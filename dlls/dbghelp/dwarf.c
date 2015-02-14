@@ -194,6 +194,14 @@ typedef struct dwarf2_parse_context_s
     char*                       cpp_name;
 } dwarf2_parse_context_t;
 
+// RJM- added acceleration structure for quick fde lookup
+typedef struct dwarf2_fde_acc_s
+{
+	unsigned long				addr;
+	unsigned long				size;
+	const unsigned char*		fde;
+} dwarf2_fde_acc;
+
 /* stored in the dbghelp's module internal structure for later reuse */
 struct dwarf2_module_info_s
 {
@@ -201,6 +209,12 @@ struct dwarf2_module_info_s
     dwarf2_section_t            debug_frame;
     dwarf2_section_t            eh_frame;
     unsigned char               word_size;
+
+	// RJM- added acceleration structure for quick fde lookup
+	unsigned					acc_eh_count;
+	dwarf2_fde_acc*				acc_eh_data;
+	unsigned					acc_debug_count;
+	dwarf2_fde_acc*				acc_debug_data;
 };
 
 #define loc_dwarf2_location_list        (loc_user + 0)
@@ -733,7 +747,7 @@ compute_location(dwarf2_traverse_context_t* ctx, struct location* loc,
         case DW_OP_shl:         stack[stk-1] <<= stack[stk]; stk--; break;
         case DW_OP_shr:         stack[stk-1] >>= stack[stk]; stk--; break;
         case DW_OP_plus_uconst: stack[stk] += dwarf2_leb128_as_unsigned(ctx); break;
-        case DW_OP_shra:        stack[stk-1] = stack[stk-1] / (1 << stack[stk]); stk--; break;
+        case DW_OP_shra:        stack[stk-1] = stack[stk-1] / (1ull << stack[stk]); stk--; break;
         case DW_OP_div:         stack[stk-1] = stack[stk-1] / stack[stk]; stk--; break;
         case DW_OP_mod:         stack[stk-1] = stack[stk-1] % stack[stk]; stk--; break;
         case DW_OP_ge:          stack[stk-1] = (stack[stk-1] >= stack[stk]); stk--; break;
@@ -2487,6 +2501,13 @@ enum reg_rule
 #define NB_FRAME_REGS 64
 #define MAX_SAVED_STATES 16
 
+// RJM- added register type to replace ULONG_PTR.
+#ifdef _WIN64
+typedef unsigned __int64 REG_PTR;
+#else
+typedef unsigned __int32 REG_PTR;
+#endif
+
 struct frame_state
 {
     ULONG_PTR     cfa_offset;
@@ -2677,6 +2698,85 @@ static BOOL dwarf2_get_cie(unsigned long addr, struct module* module, DWORD_PTR 
         }
     }
     return FALSE;
+}
+
+// RJM- accelerated version of dwarf2_get_cie.
+static BOOL dwarf2_get_cie_fast(unsigned long addr, struct module* module, DWORD_PTR delta,
+                           dwarf2_traverse_context_t* fde_ctx, dwarf2_traverse_context_t* cie_ctx,
+                           struct frame_info* info, BOOL in_eh_frame)
+{
+    const unsigned char*        cie_ptr;
+    unsigned                    len, id;
+    const BYTE*                 start_data = fde_ctx->data;
+    unsigned long               start, range;
+    unsigned                    cie_id;
+
+	unsigned					low, high, guess;
+	signed long					cmp;
+	dwarf2_fde_acc				*acc;
+
+    cie_id = in_eh_frame ? 0 : DW_CIE_ID;
+
+	low = 0;
+	if (in_eh_frame)
+	{
+		acc = module->format_info[DFI_DWARF]->u.dwarf2_info->acc_eh_data;
+		high = module->format_info[DFI_DWARF]->u.dwarf2_info->acc_eh_count;
+	} else {
+		acc = module->format_info[DFI_DWARF]->u.dwarf2_info->acc_debug_data;
+		high = module->format_info[DFI_DWARF]->u.dwarf2_info->acc_debug_count;
+	}
+	if (high == 0)
+		return FALSE;
+
+	// Use a binary search to locate the FDE for this address.
+	while(1)
+	{
+		if (low >= high)
+			return FALSE;
+
+		guess = ( low + high ) >> 1;
+		cmp = addr - (acc[guess].addr + delta);
+
+		if (cmp >= 0 && cmp < acc[guess].size)
+		{
+			low = guess;
+			break;
+		}
+	
+		if (cmp > 0)
+			low = guess+1;
+		else
+			high = guess;
+	}
+
+	fde_ctx->data = acc[low].fde;
+
+	/* find the FDE for address addr (skip CIE) */
+	len = dwarf2_parse_u4(fde_ctx);
+	if (len == 0xffffffff) FIXME("Unsupported yet 64-bit CIEs\n");
+	fde_ctx->end_data = fde_ctx->data + len;
+	id  = dwarf2_parse_u4(fde_ctx);
+
+	cie_ptr = (in_eh_frame) ? fde_ctx->data - id - 4 : start_data + id;
+
+	cie_ctx->data = cie_ptr;
+	cie_ctx->word_size = fde_ctx->word_size;
+	cie_ctx->end_data = cie_ptr + 4;
+	cie_ctx->end_data = cie_ptr + 4 + dwarf2_parse_u4(cie_ctx);
+	if (dwarf2_parse_u4(cie_ctx) != DW_CIE_ID)
+	{
+		FIXME("wrong CIE pointer\n");
+		return FALSE;
+	}
+	if (!parse_cie_details(cie_ctx, info)) return FALSE;
+
+    start = delta + dwarf2_parse_augmentation_ptr(fde_ctx, info->fde_encoding);
+    range = dwarf2_parse_augmentation_ptr(fde_ctx, info->fde_encoding & 0x0F);
+	assert( addr >= start && addr < start+range );
+
+	info->ip = acc[low].addr;
+	return TRUE;
 }
 
 static int valid_reg(ULONG_PTR reg)
@@ -2912,12 +3012,12 @@ static void execute_cfa_instructions(dwarf2_traverse_context_t* ctx,
 }
 
 /* retrieve a context register from its dwarf number */
-static ULONG_PTR get_context_reg(CONTEXT *context, ULONG_PTR dw_reg)
+static REG_PTR get_context_reg(CONTEXT *context, unsigned dw_reg)
 {
     unsigned regno = dbghelp_current_cpu->map_dwarf_register(dw_reg), sz;
-    ULONG_PTR* ptr = dbghelp_current_cpu->fetch_context_reg(context, regno, &sz);
+    REG_PTR* ptr = dbghelp_current_cpu->fetch_context_reg(context, regno, &sz);
 
-    if (sz != sizeof(ULONG_PTR))
+    if (sz != sizeof(REG_PTR))
     {
         FIXME("reading register %lu/%u of wrong size %u\n", dw_reg, regno, sz);
         return 0;
@@ -2926,11 +3026,11 @@ static ULONG_PTR get_context_reg(CONTEXT *context, ULONG_PTR dw_reg)
 }
 
 /* set a context register from its dwarf number */
-static void set_context_reg(struct cpu_stack_walk* csw, CONTEXT *context, ULONG_PTR dw_reg,
-                            ULONG_PTR val, BOOL isdebuggee)
+static void set_context_reg(struct cpu_stack_walk* csw, CONTEXT *context, unsigned dw_reg,
+                            REG_PTR val, BOOL isdebuggee)
 {
     unsigned regno = dbghelp_current_cpu->map_dwarf_register(dw_reg), sz;
-    ULONG_PTR* ptr = dbghelp_current_cpu->fetch_context_reg(context, regno, &sz);
+    REG_PTR* ptr = dbghelp_current_cpu->fetch_context_reg(context, regno, &sz);
 
     if (isdebuggee)
     {
@@ -2950,7 +3050,7 @@ static void set_context_reg(struct cpu_stack_walk* csw, CONTEXT *context, ULONG_
     }
     else
     {
-        if (sz != sizeof(ULONG_PTR))
+        if (sz != sizeof(REG_PTR))
         {
             FIXME("assigning to register %lu/%u of wrong size %u\n", dw_reg, regno, sz);
             return;
@@ -3040,7 +3140,7 @@ static ULONG_PTR eval_expression(const struct module* module, struct cpu_stack_w
         case DW_OP_shl:         stack[sp-1] <<= stack[sp]; sp--; break;
         case DW_OP_shr:         stack[sp-1] >>= stack[sp]; sp--; break;
         case DW_OP_plus_uconst: stack[sp] += dwarf2_leb128_as_unsigned(&ctx); break;
-        case DW_OP_shra:        stack[sp-1] = (LONG_PTR)stack[sp-1] / (1 << stack[sp]); sp--; break;
+        case DW_OP_shra:        stack[sp-1] = (LONG_PTR)stack[sp-1] / (1ull << stack[sp]); sp--; break;
         case DW_OP_div:         stack[sp-1] = (LONG_PTR)stack[sp-1] / (LONG_PTR)stack[sp]; sp--; break;
         case DW_OP_mod:         stack[sp-1] = (LONG_PTR)stack[sp-1] % (LONG_PTR)stack[sp]; sp--; break;
         case DW_OP_ge:          stack[sp-1] = ((LONG_PTR)stack[sp-1] >= (LONG_PTR)stack[sp]); sp--; break;
@@ -3169,13 +3269,13 @@ BOOL dwarf2_virtual_unwind(struct cpu_stack_walk* csw, ULONG_PTR ip, CONTEXT* co
      */
     delta = pair.effective->module.BaseOfImage + modfmt->u.dwarf2_info->eh_frame.rva -
         (DWORD_PTR)modfmt->u.dwarf2_info->eh_frame.address;
-    if (!dwarf2_get_cie(ip, pair.effective, delta, &fde_ctx, &cie_ctx, &info, TRUE))
+    if (!dwarf2_get_cie_fast(ip, pair.effective, delta, &fde_ctx, &cie_ctx, &info, TRUE))
     {
         fde_ctx.data = modfmt->u.dwarf2_info->debug_frame.address;
         fde_ctx.end_data = fde_ctx.data + modfmt->u.dwarf2_info->debug_frame.size;
         fde_ctx.word_size = modfmt->u.dwarf2_info->word_size;
         delta = pair.effective->reloc_delta;
-        if (!dwarf2_get_cie(ip, pair.effective, delta, &fde_ctx, &cie_ctx, &info, FALSE))
+        if (!dwarf2_get_cie_fast(ip, pair.effective, delta, &fde_ctx, &cie_ctx, &info, FALSE))
         {
             TRACE("Couldn't find information for %lx\n", ip);
             return FALSE;
@@ -3269,6 +3369,12 @@ static void dwarf2_location_compute(struct process* pcs,
 
 static void dwarf2_module_remove(struct process* pcs, struct module_format* modfmt)
 {
+	// RJM- free the fde acc data too.
+	if (modfmt->u.dwarf2_info->acc_eh_data)
+		HeapFree(GetProcessHeap(), 0, modfmt->u.dwarf2_info->acc_eh_data);
+	if (modfmt->u.dwarf2_info->acc_debug_data)
+		HeapFree(GetProcessHeap(), 0, modfmt->u.dwarf2_info->acc_debug_data);
+
     HeapFree(GetProcessHeap(), 0, modfmt);
 }
 
@@ -3292,6 +3398,107 @@ static inline BOOL dwarf2_init_section(dwarf2_section_t* section, struct image_f
     return TRUE;
 }
 
+int dwarf2_fde_cmp(const dwarf2_fde_acc *a, const dwarf2_fde_acc *b)
+{
+	if (a->addr < b->addr)
+		return -1;
+	if (a->addr > b->addr)
+		return 1;
+	return 0;
+}
+
+// RJM- builds a lookup table for fast FDE lookups.
+void dwarf2_build_fde_acc(struct dwarf2_module_info_s *dwarf2, BOOL in_eh_frame)
+{
+    const unsigned char*        ptr_blk;
+    const unsigned char*        fde_start;
+    dwarf2_traverse_context_t	cie_ctx, fde_ctx;
+    const unsigned char*        cie_ptr;
+	dwarf2_fde_acc				*dest;
+    unsigned                    len, id;
+    unsigned                    cie_id;
+    struct frame_info			info;
+	dwarf2_fde_acc*				table;
+	unsigned					count;
+	const unsigned char*		ctx_start;
+	const unsigned char*		ctx_end;
+	
+    cie_id = in_eh_frame ? 0 : DW_CIE_ID;
+    fde_ctx.word_size = dwarf2->word_size;
+
+	if (in_eh_frame)
+	{
+		ctx_start = dwarf2->eh_frame.address;
+		ctx_end = ctx_start + dwarf2->eh_frame.size;
+	} else {
+		ctx_start = dwarf2->debug_frame.address;
+	    ctx_end = ctx_start + dwarf2->debug_frame.size;
+	}
+
+	// Count how big the table needs to be.
+    fde_ctx.data = ctx_start;
+    fde_ctx.end_data = ctx_end;
+	count = 0;
+    for (; fde_ctx.data + 2 * 4 < fde_ctx.end_data; fde_ctx.data = ptr_blk)
+    {
+        len = dwarf2_parse_u4(&fde_ctx);
+        ptr_blk = fde_ctx.data + len;
+        id  = dwarf2_parse_u4(&fde_ctx);
+        if (id == cie_id)
+			continue;
+
+		count++;
+	}
+
+	// Allocate the table.
+	table = (dwarf2_fde_acc*)HeapAlloc(GetProcessHeap(), 0, sizeof(dwarf2_fde_acc) * count);
+	if (!table)
+		return;
+
+	if (in_eh_frame)
+	{
+		dwarf2->acc_eh_count = count;
+		dwarf2->acc_eh_data = table;
+	} else {
+		dwarf2->acc_debug_count = count;
+		dwarf2->acc_debug_data = table;
+	}
+
+	// Now build a list of FDEs.
+	fde_ctx.data = ctx_start;
+	fde_ctx.end_data = ctx_end;
+	dest = table;	
+	for (; fde_ctx.data + 2 * 4 < fde_ctx.end_data; fde_ctx.data = ptr_blk)
+	{
+		fde_start = fde_ctx.data;
+		len = dwarf2_parse_u4(&fde_ctx);
+		ptr_blk = fde_ctx.data + len;
+		id  = dwarf2_parse_u4(&fde_ctx);
+		if (id == cie_id)
+			continue;
+
+		cie_ptr = dwarf2->debug_frame.address + id;
+        cie_ctx.data = cie_ptr;
+        cie_ctx.word_size = fde_ctx.word_size;
+        cie_ctx.end_data = cie_ptr + 4;
+        cie_ctx.end_data = cie_ptr + 4 + dwarf2_parse_u4(&cie_ctx);
+        if (dwarf2_parse_u4(&cie_ctx) != cie_id)
+        {
+            FIXME("wrong CIE pointer\n");
+            return;
+        }
+        if (!parse_cie_details(&cie_ctx, &info)) return;
+
+		dest->addr = dwarf2_parse_augmentation_ptr(&fde_ctx, info.fde_encoding);
+        dest->size = dwarf2_parse_augmentation_ptr(&fde_ctx, info.fde_encoding & 0x0F);
+		dest->fde = fde_start;
+		dest++;
+	}
+
+	// Sort it all into ascending order to allow a binary search.
+	qsort(table, count, sizeof(dwarf2_fde_acc), dwarf2_fde_cmp);
+}
+
 BOOL dwarf2_parse(struct module* module, unsigned long load_offset,
                   const struct elf_thunk_area* thunks,
                   struct image_file_map* fmap)
@@ -3302,6 +3509,8 @@ BOOL dwarf2_parse(struct module* module, unsigned long load_offset,
                                 debug_line_sect, debug_ranges_sect, eh_frame_sect;
     BOOL                ret = TRUE;
     struct module_format* dwarf2_modfmt;
+	const unsigned char *start;
+	__int64 prevProgress;
 
     dwarf2_init_section(&eh_frame,                fmap, ".eh_frame",     &eh_frame_sect);
     dwarf2_init_section(&section[section_debug],  fmap, ".debug_info",   &debug_sect);
@@ -3354,8 +3563,18 @@ BOOL dwarf2_parse(struct module* module, unsigned long load_offset,
     dwarf2_init_section(&dwarf2_modfmt->u.dwarf2_info->debug_frame, fmap, ".debug_frame", NULL);
     dwarf2_modfmt->u.dwarf2_info->eh_frame = eh_frame;
 
+	// RJM- added some simple progress feedback here
+	start = mod_ctx.data;
+	prevProgress = -1;
     while (mod_ctx.data < mod_ctx.end_data)
     {
+		__int64 progress = 10 * (__int64)(mod_ctx.data - start) / (__int64)(mod_ctx.end_data - start);
+		if (progress != prevProgress)
+		{
+			prevProgress = progress;
+			TRACE("%i%%...\n", (int)(progress*10));
+		}
+
         dwarf2_parse_compilation_unit(section, dwarf2_modfmt->module, thunks, &mod_ctx, load_offset);
     }
     dwarf2_modfmt->module->module.SymType = SymDia;
@@ -3365,6 +3584,10 @@ BOOL dwarf2_parse(struct module* module, unsigned long load_offset,
     dwarf2_modfmt->module->module.TypeInfo = TRUE;
     dwarf2_modfmt->module->module.SourceIndexed = TRUE;
     dwarf2_modfmt->module->module.Publics = TRUE;
+
+	// RJM- build the fde lookup table
+	dwarf2_build_fde_acc(dwarf2_modfmt->u.dwarf2_info, TRUE);
+	dwarf2_build_fde_acc(dwarf2_modfmt->u.dwarf2_info, FALSE);
 
 leave:
     image_unmap_section(&debug_sect);

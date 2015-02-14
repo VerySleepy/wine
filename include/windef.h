@@ -37,6 +37,11 @@ extern "C" {
 
 /* Calling conventions definitions */
 
+// RJM
+#ifdef WOW64
+#undef _WIN64
+#endif
+
 #if defined(__x86_64__) && !defined(_WIN64)
 #define _WIN64
 #endif

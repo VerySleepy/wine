@@ -2518,9 +2518,10 @@ static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
 #elif defined(__i386__) && defined(_MSC_VER)
 static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
 {
-  struct _TEB *teb;
-  __asm mov eax, fs:[0x18];
-  __asm mov teb, eax;
+  struct _TEB *teb = NULL;
+  // RJM
+  //__asm mov eax, fs:[0x18];
+  //__asm mov teb, eax;
   return teb;
 }
 #elif defined(__x86_64__) && defined(__GNUC__)
@@ -2533,9 +2534,10 @@ static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
 #elif defined(__x86_64__) && defined (_MSC_VER)
 static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
 {
-  struct _TEB *teb;
-  __asm mov rax, gs:[0x30];
-  __asm mov teb, rax;
+  struct _TEB *teb = NULL;
+  // RJM
+  //__asm mov rax, gs:[0x30];
+  //__asm mov teb, rax;
   return teb;
 }
 #else

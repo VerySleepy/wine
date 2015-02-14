@@ -2558,7 +2558,9 @@ static BOOL pdb_init(const struct pdb_lookup* pdb_lookup, struct pdb_file_info* 
         else WARN("Found %s, but wrong GUID: %s %s\n",
                   pdb_lookup->filename, debugstr_guid(&root->guid),
                      debugstr_guid(&pdb_lookup->guid));
-        if (root->Age == pdb_lookup->age) (*matched)++;
+		// RJM- changed age to match >=, instead of ==.
+		// This seems to be the same behaviour as the Microsoft one.
+        if (root->Age >= pdb_lookup->age) (*matched)++;
         else WARN("Found %s, but wrong age: %08x %08x\n",
                   pdb_lookup->filename, root->Age, pdb_lookup->age);
         TRACE("found DS for %s: age=%x guid=%s\n",

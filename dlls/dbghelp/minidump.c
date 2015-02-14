@@ -840,9 +840,9 @@ static unsigned         dump_misc_info(struct dump_context* dc)
  */
 BOOL WINAPI MiniDumpWriteDump(HANDLE hProcess, DWORD pid, HANDLE hFile,
                               MINIDUMP_TYPE DumpType,
-                              PMINIDUMP_EXCEPTION_INFORMATION ExceptionParam,
-                              PMINIDUMP_USER_STREAM_INFORMATION UserStreamParam,
-                              PMINIDUMP_CALLBACK_INFORMATION CallbackParam)
+                              const PMINIDUMP_EXCEPTION_INFORMATION ExceptionParam,
+                              const PMINIDUMP_USER_STREAM_INFORMATION UserStreamParam,
+                              const PMINIDUMP_CALLBACK_INFORMATION CallbackParam)
 {
     static const MINIDUMP_DIRECTORY emptyDir = {UnusedStream, {0, 0}};
     MINIDUMP_HEADER     mdHead;

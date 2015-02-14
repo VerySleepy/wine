@@ -110,7 +110,7 @@ typedef /* [public] */ unsigned __int3264 UINT_PTR, *PUINT_PTR;
 typedef /* [public] */ unsigned __int3264 ULONG_PTR, *PULONG_PTR;
 typedef ULONG_PTR                   DWORD_PTR, *PDWORD_PTR;
 
-#elif defined(_WIN64)
+#elif defined(_WIN64) || defined(WOW64) // RJM
 
 #define __int3264 __int64
 

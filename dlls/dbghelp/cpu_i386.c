@@ -216,6 +216,11 @@ static BOOL i386_stack_walk(struct cpu_stack_walk* csw, LPSTACKFRAME64 frame, CO
         /* cur_switch holds address of WOW32Reserved field in TEB in debuggee
          * address space
          */
+#if 1
+		// RJM- nobbled this, doesn't seem to work on WoW64, and we don't really need 16-bit support anyway
+		curr_switch = 0;
+		info;
+#else
         if (NtQueryInformationThread(csw->hThread, ThreadBasicInformation, &info,
                                      sizeof(info), NULL) == STATUS_SUCCESS)
         {
@@ -265,6 +270,8 @@ static BOOL i386_stack_walk(struct cpu_stack_walk* csw, LPSTACKFRAME64 frame, CO
              * but the 16 <=> 32 switch facility won't be available.
              */
             curr_switch = 0;
+#endif
+
         frame->AddrReturn.Mode = frame->AddrStack.Mode = (curr_mode == stm_16bit) ? AddrMode1616 : AddrModeFlat;
         /* don't set up AddrStack on first call. Either the caller has set it up, or
          * we will get it in the next frame

@@ -179,14 +179,15 @@ static inline int wine_ldt_is_empty( const LDT_ENTRY *ent )
 #  define __DEFINE_SET_SEG(seg) extern void wine_set_##seg(unsigned int);
 # endif /* __GNUC__ || _MSC_VER */
 
-__DEFINE_GET_SEG(cs)
-__DEFINE_GET_SEG(ds)
-__DEFINE_GET_SEG(es)
-__DEFINE_GET_SEG(fs)
-__DEFINE_GET_SEG(gs)
-__DEFINE_GET_SEG(ss)
-__DEFINE_SET_SEG(fs)
-__DEFINE_SET_SEG(gs)
+// RJM
+//__DEFINE_GET_SEG(cs)
+//__DEFINE_GET_SEG(ds)
+//__DEFINE_GET_SEG(es)
+//__DEFINE_GET_SEG(fs)
+//__DEFINE_GET_SEG(gs)
+//__DEFINE_GET_SEG(ss)
+//__DEFINE_SET_SEG(fs)
+//__DEFINE_SET_SEG(gs)
 #undef __DEFINE_GET_SEG
 #undef __DEFINE_SET_SEG
 

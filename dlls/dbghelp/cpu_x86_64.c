@@ -351,12 +351,29 @@ static BOOL is_inside_epilog(struct cpu_stack_walk* csw, DWORD64 pc)
 
 static BOOL default_unwind(struct cpu_stack_walk* csw, CONTEXT* context)
 {
-    if (!sw_read_mem(csw, context->Rsp, &context->Rip, sizeof(DWORD64)))
-    {
-        WARN("Cannot read new frame offset %s\n", wine_dbgstr_longlong(context->Rsp));
+    //if (!sw_read_mem(csw, context->Rsp, &context->Rip, sizeof(DWORD64)))
+    //{
+    //    WARN("Cannot read new frame offset %s\n", wine_dbgstr_longlong(context->Rsp));
+    //    return FALSE;
+    //}
+    //context->Rsp += sizeof(DWORD64);
+
+	// RJM- changed this to use an RBP-based unwind, instead of just
+	// pulling the return address. I have no idea why it doesn't do this
+	// by default, the same as the i386 one does. (seeing as an EBP/RBP based
+	// stack frame is the gcc default).
+
+    DWORD64                   val64;
+
+	context->Rsp = context->Rbp + 2 * sizeof(DWORD64);
+	if (!sw_read_mem(csw, context->Rbp + sizeof(DWORD64), &val64, sizeof(DWORD64)))
         return FALSE;
-    }
-    context->Rsp += sizeof(DWORD64);
+	context->Rip = val64;
+	/* "pop up" previous RBP value */
+	if (!sw_read_mem(csw, context->Rbp, &val64, sizeof(DWORD64)))
+		return FALSE;
+	context->Rbp = val64;
+
     return TRUE;
 }
 
@@ -559,10 +576,19 @@ static BOOL x86_64_stack_walk(struct cpu_stack_walk* csw, LPSTACKFRAME64 frame, 
     {
         CONTEXT         newctx = *context;
 
-        if (!fetch_next_frame(csw, &newctx, frame->AddrPC.Offset - deltapc, NULL))
-            goto done_err;
+		// RJM- changed this to not fail if we can't find a return address,
+		// so that when we switch from a GCC frame to an MS one, we still get
+		// a valid IP/BP/SP out, but no return address (we don't use the return
+		// address ourselves anyway in Sleepy).
+		// The MS dbghelp behaves in a similar way.
+        if (fetch_next_frame(csw, &newctx, frame->AddrPC.Offset - deltapc, NULL))
+		{
         frame->AddrReturn.Mode = AddrModeFlat;
         frame->AddrReturn.Offset = newctx.Rip;
+		} else {
+			frame->AddrReturn.Mode = AddrModeFlat;
+			frame->AddrReturn.Offset = frame->AddrPC.Offset;
+		}
     }
 
     frame->Far = TRUE;

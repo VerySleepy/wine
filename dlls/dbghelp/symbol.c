@@ -998,7 +998,9 @@ struct symt_ht* symt_find_nearest(struct module* module, DWORD_PTR addr)
     symt_get_address(&module->addr_sorttab[low]->symt, &ref_addr);
     if (addr < ref_addr) return NULL;
     symt_get_length(module, &module->addr_sorttab[low]->symt, &ref_size);
-    if (addr >= ref_addr + ref_size) return NULL;
+    // RJM remove the end check, as this dbghelp seems to report public symbols
+	// as only having size=1, instead of the actual function size. Dunno why.
+	//if (addr >= ref_addr + ref_size) return NULL;
 
     return module->addr_sorttab[low];
 }

@@ -495,7 +495,7 @@ static BOOL pe_load_stabs(const struct process* pcs, struct module* module)
         image_unmap_section(&sect_stabstr);
         if (ret) pe_locate_with_coff_symbol_table(module);
     }
-    TRACE("%s the STABS debug info\n", ret ? "successfully loaded" : "failed to load");
+    TRACE("%s the STABS debug info for %s\n", ret ? "successfully loaded" : "failed to load", module->module_name);
 
     return ret;
 }
@@ -515,7 +515,7 @@ static BOOL pe_load_dwarf(struct module* module)
                        module->module.BaseOfImage - fmap->u.pe.ntheader.OptionalHeader.ImageBase,
                        NULL, /* FIXME: some thunks to deal with ? */
                        fmap);
-    TRACE("%s the DWARF debug info\n", ret ? "successfully loaded" : "failed to load");
+    TRACE("%s the DWARF debug info for %s\n", ret ? "successfully loaded" : "failed to load", module->module_name);
 
     return ret;
 }
