@@ -87,7 +87,7 @@ static void dump(const void* ptr, unsigned len)
         }
         msg[10 + 3 * 16] = ' ';
         msg[10 + 3 * 16 + 1 + 16] = '\0';
-        TRACE("%s\n", msg);
+        SINFO("%s\n", msg);
     }
 }
 #endif
@@ -3536,7 +3536,7 @@ BOOL dwarf2_parse(struct module* module, unsigned long load_offset,
         load_offset += fmap->u.elf.elf_start - debug_sect.fmap->u.elf.elf_start;
     }
 
-    TRACE("Loading Dwarf2 information for %s\n", debugstr_w(module->module.ModuleName));
+    SINFO("Loading Dwarf2 information for %s\n", debugstr_w(module->module.ModuleName));
 
     mod_ctx.data = section[section_debug].address;
     mod_ctx.end_data = mod_ctx.data + section[section_debug].size;
@@ -3572,7 +3572,7 @@ BOOL dwarf2_parse(struct module* module, unsigned long load_offset,
 		if (progress != prevProgress)
 		{
 			prevProgress = progress;
-			TRACE("%i%%...\n", (int)(progress*10));
+			SINFO("%i%%...\n", (int)(progress*10));
 		}
 
         dwarf2_parse_compilation_unit(section, dwarf2_modfmt->module, thunks, &mod_ctx, load_offset);

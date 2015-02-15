@@ -2484,7 +2484,7 @@ static BOOL pdb_init(const struct pdb_lookup* pdb_lookup, struct pdb_file_info* 
     BOOL        ret = TRUE;
 
     /* check the file header, and if ok, load the TOC */
-    TRACE("PDB(%s): %.40s\n", pdb_lookup->filename, debugstr_an(image, 40));
+    SINFO("PDB(%s): %.40s\n", pdb_lookup->filename, debugstr_an(image, 40));
 
     *matched = 0;
     if (!memcmp(image, PDB_JG_IDENT, sizeof(PDB_JG_IDENT)))
@@ -2675,7 +2675,7 @@ static BOOL pdb_process_internal(const struct process* pcs,
     unsigned    matched;
     struct pdb_file_info* pdb_file;
 
-    TRACE("Processing PDB file %s\n", pdb_lookup->filename);
+    SINFO("Processing PDB file %s\n", pdb_lookup->filename);
 
     pdb_file = &pdb_module_info->pdb_files[module_index == -1 ? 0 : module_index];
     /* Open and map() .PDB file */
@@ -3209,7 +3209,7 @@ static BOOL codeview_process_info(const struct process* pcs,
     BOOL                        ret = FALSE;
     struct pdb_lookup           pdb_lookup;
 
-    TRACE("Processing signature %.4s\n", (const char*)signature);
+    SINFO("Processing signature %.4s\n", (const char*)signature);
 
     switch (*signature)
     {
@@ -3305,7 +3305,7 @@ static BOOL codeview_process_info(const struct process* pcs,
     {
         const OMFSignatureRSDS* rsds = (const OMFSignatureRSDS*)msc_dbg->root;
 
-        TRACE("Got RSDS type of PDB file: guid=%s age=%08x name=%s\n",
+        SINFO("Got RSDS type of PDB file: guid=%s age=%08x name=%s\n",
               wine_dbgstr_guid(&rsds->guid), rsds->age, rsds->name);
         pdb_lookup.filename = rsds->name;
         pdb_lookup.kind = PDB_DS;

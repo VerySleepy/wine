@@ -46,6 +46,7 @@ enum __wine_debug_class
     __WINE_DBCL_FIXME,
     __WINE_DBCL_ERR,
     __WINE_DBCL_WARN,
+    __WINE_DBCL_SINFO, /* Status updates for Very Sleepy */
     __WINE_DBCL_TRACE,
 
     __WINE_DBCL_INIT = 7  /* lazy init flag */
@@ -66,9 +67,11 @@ struct __wine_debug_channel
 #ifndef WINE_NO_DEBUG_MSGS
 # define __WINE_GET_DEBUGGING_WARN(dbch)  ((dbch)->flags & (1 << __WINE_DBCL_WARN))
 # define __WINE_GET_DEBUGGING_FIXME(dbch) ((dbch)->flags & (1 << __WINE_DBCL_FIXME))
+# define __WINE_GET_DEBUGGING_SINFO(dbch) ((dbch)->flags & (1 << __WINE_DBCL_SINFO))
 #else
 # define __WINE_GET_DEBUGGING_WARN(dbch)  0
 # define __WINE_GET_DEBUGGING_FIXME(dbch) 0
+# define __WINE_GET_DEBUGGING_SINFO(dbch) 0
 #endif
 
 /* define error macro regardless of what is configured */
@@ -103,6 +106,8 @@ struct __wine_debug_channel
 #define WINE_WARN_(ch) WINE_WARN
 #define WINE_FIXME(args...) do { } while(0)
 #define WINE_FIXME_(ch) WINE_FIXME
+#define WINE_SINFO(args...) do { } while(0)
+#define WINE_SINFO_(ch) WINE_SINFO
 #endif
 
 #elif defined(__SUNPRO_C)
@@ -128,6 +133,8 @@ struct __wine_debug_channel
 #define WINE_WARN_(ch) WINE_WARN
 #define WINE_FIXME(...) do { } while(0)
 #define WINE_FIXME_(ch) WINE_FIXME
+#define WINE_SINFO(...) do { } while(0)
+#define WINE_SINFO_(ch) WINE_SINFO
 #endif
 
 #else  /* !__GNUC__ && !__SUNPRO_C */
@@ -237,6 +244,12 @@ static inline const char *wine_dbgstr_longlong( ULONGLONG ll )
 #endif
 #define WINE_FIXME_ON(ch)          __WINE_IS_DEBUG_ON(_FIXME,&__wine_dbch_##ch)
 
+#ifndef WINE_SINFO
+#define WINE_SINFO                 __WINE_DPRINTF(_SINFO,__wine_dbch___default)
+#define WINE_SINFO_(ch)            __WINE_DPRINTF(_SINFO,&__wine_dbch_##ch)
+#endif
+#define WINE_SINFO_ON(ch)          __WINE_IS_DEBUG_ON(_SINFO,&__wine_dbch_##ch)
+
 #define WINE_ERR                   __WINE_DPRINTF(_ERR,__wine_dbch___default)
 #define WINE_ERR_(ch)              __WINE_DPRINTF(_ERR,&__wine_dbch_##ch)
 #define WINE_ERR_ON(ch)            __WINE_IS_DEBUG_ON(_ERR,&__wine_dbch_##ch)
@@ -270,6 +283,10 @@ static inline const char *debugstr_w( const WCHAR *s ) { return wine_dbgstr_wn( 
 #define FIXME                      WINE_FIXME
 #define FIXME_(ch)                 WINE_FIXME_(ch)
 #define FIXME_ON(ch)               WINE_FIXME_ON(ch)
+
+#define SINFO                      WINE_SINFO
+#define SINFO_(ch)                 WINE_SINFO_(ch)
+#define SINFO_ON(ch)               WINE_SINFO_ON(ch)
 
 #undef ERR  /* Solaris got an 'ERR' define in <sys/reg.h> */
 #define ERR                        WINE_ERR

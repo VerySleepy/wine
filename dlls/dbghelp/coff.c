@@ -173,7 +173,7 @@ DECLSPEC_HIDDEN BOOL coff_process_info(const struct msc_debug_info* msc_dbg)
     BOOL                                ret = FALSE;
     ULONG64                             addr;
 
-    TRACE("Processing COFF symbols...\n");
+    SINFO("Processing COFF symbols...\n");
 
     assert(sizeof(IMAGE_SYMBOL) == IMAGE_SIZEOF_SYMBOL);
     assert(sizeof(IMAGE_LINENUMBER) == IMAGE_SIZEOF_LINENUMBER);
@@ -198,7 +198,7 @@ DECLSPEC_HIDDEN BOOL coff_process_info(const struct msc_debug_info* msc_dbg)
 	{
             curr_file_idx = coff_add_file(&coff_files, msc_dbg->module, 
                                           (const char*)(coff_sym + 1));
-            TRACE("New file %s\n", (const char*)(coff_sym + 1));
+            SINFO("New file %s\n", (const char*)(coff_sym + 1));
             i += naux;
             continue;
 	}
@@ -207,7 +207,7 @@ DECLSPEC_HIDDEN BOOL coff_process_info(const struct msc_debug_info* msc_dbg)
         {
             assert(coff_files.nfiles == 0 && coff_files.nfiles_alloc == 0);
             curr_file_idx = coff_add_file(&coff_files, msc_dbg->module, "<none>");
-            TRACE("New file <none>\n");
+            SINFO("New file <none>\n");
         }
 
         /*

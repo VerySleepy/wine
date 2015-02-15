@@ -144,7 +144,7 @@ static void dump_unwind_info(HANDLE hProcess, ULONG64 base, RUNTIME_FUNCTION *fu
         {
 #if 0
             RUNTIME_FUNCTION *next = (RUNTIME_FUNCTION*)((char*)base + (function->UnwindData & ~1));
-            TRACE("unwind info for function %p-%p chained to function %p-%p\n",
+            SINFO("unwind info for function %p-%p chained to function %p-%p\n",
                   (char*)base + function->BeginAddress, (char*)base + function->EndAddress,
                   (char*)base + next->BeginAddress, (char*)base + next->EndAddress);
             function = next;

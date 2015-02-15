@@ -495,7 +495,7 @@ static BOOL pe_load_stabs(const struct process* pcs, struct module* module)
         image_unmap_section(&sect_stabstr);
         if (ret) pe_locate_with_coff_symbol_table(module);
     }
-    TRACE("%s the STABS debug info for %s\n", ret ? "successfully loaded" : "failed to load", module->module_name);
+    SINFO("%s the STABS debug info for %s\n", ret ? "successfully loaded" : "failed to load", module->module_name);
 
     return ret;
 }
@@ -515,7 +515,7 @@ static BOOL pe_load_dwarf(struct module* module)
                        module->module.BaseOfImage - fmap->u.pe.ntheader.OptionalHeader.ImageBase,
                        NULL, /* FIXME: some thunks to deal with ? */
                        fmap);
-    TRACE("%s the DWARF debug info for %s\n", ret ? "successfully loaded" : "failed to load", module->module_name);
+    SINFO("%s the DWARF debug info for %s\n", ret ? "successfully loaded" : "failed to load", module->module_name);
 
     return ret;
 }
@@ -533,7 +533,7 @@ static BOOL pe_load_dbg_file(const struct process* pcs, struct module* module,
     const BYTE*                         dbg_mapping = NULL;
     BOOL                                ret = FALSE;
 
-    TRACE("Processing DBG file %s\n", debugstr_a(dbg_name));
+    SINFO("Processing DBG file %s\n", debugstr_a(dbg_name));
 
     if (path_find_symbol_file(pcs, dbg_name, NULL, timestamp, 0, tmp, &module->module.DbgUnmatched) &&
         (hFile = CreateFileA(tmp, GENERIC_READ, FILE_SHARE_READ, NULL,

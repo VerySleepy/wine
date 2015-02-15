@@ -882,7 +882,7 @@ static BOOL elf_locate_debug_link(struct image_file_map* fmap, const char* filen
     return FALSE;
 
 found:
-    TRACE("Located debug information file %s at %s\n", filename, debugstr_w(p));
+    SINFO("Located debug information file %s at %s\n", filename, debugstr_w(p));
     HeapFree(GetProcessHeap(), 0, p);
     fmap->u.elf.alternate = fmap_link;
     return TRUE;
@@ -1103,7 +1103,7 @@ static BOOL elf_load_file_from_fmap(struct process* pcs, const WCHAR* filename,
         {
             unsigned long rva_dyn = elf_get_map_rva(&ism);
 
-            TRACE("For module %s, got ELF (start=%lx dyn=%lx), link_map (start=%lx dyn=%lx)\n",
+            SINFO("For module %s, got ELF (start=%lx dyn=%lx), link_map (start=%lx dyn=%lx)\n",
                   debugstr_w(filename), (unsigned long)fmap->u.elf.elf_start, rva_dyn,
                   load_offset, dyn_addr);
             if (dyn_addr && load_offset + rva_dyn != dyn_addr)
@@ -1181,7 +1181,7 @@ static BOOL elf_load_file(struct process* pcs, const WCHAR* filename,
     struct image_file_map       fmap;
     struct elf_map_file_data    emfd;
 
-    TRACE("Processing elf file '%s' at %08lx\n", debugstr_w(filename), load_offset);
+    SINFO("Processing elf file '%s' at %08lx\n", debugstr_w(filename), load_offset);
 
     emfd.kind = from_file;
     emfd.u.file.filename = filename;
