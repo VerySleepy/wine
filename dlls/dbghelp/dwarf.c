@@ -3418,22 +3418,21 @@ void dwarf2_build_fde_acc(struct dwarf2_module_info_s *dwarf2, BOOL in_eh_frame)
     unsigned                    len, id;
     unsigned                    cie_id;
     struct frame_info			info;
+	dwarf2_section_t*           section;
 	dwarf2_fde_acc*				table;
 	unsigned					count;
 	const unsigned char*		ctx_start;
 	const unsigned char*		ctx_end;
 	
-    cie_id = in_eh_frame ? 0 : DW_CIE_ID;
+	*(in_eh_frame ? &dwarf2->acc_eh_count : &dwarf2->acc_debug_count) = 0;
+	*(in_eh_frame ? &dwarf2->acc_eh_data  : &dwarf2->acc_debug_data ) = NULL;
+
+	cie_id = in_eh_frame ? 0 : DW_CIE_ID;
     fde_ctx.word_size = dwarf2->word_size;
 
-	if (in_eh_frame)
-	{
-		ctx_start = dwarf2->eh_frame.address;
-		ctx_end = ctx_start + dwarf2->eh_frame.size;
-	} else {
-		ctx_start = dwarf2->debug_frame.address;
-	    ctx_end = ctx_start + dwarf2->debug_frame.size;
-	}
+    section = in_eh_frame ? &dwarf2->eh_frame : &dwarf2->debug_frame;
+    ctx_start = section->address;
+    ctx_end = ctx_start + section->size;
 
 	// Count how big the table needs to be.
     fde_ctx.data = ctx_start;
@@ -3455,15 +3454,6 @@ void dwarf2_build_fde_acc(struct dwarf2_module_info_s *dwarf2, BOOL in_eh_frame)
 	if (!table)
 		return;
 
-	if (in_eh_frame)
-	{
-		dwarf2->acc_eh_count = count;
-		dwarf2->acc_eh_data = table;
-	} else {
-		dwarf2->acc_debug_count = count;
-		dwarf2->acc_debug_data = table;
-	}
-
 	// Now build a list of FDEs.
 	fde_ctx.data = ctx_start;
 	fde_ctx.end_data = ctx_end;
@@ -3477,12 +3467,12 @@ void dwarf2_build_fde_acc(struct dwarf2_module_info_s *dwarf2, BOOL in_eh_frame)
 		if (id == cie_id)
 			continue;
 
-		cie_ptr = dwarf2->debug_frame.address + id;
+		cie_ptr = ctx_start + id;
         cie_ctx.data = cie_ptr;
         cie_ctx.word_size = fde_ctx.word_size;
         cie_ctx.end_data = cie_ptr + 4;
         cie_ctx.end_data = cie_ptr + 4 + dwarf2_parse_u4(&cie_ctx);
-        if (dwarf2_parse_u4(&cie_ctx) != cie_id)
+		if (dwarf2_parse_u4(&cie_ctx) != cie_id)
         {
             FIXME("wrong CIE pointer\n");
             return;
@@ -3497,6 +3487,9 @@ void dwarf2_build_fde_acc(struct dwarf2_module_info_s *dwarf2, BOOL in_eh_frame)
 
 	// Sort it all into ascending order to allow a binary search.
 	qsort(table, count, sizeof(dwarf2_fde_acc), dwarf2_fde_cmp);
+
+	*(in_eh_frame ? &dwarf2->acc_eh_count : &dwarf2->acc_debug_count) = count;
+	*(in_eh_frame ? &dwarf2->acc_eh_data  : &dwarf2->acc_debug_data ) = table;
 }
 
 BOOL dwarf2_parse(struct module* module, unsigned long load_offset,
