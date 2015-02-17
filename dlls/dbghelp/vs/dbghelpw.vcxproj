@@ -93,9 +93,9 @@
     <ClCompile Include="..\..\..\libs\wine\casemap.c" />
     <ClCompile Include="..\coff.c" />
     <ClCompile Include="..\cpu_arm.c" />
+    <ClCompile Include="..\cpu_arm64.c" />
     <ClCompile Include="..\cpu_i386.c" />
     <ClCompile Include="..\cpu_ppc.c" />
-    <ClCompile Include="..\cpu_sparc.c" />
     <ClCompile Include="..\cpu_x86_64.c" />
     <ClCompile Include="..\crc32.c" />
     <ClCompile Include="..\dbghelp.c" />

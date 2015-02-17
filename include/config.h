@@ -19,7 +19,11 @@
 #define HAVE__STRICMP 1
 #define HAVE_ISNAN 1
 #define HAVE_ISINF 1
+#define HAVE_ISFINITE 1
+#define HAVE__SPAWNVP 1
 #define USE_COMPILER_EXCEPTIONS
+
+#define DLLPREFIX ""
 
 #ifdef __x86_64__
 #define HAVE_SIZE_T

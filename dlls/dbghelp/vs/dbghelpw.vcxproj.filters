@@ -78,9 +78,6 @@
     <ClCompile Include="..\cpu_ppc.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\cpu_sparc.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="..\cpu_x86_64.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -140,6 +137,9 @@
     </ClCompile>
     <ClCompile Include="..\..\..\libs\wine\casemap.c">
       <Filter>Wine Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\cpu_arm64.c">
+      <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
