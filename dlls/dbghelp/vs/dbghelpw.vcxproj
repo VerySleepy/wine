@@ -44,45 +44,45 @@
   <ItemGroup>
     <Midl Include="..\..\..\include\oaidl.idl">
       <OutputDirectory>%(RelativeDir)</OutputDirectory>
-      <HeaderFileName>%(Filename).h</HeaderFileName>
-      <DllDataFileName>$(ProjectDir)$(IntDir)\%(Filename)_d.c</DllDataFileName>
-      <InterfaceIdentifierFileName>$(ProjectDir)$(IntDir)\%(Filename)_i.c</InterfaceIdentifierFileName>
-      <ProxyFileName>$(ProjectDir)$(IntDir)\%(Filename)_p.c</ProxyFileName>
+      <HeaderFileName>$(ProjectDir)int\%(Filename).h</HeaderFileName>
+      <DllDataFileName>$(ProjectDir)int\%(Filename)_d.c</DllDataFileName>
+      <InterfaceIdentifierFileName>$(ProjectDir)int\%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>$(ProjectDir)int\%(Filename)_p.c</ProxyFileName>
     </Midl>
     <Midl Include="..\..\..\include\objidl.idl">
       <OutputDirectory>%(RelativeDir)</OutputDirectory>
-      <HeaderFileName>%(Filename).h</HeaderFileName>
-      <DllDataFileName>$(ProjectDir)$(IntDir)\%(Filename)_d.c</DllDataFileName>
-      <InterfaceIdentifierFileName>$(ProjectDir)$(IntDir)\%(Filename)_i.c</InterfaceIdentifierFileName>
-      <ProxyFileName>$(ProjectDir)$(IntDir)\%(Filename)_p.c</ProxyFileName>
+      <HeaderFileName>$(ProjectDir)int\%(Filename).h</HeaderFileName>
+      <DllDataFileName>$(ProjectDir)int\%(Filename)_d.c</DllDataFileName>
+      <InterfaceIdentifierFileName>$(ProjectDir)int\%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>$(ProjectDir)int\%(Filename)_p.c</ProxyFileName>
     </Midl>
     <Midl Include="..\..\..\include\oleidl.idl">
       <OutputDirectory>%(RelativeDir)</OutputDirectory>
-      <HeaderFileName>%(Filename).h</HeaderFileName>
-      <DllDataFileName>$(ProjectDir)$(IntDir)\%(Filename)_d.c</DllDataFileName>
-      <InterfaceIdentifierFileName>$(ProjectDir)$(IntDir)\%(Filename)_i.c</InterfaceIdentifierFileName>
-      <ProxyFileName>$(ProjectDir)$(IntDir)\%(Filename)_p.c</ProxyFileName>
+      <HeaderFileName>$(ProjectDir)int\%(Filename).h</HeaderFileName>
+      <DllDataFileName>$(ProjectDir)int\%(Filename)_d.c</DllDataFileName>
+      <InterfaceIdentifierFileName>$(ProjectDir)int\%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>$(ProjectDir)int\%(Filename)_p.c</ProxyFileName>
     </Midl>
     <Midl Include="..\..\..\include\propidl.idl">
       <OutputDirectory>%(RelativeDir)</OutputDirectory>
-      <HeaderFileName>%(Filename).h</HeaderFileName>
-      <DllDataFileName>$(ProjectDir)$(IntDir)\%(Filename)_d.c</DllDataFileName>
-      <InterfaceIdentifierFileName>$(ProjectDir)$(IntDir)\%(Filename)_i.c</InterfaceIdentifierFileName>
-      <ProxyFileName>$(ProjectDir)$(IntDir)\%(Filename)_p.c</ProxyFileName>
+      <HeaderFileName>$(ProjectDir)int\%(Filename).h</HeaderFileName>
+      <DllDataFileName>$(ProjectDir)int\%(Filename)_d.c</DllDataFileName>
+      <InterfaceIdentifierFileName>$(ProjectDir)int\%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>$(ProjectDir)int\%(Filename)_p.c</ProxyFileName>
     </Midl>
     <Midl Include="..\..\..\include\unknwn.idl">
       <OutputDirectory>%(RelativeDir)</OutputDirectory>
-      <HeaderFileName>%(Filename).h</HeaderFileName>
-      <DllDataFileName>$(ProjectDir)$(IntDir)\%(Filename)_d.c</DllDataFileName>
-      <InterfaceIdentifierFileName>$(ProjectDir)$(IntDir)\%(Filename)_i.c</InterfaceIdentifierFileName>
-      <ProxyFileName>$(ProjectDir)$(IntDir)\%(Filename)_p.c</ProxyFileName>
+      <HeaderFileName>$(ProjectDir)int\%(Filename).h</HeaderFileName>
+      <DllDataFileName>$(ProjectDir)int\%(Filename)_d.c</DllDataFileName>
+      <InterfaceIdentifierFileName>$(ProjectDir)int\%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>$(ProjectDir)int\%(Filename)_p.c</ProxyFileName>
     </Midl>
     <Midl Include="..\..\..\include\wtypes.idl">
       <OutputDirectory>%(RelativeDir)</OutputDirectory>
-      <HeaderFileName>%(Filename).h</HeaderFileName>
-      <DllDataFileName>$(ProjectDir)$(IntDir)\%(Filename)_d.c</DllDataFileName>
-      <InterfaceIdentifierFileName>$(ProjectDir)$(IntDir)\%(Filename)_i.c</InterfaceIdentifierFileName>
-      <ProxyFileName>$(ProjectDir)$(IntDir)\%(Filename)_p.c</ProxyFileName>
+      <HeaderFileName>$(ProjectDir)int\%(Filename).h</HeaderFileName>
+      <DllDataFileName>$(ProjectDir)int\%(Filename)_d.c</DllDataFileName>
+      <InterfaceIdentifierFileName>$(ProjectDir)int\%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>$(ProjectDir)int\%(Filename)_p.c</ProxyFileName>
     </Midl>
   </ItemGroup>
   <ItemGroup>
@@ -118,7 +118,7 @@
   <ItemGroup>
     <CustomBuild Include="..\dbghelp.spec">
       <FileType>Document</FileType>
-      <Outputs>dbghelp.def</Outputs>
+      <Outputs>$(ProjectDir)int\dbghelp.def</Outputs>
       <AdditionalInputs>spec2def.js</AdditionalInputs>
       <Command>cscript /nologo spec2def.js &lt; %(FullPath) &gt; %(Outputs)</Command>
       <Message>Creating linker definition file</Message>
@@ -252,7 +252,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <Optimization>Disabled</Optimization>
-      <AdditionalIncludeDirectories>../../../include;$(VCInstallDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>../../../include;int;$(VCInstallDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;_USRDLL;DBGHELP_EXPORTS;__i386__;__WINESRC__;_CRT_NONSTDC_NO_WARNINGS;_CRT_SECURE_NO_DEPRECATE;COM_NO_WINDOWS_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <IgnoreStandardIncludePath>true</IgnoreStandardIncludePath>
       <MinimalRebuild>false</MinimalRebuild>
@@ -269,7 +269,7 @@
     <Link>
       <AdditionalDependencies>ntdll.lib;psapi.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
-      <ModuleDefinitionFile>dbghelp.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile>int\dbghelp.def</ModuleDefinitionFile>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
       <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
@@ -285,7 +285,7 @@
     </Midl>
     <ClCompile>
       <Optimization>Disabled</Optimization>
-      <AdditionalIncludeDirectories>../../../include;$(VCInstallDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>../../../include;int;$(VCInstallDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_WIN64;WIN32;_DEBUG;_WINDOWS;_USRDLL;DBGHELP_EXPORTS;__x86_64__;__WINESRC__;_IMAGEHLP_SOURCE_;_CRT_NONSTDC_NO_WARNINGS;_CRT_SECURE_NO_DEPRECATE;COM_NO_WINDOWS_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <IgnoreStandardIncludePath>true</IgnoreStandardIncludePath>
       <MinimalRebuild>false</MinimalRebuild>
@@ -302,7 +302,7 @@
     <Link>
       <AdditionalDependencies>ntdll.lib;psapi.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
-      <ModuleDefinitionFile>dbghelp.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile>int\dbghelp.def</ModuleDefinitionFile>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
       <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
@@ -317,7 +317,7 @@
       <Optimization>MaxSpeed</Optimization>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <WholeProgramOptimization>false</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>../../../include;$(VCInstallDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>../../../include;int;$(VCInstallDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;DBGHELP_EXPORTS;__i386__;__WINESRC__;_CRT_NONSTDC_NO_WARNINGS;_CRT_SECURE_NO_DEPRECATE;COM_NO_WINDOWS_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ExceptionHandling />
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
@@ -331,7 +331,7 @@
     </ClCompile>
     <Link>
       <AdditionalDependencies>ntdll.lib;psapi.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <ModuleDefinitionFile>dbghelp.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile>int\dbghelp.def</ModuleDefinitionFile>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
       <OptimizeReferences>true</OptimizeReferences>
@@ -351,7 +351,7 @@
       <Optimization>MaxSpeed</Optimization>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <WholeProgramOptimization>false</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>../../../include;$(VCInstallDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>../../../include;int;$(VCInstallDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_WIN64;WIN32;NDEBUG;_WINDOWS;_USRDLL;DBGHELP_EXPORTS;__x86_64__;__WINESRC__;_IMAGEHLP_SOURCE_;_CRT_NONSTDC_NO_WARNINGS;_CRT_SECURE_NO_DEPRECATE;COM_NO_WINDOWS_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ExceptionHandling />
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
@@ -365,7 +365,7 @@
     </ClCompile>
     <Link>
       <AdditionalDependencies>ntdll.lib;psapi.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <ModuleDefinitionFile>dbghelp.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile>int\dbghelp.def</ModuleDefinitionFile>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
       <OptimizeReferences>true</OptimizeReferences>
@@ -380,7 +380,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug - Wow64|Win32'">
     <ClCompile>
       <Optimization>Disabled</Optimization>
-      <AdditionalIncludeDirectories>../../../include;$(VCInstallDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>../../../include;int;$(VCInstallDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;_USRDLL;DBGHELP_EXPORTS;__i386__;__WINESRC__;_CRT_NONSTDC_NO_WARNINGS;_CRT_SECURE_NO_DEPRECATE;COM_NO_WINDOWS_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <IgnoreStandardIncludePath>true</IgnoreStandardIncludePath>
       <MinimalRebuild>false</MinimalRebuild>
@@ -397,7 +397,7 @@
     <Link>
       <AdditionalDependencies>ntdll.lib;psapi.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
-      <ModuleDefinitionFile>dbghelp.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile>int\dbghelp.def</ModuleDefinitionFile>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
       <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
@@ -413,7 +413,7 @@
     </Midl>
     <ClCompile>
       <Optimization>Disabled</Optimization>
-      <AdditionalIncludeDirectories>../../../include;$(VCInstallDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>../../../include;int;$(VCInstallDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WOW64;_WIN32;WIN32;_DEBUG;_WINDOWS;_USRDLL;DBGHELP_EXPORTS;__i386__;__WINESRC__;_IMAGEHLP_SOURCE_;_CRT_NONSTDC_NO_WARNINGS;_CRT_SECURE_NO_DEPRECATE;COM_NO_WINDOWS_H;_SIZE_T_DEFINED;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <IgnoreStandardIncludePath>true</IgnoreStandardIncludePath>
       <MinimalRebuild>false</MinimalRebuild>
@@ -430,7 +430,7 @@
     <Link>
       <AdditionalDependencies>ntdll.lib;psapi.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
-      <ModuleDefinitionFile>dbghelp.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile>int\dbghelp.def</ModuleDefinitionFile>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
       <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
@@ -445,7 +445,7 @@
       <Optimization>MaxSpeed</Optimization>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <WholeProgramOptimization>false</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>../../../include;$(VCInstallDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>../../../include;int;$(VCInstallDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;DBGHELP_EXPORTS;__i386__;__WINESRC__;_CRT_NONSTDC_NO_WARNINGS;_CRT_SECURE_NO_DEPRECATE;COM_NO_WINDOWS_H;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ExceptionHandling />
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
@@ -460,7 +460,7 @@
     <Link>
       <AdditionalDependencies>ntdll.lib;psapi.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
-      <ModuleDefinitionFile>dbghelp.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile>int\dbghelp.def</ModuleDefinitionFile>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
       <OptimizeReferences>true</OptimizeReferences>
@@ -480,7 +480,7 @@
       <Optimization>MaxSpeed</Optimization>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <WholeProgramOptimization>false</WholeProgramOptimization>
-      <AdditionalIncludeDirectories>../../../include;$(VCInstallDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>../../../include;int;$(VCInstallDir)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WOW64;_WIN32;WIN32;NDEBUG;_WINDOWS;_USRDLL;DBGHELP_EXPORTS;__i386__;__WINESRC__;_IMAGEHLP_SOURCE_;_CRT_NONSTDC_NO_WARNINGS;_CRT_SECURE_NO_DEPRECATE;COM_NO_WINDOWS_H;_SIZE_T_DEFINED;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <IgnoreStandardIncludePath>true</IgnoreStandardIncludePath>
       <ExceptionHandling />
@@ -496,7 +496,7 @@
     <Link>
       <AdditionalDependencies>ntdll.lib;psapi.lib;version.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <OutputFile>$(OutDir)$(TargetName)$(TargetExt)</OutputFile>
-      <ModuleDefinitionFile>dbghelp.def</ModuleDefinitionFile>
+      <ModuleDefinitionFile>int\dbghelp.def</ModuleDefinitionFile>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
       <OptimizeReferences>true</OptimizeReferences>
