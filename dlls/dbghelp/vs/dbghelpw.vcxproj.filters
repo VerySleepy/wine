@@ -1,0 +1,150 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{ad300ebd-f26d-4ab2-b424-af6e793d5de7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Interface Definitions">
+      <UniqueIdentifier>{19ff6a85-2c64-4f65-9d94-09812c829422}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{779335a8-2a9c-4a3f-87aa-81c9f6c3e5ba}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{aefd9a97-ac40-4ff8-b690-602116209820}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Wine Header Files">
+      <UniqueIdentifier>{256069c1-674c-423e-8761-9130990eaeb2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Wine Source Files">
+      <UniqueIdentifier>{e68e1d7f-16e2-40c7-8600-b1fc98b044b6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Spec Files">
+      <UniqueIdentifier>{b86a94ab-4b82-458b-89dc-4bd270e49805}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\dbghelp_private.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\dwarf.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\image_private.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\wdbgexts.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\include\config.h">
+      <Filter>Wine Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Midl Include="..\..\..\include\objidl.idl">
+      <Filter>Interface Definitions</Filter>
+    </Midl>
+    <Midl Include="..\..\..\include\oleidl.idl">
+      <Filter>Interface Definitions</Filter>
+    </Midl>
+    <Midl Include="..\..\..\include\oaidl.idl">
+      <Filter>Interface Definitions</Filter>
+    </Midl>
+    <Midl Include="..\..\..\include\propidl.idl">
+      <Filter>Interface Definitions</Filter>
+    </Midl>
+    <Midl Include="..\..\..\include\unknwn.idl">
+      <Filter>Interface Definitions</Filter>
+    </Midl>
+    <Midl Include="..\..\..\include\wtypes.idl">
+      <Filter>Interface Definitions</Filter>
+    </Midl>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="..\version.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\coff.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\cpu_arm.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\cpu_i386.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\cpu_ppc.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\cpu_sparc.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\cpu_x86_64.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\crc32.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\dbghelp.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\dwarf.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\elf_module.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\image.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\macho_module.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\minidump.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\module.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\msc.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\path.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\pe_module.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\source.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\stabs.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\stack.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\storage.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\symbol.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\type.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\libs\win32compat\winecompat.c">
+      <Filter>Wine Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\libs\wine\casemap.c">
+      <Filter>Wine Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="..\dbghelp.spec">
+      <Filter>Spec Files</Filter>
+    </CustomBuild>
+  </ItemGroup>
+</Project>
