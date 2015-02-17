@@ -1,7 +1,6 @@
 TESTDLL   = msvcrt.dll
 APPMODE   = -mno-cygwin
-MODCFLAGS = @BUILTINFLAG@
-EXTRAINCL = -I$(top_srcdir)/include/msvcrt -I$(srcdir)/..
+EXTRAINCL = -I$(srcdir)/..
 
 C_SRCS = \
 	cpp.c \
@@ -18,5 +17,3 @@ C_SRCS = \
 	signal.c \
 	string.c \
 	time.c
-
-@MAKE_TEST_RULES@

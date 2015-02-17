@@ -136,7 +136,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(qtdecoder);
 typedef struct QTVDecoderImpl
 {
     TransformFilter tf;
-    IUnknown *seekthru_unk;
 
     ImageDescriptionHandle hImageDescription;
     CFMutableDictionaryRef outputBufferAttributes;
@@ -146,6 +145,16 @@ typedef struct QTVDecoderImpl
     DWORD outputSize;
 
 } QTVDecoderImpl;
+
+static inline QTVDecoderImpl *impl_from_IBaseFilter( IBaseFilter *iface )
+{
+    return CONTAINING_RECORD(iface, QTVDecoderImpl, tf.filter.IBaseFilter_iface);
+}
+
+static inline QTVDecoderImpl *impl_from_TransformFilter( TransformFilter *iface )
+{
+    return CONTAINING_RECORD(iface, QTVDecoderImpl, tf.filter);
+}
 
 static const IBaseFilterVtbl QTVDecoder_Vtbl;
 
@@ -179,7 +188,7 @@ static void trackingCallback(
         return;
     }
 
-    EnterCriticalSection(&This->tf.filter.csFilter);
+    EnterCriticalSection(&This->tf.csReceive);
     hr = BaseOutputPinImpl_GetDeliveryBuffer((BaseOutputPin*)This->tf.ppPins[1], &pOutSample, NULL, NULL, 0);
     if (FAILED(hr)) {
         ERR("Unable to get delivery buffer (%x)\n", hr);
@@ -230,12 +239,14 @@ static void trackingCallback(
         IMediaSample_SetTime(pOutSample, &tStart, &tStop);
     }
 
-    LeaveCriticalSection(&This->tf.filter.csFilter);
+    LeaveCriticalSection(&This->tf.csReceive);
     hr = BaseOutputPinImpl_Deliver((BaseOutputPin*)This->tf.ppPins[1], pOutSample);
+    EnterCriticalSection(&This->tf.csReceive);
     if (hr != S_OK && hr != VFW_E_NOT_CONNECTED)
         ERR("Error sending sample (%x)\n", hr);
 
 error:
+    LeaveCriticalSection(&This->tf.csReceive);
     if (pOutSample)
         IMediaSample_Release(pOutSample);
 
@@ -244,7 +255,7 @@ error:
 
 static HRESULT WINAPI QTVDecoder_StartStreaming(TransformFilter* pTransformFilter)
 {
-    QTVDecoderImpl* This = (QTVDecoderImpl*)pTransformFilter;
+    QTVDecoderImpl* This = impl_from_TransformFilter(pTransformFilter);
     OSErr err = noErr;
     ICMDecompressionSessionOptionsRef sessionOptions = NULL;
     ICMDecompressionTrackingCallbackRecord trackingCallbackRecord;
@@ -267,7 +278,7 @@ static HRESULT WINAPI QTVDecoder_StartStreaming(TransformFilter* pTransformFilte
 
 static HRESULT WINAPI QTVDecoder_Receive(TransformFilter *tf, IMediaSample *pSample)
 {
-    QTVDecoderImpl* This = (QTVDecoderImpl *)tf;
+    QTVDecoderImpl* This = impl_from_TransformFilter(tf);
     HRESULT hr;
     DWORD cbSrcStream;
     LPBYTE pbSrcStream;
@@ -278,7 +289,6 @@ static HRESULT WINAPI QTVDecoder_Receive(TransformFilter *tf, IMediaSample *pSam
     OSStatus err = noErr;
     LONGLONG tStart, tStop;
 
-    EnterCriticalSection(&This->tf.filter.csFilter);
     hr = IMediaSample_GetPointer(pSample, &pbSrcStream);
     if (FAILED(hr))
     {
@@ -316,13 +326,12 @@ static HRESULT WINAPI QTVDecoder_Receive(TransformFilter *tf, IMediaSample *pSam
     hr = This->decodeHR;
 
 error:
-    LeaveCriticalSection(&This->tf.filter.csFilter);
     return hr;
 }
 
 static HRESULT WINAPI QTVDecoder_StopStreaming(TransformFilter* pTransformFilter)
 {
-    QTVDecoderImpl* This = (QTVDecoderImpl*)pTransformFilter;
+    QTVDecoderImpl* This = impl_from_TransformFilter(pTransformFilter);
 
     TRACE("(%p)->()\n", This);
 
@@ -335,7 +344,7 @@ static HRESULT WINAPI QTVDecoder_StopStreaming(TransformFilter* pTransformFilter
 
 static HRESULT WINAPI QTVDecoder_SetMediaType(TransformFilter *tf, PIN_DIRECTION dir, const AM_MEDIA_TYPE * pmt)
 {
-    QTVDecoderImpl* This = (QTVDecoderImpl*)tf;
+    QTVDecoderImpl* This = impl_from_TransformFilter(tf);
     HRESULT hr = VFW_E_TYPE_NOT_ACCEPTED;
     OSErr err = noErr;
     AM_MEDIA_TYPE *outpmt = &This->tf.pmt;
@@ -442,8 +451,6 @@ static HRESULT WINAPI QTVDecoder_SetMediaType(TransformFilter *tf, PIN_DIRECTION
         bmi->biCompression =  BI_RGB;
         bmi->biBitCount =  24;
         outpmt->subtype = MEDIASUBTYPE_RGB24;
-        if (bmi->biHeight > 0)
-            bmi->biHeight = -bmi->biHeight;
 
         return S_OK;
     }
@@ -466,7 +473,7 @@ failed:
 
 static HRESULT WINAPI QTVDecoder_BreakConnect(TransformFilter *tf, PIN_DIRECTION dir)
 {
-    QTVDecoderImpl *This = (QTVDecoderImpl *)tf;
+    QTVDecoderImpl *This = impl_from_TransformFilter(tf);
 
     TRACE("(%p)->()\n", This);
 
@@ -483,7 +490,7 @@ static HRESULT WINAPI QTVDecoder_BreakConnect(TransformFilter *tf, PIN_DIRECTION
 
 static HRESULT WINAPI QTVDecoder_DecideBufferSize(TransformFilter *tf, IMemAllocator *pAlloc, ALLOCATOR_PROPERTIES *ppropInputRequest)
 {
-    QTVDecoderImpl *This = (QTVDecoderImpl*)tf;
+    QTVDecoderImpl *This = impl_from_TransformFilter(tf);
     ALLOCATOR_PROPERTIES actual;
 
     TRACE("()\n");
@@ -492,7 +499,7 @@ static HRESULT WINAPI QTVDecoder_DecideBufferSize(TransformFilter *tf, IMemAlloc
         ppropInputRequest->cbAlign = 1;
 
     if (ppropInputRequest->cbBuffer < This->outputSize)
-            ppropInputRequest->cbBuffer = This->outputSize;
+            ppropInputRequest->cbBuffer = This->outputSize + ppropInputRequest->cbAlign;
 
     if (!ppropInputRequest->cBuffers)
         ppropInputRequest->cBuffers = 1;
@@ -537,36 +544,14 @@ IUnknown * CALLBACK QTVDecoder_create(IUnknown * pUnkOuter, HRESULT* phr)
         *phr = hr;
         return NULL;
     }
-    else
-    {
-        ISeekingPassThru *passthru;
-        hr = CoCreateInstance(&CLSID_SeekingPassThru, (IUnknown*)This, CLSCTX_INPROC_SERVER, &IID_IUnknown, (void**)&This->seekthru_unk);
-        IUnknown_QueryInterface(This->seekthru_unk, &IID_ISeekingPassThru, (void**)&passthru);
-        ISeekingPassThru_Init(passthru, FALSE, (IPin*)This->tf.ppPins[0]);
-        ISeekingPassThru_Release(passthru);
-    }
 
     *phr = hr;
     return (IUnknown*)This;
 }
 
-HRESULT WINAPI QTVDecoder_QueryInterface(IBaseFilter * iface, REFIID riid, LPVOID * ppv)
-{
-    HRESULT hr;
-    QTVDecoderImpl *This = (QTVDecoderImpl *)iface;
-    TRACE("(%p/%p)->(%s, %p)\n", This, iface, debugstr_guid(riid), ppv);
-
-    if (IsEqualIID(riid, &IID_IMediaSeeking))
-        return IUnknown_QueryInterface(This->seekthru_unk, riid, ppv);
-
-    hr = TransformFilterImpl_QueryInterface(iface, riid, ppv);
-
-    return hr;
-}
-
 static const IBaseFilterVtbl QTVDecoder_Vtbl =
 {
-    QTVDecoder_QueryInterface,
+    TransformFilterImpl_QueryInterface,
     BaseFilterImpl_AddRef,
     TransformFilterImpl_Release,
     BaseFilterImpl_GetClassID,

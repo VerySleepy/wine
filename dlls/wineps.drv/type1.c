@@ -63,11 +63,11 @@ enum t1_cmds {
               (DWORD)_x1         )
 
 #ifdef WORDS_BIGENDIAN
-static inline WORD  get_be_word(const void *p)  { return *(WORD*)p; }
-static inline DWORD get_be_dword(const void *p) { return *(DWORD*)p; }
+static inline WORD  get_be_word(const void *p)  { return *(const WORD*)p; }
+static inline DWORD get_be_dword(const void *p) { return *(const DWORD*)p; }
 #else
-static inline WORD  get_be_word(const void *p)  { return RtlUshortByteSwap(*(WORD*)p); }
-static inline DWORD get_be_dword(const void *p) { return RtlUlongByteSwap(*(DWORD*)p); }
+static inline WORD  get_be_word(const void *p)  { return RtlUshortByteSwap(*(const WORD*)p); }
+static inline DWORD get_be_dword(const void *p) { return RtlUlongByteSwap(*(const DWORD*)p); }
 #endif
 
 TYPE1 *T1_download_header(PHYSDEV dev, char *ps_name, RECT *bbox, UINT emsize)
@@ -75,7 +75,7 @@ TYPE1 *T1_download_header(PHYSDEV dev, char *ps_name, RECT *bbox, UINT emsize)
     char *buf;
     TYPE1 *t1;
 
-    char dict[] = /* name, emsquare, fontbbox */
+    static const char dict[] = /* name, emsquare, fontbbox */
       "25 dict begin\n"
       " /FontName /%s def\n"
       " /Encoding 256 array 0 1 255{1 index exch /.notdef put} for def\n"
@@ -226,11 +226,20 @@ static BOOL get_glyf_pos(HDC hdc, DWORD index, DWORD *start, DWORD *end)
     *start = *end = 0;
 
     len = GetFontData(hdc, MS_MAKE_TAG('h','e','a','d'), 0, NULL, 0);
+    if (len == GDI_ERROR) return FALSE;
     head = HeapAlloc(GetProcessHeap(), 0, len);
     GetFontData(hdc, MS_MAKE_TAG('h','e','a','d'), 0, head, len);
     loca_format = get_be_word(head + 50);
 
     len = GetFontData(hdc, MS_MAKE_TAG('l','o','c','a'), 0, NULL, 0);
+    if (len == GDI_ERROR)
+    {
+        len = GetFontData(hdc, MS_MAKE_TAG('C','F','F',' '), 0, NULL, 0);
+        if (len != GDI_ERROR) FIXME( "CFF tables not supported yet\n" );
+        else ERR( "loca table not found\n" );
+        HeapFree(GetProcessHeap(), 0, head);
+        return FALSE;
+    }
     loca = HeapAlloc(GetProcessHeap(), 0, len);
     GetFontData(hdc, MS_MAKE_TAG('l','o','c','a'), 0, loca, len);
 
@@ -414,7 +423,7 @@ static BOOL append_complex_glyph(HDC hdc, const BYTE *data, glyph_outline *outli
     const BYTE *ptr = data;
     WORD flags, index;
     short arg1, arg2;
-    WORD scale_xx = 1, scale_xy = 0, scale_yx = 0, scale_yy = 1;
+    FLOAT scale_xx = 1, scale_xy = 0, scale_yx = 0, scale_yy = 1;
     WORD start_pt, end_pt;
 
     ptr += 10;
@@ -433,36 +442,48 @@ static BOOL append_complex_glyph(HDC hdc, const BYTE *data, glyph_outline *outli
         }
         else
         {
-            arg1 = *(char*)ptr++;
-            arg2 = *(char*)ptr++;
+            arg1 = *(const char*)ptr++;
+            arg2 = *(const char*)ptr++;
         }
         if(flags & WE_HAVE_A_SCALE)
         {
-            scale_xx = scale_yy = get_be_word(ptr);
+            scale_xx = scale_yy = (FLOAT)(short)get_be_word(ptr) / 0x4000;
             ptr += 2;
         }
         else if(flags & WE_HAVE_AN_X_AND_Y_SCALE)
         {
-            scale_xx = get_be_word(ptr);
+            scale_xx = (FLOAT)(short)get_be_word(ptr) / 0x4000;
             ptr += 2;
-            scale_yy = get_be_word(ptr);
+            scale_yy = (FLOAT)(short)get_be_word(ptr) / 0x4000;
             ptr += 2;
         }
         else if(flags & WE_HAVE_A_TWO_BY_TWO)
         {
-            scale_xx = get_be_word(ptr);
+            scale_xx = (FLOAT)(short)get_be_word(ptr) / 0x4000;
             ptr += 2;
-            scale_xy = get_be_word(ptr);
+            scale_xy = (FLOAT)(short)get_be_word(ptr) / 0x4000;
             ptr += 2;
-            scale_yx = get_be_word(ptr);
+            scale_yx = (FLOAT)(short)get_be_word(ptr) / 0x4000;
             ptr += 2;
-            scale_yy = get_be_word(ptr);
+            scale_yy = (FLOAT)(short)get_be_word(ptr) / 0x4000;
             ptr += 2;
         }
 
         start_pt = pts_in_outline(outline);
         append_glyph_outline(hdc, index, outline);
         end_pt = pts_in_outline(outline);
+
+        if (flags & (WE_HAVE_A_SCALE | WE_HAVE_AN_X_AND_Y_SCALE | WE_HAVE_A_TWO_BY_TWO))
+        {
+            WORD i;
+            TRACE("transform %f,%f,%f,%f of glyph %x\n", scale_xx, scale_xy, scale_yx, scale_yy, index);
+            for (i = start_pt; i < end_pt; i++)
+            {
+                LONG x = outline->pts[i].x, y = outline->pts[i].y;
+                outline->pts[i].x = x * scale_xx + y * scale_yx;
+                outline->pts[i].y = x * scale_xy + y * scale_yy;
+            }
+        }
 
         if((flags & ARGS_ARE_XY_VALUES) == 0)
         {

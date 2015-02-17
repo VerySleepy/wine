@@ -47,6 +47,7 @@ LPVOID       WINAPI SHAlloc(ULONG) __WINE_ALLOC_SIZE(1);
 HRESULT      WINAPI SHCoCreateInstance(LPCWSTR,const CLSID*,IUnknown*,REFIID,LPVOID*);
 HPSXA        WINAPI SHCreatePropSheetExtArray(HKEY,LPCWSTR,UINT);
 HPSXA        WINAPI SHCreatePropSheetExtArrayEx(HKEY,LPCWSTR,UINT,IDataObject*);
+HRESULT      WINAPI SHCreateQueryCancelAutoPlayMoniker(IMoniker**);
 HRESULT      WINAPI SHCreateShellItem(LPCITEMIDLIST,IShellFolder*,LPCITEMIDLIST,IShellItem**);
 DWORD        WINAPI SHCLSIDFromStringA(LPCSTR,CLSID*);
 DWORD        WINAPI SHCLSIDFromStringW(LPCWSTR,CLSID*);
@@ -60,7 +61,7 @@ BOOL         WINAPI GetFileNameFromBrowse(HWND,LPWSTR,DWORD,LPCWSTR,LPCWSTR,LPCW
 HRESULT      WINAPI SHGetInstanceExplorer(IUnknown**);
 HRESULT      WINAPI SHGetFolderPathAndSubDirA(HWND,int,HANDLE,DWORD,LPCSTR,LPSTR);
 HRESULT      WINAPI SHGetFolderPathAndSubDirW(HWND,int,HANDLE,DWORD,LPCWSTR,LPWSTR);
-#define             SHGetFolderPathAndSubDir WINELIB_NAME_AW(SHGetFolderPathAndSubDir);
+#define             SHGetFolderPathAndSubDir WINELIB_NAME_AW(SHGetFolderPathAndSubDir)
 HRESULT      WINAPI SHGetKnownFolderPath(REFKNOWNFOLDERID,DWORD,HANDLE,PWSTR*);
 BOOL         WINAPI SHGetPathFromIDListA(LPCITEMIDLIST,LPSTR);
 BOOL         WINAPI SHGetPathFromIDListW(LPCITEMIDLIST,LPWSTR);
@@ -71,9 +72,10 @@ HRESULT      WINAPI SHLoadOLE(LPARAM);
 HRESULT      WINAPI SHParseDisplayName(LPCWSTR,IBindCtx*,LPITEMIDLIST*,SFGAOF,SFGAOF*);
 HRESULT      WINAPI SHPathPrepareForWriteA(HWND,IUnknown*,LPCSTR,DWORD);
 HRESULT      WINAPI SHPathPrepareForWriteW(HWND,IUnknown*,LPCWSTR,DWORD);
-#define             SHPathPrepareForWrite WINELIB_NAME_AW(SHPathPrepareForWrite);
+#define             SHPathPrepareForWrite WINELIB_NAME_AW(SHPathPrepareForWrite)
 UINT         WINAPI SHReplaceFromPropSheetExtArray(HPSXA,UINT,LPFNADDPROPSHEETPAGE,LPARAM);
 LPITEMIDLIST WINAPI SHSimpleIDListFromPath(LPCWSTR);
+BOOL         WINAPI SHRunControlPanel(LPCWSTR, HWND);
 int          WINAPI SHMapPIDLToSystemImageListIndex(IShellFolder*,LPCITEMIDLIST,int*);
 HRESULT      WINAPI SHStartNetConnectionDialog(HWND,LPCSTR,DWORD);
 VOID         WINAPI SHUpdateImageA(LPCSTR,INT,UINT,INT);
@@ -81,9 +83,13 @@ VOID         WINAPI SHUpdateImageW(LPCWSTR,INT,UINT,INT);
 #define             SHUpdateImage WINELIB_NAME_AW(SHUpdateImage)
 int          WINAPI RestartDialog(HWND,LPCWSTR,DWORD);
 int          WINAPI RestartDialogEx(HWND,LPCWSTR,DWORD,DWORD);
+int          WINAPI DriveType(int);
+int          WINAPI RealDriveType(int, BOOL);
+int          WINAPI IsNetDrive(int);
 BOOL         WINAPI IsUserAnAdmin(void);
 UINT         WINAPI Shell_MergeMenus(HMENU,HMENU,UINT,UINT,UINT,ULONG);
 BOOL         WINAPI Shell_GetImageLists(HIMAGELIST*,HIMAGELIST*);
+BOOL         WINAPI SignalFileOpen(PCIDLIST_ABSOLUTE);
 BOOL         WINAPI ImportPrivacySettings(LPCWSTR, BOOL*, BOOL*);
 
 #define KF_FLAG_SIMPLE_IDLIST       0x00000100
@@ -95,9 +101,9 @@ BOOL         WINAPI ImportPrivacySettings(LPCWSTR, BOOL*, BOOL*);
 #define KF_FLAG_DONT_VERIFY         0x00004000
 #define KF_FLAG_CREATE              0x00008000
 
-#define SHFMT_ERROR     0xFFFFFFFFL  /* Error on last format, drive may be formattable */
-#define SHFMT_CANCEL    0xFFFFFFFEL  /* Last format was cancelled */
-#define SHFMT_NOFORMAT  0xFFFFFFFDL  /* Drive is not formattable */
+#define SHFMT_ERROR     __MSABI_LONG(0xFFFFFFFF)  /* Error on last format, drive may be formattable */
+#define SHFMT_CANCEL    __MSABI_LONG(0xFFFFFFFE)  /* Last format was cancelled */
+#define SHFMT_NOFORMAT  __MSABI_LONG(0xFFFFFFFD)  /* Drive is not formattable */
 
 /* SHFormatDrive flags */
 #define SHFMT_ID_DEFAULT	0xFFFF
@@ -705,9 +711,9 @@ DECLARE_INTERFACE_(IProgressDialog,IUnknown)
 /****************************************************************************
 * SHAddToRecentDocs API
 */
-#define SHARD_PIDL      0x00000001L
-#define SHARD_PATHA     0x00000002L
-#define SHARD_PATHW     0x00000003L
+#define SHARD_PIDL      __MSABI_LONG(0x00000001)
+#define SHARD_PATHA     __MSABI_LONG(0x00000002)
+#define SHARD_PATHW     __MSABI_LONG(0x00000003)
 #define SHARD_PATH WINELIB_NAME_AW(SHARD_PATH)
 
 void WINAPI SHAddToRecentDocs(UINT,LPCVOID);
@@ -1302,9 +1308,9 @@ typedef struct _SHChangeNotifyEntry
 #define SHCNE_ALLEVENTS		0x7FFFFFFF
 #define SHCNE_INTERRUPT		0x80000000
 
-#define SHCNEE_ORDERCHANGED	0x0002L
-#define SHCNEE_MSI_CHANGE	0x0004L
-#define SHCNEE_MSI_UNINSTALL	0x0005L
+#define SHCNEE_ORDERCHANGED     __MSABI_LONG(0x0002)
+#define SHCNEE_MSI_CHANGE       __MSABI_LONG(0x0004)
+#define SHCNEE_MSI_UNINSTALL    __MSABI_LONG(0x0005)
 
 #define SHCNF_IDLIST		0x0000
 #define SHCNF_PATHA		0x0001
@@ -1423,6 +1429,29 @@ DWORD WINAPI SHCreateDirectory(HWND, LPCVOID);
 int WINAPI SHCreateDirectoryExA(HWND, LPCSTR, LPSECURITY_ATTRIBUTES);
 int WINAPI SHCreateDirectoryExW(HWND, LPCWSTR, LPSECURITY_ATTRIBUTES);
 #define    SHCreateDirectoryEx WINELIB_NAME_AW(SHCreateDirectoryEx)
+
+/****************************************************************************
+* SHGetSetFolderCustomSettings API
+*/
+typedef struct {
+    DWORD dwSize;
+    DWORD dwMask;
+    SHELLVIEWID *pvid;
+    LPWSTR pszWebViewTemplate;
+    DWORD cchWebViewTemplate;
+    LPWSTR pszWebViewTemplateVersion;
+    LPWSTR pszInfoTip;
+    DWORD cchInfoTip;
+    CLSID *pclsid;
+    DWORD dwFlags;
+    LPWSTR pszIconFile;
+    DWORD cchIconFile;
+    int iIconIndex;
+    LPWSTR pszLogo;
+    DWORD cchLogo;
+} SHFOLDERCUSTOMSETTINGS, *LPSHFOLDERCUSTOMSETTINGS;
+
+HRESULT WINAPI SHGetSetFolderCustomSettings(LPSHFOLDERCUSTOMSETTINGS pfcs, LPCSTR pszPath, DWORD dwReadWrite);
 
 /****************************************************************************
 * SHGetSpecialFolderLocation API
@@ -1633,10 +1662,13 @@ BOOL WINAPI WriteCabinetState(CABINETSTATE *);
 #define PRF_TRYPROGRAMEXTENSIONS 0x03
 #define PRF_FIRSTDIRDEF          0x04
 #define PRF_DONTFINDLINK         0x08
+#define PRF_REQUIREABSOLUTE      0x10
 
 VOID WINAPI PathGetShortPath(LPWSTR pszPath);
 LONG WINAPI PathProcessCommand(LPCWSTR, LPWSTR, int, DWORD);
+int  WINAPI PathResolve(LPWSTR, PZPCWSTR, UINT);
 BOOL WINAPI PathYetAnotherMakeUniqueName(LPWSTR, LPCWSTR, LPCWSTR, LPCWSTR);
+BOOL WINAPI Win32DeleteFile(LPCWSTR);
 
 /****************************************************************************
  * Drag And Drop Routines

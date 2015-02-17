@@ -113,10 +113,9 @@ static HRESULT WINAPI IDirectMusicTempoTrack_IDirectMusicTrack_InitPlay (LPDIREC
   FIXME("(%p, %p, %p, %p, %d, %d): semi-stub\n", This, pSegmentState, pPerformance, ppStateData, dwVirtualTrack8ID, dwFlags);
 
   pState = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(DMUS_PRIVATE_TEMPO_PLAY_STATE));
-  if (NULL == pState) {
-    ERR(": no more memory\n");
+  if (NULL == pState)
     return E_OUTOFMEMORY;
-  }
+
   /** TODO real fill useful data */
   pState->dummy = 0;
   *ppStateData = pState;
@@ -308,7 +307,7 @@ static ULONG WINAPI IDirectMusicTempoTrack_IPersistStream_Release (LPPERSISTSTRE
 }
 
 static HRESULT WINAPI IDirectMusicTempoTrack_IPersistStream_GetClassID (LPPERSISTSTREAM iface, CLSID* pClassID) {
-  ICOM_THIS_MULTI(IDirectMusicSegment8Impl, PersistStreamVtbl, iface);
+  ICOM_THIS_MULTI(IDirectMusicTempoTrack, PersistStreamVtbl, iface);
   TRACE("(%p, %p)\n", This, pClassID);
   *pClassID = CLSID_DirectMusicTempoTrack;
   return S_OK;
@@ -329,14 +328,12 @@ static HRESULT WINAPI IDirectMusicTempoTrack_IPersistStream_Load (LPPERSISTSTREA
   LPDMUS_PRIVATE_TEMPO_ITEM pNewItem = NULL;
   DWORD nItem = 0;
   FIXME("(%p, %p): Loading not fully implemented yet\n", This, pStm);
-  
-#if 1
+
   IStream_Read (pStm, &Chunk, sizeof(FOURCC)+sizeof(DWORD), NULL);
   TRACE_(dmfile)(": %s chunk (size = %d)", debugstr_fourcc (Chunk.fccID), Chunk.dwSize);
   switch (Chunk.fccID) {	
   case DMUS_FOURCC_TEMPO_TRACK: {
     TRACE_(dmfile)(": Tempo track\n");
-#if 1
     IStream_Read (pStm, &StreamSize, sizeof(DWORD), NULL);
     StreamSize -= sizeof(DWORD);
     StreamCount = 0;
@@ -348,20 +345,15 @@ static HRESULT WINAPI IDirectMusicTempoTrack_IPersistStream_Load (LPPERSISTSTREA
       TRACE_(dmfile)(" - lTime = %u\n", item.lTime);
       TRACE_(dmfile)(" - dblTempo = %g\n", item.dblTempo);
       pNewItem = HeapAlloc (GetProcessHeap (), HEAP_ZERO_MEMORY, sizeof(DMUS_PRIVATE_TEMPO_ITEM));
-      if (NULL == pNewItem) {
-	ERR(": no more memory\n");
-	return  E_OUTOFMEMORY;
-      }
+      if (NULL == pNewItem)
+        return  E_OUTOFMEMORY;
+
       pNewItem->item = item;
       list_add_tail (&This->Items, &pNewItem->entry);
       pNewItem = NULL;
       StreamCount += sizeof(item);
       TRACE_(dmfile)(": StreamCount[0] = %d < StreamSize[0] = %d\n", StreamCount, StreamSize);
     } while (StreamCount < StreamSize); 
-#else    
-    liMove.QuadPart = Chunk.dwSize;
-    IStream_Seek (pStm, liMove, STREAM_SEEK_CUR, NULL);
-#endif
     break;
   }
   default: {
@@ -371,7 +363,6 @@ static HRESULT WINAPI IDirectMusicTempoTrack_IPersistStream_Load (LPPERSISTSTREA
     return E_FAIL;
   }
   }
-#endif
 
   return S_OK;
 }
@@ -400,7 +391,8 @@ static const IPersistStreamVtbl DirectMusicTempoTrack_PersistStream_Vtbl = {
 };
 
 /* for ClassFactory */
-HRESULT WINAPI DMUSIC_CreateDirectMusicTempoTrack (LPCGUID lpcGUID, LPVOID *ppobj, LPUNKNOWN pUnkOuter) {
+HRESULT WINAPI create_dmtempotrack(REFIID lpcGUID, void **ppobj)
+{
   IDirectMusicTempoTrack* track;
 	
   track = HeapAlloc (GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectMusicTempoTrack));

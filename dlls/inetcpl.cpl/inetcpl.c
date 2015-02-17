@@ -60,6 +60,15 @@ BOOL WINAPI DllMain(HINSTANCE hdll, DWORD reason, LPVOID reserved)
     return TRUE;
 }
 
+/***********************************************************************
+ *  DllInstall (inetcpl.@)
+ */
+HRESULT WINAPI DllInstall(BOOL bInstall, LPCWSTR cmdline)
+{
+    FIXME("(%s, %s): stub\n", bInstall ? "TRUE" : "FALSE", debugstr_w(cmdline));
+    return S_OK;
+}
+
 /******************************************************************************
  * propsheet_callback [internal]
  *
@@ -200,4 +209,24 @@ BOOL WINAPI LaunchInternetControlPanel(HWND parent)
 {
     display_cpl_sheets(parent);
     return TRUE;
+}
+
+/*********************************************************************
+ * LaunchConnectionDialog (inetcpl.@)
+ *
+ */
+BOOL WINAPI LaunchConnectionDialog(HWND hParent)
+{
+    FIXME("(%p): stub\n", hParent);
+    return FALSE;
+}
+
+/*********************************************************************
+ * LaunchInternetControlPanel (inetcpl.@)
+ *
+ */
+BOOL WINAPI LaunchPrivacyDialog(HWND hParent)
+{
+    FIXME("(%p): stub\n", hParent);
+    return FALSE;
 }

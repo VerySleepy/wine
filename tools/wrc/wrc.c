@@ -157,7 +157,6 @@ int line_number = 1;		/* The current line */
 int char_number = 1;		/* The current char pos within the line */
 
 char *cmdline;			/* The entire commandline */
-time_t now;			/* The time of start of wrc */
 
 int parser_debug, yy_flex_debug;
 
@@ -318,7 +317,8 @@ static void set_target( const char *target )
     /* target specification is in the form CPU-MANUFACTURER-OS or CPU-MANUFACTURER-KERNEL-OS */
     if (!(p = strchr( cpu, '-' ))) error( "Invalid target specification '%s'\n", target );
     *p = 0;
-    if (!strcmp( cpu, "amd64" ) || !strcmp( cpu, "x86_64" ) || !strcmp( cpu, "ia64" ))
+    if (!strcmp( cpu, "amd64" ) || !strcmp( cpu, "x86_64" ) ||
+        !strcmp( cpu, "ia64" ) || !strcmp( cpu, "aarch64" ))
         pointer_size = 8;
     else
         pointer_size = 4;
@@ -346,8 +346,6 @@ int main(int argc,char *argv[])
 #ifdef SIGHUP
         signal( SIGHUP, exit_on_signal );
 #endif
-
-	now = time(NULL);
 
 	/* Set the default defined stuff */
         set_version_defines();
@@ -459,7 +457,6 @@ int main(int argc,char *argv[])
 			if (!strcmp( optarg, "16" )) win32 = 0;
 			else if (!strcmp( optarg, "32" )) { win32 = 1; pointer_size = 4; }
 			else if (!strcmp( optarg, "64" )) { win32 = 1; pointer_size = 8; }
-			else error( "Invalid option: -m%s\n", optarg );
 			break;
 		case 'f':
 			if (*optarg != 'o') error("Unknown option: -f%s\n",  optarg);

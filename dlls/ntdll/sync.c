@@ -22,6 +22,7 @@
  */
 
 #include "config.h"
+#include "wine/port.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -59,6 +60,19 @@
 #include "ntdll_misc.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(ntdll);
+
+HANDLE keyed_event = NULL;
+
+static inline int interlocked_dec_if_nonzero( int *dest )
+{
+    int val, tmp;
+    for (val = *dest;; val = tmp)
+    {
+        if (!val || (tmp = interlocked_cmpxchg( dest, val - 1, val )) == val)
+            break;
+    }
+    return val;
+}
 
 /* creates a struct security_descriptor and contained information in one contiguous piece of memory */
 NTSTATUS NTDLL_create_struct_sd(PSECURITY_DESCRIPTOR nt_sd, struct security_descriptor **server_sd,
@@ -208,16 +222,33 @@ NTSTATUS WINAPI NtOpenSemaphore( OUT PHANDLE SemaphoreHandle,
 /******************************************************************************
  *  NtQuerySemaphore (NTDLL.@)
  */
-NTSTATUS WINAPI NtQuerySemaphore(
-	HANDLE SemaphoreHandle,
-	SEMAPHORE_INFORMATION_CLASS SemaphoreInformationClass,
-	PVOID SemaphoreInformation,
-	ULONG Length,
-	PULONG ReturnLength)
+NTSTATUS WINAPI NtQuerySemaphore( HANDLE handle, SEMAPHORE_INFORMATION_CLASS class,
+                                  void *info, ULONG len, ULONG *ret_len )
 {
-	FIXME("(%p,%d,%p,0x%08x,%p) stub!\n",
-	SemaphoreHandle, SemaphoreInformationClass, SemaphoreInformation, Length, ReturnLength);
-	return STATUS_SUCCESS;
+    NTSTATUS ret;
+    SEMAPHORE_BASIC_INFORMATION *out = info;
+
+    if (class != SemaphoreBasicInformation)
+    {
+        FIXME("(%p,%d,%u) Unknown class\n", handle, class, len);
+        return STATUS_INVALID_INFO_CLASS;
+    }
+
+    if (len != sizeof(SEMAPHORE_BASIC_INFORMATION)) return STATUS_INFO_LENGTH_MISMATCH;
+
+    SERVER_START_REQ( query_semaphore )
+    {
+        req->handle = wine_server_obj_handle( handle );
+        if (!(ret = wine_server_call( req )))
+        {
+            out->CurrentCount = reply->current;
+            out->MaximumCount = reply->max;
+            if (ret_len) *ret_len = sizeof(SEMAPHORE_BASIC_INFORMATION);
+        }
+    }
+    SERVER_END_REQ;
+
+    return ret;
 }
 
 /******************************************************************************
@@ -390,15 +421,34 @@ NTSTATUS WINAPI NtPulseEvent( HANDLE handle, PULONG PulseCount )
 /******************************************************************************
  *  NtQueryEvent (NTDLL.@)
  */
-NTSTATUS WINAPI NtQueryEvent (
-	IN  HANDLE EventHandle,
-	IN  EVENT_INFORMATION_CLASS EventInformationClass,
-	OUT PVOID EventInformation,
-	IN  ULONG EventInformationLength,
-	OUT PULONG  ReturnLength)
+NTSTATUS WINAPI NtQueryEvent( HANDLE handle, EVENT_INFORMATION_CLASS class,
+                              void *info, ULONG len, ULONG *ret_len )
 {
-	FIXME("(%p)\n", EventHandle);
-	return STATUS_NOT_IMPLEMENTED;
+    NTSTATUS ret;
+    EVENT_BASIC_INFORMATION *out = info;
+
+    if (class != EventBasicInformation)
+    {
+        FIXME("(%p, %d, %d) Unknown class\n",
+              handle, class, len);
+        return STATUS_INVALID_INFO_CLASS;
+    }
+
+    if (len != sizeof(EVENT_BASIC_INFORMATION)) return STATUS_INFO_LENGTH_MISMATCH;
+
+    SERVER_START_REQ( query_event )
+    {
+        req->handle = wine_server_obj_handle( handle );
+        if (!(ret = wine_server_call( req )))
+        {
+            out->EventType  = reply->manual_reset ? NotificationEvent : SynchronizationEvent;
+            out->EventState = reply->state;
+            if (ret_len) *ret_len = sizeof(EVENT_BASIC_INFORMATION);
+        }
+    }
+    SERVER_END_REQ;
+
+    return ret;
 }
 
 /*
@@ -609,7 +659,7 @@ NTSTATUS WINAPI NtCreateTimer(OUT HANDLE *handle,
         req->access  = access;
         req->attributes = (attr) ? attr->Attributes : 0;
         req->rootdir = wine_server_obj_handle( attr ? attr->RootDirectory : 0 );
-        req->manual  = (timer_type == NotificationTimer) ? TRUE : FALSE;
+        req->manual  = (timer_type == NotificationTimer);
         if (len) wine_server_add_data( req, attr->ObjectName->Buffer, len );
         status = wine_server_call( req );
         *handle = wine_server_ptr_handle( reply->handle );
@@ -792,357 +842,6 @@ NTSTATUS WINAPI NtSetTimerResolution(IN ULONG resolution,
 }
 
 
-/***********************************************************************
- *              wait_reply
- *
- * Wait for a reply on the waiting pipe of the current thread.
- */
-static int wait_reply( void *cookie )
-{
-    int signaled;
-    struct wake_up_reply reply;
-    for (;;)
-    {
-        int ret;
-        ret = read( ntdll_get_thread_data()->wait_fd[0], &reply, sizeof(reply) );
-        if (ret == sizeof(reply))
-        {
-            if (!reply.cookie) break;  /* thread got killed */
-            if (wine_server_get_ptr(reply.cookie) == cookie) return reply.signaled;
-            /* we stole another reply, wait for the real one */
-            signaled = wait_reply( cookie );
-            /* and now put the wrong one back in the pipe */
-            for (;;)
-            {
-                ret = write( ntdll_get_thread_data()->wait_fd[1], &reply, sizeof(reply) );
-                if (ret == sizeof(reply)) break;
-                if (ret >= 0) server_protocol_error( "partial wakeup write %d\n", ret );
-                if (errno == EINTR) continue;
-                server_protocol_perror("wakeup write");
-            }
-            return signaled;
-        }
-        if (ret >= 0) server_protocol_error( "partial wakeup read %d\n", ret );
-        if (errno == EINTR) continue;
-        server_protocol_perror("wakeup read");
-    }
-    /* the server closed the connection; time to die... */
-    abort_thread(0);
-}
-
-
-/***********************************************************************
- *              invoke_apc
- *
- * Invoke a single APC. Return TRUE if a user APC has been run.
- */
-static BOOL invoke_apc( const apc_call_t *call, apc_result_t *result )
-{
-    BOOL user_apc = FALSE;
-    SIZE_T size;
-    void *addr;
-
-    memset( result, 0, sizeof(*result) );
-
-    switch (call->type)
-    {
-    case APC_NONE:
-        break;
-    case APC_USER:
-    {
-        void (WINAPI *func)(ULONG_PTR,ULONG_PTR,ULONG_PTR) = wine_server_get_ptr( call->user.func );
-        func( call->user.args[0], call->user.args[1], call->user.args[2] );
-        user_apc = TRUE;
-        break;
-    }
-    case APC_TIMER:
-    {
-        void (WINAPI *func)(void*, unsigned int, unsigned int) = wine_server_get_ptr( call->timer.func );
-        func( wine_server_get_ptr( call->timer.arg ),
-              (DWORD)call->timer.time, (DWORD)(call->timer.time >> 32) );
-        user_apc = TRUE;
-        break;
-    }
-    case APC_ASYNC_IO:
-    {
-        void *apc = NULL;
-        IO_STATUS_BLOCK *iosb = wine_server_get_ptr( call->async_io.sb );
-        NTSTATUS (*func)(void *, IO_STATUS_BLOCK *, NTSTATUS, void **) = wine_server_get_ptr( call->async_io.func );
-        result->type = call->type;
-        result->async_io.status = func( wine_server_get_ptr( call->async_io.user ),
-                                        iosb, call->async_io.status, &apc );
-        if (result->async_io.status != STATUS_PENDING)
-        {
-            result->async_io.total = iosb->Information;
-            result->async_io.apc   = wine_server_client_ptr( apc );
-        }
-        break;
-    }
-    case APC_VIRTUAL_ALLOC:
-        result->type = call->type;
-        addr = wine_server_get_ptr( call->virtual_alloc.addr );
-        size = call->virtual_alloc.size;
-        if ((ULONG_PTR)addr == call->virtual_alloc.addr && size == call->virtual_alloc.size)
-        {
-            result->virtual_alloc.status = NtAllocateVirtualMemory( NtCurrentProcess(), &addr,
-                                                                    call->virtual_alloc.zero_bits, &size,
-                                                                    call->virtual_alloc.op_type,
-                                                                    call->virtual_alloc.prot );
-            result->virtual_alloc.addr = wine_server_client_ptr( addr );
-            result->virtual_alloc.size = size;
-        }
-        else result->virtual_alloc.status = STATUS_WORKING_SET_LIMIT_RANGE;
-        break;
-    case APC_VIRTUAL_FREE:
-        result->type = call->type;
-        addr = wine_server_get_ptr( call->virtual_free.addr );
-        size = call->virtual_free.size;
-        if ((ULONG_PTR)addr == call->virtual_free.addr && size == call->virtual_free.size)
-        {
-            result->virtual_free.status = NtFreeVirtualMemory( NtCurrentProcess(), &addr, &size,
-                                                               call->virtual_free.op_type );
-            result->virtual_free.addr = wine_server_client_ptr( addr );
-            result->virtual_free.size = size;
-        }
-        else result->virtual_free.status = STATUS_INVALID_PARAMETER;
-        break;
-    case APC_VIRTUAL_QUERY:
-    {
-        MEMORY_BASIC_INFORMATION info;
-        result->type = call->type;
-        addr = wine_server_get_ptr( call->virtual_query.addr );
-        if ((ULONG_PTR)addr == call->virtual_query.addr)
-            result->virtual_query.status = NtQueryVirtualMemory( NtCurrentProcess(),
-                                                                 addr, MemoryBasicInformation, &info,
-                                                                 sizeof(info), NULL );
-        else
-            result->virtual_query.status = STATUS_WORKING_SET_LIMIT_RANGE;
-
-        if (result->virtual_query.status == STATUS_SUCCESS)
-        {
-            result->virtual_query.base       = wine_server_client_ptr( info.BaseAddress );
-            result->virtual_query.alloc_base = wine_server_client_ptr( info.AllocationBase );
-            result->virtual_query.size       = info.RegionSize;
-            result->virtual_query.prot       = info.Protect;
-            result->virtual_query.alloc_prot = info.AllocationProtect;
-            result->virtual_query.state      = info.State >> 12;
-            result->virtual_query.alloc_type = info.Type >> 16;
-        }
-        break;
-    }
-    case APC_VIRTUAL_PROTECT:
-        result->type = call->type;
-        addr = wine_server_get_ptr( call->virtual_protect.addr );
-        size = call->virtual_protect.size;
-        if ((ULONG_PTR)addr == call->virtual_protect.addr && size == call->virtual_protect.size)
-        {
-            result->virtual_protect.status = NtProtectVirtualMemory( NtCurrentProcess(), &addr, &size,
-                                                                     call->virtual_protect.prot,
-                                                                     &result->virtual_protect.prot );
-            result->virtual_protect.addr = wine_server_client_ptr( addr );
-            result->virtual_protect.size = size;
-        }
-        else result->virtual_protect.status = STATUS_INVALID_PARAMETER;
-        break;
-    case APC_VIRTUAL_FLUSH:
-        result->type = call->type;
-        addr = wine_server_get_ptr( call->virtual_flush.addr );
-        size = call->virtual_flush.size;
-        if ((ULONG_PTR)addr == call->virtual_flush.addr && size == call->virtual_flush.size)
-        {
-            result->virtual_flush.status = NtFlushVirtualMemory( NtCurrentProcess(),
-                                                                 (const void **)&addr, &size, 0 );
-            result->virtual_flush.addr = wine_server_client_ptr( addr );
-            result->virtual_flush.size = size;
-        }
-        else result->virtual_flush.status = STATUS_INVALID_PARAMETER;
-        break;
-    case APC_VIRTUAL_LOCK:
-        result->type = call->type;
-        addr = wine_server_get_ptr( call->virtual_lock.addr );
-        size = call->virtual_lock.size;
-        if ((ULONG_PTR)addr == call->virtual_lock.addr && size == call->virtual_lock.size)
-        {
-            result->virtual_lock.status = NtLockVirtualMemory( NtCurrentProcess(), &addr, &size, 0 );
-            result->virtual_lock.addr = wine_server_client_ptr( addr );
-            result->virtual_lock.size = size;
-        }
-        else result->virtual_lock.status = STATUS_INVALID_PARAMETER;
-        break;
-    case APC_VIRTUAL_UNLOCK:
-        result->type = call->type;
-        addr = wine_server_get_ptr( call->virtual_unlock.addr );
-        size = call->virtual_unlock.size;
-        if ((ULONG_PTR)addr == call->virtual_unlock.addr && size == call->virtual_unlock.size)
-        {
-            result->virtual_unlock.status = NtUnlockVirtualMemory( NtCurrentProcess(), &addr, &size, 0 );
-            result->virtual_unlock.addr = wine_server_client_ptr( addr );
-            result->virtual_unlock.size = size;
-        }
-        else result->virtual_unlock.status = STATUS_INVALID_PARAMETER;
-        break;
-    case APC_MAP_VIEW:
-        result->type = call->type;
-        addr = wine_server_get_ptr( call->map_view.addr );
-        size = call->map_view.size;
-        if ((ULONG_PTR)addr == call->map_view.addr && size == call->map_view.size)
-        {
-            LARGE_INTEGER offset;
-            offset.QuadPart = call->map_view.offset;
-            result->map_view.status = NtMapViewOfSection( wine_server_ptr_handle(call->map_view.handle),
-                                                          NtCurrentProcess(), &addr,
-                                                          call->map_view.zero_bits, 0,
-                                                          &offset, &size, ViewShare,
-                                                          call->map_view.alloc_type, call->map_view.prot );
-            result->map_view.addr = wine_server_client_ptr( addr );
-            result->map_view.size = size;
-        }
-        else result->map_view.status = STATUS_INVALID_PARAMETER;
-        NtClose( wine_server_ptr_handle(call->map_view.handle) );
-        break;
-    case APC_UNMAP_VIEW:
-        result->type = call->type;
-        addr = wine_server_get_ptr( call->unmap_view.addr );
-        if ((ULONG_PTR)addr == call->unmap_view.addr)
-            result->unmap_view.status = NtUnmapViewOfSection( NtCurrentProcess(), addr );
-        else
-            result->unmap_view.status = STATUS_INVALID_PARAMETER;
-        break;
-    case APC_CREATE_THREAD:
-    {
-        CLIENT_ID id;
-        HANDLE handle;
-        SIZE_T reserve = call->create_thread.reserve;
-        SIZE_T commit = call->create_thread.commit;
-        void *func = wine_server_get_ptr( call->create_thread.func );
-        void *arg  = wine_server_get_ptr( call->create_thread.arg );
-
-        result->type = call->type;
-        if (reserve == call->create_thread.reserve && commit == call->create_thread.commit &&
-            (ULONG_PTR)func == call->create_thread.func && (ULONG_PTR)arg == call->create_thread.arg)
-        {
-            result->create_thread.status = RtlCreateUserThread( NtCurrentProcess(), NULL,
-                                                                call->create_thread.suspend, NULL,
-                                                                reserve, commit, func, arg, &handle, &id );
-            result->create_thread.handle = wine_server_obj_handle( handle );
-            result->create_thread.tid = HandleToULong(id.UniqueThread);
-        }
-        else result->create_thread.status = STATUS_INVALID_PARAMETER;
-        break;
-    }
-    default:
-        server_protocol_error( "get_apc_request: bad type %d\n", call->type );
-        break;
-    }
-    return user_apc;
-}
-
-/***********************************************************************
- *           NTDLL_queue_process_apc
- */
-NTSTATUS NTDLL_queue_process_apc( HANDLE process, const apc_call_t *call, apc_result_t *result )
-{
-    for (;;)
-    {
-        NTSTATUS ret;
-        HANDLE handle = 0;
-        BOOL self = FALSE;
-
-        SERVER_START_REQ( queue_apc )
-        {
-            req->handle = wine_server_obj_handle( process );
-            req->call = *call;
-            if (!(ret = wine_server_call( req )))
-            {
-                handle = wine_server_ptr_handle( reply->handle );
-                self = reply->self;
-            }
-        }
-        SERVER_END_REQ;
-        if (ret != STATUS_SUCCESS) return ret;
-
-        if (self)
-        {
-            invoke_apc( call, result );
-        }
-        else
-        {
-            NtWaitForSingleObject( handle, FALSE, NULL );
-
-            SERVER_START_REQ( get_apc_result )
-            {
-                req->handle = wine_server_obj_handle( handle );
-                if (!(ret = wine_server_call( req ))) *result = reply->result;
-            }
-            SERVER_END_REQ;
-
-            if (!ret && result->type == APC_NONE) continue;  /* APC didn't run, try again */
-            if (ret) NtClose( handle );
-        }
-        return ret;
-    }
-}
-
-
-/***********************************************************************
- *              NTDLL_wait_for_multiple_objects
- *
- * Implementation of NtWaitForMultipleObjects
- */
-NTSTATUS NTDLL_wait_for_multiple_objects( UINT count, const HANDLE *handles, UINT flags,
-                                          const LARGE_INTEGER *timeout, HANDLE signal_object )
-{
-    NTSTATUS ret;
-    int i, cookie;
-    BOOL user_apc = FALSE;
-    obj_handle_t obj_handles[MAXIMUM_WAIT_OBJECTS];
-    obj_handle_t apc_handle = 0;
-    apc_call_t call;
-    apc_result_t result;
-    timeout_t abs_timeout = timeout ? timeout->QuadPart : TIMEOUT_INFINITE;
-
-    memset( &result, 0, sizeof(result) );
-    for (i = 0; i < count; i++) obj_handles[i] = wine_server_obj_handle( handles[i] );
-
-    for (;;)
-    {
-        SERVER_START_REQ( select )
-        {
-            req->flags    = flags;
-            req->cookie   = wine_server_client_ptr( &cookie );
-            req->signal   = wine_server_obj_handle( signal_object );
-            req->prev_apc = apc_handle;
-            req->timeout  = abs_timeout;
-            wine_server_add_data( req, &result, sizeof(result) );
-            wine_server_add_data( req, obj_handles, count * sizeof(*obj_handles) );
-            ret = wine_server_call( req );
-            abs_timeout = reply->timeout;
-            apc_handle  = reply->apc_handle;
-            call        = reply->call;
-        }
-        SERVER_END_REQ;
-        if (ret == STATUS_PENDING) ret = wait_reply( &cookie );
-        if (ret != STATUS_USER_APC) break;
-        if (invoke_apc( &call, &result ))
-        {
-            /* if we ran a user apc we have to check once more if an object got signaled,
-             * but we don't want to wait */
-            abs_timeout = 0;
-            user_apc = TRUE;
-        }
-        signal_object = 0;  /* don't signal it multiple times */
-    }
-
-    if (ret == STATUS_TIMEOUT && user_apc) ret = STATUS_USER_APC;
-
-    /* A test on Windows 2000 shows that Windows always yields during
-       a wait, but a wait that is hit by an event gets a priority
-       boost as well.  This seems to model that behavior the closest.  */
-    if (ret == STATUS_TIMEOUT) NtYieldExecution();
-
-    return ret;
-}
-
 
 /* wait operations */
 
@@ -1150,16 +849,18 @@ NTSTATUS NTDLL_wait_for_multiple_objects( UINT count, const HANDLE *handles, UIN
  *		NtWaitForMultipleObjects (NTDLL.@)
  */
 NTSTATUS WINAPI NtWaitForMultipleObjects( DWORD count, const HANDLE *handles,
-                                          BOOLEAN wait_all, BOOLEAN alertable,
+                                          BOOLEAN wait_any, BOOLEAN alertable,
                                           const LARGE_INTEGER *timeout )
 {
-    UINT flags = SELECT_INTERRUPTIBLE;
+    select_op_t select_op;
+    UINT i, flags = SELECT_INTERRUPTIBLE;
 
     if (!count || count > MAXIMUM_WAIT_OBJECTS) return STATUS_INVALID_PARAMETER_1;
 
-    if (wait_all) flags |= SELECT_ALL;
     if (alertable) flags |= SELECT_ALERTABLE;
-    return NTDLL_wait_for_multiple_objects( count, handles, flags, timeout, 0 );
+    select_op.wait.op = wait_any ? SELECT_WAIT : SELECT_WAIT_ALL;
+    for (i = 0; i < count; i++) select_op.wait.handles[i] = wine_server_obj_handle( handles[i] );
+    return server_select( &select_op, offsetof( select_op_t, wait.handles[count] ), flags, timeout );
 }
 
 
@@ -1178,11 +879,16 @@ NTSTATUS WINAPI NtWaitForSingleObject(HANDLE handle, BOOLEAN alertable, const LA
 NTSTATUS WINAPI NtSignalAndWaitForSingleObject( HANDLE hSignalObject, HANDLE hWaitObject,
                                                 BOOLEAN alertable, const LARGE_INTEGER *timeout )
 {
+    select_op_t select_op;
     UINT flags = SELECT_INTERRUPTIBLE;
 
     if (!hSignalObject) return STATUS_INVALID_HANDLE;
+
     if (alertable) flags |= SELECT_ALERTABLE;
-    return NTDLL_wait_for_multiple_objects( 1, &hWaitObject, flags, timeout, hSignalObject );
+    select_op.signal_and_wait.op = SELECT_SIGNAL_AND_WAIT;
+    select_op.signal_and_wait.wait = wine_server_obj_handle( hWaitObject );
+    select_op.signal_and_wait.signal = wine_server_obj_handle( hSignalObject );
+    return server_select( &select_op, sizeof(select_op.signal_and_wait), flags, timeout );
 }
 
 
@@ -1207,8 +913,7 @@ NTSTATUS WINAPI NtDelayExecution( BOOLEAN alertable, const LARGE_INTEGER *timeou
 {
     /* if alertable, we need to query the server */
     if (alertable)
-        return NTDLL_wait_for_multiple_objects( 0, NULL, SELECT_INTERRUPTIBLE | SELECT_ALERTABLE,
-                                                timeout, 0 );
+        return server_select( NULL, 0, SELECT_INTERRUPTIBLE | SELECT_ALERTABLE, timeout );
 
     if (!timeout || timeout->QuadPart == TIMEOUT_INFINITE)  /* sleep forever */
     {
@@ -1241,6 +946,102 @@ NTSTATUS WINAPI NtDelayExecution( BOOLEAN alertable, const LARGE_INTEGER *timeou
         }
     }
     return STATUS_SUCCESS;
+}
+
+
+/******************************************************************************
+ *              NtCreateKeyedEvent (NTDLL.@)
+ */
+NTSTATUS WINAPI NtCreateKeyedEvent( HANDLE *handle, ACCESS_MASK access,
+                                    const OBJECT_ATTRIBUTES *attr, ULONG flags )
+{
+    DWORD len = attr && attr->ObjectName ? attr->ObjectName->Length : 0;
+    NTSTATUS ret;
+    struct security_descriptor *sd = NULL;
+    struct object_attributes objattr;
+
+    if (len >= MAX_PATH * sizeof(WCHAR)) return STATUS_NAME_TOO_LONG;
+
+    objattr.rootdir = wine_server_obj_handle( attr ? attr->RootDirectory : 0 );
+    objattr.sd_len = 0;
+    objattr.name_len = len;
+    if (attr)
+    {
+        ret = NTDLL_create_struct_sd( attr->SecurityDescriptor, &sd, &objattr.sd_len );
+        if (ret != STATUS_SUCCESS) return ret;
+    }
+
+    SERVER_START_REQ( create_keyed_event )
+    {
+        req->access = access;
+        req->attributes = attr ? attr->Attributes : 0;
+        wine_server_add_data( req, &objattr, sizeof(objattr) );
+        if (objattr.sd_len) wine_server_add_data( req, sd, objattr.sd_len );
+        if (len) wine_server_add_data( req, attr->ObjectName->Buffer, len );
+        ret = wine_server_call( req );
+        *handle = wine_server_ptr_handle( reply->handle );
+    }
+    SERVER_END_REQ;
+
+    NTDLL_free_struct_sd( sd );
+    return ret;
+}
+
+/******************************************************************************
+ *              NtOpenKeyedEvent (NTDLL.@)
+ */
+NTSTATUS WINAPI NtOpenKeyedEvent( HANDLE *handle, ACCESS_MASK access, const OBJECT_ATTRIBUTES *attr )
+{
+    DWORD len = attr && attr->ObjectName ? attr->ObjectName->Length : 0;
+    NTSTATUS ret;
+
+    if (len >= MAX_PATH * sizeof(WCHAR)) return STATUS_NAME_TOO_LONG;
+
+    SERVER_START_REQ( open_keyed_event )
+    {
+        req->access  = access;
+        req->attributes = attr ? attr->Attributes : 0;
+        req->rootdir = wine_server_obj_handle( attr ? attr->RootDirectory : 0 );
+        if (len) wine_server_add_data( req, attr->ObjectName->Buffer, len );
+        ret = wine_server_call( req );
+        *handle = wine_server_ptr_handle( reply->handle );
+    }
+    SERVER_END_REQ;
+    return ret;
+}
+
+/******************************************************************************
+ *              NtWaitForKeyedEvent (NTDLL.@)
+ */
+NTSTATUS WINAPI NtWaitForKeyedEvent( HANDLE handle, const void *key,
+                                     BOOLEAN alertable, const LARGE_INTEGER *timeout )
+{
+    select_op_t select_op;
+    UINT flags = SELECT_INTERRUPTIBLE;
+
+    if ((ULONG_PTR)key & 1) return STATUS_INVALID_PARAMETER_1;
+    if (alertable) flags |= SELECT_ALERTABLE;
+    select_op.keyed_event.op     = SELECT_KEYED_EVENT_WAIT;
+    select_op.keyed_event.handle = wine_server_obj_handle( handle );
+    select_op.keyed_event.key    = wine_server_client_ptr( key );
+    return server_select( &select_op, sizeof(select_op.keyed_event), flags, timeout );
+}
+
+/******************************************************************************
+ *              NtReleaseKeyedEvent (NTDLL.@)
+ */
+NTSTATUS WINAPI NtReleaseKeyedEvent( HANDLE handle, const void *key,
+                                     BOOLEAN alertable, const LARGE_INTEGER *timeout )
+{
+    select_op_t select_op;
+    UINT flags = SELECT_INTERRUPTIBLE;
+
+    if ((ULONG_PTR)key & 1) return STATUS_INVALID_PARAMETER_1;
+    if (alertable) flags |= SELECT_ALERTABLE;
+    select_op.keyed_event.op     = SELECT_KEYED_EVENT_RELEASE;
+    select_op.keyed_event.handle = wine_server_obj_handle( handle );
+    select_op.keyed_event.key    = wine_server_client_ptr( key );
+    return server_select( &select_op, sizeof(select_op.keyed_event), flags, timeout );
 }
 
 /******************************************************************
@@ -1298,11 +1099,11 @@ NTSTATUS WINAPI NtCreateIoCompletion( PHANDLE CompletionPort, ACCESS_MASK Desire
  */
 NTSTATUS WINAPI NtSetIoCompletion( HANDLE CompletionPort, ULONG_PTR CompletionKey,
                                    ULONG_PTR CompletionValue, NTSTATUS Status,
-                                   ULONG NumberOfBytesTransferred )
+                                   SIZE_T NumberOfBytesTransferred )
 {
     NTSTATUS status;
 
-    TRACE("(%p, %lx, %lx, %x, %d)\n", CompletionPort, CompletionKey,
+    TRACE("(%p, %lx, %lx, %x, %lx)\n", CompletionPort, CompletionKey,
           CompletionValue, Status, NumberOfBytesTransferred);
 
     SERVER_START_REQ( add_completion )
@@ -1463,5 +1264,479 @@ NTSTATUS NTDLL_AddCompletion( HANDLE hFile, ULONG_PTR CompletionValue,
         status = wine_server_call( req );
     }
     SERVER_END_REQ;
+    return status;
+}
+
+/******************************************************************
+ *              RtlRunOnceInitialize (NTDLL.@)
+ */
+void WINAPI RtlRunOnceInitialize( RTL_RUN_ONCE *once )
+{
+    once->Ptr = NULL;
+}
+
+/******************************************************************
+ *              RtlRunOnceBeginInitialize (NTDLL.@)
+ */
+DWORD WINAPI RtlRunOnceBeginInitialize( RTL_RUN_ONCE *once, ULONG flags, void **context )
+{
+    if (flags & RTL_RUN_ONCE_CHECK_ONLY)
+    {
+        ULONG_PTR val = (ULONG_PTR)once->Ptr;
+
+        if (flags & RTL_RUN_ONCE_ASYNC) return STATUS_INVALID_PARAMETER;
+        if ((val & 3) != 2) return STATUS_UNSUCCESSFUL;
+        if (context) *context = (void *)(val & ~3);
+        return STATUS_SUCCESS;
+    }
+
+    for (;;)
+    {
+        ULONG_PTR next, val = (ULONG_PTR)once->Ptr;
+
+        switch (val & 3)
+        {
+        case 0:  /* first time */
+            if (!interlocked_cmpxchg_ptr( &once->Ptr,
+                                          (flags & RTL_RUN_ONCE_ASYNC) ? (void *)3 : (void *)1, 0 ))
+                return STATUS_PENDING;
+            break;
+
+        case 1:  /* in progress, wait */
+            if (flags & RTL_RUN_ONCE_ASYNC) return STATUS_INVALID_PARAMETER;
+            next = val & ~3;
+            if (interlocked_cmpxchg_ptr( &once->Ptr, (void *)((ULONG_PTR)&next | 1),
+                                         (void *)val ) == (void *)val)
+                NtWaitForKeyedEvent( keyed_event, &next, FALSE, NULL );
+            break;
+
+        case 2:  /* done */
+            if (context) *context = (void *)(val & ~3);
+            return STATUS_SUCCESS;
+
+        case 3:  /* in progress, async */
+            if (!(flags & RTL_RUN_ONCE_ASYNC)) return STATUS_INVALID_PARAMETER;
+            return STATUS_PENDING;
+        }
+    }
+}
+
+/******************************************************************
+ *              RtlRunOnceComplete (NTDLL.@)
+ */
+DWORD WINAPI RtlRunOnceComplete( RTL_RUN_ONCE *once, ULONG flags, void *context )
+{
+    if ((ULONG_PTR)context & 3) return STATUS_INVALID_PARAMETER;
+
+    if (flags & RTL_RUN_ONCE_INIT_FAILED)
+    {
+        if (context) return STATUS_INVALID_PARAMETER;
+        if (flags & RTL_RUN_ONCE_ASYNC) return STATUS_INVALID_PARAMETER;
+    }
+    else context = (void *)((ULONG_PTR)context | 2);
+
+    for (;;)
+    {
+        ULONG_PTR val = (ULONG_PTR)once->Ptr;
+
+        switch (val & 3)
+        {
+        case 1:  /* in progress */
+            if (interlocked_cmpxchg_ptr( &once->Ptr, context, (void *)val ) != (void *)val) break;
+            val &= ~3;
+            while (val)
+            {
+                ULONG_PTR next = *(ULONG_PTR *)val;
+                NtReleaseKeyedEvent( keyed_event, (void *)val, FALSE, NULL );
+                val = next;
+            }
+            return STATUS_SUCCESS;
+
+        case 3:  /* in progress, async */
+            if (!(flags & RTL_RUN_ONCE_ASYNC)) return STATUS_INVALID_PARAMETER;
+            if (interlocked_cmpxchg_ptr( &once->Ptr, context, (void *)val ) != (void *)val) break;
+            return STATUS_SUCCESS;
+
+        default:
+            return STATUS_UNSUCCESSFUL;
+        }
+    }
+}
+
+/******************************************************************
+ *              RtlRunOnceExecuteOnce (NTDLL.@)
+ */
+DWORD WINAPI RtlRunOnceExecuteOnce( RTL_RUN_ONCE *once, PRTL_RUN_ONCE_INIT_FN func,
+                                    void *param, void **context )
+{
+    DWORD ret = RtlRunOnceBeginInitialize( once, 0, context );
+
+    if (ret != STATUS_PENDING) return ret;
+
+    if (!func( once, param, context ))
+    {
+        RtlRunOnceComplete( once, RTL_RUN_ONCE_INIT_FAILED, NULL );
+        return STATUS_UNSUCCESSFUL;
+    }
+
+    return RtlRunOnceComplete( once, 0, context ? *context : NULL );
+}
+
+
+/* SRW locks implementation
+ *
+ * The memory layout used by the lock is:
+ *
+ * 32 31            16               0
+ *  ________________ ________________
+ * | X| #exclusive  |    #shared     |
+ *  ¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯
+ * Since there is no space left for a separate counter of shared access
+ * threads inside the locked section the #shared field is used for multiple
+ * purposes. The following table lists all possible states the lock can be
+ * in, notation: [X, #exclusive, #shared]:
+ *
+ * [0,   0,   N] -> locked by N shared access threads, if N=0 its unlocked
+ * [0, >=1, >=1] -> threads are requesting exclusive locks, but there are
+ * still shared access threads inside. #shared should not be incremented
+ * anymore!
+ * [1, >=1, >=0] -> lock is owned by an exclusive thread and the #shared
+ * counter can be used again to count the number of threads waiting in the
+ * queue for shared access.
+ *
+ * the following states are invalid and will never occur:
+ * [0, >=1,   0], [1,   0, >=0]
+ *
+ * The main problem arising from the fact that we have no separate counter
+ * of shared access threads inside the locked section is that in the state
+ * [0, >=1, >=1] above we cannot add additional waiting threads to the
+ * shared access queue - it wouldn't be possible to distinguish waiting
+ * threads and those that are still inside. To solve this problem the lock
+ * uses the following approach: a thread that isn't able to allocate a
+ * shared lock just uses the exclusive queue instead. As soon as the thread
+ * is woken up it is in the state [1, >=1, >=0]. In this state it's again
+ * possible to use the shared access queue. The thread atomically moves
+ * itself to the shared access queue and releases the exclusive lock, so
+ * that the "real" exclusive access threads have a chance. As soon as they
+ * are all ready the shared access threads are processed.
+ */
+
+#define SRWLOCK_MASK_IN_EXCLUSIVE     0x80000000
+#define SRWLOCK_MASK_EXCLUSIVE_QUEUE  0x7fff0000
+#define SRWLOCK_MASK_SHARED_QUEUE     0x0000ffff
+#define SRWLOCK_RES_EXCLUSIVE         0x00010000
+#define SRWLOCK_RES_SHARED            0x00000001
+
+#ifdef WORDS_BIGENDIAN
+#define srwlock_key_exclusive(lock)   (&lock->Ptr)
+#define srwlock_key_shared(lock)      ((void *)((char *)&lock->Ptr + 2))
+#else
+#define srwlock_key_exclusive(lock)   ((void *)((char *)&lock->Ptr + 2))
+#define srwlock_key_shared(lock)      (&lock->Ptr)
+#endif
+
+static inline void srwlock_check_invalid( unsigned int val )
+{
+    /* Throw exception if it's impossible to acquire/release this lock. */
+    if ((val & SRWLOCK_MASK_EXCLUSIVE_QUEUE) == SRWLOCK_MASK_EXCLUSIVE_QUEUE ||
+            (val & SRWLOCK_MASK_SHARED_QUEUE) == SRWLOCK_MASK_SHARED_QUEUE)
+        RtlRaiseStatus(STATUS_RESOURCE_NOT_OWNED);
+}
+
+static inline unsigned int srwlock_lock_exclusive( unsigned int *dest, int incr )
+{
+    unsigned int val, tmp;
+    /* Atomically modifies the value of *dest by adding incr. If the shared
+     * queue is empty and there are threads waiting for exclusive access, then
+     * sets the mark SRWLOCK_MASK_IN_EXCLUSIVE to signal other threads that
+     * they are allowed again to use the shared queue counter. */
+    for (val = *dest;; val = tmp)
+    {
+        tmp = val + incr;
+        srwlock_check_invalid( tmp );
+        if ((tmp & SRWLOCK_MASK_EXCLUSIVE_QUEUE) && !(tmp & SRWLOCK_MASK_SHARED_QUEUE))
+            tmp |= SRWLOCK_MASK_IN_EXCLUSIVE;
+        if ((tmp = interlocked_cmpxchg( (int *)dest, tmp, val )) == val)
+            break;
+    }
+    return val;
+}
+
+static inline unsigned int srwlock_unlock_exclusive( unsigned int *dest, int incr )
+{
+    unsigned int val, tmp;
+    /* Atomically modifies the value of *dest by adding incr. If the queue of
+     * threads waiting for exclusive access is empty, then remove the
+     * SRWLOCK_MASK_IN_EXCLUSIVE flag (only the shared queue counter will
+     * remain). */
+    for (val = *dest;; val = tmp)
+    {
+        tmp = val + incr;
+        srwlock_check_invalid( tmp );
+        if (!(tmp & SRWLOCK_MASK_EXCLUSIVE_QUEUE))
+            tmp &= SRWLOCK_MASK_SHARED_QUEUE;
+        if ((tmp = interlocked_cmpxchg( (int *)dest, tmp, val )) == val)
+            break;
+    }
+    return val;
+}
+
+static inline void srwlock_leave_exclusive( RTL_SRWLOCK *lock, unsigned int val )
+{
+    /* Used when a thread leaves an exclusive section. If there are other
+     * exclusive access threads they are processed first, followed by
+     * the shared waiters. */
+    if (val & SRWLOCK_MASK_EXCLUSIVE_QUEUE)
+        NtReleaseKeyedEvent( keyed_event, srwlock_key_exclusive(lock), FALSE, NULL );
+    else
+    {
+        val &= SRWLOCK_MASK_SHARED_QUEUE; /* remove SRWLOCK_MASK_IN_EXCLUSIVE */
+        while (val--)
+            NtReleaseKeyedEvent( keyed_event, srwlock_key_shared(lock), FALSE, NULL );
+    }
+}
+
+static inline void srwlock_leave_shared( RTL_SRWLOCK *lock, unsigned int val )
+{
+    /* Wake up one exclusive thread as soon as the last shared access thread
+     * has left. */
+    if ((val & SRWLOCK_MASK_EXCLUSIVE_QUEUE) && !(val & SRWLOCK_MASK_SHARED_QUEUE))
+        NtReleaseKeyedEvent( keyed_event, srwlock_key_exclusive(lock), FALSE, NULL );
+}
+
+/***********************************************************************
+ *              RtlInitializeSRWLock (NTDLL.@)
+ *
+ * NOTES
+ *  Please note that SRWLocks do not keep track of the owner of a lock.
+ *  It doesn't make any difference which thread for example unlocks an
+ *  SRWLock (see corresponding tests). This implementation uses two
+ *  keyed events (one for the exclusive waiters and one for the shared
+ *  waiters) and is limited to 2^15-1 waiting threads.
+ */
+void WINAPI RtlInitializeSRWLock( RTL_SRWLOCK *lock )
+{
+    lock->Ptr = NULL;
+}
+
+/***********************************************************************
+ *              RtlAcquireSRWLockExclusive (NTDLL.@)
+ *
+ * NOTES
+ *  Unlike RtlAcquireResourceExclusive this function doesn't allow
+ *  nested calls from the same thread. "Upgrading" a shared access lock
+ *  to an exclusive access lock also doesn't seem to be supported.
+ */
+void WINAPI RtlAcquireSRWLockExclusive( RTL_SRWLOCK *lock )
+{
+    if (srwlock_lock_exclusive( (unsigned int *)&lock->Ptr, SRWLOCK_RES_EXCLUSIVE ))
+        NtWaitForKeyedEvent( keyed_event, srwlock_key_exclusive(lock), FALSE, NULL );
+}
+
+/***********************************************************************
+ *              RtlAcquireSRWLockShared (NTDLL.@)
+ *
+ * NOTES
+ *   Do not call this function recursively - it will only succeed when
+ *   there are no threads waiting for an exclusive lock!
+ */
+void WINAPI RtlAcquireSRWLockShared( RTL_SRWLOCK *lock )
+{
+    unsigned int val, tmp;
+    /* Acquires a shared lock. If it's currently not possible to add elements to
+     * the shared queue, then request exclusive access instead. */
+    for (val = *(unsigned int *)&lock->Ptr;; val = tmp)
+    {
+        if ((val & SRWLOCK_MASK_EXCLUSIVE_QUEUE) && !(val & SRWLOCK_MASK_IN_EXCLUSIVE))
+            tmp = val + SRWLOCK_RES_EXCLUSIVE;
+        else
+            tmp = val + SRWLOCK_RES_SHARED;
+        if ((tmp = interlocked_cmpxchg( (int *)&lock->Ptr, tmp, val )) == val)
+            break;
+    }
+
+    /* Drop exclusive access again and instead requeue for shared access. */
+    if ((val & SRWLOCK_MASK_EXCLUSIVE_QUEUE) && !(val & SRWLOCK_MASK_IN_EXCLUSIVE))
+    {
+        NtWaitForKeyedEvent( keyed_event, srwlock_key_exclusive(lock), FALSE, NULL );
+        val = srwlock_unlock_exclusive( (unsigned int *)&lock->Ptr, (SRWLOCK_RES_SHARED
+                                        - SRWLOCK_RES_EXCLUSIVE) ) - SRWLOCK_RES_EXCLUSIVE;
+        srwlock_leave_exclusive( lock, val );
+    }
+
+    if (val & SRWLOCK_MASK_EXCLUSIVE_QUEUE)
+        NtWaitForKeyedEvent( keyed_event, srwlock_key_shared(lock), FALSE, NULL );
+}
+
+/***********************************************************************
+ *              RtlReleaseSRWLockExclusive (NTDLL.@)
+ */
+void WINAPI RtlReleaseSRWLockExclusive( RTL_SRWLOCK *lock )
+{
+    srwlock_leave_exclusive( lock, srwlock_unlock_exclusive( (unsigned int *)&lock->Ptr,
+                             - SRWLOCK_RES_EXCLUSIVE ) - SRWLOCK_RES_EXCLUSIVE );
+}
+
+/***********************************************************************
+ *              RtlReleaseSRWLockShared (NTDLL.@)
+ */
+void WINAPI RtlReleaseSRWLockShared( RTL_SRWLOCK *lock )
+{
+    srwlock_leave_shared( lock, srwlock_lock_exclusive( (unsigned int *)&lock->Ptr,
+                          - SRWLOCK_RES_SHARED ) - SRWLOCK_RES_SHARED );
+}
+
+/***********************************************************************
+ *              RtlTryAcquireSRWLockExclusive (NTDLL.@)
+ *
+ * NOTES
+ *  Similar to AcquireSRWLockExclusive recusive calls are not allowed
+ *  and will fail with return value FALSE.
+ */
+BOOLEAN WINAPI RtlTryAcquireSRWLockExclusive( RTL_SRWLOCK *lock )
+{
+    return interlocked_cmpxchg( (int *)&lock->Ptr, SRWLOCK_MASK_IN_EXCLUSIVE |
+                                SRWLOCK_RES_EXCLUSIVE, 0 ) == 0;
+}
+
+/***********************************************************************
+ *              RtlTryAcquireSRWLockShared (NTDLL.@)
+ */
+BOOLEAN WINAPI RtlTryAcquireSRWLockShared( RTL_SRWLOCK *lock )
+{
+    unsigned int val, tmp;
+    for (val = *(unsigned int *)&lock->Ptr;; val = tmp)
+    {
+        if (val & SRWLOCK_MASK_EXCLUSIVE_QUEUE)
+            return FALSE;
+        if ((tmp = interlocked_cmpxchg( (int *)&lock->Ptr, val + SRWLOCK_RES_SHARED, val )) == val)
+            break;
+    }
+    return TRUE;
+}
+
+/***********************************************************************
+ *           RtlInitializeConditionVariable   (NTDLL.@)
+ *
+ * Initializes the condition variable with NULL.
+ *
+ * PARAMS
+ *  variable [O] condition variable
+ *
+ * RETURNS
+ *  Nothing.
+ */
+void WINAPI RtlInitializeConditionVariable( RTL_CONDITION_VARIABLE *variable )
+{
+    variable->Ptr = NULL;
+}
+
+/***********************************************************************
+ *           RtlWakeConditionVariable   (NTDLL.@)
+ *
+ * Wakes up one thread waiting on the condition variable.
+ *
+ * PARAMS
+ *  variable [I/O] condition variable to wake up.
+ *
+ * RETURNS
+ *  Nothing.
+ *
+ * NOTES
+ *  The calling thread does not have to own any lock in order to call
+ *  this function.
+ */
+void WINAPI RtlWakeConditionVariable( RTL_CONDITION_VARIABLE *variable )
+{
+    if (interlocked_dec_if_nonzero( (int *)&variable->Ptr ))
+        NtReleaseKeyedEvent( keyed_event, &variable->Ptr, FALSE, NULL );
+}
+
+/***********************************************************************
+ *           RtlWakeAllConditionVariable   (NTDLL.@)
+ *
+ * See WakeConditionVariable, wakes up all waiting threads.
+ */
+void WINAPI RtlWakeAllConditionVariable( RTL_CONDITION_VARIABLE *variable )
+{
+    int val = interlocked_xchg( (int *)&variable->Ptr, 0 );
+    while (val-- > 0)
+        NtReleaseKeyedEvent( keyed_event, &variable->Ptr, FALSE, NULL );
+}
+
+/***********************************************************************
+ *           RtlSleepConditionVariableCS   (NTDLL.@)
+ *
+ * Atomically releases the critical section and suspends the thread,
+ * waiting for a Wake(All)ConditionVariable event. Afterwards it enters
+ * the critical section again and returns.
+ *
+ * PARAMS
+ *  variable  [I/O] condition variable
+ *  crit      [I/O] critical section to leave temporarily
+ *  timeout   [I]   timeout
+ *
+ * RETURNS
+ *  see NtWaitForKeyedEvent for all possible return values.
+ */
+NTSTATUS WINAPI RtlSleepConditionVariableCS( RTL_CONDITION_VARIABLE *variable, RTL_CRITICAL_SECTION *crit,
+                                             const LARGE_INTEGER *timeout )
+{
+    NTSTATUS status;
+    interlocked_xchg_add( (int *)&variable->Ptr, 1 );
+    RtlLeaveCriticalSection( crit );
+
+    status = NtWaitForKeyedEvent( keyed_event, &variable->Ptr, FALSE, timeout );
+    if (status != STATUS_SUCCESS)
+    {
+        if (!interlocked_dec_if_nonzero( (int *)&variable->Ptr ))
+            status = NtWaitForKeyedEvent( keyed_event, &variable->Ptr, FALSE, NULL );
+    }
+
+    RtlEnterCriticalSection( crit );
+    return status;
+}
+
+/***********************************************************************
+ *           RtlSleepConditionVariableSRW   (NTDLL.@)
+ *
+ * Atomically releases the SRWLock and suspends the thread,
+ * waiting for a Wake(All)ConditionVariable event. Afterwards it enters
+ * the SRWLock again with the same access rights and returns.
+ *
+ * PARAMS
+ *  variable  [I/O] condition variable
+ *  lock      [I/O] SRWLock to leave temporarily
+ *  timeout   [I]   timeout
+ *  flags     [I]   type of the current lock (exclusive / shared)
+ *
+ * RETURNS
+ *  see NtWaitForKeyedEvent for all possible return values.
+ *
+ * NOTES
+ *  the behaviour is undefined if the thread doesn't own the lock.
+ */
+NTSTATUS WINAPI RtlSleepConditionVariableSRW( RTL_CONDITION_VARIABLE *variable, RTL_SRWLOCK *lock,
+                                              const LARGE_INTEGER *timeout, ULONG flags )
+{
+    NTSTATUS status;
+    interlocked_xchg_add( (int *)&variable->Ptr, 1 );
+
+    if (flags & RTL_CONDITION_VARIABLE_LOCKMODE_SHARED)
+        RtlReleaseSRWLockShared( lock );
+    else
+        RtlReleaseSRWLockExclusive( lock );
+
+    status = NtWaitForKeyedEvent( keyed_event, &variable->Ptr, FALSE, timeout );
+    if (status != STATUS_SUCCESS)
+    {
+        if (!interlocked_dec_if_nonzero( (int *)&variable->Ptr ))
+            status = NtWaitForKeyedEvent( keyed_event, &variable->Ptr, FALSE, NULL );
+    }
+
+    if (flags & RTL_CONDITION_VARIABLE_LOCKMODE_SHARED)
+        RtlAcquireSRWLockShared( lock );
+    else
+        RtlAcquireSRWLockExclusive( lock );
     return status;
 }

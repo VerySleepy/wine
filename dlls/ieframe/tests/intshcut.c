@@ -70,19 +70,6 @@ static IUnknown unknown = {
     &unknownVtbl
 };
 
-static const char *printGUID(const GUID *guid)
-{
-    static char guidSTR[39];
-
-    if (!guid) return NULL;
-
-    sprintf(guidSTR, "{%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}",
-     guid->Data1, guid->Data2, guid->Data3,
-     guid->Data4[0], guid->Data4[1], guid->Data4[2], guid->Data4[3],
-     guid->Data4[4], guid->Data4[5], guid->Data4[6], guid->Data4[7]);
-    return guidSTR;
-}
-
 static void test_Aggregability(void)
 {
     HRESULT hr;
@@ -109,7 +96,7 @@ static void can_query_interface(IUnknown *pUnknown, REFIID riid)
     HRESULT hr;
     IUnknown *newInterface;
     hr = IUnknown_QueryInterface(pUnknown, riid, (void**)&newInterface);
-    ok(hr == S_OK, "interface %s could not be queried\n", printGUID(riid));
+    ok(hr == S_OK, "interface %s could not be queried\n", wine_dbgstr_guid(riid));
     if (SUCCEEDED(hr))
         IUnknown_Release(newInterface);
 }
@@ -143,7 +130,7 @@ static void _test_shortcut_url(unsigned line, IUnknown *unk, const char *exurl)
     ok_(__FILE__,line)(!strcmp(url_a, exurl), "unexpected URL, got %s, expected %s\n", url_a, exurl);
     CoTaskMemFree(url_a);
 
-    IUnknown_Release(locator_a);
+    IUnknown_Release((IUnknown*)locator_a);
 }
 
 #define check_string_transform(a,b,c,d,e) _check_string_transform(__LINE__,a,b,c,d,e)
@@ -265,7 +252,7 @@ static void test_ReadAndWriteProperties(void)
 
         hr = urlAFromFile->lpVtbl->GetURL(urlAFromFile, &url);
         ok(hr == S_OK, "Unable to get url from file, hr=0x%x\n", hr);
-        ok(lstrcmp(url, testurl) == 0, "Wrong url read from file: %s\n",url);
+        ok(lstrcmpA(url, testurl) == 0, "Wrong url read from file: %s\n",url);
 
 
         hr = urlAFromFile->lpVtbl->QueryInterface(urlAFromFile, &IID_IPropertySetStorage, (void **) &pPropSetStg);

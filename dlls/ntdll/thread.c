@@ -30,6 +30,9 @@
 #ifdef HAVE_SYS_TIMES_H
 #include <sys/times.h>
 #endif
+#ifdef HAVE_SYS_SYSCALL_H
+#include <sys/syscall.h>
+#endif
 
 #define NONAMELESSUNION
 #include "ntstatus.h"
@@ -64,7 +67,6 @@ static WCHAR current_dir[MAX_NT_PATH_LENGTH];
 static RTL_BITMAP tls_bitmap;
 static RTL_BITMAP tls_expansion_bitmap;
 static RTL_BITMAP fls_bitmap;
-static LIST_ENTRY tls_links;
 static int nb_threads = 1;
 
 /***********************************************************************
@@ -183,6 +185,23 @@ done:
     return status;
 }
 
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_error.h>
+
+static ULONG64 get_dyld_image_info_addr(void)
+{
+    ULONG64 ret = 0;
+#ifdef TASK_DYLD_INFO
+    struct task_dyld_info dyld_info;
+    mach_msg_type_number_t size = TASK_DYLD_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_DYLD_INFO, (task_info_t)&dyld_info, &size) == KERN_SUCCESS)
+        ret = dyld_info.all_image_info_addr;
+#endif
+    return ret;
+}
+#endif  /* __APPLE__ */
+
 /***********************************************************************
  *           thread_init
  *
@@ -197,8 +216,12 @@ HANDLE thread_init(void)
     SIZE_T size, info_size;
     HANDLE exe_file = 0;
     LARGE_INTEGER now;
+    NTSTATUS status;
     struct ntdll_thread_data *thread_data;
     static struct debug_info debug_info;  /* debug info for initial thread */
+#ifdef __APPLE__
+    ULONG64 dyld_image_info;
+#endif
 
     virtual_init();
 
@@ -206,7 +229,13 @@ HANDLE thread_init(void)
 
     addr = (void *)0x7ffe0000;
     size = 0x10000;
-    NtAllocateVirtualMemory( NtCurrentProcess(), &addr, 0, &size, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE );
+    status = NtAllocateVirtualMemory( NtCurrentProcess(), &addr, 0, &size,
+                                      MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE );
+    if (status)
+    {
+        MESSAGE( "wine: failed to map the shared user data: %08x\n", status );
+        exit(1);
+    }
     user_shared_data = addr;
 
     /* allocate and initialize the PEB */
@@ -230,11 +259,26 @@ HANDLE thread_init(void)
     RtlInitializeBitMap( &tls_expansion_bitmap, peb->TlsExpansionBitmapBits,
                          sizeof(peb->TlsExpansionBitmapBits) * 8 );
     RtlInitializeBitMap( &fls_bitmap, peb->FlsBitmapBits, sizeof(peb->FlsBitmapBits) * 8 );
+    RtlSetBits( peb->TlsBitmap, 0, 1 ); /* TLS index 0 is reserved and should be initialized to NULL. */
+    RtlSetBits( peb->FlsBitmap, 0, 1 );
     InitializeListHead( &peb->FlsListHead );
     InitializeListHead( &ldr.InLoadOrderModuleList );
     InitializeListHead( &ldr.InMemoryOrderModuleList );
     InitializeListHead( &ldr.InInitializationOrderModuleList );
-    InitializeListHead( &tls_links );
+#ifdef __APPLE__
+    dyld_image_info = get_dyld_image_info_addr();
+#ifdef __LP64__
+#ifdef WORDS_BIGENDIAN
+    peb->Reserved[1] = dyld_image_info & 0xFFFFFFFF;
+    peb->Reserved[0] = dyld_image_info >> 32;
+#else
+    peb->Reserved[0] = dyld_image_info & 0xFFFFFFFF;
+    peb->Reserved[1] = dyld_image_info >> 32;
+#endif
+#else
+    peb->Reserved[0] = dyld_image_info & 0xFFFFFFFF;
+#endif
+#endif
 
     /* allocate and initialize the initial TEB */
 
@@ -298,6 +342,8 @@ HANDLE thread_init(void)
 
     fill_cpu_info();
 
+    NtCreateKeyedEvent( &keyed_event, GENERIC_READ | GENERIC_WRITE, NULL, 0 );
+
     return exe_file;
 }
 
@@ -344,11 +390,7 @@ void exit_thread( int status )
     }
 
     LdrShutdownThread();
-    RtlAcquirePebLock();
-    RemoveEntryList( &NtCurrentTeb()->TlsLinks );
-    RtlReleasePebLock();
-    RtlFreeHeap( GetProcessHeap(), 0, NtCurrentTeb()->FlsSlots );
-    RtlFreeHeap( GetProcessHeap(), 0, NtCurrentTeb()->TlsExpansionSlots );
+    RtlFreeThreadActivationContextStack();
 
     pthread_sigmask( SIG_BLOCK, &server_block_set, NULL );
 
@@ -393,10 +435,6 @@ static void start_thread( struct startup_info *info )
     server_init_thread( func );
     pthread_sigmask( SIG_UNBLOCK, &server_block_set, NULL );
 
-    RtlAcquirePebLock();
-    InsertHeadList( &tls_links, &teb->TlsLinks );
-    RtlReleasePebLock();
-
     MODULE_DllThreadAttach( NULL );
 
     if (TRACE_ON(relay))
@@ -420,7 +458,7 @@ NTSTATUS WINAPI RtlCreateUserThread( HANDLE process, const SECURITY_DESCRIPTOR *
     pthread_attr_t attr;
     struct ntdll_thread_data *thread_data;
     struct startup_info *info = NULL;
-    HANDLE handle = 0;
+    HANDLE handle = 0, actctx = 0;
     TEB *teb = NULL;
     DWORD tid = 0;
     int request_pipe[2];
@@ -439,7 +477,7 @@ NTSTATUS WINAPI RtlCreateUserThread( HANDLE process, const SECURITY_DESCRIPTOR *
         call.create_thread.reserve = stack_reserve;
         call.create_thread.commit  = stack_commit;
         call.create_thread.suspend = suspended;
-        status = NTDLL_queue_process_apc( process, &call, &result );
+        status = server_queue_process_apc( process, &call, &result );
         if (status != STATUS_SUCCESS) return status;
 
         if (result.create_thread.status == STATUS_SUCCESS)
@@ -484,6 +522,19 @@ NTSTATUS WINAPI RtlCreateUserThread( HANDLE process, const SECURITY_DESCRIPTOR *
     teb->ClientId.UniqueThread  = ULongToHandle(tid);
     teb->StaticUnicodeString.Buffer        = teb->StaticUnicodeBuffer;
     teb->StaticUnicodeString.MaximumLength = sizeof(teb->StaticUnicodeBuffer);
+
+    /* create default activation context frame for new thread */
+    RtlGetActiveActivationContext(&actctx);
+    if (actctx)
+    {
+        RTL_ACTIVATION_CONTEXT_STACK_FRAME *frame;
+
+        frame = RtlAllocateHeap(GetProcessHeap(), 0, sizeof(*frame));
+        frame->Previous = NULL;
+        frame->ActivationContext = actctx;
+        frame->Flags = 0;
+        teb->ActivationContextStack.ActiveFrame = frame;
+    }
 
     info = (struct startup_info *)(teb + 1);
     info->teb         = teb;
@@ -863,7 +914,7 @@ NTSTATUS WINAPI NtQueryInformationThread( HANDLE handle, THREADINFOCLASS class,
     case ThreadBasicInformation:
         {
             THREAD_BASIC_INFORMATION info;
-            const ULONG_PTR affinity_mask = ((ULONG_PTR)1 << NtCurrentTeb()->Peb->NumberOfProcessors) - 1;
+            const ULONG_PTR affinity_mask = get_system_affinity_mask();
 
             SERVER_START_REQ( get_thread_info )
             {
@@ -890,7 +941,7 @@ NTSTATUS WINAPI NtQueryInformationThread( HANDLE handle, THREADINFOCLASS class,
         return status;
     case ThreadAffinityMask:
         {
-            const ULONG_PTR affinity_mask = ((ULONG_PTR)1 << NtCurrentTeb()->Peb->NumberOfProcessors) - 1;
+            const ULONG_PTR affinity_mask = get_system_affinity_mask();
             ULONG_PTR affinity = 0;
 
             SERVER_START_REQ( get_thread_info )
@@ -1133,7 +1184,7 @@ NTSTATUS WINAPI NtSetInformationThread( HANDLE handle, THREADINFOCLASS class,
         return status;
     case ThreadAffinityMask:
         {
-            const ULONG_PTR affinity_mask = ((ULONG_PTR)1 << NtCurrentTeb()->Peb->NumberOfProcessors) - 1;
+            const ULONG_PTR affinity_mask = get_system_affinity_mask();
             ULONG_PTR req_aff;
 
             if (length != sizeof(ULONG_PTR)) return STATUS_INVALID_PARAMETER;
@@ -1172,4 +1223,46 @@ NTSTATUS WINAPI NtSetInformationThread( HANDLE handle, THREADINFOCLASS class,
         FIXME( "info class %d not supported yet\n", class );
         return STATUS_NOT_IMPLEMENTED;
     }
+}
+
+/******************************************************************************
+ * NtGetCurrentProcessorNumber (NTDLL.@)
+ *
+ * Return the processor, on which the thread is running
+ *
+ */
+ULONG WINAPI NtGetCurrentProcessorNumber(void)
+{
+    ULONG processor;
+
+#if defined(__linux__) && defined(__NR_getcpu)
+    int res = syscall(__NR_getcpu, &processor, NULL, NULL);
+    if (res != -1) return processor;
+#endif
+
+    if (NtCurrentTeb()->Peb->NumberOfProcessors > 1)
+    {
+        ULONG_PTR thread_mask, processor_mask;
+        NTSTATUS status;
+
+        status = NtQueryInformationThread(GetCurrentThread(), ThreadAffinityMask,
+                                          &thread_mask, sizeof(thread_mask), NULL);
+        if (status == STATUS_SUCCESS)
+        {
+            for (processor = 0; processor < NtCurrentTeb()->Peb->NumberOfProcessors; processor++)
+            {
+                processor_mask = (1 << processor);
+                if (thread_mask & processor_mask)
+                {
+                    if (thread_mask != processor_mask)
+                        FIXME("need multicore support (%d processors)\n",
+                              NtCurrentTeb()->Peb->NumberOfProcessors);
+                    return processor;
+                }
+            }
+        }
+    }
+
+    /* fallback to the first processor */
+    return 0;
 }

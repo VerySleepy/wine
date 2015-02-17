@@ -898,6 +898,13 @@ static DWORD MCI_SendCommandFrom32(MCIDEVICEID wDevID, UINT16 wMsg, DWORD_PTR dw
 
 /**************************************************************************
  * 			MCI_FinishOpen				[internal]
+ *
+ * Three modes of operation:
+ * 1 open foo.ext ...        -> OPEN_ELEMENT with lpstrElementName=foo.ext
+ *   open sequencer!foo.ext     same         with lpstrElementName=foo.ext
+ * 2 open new type waveaudio -> OPEN_ELEMENT with empty ("") lpstrElementName
+ * 3 open sequencer          -> OPEN_ELEMENT unset, and
+ *   capability sequencer       (auto-open)  likewise
  */
 static	DWORD	MCI_FinishOpen(LPWINE_MCIDRIVER wmd, LPMCI_OPEN_PARMSW lpParms,
 			       DWORD dwParam)
@@ -974,23 +981,47 @@ static	WORD		MCI_GetMessage(LPCWSTR lpCmd)
 
 /**************************************************************************
  * 				MCI_GetDWord			[internal]
+ *
+ * Accept 0 -1 255 255:0 255:255:255:255 :::1 1::: 2::3 ::4: 12345678
+ * Refuse -1:0 0:-1 :: 256:0 1:256 0::::1
  */
 static	BOOL		MCI_GetDWord(DWORD* data, LPWSTR* ptr)
 {
-    DWORD	val;
-    LPWSTR	ret;
+    LPWSTR	ret = *ptr;
+    DWORD	total = 0, shift = 0;
+    BOOL	sign = FALSE, digits = FALSE;
 
-    val = strtoulW(*ptr, &ret, 10);
-
-    switch (*ret) {
-    case '\0':	break;
-    case ' ':	ret++; break;
-    default:	return FALSE;
+    while (*ret == ' ' || *ret == '\t') ret++;
+    if (*ret == '-') {
+	ret++;
+	sign = TRUE;
     }
+    for(;;) {
+	DWORD	val = 0;
+	while ('0' <= *ret && *ret <= '9') {
+	    val = *ret++ - '0' + 10 * val;
+	    digits = TRUE;
+	}
+	switch (*ret) {
+	case '\0':	break;
+	case '\t':
+	case ' ':	ret++; break;
+	default:	return FALSE;
+	case ':':
+	    if ((val >= 256) || (shift >= 24))	return FALSE;
+	    total |= val << shift;
+	    shift += 8;
+	    ret++;
+	    continue;
+	}
 
-    *data |= val;
-    *ptr = ret;
-    return TRUE;
+	if (!digits)				return FALSE;
+	if (shift && (val >= 256 || sign))	return FALSE;
+	total |= val << shift;
+	*data = sign ? -total : total;
+	*ptr = ret;
+	return TRUE;
+    }
 }
 
 /**************************************************************************
@@ -1068,7 +1099,7 @@ static	DWORD	MCI_ParseOptArgs(DWORD* data, int _offset, LPCWSTR lpCmd,
 		break;
 	    case MCI_RETURN:
 		if (offset != _offset) {
-		    ERR("MCI_RETURN not in first position\n");
+		    FIXME("MCI_RETURN not in first position\n");
 		    return MCIERR_PARSER_INTERNAL;
 		}
 	    }
@@ -1116,7 +1147,6 @@ static	DWORD	MCI_ParseOptArgs(DWORD* data, int _offset, LPCWSTR lpCmd,
 			!MCI_GetDWord(&(data[offset+1]), &args) ||
 			!MCI_GetDWord(&(data[offset+2]), &args) ||
 			!MCI_GetDWord(&(data[offset+3]), &args)) {
-			ERR("Bad rect %s\n", debugstr_w(args));
 			return MCIERR_BAD_INTEGER;
 		    }
 		    TRACE("flag=%08x for rectangle\n", flg);
@@ -1156,7 +1186,7 @@ static	DWORD	MCI_ParseOptArgs(DWORD* data, int _offset, LPCWSTR lpCmd,
 	    return MCIERR_UNRECOGNIZED_COMMAND;
 	}
 	if (offset == MCI_DATA_SIZE) {
-	    ERR("Internal data[] buffer overflow\n");
+	    FIXME("Internal data[] buffer overflow\n");
 	    return MCIERR_PARSER_INTERNAL;
 	}
     }
@@ -1274,7 +1304,7 @@ static	DWORD	MCI_HandleReturnValues(DWORD dwRet, LPWINE_MCIDRIVER wmd, DWORD ret
 	    snprintfW(lpstrRet, uRetLen, fmt_d4, data[0], data[1], data[2], data[3]);
 	    break;
         }
-	default:		ERR("oops\n");
+	default:		FIXME("Unknown MCI return type %d\n", retType);
 	}
     }
     return LOWORD(dwRet);
@@ -1286,7 +1316,7 @@ static	DWORD	MCI_HandleReturnValues(DWORD dwRet, LPWINE_MCIDRIVER wmd, DWORD ret
 DWORD WINAPI mciSendStringW(LPCWSTR lpstrCommand, LPWSTR lpstrRet,
 			    UINT uRetLen, HWND hwndCallback)
 {
-    LPWSTR		verb, dev, args;
+    LPWSTR		verb, dev, args, devType = NULL;
     LPWINE_MCIDRIVER	wmd = 0;
     MCIDEVICEID		uDevID, auto_open = 0;
     DWORD		dwFlags = 0, dwRet = 0;
@@ -1330,7 +1360,7 @@ DWORD WINAPI mciSendStringW(LPCWSTR lpstrCommand, LPWSTR lpstrRet,
 
     /* Determine devType from open */
     if (!strcmpW(verb, wszOpen)) {
-	LPWSTR	devType, tmp;
+	LPWSTR	tmp;
         WCHAR	buf[128];
 
 	/* case dev == 'new' has to be handled */
@@ -1348,6 +1378,8 @@ DWORD WINAPI mciSendStringW(LPCWSTR lpstrCommand, LPWSTR lpstrRet,
 		dwRet = MCIERR_MISSING_DEVICE_NAME;
 		goto errCleanUp;
 	    }
+	    dwFlags |= MCI_OPEN_ELEMENT;
+	    data.open.lpstrElementName = &wszNull[0];
 	} else if ((devType = strchrW(dev, '!')) != NULL) {
 	    *devType++ = '\0';
 	    tmp = devType; devType = dev; dev = tmp;
@@ -1394,7 +1426,6 @@ DWORD WINAPI mciSendStringW(LPCWSTR lpstrCommand, LPWSTR lpstrRet,
 	dwRet = MCI_LoadMciDriver(devType, &wmd);
 	if (dwRet == MCIERR_DEVICE_NOT_INSTALLED)
 	    dwRet = MCIERR_INVALID_DEVICE_NAME;
-	HeapFree(GetProcessHeap(), 0, devType);
 	if (dwRet)
 	    goto errCleanUp;
     } else if ((MCI_ALL_DEVICE_ID != uDevID) && !(wmd = MCI_GetDriver(mciGetDeviceIDW(dev)))
@@ -1475,7 +1506,9 @@ DWORD WINAPI mciSendStringW(LPCWSTR lpstrCommand, LPWSTR lpstrRet,
         break;
 #endif
     default:
-	ERR("oops\n");
+	FIXME("Unknown MCI return type %d\n", retType);
+	dwRet = MCIERR_PARSER_INTERNAL;
+	goto errCleanUp;
     }
 
     TRACE("verb=%s on dev=%s; offset=%d\n", 
@@ -1504,7 +1537,7 @@ DWORD WINAPI mciSendStringW(LPCWSTR lpstrCommand, LPWSTR lpstrRet,
     case MCI_OPEN:
 	if (strcmpW(verb, wszOpen)) {
 	    FIXME("Cannot open with command %s\n", debugstr_w(verb));
-	    dwRet = MCIERR_INTERNAL;
+	    dwRet = MCIERR_DRIVER_INTERNAL;
 	    wMsg = 0;
 	    goto errCleanUp;
 	}
@@ -1545,11 +1578,12 @@ DWORD WINAPI mciSendStringW(LPCWSTR lpstrCommand, LPWSTR lpstrRet,
     } else {
 	dwRet = MCI_SendCommand(wmd ? wmd->wDeviceID : uDevID, wMsg, dwFlags, (DWORD_PTR)&data);
     }
-    TRACE("=> 1/ %x (%s)\n", dwRet, debugstr_w(lpstrRet));
     if (!LOWORD(dwRet)) {
+	TRACE("=> 1/ %x (%s)\n", dwRet, debugstr_w(lpstrRet));
 	dwRet = MCI_HandleReturnValues(dwRet, wmd, retType, &data.generic, lpstrRet, uRetLen);
 	TRACE("=> 2/ %x (%s)\n", dwRet, debugstr_w(lpstrRet));
-    }
+    } else
+	TRACE("=> %x\n", dwRet);
 
 errCleanUp:
     if (auto_open) {
@@ -1561,6 +1595,7 @@ errCleanUp:
     }
     if (wMsg == MCI_OPEN && LOWORD(dwRet) && wmd)
 	MCI_UnLoadMciDriver(wmd);
+    HeapFree(GetProcessHeap(), 0, devType);
     HeapFree(GetProcessHeap(), 0, verb);
     return dwRet;
 }
@@ -2019,14 +2054,13 @@ static	DWORD MCI_SysInfo(UINT uDevID, DWORD dwFlags, LPMCI_SYSINFO_PARMSW lpParm
  */
 static	DWORD MCI_Break(UINT wDevID, DWORD dwFlags, LPMCI_BREAK_PARMS lpParms)
 {
-    DWORD	dwRet = 0;
-
-    if (lpParms == NULL)	return MCIERR_NULL_PARAMETER_BLOCK;
+    if (lpParms == NULL)
+        return MCIERR_NULL_PARAMETER_BLOCK;
     FIXME("(%04x) vkey %04X stub\n", dwFlags, lpParms->nVirtKey);
 
-    if (MMSYSERR_NOERROR==dwRet && (dwFlags & MCI_NOTIFY))
+    if (dwFlags & MCI_NOTIFY)
         mciDriverNotify((HWND)lpParms->dwCallback, wDevID, MCI_NOTIFY_SUCCESSFUL);
-    return dwRet;
+    return MMSYSERR_NOERROR;
 }
 
 /**************************************************************************

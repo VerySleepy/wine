@@ -28,10 +28,10 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <sys/types.h>
 #ifdef HAVE_UNISTD_H
 # include <unistd.h>
 #endif
-
 #ifdef HAVE_SYS_PARAM_H
 # include <sys/param.h>
 #endif
@@ -42,13 +42,11 @@
 #  include <sys/syscall.h>
 # endif
 #endif
-
-#ifdef HAVE_SYS_VM86_H
-# include <sys/vm86.h>
-#endif
-
 #ifdef HAVE_SYS_SIGNAL_H
 # include <sys/signal.h>
+#endif
+#ifdef HAVE_SYS_UCONTEXT_H
+# include <sys/ucontext.h>
 #endif
 
 #include "ntstatus.h"
@@ -97,9 +95,6 @@ static pthread_key_t teb_key;
 #endif /* linux */
 
 #ifdef __APPLE__
-
-# include <sys/ucontext.h>
-# include <sys/types.h>
 
 /* All Registers access - only for local access */
 # define REG_sig(reg_name, context)		((context)->uc_mcontext->ss.reg_name)
@@ -963,7 +958,7 @@ NTSTATUS signal_alloc_thread( TEB **teb )
 
     if (!sigstack_zero_bits)
     {
-        size_t min_size = getpagesize();  /* this is just for the TEB, we don't use a signal stack yet */
+        size_t min_size = page_size;  /* this is just for the TEB, we don't use a signal stack yet */
         /* find the first power of two not smaller than min_size */
         while ((1u << sigstack_zero_bits) < min_size) sigstack_zero_bits++;
         assert( sizeof(TEB) <= min_size );
@@ -1003,12 +998,12 @@ void signal_free_thread( TEB *teb )
  */
 void signal_init_thread( TEB *teb )
 {
-    static int init_done;
+    static BOOL init_done;
 
     if (!init_done)
     {
         pthread_key_create( &teb_key, NULL );
-        init_done = 1;
+        init_done = TRUE;
     }
     pthread_setspecific( teb_key, teb );
 }

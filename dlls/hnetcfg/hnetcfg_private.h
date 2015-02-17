@@ -16,10 +16,25 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+enum type_id
+{
+    INetFwAuthorizedApplication_tid,
+    INetFwAuthorizedApplications_tid,
+    INetFwMgr_tid,
+    INetFwOpenPort_tid,
+    INetFwPolicy_tid,
+    INetFwProfile_tid,
+    last_tid
+};
+
+HRESULT get_typeinfo(enum type_id, ITypeInfo **) DECLSPEC_HIDDEN;
+void release_typelib(void) DECLSPEC_HIDDEN;
+
 HRESULT NetFwMgr_create(IUnknown *, LPVOID *) DECLSPEC_HIDDEN;
 HRESULT NetFwPolicy_create(IUnknown *, LPVOID *) DECLSPEC_HIDDEN;
 HRESULT NetFwProfile_create(IUnknown *, LPVOID *) DECLSPEC_HIDDEN;
 HRESULT NetFwAuthorizedApplication_create(IUnknown *, LPVOID *) DECLSPEC_HIDDEN;
 HRESULT NetFwAuthorizedApplications_create(IUnknown *, LPVOID *) DECLSPEC_HIDDEN;
 HRESULT NetFwOpenPorts_create(IUnknown *, LPVOID *) DECLSPEC_HIDDEN;
+HRESULT NetFwOpenPort_create(IUnknown *, LPVOID *) DECLSPEC_HIDDEN;
 HRESULT NetFwServices_create(IUnknown *, LPVOID *) DECLSPEC_HIDDEN;

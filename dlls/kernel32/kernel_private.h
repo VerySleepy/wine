@@ -53,6 +53,7 @@ static inline obj_handle_t console_handle_unmap(HANDLE h)
 #define KERNEL32_CONSOLE_SHELL          ((HANDLE)2)
 
 extern HMODULE kernel32_handle DECLSPEC_HIDDEN;
+extern SYSTEM_BASIC_INFORMATION system_info DECLSPEC_HIDDEN;
 
 extern const WCHAR *DIR_Windows DECLSPEC_HIDDEN;
 extern const WCHAR *DIR_System DECLSPEC_HIDDEN;
@@ -74,12 +75,14 @@ enum binary_type
     BINARY_UNIX_LIB
 };
 
-#define BINARY_FLAG_DLL   0x01
-#define BINARY_FLAG_64BIT 0x02
+#define BINARY_FLAG_DLL     0x01
+#define BINARY_FLAG_64BIT   0x02
+#define BINARY_FLAG_FAKEDLL 0x04
 
 struct binary_info
 {
     enum binary_type type;
+    DWORD            arch;
     DWORD            flags;
     void            *res_start;
     void            *res_end;

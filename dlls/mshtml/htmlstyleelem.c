@@ -17,6 +17,7 @@
  */
 
 #include <stdarg.h>
+#include <assert.h>
 
 #define COBJMACROS
 
@@ -38,6 +39,7 @@ typedef struct {
     IHTMLStyleElement IHTMLStyleElement_iface;
 
     nsIDOMHTMLStyleElement *nsstyle;
+    IHTMLStyleSheet *style_sheet;
 } HTMLStyleElement;
 
 static inline HTMLStyleElement *impl_from_IHTMLStyleElement(IHTMLStyleElement *iface)
@@ -182,8 +184,31 @@ static HRESULT WINAPI HTMLStyleElement_get_onerror(IHTMLStyleElement *iface, VAR
 static HRESULT WINAPI HTMLStyleElement_get_styleSheet(IHTMLStyleElement *iface, IHTMLStyleSheet **p)
 {
     HTMLStyleElement *This = impl_from_IHTMLStyleElement(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    if(!This->nsstyle)
+        return E_FAIL;
+
+    if(!This->style_sheet) {
+        nsIDOMStyleSheet *ss;
+        nsresult nsres;
+
+        nsres = nsIDOMHTMLStyleElement_GetDOMStyleSheet(This->nsstyle, &ss);
+        assert(nsres == NS_OK);
+
+        if(ss) {
+            This->style_sheet = HTMLStyleSheet_Create(ss);
+            nsIDOMStyleSheet_Release(ss);
+            if(!This->style_sheet)
+                return E_OUTOFMEMORY;
+        }
+    }
+
+    if(This->style_sheet)
+        IHTMLStyleSheet_AddRef(This->style_sheet);
+    *p = This->style_sheet;
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLStyleElement_put_disabled(IHTMLStyleElement *iface, VARIANT_BOOL v)
@@ -286,17 +311,52 @@ static void HTMLStyleElement_destructor(HTMLDOMNode *iface)
 {
     HTMLStyleElement *This = impl_from_HTMLDOMNode(iface);
 
-    if(This->nsstyle)
-        nsIDOMHTMLStyleElement_Release(This->nsstyle);
+    if(This->style_sheet) {
+        IHTMLStyleSheet_Release(This->style_sheet);
+        This->style_sheet = NULL;
+    }
 
-    HTMLElement_destructor(&This->element.node);
+    HTMLElement_destructor(iface);
+}
+
+static void HTMLStyleElement_traverse(HTMLDOMNode *iface, nsCycleCollectionTraversalCallback *cb)
+{
+    HTMLStyleElement *This = impl_from_HTMLDOMNode(iface);
+
+    if(This->nsstyle)
+        note_cc_edge((nsISupports*)This->nsstyle, "This->nsstyle", cb);
+}
+
+static void HTMLStyleElement_unlink(HTMLDOMNode *iface)
+{
+    HTMLStyleElement *This = impl_from_HTMLDOMNode(iface);
+
+    if(This->nsstyle) {
+        nsIDOMHTMLStyleElement *nsstyle = This->nsstyle;
+
+        This->nsstyle = NULL;
+        nsIDOMHTMLStyleElement_Release(nsstyle);
+    }
 }
 
 static const NodeImplVtbl HTMLStyleElementImplVtbl = {
     HTMLStyleElement_QI,
     HTMLStyleElement_destructor,
+    HTMLElement_cpc,
     HTMLElement_clone,
-    HTMLElement_get_attr_col
+    HTMLElement_handle_event,
+    HTMLElement_get_attr_col,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    HTMLStyleElement_traverse,
+    HTMLStyleElement_unlink
 };
 
 static const tid_t HTMLStyleElement_iface_tids[] = {
@@ -323,14 +383,11 @@ HRESULT HTMLStyleElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem
     ret->IHTMLStyleElement_iface.lpVtbl = &HTMLStyleElementVtbl;
     ret->element.node.vtbl = &HTMLStyleElementImplVtbl;
 
-    nsres = nsIDOMHTMLElement_QueryInterface(nselem, &IID_nsIDOMHTMLStyleElement, (void**)&ret->nsstyle);
-    if(NS_FAILED(nsres)) {
-        ERR("Could not get nsIDOMHTMLStyleElement iface: %08x\n", nsres);
-        heap_free(ret);
-        return E_FAIL;
-    }
-
     HTMLElement_Init(&ret->element, doc, nselem, &HTMLStyleElement_dispex);
+
+    nsres = nsIDOMHTMLElement_QueryInterface(nselem, &IID_nsIDOMHTMLStyleElement, (void**)&ret->nsstyle);
+    assert(nsres == NS_OK);
+
     *elem = &ret->element;
     return S_OK;
 }

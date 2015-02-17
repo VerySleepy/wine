@@ -79,9 +79,7 @@ WINE_DECLARE_DEBUG_CHANNEL(relay);
 #define EF_AFTER_WRAP		0x0080	/* the caret is displayed after the last character of a
 					   wrapped line, instead of in front of the next character */
 #define EF_USE_SOFTBRK		0x0100	/* Enable soft breaks in text. */
-#define EF_APP_HAS_HANDLE       0x0200  /* Set when an app sends EM_[G|S]ETHANDLE.  We are in sole control of
-                                           the text buffer if this is clear. */
-#define EF_DIALOGMODE           0x0400  /* Indicates that we are inside a dialog window */
+#define EF_DIALOGMODE           0x0200  /* Indicates that we are inside a dialog window */
 
 typedef enum
 {
@@ -140,6 +138,7 @@ typedef struct
 				           Even if parent will change, EN_* messages
 					   should be sent to the first parent. */
 	HWND hwndListBox;		/* handle of ComboBox's listbox or NULL */
+	INT wheelDeltaRemainder;        /* scroll wheel delta left over after scrolling whole lines */
 	/*
 	 *	only for multi line controls
 	 */
@@ -150,6 +149,7 @@ typedef struct
 	HLOCAL hloc32W;			/* our unicode local memory block */
 	HLOCAL hloc32A;			/* alias for ANSI control receiving EM_GETHANDLE
 				   	   or EM_SETHANDLE */
+        HLOCAL hlocapp;                 /* The text buffer handle belongs to the app */
 	/*
 	 * IME Data
 	 */
@@ -268,11 +268,11 @@ static inline UINT get_text_length(EDITSTATE *es)
  *	EDIT_WordBreakProc
  *
  *	Find the beginning of words.
- *	Note:	unlike the specs for a WordBreakProc, this function only
- *		allows to be called without linebreaks between s[0] up to
+ *	Note:	unlike the specs for a WordBreakProc, this function can
+ *		only be called without linebreaks between s[0] up to
  *		s[count - 1].  Remember it is only called
  *		internally, so we can decide this for ourselves.
- *		Additional we will always be breaking the full string.
+ *		Additionally we will always be breaking the full string.
  *
  */
 static INT EDIT_WordBreakProc(EDITSTATE *es, LPWSTR s, INT index, INT count, INT action)
@@ -403,6 +403,7 @@ static SCRIPT_STRING_ANALYSIS EDIT_UpdateUniscribeData_linedef(EDITSTATE *es, HD
 		HFONT old_font = NULL;
 		HDC udc = dc;
 		SCRIPT_TABDEF tabdef;
+		HRESULT hr;
 
 		if (!udc)
 			udc = GetDC(es->hwndSelf);
@@ -414,7 +415,15 @@ static SCRIPT_STRING_ANALYSIS EDIT_UpdateUniscribeData_linedef(EDITSTATE *es, HD
 		tabdef.pTabStops = es->tabs;
 		tabdef.iTabOrigin = 0;
 
-		ScriptStringAnalyse(udc, &es->text[index], line_def->net_length, (1.5*line_def->net_length+16), -1, SSA_LINK|SSA_FALLBACK|SSA_GLYPHS|SSA_TAB, -1, NULL, NULL, NULL, &tabdef, NULL, &line_def->ssa);
+		hr = ScriptStringAnalyse(udc, &es->text[index], line_def->net_length,
+                                         (1.5*line_def->net_length+16), -1,
+                                         SSA_LINK|SSA_FALLBACK|SSA_GLYPHS|SSA_TAB, -1,
+                                         NULL, NULL, NULL, &tabdef, NULL, &line_def->ssa);
+		if (FAILED(hr))
+		{
+			WARN("ScriptStringAnalyse failed (%x)\n",hr);
+			line_def->ssa = NULL;
+		}
 
 		if (es->font)
 			SelectObject(udc, old_font);
@@ -467,6 +476,12 @@ static SCRIPT_STRING_ANALYSIS EDIT_UpdateUniscribeData(EDITSTATE *es, HDC dc, IN
 	}
 }
 
+static inline INT get_vertical_line_count(EDITSTATE *es)
+{
+	INT vlc = (es->format_rect.bottom - es->format_rect.top) / es->line_height;
+	return max(1,vlc);
+}
+
 /*********************************************************************
  *
  *	EDIT_BuildLineDefs_ML
@@ -487,6 +502,7 @@ static void EDIT_BuildLineDefs_ML(EDITSTATE *es, INT istart, INT iend, INT delta
 	INT line_count = es->line_count;
 	INT orig_net_length;
 	RECT rc;
+	INT vlc;
 
 	if (istart == iend && delta == 0)
 		return;
@@ -527,6 +543,7 @@ static void EDIT_BuildLineDefs_ML(EDITSTATE *es, INT istart, INT iend, INT delta
 
 	fw = es->format_rect.right - es->format_rect.left;
 	current_position = es->text + current_line->index;
+	vlc = get_vertical_line_count(es);
 	do {
 		if (current_line != start_line)
 		{
@@ -564,9 +581,9 @@ static void EDIT_BuildLineDefs_ML(EDITSTATE *es, INT istart, INT iend, INT delta
 		cp = current_position;
 		while (*cp) {
                     if (*cp == '\n') break;
-			if ((*cp == '\r') && (*(cp + 1) == '\n'))
-				break;
-			cp++;
+                    if ((*cp == '\r') && (*(cp + 1) == '\n'))
+                        break;
+                    cp++;
 		}
 
 		/* Mark type of line termination */
@@ -589,9 +606,13 @@ static void EDIT_BuildLineDefs_ML(EDITSTATE *es, INT istart, INT iend, INT delta
 			const SIZE *sz;
 			EDIT_InvalidateUniscribeData_linedef(current_line);
 			EDIT_UpdateUniscribeData_linedef(es, NULL, current_line);
-			sz = ScriptString_pSize(current_line->ssa);
-			/* Calculate line width */
-			current_line->width = sz->cx;
+			if (current_line->ssa)
+			{
+				sz = ScriptString_pSize(current_line->ssa);
+				/* Calculate line width */
+				current_line->width = sz->cx;
+			}
+			else current_line->width = es->char_width * current_line->net_length;
 		}
 		else current_line->width = 0;
 
@@ -619,7 +640,9 @@ static void EDIT_BuildLineDefs_ML(EDITSTATE *es, INT istart, INT iend, INT delta
 				current_line->net_length = prev;
 				EDIT_InvalidateUniscribeData_linedef(current_line);
 				EDIT_UpdateUniscribeData_linedef(es, NULL, current_line);
-				sz = ScriptString_pSize(current_line->ssa);
+				if (current_line->ssa)
+					sz = ScriptString_pSize(current_line->ssa);
+				else sz = 0;
 				if (sz)
 					current_line->width = sz->cx;
 				else
@@ -635,18 +658,23 @@ static void EDIT_BuildLineDefs_ML(EDITSTATE *es, INT istart, INT iend, INT delta
 				EDIT_InvalidateUniscribeData_linedef(current_line);
 				EDIT_UpdateUniscribeData_linedef(es, NULL, current_line);
 
-				count = ScriptString_pcOutChars(current_line->ssa);
-				piDx = HeapAlloc(GetProcessHeap(),0,sizeof(INT) * (*count));
-				ScriptStringGetLogicalWidths(current_line->ssa,piDx);
+				if (current_line->ssa)
+				{
+					count = ScriptString_pcOutChars(current_line->ssa);
+					piDx = HeapAlloc(GetProcessHeap(),0,sizeof(INT) * (*count));
+					ScriptStringGetLogicalWidths(current_line->ssa,piDx);
 
-				prev = current_line->net_length-1;
-				do {
-					current_line->width -= piDx[prev];
-					prev--;
-				} while ( prev > 0 && current_line->width > fw);
-				if (prev<=0)
-					prev = 1;
-				HeapFree(GetProcessHeap(),0,piDx);
+					prev = current_line->net_length-1;
+					do {
+						current_line->width -= piDx[prev];
+						prev--;
+					} while ( prev > 0 && current_line->width > fw);
+					if (prev<=0)
+						prev = 1;
+					HeapFree(GetProcessHeap(),0,piDx);
+				}
+				else
+					prev = (fw / es->char_width);
 			}
 
 			/* If the first line we are calculating, wrapped before istart, we must
@@ -671,8 +699,13 @@ static void EDIT_BuildLineDefs_ML(EDITSTATE *es, INT istart, INT iend, INT delta
 			if (current_line->net_length > 0)
 			{
 				EDIT_UpdateUniscribeData_linedef(es, NULL, current_line);
-				sz = ScriptString_pSize(current_line->ssa);
-				current_line->width = sz->cx;
+				if (current_line->ssa)
+				{
+					sz = ScriptString_pSize(current_line->ssa);
+					current_line->width = sz->cx;
+				}
+				else
+					current_line->width = 0;
 			}
 			else current_line->width = 0;
 		    }
@@ -708,6 +741,11 @@ static void EDIT_BuildLineDefs_ML(EDITSTATE *es, INT istart, INT iend, INT delta
 		es->text_width = max(es->text_width, current_line->width);
 		current_position += current_line->length;
 		previous_line = current_line;
+
+		/* Discard data for non-visible lines. It will be calculated as needed */
+		if ((line_index < es->y_offset) || (line_index > es->y_offset + vlc))
+			EDIT_InvalidateUniscribeData_linedef(current_line);
+
 		current_line = current_line->next;
 		line_index++;
 	} while (previous_line->ending != END_0);
@@ -751,7 +789,7 @@ static void EDIT_BuildLineDefs_ML(EDITSTATE *es, INT istart, INT iend, INT delta
 		if ((es->style & ES_CENTER) || (es->style & ES_RIGHT))
 			rc.left = es->format_rect.left;
 		else
-            rc.left = LOWORD(EDIT_EM_PosFromChar(es, nstart_index, FALSE));
+                        rc.left = LOWORD(EDIT_EM_PosFromChar(es, nstart_index, FALSE));
 		rc.right = es->format_rect.right;
 		SetRectRgn(hrgn, rc.left, rc.top, rc.right, rc.bottom);
 
@@ -830,7 +868,7 @@ static INT EDIT_CharFromPos(EDITSTATE *es, INT x, INT y, LPBOOL after_wrap)
 				*after_wrap = (line_def->ending == END_WRAP);
 			return line_index + line_def->net_length;
 		}
-		if (x <= 0) {
+		if (x <= 0 || !line_def->ssa) {
 			if (after_wrap)
 				*after_wrap = FALSE;
 			return line_index;
@@ -863,17 +901,22 @@ static INT EDIT_CharFromPos(EDITSTATE *es, INT x, INT y, LPBOOL after_wrap)
 		EDIT_UpdateUniscribeData(es, NULL, 0);
 		if (es->x_offset)
 		{
-			if (es->x_offset>= get_text_length(es))
+			if (es->ssa)
 			{
-				const SIZE *size;
-				size = ScriptString_pSize(es->ssa);
-				xoff = size->cx;
+				if (es->x_offset>= get_text_length(es))
+				{
+					const SIZE *size;
+					size = ScriptString_pSize(es->ssa);
+					xoff = size->cx;
+				}
+				ScriptStringCPtoX(es->ssa, es->x_offset, FALSE, &xoff);
 			}
-			ScriptStringCPtoX(es->ssa, es->x_offset, FALSE, &xoff);
+			else
+				xoff = 0;
 		}
 		if (x < 0)
 		{
-			if (x + xoff > 0)
+			if (x + xoff > 0 || !es->ssa)
 			{
 				ScriptStringXtoCP(es->ssa, x+xoff, &index, &trailing);
 				if (trailing) index++;
@@ -892,11 +935,13 @@ static INT EDIT_CharFromPos(EDITSTATE *es, INT x, INT y, LPBOOL after_wrap)
 					index = 0;
 				else if (x > size->cx)
 					index = get_text_length(es);
-				else
+				else if (es->ssa)
 				{
 					ScriptStringXtoCP(es->ssa, x+xoff, &index, &trailing);
 					if (trailing) index++;
 				}
+				else
+					index = 0;
 			}
 			else
 				index = es->x_offset;
@@ -1064,8 +1109,13 @@ static LRESULT EDIT_EM_PosFromChar(EDITSTATE *es, INT index, BOOL after_wrap)
 
 		lw = line_def->width;
 		w = es->format_rect.right - es->format_rect.left;
-		ScriptStringCPtoX(line_def->ssa, (index - 1) - li, TRUE, &x);
-		x -= es->x_offset;
+		if (line_def->ssa)
+		{
+			ScriptStringCPtoX(line_def->ssa, (index - 1) - li, TRUE, &x);
+			x -= es->x_offset;
+		}
+		else
+			x = es->x_offset;
 
 		if (es->style & ES_RIGHT)
 			x = w - (lw - x);
@@ -1077,18 +1127,26 @@ static LRESULT EDIT_EM_PosFromChar(EDITSTATE *es, INT index, BOOL after_wrap)
 		EDIT_UpdateUniscribeData(es, NULL, 0);
 		if (es->x_offset)
 		{
-			if (es->x_offset >= get_text_length(es))
+			if (es->ssa)
 			{
-				if (es->ssa)
+				if (es->x_offset >= get_text_length(es))
 				{
-					const SIZE *size;
-					size = ScriptString_pSize(es->ssa);
-					xoff = size->cx;
+					int leftover = es->x_offset - get_text_length(es);
+					if (es->ssa)
+					{
+						const SIZE *size;
+						size = ScriptString_pSize(es->ssa);
+						xoff = size->cx;
+					}
+					else
+						xoff = 0;
+					xoff += es->char_width * leftover;
 				}
 				else
-					xoff = 0;
+					ScriptStringCPtoX(es->ssa, es->x_offset, FALSE, &xoff);
 			}
-			ScriptStringCPtoX(es->ssa, es->x_offset, FALSE, &xoff);
+			else
+				xoff = 0;
 		}
 		if (index)
 		{
@@ -1103,8 +1161,10 @@ static LRESULT EDIT_EM_PosFromChar(EDITSTATE *es, INT index, BOOL after_wrap)
 				else
 					xi = 0;
 			}
-			else
+			else if (es->ssa)
 				ScriptStringCPtoX(es->ssa, index, FALSE, &xi);
+			else
+				xi = 0;
 		}
 		x = xi - xoff;
 
@@ -1139,18 +1199,52 @@ static LRESULT EDIT_EM_PosFromChar(EDITSTATE *es, INT index, BOOL after_wrap)
  */
 static void EDIT_GetLineRect(EDITSTATE *es, INT line, INT scol, INT ecol, LPRECT rc)
 {
-	INT line_index =  EDIT_EM_LineIndex(es, line);
-	INT pt1, pt2;
+	SCRIPT_STRING_ANALYSIS ssa;
+	INT line_index = 0;
+	INT pt1, pt2, pt3;
 
 	if (es->style & ES_MULTILINE)
+	{
+		const LINEDEF *line_def = NULL;
 		rc->top = es->format_rect.top + (line - es->y_offset) * es->line_height;
+		if (line >= es->line_count)
+			return;
+
+		line_def = es->first_line_def;
+		if (line == -1) {
+			INT index = es->selection_end - line_def->length;
+			while ((index >= 0) && line_def->next) {
+				line_index += line_def->length;
+				line_def = line_def->next;
+				index -= line_def->length;
+			}
+		} else {
+			while (line > 0) {
+				line_index += line_def->length;
+				line_def = line_def->next;
+				line--;
+			}
+		}
+		ssa = line_def->ssa;
+	}
 	else
+	{
+		line_index = 0;
 		rc->top = es->format_rect.top;
+		ssa = es->ssa;
+	}
+
 	rc->bottom = rc->top + es->line_height;
 	pt1 = (scol == 0) ? es->format_rect.left : (short)LOWORD(EDIT_EM_PosFromChar(es, line_index + scol, TRUE));
 	pt2 = (ecol == -1) ? es->format_rect.right : (short)LOWORD(EDIT_EM_PosFromChar(es, line_index + ecol, TRUE));
-	rc->right = max(pt1 , pt2);
-	rc->left = min(pt1, pt2);
+	if (ssa)
+	{
+		ScriptStringCPtoX(ssa, scol, FALSE, &pt3);
+		pt3+=es->format_rect.left;
+	}
+	else pt3 = pt1;
+	rc->right = max(max(pt1 , pt2),pt3);
+	rc->left = min(min(pt1, pt2),pt3);
 }
 
 
@@ -1169,6 +1263,8 @@ static inline void text_buffer_changed(EDITSTATE *es)
  */
 static void EDIT_LockBuffer(EDITSTATE *es)
 {
+        if (es->hlocapp) return;
+
 	if (!es->text) {
 
 	    if(!es->hloc32W) return;
@@ -1198,7 +1294,6 @@ static void EDIT_LockBuffer(EDITSTATE *es)
 	    }
 	    else es->text = LocalLock(es->hloc32W);
 	}
-        if(es->flags & EF_APP_HAS_HANDLE) text_buffer_changed(es);
 	es->lock_count++;
 }
 
@@ -1210,6 +1305,7 @@ static void EDIT_LockBuffer(EDITSTATE *es)
  */
 static void EDIT_UnlockBuffer(EDITSTATE *es, BOOL force)
 {
+        if (es->hlocapp) return;
 
 	/* Edit window might be already destroyed */
 	if(!IsWindow(es->hwndSelf))
@@ -1285,7 +1381,7 @@ static BOOL EDIT_MakeFit(EDITSTATE *es, UINT size)
 
 	TRACE("trying to ReAlloc to %d+1 characters\n", size);
 
-	/* Force edit to unlock it's buffer. es->text now NULL */
+        /* Force edit to unlock its buffer. es->text now NULL */
 	EDIT_UnlockBuffer(es, TRUE);
 
 	if (es->hloc32W) {
@@ -1384,13 +1480,6 @@ static void EDIT_SL_InvalidateText(EDITSTATE *es, INT start, INT end)
 	EDIT_GetLineRect(es, 0, start, end, &line_rect);
 	if (IntersectRect(&rc, &line_rect, &es->format_rect))
 		EDIT_UpdateText(es, &rc, TRUE);
-}
-
-
-static inline INT get_vertical_line_count(EDITSTATE *es)
-{
-	INT vlc = (es->format_rect.bottom - es->format_rect.top) / es->line_height;
-	return max(1,vlc);
 }
 
 /*********************************************************************
@@ -2397,7 +2486,11 @@ static HLOCAL EDIT_EM_GetHandle(EDITSTATE *es)
 	    hLocal = es->hloc32A;
 	}
 
-        es->flags |= EF_APP_HAS_HANDLE;
+        EDIT_UnlockBuffer(es, TRUE);
+
+        /* The text buffer handle belongs to the app */
+        es->hlocapp = hLocal;
+
 	TRACE("Returning %p, LocalSize() = %ld\n", hLocal, LocalSize(hLocal));
 	return hLocal;
 }
@@ -2506,7 +2599,7 @@ static void EDIT_EM_ReplaceSel(EDITSTATE *es, BOOL can_undo, LPCWSTR lpsz_replac
 		es->text_width = 0;
 
 	/* Issue the EN_MAXTEXT notification and continue with replacing text
-	 * such that buffer limit is honored. */
+         * so that buffer limit is honored. */
 	if ((honor_limit) && (size > es->buffer_limit)) {
 		EDIT_NOTIFY_PARENT(es, EN_MAXTEXT);
 		/* Buffer limit can be smaller than the actual length of text in combobox */
@@ -2738,8 +2831,11 @@ static void EDIT_EM_SetHandle(EDITSTATE *es, HLOCAL hloc)
 
 	es->buffer_size = LocalSize(es->hloc32W)/sizeof(WCHAR) - 1;
 
-        es->flags |= EF_APP_HAS_HANDLE;
+        /* The text buffer handle belongs to the control */
+        es->hlocapp = NULL;
+
 	EDIT_LockBuffer(es);
+        text_buffer_changed(es);
 
 	es->x_offset = es->y_offset = 0;
 	es->selection_start = es->selection_end = 0;
@@ -2818,7 +2914,7 @@ static void EDIT_EM_SetMargins(EDITSTATE *es, INT action,
                 default_right_margin = tm.tmAveCharWidth / 2;
                 min_size = calc_min_set_margin_size(dc, default_left_margin, default_right_margin);
                 GetClientRect(es->hwndSelf, &rc);
-                if(rc.right - rc.left < min_size) {
+                if (!IsRectEmpty(&rc) && (rc.right - rc.left < min_size)) {
                     default_left_margin = es->left_margin;
                     default_right_margin = es->right_margin;
                 }
@@ -3148,14 +3244,11 @@ static LRESULT EDIT_WM_Char(EDITSTATE *es, WCHAR c)
 
 /*********************************************************************
  *
- *	WM_COMMAND
+ *	EDIT_ContextMenuCommand
  *
  */
-static void EDIT_WM_Command(EDITSTATE *es, INT code, INT id, HWND control)
+static void EDIT_ContextMenuCommand(EDITSTATE *es, UINT id)
 {
-	if (code || control)
-		return;
-
 	switch (id) {
 		case EM_UNDO:
                         SendMessageW(es->hwndSelf, WM_UNDO, 0, 0);
@@ -3173,8 +3266,7 @@ static void EDIT_WM_Command(EDITSTATE *es, INT code, INT id, HWND control)
                         SendMessageW(es->hwndSelf, WM_CLEAR, 0, 0);
 			break;
 		case EM_SETSEL:
-			EDIT_EM_SetSel(es, 0, (UINT)-1, FALSE);
-			EDIT_EM_ScrollCaret(es);
+                        SendMessageW(es->hwndSelf, EM_SETSEL, 0, -1);
 			break;
 		default:
 			ERR("unknown menu item, please report\n");
@@ -3205,6 +3297,7 @@ static void EDIT_WM_ContextMenu(EDITSTATE *es, INT x, INT y)
 	HMENU popup = GetSubMenu(menu, 0);
 	UINT start = es->selection_start;
 	UINT end = es->selection_end;
+	UINT cmd;
 
 	ORDER_UINT(start, end);
 
@@ -3233,7 +3326,12 @@ static void EDIT_WM_ContextMenu(EDITSTATE *es, INT x, INT y)
 	if (!(es->flags & EF_FOCUSED))
             SetFocus(es->hwndSelf);
 
-	TrackPopupMenu(popup, TPM_LEFTALIGN | TPM_RIGHTBUTTON, x, y, 0, es->hwndSelf, NULL);
+	cmd = TrackPopupMenu(popup, TPM_LEFTALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
+			     x, y, 0, es->hwndSelf, NULL);
+
+	if (cmd)
+	    EDIT_ContextMenuCommand(es, cmd);
+
 	DestroyMenu(menu);
 }
 
@@ -3307,7 +3405,7 @@ static BOOL EDIT_CheckCombo(EDITSTATE *es, UINT msg, INT key)
 
       case WM_SYSKEYDOWN: /* Handle Alt+up/down arrows */
          if (nEUI)
-            SendMessageW(hCombo, CB_SHOWDROPDOWN, bDropped ? FALSE : TRUE, 0);
+            SendMessageW(hCombo, CB_SHOWDROPDOWN, !bDropped, 0);
          else
             SendMessageW(hLBox, WM_KEYDOWN, VK_F4, 0);
          break;
@@ -3464,6 +3562,8 @@ static LRESULT EDIT_WM_KillFocus(EDITSTATE *es)
 	if(!(es->style & ES_NOHIDESEL))
 		EDIT_InvalidateText(es, es->selection_start, es->selection_end);
 	EDIT_NOTIFY_PARENT(es, EN_KILLFOCUS);
+	/* throw away left over scroll when we lose focus */
+	es->wheelDeltaRemainder = 0;
 	return 0;
 }
 
@@ -3608,7 +3708,7 @@ static void EDIT_WM_Paint(EDITSTATE *es, HDC hdc)
 					(es->style & ES_NOHIDESEL));
         dc = hdc ? hdc : BeginPaint(es->hwndSelf, &ps);
 
-	/* The dc we use for calcualting may not be the one we paint into.
+	/* The dc we use for calculating may not be the one we paint into.
 	   This is the safest action. */
 	EDIT_InvalidateUniscribeData(es);
 	GetClientRect(es->hwndSelf, &rcClient);
@@ -3661,11 +3761,13 @@ static void EDIT_WM_Paint(EDITSTATE *es, HDC hdc)
 	if (es->style & ES_MULTILINE) {
 		INT vlc = get_vertical_line_count(es);
 		for (i = es->y_offset ; i <= min(es->y_offset + vlc, es->y_offset + es->line_count - 1) ; i++) {
+			EDIT_UpdateUniscribeData(es, dc, i);
 			EDIT_GetLineRect(es, i, 0, -1, &rcLine);
 			if (IntersectRect(&rc, &rcRgn, &rcLine))
 				EDIT_PaintLine(es, dc, i, rev);
 		}
 	} else {
+		EDIT_UpdateUniscribeData(es, dc, 0);
 		EDIT_GetLineRect(es, 0, 0, -1, &rcLine);
 		if (IntersectRect(&rc, &rcRgn, &rcLine))
 			EDIT_PaintLine(es, dc, 0, rev);
@@ -3691,7 +3793,7 @@ static void EDIT_WM_SetFocus(EDITSTATE *es)
             EDIT_InvalidateText(es, es->selection_start, es->selection_end);
 
         /* single line edit updates itself */
-        if (!(es->style & ES_MULTILINE))
+        if (IsWindowVisible(es->hwndSelf) && !(es->style & ES_MULTILINE))
         {
             HDC hdc = GetDC(es->hwndSelf);
             EDIT_WM_Paint(es, hdc);
@@ -4321,10 +4423,16 @@ static void EDIT_ImeComposition(HWND hwnd, LPARAM CompFlag, EDITSTATE *es)
         return;
 
     if (CompFlag & GCS_RESULTSTR)
+    {
         EDIT_GetResultStr(hIMC, es);
-    if (CompFlag & GCS_COMPSTR)
-        EDIT_GetCompositionStr(hIMC, CompFlag, es);
-    cursor = ImmGetCompositionStringW(hIMC, GCS_CURSORPOS, 0, 0);
+        cursor = 0;
+    }
+    else
+    {
+        if (CompFlag & GCS_COMPSTR)
+            EDIT_GetCompositionStr(hIMC, CompFlag, es);
+        cursor = ImmGetCompositionStringW(hIMC, GCS_CURSORPOS, 0, 0);
+    }
     ImmReleaseContext(hwnd, hIMC);
     EDIT_SetCaretPos(es, es->selection_start + cursor, es->flags & EF_AFTER_WRAP);
 }
@@ -4505,12 +4613,14 @@ static LRESULT EDIT_WM_NCDestroy(EDITSTATE *es)
 {
 	LINEDEF *pc, *pp;
 
-	if (es->hloc32W) {
+        /* The app can own the text buffer handle */
+        if (es->hloc32W && (es->hloc32W != es->hlocapp)) {
 		LocalFree(es->hloc32W);
 	}
-	if (es->hloc32A) {
+        if (es->hloc32A && (es->hloc32A != es->hlocapp)) {
 		LocalFree(es->hloc32A);
 	}
+	EDIT_InvalidateUniscribeData(es);
 	pc = es->first_line_def;
 	while (pc)
 	{
@@ -4811,7 +4921,7 @@ LRESULT EditWndProc_common( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, B
                                 if (SendMessageW(GetParent(hwnd), CB_GETDROPPEDSTATE, 0, 0))
                                     result |= DLGC_WANTMESSAGE;
                         }
-                  }
+                    }
                 }
 		break;
 
@@ -4874,10 +4984,6 @@ LRESULT EditWndProc_common( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, B
 
 	case WM_CLEAR:
 		EDIT_WM_Clear(es);
-		break;
-
-	case WM_COMMAND:
-		EDIT_WM_Command(es, HIWORD(wParam), LOWORD(wParam), (HWND)lParam);
 		break;
 
         case WM_CONTEXTMENU:
@@ -5018,7 +5124,7 @@ LRESULT EditWndProc_common( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, B
 
         case WM_MOUSEWHEEL:
                 {
-                    int gcWheelDelta = 0;
+                    int wheelDelta;
                     UINT pulScrollLines = 3;
                     SystemParametersInfoW(SPI_GETWHEELSCROLLLINES,0, &pulScrollLines, 0);
 
@@ -5026,12 +5132,20 @@ LRESULT EditWndProc_common( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, B
                         result = DefWindowProcW(hwnd, msg, wParam, lParam);
                         break;
                     }
-                    gcWheelDelta -= GET_WHEEL_DELTA_WPARAM(wParam);
-                    if (abs(gcWheelDelta) >= WHEEL_DELTA && pulScrollLines)
+                    wheelDelta = GET_WHEEL_DELTA_WPARAM(wParam);
+                    /* if scrolling changes direction, ignore left overs */
+                    if ((wheelDelta < 0 && es->wheelDeltaRemainder < 0) ||
+                        (wheelDelta > 0 && es->wheelDeltaRemainder > 0))
+                        es->wheelDeltaRemainder += wheelDelta;
+                    else
+                        es->wheelDeltaRemainder = wheelDelta;
+                    if (es->wheelDeltaRemainder && pulScrollLines)
                     {
-                        int cLineScroll= (int) min((UINT) es->line_count, pulScrollLines);
-                        cLineScroll *= (gcWheelDelta / WHEEL_DELTA);
-			result = EDIT_EM_LineScroll(es, 0, cLineScroll);
+                        int cLineScroll;
+                        pulScrollLines = (int) min((UINT) es->line_count, pulScrollLines);
+                        cLineScroll = pulScrollLines * (float)es->wheelDeltaRemainder / WHEEL_DELTA;
+                        es->wheelDeltaRemainder -= WHEEL_DELTA * cLineScroll / (int)pulScrollLines;
+                        result = EDIT_EM_LineScroll(es, 0, -cLineScroll);
                     }
                 }
                 break;
@@ -5066,6 +5180,27 @@ LRESULT EditWndProc_common( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, B
 		break;
 
 	case WM_IME_CONTROL:
+		break;
+
+	case WM_IME_REQUEST:
+		switch (wParam)
+		{
+                    case IMR_QUERYCHARPOSITION:
+                    {
+                        LRESULT pos;
+                        IMECHARPOSITION *chpos = (IMECHARPOSITION *)lParam;
+
+                        pos = EDIT_EM_PosFromChar(es, es->selection_start + chpos->dwCharPos, FALSE);
+                        chpos->pt.x = LOWORD(pos);
+                        chpos->pt.y = HIWORD(pos);
+                        chpos->cLineHeight = es->line_height;
+                        chpos->rcDocument = es->format_rect;
+                        MapWindowPoints(hwnd, 0, &chpos->pt, 1);
+                        MapWindowPoints(hwnd, 0, (POINT*)&chpos->rcDocument, 2);
+                        result = 1;
+                        break;
+                    }
+		}
 		break;
 
 	default:

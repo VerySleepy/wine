@@ -5,4 +5,4 @@ IMPORTS   = advapi32
 C_SRCS = \
 	proxyodbc.c
 
-@MAKE_DLL_RULES@
+RC_SRCS = rsrc.rc

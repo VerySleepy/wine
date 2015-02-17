@@ -185,32 +185,22 @@ static WCHAR x500SubjectStrSemicolonReverseW[] = {
  'e','a','p','o','l','i','s',';',' ','S','=','M','i','n','n','e','s','o','t','a',
  ';',' ','C','=','U','S',0 };
 
-typedef BOOL (WINAPI *CryptDecodeObjectFunc)(DWORD, LPCSTR, const BYTE *,
- DWORD, DWORD, void *, DWORD *);
-typedef DWORD (WINAPI *CertNameToStrAFunc)(DWORD,LPVOID,DWORD,LPSTR,DWORD);
-typedef DWORD (WINAPI *CertNameToStrWFunc)(DWORD,LPVOID,DWORD,LPWSTR,DWORD);
-typedef DWORD (WINAPI *CertRDNValueToStrAFunc)(DWORD, PCERT_RDN_VALUE_BLOB,
+static HMODULE dll;
+static DWORD (WINAPI *pCertNameToStrA)(DWORD,LPVOID,DWORD,LPSTR,DWORD);
+static DWORD (WINAPI *pCertNameToStrW)(DWORD,LPVOID,DWORD,LPWSTR,DWORD);
+static DWORD (WINAPI *pCertRDNValueToStrA)(DWORD, PCERT_RDN_VALUE_BLOB,
  LPSTR, DWORD);
-typedef DWORD (WINAPI *CertRDNValueToStrWFunc)(DWORD, PCERT_RDN_VALUE_BLOB,
+static DWORD (WINAPI *pCertRDNValueToStrW)(DWORD, PCERT_RDN_VALUE_BLOB,
  LPWSTR, DWORD);
-typedef BOOL (WINAPI *CertStrToNameAFunc)(DWORD dwCertEncodingType,
+static BOOL (WINAPI *pCertStrToNameA)(DWORD dwCertEncodingType,
  LPCSTR pszX500, DWORD dwStrType, void *pvReserved, BYTE *pbEncoded,
  DWORD *pcbEncoded, LPCSTR *ppszError);
-typedef BOOL (WINAPI *CertStrToNameWFunc)(DWORD dwCertEncodingType,
+static BOOL (WINAPI *pCertStrToNameW)(DWORD dwCertEncodingType,
  LPCWSTR pszX500, DWORD dwStrType, void *pvReserved, BYTE *pbEncoded,
  DWORD *pcbEncoded, LPCWSTR *ppszError);
-typedef DWORD (WINAPI *CertGetNameStringAFunc)(PCCERT_CONTEXT cert, DWORD type,
+static DWORD (WINAPI *pCertGetNameStringA)(PCCERT_CONTEXT cert, DWORD type,
  DWORD flags, void *typePara, LPSTR str, DWORD cch);
 
-static HMODULE dll;
-static CertNameToStrAFunc pCertNameToStrA;
-static CertNameToStrWFunc pCertNameToStrW;
-static CryptDecodeObjectFunc pCryptDecodeObject;
-static CertRDNValueToStrAFunc pCertRDNValueToStrA;
-static CertRDNValueToStrWFunc pCertRDNValueToStrW;
-static CertStrToNameAFunc pCertStrToNameA;
-static CertStrToNameWFunc pCertStrToNameW;
-static CertGetNameStringAFunc pCertGetNameStringA;
 
 static void test_CertRDNValueToStrA(void)
 {
@@ -460,6 +450,15 @@ static BYTE encodedSemiCN[] = {
 static BYTE encodedNewlineCN[] = {
 0x30,0x11,0x31,0x0f,0x30,0x0d,0x06,0x03,0x55,0x04,0x03,0x1e,0x06,0x00,0x61,
 0x00,0x0a,0x00,0x62 };
+static BYTE encodedDummyCN[] = {
+0x30,0x1F,0x31,0x0E,0x30,0x0C,0x06,0x03,0x55,0x04,0x03,0x13,0x05,0x64,0x75,
+0x6D,0x6D,0x79,0x31,0x0D,0x30,0x0B,0x06,0x03,0x55,0x04,0x0C,0x13,0x04,0x74,
+0x65,0x73,0x74 };
+static BYTE encodedFields[] = {
+0x30,0x2F,0x31,0x12,0x30,0x10,0x06,0x03,0x55,0x04,0x03,0x13,0x09,0x57,0x69,
+0x6E,0x65,0x20,0x54,0x65,0x73,0x74,0x31,0x0C,0x30,0x0A,0x06,0x03,0x55,0x04,
+0x0C,0x13,0x03,0x31,0x32,0x33,0x31,0x0B,0x30,0x09,0x06,0x03,0x55,0x04,0x06,
+0x13,0x02,0x42,0x52 };
 
 static void test_CertNameToStrA(void)
 {
@@ -766,6 +765,8 @@ static const struct StrToNameA namesA[] = {
  { "CN=\">\"", sizeof(encodedGreaterThanCN), encodedGreaterThanCN },
  { "CN=\"#\"", sizeof(encodedHashCN), encodedHashCN },
  { "CN=\";\"", sizeof(encodedSemiCN), encodedSemiCN },
+ { "CN=dummy,T=test", sizeof(encodedDummyCN), encodedDummyCN },
+ { " CN =   Wine Test,T = 123, C = BR", sizeof(encodedFields), encodedFields },
 };
 
 static void test_CertStrToNameA(void)
@@ -859,6 +860,10 @@ static const WCHAR badlyQuotedCN_W[] = { 'C','N','=','"','"','1','"','"',0 };
 static const WCHAR simpleCN2_W[] = { 'C','N','=','"','1','"',0 };
 static const WCHAR simpleCN3_W[] = { 'C','N',' ','=',' ','"','1','"',0 };
 static const WCHAR japaneseCN_W[] = { 'C','N','=',0x226f,0x575b,0 };
+static const WCHAR dummyCN_W[] = { 'C','N','=','d','u','m','m','y',',','T','=','t','e','s','t',0 };
+static const WCHAR encodedFields_W[] = { ' ','C','N',' ','=',' ',' ',' ','W','i','n','e',' ','T',
+                                         'e','s','t',',','T',' ','=',' ','1','2','3',',',' ','C',
+                                         ' ','=',' ','B','R',0 };
 static const BYTE encodedJapaneseCN[] = { 0x30,0x0f,0x31,0x0d,0x30,0x0b,0x06,
  0x03,0x55,0x04,0x03,0x1e,0x04,0x22,0x6f,0x57,0x5b };
 
@@ -877,6 +882,8 @@ static const struct StrToNameW namesW[] = {
  { greaterThanCN_W, sizeof(encodedGreaterThanCN), encodedGreaterThanCN },
  { hashCN_W, sizeof(encodedHashCN), encodedHashCN },
  { semiCN_W, sizeof(encodedSemiCN), encodedSemiCN },
+ { dummyCN_W, sizeof(encodedDummyCN), encodedDummyCN },
+ { encodedFields_W, sizeof(encodedFields), encodedFields },
 };
 
 static void test_CertStrToNameW(void)
@@ -932,7 +939,7 @@ static void test_CertStrToNameW(void)
          size);
         if (ret)
             ok(!memcmp(buf, namesW[i].encoded, size),
-             "Index %d: unexpected value\n", i);
+             "Index %d: unexpected value for string %s\n", i, wine_dbgstr_w(namesW[i].x500));
     }
 }
 
@@ -1096,18 +1103,13 @@ START_TEST(str)
 {
     dll = GetModuleHandleA("Crypt32.dll");
 
-    pCertNameToStrA = (CertNameToStrAFunc)GetProcAddress(dll,"CertNameToStrA");
-    pCertNameToStrW = (CertNameToStrWFunc)GetProcAddress(dll,"CertNameToStrW");
-    pCertRDNValueToStrA = (CertRDNValueToStrAFunc)GetProcAddress(dll,
-     "CertRDNValueToStrA");
-    pCertRDNValueToStrW = (CertRDNValueToStrWFunc)GetProcAddress(dll,
-     "CertRDNValueToStrW");
-    pCryptDecodeObject = (CryptDecodeObjectFunc)GetProcAddress(dll,
-     "CryptDecodeObject");
-    pCertStrToNameA = (CertStrToNameAFunc)GetProcAddress(dll,"CertStrToNameA");
-    pCertStrToNameW = (CertStrToNameWFunc)GetProcAddress(dll,"CertStrToNameW");
-    pCertGetNameStringA = (CertGetNameStringAFunc)GetProcAddress(dll,
-     "CertGetNameStringA");
+    pCertNameToStrA = (void*)GetProcAddress(dll,"CertNameToStrA");
+    pCertNameToStrW = (void*)GetProcAddress(dll,"CertNameToStrW");
+    pCertRDNValueToStrA = (void*)GetProcAddress(dll, "CertRDNValueToStrA");
+    pCertRDNValueToStrW = (void*)GetProcAddress(dll, "CertRDNValueToStrW");
+    pCertStrToNameA = (void*)GetProcAddress(dll,"CertStrToNameA");
+    pCertStrToNameW = (void*)GetProcAddress(dll,"CertStrToNameW");
+    pCertGetNameStringA = (void*)GetProcAddress(dll, "CertGetNameStringA");
 
     test_CertRDNValueToStrA();
     test_CertRDNValueToStrW();

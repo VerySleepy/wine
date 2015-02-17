@@ -187,15 +187,15 @@
 187 stdcall GdipDrawRectangleI(ptr ptr long long long long)
 188 stdcall GdipDrawRectangles(ptr ptr ptr long)
 189 stdcall GdipDrawRectanglesI(ptr ptr ptr long)
-190 stdcall GdipDrawString(ptr ptr long ptr ptr ptr ptr)
+190 stdcall GdipDrawString(ptr wstr long ptr ptr ptr ptr)
 191 stdcall GdipEmfToWmfBits(ptr long ptr long long)
 192 stdcall GdipEndContainer(ptr ptr)
-193 stub GdipEnumerateMetafileDestPoint
-194 stub GdipEnumerateMetafileDestPointI
+193 stdcall GdipEnumerateMetafileDestPoint(ptr ptr ptr ptr ptr ptr)
+194 stdcall GdipEnumerateMetafileDestPointI(ptr ptr ptr ptr ptr ptr)
 195 stub GdipEnumerateMetafileDestPoints
 196 stub GdipEnumerateMetafileDestPointsI
-197 stub GdipEnumerateMetafileDestRect
-198 stub GdipEnumerateMetafileDestRectI
+197 stdcall GdipEnumerateMetafileDestRect(ptr ptr ptr ptr ptr ptr)
+198 stdcall GdipEnumerateMetafileDestRectI(ptr ptr ptr ptr ptr ptr)
 199 stub GdipEnumerateMetafileSrcRectDestPoint
 200 stub GdipEnumerateMetafileSrcRectDestPointI
 201 stdcall GdipEnumerateMetafileSrcRectDestPoints(ptr ptr ptr long ptr long ptr ptr ptr)
@@ -316,7 +316,7 @@
 316 stdcall GdipGetPathGradientCenterPointI(ptr ptr)
 317 stdcall GdipGetPathGradientFocusScales(ptr ptr ptr)
 318 stdcall GdipGetPathGradientGammaCorrection(ptr ptr)
-319 stub GdipGetPathGradientPath
+319 stdcall GdipGetPathGradientPath(ptr ptr)
 320 stdcall GdipGetPathGradientPointCount(ptr ptr)
 321 stdcall GdipGetPathGradientPresetBlend(ptr ptr ptr long)
 322 stdcall GdipGetPathGradientPresetBlendCount(ptr ptr)
@@ -455,11 +455,11 @@
 455 stdcall GdipReleaseDC(ptr ptr)
 456 stdcall GdipRemovePropertyItem(ptr long)
 457 stdcall GdipResetClip(ptr)
-458 stub GdipResetImageAttributes
+458 stdcall GdipResetImageAttributes(ptr long)
 459 stdcall GdipResetLineTransform(ptr)
-460 stub GdipResetPageTransform
+460 stdcall GdipResetPageTransform(ptr)
 461 stdcall GdipResetPath(ptr)
-462 stub GdipResetPathGradientTransform
+462 stdcall GdipResetPathGradientTransform(ptr)
 463 stdcall GdipResetPenTransform(ptr)
 464 stdcall GdipResetTextureTransform(ptr)
 465 stdcall GdipResetWorldTransform(ptr)
@@ -471,10 +471,10 @@
 471 stdcall GdipRotatePenTransform(ptr float long)
 472 stdcall GdipRotateTextureTransform(ptr float long)
 473 stdcall GdipRotateWorldTransform(ptr float long)
-474 stub GdipSaveAdd
+474 stdcall GdipSaveAdd(ptr ptr)
 475 stub GdipSaveAddImage
 476 stdcall GdipSaveGraphics(ptr ptr)
-477 stdcall GdipSaveImageToFile(ptr ptr ptr ptr)
+477 stdcall GdipSaveImageToFile(ptr wstr ptr ptr)
 478 stdcall GdipSaveImageToStream(ptr ptr ptr ptr)
 479 stdcall GdipScaleLineTransform(ptr float float long)
 480 stdcall GdipScaleMatrix(ptr float float long)

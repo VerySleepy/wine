@@ -66,6 +66,19 @@ static void dump_uints( const int *ptr, int len )
     fputc( '}', stderr );
 }
 
+static void dump_handles( const char *prefix, const obj_handle_t *data, data_size_t size )
+{
+    data_size_t len = size / sizeof(*data);
+
+    fprintf( stderr,"%s{", prefix );
+    while (len > 0)
+    {
+        fprintf( stderr, "%04x", *data++ );
+        if (--len) fputc( ',', stderr );
+    }
+    fputc( '}', stderr );
+}
+
 static void dump_timeout( const char *prefix, const timeout_t *time )
 {
     fprintf( stderr, "%s%s", prefix, get_timeout_str(*time) );
@@ -114,7 +127,8 @@ static void dump_cpu_type( const char *prefix, const cpu_type_t *code )
         CASE(x86);
         CASE(x86_64);
         CASE(POWERPC);
-        CASE(SPARC);
+        CASE(ARM);
+        CASE(ARM64);
         default: fprintf( stderr, "%s%u", prefix, *code ); break;
 #undef CASE
     }
@@ -368,16 +382,45 @@ static void dump_varargs_apc_result( const char *prefix, data_size_t size )
     remove_data( size );
 }
 
-static void dump_varargs_handles( const char *prefix, data_size_t size )
+static void dump_varargs_select_op( const char *prefix, data_size_t size )
 {
-    const obj_handle_t *data = cur_data;
-    data_size_t len = size / sizeof(*data);
+    select_op_t data;
 
-    fprintf( stderr,"%s{", prefix );
-    while (len > 0)
+    if (!size)
     {
-        fprintf( stderr, "%04x", *data++ );
-        if (--len) fputc( ',', stderr );
+        fprintf( stderr, "%s{}", prefix );
+        return;
+    }
+    memset( &data, 0, sizeof(data) );
+    memcpy( &data, cur_data, min( size, sizeof(data) ));
+
+    fprintf( stderr, "%s{", prefix );
+    switch (data.op)
+    {
+    case SELECT_NONE:
+        fprintf( stderr, "NONE" );
+        break;
+    case SELECT_WAIT:
+    case SELECT_WAIT_ALL:
+        fprintf( stderr, "%s", data.op == SELECT_WAIT ? "WAIT" : "WAIT_ALL" );
+        if (size > offsetof( select_op_t, wait.handles ))
+            dump_handles( ",handles=", data.wait.handles,
+                          min( size, sizeof(data.wait) ) - offsetof( select_op_t, wait.handles ));
+        break;
+    case SELECT_SIGNAL_AND_WAIT:
+        fprintf( stderr, "SIGNAL_AND_WAIT,signal=%04x,wait=%04x",
+                 data.signal_and_wait.signal, data.signal_and_wait.wait );
+        break;
+    case SELECT_KEYED_EVENT_WAIT:
+    case SELECT_KEYED_EVENT_RELEASE:
+        fprintf( stderr, "KEYED_EVENT_%s,handle=%04x",
+                 data.op == SELECT_KEYED_EVENT_WAIT ? "WAIT" : "RELEASE",
+                 data.keyed_event.handle );
+        dump_uint64( ",key=", &data.keyed_event.key );
+        break;
+    default:
+        fprintf( stderr, "op=%u", data.op );
+        break;
     }
     fputc( '}', stderr );
     remove_data( size );
@@ -557,17 +600,46 @@ static void dump_varargs_context( const char *prefix, data_size_t size )
         if (ctx.flags & SERVER_CTX_INTEGER)
             for (i = 0; i < 13; i++) fprintf( stderr, ",r%u=%08x", i, ctx.integer.arm_regs.r[i] );
         break;
-    case CPU_SPARC:
+    case CPU_ARM64:
         if (ctx.flags & SERVER_CTX_CONTROL)
-            fprintf( stderr, ",psr=%08x,pc=%08x,npc=%08x,y=%08x,wim=%08x,tbr=%08x",
-                     ctx.ctl.sparc_regs.psr, ctx.ctl.sparc_regs.pc, ctx.ctl.sparc_regs.npc,
-                     ctx.ctl.sparc_regs.y, ctx.ctl.sparc_regs.wim, ctx.ctl.sparc_regs.tbr );
+        {
+            dump_uint64( ",sp=", &ctx.ctl.arm64_regs.sp );
+            dump_uint64( ",pc=", &ctx.ctl.arm64_regs.pc );
+            dump_uint64( ",pstate=", &ctx.ctl.arm64_regs.pstate );
+        }
         if (ctx.flags & SERVER_CTX_INTEGER)
         {
-            for (i = 0; i < 8; i++) fprintf( stderr, ",g%u=%08x", i, ctx.integer.sparc_regs.g[i] );
-            for (i = 0; i < 8; i++) fprintf( stderr, ",o%u=%08x", i, ctx.integer.sparc_regs.o[i] );
-            for (i = 0; i < 8; i++) fprintf( stderr, ",l%u=%08x", i, ctx.integer.sparc_regs.l[i] );
-            for (i = 0; i < 8; i++) fprintf( stderr, ",i%u=%08x", i, ctx.integer.sparc_regs.i[i] );
+            dump_uint64( ",x0=",  &ctx.integer.arm64_regs.x[0] );
+            dump_uint64( ",x1=",  &ctx.integer.arm64_regs.x[1] );
+            dump_uint64( ",x2=",  &ctx.integer.arm64_regs.x[2] );
+            dump_uint64( ",x3=",  &ctx.integer.arm64_regs.x[3] );
+            dump_uint64( ",x4=",  &ctx.integer.arm64_regs.x[4] );
+            dump_uint64( ",x5=",  &ctx.integer.arm64_regs.x[5] );
+            dump_uint64( ",x6=",  &ctx.integer.arm64_regs.x[6] );
+            dump_uint64( ",x7=",  &ctx.integer.arm64_regs.x[7] );
+            dump_uint64( ",x8=",  &ctx.integer.arm64_regs.x[8] );
+            dump_uint64( ",x9=",  &ctx.integer.arm64_regs.x[9] );
+            dump_uint64( ",x10=", &ctx.integer.arm64_regs.x[10] );
+            dump_uint64( ",x11=", &ctx.integer.arm64_regs.x[11] );
+            dump_uint64( ",x12=", &ctx.integer.arm64_regs.x[12] );
+            dump_uint64( ",x13=", &ctx.integer.arm64_regs.x[13] );
+            dump_uint64( ",x14=", &ctx.integer.arm64_regs.x[14] );
+            dump_uint64( ",x15=", &ctx.integer.arm64_regs.x[15] );
+            dump_uint64( ",x16=", &ctx.integer.arm64_regs.x[16] );
+            dump_uint64( ",x17=", &ctx.integer.arm64_regs.x[17] );
+            dump_uint64( ",x18=", &ctx.integer.arm64_regs.x[18] );
+            dump_uint64( ",x19=", &ctx.integer.arm64_regs.x[19] );
+            dump_uint64( ",x20=", &ctx.integer.arm64_regs.x[20] );
+            dump_uint64( ",x21=", &ctx.integer.arm64_regs.x[21] );
+            dump_uint64( ",x22=", &ctx.integer.arm64_regs.x[22] );
+            dump_uint64( ",x23=", &ctx.integer.arm64_regs.x[23] );
+            dump_uint64( ",x24=", &ctx.integer.arm64_regs.x[24] );
+            dump_uint64( ",x25=", &ctx.integer.arm64_regs.x[25] );
+            dump_uint64( ",x26=", &ctx.integer.arm64_regs.x[26] );
+            dump_uint64( ",x27=", &ctx.integer.arm64_regs.x[27] );
+            dump_uint64( ",x28=", &ctx.integer.arm64_regs.x[28] );
+            dump_uint64( ",x29=", &ctx.integer.arm64_regs.x[29] );
+            dump_uint64( ",x30=", &ctx.integer.arm64_regs.x[30] );
         }
         break;
     }
@@ -641,15 +713,6 @@ static void dump_varargs_debug_event( const char *prefix, data_size_t size )
         fprintf( stderr, "%s{unload_dll", prefix );
         dump_uint64( ",base=", &event.unload_dll.base );
         fputc( '}', stderr );
-        break;
-    case OUTPUT_DEBUG_STRING_EVENT:
-        fprintf( stderr, "%s{output_string", prefix );
-        dump_uint64( ",string=", &event.output_string.string );
-        fprintf( stderr, ",len=%u}", event.output_string.length );
-        break;
-    case RIP_EVENT:
-        fprintf( stderr, "%s{rip,err=%d,type=%d}", prefix,
-                 event.rip_info.error, event.rip_info.type );
         break;
     case 0:  /* zero is the code returned on timeouts */
         fprintf( stderr, "%s{}", prefix );
@@ -1004,6 +1067,23 @@ static void dump_varargs_filesystem_event( const char *prefix, data_size_t size 
     fputc( '}', stderr );
 }
 
+static void dump_varargs_rawinput_devices(const char *prefix, data_size_t size )
+{
+    const struct rawinput_device *device;
+
+    fprintf( stderr, "%s{", prefix );
+    while (size >= sizeof(*device))
+    {
+        device = cur_data;
+        fprintf( stderr, "{usage_page=%04x,usage=%04x,flags=%08x,target=%08x}",
+                 device->usage_page, device->usage, device->flags, device->target );
+        size -= sizeof(*device);
+        remove_data( sizeof(*device) );
+        if (size) fputc( ',', stderr );
+    }
+    fputc( '}', stderr );
+}
+
 typedef void (*dump_func)( const void *req );
 
 /* Everything below this line is generated automatically by tools/make_requests */
@@ -1019,6 +1099,7 @@ static void dump_new_process_request( const struct new_process_request *req )
     fprintf( stderr, ", process_attr=%08x", req->process_attr );
     fprintf( stderr, ", thread_access=%08x", req->thread_access );
     fprintf( stderr, ", thread_attr=%08x", req->thread_attr );
+    dump_cpu_type( ", cpu=", &req->cpu );
     fprintf( stderr, ", info_size=%u", req->info_size );
     dump_varargs_startup_info( ", info=", min(cur_size,req->info_size) );
     dump_varargs_unicode_str( ", env=", cur_size );
@@ -1312,11 +1393,10 @@ static void dump_select_request( const struct select_request *req )
 {
     fprintf( stderr, " flags=%d", req->flags );
     dump_uint64( ", cookie=", &req->cookie );
-    fprintf( stderr, ", signal=%04x", req->signal );
-    fprintf( stderr, ", prev_apc=%04x", req->prev_apc );
     dump_timeout( ", timeout=", &req->timeout );
+    fprintf( stderr, ", prev_apc=%04x", req->prev_apc );
     dump_varargs_apc_result( ", result=", cur_size );
-    dump_varargs_handles( ", handles=", cur_size );
+    dump_varargs_select_op( ", data=", cur_size );
 }
 
 static void dump_select_reply( const struct select_reply *req )
@@ -1346,6 +1426,17 @@ static void dump_event_op_request( const struct event_op_request *req )
     fprintf( stderr, ", op=%d", req->op );
 }
 
+static void dump_query_event_request( const struct query_event_request *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+}
+
+static void dump_query_event_reply( const struct query_event_reply *req )
+{
+    fprintf( stderr, " manual_reset=%d", req->manual_reset );
+    fprintf( stderr, ", state=%d", req->state );
+}
+
 static void dump_open_event_request( const struct open_event_request *req )
 {
     fprintf( stderr, " access=%08x", req->access );
@@ -1355,6 +1446,31 @@ static void dump_open_event_request( const struct open_event_request *req )
 }
 
 static void dump_open_event_reply( const struct open_event_reply *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+}
+
+static void dump_create_keyed_event_request( const struct create_keyed_event_request *req )
+{
+    fprintf( stderr, " access=%08x", req->access );
+    fprintf( stderr, ", attributes=%08x", req->attributes );
+    dump_varargs_object_attributes( ", objattr=", cur_size );
+}
+
+static void dump_create_keyed_event_reply( const struct create_keyed_event_reply *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+}
+
+static void dump_open_keyed_event_request( const struct open_keyed_event_request *req )
+{
+    fprintf( stderr, " access=%08x", req->access );
+    fprintf( stderr, ", attributes=%08x", req->attributes );
+    fprintf( stderr, ", rootdir=%04x", req->rootdir );
+    dump_varargs_unicode_str( ", name=", cur_size );
+}
+
+static void dump_open_keyed_event_reply( const struct open_keyed_event_reply *req )
 {
     fprintf( stderr, " handle=%04x", req->handle );
 }
@@ -1418,6 +1534,17 @@ static void dump_release_semaphore_request( const struct release_semaphore_reque
 static void dump_release_semaphore_reply( const struct release_semaphore_reply *req )
 {
     fprintf( stderr, " prev_count=%08x", req->prev_count );
+}
+
+static void dump_query_semaphore_request( const struct query_semaphore_request *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+}
+
+static void dump_query_semaphore_reply( const struct query_semaphore_reply *req )
+{
+    fprintf( stderr, " current=%08x", req->current );
+    fprintf( stderr, ", max=%08x", req->max );
 }
 
 static void dump_open_semaphore_request( const struct open_semaphore_request *req )
@@ -1588,6 +1715,18 @@ static void dump_get_socket_event_reply( const struct get_socket_event_reply *re
     fprintf( stderr, ", pmask=%08x", req->pmask );
     fprintf( stderr, ", state=%08x", req->state );
     dump_varargs_ints( ", errors=", cur_size );
+}
+
+static void dump_get_socket_info_request( const struct get_socket_info_request *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+}
+
+static void dump_get_socket_info_reply( const struct get_socket_info_reply *req )
+{
+    fprintf( stderr, " family=%d", req->family );
+    fprintf( stderr, ", type=%d", req->type );
+    fprintf( stderr, ", protocol=%d", req->protocol );
 }
 
 static void dump_enable_socket_event_request( const struct enable_socket_event_request *req )
@@ -1969,6 +2108,7 @@ static void dump_next_process_reply( const struct next_process_reply *req )
     fprintf( stderr, ", threads=%d", req->threads );
     fprintf( stderr, ", priority=%d", req->priority );
     fprintf( stderr, ", handles=%d", req->handles );
+    fprintf( stderr, ", unix_pid=%d", req->unix_pid );
     dump_varargs_unicode_str( ", filename=", cur_size );
 }
 
@@ -2025,12 +2165,6 @@ static void dump_get_exception_status_request( const struct get_exception_status
 static void dump_get_exception_status_reply( const struct get_exception_status_reply *req )
 {
     dump_varargs_context( " context=", cur_size );
-}
-
-static void dump_output_debug_string_request( const struct output_debug_string_request *req )
-{
-    fprintf( stderr, " length=%u", req->length );
-    dump_uint64( ", string=", &req->string );
 }
 
 static void dump_continue_debug_event_request( const struct continue_debug_event_request *req )
@@ -2452,6 +2586,11 @@ static void dump_send_hardware_message_request( const struct send_hardware_messa
 static void dump_send_hardware_message_reply( const struct send_hardware_message_reply *req )
 {
     fprintf( stderr, " wait=%d", req->wait );
+    fprintf( stderr, ", prev_x=%d", req->prev_x );
+    fprintf( stderr, ", prev_y=%d", req->prev_y );
+    fprintf( stderr, ", new_x=%d", req->new_x );
+    fprintf( stderr, ", new_y=%d", req->new_y );
+    dump_varargs_bytes( ", keystate=", cur_size );
 }
 
 static void dump_get_message_request( const struct get_message_request *req )
@@ -2489,7 +2628,6 @@ static void dump_accept_hardware_message_request( const struct accept_hardware_m
 {
     fprintf( stderr, " hw_id=%08x", req->hw_id );
     fprintf( stderr, ", remove=%d", req->remove );
-    fprintf( stderr, ", new_win=%08x", req->new_win );
 }
 
 static void dump_get_message_reply_request( const struct get_message_reply_request *req )
@@ -2537,6 +2675,7 @@ static void dump_is_window_hung_reply( const struct is_window_hung_reply *req )
 static void dump_get_serial_info_request( const struct get_serial_info_request *req )
 {
     fprintf( stderr, " handle=%04x", req->handle );
+    fprintf( stderr, ", flags=%d", req->flags );
 }
 
 static void dump_get_serial_info_reply( const struct get_serial_info_reply *req )
@@ -2547,6 +2686,8 @@ static void dump_get_serial_info_reply( const struct get_serial_info_reply *req 
     fprintf( stderr, ", writeconst=%08x", req->writeconst );
     fprintf( stderr, ", writemult=%08x", req->writemult );
     fprintf( stderr, ", eventmask=%08x", req->eventmask );
+    fprintf( stderr, ", cookie=%08x", req->cookie );
+    fprintf( stderr, ", pending_write=%08x", req->pending_write );
 }
 
 static void dump_set_serial_info_request( const struct set_serial_info_request *req )
@@ -2605,7 +2746,6 @@ static void dump_create_named_pipe_request( const struct create_named_pipe_reque
 {
     fprintf( stderr, " access=%08x", req->access );
     fprintf( stderr, ", attributes=%08x", req->attributes );
-    fprintf( stderr, ", rootdir=%04x", req->rootdir );
     fprintf( stderr, ", options=%08x", req->options );
     fprintf( stderr, ", sharing=%08x", req->sharing );
     fprintf( stderr, ", maxinstances=%08x", req->maxinstances );
@@ -2613,7 +2753,7 @@ static void dump_create_named_pipe_request( const struct create_named_pipe_reque
     fprintf( stderr, ", insize=%08x", req->insize );
     dump_timeout( ", timeout=", &req->timeout );
     fprintf( stderr, ", flags=%08x", req->flags );
-    dump_varargs_unicode_str( ", name=", cur_size );
+    dump_varargs_object_attributes( ", objattr=", cur_size );
 }
 
 static void dump_create_named_pipe_reply( const struct create_named_pipe_reply *req )
@@ -2634,6 +2774,12 @@ static void dump_get_named_pipe_info_reply( const struct get_named_pipe_info_rep
     fprintf( stderr, ", instances=%08x", req->instances );
     fprintf( stderr, ", outsize=%08x", req->outsize );
     fprintf( stderr, ", insize=%08x", req->insize );
+}
+
+static void dump_set_named_pipe_info_request( const struct set_named_pipe_info_request *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+    fprintf( stderr, ", flags=%08x", req->flags );
 }
 
 static void dump_create_window_request( const struct create_window_request *req )
@@ -2792,7 +2938,8 @@ static void dump_get_window_tree_reply( const struct get_window_tree_reply *req 
 
 static void dump_set_window_pos_request( const struct set_window_pos_request *req )
 {
-    fprintf( stderr, " flags=%08x", req->flags );
+    fprintf( stderr, " swp_flags=%04x", req->swp_flags );
+    fprintf( stderr, ", paint_flags=%04x", req->paint_flags );
     fprintf( stderr, ", handle=%08x", req->handle );
     fprintf( stderr, ", previous=%08x", req->previous );
     dump_rectangle( ", window=", &req->window );
@@ -2804,6 +2951,7 @@ static void dump_set_window_pos_reply( const struct set_window_pos_reply *req )
 {
     fprintf( stderr, " new_style=%08x", req->new_style );
     fprintf( stderr, ", new_ex_style=%08x", req->new_ex_style );
+    fprintf( stderr, ", surface_win=%08x", req->surface_win );
 }
 
 static void dump_get_window_rectangles_request( const struct get_window_rectangles_request *req )
@@ -2859,6 +3007,19 @@ static void dump_get_visible_region_reply( const struct get_visible_region_reply
     fprintf( stderr, " top_win=%08x", req->top_win );
     dump_rectangle( ", top_rect=", &req->top_rect );
     dump_rectangle( ", win_rect=", &req->win_rect );
+    fprintf( stderr, ", paint_flags=%08x", req->paint_flags );
+    fprintf( stderr, ", total_size=%u", req->total_size );
+    dump_varargs_rectangles( ", region=", cur_size );
+}
+
+static void dump_get_surface_region_request( const struct get_surface_region_request *req )
+{
+    fprintf( stderr, " window=%08x", req->window );
+}
+
+static void dump_get_surface_region_reply( const struct get_surface_region_reply *req )
+{
+    dump_rectangle( " visible_rect=", &req->visible_rect );
     fprintf( stderr, ", total_size=%u", req->total_size );
     dump_varargs_rectangles( ", region=", cur_size );
 }
@@ -3034,6 +3195,18 @@ static void dump_open_desktop_reply( const struct open_desktop_reply *req )
     fprintf( stderr, " handle=%04x", req->handle );
 }
 
+static void dump_open_input_desktop_request( const struct open_input_desktop_request *req )
+{
+    fprintf( stderr, " flags=%08x", req->flags );
+    fprintf( stderr, ", access=%08x", req->access );
+    fprintf( stderr, ", attributes=%08x", req->attributes );
+}
+
+static void dump_open_input_desktop_reply( const struct open_input_desktop_reply *req )
+{
+    fprintf( stderr, " handle=%04x", req->handle );
+}
+
 static void dump_close_desktop_request( const struct close_desktop_request *req )
 {
     fprintf( stderr, " handle=%04x", req->handle );
@@ -3157,6 +3330,7 @@ static void dump_get_key_state_reply( const struct get_key_state_reply *req )
 static void dump_set_key_state_request( const struct set_key_state_request *req )
 {
     fprintf( stderr, " tid=%04x", req->tid );
+    fprintf( stderr, ", async=%d", req->async );
     dump_varargs_bytes( ", keystate=", cur_size );
 }
 
@@ -3794,7 +3968,7 @@ static void dump_add_completion_request( const struct add_completion_request *re
     fprintf( stderr, " handle=%04x", req->handle );
     dump_uint64( ", ckey=", &req->ckey );
     dump_uint64( ", cvalue=", &req->cvalue );
-    fprintf( stderr, ", information=%08x", req->information );
+    dump_uint64( ", information=", &req->information );
     fprintf( stderr, ", status=%08x", req->status );
 }
 
@@ -3807,7 +3981,7 @@ static void dump_remove_completion_reply( const struct remove_completion_reply *
 {
     dump_uint64( " ckey=", &req->ckey );
     dump_uint64( ", cvalue=", &req->cvalue );
-    fprintf( stderr, ", information=%08x", req->information );
+    dump_uint64( ", information=", &req->information );
     fprintf( stderr, ", status=%08x", req->status );
 }
 
@@ -3832,8 +4006,8 @@ static void dump_add_fd_completion_request( const struct add_fd_completion_reque
 {
     fprintf( stderr, " handle=%04x", req->handle );
     dump_uint64( ", cvalue=", &req->cvalue );
+    dump_uint64( ", information=", &req->information );
     fprintf( stderr, ", status=%08x", req->status );
-    fprintf( stderr, ", information=%08x", req->information );
 }
 
 static void dump_get_window_layered_info_request( const struct get_window_layered_info_request *req )
@@ -3893,6 +4067,11 @@ static void dump_set_cursor_reply( const struct set_cursor_reply *req )
     fprintf( stderr, ", last_change=%08x", req->last_change );
 }
 
+static void dump_update_rawinput_devices_request( const struct update_rawinput_devices_request *req )
+{
+    dump_varargs_rawinput_devices( " devices=", cur_size );
+}
+
 static void dump_get_suspend_context_request( const struct get_suspend_context_request *req )
 {
 }
@@ -3935,12 +4114,16 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_select_request,
     (dump_func)dump_create_event_request,
     (dump_func)dump_event_op_request,
+    (dump_func)dump_query_event_request,
     (dump_func)dump_open_event_request,
+    (dump_func)dump_create_keyed_event_request,
+    (dump_func)dump_open_keyed_event_request,
     (dump_func)dump_create_mutex_request,
     (dump_func)dump_release_mutex_request,
     (dump_func)dump_open_mutex_request,
     (dump_func)dump_create_semaphore_request,
     (dump_func)dump_release_semaphore_request,
+    (dump_func)dump_query_semaphore_request,
     (dump_func)dump_open_semaphore_request,
     (dump_func)dump_create_file_request,
     (dump_func)dump_open_file_object_request,
@@ -3955,6 +4138,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_accept_into_socket_request,
     (dump_func)dump_set_socket_event_request,
     (dump_func)dump_get_socket_event_request,
+    (dump_func)dump_get_socket_info_request,
     (dump_func)dump_enable_socket_event_request,
     (dump_func)dump_set_socket_deferred_request,
     (dump_func)dump_alloc_console_request,
@@ -3991,7 +4175,6 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_wait_debug_event_request,
     (dump_func)dump_queue_exception_event_request,
     (dump_func)dump_get_exception_status_request,
-    (dump_func)dump_output_debug_string_request,
     (dump_func)dump_continue_debug_event_request,
     (dump_func)dump_debug_process_request,
     (dump_func)dump_debug_break_request,
@@ -4049,6 +4232,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_get_ioctl_result_request,
     (dump_func)dump_create_named_pipe_request,
     (dump_func)dump_get_named_pipe_info_request,
+    (dump_func)dump_set_named_pipe_info_request,
     (dump_func)dump_create_window_request,
     (dump_func)dump_destroy_window_request,
     (dump_func)dump_get_desktop_window_request,
@@ -4066,6 +4250,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_set_window_text_request,
     (dump_func)dump_get_windows_offset_request,
     (dump_func)dump_get_visible_region_request,
+    (dump_func)dump_get_surface_region_request,
     (dump_func)dump_get_window_region_request,
     (dump_func)dump_set_window_region_request,
     (dump_func)dump_get_update_region_request,
@@ -4083,6 +4268,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_enum_winstation_request,
     (dump_func)dump_create_desktop_request,
     (dump_func)dump_open_desktop_request,
+    (dump_func)dump_open_input_desktop_request,
     (dump_func)dump_close_desktop_request,
     (dump_func)dump_get_thread_desktop_request,
     (dump_func)dump_set_thread_desktop_request,
@@ -4153,6 +4339,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_alloc_user_handle_request,
     (dump_func)dump_free_user_handle_request,
     (dump_func)dump_set_cursor_request,
+    (dump_func)dump_update_rawinput_devices_request,
     (dump_func)dump_get_suspend_context_request,
     (dump_func)dump_set_suspend_context_request,
 };
@@ -4185,12 +4372,16 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_select_reply,
     (dump_func)dump_create_event_reply,
     NULL,
+    (dump_func)dump_query_event_reply,
     (dump_func)dump_open_event_reply,
+    (dump_func)dump_create_keyed_event_reply,
+    (dump_func)dump_open_keyed_event_reply,
     (dump_func)dump_create_mutex_reply,
     (dump_func)dump_release_mutex_reply,
     (dump_func)dump_open_mutex_reply,
     (dump_func)dump_create_semaphore_reply,
     (dump_func)dump_release_semaphore_reply,
+    (dump_func)dump_query_semaphore_reply,
     (dump_func)dump_open_semaphore_reply,
     (dump_func)dump_create_file_reply,
     (dump_func)dump_open_file_object_reply,
@@ -4205,6 +4396,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     NULL,
     NULL,
     (dump_func)dump_get_socket_event_reply,
+    (dump_func)dump_get_socket_info_reply,
     NULL,
     NULL,
     (dump_func)dump_alloc_console_reply,
@@ -4241,7 +4433,6 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_wait_debug_event_reply,
     (dump_func)dump_queue_exception_event_reply,
     (dump_func)dump_get_exception_status_reply,
-    NULL,
     NULL,
     NULL,
     (dump_func)dump_debug_break_reply,
@@ -4299,6 +4490,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_get_ioctl_result_reply,
     (dump_func)dump_create_named_pipe_reply,
     (dump_func)dump_get_named_pipe_info_reply,
+    NULL,
     (dump_func)dump_create_window_reply,
     NULL,
     (dump_func)dump_get_desktop_window_reply,
@@ -4316,6 +4508,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     NULL,
     (dump_func)dump_get_windows_offset_reply,
     (dump_func)dump_get_visible_region_reply,
+    (dump_func)dump_get_surface_region_reply,
     (dump_func)dump_get_window_region_reply,
     NULL,
     (dump_func)dump_get_update_region_reply,
@@ -4333,6 +4526,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_enum_winstation_reply,
     (dump_func)dump_create_desktop_reply,
     (dump_func)dump_open_desktop_reply,
+    (dump_func)dump_open_input_desktop_reply,
     NULL,
     (dump_func)dump_get_thread_desktop_reply,
     NULL,
@@ -4403,6 +4597,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] = {
     (dump_func)dump_alloc_user_handle_reply,
     NULL,
     (dump_func)dump_set_cursor_reply,
+    NULL,
     (dump_func)dump_get_suspend_context_reply,
     NULL,
 };
@@ -4435,12 +4630,16 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "select",
     "create_event",
     "event_op",
+    "query_event",
     "open_event",
+    "create_keyed_event",
+    "open_keyed_event",
     "create_mutex",
     "release_mutex",
     "open_mutex",
     "create_semaphore",
     "release_semaphore",
+    "query_semaphore",
     "open_semaphore",
     "create_file",
     "open_file_object",
@@ -4455,6 +4654,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "accept_into_socket",
     "set_socket_event",
     "get_socket_event",
+    "get_socket_info",
     "enable_socket_event",
     "set_socket_deferred",
     "alloc_console",
@@ -4491,7 +4691,6 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "wait_debug_event",
     "queue_exception_event",
     "get_exception_status",
-    "output_debug_string",
     "continue_debug_event",
     "debug_process",
     "debug_break",
@@ -4549,6 +4748,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "get_ioctl_result",
     "create_named_pipe",
     "get_named_pipe_info",
+    "set_named_pipe_info",
     "create_window",
     "destroy_window",
     "get_desktop_window",
@@ -4566,6 +4766,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "set_window_text",
     "get_windows_offset",
     "get_visible_region",
+    "get_surface_region",
     "get_window_region",
     "set_window_region",
     "get_update_region",
@@ -4583,6 +4784,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "enum_winstation",
     "create_desktop",
     "open_desktop",
+    "open_input_desktop",
     "close_desktop",
     "get_thread_desktop",
     "set_thread_desktop",
@@ -4653,6 +4855,7 @@ static const char * const req_names[REQ_NB_REQUESTS] = {
     "alloc_user_handle",
     "free_user_handle",
     "set_cursor",
+    "update_rawinput_devices",
     "get_suspend_context",
     "set_suspend_context",
 };
@@ -4712,11 +4915,17 @@ static const struct
     { "INVALID_DEVICE_REQUEST",      STATUS_INVALID_DEVICE_REQUEST },
     { "INVALID_FILE_FOR_SECTION",    STATUS_INVALID_FILE_FOR_SECTION },
     { "INVALID_HANDLE",              STATUS_INVALID_HANDLE },
+    { "INVALID_IMAGE_FORMAT",        STATUS_INVALID_IMAGE_FORMAT },
+    { "INVALID_IMAGE_NE_FORMAT",     STATUS_INVALID_IMAGE_NE_FORMAT },
+    { "INVALID_IMAGE_NOT_MZ",        STATUS_INVALID_IMAGE_NOT_MZ },
+    { "INVALID_IMAGE_PROTECT",       STATUS_INVALID_IMAGE_PROTECT },
+    { "INVALID_IMAGE_WIN_64",        STATUS_INVALID_IMAGE_WIN_64 },
     { "INVALID_PARAMETER",           STATUS_INVALID_PARAMETER },
     { "INVALID_SECURITY_DESCR",      STATUS_INVALID_SECURITY_DESCR },
     { "IO_TIMEOUT",                  STATUS_IO_TIMEOUT },
     { "KEY_DELETED",                 STATUS_KEY_DELETED },
     { "MAPPED_FILE_SIZE_ZERO",       STATUS_MAPPED_FILE_SIZE_ZERO },
+    { "MORE_PROCESSING_REQUIRED",    STATUS_MORE_PROCESSING_REQUIRED },
     { "MUTANT_NOT_OWNED",            STATUS_MUTANT_NOT_OWNED },
     { "NAME_TOO_LONG",               STATUS_NAME_TOO_LONG },
     { "NETWORK_BUSY",                STATUS_NETWORK_BUSY },

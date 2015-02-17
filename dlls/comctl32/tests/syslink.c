@@ -70,7 +70,7 @@ static void flush_events(void)
     while (diff > 0)
     {
         if (MsgWaitForMultipleObjects( 0, NULL, FALSE, min_timeout, QS_ALLINPUT ) == WAIT_TIMEOUT) break;
-        while (PeekMessage( &msg, 0, 0, 0, PM_REMOVE )) DispatchMessage( &msg );
+        while (PeekMessageA( &msg, 0, 0, 0, PM_REMOVE )) DispatchMessageA( &msg );
         diff = time - GetTickCount();
     }
 }
@@ -91,8 +91,6 @@ static LRESULT WINAPI parent_wnd_proc(HWND hwnd, UINT message, WPARAM wParam, LP
         message != WM_GETICON &&
         message != WM_DEVICECHANGE)
     {
-        trace("parent: %p, %04x, %08lx, %08lx\n", hwnd, message, wParam, lParam);
-
         msg.message = message;
         msg.flags = sent|wparam|lparam;
         if (defwndproc_counter) msg.flags |= defwinproc;
@@ -148,13 +146,12 @@ static LRESULT WINAPI syslink_subclass_proc(HWND hwnd, UINT message, WPARAM wPar
     LRESULT ret;
     struct message msg;
 
-    trace("syslink: %p, %04x, %08lx, %08lx\n", hwnd, message, wParam, lParam);
-
     msg.message = message;
     msg.flags = sent|wparam|lparam;
     if (defwndproc_counter) msg.flags |= defwinproc;
     msg.wParam = wParam;
     msg.lParam = lParam;
+    msg.id = 0;
     add_message(sequences, SYSLINK_SEQ_INDEX, &msg);
 
     defwndproc_counter++;
@@ -244,8 +241,8 @@ START_TEST(syslink)
 
     /* Make the SysLink control visible */
     flush_sequences(sequences, NUM_MSG_SEQUENCE);
-    oldstyle = GetWindowLong(hWndSysLink, GWL_STYLE);
-    SetWindowLong(hWndSysLink, GWL_STYLE, oldstyle | WS_VISIBLE);
+    oldstyle = GetWindowLongA(hWndSysLink, GWL_STYLE);
+    SetWindowLongA(hWndSysLink, GWL_STYLE, oldstyle | WS_VISIBLE);
     RedrawWindow(hWndSysLink, NULL, NULL, RDW_INVALIDATE);
     flush_events();
     ok_sequence(sequences, SYSLINK_SEQ_INDEX, visible_syslink_wnd_seq, "visible SysLink", TRUE);

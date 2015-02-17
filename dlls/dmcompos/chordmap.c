@@ -22,116 +22,102 @@
 WINE_DEFAULT_DEBUG_CHANNEL(dmcompos);
 WINE_DECLARE_DEBUG_CHANNEL(dmfile);
 
-static ULONG WINAPI IDirectMusicChordMapImpl_IUnknown_AddRef (LPUNKNOWN iface);
-static ULONG WINAPI IDirectMusicChordMapImpl_IDirectMusicChordMap_AddRef (LPDIRECTMUSICCHORDMAP iface);
-static ULONG WINAPI IDirectMusicChordMapImpl_IDirectMusicObject_AddRef (LPDIRECTMUSICOBJECT iface);
-static ULONG WINAPI IDirectMusicChordMapImpl_IPersistStream_AddRef (LPPERSISTSTREAM iface);
-
 /*****************************************************************************
  * IDirectMusicChordMapImpl implementation
  */
-/* IDirectMusicChordMapImpl IUnknown part: */
-static HRESULT WINAPI IDirectMusicChordMapImpl_IUnknown_QueryInterface (LPUNKNOWN iface, REFIID riid, LPVOID *ppobj) {
-	ICOM_THIS_MULTI(IDirectMusicChordMapImpl, UnknownVtbl, iface);
-	TRACE("(%p, %s, %p)\n", This, debugstr_dmguid(riid), ppobj);
-	
-	if (IsEqualIID (riid, &IID_IUnknown)) {
-		*ppobj = &This->UnknownVtbl;
-		IDirectMusicChordMapImpl_IUnknown_AddRef ((LPUNKNOWN)&This->UnknownVtbl);
-		return S_OK;	
-	} else if (IsEqualIID (riid, &IID_IDirectMusicChordMap)) {
-		*ppobj = &This->ChordMapVtbl;
-		IDirectMusicChordMapImpl_IDirectMusicChordMap_AddRef ((LPDIRECTMUSICCHORDMAP)&This->ChordMapVtbl);
-		return S_OK;
-	} else if (IsEqualIID (riid, &IID_IDirectMusicObject)) {
-		*ppobj = &This->ObjectVtbl;
-		IDirectMusicChordMapImpl_IDirectMusicObject_AddRef ((LPDIRECTMUSICOBJECT)&This->ObjectVtbl);		
-		return S_OK;
-	} else if (IsEqualIID (riid, &IID_IPersistStream)) {
-		*ppobj = &This->PersistStreamVtbl;
-		IDirectMusicChordMapImpl_IPersistStream_AddRef ((LPPERSISTSTREAM)&This->PersistStreamVtbl);		
-		return S_OK;
-	}
-	
-	WARN("(%p, %s, %p): not found\n", This, debugstr_dmguid(riid), ppobj);
-	return E_NOINTERFACE;
-}
-
-static ULONG WINAPI IDirectMusicChordMapImpl_IUnknown_AddRef (LPUNKNOWN iface) {
-	ICOM_THIS_MULTI(IDirectMusicChordMapImpl, UnknownVtbl, iface);
-        ULONG ref = InterlockedIncrement(&This->ref);
-
-	TRACE("(%p): AddRef from %d\n", This, ref - 1);
-	
-	DMCOMPOS_LockModule();
-	
-	return ref;
-}
-
-static ULONG WINAPI IDirectMusicChordMapImpl_IUnknown_Release (LPUNKNOWN iface) {
-	ICOM_THIS_MULTI(IDirectMusicChordMapImpl, UnknownVtbl, iface);
-	ULONG ref = InterlockedDecrement(&This->ref);
-
-	TRACE("(%p): ReleaseRef to %d\n", This, ref);
-	
-	if (ref == 0) {
-		HeapFree(GetProcessHeap(), 0, This);
-	}
-	
-	DMCOMPOS_UnlockModule();
-	
-	return ref;
-}
-
-static const IUnknownVtbl DirectMusicChordMap_Unknown_Vtbl = {
-	IDirectMusicChordMapImpl_IUnknown_QueryInterface,
-	IDirectMusicChordMapImpl_IUnknown_AddRef,
-	IDirectMusicChordMapImpl_IUnknown_Release
-};
+typedef struct IDirectMusicChordMapImpl {
+    IDirectMusicChordMap IDirectMusicChordMap_iface;
+    const IDirectMusicObjectVtbl *ObjectVtbl;
+    const IPersistStreamVtbl *PersistStreamVtbl;
+    LONG  ref;
+    DMUS_OBJECTDESC *pDesc;
+} IDirectMusicChordMapImpl;
 
 /* IDirectMusicChordMapImpl IDirectMusicChordMap part: */
-static HRESULT WINAPI IDirectMusicChordMapImpl_IDirectMusicChordMap_QueryInterface (LPDIRECTMUSICCHORDMAP iface, REFIID riid, LPVOID *ppobj) {
-	ICOM_THIS_MULTI(IDirectMusicChordMapImpl, ChordMapVtbl, iface);
-	return IDirectMusicChordMapImpl_IUnknown_QueryInterface ((LPUNKNOWN)&This->UnknownVtbl, riid, ppobj);
+static inline IDirectMusicChordMapImpl *impl_from_IDirectMusicChordMap(IDirectMusicChordMap *iface)
+{
+    return CONTAINING_RECORD(iface, IDirectMusicChordMapImpl, IDirectMusicChordMap_iface);
 }
 
-static ULONG WINAPI IDirectMusicChordMapImpl_IDirectMusicChordMap_AddRef (LPDIRECTMUSICCHORDMAP iface) {
-	ICOM_THIS_MULTI(IDirectMusicChordMapImpl, ChordMapVtbl, iface);
-	return IDirectMusicChordMapImpl_IUnknown_AddRef ((LPUNKNOWN)&This->UnknownVtbl);
+static HRESULT WINAPI IDirectMusicChordMapImpl_QueryInterface(IDirectMusicChordMap *iface,
+        REFIID riid, void **ret_iface)
+{
+    IDirectMusicChordMapImpl *This = impl_from_IDirectMusicChordMap(iface);
+
+    TRACE("(%p, %s, %p)\n", This, debugstr_dmguid(riid), ret_iface);
+
+    *ret_iface = NULL;
+
+    if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IDirectMusicChordMap))
+        *ret_iface = iface;
+    else if (IsEqualIID(riid, &IID_IDirectMusicObject))
+        *ret_iface = &This->ObjectVtbl;
+    else if (IsEqualIID(riid, &IID_IPersistStream))
+        *ret_iface = &This->PersistStreamVtbl;
+    else {
+        WARN("(%p, %s, %p): not found\n", This, debugstr_dmguid(riid), ret_iface);
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown*)*ret_iface);
+    return S_OK;
 }
 
-static ULONG WINAPI IDirectMusicChordMapImpl_IDirectMusicChordMap_Release (LPDIRECTMUSICCHORDMAP iface) {
-	ICOM_THIS_MULTI(IDirectMusicChordMapImpl, ChordMapVtbl, iface);
-	return IDirectMusicChordMapImpl_IUnknown_Release ((LPUNKNOWN)&This->UnknownVtbl);
+static ULONG WINAPI IDirectMusicChordMapImpl_AddRef(IDirectMusicChordMap *iface)
+{
+    IDirectMusicChordMapImpl *This = impl_from_IDirectMusicChordMap(iface);
+    LONG ref = InterlockedIncrement(&This->ref);
+
+    TRACE("(%p) ref=%d\n", This, ref);
+
+    return ref;
 }
 
-static HRESULT WINAPI IDirectMusicChordMapImpl_IDirectMusicChordMap_GetScale (LPDIRECTMUSICCHORDMAP iface, DWORD* pdwScale) {
-	ICOM_THIS_MULTI(IDirectMusicChordMapImpl, ChordMapVtbl, iface);
-	FIXME("(%p, %p): stub\n", This, pdwScale);
-	return S_OK;
+static ULONG WINAPI IDirectMusicChordMapImpl_Release(IDirectMusicChordMap *iface)
+{
+    IDirectMusicChordMapImpl *This = impl_from_IDirectMusicChordMap(iface);
+    LONG ref = InterlockedDecrement(&This->ref);
+
+    TRACE("(%p) ref=%d\n", This, ref);
+
+    if (!ref) {
+        HeapFree(GetProcessHeap(), 0, This->pDesc);
+        HeapFree(GetProcessHeap(), 0, This);
+        DMCOMPOS_UnlockModule();
+    }
+
+    return ref;
 }
 
-static const IDirectMusicChordMapVtbl DirectMusicChordMap_ChordMap_Vtbl = {
-	IDirectMusicChordMapImpl_IDirectMusicChordMap_QueryInterface,
-	IDirectMusicChordMapImpl_IDirectMusicChordMap_AddRef,
-	IDirectMusicChordMapImpl_IDirectMusicChordMap_Release,
-	IDirectMusicChordMapImpl_IDirectMusicChordMap_GetScale
+static HRESULT WINAPI IDirectMusicChordMapImpl_GetScale(IDirectMusicChordMap *iface,
+        DWORD *pdwScale)
+{
+    IDirectMusicChordMapImpl *This = impl_from_IDirectMusicChordMap(iface);
+    FIXME("(%p, %p): stub\n", This, pdwScale);
+    return S_OK;
+}
+
+static const IDirectMusicChordMapVtbl dmchordmap_vtbl = {
+    IDirectMusicChordMapImpl_QueryInterface,
+    IDirectMusicChordMapImpl_AddRef,
+    IDirectMusicChordMapImpl_Release,
+    IDirectMusicChordMapImpl_GetScale
 };
 
 /* IDirectMusicChordMapImpl IDirectMusicObject part: */
 static HRESULT WINAPI IDirectMusicChordMapImpl_IDirectMusicObject_QueryInterface (LPDIRECTMUSICOBJECT iface, REFIID riid, LPVOID *ppobj) {
 	ICOM_THIS_MULTI(IDirectMusicChordMapImpl, ObjectVtbl, iface);
-	return IDirectMusicChordMapImpl_IUnknown_QueryInterface ((LPUNKNOWN)&This->UnknownVtbl, riid, ppobj);
+        return IDirectMusicChordMap_QueryInterface(&This->IDirectMusicChordMap_iface, riid, ppobj);
 }
 
 static ULONG WINAPI IDirectMusicChordMapImpl_IDirectMusicObject_AddRef (LPDIRECTMUSICOBJECT iface) {
 	ICOM_THIS_MULTI(IDirectMusicChordMapImpl, ObjectVtbl, iface);
-	return IDirectMusicChordMapImpl_IUnknown_AddRef ((LPUNKNOWN)&This->UnknownVtbl);
+        return IDirectMusicChordMap_AddRef(&This->IDirectMusicChordMap_iface);
 }
 
 static ULONG WINAPI IDirectMusicChordMapImpl_IDirectMusicObject_Release (LPDIRECTMUSICOBJECT iface) {
 	ICOM_THIS_MULTI(IDirectMusicChordMapImpl, ObjectVtbl, iface);
-	return IDirectMusicChordMapImpl_IUnknown_Release ((LPUNKNOWN)&This->UnknownVtbl);
+        return IDirectMusicChordMap_Release(&This->IDirectMusicChordMap_iface);
 }
 
 static HRESULT WINAPI IDirectMusicChordMapImpl_IDirectMusicObject_GetDescriptor (LPDIRECTMUSICOBJECT iface, LPDMUS_OBJECTDESC pDesc) {
@@ -336,17 +322,17 @@ static const IDirectMusicObjectVtbl DirectMusicChordMap_Object_Vtbl = {
 /* IDirectMusicChordMapImpl IPersistStream part: */
 static HRESULT WINAPI IDirectMusicChordMapImpl_IPersistStream_QueryInterface (LPPERSISTSTREAM iface, REFIID riid, LPVOID *ppobj) {
 	ICOM_THIS_MULTI(IDirectMusicChordMapImpl, PersistStreamVtbl, iface);
-	return IDirectMusicChordMapImpl_IUnknown_QueryInterface ((LPUNKNOWN)&This->UnknownVtbl, riid, ppobj);
+        return IDirectMusicChordMap_QueryInterface(&This->IDirectMusicChordMap_iface, riid, ppobj);
 }
 
 static ULONG WINAPI IDirectMusicChordMapImpl_IPersistStream_AddRef (LPPERSISTSTREAM iface) {
 	ICOM_THIS_MULTI(IDirectMusicChordMapImpl, PersistStreamVtbl, iface);
-	return IDirectMusicChordMapImpl_IUnknown_AddRef ((LPUNKNOWN)&This->UnknownVtbl);
+        return IDirectMusicChordMap_AddRef(&This->IDirectMusicChordMap_iface);
 }
 
 static ULONG WINAPI IDirectMusicChordMapImpl_IPersistStream_Release (LPPERSISTSTREAM iface) {
 	ICOM_THIS_MULTI(IDirectMusicChordMapImpl, PersistStreamVtbl, iface);
-	return IDirectMusicChordMapImpl_IUnknown_Release ((LPUNKNOWN)&This->UnknownVtbl);
+        return IDirectMusicChordMap_Release(&This->IDirectMusicChordMap_iface);
 }
 
 static HRESULT WINAPI IDirectMusicChordMapImpl_IPersistStream_GetClassID (LPPERSISTSTREAM iface, CLSID* pClassID) {
@@ -524,23 +510,28 @@ static const IPersistStreamVtbl DirectMusicChordMap_PersistStream_Vtbl = {
 };
 
 /* for ClassFactory */
-HRESULT WINAPI DMUSIC_CreateDirectMusicChordMapImpl (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) {
+HRESULT WINAPI create_dmchordmap(REFIID lpcGUID, void **ppobj)
+{
 	IDirectMusicChordMapImpl* obj;
-	
+        HRESULT hr;
+
 	obj = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectMusicChordMapImpl));
 	if (NULL == obj) {
 		*ppobj = NULL;
 		return E_OUTOFMEMORY;
 	}
-	obj->UnknownVtbl = &DirectMusicChordMap_Unknown_Vtbl;
-	obj->ChordMapVtbl = &DirectMusicChordMap_ChordMap_Vtbl;
+        obj->IDirectMusicChordMap_iface.lpVtbl = &dmchordmap_vtbl;
 	obj->ObjectVtbl = &DirectMusicChordMap_Object_Vtbl;
 	obj->PersistStreamVtbl = &DirectMusicChordMap_PersistStream_Vtbl;
 	obj->pDesc = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(DMUS_OBJECTDESC));
 	DM_STRUCT_INIT(obj->pDesc);
 	obj->pDesc->dwValidData |= DMUS_OBJ_CLASS;
 	obj->pDesc->guidClass = CLSID_DirectMusicChordMap;
-	obj->ref = 0; /* will be inited by QueryInterface */
+        obj->ref = 1;
 
-	return IDirectMusicChordMapImpl_IUnknown_QueryInterface ((LPUNKNOWN)&obj->UnknownVtbl, lpcGUID, ppobj);
+        DMCOMPOS_LockModule();
+        hr = IDirectMusicChordMap_QueryInterface(&obj->IDirectMusicChordMap_iface, lpcGUID, ppobj);
+        IDirectMusicChordMap_Release(&obj->IDirectMusicChordMap_iface);
+
+        return hr;
 }

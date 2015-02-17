@@ -70,6 +70,8 @@ static IUnknown *create_activex_object(script_ctx_t *ctx, const WCHAR *progid)
     GUID guid;
     HRESULT hres;
 
+    TRACE("%s\n", debugstr_w(progid));
+
     hres = CLSIDFromProgID(progid, &guid);
     if(FAILED(hres))
         return NULL;
@@ -130,7 +132,6 @@ static IUnknown *create_activex_object(script_ctx_t *ctx, const WCHAR *progid)
         }
         IObjectWithSite_Release(obj_site);
         if(!ax_site || FAILED(hres)) {
-            IObjectWithSite_Release(obj_site);
             IUnknown_Release(obj);
             return NULL;
         }
@@ -139,12 +140,13 @@ static IUnknown *create_activex_object(script_ctx_t *ctx, const WCHAR *progid)
     return obj;
 }
 
-static HRESULT ActiveXObject_value(script_ctx_t *ctx, vdisp_t *jsthis, WORD flags, DISPPARAMS *dp,
-        VARIANT *retv, jsexcept_t *ei, IServiceProvider *caller)
+static HRESULT ActiveXObject_value(script_ctx_t *ctx, vdisp_t *jsthis, WORD flags, unsigned argc, jsval_t *argv,
+        jsval_t *r)
 {
+    jsstr_t * progid_str;
+    const WCHAR *progid;
     IDispatch *disp;
     IUnknown *obj;
-    BSTR progid;
     HRESULT hres;
 
     TRACE("\n");
@@ -160,19 +162,19 @@ static HRESULT ActiveXObject_value(script_ctx_t *ctx, vdisp_t *jsthis, WORD flag
         return E_NOTIMPL;
     }
 
-    if(arg_cnt(dp) != 1) {
-        FIXME("unsupported arg_cnt %d\n", arg_cnt(dp));
+    if(argc != 1) {
+        FIXME("unsupported argc %d\n", argc);
         return E_NOTIMPL;
     }
 
-    hres = to_string(ctx, get_arg(dp,0), ei, &progid);
+    hres = to_flat_string(ctx, argv[0], &progid_str, &progid);
     if(FAILED(hres))
         return hres;
 
     obj = create_activex_object(ctx, progid);
-    SysFreeString(progid);
+    jsstr_release(progid_str);
     if(!obj)
-        return throw_generic_error(ctx, ei, JS_E_CANNOT_CREATE_OBJ, NULL);
+        return throw_generic_error(ctx, JS_E_CANNOT_CREATE_OBJ, NULL);
 
     hres = IUnknown_QueryInterface(obj, &IID_IDispatch, (void**)&disp);
     IUnknown_Release(obj);
@@ -181,8 +183,7 @@ static HRESULT ActiveXObject_value(script_ctx_t *ctx, vdisp_t *jsthis, WORD flag
         return E_NOTIMPL;
     }
 
-    V_VT(retv) = VT_DISPATCH;
-    V_DISPATCH(retv) = disp;
+    *r = jsval_disp(disp);
     return S_OK;
 }
 

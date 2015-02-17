@@ -53,7 +53,7 @@ static void flush_events(void)
     while (diff > 0)
     {
         if (MsgWaitForMultipleObjects( 0, NULL, FALSE, min_timeout, QS_ALLINPUT ) == WAIT_TIMEOUT) break;
-        while (PeekMessage( &msg, 0, 0, 0, PM_REMOVE )) DispatchMessage( &msg );
+        while (PeekMessageA( &msg, 0, 0, 0, PM_REMOVE )) DispatchMessageA( &msg );
         diff = time - GetTickCount();
         min_timeout = 10;
     }
@@ -80,7 +80,7 @@ static void create_dde_window(HWND *hwnd, LPCSTR name, WNDPROC wndproc)
 static void destroy_dde_window(HWND *hwnd, LPCSTR name)
 {
     DestroyWindow(*hwnd);
-    UnregisterClass(name, GetModuleHandleA(0));
+    UnregisterClassA(name, GetModuleHandleA(NULL));
 }
 
 static LRESULT WINAPI dde_server_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
@@ -143,7 +143,7 @@ static LRESULT WINAPI dde_server_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPA
         else
             lstrcpyA(str, "requested data\r\n");
 
-        size = sizeof(DDEDATA) + lstrlenA(str) + 1;
+        size = FIELD_OFFSET(DDEDATA, Value[lstrlenA(str) + 1]);
         hglobal = GlobalAlloc(GMEM_MOVEABLE, size);
         ok(hglobal != NULL, "Expected non-NULL hglobal\n");
 
@@ -255,7 +255,7 @@ static void test_msg_server(HANDLE hproc, HANDLE hthread)
 
     while (MsgWaitForMultipleObjects( 1, &hproc, FALSE, INFINITE, QS_ALLINPUT ) != 0)
     {
-        while (PeekMessage(&msg, 0, 0, 0, PM_REMOVE)) DispatchMessageA(&msg);
+        while (PeekMessageA(&msg, 0, 0, 0, PM_REMOVE)) DispatchMessageA(&msg);
     }
 
     destroy_dde_window(&hwnd, "dde_server");
@@ -314,8 +314,7 @@ static void test_ddeml_client(void)
     {
         str = (LPSTR)DdeAccessData(hdata, &size);
         ok(!lstrcmpA(str, "requested data\r\n"), "Expected 'requested data\\r\\n', got %s\n", str);
-        ok(size == 19 || broken(size == 28), /* sizes are rounded up on win9x */
-           "Expected 19, got %d\n", size);
+        ok(size == 17, "Expected 17, got %d\n", size);
 
         ret = DdeUnaccessData(hdata);
         ok(ret == TRUE, "Expected TRUE, got %d\n", ret);
@@ -336,8 +335,7 @@ todo_wine
     {
         str = (LPSTR)DdeAccessData(hdata, &size);
         ok(!lstrcmpA(str, "requested data\r\n"), "Expected 'requested data\\r\\n', got %s\n", str);
-        ok(size == 19 || broken(size == 28), /* sizes are rounded up on win9x */
-           "Expected 19, got %d\n", size);
+        ok(size == 17, "Expected 17, got %d\n", size);
 
         ret = DdeUnaccessData(hdata);
         ok(ret == TRUE, "Expected TRUE, got %d\n", ret);
@@ -357,8 +355,7 @@ todo_wine
     {
         str = (LPSTR)DdeAccessData(hdata, &size);
         ok(!lstrcmpA(str, "requested data\r\n"), "Expected 'requested data\\r\\n', got %s\n", str);
-        ok(size == 19 || broken(size == 28), /* sizes are rounded up on win9x */
-           "Expected 19, got %d\n", size);
+        ok(size == 17, "Expected 17, got %d\n", size);
 
         ret = DdeUnaccessData(hdata);
         ok(ret == TRUE, "Expected TRUE, got %d\n", ret);
@@ -483,8 +480,7 @@ todo_wine
     {
         str = (LPSTR)DdeAccessData(hdata, &size);
         ok(!lstrcmpA(str, "command executed\r\n"), "Expected 'command executed\\r\\n', got %s\n", str);
-        ok(size == 21 || broken(size == 28), /* sizes are rounded up on win9x */
-           "Expected 21, got %d\n", size);
+        ok(size == 19, "Expected 19, got %d\n", size);
 
         ret = DdeUnaccessData(hdata);
         ok(ret == TRUE, "Expected TRUE, got %d\n", ret);
@@ -780,7 +776,6 @@ static HDDEDATA CALLBACK server_ddeml_callback(UINT uType, UINT uFmt, HCONV hcon
         else if (msg_index == 10)
         {
             DWORD rsize = 0;
-            size = 0;
 
             size = DdeGetData(hdata, NULL, 0, 0);
             ok(size == 17, "DdeGetData should have returned 17 not %d\n", size);
@@ -829,10 +824,10 @@ static void test_ddeml_server(HANDLE hproc)
 
     /* set up DDE server */
     server_pid = 0;
-    res = DdeInitialize(&server_pid, server_ddeml_callback, APPCLASS_STANDARD, 0);
+    res = DdeInitializeA(&server_pid, server_ddeml_callback, APPCLASS_STANDARD, 0);
     ok(res == DMLERR_NO_ERROR, "Expected DMLERR_NO_ERROR, got %d\n", res);
 
-    server = DdeCreateStringHandle(server_pid, "TestDDEServer", CP_WINANSI);
+    server = DdeCreateStringHandleA(server_pid, "TestDDEServer", CP_WINANSI);
     ok(server != NULL, "Expected non-NULL string handle\n");
 
     hdata = DdeNameService(server_pid, server, 0, DNS_REGISTER);
@@ -840,7 +835,7 @@ static void test_ddeml_server(HANDLE hproc)
 
     while (MsgWaitForMultipleObjects( 1, &hproc, FALSE, INFINITE, QS_ALLINPUT ) != 0)
     {
-        while (PeekMessage(&msg, 0, 0, 0, PM_REMOVE)) DispatchMessageA(&msg);
+        while (PeekMessageA(&msg, 0, 0, 0, PM_REMOVE)) DispatchMessageA(&msg);
     }
     ret = DdeUninitialize(server_pid);
     ok(ret == TRUE, "Expected TRUE, got %d\n", ret);
@@ -1078,7 +1073,7 @@ static void test_msg_client(void)
 
     flush_events();
 
-    item = GlobalAddAtom("request");
+    item = GlobalAddAtomA("request");
     ok(item != 0, "Expected non-NULL item\n");
 
     /* WM_DDE_REQUEST, bad clipboard format */
@@ -1595,7 +1590,7 @@ static void test_dde_aw_transaction( BOOL client_unicode, BOOL server_unicode )
     info.cb = sizeof(info);
     ret = DdeQueryConvInfo(hconv, QID_SYNC, &info);
     ok(ret, "wrong info size %d, DdeQueryConvInfo error %x\n", ret, DdeGetLastError(dde_inst));
-    ok(info.ConvCtxt.iCodePage == client_unicode ? CP_WINUNICODE : CP_WINANSI,
+    ok(info.ConvCtxt.iCodePage == (client_unicode ? CP_WINUNICODE : CP_WINANSI),
        "wrong iCodePage %d\n", info.ConvCtxt.iCodePage);
     ok(!info.hConvPartner, "unexpected info.hConvPartner: %p\n", info.hConvPartner);
 todo_wine {
@@ -1924,7 +1919,7 @@ static void test_DdeCreateDataHandle(void)
     ok(err == DMLERR_INVALIDPARAMETER, "Expected DMLERR_INVALIDPARAMETER, got %d\n", err);
 
     ret = DdeUninitialize(dde_inst2);
-    ok(res == DMLERR_NO_ERROR, "Expected DMLERR_NO_ERROR, got %d\n", res);
+    ok(ret == TRUE, "Expected TRUE, got %d\n", ret);
 
 
     /* NULL pSrc */
@@ -2037,7 +2032,7 @@ static void test_DdeCreateDataHandle(void)
     ok(ret == TRUE, "Expected TRUE, got %d\n", ret);
 
     ret = DdeUninitialize(dde_inst);
-    ok(res == DMLERR_NO_ERROR, "Expected DMLERR_NO_ERROR, got %d\n", res);
+    ok(ret == TRUE, "Expected TRUE, got %d\n", ret);
 }
 
 static void test_DdeCreateStringHandle(void)
@@ -2401,8 +2396,8 @@ static HDDEDATA CALLBACK server_end_to_end_callback(UINT uType, UINT uFmt, HCONV
     char str[MAX_PATH];
     static int msg_index = 0;
     static HCONV conversation = 0;
-    static char test_service [] = "TestDDEService";
-    static char test_topic [] = "TestDDETopic";
+    static const char test_service [] = "TestDDEService";
+    static const char test_topic [] = "TestDDETopic";
 
     msg_index++;
 
@@ -2459,7 +2454,6 @@ static HDDEDATA CALLBACK server_end_to_end_callback(UINT uType, UINT uFmt, HCONV
         size = DdeQueryStringA(server_pid, hsz1, str, MAX_PATH, CP_WINANSI);
         ok(!lstrcmpA(str, test_topic), "Expected %s, got %s, msg_index=%d\n",
                              test_topic, str, msg_index);
-        ok(size == 12, "Expected 12, got %d, msg_index=%d\n", size, msg_index);
         ok(size == 12, "Expected 12, got %d, msg_index=%d\n", size, msg_index);
 
         size = DdeGetData(hdata, NULL, 0, 0);
@@ -2591,10 +2585,10 @@ static void test_end_to_end_client(BOOL type_a)
     HSZ server, topic;
     HCONV hconv;
     HDDEDATA hdata;
-    static char test_service[] = "TestDDEService";
-    static WCHAR test_service_w[] = {'T','e','s','t','D','D','E','S','e','r','v','i','c','e',0};
-    static char test_topic[] = "TestDDETopic";
-    static WCHAR test_topic_w[] = {'T','e','s','t','D','D','E','T','o','p','i','c',0};
+    static const char test_service[] = "TestDDEService";
+    static const WCHAR test_service_w[] = {'T','e','s','t','D','D','E','S','e','r','v','i','c','e',0};
+    static const char test_topic[] = "TestDDETopic";
+    static const WCHAR test_topic_w[] = {'T','e','s','t','D','D','E','T','o','p','i','c',0};
 
     trace("Start end to end client %s\n", type_a ? "ASCII" : "UNICODE");
 
@@ -2656,7 +2650,7 @@ static void test_end_to_end_server(HANDLE hproc, HANDLE hthread, BOOL type_a)
     BOOL ret;
     DWORD res;
     HDDEDATA hdata;
-    static CHAR test_service[] = "TestDDEService";
+    static const char test_service[] = "TestDDEService";
 
     trace("start end to end server %s\n", type_a ? "ASCII" : "UNICODE");
     server_pid = 0;
@@ -2677,7 +2671,7 @@ static void test_end_to_end_server(HANDLE hproc, HANDLE hthread, BOOL type_a)
 
     while (MsgWaitForMultipleObjects( 1, &hproc, FALSE, INFINITE, QS_ALLINPUT ) != 0)
     {
-        while (PeekMessage(&msg, 0, 0, 0, PM_REMOVE)) DispatchMessageA(&msg);
+        while (PeekMessageA(&msg, 0, 0, 0, PM_REMOVE)) DispatchMessageA(&msg);
     }
 
     ret = DdeUninitialize(server_pid);
@@ -2691,7 +2685,7 @@ START_TEST(dde)
     int argc;
     char **argv;
     char buffer[MAX_PATH];
-    STARTUPINFO startup;
+    STARTUPINFOA startup;
     PROCESS_INFORMATION proc;
     DWORD dde_inst = 0xdeadbeef;
 
@@ -2720,7 +2714,7 @@ START_TEST(dde)
         return;
     }
 
-    ZeroMemory(&startup, sizeof(STARTUPINFO));
+    ZeroMemory(&startup, sizeof(STARTUPINFOA));
     sprintf(buffer, "%s dde ddeml", argv[0]);
     startup.cb = sizeof(startup);
     startup.dwFlags = STARTF_USESHOWWINDOW;

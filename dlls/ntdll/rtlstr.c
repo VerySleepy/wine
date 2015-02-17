@@ -1723,7 +1723,7 @@ NTSTATUS WINAPI RtlCharToInteger(
     CHAR chCurrent;
     int digit;
     ULONG RunningTotal = 0;
-    char bMinus = 0;
+    BOOL bMinus = FALSE;
 
     while (*str != '\0' && *str <= ' ') {
 	str++;
@@ -1732,7 +1732,7 @@ NTSTATUS WINAPI RtlCharToInteger(
     if (*str == '+') {
 	str++;
     } else if (*str == '-') {
-	bMinus = 1;
+        bMinus = TRUE;
 	str++;
     } /* if */
 
@@ -1877,7 +1877,7 @@ NTSTATUS WINAPI RtlUnicodeStringToInteger(
     WCHAR wchCurrent;
     int digit;
     ULONG RunningTotal = 0;
-    char bMinus = 0;
+    BOOL bMinus = FALSE;
 
     while (CharsRemaining >= 1 && *lpwstr <= ' ') {
 	lpwstr++;
@@ -1889,7 +1889,7 @@ NTSTATUS WINAPI RtlUnicodeStringToInteger(
 	    lpwstr++;
 	    CharsRemaining--;
 	} else if (*lpwstr == '-') {
-	    bMinus = 1;
+            bMinus = TRUE;
 	    lpwstr++;
 	    CharsRemaining--;
 	} /* if */
@@ -2137,4 +2137,29 @@ NTSTATUS WINAPI RtlStringFromGUID(const GUID* guid, UNICODE_STRING *str)
           guid->Data4[4], guid->Data4[5], guid->Data4[6], guid->Data4[7]);
 
   return STATUS_SUCCESS;
+}
+
+/******************************************************************************
+ * RtlHashUnicodeString [NTDLL.@]
+ */
+NTSTATUS WINAPI RtlHashUnicodeString(PCUNICODE_STRING string, BOOLEAN case_insensitive, ULONG alg, ULONG *hash)
+{
+    unsigned int i;
+
+    if (!string || !hash) return STATUS_INVALID_PARAMETER;
+
+    switch (alg)
+    {
+    case HASH_STRING_ALGORITHM_DEFAULT:
+    case HASH_STRING_ALGORITHM_X65599:
+        break;
+    default:
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    *hash = 0;
+    for (i = 0; i < string->Length/sizeof(WCHAR); i++)
+        *hash = *hash*65599 + (case_insensitive ? toupperW(string->Buffer[i]) : string->Buffer[i]);
+
+    return STATUS_SUCCESS;
 }

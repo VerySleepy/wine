@@ -453,50 +453,6 @@ static void CBGetDroppedControlRect( LPHEADCOMBO lphc, LPRECT lpRect)
 }
 
 /***********************************************************************
- *           COMBO_WindowPosChanging
- */
-static LRESULT COMBO_WindowPosChanging(
-  HWND        hwnd,
-  LPHEADCOMBO lphc,
-  WINDOWPOS*  posChanging)
-{
-  /*
-   * We need to override the WM_WINDOWPOSCHANGING method to handle all
-   * the non-simple comboboxes. The problem is that those controls are
-   * always the same height. We have to make sure they are not resized
-   * to another value.
-   */
-  if ( ( CB_GETTYPE(lphc) != CBS_SIMPLE ) &&
-       ((posChanging->flags & SWP_NOSIZE) == 0) )
-  {
-    int newComboHeight;
-
-    newComboHeight = CBGetTextAreaHeight(hwnd,lphc) +
-                      2*COMBO_YBORDERSIZE();
-
-    /*
-     * Resizing a combobox has another side effect, it resizes the dropped
-     * rectangle as well. However, it does it only if the new height for the
-     * combobox is more than the height it should have. In other words,
-     * if the application resizing the combobox only had the intention to resize
-     * the actual control, for example, to do the layout of a dialog that is
-     * resized, the height of the dropdown is not changed.
-     */
-    if (posChanging->cy > newComboHeight)
-    {
-	TRACE("posChanging->cy=%d, newComboHeight=%d, oldbot=%d, oldtop=%d\n",
-	      posChanging->cy, newComboHeight, lphc->droppedRect.bottom,
-	      lphc->droppedRect.top);
-      lphc->droppedRect.bottom = lphc->droppedRect.top + posChanging->cy - newComboHeight;
-
-    }
-    posChanging->cy = newComboHeight;
-  }
-
-  return 0;
-}
-
-/***********************************************************************
  *           COMBO_Create
  */
 static LRESULT COMBO_Create( HWND hwnd, LPHEADCOMBO lphc, HWND hwndParent, LONG style,
@@ -1087,18 +1043,24 @@ static void CBDropDown( LPHEADCOMBO lphc )
       }
    }
 
+   r.left = rect.left;
+   r.top = rect.bottom;
+   r.right = r.left + lphc->droppedRect.right - lphc->droppedRect.left;
+   r.bottom = r.top + nDroppedHeight;
+
    /*If height of dropped rectangle gets beyond a screen size it should go up, otherwise down.*/
    monitor = MonitorFromRect( &rect, MONITOR_DEFAULTTOPRIMARY );
    mon_info.cbSize = sizeof(mon_info);
    GetMonitorInfoW( monitor, &mon_info );
 
-   if( (rect.bottom + nDroppedHeight) >= mon_info.rcWork.bottom )
-      rect.bottom = rect.top - nDroppedHeight;
+   if (r.bottom > mon_info.rcWork.bottom)
+   {
+       r.top = max( rect.top - nDroppedHeight, mon_info.rcWork.top );
+       r.bottom = min( r.top + nDroppedHeight, mon_info.rcWork.bottom );
+   }
 
-   SetWindowPos( lphc->hWndLBox, HWND_TOP, rect.left, rect.bottom,
-		 lphc->droppedRect.right - lphc->droppedRect.left,
-		 nDroppedHeight,
-		 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+   SetWindowPos( lphc->hWndLBox, HWND_TOPMOST, r.left, r.top, r.right - r.left, r.bottom - r.top,
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW );
 
 
    if( !(lphc->wState & CBF_NOREDRAW) )
@@ -1551,15 +1513,52 @@ static void CBResetPos(
 /***********************************************************************
  *           COMBO_Size
  */
-static void COMBO_Size( LPHEADCOMBO lphc, BOOL bRedraw )
+static void COMBO_Size( LPHEADCOMBO lphc )
+{
+  /*
+   * Those controls are always the same height. So we have to make sure
+   * they are not resized to another value.
+   */
+  if( CB_GETTYPE(lphc) != CBS_SIMPLE )
   {
+    int newComboHeight, curComboHeight, curComboWidth;
+    RECT rc;
+
+    GetWindowRect(lphc->self, &rc);
+    curComboHeight = rc.bottom - rc.top;
+    curComboWidth = rc.right - rc.left;
+    newComboHeight = CBGetTextAreaHeight(lphc->self, lphc) + 2*COMBO_YBORDERSIZE();
+
+    /*
+     * Resizing a combobox has another side effect, it resizes the dropped
+     * rectangle as well. However, it does it only if the new height for the
+     * combobox is more than the height it should have. In other words,
+     * if the application resizing the combobox only had the intention to resize
+     * the actual control, for example, to do the layout of a dialog that is
+     * resized, the height of the dropdown is not changed.
+     */
+    if( curComboHeight > newComboHeight )
+    {
+      TRACE("oldComboHeight=%d, newComboHeight=%d, oldDropBottom=%d, oldDropTop=%d\n",
+            curComboHeight, newComboHeight, lphc->droppedRect.bottom,
+            lphc->droppedRect.top);
+      lphc->droppedRect.bottom = lphc->droppedRect.top + curComboHeight - newComboHeight;
+    }
+    /*
+     * Restore original height
+     */
+    if( curComboHeight != newComboHeight )
+      SetWindowPos(lphc->self, 0, 0, 0, curComboWidth, newComboHeight,
+            SWP_NOZORDER|SWP_NOMOVE|SWP_NOACTIVATE|SWP_NOREDRAW);
+  }
+
   CBCalcPlacement(lphc->self,
 		  lphc,
 		  &lphc->textRect,
 		  &lphc->buttonRect,
 		  &lphc->droppedRect);
 
-  CBResetPos( lphc, &lphc->textRect, &lphc->droppedRect, bRedraw );
+  CBResetPos( lphc, &lphc->textRect, &lphc->droppedRect, TRUE );
 }
 
 
@@ -1871,21 +1870,9 @@ LRESULT ComboWndProc_common( HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
 		}
 		return  result;
 	}
-	case WM_WINDOWPOSCHANGING:
-	        return  COMBO_WindowPosChanging(hwnd, lphc, (LPWINDOWPOS)lParam);
-    case WM_WINDOWPOSCHANGED:
-        /* SetWindowPos can be called on a Combobox to resize its Listbox.
-         * In that case, the Combobox itself will not be resized, so we won't
-         * get a WM_SIZE. Since we still want to update the Listbox, we have to
-         * do it here.
-         */
-        /* we should not force repainting on WM_WINDOWPOSCHANGED, it breaks
-         * Z-order based painting.
-         */
-        /* fall through */
 	case WM_SIZE:
 	        if( lphc->hWndLBox &&
-		  !(lphc->wState & CBF_NORESIZE) ) COMBO_Size( lphc, message == WM_SIZE );
+		  !(lphc->wState & CBF_NORESIZE) ) COMBO_Size( lphc );
 		return  TRUE;
 	case WM_SETFONT:
 		COMBO_Font( lphc, (HFONT)wParam, (BOOL)lParam );
@@ -2134,7 +2121,7 @@ LRESULT ComboWndProc_common( HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
 		if( lParam ) CBGetDroppedControlRect(lphc, (LPRECT)lParam );
 		return  CB_OKAY;
 	case CB_GETDROPPEDSTATE:
-		return  (lphc->wState & CBF_DROPPED) ? TRUE : FALSE;
+		return (lphc->wState & CBF_DROPPED) != 0;
 	case CB_DIR:
 		return unicode ? SendMessageW(lphc->hWndLBox, LB_DIR, wParam, lParam) :
 				 SendMessageA(lphc->hWndLBox, LB_DIR, wParam, lParam);
@@ -2196,7 +2183,7 @@ LRESULT ComboWndProc_common( HWND hwnd, UINT message, WPARAM wParam, LPARAM lPar
 		else lphc->wState &= ~CBF_EUI;
 		return  CB_OKAY;
 	case CB_GETEXTENDEDUI:
-		return  (lphc->wState & CBF_EUI) ? TRUE : FALSE;
+		return (lphc->wState & CBF_EUI) != 0;
 	case CB_GETCOMBOBOXINFO:
 		return COMBO_GetComboBoxInfo(lphc, (COMBOBOXINFO *)lParam);
 	case CB_LIMITTEXT:

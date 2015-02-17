@@ -345,6 +345,72 @@ enum wined3d_format_id wined3dformat_from_dxgi_format(DXGI_FORMAT format)
     }
 }
 
+DWORD wined3d_usage_from_d3d10core(UINT bind_flags, enum D3D10_USAGE usage)
+{
+    static const DWORD handled = D3D10_BIND_SHADER_RESOURCE
+            | D3D10_BIND_RENDER_TARGET
+            | D3D10_BIND_DEPTH_STENCIL;
+    DWORD wined3d_usage = 0;
+
+    if (bind_flags & D3D10_BIND_SHADER_RESOURCE)
+        wined3d_usage |= WINED3DUSAGE_TEXTURE;
+    if (bind_flags & D3D10_BIND_RENDER_TARGET)
+        wined3d_usage |= WINED3DUSAGE_RENDERTARGET;
+    if (bind_flags & D3D10_BIND_DEPTH_STENCIL)
+        wined3d_usage |= WINED3DUSAGE_DEPTHSTENCIL;
+    if (bind_flags & ~handled)
+        FIXME("Unhandled bind flags %#x.\n", usage & ~handled);
+
+    if (usage == D3D10_USAGE_DYNAMIC)
+        wined3d_usage |= WINED3DUSAGE_DYNAMIC;
+
+    return wined3d_usage;
+}
+
+struct wined3d_resource *wined3d_resource_from_resource(ID3D10Resource *resource)
+{
+    D3D10_RESOURCE_DIMENSION dimension;
+
+    ID3D10Resource_GetType(resource, &dimension);
+
+    switch (dimension)
+    {
+        case D3D10_RESOURCE_DIMENSION_BUFFER:
+            return wined3d_buffer_get_resource(unsafe_impl_from_ID3D10Buffer(
+                    (ID3D10Buffer *)resource)->wined3d_buffer);
+
+        case D3D10_RESOURCE_DIMENSION_TEXTURE2D:
+            return wined3d_texture_get_resource(unsafe_impl_from_ID3D10Texture2D(
+                    (ID3D10Texture2D *)resource)->wined3d_texture);
+
+        default:
+            FIXME("Unhandled resource dimension %#x.\n", dimension);
+            return NULL;
+    }
+}
+
+DWORD wined3d_map_flags_from_d3d10_map_type(D3D10_MAP map_type)
+{
+    switch (map_type)
+    {
+        case D3D10_MAP_READ_WRITE:
+            return 0;
+
+        case D3D10_MAP_READ:
+            return WINED3D_MAP_READONLY;
+
+        case D3D10_MAP_WRITE_DISCARD:
+            return WINED3D_MAP_DISCARD;
+
+        case D3D10_MAP_WRITE_NO_OVERWRITE:
+            return WINED3D_MAP_NOOVERWRITE;
+
+        default:
+            FIXME("Unhandled map_type %#x.\n", map_type);
+            return 0;
+    }
+}
+
 void skip_dword_unknown(const char **ptr, unsigned int count)
 {
     unsigned int i;

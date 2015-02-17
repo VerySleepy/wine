@@ -37,7 +37,7 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(ole);
 
-#define  BLOCK_TAB_SIZE 5 /* represent the first size table and it's increment block size */
+#define  BLOCK_TAB_SIZE 5 /* represent the first size table and its increment block size */
 
 /* CompositeMoniker data structure */
 typedef struct CompositeMonikerImpl{
@@ -156,7 +156,7 @@ CompositeMonikerImpl_Release(IMoniker* iface)
 
     ref = InterlockedDecrement(&This->ref);
 
-    /* destroy the object if there's no more reference on it */
+    /* destroy the object if there are no more references to it */
     if (ref == 0){
 
         /* release all the components before destroying this object */
@@ -236,7 +236,7 @@ CompositeMonikerImpl_Load(IMoniker* iface,IStream* pStm)
         if (++This->tabLastIndex==This->tabSize){
 
             This->tabSize+=BLOCK_TAB_SIZE;
-            This->tabMoniker=HeapReAlloc(GetProcessHeap(),0,This->tabMoniker,This->tabSize*sizeof(IMoniker));
+            This->tabMoniker=HeapReAlloc(GetProcessHeap(),0,This->tabMoniker,This->tabSize*sizeof(This->tabMoniker[0]));
 
             if (This->tabMoniker==NULL)
             return E_OUTOFMEMORY;
@@ -1443,7 +1443,7 @@ static HRESULT WINAPI CompositeMonikerMarshalImpl_UnmarshalInterface(IMarshal *i
     if (This->tabLastIndex + 2 > This->tabSize)
     {
         This->tabSize += max(BLOCK_TAB_SIZE, 2);
-        This->tabMoniker=HeapReAlloc(GetProcessHeap(),0,This->tabMoniker,This->tabSize*sizeof(IMoniker));
+        This->tabMoniker=HeapReAlloc(GetProcessHeap(),0,This->tabMoniker,This->tabSize*sizeof(This->tabMoniker[0]));
 
         if (This->tabMoniker==NULL)
             return E_OUTOFMEMORY;
@@ -1542,7 +1542,7 @@ EnumMonikerImpl_Release(IEnumMoniker* iface)
 
     ref = InterlockedDecrement(&This->ref);
 
-    /* destroy the object if there's no more reference on it */
+    /* destroy the object if there are no more references to it */
     if (ref == 0) {
 
         for(i=0;i<This->tabSize;i++)
@@ -1638,10 +1638,10 @@ static const IEnumMonikerVtbl VT_EnumMonikerImpl =
  ******************************************************************************/
 static HRESULT
 EnumMonikerImpl_CreateEnumMoniker(IMoniker** tabMoniker, ULONG tabSize,
-               ULONG currentPos, BOOL leftToRigth, IEnumMoniker ** ppmk)
+               ULONG currentPos, BOOL leftToRight, IEnumMoniker ** ppmk)
 {
     EnumMonikerImpl* newEnumMoniker;
-    int i;
+    ULONG i;
 
     if (currentPos > tabSize)
         return E_INVALIDARG;
@@ -1658,24 +1658,24 @@ EnumMonikerImpl_CreateEnumMoniker(IMoniker** tabMoniker, ULONG tabSize,
     newEnumMoniker->tabSize=tabSize;
     newEnumMoniker->currentPos=currentPos;
 
-    newEnumMoniker->tabMoniker=HeapAlloc(GetProcessHeap(),0,tabSize*sizeof(IMoniker));
+    newEnumMoniker->tabMoniker=HeapAlloc(GetProcessHeap(),0,tabSize*sizeof(newEnumMoniker->tabMoniker[0]));
 
     if (newEnumMoniker->tabMoniker==NULL) {
         HeapFree(GetProcessHeap(), 0, newEnumMoniker);
         return E_OUTOFMEMORY;
     }
 
-    if (leftToRigth)
+    if (leftToRight)
         for (i=0;i<tabSize;i++){
 
             newEnumMoniker->tabMoniker[i]=tabMoniker[i];
             IMoniker_AddRef(tabMoniker[i]);
         }
     else
-        for (i=tabSize-1;i>=0;i--){
+        for (i = tabSize; i > 0; i--){
 
-            newEnumMoniker->tabMoniker[tabSize-i-1]=tabMoniker[i];
-            IMoniker_AddRef(tabMoniker[i]);
+            newEnumMoniker->tabMoniker[tabSize-i]=tabMoniker[i - 1];
+            IMoniker_AddRef(tabMoniker[i - 1]);
         }
 
     *ppmk=&newEnumMoniker->IEnumMoniker_iface;
@@ -1765,7 +1765,7 @@ CompositeMonikerImpl_Construct(IMoniker **ppMoniker, IMoniker *pmkFirst, IMonike
     This->tabSize=BLOCK_TAB_SIZE;
     This->tabLastIndex=0;
 
-    This->tabMoniker=HeapAlloc(GetProcessHeap(),0,This->tabSize*sizeof(IMoniker));
+    This->tabMoniker=HeapAlloc(GetProcessHeap(),0,This->tabSize*sizeof(This->tabMoniker[0]));
     if (This->tabMoniker==NULL) {
         HeapFree(GetProcessHeap(), 0, This);
         return E_OUTOFMEMORY;
@@ -1893,7 +1893,7 @@ CompositeMonikerImpl_Construct(IMoniker **ppMoniker, IMoniker *pmkFirst, IMonike
 
                 This->tabSize+=BLOCK_TAB_SIZE;
 
-                This->tabMoniker=HeapReAlloc(GetProcessHeap(),0,This->tabMoniker,This->tabSize*sizeof(IMoniker));
+                This->tabMoniker=HeapReAlloc(GetProcessHeap(),0,This->tabMoniker,This->tabSize*sizeof(This->tabMoniker[0]));
 
                 if (This->tabMoniker==NULL){
                     HeapFree(GetProcessHeap(), 0, tab_moniker);
@@ -1938,10 +1938,12 @@ CreateGenericComposite(IMoniker *pmkFirst, IMoniker *pmkRest, IMoniker **ppmkCom
     if (pmkFirst==NULL && pmkRest!=NULL){
 
         *ppmkComposite=pmkRest;
+        IMoniker_AddRef(pmkRest);
         return S_OK;
     }
     else if (pmkFirst!=NULL && pmkRest==NULL){
         *ppmkComposite=pmkFirst;
+        IMoniker_AddRef(pmkFirst);
         return S_OK;
     }
     else  if (pmkFirst==NULL && pmkRest==NULL)
@@ -1968,14 +1970,13 @@ MonikerCommonPrefixWith(IMoniker* pmkThis,IMoniker* pmkOther,IMoniker** ppmkComm
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI CompositeMonikerCF_QueryInterface(LPCLASSFACTORY iface,
-                                                  REFIID riid, LPVOID *ppv)
+static HRESULT WINAPI CompositeMonikerCF_QueryInterface(IClassFactory *iface, REFIID riid, void **ppv)
 {
     *ppv = NULL;
     if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IClassFactory))
     {
         *ppv = iface;
-        IUnknown_AddRef(iface);
+        IClassFactory_AddRef(iface);
         return S_OK;
     }
     return E_NOINTERFACE;

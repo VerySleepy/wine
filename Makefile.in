@@ -18,76 +18,58 @@
 # sgmlpages:       compile sgml source for the Wine API Guide
 # xmlpages:        compile xml source for the Wine API Guide
 
-# Sub-directories that don't have a makefile
-EXTRASUBDIRS = \
-	dlls \
-	libs \
-	po \
-	programs
-
-# Destination directories for make install
-INSTALLDIRS = \
-	$(DESTDIR)$(bindir) \
-	$(DESTDIR)$(dlldir) \
-	$(DESTDIR)$(fakedlldir) \
-	$(DESTDIR)$(mandir)/man$(prog_manext)
-
 all: wine
 	@echo "Wine build complete."
 
-WINAPI_CHECK_EXTRA_FLAGS = --global
-
-@MAKE_RULES@
-
 # Rules for re-running configure
 
-config.status: configure
+config.status: $(srcdir)/configure
 	@./config.status --recheck
 
 include/config.h: include/stamp-h
-include/stamp-h: include/config.h.in config.status
+include/stamp-h: $(srcdir)/include/config.h.in config.status
 	@./config.status include/config.h include/stamp-h
 
 # Rules for cleaning
 
-.PHONY: __clean__
+.PHONY: clean distclean __clean__
+
 clean:: __clean__
 distclean:: clean
-	$(RM) config.* configure.lineno TAGS tags include/config.h include/stamp-h Makefile Make.tmp
+	$(RM) config.* configure.lineno TAGS tags include/config.h include/stamp-h Makefile Make.tmp .gitignore
 	$(RM) -r autom4te.cache
 
 # Rules for uninstalling
 
-.PHONY: __uninstall__
+.PHONY: install install-lib install-dev uninstall __uninstall__
 uninstall:: __uninstall__
-	-rmdir $(DESTDIR)$(datadir)/wine $(DESTDIR)$(fakedlldir) $(DESTDIR)$(dlldir)
+	-rmdir $(DESTDIR)$(fontdir) $(DESTDIR)$(datadir)/wine $(DESTDIR)$(fakedlldir) $(DESTDIR)$(dlldir) $(DESTDIR)$(includedir)
 
 # Dependencies between directories
 
 # dependencies needed to build any dll or program
 __tooldeps__: libs/port libs/wine libs/wpp
 __builddeps__: __tooldeps__ include
-.PHONY: test crosstest __tooldeps__ __builddeps__
+.PHONY: depend check test testclean crosstest __tooldeps__ __builddeps__
 
-loader server: libs/port libs/wine tools
-fonts: tools
+loader: libs/port libs/wine tools
+server: libs/port libs/wine tools include
+fonts: tools/sfnt2fon
 include: tools tools/widl
-libs/wine: libs/port
+libs/wine tools: libs/port
 tools/wmc tools/wrc: tools
-tools tools/wmc tools/wrc: libs/wine
+tools/sfnt2fon tools/wmc tools/wrc: libs/wine
 tools/widl tools/wmc tools/wrc: libs/wpp
-
-dlls/shell32/Makefile dlls/shell32/__depend__: dlls/shell32/AUTHORS
-
-$(MAKEDEP): include/config.h
-	@cd $(TOOLSDIR)/tools && $(MAKE) makedep$(TOOLSEXT)
+libs/port libs/wine libs/wpp: include/config.h
 
 # Misc rules
 
+TAGSFLAGS = --langmap='c:+.idl.l.rh,make:(Make*.in)'
+
 TAGS etags:
 	$(RM) TAGS
-	(test -d .git && git ls-files '*.[chly]' '*.idl' || find -L $(top_srcdir) -name '*.[ch]' -print) | xargs etags -a
+	(test -d .git && git ls-files || find -L $(top_srcdir) -name '*.[ch]' -print) | xargs etags -a $(TAGSFLAGS)
 
 tags ctags:
 	$(RM) tags
-	(test -d .git && git ls-files '*.[chly]' '*.idl' || find -L $(top_srcdir) -name '*.[ch]' -print) | xargs ctags -a
+	(test -d .git && git ls-files || find -L $(top_srcdir) -name '*.[ch]' -print) | xargs ctags -a $(TAGSFLAGS)

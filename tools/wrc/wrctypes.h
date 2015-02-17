@@ -97,7 +97,7 @@ typedef struct res {
 	unsigned int	allocsize;	/* Allocated datablock size */
 	unsigned int	size;		/* Actual size of data */
 	unsigned int	dataidx;	/* Tag behind the resource-header */
-	char		*data;
+	unsigned char	*data;
 } res_t;
 
 /* Resource strings are slightly more complex because they include '\0' */
@@ -176,7 +176,7 @@ enum res_e {
 	res_rdt,
 	res_msg,
 	res_curg,
-	res_13,		/* Hm, wonder why its not used... */
+	res_13,         /* Hm, wonder why it's not used... */
 	res_icog,
 	res_15,
 	res_ver,
@@ -537,6 +537,7 @@ typedef struct versioninfo {
 typedef struct event {
 	struct event	*next;
 	struct event	*prev;
+	string_t	*str;
 	int		flags;
 	int		key;
 	int		id;

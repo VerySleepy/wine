@@ -35,10 +35,10 @@
 WINE_DEFAULT_DEBUG_CHANNEL(cabarc);
 
 /* from msvcrt */
+#ifndef _O_RDONLY
 #define _O_RDONLY      0
 #define _O_WRONLY      1
 #define _O_RDWR        2
-#define _O_ACCMODE     (_O_RDONLY|_O_WRONLY|_O_RDWR)
 #define _O_APPEND      0x0008
 #define _O_RANDOM      0x0010
 #define _O_SEQUENTIAL  0x0020
@@ -50,24 +50,33 @@ WINE_DEFAULT_DEBUG_CHANNEL(cabarc);
 #define _O_SHORT_LIVED 0x1000
 #define _O_TEXT        0x4000
 #define _O_BINARY      0x8000
+#endif
 
+#ifndef _O_ACCMODE
+#define _O_ACCMODE     (_O_RDONLY|_O_WRONLY|_O_RDWR)
+#endif
+
+#ifndef _SH_COMPAT
 #define _SH_COMPAT     0x00
 #define _SH_DENYRW     0x10
 #define _SH_DENYWR     0x20
 #define _SH_DENYRD     0x30
 #define _SH_DENYNO     0x40
+#endif
 
+#ifndef _A_RDONLY
 #define _A_RDONLY      0x01
 #define _A_HIDDEN      0x02
 #define _A_SYSTEM      0x04
 #define _A_ARCH        0x20
+#endif
 
 /* command-line options */
 static int opt_cabinet_size = CB_MAX_DISK;
 static int opt_cabinet_id;
 static int opt_compression = tcompTYPE_MSZIP;
-static int opt_recurse;
-static int opt_preserve_paths;
+static BOOL opt_recurse;
+static BOOL opt_preserve_paths;
 static int opt_reserve_space;
 static int opt_verbose;
 static char *opt_cab_file;
@@ -454,6 +463,13 @@ static INT_PTR CDECL extract_notify( FDINOTIFICATIONTYPE fdint, PFDINOTIFICATION
         CloseHandle( (HANDLE)pfdin->hf );
         return 0;
 
+    case fdintNEXT_CABINET:
+        WINE_TRACE("Next cab: status %u, path '%s', file '%s'\n", pfdin->fdie, pfdin->psz3, pfdin->psz1);
+        return pfdin->fdie == FDIERROR_NONE ? 0 : -1;
+
+    case fdintENUMERATE:
+        return 0;
+
     default:
         WINE_FIXME( "Unexpected notification type %d.\n", fdint );
         return 0;
@@ -467,7 +483,11 @@ static int extract_cabinet( char *cab_dir )
     HFDI fdi = FDICreate( cab_alloc, cab_free, fdi_open, fdi_read,
                           fdi_write, fdi_close, fdi_lseek, cpuUNKNOWN, &erf );
 
-    if (!FDICopy( fdi, opt_cab_file, cab_dir, 0, extract_notify, NULL, NULL )) ret = GetLastError();
+    if (!FDICopy( fdi, opt_cab_file, cab_dir, 0, extract_notify, NULL, NULL ))
+    {
+        ret = GetLastError();
+        WINE_WARN("FDICopy() failed: code %u\n", ret);
+    }
     FDIDestroy( fdi );
     return ret;
 }
@@ -616,6 +636,7 @@ int wmain( int argc, WCHAR *argv[] )
 
     WCHAR *p, *command;
     char buffer[MAX_PATH];
+    char filename[MAX_PATH];
     char *cab_file, *file_part;
     int i;
 
@@ -645,15 +666,16 @@ int wmain( int argc, WCHAR *argv[] )
             else if (!strcmpiW( argv[1], mszipW )) opt_compression = tcompTYPE_MSZIP;
             else
             {
-                WINE_MESSAGE( "cabarc: Unknown compression type '%s'\n", optarg );
+                char *arg = strdupWtoA( CP_ACP, argv[1] );
+                WINE_MESSAGE( "cabarc: Unknown compression type '%s'\n", arg);
                 return 1;
             }
             break;
         case 'p':
-            opt_preserve_paths = 1;
+            opt_preserve_paths = TRUE;
             break;
         case 'r':
-            opt_recurse = 1;
+            opt_recurse = TRUE;
             break;
         case 's':
             argv++; argc--;
@@ -684,15 +706,15 @@ int wmain( int argc, WCHAR *argv[] )
         WINE_ERR( "cannot get full name for %s\n", wine_dbgstr_a( cab_file ));
         return 1;
     }
-    file_part[-1] = 0;
-    cab_free( cab_file );
+    strcpy(filename, file_part);
+    file_part[0] = 0;
 
     /* map slash to backslash in all file arguments */
     for (i = 1; i < argc; i++)
         for (p = argv[i]; *p; p++)
             if (*p == '/') *p = '\\';
     opt_files = argv + 1;
-    opt_cab_file = file_part;
+    opt_cab_file = filename;
 
     switch (*command)
     {
@@ -713,6 +735,7 @@ int wmain( int argc, WCHAR *argv[] )
                 argv[--argc] = NULL;
             }
         }
+        WINE_TRACE("Extracting file(s) from cabinet %s\n", wine_dbgstr_a(cab_file));
         return extract_cabinet( buffer );
     default:
         usage();

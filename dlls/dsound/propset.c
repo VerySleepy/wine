@@ -41,12 +41,6 @@
 #include "propkey.h"
 #include "devpkey.h"
 
-#ifdef NONAMELESSSTRUCT
-# define S(x) (x).s
-#else
-# define S(x) (x)
-#endif
-
 WINE_DEFAULT_DEBUG_CHANNEL(dsound);
 
 static WCHAR wInterface[] = { 'I','n','t','e','r','f','a','c','e',0 };
@@ -68,9 +62,7 @@ static IKsPrivatePropertySetImpl *impl_from_IKsPropertySet(IKsPropertySet *iface
 
 /* IUnknown methods */
 static HRESULT WINAPI IKsPrivatePropertySetImpl_QueryInterface(
-    LPKSPROPERTYSET iface,
-    REFIID riid,
-    LPVOID *ppobj )
+        IKsPropertySet *iface, REFIID riid, void **ppobj)
 {
     IKsPrivatePropertySetImpl *This = impl_from_IKsPropertySet(iface);
     TRACE("(%p,%s,%p)\n",This,debugstr_guid(riid),ppobj);
@@ -78,7 +70,7 @@ static HRESULT WINAPI IKsPrivatePropertySetImpl_QueryInterface(
     if (IsEqualIID(riid, &IID_IUnknown) ||
         IsEqualIID(riid, &IID_IKsPropertySet)) {
         *ppobj = iface;
-        IUnknown_AddRef(iface);
+        IKsPropertySet_AddRef(iface);
         return S_OK;
     }
     *ppobj = NULL;
@@ -619,23 +611,24 @@ static const IKsPropertySetVtbl ikspvt = {
     IKsPrivatePropertySetImpl_QuerySupport
 };
 
-HRESULT IKsPrivatePropertySetImpl_Create(
-    REFIID riid,
-    IKsPropertySet **piks)
+HRESULT IKsPrivatePropertySetImpl_Create(REFIID riid, void **ppv)
 {
     IKsPrivatePropertySetImpl *iks;
-    TRACE("(%s, %p)\n", debugstr_guid(riid), piks);
+    HRESULT hr;
 
-    if (!IsEqualIID(riid, &IID_IUnknown) &&
-        !IsEqualIID(riid, &IID_IKsPropertySet)) {
-        *piks = 0;
-        return E_NOINTERFACE;
+    TRACE("(%s, %p)\n", debugstr_guid(riid), ppv);
+
+    iks = HeapAlloc(GetProcessHeap(), 0, sizeof(*iks));
+    if (!iks) {
+        WARN("out of memory\n");
+        return DSERR_OUTOFMEMORY;
     }
 
-    iks = HeapAlloc(GetProcessHeap(),0,sizeof(*iks));
     iks->ref = 1;
     iks->IKsPropertySet_iface.lpVtbl = &ikspvt;
 
-    *piks = &iks->IKsPropertySet_iface;
-    return S_OK;
+    hr = IKsPropertySet_QueryInterface(&iks->IKsPropertySet_iface, riid, ppv);
+    IKsPropertySet_Release(&iks->IKsPropertySet_iface);
+
+    return hr;
 }

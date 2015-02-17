@@ -37,22 +37,36 @@ extern "C" {
 # define CONST_VTBL
 #endif
 
+#ifndef EXTERN_GUID
+#ifdef __cplusplus
+#define EXTERN_GUID(name, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8) \
+        EXTERN_C const GUID DECLSPEC_SELECTANY name DECLSPEC_HIDDEN; \
+        EXTERN_C const GUID DECLSPEC_SELECTANY name = \
+	{ l, w1, w2, { b1, b2,  b3,  b4,  b5,  b6,  b7,  b8 } }
+#else
+#define EXTERN_GUID(name, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8) \
+        const GUID DECLSPEC_SELECTANY name DECLSPEC_HIDDEN; \
+        const GUID DECLSPEC_SELECTANY name = \
+	{ l, w1, w2, { b1, b2,  b3,  b4,  b5,  b6,  b7,  b8 } }
+#endif
+#endif
+
 /* stupid #if can't handle casts... this __stupidity
    is just a workaround for that limitation */
 
-#define __NDR_CHAR_REP_MASK  0x000fL
-#define __NDR_INT_REP_MASK   0x00f0L
-#define __NDR_FLOAT_REP_MASK 0xff00L
+#define __NDR_CHAR_REP_MASK  0x000f
+#define __NDR_INT_REP_MASK   0x00f0
+#define __NDR_FLOAT_REP_MASK 0xff00
 
-#define __NDR_IEEE_FLOAT     0x0000L
-#define __NDR_VAX_FLOAT      0x0100L
-#define __NDR_IBM_FLOAT      0x0300L
+#define __NDR_IEEE_FLOAT     0x0000
+#define __NDR_VAX_FLOAT      0x0100
+#define __NDR_IBM_FLOAT      0x0300
 
-#define __NDR_ASCII_CHAR     0x0000L
-#define __NDR_EBCDIC_CHAR    0x0001L
+#define __NDR_ASCII_CHAR     0x0000
+#define __NDR_EBCDIC_CHAR    0x0001
 
-#define __NDR_LITTLE_ENDIAN  0x0010L
-#define __NDR_BIG_ENDIAN     0x0000L
+#define __NDR_LITTLE_ENDIAN  0x0010
+#define __NDR_BIG_ENDIAN     0x0000
 
 /* Mac's are special */
 #if defined(__RPC_MAC__)
@@ -415,7 +429,7 @@ typedef struct _MIDL_STUBLESS_PROXY_INFO
 } MIDL_STUBLESS_PROXY_INFO, *PMIDL_STUBLESS_PROXY_INFO;
 
 
-#if defined(__i386__) && !defined(__MSC_VER) && !defined(__MINGW32__) && !defined(__CYGWIN__)
+#if defined(__i386__) && !defined(_MSC_VER) && !defined(__MINGW32__) && !defined(__CYGWIN__)
 /* Calling convention for returning structures/unions is different between Windows and gcc on i386 */
 typedef LONG_PTR CLIENT_CALL_RETURN;
 #else

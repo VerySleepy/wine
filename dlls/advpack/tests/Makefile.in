@@ -1,9 +1,7 @@
 TESTDLL   = advpack.dll
-IMPORTS   = cabinet advapi32
+IMPORTS   = cabinet advapi32 advpack
 
 C_SRCS = \
 	advpack.c \
 	files.c \
 	install.c
-
-@MAKE_TEST_RULES@

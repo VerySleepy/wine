@@ -26,55 +26,52 @@ WINE_DEFAULT_DEBUG_CHANNEL(dxgi);
 
 /* Inner IUnknown methods */
 
-static inline struct dxgi_surface *dxgi_surface_from_inner_unknown(IUnknown *iface)
+static inline struct dxgi_surface *impl_from_IUnknown(IUnknown *iface)
 {
-    return (struct dxgi_surface *)((char*)iface - FIELD_OFFSET(struct dxgi_surface, inner_unknown_vtbl));
+    return CONTAINING_RECORD(iface, struct dxgi_surface, IUnknown_iface);
 }
 
-static HRESULT STDMETHODCALLTYPE dxgi_surface_inner_QueryInterface(IUnknown *iface, REFIID riid, void **object)
+static HRESULT STDMETHODCALLTYPE dxgi_surface_inner_QueryInterface(IUnknown *iface, REFIID riid, void **out)
 {
-    struct dxgi_surface *This = dxgi_surface_from_inner_unknown(iface);
+    struct dxgi_surface *surface = impl_from_IUnknown(iface);
 
-    TRACE("iface %p, riid %s, object %p\n", iface, debugstr_guid(riid), object);
+    TRACE("iface %p, riid %s, out %p.\n", iface, debugstr_guid(riid), out);
 
     if (IsEqualGUID(riid, &IID_IDXGISurface)
             || IsEqualGUID(riid, &IID_IDXGIDeviceSubObject)
             || IsEqualGUID(riid, &IID_IDXGIObject)
             || IsEqualGUID(riid, &IID_IUnknown))
     {
-        IDXGISurface_AddRef(&This->IDXGISurface_iface);
-        *object = This;
+        IDXGISurface_AddRef(&surface->IDXGISurface_iface);
+        *out = &surface->IDXGISurface_iface;
         return S_OK;
     }
 
     WARN("%s not implemented, returning E_NOINTERFACE\n", debugstr_guid(riid));
 
-    *object = NULL;
+    *out = NULL;
     return E_NOINTERFACE;
 }
 
 static ULONG STDMETHODCALLTYPE dxgi_surface_inner_AddRef(IUnknown *iface)
 {
-    struct dxgi_surface *This = dxgi_surface_from_inner_unknown(iface);
-    ULONG refcount = InterlockedIncrement(&This->refcount);
+    struct dxgi_surface *surface = impl_from_IUnknown(iface);
+    ULONG refcount = InterlockedIncrement(&surface->refcount);
 
-    TRACE("%p increasing refcount to %u\n", This, refcount);
+    TRACE("%p increasing refcount to %u.\n", surface, refcount);
 
     return refcount;
 }
 
 static ULONG STDMETHODCALLTYPE dxgi_surface_inner_Release(IUnknown *iface)
 {
-    struct dxgi_surface *This = dxgi_surface_from_inner_unknown(iface);
-    ULONG refcount = InterlockedDecrement(&This->refcount);
+    struct dxgi_surface *surface = impl_from_IUnknown(iface);
+    ULONG refcount = InterlockedDecrement(&surface->refcount);
 
-    TRACE("%p decreasing refcount to %u\n", This, refcount);
+    TRACE("%p decreasing refcount to %u.\n", surface, refcount);
 
     if (!refcount)
-    {
-        IDXGIDevice_Release(This->device);
-        HeapFree(GetProcessHeap(), 0, This);
-    }
+        HeapFree(GetProcessHeap(), 0, surface);
 
     return refcount;
 }
@@ -157,9 +154,13 @@ static HRESULT STDMETHODCALLTYPE dxgi_surface_GetDevice(IDXGISurface *iface, REF
 /* IDXGISurface methods */
 static HRESULT STDMETHODCALLTYPE dxgi_surface_GetDesc(IDXGISurface *iface, DXGI_SURFACE_DESC *desc)
 {
-    FIXME("iface %p, desc %p stub!\n", iface, desc);
+    struct dxgi_surface *surface = impl_from_IDXGISurface(iface);
 
-    return E_NOTIMPL;
+    TRACE("iface %p, desc %p.\n", iface, desc);
+
+    *desc = surface->desc;
+
+    return S_OK;
 }
 
 static HRESULT STDMETHODCALLTYPE dxgi_surface_Map(IDXGISurface *iface, DXGI_MAPPED_RECT *mapped_rect, UINT flags)
@@ -203,14 +204,15 @@ static const struct IUnknownVtbl dxgi_surface_inner_unknown_vtbl =
     dxgi_surface_inner_Release,
 };
 
-HRESULT dxgi_surface_init(struct dxgi_surface *surface, IDXGIDevice *device, IUnknown *outer)
+HRESULT dxgi_surface_init(struct dxgi_surface *surface, IDXGIDevice *device,
+        IUnknown *outer, const DXGI_SURFACE_DESC *desc)
 {
     surface->IDXGISurface_iface.lpVtbl = &dxgi_surface_vtbl;
-    surface->inner_unknown_vtbl = &dxgi_surface_inner_unknown_vtbl;
+    surface->IUnknown_iface.lpVtbl = &dxgi_surface_inner_unknown_vtbl;
     surface->refcount = 1;
-    surface->outer_unknown = outer ? outer : (IUnknown *)&surface->inner_unknown_vtbl;
+    surface->outer_unknown = outer ? outer : &surface->IUnknown_iface;
     surface->device = device;
-    IDXGIDevice_AddRef(device);
+    surface->desc = *desc;
 
     return S_OK;
 }

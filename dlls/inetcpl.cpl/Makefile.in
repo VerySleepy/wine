@@ -1,6 +1,6 @@
 MODULE    = inetcpl.cpl
 IMPORTS   = comctl32 shlwapi user32 advapi32
-DELAYIMPORTS = cryptui wininet ole32 urlmon
+DELAYIMPORTS = cryptui wininet ole32 urlmon shell32
 
 C_SRCS = \
 	content.c \
@@ -9,9 +9,6 @@ C_SRCS = \
 	security.c
 
 RC_SRCS = inetcpl.rc
-PO_SRCS = inetcpl.rc
 
 SVG_SRCS = \
 	inetcpl.svg
-
-@MAKE_DLL_RULES@

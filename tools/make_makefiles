@@ -21,16 +21,6 @@
 
 use strict;
 
-# Make rules files
-my %makerules =
-(
- "MAKE_RULES" => "Make.rules",
- "MAKE_DLL_RULES" => "dlls/Makedll.rules",
- "MAKE_IMPLIB_RULES" => "dlls/Makeimplib.rules",
- "MAKE_TEST_RULES" => "Maketest.rules",
- "MAKE_PROG_RULES" => "programs/Makeprog.rules",
-);
-
 # Programs that we want to install in the bin directory too
 my %bin_install =
 (
@@ -50,7 +40,6 @@ my %bin_install =
 # Programs that we don't want to install at all
 my %dont_install =
 (
-  "cmdlgtst" => 1,
   "winetest" => 1,
 );
 
@@ -71,59 +60,6 @@ my %modules16 =
   "wow32.dll" => 1,
 );
 
-# Default patterns for top-level .gitignore
-my @ignores = (
-    "*.[oa]",
-    "*.exe",
-    "*.fake",
-    "*.man",
-    "*.ok",
-    "*.res",
-    "*.so",
-    "/autom4te.cache",
-    "/config.cache",
-    "/config.log",
-    "/config.status",
-    "/configure.lineno",
-    "/TAGS",
-    "/tags",
-    "/wine",
-    "/wine64",
-    "Makefile",
-    "dlldata.c",
-    "dlls/*/*.def",
-    "dlls/shell32/AUTHORS",
-    "*/*/tests/testlist.c",
-    "include/config.h",
-    "include/stamp-h",
-    "msg.pot",
-    "po/*.mo",
-    "programs/winetest/build.nfo",
-    "programs/winetest/build.rc",
-    "rsrc.pot",
-    "tools/makedep",
-);
-
-# Source files and their resulting target to ignore
-my @ignore_srcs = (
-    [ 'BISON_SRCS',   '\.y',   '.tab.c' ],
-    [ 'BISON_SRCS',   '\.y',   '.tab.h' ],
-    [ 'LEX_SRCS',     '\.l',   '.yy.c' ],
-    [ 'IDL_TLB_SRCS', '\.idl', '.tlb' ],
-    [ 'IDL_H_SRCS',   '\.idl', '.h' ],
-    [ 'IDL_C_SRCS',   '\.idl', '.h' ],
-    [ 'IDL_I_SRCS',   '\.idl', '.h' ],
-    [ 'IDL_P_SRCS',   '\.idl', '.h' ],
-    [ 'IDL_S_SRCS',   '\.idl', '.h' ],
-    [ 'IDL_C_SRCS',   '\.idl', '_c.c' ],
-    [ 'IDL_I_SRCS',   '\.idl', '_i.c' ],
-    [ 'IDL_P_SRCS',   '\.idl', '_p.c' ],
-    [ 'IDL_S_SRCS',   '\.idl', '_s.c' ],
-    [ 'PUBLIC_IDL_H_SRCS',  '\.idl', '.h' ],
-    [ 'PRIVATE_IDL_H_SRCS', '\.idl', '.h' ],
-    [ 'XTEMPLATE_SRCS',     '\.x',   '.h' ],
-);
-
 my %exported_wine_headers = (
     "wine/debug.h" => 1,
     "wine/exception.h" => 1,
@@ -140,6 +76,7 @@ my %private_idl_headers = (
     "axcore.idl" => 1,
     "axextend.idl" => 1,
     "binres.idl" => 1,
+    "chprst.idl" => 1,
     "cmdbas.idl" => 1,
     "cmdtxt.idl" => 1,
     "crtrow.idl" => 1,
@@ -151,12 +88,17 @@ my %private_idl_headers = (
     "dbs.idl" => 1,
     "devenum.idl" => 1,
     "dyngraph.idl" => 1,
+    "errrec.idl" => 1,
     "opnrst.idl" => 1,
     "row.idl" => 1,
     "rowchg.idl" => 1,
+    "rowpos.idl" => 1,
+    "rowpsc.idl" => 1,
     "rstbas.idl" => 1,
     "rstinf.idl" => 1,
     "rstloc.idl" => 1,
+    "rstnot.idl" => 1,
+    "srcrst.idl" => 1,
     "sesprp.idl" => 1,
     "vmrender.idl" => 1,
     "xmldom.idl" => 1,
@@ -244,11 +186,18 @@ sub replace_makefile_variable($$)
     my ($file, $var) = @_;
     my $make = $makefiles{$file};
     my $replaced = 0;
+    my @values;
 
-    return unless defined ${$make}{"=$var"};
-
-    my @values = @{${$make}{"=$var"}};
-    ${$make}{$var} = \@values;
+    if (defined ${$make}{"=$var"})
+    {
+        @values = @{${$make}{"=$var"}};
+        ${$make}{$var} = \@values;
+    }
+    else
+    {
+        return unless defined ${$make}{$var};
+        undef ${$make}{$var};
+    }
 
     open NEW_FILE, ">$file.in.new" or die "cannot create $file.in.new";
 
@@ -265,7 +214,11 @@ sub replace_makefile_variable($$)
                 $_ = <OLD_FILE>;
                 last unless $_;
             }
-            if ($multiline)
+            if (!@values)
+            {
+                # nothing
+            }
+            elsif ($multiline)
             {
                 print NEW_FILE "$var = \\\n\t" . join(" \\\n\t", sort @values) . "\n";
             }
@@ -276,7 +229,7 @@ sub replace_makefile_variable($$)
             $replaced = 1;
             next;
         }
-        if (/^\@MAKE/ && !$replaced)
+        if (/^\@MAKE/ && !$replaced && @values)
         {
             print NEW_FILE "$var = \\\n\t" . join(" \\\n\t", sort @values) . "\n";
         }
@@ -304,33 +257,25 @@ sub parse_makefile($)
         while (/\\$/) { chop; $_ .= <MAKE>; chomp; }  # merge continued lines
         next if (/^\s*$/);
 
-        if (/^\@(MAKE.*RULES)\@/)
-        {
-            my $var = $1;
-            $make{"=rules"} = $makerules{$var};
-            next;
-        }
-        if (/^\s*(MODULE|IMPORTLIB|TESTDLL|MANPAGE)\s*=\s*(.*)/)
+        if (/^\s*(MODULE|IMPORTLIB|TESTDLL|PARENTSRC|APPMODE)\s*=\s*(.*)/)
         {
             my $var = $1;
             $make{$var} = $2;
-            push @{$make{"=flags"}}, "implib" if $var eq "IMPORTLIB";
-            push @{$make{"=flags"}}, "manpage" if $var eq "MANPAGE";
+            ${$make{"=flags"}}{"implib"} = 1 if $var eq "IMPORTLIB";
             next;
         }
-        if (/^\s*(BISON_SRCS|LEX_SRCS|IDL_[CHIPRS]_SRCS|IDL_TLB_SRCS|IMPLIB_SRCS|C_SRCS|MC_SRCS|RC_SRCS|PO_SRCS|SVG_SRCS|PROGRAMS)\s*=\s*(.*)/)
+        if (/^\s*(BISON_SRCS|LEX_SRCS|IDL_SRCS|IMPLIB_SRCS|C_SRCS|OBJC_SRCS|MC_SRCS|RC_SRCS|SVG_SRCS|FONT_SRCS|IN_SRCS|PROGRAMS|EXTRA_TARGETS|MANPAGES)\s*=\s*(.*)/)
         {
             my $var = $1;
             my @list = split(/\s+/, $2);
             $make{$var} = \@list;
-            push @{$make{"=flags"}}, "mc" if $var eq "MC_SRCS";
-            push @{$make{"=flags"}}, "po" if $var eq "PO_SRCS";
-            push @{$make{"=flags"}}, "staticimplib" if $var eq "IMPLIB_SRCS";
+            ${$make{"=flags"}}{"clean"} = 1 if $var eq "PROGRAMS";
+            ${$make{"=flags"}}{"clean"} = 1 if $var eq "EXTRA_TARGETS";
             next;
         }
-        if (/(install-lib|install-dev)\s*:/)
+        if (/(install-lib|install-dev|clean)\s*:/)
         {
-            push @{$make{"=flags"}}, $1;
+            ${$make{"=flags"}}{$1} = 1;
             next;
         }
         if (/^\s*(TOPSRCDIR|TOPOBJDIR|SRCDIR|VPATH)\s*=\s*(.*)/)
@@ -341,33 +286,91 @@ sub parse_makefile($)
 
     if ($file =~ /^programs\/([^\/]+)\/Makefile/)
     {
-        push @{$make{"=flags"}}, "install" unless $dont_install{$1};
-        push @{$make{"=flags"}}, "installbin" if $bin_install{$1};
+        ${$make{"=flags"}}{"install"} = 1 unless $dont_install{$1};
+        ${$make{"=flags"}}{"installbin"} = 1 if $bin_install{$1};
+    }
+
+    if (defined $make{"=flags"} && defined $make{"MODULE"})
+    {
+        die "Custom install-lib rule not allowed in $file" if defined ${$make{"=flags"}}{"install-lib"};
+        die "Custom install-dev rule not allowed in $file" if defined ${$make{"=flags"}}{"install-dev"};
     }
 
     return %make;
 }
 
+# read pragma makedep flags from a source file
+sub get_makedep_flags($)
+{
+    my $file = shift;
+    my %flags;
+
+    open FILE, $file or die "cannot open $file";
+    while (<FILE>)
+    {
+        next unless /^#\s*pragma\s+makedep\s+(.*)/;
+        foreach my $flag (split /\s+/, $1)
+        {
+            last if $flag eq "depend";
+            $flags{$flag} = 1;
+        }
+    }
+    close FILE;
+    return %flags;
+}
+
+sub get_parent_makefile($)
+{
+    my $file = shift;
+    my %make = %{$makefiles{$file}};
+    my $reldir = $make{"PARENTSRC"} || "";
+    return "" unless $reldir;
+    (my $path = $file) =~ s/\/Makefile$/\//;
+    while ($reldir =~ /^\.\.\//)
+    {
+        $reldir =~ s/^\.\.\///;
+        $path =~ s/[^\/]+\/$//;
+    }
+    return "$path$reldir/Makefile";
+}
+
+# preserve shared source files that are listed in the existing makefile
+sub preserve_shared_source_files($$$)
+{
+    my ($make, $parent, $var) = @_;
+    my %srcs;
+
+    return unless defined ${$parent}{"=$var"};
+    foreach my $file (@{${$parent}{"=$var"}}) { $srcs{$file} = 1; }
+    foreach my $file (@{${$make}{"=$var"}}) { $srcs{$file} = 0; }
+
+    foreach my $file (@{${$make}{$var}})
+    {
+        next unless defined $srcs{$file} && $srcs{$file} == 1;
+        push @{${$make}{"=$var"}}, $file;
+    }
+}
+
 # assign source files to their respective makefile
 sub assign_sources_to_makefiles(@)
 {
-    my %subdirs;
-
     foreach my $file (@_)
     {
         next if defined $ignored_source_files{$file};
+        next if $file =~ /Makefile\.in$/;
         my $dir = dirname( $file );
         my $subdir = $dir;
 
         while ($dir && !defined $makefiles{"$dir/Makefile"}) { $dir = dirname( $dir ); }
         $subdir =~ s/^$dir\/?//;
-        $subdirs{"$dir/ $subdir"} = 1 if $subdir;
         next unless $dir;
 
         die "no makefile found for $file\n" unless defined $makefiles{"$dir/Makefile"};
 
         my $make = $makefiles{"$dir/Makefile"};
         my $name = substr( $file, length($dir) + 1 );
+
+        ${$make}{"=flags"}{"clean"} = 1 if $subdir;
 
         if ($dir eq "include")
         {
@@ -388,19 +391,47 @@ sub assign_sources_to_makefiles(@)
         }
         else
         {
-            if ($name =~ /\.c$/) { push @{${$make}{"=C_SRCS"}}, $name; }
+            if ($name =~ /\.m$/) { push @{${$make}{"=OBJC_SRCS"}}, $name; }
             elsif ($name =~ /\.l$/) { push @{${$make}{"=LEX_SRCS"}}, $name; }
             elsif ($name =~ /\.y$/) { push @{${$make}{"=BISON_SRCS"}}, $name; }
-            elsif ($name =~ /\.rc$/) { push @{${$make}{"=RC_SRCS"}}, $name; }
-            elsif ($name =~ /\.mc$/) { push @{${$make}{"=MC_SRCS"}}, $name; }
             elsif ($name =~ /\.svg$/) { push @{${$make}{"=SVG_SRCS"}}, $name; }
+            elsif ($name =~ /\.sfd$/) { push @{${$make}{"=FONT_SRCS"}}, $name; }
+            elsif ($name =~ /\.c$/)
+            {
+                my %flags = get_makedep_flags( $file );
+                if (defined $flags{"implib"})
+                {
+                    push @{${$make}{"=IMPLIB_SRCS"}}, $name;
+                    ${${$make}{"=flags"}}{"staticimplib"} = 1;
+                }
+                push @{${$make}{"=C_SRCS"}}, $name;
+            }
+            elsif ($name =~ /\.rc$/)
+            {
+                my %flags = get_makedep_flags( $file );
+                ${${$make}{"=flags"}}{"po"} = 1 if defined $flags{"po"};
+                push @{${$make}{"=RC_SRCS"}}, $name;
+            }
+            elsif ($name =~ /\.mc$/)
+            {
+                push @{${$make}{"=MC_SRCS"}}, $name;
+                ${${$make}{"=flags"}}{"mc"} = 1;
+            }
+            elsif ($name =~ /\.idl$/)
+            {
+                push @{${$make}{"=IDL_SRCS"}}, $name;
+                ${${$make}{"=flags"}}{"clean"} = 1;
+            }
+            elsif ($name =~ /\.man\.in$/)
+            {
+                push @{${$make}{"=MANPAGES"}}, $name;
+                ${${$make}{"=flags"}}{"manpage"} = 1;
+            }
+            elsif ($name =~ /\.in$/)
+            {
+                push @{${$make}{"=IN_SRCS"}}, $name;
+            }
         }
-    }
-    foreach my $key (keys %subdirs)
-    {
-        my ($dir, $subdir) = split " ", $key;
-        if ($dir eq "/") { $dir = ""; }
-        push @{${$makefiles{"${dir}Makefile"}}{"=EXTRASUBDIRS"}}, $subdir;
     }
 
     # add extra variables to include source list
@@ -408,6 +439,20 @@ sub assign_sources_to_makefiles(@)
     unshift @{${$make}{"=SRCDIR_INCLUDES"}}, "\$(XTEMPLATE_SRCS)";
     unshift @{${$make}{"=SRCDIR_INCLUDES"}}, "\$(PUBLIC_IDL_H_SRCS)";
     unshift @{${$make}{"=SRCDIR_INCLUDES"}}, "\$(IDL_TLB_SRCS)";
+    unshift @{${$make}{"=IDL_SRCS"}}, "\$(IDL_H_SRCS) \$(IDL_TLB_SRCS)";
+
+    # preserve shared source files from the parent makefile
+    foreach my $file (@makefiles)
+    {
+        my $make = $makefiles{$file};
+        my $parent = get_parent_makefile( $file );
+        next unless $parent;
+        preserve_shared_source_files( $makefiles{$file}, $makefiles{$parent}, "C_SRCS" );
+        preserve_shared_source_files( $makefiles{$file}, $makefiles{$parent}, "IDL_SRCS" );
+        preserve_shared_source_files( $makefiles{$file}, $makefiles{$parent}, "LEX_SRCS" );
+        preserve_shared_source_files( $makefiles{$file}, $makefiles{$parent}, "BISON_SRCS" );
+        ${${$make}{"=flags"}}{"clean"} = 1 if defined ${$make}{"=IDL_SRCS"} && @{${$make}{"=IDL_SRCS"}};
+    }
 }
 
 ################################################################
@@ -417,24 +462,50 @@ sub update_makefiles(@)
 {
     my (@lines);
 
-    foreach my $var (sort { $makerules{$a} cmp $makerules{$b}; } keys %makerules)
-    {
-        my $file = $makerules{$var};
-        my %make = %{$makefiles{$file}};
-        my $rules = $make{"=rules"} ? ",[$make{\"=rules\"}]" : "";
-        push @lines, "WINE_CONFIG_MAKERULES([$file],[$var]$rules)\n";
-    }
-    push @lines, "\n";
-
     foreach my $file (sort @_)
     {
         my %make = %{$makefiles{$file}};
-        my $rules = $make{"=rules"};
         my $args = "";
         my $is_win16 = $make{"MODULE"} && ($make{"MODULE"} =~ /16$/ || $modules16{$make{"MODULE"}});
-        my $flag_args = defined $make{"=flags"} ? ",[" . join(",",sort @{$make{"=flags"}}) ."]" : "";
-        if ($rules eq $makerules{"MAKE_DLL_RULES"})
+        my $flag_args = defined $make{"=flags"} ? ",[" . join(",",sort keys %{$make{"=flags"}}) ."]" : "";
+        if (defined($make{"TESTDLL"}))  # test
         {
+            die "TESTDLL should not be defined in $file" unless $file =~ /\/tests\/Makefile$/;
+            die "MODULE should not be defined in $file" if defined $make{"MODULE"};
+            die "STATICLIB should not be defined in $file" if defined $make{"STATICLIB"};
+            (my $dir = $file) =~ s/^(.*)\/Makefile/$1/;
+            push @lines, "WINE_CONFIG_TEST($dir$flag_args)\n";
+        }
+        elsif (defined($make{"MODULE"}) && $make{"MODULE"} =~ /\.a$/)  # import lib
+        {
+            die "MODULE should not be defined as static lib in $file" unless $file =~ /^dlls\//;
+            die "APPMODE should not be defined in $file" if defined $make{"APPMODE"};
+            die "STATICLIB should not be defined in $file" if defined $make{"STATICLIB"};
+            (my $name = $file) =~ s/^dlls\/(.*)\/Makefile/$1/;
+            push @lines, "WINE_CONFIG_LIB($name$flag_args)\n";
+        }
+        elsif (defined($make{"MODULE"}) && defined($make{"APPMODE"}))  # program
+        {
+            die "APPMODE should not be defined in $file" unless $file =~ /^programs\//;
+            die "STATICLIB should not be defined in $file" if defined $make{"STATICLIB"};
+            (my $name = $file) =~ s/^programs\/(.*)\/Makefile/$1/;
+            if ($name =~ /\./)
+            {
+                die "Invalid MODULE in $file" unless $make{"MODULE"} eq $name;
+            }
+            else
+            {
+                die "Invalid MODULE in $file" unless $make{"MODULE"} eq "$name.exe";
+            }
+            $args .= "," if $is_win16 || defined $make{"=flags"};
+            $args .= "enable_win16" if $is_win16;
+            push @lines, "WINE_CONFIG_PROGRAM($name$args$flag_args)\n";
+        }
+        elsif (defined($make{"MODULE"}))  # dll
+        {
+            die "APPMODE should be defined in $file" if $file =~ /^programs\//;
+            die "MODULE should not be defined in $file" unless $file =~ /^dlls\//;
+            die "STATICLIB should not be defined in $file" if defined $make{"STATICLIB"};
             (my $name = $file) =~ s/^dlls\/(.*)\/Makefile/$1/;
             if ($name =~ /\./)
             {
@@ -451,33 +522,10 @@ sub update_makefiles(@)
             $args .= ",[$implib]" if $implib && $implib ne $name;
             push @lines, "WINE_CONFIG_DLL($name$args)\n";
         }
-        elsif ($rules eq $makerules{"MAKE_PROG_RULES"})
-        {
-            (my $name = $file) =~ s/^programs\/(.*)\/Makefile/$1/;
-            if ($name =~ /\./)
-            {
-                die "Invalid MODULE in $file" unless $make{"MODULE"} eq $name;
-            }
-            else
-            {
-                die "Invalid MODULE in $file" unless $make{"MODULE"} eq "$name.exe";
-            }
-            $args .= "," if $is_win16 || defined $make{"=flags"};
-            $args .= "enable_win16" if $is_win16;
-            push @lines, "WINE_CONFIG_PROGRAM($name$args$flag_args)\n";
-        }
-        elsif ($rules eq $makerules{"MAKE_TEST_RULES"})
-        {
-            (my $dir = $file) =~ s/^(.*)\/Makefile/$1/;
-            push @lines, "WINE_CONFIG_TEST($dir$flag_args)\n";
-        }
-        elsif ($rules eq $makerules{"MAKE_IMPLIB_RULES"})
-        {
-            (my $name = $file) =~ s/^dlls\/(.*)\/Makefile/$1/;
-            push @lines, "WINE_CONFIG_LIB($name$flag_args)\n";
-        }
         elsif ($file =~ /^tools.*\/Makefile$/)
         {
+            die "APPMODE should not be defined in $file" if defined $make{"APPMODE"};
+            die "STATICLIB should not be defined in $file" if defined $make{"STATICLIB"};
             (my $name = $file) =~ s/^(.*)\/Makefile/$1/;
             push @lines, "WINE_CONFIG_TOOL($name$flag_args)\n";
         }
@@ -500,88 +548,24 @@ sub update_makefiles(@)
         replace_makefile_variable( $file, "BISON_SRCS" );
         replace_makefile_variable( $file, "MC_SRCS" );
         replace_makefile_variable( $file, "SVG_SRCS" );
+        replace_makefile_variable( $file, "FONT_SRCS" );
         replace_makefile_variable( $file, "C_SRCS" );
+        replace_makefile_variable( $file, "OBJC_SRCS" );
         replace_makefile_variable( $file, "RC_SRCS" );
+        replace_makefile_variable( $file, "IDL_SRCS" );
+        replace_makefile_variable( $file, "XTEMPLATE_SRCS" );
+        replace_makefile_variable( $file, "IN_SRCS" );
+        replace_makefile_variable( $file, "IMPLIB_SRCS" );
+        replace_makefile_variable( $file, "MANPAGES" );
+        next unless $file eq "include/Makefile";
         replace_makefile_variable( $file, "PRIVATE_IDL_H_SRCS" );
         replace_makefile_variable( $file, "PUBLIC_IDL_H_SRCS" );
         replace_makefile_variable( $file, "IDL_TLB_SRCS" );
-        replace_makefile_variable( $file, "XTEMPLATE_SRCS" );
         replace_makefile_variable( $file, "SRCDIR_INCLUDES" );
-        replace_makefile_variable( $file, "EXTRASUBDIRS" );
     }
 
     push @lines, "dnl End of auto-generated output commands\n";
-    replace_in_file( "configure.ac", '^WINE_CONFIG_MAKERULES', '^dnl End of auto-generated output commands\n$', @lines);
-}
-
-
-################################################################
-# process ignore targets for generic source files
-
-sub update_ignores(@)
-{
-    my @ignores;
-
-    foreach my $file (sort @_)
-    {
-        my %makefile = %{$makefiles{$file}};
-        my @list;
-
-        foreach my $src (@ignore_srcs)
-        {
-            my @pattern = @{$src};
-            next unless defined $makefile{$pattern[0]};
-            next if $pattern[0] eq "IDL_TLB_SRCS" && $makefile{"=rules"} eq "dlls/Makedll.rules";
-            push @list, map { (my $ret = $_) =~ s/$pattern[1]$/$pattern[2]/; $ret; } @{$makefile{$pattern[0]}};
-        }
-        foreach my $f (@list)
-        {
-            push @ignores, $makefile{"=dir"} . $f unless $f =~ /\$\(.*\)/;  # skip make variables
-        }
-
-        if (defined $makefile{"IMPORTLIB"})
-        {
-            if ($makefile{"IMPORTLIB"} =~ /^([a-zA-Z0-9_.]+)/)
-            {
-                if ("dlls/$1/" ne $makefile{"=dir"}) { push @ignores, "dlls/lib$1.def"; }
-            }
-            else
-            {
-                die "invalid importlib name $makefile{IMPORTLIB} in $file";
-            }
-        }
-    }
-    return @ignores;
-}
-
-
-################################################################
-# update the main .gitignore
-
-sub update_gitignore(@)
-{
-    my @ignores = values %makerules;
-
-    foreach my $make (@makefiles)
-    {
-        my %makefile = %{$makefiles{$make}};
-        my $dir = $makefile{"=dir"};
-        if (defined $makefile{"PROGRAMS"})
-        {
-            push @ignores, map { s/\$\(EXEEXT\)//; $dir . $_; } @{$makefile{"PROGRAMS"}};
-        }
-    }
-
-    # prepend a slash to paths that don't have one
-    @ignores = map { $_ =~ s/^([^\/]+)$/\/$1/; $_; } @ignores;
-
-    # get rid of duplicates
-    my %ignores = ();
-    foreach my $i (@ignores, @_) { $ignores{$i} = 1; }
-
-    replace_in_file( ".gitignore", undef, undef,
-                     "# Automatically generated by make_makefiles; DO NOT EDIT!!\n",
-                     join("\n", sort keys %ignores), "\n" );
+    replace_in_file( "configure.ac", '^WINE_CONFIG_DLL', '^dnl End of auto-generated output commands\n$', @lines);
 }
 
 
@@ -594,13 +578,14 @@ sub update_linguas(@)
 }
 
 
-die "needs to be run from a git checkout" unless -d ".git";
+my $git_dir = $ENV{GIT_DIR} || ".git";
+die "needs to be run from a git checkout" unless -d $git_dir;
 
 my @all_files = split /\0/, `git ls-files -c -z`;
 @linguas = map { (my $ret = $_) =~ s/^po\/(.*)\.po/$1/; $ret; } grep /^po\/.*\.po$/, @all_files;
 @makefiles = map { (my $ret = $_) =~ s/\.in$//; $ret; } grep /Makefile.in$/, @all_files;
 
-foreach my $file (sort values %makerules, @makefiles)
+foreach my $file (sort @makefiles)
 {
     my %make = parse_makefile( $file );
     $makefiles{$file} = \%make;
@@ -609,5 +594,3 @@ foreach my $file (sort values %makerules, @makefiles)
 assign_sources_to_makefiles( @all_files );
 update_linguas( @linguas );
 update_makefiles( @makefiles );
-push @ignores, update_ignores( @makefiles );
-update_gitignore( @ignores );

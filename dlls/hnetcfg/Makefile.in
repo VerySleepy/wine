@@ -1,5 +1,5 @@
 MODULE    = hnetcfg.dll
-IMPORTS   = ole32 advapi32
+IMPORTS   = oleaut32 ole32 advapi32
 
 C_SRCS = \
 	apps.c \
@@ -10,6 +10,6 @@ C_SRCS = \
 	profile.c \
 	service.c
 
-IDL_R_SRCS = hnetcfg.idl
-
-@MAKE_DLL_RULES@
+IDL_SRCS = \
+	hnetcfg.idl \
+	hnetcfg_tlb.idl

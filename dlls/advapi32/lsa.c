@@ -29,7 +29,6 @@
 #include "winbase.h"
 #include "winreg.h"
 #include "winternl.h"
-#include "ntsecapi.h"
 #include "advapi32_misc.h"
 
 #include "wine/debug.h"
@@ -79,7 +78,7 @@ static void* ADVAPI_GetDomainName(unsigned sz, unsigned ofs)
         ret = RegQueryValueExW(key, wg, NULL, NULL, NULL, &size);
         if (ret == ERROR_MORE_DATA || ret == ERROR_SUCCESS)
         {
-            ptr = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sz + size);
+            ptr = heap_alloc_zero(sz + size);
             if (!ptr) return NULL;
             ustr = (UNICODE_STRING*)(ptr + ofs);
             ustr->MaximumLength = size;
@@ -87,7 +86,7 @@ static void* ADVAPI_GetDomainName(unsigned sz, unsigned ofs)
             ret = RegQueryValueExW(key, wg, NULL, NULL, (LPBYTE)ustr->Buffer, &size);
             if (ret != ERROR_SUCCESS)
             {
-                HeapFree(GetProcessHeap(), 0, ptr);
+                heap_free(ptr);
                 ptr = NULL;
             }   
             else ustr->Length = size - sizeof(WCHAR);
@@ -97,8 +96,7 @@ static void* ADVAPI_GetDomainName(unsigned sz, unsigned ofs)
     if (!ptr)
     {
         static const WCHAR wDomain[] = {'D','O','M','A','I','N','\0'};
-        ptr = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-                        sz + sizeof(wDomain));
+        ptr = heap_alloc_zero(sz + sizeof(wDomain));
         if (!ptr) return NULL;
         ustr = (UNICODE_STRING*)(ptr + ofs);
         ustr->MaximumLength = sizeof(wDomain);
@@ -120,7 +118,7 @@ NTSTATUS WINAPI LsaAddAccountRights(
     ULONG count)
 {
     FIXME("(%p,%p,%p,0x%08x) stub\n", policy, sid, rights, count);
-    return STATUS_OBJECT_NAME_NOT_FOUND;
+    return STATUS_SUCCESS;
 }
 
 /******************************************************************************
@@ -266,7 +264,7 @@ NTSTATUS WINAPI LsaFreeMemory(IN PVOID Buffer)
 {
     TRACE("(%p)\n", Buffer);
 
-    HeapFree(GetProcessHeap(), 0, Buffer);
+    heap_free(Buffer);
     return STATUS_SUCCESS;
 }
 
@@ -312,37 +310,54 @@ static BOOL lookup_name( LSA_UNICODE_STRING *name, SID *sid, DWORD *sid_size, WC
     return ret;
 }
 
-static INT build_domain(PLSA_REFERENCED_DOMAIN_LIST currentList, PLSA_UNICODE_STRING domain)
+/* Adds domain info to referenced domain list.
+   Domain list is stored as plain buffer, layout is:
+
+       LSA_REFERENCED_DOMAIN_LIST,
+       LSA_TRUST_INFORMATION array,
+       domain data array of
+           {
+               domain name data (WCHAR buffer),
+               SID data
+           }
+
+   Parameters:
+       list   [I]  referenced list pointer
+       domain [I]  domain name string
+       data   [IO] pointer to domain data array
+*/
+static LONG lsa_reflist_add_domain(LSA_REFERENCED_DOMAIN_LIST *list, LSA_UNICODE_STRING *domain, char **data)
 {
-    ULONG count;
     ULONG sid_size = 0,domain_size = 0;
     BOOL handled = FALSE;
     SID_NAME_USE use;
+    LONG i;
 
-    for (count = 0; count < currentList->Entries; count ++)
+    for (i = 0; i < list->Entries; i++)
     {
-        if ((currentList->Domains[count].Name.Length == domain->Length) &&
-            (strncmpiW(currentList->Domains[count].Name.Buffer,domain->Buffer,(domain->Length / sizeof(WCHAR))) == 0))
+        /* try to reuse index */
+        if ((list->Domains[i].Name.Length == domain->Length) &&
+            (!strncmpiW(list->Domains[i].Name.Buffer, domain->Buffer, (domain->Length / sizeof(WCHAR)))))
         {
-            HeapFree(GetProcessHeap(),0,domain->Buffer);
-            return count;
+            return i;
         }
     }
 
-    if (currentList->Entries > 0)
-        currentList->Domains = HeapReAlloc(GetProcessHeap(),0,currentList->Domains, (currentList->Entries + 1) * sizeof(LSA_TRUST_INFORMATION));
-    else
-        currentList->Domains = HeapAlloc(GetProcessHeap(),0,sizeof(LSA_TRUST_INFORMATION));
+    /* no matching domain found, store name */
+    list->Domains[list->Entries].Name.Length = domain->Length;
+    list->Domains[list->Entries].Name.MaximumLength = domain->MaximumLength;
+    list->Domains[list->Entries].Name.Buffer = (WCHAR*)*data;
+    memcpy(list->Domains[list->Entries].Name.Buffer, domain->Buffer, domain->MaximumLength);
+    *data += domain->MaximumLength;
 
-    currentList->Domains[currentList->Entries].Name = *domain;
-
-    lookup_name( domain, NULL, &sid_size, NULL, &domain_size, &use, &handled );
+    /* get and store SID data */
+    list->Domains[list->Entries].Sid = *data;
+    lookup_name(domain, NULL, &sid_size, NULL, &domain_size, &use, &handled);
     domain_size = 0;
-    currentList->Domains[currentList->Entries].Sid = HeapAlloc(GetProcessHeap(),0,sid_size);
-    lookup_name( domain, currentList->Domains[currentList->Entries].Sid, &sid_size, NULL, &domain_size, &use, &handled );
+    lookup_name(domain, list->Domains[list->Entries].Sid, &sid_size, NULL, &domain_size, &use, &handled);
+    *data += sid_size;
 
-    currentList->Entries++;
-    return currentList->Entries-1;
+    return list->Entries++;
 }
 
 /******************************************************************************
@@ -353,9 +368,11 @@ NTSTATUS WINAPI LsaLookupNames2( LSA_HANDLE policy, ULONG flags, ULONG count,
                                  PLSA_UNICODE_STRING names, PLSA_REFERENCED_DOMAIN_LIST *domains,
                                  PLSA_TRANSLATED_SID2 *sids )
 {
-    ULONG i, sid_size_total = 0, domain_size_max = 0, size;
+    ULONG i, sid_size_total = 0, domain_size_max = 0, size, domainname_size_total = 0;
     ULONG sid_size, domain_size, mapped;
+    LSA_UNICODE_STRING domain;
     BOOL handled = FALSE;
+    char *domain_data;
     SID_NAME_USE use;
     SID *sid;
 
@@ -370,6 +387,7 @@ NTSTATUS WINAPI LsaLookupNames2( LSA_HANDLE policy, ULONG flags, ULONG count,
         if (handled)
         {
             sid_size_total += sid_size;
+            domainname_size_total += domain_size;
             if (domain_size)
             {
                 if (domain_size > domain_size_max)
@@ -381,25 +399,26 @@ NTSTATUS WINAPI LsaLookupNames2( LSA_HANDLE policy, ULONG flags, ULONG count,
     TRACE("mapped %u out of %u\n", mapped, count);
 
     size = sizeof(LSA_TRANSLATED_SID2) * count + sid_size_total;
-    if (!(*sids = HeapAlloc( GetProcessHeap(), 0, size) )) return STATUS_NO_MEMORY;
+    if (!(*sids = heap_alloc(size))) return STATUS_NO_MEMORY;
 
     sid = (SID *)(*sids + count);
 
-    if (!(*domains = HeapAlloc( GetProcessHeap(), 0, sizeof(LSA_REFERENCED_DOMAIN_LIST) )))
+    /* use maximum domain count */
+    if (!(*domains = heap_alloc(sizeof(LSA_REFERENCED_DOMAIN_LIST) + sizeof(LSA_TRUST_INFORMATION)*count +
+                                sid_size_total + domainname_size_total*sizeof(WCHAR))))
     {
-        HeapFree( GetProcessHeap(), 0, *sids );
+        heap_free(*sids);
         return STATUS_NO_MEMORY;
     }
     (*domains)->Entries = 0;
-    (*domains)->Domains = NULL;
+    (*domains)->Domains = (LSA_TRUST_INFORMATION*)((char*)*domains + sizeof(LSA_REFERENCED_DOMAIN_LIST));
+    domain_data = (char*)(*domains)->Domains + sizeof(LSA_TRUST_INFORMATION)*count;
 
+    domain.Buffer = heap_alloc(domain_size_max*sizeof(WCHAR));
     for (i = 0; i < count; i++)
     {
-        LSA_UNICODE_STRING domain;
-
         domain.Length = domain_size_max*sizeof(WCHAR);
         domain.MaximumLength = domain_size_max*sizeof(WCHAR);
-        domain.Buffer = HeapAlloc(GetProcessHeap(),0,domain.Length);
 
         (*sids)[i].Use = SidTypeUnknown;
         (*sids)[i].DomainIndex = -1;
@@ -419,14 +438,12 @@ NTSTATUS WINAPI LsaLookupNames2( LSA_HANDLE policy, ULONG flags, ULONG count,
             if (domain_size)
             {
                 domain.Length = domain_size * sizeof(WCHAR);
-                (*sids)[i].DomainIndex = build_domain(*domains, &domain);
+                domain.MaximumLength = (domain_size + 1) * sizeof(WCHAR);
+                (*sids)[i].DomainIndex = lsa_reflist_add_domain(*domains, &domain, &domain_data);
             }
-            else
-                HeapFree(GetProcessHeap(),0,domain.Buffer);
         }
-        else
-            HeapFree(GetProcessHeap(),0,domain.Buffer);
     }
+    heap_free(domain.Buffer);
 
     if (mapped == count) return STATUS_SUCCESS;
     if (mapped > 0 && mapped < count) return STATUS_SOME_NOT_MAPPED;
@@ -451,70 +468,127 @@ NTSTATUS WINAPI LsaLookupNames2( LSA_HANDLE policy, ULONG flags, ULONG count,
  *  Failure: STATUS_NONE_MAPPED or NTSTATUS code.
  */
 NTSTATUS WINAPI LsaLookupSids(
-    IN LSA_HANDLE PolicyHandle,
-    IN ULONG Count,
-    IN PSID *Sids,
-    OUT PLSA_REFERENCED_DOMAIN_LIST *ReferencedDomains,
-    OUT PLSA_TRANSLATED_NAME *Names )
+    LSA_HANDLE PolicyHandle,
+    ULONG Count,
+    PSID *Sids,
+    LSA_REFERENCED_DOMAIN_LIST **ReferencedDomains,
+    LSA_TRANSLATED_NAME **Names)
 {
-    ULONG i, mapped, size;
+    ULONG i, mapped, name_fullsize, domain_fullsize;
     ULONG name_size, domain_size;
+    LSA_UNICODE_STRING domain;
+    WCHAR *name_buffer;
+    char *domain_data;
     SID_NAME_USE use;
 
-    TRACE("(%p,%u,%p,%p,%p) stub\n", PolicyHandle, Count, Sids,
-          ReferencedDomains, Names);
+    TRACE("(%p, %u, %p, %p, %p)\n", PolicyHandle, Count, Sids, ReferencedDomains, Names);
 
-    size = sizeof(LSA_TRANSLATED_NAME) * Count;
-    if (!(*Names = HeapAlloc( GetProcessHeap(), 0, size) )) return STATUS_NO_MEMORY;
-    if (!(*ReferencedDomains = HeapAlloc( GetProcessHeap(), 0, sizeof(LSA_REFERENCED_DOMAIN_LIST)) ))
+    /* this length does not include actual string length yet */
+    name_fullsize = sizeof(LSA_TRANSLATED_NAME) * Count;
+    if (!(*Names = heap_alloc(name_fullsize))) return STATUS_NO_MEMORY;
+    /* maximum count of stored domain infos is Count, allocate it like that cause really needed
+       count could only be computed after sid data is retrieved */
+    domain_fullsize = sizeof(LSA_REFERENCED_DOMAIN_LIST) + sizeof(LSA_TRUST_INFORMATION)*Count;
+    if (!(*ReferencedDomains = heap_alloc(domain_fullsize)))
     {
-        HeapFree( GetProcessHeap(), 0, *Names);
+        heap_free(*Names);
         return STATUS_NO_MEMORY;
     }
     (*ReferencedDomains)->Entries = 0;
-    (*ReferencedDomains)->Domains = NULL;
+    (*ReferencedDomains)->Domains = (LSA_TRUST_INFORMATION*)((char*)*ReferencedDomains + sizeof(LSA_REFERENCED_DOMAIN_LIST));
+
+    /* Get full names data length and full length needed to store domain name and SID */
+    for (i = 0; i < Count; i++)
+    {
+        (*Names)[i].Use = SidTypeUnknown;
+        (*Names)[i].DomainIndex = -1;
+        (*Names)[i].Name.Buffer = NULL;
+
+        memset(&(*ReferencedDomains)->Domains[i], 0, sizeof(LSA_TRUST_INFORMATION));
+
+        name_size = domain_size = 0;
+        if (!LookupAccountSidW(NULL, Sids[i], NULL, &name_size, NULL, &domain_size, &use) &&
+            GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+        {
+            if (name_size)
+            {
+                (*Names)[i].Name.Length = (name_size - 1) * sizeof(WCHAR);
+                (*Names)[i].Name.MaximumLength = name_size * sizeof(WCHAR);
+                name_fullsize += (*Names)[i].Name.MaximumLength;
+            }
+            else
+            {
+                (*Names)[i].Name.Length = 0;
+                (*Names)[i].Name.MaximumLength = 0;
+            }
+
+            /* This potentially allocates more than needed, cause different names will reuse same domain index.
+               Also it's not possible to store domain name length right here for the same reason. */
+            if (domain_size)
+            {
+                ULONG sid_size = 0;
+                BOOL handled = FALSE;
+                WCHAR *name;
+
+                domain_fullsize += domain_size * sizeof(WCHAR);
+
+                /* get domain SID size too */
+                name = heap_alloc(domain_size * sizeof(WCHAR));
+                *name = 0;
+                LookupAccountSidW(NULL, Sids[i], NULL, &name_size, name, &domain_size, &use);
+
+                domain.Buffer = name;
+                domain.Length = domain_size * sizeof(WCHAR);
+                domain.MaximumLength = domain_size * sizeof(WCHAR);
+
+                lookup_name(&domain, NULL, &sid_size, NULL, &domain_size, &use, &handled);
+                domain_fullsize += sid_size;
+
+                heap_free(name);
+            }
+        }
+    }
+
+    /* now we have full length needed for both */
+    *Names = heap_realloc(*Names, name_fullsize);
+    name_buffer = (WCHAR*)((char*)*Names + sizeof(LSA_TRANSLATED_NAME)*Count);
+
+    *ReferencedDomains = heap_realloc(*ReferencedDomains, domain_fullsize);
+    /* fix pointer after reallocation */
+    (*ReferencedDomains)->Domains = (LSA_TRUST_INFORMATION*)((char*)*ReferencedDomains + sizeof(LSA_REFERENCED_DOMAIN_LIST));
+    domain_data = (char*)(*ReferencedDomains)->Domains + sizeof(LSA_TRUST_INFORMATION)*Count;
 
     mapped = 0;
     for (i = 0; i < Count; i++)
     {
         name_size = domain_size = 0;
-        (*Names)[i].Use = SidTypeUnknown;
-        (*Names)[i].DomainIndex = -1;
-        (*Names)[i].Name.Length = 0;
-        (*Names)[i].Name.MaximumLength = 0;
-        (*Names)[i].Name.Buffer = NULL;
 
         if (!LookupAccountSidW(NULL, Sids[i], NULL, &name_size, NULL, &domain_size, &use) &&
             GetLastError() == ERROR_INSUFFICIENT_BUFFER)
         {
-            LSA_UNICODE_STRING domain;
-
             mapped++;
 
             if (domain_size)
             {
                 domain.Length = (domain_size - 1) * sizeof(WCHAR);
-                domain.MaximumLength = domain_size*sizeof(WCHAR);
-                domain.Buffer = HeapAlloc(GetProcessHeap(),0,domain.MaximumLength);
-            }
-            else
-            {
-                domain.Length = 0;
-                domain.MaximumLength = 0;
-                domain.Buffer = NULL;
+                domain.MaximumLength = domain_size * sizeof(WCHAR);
+                domain.Buffer = heap_alloc(domain.MaximumLength);
             }
 
-            (*Names)[i].Name.Length = (name_size - 1) * sizeof(WCHAR);
-            (*Names)[i].Name.MaximumLength = name_size * sizeof(WCHAR);
-            (*Names)[i].Name.Buffer = HeapAlloc(GetProcessHeap(), 0, name_size * sizeof(WCHAR));
+            (*Names)[i].Name.Buffer = name_buffer;
             LookupAccountSidW(NULL, Sids[i], (*Names)[i].Name.Buffer, &name_size, domain.Buffer, &domain_size, &use);
             (*Names)[i].Use = use;
 
             if (domain_size)
-                (*Names)[i].DomainIndex = build_domain(*ReferencedDomains, &domain);
+            {
+                (*Names)[i].DomainIndex = lsa_reflist_add_domain(*ReferencedDomains, &domain, &domain_data);
+                heap_free(domain.Buffer);
+            }
         }
+
+        name_buffer += name_size;
     }
-    TRACE("mapped %u out of %u\n",mapped,Count);
+    TRACE("mapped %u out of %u\n", mapped, Count);
 
     if (mapped == Count) return STATUS_SUCCESS;
     if (mapped) return STATUS_SOME_NOT_MAPPED;
@@ -614,8 +688,7 @@ NTSTATUS WINAPI LsaQueryInformationPolicy(
     {
         case PolicyAuditEventsInformation: /* 2 */
         {
-            PPOLICY_AUDIT_EVENTS_INFO p = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
-                                                    sizeof(POLICY_AUDIT_EVENTS_INFO));
+            PPOLICY_AUDIT_EVENTS_INFO p = heap_alloc_zero(sizeof(POLICY_AUDIT_EVENTS_INFO));
             p->AuditingMode = FALSE; /* no auditing */
             *Buffer = p;
         }
@@ -645,7 +718,7 @@ NTSTATUS WINAPI LsaQueryInformationPolicy(
             };
 
             DWORD dwSize = MAX_COMPUTERNAME_LENGTH + 1;
-            struct di * xdi = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*xdi));
+            struct di * xdi = heap_alloc_zero(sizeof(*xdi));
 
             xdi->info.DomainName.MaximumLength = dwSize * sizeof(WCHAR);
             xdi->info.DomainName.Buffer = xdi->domain;
@@ -658,7 +731,7 @@ NTSTATUS WINAPI LsaQueryInformationPolicy(
 
             if (!ADVAPI_GetComputerSid(&xdi->sid))
             {
-                HeapFree(GetProcessHeap(), 0, xdi);
+                heap_free(xdi);
 
                 WARN("Computer SID not found\n");
 

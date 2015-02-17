@@ -90,7 +90,7 @@
 @ stub NetFileClose
 @ stdcall NetFileEnum(wstr wstr wstr long ptr long ptr ptr ptr)
 @ stub NetFileGetInfo
-@ stub NetGetAnyDCName
+@ stdcall NetGetAnyDCName(wstr wstr ptr)
 @ stdcall NetGetDCName(wstr wstr ptr)
 @ stub NetGetDisplayInformationIndex
 @ stdcall NetGetJoinInformation(wstr ptr ptr)
@@ -166,8 +166,8 @@
 @ stub NetRplWkstaEnum
 @ stub NetRplWkstaGetInfo
 @ stub NetRplWkstaSetInfo
-@ stub NetScheduleJobAdd
-@ stub NetScheduleJobDel
+@ stdcall NetScheduleJobAdd(wstr ptr ptr)
+@ stdcall NetScheduleJobDel(wstr long long)
 @ stdcall NetScheduleJobEnum(wstr ptr long ptr ptr ptr)
 @ stub NetScheduleJobGetInfo
 @ stub NetServerComputerNameAdd
@@ -200,7 +200,7 @@
 @ stdcall NetUseAdd(wstr long ptr ptr)
 @ stdcall NetUseDel(wstr wstr long)
 @ stdcall NetUseEnum(wstr long ptr long ptr ptr ptr)
-@ stub NetUseGetInfo
+@ stdcall NetUseGetInfo(ptr ptr long ptr)
 @ stdcall NetUserAdd(wstr long ptr ptr)
 @ stdcall NetUserChangePassword(wstr wstr wstr wstr)
 @ stdcall NetUserDel(wstr wstr)

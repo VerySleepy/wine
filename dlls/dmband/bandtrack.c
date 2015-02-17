@@ -25,7 +25,16 @@ WINE_DECLARE_DEBUG_CHANNEL(dmfile);
 /*****************************************************************************
  * IDirectMusicBandTrack implementation
  */
-/* IDirectMusicBandTrack IUnknown part: */
+typedef struct IDirectMusicBandTrack {
+    const IUnknownVtbl *UnknownVtbl;
+    const IDirectMusicTrack8Vtbl *TrackVtbl;
+    const IPersistStreamVtbl *PersistStreamVtbl;
+    LONG ref;
+    DMUS_OBJECTDESC *pDesc;
+    DMUS_IO_BAND_TRACK_HEADER header;
+    struct list Bands;
+} IDirectMusicBandTrack;
+
 static HRESULT WINAPI IDirectMusicBandTrack_IUnknown_QueryInterface (LPUNKNOWN iface, REFIID riid, LPVOID *ppobj) {
 	ICOM_THIS_MULTI(IDirectMusicBandTrack, UnknownVtbl, iface);
 	TRACE("(%p, %s, %p)\n", This, debugstr_dmguid(riid), ppobj);
@@ -103,10 +112,13 @@ static HRESULT WINAPI IDirectMusicBandTrack_IDirectMusicTrack_Init (LPDIRECTMUSI
   return S_OK;
 }
 
-static HRESULT WINAPI IDirectMusicBandTrack_IDirectMusicTrack_InitPlay (LPDIRECTMUSICTRACK8 iface, IDirectMusicSegmentState* pSegmentState, IDirectMusicPerformance* pPerformance, void** ppStateData, DWORD dwVirtualTrack8ID, DWORD dwFlags) {
-  ICOM_THIS_MULTI(IDirectMusicBandTrack, TrackVtbl, iface);
-  FIXME("(%p, %p, %p, %p, %d, %d): stub\n", This, pSegmentState, pPerformance, ppStateData, dwVirtualTrack8ID, dwFlags);
-  return S_OK;
+static HRESULT WINAPI IDirectMusicBandTrack_IDirectMusicTrack_InitPlay(LPDIRECTMUSICTRACK8 iface, IDirectMusicSegmentState* segment_state, IDirectMusicPerformance* performance, void** state_data, DWORD virtual_track8id, DWORD flags)
+{
+    ICOM_THIS_MULTI(IDirectMusicBandTrack, TrackVtbl, iface);
+
+    FIXME("(%p, %p, %p, %p, %d, %x): stub\n", This, segment_state, performance, state_data, virtual_track8id, flags);
+
+    return S_OK;
 }
 
 static HRESULT WINAPI IDirectMusicBandTrack_IDirectMusicTrack_EndPlay (LPDIRECTMUSICTRACK8 iface, void* pStateData) {
@@ -115,18 +127,20 @@ static HRESULT WINAPI IDirectMusicBandTrack_IDirectMusicTrack_EndPlay (LPDIRECTM
   return S_OK;
 }
 
-static HRESULT WINAPI IDirectMusicBandTrack_IDirectMusicTrack_Play (LPDIRECTMUSICTRACK8 iface, void* pStateData, MUSIC_TIME mtStart, MUSIC_TIME mtEnd, MUSIC_TIME mtOffset, DWORD dwFlags, IDirectMusicPerformance* pPerf, IDirectMusicSegmentState* pSegSt, DWORD dwVirtualID) {
-  ICOM_THIS_MULTI(IDirectMusicBandTrack, TrackVtbl, iface);
-  
-  FIXME("(%p, %p, %d, %d, %d, %d, %p, %p, %d): semi-stub\n", This, pStateData, mtStart, mtEnd, mtOffset, dwFlags, pPerf, pSegSt, dwVirtualID);
-  /* Sends following pMSG:
-     - DMUS_PATCH_PMSG
-     - DMUS_TRANSPOSE_PMSG
-     - DMUS_CHANNEL_PRIORITY_PMSG
-     - DMUS_MIDI_PMSG
-  */
+static HRESULT WINAPI IDirectMusicBandTrack_IDirectMusicTrack_Play(LPDIRECTMUSICTRACK8 iface, void* state_data, MUSIC_TIME mtStart, MUSIC_TIME mtEnd, MUSIC_TIME mtOffset, DWORD flags, IDirectMusicPerformance* performance, IDirectMusicSegmentState* segment_state, DWORD virtual_id)
+{
+    ICOM_THIS_MULTI(IDirectMusicBandTrack, TrackVtbl, iface);
 
-  return S_OK;
+    FIXME("(%p, %p, %d, %d, %d, %x, %p, %p, %d): semi-stub\n", This, state_data, mtStart, mtEnd, mtOffset, flags, performance, segment_state, virtual_id);
+
+    /* Sends following pMSG:
+       - DMUS_PATCH_PMSG
+       - DMUS_TRANSPOSE_PMSG
+       - DMUS_CHANNEL_PRIORITY_PMSG
+       - DMUS_MIDI_PMSG
+    */
+
+    return S_OK;
 }
 
 static HRESULT WINAPI IDirectMusicBandTrack_IDirectMusicTrack_GetParam (LPDIRECTMUSICTRACK8 iface, REFGUID rguidType, MUSIC_TIME mtTime, MUSIC_TIME* pmtNext, void* pParam) {
@@ -182,25 +196,34 @@ static HRESULT WINAPI IDirectMusicBandTrack_IDirectMusicTrack_Clone (LPDIRECTMUS
   return S_OK;
 }
 
-static HRESULT WINAPI IDirectMusicBandTrack_IDirectMusicTrack_PlayEx (LPDIRECTMUSICTRACK8 iface, void* pStateData, REFERENCE_TIME rtStart, REFERENCE_TIME rtEnd, REFERENCE_TIME rtOffset, DWORD dwFlags, IDirectMusicPerformance* pPerf, IDirectMusicSegmentState* pSegSt, DWORD dwVirtualID) {
-  ICOM_THIS_MULTI(IDirectMusicBandTrack, TrackVtbl, iface);
-  FIXME("(%p, %p, 0x%s, 0x%s, 0x%s, %d, %p, %p, %d): stub\n", This, pStateData, wine_dbgstr_longlong(rtStart),
-      wine_dbgstr_longlong(rtEnd), wine_dbgstr_longlong(rtOffset), dwFlags, pPerf, pSegSt, dwVirtualID);
-  return S_OK;
+static HRESULT WINAPI IDirectMusicBandTrack_IDirectMusicTrack_PlayEx(LPDIRECTMUSICTRACK8 iface, void* state_data, REFERENCE_TIME rtStart, REFERENCE_TIME rtEnd, REFERENCE_TIME rtOffset, DWORD flags, IDirectMusicPerformance* performance, IDirectMusicSegmentState* segment_state, DWORD virtual_id)
+{
+    ICOM_THIS_MULTI(IDirectMusicBandTrack, TrackVtbl, iface);
+
+    FIXME("(%p, %p, 0x%s, 0x%s, 0x%s, %x, %p, %p, %d): stub\n", This, state_data, wine_dbgstr_longlong(rtStart),
+        wine_dbgstr_longlong(rtEnd), wine_dbgstr_longlong(rtOffset), flags, performance, segment_state, virtual_id);
+
+    return S_OK;
 }
 
-static HRESULT WINAPI IDirectMusicBandTrack_IDirectMusicTrack_GetParamEx (LPDIRECTMUSICTRACK8 iface, REFGUID rguidType, REFERENCE_TIME rtTime, REFERENCE_TIME* prtNext, void* pParam, void* pStateData, DWORD dwFlags) {
-  ICOM_THIS_MULTI(IDirectMusicBandTrack, TrackVtbl, iface);
-  FIXME("(%p, %s, 0x%s, %p, %p, %p, %d): stub\n", This, debugstr_dmguid(rguidType),
-      wine_dbgstr_longlong(rtTime), prtNext, pParam, pStateData, dwFlags);
-  return S_OK;
+static HRESULT WINAPI IDirectMusicBandTrack_IDirectMusicTrack_GetParamEx(LPDIRECTMUSICTRACK8 iface, REFGUID rguidType, REFERENCE_TIME rtTime, REFERENCE_TIME* rtNext, void* param, void* state_data, DWORD flags)
+{
+    ICOM_THIS_MULTI(IDirectMusicBandTrack, TrackVtbl, iface);
+
+    FIXME("(%p, %s, 0x%s, %p, %p, %p, %x): stub\n", This, debugstr_dmguid(rguidType),
+        wine_dbgstr_longlong(rtTime), rtNext, param, state_data, flags);
+
+    return S_OK;
 }
 
-static HRESULT WINAPI IDirectMusicBandTrack_IDirectMusicTrack_SetParamEx (LPDIRECTMUSICTRACK8 iface, REFGUID rguidType, REFERENCE_TIME rtTime, void* pParam, void* pStateData, DWORD dwFlags) {
-  ICOM_THIS_MULTI(IDirectMusicBandTrack, TrackVtbl, iface);
-  FIXME("(%p, %s, 0x%s, %p, %p, %d): stub\n", This, debugstr_dmguid(rguidType),
-      wine_dbgstr_longlong(rtTime), pParam, pStateData, dwFlags);
-  return S_OK;
+static HRESULT WINAPI IDirectMusicBandTrack_IDirectMusicTrack_SetParamEx(LPDIRECTMUSICTRACK8 iface, REFGUID rguidType, REFERENCE_TIME rtTime, void* param, void* state_data, DWORD flags)
+{
+    ICOM_THIS_MULTI(IDirectMusicBandTrack, TrackVtbl, iface);
+
+    FIXME("(%p, %s, 0x%s, %p, %p, %x): stub\n", This, debugstr_dmguid(rguidType),
+        wine_dbgstr_longlong(rtTime), param, state_data, flags);
+
+    return S_OK;
 }
 
 static HRESULT WINAPI IDirectMusicBandTrack_IDirectMusicTrack_Compose (LPDIRECTMUSICTRACK8 iface, IUnknown* pContext, DWORD dwTrackGroup, IDirectMusicTrack** ppResultTrack) {
@@ -303,7 +326,7 @@ static HRESULT IDirectMusicBandTrack_IPersistStream_LoadBand (LPPERSISTSTREAM if
       return  E_OUTOFMEMORY;
     }
     pNewBand->BandHeader = *pHeader;
-    pNewBand->pBand = (IDirectMusicBandImpl*)((char*)(*ppBand) - offsetof(IDirectMusicBandImpl,BandVtbl));
+    pNewBand->band = *ppBand;
     IDirectMusicBand_AddRef(*ppBand);
     list_add_tail (&This->Bands, &pNewBand->entry);
   }
@@ -592,7 +615,8 @@ static const IPersistStreamVtbl DirectMusicBandTrack_PerststStream_Vtbl = {
 };
 
 /* for ClassFactory */
-HRESULT WINAPI DMUSIC_CreateDirectMusicBandTrack (LPCGUID lpcGUID, LPVOID *ppobj, LPUNKNOWN pUnkOuter) {
+HRESULT WINAPI create_dmbandtrack(REFIID lpcGUID, void **ppobj)
+{
   IDirectMusicBandTrack* track;
 	
   track = HeapAlloc (GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectMusicBandTrack));

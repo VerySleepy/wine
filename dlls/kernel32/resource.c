@@ -219,9 +219,9 @@ BOOL WINAPI EnumResourceTypesA( HMODULE hmod, ENUMRESTYPEPROCA lpfun, LONG_PTR l
     et = (const IMAGE_RESOURCE_DIRECTORY_ENTRY *)(resdir + 1);
     for (i = 0; i < resdir->NumberOfNamedEntries+resdir->NumberOfIdEntries; i++)
     {
-        if (et[i].u1.s1.NameIsString)
+        if (et[i].u.s.NameIsString)
         {
-            str = (const IMAGE_RESOURCE_DIR_STRING_U *)((const BYTE *)resdir + et[i].u1.s1.NameOffset);
+            str = (const IMAGE_RESOURCE_DIR_STRING_U *)((const BYTE *)resdir + et[i].u.s.NameOffset);
             newlen = WideCharToMultiByte( CP_ACP, 0, str->NameString, str->Length, NULL, 0, NULL, NULL);
             if (newlen + 1 > len)
             {
@@ -235,7 +235,7 @@ BOOL WINAPI EnumResourceTypesA( HMODULE hmod, ENUMRESTYPEPROCA lpfun, LONG_PTR l
         }
         else
         {
-            ret = lpfun( hmod, UIntToPtr(et[i].u1.s2.Id), lparam );
+            ret = lpfun( hmod, UIntToPtr(et[i].u.Id), lparam );
         }
         if (!ret) break;
     }
@@ -269,9 +269,9 @@ BOOL WINAPI EnumResourceTypesW( HMODULE hmod, ENUMRESTYPEPROCW lpfun, LONG_PTR l
     et = (const IMAGE_RESOURCE_DIRECTORY_ENTRY *)(resdir + 1);
     for (i = 0; i < resdir->NumberOfNamedEntries + resdir->NumberOfIdEntries; i++)
     {
-        if (et[i].u1.s1.NameIsString)
+        if (et[i].u.s.NameIsString)
         {
-            str = (const IMAGE_RESOURCE_DIR_STRING_U *)((const BYTE *)resdir + et[i].u1.s1.NameOffset);
+            str = (const IMAGE_RESOURCE_DIR_STRING_U *)((const BYTE *)resdir + et[i].u.s.NameOffset);
             if (str->Length + 1 > len)
             {
                 len = str->Length + 1;
@@ -284,7 +284,7 @@ BOOL WINAPI EnumResourceTypesW( HMODULE hmod, ENUMRESTYPEPROCW lpfun, LONG_PTR l
         }
         else
         {
-            ret = lpfun( hmod, UIntToPtr(et[i].u1.s2.Id), lparam );
+            ret = lpfun( hmod, UIntToPtr(et[i].u.Id), lparam );
         }
         if (!ret) break;
     }
@@ -326,9 +326,9 @@ BOOL WINAPI EnumResourceNamesA( HMODULE hmod, LPCSTR type, ENUMRESNAMEPROCA lpfu
     {
         for (i = 0; i < resdir->NumberOfNamedEntries+resdir->NumberOfIdEntries; i++)
         {
-            if (et[i].u1.s1.NameIsString)
+            if (et[i].u.s.NameIsString)
             {
-                str = (const IMAGE_RESOURCE_DIR_STRING_U *)((const BYTE *)basedir + et[i].u1.s1.NameOffset);
+                str = (const IMAGE_RESOURCE_DIR_STRING_U *)((const BYTE *)basedir + et[i].u.s.NameOffset);
                 newlen = WideCharToMultiByte(CP_ACP, 0, str->NameString, str->Length, NULL, 0, NULL, NULL);
                 if (newlen + 1 > len)
                 {
@@ -346,7 +346,7 @@ BOOL WINAPI EnumResourceNamesA( HMODULE hmod, LPCSTR type, ENUMRESNAMEPROCA lpfu
             }
             else
             {
-                ret = lpfun( hmod, type, UIntToPtr(et[i].u1.s2.Id), lparam );
+                ret = lpfun( hmod, type, UIntToPtr(et[i].u.Id), lparam );
             }
             if (!ret) break;
         }
@@ -398,9 +398,9 @@ BOOL WINAPI EnumResourceNamesW( HMODULE hmod, LPCWSTR type, ENUMRESNAMEPROCW lpf
     {
         for (i = 0; i < resdir->NumberOfNamedEntries+resdir->NumberOfIdEntries; i++)
         {
-            if (et[i].u1.s1.NameIsString)
+            if (et[i].u.s.NameIsString)
             {
-                str = (const IMAGE_RESOURCE_DIR_STRING_U *)((const BYTE *)basedir + et[i].u1.s1.NameOffset);
+                str = (const IMAGE_RESOURCE_DIR_STRING_U *)((const BYTE *)basedir + et[i].u.s.NameOffset);
                 if (str->Length + 1 > len)
                 {
                     len = str->Length + 1;
@@ -417,7 +417,7 @@ BOOL WINAPI EnumResourceNamesW( HMODULE hmod, LPCWSTR type, ENUMRESNAMEPROCW lpf
             }
             else
             {
-                ret = lpfun( hmod, type, UIntToPtr(et[i].u1.s2.Id), lparam );
+                ret = lpfun( hmod, type, UIntToPtr(et[i].u.Id), lparam );
             }
             if (!ret) break;
         }
@@ -437,10 +437,11 @@ done:
 
 
 /**********************************************************************
- *	EnumResourceLanguagesA	(KERNEL32.@)
+ *	EnumResourceLanguagesExA	(KERNEL32.@)
  */
-BOOL WINAPI EnumResourceLanguagesA( HMODULE hmod, LPCSTR type, LPCSTR name,
-                                    ENUMRESLANGPROCA lpfun, LONG_PTR lparam )
+BOOL WINAPI EnumResourceLanguagesExA( HMODULE hmod, LPCSTR type, LPCSTR name,
+                                      ENUMRESLANGPROCA lpfun, LONG_PTR lparam,
+                                      DWORD flags, LANGID lang )
 {
     int i;
     BOOL ret = FALSE;
@@ -450,7 +451,15 @@ BOOL WINAPI EnumResourceLanguagesA( HMODULE hmod, LPCSTR type, LPCSTR name,
     const IMAGE_RESOURCE_DIRECTORY *basedir, *resdir;
     const IMAGE_RESOURCE_DIRECTORY_ENTRY *et;
 
-    TRACE( "%p %s %s %p %lx\n", hmod, debugstr_a(type), debugstr_a(name), lpfun, lparam );
+    TRACE( "%p %s %s %p %lx %x %d\n", hmod, debugstr_a(type), debugstr_a(name),
+           lpfun, lparam, flags, lang );
+
+    if (flags & (RESOURCE_ENUM_MUI | RESOURCE_ENUM_MUI_SYSTEM | RESOURCE_ENUM_VALIDATE))
+        FIXME( "unimplemented flags: %x\n", flags );
+
+    if (!flags) flags = RESOURCE_ENUM_LN | RESOURCE_ENUM_MUI;
+
+    if (!(flags & RESOURCE_ENUM_LN)) return ret;
 
     if (!hmod) hmod = GetModuleHandleA( NULL );
     typeW.Buffer = nameW.Buffer = NULL;
@@ -470,7 +479,78 @@ BOOL WINAPI EnumResourceLanguagesA( HMODULE hmod, LPCSTR type, LPCSTR name,
     {
         for (i = 0; i < resdir->NumberOfNamedEntries + resdir->NumberOfIdEntries; i++)
         {
-            ret = lpfun( hmod, type, name, et[i].u1.s2.Id, lparam );
+            ret = lpfun( hmod, type, name, et[i].u.Id, lparam );
+            if (!ret) break;
+        }
+    }
+    __EXCEPT_PAGE_FAULT
+    {
+        ret = FALSE;
+        status = STATUS_ACCESS_VIOLATION;
+    }
+    __ENDTRY
+done:
+    if (!IS_INTRESOURCE(typeW.Buffer)) HeapFree( GetProcessHeap(), 0, typeW.Buffer );
+    if (!IS_INTRESOURCE(nameW.Buffer)) HeapFree( GetProcessHeap(), 0, nameW.Buffer );
+    if (status != STATUS_SUCCESS) SetLastError( RtlNtStatusToDosError(status) );
+    return ret;
+}
+
+
+/**********************************************************************
+ *	EnumResourceLanguagesA	(KERNEL32.@)
+ */
+BOOL WINAPI EnumResourceLanguagesA( HMODULE hmod, LPCSTR type, LPCSTR name,
+                                    ENUMRESLANGPROCA lpfun, LONG_PTR lparam )
+{
+    return EnumResourceLanguagesExA( hmod, type, name, lpfun, lparam, 0, 0 );
+}
+
+
+/**********************************************************************
+ *	EnumResourceLanguagesExW	(KERNEL32.@)
+ */
+BOOL WINAPI EnumResourceLanguagesExW( HMODULE hmod, LPCWSTR type, LPCWSTR name,
+                                      ENUMRESLANGPROCW lpfun, LONG_PTR lparam,
+                                      DWORD flags, LANGID lang )
+{
+    int i;
+    BOOL ret = FALSE;
+    NTSTATUS status;
+    UNICODE_STRING typeW, nameW;
+    LDR_RESOURCE_INFO info;
+    const IMAGE_RESOURCE_DIRECTORY *basedir, *resdir;
+    const IMAGE_RESOURCE_DIRECTORY_ENTRY *et;
+
+    TRACE( "%p %s %s %p %lx %x %d\n", hmod, debugstr_w(type), debugstr_w(name),
+           lpfun, lparam, flags, lang );
+
+    if (flags & (RESOURCE_ENUM_MUI | RESOURCE_ENUM_MUI_SYSTEM | RESOURCE_ENUM_VALIDATE))
+        FIXME( "unimplemented flags: %x\n", flags );
+
+    if (!flags) flags = RESOURCE_ENUM_LN | RESOURCE_ENUM_MUI;
+
+    if (!(flags & RESOURCE_ENUM_LN)) return ret;
+
+    if (!hmod) hmod = GetModuleHandleW( NULL );
+    typeW.Buffer = nameW.Buffer = NULL;
+    if ((status = LdrFindResourceDirectory_U( hmod, NULL, 0, &basedir )) != STATUS_SUCCESS)
+        goto done;
+    if ((status = get_res_nameW( type, &typeW )) != STATUS_SUCCESS)
+        goto done;
+    if ((status = get_res_nameW( name, &nameW )) != STATUS_SUCCESS)
+        goto done;
+    info.Type = (ULONG_PTR)typeW.Buffer;
+    info.Name = (ULONG_PTR)nameW.Buffer;
+    if ((status = LdrFindResourceDirectory_U( hmod, &info, 2, &resdir )) != STATUS_SUCCESS)
+        goto done;
+
+    et = (const IMAGE_RESOURCE_DIRECTORY_ENTRY *)(resdir + 1);
+    __TRY
+    {
+        for (i = 0; i < resdir->NumberOfNamedEntries + resdir->NumberOfIdEntries; i++)
+        {
+            ret = lpfun( hmod, type, name, et[i].u.Id, lparam );
             if (!ret) break;
         }
     }
@@ -494,49 +574,7 @@ done:
 BOOL WINAPI EnumResourceLanguagesW( HMODULE hmod, LPCWSTR type, LPCWSTR name,
                                     ENUMRESLANGPROCW lpfun, LONG_PTR lparam )
 {
-    int i;
-    BOOL ret = FALSE;
-    NTSTATUS status;
-    UNICODE_STRING typeW, nameW;
-    LDR_RESOURCE_INFO info;
-    const IMAGE_RESOURCE_DIRECTORY *basedir, *resdir;
-    const IMAGE_RESOURCE_DIRECTORY_ENTRY *et;
-
-    TRACE( "%p %s %s %p %lx\n", hmod, debugstr_w(type), debugstr_w(name), lpfun, lparam );
-
-    if (!hmod) hmod = GetModuleHandleW( NULL );
-    typeW.Buffer = nameW.Buffer = NULL;
-    if ((status = LdrFindResourceDirectory_U( hmod, NULL, 0, &basedir )) != STATUS_SUCCESS)
-        goto done;
-    if ((status = get_res_nameW( type, &typeW )) != STATUS_SUCCESS)
-        goto done;
-    if ((status = get_res_nameW( name, &nameW )) != STATUS_SUCCESS)
-        goto done;
-    info.Type = (ULONG_PTR)typeW.Buffer;
-    info.Name = (ULONG_PTR)nameW.Buffer;
-    if ((status = LdrFindResourceDirectory_U( hmod, &info, 2, &resdir )) != STATUS_SUCCESS)
-        goto done;
-
-    et = (const IMAGE_RESOURCE_DIRECTORY_ENTRY *)(resdir + 1);
-    __TRY
-    {
-        for (i = 0; i < resdir->NumberOfNamedEntries + resdir->NumberOfIdEntries; i++)
-        {
-            ret = lpfun( hmod, type, name, et[i].u1.s2.Id, lparam );
-            if (!ret) break;
-        }
-    }
-    __EXCEPT_PAGE_FAULT
-    {
-        ret = FALSE;
-        status = STATUS_ACCESS_VIOLATION;
-    }
-    __ENDTRY
-done:
-    if (!IS_INTRESOURCE(typeW.Buffer)) HeapFree( GetProcessHeap(), 0, typeW.Buffer );
-    if (!IS_INTRESOURCE(nameW.Buffer)) HeapFree( GetProcessHeap(), 0, nameW.Buffer );
-    if (status != STATUS_SUCCESS) SetLastError( RtlNtStatusToDosError(status) );
-    return ret;
+    return EnumResourceLanguagesExW( hmod, type, name, lpfun, lparam, 0, 0 );
 }
 
 
@@ -572,7 +610,7 @@ LPVOID WINAPI LockResource( HGLOBAL handle )
  */
 BOOL WINAPI FreeResource( HGLOBAL handle )
 {
-    return 0;
+    return FALSE;
 }
 
 
@@ -830,7 +868,6 @@ static IMAGE_NT_HEADERS *get_nt_header( void *base, DWORD mapping_size )
 static IMAGE_SECTION_HEADER *get_section_header( void *base, DWORD mapping_size, DWORD *num_sections )
 {
     IMAGE_NT_HEADERS *nt;
-    IMAGE_SECTION_HEADER *sec;
     DWORD section_ofs;
 
     nt = get_nt_header( base, mapping_size );
@@ -839,7 +876,7 @@ static IMAGE_SECTION_HEADER *get_section_header( void *base, DWORD mapping_size,
 
     /* check that we don't go over the end of the file accessing the sections */
     section_ofs = FIELD_OFFSET(IMAGE_NT_HEADERS, OptionalHeader) + nt->FileHeader.SizeOfOptionalHeader;
-    if ((nt->FileHeader.NumberOfSections * sizeof (*sec) + section_ofs) > mapping_size)
+    if ((nt->FileHeader.NumberOfSections * sizeof (IMAGE_SECTION_HEADER) + section_ofs) > mapping_size)
         return NULL;
 
     if (num_sections)
@@ -851,8 +888,10 @@ static IMAGE_SECTION_HEADER *get_section_header( void *base, DWORD mapping_size,
 
 static BOOL check_pe_exe( HANDLE file, QUEUEDUPDATES *updates )
 {
-    const IMAGE_NT_HEADERS *nt;
+    const IMAGE_NT_HEADERS32 *nt;
+    const IMAGE_NT_HEADERS64 *nt64;
     const IMAGE_SECTION_HEADER *sec;
+    const IMAGE_DATA_DIRECTORY *dd;
     BOOL ret = FALSE;
     HANDLE mapping;
     DWORD mapping_size, num_sections = 0;
@@ -868,13 +907,18 @@ static BOOL check_pe_exe( HANDLE file, QUEUEDUPDATES *updates )
     if (!base)
         goto done;
 
-    nt = get_nt_header( base, mapping_size );
+    nt = (IMAGE_NT_HEADERS32 *)get_nt_header( base, mapping_size );
     if (!nt)
         goto done;
 
+    nt64 = (IMAGE_NT_HEADERS64*)nt;
+    dd = &nt->OptionalHeader.DataDirectory[0];
+    if (nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+        dd = &nt64->OptionalHeader.DataDirectory[0];
+
     TRACE("resources: %08x %08x\n",
-          nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_RESOURCE].VirtualAddress,
-          nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_RESOURCE].Size);
+          dd[IMAGE_DIRECTORY_ENTRY_RESOURCE].VirtualAddress,
+          dd[IMAGE_DIRECTORY_ENTRY_RESOURCE].Size);
 
     sec = get_section_header( base, mapping_size, &num_sections );
     if (!sec)
@@ -949,10 +993,10 @@ static LPWSTR resource_dup_string( const IMAGE_RESOURCE_DIRECTORY *root, const I
     const IMAGE_RESOURCE_DIR_STRING_U* string;
     LPWSTR s;
 
-    if (!entry->u1.s1.NameIsString)
-        return UIntToPtr(entry->u1.s2.Id);
+    if (!entry->u.s.NameIsString)
+        return UIntToPtr(entry->u.Id);
 
-    string = (const IMAGE_RESOURCE_DIR_STRING_U*) (((const char *)root) + entry->u1.s1.NameOffset);
+    string = (const IMAGE_RESOURCE_DIR_STRING_U*) (((const char *)root) + entry->u.s.NameOffset);
     s = HeapAlloc(GetProcessHeap(), 0, (string->Length + 1)*sizeof (WCHAR) );
     memcpy( s, string->NameString, (string->Length + 1)*sizeof (WCHAR) );
     s[string->Length] = 0;
@@ -981,7 +1025,7 @@ static BOOL enumerate_mapped_resources( QUEUEDUPDATES *updates,
 
         Type = resource_dup_string( root, e1 );
 
-        namedir = (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + e1->u2.s3.OffsetToDirectory);
+        namedir = (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + e1->u2.s2.OffsetToDirectory);
         for (j = 0; j < namedir->NumberOfNamedEntries + namedir->NumberOfIdEntries; j++)
         {
             LPWSTR Name;
@@ -990,7 +1034,7 @@ static BOOL enumerate_mapped_resources( QUEUEDUPDATES *updates,
 
             Name = resource_dup_string( root, e2 );
 
-            langdir = (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + e2->u2.s3.OffsetToDirectory);
+            langdir = (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + e2->u2.s2.OffsetToDirectory);
             for (k = 0; k < langdir->NumberOfNamedEntries + langdir->NumberOfIdEntries; k++)
             {
                 LANGID Lang;
@@ -999,7 +1043,7 @@ static BOOL enumerate_mapped_resources( QUEUEDUPDATES *updates,
 
                 e3 = (const IMAGE_RESOURCE_DIRECTORY_ENTRY*)(langdir + 1) + k;
 
-                Lang = e3->u1.s2.Id;
+                Lang = e3->u.Id;
 
                 data = (const IMAGE_RESOURCE_DATA_ENTRY *)((const char *)root + e3->u2.OffsetToData);
 
@@ -1236,8 +1280,8 @@ static BOOL write_resources( QUEUEDUPDATES *updates, LPBYTE base, struct resourc
             DWORD len;
 
             root->NumberOfNamedEntries++;
-            e1->u1.s1.NameIsString = 1;
-            e1->u1.s1.NameOffset = si->strings_ofs;
+            e1->u.s.NameIsString = 1;
+            e1->u.s.NameOffset = si->strings_ofs;
 
             strings = (WCHAR*) &base[si->strings_ofs];
             len = lstrlenW( types->id );
@@ -1248,10 +1292,10 @@ static BOOL write_resources( QUEUEDUPDATES *updates, LPBYTE base, struct resourc
         else
         {
             root->NumberOfIdEntries++;
-            e1->u1.s2.Id = LOWORD( types->id );
+            e1->u.Id = LOWORD( types->id );
         }
-        e1->u2.s3.OffsetToDirectory = si->names_ofs;
-        e1->u2.s3.DataIsDirectory = TRUE;
+        e1->u2.s2.OffsetToDirectory = si->names_ofs;
+        e1->u2.s2.DataIsDirectory = TRUE;
         si->types_ofs += sizeof (IMAGE_RESOURCE_DIRECTORY_ENTRY);
 
         namedir = (IMAGE_RESOURCE_DIRECTORY*) &base[si->names_ofs];
@@ -1272,8 +1316,8 @@ static BOOL write_resources( QUEUEDUPDATES *updates, LPBYTE base, struct resourc
                 DWORD len;
 
                 namedir->NumberOfNamedEntries++;
-                e2->u1.s1.NameIsString = 1;
-                e2->u1.s1.NameOffset = si->strings_ofs;
+                e2->u.s.NameIsString = 1;
+                e2->u.s.NameOffset = si->strings_ofs;
 
                 strings = (WCHAR*) &base[si->strings_ofs];
                 len = lstrlenW( names->id );
@@ -1284,10 +1328,10 @@ static BOOL write_resources( QUEUEDUPDATES *updates, LPBYTE base, struct resourc
             else
             {
                 namedir->NumberOfIdEntries++;
-                e2->u1.s2.Id = LOWORD( names->id );
+                e2->u.Id = LOWORD( names->id );
             }
-            e2->u2.s3.OffsetToDirectory = si->langs_ofs;
-            e2->u2.s3.DataIsDirectory = TRUE;
+            e2->u2.s2.OffsetToDirectory = si->langs_ofs;
+            e2->u2.s2.DataIsDirectory = TRUE;
             si->names_ofs += sizeof (IMAGE_RESOURCE_DIRECTORY_ENTRY);
 
             langdir = (IMAGE_RESOURCE_DIRECTORY*) &base[si->langs_ofs];
@@ -1304,7 +1348,7 @@ static BOOL write_resources( QUEUEDUPDATES *updates, LPBYTE base, struct resourc
                 e3 = (IMAGE_RESOURCE_DIRECTORY_ENTRY*) &base[si->langs_ofs];
                 memset( e3, 0, sizeof *e3 );
                 langdir->NumberOfIdEntries++;
-                e3->u1.s2.Id = LOWORD( data->lang );
+                e3->u.Id = LOWORD( data->lang );
                 e3->u2.OffsetToData = si->data_entry_ofs;
 
                 si->langs_ofs += sizeof (IMAGE_RESOURCE_DIRECTORY_ENTRY);
@@ -1394,10 +1438,12 @@ static BOOL write_raw_resources( QUEUEDUPDATES *updates )
     DWORD section_size;
     BOOL ret = FALSE;
     IMAGE_SECTION_HEADER *sec;
-    IMAGE_NT_HEADERS *nt;
+    IMAGE_NT_HEADERS32 *nt;
+    IMAGE_NT_HEADERS64 *nt64;
     struct resource_size_info res_size;
     BYTE *res_base;
     struct mapping_info *read_map = NULL, *write_map = NULL;
+    DWORD PeSectionAlignment, PeFileAlignment, PeSizeOfImage;
 
     /* copy the exe to a temp file then update the temp file... */
     tempdir[0] = 0;
@@ -1430,19 +1476,30 @@ static BOOL write_raw_resources( QUEUEDUPDATES *updates )
     if (!write_map)
         goto done;
 
-    nt = get_nt_header( write_map->base, write_map->size );
+    nt = (IMAGE_NT_HEADERS32*)get_nt_header( write_map->base, write_map->size );
     if (!nt)
         goto done;
 
-    if (nt->OptionalHeader.SectionAlignment <= 0)
+    nt64 = (IMAGE_NT_HEADERS64*)nt;
+    if (nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
+        PeSectionAlignment = nt64->OptionalHeader.SectionAlignment;
+        PeFileAlignment = nt64->OptionalHeader.FileAlignment;
+        PeSizeOfImage = nt64->OptionalHeader.SizeOfImage;
+    } else {
+        PeSectionAlignment = nt->OptionalHeader.SectionAlignment;
+        PeFileAlignment = nt->OptionalHeader.FileAlignment;
+        PeSizeOfImage = nt->OptionalHeader.SizeOfImage;
+    }
+
+    if ((LONG)PeSectionAlignment <= 0)
     {
-        ERR("invalid section alignment %04x\n", nt->OptionalHeader.SectionAlignment);
+        ERR("invalid section alignment %08x\n", PeSectionAlignment);
         goto done;
     }
 
-    if (nt->OptionalHeader.FileAlignment <= 0)
+    if ((LONG)PeFileAlignment <= 0)
     {
-        ERR("invalid file alignment %04x\n", nt->OptionalHeader.FileAlignment);
+        ERR("invalid file alignment %08x\n", PeFileAlignment);
         goto done;
     }
 
@@ -1461,12 +1518,12 @@ static BOOL write_raw_resources( QUEUEDUPDATES *updates )
         memset( sec, 0, sizeof *sec );
         memcpy( sec->Name, ".rsrc", 5 );
         sec->Characteristics = IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ;
-        sec->VirtualAddress = nt->OptionalHeader.SizeOfImage;
+        sec->VirtualAddress = PeSizeOfImage;
     }
 
     if (!sec->PointerToRawData)  /* empty section */
     {
-        sec->PointerToRawData = write_map->size + (-write_map->size) % nt->OptionalHeader.FileAlignment;
+        sec->PointerToRawData = write_map->size + (-write_map->size) % PeFileAlignment;
         sec->SizeOfRawData = 0;
     }
 
@@ -1476,7 +1533,7 @@ static BOOL write_raw_resources( QUEUEDUPDATES *updates )
 
     /* round up the section size */
     section_size = res_size.total_size;
-    section_size += (-section_size) % nt->OptionalHeader.FileAlignment;
+    section_size += (-section_size) % PeFileAlignment;
 
     TRACE("requires %08x (%08x) bytes\n", res_size.total_size, section_size );
 
@@ -1484,11 +1541,12 @@ static BOOL write_raw_resources( QUEUEDUPDATES *updates )
     if (section_size != sec->SizeOfRawData)
     {
         DWORD old_size = write_map->size;
-        DWORD virtual_section_size = res_size.total_size + (-res_size.total_size) % nt->OptionalHeader.SectionAlignment;
-        int delta = section_size - (sec->SizeOfRawData + (-sec->SizeOfRawData) % nt->OptionalHeader.FileAlignment);
+        DWORD virtual_section_size = res_size.total_size + (-res_size.total_size) % PeSectionAlignment;
+        int delta = section_size - (sec->SizeOfRawData + (-sec->SizeOfRawData) % PeFileAlignment);
         int rva_delta = virtual_section_size -
-            (sec->Misc.VirtualSize + (-sec->Misc.VirtualSize) % nt->OptionalHeader.SectionAlignment);
-        BOOL rsrc_is_last = sec->PointerToRawData + sec->SizeOfRawData == old_size;
+            (sec->Misc.VirtualSize + (-sec->Misc.VirtualSize) % PeSectionAlignment);
+        /* when new section is added it could end past current mapping size */
+        BOOL rsrc_is_last = sec->PointerToRawData + sec->SizeOfRawData >= old_size;
 	/* align .rsrc size when possible */
         DWORD mapping_size = rsrc_is_last ? sec->PointerToRawData + section_size : old_size + delta;
 
@@ -1503,12 +1561,13 @@ static BOOL write_raw_resources( QUEUEDUPDATES *updates )
             ret = resize_mapping( write_map, mapping_size );
 
             /* get the pointers again - they might be different after remapping */
-            nt = get_nt_header( write_map->base, mapping_size );
+            nt = (IMAGE_NT_HEADERS32*)get_nt_header( write_map->base, mapping_size );
             if (!nt)
             {
                 ERR("couldn't get NT header\n");
                 goto done;
             }
+            nt64 = (IMAGE_NT_HEADERS64*)nt;
 
             sec = get_resource_section( write_map->base, mapping_size );
             if (!sec)
@@ -1539,12 +1598,13 @@ static BOOL write_raw_resources( QUEUEDUPDATES *updates )
         {
             ret = resize_mapping( write_map, mapping_size );
 
-            nt = get_nt_header( write_map->base, mapping_size );
+            nt = (IMAGE_NT_HEADERS32*)get_nt_header( write_map->base, mapping_size );
             if (!nt)
             {
                 ERR("couldn't get NT header\n");
                 goto done;
             }
+            nt64 = (IMAGE_NT_HEADERS64*)nt;
 
             sec = get_resource_section( write_map->base, mapping_size );
             if (!sec)
@@ -1554,9 +1614,17 @@ static BOOL write_raw_resources( QUEUEDUPDATES *updates )
         /* adjust the PE header information */
         sec->SizeOfRawData = section_size;
         sec->Misc.VirtualSize = virtual_section_size;
-        nt->OptionalHeader.SizeOfImage += rva_delta;
-        nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_RESOURCE].Size = res_size.total_size;
-        nt->OptionalHeader.SizeOfInitializedData = get_init_data_size( write_map->base, mapping_size );
+        if (nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
+            nt64->OptionalHeader.SizeOfImage += rva_delta;
+            nt64->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_RESOURCE].VirtualAddress = sec->VirtualAddress;
+            nt64->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_RESOURCE].Size = res_size.total_size;
+            nt64->OptionalHeader.SizeOfInitializedData = get_init_data_size( write_map->base, mapping_size );
+        } else {
+            nt->OptionalHeader.SizeOfImage += rva_delta;
+            nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_RESOURCE].VirtualAddress = sec->VirtualAddress;
+            nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_RESOURCE].Size = res_size.total_size;
+            nt->OptionalHeader.SizeOfInitializedData = get_init_data_size( write_map->base, mapping_size );
+        }
     }
 
     res_base = (LPBYTE) write_map->base + sec->PointerToRawData;

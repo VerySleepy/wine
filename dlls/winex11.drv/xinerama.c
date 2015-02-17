@@ -33,6 +33,8 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(x11drv);
 
+static RECT virtual_screen_rect;
+
 static MONITORINFOEXW default_monitor =
 {
     sizeof(default_monitor),    /* cbSize */
@@ -157,13 +159,37 @@ static inline int query_screens(void)
 
 #endif  /* SONAME_LIBXINERAMA */
 
+POINT virtual_screen_to_root( INT x, INT y )
+{
+    POINT pt;
+    pt.x = x - virtual_screen_rect.left;
+    pt.y = y - virtual_screen_rect.top;
+    return pt;
+}
+
+POINT root_to_virtual_screen( INT x, INT y )
+{
+    POINT pt;
+    pt.x = x + virtual_screen_rect.left;
+    pt.y = y + virtual_screen_rect.top;
+    return pt;
+}
+
+RECT get_virtual_screen_rect(void)
+{
+    return virtual_screen_rect;
+}
+
+RECT get_primary_monitor_rect(void)
+{
+    return get_primary()->rcMonitor;
+}
+
 void xinerama_init( unsigned int width, unsigned int height )
 {
     MONITORINFOEXW *primary;
     int i;
     RECT rect;
-
-    wine_tsx11_lock();
 
     SetRect( &rect, 0, 0, width, height );
 
@@ -177,6 +203,7 @@ void xinerama_init( unsigned int width, unsigned int height )
     }
 
     primary = get_primary();
+    SetRectEmpty( &virtual_screen_rect );
 
     /* coordinates (0,0) have to point to the primary monitor origin */
     OffsetRect( &rect, -primary->rcMonitor.left, -primary->rcMonitor.top );
@@ -184,19 +211,15 @@ void xinerama_init( unsigned int width, unsigned int height )
     {
         OffsetRect( &monitors[i].rcMonitor, rect.left, rect.top );
         OffsetRect( &monitors[i].rcWork, rect.left, rect.top );
+        UnionRect( &virtual_screen_rect, &virtual_screen_rect, &monitors[i].rcMonitor );
         TRACE( "monitor %p: %s work %s%s\n",
                index_to_monitor(i), wine_dbgstr_rect(&monitors[i].rcMonitor),
                wine_dbgstr_rect(&monitors[i].rcWork),
                (monitors[i].dwFlags & MONITORINFOF_PRIMARY) ? " (primary)" : "" );
     }
 
-    virtual_screen_rect = rect;
-    screen_width = primary->rcMonitor.right - primary->rcMonitor.left;
-    screen_height = primary->rcMonitor.bottom - primary->rcMonitor.top;
-    TRACE( "virtual size: %s primary size: %dx%d\n",
-           wine_dbgstr_rect(&rect), screen_width, screen_height );
-
-    wine_tsx11_unlock();
+    TRACE( "virtual size: %s primary: %s\n",
+           wine_dbgstr_rect(&virtual_screen_rect), wine_dbgstr_rect(&primary->rcMonitor) );
 }
 
 

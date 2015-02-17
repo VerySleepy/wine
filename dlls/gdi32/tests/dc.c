@@ -19,7 +19,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+
 #define WINVER 0x0501 /* request latest DEVMODE */
+#define NONAMELESSSTRUCT
+#define NONAMELESSUNION
 
 #include <assert.h>
 #include <stdio.h>
@@ -30,6 +33,10 @@
 #include "winuser.h"
 #include "winspool.h"
 #include "winerror.h"
+
+#ifndef LAYOUT_LTR
+#define LAYOUT_LTR 0
+#endif
 
 static DWORD (WINAPI *pSetLayout)(HDC hdc, DWORD layout);
 
@@ -52,6 +59,54 @@ static void dump_region(HRGN hrgn)
         printf( " (%d,%d)-(%d,%d)", rect->left, rect->top, rect->right, rect->bottom );
     printf( "\n" );
     HeapFree( GetProcessHeap(), 0, data );
+}
+
+static void test_dc_values(void)
+{
+    HDC hdc = CreateDCA("DISPLAY", NULL, NULL, NULL);
+    COLORREF color;
+    int extra;
+
+    ok( hdc != NULL, "CreateDC failed\n" );
+    color = SetBkColor( hdc, 0x12345678 );
+    ok( color == 0xffffff, "initial color %08x\n", color );
+    color = GetBkColor( hdc );
+    ok( color == 0x12345678, "wrong color %08x\n", color );
+    color = SetBkColor( hdc, 0xffffffff );
+    ok( color == 0x12345678, "wrong color %08x\n", color );
+    color = GetBkColor( hdc );
+    ok( color == 0xffffffff, "wrong color %08x\n", color );
+    color = SetBkColor( hdc, 0 );
+    ok( color == 0xffffffff, "wrong color %08x\n", color );
+    color = GetBkColor( hdc );
+    ok( color == 0, "wrong color %08x\n", color );
+
+    color = SetTextColor( hdc, 0xffeeddcc );
+    ok( color == 0, "initial color %08x\n", color );
+    color = GetTextColor( hdc );
+    ok( color == 0xffeeddcc, "wrong color %08x\n", color );
+    color = SetTextColor( hdc, 0xffffffff );
+    ok( color == 0xffeeddcc, "wrong color %08x\n", color );
+    color = GetTextColor( hdc );
+    ok( color == 0xffffffff, "wrong color %08x\n", color );
+    color = SetTextColor( hdc, 0 );
+    ok( color == 0xffffffff, "wrong color %08x\n", color );
+    color = GetTextColor( hdc );
+    ok( color == 0, "wrong color %08x\n", color );
+
+    extra = GetTextCharacterExtra( hdc );
+    ok( extra == 0, "initial extra %d\n", extra );
+    SetTextCharacterExtra( hdc, 123 );
+    extra = GetTextCharacterExtra( hdc );
+    ok( extra == 123, "initial extra %d\n", extra );
+    SetMapMode( hdc, MM_LOMETRIC );
+    extra = GetTextCharacterExtra( hdc );
+    ok( extra == 123, "initial extra %d\n", extra );
+    SetMapMode( hdc, MM_TEXT );
+    extra = GetTextCharacterExtra( hdc );
+    ok( extra == 123, "initial extra %d\n", extra );
+
+    DeleteDC( hdc );
 }
 
 static void test_savedc_2(void)
@@ -89,10 +144,7 @@ static void test_savedc_2(void)
        rc_clip.left, rc_clip.top, rc_clip.right, rc_clip.bottom);
 
     ret = SaveDC(hdc);
-todo_wine
-{
     ok(ret == 1, "ret = %d\n", ret);
-}
 
     ret = IntersectClipRect(hdc, 0, 0, 50, 50);
     if (ret == COMPLEXREGION)
@@ -263,14 +315,271 @@ static void test_GdiConvertToDevmodeW(void)
     HeapFree(GetProcessHeap(), 0, dmW);
 }
 
+static void test_device_caps( HDC hdc, HDC ref_dc, const char *descr, int scale )
+{
+    static const int caps[] =
+    {
+        DRIVERVERSION,
+        TECHNOLOGY,
+        HORZSIZE,
+        VERTSIZE,
+        HORZRES,
+        VERTRES,
+        BITSPIXEL,
+        PLANES,
+        NUMBRUSHES,
+        NUMPENS,
+        NUMMARKERS,
+        NUMFONTS,
+        NUMCOLORS,
+        PDEVICESIZE,
+        CURVECAPS,
+        LINECAPS,
+        POLYGONALCAPS,
+        /* TEXTCAPS broken on printer DC on winxp */
+        CLIPCAPS,
+        RASTERCAPS,
+        ASPECTX,
+        ASPECTY,
+        ASPECTXY,
+        LOGPIXELSX,
+        LOGPIXELSY,
+        SIZEPALETTE,
+        NUMRESERVED,
+        COLORRES,
+        PHYSICALWIDTH,
+        PHYSICALHEIGHT,
+        PHYSICALOFFSETX,
+        PHYSICALOFFSETY,
+        SCALINGFACTORX,
+        SCALINGFACTORY,
+        VREFRESH,
+        DESKTOPVERTRES,
+        DESKTOPHORZRES,
+        BLTALIGNMENT,
+        SHADEBLENDCAPS
+    };
+    unsigned int i;
+    WORD ramp[3][256];
+    BOOL ret;
+    RECT rect;
+    UINT type;
+
+    if (GetObjectType( hdc ) == OBJ_METADC)
+    {
+        for (i = 0; i < sizeof(caps)/sizeof(caps[0]); i++)
+            ok( GetDeviceCaps( hdc, caps[i] ) == (caps[i] == TECHNOLOGY ? DT_METAFILE : 0),
+                "wrong caps on %s for %u: %u\n", descr, caps[i],
+                GetDeviceCaps( hdc, caps[i] ) );
+
+        SetLastError( 0xdeadbeef );
+        ret = GetDeviceGammaRamp( hdc, &ramp );
+        ok( !ret, "GetDeviceGammaRamp succeeded on %s\n", descr );
+        ok( GetLastError() == ERROR_INVALID_PARAMETER || broken(GetLastError() == 0xdeadbeef), /* nt4 */
+            "wrong error %u on %s\n", GetLastError(), descr );
+        type = GetClipBox( hdc, &rect );
+        ok( type == ERROR, "GetClipBox returned %d on %s\n", type, descr );
+
+        SetBoundsRect( hdc, NULL, DCB_RESET | DCB_ENABLE );
+        SetMapMode( hdc, MM_TEXT );
+        Rectangle( hdc, 2, 2, 5, 5 );
+        type = GetBoundsRect( hdc, &rect, DCB_RESET );
+        ok( !type, "GetBoundsRect succeeded on %s\n", descr );
+        type = SetBoundsRect( hdc, &rect, DCB_RESET | DCB_ENABLE );
+        ok( !type, "SetBoundsRect succeeded on %s\n", descr );
+    }
+    else
+    {
+        for (i = 0; i < sizeof(caps)/sizeof(caps[0]); i++)
+        {
+            INT precision = 0;
+            INT hdc_caps = GetDeviceCaps( hdc, caps[i] );
+
+            switch (caps[i])
+            {
+            case HORZSIZE:
+            case VERTSIZE:
+                hdc_caps /= scale;
+                precision = 1;
+                break;
+            case LOGPIXELSX:
+            case LOGPIXELSY:
+                hdc_caps *= scale;
+                break;
+            }
+
+            ok( abs(hdc_caps - GetDeviceCaps( ref_dc, caps[i] )) <= precision,
+                "mismatched caps on %s for %u: %u/%u (scale %d)\n", descr, caps[i],
+                hdc_caps, GetDeviceCaps( ref_dc, caps[i] ), scale );
+        }
+
+        SetLastError( 0xdeadbeef );
+        ret = GetDeviceGammaRamp( hdc, &ramp );
+        if (GetObjectType( hdc ) != OBJ_DC || GetDeviceCaps( hdc, TECHNOLOGY ) == DT_RASPRINTER)
+        {
+            ok( !ret, "GetDeviceGammaRamp succeeded on %s (type %d)\n", descr, GetObjectType( hdc ) );
+            ok( GetLastError() == ERROR_INVALID_PARAMETER || broken(GetLastError() == 0xdeadbeef), /* nt4 */
+                "wrong error %u on %s\n", GetLastError(), descr );
+        }
+        else
+            ok( ret || broken(!ret) /* NT4 */, "GetDeviceGammaRamp failed on %s (type %d), error %u\n", descr, GetObjectType( hdc ), GetLastError() );
+        type = GetClipBox( hdc, &rect );
+        if (GetObjectType( hdc ) == OBJ_ENHMETADC)
+            todo_wine ok( type == SIMPLEREGION, "GetClipBox returned %d on memdc for %s\n", type, descr );
+        else
+            ok( type == SIMPLEREGION, "GetClipBox returned %d on memdc for %s\n", type, descr );
+
+        type = GetBoundsRect( hdc, &rect, 0 );
+        ok( type == DCB_RESET || broken(type == DCB_SET) /* XP */,
+            "GetBoundsRect returned type %x for %s\n", type, descr );
+        if (type == DCB_RESET)
+            ok( rect.left == 0 && rect.top == 0 && rect.right == 0 && rect.bottom == 0,
+                "GetBoundsRect returned %d,%d,%d,%d type %x for %s\n",
+                rect.left, rect.top, rect.right, rect.bottom, type, descr );
+        type = SetBoundsRect( hdc, NULL, DCB_RESET | DCB_ENABLE );
+        ok( type == (DCB_RESET | DCB_DISABLE) || broken(type == (DCB_SET | DCB_ENABLE)) /* XP */,
+            "SetBoundsRect returned %x for %s (hdc type %d)\n", type, descr, GetObjectType( hdc ) );
+
+        SetMapMode( hdc, MM_TEXT );
+        Rectangle( hdc, 2, 2, 4, 4 );
+        type = GetBoundsRect( hdc, &rect, DCB_RESET );
+        if (GetObjectType( hdc ) == OBJ_ENHMETADC || (GetObjectType( hdc ) == OBJ_DC && GetDeviceCaps( hdc, TECHNOLOGY ) == DT_RASPRINTER))
+            todo_wine
+            ok( rect.left == 2 && rect.top == 2 && rect.right == 4 && rect.bottom == 4 && type == DCB_SET,
+                "GetBoundsRect returned %d,%d,%d,%d type %x for %s\n",
+                rect.left, rect.top, rect.right, rect.bottom, type, descr );
+        else
+            ok( rect.left == 2 && rect.top == 2 && rect.right == 4 && rect.bottom == 4 && type == DCB_SET,
+                "GetBoundsRect returned %d,%d,%d,%d type %x for %s\n",
+                rect.left, rect.top, rect.right, rect.bottom, type, descr );
+    }
+
+    type = GetClipBox( ref_dc, &rect );
+    if (type != COMPLEXREGION && type != ERROR)  /* region can be complex on multi-monitor setups */
+    {
+        RECT ref_rect;
+
+        ok( type == SIMPLEREGION, "GetClipBox returned %d on %s\n", type, descr );
+        if (GetDeviceCaps( ref_dc, TECHNOLOGY ) == DT_RASDISPLAY)
+        {
+            if (GetSystemMetrics( SM_CXSCREEN ) != GetSystemMetrics( SM_CXVIRTUALSCREEN ))
+                todo_wine ok( GetDeviceCaps( ref_dc, DESKTOPHORZRES ) == GetSystemMetrics( SM_CXSCREEN ),
+                              "Got DESKTOPHORZRES %d on %s, expected %d\n",
+                              GetDeviceCaps( ref_dc, DESKTOPHORZRES ), descr, GetSystemMetrics( SM_CXSCREEN ) );
+            else
+                ok( GetDeviceCaps( ref_dc, DESKTOPHORZRES ) == GetSystemMetrics( SM_CXSCREEN ),
+                    "Got DESKTOPHORZRES %d on %s, expected %d\n",
+                    GetDeviceCaps( ref_dc, DESKTOPHORZRES ), descr, GetSystemMetrics( SM_CXSCREEN ) );
+
+            if (GetSystemMetrics( SM_CYSCREEN ) != GetSystemMetrics( SM_CYVIRTUALSCREEN ))
+                todo_wine ok( GetDeviceCaps( ref_dc, DESKTOPVERTRES ) == GetSystemMetrics( SM_CYSCREEN ),
+                              "Got DESKTOPVERTRES %d on %s, expected %d\n",
+                              GetDeviceCaps( ref_dc, DESKTOPVERTRES ), descr, GetSystemMetrics( SM_CYSCREEN ) );
+            else
+                ok( GetDeviceCaps( ref_dc, DESKTOPVERTRES ) == GetSystemMetrics( SM_CYSCREEN ),
+                    "Got DESKTOPVERTRES %d on %s, expected %d\n",
+                    GetDeviceCaps( ref_dc, DESKTOPVERTRES ), descr, GetSystemMetrics( SM_CYSCREEN ) );
+
+            SetRect( &ref_rect, GetSystemMetrics( SM_XVIRTUALSCREEN ), GetSystemMetrics( SM_YVIRTUALSCREEN ),
+                     GetSystemMetrics( SM_XVIRTUALSCREEN ) + GetSystemMetrics( SM_CXVIRTUALSCREEN ),
+                     GetSystemMetrics( SM_YVIRTUALSCREEN ) + GetSystemMetrics( SM_CYVIRTUALSCREEN ) );
+        }
+        else
+        {
+            SetRect( &ref_rect, 0, 0, GetDeviceCaps( ref_dc, DESKTOPHORZRES ),
+                     GetDeviceCaps( ref_dc, DESKTOPVERTRES ) );
+        }
+
+        if (GetDeviceCaps( ref_dc, TECHNOLOGY ) == DT_RASDISPLAY && GetObjectType( hdc ) != OBJ_ENHMETADC &&
+            (GetSystemMetrics( SM_XVIRTUALSCREEN ) || GetSystemMetrics( SM_YVIRTUALSCREEN )))
+            todo_wine ok( EqualRect( &rect, &ref_rect ), "GetClipBox returned %d,%d,%d,%d on %s\n",
+                          rect.left, rect.top, rect.right, rect.bottom, descr );
+        else
+            ok( EqualRect( &rect, &ref_rect ), "GetClipBox returned %d,%d,%d,%d on %s\n",
+                rect.left, rect.top, rect.right, rect.bottom, descr );
+    }
+
+    SetBoundsRect( ref_dc, NULL, DCB_RESET | DCB_ACCUMULATE );
+    SetMapMode( ref_dc, MM_TEXT );
+    Rectangle( ref_dc, 3, 3, 5, 5 );
+    type = GetBoundsRect( ref_dc, &rect, DCB_RESET );
+    /* it may or may not work on non-memory DCs */
+    ok( (rect.left == 0 && rect.top == 0 && rect.right == 0 && rect.bottom == 0 && type == DCB_RESET) ||
+        (rect.left == 3 && rect.top == 3 && rect.right == 5 && rect.bottom == 5 && type == DCB_SET),
+        "GetBoundsRect returned %d,%d,%d,%d type %x on %s\n",
+        rect.left, rect.top, rect.right, rect.bottom, type, descr );
+
+    if (GetObjectType( hdc ) == OBJ_MEMDC)
+    {
+        char buffer[sizeof(BITMAPINFOHEADER) + 256 * sizeof(RGBQUAD)];
+        BITMAPINFO *info = (BITMAPINFO *)buffer;
+        HBITMAP dib, old;
+
+        memset( buffer, 0, sizeof(buffer) );
+        info->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        info->bmiHeader.biWidth = 16;
+        info->bmiHeader.biHeight = 16;
+        info->bmiHeader.biPlanes = 1;
+        info->bmiHeader.biBitCount = 8;
+        info->bmiHeader.biCompression = BI_RGB;
+        dib = CreateDIBSection( ref_dc, info, DIB_RGB_COLORS, NULL, NULL, 0 );
+        old = SelectObject( hdc, dib );
+
+        for (i = 0; i < sizeof(caps)/sizeof(caps[0]); i++)
+            ok( GetDeviceCaps( hdc, caps[i] ) == GetDeviceCaps( ref_dc, caps[i] ),
+                "mismatched caps on %s and DIB for %u: %u/%u\n", descr, caps[i],
+                GetDeviceCaps( hdc, caps[i] ), GetDeviceCaps( ref_dc, caps[i] ) );
+
+        SetLastError( 0xdeadbeef );
+        ret = GetDeviceGammaRamp( hdc, &ramp );
+        ok( !ret, "GetDeviceGammaRamp succeeded on %s\n", descr );
+        ok( GetLastError() == ERROR_INVALID_PARAMETER || broken(GetLastError() == 0xdeadbeef), /* nt4 */
+            "wrong error %u on %s\n", GetLastError(), descr );
+
+        type = GetClipBox( hdc, &rect );
+        ok( type == SIMPLEREGION, "GetClipBox returned %d on memdc for %s\n", type, descr );
+        ok( rect.left == 0 && rect.top == 0 && rect.right == 16 && rect.bottom == 16,
+            "GetClipBox returned %d,%d,%d,%d on memdc for %s\n",
+            rect.left, rect.top, rect.right, rect.bottom, descr );
+
+        SetBoundsRect( hdc, NULL, DCB_RESET | DCB_ENABLE );
+        SetMapMode( hdc, MM_TEXT );
+        Rectangle( hdc, 5, 5, 12, 14 );
+        type = GetBoundsRect( hdc, &rect, DCB_RESET );
+        ok( rect.left == 5 && rect.top == 5 && rect.right == 12 && rect.bottom == 14 && type == DCB_SET,
+            "GetBoundsRect returned %d,%d,%d,%d type %x on memdc for %s\n",
+            rect.left, rect.top, rect.right, rect.bottom, type, descr );
+
+        SelectObject( hdc, old );
+        DeleteObject( dib );
+    }
+
+    /* restore hdc state */
+    SetBoundsRect( hdc, NULL, DCB_RESET | DCB_DISABLE );
+    SetBoundsRect( ref_dc, NULL, DCB_RESET | DCB_DISABLE );
+}
+
 static void test_CreateCompatibleDC(void)
 {
     BOOL bRet;
-    HDC hdc, hNewDC, hdcMetafile;
+    HDC hdc, hNewDC, hdcMetafile, screen_dc;
     HBITMAP bitmap;
     INT caps;
+    DEVMODEA dm;
 
     bitmap = CreateBitmap( 10, 10, 1, 1, NULL );
+
+    bRet = EnumDisplaySettingsA(NULL, ENUM_CURRENT_SETTINGS, &dm);
+    ok(bRet, "EnumDisplaySettingsEx failed\n");
+    dm.u1.s1.dmScale = 200;
+    dm.dmFields |= DM_SCALE;
+    hdc = CreateDCA( "DISPLAY", NULL, NULL, &dm );
+
+    screen_dc = CreateDCA( "DISPLAY", NULL, NULL, NULL );
+    test_device_caps( hdc, screen_dc, "display dc", 1 );
+    ResetDCA( hdc, &dm );
+    test_device_caps( hdc, screen_dc, "display dc", 1 );
+    DeleteDC( hdc );
 
     /* Create a DC compatible with the screen */
     hdc = CreateCompatibleDC(NULL);
@@ -278,6 +587,8 @@ static void test_CreateCompatibleDC(void)
     ok( SelectObject( hdc, bitmap ) != 0, "SelectObject failed\n" );
     caps = GetDeviceCaps( hdc, TECHNOLOGY );
     ok( caps == DT_RASDISPLAY, "wrong caps %u\n", caps );
+
+    test_device_caps( hdc, screen_dc, "display dc", 1 );
 
     /* Delete this DC, this should succeed */
     bRet = DeleteDC(hdc);
@@ -295,8 +606,9 @@ static void test_CreateCompatibleDC(void)
     ok( SelectObject( hNewDC, bitmap ) != 0, "SelectObject failed\n" );
     caps = GetDeviceCaps( hdcMetafile, TECHNOLOGY );
     ok( caps == DT_RASDISPLAY, "wrong caps %u\n", caps );
-    caps = GetDeviceCaps( hNewDC, TECHNOLOGY );
-    ok( caps == DT_RASDISPLAY, "wrong caps %u\n", caps );
+    test_device_caps( hdcMetafile, hdc, "enhmetafile dc", 1 );
+    ResetDCA( hdcMetafile, &dm );
+    test_device_caps( hdcMetafile, hdc, "enhmetafile dc", 1 );
     DeleteDC( hNewDC );
     DeleteEnhMetaFile( CloseEnhMetaFile( hdcMetafile ));
     ReleaseDC( 0, hdc );
@@ -307,9 +619,13 @@ static void test_CreateCompatibleDC(void)
     ok(hNewDC == NULL, "CreateCompatibleDC succeeded\n");
     caps = GetDeviceCaps( hdcMetafile, TECHNOLOGY );
     ok( caps == DT_METAFILE, "wrong caps %u\n", caps );
+    test_device_caps( hdcMetafile, screen_dc, "metafile dc", 1 );
+    ResetDCA( hdcMetafile, &dm );
+    test_device_caps( hdcMetafile, screen_dc, "metafile dc", 1 );
     DeleteMetaFile( CloseMetaFile( hdcMetafile ));
 
     DeleteObject( bitmap );
+    DeleteDC( screen_dc );
 }
 
 static void test_DC_bitmap(void)
@@ -391,7 +707,7 @@ static void test_DeleteDC(void)
 {
     HWND hwnd;
     HDC hdc, hdc_test;
-    WNDCLASSEX cls;
+    WNDCLASSEXA cls;
     int ret;
 
     /* window DC */
@@ -445,7 +761,7 @@ static void test_DeleteDC(void)
     memset(&cls, 0, sizeof(cls));
     cls.cbSize = sizeof(cls);
     cls.style = CS_CLASSDC;
-    cls.hInstance = GetModuleHandle(0);
+    cls.hInstance = GetModuleHandleA(NULL);
     cls.lpszClassName = "Wine class DC";
     cls.lpfnWndProc = DefWindowProcA;
     ret = RegisterClassExA(&cls);
@@ -484,7 +800,7 @@ static void test_DeleteDC(void)
     ret = GetObjectType(hdc_test);
     ok(ret == OBJ_DC, "expected OBJ_DC, got %d\n", ret);
 
-    ret = UnregisterClassA("Wine class DC", GetModuleHandle(NULL));
+    ret = UnregisterClassA("Wine class DC", GetModuleHandleA(NULL));
     ok(ret, "UnregisterClassA failed\n");
 
     ret = GetObjectType(hdc_test);
@@ -495,7 +811,7 @@ todo_wine
     memset(&cls, 0, sizeof(cls));
     cls.cbSize = sizeof(cls);
     cls.style = CS_OWNDC;
-    cls.hInstance = GetModuleHandle(0);
+    cls.hInstance = GetModuleHandleA(NULL);
     cls.lpszClassName = "Wine own DC";
     cls.lpfnWndProc = DefWindowProcA;
     ret = RegisterClassExA(&cls);
@@ -529,21 +845,24 @@ todo_wine
 
     DestroyWindow(hwnd);
 
-    ret = UnregisterClassA("Wine own DC", GetModuleHandle(NULL));
+    ret = UnregisterClassA("Wine own DC", GetModuleHandleA(NULL));
     ok(ret, "UnregisterClassA failed\n");
 }
 
 static void test_boundsrect(void)
 {
+    char buffer[sizeof(BITMAPINFOHEADER) + 256 * sizeof(RGBQUAD)];
+    BITMAPINFO *info = (BITMAPINFO *)buffer;
     HDC hdc;
-    HBITMAP bitmap;
+    HBITMAP bitmap, dib, old;
     RECT rect, expect, set_rect;
     UINT ret;
+    int i, level;
 
     hdc = CreateCompatibleDC(0);
     ok(hdc != NULL, "CreateCompatibleDC failed\n");
     bitmap = CreateCompatibleBitmap( hdc, 200, 200 );
-    SelectObject( hdc, bitmap );
+    old = SelectObject( hdc, bitmap );
 
     ret = GetBoundsRect(hdc, NULL, 0);
     ok(ret == 0, "Expected GetBoundsRect to return 0, got %u\n", ret);
@@ -673,8 +992,147 @@ static void test_boundsrect(void)
            rect.left, rect.top, rect.right, rect.bottom);
     }
 
+    SetBoundsRect( hdc, NULL, DCB_RESET | DCB_ENABLE );
+    MoveToEx( hdc, 10, 10, NULL );
+    LineTo( hdc, 20, 20 );
+    ret = GetBoundsRect( hdc, &rect, 0 );
+    ok( ret == DCB_SET, "GetBoundsRect returned %x\n", ret );
+    SetRect( &expect, 10, 10, 21, 21 );
+    ok( EqualRect(&rect, &expect), "Got (%d,%d)-(%d,%d)\n", rect.left, rect.top, rect.right, rect.bottom );
+    SetRect( &rect, 8, 8, 23, 23 );
+    expect = rect;
+    SetBoundsRect( hdc, &rect, DCB_ACCUMULATE );
+    ret = GetBoundsRect( hdc, &rect, 0 );
+    ok( ret == DCB_SET, "GetBoundsRect returned %x\n", ret );
+    ok( EqualRect(&rect, &expect), "Got (%d,%d)-(%d,%d)\n", rect.left, rect.top, rect.right, rect.bottom );
+
+    level = SaveDC( hdc );
+    LineTo( hdc, 30, 25 );
+    ret = GetBoundsRect( hdc, &rect, 0 );
+    ok( ret == DCB_SET, "GetBoundsRect returned %x\n", ret );
+    SetRect( &expect, 8, 8, 31, 26 );
+    ok( EqualRect(&rect, &expect), "Got (%d,%d)-(%d,%d)\n", rect.left, rect.top, rect.right, rect.bottom );
+    SetBoundsRect( hdc, NULL, DCB_DISABLE );
+    LineTo( hdc, 40, 40 );
+    ret = GetBoundsRect( hdc, &rect, 0 );
+    ok( ret == DCB_SET, "GetBoundsRect returned %x\n", ret );
+    SetRect( &expect, 8, 8, 31, 26 );
+    ok( EqualRect(&rect, &expect), "Got (%d,%d)-(%d,%d)\n", rect.left, rect.top, rect.right, rect.bottom );
+    SetRect( &rect, 6, 6, 30, 30 );
+    SetBoundsRect( hdc, &rect, DCB_ACCUMULATE );
+    ret = GetBoundsRect( hdc, &rect, 0 );
+    ok( ret == DCB_SET, "GetBoundsRect returned %x\n", ret );
+    SetRect( &expect, 6, 6, 31, 30 );
+    ok( EqualRect(&rect, &expect), "Got (%d,%d)-(%d,%d)\n", rect.left, rect.top, rect.right, rect.bottom );
+
+    RestoreDC( hdc, level );
+    ret = GetBoundsRect( hdc, &rect, 0 );
+    ok( ret == DCB_SET, "GetBoundsRect returned %x\n", ret );
+    ok( EqualRect(&rect, &expect), "Got (%d,%d)-(%d,%d)\n", rect.left, rect.top, rect.right, rect.bottom );
+    LineTo( hdc, 40, 40 );
+    ret = GetBoundsRect( hdc, &rect, 0 );
+    ok( ret == DCB_SET, "GetBoundsRect returned %x\n", ret );
+    ok( EqualRect(&rect, &expect), "Got (%d,%d)-(%d,%d)\n", rect.left, rect.top, rect.right, rect.bottom );
+
+    SelectObject( hdc, old );
+    ret = GetBoundsRect( hdc, &rect, 0 );
+    ok( ret == DCB_SET, "GetBoundsRect returned %x\n", ret );
+    SetRect( &expect, 6, 6, 1, 1 );
+    ok( EqualRect(&rect, &expect), "Got (%d,%d)-(%d,%d)\n", rect.left, rect.top, rect.right, rect.bottom );
+    SetBoundsRect( hdc, NULL, DCB_ENABLE );
+    LineTo( hdc, 50, 40 );
+
+    SelectObject( hdc, bitmap );
+    ret = GetBoundsRect( hdc, &rect, 0 );
+    ok( ret == DCB_SET, "GetBoundsRect returned %x\n", ret );
+    SetRect( &expect, 6, 6, 51, 41 );
+    ok( EqualRect(&rect, &expect), "Got (%d,%d)-(%d,%d)\n", rect.left, rect.top, rect.right, rect.bottom );
+    SelectObject( hdc, GetStockObject( NULL_PEN ));
+    LineTo( hdc, 50, 50 );
+    ret = GetBoundsRect( hdc, &rect, 0 );
+    ok( ret == DCB_SET, "GetBoundsRect returned %x\n", ret );
+    SetRect( &expect, 6, 6, 51, 51 );
+    ok( EqualRect(&rect, &expect), "Got (%d,%d)-(%d,%d)\n", rect.left, rect.top, rect.right, rect.bottom );
+
+    memset( buffer, 0, sizeof(buffer) );
+    info->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info->bmiHeader.biWidth = 256;
+    info->bmiHeader.biHeight = 256;
+    info->bmiHeader.biPlanes = 1;
+    info->bmiHeader.biBitCount = 8;
+    info->bmiHeader.biCompression = BI_RGB;
+    dib = CreateDIBSection( 0, info, DIB_RGB_COLORS, NULL, NULL, 0 );
+    ok( dib != 0, "failed to create DIB\n" );
+    SelectObject( hdc, dib );
+    ret = GetBoundsRect( hdc, &rect, 0 );
+    ok( ret == DCB_SET, "GetBoundsRect returned %x\n", ret );
+    SetRect( &expect, 6, 6, 51, 51 );
+    ok( EqualRect(&rect, &expect), "Got (%d,%d)-(%d,%d)\n", rect.left, rect.top, rect.right, rect.bottom );
+    LineTo( hdc, 55, 30 );
+    ret = GetBoundsRect( hdc, &rect, 0 );
+    ok( ret == DCB_SET, "GetBoundsRect returned %x\n", ret );
+    SetRect( &expect, 6, 6, 56, 51 );
+    ok( EqualRect(&rect, &expect), "Got (%d,%d)-(%d,%d)\n", rect.left, rect.top, rect.right, rect.bottom );
+    LineTo( hdc, 300, 30 );
+    ret = GetBoundsRect( hdc, &rect, 0 );
+    ok( ret == DCB_SET, "GetBoundsRect returned %x\n", ret );
+    SetRect( &expect, 6, 6, 256, 51 );
+    ok( EqualRect(&rect, &expect), "Got (%d,%d)-(%d,%d)\n", rect.left, rect.top, rect.right, rect.bottom );
+    LineTo( hdc, -300, -300 );
+    ret = GetBoundsRect( hdc, &rect, 0 );
+    ok( ret == DCB_SET, "GetBoundsRect returned %x\n", ret );
+    SetRect( &expect, 0, 0, 256, 51 );
+    ok( EqualRect(&rect, &expect), "Got (%d,%d)-(%d,%d)\n", rect.left, rect.top, rect.right, rect.bottom );
+
+    /* test the wide pen heuristics */
+    SetBoundsRect( hdc, NULL, DCB_ENABLE | DCB_RESET );
+    for (i = 0; i < 1000; i++)
+    {
+        static const UINT endcaps[3] = { PS_ENDCAP_ROUND, PS_ENDCAP_SQUARE, PS_ENDCAP_FLAT };
+        static const UINT joins[3] = { PS_JOIN_ROUND, PS_JOIN_BEVEL, PS_JOIN_MITER };
+        LOGBRUSH brush = { BS_SOLID, RGB(0,0,0), 0 };
+        UINT join = joins[i % 3];
+        UINT endcap = endcaps[(i / 3) % 3];
+        INT inflate, width = 1 + i / 9;
+        HPEN pen = ExtCreatePen( PS_GEOMETRIC | join | endcap | PS_SOLID, width, &brush, 0, NULL );
+        HPEN old = SelectObject( hdc, pen );
+        MoveToEx( hdc, 100, 100, NULL );
+        LineTo( hdc, 160, 100 );
+        LineTo( hdc, 100, 160 );
+        LineTo( hdc, 160, 160 );
+        GetBoundsRect( hdc, &rect, DCB_RESET );
+        SetRect( &expect, 100, 100, 161, 161 );
+
+        inflate = width + 2;
+        if (join == PS_JOIN_MITER)
+        {
+            inflate *= 5;
+            if (endcap == PS_ENDCAP_SQUARE)
+                InflateRect( &expect, (inflate * 3 + 1) / 2, (inflate * 3 + 1) / 2 );
+            else
+                InflateRect( &expect, inflate, inflate );
+        }
+        else
+        {
+            if (endcap == PS_ENDCAP_SQUARE)
+                InflateRect( &expect, inflate - inflate / 4, inflate - inflate / 4 );
+            else
+                InflateRect( &expect, (inflate + 1) / 2, (inflate + 1) / 2 );
+        }
+        expect.left   = max( expect.left, 0 );
+        expect.top    = max( expect.top, 0 );
+        expect.right  = min( expect.right, 256 );
+        expect.bottom = min( expect.bottom, 256 );
+        ok( EqualRect(&rect, &expect),
+            "Got %d,%d,%d,%d expected %d,%d,%d,%d %u/%x/%x\n",
+            rect.left, rect.top, rect.right, rect.bottom,
+            expect.left, expect.top, expect.right, expect.bottom, width, endcap, join );
+        DeleteObject( SelectObject( hdc, old ));
+    }
+
     DeleteDC( hdc );
     DeleteObject( bitmap );
+    DeleteObject( dib );
 }
 
 static void test_desktop_colorres(void)
@@ -784,7 +1242,17 @@ done:
     ReleaseDC(NULL, hdc);
 }
 
-static HDC create_printer_dc(void)
+static BOOL is_postscript_printer(HDC hdc)
+{
+    char tech[256];
+
+    if (ExtEscape(hdc, GETTECHNOLOGY, 0, NULL, sizeof(tech), tech) > 0)
+        return strcmp(tech, "PostScript") == 0;
+
+    return FALSE;
+}
+
+static HDC create_printer_dc(int scale, BOOL reset)
 {
     char buffer[260];
     DWORD len;
@@ -820,9 +1288,15 @@ static HDC create_printer_dc(void)
     dbuf = HeapAlloc( GetProcessHeap(), 0, len );
     if (!pGetPrinterDriverA( hprn, NULL, 3, (LPBYTE)dbuf, len, &len )) goto done;
 
+    pbuf->pDevMode->u1.s1.dmScale = scale;
+    pbuf->pDevMode->dmFields |= DM_SCALE;
+
     hdc = CreateDCA( dbuf->pDriverPath, pbuf->pPrinterName, pbuf->pPortName, pbuf->pDevMode );
-    trace( "hdc %p for driver '%s' printer '%s' port '%s'\n", hdc,
-           dbuf->pDriverPath, pbuf->pPrinterName, pbuf->pPortName );
+    trace( "hdc %p for driver '%s' printer '%s' port '%s' is %sPostScript\n", hdc,
+           dbuf->pDriverPath, pbuf->pPrinterName, pbuf->pPortName,
+           is_postscript_printer(hdc) ? "" : "NOT " );
+
+    if (reset) ResetDCA( hdc, pbuf->pDevMode );
 done:
     HeapFree( GetProcessHeap(), 0, dbuf );
     HeapFree( GetProcessHeap(), 0, pbuf );
@@ -834,12 +1308,22 @@ done:
 
 static void test_printer_dc(void)
 {
-    HDC memdc, display_memdc;
+    HDC memdc, display_memdc, enhmf_dc;
     HBITMAP orig, bmp;
     DWORD ret;
-    HDC hdc = create_printer_dc();
+    HDC hdc, hdc_200;
 
-    if (!hdc) return;
+    hdc = create_printer_dc(100, FALSE);
+    hdc_200 = create_printer_dc(200, FALSE);
+
+    if (!hdc || !hdc_200) return;
+
+    test_device_caps( hdc, hdc_200, "printer dc", is_postscript_printer(hdc) ? 2 : 1 );
+    DeleteDC( hdc_200 );
+
+    hdc_200 = create_printer_dc(200, TRUE);
+    test_device_caps( hdc, hdc_200, "printer dc", is_postscript_printer(hdc) ? 2 : 1 );
+    DeleteDC( hdc_200 );
 
     memdc = CreateCompatibleDC( hdc );
     display_memdc = CreateCompatibleDC( 0 );
@@ -861,6 +1345,8 @@ static void test_printer_dc(void)
     ok( orig != NULL, "SelectObject failed\n" );
     ok( BitBlt( hdc, 10, 10, 20, 20, memdc, 0, 0, SRCCOPY ), "BitBlt failed\n" );
 
+    test_device_caps( memdc, hdc, "printer dc", 1 );
+
     ok( !SelectObject( display_memdc, bmp ), "SelectObject succeeded\n" );
     SelectObject( memdc, orig );
     DeleteObject( bmp );
@@ -876,6 +1362,16 @@ static void test_printer_dc(void)
     ret = GetPixel( hdc, 0, 0 );
     ok( ret == CLR_INVALID, "wrong pixel value %x\n", ret );
 
+    enhmf_dc = CreateEnhMetaFileA( hdc, NULL, NULL, NULL );
+    ok(enhmf_dc != 0, "CreateEnhMetaFileA failed\n");
+    test_device_caps( enhmf_dc, hdc, "enhmetafile printer dc", 1 );
+    DeleteEnhMetaFile( CloseEnhMetaFile( enhmf_dc ));
+
+    enhmf_dc = CreateEnhMetaFileA( hdc, NULL, NULL, NULL );
+    ok(enhmf_dc != 0, "CreateEnhMetaFileA failed\n");
+    test_device_caps( enhmf_dc, hdc, "enhmetafile printer dc", 1 );
+    DeleteEnhMetaFile( CloseEnhMetaFile( enhmf_dc ));
+
     DeleteDC( memdc );
     DeleteDC( display_memdc );
     DeleteDC( hdc );
@@ -884,7 +1380,8 @@ static void test_printer_dc(void)
 
 START_TEST(dc)
 {
-    pSetLayout = (void *)GetProcAddress( GetModuleHandle("gdi32.dll"), "SetLayout");
+    pSetLayout = (void *)GetProcAddress( GetModuleHandleA("gdi32.dll"), "SetLayout");
+    test_dc_values();
     test_savedc();
     test_savedc_2();
     test_GdiConvertToDevmodeW();

@@ -20,12 +20,12 @@
 #include <winuser.h>
 #include <commctrl.h>
 
-#define IDS_HTMLDISABLED    7500
 #define IDS_HTMLDOCUMENT    7501
 
-#define NUM_STATUS_STRINGS         2
-#define IDS_STATUS_DOWNLOADINGFROM 7550
-#define IDS_STATUS_DONE            7551
+#define IDS_STATUS_FIRST            7550
+#define IDS_STATUS_DOWNLOADINGFROM  IDS_STATUS_FIRST
+#define IDS_STATUS_DONE             (IDS_STATUS_FIRST+1)
+#define IDS_STATUS_LAST             IDS_STATUS_DONE
 
 #define ID_PROMPT_DIALOG    7700
 #define ID_PROMPT_PROMPT    7701
@@ -37,23 +37,6 @@
 #define IDS_PRINT_FOOTER_TEMPLATE  8404
 
 #define IDR_BROWSE_CONTEXT_MENU  24641
-
-#define IDM_TRACETAGS           6004
-#define IDM_RESOURCEFAILURES    6005
-#define IDM_DUMPTRACKINGINFO    6006
-#define IDM_DEBUGBREAK          6007
-#define IDM_DEBUGVIEW           6008
-#define IDM_DUMPTREE            6009
-#define IDM_DUMPLINES           6010
-
-#define IDM_SAVEHTML            6012
-#define IDM_MEMORYMONITOR       6013
-#define IDM_PERFORMANCEMETERS   6014
-#define IDM_DUMPDISPLAYTREE     6015
-#define IDM_DUMPFORMATCACHES    6016
-#define IDM_DUMPLAYOUTRECTS     6017
-
-#define _IDM_REFRESH            6042
 
 #define IDD_HYPERLINK           8000
 

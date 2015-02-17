@@ -182,55 +182,46 @@ static void NC_DrawCaptionBar (HDC hdc, const RECT *rect, DWORD dwStyle,
 {
     if (gradient)
     {
-        TRIVERTEX vertices[6];
+        TRIVERTEX vertices[4];
         DWORD colLeft = 
             GetSysColor (active ? COLOR_ACTIVECAPTION : COLOR_INACTIVECAPTION);
         DWORD colRight = 
             GetSysColor (active ? COLOR_GRADIENTACTIVECAPTION 
                                 : COLOR_GRADIENTINACTIVECAPTION);
-        int v;
         int buttonsAreaSize = GetSystemMetrics(SM_CYCAPTION) - 1;
-        static GRADIENT_RECT mesh[] = {{0, 1}, {2, 3}, {4, 5}};
-    
-        for (v = 0; v < 3; v++)
-        {
-            vertices[v].Red = GetRValue (colLeft) << 8;
-            vertices[v].Green = GetGValue (colLeft) << 8;
-            vertices[v].Blue = GetBValue (colLeft) << 8;
-            vertices[v].Alpha = 0x8000;
-            vertices[v+3].Red = GetRValue (colRight) << 8;
-            vertices[v+3].Green = GetGValue (colRight) << 8;
-            vertices[v+3].Blue = GetBValue (colRight) << 8;
-            vertices[v+3].Alpha = 0x8000;
-        }
-    
-        if ((dwStyle & WS_SYSMENU) 
+        static GRADIENT_RECT mesh[] = {{0, 1}, {1, 2}, {2, 3}};
+
+        vertices[0].Red   = vertices[1].Red   = GetRValue (colLeft) << 8;
+        vertices[0].Green = vertices[1].Green = GetGValue (colLeft) << 8;
+        vertices[0].Blue  = vertices[1].Blue  = GetBValue (colLeft) << 8;
+        vertices[0].Alpha = vertices[1].Alpha = 0xff00;
+        vertices[2].Red   = vertices[3].Red   = GetRValue (colRight) << 8;
+        vertices[2].Green = vertices[3].Green = GetGValue (colRight) << 8;
+        vertices[2].Blue  = vertices[3].Blue  = GetBValue (colRight) << 8;
+        vertices[2].Alpha = vertices[3].Alpha = 0xff00;
+
+        if ((dwStyle & WS_SYSMENU)
             && ((dwStyle & WS_MAXIMIZEBOX) || (dwStyle & WS_MINIMIZEBOX)))
             buttonsAreaSize += 2 * (GetSystemMetrics(SM_CXSIZE) + 1);
-        
+
         /* area behind icon; solid filled with left color */
         vertices[0].x = rect->left;
         vertices[0].y = rect->top;
-        if (dwStyle & WS_SYSMENU) 
-            vertices[1].x = 
-                min (rect->left + GetSystemMetrics(SM_CXSMICON), rect->right);
+        if (dwStyle & WS_SYSMENU)
+            vertices[1].x = min (rect->left + GetSystemMetrics(SM_CXSMICON), rect->right);
         else
             vertices[1].x = vertices[0].x;
         vertices[1].y = rect->bottom;
-        
+
         /* area behind text; gradient */
-        vertices[2].x = vertices[1].x;
+        vertices[2].x = max (vertices[1].x, rect->right - buttonsAreaSize);
         vertices[2].y = rect->top;
-        vertices[3].x = max (vertices[2].x, rect->right - buttonsAreaSize);
-        vertices[3].y = rect->bottom;
-        
+
         /* area behind buttons; solid filled with right color */
-        vertices[4].x = vertices[3].x;
-        vertices[4].y = rect->top;
-        vertices[5].x = rect->right;
-        vertices[5].y = rect->bottom;
-        
-        GdiGradientFill (hdc, vertices, 6, mesh, 3, GRADIENT_FILL_RECT_H);
+        vertices[3].x = rect->right;
+        vertices[3].y = rect->bottom;
+
+        GdiGradientFill (hdc, vertices, 4, mesh, 3, GRADIENT_FILL_RECT_H);
     }
     else
         FillRect (hdc, rect, GetSysColorBrush (active ?
@@ -298,7 +289,7 @@ BOOL WINAPI DrawCaptionTempW (HWND hwnd, HDC hdc, const RECT *rect, HFONT hFont,
         FillRect (hdc, &rc, GetSysColorBrush (COLOR_3DFACE));
 
         if (uFlags & DC_ACTIVE) {
-            HBRUSH hbr = SelectObject (hdc, SYSCOLOR_55AABrush);
+            HBRUSH hbr = SelectObject (hdc, SYSCOLOR_Get55AABrush());
             PatBlt (hdc, rc.left, rc.top,
                       rc.right-rc.left, rc.bottom-rc.top, 0xFA0089);
             SelectObject (hdc, hbr);
@@ -369,14 +360,14 @@ BOOL WINAPI DrawCaptionTempW (HWND hwnd, HDC hdc, const RECT *rect, HFONT hFont,
     if (uFlags & 0x2000)
         FIXME("undocumented flag (0x2000)!\n");
 
-    return 0;
+    return FALSE;
 }
 
 
 /***********************************************************************
  *		AdjustWindowRect (USER32.@)
  */
-BOOL WINAPI AdjustWindowRect( LPRECT rect, DWORD style, BOOL menu )
+BOOL WINAPI DECLSPEC_HOTPATCH AdjustWindowRect( LPRECT rect, DWORD style, BOOL menu )
 {
     return AdjustWindowRectEx( rect, style, menu, 0 );
 }
@@ -385,7 +376,7 @@ BOOL WINAPI AdjustWindowRect( LPRECT rect, DWORD style, BOOL menu )
 /***********************************************************************
  *		AdjustWindowRectEx (USER32.@)
  */
-BOOL WINAPI AdjustWindowRectEx( LPRECT rect, DWORD style, BOOL menu, DWORD exStyle )
+BOOL WINAPI DECLSPEC_HOTPATCH AdjustWindowRectEx( LPRECT rect, DWORD style, BOOL menu, DWORD exStyle )
 {
     if (style & WS_ICONIC) return TRUE;
     style &= ~(WS_HSCROLL | WS_VSCROLL);
@@ -585,8 +576,7 @@ LRESULT NC_HandleNCHitTest( HWND hwnd, POINT pt )
             rect.top += GetSystemMetrics(SM_CYCAPTION) - 1;
         if (!PtInRect( &rect, pt ))
         {
-            BOOL min_or_max_box = (style & WS_MAXIMIZEBOX) ||
-                                  (style & WS_MINIMIZEBOX);
+            BOOL min_or_max_box = (style & WS_SYSMENU) && (style & (WS_MINIMIZEBOX|WS_MAXIMIZEBOX));
             if (ex_style & WS_EX_LAYOUTRTL)
             {
                 /* Check system menu */
@@ -707,11 +697,14 @@ BOOL NC_DrawSysButton (HWND hwnd, HDC hdc, BOOL down)
     if (hIcon)
     {
         RECT rect;
+        POINT pt;
         DWORD style = GetWindowLongW( hwnd, GWL_STYLE );
         DWORD ex_style = GetWindowLongW( hwnd, GWL_EXSTYLE );
 
         NC_GetInsideRect( hwnd, COORDS_WINDOW, &rect, style, ex_style );
-        DrawIconEx (hdc, rect.left + 2, rect.top + 1, hIcon,
+        pt.x = rect.left + 2;
+        pt.y = (rect.top + GetSystemMetrics(SM_CYCAPTION) - GetSystemMetrics(SM_CYSMICON)) / 2;
+        DrawIconEx (hdc, pt.x, pt.y, hIcon,
                     GetSystemMetrics(SM_CXSMICON),
                     GetSystemMetrics(SM_CYSMICON), 0, 0, DI_NORMAL);
     }
@@ -987,7 +980,7 @@ static void  NC_DrawCaption( HDC  hdc, RECT *rect, HWND hwnd, DWORD  style,
  *
  *   Paint the non-client area for windows.
  */
-static void  NC_DoNCPaint( HWND  hwnd, HRGN  clip, BOOL  suppress_menupaint )
+static void  NC_DoNCPaint( HWND  hwnd, HRGN  clip )
 {
     HDC hdc;
     RECT rfuzz, rect, rectClip;
@@ -1069,7 +1062,7 @@ static void  NC_DoNCPaint( HWND  hwnd, HRGN  clip, BOOL  suppress_menupaint )
 
 	TRACE("Calling DrawMenuBar with rect (%s)\n", wine_dbgstr_rect(&r));
 
-	rect.top += MENU_DrawMenuBar( hdc, &r, hwnd, suppress_menupaint ) + 1;
+	rect.top += MENU_DrawMenuBar( hdc, &r, hwnd ) + 1;
     }
 
     TRACE("After MenuBar, rect is (%s).\n", wine_dbgstr_rect(&rect));
@@ -1116,7 +1109,7 @@ LRESULT NC_HandleNCPaint( HWND hwnd , HRGN clip)
 	if( dwStyle & WS_MINIMIZE )
 	    WINPOS_RedrawIconTitle( hwnd );
 	else
-	    NC_DoNCPaint( hwnd, clip, FALSE );
+	    NC_DoNCPaint( hwnd, clip );
     }
     return 0;
 }
@@ -1150,7 +1143,7 @@ LRESULT NC_HandleNCActivate( HWND hwnd, WPARAM wParam, LPARAM lParam )
         if (IsIconic(hwnd))
             WINPOS_RedrawIconTitle( hwnd );
         else
-            NC_DoNCPaint( hwnd, (HRGN)1, FALSE );
+            NC_DoNCPaint( hwnd, (HRGN)1 );
     }
 
     return TRUE;
@@ -1298,7 +1291,7 @@ static void NC_TrackMinMaxBox( HWND hwnd, WORD wParam )
     ReleaseCapture();
     ReleaseDC( hwnd, hdc );
 
-    /* If the item minimize or maximize of the sysmenu are not there */
+    /* If the minimize or maximize items of the sysmenu are not there */
     /* or if the style is not present, do nothing */
     if ((!pressed) || (state == 0xFFFFFFFF))
         return;
@@ -1328,7 +1321,7 @@ static void NC_TrackCloseButton (HWND hwnd, WPARAM wParam, LPARAM lParam)
 
     state = GetMenuState(hSysMenu, SC_CLOSE, MF_BYCOMMAND);
 
-    /* If the item close of the sysmenu is disabled or not there do nothing */
+    /* If the close item of the sysmenu is disabled or not present do nothing */
     if((state & MF_DISABLED) || (state & MF_GRAYED) || (state == 0xFFFFFFFF))
         return;
 
@@ -1403,7 +1396,15 @@ LRESULT NC_HandleNCLButtonDown( HWND hwnd, WPARAM wParam, LPARAM lParam )
     {
     case HTCAPTION:
         {
-            HWND top = GetAncestor( hwnd, GA_ROOT );
+            HWND top = hwnd, parent;
+            while(1)
+            {
+                if ((GetWindowLongW( top, GWL_STYLE ) & (WS_POPUP|WS_CHILD)) != WS_CHILD)
+                    break;
+                parent = GetAncestor( top, GA_PARENT );
+                if (!parent || parent == GetDesktopWindow()) break;
+                top = parent;
+            }
 
             if (FOCUS_MouseActivate( top ) || (GetActiveWindow() == top))
                 SendMessageW( hwnd, WM_SYSCOMMAND, SC_MOVE + HTCAPTION, lParam );
@@ -1471,6 +1472,42 @@ LRESULT NC_HandleNCLButtonDown( HWND hwnd, WPARAM wParam, LPARAM lParam )
 
 
 /***********************************************************************
+ *           NC_HandleNCRButtonDown
+ *
+ * Handle a WM_NCRBUTTONDOWN message. Called from DefWindowProc().
+ */
+LRESULT NC_HandleNCRButtonDown( HWND hwnd, WPARAM wParam, LPARAM lParam )
+{
+    MSG msg;
+    INT hittest = wParam;
+
+    switch (hittest)
+    {
+    case HTCAPTION:
+    case HTSYSMENU:
+        if (!GetSystemMenu( hwnd, FALSE )) break;
+
+        SetCapture( hwnd );
+        for (;;)
+        {
+            if (!GetMessageW( &msg, 0, WM_MOUSEFIRST, WM_MOUSELAST )) break;
+            if (CallMsgFilterW( &msg, MSGF_MAX )) continue;
+            if (msg.message == WM_RBUTTONUP)
+            {
+                hittest = NC_HandleNCHitTest( hwnd, msg.pt );
+                break;
+            }
+        }
+        ReleaseCapture();
+        if (hittest == HTCAPTION || hittest == HTSYSMENU)
+            SendMessageW( hwnd, WM_SYSCOMMAND, SC_MOUSEMENU + HTSYSMENU, msg.lParam );
+        break;
+    }
+    return 0;
+}
+
+
+/***********************************************************************
  *           NC_HandleNCLButtonDblClk
  *
  * Handle a WM_NCLBUTTONDBLCLK message. Called from DefWindowProc().
@@ -1501,7 +1538,7 @@ LRESULT NC_HandleNCLButtonDblClk( HWND hwnd, WPARAM wParam, LPARAM lParam )
             HMENU hSysMenu = GetSystemMenu(hwnd, FALSE);
             UINT state = GetMenuState(hSysMenu, SC_CLOSE, MF_BYCOMMAND);
 
-            /* If the item close of the sysmenu is disabled or not there do nothing */
+            /* If the close item of the sysmenu is disabled or not present do nothing */
             if ((state & (MF_DISABLED | MF_GRAYED)) || (state == 0xFFFFFFFF))
                 break;
 

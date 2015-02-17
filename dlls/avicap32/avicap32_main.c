@@ -29,9 +29,7 @@
 #ifdef HAVE_SYS_STAT_H
 # include <sys/stat.h>
 #endif
-#ifdef HAVE_SYS_ERRNO_H
-# include <sys/errno.h>
-#endif
+#include <errno.h>
 #ifdef HAVE_SYS_TIME_H
 # include <sys/time.h>
 #endif
@@ -66,9 +64,8 @@ HWND VFWAPI capCreateCaptureWindowW(LPCWSTR lpszWindowName, DWORD dwStyle, INT x
                                     INT y, INT nWidth, INT nHeight, HWND hWnd,
                                     INT nID)
 {
-    FIXME("%s, %08x, %08x, %08x, %08x, %08x, %p, %08x\n",
-           debugstr_w(lpszWindowName), dwStyle,
-           x, y, nWidth, nHeight, hWnd, nID);
+    FIXME("(%s, %08x, %08x, %08x, %08x, %08x, %p, %08x): stub\n",
+           debugstr_w(lpszWindowName), dwStyle, x, y, nWidth, nHeight, hWnd, nID);
     return 0;
 }
 

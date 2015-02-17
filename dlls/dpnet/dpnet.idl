@@ -18,6 +18,8 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#pragma makedep register
+
 [
     helpstring("DirectPlay8Client Object"),
     threading(both),
@@ -52,6 +54,15 @@ coclass DirectPlay8Address { interface IDirectPlay8Address; }
     uuid(667955ad-6b3b-43ca-b949-bc69b5baff7f)
 ]
 coclass DirectPlay8LobbiedApplication { interface IDirectPlay8LobbiedApplication; }
+
+[
+    helpstring("DirectPlay8LobbyClient Object"),
+    threading(both),
+    progid("DirectPlay8Lobby.LobbyClient.1"),
+    vi_progid("DirectPlay8Lobby.LobbyClient"),
+    uuid(3b2b6775-70b6-45af-8dea-a209c69559f3)
+]
+coclass DirectPlay8LobbyClient { interface IDirectPlay8LobbyClient; }
 
 [
     helpstring("DirectPlay8 Thread Pool Object"),

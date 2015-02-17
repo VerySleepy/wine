@@ -20,6 +20,7 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <windows.h>
 #include "regproc.h"
 
@@ -159,7 +160,7 @@ static BOOL PerformRegAction(REGEDIT_ACTION action, LPSTR s)
                                 getAppName(), filename, GetLastError());
                         exit(1);
                     }
-                    reg_file = fopen(realname, "r");
+                    reg_file = fopen(realname, "rb");
                     if (reg_file == NULL)
                     {
                         perror("");

@@ -526,6 +526,7 @@ typedef LOGBRUSH PATTERN, *PPATTERN, *LPPATTERN;
 #define HS_BDIAGONAL        3
 #define HS_CROSS            4
 #define HS_DIAGCROSS        5
+#define HS_API_MAX          12
 
   /* Fonts */
 
@@ -775,31 +776,34 @@ typedef struct tagXFORM
 #define FS_SYMBOL              __MSABI_LONG(0x80000000)
 
   /* lfOutPrecision values */
-#define OUT_DEFAULT_PRECIS	0
-#define OUT_STRING_PRECIS	1
-#define OUT_CHARACTER_PRECIS	2
-#define OUT_STROKE_PRECIS	3
-#define OUT_TT_PRECIS		4
-#define OUT_DEVICE_PRECIS	5
-#define OUT_RASTER_PRECIS	6
-#define OUT_TT_ONLY_PRECIS	7
-#define OUT_OUTLINE_PRECIS      8
+#define OUT_DEFAULT_PRECIS           0
+#define OUT_STRING_PRECIS            1
+#define OUT_CHARACTER_PRECIS         2
+#define OUT_STROKE_PRECIS            3
+#define OUT_TT_PRECIS                4
+#define OUT_DEVICE_PRECIS            5
+#define OUT_RASTER_PRECIS            6
+#define OUT_TT_ONLY_PRECIS           7
+#define OUT_OUTLINE_PRECIS           8
+#define OUT_SCREEN_OUTLINE_PRECIS    9
+#define OUT_PS_ONLY_PRECIS           10
 
   /* lfClipPrecision values */
 #define CLIP_DEFAULT_PRECIS     0x00
 #define CLIP_CHARACTER_PRECIS   0x01
 #define CLIP_STROKE_PRECIS      0x02
-#define CLIP_MASK		0x0F
-#define CLIP_LH_ANGLES		0x10
-#define CLIP_TT_ALWAYS		0x20
-#define CLIP_EMBEDDED		0x80
+#define CLIP_MASK               0x0F
+#define CLIP_LH_ANGLES          0x10
+#define CLIP_TT_ALWAYS          0x20
+#define CLIP_DFA_DISABLE        0x40
+#define CLIP_EMBEDDED           0x80
 
   /* lfQuality values */
-#define DEFAULT_QUALITY        0
-#define DRAFT_QUALITY          1
-#define PROOF_QUALITY          2
-#define NONANTIALIASED_QUALITY 3
-#define ANTIALIASED_QUALITY    4
+#define DEFAULT_QUALITY            0
+#define DRAFT_QUALITY              1
+#define PROOF_QUALITY              2
+#define NONANTIALIASED_QUALITY     3
+#define ANTIALIASED_QUALITY        4
 #define CLEARTYPE_QUALITY          5
 #define CLEARTYPE_NATURAL_QUALITY  6
 
@@ -1457,11 +1461,6 @@ typedef struct
 
 #define TT_AVAILABLE        0x0001
 #define TT_ENABLED          0x0002
-
-#ifdef __WINESRC__
-#define WINE_TT_SUBPIXEL_RENDERING_ENABLED 0x4000
-#define WINE_TT_HINTER_ENABLED 0x8000
-#endif
 
 #define TT_PRIM_LINE    1
 #define TT_PRIM_QSPLINE 2
@@ -3031,6 +3030,11 @@ DECL_WINELIB_TYPE_AW(LPDEVMODE)
 #define DM_DITHERTYPE           __MSABI_LONG(0x04000000)
 #define DM_PANNINGWIDTH         __MSABI_LONG(0x08000000)
 #define DM_PANNINGHEIGHT        __MSABI_LONG(0x10000000)
+#define DM_DISPLAYFIXEDOUTPUT   __MSABI_LONG(0x20000000)
+
+#define DM_GRAYSCALE            1
+#define DM_INTERLACED           2
+#define DMDISPLAYFLAGS_TEXTMODE 4
 
 #define DMORIENT_PORTRAIT	1
 #define DMORIENT_LANDSCAPE	2
@@ -3224,6 +3228,10 @@ DECL_WINELIB_TYPE_AW(LPDEVMODE)
 #define DMDO_180                2
 #define DMDO_270                3
 
+#define DMDFO_DEFAULT           0
+#define DMDFO_STRETCH           1
+#define DMDFO_CENTER            2
+
 typedef struct
 {
     INT    cbSize;
@@ -3378,7 +3386,7 @@ WINGDIAPI HDC         WINAPI CreateDCW(LPCWSTR,LPCWSTR,LPCWSTR,const DEVMODEW*);
 WINGDIAPI HBITMAP     WINAPI CreateDIBitmap(HDC,const BITMAPINFOHEADER*,DWORD,LPCVOID,const BITMAPINFO*,UINT);
 WINGDIAPI HBRUSH      WINAPI CreateDIBPatternBrush(HGLOBAL,UINT);
 WINGDIAPI HBRUSH      WINAPI CreateDIBPatternBrushPt(const void*,UINT);
-WINGDIAPI HBITMAP     WINAPI CreateDIBSection(HDC, CONST BITMAPINFO *, UINT, VOID **, HANDLE, DWORD offset);
+WINGDIAPI HBITMAP     WINAPI CreateDIBSection(HDC, const BITMAPINFO *, UINT, void **, HANDLE, DWORD offset);
 WINGDIAPI HBITMAP     WINAPI CreateDiscardableBitmap(HDC,INT,INT);
 WINGDIAPI HRGN        WINAPI CreateEllipticRgn(INT,INT,INT,INT);
 WINGDIAPI HRGN        WINAPI CreateEllipticRgnIndirect(const RECT *);
@@ -3669,7 +3677,7 @@ WINGDIAPI HCOLORSPACE WINAPI SetColorSpace(HDC,HCOLORSPACE);
 WINGDIAPI BOOL        WINAPI SetDeviceGammaRamp(HDC,LPVOID);
 WINGDIAPI COLORREF    WINAPI SetDCBrushColor(HDC,COLORREF);
 WINGDIAPI COLORREF    WINAPI SetDCPenColor(HDC, COLORREF);
-WINGDIAPI UINT        WINAPI SetDIBColorTable(HDC,UINT,UINT,CONST RGBQUAD*);
+WINGDIAPI UINT        WINAPI SetDIBColorTable(HDC,UINT,UINT,const RGBQUAD*);
 WINGDIAPI INT         WINAPI SetDIBits(HDC,HBITMAP,UINT,UINT,LPCVOID,const BITMAPINFO*,UINT);
 WINGDIAPI INT         WINAPI SetDIBitsToDevice(HDC,INT,INT,DWORD,DWORD,INT,INT,UINT,UINT,LPCVOID,const BITMAPINFO*,UINT);
 WINGDIAPI HENHMETAFILE WINAPI SetEnhMetaFileBits(UINT,const BYTE *);
@@ -3702,7 +3710,7 @@ WINGDIAPI BOOL        WINAPI SetViewportExtEx(HDC,INT,INT,LPSIZE);
 WINGDIAPI BOOL        WINAPI SetViewportOrgEx(HDC,INT,INT,LPPOINT);
 WINGDIAPI BOOL        WINAPI SetWindowExtEx(HDC,INT,INT,LPSIZE);
 WINGDIAPI BOOL        WINAPI SetWindowOrgEx(HDC,INT,INT,LPPOINT);
-WINGDIAPI HENHMETAFILE WINAPI SetWinMetaFileBits(UINT,CONST BYTE*,HDC,CONST METAFILEPICT *);
+WINGDIAPI HENHMETAFILE WINAPI SetWinMetaFileBits(UINT,const BYTE*,HDC,const METAFILEPICT *);
 WINGDIAPI BOOL        WINAPI SetWorldTransform(HDC,const XFORM*);
 WINGDIAPI INT         WINAPI StartDocA(HDC,const DOCINFOA*);
 WINGDIAPI INT         WINAPI StartDocW(HDC,const DOCINFOW*);
@@ -3762,6 +3770,9 @@ WINGDIAPI BOOL        WINAPI PolyTextOutW(HDC,const POLYTEXTW*,INT);
 #define WGL_SWAP_UNDERLAY14 (1 << 29)
 #define WGL_SWAP_UNDERLAY15 (1 << 30)
 
+#define WGL_FONT_LINES      0
+#define WGL_FONT_POLYGONS   1
+
 /* WGL prototypes */
 WINGDIAPI HGLRC   WINAPI wglCreateContext(HDC);
 WINGDIAPI HGLRC   WINAPI wglCreateLayerContext(HDC,INT);
@@ -3783,25 +3794,6 @@ WINGDIAPI BOOL    WINAPI wglUseFontBitmapsW(HDC,DWORD,DWORD,DWORD);
 WINGDIAPI BOOL    WINAPI wglUseFontOutlinesA(HDC,DWORD,DWORD,DWORD,FLOAT,FLOAT,INT,LPGLYPHMETRICSFLOAT);
 WINGDIAPI BOOL    WINAPI wglUseFontOutlinesW(HDC,DWORD,DWORD,DWORD,FLOAT,FLOAT,INT,LPGLYPHMETRICSFLOAT);
 #define                  wglUseFontOutlines WINELIB_NAME_AW(wglUseFontOutlines)
-
-#ifdef __WINESRC__
-/* the DC hook support is only exported on Win16, the 32-bit version is a Wine extension */
-
-#define DCHC_INVALIDVISRGN      0x0001
-#define DCHC_DELETEDC           0x0002
-#define DCHF_INVALIDATEVISRGN   0x0001
-#define DCHF_VALIDATEVISRGN     0x0002
-
-typedef BOOL (CALLBACK *DCHOOKPROC)(HDC,WORD,DWORD_PTR,LPARAM);
-
-WINGDIAPI DWORD_PTR WINAPI GetDCHook(HDC,DCHOOKPROC*);
-WINGDIAPI BOOL      WINAPI SetDCHook(HDC,DCHOOKPROC,DWORD_PTR);
-WINGDIAPI WORD      WINAPI SetHookFlags(HDC,WORD);
-
-extern void CDECL __wine_make_gdi_object_system( HGDIOBJ handle, BOOL set );
-extern void CDECL __wine_set_visible_region( HDC hdc, HRGN hrgn, const RECT *vis_rect );
-
-#endif /* __WINESRC__ */
 
 #ifdef __cplusplus
 }

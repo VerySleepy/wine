@@ -33,11 +33,7 @@ static HWND hWndParent;
 
 static struct msg_sequence *sequences[NUM_MSG_SEQUENCE];
 
-static const struct message create_trackbar_wnd_seq[] = {
-    {0}
-};
-
-static const struct message parent_empty_test_seq[] = {
+static const struct message empty_seq[] = {
     {0}
 };
 
@@ -298,10 +294,20 @@ static const struct message thumb_length_test_seq[] = {
     { WM_PAINT, sent|defwinproc},
     { TBM_GETTHUMBLENGTH, sent},
     { TBM_GETTHUMBLENGTH, sent},
+    { WM_SIZE, sent},
+    { WM_PAINT, sent|defwinproc},
+    { TBM_GETTHUMBLENGTH, sent},
+    { WM_SIZE, sent},
+    { WM_PAINT, sent|defwinproc},
+    { TBM_GETTHUMBLENGTH, sent},
     {0}
 };
 
 static const struct message parent_thumb_length_test_seq[] = {
+    { WM_CTLCOLORSTATIC, sent},
+    { WM_NOTIFY, sent},
+    { WM_CTLCOLORSTATIC, sent},
+    { WM_NOTIFY, sent},
     { WM_CTLCOLORSTATIC, sent},
     { WM_NOTIFY, sent},
     { WM_CTLCOLORSTATIC, sent},
@@ -378,13 +384,12 @@ static LRESULT WINAPI parent_wnd_proc(HWND hwnd, UINT message, WPARAM wParam, LP
         message != WM_GETICON &&
         message != WM_DEVICECHANGE)
     {
-        trace("parent: %p, %04x, %08lx, %08lx\n", hwnd, message, wParam, lParam);
-
         msg.message = message;
         msg.flags = sent|wparam|lparam;
         if (defwndproc_counter) msg.flags |= defwinproc;
         msg.wParam = wParam;
         msg.lParam = lParam;
+        msg.id = 0;
         add_message(sequences, PARENT_SEQ_INDEX, &msg);
     }
 
@@ -404,7 +409,7 @@ static BOOL register_parent_wnd_class(void){
     cls.cbWndExtra = 0;
     cls.hInstance = GetModuleHandleA(NULL);
     cls.hIcon = 0;
-    cls.hCursor = LoadCursorA(0, IDC_ARROW);
+    cls.hCursor = LoadCursorA(0, (LPCSTR)IDC_ARROW);
     cls.hbrBackground = GetStockObject(WHITE_BRUSH);
     cls.lpszMenuName = NULL;
     cls.lpszClassName = "Trackbar test parent class";
@@ -415,12 +420,9 @@ static HWND create_parent_window(void){
     if (!register_parent_wnd_class())
         return NULL;
 
-    return CreateWindowEx(0, "Trackbar test parent class",
-        "Trackbar test parent window",
-        WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX |
-        WS_MAXIMIZEBOX | WS_VISIBLE,
-        0, 0, 100, 100,
-        GetDesktopWindow(), NULL, GetModuleHandleA(NULL), NULL);
+    return CreateWindowA("Trackbar test parent class", "Trackbar test parent window",
+                         WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_VISIBLE,
+                         0, 0, 100, 100, GetDesktopWindow(), NULL, GetModuleHandleA(NULL), NULL);
 }
 
 static LRESULT WINAPI trackbar_subclass_proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam){
@@ -429,13 +431,12 @@ static LRESULT WINAPI trackbar_subclass_proc(HWND hwnd, UINT message, WPARAM wPa
     LRESULT ret;
     struct message msg;
 
-    trace("trackbar: %p, %04x, %08lx, %08lx\n", hwnd, message, wParam, lParam);
-
     msg.message = message;
     msg.flags = sent|wparam|lparam;
     if (defwndproc_counter) msg.flags |= defwinproc;
     msg.wParam = wParam;
     msg.lParam = lParam;
+    msg.id = 0;
     add_message(sequences, TRACKBAR_SEQ_INDEX, &msg);
 
     defwndproc_counter++;
@@ -451,10 +452,9 @@ static HWND create_trackbar(DWORD style, HWND parent){
     RECT rect;
 
     GetClientRect(parent, &rect);
-    hWndTrack = CreateWindowEx(
-      0, TRACKBAR_CLASS,"Trackbar Control", style,
-      rect.right,rect.bottom, 100, 50,
-      parent, NULL,GetModuleHandleA(NULL) ,NULL);
+    hWndTrack = CreateWindowA(TRACKBAR_CLASSA, "Trackbar Control", style,
+                              rect.right, rect.bottom, 100, 50,
+                              parent, NULL, GetModuleHandleA(NULL), NULL);
 
     if (!hWndTrack) return NULL;
 
@@ -474,42 +474,40 @@ static void test_trackbar_buddy(HWND hWndTrackbar){
 
     flush_sequences(sequences, NUM_MSG_SEQUENCE);
 
-    hWndLeftBuddy = CreateWindowEx(0, STATUSCLASSNAME, NULL, 0,
-        0,0,300,20, NULL, NULL, NULL, NULL);
+    hWndLeftBuddy = CreateWindowA(STATUSCLASSNAMEA, NULL, 0, 0, 0, 300, 20, NULL, NULL, NULL, NULL);
     ok(hWndLeftBuddy != NULL, "Expected non NULL value\n");
 
     if (hWndLeftBuddy != NULL){
-        hWndCurrentBuddy = (HWND) SendMessage(hWndTrackbar, TBM_GETBUDDY, TRUE, 0);
-        rTest = (HWND) SendMessage(hWndTrackbar, TBM_SETBUDDY, FALSE, (LPARAM) hWndLeftBuddy);
+        hWndCurrentBuddy = (HWND) SendMessageA(hWndTrackbar, TBM_GETBUDDY, TRUE, 0);
+        rTest = (HWND) SendMessageA(hWndTrackbar, TBM_SETBUDDY, FALSE, (LPARAM) hWndLeftBuddy);
         ok(rTest == hWndCurrentBuddy, "Expected hWndCurrentBuddy\n");
-        rTest = (HWND) SendMessage(hWndTrackbar, TBM_SETBUDDY, FALSE, (LPARAM) hWndLeftBuddy);
+        rTest = (HWND) SendMessageA(hWndTrackbar, TBM_SETBUDDY, FALSE, (LPARAM) hWndLeftBuddy);
         ok(rTest == hWndLeftBuddy, "Expected hWndLeftBuddy\n");
     } else
         skip ("left buddy control not present?\n");
 
-    hWndRightBuddy = CreateWindowEx(0, STATUSCLASSNAME, NULL, 0,
-        0,0,300,20,NULL,NULL, NULL, NULL);
+    hWndRightBuddy = CreateWindowA(STATUSCLASSNAMEA, NULL, 0, 0, 0, 300, 20, NULL, NULL, NULL, NULL);
 
     ok(hWndRightBuddy != NULL, "expected non NULL value\n");
 
     /* test TBM_SETBUDDY */
     if (hWndRightBuddy != NULL){
-        hWndCurrentBuddy = (HWND) SendMessage(hWndTrackbar, TBM_GETBUDDY, TRUE, 0);
-        rTest = (HWND) SendMessage(hWndTrackbar, TBM_SETBUDDY, TRUE, (LPARAM) hWndRightBuddy);
+        hWndCurrentBuddy = (HWND) SendMessageA(hWndTrackbar, TBM_GETBUDDY, TRUE, 0);
+        rTest = (HWND) SendMessageA(hWndTrackbar, TBM_SETBUDDY, TRUE, (LPARAM) hWndRightBuddy);
         ok(rTest == hWndCurrentBuddy, "Expected hWndCurrentBuddy\n");
-        rTest = (HWND) SendMessage(hWndTrackbar, TBM_SETBUDDY, TRUE, (LPARAM) hWndRightBuddy);
+        rTest = (HWND) SendMessageA(hWndTrackbar, TBM_SETBUDDY, TRUE, (LPARAM) hWndRightBuddy);
         ok(rTest == hWndRightBuddy, "Expected hWndRightbuddy\n");
      } else
        skip("Right buddy control not present?\n");
 
     /* test TBM_GETBUDDY */
     if (hWndLeftBuddy != NULL){
-        rTest = (HWND) SendMessage(hWndTrackbar, TBM_GETBUDDY, FALSE, 0);
+        rTest = (HWND) SendMessageA(hWndTrackbar, TBM_GETBUDDY, FALSE, 0);
         ok(rTest == hWndLeftBuddy, "Expected hWndLeftBuddy\n");
         DestroyWindow(hWndLeftBuddy);
     }
     if (hWndRightBuddy != NULL){
-        rTest = (HWND) SendMessage(hWndTrackbar, TBM_GETBUDDY, TRUE,0);
+        rTest = (HWND) SendMessageA(hWndTrackbar, TBM_GETBUDDY, TRUE,0);
         ok(rTest == hWndRightBuddy, "Expected hWndRightBuddy\n");
         DestroyWindow(hWndRightBuddy);
     }
@@ -525,17 +523,17 @@ static void test_line_size(HWND hWndTrackbar){
     flush_sequences(sequences, NUM_MSG_SEQUENCE);
 
     /* test TBM_SETLINESIZE */
-    r = SendMessage(hWndTrackbar, TBM_SETLINESIZE, 0, 10);
+    r = SendMessageA(hWndTrackbar, TBM_SETLINESIZE, 0, 10);
     expect(1,r);
-    r = SendMessage(hWndTrackbar, TBM_SETLINESIZE, 0, 4);
+    r = SendMessageA(hWndTrackbar, TBM_SETLINESIZE, 0, 4);
     expect(10, r);
 
     /* test TBM_GETLINESIZE */
-    r = SendMessage(hWndTrackbar, TBM_GETLINESIZE, 0,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETLINESIZE, 0,0);
     expect(4, r);
 
     ok_sequence(sequences, TRACKBAR_SEQ_INDEX, line_size_test_seq, "linesize test sequence", FALSE);
-    ok_sequence(sequences, PARENT_SEQ_INDEX, parent_empty_test_seq, "parent line test sequence", FALSE);
+    ok_sequence(sequences, PARENT_SEQ_INDEX, empty_seq, "parent line test sequence", FALSE);
 }
 
 
@@ -545,32 +543,32 @@ static void test_page_size(HWND hWndTrackbar){
     flush_sequences(sequences, NUM_MSG_SEQUENCE);
 
     /* test TBM_SETPAGESIZE */
-    r = SendMessage(hWndTrackbar, TBM_SETPAGESIZE, 0, 10);
+    r = SendMessageA(hWndTrackbar, TBM_SETPAGESIZE, 0, 10);
     expect(20, r);
-    r = SendMessage(hWndTrackbar, TBM_SETPAGESIZE, 0, -1);
+    r = SendMessageA(hWndTrackbar, TBM_SETPAGESIZE, 0, -1);
     expect(10, r);
 
     /* test TBM_GETPAGESIZE */
-    r = SendMessage(hWndTrackbar, TBM_GETPAGESIZE, 0,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETPAGESIZE, 0,0);
     expect(20, r);
 
     ok_sequence(sequences, TRACKBAR_SEQ_INDEX, page_size_test_seq, "page size test sequence", FALSE);
-    ok_sequence(sequences, PARENT_SEQ_INDEX, parent_empty_test_seq, "parent page size test sequence", FALSE);
+    ok_sequence(sequences, PARENT_SEQ_INDEX, empty_seq, "parent page size test sequence", FALSE);
 
     /* check for zero page size */
-    r = SendMessage(hWndTrackbar, TBM_SETPAGESIZE, 0, 0);
+    r = SendMessageA(hWndTrackbar, TBM_SETPAGESIZE, 0, 0);
     expect(20, r);
-    r = SendMessage(hWndTrackbar, TBM_GETPAGESIZE, 0, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETPAGESIZE, 0, 0);
     expect(0, r);
     /* revert to default */
-    r = SendMessage(hWndTrackbar, TBM_SETPAGESIZE, 0, -1);
+    r = SendMessageA(hWndTrackbar, TBM_SETPAGESIZE, 0, -1);
     expect(0, r);
-    r = SendMessage(hWndTrackbar, TBM_GETPAGESIZE, 0, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETPAGESIZE, 0, 0);
     expect(20, r);
     /* < -1 */
-    r = SendMessage(hWndTrackbar, TBM_SETPAGESIZE, 0, -2);
+    r = SendMessageA(hWndTrackbar, TBM_SETPAGESIZE, 0, -2);
     expect(20, r);
-    r = SendMessage(hWndTrackbar, TBM_GETPAGESIZE, 0, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETPAGESIZE, 0, 0);
     expect(-2, r);
 }
 
@@ -579,23 +577,23 @@ static void test_position(HWND hWndTrackbar){
 
     flush_sequences(sequences, NUM_MSG_SEQUENCE);
     /* test TBM_SETPOS */
-    SendMessage(hWndTrackbar, TBM_SETPOS, TRUE, -1);
-    r = SendMessage(hWndTrackbar, TBM_GETPOS, 0, 0);
+    SendMessageA(hWndTrackbar, TBM_SETPOS, TRUE, -1);
+    r = SendMessageA(hWndTrackbar, TBM_GETPOS, 0, 0);
     expect(0, r);
-    SendMessage(hWndTrackbar, TBM_SETPOS, TRUE, 5);
-    r = SendMessage(hWndTrackbar, TBM_GETPOS, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETPOS, TRUE, 5);
+    r = SendMessageA(hWndTrackbar, TBM_GETPOS, 0,0);
     expect(5, r);
-    SendMessage(hWndTrackbar, TBM_SETPOS, TRUE, 5);
-    SendMessage(hWndTrackbar, TBM_SETPOS, TRUE, 1000);
-    r = SendMessage(hWndTrackbar, TBM_GETPOS, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETPOS, TRUE, 5);
+    SendMessageA(hWndTrackbar, TBM_SETPOS, TRUE, 1000);
+    r = SendMessageA(hWndTrackbar, TBM_GETPOS, 0,0);
     expect(100, r);
-    SendMessage(hWndTrackbar, TBM_SETPOS, FALSE, 20);
-    r = SendMessage(hWndTrackbar, TBM_GETPOS, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETPOS, FALSE, 20);
+    r = SendMessageA(hWndTrackbar, TBM_GETPOS, 0,0);
     expect(20, r);
-    SendMessage(hWndTrackbar, TBM_SETPOS, TRUE, 20);
+    SendMessageA(hWndTrackbar, TBM_SETPOS, TRUE, 20);
 
     /* test TBM_GETPOS */
-    r = SendMessage(hWndTrackbar, TBM_GETPOS, 0,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETPOS, 0,0);
     expect(20, r);
 
     ok_sequence(sequences, TRACKBAR_SEQ_INDEX, position_test_seq, "position test sequence", TRUE);
@@ -607,58 +605,58 @@ static void test_range(HWND hWndTrackbar){
 
     flush_sequences(sequences, NUM_MSG_SEQUENCE);
     /* test TBM_SETRANGE */
-    SendMessage(hWndTrackbar, TBM_SETRANGE, TRUE, MAKELONG(0, 10));
-    r = SendMessage(hWndTrackbar, TBM_GETRANGEMAX, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETRANGE, TRUE, MAKELONG(0, 10));
+    r = SendMessageA(hWndTrackbar, TBM_GETRANGEMAX, 0,0);
     expect(10, r);
-    r = SendMessage(hWndTrackbar, TBM_GETRANGEMIN, 0,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETRANGEMIN, 0,0);
     expect(0, r);
-    SendMessage(hWndTrackbar, TBM_SETRANGE, TRUE, MAKELONG(-1, 1000));
-    r = SendMessage(hWndTrackbar, TBM_GETRANGEMAX, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETRANGE, TRUE, MAKELONG(-1, 1000));
+    r = SendMessageA(hWndTrackbar, TBM_GETRANGEMAX, 0,0);
     expect(1000, r);
-    r = SendMessage(hWndTrackbar, TBM_GETRANGEMIN, 0,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETRANGEMIN, 0,0);
     expect(-1, r);
-    SendMessage(hWndTrackbar, TBM_SETRANGE, TRUE, MAKELONG(10, 0));
-    r = SendMessage(hWndTrackbar, TBM_GETRANGEMAX, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETRANGE, TRUE, MAKELONG(10, 0));
+    r = SendMessageA(hWndTrackbar, TBM_GETRANGEMAX, 0,0);
     expect(0, r);
-    r = SendMessage(hWndTrackbar, TBM_GETRANGEMIN, 0,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETRANGEMIN, 0,0);
     expect(10, r);
-    SendMessage(hWndTrackbar, TBM_SETRANGE, FALSE, MAKELONG(0,10));
-    r = SendMessage(hWndTrackbar, TBM_GETRANGEMAX, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETRANGE, FALSE, MAKELONG(0,10));
+    r = SendMessageA(hWndTrackbar, TBM_GETRANGEMAX, 0,0);
     expect(10, r);
-    r = SendMessage(hWndTrackbar, TBM_GETRANGEMIN, 0,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETRANGEMIN, 0,0);
     expect(0, r);
 
     /*test TBM_SETRANGEMAX */
-    SendMessage(hWndTrackbar, TBM_SETRANGEMAX, TRUE, 10);
-    r = SendMessage(hWndTrackbar, TBM_GETRANGEMAX, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETRANGEMAX, TRUE, 10);
+    r = SendMessageA(hWndTrackbar, TBM_GETRANGEMAX, 0,0);
     expect(10, r);
-    SendMessage(hWndTrackbar, TBM_SETRANGEMAX, TRUE, -1);
-    r = SendMessage(hWndTrackbar, TBM_GETRANGEMAX, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETRANGEMAX, TRUE, -1);
+    r = SendMessageA(hWndTrackbar, TBM_GETRANGEMAX, 0,0);
     expect(-1, r);
-    SendMessage(hWndTrackbar, TBM_SETRANGEMAX, FALSE, 10);
-    r = SendMessage(hWndTrackbar, TBM_GETRANGEMAX, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETRANGEMAX, FALSE, 10);
+    r = SendMessageA(hWndTrackbar, TBM_GETRANGEMAX, 0,0);
     expect(10, r);
 
     /* testing TBM_SETRANGEMIN */
-    SendMessage(hWndTrackbar, TBM_SETRANGEMIN, TRUE, 0);
-    r = SendMessage(hWndTrackbar, TBM_GETRANGEMIN, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETRANGEMIN, TRUE, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETRANGEMIN, 0,0);
     expect(0, r);
-    SendMessage(hWndTrackbar, TBM_SETRANGEMIN, TRUE, 10);
-    r = SendMessage(hWndTrackbar, TBM_GETRANGEMIN, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETRANGEMIN, TRUE, 10);
+    r = SendMessageA(hWndTrackbar, TBM_GETRANGEMIN, 0,0);
     expect(10, r);
-    SendMessage(hWndTrackbar, TBM_SETRANGEMIN, TRUE, -10);
-    r = SendMessage(hWndTrackbar, TBM_GETRANGEMIN, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETRANGEMIN, TRUE, -10);
+    r = SendMessageA(hWndTrackbar, TBM_GETRANGEMIN, 0,0);
     expect(-10, r);
-    SendMessage(hWndTrackbar, TBM_SETRANGEMIN, FALSE, 5);
-    r = SendMessage(hWndTrackbar, TBM_GETRANGEMIN, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETRANGEMIN, FALSE, 5);
+    r = SendMessageA(hWndTrackbar, TBM_GETRANGEMIN, 0,0);
     expect(5, r);
 
     /* test TBM_GETRANGEMAX */
-    r = SendMessage(hWndTrackbar, TBM_GETRANGEMAX, 0,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETRANGEMAX, 0,0);
     expect(10, r);
 
     /* test TBM_GETRANGEMIN */
-    r = SendMessage(hWndTrackbar, TBM_GETRANGEMIN, 0,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETRANGEMIN, 0,0);
     expect(5, r);
 
     ok_sequence(sequences, TRACKBAR_SEQ_INDEX, range_test_seq, "range test sequence", TRUE);
@@ -670,60 +668,60 @@ static void test_selection(HWND hWndTrackbar){
 
     flush_sequences(sequences, NUM_MSG_SEQUENCE);
     /* test TBM_SETSEL */
-    SendMessage(hWndTrackbar, TBM_SETSEL, TRUE, MAKELONG(0,10));
-    r = SendMessage(hWndTrackbar, TBM_GETSELEND, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETSEL, TRUE, MAKELONG(0,10));
+    r = SendMessageA(hWndTrackbar, TBM_GETSELEND, 0,0);
     expect(10, r);
-    r = SendMessage(hWndTrackbar, TBM_GETSELSTART, 0,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELSTART, 0,0);
     expect(5, r);
-    SendMessage(hWndTrackbar, TBM_SETSEL, TRUE, MAKELONG(5, 20));
-    r = SendMessage(hWndTrackbar, TBM_GETSELEND, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETSEL, TRUE, MAKELONG(5, 20));
+    r = SendMessageA(hWndTrackbar, TBM_GETSELEND, 0,0);
     expect(10, r);
-    r = SendMessage(hWndTrackbar, TBM_GETSELSTART, 0,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELSTART, 0,0);
     expect(5, r);
-    SendMessage(hWndTrackbar, TBM_SETSEL, FALSE, MAKELONG(5, 10));
-    r = SendMessage(hWndTrackbar, TBM_GETSELEND, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETSEL, FALSE, MAKELONG(5, 10));
+    r = SendMessageA(hWndTrackbar, TBM_GETSELEND, 0,0);
     expect(10, r);
-    r = SendMessage(hWndTrackbar, TBM_GETSELSTART, 0,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELSTART, 0,0);
     expect(5, r);
 
     /* test TBM_SETSELEND */
-    SendMessage(hWndTrackbar, TBM_SETSELEND, TRUE, 10);
-    r = SendMessage(hWndTrackbar, TBM_GETSELEND, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETSELEND, TRUE, 10);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELEND, 0,0);
     expect(10, r);
-    SendMessage(hWndTrackbar, TBM_SETSELEND, TRUE, 20);
-    r = SendMessage(hWndTrackbar, TBM_GETSELEND, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETSELEND, TRUE, 20);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELEND, 0,0);
     expect(10, r);
-    SendMessage(hWndTrackbar, TBM_SETSELEND, TRUE, 4);
-    r = SendMessage(hWndTrackbar, TBM_GETSELEND, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETSELEND, TRUE, 4);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELEND, 0,0);
     expect(4, r);
-    SendMessage(hWndTrackbar, TBM_SETSELEND, FALSE, 2);
-    r = SendMessage(hWndTrackbar, TBM_GETSELEND, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETSELEND, FALSE, 2);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELEND, 0,0);
     expect(2, r);
 
     /* test TBM_GETSELEND */
-    r = SendMessage(hWndTrackbar, TBM_GETSELEND, 0,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELEND, 0,0);
     expect(2, r);
 
     /* testing TBM_SETSELSTART */
-    SendMessage(hWndTrackbar, TBM_SETSELSTART, TRUE, 5);
-    r = SendMessage(hWndTrackbar, TBM_GETSELSTART, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETSELSTART, TRUE, 5);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELSTART, 0,0);
     expect(5, r);
-    SendMessage(hWndTrackbar, TBM_SETSELSTART, TRUE, 0);
-    r = SendMessage(hWndTrackbar, TBM_GETSELSTART, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETSELSTART, TRUE, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELSTART, 0,0);
     expect(5, r);
-    SendMessage(hWndTrackbar, TBM_SETSELSTART, TRUE, 20);
-    r = SendMessage(hWndTrackbar, TBM_GETSELSTART, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETSELSTART, TRUE, 20);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELSTART, 0,0);
     expect(20, r);
-    SendMessage(hWndTrackbar, TBM_SETSELSTART, FALSE, 8);
-    r = SendMessage(hWndTrackbar, TBM_GETSELSTART, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETSELSTART, FALSE, 8);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELSTART, 0,0);
     expect(8, r);
 
     /* test TBM_GETSELSTART */
-    r = SendMessage(hWndTrackbar, TBM_GETSELSTART, 0,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELSTART, 0,0);
     expect(8, r);
 
     ok_sequence(sequences, TRACKBAR_SEQ_INDEX, selection_test_seq, "selection test sequence", TRUE);
-    ok_sequence(sequences, PARENT_SEQ_INDEX, parent_selection_test_seq, "parent selection test seqence", TRUE);
+    ok_sequence(sequences, PARENT_SEQ_INDEX, parent_selection_test_seq, "parent selection test sequence", TRUE);
 }
 
 static void test_thumb_length(HWND hWndTrackbar){
@@ -731,19 +729,28 @@ static void test_thumb_length(HWND hWndTrackbar){
 
     flush_sequences(sequences, NUM_MSG_SEQUENCE);
     /* testing TBM_SETTHUMBLENGTH */
-    SendMessage(hWndTrackbar, TBM_SETTHUMBLENGTH, 15, 0);
-    r = SendMessage(hWndTrackbar, TBM_GETTHUMBLENGTH, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETTHUMBLENGTH, 15, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETTHUMBLENGTH, 0,0);
     expect(15, r);
-    SendMessage(hWndTrackbar, TBM_SETTHUMBLENGTH, 20, 0);
-    r = SendMessage(hWndTrackbar, TBM_GETTHUMBLENGTH, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETTHUMBLENGTH, 20, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETTHUMBLENGTH, 0,0);
     expect(20, r);
 
     /* test TBM_GETTHUMBLENGTH */
-    r = SendMessage(hWndTrackbar, TBM_GETTHUMBLENGTH, 0,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETTHUMBLENGTH, 0,0);
+    expect(20, r);
+
+    r = SendMessageA(hWndTrackbar, WM_SIZE, 0,0);
+    expect(0, r);
+    r = SendMessageA(hWndTrackbar, TBM_GETTHUMBLENGTH, 0,0);
+    expect(20, r);
+    r = SendMessageA(hWndTrackbar, WM_SIZE, 0, MAKELPARAM(50, 50) );
+    expect(0, r);
+    r = SendMessageA(hWndTrackbar, TBM_GETTHUMBLENGTH, 0,0);
     expect(20, r);
 
     ok_sequence(sequences, TRACKBAR_SEQ_INDEX, thumb_length_test_seq, "thumb length test sequence", TRUE);
-    ok_sequence(sequences, PARENT_SEQ_INDEX, parent_thumb_length_test_seq, "parent thumb lenth test sequence", TRUE);
+    ok_sequence(sequences, PARENT_SEQ_INDEX, parent_thumb_length_test_seq, "parent thumb length test sequence", TRUE);
 }
 
 static void test_tic_settings(HWND hWndTrackbar){
@@ -752,59 +759,59 @@ static void test_tic_settings(HWND hWndTrackbar){
     /* testing TBM_SETTIC */
     /* Set tics at 5 and 10 */
     /* 0 and 20 are out of range and should not be set */
-    r = SendMessage(hWndTrackbar, TBM_GETRANGEMAX, 0, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETRANGEMAX, 0, 0);
     expect(10, r);
-    r = SendMessage(hWndTrackbar, TBM_GETRANGEMIN, 0, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETRANGEMIN, 0, 0);
     expect(5, r);
 
     flush_sequences(sequences, NUM_MSG_SEQUENCE);
-    r = SendMessage(hWndTrackbar, TBM_SETTIC, 0, 0);
+    r = SendMessageA(hWndTrackbar, TBM_SETTIC, 0, 0);
     ok(r == FALSE, "Expected FALSE, got %d\n", r);
-    r = SendMessage(hWndTrackbar, TBM_SETTIC, 0, 5);
+    r = SendMessageA(hWndTrackbar, TBM_SETTIC, 0, 5);
     ok(r == TRUE, "Expected TRUE, got %d\n", r);
-    r = SendMessage(hWndTrackbar, TBM_SETTIC, 0, 10);
+    r = SendMessageA(hWndTrackbar, TBM_SETTIC, 0, 10);
     ok(r == TRUE, "Expected TRUE, got %d\n", r);
 
-    r = SendMessage(hWndTrackbar, TBM_SETTIC, 0, 20);
-    ok(r == FALSE, "Expected False, got %d\n", r);
+    r = SendMessageA(hWndTrackbar, TBM_SETTIC, 0, 20);
+    ok(r == FALSE, "Expected FALSE, got %d\n", r);
 
     /* test TBM_SETTICFREQ */
-    SendMessage(hWndTrackbar, TBM_SETRANGE, TRUE, MAKELONG(0, 10));
-    SendMessage(hWndTrackbar, TBM_SETTICFREQ, 2, 0);
-    r = SendMessage(hWndTrackbar, TBM_GETNUMTICS, 0, 0);
+    SendMessageA(hWndTrackbar, TBM_SETRANGE, TRUE, MAKELONG(0, 10));
+    SendMessageA(hWndTrackbar, TBM_SETTICFREQ, 2, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETNUMTICS, 0, 0);
     expect(6, r);
-    SendMessage(hWndTrackbar, TBM_SETTICFREQ, 5, 0);
-    r = SendMessage(hWndTrackbar, TBM_GETNUMTICS, 0, 0);
+    SendMessageA(hWndTrackbar, TBM_SETTICFREQ, 5, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETNUMTICS, 0, 0);
     expect(3, r);
-    SendMessage(hWndTrackbar, TBM_SETTICFREQ, 15, 0);
-    r = SendMessage(hWndTrackbar, TBM_GETNUMTICS, 0, 0);
+    SendMessageA(hWndTrackbar, TBM_SETTICFREQ, 15, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETNUMTICS, 0, 0);
     expect(2, r);
 
     /* test TBM_GETNUMTICS */
     /* since TIC FREQ is 15, there should be only 2 tics now */
-    r = SendMessage(hWndTrackbar, TBM_GETNUMTICS, 0, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETNUMTICS, 0, 0);
     expect(2, r);
 
     ok_sequence(sequences, TRACKBAR_SEQ_INDEX, tic_settings_test_seq, "tic settings test sequence", TRUE);
     ok_sequence(sequences, PARENT_SEQ_INDEX, parent_tic_settings_test_seq, "parent tic settings test sequence", TRUE);
 
     /* range [0,0], freq = 1 */
-    SendMessage(hWndTrackbar, TBM_SETRANGEMAX, TRUE, 0);
-    SendMessage(hWndTrackbar, TBM_SETRANGEMIN, TRUE, 0);
-    SendMessage(hWndTrackbar, TBM_SETTICFREQ, 1, 0);
-    r = SendMessage(hWndTrackbar, TBM_GETNUMTICS, 0, 0);
+    SendMessageA(hWndTrackbar, TBM_SETRANGEMAX, TRUE, 0);
+    SendMessageA(hWndTrackbar, TBM_SETRANGEMIN, TRUE, 0);
+    SendMessageA(hWndTrackbar, TBM_SETTICFREQ, 1, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETNUMTICS, 0, 0);
     expect(2, r);
     /* range [0,1], freq = 1 */
-    SendMessage(hWndTrackbar, TBM_SETRANGEMAX, TRUE, 1);
-    SendMessage(hWndTrackbar, TBM_SETRANGEMIN, TRUE, 0);
-    SendMessage(hWndTrackbar, TBM_SETTICFREQ, 1, 0);
-    r = SendMessage(hWndTrackbar, TBM_GETNUMTICS, 0, 0);
+    SendMessageA(hWndTrackbar, TBM_SETRANGEMAX, TRUE, 1);
+    SendMessageA(hWndTrackbar, TBM_SETRANGEMIN, TRUE, 0);
+    SendMessageA(hWndTrackbar, TBM_SETTICFREQ, 1, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETNUMTICS, 0, 0);
     expect(2, r);
     /* range [0,2], freq = 1 */
-    SendMessage(hWndTrackbar, TBM_SETRANGEMAX, TRUE, 2);
-    SendMessage(hWndTrackbar, TBM_SETRANGEMIN, TRUE, 0);
-    SendMessage(hWndTrackbar, TBM_SETTICFREQ, 1, 0);
-    r = SendMessage(hWndTrackbar, TBM_GETNUMTICS, 0, 0);
+    SendMessageA(hWndTrackbar, TBM_SETRANGEMAX, TRUE, 2);
+    SendMessageA(hWndTrackbar, TBM_SETRANGEMIN, TRUE, 0);
+    SendMessageA(hWndTrackbar, TBM_SETTICFREQ, 1, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETNUMTICS, 0, 0);
     expect(3, r);
 }
 
@@ -813,36 +820,36 @@ static void test_tic_placement(HWND hWndTrackbar){
     DWORD *rPTics;
     DWORD numtics;
 
-    SendMessage(hWndTrackbar, TBM_SETRANGE, TRUE, MAKELONG(1, 6));
-    SendMessage(hWndTrackbar, TBM_SETTICFREQ, 1, 0);
+    SendMessageA(hWndTrackbar, TBM_SETRANGE, TRUE, MAKELONG(1, 6));
+    SendMessageA(hWndTrackbar, TBM_SETTICFREQ, 1, 0);
 
-    numtics = SendMessage(hWndTrackbar, TBM_GETNUMTICS, 0, 0);
+    numtics = SendMessageA(hWndTrackbar, TBM_GETNUMTICS, 0, 0);
     ok(numtics == 6, "Expected 6, got %d\n", numtics);
 
     flush_sequences(sequences, NUM_MSG_SEQUENCE);
     /* test TBM_GETPTICS */
-    rPTics = (DWORD *) SendMessage(hWndTrackbar, TBM_GETPTICS, 0,0);
+    rPTics = (DWORD *) SendMessageA(hWndTrackbar, TBM_GETPTICS, 0,0);
     expect(2, rPTics[0]);
     expect(3, rPTics[1]);
     expect(4, rPTics[2]);
     expect(5, rPTics[3]);
 
     /* test TBM_GETTIC */
-    r = SendMessage(hWndTrackbar, TBM_GETTIC, 0,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETTIC, 0,0);
     expect(2, r);
-    r = SendMessage(hWndTrackbar, TBM_GETTIC, 2,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETTIC, 2,0);
     expect(4, r);
-    r = SendMessage(hWndTrackbar, TBM_GETTIC, 4,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETTIC, 4,0);
     expect(-1, r);
 
     /* test TBM_GETTICPIC */
-    r = SendMessage(hWndTrackbar, TBM_GETTICPOS, 0, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETTICPOS, 0, 0);
     ok(r > 0, "Expected r > 0, got %d\n", r);
-    r = SendMessage(hWndTrackbar, TBM_GETTICPOS, 2, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETTICPOS, 2, 0);
     ok(r > 0, "Expected r > 0, got %d\n", r);
 
     ok_sequence(sequences, TRACKBAR_SEQ_INDEX, tic_placement_test_seq, "get tic placement test sequence", FALSE);
-    ok_sequence(sequences, PARENT_SEQ_INDEX, parent_empty_test_seq, "parent get tic placement test sequence", FALSE);
+    ok_sequence(sequences, PARENT_SEQ_INDEX, empty_seq, "parent get tic placement test sequence", FALSE);
 }
 
 
@@ -853,40 +860,40 @@ static void test_tool_tips(HWND hWndTrackbar){
 
     flush_sequences(sequences, NUM_MSG_SEQUENCE);
     /* testing TBM_SETTIPSIDE */
-    r = SendMessage(hWndTrackbar, TBM_SETTIPSIDE, TBTS_TOP, 0);
+    r = SendMessageA(hWndTrackbar, TBM_SETTIPSIDE, TBTS_TOP, 0);
     expect(TBTS_TOP, r);
-    r = SendMessage(hWndTrackbar, TBM_SETTIPSIDE, TBTS_LEFT, 0);
+    r = SendMessageA(hWndTrackbar, TBM_SETTIPSIDE, TBTS_LEFT, 0);
     expect(TBTS_TOP, r);
-    r = SendMessage(hWndTrackbar, TBM_SETTIPSIDE, TBTS_BOTTOM, 0);
+    r = SendMessageA(hWndTrackbar, TBM_SETTIPSIDE, TBTS_BOTTOM, 0);
     expect(TBTS_LEFT, r);
-    r = SendMessage(hWndTrackbar, TBM_SETTIPSIDE, TBTS_RIGHT, 0);
+    r = SendMessageA(hWndTrackbar, TBM_SETTIPSIDE, TBTS_RIGHT, 0);
     expect(TBTS_BOTTOM, r);
 
     /* testing TBM_SETTOOLTIPS */
-    hWndTooltip = CreateWindowEx(WS_EX_TOPMOST, TOOLTIPS_CLASS, NULL, 0,
-      CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-      NULL, NULL, NULL, NULL);
+    hWndTooltip = CreateWindowExA(WS_EX_TOPMOST, TOOLTIPS_CLASSA, NULL, 0,
+                                  CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+                                  NULL, NULL, NULL, NULL);
 
     ok(hWndTooltip != NULL, "Expected non NULL value\n");
     if (hWndTooltip != NULL){
-        SendMessage(hWndTrackbar, TBM_SETTOOLTIPS, (LPARAM) hWndTooltip, 0);
-        rTest = (HWND) SendMessage(hWndTrackbar, TBM_GETTOOLTIPS, 0,0);
+        SendMessageA(hWndTrackbar, TBM_SETTOOLTIPS, (LPARAM) hWndTooltip, 0);
+        rTest = (HWND) SendMessageA(hWndTrackbar, TBM_GETTOOLTIPS, 0,0);
         ok(rTest == hWndTooltip, "Expected hWndToolTip, got\n");
-        SendMessage(hWndTrackbar, TBM_SETTOOLTIPS, 0, 0);
-        rTest = (HWND) SendMessage(hWndTrackbar, TBM_GETTOOLTIPS, 0,0);
+        SendMessageA(hWndTrackbar, TBM_SETTOOLTIPS, 0, 0);
+        rTest = (HWND) SendMessageA(hWndTrackbar, TBM_GETTOOLTIPS, 0,0);
         ok(rTest == NULL, "Expected NULL\n");
-        SendMessage(hWndTrackbar, TBM_SETTOOLTIPS, (LPARAM) hWndTooltip, 5);
-        rTest = (HWND) SendMessage(hWndTrackbar, TBM_GETTOOLTIPS, 0,0);
+        SendMessageA(hWndTrackbar, TBM_SETTOOLTIPS, (LPARAM) hWndTooltip, 5);
+        rTest = (HWND) SendMessageA(hWndTrackbar, TBM_GETTOOLTIPS, 0,0);
         ok(rTest == hWndTooltip, "Expected hWndTooltip, got\n");
     } else
         skip("tool tip control not present?\n");
 
     /* test TBM_GETTOOLTIPS */
-    rTest = (HWND) SendMessage(hWndTrackbar, TBM_GETTOOLTIPS, 0,0);
+    rTest = (HWND) SendMessageA(hWndTrackbar, TBM_GETTOOLTIPS, 0,0);
     ok(rTest == hWndTooltip, "Expected hWndTooltip\n");
 
     ok_sequence(sequences, TRACKBAR_SEQ_INDEX, tool_tips_test_seq, "tool tips test sequence", FALSE);
-    ok_sequence(sequences, PARENT_SEQ_INDEX, parent_empty_test_seq, "parent tool tips test sequence", FALSE);
+    ok_sequence(sequences, PARENT_SEQ_INDEX, empty_seq, "parent tool tips test sequence", FALSE);
 }
 
 
@@ -895,17 +902,17 @@ static void test_unicode(HWND hWndTrackbar){
 
     flush_sequences(sequences, NUM_MSG_SEQUENCE);
     /* testing TBM_SETUNICODEFORMAT */
-    r = SendMessage(hWndTrackbar, TBM_SETUNICODEFORMAT, TRUE, 0);
+    r = SendMessageA(hWndTrackbar, TBM_SETUNICODEFORMAT, TRUE, 0);
     ok(r == FALSE, "Expected FALSE, got %d\n",r);
-    r = SendMessage(hWndTrackbar, TBM_SETUNICODEFORMAT, FALSE, 0);
+    r = SendMessageA(hWndTrackbar, TBM_SETUNICODEFORMAT, FALSE, 0);
     ok(r == TRUE, "Expected TRUE, got %d\n",r);
 
     /* test TBM_GETUNICODEFORMAT */
-    r = SendMessage(hWndTrackbar, TBM_GETUNICODEFORMAT, 0,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETUNICODEFORMAT, 0,0);
     ok(r == FALSE, "Expected FALSE, got %d\n",r);
 
     ok_sequence(sequences, TRACKBAR_SEQ_INDEX, unicode_test_seq, "unicode test sequence", FALSE);
-    ok_sequence(sequences, PARENT_SEQ_INDEX, parent_empty_test_seq, "parent unicode test sequence", FALSE);
+    ok_sequence(sequences, PARENT_SEQ_INDEX, empty_seq, "parent unicode test sequence", FALSE);
 }
 
 static void test_ignore_selection(HWND hWndTrackbar){
@@ -913,41 +920,41 @@ static void test_ignore_selection(HWND hWndTrackbar){
 
     flush_sequences(sequences, NUM_MSG_SEQUENCE);
     /* test TBM_SETSEL  ensure that it is ignored */
-    SendMessage(hWndTrackbar, TBM_SETSEL, TRUE, MAKELONG(0,10));
-    r = SendMessage(hWndTrackbar, TBM_GETSELEND, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETSEL, TRUE, MAKELONG(0,10));
+    r = SendMessageA(hWndTrackbar, TBM_GETSELEND, 0,0);
     expect(0, r);
-    r = SendMessage(hWndTrackbar, TBM_GETSELSTART, 0,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELSTART, 0,0);
     expect(0, r);
-    SendMessage(hWndTrackbar, TBM_SETSEL, FALSE, MAKELONG(0,10));
-    r = SendMessage(hWndTrackbar, TBM_GETSELEND, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETSEL, FALSE, MAKELONG(0,10));
+    r = SendMessageA(hWndTrackbar, TBM_GETSELEND, 0,0);
     expect(0, r);
-    r = SendMessage(hWndTrackbar, TBM_GETSELSTART, 0,0);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELSTART, 0,0);
     expect(0, r);
 
     /* test TBM_SETSELEND, ensure that it is ignored */
-    SendMessage(hWndTrackbar, TBM_SETSELEND, TRUE, 0);
-    r = SendMessage(hWndTrackbar, TBM_GETSELEND, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETSELEND, TRUE, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELEND, 0,0);
     expect(0, r);
-    SendMessage(hWndTrackbar, TBM_SETSELEND, TRUE, 10);
-    r = SendMessage(hWndTrackbar, TBM_GETSELEND, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETSELEND, TRUE, 10);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELEND, 0,0);
     expect(0,r);
-    SendMessage(hWndTrackbar, TBM_SETSELEND, FALSE, 0);
-    r = SendMessage(hWndTrackbar, TBM_GETSELEND, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETSELEND, FALSE, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELEND, 0,0);
     expect(0, r);
 
     /* test TBM_SETSELSTART, ensure that it is ignored */
-    SendMessage(hWndTrackbar, TBM_SETSELSTART, TRUE, 0);
-    r = SendMessage(hWndTrackbar, TBM_GETSELSTART, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETSELSTART, TRUE, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELSTART, 0,0);
     expect(0, r);
-    SendMessage(hWndTrackbar, TBM_SETSELSTART, TRUE, 10);
-    r = SendMessage(hWndTrackbar, TBM_GETSELSTART, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETSELSTART, TRUE, 10);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELSTART, 0,0);
     expect(0,r);
-    SendMessage(hWndTrackbar, TBM_SETSELSTART, FALSE, 0);
-    r = SendMessage(hWndTrackbar, TBM_GETSELSTART, 0,0);
+    SendMessageA(hWndTrackbar, TBM_SETSELSTART, FALSE, 0);
+    r = SendMessageA(hWndTrackbar, TBM_GETSELSTART, 0,0);
     expect(0, r);
 
     ok_sequence(sequences, TRACKBAR_SEQ_INDEX, ignore_selection_test_seq, "ignore selection setting test sequence", FALSE);
-    ok_sequence(sequences, PARENT_SEQ_INDEX, parent_empty_test_seq, "parent ignore selection setting test sequence", FALSE);
+    ok_sequence(sequences, PARENT_SEQ_INDEX, empty_seq, "parent ignore selection setting test sequence", FALSE);
 }
 
 static void test_initial_state(void)
@@ -957,12 +964,72 @@ static void test_initial_state(void)
 
     hWnd = create_trackbar(0, hWndParent);
 
-    ret = SendMessage(hWnd, TBM_GETNUMTICS, 0, 0);
+    ret = SendMessageA(hWnd, TBM_GETNUMTICS, 0, 0);
     expect(2, ret);
-    ret = SendMessage(hWnd, TBM_GETTIC, 0, 0);
+    ret = SendMessageA(hWnd, TBM_GETTIC, 0, 0);
     expect(-1, ret);
-    ret = SendMessage(hWnd, TBM_GETTICPOS, 0, 0);
+    ret = SendMessageA(hWnd, TBM_GETTICPOS, 0, 0);
     expect(-1, ret);
+    ret = SendMessageA(hWnd, TBM_GETRANGEMIN, 0, 0);
+    expect(0, ret);
+    ret = SendMessageA(hWnd, TBM_GETRANGEMAX, 0, 0);
+    expect(100, ret);
+
+    ret = SendMessageA(hWnd, TBM_SETRANGEMAX, TRUE, 200);
+    expect(0, ret);
+
+    ret = SendMessageA(hWnd, TBM_GETNUMTICS, 0, 0);
+    expect(2, ret);
+
+    ret = SendMessageA(hWnd, TBM_SETRANGEMIN, TRUE, 10);
+    expect(0, ret);
+
+    ret = SendMessageA(hWnd, TBM_GETNUMTICS, 0, 0);
+    expect(2, ret);
+
+    DestroyWindow(hWnd);
+}
+
+static void test_TBS_AUTOTICKS(void)
+{
+    HWND hWnd;
+    int ret;
+
+    hWnd = create_trackbar(TBS_AUTOTICKS, hWndParent);
+
+    ret = SendMessageA(hWnd, TBM_GETNUMTICS, 0, 0);
+    expect(2, ret);
+    ret = SendMessageA(hWnd, TBM_GETTIC, 0, 0);
+    expect(-1, ret);
+    ret = SendMessageA(hWnd, TBM_GETTICPOS, 0, 0);
+    expect(-1, ret);
+    ret = SendMessageA(hWnd, TBM_GETRANGEMIN, 0, 0);
+    expect(0, ret);
+    ret = SendMessageA(hWnd, TBM_GETRANGEMAX, 0, 0);
+    expect(100, ret);
+
+    /* TBM_SETRANGEMAX rebuilds tics */
+    ret = SendMessageA(hWnd, TBM_SETRANGEMAX, TRUE, 200);
+    expect(0, ret);
+    ret = SendMessageA(hWnd, TBM_GETNUMTICS, 0, 0);
+    expect(201, ret);
+
+    /* TBM_SETRANGEMIN rebuilds tics */
+    ret = SendMessageA(hWnd, TBM_SETRANGEMAX, TRUE, 100);
+    expect(0, ret);
+    ret = SendMessageA(hWnd, TBM_SETRANGEMIN, TRUE, 10);
+    expect(0, ret);
+    ret = SendMessageA(hWnd, TBM_GETNUMTICS, 0, 0);
+    expect(91, ret);
+
+    ret = SendMessageA(hWnd, TBM_SETRANGEMIN, TRUE, 0);
+    expect(0, ret);
+
+    /* TBM_SETRANGE rebuilds tics */
+    ret = SendMessageA(hWnd, TBM_SETRANGE, TRUE, MAKELONG(10, 200));
+    expect(0, ret);
+    ret = SendMessageA(hWnd, TBM_GETNUMTICS, 0, 0);
+    expect(191, ret);
 
     DestroyWindow(hWnd);
 }
@@ -996,7 +1063,7 @@ START_TEST(trackbar)
         return;
     }
 
-    ok_sequence(sequences, TRACKBAR_SEQ_INDEX, create_trackbar_wnd_seq, "create Trackbar Window", FALSE);
+    ok_sequence(sequences, TRACKBAR_SEQ_INDEX, empty_seq, "create Trackbar Window", FALSE);
     ok_sequence(sequences, PARENT_SEQ_INDEX, parent_create_trackbar_wnd_seq, "parent trackbar window", TRUE);
     flush_sequences(sequences, NUM_MSG_SEQUENCE);
 
@@ -1012,6 +1079,7 @@ START_TEST(trackbar)
     test_tic_placement(hWndTrackbar);
     test_tool_tips(hWndTrackbar);
     test_unicode(hWndTrackbar);
+    test_TBS_AUTOTICKS();
 
     flush_sequences(sequences, NUM_MSG_SEQUENCE);
     DestroyWindow(hWndTrackbar);

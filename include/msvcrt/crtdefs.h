@@ -29,7 +29,7 @@
 # error You cannot use both wine/port.h and msvcrt headers
 #endif
 
-#if defined(__x86_64__) && !defined(_WIN64)
+#if (defined(__x86_64__) || defined(__powerpc64__) || defined(__sparc64__) || defined(__aarch64__)) && !defined(_WIN64)
 #define _WIN64
 #endif
 
@@ -80,10 +80,16 @@
 #  define __ms_va_list __builtin_ms_va_list
 #  define __ms_va_start(list,arg) __builtin_ms_va_start(list,arg)
 #  define __ms_va_end(list) __builtin_ms_va_end(list)
+#  define __ms_va_copy(dest,src) __builtin_ms_va_copy(dest,src)
 # else
 #  define __ms_va_list va_list
 #  define __ms_va_start(list,arg) va_start(list,arg)
 #  define __ms_va_end(list) va_end(list)
+#  ifdef va_copy
+#   define __ms_va_copy(dest,src) va_copy(dest,src)
+#  else
+#   define __ms_va_copy(dest,src) ((dest) = (src))
+#  endif
 # endif
 #endif
 

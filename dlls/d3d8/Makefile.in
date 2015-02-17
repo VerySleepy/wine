@@ -4,7 +4,6 @@ IMPORTS   = dxguid uuid wined3d
 
 C_SRCS = \
 	buffer.c \
-	cubetexture.c \
 	d3d8_main.c \
 	device.c \
 	directx.c \
@@ -13,9 +12,5 @@ C_SRCS = \
 	swapchain.c \
 	texture.c \
 	vertexdeclaration.c \
-	volume.c \
-	volumetexture.c
-
+	volume.c
 RC_SRCS = version.rc
-
-@MAKE_DLL_RULES@

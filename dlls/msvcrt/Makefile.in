@@ -1,4 +1,4 @@
-EXTRADEFS = -D_MT
+EXTRADEFS = -D_MT -D_MSVCR_VER=0
 MODULE    = msvcrt.dll
 IMPORTLIB = msvcrt
 DELAYIMPORTS = advapi32 user32
@@ -6,13 +6,15 @@ DELAYIMPORTS = advapi32 user32
 C_SRCS = \
 	console.c \
 	cpp.c \
-	cppexcept.c \
 	ctype.c \
 	data.c \
 	dir.c \
 	environ.c \
 	errno.c \
 	except.c \
+	except_arm.c \
+	except_i386.c \
+	except_x86_64.c \
 	exit.c \
 	file.c \
 	heap.c \
@@ -32,5 +34,3 @@ C_SRCS = \
 
 RC_SRCS = \
 	rsrc.rc
-
-@MAKE_DLL_RULES@

@@ -2,6 +2,7 @@
  * Unit test suite for clipping
  *
  * Copyright 2005 Huw Davies
+ * Copyright 2008,2011,2013 Dmitry Timoshkov
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -112,6 +113,8 @@ static void test_GetRandomRgn(void)
     GetRgnBox(hrgn, &ret_rc);
     if(GetVersion() & 0x80000000)
         OffsetRect(&window_rc, -window_rc.left, -window_rc.top);
+    /* the window may be partially obscured so the region may be smaller */
+    IntersectRect( &window_rc, &ret_rc, &ret_rc );
     ok(EqualRect(&window_rc, &ret_rc) ||
        broken(IsRectEmpty(&ret_rc)), /* win95 */
        "GetRandomRgn %d,%d - %d,%d\n",
@@ -181,11 +184,12 @@ static void test_ExtCreateRegion(void)
 {
     static const RECT empty_rect;
     static const RECT rc = { 111, 222, 333, 444 };
+    static const RECT arc[2] = { {0, 0, 10, 10}, {10, 10, 20, 20}};
     static const RECT rc_xformed = { 76, 151, 187, 262 };
     union
     {
         RGNDATA data;
-        char buf[sizeof(RGNDATAHEADER) + sizeof(RECT)];
+        char buf[sizeof(RGNDATAHEADER) + 2 * sizeof(RECT)];
     } rgn;
     HRGN hrgn;
     XFORM xform;
@@ -221,6 +225,20 @@ static void test_ExtCreateRegion(void)
     rgn.data.rdh.iType = RDH_RECTANGLES;
     rgn.data.rdh.dwSize = sizeof(rgn.data.rdh);
 
+    /* sizeof(RGNDATAHEADER) is large enough */
+    SetLastError(0xdeadbeef);
+    hrgn = ExtCreateRegion(NULL, sizeof(RGNDATAHEADER), &rgn.data);
+    ok(hrgn != 0, "ExtCreateRegion error %u\n", GetLastError());
+    verify_region(hrgn, &empty_rect);
+    DeleteObject(hrgn);
+
+    /* Cannot be smaller than sizeof(RGNDATAHEADER) */
+    SetLastError(0xdeadbeef);
+    hrgn = ExtCreateRegion(NULL, sizeof(RGNDATAHEADER) - 1, &rgn.data);
+    todo_wine
+    ok(!hrgn, "ExtCreateRegion should fail\n");
+    ok(GetLastError() == 0xdeadbeef, "0xdeadbeef, got %u\n", GetLastError());
+
     SetLastError(0xdeadbeef);
     hrgn = ExtCreateRegion(NULL, sizeof(rgn), &rgn.data);
     ok(hrgn != 0, "ExtCreateRegion error %u\n", GetLastError());
@@ -230,6 +248,13 @@ static void test_ExtCreateRegion(void)
     rgn.data.rdh.nCount = 1;
     SetRectEmpty(&rgn.data.rdh.rcBound);
     memcpy(rgn.data.Buffer, &rc, sizeof(rc));
+
+    /* With a single rect this seems to work... */
+    SetLastError(0xdeadbeef);
+    hrgn = ExtCreateRegion(NULL, sizeof(RGNDATAHEADER) + sizeof(RECT) - 1, &rgn.data);
+    ok(hrgn != 0, "ExtCreateRegion error %u\n", GetLastError());
+    verify_region(hrgn, &rc);
+    DeleteObject(hrgn);
 
     SetLastError(0xdeadbeef);
     hrgn = ExtCreateRegion(NULL, sizeof(rgn), &rgn.data);
@@ -264,6 +289,18 @@ static void test_ExtCreateRegion(void)
     ok(hrgn != 0, "ExtCreateRegion error %u/%x\n", GetLastError(), GetLastError());
     verify_region(hrgn, &rc_xformed);
     DeleteObject(hrgn);
+
+    rgn.data.rdh.nCount = 2;
+    SetRectEmpty(&rgn.data.rdh.rcBound);
+    memcpy(rgn.data.Buffer, arc, sizeof(arc));
+
+    /* Buffer cannot be smaller than sizeof(RGNDATAHEADER) + 2 * sizeof(RECT) */
+    SetLastError(0xdeadbeef);
+    hrgn = ExtCreateRegion(NULL, sizeof(RGNDATAHEADER) + 2 * sizeof(RECT) - 1, &rgn.data);
+    todo_wine
+    ok(!hrgn, "ExtCreateRegion should fail\n");
+    ok(GetLastError() == 0xdeadbeef, "0xdeadbeef, got %u\n", GetLastError());
+
 }
 
 static void test_GetClipRgn(void)
@@ -331,7 +368,7 @@ static void test_GetClipRgn(void)
 
     /* Try unsetting and then query the clipping region. */
     ret = SelectClipRgn(hdc, NULL);
-    ok(ret == SIMPLEREGION,
+    ok(ret == SIMPLEREGION || (ret == COMPLEXREGION && GetSystemMetrics(SM_CMONITORS) > 1),
        "Expected SelectClipRgn to return SIMPLEREGION, got %d\n", ret);
 
     ret = GetClipRgn(hdc, NULL);
@@ -386,10 +423,35 @@ static void test_memory_dc_clipping(void)
     ret = GetClipRgn(hdc, hrgn);
     ok(ret == 0, "expected 0, got %d\n", ret);
 
+    ret = ExtSelectClipRgn(hdc, 0, RGN_DIFF);
+    ok(ret == 0, "expected 0, got %d\n", ret);
+
+    ret = GetClipRgn(hdc, hrgn);
+    ok(ret == 0, "expected 0, got %d\n", ret);
+
     SelectObject(hdc, hbmp);
 
     ret = ExtSelectClipRgn(hdc, hrgn_empty, RGN_DIFF);
     ok(ret == SIMPLEREGION, "expected SIMPLEREGION, got %d\n", ret);
+
+    ret = GetClipRgn(hdc, hrgn);
+    ok(ret == 1, "expected 1, got %d\n", ret);
+
+    ret = GetRgnBox(hrgn, &rc);
+    ok(ret == SIMPLEREGION, "expected SIMPLEREGION, got %d\n", ret);
+    ok(rc.left == 0 && rc.top == 0 && rc.right == 100 && rc.bottom == 100,
+       "expected 0,0-100,100, got %d,%d-%d,%d\n", rc.left, rc.top, rc.right, rc.bottom);
+
+    SetRect( &rc, 10, 10, 20, 20 );
+    ret = RectVisible( hdc, &rc );
+    ok( ret, "RectVisible failed for %d,%d-%d,%d\n", rc.left, rc.top, rc.right, rc.bottom );
+
+    SetRect( &rc, 20, 20, 10, 10 );
+    ret = RectVisible( hdc, &rc );
+    ok( ret, "RectVisible failed for %d,%d-%d,%d\n", rc.left, rc.top, rc.right, rc.bottom );
+
+    ret = ExtSelectClipRgn(hdc, 0, RGN_DIFF);
+    ok(ret == 0, "expected 0, got %d\n", ret);
 
     ret = GetClipRgn(hdc, hrgn);
     ok(ret == 1, "expected 1, got %d\n", ret);
@@ -410,7 +472,7 @@ static void test_window_dc_clipping(void)
     HDC hdc;
     HRGN hrgn, hrgn_empty;
     HWND hwnd;
-    RECT rc;
+    RECT rc, virtual_rect;
     int ret, screen_width, screen_height;
 
     /* Windows versions earlier than Win2k do not support the virtual screen metrics,
@@ -419,6 +481,8 @@ static void test_window_dc_clipping(void)
     if(!screen_width) screen_width = GetSystemMetrics(SM_CXSCREEN);
     screen_height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
     if(!screen_height) screen_height = GetSystemMetrics(SM_CYSCREEN);
+    SetRect(&virtual_rect, GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_XVIRTUALSCREEN) + screen_width, GetSystemMetrics(SM_YVIRTUALSCREEN) + screen_height);
 
     trace("screen resolution %d x %d\n", screen_width, screen_height);
 
@@ -431,20 +495,48 @@ static void test_window_dc_clipping(void)
     ret = GetClipRgn(hdc, hrgn);
     ok(ret == 0, "expected 0, got %d\n", ret);
 
+    ret = ExtSelectClipRgn(hdc, 0, RGN_DIFF);
+    ok(ret == 0, "expected 0, got %d\n", ret);
+
+    ret = GetClipRgn(hdc, hrgn);
+    ok(ret == 0, "expected 0, got %d\n", ret);
+
     ret = ExtSelectClipRgn(hdc, hrgn_empty, RGN_DIFF);
-    ok(ret == SIMPLEREGION, "expected SIMPLEREGION, got %d\n", ret);
+    ok(ret == SIMPLEREGION || (ret == COMPLEXREGION && GetSystemMetrics(SM_CMONITORS) > 1),
+       "expected SIMPLEREGION, got %d\n", ret);
 
     ret = GetClipRgn(hdc, hrgn);
     ok(ret == 1, "expected 1, got %d\n", ret);
 
     ret = GetRgnBox(hrgn, &rc);
     ok(ret == SIMPLEREGION, "expected SIMPLEREGION, got %d\n", ret);
-    ok(rc.left == 0 && rc.top == 0 && rc.right == screen_width && rc.bottom == screen_height,
-       "expected 0,0-%d,%d, got %d,%d-%d,%d\n", screen_width, screen_height,
-        rc.left, rc.top, rc.right, rc.bottom);
+    ok(EqualRect(&rc, &virtual_rect), "expected %d,%d-%d,%d, got %d,%d-%d,%d\n",
+       virtual_rect.left, virtual_rect.top, virtual_rect.right, virtual_rect.bottom,
+       rc.left, rc.top, rc.right, rc.bottom);
+
+    SetRect( &rc, 10, 10, 20, 20 );
+    ret = RectVisible( hdc, &rc );
+    ok( ret, "RectVisible failed for %d,%d-%d,%d\n", rc.left, rc.top, rc.right, rc.bottom );
+
+    SetRect( &rc, 20, 20, 10, 10 );
+    ret = RectVisible( hdc, &rc );
+    ok( ret, "RectVisible failed for %d,%d-%d,%d\n", rc.left, rc.top, rc.right, rc.bottom );
+
+    ret = ExtSelectClipRgn(hdc, 0, RGN_DIFF);
+    ok(ret == 0, "expected 0, got %d\n", ret);
+
+    ret = GetClipRgn(hdc, hrgn);
+    ok(ret == 1, "expected 1, got %d\n", ret);
+
+    ret = GetRgnBox(hrgn, &rc);
+    ok(ret == SIMPLEREGION, "expected SIMPLEREGION, got %d\n", ret);
+    ok(EqualRect(&rc, &virtual_rect), "expected %d,%d-%d,%d, got %d,%d-%d,%d\n",
+       virtual_rect.left, virtual_rect.top, virtual_rect.right, virtual_rect.bottom,
+       rc.left, rc.top, rc.right, rc.bottom);
 
     ret = ExtSelectClipRgn(hdc, 0, RGN_COPY);
-    ok(ret == SIMPLEREGION, "expected SIMPLEREGION, got %d\n", ret);
+    ok(ret == SIMPLEREGION || (ret == COMPLEXREGION && GetSystemMetrics(SM_CMONITORS) > 1),
+       "expected SIMPLEREGION, got %d\n", ret);
 
     ret = GetClipRgn(hdc, hrgn);
     ok(ret == 0, "expected 0, got %d\n", ret);

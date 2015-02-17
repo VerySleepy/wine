@@ -51,6 +51,8 @@ UINT WINAPI WSOCK32_inet_network(const char *cp)
 {
 #ifdef HAVE_INET_NETWORK
     return inet_network(cp);
+#elif defined(HAVE_INET_ADDR)
+    return ntohl( inet_addr( cp ) );
 #else
     return 0;
 #endif
@@ -83,7 +85,7 @@ static DWORD map_service(DWORD wsaflags)
     if (wsaflags & XP1_DISCONNECT_DATA)     flags |= XP_DISCONNECT_DATA;
     if (wsaflags & XP1_SUPPORT_BROADCAST)   flags |= XP_SUPPORTS_BROADCAST;
     if (wsaflags & XP1_SUPPORT_MULTIPOINT)  flags |= XP_SUPPORTS_MULTICAST;
-    if (wsaflags & XP1_QOS_SUPPORTED)       flags |= XP_BANDWITH_ALLOCATION;
+    if (wsaflags & XP1_QOS_SUPPORTED)       flags |= XP_BANDWIDTH_ALLOCATION;
     if (wsaflags & XP1_PARTIAL_MESSAGE)     flags |= XP_FRAGMENTATION;
     return flags;
 }
@@ -115,7 +117,8 @@ INT WINAPI EnumProtocolsA(LPINT protocols, LPVOID buffer, LPDWORD buflen)
         {
             WSAPROTOCOL_INFOA *wsabuf;
             PROTOCOL_INFOA *pi = buffer;
-            unsigned int i, string_offset;
+            unsigned int string_offset;
+            INT i;
 
             if (!(wsabuf = HeapAlloc(GetProcessHeap(), 0, size))) return SOCKET_ERROR;
 
@@ -169,7 +172,8 @@ INT WINAPI EnumProtocolsW(LPINT protocols, LPVOID buffer, LPDWORD buflen)
         {
             WSAPROTOCOL_INFOW *wsabuf;
             PROTOCOL_INFOW *pi = buffer;
-            unsigned int i, string_offset;
+            unsigned int string_offset;
+            INT i;
 
             if (!(wsabuf = HeapAlloc(GetProcessHeap(), 0, size))) return SOCKET_ERROR;
 
@@ -187,7 +191,7 @@ INT WINAPI EnumProtocolsW(LPINT protocols, LPVOID buffer, LPDWORD buflen)
                 pi[i].dwMessageSize  = wsabuf[i].dwMessageSize;
 
                 memcpy((char *)buffer + string_offset, wsabuf[i].szProtocol, string_size);
-                pi[i].lpProtocol = (WCHAR *)(char *)buffer + string_offset;
+                pi[i].lpProtocol = (WCHAR *)((char *)buffer + string_offset);
                 string_offset += string_size;
             }
             HeapFree(GetProcessHeap(), 0, wsabuf);

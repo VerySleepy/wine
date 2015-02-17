@@ -53,6 +53,7 @@ struct tray_icon
     HICON          image;    /* the image to render */
     HWND           owner;    /* the HWND passed in to the Shell_NotifyIcon call */
     HWND           window;   /* the adaptor window */
+    BOOL           layered;  /* whether we are using a layered window */
     HWND           tooltip;  /* Icon tooltip */
     UINT           state;    /* state flags */
     UINT           id;       /* the unique id given by the app */
@@ -361,13 +362,88 @@ static void remove_from_standalone_tray( struct tray_icon *icon )
     TRACE( "removed %u now %d icons\n", icon->id, nb_displayed );
 }
 
+static void repaint_tray_icon( struct tray_icon *icon )
+{
+    BLENDFUNCTION blend = { AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+    int width = GetSystemMetrics( SM_CXSMICON );
+    int height = GetSystemMetrics( SM_CYSMICON );
+    BITMAPINFO *info;
+    HBITMAP dib, mask;
+    HDC hdc;
+    RECT rc;
+    SIZE size;
+    POINT pos;
+    int i, x, y;
+    void *color_bits, *mask_bits;
+    DWORD *ptr;
+    BOOL has_alpha = FALSE;
+
+    GetWindowRect( icon->window, &rc );
+    size.cx = rc.right - rc.left;
+    size.cy = rc.bottom - rc.top;
+    pos.x = (size.cx - width) / 2;
+    pos.y = (size.cy - height) / 2;
+
+    info = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, FIELD_OFFSET( BITMAPINFO, bmiColors[2] ));
+    if (!info) return;
+    info->bmiHeader.biSize = sizeof(info->bmiHeader);
+    info->bmiHeader.biWidth = size.cx;
+    info->bmiHeader.biHeight = size.cy;
+    info->bmiHeader.biBitCount = 32;
+    info->bmiHeader.biPlanes = 1;
+    info->bmiHeader.biCompression = BI_RGB;
+
+    hdc = CreateCompatibleDC( 0 );
+    if (!(dib = CreateDIBSection( 0, info, DIB_RGB_COLORS, &color_bits, NULL, 0 ))) goto done;
+    SelectObject( hdc, dib );
+    DrawIconEx( hdc, pos.x, pos.y, icon->image, width, height, 0, 0, DI_DEFAULTSIZE | DI_NORMAL );
+
+    /* check if the icon was drawn with an alpha channel */
+    for (i = 0, ptr = color_bits; i < size.cx * size.cy; i++)
+        if ((has_alpha = (ptr[i] & 0xff000000) != 0)) break;
+
+    if (!has_alpha)
+    {
+        unsigned int width_bytes = (size.cx + 31) / 32 * 4;
+
+        info->bmiHeader.biBitCount = 1;
+        info->bmiColors[0].rgbRed      = 0;
+        info->bmiColors[0].rgbGreen    = 0;
+        info->bmiColors[0].rgbBlue     = 0;
+        info->bmiColors[0].rgbReserved = 0;
+        info->bmiColors[1].rgbRed      = 0xff;
+        info->bmiColors[1].rgbGreen    = 0xff;
+        info->bmiColors[1].rgbBlue     = 0xff;
+        info->bmiColors[1].rgbReserved = 0;
+
+        if (!(mask = CreateDIBSection( 0, info, DIB_RGB_COLORS, &mask_bits, NULL, 0 ))) goto done;
+        memset( mask_bits, 0xff, width_bytes * size.cy );
+        SelectObject( hdc, mask );
+        DrawIconEx( hdc, pos.x, pos.y, icon->image, width, height, 0, 0, DI_DEFAULTSIZE | DI_MASK );
+
+        for (y = 0, ptr = color_bits; y < size.cy; y++)
+            for (x = 0; x < size.cx; x++, ptr++)
+                if (!((((BYTE *)mask_bits)[y * width_bytes + x / 8] << (x % 8)) & 0x80))
+                    *ptr |= 0xff000000;
+
+        SelectObject( hdc, dib );
+        DeleteObject( mask );
+    }
+
+    UpdateLayeredWindow( icon->window, 0, NULL, NULL, hdc, NULL, 0, &blend, ULW_ALPHA );
+done:
+    HeapFree (GetProcessHeap(), 0, info);
+    if (hdc) DeleteDC( hdc );
+    if (dib) DeleteObject( dib );
+}
+
 /* window procedure for the individual tray icon window */
 static LRESULT WINAPI tray_icon_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     struct tray_icon *icon = NULL;
     BOOL ret;
 
-    WINE_TRACE("hwnd=%p, msg=0x%x\n", hwnd, msg);
+    TRACE("hwnd=%p, msg=0x%x\n", hwnd, msg);
 
     /* set the icon data for the window from the data passed into CreateWindow */
     if (msg == WM_NCCREATE)
@@ -381,7 +457,12 @@ static LRESULT WINAPI tray_icon_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPAR
         SetTimer( hwnd, VALID_WIN_TIMER, VALID_WIN_TIMEOUT, NULL );
         break;
 
+    case WM_SIZE:
+        if (icon->window && icon->layered) repaint_tray_icon( icon );
+        break;
+
     case WM_PAINT:
+        if (!icon->layered)
         {
             PAINTSTRUCT ps;
             RECT rc;
@@ -397,6 +478,7 @@ static LRESULT WINAPI tray_icon_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPAR
             EndPaint(hwnd, &ps);
             return 0;
         }
+        break;
 
     case WM_MOUSEMOVE:
     case WM_LBUTTONDOWN:
@@ -452,12 +534,34 @@ static LRESULT WINAPI tray_icon_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPAR
 /* find the X11 window owner the system tray selection */
 static Window get_systray_selection_owner( Display *display )
 {
-    Window ret;
+    return XGetSelectionOwner( display, systray_atom );
+}
 
-    wine_tsx11_lock();
-    ret = XGetSelectionOwner( display, systray_atom );
-    wine_tsx11_unlock();
-    return ret;
+static void get_systray_visual_info( Display *display, Window systray_window, XVisualInfo *info )
+{
+    XVisualInfo *list, template;
+    VisualID *visual_id;
+    Atom type;
+    int format, num;
+    unsigned long count, remaining;
+
+    *info = default_visual;
+    if (XGetWindowProperty( display, systray_window, x11drv_atom(_NET_SYSTEM_TRAY_VISUAL), 0,
+                            65536/sizeof(CARD32), False, XA_VISUALID, &type, &format, &count,
+                            &remaining, (unsigned char **)&visual_id ))
+        return;
+
+    if (type == XA_VISUALID && format == 32)
+    {
+        template.visualid = visual_id[0];
+        if ((list = XGetVisualInfo( display, VisualIDMask, &template, &num )))
+        {
+            *info = list[0];
+            TRACE( "systray window %lx got visual %lx\n", systray_window, info->visualid );
+            XFree( list );
+        }
+    }
+    XFree( visual_id );
 }
 
 static BOOL init_systray(void)
@@ -498,7 +602,6 @@ static BOOL init_systray(void)
     }
 
     display = thread_init_display();
-    wine_tsx11_lock();
     if (DefaultScreen( display ) == 0)
         systray_atom = x11drv_atom(_NET_SYSTEM_TRAY_S0);
     else
@@ -508,7 +611,6 @@ static BOOL init_systray(void)
         systray_atom = XInternAtom( display, systray_buffer, False );
     }
     XSelectInput( display, root_window, StructureNotifyMask );
-    wine_tsx11_unlock();
 
     init_done = TRUE;
     return TRUE;
@@ -517,23 +619,30 @@ static BOOL init_systray(void)
 /* dock the given icon with the NETWM system tray */
 static void dock_systray_icon( Display *display, struct tray_icon *icon, Window systray_window )
 {
-    struct x11drv_win_data *data;
+    Window window;
     XEvent ev;
     XSetWindowAttributes attr;
+    XVisualInfo visual;
+    struct x11drv_win_data *data;
 
-    icon->window = CreateWindowW( icon_classname, NULL, WS_CLIPSIBLINGS | WS_POPUP,
-                                  CW_USEDEFAULT, CW_USEDEFAULT, icon_cx, icon_cy,
-                                  NULL, NULL, NULL, icon );
-    if (!icon->window) return;
+    get_systray_visual_info( display, systray_window, &visual );
 
-    if (!(data = X11DRV_get_win_data( icon->window )) &&
-        !(data = X11DRV_create_win_data( icon->window ))) return;
+    icon->layered = (visual.visualid != default_visual.visualid);
+    icon->window = CreateWindowExW( icon->layered ? WS_EX_LAYERED : 0,
+                                    icon_classname, NULL, WS_CLIPSIBLINGS | WS_POPUP,
+                                    CW_USEDEFAULT, CW_USEDEFAULT, icon_cx, icon_cy,
+                                    NULL, NULL, NULL, icon );
 
-    TRACE( "icon window %p/%lx managed %u\n", data->hwnd, data->whole_window, data->managed );
+    if (!(data = get_win_data( icon->window ))) return;
+    if (icon->layered) set_window_visual( data, &visual );
+    make_window_embedded( data );
+    window = data->whole_window;
+    release_win_data( data );
 
-    make_window_embedded( display, data );
     create_tooltip( icon );
     ShowWindow( icon->window, SW_SHOWNA );
+
+    TRACE( "icon window %p/%lx\n", icon->window, window );
 
     /* send the docking request message */
     ev.xclient.type = ClientMessage;
@@ -542,16 +651,18 @@ static void dock_systray_icon( Display *display, struct tray_icon *icon, Window 
     ev.xclient.format = 32;
     ev.xclient.data.l[0] = CurrentTime;
     ev.xclient.data.l[1] = SYSTEM_TRAY_REQUEST_DOCK;
-    ev.xclient.data.l[2] = data->whole_window;
+    ev.xclient.data.l[2] = window;
     ev.xclient.data.l[3] = 0;
     ev.xclient.data.l[4] = 0;
-    wine_tsx11_lock();
     XSendEvent( display, systray_window, False, NoEventMask, &ev );
-    attr.background_pixmap = ParentRelative;
-    attr.bit_gravity = ForgetGravity;
-    XChangeWindowAttributes( display, data->whole_window, CWBackPixmap | CWBitGravity, &attr );
-    XChangeWindowAttributes( display, data->client_window, CWBackPixmap | CWBitGravity, &attr );
-    wine_tsx11_unlock();
+
+    if (!icon->layered)
+    {
+        attr.background_pixmap = ParentRelative;
+        attr.bit_gravity = ForgetGravity;
+        XChangeWindowAttributes( display, window, CWBackPixmap | CWBitGravity, &attr );
+    }
+    else repaint_tray_icon( icon );
 }
 
 /* dock systray windows again with the new owner */
@@ -578,11 +689,15 @@ static BOOL hide_icon( struct tray_icon *icon )
     if (!icon->window) return TRUE;  /* already hidden */
 
     /* make sure we don't try to unmap it, it confuses some systray docks */
-    if ((data = X11DRV_get_win_data( icon->window )) && data->embedded) data->mapped = FALSE;
-
+    if ((data = get_win_data( icon->window )))
+    {
+        if (data->embedded) data->mapped = FALSE;
+        release_win_data( data );
+    }
     DestroyWindow(icon->window);
     DestroyWindow(icon->tooltip);
     icon->window = 0;
+    icon->layered = FALSE;
     icon->tooltip = 0;
     remove_from_standalone_tray( icon );
     update_balloon( icon );
@@ -625,10 +740,11 @@ static BOOL modify_icon( struct tray_icon *icon, NOTIFYICONDATAW *nid )
         if (icon->window)
         {
             if (icon->display != -1) InvalidateRect( icon->window, NULL, TRUE );
+            else if (icon->layered) repaint_tray_icon( icon );
             else
             {
-                struct x11drv_win_data *data = X11DRV_get_win_data( icon->window );
-                if (data) XClearArea( gdi_display, data->client_window, 0, 0, 0, 0, True );
+                Window win = X11DRV_get_whole_window( icon->window );
+                if (win) XClearArea( gdi_display, win, 0, 0, 0, 0, True );
             }
         }
     }
@@ -661,17 +777,17 @@ static BOOL add_icon(NOTIFYICONDATAW *nid)
 {
     struct tray_icon  *icon;
 
-    WINE_TRACE("id=0x%x, hwnd=%p\n", nid->uID, nid->hWnd);
+    TRACE("id=0x%x, hwnd=%p\n", nid->uID, nid->hWnd);
 
     if ((icon = get_icon(nid->hWnd, nid->uID)))
     {
-        WINE_WARN("duplicate tray icon add, buggy app?\n");
+        WARN("duplicate tray icon add, buggy app?\n");
         return FALSE;
     }
 
     if (!(icon = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*icon))))
     {
-        WINE_ERR("out of memory\n");
+        ERR("out of memory\n");
         return FALSE;
     }
 

@@ -224,6 +224,12 @@ static BOOL pe_map_file(HANDLE file, struct image_file_map* fmap, enum module_ty
 
             if (!(nthdr = RtlImageNtHeader(mapping))) goto error;
             memcpy(&fmap->u.pe.ntheader, nthdr, sizeof(fmap->u.pe.ntheader));
+            switch (nthdr->OptionalHeader.Magic)
+            {
+            case 0x10b: fmap->addr_size = 32; break;
+            case 0x20b: fmap->addr_size = 64; break;
+            default: return FALSE;
+            }
             section = (IMAGE_SECTION_HEADER*)
                 ((char*)&nthdr->OptionalHeader + nthdr->FileHeader.SizeOfOptionalHeader);
             fmap->u.pe.sect = HeapAlloc(GetProcessHeap(), 0,
@@ -509,7 +515,7 @@ static BOOL pe_load_stabs(const struct process* pcs, struct module* module)
 static BOOL pe_load_dwarf(struct module* module)
 {
     struct image_file_map*      fmap = &module->format_info[DFI_PE]->u.pe_info->fmap;
-    BOOL                        ret = FALSE;
+    BOOL                        ret;
 
     ret = dwarf2_parse(module,
                        module->module.BaseOfImage - fmap->u.pe.ntheader.OptionalHeader.ImageBase,
@@ -600,8 +606,8 @@ static BOOL pe_load_msc_debug_info(const struct process* pcs, struct module* mod
         if (nDbg != 1 || dbg->Type != IMAGE_DEBUG_TYPE_MISC ||
             misc->DataType != IMAGE_DEBUG_MISC_EXENAME)
         {
-            WINE_ERR("-Debug info stripped, but no .DBG file in module %s\n",
-                     debugstr_w(module->module.ModuleName));
+            ERR("-Debug info stripped, but no .DBG file in module %s\n",
+                debugstr_w(module->module.ModuleName));
         }
         else
         {

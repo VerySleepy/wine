@@ -31,11 +31,14 @@
 #include "winerror.h"
 #include "aclapi.h"
 
+#define IS_HKCR(hk) ((UINT_PTR)hk > 0 && ((UINT_PTR)hk & 3) == 2)
+
 static HKEY hkey_main;
 static DWORD GLE;
 
 static const char * sTestpath1 = "%LONGSYSTEMVAR%\\subdir1";
 static const char * sTestpath2 = "%FOO%\\subdir1";
+static const DWORD ptr_size = 8 * sizeof(void*);
 
 static DWORD (WINAPI *pRegGetValueA)(HKEY,LPCSTR,LPCSTR,DWORD,LPDWORD,PVOID,LPDWORD);
 static DWORD (WINAPI *pRegDeleteTreeA)(HKEY,LPCSTR);
@@ -44,6 +47,10 @@ static BOOL (WINAPI *pIsWow64Process)(HANDLE,PBOOL);
 static NTSTATUS (WINAPI * pNtDeleteKey)(HANDLE);
 static NTSTATUS (WINAPI * pRtlFormatCurrentUserKeyPath)(UNICODE_STRING*);
 static NTSTATUS (WINAPI * pRtlFreeUnicodeString)(PUNICODE_STRING);
+static LONG (WINAPI *pRegDeleteKeyValueA)(HKEY,LPCSTR,LPCSTR);
+static LONG (WINAPI *pRegSetKeyValueW)(HKEY,LPCWSTR,LPCWSTR,DWORD,const void*,DWORD);
+
+static BOOL limited_user;
 
 
 /* Debugging functions from wine/libs/wine/debug.c */
@@ -130,6 +137,8 @@ static void InitFunctionPtrs(void)
     ADVAPI32_GET_PROC(RegGetValueA);
     ADVAPI32_GET_PROC(RegDeleteTreeA);
     ADVAPI32_GET_PROC(RegDeleteKeyExA);
+    ADVAPI32_GET_PROC(RegDeleteKeyValueA);
+    ADVAPI32_GET_PROC(RegSetKeyValueW);
 
     pIsWow64Process = (void *)GetProcAddress( hkernel32, "IsWow64Process" );
     pRtlFormatCurrentUserKeyPath = (void *)GetProcAddress( hntdll, "RtlFormatCurrentUserKeyPath" );
@@ -143,6 +152,7 @@ static DWORD delete_key( HKEY hkey )
     char name[MAX_PATH];
     DWORD ret;
 
+    if ((ret = RegOpenKeyExA( hkey, "", 0, KEY_ENUMERATE_SUB_KEYS, &hkey ))) return ret;
     while (!(ret = RegEnumKeyA(hkey, 0, name, sizeof(name))))
     {
         HKEY tmp;
@@ -155,6 +165,7 @@ static DWORD delete_key( HKEY hkey )
     }
     if (ret != ERROR_NO_MORE_ITEMS) return ret;
     RegDeleteKeyA( hkey, "" );
+    RegCloseKey(hkey);
     return 0;
 }
 
@@ -163,6 +174,26 @@ static void setup_main_key(void)
     if (!RegOpenKeyA( HKEY_CURRENT_USER, "Software\\Wine\\Test", &hkey_main )) delete_key( hkey_main );
 
     assert (!RegCreateKeyA( HKEY_CURRENT_USER, "Software\\Wine\\Test", &hkey_main ));
+}
+
+static void check_user_privs(void)
+{
+    DWORD ret;
+    HKEY hkey = (HKEY)0xdeadbeef;
+
+    ret = RegOpenKeyExA( HKEY_LOCAL_MACHINE, "Software", 0, KEY_READ|KEY_WRITE, &hkey);
+    ok(ret == ERROR_SUCCESS || ret == ERROR_ACCESS_DENIED, "expected success or access denied, got %i\n", ret);
+    if (ret == ERROR_SUCCESS)
+    {
+        ok(hkey != NULL, "RegOpenKeyExA succeeded but returned NULL hkey\n");
+        RegCloseKey(hkey);
+    }
+    else
+    {
+        ok(hkey == NULL, "RegOpenKeyExA failed but returned hkey %p\n", hkey);
+        limited_user = TRUE;
+        trace("running as limited user\n");
+    }
 }
 
 #define lok ok_(__FILE__, line)
@@ -346,6 +377,9 @@ static void test_set_value(void)
         /* Crashes on NT4, Windows 2000 and XP SP1 */
         ret = RegSetValueW(hkey_main, NULL, REG_SZ, NULL, 0);
         ok(ret == ERROR_INVALID_PARAMETER, "RegSetValueW should have failed with ERROR_INVALID_PARAMETER instead of %d\n", ret);
+
+        RegSetValueExA(hkey_main, name2A, 0, REG_SZ, (const BYTE *)1, 1);
+        RegSetValueExA(hkey_main, name2A, 0, REG_DWORD, (const BYTE *)1, 1);
     }
 
     ret = RegSetValueW(hkey_main, NULL, REG_SZ, string1W, sizeof(string1W));
@@ -353,7 +387,12 @@ static void test_set_value(void)
     test_hkey_main_Value_A(NULL, string1A, sizeof(string1A));
     test_hkey_main_Value_W(NULL, string1W, sizeof(string1W));
 
-    /* RegSetValueA ignores the size passed in */
+    ret = RegSetValueW(hkey_main, name1W, REG_SZ, string1W, sizeof(string1W));
+    ok(ret == ERROR_SUCCESS, "RegSetValueW failed: %d, GLE=%d\n", ret, GetLastError());
+    test_hkey_main_Value_A(name1A, string1A, sizeof(string1A));
+    test_hkey_main_Value_W(name1W, string1W, sizeof(string1W));
+
+    /* RegSetValueW ignores the size passed in */
     ret = RegSetValueW(hkey_main, NULL, REG_SZ, string1W, 4 * sizeof(string1W[0]));
     ok(ret == ERROR_SUCCESS, "RegSetValueW failed: %d, GLE=%d\n", ret, GetLastError());
     test_hkey_main_Value_A(NULL, string1A, sizeof(string1A));
@@ -390,6 +429,64 @@ static void test_set_value(void)
     ok(ret == ERROR_SUCCESS, "RegSetValueExW failed: %d, GLE=%d\n", ret, GetLastError());
     test_hkey_main_Value_A(name2A, string2A, sizeof(string2A));
     test_hkey_main_Value_W(name2W, string2W, sizeof(string2W));
+
+    /* test RegSetValueExW with data = 1 */
+    ret = RegSetValueExW(hkey_main, name2W, 0, REG_SZ, (const BYTE *)1, 1);
+    ok(ret == ERROR_NOACCESS, "RegSetValueExW should have failed with ERROR_NOACCESS: %d, GLE=%d\n", ret, GetLastError());
+    ret = RegSetValueExW(hkey_main, name2W, 0, REG_DWORD, (const BYTE *)1, 1);
+    ok(ret == ERROR_NOACCESS, "RegSetValueExW should have failed with ERROR_NOACCESS: %d, GLE=%d\n", ret, GetLastError());
+
+    if (pRegGetValueA) /* avoid a crash on Windows 2000 */
+    {
+        ret = RegSetValueExW(hkey_main, NULL, 0, REG_SZ, NULL, 4);
+        ok(ret == ERROR_NOACCESS, "RegSetValueExW should have failed with ERROR_NOACCESS: %d, GLE=%d\n", ret, GetLastError());
+
+        ret = RegSetValueExW(hkey_main, NULL, 0, REG_SZ, NULL, 0);
+        ok(ret == ERROR_SUCCESS, "got %d\n", ret);
+
+        ret = RegSetValueExW(hkey_main, NULL, 0, REG_DWORD, NULL, 4);
+        ok(ret == ERROR_NOACCESS, "RegSetValueExW should have failed with ERROR_NOACCESS: %d, GLE=%d\n", ret, GetLastError());
+
+        ret = RegSetValueExW(hkey_main, NULL, 0, REG_DWORD, NULL, 0);
+        ok(ret == ERROR_SUCCESS, "got %d\n", ret);
+    }
+
+    /* RegSetKeyValue */
+    if (!pRegSetKeyValueW)
+        win_skip("RegSetKeyValue() is not supported.\n");
+    else
+    {
+        static const WCHAR subkeyW[] = {'s','u','b','k','e','y',0};
+        DWORD len, type;
+        HKEY subkey;
+
+        ret = pRegSetKeyValueW(hkey_main, NULL, name1W, REG_SZ, (const BYTE*)string2W, sizeof(string2W));
+        ok(ret == ERROR_SUCCESS, "got %d\n", ret);
+        test_hkey_main_Value_A(name1A, string2A, sizeof(string2A));
+        test_hkey_main_Value_W(name1W, string2W, sizeof(string2W));
+
+        ret = pRegSetKeyValueW(hkey_main, subkeyW, name1W, REG_SZ, string1W, sizeof(string1W));
+        ok(ret == ERROR_SUCCESS, "got %d\n", ret);
+
+        ret = RegOpenKeyExW(hkey_main, subkeyW, 0, KEY_QUERY_VALUE, &subkey);
+        ok(ret == ERROR_SUCCESS, "got %d\n", ret);
+        type = len = 0;
+        ret = RegQueryValueExW(subkey, name1W, 0, &type, NULL, &len);
+        ok(ret == ERROR_SUCCESS, "got %d\n", ret);
+        ok(len == sizeof(string1W), "got %d\n", len);
+        ok(type == REG_SZ, "got type %d\n", type);
+
+        ret = pRegSetKeyValueW(hkey_main, subkeyW, name1W, REG_SZ, NULL, 0);
+        ok(ret == ERROR_SUCCESS, "got %d\n", ret);
+
+        ret = pRegSetKeyValueW(hkey_main, subkeyW, name1W, REG_SZ, NULL, 4);
+        ok(ret == ERROR_NOACCESS, "got %d\n", ret);
+
+        ret = pRegSetKeyValueW(hkey_main, subkeyW, name1W, REG_DWORD, NULL, 4);
+        ok(ret == ERROR_NOACCESS, "got %d\n", ret);
+
+        RegCloseKey(subkey);
+    }
 }
 
 static void create_test_entries(void)
@@ -440,6 +537,33 @@ static void test_enum_value(void)
     ok( ERROR_SUCCESS == res || ERROR_INVALID_PARAMETER == res, "RegSetValueExA returned %d\n", res );
     res = RegSetValueExA( test_key, "Test", 0, REG_BINARY, NULL, 0 );
     ok( ERROR_SUCCESS == res || ERROR_INVALID_PARAMETER == res, "RegSetValueExA returned %d\n", res );
+
+    /* test reading the value and data without setting them */
+    val_count = 20;
+    data_count = 20;
+    type = 1234;
+    strcpy( value, "xxxxxxxxxx" );
+    strcpy( data, "xxxxxxxxxx" );
+    res = RegEnumValueA( test_key, 0, value, &val_count, NULL, &type, (LPBYTE)data, &data_count );
+    ok( res == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %d\n", res );
+    ok( val_count == 4, "val_count set to %d instead of 4\n", val_count );
+    ok( data_count == 0, "data_count set to %d instead of 0\n", data_count );
+    ok( type == REG_BINARY, "type %d is not REG_BINARY\n", type );
+    ok( !strcmp( value, "Test" ), "value is '%s' instead of Test\n", value );
+    ok( !strcmp( data, "xxxxxxxxxx" ), "data is '%s' instead of xxxxxxxxxx\n", data );
+
+    val_count = 20;
+    data_count = 20;
+    type = 1234;
+    memcpy( valueW, xxxW, sizeof(xxxW) );
+    memcpy( dataW, xxxW, sizeof(xxxW) );
+    res = RegEnumValueW( test_key, 0, valueW, &val_count, NULL, &type, (BYTE*)dataW, &data_count );
+    ok( res == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %d\n", res );
+    ok( val_count == 4, "val_count set to %d instead of 4\n", val_count );
+    ok( data_count == 0, "data_count set to %d instead of 0\n", data_count );
+    ok( type == REG_BINARY, "type %d is not REG_BINARY\n", type );
+    ok( !memcmp( valueW, testW, sizeof(testW) ), "value is not 'Test'\n" );
+    ok( !memcmp( dataW, xxxW, sizeof(xxxW) ), "data is not 'xxxxxxxxxx'\n" );
 
     res = RegSetValueExA( test_key, "Test", 0, REG_SZ, (const BYTE *)"foobar", 7 );
     ok( res == 0, "RegSetValueExA failed error %d\n", res );
@@ -809,7 +933,8 @@ static void test_get_value(void)
 
     /* Query REG_EXPAND_SZ using RRF_RT_REG_EXPAND_SZ (not allowed without RRF_NOEXPAND) */
     ret = pRegGetValueA(hkey_main, NULL, "TP1_EXP_SZ", RRF_RT_REG_EXPAND_SZ, NULL, NULL, NULL);
-    ok(ret == ERROR_INVALID_PARAMETER, "ret=%d\n", ret);
+    /* before win8: ERROR_INVALID_PARAMETER, win8: ERROR_UNSUPPORTED_TYPE */
+    ok(ret == ERROR_INVALID_PARAMETER || ret == ERROR_UNSUPPORTED_TYPE, "ret=%d\n", ret);
 
     /* Query REG_EXPAND_SZ using RRF_RT_ANY */
     buf[0] = 0; type = 0xdeadbeef; size = sizeof(buf);
@@ -847,6 +972,11 @@ static void test_reg_open_key(void)
     ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %d\n", ret);
     ok(hkResult != hkPreserve, "expected hkResult != hkPreserve\n");
     ok(hkResult != NULL, "hkResult != NULL\n");
+    RegCloseKey(hkResult);
+
+    /* trailing slashes */
+    ret = RegOpenKeyA(HKEY_CURRENT_USER, "Software\\Wine\\Test\\\\", &hkResult);
+    ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %d\n", ret);
     RegCloseKey(hkResult);
 
     /* open nonexistent key
@@ -932,6 +1062,39 @@ static void test_reg_open_key(void)
         "RegOpenKeyEx with KEY_WOW64_64KEY failed (err=%u)\n", ret);
     RegCloseKey(hkResult);
 
+    /* check special HKEYs on 64bit
+     * only the lower 4 bytes of the supplied key are used
+     */
+    if (ptr_size == 64)
+    {
+        /* HKEY_CURRENT_USER */
+        ret = RegOpenKeyA(UlongToHandle(HandleToUlong(HKEY_CURRENT_USER)), "Software", &hkResult);
+        ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %d\n", ret);
+        ok(hkResult != NULL, "expected hkResult != NULL\n");
+        RegCloseKey(hkResult);
+
+        ret = RegOpenKeyA((HKEY)(HandleToUlong(HKEY_CURRENT_USER) | (ULONG64)1 << 32), "Software", &hkResult);
+        ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %d\n", ret);
+        ok(hkResult != NULL, "expected hkResult != NULL\n");
+        RegCloseKey(hkResult);
+
+        ret = RegOpenKeyA((HKEY)(HandleToUlong(HKEY_CURRENT_USER) | (ULONG64)0xdeadbeef << 32), "Software", &hkResult);
+        ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %d\n", ret);
+        ok(hkResult != NULL, "expected hkResult != NULL\n");
+        RegCloseKey(hkResult);
+
+        ret = RegOpenKeyA((HKEY)(HandleToUlong(HKEY_CURRENT_USER) | (ULONG64)0xffffffff << 32), "Software", &hkResult);
+        ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %d\n", ret);
+        ok(hkResult != NULL, "expected hkResult != NULL\n");
+        RegCloseKey(hkResult);
+
+        /* HKEY_LOCAL_MACHINE */
+        ret = RegOpenKeyA((HKEY)(HandleToUlong(HKEY_LOCAL_MACHINE) | (ULONG64)0xdeadbeef << 32), "Software", &hkResult);
+        ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %d\n", ret);
+        ok(hkResult != NULL, "expected hkResult != NULL\n");
+        RegCloseKey(hkResult);
+    }
+
     /* Try using WOW64 flags when opening a key with a DACL set to verify that
      * the registry access check is performed correctly. Redirection isn't
      * being tested, so the tests don't care about whether the process is
@@ -944,13 +1107,21 @@ static void test_reg_open_key(void)
 
     ret = RegCreateKeyExA(HKEY_LOCAL_MACHINE, "Software\\Wine", 0, NULL, 0,
                           KEY_WOW64_32KEY | KEY_ALL_ACCESS, NULL, &hkRoot32, NULL);
-    ok(ret == ERROR_SUCCESS && hkRoot32 != NULL,
-       "RegCreateKeyEx with KEY_WOW64_32KEY failed (err=%u)\n", ret);
+    if (limited_user)
+        ok(ret == ERROR_ACCESS_DENIED && hkRoot32 == NULL,
+           "RegCreateKeyEx with KEY_WOW64_32KEY failed (err=%u)\n", ret);
+    else
+        ok(ret == ERROR_SUCCESS && hkRoot32 != NULL,
+           "RegCreateKeyEx with KEY_WOW64_32KEY failed (err=%u)\n", ret);
 
     ret = RegCreateKeyExA(HKEY_LOCAL_MACHINE, "Software\\Wine", 0, NULL, 0,
                           KEY_WOW64_64KEY | KEY_ALL_ACCESS, NULL, &hkRoot64, NULL);
-    ok(ret == ERROR_SUCCESS && hkRoot64 != NULL,
-       "RegCreateKeyEx with KEY_WOW64_64KEY failed (err=%u)\n", ret);
+    if (limited_user)
+        ok(ret == ERROR_ACCESS_DENIED && hkRoot64 == NULL,
+           "RegCreateKeyEx with KEY_WOW64_64KEY failed (err=%u)\n", ret);
+    else
+        ok(ret == ERROR_SUCCESS && hkRoot64 != NULL,
+           "RegCreateKeyEx with KEY_WOW64_64KEY failed (err=%u)\n", ret);
 
     bRet = AllocateAndInitializeSid(&sid_authority, 1, SECURITY_WORLD_RID,
                                     0, 0, 0, 0, 0, 0, 0, &world_sid);
@@ -979,26 +1150,34 @@ static void test_reg_open_key(void)
     ok(bRet == TRUE,
        "Expected SetSecurityDescriptorDacl to return TRUE, got %d, last error %u\n", bRet, GetLastError());
 
-    /* The "sanctioned" methods of setting a registry ACL aren't implemented in Wine. */
-    bRet = SetKernelObjectSecurity(hkRoot64, DACL_SECURITY_INFORMATION, sd);
-    ok(bRet == TRUE,
-       "Expected SetKernelObjectSecurity to return TRUE, got %d, last error %u\n", bRet, GetLastError());
+    if (limited_user)
+    {
+        skip("not enough privileges to modify HKLM\n");
+    }
+    else
+    {
+        LONG error;
 
-    bRet = SetKernelObjectSecurity(hkRoot32, DACL_SECURITY_INFORMATION, sd);
-    ok(bRet == TRUE,
-       "Expected SetKernelObjectSecurity to return TRUE, got %d, last error %u\n", bRet, GetLastError());
+        error = RegSetKeySecurity(hkRoot64, DACL_SECURITY_INFORMATION, sd);
+        ok(error == ERROR_SUCCESS,
+           "Expected RegSetKeySecurity to return success, got error %u\n", error);
 
-    hkResult = NULL;
-    ret = RegOpenKeyExA(HKEY_LOCAL_MACHINE, "Software\\Wine", 0, KEY_WOW64_64KEY | KEY_READ, &hkResult);
-    ok(ret == ERROR_SUCCESS && hkResult != NULL,
-       "RegOpenKeyEx with KEY_WOW64_64KEY failed (err=%u)\n", ret);
-    RegCloseKey(hkResult);
+        error = RegSetKeySecurity(hkRoot32, DACL_SECURITY_INFORMATION, sd);
+        ok(error == ERROR_SUCCESS,
+           "Expected RegSetKeySecurity to return success, got error %u\n", error);
 
-    hkResult = NULL;
-    ret = RegOpenKeyExA(HKEY_LOCAL_MACHINE, "Software\\Wine", 0, KEY_WOW64_32KEY | KEY_READ, &hkResult);
-    ok(ret == ERROR_SUCCESS && hkResult != NULL,
-       "RegOpenKeyEx with KEY_WOW64_32KEY failed (err=%u)\n", ret);
-    RegCloseKey(hkResult);
+        hkResult = NULL;
+        ret = RegOpenKeyExA(HKEY_LOCAL_MACHINE, "Software\\Wine", 0, KEY_WOW64_64KEY | KEY_READ, &hkResult);
+        ok(ret == ERROR_SUCCESS && hkResult != NULL,
+           "RegOpenKeyEx with KEY_WOW64_64KEY failed (err=%u)\n", ret);
+        RegCloseKey(hkResult);
+
+        hkResult = NULL;
+        ret = RegOpenKeyExA(HKEY_LOCAL_MACHINE, "Software\\Wine", 0, KEY_WOW64_32KEY | KEY_READ, &hkResult);
+        ok(ret == ERROR_SUCCESS && hkResult != NULL,
+           "RegOpenKeyEx with KEY_WOW64_32KEY failed (err=%u)\n", ret);
+        RegCloseKey(hkResult);
+    }
 
     HeapFree(GetProcessHeap(), 0, sd);
     LocalFree(key_acl);
@@ -1031,8 +1210,8 @@ static void test_reg_create_key(void)
     ok(!ret, "RegCreateKeyExA failed with error %d\n", ret);
 
     /* clean up */
-    RegDeleteKey(hkey2, "");
-    RegDeleteKey(hkey1, "");
+    RegDeleteKeyA(hkey2, "");
+    RegDeleteKeyA(hkey1, "");
     RegCloseKey(hkey2);
     RegCloseKey(hkey1);
 
@@ -1050,8 +1229,8 @@ static void test_reg_create_key(void)
     ok(!ret, "RegCreateKeyExA failed with error %d\n", ret);
 
     /* clean up */
-    RegDeleteKey(hkey2, "");
-    RegDeleteKey(hkey1, "");
+    RegDeleteKeyA(hkey2, "");
+    RegDeleteKeyA(hkey1, "");
     RegCloseKey(hkey2);
     RegCloseKey(hkey1);
 
@@ -1061,9 +1240,15 @@ static void test_reg_create_key(void)
         ok(ret == ERROR_BAD_PATHNAME, "expected ERROR_BAD_PATHNAME, got %d\n", ret);
     else {
         ok(!ret, "RegCreateKeyExA failed with error %d\n", ret);
-        RegDeleteKey(hkey1, NULL);
+        RegDeleteKeyA(hkey1, "");
         RegCloseKey(hkey1);
     }
+
+    /* trailing backslash characters */
+    ret = RegCreateKeyExA(hkey_main, "Subkey4\\\\", 0, NULL, 0, KEY_NOTIFY, NULL, &hkey1, NULL);
+    ok(ret == ERROR_SUCCESS, "RegCreateKeyExA failed with error %d\n", ret);
+    RegDeleteKeyA(hkey1, "");
+    RegCloseKey(hkey1);
 
     /* WOW64 flags - open an existing key */
     hkey1 = NULL;
@@ -1090,13 +1275,21 @@ static void test_reg_create_key(void)
 
     ret = RegCreateKeyExA(HKEY_LOCAL_MACHINE, "Software\\Wine", 0, NULL, 0,
                           KEY_WOW64_32KEY | KEY_ALL_ACCESS, NULL, &hkRoot32, NULL);
-    ok(ret == ERROR_SUCCESS && hkRoot32 != NULL,
-       "RegCreateKeyEx with KEY_WOW64_32KEY failed (err=%d)\n", ret);
+    if (limited_user)
+        ok(ret == ERROR_ACCESS_DENIED && hkRoot32 == NULL,
+           "RegCreateKeyEx with KEY_WOW64_32KEY failed (err=%d)\n", ret);
+    else
+        ok(ret == ERROR_SUCCESS && hkRoot32 != NULL,
+           "RegCreateKeyEx with KEY_WOW64_32KEY failed (err=%d)\n", ret);
 
     ret = RegCreateKeyExA(HKEY_LOCAL_MACHINE, "Software\\Wine", 0, NULL, 0,
                           KEY_WOW64_64KEY | KEY_ALL_ACCESS, NULL, &hkRoot64, NULL);
-    ok(ret == ERROR_SUCCESS && hkRoot64 != NULL,
-       "RegCreateKeyEx with KEY_WOW64_64KEY failed (err=%d)\n", ret);
+    if (limited_user)
+        ok(ret == ERROR_ACCESS_DENIED && hkRoot64 == NULL,
+           "RegCreateKeyEx with KEY_WOW64_64KEY failed (err=%d)\n", ret);
+    else
+        ok(ret == ERROR_SUCCESS && hkRoot64 != NULL,
+           "RegCreateKeyEx with KEY_WOW64_64KEY failed (err=%d)\n", ret);
 
     bRet = AllocateAndInitializeSid(&sid_authority, 1, SECURITY_WORLD_RID,
                                     0, 0, 0, 0, 0, 0, 0, &world_sid);
@@ -1113,7 +1306,7 @@ static void test_reg_create_key(void)
     access.Trustee.ptstrName = (char *)world_sid;
 
     dwRet = SetEntriesInAclA(1, &access, NULL, &key_acl);
-    ok(ret == ERROR_SUCCESS,
+    ok(dwRet == ERROR_SUCCESS,
        "Expected SetEntriesInAclA to return ERROR_SUCCESS, got %u, last error %u\n", dwRet, GetLastError());
 
     sd = HeapAlloc(GetProcessHeap(), 0, SECURITY_DESCRIPTOR_MIN_LENGTH);
@@ -1125,28 +1318,34 @@ static void test_reg_create_key(void)
     ok(bRet == TRUE,
        "Expected SetSecurityDescriptorDacl to return TRUE, got %d, last error %u\n", bRet, GetLastError());
 
-    /* The "sanctioned" methods of setting a registry ACL aren't implemented in Wine. */
-    bRet = SetKernelObjectSecurity(hkRoot64, DACL_SECURITY_INFORMATION, sd);
-    ok(bRet == TRUE,
-       "Expected SetKernelObjectSecurity to return TRUE, got %d, last error %u\n", bRet, GetLastError());
+    if (limited_user)
+    {
+        skip("not enough privileges to modify HKLM\n");
+    }
+    else
+    {
+        ret = RegSetKeySecurity(hkRoot64, DACL_SECURITY_INFORMATION, sd);
+        ok(ret == ERROR_SUCCESS,
+           "Expected RegSetKeySecurity to return success, got error %u\n", ret);
 
-    bRet = SetKernelObjectSecurity(hkRoot32, DACL_SECURITY_INFORMATION, sd);
-    ok(bRet == TRUE,
-       "Expected SetKernelObjectSecurity to return TRUE, got %d, last error %u\n", bRet, GetLastError());
+        ret = RegSetKeySecurity(hkRoot32, DACL_SECURITY_INFORMATION, sd);
+        ok(ret == ERROR_SUCCESS,
+           "Expected RegSetKeySecurity to return success, got error %u\n", ret);
 
-    hkey1 = NULL;
-    ret = RegCreateKeyExA(HKEY_LOCAL_MACHINE, "Software\\Wine", 0, NULL, 0,
-                          KEY_WOW64_64KEY | KEY_READ, NULL, &hkey1, NULL);
-    ok(ret == ERROR_SUCCESS && hkey1 != NULL,
-       "RegOpenKeyEx with KEY_WOW64_64KEY failed (err=%u)\n", ret);
-    RegCloseKey(hkey1);
+        hkey1 = NULL;
+        ret = RegCreateKeyExA(HKEY_LOCAL_MACHINE, "Software\\Wine", 0, NULL, 0,
+                              KEY_WOW64_64KEY | KEY_READ, NULL, &hkey1, NULL);
+        ok(ret == ERROR_SUCCESS && hkey1 != NULL,
+           "RegOpenKeyEx with KEY_WOW64_64KEY failed (err=%u)\n", ret);
+        RegCloseKey(hkey1);
 
-    hkey1 = NULL;
-    ret = RegCreateKeyExA(HKEY_LOCAL_MACHINE, "Software\\Wine", 0, NULL, 0,
-                          KEY_WOW64_32KEY | KEY_READ, NULL, &hkey1, NULL);
-    ok(ret == ERROR_SUCCESS && hkey1 != NULL,
-       "RegOpenKeyEx with KEY_WOW64_32KEY failed (err=%u)\n", ret);
-    RegCloseKey(hkey1);
+        hkey1 = NULL;
+        ret = RegCreateKeyExA(HKEY_LOCAL_MACHINE, "Software\\Wine", 0, NULL, 0,
+                              KEY_WOW64_32KEY | KEY_READ, NULL, &hkey1, NULL);
+        ok(ret == ERROR_SUCCESS && hkey1 != NULL,
+           "RegOpenKeyEx with KEY_WOW64_32KEY failed (err=%u)\n", ret);
+        RegCloseKey(hkey1);
+    }
 
     HeapFree(GetProcessHeap(), 0, sd);
     LocalFree(key_acl);
@@ -1194,8 +1393,9 @@ static void test_reg_close_key(void)
 static void test_reg_delete_key(void)
 {
     DWORD ret;
+    HKEY key;
 
-    ret = RegDeleteKey(hkey_main, NULL);
+    ret = RegDeleteKeyA(hkey_main, NULL);
 
     /* There is a bug in NT4 and W2K that doesn't check if the subkey is NULL. If
      * there are also no subkeys available it will delete the key pointed to by hkey_main.
@@ -1212,13 +1412,22 @@ static void test_reg_delete_key(void)
            ret == ERROR_ACCESS_DENIED ||
            ret == ERROR_BADKEY, /* Win95 */
            "ret=%d\n", ret);
+
+    ret = RegCreateKeyA(hkey_main, "deleteme", &key);
+    ok(ret == ERROR_SUCCESS, "Could not create key, got %d\n", ret);
+    ret = RegDeleteKeyA(key, "");
+    ok(ret == ERROR_SUCCESS, "RegDeleteKeyA failed, got %d\n", ret);
+    RegCloseKey(key);
+    ret = RegOpenKeyA(hkey_main, "deleteme", &key);
+    ok(ret == ERROR_FILE_NOT_FOUND, "Key was not deleted, got %d\n", ret);
+    RegCloseKey(key);
 }
 
 static void test_reg_save_key(void)
 {
     DWORD ret;
 
-    ret = RegSaveKey(hkey_main, "saved_key", NULL);
+    ret = RegSaveKeyA(hkey_main, "saved_key", NULL);
     ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %d\n", ret);
 }
 
@@ -1227,10 +1436,10 @@ static void test_reg_load_key(void)
     DWORD ret;
     HKEY hkHandle;
 
-    ret = RegLoadKey(HKEY_LOCAL_MACHINE, "Test", "saved_key");
+    ret = RegLoadKeyA(HKEY_LOCAL_MACHINE, "Test", "saved_key");
     ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %d\n", ret);
 
-    ret = RegOpenKey(HKEY_LOCAL_MACHINE, "Test", &hkHandle);
+    ret = RegOpenKeyA(HKEY_LOCAL_MACHINE, "Test", &hkHandle);
     ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %d\n", ret);
 
     RegCloseKey(hkHandle);
@@ -1240,11 +1449,11 @@ static void test_reg_unload_key(void)
 {
     DWORD ret;
 
-    ret = RegUnLoadKey(HKEY_LOCAL_MACHINE, "Test");
+    ret = RegUnLoadKeyA(HKEY_LOCAL_MACHINE, "Test");
     ok(ret == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %d\n", ret);
 
-    DeleteFile("saved_key");
-    DeleteFile("saved_key.LOG");
+    DeleteFileA("saved_key");
+    DeleteFileA("saved_key.LOG");
 }
 
 static BOOL set_privileges(LPCSTR privilege, BOOL set)
@@ -1256,7 +1465,7 @@ static BOOL set_privileges(LPCSTR privilege, BOOL set)
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES, &hToken))
         return FALSE;
 
-    if(!LookupPrivilegeValue(NULL, privilege, &luid))
+    if(!LookupPrivilegeValueA(NULL, privilege, &luid))
     {
         CloseHandle(hToken);
         return FALSE;
@@ -1379,7 +1588,7 @@ static void test_reg_query_value(void)
     ret = RegQueryValueA(hkey_main, "subkey", val, NULL);
     ok(ret == ERROR_INVALID_PARAMETER, "Expected ERROR_INVALID_PARAMETER, got %d\n", ret);
     ok(GetLastError() == 0xdeadbeef, "Expected 0xdeadbeef, got %d\n", GetLastError());
-    ok(lstrlenA(val) == 0, "Expected val to be untouched, got %s\n", val);
+    ok(!val[0], "Expected val to be untouched, got %s\n", val);
 
     /* try a NULL value and size */
     ret = RegQueryValueA(hkey_main, "subkey", NULL, NULL);
@@ -1392,7 +1601,7 @@ static void test_reg_query_value(void)
     ret = RegQueryValueA(hkey_main, "subkey", val, &size);
     ok(ret == ERROR_MORE_DATA, "Expected ERROR_MORE_DATA, got %d\n", ret);
     ok(GetLastError() == 0xdeadbeef, "Expected 0xdeadbeef, got %d\n", GetLastError());
-    ok(lstrlenA(val) == 0, "Expected val to be untouched, got %s\n", val);
+    ok(!val[0], "Expected val to be untouched, got %s\n", val);
     ok(size == 5, "Expected 5, got %d\n", size);
 
     /* successfully read the value using 'subkey' */
@@ -1421,7 +1630,7 @@ static void test_reg_query_value(void)
     }
     ok(ret == ERROR_MORE_DATA, "Expected ERROR_MORE_DATA, got %d\n", ret);
     ok(GetLastError() == 0xdeadbeef, "Expected 0xdeadbeef, got %d\n", GetLastError());
-    ok(lstrlenW(valW) == 0, "Expected valW to be untouched\n");
+    ok(!valW[0], "Expected valW to be untouched\n");
     ok(size == sizeof(expected), "Got wrong size: %d\n", size);
 
     /* unicode - try size in WCHARS */
@@ -1430,7 +1639,7 @@ static void test_reg_query_value(void)
     ret = RegQueryValueW(subkey, NULL, valW, &size);
     ok(ret == ERROR_MORE_DATA, "Expected ERROR_MORE_DATA, got %d\n", ret);
     ok(GetLastError() == 0xdeadbeef, "Expected 0xdeadbeef, got %d\n", GetLastError());
-    ok(lstrlenW(valW) == 0, "Expected valW to be untouched\n");
+    ok(!valW[0], "Expected valW to be untouched\n");
     ok(size == sizeof(expected), "Got wrong size: %d\n", size);
 
     /* unicode - successfully read the value */
@@ -1597,8 +1806,7 @@ static void test_reg_delete_tree(void)
     ret = RegQueryValueA(subkey, NULL, buffer, &size);
     ok(ret == ERROR_SUCCESS,
         "Default value of subkey is not present\n");
-    ok(!lstrlenA(buffer),
-        "Expected length 0 got length %u(%s)\n", lstrlenA(buffer), buffer);
+    ok(!buffer[0], "Expected length 0 got length %u(%s)\n", lstrlenA(buffer), buffer);
     size = MAX_PATH;
     ok(RegQueryValueA(subkey, "value", buffer, &size),
         "Value is still present\n");
@@ -1612,7 +1820,7 @@ static void test_rw_order(void)
 {
     HKEY hKey;
     DWORD dw = 0;
-    static char keyname[] = "test_rw_order";
+    static const char keyname[] = "test_rw_order";
     char value_buf[2];
     DWORD values, value_len, value_name_max_len;
     LSTATUS ret;
@@ -1651,7 +1859,7 @@ static void test_rw_order(void)
     ok(!RegEnumValueA(hKey, 3, value_buf, &value_len, NULL, NULL, NULL, NULL), "RegEnumValueA failed\n");
     todo_wine ok(strcmp(value_buf, "B") == 0, "Expected name \"B\", got %s\n", value_buf);
 
-    ok(!RegDeleteKey(HKEY_CURRENT_USER, keyname), "Failed to delete key\n");
+    ok(!RegDeleteKeyA(HKEY_CURRENT_USER, keyname), "Failed to delete key\n");
 }
 
 static void test_symlinks(void)
@@ -1769,10 +1977,10 @@ static void test_symlinks(void)
                            KEY_ALL_ACCESS, NULL, &key, NULL );
     ok( err == ERROR_ALREADY_EXISTS, "RegCreateKeyEx wrong error %u\n", err );
 
-    err = RegDeleteKey( hkey_main, "target" );
+    err = RegDeleteKeyA( hkey_main, "target" );
     ok( err == ERROR_SUCCESS, "RegDeleteKey failed error %u\n", err );
 
-    err = RegDeleteKey( hkey_main, "link" );
+    err = RegDeleteKeyA( hkey_main, "link" );
     ok( err == ERROR_FILE_NOT_FOUND, "RegDeleteKey wrong error %u\n", err );
 
     status = pNtDeleteKey( link );
@@ -1782,8 +1990,6 @@ static void test_symlinks(void)
     HeapFree( GetProcessHeap(), 0, target );
     pRtlFreeUnicodeString( &target_str );
 }
-
-static const DWORD ptr_size = 8 * sizeof(void*);
 
 static DWORD get_key_value( HKEY root, const char *name, DWORD flags )
 {
@@ -1813,8 +2019,9 @@ static void _check_key_value( int line, HANDLE root, const char *name, DWORD fla
 static void test_redirection(void)
 {
     DWORD err, type, dw, len;
-    HKEY key, root32, root64, key32, key64;
+    HKEY key, root32, root64, key32, key64, native, op_key;
     BOOL is_vista = FALSE;
+    REGSAM opposite = (sizeof(void*) == 8 ? KEY_WOW64_32KEY : KEY_WOW64_64KEY);
 
     if (ptr_size != 64)
     {
@@ -1918,6 +2125,27 @@ static void test_redirection(void)
         check_key_value( key, "Wow6432Node\\Wine\\Winetest", 0, is_vista ? 32 : 0 );
         check_key_value( key, "Wow6432Node\\Wine\\Winetest", KEY_WOW64_64KEY, is_vista ? 64 : 0 );
         check_key_value( key, "Wow6432Node\\Wine\\Winetest", KEY_WOW64_32KEY, is_vista ? 32 : 0 );
+        RegCloseKey( key );
+    }
+    else
+    {
+        err = RegCreateKeyExA( HKEY_LOCAL_MACHINE, "Software", 0, NULL, 0,
+                               KEY_WOW64_64KEY | KEY_ALL_ACCESS, NULL, &key, NULL );
+        ok( err == ERROR_SUCCESS, "RegCreateKeyExA failed: %u\n", err );
+        check_key_value( key, "Wine\\Winetest", 0, 64 );
+        check_key_value( key, "Wine\\Winetest", KEY_WOW64_64KEY, 64 );
+        dw = get_key_value( key, "Wine\\Winetest", KEY_WOW64_32KEY );
+        todo_wine ok( dw == 32, "wrong value %u\n", dw );
+        check_key_value( key, "Wow6432Node\\Wine\\Winetest", 0, 32 );
+        RegCloseKey( key );
+
+        err = RegCreateKeyExA( HKEY_LOCAL_MACHINE, "Software", 0, NULL, 0,
+                               KEY_WOW64_32KEY | KEY_ALL_ACCESS, NULL, &key, NULL );
+        ok( err == ERROR_SUCCESS, "RegCreateKeyExA failed: %u\n", err );
+        check_key_value( key, "Wine\\Winetest", 0, 32 );
+        dw = get_key_value( key, "Wine\\Winetest", KEY_WOW64_64KEY );
+        ok( dw == 32 || broken(dw == 64) /* vista */, "wrong value %u\n", dw );
+        check_key_value( key, "Wine\\Winetest", KEY_WOW64_32KEY, 32 );
         RegCloseKey( key );
     }
 
@@ -2048,6 +2276,39 @@ static void test_redirection(void)
     RegCloseKey( key64 );
     RegCloseKey( root32 );
     RegCloseKey( root64 );
+
+    /* open key in native bit mode */
+    err = RegOpenKeyExA(HKEY_CLASSES_ROOT, "Interface", 0, KEY_ALL_ACCESS, &native);
+    ok(err == ERROR_SUCCESS, "got %i\n", err);
+
+    pRegDeleteKeyExA(native, "AWineTest", 0, 0);
+
+    /* write subkey in opposite bit mode */
+    err = RegOpenKeyExA(HKEY_CLASSES_ROOT, "Interface", 0, KEY_ALL_ACCESS | opposite, &op_key);
+    ok(err == ERROR_SUCCESS, "got %i\n", err);
+
+    err = RegCreateKeyExA(op_key, "AWineTest", 0, NULL, 0, KEY_ALL_ACCESS | opposite,
+            NULL, &key, NULL);
+    ok(err == ERROR_SUCCESS || err == ERROR_ACCESS_DENIED, "got %i\n", err);
+    if(err != ERROR_SUCCESS){
+        win_skip("Can't write to registry\n");
+        RegCloseKey(op_key);
+        RegCloseKey(native);
+        return;
+    }
+    RegCloseKey(key);
+
+    /* verify subkey is not present in native mode */
+    err = RegOpenKeyExA(native, "AWineTest", 0, KEY_ALL_ACCESS, &key);
+    ok(err == ERROR_FILE_NOT_FOUND ||
+            broken(err == ERROR_SUCCESS), /* before Win7, HKCR is reflected instead of redirected */
+            "got %i\n", err);
+
+    err = pRegDeleteKeyExA(op_key, "AWineTest", opposite, 0);
+    ok(err == ERROR_SUCCESS, "got %i\n", err);
+
+    RegCloseKey(op_key);
+    RegCloseKey(native);
 }
 
 static void test_classesroot(void)
@@ -2071,6 +2332,7 @@ static void test_classesroot(void)
         skip("not enough privileges to add a user class\n");
         return;
     }
+    ok(!IS_HKCR(hkey), "hkcr mask set in %p\n", hkey);
 
     /* try to open that key in hkcr */
     res = RegOpenKeyExA( HKEY_CLASSES_ROOT, "WineTestCls", 0,
@@ -2085,6 +2347,8 @@ static void test_classesroot(void)
         RegCloseKey( hkey );
         return;
     }
+
+    todo_wine ok(IS_HKCR(hkcr), "hkcr mask not set in %p\n", hkcr);
 
     /* set a value in user's classes */
     res = RegSetValueExA(hkey, "val1", 0, REG_SZ, (const BYTE *)"user", sizeof("user"));
@@ -2109,16 +2373,16 @@ static void test_classesroot(void)
     ok(res == ERROR_SUCCESS, "RegSetValueExA failed: %d, GLE=%x\n", res, GetLastError());
 
     /* try to find the value in user's classes */
-    res = RegQueryValueExA(hkcr, "val0", NULL, &type, (LPBYTE)buffer, &size);
+    res = RegQueryValueExA(hkey, "val0", NULL, &type, (LPBYTE)buffer, &size);
     ok(res == ERROR_SUCCESS, "RegQueryValueExA failed: %d\n", res);
     ok(!strcmp( buffer, "hkcr" ), "value set to '%s'\n", buffer );
 
     /* modify the value in user's classes */
-    res = RegSetValueExA(hkcr, "val0", 0, REG_SZ, (const BYTE *)"user", sizeof("user"));
+    res = RegSetValueExA(hkey, "val0", 0, REG_SZ, (const BYTE *)"user", sizeof("user"));
     ok(res == ERROR_SUCCESS, "RegSetValueExA failed: %d, GLE=%x\n", res, GetLastError());
 
     /* check if the value is also modified in hkcr */
-    res = RegQueryValueExA(hkey, "val0", NULL, &type, (LPBYTE)buffer, &size);
+    res = RegQueryValueExA(hkcr, "val0", NULL, &type, (LPBYTE)buffer, &size);
     ok(res == ERROR_SUCCESS, "RegQueryValueExA failed: %d, GLE=%x\n", res, GetLastError());
     ok(!strcmp( buffer, "user" ), "value set to '%s'\n", buffer );
 
@@ -2141,12 +2405,14 @@ static void test_classesroot(void)
         skip("not enough privileges to add a system class\n");
         return;
     }
+    ok(!IS_HKCR(hklm), "hkcr mask set in %p\n", hklm);
 
     /* try to open that key in hkcr */
     res = RegOpenKeyExA( HKEY_CLASSES_ROOT, "WineTestCls", 0,
                          KEY_QUERY_VALUE|KEY_SET_VALUE, &hkcr );
     ok(res == ERROR_SUCCESS,
        "test key not found in hkcr: %d\n", res);
+    ok(IS_HKCR(hkcr), "hkcr mask not set in %p\n", hkcr);
     if (res)
     {
         delete_key( hklm );
@@ -2167,19 +2433,21 @@ static void test_classesroot(void)
     res = RegSetValueExA(hkcr, "val2", 0, REG_SZ, (const BYTE *)"hkcr", sizeof("hkcr"));
     ok(res == ERROR_SUCCESS, "RegSetValueExA failed: %d, GLE=%x\n", res, GetLastError());
 
-    /* check that the value is not modified in hklm classes */
+    /* check that the value is modified in hklm classes */
     res = RegQueryValueExA(hklm, "val2", NULL, &type, (LPBYTE)buffer, &size);
     ok(res == ERROR_SUCCESS, "RegQueryValueExA failed: %d, GLE=%x\n", res, GetLastError());
-    ok(!strcmp( buffer, "hklm" ), "value set to '%s'\n", buffer );
+    ok(!strcmp( buffer, "hkcr" ), "value set to '%s'\n", buffer );
 
     if (RegCreateKeyExA( HKEY_CURRENT_USER, "Software\\Classes\\WineTestCls", 0, NULL, 0,
                          KEY_QUERY_VALUE|KEY_SET_VALUE, NULL, &hkey, NULL )) return;
+    ok(!IS_HKCR(hkey), "hkcr mask set in %p\n", hkey);
 
     /* try to open that key in hkcr */
     res = RegOpenKeyExA( HKEY_CLASSES_ROOT, "WineTestCls", 0,
                          KEY_QUERY_VALUE|KEY_SET_VALUE, &hkcr );
     ok(res == ERROR_SUCCESS,
        "test key not found in hkcr: %d\n", res);
+    ok(IS_HKCR(hkcr), "hkcr mask not set in %p\n", hkcr);
 
     /* set a value in user's classes */
     res = RegSetValueExA(hkey, "val2", 0, REG_SZ, (const BYTE *)"user", sizeof("user"));
@@ -2217,9 +2485,11 @@ static void test_classesroot(void)
     /* create a subkey in hklm */
     if (RegCreateKeyExA( hklm, "subkey1", 0, NULL, 0,
                          KEY_QUERY_VALUE|KEY_SET_VALUE, NULL, &hklmsub1, NULL )) return;
+    ok(!IS_HKCR(hklmsub1), "hkcr mask set in %p\n", hklmsub1);
     /* try to open that subkey in hkcr */
     res = RegOpenKeyExA( hkcr, "subkey1", 0, KEY_QUERY_VALUE|KEY_SET_VALUE, &hkcrsub1 );
     ok(res == ERROR_SUCCESS, "test key not found in hkcr: %d\n", res);
+    ok(IS_HKCR(hkcrsub1), "hkcr mask not set in %p\n", hkcrsub1);
 
     /* set a value in hklm classes */
     res = RegSetValueExA(hklmsub1, "subval1", 0, REG_SZ, (const BYTE *)"hklm", sizeof("hklm"));
@@ -2242,6 +2512,7 @@ static void test_classesroot(void)
     /* create a subkey in user's classes */
     if (RegCreateKeyExA( hkey, "subkey1", 0, NULL, 0,
                          KEY_QUERY_VALUE|KEY_SET_VALUE, NULL, &hkeysub1, NULL )) return;
+    ok(!IS_HKCR(hkeysub1), "hkcr mask set in %p\n", hkeysub1);
 
     /* set a value in user's classes */
     res = RegSetValueExA(hkeysub1, "subval1", 0, REG_SZ, (const BYTE *)"user", sizeof("user"));
@@ -2279,6 +2550,7 @@ static void test_classesroot(void)
     /* new subkey in hkcr */
     if (RegCreateKeyExA( hkcr, "subkey2", 0, NULL, 0,
                          KEY_QUERY_VALUE|KEY_SET_VALUE, NULL, &hkcrsub2, NULL )) return;
+    ok(IS_HKCR(hkcrsub2), "hkcr mask not set in %p\n", hkcrsub2);
     res = RegSetValueExA(hkcrsub2, "subval1", 0, REG_SZ, (const BYTE *)"hkcr", sizeof("hkcr"));
     ok(res == ERROR_SUCCESS, "RegSetValueExA failed: %d, GLE=%x\n", res, GetLastError());
 
@@ -2288,11 +2560,36 @@ static void test_classesroot(void)
     hklmsub2 = 0;
     res = RegOpenKeyExA( hklm, "subkey2", 0, KEY_QUERY_VALUE|KEY_SET_VALUE, &hklmsub2 );
     ok(res == ERROR_SUCCESS, "test key not found in hklm: %d\n", res);
+    ok(!IS_HKCR(hklmsub2), "hkcr mask set in %p\n", hklmsub2);
 
     /* check that the value is present in hklm */
     res = RegQueryValueExA(hklmsub2, "subval1", NULL, &type, (LPBYTE)buffer, &size);
     ok(res == ERROR_SUCCESS, "RegQueryValueExA failed: %d\n", res);
     ok(!strcmp( buffer, "hkcr" ), "value set to '%s'\n", buffer );
+
+    /* cleanup */
+    RegCloseKey( hkeysub1 );
+    RegCloseKey( hklmsub1 );
+
+    /* delete subkey1 from hkcr (should point at user's classes) */
+    res = RegDeleteKeyA(hkcr, "subkey1");
+    ok(res == ERROR_SUCCESS, "RegDeleteKey failed: %d\n", res);
+
+    /* confirm key was removed in hkey but not hklm */
+    res = RegOpenKeyExA(hkey, "subkey1", 0, KEY_READ, &hkeysub1);
+    ok(res == ERROR_FILE_NOT_FOUND, "test key found in user's classes: %d\n", res);
+    res = RegOpenKeyExA(hklm, "subkey1", 0, KEY_READ, &hklmsub1);
+    ok(res == ERROR_SUCCESS, "test key not found in hklm: %d\n", res);
+    ok(!IS_HKCR(hklmsub1), "hkcr mask set in %p\n", hklmsub1);
+
+    /* delete subkey1 from hkcr again (which should now point at hklm) */
+    res = RegDeleteKeyA(hkcr, "subkey1");
+    ok(res == ERROR_SUCCESS, "RegDeleteKey failed: %d\n", res);
+
+    /* confirm hkey was removed in hklm */
+    RegCloseKey( hklmsub1 );
+    res = RegOpenKeyExA(hklm, "subkey1", 0, KEY_READ, &hklmsub1);
+    ok(res == ERROR_FILE_NOT_FOUND, "test key found in hklm: %d\n", res);
 
     /* final cleanup */
     delete_key( hkey );
@@ -2311,6 +2608,215 @@ static void test_classesroot(void)
     RegCloseKey( hkcrsub1 );
     RegCloseKey( hklmsub2 );
     RegCloseKey( hkcrsub2 );
+}
+
+static void test_classesroot_enum(void)
+{
+    HKEY hkcu=0, hklm=0, hkcr=0, hkcusub[2]={0}, hklmsub[2]={0};
+    DWORD size;
+    static CHAR buffer[2];
+    LONG res;
+
+    /* prepare initial testing env in HKCU */
+    if (!RegOpenKeyA( HKEY_CURRENT_USER, "Software\\Classes\\WineTestCls", &hkcu ))
+    {
+        delete_key( hkcu );
+        RegCloseKey( hkcu );
+    }
+    res = RegCreateKeyExA( HKEY_CURRENT_USER, "Software\\Classes\\WineTestCls", 0, NULL, 0,
+                            KEY_SET_VALUE|KEY_ENUMERATE_SUB_KEYS, NULL, &hkcu, NULL );
+
+    if (res != ERROR_SUCCESS)
+    {
+        skip("failed to add a user class\n");
+        return;
+    }
+
+    res = RegOpenKeyA( HKEY_CLASSES_ROOT, "WineTestCls", &hkcr );
+    todo_wine ok(res == ERROR_SUCCESS ||
+                 broken(res == ERROR_FILE_NOT_FOUND /* WinNT */),
+                 "test key not found in hkcr: %d\n", res);
+    if (res)
+    {
+        skip("HKCR key merging not supported\n");
+        delete_key( hkcu );
+        RegCloseKey( hkcu );
+        return;
+    }
+
+    res = RegSetValueExA( hkcu, "X", 0, REG_SZ, (const BYTE *) "AA", 3 );
+    ok(res == ERROR_SUCCESS, "RegSetValueExA failed: %d\n", res);
+    res = RegSetValueExA( hkcu, "Y", 0, REG_SZ, (const BYTE *) "B", 2 );
+    ok(res == ERROR_SUCCESS, "RegSetValueExA failed: %d\n", res);
+    res = RegCreateKeyA( hkcu, "A", &hkcusub[0] );
+    ok(res == ERROR_SUCCESS, "RegCreateKeyA failed: %d\n", res);
+    res = RegCreateKeyA( hkcu, "B", &hkcusub[1] );
+    ok(res == ERROR_SUCCESS, "RegCreateKeyA failed: %d\n", res);
+
+    /* test on values in HKCU */
+    size = sizeof(buffer);
+    res = RegEnumValueA( hkcr, 0, buffer, &size, NULL, NULL, NULL, NULL );
+    ok(res == ERROR_SUCCESS, "RegEnumValueA failed: %d\n", res );
+    ok(!strcmp( buffer, "X" ), "expected 'X', got '%s'\n", buffer);
+    size = sizeof(buffer);
+    res = RegEnumValueA( hkcr, 1, buffer, &size, NULL, NULL, NULL, NULL );
+    ok(res == ERROR_SUCCESS, "RegEnumValueA failed: %d\n", res );
+    ok(!strcmp( buffer, "Y" ), "expected 'Y', got '%s'\n", buffer);
+    size = sizeof(buffer);
+    res = RegEnumValueA( hkcr, 2, buffer, &size, NULL, NULL, NULL, NULL );
+    ok(res == ERROR_NO_MORE_ITEMS, "expected ERROR_NO_MORE_ITEMS, got %d\n", res );
+
+    res = RegEnumKeyA( hkcr, 0, buffer, size );
+    ok(res == ERROR_SUCCESS, "RegEnumKey failed: %d\n", res );
+    ok(!strcmp( buffer, "A" ), "expected 'A', got '%s'\n", buffer);
+    res = RegEnumKeyA( hkcr, 1, buffer, size );
+    ok(res == ERROR_SUCCESS, "RegEnumKey failed: %d\n", res );
+    ok(!strcmp( buffer, "B" ), "expected 'B', got '%s'\n", buffer);
+    res = RegEnumKeyA( hkcr, 2, buffer, size );
+    ok(res == ERROR_NO_MORE_ITEMS, "expected ERROR_NO_MORE_ITEMS, got %d\n", res );
+
+    /* prepare test env in HKLM */
+    if (!RegOpenKeyA( HKEY_LOCAL_MACHINE, "Software\\Classes\\WineTestCls", &hklm ))
+    {
+        delete_key( hklm );
+        RegCloseKey( hklm );
+    }
+
+    res = RegCreateKeyExA( HKEY_LOCAL_MACHINE, "Software\\Classes\\WineTestCls", 0, NULL, 0,
+                            KEY_SET_VALUE|KEY_ENUMERATE_SUB_KEYS, NULL, &hklm, NULL );
+
+    if (res == ERROR_ACCESS_DENIED)
+    {
+        RegCloseKey( hkcusub[0] );
+        RegCloseKey( hkcusub[1] );
+        delete_key( hkcu );
+        RegCloseKey( hkcu );
+        RegCloseKey( hkcr );
+        skip("not enough privileges to add a system class\n");
+        return;
+    }
+
+    res = RegSetValueExA( hklm, "X", 0, REG_SZ, (const BYTE *) "AB", 3 );
+    ok(res == ERROR_SUCCESS, "RegSetValueExA failed: %d\n", res);
+    res = RegSetValueExA( hklm, "Z", 0, REG_SZ, (const BYTE *) "C", 2 );
+    ok(res == ERROR_SUCCESS, "RegSetValueExA failed: %d\n", res);
+    res = RegCreateKeyA( hklm, "A", &hklmsub[0] );
+    ok(res == ERROR_SUCCESS, "RegCreateKeyA failed: %d\n", res);
+    res = RegCreateKeyA( hklm, "C", &hklmsub[1] );
+    ok(res == ERROR_SUCCESS, "RegCreateKeyA failed: %d\n", res);
+
+    /* test on values/keys in both HKCU and HKLM */
+    size = sizeof(buffer);
+    res = RegEnumValueA( hkcr, 0, buffer, &size, NULL, NULL, NULL, NULL );
+    ok(res == ERROR_SUCCESS, "RegEnumValueA failed: %d\n", res );
+    ok(!strcmp( buffer, "X" ), "expected 'X', got '%s'\n", buffer);
+    size = sizeof(buffer);
+    res = RegEnumValueA( hkcr, 1, buffer, &size, NULL, NULL, NULL, NULL );
+    ok(res == ERROR_SUCCESS, "RegEnumValueA failed: %d\n", res );
+    ok(!strcmp( buffer, "Y" ), "expected 'Y', got '%s'\n", buffer);
+    size = sizeof(buffer);
+    res = RegEnumValueA( hkcr, 2, buffer, &size, NULL, NULL, NULL, NULL );
+    ok(res == ERROR_SUCCESS, "RegEnumValueA failed: %d\n", res );
+    ok(!strcmp( buffer, "Z" ), "expected 'Z', got '%s'\n", buffer);
+    size = sizeof(buffer);
+    res = RegEnumValueA( hkcr, 3, buffer, &size, NULL, NULL, NULL, NULL );
+    ok(res == ERROR_NO_MORE_ITEMS, "expected ERROR_NO_MORE_ITEMS, got %d\n", res );
+
+    res = RegEnumKeyA( hkcr, 0, buffer, size );
+    ok(res == ERROR_SUCCESS, "RegEnumKey failed: %d\n", res );
+    ok(!strcmp( buffer, "A" ), "expected 'A', got '%s'\n", buffer);
+    res = RegEnumKeyA( hkcr, 1, buffer, size );
+    ok(res == ERROR_SUCCESS, "RegEnumKey failed: %d\n", res );
+    ok(!strcmp( buffer, "B" ), "expected 'B', got '%s'\n", buffer);
+    res = RegEnumKeyA( hkcr, 2, buffer, size );
+    ok(res == ERROR_SUCCESS, "RegEnumKey failed: %d\n", res );
+    ok(!strcmp( buffer, "C" ), "expected 'C', got '%s'\n", buffer);
+    res = RegEnumKeyA( hkcr, 3, buffer, size );
+    ok(res == ERROR_NO_MORE_ITEMS, "expected ERROR_NO_MORE_ITEMS, got %d\n", res );
+
+    /* delete values/keys from HKCU to test only on HKLM */
+    RegCloseKey( hkcusub[0] );
+    RegCloseKey( hkcusub[1] );
+    delete_key( hkcu );
+    RegCloseKey( hkcu );
+
+    size = sizeof(buffer);
+    res = RegEnumValueA( hkcr, 0, buffer, &size, NULL, NULL, NULL, NULL );
+    ok(res == ERROR_KEY_DELETED ||
+       res == ERROR_NO_SYSTEM_RESOURCES, /* Windows XP */
+       "expected ERROR_KEY_DELETED, got %d\n", res);
+    size = sizeof(buffer);
+    res = RegEnumKeyA( hkcr, 0, buffer, size );
+    ok(res == ERROR_KEY_DELETED ||
+       res == ERROR_NO_SYSTEM_RESOURCES, /* Windows XP */
+       "expected ERROR_KEY_DELETED, got %d\n", res);
+
+    /* reopen HKCR handle */
+    RegCloseKey( hkcr );
+    res = RegOpenKeyA( HKEY_CLASSES_ROOT, "WineTestCls", &hkcr );
+    ok(res == ERROR_SUCCESS, "test key not found in hkcr: %d\n", res);
+    if (res) goto cleanup;
+
+    /* test on values/keys in HKLM */
+    size = sizeof(buffer);
+    res = RegEnumValueA( hkcr, 0, buffer, &size, NULL, NULL, NULL, NULL );
+    ok(res == ERROR_SUCCESS, "RegEnumValueA failed: %d\n", res );
+    ok(!strcmp( buffer, "X" ), "expected 'X', got '%s'\n", buffer);
+    size = sizeof(buffer);
+    res = RegEnumValueA( hkcr, 1, buffer, &size, NULL, NULL, NULL, NULL );
+    ok(res == ERROR_SUCCESS, "RegEnumValueA failed: %d\n", res );
+    ok(!strcmp( buffer, "Z" ), "expected 'Z', got '%s'\n", buffer);
+    size = sizeof(buffer);
+    res = RegEnumValueA( hkcr, 2, buffer, &size, NULL, NULL, NULL, NULL );
+    ok(res == ERROR_NO_MORE_ITEMS, "expected ERROR_NO_MORE_ITEMS, got %d\n", res );
+
+    res = RegEnumKeyA( hkcr, 0, buffer, size );
+    ok(res == ERROR_SUCCESS, "RegEnumKey failed: %d\n", res );
+    ok(!strcmp( buffer, "A" ), "expected 'A', got '%s'\n", buffer);
+    res = RegEnumKeyA( hkcr, 1, buffer, size );
+    ok(res == ERROR_SUCCESS, "RegEnumKey failed: %d\n", res );
+    ok(!strcmp( buffer, "C" ), "expected 'C', got '%s'\n", buffer);
+    res = RegEnumKeyA( hkcr, 2, buffer, size );
+    ok(res == ERROR_NO_MORE_ITEMS, "expected ERROR_NO_MORE_ITEMS, got %d\n", res );
+
+cleanup:
+    RegCloseKey( hklmsub[0] );
+    RegCloseKey( hklmsub[1] );
+    delete_key( hklm );
+    RegCloseKey( hklm );
+    RegCloseKey( hkcr );
+}
+
+static void test_classesroot_mask(void)
+{
+    HKEY hkey;
+    LSTATUS res;
+
+    res = RegOpenKeyA( HKEY_CLASSES_ROOT, "CLSID", &hkey );
+    ok(res == ERROR_SUCCESS, "RegOpenKeyA failed: %d\n", res);
+    todo_wine ok(IS_HKCR(hkey) || broken(!IS_HKCR(hkey)) /* WinNT */,
+                 "hkcr mask not set in %p\n", hkey);
+    RegCloseKey( hkey );
+
+    res = RegOpenKeyA( HKEY_CURRENT_USER, "Software", &hkey );
+    ok(res == ERROR_SUCCESS, "RegOpenKeyA failed: %d\n", res);
+    ok(!IS_HKCR(hkey), "hkcr mask set in %p\n", hkey);
+    RegCloseKey( hkey );
+
+    res = RegOpenKeyA( HKEY_LOCAL_MACHINE, "Software", &hkey );
+    ok(res == ERROR_SUCCESS, "RegOpenKeyA failed: %d\n", res);
+    ok(!IS_HKCR(hkey), "hkcr mask set in %p\n", hkey);
+    RegCloseKey( hkey );
+
+    res = RegOpenKeyA( HKEY_USERS, ".Default", &hkey );
+    ok(res == ERROR_SUCCESS, "RegOpenKeyA failed: %d\n", res);
+    ok(!IS_HKCR(hkey), "hkcr mask set in %p\n", hkey);
+    RegCloseKey( hkey );
+
+    res = RegOpenKeyA( HKEY_CURRENT_CONFIG, "Software", &hkey );
+    ok(res == ERROR_SUCCESS, "RegOpenKeyA failed: %d\n", res);
+    ok(!IS_HKCR(hkey), "hkcr mask set in %p\n", hkey);
+    RegCloseKey( hkey );
 }
 
 static void test_deleted_key(void)
@@ -2386,12 +2892,63 @@ static void test_delete_value(void)
        "expect ERROR_FILE_NOT_FOUND, got %i\n", res);
 }
 
+static void test_delete_key_value(void)
+{
+    HKEY subkey;
+    LONG ret;
+
+    if (!pRegDeleteKeyValueA)
+    {
+        win_skip("RegDeleteKeyValue is not available.\n");
+        return;
+    }
+
+    ret = pRegDeleteKeyValueA(NULL, NULL, NULL);
+    ok(ret == ERROR_INVALID_HANDLE, "got %d\n", ret);
+
+    ret = pRegDeleteKeyValueA(hkey_main, NULL, NULL);
+    ok(ret == ERROR_FILE_NOT_FOUND, "got %d\n", ret);
+
+    ret = RegSetValueExA(hkey_main, "test", 0, REG_SZ, (const BYTE*)"value", 6);
+    ok(ret == ERROR_SUCCESS, "got %d\n", ret);
+
+    ret = RegQueryValueExA(hkey_main, "test", NULL, NULL, NULL, NULL);
+    ok(ret == ERROR_SUCCESS, "got %d\n", ret);
+
+    /* NULL subkey name means delete from open key */
+    ret = pRegDeleteKeyValueA(hkey_main, NULL, "test");
+    ok(ret == ERROR_SUCCESS, "got %d\n", ret);
+
+    ret = RegQueryValueExA(hkey_main, "test", NULL, NULL, NULL, NULL);
+    ok(ret == ERROR_FILE_NOT_FOUND, "got %d\n", ret);
+
+    /* now with real subkey */
+    ret = RegCreateKeyExA(hkey_main, "Subkey1", 0, NULL, 0, KEY_WRITE|KEY_READ, NULL, &subkey, NULL);
+    ok(!ret, "failed with error %d\n", ret);
+
+    ret = RegSetValueExA(subkey, "test", 0, REG_SZ, (const BYTE*)"value", 6);
+    ok(ret == ERROR_SUCCESS, "got %d\n", ret);
+
+    ret = RegQueryValueExA(subkey, "test", NULL, NULL, NULL, NULL);
+    ok(ret == ERROR_SUCCESS, "got %d\n", ret);
+
+    ret = pRegDeleteKeyValueA(hkey_main, "Subkey1", "test");
+    ok(ret == ERROR_SUCCESS, "got %d\n", ret);
+
+    ret = RegQueryValueExA(subkey, "test", NULL, NULL, NULL, NULL);
+    ok(ret == ERROR_FILE_NOT_FOUND, "got %d\n", ret);
+
+    RegDeleteKeyA(subkey, "");
+    RegCloseKey(subkey);
+}
+
 START_TEST(registry)
 {
     /* Load pointers for functions that are not available in all Windows versions */
     InitFunctionPtrs();
 
     setup_main_key();
+    check_user_privs();
     test_set_value();
     create_test_entries();
     test_enum_value();
@@ -2406,6 +2963,8 @@ START_TEST(registry)
     test_symlinks();
     test_redirection();
     test_classesroot();
+    test_classesroot_enum();
+    test_classesroot_mask();
 
     /* SaveKey/LoadKey require the SE_BACKUP_NAME privilege to be set */
     if (set_privileges(SE_BACKUP_NAME, TRUE) &&
@@ -2423,6 +2982,7 @@ START_TEST(registry)
     test_rw_order();
     test_deleted_key();
     test_delete_value();
+    test_delete_key_value();
 
     /* cleanup */
     delete_key( hkey_main );

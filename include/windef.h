@@ -42,7 +42,7 @@ extern "C" {
 #undef _WIN64
 #endif
 
-#if defined(__x86_64__) && !defined(_WIN64)
+#if (defined(__x86_64__) || defined(__powerpc64__) || defined(__sparc64__) || defined(__aarch64__)) && !defined(_WIN64)
 #define _WIN64
 #endif
 
@@ -58,7 +58,7 @@ extern "C" {
 #ifndef __stdcall
 # ifdef __i386__
 #  ifdef __GNUC__
-#   ifdef __APPLE__ /* Mac OS X uses a 16-byte aligned stack and not a 4-byte one */
+#   if (__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 2)) || defined(__APPLE__)
 #    define __stdcall __attribute__((__stdcall__)) __attribute__((__force_align_arg_pointer__))
 #   else
 #    define __stdcall __attribute__((__stdcall__))
@@ -77,7 +77,7 @@ extern "C" {
 
 #ifndef __cdecl
 # if defined(__i386__) && defined(__GNUC__)
-#  ifdef __APPLE__ /* Mac OS X uses 16-byte aligned stack and not a 4-byte one */
+#   if (__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 2)) || defined(__APPLE__)
 #   define __cdecl __attribute__((__cdecl__)) __attribute__((__force_align_arg_pointer__))
 #  else
 #   define __cdecl __attribute__((__cdecl__))
@@ -94,10 +94,16 @@ extern "C" {
 #  define __ms_va_list __builtin_ms_va_list
 #  define __ms_va_start(list,arg) __builtin_ms_va_start(list,arg)
 #  define __ms_va_end(list) __builtin_ms_va_end(list)
+#  define __ms_va_copy(dest,src) __builtin_ms_va_copy(dest,src)
 # else
 #  define __ms_va_list va_list
 #  define __ms_va_start(list,arg) va_start(list,arg)
 #  define __ms_va_end(list) va_end(list)
+#  ifdef va_copy
+#   define __ms_va_copy(dest,src) va_copy(dest,src)
+#  else
+#   define __ms_va_copy(dest,src) ((dest) = (src))
+#  endif
 # endif
 #endif
 
@@ -172,7 +178,7 @@ extern "C" {
 #define _CDECL      __cdecl
 #define WINAPIV     __cdecl
 #define APIENTRY    WINAPI
-#define CONST       const
+#define CONST       __ONLY_IN_WINELIB(const)
 
 /* Misc. constants. */
 

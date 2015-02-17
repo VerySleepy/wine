@@ -62,35 +62,17 @@ typedef struct
 
 typedef struct
 {
-    const ICreateDevEnumVtbl *lpVtbl;
-} CreateDevEnumImpl;
-
-typedef struct
-{
-    const IParseDisplayNameVtbl *lpVtbl;
-} ParseDisplayNameImpl;
-
-typedef struct
-{
-    const IEnumMonikerVtbl *lpVtbl;
-    LONG ref;
-    DWORD index;
-    HKEY hkey;
-} EnumMonikerImpl;
-
-typedef struct
-{
-    const IMonikerVtbl *lpVtbl;
+    IMoniker IMoniker_iface;
     LONG ref;
     HKEY hkey;
 } MediaCatMoniker;
 
 MediaCatMoniker * DEVENUM_IMediaCatMoniker_Construct(void) DECLSPEC_HIDDEN;
-HRESULT DEVENUM_IEnumMoniker_Construct(HKEY hkey, IEnumMoniker ** ppEnumMoniker) DECLSPEC_HIDDEN;
+HRESULT DEVENUM_IEnumMoniker_Construct(HKEY hkey, HKEY special_hkey, IEnumMoniker ** ppEnumMoniker) DECLSPEC_HIDDEN;
 
 extern ClassFactoryImpl DEVENUM_ClassFactory DECLSPEC_HIDDEN;
-extern CreateDevEnumImpl DEVENUM_CreateDevEnum DECLSPEC_HIDDEN;
-extern ParseDisplayNameImpl DEVENUM_ParseDisplayName DECLSPEC_HIDDEN;
+extern ICreateDevEnum DEVENUM_CreateDevEnum DECLSPEC_HIDDEN;
+extern IParseDisplayName DEVENUM_ParseDisplayName DECLSPEC_HIDDEN;
 
 /**********************************************************************
  * Private helper function to get AM filter category key location

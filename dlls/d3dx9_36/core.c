@@ -87,7 +87,7 @@ static ULONG WINAPI ID3DXBufferImpl_Release(ID3DXBuffer *iface)
     return ref;
 }
 
-static LPVOID WINAPI ID3DXBufferImpl_GetBufferPointer(ID3DXBuffer *iface)
+static void * WINAPI ID3DXBufferImpl_GetBufferPointer(ID3DXBuffer *iface)
 {
     struct ID3DXBufferImpl *This = impl_from_ID3DXBuffer(iface);
 
@@ -132,7 +132,7 @@ static HRESULT d3dx9_buffer_init(struct ID3DXBufferImpl *buffer, DWORD size)
     return D3D_OK;
 }
 
-HRESULT WINAPI D3DXCreateBuffer(DWORD size, LPD3DXBUFFER *buffer)
+HRESULT WINAPI D3DXCreateBuffer(DWORD size, ID3DXBuffer **buffer)
 {
     struct ID3DXBufferImpl *object;
     HRESULT hr;
@@ -145,10 +145,7 @@ HRESULT WINAPI D3DXCreateBuffer(DWORD size, LPD3DXBUFFER *buffer)
 
     object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object));
     if (!object)
-    {
-        ERR("Failed to allocate buffer memory\n");
         return E_OUTOFMEMORY;
-    }
 
     hr = d3dx9_buffer_init(object, size);
     if (FAILED(hr))

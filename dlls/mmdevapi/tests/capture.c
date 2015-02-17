@@ -39,6 +39,7 @@
 #define NULL_PTR_ERR MAKE_HRESULT(SEVERITY_ERROR, FACILITY_WIN32, RPC_X_NULL_REF_POINTER)
 
 static IMMDevice *dev = NULL;
+static const LARGE_INTEGER ullZero;
 
 static void test_uninitialized(IAudioClient *ac)
 {
@@ -80,67 +81,369 @@ static void test_capture(IAudioClient *ac, HANDLE handle, WAVEFORMATEX *wfx)
 {
     IAudioCaptureClient *acc;
     HRESULT hr;
-    UINT32 frames = 0;
-    BYTE *data = NULL;
-    DWORD flags;
-    UINT64 devpos, qpcpos;
+    UINT32 frames, next, pad, sum = 0;
+    BYTE *data;
+    DWORD flags, r;
+    UINT64 pos, qpc;
+    REFERENCE_TIME period;
 
     hr = IAudioClient_GetService(ac, &IID_IAudioCaptureClient, (void**)&acc);
     ok(hr == S_OK, "IAudioClient_GetService(IID_IAudioCaptureClient) returns %08x\n", hr);
     if (hr != S_OK)
         return;
 
+    frames = 0xabadcafe;
+    data = (void*)0xdeadf00d;
+    flags = 0xabadcafe;
+    pos = qpc = 0xdeadbeef;
+    hr = IAudioCaptureClient_GetBuffer(acc, &data, &frames, &flags, &pos, &qpc);
+    ok(hr == AUDCLNT_S_BUFFER_EMPTY, "Initial IAudioCaptureClient_GetBuffer returns %08x\n", hr);
+
+    /* should be empty right after start. Otherwise consume one packet */
+    if(hr == S_OK){
+        hr = IAudioCaptureClient_ReleaseBuffer(acc, frames);
+        ok(hr == S_OK, "Releasing buffer returns %08x\n", hr);
+        sum += frames;
+
+        frames = 0xabadcafe;
+        data = (void*)0xdeadf00d;
+        flags = 0xabadcafe;
+        pos = qpc = 0xdeadbeef;
+        hr = IAudioCaptureClient_GetBuffer(acc, &data, &frames, &flags, &pos, &qpc);
+        ok(hr == AUDCLNT_S_BUFFER_EMPTY, "Initial IAudioCaptureClient_GetBuffer returns %08x\n", hr);
+    }
+
+    if(hr == AUDCLNT_S_BUFFER_EMPTY){
+        ok(!frames, "frames changed to %u\n", frames);
+        ok(data == (void*)0xdeadf00d, "data changed to %p\n", data);
+        ok(flags == 0xabadcafe, "flags changed to %x\n", flags);
+        ok(pos == 0xdeadbeef, "position changed to %u\n", (UINT)pos);
+        ok(qpc == 0xdeadbeef, "timer changed to %u\n", (UINT)qpc);
+
+        /* GetNextPacketSize yields 0 if no data is yet available
+         * it is not constantly period_size * SamplesPerSec */
+        hr = IAudioCaptureClient_GetNextPacketSize(acc, &next);
+        ok(hr == S_OK, "IAudioCaptureClient_GetNextPacketSize returns %08x\n", hr);
+        ok(!next, "GetNextPacketSize %u\n", next);
+    }
+
+    hr = IAudioCaptureClient_ReleaseBuffer(acc, frames);
+    ok(hr == S_OK, "Releasing buffer returns %08x\n", hr);
+    sum += frames;
+
+    ok(ResetEvent(handle), "ResetEvent\n");
+
+    hr = IAudioCaptureClient_GetNextPacketSize(acc, &next);
+    ok(hr == S_OK, "IAudioCaptureClient_GetNextPacketSize returns %08x\n", hr);
+
+    hr = IAudioClient_GetCurrentPadding(ac, &pad);
+    ok(hr == S_OK, "GetCurrentPadding call returns %08x\n", hr);
+    ok(next == pad, "GetNextPacketSize %u vs. GCP %u\n", next, pad);
+    /* later GCP will grow, while GNPS is 0 or period size */
+
     hr = IAudioCaptureClient_GetNextPacketSize(acc, NULL);
     ok(hr == E_POINTER, "IAudioCaptureClient_GetNextPacketSize(NULL) returns %08x\n", hr);
 
-    ok(WaitForSingleObject(handle, 2000) == WAIT_OBJECT_0, "Waiting on event handle failed!\n");
-
-    /* frames can be 0 if no data is available yet.. */
-    hr = IAudioCaptureClient_GetNextPacketSize(acc, &frames);
-    ok(hr == S_OK, "IAudioCaptureClient_GetNextPacketSize returns %08x\n", hr);
-
-    data = (BYTE*)(DWORD_PTR)0xdeadbeef;
+    data = (void*)0xdeadf00d;
+    frames = 0xdeadbeef;
+    flags = 0xabadcafe;
     hr = IAudioCaptureClient_GetBuffer(acc, &data, NULL, NULL, NULL, NULL);
     ok(hr == E_POINTER, "IAudioCaptureClient_GetBuffer(data, NULL, NULL) returns %08x\n", hr);
-    ok((DWORD_PTR)data == 0xdeadbeef, "data is reset to %p\n", data);
 
-    frames = 0xdeadbeef;
     hr = IAudioCaptureClient_GetBuffer(acc, NULL, &frames, NULL, NULL, NULL);
     ok(hr == E_POINTER, "IAudioCaptureClient_GetBuffer(NULL, &frames, NULL) returns %08x\n", hr);
-    ok(frames == 0xdeadbeef, "frames is reset to %08x\n", frames);
 
-    flags = 0xdeadbeef;
     hr = IAudioCaptureClient_GetBuffer(acc, NULL, NULL, &flags, NULL, NULL);
     ok(hr == E_POINTER, "IAudioCaptureClient_GetBuffer(NULL, NULL, &flags) returns %08x\n", hr);
-    ok(flags == 0xdeadbeef, "flags is reset to %08x\n", flags);
 
     hr = IAudioCaptureClient_GetBuffer(acc, &data, &frames, NULL, NULL, NULL);
     ok(hr == E_POINTER, "IAudioCaptureClient_GetBuffer(&ata, &frames, NULL) returns %08x\n", hr);
+    ok((DWORD_PTR)data == 0xdeadf00d, "data is reset to %p\n", data);
+    ok(frames == 0xdeadbeef, "frames is reset to %08x\n", frames);
+    ok(flags == 0xabadcafe, "flags is reset to %08x\n", flags);
 
-    hr = IAudioCaptureClient_GetBuffer(acc, &data, &frames, &flags, &devpos, &qpcpos);
+    hr = IAudioClient_GetDevicePeriod(ac, &period, NULL);
+    ok(hr == S_OK, "GetDevicePeriod failed: %08x\n", hr);
+    period = MulDiv(period, wfx->nSamplesPerSec, 10000000); /* as in render.c */
+
+    ok(WaitForSingleObject(handle, 1000) == WAIT_OBJECT_0, "Waiting on event handle failed!\n");
+
+    data = (void*)0xdeadf00d;
+    hr = IAudioCaptureClient_GetBuffer(acc, &data, &frames, &flags, &pos, &qpc);
     ok(hr == S_OK || hr == AUDCLNT_S_BUFFER_EMPTY, "Valid IAudioCaptureClient_GetBuffer returns %08x\n", hr);
-    if (hr == S_OK)
+    if (hr == S_OK){
         ok(frames, "Amount of frames locked is 0!\n");
-    else if (hr == AUDCLNT_S_BUFFER_EMPTY)
+        /* broken: some w7 machines return pad == 0 and DATA_DISCONTINUITY here,
+         * AUDCLNT_S_BUFFER_EMPTY above, yet pos == 1-2 * period rather than 0 */
+        ok(pos == sum || broken(pos == period || pos == 2*period),
+           "Position %u expected %u\n", (UINT)pos, sum);
+        sum = pos;
+    }else if (hr == AUDCLNT_S_BUFFER_EMPTY){
         ok(!frames, "Amount of frames locked with empty buffer is %u!\n", frames);
-    else
-        ok(0, "GetBuffer returned %08x\n", hr);
-    trace("Device position is at %u, amount of frames locked: %u\n", (DWORD)devpos, frames);
+        ok(data == (void*)0xdeadf00d, "No data changed to %p\n", data);
+    }
+
+    trace("Wait'ed position %d pad %u flags %x, amount of frames locked: %u\n",
+          hr==S_OK ? (UINT)pos : -1, pad, flags, frames);
+
+    hr = IAudioCaptureClient_GetNextPacketSize(acc, &next);
+    ok(hr == S_OK, "IAudioCaptureClient_GetNextPacketSize returns %08x\n", hr);
+    ok(next == frames, "GetNextPacketSize %u vs. GetBuffer %u\n", next, frames);
+
+    hr = IAudioCaptureClient_ReleaseBuffer(acc, frames);
+    ok(hr == S_OK, "Releasing buffer returns %08x\n", hr);
+
+    hr = IAudioCaptureClient_ReleaseBuffer(acc, 0);
+    ok(hr == S_OK, "Releasing 0 returns %08x\n", hr);
+
+    hr = IAudioCaptureClient_GetNextPacketSize(acc, &next);
+    ok(hr == S_OK, "IAudioCaptureClient_GetNextPacketSize returns %08x\n", hr);
 
     if (frames) {
-        hr = IAudioCaptureClient_GetBuffer(acc, &data, &frames, &flags, &devpos, &qpcpos);
+        hr = IAudioCaptureClient_ReleaseBuffer(acc, frames);
+        ok(hr == AUDCLNT_E_OUT_OF_ORDER, "Releasing buffer twice returns %08x\n", hr);
+        sum += frames;
+    }
+
+    Sleep(350); /* for sure there's data now */
+
+    hr = IAudioClient_GetCurrentPadding(ac, &pad);
+    ok(hr == S_OK, "GetCurrentPadding call returns %08x\n", hr);
+
+    /** GetNextPacketSize
+     * returns either 0 or one period worth of frames
+     * whereas GetCurrentPadding grows when input is not consumed. */
+    hr = IAudioCaptureClient_GetNextPacketSize(acc, &next);
+    ok(hr == S_OK, "IAudioCaptureClient_GetNextPacketSize returns %08x\n", hr);
+    ok(next <  pad, "GetNextPacketSize %u vs. GCP %u\n", next, pad);
+
+    hr = IAudioCaptureClient_GetBuffer(acc, &data, &frames, &flags, &pos, &qpc);
+    ok(hr == S_OK, "Valid IAudioCaptureClient_GetBuffer returns %08x\n", hr);
+    ok(next == frames, "GetNextPacketSize %u vs. GetBuffer %u\n", next, frames);
+
+    if(hr == S_OK){
+        UINT32 frames2 = frames;
+        UINT64 pos2, qpc2;
+        ok(frames, "Amount of frames locked is 0!\n");
+        ok(pos == sum, "Position %u expected %u\n", (UINT)pos, sum);
+
+        hr = IAudioCaptureClient_ReleaseBuffer(acc, 0);
+        ok(hr == S_OK, "Releasing 0 returns %08x\n", hr);
+
+        /* GCP did not decrement, no data consumed */
+        hr = IAudioClient_GetCurrentPadding(ac, &frames);
+        ok(hr == S_OK, "GetCurrentPadding call returns %08x\n", hr);
+        ok(frames == pad || frames == pad + next /* concurrent feeder */,
+           "GCP %u past ReleaseBuffer(0) initially %u\n", frames, pad);
+
+        /* should re-get the same data */
+        hr = IAudioCaptureClient_GetBuffer(acc, &data, &frames, &flags, &pos2, &qpc2);
+        ok(hr == S_OK, "Valid IAudioCaptureClient_GetBuffer returns %08x\n", hr);
+        ok(frames2 == frames, "GetBuffer after ReleaseBuffer(0) %u/%u\n", frames2, frames);
+        ok(pos2 == pos, "Position after ReleaseBuffer(0) %u/%u\n", (UINT)pos2, (UINT)pos);
+        todo_wine ok(qpc2 == qpc, "HPC after ReleaseBuffer(0) %u vs. %u\n", (UINT)qpc2, (UINT)qpc);
+    }
+
+    /* trace after the GCP test because log output to MS-DOS console disturbs timing */
+    trace("Sleep.1 position %d pad %u flags %x, amount of frames locked: %u\n",
+          hr==S_OK ? (UINT)pos : -1, pad, flags, frames);
+
+    if(hr == S_OK){
+        UINT32 frames2 = 0xabadcafe;
+        BYTE *data2 = (void*)0xdeadf00d;
+        flags = 0xabadcafe;
+
+        ok(pos == sum, "Position %u expected %u\n", (UINT)pos, sum);
+
+        pos = qpc = 0xdeadbeef;
+        hr = IAudioCaptureClient_GetBuffer(acc, &data2, &frames2, &flags, &pos, &qpc);
         ok(hr == AUDCLNT_E_OUT_OF_ORDER, "Out of order IAudioCaptureClient_GetBuffer returns %08x\n", hr);
+        ok(frames2 == 0xabadcafe, "Out of order frames changed to %x\n", frames2);
+        ok(data2 == (void*)0xdeadf00d, "Out of order data changed to %p\n", data2);
+        ok(flags == 0xabadcafe, "Out of order flags changed to %x\n", flags);
+        ok(pos == 0xdeadbeef, "Out of order position changed to %x\n", (UINT)pos);
+        ok(qpc == 0xdeadbeef, "Out of order timer changed to %x\n", (UINT)qpc);
+
+        hr = IAudioCaptureClient_ReleaseBuffer(acc, frames+1);
+        ok(hr == AUDCLNT_E_INVALID_SIZE, "Releasing buffer+1 returns %08x\n", hr);
+
+        hr = IAudioCaptureClient_ReleaseBuffer(acc, 1);
+        ok(hr == AUDCLNT_E_INVALID_SIZE, "Releasing 1 returns %08x\n", hr);
+
+        hr = IAudioClient_Reset(ac);
+        ok(hr == AUDCLNT_E_NOT_STOPPED, "Reset failed: %08x\n", hr);
     }
 
     hr = IAudioCaptureClient_ReleaseBuffer(acc, frames);
     ok(hr == S_OK, "Releasing buffer returns %08x\n", hr);
 
     if (frames) {
+        sum += frames;
         hr = IAudioCaptureClient_ReleaseBuffer(acc, frames);
         ok(hr == AUDCLNT_E_OUT_OF_ORDER, "Releasing buffer twice returns %08x\n", hr);
     }
 
-    IUnknown_Release(acc);
+    frames = period;
+    ok(next == frames, "GetNextPacketSize %u vs. GetDevicePeriod %u\n", next, frames);
+
+    /* GetBufferSize is not a multiple of the period size! */
+    hr = IAudioClient_GetBufferSize(ac, &next);
+    ok(hr == S_OK, "GetBufferSize failed: %08x\n", hr);
+    trace("GetBufferSize %u period size %u\n", next, frames);
+
+    Sleep(400); /* overrun */
+
+    hr = IAudioClient_GetCurrentPadding(ac, &pad);
+    ok(hr == S_OK, "GetCurrentPadding call returns %08x\n", hr);
+
+    hr = IAudioCaptureClient_GetBuffer(acc, &data, &frames, &flags, &pos, &qpc);
+    ok(hr == S_OK, "Valid IAudioCaptureClient_GetBuffer returns %08x\n", hr);
+
+    trace("Overrun position %d pad %u flags %x, amount of frames locked: %u\n",
+          hr==S_OK ? (UINT)pos : -1, pad, flags, frames);
+
+    if(hr == S_OK){
+        /* The discontinuity is reported here, but is this an old or new packet? */
+        todo_wine ok(flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY, "expect DISCONTINUITY %x\n", flags);
+        ok(pad == next, "GCP %u vs. BufferSize %u\n", (UINT32)pad, next);
+
+        /* Native's position is one period further than what we read.
+         * Perhaps that's precisely the meaning of DATA_DISCONTINUITY:
+         * signal when the position jump left a gap. */
+        todo_wine ok(pos == sum + frames, "Position %u gap %d\n",
+                     (UINT)pos, (UINT)pos - sum);
+        if(flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY)
+            sum = pos;
+    }
+
+    hr = IAudioCaptureClient_ReleaseBuffer(acc, frames);
+    ok(hr == S_OK, "Releasing buffer returns %08x\n", hr);
+    sum += frames;
+
+    hr = IAudioClient_GetCurrentPadding(ac, &pad);
+    ok(hr == S_OK, "GetCurrentPadding call returns %08x\n", hr);
+
+    hr = IAudioCaptureClient_GetBuffer(acc, &data, &frames, &flags, &pos, &qpc);
+    ok(hr == S_OK, "Valid IAudioCaptureClient_GetBuffer returns %08x\n", hr);
+
+    trace("Cont'ed position %d pad %u flags %x, amount of frames locked: %u\n",
+          hr==S_OK ? (UINT)pos : -1, pad, flags, frames);
+
+    if(hr == S_OK){
+        ok(pos == sum, "Position %u expected %u\n", (UINT)pos, sum);
+        ok(!flags, "flags %u\n", flags);
+
+        hr = IAudioCaptureClient_ReleaseBuffer(acc, frames);
+        ok(hr == S_OK, "Releasing buffer returns %08x\n", hr);
+        sum += frames;
+    }
+
+    hr = IAudioClient_Stop(ac);
+    ok(hr == S_OK, "Stop on a started stream returns %08x\n", hr);
+
+    hr = IAudioClient_Start(ac);
+    ok(hr == S_OK, "Start on a stopped stream returns %08x\n", hr);
+
+    hr = IAudioCaptureClient_GetBuffer(acc, &data, &frames, &flags, &pos, &qpc);
+    ok(hr == S_OK, "Valid IAudioCaptureClient_GetBuffer returns %08x\n", hr);
+
+    hr = IAudioClient_GetCurrentPadding(ac, &pad);
+    ok(hr == S_OK, "GetCurrentPadding call returns %08x\n", hr);
+
+    trace("Restart position %d pad %u flags %x, amount of frames locked: %u\n",
+          hr==S_OK ? (UINT)pos : -1, pad, flags, frames);
+    ok(pad > sum, "restarted GCP %u\n", pad); /* GCP is still near buffer size */
+
+    if(frames){
+        ok(pos == sum, "Position %u expected %u\n", (UINT)pos, sum);
+        ok(!flags, "flags %u\n", flags);
+
+        hr = IAudioCaptureClient_ReleaseBuffer(acc, frames);
+        ok(hr == S_OK, "Releasing buffer returns %08x\n", hr);
+        sum += frames;
+    }
+
+    hr = IAudioClient_Stop(ac);
+    ok(hr == S_OK, "Stop on a started stream returns %08x\n", hr);
+
+    hr = IAudioClient_Reset(ac);
+    ok(hr == S_OK, "Reset on a stopped stream returns %08x\n", hr);
+    sum += pad - frames;
+
+    hr = IAudioClient_Start(ac);
+    ok(hr == S_OK, "Start on a stopped stream returns %08x\n", hr);
+
+    hr = IAudioClient_GetCurrentPadding(ac, &pad);
+    ok(hr == S_OK, "GetCurrentPadding call returns %08x\n", hr);
+
+    flags = 0xabadcafe;
+    hr = IAudioCaptureClient_GetBuffer(acc, &data, &frames, &flags, &pos, &qpc);
+    ok(hr == AUDCLNT_S_BUFFER_EMPTY || /*PulseAudio*/hr == S_OK,
+       "Initial IAudioCaptureClient_GetBuffer returns %08x\n", hr);
+
+    trace("Reset   position %d pad %u flags %x, amount of frames locked: %u\n",
+          hr==S_OK ? (UINT)pos : -1, pad, flags, frames);
+
+    if(hr == S_OK){
+        /* Only PulseAudio goes here; despite snd_pcm_drop it manages
+         * to fill GetBufferSize with a single snd_pcm_read */
+        trace("Test marked todo: only PulseAudio gets here\n");
+        todo_wine ok(flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY, "expect DISCONTINUITY %x\n", flags);
+        /* Reset zeroes padding, not the position */
+        ok(pos >= sum, "Position %u last %u\n", (UINT)pos, sum);
+        /*sum = pos; check after next GetBuffer */
+
+        hr = IAudioCaptureClient_ReleaseBuffer(acc, frames);
+        ok(hr == S_OK, "Releasing buffer returns %08x\n", hr);
+        sum += frames;
+    }
+    else if(hr == AUDCLNT_S_BUFFER_EMPTY){
+        ok(!pad, "resetted GCP %u\n", pad);
+        Sleep(180);
+    }
+
+    hr = IAudioClient_GetCurrentPadding(ac, &pad);
+    ok(hr == S_OK, "GetCurrentPadding call returns %08x\n", hr);
+
+    hr = IAudioCaptureClient_GetBuffer(acc, &data, &frames, &flags, &pos, &qpc);
+    ok(hr == S_OK, "Valid IAudioCaptureClient_GetBuffer returns %08x\n", hr);
+    trace("Running position %d pad %u flags %x, amount of frames locked: %u\n",
+          hr==S_OK ? (UINT)pos : -1, pad, flags, frames);
+
+    if(hr == S_OK){
+        /* Some w7 machines signal DATA_DISCONTINUITY here following the
+         * previous AUDCLNT_S_BUFFER_EMPTY, others not.  What logic? */
+        ok(pos >= sum, "Position %u gap %d\n", (UINT)pos, (UINT)pos - sum);
+        IAudioCaptureClient_ReleaseBuffer(acc, frames);
+    }
+
+    hr = IAudioClient_Stop(ac);
+    ok(hr == S_OK, "Stop failed: %08x\n", hr);
+
+    ok(ResetEvent(handle), "ResetEvent\n");
+
+    /* Still receiving events! */
+    r = WaitForSingleObject(handle, 20);
+    ok(r == WAIT_OBJECT_0, "Wait(event) after Stop gave %x\n", r);
+
+    hr = IAudioClient_Reset(ac);
+    ok(hr == S_OK, "Reset failed: %08x\n", hr);
+
+    ok(ResetEvent(handle), "ResetEvent\n");
+
+    r = WaitForSingleObject(handle, 120);
+    ok(r == WAIT_OBJECT_0, "Wait(event) after Reset gave %x\n", r);
+
+    hr = IAudioClient_SetEventHandle(ac, NULL);
+    ok(hr == E_INVALIDARG, "SetEventHandle(NULL) returns %08x\n", hr);
+
+    r = WaitForSingleObject(handle, 70);
+    ok(r == WAIT_OBJECT_0, "Wait(NULL event) gave %x\n", r);
+
+    hr = IAudioClient_Start(ac);
+    ok(hr == S_OK, "Start failed: %08x\n", hr);
+
+    IAudioCaptureClient_Release(acc);
 }
 
 static void test_audioclient(void)
@@ -246,7 +549,9 @@ static void test_audioclient(void)
         ok(pwfx2 == NULL, "pwfx2 non-null on exclusive IsFormatSupported\n");
 
         hr = IAudioClient_IsFormatSupported(ac, 0xffffffff, pwfx, NULL);
-        ok(hr == E_INVALIDARG, "IsFormatSupported(0xffffffff) call returns %08x\n", hr);
+        ok(hr == E_INVALIDARG/*w32*/ ||
+           broken(hr == AUDCLNT_E_UNSUPPORTED_FORMAT/*w64 response from exclusive mode driver */),
+           "IsFormatSupported(0xffffffff) call returns %08x\n", hr);
     }
 
     test_uninitialized(ac);
@@ -255,15 +560,15 @@ static void test_audioclient(void)
     ok(hr == AUDCLNT_E_NOT_INITIALIZED, "Initialize with invalid sharemode returns %08x\n", hr);
 
     hr = IAudioClient_Initialize(ac, AUDCLNT_SHAREMODE_SHARED, 0xffffffff, 5000000, 0, pwfx, NULL);
-    ok(hr == E_INVALIDARG, "Initialize with invalid flags returns %08x\n", hr);
+    ok(hr == E_INVALIDARG || hr == AUDCLNT_E_INVALID_STREAM_FLAG, "Initialize with invalid flags returns %08x\n", hr);
 
-    /* It seems that if length > 2s or periodicity != 0 the length is ignored and call succeeds
-     * Since we can only initialize successfully once skip those tests
+    /* A period != 0 is ignored and the call succeeds.
+     * Since we can only initialize successfully once, skip those tests.
      */
     hr = IAudioClient_Initialize(ac, AUDCLNT_SHAREMODE_SHARED, 0, 5000000, 0, NULL, NULL);
     ok(hr == E_POINTER, "Initialize with null format returns %08x\n", hr);
 
-    hr = IAudioClient_Initialize(ac, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 5000000, 0, pwfx, NULL);
+    hr = IAudioClient_Initialize(ac, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 4987654, 0, pwfx, NULL);
     ok(hr == S_OK, "Valid Initialize returns %08x\n", hr);
 
     if (hr != S_OK)
@@ -330,6 +635,8 @@ static void test_streamvolume(void)
     hr = IAudioClient_Initialize(ac, AUDCLNT_SHAREMODE_SHARED, 0, 5000000,
             0, fmt, NULL);
     ok(hr == S_OK, "Initialize failed: %08x\n", hr);
+    if(hr != S_OK)
+        return;
 
     hr = IAudioClient_GetService(ac, &IID_IAudioStreamVolume, (void**)&asv);
     ok(hr == S_OK, "GetService failed: %08x\n", hr);
@@ -430,6 +737,8 @@ static void test_channelvolume(void)
 
     hr = IAudioClient_GetService(ac, &IID_IChannelAudioVolume, (void**)&acv);
     ok(hr == S_OK, "GetService failed: %08x\n", hr);
+    if(hr != S_OK)
+        return;
 
     hr = IChannelAudioVolume_GetChannelCount(acv, NULL);
     ok(hr == NULL_PTR_ERR, "GetChannelCount gave wrong error: %08x\n", hr);
@@ -530,6 +839,8 @@ static void test_simplevolume(void)
 
     hr = IAudioClient_GetService(ac, &IID_ISimpleAudioVolume, (void**)&sav);
     ok(hr == S_OK, "GetService failed: %08x\n", hr);
+    if(hr != S_OK)
+        return;
 
     hr = ISimpleAudioVolume_GetMasterVolume(sav, NULL);
     ok(hr == NULL_PTR_ERR, "GetMasterVolume gave wrong error: %08x\n", hr);
@@ -605,6 +916,8 @@ static void test_volume_dependence(void)
     hr = IMMDevice_Activate(dev, &IID_IAudioClient, CLSCTX_INPROC_SERVER,
             NULL, (void**)&ac);
     ok(hr == S_OK, "Activation failed with %08x\n", hr);
+    if(hr != S_OK)
+        return;
 
     hr = IAudioClient_GetMixFormat(ac, &fmt);
     ok(hr == S_OK, "GetMixFormat failed: %08x\n", hr);
@@ -621,6 +934,8 @@ static void test_volume_dependence(void)
 
     hr = IAudioClient_GetService(ac, &IID_IAudioStreamVolume, (void**)&asv);
     ok(hr == S_OK, "GetService (AudioStreamVolume) failed: %08x\n", hr);
+    if(hr != S_OK)
+        return;
 
     hr = IAudioStreamVolume_SetChannelVolume(asv, 0, 0.2f);
     ok(hr == S_OK, "ASV_SetChannelVolume failed: %08x\n", hr);
@@ -694,6 +1009,69 @@ static void test_volume_dependence(void)
     IAudioClient_Release(ac);
 }
 
+static void test_marshal(void)
+{
+    IStream *pStream;
+    IAudioClient *ac, *acDest;
+    IAudioCaptureClient *cc, *ccDest;
+    WAVEFORMATEX *pwfx;
+    HRESULT hr;
+
+    hr = IMMDevice_Activate(dev, &IID_IAudioClient, CLSCTX_INPROC_SERVER,
+            NULL, (void**)&ac);
+    ok(hr == S_OK, "Activation failed with %08x\n", hr);
+    if(hr != S_OK)
+        return;
+
+    hr = IAudioClient_GetMixFormat(ac, &pwfx);
+    ok(hr == S_OK, "GetMixFormat failed: %08x\n", hr);
+
+    hr = IAudioClient_Initialize(ac, AUDCLNT_SHAREMODE_SHARED, 0, 5000000,
+            0, pwfx, NULL);
+    ok(hr == S_OK, "Initialize failed: %08x\n", hr);
+
+    CoTaskMemFree(pwfx);
+
+    hr = IAudioClient_GetService(ac, &IID_IAudioCaptureClient, (void**)&cc);
+    ok(hr == S_OK, "GetService failed: %08x\n", hr);
+    if(hr != S_OK) {
+        IAudioClient_Release(ac);
+        return;
+    }
+
+    hr = CreateStreamOnHGlobal(NULL, TRUE, &pStream);
+    ok(hr == S_OK, "CreateStreamOnHGlobal failed 0x%08x\n", hr);
+
+    /* marshal IAudioClient */
+
+    hr = CoMarshalInterface(pStream, &IID_IAudioClient, (IUnknown*)ac, MSHCTX_INPROC, NULL, MSHLFLAGS_NORMAL);
+    ok(hr == S_OK, "CoMarshalInterface IAudioClient failed 0x%08x\n", hr);
+
+    IStream_Seek(pStream, ullZero, STREAM_SEEK_SET, NULL);
+    hr = CoUnmarshalInterface(pStream, &IID_IAudioClient, (void **)&acDest);
+    ok(hr == S_OK, "CoUnmarshalInterface IAudioClient failed 0x%08x\n", hr);
+    if (hr == S_OK)
+        IAudioClient_Release(acDest);
+
+    IStream_Seek(pStream, ullZero, STREAM_SEEK_SET, NULL);
+    /* marshal IAudioCaptureClient */
+
+    hr = CoMarshalInterface(pStream, &IID_IAudioCaptureClient, (IUnknown*)cc, MSHCTX_INPROC, NULL, MSHLFLAGS_NORMAL);
+    ok(hr == S_OK, "CoMarshalInterface IAudioCaptureClient failed 0x%08x\n", hr);
+
+    IStream_Seek(pStream, ullZero, STREAM_SEEK_SET, NULL);
+    hr = CoUnmarshalInterface(pStream, &IID_IAudioCaptureClient, (void **)&ccDest);
+    ok(hr == S_OK, "CoUnmarshalInterface IAudioCaptureClient failed 0x%08x\n", hr);
+    if (hr == S_OK)
+        IAudioCaptureClient_Release(ccDest);
+
+    IStream_Release(pStream);
+
+    IAudioClient_Release(ac);
+    IAudioCaptureClient_Release(cc);
+
+}
+
 START_TEST(capture)
 {
     HRESULT hr;
@@ -723,6 +1101,7 @@ START_TEST(capture)
     test_channelvolume();
     test_simplevolume();
     test_volume_dependence();
+    test_marshal();
 
     IMMDevice_Release(dev);
 

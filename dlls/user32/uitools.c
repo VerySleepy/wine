@@ -539,7 +539,7 @@ static BOOL UITOOLS95_DrawRectEdge(HDC hdc, LPRECT rc,
     if(uFlags & BF_BOTTOM)
     {
         MoveToEx(hdc, InnerRect.left, InnerRect.bottom-1, NULL);
-        LineTo(hdc, InnerRect.right-1, InnerRect.bottom-1);
+        LineTo(hdc, InnerRect.right, InnerRect.bottom-1);
     }
     if(uFlags & BF_RIGHT)
     {
@@ -563,12 +563,12 @@ static BOOL UITOOLS95_DrawRectEdge(HDC hdc, LPRECT rc,
     if(uFlags & BF_BOTTOM)
     {
         MoveToEx(hdc, InnerRect.left+LBpenplus, InnerRect.bottom-2, NULL);
-        LineTo(hdc, InnerRect.right-1-RBpenplus, InnerRect.bottom-2);
+        LineTo(hdc, InnerRect.right-RBpenplus, InnerRect.bottom-2);
     }
     if(uFlags & BF_RIGHT)
     {
-        MoveToEx(hdc, InnerRect.right-2, InnerRect.top+2-RBpenplus, NULL);
-        LineTo(hdc, InnerRect.right-2, InnerRect.bottom-2+RTpenplus);
+        MoveToEx(hdc, InnerRect.right-2, InnerRect.top+RTpenplus, NULL);
+        LineTo(hdc, InnerRect.right-2, InnerRect.bottom-RBpenplus);
     }
 
     if( ((uFlags & BF_MIDDLE) && retval) || (uFlags & BF_ADJUST) )
@@ -649,7 +649,7 @@ static void UITOOLS_DrawCheckedRect( HDC dc, LPRECT rect )
 
       FillRect(dc, rect, GetSysColorBrush(COLOR_BTNFACE));
       bg = SetBkColor(dc, RGB(255, 255, 255));
-      hbsave = SelectObject(dc, SYSCOLOR_55AABrush);
+      hbsave = SelectObject(dc, SYSCOLOR_Get55AABrush());
       PatBlt(dc, rect->left, rect->top, rect->right-rect->left, rect->bottom-rect->top, 0x00FA0089);
       SelectObject(dc, hbsave);
       SetBkColor(dc, bg);
@@ -932,7 +932,7 @@ static BOOL UITOOLS95_DrawFrameCaption(HDC dc, LPRECT r, UINT uFlags)
     int colorIdx = uFlags & DFCS_INACTIVE ? COLOR_BTNSHADOW : COLOR_BTNTEXT;
     int xc = (myr.left+myr.right)/2;
     int yc = (myr.top+myr.bottom)/2;
-    WCHAR str[2] = {0, 0};
+    WCHAR str[] = {0, 0};
     static const WCHAR glyphFontName[] = { 'M','a','r','l','e','t','t',0 };
     UINT alignsave;
     int bksave;
@@ -1001,8 +1001,7 @@ static BOOL UITOOLS95_DrawFrameScroll(HDC dc, LPRECT r, UINT uFlags)
      * with the updown control.
      * Making sure that the arrow is as least 3 pixels wide (or high).
      */
-    if (tri == 0)
-      tri = 1;
+    tri = max( 2, tri );
 
     switch(uFlags & 0xff)
     {
@@ -1422,14 +1421,14 @@ BOOL WINAPI SubtractRect( LPRECT dest, const RECT *src1, const RECT *src2 )
         SetRectEmpty( dest );
         return FALSE;
     }
-    *dest = *src1;
     if (IntersectRect( &tmp, src1, src2 ))
     {
-        if (EqualRect( &tmp, dest ))
+        if (EqualRect( &tmp, src1 ))
         {
             SetRectEmpty( dest );
             return FALSE;
         }
+        *dest = *src1;
         if ((tmp.top == dest->top) && (tmp.bottom == dest->bottom))
         {
             if (tmp.left == dest->left) dest->left = tmp.right;
@@ -1440,6 +1439,10 @@ BOOL WINAPI SubtractRect( LPRECT dest, const RECT *src1, const RECT *src2 )
             if (tmp.top == dest->top) dest->top = tmp.bottom;
             else if (tmp.bottom == dest->bottom) dest->bottom = tmp.top;
         }
+    }
+    else
+    {
+        *dest = *src1;
     }
     return TRUE;
 }
@@ -1507,10 +1510,10 @@ BOOL WINAPI DrawFocusRect( HDC hdc, const RECT* rc )
 
     hOldBrush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
     lb.lbStyle = BS_SOLID;
-    lb.lbColor = GetSysColor(COLOR_WINDOWTEXT);
+    lb.lbColor = 0;
     hNewPen = ExtCreatePen(PS_COSMETIC|PS_ALTERNATE, 1, &lb, 0, NULL);
     hOldPen = SelectObject(hdc, hNewPen);
-    oldDrawMode = SetROP2(hdc, R2_XORPEN);
+    oldDrawMode = SetROP2(hdc, R2_NOT);
     oldBkMode = SetBkMode(hdc, TRANSPARENT);
 
     Rectangle(hdc, rc->left, rc->top, rc->right, rc->bottom);
@@ -1691,6 +1694,7 @@ static BOOL UITOOLS_DrawState(HDC hdc, HBRUSH hbr, DRAWSTATEPROC func, LPARAM lp
     SetBkColor(memdc, RGB(255, 255, 255));
     SetTextColor(memdc, RGB(0, 0, 0));
     hfsave  = SelectObject(memdc, GetCurrentObject(hdc, OBJ_FONT));
+    SetLayout( memdc, GetLayout( hdc ));
 
     /* DST_COMPLEX may draw text as well,
      * so we must be sure that correct font is selected
@@ -1703,7 +1707,7 @@ static BOOL UITOOLS_DrawState(HDC hdc, HBRUSH hbr, DRAWSTATEPROC func, LPARAM lp
     /* This state cause the image to be dithered */
     if(flags & DSS_UNION)
     {
-        hbsave = SelectObject(memdc, SYSCOLOR_55AABrush);
+        hbsave = SelectObject(memdc, SYSCOLOR_Get55AABrush());
         if(!hbsave) goto cleanup;
         tmp = PatBlt(memdc, 0, 0, cx, cy, 0x00FA0089);
         SelectObject(memdc, hbsave);

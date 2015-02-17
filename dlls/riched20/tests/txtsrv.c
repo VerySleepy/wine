@@ -21,6 +21,7 @@
  */
 
 #define COBJMACROS
+#define CONST_VTABLE
 
 #include <stdio.h>
 #include <stdarg.h>
@@ -28,7 +29,10 @@
 #include <winbase.h>
 #include <objbase.h>
 #include <richedit.h>
+#include <tom.h>
+#include <richole.h>
 #include <initguid.h>
+#include <imm.h>
 #include <textserv.h>
 #include <wine/test.h>
 #include <oleauto.h>
@@ -38,21 +42,7 @@ static HMODULE hmoduleRichEdit;
 static IID *pIID_ITextServices;
 static IID *pIID_ITextHost;
 static IID *pIID_ITextHost2;
-
-static const char *debugstr_guid(REFIID riid)
-{
-    static char buf[50];
-
-    if(!riid)
-        return "(null)";
-
-    sprintf(buf, "{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
-            riid->Data1, riid->Data2, riid->Data3, riid->Data4[0],
-            riid->Data4[1], riid->Data4[2], riid->Data4[3], riid->Data4[4],
-            riid->Data4[5], riid->Data4[6], riid->Data4[7]);
-
-    return buf;
-}
+static PCreateTextServices pCreateTextServices;
 
 /* Define C Macros for ITextServices calls. */
 
@@ -77,7 +67,7 @@ static ITextServicesVtbl itextServicesStdcallVtbl;
 #define ITextServices_OnTxUIDeactivate(This) TXTSERV_VTABLE(This)->OnTxUIDeactivate(This)
 #define ITextServices_TxGetText(This,a) TXTSERV_VTABLE(This)->TxGetText(This,a)
 #define ITextServices_TxSetText(This,a) TXTSERV_VTABLE(This)->TxSetText(This,a)
-#define ITextServices_TxGetCurrentTargetX(This,a) TXTSERV_VTABLE(This)->TxGetCurrentTargetX(This,a)
+#define ITextServices_TxGetCurTargetX(This,a) TXTSERV_VTABLE(This)->TxGetCurTargetX(This,a)
 #define ITextServices_TxGetBaseLinePos(This,a) TXTSERV_VTABLE(This)->TxGetBaseLinePos(This,a)
 #define ITextServices_TxGetNaturalSize(This,a,b,c,d,e,f,g,h) TXTSERV_VTABLE(This)->TxGetNaturalSize(This,a,b,c,d,e,f,g,h)
 #define ITextServices_TxGetDropTarget(This,a) TXTSERV_VTABLE(This)->TxGetDropTarget(This,a)
@@ -620,7 +610,6 @@ static BOOL init_texthost(void)
 {
     IUnknown *init;
     HRESULT result;
-    PCreateTextServices pCreateTextServices;
 
     dummyTextHost = CoTaskMemAlloc(sizeof(*dummyTextHost));
     if (dummyTextHost == NULL) {
@@ -633,7 +622,6 @@ static BOOL init_texthost(void)
     /* MSDN states that an IUnknown object is returned by
        CreateTextServices which is then queried to obtain a
        ITextServices object. */
-    pCreateTextServices = (void*)GetProcAddress(hmoduleRichEdit, "CreateTextServices");
     result = (*pCreateTextServices)(NULL, &dummyTextHost->ITextHost_iface, &init);
     ok(result == S_OK, "Did not return S_OK when created (result =  %x)\n", result);
     if (result != S_OK) {
@@ -657,7 +645,7 @@ static BOOL init_texthost(void)
 
 static void free_texthost(void)
 {
-    IUnknown_Release(txtserv);
+    ITextServices_Release(txtserv);
     CoTaskMemFree(dummyTextHost);
 }
 
@@ -720,7 +708,7 @@ static void test_TxGetNaturalSize(void) {
 
     /* Variables with the text metric information */
     INT charwidth_caps_text[26];
-    TEXTMETRIC tmInfo_text;
+    TEXTMETRICA tmInfo_text;
 
     if (!init_texthost())
         return;
@@ -730,9 +718,9 @@ static void test_TxGetNaturalSize(void) {
 
     /* Populate the metric strucs */
     SetMapMode(hdcDraw,MM_TEXT);
-    GetTextMetrics(hdcDraw, &tmInfo_text);
+    GetTextMetricsA(hdcDraw, &tmInfo_text);
     SetLastError(0xdeadbeef);
-    ret = GetCharWidth32(hdcDraw,'A','Z',charwidth_caps_text);
+    ret = GetCharWidth32A(hdcDraw,'A','Z',charwidth_caps_text);
     if (!ret && GetLastError() == ERROR_CALL_NOT_IMPLEMENTED) {
         win_skip("GetCharWidth32 is not available\n");
         goto cleanup;
@@ -805,13 +793,142 @@ DEFINE_GUID(expected_iid_itexthost2, 0x13e670f5,0x1a5a,0x11cf,0xab,0xeb,0x00,0xa
 static void test_IIDs(void)
 {
     ok(IsEqualIID(pIID_ITextServices, &expected_iid_itextservices),
-       "unexpected value for IID_ITextServices: %s\n", debugstr_guid(pIID_ITextServices));
+       "unexpected value for IID_ITextServices: %s\n", wine_dbgstr_guid(pIID_ITextServices));
     ok(IsEqualIID(pIID_ITextHost, &expected_iid_itexthost),
-       "unexpected value for IID_ITextHost: %s\n", debugstr_guid(pIID_ITextHost));
+       "unexpected value for IID_ITextHost: %s\n", wine_dbgstr_guid(pIID_ITextHost));
     ok(IsEqualIID(pIID_ITextHost2, &expected_iid_itexthost2),
-       "unexpected value for IID_ITextHost2: %s\n", debugstr_guid(pIID_ITextHost2));
+       "unexpected value for IID_ITextHost2: %s\n", wine_dbgstr_guid(pIID_ITextHost2));
 }
 
+/* Outer IUnknown for COM aggregation tests */
+struct unk_impl {
+    IUnknown IUnknown_iface;
+    LONG ref;
+    IUnknown *inner_unk;
+};
+
+static inline struct unk_impl *impl_from_IUnknown(IUnknown *iface)
+{
+    return CONTAINING_RECORD(iface, struct unk_impl, IUnknown_iface);
+}
+
+static HRESULT WINAPI unk_QueryInterface(IUnknown *iface, REFIID riid, void **ppv)
+{
+    struct unk_impl *This = impl_from_IUnknown(iface);
+
+    return IUnknown_QueryInterface(This->inner_unk, riid, ppv);
+}
+
+static ULONG WINAPI unk_AddRef(IUnknown *iface)
+{
+    struct unk_impl *This = impl_from_IUnknown(iface);
+
+    return InterlockedIncrement(&This->ref);
+}
+
+static ULONG WINAPI unk_Release(IUnknown *iface)
+{
+    struct unk_impl *This = impl_from_IUnknown(iface);
+
+    return InterlockedDecrement(&This->ref);
+}
+
+static const IUnknownVtbl unk_vtbl =
+{
+    unk_QueryInterface,
+    unk_AddRef,
+    unk_Release
+};
+
+static void test_COM(void)
+{
+    struct unk_impl unk_obj = {{&unk_vtbl}, 19, NULL};
+    struct ITextHostTestImpl texthost = {{&itextHostVtbl}, 1};
+    ITextServices *textsrv;
+    ULONG refcount;
+    HRESULT hr;
+
+    /* COM aggregation */
+    hr = pCreateTextServices(&unk_obj.IUnknown_iface, &texthost.ITextHost_iface,
+                             &unk_obj.inner_unk);
+    ok(hr == S_OK, "CreateTextServices failed: %08x\n", hr);
+    hr = IUnknown_QueryInterface(unk_obj.inner_unk, pIID_ITextServices, (void**)&textsrv);
+    ok(hr == S_OK, "QueryInterface for IID_ITextServices failed: %08x\n", hr);
+    refcount = ITextServices_AddRef(textsrv);
+    ok(refcount == unk_obj.ref, "CreateTextServices just pretends to support COM aggregation\n");
+    refcount = ITextServices_Release(textsrv);
+    ok(refcount == unk_obj.ref, "CreateTextServices just pretends to support COM aggregation\n");
+    refcount = ITextServices_Release(textsrv);
+    ok(refcount == 19, "Refcount should be back at 19 but is %u\n", refcount);
+
+    IUnknown_Release(unk_obj.inner_unk);
+}
+
+static ULONG get_refcount(IUnknown *iface)
+{
+    IUnknown_AddRef(iface);
+    return IUnknown_Release(iface);
+}
+
+static void test_QueryInterface(void)
+{
+    HRESULT hres;
+    IRichEditOle *reole, *txtsrv_reole;
+    ITextDocument *txtdoc, *txtsrv_txtdoc;
+    ULONG refcount;
+
+    if(!init_texthost())
+        return;
+
+    refcount = get_refcount((IUnknown *)txtserv);
+    ok(refcount == 1, "got wrong ref count: %d\n", refcount);
+
+    /* IID_IRichEditOle */
+    hres = ITextServices_QueryInterface(txtserv, &IID_IRichEditOle, (void **)&txtsrv_reole);
+    ok(hres == S_OK, "ITextServices_QueryInterface: 0x%08x\n", hres);
+    refcount = get_refcount((IUnknown *)txtserv);
+    ok(refcount == 2, "got wrong ref count: %d\n", refcount);
+    refcount = get_refcount((IUnknown *)txtsrv_reole);
+    ok(refcount == 2, "got wrong ref count: %d\n", refcount);
+
+    hres = IRichEditOle_QueryInterface(txtsrv_reole, &IID_ITextDocument, (void **)&txtdoc);
+    ok(hres == S_OK, "IRichEditOle_QueryInterface: 0x%08x\n", hres);
+    refcount = get_refcount((IUnknown *)txtserv);
+    ok(refcount == 3, "got wrong ref count: %d\n", refcount);
+    refcount = get_refcount((IUnknown *)txtsrv_reole);
+    ok(refcount == 3, "got wrong ref count: %d\n", refcount);
+
+    ITextDocument_Release(txtdoc);
+    refcount = get_refcount((IUnknown *)txtserv);
+    ok(refcount == 2, "got wrong ref count: %d\n", refcount);
+    IRichEditOle_Release(txtsrv_reole);
+    refcount = get_refcount((IUnknown *)txtserv);
+    ok(refcount == 1, "got wrong ref count: %d\n", refcount);
+
+    /* IID_ITextDocument */
+    hres = ITextServices_QueryInterface(txtserv, &IID_ITextDocument, (void **)&txtsrv_txtdoc);
+    ok(hres == S_OK, "ITextServices_QueryInterface: 0x%08x\n", hres);
+    refcount = get_refcount((IUnknown *)txtserv);
+    ok(refcount == 2, "got wrong ref count: %d\n", refcount);
+    refcount = get_refcount((IUnknown *)txtsrv_txtdoc);
+    ok(refcount == 2, "got wrong ref count: %d\n", refcount);
+
+    hres = ITextDocument_QueryInterface(txtsrv_txtdoc, &IID_IRichEditOle, (void **)&reole);
+    ok(hres == S_OK, "ITextDocument_QueryInterface: 0x%08x\n", hres);
+    refcount = get_refcount((IUnknown *)txtserv);
+    ok(refcount == 3, "got wrong ref count: %d\n", refcount);
+    refcount = get_refcount((IUnknown *)txtsrv_txtdoc);
+    ok(refcount == 3, "got wrong ref count: %d\n", refcount);
+
+    IRichEditOle_Release(reole);
+    refcount = get_refcount((IUnknown *)txtserv);
+    ok(refcount == 2, "got wrong ref count: %d\n", refcount);
+    ITextDocument_Release(txtsrv_txtdoc);
+    refcount = get_refcount((IUnknown *)txtserv);
+    ok(refcount == 1, "got wrong ref count: %d\n", refcount);
+
+    free_texthost();
+}
 
 START_TEST( txtsrv )
 {
@@ -819,13 +936,16 @@ START_TEST( txtsrv )
 
     /* Must explicitly LoadLibrary(). The test has no references to functions in
      * RICHED20.DLL, so the linker doesn't actually link to it. */
-    hmoduleRichEdit = LoadLibrary("RICHED20.DLL");
+    hmoduleRichEdit = LoadLibraryA("riched20.dll");
     ok(hmoduleRichEdit != NULL, "error: %d\n", (int) GetLastError());
 
     pIID_ITextServices = (IID*)GetProcAddress(hmoduleRichEdit, "IID_ITextServices");
     pIID_ITextHost = (IID*)GetProcAddress(hmoduleRichEdit, "IID_ITextHost");
     pIID_ITextHost2 = (IID*)GetProcAddress(hmoduleRichEdit, "IID_ITextHost2");
+    pCreateTextServices = (void*)GetProcAddress(hmoduleRichEdit, "CreateTextServices");
+
     test_IIDs();
+    test_COM();
 
     if (init_texthost())
     {
@@ -835,6 +955,7 @@ START_TEST( txtsrv )
         test_TxSetText();
         test_TxGetNaturalSize();
         test_TxDraw();
+        test_QueryInterface();
     }
     if (wrapperCodeMem) VirtualFree(wrapperCodeMem, 0, MEM_RELEASE);
 }

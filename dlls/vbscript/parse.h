@@ -20,6 +20,7 @@ typedef enum {
     EXPR_ADD,
     EXPR_AND,
     EXPR_BOOL,
+    EXPR_BRACKETS,
     EXPR_CONCAT,
     EXPR_DIV,
     EXPR_DOUBLE,
@@ -41,6 +42,7 @@ typedef enum {
     EXPR_NEG,
     EXPR_NEQUAL,
     EXPR_NEW,
+    EXPR_NOARG, /* not a real expression */
     EXPR_NOT,
     EXPR_NOTHING,
     EXPR_NULL,
@@ -107,10 +109,12 @@ typedef enum {
     STAT_EXITFUNC,
     STAT_EXITPROP,
     STAT_EXITSUB,
+    STAT_FOREACH,
     STAT_FORTO,
     STAT_FUNC,
     STAT_IF,
     STAT_ONERROR,
+    STAT_SELECT,
     STAT_SET,
     STAT_STOP,
     STAT_UNTIL,
@@ -126,6 +130,7 @@ typedef struct _statement_t {
 typedef struct {
     statement_t stat;
     member_expression_t *expr;
+    BOOL is_strict;
 } call_statement_t;
 
 typedef struct {
@@ -134,8 +139,16 @@ typedef struct {
     expression_t *value_expr;
 } assign_statement_t;
 
+typedef struct _dim_list_t {
+    unsigned val;
+    struct _dim_list_t *next;
+} dim_list_t;
+
 typedef struct _dim_decl_t {
     const WCHAR *name;
+    BOOL is_array;
+    BOOL is_public; /* Used only for class members. */
+    dim_list_t *dims;
     struct _dim_decl_t *next;
 } dim_decl_t;
 
@@ -165,16 +178,10 @@ typedef struct {
     function_decl_t *func_decl;
 } function_statement_t;
 
-typedef struct _class_prop_decl_t {
-    BOOL is_public;
-    const WCHAR *name;
-    struct _class_prop_decl_t *next;
-} class_prop_decl_t;
-
 typedef struct _class_decl_t {
     const WCHAR *name;
     function_decl_t *funcs;
-    class_prop_decl_t *props;
+    dim_decl_t *props;
     struct _class_decl_t *next;
 } class_decl_t;
 
@@ -209,6 +216,13 @@ typedef struct {
 
 typedef struct {
     statement_t stat;
+    const WCHAR *identifier;
+    expression_t *group_expr;
+    statement_t *body;
+} foreach_statement_t;
+
+typedef struct {
+    statement_t stat;
     BOOL resume_next;
 } onerror_statement_t;
 
@@ -223,6 +237,18 @@ typedef struct {
     const_decl_t *decls;
 } const_statement_t;
 
+typedef struct _case_clausule_t {
+    expression_t *expr;
+    statement_t *stat;
+    struct _case_clausule_t *next;
+} case_clausule_t;
+
+typedef struct {
+    statement_t stat;
+    expression_t *expr;
+    case_clausule_t *case_clausules;
+} select_statement_t;
+
 typedef struct {
     const WCHAR *code;
     const WCHAR *ptr;
@@ -230,6 +256,7 @@ typedef struct {
 
     BOOL option_explicit;
     BOOL parse_complete;
+    BOOL is_html;
     HRESULT hres;
 
     int last_token;
@@ -239,10 +266,10 @@ typedef struct {
     statement_t *stats_tail;
     class_decl_t *class_decls;
 
-    vbsheap_t heap;
+    heap_pool_t heap;
 } parser_ctx_t;
 
-HRESULT parse_script(parser_ctx_t*,const WCHAR*) DECLSPEC_HIDDEN;
+HRESULT parse_script(parser_ctx_t*,const WCHAR*,const WCHAR*) DECLSPEC_HIDDEN;
 void parser_release(parser_ctx_t*) DECLSPEC_HIDDEN;
 int parser_lex(void*,parser_ctx_t*) DECLSPEC_HIDDEN;
 void *parser_alloc(parser_ctx_t*,size_t) DECLSPEC_HIDDEN;

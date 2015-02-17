@@ -25,20 +25,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d10core);
 
-BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpv)
-{
-    TRACE("fdwReason %u\n", fdwReason);
-
-    switch(fdwReason)
-    {
-        case DLL_PROCESS_ATTACH:
-            DisableThreadLibraryCalls(hInstDLL);
-            break;
-    }
-
-    return TRUE;
-}
-
 static HRESULT WINAPI layer_init(enum dxgi_device_layer_id id, DWORD *count, DWORD *values)
 {
     TRACE("id %#x, count %p, values %p\n", id, count, values);
@@ -69,6 +55,7 @@ static HRESULT WINAPI layer_create(enum dxgi_device_layer_id id, void **layer_ba
         void *device_object, REFIID riid, void **device_layer)
 {
     struct d3d10_device *object;
+    HRESULT hr;
 
     TRACE("id %#x, layer_base %p, unknown0 %#x, device_object %p, riid %s, device_layer %p\n",
             id, layer_base, unknown0, device_object, debugstr_guid(riid), device_layer);
@@ -81,8 +68,13 @@ static HRESULT WINAPI layer_create(enum dxgi_device_layer_id id, void **layer_ba
     }
 
     object = *layer_base;
-    d3d10_device_init(object, device_object);
-    *device_layer = &object->inner_unknown_vtbl;
+    if (FAILED(hr = d3d10_device_init(object, device_object)))
+    {
+        WARN("Failed to initialize device, hr %#x.\n", hr);
+        *device_layer = NULL;
+        return hr;
+    }
+    *device_layer = &object->IUnknown_inner;
 
     TRACE("Created d3d10 device at %p\n", object);
 

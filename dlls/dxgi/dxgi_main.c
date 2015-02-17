@@ -39,73 +39,45 @@ struct dxgi_main
     HMODULE d3d10core;
     struct dxgi_device_layer *device_layers;
     UINT layer_count;
-    LONG refcount;
 };
 static struct dxgi_main dxgi_main;
 
 static void dxgi_main_cleanup(void)
 {
-    EnterCriticalSection(&dxgi_cs);
-
     HeapFree(GetProcessHeap(), 0, dxgi_main.device_layers);
-    dxgi_main.device_layers = NULL;
-    dxgi_main.layer_count = 0;
-
     FreeLibrary(dxgi_main.d3d10core);
-    dxgi_main.d3d10core = NULL;
-
-    LeaveCriticalSection(&dxgi_cs);
+    DeleteCriticalSection(&dxgi_cs);
 }
 
-BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpv)
+BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, void *reserved)
 {
-    TRACE("fdwReason %u\n", fdwReason);
-
-    switch(fdwReason)
+    switch (reason)
     {
         case DLL_PROCESS_ATTACH:
-            DisableThreadLibraryCalls(hInstDLL);
-            ++dxgi_main.refcount;
+            DisableThreadLibraryCalls(inst);
             break;
 
         case DLL_PROCESS_DETACH:
-            if (!--dxgi_main.refcount) dxgi_main_cleanup();
+            if (!reserved)
+                dxgi_main_cleanup();
             break;
     }
 
     return TRUE;
 }
 
-HRESULT WINAPI CreateDXGIFactory(REFIID riid, void **factory)
+HRESULT WINAPI CreateDXGIFactory1(REFIID riid, void **factory)
 {
-    struct dxgi_factory *object;
-    HRESULT hr;
-
     TRACE("riid %s, factory %p\n", debugstr_guid(riid), factory);
 
-    object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object));
-    if (!object)
-    {
-        ERR("Failed to allocate DXGI factory object memory\n");
-        *factory = NULL;
-        return E_OUTOFMEMORY;
-    }
+    return dxgi_factory_create(riid, factory, TRUE);
+}
 
-    hr = dxgi_factory_init(object);
-    if (FAILED(hr))
-    {
-        WARN("Failed to initialize swapchain, hr %#x.\n", hr);
-        HeapFree(GetProcessHeap(), 0, object);
-        *factory = NULL;
-        return hr;
-    }
+HRESULT WINAPI CreateDXGIFactory(REFIID riid, void **factory)
+{
+    TRACE("riid %s, factory %p\n", debugstr_guid(riid), factory);
 
-    TRACE("Created IDXGIFactory %p\n", object);
-
-    hr = IDXGIFactory_QueryInterface((IDXGIFactory *)object, riid, factory);
-    IDXGIFactory_Release((IDXGIFactory *)object);
-
-    return hr;
+    return dxgi_factory_create(riid, factory, FALSE);
 }
 
 static BOOL get_layer(enum dxgi_device_layer_id id, struct dxgi_device_layer *layer)
@@ -139,8 +111,7 @@ static HRESULT register_d3d10core_layers(HMODULE d3d10core)
         HMODULE mod;
         BOOL ret;
 
-        ret = GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, (LPCSTR)d3d10core, &mod);
-        if (!ret)
+        if (!(ret = GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, (const char *)d3d10core, &mod)))
         {
             LeaveCriticalSection(&dxgi_cs);
             return E_FAIL;

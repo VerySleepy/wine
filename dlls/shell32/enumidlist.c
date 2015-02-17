@@ -45,8 +45,8 @@ BOOL AddToEnumList(IEnumIDListImpl *This, LPITEMIDLIST pidl)
 
 	TRACE("(%p)->(pidl=%p)\n",This,pidl);
 
-    if (!This || !pidl)
-        return FALSE;
+        if (!This || !pidl)
+          return FALSE;
 
         pNew = SHAlloc(sizeof(*pNew));
 	if(pNew)
@@ -170,11 +170,10 @@ static HRESULT WINAPI IEnumIDList_fnQueryInterface(IEnumIDList *iface, REFIID ri
 
 	*ppvObj = NULL;
 
-	if(IsEqualIID(riid, &IID_IUnknown))          /*IUnknown*/
-	{ *ppvObj = This;
-	}
-	else if(IsEqualIID(riid, &IID_IEnumIDList))  /*IEnumIDList*/
-	{    *ppvObj = This;
+	if(IsEqualIID(riid, &IID_IUnknown) ||
+           IsEqualIID(riid, &IID_IEnumIDList))
+	{
+            *ppvObj = &This->IEnumIDList_iface;
 	}
 
 	if(*ppvObj)

@@ -45,9 +45,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(winmm);
 
-/* Default set of drivers to be loaded */
-#define WINE_DEFAULT_WINMM_DRIVER "alsa,oss,coreaudio"
-
 /* each known type of driver has an instance of this structure */
 typedef struct tagWINE_LLTYPE {
     /* those attributes depend on the specification of the type */
@@ -67,7 +64,8 @@ static WINE_LLTYPE llTypes[MMDRV_MAX] = {
     { "WaveOut", 0, 0, -1 }
 };
 
-static int drivers_loaded, MMDrvsHi;
+static BOOL drivers_loaded;
+static int MMDrvsHi;
 static WINE_MM_DRIVER	MMDrvs[8];
 static LPWINE_MLD	MM_MLDrvs[40];
 #define MAX_MM_MLDRVS	(sizeof(MM_MLDrvs) / sizeof(MM_MLDrvs[0]))
@@ -76,7 +74,7 @@ static void MMDRV_Init(void);
 
 static void MMDRV_InitSingleType(UINT type) {
     if (!drivers_loaded) {
-        drivers_loaded = 1;
+        drivers_loaded = TRUE;
         MMDRV_Init();
     }
 }
@@ -285,24 +283,6 @@ LPWINE_MLD	MMDRV_Get(HANDLE _hndl, UINT type, BOOL bCanBeID)
 }
 
 /**************************************************************************
- * 				MMDRV_GetRelated		[internal]
- */
-LPWINE_MLD	MMDRV_GetRelated(HANDLE hndl, UINT srcType,
-				 BOOL bSrcCanBeID, UINT dstType)
-{
-    LPWINE_MLD		mld;
-    TRACE("(%p, %04x, %c, %04x)\n",
-          hndl, srcType, bSrcCanBeID ? 'Y' : 'N', dstType);
-
-    if ((mld = MMDRV_Get(hndl, srcType, bSrcCanBeID)) != NULL) {
-	WINE_MM_DRIVER_PART*	part = &MMDrvs[mld->mmdIndex].parts[dstType];
-	if (part->nIDMin < part->nIDMax)
-	    return MMDRV_GetByID(part->nIDMin, dstType);
-    }
-    return NULL;
-}
-
-/**************************************************************************
  * 				MMDRV_PhysicalFeatures		[internal]
  */
 UINT	MMDRV_PhysicalFeatures(LPWINE_MLD mld, UINT uMsg,
@@ -342,10 +322,6 @@ UINT	MMDRV_PhysicalFeatures(LPWINE_MLD mld, UINT uMsg,
     case DRV_QUERYDEVICEINTERFACE:
     case DRV_QUERYDEVICEINTERFACESIZE:
         return MMDRV_Message(mld, uMsg, dwParam1, dwParam2);
-
-    case DRV_QUERYDSOUNDIFACE: /* Wine-specific: Retrieve DirectSound interface */
-    case DRV_QUERYDSOUNDDESC: /* Wine-specific: Retrieve DirectSound driver description*/
-	return MMDRV_Message(mld, uMsg, dwParam1, dwParam2);
 
     default:
 	WARN("Unknown call %04x\n", uMsg);
@@ -531,7 +507,7 @@ static void MMDRV_Init(void)
 
     TRACE("()\n");
 
-    init_hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    init_hr = CoInitialize(NULL);
 
     hr = CoCreateInstance(&CLSID_MMDeviceEnumerator, NULL,
             CLSCTX_INPROC_SERVER, &IID_IMMDeviceEnumerator, (void**)&devenum);

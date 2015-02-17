@@ -39,15 +39,8 @@ typedef struct
     HANDLE     hFile;              /* Handle for disk based MetaFile */
     HBRUSH     dc_brush;
     HPEN       dc_pen;
-    INT        horzres, vertres;
-    INT        horzsize, vertsize;
-    INT        logpixelsx, logpixelsy;
-    INT        bitspixel;
-    INT        textcaps;
-    INT        rastercaps;
-    INT        technology;
-    INT        planes;
-    INT        numcolors;
+    HDC        ref_dc;             /* Reference device */
+    HDC        screen_dc;          /* Screen DC if no reference device specified */
     INT        restoring;          /* RestoreDC counter */
 } EMFDRV_PDEVICE;
 
@@ -80,7 +73,7 @@ extern BOOL     EMFDRV_FillPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
 extern BOOL     EMFDRV_FillRgn( PHYSDEV dev, HRGN hrgn, HBRUSH hbrush ) DECLSPEC_HIDDEN;
 extern BOOL     EMFDRV_FlattenPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
 extern BOOL     EMFDRV_FrameRgn( PHYSDEV dev, HRGN hrgn, HBRUSH hbrush, INT width, INT height ) DECLSPEC_HIDDEN;
-extern BOOL     EMFDRV_GdiComment( PHYSDEV dev, UINT bytes, CONST BYTE *buffer ) DECLSPEC_HIDDEN;
+extern BOOL     EMFDRV_GdiComment( PHYSDEV dev, UINT bytes, const BYTE *buffer ) DECLSPEC_HIDDEN;
 extern INT      EMFDRV_GetDeviceCaps( PHYSDEV dev, INT cap ) DECLSPEC_HIDDEN;
 extern INT      EMFDRV_IntersectClipRect( PHYSDEV dev, INT left, INT top, INT right, INT bottom ) DECLSPEC_HIDDEN;
 extern BOOL     EMFDRV_InvertRgn( PHYSDEV dev, HRGN hrgn ) DECLSPEC_HIDDEN;
@@ -94,6 +87,8 @@ extern BOOL     EMFDRV_PaintRgn( PHYSDEV dev, HRGN hrgn ) DECLSPEC_HIDDEN;
 extern BOOL     EMFDRV_PatBlt( PHYSDEV dev, struct bitblt_coords *dst, DWORD rop ) DECLSPEC_HIDDEN;
 extern BOOL     EMFDRV_Pie( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
                             INT xstart, INT ystart, INT xend, INT yend ) DECLSPEC_HIDDEN;
+extern BOOL     EMFDRV_PolyBezier( PHYSDEV dev, const POINT *pts, DWORD count ) DECLSPEC_HIDDEN;
+extern BOOL     EMFDRV_PolyBezierTo( PHYSDEV dev, const POINT *pts, DWORD count ) DECLSPEC_HIDDEN;
 extern BOOL     EMFDRV_PolyPolygon( PHYSDEV dev, const POINT* pt, const INT* counts, UINT polys) DECLSPEC_HIDDEN;
 extern BOOL     EMFDRV_PolyPolyline( PHYSDEV dev, const POINT* pt, const DWORD* counts, DWORD polys) DECLSPEC_HIDDEN;
 extern BOOL     EMFDRV_Polygon( PHYSDEV dev, const POINT* pt, INT count ) DECLSPEC_HIDDEN;
@@ -108,11 +103,10 @@ extern BOOL     EMFDRV_ScaleViewportExtEx( PHYSDEV dev, INT xNum, INT xDenom,
 extern BOOL     EMFDRV_ScaleWindowExtEx( PHYSDEV dev, INT xNum, INT xDenom,
                                          INT yNum, INT yDenom, SIZE *size ) DECLSPEC_HIDDEN;
 extern HBITMAP  EMFDRV_SelectBitmap( PHYSDEV dev, HBITMAP handle ) DECLSPEC_HIDDEN;
-extern HBRUSH   EMFDRV_SelectBrush( PHYSDEV dev, HBRUSH hbrush, HBITMAP bitmap,
-                                    const BITMAPINFO *info, void *bits, UINT usage ) DECLSPEC_HIDDEN;
+extern HBRUSH   EMFDRV_SelectBrush( PHYSDEV dev, HBRUSH hbrush, const struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
 extern BOOL     EMFDRV_SelectClipPath( PHYSDEV dev, INT iMode ) DECLSPEC_HIDDEN;
-extern HFONT    EMFDRV_SelectFont( PHYSDEV dev, HFONT handle ) DECLSPEC_HIDDEN;
-extern HPEN     EMFDRV_SelectPen( PHYSDEV dev, HPEN handle ) DECLSPEC_HIDDEN;
+extern HFONT    EMFDRV_SelectFont( PHYSDEV dev, HFONT handle, UINT *aa_flags ) DECLSPEC_HIDDEN;
+extern HPEN     EMFDRV_SelectPen( PHYSDEV dev, HPEN handle, const struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
 extern HPALETTE EMFDRV_SelectPalette( PHYSDEV dev, HPALETTE hPal, BOOL force ) DECLSPEC_HIDDEN;
 extern INT      EMFDRV_SetArcDirection( PHYSDEV dev, INT arcDirection ) DECLSPEC_HIDDEN;
 extern COLORREF EMFDRV_SetBkColor( PHYSDEV dev, COLORREF color ) DECLSPEC_HIDDEN;

@@ -6,7 +6,6 @@
 
 @ cdecl ActivateKeyboardLayout(long long) X11DRV_ActivateKeyboardLayout
 @ cdecl Beep() X11DRV_Beep
-@ cdecl GetAsyncKeyState(long) X11DRV_GetAsyncKeyState
 @ cdecl GetKeyNameText(long ptr long) X11DRV_GetKeyNameText
 @ cdecl GetKeyboardLayout(long) X11DRV_GetKeyboardLayout
 @ cdecl GetKeyboardLayoutName(ptr) X11DRV_GetKeyboardLayoutName
@@ -20,8 +19,6 @@
 @ cdecl GetCursorPos(ptr) X11DRV_GetCursorPos
 @ cdecl SetCursorPos(long long) X11DRV_SetCursorPos
 @ cdecl ClipCursor(ptr) X11DRV_ClipCursor
-@ cdecl GetScreenSaveActive() X11DRV_GetScreenSaveActive
-@ cdecl SetScreenSaveActive(long) X11DRV_SetScreenSaveActive
 @ cdecl ChangeDisplaySettingsEx(ptr ptr long long long) X11DRV_ChangeDisplaySettingsEx
 @ cdecl EnumDisplayMonitors(long ptr ptr long) X11DRV_EnumDisplayMonitors
 @ cdecl EnumDisplaySettingsEx(ptr long ptr long) X11DRV_EnumDisplaySettingsEx
@@ -39,7 +36,7 @@
 @ cdecl IsClipboardFormatAvailable(long) X11DRV_IsClipboardFormatAvailable
 @ cdecl MsgWaitForMultipleObjectsEx(long ptr long long long) X11DRV_MsgWaitForMultipleObjectsEx
 @ cdecl ReleaseDC(long long) X11DRV_ReleaseDC
-@ cdecl ScrollDC(long long long ptr ptr long ptr) X11DRV_ScrollDC
+@ cdecl ScrollDC(long long long) X11DRV_ScrollDC
 @ cdecl SetClipboardData(long long long) X11DRV_SetClipboardData
 @ cdecl SetCapture(long long) X11DRV_SetCapture
 @ cdecl SetFocus(long) X11DRV_SetFocus
@@ -51,19 +48,17 @@
 @ cdecl SetWindowText(long wstr) X11DRV_SetWindowText
 @ cdecl ShowWindow(long long ptr long) X11DRV_ShowWindow
 @ cdecl SysCommand(long long long) X11DRV_SysCommand
+@ cdecl UpdateLayeredWindow(long ptr ptr) X11DRV_UpdateLayeredWindow
 @ cdecl WindowMessage(long long long long) X11DRV_WindowMessage
-@ cdecl WindowPosChanging(long long long ptr ptr ptr) X11DRV_WindowPosChanging
-@ cdecl WindowPosChanged(long long long ptr ptr ptr ptr) X11DRV_WindowPosChanged
+@ cdecl WindowPosChanging(long long long ptr ptr ptr ptr) X11DRV_WindowPosChanging
+@ cdecl WindowPosChanged(long long long ptr ptr ptr ptr ptr) X11DRV_WindowPosChanged
+@ cdecl SystemParametersInfo(long long ptr long) X11DRV_SystemParametersInfo
 
 # WinTab32
 @ cdecl AttachEventQueueToTablet(long) X11DRV_AttachEventQueueToTablet
 @ cdecl GetCurrentPacket(ptr) X11DRV_GetCurrentPacket
 @ cdecl LoadTabletInfo(long) X11DRV_LoadTabletInfo
 @ cdecl WTInfoW(long long ptr) X11DRV_WTInfoW
-
-# X11 locks
-@ cdecl -norelay wine_tsx11_lock()
-@ cdecl -norelay wine_tsx11_unlock()
 
 # Desktop
 @ cdecl wine_create_desktop(long long) X11DRV_create_desktop

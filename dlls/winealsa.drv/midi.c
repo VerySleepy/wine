@@ -95,6 +95,14 @@ static	int 		MODM_NumDevs = 0;
 /* this is the total number of MIDI out devices found */
 static	int 		MIDM_NumDevs = 0;
 
+static CRITICAL_SECTION midiSeqLock;
+static CRITICAL_SECTION_DEBUG midiSeqLockDebug =
+{
+    0, 0, &midiSeqLock,
+    { &midiSeqLockDebug.ProcessLocksList, &midiSeqLockDebug.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": midiSeqLock") }
+};
+static CRITICAL_SECTION midiSeqLock = { &midiSeqLockDebug, -1, 0, 0, 0, 0 };
 static	snd_seq_t*      midiSeq = NULL;
 static	int		numOpenMidiSeq = 0;
 static	int		numStartedMidiIn = 0;
@@ -117,9 +125,6 @@ static HANDLE hThread;
 /*======================================================================*
  *                  Low level MIDI implementation			*
  *======================================================================*/
-
-static int midiOpenSeq(int);
-static int midiCloseSeq(void);
 
 #if 0 /* Debug Purpose */
 static void error_handler(const char* file, int line, const char* function, int err, const char* fmt, ...)
@@ -176,10 +181,10 @@ static	int 	MIDI_AlsaToWindowsDeviceType(unsigned int type)
 static void MIDI_NotifyClient(UINT wDevID, WORD wMsg,
 			      DWORD_PTR dwParam1, DWORD_PTR dwParam2)
 {
-    DWORD 		dwCallBack;
+    DWORD_PTR 		dwCallBack;
     UINT 		uFlags;
     HANDLE		hDev;
-    DWORD 		dwInstance;
+    DWORD_PTR 		dwInstance;
 
     TRACE("wDevID = %04X wMsg = %d dwParm1 = %04lX dwParam2 = %04lX\n",
 	  wDevID, wMsg, dwParam1, dwParam2);
@@ -219,12 +224,13 @@ static void MIDI_NotifyClient(UINT wDevID, WORD wMsg,
     DriverCallback(dwCallBack, uFlags, hDev, wMsg, dwInstance, dwParam1, dwParam2);
 }
 
-static int midi_warn = 1;
+static BOOL midi_warn = TRUE;
 /**************************************************************************
  * 			midiOpenSeq				[internal]
  */
-static int midiOpenSeq(int create_client)
+static int midiOpenSeq(BOOL create_client)
 {
+    EnterCriticalSection(&midiSeqLock);
     if (numOpenMidiSeq == 0) {
 	if (snd_seq_open(&midiSeq, "default", SND_SEQ_OPEN_DUPLEX, 0) < 0)
         {
@@ -232,7 +238,8 @@ static int midiOpenSeq(int create_client)
 	    {
 		WARN("Error opening ALSA sequencer.\n");
 	    }
-	    midi_warn = 0;
+            midi_warn = FALSE;
+            LeaveCriticalSection(&midiSeqLock);
 	    return -1;
 	}
 
@@ -246,25 +253,26 @@ static int midiOpenSeq(int create_client)
             if (port_out < 0)
                TRACE("Unable to create output port\n");
             else
-	       TRACE("Outport port created successfully (%d)\n", port_out);
+	       TRACE("Outport port %d created successfully\n", port_out);
 #else
             port_out = snd_seq_create_simple_port(midiSeq, "WINE ALSA Output", SND_SEQ_PORT_CAP_READ,
 	                 	                                                 SND_SEQ_PORT_TYPE_APPLICATION);
 	    if (port_out < 0)
 		TRACE("Unable to create output port\n");
 	    else
-		TRACE("Outport port created successfully (%d)\n", port_out);
+		TRACE("Outport port %d created successfully\n", port_out);
 
 	    port_in = snd_seq_create_simple_port(midiSeq, "WINE ALSA Input", SND_SEQ_PORT_CAP_WRITE,
 	             	                                               SND_SEQ_PORT_TYPE_APPLICATION);
             if (port_in < 0)
                 TRACE("Unable to create input port\n");
             else
-	        TRACE("Input port created successfully (%d)\n", port_in);
+	        TRACE("Input port %d created successfully\n", port_in);
 #endif
        }
     }
     numOpenMidiSeq++;
+    LeaveCriticalSection(&midiSeqLock);
     return 0;
 }
 
@@ -273,12 +281,14 @@ static int midiOpenSeq(int create_client)
  */
 static int midiCloseSeq(void)
 {
+    EnterCriticalSection(&midiSeqLock);
     if (--numOpenMidiSeq == 0) {
 	snd_seq_delete_simple_port(midiSeq, port_out);
 	snd_seq_delete_simple_port(midiSeq, port_in);
 	snd_seq_close(midiSeq);
 	midiSeq = NULL;
     }
+    LeaveCriticalSection(&midiSeqLock);
     return 0;
 }
 
@@ -286,17 +296,20 @@ static DWORD WINAPI midRecThread(LPVOID arg)
 {
     int npfd;
     struct pollfd *pfd;
+    int ret;
 
     TRACE("Thread startup\n");
 
     while(!end_thread) {
 	TRACE("Thread loop\n");
+        EnterCriticalSection(&midiSeqLock);
 	npfd = snd_seq_poll_descriptors_count(midiSeq, POLLIN);
 	pfd = HeapAlloc(GetProcessHeap(), 0, npfd * sizeof(struct pollfd));
 	snd_seq_poll_descriptors(midiSeq, pfd, npfd, POLLIN);
+        LeaveCriticalSection(&midiSeqLock);
 
 	/* Check if an event is present */
-	if (poll(pfd, npfd, 250) < 0) {
+	if (poll(pfd, npfd, 250) <= 0) {
 	    HeapFree(GetProcessHeap(), 0, pfd);
 	    continue;
 	}
@@ -312,7 +325,9 @@ static DWORD WINAPI midRecThread(LPVOID arg)
 	do {
 	    WORD wDevID;
 	    snd_seq_event_t* ev;
+            EnterCriticalSection(&midiSeqLock);
 	    snd_seq_event_input(midiSeq, &ev);
+            LeaveCriticalSection(&midiSeqLock);
 	    /* Find the target device */
 	    for (wDevID = 0; wDevID < MIDM_NumDevs; wDevID++)
 		if ( (ev->source.client == MidiInDev[wDevID].addr.client) && (ev->source.port == MidiInDev[wDevID].addr.port) )
@@ -392,9 +407,9 @@ static DWORD WINAPI midRecThread(LPVOID arg)
 				 * to handle the case where ALSA split the sysex into several events */
 				if ((lpMidiHdr->dwBytesRecorded == lpMidiHdr->dwBufferLength) ||
 				    (*(BYTE*)(lpMidiHdr->lpData + lpMidiHdr->dwBytesRecorded - 1) == 0xF7)) {
+				    MidiInDev[wDevID].lpQueueHdr = lpMidiHdr->lpNext;
 				    lpMidiHdr->dwFlags &= ~MHDR_INQUEUE;
 				    lpMidiHdr->dwFlags |= MHDR_DONE;
-                                    MidiInDev[wDevID].lpQueueHdr = lpMidiHdr->lpNext;
 				    MIDI_NotifyClient(wDevID, MIM_LONGDATA, (DWORD_PTR)lpMidiHdr, dwTime);
 				}
 			    } else {
@@ -413,12 +428,16 @@ static DWORD WINAPI midRecThread(LPVOID arg)
 		    break;
 		}
 		if (toSend != 0) {
-                    TRACE("Sending event %08x (from %d %d)\n", toSend, ev->source.client, ev->source.port);
+		    TRACE("Received event %08x from %d:%d\n", toSend, ev->source.client, ev->source.port);
 		    MIDI_NotifyClient(wDevID, MIM_DATA, toSend, dwTime);
 		}
 	    }
 	    snd_seq_free_event(ev);
-	} while(snd_seq_event_input_pending(midiSeq, 0) > 0);
+
+            EnterCriticalSection(&midiSeqLock);
+            ret = snd_seq_event_input_pending(midiSeq, 0);
+            LeaveCriticalSection(&midiSeqLock);
+	} while(ret > 0);
 	
 	HeapFree(GetProcessHeap(), 0, pfd);
     }
@@ -446,6 +465,8 @@ static DWORD midGetDevCaps(WORD wDevID, LPMIDIINCAPSW lpCaps, DWORD dwSize)
  */
 static DWORD midOpen(WORD wDevID, LPMIDIOPENDESC lpDesc, DWORD dwFlags)
 {
+    int ret = 0;
+
     TRACE("(%04X, %p, %08X);\n", wDevID, lpDesc, dwFlags);
 
     if (lpDesc == NULL) {
@@ -477,15 +498,29 @@ static DWORD midOpen(WORD wDevID, LPMIDIOPENDESC lpDesc, DWORD dwFlags)
 	return MMSYSERR_INVALFLAG;
     }
 
-    if (midiOpenSeq(1) < 0) {
+    if (midiOpenSeq(TRUE) < 0) {
 	return MMSYSERR_ERROR;
     }
 
+    MidiInDev[wDevID].wFlags = HIWORD(dwFlags & CALLBACK_TYPEMASK);
+
+    MidiInDev[wDevID].lpQueueHdr = NULL;
+    MidiInDev[wDevID].dwTotalPlayed = 0;
+    MidiInDev[wDevID].bufsize = 0x3FFF;
+    MidiInDev[wDevID].midiDesc = *lpDesc;
+    MidiInDev[wDevID].state = 0;
+    MidiInDev[wDevID].incLen = 0;
+    MidiInDev[wDevID].startTime = 0;
+
     /* Connect our app port to the device port */
-    if (snd_seq_connect_from(midiSeq, port_in, MidiInDev[wDevID].addr.client, MidiInDev[wDevID].addr.port) < 0)
+    EnterCriticalSection(&midiSeqLock);
+    ret = snd_seq_connect_from(midiSeq, port_in, MidiInDev[wDevID].addr.client,
+                               MidiInDev[wDevID].addr.port);
+    LeaveCriticalSection(&midiSeqLock);
+    if (ret < 0)
 	return MMSYSERR_NOTENABLED;
 
-    TRACE("input port connected %d %d %d\n",port_in,MidiInDev[wDevID].addr.client,MidiInDev[wDevID].addr.port);
+    TRACE("Input port :%d connected %d:%d\n",port_in,MidiInDev[wDevID].addr.client,MidiInDev[wDevID].addr.port);
 
     if (numStartedMidiIn++ == 0) {
 	end_thread = 0;
@@ -499,16 +534,6 @@ static DWORD midOpen(WORD wDevID, LPMIDIOPENDESC lpDesc, DWORD dwFlags)
         SetThreadPriority(hThread, THREAD_PRIORITY_TIME_CRITICAL);
 	TRACE("Created thread for midi-in\n");
     }
-
-    MidiInDev[wDevID].wFlags = HIWORD(dwFlags & CALLBACK_TYPEMASK);
-
-    MidiInDev[wDevID].lpQueueHdr = NULL;
-    MidiInDev[wDevID].dwTotalPlayed = 0;
-    MidiInDev[wDevID].bufsize = 0x3FFF;
-    MidiInDev[wDevID].midiDesc = *lpDesc;
-    MidiInDev[wDevID].state = 0;
-    MidiInDev[wDevID].incLen = 0;
-    MidiInDev[wDevID].startTime = 0;
 
     MIDI_NotifyClient(wDevID, MIM_OPEN, 0L, 0L);
     return MMSYSERR_NOERROR;
@@ -549,7 +574,9 @@ static DWORD midClose(WORD wDevID)
     	TRACE("Stopped thread for midi-in\n");
     }
 
+    EnterCriticalSection(&midiSeqLock);
     snd_seq_disconnect_from(midiSeq, port_in, MidiInDev[wDevID].addr.client, MidiInDev[wDevID].addr.port);
+    LeaveCriticalSection(&midiSeqLock);
     midiCloseSeq();
 
     MidiInDev[wDevID].bufsize = 0;
@@ -565,7 +592,7 @@ static DWORD midClose(WORD wDevID)
  */
 static DWORD midAddBuffer(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
 {
-    TRACE("(%04X, %p, %08X);\n", wDevID, lpMidiHdr, dwSize);
+    TRACE("(%04X, %p, %d);\n", wDevID, lpMidiHdr, dwSize);
 
     if (wDevID >= MIDM_NumDevs) return MMSYSERR_BADDEVICEID;
     if (MidiInDev[wDevID].state == -1) return MIDIERR_NODEVICE;
@@ -600,15 +627,16 @@ static DWORD midAddBuffer(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
  */
 static DWORD midPrepare(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
 {
-    TRACE("(%04X, %p, %08X);\n", wDevID, lpMidiHdr, dwSize);
+    TRACE("(%04X, %p, %d);\n", wDevID, lpMidiHdr, dwSize);
 
-    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 ||
-	lpMidiHdr->lpData == 0 || (lpMidiHdr->dwFlags & MHDR_INQUEUE) != 0)
+    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 || lpMidiHdr->lpData == 0)
 	return MMSYSERR_INVALPARAM;
+    if (lpMidiHdr->dwFlags & MHDR_PREPARED)
+	return MMSYSERR_NOERROR;
 
     lpMidiHdr->lpNext = 0;
     lpMidiHdr->dwFlags |= MHDR_PREPARED;
-    lpMidiHdr->dwBytesRecorded = 0;
+    lpMidiHdr->dwFlags &= ~(MHDR_DONE|MHDR_INQUEUE); /* flags cleared since w2k */
 
     return MMSYSERR_NOERROR;
 }
@@ -618,17 +646,14 @@ static DWORD midPrepare(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
  */
 static DWORD midUnprepare(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
 {
-    TRACE("(%04X, %p, %08X);\n", wDevID, lpMidiHdr, dwSize);
+    TRACE("(%04X, %p, %d);\n", wDevID, lpMidiHdr, dwSize);
 
-    if (wDevID >= MIDM_NumDevs) return MMSYSERR_BADDEVICEID;
-    if (MidiInDev[wDevID].state == -1) return MIDIERR_NODEVICE;
-
-    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 ||
-	lpMidiHdr->lpData == 0)
+    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 || lpMidiHdr->lpData == 0)
 	return MMSYSERR_INVALPARAM;
-
-    if (!(lpMidiHdr->dwFlags & MHDR_PREPARED)) return MIDIERR_UNPREPARED;
-    if (lpMidiHdr->dwFlags & MHDR_INQUEUE) return MIDIERR_STILLPLAYING;
+    if (!(lpMidiHdr->dwFlags & MHDR_PREPARED))
+	return MMSYSERR_NOERROR;
+    if (lpMidiHdr->dwFlags & MHDR_INQUEUE)
+	return MIDIERR_STILLPLAYING;
 
     lpMidiHdr->dwFlags &= ~MHDR_PREPARED;
 
@@ -649,12 +674,11 @@ static DWORD midReset(WORD wDevID)
 
     EnterCriticalSection(&crit_sect);
     while (MidiInDev[wDevID].lpQueueHdr) {
-	MidiInDev[wDevID].lpQueueHdr->dwFlags &= ~MHDR_INQUEUE;
-	MidiInDev[wDevID].lpQueueHdr->dwFlags |= MHDR_DONE;
-	/* FIXME: when called from 16 bit, lpQueueHdr needs to be a segmented ptr */
-	MIDI_NotifyClient(wDevID, MIM_LONGDATA,
-			  (DWORD_PTR)MidiInDev[wDevID].lpQueueHdr, dwTime);
-        MidiInDev[wDevID].lpQueueHdr = MidiInDev[wDevID].lpQueueHdr->lpNext;
+	LPMIDIHDR lpMidiHdr = MidiInDev[wDevID].lpQueueHdr;
+	MidiInDev[wDevID].lpQueueHdr = lpMidiHdr->lpNext;
+	lpMidiHdr->dwFlags &= ~MHDR_INQUEUE;
+	lpMidiHdr->dwFlags |= MHDR_DONE;
+	MIDI_NotifyClient(wDevID, MIM_LONGDATA, (DWORD_PTR)lpMidiHdr, dwTime);
     }
     LeaveCriticalSection(&crit_sect);
 
@@ -710,6 +734,8 @@ static DWORD modGetDevCaps(WORD wDevID, LPMIDIOUTCAPSW lpCaps, DWORD dwSize)
  */
 static DWORD modOpen(WORD wDevID, LPMIDIOPENDESC lpDesc, DWORD dwFlags)
 {
+    int ret;
+
     TRACE("(%04X, %p, %08X);\n", wDevID, lpDesc, dwFlags);
     if (lpDesc == NULL) {
 	WARN("Invalid Parameter !\n");
@@ -731,10 +757,6 @@ static DWORD modOpen(WORD wDevID, LPMIDIOPENDESC lpDesc, DWORD dwFlags)
 	WARN("bad dwFlags\n");
 	return MMSYSERR_INVALFLAG;
     }
-    if (!MidiOutDev[wDevID].bEnabled) {
-	TRACE("disabled wDevID\n");
-	return MMSYSERR_NOTENABLED;
-    }
 
     MidiOutDev[wDevID].lpExtra = 0;
 
@@ -742,7 +764,7 @@ static DWORD modOpen(WORD wDevID, LPMIDIOPENDESC lpDesc, DWORD dwFlags)
     case MOD_FMSYNTH:
     case MOD_MIDIPORT:
     case MOD_SYNTH:
-	if (midiOpenSeq(1) < 0) {
+        if (midiOpenSeq(TRUE) < 0) {
 	    return MMSYSERR_ALLOCATED;
 	}
 	break;
@@ -760,11 +782,16 @@ static DWORD modOpen(WORD wDevID, LPMIDIOPENDESC lpDesc, DWORD dwFlags)
     MidiOutDev[wDevID].midiDesc = *lpDesc;
 
     /* Connect our app port to the device port */
-    if (snd_seq_connect_to(midiSeq, port_out, MidiOutDev[wDevID].addr.client, MidiOutDev[wDevID].addr.port) < 0)
+    EnterCriticalSection(&midiSeqLock);
+    ret = snd_seq_connect_to(midiSeq, port_out, MidiOutDev[wDevID].addr.client,
+                             MidiOutDev[wDevID].addr.port);
+    LeaveCriticalSection(&midiSeqLock);
+    if (ret < 0)
 	return MMSYSERR_NOTENABLED;
     
+    TRACE("Output port :%d connected %d:%d\n",port_out,MidiOutDev[wDevID].addr.client,MidiOutDev[wDevID].addr.port);
+
     MIDI_NotifyClient(wDevID, MOM_OPEN, 0L, 0L);
-    TRACE("Successful !\n");
     return MMSYSERR_NOERROR;
 }
 
@@ -794,7 +821,9 @@ static DWORD modClose(WORD wDevID)
     case MOD_FMSYNTH:
     case MOD_MIDIPORT:
     case MOD_SYNTH:
+        EnterCriticalSection(&midiSeqLock);
         snd_seq_disconnect_to(midiSeq, port_out, MidiOutDev[wDevID].addr.client, MidiOutDev[wDevID].addr.port);
+        LeaveCriticalSection(&midiSeqLock);
 	midiCloseSeq();
 	break;
     default:
@@ -913,8 +942,11 @@ static DWORD modData(WORD wDevID, DWORD dwParam)
 		}
 		break;
 	    }
-	    if (handled)
+	    if (handled) {
+                EnterCriticalSection(&midiSeqLock);
                 snd_seq_event_output_direct(midiSeq, &event);
+                LeaveCriticalSection(&midiSeqLock);
+            }
 	}
 	break;
     default:
@@ -931,8 +963,8 @@ static DWORD modData(WORD wDevID, DWORD dwParam)
  */
 static DWORD modLongData(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
 {
-    int		len_add = 0;
-    LPBYTE	lpData, lpNewData = NULL;
+    int len_add = 0;
+    BYTE *lpData, *lpNewData = NULL;
     snd_seq_event_t event;
 
     TRACE("(%04X, %p, %08X);\n", wDevID, lpMidiHdr, dwSize);
@@ -941,7 +973,7 @@ static DWORD modLongData(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
      * but it seems to be used only for midi input.
      * Taking a look at the WAVEHDR structure (which is quite similar) confirms this assumption.
      */
-    
+
     if (wDevID >= MODM_NumDevs) return MMSYSERR_BADDEVICEID;
     if (!MidiOutDev[wDevID].bEnabled) return MIDIERR_NODEVICE;
 
@@ -950,8 +982,8 @@ static DWORD modLongData(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
 	return MIDIERR_NODEVICE;
     }
 
-    lpData = (LPBYTE) lpMidiHdr->lpData;
-    
+    lpData = (BYTE*)lpMidiHdr->lpData;
+
     if (lpData == NULL)
 	return MIDIERR_UNPREPARED;
     if (!(lpMidiHdr->dwFlags & MHDR_PREPARED))
@@ -978,35 +1010,36 @@ static DWORD modLongData(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
 
     switch (MidiOutDev[wDevID].caps.wTechnology) {
     case MOD_FMSYNTH:
-	/* FIXME: I don't think there is much to do here */
-	break;
+        /* FIXME: I don't think there is much to do here */
+        HeapFree(GetProcessHeap(), 0, lpNewData);
+        break;
     case MOD_MIDIPORT:
-	if (lpData[0] != 0xF0) {
-	    /* Send start of System Exclusive */
-	    len_add = 1;
-	    lpData[0] = 0xF0;
-	    memcpy(lpNewData, lpData, lpMidiHdr->dwBufferLength);
-	    WARN("Adding missing 0xF0 marker at the beginning of "
-		 "system exclusive byte stream\n");
-	}
-	if (lpData[lpMidiHdr->dwBufferLength-1] != 0xF7) {
-	    /* Send end of System Exclusive */
-	    memcpy(lpData + len_add, lpData, lpMidiHdr->dwBufferLength);
-            lpNewData[lpMidiHdr->dwBufferLength + len_add - 1] = 0xF0;
-	    len_add++;
-	    WARN("Adding missing 0xF7 marker at the end of "
-		 "system exclusive byte stream\n");
-	}
+        if (lpData[0] != 0xF0) {
+            /* Send start of System Exclusive */
+            len_add = 1;
+            lpNewData[0] = 0xF0;
+            memcpy(lpNewData + 1, lpData, lpMidiHdr->dwBufferLength);
+            WARN("Adding missing 0xF0 marker at the beginning of system exclusive byte stream\n");
+        }
+        if (lpData[lpMidiHdr->dwBufferLength-1] != 0xF7) {
+            /* Send end of System Exclusive */
+            if (!len_add)
+                memcpy(lpNewData, lpData, lpMidiHdr->dwBufferLength);
+            lpNewData[lpMidiHdr->dwBufferLength + len_add] = 0xF7;
+            len_add++;
+            WARN("Adding missing 0xF7 marker at the end of system exclusive byte stream\n");
+        }
 	snd_seq_ev_clear(&event);
 	snd_seq_ev_set_direct(&event);
 	snd_seq_ev_set_source(&event, port_out);
 	snd_seq_ev_set_dest(&event, MidiOutDev[wDevID].addr.client, MidiOutDev[wDevID].addr.port);
-	TRACE("client = %d port = %d\n", MidiOutDev[wDevID].addr.client, MidiOutDev[wDevID].addr.port);
+	TRACE("destination %d:%d\n", MidiOutDev[wDevID].addr.client, MidiOutDev[wDevID].addr.port);
 	snd_seq_ev_set_sysex(&event, lpMidiHdr->dwBufferLength + len_add, lpNewData ? lpNewData : lpData);
+        EnterCriticalSection(&midiSeqLock);
 	snd_seq_event_output_direct(midiSeq, &event);
-	if (lpNewData)
-		HeapFree(GetProcessHeap(), 0, lpData);
-	break;
+        LeaveCriticalSection(&midiSeqLock);
+        HeapFree(GetProcessHeap(), 0, lpNewData);
+        break;
     default:
 	WARN("Technology not supported (yet) %d !\n",
 	     MidiOutDev[wDevID].caps.wTechnology);
@@ -1025,27 +1058,16 @@ static DWORD modLongData(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
  */
 static DWORD modPrepare(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
 {
-    TRACE("(%04X, %p, %08X);\n", wDevID, lpMidiHdr, dwSize);
+    TRACE("(%04X, %p, %d);\n", wDevID, lpMidiHdr, dwSize);
 
-    if (midiSeq == NULL) {
-	WARN("can't prepare !\n");
-	return MMSYSERR_NOTENABLED;
-    }
-
-    /* MS doc says that dwFlags must be set to zero, but (kinda funny) MS mciseq drivers
-     * asks to prepare MIDIHDR which dwFlags != 0.
-     * So at least check for the inqueue flag
-     */
-    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 ||
-	lpMidiHdr->lpData == 0 || (lpMidiHdr->dwFlags & MHDR_INQUEUE) != 0) {
-	WARN("%p %p %08x %d\n", lpMidiHdr, lpMidiHdr ? lpMidiHdr->lpData : NULL,
-             lpMidiHdr ? lpMidiHdr->dwFlags : 0, dwSize);
+    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 || lpMidiHdr->lpData == 0)
 	return MMSYSERR_INVALPARAM;
-    }
+    if (lpMidiHdr->dwFlags & MHDR_PREPARED)
+	return MMSYSERR_NOERROR;
 
     lpMidiHdr->lpNext = 0;
     lpMidiHdr->dwFlags |= MHDR_PREPARED;
-    lpMidiHdr->dwFlags &= ~MHDR_DONE;
+    lpMidiHdr->dwFlags &= ~(MHDR_DONE|MHDR_INQUEUE); /* flags cleared since w2k */
     return MMSYSERR_NOERROR;
 }
 
@@ -1054,15 +1076,12 @@ static DWORD modPrepare(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
  */
 static DWORD modUnprepare(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
 {
-    TRACE("(%04X, %p, %08X);\n", wDevID, lpMidiHdr, dwSize);
+    TRACE("(%04X, %p, %d);\n", wDevID, lpMidiHdr, dwSize);
 
-    if (midiSeq == NULL) {
-	WARN("can't unprepare !\n");
-	return MMSYSERR_NOTENABLED;
-    }
-
-    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0)
+    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 || lpMidiHdr->lpData == 0)
 	return MMSYSERR_INVALPARAM;
+    if (!(lpMidiHdr->dwFlags & MHDR_PREPARED))
+	return MMSYSERR_NOERROR;
     if (lpMidiHdr->dwFlags & MHDR_INQUEUE)
 	return MIDIERR_STILLPLAYING;
     lpMidiHdr->dwFlags &= ~MHDR_PREPARED;
@@ -1245,7 +1264,7 @@ static void ALSA_AddMidiPort(snd_seq_client_info_t* cinfo, snd_seq_port_info_t* 
  *
  * Initializes the MIDI devices information variables
  */
-static LONG ALSA_MidiInit(void)
+static BOOL ALSA_MidiInit(void)
 {
     static	BOOL	bInitDone = FALSE;
     snd_seq_client_info_t *cinfo;
@@ -1258,7 +1277,7 @@ static LONG ALSA_MidiInit(void)
     bInitDone = TRUE;
 
     /* try to open device */
-    if (midiOpenSeq(0) == -1) {
+    if (midiOpenSeq(FALSE) == -1) {
 	return TRUE;
     }
 

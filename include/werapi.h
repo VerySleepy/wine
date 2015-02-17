@@ -70,6 +70,16 @@ typedef enum _WER_CONSENT
     WerConsentMax
 } WER_CONSENT;
 
+typedef enum _WER_FILE_TYPE
+{
+    WerFileTypeMicrodump = 1,
+    WerFileTypeMinidump,
+    WerFileTypeHeapdump,
+    WerFileTypeUserDocument,
+    WerFileTypeOther,
+    WerFileTypeMax
+} WER_FILE_TYPE;
+
 typedef enum _WER_REGISTER_FILE_TYPE
 {
     WerRegFileTypeUserDocument = 1,
@@ -121,6 +131,22 @@ typedef enum _WER_DUMP_TYPE
     WerDumpTypeMax
 } WER_DUMP_TYPE;
 
+typedef enum _WER_REPORT_UI
+{
+    WerUIAdditionalDataDlgHeader = 1,
+    WerUIIconFilePath = 2,
+    WerUIConsentDlgHeader = 3,
+    WerUIConsentDlgBody = 4,
+    WerUIOnlineSolutionCheckText = 5,
+    WerUIOfflineSolutionCheckText = 6,
+    WerUICloseText = 7,
+    WerUICloseDlgHeader = 8,
+    WerUICloseDlgBody = 9,
+    WerUICloseDlgButtonText = 10,
+    WerUICustomActionButtonText = 11,
+    WerUIMax
+} WER_REPORT_UI;
+
 /* #### */
 
 typedef struct _WER_DUMP_CUSTOM_OPTIONS
@@ -149,11 +175,17 @@ typedef struct _WER_EXCEPTION_INFORMATION
 
 HRESULT WINAPI WerAddExcludedApplication(PCWSTR, BOOL);
 HRESULT WINAPI WerRegisterFile(PCWSTR file, WER_REGISTER_FILE_TYPE regfiletype, DWORD flags);
+HRESULT WINAPI WerRegisterMemoryBlock(void *block, DWORD size);
+HRESULT WINAPI WerRegisterRuntimeExceptionModule(PCWSTR callbackdll, void *context);
 HRESULT WINAPI WerRemoveExcludedApplication(PCWSTR, BOOL);
+HRESULT WINAPI WerReportAddFile(HREPORT, PCWSTR, WER_FILE_TYPE, DWORD);
 HRESULT WINAPI WerReportCloseHandle(HREPORT);
 HRESULT WINAPI WerReportCreate(PCWSTR, WER_REPORT_TYPE, PWER_REPORT_INFORMATION, HREPORT*);
 HRESULT WINAPI WerReportSetParameter(HREPORT, DWORD, PCWSTR, PCWSTR);
+HRESULT WINAPI WerReportSetUIOption(HREPORT, WER_REPORT_UI, PCWSTR);
 HRESULT WINAPI WerReportSubmit(HREPORT, WER_CONSENT, DWORD, PWER_SUBMIT_RESULT);
+HRESULT WINAPI WerSetFlags(DWORD flags);
+HRESULT WINAPI WerUnregisterMemoryBlock(void *block);
 
 #ifdef __cplusplus
 }

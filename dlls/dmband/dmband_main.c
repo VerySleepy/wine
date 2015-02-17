@@ -27,7 +27,7 @@ LONG DMBAND_refCount = 0;
 
 typedef struct {
         IClassFactory IClassFactory_iface;
-        HRESULT WINAPI (*fnCreateInstance)(REFIID riid, void **ppv, IUnknown *pUnkOuter);
+        HRESULT WINAPI (*fnCreateInstance)(REFIID riid, void **ret_iface);
 } IClassFactoryImpl;
 
 /******************************************************************
@@ -79,7 +79,12 @@ static HRESULT WINAPI ClassFactory_CreateInstance(IClassFactory *iface, IUnknown
 
         TRACE ("(%p, %s, %p)\n", pUnkOuter, debugstr_dmguid(riid), ppv);
 
-        return This->fnCreateInstance(riid, ppv, pUnkOuter);
+        if (pUnkOuter) {
+                *ppv = NULL;
+                return CLASS_E_NOAGGREGATION;
+        }
+
+        return This->fnCreateInstance(riid, ppv);
 }
 
 static HRESULT WINAPI ClassFactory_LockServer(IClassFactory *iface, BOOL dolock)
@@ -102,8 +107,8 @@ static const IClassFactoryVtbl classfactory_vtbl = {
         ClassFactory_LockServer
 };
 
-static IClassFactoryImpl Band_CF = {{&classfactory_vtbl}, DMUSIC_CreateDirectMusicBandImpl};
-static IClassFactoryImpl BandTrack_CF = {{&classfactory_vtbl}, DMUSIC_CreateDirectMusicBandTrack};
+static IClassFactoryImpl Band_CF = {{&classfactory_vtbl}, create_dmband};
+static IClassFactoryImpl BandTrack_CF = {{&classfactory_vtbl}, create_dmbandtrack};
 
 /******************************************************************
  *		DllMain
@@ -114,9 +119,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
 	if (fdwReason == DLL_PROCESS_ATTACH) {
             instance = hinstDLL;
             DisableThreadLibraryCalls(hinstDLL);
-		/* FIXME: Initialisation */
-	} else if (fdwReason == DLL_PROCESS_DETACH) {
-		/* FIXME: Cleanup */
 	}
 
 	return TRUE;

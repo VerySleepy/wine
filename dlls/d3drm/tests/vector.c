@@ -28,14 +28,15 @@
 
 #define expect_mat( expectedmat, gotmat)\
 { \
-    int i,j,equal=1; \
+    int i,j; \
+    BOOL equal = TRUE; \
     for (i=0; i<4; i++)\
         {\
          for (j=0; j<4; j++)\
              {\
               if (fabs(expectedmat[i][j]-gotmat[i][j])>admit_error)\
                  {\
-                  equal=0;\
+                  equal = FALSE;\
                  }\
              }\
         }\
@@ -67,18 +68,19 @@
 
 static HMODULE d3drm_handle = 0;
 
-static void (WINAPI * pD3DRMMatrixFromQuaternion)(D3DRMMATRIX4D, LPD3DRMQUATERNION);
-static LPD3DVECTOR (WINAPI* pD3DRMVectorAdd)(LPD3DVECTOR, LPD3DVECTOR, LPD3DVECTOR);
-static LPD3DVECTOR (WINAPI* pD3DRMVectorCrossProduct)(LPD3DVECTOR, LPD3DVECTOR, LPD3DVECTOR);
-static D3DVALUE (WINAPI* pD3DRMVectorDotProduct)(LPD3DVECTOR, LPD3DVECTOR);
-static D3DVALUE (WINAPI* pD3DRMVectorModulus)(LPD3DVECTOR);
-static LPD3DVECTOR (WINAPI * pD3DRMVectorNormalize)(LPD3DVECTOR);
-static LPD3DVECTOR (WINAPI * pD3DRMVectorReflect)(LPD3DVECTOR, LPD3DVECTOR, LPD3DVECTOR);
-static LPD3DVECTOR (WINAPI * pD3DRMVectorRotate)(LPD3DVECTOR, LPD3DVECTOR, LPD3DVECTOR, D3DVALUE);
-static LPD3DVECTOR (WINAPI * pD3DRMVectorScale)(LPD3DVECTOR, LPD3DVECTOR, D3DVALUE);
-static LPD3DVECTOR (WINAPI * pD3DRMVectorSubtract)(LPD3DVECTOR, LPD3DVECTOR, LPD3DVECTOR);
-static LPD3DRMQUATERNION (WINAPI * pD3DRMQuaternionFromRotation)(LPD3DRMQUATERNION, LPD3DVECTOR, D3DVALUE);
-static LPD3DRMQUATERNION (WINAPI * pD3DRMQuaternionSlerp)(LPD3DRMQUATERNION, LPD3DRMQUATERNION, LPD3DRMQUATERNION, D3DVALUE);
+static void (WINAPI * pD3DRMMatrixFromQuaternion)(D3DRMMATRIX4D, D3DRMQUATERNION *);
+static D3DVECTOR *(WINAPI *pD3DRMVectorAdd)(D3DVECTOR *, D3DVECTOR *, D3DVECTOR *);
+static D3DVECTOR *(WINAPI *pD3DRMVectorCrossProduct)(D3DVECTOR *, D3DVECTOR *, D3DVECTOR *);
+static D3DVALUE (WINAPI *pD3DRMVectorDotProduct)(D3DVECTOR *, D3DVECTOR *);
+static D3DVALUE (WINAPI *pD3DRMVectorModulus)(D3DVECTOR *);
+static D3DVECTOR *(WINAPI *pD3DRMVectorNormalize)(D3DVECTOR *);
+static D3DVECTOR *(WINAPI *pD3DRMVectorReflect)(D3DVECTOR *, D3DVECTOR *, D3DVECTOR *);
+static D3DVECTOR *(WINAPI *pD3DRMVectorRotate)(D3DVECTOR *, D3DVECTOR *, D3DVECTOR *, D3DVALUE);
+static D3DVECTOR *(WINAPI *pD3DRMVectorScale)(D3DVECTOR *, D3DVECTOR *, D3DVALUE);
+static D3DVECTOR *(WINAPI *pD3DRMVectorSubtract)(D3DVECTOR *, D3DVECTOR *, D3DVECTOR *);
+static D3DRMQUATERNION *(WINAPI *pD3DRMQuaternionFromRotation)(D3DRMQUATERNION*, D3DVECTOR *, D3DVALUE);
+static D3DRMQUATERNION *(WINAPI * pD3DRMQuaternionSlerp)(D3DRMQUATERNION *,
+        D3DRMQUATERNION *, D3DRMQUATERNION *, D3DVALUE);
 static D3DCOLOR (WINAPI * pD3DRMCreateColorRGB)(D3DVALUE, D3DVALUE, D3DVALUE);
 static D3DCOLOR (WINAPI * pD3DRMCreateColorRGBA)(D3DVALUE, D3DVALUE, D3DVALUE, D3DVALUE);
 static D3DVALUE (WINAPI * pD3DRMColorGetAlpha)(D3DCOLOR);

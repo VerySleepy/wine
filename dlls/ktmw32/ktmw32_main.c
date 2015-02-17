@@ -23,19 +23,39 @@
 
 #include "windef.h"
 #include "winbase.h"
+#include "wine/debug.h"
+
+WINE_DEFAULT_DEBUG_CHANNEL(ktmw32);
 
 
-BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
+/***********************************************************************
+ * CommitTransaction (ktmw32.@)
+ */
+BOOL WINAPI CommitTransaction(HANDLE transaction)
+{
+    FIXME("(%p): stub\n", transaction);
+    return TRUE;
+}
+
+/***********************************************************************
+ * CreateTransaction (ktmw32.@)
+ */
+HANDLE WINAPI CreateTransaction(LPSECURITY_ATTRIBUTES pattr, LPGUID pguid, DWORD options,
+                                DWORD level, DWORD flags, DWORD timeout, LPWSTR description)
 {
 
-    switch (fdwReason)
-    {
-        case DLL_PROCESS_ATTACH:
-            DisableThreadLibraryCalls(hinstDLL);
-            break;
-        case DLL_PROCESS_DETACH:
-            break;
-    }
+    FIXME("(%p %p 0x%x 0x%x 0x%x, %u, %s): stub\n",
+            pattr, pguid, options, level, flags, timeout, debugstr_w(description));
 
-    return TRUE;
+    return (HANDLE) 1;
+}
+
+/***********************************************************************
+ * Rollback Transaction (ktmw32.@)
+ */
+BOOL WINAPI RollbackTransaction(HANDLE transaction)
+{
+    FIXME("stub: %p\n", transaction);
+    SetLastError(ERROR_ACCESS_DENIED);
+    return FALSE;
 }

@@ -72,19 +72,7 @@ static ULONG STDMETHODCALLTYPE dxgi_swapchain_Release(IDXGISwapChain *iface)
     TRACE("%p decreasing refcount to %u\n", This, refcount);
 
     if (!refcount)
-    {
-        struct wined3d_device *wined3d_device;
-        HRESULT hr;
-
-        FIXME("Only a single swapchain is supported\n");
-
-        wined3d_device = wined3d_swapchain_get_device(This->wined3d_swapchain);
-        hr = wined3d_device_uninit_3d(wined3d_device);
-        if (FAILED(hr))
-        {
-            ERR("Uninit3D failed, hr %#x\n", hr);
-        }
-    }
+        wined3d_swapchain_decref(This->wined3d_swapchain);
 
     return refcount;
 }
@@ -158,17 +146,15 @@ static HRESULT STDMETHODCALLTYPE dxgi_swapchain_GetBuffer(IDXGISwapChain *iface,
 
     EnterCriticalSection(&dxgi_cs);
 
-    hr = wined3d_swapchain_get_back_buffer(This->wined3d_swapchain,
-            buffer_idx, WINED3DBACKBUFFER_TYPE_MONO, &backbuffer);
-    if (FAILED(hr))
+    if (!(backbuffer = wined3d_swapchain_get_back_buffer(This->wined3d_swapchain,
+            buffer_idx, WINED3D_BACKBUFFER_TYPE_MONO)))
     {
         LeaveCriticalSection(&dxgi_cs);
-        return hr;
+        return DXGI_ERROR_INVALID_CALL;
     }
 
     parent = wined3d_surface_get_parent(backbuffer);
     hr = IUnknown_QueryInterface(parent, riid, surface);
-    wined3d_surface_decref(backbuffer);
     LeaveCriticalSection(&dxgi_cs);
 
     return hr;
@@ -192,9 +178,36 @@ static HRESULT STDMETHODCALLTYPE dxgi_swapchain_GetFullscreenState(IDXGISwapChai
 
 static HRESULT STDMETHODCALLTYPE dxgi_swapchain_GetDesc(IDXGISwapChain *iface, DXGI_SWAP_CHAIN_DESC *desc)
 {
-    FIXME("iface %p, desc %p stub!\n", iface, desc);
+    struct dxgi_swapchain *swapchain = impl_from_IDXGISwapChain(iface);
+    struct wined3d_swapchain_desc wined3d_desc;
 
-    return E_NOTIMPL;
+    FIXME("iface %p, desc %p partial stub!\n", iface, desc);
+
+    if (desc == NULL)
+        return E_INVALIDARG;
+
+    EnterCriticalSection(&dxgi_cs);
+    wined3d_swapchain_get_desc(swapchain->wined3d_swapchain, &wined3d_desc);
+    LeaveCriticalSection(&dxgi_cs);
+
+    FIXME("Ignoring ScanlineOrdering, Scaling, SwapEffect and Flags\n");
+
+    desc->BufferDesc.Width = wined3d_desc.backbuffer_width;
+    desc->BufferDesc.Height = wined3d_desc.backbuffer_height;
+    desc->BufferDesc.RefreshRate.Numerator = wined3d_desc.refresh_rate;
+    desc->BufferDesc.RefreshRate.Denominator = 1;
+    desc->BufferDesc.Format = dxgi_format_from_wined3dformat(wined3d_desc.backbuffer_format);
+    desc->BufferDesc.ScanlineOrdering = DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED;
+    desc->BufferDesc.Scaling = DXGI_MODE_SCALING_UNSPECIFIED;
+    desc->SampleDesc.Count = wined3d_desc.multisample_type;
+    desc->SampleDesc.Quality = wined3d_desc.multisample_quality;
+    desc->BufferCount = wined3d_desc.backbuffer_count;
+    desc->OutputWindow = wined3d_desc.device_window;
+    desc->Windowed = wined3d_desc.windowed;
+    desc->SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+    desc->Flags = 0;
+
+    return S_OK;
 }
 
 static HRESULT STDMETHODCALLTYPE dxgi_swapchain_ResizeBuffers(IDXGISwapChain *iface,
@@ -272,17 +285,15 @@ static const struct wined3d_parent_ops dxgi_swapchain_wined3d_parent_ops =
 };
 
 HRESULT dxgi_swapchain_init(struct dxgi_swapchain *swapchain, struct dxgi_device *device,
-        WINED3DPRESENT_PARAMETERS *present_parameters)
+        struct wined3d_swapchain_desc *desc)
 {
     HRESULT hr;
 
     swapchain->IDXGISwapChain_iface.lpVtbl = &dxgi_swapchain_vtbl;
     swapchain->refcount = 1;
 
-    hr = wined3d_swapchain_create(device->wined3d_device, present_parameters,
-            SURFACE_OPENGL, swapchain, &dxgi_swapchain_wined3d_parent_ops,
-            &swapchain->wined3d_swapchain);
-    if (FAILED(hr))
+    if (FAILED(hr = wined3d_swapchain_create(device->wined3d_device, desc, swapchain,
+            &dxgi_swapchain_wined3d_parent_ops, &swapchain->wined3d_swapchain)))
     {
         WARN("Failed to create wined3d swapchain, hr %#x.\n", hr);
         return hr;

@@ -17,6 +17,7 @@
  */
 
 typedef struct HTMLPluginContainer HTMLPluginContainer;
+typedef struct PHEventSink PHEventSink;
 
 typedef struct {
     IOleClientSite       IOleClientSite_iface;
@@ -43,6 +44,7 @@ typedef struct {
     HTMLDocumentNode *doc;
     struct list entry;
 
+    PHEventSink *sink;
     HTMLPluginContainer *element;
 } PluginHost;
 
@@ -58,7 +60,7 @@ struct HTMLPluginContainer {
 
 extern const IID IID_HTMLPluginContainer DECLSPEC_HIDDEN;
 
-HRESULT create_plugin_host(HTMLDocumentNode*,nsIDOMElement*,IUnknown*,const CLSID*,PluginHost**) DECLSPEC_HIDDEN;
+HRESULT create_plugin_host(HTMLDocumentNode*,HTMLPluginContainer*) DECLSPEC_HIDDEN;
 void update_plugin_window(PluginHost*,HWND,const RECT*) DECLSPEC_HIDDEN;
 void detach_plugin_host(PluginHost*) DECLSPEC_HIDDEN;
 
@@ -70,3 +72,5 @@ HRESULT create_ip_frame(IOleInPlaceFrame**) DECLSPEC_HIDDEN;
 HRESULT get_plugin_disp(HTMLPluginContainer*,IDispatch**) DECLSPEC_HIDDEN;
 HRESULT get_plugin_dispid(HTMLPluginContainer*,WCHAR*,DISPID*) DECLSPEC_HIDDEN;
 HRESULT invoke_plugin_prop(HTMLPluginContainer*,DISPID,LCID,WORD,DISPPARAMS*,VARIANT*,EXCEPINFO*) DECLSPEC_HIDDEN;
+void notif_container_change(HTMLPluginContainer*,DISPID);
+void bind_activex_event(HTMLDocumentNode*,HTMLPluginContainer*,WCHAR*,IDispatch*) DECLSPEC_HIDDEN;

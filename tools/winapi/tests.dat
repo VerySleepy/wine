@@ -273,7 +273,6 @@ NEWTEXTMETRICEXW
 NEWTEXTMETRICW
 NPEXTLOGPEN
 !NPLOGPALETTE           # FIXME: 20040821: Mishandled by winapi_test
-OLDFONTENUMPROC
 OLDFONTENUMPROCA
 OLDFONTENUMPROCW
 OUTLINETEXTMETRICA
@@ -760,7 +759,6 @@ PCCH
 PCH
 !PCONTEXT               # Architecture dependent
 PCSTR
-PCTSTR
 PCWCH
 PCWSTR
 !PEXCEPTION_HANDLER     # Wine-only type
@@ -853,7 +851,6 @@ PTOKEN_GROUPS
 PTOKEN_PRIVILEGES
 PTOKEN_USER
 PTOP_LEVEL_EXCEPTION_FILTER
-PTSTR
 PULARGE_INTEGER
 PVECTORED_EXCEPTION_HANDLER
 PVOID
@@ -884,7 +881,6 @@ SSIZE_T
 !STACK_FRAME_HEADER     # Architecture dependent
 SYSTEM_ALARM_ACE
 SYSTEM_AUDIT_ACE
-TCHAR
 TOKEN_DEFAULT_DACL
 TOKEN_GROUPS
 TOKEN_OWNER
@@ -938,6 +934,7 @@ rpcproxy.h
 <stdarg.h>
 "windef.h"
 "winbase.h"
+"ole2.h"
 "rpc.h"
 "rpcndr.h"
 "rpcproxy.h"
@@ -1738,7 +1735,8 @@ mmsystem.h
 
 %include
 
-"windows.h"
+"windef.h"
+"mmsystem.h"
 
 %type
 

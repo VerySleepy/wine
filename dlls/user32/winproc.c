@@ -28,6 +28,7 @@
 
 #include "windef.h"
 #include "winbase.h"
+#include "wingdi.h"
 #include "controls.h"
 #include "win.h"
 #include "user_private.h"
@@ -74,6 +75,7 @@ static WINDOWPROC winproc_array[MAX_WINPROCS] =
     { MDIClientWndProcA, MDIClientWndProcW },  /* WINPROC_MDICLIENT */
     { ScrollBarWndProcA, ScrollBarWndProcW },  /* WINPROC_SCROLLBAR */
     { StaticWndProcA, StaticWndProcW },        /* WINPROC_STATIC */
+    { ImeWndProcA, ImeWndProcW },              /* WINPROC_IME */
     { NULL, DesktopWndProc },                  /* WINPROC_DESKTOP */
     { NULL, IconTitleWndProc },                /* WINPROC_ICONTITLE */
     { NULL, PopupMenuWndProc },                /* WINPROC_MENU */
@@ -219,8 +221,9 @@ static WPARAM map_wparam_char_WtoA( WPARAM wParam, DWORD len )
 {
     WCHAR wch = wParam;
     BYTE ch[2];
+    DWORD cp = get_input_codepage();
 
-    RtlUnicodeToMultiByteN( (LPSTR)ch, len, &len, &wch, sizeof(wch) );
+    len = WideCharToMultiByte( cp, 0, &wch, 1, (LPSTR)ch, len, NULL, NULL );
     if (len == 2)
         return MAKEWPARAM( (ch[0] << 8) | ch[1], HIWORD(wParam) );
     else
@@ -826,9 +829,8 @@ static LRESULT WINPROC_CallProcWtoA( winproc_callback_t callback, HWND hwnd, UIN
         {
             WCHAR wch = wParam;
             char ch[2];
-            DWORD len;
-
-            RtlUnicodeToMultiByteN( ch, 2, &len, &wch, sizeof(wch) );
+            DWORD cp = get_input_codepage();
+            DWORD len = WideCharToMultiByte( cp, 0, &wch, 1, ch, 2, NULL, NULL );
             ret = callback( hwnd, msg, (BYTE)ch[0], lParam, result, arg );
             if (len == 2) ret = callback( hwnd, msg, (BYTE)ch[1], lParam, result, arg );
         }
@@ -1121,10 +1123,11 @@ static LRESULT WINAPI StaticWndProcW( HWND hwnd, UINT msg, WPARAM wParam, LPARAM
     return wow_handlers.static_proc( hwnd, msg, wParam, lParam, TRUE );
 }
 
-static DWORD wait_message( DWORD count, CONST HANDLE *handles, DWORD timeout, DWORD mask, DWORD flags )
+static DWORD wait_message( DWORD count, const HANDLE *handles, DWORD timeout, DWORD mask, DWORD flags )
 {
     DWORD ret = USER_Driver->pMsgWaitForMultipleObjectsEx( count, handles, timeout, mask, flags );
     if (ret == WAIT_TIMEOUT && !count && !timeout) NtYieldExecution();
+    if ((mask & QS_INPUT) == QS_INPUT) get_user_thread_info()->message_count = 0;
     return ret;
 }
 

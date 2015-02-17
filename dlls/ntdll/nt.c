@@ -223,7 +223,7 @@ NTSTATUS WINAPI NtAdjustPrivilegesToken(
         ret = wine_server_call( req );
         if (PreviousState)
         {
-            *ReturnLength = reply->len + FIELD_OFFSET( TOKEN_PRIVILEGES, Privileges );
+            if (ReturnLength) *ReturnLength = reply->len + FIELD_OFFSET( TOKEN_PRIVILEGES, Privileges );
             PreviousState->PrivilegeCount = reply->len / sizeof(LUID_AND_ATTRIBUTES);
         }
     }
@@ -276,10 +276,23 @@ NTSTATUS WINAPI NtQueryInformationToken(
         0,    /* TokenAccessInformation */
         0,    /* TokenVirtualizationAllowed */
         0,    /* TokenVirtualizationEnabled */
-        0,    /* TokenIntegrityLevel */
+        sizeof(TOKEN_MANDATORY_LABEL) + sizeof(SID), /* TokenIntegrityLevel [sizeof(SID) includes one SubAuthority] */
         0,    /* TokenUIAccess */
         0,    /* TokenMandatoryPolicy */
-        0     /* TokenLogonSid */
+        0,    /* TokenLogonSid */
+        0,    /* TokenIsAppContainer */
+        0,    /* TokenCapabilities */
+        sizeof(TOKEN_APPCONTAINER_INFORMATION) + sizeof(SID), /* TokenAppContainerSid */
+        0,    /* TokenAppContainerNumber */
+        0,    /* TokenUserClaimAttributes*/
+        0,    /* TokenDeviceClaimAttributes */
+        0,    /* TokenRestrictedUserClaimAttributes */
+        0,    /* TokenRestrictedDeviceClaimAttributes */
+        0,    /* TokenDeviceGroups */
+        0,    /* TokenRestrictedDeviceGroups */
+        0,    /* TokenSecurityAttributes */
+        0,    /* TokenIsRestricted */
+        0     /* TokenProcessTrustLevel */
     };
 
     ULONG len = 0;
@@ -507,6 +520,27 @@ NTSTATUS WINAPI NtQueryInformationToken(
             FIXME("QueryInformationToken( ..., TokenSessionId, ...) semi-stub\n");
         }
         break;
+    case TokenIntegrityLevel:
+        {
+            /* report always "S-1-16-12288" (high mandatory level) for now */
+            static const SID high_level = {SID_REVISION, 1, {SECURITY_MANDATORY_LABEL_AUTHORITY},
+                                                            {SECURITY_MANDATORY_HIGH_RID}};
+
+            TOKEN_MANDATORY_LABEL *tml = tokeninfo;
+            PSID psid = tml + 1;
+
+            tml->Label.Sid = psid;
+            tml->Label.Attributes = SE_GROUP_INTEGRITY | SE_GROUP_INTEGRITY_ENABLED;
+            memcpy(psid, &high_level, sizeof(SID));
+        }
+        break;
+    case TokenAppContainerSid:
+        {
+            TOKEN_APPCONTAINER_INFORMATION *container = tokeninfo;
+            FIXME("QueryInformationToken( ..., TokenAppContainerSid, ...) semi-stub\n");
+            container->TokenAppContainer = NULL;
+        }
+        break;
     default:
         {
             ERR("Unhandled Token Information class %d!\n", tokeninfoclass);
@@ -596,7 +630,7 @@ NTSTATUS WINAPI NtPrivilegeCheck(
     SERVER_START_REQ( check_token_privileges )
     {
         req->handle = wine_server_obj_handle( ClientToken );
-        req->all_required = ((RequiredPrivileges->Control & PRIVILEGE_SET_ALL_NECESSARY) ? TRUE : FALSE);
+        req->all_required = (RequiredPrivileges->Control & PRIVILEGE_SET_ALL_NECESSARY) != 0;
         wine_server_add_data( req, RequiredPrivileges->Privilege,
             RequiredPrivileges->PrivilegeCount * sizeof(RequiredPrivileges->Privilege[0]) );
         wine_server_set_reply( req, RequiredPrivileges->Privilege,
@@ -605,7 +639,7 @@ NTSTATUS WINAPI NtPrivilegeCheck(
         status = wine_server_call( req );
 
         if (status == STATUS_SUCCESS)
-            *Result = (reply->has_privileges ? TRUE : FALSE);
+            *Result = reply->has_privileges != 0;
     }
     SERVER_END_REQ;
     return status;
@@ -796,11 +830,22 @@ NTSTATUS WINAPI NtSetIntervalProfile(
 }
 
 static  SYSTEM_CPU_INFORMATION cached_sci;
-static  ULONGLONG cpuHz = 1000000000; /* default to a 1GHz */
+
+/*******************************************************************************
+ * Architecture specific feature detection for CPUs
+ *
+ * This a set of mutually exclusive #if define()s each providing its own get_cpuinfo() to be called
+ * from fill_cpu_info();
+ */
+#if defined(__i386__) || defined(__x86_64__)
 
 #define AUTH	0x68747541	/* "Auth" */
 #define ENTI	0x69746e65	/* "enti" */
 #define CAMD	0x444d4163	/* "cAMD" */
+
+#define GENU	0x756e6547	/* "Genu" */
+#define INEI	0x49656e69	/* "ineI" */
+#define NTEL	0x6c65746e	/* "ntel" */
 
 /* Calls cpuid with an eax of 'ax' and returns the 16 bytes in *p
  * We are compiled with -fPIC, so we can't clobber ebx.
@@ -814,11 +859,18 @@ static inline void do_cpuid(unsigned int ax, unsigned int *p)
                 "popl %%ebx"
                 : "=a" (p[0]), "=S" (p[1]), "=c" (p[2]), "=d" (p[3])
                 :  "0" (ax));
+#elif defined(__x86_64__)
+	__asm__("push %%rbx\n\t"
+                "cpuid\n\t"
+                "movq %%rbx, %%rsi\n\t"
+                "pop %%rbx"
+                : "=a" (p[0]), "=S" (p[1]), "=c" (p[2]), "=d" (p[3])
+                :  "0" (ax));
 #endif
 }
 
 /* From xf86info havecpuid.c 1.11 */
-static inline int have_cpuid(void)
+static inline BOOL have_cpuid(void)
 {
 #ifdef __i386__
 	unsigned int f1, f2;
@@ -835,8 +887,53 @@ static inline int have_cpuid(void)
                 : "=&r" (f1), "=&r" (f2)
                 : "ir" (0x00200000));
 	return ((f1^f2) & 0x00200000) != 0;
+#elif defined(__x86_64__)
+        return TRUE;
 #else
-        return 0;
+        return FALSE;
+#endif
+}
+
+/* Detect if a SSE2 processor is capable of Denormals Are Zero (DAZ) mode.
+ *
+ * This function assumes you have already checked for SSE2/FXSAVE support. */
+static inline BOOL have_sse_daz_mode(void)
+{
+#ifdef __i386__
+    typedef struct DECLSPEC_ALIGN(16) _M128A {
+        ULONGLONG Low;
+        LONGLONG High;
+    } M128A;
+
+    typedef struct _XMM_SAVE_AREA32 {
+        WORD ControlWord;
+        WORD StatusWord;
+        BYTE TagWord;
+        BYTE Reserved1;
+        WORD ErrorOpcode;
+        DWORD ErrorOffset;
+        WORD ErrorSelector;
+        WORD Reserved2;
+        DWORD DataOffset;
+        WORD DataSelector;
+        WORD Reserved3;
+        DWORD MxCsr;
+        DWORD MxCsr_Mask;
+        M128A FloatRegisters[8];
+        M128A XmmRegisters[16];
+        BYTE Reserved4[96];
+    } XMM_SAVE_AREA32;
+
+    /* Intel says we need a zeroed 16-byte aligned buffer */
+    char buffer[512 + 16];
+    XMM_SAVE_AREA32 *state = (XMM_SAVE_AREA32 *)(((ULONG_PTR)buffer + 15) & ~15);
+    memset(buffer, 0, sizeof(buffer));
+
+    __asm__ __volatile__( "fxsave %0" : "=m" (*state) : "m" (*state) );
+
+    return (state->MxCsr_Mask & (1 << 6)) >> 6;
+#else /* all x86_64 processors include SSE2 with DAZ mode */
+    return TRUE;
 #endif
 }
 
@@ -844,25 +941,35 @@ static inline void get_cpuinfo(SYSTEM_CPU_INFORMATION* info)
 {
     unsigned int regs[4], regs2[4];
 
+#if defined(__i386__)
+    info->Architecture = PROCESSOR_ARCHITECTURE_INTEL;
+#elif defined(__x86_64__)
+    info->Architecture = PROCESSOR_ARCHITECTURE_AMD64;
+#endif
+
+    /* We're at least a 386 */
+    info->FeatureSet = CPU_FEATURE_VME | CPU_FEATURE_X86 | CPU_FEATURE_PGE;
+    info->Level = 3;
+
     if (!have_cpuid()) return;
 
     do_cpuid(0x00000000, regs);  /* get standard cpuid level and vendor name */
     if (regs[0]>=0x00000001)   /* Check for supported cpuid version */
     {
         do_cpuid(0x00000001, regs2); /* get cpu features */
-        switch ((regs2[0] >> 8) & 0xf)  /* cpu family */
-        {
-        case 3: info->Level = 3;        break;
-        case 4: info->Level = 4;        break;
-        case 5: info->Level = 5;        break;
-        case 15: /* PPro/2/3/4 has same info as P1 */
-        case 6: info->Level = 6;         break;
-        default:
-            FIXME("unknown cpu family %d, please report! (-> setting to 386)\n",
-                  (regs2[0] >> 8)&0xf);
-            info->Level = 3;
-            break;
-        }
+
+        if(regs2[3] & (1 << 3 )) info->FeatureSet |= CPU_FEATURE_PSE;
+        if(regs2[3] & (1 << 4 )) info->FeatureSet |= CPU_FEATURE_TSC;
+        if(regs2[3] & (1 << 8 )) info->FeatureSet |= CPU_FEATURE_CX8;
+        if(regs2[3] & (1 << 11)) info->FeatureSet |= CPU_FEATURE_SEP;
+        if(regs2[3] & (1 << 12)) info->FeatureSet |= CPU_FEATURE_MTRR;
+        if(regs2[3] & (1 << 15)) info->FeatureSet |= CPU_FEATURE_CMOV;
+        if(regs2[3] & (1 << 16)) info->FeatureSet |= CPU_FEATURE_PAT;
+        if(regs2[3] & (1 << 23)) info->FeatureSet |= CPU_FEATURE_MMX;
+        if(regs2[3] & (1 << 24)) info->FeatureSet |= CPU_FEATURE_FXSR;
+        if(regs2[3] & (1 << 25)) info->FeatureSet |= CPU_FEATURE_SSE;
+        if(regs2[3] & (1 << 26)) info->FeatureSet |= CPU_FEATURE_SSE2;
+
         user_shared_data->ProcessorFeatures[PF_FLOATING_POINT_EMULATED]       = !(regs2[3] & 1);
         user_shared_data->ProcessorFeatures[PF_RDTSC_INSTRUCTION_AVAILABLE]   = (regs2[3] & (1 << 4 )) >> 4;
         user_shared_data->ProcessorFeatures[PF_PAE_ENABLED]                   = (regs2[3] & (1 << 6 )) >> 6;
@@ -870,432 +977,623 @@ static inline void get_cpuinfo(SYSTEM_CPU_INFORMATION* info)
         user_shared_data->ProcessorFeatures[PF_MMX_INSTRUCTIONS_AVAILABLE]    = (regs2[3] & (1 << 23)) >> 23;
         user_shared_data->ProcessorFeatures[PF_XMMI_INSTRUCTIONS_AVAILABLE]   = (regs2[3] & (1 << 25)) >> 25;
         user_shared_data->ProcessorFeatures[PF_XMMI64_INSTRUCTIONS_AVAILABLE] = (regs2[3] & (1 << 26)) >> 26;
+        user_shared_data->ProcessorFeatures[PF_SSE3_INSTRUCTIONS_AVAILABLE]   = regs2[2] & 1;
+        user_shared_data->ProcessorFeatures[PF_XSAVE_ENABLED]                 = (regs2[2] & (1 << 27)) >> 27;
+        user_shared_data->ProcessorFeatures[PF_COMPARE_EXCHANGE128]           = (regs2[2] & (1 << 13)) >> 13;
+
+        if((regs2[3] & (1 << 26)) && (regs2[3] & (1 << 24))) /* has SSE2 and FXSAVE/FXRSTOR */
+            user_shared_data->ProcessorFeatures[PF_SSE_DAZ_MODE_AVAILABLE] = have_sse_daz_mode();
 
         if (regs[1] == AUTH && regs[3] == ENTI && regs[2] == CAMD)
         {
+            info->Level = (regs2[0] >> 8) & 0xf; /* family */
+            if (info->Level == 0xf)  /* AMD says to add the extended family to the family if family is 0xf */
+                info->Level += (regs2[0] >> 20) & 0xff;
+
+            /* repack model and stepping to make a "revision" */
+            info->Revision  = ((regs2[0] >> 16) & 0xf) << 12; /* extended model */
+            info->Revision |= ((regs2[0] >> 4 ) & 0xf) << 8;  /* model          */
+            info->Revision |= regs2[0] & 0xf;                 /* stepping       */
+
             do_cpuid(0x80000000, regs);  /* get vendor cpuid level */
             if (regs[0] >= 0x80000001)
             {
                 do_cpuid(0x80000001, regs2);  /* get vendor features */
+                user_shared_data->ProcessorFeatures[PF_VIRT_FIRMWARE_ENABLED]        = (regs2[2] & (1 << 2  )) >> 2;
+                user_shared_data->ProcessorFeatures[PF_NX_ENABLED]                   = (regs2[3] & (1 << 20 )) >> 20;
                 user_shared_data->ProcessorFeatures[PF_3DNOW_INSTRUCTIONS_AVAILABLE] = (regs2[3] & (1 << 31 )) >> 31;
+                if(regs2[3] & (1 << 31)) info->FeatureSet |= CPU_FEATURE_3DNOW;
             }
+        }
+        else if (regs[1] == GENU && regs[3] == INEI && regs[2] == NTEL)
+        {
+            info->Level = ((regs2[0] >> 8) & 0xf) + ((regs2[0] >> 20) & 0xff); /* family + extended family */
+            if(info->Level == 15) info->Level = 6;
+
+            /* repack model and stepping to make a "revision" */
+            info->Revision  = ((regs2[0] >> 16) & 0xf) << 12; /* extended model */
+            info->Revision |= ((regs2[0] >> 4 ) & 0xf) << 8;  /* model          */
+            info->Revision |= regs2[0] & 0xf;                 /* stepping       */
+
+            if(regs2[3] & (1 << 21)) info->FeatureSet |= CPU_FEATURE_DS;
+            user_shared_data->ProcessorFeatures[PF_VIRT_FIRMWARE_ENABLED] = (regs2[2] & (1 << 5 )) >> 5;
+
+            do_cpuid(0x80000000, regs);  /* get vendor cpuid level */
+            if (regs[0] >= 0x80000001)
+            {
+                do_cpuid(0x80000001, regs2);  /* get vendor features */
+                user_shared_data->ProcessorFeatures[PF_NX_ENABLED] = (regs2[3] & (1 << 20 )) >> 20;
+            }
+        }
+        else
+        {
+            info->Level = (regs2[0] >> 8) & 0xf; /* family */
+
+            /* repack model and stepping to make a "revision" */
+            info->Revision = ((regs2[0] >> 4 ) & 0xf) << 8;  /* model    */
+            info->Revision |= regs2[0] & 0xf;                /* stepping */
         }
     }
 }
+
+#elif defined(__powerpc__) || defined(__ppc__)
+
+static inline void get_cpuinfo(SYSTEM_CPU_INFORMATION* info)
+{
+#ifdef __APPLE__
+    size_t valSize;
+    int value;
+
+    valSize = sizeof(value);
+    if (sysctlbyname("hw.optional.floatingpoint", &value, &valSize, NULL, 0) == 0)
+        user_shared_data->ProcessorFeatures[PF_FLOATING_POINT_EMULATED] = !value;
+
+    valSize = sizeof(value);
+    if (sysctlbyname("hw.cpusubtype", &value, &valSize, NULL, 0) == 0)
+    {
+        switch (value)
+        {
+            case CPU_SUBTYPE_POWERPC_601:
+            case CPU_SUBTYPE_POWERPC_602:       info->Level = 1;   break;
+            case CPU_SUBTYPE_POWERPC_603:       info->Level = 3;   break;
+            case CPU_SUBTYPE_POWERPC_603e:
+            case CPU_SUBTYPE_POWERPC_603ev:     info->Level = 6;   break;
+            case CPU_SUBTYPE_POWERPC_604:       info->Level = 4;   break;
+            case CPU_SUBTYPE_POWERPC_604e:      info->Level = 9;   break;
+            case CPU_SUBTYPE_POWERPC_620:       info->Level = 20;  break;
+            case CPU_SUBTYPE_POWERPC_750:       /* G3/G4 derive from 603 so ... */
+            case CPU_SUBTYPE_POWERPC_7400:
+            case CPU_SUBTYPE_POWERPC_7450:      info->Level = 6;   break;
+            case CPU_SUBTYPE_POWERPC_970:       info->Level = 9;
+                /* :o) user_shared_data->ProcessorFeatures[PF_ALTIVEC_INSTRUCTIONS_AVAILABLE] ;-) */
+                break;
+            default: break;
+        }
+    }
+#else
+    FIXME("CPU Feature detection not implemented.\n");
+#endif
+    info->Architecture = PROCESSOR_ARCHITECTURE_PPC;
+}
+
+#elif defined(__arm__)
+
+static inline void get_cpuinfo(SYSTEM_CPU_INFORMATION* info)
+{
+#ifdef linux
+    char line[512];
+    char *s, *value;
+    FILE *f = fopen("/proc/cpuinfo", "r");
+    if (f)
+    {
+        while (fgets(line, sizeof(line), f) != NULL)
+        {
+            /* NOTE: the ':' is the only character we can rely on */
+            if (!(value = strchr(line,':')))
+                continue;
+            /* terminate the valuename */
+            s = value - 1;
+            while ((s >= line) && isspace(*s)) s--;
+            *(s + 1) = '\0';
+            /* and strip leading spaces from value */
+            value += 1;
+            while (isspace(*value)) value++;
+            if ((s = strchr(value,'\n')))
+                *s='\0';
+            if (!strcasecmp(line, "CPU part"))
+            {
+                if (isdigit(value[0]))
+                    info->Level = strtol(value, NULL, 16);
+                continue;
+            }
+            if (!strcasecmp(line, "CPU revision"))
+            {
+                if (isdigit(value[0]))
+                    info->Revision = atoi(value);
+                continue;
+            }
+            if (!strcasecmp(line, "features"))
+            {
+                if (strstr(value, "vfpv3"))
+                    user_shared_data->ProcessorFeatures[PF_ARM_VFP_32_REGISTERS_AVAILABLE] = TRUE;
+                if (strstr(value, "neon"))
+                    user_shared_data->ProcessorFeatures[PF_ARM_NEON_INSTRUCTIONS_AVAILABLE] = TRUE;
+                continue;
+            }
+        }
+        fclose(f);
+    }
+#else
+    FIXME("CPU Feature detection not implemented.\n");
+#endif
+    info->Architecture = PROCESSOR_ARCHITECTURE_ARM;
+}
+
+#elif defined(__aarch64__)
+
+static inline void get_cpuinfo(SYSTEM_CPU_INFORMATION* info)
+{
+    info->Level = 8;
+    info->Architecture = PROCESSOR_ARCHITECTURE_ARM;
+}
+
+#endif /* End architecture specific feature detection for CPUs */
 
 /******************************************************************
  *		fill_cpu_info
  *
  * inits a couple of places with CPU related information:
- * - cached_sci & cpuHZ in this file
+ * - cached_sci in this file
  * - Peb->NumberOfProcessors
  * - SharedUserData->ProcessFeatures[] array
- *
- * It creates a registry subhierarchy, looking like:
- * "\HARDWARE\DESCRIPTION\System\CentralProcessor\<processornumber>\Identifier (CPU x86)".
- * Note that there is a hierarchy for every processor installed, so this
- * supports multiprocessor systems. This is done like Win95 does it, I think.
- *
- * It creates some registry entries in the environment part:
- * "\HKLM\System\CurrentControlSet\Control\Session Manager\Environment". These are
- * always present. When deleted, Windows will add them again.
  */
 void fill_cpu_info(void)
 {
+    long num;
+
+#ifdef _SC_NPROCESSORS_ONLN
+    num = sysconf(_SC_NPROCESSORS_ONLN);
+    if (num < 1)
+    {
+        num = 1;
+        WARN("Failed to detect the number of processors.\n");
+    }
+#elif defined(CTL_HW) && defined(HW_NCPU)
+    int mib[2];
+    size_t len = sizeof(num);
+    mib[0] = CTL_HW;
+    mib[1] = HW_NCPU;
+    if (sysctl(mib, 2, &num, &len, NULL, 0) != 0)
+    {
+        num = 1;
+        WARN("Failed to detect the number of processors.\n");
+    }
+#else
+    num = 1;
+    FIXME("Detecting the number of processors is not supported.\n");
+#endif
+    NtCurrentTeb()->Peb->NumberOfProcessors = num;
+
     memset(&cached_sci, 0, sizeof(cached_sci));
-    /* choose sensible defaults ...
-     * FIXME: perhaps overridable with precompiler flags?
-     */
-#ifdef __i386__
-    cached_sci.Architecture     = PROCESSOR_ARCHITECTURE_INTEL;
-    cached_sci.Level		= 5; /* 586 */
-#elif defined(__x86_64__)
-    cached_sci.Architecture     = PROCESSOR_ARCHITECTURE_AMD64;
-#elif defined(__powerpc__)
-    cached_sci.Architecture     = PROCESSOR_ARCHITECTURE_PPC;
-#elif defined(__arm__)
-    cached_sci.Architecture     = PROCESSOR_ARCHITECTURE_ARM;
-#elif defined(__sparc__)
-    cached_sci.Architecture     = PROCESSOR_ARCHITECTURE_SPARC;
-#else
-#error Unknown CPU
-#endif
-    cached_sci.Revision   	= 0;
-    cached_sci.Reserved         = 0;
-    cached_sci.FeatureSet       = 0x1fff; /* FIXME: set some sensible defaults out of ProcessFeatures[] */
+    get_cpuinfo(&cached_sci);
 
-    NtCurrentTeb()->Peb->NumberOfProcessors = 1;
-
-    /* Hmm, reasonable processor feature defaults? */
-
-#ifdef linux
-    {
-	char line[200];
-	FILE *f = fopen ("/proc/cpuinfo", "r");
-
-	if (!f)
-		return;
-	while (fgets(line,200,f) != NULL)
-        {
-            char	*s,*value;
-
-            /* NOTE: the ':' is the only character we can rely on */
-            if (!(value = strchr(line,':')))
-                continue;
-
-            /* terminate the valuename */
-            s = value - 1;
-            while ((s >= line) && ((*s == ' ') || (*s == '\t'))) s--;
-            *(s + 1) = '\0';
-
-            /* and strip leading spaces from value */
-            value += 1;
-            while (*value==' ') value++;
-            if ((s = strchr(value,'\n')))
-                *s='\0';
-
-            if (!strcasecmp(line, "processor"))
-            {
-                /* processor number counts up... */
-                unsigned int x;
-
-                if (sscanf(value, "%d",&x))
-                    if (x + 1 > NtCurrentTeb()->Peb->NumberOfProcessors)
-                        NtCurrentTeb()->Peb->NumberOfProcessors = x + 1;
-
-                continue;
-            }
-            if (!strcasecmp(line, "model"))
-            {
-                /* First part of Revision */
-                int	x;
-
-                if (sscanf(value, "%d",&x))
-                    cached_sci.Revision = cached_sci.Revision | (x << 8);
-
-                continue;
-            }
-
-            /* 2.1 and ARM method */
-            if (!strcasecmp(line, "cpu family") || !strcasecmp(line, "CPU architecture"))
-            {
-                if (isdigit(value[0]))
-                {
-                    cached_sci.Level = atoi(value);
-                }
-                continue;
-            }
-            /* old 2.0 method */
-            if (!strcasecmp(line, "cpu"))
-            {
-                if (isdigit(value[0]) && value[1] == '8' && value[2] == '6' && value[3] == 0)
-                {
-                    switch (cached_sci.Level = value[0] - '0')
-                    {
-                    case 3:
-                    case 4:
-                    case 5:
-                    case 6:
-                        break;
-                    default:
-                        FIXME("unknown Linux 2.0 cpu family '%s', please report ! (-> setting to 386)\n", value);
-                        cached_sci.Level = 3;
-                        break;
-                    }
-                }
-                continue;
-            }
-            if (!strcasecmp(line, "stepping"))
-            {
-                /* Second part of Revision */
-                int	x;
-
-                if (sscanf(value, "%d",&x))
-                    cached_sci.Revision = cached_sci.Revision | x;
-                continue;
-            }
-            if (!strcasecmp(line, "cpu MHz"))
-            {
-                double cmz;
-                if (sscanf( value, "%lf", &cmz ) == 1)
-                {
-                    /* SYSTEMINFO doesn't have a slot for cpu speed, so store in a global */
-                    cpuHz = cmz * 1000 * 1000;
-                }
-                continue;
-            }
-            if (!strcasecmp(line, "fdiv_bug"))
-            {
-                if (!strncasecmp(value, "yes",3))
-                    user_shared_data->ProcessorFeatures[PF_FLOATING_POINT_PRECISION_ERRATA] = TRUE;
-                continue;
-            }
-            if (!strcasecmp(line, "fpu"))
-            {
-                if (!strncasecmp(value, "no",2))
-                    user_shared_data->ProcessorFeatures[PF_FLOATING_POINT_EMULATED] = TRUE;
-                continue;
-            }
-            if (!strcasecmp(line, "flags") || !strcasecmp(line, "features"))
-            {
-                if (strstr(value, "cx8"))
-                    user_shared_data->ProcessorFeatures[PF_COMPARE_EXCHANGE_DOUBLE] = TRUE;
-                if (strstr(value, "cx16"))
-                    user_shared_data->ProcessorFeatures[PF_COMPARE_EXCHANGE128] = TRUE;
-                if (strstr(value, "mmx"))
-                    user_shared_data->ProcessorFeatures[PF_MMX_INSTRUCTIONS_AVAILABLE] = TRUE;
-                if (strstr(value, "nx"))
-                    user_shared_data->ProcessorFeatures[PF_NX_ENABLED] = TRUE;
-                if (strstr(value, "tsc"))
-                    user_shared_data->ProcessorFeatures[PF_RDTSC_INSTRUCTION_AVAILABLE] = TRUE;
-                if (strstr(value, "3dnow"))
-                    user_shared_data->ProcessorFeatures[PF_3DNOW_INSTRUCTIONS_AVAILABLE] = TRUE;
-                /* This will also catch sse2, but we have sse itself
-                 * if we have sse2, so no problem */
-                if (strstr(value, "sse"))
-                    user_shared_data->ProcessorFeatures[PF_XMMI_INSTRUCTIONS_AVAILABLE] = TRUE;
-                if (strstr(value, "sse2"))
-                    user_shared_data->ProcessorFeatures[PF_XMMI64_INSTRUCTIONS_AVAILABLE] = TRUE;
-                if (strstr(value, "pni"))
-                    user_shared_data->ProcessorFeatures[PF_SSE3_INSTRUCTIONS_AVAILABLE] = TRUE;
-                if (strstr(value, "pae"))
-                    user_shared_data->ProcessorFeatures[PF_PAE_ENABLED] = TRUE;
-                if (strstr(value, "ht"))
-                    cached_sci.FeatureSet |= CPU_FEATURE_HTT;
-                continue;
-            }
-	}
-	fclose(f);
-    }
-#elif defined (__NetBSD__)
-    {
-        int mib[2];
-        int value;
-        size_t val_len;
-        char model[256];
-        char *cpuclass;
-        FILE *f = fopen("/var/run/dmesg.boot", "r");
-
-        /* first deduce as much as possible from the sysctls */
-        mib[0] = CTL_MACHDEP;
-#ifdef CPU_FPU_PRESENT
-        mib[1] = CPU_FPU_PRESENT;
-        val_len = sizeof(value);
-        if (sysctl(mib, 2, &value, &val_len, NULL, 0) >= 0)
-            user_shared_data->ProcessorFeatures[PF_FLOATING_POINT_EMULATED] = !value;
-#endif
-#ifdef CPU_SSE
-        mib[1] = CPU_SSE;   /* this should imply MMX */
-        val_len = sizeof(value);
-        if (sysctl(mib, 2, &value, &val_len, NULL, 0) >= 0)
-            if (value) user_shared_data->ProcessorFeatures[PF_MMX_INSTRUCTIONS_AVAILABLE] = TRUE;
-#endif
-#ifdef CPU_SSE2
-        mib[1] = CPU_SSE2;  /* this should imply MMX */
-        val_len = sizeof(value);
-        if (sysctl(mib, 2, &value, &val_len, NULL, 0) >= 0)
-            if (value) user_shared_data->ProcessorFeatures[PF_MMX_INSTRUCTIONS_AVAILABLE] = TRUE;
-#endif
-        mib[0] = CTL_HW;
-        mib[1] = HW_NCPU;
-        val_len = sizeof(value);
-        if (sysctl(mib, 2, &value, &val_len, NULL, 0) >= 0)
-            if (value > NtCurrentTeb()->Peb->NumberOfProcessors)
-                NtCurrentTeb()->Peb->NumberOfProcessors = value;
-        mib[1] = HW_MODEL;
-        val_len = sizeof(model)-1;
-        if (sysctl(mib, 2, model, &val_len, NULL, 0) >= 0)
-        {
-            model[val_len] = '\0'; /* just in case */
-            cpuclass = strstr(model, "-class");
-            if (cpuclass != NULL) {
-                while(cpuclass > model && cpuclass[0] != '(') cpuclass--;
-                if (!strncmp(cpuclass+1, "386", 3))
-                {
-                    cached_sci.Level= 3;
-                }
-                if (!strncmp(cpuclass+1, "486", 3))
-                {
-                    cached_sci.Level= 4;
-                }
-                if (!strncmp(cpuclass+1, "586", 3))
-                {
-                    cached_sci.Level= 5;
-                }
-                if (!strncmp(cpuclass+1, "686", 3))
-                {
-                    cached_sci.Level= 6;
-                    /* this should imply MMX */
-                    user_shared_data->ProcessorFeatures[PF_MMX_INSTRUCTIONS_AVAILABLE] = TRUE;
-                }
-            }
-        }
-
-        /* it may be worth reading from /var/run/dmesg.boot for
-           additional information such as CX8, MMX and TSC
-           (however this information should be considered less
-           reliable than that from the sysctl calls) */
-        if (f != NULL)
-        {
-            while (fgets(model, 255, f) != NULL)
-            {
-                int cpu, features;
-                if (sscanf(model, "cpu%d: features %x<", &cpu, &features) == 2)
-                {
-                    /* we could scan the string but it is easier
-                       to test the bits directly */
-                    if (features & 0x1)
-                        user_shared_data->ProcessorFeatures[PF_FLOATING_POINT_EMULATED] = TRUE;
-                    if (features & 0x10)
-                        user_shared_data->ProcessorFeatures[PF_RDTSC_INSTRUCTION_AVAILABLE] = TRUE;
-                    if (features & 0x100)
-                        user_shared_data->ProcessorFeatures[PF_COMPARE_EXCHANGE_DOUBLE] = TRUE;
-                    if (features & 0x800000)
-                        user_shared_data->ProcessorFeatures[PF_MMX_INSTRUCTIONS_AVAILABLE] = TRUE;
-
-                    break;
-                }
-            }
-            fclose(f);
-        }
-    }
-#elif defined(__FreeBSD__) || defined (__FreeBSD_kernel__)
-    {
-        int ret, num;
-        size_t len;
-
-        get_cpuinfo( &cached_sci );
-
-        /* Check for OS support of SSE -- Is this used, and should it be sse1 or sse2? */
-        /*len = sizeof(num);
-          ret = sysctlbyname("hw.instruction_sse", &num, &len, NULL, 0);
-          if (!ret)
-          user_shared_data->ProcessorFeatures[PF_XMMI_INSTRUCTIONS_AVAILABLE] = num;*/
-
-        len = sizeof(num);
-        ret = sysctlbyname("hw.ncpu", &num, &len, NULL, 0);
-        if (!ret)
-            NtCurrentTeb()->Peb->NumberOfProcessors = num;
-
-        len = sizeof(num);
-        if (!sysctlbyname("dev.cpu.0.freq", &num, &len, NULL, 0))
-            cpuHz = num * 1000 * 1000;
-    }
-#elif defined(__sun)
-    {
-        int num = sysconf( _SC_NPROCESSORS_ONLN );
-
-        if (num == -1) num = 1;
-        get_cpuinfo( &cached_sci );
-        NtCurrentTeb()->Peb->NumberOfProcessors = num;
-    }
-#elif defined (__OpenBSD__)
-    {
-        int mib[2], num, ret;
-        size_t len;
-
-        mib[0] = CTL_HW;
-        mib[1] = HW_NCPU;
-        len = sizeof(num);
-
-        ret = sysctl(mib, 2, &num, &len, NULL, 0);
-        if (!ret)
-            NtCurrentTeb()->Peb->NumberOfProcessors = num;
-    }
-#elif defined (__APPLE__)
-    {
-        size_t valSize;
-        unsigned long long longVal;
-        int value;
-        int cputype;
-        char buffer[256];
-
-        valSize = sizeof(int);
-        if (sysctlbyname ("hw.optional.floatingpoint", &value, &valSize, NULL, 0) == 0)
-        {
-            if (value)
-                user_shared_data->ProcessorFeatures[PF_FLOATING_POINT_EMULATED] = FALSE;
-            else
-                user_shared_data->ProcessorFeatures[PF_FLOATING_POINT_EMULATED] = TRUE;
-        }
-        valSize = sizeof(int);
-        if (sysctlbyname ("hw.ncpu", &value, &valSize, NULL, 0) == 0)
-            NtCurrentTeb()->Peb->NumberOfProcessors = value;
-
-        /* FIXME: we don't use the "hw.activecpu" value... but the cached one */
-
-        valSize = sizeof(int);
-        if (sysctlbyname ("hw.cputype", &cputype, &valSize, NULL, 0) == 0)
-        {
-            switch (cputype)
-            {
-            case CPU_TYPE_POWERPC:
-                cached_sci.Architecture = PROCESSOR_ARCHITECTURE_PPC;
-                valSize = sizeof(int);
-                if (sysctlbyname ("hw.cpusubtype", &value, &valSize, NULL, 0) == 0)
-                {
-                    switch (value)
-                    {
-                    case CPU_SUBTYPE_POWERPC_601:
-                    case CPU_SUBTYPE_POWERPC_602:       cached_sci.Level = 1;   break;
-                    case CPU_SUBTYPE_POWERPC_603:       cached_sci.Level = 3;   break;
-                    case CPU_SUBTYPE_POWERPC_603e:
-                    case CPU_SUBTYPE_POWERPC_603ev:     cached_sci.Level = 6;   break;
-                    case CPU_SUBTYPE_POWERPC_604:       cached_sci.Level = 4;   break;
-                    case CPU_SUBTYPE_POWERPC_604e:      cached_sci.Level = 9;   break;
-                    case CPU_SUBTYPE_POWERPC_620:       cached_sci.Level = 20;  break;
-                    case CPU_SUBTYPE_POWERPC_750:       /* G3/G4 derive from 603 so ... */
-                    case CPU_SUBTYPE_POWERPC_7400:
-                    case CPU_SUBTYPE_POWERPC_7450:      cached_sci.Level = 6;   break;
-                    case CPU_SUBTYPE_POWERPC_970:       cached_sci.Level = 9;
-                        /* :o) user_shared_data->ProcessorFeatures[PF_ALTIVEC_INSTRUCTIONS_AVAILABLE] ;-) */
-                        break;
-                    default: break;
-                    }
-                }
-                break; /* CPU_TYPE_POWERPC */
-            case CPU_TYPE_I386:
-                cached_sci.Architecture = PROCESSOR_ARCHITECTURE_INTEL;
-                valSize = sizeof(int);
-                if (sysctlbyname ("machdep.cpu.family", &value, &valSize, NULL, 0) == 0)
-                {
-                    cached_sci.Level = value;
-                }
-                valSize = sizeof(int);
-                if (sysctlbyname ("machdep.cpu.model", &value, &valSize, NULL, 0) == 0)
-                    cached_sci.Revision = (value << 8);
-                valSize = sizeof(int);
-                if (sysctlbyname ("machdep.cpu.stepping", &value, &valSize, NULL, 0) == 0)
-                    cached_sci.Revision |= value;
-                valSize = sizeof(buffer);
-                if (sysctlbyname ("machdep.cpu.features", buffer, &valSize, NULL, 0) == 0)
-                {
-                    cached_sci.Revision |= value;
-                    if (strstr(buffer, "CX8"))   user_shared_data->ProcessorFeatures[PF_COMPARE_EXCHANGE_DOUBLE] = TRUE;
-                    if (strstr(buffer, "CX16"))  user_shared_data->ProcessorFeatures[PF_COMPARE_EXCHANGE128] = TRUE;
-                    if (strstr(buffer, "MMX"))   user_shared_data->ProcessorFeatures[PF_MMX_INSTRUCTIONS_AVAILABLE] = TRUE;
-                    if (strstr(buffer, "TSC"))   user_shared_data->ProcessorFeatures[PF_RDTSC_INSTRUCTION_AVAILABLE] = TRUE;
-                    if (strstr(buffer, "3DNOW")) user_shared_data->ProcessorFeatures[PF_3DNOW_INSTRUCTIONS_AVAILABLE] = TRUE;
-                    if (strstr(buffer, "SSE"))   user_shared_data->ProcessorFeatures[PF_XMMI_INSTRUCTIONS_AVAILABLE] = TRUE;
-                    if (strstr(buffer, "SSE2"))  user_shared_data->ProcessorFeatures[PF_XMMI64_INSTRUCTIONS_AVAILABLE] = TRUE;
-                    if (strstr(buffer, "SSE3"))  user_shared_data->ProcessorFeatures[PF_SSE3_INSTRUCTIONS_AVAILABLE] = TRUE;
-                    if (strstr(buffer, "PAE"))   user_shared_data->ProcessorFeatures[PF_PAE_ENABLED] = TRUE;
-                    if (strstr(buffer, "HTT"))   cached_sci.FeatureSet |= CPU_FEATURE_HTT;
-                }
-                break; /* CPU_TYPE_I386 */
-            default: break;
-            } /* switch (cputype) */
-        }
-        valSize = sizeof(longVal);
-        if (!sysctlbyname("hw.cpufrequency", &longVal, &valSize, NULL, 0))
-            cpuHz = longVal;
-    }
-#else
-    FIXME("not yet supported on this system\n");
-#endif
     TRACE("<- CPU arch %d, level %d, rev %d, features 0x%x\n",
           cached_sci.Architecture, cached_sci.Level, cached_sci.Revision, cached_sci.FeatureSet);
 }
+
+#ifdef linux
+static inline BOOL logical_proc_info_add_by_id(SYSTEM_LOGICAL_PROCESSOR_INFORMATION *data,
+        DWORD *len, DWORD max_len, LOGICAL_PROCESSOR_RELATIONSHIP rel, DWORD id, DWORD proc)
+{
+    DWORD i;
+
+    for(i=0; i<*len; i++)
+    {
+        if(data[i].Relationship!=rel || data[i].u.Reserved[1]!=id)
+            continue;
+
+        data[i].ProcessorMask |= (ULONG_PTR)1<<proc;
+        return TRUE;
+    }
+
+    if(*len == max_len)
+        return FALSE;
+
+    data[i].Relationship = rel;
+    data[i].ProcessorMask = (ULONG_PTR)1<<proc;
+    /* TODO: set processor core flags */
+    data[i].u.Reserved[0] = 0;
+    data[i].u.Reserved[1] = id;
+    *len = i+1;
+    return TRUE;
+}
+
+static inline BOOL logical_proc_info_add_cache(SYSTEM_LOGICAL_PROCESSOR_INFORMATION *data,
+        DWORD *len, DWORD max_len, ULONG_PTR mask, CACHE_DESCRIPTOR *cache)
+{
+    DWORD i;
+
+    for(i=0; i<*len; i++)
+    {
+        if(data[i].Relationship==RelationCache && data[i].ProcessorMask==mask
+                && data[i].u.Cache.Level==cache->Level && data[i].u.Cache.Type==cache->Type)
+            return TRUE;
+    }
+
+    if(*len == max_len)
+        return FALSE;
+
+    data[i].Relationship = RelationCache;
+    data[i].ProcessorMask = mask;
+    data[i].u.Cache = *cache;
+    *len = i+1;
+    return TRUE;
+}
+
+static inline BOOL logical_proc_info_add_numa_node(SYSTEM_LOGICAL_PROCESSOR_INFORMATION *data,
+        DWORD *len, DWORD max_len, ULONG_PTR mask, DWORD node_id)
+{
+    if(*len == max_len)
+        return FALSE;
+
+    data[*len].Relationship = RelationNumaNode;
+    data[*len].ProcessorMask = mask;
+    data[*len].u.NumaNode.NodeNumber = node_id;
+    (*len)++;
+    return TRUE;
+}
+
+static NTSTATUS create_logical_proc_info(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **data, DWORD *max_len)
+{
+    static const char core_info[] = "/sys/devices/system/cpu/cpu%d/%s";
+    static const char cache_info[] = "/sys/devices/system/cpu/cpu%d/cache/index%d/%s";
+    static const char numa_info[] = "/sys/devices/system/node/node%d/cpumap";
+
+    FILE *fcpu_list, *fnuma_list, *f;
+    DWORD len = 0, beg, end, i, j, r;
+    char op, name[MAX_PATH];
+
+    fcpu_list = fopen("/sys/devices/system/cpu/online", "r");
+    if(!fcpu_list)
+        return STATUS_NOT_IMPLEMENTED;
+
+    while(!feof(fcpu_list))
+    {
+        if(!fscanf(fcpu_list, "%u%c ", &beg, &op))
+            break;
+        if(op == '-') fscanf(fcpu_list, "%u%c ", &end, &op);
+        else end = beg;
+
+        for(i=beg; i<=end; i++)
+        {
+            if(i > 8*sizeof(ULONG_PTR))
+            {
+                FIXME("skipping logical processor %d\n", i);
+                continue;
+            }
+
+            sprintf(name, core_info, i, "core_id");
+            f = fopen(name, "r");
+            if(f)
+            {
+                fscanf(f, "%u", &r);
+                fclose(f);
+            }
+            else r = i;
+            if(!logical_proc_info_add_by_id(*data, &len, *max_len, RelationProcessorCore, r, i))
+            {
+                SYSTEM_LOGICAL_PROCESSOR_INFORMATION *new_data;
+
+                *max_len *= 2;
+                new_data = RtlReAllocateHeap(GetProcessHeap(), 0, *data, *max_len*sizeof(*new_data));
+                if(!new_data)
+                {
+                    fclose(fcpu_list);
+                    return STATUS_NO_MEMORY;
+                }
+
+                *data = new_data;
+                logical_proc_info_add_by_id(*data, &len, *max_len, RelationProcessorCore, r, i);
+            }
+
+            sprintf(name, core_info, i, "physical_package_id");
+            f = fopen(name, "r");
+            if(f)
+            {
+                fscanf(f, "%u", &r);
+                fclose(f);
+            }
+            else r = 0;
+            if(!logical_proc_info_add_by_id(*data, &len, *max_len, RelationProcessorPackage, r, i))
+            {
+                SYSTEM_LOGICAL_PROCESSOR_INFORMATION *new_data;
+
+                *max_len *= 2;
+                new_data = RtlReAllocateHeap(GetProcessHeap(), 0, *data, *max_len*sizeof(*new_data));
+                if(!new_data)
+                {
+                    fclose(fcpu_list);
+                    return STATUS_NO_MEMORY;
+                }
+
+                *data = new_data;
+                logical_proc_info_add_by_id(*data, &len, *max_len, RelationProcessorPackage, r, i);
+            }
+
+            for(j=0; j<4; j++)
+            {
+                CACHE_DESCRIPTOR cache;
+                ULONG_PTR mask = 0;
+
+                sprintf(name, cache_info, i, j, "shared_cpu_map");
+                f = fopen(name, "r");
+                if(!f) continue;
+                while(!feof(f))
+                {
+                    if(!fscanf(f, "%x%c ", &r, &op))
+                        break;
+                    mask = (sizeof(ULONG_PTR)>sizeof(int) ? mask<<(8*sizeof(DWORD)) : 0) + r;
+                }
+                fclose(f);
+
+                sprintf(name, cache_info, i, j, "level");
+                f = fopen(name, "r");
+                if(!f) continue;
+                fscanf(f, "%u", &r);
+                fclose(f);
+                cache.Level = r;
+
+                sprintf(name, cache_info, i, j, "ways_of_associativity");
+                f = fopen(name, "r");
+                if(!f) continue;
+                fscanf(f, "%u", &r);
+                fclose(f);
+                cache.Associativity = r;
+
+                sprintf(name, cache_info, i, j, "coherency_line_size");
+                f = fopen(name, "r");
+                if(!f) continue;
+                fscanf(f, "%u", &r);
+                fclose(f);
+                cache.LineSize = r;
+
+                sprintf(name, cache_info, i, j, "size");
+                f = fopen(name, "r");
+                if(!f) continue;
+                fscanf(f, "%u%c", &r, &op);
+                fclose(f);
+                if(op != 'K')
+                    WARN("unknown cache size %u%c\n", r, op);
+                cache.Size = (op=='K' ? r*1024 : r);
+
+                sprintf(name, cache_info, i, j, "type");
+                f = fopen(name, "r");
+                if(!f) continue;
+                fscanf(f, "%s", name);
+                fclose(f);
+                if(!memcmp(name, "Data", 5))
+                    cache.Type = CacheData;
+                else if(!memcmp(name, "Instruction", 11))
+                    cache.Type = CacheInstruction;
+                else
+                    cache.Type = CacheUnified;
+
+                if(!logical_proc_info_add_cache(*data, &len, *max_len, mask, &cache))
+                {
+                    SYSTEM_LOGICAL_PROCESSOR_INFORMATION *new_data;
+
+                    *max_len *= 2;
+                    new_data = RtlReAllocateHeap(GetProcessHeap(), 0, *data, *max_len*sizeof(*new_data));
+                    if(!new_data)
+                    {
+                        fclose(fcpu_list);
+                        return STATUS_NO_MEMORY;
+                    }
+
+                    *data = new_data;
+                    logical_proc_info_add_cache(*data, &len, *max_len, mask, &cache);
+                }
+            }
+        }
+    }
+    fclose(fcpu_list);
+
+    fnuma_list = fopen("/sys/devices/system/node/online", "r");
+    if(!fnuma_list)
+    {
+        ULONG_PTR mask = 0;
+
+        for(i=0; i<len; i++)
+            if((*data)[i].Relationship == RelationProcessorCore)
+                mask |= (*data)[i].ProcessorMask;
+
+        if(len == *max_len)
+        {
+            SYSTEM_LOGICAL_PROCESSOR_INFORMATION *new_data;
+
+            *max_len *= 2;
+            new_data = RtlReAllocateHeap(GetProcessHeap(), 0, *data, *max_len*sizeof(*new_data));
+            if(!new_data)
+                return STATUS_NO_MEMORY;
+
+            *data = new_data;
+        }
+        logical_proc_info_add_numa_node(*data, &len, *max_len, mask, 0);
+    }
+    else
+    {
+        while(!feof(fnuma_list))
+        {
+            if(!fscanf(fnuma_list, "%u%c ", &beg, &op))
+                break;
+            if(op == '-') fscanf(fnuma_list, "%u%c ", &end, &op);
+            else end = beg;
+
+            for(i=beg; i<=end; i++)
+            {
+                ULONG_PTR mask = 0;
+
+                sprintf(name, numa_info, i);
+                f = fopen(name, "r");
+                if(!f) continue;
+                while(!feof(f))
+                {
+                    if(!fscanf(f, "%x%c ", &r, &op))
+                        break;
+                    mask = (sizeof(ULONG_PTR)>sizeof(int) ? mask<<(8*sizeof(DWORD)) : 0) + r;
+                }
+                fclose(f);
+
+                if(len == *max_len)
+                {
+                    SYSTEM_LOGICAL_PROCESSOR_INFORMATION *new_data;
+
+                    *max_len *= 2;
+                    new_data = RtlReAllocateHeap(GetProcessHeap(), 0, *data, *max_len*sizeof(*new_data));
+                    if(!new_data)
+                    {
+                        fclose(fnuma_list);
+                        return STATUS_NO_MEMORY;
+                    }
+
+                    *data = new_data;
+                }
+                logical_proc_info_add_numa_node(*data, &len, *max_len, mask, i);
+            }
+        }
+        fclose(fnuma_list);
+    }
+
+    *max_len = len * sizeof(**data);
+    return STATUS_SUCCESS;
+}
+#elif defined(__APPLE__)
+static NTSTATUS create_logical_proc_info(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **data, DWORD *max_len)
+{
+    DWORD len = 0, i, j, k;
+    DWORD cores_no, lcpu_no, lcpu_per_core, cores_per_package, assoc;
+    size_t size;
+    ULONG_PTR mask;
+    LONGLONG cache_size, cache_line_size, cache_sharing[10];
+    CACHE_DESCRIPTOR cache[4];
+
+    lcpu_no = NtCurrentTeb()->Peb->NumberOfProcessors;
+
+    size = sizeof(cores_no);
+    if(sysctlbyname("machdep.cpu.core_count", &cores_no, &size, NULL, 0))
+        cores_no = lcpu_no;
+
+    lcpu_per_core = lcpu_no/cores_no;
+    for(i=0; i<cores_no; i++)
+    {
+        mask = 0;
+        for(j=lcpu_per_core*i; j<lcpu_per_core*(i+1); j++)
+            mask |= (ULONG_PTR)1<<j;
+
+        (*data)[len].Relationship = RelationProcessorCore;
+        (*data)[len].ProcessorMask = mask;
+        (*data)[len].u.ProcessorCore.Flags = 0; /* TODO */
+        len++;
+    }
+
+    size = sizeof(cores_per_package);
+    if(sysctlbyname("machdep.cpu.cores_per_package", &cores_per_package, &size, NULL, 0))
+        cores_per_package = lcpu_no;
+
+    for(i=0; i<(lcpu_no+cores_per_package-1)/cores_per_package; i++)
+    {
+        mask = 0;
+        for(j=cores_per_package*i; j<cores_per_package*(i+1) && j<lcpu_no; j++)
+            mask |= (ULONG_PTR)1<<j;
+
+        (*data)[len].Relationship = RelationProcessorPackage;
+        (*data)[len].ProcessorMask = mask;
+        len++;
+    }
+
+    memset(cache, 0, sizeof(cache));
+    cache[0].Level = 1;
+    cache[0].Type = CacheInstruction;
+    cache[1].Level = 1;
+    cache[1].Type = CacheData;
+    cache[2].Level = 2;
+    cache[2].Type = CacheUnified;
+    cache[3].Level = 3;
+    cache[3].Type = CacheUnified;
+
+    size = sizeof(cache_line_size);
+    if(!sysctlbyname("hw.cachelinesize", &cache_line_size, &size, NULL, 0))
+    {
+        for(i=0; i<4; i++)
+            cache[i].LineSize = cache_line_size;
+    }
+
+    /* TODO: set associativity for all caches */
+    size = sizeof(assoc);
+    if(!sysctlbyname("machdep.cpu.cache.L2_associativity", &assoc, &size, NULL, 0))
+        cache[2].Associativity = assoc;
+
+    size = sizeof(cache_size);
+    if(!sysctlbyname("hw.l1icachesize", &cache_size, &size, NULL, 0))
+        cache[0].Size = cache_size;
+    size = sizeof(cache_size);
+    if(!sysctlbyname("hw.l1dcachesize", &cache_size, &size, NULL, 0))
+        cache[1].Size = cache_size;
+    size = sizeof(cache_size);
+    if(!sysctlbyname("hw.l2cachesize", &cache_size, &size, NULL, 0))
+        cache[2].Size = cache_size;
+    size = sizeof(cache_size);
+    if(!sysctlbyname("hw.l3cachesize", &cache_size, &size, NULL, 0))
+        cache[3].Size = cache_size;
+
+    size = sizeof(cache_sharing);
+    if(!sysctlbyname("hw.cacheconfig", cache_sharing, &size, NULL, 0))
+    {
+        for(i=1; i<4 && i<size/sizeof(*cache_sharing); i++)
+        {
+            if(!cache_sharing[i] || !cache[i].Size)
+                continue;
+
+            for(j=0; j<lcpu_no/cache_sharing[i]; j++)
+            {
+                mask = 0;
+                for(k=j*cache_sharing[i]; k<lcpu_no && k<(j+1)*cache_sharing[i]; k++)
+                    mask |= (ULONG_PTR)1<<k;
+
+                if(i==1 && cache[0].Size)
+                {
+                    (*data)[len].Relationship = RelationCache;
+                    (*data)[len].ProcessorMask = mask;
+                    (*data)[len].u.Cache = cache[0];
+                    len++;
+                }
+
+                (*data)[len].Relationship = RelationCache;
+                (*data)[len].ProcessorMask = mask;
+                (*data)[len].u.Cache = cache[i];
+                len++;
+            }
+        }
+    }
+
+    mask = 0;
+    for(i=0; i<lcpu_no; i++)
+        mask |= (ULONG_PTR)1<<i;
+    (*data)[len].Relationship = RelationNumaNode;
+    (*data)[len].ProcessorMask = mask;
+    (*data)[len].u.NumaNode.NodeNumber = 0;
+    len++;
+
+    *max_len = len * sizeof(**data);
+    return STATUS_SUCCESS;
+}
+#else
+static NTSTATUS create_logical_proc_info(SYSTEM_LOGICAL_PROCESSOR_INFORMATION **data, DWORD *max_len)
+{
+    FIXME("stub\n");
+    return STATUS_NOT_IMPLEMENTED;
+}
+#endif
 
 /******************************************************************************
  * NtQuerySystemInformation [NTDLL.@]
@@ -1468,9 +1766,8 @@ NTSTATUS WINAPI NtQuerySystemInformation(
 
                             /* spi->ti will be set later on */
 
-                            len += procstructlen;
                         }
-                        else ret = STATUS_INFO_LENGTH_MISMATCH;
+                        len += procstructlen;
                     }
                 }
                 SERVER_END_REQ;
@@ -1480,7 +1777,8 @@ NTSTATUS WINAPI NtQuerySystemInformation(
                     if (ret == STATUS_NO_MORE_FILES) ret = STATUS_SUCCESS;
                     break;
                 }
-                else /* Length is already checked for */
+
+                if (Length >= len)
                 {
                     int     i, j;
 
@@ -1528,6 +1826,7 @@ NTSTATUS WINAPI NtQuerySystemInformation(
                 }
             }
             if (ret == STATUS_SUCCESS && last) last->NextEntryOffset = 0;
+            if (len > Length) ret = STATUS_INFO_LENGTH_MISMATCH;
             if (hSnap) NtClose(hSnap);
         }
         break;
@@ -1611,7 +1910,7 @@ NTSTATUS WINAPI NtQuerySystemInformation(
             if (cpus == 0)
             {
                 static int i = 1;
-                int n;
+                unsigned int n;
                 cpus = min(NtCurrentTeb()->Peb->NumberOfProcessors, out_cpus);
                 len = sizeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION) * cpus;
                 sppi = RtlAllocateHeap(GetProcessHeap(), 0, len);
@@ -1731,6 +2030,36 @@ NTSTATUS WINAPI NtQuerySystemInformation(
             else ret = STATUS_INFO_LENGTH_MISMATCH;
         }
 	break;
+    case SystemLogicalProcessorInformation:
+        {
+            SYSTEM_LOGICAL_PROCESSOR_INFORMATION *buf;
+
+            /* Each logical processor may use up to 7 entries in returned table:
+             * core, numa node, package, L1i, L1d, L2, L3 */
+            len = 7 * NtCurrentTeb()->Peb->NumberOfProcessors;
+            buf = RtlAllocateHeap(GetProcessHeap(), 0, len * sizeof(*buf));
+            if(!buf)
+            {
+                ret = STATUS_NO_MEMORY;
+                break;
+            }
+
+            ret = create_logical_proc_info(&buf, &len);
+            if( ret != STATUS_SUCCESS )
+            {
+                RtlFreeHeap(GetProcessHeap(), 0, buf);
+                break;
+            }
+
+            if( Length >= len)
+            {
+                if (!SystemInformation) ret = STATUS_ACCESS_VIOLATION;
+                else memcpy( SystemInformation, buf, len);
+            }
+            else ret = STATUS_INFO_LENGTH_MISMATCH;
+            RtlFreeHeap(GetProcessHeap(), 0, buf);
+        }
+        break;
     default:
 	FIXME("(0x%08x,%p,0x%08x,%p) stub\n",
 	      SystemInformationClass,SystemInformation,Length,ResultLength);
@@ -1803,7 +2132,35 @@ NTSTATUS WINAPI NtInitiatePowerAction(
 		SystemAction,MinSystemState,Flags,Asynchronous);
         return STATUS_NOT_IMPLEMENTED;
 }
-	
+
+#ifdef linux
+/* Fallback using /proc/cpuinfo for Linux systems without cpufreq. For
+ * most distributions on recent enough hardware, this is only likely to
+ * happen while running in virtualized environments such as QEMU. */
+static ULONG mhz_from_cpuinfo(void)
+{
+    char line[512];
+    char *s, *value;
+    double cmz = 0;
+    FILE* f = fopen("/proc/cpuinfo", "r");
+    if(f) {
+        while (fgets(line, sizeof(line), f) != NULL) {
+            if (!(value = strchr(line,':')))
+                continue;
+            s = value - 1;
+            while ((s >= line) && isspace(*s)) s--;
+            *(s + 1) = '\0';
+            value++;
+            if (!strcasecmp(line, "cpu MHz")) {
+                sscanf(value, " %lf", &cmz);
+                break;
+            }
+        }
+        fclose(f);
+    }
+    return cmz;
+}
+#endif
 
 /******************************************************************************
  *  NtPowerInformation				[NTDLL.@]
@@ -1867,20 +2224,127 @@ NTSTATUS WINAPI NtPowerInformation(
 			*ExecutionState = ES_USER_PRESENT;
 			return STATUS_SUCCESS;
 		}
-                case ProcessorInformation: {
-			PPROCESSOR_POWER_INFORMATION cpu_power = lpOutputBuffer;
+		case ProcessorInformation: {
+			const int cannedMHz = 1000; /* We fake a 1GHz processor if we can't conjure up real values */
+			PROCESSOR_POWER_INFORMATION* cpu_power = lpOutputBuffer;
+			int i, out_cpus;
 
-			WARN("semi-stub: ProcessorInformation\n");
-			if (nOutputBufferSize < sizeof(PROCESSOR_POWER_INFORMATION))
+			if ((lpOutputBuffer == NULL) || (nOutputBufferSize == 0))
+				return STATUS_INVALID_PARAMETER;
+			out_cpus = NtCurrentTeb()->Peb->NumberOfProcessors;
+			if ((nOutputBufferSize / sizeof(PROCESSOR_POWER_INFORMATION)) < out_cpus)
 				return STATUS_BUFFER_TOO_SMALL;
-                        cpu_power->Number = NtCurrentTeb()->Peb->NumberOfProcessors;
-                        cpu_power->MaxMhz = cpuHz / 1000000;
-                        cpu_power->CurrentMhz = cpuHz / 1000000;
-                        cpu_power->MhzLimit = cpuHz / 1000000;
-                        cpu_power->MaxIdleState = 0; /* FIXME */
-                        cpu_power->CurrentIdleState = 0; /* FIXME */
-                        return STATUS_SUCCESS;
-                }
+#if defined(linux)
+			{
+				char filename[128];
+				FILE* f;
+
+				for(i = 0; i < out_cpus; i++) {
+					sprintf(filename, "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_cur_freq", i);
+					f = fopen(filename, "r");
+					if (f && (fscanf(f, "%d", &cpu_power[i].CurrentMhz) == 1)) {
+						cpu_power[i].CurrentMhz /= 1000;
+						fclose(f);
+					}
+					else {
+						if(i == 0) {
+							cpu_power[0].CurrentMhz = mhz_from_cpuinfo();
+							if(cpu_power[0].CurrentMhz == 0)
+								cpu_power[0].CurrentMhz = cannedMHz;
+						}
+						else
+							cpu_power[i].CurrentMhz = cpu_power[0].CurrentMhz;
+						if(f) fclose(f);
+					}
+
+					sprintf(filename, "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", i);
+					f = fopen(filename, "r");
+					if (f && (fscanf(f, "%d", &cpu_power[i].MaxMhz) == 1)) {
+						cpu_power[i].MaxMhz /= 1000;
+						fclose(f);
+					}
+					else {
+						cpu_power[i].MaxMhz = cpu_power[i].CurrentMhz;
+						if(f) fclose(f);
+					}
+
+					sprintf(filename, "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_max_freq", i);
+					f = fopen(filename, "r");
+					if(f && (fscanf(f, "%d", &cpu_power[i].MhzLimit) == 1)) {
+						cpu_power[i].MhzLimit /= 1000;
+						fclose(f);
+					}
+					else
+					{
+						cpu_power[i].MhzLimit = cpu_power[i].MaxMhz;
+						if(f) fclose(f);
+					}
+
+					cpu_power[i].Number = i;
+					cpu_power[i].MaxIdleState = 0;     /* FIXME */
+					cpu_power[i].CurrentIdleState = 0; /* FIXME */
+				}
+			}
+#elif defined(__FreeBSD__) || defined (__FreeBSD_kernel__) || defined(__DragonFly__)
+			{
+				int num;
+				size_t valSize = sizeof(num);
+				if (sysctlbyname("hw.clockrate", &num, &valSize, NULL, 0))
+					num = cannedMHz;
+				for(i = 0; i < out_cpus; i++) {
+					cpu_power[i].CurrentMhz = num;
+					cpu_power[i].MaxMhz = num;
+					cpu_power[i].MhzLimit = num;
+					cpu_power[i].Number = i;
+					cpu_power[i].MaxIdleState = 0;     /* FIXME */
+					cpu_power[i].CurrentIdleState = 0; /* FIXME */
+				}
+			}
+#elif defined (__APPLE__)
+			{
+				size_t valSize;
+				unsigned long long currentMhz;
+				unsigned long long maxMhz;
+
+				valSize = sizeof(currentMhz);
+				if (!sysctlbyname("hw.cpufrequency", &currentMhz, &valSize, NULL, 0))
+					currentMhz /= 1000000;
+				else
+					currentMhz = cannedMHz;
+
+				valSize = sizeof(maxMhz);
+				if (!sysctlbyname("hw.cpufrequency_max", &maxMhz, &valSize, NULL, 0))
+					maxMhz /= 1000000;
+				else
+					maxMhz = currentMhz;
+
+				for(i = 0; i < out_cpus; i++) {
+					cpu_power[i].CurrentMhz = currentMhz;
+					cpu_power[i].MaxMhz = maxMhz;
+					cpu_power[i].MhzLimit = maxMhz;
+					cpu_power[i].Number = i;
+					cpu_power[i].MaxIdleState = 0;     /* FIXME */
+					cpu_power[i].CurrentIdleState = 0; /* FIXME */
+				}
+			}
+#else
+			for(i = 0; i < out_cpus; i++) {
+				cpu_power[i].CurrentMhz = cannedMHz;
+				cpu_power[i].MaxMhz = cannedMHz;
+				cpu_power[i].MhzLimit = cannedMHz;
+				cpu_power[i].Number = i;
+				cpu_power[i].MaxIdleState = 0; /* FIXME */
+				cpu_power[i].CurrentIdleState = 0; /* FIXME */
+			}
+			WARN("Unable to detect CPU MHz for this platform. Reporting %d MHz.\n", cannedMHz);
+#endif
+			for(i = 0; i < out_cpus; i++) {
+				TRACE("cpu_power[%d] = %u %u %u %u %u %u\n", i, cpu_power[i].Number,
+					  cpu_power[i].MaxMhz, cpu_power[i].CurrentMhz, cpu_power[i].MhzLimit,
+					  cpu_power[i].MaxIdleState, cpu_power[i].CurrentIdleState);
+			}
+			return STATUS_SUCCESS;
+		}
 		default:
 			/* FIXME: Needed by .NET Framework */
 			WARN("Unimplemented NtPowerInformation action: %d\n", InformationLevel);

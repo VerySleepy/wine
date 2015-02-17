@@ -407,7 +407,7 @@ static void free_resource_tree( struct res_tree *tree )
 static void output_string( const WCHAR *name )
 {
     int i, len = strlenW(name);
-    output( "\t%s 0x%04x", get_asm_short_keyword(), len );
+    output( "\t.short 0x%04x", len );
     for (i = 0; i < len; i++) output( ",0x%04x", name[i] );
     output( " /* " );
     for (i = 0; i < len; i++) output( "%c", isprint((char)name[i]) ? (char)name[i] : '?' );
@@ -419,10 +419,9 @@ static inline void output_res_dir( unsigned int nb_names, unsigned int nb_ids )
 {
     output( "\t.long 0\n" );  /* Characteristics */
     output( "\t.long 0\n" );  /* TimeDateStamp */
-    output( "\t%s 0,0\n",     /* Major/MinorVersion */
-             get_asm_short_keyword() );
-    output( "\t%s %u,%u\n",   /* NumberOfNamed/IdEntries */
-             get_asm_short_keyword(), nb_names, nb_ids );
+    output( "\t.short 0,0\n" );   /* Major/MinorVersion */
+    output( "\t.short %u,%u\n",   /* NumberOfNamed/IdEntries */
+             nb_names, nb_ids );
 }
 
 /* output the resource definitions */
@@ -478,7 +477,7 @@ void output_resources( DLLSPEC *spec )
 
     for (i = 0, res = spec->resources; i < spec->nb_resources; i++, res++)
         output( "\t.long .L__wine_spec_res_%d-.L__wine_spec_rva_base,%u,0,0\n",
-                i, (res->data_size + 3) & ~3 );
+                i, res->data_size );
 
     /* dump the name strings */
 
@@ -579,7 +578,7 @@ void output_bin_resources( DLLSPEC *spec, unsigned int start_rva )
     for (i = 0, res = spec->resources; i < spec->nb_resources; i++, res++)
     {
         put_dword( data_offset + start_rva );
-        put_dword( (res->data_size + 3) & ~3 );
+        put_dword( res->data_size );
         put_dword( 0 );
         put_dword( 0 );
         data_offset += (res->data_size + 3) & ~3;
@@ -681,8 +680,8 @@ void output_res_o_file( DLLSPEC *spec )
     close( fd );
     free( output_buffer );
 
-    args = strarray_init();
-    strarray_add( args, find_tool( "windres", NULL ), "-i", res_file, "-o", output_file_name, NULL );
+    args = find_tool( "windres", NULL );
+    strarray_add( args, "-i", res_file, "-o", output_file_name, NULL );
     spawn( args );
     strarray_free( args );
 

@@ -287,7 +287,7 @@ BOOL WINAPI CloseClipboard(void)
             bCBHasChanged = FALSE;
 
             if (hWndViewer)
-                SendMessageW(hWndViewer, WM_DRAWCLIPBOARD, (WPARAM) GetClipboardOwner(), 0);
+                SendNotifyMessageW(hWndViewer, WM_DRAWCLIPBOARD, (WPARAM) GetClipboardOwner(), 0);
         }
 
         bRet = TRUE;
@@ -320,7 +320,7 @@ BOOL WINAPI EmptyClipboard(void)
         SendMessageW(cbinfo.hWndOwner, WM_DESTROYCLIPBOARD, 0, 0);
 
     /* Tell the driver to acquire the selection. The current owner
-     * will be signaled to delete it's own cache. */
+     * will be signaled to delete its own cache. */
 
     /* Assign ownership of the clipboard to the current client. We do
      * this before acquiring the selection so that when we do acquire the
@@ -332,7 +332,7 @@ BOOL WINAPI EmptyClipboard(void)
     CLIPBOARD_SetClipboardOwner(cbinfo.hWndOpen);
 
     /* Acquire the selection. This will notify the previous owner
-     * to clear it's cache. */
+     * to clear its cache. */
     USER_Driver->pAcquireClipboard(cbinfo.hWndOpen);
 
     /* Empty the local cache */
@@ -393,7 +393,7 @@ HWND WINAPI SetClipboardViewer( HWND hWnd )
     HWND hwndPrev = CLIPBOARD_SetClipboardViewer(hWnd);
 
     if (hWnd)
-        SendMessageW(hWnd, WM_DRAWCLIPBOARD, (WPARAM) GetClipboardOwner(), 0);
+        SendNotifyMessageW(hWnd, WM_DRAWCLIPBOARD, (WPARAM) GetClipboardOwner(), 0);
     TRACE("(%p): returning %p\n", hWnd, hwndPrev);
 
     return hwndPrev;
@@ -579,4 +579,22 @@ DWORD WINAPI GetClipboardSequenceNumber(VOID)
 
     TRACE("returning %x\n", seqno);
     return seqno;
+}
+
+/**************************************************************************
+ *		AddClipboardFormatListener (USER32.@)
+ */
+BOOL WINAPI AddClipboardFormatListener(HWND hwnd)
+{
+    FIXME("%p: stub\n", hwnd);
+    return TRUE;
+}
+
+/**************************************************************************
+ *		RemoveClipboardFormatListener (USER32.@)
+ */
+BOOL WINAPI RemoveClipboardFormatListener(HWND hwnd)
+{
+    FIXME("%p: stub\n", hwnd);
+    return TRUE;
 }

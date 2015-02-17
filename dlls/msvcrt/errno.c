@@ -130,7 +130,7 @@ static MSVCRT_invalid_parameter_handler invalid_parameter_handler = NULL;
 /* INTERNAL: Set the crt and dos errno's from the OS error given. */
 void msvcrt_set_errno(int err)
 {
-  int *errno = MSVCRT__errno();
+  int *errno_ptr = MSVCRT__errno();
   MSVCRT_ulong *doserrno = MSVCRT___doserrno();
 
   *doserrno = err;
@@ -138,7 +138,7 @@ void msvcrt_set_errno(int err)
   switch(err)
   {
 #define ERR_CASE(oserr) case oserr:
-#define ERR_MAPS(oserr, crterr) case oserr: *errno = crterr; break
+#define ERR_MAPS(oserr, crterr) case oserr: *errno_ptr = crterr; break
     ERR_CASE(ERROR_ACCESS_DENIED)
     ERR_CASE(ERROR_NETWORK_ACCESS_DENIED)
     ERR_CASE(ERROR_CANNOT_MAKE)
@@ -184,8 +184,24 @@ void msvcrt_set_errno(int err)
   default:
     /*  Remaining cases map to EINVAL */
     /* FIXME: may be missing some errors above */
-    *errno = MSVCRT_EINVAL;
+    *errno_ptr = MSVCRT_EINVAL;
   }
+}
+
+/*********************************************************************
+ * __sys_nerr (MSVCR100.@)
+ */
+int* CDECL __sys_nerr(void)
+{
+    return (int*)&MSVCRT__sys_nerr;
+}
+
+/*********************************************************************
+ *  __sys_errlist (MSVCR100.@)
+ */
+char** CDECL __sys_errlist(void)
+{
+    return MSVCRT__sys_errlist;
 }
 
 /*********************************************************************
@@ -264,7 +280,7 @@ char* CDECL MSVCRT_strerror(int err)
 /**********************************************************************
  *		strerror_s	(MSVCRT.@)
  */
-int CDECL strerror_s(char *buffer, MSVCRT_size_t numberOfElements, int errnum)
+int CDECL MSVCRT_strerror_s(char *buffer, MSVCRT_size_t numberOfElements, int errnum)
 {
     char *ptr;
 
@@ -330,13 +346,11 @@ void CDECL MSVCRT_perror(const char* str)
 /*********************************************************************
  *		_wcserror_s (MSVCRT.@)
  */
-int CDECL _wcserror_s(MSVCRT_wchar_t* buffer, MSVCRT_size_t nc, int err)
+int CDECL MSVCRT__wcserror_s(MSVCRT_wchar_t* buffer, MSVCRT_size_t nc, int err)
 {
-    if (!MSVCRT_CHECK_PMT(buffer != NULL) || !MSVCRT_CHECK_PMT(nc > 0))
-    {
-        _set_errno(MSVCRT_EINVAL);
-        return MSVCRT_EINVAL;
-    }
+    if (!MSVCRT_CHECK_PMT(buffer != NULL)) return MSVCRT_EINVAL;
+    if (!MSVCRT_CHECK_PMT(nc > 0)) return MSVCRT_EINVAL;
+
     if (err < 0 || err > MSVCRT__sys_nerr) err = MSVCRT__sys_nerr;
     MultiByteToWideChar(CP_ACP, 0, MSVCRT__sys_errlist[err], -1, buffer, nc);
     return 0;
@@ -351,14 +365,14 @@ MSVCRT_wchar_t* CDECL MSVCRT__wcserror(int err)
 
     if (!data->wcserror_buffer)
         if (!(data->wcserror_buffer = MSVCRT_malloc(256 * sizeof(MSVCRT_wchar_t)))) return NULL;
-    _wcserror_s(data->wcserror_buffer, 256, err);
+    MSVCRT__wcserror_s(data->wcserror_buffer, 256, err);
     return data->wcserror_buffer;
 }
 
 /**********************************************************************
  *		__wcserror_s	(MSVCRT.@)
  */
-int CDECL __wcserror_s(MSVCRT_wchar_t* buffer, MSVCRT_size_t nc, const MSVCRT_wchar_t* str)
+int CDECL MSVCRT___wcserror_s(MSVCRT_wchar_t* buffer, MSVCRT_size_t nc, const MSVCRT_wchar_t* str)
 {
     int err;
     static const WCHAR colonW[] = {':', ' ', '\0'};
@@ -372,8 +386,7 @@ int CDECL __wcserror_s(MSVCRT_wchar_t* buffer, MSVCRT_size_t nc, const MSVCRT_wc
     if (str && *str) len += lstrlenW(str) + 2 /* ': ' */;
     if (len > nc)
     {
-        MSVCRT_INVALID_PMT("buffer[nc] is too small");
-        _set_errno(MSVCRT_ERANGE);
+        MSVCRT_INVALID_PMT("buffer[nc] is too small", MSVCRT_ERANGE);
         return MSVCRT_ERANGE;
     }
     if (str && *str)
@@ -400,7 +413,7 @@ MSVCRT_wchar_t* CDECL MSVCRT___wcserror(const MSVCRT_wchar_t* str)
     if (!data->wcserror_buffer)
         if (!(data->wcserror_buffer = MSVCRT_malloc(256 * sizeof(MSVCRT_wchar_t)))) return NULL;
 
-    err = __wcserror_s(data->wcserror_buffer, 256, str);
+    err = MSVCRT___wcserror_s(data->wcserror_buffer, 256, str);
     if (err) FIXME("bad wcserror call (%d)\n", err);
 
     return data->wcserror_buffer;
@@ -424,18 +437,32 @@ void __cdecl MSVCRT__invalid_parameter(const MSVCRT_wchar_t *expr, const MSVCRT_
     else
     {
         ERR( "%s:%u %s: %s %lx\n", debugstr_w(file), line, debugstr_w(func), debugstr_w(expr), arg );
+#if _MSVCR_VER > 0
         RaiseException( STATUS_INVALID_CRUNTIME_PARAMETER, EXCEPTION_NONCONTINUABLE, 0, NULL );
+#endif
     }
 }
 
-/* _get_invalid_parameter_handler - not exported in native msvcrt, added in msvcr80 */
+/*********************************************************************
+ * _invalid_parameter_noinfo (MSVCR100.@)
+ */
+void CDECL _invalid_parameter_noinfo(void)
+{
+    MSVCRT__invalid_parameter( NULL, NULL, NULL, 0, 0 );
+}
+
+/*********************************************************************
+ * _get_invalid_parameter_handler (MSVCR80.@)
+ */
 MSVCRT_invalid_parameter_handler CDECL _get_invalid_parameter_handler(void)
 {
     TRACE("\n");
     return invalid_parameter_handler;
 }
 
-/* _set_invalid_parameter_handler - not exproted in native msvcrt, added in msvcr80 */
+/*********************************************************************
+ * _set_invalid_parameter_handler (MSVCR80.@)
+ */
 MSVCRT_invalid_parameter_handler CDECL _set_invalid_parameter_handler(
         MSVCRT_invalid_parameter_handler handler)
 {

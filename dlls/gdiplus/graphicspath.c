@@ -155,7 +155,7 @@ static BOOL flatten_bezier(path_list_node_t *start, REAL x2, REAL y2, REAL x3, R
         if(!(node = add_path_list_node(start, mp[2].X, mp[2].Y, PathPointTypeLine)))
             return FALSE;
 
-    /* do the same with halfs */
+    /* do the same with halves */
     flatten_bezier(start, mp[0].X, mp[0].Y, mp[1].X, mp[1].Y, node, flatness);
     flatten_bezier(node,  mp[3].X, mp[3].Y, mp[4].X, mp[4].Y, end,  flatness);
 
@@ -744,7 +744,7 @@ GpStatus WINGDIPAPI GdipAddPathPie(GpPath *path, REAL x, REAL y, REAL width, REA
 
     arc2polybezier(ptf, x, y, width, height, startAngle, sweepAngle);
 
-    status = GdipAddPathLine(path, (width - x)/2, (height - y)/2, ptf[0].X, ptf[0].Y);
+    status = GdipAddPathLine(path, x + width/2, y + height/2, ptf[0].X, ptf[0].Y);
     if(status != Ok){
         GdipFree(ptf);
         return status;
@@ -840,36 +840,44 @@ static float fromfixedpoint(const FIXED v)
 struct format_string_args
 {
     GpPath *path;
-    UINT maxY;
+    float maxY;
+    float scale;
+    float ascent;
 };
 
 static GpStatus format_string_callback(HDC dc,
     GDIPCONST WCHAR *string, INT index, INT length, GDIPCONST GpFont *font,
     GDIPCONST RectF *rect, GDIPCONST GpStringFormat *format,
-    INT lineno, const RectF *bounds, void *priv)
+    INT lineno, const RectF *bounds, INT *underlined_indexes,
+    INT underlined_index_count, void *priv)
 {
     static const MAT2 identity = { {0,1}, {0,0}, {0,0}, {0,1} };
     struct format_string_args *args = priv;
     GpPath *path = args->path;
     GpStatus status = Ok;
-    float x = bounds->X;
-    float y = bounds->Y;
+    float x = rect->X + (bounds->X - rect->X) * args->scale;
+    float y = rect->Y + (bounds->Y - rect->Y) * args->scale;
     int i;
+
+    if (underlined_index_count)
+        FIXME("hotkey underlines not drawn yet\n");
+
+    if (y + bounds->Height * args->scale > args->maxY)
+        args->maxY = y + bounds->Height * args->scale;
 
     for (i = index; i < length; ++i)
     {
         GLYPHMETRICS gm;
-        TTPOLYGONHEADER *ph = NULL;
+        TTPOLYGONHEADER *ph = NULL, *origph;
         char *start;
         DWORD len, ofs = 0;
-        UINT bb_end;
         len = GetGlyphOutlineW(dc, string[i], GGO_BEZIER, &gm, 0, NULL, &identity);
         if (len == GDI_ERROR)
         {
             status = GenericError;
             break;
         }
-        ph = GdipAlloc(len);
+        origph = ph = GdipAlloc(len);
         start = (char *)ph;
         if (!ph || !lengthen_path(path, len / sizeof(POINTFX)))
         {
@@ -877,9 +885,6 @@ static GpStatus format_string_callback(HDC dc,
             break;
         }
         GetGlyphOutlineW(dc, string[i], GGO_BEZIER, &gm, len, start, &identity);
-        bb_end = gm.gmBlackBoxY + gm.gmptGlyphOrigin.y;
-        if (bb_end + y > args->maxY)
-            args->maxY = bb_end + y;
 
         ofs = 0;
         while (ofs < len)
@@ -887,8 +892,8 @@ static GpStatus format_string_callback(HDC dc,
             DWORD ofs_start = ofs;
             ph = (TTPOLYGONHEADER*)&start[ofs];
             path->pathdata.Types[path->pathdata.Count] = PathPointTypeStart;
-            path->pathdata.Points[path->pathdata.Count].X = x + fromfixedpoint(ph->pfxStart.x);
-            path->pathdata.Points[path->pathdata.Count++].Y = y + bb_end - fromfixedpoint(ph->pfxStart.y);
+            path->pathdata.Points[path->pathdata.Count].X = x + fromfixedpoint(ph->pfxStart.x) * args->scale;
+            path->pathdata.Points[path->pathdata.Count++].Y = y + args->ascent - fromfixedpoint(ph->pfxStart.y) * args->scale;
             TRACE("Starting at count %i with pos %f, %f)\n", path->pathdata.Count, x, y);
             ofs += sizeof(*ph);
             while (ofs - ofs_start < ph->cb)
@@ -903,16 +908,16 @@ static GpStatus format_string_callback(HDC dc,
                     for (j = 0; j < curve->cpfx; ++j)
                     {
                         path->pathdata.Types[path->pathdata.Count] = PathPointTypeLine;
-                        path->pathdata.Points[path->pathdata.Count].X = x + fromfixedpoint(curve->apfx[j].x);
-                        path->pathdata.Points[path->pathdata.Count++].Y = y + bb_end - fromfixedpoint(curve->apfx[j].y);
+                        path->pathdata.Points[path->pathdata.Count].X = x + fromfixedpoint(curve->apfx[j].x) * args->scale;
+                        path->pathdata.Points[path->pathdata.Count++].Y = y + args->ascent - fromfixedpoint(curve->apfx[j].y) * args->scale;
                     }
                     break;
                 case TT_PRIM_CSPLINE:
                     for (j = 0; j < curve->cpfx; ++j)
                     {
                         path->pathdata.Types[path->pathdata.Count] = PathPointTypeBezier;
-                        path->pathdata.Points[path->pathdata.Count].X = x + fromfixedpoint(curve->apfx[j].x);
-                        path->pathdata.Points[path->pathdata.Count++].Y = y + bb_end - fromfixedpoint(curve->apfx[j].y);
+                        path->pathdata.Points[path->pathdata.Count].X = x + fromfixedpoint(curve->apfx[j].x) * args->scale;
+                        path->pathdata.Points[path->pathdata.Count++].Y = y + args->ascent - fromfixedpoint(curve->apfx[j].y) * args->scale;
                     }
                     break;
                 default:
@@ -923,10 +928,10 @@ static GpStatus format_string_callback(HDC dc,
             path->pathdata.Types[path->pathdata.Count - 1] |= PathPointTypeCloseSubpath;
         }
         path->newfigure = TRUE;
-        x += gm.gmCellIncX;
-        y += gm.gmCellIncY;
+        x += gm.gmCellIncX * args->scale;
+        y += gm.gmCellIncY * args->scale;
 
-        GdipFree(ph);
+        GdipFree(origph);
         if (status != Ok)
             break;
     }
@@ -938,39 +943,74 @@ GpStatus WINGDIPAPI GdipAddPathString(GpPath* path, GDIPCONST WCHAR* string, INT
 {
     GpFont *font;
     GpStatus status;
+    LOGFONTW lfw;
     HANDLE hfont;
     HDC dc;
+    GpGraphics *graphics;
     GpPath *backup;
     struct format_string_args args;
     int i;
+    UINT16 native_height;
+    RectF scaled_layout_rect;
+    TEXTMETRICW textmetric;
 
-    FIXME("(%p, %s, %d, %p, %d, %f, %p, %p): stub\n", path, debugstr_w(string), length, family, style, emSize, layoutRect, format);
+    TRACE("(%p, %s, %d, %p, %d, %f, %p, %p)\n", path, debugstr_w(string), length, family, style, emSize, layoutRect, format);
     if (!path || !string || !family || !emSize || !layoutRect || !format)
         return InvalidParameter;
 
-    status = GdipCreateFont(family, emSize, style, UnitPixel, &font);
+    status = GdipGetEmHeight(family, style, &native_height);
     if (status != Ok)
         return status;
 
-    hfont = CreateFontIndirectW(&font->lfw);
-    if (!hfont)
-    {
-        WARN("Failed to create font\n");
-        return GenericError;
-    }
+    scaled_layout_rect.X = layoutRect->X;
+    scaled_layout_rect.Y = layoutRect->Y;
+    scaled_layout_rect.Width = layoutRect->Width * native_height / emSize;
+    scaled_layout_rect.Height = layoutRect->Height * native_height / emSize;
 
     if ((status = GdipClonePath(path, &backup)) != Ok)
+        return status;
+
+    dc = CreateCompatibleDC(0);
+    status = GdipCreateFromHDC(dc, &graphics);
+    if (status != Ok)
     {
-        DeleteObject(hfont);
+        DeleteDC(dc);
+        GdipDeletePath(backup);
         return status;
     }
 
-    dc = CreateCompatibleDC(0);
+    status = GdipCreateFont(family, native_height, style, UnitPixel, &font);
+    if (status != Ok)
+    {
+        GdipDeleteGraphics(graphics);
+        DeleteDC(dc);
+        GdipDeletePath(backup);
+        return status;
+    }
+
+    get_log_fontW(font, graphics, &lfw);
+    GdipDeleteFont(font);
+    GdipDeleteGraphics(graphics);
+
+    hfont = CreateFontIndirectW(&lfw);
+    if (!hfont)
+    {
+        WARN("Failed to create font\n");
+        DeleteDC(dc);
+        GdipDeletePath(backup);
+        return GenericError;
+    }
+
     SelectObject(dc, hfont);
+
+    GetTextMetricsW(dc, &textmetric);
 
     args.path = path;
     args.maxY = 0;
-    status = gdip_format_string(dc, string, length, NULL, layoutRect, format, format_string_callback, &args);
+    args.scale = emSize / native_height;
+    args.ascent = textmetric.tmAscent * args.scale;
+    status = gdip_format_string(dc, string, length, NULL, &scaled_layout_rect,
+                                format, TRUE, format_string_callback, &args);
 
     DeleteDC(dc);
     DeleteObject(hfont);
@@ -985,12 +1025,12 @@ GpStatus WINGDIPAPI GdipAddPathString(GpPath* path, GDIPCONST WCHAR* string, INT
     }
     if (format && format->vertalign == StringAlignmentCenter && layoutRect->Y + args.maxY < layoutRect->Height)
     {
-        float inc = layoutRect->Height - args.maxY - layoutRect->Y;
+        float inc = layoutRect->Height + layoutRect->Y - args.maxY;
         inc /= 2;
         for (i = backup->pathdata.Count; i < path->pathdata.Count; ++i)
             path->pathdata.Points[i].Y += inc;
     } else if (format && format->vertalign == StringAlignmentFar) {
-        float inc = layoutRect->Height - args.maxY - layoutRect->Y;
+        float inc = layoutRect->Height + layoutRect->Y - args.maxY;
         for (i = backup->pathdata.Count; i < path->pathdata.Count; ++i)
             path->pathdata.Points[i].Y += inc;
     }
@@ -1028,9 +1068,9 @@ GpStatus WINGDIPAPI GdipClonePath(GpPath* path, GpPath **clone)
     (*clone)->pathdata.Points = GdipAlloc(path->datalen * sizeof(PointF));
     (*clone)->pathdata.Types = GdipAlloc(path->datalen);
     if(!(*clone)->pathdata.Points || !(*clone)->pathdata.Types){
-        GdipFree(*clone);
         GdipFree((*clone)->pathdata.Points);
         GdipFree((*clone)->pathdata.Types);
+        GdipFree(*clone);
         return OutOfMemory;
     }
 
@@ -1166,19 +1206,21 @@ GpStatus WINGDIPAPI GdipFlattenPath(GpPath *path, GpMatrix* matrix, REAL flatnes
     GpPointF pt;
     INT i = 1;
     INT startidx = 0;
+    GpStatus stat;
 
     TRACE("(%p, %p, %.2f)\n", path, matrix, flatness);
 
     if(!path)
         return InvalidParameter;
 
-    if(matrix){
-        WARN("transformation not supported yet!\n");
-        return NotImplemented;
-    }
-
     if(path->pathdata.Count == 0)
         return Ok;
+
+    if(matrix){
+        stat = GdipTransformPath(path, matrix);
+        if (stat != Ok)
+            return stat;
+    }
 
     pt = path->pathdata.Points[0];
     if(!init_path_list(&list, pt.X, pt.Y))
@@ -1207,14 +1249,7 @@ GpStatus WINGDIPAPI GdipFlattenPath(GpPath *path, GpMatrix* matrix, REAL flatnes
             continue;
         }
 
-        /* Bezier curve always stored as 4 points */
-        if((path->pathdata.Types[i-1] & PathPointTypePathTypeMask) != PathPointTypeStart){
-            type = (path->pathdata.Types[i] & ~PathPointTypePathTypeMask) | PathPointTypeLine;
-            if(!add_path_list_node(node, pt.X, pt.Y, type))
-                goto memout;
-
-            node = node->next;
-        }
+        /* Bezier curve */
 
         /* test for closed figure */
         if(path->pathdata.Types[i+1] & PathPointTypeCloseSubpath){
@@ -1339,8 +1374,8 @@ GpStatus WINGDIPAPI GdipGetPathPointsI(GpPath *path, GpPoint* points, INT count)
     ret = GdipGetPathPoints(path,ptf,count);
     if(ret == Ok)
         for(i = 0;i < count;i++){
-            points[i].X = roundr(ptf[i].X);
-            points[i].Y = roundr(ptf[i].Y);
+            points[i].X = gdip_round(ptf[i].X);
+            points[i].Y = gdip_round(ptf[i].Y);
         };
     GdipFree(ptf);
 
@@ -1460,10 +1495,10 @@ GpStatus WINGDIPAPI GdipGetPathWorldBoundsI(GpPath* path, GpRect* bounds,
     ret = GdipGetPathWorldBounds(path,&boundsF,matrix,pen);
 
     if(ret == Ok){
-        bounds->X      = roundr(boundsF.X);
-        bounds->Y      = roundr(boundsF.Y);
-        bounds->Width  = roundr(boundsF.Width);
-        bounds->Height = roundr(boundsF.Height);
+        bounds->X      = gdip_round(boundsF.X);
+        bounds->Y      = gdip_round(boundsF.Y);
+        bounds->Width  = gdip_round(boundsF.Width);
+        bounds->Height = gdip_round(boundsF.Height);
     }
 
     return ret;
@@ -1589,7 +1624,7 @@ GpStatus WINGDIPAPI GdipIsVisiblePathPoint(GpPath* path, REAL x, REAL y, GpGraph
         return status;
     }
 
-    *result = PtInRegion(hrgn, roundr(x), roundr(y));
+    *result = PtInRegion(hrgn, gdip_round(x), gdip_round(y));
 
     DeleteObject(hrgn);
     GdipDeleteRegion(region);
@@ -1659,12 +1694,460 @@ GpStatus WINGDIPAPI GdipWarpPath(GpPath *path, GpMatrix* matrix,
     return NotImplemented;
 }
 
+static void add_bevel_point(const GpPointF *endpoint, const GpPointF *nextpoint,
+    GpPen *pen, int right_side, path_list_node_t **last_point)
+{
+    REAL segment_dy = nextpoint->Y-endpoint->Y;
+    REAL segment_dx = nextpoint->X-endpoint->X;
+    REAL segment_length = sqrtf(segment_dy*segment_dy + segment_dx*segment_dx);
+    REAL distance = pen->width/2.0;
+    REAL bevel_dx, bevel_dy;
+
+    if (segment_length == 0.0)
+    {
+        *last_point = add_path_list_node(*last_point, endpoint->X,
+            endpoint->Y, PathPointTypeLine);
+        return;
+    }
+
+    if (right_side)
+    {
+        bevel_dx = -distance * segment_dy / segment_length;
+        bevel_dy = distance * segment_dx / segment_length;
+    }
+    else
+    {
+        bevel_dx = distance * segment_dy / segment_length;
+        bevel_dy = -distance * segment_dx / segment_length;
+    }
+
+    *last_point = add_path_list_node(*last_point, endpoint->X + bevel_dx,
+        endpoint->Y + bevel_dy, PathPointTypeLine);
+}
+
+static void widen_joint(const GpPointF *p1, const GpPointF *p2, const GpPointF *p3,
+    GpPen* pen, path_list_node_t **last_point)
+{
+    switch (pen->join)
+    {
+    case LineJoinMiter:
+    case LineJoinMiterClipped:
+        if ((p2->X - p1->X) * (p3->Y - p1->Y) > (p2->Y - p1->Y) * (p3->X - p1->X))
+        {
+            float distance = pen->width/2.0;
+            float length_0 = sqrtf((p2->X-p1->X)*(p2->X-p1->X)+(p2->Y-p1->Y)*(p2->Y-p1->Y));
+            float length_1 = sqrtf((p3->X-p2->X)*(p3->X-p2->X)+(p3->Y-p2->Y)*(p3->Y-p2->Y));
+            float dx0 = distance * (p2->X - p1->X) / length_0;
+            float dy0 = distance * (p2->Y - p1->Y) / length_0;
+            float dx1 = distance * (p3->X - p2->X) / length_1;
+            float dy1 = distance * (p3->Y - p2->Y) / length_1;
+            float det = (dy0*dx1 - dx0*dy1);
+            float dx = (dx0*dx1*(dx0-dx1) + dy0*dy0*dx1 - dy1*dy1*dx0)/det;
+            float dy = (dy0*dy1*(dy0-dy1) + dx0*dx0*dy1 - dx1*dx1*dy0)/det;
+            if (dx*dx + dy*dy < pen->miterlimit*pen->miterlimit * distance*distance)
+            {
+                *last_point = add_path_list_node(*last_point, p2->X + dx,
+                    p2->Y + dy, PathPointTypeLine);
+                break;
+            }
+            else if (pen->join == LineJoinMiter)
+            {
+                static int once;
+                if (!once++)
+                    FIXME("should add a clipped corner\n");
+            }
+            /* else fall-through */
+        }
+        /* else fall-through */
+    default:
+    case LineJoinBevel:
+        add_bevel_point(p2, p1, pen, 1, last_point);
+        add_bevel_point(p2, p3, pen, 0, last_point);
+        break;
+    }
+}
+
+static void widen_cap(const GpPointF *endpoint, const GpPointF *nextpoint,
+    GpPen *pen, GpLineCap cap, GpCustomLineCap *custom, int add_first_points,
+    int add_last_point, path_list_node_t **last_point)
+{
+    switch (cap)
+    {
+    default:
+    case LineCapFlat:
+        if (add_first_points)
+            add_bevel_point(endpoint, nextpoint, pen, 1, last_point);
+        if (add_last_point)
+            add_bevel_point(endpoint, nextpoint, pen, 0, last_point);
+        break;
+    case LineCapSquare:
+    {
+        REAL segment_dy = nextpoint->Y-endpoint->Y;
+        REAL segment_dx = nextpoint->X-endpoint->X;
+        REAL segment_length = sqrtf(segment_dy*segment_dy + segment_dx*segment_dx);
+        REAL distance = pen->width/2.0;
+        REAL bevel_dx, bevel_dy;
+        REAL extend_dx, extend_dy;
+
+        extend_dx = -distance * segment_dx / segment_length;
+        extend_dy = -distance * segment_dy / segment_length;
+
+        bevel_dx = -distance * segment_dy / segment_length;
+        bevel_dy = distance * segment_dx / segment_length;
+
+        if (add_first_points)
+            *last_point = add_path_list_node(*last_point, endpoint->X + extend_dx + bevel_dx,
+                endpoint->Y + extend_dy + bevel_dy, PathPointTypeLine);
+
+        if (add_last_point)
+            *last_point = add_path_list_node(*last_point, endpoint->X + extend_dx - bevel_dx,
+                endpoint->Y + extend_dy - bevel_dy, PathPointTypeLine);
+
+        break;
+    }
+    case LineCapRound:
+    {
+        REAL segment_dy = nextpoint->Y-endpoint->Y;
+        REAL segment_dx = nextpoint->X-endpoint->X;
+        REAL segment_length = sqrtf(segment_dy*segment_dy + segment_dx*segment_dx);
+        REAL distance = pen->width/2.0;
+        REAL dx, dy, dx2, dy2;
+        const REAL control_point_distance = 0.5522847498307935; /* 4/3 * (sqrt(2) - 1) */
+
+        if (add_first_points)
+        {
+            dx = -distance * segment_dx / segment_length;
+            dy = -distance * segment_dy / segment_length;
+
+            dx2 = dx * control_point_distance;
+            dy2 = dy * control_point_distance;
+
+            /* first 90-degree arc */
+            *last_point = add_path_list_node(*last_point, endpoint->X + dy,
+                endpoint->Y - dx, PathPointTypeLine);
+
+            *last_point = add_path_list_node(*last_point, endpoint->X + dy + dx2,
+                endpoint->Y - dx + dy2, PathPointTypeBezier);
+
+            *last_point = add_path_list_node(*last_point, endpoint->X + dx + dy2,
+                endpoint->Y + dy - dx2, PathPointTypeBezier);
+
+            /* midpoint */
+            *last_point = add_path_list_node(*last_point, endpoint->X + dx,
+                endpoint->Y + dy, PathPointTypeBezier);
+
+            /* second 90-degree arc */
+            *last_point = add_path_list_node(*last_point, endpoint->X + dx - dy2,
+                endpoint->Y + dy + dx2, PathPointTypeBezier);
+
+            *last_point = add_path_list_node(*last_point, endpoint->X - dy + dx2,
+                endpoint->Y + dx + dy2, PathPointTypeBezier);
+
+            *last_point = add_path_list_node(*last_point, endpoint->X - dy,
+                endpoint->Y + dx, PathPointTypeBezier);
+        }
+        break;
+    }
+    }
+}
+
+static void widen_open_figure(const GpPointF *points, GpPen *pen, int start, int end,
+    GpLineCap start_cap, GpCustomLineCap *start_custom, GpLineCap end_cap,
+    GpCustomLineCap *end_custom, path_list_node_t **last_point)
+{
+    int i;
+    path_list_node_t *prev_point;
+
+    if (end <= start)
+        return;
+
+    prev_point = *last_point;
+
+    widen_cap(&points[start], &points[start+1],
+        pen, start_cap, start_custom, FALSE, TRUE, last_point);
+
+    for (i=start+1; i<end; i++)
+        widen_joint(&points[i-1], &points[i],
+            &points[i+1], pen, last_point);
+
+    widen_cap(&points[end], &points[end-1],
+        pen, end_cap, end_custom, TRUE, TRUE, last_point);
+
+    for (i=end-1; i>start; i--)
+        widen_joint(&points[i+1], &points[i],
+            &points[i-1], pen, last_point);
+
+    widen_cap(&points[start], &points[start+1],
+        pen, start_cap, start_custom, TRUE, FALSE, last_point);
+
+    prev_point->next->type = PathPointTypeStart;
+    (*last_point)->type |= PathPointTypeCloseSubpath;
+}
+
+static void widen_closed_figure(GpPath *path, GpPen *pen, int start, int end,
+    path_list_node_t **last_point)
+{
+    int i;
+    path_list_node_t *prev_point;
+
+    if (end <= start+1)
+        return;
+
+    /* left outline */
+    prev_point = *last_point;
+
+    widen_joint(&path->pathdata.Points[end], &path->pathdata.Points[start],
+        &path->pathdata.Points[start+1], pen, last_point);
+
+    for (i=start+1; i<end; i++)
+        widen_joint(&path->pathdata.Points[i-1], &path->pathdata.Points[i],
+            &path->pathdata.Points[i+1], pen, last_point);
+
+    widen_joint(&path->pathdata.Points[end-1], &path->pathdata.Points[end],
+        &path->pathdata.Points[start], pen, last_point);
+
+    prev_point->next->type = PathPointTypeStart;
+    (*last_point)->type |= PathPointTypeCloseSubpath;
+
+    /* right outline */
+    prev_point = *last_point;
+
+    widen_joint(&path->pathdata.Points[start], &path->pathdata.Points[end],
+        &path->pathdata.Points[end-1], pen, last_point);
+
+    for (i=end-1; i>start; i--)
+        widen_joint(&path->pathdata.Points[i+1], &path->pathdata.Points[i],
+            &path->pathdata.Points[i-1], pen, last_point);
+
+    widen_joint(&path->pathdata.Points[start+1], &path->pathdata.Points[start],
+        &path->pathdata.Points[end], pen, last_point);
+
+    prev_point->next->type = PathPointTypeStart;
+    (*last_point)->type |= PathPointTypeCloseSubpath;
+}
+
+static void widen_dashed_figure(GpPath *path, GpPen *pen, int start, int end,
+    int closed, path_list_node_t **last_point)
+{
+    int i, j;
+    REAL dash_pos=0.0;
+    int dash_index=0;
+    const REAL *dash_pattern;
+    int dash_count;
+    GpPointF *tmp_points;
+    REAL segment_dy;
+    REAL segment_dx;
+    REAL segment_length;
+    REAL segment_pos;
+    int num_tmp_points=0;
+    int draw_start_cap=0;
+    static const REAL dash_dot_dot[6] = { 3.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
+
+    if (end <= start)
+        return;
+
+    switch (pen->dash)
+    {
+    case DashStyleDash:
+    default:
+        dash_pattern = dash_dot_dot;
+        dash_count = 2;
+        break;
+    case DashStyleDot:
+        dash_pattern = &dash_dot_dot[2];
+        dash_count = 2;
+        break;
+    case DashStyleDashDot:
+        dash_pattern = dash_dot_dot;
+        dash_count = 4;
+        break;
+    case DashStyleDashDotDot:
+        dash_pattern = dash_dot_dot;
+        dash_count = 6;
+        break;
+    case DashStyleCustom:
+        dash_pattern = pen->dashes;
+        dash_count = pen->numdashes;
+        break;
+    }
+
+    tmp_points = GdipAlloc((end - start + 2) * sizeof(GpPoint));
+    if (!tmp_points) return; /* FIXME */
+
+    if (!closed)
+        draw_start_cap = 1;
+
+    for (j=start; j <= end; j++)
+    {
+        if (j == start)
+        {
+            if (closed)
+                i = end;
+            else
+                continue;
+        }
+        else
+            i = j-1;
+
+        segment_dy = path->pathdata.Points[j].Y - path->pathdata.Points[i].Y;
+        segment_dx = path->pathdata.Points[j].X - path->pathdata.Points[i].X;
+        segment_length = sqrtf(segment_dy*segment_dy + segment_dx*segment_dx);
+        segment_pos = 0.0;
+
+        while (1)
+        {
+            if (dash_pos == 0.0)
+            {
+                if ((dash_index % 2) == 0)
+                {
+                    /* start dash */
+                    num_tmp_points = 1;
+                    tmp_points[0].X = path->pathdata.Points[i].X + segment_dx * segment_pos / segment_length;
+                    tmp_points[0].Y = path->pathdata.Points[i].Y + segment_dy * segment_pos / segment_length;
+                }
+                else
+                {
+                    /* end dash */
+                    tmp_points[num_tmp_points].X = path->pathdata.Points[i].X + segment_dx * segment_pos / segment_length;
+                    tmp_points[num_tmp_points].Y = path->pathdata.Points[i].Y + segment_dy * segment_pos / segment_length;
+
+                    widen_open_figure(tmp_points, pen, 0, num_tmp_points,
+                        draw_start_cap ? pen->startcap : LineCapFlat, pen->customstart,
+                        LineCapFlat, NULL, last_point);
+                    draw_start_cap = 0;
+                    num_tmp_points = 0;
+                }
+            }
+
+            if (dash_pattern[dash_index] - dash_pos > segment_length - segment_pos)
+            {
+                /* advance to next segment */
+                if ((dash_index % 2) == 0)
+                {
+                    tmp_points[num_tmp_points] = path->pathdata.Points[j];
+                    num_tmp_points++;
+                }
+                dash_pos += segment_length - segment_pos;
+                break;
+            }
+            else
+            {
+                /* advance to next dash in pattern */
+                segment_pos += dash_pattern[dash_index] - dash_pos;
+                dash_pos = 0.0;
+                if (++dash_index == dash_count)
+                    dash_index = 0;
+                continue;
+            }
+        }
+    }
+
+    if (dash_index % 2 == 0 && num_tmp_points != 0)
+    {
+        /* last dash overflows last segment */
+        tmp_points[num_tmp_points] = path->pathdata.Points[end];
+        widen_open_figure(tmp_points, pen, 0, num_tmp_points,
+            draw_start_cap ? pen->startcap : LineCapFlat, pen->customstart,
+            closed ? LineCapFlat : pen->endcap, pen->customend, last_point);
+    }
+
+    GdipFree(tmp_points);
+}
+
 GpStatus WINGDIPAPI GdipWidenPath(GpPath *path, GpPen *pen, GpMatrix *matrix,
     REAL flatness)
 {
-    FIXME("(%p,%p,%p,%0.2f)\n", path, pen, matrix, flatness);
+    GpPath *flat_path=NULL;
+    GpStatus status;
+    path_list_node_t *points=NULL, *last_point=NULL;
+    int i, subpath_start=0, new_length;
+    BYTE type;
 
-    return NotImplemented;
+    TRACE("(%p,%p,%p,%0.2f)\n", path, pen, matrix, flatness);
+
+    if (!path || !pen)
+        return InvalidParameter;
+
+    if (path->pathdata.Count <= 1)
+        return OutOfMemory;
+
+    status = GdipClonePath(path, &flat_path);
+
+    if (status == Ok)
+        status = GdipFlattenPath(flat_path, matrix, flatness);
+
+    if (status == Ok && !init_path_list(&points, 314.0, 22.0))
+        status = OutOfMemory;
+
+    if (status == Ok)
+    {
+        last_point = points;
+
+        if (pen->endcap > LineCapRound)
+            FIXME("unimplemented end cap %x\n", pen->endcap);
+
+        if (pen->startcap > LineCapRound)
+            FIXME("unimplemented start cap %x\n", pen->startcap);
+
+        if (pen->dashcap != DashCapFlat)
+            FIXME("unimplemented dash cap %d\n", pen->dashcap);
+
+        if (pen->join == LineJoinRound)
+            FIXME("unimplemented line join %d\n", pen->join);
+
+        if (pen->align != PenAlignmentCenter)
+            FIXME("unimplemented pen alignment %d\n", pen->align);
+
+        for (i=0; i < flat_path->pathdata.Count; i++)
+        {
+            type = flat_path->pathdata.Types[i];
+
+            if ((type&PathPointTypePathTypeMask) == PathPointTypeStart)
+                subpath_start = i;
+
+            if ((type&PathPointTypeCloseSubpath) == PathPointTypeCloseSubpath)
+            {
+                if (pen->dash != DashStyleSolid)
+                    widen_dashed_figure(flat_path, pen, subpath_start, i, 1, &last_point);
+                else
+                    widen_closed_figure(flat_path, pen, subpath_start, i, &last_point);
+            }
+            else if (i == flat_path->pathdata.Count-1 ||
+                (flat_path->pathdata.Types[i+1]&PathPointTypePathTypeMask) == PathPointTypeStart)
+            {
+                if (pen->dash != DashStyleSolid)
+                    widen_dashed_figure(flat_path, pen, subpath_start, i, 0, &last_point);
+                else
+                    widen_open_figure(flat_path->pathdata.Points, pen, subpath_start, i, pen->startcap, pen->customstart, pen->endcap, pen->customend, &last_point);
+            }
+        }
+
+        new_length = path_list_count(points)-1;
+
+        if (!lengthen_path(path, new_length))
+            status = OutOfMemory;
+    }
+
+    if (status == Ok)
+    {
+        path->pathdata.Count = new_length;
+
+        last_point = points->next;
+        for (i = 0; i < new_length; i++)
+        {
+            path->pathdata.Points[i] = last_point->pt;
+            path->pathdata.Types[i] = last_point->type;
+            last_point = last_point->next;
+        }
+
+        path->fill = FillModeWinding;
+    }
+
+    free_path_list(points);
+
+    GdipDeletePath(flat_path);
+
+    return status;
 }
 
 GpStatus WINGDIPAPI GdipAddPathRectangle(GpPath *path, REAL x, REAL y,

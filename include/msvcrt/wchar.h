@@ -266,10 +266,10 @@ int      __cdecl _wrmdir(const wchar_t*);
 int      __cdecl _waccess(const wchar_t*,int);
 int      __cdecl _wchmod(const wchar_t*,int);
 int      __cdecl _wcreat(const wchar_t*,int);
-__msvcrt_long __cdecl _wfindfirst(const wchar_t*,struct _wfinddata_t*);
-__msvcrt_long __cdecl _wfindfirsti64(const wchar_t*, struct _wfinddatai64_t*);
-int      __cdecl _wfindnext(__msvcrt_long,struct _wfinddata_t*);
-int      __cdecl _wfindnexti64(__msvcrt_long, struct _wfinddatai64_t*);
+intptr_t __cdecl _wfindfirst(const wchar_t*,struct _wfinddata_t*);
+intptr_t __cdecl _wfindfirsti64(const wchar_t*, struct _wfinddatai64_t*);
+int      __cdecl _wfindnext(intptr_t,struct _wfinddata_t*);
+int      __cdecl _wfindnexti64(intptr_t, struct _wfinddatai64_t*);
 wchar_t* __cdecl _wmktemp(wchar_t*);
 int      __cdecl _wopen(const wchar_t*,int,...);
 int      __cdecl _wrename(const wchar_t*,const wchar_t*);
@@ -313,13 +313,20 @@ int __cdecl _wstat64(const wchar_t*,struct _stat64*);
 
 #ifndef _WSTDIO_DEFINED
 #define _WSTDIO_DEFINED
+wint_t   __cdecl _fgetwc_nolock(FILE*);
 wint_t   __cdecl _fgetwchar(void);
+wint_t   __cdecl _fputwc_nolock(wint_t,FILE*);
 wint_t   __cdecl _fputwchar(wint_t);
+wint_t   __cdecl _getwc_nolock(FILE*);
 wchar_t* __cdecl _getws(wchar_t*);
+wint_t   __cdecl _putwc_nolock(wint_t,FILE*);
 int      __cdecl _putws(const wchar_t*);
 int      __cdecl _snwprintf(wchar_t*,size_t,const wchar_t*,...);
 int      __cdecl _snwprintf_s(wchar_t*,size_t,size_t,const wchar_t*,...);
+int      __cdecl _scwprintf(const wchar_t*,...);
+wint_t   __cdecl _ungetwc_nolock(wint_t,FILE*);
 int      __cdecl _vscwprintf(const wchar_t*,__ms_va_list);
+int      __cdecl _vscwprintf_p_l(const wchar_t*,_locale_t,__ms_va_list);
 int      __cdecl _vsnwprintf(wchar_t*,size_t,const wchar_t*,__ms_va_list);
 int      __cdecl _vsnwprintf_s(wchar_t*,size_t,size_t,const wchar_t*,__ms_va_list);
 int      __cdecl _vswprintf_p_l(wchar_t*,size_t,const wchar_t*,_locale_t,__ms_va_list);
@@ -401,12 +408,17 @@ int           __cdecl wctomb(char*,wchar_t);
 
 #ifndef _WSTRING_DEFINED
 #define _WSTRING_DEFINED
+int      __cdecl _wcscoll_l(const wchar_t*,const wchar_t*,_locale_t);
 wchar_t* __cdecl _wcsdup(const wchar_t*);
 int      __cdecl _wcsicmp(const wchar_t*,const wchar_t*);
 int      __cdecl _wcsicoll(const wchar_t*,const wchar_t*);
+int      __cdecl _wcsicoll_l(const wchar_t*,const wchar_t*,_locale_t);
 wchar_t* __cdecl _wcslwr(wchar_t*);
+int      __cdecl _wcsncoll(const wchar_t*,const wchar_t*,size_t);
+int      __cdecl _wcsncoll_l(const wchar_t*,const wchar_t*,size_t,_locale_t);
 int      __cdecl _wcsnicmp(const wchar_t*,const wchar_t*,size_t);
 int      __cdecl _wcsnicoll(const wchar_t*,const wchar_t*,size_t);
+int      __cdecl _wcsnicoll_l(const wchar_t*,const wchar_t*,size_t,_locale_t);
 wchar_t* __cdecl _wcsnset(wchar_t*,wchar_t,size_t);
 wchar_t* __cdecl _wcsrev(wchar_t*);
 wchar_t* __cdecl _wcsset(wchar_t*,wchar_t);

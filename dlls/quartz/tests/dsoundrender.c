@@ -33,13 +33,13 @@
     ok(ppv != NULL, "Pointer is NULL\n");
 
 #define RELEASE_EXPECT(iface, num) if (iface) { \
-    hr = IUnknown_Release(iface); \
+    hr = IUnknown_Release((IUnknown*)iface); \
     ok(hr == num, "IUnknown_Release should return %d, got %d\n", num, hr); \
 }
 
 static IUnknown *pDSRender = NULL;
 
-static int create_dsound_renderer(void)
+static BOOL create_dsound_renderer(void)
 {
     HRESULT hr;
 
@@ -148,9 +148,9 @@ static void test_query_interface(void)
         ok(hr == S_OK, "Couldn't load default device: %08x\n", hr);
     }
     RELEASE_EXPECT(ppb, 1);
+    }
     QI_SUCCEED(pDSRender, IID_IMediaPosition, pMediaPosition);
     RELEASE_EXPECT(pMediaPosition, 1);
-    }
     QI_SUCCEED(pDSRender, IID_IQualityControl, pQualityControl);
     RELEASE_EXPECT(pQualityControl, 1);
 }
@@ -179,7 +179,7 @@ static void test_basefilter(void)
     ULONG ref;
     HRESULT hr;
 
-    IUnknown_QueryInterface(pDSRender, &IID_IBaseFilter, (void *)&base);
+    IUnknown_QueryInterface(pDSRender, &IID_IBaseFilter, (void **)&base);
     if (base == NULL)
     {
         /* test_query_interface handles this case */

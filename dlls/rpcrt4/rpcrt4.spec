@@ -29,7 +29,7 @@
 @ stub I_RpcBindingInqDynamicEndPoint
 @ stub I_RpcBindingInqDynamicEndPointA
 @ stub I_RpcBindingInqDynamicEndPointW
-@ stub I_RpcBindingInqLocalClientPID # wxp
+@ stdcall I_RpcBindingInqLocalClientPID(ptr ptr)
 @ stub I_RpcBindingInqSecurityContext
 @ stdcall I_RpcBindingInqTransportType(ptr ptr)
 @ stub I_RpcBindingInqWireIdForSnego
@@ -53,7 +53,7 @@
 @ stub I_RpcIfInqTransferSyntaxes
 @ stub I_RpcLogEvent
 @ stdcall I_RpcMapWin32Status(long)
-@ stub I_RpcNegotiateTransferSyntax # wxp
+@ stdcall I_RpcNegotiateTransferSyntax(ptr)
 @ stub I_RpcNsBindingSetEntryName
 @ stub I_RpcNsBindingSetEntryNameA
 @ stub I_RpcNsBindingSetEntryNameW
@@ -369,19 +369,19 @@
 @ stub RpcCertGeneratePrincipalNameW
 @ stdcall RpcCompleteAsyncCall(ptr ptr) RpcAsyncCompleteCall
 @ stdcall RpcEpRegisterA(ptr ptr ptr str)
-@ stub RpcEpRegisterNoReplaceA
-@ stub RpcEpRegisterNoReplaceW
+@ stdcall RpcEpRegisterNoReplaceA(ptr ptr ptr str)
+@ stdcall RpcEpRegisterNoReplaceW(ptr ptr ptr wstr)
 @ stdcall RpcEpRegisterW(ptr ptr ptr wstr)
 @ stdcall RpcEpResolveBinding(ptr ptr)
 @ stdcall RpcEpUnregister(ptr ptr ptr)
 @ stub RpcErrorAddRecord # wxp
 @ stub RpcErrorClearInformation # wxp
-@ stub RpcErrorEndEnumeration # wxp
-@ stub RpcErrorGetNextRecord # wxp
-@ stub RpcErrorLoadErrorInfo # wxp
+@ stdcall RpcErrorEndEnumeration(ptr)
+@ stdcall RpcErrorGetNextRecord(ptr long ptr)
+@ stdcall RpcErrorLoadErrorInfo(ptr long ptr)
 @ stub RpcErrorNumberOfRecords # wxp
 @ stub RpcErrorResetEnumeration # wxp
-@ stub RpcErrorSaveErrorInfo # wxp
+@ stdcall RpcErrorSaveErrorInfo(ptr ptr ptr)
 @ stdcall RpcErrorStartEnumeration(ptr)
 @ stub RpcFreeAuthorizationContext # wxp
 @ stdcall RpcGetAsyncCallStatus(ptr) RpcAsyncGetCallStatus
@@ -427,8 +427,8 @@
 @ stdcall RpcServerInqBindings(ptr)
 @ stub RpcServerInqCallAttributesA # wxp
 @ stub RpcServerInqCallAttributesW # wxp
-@ stub RpcServerInqDefaultPrincNameA
-@ stub RpcServerInqDefaultPrincNameW
+@ stdcall RpcServerInqDefaultPrincNameA(long ptr)
+@ stdcall RpcServerInqDefaultPrincNameW(long ptr)
 @ stub RpcServerInqIf
 @ stdcall RpcServerListen(long long long)
 @ stdcall RpcServerRegisterAuthInfoA(str  long ptr ptr)
@@ -471,7 +471,7 @@
 @ stub RpcSsContextLockShared # wxp
 @ stdcall RpcSsDestroyClientContext(ptr)
 @ stub RpcSsDisableAllocate
-@ stub RpcSsDontSerializeContext
+@ stdcall RpcSsDontSerializeContext()
 @ stub RpcSsEnableAllocate
 @ stub RpcSsFree
 @ stub RpcSsGetContextBinding

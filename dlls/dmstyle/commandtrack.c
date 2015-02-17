@@ -263,7 +263,7 @@ static HRESULT WINAPI IDirectMusicCommandTrack_IPersistStream_Load (LPPERSISTSTR
 	TRACE_(dmfile)(": %s chunk (size = %d)", debugstr_fourcc (chunkID), chunkSize);
 	switch (chunkID) {
 		case DMUS_FOURCC_COMMANDTRACK_CHUNK: {
-			int count;
+			DWORD count;
 			TRACE_(dmfile)(": command track chunk\n");
 			IStream_Read (pStm, &dwSizeOfStruct, sizeof(DWORD), NULL);
 			if (dwSizeOfStruct != sizeof(DMUS_IO_COMMAND)) {
@@ -333,7 +333,8 @@ static const IPersistStreamVtbl DirectMusicCommandTrack_PersistStream_Vtbl = {
 };
 
 /* for ClassFactory */
-HRESULT WINAPI DMUSIC_CreateDirectMusicCommandTrack (LPCGUID lpcGUID, LPVOID *ppobj, LPUNKNOWN pUnkOuter) {
+HRESULT WINAPI create_dmcommandtrack(REFIID lpcGUID, void **ppobj)
+{
 	IDirectMusicCommandTrack* track;
 	
 	track = HeapAlloc (GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectMusicCommandTrack));

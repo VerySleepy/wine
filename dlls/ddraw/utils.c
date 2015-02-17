@@ -30,26 +30,15 @@ WINE_DEFAULT_DEBUG_CHANNEL(ddraw);
 
 static void DDRAW_dump_pixelformat(const DDPIXELFORMAT *pf);
 
-/*****************************************************************************
- * PixelFormat_WineD3DtoDD
- *
- * Converts an wined3d format ID into a DDPIXELFORMAT structure
- *
- * Params:
- *  DDPixelFormat: Address of the structure to write the pixel format to
- *  WineD3DFormat: Source format
- *
- *****************************************************************************/
-void PixelFormat_WineD3DtoDD(DDPIXELFORMAT *DDPixelFormat, enum wined3d_format_id WineD3DFormat)
+void ddrawformat_from_wined3dformat(DDPIXELFORMAT *DDPixelFormat, enum wined3d_format_id wined3d_format)
 {
     DWORD Size = DDPixelFormat->dwSize;
-    TRACE("Converting wined3d format %#x to DDRAW.\n", WineD3DFormat);
 
     if(Size==0) return;
 
     memset(DDPixelFormat, 0x00, Size);
     DDPixelFormat->dwSize = Size;
-    switch(WineD3DFormat)
+    switch (wined3d_format)
     {
         case WINED3DFMT_B8G8R8_UNORM:
             DDPixelFormat->dwFlags = DDPF_RGB;
@@ -247,13 +236,13 @@ void PixelFormat_WineD3DtoDD(DDPIXELFORMAT *DDPixelFormat, enum wined3d_format_i
         case WINED3DFMT_YUY2:
             DDPixelFormat->u1.dwYUVBitCount = 16;
             DDPixelFormat->dwFlags = DDPF_FOURCC;
-            DDPixelFormat->dwFourCC = WineD3DFormat;
+            DDPixelFormat->dwFourCC = wined3d_format;
             break;
 
         case WINED3DFMT_YV12:
             DDPixelFormat->u1.dwYUVBitCount = 12;
             DDPixelFormat->dwFlags = DDPF_FOURCC;
-            DDPixelFormat->dwFourCC = WineD3DFormat;
+            DDPixelFormat->dwFourCC = wined3d_format;
             break;
 
         case WINED3DFMT_DXT1:
@@ -265,7 +254,7 @@ void PixelFormat_WineD3DtoDD(DDPIXELFORMAT *DDPixelFormat, enum wined3d_format_i
         case WINED3DFMT_G8R8_G8B8:
         case WINED3DFMT_R8G8_B8G8:
             DDPixelFormat->dwFlags = DDPF_FOURCC;
-            DDPixelFormat->dwFourCC = WineD3DFormat;
+            DDPixelFormat->dwFourCC = wined3d_format;
             break;
 
         /* Luminance */
@@ -341,7 +330,8 @@ void PixelFormat_WineD3DtoDD(DDPIXELFORMAT *DDPixelFormat, enum wined3d_format_i
             break;
 
         default:
-            ERR("Can't translate this Pixelformat %d\n", WineD3DFormat);
+            FIXME("Unhandled wined3d format %#x.\n", wined3d_format);
+            break;
     }
 
     if(TRACE_ON(ddraw)) {
@@ -349,20 +339,8 @@ void PixelFormat_WineD3DtoDD(DDPIXELFORMAT *DDPixelFormat, enum wined3d_format_i
         DDRAW_dump_pixelformat(DDPixelFormat);
     }
 }
-/*****************************************************************************
- * PixelFormat_DD2WineD3D
- *
- * Reads a DDPIXELFORMAT structure and returns the equivalent wined3d
- * format ID.
- *
- * Params:
- *  DDPixelFormat: The source format
- *
- * Returns:
- *  The wined3d format ID equivalent to the DDraw format
- *  WINED3DFMT_UNKNOWN if a matching format wasn't found
- *****************************************************************************/
-enum wined3d_format_id PixelFormat_DD2WineD3D(const DDPIXELFORMAT *DDPixelFormat)
+
+enum wined3d_format_id wined3dformat_from_ddrawformat(const DDPIXELFORMAT *DDPixelFormat)
 {
     TRACE("Convert a DirectDraw Pixelformat to a WineD3D Pixelformat\n");
     if(TRACE_ON(ddraw))
@@ -446,6 +424,7 @@ enum wined3d_format_id PixelFormat_DD2WineD3D(const DDPIXELFORMAT *DDPixelFormat
 
                 }
                 WARN("32 bit RGB pixel format does not match.\n");
+                return WINED3DFMT_UNKNOWN;
 
             default:
                 WARN("Invalid dwRGBBitCount in Pixelformat structure.\n");
@@ -457,10 +436,6 @@ enum wined3d_format_id PixelFormat_DD2WineD3D(const DDPIXELFORMAT *DDPixelFormat
         /* Alpha only Pixelformat */
         switch(DDPixelFormat->u1.dwAlphaBitDepth)
         {
-            case 1:
-            case 2:
-            case 4:
-                FIXME("Unsupported Alpha-Only bit depth 0x%x.\n", DDPixelFormat->u1.dwAlphaBitDepth);
             case 8:
                 return WINED3DFMT_A8_UNORM;
 
@@ -622,11 +597,10 @@ DDRAW_dump_PTR(const void *in)
 static void
 DDRAW_dump_DDCOLORKEY(const DDCOLORKEY *ddck)
 {
-    TRACE("Low : %d  - High : %d\n", ddck->dwColorSpaceLowValue, ddck->dwColorSpaceHighValue);
+    TRACE("Low : 0x%08x  - High : 0x%08x\n", ddck->dwColorSpaceLowValue, ddck->dwColorSpaceHighValue);
 }
 
-static void DDRAW_dump_flags_nolf(DWORD flags, const flag_info* names,
-                                  size_t num_names)
+static void DDRAW_dump_flags_nolf(DWORD flags, const struct flag_info *names, size_t num_names)
 {
     unsigned int i;
 
@@ -636,7 +610,7 @@ static void DDRAW_dump_flags_nolf(DWORD flags, const flag_info* names,
             TRACE("%s ", names[i].name);
 }
 
-static void DDRAW_dump_flags(DWORD flags, const flag_info* names, size_t num_names)
+static void DDRAW_dump_flags(DWORD flags, const struct flag_info *names, size_t num_names)
 {
     DDRAW_dump_flags_nolf(flags, names, num_names);
     TRACE("\n");
@@ -644,7 +618,8 @@ static void DDRAW_dump_flags(DWORD flags, const flag_info* names, size_t num_nam
 
 void DDRAW_dump_DDSCAPS2(const DDSCAPS2 *in)
 {
-    static const flag_info flags[] = {
+    static const struct flag_info flags[] =
+    {
         FE(DDSCAPS_RESERVED1),
         FE(DDSCAPS_ALPHA),
         FE(DDSCAPS_BACKBUFFER),
@@ -676,7 +651,8 @@ void DDRAW_dump_DDSCAPS2(const DDSCAPS2 *in)
         FE(DDSCAPS_STANDARDVGAMODE),
         FE(DDSCAPS_OPTIMIZED)
     };
-    static const flag_info flags2[] = {
+    static const struct flag_info flags2[] =
+    {
         FE(DDSCAPS2_HARDWAREDEINTERLACE),
         FE(DDSCAPS2_HINTDYNAMIC),
         FE(DDSCAPS2_HINTSTATIC),
@@ -718,32 +694,28 @@ DDRAW_dump_DDSCAPS(const DDSCAPS *in)
 static void
 DDRAW_dump_pixelformat_flag(DWORD flagmask)
 {
-    static const flag_info flags[] =
-        {
-            FE(DDPF_ALPHAPIXELS),
-            FE(DDPF_ALPHA),
-            FE(DDPF_FOURCC),
-            FE(DDPF_PALETTEINDEXED4),
-            FE(DDPF_PALETTEINDEXEDTO8),
-            FE(DDPF_PALETTEINDEXED8),
-            FE(DDPF_RGB),
-            FE(DDPF_COMPRESSED),
-            FE(DDPF_RGBTOYUV),
-            FE(DDPF_YUV),
-            FE(DDPF_ZBUFFER),
-            FE(DDPF_PALETTEINDEXED1),
-            FE(DDPF_PALETTEINDEXED2),
-            FE(DDPF_ZPIXELS)
+    static const struct flag_info flags[] =
+    {
+        FE(DDPF_ALPHAPIXELS),
+        FE(DDPF_ALPHA),
+        FE(DDPF_FOURCC),
+        FE(DDPF_PALETTEINDEXED4),
+        FE(DDPF_PALETTEINDEXEDTO8),
+        FE(DDPF_PALETTEINDEXED8),
+        FE(DDPF_RGB),
+        FE(DDPF_COMPRESSED),
+        FE(DDPF_RGBTOYUV),
+        FE(DDPF_YUV),
+        FE(DDPF_ZBUFFER),
+        FE(DDPF_PALETTEINDEXED1),
+        FE(DDPF_PALETTEINDEXED2),
+        FE(DDPF_ZPIXELS)
     };
 
     DDRAW_dump_flags_nolf(flagmask, flags, sizeof(flags)/sizeof(flags[0]));
 }
 
-static void
-DDRAW_dump_members(DWORD flags,
-                   const void* data,
-                   const member_info* mems,
-                   size_t num_mems)
+static void DDRAW_dump_members(DWORD flags, const void *data, const struct member_info *mems, size_t num_mems)
 {
     unsigned int i;
 
@@ -763,89 +735,67 @@ DDRAW_dump_pixelformat(const DDPIXELFORMAT *pf)
     TRACE("( ");
     DDRAW_dump_pixelformat_flag(pf->dwFlags);
     if (pf->dwFlags & DDPF_FOURCC)
-    {
-        TRACE(", dwFourCC code '%c%c%c%c' (0x%08x) - %d bits per pixel",
+        TRACE(", dwFourCC code '%c%c%c%c' (0x%08x) - %u bits per pixel",
                 (unsigned char)( pf->dwFourCC     &0xff),
                 (unsigned char)((pf->dwFourCC>> 8)&0xff),
                 (unsigned char)((pf->dwFourCC>>16)&0xff),
                 (unsigned char)((pf->dwFourCC>>24)&0xff),
                 pf->dwFourCC,
-                pf->u1.dwYUVBitCount
-        );
-    }
+                pf->u1.dwYUVBitCount);
     if (pf->dwFlags & DDPF_RGB)
     {
-        const char *cmd;
-        TRACE(", RGB bits: %d, ", pf->u1.dwRGBBitCount);
-        switch (pf->u1.dwRGBBitCount)
-        {
-        case 4: cmd = "%1lx"; break;
-        case 8: cmd = "%02lx"; break;
-        case 16: cmd = "%04lx"; break;
-        case 24: cmd = "%06lx"; break;
-        case 32: cmd = "%08lx"; break;
-        default: ERR("Unexpected bit depth !\n"); cmd = "%d"; break;
-        }
-        TRACE(" R "); TRACE(cmd, pf->u2.dwRBitMask);
-        TRACE(" G "); TRACE(cmd, pf->u3.dwGBitMask);
-        TRACE(" B "); TRACE(cmd, pf->u4.dwBBitMask);
+        TRACE(", RGB bits: %u, R 0x%08x G 0x%08x B 0x%08x",
+                pf->u1.dwRGBBitCount,
+                pf->u2.dwRBitMask,
+                pf->u3.dwGBitMask,
+                pf->u4.dwBBitMask);
         if (pf->dwFlags & DDPF_ALPHAPIXELS)
-        {
-            TRACE(" A "); TRACE(cmd, pf->u5.dwRGBAlphaBitMask);
-        }
+            TRACE(" A 0x%08x", pf->u5.dwRGBAlphaBitMask);
         if (pf->dwFlags & DDPF_ZPIXELS)
-        {
-            TRACE(" Z "); TRACE(cmd, pf->u5.dwRGBZBitMask);
-        }
+            TRACE(" Z 0x%08x", pf->u5.dwRGBZBitMask);
     }
     if (pf->dwFlags & DDPF_ZBUFFER)
-    {
-        TRACE(", Z bits : %d", pf->u1.dwZBufferBitDepth);
-    }
+        TRACE(", Z bits: %u", pf->u1.dwZBufferBitDepth);
     if (pf->dwFlags & DDPF_ALPHA)
-    {
-        TRACE(", Alpha bits : %d", pf->u1.dwAlphaBitDepth);
-    }
+        TRACE(", Alpha bits: %u", pf->u1.dwAlphaBitDepth);
     if (pf->dwFlags & DDPF_BUMPDUDV)
-    {
-        const char *cmd = "%08lx";
-        TRACE(", Bump bits: %d, ", pf->u1.dwBumpBitCount);
-        TRACE(" U "); TRACE(cmd, pf->u2.dwBumpDuBitMask);
-        TRACE(" V "); TRACE(cmd, pf->u3.dwBumpDvBitMask);
-        TRACE(" L "); TRACE(cmd, pf->u4.dwBumpLuminanceBitMask);
-    }
+        TRACE(", Bump bits: %u, U 0x%08x V 0x%08x L 0x%08x",
+                pf->u1.dwBumpBitCount,
+                pf->u2.dwBumpDuBitMask,
+                pf->u3.dwBumpDvBitMask,
+                pf->u4.dwBumpLuminanceBitMask);
     TRACE(")\n");
 }
 
 void DDRAW_dump_surface_desc(const DDSURFACEDESC2 *lpddsd)
 {
 #define STRUCT DDSURFACEDESC2
-    static const member_info members[] =
-        {
-            ME(DDSD_HEIGHT, DDRAW_dump_DWORD, dwHeight),
-            ME(DDSD_WIDTH, DDRAW_dump_DWORD, dwWidth),
-            ME(DDSD_PITCH, DDRAW_dump_DWORD, u1 /* lPitch */),
-            ME(DDSD_LINEARSIZE, DDRAW_dump_DWORD, u1 /* dwLinearSize */),
-            ME(DDSD_BACKBUFFERCOUNT, DDRAW_dump_DWORD, dwBackBufferCount),
-            ME(DDSD_MIPMAPCOUNT, DDRAW_dump_DWORD, u2 /* dwMipMapCount */),
-            ME(DDSD_ZBUFFERBITDEPTH, DDRAW_dump_DWORD, u2 /* dwZBufferBitDepth */), /* This is for 'old-style' D3D */
-            ME(DDSD_REFRESHRATE, DDRAW_dump_DWORD, u2 /* dwRefreshRate */),
-            ME(DDSD_ALPHABITDEPTH, DDRAW_dump_DWORD, dwAlphaBitDepth),
-            ME(DDSD_LPSURFACE, DDRAW_dump_PTR, lpSurface),
-            ME(DDSD_CKDESTOVERLAY, DDRAW_dump_DDCOLORKEY, u3 /* ddckCKDestOverlay */),
-            ME(DDSD_CKDESTBLT, DDRAW_dump_DDCOLORKEY, ddckCKDestBlt),
-            ME(DDSD_CKSRCOVERLAY, DDRAW_dump_DDCOLORKEY, ddckCKSrcOverlay),
-            ME(DDSD_CKSRCBLT, DDRAW_dump_DDCOLORKEY, ddckCKSrcBlt),
-            ME(DDSD_PIXELFORMAT, DDRAW_dump_pixelformat, u4 /* ddpfPixelFormat */)
-        };
-    static const member_info members_caps[] =
-        {
-            ME(DDSD_CAPS, DDRAW_dump_DDSCAPS, ddsCaps)
-        };
-    static const member_info members_caps2[] =
-        {
-            ME(DDSD_CAPS, DDRAW_dump_DDSCAPS2, ddsCaps)
-        };
+    static const struct member_info members[] =
+    {
+        ME(DDSD_HEIGHT, DDRAW_dump_DWORD, dwHeight),
+        ME(DDSD_WIDTH, DDRAW_dump_DWORD, dwWidth),
+        ME(DDSD_PITCH, DDRAW_dump_DWORD, u1 /* lPitch */),
+        ME(DDSD_LINEARSIZE, DDRAW_dump_DWORD, u1 /* dwLinearSize */),
+        ME(DDSD_BACKBUFFERCOUNT, DDRAW_dump_DWORD, dwBackBufferCount),
+        ME(DDSD_MIPMAPCOUNT, DDRAW_dump_DWORD, u2 /* dwMipMapCount */),
+        ME(DDSD_ZBUFFERBITDEPTH, DDRAW_dump_DWORD, u2 /* dwZBufferBitDepth */), /* This is for 'old-style' D3D */
+        ME(DDSD_REFRESHRATE, DDRAW_dump_DWORD, u2 /* dwRefreshRate */),
+        ME(DDSD_ALPHABITDEPTH, DDRAW_dump_DWORD, dwAlphaBitDepth),
+        ME(DDSD_LPSURFACE, DDRAW_dump_PTR, lpSurface),
+        ME(DDSD_CKDESTOVERLAY, DDRAW_dump_DDCOLORKEY, u3 /* ddckCKDestOverlay */),
+        ME(DDSD_CKDESTBLT, DDRAW_dump_DDCOLORKEY, ddckCKDestBlt),
+        ME(DDSD_CKSRCOVERLAY, DDRAW_dump_DDCOLORKEY, ddckCKSrcOverlay),
+        ME(DDSD_CKSRCBLT, DDRAW_dump_DDCOLORKEY, ddckCKSrcBlt),
+        ME(DDSD_PIXELFORMAT, DDRAW_dump_pixelformat, u4 /* ddpfPixelFormat */)
+    };
+    static const struct member_info members_caps[] =
+    {
+        ME(DDSD_CAPS, DDRAW_dump_DDSCAPS, ddsCaps)
+    };
+    static const struct member_info members_caps2[] =
+    {
+        ME(DDSD_CAPS, DDRAW_dump_DDSCAPS2, ddsCaps)
+    };
 #undef STRUCT
 
     if (NULL == lpddsd)
@@ -924,17 +874,17 @@ void DDRAW_Convert_DDDEVICEIDENTIFIER_2_To_1(const DDDEVICEIDENTIFIER2* pIn, DDD
 
 void DDRAW_dump_cooperativelevel(DWORD cooplevel)
 {
-    static const flag_info flags[] =
-        {
-            FE(DDSCL_FULLSCREEN),
-            FE(DDSCL_ALLOWREBOOT),
-            FE(DDSCL_NOWINDOWCHANGES),
-            FE(DDSCL_NORMAL),
-            FE(DDSCL_ALLOWMODEX),
-            FE(DDSCL_EXCLUSIVE),
-            FE(DDSCL_SETFOCUSWINDOW),
-            FE(DDSCL_SETDEVICEWINDOW),
-            FE(DDSCL_CREATEDEVICEWINDOW)
+    static const struct flag_info flags[] =
+    {
+        FE(DDSCL_FULLSCREEN),
+        FE(DDSCL_ALLOWREBOOT),
+        FE(DDSCL_NOWINDOWCHANGES),
+        FE(DDSCL_NORMAL),
+        FE(DDSCL_ALLOWMODEX),
+        FE(DDSCL_EXCLUSIVE),
+        FE(DDSCL_SETFOCUSWINDOW),
+        FE(DDSCL_SETDEVICEWINDOW),
+        FE(DDSCL_CREATEDEVICEWINDOW)
     };
 
     if (TRACE_ON(ddraw))
@@ -946,156 +896,156 @@ void DDRAW_dump_cooperativelevel(DWORD cooplevel)
 
 void DDRAW_dump_DDCAPS(const DDCAPS *lpcaps)
 {
-    static const flag_info flags1[] =
+    static const struct flag_info flags1[] =
     {
-      FE(DDCAPS_3D),
-      FE(DDCAPS_ALIGNBOUNDARYDEST),
-      FE(DDCAPS_ALIGNSIZEDEST),
-      FE(DDCAPS_ALIGNBOUNDARYSRC),
-      FE(DDCAPS_ALIGNSIZESRC),
-      FE(DDCAPS_ALIGNSTRIDE),
-      FE(DDCAPS_BLT),
-      FE(DDCAPS_BLTQUEUE),
-      FE(DDCAPS_BLTFOURCC),
-      FE(DDCAPS_BLTSTRETCH),
-      FE(DDCAPS_GDI),
-      FE(DDCAPS_OVERLAY),
-      FE(DDCAPS_OVERLAYCANTCLIP),
-      FE(DDCAPS_OVERLAYFOURCC),
-      FE(DDCAPS_OVERLAYSTRETCH),
-      FE(DDCAPS_PALETTE),
-      FE(DDCAPS_PALETTEVSYNC),
-      FE(DDCAPS_READSCANLINE),
-      FE(DDCAPS_STEREOVIEW),
-      FE(DDCAPS_VBI),
-      FE(DDCAPS_ZBLTS),
-      FE(DDCAPS_ZOVERLAYS),
-      FE(DDCAPS_COLORKEY),
-      FE(DDCAPS_ALPHA),
-      FE(DDCAPS_COLORKEYHWASSIST),
-      FE(DDCAPS_NOHARDWARE),
-      FE(DDCAPS_BLTCOLORFILL),
-      FE(DDCAPS_BANKSWITCHED),
-      FE(DDCAPS_BLTDEPTHFILL),
-      FE(DDCAPS_CANCLIP),
-      FE(DDCAPS_CANCLIPSTRETCHED),
-      FE(DDCAPS_CANBLTSYSMEM)
+        FE(DDCAPS_3D),
+        FE(DDCAPS_ALIGNBOUNDARYDEST),
+        FE(DDCAPS_ALIGNSIZEDEST),
+        FE(DDCAPS_ALIGNBOUNDARYSRC),
+        FE(DDCAPS_ALIGNSIZESRC),
+        FE(DDCAPS_ALIGNSTRIDE),
+        FE(DDCAPS_BLT),
+        FE(DDCAPS_BLTQUEUE),
+        FE(DDCAPS_BLTFOURCC),
+        FE(DDCAPS_BLTSTRETCH),
+        FE(DDCAPS_GDI),
+        FE(DDCAPS_OVERLAY),
+        FE(DDCAPS_OVERLAYCANTCLIP),
+        FE(DDCAPS_OVERLAYFOURCC),
+        FE(DDCAPS_OVERLAYSTRETCH),
+        FE(DDCAPS_PALETTE),
+        FE(DDCAPS_PALETTEVSYNC),
+        FE(DDCAPS_READSCANLINE),
+        FE(DDCAPS_STEREOVIEW),
+        FE(DDCAPS_VBI),
+        FE(DDCAPS_ZBLTS),
+        FE(DDCAPS_ZOVERLAYS),
+        FE(DDCAPS_COLORKEY),
+        FE(DDCAPS_ALPHA),
+        FE(DDCAPS_COLORKEYHWASSIST),
+        FE(DDCAPS_NOHARDWARE),
+        FE(DDCAPS_BLTCOLORFILL),
+        FE(DDCAPS_BANKSWITCHED),
+        FE(DDCAPS_BLTDEPTHFILL),
+        FE(DDCAPS_CANCLIP),
+        FE(DDCAPS_CANCLIPSTRETCHED),
+        FE(DDCAPS_CANBLTSYSMEM)
     };
-    static const flag_info flags2[] =
+    static const struct flag_info flags2[] =
     {
-      FE(DDCAPS2_CERTIFIED),
-      FE(DDCAPS2_NO2DDURING3DSCENE),
-      FE(DDCAPS2_VIDEOPORT),
-      FE(DDCAPS2_AUTOFLIPOVERLAY),
-      FE(DDCAPS2_CANBOBINTERLEAVED),
-      FE(DDCAPS2_CANBOBNONINTERLEAVED),
-      FE(DDCAPS2_COLORCONTROLOVERLAY),
-      FE(DDCAPS2_COLORCONTROLPRIMARY),
-      FE(DDCAPS2_CANDROPZ16BIT),
-      FE(DDCAPS2_NONLOCALVIDMEM),
-      FE(DDCAPS2_NONLOCALVIDMEMCAPS),
-      FE(DDCAPS2_NOPAGELOCKREQUIRED),
-      FE(DDCAPS2_WIDESURFACES),
-      FE(DDCAPS2_CANFLIPODDEVEN),
-      FE(DDCAPS2_CANBOBHARDWARE),
-      FE(DDCAPS2_COPYFOURCC),
-      FE(DDCAPS2_PRIMARYGAMMA),
-      FE(DDCAPS2_CANRENDERWINDOWED),
-      FE(DDCAPS2_CANCALIBRATEGAMMA),
-      FE(DDCAPS2_FLIPINTERVAL),
-      FE(DDCAPS2_FLIPNOVSYNC),
-      FE(DDCAPS2_CANMANAGETEXTURE),
-      FE(DDCAPS2_TEXMANINNONLOCALVIDMEM),
-      FE(DDCAPS2_STEREO),
-      FE(DDCAPS2_SYSTONONLOCAL_AS_SYSTOLOCAL)
+        FE(DDCAPS2_CERTIFIED),
+        FE(DDCAPS2_NO2DDURING3DSCENE),
+        FE(DDCAPS2_VIDEOPORT),
+        FE(DDCAPS2_AUTOFLIPOVERLAY),
+        FE(DDCAPS2_CANBOBINTERLEAVED),
+        FE(DDCAPS2_CANBOBNONINTERLEAVED),
+        FE(DDCAPS2_COLORCONTROLOVERLAY),
+        FE(DDCAPS2_COLORCONTROLPRIMARY),
+        FE(DDCAPS2_CANDROPZ16BIT),
+        FE(DDCAPS2_NONLOCALVIDMEM),
+        FE(DDCAPS2_NONLOCALVIDMEMCAPS),
+        FE(DDCAPS2_NOPAGELOCKREQUIRED),
+        FE(DDCAPS2_WIDESURFACES),
+        FE(DDCAPS2_CANFLIPODDEVEN),
+        FE(DDCAPS2_CANBOBHARDWARE),
+        FE(DDCAPS2_COPYFOURCC),
+        FE(DDCAPS2_PRIMARYGAMMA),
+        FE(DDCAPS2_CANRENDERWINDOWED),
+        FE(DDCAPS2_CANCALIBRATEGAMMA),
+        FE(DDCAPS2_FLIPINTERVAL),
+        FE(DDCAPS2_FLIPNOVSYNC),
+        FE(DDCAPS2_CANMANAGETEXTURE),
+        FE(DDCAPS2_TEXMANINNONLOCALVIDMEM),
+        FE(DDCAPS2_STEREO),
+        FE(DDCAPS2_SYSTONONLOCAL_AS_SYSTOLOCAL)
     };
-    static const flag_info flags3[] =
+    static const struct flag_info flags3[] =
     {
-      FE(DDCKEYCAPS_DESTBLT),
-      FE(DDCKEYCAPS_DESTBLTCLRSPACE),
-      FE(DDCKEYCAPS_DESTBLTCLRSPACEYUV),
-      FE(DDCKEYCAPS_DESTBLTYUV),
-      FE(DDCKEYCAPS_DESTOVERLAY),
-      FE(DDCKEYCAPS_DESTOVERLAYCLRSPACE),
-      FE(DDCKEYCAPS_DESTOVERLAYCLRSPACEYUV),
-      FE(DDCKEYCAPS_DESTOVERLAYONEACTIVE),
-      FE(DDCKEYCAPS_DESTOVERLAYYUV),
-      FE(DDCKEYCAPS_SRCBLT),
-      FE(DDCKEYCAPS_SRCBLTCLRSPACE),
-      FE(DDCKEYCAPS_SRCBLTCLRSPACEYUV),
-      FE(DDCKEYCAPS_SRCBLTYUV),
-      FE(DDCKEYCAPS_SRCOVERLAY),
-      FE(DDCKEYCAPS_SRCOVERLAYCLRSPACE),
-      FE(DDCKEYCAPS_SRCOVERLAYCLRSPACEYUV),
-      FE(DDCKEYCAPS_SRCOVERLAYONEACTIVE),
-      FE(DDCKEYCAPS_SRCOVERLAYYUV),
-      FE(DDCKEYCAPS_NOCOSTOVERLAY)
+        FE(DDCKEYCAPS_DESTBLT),
+        FE(DDCKEYCAPS_DESTBLTCLRSPACE),
+        FE(DDCKEYCAPS_DESTBLTCLRSPACEYUV),
+        FE(DDCKEYCAPS_DESTBLTYUV),
+        FE(DDCKEYCAPS_DESTOVERLAY),
+        FE(DDCKEYCAPS_DESTOVERLAYCLRSPACE),
+        FE(DDCKEYCAPS_DESTOVERLAYCLRSPACEYUV),
+        FE(DDCKEYCAPS_DESTOVERLAYONEACTIVE),
+        FE(DDCKEYCAPS_DESTOVERLAYYUV),
+        FE(DDCKEYCAPS_SRCBLT),
+        FE(DDCKEYCAPS_SRCBLTCLRSPACE),
+        FE(DDCKEYCAPS_SRCBLTCLRSPACEYUV),
+        FE(DDCKEYCAPS_SRCBLTYUV),
+        FE(DDCKEYCAPS_SRCOVERLAY),
+        FE(DDCKEYCAPS_SRCOVERLAYCLRSPACE),
+        FE(DDCKEYCAPS_SRCOVERLAYCLRSPACEYUV),
+        FE(DDCKEYCAPS_SRCOVERLAYONEACTIVE),
+        FE(DDCKEYCAPS_SRCOVERLAYYUV),
+        FE(DDCKEYCAPS_NOCOSTOVERLAY)
     };
-    static const flag_info flags4[] =
+    static const struct flag_info flags4[] =
     {
-      FE(DDFXCAPS_BLTALPHA),
-      FE(DDFXCAPS_OVERLAYALPHA),
-      FE(DDFXCAPS_BLTARITHSTRETCHYN),
-      FE(DDFXCAPS_BLTARITHSTRETCHY),
-      FE(DDFXCAPS_BLTMIRRORLEFTRIGHT),
-      FE(DDFXCAPS_BLTMIRRORUPDOWN),
-      FE(DDFXCAPS_BLTROTATION),
-      FE(DDFXCAPS_BLTROTATION90),
-      FE(DDFXCAPS_BLTSHRINKX),
-      FE(DDFXCAPS_BLTSHRINKXN),
-      FE(DDFXCAPS_BLTSHRINKY),
-      FE(DDFXCAPS_BLTSHRINKYN),
-      FE(DDFXCAPS_BLTSTRETCHX),
-      FE(DDFXCAPS_BLTSTRETCHXN),
-      FE(DDFXCAPS_BLTSTRETCHY),
-      FE(DDFXCAPS_BLTSTRETCHYN),
-      FE(DDFXCAPS_OVERLAYARITHSTRETCHY),
-      FE(DDFXCAPS_OVERLAYARITHSTRETCHYN),
-      FE(DDFXCAPS_OVERLAYSHRINKX),
-      FE(DDFXCAPS_OVERLAYSHRINKXN),
-      FE(DDFXCAPS_OVERLAYSHRINKY),
-      FE(DDFXCAPS_OVERLAYSHRINKYN),
-      FE(DDFXCAPS_OVERLAYSTRETCHX),
-      FE(DDFXCAPS_OVERLAYSTRETCHXN),
-      FE(DDFXCAPS_OVERLAYSTRETCHY),
-      FE(DDFXCAPS_OVERLAYSTRETCHYN),
-      FE(DDFXCAPS_OVERLAYMIRRORLEFTRIGHT),
-      FE(DDFXCAPS_OVERLAYMIRRORUPDOWN)
+        FE(DDFXCAPS_BLTALPHA),
+        FE(DDFXCAPS_OVERLAYALPHA),
+        FE(DDFXCAPS_BLTARITHSTRETCHYN),
+        FE(DDFXCAPS_BLTARITHSTRETCHY),
+        FE(DDFXCAPS_BLTMIRRORLEFTRIGHT),
+        FE(DDFXCAPS_BLTMIRRORUPDOWN),
+        FE(DDFXCAPS_BLTROTATION),
+        FE(DDFXCAPS_BLTROTATION90),
+        FE(DDFXCAPS_BLTSHRINKX),
+        FE(DDFXCAPS_BLTSHRINKXN),
+        FE(DDFXCAPS_BLTSHRINKY),
+        FE(DDFXCAPS_BLTSHRINKYN),
+        FE(DDFXCAPS_BLTSTRETCHX),
+        FE(DDFXCAPS_BLTSTRETCHXN),
+        FE(DDFXCAPS_BLTSTRETCHY),
+        FE(DDFXCAPS_BLTSTRETCHYN),
+        FE(DDFXCAPS_OVERLAYARITHSTRETCHY),
+        FE(DDFXCAPS_OVERLAYARITHSTRETCHYN),
+        FE(DDFXCAPS_OVERLAYSHRINKX),
+        FE(DDFXCAPS_OVERLAYSHRINKXN),
+        FE(DDFXCAPS_OVERLAYSHRINKY),
+        FE(DDFXCAPS_OVERLAYSHRINKYN),
+        FE(DDFXCAPS_OVERLAYSTRETCHX),
+        FE(DDFXCAPS_OVERLAYSTRETCHXN),
+        FE(DDFXCAPS_OVERLAYSTRETCHY),
+        FE(DDFXCAPS_OVERLAYSTRETCHYN),
+        FE(DDFXCAPS_OVERLAYMIRRORLEFTRIGHT),
+        FE(DDFXCAPS_OVERLAYMIRRORUPDOWN)
     };
-    static const flag_info flags5[] =
+    static const struct flag_info flags5[] =
     {
-      FE(DDFXALPHACAPS_BLTALPHAEDGEBLEND),
-      FE(DDFXALPHACAPS_BLTALPHAPIXELS),
-      FE(DDFXALPHACAPS_BLTALPHAPIXELSNEG),
-      FE(DDFXALPHACAPS_BLTALPHASURFACES),
-      FE(DDFXALPHACAPS_BLTALPHASURFACESNEG),
-      FE(DDFXALPHACAPS_OVERLAYALPHAEDGEBLEND),
-      FE(DDFXALPHACAPS_OVERLAYALPHAPIXELS),
-      FE(DDFXALPHACAPS_OVERLAYALPHAPIXELSNEG),
-      FE(DDFXALPHACAPS_OVERLAYALPHASURFACES),
-      FE(DDFXALPHACAPS_OVERLAYALPHASURFACESNEG)
+        FE(DDFXALPHACAPS_BLTALPHAEDGEBLEND),
+        FE(DDFXALPHACAPS_BLTALPHAPIXELS),
+        FE(DDFXALPHACAPS_BLTALPHAPIXELSNEG),
+        FE(DDFXALPHACAPS_BLTALPHASURFACES),
+        FE(DDFXALPHACAPS_BLTALPHASURFACESNEG),
+        FE(DDFXALPHACAPS_OVERLAYALPHAEDGEBLEND),
+        FE(DDFXALPHACAPS_OVERLAYALPHAPIXELS),
+        FE(DDFXALPHACAPS_OVERLAYALPHAPIXELSNEG),
+        FE(DDFXALPHACAPS_OVERLAYALPHASURFACES),
+        FE(DDFXALPHACAPS_OVERLAYALPHASURFACESNEG)
     };
-    static const flag_info flags6[] =
+    static const struct flag_info flags6[] =
     {
-      FE(DDPCAPS_4BIT),
-      FE(DDPCAPS_8BITENTRIES),
-      FE(DDPCAPS_8BIT),
-      FE(DDPCAPS_INITIALIZE),
-      FE(DDPCAPS_PRIMARYSURFACE),
-      FE(DDPCAPS_PRIMARYSURFACELEFT),
-      FE(DDPCAPS_ALLOW256),
-      FE(DDPCAPS_VSYNC),
-      FE(DDPCAPS_1BIT),
-      FE(DDPCAPS_2BIT),
-      FE(DDPCAPS_ALPHA),
+        FE(DDPCAPS_4BIT),
+        FE(DDPCAPS_8BITENTRIES),
+        FE(DDPCAPS_8BIT),
+        FE(DDPCAPS_INITIALIZE),
+        FE(DDPCAPS_PRIMARYSURFACE),
+        FE(DDPCAPS_PRIMARYSURFACELEFT),
+        FE(DDPCAPS_ALLOW256),
+        FE(DDPCAPS_VSYNC),
+        FE(DDPCAPS_1BIT),
+        FE(DDPCAPS_2BIT),
+        FE(DDPCAPS_ALPHA),
     };
-    static const flag_info flags7[] =
+    static const struct flag_info flags7[] =
     {
-      FE(DDSVCAPS_RESERVED1),
-      FE(DDSVCAPS_RESERVED2),
-      FE(DDSVCAPS_RESERVED3),
-      FE(DDSVCAPS_RESERVED4),
-      FE(DDSVCAPS_STEREOSEQUENTIAL),
+        FE(DDSVCAPS_RESERVED1),
+        FE(DDSVCAPS_RESERVED2),
+        FE(DDSVCAPS_RESERVED3),
+        FE(DDSVCAPS_RESERVED4),
+        FE(DDSVCAPS_STEREOSEQUENTIAL),
     };
 
     TRACE(" - dwSize : %d\n", lpcaps->dwSize);

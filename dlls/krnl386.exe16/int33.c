@@ -184,6 +184,11 @@ void WINAPI DOSVM_Int33Handler( CONTEXT *context )
         FIXME("Define screen region for update\n");
         break;
 
+    case 0x0015:
+        TRACE("Get mouse driver state and memory requirements\n");
+        SET_BX(context, sizeof(mouse_info));
+        break;
+
     case 0x0021:
         TRACE("Software reset\n");
         INT33_ResetMouse( context );
@@ -290,7 +295,7 @@ void DOSVM_Int33Message(UINT message,WPARAM wParam,LPARAM lParam)
   WORD mask = 0;
   unsigned Height, Width, SX=1, SY=1;
 
-  if (!VGA_GetMode(&Height,&Width,NULL)) {
+  if (VGA_GetMode(&Height, &Width, NULL)) {
     /* may need to do some coordinate scaling */
     if (Width)
       SX = 640/Width;

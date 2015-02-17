@@ -88,6 +88,9 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
+#ifdef HAVE_SYS_SYSCALL_H
+#include <sys/syscall.h>
+#endif
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -302,7 +305,7 @@ struct file_lock
 };
 
 static void file_lock_dump( struct object *obj, int verbose );
-static int file_lock_signaled( struct object *obj, struct thread *thread );
+static int file_lock_signaled( struct object *obj, struct wait_queue_entry *entry );
 
 static const struct object_ops file_lock_ops =
 {
@@ -924,7 +927,7 @@ static int is_device_removable( dev_t dev, int unix_fd )
     return (stfs.f_type == 0x9660 ||    /* iso9660 */
             stfs.f_type == 0x9fa1 ||    /* supermount */
             stfs.f_type == 0x15013346); /* udf */
-#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__APPLE__)
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__DragonFly__) || defined(__APPLE__)
     struct statfs stfs;
 
     if (fstatfs( unix_fd, &stfs ) == -1) return 0;
@@ -1128,7 +1131,7 @@ static void file_lock_dump( struct object *obj, int verbose )
     fprintf( stderr, "\n" );
 }
 
-static int file_lock_signaled( struct object *obj, struct thread *thread )
+static int file_lock_signaled( struct object *obj, struct wait_queue_entry *entry )
 {
     struct file_lock *lock = (struct file_lock *)obj;
     /* lock is signaled if it has lost its owner */
@@ -1164,6 +1167,7 @@ static int set_unix_lock( struct fd *fd, file_pos_t start, file_pos_t end, int t
             /* fall through */
         case EIO:
         case ENOLCK:
+        case ENOTSUP:
             /* no locking on this fs, just ignore it */
             fd->fs_locks = 0;
             return 1;
@@ -1172,8 +1176,12 @@ static int set_unix_lock( struct fd *fd, file_pos_t start, file_pos_t end, int t
             return 0;
         case EBADF:
             /* this can happen if we try to set a write lock on a read-only file */
-            /* we just ignore that error */
-            if (fl.l_type == F_WRLCK) return 1;
+            /* try to at least grab a read lock */
+            if (fl.l_type == F_WRLCK)
+            {
+                type = F_RDLCK;
+                break; /* retry */
+            }
             set_error( STATUS_ACCESS_DENIED );
             return 0;
 #ifdef EOVERFLOW
@@ -1765,7 +1773,7 @@ struct fd *open_fd( struct fd *root, const char *name, int flags, mode_t *mode, 
     /* create the directory if needed */
     if ((options & FILE_DIRECTORY_FILE) && (flags & O_CREAT))
     {
-        if (mkdir( name, 0777 ) == -1)
+        if (mkdir( name, *mode ) == -1)
         {
             if (errno != EEXIST || (flags & O_EXCL))
             {
@@ -1968,7 +1976,7 @@ int check_fd_events( struct fd *fd, int events )
 }
 
 /* default signaled() routine for objects that poll() on an fd */
-int default_fd_signaled( struct object *obj, struct thread *thread )
+int default_fd_signaled( struct object *obj, struct wait_queue_entry *entry )
 {
     struct fd *fd = get_obj_fd( obj );
     int ret = fd->signaled;

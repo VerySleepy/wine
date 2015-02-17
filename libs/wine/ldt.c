@@ -70,7 +70,7 @@ static inline void fill_modify_ldt_struct( struct modify_ldt_s *ptr, const LDT_E
 
 static inline int modify_ldt( int func, struct modify_ldt_s *ptr, unsigned long count )
 {
-    return syscall( SYS_modify_ldt, func, ptr, count );
+    return syscall( 123 /* SYS_modify_ldt */, func, ptr, count );
 }
 
 static inline int set_thread_area( struct modify_ldt_s *ptr )
@@ -87,10 +87,15 @@ static inline int set_thread_area( struct modify_ldt_s *ptr )
 #endif
 #endif
 
-#if defined(__NetBSD__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__OpenBSD__)
+#if defined(__NetBSD__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__OpenBSD__) || defined(__DragonFly__)
 #include <machine/segments.h>
 #include <machine/sysarch.h>
 #endif  /* __NetBSD__ || __FreeBSD__ || __OpenBSD__ */
+
+#ifdef __GNU__
+#include <mach/i386/mach_i386.h>
+#include <mach/mach_traps.h>
+#endif
 
 #ifdef __APPLE__
 #include <i386/user_ldt.h>
@@ -175,7 +180,7 @@ static int internal_set_entry( unsigned short sel, const LDT_ENTRY *entry )
         if ((ret = modify_ldt(0x11, &ldt_info, sizeof(ldt_info))) < 0)
             perror( "modify_ldt" );
     }
-#elif defined(__NetBSD__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__OpenBSD__)
+#elif defined(__NetBSD__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__OpenBSD__) || defined(__DragonFly__)
     {
 	LDT_ENTRY entry_copy = *entry;
 	/* The kernel will only let us set LDTs with user priority level */
@@ -202,6 +207,9 @@ static int internal_set_entry( unsigned short sel, const LDT_ENTRY *entry )
     }
 #elif defined(__APPLE__)
     if ((ret = i386_set_ldt(index, (union ldt_entry *)entry, 1)) < 0)
+        perror("i386_set_ldt");
+#elif defined(__GNU__)
+    if ((ret = i386_set_ldt(mach_thread_self(), sel, (descriptor_list_t)entry, 1)) != KERN_SUCCESS)
         perror("i386_set_ldt");
 #else
     fprintf( stderr, "No LDT support on this platform\n" );
@@ -412,7 +420,7 @@ void wine_ldt_init_fs( unsigned short sel, const LDT_ENTRY *entry )
         ldt_info.entry_number = sel >> 3;
         fill_modify_ldt_struct( &ldt_info, entry );
         if ((ret = set_thread_area( &ldt_info ) < 0)) perror( "set_thread_area" );
-#elif defined(__FreeBSD__) || defined (__FreeBSD_kernel__)
+#elif defined(__FreeBSD__) || defined (__FreeBSD_kernel__) || defined(__DragonFly__)
         i386_set_fsbase( wine_ldt_get_base( entry ));
 #endif
     }

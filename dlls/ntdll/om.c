@@ -165,8 +165,8 @@ NTSTATUS WINAPI NtQueryObject(IN HANDLE handle,
                 status = wine_server_call( req );
                 if (status == STATUS_SUCCESS)
                 {
-                    p->InheritHandle = (reply->old_flags & HANDLE_FLAG_INHERIT) ? TRUE : FALSE;
-                    p->ProtectFromClose = (reply->old_flags & HANDLE_FLAG_PROTECT_FROM_CLOSE) ? TRUE : FALSE;
+                    p->InheritHandle = (reply->old_flags & HANDLE_FLAG_INHERIT) != 0;
+                    p->ProtectFromClose = (reply->old_flags & HANDLE_FLAG_PROTECT_FROM_CLOSE) != 0;
                     if (used_len) *used_len = sizeof(*p);
                 }
             }
@@ -332,16 +332,11 @@ NTSTATUS WINAPI NtDuplicateObject( HANDLE source_process, HANDLE source,
         if (!(ret = wine_server_call( req )))
         {
             if (dest) *dest = wine_server_ptr_handle( reply->handle );
-            if (reply->closed)
+            if (reply->closed && reply->self)
             {
-                if (reply->self)
-                {
-                    int fd = server_remove_fd_from_cache( source );
-                    if (fd != -1) close( fd );
-                }
+                int fd = server_remove_fd_from_cache( source );
+                if (fd != -1) close( fd );
             }
-            else if (options & DUPLICATE_CLOSE_SOURCE)
-                WARN( "failed to close handle %p in process %p\n", source, source_process );
         }
     }
     SERVER_END_REQ;

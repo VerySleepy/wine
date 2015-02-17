@@ -32,6 +32,7 @@
 #include "wine/debug.h"
 
 #include "mshtml_private.h"
+#include "binding.h"
 #include "resource.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mshtml);
@@ -59,6 +60,28 @@ void do_ns_command(HTMLDocument *This, const char *cmd, nsICommandParams *nspara
         ERR("DoCommand(%s) failed: %08x\n", debugstr_a(cmd), nsres);
 
     nsICommandManager_Release(cmdmgr);
+}
+
+static nsIClipboardCommands *get_clipboard_commands(HTMLDocument *doc)
+{
+    nsIClipboardCommands *clipboard_commands;
+    nsIDocShell *doc_shell;
+    nsresult nsres;
+
+    nsres = get_nsinterface((nsISupports*)doc->window->nswindow, &IID_nsIDocShell, (void**)&doc_shell);
+    if(NS_FAILED(nsres)) {
+        ERR("Could not get nsIDocShell interface\n");
+        return NULL;
+    }
+
+    nsres = nsIDocShell_QueryInterface(doc_shell, &IID_nsIClipboardCommands, (void**)&clipboard_commands);
+    nsIDocShell_Release(doc_shell);
+    if(NS_FAILED(nsres)) {
+        ERR("Could not get nsIClipboardCommands interface\n");
+        return NULL;
+    }
+
+    return clipboard_commands;
 }
 
 /**********************************************************
@@ -221,7 +244,7 @@ static HRESULT exec_print(HTMLDocument *This, DWORD nCmdexecopt, VARIANT *pvaIn,
     nsIPrintSettings *settings;
     nsresult nsres;
 
-    TRACE("(%p)->(%d %p %p)\n", This, nCmdexecopt, pvaIn, pvaOut);
+    TRACE("(%p)->(%d %s %p)\n", This, nCmdexecopt, debugstr_variant(pvaIn), pvaOut);
 
     if(pvaOut)
         FIXME("unsupported pvaOut\n");
@@ -263,7 +286,7 @@ static HRESULT exec_print(HTMLDocument *This, DWORD nCmdexecopt, VARIANT *pvaIn,
                 case VT_NULL:
                     break;
                 default:
-                    WARN("V_VT(opts) = %d\n", V_VT(opts));
+                    WARN("opts = %s\n", debugstr_variant(opts));
                 }
             }
 
@@ -276,7 +299,7 @@ static HRESULT exec_print(HTMLDocument *This, DWORD nCmdexecopt, VARIANT *pvaIn,
                 case VT_NULL:
                     break;
                 default:
-                    WARN("V_VT(opts) = %d\n", V_VT(opts+1));
+                    WARN("opts[1] = %s\n", debugstr_variant(opts+1));
                 }
             }
 
@@ -287,7 +310,7 @@ static HRESULT exec_print(HTMLDocument *This, DWORD nCmdexecopt, VARIANT *pvaIn,
             break;
         }
         default:
-            FIXME("unsupported vt %x\n", V_VT(pvaIn));
+            FIXME("unsupported arg %s\n", debugstr_variant(pvaIn));
         }
     }
 
@@ -384,10 +407,69 @@ static HRESULT exec_get_zoom_range(HTMLDocument *This, DWORD nCmdexecopt, VARIAN
     return E_NOTIMPL;
 }
 
+typedef struct {
+    task_t header;
+    HTMLOuterWindow *window;
+}refresh_task_t;
+
+static void refresh_proc(task_t *_task)
+{
+    refresh_task_t *task = (refresh_task_t*)_task;
+    HTMLOuterWindow *window = task->window;
+
+    TRACE("%p\n", window);
+
+    window->readystate = READYSTATE_UNINITIALIZED;
+
+    if(window->doc_obj && window->doc_obj->client_cmdtrg) {
+        VARIANT var;
+
+        V_VT(&var) = VT_I4;
+        V_I4(&var) = 0;
+        IOleCommandTarget_Exec(window->doc_obj->client_cmdtrg, &CGID_ShellDocView, 37, 0, &var, NULL);
+    }
+
+    load_uri(task->window, task->window->uri, BINDING_REFRESH|BINDING_NOFRAG);
+}
+
+static void refresh_destr(task_t *_task)
+{
+    refresh_task_t *task = (refresh_task_t*)_task;
+
+    IHTMLWindow2_Release(&task->window->base.IHTMLWindow2_iface);
+    heap_free(task);
+}
+
 static HRESULT exec_refresh(HTMLDocument *This, DWORD nCmdexecopt, VARIANT *pvaIn, VARIANT *pvaOut)
 {
-    FIXME("(%p)->(%d %p %p)\n", This, nCmdexecopt, pvaIn, pvaOut);
-    return E_NOTIMPL;
+    refresh_task_t *task;
+    HRESULT hres;
+
+    TRACE("(%p)->(%d %s %p)\n", This, nCmdexecopt, debugstr_variant(pvaIn), pvaOut);
+
+    if(This->doc_obj->client) {
+        IOleCommandTarget *olecmd;
+
+        hres = IOleClientSite_QueryInterface(This->doc_obj->client, &IID_IOleCommandTarget, (void**)&olecmd);
+        if(SUCCEEDED(hres)) {
+            hres = IOleCommandTarget_Exec(olecmd, &CGID_DocHostCommandHandler, 2300, nCmdexecopt, pvaIn, pvaOut);
+            IOleCommandTarget_Release(olecmd);
+            if(SUCCEEDED(hres))
+                return S_OK;
+        }
+    }
+
+    if(!This->window)
+        return E_UNEXPECTED;
+
+    task = heap_alloc(sizeof(*task));
+    if(!task)
+        return E_OUTOFMEMORY;
+
+    IHTMLWindow2_AddRef(&This->window->base.IHTMLWindow2_iface);
+    task->window = This->window;
+
+    return push_task(&task->header, refresh_proc, refresh_destr, This->window->task_magic);
 }
 
 static HRESULT exec_stop(HTMLDocument *This, DWORD nCmdexecopt, VARIANT *pvaIn, VARIANT *pvaOut)
@@ -464,6 +546,19 @@ static HRESULT exec_get_print_template(HTMLDocument *This, DWORD nCmdexecopt, VA
     return E_NOTIMPL;
 }
 
+static HRESULT exec_optical_zoom(HTMLDocument *This, DWORD nCmdexecopt, VARIANT *pvaIn, VARIANT *pvaOut)
+{
+    TRACE("(%p)->(%d %s %p)\n", This, nCmdexecopt, debugstr_variant(pvaIn), pvaOut);
+
+    if(!pvaIn || V_VT(pvaIn) != VT_I4) {
+        FIXME("Unsupported argument %s\n", debugstr_variant(pvaIn));
+        return E_NOTIMPL;
+    }
+
+    set_viewer_zoom(This->doc_obj->nscontainer, (float)V_I4(pvaIn)/100);
+    return S_OK;
+}
+
 static HRESULT query_mshtml_copy(HTMLDocument *This, OLECMD *cmd)
 {
     FIXME("(%p)\n", This);
@@ -491,13 +586,26 @@ static HRESULT query_mshtml_cut(HTMLDocument *This, OLECMD *cmd)
 
 static HRESULT exec_mshtml_cut(HTMLDocument *This, DWORD cmdexecopt, VARIANT *in, VARIANT *out)
 {
+    nsIClipboardCommands *clipboard_commands;
+    nsresult nsres;
+
     TRACE("(%p)->(%08x %p %p)\n", This, cmdexecopt, in, out);
 
     if(This->doc_obj->usermode == EDITMODE)
         return editor_exec_cut(This, cmdexecopt, in, out);
 
-    FIXME("Unimplemented in browse mode\n");
-    return E_NOTIMPL;
+    clipboard_commands = get_clipboard_commands(This);
+    if(!clipboard_commands)
+        return E_UNEXPECTED;
+
+    nsres = nsIClipboardCommands_CutSelection(clipboard_commands);
+    nsIClipboardCommands_Release(clipboard_commands);
+    if(NS_FAILED(nsres)) {
+        ERR("Paste failed: %08x\n", nsres);
+        return E_FAIL;
+    }
+
+    return S_OK;
 }
 
 static HRESULT query_mshtml_paste(HTMLDocument *This, OLECMD *cmd)
@@ -509,13 +617,26 @@ static HRESULT query_mshtml_paste(HTMLDocument *This, OLECMD *cmd)
 
 static HRESULT exec_mshtml_paste(HTMLDocument *This, DWORD cmdexecopt, VARIANT *in, VARIANT *out)
 {
+    nsIClipboardCommands *clipboard_commands;
+    nsresult nsres;
+
     TRACE("(%p)->(%08x %p %p)\n", This, cmdexecopt, in, out);
 
     if(This->doc_obj->usermode == EDITMODE)
         return editor_exec_paste(This, cmdexecopt, in, out);
 
-    FIXME("Unimplemented in browse mode\n");
-    return E_NOTIMPL;
+    clipboard_commands = get_clipboard_commands(This);
+    if(!clipboard_commands)
+        return E_UNEXPECTED;
+
+    nsres = nsIClipboardCommands_Paste(clipboard_commands);
+    nsIClipboardCommands_Release(clipboard_commands);
+    if(NS_FAILED(nsres)) {
+        ERR("Paste failed: %08x\n", nsres);
+        return E_FAIL;
+    }
+
+    return S_OK;
 }
 
 static HRESULT exec_browsemode(HTMLDocument *This, DWORD cmdexecopt, VARIANT *in, VARIANT *out)
@@ -532,109 +653,12 @@ static HRESULT exec_browsemode(HTMLDocument *This, DWORD cmdexecopt, VARIANT *in
 
 static HRESULT exec_editmode(HTMLDocument *This, DWORD cmdexecopt, VARIANT *in, VARIANT *out)
 {
-    IMoniker *mon;
-    HRESULT hres;
-
     TRACE("(%p)->(%08x %p %p)\n", This, cmdexecopt, in, out);
 
     if(in || out)
         FIXME("unsupported args\n");
 
-    if(This->doc_obj->usermode == EDITMODE)
-        return S_OK;
-
-    This->doc_obj->usermode = EDITMODE;
-
-    if(This->window->mon) {
-        CLSID clsid = IID_NULL;
-        hres = IMoniker_GetClassID(This->window->mon, &clsid);
-        if(SUCCEEDED(hres)) {
-            /* We should use IMoniker::Save here */
-            FIXME("Use CLSID %s\n", debugstr_guid(&clsid));
-        }
-    }
-
-    if(This->doc_obj->frame)
-        IOleInPlaceFrame_SetStatusText(This->doc_obj->frame, NULL);
-
-    This->window->readystate = READYSTATE_UNINITIALIZED;
-
-    if(This->doc_obj->client) {
-        IOleCommandTarget *cmdtrg;
-
-        hres = IOleClientSite_QueryInterface(This->doc_obj->client, &IID_IOleCommandTarget,
-                (void**)&cmdtrg);
-        if(SUCCEEDED(hres)) {
-            VARIANT var;
-
-            V_VT(&var) = VT_I4;
-            V_I4(&var) = 0;
-            IOleCommandTarget_Exec(cmdtrg, &CGID_ShellDocView, 37, 0, &var, NULL);
-
-            IOleCommandTarget_Release(cmdtrg);
-        }
-    }
-
-    if(This->doc_obj->hostui) {
-        DOCHOSTUIINFO hostinfo;
-
-        memset(&hostinfo, 0, sizeof(DOCHOSTUIINFO));
-        hostinfo.cbSize = sizeof(DOCHOSTUIINFO);
-        hres = IDocHostUIHandler_GetHostInfo(This->doc_obj->hostui, &hostinfo);
-        if(SUCCEEDED(hres))
-            /* FIXME: use hostinfo */
-            TRACE("hostinfo = {%u %08x %08x %s %s}\n",
-                    hostinfo.cbSize, hostinfo.dwFlags, hostinfo.dwDoubleClick,
-                    debugstr_w(hostinfo.pchHostCss), debugstr_w(hostinfo.pchHostNS));
-    }
-
-    update_doc(This, UPDATE_UI);
-
-    if(This->window->mon) {
-        /* FIXME: We should find nicer way to do this */
-        remove_target_tasks(This->task_magic);
-
-        mon = This->window->mon;
-        IMoniker_AddRef(mon);
-    }else {
-        static const WCHAR about_blankW[] = {'a','b','o','u','t',':','b','l','a','n','k',0};
-
-        hres = CreateURLMoniker(NULL, about_blankW, &mon);
-        if(FAILED(hres)) {
-            FIXME("CreateURLMoniker failed: %08x\n", hres);
-            return hres;
-        }
-    }
-
-    hres = IPersistMoniker_Load(&This->IPersistMoniker_iface, TRUE, mon, NULL, 0);
-    IMoniker_Release(mon);
-    if(FAILED(hres))
-        return hres;
-
-    if(This->doc_obj->ui_active) {
-        if(This->doc_obj->ip_window)
-            call_set_active_object(This->doc_obj->ip_window, NULL);
-        if(This->doc_obj->hostui)
-            IDocHostUIHandler_HideUI(This->doc_obj->hostui);
-    }
-
-    if(This->doc_obj->ui_active) {
-        RECT rcBorderWidths;
-
-        if(This->doc_obj->hostui)
-            IDocHostUIHandler_ShowUI(This->doc_obj->hostui, DOCHOSTUITYPE_AUTHOR,
-                    &This->IOleInPlaceActiveObject_iface, &This->IOleCommandTarget_iface,
-                    This->doc_obj->frame, This->doc_obj->ip_window);
-
-        if(This->doc_obj->ip_window)
-            call_set_active_object(This->doc_obj->ip_window, &This->IOleInPlaceActiveObject_iface);
-
-        memset(&rcBorderWidths, 0, sizeof(rcBorderWidths));
-        if(This->doc_obj->frame)
-            IOleInPlaceFrame_SetBorderSpace(This->doc_obj->frame, &rcBorderWidths);
-    }
-
-    return S_OK;
+    return setup_edit_mode(This->doc_obj);
 }
 
 static HRESULT exec_htmleditmode(HTMLDocument *This, DWORD cmdexecopt, VARIANT *in, VARIANT *out)
@@ -652,8 +676,13 @@ static HRESULT exec_baselinefont3(HTMLDocument *This, DWORD cmdexecopt, VARIANT 
 static HRESULT exec_respectvisibility_indesign(HTMLDocument *This, DWORD cmdexecopt,
         VARIANT *in, VARIANT *out)
 {
-    FIXME("(%p)->(%08x %p %p)\n", This, cmdexecopt, in, out);
-    return E_NOTIMPL;
+    TRACE("(%p)->(%x %s %p)\n", This, cmdexecopt, debugstr_variant(in), out);
+
+    /* This is turned on by default in Gecko. */
+    if(!in || V_VT(in) != VT_BOOL || !V_BOOL(in))
+        FIXME("Unsupported argument %s\n", debugstr_variant(in));
+
+    return S_OK;
 }
 
 static HRESULT query_enabled_stub(HTMLDocument *This, OLECMD *cmd)
@@ -679,7 +708,7 @@ static HRESULT query_enabled_stub(HTMLDocument *This, OLECMD *cmd)
 static const struct {
     OLECMDF cmdf;
     HRESULT (*func)(HTMLDocument*,DWORD,VARIANT*,VARIANT*);
-} exec_table[OLECMDID_GETPRINTTEMPLATE+1] = {
+} exec_table[] = {
     {0},
     { OLECMDF_SUPPORTED,                  exec_open                 }, /* OLECMDID_OPEN */
     { OLECMDF_SUPPORTED,                  exec_new                  }, /* OLECMDID_NEW */
@@ -719,7 +748,9 @@ static const struct {
     { OLECMDF_SUPPORTED,                  exec_close                }, /* OLECMDID_CLOSE */
     {0},{0},{0},
     { OLECMDF_SUPPORTED,                  exec_set_print_template   }, /* OLECMDID_SETPRINTTEMPLATE */
-    { OLECMDF_SUPPORTED,                  exec_get_print_template   }  /* OLECMDID_GETPRINTTEMPLATE */
+    { OLECMDF_SUPPORTED,                  exec_get_print_template   }, /* OLECMDID_GETPRINTTEMPLATE */
+    {0},{0},{0},{0},{0},{0},{0},{0},{0},{0},
+    { 0, /* not reported as supported */  exec_optical_zoom         }  /* OLECMDID_OPTICAL_ZOOM */
 };
 
 static const cmdtable_t base_cmds[] = {
@@ -774,18 +805,22 @@ static HRESULT WINAPI OleCommandTarget_QueryStatus(IOleCommandTarget *iface, con
         ULONG cCmds, OLECMD prgCmds[], OLECMDTEXT *pCmdText)
 {
     HTMLDocument *This = impl_from_IOleCommandTarget(iface);
-    HRESULT hres = S_OK, hr;
+    HRESULT hres;
 
     TRACE("(%p)->(%s %d %p %p)\n", This, debugstr_guid(pguidCmdGroup), cCmds, prgCmds, pCmdText);
+
+    if(pCmdText)
+        FIXME("Unsupported pCmdText\n");
+    if(!cCmds)
+        return S_OK;
 
     if(!pguidCmdGroup) {
         ULONG i;
 
         for(i=0; i<cCmds; i++) {
-            if(prgCmds[i].cmdID<OLECMDID_OPEN || prgCmds[i].cmdID>OLECMDID_GETPRINTTEMPLATE) {
+            if(prgCmds[i].cmdID < OLECMDID_OPEN || prgCmds[i].cmdID >= sizeof(exec_table)/sizeof(*exec_table)) {
                 WARN("Unsupported cmdID = %d\n", prgCmds[i].cmdID);
                 prgCmds[i].cmdf = 0;
-                hres = OLECMDERR_E_NOTSUPPORTED;
             }else {
                 if(prgCmds[i].cmdID == OLECMDID_OPEN || prgCmds[i].cmdID == OLECMDID_NEW) {
                     IOleCommandTarget *cmdtrg = NULL;
@@ -793,14 +828,14 @@ static HRESULT WINAPI OleCommandTarget_QueryStatus(IOleCommandTarget *iface, con
 
                     prgCmds[i].cmdf = OLECMDF_SUPPORTED;
                     if(This->doc_obj->client) {
-                        hr = IOleClientSite_QueryInterface(This->doc_obj->client, &IID_IOleCommandTarget,
+                        hres = IOleClientSite_QueryInterface(This->doc_obj->client, &IID_IOleCommandTarget,
                                 (void**)&cmdtrg);
-                        if(SUCCEEDED(hr)) {
+                        if(SUCCEEDED(hres)) {
                             olecmd.cmdID = prgCmds[i].cmdID;
                             olecmd.cmdf = 0;
 
-                            hr = IOleCommandTarget_QueryStatus(cmdtrg, NULL, 1, &olecmd, NULL);
-                            if(SUCCEEDED(hr) && olecmd.cmdf)
+                            hres = IOleCommandTarget_QueryStatus(cmdtrg, NULL, 1, &olecmd, NULL);
+                            if(SUCCEEDED(hres) && olecmd.cmdf)
                                 prgCmds[i].cmdf = olecmd.cmdf;
                         }
                     }else {
@@ -810,33 +845,28 @@ static HRESULT WINAPI OleCommandTarget_QueryStatus(IOleCommandTarget *iface, con
                     prgCmds[i].cmdf = exec_table[prgCmds[i].cmdID].cmdf;
                     TRACE("cmdID = %d  returning %x\n", prgCmds[i].cmdID, prgCmds[i].cmdf);
                 }
-                hres = S_OK;
             }
         }
 
-        if(pCmdText)
-            FIXME("Set pCmdText\n");
-    }else if(IsEqualGUID(&CGID_MSHTML, pguidCmdGroup)) {
+        return (prgCmds[cCmds-1].cmdf & OLECMDF_SUPPORTED) ? S_OK : OLECMDERR_E_NOTSUPPORTED;
+    }
+
+    if(IsEqualGUID(&CGID_MSHTML, pguidCmdGroup)) {
         ULONG i;
 
         for(i=0; i<cCmds; i++) {
-            HRESULT hres = query_from_table(This, base_cmds, prgCmds+i);
+            hres = query_from_table(This, base_cmds, prgCmds+i);
             if(hres == OLECMDERR_E_NOTSUPPORTED)
                 hres = query_from_table(This, editmode_cmds, prgCmds+i);
             if(hres == OLECMDERR_E_NOTSUPPORTED)
                 FIXME("CGID_MSHTML: unsupported cmdID %d\n", prgCmds[i].cmdID);
         }
 
-        hres = prgCmds[i-1].cmdf ? S_OK : OLECMDERR_E_NOTSUPPORTED;
-
-        if(pCmdText)
-            FIXME("Set pCmdText\n");
-    }else {
-        FIXME("Unsupported pguidCmdGroup %s\n", debugstr_guid(pguidCmdGroup));
-        hres = OLECMDERR_E_UNKNOWNGROUP;
+        return (prgCmds[cCmds-1].cmdf & OLECMDF_SUPPORTED) ? S_OK : OLECMDERR_E_NOTSUPPORTED;
     }
 
-    return hres;
+    FIXME("Unsupported pguidCmdGroup %s\n", debugstr_guid(pguidCmdGroup));
+    return OLECMDERR_E_UNKNOWNGROUP;
 }
 
 static HRESULT exec_from_table(HTMLDocument *This, const cmdtable_t *cmdtable, DWORD cmdid,
@@ -859,7 +889,7 @@ static HRESULT WINAPI OleCommandTarget_Exec(IOleCommandTarget *iface, const GUID
     HTMLDocument *This = impl_from_IOleCommandTarget(iface);
 
     if(!pguidCmdGroup) {
-        if(nCmdID<OLECMDID_OPEN || nCmdID>OLECMDID_GETPRINTTEMPLATE || !exec_table[nCmdID].func) {
+        if(nCmdID < OLECMDID_OPEN || nCmdID >= sizeof(exec_table)/sizeof(*exec_table) || !exec_table[nCmdID].func) {
             WARN("Unsupported cmdID = %d\n", nCmdID);
             return OLECMDERR_E_NOTSUPPORTED;
         }

@@ -1,7 +1,6 @@
 MODULE    = mshtml.dll
 IMPORTLIB = mshtml
 IMPORTS   = strmiids uuid urlmon shlwapi shell32 ole32 oleaut32 user32 gdi32 advapi32
-EXTRADEFS = -DCOM_NO_WINDOWS_H
 DELAYIMPORTS = wininet
 
 C_SRCS = \
@@ -15,11 +14,7 @@ C_SRCS = \
 	htmlcomment.c \
 	htmlcurstyle.c \
 	htmldoc.c \
-	htmldoc3.c \
-	htmldoc5.c \
 	htmlelem.c \
-	htmlelem2.c \
-	htmlelem3.c \
 	htmlelemcol.c \
 	htmlembed.c \
 	htmlevent.c \
@@ -31,24 +26,29 @@ C_SRCS = \
 	htmliframe.c \
 	htmlimg.c \
 	htmlinput.c \
+	htmllink.c \
 	htmllocation.c \
+	htmlmeta.c \
 	htmlnode.c \
 	htmlobject.c \
 	htmloption.c \
 	htmlscreen.c \
 	htmlscript.c \
 	htmlselect.c \
+	htmlstorage.c \
 	htmlstyle.c \
 	htmlstyle2.c \
 	htmlstyle3.c \
 	htmlstyleelem.c \
 	htmlstylesheet.c \
 	htmltable.c \
+	htmltablecell.c \
 	htmltablerow.c \
 	htmltextarea.c \
 	htmltextcont.c \
 	htmltextnode.c \
 	htmlwindow.c \
+	ifacewrap.c \
 	ipwindow.c \
 	loadopts.c \
 	main.c \
@@ -75,35 +75,8 @@ C_SRCS = \
 	txtrange.c \
 	view.c
 
-RC_SRCS = \
-	Da.rc \
-	De.rc \
-	En.rc \
-	Es.rc \
-	Fr.rc \
-	He.rc \
-	Hu.rc \
-	It.rc \
-	Ja.rc \
-	Ko.rc \
-	Lt.rc \
-	Nl.rc \
-	No.rc \
-	Pl.rc \
-	Pt.rc \
-	Ro.rc \
-	Ru.rc \
-	Si.rc \
-	Sr.rc \
-	Sv.rc \
-	Uk.rc \
-	Zh.rc \
-	mshtml.rc
+RC_SRCS = mshtml.rc
 
-PO_SRCS = mshtml.rc
-
-IDL_H_SRCS = nsiface.idl
-
-IDL_R_SRCS = mshtml_classes.idl
-
-@MAKE_DLL_RULES@
+IDL_SRCS = \
+	mshtml_classes.idl \
+	nsiface.idl

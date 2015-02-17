@@ -345,10 +345,9 @@ UINT msi_view_get_row(MSIDATABASE *db, MSIVIEW *view, UINT row, MSIRECORD **rec)
 
         if (type & MSITYPE_STRING)
         {
-            LPCWSTR sval;
-
-            sval = msi_string_lookup_id(db->strings, ival);
-            MSI_RecordSetStringW(*rec, i, sval);
+            int len;
+            const WCHAR *sval = msi_string_lookup( db->strings, ival, &len );
+            msi_record_set_string( *rec, i, sval, len );
         }
         else
         {
@@ -501,6 +500,8 @@ static UINT msi_set_record_type_string( MSIRECORD *rec, UINT field,
         szType[0] = 'v';
     else if (type & MSITYPE_LOCALIZABLE)
         szType[0] = 'l';
+    else if (type & MSITYPE_UNKNOWN)
+        szType[0] = 'f';
     else if (type & MSITYPE_STRING)
     {
         if (temporary)
@@ -839,8 +840,13 @@ UINT WINAPI MsiDatabaseCommit( MSIHANDLE hdb )
 
     /* FIXME: lock the database */
 
-    r = MSI_CommitTables( db );
-    if (r != ERROR_SUCCESS) ERR("Failed to commit tables!\n");
+    r = msi_commit_streams( db );
+    if (r != ERROR_SUCCESS) ERR("Failed to commit streams!\n");
+    else
+    {
+        r = MSI_CommitTables( db );
+        if (r != ERROR_SUCCESS) ERR("Failed to commit tables!\n");
+    }
 
     /* FIXME: unlock the database */
 

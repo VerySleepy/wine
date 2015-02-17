@@ -47,6 +47,8 @@
 #define ID_FILE_MOVE                    106
 #define ID_FILE_COPY                    107
 #define ID_FILE_DELETE                  108
+#define ID_RENAME                       109
+#define ID_MKDIR                        111
 #define ID_FILE_EXIT                    115
 #define ID_CONNECT_NETWORK_DRIVE        252
 #define ID_DISCONNECT_NETWORK_DRIVE     253
@@ -126,6 +128,9 @@
 #define IDS_COL_ATTR                    1217
 #define IDS_COL_SEC                     1218
 #define IDS_FREE_SPACE_FMT              1219
+#define IDS_UNIT_KB                     1220
+#define IDS_UNIT_MB                     1221
+#define IDS_UNIT_GB                     1222
 
 /* range for drive bar command ids: 0x9000..0x90FF */
 

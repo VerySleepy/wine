@@ -50,7 +50,7 @@
 static ULONG (WINAPI *pRtlNtStatusToDosError)(NTSTATUS Status);
 static int strict;
 
-static int prepare_test(void)
+static BOOL prepare_test(void)
 {
     HMODULE ntdll;
     int argc;
@@ -61,12 +61,12 @@ static int prepare_test(void)
     if (!pRtlNtStatusToDosError)
     {
         win_skip("RtlNtStatusToDosError is not available\n");
-        return 0;
+        return FALSE;
     }
 
     argc = winetest_get_mainargs(&argv);
     strict=(argc >= 3 && strcmp(argv[2],"strict")==0);
-    return 1;
+    return TRUE;
 }
 
 static void cmp_call(NTSTATUS win_nt, ULONG win32, const char* message)
@@ -963,7 +963,7 @@ static void run_error_tests(void)
     cmp2(STATUS_SXS_MANIFEST_TOO_BIG,            ERROR_SXS_MANIFEST_TOO_BIG);
     cmp2(STATUS_SXS_SETTING_NOT_REGISTERED,      ERROR_SXS_SETTING_NOT_REGISTERED);
     cmp2(STATUS_SXS_TRANSACTION_CLOSURE_INCOMPLETE,                 ERROR_SXS_TRANSACTION_CLOSURE_INCOMPLETE);
-    cmp2(STATUS_SXS_PRIMITIVE_INSTALLER_FAILED,  ERROR_SMI_PRIMITIVE_INSTALLER_FAILED);
+    cmp2(STATUS_SMI_PRIMITIVE_INSTALLER_FAILED,  ERROR_SMI_PRIMITIVE_INSTALLER_FAILED);
     cmp2(STATUS_GENERIC_COMMAND_FAILED,          ERROR_GENERIC_COMMAND_FAILED);
     cmp2(STATUS_SXS_FILE_HASH_MISSING,           ERROR_SXS_FILE_HASH_MISSING);
     cmp2(STATUS_REDIRECTOR_STARTED,              ERROR_SERVICE_ALREADY_RUNNING);

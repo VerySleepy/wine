@@ -37,6 +37,7 @@
 #include "wine/unicode.h"
 #include "objbase.h"
 
+#include "initguid.h"
 #include "dmusici.h"
 #include "dmusicf.h"
 #include "dmusics.h"
@@ -337,7 +338,6 @@ const char *debugstr_dmguid (const GUID *id) {
 		/* CLSIDs */
 		GE(CLSID_AudioVBScript),
 		GE(CLSID_DirectMusic),
-		GE(CLSID_DirectMusicAudioPath),
 		GE(CLSID_DirectMusicAudioPathConfig),
 		GE(CLSID_DirectMusicAuditionTrack),
 		GE(CLSID_DirectMusicBand),

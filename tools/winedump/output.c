@@ -237,10 +237,10 @@ void  output_c_preamble (void)
   }
 
   fprintf (cfile,
-           "BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID "
-           "lpvReserved)\n{\n"
-           "    TRACE(\"(0x%%p, %%d, %%p)\\n\", hinstDLL, fdwReason, lpvReserved);\n\n"
-           "    switch (fdwReason)\n"
+           "BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID "
+           "reserved)\n{\n"
+           "    TRACE(\"(%%p, %%u, %%p)\\n\", instance, reason, reserved);\n\n"
+           "    switch (reason)\n"
            "    {\n"
            "        case DLL_WINE_PREATTACH:\n"
            "            return FALSE;    /* prefer native version */\n"
@@ -253,20 +253,20 @@ void  output_c_preamble (void)
            globals.forward_dll, globals.forward_dll);
   else
     fprintf (cfile,
-           "            DisableThreadLibraryCalls(hinstDLL);\n");
+           "            DisableThreadLibraryCalls(instance);\n");
 
   fprintf (cfile,
-           "            break;\n"
-           "        case DLL_PROCESS_DETACH:\n");
+           "            break;\n");
 
   if (globals.forward_dll)
     fprintf (cfile,
+           "        case DLL_PROCESS_DETACH:\n"
            "            FreeLibrary(hDLL);\n"
-           "            TRACE(\"Forwarding DLL (%s) freed\\n\");\n",
+           "            TRACE(\"Forwarding DLL (%s) freed\\n\");\n"
+           "            break;\n",
            globals.forward_dll);
 
   fprintf (cfile,
-           "            break;\n"
            "    }\n\n"
            "    return TRUE;\n}\n");
 }
@@ -280,8 +280,8 @@ void  output_c_preamble (void)
 void  output_c_symbol (const parsed_symbol *sym)
 {
   unsigned int i, start = sym->flags & SYM_THISCALL ? 1 : 0;
-  int is_void;
-  static int has_thiscall = 0;
+  BOOL is_void;
+  static BOOL has_thiscall = FALSE;
 
   assert (cfile);
   assert (sym && sym->symbol);
@@ -313,7 +313,7 @@ void  output_c_symbol (const parsed_symbol *sym)
            "#define THISCALL_NAME(func) __ASM_NAME(#func)\n"
            "#define DEFINE_THISCALL_WRAPPER(func) /* nothing */\n\n"
            "#endif /* __i386__ */\n\n", cfile);
-    has_thiscall = 1;
+    has_thiscall = TRUE;
   }
 
   output_c_banner(sym);
@@ -457,8 +457,7 @@ void  output_makefile (void)
   if (globals.forward_dll)
     fprintf (makefile, "IMPORTS   = %s", globals.forward_dll);
 
-  fprintf (makefile, "\n\nC_SRCS = \\\n\t%s_main.c\n\n@MAKE_DLL_RULES@\n\n",
-           OUTPUT_DLL_NAME);
+  fprintf (makefile, "\n\nC_SRCS = \\\n\t%s_main.c\n", OUTPUT_DLL_NAME);
 
   if (globals.forward_dll)
     fprintf (specfile,"#import %s.dll\n", globals.forward_dll);

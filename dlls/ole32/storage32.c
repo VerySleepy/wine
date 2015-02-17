@@ -52,6 +52,7 @@
 
 #include "winreg.h"
 #include "wine/wingdi16.h"
+#include "compobj_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(storage);
 
@@ -65,7 +66,15 @@ WINE_DEFAULT_DEBUG_CHANNEL(storage);
 static const BYTE STORAGE_magic[8]    ={0xd0,0xcf,0x11,0xe0,0xa1,0xb1,0x1a,0xe1};
 static const BYTE STORAGE_oldmagic[8] ={0xd0,0xcf,0x11,0xe0,0x0e,0x11,0xfc,0x0d};
 
-static const char rootEntryName[] = "Root Entry";
+static inline StorageBaseImpl *impl_from_IStorage( IStorage *iface )
+{
+    return CONTAINING_RECORD(iface, StorageBaseImpl, IStorage_iface);
+}
+
+static inline StorageBaseImpl *impl_from_IDirectWriterLock( IDirectWriterLock *iface )
+{
+    return CONTAINING_RECORD(iface, StorageBaseImpl, IDirectWriterLock_iface);
+}
 
 /****************************************************************************
  * Storage32InternalImpl definitions.
@@ -93,16 +102,18 @@ static const IStorageVtbl Storage32InternalImpl_Vtbl;
 /* Method definitions for the Storage32InternalImpl class. */
 static StorageInternalImpl* StorageInternalImpl_Construct(StorageBaseImpl* parentStorage,
                                                           DWORD openFlags, DirRef storageDirEntry);
+static HRESULT StorageImpl_Refresh(StorageImpl *This, BOOL new_object, BOOL create);
 static void StorageImpl_Destroy(StorageBaseImpl* iface);
 static void StorageImpl_Invalidate(StorageBaseImpl* iface);
 static HRESULT StorageImpl_Flush(StorageBaseImpl* iface);
-static BOOL StorageImpl_ReadBigBlock(StorageImpl* This, ULONG blockIndex, void* buffer);
+static HRESULT StorageImpl_ReadBigBlock(StorageImpl* This, ULONG blockIndex, void* buffer, ULONG *read );
 static BOOL StorageImpl_WriteBigBlock(StorageImpl* This, ULONG blockIndex, const void* buffer);
 static void StorageImpl_SetNextBlockInChain(StorageImpl* This, ULONG blockIndex, ULONG nextBlock);
 static HRESULT StorageImpl_LoadFileHeader(StorageImpl* This);
 static void StorageImpl_SaveFileHeader(StorageImpl* This);
+static HRESULT StorageImpl_LockRegionSync(StorageImpl *This, ULARGE_INTEGER offset, ULARGE_INTEGER cb, DWORD dwLockType);
 
-static void Storage32Impl_AddBlockDepot(StorageImpl* This, ULONG blockIndex);
+static void Storage32Impl_AddBlockDepot(StorageImpl* This, ULONG blockIndex, ULONG depotIndex);
 static ULONG Storage32Impl_AddExtBlockDepot(StorageImpl* This);
 static ULONG Storage32Impl_GetNextExtendedBlock(StorageImpl* This, ULONG blockIndex);
 static ULONG Storage32Impl_GetExtDepotBlock(StorageImpl* This, ULONG depotIndex);
@@ -129,20 +140,20 @@ typedef struct TransactedDirEntry
   DirRef transactedParentEntry;
 
   /* True if this entry is being used. */
-  int inuse;
+  BOOL inuse;
 
   /* True if data is up to date. */
-  int read;
+  BOOL read;
 
   /* True if this entry has been modified. */
-  int dirty;
+  BOOL dirty;
 
   /* True if this entry's stream has been modified. */
-  int stream_dirty;
+  BOOL stream_dirty;
 
   /* True if this entry has been deleted in the transacted storage, but the
    * delete has not yet been committed. */
-  int deleted;
+  BOOL deleted;
 
   /* If this entry's stream has been modified, a reference to where the stream
    * is stored in the snapshot file. */
@@ -182,10 +193,31 @@ typedef struct TransactedSnapshotImpl
    * Changes are committed to the transacted parent.
    */
   StorageBaseImpl *transactedParent;
+
+  /* The transaction signature from when we last committed */
+  ULONG lastTransactionSig;
 } TransactedSnapshotImpl;
 
+typedef struct TransactedSharedImpl
+{
+  struct StorageBaseImpl base;
+
+  /*
+   * Snapshot and uncommitted changes go here.
+   */
+  TransactedSnapshotImpl *scratch;
+
+  /*
+   * Changes are committed to the transacted parent.
+   */
+  StorageBaseImpl *transactedParent;
+
+  /* The transaction signature from when we last committed */
+  ULONG lastTransactionSig;
+} TransactedSharedImpl;
+
 /* Generic function to create a transacted wrapper for a direct storage object. */
-static HRESULT Storage_ConstructTransacted(StorageBaseImpl* parent, StorageBaseImpl** result);
+static HRESULT Storage_ConstructTransacted(StorageBaseImpl* parent, BOOL toplevel, StorageBaseImpl** result);
 
 /* OLESTREAM memory structure to use for Get and Put Routines */
 /* Used for OleConvertIStorageToOLESTREAM and OleConvertOLESTREAMToIStorage */
@@ -321,9 +353,9 @@ static void IEnumSTATSTGImpl_Destroy(IEnumSTATSTGImpl* This);
 ** Block Functions
 */
 
-static ULONG StorageImpl_GetBigBlockOffset(StorageImpl* This, ULONG index)
+static ULONGLONG StorageImpl_GetBigBlockOffset(StorageImpl* This, ULONG index)
 {
-    return (index+1) * This->bigBlockSize;
+    return (ULONGLONG)(index+1) * This->bigBlockSize;
 }
 
 /************************************************************************
@@ -360,9 +392,9 @@ static HRESULT WINAPI StorageBaseImpl_QueryInterface(
   REFIID             riid,
   void**             ppvObject)
 {
-  StorageBaseImpl *This = (StorageBaseImpl *)iface;
+  StorageBaseImpl *This = impl_from_IStorage(iface);
 
-  if ( (This==0) || (ppvObject==0) )
+  if (!ppvObject)
     return E_INVALIDARG;
 
   *ppvObject = 0;
@@ -370,14 +402,18 @@ static HRESULT WINAPI StorageBaseImpl_QueryInterface(
   if (IsEqualGUID(&IID_IUnknown, riid) ||
       IsEqualGUID(&IID_IStorage, riid))
   {
-    *ppvObject = This;
+    *ppvObject = &This->IStorage_iface;
   }
   else if (IsEqualGUID(&IID_IPropertySetStorage, riid))
   {
-    *ppvObject = &This->pssVtbl;
+    *ppvObject = &This->IPropertySetStorage_iface;
   }
-
-  if ((*ppvObject)==0)
+  /* locking interface is reported for writer only */
+  else if (IsEqualGUID(&IID_IDirectWriterLock, riid) && This->lockingrole == SWMR_Writer)
+  {
+    *ppvObject = &This->IDirectWriterLock_iface;
+  }
+  else
     return E_NOINTERFACE;
 
   IStorage_AddRef(iface);
@@ -396,7 +432,7 @@ static HRESULT WINAPI StorageBaseImpl_QueryInterface(
 static ULONG WINAPI StorageBaseImpl_AddRef(
             IStorage* iface)
 {
-  StorageBaseImpl *This = (StorageBaseImpl *)iface;
+  StorageBaseImpl *This = impl_from_IStorage(iface);
   ULONG ref = InterlockedIncrement(&This->ref);
 
   TRACE("(%p) AddRef to %d\n", This, ref);
@@ -415,7 +451,7 @@ static ULONG WINAPI StorageBaseImpl_AddRef(
 static ULONG WINAPI StorageBaseImpl_Release(
       IStorage* iface)
 {
-  StorageBaseImpl *This = (StorageBaseImpl *)iface;
+  StorageBaseImpl *This = impl_from_IStorage(iface);
 
   ULONG ref = InterlockedDecrement(&This->ref);
 
@@ -449,7 +485,7 @@ static HRESULT WINAPI StorageBaseImpl_OpenStream(
   DWORD            reserved2, /* [in]  */
   IStream**        ppstm)     /* [out] */
 {
-  StorageBaseImpl *This = (StorageBaseImpl *)iface;
+  StorageBaseImpl *This = impl_from_IStorage(iface);
   StgStreamImpl*    newStream;
   DirEntry          currentEntry;
   DirRef            streamEntryRef;
@@ -524,10 +560,10 @@ static HRESULT WINAPI StorageBaseImpl_OpenStream(
 
     newStream = StgStreamImpl_Construct(This, grfMode, streamEntryRef);
 
-    if (newStream!=0)
+    if (newStream)
     {
       newStream->grfMode = grfMode;
-      *ppstm = (IStream*)newStream;
+      *ppstm = &newStream->IStream_iface;
 
       IStream_AddRef(*ppstm);
 
@@ -564,7 +600,7 @@ static HRESULT WINAPI StorageBaseImpl_OpenStorage(
   DWORD            reserved,      /* [in] */
   IStorage**       ppstg)         /* [out] */
 {
-  StorageBaseImpl *This = (StorageBaseImpl *)iface;
+  StorageBaseImpl *This = impl_from_IStorage(iface);
   StorageInternalImpl*   newStorage;
   StorageBaseImpl*       newTransactedStorage;
   DirEntry               currentEntry;
@@ -575,7 +611,7 @@ static HRESULT WINAPI StorageBaseImpl_OpenStorage(
 	iface, debugstr_w(pwcsName), pstgPriority,
 	grfMode, snbExclude, reserved, ppstg);
 
-  if ( (This==0) || (pwcsName==NULL) || (ppstg==0) )
+  if ((pwcsName==NULL) || (ppstg==0) )
   {
     res = E_INVALIDARG;
     goto end;
@@ -653,7 +689,7 @@ static HRESULT WINAPI StorageBaseImpl_OpenStorage(
     {
       if (grfMode & STGM_TRANSACTED)
       {
-        res = Storage_ConstructTransacted(&newStorage->base, &newTransactedStorage);
+        res = Storage_ConstructTransacted(&newStorage->base, FALSE, &newTransactedStorage);
 
         if (FAILED(res))
         {
@@ -661,11 +697,11 @@ static HRESULT WINAPI StorageBaseImpl_OpenStorage(
           goto end;
         }
 
-        *ppstg = (IStorage*)newTransactedStorage;
+        *ppstg = &newTransactedStorage->IStorage_iface;
       }
       else
       {
-        *ppstg = (IStorage*)newStorage;
+        *ppstg = &newStorage->base.IStorage_iface;
       }
 
       list_add_tail(&This->storageHead, &newStorage->ParentListEntry);
@@ -700,13 +736,13 @@ static HRESULT WINAPI StorageBaseImpl_EnumElements(
   DWORD           reserved3, /* [in] */
   IEnumSTATSTG**  ppenum)    /* [out] */
 {
-  StorageBaseImpl *This = (StorageBaseImpl *)iface;
+  StorageBaseImpl *This = impl_from_IStorage(iface);
   IEnumSTATSTGImpl* newEnum;
 
   TRACE("(%p, %d, %p, %d, %p)\n",
 	iface, reserved1, reserved2, reserved3, ppenum);
 
-  if ( (This==0) || (ppenum==0))
+  if (!ppenum)
     return E_INVALIDARG;
 
   if (This->reverted)
@@ -716,12 +752,9 @@ static HRESULT WINAPI StorageBaseImpl_EnumElements(
               This,
               This->storageDirEntry);
 
-  if (newEnum!=0)
+  if (newEnum)
   {
     *ppenum = &newEnum->IEnumSTATSTG_iface;
-
-    IEnumSTATSTG_AddRef(*ppenum);
-
     return S_OK;
   }
 
@@ -740,14 +773,14 @@ static HRESULT WINAPI StorageBaseImpl_Stat(
   STATSTG*         pstatstg,     /* [out] */
   DWORD            grfStatFlag)  /* [in] */
 {
-  StorageBaseImpl *This = (StorageBaseImpl *)iface;
+  StorageBaseImpl *This = impl_from_IStorage(iface);
   DirEntry       currentEntry;
   HRESULT        res = STG_E_UNKNOWN;
 
   TRACE("(%p, %p, %x)\n",
 	iface, pstatstg, grfStatFlag);
 
-  if ( (This==0) || (pstatstg==0))
+  if (!pstatstg)
   {
     res = E_INVALIDARG;
     goto end;
@@ -797,7 +830,7 @@ static HRESULT WINAPI StorageBaseImpl_RenameElement(
             const OLECHAR*   pwcsOldName,  /* [in] */
             const OLECHAR*   pwcsNewName)  /* [in] */
 {
-  StorageBaseImpl *This = (StorageBaseImpl *)iface;
+  StorageBaseImpl *This = impl_from_IStorage(iface);
   DirEntry          currentEntry;
   DirRef            currentEntryRef;
 
@@ -881,7 +914,7 @@ static HRESULT WINAPI StorageBaseImpl_CreateStream(
             DWORD            reserved2, /* [in] */
             IStream**        ppstm)     /* [out] */
 {
-  StorageBaseImpl *This = (StorageBaseImpl *)iface;
+  StorageBaseImpl *This = impl_from_IStorage(iface);
   StgStreamImpl*    newStream;
   DirEntry          currentEntry, newStreamEntry;
   DirRef            currentEntryRef, newStreamEntryRef;
@@ -1007,10 +1040,9 @@ static HRESULT WINAPI StorageBaseImpl_CreateStream(
    */
   newStream = StgStreamImpl_Construct(This, grfMode, newStreamEntryRef);
 
-  if (newStream != 0)
+  if (newStream)
   {
-    *ppstm = (IStream*)newStream;
-
+    *ppstm = &newStream->IStream_iface;
     IStream_AddRef(*ppstm);
   }
   else
@@ -1033,7 +1065,7 @@ static HRESULT WINAPI StorageBaseImpl_SetClass(
   IStorage*        iface,
   REFCLSID         clsid) /* [in] */
 {
-  StorageBaseImpl *This = (StorageBaseImpl *)iface;
+  StorageBaseImpl *This = impl_from_IStorage(iface);
   HRESULT hRes;
   DirEntry currentEntry;
 
@@ -1079,7 +1111,7 @@ static HRESULT WINAPI StorageBaseImpl_CreateStorage(
   DWORD            reserved2, /* [in] */
   IStorage       **ppstg)   /* [out] */
 {
-  StorageBaseImpl* const This=(StorageBaseImpl*)iface;
+  StorageBaseImpl* This = impl_from_IStorage(iface);
 
   DirEntry         currentEntry;
   DirEntry         newEntry;
@@ -1290,8 +1322,7 @@ static HRESULT StorageImpl_CreateDirEntry(
     /*
      * initialize the size used by the directory stream
      */
-    newSize.u.HighPart = 0;
-    newSize.u.LowPart  = storage->bigBlockSize * blockCount;
+    newSize.QuadPart  = (ULONGLONG)storage->bigBlockSize * blockCount;
 
     /*
      * add a block to the directory stream
@@ -1343,15 +1374,12 @@ static HRESULT StorageImpl_DestroyDirEntry(
   StorageBaseImpl *base,
   DirRef index)
 {
-  HRESULT hr;
   BYTE emptyData[RAW_DIRENTRY_SIZE];
   StorageImpl *storage = (StorageImpl*)base;
 
   memset(emptyData, 0, RAW_DIRENTRY_SIZE);
 
-  hr = StorageImpl_WriteRawDirEntry(storage, index, emptyData);
-
-  return hr;
+  return StorageImpl_WriteRawDirEntry(storage, index, emptyData);
 }
 
 
@@ -1417,7 +1445,7 @@ static HRESULT insertIntoTree(
      * The root storage contains some element, therefore, start the research
      * for the appropriate location.
      */
-    BOOL found = 0;
+    BOOL found = FALSE;
     DirRef current, next, previous, currentEntryId;
 
     /*
@@ -1436,7 +1464,7 @@ static HRESULT insertIntoTree(
     next     = currentEntry.rightChild;
     current  = currentEntryId;
 
-    while (found == 0)
+    while (!found)
     {
       LONG diff = entryNameCmp( newEntry.name, currentEntry.name);
 
@@ -1455,7 +1483,7 @@ static HRESULT insertIntoTree(
           StorageBaseImpl_WriteDirEntry(This,
                                         current,
                                         &currentEntry);
-          found = 1;
+          found = TRUE;
         }
       }
       else if (diff > 0)
@@ -1473,7 +1501,7 @@ static HRESULT insertIntoTree(
           StorageBaseImpl_WriteDirEntry(This,
                                         current,
                                         &currentEntry);
-          found = 1;
+          found = TRUE;
         }
       }
       else
@@ -1684,11 +1712,19 @@ static HRESULT StorageBaseImpl_CopyChildEntryTo(StorageBaseImpl *This,
        */
       if (hr == S_OK)
       {
-        pstrChild = (IStream*)StgStreamImpl_Construct(This, STGM_READ|STGM_SHARE_EXCLUSIVE, srcEntry);
-        if (pstrChild)
-          IStream_AddRef(pstrChild);
+        StgStreamImpl *streamimpl = StgStreamImpl_Construct(This, STGM_READ|STGM_SHARE_EXCLUSIVE, srcEntry);
+
+        if (streamimpl)
+        {
+          pstrChild = &streamimpl->IStream_iface;
+          if (pstrChild)
+            IStream_AddRef(pstrChild);
+        }
         else
+        {
+          pstrChild = NULL;
           hr = E_OUTOFMEMORY;
+        }
       }
 
       if (hr == S_OK)
@@ -1757,10 +1793,10 @@ static HRESULT WINAPI StorageBaseImpl_CopyTo(
   SNB         snbExclude,   /* [unique][in] */
   IStorage*   pstgDest)     /* [unique][in] */
 {
-  StorageBaseImpl* const This=(StorageBaseImpl*)iface;
+  StorageBaseImpl *This = impl_from_IStorage(iface);
 
   BOOL         skip_storage = FALSE, skip_stream = FALSE;
-  int          i;
+  DWORD        i;
 
   TRACE("(%p, %d, %p, %p, %p)\n",
 	iface, ciidExclude, rgiidExclude,
@@ -1793,15 +1829,15 @@ static HRESULT WINAPI StorageBaseImpl_CopyTo(
 
       if (pstgDestAncestor->lpVtbl == &TransactedSnapshotImpl_Vtbl)
       {
-        TransactedSnapshotImpl *impl = (TransactedSnapshotImpl*) pstgDestAncestor;
+        TransactedSnapshotImpl *snapshot = (TransactedSnapshotImpl*) pstgDestAncestor;
 
-        pstgDestAncestor = (IStorage*)impl->transactedParent;
+        pstgDestAncestor = &snapshot->transactedParent->IStorage_iface;
       }
       else if (pstgDestAncestor->lpVtbl == &Storage32InternalImpl_Vtbl)
       {
-        StorageInternalImpl *impl = (StorageInternalImpl*) pstgDestAncestor;
+        StorageInternalImpl *internal = (StorageInternalImpl*) pstgDestAncestor;
 
-        pstgDestAncestor = (IStorage*)impl->parentStorage;
+        pstgDestAncestor = &internal->parentStorage->IStorage_iface;
       }
       else
         break;
@@ -1864,9 +1900,9 @@ static HRESULT WINAPI StorageImpl_Commit(
   IStorage*   iface,
   DWORD         grfCommitFlags)/* [in] */
 {
-  StorageBaseImpl* const base=(StorageBaseImpl*)iface;
+  StorageBaseImpl* This = impl_from_IStorage(iface);
   TRACE("(%p %d)\n", iface, grfCommitFlags);
-  return StorageBaseImpl_Flush(base);
+  return StorageBaseImpl_Flush(This);
 }
 
 /*************************************************************************
@@ -1896,7 +1932,7 @@ static HRESULT WINAPI StorageBaseImpl_DestroyElement(
   IStorage*     iface,
   const OLECHAR *pwcsName)/* [string][in] */
 {
-  StorageBaseImpl* const This=(StorageBaseImpl*)iface;
+  StorageBaseImpl *This = impl_from_IStorage(iface);
 
   HRESULT           hr = S_OK;
   DirEntry          entryToDelete;
@@ -2069,8 +2105,8 @@ static HRESULT deleteStorageContents(
   /*
    * Open the storage and enumerate it
    */
-  hr = StorageBaseImpl_OpenStorage(
-        (IStorage*)parentStorage,
+  hr = IStorage_OpenStorage(
+        &parentStorage->IStorage_iface,
         entryDataToDelete.name,
         0,
         STGM_WRITE | STGM_SHARE_EXCLUSIVE,
@@ -2146,7 +2182,7 @@ static HRESULT deleteStreamContents(
   size.u.HighPart = 0;
   size.u.LowPart = 0;
 
-  hr = StorageBaseImpl_OpenStream((IStorage*)parentStorage,
+  hr = IStorage_OpenStream(&parentStorage->IStorage_iface,
         entryDataToDelete.name, NULL, STGM_WRITE | STGM_SHARE_EXCLUSIVE, 0, &pis);
 
   if (hr!=S_OK)
@@ -2202,11 +2238,11 @@ static HRESULT removeFromTree(
   DirRef        parentStorageIndex,
   DirRef        deletedIndex)
 {
-  HRESULT hr                     = S_OK;
   DirEntry   entryToDelete;
   DirEntry   parentEntry;
   DirRef parentEntryRef;
   ULONG typeOfRelation;
+  HRESULT hr;
 
   hr = StorageBaseImpl_ReadDirEntry(This, deletedIndex, &entryToDelete);
 
@@ -2318,7 +2354,7 @@ static HRESULT WINAPI StorageBaseImpl_SetStateBits(
   DWORD         grfStateBits,/* [in] */
   DWORD         grfMask)     /* [in] */
 {
-  StorageBaseImpl* const This = (StorageBaseImpl*)iface;
+  StorageBaseImpl *This = impl_from_IStorage(iface);
 
   if (This->reverted)
     return STG_E_REVERTED;
@@ -2565,7 +2601,6 @@ static HRESULT StorageImpl_StreamWriteAt(StorageBaseImpl *base, DirRef index,
   if (FAILED(hr)) return hr;
 
   /* Grow the stream if necessary */
-  newSize.QuadPart = 0;
   newSize.QuadPart = offset.QuadPart + size;
 
   if (newSize.QuadPart > data.size.QuadPart)
@@ -2598,9 +2633,7 @@ static HRESULT StorageImpl_StreamWriteAt(StorageBaseImpl *base, DirRef index,
     stream = *StorageImpl_GetCachedBlockChainStream(This, index);
     if (!stream) return E_OUTOFMEMORY;
 
-    hr = BlockChainStream_WriteAt(stream, offset, size, buffer, bytesWritten);
-
-    return hr;
+    return BlockChainStream_WriteAt(stream, offset, size, buffer, bytesWritten);
   }
 }
 
@@ -2628,6 +2661,108 @@ static HRESULT StorageImpl_StreamLink(StorageBaseImpl *base, DirRef dst,
   return hr;
 }
 
+static HRESULT StorageImpl_GetTransactionSig(StorageBaseImpl *base,
+  ULONG* result, BOOL refresh)
+{
+  StorageImpl *This = (StorageImpl*)base;
+  HRESULT hr=S_OK;
+  DWORD oldTransactionSig = This->transactionSig;
+
+  if (refresh)
+  {
+    ULARGE_INTEGER offset;
+    ULONG bytes_read;
+    BYTE data[4];
+
+    offset.u.HighPart = 0;
+    offset.u.LowPart = OFFSET_TRANSACTIONSIG;
+    hr = StorageImpl_ReadAt(This, offset, data, 4, &bytes_read);
+
+    if (SUCCEEDED(hr))
+    {
+      StorageUtl_ReadDWord(data, 0, &This->transactionSig);
+
+      if (oldTransactionSig != This->transactionSig)
+      {
+        /* Someone else wrote to this, so toss all cached information. */
+        TRACE("signature changed\n");
+
+        hr = StorageImpl_Refresh(This, FALSE, FALSE);
+      }
+
+      if (FAILED(hr))
+        This->transactionSig = oldTransactionSig;
+    }
+  }
+
+  *result = This->transactionSig;
+
+  return hr;
+}
+
+static HRESULT StorageImpl_SetTransactionSig(StorageBaseImpl *base,
+  ULONG value)
+{
+  StorageImpl *This = (StorageImpl*)base;
+
+  This->transactionSig = value;
+  StorageImpl_SaveFileHeader(This);
+
+  return S_OK;
+}
+
+static HRESULT StorageImpl_LockTransaction(StorageBaseImpl *base, BOOL write)
+{
+  StorageImpl *This = (StorageImpl*)base;
+  HRESULT hr;
+  ULARGE_INTEGER offset, cb;
+
+  if (write)
+  {
+    /* Synchronous grab of second priority range, the commit lock, and the
+     * lock-checking lock. */
+    offset.QuadPart = RANGELOCK_TRANSACTION_FIRST;
+    cb.QuadPart = RANGELOCK_TRANSACTION_LAST - RANGELOCK_TRANSACTION_FIRST + 1;
+  }
+  else
+  {
+    offset.QuadPart = RANGELOCK_COMMIT;
+    cb.QuadPart = 1;
+  }
+
+  hr = StorageImpl_LockRegionSync(This, offset, cb, LOCK_ONLYONCE);
+
+  if (hr == STG_E_INVALIDFUNCTION)
+    hr = S_OK;
+
+  return hr;
+}
+
+static HRESULT StorageImpl_UnlockTransaction(StorageBaseImpl *base, BOOL write)
+{
+  StorageImpl *This = (StorageImpl*)base;
+  HRESULT hr;
+  ULARGE_INTEGER offset, cb;
+
+  if (write)
+  {
+    offset.QuadPart = RANGELOCK_TRANSACTION_FIRST;
+    cb.QuadPart = RANGELOCK_TRANSACTION_LAST - RANGELOCK_TRANSACTION_FIRST + 1;
+  }
+  else
+  {
+    offset.QuadPart = RANGELOCK_COMMIT;
+    cb.QuadPart = 1;
+  }
+
+  hr = ILockBytes_UnlockRegion(This->lockBytes, offset, cb, LOCK_ONLYONCE);
+
+  if (hr == STG_E_INVALIDFUNCTION)
+    hr = S_OK;
+
+  return hr;
+}
+
 static HRESULT StorageImpl_GetFilename(StorageBaseImpl* iface, LPWSTR *result)
 {
   StorageImpl *This = (StorageImpl*) iface;
@@ -2640,6 +2775,55 @@ static HRESULT StorageImpl_GetFilename(StorageBaseImpl* iface, LPWSTR *result)
 
   return hr;
 }
+
+static HRESULT WINAPI directwriterlock_QueryInterface(IDirectWriterLock *iface, REFIID riid, void **obj)
+{
+  StorageBaseImpl *This = impl_from_IDirectWriterLock(iface);
+  return IStorage_QueryInterface(&This->IStorage_iface, riid, obj);
+}
+
+static ULONG WINAPI directwriterlock_AddRef(IDirectWriterLock *iface)
+{
+  StorageBaseImpl *This = impl_from_IDirectWriterLock(iface);
+  return IStorage_AddRef(&This->IStorage_iface);
+}
+
+static ULONG WINAPI directwriterlock_Release(IDirectWriterLock *iface)
+{
+  StorageBaseImpl *This = impl_from_IDirectWriterLock(iface);
+  return IStorage_Release(&This->IStorage_iface);
+}
+
+static HRESULT WINAPI directwriterlock_WaitForWriteAccess(IDirectWriterLock *iface, DWORD timeout)
+{
+  StorageBaseImpl *This = impl_from_IDirectWriterLock(iface);
+  FIXME("(%p)->(%d): stub\n", This, timeout);
+  return E_NOTIMPL;
+}
+
+static HRESULT WINAPI directwriterlock_ReleaseWriteAccess(IDirectWriterLock *iface)
+{
+  StorageBaseImpl *This = impl_from_IDirectWriterLock(iface);
+  FIXME("(%p): stub\n", This);
+  return E_NOTIMPL;
+}
+
+static HRESULT WINAPI directwriterlock_HaveWriteAccess(IDirectWriterLock *iface)
+{
+  StorageBaseImpl *This = impl_from_IDirectWriterLock(iface);
+  FIXME("(%p): stub\n", This);
+  return E_NOTIMPL;
+}
+
+static const IDirectWriterLockVtbl DirectWriterLockVtbl =
+{
+  directwriterlock_QueryInterface,
+  directwriterlock_AddRef,
+  directwriterlock_Release,
+  directwriterlock_WaitForWriteAccess,
+  directwriterlock_ReleaseWriteAccess,
+  directwriterlock_HaveWriteAccess
+};
 
 /*
  * Virtual function table for the IStorage32Impl class.
@@ -2679,61 +2863,163 @@ static const StorageBaseImplVtbl StorageImpl_BaseVtbl =
   StorageImpl_StreamReadAt,
   StorageImpl_StreamWriteAt,
   StorageImpl_StreamSetSize,
-  StorageImpl_StreamLink
+  StorageImpl_StreamLink,
+  StorageImpl_GetTransactionSig,
+  StorageImpl_SetTransactionSig,
+  StorageImpl_LockTransaction,
+  StorageImpl_UnlockTransaction
 };
 
-static HRESULT StorageImpl_Construct(
-  HANDLE       hFile,
-  LPCOLESTR    pwcsName,
-  ILockBytes*  pLkbyt,
-  DWORD        openFlags,
-  BOOL         fileBased,
-  BOOL         create,
-  ULONG        sector_size,
-  StorageImpl** result)
+static HRESULT StorageImpl_LockRegionSync(StorageImpl *This, ULARGE_INTEGER offset,
+    ULARGE_INTEGER cb, DWORD dwLockType)
 {
-  StorageImpl* This;
-  HRESULT     hr = S_OK;
+    HRESULT hr;
+    int delay = 0;
+
+    /* if it's a FileLockBytesImpl use LockFileEx in blocking mode */
+    if (SUCCEEDED(FileLockBytesImpl_LockRegionSync(This->lockBytes, offset, cb)))
+        return S_OK;
+
+    /* otherwise we have to fake it based on an async lock */
+    do
+    {
+        hr = ILockBytes_LockRegion(This->lockBytes, offset, cb, dwLockType);
+
+        if (hr == STG_E_ACCESSDENIED || hr == STG_E_LOCKVIOLATION)
+        {
+            Sleep(delay);
+            if (delay < 150) delay++;
+        }
+    } while (hr == STG_E_ACCESSDENIED || hr == STG_E_LOCKVIOLATION);
+
+    return hr;
+}
+
+static HRESULT StorageImpl_CheckLockRange(StorageImpl *This, ULONG start,
+    ULONG end, HRESULT fail_hr)
+{
+    HRESULT hr;
+    ULARGE_INTEGER offset, cb;
+
+    offset.QuadPart = start;
+    cb.QuadPart = 1 + end - start;
+
+    hr = ILockBytes_LockRegion(This->lockBytes, offset, cb, LOCK_ONLYONCE);
+    if (SUCCEEDED(hr)) ILockBytes_UnlockRegion(This->lockBytes, offset, cb, LOCK_ONLYONCE);
+
+    if (hr == STG_E_ACCESSDENIED || hr == STG_E_LOCKVIOLATION)
+        return fail_hr;
+    else
+        return S_OK;
+}
+
+static HRESULT StorageImpl_LockOne(StorageImpl *This, ULONG start, ULONG end)
+{
+    HRESULT hr=S_OK;
+    int i, j;
+    ULARGE_INTEGER offset, cb;
+
+    cb.QuadPart = 1;
+
+    for (i=start; i<=end; i++)
+    {
+        offset.QuadPart = i;
+        hr = ILockBytes_LockRegion(This->lockBytes, offset, cb, LOCK_ONLYONCE);
+        if (hr != STG_E_ACCESSDENIED && hr != STG_E_LOCKVIOLATION)
+            break;
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        for (j=0; j<sizeof(This->locked_bytes)/sizeof(This->locked_bytes[0]); j++)
+        {
+            if (This->locked_bytes[j] == 0)
+            {
+                This->locked_bytes[j] = i;
+                break;
+            }
+        }
+    }
+
+    return hr;
+}
+
+static HRESULT StorageImpl_GrabLocks(StorageImpl *This, DWORD openFlags)
+{
+    HRESULT hr;
+    ULARGE_INTEGER offset;
+    ULARGE_INTEGER cb;
+    DWORD share_mode = STGM_SHARE_MODE(openFlags);
+
+    if (openFlags & STGM_NOSNAPSHOT)
+    {
+        /* STGM_NOSNAPSHOT implies deny write */
+        if (share_mode == STGM_SHARE_DENY_READ) share_mode = STGM_SHARE_EXCLUSIVE;
+        else if (share_mode != STGM_SHARE_EXCLUSIVE) share_mode = STGM_SHARE_DENY_WRITE;
+    }
+
+    /* Wrap all other locking inside a single lock so we can check ranges safely */
+    offset.QuadPart = RANGELOCK_CHECKLOCKS;
+    cb.QuadPart = 1;
+    hr = StorageImpl_LockRegionSync(This, offset, cb, LOCK_ONLYONCE);
+
+    /* If the ILockBytes doesn't support locking that's ok. */
+    if (FAILED(hr)) return S_OK;
+
+    hr = S_OK;
+
+    /* First check for any conflicting locks. */
+    if (SUCCEEDED(hr) && (openFlags & STGM_PRIORITY) == STGM_PRIORITY)
+        hr = StorageImpl_CheckLockRange(This, RANGELOCK_COMMIT, RANGELOCK_COMMIT, STG_E_LOCKVIOLATION);
+
+    if (SUCCEEDED(hr) && (STGM_ACCESS_MODE(openFlags) != STGM_WRITE))
+        hr = StorageImpl_CheckLockRange(This, RANGELOCK_DENY_READ_FIRST, RANGELOCK_DENY_READ_LAST, STG_E_SHAREVIOLATION);
+
+    if (SUCCEEDED(hr) && (STGM_ACCESS_MODE(openFlags) != STGM_READ))
+        hr = StorageImpl_CheckLockRange(This, RANGELOCK_DENY_WRITE_FIRST, RANGELOCK_DENY_WRITE_LAST, STG_E_SHAREVIOLATION);
+
+    if (SUCCEEDED(hr) && (share_mode == STGM_SHARE_DENY_READ || share_mode == STGM_SHARE_EXCLUSIVE))
+        hr = StorageImpl_CheckLockRange(This, RANGELOCK_READ_FIRST, RANGELOCK_READ_LAST, STG_E_LOCKVIOLATION);
+
+    if (SUCCEEDED(hr) && (share_mode == STGM_SHARE_DENY_WRITE || share_mode == STGM_SHARE_EXCLUSIVE))
+        hr = StorageImpl_CheckLockRange(This, RANGELOCK_WRITE_FIRST, RANGELOCK_WRITE_LAST, STG_E_LOCKVIOLATION);
+
+    /* Then grab our locks. */
+    if (SUCCEEDED(hr) && (openFlags & STGM_PRIORITY) == STGM_PRIORITY)
+    {
+        hr = StorageImpl_LockOne(This, RANGELOCK_PRIORITY1_FIRST, RANGELOCK_PRIORITY1_LAST);
+        if (SUCCEEDED(hr))
+            hr = StorageImpl_LockOne(This, RANGELOCK_PRIORITY2_FIRST, RANGELOCK_PRIORITY2_LAST);
+    }
+
+    if (SUCCEEDED(hr) && (STGM_ACCESS_MODE(openFlags) != STGM_WRITE))
+        hr = StorageImpl_LockOne(This, RANGELOCK_READ_FIRST, RANGELOCK_READ_LAST);
+
+    if (SUCCEEDED(hr) && (STGM_ACCESS_MODE(openFlags) != STGM_READ))
+        hr = StorageImpl_LockOne(This, RANGELOCK_WRITE_FIRST, RANGELOCK_WRITE_LAST);
+
+    if (SUCCEEDED(hr) && (share_mode == STGM_SHARE_DENY_READ || share_mode == STGM_SHARE_EXCLUSIVE))
+        hr = StorageImpl_LockOne(This, RANGELOCK_DENY_READ_FIRST, RANGELOCK_DENY_READ_LAST);
+
+    if (SUCCEEDED(hr) && (share_mode == STGM_SHARE_DENY_WRITE || share_mode == STGM_SHARE_EXCLUSIVE))
+        hr = StorageImpl_LockOne(This, RANGELOCK_DENY_WRITE_FIRST, RANGELOCK_DENY_WRITE_LAST);
+
+    if (SUCCEEDED(hr) && (openFlags & STGM_NOSNAPSHOT) == STGM_NOSNAPSHOT)
+        hr = StorageImpl_LockOne(This, RANGELOCK_NOSNAPSHOT_FIRST, RANGELOCK_NOSNAPSHOT_LAST);
+
+    offset.QuadPart = RANGELOCK_CHECKLOCKS;
+    cb.QuadPart = 1;
+    ILockBytes_UnlockRegion(This->lockBytes, offset, cb, LOCK_ONLYONCE);
+
+    return hr;
+}
+
+static HRESULT StorageImpl_Refresh(StorageImpl *This, BOOL new_object, BOOL create)
+{
+  HRESULT hr=S_OK;
   DirEntry currentEntry;
   DirRef      currentEntryRef;
-
-  if ( FAILED( validateSTGM(openFlags) ))
-    return STG_E_INVALIDFLAG;
-
-  This = HeapAlloc(GetProcessHeap(), 0, sizeof(StorageImpl));
-  if (!This)
-    return E_OUTOFMEMORY;
-
-  memset(This, 0, sizeof(StorageImpl));
-
-  list_init(&This->base.strmHead);
-
-  list_init(&This->base.storageHead);
-
-  This->base.lpVtbl = &Storage32Impl_Vtbl;
-  This->base.pssVtbl = &IPropertySetStorage_Vtbl;
-  This->base.baseVtbl = &StorageImpl_BaseVtbl;
-  This->base.openFlags = (openFlags & ~STGM_CREATE);
-  This->base.ref = 1;
-  This->base.create = create;
-
-  This->base.reverted = 0;
-
-  /*
-   * Initialize the big block cache.
-   */
-  This->bigBlockSize   = sector_size;
-  This->smallBlockSize = DEF_SMALL_BLOCK_SIZE;
-  if (hFile)
-    hr = FileLockBytesImpl_Construct(hFile, openFlags, pwcsName, &This->lockBytes);
-  else
-  {
-    This->lockBytes = pLkbyt;
-    ILockBytes_AddRef(pLkbyt);
-  }
-
-  if (FAILED(hr))
-    goto end;
+  BlockChainStream *blockChainStream;
 
   if (create)
   {
@@ -2759,7 +3045,7 @@ static HRESULT StorageImpl_Construct(
     This->rootStartBlock        = 1;
     This->smallBlockLimit       = LIMIT_TO_USE_SMALL_BLOCK;
     This->smallBlockDepotStart  = BLOCK_END_OF_CHAIN;
-    if (sector_size == 4096)
+    if (This->bigBlockSize == 4096)
       This->bigBlockSizeBits      = MAX_BIG_BLOCK_SIZE_BITS;
     else
       This->bigBlockSizeBits      = MIN_BIG_BLOCK_SIZE_BITS;
@@ -2793,7 +3079,7 @@ static HRESULT StorageImpl_Construct(
 
     if (FAILED(hr))
     {
-      goto end;
+      return hr;
     }
   }
 
@@ -2815,13 +3101,12 @@ static HRESULT StorageImpl_Construct(
   {
     ULONG current_block = This->extBigBlockDepotStart;
     ULONG cache_size = This->extBigBlockDepotCount * 2;
-    int i;
+    ULONG i;
 
     This->extBigBlockDepotLocations = HeapAlloc(GetProcessHeap(), 0, sizeof(ULONG) * cache_size);
     if (!This->extBigBlockDepotLocations)
     {
-      hr = E_OUTOFMEMORY;
-      goto end;
+      return E_OUTOFMEMORY;
     }
 
     This->extBigBlockDepotLocationsSize = cache_size;
@@ -2831,8 +3116,7 @@ static HRESULT StorageImpl_Construct(
       if (current_block == BLOCK_END_OF_CHAIN)
       {
         WARN("File has too few extended big block depot blocks.\n");
-        hr = STG_E_DOCFILECORRUPT;
-        goto end;
+        return STG_E_DOCFILECORRUPT;
       }
       This->extBigBlockDepotLocations[i] = current_block;
       current_block = Storage32Impl_GetNextExtendedBlock(This, current_block);
@@ -2847,41 +3131,45 @@ static HRESULT StorageImpl_Construct(
   /*
    * Create the block chain abstractions.
    */
-  if(!(This->rootBlockChain =
+  if(!(blockChainStream =
        BlockChainStream_Construct(This, &This->rootStartBlock, DIRENTRY_NULL)))
   {
-    hr = STG_E_READFAULT;
-    goto end;
+    return STG_E_READFAULT;
   }
+  if (!new_object)
+    BlockChainStream_Destroy(This->rootBlockChain);
+  This->rootBlockChain = blockChainStream;
 
-  if(!(This->smallBlockDepotChain =
+  if(!(blockChainStream =
        BlockChainStream_Construct(This, &This->smallBlockDepotStart,
 				  DIRENTRY_NULL)))
   {
-    hr = STG_E_READFAULT;
-    goto end;
+    return STG_E_READFAULT;
   }
+  if (!new_object)
+    BlockChainStream_Destroy(This->smallBlockDepotChain);
+  This->smallBlockDepotChain = blockChainStream;
 
   /*
    * Write the root storage entry (memory only)
    */
   if (create)
   {
+    static const WCHAR rootentryW[] = {'R','o','o','t',' ','E','n','t','r','y',0};
     DirEntry rootEntry;
     /*
      * Initialize the directory table
      */
     memset(&rootEntry, 0, sizeof(rootEntry));
-    MultiByteToWideChar( CP_ACP, 0, rootEntryName, -1, rootEntry.name,
-                         sizeof(rootEntry.name)/sizeof(WCHAR) );
-    rootEntry.sizeOfNameString = (strlenW(rootEntry.name)+1) * sizeof(WCHAR);
+    strcpyW(rootEntry.name, rootentryW);
+    rootEntry.sizeOfNameString = sizeof(rootentryW);
     rootEntry.stgType          = STGTY_ROOT;
-    rootEntry.leftChild = DIRENTRY_NULL;
-    rootEntry.rightChild     = DIRENTRY_NULL;
+    rootEntry.leftChild        = DIRENTRY_NULL;
+    rootEntry.rightChild       = DIRENTRY_NULL;
     rootEntry.dirRootEntry     = DIRENTRY_NULL;
     rootEntry.startingBlock    = BLOCK_END_OF_CHAIN;
-    rootEntry.size.u.HighPart    = 0;
-    rootEntry.size.u.LowPart     = 0;
+    rootEntry.size.u.HighPart  = 0;
+    rootEntry.size.u.LowPart   = 0;
 
     StorageImpl_WriteDirEntry(This, 0, &rootEntry);
   }
@@ -2913,28 +3201,104 @@ static HRESULT StorageImpl_Construct(
 
   if (FAILED(hr))
   {
-    hr = STG_E_READFAULT;
-    goto end;
+    return STG_E_READFAULT;
   }
 
   /*
    * Create the block chain abstraction for the small block root chain.
    */
-  if(!(This->smallBlockRootChain =
+  if(!(blockChainStream =
        BlockChainStream_Construct(This, NULL, This->base.storageDirEntry)))
   {
-    hr = STG_E_READFAULT;
+    return STG_E_READFAULT;
+  }
+  if (!new_object)
+    BlockChainStream_Destroy(This->smallBlockRootChain);
+  This->smallBlockRootChain = blockChainStream;
+
+  if (!new_object)
+  {
+    int i;
+    for (i=0; i<BLOCKCHAIN_CACHE_SIZE; i++)
+    {
+      BlockChainStream_Destroy(This->blockChainCache[i]);
+      This->blockChainCache[i] = NULL;
+    }
   }
 
-end:
+  return hr;
+}
+
+static HRESULT StorageImpl_Construct(
+  HANDLE       hFile,
+  LPCOLESTR    pwcsName,
+  ILockBytes*  pLkbyt,
+  DWORD        openFlags,
+  BOOL         fileBased,
+  BOOL         create,
+  ULONG        sector_size,
+  StorageImpl** result)
+{
+  StorageImpl* This;
+  HRESULT     hr = S_OK;
+
+  if ( FAILED( validateSTGM(openFlags) ))
+    return STG_E_INVALIDFLAG;
+
+  This = HeapAlloc(GetProcessHeap(), 0, sizeof(StorageImpl));
+  if (!This)
+    return E_OUTOFMEMORY;
+
+  memset(This, 0, sizeof(StorageImpl));
+
+  list_init(&This->base.strmHead);
+
+  list_init(&This->base.storageHead);
+
+  This->base.IStorage_iface.lpVtbl = &Storage32Impl_Vtbl;
+  This->base.IPropertySetStorage_iface.lpVtbl = &IPropertySetStorage_Vtbl;
+  This->base.IDirectWriterLock_iface.lpVtbl = &DirectWriterLockVtbl;
+  This->base.baseVtbl = &StorageImpl_BaseVtbl;
+  This->base.openFlags = (openFlags & ~STGM_CREATE);
+  This->base.ref = 1;
+  This->base.create = create;
+
+  if (openFlags == (STGM_DIRECT_SWMR|STGM_READWRITE|STGM_SHARE_DENY_WRITE))
+    This->base.lockingrole = SWMR_Writer;
+  else if (openFlags == (STGM_DIRECT_SWMR|STGM_READ|STGM_SHARE_DENY_NONE))
+    This->base.lockingrole = SWMR_Reader;
+  else
+    This->base.lockingrole = SWMR_None;
+
+  This->base.reverted = FALSE;
+
+  /*
+   * Initialize the big block cache.
+   */
+  This->bigBlockSize   = sector_size;
+  This->smallBlockSize = DEF_SMALL_BLOCK_SIZE;
+  if (hFile)
+    hr = FileLockBytesImpl_Construct(hFile, openFlags, pwcsName, &This->lockBytes);
+  else
+  {
+    This->lockBytes = pLkbyt;
+    ILockBytes_AddRef(pLkbyt);
+  }
+
+  if (SUCCEEDED(hr))
+    hr = StorageImpl_GrabLocks(This, openFlags);
+
+  if (SUCCEEDED(hr))
+    hr = StorageImpl_Refresh(This, TRUE, create);
+
   if (FAILED(hr))
   {
-    IStorage_Release((IStorage*)This);
+    IStorage_Release(&This->base.IStorage_iface);
     *result = NULL;
   }
   else
   {
-    StorageImpl_Flush((StorageBaseImpl*)This);
+    StorageImpl_Flush(&This->base);
     *result = This;
   }
 
@@ -2947,7 +3311,7 @@ static void StorageImpl_Invalidate(StorageBaseImpl* iface)
 
   StorageBaseImpl_DeleteAll(&This->base);
 
-  This->base.reverted = 1;
+  This->base.reverted = TRUE;
 }
 
 static void StorageImpl_Destroy(StorageBaseImpl* iface)
@@ -2969,14 +3333,25 @@ static void StorageImpl_Destroy(StorageBaseImpl* iface)
   for (i=0; i<BLOCKCHAIN_CACHE_SIZE; i++)
     BlockChainStream_Destroy(This->blockChainCache[i]);
 
+  for (i=0; i<sizeof(This->locked_bytes)/sizeof(This->locked_bytes[0]); i++)
+  {
+    ULARGE_INTEGER offset, cb;
+    cb.QuadPart = 1;
+    if (This->locked_bytes[i] != 0)
+    {
+      offset.QuadPart = This->locked_bytes[i];
+      ILockBytes_UnlockRegion(This->lockBytes, offset, cb, LOCK_ONLYONCE);
+    }
+  }
+
   if (This->lockBytes)
     ILockBytes_Release(This->lockBytes);
   HeapFree(GetProcessHeap(), 0, This);
 }
 
-static HRESULT StorageImpl_Flush(StorageBaseImpl* iface)
+static HRESULT StorageImpl_Flush(StorageBaseImpl *storage)
 {
-  StorageImpl *This = (StorageImpl*) iface;
+  StorageImpl *This = (StorageImpl*)storage;
   int i;
   HRESULT hr;
   TRACE("(%p)\n", This);
@@ -3011,12 +3386,12 @@ static ULONG StorageImpl_GetNextFreeBigBlock(
 {
   ULONG depotBlockIndexPos;
   BYTE depotBuffer[MAX_BIG_BLOCK_SIZE];
-  BOOL success;
   ULONG depotBlockOffset;
   ULONG blocksPerDepot    = This->bigBlockSize / sizeof(ULONG);
   ULONG nextBlockIndex    = BLOCK_SPECIAL;
   int   depotIndex        = 0;
   ULONG freeBlock         = BLOCK_UNUSED;
+  ULONG read;
   ULARGE_INTEGER neededSize;
   STATSTG statstg;
 
@@ -3042,7 +3417,7 @@ static ULONG StorageImpl_GetNextFreeBigBlock(
         /*
          * Add a block depot.
          */
-        Storage32Impl_AddBlockDepot(This, depotBlockIndexPos);
+        Storage32Impl_AddBlockDepot(This, depotBlockIndexPos, depotIndex);
         This->bigBlockDepotCount++;
         This->bigBlockDepotStart[depotIndex] = depotBlockIndexPos;
 
@@ -3085,7 +3460,7 @@ static ULONG StorageImpl_GetNextFreeBigBlock(
         /*
          * Add a block depot and mark it in the extended block.
          */
-        Storage32Impl_AddBlockDepot(This, depotBlockIndexPos);
+        Storage32Impl_AddBlockDepot(This, depotBlockIndexPos, depotIndex);
         This->bigBlockDepotCount++;
         Storage32Impl_SetExtDepotBlock(This, depotIndex, depotBlockIndexPos);
 
@@ -3106,9 +3481,9 @@ static ULONG StorageImpl_GetNextFreeBigBlock(
       }
     }
 
-    success = StorageImpl_ReadBigBlock(This, depotBlockIndexPos, depotBuffer);
+    StorageImpl_ReadBigBlock(This, depotBlockIndexPos, depotBuffer, &read);
 
-    if (success)
+    if (read)
     {
       while ( ( (depotBlockOffset/sizeof(ULONG) ) < blocksPerDepot) &&
               ( nextBlockIndex != BLOCK_UNUSED))
@@ -3150,14 +3525,24 @@ static ULONG StorageImpl_GetNextFreeBigBlock(
  * This will create a depot block, essentially it is a block initialized
  * to BLOCK_UNUSEDs.
  */
-static void Storage32Impl_AddBlockDepot(StorageImpl* This, ULONG blockIndex)
+static void Storage32Impl_AddBlockDepot(StorageImpl* This, ULONG blockIndex, ULONG depotIndex)
 {
   BYTE blockBuffer[MAX_BIG_BLOCK_SIZE];
+  ULONG rangeLockIndex = RANGELOCK_FIRST / This->bigBlockSize - 1;
+  ULONG blocksPerDepot = This->bigBlockSize / sizeof(ULONG);
+  ULONG rangeLockDepot = rangeLockIndex / blocksPerDepot;
 
   /*
    * Initialize blocks as free
    */
   memset(blockBuffer, BLOCK_UNUSED, This->bigBlockSize);
+
+  /* Reserve the range lock sector */
+  if (depotIndex == rangeLockDepot)
+  {
+    ((ULONG*)blockBuffer)[rangeLockIndex % blocksPerDepot] = BLOCK_END_OF_CHAIN;
+  }
+
   StorageImpl_WriteBigBlock(This, blockIndex, blockBuffer);
 }
 
@@ -3188,7 +3573,7 @@ static ULONG Storage32Impl_GetExtDepotBlock(StorageImpl* This, ULONG depotIndex)
   {
     extBlockIndex = This->extBigBlockDepotLocations[extBlockCount];
 
-    StorageImpl_ReadBigBlock(This, extBlockIndex, depotBuffer);
+    StorageImpl_ReadBigBlock(This, extBlockIndex, depotBuffer, NULL);
 
     num_blocks = This->bigBlockSize / 4;
 
@@ -3350,7 +3735,7 @@ static HRESULT StorageImpl_GetNextBlockInChain(
   ULONG depotBlockCount  = offsetInDepot / This->bigBlockSize;
   ULONG depotBlockOffset = offsetInDepot % This->bigBlockSize;
   BYTE depotBuffer[MAX_BIG_BLOCK_SIZE];
-  BOOL success;
+  ULONG read;
   ULONG depotBlockIndexPos;
   int index, num_blocks;
 
@@ -3382,9 +3767,9 @@ static HRESULT StorageImpl_GetNextBlockInChain(
       depotBlockIndexPos = Storage32Impl_GetExtDepotBlock(This, depotBlockCount);
     }
 
-    success = StorageImpl_ReadBigBlock(This, depotBlockIndexPos, depotBuffer);
+    StorageImpl_ReadBigBlock(This, depotBlockIndexPos, depotBuffer, &read);
 
-    if (!success)
+    if (!read)
       return STG_E_READFAULT;
 
     num_blocks = This->bigBlockSize / 4;
@@ -3453,6 +3838,13 @@ static void StorageImpl_SetNextBlockInChain(
 
   assert(depotBlockCount < This->bigBlockDepotCount);
   assert(blockIndex != nextBlock);
+
+  if (blockIndex == (RANGELOCK_FIRST / This->bigBlockSize) - 1)
+    /* This should never happen (storage file format spec forbids it), but
+     * older versions of Wine may have generated broken files. We don't want to
+     * assert and potentially lose data, but we do want to know if this ever
+     * happens in a newly-created file. */
+    ERR("Using range lock page\n");
 
   if (depotBlockCount < COUNT_BBDEPOTINHEADER)
   {
@@ -3539,6 +3931,11 @@ static HRESULT StorageImpl_LoadFileHeader(
       headerBigBlock,
       OFFSET_ROOTSTARTBLOCK,
       &This->rootStartBlock);
+
+    StorageUtl_ReadDWord(
+      headerBigBlock,
+      OFFSET_TRANSACTIONSIG,
+      &This->transactionSig);
 
     StorageUtl_ReadDWord(
       headerBigBlock,
@@ -3700,6 +4097,11 @@ static void StorageImpl_SaveFileHeader(
 
   StorageUtl_WriteDWord(
     headerBigBlock,
+    OFFSET_TRANSACTIONSIG,
+    This->transactionSig);
+
+  StorageUtl_WriteDWord(
+    headerBigBlock,
     OFFSET_SMALLBLOCKLIMIT,
     This->smallBlockLimit);
 
@@ -3751,8 +4153,7 @@ HRESULT StorageImpl_ReadRawDirEntry(StorageImpl *This, ULONG index, BYTE *buffer
   HRESULT hr;
   ULONG bytesRead;
 
-  offset.u.HighPart = 0;
-  offset.u.LowPart  = index * RAW_DIRENTRY_SIZE;
+  offset.QuadPart  = (ULONGLONG)index * RAW_DIRENTRY_SIZE;
 
   hr = BlockChainStream_ReadAt(
                     This->rootBlockChain,
@@ -3777,20 +4178,16 @@ HRESULT StorageImpl_ReadRawDirEntry(StorageImpl *This, ULONG index, BYTE *buffer
 HRESULT StorageImpl_WriteRawDirEntry(StorageImpl *This, ULONG index, const BYTE *buffer)
 {
   ULARGE_INTEGER offset;
-  HRESULT hr;
   ULONG bytesRead;
 
-  offset.u.HighPart = 0;
-  offset.u.LowPart  = index * RAW_DIRENTRY_SIZE;
+  offset.QuadPart  = (ULONGLONG)index * RAW_DIRENTRY_SIZE;
 
-  hr = BlockChainStream_WriteAt(
+  return BlockChainStream_WriteAt(
                     This->rootBlockChain,
                     offset,
                     RAW_DIRENTRY_SIZE,
                     buffer,
                     &bytesRead);
-
-  return hr;
 }
 
 /******************************************************************************
@@ -3865,6 +4262,11 @@ void UpdateRawDirEntry(BYTE *buffer, const DirEntry *newData)
     buffer,
       OFFSET_PS_SIZE,
       newData->size.u.LowPart);
+
+  StorageUtl_WriteDWord(
+    buffer,
+      OFFSET_PS_SIZE_HIGH,
+      newData->size.u.HighPart);
 }
 
 /******************************************************************************
@@ -3948,7 +4350,10 @@ HRESULT StorageImpl_ReadDirEntry(
       OFFSET_PS_SIZE,
       &buffer->size.u.LowPart);
 
-    buffer->size.u.HighPart = 0;
+    StorageUtl_ReadDWord(
+      currentEntry,
+      OFFSET_PS_SIZE_HIGH,
+      &buffer->size.u.HighPart);
   }
 
   return readRes;
@@ -3962,35 +4367,36 @@ HRESULT StorageImpl_WriteDirEntry(
   DirRef                index,
   const DirEntry*       buffer)
 {
-  BYTE           currentEntry[RAW_DIRENTRY_SIZE];
-  HRESULT        writeRes;
+  BYTE currentEntry[RAW_DIRENTRY_SIZE];
 
   UpdateRawDirEntry(currentEntry, buffer);
 
-  writeRes = StorageImpl_WriteRawDirEntry(This, index, currentEntry);
-  return writeRes;
+  return StorageImpl_WriteRawDirEntry(This, index, currentEntry);
 }
 
-static BOOL StorageImpl_ReadBigBlock(
+static HRESULT StorageImpl_ReadBigBlock(
   StorageImpl* This,
   ULONG          blockIndex,
-  void*          buffer)
+  void*          buffer,
+  ULONG*         out_read)
 {
   ULARGE_INTEGER ulOffset;
   DWORD  read=0;
+  HRESULT hr;
 
-  ulOffset.u.HighPart = 0;
-  ulOffset.u.LowPart = StorageImpl_GetBigBlockOffset(This, blockIndex);
+  ulOffset.QuadPart = StorageImpl_GetBigBlockOffset(This, blockIndex);
 
-  StorageImpl_ReadAt(This, ulOffset, buffer, This->bigBlockSize, &read);
+  hr = StorageImpl_ReadAt(This, ulOffset, buffer, This->bigBlockSize, &read);
 
-  if (read && read < This->bigBlockSize)
+  if (SUCCEEDED(hr) &&  read < This->bigBlockSize)
   {
     /* File ends during this block; fill the rest with 0's. */
     memset((LPBYTE)buffer+read, 0, This->bigBlockSize-read);
   }
 
-  return (read != 0);
+  if (out_read) *out_read = read;
+
+  return hr;
 }
 
 static BOOL StorageImpl_ReadDWordFromBigBlock(
@@ -4003,9 +4409,8 @@ static BOOL StorageImpl_ReadDWordFromBigBlock(
   DWORD  read;
   DWORD  tmp;
 
-  ulOffset.u.HighPart = 0;
-  ulOffset.u.LowPart = StorageImpl_GetBigBlockOffset(This, blockIndex);
-  ulOffset.u.LowPart += offset;
+  ulOffset.QuadPart = StorageImpl_GetBigBlockOffset(This, blockIndex);
+  ulOffset.QuadPart += offset;
 
   StorageImpl_ReadAt(This, ulOffset, &tmp, sizeof(DWORD), &read);
   *value = lendian32toh(tmp);
@@ -4020,8 +4425,7 @@ static BOOL StorageImpl_WriteBigBlock(
   ULARGE_INTEGER ulOffset;
   DWORD  wrote;
 
-  ulOffset.u.HighPart = 0;
-  ulOffset.u.LowPart = StorageImpl_GetBigBlockOffset(This, blockIndex);
+  ulOffset.QuadPart = StorageImpl_GetBigBlockOffset(This, blockIndex);
 
   StorageImpl_WriteAt(This, ulOffset, buffer, This->bigBlockSize, &wrote);
   return (wrote == This->bigBlockSize);
@@ -4036,9 +4440,8 @@ static BOOL StorageImpl_WriteDWordToBigBlock(
   ULARGE_INTEGER ulOffset;
   DWORD  wrote;
 
-  ulOffset.u.HighPart = 0;
-  ulOffset.u.LowPart = StorageImpl_GetBigBlockOffset(This, blockIndex);
-  ulOffset.u.LowPart += offset;
+  ulOffset.QuadPart = StorageImpl_GetBigBlockOffset(This, blockIndex);
+  ulOffset.QuadPart += offset;
 
   value = htole32(value);
   StorageImpl_WriteAt(This, ulOffset, &value, sizeof(DWORD), &wrote);
@@ -4293,6 +4696,106 @@ static HRESULT StorageBaseImpl_CopyStream(
   return hr;
 }
 
+static HRESULT StorageBaseImpl_DupStorageTree(
+  StorageBaseImpl *dst, DirRef *dst_entry,
+  StorageBaseImpl *src, DirRef src_entry)
+{
+  HRESULT hr;
+  DirEntry data;
+  BOOL has_stream=FALSE;
+
+  if (src_entry == DIRENTRY_NULL)
+  {
+    *dst_entry = DIRENTRY_NULL;
+    return S_OK;
+  }
+
+  hr = StorageBaseImpl_ReadDirEntry(src, src_entry, &data);
+  if (SUCCEEDED(hr))
+  {
+    has_stream = (data.stgType == STGTY_STREAM && data.size.QuadPart != 0);
+    data.startingBlock = BLOCK_END_OF_CHAIN;
+    data.size.QuadPart = 0;
+
+    hr = StorageBaseImpl_DupStorageTree(dst, &data.leftChild, src, data.leftChild);
+  }
+
+  if (SUCCEEDED(hr))
+    hr = StorageBaseImpl_DupStorageTree(dst, &data.rightChild, src, data.rightChild);
+
+  if (SUCCEEDED(hr))
+    hr = StorageBaseImpl_DupStorageTree(dst, &data.dirRootEntry, src, data.dirRootEntry);
+
+  if (SUCCEEDED(hr))
+    hr = StorageBaseImpl_CreateDirEntry(dst, &data, dst_entry);
+
+  if (SUCCEEDED(hr) && has_stream)
+    hr = StorageBaseImpl_CopyStream(dst, *dst_entry, src, src_entry);
+
+  return hr;
+}
+
+static HRESULT StorageBaseImpl_CopyStorageTree(
+  StorageBaseImpl *dst, DirRef dst_entry,
+  StorageBaseImpl *src, DirRef src_entry)
+{
+  HRESULT hr;
+  DirEntry src_data, dst_data;
+  DirRef new_root_entry;
+
+  hr = StorageBaseImpl_ReadDirEntry(src, src_entry, &src_data);
+
+  if (SUCCEEDED(hr))
+  {
+    hr = StorageBaseImpl_DupStorageTree(dst, &new_root_entry, src, src_data.dirRootEntry);
+  }
+
+  if (SUCCEEDED(hr))
+  {
+    hr = StorageBaseImpl_ReadDirEntry(dst, dst_entry, &dst_data);
+    dst_data.clsid = src_data.clsid;
+    dst_data.ctime = src_data.ctime;
+    dst_data.mtime = src_data.mtime;
+    dst_data.dirRootEntry = new_root_entry;
+  }
+
+  if (SUCCEEDED(hr))
+    hr = StorageBaseImpl_WriteDirEntry(dst, dst_entry, &dst_data);
+
+  return hr;
+}
+
+static HRESULT StorageBaseImpl_DeleteStorageTree(StorageBaseImpl *This, DirRef entry, BOOL include_siblings)
+{
+  HRESULT hr;
+  DirEntry data;
+  ULARGE_INTEGER zero;
+
+  if (entry == DIRENTRY_NULL)
+    return S_OK;
+
+  zero.QuadPart = 0;
+
+  hr = StorageBaseImpl_ReadDirEntry(This, entry, &data);
+
+  if (SUCCEEDED(hr) && include_siblings)
+    hr = StorageBaseImpl_DeleteStorageTree(This, data.leftChild, TRUE);
+
+  if (SUCCEEDED(hr) && include_siblings)
+    hr = StorageBaseImpl_DeleteStorageTree(This, data.rightChild, TRUE);
+
+  if (SUCCEEDED(hr))
+    hr = StorageBaseImpl_DeleteStorageTree(This, data.dirRootEntry, TRUE);
+
+  if (SUCCEEDED(hr) && data.stgType == STGTY_STREAM)
+    hr = StorageBaseImpl_StreamSetSize(This, entry, zero);
+
+  if (SUCCEEDED(hr))
+    hr = StorageBaseImpl_DestroyDirEntry(This, entry);
+
+  return hr;
+}
+
 static DirRef TransactedSnapshotImpl_FindFreeEntry(TransactedSnapshotImpl *This)
 {
   DirRef result=This->firstFreeEntry;
@@ -4315,7 +4818,7 @@ static DirRef TransactedSnapshotImpl_FindFreeEntry(TransactedSnapshotImpl *This)
     This->entries_size = new_size;
   }
 
-  This->entries[result].inuse = 1;
+  This->entries[result].inuse = TRUE;
 
   This->firstFreeEntry = result+1;
 
@@ -4336,7 +4839,7 @@ static DirRef TransactedSnapshotImpl_CreateStubEntry(
 
     entry->newTransactedParentEntry = entry->transactedParentEntry = parentEntryRef;
 
-    entry->read = 0;
+    entry->read = FALSE;
   }
 
   return stubEntryRef;
@@ -4381,7 +4884,7 @@ static HRESULT TransactedSnapshotImpl_EnsureReadEntry(
     if (SUCCEEDED(hr))
     {
       memcpy(&This->entries[entry].data, &data, sizeof(DirEntry));
-      This->entries[entry].read = 1;
+      This->entries[entry].read = TRUE;
     }
   }
 
@@ -4420,7 +4923,7 @@ static HRESULT TransactedSnapshotImpl_MakeStreamDirty(
     }
 
     if (SUCCEEDED(hr))
-      This->entries[entry].stream_dirty = 1;
+      This->entries[entry].stream_dirty = TRUE;
 
     if (This->entries[entry].transactedParentEntry != DIRENTRY_NULL)
     {
@@ -4430,7 +4933,7 @@ static HRESULT TransactedSnapshotImpl_MakeStreamDirty(
       delete_ref = TransactedSnapshotImpl_CreateStubEntry(This, This->entries[entry].transactedParentEntry);
 
       if (delete_ref != DIRENTRY_NULL)
-        This->entries[delete_ref].deleted = 1;
+        This->entries[delete_ref].deleted = TRUE;
 
       This->entries[entry].transactedParentEntry = This->entries[entry].newTransactedParentEntry = DIRENTRY_NULL;
     }
@@ -4641,12 +5144,13 @@ static HRESULT WINAPI TransactedSnapshotImpl_Commit(
   IStorage*            iface,
   DWORD                  grfCommitFlags)  /* [in] */
 {
-  TransactedSnapshotImpl* This = (TransactedSnapshotImpl*) iface;
+  TransactedSnapshotImpl* This = (TransactedSnapshotImpl*)impl_from_IStorage(iface);
   TransactedDirEntry *root_entry;
   DirRef i, dir_root_ref;
   DirEntry data;
   ULARGE_INTEGER zero;
   HRESULT hr;
+  ULONG transactionSig;
 
   zero.QuadPart = 0;
 
@@ -4656,89 +5160,116 @@ static HRESULT WINAPI TransactedSnapshotImpl_Commit(
   if ( STGM_ACCESS_MODE( This->base.openFlags ) == STGM_READ )
     return STG_E_ACCESSDENIED;
 
-  /* To prevent data loss, we create the new structure in the file before we
-   * delete the old one, so that in case of errors the old data is intact. We
-   * shouldn't do this if STGC_OVERWRITE is set, but that flag should only be
-   * needed in the rare situation where we have just enough free disk space to
-   * overwrite the existing data. */
-
-  root_entry = &This->entries[This->base.storageDirEntry];
-
-  if (!root_entry->read)
-    return S_OK;
-
-  hr = TransactedSnapshotImpl_CopyTree(This);
-  if (FAILED(hr)) return hr;
-
-  if (root_entry->data.dirRootEntry == DIRENTRY_NULL)
-    dir_root_ref = DIRENTRY_NULL;
-  else
-    dir_root_ref = This->entries[root_entry->data.dirRootEntry].newTransactedParentEntry;
-
-  hr = StorageBaseImpl_Flush(This->transactedParent);
-
-  /* Update the storage to use the new data in one step. */
-  if (SUCCEEDED(hr))
-    hr = StorageBaseImpl_ReadDirEntry(This->transactedParent,
-      root_entry->transactedParentEntry, &data);
-
+  hr = StorageBaseImpl_LockTransaction(This->transactedParent, TRUE);
+  if (hr == E_NOTIMPL) hr = S_OK;
   if (SUCCEEDED(hr))
   {
-    data.dirRootEntry = dir_root_ref;
-    data.clsid = root_entry->data.clsid;
-    data.ctime = root_entry->data.ctime;
-    data.mtime = root_entry->data.mtime;
-
-    hr = StorageBaseImpl_WriteDirEntry(This->transactedParent,
-      root_entry->transactedParentEntry, &data);
-  }
-
-  /* Try to flush after updating the root storage, but if the flush fails, keep
-   * going, on the theory that it'll either succeed later or the subsequent
-   * writes will fail. */
-  StorageBaseImpl_Flush(This->transactedParent);
-
-  if (SUCCEEDED(hr))
-  {
-    /* Destroy the old now-orphaned data. */
-    for (i=0; i<This->entries_size; i++)
+    hr = StorageBaseImpl_GetTransactionSig(This->transactedParent, &transactionSig, TRUE);
+    if (SUCCEEDED(hr))
     {
-      TransactedDirEntry *entry = &This->entries[i];
-      if (entry->inuse)
+      if (transactionSig != This->lastTransactionSig)
       {
-        if (entry->deleted)
+        ERR("file was externally modified\n");
+        hr = STG_E_NOTCURRENT;
+      }
+
+      if (SUCCEEDED(hr))
+      {
+        This->lastTransactionSig = transactionSig+1;
+        hr = StorageBaseImpl_SetTransactionSig(This->transactedParent, This->lastTransactionSig);
+      }
+    }
+    else if (hr == E_NOTIMPL)
+      hr = S_OK;
+
+    if (FAILED(hr)) goto end;
+
+    /* To prevent data loss, we create the new structure in the file before we
+     * delete the old one, so that in case of errors the old data is intact. We
+     * shouldn't do this if STGC_OVERWRITE is set, but that flag should only be
+     * needed in the rare situation where we have just enough free disk space to
+     * overwrite the existing data. */
+
+    root_entry = &This->entries[This->base.storageDirEntry];
+
+    if (!root_entry->read)
+      goto end;
+
+    hr = TransactedSnapshotImpl_CopyTree(This);
+    if (FAILED(hr)) goto end;
+
+    if (root_entry->data.dirRootEntry == DIRENTRY_NULL)
+      dir_root_ref = DIRENTRY_NULL;
+    else
+      dir_root_ref = This->entries[root_entry->data.dirRootEntry].newTransactedParentEntry;
+
+    hr = StorageBaseImpl_Flush(This->transactedParent);
+
+    /* Update the storage to use the new data in one step. */
+    if (SUCCEEDED(hr))
+      hr = StorageBaseImpl_ReadDirEntry(This->transactedParent,
+        root_entry->transactedParentEntry, &data);
+
+    if (SUCCEEDED(hr))
+    {
+      data.dirRootEntry = dir_root_ref;
+      data.clsid = root_entry->data.clsid;
+      data.ctime = root_entry->data.ctime;
+      data.mtime = root_entry->data.mtime;
+
+      hr = StorageBaseImpl_WriteDirEntry(This->transactedParent,
+        root_entry->transactedParentEntry, &data);
+    }
+
+    /* Try to flush after updating the root storage, but if the flush fails, keep
+     * going, on the theory that it'll either succeed later or the subsequent
+     * writes will fail. */
+    StorageBaseImpl_Flush(This->transactedParent);
+
+    if (SUCCEEDED(hr))
+    {
+      /* Destroy the old now-orphaned data. */
+      for (i=0; i<This->entries_size; i++)
+      {
+        TransactedDirEntry *entry = &This->entries[i];
+        if (entry->inuse)
         {
-          StorageBaseImpl_StreamSetSize(This->transactedParent,
-            entry->transactedParentEntry, zero);
-          StorageBaseImpl_DestroyDirEntry(This->transactedParent,
-            entry->transactedParentEntry);
-          memset(entry, 0, sizeof(TransactedDirEntry));
-          This->firstFreeEntry = min(i, This->firstFreeEntry);
-        }
-        else if (entry->read && entry->transactedParentEntry != entry->newTransactedParentEntry)
-        {
-          if (entry->transactedParentEntry != DIRENTRY_NULL)
+          if (entry->deleted)
+          {
+            StorageBaseImpl_StreamSetSize(This->transactedParent,
+              entry->transactedParentEntry, zero);
             StorageBaseImpl_DestroyDirEntry(This->transactedParent,
               entry->transactedParentEntry);
-          if (entry->stream_dirty)
-          {
-            StorageBaseImpl_StreamSetSize(This->scratch, entry->stream_entry, zero);
-            StorageBaseImpl_DestroyDirEntry(This->scratch, entry->stream_entry);
-            entry->stream_dirty = 0;
+            memset(entry, 0, sizeof(TransactedDirEntry));
+            This->firstFreeEntry = min(i, This->firstFreeEntry);
           }
-          entry->dirty = 0;
-          entry->transactedParentEntry = entry->newTransactedParentEntry;
+          else if (entry->read && entry->transactedParentEntry != entry->newTransactedParentEntry)
+          {
+            if (entry->transactedParentEntry != DIRENTRY_NULL)
+              StorageBaseImpl_DestroyDirEntry(This->transactedParent,
+                entry->transactedParentEntry);
+            if (entry->stream_dirty)
+            {
+              StorageBaseImpl_StreamSetSize(This->scratch, entry->stream_entry, zero);
+              StorageBaseImpl_DestroyDirEntry(This->scratch, entry->stream_entry);
+              entry->stream_dirty = FALSE;
+            }
+            entry->dirty = FALSE;
+            entry->transactedParentEntry = entry->newTransactedParentEntry;
+          }
         }
       }
     }
-  }
-  else
-  {
-    TransactedSnapshotImpl_DestroyTemporaryCopy(This, DIRENTRY_NULL);
-  }
+    else
+    {
+      TransactedSnapshotImpl_DestroyTemporaryCopy(This, DIRENTRY_NULL);
+    }
 
-  if (SUCCEEDED(hr))
-    hr = StorageBaseImpl_Flush(This->transactedParent);
+    if (SUCCEEDED(hr))
+      hr = StorageBaseImpl_Flush(This->transactedParent);
+end:
+    StorageBaseImpl_UnlockTransaction(This->transactedParent, TRUE);
+  }
 
   return hr;
 }
@@ -4746,7 +5277,7 @@ static HRESULT WINAPI TransactedSnapshotImpl_Commit(
 static HRESULT WINAPI TransactedSnapshotImpl_Revert(
   IStorage*            iface)
 {
-  TransactedSnapshotImpl* This = (TransactedSnapshotImpl*) iface;
+  TransactedSnapshotImpl* This = (TransactedSnapshotImpl*)impl_from_IStorage(iface);
   ULARGE_INTEGER zero;
   ULONG i;
 
@@ -4782,7 +5313,7 @@ static void TransactedSnapshotImpl_Invalidate(StorageBaseImpl* This)
   {
     TRACE("Storage invalidated (stg=%p)\n", This);
 
-    This->reverted = 1;
+    This->reverted = TRUE;
 
     StorageBaseImpl_DeleteAll(This);
   }
@@ -4792,14 +5323,10 @@ static void TransactedSnapshotImpl_Destroy( StorageBaseImpl *iface)
 {
   TransactedSnapshotImpl* This = (TransactedSnapshotImpl*) iface;
 
-  TransactedSnapshotImpl_Revert((IStorage*)iface);
-
-  IStorage_Release((IStorage*)This->transactedParent);
-
-  IStorage_Release((IStorage*)This->scratch);
-
+  IStorage_Revert(&This->base.IStorage_iface);
+  IStorage_Release(&This->transactedParent->IStorage_iface);
+  IStorage_Release(&This->scratch->IStorage_iface);
   HeapFree(GetProcessHeap(), 0, This->entries);
-
   HeapFree(GetProcessHeap(), 0, This);
 }
 
@@ -4830,8 +5357,8 @@ static HRESULT TransactedSnapshotImpl_CreateDirEntry(StorageBaseImpl *base,
   new_entry = &This->entries[new_ref];
 
   new_entry->newTransactedParentEntry = new_entry->transactedParentEntry = DIRENTRY_NULL;
-  new_entry->read = 1;
-  new_entry->dirty = 1;
+  new_entry->read = TRUE;
+  new_entry->dirty = TRUE;
   memcpy(&new_entry->data, newData, sizeof(DirEntry));
 
   *index = new_ref;
@@ -4856,7 +5383,7 @@ static HRESULT TransactedSnapshotImpl_WriteDirEntry(StorageBaseImpl *base,
 
   if (index != This->base.storageDirEntry)
   {
-    This->entries[index].dirty = 1;
+    This->entries[index].dirty = TRUE;
 
     if (data->size.QuadPart == 0 &&
         This->entries[index].transactedParentEntry != DIRENTRY_NULL)
@@ -4867,7 +5394,7 @@ static HRESULT TransactedSnapshotImpl_WriteDirEntry(StorageBaseImpl *base,
       delete_ref = TransactedSnapshotImpl_CreateStubEntry(This, This->entries[index].transactedParentEntry);
 
       if (delete_ref != DIRENTRY_NULL)
-        This->entries[delete_ref].deleted = 1;
+        This->entries[delete_ref].deleted = TRUE;
 
       This->entries[index].transactedParentEntry = This->entries[index].newTransactedParentEntry = DIRENTRY_NULL;
     }
@@ -4908,7 +5435,7 @@ static HRESULT TransactedSnapshotImpl_DestroyDirEntry(StorageBaseImpl *base,
   }
   else
   {
-    This->entries[index].deleted = 1;
+    This->entries[index].deleted = TRUE;
   }
 
   return S_OK;
@@ -4984,7 +5511,7 @@ static HRESULT TransactedSnapshotImpl_StreamSetSize(StorageBaseImpl *base,
         This->entries[index].stream_entry, zero);
       StorageBaseImpl_DestroyDirEntry(This->scratch,
         This->entries[index].stream_entry);
-      This->entries[index].stream_dirty = 0;
+      This->entries[index].stream_dirty = FALSE;
     }
     else if (This->entries[index].transactedParentEntry != DIRENTRY_NULL)
     {
@@ -4992,7 +5519,7 @@ static HRESULT TransactedSnapshotImpl_StreamSetSize(StorageBaseImpl *base,
       delete_ref = TransactedSnapshotImpl_CreateStubEntry(This, This->entries[index].transactedParentEntry);
 
       if (delete_ref != DIRENTRY_NULL)
-        This->entries[delete_ref].deleted = 1;
+        This->entries[delete_ref].deleted = TRUE;
 
       This->entries[index].transactedParentEntry = This->entries[index].newTransactedParentEntry = DIRENTRY_NULL;
     }
@@ -5037,6 +5564,28 @@ static HRESULT TransactedSnapshotImpl_StreamLink(StorageBaseImpl *base,
   return S_OK;
 }
 
+static HRESULT TransactedSnapshotImpl_GetTransactionSig(StorageBaseImpl *base,
+  ULONG* result, BOOL refresh)
+{
+  return E_NOTIMPL;
+}
+
+static HRESULT TransactedSnapshotImpl_SetTransactionSig(StorageBaseImpl *base,
+  ULONG value)
+{
+  return E_NOTIMPL;
+}
+
+static HRESULT TransactedSnapshotImpl_LockTransaction(StorageBaseImpl *base, BOOL write)
+{
+  return E_NOTIMPL;
+}
+
+static HRESULT TransactedSnapshotImpl_UnlockTransaction(StorageBaseImpl *base, BOOL write)
+{
+  return E_NOTIMPL;
+}
+
 static const IStorageVtbl TransactedSnapshotImpl_Vtbl =
 {
     StorageBaseImpl_QueryInterface,
@@ -5072,7 +5621,11 @@ static const StorageBaseImplVtbl TransactedSnapshotImpl_BaseVtbl =
   TransactedSnapshotImpl_StreamReadAt,
   TransactedSnapshotImpl_StreamWriteAt,
   TransactedSnapshotImpl_StreamSetSize,
-  TransactedSnapshotImpl_StreamLink
+  TransactedSnapshotImpl_StreamLink,
+  TransactedSnapshotImpl_GetTransactionSig,
+  TransactedSnapshotImpl_SetTransactionSig,
+  TransactedSnapshotImpl_LockTransaction,
+  TransactedSnapshotImpl_UnlockTransaction
 };
 
 static HRESULT TransactedSnapshotImpl_Construct(StorageBaseImpl *parentStorage,
@@ -5083,11 +5636,12 @@ static HRESULT TransactedSnapshotImpl_Construct(StorageBaseImpl *parentStorage,
   *result = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(TransactedSnapshotImpl));
   if (*result)
   {
-    (*result)->base.lpVtbl = &TransactedSnapshotImpl_Vtbl;
+    IStorage *scratch;
+
+    (*result)->base.IStorage_iface.lpVtbl = &TransactedSnapshotImpl_Vtbl;
 
     /* This is OK because the property set storage functions use the IStorage functions. */
-    (*result)->base.pssVtbl = parentStorage->pssVtbl;
-
+    (*result)->base.IPropertySetStorage_iface.lpVtbl = parentStorage->IPropertySetStorage_iface.lpVtbl;
     (*result)->base.baseVtbl = &TransactedSnapshotImpl_BaseVtbl;
 
     list_init(&(*result)->base.strmHead);
@@ -5098,18 +5652,20 @@ static HRESULT TransactedSnapshotImpl_Construct(StorageBaseImpl *parentStorage,
 
     (*result)->base.openFlags = parentStorage->openFlags;
 
+    /* This cannot fail, except with E_NOTIMPL in which case we don't care */
+    StorageBaseImpl_GetTransactionSig(parentStorage, &(*result)->lastTransactionSig, FALSE);
+
     /* Create a new temporary storage to act as the scratch file. */
     hr = StgCreateDocfile(NULL, STGM_READWRITE|STGM_SHARE_EXCLUSIVE|STGM_CREATE|STGM_DELETEONRELEASE,
-        0, (IStorage**)&(*result)->scratch);
+        0, &scratch);
+    (*result)->scratch = impl_from_IStorage(scratch);
 
     if (SUCCEEDED(hr))
     {
         ULONG num_entries = 20;
 
         (*result)->entries = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(TransactedDirEntry) * num_entries);
-
         (*result)->entries_size = num_entries;
-
         (*result)->firstFreeEntry = 0;
 
         if ((*result)->entries)
@@ -5117,19 +5673,356 @@ static HRESULT TransactedSnapshotImpl_Construct(StorageBaseImpl *parentStorage,
             /* parentStorage already has 1 reference, which we take over here. */
             (*result)->transactedParent = parentStorage;
 
-            parentStorage->transactedChild = (StorageBaseImpl*)*result;
+            parentStorage->transactedChild = &(*result)->base;
 
             (*result)->base.storageDirEntry = TransactedSnapshotImpl_CreateStubEntry(*result, parentStorage->storageDirEntry);
         }
         else
         {
-            IStorage_Release((IStorage*)(*result)->scratch);
+            IStorage_Release(scratch);
 
             hr = E_OUTOFMEMORY;
         }
     }
 
-    if (FAILED(hr)) HeapFree(GetProcessHeap(), 0, (*result));
+    if (FAILED(hr)) HeapFree(GetProcessHeap(), 0, *result);
+
+    return hr;
+  }
+  else
+    return E_OUTOFMEMORY;
+}
+
+static void TransactedSharedImpl_Invalidate(StorageBaseImpl* This)
+{
+  if (!This->reverted)
+  {
+    TRACE("Storage invalidated (stg=%p)\n", This);
+
+    This->reverted = TRUE;
+
+    StorageBaseImpl_DeleteAll(This);
+  }
+}
+
+static void TransactedSharedImpl_Destroy( StorageBaseImpl *iface)
+{
+  TransactedSharedImpl* This = (TransactedSharedImpl*) iface;
+
+  TransactedSharedImpl_Invalidate(&This->base);
+  IStorage_Release(&This->transactedParent->IStorage_iface);
+  IStorage_Release(&This->scratch->base.IStorage_iface);
+  HeapFree(GetProcessHeap(), 0, This);
+}
+
+static HRESULT TransactedSharedImpl_Flush(StorageBaseImpl* iface)
+{
+  /* We only need to flush when committing. */
+  return S_OK;
+}
+
+static HRESULT TransactedSharedImpl_GetFilename(StorageBaseImpl* iface, LPWSTR *result)
+{
+  TransactedSharedImpl* This = (TransactedSharedImpl*) iface;
+
+  return StorageBaseImpl_GetFilename(This->transactedParent, result);
+}
+
+static HRESULT TransactedSharedImpl_CreateDirEntry(StorageBaseImpl *base,
+  const DirEntry *newData, DirRef *index)
+{
+  TransactedSharedImpl* This = (TransactedSharedImpl*) base;
+
+  return StorageBaseImpl_CreateDirEntry(&This->scratch->base,
+    newData, index);
+}
+
+static HRESULT TransactedSharedImpl_WriteDirEntry(StorageBaseImpl *base,
+  DirRef index, const DirEntry *data)
+{
+  TransactedSharedImpl* This = (TransactedSharedImpl*) base;
+
+  return StorageBaseImpl_WriteDirEntry(&This->scratch->base,
+    index, data);
+}
+
+static HRESULT TransactedSharedImpl_ReadDirEntry(StorageBaseImpl *base,
+  DirRef index, DirEntry *data)
+{
+  TransactedSharedImpl* This = (TransactedSharedImpl*) base;
+
+  return StorageBaseImpl_ReadDirEntry(&This->scratch->base,
+    index, data);
+}
+
+static HRESULT TransactedSharedImpl_DestroyDirEntry(StorageBaseImpl *base,
+  DirRef index)
+{
+  TransactedSharedImpl* This = (TransactedSharedImpl*) base;
+
+  return StorageBaseImpl_DestroyDirEntry(&This->scratch->base,
+    index);
+}
+
+static HRESULT TransactedSharedImpl_StreamReadAt(StorageBaseImpl *base,
+  DirRef index, ULARGE_INTEGER offset, ULONG size, void *buffer, ULONG *bytesRead)
+{
+  TransactedSharedImpl* This = (TransactedSharedImpl*) base;
+
+  return StorageBaseImpl_StreamReadAt(&This->scratch->base,
+    index, offset, size, buffer, bytesRead);
+}
+
+static HRESULT TransactedSharedImpl_StreamWriteAt(StorageBaseImpl *base,
+  DirRef index, ULARGE_INTEGER offset, ULONG size, const void *buffer, ULONG *bytesWritten)
+{
+  TransactedSharedImpl* This = (TransactedSharedImpl*) base;
+
+  return StorageBaseImpl_StreamWriteAt(&This->scratch->base,
+    index, offset, size, buffer, bytesWritten);
+}
+
+static HRESULT TransactedSharedImpl_StreamSetSize(StorageBaseImpl *base,
+  DirRef index, ULARGE_INTEGER newsize)
+{
+  TransactedSharedImpl* This = (TransactedSharedImpl*) base;
+
+  return StorageBaseImpl_StreamSetSize(&This->scratch->base,
+    index, newsize);
+}
+
+static HRESULT TransactedSharedImpl_StreamLink(StorageBaseImpl *base,
+  DirRef dst, DirRef src)
+{
+  TransactedSharedImpl* This = (TransactedSharedImpl*) base;
+
+  return StorageBaseImpl_StreamLink(&This->scratch->base,
+    dst, src);
+}
+
+static HRESULT TransactedSharedImpl_GetTransactionSig(StorageBaseImpl *base,
+  ULONG* result, BOOL refresh)
+{
+  return E_NOTIMPL;
+}
+
+static HRESULT TransactedSharedImpl_SetTransactionSig(StorageBaseImpl *base,
+  ULONG value)
+{
+  return E_NOTIMPL;
+}
+
+static HRESULT TransactedSharedImpl_LockTransaction(StorageBaseImpl *base, BOOL write)
+{
+  return E_NOTIMPL;
+}
+
+static HRESULT TransactedSharedImpl_UnlockTransaction(StorageBaseImpl *base, BOOL write)
+{
+  return E_NOTIMPL;
+}
+
+static HRESULT WINAPI TransactedSharedImpl_Commit(
+  IStorage*            iface,
+  DWORD                  grfCommitFlags)  /* [in] */
+{
+  TransactedSharedImpl* This = (TransactedSharedImpl*)impl_from_IStorage(iface);
+  DirRef new_storage_ref, prev_storage_ref;
+  DirEntry src_data, dst_data;
+  HRESULT hr;
+  ULONG transactionSig;
+
+  TRACE("(%p,%x)\n", iface, grfCommitFlags);
+
+  /* Cannot commit a read-only transacted storage */
+  if ( STGM_ACCESS_MODE( This->base.openFlags ) == STGM_READ )
+    return STG_E_ACCESSDENIED;
+
+  hr = StorageBaseImpl_LockTransaction(This->transactedParent, TRUE);
+  if (hr == E_NOTIMPL) hr = S_OK;
+  if (SUCCEEDED(hr))
+  {
+    hr = StorageBaseImpl_GetTransactionSig(This->transactedParent, &transactionSig, TRUE);
+    if (SUCCEEDED(hr))
+    {
+      if ((grfCommitFlags & STGC_ONLYIFCURRENT) && transactionSig != This->lastTransactionSig)
+        hr = STG_E_NOTCURRENT;
+
+      if (SUCCEEDED(hr))
+        hr = StorageBaseImpl_SetTransactionSig(This->transactedParent, transactionSig+1);
+    }
+    else if (hr == E_NOTIMPL)
+      hr = S_OK;
+
+    if (SUCCEEDED(hr))
+      hr = StorageBaseImpl_ReadDirEntry(&This->scratch->base, This->scratch->base.storageDirEntry, &src_data);
+
+    /* FIXME: If we're current, we should be able to copy only the changes in scratch. */
+    if (SUCCEEDED(hr))
+      hr = StorageBaseImpl_DupStorageTree(This->transactedParent, &new_storage_ref, &This->scratch->base, src_data.dirRootEntry);
+
+    if (SUCCEEDED(hr))
+      hr = StorageBaseImpl_Flush(This->transactedParent);
+
+    if (SUCCEEDED(hr))
+      hr = StorageBaseImpl_ReadDirEntry(This->transactedParent, This->transactedParent->storageDirEntry, &dst_data);
+
+    if (SUCCEEDED(hr))
+    {
+      prev_storage_ref = dst_data.dirRootEntry;
+      dst_data.dirRootEntry = new_storage_ref;
+      dst_data.clsid = src_data.clsid;
+      dst_data.ctime = src_data.ctime;
+      dst_data.mtime = src_data.mtime;
+      hr = StorageBaseImpl_WriteDirEntry(This->transactedParent, This->transactedParent->storageDirEntry, &dst_data);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+      /* Try to flush after updating the root storage, but if the flush fails, keep
+       * going, on the theory that it'll either succeed later or the subsequent
+       * writes will fail. */
+      StorageBaseImpl_Flush(This->transactedParent);
+
+      hr = StorageBaseImpl_DeleteStorageTree(This->transactedParent, prev_storage_ref, TRUE);
+    }
+
+    if (SUCCEEDED(hr))
+      hr = StorageBaseImpl_Flush(This->transactedParent);
+
+    StorageBaseImpl_UnlockTransaction(This->transactedParent, TRUE);
+
+    if (SUCCEEDED(hr))
+      hr = IStorage_Commit(&This->scratch->base.IStorage_iface, STGC_DEFAULT);
+
+    if (SUCCEEDED(hr))
+    {
+      This->lastTransactionSig = transactionSig+1;
+    }
+  }
+
+  return hr;
+}
+
+static HRESULT WINAPI TransactedSharedImpl_Revert(
+  IStorage*            iface)
+{
+  TransactedSharedImpl* This = (TransactedSharedImpl*)impl_from_IStorage(iface);
+
+  TRACE("(%p)\n", iface);
+
+  /* Destroy the open objects. */
+  StorageBaseImpl_DeleteAll(&This->base);
+
+  return IStorage_Revert(&This->scratch->base.IStorage_iface);
+}
+
+static const IStorageVtbl TransactedSharedImpl_Vtbl =
+{
+    StorageBaseImpl_QueryInterface,
+    StorageBaseImpl_AddRef,
+    StorageBaseImpl_Release,
+    StorageBaseImpl_CreateStream,
+    StorageBaseImpl_OpenStream,
+    StorageBaseImpl_CreateStorage,
+    StorageBaseImpl_OpenStorage,
+    StorageBaseImpl_CopyTo,
+    StorageBaseImpl_MoveElementTo,
+    TransactedSharedImpl_Commit,
+    TransactedSharedImpl_Revert,
+    StorageBaseImpl_EnumElements,
+    StorageBaseImpl_DestroyElement,
+    StorageBaseImpl_RenameElement,
+    StorageBaseImpl_SetElementTimes,
+    StorageBaseImpl_SetClass,
+    StorageBaseImpl_SetStateBits,
+    StorageBaseImpl_Stat
+};
+
+static const StorageBaseImplVtbl TransactedSharedImpl_BaseVtbl =
+{
+  TransactedSharedImpl_Destroy,
+  TransactedSharedImpl_Invalidate,
+  TransactedSharedImpl_Flush,
+  TransactedSharedImpl_GetFilename,
+  TransactedSharedImpl_CreateDirEntry,
+  TransactedSharedImpl_WriteDirEntry,
+  TransactedSharedImpl_ReadDirEntry,
+  TransactedSharedImpl_DestroyDirEntry,
+  TransactedSharedImpl_StreamReadAt,
+  TransactedSharedImpl_StreamWriteAt,
+  TransactedSharedImpl_StreamSetSize,
+  TransactedSharedImpl_StreamLink,
+  TransactedSharedImpl_GetTransactionSig,
+  TransactedSharedImpl_SetTransactionSig,
+  TransactedSharedImpl_LockTransaction,
+  TransactedSharedImpl_UnlockTransaction
+};
+
+static HRESULT TransactedSharedImpl_Construct(StorageBaseImpl *parentStorage,
+  TransactedSharedImpl** result)
+{
+  HRESULT hr;
+
+  *result = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(TransactedSharedImpl));
+  if (*result)
+  {
+    IStorage *scratch;
+
+    (*result)->base.IStorage_iface.lpVtbl = &TransactedSharedImpl_Vtbl;
+
+    /* This is OK because the property set storage functions use the IStorage functions. */
+    (*result)->base.IPropertySetStorage_iface.lpVtbl = parentStorage->IPropertySetStorage_iface.lpVtbl;
+    (*result)->base.baseVtbl = &TransactedSharedImpl_BaseVtbl;
+
+    list_init(&(*result)->base.strmHead);
+
+    list_init(&(*result)->base.storageHead);
+
+    (*result)->base.ref = 1;
+
+    (*result)->base.openFlags = parentStorage->openFlags;
+
+    hr = StorageBaseImpl_LockTransaction(parentStorage, FALSE);
+
+    if (SUCCEEDED(hr))
+    {
+      STGOPTIONS stgo;
+
+      /* This cannot fail, except with E_NOTIMPL in which case we don't care */
+      StorageBaseImpl_GetTransactionSig(parentStorage, &(*result)->lastTransactionSig, FALSE);
+
+      stgo.usVersion = 1;
+      stgo.reserved = 0;
+      stgo.ulSectorSize = 4096;
+      stgo.pwcsTemplateFile = NULL;
+
+      /* Create a new temporary storage to act as the scratch file. */
+      hr = StgCreateStorageEx(NULL, STGM_READWRITE|STGM_SHARE_EXCLUSIVE|STGM_CREATE|STGM_DELETEONRELEASE|STGM_TRANSACTED,
+          STGFMT_DOCFILE, 0, &stgo, NULL, &IID_IStorage, (void**)&scratch);
+      (*result)->scratch = (TransactedSnapshotImpl*)impl_from_IStorage(scratch);
+
+      if (SUCCEEDED(hr))
+      {
+        hr = StorageBaseImpl_CopyStorageTree(&(*result)->scratch->base, (*result)->scratch->base.storageDirEntry,
+          parentStorage, parentStorage->storageDirEntry);
+
+        if (SUCCEEDED(hr))
+        {
+          hr = IStorage_Commit(scratch, STGC_DEFAULT);
+
+          (*result)->base.storageDirEntry = (*result)->scratch->base.storageDirEntry;
+          (*result)->transactedParent = parentStorage;
+        }
+
+        if (FAILED(hr))
+          IStorage_Release(scratch);
+      }
+
+      StorageBaseImpl_UnlockTransaction(parentStorage, FALSE);
+    }
+
+    if (FAILED(hr)) HeapFree(GetProcessHeap(), 0, *result);
 
     return hr;
   }
@@ -5138,13 +6031,22 @@ static HRESULT TransactedSnapshotImpl_Construct(StorageBaseImpl *parentStorage,
 }
 
 static HRESULT Storage_ConstructTransacted(StorageBaseImpl *parentStorage,
-  StorageBaseImpl** result)
+  BOOL toplevel, StorageBaseImpl** result)
 {
-  static int fixme=0;
+  static int fixme_flags=STGM_NOSCRATCH|STGM_NOSNAPSHOT;
 
-  if (parentStorage->openFlags & (STGM_NOSCRATCH|STGM_NOSNAPSHOT) && !fixme++)
+  if (parentStorage->openFlags & fixme_flags)
   {
+    fixme_flags &= ~parentStorage->openFlags;
     FIXME("Unimplemented flags %x\n", parentStorage->openFlags);
+  }
+
+  if (toplevel && !(parentStorage->openFlags & STGM_NOSNAPSHOT) &&
+      STGM_SHARE_MODE(parentStorage->openFlags) != STGM_SHARE_DENY_WRITE &&
+      STGM_SHARE_MODE(parentStorage->openFlags) != STGM_SHARE_EXCLUSIVE)
+  {
+    /* Need to create a temp file for the snapshot */
+    return TransactedSharedImpl_Construct(parentStorage, (TransactedSharedImpl**)result);
   }
 
   return TransactedSnapshotImpl_Construct(parentStorage,
@@ -5170,9 +6072,9 @@ static HRESULT Storage_Construct(
 
   if (openFlags & STGM_TRANSACTED)
   {
-    hr = Storage_ConstructTransacted(&newStorage->base, &newTransactedStorage);
+    hr = Storage_ConstructTransacted(&newStorage->base, TRUE, &newTransactedStorage);
     if (FAILED(hr))
-      IStorage_Release((IStorage*)newStorage);
+      IStorage_Release(&newStorage->base.IStorage_iface);
     else
       *result = newTransactedStorage;
   }
@@ -5191,7 +6093,7 @@ static void StorageInternalImpl_Invalidate( StorageBaseImpl *base )
   {
     TRACE("Storage invalidated (stg=%p)\n", This);
 
-    This->base.reverted = 1;
+    This->base.reverted = TRUE;
 
     This->parentStorage = NULL;
 
@@ -5296,6 +6198,28 @@ static HRESULT StorageInternalImpl_StreamLink(StorageBaseImpl *base,
     dst, src);
 }
 
+static HRESULT StorageInternalImpl_GetTransactionSig(StorageBaseImpl *base,
+  ULONG* result, BOOL refresh)
+{
+  return E_NOTIMPL;
+}
+
+static HRESULT StorageInternalImpl_SetTransactionSig(StorageBaseImpl *base,
+  ULONG value)
+{
+  return E_NOTIMPL;
+}
+
+static HRESULT StorageInternalImpl_LockTransaction(StorageBaseImpl *base, BOOL write)
+{
+  return E_NOTIMPL;
+}
+
+static HRESULT StorageInternalImpl_UnlockTransaction(StorageBaseImpl *base, BOOL write)
+{
+  return E_NOTIMPL;
+}
+
 /******************************************************************************
 **
 ** Storage32InternalImpl_Commit
@@ -5305,9 +6229,9 @@ static HRESULT WINAPI StorageInternalImpl_Commit(
   IStorage*            iface,
   DWORD                  grfCommitFlags)  /* [in] */
 {
-  StorageBaseImpl* base = (StorageBaseImpl*) iface;
+  StorageBaseImpl* This = impl_from_IStorage(iface);
   TRACE("(%p,%x)\n", iface, grfCommitFlags);
-  return StorageBaseImpl_Flush(base);
+  return StorageBaseImpl_Flush(This);
 }
 
 /******************************************************************************
@@ -5324,7 +6248,7 @@ static HRESULT WINAPI StorageInternalImpl_Revert(
 
 static void IEnumSTATSTGImpl_Destroy(IEnumSTATSTGImpl* This)
 {
-  IStorage_Release((IStorage*)This->parentStorage);
+  IStorage_Release(&This->parentStorage->IStorage_iface);
   HeapFree(GetProcessHeap(), 0, This);
 }
 
@@ -5536,35 +6460,29 @@ static HRESULT WINAPI IEnumSTATSTGImpl_Clone(
   IEnumSTATSTG**    ppenum)
 {
   IEnumSTATSTGImpl* const This = impl_from_IEnumSTATSTG(iface);
-
   IEnumSTATSTGImpl* newClone;
 
   if (This->parentStorage->reverted)
     return STG_E_REVERTED;
 
-  /*
-   * Perform a sanity check on the parameters.
-   */
   if (ppenum==0)
     return E_INVALIDARG;
 
   newClone = IEnumSTATSTGImpl_Construct(This->parentStorage,
                This->storageDirEntry);
-
+  if (!newClone)
+  {
+    *ppenum = NULL;
+    return E_OUTOFMEMORY;
+  }
 
   /*
    * The new clone enumeration must point to the same current node as
-   * the ole one.
+   * the old one.
    */
   memcpy(newClone->name, This->name, sizeof(newClone->name));
 
   *ppenum = &newClone->IEnumSTATSTG_iface;
-
-  /*
-   * Don't forget to nail down a reference to the clone before
-   * returning it.
-   */
-  IEnumSTATSTGImpl_AddRef(*ppenum);
 
   return S_OK;
 }
@@ -5595,27 +6513,20 @@ static IEnumSTATSTGImpl* IEnumSTATSTGImpl_Construct(
 
   newEnumeration = HeapAlloc(GetProcessHeap(), 0, sizeof(IEnumSTATSTGImpl));
 
-  if (newEnumeration!=0)
+  if (newEnumeration)
   {
-    /*
-     * Set-up the virtual function table and reference count.
-     */
     newEnumeration->IEnumSTATSTG_iface.lpVtbl = &IEnumSTATSTGImpl_Vtbl;
-    newEnumeration->ref       = 0;
+    newEnumeration->ref = 1;
+    newEnumeration->name[0] = 0;
 
     /*
      * We want to nail-down the reference to the storage in case the
      * enumeration out-lives the storage in the client application.
      */
     newEnumeration->parentStorage = parentStorage;
-    IStorage_AddRef((IStorage*)newEnumeration->parentStorage);
+    IStorage_AddRef(&newEnumeration->parentStorage->IStorage_iface);
 
-    newEnumeration->storageDirEntry   = storageDirEntry;
-
-    /*
-     * Make sure the current node of the iterator is the first one.
-     */
-    IEnumSTATSTGImpl_Reset(&newEnumeration->IEnumSTATSTG_iface);
+    newEnumeration->storageDirEntry = storageDirEntry;
   }
 
   return newEnumeration;
@@ -5659,7 +6570,11 @@ static const StorageBaseImplVtbl StorageInternalImpl_BaseVtbl =
   StorageInternalImpl_StreamReadAt,
   StorageInternalImpl_StreamWriteAt,
   StorageInternalImpl_StreamSetSize,
-  StorageInternalImpl_StreamLink
+  StorageInternalImpl_StreamLink,
+  StorageInternalImpl_GetTransactionSig,
+  StorageInternalImpl_SetTransactionSig,
+  StorageInternalImpl_LockTransaction,
+  StorageInternalImpl_UnlockTransaction
 };
 
 /******************************************************************************
@@ -5684,12 +6599,12 @@ static StorageInternalImpl* StorageInternalImpl_Construct(
     /*
      * Initialize the virtual function table.
      */
-    newStorage->base.lpVtbl = &Storage32InternalImpl_Vtbl;
-    newStorage->base.pssVtbl = &IPropertySetStorage_Vtbl;
+    newStorage->base.IStorage_iface.lpVtbl = &Storage32InternalImpl_Vtbl;
+    newStorage->base.IPropertySetStorage_iface.lpVtbl = &IPropertySetStorage_Vtbl;
     newStorage->base.baseVtbl = &StorageInternalImpl_BaseVtbl;
     newStorage->base.openFlags = (openFlags & ~STGM_CREATE);
 
-    newStorage->base.reverted = 0;
+    newStorage->base.reverted = FALSE;
 
     newStorage->base.ref = 1;
 
@@ -5700,7 +6615,7 @@ static StorageInternalImpl* StorageInternalImpl_Construct(
      */
     newStorage->base.storageDirEntry = storageDirEntry;
 
-    newStorage->base.create = 0;
+    newStorage->base.create = FALSE;
 
     return newStorage;
   }
@@ -5987,10 +6902,10 @@ HRESULT BlockChainStream_GetBlockAtOffset(BlockChainStream *This,
     {
       if (!StorageImpl_WriteBigBlock(This->parentStorage, result->sector, result->data))
         return STG_E_WRITEFAULT;
-      result->dirty = 0;
+      result->dirty = FALSE;
     }
 
-    result->read = 0;
+    result->read = FALSE;
     result->index = index;
     result->sector = *sector;
   }
@@ -6015,9 +6930,9 @@ BlockChainStream* BlockChainStream_Construct(
   newStream->indexCacheLen           = 0;
   newStream->indexCacheSize          = 0;
   newStream->cachedBlocks[0].index = 0xffffffff;
-  newStream->cachedBlocks[0].dirty = 0;
+  newStream->cachedBlocks[0].dirty = FALSE;
   newStream->cachedBlocks[1].index = 0xffffffff;
-  newStream->cachedBlocks[1].dirty = 0;
+  newStream->cachedBlocks[1].dirty = FALSE;
   newStream->blockToEvict          = 0;
 
   if (FAILED(BlockChainStream_UpdateIndexCache(newStream)))
@@ -6039,7 +6954,7 @@ HRESULT BlockChainStream_Flush(BlockChainStream* This)
     if (This->cachedBlocks[i].dirty)
     {
       if (StorageImpl_WriteBigBlock(This->parentStorage, This->cachedBlocks[i].sector, This->cachedBlocks[i].data))
-        This->cachedBlocks[i].dirty = 0;
+        This->cachedBlocks[i].dirty = FALSE;
       else
         return STG_E_WRITEFAULT;
     }
@@ -6080,10 +6995,8 @@ static ULONG BlockChainStream_GetHeadOfChain(BlockChainStream* This)
                       This->ownerDirEntry,
                       &chainEntry);
 
-    if (SUCCEEDED(hr))
-    {
+    if (SUCCEEDED(hr) && chainEntry.startingBlock < BLOCK_FIRST_SPECIAL)
       return chainEntry.startingBlock;
-    }
   }
 
   return BLOCK_END_OF_CHAIN;
@@ -6113,8 +7026,8 @@ HRESULT BlockChainStream_ReadAt(BlockChainStream* This,
   void*          buffer,
   ULONG*         bytesRead)
 {
-  ULONG blockNoInSequence = offset.u.LowPart / This->parentStorage->bigBlockSize;
-  ULONG offsetInBlock     = offset.u.LowPart % This->parentStorage->bigBlockSize;
+  ULONG blockNoInSequence = offset.QuadPart / This->parentStorage->bigBlockSize;
+  ULONG offsetInBlock     = offset.QuadPart % This->parentStorage->bigBlockSize;
   ULONG bytesToReadInBuffer;
   ULONG blockIndex;
   BYTE* bufferWalker;
@@ -6161,8 +7074,7 @@ HRESULT BlockChainStream_ReadAt(BlockChainStream* This,
     if (!cachedBlock)
     {
       /* Not in cache, and we're going to read past the end of the block. */
-      ulOffset.u.HighPart = 0;
-      ulOffset.u.LowPart = StorageImpl_GetBigBlockOffset(This->parentStorage, blockIndex) +
+      ulOffset.QuadPart = StorageImpl_GetBigBlockOffset(This->parentStorage, blockIndex) +
                                offsetInBlock;
 
       StorageImpl_ReadAt(This->parentStorage,
@@ -6175,10 +7087,11 @@ HRESULT BlockChainStream_ReadAt(BlockChainStream* This,
     {
       if (!cachedBlock->read)
       {
-        if (!StorageImpl_ReadBigBlock(This->parentStorage, cachedBlock->sector, cachedBlock->data))
+        ULONG read;
+        if (FAILED(StorageImpl_ReadBigBlock(This->parentStorage, cachedBlock->sector, cachedBlock->data, &read)) && !read)
           return STG_E_READFAULT;
 
-        cachedBlock->read = 1;
+        cachedBlock->read = TRUE;
       }
 
       memcpy(bufferWalker, cachedBlock->data+offsetInBlock, bytesToReadInBuffer);
@@ -6210,8 +7123,8 @@ HRESULT BlockChainStream_WriteAt(BlockChainStream* This,
   const void*       buffer,
   ULONG*            bytesWritten)
 {
-  ULONG blockNoInSequence = offset.u.LowPart / This->parentStorage->bigBlockSize;
-  ULONG offsetInBlock     = offset.u.LowPart % This->parentStorage->bigBlockSize;
+  ULONG blockNoInSequence = offset.QuadPart / This->parentStorage->bigBlockSize;
+  ULONG offsetInBlock     = offset.QuadPart % This->parentStorage->bigBlockSize;
   ULONG bytesToWrite;
   ULONG blockIndex;
   const BYTE* bufferWalker;
@@ -6245,8 +7158,7 @@ HRESULT BlockChainStream_WriteAt(BlockChainStream* This,
     if (!cachedBlock)
     {
       /* Not in cache, and we're going to write past the end of the block. */
-      ulOffset.u.HighPart = 0;
-      ulOffset.u.LowPart = StorageImpl_GetBigBlockOffset(This->parentStorage, blockIndex) +
+      ulOffset.QuadPart = StorageImpl_GetBigBlockOffset(This->parentStorage, blockIndex) +
                                offsetInBlock;
 
       StorageImpl_WriteAt(This->parentStorage,
@@ -6259,14 +7171,15 @@ HRESULT BlockChainStream_WriteAt(BlockChainStream* This,
     {
       if (!cachedBlock->read && bytesToWrite != This->parentStorage->bigBlockSize)
       {
-        if (!StorageImpl_ReadBigBlock(This->parentStorage, cachedBlock->sector, cachedBlock->data))
+        ULONG read;
+        if (FAILED(StorageImpl_ReadBigBlock(This->parentStorage, cachedBlock->sector, cachedBlock->data, &read)) && !read)
           return STG_E_READFAULT;
       }
 
       memcpy(cachedBlock->data+offsetInBlock, bufferWalker, bytesToWrite);
       bytesWrittenAt = bytesToWrite;
-      cachedBlock->read = 1;
-      cachedBlock->dirty = 1;
+      cachedBlock->read = TRUE;
+      cachedBlock->dirty = TRUE;
     }
 
     blockNoInSequence++;
@@ -6297,9 +7210,9 @@ static BOOL BlockChainStream_Shrink(BlockChainStream* This,
   /*
    * Figure out how many blocks are needed to contain the new size
    */
-  numBlocks = newSize.u.LowPart / This->parentStorage->bigBlockSize;
+  numBlocks = newSize.QuadPart / This->parentStorage->bigBlockSize;
 
-  if ((newSize.u.LowPart % This->parentStorage->bigBlockSize) != 0)
+  if ((newSize.QuadPart % This->parentStorage->bigBlockSize) != 0)
     numBlocks++;
 
   if (numBlocks)
@@ -6368,7 +7281,7 @@ static BOOL BlockChainStream_Shrink(BlockChainStream* This,
     if (This->cachedBlocks[i].index >= numBlocks)
     {
       This->cachedBlocks[i].index = 0xffffffff;
-      This->cachedBlocks[i].dirty = 0;
+      This->cachedBlocks[i].dirty = FALSE;
     }
   }
 
@@ -6428,9 +7341,9 @@ static BOOL BlockChainStream_Enlarge(BlockChainStream* This,
   /*
    * Figure out how many blocks are needed to contain this stream
    */
-  newNumBlocks = newSize.u.LowPart / This->parentStorage->bigBlockSize;
+  newNumBlocks = newSize.QuadPart / This->parentStorage->bigBlockSize;
 
-  if ((newSize.u.LowPart % This->parentStorage->bigBlockSize) != 0)
+  if ((newSize.QuadPart % This->parentStorage->bigBlockSize) != 0)
     newNumBlocks++;
 
   /*
@@ -6505,10 +7418,10 @@ BOOL BlockChainStream_SetSize(
 {
   ULARGE_INTEGER size = BlockChainStream_GetSize(This);
 
-  if (newSize.u.LowPart == size.u.LowPart)
+  if (newSize.QuadPart == size.QuadPart)
     return TRUE;
 
-  if (newSize.u.LowPart < size.u.LowPart)
+  if (newSize.QuadPart < size.QuadPart)
   {
     BlockChainStream_Shrink(This, newSize);
   }
@@ -6550,10 +7463,8 @@ static ULARGE_INTEGER BlockChainStream_GetSize(BlockChainStream* This)
      * size of them
      */
     ULARGE_INTEGER result;
-    result.u.HighPart = 0;
-
-    result.u.LowPart  =
-      BlockChainStream_GetCount(This) *
+    result.QuadPart =
+      (ULONGLONG)BlockChainStream_GetCount(This) *
       This->parentStorage->bigBlockSize;
 
     return result;
@@ -6607,11 +7518,8 @@ static ULONG SmallBlockChainStream_GetHeadOfChain(
                       This->ownerDirEntry,
                       &chainEntry);
 
-    if (SUCCEEDED(hr))
-    {
+    if (SUCCEEDED(hr) && chainEntry.startingBlock < BLOCK_FIRST_SPECIAL)
       return chainEntry.startingBlock;
-    }
-
   }
 
   return BLOCK_END_OF_CHAIN;
@@ -6638,8 +7546,7 @@ static HRESULT SmallBlockChainStream_GetNextBlockInChain(
 
   *nextBlockInChain = BLOCK_END_OF_CHAIN;
 
-  offsetOfBlockInDepot.u.HighPart = 0;
-  offsetOfBlockInDepot.u.LowPart  = blockIndex * sizeof(ULONG);
+  offsetOfBlockInDepot.QuadPart  = (ULONGLONG)blockIndex * sizeof(ULONG);
 
   /*
    * Read those bytes in the buffer from the small block file.
@@ -6680,8 +7587,7 @@ static void SmallBlockChainStream_SetNextBlockInChain(
   DWORD  buffer;
   ULONG  bytesWritten;
 
-  offsetOfBlockInDepot.u.HighPart = 0;
-  offsetOfBlockInDepot.u.LowPart  = blockIndex * sizeof(ULONG);
+  offsetOfBlockInDepot.QuadPart  = (ULONGLONG)blockIndex * sizeof(ULONG);
 
   StorageUtl_WriteDWord((BYTE *)&buffer, 0, nextBlock);
 
@@ -6736,7 +7642,7 @@ static ULONG SmallBlockChainStream_GetNextFreeBlock(
    */
   while (nextBlockIndex != BLOCK_UNUSED)
   {
-    offsetOfBlockInDepot.u.LowPart = blockIndex * sizeof(ULONG);
+    offsetOfBlockInDepot.QuadPart = (ULONGLONG)blockIndex * sizeof(ULONG);
 
     res = BlockChainStream_ReadAt(
                 This->parentStorage->smallBlockDepotChain,
@@ -6764,14 +7670,14 @@ static ULONG SmallBlockChainStream_GetNextFreeBlock(
       ULARGE_INTEGER newSize, offset;
       ULONG bytesWritten;
 
-      newSize.QuadPart = (count + 1) * This->parentStorage->bigBlockSize;
+      newSize.QuadPart = (ULONGLONG)(count + 1) * This->parentStorage->bigBlockSize;
       BlockChainStream_Enlarge(This->parentStorage->smallBlockDepotChain, newSize);
 
       /*
        * Initialize all the small blocks to free
        */
       memset(smallBlockDepot, BLOCK_UNUSED, This->parentStorage->bigBlockSize);
-      offset.QuadPart = count * This->parentStorage->bigBlockSize;
+      offset.QuadPart = (ULONGLONG)count * This->parentStorage->bigBlockSize;
       BlockChainStream_WriteAt(This->parentStorage->smallBlockDepotChain,
         offset, This->parentStorage->bigBlockSize, smallBlockDepot, &bytesWritten);
 
@@ -6789,7 +7695,7 @@ static ULONG SmallBlockChainStream_GetNextFreeBlock(
    */
   blocksRequired = (blockIndex / smallBlocksPerBigBlock) + 1;
 
-  size_required.QuadPart = blocksRequired * This->parentStorage->bigBlockSize;
+  size_required.QuadPart = (ULONGLONG)blocksRequired * This->parentStorage->bigBlockSize;
 
   old_size = BlockChainStream_GetSize(This->parentStorage->smallBlockRootChain);
 
@@ -6883,11 +7789,10 @@ HRESULT SmallBlockChainStream_ReadAt(
     /*
      * Calculate the offset of the small block in the small block file.
      */
-    offsetInBigBlockFile.u.HighPart  = 0;
-    offsetInBigBlockFile.u.LowPart   =
-      blockIndex * This->parentStorage->smallBlockSize;
+    offsetInBigBlockFile.QuadPart   =
+      (ULONGLONG)blockIndex * This->parentStorage->smallBlockSize;
 
-    offsetInBigBlockFile.u.LowPart  += offsetInBlock;
+    offsetInBigBlockFile.QuadPart  += offsetInBlock;
 
     /*
      * Read those bytes in the buffer from the small block file.
@@ -6979,11 +7884,10 @@ HRESULT SmallBlockChainStream_WriteAt(
     /*
      * Calculate the offset of the small block in the small block file.
      */
-    offsetInBigBlockFile.u.HighPart  = 0;
-    offsetInBigBlockFile.u.LowPart   =
-      blockIndex * This->parentStorage->smallBlockSize;
+    offsetInBigBlockFile.QuadPart   =
+      (ULONGLONG)blockIndex * This->parentStorage->smallBlockSize;
 
-    offsetInBigBlockFile.u.LowPart  += offsetInBlock;
+    offsetInBigBlockFile.QuadPart  += offsetInBlock;
 
     /*
      * Write those bytes in the buffer to the small block file.
@@ -7000,9 +7904,9 @@ HRESULT SmallBlockChainStream_WriteAt(
     /*
      * Step to the next big block.
      */
-    if(FAILED(SmallBlockChainStream_GetNextBlockInChain(This, blockIndex,
-							&blockIndex)))
-      return FALSE;
+    res = SmallBlockChainStream_GetNextBlockInChain(This, blockIndex, &blockIndex);
+    if (FAILED(res))
+      return res;
     bufferWalker  += bytesWrittenToBigBlockFile;
     size          -= bytesWrittenToBigBlockFile;
     *bytesWritten += bytesWrittenToBigBlockFile;
@@ -7344,20 +8248,13 @@ static HRESULT create_storagefile(
   /*
    * Interpret the STGM value grfMode
    */
-  shareMode    = FILE_SHARE_READ | FILE_SHARE_WRITE;
+  shareMode    = GetShareModeFromSTGM(grfMode);
   accessMode   = GetAccessModeFromSTGM(grfMode);
 
   if (grfMode & STGM_DELETEONRELEASE)
     fileAttributes = FILE_FLAG_RANDOM_ACCESS | FILE_FLAG_DELETE_ON_CLOSE;
   else
     fileAttributes = FILE_ATTRIBUTE_NORMAL | FILE_FLAG_RANDOM_ACCESS;
-
-  if (STGM_SHARE_MODE(grfMode) && !(grfMode & STGM_SHARE_DENY_NONE))
-  {
-    static int fixme;
-    if (!fixme++)
-      FIXME("Storage share mode not implemented.\n");
-  }
 
   *ppstgOpen = 0;
 
@@ -7396,9 +8293,8 @@ static HRESULT create_storagefile(
     goto end;
   }
 
-  hr = IStorage_QueryInterface((IStorage*)newStorage, riid, ppstgOpen);
-
-  IStorage_Release((IStorage*)newStorage);
+  hr = IStorage_QueryInterface(&newStorage->IStorage_iface, riid, ppstgOpen);
+  IStorage_Release(&newStorage->IStorage_iface);
 
 end:
   TRACE("<-- %p  r = %08x\n", *ppstgOpen, hr);
@@ -7488,17 +8384,13 @@ HRESULT WINAPI StgCreateStorageEx(const WCHAR* pwcsName, DWORD grfMode, DWORD st
  *              StgCreatePropSetStg       [OLE32.@]
  */
 HRESULT WINAPI StgCreatePropSetStg(IStorage *pstg, DWORD reserved,
- IPropertySetStorage **ppPropSetStg)
+ IPropertySetStorage **propset)
 {
-    HRESULT hr;
-
-    TRACE("(%p, 0x%x, %p)\n", pstg, reserved, ppPropSetStg);
+    TRACE("(%p, 0x%x, %p)\n", pstg, reserved, propset);
     if (reserved)
-        hr = STG_E_INVALIDPARAMETER;
-    else
-        hr = StorageBaseImpl_QueryInterface(pstg, &IID_IPropertySetStorage,
-         (void**)ppPropSetStg);
-    return hr;
+        return STG_E_INVALIDPARAMETER;
+
+    return IStorage_QueryInterface(pstg, &IID_IPropertySetStorage, (void**)propset);
 }
 
 /******************************************************************************
@@ -7561,10 +8453,20 @@ HRESULT WINAPI StgOpenStorage(
   HANDLE         hFile = 0;
   DWORD          shareMode;
   DWORD          accessMode;
+  LPWSTR         temp_name = NULL;
 
   TRACE("(%s, %p, %x, %p, %d, %p)\n",
 	debugstr_w(pwcsName), pstgPriority, grfMode,
 	snbExclude, reserved, ppstgOpen);
+
+  if (pstgPriority)
+  {
+    /* FIXME: Copy ILockBytes instead? But currently for STGM_PRIORITY it'll be read-only. */
+    hr = StorageBaseImpl_GetFilename((StorageBaseImpl*)pstgPriority, &temp_name);
+    if (FAILED(hr)) goto end;
+    pwcsName = temp_name;
+    TRACE("using filename %s\n", debugstr_w(temp_name));
+  }
 
   if (pwcsName == 0)
   {
@@ -7594,19 +8496,21 @@ HRESULT WINAPI StgOpenStorage(
       return STG_E_INVALIDFLAG;
     grfMode &= ~0xf0; /* remove the existing sharing mode */
     grfMode |= STGM_SHARE_DENY_NONE;
-
-    /* STGM_PRIORITY stops other IStorage objects on the same file from
-     * committing until the STGM_PRIORITY IStorage is closed. it also
-     * stops non-transacted mode StgOpenStorage calls with write access from
-     * succeeding. obviously, both of these cannot be achieved through just
-     * file share flags */
-    FIXME("STGM_PRIORITY mode not implemented correctly\n");
   }
 
   /*
    * Validate the sharing mode
    */
-  if (!(grfMode & (STGM_TRANSACTED|STGM_PRIORITY)))
+  if (grfMode & STGM_DIRECT_SWMR)
+  {
+    if ((STGM_SHARE_MODE(grfMode) != STGM_SHARE_DENY_WRITE) &&
+        (STGM_SHARE_MODE(grfMode) != STGM_SHARE_DENY_NONE))
+    {
+      hr = STG_E_INVALIDFLAG;
+      goto end;
+    }
+  }
+  else if (!(grfMode & (STGM_TRANSACTED|STGM_PRIORITY)))
     switch(STGM_SHARE_MODE(grfMode))
     {
       case STGM_SHARE_EXCLUSIVE:
@@ -7624,10 +8528,10 @@ HRESULT WINAPI StgOpenStorage(
     goto end;
   }
 
-  /* shared reading requires transacted mode */
+  /* shared reading requires transacted or single writer mode */
   if( STGM_SHARE_MODE(grfMode) == STGM_SHARE_DENY_WRITE &&
       STGM_ACCESS_MODE(grfMode) == STGM_READWRITE &&
-     !(grfMode&STGM_TRANSACTED) )
+     !(grfMode & STGM_TRANSACTED) && !(grfMode & STGM_DIRECT_SWMR))
   {
     hr = STG_E_INVALIDFLAG;
     goto end;
@@ -7715,12 +8619,11 @@ HRESULT WINAPI StgOpenStorage(
     goto end;
   }
 
-  /*
-   * Get an "out" pointer for the caller.
-   */
-  *ppstgOpen = (IStorage*)newStorage;
+  *ppstgOpen = &newStorage->IStorage_iface;
 
 end:
+  CoTaskMemFree(temp_name);
+  if (pstgPriority) IStorage_Release(pstgPriority);
   TRACE("<-- %08x, IStorage %p\n", hr, ppstgOpen ? *ppstgOpen : NULL);
   return hr;
 }
@@ -7758,10 +8661,7 @@ HRESULT WINAPI StgCreateDocfileOnILockBytes(
     return hr;
   }
 
-  /*
-   * Get an "out" pointer for the caller.
-   */
-  *ppstgOpen = (IStorage*)newStorage;
+  *ppstgOpen = &newStorage->IStorage_iface;
 
   return hr;
 }
@@ -7806,10 +8706,7 @@ HRESULT WINAPI StgOpenStorageOnILockBytes(
     return hr;
   }
 
-  /*
-   * Get an "out" pointer for the caller.
-   */
-  *ppstgOpen = (IStorage*)newStorage;
+  *ppstgOpen = &newStorage->IStorage_iface;
 
   return hr;
 }
@@ -7846,15 +8743,16 @@ HRESULT WINAPI StgSetTimes(OLECHAR const *str, FILETIME const *pctime,
  */
 HRESULT WINAPI StgIsStorageILockBytes(ILockBytes *plkbyt)
 {
-  BYTE sig[8];
+  BYTE sig[sizeof(STORAGE_magic)];
   ULARGE_INTEGER offset;
+  ULONG read = 0;
 
   offset.u.HighPart = 0;
   offset.u.LowPart  = 0;
 
-  ILockBytes_ReadAt(plkbyt, offset, sig, sizeof(sig), NULL);
+  ILockBytes_ReadAt(plkbyt, offset, sig, sizeof(sig), &read);
 
-  if (memcmp(sig, STORAGE_magic, sizeof(STORAGE_magic)) == 0)
+  if (read == sizeof(sig) && memcmp(sig, STORAGE_magic, sizeof(sig)) == 0)
     return S_OK;
 
   return S_FALSE;
@@ -7867,17 +8765,13 @@ HRESULT WINAPI StgIsStorageILockBytes(ILockBytes *plkbyt)
  */
 HRESULT WINAPI WriteClassStg(IStorage* pStg, REFCLSID rclsid)
 {
-  HRESULT hRes;
-
   if(!pStg)
     return E_INVALIDARG;
 
   if(!rclsid)
     return STG_E_INVALIDPOINTER;
 
-  hRes = IStorage_SetClass(pStg, rclsid);
-
-  return hRes;
+  return IStorage_SetClass(pStg, rclsid);
 }
 
 /***********************************************************************
@@ -8036,6 +8930,10 @@ static HRESULT validateSTGM(DWORD stgm)
   case STGM_SHARE_DENY_WRITE:
   case STGM_SHARE_EXCLUSIVE:
     break;
+  case 0:
+    if (!(stgm & STGM_TRANSACTED))
+      return E_FAIL;
+    break;
   default:
     return E_FAIL;
   }
@@ -8091,14 +8989,16 @@ static DWORD GetShareModeFromSTGM(DWORD stgm)
 {
   switch (STGM_SHARE_MODE(stgm))
   {
+  case 0:
+    assert(stgm & STGM_TRANSACTED);
+    /* fall-through */
   case STGM_SHARE_DENY_NONE:
     return FILE_SHARE_READ | FILE_SHARE_WRITE;
   case STGM_SHARE_DENY_READ:
     return FILE_SHARE_WRITE;
   case STGM_SHARE_DENY_WRITE:
-    return FILE_SHARE_READ;
   case STGM_SHARE_EXCLUSIVE:
-    return 0;
+    return FILE_SHARE_READ;
   }
   ERR("Invalid share mode!\n");
   assert(0);
@@ -8535,18 +9435,18 @@ static DWORD OLECONVERT_WriteOLE20ToBuffer(LPSTORAGE pStorage, BYTE **pData)
 }
 
 /*************************************************************************
- * OLECONVERT_CreateOleStream [Internal]
+ * STORAGE_CreateOleStream [Internal]
  *
  * Creates the "\001OLE" stream in the IStorage if necessary.
  *
  * PARAMS
- *     pStorage     [I] Dest storage to create the stream in
+ *     storage     [I] Dest storage to create the stream in
+ *     flags       [I] flags to be set for newly created stream
  *
  * RETURNS
- *     Nothing
+ *     HRESULT return value
  *
  * NOTES
- *     This function is used by OleConvertOLESTREAMToIStorage only.
  *
  *     This stream is still unknown, MS Word seems to have extra data
  *     but since the data is stored in the OLESTREAM there should be
@@ -8554,28 +9454,36 @@ static DWORD OLECONVERT_WriteOLE20ToBuffer(LPSTORAGE pStorage, BYTE **pData)
  *     deleted it will create it with this default data.
  *
  */
-void OLECONVERT_CreateOleStream(LPSTORAGE pStorage)
+HRESULT STORAGE_CreateOleStream(IStorage *storage, DWORD flags)
 {
-    HRESULT hRes;
-    IStream *pStream;
-    static const WCHAR wstrStreamName[] = {1,'O', 'l', 'e', 0};
-    BYTE pOleStreamHeader [] =
-    {
-        0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00
-    };
+    static const WCHAR stream_1oleW[] = {1,'O','l','e',0};
+    static const DWORD version_magic = 0x02000001;
+    IStream *stream;
+    HRESULT hr;
 
-    /* Create stream if not present */
-    hRes = IStorage_CreateStream(pStorage, wstrStreamName,
-        STGM_WRITE  | STGM_SHARE_EXCLUSIVE, 0, 0, &pStream );
-
-    if(hRes == S_OK)
+    hr = IStorage_CreateStream(storage, stream_1oleW, STGM_WRITE | STGM_SHARE_EXCLUSIVE, 0, 0, &stream);
+    if (hr == S_OK)
     {
-        /* Write default Data */
-        hRes = IStream_Write(pStream, pOleStreamHeader, sizeof(pOleStreamHeader), NULL);
-        IStream_Release(pStream);
+        struct empty_1ole_stream {
+            DWORD version_magic;
+            DWORD flags;
+            DWORD update_options;
+            DWORD reserved;
+            DWORD mon_stream_size;
+        };
+        struct empty_1ole_stream stream_data;
+
+        stream_data.version_magic = version_magic;
+        stream_data.flags = flags;
+        stream_data.update_options = 0;
+        stream_data.reserved = 0;
+        stream_data.mon_stream_size = 0;
+
+        hr = IStream_Write(stream, &stream_data, sizeof(stream_data), NULL);
+        IStream_Release(stream);
     }
+
+    return hr;
 }
 
 /* write a string to a stream, preceded by its length */
@@ -8633,7 +9541,10 @@ static HRESULT STREAM_ReadString( IStream *stm, LPWSTR *string )
     len = MultiByteToWideChar( CP_ACP, 0, str, count, NULL, 0 );
     wstr = CoTaskMemAlloc( (len + 1)*sizeof (WCHAR) );
     if( wstr )
+    {
          MultiByteToWideChar( CP_ACP, 0, str, count, wstr, len );
+         wstr[len] = 0;
+    }
     CoTaskMemFree( str );
 
     *string = wstr;
@@ -8692,32 +9603,37 @@ static HRESULT STORAGE_WriteCompObj( LPSTORAGE pstg, CLSID *clsid,
 HRESULT WINAPI WriteFmtUserTypeStg(
 	  LPSTORAGE pstg, CLIPFORMAT cf, LPOLESTR lpszUserType)
 {
+    STATSTG stat;
     HRESULT r;
     WCHAR szwClipName[0x40];
-    CLSID clsid = CLSID_NULL;
+    CLSID clsid;
     LPWSTR wstrProgID = NULL;
     DWORD n;
 
     TRACE("(%p,%x,%s)\n",pstg,cf,debugstr_w(lpszUserType));
 
     /* get the clipboard format name */
-    n = GetClipboardFormatNameW( cf, szwClipName, sizeof(szwClipName)/sizeof(szwClipName[0]) );
-    szwClipName[n]=0;
+    if( cf )
+    {
+        n = GetClipboardFormatNameW( cf, szwClipName,
+                sizeof(szwClipName)/sizeof(szwClipName[0]) );
+        szwClipName[n]=0;
+    }
 
     TRACE("Clipboard name is %s\n", debugstr_w(szwClipName));
 
-    /* FIXME: There's room to save a CLSID and its ProgID, but
-       the CLSID is not looked up in the registry and in all the
-       tests I wrote it was CLSID_NULL.  Where does it come from?
-    */
+    r = IStorage_Stat(pstg, &stat, STATFLAG_NONAME);
+    if(SUCCEEDED(r))
+        clsid = stat.clsid;
+    else
+        clsid = CLSID_NULL;
 
-    /* get the real program ID.  This may fail, but that's fine */
     ProgIDFromCLSID(&clsid, &wstrProgID);
 
     TRACE("progid is %s\n",debugstr_w(wstrProgID));
 
-    r = STORAGE_WriteCompObj( pstg, &clsid, 
-                              lpszUserType, szwClipName, wstrProgID );
+    r = STORAGE_WriteCompObj( pstg, &clsid, lpszUserType,
+            cf ? szwClipName : NULL, wstrProgID );
 
     CoTaskMemFree(wstrProgID);
 
@@ -8776,13 +9692,17 @@ HRESULT WINAPI ReadFmtUserTypeStg (LPSTORAGE pstg, CLIPFORMAT* pcf, LPOLESTR* lp
     /* ok, success... now we just need to store what we found */
     if( pcf )
         *pcf = RegisterClipboardFormatW( szOleTypeName );
-    CoTaskMemFree( szOleTypeName );
 
     if( lplpszUserType )
+    {
         *lplpszUserType = szCLSIDName;
-    CoTaskMemFree( szProgIDName );
+        szCLSIDName = NULL;
+    }
 
 end:
+    CoTaskMemFree( szCLSIDName );
+    CoTaskMemFree( szOleTypeName );
+    CoTaskMemFree( szProgIDName );
     IStream_Release( stm );
 
     return r;
@@ -8853,7 +9773,7 @@ HRESULT OLECONVERT_CreateCompObjStream(LPSTORAGE pStorage, LPCSTR strOleTypeName
             HKEY hKey;
             LONG hErr;
             /* Get the CLSID Default Name from the Registry */
-            hErr = RegOpenKeyA(HKEY_CLASSES_ROOT, IStorageCompObj.strProgIDName, &hKey);
+            hErr = open_classes_key(HKEY_CLASSES_ROOT, bufferW, MAXIMUM_ALLOWED, &hKey);
             if(hErr == ERROR_SUCCESS)
             {
                 char strTemp[OLESTREAM_MAX_STR_LEN];
@@ -9082,6 +10002,7 @@ static HRESULT OLECONVERT_GetOLE10ProgID(LPSTORAGE pStorage, char *strProgID, DW
         if(hRes == S_OK)
         {
             *dwSize = WideCharToMultiByte(CP_ACP, 0, wstrProgID, -1, strProgID, *dwSize, NULL, FALSE);
+            CoTaskMemFree(wstrProgID);
         }
 
     }
@@ -9306,7 +10227,7 @@ HRESULT WINAPI OleConvertOLESTREAMToIStorage (
         if(hRes == S_OK)
         {
             /*Create the Ole Stream if necessary */
-            OLECONVERT_CreateOleStream(pstg);
+            STORAGE_CreateOleStream(pstg, 0);
         }
     }
 
@@ -9392,12 +10313,94 @@ HRESULT WINAPI OleConvertIStorageToOLESTREAM (
     return hRes;
 }
 
+enum stream_1ole_flags {
+    OleStream_LinkedObject = 0x00000001,
+    OleStream_Convert      = 0x00000004
+};
+
 /***********************************************************************
  *		GetConvertStg (OLE32.@)
  */
-HRESULT WINAPI GetConvertStg(IStorage *stg) {
-    FIXME("unimplemented stub!\n");
-    return E_FAIL;
+HRESULT WINAPI GetConvertStg(IStorage *stg)
+{
+    static const WCHAR stream_1oleW[] = {1,'O','l','e',0};
+    static const DWORD version_magic = 0x02000001;
+    DWORD header[2];
+    IStream *stream;
+    HRESULT hr;
+
+    TRACE("%p\n", stg);
+
+    if (!stg) return E_INVALIDARG;
+
+    hr = IStorage_OpenStream(stg, stream_1oleW, NULL, STGM_READ | STGM_SHARE_EXCLUSIVE, 0, &stream);
+    if (FAILED(hr)) return hr;
+
+    hr = IStream_Read(stream, header, sizeof(header), NULL);
+    IStream_Release(stream);
+    if (FAILED(hr)) return hr;
+
+    if (header[0] != version_magic)
+    {
+        ERR("got wrong version magic for 1Ole stream, 0x%08x\n", header[0]);
+        return E_FAIL;
+    }
+
+    return header[1] & OleStream_Convert ? S_OK : S_FALSE;
+}
+
+/***********************************************************************
+ *		SetConvertStg (OLE32.@)
+ */
+HRESULT WINAPI SetConvertStg(IStorage *storage, BOOL convert)
+{
+    static const WCHAR stream_1oleW[] = {1,'O','l','e',0};
+    DWORD flags = convert ? OleStream_Convert : 0;
+    IStream *stream;
+    DWORD header[2];
+    HRESULT hr;
+
+    TRACE("(%p, %d)\n", storage, convert);
+
+    hr = IStorage_OpenStream(storage, stream_1oleW, NULL, STGM_READWRITE | STGM_SHARE_EXCLUSIVE, 0, &stream);
+    if (FAILED(hr))
+    {
+        if (hr != STG_E_FILENOTFOUND)
+            return hr;
+
+        return STORAGE_CreateOleStream(storage, flags);
+    }
+
+    hr = IStream_Read(stream, header, sizeof(header), NULL);
+    if (FAILED(hr))
+    {
+        IStream_Release(stream);
+        return hr;
+    }
+
+    /* update flag if differs */
+    if ((header[1] ^ flags) & OleStream_Convert)
+    {
+        LARGE_INTEGER pos = {{0}};
+
+        if (header[1] & OleStream_Convert)
+            flags = header[1] & ~OleStream_Convert;
+        else
+            flags = header[1] |  OleStream_Convert;
+
+        pos.QuadPart = sizeof(DWORD);
+        hr = IStream_Seek(stream, pos, STREAM_SEEK_SET, NULL);
+        if (FAILED(hr))
+        {
+            IStream_Release(stream);
+            return hr;
+        }
+
+        hr = IStream_Write(stream, &flags, sizeof(flags), NULL);
+    }
+
+    IStream_Release(stream);
+    return hr;
 }
 
 /******************************************************************************
@@ -9498,7 +10501,7 @@ HRESULT WINAPI ReadClassStm(IStream *pStm,CLSID *pclsid)
     /* clear the output args */
     *pclsid = CLSID_NULL;
 
-    res = IStream_Read(pStm,(void*)pclsid,sizeof(CLSID),&nbByte);
+    res = IStream_Read(pStm, pclsid, sizeof(CLSID), &nbByte);
 
     if (FAILED(res))
         return res;

@@ -99,8 +99,8 @@
 @ stdcall DeviceCapabilitiesW(wstr wstr long ptr ptr)
 @ stub DeviceMode
 @ stub DocumentEvent
-@ stdcall DocumentPropertiesA(long long ptr ptr ptr long)
-@ stdcall DocumentPropertiesW(long long ptr ptr ptr long)
+@ stdcall DocumentPropertiesA(long long str ptr ptr long)
+@ stdcall DocumentPropertiesW(long long wstr ptr ptr long)
 @ stub EXTDEVICEMODE
 @ stdcall EndDocPrinter(long)
 @ stdcall EndPagePrinter(long)
@@ -176,6 +176,8 @@
 @ stdcall StartDocPrinterA(long long ptr)
 @ stdcall StartDocPrinterW(long long ptr)
 @ stdcall StartPagePrinter(long)
+@ stdcall UploadPrinterDriverPackageA(str str str long long ptr ptr)
+@ stdcall UploadPrinterDriverPackageW(wstr wstr wstr long long ptr ptr)
 @ stub WaitForPrinterChange
 @ stdcall WritePrinter(long ptr long ptr)
 @ stdcall XcvDataW(long wstr ptr long ptr long ptr ptr)

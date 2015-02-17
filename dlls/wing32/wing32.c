@@ -42,7 +42,7 @@ BOOL WINAPI WinGRecommendDIBFormat( BITMAPINFO *bmi )
 
     bmi->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     bmi->bmiHeader.biWidth = 320;
-    bmi->bmiHeader.biHeight = -1;
+    bmi->bmiHeader.biHeight = 1;
     bmi->bmiHeader.biPlanes = 1;
     bmi->bmiHeader.biBitCount = 8;
     bmi->bmiHeader.biCompression = BI_RGB;
@@ -60,7 +60,7 @@ BOOL WINAPI WinGRecommendDIBFormat( BITMAPINFO *bmi )
  */
 HBITMAP WINAPI WinGCreateBitmap( HDC hdc, BITMAPINFO *bmi, void **bits )
 {
-    return CreateDIBSection( hdc, bmi, 0, bits, 0, 0 );
+    return CreateDIBSection( hdc, bmi, DIB_RGB_COLORS, bits, 0, 0 );
 }
 
 /***********************************************************************
@@ -72,7 +72,7 @@ void * WINAPI WinGGetDIBPointer( HBITMAP hbmp, BITMAPINFO *bmi )
 
     if (GetObjectW( hbmp, sizeof(ds), &ds ) == sizeof(ds))
     {
-        memcpy( &bmi->bmiHeader, &ds.dsBmih, sizeof(*bmi) );
+        bmi->bmiHeader = ds.dsBmih;
         return ds.dsBm.bmBits;
     }
     return NULL;

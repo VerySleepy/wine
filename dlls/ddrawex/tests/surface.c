@@ -27,7 +27,7 @@
 #include "unknwn.h"
 
 static IDirectDrawFactory *factory;
-static HRESULT (WINAPI *pDllGetClassObject)(REFCLSID rclsid, REFIID riid, LPVOID *ppv);
+static HRESULT (WINAPI *pDllGetClassObject)(REFCLSID rclsid, REFIID riid, void **out);
 
 static IDirectDraw *createDD(void)
 {
@@ -408,7 +408,7 @@ START_TEST(surface)
     IClassFactory *classfactory = NULL;
     ULONG ref;
     HRESULT hr;
-    HMODULE hmod = LoadLibrary("ddrawex.dll");
+    HMODULE hmod = LoadLibraryA("ddrawex.dll");
     if(hmod == NULL) {
         skip("Failed to load ddrawex.dll\n");
         return;

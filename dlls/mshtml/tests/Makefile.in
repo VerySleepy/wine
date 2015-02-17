@@ -1,6 +1,5 @@
 TESTDLL   = mshtml.dll
 IMPORTS   = ole32 oleaut32 wininet user32 urlmon gdi32 advapi32
-
 C_SRCS = \
 	activex.c \
 	dom.c \
@@ -12,6 +11,6 @@ C_SRCS = \
 	script.c \
 	style.c
 
-RC_SRCS = rsrc.rc
+IDL_SRCS = test_tlb.idl
 
-@MAKE_TEST_RULES@
+RC_SRCS = rsrc.rc

@@ -372,16 +372,18 @@ int WINAPI PathCommonPrefixA(LPCSTR,LPCSTR,LPSTR);
 int WINAPI PathCommonPrefixW(LPCWSTR,LPCWSTR,LPWSTR);
 #define PathCommonPrefix WINELIB_NAME_AW(PathCommonPrefix)
 
-HRESULT WINAPI PathCreateFromUrlA(LPCSTR pszUrl, LPSTR pszPath, LPDWORD pcchPath, DWORD dwReserved);
-HRESULT WINAPI PathCreateFromUrlW(LPCWSTR pszUrl, LPWSTR pszPath, LPDWORD pcchPath, DWORD dwReserved);
+HRESULT WINAPI PathCreateFromUrlA(LPCSTR,LPSTR,LPDWORD,DWORD);
+HRESULT WINAPI PathCreateFromUrlW(LPCWSTR,LPWSTR,LPDWORD,DWORD);
 #define PathCreateFromUrl WINELIB_NAME_AW(PathCreateFromUrl)
+
+HRESULT WINAPI PathCreateFromUrlAlloc(LPCWSTR,LPWSTR*,DWORD);
 
 BOOL WINAPI PathFileExistsA(LPCSTR);
 BOOL WINAPI PathFileExistsW(LPCWSTR);
 #define PathFileExists WINELIB_NAME_AW(PathFileExists)
 
-BOOL WINAPI PathFileExistsAndAttributesA(LPCSTR lpszPath, DWORD *dwAttr);
-BOOL WINAPI PathFileExistsAndAttributesW(LPCWSTR lpszPath, DWORD *dwAttr);
+BOOL WINAPI PathFileExistsAndAttributesA(LPCSTR,DWORD*);
+BOOL WINAPI PathFileExistsAndAttributesW(LPCWSTR,DWORD*);
 #define PathFileExistsAndAttributes WINELIB_NAME_AW(PathFileExistsAndAttributes)
 
 LPSTR  WINAPI PathFindExtensionA(LPCSTR);
@@ -422,7 +424,7 @@ BOOL WINAPI PathIsDirectoryEmptyW(LPCWSTR);
 
 BOOL WINAPI PathIsFileSpecA(LPCSTR);
 BOOL WINAPI PathIsFileSpecW(LPCWSTR);
-#define PathIsFileSpec WINELIB_NAME_AW(PathIsFileSpec);
+#define PathIsFileSpec WINELIB_NAME_AW(PathIsFileSpec)
 
 BOOL WINAPI PathIsPrefixA(LPCSTR,LPCSTR);
 BOOL WINAPI PathIsPrefixW(LPCWSTR,LPCWSTR);
@@ -701,7 +703,7 @@ BOOL    WINAPI UrlIsOpaqueW(LPCWSTR);
 #define UrlIsOpaque WINELIB_NAME_AW(UrlIsOpaque)
 
 #define UrlIsFileUrlA(x) UrlIsA(x, URLIS_FILEURL)
-#define UrlIsFileUrlW(y) UrlIsW(x, URLIS_FILEURL)
+#define UrlIsFileUrlW(x) UrlIsW(x, URLIS_FILEURL)
 #define UrlIsFileUrl WINELIB_NAME_AW(UrlIsFileUrl)
 
 HRESULT WINAPI UrlUnescapeA(LPSTR,LPSTR,LPDWORD,DWORD);
@@ -747,8 +749,8 @@ HRESULT WINAPI ParseURLW(LPCWSTR pszUrl, PARSEDURLW *ppu);
 #ifndef NO_SHLWAPI_STRFCNS
 
 /* StrToIntEx flags */
-#define STIF_DEFAULT     0x0L
-#define STIF_SUPPORT_HEX 0x1L
+#define STIF_DEFAULT     __MSABI_LONG(0x0)
+#define STIF_SUPPORT_HEX __MSABI_LONG(0x1)
 
 BOOL WINAPI ChrCmpIA (WORD,WORD);
 BOOL WINAPI ChrCmpIW (WCHAR,WCHAR);
@@ -933,6 +935,10 @@ HRESULT WINAPI StrRetToBufW(STRRET*,LPCITEMIDLIST,LPWSTR,UINT);
 
 HRESULT WINAPI StrRetToBSTR(STRRET*,LPCITEMIDLIST,BSTR*);
 
+BOOL WINAPI IsCharSpaceA(CHAR);
+BOOL WINAPI IsCharSpaceW(WCHAR);
+#define IsCharSpace WINELIB_NAME_AW(IsCharSpace)
+
 #endif /* NO_SHLWAPI_STRFCNS */
 
 
@@ -949,6 +955,8 @@ VOID WINAPI ColorRGBToHLS(COLORREF,LPWORD,LPWORD,LPWORD);
 
 #endif /* NO_SHLWAPI_GDI */
 
+/* Security functions */
+BOOL WINAPI IsInternetESCEnabled(void);
 
 /* Stream functions */
 #ifndef NO_SHLWAPI_STREAM

@@ -26,14 +26,14 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(winedbg);
 
-static int is_xpoint_break(int bpnum)
+static BOOL is_xpoint_break(int bpnum)
 {
     int type = dbg_curr_process->bp[bpnum].xpoint_type;
 
     if (type == be_xpoint_break || type == be_xpoint_watch_exec) return TRUE;
     if (type == be_xpoint_watch_read || type == be_xpoint_watch_write) return FALSE;
     RaiseException(DEBUG_STATUS_INTERNAL_ERROR, 0, 0, NULL);
-    return 0; /* never reached */
+    return FALSE; /* never reached */
 }
 
 /***********************************************************************
@@ -492,14 +492,6 @@ void break_delete_xpoint(int num)
     bp[num].skipcount = 0;
 }
 
-static inline BOOL module_is_container(const IMAGEHLP_MODULE* wmod_cntnr,
-                                     const IMAGEHLP_MODULE* wmod_child)
-{
-    return wmod_cntnr->BaseOfImage <= wmod_child->BaseOfImage &&
-        wmod_cntnr->BaseOfImage + wmod_cntnr->ImageSize >=
-        wmod_child->BaseOfImage + wmod_child->ImageSize;
-}
-
 /******************************************************************
  *		break_delete_xpoints_from_module
  *
@@ -549,7 +541,7 @@ void break_enable_xpoint(int num, BOOL enable)
         dbg_printf("Invalid breakpoint number %d\n", num);
         return;
     }
-    dbg_curr_process->bp[num].enabled = (enable) ? TRUE : FALSE;
+    dbg_curr_process->bp[num].enabled = enable != 0;
     dbg_curr_process->bp[num].skipcount = 0;
 }
 
@@ -1001,7 +993,7 @@ void break_restart_execution(int count)
     dbg_curr_thread->exec_mode = ret_mode;
 }
 
-int break_add_condition(int num, struct expr* exp)
+BOOL break_add_condition(int num, struct expr* exp)
 {
     if (num <= 0 || num >= dbg_curr_process->next_bp || 
         !dbg_curr_process->bp[num].refcount)

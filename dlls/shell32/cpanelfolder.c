@@ -126,7 +126,7 @@ HRESULT WINAPI IControlPanel_Constructor(IUnknown* pUnkOuter, REFIID riid, LPVOI
     if (!sf)
 	return E_OUTOFMEMORY;
 
-    sf->ref = 0;
+    sf->ref = 1;
     sf->IShellFolder2_iface.lpVtbl = &vt_ShellFolder2;
     sf->IPersistFolder2_iface.lpVtbl = &vt_PersistFolder2;
     sf->IShellExecuteHookW_iface.lpVtbl = &vt_ShellExecuteHookW;
@@ -138,6 +138,7 @@ HRESULT WINAPI IControlPanel_Constructor(IUnknown* pUnkOuter, REFIID riid, LPVOI
         IShellFolder2_Release(&sf->IShellFolder2_iface);
 	return E_NOINTERFACE;
     }
+    IShellFolder2_Release(&sf->IShellFolder2_iface);
 
     TRACE("--(%p)\n", sf);
     return S_OK;
@@ -159,7 +160,7 @@ static HRESULT WINAPI ISF_ControlPanel_fnQueryInterface(IShellFolder2 *iface, RE
 
     if (IsEqualIID(riid, &IID_IUnknown) ||
 	IsEqualIID(riid, &IID_IShellFolder) || IsEqualIID(riid, &IID_IShellFolder2))
-	*ppvObject = This;
+	*ppvObject = &This->IShellFolder2_iface;
     else if (IsEqualIID(riid, &IID_IPersist) ||
 	       IsEqualIID(riid, &IID_IPersistFolder) || IsEqualIID(riid, &IID_IPersistFolder2))
         *ppvObject = &This->IPersistFolder2_iface;
@@ -302,15 +303,15 @@ static BOOL SHELL_RegisterCPanelApp(IEnumIDListImpl *list, LPCSTR path)
 
     MultiByteToWideChar(CP_ACP, 0, path, -1, wpath, MAX_PATH);
 
-    panel.first = NULL;
+    list_init( &panel.applets );
     applet = Control_LoadApplet(0, wpath, &panel);
 
     if (applet)
     {
         for(i=0; i<applet->count; ++i)
         {
-            WideCharToMultiByte(CP_ACP, 0, applet->info[i].szName, -1, displayName, MAX_PATH, 0, 0);
-            WideCharToMultiByte(CP_ACP, 0, applet->info[i].szInfo, -1, comment, MAX_PATH, 0, 0);
+            WideCharToMultiByte(CP_ACP, 0, applet->info[i].name, -1, displayName, MAX_PATH, 0, 0);
+            WideCharToMultiByte(CP_ACP, 0, applet->info[i].info, -1, comment, MAX_PATH, 0, 0);
 
             applet->proc(0, CPL_INQUIRE, i, (LPARAM)&info);
 
@@ -499,7 +500,7 @@ static HRESULT WINAPI ISF_ControlPanel_fnCompareIDs(IShellFolder2 *iface, LPARAM
     int nReturn;
 
     TRACE("(%p)->(0x%08lx,pidl1=%p,pidl2=%p)\n", This, lParam, pidl1, pidl2);
-    nReturn = SHELL32_CompareIDs((IShellFolder *)&This->IShellFolder2_iface, lParam, pidl1, pidl2);
+    nReturn = SHELL32_CompareIDs(&This->IShellFolder2_iface, lParam, pidl1, pidl2);
     TRACE("-- %i\n", nReturn);
     return nReturn;
 }
@@ -600,8 +601,7 @@ static HRESULT WINAPI ISF_ControlPanel_fnGetUIObjectOf(IShellFolder2 *iface, HWN
 	*ppvOut = NULL;
 
 	if (IsEqualIID(riid, &IID_IContextMenu) &&(cidl >= 1)) {
-	    pObj = (LPUNKNOWN) ISvItemCm_Constructor((IShellFolder *) iface, This->pidlRoot, apidl, cidl);
-	    hr = S_OK;
+	    return ItemMenu_Constructor((IShellFolder*)iface, This->pidlRoot, apidl, cidl, riid, ppvOut);
 	} else if (IsEqualIID(riid, &IID_IDataObject) &&(cidl >= 1)) {
 	    pObj = (LPUNKNOWN) IDataObject_Constructor(hwndOwner, This->pidlRoot, apidl, cidl);
 	    hr = S_OK;
@@ -618,7 +618,7 @@ static HRESULT WINAPI ISF_ControlPanel_fnGetUIObjectOf(IShellFolder2 *iface, HWN
 	} else if ((IsEqualIID(riid,&IID_IShellLinkW) || IsEqualIID(riid,&IID_IShellLinkA))
 				&& (cidl == 1)) {
 	    pidl = ILCombine(This->pidlRoot, apidl[0]);
-	    hr = IShellLink_ConstructFromFile(NULL, riid, pidl,(LPVOID*)&pObj);
+	    hr = IShellLink_ConstructFromFile(NULL, riid, pidl, &pObj);
 	    SHFree(pidl);
 	} else {
 	    hr = E_NOINTERFACE;
@@ -777,7 +777,7 @@ static HRESULT WINAPI ISF_ControlPanel_fnGetDetailsOf(IShellFolder2 *iface, LPCI
 	psd->str.uType = STRRET_CSTR;
 	switch(iColumn) {
 	case 0:		/* name */
-	    hr = IShellFolder_GetDisplayNameOf(iface, pidl, SHGDN_NORMAL | SHGDN_INFOLDER, &psd->str);
+	    hr = IShellFolder2_GetDisplayNameOf(iface, pidl, SHGDN_NORMAL | SHGDN_INFOLDER, &psd->str);
 	    break;
 	case 1:		/* comment */
             pcpanel = _ILGetCPanelPointer(pidl);

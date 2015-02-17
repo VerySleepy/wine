@@ -37,10 +37,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(ddraw);
  *  S_OK on success
  *  E_NOINTERFACE if the requested interface wasn't found
  *****************************************************************************/
-static HRESULT WINAPI
-IDirectDrawPaletteImpl_QueryInterface(IDirectDrawPalette *iface,
-                                      REFIID refiid,
-                                      void **obj)
+static HRESULT WINAPI ddraw_palette_QueryInterface(IDirectDrawPalette *iface, REFIID refiid, void **obj)
 {
     TRACE("iface %p, riid %s, object %p.\n", iface, debugstr_guid(refiid), obj);
 
@@ -67,10 +64,9 @@ IDirectDrawPaletteImpl_QueryInterface(IDirectDrawPalette *iface,
  *  The new refcount
  *
  *****************************************************************************/
-static ULONG WINAPI
-IDirectDrawPaletteImpl_AddRef(IDirectDrawPalette *iface)
+static ULONG WINAPI ddraw_palette_AddRef(IDirectDrawPalette *iface)
 {
-    IDirectDrawPaletteImpl *This = impl_from_IDirectDrawPalette(iface);
+    struct ddraw_palette *This = impl_from_IDirectDrawPalette(iface);
     ULONG ref = InterlockedIncrement(&This->ref);
 
     TRACE("%p increasing refcount to %u.\n", This, ref);
@@ -87,23 +83,23 @@ IDirectDrawPaletteImpl_AddRef(IDirectDrawPalette *iface)
  *  The new refcount
  *
  *****************************************************************************/
-static ULONG WINAPI
-IDirectDrawPaletteImpl_Release(IDirectDrawPalette *iface)
+static ULONG WINAPI ddraw_palette_Release(IDirectDrawPalette *iface)
 {
-    IDirectDrawPaletteImpl *This = impl_from_IDirectDrawPalette(iface);
+    struct ddraw_palette *This = impl_from_IDirectDrawPalette(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
     TRACE("%p decreasing refcount to %u.\n", This, ref);
 
     if (ref == 0)
     {
-        EnterCriticalSection(&ddraw_cs);
+        wined3d_mutex_lock();
         wined3d_palette_decref(This->wineD3DPalette);
-        if(This->ifaceToRelease)
-        {
+        if ((This->flags & DDPCAPS_PRIMARYSURFACE) && This->ddraw->primary)
+            This->ddraw->primary->palette = NULL;
+        if (This->ifaceToRelease)
             IUnknown_Release(This->ifaceToRelease);
-        }
-        LeaveCriticalSection(&ddraw_cs);
+        wined3d_mutex_unlock();
+
         HeapFree(GetProcessHeap(), 0, This);
     }
 
@@ -125,43 +121,24 @@ IDirectDrawPaletteImpl_Release(IDirectDrawPalette *iface)
  *  DDERR_ALREADYINITIALIZED
  *
  *****************************************************************************/
-static HRESULT WINAPI
-IDirectDrawPaletteImpl_Initialize(IDirectDrawPalette *iface,
-                                  IDirectDraw *DD,
-                                  DWORD Flags,
-                                  PALETTEENTRY *ColorTable)
+static HRESULT WINAPI ddraw_palette_Initialize(IDirectDrawPalette *iface,
+        IDirectDraw *ddraw, DWORD flags, PALETTEENTRY *entries)
 {
     TRACE("iface %p, ddraw %p, flags %#x, entries %p.\n",
-            iface, DD, Flags, ColorTable);
+            iface, ddraw, flags, entries);
 
     return DDERR_ALREADYINITIALIZED;
 }
 
-/*****************************************************************************
- * IDirectDrawPalette::GetCaps
- *
- * Returns the palette description
- *
- * Params:
- *  Caps: Address to store the caps at
- *
- * Returns:
- *  D3D_OK on success
- *  DDERR_INVALIDPARAMS if Caps is NULL
- *  For more details, see IWineD3DPalette::GetCaps
- *
- *****************************************************************************/
-static HRESULT WINAPI
-IDirectDrawPaletteImpl_GetCaps(IDirectDrawPalette *iface,
-                               DWORD *Caps)
+static HRESULT WINAPI ddraw_palette_GetCaps(IDirectDrawPalette *iface, DWORD *caps)
 {
-    IDirectDrawPaletteImpl *This = impl_from_IDirectDrawPalette(iface);
+    struct ddraw_palette *palette = impl_from_IDirectDrawPalette(iface);
 
-    TRACE("iface %p, caps %p.\n", iface, Caps);
+    TRACE("iface %p, caps %p.\n", iface, caps);
 
-    EnterCriticalSection(&ddraw_cs);
-    *Caps = wined3d_palette_get_flags(This->wineD3DPalette);
-    LeaveCriticalSection(&ddraw_cs);
+    wined3d_mutex_lock();
+    *caps = palette->flags;
+    wined3d_mutex_unlock();
 
     return D3D_OK;
 }
@@ -184,25 +161,26 @@ IDirectDrawPaletteImpl_GetCaps(IDirectDrawPalette *iface,
  *  For details, see IWineD3DDevice::SetEntries
  *
  *****************************************************************************/
-static HRESULT WINAPI
-IDirectDrawPaletteImpl_SetEntries(IDirectDrawPalette *iface,
-                                  DWORD Flags,
-                                  DWORD Start,
-                                  DWORD Count,
-                                  PALETTEENTRY *PalEnt)
+static HRESULT WINAPI ddraw_palette_SetEntries(IDirectDrawPalette *iface,
+        DWORD flags, DWORD start, DWORD count, PALETTEENTRY *entries)
 {
-    IDirectDrawPaletteImpl *This = impl_from_IDirectDrawPalette(iface);
+    struct ddraw_palette *palette = impl_from_IDirectDrawPalette(iface);
     HRESULT hr;
 
     TRACE("iface %p, flags %#x, start %u, count %u, entries %p.\n",
-            iface, Flags, Start, Count, PalEnt);
+            iface, flags, start, count, entries);
 
-    if(!PalEnt)
+    if (!entries)
         return DDERR_INVALIDPARAMS;
 
-    EnterCriticalSection(&ddraw_cs);
-    hr = wined3d_palette_set_entries(This->wineD3DPalette, Flags, Start, Count, PalEnt);
-    LeaveCriticalSection(&ddraw_cs);
+    wined3d_mutex_lock();
+    hr = wined3d_palette_set_entries(palette->wineD3DPalette, flags, start, count, entries);
+
+    if (SUCCEEDED(hr) && palette->flags & DDPCAPS_PRIMARYSURFACE)
+        ddraw_surface_update_frontbuffer(palette->ddraw->primary, NULL, FALSE);
+
+    wined3d_mutex_unlock();
+
     return hr;
 }
 
@@ -223,64 +201,94 @@ IDirectDrawPaletteImpl_SetEntries(IDirectDrawPalette *iface,
  *  For details, see IWineD3DDevice::SetEntries
  *
  *****************************************************************************/
-static HRESULT WINAPI
-IDirectDrawPaletteImpl_GetEntries(IDirectDrawPalette *iface,
-                                  DWORD Flags,
-                                  DWORD Start,
-                                  DWORD Count,
-                                  PALETTEENTRY *PalEnt)
+static HRESULT WINAPI ddraw_palette_GetEntries(IDirectDrawPalette *iface,
+        DWORD flags, DWORD start, DWORD count, PALETTEENTRY *entries)
 {
-    IDirectDrawPaletteImpl *This = impl_from_IDirectDrawPalette(iface);
+    struct ddraw_palette *palette = impl_from_IDirectDrawPalette(iface);
     HRESULT hr;
 
     TRACE("iface %p, flags %#x, start %u, count %u, entries %p.\n",
-            iface, Flags, Start, Count, PalEnt);
+            iface, flags, start, count, entries);
 
-    if(!PalEnt)
+    if (!entries)
         return DDERR_INVALIDPARAMS;
 
-    EnterCriticalSection(&ddraw_cs);
-    hr = wined3d_palette_get_entries(This->wineD3DPalette, Flags, Start, Count, PalEnt);
-    LeaveCriticalSection(&ddraw_cs);
+    wined3d_mutex_lock();
+    hr = wined3d_palette_get_entries(palette->wineD3DPalette, flags, start, count, entries);
+    wined3d_mutex_unlock();
+
     return hr;
 }
 
 static const struct IDirectDrawPaletteVtbl ddraw_palette_vtbl =
 {
     /*** IUnknown ***/
-    IDirectDrawPaletteImpl_QueryInterface,
-    IDirectDrawPaletteImpl_AddRef,
-    IDirectDrawPaletteImpl_Release,
+    ddraw_palette_QueryInterface,
+    ddraw_palette_AddRef,
+    ddraw_palette_Release,
     /*** IDirectDrawPalette ***/
-    IDirectDrawPaletteImpl_GetCaps,
-    IDirectDrawPaletteImpl_GetEntries,
-    IDirectDrawPaletteImpl_Initialize,
-    IDirectDrawPaletteImpl_SetEntries
+    ddraw_palette_GetCaps,
+    ddraw_palette_GetEntries,
+    ddraw_palette_Initialize,
+    ddraw_palette_SetEntries
 };
 
-IDirectDrawPaletteImpl *unsafe_impl_from_IDirectDrawPalette(IDirectDrawPalette *iface)
+struct ddraw_palette *unsafe_impl_from_IDirectDrawPalette(IDirectDrawPalette *iface)
 {
     if (!iface) return NULL;
     assert(iface->lpVtbl == &ddraw_palette_vtbl);
-    return CONTAINING_RECORD(iface, IDirectDrawPaletteImpl, IDirectDrawPalette_iface);
+    return CONTAINING_RECORD(iface, struct ddraw_palette, IDirectDrawPalette_iface);
 }
 
-HRESULT ddraw_palette_init(IDirectDrawPaletteImpl *palette,
-        IDirectDrawImpl *ddraw, DWORD flags, PALETTEENTRY *entries)
+static unsigned int palette_size(DWORD flags)
 {
+    switch (flags & (DDPCAPS_1BIT | DDPCAPS_2BIT | DDPCAPS_4BIT | DDPCAPS_8BIT))
+    {
+        case DDPCAPS_1BIT:
+            return 2;
+        case DDPCAPS_2BIT:
+            return 4;
+        case DDPCAPS_4BIT:
+            return 16;
+        case DDPCAPS_8BIT:
+            return 256;
+        default:
+            return ~0u;
+    }
+}
+
+HRESULT ddraw_palette_init(struct ddraw_palette *palette,
+        struct ddraw *ddraw, DWORD flags, PALETTEENTRY *entries)
+{
+    unsigned int entry_count;
+    DWORD wined3d_flags = 0;
     HRESULT hr;
+
+    if ((entry_count = palette_size(flags)) == ~0u)
+    {
+        WARN("Invalid flags %#x.\n", flags);
+        return DDERR_INVALIDPARAMS;
+    }
+
+    if (flags & DDPCAPS_8BITENTRIES)
+        wined3d_flags |= WINED3D_PALETTE_8BIT_ENTRIES;
+    if (flags & DDPCAPS_ALLOW256)
+        wined3d_flags |= WINED3D_PALETTE_ALLOW_256;
+    if (flags & DDPCAPS_ALPHA)
+        wined3d_flags |= WINED3D_PALETTE_ALPHA;
 
     palette->IDirectDrawPalette_iface.lpVtbl = &ddraw_palette_vtbl;
     palette->ref = 1;
+    palette->flags = flags;
 
-    hr = wined3d_palette_create(ddraw->wined3d_device, flags,
-            entries, palette, &palette->wineD3DPalette);
-    if (FAILED(hr))
+    if (FAILED(hr = wined3d_palette_create(ddraw->wined3d_device,
+            wined3d_flags, entry_count, entries, &palette->wineD3DPalette)))
     {
         WARN("Failed to create wined3d palette, hr %#x.\n", hr);
         return hr;
     }
 
+    palette->ddraw = ddraw;
     palette->ifaceToRelease = (IUnknown *)&ddraw->IDirectDraw7_iface;
     IUnknown_AddRef(palette->ifaceToRelease);
 

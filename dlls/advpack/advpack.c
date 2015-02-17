@@ -175,7 +175,7 @@ void set_ldids(HINF hInf, LPCWSTR pszInstallSection, LPCWSTR pszWorkingDir)
             FIXME("Need to support changing paths - default will be used\n");
 
         /* set all ldids to dest */
-        while ((ptr = get_parameter(&key, ',')))
+        while ((ptr = get_parameter(&key, ',', FALSE)))
         {
             ldid = atolW(ptr);
             SetupSetDirectoryIdW(hInf, ldid, dest);
@@ -205,19 +205,6 @@ HRESULT WINAPI CloseINFEngine(HINF hInf)
 
     SetupCloseInfFile(hInf);
     return S_OK;
-}
-
-/***********************************************************************
- *           DllMain (ADVPACK.@)
- */
-BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
-{
-    TRACE("(%p, %d, %p)\n", hinstDLL, fdwReason, lpvReserved);
-
-    if (fdwReason == DLL_PROCESS_ATTACH)
-        DisableThreadLibraryCalls(hinstDLL);
-
-    return TRUE;
 }
 
 /***********************************************************************
@@ -452,7 +439,7 @@ HRESULT WINAPI RebootCheckOnInstallW(HWND hWnd, LPCWSTR pszINF,
 }
 
 /* registers the OCX if do_reg is TRUE, unregisters it otherwise */
-HRESULT do_ocx_reg(HMODULE hocx, BOOL do_reg)
+HRESULT do_ocx_reg(HMODULE hocx, BOOL do_reg, const WCHAR *flags, const WCHAR *param)
 {
     DLLREGISTER reg_func;
 
@@ -508,18 +495,18 @@ HRESULT WINAPI RegisterOCX(HWND hWnd, HINSTANCE hInst, LPCSTR cmdline, INT show)
     cmdline_ptr = cmdline_copy;
     lstrcpyW(cmdline_copy, cmdlineW.Buffer);
 
-    ocx_filename = get_parameter(&cmdline_ptr, ',');
+    ocx_filename = get_parameter(&cmdline_ptr, ',', TRUE);
     if (!ocx_filename || !*ocx_filename)
         goto done;
 
-    str_flags = get_parameter(&cmdline_ptr, ',');
-    param = get_parameter(&cmdline_ptr, ',');
+    str_flags = get_parameter(&cmdline_ptr, ',', TRUE);
+    param = get_parameter(&cmdline_ptr, ',', TRUE);
 
     hm = LoadLibraryExW(ocx_filename, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!hm)
         goto done;
 
-    hr = do_ocx_reg(hm, TRUE);
+    hr = do_ocx_reg(hm, TRUE, str_flags, param);
 
 done:
     FreeLibrary(hm);
@@ -692,7 +679,7 @@ HRESULT WINAPI TranslateInfStringA(LPCSTR pszInfFilename, LPCSTR pszInstallSecti
                                     dwBufferSize, NULL, NULL);
             }
             else
-                res = HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
+                res = E_NOT_SUFFICIENT_BUFFER;
         }
         
         HeapFree(GetProcessHeap(), 0, bufferW);
@@ -752,7 +739,7 @@ HRESULT WINAPI TranslateInfStringW(LPCWSTR pszInfFilename, LPCWSTR pszInstallSec
                            pszBuffer, dwBufferSize, pdwRequiredSize))
     {
         if (dwBufferSize < *pdwRequiredSize)
-            hret = HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
+            hret = E_NOT_SUFFICIENT_BUFFER;
         else
             hret = SPAPI_E_LINE_NOT_FOUND;
     }
@@ -809,7 +796,7 @@ HRESULT WINAPI TranslateInfStringExA(HINF hInf, LPCSTR pszInfFilename,
                                     dwBufferSize, NULL, NULL);
             }
             else
-                res = HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
+                res = E_NOT_SUFFICIENT_BUFFER;
         }
         
         HeapFree(GetProcessHeap(), 0, bufferW);
@@ -867,7 +854,7 @@ HRESULT WINAPI TranslateInfStringExW(HINF hInf, LPCWSTR pszInfFilename,
                            pszBuffer, dwBufferSize, pdwRequiredSize))
     {
         if (dwBufferSize < *pdwRequiredSize)
-            return HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
+            return E_NOT_SUFFICIENT_BUFFER;
 
         return SPAPI_E_LINE_NOT_FOUND;
     }

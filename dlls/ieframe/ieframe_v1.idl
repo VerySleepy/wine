@@ -16,6 +16,9 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#pragma makedep regtypelib
+#pragma makedep register
+
 #include "exdisp.idl"
 
 [
@@ -28,12 +31,6 @@
     threading(apartment),
     uuid(3c374a40-bae4-11cf-bf7d-00aa006946ee)
 ] coclass CUrlHistory { interface IUrlHistoryStg2; }
-
-[
-    helpstring("Task Bar Communication"),
-    threading(apartment),
-    uuid(56fdf344-fd6d-11d0-958a-006097c9a090)
-] coclass TaskbarList { interface ITaskbarList; }
 
 [
     helpstring("Internet Shortcut"),

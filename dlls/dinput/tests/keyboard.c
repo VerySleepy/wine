@@ -30,10 +30,10 @@
 #include "wingdi.h"
 #include "dinput.h"
 
-static void acquire_tests(LPDIRECTINPUT pDI, HWND hwnd)
+static void acquire_tests(IDirectInputA *pDI, HWND hwnd)
 {
     HRESULT hr;
-    LPDIRECTINPUTDEVICE pKeyboard;
+    IDirectInputDeviceA *pKeyboard;
     BYTE kbd_state[256];
     LONG custom_state[6];
     int i;
@@ -112,10 +112,10 @@ static const HRESULT SetCoop_child_window[16] =  {
     E_INVALIDARG, E_HANDLE,     E_HANDLE,     E_INVALIDARG,
     E_INVALIDARG, E_INVALIDARG, E_INVALIDARG, E_INVALIDARG};
 
-static void test_set_coop(LPDIRECTINPUT pDI, HWND hwnd)
+static void test_set_coop(IDirectInputA *pDI, HWND hwnd)
 {
     HRESULT hr;
-    LPDIRECTINPUTDEVICE pKeyboard = NULL;
+    IDirectInputDeviceA *pKeyboard = NULL;
     int i;
     HWND child;
 
@@ -134,8 +134,8 @@ static void test_set_coop(LPDIRECTINPUT pDI, HWND hwnd)
         ok(hr == SetCoop_real_window[i], "SetCooperativeLevel(hwnd, %d): %08x\n", i, hr);
     }
 
-    child = CreateWindow("static", "Title", WS_CHILD | WS_VISIBLE,
-                         10, 10, 50, 50, hwnd, NULL, NULL, NULL);
+    child = CreateWindowA("static", "Title", WS_CHILD | WS_VISIBLE, 10, 10, 50, 50, hwnd, NULL,
+                          NULL, NULL);
     ok(child != NULL, "err: %d\n", GetLastError());
 
     for (i=0; i<16; i++)
@@ -148,10 +148,10 @@ static void test_set_coop(LPDIRECTINPUT pDI, HWND hwnd)
     if (pKeyboard) IUnknown_Release(pKeyboard);
 }
 
-static void test_get_prop(LPDIRECTINPUT pDI, HWND hwnd)
+static void test_get_prop(IDirectInputA *pDI, HWND hwnd)
 {
     HRESULT hr;
-    LPDIRECTINPUTDEVICE pKeyboard = NULL;
+    IDirectInputDeviceA *pKeyboard = NULL;
     DIPROPRANGE diprg;
 
     hr = IDirectInput_CreateDevice(pDI, &GUID_SysKeyboard, &pKeyboard, NULL);
@@ -170,25 +170,48 @@ static void test_get_prop(LPDIRECTINPUT pDI, HWND hwnd)
     if (pKeyboard) IUnknown_Release(pKeyboard);
 }
 
+static void test_capabilities(IDirectInputA *pDI, HWND hwnd)
+{
+    HRESULT hr;
+    IDirectInputDeviceA *pKeyboard = NULL;
+    DIDEVCAPS caps;
+
+    hr = IDirectInput_CreateDevice(pDI, &GUID_SysKeyboard, &pKeyboard, NULL);
+    ok(SUCCEEDED(hr), "IDirectInput_CreateDevice() failed: %08x\n", hr);
+    if (FAILED(hr)) return;
+
+    caps.dwSize = sizeof(caps);
+    hr = IDirectInputDevice_GetCapabilities(pKeyboard, &caps);
+
+    ok (SUCCEEDED(hr), "GetCapabilities failed: 0x%08x\n", hr);
+    ok (caps.dwFlags & DIDC_ATTACHED, "GetCapabilities dwFlags: 0x%08x\n", caps.dwFlags);
+    ok (LOWORD(LOBYTE(caps.dwDevType)) == DIDEVTYPE_KEYBOARD,
+        "GetCapabilities invalid device type for dwDevType: 0x%08x\n", caps.dwDevType);
+    ok (LOWORD(HIBYTE(caps.dwDevType)) != DIDEVTYPEKEYBOARD_UNKNOWN,
+        "GetCapabilities invalid device subtype for dwDevType: 0x%08x\n", caps.dwDevType);
+
+    IUnknown_Release(pKeyboard);
+}
+
 static void keyboard_tests(DWORD version)
 {
     HRESULT hr;
-    LPDIRECTINPUT pDI = NULL;
-    HINSTANCE hInstance = GetModuleHandle(NULL);
+    IDirectInputA *pDI = NULL;
+    HINSTANCE hInstance = GetModuleHandleW(NULL);
     HWND hwnd;
     ULONG ref = 0;
 
-    hr = DirectInputCreate(hInstance, version, &pDI, NULL);
+    hr = DirectInputCreateA(hInstance, version, &pDI, NULL);
     if (hr == DIERR_OLDDIRECTINPUTVERSION)
     {
         skip("Tests require a newer dinput version\n");
         return;
     }
-    ok(SUCCEEDED(hr), "DirectInputCreate() failed: %08x\n", hr);
+    ok(SUCCEEDED(hr), "DirectInputCreateA() failed: %08x\n", hr);
     if (FAILED(hr)) return;
 
-    hwnd = CreateWindow("static", "Title", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                        10, 10, 200, 200, NULL, NULL, NULL, NULL);
+    hwnd = CreateWindowA("static", "Title", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 10, 10, 200, 200,
+                         NULL, NULL, NULL, NULL);
     ok(hwnd != NULL, "err: %d\n", GetLastError());
 
     if (hwnd)
@@ -196,6 +219,7 @@ static void keyboard_tests(DWORD version)
         acquire_tests(pDI, hwnd);
         test_set_coop(pDI, hwnd);
         test_get_prop(pDI, hwnd);
+        test_capabilities(pDI, hwnd);
     }
 
     DestroyWindow(hwnd);

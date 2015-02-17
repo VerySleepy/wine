@@ -246,7 +246,7 @@ static BOOL do_test( HWND hwnd, int seqnr, const KEV td[] )
     if (winetest_debug > 1)
         trace("======== key stroke sequence #%d: %s =============\n",
             seqnr + 1, buf);
-    while( PeekMessage(&msg,hwnd,WM_KEYFIRST,WM_KEYLAST,PM_REMOVE) ) {
+    while( PeekMessageA(&msg,hwnd,WM_KEYFIRST,WM_KEYLAST,PM_REMOVE) ) {
         if (winetest_debug > 1)
             trace("message[%d] %-15s wParam %04lx lParam %08lx time %x\n", i,
                   MSGNAME[msg.message - WM_KEYFIRST], msg.wParam, msg.lParam, msg.time);
@@ -344,8 +344,8 @@ static void test_Input_whitebox(void)
     wclass.style         = CS_HREDRAW | CS_VREDRAW;
     wclass.lpfnWndProc   = WndProc;
     wclass.hInstance     = hInstance;
-    wclass.hIcon         = LoadIconA( 0, IDI_APPLICATION );
-    wclass.hCursor       = LoadCursorA( NULL, IDC_ARROW );
+    wclass.hIcon         = LoadIconA( 0, (LPCSTR)IDI_APPLICATION );
+    wclass.hCursor       = LoadCursorA( NULL, (LPCSTR)IDC_ARROW );
     wclass.hbrBackground = (HBRUSH)( COLOR_WINDOW + 1 );
     wclass.lpszMenuName = 0;
     wclass.cbClsExtra    = 0;
@@ -362,7 +362,7 @@ static void test_Input_whitebox(void)
     UpdateWindow( hWndTest);
 
     /* flush pending messages */
-    while (PeekMessage( &msg, 0, 0, 0, PM_REMOVE )) DispatchMessageA( &msg );
+    while (PeekMessageA( &msg, 0, 0, 0, PM_REMOVE )) DispatchMessageA( &msg );
 
     SetFocus( hWndTest );
     TestSysKeys( hWndTest );
@@ -390,13 +390,13 @@ static void empty_message_queue(void)
     while (diff > 0)
     {
         if (MsgWaitForMultipleObjects(0, NULL, FALSE, min_timeout, QS_ALLINPUT) == WAIT_TIMEOUT) break;
-        while (PeekMessage(&msg, 0, 0, 0, PM_REMOVE))
+        while (PeekMessageA(&msg, 0, 0, 0, PM_REMOVE))
         {
             if (is_keyboard_message(msg.message) || is_mouse_message(msg.message))
                 ok(msg.time != 0, "message %#x has time set to 0\n", msg.message);
 
             TranslateMessage(&msg);
-            DispatchMessage(&msg);
+            DispatchMessageA(&msg);
         }
         diff = time - GetTickCount();
     }
@@ -437,83 +437,83 @@ static const struct sendinput_test_s {
 } sendinput_test[] = {
     /* test ALT+F */
     /* 0 */
-    {VK_LMENU, 0, 0, {{VK_MENU, 0x00}, {VK_LMENU, 0x00}, {0}},
+    {VK_LMENU, 0, FALSE, {{VK_MENU, 0x00}, {VK_LMENU, 0x00}, {0}},
         {{WM_SYSKEYDOWN, hook|wparam, VK_LMENU}, {WM_SYSKEYDOWN}, {0}}},
-    {'F', 0, 0, {{'F', 0x00}, {0}},
+    {'F', 0, FALSE, {{'F', 0x00}, {0}},
         {{WM_SYSKEYDOWN, hook}, {WM_SYSKEYDOWN},
         {WM_SYSCHAR},
         {WM_SYSCOMMAND}, {0}}},
-    {'F', KEYEVENTF_KEYUP, 0, {{'F', 0x80}, {0}},
+    {'F', KEYEVENTF_KEYUP, FALSE, {{'F', 0x80}, {0}},
         {{WM_SYSKEYUP, hook}, {WM_SYSKEYUP}, {0}}},
-    {VK_LMENU, KEYEVENTF_KEYUP, 0, {{VK_MENU, 0x80}, {VK_LMENU, 0x80}, {0}},
+    {VK_LMENU, KEYEVENTF_KEYUP, FALSE, {{VK_MENU, 0x80}, {VK_LMENU, 0x80}, {0}},
         {{WM_KEYUP, hook}, {WM_KEYUP}, {0}}},
 
     /* test CTRL+O */
     /* 4 */
-    {VK_LCONTROL, 0, 0, {{VK_CONTROL, 0x00}, {VK_LCONTROL, 0x00}, {0}},
+    {VK_LCONTROL, 0, FALSE, {{VK_CONTROL, 0x00}, {VK_LCONTROL, 0x00}, {0}},
         {{WM_KEYDOWN, hook}, {WM_KEYDOWN}, {0}}},
-    {'O', 0, 0, {{'O', 0x00}, {0}},
+    {'O', 0, FALSE, {{'O', 0x00}, {0}},
         {{WM_KEYDOWN, hook}, {WM_KEYDOWN}, {WM_CHAR}, {0}}},
-    {'O', KEYEVENTF_KEYUP, 0, {{'O', 0x80}, {0}},
+    {'O', KEYEVENTF_KEYUP, FALSE, {{'O', 0x80}, {0}},
         {{WM_KEYUP, hook}, {WM_KEYUP}, {0}}},
-    {VK_LCONTROL, KEYEVENTF_KEYUP, 0, {{VK_CONTROL, 0x80}, {VK_LCONTROL, 0x80}, {0}},
+    {VK_LCONTROL, KEYEVENTF_KEYUP, FALSE, {{VK_CONTROL, 0x80}, {VK_LCONTROL, 0x80}, {0}},
         {{WM_KEYUP, hook}, {WM_KEYUP}, {0}}},
 
     /* test ALT+CTRL+X */
     /* 8 */
-    {VK_LMENU, 0, 0, {{VK_MENU, 0x00}, {VK_LMENU, 0x00}, {0}},
+    {VK_LMENU, 0, FALSE, {{VK_MENU, 0x00}, {VK_LMENU, 0x00}, {0}},
         {{WM_SYSKEYDOWN, hook}, {WM_SYSKEYDOWN}, {0}}},
-    {VK_LCONTROL, 0, 0, {{VK_CONTROL, 0x00}, {VK_LCONTROL, 0x00}, {0}},
+    {VK_LCONTROL, 0, FALSE, {{VK_CONTROL, 0x00}, {VK_LCONTROL, 0x00}, {0}},
         {{WM_KEYDOWN, hook}, {WM_KEYDOWN}, {0}}},
-    {'X', 0, 0, {{'X', 0x00}, {0}},
+    {'X', 0, FALSE, {{'X', 0x00}, {0}},
         {{WM_KEYDOWN, hook}, {WM_KEYDOWN}, {0}}},
-    {'X', KEYEVENTF_KEYUP, 0, {{'X', 0x80}, {0}},
+    {'X', KEYEVENTF_KEYUP, FALSE, {{'X', 0x80}, {0}},
         {{WM_KEYUP, hook}, {WM_KEYUP}, {0}}},
-    {VK_LCONTROL, KEYEVENTF_KEYUP, 0, {{VK_CONTROL, 0x80}, {VK_LCONTROL, 0x80}, {0}},
+    {VK_LCONTROL, KEYEVENTF_KEYUP, FALSE, {{VK_CONTROL, 0x80}, {VK_LCONTROL, 0x80}, {0}},
         {{WM_SYSKEYUP, hook}, {WM_SYSKEYUP}, {0}}},
-    {VK_LMENU, KEYEVENTF_KEYUP, 0, {{VK_MENU, 0x80}, {VK_LMENU, 0x80}, {0}},
+    {VK_LMENU, KEYEVENTF_KEYUP, FALSE, {{VK_MENU, 0x80}, {VK_LMENU, 0x80}, {0}},
         {{WM_KEYUP, hook}, {WM_KEYUP}, {0}}},
 
     /* test SHIFT+A */
     /* 14 */
-    {VK_LSHIFT, 0, 0, {{VK_SHIFT, 0x00}, {VK_LSHIFT, 0x00}, {0}},
+    {VK_LSHIFT, 0, FALSE, {{VK_SHIFT, 0x00}, {VK_LSHIFT, 0x00}, {0}},
         {{WM_KEYDOWN, hook}, {WM_KEYDOWN}, {0}}},
-    {'A', 0, 0, {{'A', 0x00}, {0}},
+    {'A', 0, FALSE, {{'A', 0x00}, {0}},
         {{WM_KEYDOWN, hook}, {WM_KEYDOWN}, {WM_CHAR}, {0}}},
-    {'A', KEYEVENTF_KEYUP, 0, {{'A', 0x80}, {0}},
+    {'A', KEYEVENTF_KEYUP, FALSE, {{'A', 0x80}, {0}},
         {{WM_KEYUP, hook}, {WM_KEYUP}, {0}}},
-    {VK_LSHIFT, KEYEVENTF_KEYUP, 0, {{VK_SHIFT, 0x80}, {VK_LSHIFT, 0x80}, {0}},
+    {VK_LSHIFT, KEYEVENTF_KEYUP, FALSE, {{VK_SHIFT, 0x80}, {VK_LSHIFT, 0x80}, {0}},
         {{WM_KEYUP, hook}, {WM_KEYUP}, {0}}},
     /* test L-SHIFT & R-SHIFT: */
     /* RSHIFT == LSHIFT */
     /* 18 */
-    {VK_RSHIFT, 0, 0,
+    {VK_RSHIFT, 0, FALSE,
      /* recent windows versions (>= w2k3) correctly report an RSHIFT transition */
        {{VK_SHIFT, 0x00}, {VK_LSHIFT, 0x00, TRUE}, {VK_RSHIFT, 0x00, TRUE}, {0}},
         {{WM_KEYDOWN, hook|wparam, VK_RSHIFT},
         {WM_KEYDOWN}, {0}}},
-    {VK_RSHIFT, KEYEVENTF_KEYUP, 0,
+    {VK_RSHIFT, KEYEVENTF_KEYUP, FALSE,
        {{VK_SHIFT, 0x80}, {VK_LSHIFT, 0x80, TRUE}, {VK_RSHIFT, 0x80, TRUE}, {0}},
         {{WM_KEYUP, hook, hook|wparam, VK_RSHIFT},
         {WM_KEYUP}, {0}}},
 
     /* LSHIFT | KEYEVENTF_EXTENDEDKEY == RSHIFT */
     /* 20 */
-    {VK_LSHIFT, KEYEVENTF_EXTENDEDKEY, 0,
+    {VK_LSHIFT, KEYEVENTF_EXTENDEDKEY, FALSE,
         {{VK_SHIFT, 0x00}, {VK_RSHIFT, 0x00}, {0}},
         {{WM_KEYDOWN, hook|wparam|lparam, VK_LSHIFT, LLKHF_EXTENDED},
         {WM_KEYDOWN, wparam|lparam, VK_SHIFT, 0}, {0}}},
-    {VK_LSHIFT, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, 0,
+    {VK_LSHIFT, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, FALSE,
         {{VK_SHIFT, 0x80}, {VK_RSHIFT, 0x80}, {0}},
         {{WM_KEYUP, hook|wparam|lparam, VK_LSHIFT, LLKHF_UP|LLKHF_EXTENDED},
         {WM_KEYUP, wparam|lparam, VK_SHIFT, KF_UP}, {0}}},
     /* RSHIFT | KEYEVENTF_EXTENDEDKEY == RSHIFT */
     /* 22 */
-    {VK_RSHIFT, KEYEVENTF_EXTENDEDKEY, 0,
+    {VK_RSHIFT, KEYEVENTF_EXTENDEDKEY, FALSE,
         {{VK_SHIFT, 0x00}, {VK_RSHIFT, 0x00}, {0}},
         {{WM_KEYDOWN, hook|wparam|lparam, VK_RSHIFT, LLKHF_EXTENDED},
         {WM_KEYDOWN, wparam|lparam, VK_SHIFT, 0}, {0}}},
-    {VK_RSHIFT, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, 0,
+    {VK_RSHIFT, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, FALSE,
         {{VK_SHIFT, 0x80}, {VK_RSHIFT, 0x80}, {0}},
         {{WM_KEYUP, hook|wparam|lparam, VK_RSHIFT, LLKHF_UP|LLKHF_EXTENDED},
         {WM_KEYUP, wparam|lparam, VK_SHIFT, KF_UP}, {0}}},
@@ -524,21 +524,21 @@ static const struct sendinput_test_s {
     */
     /* SHIFT == LSHIFT */
     /* 24 */
-    {VK_SHIFT, 0, 0,
+    {VK_SHIFT, 0, FALSE,
         {{VK_SHIFT, 0x00}, {VK_LSHIFT, 0x00}, {0}},
         {{WM_KEYDOWN, hook/* |wparam */|lparam, VK_SHIFT, 0},
         {WM_KEYDOWN, wparam|lparam, VK_SHIFT, 0}, {0}}},
-    {VK_SHIFT, KEYEVENTF_KEYUP, 0,
+    {VK_SHIFT, KEYEVENTF_KEYUP, FALSE,
         {{VK_SHIFT, 0x80}, {VK_LSHIFT, 0x80}, {0}},
         {{WM_KEYUP, hook/*|wparam*/|lparam, VK_SHIFT, LLKHF_UP},
         {WM_KEYUP, wparam|lparam, VK_SHIFT, KF_UP}, {0}}},
     /* SHIFT | KEYEVENTF_EXTENDEDKEY == RSHIFT */
     /* 26 */
-    {VK_SHIFT, KEYEVENTF_EXTENDEDKEY, 0,
+    {VK_SHIFT, KEYEVENTF_EXTENDEDKEY, FALSE,
         {{VK_SHIFT, 0x00}, {VK_RSHIFT, 0x00}, {0}},
         {{WM_KEYDOWN, hook/*|wparam*/|lparam, VK_SHIFT, LLKHF_EXTENDED},
         {WM_KEYDOWN, wparam|lparam, VK_SHIFT, 0}, {0}}},
-    {VK_SHIFT, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, 0,
+    {VK_SHIFT, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, FALSE,
         {{VK_SHIFT, 0x80}, {VK_RSHIFT, 0x80}, {0}},
         {{WM_KEYUP, hook/*|wparam*/|lparam, VK_SHIFT, LLKHF_UP|LLKHF_EXTENDED},
         {WM_KEYUP, wparam|lparam, VK_SHIFT, KF_UP}, {0}}},
@@ -546,51 +546,51 @@ static const struct sendinput_test_s {
     /* test L-CONTROL & R-CONTROL: */
     /* RCONTROL == LCONTROL */
     /* 28 */
-    {VK_RCONTROL, 0, 0,
+    {VK_RCONTROL, 0, FALSE,
         {{VK_CONTROL, 0x00}, {VK_LCONTROL, 0x00}, {0}},
         {{WM_KEYDOWN, hook|wparam, VK_RCONTROL},
         {WM_KEYDOWN, wparam|lparam, VK_CONTROL, 0}, {0}}},
-    {VK_RCONTROL, KEYEVENTF_KEYUP, 0,
+    {VK_RCONTROL, KEYEVENTF_KEYUP, FALSE,
         {{VK_CONTROL, 0x80}, {VK_LCONTROL, 0x80}, {0}},
         {{WM_KEYUP, hook|wparam, VK_RCONTROL},
         {WM_KEYUP, wparam|lparam, VK_CONTROL, KF_UP}, {0}}},
     /* LCONTROL | KEYEVENTF_EXTENDEDKEY == RCONTROL */
     /* 30 */
-    {VK_LCONTROL, KEYEVENTF_EXTENDEDKEY, 0,
+    {VK_LCONTROL, KEYEVENTF_EXTENDEDKEY, FALSE,
         {{VK_CONTROL, 0x00}, {VK_RCONTROL, 0x00}, {0}},
         {{WM_KEYDOWN, hook|wparam|lparam, VK_LCONTROL, LLKHF_EXTENDED},
         {WM_KEYDOWN, wparam|lparam, VK_CONTROL, KF_EXTENDED}, {0}}},
-    {VK_LCONTROL, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, 0,
+    {VK_LCONTROL, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, FALSE,
         {{VK_CONTROL, 0x80}, {VK_RCONTROL, 0x80}, {0}},
         {{WM_KEYUP, hook|wparam|lparam, VK_LCONTROL, LLKHF_UP|LLKHF_EXTENDED},
         {WM_KEYUP, wparam|lparam, VK_CONTROL, KF_UP|KF_EXTENDED}, {0}}},
     /* RCONTROL | KEYEVENTF_EXTENDEDKEY == RCONTROL */
     /* 32 */
-    {VK_RCONTROL, KEYEVENTF_EXTENDEDKEY, 0,
+    {VK_RCONTROL, KEYEVENTF_EXTENDEDKEY, FALSE,
         {{VK_CONTROL, 0x00}, {VK_RCONTROL, 0x00}, {0}},
         {{WM_KEYDOWN, hook|wparam|lparam, VK_RCONTROL, LLKHF_EXTENDED},
         {WM_KEYDOWN, wparam|lparam, VK_CONTROL, KF_EXTENDED}, {0}}},
-    {VK_RCONTROL, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, 0,
+    {VK_RCONTROL, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, FALSE,
         {{VK_CONTROL, 0x80}, {VK_RCONTROL, 0x80}, {0}},
         {{WM_KEYUP, hook|wparam|lparam, VK_RCONTROL, LLKHF_UP|LLKHF_EXTENDED},
         {WM_KEYUP, wparam|lparam, VK_CONTROL, KF_UP|KF_EXTENDED}, {0}}},
     /* CONTROL == LCONTROL */
     /* 34 */
-    {VK_CONTROL, 0, 0,
+    {VK_CONTROL, 0, FALSE,
         {{VK_CONTROL, 0x00}, {VK_LCONTROL, 0x00}, {0}},
         {{WM_KEYDOWN, hook/*|wparam, VK_CONTROL*/},
         {WM_KEYDOWN, wparam|lparam, VK_CONTROL, 0}, {0}}},
-    {VK_CONTROL, KEYEVENTF_KEYUP, 0,
+    {VK_CONTROL, KEYEVENTF_KEYUP, FALSE,
         {{VK_CONTROL, 0x80}, {VK_LCONTROL, 0x80}, {0}},
         {{WM_KEYUP, hook/*|wparam, VK_CONTROL*/},
         {WM_KEYUP, wparam|lparam, VK_CONTROL, KF_UP}, {0}}},
     /* CONTROL | KEYEVENTF_EXTENDEDKEY == RCONTROL */
     /* 36 */
-    {VK_CONTROL, KEYEVENTF_EXTENDEDKEY, 0,
+    {VK_CONTROL, KEYEVENTF_EXTENDEDKEY, FALSE,
         {{VK_CONTROL, 0x00}, {VK_RCONTROL, 0x00}, {0}},
         {{WM_KEYDOWN, hook/*|wparam*/|lparam, VK_CONTROL, LLKHF_EXTENDED},
         {WM_KEYDOWN, wparam|lparam, VK_CONTROL, KF_EXTENDED}, {0}}},
-    {VK_CONTROL, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, 0,
+    {VK_CONTROL, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, FALSE,
         {{VK_CONTROL, 0x80}, {VK_RCONTROL, 0x80}, {0}},
         {{WM_KEYUP, hook/*|wparam*/|lparam, VK_CONTROL, LLKHF_UP|LLKHF_EXTENDED},
         {WM_KEYUP, wparam|lparam, VK_CONTROL, KF_UP|KF_EXTENDED}, {0}}},
@@ -598,13 +598,13 @@ static const struct sendinput_test_s {
     /* test L-MENU & R-MENU: */
     /* RMENU == LMENU */
     /* 38 */
-    {VK_RMENU, 0, 0,
+    {VK_RMENU, 0, FALSE,
         {{VK_MENU, 0x00}, {VK_LMENU, 0x00}, {VK_CONTROL, 0x00, 1}, {VK_LCONTROL, 0x01, 1}, {0}},
         {{WM_SYSKEYDOWN, hook|wparam|optional, VK_LCONTROL},
         {WM_SYSKEYDOWN, hook|wparam, VK_RMENU},
         {WM_KEYDOWN, wparam|lparam|optional, VK_CONTROL, 0},
         {WM_SYSKEYDOWN, wparam|lparam, VK_MENU, 0}, {0}}},
-    {VK_RMENU, KEYEVENTF_KEYUP, 1,
+    {VK_RMENU, KEYEVENTF_KEYUP, TRUE,
         {{VK_MENU, 0x80}, {VK_LMENU, 0x80}, {VK_CONTROL, 0x81, 1}, {VK_LCONTROL, 0x80, 1}, {0}},
         {{WM_KEYUP, hook|wparam|optional, VK_LCONTROL},
         {WM_KEYUP, hook|wparam, VK_RMENU},
@@ -613,24 +613,24 @@ static const struct sendinput_test_s {
         {WM_SYSCOMMAND, optional}, {0}}},
     /* LMENU | KEYEVENTF_EXTENDEDKEY == RMENU */
     /* 40 */
-    {VK_LMENU, KEYEVENTF_EXTENDEDKEY, 0,
+    {VK_LMENU, KEYEVENTF_EXTENDEDKEY, FALSE,
         {{VK_MENU, 0x00}, {VK_RMENU, 0x00}, {0}},
         {{WM_SYSKEYDOWN, hook|wparam|lparam, VK_LMENU, LLKHF_EXTENDED},
         {WM_SYSKEYDOWN, wparam|lparam, VK_MENU, KF_EXTENDED}, {0}}},
-    {VK_LMENU, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, 1,
+    {VK_LMENU, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, TRUE,
         {{VK_MENU, 0x80}, {VK_RMENU, 0x80}, {0}},
         {{WM_KEYUP, hook|wparam|lparam, VK_LMENU, LLKHF_UP|LLKHF_EXTENDED},
         {WM_SYSKEYUP, wparam|lparam, VK_MENU, KF_UP|KF_EXTENDED},
         {WM_SYSCOMMAND}, {0}}},
     /* RMENU | KEYEVENTF_EXTENDEDKEY == RMENU */
     /* 42 */
-    {VK_RMENU, KEYEVENTF_EXTENDEDKEY, 0,
+    {VK_RMENU, KEYEVENTF_EXTENDEDKEY, FALSE,
         {{VK_MENU, 0x00}, {VK_RMENU, 0x00}, {VK_CONTROL, 0x00, 1}, {VK_LCONTROL, 0x01, 1}, {0}},
         {{WM_SYSKEYDOWN, hook|wparam|lparam|optional, VK_LCONTROL, 0},
         {WM_SYSKEYDOWN, hook|wparam|lparam, VK_RMENU, LLKHF_EXTENDED},
         {WM_KEYDOWN, wparam|lparam|optional, VK_CONTROL, 0},
         {WM_SYSKEYDOWN, wparam|lparam, VK_MENU, KF_EXTENDED}, {0}}},
-    {VK_RMENU, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, 1,
+    {VK_RMENU, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, TRUE,
         {{VK_MENU, 0x80}, {VK_RMENU, 0x80}, {VK_CONTROL, 0x81, 1}, {VK_LCONTROL, 0x80, 1}, {0}},
         {{WM_KEYUP, hook|wparam|lparam|optional, VK_LCONTROL, LLKHF_UP},
         {WM_KEYUP, hook|wparam|lparam, VK_RMENU, LLKHF_UP|LLKHF_EXTENDED},
@@ -639,23 +639,23 @@ static const struct sendinput_test_s {
         {WM_SYSCOMMAND, optional}, {0}}},
     /* MENU == LMENU */
     /* 44 */
-    {VK_MENU, 0, 0,
+    {VK_MENU, 0, FALSE,
         {{VK_MENU, 0x00}, {VK_LMENU, 0x00}, {0}},
         {{WM_SYSKEYDOWN, hook/*|wparam, VK_MENU*/},
         {WM_SYSKEYDOWN, wparam|lparam, VK_MENU, 0}, {0}}},
-    {VK_MENU, KEYEVENTF_KEYUP, 1,
+    {VK_MENU, KEYEVENTF_KEYUP, TRUE,
         {{VK_MENU, 0x80}, {VK_LMENU, 0x80}, {0}},
         {{WM_KEYUP, hook/*|wparam, VK_MENU*/},
         {WM_SYSKEYUP, wparam|lparam, VK_MENU, KF_UP},
         {WM_SYSCOMMAND}, {0}}},
     /* MENU | KEYEVENTF_EXTENDEDKEY == RMENU */
     /* 46 */
-    {VK_MENU, KEYEVENTF_EXTENDEDKEY, 0,
+    {VK_MENU, KEYEVENTF_EXTENDEDKEY, FALSE,
         {{VK_MENU, 0x00}, {VK_RMENU, 0x00}, {VK_CONTROL, 0x00, 1}, {VK_LCONTROL, 0x01, 1}, {0}},
         {{WM_SYSKEYDOWN, hook|wparam|lparam|optional, VK_CONTROL, 0},
         {WM_SYSKEYDOWN, hook/*|wparam*/|lparam, VK_MENU, LLKHF_EXTENDED},
         {WM_SYSKEYDOWN, wparam|lparam, VK_MENU, KF_EXTENDED}, {0}}},
-    {VK_MENU, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, 1,
+    {VK_MENU, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, TRUE,
         {{VK_MENU, 0x80}, {VK_RMENU, 0x80}, {VK_CONTROL, 0x81, 1}, {VK_LCONTROL, 0x80, 1}, {0}},
         {{WM_KEYUP, hook|wparam|lparam|optional, VK_CONTROL, LLKHF_UP},
         {WM_KEYUP, hook/*|wparam*/|lparam, VK_MENU, LLKHF_UP|LLKHF_EXTENDED},
@@ -664,24 +664,24 @@ static const struct sendinput_test_s {
 
     /* test LSHIFT & RSHIFT */
     /* 48 */
-    {VK_LSHIFT, 0, 0,
+    {VK_LSHIFT, 0, FALSE,
         {{VK_SHIFT, 0x00}, {VK_LSHIFT, 0x00}, {0}},
         {{WM_KEYDOWN, hook|wparam|lparam, VK_LSHIFT, 0},
         {WM_KEYDOWN, wparam|lparam, VK_SHIFT, 0}, {0}}},
-    {VK_RSHIFT, KEYEVENTF_EXTENDEDKEY, 0,
+    {VK_RSHIFT, KEYEVENTF_EXTENDEDKEY, FALSE,
         {{VK_RSHIFT, 0x00}, {0}},
         {{WM_KEYDOWN, hook|wparam|lparam, VK_RSHIFT, LLKHF_EXTENDED},
         {WM_KEYDOWN, wparam|lparam, VK_SHIFT, 0}, {0}}},
-    {VK_RSHIFT, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, 0,
+    {VK_RSHIFT, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, FALSE,
         {{VK_RSHIFT, 0x80}, {0}},
         {{WM_KEYUP, hook|wparam|lparam, VK_RSHIFT, LLKHF_UP|LLKHF_EXTENDED},
         {WM_KEYUP, optional}, {0}}},
-    {VK_LSHIFT, KEYEVENTF_KEYUP, 0,
+    {VK_LSHIFT, KEYEVENTF_KEYUP, FALSE,
         {{VK_SHIFT, 0x80}, {VK_LSHIFT, 0x80}, {0}},
         {{WM_KEYUP, hook|wparam, VK_LSHIFT},
         {WM_KEYUP, wparam|lparam, VK_SHIFT, KF_UP}, {0}}},
 
-    {0, 0, 0, {{0}}, {{0}}} /* end */
+    {0, 0, FALSE, {{0}}, {{0}}} /* end */
 };
 
 static struct message sent_messages[MAXKEYMESSAGES];
@@ -696,7 +696,7 @@ static void compare_and_check(int id, BYTE *ks1, BYTE *ks2, const struct sendinp
     const struct message *expected = test->expected_messages;
 
     while (t->wVk) {
-        int matched = ((ks1[t->wVk]&0x80) == (t->before_state&0x80)
+        BOOL matched = ((ks1[t->wVk]&0x80) == (t->before_state&0x80)
                        && (ks2[t->wVk]&0x80) == (~t->before_state&0x80));
 
         if (!matched && !t->optional && test->_todo_wine)
@@ -865,7 +865,7 @@ static LRESULT CALLBACK WndProc2(HWND hWnd, UINT Msg, WPARAM wParam,
             sent_messages[sent_messages_cnt++].lParam = HIWORD(lParam) & (KF_UP|KF_EXTENDED);
         }
     }
-    return DefWindowProc(hWnd, Msg, wParam, lParam);
+    return DefWindowProcA(hWnd, Msg, wParam, lParam);
 }
 
 static LRESULT CALLBACK hook_proc(int code, WPARAM wparam, LPARAM lparam)
@@ -911,7 +911,7 @@ static void test_Input_blackbox(void)
         skip("Skipping Input_blackbox test on non-US keyboard\n");
         return;
     }
-    window = CreateWindow("Static", NULL, WS_POPUP|WS_HSCROLL|WS_VSCROLL
+    window = CreateWindowA("Static", NULL, WS_POPUP|WS_HSCROLL|WS_VSCROLL
         |WS_VISIBLE, 0, 0, 200, 60, NULL, NULL,
         NULL, NULL);
     ok(window != NULL, "error: %d\n", (int) GetLastError());
@@ -929,7 +929,7 @@ static void test_Input_blackbox(void)
      * key state set by SendInput(). */
     empty_message_queue();
 
-    prevWndProc = SetWindowLongPtr(window, GWLP_WNDPROC, (LONG_PTR) WndProc2);
+    prevWndProc = SetWindowLongPtrA(window, GWLP_WNDPROC, (LONG_PTR) WndProc2);
     ok(prevWndProc != 0 || (prevWndProc == 0 && GetLastError() == 0),
        "error: %d\n", (int) GetLastError());
 
@@ -1160,8 +1160,8 @@ static void test_Input_unicode(void)
     wclass.style         = CS_HREDRAW | CS_VREDRAW;
     wclass.lpfnWndProc   = unicode_wnd_proc;
     wclass.hInstance     = hInstance;
-    wclass.hIcon         = LoadIcon(0, IDI_APPLICATION);
-    wclass.hCursor       = LoadCursor( NULL, IDC_ARROW);
+    wclass.hIcon         = LoadIconW(0, (LPCWSTR)IDI_APPLICATION);
+    wclass.hCursor       = LoadCursorW( NULL, (LPCWSTR)IDC_ARROW);
     wclass.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     wclass.lpszMenuName  = 0;
     wclass.cbClsExtra    = 0;
@@ -1171,7 +1171,7 @@ static void test_Input_unicode(void)
         return;
     }
 
-    hModuleImm32 = LoadLibrary("imm32.dll");
+    hModuleImm32 = LoadLibraryA("imm32.dll");
     if (hModuleImm32) {
         pImmDisableIME = (void *)GetProcAddress(hModuleImm32, "ImmDisableIME");
         if (pImmDisableIME)
@@ -1280,7 +1280,7 @@ static void test_mouse_ll_hook(void)
     RECT rc;
 
     GetCursorPos(&pt_org);
-    hwnd = CreateWindow("static", "Title", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+    hwnd = CreateWindowA("static", "Title", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                         10, 10, 200, 200, NULL, NULL, NULL, NULL);
     SetCursorPos(100, 100);
 
@@ -1361,7 +1361,7 @@ static void test_GetMouseMovePointsEx(void)
 
     /* Get a valid content for the input struct */
     if(!GetCursorPos(&point)) {
-        skip("GetCursorPos() failed with error %u\n", GetLastError());
+        win_skip("GetCursorPos() failed with error %u\n", GetLastError());
         return;
     }
     memset(&in, 0, sizeof(MOUSEMOVEPOINT));
@@ -1503,34 +1503,34 @@ static void test_key_map(void)
         { VK_NUMPAD9, VK_PRIOR },
     };
 
-    s  = MapVirtualKeyEx(VK_SHIFT,  MAPVK_VK_TO_VSC, kl);
+    s  = MapVirtualKeyExA(VK_SHIFT,  MAPVK_VK_TO_VSC, kl);
     ok(s != 0, "MapVirtualKeyEx(VK_SHIFT) should return non-zero\n");
-    sL = MapVirtualKeyEx(VK_LSHIFT, MAPVK_VK_TO_VSC, kl);
+    sL = MapVirtualKeyExA(VK_LSHIFT, MAPVK_VK_TO_VSC, kl);
     ok(s == sL || broken(sL == 0), /* win9x */
        "%x != %x\n", s, sL);
 
-    kL = MapVirtualKeyEx(0x2a, MAPVK_VSC_TO_VK, kl);
+    kL = MapVirtualKeyExA(0x2a, MAPVK_VSC_TO_VK, kl);
     ok(kL == VK_SHIFT, "Scan code -> vKey = %x (not VK_SHIFT)\n", kL);
-    kR = MapVirtualKeyEx(0x36, MAPVK_VSC_TO_VK, kl);
+    kR = MapVirtualKeyExA(0x36, MAPVK_VSC_TO_VK, kl);
     ok(kR == VK_SHIFT, "Scan code -> vKey = %x (not VK_SHIFT)\n", kR);
 
-    kL = MapVirtualKeyEx(0x2a, MAPVK_VSC_TO_VK_EX, kl);
+    kL = MapVirtualKeyExA(0x2a, MAPVK_VSC_TO_VK_EX, kl);
     ok(kL == VK_LSHIFT || broken(kL == 0), /* win9x */
        "Scan code -> vKey = %x (not VK_LSHIFT)\n", kL);
-    kR = MapVirtualKeyEx(0x36, MAPVK_VSC_TO_VK_EX, kl);
+    kR = MapVirtualKeyExA(0x36, MAPVK_VSC_TO_VK_EX, kl);
     ok(kR == VK_RSHIFT || broken(kR == 0), /* win9x */
        "Scan code -> vKey = %x (not VK_RSHIFT)\n", kR);
 
     /* test that MAPVK_VSC_TO_VK prefers the non-numpad vkey if there's ambiguity */
     for (i = 0; i < sizeof(numpad_collisions)/sizeof(numpad_collisions[0]); i++)
     {
-        UINT numpad_scan = MapVirtualKeyEx(numpad_collisions[i][0],  MAPVK_VK_TO_VSC, kl);
-        UINT other_scan  = MapVirtualKeyEx(numpad_collisions[i][1],  MAPVK_VK_TO_VSC, kl);
+        UINT numpad_scan = MapVirtualKeyExA(numpad_collisions[i][0],  MAPVK_VK_TO_VSC, kl);
+        UINT other_scan  = MapVirtualKeyExA(numpad_collisions[i][1],  MAPVK_VK_TO_VSC, kl);
 
         /* do they really collide for this layout? */
         if (numpad_scan && other_scan == numpad_scan)
         {
-            UINT vkey = MapVirtualKeyEx(numpad_scan, MAPVK_VSC_TO_VK, kl);
+            UINT vkey = MapVirtualKeyExA(numpad_scan, MAPVK_VSC_TO_VK, kl);
             ok(vkey != numpad_collisions[i][0],
                "Got numpad vKey %x for scan code %x when there was another choice\n",
                vkey, numpad_scan);
@@ -1540,7 +1540,7 @@ static void test_key_map(void)
 
 static void test_ToUnicode(void)
 {
-    WCHAR wStr[2];
+    WCHAR wStr[4];
     BYTE state[256];
     const BYTE SC_RETURN = 0x1c, SC_TAB = 0x0f;
     const BYTE HIGHEST_BIT = 0x80;
@@ -1548,8 +1548,9 @@ static void test_ToUnicode(void)
     for(i=0; i<256; i++)
         state[i]=0;
 
+    wStr[1] = 0xAA;
     SetLastError(0xdeadbeef);
-    ret = ToUnicode(VK_RETURN, SC_RETURN, state, wStr, 2, 0);
+    ret = ToUnicode(VK_RETURN, SC_RETURN, state, wStr, 4, 0);
     if (!ret && GetLastError() == ERROR_CALL_NOT_IMPLEMENTED)
     {
         win_skip("ToUnicode is not implemented\n");
@@ -1558,7 +1559,11 @@ static void test_ToUnicode(void)
 
     ok(ret == 1, "ToUnicode for Return key didn't return 1 (was %i)\n", ret);
     if(ret == 1)
+    {
         ok(wStr[0]=='\r', "ToUnicode for CTRL + Return was %i (expected 13)\n", wStr[0]);
+        ok(wStr[1]==0 || broken(wStr[1]!=0) /* nt4 */,
+           "ToUnicode didn't null-terminate the buffer when there was room.\n");
+    }
     state[VK_CONTROL] |= HIGHEST_BIT;
     state[VK_LCONTROL] |= HIGHEST_BIT;
 
@@ -1590,12 +1595,362 @@ static void test_keyboard_layout_name(void)
     BOOL ret;
     char klid[KL_NAMELENGTH];
 
+if (0) /* crashes on native system */
+    ret = GetKeyboardLayoutNameA(NULL);
+
+    SetLastError(0xdeadbeef);
+    ret = GetKeyboardLayoutNameW(NULL);
+    ok(!ret, "got %d\n", ret);
+    ok(GetLastError() == ERROR_NOACCESS, "got %d\n", GetLastError());
+
     if (GetKeyboardLayout(0) != (HKL)(ULONG_PTR)0x04090409) return;
 
     klid[0] = 0;
     ret = GetKeyboardLayoutNameA(klid);
     ok(ret, "GetKeyboardLayoutNameA failed %u\n", GetLastError());
     ok(!strcmp(klid, "00000409"), "expected 00000409, got %s\n", klid);
+}
+
+static void test_key_names(void)
+{
+    char buffer[40];
+    WCHAR bufferW[40];
+    int ret, prev;
+    LONG lparam = 0x1d << 16;
+
+    memset( buffer, 0xcc, sizeof(buffer) );
+    ret = GetKeyNameTextA( lparam, buffer, sizeof(buffer) );
+    ok( ret > 0, "wrong len %u for '%s'\n", ret, buffer );
+    ok( ret == strlen(buffer), "wrong len %u for '%s'\n", ret, buffer );
+
+    memset( buffer, 0xcc, sizeof(buffer) );
+    prev = ret;
+    ret = GetKeyNameTextA( lparam, buffer, prev );
+    ok( ret == prev - 1, "wrong len %u for '%s'\n", ret, buffer );
+    ok( ret == strlen(buffer), "wrong len %u for '%s'\n", ret, buffer );
+
+    memset( buffer, 0xcc, sizeof(buffer) );
+    ret = GetKeyNameTextA( lparam, buffer, 0 );
+    ok( ret == 0, "wrong len %u for '%s'\n", ret, buffer );
+    ok( buffer[0] == 0, "wrong string '%s'\n", buffer );
+
+    memset( bufferW, 0xcc, sizeof(bufferW) );
+    ret = GetKeyNameTextW( lparam, bufferW, sizeof(bufferW)/sizeof(WCHAR) );
+    ok( ret > 0, "wrong len %u for %s\n", ret, wine_dbgstr_w(bufferW) );
+    ok( ret == lstrlenW(bufferW), "wrong len %u for %s\n", ret, wine_dbgstr_w(bufferW) );
+
+    memset( bufferW, 0xcc, sizeof(bufferW) );
+    prev = ret;
+    ret = GetKeyNameTextW( lparam, bufferW, prev );
+    ok( ret == prev - 1, "wrong len %u for %s\n", ret, wine_dbgstr_w(bufferW) );
+    ok( ret == lstrlenW(bufferW), "wrong len %u for %s\n", ret, wine_dbgstr_w(bufferW) );
+
+    memset( bufferW, 0xcc, sizeof(bufferW) );
+    ret = GetKeyNameTextW( lparam, bufferW, 0 );
+    ok( ret == 0, "wrong len %u for %s\n", ret, wine_dbgstr_w(bufferW) );
+    ok( bufferW[0] == 0xcccc, "wrong string %s\n", wine_dbgstr_w(bufferW) );
+}
+
+static void simulate_click(BOOL left, int x, int y)
+{
+    INPUT input[2];
+    UINT events_no;
+
+    SetCursorPos(x, y);
+    memset(input, 0, sizeof(input));
+    input[0].type = INPUT_MOUSE;
+    U(input[0]).mi.dx = x;
+    U(input[0]).mi.dy = y;
+    U(input[0]).mi.dwFlags = left ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_RIGHTDOWN;
+    input[1].type = INPUT_MOUSE;
+    U(input[1]).mi.dx = x;
+    U(input[1]).mi.dy = y;
+    U(input[1]).mi.dwFlags = left ? MOUSEEVENTF_LEFTUP : MOUSEEVENTF_RIGHTUP;
+    events_no = SendInput(2, input, sizeof(input[0]));
+    ok(events_no == 2, "SendInput returned %d\n", events_no);
+}
+
+static BOOL wait_for_message( MSG *msg )
+{
+    BOOL ret;
+
+    for (;;)
+    {
+        ret = PeekMessageA(msg, 0, 0, 0, PM_REMOVE);
+        if (ret)
+        {
+            if (msg->message == WM_PAINT) DispatchMessageA(msg);
+            else break;
+        }
+        else if (MsgWaitForMultipleObjects(0, NULL, FALSE, 100, QS_ALLINPUT) == WAIT_TIMEOUT) break;
+    }
+    if (!ret) msg->message = 0;
+    return ret;
+}
+
+static BOOL wait_for_event(HANDLE event, int timeout)
+{
+    DWORD end_time = GetTickCount() + timeout;
+    MSG msg;
+
+    do {
+        if(MsgWaitForMultipleObjects(1, &event, FALSE, timeout, QS_ALLINPUT) == WAIT_OBJECT_0)
+            return TRUE;
+        while(PeekMessageA(&msg, 0, 0, 0, PM_REMOVE))
+            DispatchMessageA(&msg);
+        timeout = end_time - GetTickCount();
+    }while(timeout > 0);
+
+    return FALSE;
+}
+
+static WNDPROC def_static_proc;
+static DWORD hittest_no;
+static LRESULT WINAPI static_hook_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (msg == WM_NCHITTEST)
+    {
+        /* break infinite hittest loop */
+        if(hittest_no > 50) return HTCLIENT;
+        hittest_no++;
+    }
+
+    return def_static_proc(hwnd, msg, wp, lp);
+}
+
+struct thread_data
+{
+    HANDLE start_event;
+    HANDLE end_event;
+    HWND win;
+};
+
+static DWORD WINAPI create_static_win(void *arg)
+{
+    struct thread_data *thread_data = arg;
+    HWND win;
+
+    win = CreateWindowA("static", "static", WS_VISIBLE | WS_POPUP,
+            100, 100, 100, 100, 0, NULL, NULL, NULL);
+    ok(win != 0, "CreateWindow failed\n");
+    def_static_proc = (void*)SetWindowLongPtrA(win,
+            GWLP_WNDPROC, (LONG_PTR)static_hook_proc);
+    thread_data->win = win;
+
+    SetEvent(thread_data->start_event);
+    wait_for_event(thread_data->end_event, 5000);
+    return 0;
+}
+
+static void test_Input_mouse(void)
+{
+    BOOL got_button_down, got_button_up;
+    HWND hwnd, button_win, static_win;
+    struct thread_data thread_data;
+    HANDLE thread;
+    DWORD thread_id;
+    POINT pt;
+    MSG msg;
+
+    button_win = CreateWindowA("button", "button", WS_VISIBLE | WS_POPUP,
+            100, 100, 100, 100, 0, NULL, NULL, NULL);
+    ok(button_win != 0, "CreateWindow failed\n");
+
+    pt.x = pt.y = 150;
+    hwnd = WindowFromPoint(pt);
+    if (hwnd != button_win)
+    {
+        skip("there's another window covering test window\n");
+        DestroyWindow(button_win);
+        return;
+    }
+
+    /* simple button click test */
+    simulate_click(TRUE, 150, 150);
+    got_button_down = got_button_up = FALSE;
+    while (wait_for_message(&msg))
+    {
+        DispatchMessageA(&msg);
+
+        if (msg.message == WM_LBUTTONDOWN)
+        {
+            got_button_down = TRUE;
+        }
+        else if (msg.message == WM_LBUTTONUP)
+        {
+            got_button_up = TRUE;
+            break;
+        }
+    }
+    ok(got_button_down, "expected WM_LBUTTONDOWN message\n");
+    ok(got_button_up, "expected WM_LBUTTONUP message\n");
+
+    /* click through HTTRANSPARENT child window */
+    static_win = CreateWindowA("static", "static", WS_VISIBLE | WS_CHILD,
+            0, 0, 100, 100, button_win, NULL, NULL, NULL);
+    ok(static_win != 0, "CreateWindow failed\n");
+    def_static_proc = (void*)SetWindowLongPtrA(static_win,
+            GWLP_WNDPROC, (LONG_PTR)static_hook_proc);
+    simulate_click(FALSE, 150, 150);
+    hittest_no = 0;
+    got_button_down = got_button_up = FALSE;
+    while (wait_for_message(&msg))
+    {
+        DispatchMessageA(&msg);
+
+        if (msg.message == WM_RBUTTONDOWN)
+        {
+            ok(msg.hwnd == button_win, "msg.hwnd = %p\n", msg.hwnd);
+            got_button_down = TRUE;
+        }
+        else if (msg.message == WM_RBUTTONUP)
+        {
+            ok(msg.hwnd == button_win, "msg.hwnd = %p\n", msg.hwnd);
+            got_button_up = TRUE;
+            break;
+        }
+    }
+    ok(hittest_no && hittest_no<50, "expected WM_NCHITTEST message\n");
+    ok(got_button_down, "expected WM_RBUTTONDOWN message\n");
+    ok(got_button_up, "expected WM_RBUTTONUP message\n");
+    DestroyWindow(static_win);
+
+    /* click through HTTRANSPARENT top-level window */
+    static_win = CreateWindowA("static", "static", WS_VISIBLE | WS_POPUP,
+            100, 100, 100, 100, 0, NULL, NULL, NULL);
+    ok(static_win != 0, "CreateWindow failed\n");
+    def_static_proc = (void*)SetWindowLongPtrA(static_win,
+            GWLP_WNDPROC, (LONG_PTR)static_hook_proc);
+    simulate_click(TRUE, 150, 150);
+    hittest_no = 0;
+    got_button_down = got_button_up = FALSE;
+    while (wait_for_message(&msg))
+    {
+        DispatchMessageA(&msg);
+
+        if (msg.message == WM_LBUTTONDOWN)
+        {
+            ok(msg.hwnd == button_win, "msg.hwnd = %p\n", msg.hwnd);
+            got_button_down = TRUE;
+        }
+        else if (msg.message == WM_LBUTTONUP)
+        {
+            ok(msg.hwnd == button_win, "msg.hwnd = %p\n", msg.hwnd);
+            got_button_up = TRUE;
+            break;
+        }
+    }
+    ok(hittest_no && hittest_no<50, "expected WM_NCHITTEST message\n");
+    todo_wine ok(got_button_down, "expected WM_LBUTTONDOWN message\n");
+    todo_wine ok(got_button_up, "expected WM_LBUTTONUP message\n");
+    DestroyWindow(static_win);
+
+    /* click on HTTRANSPARENT top-level window that belongs to other thread */
+    thread_data.start_event = CreateEventA(NULL, FALSE, FALSE, NULL);
+    ok(thread_data.start_event != NULL, "CreateEvent failed\n");
+    thread_data.end_event = CreateEventA(NULL, FALSE, FALSE, NULL);
+    ok(thread_data.end_event != NULL, "CreateEvent failed\n");
+    thread = CreateThread(NULL, 0, create_static_win, &thread_data, 0, NULL);
+    ok(thread != NULL, "CreateThread failed\n");
+    hittest_no = 0;
+    got_button_down = got_button_up = FALSE;
+    WaitForSingleObject(thread_data.start_event, INFINITE);
+    simulate_click(FALSE, 150, 150);
+    while (wait_for_message(&msg))
+    {
+        DispatchMessageA(&msg);
+
+        if (msg.message == WM_RBUTTONDOWN)
+            got_button_down = TRUE;
+        else if (msg.message == WM_RBUTTONUP)
+            got_button_up = TRUE;
+    }
+    SetEvent(thread_data.end_event);
+    WaitForSingleObject(thread, INFINITE);
+    ok(hittest_no && hittest_no<50, "expected WM_NCHITTEST message\n");
+    ok(!got_button_down, "unexpected WM_RBUTTONDOWN message\n");
+    ok(!got_button_up, "unexpected WM_RBUTTONUP message\n");
+
+    /* click on HTTRANSPARENT top-level window that belongs to other thread,
+     * thread input queues are attached */
+    thread = CreateThread(NULL, 0, create_static_win, &thread_data, 0, &thread_id);
+    ok(thread != NULL, "CreateThread failed\n");
+    hittest_no = 0;
+    got_button_down = got_button_up = FALSE;
+    WaitForSingleObject(thread_data.start_event, INFINITE);
+    ok(AttachThreadInput(thread_id, GetCurrentThreadId(), TRUE),
+            "AttachThreadInput failed\n");
+    while (wait_for_message(&msg)) DispatchMessageA(&msg);
+    SetWindowPos(thread_data.win, button_win, 0, 0, 0, 0, SWP_NOSIZE|SWP_NOMOVE);
+    simulate_click(TRUE, 150, 150);
+    while (wait_for_message(&msg))
+    {
+        DispatchMessageA(&msg);
+
+        if (msg.message == WM_LBUTTONDOWN)
+            got_button_down = TRUE;
+        else if (msg.message == WM_LBUTTONUP)
+            got_button_up = TRUE;
+    }
+    SetEvent(thread_data.end_event);
+    WaitForSingleObject(thread, INFINITE);
+    todo_wine ok(hittest_no > 50, "expected loop with WM_NCHITTEST messages\n");
+    ok(!got_button_down, "unexpected WM_LBUTTONDOWN message\n");
+    ok(!got_button_up, "unexpected WM_LBUTTONUP message\n");
+
+    /* click after SetCapture call */
+    SetCapture(button_win);
+    got_button_down = got_button_up = FALSE;
+    simulate_click(FALSE, 50, 50);
+    while (wait_for_message(&msg))
+    {
+        DispatchMessageA(&msg);
+
+        if (msg.message == WM_RBUTTONDOWN)
+        {
+            ok(msg.hwnd == button_win, "msg.hwnd = %p\n", msg.hwnd);
+            got_button_down = TRUE;
+        }
+        else if (msg.message == WM_RBUTTONUP)
+        {
+            ok(msg.hwnd == button_win, "msg.hwnd = %p\n", msg.hwnd);
+            got_button_up = TRUE;
+            break;
+        }
+    }
+    ok(got_button_down, "expected WM_RBUTTONDOWN message\n");
+    ok(got_button_up, "expected WM_RBUTTONUP message\n");
+
+    /* click on child window after SetCapture call */
+    hwnd = CreateWindowA("button", "button2", WS_VISIBLE | WS_CHILD,
+            0, 0, 100, 100, button_win, NULL, NULL, NULL);
+    ok(hwnd != 0, "CreateWindow failed\n");
+    got_button_down = got_button_up = FALSE;
+    simulate_click(TRUE, 150, 150);
+    while (wait_for_message(&msg))
+    {
+        DispatchMessageA(&msg);
+
+        if (msg.message == WM_LBUTTONDOWN)
+        {
+            ok(msg.hwnd == button_win, "msg.hwnd = %p\n", msg.hwnd);
+            got_button_down = TRUE;
+        }
+        else if (msg.message == WM_LBUTTONUP)
+        {
+            ok(msg.hwnd == button_win, "msg.hwnd = %p\n", msg.hwnd);
+            got_button_up = TRUE;
+            break;
+        }
+    }
+    ok(got_button_down, "expected WM_LBUTTONDOWN message\n");
+    ok(got_button_up, "expected WM_LBUTTONUP message\n");
+    DestroyWindow(hwnd);
+    ok(ReleaseCapture(), "ReleaseCapture failed\n");
+
+    CloseHandle(thread_data.start_event);
+    CloseHandle(thread_data.end_event);
+    DestroyWindow(button_win);
 }
 
 START_TEST(input)
@@ -1607,6 +1962,7 @@ START_TEST(input)
         test_Input_blackbox();
         test_Input_whitebox();
         test_Input_unicode();
+        test_Input_mouse();
     }
     else win_skip("SendInput is not available\n");
 
@@ -1616,6 +1972,7 @@ START_TEST(input)
     test_ToUnicode();
     test_get_async_key_state();
     test_keyboard_layout_name();
+    test_key_names();
 
     if(pGetMouseMovePointsEx)
         test_GetMouseMovePointsEx();

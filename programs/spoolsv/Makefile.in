@@ -1,9 +1,6 @@
-EXTRADEFS = -DWINE_NO_UNICODE_MACROS
 MODULE    = spoolsv.exe
 APPMODE   = -mconsole
 IMPORTS   = advapi32
 
 C_SRCS = \
 	main.c
-
-@MAKE_PROG_RULES@

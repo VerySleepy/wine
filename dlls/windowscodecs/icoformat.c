@@ -95,7 +95,7 @@ static HRESULT WINAPI IcoFrameDecode_QueryInterface(IWICBitmapFrameDecode *iface
         IsEqualIID(&IID_IWICBitmapSource, iid) ||
         IsEqualIID(&IID_IWICBitmapFrameDecode, iid))
     {
-        *ppv = This;
+        *ppv = &This->IWICBitmapFrameDecode_iface;
     }
     else
     {
@@ -201,7 +201,7 @@ static HRESULT WINAPI IcoFrameDecode_GetThumbnail(IWICBitmapFrameDecode *iface,
     IWICBitmapSource **ppIThumbnail)
 {
     TRACE("(%p,%p)\n", iface, ppIThumbnail);
-    return WINCODEC_ERR_CODECNOTHUMBNAIL;
+    return IWICBitmapFrameDecode_QueryInterface(iface, &IID_IWICBitmapSource, (void **)ppIThumbnail);
 }
 
 static const IWICBitmapFrameDecodeVtbl IcoFrameDecode_Vtbl = {
@@ -232,7 +232,7 @@ static HRESULT ReadIcoDib(IStream *stream, IcoFrameDecode *result)
     IWICBitmapFrameDecode *framedecode;
     WICPixelFormatGUID pixelformat;
     IWICBitmapSource *source;
-    int has_alpha=FALSE; /* if TRUE, alpha data might be in the image data */
+    BOOL has_alpha=FALSE; /* if TRUE, alpha data might be in the image data */
     WICRect rc;
 
     hr = IcoDibDecoder_CreateInstance(&bmp_decoder);
@@ -293,7 +293,7 @@ static HRESULT ReadIcoDib(IStream *stream, IcoFrameDecode *result)
         {
             /* If the alpha channel is fully transparent, we should ignore it. */
             int nonzero_alpha = 0;
-            int i;
+            UINT i;
 
             for (i=0; i<(result->height*result->width); i++)
             {
@@ -397,7 +397,7 @@ static HRESULT ReadIcoPng(IStream *stream, IcoFrameDecode *result)
     WICRect rect;
     HRESULT hr;
 
-    hr = PngDecoder_CreateInstance(NULL, &IID_IWICBitmapDecoder, (void**)&decoder);
+    hr = PngDecoder_CreateInstance(&IID_IWICBitmapDecoder, (void**)&decoder);
     if (FAILED(hr))
         goto end;
     hr = IWICBitmapDecoder_Initialize(decoder, stream, WICDecodeMetadataCacheOnLoad);
@@ -446,9 +446,10 @@ static HRESULT WINAPI IcoDecoder_QueryInterface(IWICBitmapDecoder *iface, REFIID
 
     if (!ppv) return E_INVALIDARG;
 
-    if (IsEqualIID(&IID_IUnknown, iid) || IsEqualIID(&IID_IWICBitmapDecoder, iid))
+    if (IsEqualIID(&IID_IUnknown, iid) ||
+        IsEqualIID(&IID_IWICBitmapDecoder, iid))
     {
-        *ppv = This;
+        *ppv = &This->IWICBitmapDecoder_iface;
     }
     else
     {
@@ -488,11 +489,20 @@ static ULONG WINAPI IcoDecoder_Release(IWICBitmapDecoder *iface)
     return ref;
 }
 
-static HRESULT WINAPI IcoDecoder_QueryCapability(IWICBitmapDecoder *iface, IStream *pIStream,
-    DWORD *pdwCapability)
+static HRESULT WINAPI IcoDecoder_QueryCapability(IWICBitmapDecoder *iface, IStream *stream,
+    DWORD *capability)
 {
-    FIXME("(%p,%p,%p): stub\n", iface, pIStream, pdwCapability);
-    return E_NOTIMPL;
+    HRESULT hr;
+
+    TRACE("(%p,%p,%p)\n", iface, stream, capability);
+
+    if (!stream || !capability) return E_INVALIDARG;
+
+    hr = IWICBitmapDecoder_Initialize(iface, stream, WICDecodeMetadataCacheOnDemand);
+    if (hr != S_OK) return hr;
+
+    *capability = WICBitmapDecoderCapabilityCanDecodeAllImages;
+    return S_OK;
 }
 
 static HRESULT WINAPI IcoDecoder_Initialize(IWICBitmapDecoder *iface, IStream *pIStream,
@@ -602,12 +612,14 @@ static HRESULT WINAPI IcoDecoder_GetFrameCount(IWICBitmapDecoder *iface,
     UINT *pCount)
 {
     IcoDecoder *This = impl_from_IWICBitmapDecoder(iface);
-    TRACE("(%p,%p)\n", iface, pCount);
 
-    if (!This->initialized) return WINCODEC_ERR_NOTINITIALIZED;
+    if (!pCount) return E_INVALIDARG;
 
-    *pCount = This->header.idCount;
-    TRACE("<-- %u\n", *pCount);
+    EnterCriticalSection(&This->lock);
+    *pCount = This->initialized ? This->header.idCount : 0;
+    LeaveCriticalSection(&This->lock);
+
+    TRACE("(%p) <-- %d\n", iface, *pCount);
 
     return S_OK;
 }
@@ -630,7 +642,7 @@ static HRESULT WINAPI IcoDecoder_GetFrame(IWICBitmapDecoder *iface,
 
     if (!This->initialized)
     {
-        hr = WINCODEC_ERR_NOTINITIALIZED;
+        hr = WINCODEC_ERR_FRAMEMISSING;
         goto fail;
     }
 
@@ -692,18 +704,18 @@ static HRESULT WINAPI IcoDecoder_GetFrame(IWICBitmapDecoder *iface,
     }
     if (FAILED(hr)) goto fail;
 
-    *ppIBitmapFrame = (IWICBitmapFrameDecode*)result;
+    *ppIBitmapFrame = &result->IWICBitmapFrameDecode_iface;
 
     LeaveCriticalSection(&This->lock);
 
-    IStream_Release(substream);
+    IWICStream_Release(substream);
 
     return S_OK;
 
 fail:
     LeaveCriticalSection(&This->lock);
     HeapFree(GetProcessHeap(), 0, result);
-    if (substream) IStream_Release(substream);
+    if (substream) IWICStream_Release(substream);
     if (SUCCEEDED(hr)) hr = E_FAIL;
     TRACE("<-- %x\n", hr);
     return hr;
@@ -726,16 +738,14 @@ static const IWICBitmapDecoderVtbl IcoDecoder_Vtbl = {
     IcoDecoder_GetFrame
 };
 
-HRESULT IcoDecoder_CreateInstance(IUnknown *pUnkOuter, REFIID iid, void** ppv)
+HRESULT IcoDecoder_CreateInstance(REFIID iid, void** ppv)
 {
     IcoDecoder *This;
     HRESULT ret;
 
-    TRACE("(%p,%s,%p)\n", pUnkOuter, debugstr_guid(iid), ppv);
+    TRACE("(%s,%p)\n", debugstr_guid(iid), ppv);
 
     *ppv = NULL;
-
-    if (pUnkOuter) return CLASS_E_NOAGGREGATION;
 
     This = HeapAlloc(GetProcessHeap(), 0, sizeof(IcoDecoder));
     if (!This) return E_OUTOFMEMORY;
@@ -747,8 +757,8 @@ HRESULT IcoDecoder_CreateInstance(IUnknown *pUnkOuter, REFIID iid, void** ppv)
     InitializeCriticalSection(&This->lock);
     This->lock.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": IcoDecoder.lock");
 
-    ret = IUnknown_QueryInterface((IUnknown*)This, iid, ppv);
-    IUnknown_Release((IUnknown*)This);
+    ret = IWICBitmapDecoder_QueryInterface(&This->IWICBitmapDecoder_iface, iid, ppv);
+    IWICBitmapDecoder_Release(&This->IWICBitmapDecoder_iface);
 
     return ret;
 }

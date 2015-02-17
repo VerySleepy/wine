@@ -112,7 +112,7 @@ static HRESULT GAMEUX_updateStatisticsFile(struct GAMEUX_STATS *stats)
 
     HRESULT hr = S_OK;
     IXMLDOMDocument *document;
-    IXMLDOMElement *root, *categoryElement, *statisticsElement;
+    IXMLDOMElement *root, *statisticsElement;
     IXMLDOMNode *categoryNode, *statisticsNode;
     VARIANT vStatsFilePath, vValue;
     BSTR bstrStatistics = NULL, bstrCategory = NULL, bstrIndex = NULL,
@@ -176,11 +176,11 @@ static HRESULT GAMEUX_updateStatisticsFile(struct GAMEUX_STATS *stats)
     }
 
     if(SUCCEEDED(hr))
-
-    if(SUCCEEDED(hr))
         for(i=0; i<MAX_CATEGORIES; ++i)
         {
-            if(lstrlenW(stats->categories[i].sName)==0)
+            IXMLDOMElement *categoryElement = NULL;
+
+            if(!stats->categories[i].sName[0])
                 continue;
 
             V_VT(&vValue) = VT_INT;
@@ -189,7 +189,7 @@ static HRESULT GAMEUX_updateStatisticsFile(struct GAMEUX_STATS *stats)
             hr = IXMLDOMDocument_createNode(document, vValue, bstrCategory, NULL, &categoryNode);
 
             if(SUCCEEDED(hr))
-                hr = IXMLDOMNode_QueryInterface(categoryNode, &IID_IXMLDOMElement, (LPVOID*)&categoryElement);
+                hr = IXMLDOMNode_QueryInterface(categoryNode, &IID_IXMLDOMElement, (void**)&categoryElement);
 
             V_INT(&vValue) = i;
             if(SUCCEEDED(hr))
@@ -209,13 +209,16 @@ static HRESULT GAMEUX_updateStatisticsFile(struct GAMEUX_STATS *stats)
                 hr = IXMLDOMElement_setAttribute(categoryElement, bstrName, vValue);
             }
 
+            if (categoryElement)
+                IXMLDOMElement_Release(categoryElement);
+
             SysFreeString(V_BSTR(&vValue));
 
             if(SUCCEEDED(hr))
             {
                 for(j=0; j<MAX_STATS_PER_CATEGORY; ++j)
                 {
-                    if(lstrlenW(stats->categories[i].stats[j].sName)==0)
+                    if(!stats->categories[i].stats[j].sName[0])
                         continue;
 
                     V_VT(&vValue) = VT_INT;
@@ -242,9 +245,8 @@ static HRESULT GAMEUX_updateStatisticsFile(struct GAMEUX_STATS *stats)
                     {
                         TRACE("    storing statistic %d: name: %s\n", j, debugstr_w(V_BSTR(&vValue)));
                         hr = IXMLDOMElement_setAttribute(statisticsElement, bstrName, vValue);
+                        SysFreeString(V_BSTR(&vValue));
                     }
-
-                    SysFreeString(V_BSTR(&vValue));
 
                     if(SUCCEEDED(hr))
                     {
@@ -258,12 +260,11 @@ static HRESULT GAMEUX_updateStatisticsFile(struct GAMEUX_STATS *stats)
                     {
                         TRACE("    storing statistic %d: name: %s\n", j, debugstr_w(V_BSTR(&vValue)));
                         hr = IXMLDOMElement_setAttribute(statisticsElement, bstrValue, vValue);
+                        SysFreeString(V_BSTR(&vValue));
                     }
 
-                    SysFreeString(V_BSTR(&vValue));
-
                     if(SUCCEEDED(hr))
-                        hr = IXMLDOMElement_appendChild(categoryNode, statisticsNode, &statisticsNode);
+                        hr = IXMLDOMNode_appendChild(categoryNode, statisticsNode, &statisticsNode);
 
                     IXMLDOMElement_Release(statisticsElement);
                     IXMLDOMNode_Release(statisticsNode);
@@ -273,7 +274,6 @@ static HRESULT GAMEUX_updateStatisticsFile(struct GAMEUX_STATS *stats)
             if(SUCCEEDED(hr))
                 hr = IXMLDOMElement_appendChild(root, categoryNode, &categoryNode);
 
-            IXMLDOMElement_Release(categoryElement);
             IXMLDOMNode_Release(categoryNode);
 
             if(FAILED(hr))
@@ -387,20 +387,21 @@ static HRESULT GAMEUX_getAppIdFromGDFPath(
         hr = E_FAIL;
 
     if(SUCCEEDED(hr))
-        /* game is registered, let's read it's application id from registry */
+        /* game is registered, let's read its application id from registry */
         hr = GAMEUX_buildGameRegistryPath(installScope, &instanceId, &lpRegistryPath);
 
-    if(SUCCEEDED(hr))
+    if(SUCCEEDED(hr)) {
         hr = HRESULT_FROM_WIN32(RegOpenKeyExW(HKEY_LOCAL_MACHINE,
                 lpRegistryPath, 0, KEY_READ | KEY_WOW64_64KEY, &hKey));
-
-    if(SUCCEEDED(hr))
-        hr = HRESULT_FROM_WIN32(RegGetValueW(hKey,
-                NULL, sApplicationId, RRF_RT_REG_SZ,
-                NULL, lpApplicationId, &dwLength));
+        if(SUCCEEDED(hr)) {
+            hr = HRESULT_FROM_WIN32(RegGetValueW(hKey,
+                    NULL, sApplicationId, RRF_RT_REG_SZ,
+                    NULL, lpApplicationId, &dwLength));
+            RegCloseKey(hKey);
+        }
+    }
 
     HeapFree(GetProcessHeap(), 0, lpRegistryPath);
-    RegCloseKey(hKey);
 
     TRACE("found app id: %s, return: %#x\n", debugstr_w(lpApplicationId), hr);
     return hr;
@@ -931,7 +932,7 @@ static HRESULT WINAPI GameStatisticsImpl_SetStatistic(
                   value, dwValueLen+1);
     }
     else
-        /* Windows allows to pass NULL as value */
+        /* Windows allows passing NULL as value */
         This->stats.categories[categoryIndex].stats[statIndex].sValue[0] = 0;
 
     return hr;
@@ -942,16 +943,13 @@ static HRESULT WINAPI GameStatisticsImpl_Save(
     BOOL trackChanges)
 {
     GameStatisticsImpl *This = impl_from_IGameStatistics(iface);
-    HRESULT hr = S_OK;
 
     TRACE("(%p, %d)\n", This, trackChanges);
 
     if(trackChanges)
         FIXME("tracking changes not yet implemented\n");
 
-    hr = GAMEUX_updateStatisticsFile(&This->stats);
-
-    return hr;
+    return GAMEUX_updateStatisticsFile(&This->stats);
 }
 
 static HRESULT WINAPI GameStatisticsImpl_SetLastPlayedCategory(

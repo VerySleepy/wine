@@ -221,7 +221,7 @@ BOOL WINAPI ChooseFontW(LPCHOOSEFONTW lpChFont)
     if (TRACE_ON(commdlg))
         _dump_cf_flags(lpChFont->Flags);
 
-    if (lpChFont->Flags & (CF_SELECTSCRIPT | CF_NOVERTFONTS ))
+    if (lpChFont->Flags & CF_SELECTSCRIPT)
         FIXME(": unimplemented flag (ignored)\n");
 
     return DialogBoxIndirectParamW(COMDLG32_hInstance, template,
@@ -274,7 +274,7 @@ BOOL WINAPI ChooseFontA(LPCHOOSEFONTA lpChFont)
     }
     if (TRACE_ON(commdlg))
         _dump_cf_flags(lpChFont->Flags);
-    if (lpChFont->Flags & (CF_SELECTSCRIPT | CF_NOVERTFONTS ))
+    if (lpChFont->Flags & CF_SELECTSCRIPT)
         FIXME(": unimplemented flag (ignored)\n");
 
     return DialogBoxIndirectParamA(COMDLG32_hInstance, template,
@@ -325,6 +325,9 @@ static INT AddFontFamily(const ENUMLOGFONTEXW *lpElfex, const NEWTEXTMETRICEXW *
     if (lpcf->Flags & CF_TTONLY)
         if (!(nFontType & TRUETYPE_FONTTYPE))
             return 1;
+    if (lpcf->Flags & CF_NOVERTFONTS)
+        if (lplf->lfFaceName[0] == '@')
+            return 1;
 
     if (e) e->added++;
 
@@ -358,7 +361,7 @@ static INT WINAPI FontFamilyEnumProc(const ENUMLOGFONTEXW *lpElfex,
  *
  * Fill font style information into combobox  (without using font.c directly)
  */
-static int SetFontStylesToCombo2(HWND hwnd, HDC hdc, const LOGFONTW *lplf)
+static BOOL SetFontStylesToCombo2(HWND hwnd, HDC hdc, const LOGFONTW *lplf)
 {
 #define FSTYLES 4
     struct FONTSTYLE
@@ -397,19 +400,19 @@ static int SetFontStylesToCombo2(HWND hwnd, HDC hdc, const LOGFONTW *lplf)
             WCHAR name[64];
             LoadStringW(COMDLG32_hInstance, fontstyles[i].resId, name, 64);
             j=SendMessageW(hwnd,CB_ADDSTRING,0,(LPARAM)name );
-            if (j==CB_ERR) return 1;
+            if (j==CB_ERR) return TRUE;
             j=SendMessageW(hwnd, CB_SETITEMDATA, j,
                            MAKELONG(tm.tmWeight,fontstyles[i].italic));
-            if (j==CB_ERR) return 1;
+            if (j==CB_ERR) return TRUE;
         }
     }
-    return 0;
+    return FALSE;
 }
 
 /*************************************************************************
  *              AddFontSizeToCombo3                           [internal]
  */
-static int AddFontSizeToCombo3(HWND hwnd, UINT h, const CHOOSEFONTW *lpcf)
+static BOOL AddFontSizeToCombo3(HWND hwnd, UINT h, const CHOOSEFONTW *lpcf)
 {
     int j;
     WCHAR buffer[20];
@@ -424,23 +427,23 @@ static int AddFontSizeToCombo3(HWND hwnd, UINT h, const CHOOSEFONTW *lpcf)
         {
             j=SendMessageW(hwnd, CB_ADDSTRING, 0, (LPARAM)buffer);
             if (j!=CB_ERR) j = SendMessageW(hwnd, CB_SETITEMDATA, j, h);
-            if (j==CB_ERR) return 1;
+            if (j==CB_ERR) return TRUE;
         }
     }
-    return 0;
+    return FALSE;
 }
 
 /*************************************************************************
  *              SetFontSizesToCombo3                           [internal]
  */
-static int SetFontSizesToCombo3(HWND hwnd, const CHOOSEFONTW *lpcf)
+static BOOL SetFontSizesToCombo3(HWND hwnd, const CHOOSEFONTW *lpcf)
 {
     static const BYTE sizes[]={6,7,8,9,10,11,12,14,16,18,20,22,24,26,28,36,48,72};
     unsigned int i;
 
     for (i = 0; i < sizeof(sizes)/sizeof(sizes[0]); i++)
-        if (AddFontSizeToCombo3(hwnd, sizes[i], lpcf)) return 1;
-    return 0;
+        if (AddFontSizeToCombo3(hwnd, sizes[i], lpcf)) return TRUE;
+    return FALSE;
 }
 
 /*************************************************************************
@@ -503,16 +506,17 @@ static INT AddFontStyle( const ENUMLOGFONTEXW *lpElfex, const NEWTEXTMETRICEXW *
         INT points;
         points = MulDiv( lpNTM->ntmTm.tmHeight - lpNTM->ntmTm.tmInternalLeading,
                 72, GetScreenDPI());
-        i = AddFontSizeToCombo3(hcmb3, points, lpcf);
-        if(i) return 0;
+        if (AddFontSizeToCombo3(hcmb3, points, lpcf))
+            return 0;
     } else if (SetFontSizesToCombo3(hcmb3, lpcf)) return 0;
 
     if (!SendMessageW(hcmb2, CB_GETCOUNT, 0, 0))
     {
+        BOOL res;
         if(!(hdc = CFn_GetDC(lpcf))) return 0;
-        i=SetFontStylesToCombo2(hcmb2,hdc,lplf);
+        res = SetFontStylesToCombo2(hcmb2,hdc,lplf);
         CFn_ReleaseDC(lpcf, hdc);
-        if (i)
+        if (res)
             return 0;
     }
     if (!( hcmb5 = GetDlgItem(hDlg, cmb5))) return 1;
@@ -527,10 +531,10 @@ static INT AddFontStyle( const ENUMLOGFONTEXW *lpElfex, const NEWTEXTMETRICEXW *
     return 1 ;
 }
 
-static INT CFn_FitFontSize( HWND hDlg, int points)
+static BOOL CFn_FitFontSize( HWND hDlg, int points)
 {
     int i,n;
-    int ret = 0;
+    BOOL ret = FALSE;
     /* look for fitting font size in combobox3 */
     n=SendDlgItemMessageW(hDlg, cmb3, CB_GETCOUNT, 0, 0);
     for (i=0;i<n;i++)
@@ -542,17 +546,18 @@ static INT CFn_FitFontSize( HWND hDlg, int points)
             SendMessageW(hDlg, WM_COMMAND,
                     MAKEWPARAM(cmb3, CBN_SELCHANGE),
                     (LPARAM)GetDlgItem(hDlg,cmb3));
-            ret = 1;
+            ret = TRUE;
             break;
         }
     }
     return ret;
 }
 
-static INT CFn_FitFontStyle( HWND hDlg, LONG packedstyle )
+static BOOL CFn_FitFontStyle( HWND hDlg, LONG packedstyle )
 {
     LONG id;
-    int i, ret = 0;
+    int i;
+    BOOL ret = FALSE;
     /* look for fitting font style in combobox2 */
     for (i=0;i<TEXT_EXTRAS;i++)
     {
@@ -562,7 +567,7 @@ static INT CFn_FitFontStyle( HWND hDlg, LONG packedstyle )
             SendDlgItemMessageW(hDlg, cmb2, CB_SETCURSEL, i, 0);
             SendMessageW(hDlg, WM_COMMAND, MAKEWPARAM(cmb2, CBN_SELCHANGE),
                     (LPARAM)GetDlgItem(hDlg,cmb2));
-            ret = 1;
+            ret = TRUE;
             break;
         }
     }
@@ -570,7 +575,7 @@ static INT CFn_FitFontStyle( HWND hDlg, LONG packedstyle )
 }
 
 
-static INT CFn_FitCharSet( HWND hDlg, int charset )
+static BOOL CFn_FitCharSet( HWND hDlg, int charset )
 {
     int i,n,cs;
     /* look for fitting char set in combobox5 */
@@ -583,14 +588,14 @@ static INT CFn_FitCharSet( HWND hDlg, int charset )
             SendDlgItemMessageW(hDlg, cmb5, CB_SETCURSEL, i, 0);
             SendMessageW(hDlg, WM_COMMAND, MAKEWPARAM(cmb5, CBN_SELCHANGE),
                     (LPARAM)GetDlgItem(hDlg,cmb2));
-            return 1;
+            return TRUE;
         }
     }
     /* no charset fits: select the first one in the list */
     SendDlgItemMessageW(hDlg, cmb5, CB_SETCURSEL, 0, 0);
     SendMessageW(hDlg, WM_COMMAND, MAKEWPARAM(cmb5, CBN_SELCHANGE),
             (LPARAM)GetDlgItem(hDlg,cmb2));
-    return 0;
+    return FALSE;
 }
 
 /***********************************************************************
@@ -613,7 +618,8 @@ static INT WINAPI FontStyleEnumProc( const ENUMLOGFONTEXW *lpElfex,
 static LRESULT CFn_WMInitDialog(HWND hDlg, LPARAM lParam, LPCHOOSEFONTW lpcf)
 {
     HDC hdc;
-    int i,j,init=0;
+    int i,j;
+    BOOL init = FALSE;
     long pstyle;
     CFn_ENUMSTRUCT s;
     LPLOGFONTW lpxx;
@@ -626,7 +632,7 @@ static LRESULT CFn_WMInitDialog(HWND hDlg, LPARAM lParam, LPCHOOSEFONTW lpcf)
 
     if (lpcf->lStructSize != sizeof(CHOOSEFONTW))
     {
-        ERR("structure size failure !!!\n");
+        ERR("structure size failure!!!\n");
         EndDialog (hDlg, 0);
         return FALSE;
     }
@@ -724,7 +730,7 @@ static LRESULT CFn_WMInitDialog(HWND hDlg, LPARAM lParam, LPCHOOSEFONTW lpcf)
             SendDlgItemMessageW(hDlg, cmb1, CB_SETCURSEL, j, 0);
             SendMessageW(hDlg, WM_COMMAND, MAKEWPARAM(cmb1, CBN_SELCHANGE),
                     (LPARAM)GetDlgItem(hDlg,cmb1));
-            init=1;
+            init = TRUE;
             /* look for fitting font style in combobox2 */
             CFn_FitFontStyle(hDlg, pstyle);
             /* look for fitting font size in combobox3 */
@@ -782,7 +788,7 @@ static LRESULT CFn_WMMeasureItem(HWND hDlg, LPARAM lParam)
     /* use MAX of bitmap height and tm.tmHeight .*/
     hdc=GetDC(hDlg);
     if(!hdc) return 0;
-    hfontprev = SelectObject( hdc, GetStockObject( DEFAULT_GUI_FONT ) );
+    hfontprev = SelectObject( hdc, (HFONT)SendMessageW( hDlg, WM_GETFONT, 0, 0 ));
     GetTextMetricsW(hdc, &tm);
     if( tm.tmHeight > lpmi->itemHeight) lpmi->itemHeight = tm.tmHeight;
     SelectObject(hdc, hfontprev);
@@ -801,7 +807,7 @@ static LRESULT CFn_WMDrawItem(LPARAM lParam)
     COLORREF cr, oldText=0, oldBk=0;
     RECT rect;
     int nFontType;
-    int idx;
+    int cx, cy, idx;
     LPDRAWITEMSTRUCT lpdi = (LPDRAWITEMSTRUCT)lParam;
 
     if (lpdi->itemID == (UINT)-1)  /* got no items */
@@ -830,9 +836,10 @@ static LRESULT CFn_WMDrawItem(LPARAM lParam)
         {
         case cmb1:
             /* TRACE(commdlg,"WM_Drawitem cmb1\n"); */
+            ImageList_GetIconSize( himlTT, &cx, &cy);
             SendMessageW(lpdi->hwndItem, CB_GETLBTEXT, lpdi->itemID,
                          (LPARAM)buffer);
-            TextOutW(lpdi->hDC, lpdi->rcItem.left + TTBITMAP_XSIZE + 10,
+            TextOutW(lpdi->hDC, lpdi->rcItem.left + cx + 4,
                      lpdi->rcItem.top, buffer, lstrlenW(buffer));
             nFontType = SendMessageW(lpdi->hwndItem, CB_GETITEMDATA, lpdi->itemID,0L);
             idx = -1;
@@ -848,7 +855,7 @@ static LRESULT CFn_WMDrawItem(LPARAM lParam)
                 idx = 1; /* picture: printer */
             if( idx >= 0)
                 ImageList_Draw( himlTT, idx, lpdi->hDC, lpdi->rcItem.left,
-                        lpdi->rcItem.top, ILD_TRANSPARENT);
+                                (lpdi->rcItem.top + lpdi->rcItem.bottom - cy) / 2, ILD_TRANSPARENT);
             break;
         case cmb2:
         case cmb3:
@@ -1055,8 +1062,13 @@ static LRESULT CFn_WMCommand(HWND hDlg, WPARAM wParam, LPARAM lParam, LPCHOOSEFO
         {
             WCHAR buffer[80];
             WCHAR format[80];
+            DWORD_PTR args[2];
             LoadStringW(COMDLG32_hInstance, IDS_FONT_SIZE, format, sizeof(format)/sizeof(WCHAR));
-            wsprintfW(buffer, format, lpcf->nSizeMin,lpcf->nSizeMax);
+            args[0] = lpcf->nSizeMin;
+            args[1] = lpcf->nSizeMax;
+            FormatMessageW(FORMAT_MESSAGE_FROM_STRING|FORMAT_MESSAGE_ARGUMENT_ARRAY,
+                           format, 0, 0, buffer, sizeof(buffer)/sizeof(*buffer),
+                           (__ms_va_list*)args);
             MessageBoxW(hDlg, buffer, NULL, MB_OK);
         }
         return(TRUE);
@@ -1110,7 +1122,6 @@ static LRESULT CFn_WMPaint(HWND hDlg, WPARAM wParam, LPARAM lParam, const CHOOSE
     {
         PAINTSTRUCT ps;
         HDC hdc;
-        HPEN hOrigPen;
         HFONT hOrigFont;
         LOGFONTW lf = *(lpcf->lpLogFont);
 
@@ -1122,22 +1133,9 @@ static LRESULT CFn_WMPaint(HWND hDlg, WPARAM wParam, LPARAM lParam, const CHOOSE
               ps.rcPaint.right, ps.rcPaint.bottom);
 
         /* Paint frame */
-        MoveToEx( hdc, info.rcWindow.left, info.rcWindow.bottom, NULL );
-        hOrigPen=SelectObject( hdc, CreatePen( PS_SOLID, 2,
-                                               GetSysColor( COLOR_3DSHADOW ) ));
-        LineTo( hdc, info.rcWindow.left, info.rcWindow.top );
-        LineTo( hdc, info.rcWindow.right, info.rcWindow.top );
-        DeleteObject(SelectObject( hdc, CreatePen( PS_SOLID, 2,
-                                                   GetSysColor( COLOR_3DLIGHT ) )));
-        LineTo( hdc, info.rcWindow.right, info.rcWindow.bottom );
-        LineTo( hdc, info.rcWindow.left, info.rcWindow.bottom );
-        DeleteObject(SelectObject( hdc, hOrigPen ));
+        DrawEdge( hdc, &info.rcWindow, EDGE_SUNKEN, BF_RECT|BF_ADJUST );
 
         /* Draw the sample text itself */
-        info.rcWindow.right--;
-        info.rcWindow.bottom--;
-        info.rcWindow.top++;
-        info.rcWindow.left++;
         hOrigFont = SelectObject( hdc, CreateFontIndirectW( &lf ) );
         SetTextColor( hdc, lpcf->rgbColors );
 
@@ -1203,9 +1201,14 @@ static INT_PTR CALLBACK FormatCharDlgProcA(HWND hDlg, UINT uMsg, WPARAM wParam, 
     case WM_DESTROY:
         return CFn_WMDestroy(hDlg, lpcfw);
     case WM_CHOOSEFONT_GETLOGFONT:
+    {
+        LOGFONTA *logfont = (LOGFONTA *)lParam;
         TRACE("WM_CHOOSEFONT_GETLOGFONT lParam=%08lX\n", lParam);
-        FIXME("current logfont back to caller\n");
+        memcpy( logfont, lpcfw->lpLogFont, FIELD_OFFSET( LOGFONTA, lfFaceName ));
+        WideCharToMultiByte( CP_ACP, 0, lpcfw->lpLogFont->lfFaceName, LF_FACESIZE,
+                             logfont->lfFaceName, LF_FACESIZE, NULL, NULL );
         break;
+    }
     case WM_PAINT:
         return CFn_WMPaint(hDlg, wParam, lParam, lpcfw);
     }
@@ -1251,7 +1254,7 @@ static INT_PTR CALLBACK FormatCharDlgProcW(HWND hDlg, UINT uMsg, WPARAM wParam, 
         return TRUE;
     case WM_CHOOSEFONT_GETLOGFONT:
         TRACE("WM_CHOOSEFONT_GETLOGFONT lParam=%08lX\n", lParam);
-        FIXME("current logfont back to caller\n");
+        memcpy( (LOGFONTW *)lParam, lpcf->lpLogFont, sizeof(LOGFONTW) );
         break;
     case WM_PAINT:
         return CFn_WMPaint(hDlg, wParam, lParam, lpcf);

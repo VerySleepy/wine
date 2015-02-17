@@ -3,9 +3,6 @@
  *
  * Copyright 2008 Christian Costa
  *
- * This file contains the (internal) driver registration functions,
- * driver enumeration APIs and DirectDraw creation functions.
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -22,6 +19,7 @@
  */
 
 #include "config.h"
+#include "wine/port.h"
 #include "wine/debug.h"
 
 #define COBJMACROS
@@ -48,6 +46,8 @@ WINE_DEFAULT_DEBUG_CHANNEL(d3dxof_parsing);
 #define XOFFILE_FORMAT_FLOAT_BITS_32 MAKEFOUR('0','0','3','2')
 #define XOFFILE_FORMAT_FLOAT_BITS_64 MAKEFOUR('0','0','6','4')
 
+#define TOKEN_ERROR   0xffff
+#define TOKEN_NONE         0
 #define TOKEN_NAME         1
 #define TOKEN_STRING       2
 #define TOKEN_INTEGER      3
@@ -91,7 +91,7 @@ static const char *debugstr_fourcc(DWORD fourcc)
         (char)(fourcc >> 16), (char)(fourcc >> 24));
 }
 
-static const char* get_primitive_string(WORD token)
+static const char* get_primitive_string(DWORD token)
 {
   switch(token)
   {
@@ -127,7 +127,7 @@ static const char* get_primitive_string(WORD token)
 
 static void dump_template(xtemplate* templates_array, xtemplate* ptemplate)
 {
-  int j, k;
+  ULONG j, k;
   GUID* clsid;
 
   clsid = &ptemplate->class_id;
@@ -223,40 +223,64 @@ HRESULT parse_header(parse_buffer * buf, BYTE ** decomp_buffer_ptr)
   if (header[2] == XOFFILE_FORMAT_BINARY_MSZIP || header[2] == XOFFILE_FORMAT_TEXT_MSZIP)
   {
     /* Extended header for compressed data:
-     * 16-17 -> decompressed size w/ header,  18-19 -> null,
-     * 20-21 -> decompressed size w/o header, 22-23 -> size of MSZIP compressed data,
-     * 24-xx -> compressed MSZIP data */
+     * 16-19 -> size of decompressed file including xof header,
+     * 20-21 -> size of first decompressed MSZIP chunk, 22-23 -> size of first compressed MSZIP chunk
+     * 24-xx -> compressed MSZIP data chunk
+     * xx-xx -> size of next decompressed MSZIP chunk, xx-xx -> size of next compressed MSZIP chunk
+     * xx-xx -> compressed MSZIP data chunk
+     * .............................................................................................. */
     int err;
-    WORD decomp_size;
-    WORD comp_size;
+    DWORD decomp_file_size;
+    WORD decomp_chunk_size;
+    WORD comp_chunk_size;
     LPBYTE decomp_buffer;
 
-    buf->rem_bytes -= sizeof(WORD) * 2;
-    buf->buffer += sizeof(WORD) * 2;
-    if (!read_bytes(buf, &decomp_size, sizeof(decomp_size)))
-      return DXFILEERR_BADFILETYPE;
-    if (!read_bytes(buf, &comp_size, sizeof(comp_size)))
+    if (!read_bytes(buf, &decomp_file_size, sizeof(decomp_file_size)))
       return DXFILEERR_BADFILETYPE;
 
-    TRACE("Compressed format %s detected: compressed_size = %x, decompressed_size = %x\n",
-        debugstr_fourcc(header[2]), comp_size, decomp_size);
+    TRACE("Compressed format %s detected: decompressed file size with xof header = %d\n",
+          debugstr_fourcc(header[2]), decomp_file_size);
 
-    decomp_buffer = HeapAlloc(GetProcessHeap(), 0, decomp_size);
+    /* Does not take xof header into account */
+    decomp_file_size -= 16;
+
+    decomp_buffer = HeapAlloc(GetProcessHeap(), 0, decomp_file_size);
     if (!decomp_buffer)
     {
         ERR("Out of memory\n");
         return DXFILEERR_BADALLOC;
     }
-    err = mszip_decompress(comp_size, decomp_size, (char*)buf->buffer, (char*)decomp_buffer);
-    if (err)
+    *decomp_buffer_ptr = decomp_buffer;
+
+    while (buf->rem_bytes)
     {
-        WARN("Error while decompressing mszip archive %d\n", err);
+      if (!read_bytes(buf, &decomp_chunk_size, sizeof(decomp_chunk_size)))
+        return DXFILEERR_BADFILETYPE;
+      if (!read_bytes(buf, &comp_chunk_size, sizeof(comp_chunk_size)))
+        return DXFILEERR_BADFILETYPE;
+
+      TRACE("Process chunk: compressed_size = %d, decompressed_size = %d\n",
+            comp_chunk_size, decomp_chunk_size);
+
+      err = mszip_decompress(comp_chunk_size, decomp_chunk_size, (char*)buf->buffer, (char*)decomp_buffer);
+      if (err)
+      {
+        WARN("Error while decompressing MSZIP chunk %d\n", err);
         HeapFree(GetProcessHeap(), 0, decomp_buffer);
         return DXFILEERR_BADALLOC;
+      }
+      buf->rem_bytes -= comp_chunk_size;
+      buf->buffer += comp_chunk_size;
+      decomp_buffer += decomp_chunk_size;
     }
+
+    if ((decomp_buffer - *decomp_buffer_ptr) != decomp_file_size)
+      ERR("Size of all decompressed chunks (%u) does not match decompressed file size (%u)\n",
+          (DWORD)(decomp_buffer - *decomp_buffer_ptr), decomp_file_size);
+
     /* Use decompressed data */
-    buf->buffer = *decomp_buffer_ptr = decomp_buffer;
-    buf->rem_bytes = decomp_size;
+    buf->buffer = *decomp_buffer_ptr;
+    buf->rem_bytes = decomp_file_size;
   }
 
   TRACE("Header is correct\n");
@@ -487,11 +511,11 @@ static BOOL is_name(parse_buffer* buf)
   char tmp[512];
   DWORD pos = 0;
   char c;
-  BOOL error = 0;
+  BOOL error = FALSE;
   while (pos < buf->rem_bytes && !is_separator(c = *(buf->buffer+pos)))
   {
     if (!(((c >= 'a') && (c <= 'z')) || ((c >= 'A') && (c <= 'Z')) || ((c >= '0') && (c <= '9')) || (c == '_') || (c == '-')))
-      error = 1;
+      error = TRUE;
     if (pos < sizeof(tmp))
         tmp[pos] = c;
     pos++;
@@ -519,7 +543,7 @@ static BOOL is_float(parse_buffer* buf)
   DWORD pos = 0;
   char c;
   float decimal;
-  BOOL dot = 0;
+  BOOL dot = FALSE;
 
   while (pos < buf->rem_bytes && !is_separator(c = *(buf->buffer+pos)))
   {
@@ -579,16 +603,17 @@ static BOOL is_string(parse_buffer* buf)
   char tmp[512];
   DWORD pos = 0;
   char c;
-  BOOL ok = 0;
+  BOOL ok = FALSE;
 
   if (*buf->buffer != '"')
     return FALSE;
 
-  while (pos < buf->rem_bytes && !is_operator(c = *(buf->buffer+pos+1)))
+  while ((pos+1) < buf->rem_bytes)
   {
+    c = *(buf->buffer+pos+1);
     if (c == '"')
     {
-      ok = 1;
+      ok = TRUE;
       break;
     }
     if (pos < sizeof(tmp))
@@ -622,23 +647,22 @@ static WORD parse_TOKEN(parse_buffer * buf)
     {
       char c;
       if (!read_bytes(buf, &c, 1))
-        return 0;
-      /*TRACE("char = '%c'\n", is_space(c) ? ' ' : c);*/
+        return TOKEN_NONE;
       if ((c == '#') || (c == '/'))
       {
         /* Handle comment (# or //) */
         if (c == '/')
         {
           if (!read_bytes(buf, &c, 1))
-            return 0;
+            return TOKEN_ERROR;
           if (c != '/')
-            return 0;
+            return TOKEN_ERROR;
         }
         c = 0;
         while (c != 0x0A)
         {
           if (!read_bytes(buf, &c, 1))
-            return 0;
+            return TOKEN_NONE;
         }
         continue;
       }
@@ -688,51 +712,58 @@ static WORD parse_TOKEN(parse_buffer * buf)
         }
 
         FIXME("Unrecognize element\n");
-        return 0;
+        return TOKEN_ERROR;
       }
     }
   }
   else
   {
-    static int nb_elem;
-    static int is_float;
-
-    if (!nb_elem)
+    if (!buf->list_nb_elements)
     {
       if (!read_bytes(buf, &token, 2))
-        return 0;
+        return TOKEN_NONE;
 
       /* Convert integer and float list into separate elements */
       if (token == TOKEN_INTEGER_LIST)
       {
-        if (!read_bytes(buf, &nb_elem, 4))
-          return 0;
+        if (!read_bytes(buf, &buf->list_nb_elements, 4))
+          return TOKEN_ERROR;
         token = TOKEN_INTEGER;
-        is_float = FALSE;
-        TRACE("Integer list (TOKEN_INTEGER_LIST) of size %d\n", nb_elem);
+        buf->list_type_float = FALSE;
+        TRACE("Integer list (TOKEN_INTEGER_LIST) of size %d\n", buf->list_nb_elements);
       }
       else if (token == TOKEN_FLOAT_LIST)
       {
-        if (!read_bytes(buf, &nb_elem, 4))
-          return 0;
+        if (!read_bytes(buf, &buf->list_nb_elements, 4))
+          return TOKEN_ERROR;
         token = TOKEN_FLOAT;
-        is_float = TRUE;
-        TRACE("Float list (TOKEN_FLOAT_LIST) of size %d\n", nb_elem);
+        buf->list_type_float = TRUE;
+        TRACE("Float list (TOKEN_FLOAT_LIST) of size %d\n", buf->list_nb_elements);
       }
     }
 
-    if (nb_elem)
+    if (buf->list_nb_elements)
     {
-      token = is_float ? TOKEN_FLOAT : TOKEN_INTEGER;
-      nb_elem--;
-        {
-          DWORD integer;
+      if (buf->list_separator)
+      {
+        buf->list_nb_elements--;
+        buf->list_separator = FALSE;
+        /* Insert separarator between each values and since list does not accept separator at the end
+           use a comma so any extra separator will generate an error */
+        token = TOKEN_COMMA;
+      }
+      else
+      {
+        DWORD value;
 
-          if (!read_bytes(buf, &integer, 4))
-            return 0;
+        if (!read_bytes(buf, &value, 4))
+          return TOKEN_ERROR;
+        *(DWORD*)buf->value = value;
 
-          *(DWORD*)buf->value = integer;
-        }
+        buf->list_separator = TRUE;
+        /* Convert list into a serie of their basic type counterpart */
+        token = buf->list_type_float ? TOKEN_FLOAT : TOKEN_INTEGER;
+      }
       dump_TOKEN(token);
       return token;
     }
@@ -742,16 +773,14 @@ static WORD parse_TOKEN(parse_buffer * buf)
       case TOKEN_NAME:
         {
           DWORD count;
-          char strname[100];
+          char *name = (char*)buf->value;
 
           if (!read_bytes(buf, &count, 4))
-            return 0;
-          if (!read_bytes(buf, strname, count))
-            return 0;
-          strname[count] = 0;
-          /*TRACE("name = %s\n", strname);*/
-
-          strcpy((char*)buf->value, strname);
+            return TOKEN_ERROR;
+          if (!read_bytes(buf, name, count))
+            return TOKEN_ERROR;
+          name[count] = 0;
+          TRACE("name = %s\n", name);
         }
         break;
       case TOKEN_INTEGER:
@@ -759,8 +788,8 @@ static WORD parse_TOKEN(parse_buffer * buf)
           DWORD integer;
 
           if (!read_bytes(buf, &integer, 4))
-            return 0;
-          /*TRACE("integer = %ld\n", integer);*/
+            return TOKEN_ERROR;
+          TRACE("integer = %u\n", integer);
 
           *(DWORD*)buf->value = integer;
         }
@@ -771,11 +800,11 @@ static WORD parse_TOKEN(parse_buffer * buf)
           GUID class_id;
 
           if (!read_bytes(buf, &class_id, 16))
-            return 0;
+            return TOKEN_ERROR;
           sprintf(strguid, CLSIDFMT, class_id.Data1, class_id.Data2, class_id.Data3, class_id.Data4[0],
             class_id.Data4[1], class_id.Data4[2], class_id.Data4[3], class_id.Data4[4], class_id.Data4[5],
             class_id.Data4[6], class_id.Data4[7]);
-          /*TRACE("guid = {%s}\n", strguid);*/
+          TRACE("guid = %s\n", strguid);
 
           *(GUID*)buf->value = class_id;
         }
@@ -783,20 +812,15 @@ static WORD parse_TOKEN(parse_buffer * buf)
       case TOKEN_STRING:
         {
           DWORD count;
-          WORD tmp_token;
-          char strname[100];
-          if (!read_bytes(buf, &count, 4))
-            return 0;
-          if (!read_bytes(buf, strname, count))
-            return 0;
-          strname[count] = 0;
-          if (!read_bytes(buf, &tmp_token, 2))
-            return 0;
-          if ((tmp_token != TOKEN_COMMA) && (tmp_token != TOKEN_SEMICOLON))
-            ERR("No comma or semicolon (got %d)\n", tmp_token);
-          /*TRACE("name = %s\n", strname);*/
+          char *string = (char*)buf->value;
 
-          strcpy((char*)buf->value, strname);
+          if (!read_bytes(buf, &count, 4))
+            return TOKEN_ERROR;
+          if (!read_bytes(buf, string, count))
+            return TOKEN_ERROR;
+          string[count] = 0;
+          TRACE("string = %s\n", string);
+
           token = TOKEN_LPSTR;
         }
         break;
@@ -827,7 +851,7 @@ static WORD parse_TOKEN(parse_buffer * buf)
       case TOKEN_ARRAY:
         break;
       default:
-        return 0;
+        return TOKEN_ERROR;
     }
   }
 
@@ -860,11 +884,6 @@ static WORD check_TOKEN(parse_buffer * buf)
   return buf->current_token;
 }
 
-static BOOL is_template_available(parse_buffer * buf)
-{
-  return check_TOKEN(buf) == TOKEN_TEMPLATE;
-}
-
 static inline BOOL is_primitive_type(WORD token)
 {
   BOOL ret;
@@ -881,10 +900,10 @@ static inline BOOL is_primitive_type(WORD token)
     case TOKEN_LPSTR:
     case TOKEN_UNICODE:
     case TOKEN_CSTRING:
-      ret = 1;
+      ret = TRUE;
       break;
     default:
-      ret = 0;
+      ret = FALSE;
       break;
   }
   return ret;
@@ -930,30 +949,38 @@ static BOOL parse_template_members_list(parse_buffer * buf)
 
   while (1)
   {
-    BOOL array = 0;
+    BOOL array = FALSE;
     int nb_dims = 0;
     cur_member = &buf->pdxf->xtemplates[buf->pdxf->nb_xtemplates].members[idx_member];
 
     if (check_TOKEN(buf) == TOKEN_ARRAY)
     {
       get_TOKEN(buf);
-      array = 1;
+      array = TRUE;
     }
 
     if (check_TOKEN(buf) == TOKEN_NAME)
     {
       cur_member->type = get_TOKEN(buf);
-      cur_member->idx_template = 0;
-      while (cur_member->idx_template < buf->pdxf->nb_xtemplates)
+      if (!strcmp((char*)buf->value, "indexColor"))
       {
-        if (!strcasecmp((char*)buf->value, buf->pdxf->xtemplates[cur_member->idx_template].name))
-          break;
-        cur_member->idx_template++;
+        /* Case sensitive legacy type indexColor is described in the first template */
+        cur_member->idx_template = 0;
       }
-      if (cur_member->idx_template == buf->pdxf->nb_xtemplates)
+      else
       {
-        ERR("Reference to a nonexistent template '%s'\n", (char*)buf->value);
-        return FALSE;
+        cur_member->idx_template = 1;
+        while (cur_member->idx_template < buf->pdxf->nb_xtemplates)
+        {
+          if (!strcasecmp((char*)buf->value, buf->pdxf->xtemplates[cur_member->idx_template].name))
+            break;
+          cur_member->idx_template++;
+        }
+        if (cur_member->idx_template == buf->pdxf->nb_xtemplates)
+        {
+          WARN("Reference to a nonexistent template '%s'\n", (char*)buf->value);
+          return FALSE;
+        }
       }
     }
     else if (is_primitive_type(check_TOKEN(buf)))
@@ -1046,39 +1073,6 @@ static BOOL parse_template_parts(parse_buffer * buf)
   return TRUE;
 }
 
-static void go_to_next_definition(parse_buffer * buf)
-{
-  char c;
-  while (buf->rem_bytes)
-  {
-    if (!read_bytes(buf, &c, 1))
-      return;
-    if ((c == '#') || (c == '/'))
-    {
-      /* Handle comment (# or //) */
-      if (c == '/')
-      {
-        if (!read_bytes(buf, &c, 1))
-          return;
-        if (c != '/')
-          return;
-      }
-      c = 0;
-      while (c != 0x0A)
-      {
-        if (!read_bytes(buf, &c, 1))
-          return;
-      }
-      continue;
-    }
-    else if (!is_space(c))
-    {
-      rewind_bytes(buf, 1);
-      break;
-    }
-  }
-}
-
 static BOOL parse_template(parse_buffer * buf)
 {
   if (get_TOKEN(buf) != TOKEN_TEMPLATE)
@@ -1095,11 +1089,6 @@ static BOOL parse_template(parse_buffer * buf)
     return FALSE;
   if (get_TOKEN(buf) != TOKEN_CBRACE)
     return FALSE;
-  if (buf->txt)
-  {
-    /* Go to the next template */
-    go_to_next_definition(buf);
-  }
 
   TRACE("%d - %s - %s\n", buf->pdxf->nb_xtemplates, buf->pdxf->xtemplates[buf->pdxf->nb_xtemplates].name, debugstr_guid(&buf->pdxf->xtemplates[buf->pdxf->nb_xtemplates].class_id));
   buf->pdxf->nb_xtemplates++;
@@ -1107,10 +1096,12 @@ static BOOL parse_template(parse_buffer * buf)
   return TRUE;
 }
 
-BOOL parse_templates(parse_buffer * buf)
+BOOL parse_templates(parse_buffer * buf, BOOL templates_only)
 {
-  while (buf->rem_bytes && is_template_available(buf))
+  while (check_TOKEN(buf) != TOKEN_NONE)
   {
+    if (templates_only && (check_TOKEN(buf) != TOKEN_TEMPLATE))
+      return TRUE;
     if (!parse_template(buf))
     {
       WARN("Template is not correct\n");
@@ -1149,13 +1140,16 @@ static BOOL parse_object_parts(parse_buffer * buf, BOOL allow_optional);
 static BOOL parse_object_members_list(parse_buffer * buf)
 {
   DWORD token;
-  int i;
+  ULONG i;
   xtemplate* pt = buf->pxt[buf->level];
+
+  buf->pxo->nb_members = pt->nb_members;
 
   for (i = 0; i < pt->nb_members; i++)
   {
-    int k;
-    int nb_elems = 1;
+    ULONG k;
+    ULONG nb_elems = 1;
+    BOOL basic_type = TRUE;
 
     buf->pxo->members[i].name = pt->members[i].name;
     buf->pxo->members[i].start = buf->cur_pos_data;
@@ -1168,30 +1162,16 @@ static BOOL parse_object_members_list(parse_buffer * buf)
         nb_elems *= *(DWORD*)(buf->pxo->root->pdata + buf->pxo->members[pt->members[i].dim_value[k]].start);
     }
 
-    TRACE("Elements to consider: %d\n", nb_elems);
+    TRACE("Elements to consider: %u\n", nb_elems);
 
     for (k = 0; k < nb_elems; k++)
     {
-      if (buf->txt && k)
-      {
-        token = check_TOKEN(buf);
-        if (token == TOKEN_COMMA)
-        {
-          get_TOKEN(buf);
-        }
-        else
-        {
-          /* Allow comma omission */
-          if (!((token == TOKEN_FLOAT) || (token == TOKEN_INTEGER)))
-            return FALSE;
-        }
-      }
-
       if (pt->members[i].type == TOKEN_NAME)
       {
-        int j;
+        ULONG j;
 
         TRACE("Found sub-object %s\n", buf->pdxf->xtemplates[pt->members[i].idx_template].name);
+        basic_type = FALSE;
         buf->level++;
         /* To do template lookup */
         for (j = 0; j < buf->pdxf->nb_xtemplates; j++)
@@ -1228,12 +1208,12 @@ static BOOL parse_object_members_list(parse_buffer * buf)
             return FALSE;
           if (pt->members[i].type == TOKEN_WORD)
           {
-            *(((WORD*)(buf->cur_pos_data + buf->pdata))) = (WORD)(*(DWORD*)buf->value);
+            *(((WORD*)(buf->pdata + buf->cur_pos_data))) = (WORD)(*(DWORD*)buf->value);
             buf->cur_pos_data += 2;
           }
           else if (pt->members[i].type == TOKEN_DWORD)
           {
-            *(((DWORD*)(buf->cur_pos_data + buf->pdata))) = (DWORD)(*(DWORD*)buf->value);
+            *(((DWORD*)(buf->pdata + buf->cur_pos_data))) = (DWORD)(*(DWORD*)buf->value);
             buf->cur_pos_data += 4;
           }
           else
@@ -1250,7 +1230,7 @@ static BOOL parse_object_members_list(parse_buffer * buf)
             return FALSE;
           if (pt->members[i].type == TOKEN_FLOAT)
           {
-            *(((float*)(buf->cur_pos_data + buf->pdata))) = (float)(*(float*)buf->value);
+            *(((float*)(buf->pdata + buf->cur_pos_data))) = (float)(*(float*)buf->value);
             buf->cur_pos_data += 4;
           }
           else
@@ -1274,7 +1254,7 @@ static BOOL parse_object_members_list(parse_buffer * buf)
               return FALSE;
             }
             strcpy((char*)buf->cur_pstrings, (char*)buf->value);
-            *(((LPCSTR*)(buf->cur_pos_data + buf->pdata))) = (char*)buf->cur_pstrings;
+            *(((LPCSTR*)(buf->pdata + buf->cur_pos_data))) = (char*)buf->cur_pstrings;
             buf->cur_pstrings += len;
             buf->cur_pos_data += sizeof(LPSTR);
           }
@@ -1285,19 +1265,27 @@ static BOOL parse_object_members_list(parse_buffer * buf)
           }
         }
         else
-	{
-          FIXME("Unexpected token %d\n", token);
+        {
+          WARN("Unexpected token %d\n", token);
           return FALSE;
         }
       }
+
+      if (basic_type)
+      {
+        /* Handle separator only for basic types */
+        token = check_TOKEN(buf);
+        if ((token != TOKEN_COMMA) && (token != TOKEN_SEMICOLON))
+          return FALSE;
+        /* Allow multi-semicolons + single comma separator */
+        while (check_TOKEN(buf) == TOKEN_SEMICOLON)
+          get_TOKEN(buf);
+        if (check_TOKEN(buf) == TOKEN_COMMA)
+          get_TOKEN(buf);
+      }
     }
 
-    if (nb_elems && buf->txt && (check_TOKEN(buf) != TOKEN_CBRACE) && (check_TOKEN(buf) != TOKEN_NAME))
-    {
-      token = get_TOKEN(buf);
-      if ((token != TOKEN_SEMICOLON) && (token != TOKEN_COMMA))
-        return FALSE;
-    }
+    buf->pxo->members[i].size = buf->cur_pos_data - buf->pxo->members[i].start;
   }
 
   return TRUE;
@@ -1314,15 +1302,11 @@ static BOOL parse_object_parts(parse_buffer * buf, BOOL allow_optional)
   {
     buf->pxo->size = buf->cur_pos_data - buf->pxo->pos_data;
 
-    /* Skip trailing semicolon */
-    while (check_TOKEN(buf) == TOKEN_SEMICOLON)
-      get_TOKEN(buf);
-
     while (1)
     {
       if (check_TOKEN(buf) == TOKEN_OBRACE)
       {
-        int i, j;
+        ULONG i, j;
         get_TOKEN(buf);
         if (get_TOKEN(buf) != TOKEN_NAME)
           return FALSE;
@@ -1394,7 +1378,7 @@ _exit:
 
 BOOL parse_object(parse_buffer * buf)
 {
-  int i;
+  ULONG i;
 
   buf->pxo->pos_data = buf->cur_pos_data;
   buf->pxo->ptarget = NULL;
@@ -1443,11 +1427,8 @@ BOOL parse_object(parse_buffer * buf)
   if (get_TOKEN(buf) != TOKEN_CBRACE)
     return FALSE;
 
-  if (buf->txt)
-  {
-    /* Go to the next object */
-    go_to_next_definition(buf);
-  }
+  /* For seeking to a possibly eof to avoid parsing another object next time */
+  check_TOKEN(buf);
 
   return TRUE;
 }

@@ -17,6 +17,7 @@
  */
 
 #include <stdio.h>
+#include <limits.h>
 
 #include <windef.h>
 #include <winbase.h>
@@ -52,6 +53,7 @@ static void* (__cdecl *p_set_invalid_parameter_handler)(void*);
 static basic_string_char* (__cdecl *p_basic_string_char_concatenate)(basic_string_char*, const basic_string_char*, const basic_string_char*);
 static basic_string_char* (__cdecl *p_basic_string_char_concatenate_cstr)(basic_string_char*, const basic_string_char*, const char*);
 
+#undef __thiscall
 #ifdef __i386__
 #define __thiscall __stdcall
 #else
@@ -74,6 +76,11 @@ static basic_string_char* (__thiscall *p_basic_string_char_append_substr)(basic_
 static int (__thiscall *p_basic_string_char_compare_substr_substr)(basic_string_char*, size_t, size_t, basic_string_char*, size_t, size_t);
 static int (__thiscall *p_basic_string_char_compare_substr_cstr_len)(basic_string_char*, size_t, size_t, const char*, size_t);
 static size_t (__thiscall *p_basic_string_char_find_cstr_substr)(basic_string_char*, const char*, size_t, size_t);
+static size_t (__thiscall *p_basic_string_char_rfind_cstr_substr)(basic_string_char*, const char*, size_t, size_t);
+static basic_string_char* (__thiscall *p_basic_string_char_replace_cstr)(basic_string_char*, size_t, size_t, const char*);
+static size_t (__thiscall *p_basic_string_char_find_last_not_of_cstr_substr)(const basic_string_char*, const char*, size_t, size_t);
+
+static size_t *p_basic_string_char_npos;
 
 static basic_string_wchar* (__thiscall *p_basic_string_wchar_ctor)(basic_string_wchar*);
 static basic_string_wchar* (__thiscall *p_basic_string_wchar_copy_ctor)(basic_string_wchar*, basic_string_wchar*);
@@ -163,12 +170,13 @@ static void init_thiscall_thunk(void)
 
 #endif /* __i386__ */
 
+static HMODULE msvcr, msvcp;
 #define SETNOFAIL(x,y) x = (void*)GetProcAddress(msvcp,y)
 #define SET(x,y) do { SETNOFAIL(x,y); ok(x != NULL, "Export '%s' not found\n", y); } while(0)
 static BOOL init(void)
 {
-    HMODULE msvcr = LoadLibraryA("msvcr90.dll");
-    HMODULE msvcp = LoadLibraryA("msvcp90.dll");
+    msvcr = LoadLibraryA("msvcr90.dll");
+    msvcp = LoadLibraryA("msvcp90.dll");
     if(!msvcr || !msvcp) {
         win_skip("msvcp90.dll or msvcrt90.dll not installed\n");
         return FALSE;
@@ -219,6 +227,14 @@ static BOOL init(void)
                 "??$?HDU?$char_traits@D@std@@V?$allocator@D@1@@std@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@AEBV10@PEBD@Z");
         SET(p_basic_string_char_find_cstr_substr,
                 "?find@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QEBA_KPEBD_K1@Z");
+        SET(p_basic_string_char_rfind_cstr_substr,
+                "?rfind@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QEBA_KPEBD_K1@Z");
+        SET(p_basic_string_char_replace_cstr,
+                "?replace@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QEAAAEAV12@_K0PEBD@Z");
+        SET(p_basic_string_char_find_last_not_of_cstr_substr,
+                "?find_last_not_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QEBA_KPEBD_K1@Z");
+        SET(p_basic_string_char_npos,
+                "?npos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@2_KB");
 
         SET(p_basic_string_wchar_ctor,
                 "??0?$basic_string@_WU?$char_traits@_W@std@@V?$allocator@_W@2@@std@@QEAA@XZ");
@@ -279,6 +295,14 @@ static BOOL init(void)
                 "??$?HDU?$char_traits@D@std@@V?$allocator@D@1@@std@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@0@ABV10@PBD@Z");
         SET(p_basic_string_char_find_cstr_substr,
                 "?find@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z");
+        SET(p_basic_string_char_rfind_cstr_substr,
+                "?rfind@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z");
+        SET(p_basic_string_char_replace_cstr,
+                "?replace@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QAEAAV12@IIPBD@Z");
+        SET(p_basic_string_char_find_last_not_of_cstr_substr,
+                "?find_last_not_of@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBEIPBDII@Z");
+        SET(p_basic_string_char_npos,
+                "?npos@?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@2IB");
 
         SET(p_basic_string_wchar_ctor,
                 "??0?$basic_string@_WU?$char_traits@_W@std@@V?$allocator@_W@2@@std@@QAE@XZ");
@@ -433,11 +457,12 @@ static void test_basic_string_char_append(void) {
 }
 
 static void test_basic_string_char_compare(void) {
-    basic_string_char str1, str2;
+    basic_string_char str1, str2, str3;
     int ret;
 
     call_func2(p_basic_string_char_ctor_cstr, &str1, "str1str");
     call_func2(p_basic_string_char_ctor_cstr, &str2, "str9str");
+    call_func2(p_basic_string_char_ctor_cstr, &str3, "splash.png");
 
     ret = (int)call_func6(p_basic_string_char_compare_substr_substr,
             &str1, 0, 3, &str2, 0, 3);
@@ -453,6 +478,9 @@ static void test_basic_string_char_compare(void) {
             &str1, 0, 1000, "str1str", 7);
     ok(ret == 0, "ret = %d\n", ret);
     ret = (int)call_func5(p_basic_string_char_compare_substr_cstr_len,
+            &str3, 6, UINT_MAX, ".png", 4);
+    ok(ret == 0, "ret = %d\n", ret);
+    ret = (int)call_func5(p_basic_string_char_compare_substr_cstr_len,
             &str1, 1, 2, "tr", 2);
     ok(ret == 0, "ret = %d\n", ret);
     ret = (int)call_func5(p_basic_string_char_compare_substr_cstr_len,
@@ -464,6 +492,7 @@ static void test_basic_string_char_compare(void) {
 
     call_func1(p_basic_string_char_dtor, &str1);
     call_func1(p_basic_string_char_dtor, &str2);
+    call_func1(p_basic_string_char_dtor, &str3);
 }
 
 static void test_basic_string_char_concatenate(void) {
@@ -501,6 +530,88 @@ static void test_basic_string_char_find(void) {
     ret = (size_t)call_func4(p_basic_string_char_find_cstr_substr, &str, "bbb", 0, 3);
     ok(ret == 4, "ret = %lu\n", (unsigned long)ret);
     call_func1(p_basic_string_char_dtor, &str);
+}
+
+static void test_basic_string_char_rfind(void) {
+    struct rfind_char_test {
+        const char *str;
+        const char *find;
+        size_t pos;
+        size_t len;
+        size_t ret;
+    };
+
+    int i;
+    basic_string_char str;
+    size_t ret;
+    struct rfind_char_test tests[] = {
+        { "",    "a",   0, 1, *p_basic_string_char_npos }, /* empty string */
+        { "a",   "",    0, 0, 0 }, /* empty find */
+        { "aaa", "aaa", 0, 3, 0 }, /* simple case */
+        { "aaa", "a",   0, 1, 0 }, /* start of string */
+        { "aaa", "a",   2, 1, 2 }, /* end of string */
+        { "aaa", "a",   *p_basic_string_char_npos, 1, 2 }, /* off == npos */
+        { "aaa", "z",   0, 1, *p_basic_string_char_npos }  /* can't find */
+    };
+
+    for(i=0; i<sizeof(tests)/sizeof(tests[0]); i++) {
+        call_func2(p_basic_string_char_ctor_cstr, &str, tests[i].str);
+
+        ret = (size_t)call_func4(p_basic_string_char_rfind_cstr_substr, &str,
+            tests[i].find, tests[i].pos, tests[i].len);
+        ok(ret == tests[i].ret, "str = '%s' find = '%s' ret = %lu\n",
+            tests[i].str, tests[i].find, (unsigned long)ret);
+
+        call_func1(p_basic_string_char_dtor, &str);
+    }
+}
+
+static void test_basic_string_char_replace(void) {
+    struct replace_char_test {
+        const char *str;
+        size_t off;
+        size_t len;
+        const char *replace;
+        const char *ret;
+    };
+
+    int i;
+    basic_string_char str;
+    basic_string_char *ret;
+    struct replace_char_test tests[] = {
+        { "", 0, 0,  "", "" },  /* empty string */
+        { "", 0, 10, "", "" },  /* empty string with invalid len */
+
+        { "ABCDEF", 0, 0, "",  "ABCDEF" },  /* replace with empty string */
+        { "ABCDEF", 0, 0, "-", "-ABCDEF"},  /* replace with 0 len */
+        { "ABCDEF", 0, 1, "-", "-BCDEF" },  /* replace 1 at beginning */
+        { "ABCDEF", 0, 3, "-", "-DEF" },    /* replace 3 at beginning */
+        { "ABCDEF", 0, 42, "-", "-" },      /* replace whole string with invalid long len */
+        { "ABCDEF", 0, *p_basic_string_char_npos, "-", "-" }, /* replace whole string with npos */
+
+        { "ABCDEF", 5, 0, "",   "ABCDEF" },  /* replace at end with empty string */
+        { "ABCDEF", 5, 0, "-",  "ABCDE-F"},  /* replace at end with 0 len */
+        { "ABCDEF", 5, 1, "-",  "ABCDE-" },  /* replace 1 at end */
+        { "ABCDEF", 5, 42, "-", "ABCDE-" },  /* replace end with invalid long len */
+        { "ABCDEF", 5, *p_basic_string_char_npos, "-", "ABCDE-" }, /* replace end with npos */
+
+        { "ABCDEF", 6, 0, "",   "ABCDEF" },   /* replace after end with empty string */
+        { "ABCDEF", 6, 0, "-",  "ABCDEF-"},   /* replace after end with 0 len */
+        { "ABCDEF", 6, 1, "-",  "ABCDEF-" },  /* replace 1 after end */
+        { "ABCDEF", 6, 42, "-", "ABCDEF-" },  /* replace after end with invalid long len */
+        { "ABCDEF", 6, *p_basic_string_char_npos, "-", "ABCDEF-" }, /* replace after end with npos */
+    };
+
+    for(i=0; i<sizeof(tests)/sizeof(tests[0]); i++) {
+        call_func2(p_basic_string_char_ctor_cstr, &str, tests[i].str);
+
+        ret = call_func4(p_basic_string_char_replace_cstr, &str, tests[i].off, tests[i].len, tests[i].replace);
+        ok(ret == &str, "str = %p ret = %p\n", ret, &str);
+        ok(strcmp(tests[i].ret, (const char *) call_func1(p_basic_string_char_cstr, ret)) == 0, "str = %s ret = %s\n",
+                  tests[i].ret, (const char *) call_func1(p_basic_string_char_cstr, ret));
+
+        call_func1(p_basic_string_char_dtor, &str);
+    }
 }
 
 static void test_basic_string_wchar(void) {
@@ -603,6 +714,59 @@ static void test_basic_string_wchar_swap(void) {
     call_func1(p_basic_string_wchar_dtor, &str2);
 }
 
+static void test_basic_string_char_find_last_not_of(void) {
+    struct find_last_not_of_test {
+        const char *str;
+        const char *find;
+        size_t off;
+        size_t len;
+        size_t ret;
+    };
+
+    int i;
+    size_t ret;
+    basic_string_char str;
+    struct find_last_not_of_test tests[] = {
+        /* simple cases where find is not in string */
+        { "AAAAA", "B",    0, 1, 0 },
+        { "AAAAA", "B",    5, 1, 4 },
+        { "AAAAA", "BCDE", 0, 4, 0 },
+        { "AAAAA", "BCDE", 5, 4, 4 },
+
+        /* simple cases where find is in string */
+        { "AAAAA", "A",     5, 1, -1 },
+        { "AAAAB", "A",     5, 1,  4 },
+        { "AAAAB", "A",     4, 1,  4 },
+        { "AAAAB", "A",     3, 1, -1 },
+        { "ABCDE", "ABCDE", 0, 5, -1 },
+        { "ABCDE", "ABCDE", 5, 5, -1 },
+        { "ABCDE", "AB DE", 5, 5,  2 },
+
+        /* cases where find appears in multiple spots */
+        { "ABABA", "A", 0, 1, -1 },
+        { "ABABA", "A", 1, 1,  1 },
+        { "ABABA", "A", 2, 1,  1 },
+        { "ABABA", "A", 3, 1,  3 },
+
+        /* using empty strings */
+        { "",      "",  0, 0, -1 },
+        { "",      "A", 0, 1, -1 },
+        { "ABCDE", "",  0, 0, 0 },
+        { "ABCDE", "",  3, 0, 3 },
+        { "ABCDE", "",  5, 0, 4 },
+    };
+
+    for(i=0; i<sizeof(tests)/sizeof(tests[0]); i++) {
+        call_func2(p_basic_string_char_ctor_cstr, &str, tests[i].str);
+
+        ret = (size_t)call_func4(p_basic_string_char_find_last_not_of_cstr_substr,
+                                 &str, tests[i].find, tests[i].off, tests[i].len);
+        ok(ret == tests[i].ret, "ret = %li tests[%i].ret = %li\n", (long)ret, i, (long)tests[i].ret);
+
+        call_func1(p_basic_string_char_dtor, &str);
+    }
+}
+
 START_TEST(string)
 {
     if(!init())
@@ -614,8 +778,14 @@ START_TEST(string)
     test_basic_string_char_compare();
     test_basic_string_char_concatenate();
     test_basic_string_char_find();
+    test_basic_string_char_rfind();
+    test_basic_string_char_replace();
     test_basic_string_wchar();
     test_basic_string_wchar_swap();
+    test_basic_string_char_find_last_not_of();
 
     ok(!invalid_parameter, "invalid_parameter_handler was invoked too many times\n");
+
+    FreeLibrary(msvcr);
+    FreeLibrary(msvcp);
 }

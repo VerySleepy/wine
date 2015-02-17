@@ -22,54 +22,41 @@
 #define __QMGR_H__
 
 #include "windef.h"
-#include "objbase.h"
 
 #define COBJMACROS
+#include "objbase.h"
+
 #include "bits1_5.h"
+#include "bits3_0.h"
 
 #include <string.h>
 #include "wine/list.h"
+#include "wine/unicode.h"
 
 /* Background copy job vtbl and related data */
 typedef struct
 {
-    const IBackgroundCopyJob2Vtbl *lpVtbl;
+    IBackgroundCopyJob2 IBackgroundCopyJob2_iface;
     LONG ref;
     LPWSTR displayName;
+    LPWSTR description;
     BG_JOB_TYPE type;
     GUID jobId;
     struct list files;
     BG_JOB_PROGRESS jobProgress;
     BG_JOB_STATE state;
+    ULONG notify_flags;
+    IBackgroundCopyCallback2 *callback;
+    BOOL callback2; /* IBackgroundCopyCallback2 is supported in addition to IBackgroundCopyCallback */
     /* Protects file list, and progress */
     CRITICAL_SECTION cs;
     struct list entryFromQmgr;
 } BackgroundCopyJobImpl;
 
-/* Enum background copy jobs vtbl and related data */
-typedef struct
-{
-    const IEnumBackgroundCopyJobsVtbl *lpVtbl;
-    LONG ref;
-    IBackgroundCopyJob **jobs;
-    ULONG numJobs;
-    ULONG indexJobs;
-} EnumBackgroundCopyJobsImpl;
-
-/* Enum background copy files vtbl and related data */
-typedef struct
-{
-    const IEnumBackgroundCopyFilesVtbl *lpVtbl;
-    LONG ref;
-    IBackgroundCopyFile **files;
-    ULONG numFiles;
-    ULONG indexFiles;
-} EnumBackgroundCopyFilesImpl;
-
 /* Background copy file vtbl and related data */
 typedef struct
 {
-    const IBackgroundCopyFileVtbl *lpVtbl;
+    IBackgroundCopyFile IBackgroundCopyFile_iface;
     LONG ref;
     BG_FILE_INFO info;
     BG_FILE_PROGRESS fileProgress;
@@ -81,7 +68,7 @@ typedef struct
 /* Background copy manager vtbl and related data */
 typedef struct
 {
-    const IBackgroundCopyManagerVtbl *lpVtbl;
+    IBackgroundCopyManager IBackgroundCopyManager_iface;
     /* Protects job list, job states, and jobEvent  */
     CRITICAL_SECTION cs;
     HANDLE jobEvent;
@@ -97,16 +84,15 @@ extern HANDLE stop_event DECLSPEC_HIDDEN;
 extern ClassFactoryImpl BITS_ClassFactory DECLSPEC_HIDDEN;
 extern BackgroundCopyManagerImpl globalMgr DECLSPEC_HIDDEN;
 
-HRESULT BackgroundCopyManagerConstructor(IUnknown *pUnkOuter, LPVOID *ppObj) DECLSPEC_HIDDEN;
+HRESULT BackgroundCopyManagerConstructor(LPVOID *ppObj) DECLSPEC_HIDDEN;
 HRESULT BackgroundCopyJobConstructor(LPCWSTR displayName, BG_JOB_TYPE type,
-                                     GUID *pJobId, LPVOID *ppObj) DECLSPEC_HIDDEN;
-HRESULT EnumBackgroundCopyJobsConstructor(LPVOID *ppObj,
-                                          IBackgroundCopyManager* copyManager) DECLSPEC_HIDDEN;
+                                     GUID *pJobId, BackgroundCopyJobImpl **job) DECLSPEC_HIDDEN;
+HRESULT enum_copy_job_create(BackgroundCopyManagerImpl *qmgr,
+        IEnumBackgroundCopyJobs **enumjob) DECLSPEC_HIDDEN;
 HRESULT BackgroundCopyFileConstructor(BackgroundCopyJobImpl *owner,
                                       LPCWSTR remoteName, LPCWSTR localName,
-                                      LPVOID *ppObj) DECLSPEC_HIDDEN;
-HRESULT EnumBackgroundCopyFilesConstructor(LPVOID *ppObj,
-                                           IBackgroundCopyJob2 *copyJob) DECLSPEC_HIDDEN;
+                                      BackgroundCopyFileImpl **file) DECLSPEC_HIDDEN;
+HRESULT EnumBackgroundCopyFilesConstructor(BackgroundCopyJobImpl*, IEnumBackgroundCopyFiles**) DECLSPEC_HIDDEN;
 DWORD WINAPI fileTransfer(void *param) DECLSPEC_HIDDEN;
 void processJob(BackgroundCopyJobImpl *job) DECLSPEC_HIDDEN;
 BOOL processFile(BackgroundCopyFileImpl *file, BackgroundCopyJobImpl *job) DECLSPEC_HIDDEN;
@@ -118,6 +104,19 @@ qmgr_strdup(const char *s)
     size_t n = strlen(s) + 1;
     char *d = HeapAlloc(GetProcessHeap(), 0, n);
     return d ? memcpy(d, s, n) : NULL;
+}
+
+static inline HRESULT return_strval(const WCHAR *str, WCHAR **ret)
+{
+    int len;
+
+    if (!ret) return E_INVALIDARG;
+
+    len = strlenW(str);
+    *ret = CoTaskMemAlloc((len+1)*sizeof(WCHAR));
+    if (!*ret) return E_OUTOFMEMORY;
+    strcpyW(*ret, str);
+    return S_OK;
 }
 
 static inline BOOL

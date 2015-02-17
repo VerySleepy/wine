@@ -48,7 +48,8 @@ my $EXPORT_FLAGS    = 4;  # Flags - see above.
 # Options
 my $opt_output_directory = "man3w"; # All default options are for nroff (man pages)
 my $opt_manual_section = "3w";
-my $opt_source_dir = "";
+my $opt_source_dir = ".";
+my $opt_parent_dir = "";
 my $opt_wine_root_dir = "";
 my $opt_output_format = "";         # '' = nroff, 'h' = html, 's' = sgml, 'x' = xml
 my $opt_output_empty = 0;           # Non-zero = Create 'empty' comments (for every implemented function)
@@ -98,13 +99,14 @@ sub process_extra_comment($);
 sub process_spec_file($)
 {
   my $spec_name = shift;
-  my ($dll_name, $dll_ext)  = split(/\./, $spec_name);
+  (my $basename = $spec_name) =~ s/.*\///;
+  my ($dll_name, $dll_ext)  = split(/\./, $basename);
   $dll_ext = "dll" if ( $dll_ext eq "spec" );
   my $uc_dll_name  = uc $dll_name;
 
   my $spec_details =
   {
-    NAME => $spec_name,
+    NAME => $basename,
     DLL_NAME => $dll_name,
     DLL_EXT => $dll_ext,
     NUM_EXPORTS => 0,
@@ -244,15 +246,17 @@ sub process_source_file($)
   };
   my $parse_state = 0;
   my $ignore_blank_lines = 1;
-  my $extra_comment = 0; # 1 if this is an extra comment, i.e its not a .spec export
+  my $extra_comment = 0; # 1 if this is an extra comment, i.e it's not a .spec export
 
   if ($opt_verbose > 0)
   {
     print "Processing ".$source_file."\n";
   }
   open(SOURCE_FILE,"<$source_file")
-  || (($opt_source_dir ne "")
+  || (($opt_source_dir ne ".")
       && open(SOURCE_FILE,"<$opt_source_dir/$source_file"))
+  || (($opt_parent_dir ne "")
+      && open(SOURCE_FILE,"<$opt_source_dir/$opt_parent_dir/$source_file"))
   || die "couldn't open ".$source_file."\n";
 
   # Add this source file to the list of source files
@@ -517,7 +521,7 @@ sub process_comment_text($)
       s/\[I\]|\[i\]|\[in\]|\[IN\]/\[In\] /g;
       s/\[O\]|\[o\]|\[out\]|\[OUT\]/\[Out\]/g;
       s/\[I\/O\]|\[I\,O\]|\[i\/o\]|\[in\/out\]|\[IN\/OUT\]/\[In\/Out\]/g;
-      # TRUE/FALSE/NULL are defines, capitilise them
+      # TRUE/FALSE/NULL are defines, capitalise them
       s/True|true/TRUE/g;
       s/False|false/FALSE/g;
       s/Null|null/NULL/g;
@@ -760,7 +764,7 @@ sub process_comment($)
             if ($comment->{COMMENT_NAME} =~ /W$/ )
             {
               # This is probably a Unicode version of an Ascii function.
-              # Create the Ascii name and see if its been documented
+              # Create the Ascii name and see if it has been documented
               my $ascii_name = $comment->{COMMENT_NAME};
               $ascii_name =~ s/W$/A/;
 
@@ -1200,7 +1204,7 @@ sub output_spec($)
     "",
     $contribstring,
     "Note: This list may not be complete.",
-    "For a complete listing, see the Files \"AUTHORS\" and \"Changelog\" in the Wine source tree.",
+    "For a complete listing, see the git commit logs and the File \"AUTHORS\" in the Wine source tree.",
     "",
   );
 
@@ -1486,7 +1490,7 @@ sub output_api_synopsis($)
   # Since our prototype is output in a pre-formatted block, line up the
   # parameters and parameter comments in the same column.
 
-  # First caluculate where the columns should start
+  # First calculate where the columns should start
   my $biggest_length = 0;
   for(my $i=0; $i < @{$comment->{PROTOTYPE}}; $i++)
   {
@@ -1814,8 +1818,8 @@ sub output_master_index_files()
   my $comment =
   {
     FILE => "",
-    COMMENT_NAME => "The Wine Api Guide",
-    ALT_NAME => "The Wine Api Guide",
+    COMMENT_NAME => "The Wine API Guide",
+    ALT_NAME => "The Wine API Guide",
     DLL_NAME => "",
     ORDINAL => "",
     RETURNS => "",
@@ -1839,19 +1843,19 @@ sub output_master_index_files()
 
   # Create the initial comment text
   push (@{$comment->{TEXT}},
-    "This document describes the Api calls made available",
+    "This document describes the API calls made available",
     "by Wine. They are grouped by the dll that exports them.",
     "",
     "Please do not edit this document, since it is generated automatically",
     "from the Wine source code tree. Details on updating this documentation",
     "are given in the \"Wine Developers Guide\".",
     "CONTRIBUTORS",
-    "Api documentation is generally written by the person who ",
-    "implements a given Api call. Authors of each dll are listed in the overview ",
+    "API documentation is generally written by the person who ",
+    "implements a given API call. Authors of each dll are listed in the overview ",
     "section for that dll. Additional contributors who have updated source files ",
     "but have not entered their names in a copyright statement are noted by an ",
-    "entry in the file \"Changelog\" from the Wine source code distribution.",
-      ""
+    "entry in the git commit logs.",
+    ""
   );
 
   # Read in all dlls from the database of dll names
@@ -1884,7 +1888,7 @@ sub output_master_index_files()
   {
     # Just write this as the initial blurb, with a chapter heading
     output_open_api_file("blurb");
-    print OUTPUT "<chapter id =\"blurb\">\n<title>Introduction to The Wine Api Guide</title>\n"
+    print OUTPUT "<chapter id =\"blurb\">\n<title>Introduction to The Wine API Guide</title>\n"
   }
 
   # Write out the document
@@ -1934,7 +1938,7 @@ sub output_xml_master_file($)
     print OUTPUT "<!ENTITY ",$_," SYSTEM \"",$_,".xml\">\n"
   }
 
-  print OUTPUT "]>\n\n<book id=\"index\">\n<bookinfo><title>The Wine Api Guide</title></bookinfo>\n\n";
+  print OUTPUT "]>\n\n<book id=\"index\">\n<bookinfo><title>The Wine API Guide</title></bookinfo>\n\n";
   print OUTPUT "  &blurb;\n";
 
   for (@$dlls)
@@ -1963,7 +1967,7 @@ sub output_sgml_master_file($)
     print OUTPUT "<!entity ",$_," SYSTEM \"",$_,".sgml\">\n"
   }
 
-  print OUTPUT "]>\n\n<book id=\"index\">\n<bookinfo><title>The Wine Api Guide</title></bookinfo>\n\n";
+  print OUTPUT "]>\n\n<book id=\"index\">\n<bookinfo><title>The Wine API Guide</title></bookinfo>\n\n";
   print OUTPUT "  &blurb;\n";
 
   for (@$dlls)
@@ -2238,10 +2242,11 @@ sub usage()
         "       The above can be given multiple times on the command line, as appropriate.\n",
         "Options:\n",
         " -Th      : Output HTML instead of a man page\n",
-        " -Ts      : Output SGML (Docbook source) instead of a man page\n",
+        " -Ts      : Output SGML (DocBook source) instead of a man page\n",
         " -C <dir> : Source directory, to find source files if they are not found in the\n",
         "            current directory. Default is \"",$opt_source_dir,"\"\n",
-        " -R <dir> : Root of build directory, default is \"",$opt_wine_root_dir,"\"\n",
+        " -P <dir> : Parent source directory.\n",
+        " -R <dir> : Root of build directory.\n",
         " -o <dir> : Create output in <dir>, default is \"",$opt_output_directory,"\"\n",
         " -s <sect>: Set manual section to <sect>, default is ",$opt_manual_section,"\n",
         " -e       : Output \"FIXME\" documentation from empty comments.\n",
@@ -2289,6 +2294,10 @@ while(defined($_ = shift @ARGV))
                    };
       s/^C// && do {
                      if ($_ ne "") { $opt_source_dir = $_; }
+                     last;
+                   };
+      s/^P// && do {
+                     if ($_ ne "") { $opt_parent_dir = $_; }
                      last;
                    };
       s/^R// && do { if ($_ =~ /^\//) { $opt_wine_root_dir = $_; }

@@ -1,6 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Wine Windows Program Loader
+Name[ar]=منظومة واين لتشغيل برامج وندوز
 Name[cs]=Zavaděč programů pro Wine
 Name[de]=Wine Windows-Programmstarter
 Name[es]=Wine Cargador de programas de Windows
@@ -22,6 +23,7 @@ Name[sr]=Wine - дизач Windows програма
 Name[sr@latin]=Wine - dizač Windows programa
 Name[hr]=Wine - dizač Windows programa
 Name[he]=Wine — מריץ תכניות Windows
+Name[ja]=Wine Windowsプログラムローダー
 Exec=wine start /unix %f
 MimeType=application/x-ms-dos-executable;application/x-msi;application/x-ms-shortcut;
 Icon=wine

@@ -75,7 +75,7 @@ twain_add_onedriver(const char *dsname) {
 		ret = dsEntry (&fakeOrigin, DG_CONTROL, DAT_IDENTITY, MSG_GET, &sourceId);
 		if (ret != TWRC_SUCCESS) {
 			ERR("Source->(DG_CONTROL,DAT_IDENTITY,MSG_GET) failed!\n");
-			return;
+                        break;
 		}
 		TRACE("Manufacturer: %s\n",	debugstr_a(sourceId.Manufacturer));
 		TRACE("ProductFamily: %s\n",	debugstr_a(sourceId.ProductFamily));
@@ -100,12 +100,12 @@ twain_add_onedriver(const char *dsname) {
 	FreeLibrary (hmod);
 }
 
-static int detectionrun = 0;
+static BOOL detectionrun = FALSE;
 
 static void
 twain_autodetect(void) {
 	if (detectionrun) return;
-	detectionrun = 1;
+        detectionrun = TRUE;
 
 	twain_add_onedriver("sane.ds");
 	twain_add_onedriver("gphoto2.ds");
@@ -207,7 +207,7 @@ TW_UINT16 TWAIN_OpenDS (pTW_IDENTITY pOrigin, TW_MEMREF pData)
 
 	TRACE("DG_CONTROL/DAT_IDENTITY/MSG_OPENDS\n");
         TRACE("pIdentity is %s\n", pIdentity->ProductName);
-	if (DSM_currentState != 3) {
+	if (!DSM_initialized) {
 		FIXME("seq error\n");
 		DSM_twCC = TWCC_SEQERROR;
 		return TWRC_FAILURE;
@@ -281,10 +281,9 @@ TW_UINT16 TWAIN_CloseDSM (pTW_IDENTITY pOrigin, TW_MEMREF pData)
 
     TRACE("DG_CONTROL/DAT_PARENT/MSG_CLOSEDSM\n");
 
-    if (DSM_currentState == 3)
+    if (DSM_initialized)
     {
         DSM_initialized = FALSE;
-        DSM_currentState = 2;
 
         /* If there are data sources still open, close them now. */
         while (currentDS != NULL)
@@ -309,12 +308,9 @@ TW_UINT16 TWAIN_OpenDSM (pTW_IDENTITY pOrigin, TW_MEMREF pData)
 	TW_UINT16 twRC = TWRC_SUCCESS;
 
 	TRACE("DG_CONTROL/DAT_PARENT/MSG_OPENDSM\n");
-	if (DSM_currentState == 2) {
-		if (!DSM_initialized) {
-			DSM_currentDevice = 0;
-			DSM_initialized = TRUE;
-		}
-        	DSM_currentState = 3;
+        if (!DSM_initialized) {
+		DSM_currentDevice = 0;
+		DSM_initialized = TRUE;
 		DSM_twCC = TWCC_SUCCESS;
 		twRC = TWRC_SUCCESS;
 	} else {

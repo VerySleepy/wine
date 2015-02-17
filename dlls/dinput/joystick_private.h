@@ -57,6 +57,8 @@ HRESULT setup_dinput_options(JoystickGenericImpl *This, const int *default_axis_
 
 DWORD joystick_map_pov(const POINTL *p) DECLSPEC_HIDDEN;
 
+BOOL device_disabled_registry(const char* name) DECLSPEC_HIDDEN;
+
 HRESULT WINAPI JoystickWGenericImpl_GetObjectInfo(LPDIRECTINPUTDEVICE8W iface,
         LPDIDEVICEOBJECTINSTANCEW pdidoi, DWORD dwObj, DWORD dwHow) DECLSPEC_HIDDEN;
 
@@ -91,5 +93,8 @@ HRESULT WINAPI JoystickWGenericImpl_BuildActionMap(LPDIRECTINPUTDEVICE8W iface, 
 
 HRESULT WINAPI JoystickAGenericImpl_SetActionMap(LPDIRECTINPUTDEVICE8A iface, LPDIACTIONFORMATA lpdiaf, LPCSTR lpszUserName, DWORD dwFlags) DECLSPEC_HIDDEN;
 HRESULT WINAPI JoystickWGenericImpl_SetActionMap(LPDIRECTINPUTDEVICE8W iface, LPDIACTIONFORMATW lpdiaf, LPCWSTR lpszUserName, DWORD dwFlags) DECLSPEC_HIDDEN;
+
+DWORD typeFromGUID(REFGUID guid) DECLSPEC_HIDDEN;
+void dump_DIEFFECT(LPCDIEFFECT eff, REFGUID guid, DWORD dwFlags) DECLSPEC_HIDDEN;
 
 #endif /* __WINE_DLLS_DINPUT_JOYSTICK_PRIVATE_H */

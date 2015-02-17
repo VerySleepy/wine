@@ -30,7 +30,7 @@ DECLARE_INTERFACE_(IDirectDrawFactory, IUnknown)
     STDMETHOD_(ULONG, Release)(THIS) PURE;
     STDMETHOD(CreateDirectDraw)(THIS_ GUID * pGUID, HWND hWnd, DWORD dwCoopLevelFlags,
         DWORD dwReserved, IUnknown *pUnkOuter, IDirectDraw **ppDirectDraw) PURE;
-    STDMETHOD(_DirectDrawEnumerate)(THIS_ LPDDENUMCALLBACKW lpCallback, LPVOID lpContext) PURE;
+    STDMETHOD(_DirectDrawEnumerate)(THIS_ LPDDENUMCALLBACKW cb, void *ctx) PURE;
 };
 #undef INTERFACE
 
@@ -44,17 +44,14 @@ DECLARE_INTERFACE_(IDirectDrawFactory, IUnknown)
 #endif
 
 
-HRESULT WINAPI IDirectDrawFactoryImpl_CreateDirectDraw(IDirectDrawFactory* iface,
-    GUID * pGUID, HWND hWnd, DWORD dwCoopLevelFlags, DWORD dwReserved, IUnknown *pUnkOuter,
-    IDirectDraw **ppDirectDraw) DECLSPEC_HIDDEN;
+HRESULT WINAPI ddrawex_factory_CreateDirectDraw(IDirectDrawFactory *iface,
+    GUID *guid, HWND window, DWORD coop_level, DWORD reserved, IUnknown *outer_unknown,
+    IDirectDraw **ddraw) DECLSPEC_HIDDEN;
 
 void DDSD_to_DDSD2(const DDSURFACEDESC *in, DDSURFACEDESC2 *out) DECLSPEC_HIDDEN;
 void DDSD2_to_DDSD(const DDSURFACEDESC2 *in, DDSURFACEDESC *out) DECLSPEC_HIDDEN;
 
-/******************************************************************************
- * IDirectDraw wrapper implementation
- ******************************************************************************/
-typedef struct
+struct ddrawex
 {
     IDirectDraw IDirectDraw_iface;
     IDirectDraw2 IDirectDraw2_iface;
@@ -64,18 +61,15 @@ typedef struct
 
     /* The interface we're forwarding to */
     IDirectDraw4 *parent;
-} IDirectDrawImpl;
+};
 
 IDirectDraw4 *dd_get_outer(IDirectDraw4 *inner) DECLSPEC_HIDDEN;
 IDirectDraw4 *dd_get_inner(IDirectDraw4 *outer) DECLSPEC_HIDDEN;
 
-/******************************************************************************
- * IDirectDrawSurface implementation
- ******************************************************************************/
-typedef struct
+struct ddrawex_surface
 {
     IDirectDrawSurface3 IDirectDrawSurface3_iface;
-    const IDirectDrawSurface4Vtbl *IDirectDrawSurface4_Vtbl;
+    IDirectDrawSurface4 IDirectDrawSurface4_iface;
     LONG ref;
 
     /* The interface we're forwarding to */
@@ -86,11 +80,10 @@ typedef struct
 
     /* An UUID we use to store the outer surface as private data in the inner surface */
 #define IID_DDrawexPriv IID_IDirectDrawSurface4
+};
 
-} IDirectDrawSurfaceImpl;
-
+struct ddrawex_surface *unsafe_impl_from_IDirectDrawSurface4(IDirectDrawSurface4 *iface) DECLSPEC_HIDDEN;
 IDirectDrawSurface4 *dds_get_outer(IDirectDrawSurface4 *inner) DECLSPEC_HIDDEN;
-IDirectDrawSurface4 *dds_get_inner(IDirectDrawSurface4 *outer) DECLSPEC_HIDDEN;
 HRESULT prepare_permanent_dc(IDirectDrawSurface4 *iface) DECLSPEC_HIDDEN;
 
 #endif /* __WINE_DLLS_DDRAWEX_DDRAWEX_PRIVATE_H */

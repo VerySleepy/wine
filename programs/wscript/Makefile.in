@@ -1,7 +1,6 @@
 MODULE    = wscript.exe
 APPMODE   = -mwindows -municode
-IMPORTS   = uuid shell32 oleaut32 ole32 advapi32
-EXTRADEFS = -DWINE_NO_UNICODE_MACROS
+IMPORTS   = uuid shell32 oleaut32 ole32 user32 advapi32
 
 RC_SRCS = \
 	rsrc.rc
@@ -11,7 +10,4 @@ C_SRCS = \
 	host.c \
 	main.c
 
-IDL_H_SRCS = ihost.idl
-IDL_TLB_SRCS = ihost.idl
-
-@MAKE_PROG_RULES@
+IDL_SRCS = ihost.idl

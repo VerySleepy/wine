@@ -97,12 +97,18 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
   switch (fdwReason)
   {
   case DLL_PROCESS_ATTACH:
-    if (!msvcrt_init_tls())
+    msvcrt_init_exception(hinstDLL);
+    if(!msvcrt_init_heap())
+        return FALSE;
+    if(!msvcrt_init_tls()) {
+      msvcrt_destroy_heap();
       return FALSE;
+    }
     msvcrt_init_mt_locks();
     if(!msvcrt_init_locale()) {
-        msvcrt_free_mt_locks();
+        msvcrt_free_locks();
         msvcrt_free_tls_mem();
+        msvcrt_destroy_heap();
         return FALSE;
     }
     msvcrt_init_math();
@@ -110,15 +116,21 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
     msvcrt_init_console();
     msvcrt_init_args();
     msvcrt_init_signals();
+#if _MSVCR_VER == 0
     /* don't allow unloading msvcrt, we can't setup file handles twice */
-    LdrAddRefDll( 0, hinstDLL );
+    LdrAddRefDll( LDR_ADDREF_DLL_PIN, hinstDLL );
+#elif _MSVCR_VER >= 80
+    MSVCRT__set_printf_count_output(0);
+#endif
     TRACE("finished process init\n");
     break;
   case DLL_THREAD_ATTACH:
     break;
   case DLL_PROCESS_DETACH:
     msvcrt_free_io();
-    msvcrt_free_mt_locks();
+    if (lpvReserved) break;
+    msvcrt_free_popen_data();
+    msvcrt_free_locks();
     msvcrt_free_console();
     msvcrt_free_args();
     msvcrt_free_signals();
@@ -126,6 +138,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
     if (!msvcrt_free_tls())
       return FALSE;
     MSVCRT__free_locale(MSVCRT_locale);
+    msvcrt_destroy_heap();
     TRACE("finished process free\n");
     break;
   case DLL_THREAD_DETACH:

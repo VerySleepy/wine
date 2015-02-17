@@ -22,6 +22,7 @@
 #include <windows.h>
 
 #include "wine/test.h"
+#include "v6util.h"
 
 static PVOID (WINAPI * pAlloc)(LONG);
 static PVOID (WINAPI * pReAlloc)(PVOID, LONG);
@@ -74,7 +75,7 @@ static void test_GetPtrAW(void)
         static char dest[MAX_PATH];
         int sourcelen;
         int destsize = MAX_PATH;
-        int count = -1;
+        int count;
 
         sourcelen = strlen(source) + 1;
 
@@ -101,8 +102,8 @@ static void test_GetPtrAW(void)
         ok (count == sourcelen ||
             broken(count == 0), /* win9x */
             "Expected count to be %d, it was %d\n", sourcelen, count);
-        ok (!lstrcmp(dest, desttest) ||
-            broken(!lstrcmp(dest, "")), /* Win7 */
+        ok (!lstrcmpA(dest, desttest) ||
+            broken(!lstrcmpA(dest, "")), /* Win7 */
             "Expected destination to not have changed\n");
 
         count = pStr_GetPtrA(source, NULL, destsize);
@@ -114,7 +115,7 @@ static void test_GetPtrAW(void)
         ok (count == sourcelen ||
             broken(count == sourcelen - 1), /* win9x */
             "Expected count to be %d, it was %d\n", sourcelen, count);
-        ok (!lstrcmp(source, dest), "Expected source and destination to be the same\n");
+        ok (!lstrcmpA(source, dest), "Expected source and destination to be the same\n");
 
         strcpy(dest, desttest);
         count = pStr_GetPtrA(NULL, dest, destsize);
@@ -186,13 +187,39 @@ static void test_Alloc(void)
     ok(res == TRUE, "Expected TRUE, got %d\n", res);
 }
 
+static void test_TaskDialogIndirect(void)
+{
+    HINSTANCE hinst;
+    void *ptr, *ptr2;
+
+    hinst = LoadLibraryA("comctl32.dll");
+
+    ptr = GetProcAddress(hinst, "TaskDialogIndirect");
+    if (!ptr)
+    {
+        win_skip("TaskDialogIndirect not exported by name\n");
+        return;
+    }
+
+    ptr2 = GetProcAddress(hinst, (const CHAR*)345);
+    ok(ptr == ptr2, "got wrong pointer for ordinal 345, %p expected %p\n", ptr2, ptr);
+}
+
 START_TEST(misc)
 {
+    ULONG_PTR ctx_cookie;
+    HANDLE hCtx;
+
     if(!InitFunctionPtrs())
         return;
 
     test_GetPtrAW();
     test_Alloc();
 
-    FreeLibrary(hComctl32);
+    if (!load_v6_module(&ctx_cookie, &hCtx))
+        return;
+
+    test_TaskDialogIndirect();
+
+    unload_v6_module(ctx_cookie, hCtx);
 }

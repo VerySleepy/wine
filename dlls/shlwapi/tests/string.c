@@ -48,6 +48,7 @@ static DWORD   (WINAPI *pSHAnsiToAnsi)(LPCSTR,LPSTR,int);
 static DWORD   (WINAPI *pSHUnicodeToUnicode)(LPCWSTR,LPWSTR,int);
 static LPSTR   (WINAPI *pStrCatBuffA)(LPSTR,LPCSTR,INT);
 static LPWSTR  (WINAPI *pStrCatBuffW)(LPWSTR,LPCWSTR,INT);
+static DWORD   (WINAPI *pStrCatChainW)(LPWSTR,DWORD,DWORD,LPCWSTR);
 static LPSTR   (WINAPI *pStrCpyNXA)(LPSTR,LPCSTR,int);
 static LPWSTR  (WINAPI *pStrCpyNXW)(LPWSTR,LPCWSTR,int);
 static LPSTR   (WINAPI *pStrFormatByteSize64A)(LONGLONG,LPSTR,UINT);
@@ -64,7 +65,9 @@ static LPWSTR  (WINAPI *pStrStrNW)(LPCWSTR,LPCWSTR,UINT);
 static LPWSTR  (WINAPI *pStrStrNIW)(LPCWSTR,LPCWSTR,UINT);
 static INT     (WINAPIV *pwnsprintfA)(LPSTR,INT,LPCSTR, ...);
 static INT     (WINAPIV *pwnsprintfW)(LPWSTR,INT,LPCWSTR, ...);
-static LPWSTR  (WINAPI *pStrChrNW)(LPWSTR,WCHAR,UINT);
+static LPWSTR  (WINAPI *pStrChrNW)(LPCWSTR,WCHAR,UINT);
+static BOOL    (WINAPI *pStrToInt64ExA)(LPCSTR,DWORD,LONGLONG*);
+static BOOL    (WINAPI *pStrToInt64ExW)(LPCWSTR,DWORD,LONGLONG*);
 
 static int strcmpW(const WCHAR *str1, const WCHAR *str2)
 {
@@ -77,17 +80,19 @@ typedef struct tagStrToIntResult
 {
   const char* string;
   int str_to_int;
-  int str_to_int_ex;
-  int str_to_int_hex;
+  LONGLONG str_to_int64_ex;
+  LONGLONG str_to_int64_hex;
 } StrToIntResult;
 
 static const StrToIntResult StrToInt_results[] = {
      { "1099", 1099, 1099, 1099 },
+     { "4294967319", 23, ((LONGLONG)1 << 32) | 23, ((LONGLONG)1 << 32) | 23 },
      { "+88987", 0, 88987, 88987 },
      { "012", 12, 12, 12 },
      { "-55", -55, -55, -55 },
      { "-0", 0, 0, 0 },
      { "0x44ff", 0, 0, 0x44ff },
+     { "0x2bdc546291f4b1", 0, 0, ((LONGLONG)0x2bdc54 << 32) | 0x6291f4b1 },
      { "+0x44f4", 0, 0, 0x44f4 },
      { "-0x44fd", 0, 0, 0x44fd },
      { "+ 88987", 0, 0, 0 },
@@ -403,21 +408,33 @@ static void test_StrCpyW(void)
   WCHAR szSrc[256];
   WCHAR szBuff[256];
   const StrFormatSizeResult* result = StrFormatSize_results;
-
+  LPWSTR lpRes;
 
   while(result->value)
   {
-    MultiByteToWideChar(0,0,result->byte_size_64,-1,szSrc,sizeof(szSrc)/sizeof(WCHAR));
+    MultiByteToWideChar(CP_ACP,0,result->byte_size_64,-1,szSrc,sizeof(szSrc)/sizeof(WCHAR));
 
-    StrCpyW(szBuff, szSrc);
-    ok(!StrCmpW(szSrc, szBuff), "Copied string %s wrong\n", result->byte_size_64);
+    lpRes = StrCpyW(szBuff, szSrc);
+    ok(!StrCmpW(szSrc, szBuff) && lpRes == szBuff, "Copied string %s wrong\n", result->byte_size_64);
     result++;
   }
+
+  /* this test crashes on win2k SP4 */
+  /*lpRes = StrCpyW(szBuff, NULL);*/
+  /*ok(lpRes == szBuff, "Wrong return value: got %p expected %p\n", lpRes, szBuff);*/
+
+  /* this test crashes on win2k SP4 */
+  /*lpRes = StrCpyW(NULL, szSrc);*/
+  /*ok(lpRes == NULL, "Wrong return value: got %p expected NULL\n", lpRes);*/
+
+  /* this test crashes on win2k SP4 */
+  /*lpRes = StrCpyW(NULL, NULL);*/
+  /*ok(lpRes == NULL, "Wrong return value: got %p expected NULL\n", lpRes);*/
 }
 
 static void test_StrChrNW(void)
 {
-    static WCHAR string[] = {'T','e','s','t','i','n','g',' ','S','t','r','i','n','g',0};
+    static const WCHAR string[] = {'T','e','s','t','i','n','g',' ','S','t','r','i','n','g',0};
     LPWSTR p;
 
     if (!pStrChrNW)
@@ -459,7 +476,7 @@ static void test_StrToIntW(void)
 
   while (result->string)
   {
-    MultiByteToWideChar(0,0,result->string,-1,szBuff,sizeof(szBuff)/sizeof(WCHAR));
+    MultiByteToWideChar(CP_ACP,0,result->string,-1,szBuff,sizeof(szBuff)/sizeof(WCHAR));
     return_val = StrToIntW(szBuff);
     ok(return_val == result->str_to_int, "converted '%s' wrong (%d)\n",
        result->string, return_val);
@@ -480,7 +497,7 @@ static void test_StrToIntExA(void)
     ok(!bRet || return_val != -1, "No result returned from '%s'\n",
        result->string);
     if (bRet)
-      ok(return_val == result->str_to_int_ex, "converted '%s' wrong (%d)\n",
+      ok(return_val == (int)result->str_to_int64_ex, "converted '%s' wrong (%d)\n",
          result->string, return_val);
     result++;
   }
@@ -493,7 +510,7 @@ static void test_StrToIntExA(void)
     ok(!bRet || return_val != -1, "No result returned from '%s'\n",
        result->string);
     if (bRet)
-      ok(return_val == result->str_to_int_hex, "converted '%s' wrong (%d)\n",
+      ok(return_val == (int)result->str_to_int64_hex, "converted '%s' wrong (%d)\n",
          result->string, return_val);
     result++;
   }
@@ -509,12 +526,12 @@ static void test_StrToIntExW(void)
   while (result->string)
   {
     return_val = -1;
-    MultiByteToWideChar(0,0,result->string,-1,szBuff,sizeof(szBuff)/sizeof(WCHAR));
+    MultiByteToWideChar(CP_ACP,0,result->string,-1,szBuff,sizeof(szBuff)/sizeof(WCHAR));
     bRet = StrToIntExW(szBuff, 0, &return_val);
     ok(!bRet || return_val != -1, "No result returned from '%s'\n",
        result->string);
     if (bRet)
-      ok(return_val == result->str_to_int_ex, "converted '%s' wrong (%d)\n",
+      ok(return_val == (int)result->str_to_int64_ex, "converted '%s' wrong (%d)\n",
          result->string, return_val);
     result++;
   }
@@ -523,13 +540,92 @@ static void test_StrToIntExW(void)
   while (result->string)
   {
     return_val = -1;
-    MultiByteToWideChar(0,0,result->string,-1,szBuff,sizeof(szBuff)/sizeof(WCHAR));
+    MultiByteToWideChar(CP_ACP,0,result->string,-1,szBuff,sizeof(szBuff)/sizeof(WCHAR));
     bRet = StrToIntExW(szBuff, STIF_SUPPORT_HEX, &return_val);
     ok(!bRet || return_val != -1, "No result returned from '%s'\n",
        result->string);
     if (bRet)
-      ok(return_val == result->str_to_int_hex, "converted '%s' wrong (%d)\n",
+      ok(return_val == (int)result->str_to_int64_hex, "converted '%s' wrong (%d)\n",
          result->string, return_val);
+    result++;
+  }
+}
+
+static void test_StrToInt64ExA(void)
+{
+  const StrToIntResult *result = StrToInt_results;
+  LONGLONG return_val;
+  BOOL bRet;
+
+  if (!pStrToInt64ExA)
+  {
+    win_skip("StrToInt64ExA() is not available\n");
+    return;
+  }
+
+  while (result->string)
+  {
+    return_val = -1;
+    bRet = pStrToInt64ExA(result->string,0,&return_val);
+    ok(!bRet || return_val != -1, "No result returned from '%s'\n",
+       result->string);
+    if (bRet)
+      ok(return_val == result->str_to_int64_ex, "converted '%s' wrong (%08x%08x)\n",
+         result->string, (DWORD)(return_val >> 32), (DWORD)return_val);
+    result++;
+  }
+
+  result = StrToInt_results;
+  while (result->string)
+  {
+    return_val = -1;
+    bRet = pStrToInt64ExA(result->string,STIF_SUPPORT_HEX,&return_val);
+    ok(!bRet || return_val != -1, "No result returned from '%s'\n",
+       result->string);
+    if (bRet)
+      ok(return_val == result->str_to_int64_hex, "converted '%s' wrong (%08x%08x)\n",
+         result->string, (DWORD)(return_val >> 32), (DWORD)return_val);
+    result++;
+  }
+}
+
+static void test_StrToInt64ExW(void)
+{
+  WCHAR szBuff[256];
+  const StrToIntResult *result = StrToInt_results;
+  LONGLONG return_val;
+  BOOL bRet;
+
+  if (!pStrToInt64ExW)
+  {
+    win_skip("StrToInt64ExW() is not available\n");
+    return;
+  }
+
+  while (result->string)
+  {
+    return_val = -1;
+    MultiByteToWideChar(CP_ACP,0,result->string,-1,szBuff,sizeof(szBuff)/sizeof(WCHAR));
+    bRet = pStrToInt64ExW(szBuff, 0, &return_val);
+    ok(!bRet || return_val != -1, "No result returned from '%s'\n",
+       result->string);
+    if (bRet)
+      ok(return_val == result->str_to_int64_ex, "converted '%s' wrong (%08x%08x)\n",
+         result->string, (DWORD)(return_val >> 32), (DWORD)return_val);
+    result++;
+  }
+
+  result = StrToInt_results;
+  while (result->string)
+  {
+    return_val = -1;
+    MultiByteToWideChar(CP_ACP,0,result->string,-1,szBuff,sizeof(szBuff)/sizeof(WCHAR));
+    bRet = pStrToInt64ExW(szBuff, STIF_SUPPORT_HEX, &return_val);
+    ok(!bRet || return_val != -1, "No result returned from '%s'\n",
+       result->string);
+    if (bRet)
+      ok(return_val == result->str_to_int64_hex, "converted '%s' wrong (%08x%08x)\n",
+         result->string, (DWORD)(return_val >> 32), (DWORD)return_val);
     result++;
   }
 }
@@ -598,7 +694,7 @@ static void test_StrFormatKBSizeW(void)
   while(result->value)
   {
     pStrFormatKBSizeW(result->value, szBuffW, 256);
-    WideCharToMultiByte(0,0,szBuffW,-1,szBuff,sizeof(szBuff)/sizeof(WCHAR),0,0);
+    WideCharToMultiByte(CP_ACP,0,szBuffW,-1,szBuff,sizeof(szBuff)/sizeof(WCHAR),NULL,NULL);
 
     ok(!strcmp(result->kb_size, szBuff), "Formatted %x%08x wrong: got %s, expected %s\n",
        (LONG)(result->value >> 32), (LONG)result->value, szBuff, result->kb_size);
@@ -963,7 +1059,7 @@ if (0)
         memset(wbuf, 0xbf, sizeof(wbuf));
         strret.uType = STRRET_WSTR;
         U(strret).pOleStr = StrDupW(wstr1);
-        expect_eq2(pStrRetToBufW(&strret, NULL, wbuf, 10), S_OK, HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER) /* Vista */, HRESULT, "%x");
+        expect_eq2(pStrRetToBufW(&strret, NULL, wbuf, 10), S_OK, E_NOT_SUFFICIENT_BUFFER /* Vista */, HRESULT, "%x");
         expect_eq(wbuf[9], 0, WCHAR, "%x");
         expect_eq(wbuf[10], (WCHAR)0xbfbf, WCHAR, "%x");
     }
@@ -974,8 +1070,8 @@ if (0)
     {
         memset(buf, 0xbf, sizeof(buf));
         strret.uType = STRRET_CSTR;
-        StrCpyN(U(strret).cStr, str1, MAX_PATH);
-        expect_eq2(pStrRetToBufA(&strret, NULL, buf, 10), S_OK, HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER) /* Vista */, HRESULT, "%x");
+        StrCpyNA(U(strret).cStr, str1, MAX_PATH);
+        expect_eq2(pStrRetToBufA(&strret, NULL, buf, 10), S_OK, E_NOT_SUFFICIENT_BUFFER /* Vista */, HRESULT, "%x");
         expect_eq(buf[9], 0, CHAR, "%x");
         expect_eq(buf[10], (CHAR)0xbf, CHAR, "%x");
     }
@@ -1386,15 +1482,134 @@ static void test_StrStrNIW(void)
     }
 }
 
+static void test_StrCatChainW(void)
+{
+    static const WCHAR deadbeefW[] = {'D','e','A','d','B','e','E','f',0};
+    static const WCHAR deadW[] = {'D','e','A','d',0};
+    static const WCHAR beefW[] = {'B','e','E','f',0};
+
+    WCHAR buf[32 + 1];
+    DWORD ret;
+
+    if (!pStrCatChainW)
+    {
+        win_skip("StrCatChainW is not available\n");
+        return;
+    }
+
+    /* Test with NULL buffer */
+    ret = pStrCatChainW(NULL, 0, 0, beefW);
+    ok(ret == 0, "Expected StrCatChainW to return 0, got %u\n", ret);
+
+    /* Test with empty buffer */
+    memset(buf, 0x11, sizeof(buf));
+    ret = pStrCatChainW(buf, 0, 0, beefW);
+    ok(ret == 0, "Expected StrCatChainW to return 0, got %u\n", ret);
+    ok(buf[0] == 0x1111, "Expected buf[0] = 0x1111, got %x\n", buf[0]);
+
+    memcpy(buf, deadbeefW, sizeof(deadbeefW));
+    ret = pStrCatChainW(buf, 0, -1, beefW);
+    ok(ret == 8, "Expected StrCatChainW to return 8, got %u\n", ret);
+    ok(!memcmp(buf, deadbeefW, sizeof(deadbeefW)), "Buffer contains wrong data\n");
+
+    /* Append data to existing string with offset = -1 */
+    memset(buf, 0x11, sizeof(buf));
+    ret = pStrCatChainW(buf, 32, 0, deadW);
+    ok(ret == 4, "Expected StrCatChainW to return 4, got %u\n", ret);
+    ok(!memcmp(buf, deadW, sizeof(deadW)), "Buffer contains wrong data\n");
+
+    ret = pStrCatChainW(buf, 32, -1, beefW);
+    ok(ret == 8, "Expected StrCatChainW to return 8, got %u\n", ret);
+    ok(!memcmp(buf, deadbeefW, sizeof(deadbeefW)), "Buffer contains wrong data\n");
+
+    /* Append data at a fixed offset */
+    memset(buf, 0x11, sizeof(buf));
+    ret = pStrCatChainW(buf, 32, 0, deadW);
+    ok(ret == 4, "Expected StrCatChainW to return 4, got %u\n", ret);
+    ok(!memcmp(buf, deadW, sizeof(deadW)), "Buffer contains wrong data\n");
+
+    ret = pStrCatChainW(buf, 32, 4, beefW);
+    ok(ret == 8, "Expected StrCatChainW to return 8, got %u\n", ret);
+    ok(!memcmp(buf, deadbeefW, sizeof(deadbeefW)), "Buffer contains wrong data\n");
+
+    /* Buffer exactly sufficient for string + terminating null */
+    memset(buf, 0x11, sizeof(buf));
+    ret = pStrCatChainW(buf, 5, 0, deadW);
+    ok(ret == 4, "Expected StrCatChainW to return 4, got %u\n", ret);
+    ok(!memcmp(buf, deadW, sizeof(deadW)), "Buffer contains wrong data\n");
+
+    /* Buffer too small, string will be truncated */
+    memset(buf, 0x11, sizeof(buf));
+    ret = pStrCatChainW(buf, 4, 0, deadW);
+    if (ret == 4)
+    {
+        /* Windows 2000 and XP uses a slightly different implementation
+         * for StrCatChainW, which doesn't ensure that strings are null-
+         * terminated. Skip test if we detect such an implementation. */
+        win_skip("Windows2000/XP behaviour detected for StrCatChainW, skipping tests\n");
+        return;
+    }
+    ok(ret == 3, "Expected StrCatChainW to return 3, got %u\n", ret);
+    ok(!memcmp(buf, deadW, 3 * sizeof(WCHAR)), "Buffer contains wrong data\n");
+    ok(!buf[3], "String is not nullterminated\n");
+    ok(buf[4] == 0x1111, "Expected buf[4] = 0x1111, got %x\n", buf[4]);
+
+    /* Overwrite part of an existing string */
+    ret = pStrCatChainW(buf, 4, 1, beefW);
+    ok(ret == 3, "Expected StrCatChainW to return 3, got %u\n", ret);
+    ok(buf[0] == 'D', "Expected buf[0] = 'D', got %x\n", buf[0]);
+    ok(buf[1] == 'B', "Expected buf[1] = 'B', got %x\n", buf[1]);
+    ok(buf[2] == 'e', "Expected buf[2] = 'e', got %x\n", buf[2]);
+    ok(!buf[3], "String is not nullterminated\n");
+    ok(buf[4] == 0x1111, "Expected buf[4] = 0x1111, got %x\n", buf[4]);
+
+    /* Test appending to full buffer */
+    memset(buf, 0x11, sizeof(buf));
+    memcpy(buf, deadbeefW, sizeof(deadbeefW));
+    memcpy(buf + 9, deadW, sizeof(deadW));
+    ret = pStrCatChainW(buf, 9, 8, beefW);
+    ok(ret == 8, "Expected StrCatChainW to return 8, got %u\n", ret);
+    ok(!memcmp(buf, deadbeefW, sizeof(deadbeefW)), "Buffer contains wrong data\n");
+    ok(!memcmp(buf + 9, deadW, sizeof(deadW)), "Buffer contains wrong data\n");
+
+    /* Offset points at the end of the buffer */
+    ret = pStrCatChainW(buf, 9, 9, beefW);
+    ok(ret == 8, "Expected StrCatChainW to return 8, got %u\n", ret);
+    ok(!memcmp(buf, deadbeefW, sizeof(deadbeefW)), "Buffer contains wrong data\n");
+    ok(!memcmp(buf + 9, deadW, sizeof(deadW)), "Buffer contains wrong data\n");
+
+    /* Offset points outside of the buffer */
+    ret = pStrCatChainW(buf, 9, 10, beefW);
+    ok(ret == 10, "Expected StrCatChainW to return 10, got %u\n", ret);
+    ok(!memcmp(buf, deadbeefW, sizeof(deadbeefW)), "Buffer contains wrong data\n");
+    ok(!memcmp(buf + 9, deadW, sizeof(deadW)), "Buffer contains wrong data\n");
+
+    /* The same but without nullterminated string */
+    memcpy(buf, deadbeefW, sizeof(deadbeefW));
+    ret = pStrCatChainW(buf, 5, -1, deadW);
+    ok(ret == 8, "Expected StrCatChainW to return 8, got %u\n", ret);
+    ok(!memcmp(buf, deadbeefW, sizeof(deadbeefW)), "Buffer contains wrong data\n");
+
+    ret = pStrCatChainW(buf, 5, 5, deadW);
+    ok(ret == 4, "Expected StrCatChainW to return 4, got %u\n", ret);
+    ok(!memcmp(buf, deadW, sizeof(deadW)), "Buffer contains wrong data\n");
+    ok(buf[5] == 'e', "Expected buf[5] = 'e', got %x\n", buf[5]);
+
+    ret = pStrCatChainW(buf, 5, 6, deadW);
+    ok(ret == 6, "Expected StrCatChainW to return 6, got %u\n", ret);
+    ok(!memcmp(buf, deadW, sizeof(deadW)), "Buffer contains wrong data\n");
+    ok(buf[5] == 'e', "Expected buf[5] = 'e', got %x\n", buf[5]);
+}
+
 START_TEST(string)
 {
   HMODULE hShlwapi;
-  TCHAR thousandDelim[8];
-  TCHAR decimalDelim[8];
+  CHAR thousandDelim[8];
+  CHAR decimalDelim[8];
   CoInitialize(0);
 
-  GetLocaleInfo(LOCALE_USER_DEFAULT, LOCALE_STHOUSAND, thousandDelim, 8);
-  GetLocaleInfo(LOCALE_USER_DEFAULT, LOCALE_SDECIMAL, decimalDelim, 8);
+  GetLocaleInfoA(LOCALE_USER_DEFAULT, LOCALE_STHOUSAND, thousandDelim, 8);
+  GetLocaleInfoA(LOCALE_USER_DEFAULT, LOCALE_SDECIMAL, decimalDelim, 8);
 
   hShlwapi = GetModuleHandleA("shlwapi");
   pChrCmpIA = (void *)GetProcAddress(hShlwapi, "ChrCmpIA");
@@ -1405,6 +1620,7 @@ START_TEST(string)
   pSHUnicodeToUnicode = (void *)GetProcAddress(hShlwapi, (LPSTR)346);
   pStrCatBuffA = (void *)GetProcAddress(hShlwapi, "StrCatBuffA");
   pStrCatBuffW = (void *)GetProcAddress(hShlwapi, "StrCatBuffW");
+  pStrCatChainW = (void *)GetProcAddress(hShlwapi, "StrCatChainW");
   pStrCpyNXA = (void *)GetProcAddress(hShlwapi, (LPSTR)399);
   pStrCpyNXW = (void *)GetProcAddress(hShlwapi, (LPSTR)400);
   pStrChrNW = (void *)GetProcAddress(hShlwapi, "StrChrNW");
@@ -1422,6 +1638,8 @@ START_TEST(string)
   pStrStrNIW = (void *)GetProcAddress(hShlwapi, "StrStrNIW");
   pwnsprintfA = (void *)GetProcAddress(hShlwapi, "wnsprintfA");
   pwnsprintfW = (void *)GetProcAddress(hShlwapi, "wnsprintfW");
+  pStrToInt64ExA = (void *)GetProcAddress(hShlwapi, "StrToInt64ExA");
+  pStrToInt64ExW = (void *)GetProcAddress(hShlwapi, "StrToInt64ExW");
 
   test_StrChrA();
   test_StrChrW();
@@ -1435,6 +1653,8 @@ START_TEST(string)
   test_StrToIntW();
   test_StrToIntExA();
   test_StrToIntExW();
+  test_StrToInt64ExA();
+  test_StrToInt64ExW();
   test_StrDupA();
 
   /* language-dependent test */
@@ -1466,6 +1686,7 @@ START_TEST(string)
   test_StrStrIW();
   test_StrStrNW();
   test_StrStrNIW();
+  test_StrCatChainW();
 
   CoUninitialize();
 }

@@ -36,6 +36,7 @@
 #include "win.h"
 #include "user_private.h"
 #include "controls.h"
+#include "wine/gdi_driver.h"
 #include "wine/list.h"
 #include "wine/debug.h"
 
@@ -107,12 +108,15 @@ static void dump_rdw_flags(UINT flags)
  */
 static void update_visible_region( struct dce *dce )
 {
+    struct window_surface *surface = NULL;
     NTSTATUS status;
     HRGN vis_rgn = 0;
     HWND top_win = 0;
     DWORD flags = dce->flags;
+    DWORD paint_flags = 0;
     size_t size = 256;
     RECT win_rect, top_rect;
+    WND *win;
 
     /* don't clip siblings if using parent clip region */
     if (flags & DCX_PARENTCLIP) flags &= ~DCX_CLIPSIBLINGS;
@@ -135,7 +139,7 @@ static void update_visible_region( struct dce *dce )
                 data->rdh.iType    = RDH_RECTANGLES;
                 data->rdh.nCount   = reply_size / sizeof(RECT);
                 data->rdh.nRgnSize = reply_size;
-                vis_rgn = ExtCreateRegion( NULL, size, data );
+                vis_rgn = ExtCreateRegion( NULL, data->rdh.dwSize + data->rdh.nRgnSize, data );
 
                 top_win         = wine_server_ptr_handle( reply->top_win );
                 win_rect.left   = reply->win_rect.left;
@@ -146,6 +150,7 @@ static void update_visible_region( struct dce *dce )
                 top_rect.top    = reply->top_rect.top;
                 top_rect.right  = reply->top_rect.right;
                 top_rect.bottom = reply->top_rect.bottom;
+                paint_flags     = reply->paint_flags;
             }
             else size = reply->total_size;
         }
@@ -160,17 +165,21 @@ static void update_visible_region( struct dce *dce )
     if (dce->clip_rgn) CombineRgn( vis_rgn, vis_rgn, dce->clip_rgn,
                                    (flags & DCX_INTERSECTRGN) ? RGN_AND : RGN_DIFF );
 
-    __wine_set_visible_region( dce->hdc, vis_rgn, &win_rect );
-}
+    /* don't use a surface to paint the client area of OpenGL windows */
+    if (!(paint_flags & SET_WINPOS_PIXEL_FORMAT) || (flags & DCX_WINDOW))
+    {
+        win = WIN_GetPtr( top_win );
+        if (win && win != WND_DESKTOP && win != WND_OTHER_PROCESS)
+        {
+            surface = win->surface;
+            if (surface) window_surface_add_ref( surface );
+            WIN_ReleasePtr( win );
+        }
+    }
 
-
-/***********************************************************************
- *		reset_dce_attrs
- */
-static void reset_dce_attrs( struct dce *dce )
-{
-    RestoreDC( dce->hdc, 1 );  /* initial save level is always 1 */
-    SaveDC( dce->hdc );  /* save the state again for next time */
+    if (!surface) top_rect = get_virtual_screen_rect();
+    __wine_set_visible_region( dce->hdc, vis_rgn, &win_rect, &top_rect, surface );
+    if (surface) window_surface_release( surface );
 }
 
 
@@ -181,6 +190,7 @@ static void release_dce( struct dce *dce )
 {
     if (!dce->hwnd) return;  /* already released */
 
+    __wine_set_visible_region( dce->hdc, 0, &dummy_surface.rect, &dummy_surface.rect, &dummy_surface );
     USER_Driver->pReleaseDC( dce->hwnd, dce->hdc );
 
     if (dce->clip_rgn) DeleteObject( dce->clip_rgn );
@@ -221,8 +231,6 @@ static struct dce *alloc_dce(void)
         HeapFree( GetProcessHeap(), 0, dce );
         return 0;
     }
-    SaveDC( dce->hdc );
-
     dce->hwnd      = 0;
     dce->clip_rgn  = 0;
     dce->flags     = 0;
@@ -313,9 +321,11 @@ static struct dce *get_window_dce( HWND hwnd )
 
         if (dce_to_free)
         {
-            SetDCHook( dce->hdc, NULL, 0 );
-            DeleteDC( dce->hdc );
-            HeapFree( GetProcessHeap(), 0, dce );
+            SetDCHook( dce_to_free->hdc, NULL, 0 );
+            DeleteDC( dce_to_free->hdc );
+            HeapFree( GetProcessHeap(), 0, dce_to_free );
+            if (dce_to_free == dce)
+                dce = NULL;
         }
     }
     return dce;
@@ -336,7 +346,7 @@ void free_dce( struct dce *dce, HWND hwnd )
         if (!--dce->count)
         {
             /* turn it into a cache entry */
-            reset_dce_attrs( dce );
+            SetHookFlags( dce->hdc, DCHF_RESETDC );
             release_dce( dce );
             dce->flags |= DCX_CACHE;
         }
@@ -396,50 +406,46 @@ static void make_dc_dirty( struct dce *dce )
  * rectangle. In addition, pWnd->parent DCEs may need to be updated if
  * DCX_CLIPCHILDREN flag is set.
  */
-void invalidate_dce( HWND hwnd, const RECT *extra_rect )
+void invalidate_dce( WND *win, const RECT *extra_rect )
 {
     RECT window_rect;
     struct dce *dce;
-    HWND hwndScope = GetAncestor( hwnd, GA_PARENT );
 
-    if (!hwndScope) return;
+    if (!win->parent) return;
 
-    GetWindowRect( hwnd, &window_rect );
+    GetWindowRect( win->obj.handle, &window_rect );
 
-    TRACE("%p scope hwnd = %p %s (%s)\n",
-          hwnd, hwndScope, wine_dbgstr_rect(&window_rect), wine_dbgstr_rect(extra_rect) );
+    TRACE("%p parent %p %s (%s)\n",
+          win->obj.handle, win->parent, wine_dbgstr_rect(&window_rect), wine_dbgstr_rect(extra_rect) );
 
     /* walk all DCEs and fixup non-empty entries */
 
-    USER_Lock();
     LIST_FOR_EACH_ENTRY( dce, &dce_list, struct dce, entry )
     {
         TRACE( "%p: hwnd %p dcx %08x %s %s\n", dce, dce->hwnd, dce->flags,
                (dce->flags & DCX_CACHE) ? "Cache" : "Owned", dce->count ? "InUse" : "" );
 
         if (!dce->hwnd) continue;
-        if ((dce->hwnd == hwndScope) && !(dce->flags & DCX_CLIPCHILDREN))
+        if ((dce->hwnd == win->parent) && !(dce->flags & DCX_CLIPCHILDREN))
             continue;  /* child window positions don't bother us */
 
         /* if DCE window is a child of hwnd, it has to be invalidated */
-        if (dce->hwnd == hwnd || IsChild( hwnd, dce->hwnd ))
+        if (dce->hwnd == win->obj.handle || IsChild( win->obj.handle, dce->hwnd ))
         {
             make_dc_dirty( dce );
+            continue;
         }
-        else  /* otherwise check if the window rectangle intersects this DCE window */
+
+        /* otherwise check if the window rectangle intersects this DCE window */
+        if (win->parent == dce->hwnd || IsChild( win->parent, dce->hwnd ))
         {
-            if (hwndScope == GetDesktopWindow() ||
-                hwndScope == dce->hwnd || IsChild( hwndScope, dce->hwnd ))
-            {
-                RECT dce_rect, tmp;
-                GetWindowRect( dce->hwnd, &dce_rect );
-                if (IntersectRect( &tmp, &dce_rect, &window_rect ) ||
-                    (extra_rect && IntersectRect( &tmp, &dce_rect, extra_rect )))
-                    make_dc_dirty( dce );
-            }
+            RECT dce_rect, tmp;
+            GetWindowRect( dce->hwnd, &dce_rect );
+            if (IntersectRect( &tmp, &dce_rect, &window_rect ) ||
+                (extra_rect && IntersectRect( &tmp, &dce_rect, extra_rect )))
+                make_dc_dirty( dce );
         }
     }
-    USER_Unlock();
 }
 
 /***********************************************************************
@@ -458,7 +464,7 @@ static INT release_dc( HWND hwnd, HDC hdc, BOOL end_paint )
     dce = (struct dce *)GetDCHook( hdc, NULL );
     if (dce && dce->count)
     {
-        if (!(dce->flags & DCX_NORESETATTRS)) reset_dce_attrs( dce );
+        if (!(dce->flags & DCX_NORESETATTRS)) SetHookFlags( dce->hdc, DCHF_RESETDC );
         if (end_paint || (dce->flags & DCX_CACHE)) delete_clip_rgn( dce );
         if (dce->flags & DCX_CACHE) dce->count = 0;
         ret = TRUE;
@@ -480,7 +486,7 @@ static BOOL CALLBACK dc_hook( HDC hDC, WORD code, DWORD_PTR data, LPARAM lParam 
 
     TRACE("hDC = %p, %u\n", hDC, code);
 
-    if (!dce) return 0;
+    if (!dce) return FALSE;
     assert( dce->hdc == hDC );
 
     switch( code )
@@ -551,7 +557,7 @@ static HRGN get_update_region( HWND hwnd, UINT *flags, HWND *child )
                 data->rdh.iType    = RDH_RECTANGLES;
                 data->rdh.nCount   = reply_size / sizeof(RECT);
                 data->rdh.nRgnSize = reply_size;
-                hrgn = ExtCreateRegion( NULL, size, data );
+                hrgn = ExtCreateRegion( NULL, data->rdh.dwSize + data->rdh.nRgnSize, data );
                 if (child) *child = wine_server_ptr_handle( reply->child );
                 *flags = reply->flags;
             }
@@ -744,22 +750,48 @@ void erase_now( HWND hwnd, UINT rdw_flags )
 
 
 /***********************************************************************
+ *           move_window_bits
+ *
+ * Move the window bits when a window is resized or its surface recreated.
+ */
+void move_window_bits( HWND hwnd, struct window_surface *old_surface,
+                       struct window_surface *new_surface,
+                       const RECT *visible_rect, const RECT *old_visible_rect,
+                       const RECT *client_rect, const RECT *valid_rects )
+{
+    RECT dst = valid_rects[0];
+    RECT src = valid_rects[1];
+
+    if (new_surface != old_surface ||
+        src.left - old_visible_rect->left != dst.left - visible_rect->left ||
+        src.top - old_visible_rect->top != dst.top - visible_rect->top)
+    {
+        char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
+        BITMAPINFO *info = (BITMAPINFO *)buffer;
+        void *bits;
+        UINT flags = UPDATE_NOCHILDREN;
+        HRGN rgn = get_update_region( hwnd, &flags, NULL );
+        HDC hdc = GetDCEx( hwnd, rgn, DCX_CACHE | DCX_EXCLUDERGN );
+
+        OffsetRect( &dst, -client_rect->left, -client_rect->top );
+        TRACE( "copying  %s -> %s\n", wine_dbgstr_rect(&src), wine_dbgstr_rect(&dst) );
+        bits = old_surface->funcs->get_info( old_surface, info );
+        old_surface->funcs->lock( old_surface );
+        SetDIBitsToDevice( hdc, dst.left, dst.top, dst.right - dst.left, dst.bottom - dst.top,
+                           src.left - old_visible_rect->left - old_surface->rect.left,
+                           old_surface->rect.bottom - (src.bottom - old_visible_rect->top),
+                           0, old_surface->rect.bottom - old_surface->rect.top,
+                           bits, info, DIB_RGB_COLORS );
+        old_surface->funcs->unlock( old_surface );
+        ReleaseDC( hwnd, hdc );
+    }
+}
+
+
+/***********************************************************************
  *           update_now
  *
  * Implementation of RDW_UPDATENOW behavior.
- *
- * FIXME: Windows uses WM_SYNCPAINT to cut down the number of intertask
- * SendMessage() calls. This is a comment inside DefWindowProc() source
- * from 16-bit SDK:
- *
- *   This message avoids lots of inter-app message traffic
- *   by switching to the other task and continuing the
- *   recursion there.
- *
- * wParam         = flags
- * LOWORD(lParam) = hrgnClip
- * HIWORD(lParam) = hwndSkip  (not used; always NULL)
- *
  */
 static void update_now( HWND hwnd, UINT rdw_flags )
 {
@@ -867,20 +899,28 @@ static HWND fix_caret(HWND hWnd, const RECT *scroll_rect, INT dx, INT dy,
 HDC WINAPI BeginPaint( HWND hwnd, PAINTSTRUCT *lps )
 {
     HRGN hrgn;
+    HDC hdc;
+    BOOL erase;
+    RECT rect;
     UINT flags = UPDATE_NONCLIENT | UPDATE_ERASE | UPDATE_PAINT | UPDATE_INTERNALPAINT | UPDATE_NOCHILDREN;
-
-    if (!lps) return 0;
 
     HideCaret( hwnd );
 
     if (!(hrgn = send_ncpaint( hwnd, NULL, &flags ))) return 0;
 
-    lps->fErase = send_erase( hwnd, flags, hrgn, &lps->rcPaint, &lps->hdc );
+    erase = send_erase( hwnd, flags, hrgn, &rect, &hdc );
 
-    TRACE("hdc = %p box = (%s), fErase = %d\n",
-          lps->hdc, wine_dbgstr_rect(&lps->rcPaint), lps->fErase);
+    TRACE("hdc = %p box = (%s), fErase = %d\n", hdc, wine_dbgstr_rect(&rect), erase);
 
-    return lps->hdc;
+    if (!lps)
+    {
+        release_dc( hwnd, hdc, TRUE );
+        return 0;
+    }
+    lps->fErase = erase;
+    lps->rcPaint = rect;
+    lps->hdc = hdc;
+    return hdc;
 }
 
 
@@ -889,9 +929,10 @@ HDC WINAPI BeginPaint( HWND hwnd, PAINTSTRUCT *lps )
  */
 BOOL WINAPI EndPaint( HWND hwnd, const PAINTSTRUCT *lps )
 {
+    ShowCaret( hwnd );
+    flush_window_surfaces( FALSE );
     if (!lps) return FALSE;
     release_dc( hwnd, lps->hdc, TRUE );
-    ShowCaret( hwnd );
     return TRUE;
 }
 
@@ -1365,17 +1406,8 @@ INT WINAPI ExcludeUpdateRgn( HDC hdc, HWND hwnd )
 }
 
 
-/*************************************************************************
- *		ScrollWindowEx (USER32.@)
- *
- * Note: contrary to what the doc says, pixels that are scrolled from the
- *      outside of clipRect to the inside are NOT painted.
- *
- */
-INT WINAPI ScrollWindowEx( HWND hwnd, INT dx, INT dy,
-                           const RECT *rect, const RECT *clipRect,
-                           HRGN hrgnUpdate, LPRECT rcUpdate,
-                           UINT flags )
+static INT scroll_window( HWND hwnd, INT dx, INT dy, const RECT *rect, const RECT *clipRect,
+                          HRGN hrgnUpdate, LPRECT rcUpdate, UINT flags, BOOL is_ex )
 {
     INT   retVal = NULLREGION;
     BOOL  bOwnRgn = TRUE;
@@ -1414,11 +1446,12 @@ INT WINAPI ScrollWindowEx( HWND hwnd, INT dx, INT dy,
     newCaretPos.x = newCaretPos.y = 0;
 
     if( !IsRectEmpty(&cliprc) && (dx || dy)) {
-        DWORD dcxflags = DCX_CACHE;
+        DWORD dcxflags = 0;
         DWORD style = GetWindowLongW( hwnd, GWL_STYLE );
 
         hwndCaret = fix_caret(hwnd, &rc, dx, dy, flags, &moveCaret, &newCaretPos);
 
+        if (is_ex) dcxflags |= DCX_CACHE;
         if( style & WS_CLIPSIBLINGS) dcxflags |= DCX_CLIPSIBLINGS;
         if( GetClassLongW( hwnd, GCL_STYLE ) & CS_PARENTDC)
             dcxflags |= DCX_PARENTCLIP;
@@ -1521,15 +1554,29 @@ INT WINAPI ScrollWindowEx( HWND hwnd, INT dx, INT dy,
 
 
 /*************************************************************************
+ *		ScrollWindowEx (USER32.@)
+ *
+ * Note: contrary to what the doc says, pixels that are scrolled from the
+ *      outside of clipRect to the inside are NOT painted.
+ *
+ */
+INT WINAPI ScrollWindowEx( HWND hwnd, INT dx, INT dy,
+                           const RECT *rect, const RECT *clipRect,
+                           HRGN hrgnUpdate, LPRECT rcUpdate,
+                           UINT flags )
+{
+    return scroll_window( hwnd, dx, dy, rect, clipRect, hrgnUpdate, rcUpdate, flags, TRUE );
+}
+
+/*************************************************************************
  *		ScrollWindow (USER32.@)
  *
  */
 BOOL WINAPI ScrollWindow( HWND hwnd, INT dx, INT dy,
                           const RECT *rect, const RECT *clipRect )
 {
-    return (ERROR != ScrollWindowEx( hwnd, dx, dy, rect, clipRect, 0, NULL,
-                                     (rect ? 0 : SW_SCROLLCHILDREN) |
-                                     SW_INVALIDATE | SW_ERASE ));
+    return scroll_window( hwnd, dx, dy, rect, clipRect, 0, NULL,
+                          SW_INVALIDATE | SW_ERASE | (rect ? 0 : SW_SCROLLCHILDREN), FALSE ) != ERROR;
 }
 
 
@@ -1540,11 +1587,109 @@ BOOL WINAPI ScrollWindow( HWND hwnd, INT dx, INT dy,
  * wrong) hrgnUpdate is returned in device coordinates with rcUpdate in
  * logical coordinates.
  */
-BOOL WINAPI ScrollDC( HDC hdc, INT dx, INT dy, const RECT *lprcScroll,
-                      const RECT *lprcClip, HRGN hrgnUpdate, LPRECT lprcUpdate )
+BOOL WINAPI ScrollDC( HDC hdc, INT dx, INT dy, const RECT *scroll, const RECT *clip,
+                      HRGN ret_update_rgn, LPRECT update_rect )
 
 {
-    return USER_Driver->pScrollDC( hdc, dx, dy, lprcScroll, lprcClip, hrgnUpdate, lprcUpdate );
+    HRGN update_rgn = ret_update_rgn;
+    RECT src_rect, clip_rect, offset;
+    INT dxdev, dydev;
+    HRGN dstrgn, cliprgn, visrgn;
+    BOOL ret;
+
+    TRACE( "dx,dy %d,%d scroll %s clip %s update %p rect %p\n",
+           dx, dy, wine_dbgstr_rect(scroll), wine_dbgstr_rect(clip), ret_update_rgn, update_rect );
+
+    /* get the visible region */
+    visrgn = CreateRectRgn( 0, 0, 0, 0 );
+    GetRandomRgn( hdc, visrgn, SYSRGN );
+    if (!(GetVersion() & 0x80000000))
+    {
+        POINT org;
+        GetDCOrgEx( hdc, &org );
+        OffsetRgn( visrgn, -org.x, -org.y );
+    }
+
+    /* intersect with the clipping region if the DC has one */
+    cliprgn = CreateRectRgn( 0, 0, 0, 0);
+    if (GetClipRgn( hdc, cliprgn ) != 1)
+    {
+        DeleteObject( cliprgn );
+        cliprgn = 0;
+    }
+    else CombineRgn( visrgn, visrgn, cliprgn, RGN_AND );
+
+    /* only those pixels in the scroll rectangle that remain in the clipping
+     * rect are scrolled. */
+    if (clip)
+        clip_rect = *clip;
+    else
+        GetClipBox( hdc, &clip_rect );
+    src_rect = clip_rect;
+    OffsetRect( &clip_rect, -dx, -dy );
+    IntersectRect( &src_rect, &src_rect, &clip_rect );
+
+    /* if an scroll rectangle is specified, only the pixels within that
+     * rectangle are scrolled */
+    if (scroll) IntersectRect( &src_rect, &src_rect, scroll );
+
+    /* now convert to device coordinates */
+    LPtoDP( hdc, (LPPOINT)&src_rect, 2 );
+    TRACE( "source rect: %s\n", wine_dbgstr_rect(&src_rect) );
+    /* also dx and dy */
+    SetRect( &offset, 0, 0, dx, dy );
+    LPtoDP( hdc, (LPPOINT)&offset, 2 );
+    dxdev = offset.right - offset.left;
+    dydev = offset.bottom - offset.top;
+
+    /* now intersect with the visible region to get the pixels that will actually scroll */
+    dstrgn = CreateRectRgnIndirect( &src_rect );
+    CombineRgn( dstrgn, dstrgn, visrgn, RGN_AND );
+    OffsetRgn( dstrgn, dxdev, dydev );
+    ExtSelectClipRgn( hdc, dstrgn, RGN_AND );
+
+    /* compute the update areas.  This is the combined clip rectangle
+     * minus the scrolled region, and intersected with the visible region. */
+    if (ret_update_rgn || update_rect)
+    {
+        /* intersect clip and scroll rectangles, allowing NULL values */
+        if (scroll)
+        {
+            if (clip)
+                IntersectRect( &clip_rect, clip, scroll );
+            else
+                clip_rect = *scroll;
+        }
+        else if (clip)
+            clip_rect = *clip;
+        else
+            GetClipBox( hdc, &clip_rect );
+
+        /* Convert the combined clip rectangle to device coordinates */
+        LPtoDP( hdc, (LPPOINT)&clip_rect, 2 );
+        if (update_rgn)
+            SetRectRgn( update_rgn, clip_rect.left, clip_rect.top, clip_rect.right, clip_rect.bottom );
+        else
+            update_rgn = CreateRectRgnIndirect( &clip_rect );
+
+        CombineRgn( update_rgn, update_rgn, visrgn, RGN_AND );
+        CombineRgn( update_rgn, update_rgn, dstrgn, RGN_DIFF );
+    }
+
+    ret = USER_Driver->pScrollDC( hdc, dx, dy, update_rgn );
+
+    if (ret && update_rect)
+    {
+        GetRgnBox( update_rgn, update_rect );
+        DPtoLP( hdc, (LPPOINT)update_rect, 2 );
+        TRACE( "returning update_rect %s\n", wine_dbgstr_rect(update_rect) );
+    }
+    if (!ret_update_rgn) DeleteObject( update_rgn );
+    SelectClipRgn( hdc, cliprgn );
+    if (cliprgn) DeleteObject( cliprgn );
+    DeleteObject( visrgn );
+    DeleteObject( dstrgn );
+    return ret;
 }
 
 /************************************************************************

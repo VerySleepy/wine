@@ -25,6 +25,18 @@
 #define GetCurrentProcess GetCurrentProcess_Mac
 #define GetCurrentThread GetCurrentThread_Mac
 #define LoadResource LoadResource_Mac
+#define AnimatePalette AnimatePalette_Mac
+#define EqualRgn EqualRgn_Mac
+#define FillRgn FillRgn_Mac
+#define FrameRgn FrameRgn_Mac
+#define GetPixel GetPixel_Mac
+#define InvertRgn InvertRgn_Mac
+#define LineTo LineTo_Mac
+#define OffsetRgn OffsetRgn_Mac
+#define PaintRgn PaintRgn_Mac
+#define Polygon Polygon_Mac
+#define ResizePalette ResizePalette_Mac
+#define SetRectRgn SetRectRgn_Mac
 #define EqualRect EqualRect_Mac
 #define FillRect FillRect_Mac
 #define FrameRect FrameRect_Mac
@@ -40,6 +52,18 @@
 #undef GetCurrentProcess
 #undef GetCurrentThread
 #undef LoadResource
+#undef AnimatePalette
+#undef EqualRgn
+#undef FillRgn
+#undef FrameRgn
+#undef GetPixel
+#undef InvertRgn
+#undef LineTo
+#undef OffsetRgn
+#undef PaintRgn
+#undef Polygon
+#undef ResizePalette
+#undef SetRectRgn
 #undef EqualRect
 #undef FillRect
 #undef FrameRect
@@ -367,66 +391,22 @@ static HRESULT WINAPI IcnsFrameEncode_WriteSource(IWICBitmapFrameEncode *iface,
 {
     IcnsFrameEncode *This = impl_from_IWICBitmapFrameEncode(iface);
     HRESULT hr;
-    WICRect rc;
-    WICPixelFormatGUID guid;
-    UINT stride;
-    BYTE *pixeldata = NULL;
 
     TRACE("(%p,%p,%p)\n", iface, pIBitmapSource, prc);
 
-    if (!This->initialized || !This->size)
-    {
-        hr = WINCODEC_ERR_WRONGSTATE;
-        goto end;
-    }
+    if (!This->initialized)
+        return WINCODEC_ERR_WRONGSTATE;
 
-    hr = IWICBitmapSource_GetPixelFormat(pIBitmapSource, &guid);
-    if (FAILED(hr))
-        goto end;
-    if (!IsEqualGUID(&guid, &GUID_WICPixelFormat32bppBGRA))
-    {
-        FIXME("format %s unsupported, could use WICConvertBitmapSource to convert\n", debugstr_guid(&guid));
-        hr = E_FAIL;
-        goto end;
-    }
+    hr = configure_write_source(iface, pIBitmapSource, &prc,
+        &GUID_WICPixelFormat32bppBGRA, This->size, This->size,
+        1.0, 1.0);
 
-    if (!prc)
-    {
-        UINT width, height;
-        hr = IWICBitmapSource_GetSize(pIBitmapSource, &width, &height);
-        if (FAILED(hr))
-            goto end;
-        rc.X = 0;
-        rc.Y = 0;
-        rc.Width = width;
-        rc.Height = height;
-        prc = &rc;
-    }
-
-    if (prc->Width != This->size)
-    {
-        hr = E_INVALIDARG;
-        goto end;
-    }
-
-    stride = (32 * This->size + 7)/8;
-    pixeldata = HeapAlloc(GetProcessHeap(), 0, stride * prc->Height);
-    if (!pixeldata)
-    {
-        hr = E_OUTOFMEMORY;
-        goto end;
-    }
-
-    hr = IWICBitmapSource_CopyPixels(pIBitmapSource, prc, stride,
-        stride*prc->Height, pixeldata);
     if (SUCCEEDED(hr))
     {
-        hr = IWICBitmapFrameEncode_WritePixels(iface, prc->Height, stride,
-            stride*prc->Height, pixeldata);
+        hr = write_source(iface, pIBitmapSource, prc,
+            &GUID_WICPixelFormat32bppBGRA, 32, This->size, This->size);
     }
 
-end:
-    HeapFree(GetProcessHeap(), 0, pixeldata);
     return hr;
 }
 
@@ -639,7 +619,7 @@ static HRESULT WINAPI IcnsEncoder_CreateNewFrame(IWICBitmapEncoder *iface,
         goto end;
     }
 
-    hr = CreatePropertyBag2(ppIEncoderOptions);
+    hr = CreatePropertyBag2(NULL, 0, ppIEncoderOptions);
     if (FAILED(hr))
         goto end;
 
@@ -723,16 +703,14 @@ static const IWICBitmapEncoderVtbl IcnsEncoder_Vtbl = {
     IcnsEncoder_GetMetadataQueryWriter
 };
 
-HRESULT IcnsEncoder_CreateInstance(IUnknown *pUnkOuter, REFIID iid, void** ppv)
+HRESULT IcnsEncoder_CreateInstance(REFIID iid, void** ppv)
 {
     IcnsEncoder *This;
     HRESULT ret;
 
-    TRACE("(%p,%s,%p)\n", pUnkOuter, debugstr_guid(iid), ppv);
+    TRACE("(%s,%p)\n", debugstr_guid(iid), ppv);
 
     *ppv = NULL;
-
-    if (pUnkOuter) return CLASS_E_NOAGGREGATION;
 
     This = HeapAlloc(GetProcessHeap(), 0, sizeof(IcnsEncoder));
     if (!This) return E_OUTOFMEMORY;
@@ -756,7 +734,7 @@ HRESULT IcnsEncoder_CreateInstance(IUnknown *pUnkOuter, REFIID iid, void** ppv)
 #else /* !defined(HAVE_APPLICATIONSERVICES_APPLICATIONSERVICES_H) ||
          MAC_OS_X_VERSION_MAX_ALLOWED <= MAC_OS_X_VERSION_10_4 */
 
-HRESULT IcnsEncoder_CreateInstance(IUnknown *pUnkOuter, REFIID iid, void** ppv)
+HRESULT IcnsEncoder_CreateInstance(REFIID iid, void** ppv)
 {
     ERR("Trying to save ICNS picture, but ICNS support is not compiled in.\n");
     return E_FAIL;

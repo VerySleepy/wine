@@ -1145,13 +1145,13 @@ BOOLEAN WINAPI RtlFirstFreeAce(
 	ace = (PACE_HEADER)(acl+1);
 	for (i=0;i<acl->AceCount;i++) {
 		if ((BYTE *)ace >= (BYTE *)acl + acl->AclSize)
-			return 0;
+			return FALSE;
 		ace = (PACE_HEADER)(((BYTE*)ace)+ace->AceSize);
 	}
 	if ((BYTE *)ace >= (BYTE *)acl + acl->AclSize)
-		return 0;
+		return FALSE;
 	*x = ace;
-	return 1;
+	return TRUE;
 }
 
 /**************************************************************************
@@ -1349,7 +1349,7 @@ BOOLEAN WINAPI RtlValidAcl(PACL pAcl)
 	__EXCEPT_PAGE_FAULT
 	{
 		WARN("(%p): invalid pointer!\n", pAcl);
-		return 0;
+		return FALSE;
 	}
 	__ENDTRY
         return ret;
@@ -1806,4 +1806,17 @@ NTSTATUS WINAPI RtlQueryInformationAcl(
     }
 
     return status;
+}
+
+BOOL WINAPI RtlConvertToAutoInheritSecurityObject(
+        PSECURITY_DESCRIPTOR pdesc,
+        PSECURITY_DESCRIPTOR cdesc,
+        PSECURITY_DESCRIPTOR* ndesc,
+        GUID* objtype,
+        BOOL isdir,
+        PGENERIC_MAPPING genmap )
+{
+    FIXME("%p %p %p %p %d %p - stub\n", pdesc, cdesc, ndesc, objtype, isdir, genmap);
+
+    return FALSE;
 }

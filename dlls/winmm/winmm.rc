@@ -19,6 +19,8 @@
 #include "windef.h"
 #include "mmddk.h"
 
+#pragma makedep po
+
 LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 
 STRINGTABLE
@@ -31,7 +33,7 @@ MMSYSERR_BADDEVICEID, 		"A device ID has been used that is out of range for your
 MMSYSERR_NOTENABLED, 		"The driver was not enabled."
 MMSYSERR_ALLOCATED, 		"The specified device is already in use. Wait until it is free, and then try again."
 MMSYSERR_INVALHANDLE, 		"The specified device handle is invalid."
-MMSYSERR_NODRIVER, 		"There is no driver installed on your system!\n"
+MMSYSERR_NODRIVER, 		"There is no driver installed on your system!"
 MMSYSERR_NOMEM, 		"Not enough memory available for this task. Quit one or more applications to increase available memory, and then try again."
 MMSYSERR_NOTSUPPORTED, 		"This function is not supported. Use the Capabilities function to determine which functions and messages the driver supports."
 MMSYSERR_BADERRNUM, 		"An error number was specified that is not defined in the system."
@@ -49,7 +51,7 @@ MIDIERR_UNPREPARED, 		"The MIDI header was not prepared. Use the Prepare functio
 MIDIERR_STILLPLAYING, 		"Cannot perform this operation while media data is still playing. Reset the device, or wait until the data is finished playing."
 MIDIERR_NOMAP, 			"A MIDI map was not found. There may be a problem with the driver, or the MIDIMAP.CFG file may be corrupt or missing."
 MIDIERR_NOTREADY, 		"The port is transmitting data to the device. Wait until the data has been transmitted, and then try again."
-MIDIERR_NODEVICE, 		"The current MIDI Mapper setup refers to a MIDI device that is not installed on the system. Use MIDI Mapper to edit the setup."
+MIDIERR_NODEVICE, 		"The current MIDI Mapper setup refers to a MIDI device that is not installed on the system."
 MIDIERR_INVALIDSETUP, 		"The current MIDI setup is damaged. Copy the original MIDIMAP.CFG file to the Windows SYSTEM directory, and then try again."
 
 /* MCI errors */
@@ -58,7 +60,7 @@ MCIERR_UNRECOGNIZED_KEYWORD, 	"The driver cannot recognize the specified command
 MCIERR_UNRECOGNIZED_COMMAND,	"The driver cannot recognize the specified command."
 MCIERR_HARDWARE, 		"There is a problem with your media device. Make sure it is working correctly or contact the device manufacturer."
 MCIERR_INVALID_DEVICE_NAME, 	"The specified device is not open or is not recognized by MCI."
-MCIERR_OUT_OF_MEMORY, 		"Not enough memory available for this task.\nQuit one or more applications to increase available memory, and then try again."
+MCIERR_OUT_OF_MEMORY, 		"Not enough memory available for this task. Quit one or more applications to increase available memory, and then try again."
 MCIERR_DEVICE_OPEN, 		"The device name is already being used as an alias by this application. Use a unique alias."
 MCIERR_CANNOT_LOAD_DRIVER, 	"There is an undetectable problem in loading the specified device driver."
 MCIERR_MISSING_COMMAND_STRING, 	"No command was specified."
@@ -122,7 +124,7 @@ MCIERR_FILE_WRITE, 		"Cannot write to the specified file. Make sure you have eno
 MCIERR_SEQ_DIV_INCOMPATIBLE, 	"The time formats of the ""song pointer"" and SMPTE are mutually exclusive. You can't use them together."
 MCIERR_SEQ_NOMIDIPRESENT, 	"The system has no installed MIDI devices. Use the Drivers option from the Control Panel to install a MIDI driver."
 MCIERR_SEQ_PORT_INUSE, 		"The specified MIDI port is already in use. Wait until it is free; then try again."
-MCIERR_SEQ_PORT_MAPNODEVICE, 	"The current MIDI Mapper setup refers to a MIDI device that is not installed on the system. Use the MIDI Mapper option from the Control Panel to edit the setup."
+MCIERR_SEQ_PORT_MAPNODEVICE, 	"The current MIDI Mapper setup refers to a MIDI device that is not installed on the system."
 MCIERR_SEQ_PORT_MISCERROR, 	"An error occurred with the specified port."
 MCIERR_SEQ_PORT_NONEXISTENT, 	"The specified MIDI device is not installed on the system. Use the Drivers option from the Control Panel to install a MIDI device."
 MCIERR_SEQ_PORTUNSPECIFIED, 	"The system doesn't have a current MIDI port specified."

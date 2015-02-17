@@ -1,9 +1,6 @@
-EXTRADEFS = -DWINE_NO_UNICODE_MACROS
 MODULE    = winevdm.exe
-APPMODE   = -mconsole
+APPMODE   = -mwindows
 IMPORTS   = user32 kernel
 
 C_SRCS = \
 	winevdm.c
-
-@MAKE_PROG_RULES@

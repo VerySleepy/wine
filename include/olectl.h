@@ -183,6 +183,10 @@ typedef VARIANT_BOOL OLE_ENABLEDEFAULTBOOL;
 #define LP_VGACOLOR     0x2
 #define LP_COLOR        0x4
 
+HRESULT WINAPI DllRegisterServer(void);
+
+HRESULT WINAPI DllUnregisterServer(void);
+
 HCURSOR WINAPI OleIconToCursor( HINSTANCE hinstExe, HICON hicon);
 
 HRESULT WINAPI OleCreatePropertyFrameIndirect( LPOCPFIPARAMS lpParams);
@@ -328,7 +332,7 @@ HRESULT WINAPI OleTranslateColor( OLE_COLOR clr, HPALETTE hpal,
 #define VT_VERBOSE_ENUM     76
 
 #ifndef OLEIVERB_PROPERTIES
-#define OLEIVERB_PROPERTIES (-7L)
+#define OLEIVERB_PROPERTIES (__MSABI_LONG(-7))
 #endif
 
 #define PERPROP_E_FIRST    MAKE_SCODE(SEVERITY_ERROR,   FACILITY_ITF, 0x0200)

@@ -47,8 +47,6 @@
 #include "winreg.h"
 
 #include "x11drv.h"
-#include "xvidmode.h"
-#include "xrandr.h"
 #include "xcomposite.h"
 #include "wine/server.h"
 #include "wine/debug.h"
@@ -58,42 +56,29 @@ WINE_DEFAULT_DEBUG_CHANNEL(x11drv);
 WINE_DECLARE_DEBUG_CHANNEL(synchronous);
 WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
-static CRITICAL_SECTION X11DRV_CritSection;
-static CRITICAL_SECTION_DEBUG critsect_debug =
-{
-    0, 0, &X11DRV_CritSection,
-    { &critsect_debug.ProcessLocksList, &critsect_debug.ProcessLocksList },
-      0, 0, { (DWORD_PTR)(__FILE__ ": X11DRV_CritSection") }
-};
-static CRITICAL_SECTION X11DRV_CritSection = { &critsect_debug, -1, 0, 0, 0, 0 };
-
-static Screen *screen;
-Visual *visual;
+XVisualInfo default_visual = { 0 };
+XVisualInfo argb_visual = { 0 };
+Colormap default_colormap = None;
 XPixmapFormatValues **pixmap_formats;
-unsigned int screen_width;
-unsigned int screen_height;
 unsigned int screen_bpp;
-unsigned int screen_depth;
-RECT virtual_screen_rect;
 Window root_window;
-int usexvidmode = 1;
-int usexrandr = 1;
-int usexcomposite = 1;
-int use_xkb = 1;
-int use_take_focus = 1;
-int use_primary_selection = 0;
-int use_system_cursors = 1;
-int show_systray = 1;
-int grab_pointer = 1;
-int grab_fullscreen = 0;
-int managed_mode = 1;
-int decorated_mode = 1;
-int private_color_map = 0;
+BOOL usexvidmode = TRUE;
+BOOL usexrandr = TRUE;
+BOOL usexcomposite = TRUE;
+BOOL use_xkb = TRUE;
+BOOL use_take_focus = TRUE;
+BOOL use_primary_selection = FALSE;
+BOOL use_system_cursors = TRUE;
+BOOL show_systray = TRUE;
+BOOL grab_pointer = TRUE;
+BOOL grab_fullscreen = FALSE;
+BOOL managed_mode = TRUE;
+BOOL decorated_mode = TRUE;
+BOOL private_color_map = FALSE;
 int primary_monitor = 0;
-int client_side_with_core = 1;
-int client_side_with_render = 1;
-int client_side_antialias_with_core = 1;
-int client_side_antialias_with_render = 1;
+BOOL client_side_graphics = TRUE;
+BOOL client_side_with_render = TRUE;
+BOOL shape_layered_windows = TRUE;
 int copy_default_colors = 128;
 int alloc_system_colors = 256;
 DWORD thread_data_tls_index = TLS_OUT_OF_INDEXES;
@@ -106,7 +91,7 @@ static void *err_callback_arg;               /* error callback argument */
 static int err_callback_result;              /* error callback result */
 static unsigned long err_serial;             /* serial number of first request */
 static int (*old_error_handler)( Display *, XErrorEvent * );
-static int use_xim = 1;
+static BOOL use_xim = TRUE;
 static char input_style[20];
 
 #define IS_OPTION_TRUE(ch) \
@@ -130,6 +115,8 @@ static const char * const atom_names[NB_XATOMS - FIRST_XATOM] =
     "RAW_ASCENT",
     "RAW_DESCENT",
     "RAW_CAP_HEIGHT",
+    "Rel X",
+    "Rel Y",
     "WM_PROTOCOLS",
     "WM_DELETE_WINDOW",
     "WM_STATE",
@@ -143,6 +130,7 @@ static const char * const atom_names[NB_XATOMS - FIRST_XATOM] =
     "_NET_SUPPORTED",
     "_NET_SYSTEM_TRAY_OPCODE",
     "_NET_SYSTEM_TRAY_S0",
+    "_NET_SYSTEM_TRAY_VISUAL",
     "_NET_WM_ICON",
     "_NET_WM_MOVERESIZE",
     "_NET_WM_NAME",
@@ -245,12 +233,9 @@ static inline BOOL ignore_error( Display *display, XErrorEvent *event )
  *
  * Setup a callback function that will be called on an X error.  The
  * callback must return non-zero if the error is the one it expected.
- * This function acquires the x11 lock; X11DRV_check_error must be
- * called in all cases to release it.
  */
 void X11DRV_expect_error( Display *display, x11drv_error_callback callback, void *arg )
 {
-    wine_tsx11_lock();
     err_callback         = callback;
     err_callback_display = display;
     err_callback_arg     = arg;
@@ -263,16 +248,12 @@ void X11DRV_expect_error( Display *display, x11drv_error_callback callback, void
  *		X11DRV_check_error
  *
  * Check if an expected X11 error occurred; return non-zero if yes.
- * Also release the x11 lock obtained in X11DRV_expect_error.
  * The caller is responsible for calling XSync first if necessary.
  */
 int X11DRV_check_error(void)
 {
-    int ret;
     err_callback = NULL;
-    ret = err_callback_result;
-    wine_tsx11_unlock();
-    return ret;
+    return err_callback_result;
 }
 
 
@@ -306,23 +287,6 @@ static int error_handler( Display *display, XErrorEvent *error_evt )
     old_error_handler( display, error_evt );
     return 0;
 }
-
-/***********************************************************************
- *		wine_tsx11_lock   (X11DRV.@)
- */
-void CDECL wine_tsx11_lock(void)
-{
-    EnterCriticalSection( &X11DRV_CritSection );
-}
-
-/***********************************************************************
- *		wine_tsx11_unlock   (X11DRV.@)
- */
-void CDECL wine_tsx11_unlock(void)
-{
-    LeaveCriticalSection( &X11DRV_CritSection );
-}
-
 
 /***********************************************************************
  *		init_pixmap_formats
@@ -419,24 +383,20 @@ static void setup_options(void)
     if (!get_config_key( hkey, appkey, "GrabFullscreen", buffer, sizeof(buffer) ))
         grab_fullscreen = IS_OPTION_TRUE( buffer[0] );
 
-    screen_depth = 0;
     if (!get_config_key( hkey, appkey, "ScreenDepth", buffer, sizeof(buffer) ))
-        screen_depth = atoi(buffer);
+        default_visual.depth = atoi(buffer);
 
-    if (!get_config_key( hkey, appkey, "ClientSideWithCore", buffer, sizeof(buffer) ))
-        client_side_with_core = IS_OPTION_TRUE( buffer[0] );
+    if (!get_config_key( hkey, appkey, "ClientSideGraphics", buffer, sizeof(buffer) ))
+        client_side_graphics = IS_OPTION_TRUE( buffer[0] );
 
     if (!get_config_key( hkey, appkey, "ClientSideWithRender", buffer, sizeof(buffer) ))
         client_side_with_render = IS_OPTION_TRUE( buffer[0] );
 
-    if (!get_config_key( hkey, appkey, "ClientSideAntiAliasWithCore", buffer, sizeof(buffer) ))
-        client_side_antialias_with_core = IS_OPTION_TRUE( buffer[0] );
-
-    if (!get_config_key( hkey, appkey, "ClientSideAntiAliasWithRender", buffer, sizeof(buffer) ))
-        client_side_antialias_with_render = IS_OPTION_TRUE( buffer[0] );
-
     if (!get_config_key( hkey, appkey, "UseXIM", buffer, sizeof(buffer) ))
         use_xim = IS_OPTION_TRUE( buffer[0] );
+
+    if (!get_config_key( hkey, appkey, "ShapeLayeredWindows", buffer, sizeof(buffer) ))
+        shape_layered_windows = IS_OPTION_TRUE( buffer[0] );
 
     if (!get_config_key( hkey, appkey, "PrivateColorMap", buffer, sizeof(buffer) ))
         private_color_map = IS_OPTION_TRUE( buffer[0] );
@@ -479,7 +439,7 @@ static void X11DRV_XComposite_Init(void)
     if (!xcomposite_handle)
     {
         TRACE("Unable to open %s, XComposite disabled\n", SONAME_LIBXCOMPOSITE);
-        usexcomposite = 0;
+        usexcomposite = FALSE;
         return;
     }
 
@@ -502,7 +462,7 @@ static void X11DRV_XComposite_Init(void)
         TRACE("XComposite extension could not be queried; disabled\n");
         wine_dlclose(xcomposite_handle, NULL, 0);
         xcomposite_handle = NULL;
-        usexcomposite = 0;
+        usexcomposite = FALSE;
         return;
     }
     TRACE("XComposite is up and running error_base = %d\n", xcomp_error_base);
@@ -512,10 +472,58 @@ sym_not_found:
     TRACE("Unable to load function pointers from %s, XComposite disabled\n", SONAME_LIBXCOMPOSITE);
     wine_dlclose(xcomposite_handle, NULL, 0);
     xcomposite_handle = NULL;
-    usexcomposite = 0;
+    usexcomposite = FALSE;
 }
 #endif /* defined(SONAME_LIBXCOMPOSITE) */
 
+static void init_visuals( Display *display, int screen )
+{
+    int count;
+    XVisualInfo *info;
+
+    default_visual.screen = screen;
+    if (default_visual.depth)  /* depth specified */
+    {
+        info = XGetVisualInfo( display, VisualScreenMask | VisualDepthMask, &default_visual, &count );
+        if (info)
+        {
+            default_visual = *info;
+            XFree( info );
+        }
+        else WARN( "no visual found for depth %d\n", default_visual.depth );
+    }
+
+    if (!default_visual.visual)
+    {
+        default_visual.depth         = DefaultDepth( display, screen );
+        default_visual.visual        = DefaultVisual( display, screen );
+        default_visual.visualid      = default_visual.visual->visualid;
+        default_visual.class         = default_visual.visual->class;
+        default_visual.red_mask      = default_visual.visual->red_mask;
+        default_visual.green_mask    = default_visual.visual->green_mask;
+        default_visual.blue_mask     = default_visual.visual->blue_mask;
+        default_visual.colormap_size = default_visual.visual->map_entries;
+        default_visual.bits_per_rgb  = default_visual.visual->bits_per_rgb;
+    }
+    default_colormap = XCreateColormap( display, root_window, default_visual.visual, AllocNone );
+
+    argb_visual.screen     = screen;
+    argb_visual.class      = TrueColor;
+    argb_visual.depth      = 32;
+    argb_visual.red_mask   = 0xff0000;
+    argb_visual.green_mask = 0x00ff00;
+    argb_visual.blue_mask  = 0x0000ff;
+
+    if ((info = XGetVisualInfo( display, VisualScreenMask | VisualDepthMask | VisualClassMask |
+                                VisualRedMaskMask | VisualGreenMaskMask | VisualBlueMaskMask,
+                                &argb_visual, &count )))
+    {
+        argb_visual = *info;
+        XFree( info );
+    }
+    TRACE( "default visual %lx class %u argb %lx\n",
+           default_visual.visualid, default_visual.class, argb_visual.visualid );
+}
 
 /***********************************************************************
  *           X11DRV process initialisation routine
@@ -543,49 +551,34 @@ static BOOL process_attach(void)
 
     /* Open display */
 
+    if (!XInitThreads()) ERR( "XInitThreads failed, trouble ahead\n" );
     if (!(display = XOpenDisplay( NULL ))) return FALSE;
 
     fcntl( ConnectionNumber(display), F_SETFD, 1 ); /* set close on exec flag */
-    screen = DefaultScreenOfDisplay( display );
-    visual = DefaultVisual( display, DefaultScreen(display) );
     root_window = DefaultRootWindow( display );
     gdi_display = display;
     old_error_handler = XSetErrorHandler( error_handler );
 
-    /* Initialize screen depth */
-
-    if (screen_depth)  /* depth specified */
-    {
-        int depth_count, i;
-        int *depth_list = XListDepths(display, DefaultScreen(display), &depth_count);
-        for (i = 0; i < depth_count; i++)
-            if (depth_list[i] == screen_depth) break;
-        XFree( depth_list );
-        if (i >= depth_count)
-        {
-            WARN( "invalid depth %d, using default\n", screen_depth );
-            screen_depth = 0;
-        }
-    }
-    if (!screen_depth) screen_depth = DefaultDepthOfScreen( screen );
     init_pixmap_formats( display );
-    screen_bpp = pixmap_formats[screen_depth]->bits_per_pixel;
+    init_visuals( display, DefaultScreen( display ));
+    screen_bpp = pixmap_formats[default_visual.depth]->bits_per_pixel;
 
     XInternAtoms( display, (char **)atom_names, NB_XATOMS - FIRST_XATOM, False, X11DRV_Atoms );
 
+    winContext = XUniqueContext();
+    win_data_context = XUniqueContext();
+    cursor_context = XUniqueContext();
+
     if (TRACE_ON(synchronous)) XSynchronize( display, True );
 
-    xinerama_init( WidthOfScreen(screen), HeightOfScreen(screen) );
+    xinerama_init( DisplayWidth( display, default_visual.screen ),
+                   DisplayHeight( display, default_visual.screen ));
     X11DRV_Settings_Init();
 
-#ifdef SONAME_LIBXXF86VM
     /* initialize XVidMode */
     X11DRV_XF86VM_Init();
-#endif
-#ifdef SONAME_LIBXRANDR
     /* initialize XRandR */
     X11DRV_XRandR_Init();
-#endif
 #ifdef SONAME_LIBXCOMPOSITE
     X11DRV_XComposite_Init();
 #endif
@@ -612,36 +605,13 @@ static void thread_detach(void)
     if (data)
     {
         X11DRV_ResetSelectionOwner();
-        wine_tsx11_lock();
         if (data->xim) XCloseIM( data->xim );
         if (data->font_set) XFreeFontSet( data->display, data->font_set );
         XCloseDisplay( data->display );
-        wine_tsx11_unlock();
         HeapFree( GetProcessHeap(), 0, data );
+        /* clear data in case we get re-entered from user32 before the thread is truly dead */
+        TlsSetValue( thread_data_tls_index, NULL );
     }
-}
-
-
-/***********************************************************************
- *           X11DRV process termination routine
- */
-static void process_detach(void)
-{
-    X11DRV_Clipboard_Cleanup();
-#ifdef SONAME_LIBXXF86VM
-    /* cleanup XVidMode */
-    X11DRV_XF86VM_Cleanup();
-#endif
-    if(using_client_side_fonts)
-        X11DRV_XRender_Finalize();
-
-    /* cleanup GDI */
-    X11DRV_GDI_Finalize();
-    X11DRV_OpenGL_Cleanup();
-
-    IME_UnregisterClasses();
-    DeleteCriticalSection( &X11DRV_CritSection );
-    TlsFree( thread_data_tls_index );
 }
 
 
@@ -685,10 +655,8 @@ struct x11drv_thread_data *x11drv_init_thread_data(void)
         ERR( "could not create data\n" );
         ExitProcess(1);
     }
-    wine_tsx11_lock();
     if (!(data->display = XOpenDisplay(NULL)))
     {
-        wine_tsx11_unlock();
         ERR_(winediag)( "x11drv: Can't open display: %s. Please ensure that your X server is running and that $DISPLAY is set correctly.\n", XDisplayName(NULL));
         ExitProcess(1);
     }
@@ -701,7 +669,6 @@ struct x11drv_thread_data *x11drv_init_thread_data(void)
 #endif
 
     if (TRACE_ON(synchronous)) XSynchronize( data->display, True );
-    wine_tsx11_unlock();
 
     set_queue_display_fd( data->display );
     TlsSetValue( thread_data_tls_index, data );
@@ -728,44 +695,43 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
     case DLL_THREAD_DETACH:
         thread_detach();
         break;
-    case DLL_PROCESS_DETACH:
-        process_detach();
-        break;
     }
     return ret;
 }
 
-/***********************************************************************
- *              GetScreenSaveActive (X11DRV.@)
- *
- * Returns the active status of the screen saver
- */
-BOOL CDECL X11DRV_GetScreenSaveActive(void)
-{
-    int timeout, temp;
-    wine_tsx11_lock();
-    XGetScreenSaver(gdi_display, &timeout, &temp, &temp, &temp);
-    wine_tsx11_unlock();
-    return timeout != 0;
-}
 
 /***********************************************************************
- *              SetScreenSaveActive (X11DRV.@)
- *
- * Activate/Deactivate the screen saver
+ *              SystemParametersInfo (X11DRV.@)
  */
-void CDECL X11DRV_SetScreenSaveActive(BOOL bActivate)
+BOOL CDECL X11DRV_SystemParametersInfo( UINT action, UINT int_param, void *ptr_param, UINT flags )
 {
-    int timeout, interval, prefer_blanking, allow_exposures;
-    static int last_timeout = 15 * 60;
+    switch (action)
+    {
+    case SPI_GETSCREENSAVEACTIVE:
+        if (ptr_param)
+        {
+            int timeout, temp;
+            XGetScreenSaver(gdi_display, &timeout, &temp, &temp, &temp);
+            *(BOOL *)ptr_param = timeout != 0;
+            return TRUE;
+        }
+        break;
+    case SPI_SETSCREENSAVEACTIVE:
+        {
+            int timeout, interval, prefer_blanking, allow_exposures;
+            static int last_timeout = 15 * 60;
 
-    wine_tsx11_lock();
-    XGetScreenSaver(gdi_display, &timeout, &interval, &prefer_blanking,
-                    &allow_exposures);
-    if (timeout) last_timeout = timeout;
+            XLockDisplay( gdi_display );
+            XGetScreenSaver(gdi_display, &timeout, &interval, &prefer_blanking,
+                            &allow_exposures);
+            if (timeout) last_timeout = timeout;
 
-    timeout = bActivate ? last_timeout : 0;
-    XSetScreenSaver(gdi_display, timeout, interval, prefer_blanking,
-                    allow_exposures);
-    wine_tsx11_unlock();
+            timeout = int_param ? last_timeout : 0;
+            XSetScreenSaver(gdi_display, timeout, interval, prefer_blanking,
+                            allow_exposures);
+            XUnlockDisplay( gdi_display );
+        }
+        break;
+    }
+    return FALSE;  /* let user32 handle it */
 }

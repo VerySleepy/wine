@@ -1244,7 +1244,7 @@ static BOOL AVISaveOptionsFmtChoose(HWND hWnd)
       pOptions->dwFlags |= AVICOMPRESSF_VALID;
 
     HeapFree(GetProcessHeap(), 0, afmtc.pwfxEnum);
-    return (ret == S_OK ? TRUE : FALSE);
+    return ret == S_OK;
   } else {
     ERR(": unknown streamtype 0x%08X\n", sInfo.fccType);
     return FALSE;
@@ -1515,7 +1515,7 @@ HRESULT WINAPI AVISaveVA(LPCSTR szFile, CLSID *pclsidHandler,
   HRESULT hr;
   int     len;
 
-  TRACE("%s,%p,%p,%d,%p,%p)\n", debugstr_a(szFile), pclsidHandler,
+  TRACE("(%s,%p,%p,%d,%p,%p)\n", debugstr_a(szFile), pclsidHandler,
 	lpfnCallback, nStream, ppavi, plpOptions);
 
   if (szFile == NULL || ppavi == NULL || plpOptions == NULL)

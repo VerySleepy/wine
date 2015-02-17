@@ -19,6 +19,12 @@
 #ifndef __WINE_WINHTTP_H
 #define __WINE_WINHTTP_H
 
+#ifdef _WIN64
+#include <pshpack8.h>
+#else
+#include <pshpack4.h>
+#endif
+
 #define WINHTTPAPI
 #define BOOLAPI WINHTTPAPI BOOL WINAPI
 
@@ -408,7 +414,7 @@ typedef int INTERNET_SCHEME, *LPINTERNET_SCHEME;
                                                         | WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE | WINHTTP_CALLBACK_STATUS_READ_COMPLETE          \
                                                         | WINHTTP_CALLBACK_STATUS_WRITE_COMPLETE | WINHTTP_CALLBACK_STATUS_REQUEST_ERROR)
 #define WINHTTP_CALLBACK_FLAG_ALL_NOTIFICATIONS         0xffffffff
-#define WINHTTP_INVALID_STATUS_CALLBACK                 ((WINHTTP_STATUS_CALLBACK)(-1L))
+#define WINHTTP_INVALID_STATUS_CALLBACK                 ((WINHTTP_STATUS_CALLBACK)(-1))
 
 #define API_RECEIVE_RESPONSE          (1)
 #define API_QUERY_DATA_AVAILABLE      (2)
@@ -487,8 +493,8 @@ typedef struct
 typedef struct
 {
     DWORD dwAccessType;
-    LPCWSTR lpszProxy;
-    LPCWSTR lpszProxyBypass;
+    LPWSTR lpszProxy;
+    LPWSTR lpszProxyBypass;
 } WINHTTP_PROXY_INFO, *LPWINHTTP_PROXY_INFO;
 typedef WINHTTP_PROXY_INFO WINHTTP_PROXY_INFOW;
 typedef LPWINHTTP_PROXY_INFO LPWINHTTP_PROXY_INFOW;
@@ -502,6 +508,14 @@ typedef struct
 } WINHTTP_CURRENT_USER_IE_PROXY_CONFIG;
 
 typedef VOID (CALLBACK *WINHTTP_STATUS_CALLBACK)(HINTERNET,DWORD_PTR,DWORD,LPVOID,DWORD);
+
+#define WINHTTP_AUTO_DETECT_TYPE_DHCP   0x00000001
+#define WINHTTP_AUTO_DETECT_TYPE_DNS_A  0x00000002
+
+#define WINHTTP_AUTOPROXY_AUTO_DETECT           0x00000001
+#define WINHTTP_AUTOPROXY_CONFIG_URL            0x00000002
+#define WINHTTP_AUTOPROXY_RUN_INPROCESS         0x00010000
+#define WINHTTP_AUTOPROXY_RUN_OUTPROCESS_ONLY   0x00020000
 
 typedef struct
 {
@@ -519,6 +533,14 @@ typedef struct
     DWORD dwMinorVersion;
 } HTTP_VERSION_INFO, *LPHTTP_VERSION_INFO;
 
+#ifdef _WS2DEF_
+typedef struct
+{
+    DWORD cbSize;
+    SOCKADDR_STORAGE LocalAddress;
+    SOCKADDR_STORAGE RemoteAddress;
+} WINHTTP_CONNECTION_INFO;
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -549,12 +571,14 @@ BOOL        WINAPI WinHttpSetCredentials(HINTERNET,DWORD,DWORD,LPCWSTR,LPCWSTR,L
 BOOL        WINAPI WinHttpSetOption(HINTERNET,DWORD,LPVOID,DWORD);
 WINHTTP_STATUS_CALLBACK WINAPI WinHttpSetStatusCallback(HINTERNET,WINHTTP_STATUS_CALLBACK,DWORD,DWORD_PTR);
 BOOL        WINAPI WinHttpSetTimeouts(HINTERNET,int,int,int,int);
-BOOL        WINAPI WinHttpTimeFromSystemTime(CONST SYSTEMTIME *,LPWSTR);
+BOOL        WINAPI WinHttpTimeFromSystemTime(const SYSTEMTIME *,LPWSTR);
 BOOL        WINAPI WinHttpTimeToSystemTime(LPCWSTR,SYSTEMTIME*);
 BOOL        WINAPI WinHttpWriteData(HINTERNET,LPCVOID,DWORD,LPDWORD);
 
 #ifdef __cplusplus
 }
 #endif
+
+#include <poppack.h>
 
 #endif  /* __WINE_WINHTTP_H */

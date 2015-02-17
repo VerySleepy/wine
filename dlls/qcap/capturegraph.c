@@ -42,6 +42,7 @@
  *#include "dshow.h"
  *#include "ddraw.h"
  */
+#include "uuids.h"
 #include "qcap_main.h"
 
 #include "wine/unicode.h"
@@ -58,7 +59,6 @@ typedef struct CaptureGraphImpl
     ICaptureGraphBuilder ICaptureGraphBuilder_iface;
     LONG ref;
     IGraphBuilder *mygraph;
-
     CRITICAL_SECTION csFilter;
 } CaptureGraphImpl;
 
@@ -143,8 +143,7 @@ fnCaptureGraphBuilder2_AddRef(ICaptureGraphBuilder2 * iface)
     return ref;
 }
 
-static ULONG WINAPI
-fnCaptureGraphBuilder2_Release(ICaptureGraphBuilder2 * iface)
+static ULONG WINAPI fnCaptureGraphBuilder2_Release(ICaptureGraphBuilder2 * iface)
 {
     CaptureGraphImpl *This = impl_from_ICaptureGraphBuilder2(iface);
     DWORD ref = InterlockedDecrement(&This->ref);
@@ -153,10 +152,9 @@ fnCaptureGraphBuilder2_Release(ICaptureGraphBuilder2 * iface)
 
     if (!ref)
     {
-        FIXME("Release IGraphFilter or w/e\n");
         This->csFilter.DebugInfo->Spare[0] = 0;
         DeleteCriticalSection(&This->csFilter);
-        if (This->mygraph != NULL)
+        if (This->mygraph)
             IGraphBuilder_Release(This->mygraph);
         CoTaskMemFree(This);
         ObjectRefCount(FALSE);
@@ -184,7 +182,7 @@ fnCaptureGraphBuilder2_SetFilterGraph(ICaptureGraphBuilder2 * iface,
 
     This->mygraph = pfg;
     IGraphBuilder_AddRef(This->mygraph);
-    if (SUCCEEDED(IUnknown_QueryInterface(This->mygraph,
+    if (SUCCEEDED(IGraphBuilder_QueryInterface(This->mygraph,
                                           &IID_IMediaEvent, (LPVOID *)&pmev)))
     {
         IMediaEvent_CancelDefaultHandling(pmev, EC_REPAINT);
@@ -212,7 +210,7 @@ fnCaptureGraphBuilder2_GetFilterGraph(ICaptureGraphBuilder2 * iface,
     }
 
     IGraphBuilder_AddRef(This->mygraph);
-   
+
     TRACE("(%p) return filtergraph %p\n", iface, *pfg);
     return S_OK;
 }
@@ -262,37 +260,79 @@ fnCaptureGraphBuilder2_RenderStream(ICaptureGraphBuilder2 * iface,
                                     IBaseFilter *pfRenderer)
 {
     CaptureGraphImpl *This = impl_from_ICaptureGraphBuilder2(iface);
-    IPin *pin_in = NULL;
-    IPin *pin_out = NULL;
+    IPin *source_out, *renderer_in, *capture, *preview;
     HRESULT hr;
 
-    FIXME("(%p/%p)->(%s, %s, %p, %p, %p) Stub!\n", This, iface,
+    FIXME("(%p/%p)->(%s, %s, %p, %p, %p) semi-stub!\n", This, iface,
           debugstr_guid(pCategory), debugstr_guid(pType),
           pSource, pfCompressor, pfRenderer);
-
-    if (pfCompressor)
-        FIXME("Intermediate streams not supported yet\n");
 
     if (!This->mygraph)
     {
         FIXME("Need a capture graph\n");
         return E_UNEXPECTED;
     }
-
-    ICaptureGraphBuilder2_FindPin(iface, pSource, PINDIR_OUTPUT, pCategory, pType, TRUE, 0, &pin_in);
-    if (!pin_in)
-        return E_FAIL;
-    ICaptureGraphBuilder2_FindPin(iface, (IUnknown*)pfRenderer, PINDIR_INPUT, pCategory, pType, TRUE, 0, &pin_out);
-    if (!pin_out)
+    if (!pfRenderer)
     {
-        IPin_Release(pin_in);
-        return E_FAIL;
+        FIXME("pfRenderer == NULL not yet supported\n");
+        return E_NOTIMPL;
     }
 
-    /* Uses 'Intelligent Connect', so Connect, not ConnectDirect here */
-    hr = IFilterGraph2_Connect(This->mygraph, pin_in, pin_out);
-    IPin_Release(pin_in);
-    IPin_Release(pin_out);
+    hr = ICaptureGraphBuilder2_FindPin(iface, pSource, PINDIR_OUTPUT, pCategory, pType, TRUE, 0, &source_out);
+    if (FAILED(hr))
+        return E_INVALIDARG;
+
+    if (pCategory && IsEqualIID(pCategory, &PIN_CATEGORY_VBI)) {
+        FIXME("Tee/Sink-to-Sink filter not supported\n");
+        IPin_Release(source_out);
+        return E_NOTIMPL;
+    }
+
+    hr = ICaptureGraphBuilder2_FindPin(iface, pSource, PINDIR_OUTPUT, &PIN_CATEGORY_CAPTURE, NULL, TRUE, 0, &capture);
+    if (SUCCEEDED(hr)) {
+        hr = ICaptureGraphBuilder2_FindPin(iface, pSource, PINDIR_OUTPUT, &PIN_CATEGORY_PREVIEW, NULL, TRUE, 0, &preview);
+        if (FAILED(hr))
+            FIXME("Smart Tee filter not supported - not creating preview pin\n");
+        else
+            IPin_Release(preview);
+        IPin_Release(capture);
+    }
+
+    hr = ICaptureGraphBuilder2_FindPin(iface, (IUnknown*)pfRenderer, PINDIR_INPUT, NULL, NULL, TRUE, 0, &renderer_in);
+    if (FAILED(hr))
+    {
+        IPin_Release(source_out);
+        return hr;
+    }
+
+    if (!pfCompressor)
+        hr = IGraphBuilder_Connect(This->mygraph, source_out, renderer_in);
+    else
+    {
+        IPin *compressor_in, *compressor_out;
+
+        hr = ICaptureGraphBuilder2_FindPin(iface, (IUnknown*)pfCompressor,
+                PINDIR_INPUT, NULL, NULL, TRUE, 0, &compressor_in);
+        if (SUCCEEDED(hr))
+        {
+            hr = IGraphBuilder_Connect(This->mygraph, source_out, compressor_in);
+            IPin_Release(compressor_in);
+        }
+
+        if (SUCCEEDED(hr))
+        {
+            hr = ICaptureGraphBuilder2_FindPin(iface, (IUnknown*)pfCompressor,
+                    PINDIR_OUTPUT, NULL, NULL, TRUE, 0, &compressor_out);
+            if (SUCCEEDED(hr))
+            {
+                hr = IGraphBuilder_Connect(This->mygraph, compressor_out, renderer_in);
+                IPin_Release(compressor_out);
+            }
+        }
+    }
+
+    IPin_Release(source_out);
+    IPin_Release(renderer_in);
     return hr;
 }
 
@@ -344,31 +384,73 @@ fnCaptureGraphBuilder2_CopyCaptureFile(ICaptureGraphBuilder2 * iface,
     return E_NOTIMPL;
 }
 
-static BOOL pin_matches(IPin *pin, PIN_DIRECTION direction, const GUID *cat, const GUID *type, BOOL unconnected)
+static HRESULT pin_matches(IPin *pin, PIN_DIRECTION direction, const GUID *cat, const GUID *type, BOOL unconnected)
 {
     IPin *partner;
     PIN_DIRECTION pindir;
+    HRESULT hr;
 
-    IPin_QueryDirection(pin, &pindir);
-    if (pindir != direction)
-    {
-        TRACE("No match, wrong direction\n");
-        return FALSE;
-    }
+    hr = IPin_QueryDirection(pin, &pindir);
 
-    if (unconnected && IPin_ConnectedTo(pin, &partner) == S_OK)
+    if (unconnected && IPin_ConnectedTo(pin, &partner) == S_OK && partner!=NULL)
     {
         IPin_Release(partner);
         TRACE("No match, %p already connected to %p\n", pin, partner);
-        return FALSE;
+        return FAILED(hr) ? hr : S_FALSE;
     }
 
-    if (cat || type)
-        FIXME("Ignoring category/type\n");
+    if (FAILED(hr))
+        return hr;
+    if (SUCCEEDED(hr) && pindir != direction)
+        return S_FALSE;
 
-    TRACE("Match made in heaven\n");
+    if (cat)
+    {
+        IKsPropertySet *props;
+        GUID category;
+        DWORD fetched;
 
-    return TRUE;
+        hr = IPin_QueryInterface(pin, &IID_IKsPropertySet, (void**)&props);
+        if (FAILED(hr))
+            return S_FALSE;
+
+        hr = IKsPropertySet_Get(props, &AMPROPSETID_Pin, 0, NULL,
+                0, &category, sizeof(category), &fetched);
+        IKsPropertySet_Release(props);
+        if (FAILED(hr) || !IsEqualIID(&category, cat))
+            return S_FALSE;
+    }
+
+    if (type)
+    {
+        IEnumMediaTypes *types;
+        AM_MEDIA_TYPE *media_type;
+        ULONG fetched;
+
+        hr = IPin_EnumMediaTypes(pin, &types);
+        if (FAILED(hr))
+            return S_FALSE;
+
+        IEnumMediaTypes_Reset(types);
+        while (1) {
+            if (IEnumMediaTypes_Next(types, 1, &media_type, &fetched) != S_OK || fetched != 1)
+            {
+                IEnumMediaTypes_Release(types);
+                return S_FALSE;
+            }
+
+            if (IsEqualIID(&media_type->majortype, type))
+            {
+                DeleteMediaType(media_type);
+                break;
+            }
+            DeleteMediaType(media_type);
+        }
+        IEnumMediaTypes_Release(types);
+    }
+
+    TRACE("Pin matched\n");
+    return S_OK;
 }
 
 static HRESULT WINAPI
@@ -402,7 +484,7 @@ fnCaptureGraphBuilder2_FindPin(ICaptureGraphBuilder2 * iface,
         if (hr == E_NOINTERFACE)
         {
             WARN("Input not filter or pin?!\n");
-            return E_FAIL;
+            return E_NOINTERFACE;
         }
 
         hr = IBaseFilter_EnumPins(filter, &enumpins);
@@ -412,11 +494,11 @@ fnCaptureGraphBuilder2_FindPin(ICaptureGraphBuilder2 * iface,
             return hr;
         }
 
-        IEnumPins_Reset(enumpins);
-
         while (1)
         {
-            hr = IEnumPins_Next(enumpins, 1, &pin, NULL);
+            ULONG fetched;
+
+            hr = IEnumPins_Next(enumpins, 1, &pin, &fetched);
             if (hr == VFW_E_ENUM_OUT_OF_SYNC)
             {
                 numcurrent = 0;
@@ -424,14 +506,22 @@ fnCaptureGraphBuilder2_FindPin(ICaptureGraphBuilder2 * iface,
                 pin = NULL;
                 continue;
             }
-
             if (hr != S_OK)
                 break;
+            if (fetched != 1)
+            {
+                hr = E_FAIL;
+                break;
+            }
+
             TRACE("Testing match\n");
-            if (pin_matches(pin, pindir, pCategory, pType, fUnconnected) && numcurrent++ == num)
+            hr = pin_matches(pin, pindir, pCategory, pType, fUnconnected);
+            if (hr == S_OK && numcurrent++ == num)
                 break;
             IPin_Release(pin);
             pin = NULL;
+            if (FAILED(hr))
+                break;
         }
         IEnumPins_Release(enumpins);
 
@@ -441,7 +531,7 @@ fnCaptureGraphBuilder2_FindPin(ICaptureGraphBuilder2 * iface,
             return E_FAIL;
         }
     }
-    else if (!pin_matches(pin, pindir, pCategory, pType, fUnconnected))
+    else if (pin_matches(pin, pindir, pCategory, pType, fUnconnected) != S_OK)
     {
         IPin_Release(pin);
         return E_FAIL;
@@ -452,7 +542,7 @@ fnCaptureGraphBuilder2_FindPin(ICaptureGraphBuilder2 * iface,
 }
 
 static const ICaptureGraphBuilder2Vtbl builder2_Vtbl =
-{   
+{
     fnCaptureGraphBuilder2_QueryInterface,
     fnCaptureGraphBuilder2_AddRef,
     fnCaptureGraphBuilder2_Release,
@@ -474,7 +564,7 @@ fnCaptureGraphBuilder_QueryInterface(ICaptureGraphBuilder * iface,
 {
     CaptureGraphImpl *This = impl_from_ICaptureGraphBuilder(iface);
     TRACE("%p --> Forwarding to v2 (%p)\n", iface, This);
-    return IUnknown_QueryInterface(&This->ICaptureGraphBuilder2_iface, riid, ppv);
+    return ICaptureGraphBuilder2_QueryInterface(&This->ICaptureGraphBuilder2_iface, riid, ppv);
 }
 
 static ULONG WINAPI
@@ -482,7 +572,7 @@ fnCaptureGraphBuilder_AddRef(ICaptureGraphBuilder * iface)
 {
     CaptureGraphImpl *This = impl_from_ICaptureGraphBuilder(iface);
     TRACE("%p --> Forwarding to v2 (%p)\n", iface, This);
-    return IUnknown_AddRef(&This->ICaptureGraphBuilder2_iface);
+    return ICaptureGraphBuilder2_AddRef(&This->ICaptureGraphBuilder2_iface);
 }
 
 static ULONG WINAPI
@@ -490,7 +580,7 @@ fnCaptureGraphBuilder_Release(ICaptureGraphBuilder * iface)
 {
     CaptureGraphImpl *This = impl_from_ICaptureGraphBuilder(iface);
     TRACE("%p --> Forwarding to v2 (%p)\n", iface, This);
-    return IUnknown_Release(&This->ICaptureGraphBuilder2_iface);
+    return ICaptureGraphBuilder2_Release(&This->ICaptureGraphBuilder2_iface);
 }
 
 static HRESULT WINAPI
@@ -578,7 +668,7 @@ fnCaptureGraphBuilder_CopyCaptureFile(ICaptureGraphBuilder * iface,
 }
 
 static const ICaptureGraphBuilderVtbl builder_Vtbl =
-{   
+{
    fnCaptureGraphBuilder_QueryInterface,
    fnCaptureGraphBuilder_AddRef,
    fnCaptureGraphBuilder_Release,

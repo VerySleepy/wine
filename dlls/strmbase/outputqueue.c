@@ -97,7 +97,7 @@ HRESULT WINAPI OutputQueue_Construct(
     list_init(This->SampleList);
 
     This->pInputPin = pInputPin;
-    IPin_AddRef((IPin*)pInputPin);
+    IPin_AddRef(&pInputPin->pin.IPin_iface);
 
     EnterCriticalSection(&This->csQueue);
     if (bAuto && pInputPin->pMemInputPin)
@@ -127,12 +127,13 @@ HRESULT WINAPI OutputQueue_Destroy(OutputQueue *pOutputQueue)
     SetEvent(pOutputQueue->hProcessQueue);
     LeaveCriticalSection(&pOutputQueue->csQueue);
 
+    pOutputQueue->csQueue.DebugInfo->Spare[0] = 0;
     DeleteCriticalSection(&pOutputQueue->csQueue);
     CloseHandle(pOutputQueue->hProcessQueue);
 
     HeapFree(GetProcessHeap(),0,pOutputQueue->SampleList);
 
-    IPin_Release((IPin*)pOutputQueue->pInputPin);
+    IPin_Release(&pOutputQueue->pInputPin->pin.IPin_iface);
     HeapFree(GetProcessHeap(),0,pOutputQueue);
     return S_OK;
 }
@@ -218,7 +219,7 @@ VOID WINAPI OutputQueue_EOS(OutputQueue *pOutputQueue)
     else
     {
         IPin* ppin = NULL;
-        IPin_ConnectedTo((IPin*)pOutputQueue->pInputPin, &ppin);
+        IPin_ConnectedTo(&pOutputQueue->pInputPin->pin.IPin_iface, &ppin);
         if (ppin)
         {
             IPin_EndOfStream(ppin);
@@ -274,7 +275,7 @@ DWORD WINAPI OutputQueueImpl_ThreadProc(OutputQueue *pOutputQueue)
                     IMemInputPin_Release(pOutputQueue->pInputPin->pMemInputPin);
                 }
                 for (i = 0; i < nSamples; i++)
-                    IUnknown_Release(ppSamples[i]);
+                    IMediaSample_Release(ppSamples[i]);
                 HeapFree(GetProcessHeap(),0,ppSamples);
 
                 /* Process Non-Samples */
@@ -284,7 +285,7 @@ DWORD WINAPI OutputQueueImpl_ThreadProc(OutputQueue *pOutputQueue)
                     if (qev->type == EOS_PACKET)
                     {
                         IPin* ppin = NULL;
-                        IPin_ConnectedTo((IPin*)pOutputQueue->pInputPin, &ppin);
+                        IPin_ConnectedTo(&pOutputQueue->pInputPin->pin.IPin_iface, &ppin);
                         if (ppin)
                         {
                             IPin_EndOfStream(ppin);

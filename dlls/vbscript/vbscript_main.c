@@ -24,10 +24,12 @@
 #include "rpcproxy.h"
 #include "vbscript_classes.h"
 #include "vbsglobal.h"
+#include "vbsregexp55.h"
 
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
+WINE_DECLARE_DEBUG_CHANNEL(heap);
 
 DEFINE_GUID(GUID_NULL,0,0,0,0,0,0,0,0,0,0,0);
 
@@ -93,52 +95,21 @@ static void release_typelib(void)
     ITypeLib_Release(typelib);
 }
 
-const char *debugstr_variant(const VARIANT *v)
-{
-    if(!v)
-        return "(null)";
-
-    if(V_ISBYREF(v))
-        return wine_dbg_sprintf("{V_BYREF -> %s}", debugstr_variant(V_BYREF(v)));
-
-    switch(V_VT(v)) {
-    case VT_EMPTY:
-        return "{VT_EMPTY}";
-    case VT_NULL:
-        return "{VT_NULL}";
-    case VT_I2:
-        return wine_dbg_sprintf("{VT_I2: %d}", V_I2(v));
-    case VT_I4:
-        return wine_dbg_sprintf("{VT_I4: %d}", V_I4(v));
-    case VT_UI4:
-        return wine_dbg_sprintf("{VT_UI4: %u}", V_UI4(v));
-    case VT_R8:
-        return wine_dbg_sprintf("{VT_R8: %lf}", V_R8(v));
-    case VT_BSTR:
-        return wine_dbg_sprintf("{VT_BSTR: %s}", debugstr_w(V_BSTR(v)));
-    case VT_DISPATCH:
-        return wine_dbg_sprintf("{VT_DISPATCH: %p}", V_DISPATCH(v));
-    case VT_BOOL:
-        return wine_dbg_sprintf("{VT_BOOL: %x}", V_BOOL(v));
-    default:
-        return wine_dbg_sprintf("{vt %d}", V_VT(v));
-    }
-}
-
 #define MIN_BLOCK_SIZE  128
+#define ARENA_FREE_FILLER  0xaa
 
 static inline DWORD block_size(DWORD block)
 {
     return MIN_BLOCK_SIZE << block;
 }
 
-void vbsheap_init(vbsheap_t *heap)
+void heap_pool_init(heap_pool_t *heap)
 {
     memset(heap, 0, sizeof(*heap));
     list_init(&heap->custom_blocks);
 }
 
-void *vbsheap_alloc(vbsheap_t *heap, size_t size)
+void *heap_pool_alloc(heap_pool_t *heap, size_t size)
 {
     struct list *list;
     void *tmp;
@@ -193,19 +164,65 @@ void *vbsheap_alloc(vbsheap_t *heap, size_t size)
     return list+1;
 }
 
-void vbsheap_free(vbsheap_t *heap)
+void *heap_pool_grow(heap_pool_t *heap, void *mem, DWORD size, DWORD inc)
 {
-    struct list *iter;
+    void *ret;
+
+    if(mem == (BYTE*)heap->blocks[heap->last_block] + heap->offset-size
+            && heap->offset+inc < block_size(heap->last_block)) {
+        heap->offset += inc;
+        return mem;
+    }
+
+    ret = heap_pool_alloc(heap, size+inc);
+    if(ret) /* FIXME: avoid copying for custom blocks */
+        memcpy(ret, mem, size);
+    return ret;
+}
+
+void heap_pool_clear(heap_pool_t *heap)
+{
+    struct list *tmp;
+
+    if(!heap)
+        return;
+
+    while((tmp = list_next(&heap->custom_blocks, &heap->custom_blocks))) {
+        list_remove(tmp);
+        heap_free(tmp);
+    }
+
+    if(WARN_ON(heap)) {
+        DWORD i;
+
+        for(i=0; i < heap->block_cnt; i++)
+            memset(heap->blocks[i], ARENA_FREE_FILLER, block_size(i));
+    }
+
+    heap->last_block = heap->offset = 0;
+    heap->mark = FALSE;
+}
+
+void heap_pool_free(heap_pool_t *heap)
+{
     DWORD i;
 
-    while((iter = list_next(&heap->custom_blocks, &heap->custom_blocks))) {
-        list_remove(iter);
-        heap_free(iter);
-    }
+    heap_pool_clear(heap);
 
     for(i=0; i < heap->block_cnt; i++)
         heap_free(heap->blocks[i]);
     heap_free(heap->blocks);
+
+    heap_pool_init(heap);
+}
+
+heap_pool_t *heap_pool_mark(heap_pool_t *heap)
+{
+    if(heap->mark)
+        return NULL;
+
+    heap->mark = TRUE;
+    return heap;
 }
 
 static HRESULT WINAPI ClassFactory_QueryInterface(IClassFactory *iface, REFIID riid, void **ppv)
@@ -257,6 +274,16 @@ static const IClassFactoryVtbl VBScriptFactoryVtbl = {
 
 static IClassFactory VBScriptFactory = { &VBScriptFactoryVtbl };
 
+static const IClassFactoryVtbl VBScriptRegExpFactoryVtbl = {
+    ClassFactory_QueryInterface,
+    ClassFactory_AddRef,
+    ClassFactory_Release,
+    VBScriptRegExpFactory_CreateInstance,
+    ClassFactory_LockServer
+};
+
+static IClassFactory VBScriptRegExpFactory = { &VBScriptRegExpFactoryVtbl };
+
 /******************************************************************
  *              DllMain (vbscript.@)
  */
@@ -273,7 +300,9 @@ BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpv)
         vbscript_hinstance = hInstDLL;
         break;
     case DLL_PROCESS_DETACH:
+        if (lpv) break;
         release_typelib();
+        release_regexp_typelib();
     }
 
     return TRUE;
@@ -287,6 +316,9 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID *ppv)
     if(IsEqualGUID(&CLSID_VBScript, rclsid)) {
         TRACE("(CLSID_VBScript %s %p)\n", debugstr_guid(riid), ppv);
         return IClassFactory_QueryInterface(&VBScriptFactory, riid, ppv);
+    }else if(IsEqualGUID(&CLSID_VBScriptRegExp, rclsid)) {
+        TRACE("(CLSID_VBScriptRegExp %s %p)\n", debugstr_guid(riid), ppv);
+        return IClassFactory_QueryInterface(&VBScriptRegExpFactory, riid, ppv);
     }
 
     FIXME("%s %s %p\n", debugstr_guid(rclsid), debugstr_guid(riid), ppv);

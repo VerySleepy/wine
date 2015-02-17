@@ -41,6 +41,7 @@
 
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <windows.h>
 #include <wine/debug.h>
 #include <wine/unicode.h>
@@ -113,7 +114,7 @@ static int __cdecl XCOPY_wprintf(const WCHAR *format, ...) {
      */
 
     if (!output_bufW) output_bufW = HeapAlloc(GetProcessHeap(), 0,
-                                              MAX_WRITECONSOLE_SIZE);
+                                              MAX_WRITECONSOLE_SIZE*sizeof(WCHAR));
     if (!output_bufW) {
       WINE_FIXME("Out of memory - could not allocate 2 x 64K buffers\n");
       return 0;
@@ -270,11 +271,9 @@ static BOOL XCOPY_ProcessExcludeFile(WCHAR* filename, WCHAR* endOfName) {
         EXCLUDELIST *thisEntry;
         int length = lstrlenW(buffer);
 
-        /* Strip CRLF */
-        buffer[length-1] = 0x00;
-
         /* If more than CRLF */
         if (length > 1) {
+          buffer[length-1] = 0;  /* strip CRLF */
           thisEntry = HeapAlloc(GetProcessHeap(), 0, sizeof(EXCLUDELIST));
           thisEntry->next = excludeList;
           excludeList = thisEntry;
@@ -290,6 +289,7 @@ static BOOL XCOPY_ProcessExcludeFile(WCHAR* filename, WCHAR* endOfName) {
     if (!feof(inFile)) {
         XCOPY_wprintf(XCOPY_LoadMessage(STRING_READFAIL), filename);
         *endOfName = endChar;
+        fclose(inFile);
         return TRUE;
     }
 
@@ -626,6 +626,7 @@ static int XCOPY_DoCopy(WCHAR *srcstem, WCHAR *srcspec,
             /* Find next one */
             findres = FindNextFileW(h, finddata);
         }
+        FindClose(h);
     }
 
 cleanup:
@@ -659,7 +660,7 @@ static WCHAR *skip_whitespace(WCHAR *p)
    Example: 'XCOPY "c:\DIR A" "c:DIR B\"' is OK. */
 static int find_end_of_word(const WCHAR *word, WCHAR **end)
 {
-    BOOL in_quotes = 0;
+    BOOL in_quotes = FALSE;
     const WCHAR *ptr = word;
     for (;;) {
         for (; *ptr != '\0' && *ptr != '"' &&
@@ -760,7 +761,7 @@ static int XCOPY_ParseCommandLine(WCHAR *suppliedsource,
             case 'E': if (CompareStringW(LOCALE_USER_DEFAULT,
                                          NORM_IGNORECASE | SORT_STRINGSORT,
                                          &word[1], 8,
-                                         EXCLUDE, -1) == 2) {
+                                         EXCLUDE, -1) == CSTR_EQUAL) {
                         if (XCOPY_ProcessExcludeList(&word[9])) {
                           XCOPY_FailMessage(ERROR_INVALID_PARAMETER);
                           goto out;
@@ -775,19 +776,20 @@ static int XCOPY_ParseCommandLine(WCHAR *suppliedsource,
                           BOOL       isError = FALSE;
                           memset(&st, 0x00, sizeof(st));
 
-                          /* Parse the arg : Month */
+                          /* Microsoft xcopy's usage message implies that the date
+                           * format depends on the locale, but that is false.
+                           * It is hardcoded to month-day-year.
+                           */
                           st.wMonth = _wtol(pos);
                           while (*pos && isdigit(*pos)) pos++;
                           if (*pos++ != '-') isError = TRUE;
 
-                          /* Parse the arg : Day */
                           if (!isError) {
                               st.wDay = _wtol(pos);
                               while (*pos && isdigit(*pos)) pos++;
                               if (*pos++ != '-') isError = TRUE;
                           }
 
-                          /* Parse the arg : Day */
                           if (!isError) {
                               st.wYear = _wtol(pos);
                               while (*pos && isdigit(*pos)) pos++;
@@ -819,10 +821,14 @@ static int XCOPY_ParseCommandLine(WCHAR *suppliedsource,
                       break;
 
             case '-': if (toupper(word[2])=='Y')
-                          flags &= ~OPT_NOPROMPT; break;
+                          flags &= ~OPT_NOPROMPT;
+                      break;
             case '?': XCOPY_wprintf(XCOPY_LoadMessage(STRING_HELP));
                       rc = RC_HELP;
                       goto out;
+            case 'V':
+                WINE_FIXME("ignoring /V\n");
+                break;
             default:
                 WINE_TRACE("Unhandled parameter '%s'\n", wine_dbgstr_w(word));
                 XCOPY_wprintf(XCOPY_LoadMessage(STRING_INVPARM), word);

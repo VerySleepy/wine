@@ -57,11 +57,15 @@ static UINT SELECT_fetch_int( struct tagMSIVIEW *view, UINT row, UINT col, UINT 
     if( !sv->table )
          return ERROR_FUNCTION_FAILED;
 
-    if( (col==0) || (col>sv->num_cols) )
+    if( !col || col > sv->num_cols )
          return ERROR_FUNCTION_FAILED;
 
     col = sv->cols[ col - 1 ];
-
+    if( !col )
+    {
+        *val = 0;
+        return ERROR_SUCCESS;
+    }
     return sv->table->ops->fetch_int( sv->table, row, col, val );
 }
 
@@ -74,11 +78,15 @@ static UINT SELECT_fetch_stream( struct tagMSIVIEW *view, UINT row, UINT col, IS
     if( !sv->table )
          return ERROR_FUNCTION_FAILED;
 
-    if( (col==0) || (col>sv->num_cols) )
+    if( !col || col > sv->num_cols )
          return ERROR_FUNCTION_FAILED;
 
     col = sv->cols[ col - 1 ];
-
+    if( !col )
+    {
+        *stm = NULL;
+        return ERROR_SUCCESS;
+    }
     return sv->table->ops->fetch_stream( sv->table, row, col, stm );
 }
 
@@ -218,11 +226,18 @@ static UINT SELECT_get_column_info( struct tagMSIVIEW *view, UINT n, LPCWSTR *na
     if( !sv->table )
          return ERROR_FUNCTION_FAILED;
 
-    if( (n==0) || (n>sv->num_cols) )
+    if( !n || n > sv->num_cols )
          return ERROR_FUNCTION_FAILED;
 
     n = sv->cols[ n - 1 ];
-
+    if( !n )
+    {
+        if (name) *name = szEmpty;
+        if (type) *type = MSITYPE_UNKNOWN | MSITYPE_VALID;
+        if (temporary) *temporary = FALSE;
+        if (table_name) *table_name = szEmpty;
+        return ERROR_SUCCESS;
+    }
     return sv->table->ops->get_column_info( sv->table, n, name,
                                             type, temporary, table_name );
 }
@@ -261,8 +276,9 @@ static UINT msi_select_update(struct tagMSIVIEW *view, MSIRECORD *rec, UINT row)
         }
         else if (type & MSITYPE_STRING)
         {
-            str = MSI_RecordGetString(rec, i + 1);
-            r = MSI_RecordSetStringW(mod, col, str);
+            int len;
+            str = msi_record_get_string( rec, i + 1, &len );
+            r = msi_record_set_string( mod, col, str, len );
         }
         else
         {
@@ -360,7 +376,7 @@ static const MSIVIEWOPS select_ops =
 static UINT SELECT_AddColumn( MSISELECTVIEW *sv, LPCWSTR name,
                               LPCWSTR table_name )
 {
-    UINT r, n=0;
+    UINT r, n;
     MSIVIEW *table;
 
     TRACE("%p adding %s.%s\n", sv, debugstr_w( table_name ),
@@ -380,9 +396,13 @@ static UINT SELECT_AddColumn( MSISELECTVIEW *sv, LPCWSTR name,
     if( sv->num_cols >= sv->max_cols )
         return ERROR_FUNCTION_FAILED;
 
-    r = VIEW_find_column( table, name, table_name, &n );
-    if( r != ERROR_SUCCESS )
-        return r;
+    if ( !name[0] ) n = 0;
+    else
+    {
+        r = VIEW_find_column( table, name, table_name, &n );
+        if( r != ERROR_SUCCESS )
+            return r;
+    }
 
     sv->cols[sv->num_cols] = n;
     TRACE("Translating column %s from %d -> %d\n", 
@@ -411,7 +431,7 @@ UINT SELECT_CreateView( MSIDATABASE *db, MSIVIEW **view, MSIVIEW *table,
 
     count = select_count_columns( columns );
 
-    sv = msi_alloc_zero( sizeof *sv + count*sizeof (UINT) );
+    sv = msi_alloc_zero( FIELD_OFFSET( MSISELECTVIEW, cols[count] ));
     if( !sv )
         return ERROR_FUNCTION_FAILED;
     

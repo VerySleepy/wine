@@ -10,14 +10,14 @@ C_SRCS = \
 	line.c \
 	math.c \
 	mesh.c \
+	render.c \
 	shader.c \
 	skin.c \
 	sprite.c \
 	surface.c \
 	texture.c \
 	util.c \
-	volume.c
+	volume.c \
+	xfile.c
 
 RC_SRCS = version.rc
-
-@MAKE_DLL_RULES@

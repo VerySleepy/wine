@@ -299,13 +299,6 @@ enum HotkeyPrefix
     HotkeyPrefixHide   = 2
 };
 
-enum PaletteFlags
-{
-    PaletteFlagsHasAlpha        = 1,
-    PaletteFlagsGrayScale       = 2,
-    PaletteFlagsHalftone        = 4
-};
-
 enum ImageCodecFlags
 {
     ImageCodecFlagsEncoder          = 1,
@@ -679,7 +672,6 @@ enum EmfPlusRecordType {
     EmfPlusRecordTypeSetAntiAliasMode,
     EmfPlusRecordTypeSetTextRenderingHint,
     EmfPlusRecordTypeSetTextContrast,
-    EmfPlusRecordTypeSetGammaValue,
     EmfPlusRecordTypeSetInterpolationMode,
     EmfPlusRecordTypeSetPixelOffsetMode,
     EmfPlusRecordTypeSetCompositingMode,
@@ -710,6 +702,8 @@ enum EmfPlusRecordType {
     EmfPlusRecordTypeMax = EmfPlusRecordTotal-1,
     EmfPlusRecordTypeMin = EmfPlusRecordTypeHeader
 };
+
+#define FlatnessDefault 0.25f
 
 #ifndef __cplusplus
 

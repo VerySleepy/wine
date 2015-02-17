@@ -258,7 +258,23 @@ interface IBindStatusCallback : IUnknown
         BINDSTATUS_CONTENTDISPOSITIONFILENAME,
         BINDSTATUS_MIMETEXTPLAINMISMATCH,
         BINDSTATUS_PUBLISHERAVAILABLE,
-        BINDSTATUS_DISPLAYNAMEAVAILABLE
+        BINDSTATUS_DISPLAYNAMEAVAILABLE,
+        BINDSTATUS_SSLUX_NAVBLOCKED,
+        BINDSTATUS_SERVER_MIMETYPEAVAILABLE,
+        BINDSTATUS_SNIFFED_CLASSIDAVAILABLE,
+        BINDSTATUS_64BIT_PROGRESS,
+        BINDSTATUS_LAST = BINDSTATUS_64BIT_PROGRESS,
+        BINDSTATUS_RESERVED_0 = (BINDSTATUS_LAST+1),
+        BINDSTATUS_RESERVED_1 = (BINDSTATUS_RESERVED_0+1),
+        BINDSTATUS_RESERVED_2 = (BINDSTATUS_RESERVED_1+1),
+        BINDSTATUS_RESERVED_3 = (BINDSTATUS_RESERVED_2+1),
+        BINDSTATUS_RESERVED_4 = (BINDSTATUS_RESERVED_3+1),
+        BINDSTATUS_RESERVED_5 = (BINDSTATUS_RESERVED_4+1),
+        BINDSTATUS_RESERVED_6 = (BINDSTATUS_RESERVED_5+1),
+        BINDSTATUS_RESERVED_7 = (BINDSTATUS_RESERVED_6+1),
+        BINDSTATUS_RESERVED_8 = (BINDSTATUS_RESERVED_7+1),
+        BINDSTATUS_RESERVED_9 = (BINDSTATUS_RESERVED_8+1),
+        BINDSTATUS_LAST_PRIVATE = BINDSTATUS_RESERVED_9
     } BINDSTATUS;
 
 
@@ -355,7 +371,6 @@ interface IBindStatusCallbackEx : IBindStatusCallback
  * IAuthenticate interface
  */
 [
-    local,
     object,
     uuid(79EAC9D0-BAf9-11CE-8C82-00AA004BA90B),
     pointer_default(unique)
@@ -542,6 +557,39 @@ interface IWindowForBindingUI : IUnknown
 }
 
 /*****************************************************************************
+ * ICodeInstall interface
+ */
+[
+    local,
+    object,
+    uuid(79eac9d1-baf9-11ce-8c82-00aa004ba90b),
+    pointer_default(unique)
+]
+interface ICodeInstall : IWindowForBindingUI
+{
+    typedef [unique] ICodeInstall *LPCODEINSTALL;
+
+    typedef enum {
+        CIP_DISK_FULL,
+        CIP_ACCESS_DENIED,
+        CIP_NEWER_VERSION_EXISTS,
+        CIP_OLDER_VERSION_EXISTS,
+        CIP_NAME_CONFLICT,
+        CIP_TRUST_VERIFICATION_COMPONENT_MISSING,
+        CIP_EXE_SELF_REGISTERATION_TIMEOUT,
+        CIP_UNSAFE_TO_ABORT,
+        CIP_NEED_REBOOT,
+        CIP_NEED_REBOOT_UI_PERMISSION
+    } CIP_STATUS;
+
+    HRESULT OnCodeInstallProblem(
+            [in] ULONG ulStatusCode,
+            [in, unique] LPCWSTR szDestination,
+            [in, unique] LPCWSTR szSource,
+            [in] DWORD dwReserved);
+}
+
+/*****************************************************************************
  * IHttpSecurity interface
  */
 [
@@ -674,7 +722,13 @@ interface IInternetBindInfo : IUnknown
         BINDSTRING_URL,
         BINDSTRING_IID,
         BINDSTRING_FLAG_BIND_TO_OBJECT,
-        BINDSTRING_PTR_BIND_CONTEXT
+        BINDSTRING_PTR_BIND_CONTEXT,
+        BINDSTRING_XDR_ORIGIN,
+        BINDSTRING_DOWNLOADPATH,
+        BINDSTRING_ROOTDOC_URL,
+        BINDSTRING_INITIAL_FILENAME,
+        BINDSTRING_PROXY_USERNAME,
+        BINDSTRING_PROXY_PASSWORD
     } BINDSTRING;
 
     HRESULT GetBindInfo(
@@ -1628,7 +1682,6 @@ typedef struct _tagPROTOCOLFILTERDATA {
  * IUri interface
  */
 [
-    local,
     object,
     uuid(a39ee748-6a27-4817-a6f2-13914bef5890),
     pointer_default(unique)
@@ -1795,6 +1848,8 @@ cpp_quote("#define Uri_CREATE_NO_PRE_PROCESS_HTML_URI         0x1000")
 cpp_quote("#define Uri_CREATE_IE_SETTINGS                     0x2000")
 cpp_quote("#define Uri_CREATE_NO_IE_SETTINGS                  0x4000")
 cpp_quote("#define Uri_CREATE_NO_ENCODE_FORBIDDEN_CHARACTERS  0x8000")
+cpp_quote("#define Uri_CREATE_NORMALIZE_INTL_CHARACTERS   0x00010000")
+cpp_quote("#define Uri_CREATE_CANONICALIZE_ABSOLUTE       0x00020000")
 
 cpp_quote("#define Uri_DISPLAY_NO_FRAGMENT  0x00000001")
 cpp_quote("#define Uri_PUNYCODE_IDN_HOST    0x00000002")
@@ -1967,6 +2022,30 @@ interface IInternetProtocolEx : IInternetProtocol
         [in] HANDLE *dwReserved);
 }
 
+/*****************************************************************************
+ * IGetBindHandle interface
+ */
+[
+    local,
+    object,
+    uuid(AF0FF408-129D-4b20-91F0-02BD23D88352),
+    pointer_default(unique)
+]
+interface IGetBindHandle : IUnknown
+{
+    typedef [unique] IGetBindHandle *LPGETBINDHANDLE;
+
+    typedef enum {
+        BINDHANDLETYPES_APPCACHE    = 0x00000000,
+        BINDHANDLETYPES_DEPENDENCY  = 0x00000001,
+        BINDHANDLETYPES_COUNT
+    } BINDHANDLETYPES;
+
+    HRESULT GetBindHandle(
+            [in] BINDHANDLETYPES enumRequestedHandle,
+            [out] HANDLE *pRetHandle);
+}
+
 cpp_quote("#define CONFIRMSAFETYACTION_LOADOBJECT  0x00000001")
 
 struct CONFIRMSAFETY
@@ -2065,6 +2144,7 @@ cpp_quote("HRESULT WINAPI CoInternetIsFeatureEnabled(INTERNETFEATURELIST,DWORD d
 cpp_quote("HRESULT WINAPI CoInternetIsFeatureEnabledForUrl(INTERNETFEATURELIST,DWORD,LPCWSTR,IInternetSecurityManager*);")
 cpp_quote("HRESULT WINAPI CoInternetGetSecurityUrl(LPCWSTR,LPWSTR*,PSUACTION,DWORD);")
 cpp_quote("HRESULT WINAPI CoInternetGetSecurityUrlEx(IUri*,IUri**,PSUACTION,DWORD_PTR);")
+cpp_quote("HRESULT WINAPI AsyncInstallDistributionUnit(LPCWSTR,LPCWSTR,LPCWSTR,DWORD,DWORD,LPCWSTR,IBindCtx*,LPVOID,DWORD);")
 cpp_quote("HRESULT WINAPI CreateFormatEnumerator(UINT,FORMATETC*,IEnumFORMATETC**);")
 cpp_quote("HRESULT WINAPI GetSoftwareUpdateInfo( LPCWSTR szDistUnit, LPSOFTDISTINFO psdi);")
 cpp_quote("HRESULT WINAPI FaultInIEFeature(HWND,uCLSSPEC*,QUERYCONTEXT*,DWORD);")
@@ -2082,6 +2162,7 @@ cpp_quote("HRESULT WINAPI RegisterFormatEnumerator(LPBC,IEnumFORMATETC*,DWORD);"
 cpp_quote("HRESULT WINAPI RevokeFormatEnumerator(LPBC,IEnumFORMATETC*);")
 cpp_quote("HRESULT WINAPI RevokeBindStatusCallback(LPBC,IBindStatusCallback*);")
 cpp_quote("HRESULT WINAPI CopyStgMedium(const STGMEDIUM*,STGMEDIUM*);")
+cpp_quote("HRESULT WINAPI CopyBindInfo(const BINDINFO*,BINDINFO*);")
 cpp_quote("void WINAPI ReleaseBindInfo(BINDINFO*);")
 cpp_quote("HRESULT WINAPI UrlMkGetSessionOption(DWORD,LPVOID,DWORD,DWORD*,DWORD);")
 cpp_quote("HRESULT WINAPI UrlMkSetSessionOption(DWORD,LPVOID,DWORD,DWORD);")

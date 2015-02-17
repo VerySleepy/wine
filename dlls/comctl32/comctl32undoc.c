@@ -143,8 +143,8 @@ DWORD WINAPI GetSize (LPVOID lpMem)
  * MRU-Functions  {COMCTL32}
  *
  * NOTES
- * The MRU-Api is a set of functions to manipulate lists of M.R.U. (Most Recently
- * Used) items. It is an undocumented Api that is used (at least) by the shell
+ * The MRU-API is a set of functions to manipulate lists of M.R.U. (Most Recently
+ * Used) items. It is an undocumented API that is used (at least) by the shell
  * and explorer to implement their recent documents feature.
  *
  * Since these functions are undocumented, they are unsupported by MS and
@@ -690,8 +690,8 @@ static HANDLE create_mru_list(LPWINEMRULIST mp)
     /* get values from key 'MRUList' */
     if (newkey) {
 	datasize = (mp->extview.uMax + 1) * sizeof(WCHAR);
-	if((err=RegQueryValueExW( newkey, strMRUList, 0, &type,
-				  (LPBYTE)mp->realMRU, &datasize))) {
+	if (RegQueryValueExW( newkey, strMRUList, 0, &type,
+				  (LPBYTE)mp->realMRU, &datasize)) {
 	    /* not present - set size to 1 (will become 0 later) */
 	    datasize = 1;
 	    *mp->realMRU = 0;
@@ -777,8 +777,7 @@ HANDLE WINAPI CreateMRUListLazyA (const MRUINFOA *lpcml, DWORD dwParam2,
 
     /* Native does not check for a NULL lpcml */
 
-    if (lpcml->cbSize != sizeof(MRUINFOA) || !lpcml->hKey ||
-        IsBadStringPtrA(lpcml->lpszSubKey, -1))
+    if (!lpcml->hKey || IsBadStringPtrA(lpcml->lpszSubKey, -1))
 	return 0;
 
     mp = Alloc(sizeof(WINEMRULIST));

@@ -313,7 +313,7 @@ static void GetNormalAndSelectedIcons(LPITEMIDLIST lpifq, LPTVITEMW lpTV_ITEM)
 /******************************************************************************
  * GetName [Internal]
  *
- * Query a shell folder for the display name of one of it's children
+ * Query a shell folder for the display name of one of its children
  *
  * PARAMS
  *  lpsf           [I] IShellFolder interface of the folder to be queried.
@@ -369,11 +369,11 @@ static HTREEITEM InsertTreeViewItem( browse_info *info, IShellFolder * lpsf,
 	tvi.cChildren= pEnumIL ? 1 : 0;
 	tvi.mask |= TVIF_CHILDREN;
 
-	lptvid = SHAlloc( sizeof(TV_ITEMDATA) );
-	if (!lptvid)
+	if (!GetName(lpsf, pidl, SHGDN_NORMAL, szBuff))
 	    return NULL;
 
-	if (!GetName(lpsf, pidl, SHGDN_NORMAL, szBuff))
+	lptvid = SHAlloc( sizeof(TV_ITEMDATA) );
+	if (!lptvid)
 	    return NULL;
 
 	tvi.pszText    = szBuff;
@@ -410,7 +410,6 @@ static HTREEITEM InsertTreeViewItem( browse_info *info, IShellFolder * lpsf,
 static void FillTreeView( browse_info *info, IShellFolder * lpsf,
                  LPITEMIDLIST  pidl, HTREEITEM hParent, IEnumIDList* lpe)
 {
-	HTREEITEM	hPrev = 0;
 	LPITEMIDLIST	pidlTemp = 0;
 	ULONG		ulFetched;
 	HRESULT		hr;
@@ -450,7 +449,7 @@ static void FillTreeView( browse_info *info, IShellFolder * lpsf,
                 }
 	    }
 
-	    if (!(hPrev = InsertTreeViewItem(info, lpsf, pidlTemp, pidl, pEnumIL, hParent)))
+	    if (!InsertTreeViewItem(info, lpsf, pidlTemp, pidl, pEnumIL, hParent))
 	        goto done;
 	    SHFree(pidlTemp);  /* Finally, free the pidl that the shell gave us... */
 	    pidlTemp=NULL;
@@ -570,7 +569,7 @@ static HRESULT BrsFolder_Treeview_Changed( browse_info *info, NMTREEVIEWW *pnmtv
     browsefolder_callback( info->lpBrowseInfo, info->hWnd, BFFM_SELCHANGED,
                            (LPARAM)info->pidlRet );
     BrsFolder_CheckValidSelection( info, lptvid );
-    return 0;
+    return S_OK;
 }
 
 static LRESULT BrsFolder_Treeview_Rename(browse_info *info, NMTVDISPINFOW *pnmtv)
@@ -902,7 +901,7 @@ static BOOL BrsFolder_OnSetExpanded(browse_info *info, LPVOID selection,
         if (_ILIsEqualSimple(pItemData->lpi, pidlCurrent)) {
             pidlCurrent = ILGetNext(pidlCurrent);
             if (!_ILIsEmpty(pidlCurrent)) {
-                /* Only expand current node and move on to it's first child,
+                /* Only expand current node and move on to its first child,
                  * if we didn't already reach the last SHITEMID */
                 SendMessageW(info->hwndTreeView, TVM_EXPAND, TVE_EXPAND, (LPARAM)item.hItem);
                 item.hItem = (HTREEITEM)SendMessageW(info->hwndTreeView, TVM_GETNEXTITEM, TVGN_CHILD,
@@ -958,7 +957,7 @@ static BOOL BrsFolder_OnSetSelectionA(browse_info *info, LPVOID selection, BOOL 
     return result;
 }
 
-static BOOL BrsFolder_OnWindowPosChanging(browse_info *info, WINDOWPOS *pos)
+static LRESULT BrsFolder_OnWindowPosChanging(browse_info *info, WINDOWPOS *pos)
 {
     if ((info->lpBrowseInfo->ulFlags & BIF_NEWDIALOGSTYLE) && !(pos->flags & SWP_NOSIZE))
     {
@@ -1024,12 +1023,12 @@ static INT_PTR CALLBACK BrsFolderDlgProc( HWND hWnd, UINT msg, WPARAM wParam,
 
     case BFFM_ENABLEOK:
         TRACE("Enable %ld\n", lParam);
-        EnableWindow(GetDlgItem(hWnd, 1), (lParam)?TRUE:FALSE);
+        EnableWindow(GetDlgItem(hWnd, 1), lParam != 0);
         break;
 
     case BFFM_SETOKTEXT: /* unicode only */
-        TRACE("Set OK text %s\n", debugstr_w((LPWSTR)wParam));
-        SetWindowTextW(GetDlgItem(hWnd, 1), (LPWSTR)wParam);
+        TRACE("Set OK text %s\n", debugstr_w((LPWSTR)lParam));
+        SetWindowTextW(GetDlgItem(hWnd, 1), (LPWSTR)lParam);
         break;
 
     case BFFM_SETSELECTIONA:
@@ -1111,11 +1110,16 @@ LPITEMIDLIST WINAPI SHBrowseForFolderW (LPBROWSEINFOW lpbi)
     DWORD r;
     HRESULT hr;
     const WCHAR * templateName;
+    INITCOMMONCONTROLSEX icex;
 
     info.hWnd = 0;
     info.pidlRet = NULL;
     info.lpBrowseInfo = lpbi;
     info.hwndTreeView = NULL;
+
+    icex.dwSize = sizeof( icex );
+    icex.dwICC = ICC_TREEVIEW_CLASSES;
+    InitCommonControlsEx( &icex );
 
     hr = OleInitialize(NULL);
 

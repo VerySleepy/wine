@@ -122,8 +122,8 @@
 182 stdcall FBadColumnSet@4(ptr) FBadColumnSet
 183 stub RTFSync@12
 184 stub RTFSync
-185 stub WrapCompressedRTFStream@12
-186 stub WrapCompressedRTFStream
+185 stdcall WrapCompressedRTFStream@12(ptr long ptr) WrapCompressedRTFStream
+186 stdcall WrapCompressedRTFStream(ptr long ptr)
 187 stub __ValidateParameters@8
 188 stub __CPPValidateParameters@8
 189 stub FBadSortOrderSet@4
@@ -188,3 +188,4 @@
 253 stub FixMAPI@0
 254 stdcall FGetComponentPath(str str ptr long long)
 255 stdcall FGetComponentPath@20(str str ptr long long) FGetComponentPath
+256 stdcall MAPISendMailW(ptr ptr ptr long long)

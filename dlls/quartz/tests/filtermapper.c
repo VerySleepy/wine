@@ -24,6 +24,9 @@
 #include "winbase.h"
 #include "initguid.h"
 #include "dshow.h"
+#include "winternl.h"
+
+#include "fil_data.h"
 
 DEFINE_GUID(GUID_NULL,0,0,0,0,0,0,0,0,0,0,0);
 
@@ -59,7 +62,7 @@ static BOOL enum_find_filter(const WCHAR *wszFilterName, IEnumMoniker *pEnum)
         {
             CHAR val1[512], val2[512];
 
-            WideCharToMultiByte(CP_ACP, 0, V_UNION(&var, bstrVal), -1, val1, sizeof(val1), 0, 0);
+            WideCharToMultiByte(CP_ACP, 0, V_BSTR(&var), -1, val1, sizeof(val1), 0, 0);
             WideCharToMultiByte(CP_ACP, 0, wszFilterName, -1, val2, sizeof(val2), 0, 0);
             if (!lstrcmpA(val1, val2)) found = TRUE;
         }
@@ -84,7 +87,7 @@ static void test_fm2_enummatchingfilters(void)
     CLSID clsidFilter1;
     CLSID clsidFilter2;
     IEnumMoniker *pEnum = NULL;
-    BOOL found;
+    BOOL found, registered = TRUE;
 
     ZeroMemory(&rgf2, sizeof(rgf2));
 
@@ -101,8 +104,8 @@ static void test_fm2_enummatchingfilters(void)
     /* Test that a test renderer filter is returned when enumerating filters with bRender=FALSE */
     rgf2.dwVersion = 2;
     rgf2.dwMerit = MERIT_UNLIKELY;
-    S1(U(rgf2)).cPins2 = 1;
-    S1(U(rgf2)).rgPins2 = rgPins2;
+    S2(U(rgf2)).cPins2 = 1;
+    S2(U(rgf2)).rgPins2 = rgPins2;
 
     rgPins2[0].dwFlags = REG_PINFLAG_B_RENDERER;
     rgPins2[0].cInstances = 1;
@@ -118,7 +121,10 @@ static void test_fm2_enummatchingfilters(void)
     hr = IFilterMapper2_RegisterFilter(pMapper, &clsidFilter1, wszFilterName1, NULL,
                     &CLSID_LegacyAmFilterCategory, NULL, &rgf2);
     if (hr == E_ACCESSDENIED)
+    {
+        registered = FALSE;
         skip("Not authorized to register filters\n");
+    }
     else
     {
         ok(hr == S_OK, "IFilterMapper2_RegisterFilter failed with %x\n", hr);
@@ -133,7 +139,7 @@ static void test_fm2_enummatchingfilters(void)
         rgPins2[1].lpMedium = NULL;
         rgPins2[1].clsPinCategory = NULL;
 
-        S1(U(rgf2)).cPins2 = 2;
+        S2(U(rgf2)).cPins2 = 2;
 
         hr = IFilterMapper2_RegisterFilter(pMapper, &clsidFilter2, wszFilterName2, NULL,
                     &CLSID_LegacyAmFilterCategory, NULL, &rgf2);
@@ -189,13 +195,16 @@ static void test_fm2_enummatchingfilters(void)
         ok(!found, "EnumMatchingFilters should not return the test filter 2\n");
     }
 
-    hr = IFilterMapper2_UnregisterFilter(pMapper, &CLSID_LegacyAmFilterCategory, NULL,
-            &clsidFilter1);
-    ok(SUCCEEDED(hr), "IFilterMapper2_UnregisterFilter failed with %x\n", hr);
+    if (registered)
+    {
+        hr = IFilterMapper2_UnregisterFilter(pMapper, &CLSID_LegacyAmFilterCategory, NULL,
+                &clsidFilter1);
+        ok(SUCCEEDED(hr), "IFilterMapper2_UnregisterFilter failed with %x\n", hr);
 
-    hr = IFilterMapper2_UnregisterFilter(pMapper, &CLSID_LegacyAmFilterCategory, NULL,
-            &clsidFilter2);
-    ok(SUCCEEDED(hr), "IFilterMapper2_UnregisterFilter failed with %x\n", hr);
+        hr = IFilterMapper2_UnregisterFilter(pMapper, &CLSID_LegacyAmFilterCategory, NULL,
+                &clsidFilter2);
+        ok(SUCCEEDED(hr), "IFilterMapper2_UnregisterFilter failed with %x\n", hr);
+    }
 
     out:
 
@@ -230,7 +239,7 @@ static void test_legacy_filter_registration(void)
     ok(hr == S_OK, "CoCreateInstance failed with %x\n", hr);
     if (FAILED(hr)) goto out;
 
-    hr = IFilterMapper2_QueryInterface(pMapper2, &IID_IFilterMapper, (LPVOID)&pMapper);
+    hr = IFilterMapper2_QueryInterface(pMapper2, &IID_IFilterMapper, (void **)&pMapper);
     ok(hr == S_OK, "IFilterMapper2_QueryInterface failed with %x\n", hr);
     if (FAILED(hr)) goto out;
 
@@ -415,8 +424,8 @@ static void test_register_filter_with_null_clsMinorType(void)
     ZeroMemory(&rgf2, sizeof(rgf2));
     rgf2.dwVersion = 1;
     rgf2.dwMerit = MERIT_UNLIKELY;
-    S(U(rgf2)).cPins = 1;
-    S(U(rgf2)).rgPins = &rgPins;
+    S1(U(rgf2)).cPins = 1;
+    S1(U(rgf2)).rgPins = &rgPins;
 
     rgPins.strName = wszPinName;
     rgPins.bRendered = 1;
@@ -444,8 +453,8 @@ static void test_register_filter_with_null_clsMinorType(void)
     ZeroMemory(&rgf2, sizeof(rgf2));
     rgf2.dwVersion = 2;
     rgf2.dwMerit = MERIT_UNLIKELY;
-    S1(U(rgf2)).cPins2 = 1;
-    S1(U(rgf2)).rgPins2 = &rgPins2;
+    S2(U(rgf2)).cPins2 = 1;
+    S2(U(rgf2)).rgPins2 = &rgPins2;
 
     rgPins2.dwFlags = REG_PINFLAG_B_RENDERER;
     rgPins2.cInstances = 1;
@@ -467,6 +476,70 @@ static void test_register_filter_with_null_clsMinorType(void)
     if (pMapper) IFilterMapper2_Release(pMapper);
 }
 
+static void test_parse_filter_data(void)
+{
+    static const BYTE data_block[] = {
+  0x02,0x00,0x00,0x00,0xff,0xff,0x5f,0x00,0x02,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x30,0x70,0x69,0x33,
+  0x00,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+  0x30,0x74,0x79,0x33,0x00,0x00,0x00,0x00,0x60,0x00,0x00,0x00,0x70,0x00,0x00,0x00,0x31,0x70,0x69,0x33,
+  0x08,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+  0x30,0x74,0x79,0x33,0x00,0x00,0x00,0x00,0x60,0x00,0x00,0x00,0x70,0x00,0x00,0x00,0x76,0x69,0x64,0x73,
+  0x00,0x00,0x10,0x00,0x80,0x00,0x00,0xaa,0x00,0x38,0x9b,0x71,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+  0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
+
+    BYTE *prgbRegFilter2 = NULL;
+    REGFILTER2 *pRegFilter = NULL;
+    IFilterMapper2 *pMapper = NULL;
+    SAFEARRAYBOUND saBound;
+    SAFEARRAY *psa = NULL;
+    LPBYTE pbSAData = NULL;
+    HRESULT hr;
+
+    IAMFilterData *pData = NULL;
+
+    hr = CoCreateInstance(&CLSID_FilterMapper2, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IFilterMapper2, (LPVOID*)&pMapper);
+    ok((hr == S_OK || broken(hr != S_OK)), "CoCreateInstance failed with %x\n", hr);
+    if (FAILED(hr)) goto out;
+
+    hr = IFilterMapper2_QueryInterface(pMapper, &IID_IAMFilterData, (LPVOID*)&pData);
+    ok((hr == S_OK || broken(hr != S_OK)), "Unable to find IID_IAMFilterData interface\n");
+    if (FAILED(hr)) goto out;
+
+    saBound.lLbound = 0;
+    saBound.cElements = sizeof(data_block);
+    psa = SafeArrayCreate(VT_UI1, 1, &saBound);
+    ok(psa != NULL, "Unable to crate safe array\n");
+    if (!psa) goto out;
+    hr = SafeArrayAccessData(psa, (LPVOID *)&pbSAData);
+    ok(hr == S_OK, "Unable to access array data\n");
+    if (FAILED(hr)) goto out;
+    memcpy(pbSAData, data_block, sizeof(data_block));
+
+    hr = IAMFilterData_ParseFilterData(pData, pbSAData, sizeof(data_block), &prgbRegFilter2);
+    /* We cannot do anything here.  prgbRegFilter2 is very unstable */
+    /* Pre Vista, this is a stack pointer so anything that changes the stack invalidats it */
+    /* Post Vista, it is a static pointer in the data section of the module */
+    pRegFilter =((REGFILTER2**)prgbRegFilter2)[0];
+    ok (hr==S_OK,"Failed to Parse filter Data\n");
+
+    ok(IsBadReadPtr(prgbRegFilter2,sizeof(REGFILTER2*))==0,"Bad read pointer returned\n");
+    ok(IsBadReadPtr(pRegFilter,sizeof(REGFILTER2))==0,"Bad read pointer for FilterData\n");
+    ok(pRegFilter->dwMerit == 0x5fffff,"Incorrect merit returned\n");
+
+out:
+    if (pRegFilter)
+        CoTaskMemFree(pRegFilter);
+    if (psa)
+    {
+        SafeArrayUnaccessData(psa);
+        SafeArrayDestroy(psa);
+    }
+    if (pData)
+        IAMFilterData_Release(pData);
+    if (pMapper)
+        IFilterMapper2_Release(pMapper);
+}
 
 START_TEST(filtermapper)
 {
@@ -476,6 +549,7 @@ START_TEST(filtermapper)
     test_legacy_filter_registration();
     test_ifiltermapper_from_filtergraph();
     test_register_filter_with_null_clsMinorType();
+    test_parse_filter_data();
 
     CoUninitialize();
 }

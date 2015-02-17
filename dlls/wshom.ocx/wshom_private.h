@@ -24,4 +24,16 @@
 #include "winbase.h"
 #include "ole2.h"
 
+/* typelibs */
+typedef enum tid_t {
+    NULL_tid,
+    IWshCollection_tid,
+    IWshEnvironment_tid,
+    IWshShell3_tid,
+    IWshShortcut_tid,
+    LAST_tid
+} tid_t;
+
+HRESULT get_typeinfo(tid_t tid, ITypeInfo **typeinfo) DECLSPEC_HIDDEN;
+
 HRESULT WINAPI WshShellFactory_CreateInstance(IClassFactory*,IUnknown*,REFIID,void**) DECLSPEC_HIDDEN;

@@ -100,12 +100,12 @@ typedef struct tagMSFT_SegDir {
 /*2*/MSFT_pSeg pImpInfo;     /* table with info for imported types */
 /*3*/MSFT_pSeg pImpFiles;    /* import libraries */
 /*4*/MSFT_pSeg pRefTab;      /* References table */
-/*5*/MSFT_pSeg pLibtab;      /* always exists, always same size (0x80) */
-                             /* hash table w offsets to guid????? */
+/*5*/MSFT_pSeg pGuidHashTab; /* always exists, always same size (0x80) */
+                             /* hash table with offsets to guid */
 /*6*/MSFT_pSeg pGuidTab;     /* all guids are stored here together with  */
                              /* offset in some table???? */
-/*7*/MSFT_pSeg res07;        /* always created, always same size (0x200) */
-                             /* purpose largely unknown */
+/*7*/MSFT_pSeg pNameHashTab; /* always created, always same size (0x200) */
+                             /* hash table with offsets to names */
 /*8*/MSFT_pSeg pNametab;     /* name tables */
 /*9*/MSFT_pSeg pStringtab;   /* string table */
 /*A*/MSFT_pSeg pTypdescTab;  /* table with type descriptors */
@@ -597,16 +597,16 @@ WORD typeofarray
 #include "poppack.h"
 
 /* heap allocation helpers */
-extern void* heap_alloc_zero(unsigned size);
-extern void* heap_alloc(unsigned size);
-extern void* heap_realloc(void *ptr, unsigned size);
-extern void  heap_free(void *ptr);
+extern void* heap_alloc_zero(unsigned size) DECLSPEC_HIDDEN __WINE_ALLOC_SIZE(1);
+extern void* heap_alloc(unsigned size) DECLSPEC_HIDDEN __WINE_ALLOC_SIZE(1);
+extern void* heap_realloc(void *ptr, unsigned size) DECLSPEC_HIDDEN;
+extern void  heap_free(void *ptr) DECLSPEC_HIDDEN;
 
-HRESULT ITypeInfoImpl_GetInternalFuncDesc( ITypeInfo *iface, UINT index, const FUNCDESC **ppFuncDesc );
+HRESULT ITypeInfoImpl_GetInternalFuncDesc( ITypeInfo *iface, UINT index, const FUNCDESC **ppFuncDesc ) DECLSPEC_HIDDEN;
 
-extern DWORD _invoke(FARPROC func,CALLCONV callconv, int nrargs, DWORD *args);
+extern DWORD _invoke(FARPROC func,CALLCONV callconv, int nrargs, DWORD *args) DECLSPEC_HIDDEN;
 
-HRESULT TMARSHAL_DllGetClassObject(REFCLSID rclsid, REFIID iid,LPVOID *ppv);
+HRESULT TMARSHAL_DllGetClassObject(REFCLSID rclsid, REFIID iid,LPVOID *ppv) DECLSPEC_HIDDEN;
 
 /* The OLE Automation ProxyStub Interface Class (aka Typelib Marshaler) */
 DEFINE_OLEGUID( CLSID_PSDispatch,    0x00020420, 0x0000, 0x0000 );

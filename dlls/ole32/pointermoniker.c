@@ -596,7 +596,7 @@ static HRESULT WINAPI PointerMonikerCF_QueryInterface(LPCLASSFACTORY iface,
     if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IClassFactory))
     {
         *ppv = iface;
-        IUnknown_AddRef(iface);
+        IClassFactory_AddRef(iface);
         return S_OK;
     }
     return E_NOINTERFACE;
@@ -629,7 +629,7 @@ static HRESULT WINAPI PointerMonikerCF_CreateInstance(LPCLASSFACTORY iface,
     if (FAILED(hr))
         return hr;
 
-	hr = IMoniker_QueryInterface(pMoniker, riid, ppv);
+    hr = IMoniker_QueryInterface(pMoniker, riid, ppv);
 
     if (FAILED(hr))
         IMoniker_Release(pMoniker);

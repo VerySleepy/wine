@@ -28,24 +28,28 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stdio.h>
-
-#ifdef HAVE_UCONTEXT_H
-# include <ucontext.h>
-#endif
-
+#include <sys/types.h>
 #ifdef HAVE_UNISTD_H
 # include <unistd.h>
 #endif
-
 #ifdef HAVE_MACHINE_SYSARCH_H
 # include <machine/sysarch.h>
 #endif
-
 #ifdef HAVE_SYS_PARAM_H
 # include <sys/param.h>
 #endif
+#ifdef HAVE_SYSCALL_H
+# include <syscall.h>
+#else
+# ifdef HAVE_SYS_SYSCALL_H
+#  include <sys/syscall.h>
+# endif
+#endif
 #ifdef HAVE_SYS_SIGNAL_H
 # include <sys/signal.h>
+#endif
+#ifdef HAVE_SYS_UCONTEXT_H
+# include <sys/ucontext.h>
 #endif
 
 #define NONAMELESSUNION
@@ -56,6 +60,7 @@
 #include "winternl.h"
 #include "wine/library.h"
 #include "wine/exception.h"
+#include "wine/list.h"
 #include "ntdll_misc.h"
 #include "wine/debug.h"
 
@@ -133,7 +138,7 @@ struct MSVCRT_JUMP_BUFFER
 #ifdef linux
 
 #include <asm/prctl.h>
-extern int arch_prctl(int func, void *ptr);
+static inline int arch_prctl( int func, void *ptr ) { return syscall( __NR_arch_prctl, func, ptr ); }
 
 #define RAX_sig(context)     ((context)->uc_mcontext.gregs[REG_RAX])
 #define RBX_sig(context)     ((context)->uc_mcontext.gregs[REG_RBX])
@@ -164,7 +169,6 @@ extern int arch_prctl(int func, void *ptr);
 #define FPU_sig(context)     ((XMM_SAVE_AREA32 *)((context)->uc_mcontext.fpregs))
 
 #elif defined(__FreeBSD__) || defined (__FreeBSD_kernel__)
-#include <sys/ucontext.h>
 
 #define RAX_sig(context)     ((context)->uc_mcontext.mc_rax)
 #define RBX_sig(context)     ((context)->uc_mcontext.mc_rbx)
@@ -199,9 +203,6 @@ extern int arch_prctl(int func, void *ptr);
 #define FPU_sig(context)   ((XMM_SAVE_AREA32 *)((context)->uc_mcontext.mc_fpstate))
 
 #elif defined(__NetBSD__)
-#include <sys/ucontext.h>
-#include <sys/types.h>
-#include <signal.h>
 
 #define RAX_sig(context)    ((context)->uc_mcontext.__gregs[_REG_RAX])
 #define RBX_sig(context)    ((context)->uc_mcontext.__gregs[_REG_RBX])
@@ -235,6 +236,39 @@ extern int arch_prctl(int func, void *ptr);
 #define ERROR_sig(context)  ((context)->uc_mcontext.__gregs[_REG_ERR])
 
 #define FPU_sig(context)   ((XMM_SAVE_AREA32 *)((context)->uc_mcontext.__fpregs))
+#elif defined (__APPLE__)
+static pthread_key_t teb_key;
+
+#define RAX_sig(context)     ((context)->uc_mcontext->__ss.__rax)
+#define RBX_sig(context)     ((context)->uc_mcontext->__ss.__rbx)
+#define RCX_sig(context)     ((context)->uc_mcontext->__ss.__rcx)
+#define RDX_sig(context)     ((context)->uc_mcontext->__ss.__rdx)
+#define RSI_sig(context)     ((context)->uc_mcontext->__ss.__rsi)
+#define RDI_sig(context)     ((context)->uc_mcontext->__ss.__rdi)
+#define RBP_sig(context)     ((context)->uc_mcontext->__ss.__rbp)
+#define R8_sig(context)      ((context)->uc_mcontext->__ss.__r8)
+#define R9_sig(context)      ((context)->uc_mcontext->__ss.__r9)
+#define R10_sig(context)     ((context)->uc_mcontext->__ss.__r10)
+#define R11_sig(context)     ((context)->uc_mcontext->__ss.__r11)
+#define R12_sig(context)     ((context)->uc_mcontext->__ss.__r12)
+#define R13_sig(context)     ((context)->uc_mcontext->__ss.__r13)
+#define R14_sig(context)     ((context)->uc_mcontext->__ss.__r14)
+#define R15_sig(context)     ((context)->uc_mcontext->__ss.__r15)
+
+#define CS_sig(context)      ((context)->uc_mcontext->__ss.__cs)
+#define FS_sig(context)      ((context)->uc_mcontext->__ss.__fs)
+#define GS_sig(context)      ((context)->uc_mcontext->__ss.__gs)
+
+#define EFL_sig(context)     ((context)->uc_mcontext->__ss.__rflags)
+
+#define RIP_sig(context)     (*((unsigned long*)&(context)->uc_mcontext->__ss.__rip))
+#define RSP_sig(context)     (*((unsigned long*)&(context)->uc_mcontext->__ss.__rsp))
+
+#define TRAP_sig(context)    ((context)->uc_mcontext->__es.__trapno)
+#define ERROR_sig(context)   ((context)->uc_mcontext->__es.__err)
+
+#define FPU_sig(context)     ((XMM_SAVE_AREA32 *)&(context)->uc_mcontext->__fs.__fpu_fcw)
+
 #else
 #error You must define the signal context functions for your platform
 #endif
@@ -271,6 +305,37 @@ typedef int (*wine_signal_handler)(unsigned int sig);
 
 static wine_signal_handler handlers[256];
 
+/***********************************************************************
+ * Dynamic unwind table
+ */
+
+struct dynamic_unwind_entry
+{
+    struct list entry;
+
+    /* memory region which matches this entry */
+    DWORD64 base;
+    DWORD size;
+
+    /* lookup table */
+    RUNTIME_FUNCTION *table;
+    DWORD table_size;
+
+    /* user defined callback */
+    PGET_RUNTIME_FUNCTION_CALLBACK callback;
+    PVOID context;
+};
+
+static struct list dynamic_unwind_list = LIST_INIT(dynamic_unwind_list);
+
+static RTL_CRITICAL_SECTION dynamic_unwind_section;
+static RTL_CRITICAL_SECTION_DEBUG dynamic_unwind_debug =
+{
+    0, 0, &dynamic_unwind_section,
+    { &dynamic_unwind_debug.ProcessLocksList, &dynamic_unwind_debug.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": dynamic_unwind_section") }
+};
+static RTL_CRITICAL_SECTION dynamic_unwind_section = { &dynamic_unwind_debug, -1, 0, 0, 0, 0 };
 
 /***********************************************************************
  * Definitions for Win32 unwind tables
@@ -814,7 +879,7 @@ static const char *dwarf_reg_names[NB_FRAME_REGS] =
 /* 33-40 */ "%st0", "%st1", "%st2", "%st3", "%st4", "%st5", "%st6", "%st7"
 };
 
-static int valid_reg( ULONG_PTR reg )
+static BOOL valid_reg( ULONG_PTR reg )
 {
     if (reg >= NB_FRAME_REGS) FIXME( "unsupported reg %lx\n", reg );
     return (reg < NB_FRAME_REGS);
@@ -1383,7 +1448,7 @@ static inline void *get_signal_stack(void)
  *
  * Check if pointer is inside the signal stack.
  */
-static inline int is_inside_signal_stack( void *ptr )
+static inline BOOL is_inside_signal_stack( void *ptr )
 {
     return ((char *)ptr >= (char *)get_signal_stack() &&
             (char *)ptr < (char *)get_signal_stack() + signal_stack_size);
@@ -1481,6 +1546,14 @@ static void restore_context( const CONTEXT *context, ucontext_t *sigcontext )
 #endif
     if (FPU_sig(sigcontext)) *FPU_sig(sigcontext) = context->u.FltSave;
 }
+
+
+/**************************************************************************
+ *		__chkstk (NTDLL.@)
+ *
+ * Supposed to touch all the stack pages, but we shouldn't need that.
+ */
+__ASM_GLOBAL_FUNC( __chkstk, "ret" );
 
 
 /***********************************************************************
@@ -1818,7 +1891,7 @@ static EXCEPTION_RECORD *setup_exception( ucontext_t *sigcontext, raise_func fun
     if (is_inside_signal_stack( stack ))
     {
         ERR( "nested exception on signal stack in thread %04x eip %016lx esp %016lx stack %p-%p\n",
-             GetCurrentThreadId(), RIP_sig(sigcontext), RSP_sig(sigcontext),
+             GetCurrentThreadId(), (ULONG_PTR)RIP_sig(sigcontext), (ULONG_PTR)RSP_sig(sigcontext),
              NtCurrentTeb()->Tib.StackLimit, NtCurrentTeb()->Tib.StackBase );
         abort_thread(1);
     }
@@ -1828,7 +1901,7 @@ static EXCEPTION_RECORD *setup_exception( ucontext_t *sigcontext, raise_func fun
         (char *)stack > (char *)NtCurrentTeb()->Tib.StackBase)
     {
         WARN( "exception outside of stack limits in thread %04x eip %016lx esp %016lx stack %p-%p\n",
-              GetCurrentThreadId(), RIP_sig(sigcontext), RSP_sig(sigcontext),
+              GetCurrentThreadId(), (ULONG_PTR)RIP_sig(sigcontext), (ULONG_PTR)RSP_sig(sigcontext),
               NtCurrentTeb()->Tib.StackLimit, NtCurrentTeb()->Tib.StackBase );
     }
     else if ((char *)(stack - 1) < (char *)NtCurrentTeb()->DeallocationStack + 4096)
@@ -1836,8 +1909,8 @@ static EXCEPTION_RECORD *setup_exception( ucontext_t *sigcontext, raise_func fun
         /* stack overflow on last page, unrecoverable */
         UINT diff = (char *)NtCurrentTeb()->DeallocationStack + 4096 - (char *)(stack - 1);
         ERR( "stack overflow %u bytes in thread %04x eip %016lx esp %016lx stack %p-%p-%p\n",
-             diff, GetCurrentThreadId(), RIP_sig(sigcontext),
-             RSP_sig(sigcontext), NtCurrentTeb()->DeallocationStack,
+             diff, GetCurrentThreadId(), (ULONG_PTR)RIP_sig(sigcontext),
+             (ULONG_PTR)RSP_sig(sigcontext), NtCurrentTeb()->DeallocationStack,
              NtCurrentTeb()->Tib.StackLimit, NtCurrentTeb()->Tib.StackBase );
         abort_thread(1);
     }
@@ -1849,8 +1922,8 @@ static EXCEPTION_RECORD *setup_exception( ucontext_t *sigcontext, raise_func fun
         {
             UINT diff = (char *)NtCurrentTeb()->Tib.StackLimit - (char *)(stack - 1);
             ERR( "stack overflow %u bytes in thread %04x eip %016lx esp %016lx stack %p-%p-%p\n",
-                 diff, GetCurrentThreadId(), RIP_sig(sigcontext),
-                 RSP_sig(sigcontext), NtCurrentTeb()->DeallocationStack,
+                 diff, GetCurrentThreadId(), (ULONG_PTR)RIP_sig(sigcontext),
+                 (ULONG_PTR)RSP_sig(sigcontext), NtCurrentTeb()->DeallocationStack,
                  NtCurrentTeb()->Tib.StackLimit, NtCurrentTeb()->Tib.StackBase );
             abort_thread(1);
         }
@@ -1913,6 +1986,50 @@ static RUNTIME_FUNCTION *find_function_info( ULONG64 pc, HMODULE module,
     return NULL;
 }
 
+/**********************************************************************
+ *           lookup_function_info
+ */
+static RUNTIME_FUNCTION *lookup_function_info( ULONG64 pc, ULONG64 *base, LDR_MODULE **module )
+{
+    RUNTIME_FUNCTION *func = NULL;
+    struct dynamic_unwind_entry *entry;
+    ULONG size;
+
+    /* PE module or wine module */
+    if (!LdrFindEntryForAddress( (void *)pc, module ))
+    {
+        *base = (ULONG64)(*module)->BaseAddress;
+        if ((func = RtlImageDirectoryEntryToData( (*module)->BaseAddress, TRUE,
+                                                  IMAGE_DIRECTORY_ENTRY_EXCEPTION, &size )))
+        {
+            /* lookup in function table */
+            func = find_function_info( pc, (*module)->BaseAddress, func, size );
+        }
+    }
+    else
+    {
+        *module = NULL;
+
+        RtlEnterCriticalSection( &dynamic_unwind_section );
+        LIST_FOR_EACH_ENTRY( entry, &dynamic_unwind_list, struct dynamic_unwind_entry, entry )
+        {
+            if (pc >= entry->base && pc < entry->base + entry->size)
+            {
+                *base = entry->base;
+
+                /* use callback or lookup in function table */
+                if (entry->callback)
+                    func = entry->callback( pc, entry->context );
+                else
+                    func = find_function_info( pc, (HMODULE)entry->base, entry->table, entry->table_size );
+                break;
+            }
+        }
+        RtlLeaveCriticalSection( &dynamic_unwind_section );
+    }
+
+    return func;
+}
 
 /**********************************************************************
  *           call_handler
@@ -1994,7 +2111,6 @@ static NTSTATUS call_stack_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_contex
     DISPATCHER_CONTEXT dispatch;
     CONTEXT context, new_context;
     LDR_MODULE *module;
-    DWORD size;
     NTSTATUS status;
 
     context = *orig_context;
@@ -2008,31 +2124,17 @@ static NTSTATUS call_stack_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_contex
 
         /* FIXME: should use the history table to make things faster */
 
-        module = NULL;
         dispatch.ImageBase = 0;
 
         /* first look for PE exception information */
 
-        if (!LdrFindEntryForAddress( (void *)context.Rip, &module ))
+        if ((dispatch.FunctionEntry = lookup_function_info( context.Rip, &dispatch.ImageBase, &module )))
         {
-            RUNTIME_FUNCTION *dir;
-
-            dispatch.ImageBase = (ULONG64)module->BaseAddress;
-            if ((dir = RtlImageDirectoryEntryToData( module->BaseAddress, TRUE,
-                                                     IMAGE_DIRECTORY_ENTRY_EXCEPTION, &size )))
-            {
-                if ((dispatch.FunctionEntry = find_function_info( context.Rip, module->BaseAddress,
-                                                                  dir, size )))
-                {
-                    dispatch.LanguageHandler = RtlVirtualUnwind( UNW_FLAG_EHANDLER, dispatch.ImageBase,
-                                                                 context.Rip, dispatch.FunctionEntry,
-                                                                 &new_context, &dispatch.HandlerData,
-                                                                 &dispatch.EstablisherFrame, NULL );
-                    goto unwind_done;
-                }
-            }
-            else if (!(module->Flags & LDR_WINE_INTERNAL))
-                WARN( "exception data not found in %s\n", debugstr_w(module->BaseDllName.Buffer) );
+            dispatch.LanguageHandler = RtlVirtualUnwind( UNW_FLAG_EHANDLER, dispatch.ImageBase,
+                                                         context.Rip, dispatch.FunctionEntry,
+                                                         &new_context, &dispatch.HandlerData,
+                                                         &dispatch.EstablisherFrame, NULL );
+            goto unwind_done;
         }
 
         /* then look for host system exception information */
@@ -2056,6 +2158,7 @@ static NTSTATUS call_stack_handlers( EXCEPTION_RECORD *rec, CONTEXT *orig_contex
                 goto unwind_done;
             }
         }
+        else WARN( "exception data not found in %s\n", debugstr_w(module->BaseDllName.Buffer) );
 
         /* no exception information, treat as a leaf function */
 
@@ -2118,7 +2221,7 @@ static NTSTATUS raise_exception( EXCEPTION_RECORD *rec, CONTEXT *context, BOOL f
                rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress,
                context->Rip, GetCurrentThreadId() );
         for (c = 0; c < min( EXCEPTION_MAXIMUM_PARAMETERS, rec->NumberParameters ); c++)
-            TRACE( " info[%d]=%08lx\n", c, rec->ExceptionInformation[c] );
+            TRACE( " info[%d]=%016lx\n", c, rec->ExceptionInformation[c] );
         if (rec->ExceptionCode == EXCEPTION_WINE_STUB)
         {
             if (rec->ExceptionInformation[1] >> 16)
@@ -2247,7 +2350,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
         rec->ExceptionCode = EXCEPTION_DATATYPE_MISALIGNMENT;
         break;
     default:
-        ERR( "Got unexpected trap %ld\n", TRAP_sig(ucontext) );
+        ERR( "Got unexpected trap %ld\n", (ULONG_PTR)TRAP_sig(ucontext) );
         /* fall through */
     case TRAP_x86_NMI:       /* NMI interrupt */
     case TRAP_x86_DNA:       /* Device not available exception */
@@ -2436,6 +2539,12 @@ void signal_free_thread( TEB *teb )
     NtFreeVirtualMemory( NtCurrentProcess(), (void **)&teb, &size, MEM_RELEASE );
 }
 
+#ifdef __APPLE__
+static void init_teb_key(void)
+{
+    pthread_key_create( &teb_key, NULL );
+}
+#endif
 
 /**********************************************************************
  *		signal_init_thread
@@ -2445,10 +2554,20 @@ void signal_init_thread( TEB *teb )
     const WORD fpu_cw = 0x27f;
     stack_t ss;
 
+#ifdef __APPLE__
+    static pthread_once_t init_once = PTHREAD_ONCE_INIT;
+#endif
+
 #if defined __linux__
     arch_prctl( ARCH_SET_GS, teb );
 #elif defined (__FreeBSD__) || defined (__FreeBSD_kernel__)
     amd64_set_gsbase( teb );
+#elif defined(__NetBSD__)
+    sysarch( X86_64_SET_GSBASE, &teb );
+#elif defined (__APPLE__)
+    /* FIXME: Actually setting %gs needs support from the OS */
+    pthread_once( &init_once, init_teb_key );
+    pthread_setspecific( teb_key, teb );
 #else
 # error Please define setting %gs for your architecture
 #endif
@@ -2510,8 +2629,63 @@ void signal_init_process(void)
  */
 BOOLEAN CDECL RtlAddFunctionTable( RUNTIME_FUNCTION *table, DWORD count, DWORD64 addr )
 {
-    FIXME( "%p %u %lx: stub\n", table, count, addr );
-    return FALSE;
+    struct dynamic_unwind_entry *entry;
+
+    TRACE( "%p %u %lx\n", table, count, addr );
+
+    /* NOTE: Windows doesn't check if table is aligned or a NULL pointer */
+
+    entry = RtlAllocateHeap( GetProcessHeap(), 0, sizeof(*entry) );
+    if (!entry)
+        return FALSE;
+
+    entry->base       = addr;
+    entry->size       = table[count - 1].EndAddress;
+    entry->table      = table;
+    entry->table_size = count * sizeof(RUNTIME_FUNCTION);
+    entry->callback   = NULL;
+    entry->context    = NULL;
+
+    RtlEnterCriticalSection( &dynamic_unwind_section );
+    list_add_tail( &dynamic_unwind_list, &entry->entry );
+    RtlLeaveCriticalSection( &dynamic_unwind_section );
+
+    return TRUE;
+}
+
+
+/**********************************************************************
+ *              RtlInstallFunctionTableCallback   (NTDLL.@)
+ */
+BOOLEAN CDECL RtlInstallFunctionTableCallback( DWORD64 table, DWORD64 base, DWORD length,
+                                               PGET_RUNTIME_FUNCTION_CALLBACK callback, PVOID context, PCWSTR dll )
+{
+    struct dynamic_unwind_entry *entry;
+
+    TRACE( "%lx %lx %d %p %p %s\n", table, base, length, callback, context, wine_dbgstr_w(dll) );
+
+    /* NOTE: Windows doesn't check if the provided callback is a NULL pointer */
+
+    /* both low-order bits must be set */
+    if ((table & 0x3) != 0x3)
+        return FALSE;
+
+    entry = RtlAllocateHeap( GetProcessHeap(), 0, sizeof(*entry) );
+    if (!entry)
+        return FALSE;
+
+    entry->base       = base;
+    entry->size       = length;
+    entry->table      = (RUNTIME_FUNCTION *)table;
+    entry->table_size = 0;
+    entry->callback   = callback;
+    entry->context    = context;
+
+    RtlEnterCriticalSection( &dynamic_unwind_section );
+    list_add_tail( &dynamic_unwind_list, &entry->entry );
+    RtlLeaveCriticalSection( &dynamic_unwind_section );
+
+    return TRUE;
 }
 
 
@@ -2520,8 +2694,27 @@ BOOLEAN CDECL RtlAddFunctionTable( RUNTIME_FUNCTION *table, DWORD count, DWORD64
  */
 BOOLEAN CDECL RtlDeleteFunctionTable( RUNTIME_FUNCTION *table )
 {
-    FIXME( "%p: stub\n", table );
-    return FALSE;
+    struct dynamic_unwind_entry *entry, *to_free = NULL;
+
+    TRACE( "%p\n", table );
+
+    RtlEnterCriticalSection( &dynamic_unwind_section );
+    LIST_FOR_EACH_ENTRY( entry, &dynamic_unwind_list, struct dynamic_unwind_entry, entry )
+    {
+        if (entry->table == table)
+        {
+            to_free = entry;
+            list_remove( &entry->entry );
+            break;
+        }
+    }
+    RtlLeaveCriticalSection( &dynamic_unwind_section );
+
+    if (!to_free)
+        return FALSE;
+
+    RtlFreeHeap( GetProcessHeap(), 0, to_free );
+    return TRUE;
 }
 
 
@@ -2532,23 +2725,19 @@ PRUNTIME_FUNCTION WINAPI RtlLookupFunctionEntry( ULONG64 pc, ULONG64 *base, UNWI
 {
     LDR_MODULE *module;
     RUNTIME_FUNCTION *func;
-    ULONG size;
 
     /* FIXME: should use the history table to make things faster */
 
-    if (LdrFindEntryForAddress( (void *)pc, &module ))
+    func = lookup_function_info( pc, base, &module );
+    if (!func)
     {
-        WARN( "module not found for %lx\n", pc );
-        return NULL;
+        *base = 0;
+        if (module)
+            WARN( "no exception table found in module %p pc %lx\n", module->BaseAddress, pc );
+        else
+            WARN( "module not found for %lx\n", pc );
     }
-    if (!(func = RtlImageDirectoryEntryToData( module->BaseAddress, TRUE,
-                                               IMAGE_DIRECTORY_ENTRY_EXCEPTION, &size )))
-    {
-        WARN( "no exception table found in module %p pc %lx\n", module->BaseAddress, pc );
-        return NULL;
-    }
-    func = find_function_info( pc, module->BaseAddress, func, size );
-    if (func) *base = (ULONG64)module->BaseAddress;
+
     return func;
 }
 
@@ -2566,7 +2755,7 @@ static void set_int_reg( CONTEXT *context, KNONVOLATILE_CONTEXT_POINTERS *ctx_pt
 static void set_float_reg( CONTEXT *context, KNONVOLATILE_CONTEXT_POINTERS *ctx_ptr, int reg, M128A val )
 {
     *(&context->u.s.Xmm0 + reg) = val;
-    if (ctx_ptr) ctx_ptr->u1.FloatingContext[reg] = &context->u.s.Xmm0 + reg;
+    if (ctx_ptr) ctx_ptr->u.FloatingContext[reg] = &context->u.s.Xmm0 + reg;
 }
 
 static int get_opcode_size( struct opcode op )
@@ -2586,7 +2775,7 @@ static int get_opcode_size( struct opcode op )
     }
 }
 
-static BOOL is_inside_epilog( BYTE *pc )
+static BOOL is_inside_epilog( BYTE *pc, ULONG64 base, const RUNTIME_FUNCTION *function )
 {
     /* add or lea must be the first instruction, and it must have a rex.W prefix */
     if ((pc[0] & 0xf8) == 0x48)
@@ -2629,9 +2818,7 @@ static BOOL is_inside_epilog( BYTE *pc )
 
     for (;;)
     {
-        BYTE rex = 0;
-
-        if ((*pc & 0xf0) == 0x40) rex = *pc++ & 0x0f;  /* rex prefix */
+        if ((*pc & 0xf0) == 0x40) pc++;  /* rex prefix */
 
         switch (*pc)
         {
@@ -2648,7 +2835,18 @@ static BOOL is_inside_epilog( BYTE *pc )
         case 0xc2: /* ret $nn */
         case 0xc3: /* ret */
             return TRUE;
-        /* FIXME: add various jump instructions */
+        case 0xe9: /* jmp nnnn */
+            pc += 5 + *(LONG *)(pc + 1);
+            if (pc - (BYTE *)base >= function->BeginAddress && pc - (BYTE *)base < function->EndAddress)
+                continue;
+            break;
+        case 0xeb: /* jmp n */
+            pc += 2 + (signed char)pc[1];
+            if (pc - (BYTE *)base >= function->BeginAddress && pc - (BYTE *)base < function->EndAddress)
+                continue;
+            break;
+        case 0xf3: /* rep; ret (for amd64 prediction bug) */
+            return pc[1] == 0xc3;
         }
         return FALSE;
     }
@@ -2702,10 +2900,16 @@ static void interpret_epilog( BYTE *pc, CONTEXT *context, KNONVOLATILE_CONTEXT_P
             context->Rsp += sizeof(ULONG64) + *(WORD *)(pc + 1);
             return;
         case 0xc3: /* ret */
+        case 0xf3: /* rep; ret */
             context->Rip = *(ULONG64 *)context->Rsp;
             context->Rsp += sizeof(ULONG64);
             return;
-        /* FIXME: add various jump instructions */
+        case 0xe9: /* jmp nnnn */
+            pc += 5 + *(LONG *)(pc + 1);
+            continue;
+        case 0xeb: /* jmp n */
+            pc += 2 + (signed char)pc[1];
+            continue;
         }
         return;
     }
@@ -2750,7 +2954,7 @@ PVOID WINAPI RtlVirtualUnwind( ULONG type, ULONG64 base, ULONG64 pc,
         else
         {
             prolog_offset = ~0;
-            if (is_inside_epilog( (BYTE *)pc ))
+            if (is_inside_epilog( (BYTE *)pc, base, function ))
             {
                 interpret_epilog( (BYTE *)pc, context, ctx_ptr );
                 *frame_ret = frame;
@@ -2885,17 +3089,18 @@ static void call_teb_unwind_handler( EXCEPTION_RECORD *rec, DISPATCHER_CONTEXT *
  *		RtlUnwindEx (NTDLL.@)
  */
 void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec,
-                         PVOID retval, CONTEXT *orig_context, UNWIND_HISTORY_TABLE *table )
+                         PVOID retval, CONTEXT *context, UNWIND_HISTORY_TABLE *table )
 {
     EXCEPTION_REGISTRATION_RECORD *teb_frame = NtCurrentTeb()->Tib.ExceptionList;
     EXCEPTION_RECORD record;
     DISPATCHER_CONTEXT dispatch;
-    CONTEXT context, new_context;
+    CONTEXT new_context;
     LDR_MODULE *module;
     NTSTATUS status;
-    DWORD size;
+    DWORD i;
 
-    RtlCaptureContext( orig_context );
+    RtlCaptureContext( context );
+    new_context = *context;
 
     /* build an exception record, if we do not have one */
     if (!rec)
@@ -2903,7 +3108,7 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
         record.ExceptionCode    = STATUS_UNWIND;
         record.ExceptionFlags   = 0;
         record.ExceptionRecord  = NULL;
-        record.ExceptionAddress = (void *)orig_context->Rip;
+        record.ExceptionAddress = (void *)context->Rip;
         record.NumberParameters = 0;
         rec = &record;
     }
@@ -2911,54 +3116,39 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
     rec->ExceptionFlags |= EH_UNWINDING | (end_frame ? 0 : EH_EXIT_UNWIND);
 
     TRACE( "code=%x flags=%x end_frame=%p target_ip=%p rip=%016lx\n",
-           rec->ExceptionCode, rec->ExceptionFlags, end_frame, target_ip, orig_context->Rip );
+           rec->ExceptionCode, rec->ExceptionFlags, end_frame, target_ip, context->Rip );
+    for (i = 0; i < min( EXCEPTION_MAXIMUM_PARAMETERS, rec->NumberParameters ); i++)
+        TRACE( " info[%d]=%016lx\n", i, rec->ExceptionInformation[i] );
     TRACE(" rax=%016lx rbx=%016lx rcx=%016lx rdx=%016lx\n",
-          orig_context->Rax, orig_context->Rbx, orig_context->Rcx, orig_context->Rdx );
+          context->Rax, context->Rbx, context->Rcx, context->Rdx );
     TRACE(" rsi=%016lx rdi=%016lx rbp=%016lx rsp=%016lx\n",
-          orig_context->Rsi, orig_context->Rdi, orig_context->Rbp, orig_context->Rsp );
+          context->Rsi, context->Rdi, context->Rbp, context->Rsp );
     TRACE("  r8=%016lx  r9=%016lx r10=%016lx r11=%016lx\n",
-          orig_context->R8, orig_context->R9, orig_context->R10, orig_context->R11 );
+          context->R8, context->R9, context->R10, context->R11 );
     TRACE(" r12=%016lx r13=%016lx r14=%016lx r15=%016lx\n",
-          orig_context->R12, orig_context->R13, orig_context->R14, orig_context->R15 );
+          context->R12, context->R13, context->R14, context->R15 );
 
-    context = *orig_context;
-    dispatch.EstablisherFrame = context.Rsp;
+    dispatch.EstablisherFrame = context->Rsp;
     dispatch.TargetIp         = (ULONG64)target_ip;
-    dispatch.ContextRecord    = &context;
+    dispatch.ContextRecord    = context;
     dispatch.HistoryTable     = table;
 
-    while (dispatch.EstablisherFrame != (ULONG64)end_frame)
+    for (;;)
     {
-        new_context = context;
-
         /* FIXME: should use the history table to make things faster */
 
-        module = NULL;
         dispatch.ImageBase = 0;
         dispatch.ScopeIndex = 0; /* FIXME */
 
         /* first look for PE exception information */
 
-        if (!LdrFindEntryForAddress( (void *)context.Rip, &module ))
+        if ((dispatch.FunctionEntry = lookup_function_info( context->Rip, &dispatch.ImageBase, &module )))
         {
-            RUNTIME_FUNCTION *dir;
-
-            dispatch.ImageBase = (ULONG64)module->BaseAddress;
-            if ((dir = RtlImageDirectoryEntryToData( module->BaseAddress, TRUE,
-                                                     IMAGE_DIRECTORY_ENTRY_EXCEPTION, &size )))
-            {
-                if ((dispatch.FunctionEntry = find_function_info( context.Rip, module->BaseAddress,
-                                                                  dir, size )))
-                {
-                    dispatch.LanguageHandler = RtlVirtualUnwind( UNW_FLAG_UHANDLER, dispatch.ImageBase,
-                                                                 context.Rip, dispatch.FunctionEntry,
-                                                                 &new_context, &dispatch.HandlerData,
-                                                                 &dispatch.EstablisherFrame, NULL );
-                    goto unwind_done;
-                }
-            }
-            else if (!(module->Flags & LDR_WINE_INTERNAL))
-                WARN( "exception data not found in %s\n", debugstr_w(module->BaseDllName.Buffer) );
+            dispatch.LanguageHandler = RtlVirtualUnwind( UNW_FLAG_UHANDLER, dispatch.ImageBase,
+                                                         context->Rip, dispatch.FunctionEntry,
+                                                         &new_context, &dispatch.HandlerData,
+                                                         &dispatch.EstablisherFrame, NULL );
+            goto unwind_done;
         }
 
         /* then look for host system exception information */
@@ -2966,12 +3156,12 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
         if (!module || (module->Flags & LDR_WINE_INTERNAL))
         {
             struct dwarf_eh_bases bases;
-            const struct dwarf_fde *fde = _Unwind_Find_FDE( (void *)(context.Rip - 1), &bases );
+            const struct dwarf_fde *fde = _Unwind_Find_FDE( (void *)(context->Rip - 1), &bases );
 
             if (fde)
             {
                 dispatch.FunctionEntry = NULL;
-                status = dwarf_virtual_unwind( context.Rip, &dispatch.EstablisherFrame, &new_context, fde,
+                status = dwarf_virtual_unwind( context->Rip, &dispatch.EstablisherFrame, &new_context, fde,
                                                &bases, &dispatch.LanguageHandler, &dispatch.HandlerData );
                 if (status != STATUS_SUCCESS) raise_status( status, rec );
                 if (dispatch.LanguageHandler && !module)
@@ -2982,11 +3172,12 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
                 goto unwind_done;
             }
         }
+        else WARN( "exception data not found in %s\n", debugstr_w(module->BaseDllName.Buffer) );
 
         /* no exception information, treat as a leaf function */
 
-        new_context.Rip = *(ULONG64 *)context.Rsp;
-        new_context.Rsp = context.Rsp + sizeof(ULONG64);
+        new_context.Rip = *(ULONG64 *)context->Rsp;
+        new_context.Rsp = context->Rsp + sizeof(ULONG64);
         dispatch.EstablisherFrame = new_context.Rsp;
         dispatch.LanguageHandler = NULL;
 
@@ -2997,7 +3188,7 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
         {
             TRACE( "frame %lx is inside signal stack (%p-%p)\n", dispatch.EstablisherFrame,
                    get_signal_stack(), (char *)get_signal_stack() + signal_stack_size );
-            context = new_context;
+            *context = new_context;
             continue;
         }
 
@@ -3018,6 +3209,7 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
                 ERR( "invalid end frame %lx/%p\n", dispatch.EstablisherFrame, end_frame );
                 raise_status( STATUS_INVALID_UNWIND_TARGET, rec );
             }
+            if (dispatch.EstablisherFrame == (ULONG64)end_frame) rec->ExceptionFlags |= EH_TARGET_UNWIND;
             call_unwind_handler( rec, &dispatch );
         }
         else  /* hack: call builtin handlers registered in the tib list */
@@ -3033,37 +3225,44 @@ void WINAPI RtlUnwindEx( PVOID end_frame, PVOID target_ip, EXCEPTION_RECORD *rec
             dispatch.EstablisherFrame = new_context.Rsp;
         }
 
-        context = new_context;
+        if (context->Rsp == (ULONG64)end_frame) break;
+        *context = new_context;
     }
 
     if (rec->ExceptionCode == STATUS_LONGJUMP && rec->NumberParameters >= 1)
     {
         struct MSVCRT_JUMP_BUFFER *jmp = (struct MSVCRT_JUMP_BUFFER *)rec->ExceptionInformation[0];
-        context.Rbx       = jmp->Rbx;
-        context.Rsp       = jmp->Rsp;
-        context.Rbp       = jmp->Rbp;
-        context.Rsi       = jmp->Rsi;
-        context.Rdi       = jmp->Rdi;
-        context.R12       = jmp->R12;
-        context.R13       = jmp->R13;
-        context.R14       = jmp->R14;
-        context.R15       = jmp->R15;
-        context.Rip       = jmp->Rip;
-        context.u.s.Xmm6  = jmp->Xmm6;
-        context.u.s.Xmm7  = jmp->Xmm7;
-        context.u.s.Xmm8  = jmp->Xmm8;
-        context.u.s.Xmm9  = jmp->Xmm9;
-        context.u.s.Xmm10 = jmp->Xmm10;
-        context.u.s.Xmm11 = jmp->Xmm11;
-        context.u.s.Xmm12 = jmp->Xmm12;
-        context.u.s.Xmm13 = jmp->Xmm13;
-        context.u.s.Xmm14 = jmp->Xmm14;
-        context.u.s.Xmm15 = jmp->Xmm15;
+        context->Rbx       = jmp->Rbx;
+        context->Rsp       = jmp->Rsp;
+        context->Rbp       = jmp->Rbp;
+        context->Rsi       = jmp->Rsi;
+        context->Rdi       = jmp->Rdi;
+        context->R12       = jmp->R12;
+        context->R13       = jmp->R13;
+        context->R14       = jmp->R14;
+        context->R15       = jmp->R15;
+        context->Rip       = jmp->Rip;
+        context->u.s.Xmm6  = jmp->Xmm6;
+        context->u.s.Xmm7  = jmp->Xmm7;
+        context->u.s.Xmm8  = jmp->Xmm8;
+        context->u.s.Xmm9  = jmp->Xmm9;
+        context->u.s.Xmm10 = jmp->Xmm10;
+        context->u.s.Xmm11 = jmp->Xmm11;
+        context->u.s.Xmm12 = jmp->Xmm12;
+        context->u.s.Xmm13 = jmp->Xmm13;
+        context->u.s.Xmm14 = jmp->Xmm14;
+        context->u.s.Xmm15 = jmp->Xmm15;
     }
-    context.Rax = (ULONG64)retval;
-    context.Rip = (ULONG64)target_ip;
-    TRACE( "returning to %lx stack %lx\n", context.Rip, context.Rsp );
-    set_cpu_context( &context );
+    else if (rec->ExceptionCode == STATUS_UNWIND_CONSOLIDATE && rec->NumberParameters >= 1)
+    {
+        PVOID (CALLBACK *consolidate)(EXCEPTION_RECORD *) = (void *)rec->ExceptionInformation[0];
+        TRACE( "calling consolidate callback %p\n", consolidate );
+        target_ip = consolidate( rec );
+    }
+    context->Rax = (ULONG64)retval;
+    context->Rip = (ULONG64)target_ip;
+    TRACE( "returning to %lx stack %lx\n", context->Rip, context->Rsp );
+    set_cpu_context( context );
 }
 
 
@@ -3074,6 +3273,16 @@ void WINAPI RtlUnwind( void *frame, void *target_ip, EXCEPTION_RECORD *rec, void
 {
     CONTEXT context;
     RtlUnwindEx( frame, target_ip, rec, retval, &context, NULL );
+}
+
+
+/*******************************************************************
+ *		_local_unwind (NTDLL.@)
+ */
+void WINAPI _local_unwind( void *frame, void *target_ip )
+{
+    CONTEXT context;
+    RtlUnwindEx( frame, target_ip, NULL, NULL, &context, NULL );
 }
 
 
@@ -3262,5 +3471,20 @@ __ASM_STDCALL_FUNC( DbgBreakPoint, 0, "int $3; ret")
  *		DbgUserBreakPoint   (NTDLL.@)
  */
 __ASM_STDCALL_FUNC( DbgUserBreakPoint, 0, "int $3; ret")
+
+/**********************************************************************
+ *              NtCurrentTeb  (NTDLL.@)
+ *
+ * FIXME: This isn't exported from NTDLL on real NT.  This should be
+ *        removed if and when we can set the GSBASE MSR on Mac OS X.
+ */
+#ifdef __APPLE__
+TEB * WINAPI NtCurrentTeb(void)
+{
+    return pthread_getspecific( teb_key );
+}
+#else
+__ASM_STDCALL_FUNC( NtCurrentTeb, 0, ".byte 0x65\n\tmovq 0x30,%rax\n\tret" )
+#endif
 
 #endif  /* __x86_64__ */

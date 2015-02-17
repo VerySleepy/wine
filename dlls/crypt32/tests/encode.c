@@ -849,7 +849,7 @@ static void test_encodeName(DWORD dwEncoding)
     {
         ok(size == sizeof(encodedTwoRDNs), "Unexpected size %d\n", size);
         ok(!memcmp(buf, encodedTwoRDNs, size),
-         "Unexpected value for re-endoded two RDN array\n");
+         "Unexpected value for re-encoded two RDN array\n");
         LocalFree(buf);
     }
     /* CERT_RDN_ANY_TYPE is too vague for X509_NAMEs, check the return */
@@ -973,7 +973,7 @@ static void test_encodeUnicodeName(DWORD dwEncoding)
     {
         ok(size == sizeof(encodedTwoRDNs), "Unexpected size %d\n", size);
         ok(!memcmp(buf, encodedTwoRDNs, size),
-         "Unexpected value for re-endoded two RDN array\n");
+         "Unexpected value for re-encoded two RDN array\n");
         LocalFree(buf);
     }
     /* Unicode names infer the type for CERT_RDN_ANY_TYPE */
@@ -1003,7 +1003,8 @@ static void compareNameValues(const CERT_NAME_VALUE *expected,
     ok(got->dwValueType == expected->dwValueType,
      "Expected string type %d, got %d\n", expected->dwValueType,
      got->dwValueType);
-    ok(got->Value.cbData == expected->Value.cbData,
+    ok(got->Value.cbData == expected->Value.cbData ||
+     got->Value.cbData == expected->Value.cbData - sizeof(WCHAR) /* Win8 */,
      "String type %d: unexpected data size, got %d, expected %d\n",
      expected->dwValueType, got->Value.cbData, expected->Value.cbData);
     if (got->Value.cbData && got->Value.pbData)
@@ -2054,7 +2055,6 @@ static const unsigned char bin54[] = { 0x03,0x03,0x01,0xff,0xfe };
 static const unsigned char bin55[] = { 0xff,0xfe };
 static const unsigned char bin56[] = { 0x03,0x02,0x01,0xfe };
 static const unsigned char bin57[] = { 0xfe };
-static const unsigned char bin58[] = { 0x03,0x01,0x00 };
 
 static const struct encodedBits bits[] = {
     /* normal test cases */
@@ -2709,6 +2709,17 @@ static void test_decodeExtensions(DWORD dwEncoding)
                  "Unexpected value\n");
             }
             LocalFree(buf);
+        }
+        ret = pCryptDecodeObjectEx(dwEncoding, X509_EXTENSIONS,
+         exts[i].encoded, exts[i].encoded[1] + 2, 0, NULL, NULL, &bufSize);
+        ok(ret, "CryptDecodeObjectEx failed: %08x\n", GetLastError());
+        buf = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, bufSize);
+        if (buf)
+        {
+            ret = pCryptDecodeObjectEx(dwEncoding, X509_EXTENSIONS,
+             exts[i].encoded, exts[i].encoded[1] + 2, 0, NULL, buf, &bufSize);
+            ok(ret, "CryptDecodeObjectEx failed: %08x\n", GetLastError());
+            HeapFree(GetProcessHeap(), 0, buf);
         }
     }
 }
@@ -3601,6 +3612,19 @@ static void test_decodeCRLDistPoints(DWORD dwEncoding)
         ok(!lstrcmpW(U(*entry).pwszURL, url), "Unexpected name\n");
         LocalFree(buf);
     }
+    ret = pCryptDecodeObjectEx(dwEncoding, X509_CRL_DIST_POINTS,
+     distPointWithUrlAndIssuer, distPointWithUrlAndIssuer[1] + 2, 0,
+     NULL, NULL, &size);
+    ok(ret, "CryptDecodeObjectEx failed: %08x\n", GetLastError());
+    buf = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size);
+    if (buf)
+    {
+        ret = pCryptDecodeObjectEx(dwEncoding, X509_CRL_DIST_POINTS,
+         distPointWithUrlAndIssuer, distPointWithUrlAndIssuer[1] + 2, 0,
+         NULL, buf, &size);
+        ok(ret, "CryptDecodeObjectEx failed: %08x\n", GetLastError());
+        HeapFree(GetProcessHeap(), 0, buf);
+    }
 }
 
 static const BYTE badFlagsIDP[] = { 0x30,0x06,0x81,0x01,0xff,0x82,0x01,0xff };
@@ -3708,7 +3732,7 @@ static void compareAltNameEntry(const CERT_ALT_NAME_ENTRY *expected,
         case CERT_ALT_NAME_IP_ADDRESS:
             ok(U(*got).IPAddress.cbData == U(*expected).IPAddress.cbData,
                "Unexpected IP address length %d\n", U(*got).IPAddress.cbData);
-            ok(!memcmp(U(*got).IPAddress.pbData, U(*got).IPAddress.pbData,
+            ok(!memcmp(U(*got).IPAddress.pbData, U(*expected).IPAddress.pbData,
                        U(*got).IPAddress.cbData), "Unexpected value\n");
             break;
         }
@@ -4557,7 +4581,8 @@ static void test_decodeCRLToBeSigned(DWORD dwEncoding)
      v1CRLWithIssuerAndEmptyEntry, v1CRLWithIssuerAndEmptyEntry[1] + 2,
      CRYPT_DECODE_ALLOC_FLAG, NULL, &buf, &size);
     ok(!ret && (GetLastError() == CRYPT_E_ASN1_CORRUPT ||
-     GetLastError() == OSS_DATA_ERROR /* Win9x */),
+     GetLastError() == OSS_DATA_ERROR /* Win9x */ ||
+     GetLastError() == CRYPT_E_BAD_ENCODE /* Win8 */),
      "Expected CRYPT_E_ASN1_CORRUPT or OSS_DATA_ERROR, got %08x\n",
      GetLastError());
     /* with a real CRL entry */
@@ -4740,6 +4765,17 @@ static void test_decodeEnhancedKeyUsage(DWORD dwEncoding)
              "Expected OID %s, got %s\n", keyUsages[i],
              usage->rgpszUsageIdentifier[i]);
         LocalFree(buf);
+    }
+    ret = pCryptDecodeObjectEx(dwEncoding, X509_ENHANCED_KEY_USAGE,
+     encodedUsage, sizeof(encodedUsage), 0, NULL, NULL, &size);
+    ok(ret, "CryptDecodeObjectEx failed: %08x\n", GetLastError());
+    buf = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size);
+    if (buf)
+    {
+        ret = pCryptDecodeObjectEx(dwEncoding, X509_ENHANCED_KEY_USAGE,
+         encodedUsage, sizeof(encodedUsage), 0, NULL, buf, &size);
+        ok(ret, "CryptDecodeObjectEx failed: %08x\n", GetLastError());
+        HeapFree(GetProcessHeap(), 0, buf);
     }
 }
 
@@ -5214,6 +5250,19 @@ static void test_decodeAuthorityInfoAccess(DWORD dwEncoding)
          (CERT_AUTHORITY_INFO_ACCESS *)buf);
         LocalFree(buf);
         buf = NULL;
+    }
+    ret = pCryptDecodeObjectEx(dwEncoding, X509_AUTHORITY_INFO_ACCESS,
+     authorityInfoAccessWithUrlAndIPAddr,
+     sizeof(authorityInfoAccessWithUrlAndIPAddr), 0, NULL, NULL, &size);
+    ok(ret, "CryptDecodeObjectEx failed: %x\n", GetLastError());
+    buf = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size);
+    if (buf)
+    {
+        ret = pCryptDecodeObjectEx(dwEncoding, X509_AUTHORITY_INFO_ACCESS,
+         authorityInfoAccessWithUrlAndIPAddr,
+         sizeof(authorityInfoAccessWithUrlAndIPAddr), 0, NULL, buf, &size);
+        ok(ret, "CryptDecodeObjectEx failed: %x\n", GetLastError());
+        HeapFree(GetProcessHeap(), 0, buf);
     }
 }
 
@@ -5713,7 +5762,6 @@ static void test_decodeCTL(DWORD dwEncoding)
     info.SubjectAlgorithm.Parameters.cbData = 0;
     info.ThisUpdate.dwLowDateTime = info.ThisUpdate.dwHighDateTime = 0;
     info.NextUpdate.dwLowDateTime = info.NextUpdate.dwHighDateTime = 0;
-    info.SubjectAlgorithm.pszObjId = oid2;
     info.SubjectAlgorithm.pszObjId = NULL;
     value1.cbData = sizeof(emptySequence);
     value1.pbData = (LPBYTE)emptySequence;
@@ -6168,6 +6216,17 @@ static void test_decodePKCSAttributes(DWORD dwEncoding)
          attributes->rgAttr[1].rgValue[0].cbData), "Unexpected value\n");
         LocalFree(buf);
     }
+    ret = pCryptDecodeObjectEx(dwEncoding, PKCS_ATTRIBUTES,
+     doublePKCSAttributes, sizeof(doublePKCSAttributes), 0, NULL, NULL, &size);
+    ok(ret, "CryptDecodeObjectEx failed: %x\n", GetLastError());
+    buf = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size);
+    if (buf)
+    {
+        ret = pCryptDecodeObjectEx(dwEncoding, PKCS_ATTRIBUTES,
+         doublePKCSAttributes, sizeof(doublePKCSAttributes), 0, NULL, buf, &size);
+        ok(ret, "CryptDecodeObjectEx failed: %x\n", GetLastError());
+        HeapFree(GetProcessHeap(), 0, buf);
+    }
 }
 
 static const BYTE singleCapability[] = {
@@ -6324,6 +6383,19 @@ static void test_decodePKCSSMimeCapabilities(DWORD dwEncoding)
         capabilities.cCapability = 2;
         compareSMimeCapabilities("two capabilities", &capabilities, ptr);
         LocalFree(ptr);
+    }
+    SetLastError(0xdeadbeef);
+    ret = pCryptDecodeObjectEx(dwEncoding, PKCS_SMIME_CAPABILITIES,
+     twoCapabilities, sizeof(twoCapabilities), 0, NULL, NULL, &size);
+    ok(ret, "CryptDecodeObjectEx failed: %08x\n", GetLastError());
+    ptr = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size);
+    if (ptr)
+    {
+        SetLastError(0xdeadbeef);
+        ret = pCryptDecodeObjectEx(dwEncoding, PKCS_SMIME_CAPABILITIES,
+         twoCapabilities, sizeof(twoCapabilities), 0, NULL, ptr, &size);
+        ok(ret, "CryptDecodeObjectEx failed: %08x\n", GetLastError());
+        HeapFree(GetProcessHeap(), 0, ptr);
     }
 }
 
@@ -6693,7 +6765,7 @@ static void test_encodeCMSSignerInfo(DWORD dwEncoding)
     ok(GetLastError() == E_INVALIDARG,
        "Expected E_INVALIDARG, got %08x\n", GetLastError());
     /* To be encoded, a signer must have a valid cert ID, where a valid ID may
-     * be a key id or a issuer serial number with at least the issuer set, and
+     * be a key id or an issuer serial number with at least the issuer set, and
      * the encoding must include PKCS_7_ASN_ENCODING.
      * (That isn't enough to be decoded, see decoding tests.)
      */
@@ -6837,7 +6909,7 @@ static void test_decodeCMSSignerInfo(DWORD dwEncoding)
     LPBYTE buf = NULL;
     DWORD size = 0;
     CMSG_CMS_SIGNER_INFO *info;
-    static char oid1[] = "1.2.3", oid2[] = "1.5.6";
+    static const char oid1[] = "1.2.3", oid2[] = "1.5.6";
 
     /* A CMS signer can't be decoded without a serial number. */
     SetLastError(0xdeadbeef);
@@ -7487,6 +7559,17 @@ static void test_decodeCertPolicies(DWORD dwEncoding)
          "unexpected qualifier value\n");
         LocalFree(info);
     }
+    ret = pCryptDecodeObjectEx(dwEncoding, X509_CERT_POLICIES,
+     twoPolicies, sizeof(twoPolicies), 0, NULL, NULL, &size);
+    ok(ret, "CryptDecodeObjectEx failed: %08x\n", GetLastError());
+    info = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size);
+    if (info)
+    {
+        ret = pCryptDecodeObjectEx(dwEncoding, X509_CERT_POLICIES,
+         twoPolicies, sizeof(twoPolicies), 0, NULL, info, &size);
+        ok(ret, "CryptDecodeObjectEx failed: %08x\n", GetLastError());
+        HeapFree(GetProcessHeap(), 0, info);
+    }
 }
 
 static const BYTE policyMappingWithOneMapping[] = {
@@ -7629,6 +7712,19 @@ static void test_decodeCertPolicyMappings(DWORD dwEncoding)
              "2.5.6"), "unexpected subject policy %s\n",
              info->rgPolicyMapping[1].pszSubjectDomainPolicy);
             LocalFree(info);
+        }
+        ret = pCryptDecodeObjectEx(dwEncoding, mappingOids[i],
+         policyMappingWithTwoMappings, sizeof(policyMappingWithTwoMappings), 0,
+         NULL, NULL, &size);
+        ok(ret, "CryptDecodeObjectEx failed: %08x\n", GetLastError());
+        info = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size);
+        if (info)
+        {
+            ret = pCryptDecodeObjectEx(dwEncoding, mappingOids[i],
+             policyMappingWithTwoMappings, sizeof(policyMappingWithTwoMappings), 0,
+             NULL, info, &size);
+            ok(ret, "CryptDecodeObjectEx failed: %08x\n", GetLastError());
+            HeapFree(GetProcessHeap(), 0, info);
         }
     }
 }
@@ -7958,9 +8054,9 @@ static void testPortPublicKeyInfo(void)
     PCERT_PUBLIC_KEY_INFO info = NULL;
 
     /* Just in case a previous run failed, delete this thing */
-    CryptAcquireContextA(&csp, cspName, MS_DEF_PROV, PROV_RSA_FULL,
+    CryptAcquireContextA(&csp, cspName, MS_DEF_PROV_A, PROV_RSA_FULL,
      CRYPT_DELETEKEYSET);
-    ret = CryptAcquireContextA(&csp, cspName, MS_DEF_PROV, PROV_RSA_FULL,
+    ret = CryptAcquireContextA(&csp, cspName, MS_DEF_PROV_A, PROV_RSA_FULL,
      CRYPT_NEWKEYSET);
     ok(ret,"CryptAcquireContextA failed\n");
 
@@ -7969,7 +8065,7 @@ static void testPortPublicKeyInfo(void)
 
     HeapFree(GetProcessHeap(), 0, info);
     CryptReleaseContext(csp, 0);
-    ret = CryptAcquireContextA(&csp, cspName, MS_DEF_PROV, PROV_RSA_FULL,
+    ret = CryptAcquireContextA(&csp, cspName, MS_DEF_PROV_A, PROV_RSA_FULL,
      CRYPT_DELETEKEYSET);
     ok(ret,"CryptAcquireContextA failed\n");
 }

@@ -1,7 +1,6 @@
 MODULE    = oleview.exe
 APPMODE   = -mwindows
 IMPORTS   = uuid comdlg32 comctl32 shell32 oleaut32 ole32 user32 advapi32
-EXTRADEFS = -DWINE_NO_UNICODE_MACROS
 
 C_SRCS = \
 	details.c \
@@ -12,6 +11,3 @@ C_SRCS = \
 	typelib.c
 
 RC_SRCS = oleview.rc
-PO_SRCS = oleview.rc
-
-@MAKE_PROG_RULES@

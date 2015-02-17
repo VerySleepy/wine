@@ -21,9 +21,22 @@
 #include "wine/port.h"
 
 #include <stdio.h>
+#include <stdarg.h>
+
+#define COBJMACROS
+
+#include "windef.h"
+#include "winbase.h"
+#include "winnt.h"
+#include "wingdi.h"
+#include "winuser.h"
+#include "winreg.h"
+#include "objbase.h"
+#include "rpcproxy.h"
+#include "initguid.h"
+#include "dmusici.h"
 
 #include "dswave_private.h"
-#include "rpcproxy.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dswave);
 
@@ -71,12 +84,17 @@ static ULONG WINAPI WaveCF_Release(IClassFactory * iface)
 	return 1; /* non-heap based object */
 }
 
-static HRESULT WINAPI WaveCF_CreateInstance(IClassFactory * iface, IUnknown *pOuter, REFIID riid,
-        void **ppobj)
+static HRESULT WINAPI WaveCF_CreateInstance(IClassFactory * iface, IUnknown *outer_unk, REFIID riid,
+        void **ret_iface)
 {
-	TRACE ("(%p, %s, %p)\n", pOuter, debugstr_dmguid(riid), ppobj);
+    TRACE ("(%p, %s, %p)\n", outer_unk, debugstr_dmguid(riid), ret_iface);
 
-	return DMUSIC_CreateDirectMusicWaveImpl (riid, ppobj, pOuter);
+    if (outer_unk) {
+        *ret_iface = NULL;
+        return CLASS_E_NOAGGREGATION;
+    }
+
+    return create_dswave(riid, ret_iface);
 }
 
 static HRESULT WINAPI WaveCF_LockServer(IClassFactory * iface, BOOL dolock)
@@ -110,9 +128,6 @@ BOOL WINAPI DllMain (HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
 	if (fdwReason == DLL_PROCESS_ATTACH) {
             instance = hinstDLL;
             DisableThreadLibraryCalls(hinstDLL);
-		/* FIXME: Initialisation */
-	} else if (fdwReason == DLL_PROCESS_DETACH) {
-		/* FIXME: Cleanup */
 	}
 
 	return TRUE;
@@ -191,7 +206,6 @@ const char *debugstr_dmguid (const GUID *id) {
 		/* CLSIDs */
 		GE(CLSID_AudioVBScript),
 		GE(CLSID_DirectMusic),
-		GE(CLSID_DirectMusicAudioPath),
 		GE(CLSID_DirectMusicAudioPathConfig),
 		GE(CLSID_DirectMusicAuditionTrack),
 		GE(CLSID_DirectMusicBand),

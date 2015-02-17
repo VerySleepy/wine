@@ -1,11 +1,13 @@
 MODULE    = oleacc.dll
 IMPORTLIB = oleacc
-IMPORTS   = user32
+IMPORTS   = uuid oleaut32 ole32 user32
 
 C_SRCS = \
-	main.c
+	client.c \
+	main.c \
+	propservice.c \
+	window.c
+
+IDL_SRCS = oleacc_classes.idl
 
 RC_SRCS = oleacc.rc
-PO_SRCS = oleacc.rc
-
-@MAKE_DLL_RULES@

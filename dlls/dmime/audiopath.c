@@ -108,21 +108,22 @@ static HRESULT WINAPI IDirectMusicAudioPathImpl_IDirectMusicAudioPath_GetObjectI
 	FIXME("(%p, %d, %d, %d, %s, %d, %s, %p): stub\n", This, dwPChannel, dwStage, dwBuffer, debugstr_dmguid(guidObject), dwIndex, debugstr_dmguid(iidInterface), ppObject);
 	    
 	switch (dwStage) {
-	case DMUS_PATH_BUFFER:
-	  {
-	    if (IsEqualIID (iidInterface, &IID_IDirectSoundBuffer8)) {
-	      IDirectSoundBuffer8_QueryInterface (This->pDSBuffer, &IID_IDirectSoundBuffer8, ppObject);
-	      TRACE("returning %p\n",*ppObject);
-	      return S_OK;
-	    } else if (IsEqualIID (iidInterface, &IID_IDirectSound3DBuffer)) {
-	      IDirectSoundBuffer8_QueryInterface (This->pDSBuffer, &IID_IDirectSound3DBuffer, ppObject);
-	      TRACE("returning %p\n",*ppObject);
-	      return S_OK;
-	    } else {
-	      FIXME("Bad iid\n");
-	    }
-	  }
-	  break;
+        case DMUS_PATH_BUFFER:
+          if (This->pDSBuffer)
+          {
+            if (IsEqualIID (iidInterface, &IID_IDirectSoundBuffer8)) {
+              IDirectSoundBuffer8_QueryInterface (This->pDSBuffer, &IID_IDirectSoundBuffer8, ppObject);
+              TRACE("returning %p\n",*ppObject);
+              return S_OK;
+            } else if (IsEqualIID (iidInterface, &IID_IDirectSound3DBuffer)) {
+              IDirectSoundBuffer8_QueryInterface (This->pDSBuffer, &IID_IDirectSound3DBuffer, ppObject);
+              TRACE("returning %p\n",*ppObject);
+              return S_OK;
+            } else {
+              FIXME("Bad iid\n");
+            }
+          }
+          break;
 
 	case DMUS_PATH_PRIMARY_BUFFER: {
 	  if (IsEqualIID (iidInterface, &IID_IDirectSound3DListener)) {
@@ -139,7 +140,7 @@ static HRESULT WINAPI IDirectMusicAudioPathImpl_IDirectMusicAudioPath_GetObjectI
 	    if (IsEqualIID (iidInterface, &IID_IDirectMusicGraph)) {
 	      if (NULL == This->pToolGraph) {
 		IDirectMusicGraphImpl* pGraph;
-		DMUSIC_CreateDirectMusicGraphImpl (&IID_IDirectMusicGraph, (LPVOID*)&pGraph, NULL);
+                create_dmgraph(&IID_IDirectMusicGraph, (void**)&pGraph);
 		This->pToolGraph = (IDirectMusicGraph*) pGraph;
 	      }
 	      *ppObject = This->pToolGraph;
@@ -170,7 +171,7 @@ static HRESULT WINAPI IDirectMusicAudioPathImpl_IDirectMusicAudioPath_GetObjectI
 	    IDirectMusicPerformance8_GetGraph(This->pPerf, &pPerfoGraph);
 	    if (NULL == pPerfoGraph) {
 	      IDirectMusicGraphImpl* pGraph = NULL; 
-	      DMUSIC_CreateDirectMusicGraphImpl (&IID_IDirectMusicGraph, (LPVOID*)&pGraph, NULL);			
+              create_dmgraph(&IID_IDirectMusicGraph, (void**)&pGraph);
 	      IDirectMusicPerformance8_SetGraph(This->pPerf, (IDirectMusicGraph*) pGraph);
 	      /* we need release as SetGraph do an AddRef */
 	      IDirectMusicGraph_Release((LPDIRECTMUSICGRAPH) pGraph);
@@ -296,7 +297,7 @@ static HRESULT WINAPI IDirectMusicAudioPathImpl_IDirectMusicObject_ParseDescript
 
 	/* FIXME: should this be determined from stream? */
 	pDesc->dwValidData |= DMUS_OBJ_CLASS;
-	pDesc->guidClass = CLSID_DirectMusicAudioPath;
+	pDesc->guidClass = This->pDesc->guidClass;
 
 	IStream_Read (pStream, &Chunk, sizeof(FOURCC)+sizeof(DWORD), NULL);
 	TRACE_(dmfile)(": %s chunk (size = 0x%04x)", debugstr_fourcc (Chunk.fccID), Chunk.dwSize);
@@ -634,7 +635,8 @@ static const IPersistStreamVtbl DirectMusicAudioPath_PersistStream_Vtbl = {
 };
 
 /* for ClassFactory */
-HRESULT WINAPI DMUSIC_CreateDirectMusicAudioPathImpl (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) {
+HRESULT WINAPI create_dmaudiopath(REFIID lpcGUID, void **ppobj)
+{
 	IDirectMusicAudioPathImpl* obj;
 	
 	obj = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectMusicAudioPathImpl));
@@ -649,7 +651,7 @@ HRESULT WINAPI DMUSIC_CreateDirectMusicAudioPathImpl (LPCGUID lpcGUID, LPVOID* p
 	obj->pDesc = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(DMUS_OBJECTDESC));
 	DM_STRUCT_INIT(obj->pDesc);
 	obj->pDesc->dwValidData |= DMUS_OBJ_CLASS;
-	obj->pDesc->guidClass = CLSID_DirectMusicAudioPath;
+	obj->pDesc->guidClass = CLSID_DirectMusicAudioPathConfig;
 	obj->ref = 0; /* will be inited by QueryInterface */
 
 	return IDirectMusicAudioPathImpl_IUnknown_QueryInterface ((LPUNKNOWN)&obj->UnknownVtbl, lpcGUID, ppobj);

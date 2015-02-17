@@ -154,7 +154,7 @@ extern "C" {
 # define DECLSPEC_EXPORT
 #endif
 
-#if defined(__MSC_VER) || defined(__MINGW32__) || defined(__CYGWIN__)
+#if defined(_MSC_VER) || defined(__MINGW32__) || defined(__CYGWIN__)
 # define DECLSPEC_HIDDEN
 #elif defined(__GNUC__) && ((__GNUC__ > 3) || ((__GNUC__ == 3) && (__GNUC_MINOR__ >= 3)))
 # define DECLSPEC_HIDDEN __attribute__((visibility ("hidden")))
@@ -245,26 +245,67 @@ extern "C" {
 #define DUMMYUNIONNAME8  u8
 #endif /* !defined(NONAMELESSUNION) */
 
-#ifndef __C89_NAMELESS
-# if !defined(__WINESRC__) && !defined(WINE_NO_NAMELESS_EXTENSION)
-#  ifdef __GNUC__
-    /* Anonymous structs support starts with gcc 2.96/g++ 2.95 */
-#   if (__GNUC__ > 2) || ((__GNUC__ == 2) && ((__GNUC_MINOR__ > 95) || ((__GNUC_MINOR__ == 95) && defined(__cplusplus))))
-#    define __C89_NAMELESS __extension__
-#   endif
-#  elif defined(_MSC_VER)
-#   define __C89_NAMELESS
+#undef __C89_NAMELESS
+#undef __C89_NAMELESSSTRUCTNAME
+#undef __C89_NAMELESSSTRUCTNAME1
+#undef __C89_NAMELESSSTRUCTNAME2
+#undef __C89_NAMELESSSTRUCTNAME3
+#undef __C89_NAMELESSSTRUCTNAME4
+#undef __C89_NAMELESSSTRUCTNAME5
+#undef __C89_NAMELESSUNIONNAME
+#undef __C89_NAMELESSUNIONNAME1
+#undef __C89_NAMELESSUNIONNAME2
+#undef __C89_NAMELESSUNIONNAME3
+#undef __C89_NAMELESSUNIONNAME4
+#undef __C89_NAMELESSUNIONNAME5
+#undef __C89_NAMELESSUNIONNAME6
+#undef __C89_NAMELESSUNIONNAME7
+#undef __C89_NAMELESSUNIONNAME8
+
+#if !defined(__WINESRC__) && !defined(WINE_NO_NAMELESS_EXTENSION)
+# ifdef __GNUC__
+   /* Anonymous structs support starts with gcc 2.96/g++ 2.95 */
+#  if (__GNUC__ > 2) || ((__GNUC__ == 2) && ((__GNUC_MINOR__ > 95) || ((__GNUC_MINOR__ == 95) && defined(__cplusplus))))
+#   define __C89_NAMELESS __extension__
 #  endif
+# elif defined(_MSC_VER)
+#  define __C89_NAMELESS
 # endif
 #endif
 
 #ifdef __C89_NAMELESS
 #  define __C89_NAMELESSSTRUCTNAME
+#  define __C89_NAMELESSSTRUCTNAME1
+#  define __C89_NAMELESSSTRUCTNAME2
+#  define __C89_NAMELESSSTRUCTNAME3
+#  define __C89_NAMELESSSTRUCTNAME4
+#  define __C89_NAMELESSSTRUCTNAME5
 #  define __C89_NAMELESSUNIONNAME
+#  define __C89_NAMELESSUNIONNAME1
+#  define __C89_NAMELESSUNIONNAME2
+#  define __C89_NAMELESSUNIONNAME3
+#  define __C89_NAMELESSUNIONNAME4
+#  define __C89_NAMELESSUNIONNAME5
+#  define __C89_NAMELESSUNIONNAME6
+#  define __C89_NAMELESSUNIONNAME7
+#  define __C89_NAMELESSUNIONNAME8
 #else
 #  define __C89_NAMELESS
 #  define __C89_NAMELESSSTRUCTNAME DUMMYSTRUCTNAME
+#  define __C89_NAMELESSSTRUCTNAME1 DUMMYSTRUCTNAME1
+#  define __C89_NAMELESSSTRUCTNAME2 DUMMYSTRUCTNAME2
+#  define __C89_NAMELESSSTRUCTNAME3 DUMMYSTRUCTNAME3
+#  define __C89_NAMELESSSTRUCTNAME4 DUMMYSTRUCTNAME4
+#  define __C89_NAMELESSSTRUCTNAME5 DUMMYSTRUCTNAME5
 #  define __C89_NAMELESSUNIONNAME DUMMYUNIONNAME
+#  define __C89_NAMELESSUNIONNAME1 DUMMYUNIONNAME1
+#  define __C89_NAMELESSUNIONNAME2 DUMMYUNIONNAME2
+#  define __C89_NAMELESSUNIONNAME3 DUMMYUNIONNAME3
+#  define __C89_NAMELESSUNIONNAME4 DUMMYUNIONNAME4
+#  define __C89_NAMELESSUNIONNAME5 DUMMYUNIONNAME5
+#  define __C89_NAMELESSUNIONNAME6 DUMMYUNIONNAME6
+#  define __C89_NAMELESSUNIONNAME7 DUMMYUNIONNAME7
+#  define __C89_NAMELESSUNIONNAME8 DUMMYUNIONNAME8
 #endif
 
 /* C99 restrict support */
@@ -335,8 +376,10 @@ extern "C" {
 /* Eliminate Microsoft C/C++ compiler warning 4715 */
 #if defined(_MSC_VER) && (_MSC_VER > 1200)
 # define DEFAULT_UNREACHABLE default: __assume(0)
+#elif defined(__clang__) || (defined(__GNUC__) && ((__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 5))))
+# define DEFAULT_UNREACHABLE default: __builtin_unreachable()
 #else
-# define DEFAULT_UNREACHABLE
+# define DEFAULT_UNREACHABLE default:
 #endif
 
 /* Error Masks */
@@ -405,6 +448,11 @@ typedef wchar_t         WCHAR,      *PWCHAR;
 typedef unsigned short  WCHAR,      *PWCHAR;
 #endif
 
+typedef ULONG           UCSCHAR;
+#define MIN_UCSCHAR                 (0)
+#define MAX_UCSCHAR                 (0x0010ffff)
+#define UCSCHAR_INVALID_CHARACTER   (0xffffffff)
+
 /* 'Extended/Wide' numerical types */
 #ifndef _ULONGLONG_
 # define _ULONGLONG_
@@ -427,20 +475,25 @@ typedef ULONGLONG   DECLSPEC_ALIGN(8) DWORDLONG,   *PDWORDLONG;
 #endif
 
 /* ANSI string types */
-typedef CHAR           *PCH,        *LPCH;
-typedef const CHAR     *PCCH,       *LPCCH;
+typedef CHAR           *PCH,        *LPCH,      *PNZCH;
+typedef const CHAR     *PCCH,       *LPCCH,     *PCNZCH;
 typedef CHAR           *PSTR,       *LPSTR,     *NPSTR;
 typedef const CHAR     *PCSTR,      *LPCSTR;
 typedef CHAR           *PZZSTR;
 typedef const CHAR     *PCZZSTR;
 
 /* Unicode string types */
+typedef const WCHAR    *PCWCHAR,    *LPCUWCHAR, *PCUWCHAR;
 typedef WCHAR          *PWCH,       *LPWCH;
 typedef const WCHAR    *PCWCH,      *LPCWCH;
+typedef WCHAR          *PNZWCH,     *PUNZWCH;
+typedef const WCHAR    *PCNZWCH,    *PCUNZWCH;
 typedef WCHAR          *PWSTR,      *LPWSTR,    *NWPSTR;
 typedef const WCHAR    *PCWSTR,     *LPCWSTR;
-typedef WCHAR          *PZZWSTR;
-typedef const WCHAR    *PCZZWSTR;
+typedef WCHAR          *PZZWSTR,    *PUZZWSTR;
+typedef const WCHAR    *PCZZWSTR,   *PCUZZWSTR;
+typedef PWSTR          *PZPWSTR;
+typedef PCWSTR         *PZPCWSTR;
 
 /* Neutral character and string types */
 /* These are only defined for Winelib, i.e. _not_ defined for
@@ -453,24 +506,41 @@ typedef const WCHAR    *PCZZWSTR;
 typedef WCHAR           TCHAR,      *PTCHAR;
 # define _TCHAR_DEFINED
 #endif
+typedef LPWCH           PTCH,        LPTCH;
+typedef LPCWCH          PCTCH,       LPCTCH;
 typedef LPWSTR          PTSTR,       LPTSTR;
 typedef LPCWSTR         PCTSTR,      LPCTSTR;
-typedef PZZSTR          PZZTSTR;
-typedef PCZZSTR         PCZZTSTR;
-#  define __TEXT(string) L##string
+typedef LPWSTR          PUTSTR,      LPUTSTR;
+typedef LPCWSTR         PCUTSTR,     LPCUTSTR;
+typedef PNZWCH          PNZTCH;
+typedef PUNZWCH         PUNZTCH;
+typedef PCNZWCH         PCNZTCH;
+typedef PCUNZWCH        PCUNZTCH;
+typedef PZZWSTR         PZZTSTR;
+typedef PCZZWSTR        PCZZTSTR;
+typedef PUZZWSTR        PUZZTSTR;
+typedef PCUZZWSTR       PCUZZTSTR;
 # else  /* UNICODE */
 # ifndef _TCHAR_DEFINED
 typedef CHAR            TCHAR,      *PTCHAR;
 # define _TCHAR_DEFINED
 # endif
+typedef LPCH            PTCH,        LPTCH;
+typedef LPCCH           PCTCH,       LPCTCH;
 typedef LPSTR           PTSTR,       LPTSTR;
 typedef LPCSTR          PCTSTR,      LPCTSTR;
-typedef PZZWSTR         PZZTSTR;
-typedef PCZZWSTR        PCZZTSTR;
-#  define __TEXT(string) string
+typedef PNZCH           PNZTCH,      PUNZTCH;
+typedef PCNZCH          PCNZTCH,     PCUNZTCH;
+typedef PZZSTR          PZZTSTR,     PUZZTSTR;
+typedef PCZZSTR         PCZZTSTR,    PCUZZTSTR;
 # endif /* UNICODE */
-# define TEXT(quote) __TEXT(quote)
 #endif   /* WINE_NO_UNICODE_MACROS */
+
+/* UCS string types */
+typedef UCSCHAR         *PUCSCHAR,  *PUUCSCHAR;
+typedef const UCSCHAR   *PCUCSCHAR, *PCUUCSCHAR;
+typedef UCSCHAR         *PUCSSTR,   *PUUCSSTR;
+typedef const UCSCHAR   *PCUCSSTR,  *PCUUCSSTR;
 
 /* Misc common WIN32 types */
 typedef char            CCHAR;
@@ -552,6 +622,8 @@ typedef DWORD FLONG;
 #define DBG_TERMINATE_THREAD        ((DWORD) 0x40010003)
 #define DBG_TERMINATE_PROCESS       ((DWORD) 0x40010004)
 #define DBG_CONTROL_C               ((DWORD) 0x40010005)
+#define DBG_PRINTEXCEPTION_C        ((DWORD) 0x40010006)
+#define DBG_RIPEXCEPTION            ((DWORD) 0x40010007)
 #define DBG_CONTROL_BREAK           ((DWORD) 0x40010008)
 #define DBG_COMMAND_EXCEPTION       ((DWORD) 0x40010009)
 #define DBG_EXCEPTION_NOT_HANDLED   ((DWORD) 0x80010001)
@@ -579,10 +651,8 @@ typedef DWORD FLONG;
 #define PROCESSOR_ARCHITECTURE_MSIL     8
 #define PROCESSOR_ARCHITECTURE_AMD64    9
 #define PROCESSOR_ARCHITECTURE_IA32_ON_WIN64    10
+#define PROCESSOR_ARCHITECTURE_NEUTRAL          11
 #define PROCESSOR_ARCHITECTURE_UNKNOWN	0xFFFF
-
-/* Wine extension */
-#define PROCESSOR_ARCHITECTURE_SPARC    20
 
 /* dwProcessorType */
 #define PROCESSOR_INTEL_386      386
@@ -675,14 +745,14 @@ typedef struct _MEMORY_BASIC_INFORMATION
 #define MAXBYTE       0xff
 #define MAXWORD       0xffff
 #define MAXDWORD      0xffffffff
+#define MAXLONGLONG   (((LONGLONG)0x7fffffff << 32) | 0xffffffff)
 
 #define UNICODE_STRING_MAX_CHARS 32767
 
-#define FIELD_OFFSET(type, field) \
-  ((LONG)(INT_PTR)&(((type *)0)->field))
+#define FIELD_OFFSET(type, field) ((LONG)offsetof(type, field))
 
 #define CONTAINING_RECORD(address, type, field) \
-  ((type *)((PCHAR)(address) - (PCHAR)(&((type *)0)->field)))
+  ((type *)((PCHAR)(address) - offsetof(type, field)))
 
 /* Types */
 
@@ -793,6 +863,16 @@ typedef enum _HEAP_INFORMATION_CLASS {
 #define PF_COMPARE64_EXCHANGE128		15
 #define PF_CHANNELS_ENABLED			16
 #define PF_XSAVE_ENABLED			17
+#define PF_ARM_VFP_32_REGISTERS_AVAILABLE       18
+#define PF_ARM_NEON_INSTRUCTIONS_AVAILABLE      19
+#define PF_SECOND_LEVEL_ADDRESS_TRANSLATION     20
+#define PF_VIRT_FIRMWARE_ENABLED                21
+#define PF_RDWRFSGSBASE_AVAILABLE               22
+#define PF_FASTFAIL_AVAILABLE                   23
+#define PF_ARM_DIVIDE_INSTRUCTION_AVAILABLE     24
+#define PF_ARM_64BIT_LOADSTORE_ATOMIC           25
+#define PF_ARM_EXTERNAL_CACHE_AVAILABLE         26
+#define PF_ARM_FMAC_INSTRUCTIONS_AVAILABLE      27
 
 
 /* Execution state flags */
@@ -1087,8 +1167,8 @@ typedef struct _KNONVOLATILE_CONTEXT_POINTERS
             PM128A Xmm13;
             PM128A Xmm14;
             PM128A Xmm15;
-        } DUMMYSTRUCTNAME1;
-    } DUMMYUNIONNAME1;
+        } DUMMYSTRUCTNAME;
+    } DUMMYUNIONNAME;
 
     union
     {
@@ -1111,12 +1191,15 @@ typedef struct _KNONVOLATILE_CONTEXT_POINTERS
             PULONG64 R13;
             PULONG64 R14;
             PULONG64 R15;
-        } DUMMYSTRUCTNAME2;
+        } DUMMYSTRUCTNAME;
     } DUMMYUNIONNAME2;
 } KNONVOLATILE_CONTEXT_POINTERS, *PKNONVOLATILE_CONTEXT_POINTERS;
 
+typedef PRUNTIME_FUNCTION (CALLBACK *PGET_RUNTIME_FUNCTION_CALLBACK)(DWORD64,PVOID);
+
 BOOLEAN CDECL            RtlAddFunctionTable(RUNTIME_FUNCTION*,DWORD,DWORD64);
 BOOLEAN CDECL            RtlDeleteFunctionTable(RUNTIME_FUNCTION*);
+BOOLEAN CDECL            RtlInstallFunctionTableCallback(DWORD64,DWORD64,DWORD,PGET_RUNTIME_FUNCTION_CALLBACK,PVOID,PCWSTR);
 PRUNTIME_FUNCTION WINAPI RtlLookupFunctionEntry(DWORD64,DWORD64*,UNWIND_HISTORY_TABLE*);
 PVOID WINAPI             RtlVirtualUnwind(ULONG,ULONG64,ULONG64,RUNTIME_FUNCTION*,CONTEXT*,PVOID*,ULONG64*,KNONVOLATILE_CONTEXT_POINTERS*);
 
@@ -1544,15 +1627,56 @@ typedef struct _CONTEXT
 
 /* The following flags control the contents of the CONTEXT structure. */
 
-#define CONTEXT_ARM    0x0000040
+#define CONTEXT_ARM    0x0200000
 #define CONTEXT_CONTROL         (CONTEXT_ARM | 0x00000001)
 #define CONTEXT_INTEGER         (CONTEXT_ARM | 0x00000002)
+#define CONTEXT_FLOATING_POINT  (CONTEXT_ARM | 0x00000004)
+#define CONTEXT_DEBUG_REGISTERS (CONTEXT_ARM | 0x00000008)
 
 #define CONTEXT_FULL (CONTEXT_CONTROL | CONTEXT_INTEGER)
 
 #define EXCEPTION_READ_FAULT    0
 #define EXCEPTION_WRITE_FAULT   1
 #define EXCEPTION_EXECUTE_FAULT 8
+
+typedef struct _RUNTIME_FUNCTION
+{
+    DWORD BeginAddress;
+    union {
+        DWORD UnwindData;
+        struct {
+            DWORD Flag : 2;
+            DWORD FunctionLength : 11;
+            DWORD Ret : 2;
+            DWORD H : 1;
+            DWORD Reg : 3;
+            DWORD R : 1;
+            DWORD L : 1;
+            DWORD C : 1;
+            DWORD StackAdjust : 10;
+        } DUMMYSTRUCTNAME;
+    } DUMMYUNIONNAME;
+} RUNTIME_FUNCTION, *PRUNTIME_FUNCTION;
+
+#define UNWIND_HISTORY_TABLE_SIZE 12
+
+typedef struct _UNWIND_HISTORY_TABLE_ENTRY
+{
+    DWORD ImageBase;
+    PRUNTIME_FUNCTION FunctionEntry;
+} UNWIND_HISTORY_TABLE_ENTRY, *PUNWIND_HISTORY_TABLE_ENTRY;
+
+typedef struct _UNWIND_HISTORY_TABLE
+{
+    DWORD Count;
+    BYTE  LocalHint;
+    BYTE  GlobalHint;
+    BYTE  Search;
+    BYTE  Once;
+    DWORD LowAddress;
+    DWORD HighAddress;
+    UNWIND_HISTORY_TABLE_ENTRY Entry[UNWIND_HISTORY_TABLE_SIZE];
+} UNWIND_HISTORY_TABLE, *PUNWIND_HISTORY_TABLE;
 
 typedef struct _CONTEXT {
 	/* The flags values within this flag control the contents of
@@ -1596,7 +1720,80 @@ typedef struct _CONTEXT {
 	ULONG Cpsr;
 } CONTEXT;
 
+BOOLEAN CDECL            RtlAddFunctionTable(RUNTIME_FUNCTION*,DWORD,DWORD);
+BOOLEAN CDECL            RtlDeleteFunctionTable(RUNTIME_FUNCTION*);
+PRUNTIME_FUNCTION WINAPI RtlLookupFunctionEntry(ULONG_PTR,DWORD*,UNWIND_HISTORY_TABLE*);
+
 #endif /* __arm__ */
+
+#ifdef __aarch64__
+/*
+ * FIXME:
+ *
+ * There is not yet an official CONTEXT structure defined for the AArch64
+ * architecture, so I just made one up.
+ *
+ */
+
+#define CONTEXT_ARM64           0x2000000
+#define CONTEXT_CONTROL         (CONTEXT_ARM64 | 0x00000001)
+#define CONTEXT_INTEGER         (CONTEXT_ARM64 | 0x00000002)
+#define CONTEXT_FLOATING_POINT  (CONTEXT_ARM64 | 0x00000004)
+#define CONTEXT_DEBUG_REGISTERS (CONTEXT_ARM64 | 0x00000008)
+
+#define CONTEXT_FULL (CONTEXT_CONTROL | CONTEXT_INTEGER)
+
+#define EXCEPTION_READ_FAULT    0
+#define EXCEPTION_WRITE_FAULT   1
+#define EXCEPTION_EXECUTE_FAULT 8
+
+typedef struct _CONTEXT {
+    ULONG ContextFlags;
+
+    /* This section is specified/returned if the ContextFlags word contains
+       the flag CONTEXT_INTEGER. */
+    ULONGLONG X0;
+    ULONGLONG X1;
+    ULONGLONG X2;
+    ULONGLONG X3;
+    ULONGLONG X4;
+    ULONGLONG X5;
+    ULONGLONG X6;
+    ULONGLONG X7;
+    ULONGLONG X8;
+    ULONGLONG X9;
+    ULONGLONG X10;
+    ULONGLONG X11;
+    ULONGLONG X12;
+    ULONGLONG X13;
+    ULONGLONG X14;
+    ULONGLONG X15;
+    ULONGLONG X16;
+    ULONGLONG X17;
+    ULONGLONG X18;
+    ULONGLONG X19;
+    ULONGLONG X20;
+    ULONGLONG X21;
+    ULONGLONG X22;
+    ULONGLONG X23;
+    ULONGLONG X24;
+    ULONGLONG X25;
+    ULONGLONG X26;
+    ULONGLONG X27;
+    ULONGLONG X28;
+    ULONGLONG X29;
+    ULONGLONG X30;
+
+    /* These are selected by CONTEXT_CONTROL */
+    ULONGLONG Sp;
+    ULONGLONG Pc;
+    ULONGLONG PState;
+
+    /* These are selected by CONTEXT_FLOATING_POINT */
+    /* FIXME */
+} CONTEXT;
+
+#endif /* __aarch64__ */
 
 
 /* Mips context definitions */
@@ -1831,88 +2028,6 @@ typedef struct _STACK_FRAME_HEADER
 
 #endif  /* __powerpc__ */
 
-#ifdef __sparc__
-
-/*
- * FIXME:
- *
- * There is no official CONTEXT structure defined for the SPARC
- * architecture, so I just made one up.
- *
- * This structure is valid only for 32-bit SPARC architectures,
- * not for 64-bit SPARC.
- *
- * Note that this structure contains only the 'top-level' registers;
- * the rest of the register window chain is not visible.
- *
- * The layout follows the Solaris 'prgregset_t' structure.
- *
- */
-
-#define CONTEXT_SPARC            0x10000000
-
-#define CONTEXT_CONTROL         (CONTEXT_SPARC | 0x00000001)
-#define CONTEXT_FLOATING_POINT  (CONTEXT_SPARC | 0x00000002)
-#define CONTEXT_INTEGER         (CONTEXT_SPARC | 0x00000004)
-
-#define CONTEXT_FULL (CONTEXT_CONTROL | CONTEXT_FLOATING_POINT | CONTEXT_INTEGER)
-
-#define EXCEPTION_READ_FAULT    0
-#define EXCEPTION_WRITE_FAULT   1
-#define EXCEPTION_EXECUTE_FAULT 8
-
-typedef struct _CONTEXT
-{
-    DWORD ContextFlags;
-
-    /* These are selected by CONTEXT_INTEGER */
-    DWORD g0;
-    DWORD g1;
-    DWORD g2;
-    DWORD g3;
-    DWORD g4;
-    DWORD g5;
-    DWORD g6;
-    DWORD g7;
-    DWORD o0;
-    DWORD o1;
-    DWORD o2;
-    DWORD o3;
-    DWORD o4;
-    DWORD o5;
-    DWORD o6;
-    DWORD o7;
-    DWORD l0;
-    DWORD l1;
-    DWORD l2;
-    DWORD l3;
-    DWORD l4;
-    DWORD l5;
-    DWORD l6;
-    DWORD l7;
-    DWORD i0;
-    DWORD i1;
-    DWORD i2;
-    DWORD i3;
-    DWORD i4;
-    DWORD i5;
-    DWORD i6;
-    DWORD i7;
-
-    /* These are selected by CONTEXT_CONTROL */
-    DWORD psr;
-    DWORD pc;
-    DWORD npc;
-    DWORD y;
-    DWORD wim;
-    DWORD tbr;
-
-    /* FIXME: floating point registers missing */
-
-} CONTEXT;
-
-#endif  /* __sparc__ */
-
 #if !defined(CONTEXT_FULL) && !defined(RC_INVOKED)
 #error You need to define a CONTEXT for your CPU
 #endif
@@ -1924,46 +2039,92 @@ NTSYSAPI void WINAPI RtlCaptureContext(CONTEXT*);
 /*
  * Product types
  */
-#define PRODUCT_UNLICENSED                              0xABCDABCD
-#define PRODUCT_BUSINESS                                0x00000006
-#define PRODUCT_BUSINESS_N                              0x00000010
-#define PRODUCT_CLUSTER_SERVER                          0x00000012
-#define PRODUCT_DATACENTER_SERVER                       0x00000008
-#define PRODUCT_DATACENTER_SERVER_CORE                  0x0000000C
-#define PRODUCT_DATACENTER_SERVER_CORE_V                0x00000027
-#define PRODUCT_SERVER_V                                0x00000025
-#define PRODUCT_ENTERPRISE                              0x00000004
-#define PRODUCT_ENTERPRISE_N                            0x0000001B
-#define PRODUCT_ENTERPRISE_SERVER                       0x0000000A
-#define PRODUCT_ENTERPRISE_SERVER_CORE                  0x0000000E
-#define PRODUCT_ENTERPRISE_SERVER_CORE_V                0x00000029
-#define PRODUCT_ENTERPRISE_SERVER_IA64                  0x0000000F
-#define PRODUCT_ENTERPRISE_SERVER_V                     0x00000026
+#define PRODUCT_UNDEFINED                               0x00000000
+#define PRODUCT_ULTIMATE                                0x00000001
 #define PRODUCT_HOME_BASIC                              0x00000002
-#define PRODUCT_HOME_BASIC_N                            0x00000005
 #define PRODUCT_HOME_PREMIUM                            0x00000003
-#define PRODUCT_HOME_PREMIUM_N                          0x0000001A
-#define PRODUCT_HYPERV                                  0x0000002A
-#define PRODUCT_MEDIUMBUSINESS_SERVER_MANAGEMENT        0x0000001E
-#define PRODUCT_MEDIUMBUSINESS_SERVER_MESSAGING         0x00000020
-#define PRODUCT_MEDIUMBUSINESS_SERVER_SECURITY          0x0000001F
-#define PRODUCT_SERVER_FOR_SMALLBUSINESS                0x00000018
-#define PRODUCT_SERVER_FOR_SMALLBUSINESS_V              0x00000023
-#define PRODUCT_SMALLBUSINESS_SERVER                    0x00000009
+#define PRODUCT_ENTERPRISE                              0x00000004
+#define PRODUCT_HOME_BASIC_N                            0x00000005
+#define PRODUCT_BUSINESS                                0x00000006
 #define PRODUCT_STANDARD_SERVER                         0x00000007
-#define PRODUCT_STANDARD_SERVER_CORE                    0x0000000D
-#define PRODUCT_STANDARD_SERVER_CORE_V                  0x00000028
-#define PRODUCT_STANDARD_SERVER_V                       0x00000024
+#define PRODUCT_DATACENTER_SERVER                       0x00000008
+#define PRODUCT_SMALLBUSINESS_SERVER                    0x00000009
+#define PRODUCT_ENTERPRISE_SERVER                       0x0000000A
 #define PRODUCT_STARTER                                 0x0000000B
-#define PRODUCT_STORAGE_ENTERPRISE_SERVER               0x00000017
+#define PRODUCT_DATACENTER_SERVER_CORE                  0x0000000C
+#define PRODUCT_STANDARD_SERVER_CORE                    0x0000000D
+#define PRODUCT_ENTERPRISE_SERVER_CORE                  0x0000000E
+#define PRODUCT_ENTERPRISE_SERVER_IA64                  0x0000000F
+#define PRODUCT_BUSINESS_N                              0x00000010
+#define PRODUCT_WEB_SERVER                              0x00000011
+#define PRODUCT_CLUSTER_SERVER                          0x00000012
+#define PRODUCT_HOME_SERVER                             0x00000013
 #define PRODUCT_STORAGE_EXPRESS_SERVER                  0x00000014
 #define PRODUCT_STORAGE_STANDARD_SERVER                 0x00000015
 #define PRODUCT_STORAGE_WORKGROUP_SERVER                0x00000016
-#define PRODUCT_UNDEFINED                               0x00000000
-#define PRODUCT_ULTIMATE                                0x00000001
+#define PRODUCT_STORAGE_ENTERPRISE_SERVER               0x00000017
+#define PRODUCT_SERVER_FOR_SMALLBUSINESS                0x00000018
+#define PRODUCT_SMALLBUSINESS_SERVER_PREMIUM            0x00000019
+#define PRODUCT_HOME_PREMIUM_N                          0x0000001A
+#define PRODUCT_ENTERPRISE_N                            0x0000001B
 #define PRODUCT_ULTIMATE_N                              0x0000001C
-#define PRODUCT_WEB_SERVER                              0x00000011
 #define PRODUCT_WEB_SERVER_CORE                         0x0000001D
+#define PRODUCT_MEDIUMBUSINESS_SERVER_MANAGEMENT        0x0000001E
+#define PRODUCT_MEDIUMBUSINESS_SERVER_SECURITY          0x0000001F
+#define PRODUCT_MEDIUMBUSINESS_SERVER_MESSAGING         0x00000020
+#define PRODUCT_SERVER_FOUNDATION                       0x00000021
+#define PRODUCT_HOME_PREMIUM_SERVER                     0x00000022
+#define PRODUCT_SERVER_FOR_SMALLBUSINESS_V              0x00000023
+#define PRODUCT_STANDARD_SERVER_V                       0x00000024
+#define PRODUCT_DATACENTER_SERVER_V                     0x00000025
+#define PRODUCT_SERVER_V                                0x00000025
+#define PRODUCT_ENTERPRISE_SERVER_V                     0x00000026
+#define PRODUCT_DATACENTER_SERVER_CORE_V                0x00000027
+#define PRODUCT_STANDARD_SERVER_CORE_V                  0x00000028
+#define PRODUCT_ENTERPRISE_SERVER_CORE_V                0x00000029
+#define PRODUCT_HYPERV                                  0x0000002A
+#define PRODUCT_STORAGE_EXPRESS_SERVER_CORE             0x0000002B
+#define PRODUCT_STORAGE_STANDARD_SERVER_CORE            0x0000002C
+#define PRODUCT_STORAGE_WORKGROUP_SERVER_CORE           0x0000002D
+#define PRODUCT_STORAGE_ENTERPRISE_SERVER_CORE          0x0000002E
+#define PRODUCT_STARTER_N                               0x0000002F
+#define PRODUCT_PROFESSIONAL                            0x00000030
+#define PRODUCT_PROFESSIONAL_N                          0x00000031
+#define PRODUCT_SB_SOLUTION_SERVER                      0x00000032
+#define PRODUCT_SERVER_FOR_SB_SOLUTIONS                 0x00000033
+#define PRODUCT_STANDARD_SERVER_SOLUTIONS               0x00000034
+#define PRODUCT_STANDARD_SERVER_SOLUTIONS_CORE          0x00000035
+#define PRODUCT_SB_SOLUTION_SERVER_EM                   0x00000036
+#define PRODUCT_SERVER_FOR_SB_SOLUTIONS_EM              0x00000037
+#define PRODUCT_SOLUTION_EMBEDDEDSERVER                 0x00000038
+#define PRODUCT_ESSENTIALBUSINESS_SERVER_MGMT           0x0000003B
+#define PRODUCT_ESSENTIALBUSINESS_SERVER_ADDL           0x0000003C
+#define PRODUCT_ESSENTIALBUSINESS_SERVER_MGMTSVC        0x0000003D
+#define PRODUCT_ESSENTIALBUSINESS_SERVER_ADDLSVC        0x0000003E
+#define PRODUCT_SMALLBUSINESS_SERVER_PREMIUM_CORE       0x0000003F
+#define PRODUCT_CLUSTER_SERVER_V                        0x00000040
+#define PRODUCT_EMBEDDED                                0x00000041
+#define PRODUCT_STARTER_E                               0x00000042
+#define PRODUCT_HOME_BASIC_E                            0x00000043
+#define PRODUCT_HOME_PREMIUM_E                          0x00000044
+#define PRODUCT_PROFESSIONAL_E                          0x00000045
+#define PRODUCT_ENTERPRISE_E                            0x00000046
+#define PRODUCT_ULTIMATE_E                              0x00000047
+#define PRODUCT_ENTERPRISE_EVALUATION                   0x00000048
+#define PRODUCT_MULTIPOINT_STANDARD_SERVER              0x0000004C
+#define PRODUCT_MULTIPOINT_PREMIUM_SERVER               0x0000004D
+#define PRODUCT_STANDARD_EVALUATION_SERVER              0x0000004F
+#define PRODUCT_DATACENTER_EVALUATION_SERVER            0x00000050
+#define PRODUCT_ENTERPRISE_N_EVALUATION                 0x00000054
+#define PRODUCT_STORAGE_WORKGROUP_EVALUATION_SERVER     0x0000005F
+#define PRODUCT_STORAGE_STANDARD_EVALUATION_SERVER      0x00000060
+#define PRODUCT_CORE_ARM                                0x00000061
+#define PRODUCT_CORE_N                                  0x00000062
+#define PRODUCT_CORE_COUNTRYSPECIFIC                    0x00000063
+#define PRODUCT_CORE_LANGUAGESPECIFIC                   0x00000064
+#define PRODUCT_CORE                                    0x00000065
+#define PRODUCT_PROFESSIONAL_WMC                        0x00000067
+#define PRODUCT_UNLICENSED                              0xABCDABCD
 
 
 /*
@@ -1988,414 +2149,14 @@ NTSYSAPI void WINAPI RtlCaptureContext(CONTEXT*);
 #define LOCALE_CUSTOM_DEFAULT      (MAKELCID(MAKELANGID(LANG_NEUTRAL,SUBLANG_CUSTOM_DEFAULT),SORT_DEFAULT))
 #define LOCALE_CUSTOM_UNSPECIFIED  (MAKELCID(MAKELANGID(LANG_NEUTRAL,SUBLANG_CUSTOM_UNSPECIFIED),SORT_DEFAULT))
 #define LOCALE_CUSTOM_UI_DEFAULT   (MAKELCID(MAKELANGID(LANG_NEUTRAL,SUBLANG_UI_CUSTOM_DEFAULT),SORT_DEFAULT))
+#define LOCALE_NAME_MAX_LENGTH     85
 
 
 #define UNREFERENCED_PARAMETER(u)	(void)(u)
 #define DBG_UNREFERENCED_PARAMETER(u)	(void)(u)
 #define DBG_UNREFERENCED_LOCAL_VARIABLE(u) (void)(u)
 
-#define LANG_NEUTRAL        0x00
-#define LANG_INVARIANT      0x7f
-
-#define LANG_AFRIKAANS      0x36
-#define LANG_ALBANIAN       0x1c
-#define LANG_ALSATIAN       0x84
-#define LANG_AMHARIC        0x5e
-#define LANG_ARABIC         0x01
-#define LANG_ARMENIAN       0x2b
-#define LANG_ASSAMESE       0x4d
-#define LANG_AZERI          0x2c
-#define LANG_BASHKIR        0x6d
-#define LANG_BASQUE         0x2d
-#define LANG_BELARUSIAN     0x23
-#define LANG_BENGALI        0x45
-#define LANG_BOSNIAN        0x1a
-#define LANG_BOSNIAN_NEUTRAL      0x781a
-#define LANG_BRETON         0x7e
-#define LANG_BULGARIAN      0x02
-#define LANG_CATALAN        0x03
-#define LANG_CHINESE        0x04
-#define LANG_CHINESE_SIMPLIFIED   0x0004
-#define LANG_CHINESE_TRADITIONAL  0x7c04
-#define LANG_CORSICAN       0x83
-#define LANG_CROATIAN       0x1a
-#define LANG_CZECH          0x05
-#define LANG_DANISH         0x06
-#define LANG_DARI           0x8c
-#define LANG_DIVEHI         0x65
-#define LANG_DUTCH          0x13
-#define LANG_ENGLISH        0x09
-#define LANG_ESTONIAN       0x25
-#define LANG_FAEROESE       0x38
-#define LANG_FARSI          LANG_PERSIAN
-#define LANG_FILIPINO       0x64
-#define LANG_FINNISH        0x0b
-#define LANG_FRENCH         0x0c
-#define LANG_FRISIAN        0x62
-#define LANG_GALICIAN       0x56
-#define LANG_GEORGIAN       0x37
-#define LANG_GERMAN         0x07
-#define LANG_GREEK          0x08
-#define LANG_GREENLANDIC    0x6f
-#define LANG_GUJARATI       0x47
-#define LANG_HAUSA          0x68
-#define LANG_HEBREW         0x0d
-#define LANG_HINDI          0x39
-#define LANG_HUNGARIAN      0x0e
-#define LANG_ICELANDIC      0x0f
-#define LANG_IGBO           0x70
-#define LANG_INDONESIAN     0x21
-#define LANG_INUKTITUT      0x5d
-#define LANG_IRISH          0x3c
-#define LANG_ITALIAN        0x10
-#define LANG_JAPANESE       0x11
-#define LANG_KANNADA        0x4b
-#define LANG_KASHMIRI       0x60
-#define LANG_KAZAK          0x3f
-#define LANG_KHMER          0x53
-#define LANG_KICHE          0x86
-#define LANG_KINYARWANDA    0x87
-#define LANG_KONKANI        0x57
-#define LANG_KOREAN         0x12
-#define LANG_KYRGYZ         0x40
-#define LANG_LAO            0x54
-#define LANG_LATVIAN        0x26
-#define LANG_LITHUANIAN     0x27
-#define LANG_LOWER_SORBIAN  0x2e
-#define LANG_LUXEMBOURGISH  0x6e
-#define LANG_MACEDONIAN     0x2f
-#define LANG_MALAY          0x3e
-#define LANG_MALAYALAM      0x4c
-#define LANG_MALTESE        0x3a
-#define LANG_MANIPURI       0x58
-#define LANG_MAORI          0x81
-#define LANG_MAPUDUNGUN     0x7a
-#define LANG_MARATHI        0x4e
-#define LANG_MOHAWK         0x7c
-#define LANG_MONGOLIAN      0x50
-#define LANG_NEPALI         0x61
-#define LANG_NORWEGIAN      0x14
-#define LANG_OCCITAN        0x82
-#define LANG_ORIYA          0x48
-#define LANG_PASHTO         0x63
-#define LANG_PERSIAN        0x29
-#define LANG_POLISH         0x15
-#define LANG_PORTUGUESE     0x16
-#define LANG_PUNJABI        0x46
-#define LANG_QUECHUA        0x6b
-#define LANG_ROMANIAN       0x18
-#define LANG_ROMANSH        0x17
-#define LANG_RUSSIAN        0x19
-#define LANG_SAMI           0x3b
-#define LANG_SANSKRIT       0x4f
-#define LANG_SERBIAN        0x1a
-#define LANG_SERBIAN_NEUTRAL      0x7c1a
-#define LANG_SINDHI         0x59
-#define LANG_SINHALESE      0x5b
-#define LANG_SLOVAK         0x1b
-#define LANG_SLOVENIAN      0x24
-#define LANG_SOTHO          0x6c
-#define LANG_SPANISH        0x0a
-#define LANG_SWAHILI        0x41
-#define LANG_SWEDISH        0x1d
-#define LANG_SYRIAC         0x5a
-#define LANG_TAJIK          0x28
-#define LANG_TAMAZIGHT      0x5f
-#define LANG_TAMIL          0x49
-#define LANG_TATAR          0x44
-#define LANG_TELUGU         0x4a
-#define LANG_THAI           0x1e
-#define LANG_TIBETAN        0x51
-#define LANG_TIGRIGNA       0x73
-#define LANG_TSWANA         0x32
-#define LANG_TURKISH        0x1f
-#define LANG_TURKMEN        0x42
-#define LANG_UIGHUR         0x80
-#define LANG_UKRAINIAN      0x22
-#define LANG_UPPER_SORBIAN  0x2e
-#define LANG_URDU           0x20
-#define LANG_UZBEK          0x43
-#define LANG_VIETNAMESE     0x2a
-#define LANG_WELSH          0x52
-#define LANG_WOLOF          0x88
-#define LANG_XHOSA          0x34
-#define LANG_YAKUT          0x85
-#define LANG_YI             0x78
-#define LANG_YORUBA         0x6a
-#define LANG_ZULU           0x35
-
-/* These are documented by the MSDN but are missing from the Windows header */
-#define LANG_MALAGASY       0x8d
-
-/* FIXME: these are not defined anywhere */
-#define LANG_SUTU           0x30
-#define LANG_TSONGA         0x31
-#define LANG_VENDA          0x33
-
-/* non standard; keep the number high enough (but < 0xff) */
-#define LANG_ESPERANTO			 0x8f
-#define LANG_WALON			 0x90
-#define LANG_CORNISH                     0x91
-#define LANG_GAELIC                      0x94
-
-/* Sublanguage definitions */
-#define SUBLANG_NEUTRAL                  0x00    /* language neutral */
-#define SUBLANG_DEFAULT                  0x01    /* user default */
-#define SUBLANG_SYS_DEFAULT              0x02    /* system default */
-#define SUBLANG_CUSTOM_DEFAULT           0x03
-#define SUBLANG_CUSTOM_UNSPECIFIED       0x04
-#define SUBLANG_UI_CUSTOM_DEFAULT        0x05
-
-#define SUBLANG_AFRIKAANS_SOUTH_AFRICA     0x01
-#define SUBLANG_ALBANIAN_ALBANIA           0x01
-#define SUBLANG_ALSATIAN_FRANCE            0x01
-#define SUBLANG_AMHARIC_ETHIOPIA           0x01
-#define SUBLANG_ARABIC_SAUDI_ARABIA        0x01
-#define SUBLANG_ARABIC_IRAQ                0x02
-#define SUBLANG_ARABIC_EGYPT               0x03
-#define SUBLANG_ARABIC_LIBYA               0x04
-#define SUBLANG_ARABIC_ALGERIA             0x05
-#define SUBLANG_ARABIC_MOROCCO             0x06
-#define SUBLANG_ARABIC_TUNISIA             0x07
-#define SUBLANG_ARABIC_OMAN                0x08
-#define SUBLANG_ARABIC_YEMEN               0x09
-#define SUBLANG_ARABIC_SYRIA               0x0a
-#define SUBLANG_ARABIC_JORDAN              0x0b
-#define SUBLANG_ARABIC_LEBANON             0x0c
-#define SUBLANG_ARABIC_KUWAIT              0x0d
-#define SUBLANG_ARABIC_UAE                 0x0e
-#define SUBLANG_ARABIC_BAHRAIN             0x0f
-#define SUBLANG_ARABIC_QATAR               0x10
-#define SUBLANG_ARMENIAN_ARMENIA           0x01
-#define SUBLANG_ASSAMESE_INDIA             0x01
-#define SUBLANG_AZERI_LATIN                0x01
-#define SUBLANG_AZERI_CYRILLIC             0x02
-#define SUBLANG_BASHKIR_RUSSIA             0x01
-#define SUBLANG_BASQUE_BASQUE              0x01
-#define SUBLANG_BELARUSIAN_BELARUS         0x01
-#define SUBLANG_BENGALI_INDIA              0x01
-#define SUBLANG_BENGALI_BANGLADESH         0x02
-#define SUBLANG_BOSNIAN_BOSNIA_HERZEGOVINA_LATIN 0x05
-#define SUBLANG_BOSNIAN_BOSNIA_HERZEGOVINA_CYRILLIC 0x08
-#define SUBLANG_BRETON_FRANCE              0x01
-#define SUBLANG_BULGARIAN_BULGARIA         0x01
-#define SUBLANG_CATALAN_CATALAN            0x01
-#define SUBLANG_CHINESE_TRADITIONAL        0x01
-#define SUBLANG_CHINESE_SIMPLIFIED         0x02
-#define SUBLANG_CHINESE_HONGKONG           0x03
-#define SUBLANG_CHINESE_SINGAPORE          0x04
-#define SUBLANG_CHINESE_MACAU              0x05
-#define SUBLANG_CORSICAN_FRANCE            0x01
-#define SUBLANG_CROATIAN_CROATIA           0x01
-#define SUBLANG_CROATIAN_BOSNIA_HERZEGOVINA_LATIN 0x04
-#define SUBLANG_CZECH_CZECH_REPUBLIC       0x01
-#define SUBLANG_DANISH_DENMARK             0x01
-#define SUBLANG_DARI_AFGHANISTAN           0x01
-#define SUBLANG_DIVEHI_MALDIVES            0x01
-#define SUBLANG_DUTCH                      0x01
-#define SUBLANG_DUTCH_BELGIAN              0x02
-#define SUBLANG_ENGLISH_US                 0x01
-#define SUBLANG_ENGLISH_UK                 0x02
-#define SUBLANG_ENGLISH_AUS                0x03
-#define SUBLANG_ENGLISH_CAN                0x04
-#define SUBLANG_ENGLISH_NZ                 0x05
-#define SUBLANG_ENGLISH_EIRE               0x06
-#define SUBLANG_ENGLISH_SOUTH_AFRICA       0x07
-#define SUBLANG_ENGLISH_JAMAICA            0x08
-#define SUBLANG_ENGLISH_CARIBBEAN          0x09
-#define SUBLANG_ENGLISH_BELIZE             0x0a
-#define SUBLANG_ENGLISH_TRINIDAD           0x0b
-#define SUBLANG_ENGLISH_ZIMBABWE           0x0c
-#define SUBLANG_ENGLISH_PHILIPPINES        0x0d
-#define SUBLANG_ENGLISH_INDIA              0x10
-#define SUBLANG_ENGLISH_MALAYSIA           0x11
-#define SUBLANG_ENGLISH_SINGAPORE          0x12
-#define SUBLANG_ESTONIAN_ESTONIA           0x01
-#define SUBLANG_FAEROESE_FAROE_ISLANDS     0x01
-#define SUBLANG_FILIPINO_PHILIPPINES       0x01
-#define SUBLANG_FINNISH_FINLAND            0x01
-#define SUBLANG_FRENCH                     0x01
-#define SUBLANG_FRENCH_BELGIAN             0x02
-#define SUBLANG_FRENCH_CANADIAN            0x03
-#define SUBLANG_FRENCH_SWISS               0x04
-#define SUBLANG_FRENCH_LUXEMBOURG          0x05
-#define SUBLANG_FRENCH_MONACO              0x06
-#define SUBLANG_FRISIAN_NETHERLANDS        0x01
-#define SUBLANG_GALICIAN_GALICIAN          0x01
-#define SUBLANG_GEORGIAN_GEORGIA           0x01
-#define SUBLANG_GERMAN                     0x01
-#define SUBLANG_GERMAN_SWISS               0x02
-#define SUBLANG_GERMAN_AUSTRIAN            0x03
-#define SUBLANG_GERMAN_LUXEMBOURG          0x04
-#define SUBLANG_GERMAN_LIECHTENSTEIN       0x05
-#define SUBLANG_GREEK_GREECE               0x01
-#define SUBLANG_GREENLANDIC_GREENLAND      0x01
-#define SUBLANG_GUJARATI_INDIA             0x01
-#define SUBLANG_HAUSA_NIGERIA_LATIN        0x01
-#define SUBLANG_HEBREW_ISRAEL              0x01
-#define SUBLANG_HINDI_INDIA                0x01
-#define SUBLANG_HUNGARIAN_HUNGARY          0x01
-#define SUBLANG_ICELANDIC_ICELAND          0x01
-#define SUBLANG_IGBO_NIGERIA               0x01
-#define SUBLANG_INDONESIAN_INDONESIA       0x01
-#define SUBLANG_INUKTITUT_CANADA           0x01
-#define SUBLANG_INUKTITUT_CANADA_LATIN     0x02
-#define SUBLANG_IRISH_IRELAND              0x02
-#define SUBLANG_ITALIAN                    0x01
-#define SUBLANG_ITALIAN_SWISS              0x02
-#define SUBLANG_JAPANESE_JAPAN             0x01
-#define SUBLANG_KANNADA_INDIA              0x01
-#define SUBLANG_KASHMIRI_SASIA             0x02
-#define SUBLANG_KASHMIRI_INDIA             0x02
-#define SUBLANG_KAZAK_KAZAKHSTAN           0x01
-#define SUBLANG_KHMER_CAMBODIA             0x01
-#define SUBLANG_KICHE_GUATEMALA            0x01
-#define SUBLANG_KINYARWANDA_RWANDA         0X01
-#define SUBLANG_KONKANI_INDIA              0x01
-#define SUBLANG_KOREAN                     0x01
-#define SUBLANG_KYRGYZ_KYRGYZSTAN          0x01
-#define SUBLANG_LAO_LAO                    0x01
-#define SUBLANG_LATVIAN_LATVIA             0x01
-#define SUBLANG_LITHUANIAN_LITHUANIA       0x01
-#define SUBLANG_LOWER_SORBIAN_GERMANY      0x02
-#define SUBLANG_LUXEMBOURGISH_LUXEMBOURG   0x01
-#define SUBLANG_MACEDONIAN_MACEDONIA       0x01
-#define SUBLANG_MALAY_MALAYSIA             0x01
-#define SUBLANG_MALAY_BRUNEI_DARUSSALAM    0x02
-#define SUBLANG_MALAYALAM_INDIA            0x01
-#define SUBLANG_MALTESE_MALTA              0x01
-#define SUBLANG_MAORI_NEW_ZEALAND          0x01
-#define SUBLANG_MAPUDUNGUN_CHILE           0x01
-#define SUBLANG_MARATHI_INDIA              0x01
-#define SUBLANG_MOHAWK_MOHAWK              0x01
-#define SUBLANG_MONGOLIAN_CYRILLIC_MONGOLIA 0x01
-#define SUBLANG_MONGOLIAN_PRC              0x02
-#define SUBLANG_NEPALI_INDIA               0x02
-#define SUBLANG_NEPALI_NEPAL               0x01
-#define SUBLANG_NORWEGIAN_BOKMAL           0x01
-#define SUBLANG_NORWEGIAN_NYNORSK          0x02
-#define SUBLANG_OCCITAN_FRANCE             0x01
-#define SUBLANG_ORIYA_INDIA                0x01
-#define SUBLANG_PASHTO_AFGHANISTAN         0x01
-#define SUBLANG_PERSIAN_IRAN               0x01
-#define SUBLANG_POLISH_POLAND              0x01
-#define SUBLANG_PORTUGUESE                 0x02
-#define SUBLANG_PORTUGUESE_BRAZILIAN       0x01
-#define SUBLANG_PUNJABI_INDIA              0x01
-#define SUBLANG_QUECHUA_BOLIVIA            0x01
-#define SUBLANG_QUECHUA_ECUADOR            0x02
-#define SUBLANG_QUECHUA_PERU               0x03
-#define SUBLANG_ROMANIAN_ROMANIA           0x01
-#define SUBLANG_ROMANSH_SWITZERLAND        0x01
-#define SUBLANG_RUSSIAN_RUSSIA             0x01
-#define SUBLANG_SAMI_NORTHERN_NORWAY       0x01
-#define SUBLANG_SAMI_NORTHERN_SWEDEN       0x02
-#define SUBLANG_SAMI_NORTHERN_FINLAND      0x03
-#define SUBLANG_SAMI_LULE_NORWAY           0x04
-#define SUBLANG_SAMI_LULE_SWEDEN           0x05
-#define SUBLANG_SAMI_SOUTHERN_NORWAY       0x06
-#define SUBLANG_SAMI_SOUTHERN_SWEDEN       0x07
-#define SUBLANG_SAMI_SKOLT_FINLAND         0x08
-#define SUBLANG_SAMI_INARI_FINLAND         0x09
-#define SUBLANG_SANSKRIT_INDIA             0x01
-#define SUBLANG_SERBIAN_BOSNIA_HERZEGOVINA_LATIN 0x06
-#define SUBLANG_SERBIAN_BOSNIA_HERZEGOVINA_CYRILLIC 0x07
-#define SUBLANG_SERBIAN_CROATIA            0x01
-#define SUBLANG_SERBIAN_LATIN              0x02
-#define SUBLANG_SERBIAN_CYRILLIC           0x03
-#define SUBLANG_SINDHI_AFGHANISTAN         0x02
-#define SUBLANG_SINHALESE_SRI_LANKA        0x01
-#define SUBLANG_SLOVAK_SLOVAKIA            0x01
-#define SUBLANG_SLOVENIAN_SLOVENIA         0x01
-#define SUBLANG_SOTHO_NORTHERN_SOUTH_AFRICA 0x01
-#define SUBLANG_SPANISH                    0x01
-#define SUBLANG_SPANISH_MEXICAN            0x02
-#define SUBLANG_SPANISH_MODERN             0x03
-#define SUBLANG_SPANISH_GUATEMALA          0x04
-#define SUBLANG_SPANISH_COSTA_RICA         0x05
-#define SUBLANG_SPANISH_PANAMA             0x06
-#define SUBLANG_SPANISH_DOMINICAN_REPUBLIC 0x07
-#define SUBLANG_SPANISH_VENEZUELA          0x08
-#define SUBLANG_SPANISH_COLOMBIA           0x09
-#define SUBLANG_SPANISH_PERU               0x0a
-#define SUBLANG_SPANISH_ARGENTINA          0x0b
-#define SUBLANG_SPANISH_ECUADOR            0x0c
-#define SUBLANG_SPANISH_CHILE              0x0d
-#define SUBLANG_SPANISH_URUGUAY            0x0e
-#define SUBLANG_SPANISH_PARAGUAY           0x0f
-#define SUBLANG_SPANISH_BOLIVIA            0x10
-#define SUBLANG_SPANISH_EL_SALVADOR        0x11
-#define SUBLANG_SPANISH_HONDURAS           0x12
-#define SUBLANG_SPANISH_NICARAGUA          0x13
-#define SUBLANG_SPANISH_PUERTO_RICO        0x14
-#define SUBLANG_SPANISH_US                 0x15
-#define SUBLANG_SWAHILI_KENYA              0x01
-#define SUBLANG_SWEDISH                    0x01
-#define SUBLANG_SWEDISH_FINLAND            0x02
-#define SUBLANG_SYRIAC_SYRIA               0x01
-#define SUBLANG_TAJIK_TAJIKISTAN           0x01
-#define SUBLANG_TAMAZIGHT_ALGERIA_LATIN    0x02
-#define SUBLANG_TAMIL_INDIA                0x01
-#define SUBLANG_TATAR_RUSSIA               0x01
-#define SUBLANG_TELUGU_INDIA               0x01
-#define SUBLANG_THAI_THAILAND              0x01
-#define SUBLANG_TIBETAN_PRC                0x01
-#define SUBLANG_TIBETAN_BHUTAN             0x02
-#define SUBLANG_TIGRIGNA_ERITREA           0x02
-#define SUBLANG_TSWANA_SOUTH_AFRICA        0x01
-#define SUBLANG_TURKISH_TURKEY             0x01
-#define SUBLANG_TURKMEN_TURKMENISTAN       0x01
-#define SUBLANG_UIGHUR_PRC                 0x01
-#define SUBLANG_UKRAINIAN_UKRAINE          0x01
-#define SUBLANG_UPPER_SORBIAN_GERMANY      0x01
-#define SUBLANG_URDU_PAKISTAN              0x01
-#define SUBLANG_URDU_INDIA                 0x02
-#define SUBLANG_UZBEK_LATIN                0x01
-#define SUBLANG_UZBEK_CYRILLIC             0x02
-#define SUBLANG_VIETNAMESE_VIETNAM         0x01
-#define SUBLANG_WELSH_UNITED_KINGDOM       0x01
-#define SUBLANG_WOLOF_SENEGAL              0x01
-#define SUBLANG_XHOSA_SOUTH_AFRICA         0x01
-#define SUBLANG_YAKUT_RUSSIA               0x01
-#define SUBLANG_YI_PRC                     0x01
-#define SUBLANG_YORUBA_NIGERIA             0x01
-#define SUBLANG_ZULU_SOUTH_AFRICA          0x01
-
-/* These are documented by the MSDN but are missing from the Windows header */
-#define SUBLANG_ENGLISH_IRELAND            SUBLANG_ENGLISH_EIRE
-#define SUBLANG_HAUSA_NIGERIA              SUBLANG_HAUSA_NIGERIA_LATIN
-#define SUBLANG_LAO_LAO_PDR                SUBLANG_LAO_LAO
-#define SUBLANG_LITHUANIAN                 SUBLANG_LITHUANIAN_LITHUANIA
-#define SUBLANG_PORTUGUESE_PORTUGAL        SUBLANG_PORTUGUESE
-#define SUBLANG_SWAHILI                    SUBLANG_SWAHILI_KENYA
-#define SUBLANG_SWEDISH_SWEDEN             SUBLANG_SWEDISH
-#define SUBLANG_SYRIAC                     SUBLANG_SYRIAC_SYRIA
-
-/* FIXME: these are not defined anywhere */
-#define SUBLANG_DUTCH_SURINAM              0x03
-#define SUBLANG_ROMANIAN                   SUBLANG_ROMANIAN_ROMANIA
-#define SUBLANG_ROMANIAN_MOLDAVIA          0x02
-#define SUBLANG_RUSSIAN                    SUBLANG_RUSSIAN_RUSSIA
-#define SUBLANG_RUSSIAN_MOLDAVIA           0x02
-#define SUBLANG_CROATIAN                   SUBLANG_CROATIAN_CROATIA
-#define SUBLANG_LITHUANIAN_CLASSIC         0x02
-#define SUBLANG_GAELIC                     0x01
-#define SUBLANG_GAELIC_SCOTTISH            0x02
-#define SUBLANG_GAELIC_MANX                0x03
-
-
-/*
- * Sort definitions
- */
-
-#define SORT_DEFAULT                     0x0
-#define SORT_JAPANESE_XJIS               0x0
-#define SORT_JAPANESE_UNICODE            0x1
-#define SORT_CHINESE_BIG5                0x0
-#define SORT_CHINESE_UNICODE             0x1
-#define SORT_KOREAN_KSC                  0x0
-#define SORT_KOREAN_UNICODE              0x1
-
+#include <winnt.rh>
 
 
 /*
@@ -2524,21 +2285,12 @@ static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
   //__asm mov teb, eax;
   return teb;
 }
-#elif defined(__x86_64__) && defined(__GNUC__)
+#elif defined(__x86_64__) && defined(__GNUC__) && !defined(__APPLE__)
 static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
 {
     struct _TEB *teb;
     __asm__(".byte 0x65\n\tmovq (0x30),%0" : "=r" (teb));
     return teb;
-}
-#elif defined(__x86_64__) && defined (_MSC_VER)
-static FORCEINLINE struct _TEB * WINAPI NtCurrentTeb(void)
-{
-  struct _TEB *teb = NULL;
-  // RJM
-  //__asm mov rax, gs:[0x30];
-  //__asm mov teb, rax;
-  return teb;
 }
 #else
 extern struct _TEB * WINAPI NtCurrentTeb(void);
@@ -2720,7 +2472,8 @@ typedef struct _IMAGE_VXD_HEADER {
 #define	IMAGE_FILE_MACHINE_SH5		0x01a8
 #define	IMAGE_FILE_MACHINE_ARM		0x01c0
 #define	IMAGE_FILE_MACHINE_THUMB	0x01c2
-#define	IMAGE_FILE_MACHINE_ARMV7	0x01c4
+#define	IMAGE_FILE_MACHINE_ARMNT	0x01c4
+#define	IMAGE_FILE_MACHINE_ARM64	0xaa64
 #define	IMAGE_FILE_MACHINE_AM33		0x01d3
 #define	IMAGE_FILE_MACHINE_POWERPC	0x01f0
 #define	IMAGE_FILE_MACHINE_POWERPCFP	0x01f1
@@ -2736,9 +2489,6 @@ typedef struct _IMAGE_VXD_HEADER {
 #define	IMAGE_FILE_MACHINE_AMD64	0x8664
 #define	IMAGE_FILE_MACHINE_M32R		0x9041
 #define	IMAGE_FILE_MACHINE_CEE		0xc0ee
-
-/* Wine extension */
-#define	IMAGE_FILE_MACHINE_SPARC	0x2000
 
 #define	IMAGE_SIZEOF_FILE_HEADER		20
 #define IMAGE_SIZEOF_ROM_OPTIONAL_HEADER	56
@@ -3313,6 +3063,28 @@ typedef struct _IMAGE_RELOCATION
 
 #define IMAGE_SIZEOF_RELOCATION 10
 
+typedef struct _IMAGE_DELAYLOAD_DESCRIPTOR
+{
+    union
+    {
+        DWORD AllAttributes;
+        struct
+        {
+            DWORD RvaBased:1;
+            DWORD ReservedAttributes:31;
+        } DUMMYSTRUCTNAME;
+    } Attributes;
+
+    DWORD DllNameRVA;
+    DWORD ModuleHandleRVA;
+    DWORD ImportAddressTableRVA;
+    DWORD ImportNameTableRVA;
+    DWORD BoundImportAddressTableRVA;
+    DWORD UnloadInformationTableRVA;
+    DWORD TimeDateStamp;
+} IMAGE_DELAYLOAD_DESCRIPTOR, *PIMAGE_DELAYLOAD_DESCRIPTOR;
+typedef const IMAGE_DELAYLOAD_DESCRIPTOR *PCIMAGE_DELAYLOAD_DESCRIPTOR;
+
 /* generic relocation types */
 #define IMAGE_REL_BASED_ABSOLUTE 		0
 #define IMAGE_REL_BASED_HIGH			1
@@ -3321,9 +3093,11 @@ typedef struct _IMAGE_RELOCATION
 #define IMAGE_REL_BASED_HIGHADJ			4
 #define IMAGE_REL_BASED_MIPS_JMPADDR		5
 #define IMAGE_REL_BASED_ARM_MOV32A		5 /* yes, 5 too */
+#define IMAGE_REL_BASED_ARM_MOV32		5 /* yes, 5 too */
 #define IMAGE_REL_BASED_SECTION			6
 #define	IMAGE_REL_BASED_REL			7
 #define	IMAGE_REL_BASED_ARM_MOV32T		7 /* yes, 7 too */
+#define IMAGE_REL_BASED_THUMB_MOV32		7 /* yes, 7 too */
 #define IMAGE_REL_BASED_MIPS_JMPADDR16		9
 #define IMAGE_REL_BASED_IA64_IMM64		9 /* yes, 9 too */
 #define IMAGE_REL_BASED_DIR64			10
@@ -3602,18 +3376,16 @@ typedef struct _IMAGE_RESOURCE_DIRECTORY_ENTRY {
 			unsigned NameOffset:31;
 			unsigned NameIsString:1;
 #endif
-		} DUMMYSTRUCTNAME1;
+		} DUMMYSTRUCTNAME;
 		DWORD   Name;
-                struct {
 #ifdef WORDS_BIGENDIAN
-			WORD    __pad;
-			WORD    Id;
+		WORD    __pad;
+		WORD    Id;
 #else
-			WORD    Id;
-			WORD    __pad;
+		WORD    Id;
+		WORD    __pad;
 #endif
-		} DUMMYSTRUCTNAME2;
-	} DUMMYUNIONNAME1;
+	} DUMMYUNIONNAME;
 	union {
 		DWORD   OffsetToData;
 		struct {
@@ -3624,7 +3396,7 @@ typedef struct _IMAGE_RESOURCE_DIRECTORY_ENTRY {
 			unsigned OffsetToDirectory:31;
 			unsigned DataIsDirectory:1;
 #endif
-		} DUMMYSTRUCTNAME3;
+		} DUMMYSTRUCTNAME2;
 	} DUMMYUNIONNAME2;
 } IMAGE_RESOURCE_DIRECTORY_ENTRY,*PIMAGE_RESOURCE_DIRECTORY_ENTRY;
 
@@ -3699,6 +3471,7 @@ typedef struct _IMAGE_DEBUG_DIRECTORY {
 #define IMAGE_DEBUG_TYPE_OMAP_FROM_SRC  8
 #define IMAGE_DEBUG_TYPE_BORLAND        9
 #define IMAGE_DEBUG_TYPE_RESERVED10    10
+#define IMAGE_DEBUG_TYPE_CLSID         11
 
 typedef enum ReplacesCorHdrNumericDefines
 {
@@ -3740,7 +3513,10 @@ typedef struct IMAGE_COR20_HEADER
 
     IMAGE_DATA_DIRECTORY MetaData;
     DWORD Flags;
-    DWORD EntryPointToken;
+    union {
+        DWORD EntryPointToken;
+        DWORD EntryPointRVA;
+    } DUMMYUNIONNAME;
 
     IMAGE_DATA_DIRECTORY Resources;
     IMAGE_DATA_DIRECTORY StrongNameSignature;
@@ -3912,6 +3688,19 @@ typedef enum _TOKEN_INFORMATION_CLASS {
   TokenUIAccess,
   TokenMandatoryPolicy,
   TokenLogonSid,
+  TokenIsAppContainer,
+  TokenCapabilities,
+  TokenAppContainerSid,
+  TokenAppContainerNumber,
+  TokenUserClaimAttributes,
+  TokenDeviceClaimAttributes,
+  TokenRestrictedUserClaimAttributes,
+  TokenRestrictedDeviceClaimAttributes,
+  TokenDeviceGroups,
+  TokenRestrictedDeviceGroups,
+  TokenSecurityAttributes,
+  TokenIsRestricted,
+  TokenProcessTrustLevel,
   MaxTokenInfoClass
 } TOKEN_INFORMATION_CLASS;
 
@@ -4026,43 +3815,140 @@ typedef struct _ACL_SIZE_INFORMATION
 /*
  * Privilege Names
  */
-#define SE_CREATE_TOKEN_NAME		TEXT("SeCreateTokenPrivilege")
-#define SE_ASSIGNPRIMARYTOKEN_NAME	TEXT("SeAssignPrimaryTokenPrivilege")
-#define SE_LOCK_MEMORY_NAME		TEXT("SeLockMemoryPrivilege")
-#define SE_INCREASE_QUOTA_NAME		TEXT("SeIncreaseQuotaPrivilege")
-#define SE_UNSOLICITED_INPUT_NAME	TEXT("SeUnsolicitedInputPrivilege")
-#define SE_MACHINE_ACCOUNT_NAME 	TEXT("SeMachineAccountPrivilege")
-#define SE_TCB_NAME			TEXT("SeTcbPrivilege")
-#define SE_SECURITY_NAME		TEXT("SeSecurityPrivilege")
-#define SE_TAKE_OWNERSHIP_NAME		TEXT("SeTakeOwnershipPrivilege")
-#define SE_LOAD_DRIVER_NAME		TEXT("SeLoadDriverPrivilege")
-#define SE_SYSTEM_PROFILE_NAME		TEXT("SeSystemProfilePrivilege")
-#define SE_SYSTEMTIME_NAME		TEXT("SeSystemtimePrivilege")
-#define SE_PROF_SINGLE_PROCESS_NAME	TEXT("SeProfileSingleProcessPrivilege")
-#define SE_INC_BASE_PRIORITY_NAME	TEXT("SeIncreaseBasePriorityPrivilege")
-#define SE_CREATE_PAGEFILE_NAME 	TEXT("SeCreatePagefilePrivilege")
-#define SE_CREATE_PERMANENT_NAME	TEXT("SeCreatePermanentPrivilege")
-#define SE_BACKUP_NAME 			TEXT("SeBackupPrivilege")
-#define SE_RESTORE_NAME			TEXT("SeRestorePrivilege")
-#define SE_SHUTDOWN_NAME		TEXT("SeShutdownPrivilege")
-#define SE_DEBUG_NAME			TEXT("SeDebugPrivilege")
-#define SE_AUDIT_NAME			TEXT("SeAuditPrivilege")
-#define SE_SYSTEM_ENVIRONMENT_NAME	TEXT("SeSystemEnvironmentPrivilege")
-#define SE_CHANGE_NOTIFY_NAME		TEXT("SeChangeNotifyPrivilege")
-#define SE_REMOTE_SHUTDOWN_NAME		TEXT("SeRemoteShutdownPrivilege")
-#define SE_UNDOCK_NAME                  TEXT("SeUndockPrivilege")
-#define SE_ENABLE_DELEGATION_NAME       TEXT("SeEnableDelegationPrivilege")
-#define SE_MANAGE_VOLUME_NAME           TEXT("SeManageVolumePrivilege")
-#define SE_IMPERSONATE_NAME             TEXT("SeImpersonatePrivilege")
-#define SE_CREATE_GLOBAL_NAME           TEXT("SeCreateGlobalPrivilege")
+#ifdef UNICODE
+#if defined(_MSC_VER)
+#define SE_CREATE_TOKEN_NAME            L"SeCreateTokenPrivilege"
+#define SE_ASSIGNPRIMARYTOKEN_NAME      L"SeAssignPrimaryTokenPrivilege"
+#define SE_LOCK_MEMORY_NAME             L"SeLockMemoryPrivilege"
+#define SE_INCREASE_QUOTA_NAME          L"SeIncreaseQuotaPrivilege"
+#define SE_UNSOLICITED_INPUT_NAME       L"SeUnsolicitedInputPrivilege"
+#define SE_MACHINE_ACCOUNT_NAME         L"SeMachineAccountPrivilege"
+#define SE_TCB_NAME                     L"SeTcbPrivilege"
+#define SE_SECURITY_NAME                L"SeSecurityPrivilege"
+#define SE_TAKE_OWNERSHIP_NAME          L"SeTakeOwnershipPrivilege"
+#define SE_LOAD_DRIVER_NAME             L"SeLoadDriverPrivilege"
+#define SE_SYSTEM_PROFILE_NAME          L"SeSystemProfilePrivilege"
+#define SE_SYSTEMTIME_NAME              L"SeSystemtimePrivilege"
+#define SE_PROF_SINGLE_PROCESS_NAME     L"SeProfileSingleProcessPrivilege"
+#define SE_INC_BASE_PRIORITY_NAME       L"SeIncreaseBasePriorityPrivilege"
+#define SE_CREATE_PAGEFILE_NAME         L"SeCreatePagefilePrivilege"
+#define SE_CREATE_PERMANENT_NAME        L"SeCreatePermanentPrivilege"
+#define SE_BACKUP_NAME                  L"SeBackupPrivilege"
+#define SE_RESTORE_NAME                 L"SeRestorePrivilege"
+#define SE_SHUTDOWN_NAME                L"SeShutdownPrivilege"
+#define SE_DEBUG_NAME                   L"SeDebugPrivilege"
+#define SE_AUDIT_NAME                   L"SeAuditPrivilege"
+#define SE_SYSTEM_ENVIRONMENT_NAME      L"SeSystemEnvironmentPrivilege"
+#define SE_CHANGE_NOTIFY_NAME           L"SeChangeNotifyPrivilege"
+#define SE_REMOTE_SHUTDOWN_NAME         L"SeRemoteShutdownPrivilege"
+#define SE_UNDOCK_NAME                  L"SeUndockPrivilege"
+#define SE_ENABLE_DELEGATION_NAME       L"SeEnableDelegationPrivilege"
+#define SE_MANAGE_VOLUME_NAME           L"SeManageVolumePrivilege"
+#define SE_IMPERSONATE_NAME             L"SeImpersonatePrivilege"
+#define SE_CREATE_GLOBAL_NAME           L"SeCreateGlobalPrivilege"
+#elif defined(__GNUC__)
+#define SE_CREATE_TOKEN_NAME (const WCHAR []){ 'S','e','C','r','e','a','t','e','T','o','k','e','n','P','r','i','v','i','l','e','g','e',0 }
+#define SE_ASSIGNPRIMARYTOKEN_NAME (const WCHAR []){ 'S','e','A','s','s','i','g','n','P','r','i','m','a','r','y','T','o','k','e','n','P','r','i','v','i','l','e','g','e',0 }
+#define SE_LOCK_MEMORY_NAME (const WCHAR []){ 'S','e','L','o','c','k','M','e','m','o','r','y','P','r','i','v','i','l','e','g','e',0 }
+#define SE_INCREASE_QUOTA_NAME (const WCHAR []){ 'S','e','I','n','c','r','e','a','s','e','Q','u','o','t','a','P','r','i','v','i','l','e','g','e',0 }
+#define SE_UNSOLICITED_INPUT_NAME (const WCHAR []){ 'S','e','U','n','s','o','l','i','c','i','t','e','d','I','n','p','u','t','P','r','i','v','i','l','e','g','e',0 }
+#define SE_MACHINE_ACCOUNT_NAME (const WCHAR []){ 'S','e','M','a','c','h','i','n','e','A','c','c','o','u','n','t','P','r','i','v','i','l','e','g','e',0 }
+#define SE_TCB_NAME (const WCHAR []){ 'S','e','T','c','b','P','r','i','v','i','l','e','g','e',0 }
+#define SE_SECURITY_NAME (const WCHAR []){ 'S','e','S','e','c','u','r','i','t','y','P','r','i','v','i','l','e','g','e',0 }
+#define SE_TAKE_OWNERSHIP_NAME (const WCHAR []){ 'S','e','T','a','k','e','O','w','n','e','r','s','h','i','p','P','r','i','v','i','l','e','g','e',0 }
+#define SE_LOAD_DRIVER_NAME (const WCHAR []){ 'S','e','L','o','a','d','D','r','i','v','e','r','P','r','i','v','i','l','e','g','e',0 }
+#define SE_SYSTEM_PROFILE_NAME (const WCHAR []){ 'S','e','S','y','s','t','e','m','P','r','o','f','i','l','e','P','r','i','v','i','l','e','g','e',0 }
+#define SE_SYSTEMTIME_NAME (const WCHAR []){ 'S','e','S','y','s','t','e','m','t','i','m','e','P','r','i','v','i','l','e','g','e',0 }
+#define SE_PROF_SINGLE_PROCESS_NAME (const WCHAR []){ 'S','e','P','r','o','f','i','l','e','S','i','n','g','l','e','P','r','o','c','e','s','s','P','r','i','v','i','l','e','g','e',0 }
+#define SE_INC_BASE_PRIORITY_NAME (const WCHAR []){ 'S','e','I','n','c','r','e','a','s','e','B','a','s','e','P','r','i','o','r','i','t','y','P','r','i','v','i','l','e','g','e',0 }
+#define SE_CREATE_PAGEFILE_NAME (const WCHAR []){ 'S','e','C','r','e','a','t','e','P','a','g','e','f','i','l','e','P','r','i','v','i','l','e','g','e',0 }
+#define SE_CREATE_PERMANENT_NAME (const WCHAR []){ 'S','e','C','r','e','a','t','e','P','e','r','m','a','n','e','n','t','P','r','i','v','i','l','e','g','e',0 }
+#define SE_BACKUP_NAME (const WCHAR []){ 'S','e','B','a','c','k','u','p','P','r','i','v','i','l','e','g','e',0 }
+#define SE_RESTORE_NAME (const WCHAR []){ 'S','e','R','e','s','t','o','r','e','P','r','i','v','i','l','e','g','e',0 }
+#define SE_SHUTDOWN_NAME (const WCHAR []){ 'S','e','S','h','u','t','d','o','w','n','P','r','i','v','i','l','e','g','e',0 }
+#define SE_DEBUG_NAME (const WCHAR []){ 'S','e','D','e','b','u','g','P','r','i','v','i','l','e','g','e',0 }
+#define SE_AUDIT_NAME (const WCHAR []){ 'S','e','A','u','d','i','t','P','r','i','v','i','l','e','g','e',0 }
+#define SE_SYSTEM_ENVIRONMENT_NAME (const WCHAR []){ 'S','e','S','y','s','t','e','m','E','n','v','i','r','o','n','m','e','n','t','P','r','i','v','i','l','e','g','e',0 }
+#define SE_CHANGE_NOTIFY_NAME (const WCHAR []){ 'S','e','C','h','a','n','g','e','N','o','t','i','f','y','P','r','i','v','i','l','e','g','e',0 }
+#define SE_REMOTE_SHUTDOWN_NAME (const WCHAR []){ 'S','e','R','e','m','o','t','e','S','h','u','t','d','o','w','n','P','r','i','v','i','l','e','g','e',0 }
+#define SE_UNDOCK_NAME (const WCHAR []){ 'S','e','U','n','d','o','c','k','P','r','i','v','i','l','e','g','e',0 }
+#define SE_ENABLE_DELEGATION_NAME (const WCHAR []){ 'S','e','E','n','a','b','l','e','D','e','l','e','g','a','t','i','o','n','P','r','i','v','i','l','e','g','e',0 }
+#define SE_MANAGE_VOLUME_NAME (const WCHAR []){ 'S','e','M','a','n','a','g','e','V','o','l','u','m','e','P','r','i','v','i','l','e','g','e',0 }
+#define SE_IMPERSONATE_NAME (const WCHAR []){ 'S','e','I','m','p','e','r','s','o','n','a','t','e','P','r','i','v','i','l','e','g','e',0 }
+#define SE_CREATE_GLOBAL_NAME (const WCHAR []){ 'S','e','C','r','e','a','t','e','G','l','o','b','a','l','P','r','i','v','i','l','e','g','e',0 }
+#else /* _MSC_VER/__GNUC__ */
+static const WCHAR SE_CREATE_TOKEN_NAME[] = { 'S','e','C','r','e','a','t','e','T','o','k','e','n','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_ASSIGNPRIMARYTOKEN_NAME[] = { 'S','e','A','s','s','i','g','n','P','r','i','m','a','r','y','T','o','k','e','n','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_LOCK_MEMORY_NAME[] = { 'S','e','L','o','c','k','M','e','m','o','r','y','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_INCREASE_QUOTA_NAME[] = { 'S','e','I','n','c','r','e','a','s','e','Q','u','o','t','a','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_UNSOLICITED_INPUT_NAME[] = { 'S','e','U','n','s','o','l','i','c','i','t','e','d','I','n','p','u','t','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_MACHINE_ACCOUNT_NAME[] = { 'S','e','M','a','c','h','i','n','e','A','c','c','o','u','n','t','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_TCB_NAME[] = { 'S','e','T','c','b','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_SECURITY_NAME[] = { 'S','e','S','e','c','u','r','i','t','y','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_TAKE_OWNERSHIP_NAME[] = { 'S','e','T','a','k','e','O','w','n','e','r','s','h','i','p','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_LOAD_DRIVER_NAME[] = { 'S','e','L','o','a','d','D','r','i','v','e','r','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_SYSTEM_PROFILE_NAME[] = { 'S','e','S','y','s','t','e','m','P','r','o','f','i','l','e','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_SYSTEMTIME_NAME[] = { 'S','e','S','y','s','t','e','m','t','i','m','e','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_PROF_SINGLE_PROCESS_NAME[] = { 'S','e','P','r','o','f','i','l','e','S','i','n','g','l','e','P','r','o','c','e','s','s','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_INC_BASE_PRIORITY_NAME[] = { 'S','e','I','n','c','r','e','a','s','e','B','a','s','e','P','r','i','o','r','i','t','y','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_CREATE_PAGEFILE_NAME[] = { 'S','e','C','r','e','a','t','e','P','a','g','e','f','i','l','e','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_CREATE_PERMANENT_NAME[] = { 'S','e','C','r','e','a','t','e','P','e','r','m','a','n','e','n','t','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_BACKUP_NAME[] = { 'S','e','B','a','c','k','u','p','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_RESTORE_NAME[] = { 'S','e','R','e','s','t','o','r','e','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_SHUTDOWN_NAME[] = { 'S','e','S','h','u','t','d','o','w','n','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_DEBUG_NAME[] = { 'S','e','D','e','b','u','g','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_AUDIT_NAME[] = { 'S','e','A','u','d','i','t','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_SYSTEM_ENVIRONMENT_NAME[] = { 'S','e','S','y','s','t','e','m','E','n','v','i','r','o','n','m','e','n','t','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_CHANGE_NOTIFY_NAME[] = { 'S','e','C','h','a','n','g','e','N','o','t','i','f','y','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_REMOTE_SHUTDOWN_NAME[] = { 'S','e','R','e','m','o','t','e','S','h','u','t','d','o','w','n','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_UNDOCK_NAME[] = { 'S','e','U','n','d','o','c','k','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_ENABLE_DELEGATION_NAME[] = { 'S','e','E','n','a','b','l','e','D','e','l','e','g','a','t','i','o','n','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_MANAGE_VOLUME_NAME[] = { 'S','e','M','a','n','a','g','e','V','o','l','u','m','e','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_IMPERSONATE_NAME[] = { 'S','e','I','m','p','e','r','s','o','n','a','t','e','P','r','i','v','i','l','e','g','e',0 };
+static const WCHAR SE_CREATE_GLOBAL_NAME[] = { 'S','e','C','r','e','a','t','e','G','l','o','b','a','l','P','r','i','v','i','l','e','g','e',0 };
+#endif
+#else /* UNICODE */
+#define SE_CREATE_TOKEN_NAME            "SeCreateTokenPrivilege"
+#define SE_ASSIGNPRIMARYTOKEN_NAME      "SeAssignPrimaryTokenPrivilege"
+#define SE_LOCK_MEMORY_NAME             "SeLockMemoryPrivilege"
+#define SE_INCREASE_QUOTA_NAME          "SeIncreaseQuotaPrivilege"
+#define SE_UNSOLICITED_INPUT_NAME       "SeUnsolicitedInputPrivilege"
+#define SE_MACHINE_ACCOUNT_NAME         "SeMachineAccountPrivilege"
+#define SE_TCB_NAME                     "SeTcbPrivilege"
+#define SE_SECURITY_NAME                "SeSecurityPrivilege"
+#define SE_TAKE_OWNERSHIP_NAME          "SeTakeOwnershipPrivilege"
+#define SE_LOAD_DRIVER_NAME             "SeLoadDriverPrivilege"
+#define SE_SYSTEM_PROFILE_NAME          "SeSystemProfilePrivilege"
+#define SE_SYSTEMTIME_NAME              "SeSystemtimePrivilege"
+#define SE_PROF_SINGLE_PROCESS_NAME     "SeProfileSingleProcessPrivilege"
+#define SE_INC_BASE_PRIORITY_NAME       "SeIncreaseBasePriorityPrivilege"
+#define SE_CREATE_PAGEFILE_NAME         "SeCreatePagefilePrivilege"
+#define SE_CREATE_PERMANENT_NAME        "SeCreatePermanentPrivilege"
+#define SE_BACKUP_NAME                  "SeBackupPrivilege"
+#define SE_RESTORE_NAME                 "SeRestorePrivilege"
+#define SE_SHUTDOWN_NAME                "SeShutdownPrivilege"
+#define SE_DEBUG_NAME                   "SeDebugPrivilege"
+#define SE_AUDIT_NAME                   "SeAuditPrivilege"
+#define SE_SYSTEM_ENVIRONMENT_NAME      "SeSystemEnvironmentPrivilege"
+#define SE_CHANGE_NOTIFY_NAME           "SeChangeNotifyPrivilege"
+#define SE_REMOTE_SHUTDOWN_NAME         "SeRemoteShutdownPrivilege"
+#define SE_UNDOCK_NAME                  "SeUndockPrivilege"
+#define SE_ENABLE_DELEGATION_NAME       "SeEnableDelegationPrivilege"
+#define SE_MANAGE_VOLUME_NAME           "SeManageVolumePrivilege"
+#define SE_IMPERSONATE_NAME             "SeImpersonatePrivilege"
+#define SE_CREATE_GLOBAL_NAME           "SeCreateGlobalPrivilege"
+#endif
 
-#define SE_GROUP_MANDATORY 		0x00000001
-#define SE_GROUP_ENABLED_BY_DEFAULT 	0x00000002
-#define SE_GROUP_ENABLED 		0x00000004
-#define SE_GROUP_OWNER 			0x00000008
-#define SE_GROUP_USE_FOR_DENY_ONLY 	0x00000010
-#define SE_GROUP_LOGON_ID 		0xC0000000
-#define SE_GROUP_RESOURCE 		0x20000000
+#define SE_GROUP_MANDATORY          0x00000001
+#define SE_GROUP_ENABLED_BY_DEFAULT 0x00000002
+#define SE_GROUP_ENABLED            0x00000004
+#define SE_GROUP_OWNER              0x00000008
+#define SE_GROUP_USE_FOR_DENY_ONLY  0x00000010
+#define SE_GROUP_INTEGRITY          0x00000020
+#define SE_GROUP_INTEGRITY_ENABLED  0x00000040
+#define SE_GROUP_LOGON_ID           0xC0000000
+#define SE_GROUP_RESOURCE           0x20000000
+#define SE_GROUP_VALID_ATTRIBUTES   0xE000007F
 
 #define SE_PRIVILEGE_ENABLED_BY_DEFAULT 0x00000001
 #define SE_PRIVILEGE_ENABLED 		0x00000002
@@ -4536,6 +4422,13 @@ typedef struct _TOKEN_ELEVATION {
   DWORD TokenIsElevated;
 } TOKEN_ELEVATION, * PTOKEN_ELEVATION;
 
+typedef struct _TOKEN_MANDATORY_LABEL {
+  SID_AND_ATTRIBUTES Label;
+} TOKEN_MANDATORY_LABEL, * PTOKEN_MANDATORY_LABEL;
+
+typedef struct _TOKEN_APPCONTAINER_INFORMATION {
+  PSID TokenAppContainer;
+} TOKEN_APPCONTAINER_INFORMATION, * PTOKEN_APPCONTAINER_INFORMATION;
 
 /*
  *	ACLs of NT
@@ -4642,11 +4535,12 @@ typedef enum tagSID_NAME_USE {
 #define EVENT_MODIFY_STATE         0x0002
 #define EVENT_ALL_ACCESS           (STANDARD_RIGHTS_REQUIRED|SYNCHRONIZE|0x3)
 
+#define SEMAPHORE_QUERY_STATE      0x0001
 #define SEMAPHORE_MODIFY_STATE     0x0002
 #define SEMAPHORE_ALL_ACCESS       (STANDARD_RIGHTS_REQUIRED|SYNCHRONIZE|0x3)
 
-#define MUTEX_MODIFY_STATE         0x0001
-#define MUTEX_ALL_ACCESS           (STANDARD_RIGHTS_REQUIRED|SYNCHRONIZE|0x1)
+#define MUTANT_QUERY_STATE         0x0001
+#define MUTANT_ALL_ACCESS          (STANDARD_RIGHTS_REQUIRED|SYNCHRONIZE|MUTANT_QUERY_STATE)
 
 #define JOB_OBJECT_ASSIGN_PROCESS           0x0001
 #define JOB_OBJECT_SET_ATTRIBUTES           0x0002
@@ -4659,30 +4553,34 @@ typedef enum tagSID_NAME_USE {
 #define TIMER_MODIFY_STATE         0x0002
 #define TIMER_ALL_ACCESS           (STANDARD_RIGHTS_REQUIRED|SYNCHRONIZE|0x3)
 
-#define PROCESS_TERMINATE          0x0001
-#define PROCESS_CREATE_THREAD      0x0002
-#define PROCESS_VM_OPERATION       0x0008
-#define PROCESS_VM_READ            0x0010
-#define PROCESS_VM_WRITE           0x0020
-#define PROCESS_DUP_HANDLE         0x0040
-#define PROCESS_CREATE_PROCESS     0x0080
-#define PROCESS_SET_QUOTA          0x0100
-#define PROCESS_SET_INFORMATION    0x0200
-#define PROCESS_QUERY_INFORMATION  0x0400
-#define PROCESS_SUSPEND_RESUME     0x0800
+#define PROCESS_TERMINATE                 0x0001
+#define PROCESS_CREATE_THREAD             0x0002
+#define PROCESS_VM_OPERATION              0x0008
+#define PROCESS_VM_READ                   0x0010
+#define PROCESS_VM_WRITE                  0x0020
+#define PROCESS_DUP_HANDLE                0x0040
+#define PROCESS_CREATE_PROCESS            0x0080
+#define PROCESS_SET_QUOTA                 0x0100
+#define PROCESS_SET_INFORMATION           0x0200
+#define PROCESS_QUERY_INFORMATION         0x0400
+#define PROCESS_SUSPEND_RESUME            0x0800
 #define PROCESS_QUERY_LIMITED_INFORMATION 0x1000
-#define PROCESS_ALL_ACCESS         (STANDARD_RIGHTS_REQUIRED|SYNCHRONIZE|0xfff)
+#define PROCESS_SET_LIMITED_INFORMATION   0x2000
+#define PROCESS_ALL_ACCESS         (STANDARD_RIGHTS_REQUIRED|SYNCHRONIZE|0xffff)
 
-#define THREAD_TERMINATE           0x0001
-#define THREAD_SUSPEND_RESUME      0x0002
-#define THREAD_GET_CONTEXT         0x0008
-#define THREAD_SET_CONTEXT         0x0010
-#define THREAD_SET_INFORMATION     0x0020
-#define THREAD_QUERY_INFORMATION   0x0040
-#define THREAD_SET_THREAD_TOKEN    0x0080
-#define THREAD_IMPERSONATE         0x0100
-#define THREAD_DIRECT_IMPERSONATION 0x0200
-#define THREAD_ALL_ACCESS          (STANDARD_RIGHTS_REQUIRED|SYNCHRONIZE|0x3ff)
+#define THREAD_TERMINATE                  0x0001
+#define THREAD_SUSPEND_RESUME             0x0002
+#define THREAD_GET_CONTEXT                0x0008
+#define THREAD_SET_CONTEXT                0x0010
+#define THREAD_SET_INFORMATION            0x0020
+#define THREAD_QUERY_INFORMATION          0x0040
+#define THREAD_SET_THREAD_TOKEN           0x0080
+#define THREAD_IMPERSONATE                0x0100
+#define THREAD_DIRECT_IMPERSONATION       0x0200
+#define THREAD_SET_LIMITED_INFORMATION    0x0400
+#define THREAD_QUERY_LIMITED_INFORMATION  0x0800
+#define THREAD_RESUME                     0x1000
+#define THREAD_ALL_ACCESS          (STANDARD_RIGHTS_REQUIRED|SYNCHRONIZE|0xffff)
 
 #define THREAD_BASE_PRIORITY_LOWRT  15
 #define THREAD_BASE_PRIORITY_MAX    2
@@ -5392,8 +5290,30 @@ typedef struct _RTL_SRWLOCK {
 
 #define RTL_SRWLOCK_INIT {0}
 
+typedef struct _RTL_CONDITION_VARIABLE {
+    PVOID Ptr;
+} RTL_CONDITION_VARIABLE, *PRTL_CONDITION_VARIABLE;
+#define RTL_CONDITION_VARIABLE_INIT {0}
+#define RTL_CONDITION_VARIABLE_LOCKMODE_SHARED  0x1
+
 typedef VOID (NTAPI * WAITORTIMERCALLBACKFUNC) (PVOID, BOOLEAN );
 typedef VOID (NTAPI * PFLS_CALLBACK_FUNCTION) ( PVOID );
+
+#define RTL_RUN_ONCE_INIT {0}
+typedef union _RTL_RUN_ONCE {
+    PVOID Ptr;
+} RTL_RUN_ONCE, *PRTL_RUN_ONCE;
+
+#define RTL_RUN_ONCE_CHECK_ONLY     0x00000001
+#define RTL_RUN_ONCE_ASYNC          0x00000002
+#define RTL_RUN_ONCE_INIT_FAILED    0x00000004
+
+typedef DWORD WINAPI RTL_RUN_ONCE_INIT_FN(PRTL_RUN_ONCE, PVOID, PVOID*);
+typedef RTL_RUN_ONCE_INIT_FN *PRTL_RUN_ONCE_INIT_FN;
+NTSYSAPI VOID WINAPI RtlRunOnceInitialize(PRTL_RUN_ONCE);
+NTSYSAPI DWORD WINAPI RtlRunOnceExecuteOnce(PRTL_RUN_ONCE,PRTL_RUN_ONCE_INIT_FN,PVOID,PVOID*);
+NTSYSAPI DWORD WINAPI RtlRunOnceBeginInitialize(PRTL_RUN_ONCE, DWORD, PVOID*);
+NTSYSAPI DWORD WINAPI RtlRunOnceComplete(PRTL_RUN_ONCE, DWORD, PVOID);
 
 #include <pshpack8.h>
 typedef struct _IO_COUNTERS {
@@ -5601,6 +5521,96 @@ typedef enum _JOBOBJECTINFOCLASS
     MaxJobObjectInfoClass
 } JOBOBJECTINFOCLASS;
 
+typedef struct _JOBOBJECT_BASIC_ACCOUNTING_INFORMATION {
+    LARGE_INTEGER TotalUserTime;
+    LARGE_INTEGER TotalKernelTime;
+    LARGE_INTEGER ThisPeriodTotalUserTime;
+    LARGE_INTEGER ThisPeriodTotalKernelTime;
+    DWORD         TotalPageFaultCount;
+    DWORD         TotalProcesses;
+    DWORD         ActiveProcesses;
+    DWORD         TotalTerminatedProcesses;
+} JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, *PJOBOBJECT_BASIC_ACCOUNTING_INFORMATION;
+
+typedef struct _JOBOBJECT_BASIC_LIMIT_INFORMATION {
+    LARGE_INTEGER PerProcessUserTimeLimit;
+    LARGE_INTEGER PerJobUserTimeLimit;
+    DWORD         LimitFlags;
+    SIZE_T        MinimumWorkingSetSize;
+    SIZE_T        MaximumWorkingSetSize;
+    DWORD         ActiveProcessLimit;
+    ULONG_PTR     Affinity;
+    DWORD         PriorityClass;
+    DWORD         SchedulingClass;
+} JOBOBJECT_BASIC_LIMIT_INFORMATION, *PJOBOBJECT_BASIC_LIMIT_INFORMATION;
+
+typedef struct _JOBOBJECT_BASIC_PROCESS_ID_LIST {
+    DWORD     NumberOfAssignedProcesses;
+    DWORD     NumberOfProcessIdsInList;
+    ULONG_PTR ProcessIdList[1];
+} JOBOBJECT_BASIC_PROCESS_ID_LIST, *PJOBOBJECT_BASIC_PROCESS_ID_LIST;
+
+typedef struct _JOBOBJECT_BASIC_UI_RESTRICTIONS {
+    DWORD UIRestrictionsClass;
+} JOBOBJECT_BASIC_UI_RESTRICTIONS, *PJOBOBJECT_BASIC_UI_RESTRICTIONS;
+
+typedef struct _JOBOBJECT_SECURITY_LIMIT_INFORMATION {
+    DWORD             SecurityLimitFlags;
+    HANDLE            JobToken;
+    PTOKEN_GROUPS     SidsToDisable;
+    PTOKEN_PRIVILEGES PrivilegesToDelete;
+    PTOKEN_GROUPS     RestrictedSids;
+} JOBOBJECT_SECURITY_LIMIT_INFORMATION, *PJOBOBJECT_SECURITY_LIMIT_INFORMATION;
+
+typedef struct _JOBOBJECT_END_OF_JOB_TIME_INFORMATION {
+    DWORD EndOfJobTimeAction;
+} JOBOBJECT_END_OF_JOB_TIME_INFORMATION, PJOBOBJECT_END_OF_JOB_TIME_INFORMATION;
+
+typedef struct _JOBOBJECT_ASSOCIATE_COMPLETION_PORT {
+    PVOID  CompletionKey;
+    HANDLE CompletionPort;
+} JOBOBJECT_ASSOCIATE_COMPLETION_PORT, *PJOBOBJECT_ASSOCIATE_COMPLETION_PORT;
+
+#define JOB_OBJECT_MSG_END_OF_JOB_TIME              1
+#define JOB_OBJECT_MSG_END_OF_PROCESS_TIME          2
+#define JOB_OBJECT_MSG_ACTIVE_PROCESS_LIMIT         3
+#define JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO          4
+#define JOB_OBJECT_MSG_NEW_PROCESS                  6
+#define JOB_OBJECT_MSG_EXIT_PROCESS                 7
+#define JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS        8
+#define JOB_OBJECT_MSG_PROCESS_MEMORY_LIMIT         9
+#define JOB_OBJECT_MSG_JOB_MEMORY_LIMIT             10
+
+typedef struct JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION {
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION BasicInfo;
+    IO_COUNTERS                            IoInfo;
+} JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION, *PJOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION;
+
+typedef struct _JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+    JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+    IO_COUNTERS                       IoInfo;
+    SIZE_T                            ProcessMemoryLimit;
+    SIZE_T                            JobMemoryLimit;
+    SIZE_T                            PeakProcessMemoryUsed;
+    SIZE_T                            PeakJobMemoryUsed;
+} JOBOBJECT_EXTENDED_LIMIT_INFORMATION, *PJOBOBJECT_EXTENDED_LIMIT_INFORMATION;
+
+#define JOB_OBJECT_LIMIT_WORKINGSET                 0x00000001
+#define JOB_OBJECT_LIMIT_PROCESS_TIME               0x00000002
+#define JOB_OBJECT_LIMIT_JOB_TIME                   0x00000004
+#define JOB_OBJECT_LIMIT_ACTIVE_PROCESS             0x00000008
+#define JOB_OBJECT_LIMIT_AFFINITY                   0x00000010
+#define JOB_OBJECT_LIMIT_PRIORITY_CLASS             0x00000020
+#define JOB_OBJECT_LIMIT_PRESERVE_JOB_TIME          0x00000040
+#define JOB_OBJECT_LIMIT_SCHEDULING_CLASS           0x00000080
+#define JOB_OBJECT_LIMIT_PROCESS_MEMORY             0x00000100
+#define JOB_OBJECT_LIMIT_JOB_MEMORY                 0x00000200
+#define JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION 0x00000400
+#define JOB_OBJECT_LIMIT_BREAKAWAY_OK               0x00000800
+#define JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK        0x00001000
+#define JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE          0x00002000
+#define JOB_OBJECT_LIMIT_SUBSET_AFFINITY            0x00004000
+
 typedef enum _LOGICAL_PROCESSOR_RELATIONSHIP
 {
     RelationProcessorCore    = 0,
@@ -5642,6 +5652,13 @@ typedef struct _GROUP_AFFINITY
     WORD Group;
     WORD Reserved[3];
 } GROUP_AFFINITY, *PGROUP_AFFINITY;
+
+typedef struct _PROCESSOR_NUMBER
+{
+    WORD Group;
+    BYTE Number;
+    BYTE Reserved;
+} PROCESSOR_NUMBER, *PPROCESSOR_NUMBER;
 
 typedef struct _PROCESSOR_RELATIONSHIP
 {
@@ -5708,6 +5725,71 @@ typedef struct _SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX
         GROUP_RELATIONSHIP Group;
     } DUMMYUNIONNAME;
 } SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX, *PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX;
+
+/* Threadpool things */
+typedef DWORD TP_VERSION,*PTP_VERSION;
+
+typedef struct _TP_CALLBACK_INSTANCE TP_CALLBACK_INSTANCE,*PTP_CALLBACK_INSTANCE;
+
+typedef VOID (CALLBACK *PTP_SIMPLE_CALLBACK)(PTP_CALLBACK_INSTANCE,PVOID);
+
+typedef struct _TP_POOL TP_POOL,*PTP_POOL;
+
+typedef enum _TP_CALLBACK_PRIORITY
+{
+	TP_CALLBACK_PRIORITY_HIGH,
+	TP_CALLBACK_PRIORITY_NORMAL,
+	TP_CALLBACK_PRIORITY_LOW,
+	TP_CALLBACK_PRIORITY_INVALID,
+	TP_CALLBACK_PRIORITY_COUNT = TP_CALLBACK_PRIORITY_INVALID
+} TP_CALLBACK_PRIORITY;
+
+typedef struct _TP_POOL_STACK_INFORMATION
+{
+	SIZE_T StackReserve;
+	SIZE_T StackCommit;
+} TP_POOL_STACK_INFORMATION,*PTP_POOL_STACK_INFORMATION;
+
+typedef struct _TP_CLEANUP_GROUP TP_CLEANUP_GROUP,*PTP_CLEANUP_GROUP;
+
+typedef VOID (CALLBACK *PTP_CLEANUP_GROUP_CANCEL_CALLBACK)(PVOID,PVOID);
+
+typedef struct _TP_CALLBACK_ENVIRON_V1
+{
+	TP_VERSION Version;
+	PTP_POOL Pool;
+	PTP_CLEANUP_GROUP CleanupGroup;
+	PTP_CLEANUP_GROUP_CANCEL_CALLBACK CleanupGroupCancelCallback;
+	PVOID RaceDll;
+	struct _ACTIVATION_CONTEXT* ActivationContext;
+	PTP_SIMPLE_CALLBACK FinalizationCallback;
+	union
+	{
+		DWORD Flags;
+		struct
+		{
+			DWORD LongFunction:1;
+			DWORD Persistent:1;
+			DWORD Private:30;
+		} s;
+	} u;
+} TP_CALLBACK_ENVIRON_V1;
+
+typedef struct _TP_WORK TP_WORK, *PTP_WORK;
+typedef struct _TP_TIMER TP_TIMER, *PTP_TIMER;
+
+typedef DWORD TP_WAIT_RESULT;
+typedef struct _TP_WAIT TP_WAIT, *PTP_WAIT;
+
+typedef struct _TP_IO TP_IO, *PTP_IO;
+
+typedef TP_CALLBACK_ENVIRON_V1 TP_CALLBACK_ENVIRON, *PTP_CALLBACK_ENVIRON;
+
+typedef VOID (CALLBACK *PTP_WORK_CALLBACK)(PTP_CALLBACK_INSTANCE,PVOID,PTP_WORK);
+typedef VOID (CALLBACK *PTP_TIMER_CALLBACK)(PTP_CALLBACK_INSTANCE,PVOID,PTP_TIMER);
+typedef VOID (CALLBACK *PTP_WAIT_CALLBACK)(PTP_CALLBACK_INSTANCE,PVOID,PTP_WAIT,TP_WAIT_RESULT);
+typedef VOID (CALLBACK *PTP_WIN32_IO_CALLBACK)(PTP_CALLBACK_INSTANCE,PVOID,PVOID,ULONG,ULONG_PTR,PTP_IO);
+
 
 NTSYSAPI BOOLEAN NTAPI RtlGetProductInfo(DWORD,DWORD,DWORD,DWORD,PDWORD);
 

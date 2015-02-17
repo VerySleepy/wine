@@ -25,10 +25,7 @@
 #ifndef __WINE_D3DTYPES_H
 #define __WINE_D3DTYPES_H
 
-#ifndef __WINESRC__
-# include <windows.h>
-#endif
-
+#include <windows.h>
 #include <float.h>
 #include <ddraw.h>
 
@@ -74,9 +71,9 @@ typedef LONG D3DFIXED;
 #define D3DENUMRET_CANCEL                        DDENUMRET_CANCEL
 #define D3DENUMRET_OK                            DDENUMRET_OK
 
-typedef HRESULT (CALLBACK *LPD3DVALIDATECALLBACK)(LPVOID lpUserArg, DWORD dwOffset);
-typedef HRESULT (CALLBACK *LPD3DENUMTEXTUREFORMATSCALLBACK)(LPDDSURFACEDESC lpDdsd, LPVOID lpContext);
-typedef HRESULT (CALLBACK *LPD3DENUMPIXELFORMATSCALLBACK)(LPDDPIXELFORMAT lpDDPixFmt, LPVOID lpContext);
+typedef HRESULT (CALLBACK *LPD3DVALIDATECALLBACK)(void *ctx, DWORD offset);
+typedef HRESULT (CALLBACK *LPD3DENUMTEXTUREFORMATSCALLBACK)(DDSURFACEDESC *surface_desc, void *ctx);
+typedef HRESULT (CALLBACK *LPD3DENUMPIXELFORMATSCALLBACK)(DDPIXELFORMAT *format, void *ctx);
 
 #ifndef DX_SHARED_DEFINES
 
@@ -471,11 +468,11 @@ typedef struct _D3DVIEWPORT7 {
 
 typedef struct _D3DTRANSFORMDATA {
   DWORD           dwSize;
-  LPVOID          lpIn;
+  void            *lpIn;
   DWORD           dwInSize;
-  LPVOID          lpOut;
+  void            *lpOut;
   DWORD           dwOutSize;
-  LPD3DHVERTEX    lpHOut;
+  D3DHVERTEX      *lpHOut;
   DWORD           dwClip;
   DWORD           dwClipIntersection;
   DWORD           dwClipUnion;
@@ -600,9 +597,9 @@ typedef struct _D3DLIGHT2 {
 
 typedef struct _D3DLIGHTDATA {
   DWORD                dwSize;
-  LPD3DLIGHTINGELEMENT lpIn;
+  D3DLIGHTINGELEMENT   *lpIn;
   DWORD                dwInSize;
-  LPD3DTLVERTEX        lpOut;
+  D3DTLVERTEX          *lpOut;
   DWORD                dwOutSize;
 } D3DLIGHTDATA, *LPD3DLIGHTDATA;
 
@@ -1273,9 +1270,10 @@ typedef struct _D3DVERTEXBUFFERDESC {
 #define D3DFVF_TLVERTEX ( D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_SPECULAR | \
                           D3DFVF_TEX1 )
 
-typedef struct _D3DDP_PTRSTRIDE {
-  LPVOID lpvData;
-  DWORD  dwStride;
+typedef struct _D3DDP_PTRSTRIDE
+{
+  void *lpvData;
+  DWORD dwStride;
 } D3DDP_PTRSTRIDE;
 
 #define D3DDP_MAXTEXCOORD 8

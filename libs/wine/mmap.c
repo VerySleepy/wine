@@ -23,11 +23,15 @@
 
 #include <assert.h>
 #include <ctype.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
+#ifdef HAVE_SYS_WAIT_H
+#include <sys/wait.h>
+#endif
 #ifdef HAVE_SYS_MMAN_H
 #include <sys/mman.h>
 #endif
@@ -100,8 +104,8 @@ static int try_mmap_fixed (void *addr, size_t len, int prot, int flags,
                            int fildes, off_t off)
 {
     char * volatile result = NULL;
-    int pagesize = getpagesize();
-    pid_t pid;
+    const size_t pagesize = sysconf( _SC_PAGESIZE );
+    pid_t pid, wret;
 
     /* We only try to map to a fixed address if
        addr is non-NULL and properly aligned,
@@ -150,9 +154,10 @@ static int try_mmap_fixed (void *addr, size_t len, int prot, int flags,
        _exit(1);
     }
 
-    /* vfork() lets the parent continue only after the child
-       has exited.  Furthermore, Wine sets SIGCHLD to SIG_IGN,
-       so we don't need to wait for the child. */
+    /* reap child */
+    do {
+        wret = waitpid(pid, NULL, 0);
+    } while (wret < 0 && errno == EINTR);
 
     return result == addr;
 }
@@ -200,7 +205,7 @@ void *wine_anon_mmap( void *start, size_t size, int prot, int flags )
 
     if (!(flags & MAP_FIXED))
     {
-#if defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
+#if defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__DragonFly__)
         /* Even FreeBSD 5.3 does not properly support NULL here. */
         if( start == NULL ) start = (void *)0x110000;
 #endif
@@ -250,7 +255,7 @@ static inline void reserve_area( void *addr, void *end )
 #if (defined(__svr4__) || defined(__NetBSD__)) && !defined(MAP_TRYFIXED)
     /* try_mmap_fixed is inefficient when using vfork, so we need a different algorithm here */
     /* we assume no other thread is running at this point */
-    size_t i, pagesize = getpagesize();
+    size_t i, pagesize = sysconf( _SC_PAGESIZE );
     char vec;
 
     while (size)
@@ -316,19 +321,19 @@ static inline void reserve_malloc_space( size_t size )
  */
 static inline void reserve_dos_area(void)
 {
-    const size_t page_size = getpagesize();
+    const size_t first_page = 0x1000;
     const size_t dos_area_size = 0x110000;
     void *ptr;
 
     /* first page has to be handled specially */
-    ptr = wine_anon_mmap( (void *)page_size, dos_area_size - page_size, PROT_NONE, MAP_NORESERVE );
-    if (ptr != (void *)page_size)
+    ptr = wine_anon_mmap( (void *)first_page, dos_area_size - first_page, PROT_NONE, MAP_NORESERVE );
+    if (ptr != (void *)first_page)
     {
-        if (ptr != (void *)-1) munmap( ptr, dos_area_size - page_size );
+        if (ptr != (void *)-1) munmap( ptr, dos_area_size - first_page );
         return;
     }
     /* now add first page with MAP_FIXED */
-    wine_anon_mmap( NULL, page_size, PROT_NONE, MAP_NORESERVE|MAP_FIXED );
+    wine_anon_mmap( NULL, first_page, PROT_NONE, MAP_NORESERVE|MAP_FIXED );
     wine_mmap_add_reserved_area( NULL, dos_area_size );
 }
 
@@ -372,7 +377,7 @@ void mmap_init(void)
         char *base = stack_ptr - ((unsigned int)stack_ptr & granularity_mask) - (granularity_mask + 1);
         if (base > user_space_limit) reserve_area( user_space_limit, base );
         base = stack_ptr - ((unsigned int)stack_ptr & granularity_mask) + (granularity_mask + 1);
-#if defined(linux) || defined(__FreeBSD__) || defined (__FreeBSD_kernel__)
+#if defined(linux) || defined(__FreeBSD__) || defined (__FreeBSD_kernel__) || defined(__DragonFly__)
         /* Heuristic: assume the stack is near the end of the address */
         /* space, this avoids a lot of futile allocation attempts */
         end = (char *)(((unsigned long)base + 0x0fffffff) & 0xf0000000);

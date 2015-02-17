@@ -282,7 +282,6 @@ static void test_SetTrigger_GetTrigger(void)
     normal_trigger_state.wStartHour = 24;
     hres = ITaskTrigger_SetTrigger(test_trigger, &normal_trigger_state);
     ok(hres == E_INVALIDARG, "Expected E_INVALIDARG: 0x%08x\n", hres);
-    normal_trigger_state.wStartHour = 3;
     normal_trigger_state.wStartHour = 60;
     hres = ITaskTrigger_SetTrigger(test_trigger, &normal_trigger_state);
     ok(hres == E_INVALIDARG, "Expected E_INVALIDARG: 0x%08x\n", hres);
@@ -303,7 +302,8 @@ static void test_SetTrigger_GetTrigger(void)
     ok(hres == E_INVALIDARG, "Expected E_INVALIDARG: 0x%08x\n", hres);
     normal_trigger_state.MinutesDuration = 5;
     normal_trigger_state.MinutesInterval = 0;
-    ok(hres == E_INVALIDARG, "Expected E_INVALIDARG: 0x%08x\n", hres);
+    hres = ITaskTrigger_SetTrigger(test_trigger, &normal_trigger_state);
+    ok(hres == S_OK, "Failed to set trigger: 0x%08x\n", hres);
     normal_trigger_state.MinutesDuration = 0;
     normal_trigger_state.MinutesInterval = 0;
 

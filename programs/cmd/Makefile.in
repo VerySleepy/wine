@@ -1,6 +1,5 @@
 MODULE    = cmd.exe
 APPMODE   = -mconsole -municode
-EXTRADEFS = -DWINE_NO_UNICODE_MACROS
 IMPORTS   = shell32 user32 advapi32
 
 C_SRCS = \
@@ -10,8 +9,5 @@ C_SRCS = \
 	wcmdmain.c
 
 RC_SRCS = cmd.rc
-PO_SRCS = cmd.rc
 
 SVG_SRCS = wcmd.svg
-
-@MAKE_PROG_RULES@

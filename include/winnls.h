@@ -321,14 +321,37 @@ extern "C" {
 #define LOCALE_SSORTNAME              0x1013
 #define LOCALE_IDIGITSUBSTITUTION     0x1014
 
+/* Locale name special values */
+#if defined(__GNUC__)
+# define LOCALE_NAME_INVARIANT      (const WCHAR []){ 0 }
+#elif defined(_MSC_VER)
+# define LOCALE_NAME_INVARIANT      L""
+#else
+static const WCHAR LOCALE_NAME_INVARIANT[] = { 0 };
+#endif
+
+#if defined(__GNUC__)
+# define LOCALE_NAME_SYSTEM_DEFAULT      (const WCHAR []){'!','s','y','s','-','d','e','f','a','u','l','t','-','l','o','c','a','l','e',0}
+#elif defined(_MSC_VER)
+# define LOCALE_NAME_SYSTEM_DEFAULT      L"!sys-default-locale"
+#else
+static const WCHAR LOCALE_NAME_SYSTEM_DEFAULT[] = {'!','s','y','s','-','d','e','f','a','u','l','t','-','l','o','c','a','l','e',0};
+#endif
+
+#define LOCALE_NAME_USER_DEFAULT    NULL
+
 #define LOCALE_IDEFAULTUNIXCODEPAGE   0x1030 /* Wine extension */
 
-#define NORM_IGNORECASE     0x00001
-#define NORM_IGNORENONSPACE 0x00002
-#define NORM_IGNORESYMBOLS  0x00004
-#define NORM_STRINGSORT     0x01000
-#define NORM_IGNOREKANATYPE 0x10000
-#define NORM_IGNOREWIDTH    0x20000
+#define NORM_IGNORECASE            0x00000001
+#define NORM_IGNORENONSPACE        0x00000002
+#define NORM_IGNORESYMBOLS         0x00000004
+#define SORT_DIGITSASNUMBERS       0x00000008
+#define LINGUISTIC_IGNORECASE      0x00000010
+#define LINGUISTIC_IGNOREDIACRITIC 0x00000020
+#define SORT_STRINGSORT            0x00001000 /* Take punctuation into account */
+#define NORM_IGNOREKANATYPE        0x00010000
+#define NORM_IGNOREWIDTH           0x00020000
+#define NORM_LINGUISTIC_CASING     0x08000000
 
 #define CP_ACP        0
 #define CP_OEMCP      1
@@ -371,8 +394,6 @@ extern "C" {
 #define LCMAP_UPPERCASE  0x00000200	/* Make upper-case */
 #define LCMAP_SORTKEY    0x00000400	/* Create a sort key */
 #define LCMAP_BYTEREV    0x00000800	/* Reverse the result */
-
-#define SORT_STRINGSORT  0x00001000	/* Take punctuation into account */
 
 #define LCMAP_HIRAGANA   0x00100000	/* Transform Japanese katakana into hiragana */
 #define LCMAP_KATAKANA   0x00200000	/* Transform Japanese hiragana into katakana */
@@ -439,6 +460,8 @@ extern "C" {
 #define	C3_IDEOGRAPH		0x0100
 #define	C3_KASHIDA		0x0200
 #define	C3_LEXICAL		0x0400
+#define	C3_HIGHSURROGATE	0x0800
+#define	C3_LOWSURROGATE		0x1000
 #define	C3_ALPHA		0x8000
 #define	C3_NOTAPPLICABLE	0x0000
 
@@ -648,6 +671,19 @@ typedef struct _currencyfmtW
 DECL_WINELIB_TYPE_AW(CURRENCYFMT)
 DECL_WINELIB_TYPE_AW(LPCURRENCYFMT)
 
+typedef struct _nlsversioninfo {
+    DWORD dwNLSVersionInfoSize;
+    DWORD dwNLSVersion;
+    DWORD dwDefinedVersion;
+} NLSVERSIONINFO, *LPNLSVERSIONINFO;
+
+typedef struct _nlsversioninfoex {
+    DWORD dwNLSVersionInfoSize;
+    DWORD dwNLSVersion;
+    DWORD dwDefinedVersion;
+    DWORD dwEffectiveId;
+    GUID  guidCustomVersion;
+} NLSVERSIONINFOEX, *LPNLSVERSIONINFOEX;
 
 /* Define a bunch of callback types */
 
@@ -722,7 +758,9 @@ enum SYSGEOTYPE
     GEO_FRIENDLYNAME,
     GEO_OFFICIALNAME,
     GEO_TIMEZONES,
-    GEO_OFFICIALLANGUAGES
+    GEO_OFFICIALLANGUAGES,
+    GEO_ISO_UN_NUMBER,
+    GEO_PARENT
 };
 
 enum SYSGEOCLASS
@@ -740,6 +778,7 @@ enum SYSGEOCLASS
 WINBASEAPI INT         WINAPI CompareStringA(LCID,DWORD,LPCSTR,INT,LPCSTR,INT);
 WINBASEAPI INT         WINAPI CompareStringW(LCID,DWORD,LPCWSTR,INT,LPCWSTR,INT);
 #define                       CompareString WINELIB_NAME_AW(CompareString)
+WINBASEAPI INT         WINAPI CompareStringEx(LPCWSTR,DWORD,LPCWSTR,INT,LPCWSTR,INT,LPNLSVERSIONINFO,LPVOID,LPARAM);
 WINBASEAPI LCID        WINAPI ConvertDefaultLocale(LCID);
 WINBASEAPI BOOL        WINAPI EnumCalendarInfoA(CALINFO_ENUMPROCA,LCID,CALID,CALTYPE);
 WINBASEAPI BOOL        WINAPI EnumCalendarInfoW(CALINFO_ENUMPROCW,LCID,CALID,CALTYPE);
@@ -788,6 +827,7 @@ WINBASEAPI INT         WINAPI GetCurrencyFormatA(LCID,DWORD,LPCSTR,const CURRENC
 WINBASEAPI INT         WINAPI GetCurrencyFormatW(LCID,DWORD,LPCWSTR,const CURRENCYFMTW*,LPWSTR,INT);
 #define                       GetCurrencyFormat WINELIB_NAME_AW(GetCurrencyFormat)
 WINBASEAPI INT         WINAPI GetDateFormatA(LCID,DWORD,const SYSTEMTIME*,LPCSTR,LPSTR,INT);
+WINBASEAPI INT         WINAPI GetDateFormatEx(LPCWSTR,DWORD,const SYSTEMTIME*,LPCWSTR,LPWSTR,INT,LPCWSTR);
 WINBASEAPI INT         WINAPI GetDateFormatW(LCID,DWORD,const SYSTEMTIME*,LPCWSTR,LPWSTR,INT);
 #define                       GetDateFormat WINELIB_NAME_AW(GetDateFormat)
 WINBASEAPI INT         WINAPI GetGeoInfoA(GEOID,GEOTYPE,LPSTR,INT,LANGID);
@@ -796,6 +836,7 @@ WINBASEAPI INT         WINAPI GetGeoInfoW(GEOID,GEOTYPE,LPWSTR,INT,LANGID);
 WINBASEAPI INT         WINAPI GetLocaleInfoA(LCID,LCTYPE,LPSTR,INT);
 WINBASEAPI INT         WINAPI GetLocaleInfoW(LCID,LCTYPE,LPWSTR,INT);
 #define                       GetLocaleInfo WINELIB_NAME_AW(GetLocaleInfo)
+WINBASEAPI INT         WINAPI GetLocaleInfoEx(LPCWSTR,LCTYPE,LPWSTR,INT);
 WINBASEAPI INT         WINAPI GetNumberFormatA(LCID,DWORD,LPCSTR,const NUMBERFMTA*,LPSTR,INT);
 WINBASEAPI INT         WINAPI GetNumberFormatW(LCID,DWORD,LPCWSTR,const NUMBERFMTW*,LPWSTR,INT);
 #define                       GetNumberFormat WINELIB_NAME_AW(GetNumberFormat)
@@ -810,6 +851,7 @@ WINBASEAPI LCID        WINAPI GetSystemDefaultLCID(void);
 WINBASEAPI LANGID      WINAPI GetSystemDefaultUILanguage(void);
 WINBASEAPI LCID        WINAPI GetThreadLocale(void);
 WINBASEAPI INT         WINAPI GetTimeFormatA(LCID,DWORD,const SYSTEMTIME*,LPCSTR,LPSTR,INT);
+WINBASEAPI INT         WINAPI GetTimeFormatEx(LPCWSTR,DWORD,const SYSTEMTIME*,LPCWSTR,LPWSTR,INT);
 WINBASEAPI INT         WINAPI GetTimeFormatW(LCID,DWORD,const SYSTEMTIME*,LPCWSTR,LPWSTR,INT);
 #define                       GetTimeFormat WINELIB_NAME_AW(GetTimeFormat)
 WINBASEAPI LANGID      WINAPI GetUserDefaultLangID(void);
@@ -824,12 +866,14 @@ WINBASEAPI BOOL        WINAPI IsDBCSLeadByte(BYTE);
 WINBASEAPI BOOL        WINAPI IsDBCSLeadByteEx(UINT,BYTE);
 WINNORMALIZEAPI BOOL   WINAPI IsNormalizedString(NORM_FORM,LPCWSTR,INT);
 WINBASEAPI BOOL        WINAPI IsValidCodePage(UINT);
-WINBASEAPI BOOL        WINAPI IsValidLocale(LCID,DWORD);
 WINBASEAPI BOOL        WINAPI IsValidLanguageGroup(LGRPID,DWORD);
+WINBASEAPI BOOL        WINAPI IsValidLocale(LCID,DWORD);
+WINBASEAPI BOOL        WINAPI IsValidLocaleName(LPCWSTR);
 WINBASEAPI INT         WINAPI LCIDToLocaleName(LCID,LPWSTR,INT,DWORD);
 WINBASEAPI INT         WINAPI LCMapStringA(LCID,DWORD,LPCSTR,INT,LPSTR,INT);
 WINBASEAPI INT         WINAPI LCMapStringW(LCID,DWORD,LPCWSTR,INT,LPWSTR,INT);
 #define                       LCMapString WINELIB_NAME_AW(LCMapString)
+WINBASEAPI INT         WINAPI LCMapStringEx(LPCWSTR,DWORD,LPCWSTR,INT,LPWSTR,INT,LPNLSVERSIONINFO,LPVOID,LPARAM);
 WINBASEAPI LCID        WINAPI LocaleNameToLCID(LPCWSTR,DWORD);
 WINBASEAPI INT         WINAPI MultiByteToWideChar(UINT,DWORD,LPCSTR,INT,LPWSTR,INT);
 WINNORMALIZEAPI INT    WINAPI NormalizeString(NORM_FORM,LPCWSTR,INT,LPWSTR,INT);

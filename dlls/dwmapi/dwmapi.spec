@@ -20,19 +20,20 @@
 119 stub @
 120 stub @
 
-@ stub DwmAttachMilContent
+@ stdcall DwmAttachMilContent(long)
 @ stdcall DwmDefWindowProc(long long long long ptr)
-@ stub DwmDetachMilContent
+@ stdcall DwmDetachMilContent(long)
 @ stdcall DwmEnableBlurBehindWindow(ptr ptr)
 @ stdcall DwmEnableMMCSS(long)
 @ stdcall DwmExtendFrameIntoClientArea(long ptr)
 @ stdcall DwmFlush()
 @ stdcall DwmGetColorizationColor(ptr long)
-@ stub DwmGetCompositionTimingInfo
+@ stdcall DwmGetCompositionTimingInfo(long ptr)
 @ stdcall DwmGetGraphicsStreamClient(long ptr)
 @ stdcall DwmGetGraphicsStreamTransformHint(long ptr)
 @ stdcall DwmGetTransportAttributes(ptr ptr ptr)
 @ stdcall DwmGetWindowAttribute(ptr long ptr long)
+@ stdcall DwmInvalidateIconicBitmaps(ptr)
 @ stdcall DwmIsCompositionEnabled(ptr)
 @ stub DwmModifyPreviousDxFrameDuration
 @ stub DwmQueryThumbnailSourceSize

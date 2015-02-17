@@ -49,7 +49,7 @@ static void test_solidbrush(void)
 
     for(i=0; i<sizeof(stock)/sizeof(stock[0]); i++) {
         solidBrush = CreateSolidBrush(stock[i].color);
-        
+
         if(stock[i].stockobj != -1) {
             stockBrush = GetStockObject(stock[i].stockobj);
             ok(stockBrush!=solidBrush ||
@@ -59,23 +59,59 @@ static void test_solidbrush(void)
         else
             stockBrush = NULL;
         memset(&br, 0, sizeof(br));
-        ret = GetObject(solidBrush, sizeof(br), &br);
+        ret = GetObjectW(solidBrush, sizeof(br), &br);
         ok( ret !=0, "GetObject on solid %s brush failed, error=%d\n", stock[i].name, GetLastError());
         ok(br.lbStyle==BS_SOLID, "%s brush has wrong style, got %d expected %d\n", stock[i].name, br.lbStyle, BS_SOLID);
         ok(br.lbColor==stock[i].color, "%s brush has wrong color, got 0x%08x expected 0x%08x\n", stock[i].name, br.lbColor, stock[i].color);
-        
+
         if(stockBrush) {
             /* Sanity check, make sure the colors being compared do in fact have a stock brush */
-            ret = GetObject(stockBrush, sizeof(br), &br);
+            ret = GetObjectW(stockBrush, sizeof(br), &br);
             ok( ret !=0, "GetObject on stock %s brush failed, error=%d\n", stock[i].name, GetLastError());
             ok(br.lbColor==stock[i].color, "stock %s brush unexpected color, got 0x%08x expected 0x%08x\n", stock[i].name, br.lbColor, stock[i].color);
         }
 
         DeleteObject(solidBrush);
-        ret = GetObject(solidBrush, sizeof(br), &br);
+        ret = GetObjectW(solidBrush, sizeof(br), &br);
         ok(ret==0 ||
            broken(ret!=0), /* win9x */
            "GetObject succeeded on a deleted %s brush\n", stock[i].name);
+    }
+}
+
+static void test_hatch_brush(void)
+{
+    int i, size;
+    HBRUSH brush;
+    LOGBRUSH lb;
+
+    for (i = 0; i < 20; i++)
+    {
+        SetLastError( 0xdeadbeef );
+        brush = CreateHatchBrush( i, RGB(12,34,56) );
+        if (i < HS_API_MAX)
+        {
+            ok( brush != 0, "%u: CreateHatchBrush failed err %u\n", i, GetLastError() );
+            size = GetObjectW( brush, sizeof(lb), &lb );
+            ok( size == sizeof(lb), "wrong size %u\n", size );
+            ok( lb.lbColor == RGB(12,34,56), "wrong color %08x\n", lb.lbColor );
+            if (i <= HS_DIAGCROSS)
+            {
+                ok( lb.lbStyle == BS_HATCHED, "wrong style %u\n", lb.lbStyle );
+                ok( lb.lbHatch == i, "wrong hatch %lu/%u\n", lb.lbHatch, i );
+            }
+            else
+            {
+                ok( lb.lbStyle == BS_SOLID, "wrong style %u\n", lb.lbStyle );
+                ok( lb.lbHatch == 0, "wrong hatch %lu\n", lb.lbHatch );
+            }
+            DeleteObject( brush );
+        }
+        else
+        {
+            ok( !brush, "%u: CreateHatchBrush succeeded\n", i );
+            ok( GetLastError() == 0xdeadbeef, "wrong error %u\n", GetLastError() );
+        }
     }
 }
 
@@ -100,7 +136,7 @@ static void test_pattern_brush(void)
     ok( ret == sizeof(br), "wrong size %u\n", ret );
     ok( br.lbStyle == BS_PATTERN, "wrong style %u\n", br.lbStyle );
     ok( br.lbColor == 0, "wrong color %u\n", br.lbColor );
-    todo_wine ok( (HBITMAP)br.lbHatch == bitmap, "wrong handle %p/%p\n", (HBITMAP)br.lbHatch, bitmap );
+    ok( (HBITMAP)br.lbHatch == bitmap, "wrong handle %p/%p\n", (HBITMAP)br.lbHatch, bitmap );
     DeleteObject( brush );
 
     br.lbStyle = BS_PATTERN8X8;
@@ -113,7 +149,7 @@ static void test_pattern_brush(void)
     ok( ret == sizeof(br), "wrong size %u\n", ret );
     ok( br.lbStyle == BS_PATTERN, "wrong style %u\n", br.lbStyle );
     ok( br.lbColor == 0, "wrong color %u\n", br.lbColor );
-    todo_wine ok( (HBITMAP)br.lbHatch == bitmap, "wrong handle %p/%p\n", (HBITMAP)br.lbHatch, bitmap );
+    ok( (HBITMAP)br.lbHatch == bitmap, "wrong handle %p/%p\n", (HBITMAP)br.lbHatch, bitmap );
     ret = GetObjectW( bitmap, sizeof(dib), &dib );
     ok( ret == sizeof(dib.dsBm), "wrong size %u\n", ret );
     DeleteObject( bitmap );
@@ -139,7 +175,7 @@ static void test_pattern_brush(void)
     ok( ret == sizeof(br), "wrong size %u\n", ret );
     ok( br.lbStyle == BS_PATTERN, "wrong style %u\n", br.lbStyle );
     ok( br.lbColor == 0, "wrong color %u\n", br.lbColor );
-    todo_wine ok( (HBITMAP)br.lbHatch == bitmap, "wrong handle %p/%p\n", (HBITMAP)br.lbHatch, bitmap );
+    ok( (HBITMAP)br.lbHatch == bitmap, "wrong handle %p/%p\n", (HBITMAP)br.lbHatch, bitmap );
     ret = GetObjectW( bitmap, sizeof(dib), &dib );
     ok( ret == sizeof(dib), "wrong size %u\n", ret );
     DeleteObject( brush );
@@ -152,7 +188,7 @@ static void test_pattern_brush(void)
     ok( ret == sizeof(br), "wrong size %u\n", ret );
     ok( br.lbStyle == BS_DIBPATTERN, "wrong style %u\n", br.lbStyle );
     ok( br.lbColor == 0, "wrong color %u\n", br.lbColor );
-    todo_wine ok( (BITMAPINFO *)br.lbHatch == info || broken(!br.lbHatch), /* nt4 */
+    ok( (BITMAPINFO *)br.lbHatch == info || broken(!br.lbHatch), /* nt4 */
         "wrong handle %p/%p\n", (BITMAPINFO *)br.lbHatch, info );
     DeleteObject( brush );
 
@@ -165,8 +201,8 @@ static void test_pattern_brush(void)
     ret = GetObjectW( brush, sizeof(br), &br );
     ok( ret == sizeof(br), "wrong size %u\n", ret );
     ok( br.lbStyle == BS_DIBPATTERN, "wrong style %u\n", br.lbStyle );
-    todo_wine ok( br.lbColor == 0, "wrong color %u\n", br.lbColor );
-    todo_wine ok( (BITMAPINFO *)br.lbHatch == info || broken(!br.lbHatch), /* nt4 */
+    ok( br.lbColor == 0, "wrong color %u\n", br.lbColor );
+    ok( (BITMAPINFO *)br.lbHatch == info || broken(!br.lbHatch), /* nt4 */
         "wrong handle %p/%p\n", (BITMAPINFO *)br.lbHatch, info );
 
     mem = GlobalAlloc( GMEM_MOVEABLE, sizeof(buffer) );
@@ -181,16 +217,27 @@ static void test_pattern_brush(void)
     ret = GetObjectW( brush, sizeof(br), &br );
     ok( ret == sizeof(br), "wrong size %u\n", ret );
     ok( br.lbStyle == BS_DIBPATTERN, "wrong style %u\n", br.lbStyle );
-    todo_wine ok( br.lbColor == 0, "wrong color %u\n", br.lbColor );
+    ok( br.lbColor == 0, "wrong color %u\n", br.lbColor );
     ok( (HGLOBAL)br.lbHatch != mem, "wrong handle %p/%p\n", (HGLOBAL)br.lbHatch, mem );
     bits = GlobalLock( mem );
-    todo_wine ok( (HGLOBAL)br.lbHatch == bits || broken(!br.lbHatch), /* nt4 */
+    ok( (HGLOBAL)br.lbHatch == bits || broken(!br.lbHatch), /* nt4 */
         "wrong handle %p/%p\n", (HGLOBAL)br.lbHatch, bits );
     ret = GlobalFlags( mem );
     ok( ret == 2, "wrong flags %x\n", ret );
     DeleteObject( brush );
     ret = GlobalFlags( mem );
     ok( ret == 2, "wrong flags %x\n", ret );
+
+    brush = CreateDIBPatternBrushPt( info, DIB_PAL_COLORS );
+    ok( brush != 0, "CreateDIBPatternBrushPt failed\n" );
+    DeleteObject( brush );
+    brush = CreateDIBPatternBrushPt( info, DIB_PAL_COLORS + 1 );
+    ok( brush != 0, "CreateDIBPatternBrushPt failed\n" );
+    DeleteObject( brush );
+    brush = CreateDIBPatternBrushPt( info, DIB_PAL_COLORS + 2 );
+    ok( !brush, "CreateDIBPatternBrushPt succeeded\n" );
+    brush = CreateDIBPatternBrushPt( info, DIB_PAL_COLORS + 3 );
+    ok( !brush, "CreateDIBPatternBrushPt succeeded\n" );
 
     info->bmiHeader.biBitCount = 8;
     info->bmiHeader.biCompression = BI_RLE8;
@@ -287,10 +334,7 @@ static void test_palette_brush(void)
         DWORD expect = (pal->palPalEntry[255 - i].peRed << 16 |
                         pal->palPalEntry[255 - i].peGreen << 8 |
                         pal->palPalEntry[255 - i].peBlue);
-        if (expect)
-            todo_wine ok( dib_bits[i] == expect, "wrong bits %x/%x at %u,%u\n", dib_bits[i], expect, i % 16, i / 16 );
-        else
-            ok( dib_bits[i] == expect, "wrong bits %x/%x at %u,%u\n", dib_bits[i], expect, i % 16, i / 16 );
+        ok( dib_bits[i] == expect, "wrong bits %x/%x at %u,%u\n", dib_bits[i], expect, i % 16, i / 16 );
     }
     DeleteDC( hdc );
     DeleteObject( dib );
@@ -302,6 +346,7 @@ static void test_palette_brush(void)
 START_TEST(brush)
 {
     test_solidbrush();
+    test_hatch_brush();
     test_pattern_brush();
     test_palette_brush();
 }

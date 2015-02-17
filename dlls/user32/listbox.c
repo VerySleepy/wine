@@ -27,8 +27,6 @@
  * If you discover missing features, or bugs, please note them below.
  *
  * TODO:
- *    - GetListBoxInfo()
- *    - LB_GETLISTBOXINFO
  *    - LBS_NODATA
  */
 
@@ -85,11 +83,12 @@ typedef struct
     INT         item_height;    /* Default item height */
     INT         page_size;      /* Items per listbox page */
     INT         column_width;   /* Column width for multi-column listboxes */
-    INT         horz_extent;    /* Horizontal extent (0 if no hscroll) */
+    INT         horz_extent;    /* Horizontal extent */
     INT         horz_pos;       /* Horizontal position */
     INT         nb_tabs;        /* Number of tabs in array */
     INT        *tabs;           /* Array of tabs */
     INT         avg_char_width; /* Average width of characters */
+    INT         wheel_remain;   /* Left over scroll amount */
     BOOL        caret_on;       /* Is caret on? */
     BOOL        captured;       /* Is mouse captured? */
     BOOL	in_focus;
@@ -266,17 +265,14 @@ static void LISTBOX_UpdateScroll( LB_DESCR *descr )
         if (descr->style & WS_VSCROLL)
             SetScrollInfo( descr->self, SB_VERT, &info, TRUE );
 
-        if (descr->horz_extent)
+        if (descr->style & WS_HSCROLL)
         {
-            info.nMin  = 0;
-            info.nMax  = descr->horz_extent - 1;
             info.nPos  = descr->horz_pos;
             info.nPage = descr->width;
-            info.fMask = SIF_RANGE | SIF_POS | SIF_PAGE;
+            info.fMask = SIF_POS | SIF_PAGE;
             if (descr->style & LBS_DISABLENOSCROLL)
                 info.fMask |= SIF_DISABLENOSCROLL;
-            if (descr->style & WS_HSCROLL)
-                SetScrollInfo( descr->self, SB_HORZ, &info, TRUE );
+            SetScrollInfo( descr->self, SB_HORZ, &info, TRUE );
         }
     }
 }
@@ -297,20 +293,12 @@ static LRESULT LISTBOX_SetTopItem( LB_DESCR *descr, INT index, BOOL scroll )
     if (index < 0) index = 0;
     if (descr->style & LBS_MULTICOLUMN) index -= index % descr->page_size;
     if (descr->top_item == index) return LB_OKAY;
-    if (descr->style & LBS_MULTICOLUMN)
-    {
-        INT diff = (descr->top_item - index) / descr->page_size * descr->column_width;
-        if (scroll && (abs(diff) < descr->width))
-            ScrollWindowEx( descr->self, diff, 0, NULL, NULL, 0, NULL,
-                              SW_INVALIDATE | SW_ERASE | SW_SCROLLCHILDREN );
-
-        else
-            scroll = FALSE;
-    }
-    else if (scroll)
+    if (scroll)
     {
         INT diff;
-        if (descr->style & LBS_OWNERDRAWVARIABLE)
+        if (descr->style & LBS_MULTICOLUMN)
+            diff = (descr->top_item - index) / descr->page_size * descr->column_width;
+        else if (descr->style & LBS_OWNERDRAWVARIABLE)
         {
             INT i;
             diff = 0;
@@ -328,11 +316,8 @@ static LRESULT LISTBOX_SetTopItem( LB_DESCR *descr, INT index, BOOL scroll )
         else
             diff = (descr->top_item - index) * descr->item_height;
 
-        if (abs(diff) < descr->height)
-            ScrollWindowEx( descr->self, 0, diff, NULL, NULL, 0, NULL,
-                            SW_INVALIDATE | SW_ERASE | SW_SCROLLCHILDREN );
-        else
-            scroll = FALSE;
+        ScrollWindowEx( descr->self, 0, diff, NULL, NULL, 0, NULL,
+                        SW_INVALIDATE | SW_ERASE | SW_SCROLLCHILDREN );
     }
     if (!scroll) InvalidateRect( descr->self, NULL, TRUE );
     descr->top_item = index;
@@ -695,7 +680,7 @@ static void LISTBOX_DrawFocusRect( LB_DESCR *descr, BOOL on )
     if (!IsWindowEnabled(descr->self))
         SetTextColor( hdc, GetSysColor( COLOR_GRAYTEXT ) );
     SetWindowOrgEx( hdc, descr->horz_pos, 0, NULL );
-    LISTBOX_PaintItem( descr, hdc, &rect, descr->focus_item, ODA_FOCUS, on ? FALSE : TRUE );
+    LISTBOX_PaintItem( descr, hdc, &rect, descr->focus_item, ODA_FOCUS, !on );
     if (oldFont) SelectObject( hdc, oldFont );
     ReleaseDC( descr->self, hdc );
 }
@@ -1251,16 +1236,21 @@ static void LISTBOX_SetHorizontalPos( LB_DESCR *descr, INT pos )
  */
 static LRESULT LISTBOX_SetHorizontalExtent( LB_DESCR *descr, INT extent )
 {
-    if (!descr->horz_extent || (descr->style & LBS_MULTICOLUMN))
+    if (descr->style & LBS_MULTICOLUMN)
         return LB_OKAY;
-    if (extent <= 0) extent = 1;
     if (extent == descr->horz_extent) return LB_OKAY;
     TRACE("[%p]: new horz extent = %d\n", descr->self, extent );
     descr->horz_extent = extent;
+    if (descr->style & WS_HSCROLL) {
+        SCROLLINFO info;
+        info.cbSize = sizeof(info);
+        info.nMin  = 0;
+        info.nMax = descr->horz_extent ? descr->horz_extent - 1 : 0;
+        info.fMask = SIF_RANGE;
+        SetScrollInfo( descr->self, SB_HORZ, &info, TRUE );
+    }
     if (descr->horz_pos > extent - descr->width)
         LISTBOX_SetHorizontalPos( descr, extent - descr->width );
-    else
-        LISTBOX_UpdateScroll( descr );
     return LB_OKAY;
 }
 
@@ -1777,6 +1767,8 @@ static LRESULT LISTBOX_SetCount( LB_DESCR *descr, INT count )
             if ((ret = LISTBOX_RemoveItem( descr, (descr->nb_items - 1) )) < 0)
                 return ret;
     }
+
+    InvalidateRect( descr->self, NULL, TRUE );
     return LB_OKAY;
 }
 
@@ -1999,18 +1991,24 @@ static LRESULT LISTBOX_HandleHScroll( LB_DESCR *descr, WORD scrollReq, WORD pos 
 
 static LRESULT LISTBOX_HandleMouseWheel(LB_DESCR *descr, SHORT delta )
 {
-    short gcWheelDelta = 0;
     UINT pulScrollLines = 3;
 
     SystemParametersInfoW(SPI_GETWHEELSCROLLLINES,0, &pulScrollLines, 0);
 
-    gcWheelDelta -= delta;
+    /* if scrolling changes direction, ignore left overs */
+    if ((delta < 0 && descr->wheel_remain < 0) ||
+        (delta > 0 && descr->wheel_remain > 0))
+        descr->wheel_remain += delta;
+    else
+        descr->wheel_remain = delta;
 
-    if (abs(gcWheelDelta) >= WHEEL_DELTA && pulScrollLines)
+    if (descr->wheel_remain && pulScrollLines)
     {
-        int cLineScroll = (int) min((UINT) descr->page_size, pulScrollLines);
-        cLineScroll *= (gcWheelDelta / WHEEL_DELTA);
-        LISTBOX_SetTopItem( descr, descr->top_item + cLineScroll, TRUE );
+        int cLineScroll;
+        pulScrollLines = min((UINT) descr->page_size, pulScrollLines);
+        cLineScroll = pulScrollLines * (float)descr->wheel_remain / WHEEL_DELTA;
+        descr->wheel_remain -= WHEEL_DELTA * cLineScroll / (int)pulScrollLines;
+        LISTBOX_SetTopItem( descr, descr->top_item - cLineScroll, TRUE );
     }
     return 0;
 }
@@ -2489,11 +2487,12 @@ static BOOL LISTBOX_Create( HWND hwnd, LPHEADCOMBO lphc )
     descr->item_height   = 1;
     descr->page_size     = 1;
     descr->column_width  = 150;
-    descr->horz_extent   = (descr->style & WS_HSCROLL) ? 1 : 0;
+    descr->horz_extent   = 0;
     descr->horz_pos      = 0;
     descr->nb_tabs       = 0;
     descr->tabs          = NULL;
-    descr->caret_on      = lphc ? FALSE : TRUE;
+    descr->wheel_remain  = 0;
+    descr->caret_on      = !lphc;
     if (descr->style & LBS_NOSEL) descr->caret_on = FALSE;
     descr->in_focus 	 = FALSE;
     descr->captured      = FALSE;
@@ -2956,8 +2955,7 @@ LRESULT ListBoxWndProc_common( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         return LB_OKAY;
 
     case LB_GETLISTBOXINFO:
-        FIXME("LB_GETLISTBOXINFO: stub!\n");
-        return 0;
+        return descr->page_size;
 
     case WM_DESTROY:
         return LISTBOX_Destroy( descr );
@@ -2999,7 +2997,9 @@ LRESULT ListBoxWndProc_common( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         SEND_NOTIFICATION( descr, LBN_SETFOCUS );
         return 0;
     case WM_KILLFOCUS:
+        LISTBOX_HandleLButtonUp( descr ); /* Release capture if we have it */
         descr->in_focus = FALSE;
+        descr->wheel_remain = 0;
         if ((descr->focus_item != -1) && descr->caret_on)
             LISTBOX_RepaintItem( descr, descr->focus_item, ODA_FOCUS );
         SEND_NOTIFICATION( descr, LBN_KILLFOCUS );
@@ -3148,4 +3148,10 @@ LRESULT ListBoxWndProc_common( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
 
     return unicode ? DefWindowProcW( hwnd, msg, wParam, lParam ) :
                      DefWindowProcA( hwnd, msg, wParam, lParam );
+}
+
+DWORD WINAPI GetListBoxInfo(HWND hwnd)
+{
+    TRACE("%p\n", hwnd);
+    return SendMessageW(hwnd, LB_GETLISTBOXINFO, 0, 0);
 }

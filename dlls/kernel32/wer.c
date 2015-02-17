@@ -39,3 +39,45 @@ HRESULT WINAPI WerRegisterFile(PCWSTR file, WER_REGISTER_FILE_TYPE regfiletype, 
     FIXME("(%s, %d, %d) stub!\n", debugstr_w(file), regfiletype, flags);
     return E_NOTIMPL;
 }
+
+/***********************************************************************
+ * WerRegisterRuntimeExceptionModule (KERNEL32.@)
+ *
+ * Register a custom runtime exception handler.
+ */
+
+HRESULT WINAPI WerRegisterRuntimeExceptionModule(PCWSTR callbackdll, PVOID context)
+{
+    FIXME("(%s, %p) stub!\n", debugstr_w(callbackdll), context);
+    return S_OK;
+}
+
+/***********************************************************************
+ * WerSetFlags (KERNEL32.@)
+ *
+ * Sets error reporting flags for the current process.
+ */
+
+HRESULT WINAPI WerSetFlags(DWORD flags)
+{
+    FIXME("(%d) stub!\n", flags);
+    return E_NOTIMPL;
+}
+
+/***********************************************************************
+ * WerRegisterMemoryBlock (KERNEL32.@)
+ */
+HRESULT WINAPI WerRegisterMemoryBlock(void *block, DWORD size)
+{
+    FIXME("(%p %d) stub\n", block, size);
+    return E_NOTIMPL;
+}
+
+/***********************************************************************
+ * WerUnregisterMemoryBlock (KERNEL32.@)
+ */
+HRESULT WINAPI WerUnregisterMemoryBlock(void *block)
+{
+    FIXME("(%p) stub\n", block);
+    return E_NOTIMPL;
+}

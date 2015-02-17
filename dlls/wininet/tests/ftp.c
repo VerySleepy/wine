@@ -36,7 +36,7 @@
 #include "windef.h"
 #include "winbase.h"
 #include "wininet.h"
-#include "winsock.h"
+#include "winsock2.h"
 
 #include "wine/test.h"
 
@@ -71,7 +71,7 @@ static void test_connect(HINTERNET hInternet)
      */
 
     SetLastError(0xdeadbeef);
-    hFtp = InternetConnect(hInternet, "ftp.winehq.org", INTERNET_DEFAULT_FTP_PORT, "anonymous", NULL, INTERNET_SERVICE_FTP, INTERNET_FLAG_PASSIVE, 0);
+    hFtp = InternetConnectA(hInternet, "ftp.winehq.org", INTERNET_DEFAULT_FTP_PORT, "anonymous", NULL, INTERNET_SERVICE_FTP, INTERNET_FLAG_PASSIVE, 0);
     if (hFtp)  /* some servers accept an empty password */
     {
         ok ( GetLastError() == ERROR_SUCCESS, "ERROR_SUCCESS, got %d\n", GetLastError());
@@ -82,13 +82,13 @@ static void test_connect(HINTERNET hInternet)
              "Expected ERROR_INTERNET_LOGIN_FAILURE, got %d\n", GetLastError());
 
     SetLastError(0xdeadbeef);
-    hFtp = InternetConnect(hInternet, "ftp.winehq.org", INTERNET_DEFAULT_FTP_PORT, NULL, "IEUser@", INTERNET_SERVICE_FTP, INTERNET_FLAG_PASSIVE, 0);
+    hFtp = InternetConnectA(hInternet, "ftp.winehq.org", INTERNET_DEFAULT_FTP_PORT, NULL, "IEUser@", INTERNET_SERVICE_FTP, INTERNET_FLAG_PASSIVE, 0);
     ok ( hFtp == NULL, "Expected InternetConnect to fail\n");
     ok ( GetLastError() == ERROR_INVALID_PARAMETER,
         "Expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
 
     SetLastError(0xdeadbeef);
-    hFtp = InternetConnect(hInternet, "ftp.winehq.org", INTERNET_DEFAULT_FTP_PORT, "", "IEUser@",
+    hFtp = InternetConnectA(hInternet, "ftp.winehq.org", INTERNET_DEFAULT_FTP_PORT, "", "IEUser@",
             INTERNET_SERVICE_FTP, INTERNET_FLAG_PASSIVE, 0);
     ok(!hFtp, "Expected InternetConnect to fail\n");
     ok(GetLastError() == ERROR_INVALID_PARAMETER,
@@ -102,19 +102,19 @@ static void test_connect(HINTERNET hInternet)
      */
 
     SetLastError(0xdeadbeef);
-    hFtp = InternetConnect(hInternet, "ftp.winehq.org", INTERNET_DEFAULT_FTP_PORT, NULL, NULL, INTERNET_SERVICE_FTP, INTERNET_FLAG_PASSIVE, 0);
+    hFtp = InternetConnectA(hInternet, "ftp.winehq.org", INTERNET_DEFAULT_FTP_PORT, NULL, NULL, INTERNET_SERVICE_FTP, INTERNET_FLAG_PASSIVE, 0);
     if (!hFtp && (GetLastError() == ERROR_INTERNET_LOGIN_FAILURE))
     {
         /* We are most likely running on a clean Wine install or a Windows install where the registry key is removed */
         SetLastError(0xdeadbeef);
-        hFtp = InternetConnect(hInternet, "ftp.winehq.org", INTERNET_DEFAULT_FTP_PORT, "anonymous", "IEUser@", INTERNET_SERVICE_FTP, INTERNET_FLAG_PASSIVE, 0);
+        hFtp = InternetConnectA(hInternet, "ftp.winehq.org", INTERNET_DEFAULT_FTP_PORT, "anonymous", "IEUser@", INTERNET_SERVICE_FTP, INTERNET_FLAG_PASSIVE, 0);
     }
     ok ( hFtp != NULL, "InternetConnect failed : %d\n", GetLastError());
     ok ( GetLastError() == ERROR_SUCCESS,
         "ERROR_SUCCESS, got %d\n", GetLastError());
 
     SetLastError(0xdeadbeef);
-    hFtp = InternetConnect(hInternet, "ftp.winehq.org", INTERNET_DEFAULT_FTP_PORT, "", NULL,
+    hFtp = InternetConnectA(hInternet, "ftp.winehq.org", INTERNET_DEFAULT_FTP_PORT, "", NULL,
             INTERNET_SERVICE_FTP, INTERNET_FLAG_PASSIVE, 0);
     if (!hFtp)
     {
@@ -257,10 +257,8 @@ static void test_getfile(HINTERNET hFtp, HINTERNET hConnect)
         "Expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
 
     /* Zero attributes */
-    SetLastError(0xdeadbeef);
     bRet = FtpGetFileA(hFtp, "welcome.msg", "should_be_existing_non_deadbeef", FALSE, 0, FTP_TRANSFER_TYPE_UNKNOWN, 0);
     ok ( bRet == TRUE, "Expected FtpGetFileA to succeed\n");
-    ok (GetLastError() == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", GetLastError());
     ok (GetFileAttributesA("should_be_existing_non_deadbeef") != INVALID_FILE_ATTRIBUTES,
         "Local file should have been created\n");
     DeleteFileA("should_be_existing_non_deadbeef");
@@ -748,11 +746,12 @@ static void test_command(HINTERNET hFtp, HINTERNET hConnect)
 
 static void test_find_first_file(HINTERNET hFtp, HINTERNET hConnect)
 {
-    WIN32_FIND_DATA findData;
+    WIN32_FIND_DATAA findData;
     HINTERNET hSearch;
     HINTERNET hSearch2;
     HINTERNET hOpenFile;
     DWORD error;
+    BOOL success;
 
     /* NULL as the search file ought to return the first file in the directory */
     SetLastError(0xdeadbeef);
@@ -772,13 +771,13 @@ static void test_find_first_file(HINTERNET hFtp, HINTERNET hConnect)
     /* Try a valid filename in a subdirectory search */
     SetLastError(0xdeadbeef);
     hSearch = FtpFindFirstFileA(hFtp, "pub/wine", &findData, 0, 0);
-    todo_wine ok ( hSearch != NULL, "Expected FtpFindFirstFileA to pass\n" );
+    ok( hSearch != NULL, "Expected FtpFindFirstFileA to pass\n" );
     InternetCloseHandle(hSearch);
 
     /* Try a valid filename in a subdirectory wildcard search */
     SetLastError(0xdeadbeef);
     hSearch = FtpFindFirstFileA(hFtp, "pub/w*", &findData, 0, 0);
-    todo_wine ok ( hSearch != NULL, "Expected FtpFindFirstFileA to pass\n" );
+    ok( hSearch != NULL, "Expected FtpFindFirstFileA to pass\n" );
     InternetCloseHandle(hSearch);
 
     /* Try an invalid wildcard search */
@@ -786,6 +785,24 @@ static void test_find_first_file(HINTERNET hFtp, HINTERNET hConnect)
     hSearch = FtpFindFirstFileA(hFtp, "*/w*", &findData, 0, 0);
     ok ( hSearch == NULL, "Expected FtpFindFirstFileA to fail\n" );
     InternetCloseHandle(hSearch); /* Just in case */
+
+    /* change current directory, and repeat those tests - this shows
+     * that the search string is interpreted as relative directory. */
+    success = FtpSetCurrentDirectoryA(hFtp, "pub");
+    ok( success, "Expected FtpSetCurrentDirectory to succeed\n" );
+
+    SetLastError(0xdeadbeef);
+    hSearch = FtpFindFirstFileA(hFtp, "wine", &findData, 0, 0);
+    ok( hSearch != NULL, "Expected FtpFindFirstFileA to pass\n" );
+    InternetCloseHandle(hSearch);
+
+    SetLastError(0xdeadbeef);
+    hSearch = FtpFindFirstFileA(hFtp, "w*", &findData, 0, 0);
+    ok( hSearch != NULL, "Expected FtpFindFirstFileA to pass\n" );
+    InternetCloseHandle(hSearch);
+
+    success = FtpSetCurrentDirectoryA(hFtp, "..");
+    ok( success, "Expected FtpSetCurrentDirectory to succeed\n" );
 
     /* Try FindFirstFile between FtpOpenFile and InternetCloseHandle */
     SetLastError(0xdeadbeef);
@@ -945,7 +962,7 @@ static void test_status_callbacks(HINTERNET hInternet)
     cb = pInternetSetStatusCallbackA(hInternet, status_callback);
     ok(cb == NULL, "expected NULL got %p\n", cb);
 
-    hFtp = InternetConnect(hInternet, "ftp.winehq.org", INTERNET_DEFAULT_FTP_PORT, "anonymous", NULL,
+    hFtp = InternetConnectA(hInternet, "ftp.winehq.org", INTERNET_DEFAULT_FTP_PORT, "anonymous", NULL,
                            INTERNET_SERVICE_FTP, INTERNET_FLAG_PASSIVE, 1);
     if (!hFtp)
     {
@@ -976,17 +993,17 @@ START_TEST(ftp)
     pInternetSetStatusCallbackA = (void*)GetProcAddress(hWininet, "InternetSetStatusCallbackA");
 
     SetLastError(0xdeadbeef);
-    hInternet = InternetOpen("winetest", 0, NULL, NULL, 0);
+    hInternet = InternetOpenA("winetest", 0, NULL, NULL, 0);
     ok(hInternet != NULL, "InternetOpen failed: %u\n", GetLastError());
 
-    hFtp = InternetConnect(hInternet, "ftp.winehq.org", INTERNET_DEFAULT_FTP_PORT, "anonymous", NULL, INTERNET_SERVICE_FTP, INTERNET_FLAG_PASSIVE, 0);
+    hFtp = InternetConnectA(hInternet, "ftp.winehq.org", INTERNET_DEFAULT_FTP_PORT, "anonymous", NULL, INTERNET_SERVICE_FTP, INTERNET_FLAG_PASSIVE, 0);
     if (!hFtp)
     {
         InternetCloseHandle(hInternet);
         skip("No ftp connection could be made to ftp.winehq.org\n");
         return;
     }
-    hHttp = InternetConnect(hInternet, "www.winehq.org", INTERNET_DEFAULT_HTTP_PORT, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    hHttp = InternetConnectA(hInternet, "www.winehq.org", INTERNET_DEFAULT_HTTP_PORT, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
     if (!hHttp)
     {
         InternetCloseHandle(hFtp);

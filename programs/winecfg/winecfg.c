@@ -43,7 +43,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(winecfg);
 #include "winecfg.h"
 #include "resource.h"
 
-static const int is_win64 = (sizeof(void *) > sizeof(int));
+static const BOOL is_win64 = (sizeof(void *) > sizeof(int));
 
 HKEY config_key = NULL;
 HMENU hPopupMenus = 0;
@@ -62,13 +62,13 @@ void set_window_title(HWND dialog)
     if (current_app)
     {
         WCHAR apptitle[256];
-        LoadStringW (GetModuleHandle(NULL), IDS_WINECFG_TITLE_APP, apptitle,
+        LoadStringW (GetModuleHandleW(NULL), IDS_WINECFG_TITLE_APP, apptitle,
             sizeof(apptitle)/sizeof(apptitle[0]));
         wsprintfW (newtitle, apptitle, current_app);
     }
     else
     {
-        LoadStringW (GetModuleHandle(NULL), IDS_WINECFG_TITLE, newtitle,
+        LoadStringW (GetModuleHandleW(NULL), IDS_WINECFG_TITLE, newtitle,
             sizeof(newtitle)/sizeof(newtitle[0]));
     }
 
@@ -83,7 +83,7 @@ WCHAR* load_string (UINT id)
     int len;
     WCHAR* newStr;
 
-    LoadStringW (GetModuleHandle (NULL), id, buf, sizeof(buf)/sizeof(buf[0]));
+    LoadStringW (GetModuleHandleW(NULL), id, buf, sizeof(buf)/sizeof(buf[0]));
 
     len = lstrlenW (buf);
     newStr = HeapAlloc (GetProcessHeap(), 0, (len + 1) * sizeof (WCHAR));
@@ -503,7 +503,6 @@ static WCHAR **enumerate_valuesW(HKEY root, WCHAR *path)
 
             if (removed)            /* this value was deleted by the user, so don't include it */
             {
-                HeapFree(GetProcessHeap(), 0, name);
                 i++;
                 continue;
             }
@@ -697,7 +696,7 @@ char *keypath(const char *section)
     if (current_app)
     {
         result = HeapAlloc(GetProcessHeap(), 0, strlen("AppDefaults\\") + lstrlenW(current_app)*2 + 2 /* \\ */ + strlen(section) + 1 /* terminator */);
-        wsprintf(result, "AppDefaults\\%ls", current_app);
+        wsprintfA(result, "AppDefaults\\%ls", current_app);
         if (section[0]) sprintf( result + strlen(result), "\\%s", section );
     }
     else
@@ -750,18 +749,18 @@ void PRINTERROR(void)
         WINE_TRACE("error: '%s'\n", msg);
 }
 
-int initialize(HINSTANCE hInstance)
+BOOL initialize(HINSTANCE hInstance)
 {
-    DWORD res = RegCreateKey(HKEY_CURRENT_USER, WINE_KEY_ROOT, &config_key);
+    DWORD res = RegCreateKeyA(HKEY_CURRENT_USER, WINE_KEY_ROOT, &config_key);
 
     if (res != ERROR_SUCCESS) {
 	WINE_ERR("RegOpenKey failed on wine config key (%d)\n", res);
-	return 1;
+        return TRUE;
     }
 
     /* we could probably just have the list as static data  */
     settings = HeapAlloc(GetProcessHeap(), 0, sizeof(struct list));
     list_init(settings);
 
-    return 0;
+    return FALSE;
 }

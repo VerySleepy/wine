@@ -24,7 +24,8 @@
 #include "d3d.h"
 #include "unknwn.h"
 
-static HRESULT (WINAPI *pDirectDrawCreateEx)(LPGUID,LPVOID*,REFIID,LPUNKNOWN);
+static HRESULT (WINAPI *pDirectDrawCreateEx)(GUID *driver_guid,
+        void **ddraw, REFIID interface_iid, IUnknown *outer);
 
 static void init_function_pointers(void)
 {
@@ -356,6 +357,9 @@ static void test_d3d_ifaces(void)
     ref = getRefcount( (IUnknown *) DDraw1);
     ok(ref == 1, "IDirectDraw reference count is %ld\n", ref);
 
+    /* FIXME: This test suggests that IDirect3D, IDirect3D2 and IDirect3D3 are linked
+     * to IDirectDraw. However, they are linked to whatever interface is used to QI the
+     * first IDirect3D? interface. If DDraw1 is replaced with DDraw4 here the tests break */
     hr = IDirectDraw_QueryInterface(DDraw1, &IID_IDirect3D, (void **) &D3D1);
     if (hr == E_NOINTERFACE)  /* win64 */
     {

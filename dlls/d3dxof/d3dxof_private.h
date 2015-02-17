@@ -3,9 +3,6 @@
  *
  * Copyright 2004, 2008 Christian Costa
  *
- * This file contains the (internal) driver registration functions,
- * driver enumeration APIs and DirectDraw creation functions.
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -33,10 +30,10 @@
 #include "winuser.h"
 #include "dxfile.h"
 
-#define MAX_NAME_LEN 32
+#define MAX_NAME_LEN 40
 #define MAX_ARRAY_DIM 4
 #define MAX_MEMBERS 50
-#define MAX_CHILDREN 100
+#define MAX_CHILDREN 200
 #define MAX_TEMPLATES 200
 #define MAX_OBJECTS 500
 #define MAX_SUBOBJECTS 2000
@@ -128,6 +125,9 @@ typedef struct {
   WORD current_token;
   BOOL token_present;
   BOOL txt;
+  DWORD list_nb_elements;
+  BOOL list_type_float;
+  BOOL list_separator;
   ULONG cur_pos_data;
   LPBYTE cur_pstrings;
   BYTE value[100];
@@ -164,7 +164,7 @@ HRESULT IDirectXFileImpl_Create(IUnknown *pUnkOuter, LPVOID *ppObj) DECLSPEC_HID
 
 HRESULT parse_header(parse_buffer *buf, BYTE **decomp_buffer_ptr) DECLSPEC_HIDDEN;
 BOOL parse_object(parse_buffer * buf) DECLSPEC_HIDDEN;
-BOOL parse_templates(parse_buffer * buf) DECLSPEC_HIDDEN;
+BOOL parse_templates(parse_buffer * buf, BOOL templates_only) DECLSPEC_HIDDEN;
 
 int mszip_decompress(int inlen, int outlen, char* inbuffer, char* outbuffer) DECLSPEC_HIDDEN;
 

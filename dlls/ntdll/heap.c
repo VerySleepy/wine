@@ -40,6 +40,7 @@
 #include "windef.h"
 #include "winnt.h"
 #include "winternl.h"
+#include "ntdll_misc.h"
 #include "wine/list.h"
 #include "wine/debug.h"
 #include "wine/server.h"
@@ -260,6 +261,13 @@ static inline void notify_free( void const *ptr )
 {
 #ifdef VALGRIND_FREELIKE_BLOCK
     VALGRIND_FREELIKE_BLOCK( ptr, 0 );
+#endif
+}
+
+static inline void notify_realloc( void const *ptr, SIZE_T size_old, SIZE_T size_new )
+{
+#ifdef VALGRIND_RESIZEINPLACE_BLOCK
+    VALGRIND_RESIZEINPLACE_BLOCK( ptr, size_old, size_new, 0 );
 #endif
 }
 
@@ -753,6 +761,11 @@ static void *realloc_large_block( HEAP *heap, DWORD flags, void *ptr, SIZE_T siz
         SIZE_T unused = arena->block_size - sizeof(*arena) - size;
 
         /* FIXME: we could remap zero-pages instead */
+#ifdef VALGRIND_RESIZEINPLACE_BLOCK
+        if (RUNNING_ON_VALGRIND)
+            notify_realloc( arena + 1, arena->data_size, size );
+        else
+#endif
         if (size > arena->data_size)
             initialize_block( (char *)ptr + arena->data_size, size - arena->data_size, unused, flags );
         else
@@ -794,7 +807,7 @@ static BOOL validate_large_arena( HEAP *heap, const ARENA_LARGE *arena, BOOL qui
 {
     DWORD flags = heap->flags;
 
-    if ((ULONG_PTR)arena % getpagesize())
+    if ((ULONG_PTR)arena % page_size)
     {
         if (quiet == NOISY)
         {
@@ -866,7 +879,7 @@ static SUBHEAP *HEAP_CreateSubHeap( HEAP *heap, LPVOID address, DWORD flags,
         commitSize = min( totalSize, (commitSize + COMMIT_MASK) & ~COMMIT_MASK );
 
         /* allocate the memory block */
-        if (NtAllocateVirtualMemory( NtCurrentProcess(), &address, 5, &totalSize,
+        if (NtAllocateVirtualMemory( NtCurrentProcess(), &address, 0, &totalSize,
                                      MEM_RESERVE, get_protection_type( flags ) ))
         {
             WARN("Could not allocate %08lx bytes\n", totalSize );
@@ -1844,11 +1857,8 @@ PVOID WINAPI RtlReAllocateHeap( HANDLE heap, ULONG flags, PVOID ptr, SIZE_T size
             list_remove( &pFree->entry );
             pArena->size += (pFree->size & ARENA_SIZE_MASK) + sizeof(*pFree);
             if (!HEAP_Commit( subheap, pArena, rounded_size )) goto oom;
-            notify_free( pArena + 1 );
+            notify_realloc( pArena + 1, oldActualSize, size );
             HEAP_ShrinkBlock( subheap, pArena, rounded_size );
-            notify_alloc( pArena + 1, size, FALSE );
-            /* FIXME: this is wrong as we may lose old VBits settings */
-            mark_block_initialized( pArena + 1, oldActualSize );
         }
         else  /* Do it the hard way */
         {
@@ -1883,12 +1893,8 @@ PVOID WINAPI RtlReAllocateHeap( HANDLE heap, ULONG flags, PVOID ptr, SIZE_T size
     }
     else
     {
-        /* Shrink the block */
-        notify_free( pArena + 1 );
+        notify_realloc( pArena + 1, oldActualSize, size );
         HEAP_ShrinkBlock( subheap, pArena, rounded_size );
-        notify_alloc( pArena + 1, size, FALSE );
-        /* FIXME: this is wrong as we may lose old VBits settings */
-        mark_block_initialized( pArena + 1, size );
     }
 
     pArena->unused_bytes = (pArena->size & ARENA_SIZE_MASK) - size;
@@ -2245,4 +2251,13 @@ NTSTATUS WINAPI RtlQueryHeapInformation( HANDLE heap, HEAP_INFORMATION_CLASS inf
         FIXME("Unknown heap information class %u\n", info_class);
         return STATUS_INVALID_INFO_CLASS;
     }
+}
+
+/***********************************************************************
+ *           RtlSetHeapInformation    (NTDLL.@)
+ */
+NTSTATUS WINAPI RtlSetHeapInformation( HANDLE heap, HEAP_INFORMATION_CLASS info_class, PVOID info, SIZE_T size)
+{
+    FIXME("%p %d %p %ld stub\n", heap, info_class, info, size);
+    return STATUS_SUCCESS;
 }

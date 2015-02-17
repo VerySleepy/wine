@@ -1,8 +1,5 @@
-EXTRADEFS = -DWINE_NO_UNICODE_MACROS
 MODULE    = ngen.exe
 APPMODE   = -mconsole -municode
 
 C_SRCS = \
 	ngen_main.c
-
-@MAKE_PROG_RULES@

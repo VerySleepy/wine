@@ -1,8 +1,5 @@
-EXTRADEFS = -DWINE_NO_UNICODE_MACROS
 MODULE    = cacls.exe
 APPMODE   = -mconsole
 
 C_SRCS = \
 	cacls_main.c
-
-@MAKE_PROG_RULES@

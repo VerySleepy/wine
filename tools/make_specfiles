@@ -28,12 +28,7 @@ my @dll_groups =
 (
  [
   "msvcrt",
-  "msvcr90",
   "msvcirt",
-  "msvcr100",
-  "msvcr80",
-  "msvcr71",
-  "msvcr70",
   "msvcrt40",
   "msvcrt20",
   "msvcrtd",
@@ -43,10 +38,20 @@ my @dll_groups =
   "msvcrt",
   "msvcp90",
   "msvcp100",
-  "msvcp80",
+  "msvcp110",
+  "msvcp120",
   "msvcp71",
+  "msvcp80",
   "msvcp70",
   "msvcp60",
+ ],
+ [
+  "msvcr120",
+  "msvcr120_app",
+ ],
+ [
+  "msvcp120",
+  "msvcp120_app",
  ],
  [
   "d3dx9_36",
@@ -84,6 +89,10 @@ my @dll_groups =
   "d3dx10_33",
  ],
  [
+  "d3dx11_43",
+  "d3dx11_42",
+ ],
+ [
   "d3dcompiler_43",
   "d3dcompiler_42",
   "d3dcompiler_41",
@@ -98,6 +107,7 @@ my @dll_groups =
  ],
  [
   "xinput1_3",
+  "xinput1_4",
   "xinput1_2",
   "xinput1_1",
   "xinput9_1_0",
@@ -105,6 +115,107 @@ my @dll_groups =
  [
   "setupapi",
   "cfgmgr32",
+ ],
+ [
+  "vcomp",
+  "vcomp100",
+  "vcomp90",
+ ],
+ [
+  "advapi32",
+  "api-ms-win-core-localregistry-l1-1-0",
+  "api-ms-win-downlevel-advapi32-l1-1-0",
+  "api-ms-win-downlevel-advapi32-l2-1-0",
+  "api-ms-win-security-base-l1-1-0",
+  "api-ms-win-core-registry-l1-1-0",
+  "api-ms-win-eventing-provider-l1-1-0",
+  "api-ms-win-security-base-l1-2-0",
+  "api-ms-win-security-sddl-l1-1-0",
+  "api-ms-win-service-core-l1-1-1",
+  "api-ms-win-service-management-l1-1-0",
+  "api-ms-win-service-winsvc-l1-2-0",
+ ],
+ [
+  "kernel32",
+  "api-ms-win-downlevel-normaliz-l1-1-0",
+  "api-ms-win-core-processthreads-l1-1-0",
+  "api-ms-win-core-processthreads-l1-1-1",
+  "api-ms-win-core-debug-l1-1-1",
+  "api-ms-win-core-errorhandling-l1-1-1",
+  "api-ms-win-core-interlocked-l1-2-0",
+  "api-ms-win-core-profile-l1-1-0",
+  "api-ms-win-core-string-l1-1-0",
+  "api-ms-win-core-sysinfo-l1-2-0",
+  "api-ms-win-core-util-l1-1-0",
+  "api-ms-win-core-synch-l1-2-0",
+  "api-ms-win-core-console-l1-1-0",
+  "api-ms-win-core-file-l1-2-0",
+  "api-ms-win-core-handle-l1-1-0",
+  "api-ms-win-core-heap-l1-2-0",
+  "api-ms-win-core-heap-obsolete-l1-1-0",
+  "api-ms-win-core-io-l1-1-1",
+  "api-ms-win-core-kernel32-legacy-l1-1-0",
+  "api-ms-win-core-libraryloader-l1-1-1",
+  "api-ms-win-core-localization-l1-2-0",
+  "api-ms-win-core-localization-obsolete-l1-1-0",
+  "api-ms-win-core-memory-l1-1-1",
+  "api-ms-win-core-namedpipe-l1-2-0",
+  "api-ms-win-core-processenvironment-l1-2-0",
+  "api-ms-win-core-psapi-l1-1-0",
+  "api-ms-win-core-threadpool-legacy-l1-1-0",
+  "api-ms-win-core-timezone-l1-1-0",
+  "api-ms-win-core-file-l2-1-1",
+  "api-ms-win-core-sysinfo-l1-2-1",
+  "api-ms-win-core-processthreads-l1-1-2",
+  "api-ms-win-core-fibers-l1-1-0",
+  "api-ms-win-core-fibers-l1-1-1",
+  "api-ms-win-core-file-l2-1-0",
+  "api-ms-win-core-localization-l1-2-1",
+  "api-ms-win-core-datetime-l1-1-0",
+  "api-ms-win-core-datetime-l1-1-1",
+  "api-ms-win-core-xstate-l2-1-0",
+  "api-ms-win-core-errorhandling-l1-1-2",
+ ],
+ [
+  "ole32",
+  "api-ms-win-downlevel-ole32-l1-1-0",
+  "api-ms-win-core-com-l1-1-0",
+  "combase",
+ ],
+ [
+  "shell32",
+  "api-ms-win-downlevel-shell32-l1-1-0",
+ ],
+ [
+  "shlwapi",
+  "api-ms-win-downlevel-shlwapi-l1-1-0",
+  "api-ms-win-downlevel-shlwapi-l2-1-0",
+  "api-ms-win-core-shlwapi-legacy-l1-1-0",
+  "api-ms-win-core-url-l1-1-0",
+ ],
+ [
+  "user32",
+  "api-ms-win-downlevel-user32-l1-1-0",
+  "api-ms-win-ntuser-dc-access-l1-1-0",
+ ],
+ [
+  "version",
+  "api-ms-win-downlevel-version-l1-1-0",
+ ],
+ [
+  "msvcrt",
+  "ntdll",
+  "ntoskrnl.exe",
+  "api-ms-win-core-rtlsupport-l1-2-0",
+ ],
+ [
+  "gdi32",
+  "ext-ms-win-gdi-devcaps-l1-1-0",
+ ],
+ [
+  "combase",
+  "api-ms-win-core-winrt-l1-1-0",
+  "api-ms-win-core-winrt-string-l1-1-0",
  ],
 );
 
@@ -137,15 +248,15 @@ sub update_file($)
 # parse a spec file line
 sub parse_line($$$)
 {
-    my ($name, $line, $_) = @_;
+    my ($name, $line, $str) = @_;
 
-    if (/^\s*(\@|\d+)\s+(stdcall|cdecl|varargs|thiscall|stub|extern)\s+((?:-\S+\s+)*)([A-Za-z0-9_\@\$?]+)(?:\s*(\([^)]*\)))?(?:\s+([A-Za-z0-9_\@\$?.]+))?(\s*\#.*)?/)
+    if ($str =~ /^\s*(\@|\d+)\s+(stdcall|cdecl|varargs|thiscall|stub|extern)\s+((?:-\S+\s+)*)([A-Za-z0-9_\@\$?]+)(?:\s*(\([^)]*\)))?(?:\s+([A-Za-z0-9_\@\$?.]+))?(\s*\#.*)?/)
     {
         return ( "ordinal" => $1, "callconv" => $2, "flags" => $3, "name" => $4, "args" => $5 || "",
                  "target" => $6 || $4, "comment" => $7, "spec" => $name );
     }
-    return () if /^\s*$/;
-    return () if /^\s*\#/;
+    return () if $str =~ /^\s*$/;
+    return () if $str =~ /^\s*\#/;
     printf STDERR "$name.spec:$line: error: Unrecognized line $_\n";
 }
 
@@ -209,7 +320,17 @@ sub update_spec_file($)
             goto done;
         }
 
-        my $flags = ($parent{callconv} ne "stub" || $update_flags) ? $parent{flags} : $descr{flags};
+        my $flags = $descr{flags};
+        if ($parent{callconv} ne "stub" || $update_flags)
+        {
+            $flags = $parent{flags};
+            $flags =~ s/-ordinal\s*// if $descr{ordinal} eq "@";
+            $flags =~ s/-noname\s*// if $descr{ordinal} eq "@";
+            if ($descr{flags} =~ /-private/)  # preserve -private flag
+            {
+                $flags = "-private " . $flags unless $flags =~ /-private/;
+            }
+        }
 
         if ($parent{callconv} ne "stub" || $parent{args})
         {

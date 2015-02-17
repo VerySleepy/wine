@@ -72,7 +72,7 @@ struct d3dcompiler_shader_reflection_variable
     UINT start_offset;
     UINT size;
     UINT flags;
-    LPVOID default_value;
+    void *default_value;
 };
 
 struct d3dcompiler_shader_reflection_constant_buffer
@@ -182,7 +182,7 @@ static BOOL copy_value(const char *ptr, void **value, DWORD size)
     *value = HeapAlloc(GetProcessHeap(), 0, size);
     if (!*value)
     {
-        ERR("Failed to allocate vlaue memory.\n");
+        ERR("Failed to allocate value memory.\n");
         return FALSE;
     }
 
@@ -445,7 +445,7 @@ static struct ID3D11ShaderReflectionConstantBuffer * STDMETHODCALLTYPE d3dcompil
 }
 
 static struct ID3D11ShaderReflectionConstantBuffer * STDMETHODCALLTYPE d3dcompiler_shader_reflection_GetConstantBufferByName(
-        ID3D11ShaderReflection *iface, LPCSTR name)
+        ID3D11ShaderReflection *iface, const char *name)
 {
     struct d3dcompiler_shader_reflection *This = impl_from_ID3D11ShaderReflection(iface);
     unsigned int i;
@@ -547,7 +547,7 @@ static HRESULT STDMETHODCALLTYPE d3dcompiler_shader_reflection_GetPatchConstantP
 }
 
 static struct ID3D11ShaderReflectionVariable * STDMETHODCALLTYPE d3dcompiler_shader_reflection_GetVariableByName(
-        ID3D11ShaderReflection *iface, LPCSTR name)
+        ID3D11ShaderReflection *iface, const char *name)
 {
     struct d3dcompiler_shader_reflection *This = impl_from_ID3D11ShaderReflection(iface);
     unsigned int i, k;
@@ -582,7 +582,7 @@ static struct ID3D11ShaderReflectionVariable * STDMETHODCALLTYPE d3dcompiler_sha
 }
 
 static HRESULT STDMETHODCALLTYPE d3dcompiler_shader_reflection_GetResourceBindingDescByName(
-        ID3D11ShaderReflection *iface, LPCSTR name, D3D11_SHADER_INPUT_BIND_DESC *desc)
+        ID3D11ShaderReflection *iface, const char *name, D3D11_SHADER_INPUT_BIND_DESC *desc)
 {
     struct d3dcompiler_shader_reflection *This = impl_from_ID3D11ShaderReflection(iface);
     unsigned int i;
@@ -661,7 +661,7 @@ static BOOL STDMETHODCALLTYPE d3dcompiler_shader_reflection_IsSampleFrequencySha
 {
     FIXME("iface %p stub!\n", iface);
 
-    return 0;
+    return FALSE;
 }
 
 static UINT STDMETHODCALLTYPE d3dcompiler_shader_reflection_GetNumInterfaceSlots(
@@ -767,7 +767,7 @@ static ID3D11ShaderReflectionVariable * STDMETHODCALLTYPE d3dcompiler_shader_ref
 }
 
 static ID3D11ShaderReflectionVariable * STDMETHODCALLTYPE d3dcompiler_shader_reflection_constant_buffer_GetVariableByName(
-        ID3D11ShaderReflectionConstantBuffer *iface, LPCSTR name)
+        ID3D11ShaderReflectionConstantBuffer *iface, const char *name)
 {
     struct d3dcompiler_shader_reflection_constant_buffer *This = impl_from_ID3D11ShaderReflectionConstantBuffer(iface);
     unsigned int i;
@@ -924,7 +924,7 @@ static ID3D11ShaderReflectionType * STDMETHODCALLTYPE d3dcompiler_shader_reflect
 }
 
 static ID3D11ShaderReflectionType * STDMETHODCALLTYPE d3dcompiler_shader_reflection_type_GetMemberTypeByName(
-        ID3D11ShaderReflectionType *iface, LPCSTR name)
+        ID3D11ShaderReflectionType *iface, const char *name)
 {
     struct d3dcompiler_shader_reflection_type *This = impl_from_ID3D11ShaderReflectionType(iface);
     unsigned int i;
@@ -953,7 +953,7 @@ static ID3D11ShaderReflectionType * STDMETHODCALLTYPE d3dcompiler_shader_reflect
     return &null_type.ID3D11ShaderReflectionType_iface;
 }
 
-static LPCSTR STDMETHODCALLTYPE d3dcompiler_shader_reflection_type_GetMemberTypeName(
+static const char * STDMETHODCALLTYPE d3dcompiler_shader_reflection_type_GetMemberTypeName(
         ID3D11ShaderReflectionType *iface, UINT index)
 {
     struct d3dcompiler_shader_reflection_type *This = impl_from_ID3D11ShaderReflectionType(iface);
@@ -1282,10 +1282,7 @@ static struct d3dcompiler_shader_reflection_type *get_reflection_type(struct d3d
 
     type = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*type));
     if (!type)
-    {
-        ERR("Failed to allocate type memory.\n");
         return NULL;
-    }
 
     type->ID3D11ShaderReflectionType_iface.lpVtbl = &d3dcompiler_shader_reflection_type_vtbl;
     type->id = offset;
@@ -1833,10 +1830,7 @@ HRESULT WINAPI D3DReflect(const void *data, SIZE_T data_size, REFIID riid, void 
 
     object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object));
     if (!object)
-    {
-        ERR("Failed to allocate D3D compiler shader reflection object memory\n");
         return E_OUTOFMEMORY;
-    }
 
     hr = d3dcompiler_shader_reflection_init(object, data, data_size);
     if (FAILED(hr))

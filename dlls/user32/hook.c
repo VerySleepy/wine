@@ -70,6 +70,7 @@
 
 #include "windef.h"
 #include "winbase.h"
+#include "wingdi.h"
 #include "winuser.h"
 #include "winerror.h"
 #include "win.h"
@@ -201,6 +202,48 @@ static HHOOK set_windows_hook( INT id, HOOKPROC proc, HINSTANCE inst, DWORD tid,
     return handle;
 }
 
+#ifdef __i386__
+/* Some apps pass a non-stdcall proc to SetWindowsHookExA,
+ * so we need a small assembly wrapper to call the proc.
+ */
+extern LRESULT HOOKPROC_wrapper( HOOKPROC proc,
+                                 INT code, WPARAM wParam, LPARAM lParam );
+__ASM_GLOBAL_FUNC( HOOKPROC_wrapper,
+                   "pushl %ebp\n\t"
+                   __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
+                   __ASM_CFI(".cfi_rel_offset %ebp,0\n\t")
+                   "movl %esp,%ebp\n\t"
+                   __ASM_CFI(".cfi_def_cfa_register %ebp\n\t")
+                   "pushl %edi\n\t"
+                   __ASM_CFI(".cfi_rel_offset %edi,-4\n\t")
+                   "pushl %esi\n\t"
+                   __ASM_CFI(".cfi_rel_offset %esi,-8\n\t")
+                   "pushl %ebx\n\t"
+                   __ASM_CFI(".cfi_rel_offset %ebx,-12\n\t")
+                   "pushl 20(%ebp)\n\t"
+                   "pushl 16(%ebp)\n\t"
+                   "pushl 12(%ebp)\n\t"
+                   "movl 8(%ebp),%eax\n\t"
+                   "call *%eax\n\t"
+                   "leal -12(%ebp),%esp\n\t"
+                   "popl %ebx\n\t"
+                   __ASM_CFI(".cfi_same_value %ebx\n\t")
+                   "popl %esi\n\t"
+                   __ASM_CFI(".cfi_same_value %esi\n\t")
+                   "popl %edi\n\t"
+                   __ASM_CFI(".cfi_same_value %edi\n\t")
+                   "leave\n\t"
+                   __ASM_CFI(".cfi_def_cfa %esp,4\n\t")
+                   __ASM_CFI(".cfi_same_value %ebp\n\t")
+                   "ret" )
+#else
+static inline LRESULT HOOKPROC_wrapper( HOOKPROC proc,
+                                 INT code, WPARAM wParam, LPARAM lParam )
+{
+    return proc( code, wParam, lParam );
+}
+#endif  /* __i386__ */
+
 
 /***********************************************************************
  *		call_hook_AtoW
@@ -209,7 +252,8 @@ static LRESULT call_hook_AtoW( HOOKPROC proc, INT id, INT code, WPARAM wparam, L
 {
     LRESULT ret;
     UNICODE_STRING usBuffer;
-    if (id != WH_CBT || code != HCBT_CREATEWND) ret = proc( code, wparam, lparam );
+    if (id != WH_CBT || code != HCBT_CREATEWND)
+        ret = HOOKPROC_wrapper( proc, code, wparam, lparam );
     else
     {
         CBT_CREATEWNDA *cbtcwA = (CBT_CREATEWNDA *)lparam;
@@ -232,7 +276,7 @@ static LRESULT call_hook_AtoW( HOOKPROC proc, INT id, INT code, WPARAM wparam, L
             RtlCreateUnicodeStringFromAsciiz(&usBuffer,cbtcwA->lpcs->lpszClass);
             csW.lpszClass = classW = usBuffer.Buffer;
         }
-        ret = proc( code, wparam, (LPARAM)&cbtcwW );
+        ret = HOOKPROC_wrapper( proc, code, wparam, (LPARAM)&cbtcwW );
         cbtcwA->hwndInsertAfter = cbtcwW.hwndInsertAfter;
         HeapFree( GetProcessHeap(), 0, nameW );
         HeapFree( GetProcessHeap(), 0, classW );
@@ -248,7 +292,8 @@ static LRESULT call_hook_WtoA( HOOKPROC proc, INT id, INT code, WPARAM wparam, L
 {
     LRESULT ret;
 
-    if (id != WH_CBT || code != HCBT_CREATEWND) ret = proc( code, wparam, lparam );
+    if (id != WH_CBT || code != HCBT_CREATEWND)
+        ret = HOOKPROC_wrapper( proc, code, wparam, lparam );
     else
     {
         CBT_CREATEWNDW *cbtcwW = (CBT_CREATEWNDW *)lparam;
@@ -276,7 +321,7 @@ static LRESULT call_hook_WtoA( HOOKPROC proc, INT id, INT code, WPARAM wparam, L
             csA.lpszClass = classA;
         }
 
-        ret = proc( code, wparam, (LPARAM)&cbtcwA );
+        ret = HOOKPROC_wrapper( proc, code, wparam, (LPARAM)&cbtcwA );
         cbtcwW->hwndInsertAfter = cbtcwA.hwndInsertAfter;
         HeapFree( GetProcessHeap(), 0, nameA );
         HeapFree( GetProcessHeap(), 0, classA );
@@ -314,11 +359,13 @@ static LRESULT call_hook_proc( HOOKPROC proc, INT id, INT code, WPARAM wparam, L
  *
  * Retrieve the hook procedure real value for a module-relative proc
  */
-void *get_hook_proc( void *proc, const WCHAR *module )
+void *get_hook_proc( void *proc, const WCHAR *module, HMODULE *free_module )
 {
     HMODULE mod;
 
-    if (!(mod = GetModuleHandleW(module)))
+    GetModuleHandleExW( 0, module, &mod );
+    *free_module = mod;
+    if (!mod)
     {
         TRACE( "loading %s\n", debugstr_w(module) );
         /* FIXME: the library will never be freed */
@@ -366,12 +413,13 @@ static LRESULT call_hook( struct hook_info *info, INT code, WPARAM wparam, LPARA
     }
     else if (info->proc)
     {
+        HMODULE free_module = 0;
         TRACE( "calling hook %p %s code %x wp %lx lp %lx module %s\n",
                info->proc, hook_names[info->id-WH_MINHOOK], code, wparam,
                lparam, debugstr_w(info->module) );
 
         if (!info->module[0] ||
-            (info->proc = get_hook_proc( info->proc, info->module )) != NULL)
+            (info->proc = get_hook_proc( info->proc, info->module, &free_module )) != NULL)
         {
             struct user_thread_info *thread_info = get_user_thread_info();
             HHOOK prev = thread_info->hook;
@@ -383,8 +431,14 @@ static LRESULT call_hook( struct hook_info *info, INT code, WPARAM wparam, LPARA
                                   info->prev_unicode, info->next_unicode );
             thread_info->hook = prev;
             thread_info->hook_unicode = prev_unicode;
+
+            if (free_module) FreeLibrary(free_module);
         }
     }
+
+    if (info->id == WH_KEYBOARD_LL || info->id == WH_MOUSE_LL)
+        get_user_thread_info()->key_state_time = 0;  /* force refreshing the key state cache */
+
     return ret;
 }
 
@@ -848,10 +902,11 @@ void WINAPI NotifyWinEvent(DWORD event, HWND hwnd, LONG object_id, LONG child_id
         WINEVENTPROC proc = info.proc;
         if (proc)
         {
+            HMODULE free_module = 0;
             TRACE( "calling WH_WINEVENT hook %p event %x hwnd %p %x %x module %s\n",
                    proc, event, hwnd, object_id, child_id, debugstr_w(info.module) );
 
-            if (!info.module[0] || (proc = get_hook_proc( proc, info.module )) != NULL)
+            if (!info.module[0] || (proc = get_hook_proc( proc, info.module, &free_module )) != NULL)
             {
                 if (TRACE_ON(relay))
                     DPRINTF( "%04x:Call winevent hook proc %p (hhook=%p,event=%x,hwnd=%p,object_id=%x,child_id=%x,tid=%04x,time=%x)\n",
@@ -865,6 +920,8 @@ void WINAPI NotifyWinEvent(DWORD event, HWND hwnd, LONG object_id, LONG child_id
                     DPRINTF( "%04x:Ret  winevent hook proc %p (hhook=%p,event=%x,hwnd=%p,object_id=%x,child_id=%x,tid=%04x,time=%x)\n",
                              GetCurrentThreadId(), proc, info.handle, event, hwnd, object_id,
                              child_id, GetCurrentThreadId(), GetCurrentTime());
+
+                if (free_module) FreeLibrary(free_module);
             }
         }
         else

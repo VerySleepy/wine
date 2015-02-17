@@ -20,8 +20,22 @@
 #include "config.h"
 #include "wine/port.h"
 
-#include "dmscript_private.h"
+#include <stdarg.h>
+
+#define COBJMACROS
+
+#include "windef.h"
+#include "winbase.h"
+#include "winnt.h"
+#include "wingdi.h"
+#include "winuser.h"
+#include "winreg.h"
+#include "objbase.h"
 #include "rpcproxy.h"
+#include "initguid.h"
+#include "dmusici.h"
+
+#include "dmscript_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dmscript);
 
@@ -37,7 +51,7 @@ static HRESULT WINAPI create_unimpl_instance(REFIID riid, void **ppv, IUnknown *
 {
         FIXME("(%p, %s, %p) stub\n", pUnkOuter, debugstr_dmguid(riid), ppv);
 
-        return E_NOINTERFACE;
+        return CLASS_E_CLASSNOTAVAILABLE;
 }
 
 /******************************************************************
@@ -137,9 +151,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
 	if (fdwReason == DLL_PROCESS_ATTACH) {
             instance = hinstDLL;
             DisableThreadLibraryCalls(hinstDLL);
-		/* FIXME: Initialisation */
-	} else if (fdwReason == DLL_PROCESS_DETACH) {
-		/* FIXME: Cleanup */
 	}
 
 	return TRUE;
@@ -256,7 +267,6 @@ const char *debugstr_dmguid (const GUID *id) {
 		/* CLSIDs */
 		GE(CLSID_AudioVBScript),
 		GE(CLSID_DirectMusic),
-		GE(CLSID_DirectMusicAudioPath),
 		GE(CLSID_DirectMusicAudioPathConfig),
 		GE(CLSID_DirectMusicAuditionTrack),
 		GE(CLSID_DirectMusicBand),

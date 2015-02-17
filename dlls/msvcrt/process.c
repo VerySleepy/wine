@@ -31,6 +31,7 @@
 #include <stdarg.h>
 
 #include "msvcrt.h"
+#include "mtdll.h"
 #include "wine/debug.h"
 #include "wine/unicode.h"
 
@@ -133,6 +134,7 @@ static MSVCRT_intptr_t msvcrt_spawn(int flags, const MSVCRT_wchar_t* exe, MSVCRT
   STARTUPINFOW si;
   PROCESS_INFORMATION pi;
   MSVCRT_wchar_t fullname[MAX_PATH];
+  DWORD create_flags = CREATE_UNICODE_ENVIRONMENT;
 
   TRACE("%x %s %s %s %d\n", flags, debugstr_w(exe), debugstr_w(cmdline), debugstr_w(env), use_path);
 
@@ -147,9 +149,9 @@ static MSVCRT_intptr_t msvcrt_spawn(int flags, const MSVCRT_wchar_t* exe, MSVCRT
   memset(&si, 0, sizeof(si));
   si.cb = sizeof(si);
   msvcrt_create_io_inherit_block(&si.cbReserved2, &si.lpReserved2);
+  if (flags == MSVCRT__P_DETACH) create_flags |= DETACHED_PROCESS;
   if (!CreateProcessW(fullname, cmdline, NULL, NULL, TRUE,
-                     flags == MSVCRT__P_DETACH ? DETACHED_PROCESS : 0,
-                     env, NULL, &si, &pi))
+                      create_flags, env, NULL, &si, &pi))
   {
     msvcrt_set_errno(GetLastError());
     MSVCRT_free(si.lpReserved2);
@@ -358,8 +360,6 @@ MSVCRT_intptr_t CDECL _cwait(int *status, MSVCRT_intptr_t pid, int action)
 {
   HANDLE hPid = (HANDLE)pid;
   int doserrno;
-
-  action = action; /* Remove warning */
 
   if (!WaitForSingleObject(hPid, INFINITE))
   {
@@ -599,9 +599,9 @@ MSVCRT_intptr_t CDECL _execlpe(const char* name, const char* arg0, ...)
  *
  * Unicode version of _execv
  */
-MSVCRT_intptr_t CDECL _wexecv(const MSVCRT_wchar_t* name, MSVCRT_wchar_t* const* argv)
+MSVCRT_intptr_t CDECL _wexecv(const MSVCRT_wchar_t* name, const MSVCRT_wchar_t* const* argv)
 {
-  return MSVCRT__wspawnve(MSVCRT__P_OVERLAY, name, (const MSVCRT_wchar_t* const*) argv, NULL);
+  return MSVCRT__wspawnve(MSVCRT__P_OVERLAY, name, argv, NULL);
 }
 
 /*********************************************************************
@@ -610,9 +610,9 @@ MSVCRT_intptr_t CDECL _wexecv(const MSVCRT_wchar_t* name, MSVCRT_wchar_t* const*
  * Like on Windows, this function does not handle arguments with spaces
  * or double-quotes.
  */
-MSVCRT_intptr_t CDECL _execv(const char* name, char* const* argv)
+MSVCRT_intptr_t CDECL _execv(const char* name, const char* const* argv)
 {
-  return MSVCRT__spawnve(MSVCRT__P_OVERLAY, name, (const char* const*) argv, NULL);
+  return MSVCRT__spawnve(MSVCRT__P_OVERLAY, name, argv, NULL);
 }
 
 /*********************************************************************
@@ -620,9 +620,9 @@ MSVCRT_intptr_t CDECL _execv(const char* name, char* const* argv)
  *
  * Unicode version of _execve
  */
-MSVCRT_intptr_t CDECL _wexecve(const MSVCRT_wchar_t* name, MSVCRT_wchar_t* const* argv, const MSVCRT_wchar_t* const* envv)
+MSVCRT_intptr_t CDECL _wexecve(const MSVCRT_wchar_t* name, const MSVCRT_wchar_t* const* argv, const MSVCRT_wchar_t* const* envv)
 {
-  return MSVCRT__wspawnve(MSVCRT__P_OVERLAY, name, (const MSVCRT_wchar_t* const*) argv, envv);
+  return MSVCRT__wspawnve(MSVCRT__P_OVERLAY, name, argv, envv);
 }
 
 /*********************************************************************
@@ -631,9 +631,9 @@ MSVCRT_intptr_t CDECL _wexecve(const MSVCRT_wchar_t* name, MSVCRT_wchar_t* const
  * Like on Windows, this function does not handle arguments with spaces
  * or double-quotes.
  */
-MSVCRT_intptr_t CDECL MSVCRT__execve(const char* name, char* const* argv, const char* const* envv)
+MSVCRT_intptr_t CDECL MSVCRT__execve(const char* name, const char* const* argv, const char* const* envv)
 {
-  return MSVCRT__spawnve(MSVCRT__P_OVERLAY, name, (const char* const*) argv, envv);
+  return MSVCRT__spawnve(MSVCRT__P_OVERLAY, name, argv, envv);
 }
 
 /*********************************************************************
@@ -641,9 +641,9 @@ MSVCRT_intptr_t CDECL MSVCRT__execve(const char* name, char* const* argv, const 
  *
  * Unicode version of _execvpe
  */
-MSVCRT_intptr_t CDECL _wexecvpe(const MSVCRT_wchar_t* name, MSVCRT_wchar_t* const* argv, const MSVCRT_wchar_t* const* envv)
+MSVCRT_intptr_t CDECL _wexecvpe(const MSVCRT_wchar_t* name, const MSVCRT_wchar_t* const* argv, const MSVCRT_wchar_t* const* envv)
 {
-  return MSVCRT__wspawnvpe(MSVCRT__P_OVERLAY, name, (const MSVCRT_wchar_t* const*) argv, envv);
+  return MSVCRT__wspawnvpe(MSVCRT__P_OVERLAY, name, argv, envv);
 }
 
 /*********************************************************************
@@ -652,9 +652,9 @@ MSVCRT_intptr_t CDECL _wexecvpe(const MSVCRT_wchar_t* name, MSVCRT_wchar_t* cons
  * Like on Windows, this function does not handle arguments with spaces
  * or double-quotes.
  */
-MSVCRT_intptr_t CDECL _execvpe(const char* name, char* const* argv, const char* const* envv)
+MSVCRT_intptr_t CDECL _execvpe(const char* name, const char* const* argv, const char* const* envv)
 {
-  return MSVCRT__spawnvpe(MSVCRT__P_OVERLAY, name, (const char* const*) argv, envv);
+  return MSVCRT__spawnvpe(MSVCRT__P_OVERLAY, name, argv, envv);
 }
 
 /*********************************************************************
@@ -662,7 +662,7 @@ MSVCRT_intptr_t CDECL _execvpe(const char* name, char* const* argv, const char* 
  *
  * Unicode version of _execvp
  */
-MSVCRT_intptr_t CDECL _wexecvp(const MSVCRT_wchar_t* name, MSVCRT_wchar_t* const* argv)
+MSVCRT_intptr_t CDECL _wexecvp(const MSVCRT_wchar_t* name, const MSVCRT_wchar_t* const* argv)
 {
   return _wexecvpe(name, argv, NULL);
 }
@@ -673,7 +673,7 @@ MSVCRT_intptr_t CDECL _wexecvp(const MSVCRT_wchar_t* name, MSVCRT_wchar_t* const
  * Like on Windows, this function does not handle arguments with spaces
  * or double-quotes.
  */
-MSVCRT_intptr_t CDECL _execvp(const char* name, char* const* argv)
+MSVCRT_intptr_t CDECL _execvp(const char* name, const char* const* argv)
 {
   return _execvpe(name, argv, NULL);
 }
@@ -1022,6 +1022,17 @@ MSVCRT_intptr_t CDECL _wspawnvp(int flags, const MSVCRT_wchar_t* name, const MSV
   return MSVCRT__wspawnvpe(flags, name, argv, NULL);
 }
 
+static struct popen_handle {
+    MSVCRT_FILE *f;
+    HANDLE proc;
+} *popen_handles;
+static DWORD popen_handles_size;
+
+void msvcrt_free_popen_data(void)
+{
+    MSVCRT_free(popen_handles);
+}
+
 /*********************************************************************
  *		_wpopen (MSVCRT.@)
  *
@@ -1036,6 +1047,8 @@ MSVCRT_FILE* CDECL MSVCRT__wpopen(const MSVCRT_wchar_t* command, const MSVCRT_wc
   MSVCRT_wchar_t *comspec, *fullcmd;
   unsigned int len;
   static const MSVCRT_wchar_t flag[] = {' ','/','c',' ',0};
+  struct popen_handle *container;
+  DWORD i;
 
   TRACE("(command=%s, mode=%s)\n", debugstr_w(command), debugstr_w(mode));
 
@@ -1069,6 +1082,25 @@ MSVCRT_FILE* CDECL MSVCRT__wpopen(const MSVCRT_wchar_t* command, const MSVCRT_wc
   fdToDup = readPipe ? 1 : 0;
   fdToOpen = readPipe ? 0 : 1;
 
+  _mlock(_POPEN_LOCK);
+  for(i=0; i<popen_handles_size; i++)
+  {
+    if (!popen_handles[i].f)
+      break;
+  }
+  if (i==popen_handles_size)
+  {
+    i = (popen_handles_size ? popen_handles_size*2 : 8);
+    container = MSVCRT_realloc(popen_handles, i*sizeof(*container));
+    if (!container) goto error;
+
+    popen_handles = container;
+    container = popen_handles+popen_handles_size;
+    memset(container, 0, (i-popen_handles_size)*sizeof(*container));
+    popen_handles_size = i;
+  }
+  else container = popen_handles+i;
+
   if ((fdStdHandle = MSVCRT__dup(fdToDup)) == -1)
     goto error;
   if (MSVCRT__dup2(fds[fdToDup], fdToDup) != 0)
@@ -1089,7 +1121,8 @@ MSVCRT_FILE* CDECL MSVCRT__wpopen(const MSVCRT_wchar_t* command, const MSVCRT_wc
   strcatW(fullcmd, flag);
   strcatW(fullcmd, command);
 
-  if (msvcrt_spawn(MSVCRT__P_NOWAIT, comspec, fullcmd, NULL, 1) == -1)
+  if ((container->proc = (HANDLE)msvcrt_spawn(MSVCRT__P_NOWAIT, comspec, fullcmd, NULL, 1))
+          == INVALID_HANDLE_VALUE)
   {
     MSVCRT__close(fds[fdToOpen]);
     ret = NULL;
@@ -1099,7 +1132,9 @@ MSVCRT_FILE* CDECL MSVCRT__wpopen(const MSVCRT_wchar_t* command, const MSVCRT_wc
     ret = MSVCRT__wfdopen(fds[fdToOpen], mode);
     if (!ret)
       MSVCRT__close(fds[fdToOpen]);
+    container->f = ret;
   }
+  _munlock(_POPEN_LOCK);
   HeapFree(GetProcessHeap(), 0, comspec);
   HeapFree(GetProcessHeap(), 0, fullcmd);
   MSVCRT__dup2(fdStdHandle, fdToDup);
@@ -1107,6 +1142,7 @@ MSVCRT_FILE* CDECL MSVCRT__wpopen(const MSVCRT_wchar_t* command, const MSVCRT_wc
   return ret;
 
 error:
+  _munlock(_POPEN_LOCK);
   if (fdStdHandle != -1) MSVCRT__close(fdStdHandle);
   MSVCRT__close(fds[0]);
   MSVCRT__close(fds[1]);
@@ -1145,7 +1181,38 @@ MSVCRT_FILE* CDECL MSVCRT__popen(const char* command, const char* mode)
  */
 int CDECL MSVCRT__pclose(MSVCRT_FILE* file)
 {
-  return MSVCRT_fclose(file);
+  HANDLE h;
+  DWORD i;
+
+  if (!MSVCRT_CHECK_PMT(file != NULL)) return -1;
+
+  _mlock(_POPEN_LOCK);
+  for(i=0; i<popen_handles_size; i++)
+  {
+    if (popen_handles[i].f == file)
+      break;
+  }
+  if(i == popen_handles_size)
+  {
+    _munlock(_POPEN_LOCK);
+    *MSVCRT__errno() = MSVCRT_EBADF;
+    return -1;
+  }
+
+  h = popen_handles[i].proc;
+  popen_handles[i].f = NULL;
+  _munlock(_POPEN_LOCK);
+
+  MSVCRT_fclose(file);
+  if(WaitForSingleObject(h, INFINITE)==WAIT_FAILED || !GetExitCodeProcess(h, &i))
+  {
+    msvcrt_set_errno(GetLastError());
+    CloseHandle(h);
+    return -1;
+  }
+
+  CloseHandle(h);
+  return i;
 }
 
 /*********************************************************************
@@ -1248,4 +1315,20 @@ void * CDECL _getdllprocaddr(MSVCRT_intptr_t dll, const char *name, int ordinal)
     }
     if (HIWORD(ordinal)) return NULL;
     return GetProcAddress( (HMODULE)dll, (LPCSTR)(ULONG_PTR)ordinal );
+}
+
+/*********************************************************************
+ *              _getpid (MSVCRT.@)
+ */
+int CDECL _getpid(void)
+{
+    return GetCurrentProcessId();
+}
+
+/*********************************************************************
+ *  __crtTerminateProcess (MSVCR110.@)
+ */
+int CDECL MSVCR110__crtTerminateProcess(UINT exit_code)
+{
+    return TerminateProcess(GetCurrentProcess(), exit_code);
 }

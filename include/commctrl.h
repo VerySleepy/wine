@@ -22,6 +22,7 @@
 #define __WINE_COMMCTRL_H
 
 #include <prsht.h>
+#include <commctrl.rh>
 
 #ifdef __cplusplus
 extern "C" {
@@ -41,6 +42,7 @@ BOOL WINAPI InitCommonControlsEx (const INITCOMMONCONTROLSEX*);
 LANGID WINAPI GetMUILanguage (VOID);
 VOID WINAPI InitMUILanguage (LANGID uiLang);
 
+HRESULT WINAPI LoadIconWithScaleDown(HINSTANCE, PCWSTR, int, int, HICON *);
 
 #define COMCTL32_VERSION                5  /* dll version */
 
@@ -65,20 +67,6 @@ VOID WINAPI InitMUILanguage (LANGID uiLang);
 #define ICC_NATIVEFNTCTL_CLASS 0x00002000  /* native font control ???*/
 #define ICC_STANDARD_CLASSES   0x00004000
 #define ICC_LINK_CLASS         0x00008000
-
-
-/* common control styles */
-#define CCS_TOP             0x00000001L
-#define CCS_NOMOVEY         0x00000002L
-#define CCS_BOTTOM          0x00000003L
-#define CCS_NORESIZE        0x00000004L
-#define CCS_NOPARENTALIGN   0x00000008L
-#define CCS_ADJUSTABLE      0x00000020L
-#define CCS_NODIVIDER       0x00000040L
-#define CCS_VERT            0x00000080L
-#define CCS_LEFT            (CCS_VERT|CCS_TOP)
-#define CCS_RIGHT           (CCS_VERT|CCS_BOTTOM)
-#define CCS_NOMOVEX         (CCS_VERT|CCS_NOMOVEY)
 
 
 /* common control shared messages */
@@ -130,8 +118,8 @@ VOID WINAPI InitMUILanguage (LANGID uiLang);
 
 
 /* callback constants */
-#define LPSTR_TEXTCALLBACKA    ((LPSTR)-1L)
-#define LPSTR_TEXTCALLBACKW    ((LPWSTR)-1L)
+#define LPSTR_TEXTCALLBACKA    ((LPSTR)-1)
+#define LPSTR_TEXTCALLBACKW    ((LPWSTR)-1)
 #define LPSTR_TEXTCALLBACK WINELIB_NAME_AW(LPSTR_TEXTCALLBACK)
 
 #define I_IMAGECALLBACK          (-1)
@@ -296,10 +284,7 @@ static const WCHAR STATUSCLASSNAMEW[] = { 'm','s','c','t','l','s','_',
 #define SBT_NOBORDERS		0x0100
 #define SBT_POPOUT		0x0200
 #define SBT_RTLREADING		0x0400  /* not supported */
-#define SBT_TOOLTIPS		0x0800
 #define SBT_OWNERDRAW		0x1000
-
-#define SBARS_SIZEGRIP		0x0100
 
 #define SB_SIMPLEID		0x00ff
 
@@ -413,15 +398,6 @@ typedef struct _UDACCEL
 #define UD_MAXVAL          0x7fff
 #define UD_MINVAL          0x8001
 
-#define UDS_WRAP           0x0001
-#define UDS_SETBUDDYINT    0x0002
-#define UDS_ALIGNRIGHT     0x0004
-#define UDS_ALIGNLEFT      0x0008
-#define UDS_AUTOBUDDY      0x0010
-#define UDS_ARROWKEYS      0x0020
-#define UDS_HORZ           0x0040
-#define UDS_NOTHOUSANDS    0x0080
-#define UDS_HOTTRACK       0x0100
 
 #define UDN_FIRST          (0U-721)
 #define UDN_LAST           (0U-740)
@@ -490,10 +466,6 @@ static const WCHAR PROGRESS_CLASSW[] = { 'm','s','c','t','l','s','_',
 #define PBM_GETSTATE        (WM_USER+17)
 #define PBM_SETBKCOLOR      CCM_SETBKCOLOR
 
-#define PBS_SMOOTH          0x01
-#define PBS_VERTICAL        0x04
-#define PBS_MARQUEE         0x08
-#define PBS_SMOOTHREVERSE   0x10
 
 #define PBST_NORMAL         1
 #define PBST_ERROR          2
@@ -685,19 +657,19 @@ static const WCHAR FLATSB_CLASSW[] = { 'f','l','a','t','s','b','_',
 #endif
 #define FLATSB_CLASS          WINELIB_NAME_AW(FLATSB_CLASS)
 
-#define WSB_PROP_CYVSCROLL     0x00000001L
-#define WSB_PROP_CXHSCROLL     0x00000002L
-#define WSB_PROP_CYHSCROLL     0x00000004L
-#define WSB_PROP_CXVSCROLL     0x00000008L
-#define WSB_PROP_CXHTHUMB      0x00000010L
-#define WSB_PROP_CYVTHUMB      0x00000020L
-#define WSB_PROP_VBKGCOLOR     0x00000040L
-#define WSB_PROP_HBKGCOLOR     0x00000080L
-#define WSB_PROP_VSTYLE        0x00000100L
-#define WSB_PROP_HSTYLE        0x00000200L
-#define WSB_PROP_WINSTYLE      0x00000400L
-#define WSB_PROP_PALETTE       0x00000800L
-#define WSB_PROP_MASK          0x00000FFFL
+#define WSB_PROP_CYVSCROLL     __MSABI_LONG(0x00000001)
+#define WSB_PROP_CXHSCROLL     __MSABI_LONG(0x00000002)
+#define WSB_PROP_CYHSCROLL     __MSABI_LONG(0x00000004)
+#define WSB_PROP_CXVSCROLL     __MSABI_LONG(0x00000008)
+#define WSB_PROP_CXHTHUMB      __MSABI_LONG(0x00000010)
+#define WSB_PROP_CYVTHUMB      __MSABI_LONG(0x00000020)
+#define WSB_PROP_VBKGCOLOR     __MSABI_LONG(0x00000040)
+#define WSB_PROP_HBKGCOLOR     __MSABI_LONG(0x00000080)
+#define WSB_PROP_VSTYLE        __MSABI_LONG(0x00000100)
+#define WSB_PROP_HSTYLE        __MSABI_LONG(0x00000200)
+#define WSB_PROP_WINSTYLE      __MSABI_LONG(0x00000400)
+#define WSB_PROP_PALETTE       __MSABI_LONG(0x00000800)
+#define WSB_PROP_MASK          __MSABI_LONG(0x00000FFF)
 
 #define FSB_REGULAR_MODE       0
 #define FSB_ENCARTA_MODE       1
@@ -738,17 +710,6 @@ static const WCHAR WC_HEADERW[] = { 'S','y','s','H','e','a','d','e','r','3','2',
 #endif
 #define WC_HEADER		WINELIB_NAME_AW(WC_HEADER)
 
-#define HDS_HORZ                0x0000
-#define HDS_BUTTONS             0x0002
-#define HDS_HOTTRACK            0x0004
-#define HDS_HIDDEN              0x0008
-#define HDS_DRAGDROP            0x0040
-#define HDS_FULLDRAG            0x0080
-#define HDS_FILTERBAR           0x0100
-#define HDS_FLAT                0x0200
-#define HDS_CHECKBOXES          0x0400
-#define HDS_NOSIZING            0x0800
-#define HDS_OVERFLOW            0x1000
 
 #define HDI_WIDTH               0x0001
 #define HDI_HEIGHT              HDI_WIDTH
@@ -1001,14 +962,14 @@ typedef struct tagNMHDFILTERBTNCLICK
 } NMHDFILTERBTNCLICK, *LPNMHDFILTERBTNCLICK;
 
 #define Header_GetItemCount(hwndHD) \
-  (INT)SNDMSG((hwndHD),HDM_GETITEMCOUNT,0,0L)
+  (INT)SNDMSG((hwndHD), HDM_GETITEMCOUNT, 0, 0)
 #define Header_InsertItemA(hwndHD,i,phdi) \
   (INT)SNDMSGA((hwndHD),HDM_INSERTITEMA,(WPARAM)(INT)(i),(LPARAM)(const HDITEMA*)(phdi))
 #define Header_InsertItemW(hwndHD,i,phdi) \
   (INT)SNDMSGW((hwndHD),HDM_INSERTITEMW,(WPARAM)(INT)(i),(LPARAM)(const HDITEMW*)(phdi))
 #define Header_InsertItem WINELIB_NAME_AW(Header_InsertItem)
 #define Header_DeleteItem(hwndHD,i) \
-  (BOOL)SNDMSG((hwndHD),HDM_DELETEITEM,(WPARAM)(INT)(i),0L)
+  (BOOL)SNDMSG((hwndHD), HDM_DELETEITEM, (WPARAM)(INT)(i), 0)
 #define Header_GetItemA(hwndHD,i,phdi) \
   (BOOL)SNDMSGA((hwndHD),HDM_GETITEMA,(WPARAM)(INT)(i),(LPARAM)(HDITEMA*)(phdi))
 #define Header_GetItemW(hwndHD,i,phdi) \
@@ -1129,7 +1090,8 @@ static const WCHAR TOOLBARCLASSNAMEW[] = { 'T','o','o','l','b','a','r',
 #define TBSTYLE_REGISTERDROP    0x4000
 #define TBSTYLE_TRANSPARENT     0x8000
 #define TBSTYLE_EX_DRAWDDARROWS         0x00000001
-#define TBSTYLE_EX_UNDOC1               0x00000004 /* similar to TBSTYLE_WRAPABLE */
+#define TBSTYLE_EX_MULTICOLUMN          0x00000002
+#define TBSTYLE_EX_VERTICAL             0x00000004
 #define TBSTYLE_EX_MIXEDBUTTONS         0x00000008
 #define TBSTYLE_EX_HIDECLIPPEDBUTTONS   0x00000010 /* don't show partially obscured buttons */
 #define TBSTYLE_EX_DOUBLEBUFFER         0x00000080 /* Double Buffer the toolbar */
@@ -1655,13 +1617,6 @@ static const WCHAR TOOLTIPS_CLASSW[] = { 't','o','o','l','t','i','p','s','_',
 
 #define INFOTIPSIZE             1024
 
-#define TTS_ALWAYSTIP           0x01
-#define TTS_NOPREFIX            0x02
-#define TTS_NOANIMATE           0x10
-#define TTS_NOFADE              0x20
-#define TTS_BALLOON             0x40
-#define TTS_CLOSE               0x80
-#define TTS_USEVISUALSTYLE      0x100
 
 #define TTF_IDISHWND            0x0001
 #define TTF_CENTERTIP           0x0002
@@ -1870,14 +1825,6 @@ static const WCHAR REBARCLASSNAMEW[] = { 'R','e','B','a','r',
 #endif
 #define REBARCLASSNAME          WINELIB_NAME_AW(REBARCLASSNAME)
 
-#define RBS_TOOLTIPS            0x0100
-#define RBS_VARHEIGHT           0x0200
-#define RBS_BANDBORDERS         0x0400
-#define RBS_FIXEDORDER          0x0800
-#define RBS_REGISTERDROP        0x1000
-#define RBS_AUTOSIZE            0x2000
-#define RBS_VERTICALGRIPPER     0x4000
-#define RBS_DBLCLKTOGGLE        0x8000
 
 #define RBIM_IMAGELIST          0x00000001
 
@@ -2127,21 +2074,6 @@ static const WCHAR TRACKBAR_CLASSW[] = { 'm','s','c','t','l','s','_',
 #endif
 #define TRACKBAR_CLASS  WINELIB_NAME_AW(TRACKBAR_CLASS)
 
-#define TBS_AUTOTICKS           0x0001
-#define TBS_VERT                0x0002
-#define TBS_HORZ                0x0000
-#define TBS_TOP                 0x0004
-#define TBS_BOTTOM              0x0000
-#define TBS_LEFT                0x0004
-#define TBS_RIGHT               0x0000
-#define TBS_BOTH                0x0008
-#define TBS_NOTICKS             0x0010
-#define TBS_ENABLESELRANGE      0x0020
-#define TBS_FIXEDLENGTH         0x0040
-#define TBS_NOTHUMB             0x0080
-#define TBS_TOOLTIPS            0x0100
-#define TBS_REVERSED		0x0200
-#define TBS_DOWNISLEFT		0x0400
 
 #define TBTS_TOP                0
 #define TBTS_LEFT               1
@@ -2211,10 +2143,6 @@ static const WCHAR WC_PAGESCROLLERW[] = { 'S','y','s','P','a','g','e','r',0 };
 #endif
 #define WC_PAGESCROLLER  WINELIB_NAME_AW(WC_PAGESCROLLER)
 
-#define PGS_VERT                0x00000000
-#define PGS_HORZ                0x00000001
-#define PGS_AUTOSCROLL          0x00000002
-#define PGS_DRAGNDROP           0x00000004
 
 #define PGF_INVISIBLE           0
 #define PGF_NORMAL              1
@@ -2469,23 +2397,6 @@ static const WCHAR WC_TREEVIEWW[] = { 'S','y','s',
 #define TVHT_BELOW            0x0200
 #define TVHT_TORIGHT          0x0400
 #define TVHT_TOLEFT           0x0800
-
-#define TVS_HASBUTTONS        0x0001
-#define TVS_HASLINES          0x0002
-#define TVS_LINESATROOT       0x0004
-#define TVS_EDITLABELS        0x0008
-#define TVS_DISABLEDRAGDROP   0x0010
-#define TVS_SHOWSELALWAYS     0x0020
-#define TVS_RTLREADING        0x0040
-#define TVS_NOTOOLTIPS        0x0080
-#define TVS_CHECKBOXES        0x0100
-#define TVS_TRACKSELECT       0x0200
-#define TVS_SINGLEEXPAND      0x0400
-#define TVS_INFOTIP           0x0800
-#define TVS_FULLROWSELECT     0x1000
-#define TVS_NOSCROLL          0x2000
-#define TVS_NONEVENHEIGHT     0x4000
-#define TVS_NOHSCROLL         0x8000
 
 #define TVS_SHAREDIMAGELISTS  0x0000
 #define TVS_PRIVATEIMAGELISTS 0x0400
@@ -2970,28 +2881,6 @@ static const WCHAR WC_LISTVIEWW[] = { 'S','y','s',
 #define LVSCW_AUTOSIZE -1
 #define LVSCW_AUTOSIZE_USEHEADER -2
 
-#define LVS_ICON                0x0000
-#define LVS_REPORT              0x0001
-#define LVS_SMALLICON           0x0002
-#define LVS_LIST                0x0003
-#define LVS_TYPEMASK            0x0003
-#define LVS_SINGLESEL           0x0004
-#define LVS_SHOWSELALWAYS       0x0008
-#define LVS_SORTASCENDING       0x0010
-#define LVS_SORTDESCENDING      0x0020
-#define LVS_SHAREIMAGELISTS     0x0040
-#define LVS_NOLABELWRAP         0x0080
-#define LVS_AUTOARRANGE         0x0100
-#define LVS_EDITLABELS          0x0200
-#define LVS_OWNERDATA           0x1000
-#define LVS_NOSCROLL            0x2000
-#define LVS_TYPESTYLEMASK       0xfc00
-#define LVS_ALIGNTOP            0x0000
-#define LVS_ALIGNLEFT           0x0800
-#define LVS_ALIGNMASK           0x0c00
-#define LVS_OWNERDRAWFIXED      0x0400
-#define LVS_NOCOLUMNHEADER      0x4000
-#define LVS_NOSORTHEADER        0x8000
 
 #define LVS_EX_GRIDLINES        0x0001
 #define LVS_EX_SUBITEMIMAGES    0x0002
@@ -3829,7 +3718,7 @@ typedef struct NMLVSCROLL
     (LRESULT)SNDMSGW((hwnd),LVM_SETCOLUMNW,(WPARAM)(INT)(x),(LPARAM)(LPLVCOLUMNW)(col))
 #define ListView_SetColumn WINELIB_NAME_AW(ListView_SetColumn)
 #define ListView_GetColumnWidth(hwnd,x)\
-    (INT)SNDMSG((hwnd),LVM_GETCOLUMNWIDTH,(WPARAM)(INT)(x),0L)
+    (INT)SNDMSG((hwnd), LVM_GETCOLUMNWIDTH, (WPARAM)(INT)(x), 0)
 #define ListView_SetColumnWidth(hwnd,x,width)\
     (BOOL)SNDMSG((hwnd),LVM_SETCOLUMNWIDTH,(WPARAM)(INT)(x),(LPARAM)(MAKELPARAM(width,0)))
 
@@ -3843,7 +3732,7 @@ typedef struct NMLVSCROLL
 #define ListView_FindItem WINELIB_NAME_AW(ListView_FindItem)
 
 #define ListView_Arrange(hwnd,code) \
-    (INT)SNDMSG((hwnd),LVM_ARRANGE,(WPARAM)(INT)(code),0L)
+    (INT)SNDMSG((hwnd), LVM_ARRANGE, (WPARAM)(INT)(code), 0)
 #define ListView_GetItemPosition(hwnd,i,ppt) \
     (INT)SNDMSG((hwnd),LVM_GETITEMPOSITION,(WPARAM)(INT)(i),(LPARAM)(LPPOINT)(ppt))
 #define ListView_GetItemRect(hwnd,i,prc,code) \
@@ -3866,16 +3755,16 @@ typedef struct NMLVSCROLL
 #define ListView_GetCheckState(hwndLV, i) \
     (((UINT)SNDMSG((hwndLV), LVM_GETITEMSTATE, (i), LVIS_STATEIMAGEMASK) >> 12) - 1)
 #define ListView_GetCountPerPage(hwnd) \
-    (BOOL)SNDMSG((hwnd),LVM_GETCOUNTPERPAGE,0,0L)
+    (BOOL)SNDMSG((hwnd), LVM_GETCOUNTPERPAGE, 0, 0)
 #define ListView_GetImageList(hwnd,iImageList) \
-    (HIMAGELIST)SNDMSG((hwnd),LVM_GETIMAGELIST,(WPARAM)(INT)(iImageList),0L)
+    (HIMAGELIST)SNDMSG((hwnd), LVM_GETIMAGELIST, (WPARAM)(INT)(iImageList), 0)
 #define ListView_GetStringWidthA(hwnd,pstr) \
     (INT)SNDMSGA((hwnd),LVM_GETSTRINGWIDTHA,0,(LPARAM)(LPCSTR)(pstr))
 #define ListView_GetStringWidthW(hwnd,pstr) \
     (INT)SNDMSGW((hwnd),LVM_GETSTRINGWIDTHW,0,(LPARAM)(LPCWSTR)(pstr))
 #define ListView_GetStringWidth WINELIB_NAME_AW(ListView_GetStringWidth)
 #define ListView_GetTopIndex(hwnd) \
-    (BOOL)SNDMSG((hwnd),LVM_GETTOPINDEX,0,0L)
+    (BOOL)SNDMSG((hwnd), LVM_GETTOPINDEX, 0, 0)
 #define ListView_Scroll(hwnd,dx,dy) \
     (BOOL)SNDMSG((hwnd),LVM_SCROLL,(WPARAM)(INT)(dx),(LPARAM)(INT)(dy))
 #define ListView_EnsureVisible(hwnd,i,fPartialOk) \
@@ -3885,7 +3774,7 @@ typedef struct NMLVSCROLL
 #define ListView_SetImageList(hwnd,himl,iImageList) \
     (HIMAGELIST)SNDMSG((hwnd),LVM_SETIMAGELIST,(WPARAM)(iImageList),(LPARAM)(HIMAGELIST)(himl))
 #define ListView_GetItemCount(hwnd) \
-    (INT)SNDMSG((hwnd),LVM_GETITEMCOUNT,0,0L)
+    (INT)SNDMSG((hwnd), LVM_GETITEMCOUNT, 0, 0)
 #define ListView_RedrawItems(hwnd,first,last) \
     (BOOL)SNDMSG((hwnd),LVM_REDRAWITEMS,(WPARAM)(INT)(first),(LPARAM)(INT)(last))
 #define ListView_GetEditControl(hwnd) \
@@ -3914,7 +3803,7 @@ typedef struct NMLVSCROLL
 #define ListView_InsertItem WINELIB_NAME_AW(ListView_InsertItem)
 
 #define ListView_DeleteAllItems(hwnd) \
-    (BOOL)SNDMSG((hwnd),LVM_DELETEALLITEMS,0,0L)
+    (BOOL)SNDMSG((hwnd), LVM_DELETEALLITEMS, 0, 0)
 
 #define ListView_InsertColumnA(hwnd,iCol,pcol) \
     (INT)SNDMSGA((hwnd),LVM_INSERTCOLUMNA,(WPARAM)(INT)(iCol),(LPARAM)(const LVCOLUMNA *)(pcol))
@@ -3930,12 +3819,12 @@ typedef struct NMLVSCROLL
 #define ListView_SetItemPosition(hwndLV, i, x, y) \
     (BOOL)SNDMSG((hwndLV),LVM_SETITEMPOSITION,(WPARAM)(INT)(i),MAKELPARAM((x),(y)))
 #define ListView_GetSelectedCount(hwndLV) \
-    (UINT)SNDMSG((hwndLV),LVM_GETSELECTEDCOUNT,0,0L)
+    (UINT)SNDMSG((hwndLV), LVM_GETSELECTEDCOUNT, 0, 0)
 
 #define ListView_EditLabelA(hwndLV, i) \
-    (HWND)SNDMSG((hwndLV),LVM_EDITLABELA,(WPARAM)(int)(i), 0L)
+    (HWND)SNDMSG((hwndLV), LVM_EDITLABELA, (WPARAM)(int)(i), 0)
 #define ListView_EditLabelW(hwndLV, i) \
-    (HWND)SNDMSG((hwndLV),LVM_EDITLABELW,(WPARAM)(int)(i), 0L)
+    (HWND)SNDMSG((hwndLV), LVM_EDITLABELW, (WPARAM)(int)(i), 0)
 #define ListView_EditLabel WINELIB_NAME_AW(ListView_EditLabel)
 
 #define ListView_GetItemTextA(hwndLV, i, _iSubItem, _pszText, _cchTextMax) \
@@ -3966,24 +3855,24 @@ typedef struct NMLVSCROLL
 #define ListView_SetItemText WINELIB_NAME_AW(ListView_SetItemText)
 
 #define ListView_DeleteItem(hwndLV, i) \
-    (BOOL)SNDMSG(hwndLV, LVM_DELETEITEM, (WPARAM)(int)(i), 0L)
+    (BOOL)SNDMSG(hwndLV, LVM_DELETEITEM, (WPARAM)(int)(i), 0)
 #define ListView_Update(hwndLV, i) \
-    (BOOL)SNDMSG((hwndLV), LVM_UPDATE, (WPARAM)(i), 0L)
+    (BOOL)SNDMSG((hwndLV), LVM_UPDATE, (WPARAM)(i), 0)
 #define ListView_GetColumnOrderArray(hwndLV, iCount, pi) \
     (BOOL)SNDMSG((hwndLV), LVM_GETCOLUMNORDERARRAY, (WPARAM)iCount, (LPARAM)(LPINT)pi)
 #define ListView_GetExtendedListViewStyle(hwndLV) \
-    (DWORD)SNDMSG((hwndLV), LVM_GETEXTENDEDLISTVIEWSTYLE, 0, 0L)
+    (DWORD)SNDMSG((hwndLV), LVM_GETEXTENDEDLISTVIEWSTYLE, 0, 0)
 #define ListView_GetHotCursor(hwndLV) \
-    (HCURSOR)SNDMSG((hwndLV), LVM_GETHOTCURSOR, 0, 0L)
+    (HCURSOR)SNDMSG((hwndLV), LVM_GETHOTCURSOR, 0, 0)
 #define ListView_GetHotItem(hwndLV) \
-    (int)SNDMSG((hwndLV), LVM_GETHOTITEM, 0, 0L)
+    (int)SNDMSG((hwndLV), LVM_GETHOTITEM, 0, 0)
 #define ListView_GetItemSpacing(hwndLV, fSmall) \
-    (DWORD)SNDMSG((hwndLV), LVM_GETITEMSPACING, (WPARAM)fSmall, 0L)
+    (DWORD)SNDMSG((hwndLV), LVM_GETITEMSPACING, (WPARAM)fSmall, 0)
 #define ListView_GetSubItemRect(hwndLV, iItem, iSubItem, code, prc) \
     (BOOL)SNDMSG((hwndLV), LVM_GETSUBITEMRECT, (WPARAM)(int)(iItem), \
                        ((prc) ? ((((LPRECT)(prc))->top = iSubItem), (((LPRECT)(prc))->left = code), (LPARAM)(prc)) : 0))
 #define ListView_GetToolTips(hwndLV) \
-    (HWND)SNDMSG((hwndLV), LVM_GETTOOLTIPS, 0, 0L)
+    (HWND)SNDMSG((hwndLV), LVM_GETTOOLTIPS, 0, 0)
 #define ListView_SetColumnOrderArray(hwndLV, iCount, pi) \
     (BOOL)SNDMSG((hwndLV), LVM_SETCOLUMNORDERARRAY, (WPARAM)iCount, (LPARAM)(LPINT)pi)
 #define ListView_SetExtendedListViewStyle(hwndLV, dw) \
@@ -3993,11 +3882,11 @@ typedef struct NMLVSCROLL
 #define ListView_SetHotCursor(hwndLV, hcur) \
     (HCURSOR)SNDMSG((hwndLV), LVM_SETHOTCURSOR, 0, (LPARAM)hcur)
 #define ListView_SetHotItem(hwndLV, i) \
-    (int)SNDMSG((hwndLV), LVM_SETHOTITEM, (WPARAM)i, 0L)
+    (int)SNDMSG((hwndLV), LVM_SETHOTITEM, (WPARAM)i, 0)
 #define ListView_SetIconSpacing(hwndLV, cx, cy) \
     (DWORD)SNDMSG((hwndLV), LVM_SETICONSPACING, 0, MAKELONG(cx,cy))
 #define ListView_SetToolTips(hwndLV, hwndNewHwnd) \
-    (HWND)SNDMSG((hwndLV), LVM_SETTOOLTIPS, (WPARAM)hwndNewHwnd, 0L)
+    (HWND)SNDMSG((hwndLV), LVM_SETTOOLTIPS, (WPARAM)hwndNewHwnd, 0)
 #define ListView_SubItemHitTest(hwndLV, plvhti) \
     (int)SNDMSG((hwndLV), LVM_SUBITEMHITTEST, 0, (LPARAM)(LPLVHITTESTINFO)(plvhti))
 #define ListView_GetSelectionMark(hwndLV) \
@@ -4007,7 +3896,7 @@ typedef struct NMLVSCROLL
 #define ListView_GetViewRect(hwndLV, prc) \
     (BOOL)SNDMSG((hwndLV),LVM_GETVIEWRECT,0,(LPARAM)(LPRECT)(prc))
 #define ListView_GetHeader(hwndLV) \
-    (HWND)SNDMSG((hwndLV),LVM_GETHEADER,0,0L)
+    (HWND)SNDMSG((hwndLV), LVM_GETHEADER, 0, 0)
 #define ListView_SetSelectedColumn(hwnd, iCol) \
     SNDMSG((hwnd), LVM_SETSELECTEDCOLUMN, (WPARAM)iCol, 0)
 #define ListView_SetTileWidth(hwnd, cpWidth) \
@@ -4102,26 +3991,6 @@ static const WCHAR WC_TABCONTROLW[] = { 'S','y','s',
 #define WC_TABCONTROL		WINELIB_NAME_AW(WC_TABCONTROL)
 
 /* tab control styles */
-#define TCS_SCROLLOPPOSITE      0x0001   /* assumes multiline tab */
-#define TCS_BOTTOM              0x0002
-#define TCS_RIGHT               0x0002
-#define TCS_MULTISELECT         0x0004  /* allow multi-select in button mode */
-#define TCS_FLATBUTTONS         0x0008
-#define TCS_FORCEICONLEFT       0x0010
-#define TCS_FORCELABELLEFT      0x0020
-#define TCS_HOTTRACK            0x0040
-#define TCS_VERTICAL            0x0080
-#define TCS_TABS                0x0000
-#define TCS_BUTTONS             0x0100
-#define TCS_SINGLELINE          0x0000
-#define TCS_MULTILINE           0x0200
-#define TCS_RIGHTJUSTIFY        0x0000
-#define TCS_FIXEDWIDTH          0x0400
-#define TCS_RAGGEDRIGHT         0x0800
-#define TCS_FOCUSONBUTTONDOWN   0x1000
-#define TCS_OWNERDRAWFIXED      0x2000
-#define TCS_TOOLTIPS            0x4000
-#define TCS_FOCUSNEVER          0x8000
 #define TCS_EX_FLATSEPARATORS   0x00000001  /* to be used with */
 #define TCS_EX_REGISTERDROP     0x00000002  /* TCM_SETEXTENDEDSTYLE */
 
@@ -4176,11 +4045,11 @@ static const WCHAR WC_TABCONTROLW[] = { 'S','y','s',
 
 /* TabCtrl Macros */
 #define TabCtrl_GetImageList(hwnd) \
-    (HIMAGELIST)SNDMSG((hwnd), TCM_GETIMAGELIST, 0, 0L)
+    (HIMAGELIST)SNDMSG((hwnd), TCM_GETIMAGELIST, 0, 0)
 #define TabCtrl_SetImageList(hwnd, himl) \
     (HIMAGELIST)SNDMSG((hwnd), TCM_SETIMAGELIST, 0, (LPARAM)(UINT)(HIMAGELIST)(himl))
 #define TabCtrl_GetItemCount(hwnd) \
-    (int)SNDMSG((hwnd), TCM_GETITEMCOUNT, 0, 0L)
+    (int)SNDMSG((hwnd), TCM_GETITEMCOUNT, 0, 0)
 #define TabCtrl_GetItemA(hwnd, iItem, pitem) \
     (BOOL)SNDMSGA((hwnd), TCM_GETITEMA, (WPARAM)(int)iItem, (LPARAM)(TCITEMA *)(pitem))
 #define TabCtrl_GetItemW(hwnd, iItem, pitem) \
@@ -4197,9 +4066,9 @@ static const WCHAR WC_TABCONTROLW[] = { 'S','y','s',
     (int)SNDMSGW((hwnd), TCM_INSERTITEMW, (WPARAM)(int)iItem, (LPARAM)(const TCITEMW *)(pitem))
 #define TabCtrl_InsertItem WINELIB_NAME_AW(TabCtrl_InsertItem)
 #define TabCtrl_DeleteItem(hwnd, i) \
-    (BOOL)SNDMSG((hwnd), TCM_DELETEITEM, (WPARAM)(int)(i), 0L)
+    (BOOL)SNDMSG((hwnd), TCM_DELETEITEM, (WPARAM)(int)(i), 0)
 #define TabCtrl_DeleteAllItems(hwnd) \
-    (BOOL)SNDMSG((hwnd), TCM_DELETEALLITEMS, 0, 0L)
+    (BOOL)SNDMSG((hwnd), TCM_DELETEALLITEMS, 0, 0)
 #define TabCtrl_GetItemRect(hwnd, i, prc) \
     (BOOL)SNDMSG((hwnd), TCM_GETITEMRECT, (WPARAM)(int)(i), (LPARAM)(RECT *)(prc))
 #define TabCtrl_GetCurSel(hwnd) \
@@ -4209,21 +4078,21 @@ static const WCHAR WC_TABCONTROLW[] = { 'S','y','s',
 #define TabCtrl_HitTest(hwndTC, pinfo) \
     (int)SNDMSG((hwndTC), TCM_HITTEST, 0, (LPARAM)(TC_HITTESTINFO *)(pinfo))
 #define TabCtrl_SetItemExtra(hwndTC, cb) \
-    (BOOL)SNDMSG((hwndTC), TCM_SETITEMEXTRA, (WPARAM)(cb), 0L)
+    (BOOL)SNDMSG((hwndTC), TCM_SETITEMEXTRA, (WPARAM)(cb), 0)
 #define TabCtrl_AdjustRect(hwnd, bLarger, prc) \
     (int)SNDMSG(hwnd, TCM_ADJUSTRECT, (WPARAM)(BOOL)bLarger, (LPARAM)(RECT *)prc)
 #define TabCtrl_SetItemSize(hwnd, x, y) \
     (DWORD)SNDMSG((hwnd), TCM_SETITEMSIZE, 0, MAKELPARAM(x,y))
 #define TabCtrl_RemoveImage(hwnd, i) \
-    (void)SNDMSG((hwnd), TCM_REMOVEIMAGE, i, 0L)
+    (void)SNDMSG((hwnd), TCM_REMOVEIMAGE, i, 0)
 #define TabCtrl_SetPadding(hwnd,  cx, cy) \
     (void)SNDMSG((hwnd), TCM_SETPADDING, 0, MAKELPARAM(cx, cy))
 #define TabCtrl_GetRowCount(hwnd) \
-    (int)SNDMSG((hwnd), TCM_GETROWCOUNT, 0, 0L)
+    (int)SNDMSG((hwnd), TCM_GETROWCOUNT, 0, 0)
 #define TabCtrl_GetToolTips(hwnd) \
-    (HWND)SNDMSG((hwnd), TCM_GETTOOLTIPS, 0, 0L)
+    (HWND)SNDMSG((hwnd), TCM_GETTOOLTIPS, 0, 0)
 #define TabCtrl_SetToolTips(hwnd, hwndTT) \
-    (void)SNDMSG((hwnd), TCM_SETTOOLTIPS, (WPARAM)hwndTT, 0L)
+    (void)SNDMSG((hwnd), TCM_SETTOOLTIPS, (WPARAM)hwndTT, 0)
 #define TabCtrl_GetCurFocus(hwnd) \
     (int)SNDMSG((hwnd), TCM_GETCURFOCUS, 0, 0)
 #define TabCtrl_SetCurFocus(hwnd, i) \
@@ -4539,10 +4408,6 @@ static const WCHAR ANIMATE_CLASSW[] = { 'S','y','s',
 #endif
 #define ANIMATE_CLASS           WINELIB_NAME_AW(ANIMATE_CLASS)
 
-#define ACS_CENTER              0x0001
-#define ACS_TRANSPARENT         0x0002
-#define ACS_AUTOPLAY            0x0004
-#define ACS_TIMER               0x0008  /* no threads, just timers */
 
 #define ACM_OPENA               (WM_USER+100)
 #define ACM_OPENW               (WM_USER+103)
@@ -4639,12 +4504,6 @@ static const WCHAR WC_NATIVEFONTCTLW[] = { 'N','a','t','i','v','e',
 #endif
 #define WC_NATIVEFONTCTL	WINELIB_NAME_AW(WC_NATIVEFONTCTL)
 
-#define NFS_EDIT		0x0001
-#define NFS_STATIC		0x0002
-#define NFS_LISTCOMBO		0x0004
-#define NFS_BUTTON		0x0008
-#define NFS_ALL			0x0010
-
 
 /**************************************************************************
  * Month calendar control
@@ -4710,12 +4569,6 @@ static const WCHAR MONTHCAL_CLASSW[] = { 'S','y','s',
 #define MCSC_MONTHBK      4
 #define MCSC_TRAILINGTEXT 5
 
-#define MCS_DAYSTATE           0x0001
-#define MCS_MULTISELECT        0x0002
-#define MCS_WEEKNUMBERS        0x0004
-#define MCS_NOTODAY            0x0010
-#define MCS_NOTODAYCIRCLE      0x0008
-#define MCS_NOTRAILINGDATES    0x0040
 
 #define MCHT_TITLE             0x00010000
 #define MCHT_CALENDAR          0x00020000
@@ -4786,9 +4639,9 @@ typedef struct tagNMDAYSTATE
 #define MonthCal_SetCurSel(hmc, pst)  \
 		(BOOL)SNDMSG(hmc, MCM_SETCURSEL, 0, (LPARAM)(pst))
 #define MonthCal_GetMaxSelCount(hmc) \
-		(DWORD)SNDMSG(hmc, MCM_GETMAXSELCOUNT, 0, 0L)
+                (DWORD)SNDMSG(hmc, MCM_GETMAXSELCOUNT, 0, 0)
 #define MonthCal_SetMaxSelCount(hmc, n) \
-		(BOOL)SNDMSG(hmc, MCM_SETMAXSELCOUNT, (WPARAM)(n), 0L)
+                (BOOL)SNDMSG(hmc, MCM_SETMAXSELCOUNT, (WPARAM)(n), 0)
 #define MonthCal_GetSelRange(hmc, rgst) \
 		SNDMSG(hmc, MCM_GETSELRANGE, 0, (LPARAM) (rgst))
 #define MonthCal_SetSelRange(hmc, rgst) \
@@ -4883,13 +4736,6 @@ static const WCHAR DATETIMEPICK_CLASSW[] = { 'S','y','s',
 #define DTN_FORMAT          WINELIB_NAME_AW(DTN_FORMAT)
 #define DTN_FORMATQUERY     WINELIB_NAME_AW(DTN_FORMATQUERY)
 
-#define DTS_SHORTDATEFORMAT 0x0000
-#define DTS_UPDOWN          0x0001
-#define DTS_SHOWNONE        0x0002
-#define DTS_LONGDATEFORMAT  0x0004
-#define DTS_TIMEFORMAT      0x0009
-#define DTS_APPCANPARSE     0x0010
-#define DTS_RIGHTALIGN      0x0020
 
 typedef struct tagNMDATETIMECHANGE
 {

@@ -60,9 +60,6 @@
 #ifdef HAVE_SYS_POLL_H
 #include <sys/poll.h>
 #endif
-#ifdef HAVE_SYS_ERRNO_H
-#include <sys/errno.h>
-#endif
 #include <sys/soundcard.h>
 
 #include "windef.h"
@@ -77,10 +74,6 @@
 WINE_DEFAULT_DEBUG_CHANNEL(midi);
 
 #ifdef SNDCTL_SEQ_NRMIDIS
-#define HAVE_OSS_MIDI
-#endif
-
-#ifdef HAVE_OSS_MIDI
 
 typedef struct {
     int			state;                  /* -1 disabled, 0 is no recording started, 1 in recording, bit 2 set if in sys exclusive recording */
@@ -404,10 +397,10 @@ static LRESULT OSS_MidiExit(void)
 static void MIDI_NotifyClient(UINT wDevID, WORD wMsg,
 			      DWORD_PTR dwParam1, DWORD_PTR dwParam2)
 {
-    DWORD 		dwCallBack;
+    DWORD_PTR 		dwCallBack;
     UINT 		uFlags;
     HANDLE		hDev;
-    DWORD 		dwInstance;
+    DWORD_PTR 		dwInstance;
 
     TRACE("wDevID = %04X wMsg = %d dwParm1 = %04lX dwParam2 = %04lX\n",
 	  wDevID, wMsg, dwParam1, dwParam2);
@@ -549,7 +542,7 @@ static void midReceiveChar(WORD wDevID, unsigned char value, DWORD dwTime)
 
     if (MidiInDev[wDevID].state & 2) { /* system exclusive */
 	LPMIDIHDR	lpMidiHdr;
-	WORD 		sbfb = FALSE;
+        BOOL            sbfb = FALSE;
 
 	EnterCriticalSection(&crit_sect);
 	if ((lpMidiHdr = MidiInDev[wDevID].lpQueueHdr) != NULL) {
@@ -566,9 +559,9 @@ static void midReceiveChar(WORD wDevID, unsigned char value, DWORD dwTime)
 	}
 	if (sbfb && lpMidiHdr != NULL) {
 	    lpMidiHdr = MidiInDev[wDevID].lpQueueHdr;
+	    MidiInDev[wDevID].lpQueueHdr = lpMidiHdr->lpNext;
 	    lpMidiHdr->dwFlags &= ~MHDR_INQUEUE;
 	    lpMidiHdr->dwFlags |= MHDR_DONE;
-	    MidiInDev[wDevID].lpQueueHdr = lpMidiHdr->lpNext;
 	    MIDI_NotifyClient(wDevID, MIM_LONGDATA, (DWORD_PTR)lpMidiHdr, dwTime);
 	}
 	LeaveCriticalSection(&crit_sect);
@@ -826,7 +819,7 @@ static DWORD midClose(WORD wDevID)
  */
 static DWORD midAddBuffer(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
 {
-    TRACE("(%04X, %p, %08X);\n", wDevID, lpMidiHdr, dwSize);
+    TRACE("(%04X, %p, %d);\n", wDevID, lpMidiHdr, dwSize);
 
     if (wDevID >= MIDM_NumDevs) return MMSYSERR_BADDEVICEID;
     if (MidiInDev[wDevID].state == -1) return MIDIERR_NODEVICE;
@@ -862,15 +855,16 @@ static DWORD midAddBuffer(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
  */
 static DWORD midPrepare(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
 {
-    TRACE("(%04X, %p, %08X);\n", wDevID, lpMidiHdr, dwSize);
+    TRACE("(%04X, %p, %d);\n", wDevID, lpMidiHdr, dwSize);
 
-    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 ||
-	lpMidiHdr->lpData == 0 || (lpMidiHdr->dwFlags & MHDR_INQUEUE) != 0)
+    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 || lpMidiHdr->lpData == 0)
 	return MMSYSERR_INVALPARAM;
+    if (lpMidiHdr->dwFlags & MHDR_PREPARED)
+	return MMSYSERR_NOERROR;
 
     lpMidiHdr->lpNext = 0;
     lpMidiHdr->dwFlags |= MHDR_PREPARED;
-    lpMidiHdr->dwBytesRecorded = 0;
+    lpMidiHdr->dwFlags &= ~(MHDR_DONE|MHDR_INQUEUE); /* flags cleared since w2k */
 
     return MMSYSERR_NOERROR;
 }
@@ -880,17 +874,14 @@ static DWORD midPrepare(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
  */
 static DWORD midUnprepare(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
 {
-    TRACE("(%04X, %p, %08X);\n", wDevID, lpMidiHdr, dwSize);
+    TRACE("(%04X, %p, %d);\n", wDevID, lpMidiHdr, dwSize);
 
-    if (wDevID >= MIDM_NumDevs) return MMSYSERR_BADDEVICEID;
-    if (MidiInDev[wDevID].state == -1) return MIDIERR_NODEVICE;
-
-    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 ||
-	lpMidiHdr->lpData == 0)
+    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 || lpMidiHdr->lpData == 0)
 	return MMSYSERR_INVALPARAM;
-
-    if (!(lpMidiHdr->dwFlags & MHDR_PREPARED)) return MIDIERR_UNPREPARED;
-    if (lpMidiHdr->dwFlags & MHDR_INQUEUE) return MIDIERR_STILLPLAYING;
+    if (!(lpMidiHdr->dwFlags & MHDR_PREPARED))
+	return MMSYSERR_NOERROR;
+    if (lpMidiHdr->dwFlags & MHDR_INQUEUE)
+	return MIDIERR_STILLPLAYING;
 
     lpMidiHdr->dwFlags &= ~MHDR_PREPARED;
 
@@ -911,18 +902,16 @@ static DWORD midReset(WORD wDevID)
 
     EnterCriticalSection(&crit_sect);
     while (MidiInDev[wDevID].lpQueueHdr) {
-	MidiInDev[wDevID].lpQueueHdr->dwFlags &= ~MHDR_INQUEUE;
-	MidiInDev[wDevID].lpQueueHdr->dwFlags |= MHDR_DONE;
-	/* FIXME: when called from 16 bit, lpQueueHdr needs to be a segmented ptr */
-	MIDI_NotifyClient(wDevID, MIM_LONGDATA,
-			  (DWORD_PTR)MidiInDev[wDevID].lpQueueHdr, dwTime);
-	MidiInDev[wDevID].lpQueueHdr = MidiInDev[wDevID].lpQueueHdr->lpNext;
+	LPMIDIHDR lpMidiHdr = MidiInDev[wDevID].lpQueueHdr;
+	MidiInDev[wDevID].lpQueueHdr = lpMidiHdr->lpNext;
+	lpMidiHdr->dwFlags &= ~MHDR_INQUEUE;
+	lpMidiHdr->dwFlags |= MHDR_DONE;
+	MIDI_NotifyClient(wDevID, MIM_LONGDATA, (DWORD_PTR)lpMidiHdr, dwTime);
     }
     LeaveCriticalSection(&crit_sect);
 
     return MMSYSERR_NOERROR;
 }
-
 
 /**************************************************************************
  * 			midStart				[internal]
@@ -1108,10 +1097,6 @@ static DWORD modOpen(WORD wDevID, LPMIDIOPENDESC lpDesc, DWORD dwFlags)
 	WARN("bad dwFlags\n");
 	return MMSYSERR_INVALFLAG;
     }
-    if (!MidiOutDev[wDevID].bEnabled) {
-	TRACE("disabled wDevID\n");
-	return MMSYSERR_NOTENABLED;
-    }
 
     MidiOutDev[wDevID].lpExtra = 0;
 
@@ -1121,8 +1106,7 @@ static DWORD modOpen(WORD wDevID, LPMIDIOPENDESC lpDesc, DWORD dwFlags)
 	    void*	extra;
 
             extra = HeapAlloc(GetProcessHeap(), 0,
-                              sizeof(struct sFMextra) +
-                              sizeof(struct sVoice) * (MidiOutDev[wDevID].caps.wVoices - 1));
+                              offsetof(struct sFMextra, voice[MidiOutDev[wDevID].caps.wVoices]));
 
 	    if (extra == 0) {
 		WARN("can't alloc extra data !\n");
@@ -1452,7 +1436,6 @@ static DWORD modData(WORD wDevID, DWORD dwParam)
 		switch (evt & 0x0F) {
 		case 0x00:	/* System Exclusive, don't do it on modData,
 				 * should require modLongData*/
-		case 0x01:	/* Undefined */
 		case 0x04:	/* Undefined. */
 		case 0x05:	/* Undefined. */
 		case 0x07:	/* End of Exclusive. */
@@ -1477,6 +1460,7 @@ static DWORD modData(WORD wDevID, DWORD dwParam)
 		    SEQ_MIDIOUT(dev, 0x01);
 		    SEQ_MIDIOUT(dev, 0xf7);
 		    break;
+		case 0x01:	/* MTC Quarter frame */
 		case 0x03:	/* Song Select. */
 		    SEQ_MIDIOUT(dev, evt);
 		    SEQ_MIDIOUT(dev, d1);
@@ -1537,10 +1521,10 @@ static DWORD modLongData(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
     /* FIXME: MS doc is not 100% clear. Will lpData only contain system exclusive
      * data, or can it also contain raw MIDI data, to be split up and sent to
      * modShortData() ?
-     * If the latest is true, then the following WARNing will fire up
+     * If the latter is true, then the following WARNing will fire up
      */
     if (lpData[0] != 0xF0 || lpData[lpMidiHdr->dwBufferLength - 1] != 0xF7) {
-	WARN("Alledged system exclusive buffer is not correct\n\tPlease report with MIDI file\n");
+	WARN("The allegedly system exclusive buffer is not correct\n\tPlease report with MIDI file\n");
     }
 
     TRACE("dwBufferLength=%u !\n", lpMidiHdr->dwBufferLength);
@@ -1587,27 +1571,16 @@ static DWORD modLongData(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
  */
 static DWORD modPrepare(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
 {
-    TRACE("(%04X, %p, %08X);\n", wDevID, lpMidiHdr, dwSize);
+    TRACE("(%04X, %p, %d);\n", wDevID, lpMidiHdr, dwSize);
 
-    if (midiSeqFD == -1) {
-	WARN("can't prepare !\n");
-	return MMSYSERR_NOTENABLED;
-    }
-
-    /* MS doc says that dwFlags must be set to zero, but (kinda funny) MS mciseq drivers
-     * asks to prepare MIDIHDR which dwFlags != 0.
-     * So at least check for the inqueue flag
-     */
-    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 ||
-	lpMidiHdr->lpData == 0 || (lpMidiHdr->dwFlags & MHDR_INQUEUE) != 0) {
-	WARN("%p %p %08x %d\n", lpMidiHdr, lpMidiHdr ? lpMidiHdr->lpData : NULL,
-	           lpMidiHdr ? lpMidiHdr->dwFlags : 0, dwSize);
+    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 || lpMidiHdr->lpData == 0)
 	return MMSYSERR_INVALPARAM;
-    }
+    if (lpMidiHdr->dwFlags & MHDR_PREPARED)
+	return MMSYSERR_NOERROR;
 
     lpMidiHdr->lpNext = 0;
     lpMidiHdr->dwFlags |= MHDR_PREPARED;
-    lpMidiHdr->dwFlags &= ~MHDR_DONE;
+    lpMidiHdr->dwFlags &= ~(MHDR_DONE|MHDR_INQUEUE); /* flags cleared since w2k */
     return MMSYSERR_NOERROR;
 }
 
@@ -1616,15 +1589,12 @@ static DWORD modPrepare(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
  */
 static DWORD modUnprepare(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
 {
-    TRACE("(%04X, %p, %08X);\n", wDevID, lpMidiHdr, dwSize);
+    TRACE("(%04X, %p, %d);\n", wDevID, lpMidiHdr, dwSize);
 
-    if (midiSeqFD == -1) {
-	WARN("can't unprepare !\n");
-	return MMSYSERR_NOTENABLED;
-    }
-
-    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0)
+    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 || lpMidiHdr->lpData == 0)
 	return MMSYSERR_INVALPARAM;
+    if (!(lpMidiHdr->dwFlags & MHDR_PREPARED))
+	return MMSYSERR_NOERROR;
     if (lpMidiHdr->dwFlags & MHDR_INQUEUE)
 	return MIDIERR_STILLPLAYING;
     lpMidiHdr->dwFlags &= ~MHDR_PREPARED;
@@ -1668,7 +1638,7 @@ static DWORD modReset(WORD wDevID)
     return MMSYSERR_NOERROR;
 }
 
-#endif /* HAVE_OSS_MIDI */
+#endif /* SNDCTL_SEQ_NRMIDIS */
 
 /*======================================================================*
  *                  	    MIDI entry points 				*
@@ -1683,7 +1653,7 @@ DWORD WINAPI OSS_midMessage(UINT wDevID, UINT wMsg, DWORD_PTR dwUser,
     TRACE("(%04X, %04X, %08lX, %08lX, %08lX);\n",
 	  wDevID, wMsg, dwUser, dwParam1, dwParam2);
     switch (wMsg) {
-#ifdef HAVE_OSS_MIDI
+#ifdef SNDCTL_SEQ_NRMIDIS
     case DRVM_INIT:
         return OSS_MidiInit();
     case DRVM_EXIT:
@@ -1733,7 +1703,7 @@ DWORD WINAPI OSS_modMessage(UINT wDevID, UINT wMsg, DWORD_PTR dwUser,
 	  wDevID, wMsg, dwUser, dwParam1, dwParam2);
 
     switch (wMsg) {
-#ifdef HAVE_OSS_MIDI
+#ifdef SNDCTL_SEQ_NRMIDIS
     case DRVM_INIT:
         return OSS_MidiInit();
     case DRVM_EXIT:

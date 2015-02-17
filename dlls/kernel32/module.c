@@ -264,21 +264,52 @@ void MODULE_get_binary_info( HANDLE hfile, struct binary_info *info )
     if (!memcmp( header.elf.magic, "\177ELF", 4 ))
     {
         if (header.elf.class == 2) info->flags |= BINARY_FLAG_64BIT;
-        /* FIXME: we don't bother to check byte order, architecture, etc. */
+#ifdef WORDS_BIGENDIAN
+        if (header.elf.data == 1)
+#else
+        if (header.elf.data == 2)
+#endif
+        {
+            header.elf.type = RtlUshortByteSwap( header.elf.type );
+            header.elf.machine = RtlUshortByteSwap( header.elf.machine );
+        }
         switch(header.elf.type)
         {
         case 2: info->type = BINARY_UNIX_EXE; break;
         case 3: info->type = BINARY_UNIX_LIB; break;
         }
+        switch(header.elf.machine)
+        {
+        case 3:   info->arch = IMAGE_FILE_MACHINE_I386; break;
+        case 20:  info->arch = IMAGE_FILE_MACHINE_POWERPC; break;
+        case 40:  info->arch = IMAGE_FILE_MACHINE_ARMNT; break;
+        case 50:  info->arch = IMAGE_FILE_MACHINE_IA64; break;
+        case 62:  info->arch = IMAGE_FILE_MACHINE_AMD64; break;
+        case 183: info->arch = IMAGE_FILE_MACHINE_ARM64; break;
+        }
     }
     /* Mach-o File with Endian set to Big Endian or Little Endian */
-    else if (header.macho.magic == 0xfeedface || header.macho.magic == 0xcefaedfe)
+    else if (header.macho.magic == 0xfeedface || header.macho.magic == 0xcefaedfe ||
+             header.macho.magic == 0xfeedfacf || header.macho.magic == 0xcffaedfe)
     {
         if ((header.macho.cputype >> 24) == 1) info->flags |= BINARY_FLAG_64BIT;
+        if (header.macho.magic == 0xcefaedfe || header.macho.magic == 0xcffaedfe)
+        {
+            header.macho.filetype = RtlUlongByteSwap( header.macho.filetype );
+            header.macho.cputype = RtlUlongByteSwap( header.macho.cputype );
+        }
         switch(header.macho.filetype)
         {
         case 2: info->type = BINARY_UNIX_EXE; break;
         case 8: info->type = BINARY_UNIX_LIB; break;
+        }
+        switch(header.macho.cputype)
+        {
+        case 0x00000007: info->arch = IMAGE_FILE_MACHINE_I386; break;
+        case 0x01000007: info->arch = IMAGE_FILE_MACHINE_AMD64; break;
+        case 0x0000000c: info->arch = IMAGE_FILE_MACHINE_ARMNT; break;
+        case 0x0100000c: info->arch = IMAGE_FILE_MACHINE_ARM64; break;
+        case 0x00000012: info->arch = IMAGE_FILE_MACHINE_POWERPC; break;
         }
     }
     /* Not ELF, try DOS */
@@ -298,6 +329,7 @@ void MODULE_get_binary_info( HANDLE hfile, struct binary_info *info )
          * to read or not.
          */
         info->type = BINARY_DOS;
+        info->arch = IMAGE_FILE_MACHINE_I386;
         if (SetFilePointer( hfile, header.mz.e_lfanew, NULL, SEEK_SET ) == -1) return;
         if (!ReadFile( hfile, &ext_header, sizeof(ext_header), &len, NULL ) || len < 4) return;
 
@@ -308,7 +340,11 @@ void MODULE_get_binary_info( HANDLE hfile, struct binary_info *info )
         {
             if (len >= sizeof(ext_header.nt.FileHeader))
             {
+                static const char fakedll_signature[] = "Wine placeholder DLL";
+                char buffer[sizeof(fakedll_signature)];
+
                 info->type = BINARY_PE;
+                info->arch = ext_header.nt.FileHeader.Machine;
                 if (ext_header.nt.FileHeader.Characteristics & IMAGE_FILE_DLL)
                     info->flags |= BINARY_FLAG_DLL;
                 if (len < sizeof(ext_header.nt))  /* clear remaining part of header if missing */
@@ -323,6 +359,15 @@ void MODULE_get_binary_info( HANDLE hfile, struct binary_info *info )
                 case IMAGE_NT_OPTIONAL_HDR64_MAGIC:
                     info->flags |= BINARY_FLAG_64BIT;
                     break;
+                }
+
+                if (header.mz.e_lfanew >= sizeof(header.mz) + sizeof(fakedll_signature) &&
+                    SetFilePointer( hfile, sizeof(header.mz), NULL, SEEK_SET ) == sizeof(header.mz) &&
+                    ReadFile( hfile, buffer, sizeof(fakedll_signature), &len, NULL ) &&
+                    len == sizeof(fakedll_signature) &&
+                    !memcmp( buffer, fakedll_signature, sizeof(fakedll_signature) ))
+                {
+                    info->flags |= BINARY_FLAG_FAKEDLL;
                 }
             }
         }
@@ -506,11 +551,18 @@ BOOL WINAPI GetModuleHandleExW( DWORD flags, LPCWSTR name, HMODULE *module )
 {
     NTSTATUS status = STATUS_SUCCESS;
     HMODULE ret;
-    ULONG magic;
+    ULONG_PTR magic;
+    BOOL lock;
+
+    if (!module)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
 
     /* if we are messing with the refcount, grab the loader lock */
-    if ((flags & GET_MODULE_HANDLE_EX_FLAG_PIN) ||
-        !(flags & GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT))
+    lock = (flags & GET_MODULE_HANDLE_EX_FLAG_PIN) || !(flags & GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT);
+    if (lock)
         LdrLockLoaderLock( 0, NULL, &magic );
 
     if (!name)
@@ -532,17 +584,18 @@ BOOL WINAPI GetModuleHandleExW( DWORD flags, LPCWSTR name, HMODULE *module )
     if (status == STATUS_SUCCESS)
     {
         if (flags & GET_MODULE_HANDLE_EX_FLAG_PIN)
-            FIXME( "should pin refcount for %p\n", ret );
+            LdrAddRefDll( LDR_ADDREF_DLL_PIN, ret );
         else if (!(flags & GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT))
             LdrAddRefDll( 0, ret );
     }
     else SetLastError( RtlNtStatusToDosError( status ) );
 
-    if ((flags & GET_MODULE_HANDLE_EX_FLAG_PIN) ||
-        !(flags & GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT))
+    if (lock)
         LdrUnlockLoaderLock( 0, magic );
 
-    if (module) *module = ret;
+    if (status == STATUS_SUCCESS) *module = ret;
+    else *module = NULL;
+
     return (status == STATUS_SUCCESS);
 }
 
@@ -558,11 +611,11 @@ BOOL WINAPI GetModuleHandleExW( DWORD flags, LPCWSTR name, HMODULE *module )
  *  Success: A handle to the loaded dll.
  *  Failure: A NULL handle. Use GetLastError() to determine the cause.
  */
-HMODULE WINAPI GetModuleHandleA(LPCSTR module)
+HMODULE WINAPI DECLSPEC_HOTPATCH GetModuleHandleA(LPCSTR module)
 {
     HMODULE ret;
 
-    if (!GetModuleHandleExA( GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, module, &ret )) ret = 0;
+    GetModuleHandleExA( GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, module, &ret );
     return ret;
 }
 
@@ -575,7 +628,7 @@ HMODULE WINAPI GetModuleHandleW(LPCWSTR module)
 {
     HMODULE ret;
 
-    if (!GetModuleHandleExW( GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, module, &ret )) ret = 0;
+    GetModuleHandleExW( GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, module, &ret );
     return ret;
 }
 
@@ -626,7 +679,8 @@ DWORD WINAPI GetModuleFileNameA(
  */
 DWORD WINAPI GetModuleFileNameW( HMODULE hModule, LPWSTR lpFileName, DWORD size )
 {
-    ULONG magic, len = 0;
+    ULONG len = 0;
+    ULONG_PTR magic;
     LDR_MODULE *pldr;
     NTSTATUS nts;
     WIN16_SUBSYSTEM_TIB *win16_tib;
@@ -857,7 +911,12 @@ static HMODULE load_library( const UNICODE_STRING *libname, DWORD flags )
         LOAD_IGNORE_CODE_AUTHZ_LEVEL |
         LOAD_LIBRARY_AS_IMAGE_RESOURCE |
         LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE |
-        LOAD_LIBRARY_REQUIRE_SIGNED_TARGET;
+        LOAD_LIBRARY_REQUIRE_SIGNED_TARGET |
+        LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR |
+        LOAD_LIBRARY_SEARCH_APPLICATION_DIR |
+        LOAD_LIBRARY_SEARCH_USER_DIRS |
+        LOAD_LIBRARY_SEARCH_SYSTEM32 |
+        LOAD_LIBRARY_SEARCH_DEFAULT_DIRS;
 
     if( flags & unsupported_flags)
         FIXME("unsupported flag(s) used (flags: 0x%08x)\n", flags);
@@ -866,7 +925,7 @@ static HMODULE load_library( const UNICODE_STRING *libname, DWORD flags )
 
     if (flags & LOAD_LIBRARY_AS_DATAFILE)
     {
-        ULONG magic;
+        ULONG_PTR magic;
 
         LdrLockLoaderLock( 0, NULL, &magic );
         if (!LdrGetDllHandle( load_path, flags, libname, &hModule ))
@@ -1167,6 +1226,12 @@ BOOL WINAPI K32EnumProcessModules(HANDLE process, HMODULE *lphModule,
     if (!init_module_iterator(&iter, process))
         return FALSE;
 
+    if (!needed)
+    {
+        SetLastError(ERROR_NOACCESS);
+        return FALSE;
+    }
+
     *needed = 0;
 
     while ((ret = module_iterator_next(&iter)) > 0)
@@ -1180,6 +1245,20 @@ BOOL WINAPI K32EnumProcessModules(HANDLE process, HMODULE *lphModule,
     }
 
     return ret == 0;
+}
+
+/***********************************************************************
+ *           K32EnumProcessModulesEx (KERNEL32.@)
+ *
+ * NOTES
+ *  Returned list is in load order.
+ */
+BOOL WINAPI K32EnumProcessModulesEx(HANDLE process, HMODULE *lphModule,
+                                    DWORD cb, DWORD *needed, DWORD filter)
+{
+    FIXME("(%p, %p, %d, %p, %d) semi-stub\n",
+          process, lphModule, cb, needed, filter);
+    return K32EnumProcessModules(process, lphModule, cb, needed);
 }
 
 /***********************************************************************
@@ -1239,17 +1318,28 @@ DWORD WINAPI K32GetModuleFileNameExW(HANDLE process, HMODULE module,
                                      LPWSTR file_name, DWORD size)
 {
     LDR_MODULE ldr_module;
+    DWORD len;
+
+    if (!size) return 0;
 
     if(!get_ldr_module(process, module, &ldr_module))
         return 0;
 
-    size = min(ldr_module.FullDllName.Length / sizeof(WCHAR), size);
+    len = ldr_module.FullDllName.Length / sizeof(WCHAR);
     if (!ReadProcessMemory(process, ldr_module.FullDllName.Buffer,
-                           file_name, size * sizeof(WCHAR), NULL))
+                           file_name, min( len, size ) * sizeof(WCHAR), NULL))
         return 0;
 
-    file_name[size] = 0;
-    return size;
+    if (len < size)
+    {
+        file_name[len] = 0;
+        return len;
+    }
+    else
+    {
+        file_name[size - 1] = 0;
+        return size;
+    }
 }
 
 /***********************************************************************
@@ -1259,32 +1349,42 @@ DWORD WINAPI K32GetModuleFileNameExA(HANDLE process, HMODULE module,
                                      LPSTR file_name, DWORD size)
 {
     WCHAR *ptr;
+    DWORD len;
 
     TRACE("(hProcess=%p, hModule=%p, %p, %d)\n", process, module, file_name, size);
 
-    if (!file_name || !size) return 0;
+    if (!file_name || !size)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
 
     if ( process == GetCurrentProcess() )
     {
-        DWORD len = GetModuleFileNameA( module, file_name, size );
+        len = GetModuleFileNameA( module, file_name, size );
         if (size) file_name[size - 1] = '\0';
         return len;
     }
 
     if (!(ptr = HeapAlloc(GetProcessHeap(), 0, size * sizeof(WCHAR)))) return 0;
 
-    if (!K32GetModuleFileNameExW(process, module, ptr, size))
+    len = K32GetModuleFileNameExW(process, module, ptr, size);
+    if (!len)
     {
         file_name[0] = '\0';
     }
     else
     {
         if (!WideCharToMultiByte( CP_ACP, 0, ptr, -1, file_name, size, NULL, NULL ))
+        {
             file_name[size - 1] = 0;
+            len = size;
+        }
+        else if (len < size) len = strlen( file_name );
     }
 
     HeapFree(GetProcessHeap(), 0, ptr);
-    return strlen(file_name);
+    return len;
 }
 
 /***********************************************************************

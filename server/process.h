@@ -45,6 +45,12 @@ struct process_dll
     WCHAR               *filename;        /* dll file name */
 };
 
+struct rawinput_device_entry
+{
+    struct list            entry;
+    struct rawinput_device device;
+};
+
 struct process
 {
     struct object        obj;             /* object header */
@@ -68,6 +74,7 @@ struct process
     int                  suspend;         /* global process suspend count */
     unsigned int         is_system:1;     /* is it a system process? */
     unsigned int         debug_children:1;/* also debug all child processes */
+    unsigned int         is_terminating:1;/* is process terminating? */
     struct list          locks;           /* list of file locks owned by the process */
     struct list          classes;         /* window classes owned by the process */
     struct console_input*console;         /* console input */
@@ -81,6 +88,9 @@ struct process
     client_ptr_t         peb;             /* PEB address in client address space */
     client_ptr_t         ldt_copy;        /* pointer to LDT copy in client addr space */
     unsigned int         trace_data;      /* opaque data used by the process tracing mechanism */
+    struct list          rawinput_devices;/* list of registered rawinput devices */
+    const struct rawinput_device *rawinput_mouse; /* rawinput mouse device, if any */
+    const struct rawinput_device *rawinput_kbd;   /* rawinput keyboard device, if any */
 };
 
 struct process_snapshot
@@ -90,6 +100,7 @@ struct process_snapshot
     int             threads;  /* number of threads */
     int             priority; /* priority class */
     int             handles;  /* number of handles */
+    int             unix_pid; /* Unix pid */
 };
 
 #define CPU_FLAG(cpu) (1 << (cpu))

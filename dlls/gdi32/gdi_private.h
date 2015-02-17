@@ -21,6 +21,7 @@
 #ifndef __WINE_GDI_PRIVATE_H
 #define __WINE_GDI_PRIVATE_H
 
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -56,51 +57,10 @@ struct gdi_obj_funcs
     BOOL    (*pDeleteObject)( HGDIOBJ handle );
 };
 
-struct hdc_list
-{
-    HDC hdc;
-    struct hdc_list *next;
-};
-
-typedef struct tagGDIOBJHDR
-{
-    WORD        type;         /* object type (one of the OBJ_* constants) */
-    WORD        system : 1;   /* system object flag */
-    WORD        deleted : 1;  /* whether DeleteObject has been called on this object */
-    DWORD       selcount;     /* number of times the object is selected in a DC */
-    const struct gdi_obj_funcs *funcs;
-    struct hdc_list *hdcs;
-} GDIOBJHDR;
-
-/* It should not be necessary to access the contents of the GdiPath
- * structure directly; if you find that the exported functions don't
- * allow you to do what you want, then please place a new exported
- * function that does this job in path.c.
- */
-typedef enum tagGdiPathState
-{
-   PATH_Null,
-   PATH_Open,
-   PATH_Closed
-} GdiPathState;
-
-typedef struct tagGdiPath
-{
-   GdiPathState state;
-   POINT      *pPoints;
-   BYTE         *pFlags;
-   int          numEntriesUsed, numEntriesAllocated;
-   BOOL       newStroke;
-} GdiPath;
-
-typedef struct tagGdiFont GdiFont;
-
 typedef struct tagDC
 {
-    GDIOBJHDR    header;
     HDC          hSelf;            /* Handle to this DC */
     struct gdi_physdev nulldrv;    /* physdev for the null driver */
-    PHYSDEV      dibdrv;           /* physdev for the dib driver */
     PHYSDEV      physDev;          /* current top of the physdev stack */
     DWORD        thread;           /* thread owning the DC */
     LONG         refcount;         /* thread refcount */
@@ -109,6 +69,8 @@ typedef struct tagDC
     struct tagDC *saved_dc;
     DWORD_PTR    dwHookData;
     DCHOOKPROC   hookProc;         /* DC hook */
+    BOOL         bounds_enabled:1; /* bounds tracking is enabled */
+    BOOL         path_open:1;      /* path is currently open (only for saved DCs) */
 
     INT          wndOrgX;          /* Window origin */
     INT          wndOrgY;
@@ -121,23 +83,24 @@ typedef struct tagDC
     SIZE         virtual_res;      /* Initially HORZRES,VERTRES. Changed by SetVirtualResolution */
     SIZE         virtual_size;     /* Initially HORZSIZE,VERTSIZE. Changed by SetVirtualResolution */
     RECT         vis_rect;         /* visible rectangle in screen coords */
+    RECT         device_rect;      /* rectangle for the whole device */
+    int          pixel_format;     /* pixel format (for memory DCs) */
+    UINT         aa_flags;         /* anti-aliasing flags to pass to GetGlyphOutline for current font */
     FLOAT        miterLimit;
 
     int           flags;
     DWORD         layout;
-    HRGN          hClipRgn;      /* Clip region (may be 0) */
-    HRGN          hMetaRgn;      /* Meta region (may be 0) */
-    HRGN          hMetaClipRgn;  /* Intersection of meta and clip regions (may be 0) */
-    HRGN          hVisRgn;       /* Visible region (must never be 0) */
+    HRGN          hClipRgn;      /* Clip region */
+    HRGN          hMetaRgn;      /* Meta region */
+    HRGN          hVisRgn;       /* Visible region */
+    HRGN          region;        /* Total DC region (intersection of clip and visible) */
     HPEN          hPen;
     HBRUSH        hBrush;
     HFONT         hFont;
     HBITMAP       hBitmap;
-    HANDLE        hDevice;
     HPALETTE      hPalette;
 
-    GdiFont      *gdiFont;
-    GdiPath       path;
+    struct gdi_path *path;
 
     UINT          font_code_page;
     WORD          ROPmode;
@@ -167,11 +130,8 @@ typedef struct tagDC
     XFORM         xformWorld2Vport;  /* World-to-viewport transformation */
     XFORM         xformVport2World;  /* Inverse of the above transformation */
     BOOL          vport2WorldValid;  /* Is xformVport2World valid? */
-    RECT          BoundsRect;        /* Current bounding rect */
+    RECT          bounds;            /* Current bounding rect */
 } DC;
-
-  /* DC flags */
-#define DC_BOUNDS_ENABLE 0x0008   /* Bounding rectangle tracking is enabled */
 
 /* Certain functions will do no further processing if the driver returns this.
    Used by mfdrv for example. */
@@ -189,19 +149,37 @@ static inline INT GDI_ROUND(double val)
 #define GET_DC_PHYSDEV(dc,func) \
     get_physdev_entry_point( (dc)->physDev, FIELD_OFFSET(struct gdi_dc_funcs,func))
 
+static inline PHYSDEV pop_dc_driver( DC *dc, const struct gdi_dc_funcs *funcs )
+{
+    PHYSDEV dev, *pdev = &dc->physDev;
+    while (*pdev && (*pdev)->funcs != funcs) pdev = &(*pdev)->next;
+    if (!*pdev) return NULL;
+    dev = *pdev;
+    *pdev = dev->next;
+    return dev;
+}
+
+static inline PHYSDEV find_dc_driver( DC *dc, const struct gdi_dc_funcs *funcs )
+{
+    PHYSDEV dev;
+
+    for (dev = dc->physDev; dev; dev = dev->next) if (dev->funcs == funcs) return dev;
+    return NULL;
+}
+
 /* bitmap object */
 
 typedef struct tagBITMAPOBJ
 {
-    GDIOBJHDR           header;
-    BITMAP              bitmap;
+    DIBSECTION          dib;
     SIZE                size;   /* For SetBitmapDimension() */
-    const struct gdi_dc_funcs *funcs; /* DC function table */
-    /* For device-independent bitmaps: */
-    DIBSECTION         *dib;
-    RGBQUAD            *color_table;  /* DIB color table if <= 8bpp */
-    UINT                nb_colors;    /* number of colors in table */
+    RGBQUAD            *color_table;  /* DIB color table if <= 8bpp (always 1 << bpp in size) */
 } BITMAPOBJ;
+
+static inline BOOL is_bitmapobj_dib( const BITMAPOBJ *bmp )
+{
+    return bmp->dib.dsBmih.biSize != 0;
+}
 
 /* bidi.c */
 
@@ -222,27 +200,29 @@ extern BOOL BIDI_Reorder( HDC hDC, LPCWSTR lpString, INT uCount, DWORD dwFlags, 
 
 /* bitblt.c */
 extern DWORD convert_bits( const BITMAPINFO *src_info, struct bitblt_coords *src,
-                           BITMAPINFO *dst_info, struct gdi_image_bits *bits, BOOL add_alpha ) DECLSPEC_HIDDEN;
+                           BITMAPINFO *dst_info, struct gdi_image_bits *bits ) DECLSPEC_HIDDEN;
 extern BOOL intersect_vis_rectangles( struct bitblt_coords *dst, struct bitblt_coords *src ) DECLSPEC_HIDDEN;
 extern DWORD stretch_bits( const BITMAPINFO *src_info, struct bitblt_coords *src,
                            BITMAPINFO *dst_info, struct bitblt_coords *dst,
                            struct gdi_image_bits *bits, int mode ) DECLSPEC_HIDDEN;
 
-/* bitmap.c */
-extern BOOL get_bitmap_image( HBITMAP hbitmap, BITMAPINFO *info, struct gdi_image_bits *bits ) DECLSPEC_HIDDEN;
-extern HBITMAP BITMAP_CopyBitmap( HBITMAP hbitmap ) DECLSPEC_HIDDEN;
-extern BOOL BITMAP_SetOwnerDC( HBITMAP hbitmap, PHYSDEV physdev ) DECLSPEC_HIDDEN;
+/* brush.c */
+extern BOOL store_brush_pattern( LOGBRUSH *brush, struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
+extern void free_brush_pattern( struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
+extern BOOL get_brush_bitmap_info( HBRUSH handle, BITMAPINFO *info, void **bits, UINT *usage ) DECLSPEC_HIDDEN;
 
 /* clipping.c */
-extern int get_clip_box( DC *dc, RECT *rect ) DECLSPEC_HIDDEN;
-extern void CLIPPING_UpdateGCRegion( DC * dc ) DECLSPEC_HIDDEN;
+extern BOOL clip_device_rect( DC *dc, RECT *dst, const RECT *src ) DECLSPEC_HIDDEN;
+extern BOOL clip_visrect( DC *dc, RECT *dst, const RECT *src ) DECLSPEC_HIDDEN;
+extern void update_dc_clipping( DC * dc ) DECLSPEC_HIDDEN;
 
-/* Return the total clip region (if any) */
-static inline HRGN get_clip_region( DC * dc )
+/* Return the total DC region (if any) */
+static inline HRGN get_dc_region( DC *dc )
 {
-    if (dc->hMetaClipRgn) return dc->hMetaClipRgn;
-    if (dc->hMetaRgn) return dc->hMetaRgn;
-    return dc->hClipRgn;
+    if (dc->region) return dc->region;
+    if (dc->hVisRgn) return dc->hVisRgn;
+    if (dc->hClipRgn) return dc->hClipRgn;
+    return dc->hMetaRgn;
 }
 
 /* dc.c */
@@ -256,11 +236,13 @@ extern void DC_UpdateXforms( DC * dc ) DECLSPEC_HIDDEN;
 
 /* dib.c */
 extern int bitmap_info_size( const BITMAPINFO * info, WORD coloruse ) DECLSPEC_HIDDEN;
+extern BOOL fill_color_table_from_pal_colors( BITMAPINFO *info, HDC hdc ) DECLSPEC_HIDDEN;
+extern const RGBQUAD *get_default_color_table( int bpp ) DECLSPEC_HIDDEN;
 extern void fill_default_color_table( BITMAPINFO *info ) DECLSPEC_HIDDEN;
 extern void get_ddb_bitmapinfo( BITMAPOBJ *bmp, BITMAPINFO *info ) DECLSPEC_HIDDEN;
 extern BITMAPINFO *copy_packed_dib( const BITMAPINFO *src_info, UINT usage ) DECLSPEC_HIDDEN;
 extern DWORD convert_bitmapinfo( const BITMAPINFO *src_info, void *src_bits, struct bitblt_coords *src,
-                                 const BITMAPINFO *dst_info, void *dst_bits, BOOL add_alpha ) DECLSPEC_HIDDEN;
+                                 const BITMAPINFO *dst_info, void *dst_bits ) DECLSPEC_HIDDEN;
 
 extern DWORD stretch_bitmapinfo( const BITMAPINFO *src_info, void *src_bits, struct bitblt_coords *src,
                                  const BITMAPINFO *dst_info, void *dst_bits, struct bitblt_coords *dst,
@@ -268,6 +250,18 @@ extern DWORD stretch_bitmapinfo( const BITMAPINFO *src_info, void *src_bits, str
 extern DWORD blend_bitmapinfo( const BITMAPINFO *src_info, void *src_bits, struct bitblt_coords *src,
                                const BITMAPINFO *dst_info, void *dst_bits, struct bitblt_coords *dst,
                                BLENDFUNCTION blend ) DECLSPEC_HIDDEN;
+extern DWORD gradient_bitmapinfo( const BITMAPINFO *info, void *bits, TRIVERTEX *vert_array, ULONG nvert,
+                                  void *grad_array, ULONG ngrad, ULONG mode, const POINT *dev_pts, HRGN rgn ) DECLSPEC_HIDDEN;
+extern COLORREF get_pixel_bitmapinfo( const BITMAPINFO *info, void *bits, struct bitblt_coords *src ) DECLSPEC_HIDDEN;
+extern BOOL render_aa_text_bitmapinfo( HDC hdc, BITMAPINFO *info, struct gdi_image_bits *bits,
+                                       struct bitblt_coords *src, INT x, INT y, UINT flags,
+                                       UINT aa_flags, LPCWSTR str, UINT count, const INT *dx ) DECLSPEC_HIDDEN;
+extern DWORD get_image_from_bitmap( BITMAPOBJ *bmp, BITMAPINFO *info,
+                                    struct gdi_image_bits *bits, struct bitblt_coords *src ) DECLSPEC_HIDDEN;
+extern DWORD put_image_into_bitmap( BITMAPOBJ *bmp, HRGN clip, BITMAPINFO *info,
+                                    const struct gdi_image_bits *bits, struct bitblt_coords *src,
+                                    struct bitblt_coords *dst ) DECLSPEC_HIDDEN;
+extern void dibdrv_set_window_surface( DC *dc, struct window_surface *surface ) DECLSPEC_HIDDEN;
 
 /* driver.c */
 extern const struct gdi_dc_funcs null_driver DECLSPEC_HIDDEN;
@@ -294,21 +288,22 @@ typedef struct
 
 extern INT WineEngAddFontResourceEx(LPCWSTR, DWORD, PVOID) DECLSPEC_HIDDEN;
 extern HANDLE WineEngAddFontMemResourceEx(PVOID, DWORD, PVOID, LPDWORD) DECLSPEC_HIDDEN;
-extern BOOL WineEngDestroyFontInstance(HFONT handle) DECLSPEC_HIDDEN;
-extern BOOL WineEngGetLinkedHFont(DC *dc, WCHAR c, HFONT *new_hfont, UINT *glyph) DECLSPEC_HIDDEN;
+extern BOOL WineEngCreateScalableFontResource(DWORD, LPCWSTR, LPCWSTR, LPCWSTR) DECLSPEC_HIDDEN;
 extern BOOL WineEngInit(void) DECLSPEC_HIDDEN;
 extern BOOL WineEngRemoveFontResourceEx(LPCWSTR, DWORD, PVOID) DECLSPEC_HIDDEN;
 
 /* gdiobj.c */
-extern HGDIOBJ alloc_gdi_handle( GDIOBJHDR *obj, WORD type, const struct gdi_obj_funcs *funcs ) DECLSPEC_HIDDEN;
+extern HGDIOBJ alloc_gdi_handle( void *obj, WORD type, const struct gdi_obj_funcs *funcs ) DECLSPEC_HIDDEN;
 extern void *free_gdi_handle( HGDIOBJ handle ) DECLSPEC_HIDDEN;
+extern HGDIOBJ get_full_gdi_handle( HGDIOBJ handle ) DECLSPEC_HIDDEN;
 extern void *GDI_GetObjPtr( HGDIOBJ, WORD ) DECLSPEC_HIDDEN;
 extern void GDI_ReleaseObj( HGDIOBJ ) DECLSPEC_HIDDEN;
 extern void GDI_CheckNotLock(void) DECLSPEC_HIDDEN;
+extern UINT GDI_get_ref_count( HGDIOBJ handle ) DECLSPEC_HIDDEN;
 extern HGDIOBJ GDI_inc_ref_count( HGDIOBJ handle ) DECLSPEC_HIDDEN;
 extern BOOL GDI_dec_ref_count( HGDIOBJ handle ) DECLSPEC_HIDDEN;
-extern BOOL GDI_hdc_using_object(HGDIOBJ obj, HDC hdc) DECLSPEC_HIDDEN;
-extern BOOL GDI_hdc_not_using_object(HGDIOBJ obj, HDC hdc) DECLSPEC_HIDDEN;
+extern void GDI_hdc_using_object(HGDIOBJ obj, HDC hdc) DECLSPEC_HIDDEN;
+extern void GDI_hdc_not_using_object(HGDIOBJ obj, HDC hdc) DECLSPEC_HIDDEN;
 
 /* metafile.c */
 extern HMETAFILE MF_Create_HMETAFILE(METAHEADER *mh) DECLSPEC_HIDDEN;
@@ -316,8 +311,7 @@ extern METAHEADER *MF_CreateMetaHeaderDisk(METAHEADER *mr, LPCVOID filename, BOO
 
 /* path.c */
 
-extern void PATH_InitGdiPath(GdiPath *pPath) DECLSPEC_HIDDEN;
-extern void PATH_DestroyGdiPath(GdiPath *pPath) DECLSPEC_HIDDEN;
+extern void free_gdi_path( struct gdi_path *path ) DECLSPEC_HIDDEN;
 extern BOOL PATH_SavePath( DC *dst, DC *src ) DECLSPEC_HIDDEN;
 extern BOOL PATH_RestorePath( DC *dst, DC *src ) DECLSPEC_HIDDEN;
 
@@ -330,6 +324,7 @@ extern UINT WINAPI GDIRealizePalette( HDC hdc ) DECLSPEC_HIDDEN;
 extern HPALETTE PALETTE_Init(void) DECLSPEC_HIDDEN;
 
 /* region.c */
+extern BOOL add_rect_to_region( HRGN rgn, const RECT *rect ) DECLSPEC_HIDDEN;
 extern INT mirror_region( HRGN dst, HRGN src, INT width ) DECLSPEC_HIDDEN;
 extern BOOL REGION_FrameRgn( HRGN dest, HRGN src, INT x, INT y ) DECLSPEC_HIDDEN;
 
@@ -340,7 +335,12 @@ typedef struct
     RECT *rects;
     RECT extents;
 } WINEREGION;
-extern const WINEREGION *get_wine_region(HRGN rgn) DECLSPEC_HIDDEN;
+
+/* return the region data without making a copy */
+static inline const WINEREGION *get_wine_region(HRGN rgn)
+{
+    return GDI_GetObjPtr( rgn, OBJ_REGION );
+}
 static inline void release_wine_region(HRGN rgn)
 {
     GDI_ReleaseObj(rgn);
@@ -359,13 +359,15 @@ extern BOOL nulldrv_CloseFigure( PHYSDEV dev ) DECLSPEC_HIDDEN;
 extern BOOL nulldrv_EndPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
 extern INT  nulldrv_ExcludeClipRect( PHYSDEV dev, INT left, INT top, INT right, INT bottom ) DECLSPEC_HIDDEN;
 extern INT  nulldrv_ExtSelectClipRgn( PHYSDEV dev, HRGN rgn, INT mode ) DECLSPEC_HIDDEN;
+extern BOOL nulldrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags, const RECT *rect,
+                                LPCWSTR str, UINT count, const INT *dx ) DECLSPEC_HIDDEN;
 extern BOOL nulldrv_FillPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
 extern BOOL nulldrv_FillRgn( PHYSDEV dev, HRGN rgn, HBRUSH brush ) DECLSPEC_HIDDEN;
 extern BOOL nulldrv_FlattenPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
 extern BOOL nulldrv_FrameRgn( PHYSDEV dev, HRGN rgn, HBRUSH brush, INT width, INT height ) DECLSPEC_HIDDEN;
 extern LONG nulldrv_GetBitmapBits( HBITMAP bitmap, void *bits, LONG size ) DECLSPEC_HIDDEN;
-extern DWORD nulldrv_GetImage( PHYSDEV dev, HBITMAP hbitmap, BITMAPINFO *info, struct gdi_image_bits *bits, struct bitblt_coords *src ) DECLSPEC_HIDDEN;
 extern COLORREF nulldrv_GetNearestColor( PHYSDEV dev, COLORREF color ) DECLSPEC_HIDDEN;
+extern COLORREF nulldrv_GetPixel( PHYSDEV dev, INT x, INT y ) DECLSPEC_HIDDEN;
 extern BOOL nulldrv_GradientFill( PHYSDEV dev, TRIVERTEX *vert_array, ULONG nvert,
                                   void * grad_array, ULONG ngrad, ULONG mode ) DECLSPEC_HIDDEN;
 extern INT  nulldrv_IntersectClipRect( PHYSDEV dev, INT left, INT top, INT right, INT bottom ) DECLSPEC_HIDDEN;
@@ -378,14 +380,12 @@ extern BOOL nulldrv_PolyBezier( PHYSDEV dev, const POINT *points, DWORD count ) 
 extern BOOL nulldrv_PolyBezierTo( PHYSDEV dev, const POINT *points, DWORD count ) DECLSPEC_HIDDEN;
 extern BOOL nulldrv_PolyDraw( PHYSDEV dev, const POINT *points, const BYTE *types, DWORD count ) DECLSPEC_HIDDEN;
 extern BOOL nulldrv_PolylineTo( PHYSDEV dev, const POINT *points, INT count ) DECLSPEC_HIDDEN;
-extern DWORD nulldrv_PutImage( PHYSDEV dev, HBITMAP hbitmap, HRGN clip, BITMAPINFO *info,
-                               const struct gdi_image_bits *bits, struct bitblt_coords *src,
-                               struct bitblt_coords *dst, DWORD rop ) DECLSPEC_HIDDEN;
 extern BOOL nulldrv_RestoreDC( PHYSDEV dev, INT level ) DECLSPEC_HIDDEN;
 extern INT  nulldrv_SaveDC( PHYSDEV dev ) DECLSPEC_HIDDEN;
 extern BOOL nulldrv_ScaleViewportExtEx( PHYSDEV dev, INT x_num, INT x_denom, INT y_num, INT y_denom, SIZE *size ) DECLSPEC_HIDDEN;
 extern BOOL nulldrv_ScaleWindowExtEx( PHYSDEV dev, INT x_num, INT x_denom, INT y_num, INT y_denom, SIZE *size ) DECLSPEC_HIDDEN;
 extern BOOL nulldrv_SelectClipPath( PHYSDEV dev, INT mode ) DECLSPEC_HIDDEN;
+extern HFONT nulldrv_SelectFont( PHYSDEV dev, HFONT font, UINT *ggo_flags ) DECLSPEC_HIDDEN;
 extern INT nulldrv_SetDIBitsToDevice( PHYSDEV dev, INT x_dst, INT y_dst, DWORD width, DWORD height,
                                       INT x_src, INT y_src, UINT start, UINT lines,
                                       const void *bits, BITMAPINFO *info, UINT coloruse ) DECLSPEC_HIDDEN;
@@ -438,10 +438,20 @@ static inline void offset_rect( RECT *rect, int offset_x, int offset_y )
     rect->bottom += offset_y;
 }
 
-static inline BOOL pt_in_rect( const RECT *rect, POINT pt )
+static inline void order_rect( RECT *rect )
 {
-    return ((pt.x >= rect->left) && (pt.x < rect->right) &&
-            (pt.y >= rect->top) && (pt.y < rect->bottom));
+    if (rect->left > rect->right)
+    {
+        int tmp = rect->left;
+        rect->left = rect->right;
+        rect->right = tmp;
+    }
+    if (rect->top > rect->bottom)
+    {
+        int tmp = rect->top;
+        rect->top = rect->bottom;
+        rect->bottom = tmp;
+    }
 }
 
 static inline void get_bounding_rect( RECT *rect, int x, int y, int width, int height )
@@ -464,6 +474,21 @@ static inline void get_bounding_rect( RECT *rect, int x, int y, int width, int h
     }
 }
 
+static inline void reset_bounds( RECT *bounds )
+{
+    bounds->left = bounds->top = INT_MAX;
+    bounds->right = bounds->bottom = INT_MIN;
+}
+
+static inline void add_bounds_rect( RECT *bounds, const RECT *rect )
+{
+    if (is_rect_empty( rect )) return;
+    bounds->left   = min( bounds->left, rect->left );
+    bounds->top    = min( bounds->top, rect->top );
+    bounds->right  = max( bounds->right, rect->right );
+    bounds->bottom = max( bounds->bottom, rect->bottom );
+}
+
 static inline int get_bitmap_stride( int width, int bpp )
 {
     return ((width * bpp + 15) >> 3) & ~1;
@@ -480,25 +505,24 @@ static inline int get_dib_image_size( const BITMAPINFO *info )
         * abs( info->bmiHeader.biHeight );
 }
 
-static inline int get_dib_num_of_colors( const BITMAPINFO *info )
+/* only for use on sanitized BITMAPINFO structures */
+static inline int get_dib_info_size( const BITMAPINFO *info, UINT coloruse )
 {
-    if (info->bmiHeader.biClrUsed) return min( info->bmiHeader.biClrUsed, 256 );
-    return info->bmiHeader.biBitCount > 8 ? 0 : 1 << info->bmiHeader.biBitCount;
+    if (info->bmiHeader.biCompression == BI_BITFIELDS)
+        return sizeof(BITMAPINFOHEADER) + 3 * sizeof(DWORD);
+    if (coloruse == DIB_PAL_COLORS)
+        return sizeof(BITMAPINFOHEADER) + info->bmiHeader.biClrUsed * sizeof(WORD);
+    return FIELD_OFFSET( BITMAPINFO, bmiColors[info->bmiHeader.biClrUsed] );
 }
 
+/* only for use on sanitized BITMAPINFO structures */
 static inline void copy_bitmapinfo( BITMAPINFO *dst, const BITMAPINFO *src )
 {
-    unsigned int size = FIELD_OFFSET( BITMAPINFO, bmiColors[get_dib_num_of_colors( src )] );
-    if (src->bmiHeader.biCompression == BI_BITFIELDS) size += 3 * sizeof(DWORD);
-    memcpy( dst, src, size );
-}
-
-static inline const struct gdi_dc_funcs *get_bitmap_funcs( const BITMAPOBJ *bitmap )
-{
-    if( bitmap->dib ) return &dib_driver;
-    return bitmap->funcs;
+    memcpy( dst, src, get_dib_info_size( src, DIB_RGB_COLORS ));
 }
 
 extern void free_heap_bits( struct gdi_image_bits *bits ) DECLSPEC_HIDDEN;
+
+extern HMODULE gdi32_module DECLSPEC_HIDDEN;
 
 #endif /* __WINE_GDI_PRIVATE_H */

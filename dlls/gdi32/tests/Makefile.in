@@ -17,6 +17,9 @@ C_SRCS = \
 	path.c \
 	pen.c
 
-RC_SRCS = resource.rc
+FONT_SRCS = \
+	vertical.sfd \
+	wine_test.sfd \
+	wine_vdmx.sfd
 
-@MAKE_TEST_RULES@
+RC_SRCS = resource.rc

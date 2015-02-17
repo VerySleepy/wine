@@ -67,7 +67,7 @@ struct _reg_driver
 
 static reg_driver* reg_driver_list = NULL;
 
-/* This one is a macro such that it works for both ASCII and Unicode */
+/* This one is a macro in order to work for both ASCII and Unicode */
 #define fourcc_to_string(str, fcc) do { \
 	(str)[0] = LOBYTE(LOWORD(fcc)); \
 	(str)[1] = HIBYTE(LOWORD(fcc)); \
@@ -1373,7 +1373,7 @@ LPVOID VFWAPI ICSeqCompressFrame(PCOMPVARS pc, UINT uiFlags, LPVOID lpBits, BOOL
     icComp->lFrameNum = pc->lFrame++;
     icComp->lpOutput = pc->lpBitsOut;
     icComp->lpPrev = pc->lpBitsPrev;
-    ret = ICSendMessage(pc->hic, ICM_COMPRESS, (DWORD_PTR)icComp, sizeof(icComp));
+    ret = ICSendMessage(pc->hic, ICM_COMPRESS, (DWORD_PTR)icComp, sizeof(*icComp));
 
     if (icComp->dwFlags & AVIIF_KEYFRAME)
     {
@@ -1512,7 +1512,10 @@ static BOOL GetFileNamePreview(LPVOID lpofn,BOOL bSave,BOOL bUnicode)
 
   fnGetFileName = (LPVOID)GetProcAddress(hComdlg32, szFunctionName);
   if (fnGetFileName == NULL)
+  {
+    FreeLibrary(hComdlg32);
     return FALSE;
+  }
 
   /* FIXME: need to add OFN_ENABLEHOOK and our own handler */
   ret = fnGetFileName(lpofn);

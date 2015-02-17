@@ -415,33 +415,32 @@ static BOOL is_tablet_cursor(const char *name, const char *type)
     return FALSE;
 }
 
-static BOOL is_stylus(const char *name, const char *type)
+static UINT get_cursor_type(const char *name, const char *type)
 {
     int i;
     static const char* tablet_stylus_whitelist[] = {
         "stylus",
         "wizardpen",
         "acecad",
+        "pen",
         NULL
     };
 
+    /* First check device type to avoid cases where name is "Pen and Eraser" and type is "ERASER" */
+    for (i=0; tablet_stylus_whitelist[i] != NULL; i++) {
+        if (type && match_token(type, tablet_stylus_whitelist[i]))
+            return CSR_TYPE_PEN;
+    }
+    if (type && match_token(type, "eraser"))
+        return CSR_TYPE_ERASER;
     for (i=0; tablet_stylus_whitelist[i] != NULL; i++) {
         if (name && match_token(name, tablet_stylus_whitelist[i]))
-            return TRUE;
-        if (type && match_token(type, tablet_stylus_whitelist[i]))
-            return TRUE;
+            return CSR_TYPE_PEN;
     }
-
-    return FALSE;
-}
-
-static BOOL is_eraser(const char *name, const char *type)
-{
     if (name && match_token(name, "eraser"))
-        return TRUE;
-    if (type && match_token(type, "eraser"))
-        return TRUE;
-    return FALSE;
+        return CSR_TYPE_ERASER;
+
+    return CSR_TYPE_OTHER;
 }
 
 /* cursors are placed in gSysCursor rows depending on their type
@@ -537,6 +536,8 @@ BOOL CDECL X11DRV_LoadTabletInfo(HWND hwnddefault)
     gSysContext.lcSensZ = 65536;
     gSysContext.lcSysSensX= 65536;
     gSysContext.lcSysSensY= 65536;
+    gSysContext.lcOutExtX= GetSystemMetrics(SM_CXSCREEN);
+    gSysContext.lcOutExtY= GetSystemMetrics(SM_CYSCREEN);
 
     /* initialize cursors */
     disable_system_cursors();
@@ -550,13 +551,10 @@ BOOL CDECL X11DRV_LoadTabletInfo(HWND hwnddefault)
         PK_BUTTONS |  PK_X | PK_Y | PK_NORMAL_PRESSURE | PK_ORIENTATION;
     strcpyW(gSysDevice.PNPID, SZ_NON_PLUGINPLAY);
 
-    wine_tsx11_lock();
-
     devices = pXListInputDevices(data->display, &num_devices);
     if (!devices)
     {
         WARN("XInput Extensions reported as not available\n");
-        wine_tsx11_unlock();
         return FALSE;
     }
     TRACE("XListInputDevices reports %d devices\n", num_devices);
@@ -637,13 +635,7 @@ BOOL CDECL X11DRV_LoadTabletInfo(HWND hwnddefault)
             cursor.NPBTNMARKS[1] = 1 ;
             cursor.CAPABILITIES = CRC_MULTIMODE;
 
-            /* prefer finding TYPE_PEN(most capable) */
-            if (is_stylus(target->name, device_type))
-                cursor.TYPE = CSR_TYPE_PEN;
-            else if (is_eraser(target->name, device_type))
-                cursor.TYPE = CSR_TYPE_ERASER;
-            else
-                cursor.TYPE = CSR_TYPE_OTHER;
+            cursor.TYPE = get_cursor_type(target->name, device_type);
 
             any = target->inputclassinfo;
 
@@ -777,7 +769,6 @@ BOOL CDECL X11DRV_LoadTabletInfo(HWND hwnddefault)
         WARN("Did not find a valid stylus, unable to determine system context parameters. Wintab is disabled.\n");
     }
 
-    wine_tsx11_unlock();
     return TRUE;
 }
 
@@ -807,7 +798,6 @@ static void set_button_state(int curnum, XID deviceid)
     int loop;
     int rc = 0;
 
-    wine_tsx11_lock();
     device = pXOpenDevice(data->display,deviceid);
     state = pXQueryDeviceState(data->display,device);
 
@@ -832,7 +822,6 @@ static void set_button_state(int curnum, XID deviceid)
         }
     }
     pXFreeDeviceState(state);
-    wine_tsx11_unlock();
     button_state[curnum] = rc;
 }
 
@@ -976,7 +965,6 @@ int CDECL X11DRV_AttachEventQueueToTablet(HWND hOwner)
 
     TRACE("Creating context for window %p (%lx)  %i cursors\n", hOwner, win, gNumCursors);
 
-    wine_tsx11_lock();
     devices = pXListInputDevices(data->display, &num_devices);
 
     X11DRV_expect_error(data->display,Tablet_ErrorHandler,NULL);
@@ -1046,7 +1034,6 @@ int CDECL X11DRV_AttachEventQueueToTablet(HWND hOwner)
     X11DRV_check_error();
 
     if (NULL != devices) pXFreeDeviceList(devices);
-    wine_tsx11_unlock();
     return 0;
 }
 

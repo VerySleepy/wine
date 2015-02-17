@@ -184,9 +184,7 @@ void CDECL MSVCRT_abort(void)
 }
 
 /*********************************************************************
- *		_set_abort_behavior (MSVCRT.@)
- *
- * Not exported by native msvcrt, added in msvcr80
+ *		_set_abort_behavior (MSVCR80.@)
  */
 unsigned int CDECL MSVCRT__set_abort_behavior(unsigned int flags, unsigned int mask)
 {
@@ -300,7 +298,7 @@ void CDECL MSVCRT_exit(int exitcode)
 {
   HMODULE hmscoree;
   static const WCHAR mscoreeW[] = {'m','s','c','o','r','e','e',0};
-  void WINAPI (*pCorExitProcess)(int);
+  void (WINAPI *pCorExitProcess)(int);
 
   TRACE("(%d)\n",exitcode);
   MSVCRT__cexit();
@@ -327,7 +325,9 @@ int CDECL MSVCRT_atexit(void (*func)(void))
   return MSVCRT__onexit((MSVCRT__onexit_t)func) == (MSVCRT__onexit_t)func ? 0 : -1;
 }
 
-/* _set_purecall_handler - not exported in native msvcrt */
+/*********************************************************************
+ *		_set_purecall_handler (MSVCR71.@)
+ */
 MSVCRT_purecall_handler CDECL _set_purecall_handler(MSVCRT_purecall_handler function)
 {
     MSVCRT_purecall_handler ret = purecall_handler;

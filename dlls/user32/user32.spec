@@ -1,4 +1,5 @@
 @ stdcall ActivateKeyboardLayout(long long)
+@ stdcall AddClipboardFormatListener(long)
 @ stdcall AdjustWindowRect(ptr long long)
 @ stdcall AdjustWindowRectEx(ptr long long long)
 @ stdcall AlignRects(ptr long long long)
@@ -38,6 +39,7 @@
 @ stdcall ChangeMenuA(long long ptr long long)
 @ stdcall ChangeMenuW(long long ptr long long)
 @ stdcall ChangeWindowMessageFilter(long long)
+@ stdcall ChangeWindowMessageFilterEx(long long long ptr)
 @ stdcall CharLowerA(str)
 @ stdcall CharLowerBuffA(str long)
 @ stdcall CharLowerBuffW(wstr long)
@@ -308,7 +310,7 @@
 @ stdcall GetLastActivePopup(long)
 @ stdcall GetLastInputInfo(ptr)
 @ stdcall GetLayeredWindowAttributes(long ptr ptr ptr)
-# @ stub GetListBoxInfo
+@ stdcall GetListBoxInfo(long)
 @ stdcall GetMenu(long)
 @ stdcall GetMenuBarInfo(long long long ptr)
 @ stdcall GetMenuCheckMarkDimensions()
@@ -443,6 +445,7 @@
 @ stdcall IsMenu(long)
 @ stdcall IsRectEmpty(ptr)
 # @ stub IsServerSideWindow
+@ stdcall IsTouchWindow(long ptr)
 @ stdcall IsWinEventHookInstalled(long)
 @ stdcall IsWindow(long)
 @ stdcall IsWindowEnabled(long)
@@ -498,8 +501,8 @@
 @ stdcall MessageBoxExW(long wstr wstr long long)
 @ stdcall MessageBoxIndirectA(ptr)
 @ stdcall MessageBoxIndirectW(ptr)
-# @ stub MessageBoxTimeoutA
-# @ stub MessageBoxTimeoutW
+@ stdcall MessageBoxTimeoutA(long str str long long long)
+@ stdcall MessageBoxTimeoutW(long wstr wstr long long long)
 @ stdcall MessageBoxW(long wstr wstr long)
 # @ stub ModifyAccess
 @ stdcall ModifyMenuA(long long long long ptr)
@@ -565,16 +568,19 @@
 @ stdcall RegisterLogonProcess(long long)
 # @ stub RegisterMessagePumpHook
 @ stub RegisterNetworkCapabilities
+@ stdcall RegisterPowerSettingNotification(long ptr long)
 @ stdcall RegisterRawInputDevices(ptr long long)
 @ stdcall RegisterServicesProcess(long)
 @ stdcall RegisterShellHookWindow (long)
 @ stdcall RegisterSystemThread(long long)
 @ stdcall RegisterTasklist (long)
+@ stdcall RegisterTouchWindow(long long)
 # @ stub RegisterUserApiHook
 @ stdcall RegisterWindowMessageA(str)
 @ stdcall RegisterWindowMessageW(wstr)
 @ stdcall ReleaseCapture()
 @ stdcall ReleaseDC(long long)
+@ stdcall RemoveClipboardFormatListener(long)
 @ stdcall RemoveMenu(long long long)
 @ stdcall RemovePropA(long str)
 @ stdcall RemovePropW(long wstr)
@@ -626,6 +632,7 @@
 @ stdcall SetDoubleClickTime(long)
 @ stdcall SetFocus(long)
 @ stdcall SetForegroundWindow(long)
+@ stdcall SetGestureConfig(ptr long long ptr long)
 @ stdcall SetInternalWindowPos(long long ptr ptr)
 @ stdcall SetKeyboardState(ptr)
 @ stdcall SetLastErrorEx(long long)
@@ -734,7 +741,7 @@
 @ stdcall UpdateWindow(long)
 @ stdcall User32InitializeImmEntryTable(ptr)
 @ stdcall UserClientDllInitialize(long long ptr) DllMain
-@ stub UserHandleGrantAccess
+@ stdcall UserHandleGrantAccess(ptr ptr long)
 # @ stub UserIsSystemResumeAutomatic
 # @ stub UserLpkPSMTextOut
 # @ stub UserLpkTabbedTextOut
@@ -779,3 +786,4 @@
 # or 'wine_' (for user-visible functions) to avoid namespace conflicts.
 #
 @ cdecl __wine_send_input(long ptr)
+@ cdecl __wine_set_pixel_format(long long)

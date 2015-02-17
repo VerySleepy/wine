@@ -57,7 +57,6 @@ WINE_DEFAULT_DEBUG_CHANNEL (shell);
 /* Undocumented functions from shdocvw */
 extern HRESULT WINAPI IEParseDisplayNameWithBCW(DWORD codepage, LPCWSTR lpszDisplayName, LPBC pbc, LPITEMIDLIST *ppidl);
 
-
 /***********************************************************************
 *     Desktopfolder implementation
 */
@@ -74,6 +73,8 @@ typedef struct {
     UINT cfShellIDList;        /* clipboardformat for IDropTarget */
     BOOL fAcceptFmt;        /* flag for pending Drop */
 } IDesktopFolderImpl;
+
+static IDesktopFolderImpl *cached_sf;
 
 static inline IDesktopFolderImpl *impl_from_IShellFolder2(IShellFolder2 *iface)
 {
@@ -112,7 +113,7 @@ static HRESULT WINAPI ISF_Desktop_fnQueryInterface(
         IsEqualIID (riid, &IID_IShellFolder) ||
         IsEqualIID (riid, &IID_IShellFolder2))
     {
-        *ppvObj = This;
+        *ppvObj = &This->IShellFolder2_iface;
     }
     else if (IsEqualIID (riid, &IID_IPersist) ||
              IsEqualIID (riid, &IID_IPersistFolder) ||
@@ -246,7 +247,7 @@ static HRESULT WINAPI ISF_Desktop_fnParseDisplayName (IShellFolder2 * iface,
                 else
                 {
                     /* should never reach here, but for completeness */
-                    hr = HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
+                    hr = E_NOT_SUFFICIENT_BUFFER;
                 }
             }
         }
@@ -332,7 +333,7 @@ static BOOL CreateDesktopEnumList(IEnumIDListImpl *list, DWORD dwFlags)
     }
 
     /* enumerate the elements in %windir%\desktop */
-    SHGetSpecialFolderPathW(0, szPath, CSIDL_DESKTOPDIRECTORY, FALSE);
+    ret = ret && SHGetSpecialFolderPathW(0, szPath, CSIDL_DESKTOPDIRECTORY, FALSE);
     ret = ret && CreateFolderEnumList(list, szPath, dwFlags);
 
     return ret;
@@ -396,11 +397,10 @@ static HRESULT WINAPI ISF_Desktop_fnCompareIDs (IShellFolder2 *iface,
                         LPARAM lParam, LPCITEMIDLIST pidl1, LPCITEMIDLIST pidl2)
 {
     IDesktopFolderImpl *This = impl_from_IShellFolder2(iface);
-    IShellFolder *shell_folder = (IShellFolder*)iface;
     HRESULT hr;
 
     TRACE ("(%p)->(0x%08lx,pidl1=%p,pidl2=%p)\n", This, lParam, pidl1, pidl2);
-    hr = SHELL32_CompareIDs ( shell_folder, lParam, pidl1, pidl2);
+    hr = SHELL32_CompareIDs(iface, lParam, pidl1, pidl2);
     TRACE ("-- 0x%08x\n", hr);
     return hr;
 }
@@ -530,10 +530,9 @@ static HRESULT WINAPI ISF_Desktop_fnGetUIObjectOf (IShellFolder2 * iface,
     if (IsEqualIID (riid, &IID_IContextMenu))
     {
         if (cidl > 0)
-            pObj = (LPUNKNOWN) ISvItemCm_Constructor( (IShellFolder *) iface, This->pidlRoot, apidl, cidl);
+            return ItemMenu_Constructor((IShellFolder*)iface, This->pidlRoot, apidl, cidl, riid, ppvOut);
         else
-            pObj = (LPUNKNOWN) ISvBgCm_Constructor( (IShellFolder *) iface, TRUE);
-        hr = S_OK;
+            return BackgroundMenu_Constructor((IShellFolder*)iface, TRUE, riid, ppvOut);
     }
     else if (IsEqualIID (riid, &IID_IDataObject) && (cidl >= 1))
     {
@@ -557,14 +556,14 @@ static HRESULT WINAPI ISF_Desktop_fnGetUIObjectOf (IShellFolder2 * iface,
     }
     else if (IsEqualIID (riid, &IID_IDropTarget) && (cidl >= 1))
     {
-        hr = IShellFolder_QueryInterface (iface,
+        hr = IShellFolder2_QueryInterface (iface,
                                           &IID_IDropTarget, (LPVOID *) & pObj);
     }
     else if ((IsEqualIID(riid,&IID_IShellLinkW) ||
               IsEqualIID(riid,&IID_IShellLinkA)) && (cidl == 1))
     {
         pidl = ILCombine (This->pidlRoot, apidl[0]);
-        hr = IShellLink_ConstructFromFile(NULL, riid, pidl, (LPVOID*)&pObj);
+        hr = IShellLink_ConstructFromFile(NULL, riid, pidl, &pObj);
         SHFree (pidl);
     }
     else
@@ -617,7 +616,7 @@ static HRESULT WINAPI ISF_Desktop_fnGetDisplayNameOf (IShellFolder2 * iface,
         {
             if (GET_SHGDN_FOR (dwFlags) & SHGDN_FORPARSING)
             {
-                int bWantsForParsing;
+                BOOL bWantsForParsing;
 
                 /*
                  * We can only get a filesystem path from a shellfolder if the
@@ -828,7 +827,7 @@ static HRESULT WINAPI ISF_Desktop_fnGetDetailsOf (IShellFolder2 * iface,
     switch (iColumn)
     {
     case 0:        /* name */
-        hr = IShellFolder_GetDisplayNameOf(iface, pidl,
+        hr = IShellFolder2_GetDisplayNameOf(iface, pidl,
                    SHGDN_NORMAL | SHGDN_INFOLDER, &psd->str);
         break;
     case 1:        /* size */
@@ -936,13 +935,20 @@ static const IPersistFolder2Vtbl vt_IPersistFolder2 =
     ISF_Desktop_IPersistFolder2_fnGetCurFolder
 };
 
+void release_desktop_folder(void)
+{
+    if (!cached_sf) return;
+    SHFree(cached_sf->pidlRoot);
+    SHFree(cached_sf->sPathTarget);
+    LocalFree(cached_sf);
+}
+
 /**************************************************************************
  *    ISF_Desktop_Constructor
  */
 HRESULT WINAPI ISF_Desktop_Constructor (
                 IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv)
 {
-    static IDesktopFolderImpl *cached_sf;
     WCHAR szMyPath[MAX_PATH];
 
     TRACE ("unkOut=%p %s\n", pUnkOuter, shdebugstr_guid (riid));
@@ -979,5 +985,5 @@ HRESULT WINAPI ISF_Desktop_Constructor (
         }
     }
 
-    return IUnknown_QueryInterface( &cached_sf->IShellFolder2_iface, riid, ppv );
+    return IShellFolder2_QueryInterface( &cached_sf->IShellFolder2_iface, riid, ppv );
 }

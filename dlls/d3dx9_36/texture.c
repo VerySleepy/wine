@@ -46,8 +46,8 @@ static UINT make_pow2(UINT num)
     return result;
 }
 
-static HRESULT get_surface(D3DRESOURCETYPE type, LPDIRECT3DBASETEXTURE9 tex,
-                           int face, UINT level, LPDIRECT3DSURFACE9 *surf)
+static HRESULT get_surface(D3DRESOURCETYPE type, struct IDirect3DBaseTexture9 *tex,
+        int face, UINT level, struct IDirect3DSurface9 **surf)
 {
     switch (type)
     {
@@ -61,8 +61,8 @@ static HRESULT get_surface(D3DRESOURCETYPE type, LPDIRECT3DBASETEXTURE9 tex,
     }
 }
 
-HRESULT WINAPI D3DXFilterTexture(LPDIRECT3DBASETEXTURE9 texture,
-                                 CONST PALETTEENTRY *palette,
+HRESULT WINAPI D3DXFilterTexture(IDirect3DBaseTexture9 *texture,
+                                 const PALETTEENTRY *palette,
                                  UINT srclevel,
                                  DWORD filter)
 {
@@ -70,7 +70,7 @@ HRESULT WINAPI D3DXFilterTexture(LPDIRECT3DBASETEXTURE9 texture,
     HRESULT hr;
     D3DRESOURCETYPE type;
 
-    TRACE("(%p, %p, %d, %d)\n", texture, palette, srclevel, filter);
+    TRACE("(%p, %p, %u, %#x)\n", texture, palette, srclevel, filter);
 
     if (!texture)
         return D3DERR_INVALIDCALL;
@@ -78,7 +78,9 @@ HRESULT WINAPI D3DXFilterTexture(LPDIRECT3DBASETEXTURE9 texture,
     if ((filter & 0xFFFF) > D3DX_FILTER_BOX && filter != D3DX_DEFAULT)
         return D3DERR_INVALIDCALL;
 
-    if (srclevel >= IDirect3DBaseTexture9_GetLevelCount(texture))
+    if (srclevel == D3DX_DEFAULT)
+        srclevel = 0;
+    else if (srclevel >= IDirect3DBaseTexture9_GetLevelCount(texture))
         return D3DERR_INVALIDCALL;
 
     switch (type = IDirect3DBaseTexture9_GetType(texture))
@@ -137,19 +139,74 @@ HRESULT WINAPI D3DXFilterTexture(LPDIRECT3DBASETEXTURE9 texture,
             return D3D_OK;
         }
 
+        case D3DRTYPE_VOLUMETEXTURE:
+        {
+            D3DVOLUME_DESC desc;
+            int level, level_count;
+            IDirect3DVolume9 *top_volume, *mip_volume;
+            IDirect3DVolumeTexture9 *volume_texture = (IDirect3DVolumeTexture9*) texture;
+
+            IDirect3DVolumeTexture9_GetLevelDesc(volume_texture, srclevel, &desc);
+
+            if (filter == D3DX_DEFAULT)
+            {
+                if (is_pow2(desc.Width) && is_pow2(desc.Height) && is_pow2(desc.Depth))
+                    filter = D3DX_FILTER_BOX;
+                else
+                    filter = D3DX_FILTER_BOX | D3DX_FILTER_DITHER;
+            }
+
+            hr = IDirect3DVolumeTexture9_GetVolumeLevel(volume_texture, srclevel, &top_volume);
+            if (FAILED(hr))
+                return hr;
+
+            level_count = IDirect3DVolumeTexture9_GetLevelCount(volume_texture);
+            for (level = srclevel + 1; level < level_count; level++)
+            {
+                IDirect3DVolumeTexture9_GetVolumeLevel(volume_texture, level, &mip_volume);
+                hr = D3DXLoadVolumeFromVolume(mip_volume, palette, NULL, top_volume, palette, NULL, filter, 0);
+                IDirect3DVolume9_Release(top_volume);
+                top_volume = mip_volume;
+
+                if (FAILED(hr))
+                    break;
+            }
+
+            IDirect3DVolume9_Release(top_volume);
+            if (FAILED(hr))
+                return hr;
+
+            return D3D_OK;
+        }
+
         default:
-            FIXME("Implement volume texture filtering\n");
-            return E_NOTIMPL;
+            return D3DERR_INVALIDCALL;
     }
 }
 
-HRESULT WINAPI D3DXCheckTextureRequirements(LPDIRECT3DDEVICE9 device,
-                                            UINT* width,
-                                            UINT* height,
-                                            UINT* miplevels,
-                                            DWORD usage,
-                                            D3DFORMAT* format,
-                                            D3DPOOL pool)
+static D3DFORMAT get_luminance_replacement_format(D3DFORMAT format)
+{
+    static const struct
+    {
+        D3DFORMAT luminance_format;
+        D3DFORMAT replacement_format;
+    } luminance_replacements[] =
+    {
+        {D3DFMT_L8, D3DFMT_X8R8G8B8},
+        {D3DFMT_A8L8, D3DFMT_A8R8G8B8},
+        {D3DFMT_A4L4, D3DFMT_A4R4G4B4},
+        {D3DFMT_L16, D3DFMT_A16B16G16R16}
+    };
+    unsigned int i;
+
+    for (i = 0; i < sizeof(luminance_replacements) / sizeof(luminance_replacements[0]); ++i)
+        if (format == luminance_replacements[i].luminance_format)
+            return luminance_replacements[i].replacement_format;
+    return format;
+}
+
+HRESULT WINAPI D3DXCheckTextureRequirements(struct IDirect3DDevice9 *device, UINT *width, UINT *height,
+        UINT *miplevels, DWORD usage, D3DFORMAT *format, D3DPOOL pool)
 {
     UINT w = (width && *width) ? *width : 1;
     UINT h = (height && *height) ? *height : 1;
@@ -159,6 +216,7 @@ HRESULT WINAPI D3DXCheckTextureRequirements(LPDIRECT3DDEVICE9 device,
     D3DDISPLAYMODE mode;
     HRESULT hr;
     D3DFORMAT usedformat = D3DFMT_UNKNOWN;
+    const struct pixel_format_desc *fmt;
 
     TRACE("(%p, %p, %p, %p, %u, %p, %u)\n", device, width, height, miplevels, usage, format, pool);
 
@@ -174,68 +232,6 @@ HRESULT WINAPI D3DXCheckTextureRequirements(LPDIRECT3DDEVICE9 device,
     /* pool */
     if ((pool != D3DPOOL_DEFAULT) && (pool != D3DPOOL_MANAGED) && (pool != D3DPOOL_SYSTEMMEM) && (pool != D3DPOOL_SCRATCH))
         return D3DERR_INVALIDCALL;
-
-    /* width and height */
-    if (FAILED(IDirect3DDevice9_GetDeviceCaps(device, &caps)))
-        return D3DERR_INVALIDCALL;
-
-    /* 256 x 256 default width/height */
-    if ((w == D3DX_DEFAULT) && (h == D3DX_DEFAULT))
-        w = h = 256;
-    else if (w == D3DX_DEFAULT)
-        w = (height ? h : 256);
-    else if (h == D3DX_DEFAULT)
-        h = (width ? w : 256);
-
-    /* ensure width/height is power of 2 */
-    if ((caps.TextureCaps & D3DPTEXTURECAPS_POW2) && (!is_pow2(w)))
-        w = make_pow2(w);
-
-    if (w > caps.MaxTextureWidth)
-        w = caps.MaxTextureWidth;
-
-    if ((caps.TextureCaps & D3DPTEXTURECAPS_POW2) && (!is_pow2(h)))
-        h = make_pow2(h);
-
-    if (h > caps.MaxTextureHeight)
-        h = caps.MaxTextureHeight;
-
-    /* texture must be square? */
-    if (caps.TextureCaps & D3DPTEXTURECAPS_SQUAREONLY)
-    {
-        if (w > h)
-            h = w;
-        else
-            w = h;
-    }
-
-    if (width)
-        *width = w;
-
-    if (height)
-        *height = h;
-
-    /* miplevels */
-    if (miplevels)
-    {
-        UINT max_mipmaps = 1;
-
-        if (!width && !height)
-            max_mipmaps = 9;    /* number of mipmaps in a 256x256 texture */
-        else
-        {
-            UINT max_dimen = max(w, h);
-
-            while (max_dimen > 1)
-            {
-                max_dimen >>= 1;
-                max_mipmaps++;
-            }
-        }
-
-        if (*miplevels == 0 || *miplevels > max_mipmaps)
-            *miplevels = max_mipmaps;
-    }
 
     /* format */
     if (format)
@@ -262,33 +258,34 @@ HRESULT WINAPI D3DXCheckTextureRequirements(LPDIRECT3DDEVICE9 device,
     if ((usedformat == D3DFMT_UNKNOWN) || (usedformat == D3DX_DEFAULT))
         usedformat = D3DFMT_A8R8G8B8;
 
+    fmt = get_format_info(usedformat);
+
     hr = IDirect3D9_CheckDeviceFormat(d3d, params.AdapterOrdinal, params.DeviceType, mode.Format,
         usage, D3DRTYPE_TEXTURE, usedformat);
-
     if (FAILED(hr))
     {
-        /* Heuristic to choose the fallback format */
-        const PixelFormatDesc *fmt = get_format_info(usedformat);
         BOOL allow_24bits;
         int bestscore = INT_MIN, i = 0, j;
         unsigned int channels;
-        const PixelFormatDesc *curfmt;
+        const struct pixel_format_desc *curfmt, *bestfmt = NULL;
+
+        TRACE("Requested format not supported, looking for a fallback.\n");
 
         if (!fmt)
         {
             FIXME("Pixel format %x not handled\n", usedformat);
             goto cleanup;
         }
+        fmt = get_format_info(get_luminance_replacement_format(usedformat));
 
         allow_24bits = fmt->bytes_per_pixel == 3;
-        channels = (fmt->bits[0] ? 1 : 0) + (fmt->bits[1] ? 1 : 0)
-            + (fmt->bits[2] ? 1 : 0) + (fmt->bits[3] ? 1 : 0);
+        channels = !!fmt->bits[0] + !!fmt->bits[1] + !!fmt->bits[2] + !!fmt->bits[3];
         usedformat = D3DFMT_UNKNOWN;
 
         while ((curfmt = get_format_info_idx(i)))
         {
-            unsigned int curchannels = (curfmt->bits[0] ? 1 : 0) + (curfmt->bits[1] ? 1 : 0)
-                + (curfmt->bits[2] ? 1 : 0) + (curfmt->bits[3] ? 1 : 0);
+            unsigned int curchannels = !!curfmt->bits[0] + !!curfmt->bits[1]
+                    + !!curfmt->bits[2] + !!curfmt->bits[3];
             int score;
 
             i++;
@@ -305,21 +302,94 @@ HRESULT WINAPI D3DXCheckTextureRequirements(LPDIRECT3DDEVICE9 device,
 
             /* This format can be used, let's evaluate it.
                Weights chosen quite arbitrarily... */
-            score = 16 - 4 * (curchannels - channels);
+            score = 512 * (curfmt->type == fmt->type);
+            score -= 32 * (curchannels - channels);
 
             for (j = 0; j < 4; j++)
             {
                 int diff = curfmt->bits[j] - fmt->bits[j];
-                score += 16 - (diff < 0 ? -diff * 4 : diff);
+                score -= (diff < 0 ? -diff * 8 : diff) * (j == 0 ? 1 : 2);
             }
 
             if (score > bestscore)
             {
                 bestscore = score;
                 usedformat = curfmt->format;
+                bestfmt = curfmt;
             }
         }
+        fmt = bestfmt;
         hr = D3D_OK;
+    }
+
+    if (FAILED(IDirect3DDevice9_GetDeviceCaps(device, &caps)))
+        return D3DERR_INVALIDCALL;
+
+    if ((w == D3DX_DEFAULT) && (h == D3DX_DEFAULT))
+        w = h = 256;
+    else if (w == D3DX_DEFAULT)
+        w = (height ? h : 256);
+    else if (h == D3DX_DEFAULT)
+        h = (width ? w : 256);
+
+    if (fmt->block_width != 1 || fmt->block_height != 1)
+    {
+        if (w < fmt->block_width)
+            w = fmt->block_width;
+        if (h < fmt->block_height)
+            h = fmt->block_height;
+    }
+
+    if ((caps.TextureCaps & D3DPTEXTURECAPS_POW2) && (!is_pow2(w)))
+        w = make_pow2(w);
+
+    if (w > caps.MaxTextureWidth)
+        w = caps.MaxTextureWidth;
+
+    if ((caps.TextureCaps & D3DPTEXTURECAPS_POW2) && (!is_pow2(h)))
+        h = make_pow2(h);
+
+    if (h > caps.MaxTextureHeight)
+        h = caps.MaxTextureHeight;
+
+    if (caps.TextureCaps & D3DPTEXTURECAPS_SQUAREONLY)
+    {
+        if (w > h)
+            h = w;
+        else
+            w = h;
+    }
+
+    if (width)
+        *width = w;
+
+    if (height)
+        *height = h;
+
+    if (miplevels && (usage & D3DUSAGE_AUTOGENMIPMAP))
+    {
+        if (*miplevels > 1)
+            *miplevels = 0;
+    }
+    else if (miplevels)
+    {
+        UINT max_mipmaps = 1;
+
+        if (!width && !height)
+            max_mipmaps = 9;    /* number of mipmaps in a 256x256 texture */
+        else
+        {
+            UINT max_dimen = max(w, h);
+
+            while (max_dimen > 1)
+            {
+                max_dimen >>= 1;
+                max_mipmaps++;
+            }
+        }
+
+        if (*miplevels == 0 || *miplevels > max_mipmaps)
+            *miplevels = max_mipmaps;
     }
 
 cleanup:
@@ -343,12 +413,8 @@ cleanup:
     return D3D_OK;
 }
 
-HRESULT WINAPI D3DXCheckCubeTextureRequirements(LPDIRECT3DDEVICE9 device,
-                                                UINT *size,
-                                                UINT *miplevels,
-                                                DWORD usage,
-                                                D3DFORMAT *format,
-                                                D3DPOOL pool)
+HRESULT WINAPI D3DXCheckCubeTextureRequirements(struct IDirect3DDevice9 *device, UINT *size,
+        UINT *miplevels, DWORD usage, D3DFORMAT *format, D3DPOOL pool)
 {
     D3DCAPS9 caps;
     UINT s = (size && *size) ? *size : 256;
@@ -383,14 +449,8 @@ HRESULT WINAPI D3DXCheckCubeTextureRequirements(LPDIRECT3DDEVICE9 device,
     return hr;
 }
 
-HRESULT WINAPI D3DXCheckVolumeTextureRequirements(LPDIRECT3DDEVICE9 device,
-                                                  UINT *width,
-                                                  UINT *height,
-                                                  UINT *depth,
-                                                  UINT *miplevels,
-                                                  DWORD usage,
-                                                  D3DFORMAT *format,
-                                                  D3DPOOL pool)
+HRESULT WINAPI D3DXCheckVolumeTextureRequirements(struct IDirect3DDevice9 *device, UINT *width, UINT *height,
+        UINT *depth, UINT *miplevels, DWORD usage, D3DFORMAT *format, D3DPOOL pool)
 {
     D3DCAPS9 caps;
     UINT w = width ? *width : D3DX_DEFAULT;
@@ -431,6 +491,11 @@ HRESULT WINAPI D3DXCheckVolumeTextureRequirements(LPDIRECT3DDEVICE9 device,
     {
         if (!(caps.TextureCaps & D3DPTEXTURECAPS_MIPVOLUMEMAP))
             *miplevels = 1;
+        else if ((usage & D3DUSAGE_AUTOGENMIPMAP))
+        {
+            if (*miplevels > 1)
+                *miplevels = 0;
+        }
         else
         {
             UINT max_mipmaps = 1;
@@ -457,67 +522,74 @@ HRESULT WINAPI D3DXCheckVolumeTextureRequirements(LPDIRECT3DDEVICE9 device,
     return hr;
 }
 
-HRESULT WINAPI D3DXCreateTexture(LPDIRECT3DDEVICE9 pDevice,
-                                 UINT width,
-                                 UINT height,
-                                 UINT miplevels,
-                                 DWORD usage,
-                                 D3DFORMAT format,
-                                 D3DPOOL pool,
-                                 LPDIRECT3DTEXTURE9 *ppTexture)
+HRESULT WINAPI D3DXCreateTexture(struct IDirect3DDevice9 *device, UINT width, UINT height,
+        UINT miplevels, DWORD usage, D3DFORMAT format, D3DPOOL pool, struct IDirect3DTexture9 **texture)
 {
     HRESULT hr;
 
-    TRACE("(%p, %u, %u, %u, %x, %x, %x, %p)\n", pDevice, width, height, miplevels, usage, format,
-        pool, ppTexture);
+    TRACE("device %p, width %u, height %u, miplevels %u, usage %#x, format %#x, pool %#x, texture %p.\n",
+            device, width, height, miplevels, usage, format, pool, texture);
 
-    if (!pDevice || !ppTexture)
+    if (!device || !texture)
         return D3DERR_INVALIDCALL;
 
-    hr = D3DXCheckTextureRequirements(pDevice, &width, &height, &miplevels, usage, &format, pool);
-
-    if (FAILED(hr))
+    if (FAILED(hr = D3DXCheckTextureRequirements(device, &width, &height, &miplevels, usage, &format, pool)))
         return hr;
 
-    return IDirect3DDevice9_CreateTexture(pDevice, width, height, miplevels, usage, format, pool, ppTexture, NULL);
+    return IDirect3DDevice9_CreateTexture(device, width, height, miplevels, usage, format, pool, texture, NULL);
 }
 
-HRESULT WINAPI D3DXCreateTextureFromFileInMemoryEx(LPDIRECT3DDEVICE9 device,
-                                                   LPCVOID srcdata,
-                                                   UINT srcdatasize,
-                                                   UINT width,
-                                                   UINT height,
-                                                   UINT miplevels,
-                                                   DWORD usage,
-                                                   D3DFORMAT format,
-                                                   D3DPOOL pool,
-                                                   DWORD filter,
-                                                   DWORD mipfilter,
-                                                   D3DCOLOR colorkey,
-                                                   D3DXIMAGE_INFO* srcinfo,
-                                                   PALETTEENTRY* palette,
-                                                   LPDIRECT3DTEXTURE9* texture)
+static D3DFORMAT get_alpha_replacement_format(D3DFORMAT format)
+{
+    static const struct
+    {
+        D3DFORMAT orig_format;
+        D3DFORMAT replacement_format;
+    }
+    replacement_formats[] =
+    {
+        {D3DFMT_X8R8G8B8, D3DFMT_A8R8G8B8},
+        {D3DFMT_X1R5G5B5, D3DFMT_A1R5G5B5},
+        {D3DFMT_X4R4G4B4, D3DFMT_A4R4G4B4},
+        {D3DFMT_X8B8G8R8, D3DFMT_A8B8G8R8},
+        {D3DFMT_L8, D3DFMT_A8L8},
+    };
+    unsigned int i;
+
+    for (i = 0; i < sizeof(replacement_formats) / sizeof(replacement_formats[0]); ++i)
+        if (replacement_formats[i].orig_format == format)
+            return replacement_formats[i].replacement_format;
+    return format;
+}
+
+HRESULT WINAPI D3DXCreateTextureFromFileInMemoryEx(struct IDirect3DDevice9 *device, const void *srcdata,
+        UINT srcdatasize, UINT width, UINT height, UINT miplevels, DWORD usage, D3DFORMAT format,
+        D3DPOOL pool, DWORD filter, DWORD mipfilter, D3DCOLOR colorkey, D3DXIMAGE_INFO *srcinfo,
+        PALETTEENTRY *palette, struct IDirect3DTexture9 **texture)
 {
     IDirect3DTexture9 **texptr;
     IDirect3DTexture9 *buftex;
     IDirect3DSurface9 *surface;
-    BOOL file_width = FALSE, file_height = FALSE;
-    BOOL file_format = FALSE, file_miplevels = FALSE;
+    BOOL dynamic_texture, format_specified = FALSE;
     D3DXIMAGE_INFO imginfo;
+    UINT loaded_miplevels, skip_levels;
     D3DCAPS9 caps;
     HRESULT hr;
 
-    TRACE("(%p, %p, %u, %u, %u, %u, %x, %x, %x, %u, %u, %x, %p, %p, %p)\n", device, srcdata, srcdatasize, width,
-        height, miplevels, usage, format, pool, filter, mipfilter, colorkey, srcinfo, palette, texture);
+    TRACE("device %p, srcdata %p, srcdatasize %u, width %u, height %u, miplevels %u,"
+            " usage %#x, format %#x, pool %#x, filter %#x, mipfilter %#x, colorkey %#x,"
+            " srcinfo %p, palette %p, texture %p.\n",
+            device, srcdata, srcdatasize, width, height, miplevels, usage, format, pool,
+            filter, mipfilter, colorkey, srcinfo, palette, texture);
 
     /* check for invalid parameters */
     if (!device || !texture || !srcdata || !srcdatasize)
         return D3DERR_INVALIDCALL;
 
     hr = D3DXGetImageInfoFromFileInMemory(srcdata, srcdatasize, &imginfo);
-
     if (FAILED(hr))
     {
+        FIXME("Unrecognized file format, returning failure.\n");
         *texture = NULL;
         return hr;
     }
@@ -537,85 +609,117 @@ HRESULT WINAPI D3DXCreateTextureFromFileInMemoryEx(LPDIRECT3DDEVICE9 device,
 
     if (format == D3DFMT_UNKNOWN || format == D3DX_DEFAULT)
         format = imginfo.Format;
+    else
+        format_specified = TRUE;
 
     if (width == D3DX_FROM_FILE)
     {
-        file_width = TRUE;
         width = imginfo.Width;
     }
 
     if (height == D3DX_FROM_FILE)
     {
-        file_height = TRUE;
         height = imginfo.Height;
     }
 
     if (format == D3DFMT_FROM_FILE)
     {
-        file_format = TRUE;
         format = imginfo.Format;
     }
 
     if (miplevels == D3DX_FROM_FILE)
     {
-        file_miplevels = TRUE;
         miplevels = imginfo.MipLevels;
+    }
+
+    skip_levels = mipfilter != D3DX_DEFAULT ? mipfilter >> D3DX_SKIP_DDS_MIP_LEVELS_SHIFT : 0;
+    if (skip_levels && imginfo.MipLevels > skip_levels)
+    {
+        TRACE("Skipping the first %u (of %u) levels of a DDS mipmapped texture.\n",
+                skip_levels, imginfo.MipLevels);
+        TRACE("Texture level 0 dimensions are %ux%u.\n", imginfo.Width, imginfo.Height);
+        width >>= skip_levels;
+        height >>= skip_levels;
+        miplevels -= skip_levels;
+    }
+    else
+    {
+        skip_levels = 0;
     }
 
     /* fix texture creation parameters */
     hr = D3DXCheckTextureRequirements(device, &width, &height, &miplevels, usage, &format, pool);
-
     if (FAILED(hr))
     {
+        FIXME("Couldn't find suitable texture parameters.\n");
         *texture = NULL;
         return hr;
     }
 
-    if (((file_width) && (width != imginfo.Width))    ||
-        ((file_height) && (height != imginfo.Height)) ||
-        ((file_format) && (format != imginfo.Format)) ||
-        ((file_miplevels) && (miplevels != imginfo.MipLevels)))
+    if (colorkey && !format_specified)
+        format = get_alpha_replacement_format(format);
+
+    if (imginfo.MipLevels < miplevels && (D3DFMT_DXT1 <= imginfo.Format && imginfo.Format <= D3DFMT_DXT5))
     {
-        return D3DERR_NOTAVAILABLE;
+        FIXME("Generation of mipmaps for compressed pixel formats is not implemented yet\n");
+        miplevels = imginfo.MipLevels;
+    }
+    if (imginfo.ResourceType == D3DRTYPE_VOLUMETEXTURE
+            && D3DFMT_DXT1 <= imginfo.Format && imginfo.Format <= D3DFMT_DXT5 && miplevels > 1)
+    {
+        FIXME("Generation of mipmaps for compressed pixel formats is not implemented yet.\n");
+        miplevels = 1;
     }
 
     if (FAILED(IDirect3DDevice9_GetDeviceCaps(device, &caps)))
         return D3DERR_INVALIDCALL;
 
     /* Create the to-be-filled texture */
-    if ((caps.Caps2 & D3DCAPS2_DYNAMICTEXTURES) && (pool != D3DPOOL_DEFAULT) && (usage != D3DUSAGE_DYNAMIC))
-    {
-        hr = D3DXCreateTexture(device, width, height, miplevels, usage, format, pool, texture);
-        texptr = texture;
-    }
-    else
+    dynamic_texture = (caps.Caps2 & D3DCAPS2_DYNAMICTEXTURES) && (usage & D3DUSAGE_DYNAMIC);
+    if (pool == D3DPOOL_DEFAULT && !dynamic_texture)
     {
         hr = D3DXCreateTexture(device, width, height, miplevels, usage, format, D3DPOOL_SYSTEMMEM, &buftex);
         texptr = &buftex;
     }
+    else
+    {
+        hr = D3DXCreateTexture(device, width, height, miplevels, usage, format, pool, texture);
+        texptr = texture;
+    }
 
     if (FAILED(hr))
     {
+        FIXME("Texture creation failed.\n");
         *texture = NULL;
         return hr;
     }
 
-    /* Load the file */
-    IDirect3DTexture9_GetSurfaceLevel(*texptr, 0, &surface);
-    hr = D3DXLoadSurfaceFromFileInMemory(surface, palette, NULL, srcdata, srcdatasize, NULL, filter, colorkey, NULL);
-    IDirect3DSurface9_Release(surface);
+    TRACE("Texture created correctly. Now loading the texture data into it.\n");
+    if (imginfo.ImageFileFormat != D3DXIFF_DDS)
+    {
+        IDirect3DTexture9_GetSurfaceLevel(*texptr, 0, &surface);
+        hr = D3DXLoadSurfaceFromFileInMemory(surface, palette, NULL, srcdata, srcdatasize, NULL, filter, colorkey, NULL);
+        IDirect3DSurface9_Release(surface);
+        loaded_miplevels = min(IDirect3DTexture9_GetLevelCount(*texptr), imginfo.MipLevels);
+    }
+    else
+    {
+        hr = load_texture_from_dds(*texptr, srcdata, palette, filter, colorkey, &imginfo, skip_levels,
+                &loaded_miplevels);
+    }
 
     if (FAILED(hr))
     {
+        FIXME("Texture loading failed.\n");
         IDirect3DTexture9_Release(*texptr);
         *texture = NULL;
         return hr;
     }
 
-    hr = D3DXFilterTexture((IDirect3DBaseTexture9*) *texptr, palette, 0, mipfilter);
-
+    hr = D3DXFilterTexture((IDirect3DBaseTexture9*) *texptr, palette, loaded_miplevels - 1, mipfilter);
     if (FAILED(hr))
     {
+        FIXME("Texture filtering failed.\n");
         IDirect3DTexture9_Release(*texptr);
         *texture = NULL;
         return hr;
@@ -643,10 +747,8 @@ HRESULT WINAPI D3DXCreateTextureFromFileInMemoryEx(LPDIRECT3DDEVICE9 device,
     return D3D_OK;
 }
 
-HRESULT WINAPI D3DXCreateTextureFromFileInMemory(LPDIRECT3DDEVICE9 device,
-                                                 LPCVOID srcdata,
-                                                 UINT srcdatasize,
-                                                 LPDIRECT3DTEXTURE9 *texture)
+HRESULT WINAPI D3DXCreateTextureFromFileInMemory(struct IDirect3DDevice9 *device,
+        const void *srcdata, UINT srcdatasize, struct IDirect3DTexture9 **texture)
 {
     TRACE("(%p, %p, %d, %p)\n", device, srcdata, srcdatasize, texture);
 
@@ -654,27 +756,19 @@ HRESULT WINAPI D3DXCreateTextureFromFileInMemory(LPDIRECT3DDEVICE9 device,
                                                D3DPOOL_MANAGED, D3DX_DEFAULT, D3DX_DEFAULT, 0, NULL, NULL, texture);
 }
 
-HRESULT WINAPI D3DXCreateTextureFromFileExW(LPDIRECT3DDEVICE9 device,
-                                            LPCWSTR srcfile,
-                                            UINT width,
-                                            UINT height,
-                                            UINT miplevels,
-                                            DWORD usage,
-                                            D3DFORMAT format,
-                                            D3DPOOL pool,
-                                            DWORD filter,
-                                            DWORD mipfilter,
-                                            D3DCOLOR colorkey,
-                                            D3DXIMAGE_INFO *srcinfo,
-                                            PALETTEENTRY *palette,
-                                            LPDIRECT3DTEXTURE9 *texture)
+HRESULT WINAPI D3DXCreateTextureFromFileExW(struct IDirect3DDevice9 *device, const WCHAR *srcfile,
+        UINT width, UINT height, UINT miplevels, DWORD usage, D3DFORMAT format,
+        D3DPOOL pool, DWORD filter, DWORD mipfilter, D3DCOLOR colorkey, D3DXIMAGE_INFO *srcinfo,
+        PALETTEENTRY *palette, struct IDirect3DTexture9 **texture)
 {
+    void *buffer;
     HRESULT hr;
     DWORD size;
-    LPVOID buffer;
 
-    TRACE("(%p, %p, %u, %u, %u, %x, %x, %x, %u, %u, %x, %p, %p, %p): relay\n", device, debugstr_w(srcfile), width,
-        height, miplevels, usage, format, pool, filter, mipfilter, colorkey, srcinfo, palette, texture);
+    TRACE("device %p, srcfile %s, width %u, height %u, miplevels %u, usage %#x, format %#x, "
+            "pool %#x, filter %#x, mipfilter %#x, colorkey 0x%08x, srcinfo %p, palette %p, texture %p.\n",
+            device, debugstr_w(srcfile), width, height, miplevels, usage, format,
+            pool, filter, mipfilter, colorkey, srcinfo, palette, texture);
 
     if (!srcfile)
         return D3DERR_INVALIDCALL;
@@ -691,33 +785,25 @@ HRESULT WINAPI D3DXCreateTextureFromFileExW(LPDIRECT3DDEVICE9 device,
     return hr;
 }
 
-HRESULT WINAPI D3DXCreateTextureFromFileExA(LPDIRECT3DDEVICE9 device,
-                                            LPCSTR srcfile,
-                                            UINT width,
-                                            UINT height,
-                                            UINT miplevels,
-                                            DWORD usage,
-                                            D3DFORMAT format,
-                                            D3DPOOL pool,
-                                            DWORD filter,
-                                            DWORD mipfilter,
-                                            D3DCOLOR colorkey,
-                                            D3DXIMAGE_INFO *srcinfo,
-                                            PALETTEENTRY *palette,
-                                            LPDIRECT3DTEXTURE9 *texture)
+HRESULT WINAPI D3DXCreateTextureFromFileExA(struct IDirect3DDevice9 *device, const char *srcfile,
+        UINT width, UINT height, UINT miplevels, DWORD usage, D3DFORMAT format,
+        D3DPOOL pool, DWORD filter, DWORD mipfilter, D3DCOLOR colorkey, D3DXIMAGE_INFO *srcinfo,
+        PALETTEENTRY *palette, struct IDirect3DTexture9 **texture)
 {
-    LPWSTR widename;
+    WCHAR *widename;
     HRESULT hr;
     DWORD len;
 
-    TRACE("(%p, %p, %u, %u, %u, %x, %x, %x, %u, %u, %x, %p, %p, %p): relay\n", device, debugstr_a(srcfile), width,
-        height, miplevels, usage, format, pool, filter, mipfilter, colorkey, srcinfo, palette, texture);
+    TRACE("device %p, srcfile %s, width %u, height %u, miplevels %u, usage %#x, format %#x, "
+            "pool %#x, filter %#x, mipfilter %#x, colorkey 0x%08x, srcinfo %p, palette %p, texture %p.\n",
+            device, debugstr_a(srcfile), width, height, miplevels, usage, format,
+            pool, filter, mipfilter, colorkey, srcinfo, palette, texture);
 
     if (!device || !srcfile || !texture)
         return D3DERR_INVALIDCALL;
 
     len = MultiByteToWideChar(CP_ACP, 0, srcfile, -1, NULL, 0);
-    widename = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, len * sizeof(WCHAR));
+    widename = HeapAlloc(GetProcessHeap(), 0, len * sizeof(*widename));
     MultiByteToWideChar(CP_ACP, 0, srcfile, -1, widename, len);
 
     hr = D3DXCreateTextureFromFileExW(device, widename, width, height, miplevels,
@@ -728,9 +814,8 @@ HRESULT WINAPI D3DXCreateTextureFromFileExA(LPDIRECT3DDEVICE9 device,
     return hr;
 }
 
-HRESULT WINAPI D3DXCreateTextureFromFileA(LPDIRECT3DDEVICE9 device,
-                                          LPCSTR srcfile,
-                                          LPDIRECT3DTEXTURE9 *texture)
+HRESULT WINAPI D3DXCreateTextureFromFileA(struct IDirect3DDevice9 *device,
+        const char *srcfile, struct IDirect3DTexture9 **texture)
 {
     TRACE("(%p, %s, %p)\n", device, debugstr_a(srcfile), texture);
 
@@ -738,9 +823,8 @@ HRESULT WINAPI D3DXCreateTextureFromFileA(LPDIRECT3DDEVICE9 device,
                                         D3DPOOL_MANAGED, D3DX_DEFAULT, D3DX_DEFAULT, 0, NULL, NULL, texture);
 }
 
-HRESULT WINAPI D3DXCreateTextureFromFileW(LPDIRECT3DDEVICE9 device,
-                                          LPCWSTR srcfile,
-                                          LPDIRECT3DTEXTURE9 *texture)
+HRESULT WINAPI D3DXCreateTextureFromFileW(struct IDirect3DDevice9 *device,
+        const WCHAR *srcfile, struct IDirect3DTexture9 **texture)
 {
     TRACE("(%p, %s, %p)\n", device, debugstr_w(srcfile), texture);
 
@@ -749,10 +833,8 @@ HRESULT WINAPI D3DXCreateTextureFromFileW(LPDIRECT3DDEVICE9 device,
 }
 
 
-HRESULT WINAPI D3DXCreateTextureFromResourceA(LPDIRECT3DDEVICE9 device,
-                                              HMODULE srcmodule,
-                                              LPCSTR resource,
-                                              LPDIRECT3DTEXTURE9 *texture)
+HRESULT WINAPI D3DXCreateTextureFromResourceA(struct IDirect3DDevice9 *device,
+        HMODULE srcmodule, const char *resource, struct IDirect3DTexture9 **texture)
 {
     TRACE("(%p, %s): relay\n", srcmodule, debugstr_a(resource));
 
@@ -760,10 +842,8 @@ HRESULT WINAPI D3DXCreateTextureFromResourceA(LPDIRECT3DDEVICE9 device,
                                             D3DPOOL_MANAGED, D3DX_DEFAULT, D3DX_DEFAULT, 0, NULL, NULL, texture);
 }
 
-HRESULT WINAPI D3DXCreateTextureFromResourceW(LPDIRECT3DDEVICE9 device,
-                                              HMODULE srcmodule,
-                                              LPCWSTR resource,
-                                              LPDIRECT3DTEXTURE9 *texture)
+HRESULT WINAPI D3DXCreateTextureFromResourceW(struct IDirect3DDevice9 *device,
+        HMODULE srcmodule, const WCHAR *resource, struct IDirect3DTexture9 **texture)
 {
     TRACE("(%p, %s): relay\n", srcmodule, debugstr_w(resource));
 
@@ -771,121 +851,66 @@ HRESULT WINAPI D3DXCreateTextureFromResourceW(LPDIRECT3DDEVICE9 device,
                                             D3DPOOL_MANAGED, D3DX_DEFAULT, D3DX_DEFAULT, 0, NULL, NULL, texture);
 }
 
-HRESULT WINAPI D3DXCreateTextureFromResourceExA(LPDIRECT3DDEVICE9 device,
-                                                HMODULE srcmodule,
-                                                LPCSTR resource,
-                                                UINT width,
-                                                UINT height,
-                                                UINT miplevels,
-                                                DWORD usage,
-                                                D3DFORMAT format,
-                                                D3DPOOL pool,
-                                                DWORD filter,
-                                                DWORD mipfilter,
-                                                D3DCOLOR colorkey,
-                                                D3DXIMAGE_INFO *srcinfo,
-                                                PALETTEENTRY *palette,
-                                                LPDIRECT3DTEXTURE9 *texture)
+HRESULT WINAPI D3DXCreateTextureFromResourceExA(struct IDirect3DDevice9 *device, HMODULE srcmodule,
+        const char *resource, UINT width, UINT height, UINT miplevels, DWORD usage, D3DFORMAT format,
+        D3DPOOL pool, DWORD filter, DWORD mipfilter, D3DCOLOR colorkey, D3DXIMAGE_INFO *srcinfo,
+        PALETTEENTRY *palette, struct IDirect3DTexture9 **texture)
 {
     HRSRC resinfo;
+    void *buffer;
+    DWORD size;
 
-    TRACE("(%p, %s): relay\n", srcmodule, debugstr_a(resource));
+    TRACE("device %p, srcmodule %p, resource %s, width %u, height %u, miplevels %u, usage %#x, format %#x, "
+            "pool %#x, filter %#x, mipfilter %#x, colorkey 0x%08x, srcinfo %p, palette %p, texture %p.\n",
+            device, srcmodule, debugstr_a(resource), width, height, miplevels, usage, format,
+            pool, filter, mipfilter, colorkey, srcinfo, palette, texture);
 
     if (!device || !texture)
         return D3DERR_INVALIDCALL;
 
-    resinfo = FindResourceA(srcmodule, resource, (LPCSTR) RT_RCDATA);
+    if (!(resinfo = FindResourceA(srcmodule, resource, (const char *)RT_RCDATA))
+            /* Try loading the resource as bitmap data (which is in DIB format D3DXIFF_DIB) */
+            && !(resinfo = FindResourceA(srcmodule, resource, (const char *)RT_BITMAP)))
+        return D3DXERR_INVALIDDATA;
 
-    if (resinfo)
-    {
-        LPVOID buffer;
-        HRESULT hr;
-        DWORD size;
+    if (FAILED(load_resource_into_memory(srcmodule, resinfo, &buffer, &size)))
+        return D3DXERR_INVALIDDATA;
 
-        hr = load_resource_into_memory(srcmodule, resinfo, &buffer, &size);
-
-        if (FAILED(hr))
-            return D3DXERR_INVALIDDATA;
-
-        return D3DXCreateTextureFromFileInMemoryEx(device, buffer, size, width,
-                                                   height, miplevels, usage, format,
-                                                   pool, filter, mipfilter, colorkey,
-                                                   srcinfo, palette, texture);
-    }
-
-    /* Try loading the resource as bitmap data */
-    resinfo = FindResourceA(srcmodule, resource, (LPCSTR) RT_BITMAP);
-
-    if (resinfo)
-    {
-        FIXME("Implement loading bitmaps from resource type RT_BITMAP\n");
-        return E_NOTIMPL;
-    }
-
-    return D3DXERR_INVALIDDATA;
+    return D3DXCreateTextureFromFileInMemoryEx(device, buffer, size, width, height, miplevels,
+            usage, format, pool, filter, mipfilter, colorkey, srcinfo, palette, texture);
 }
 
-HRESULT WINAPI D3DXCreateTextureFromResourceExW(LPDIRECT3DDEVICE9 device,
-                                                HMODULE srcmodule,
-                                                LPCWSTR resource,
-                                                UINT width,
-                                                UINT height,
-                                                UINT miplevels,
-                                                DWORD usage,
-                                                D3DFORMAT format,
-                                                D3DPOOL pool,
-                                                DWORD filter,
-                                                DWORD mipfilter,
-                                                D3DCOLOR colorkey,
-                                                D3DXIMAGE_INFO *srcinfo,
-                                                PALETTEENTRY *palette,
-                                                LPDIRECT3DTEXTURE9 *texture)
+HRESULT WINAPI D3DXCreateTextureFromResourceExW(struct IDirect3DDevice9 *device, HMODULE srcmodule,
+        const WCHAR *resource, UINT width, UINT height, UINT miplevels, DWORD usage, D3DFORMAT format,
+        D3DPOOL pool, DWORD filter, DWORD mipfilter, D3DCOLOR colorkey, D3DXIMAGE_INFO *srcinfo,
+        PALETTEENTRY *palette, struct IDirect3DTexture9 **texture)
 {
     HRSRC resinfo;
+    void *buffer;
+    DWORD size;
 
-    TRACE("(%p, %s): relay\n", srcmodule, debugstr_w(resource));
+    TRACE("device %p, srcmodule %p, resource %s, width %u, height %u, miplevels %u, usage %#x, format %#x, "
+            "pool %#x, filter %#x, mipfilter %#x, colorkey 0x%08x, srcinfo %p, palette %p, texture %p.\n",
+            device, srcmodule, debugstr_w(resource), width, height, miplevels, usage, format,
+            pool, filter, mipfilter, colorkey, srcinfo, palette, texture);
 
     if (!device || !texture)
         return D3DERR_INVALIDCALL;
 
-    resinfo = FindResourceW(srcmodule, resource, (LPCWSTR) RT_RCDATA);
+    if (!(resinfo = FindResourceW(srcmodule, resource, (const WCHAR *)RT_RCDATA))
+            /* Try loading the resource as bitmap data (which is in DIB format D3DXIFF_DIB) */
+            && !(resinfo = FindResourceW(srcmodule, resource, (const WCHAR *)RT_BITMAP)))
+        return D3DXERR_INVALIDDATA;
 
-    if (resinfo)
-    {
-        LPVOID buffer;
-        HRESULT hr;
-        DWORD size;
+    if (FAILED(load_resource_into_memory(srcmodule, resinfo, &buffer, &size)))
+        return D3DXERR_INVALIDDATA;
 
-        hr = load_resource_into_memory(srcmodule, resinfo, &buffer, &size);
-
-        if (FAILED(hr))
-            return D3DXERR_INVALIDDATA;
-
-        return D3DXCreateTextureFromFileInMemoryEx(device, buffer, size, width,
-                                                   height, miplevels, usage, format,
-                                                   pool, filter, mipfilter, colorkey,
-                                                   srcinfo, palette, texture);
-    }
-
-    /* Try loading the resource as bitmap data */
-    resinfo = FindResourceW(srcmodule, resource, (LPCWSTR) RT_BITMAP);
-
-    if (resinfo)
-    {
-        FIXME("Implement loading bitmaps from resource type RT_BITMAP\n");
-        return E_NOTIMPL;
-    }
-
-    return D3DXERR_INVALIDDATA;
+    return D3DXCreateTextureFromFileInMemoryEx(device, buffer, size, width, height, miplevels,
+            usage, format, pool, filter, mipfilter, colorkey, srcinfo, palette, texture);
 }
 
-HRESULT WINAPI D3DXCreateCubeTexture(LPDIRECT3DDEVICE9 device,
-                                     UINT size,
-                                     UINT miplevels,
-                                     DWORD usage,
-                                     D3DFORMAT format,
-                                     D3DPOOL pool,
-                                     LPDIRECT3DCUBETEXTURE9 *texture)
+HRESULT WINAPI D3DXCreateCubeTexture(struct IDirect3DDevice9 *device, UINT size, UINT miplevels,
+        DWORD usage, D3DFORMAT format, D3DPOOL pool, struct IDirect3DCubeTexture9 **texture)
 {
     HRESULT hr;
 
@@ -906,15 +931,17 @@ HRESULT WINAPI D3DXCreateCubeTexture(LPDIRECT3DDEVICE9 device,
     return IDirect3DDevice9_CreateCubeTexture(device, size, miplevels, usage, format, pool, texture, NULL);
 }
 
-HRESULT WINAPI D3DXCreateVolumeTexture(LPDIRECT3DDEVICE9 device,
-                                       UINT width,
-                                       UINT height,
-                                       UINT depth,
-                                       UINT miplevels,
-                                       DWORD usage,
-                                       D3DFORMAT format,
-                                       D3DPOOL pool,
-                                       LPDIRECT3DVOLUMETEXTURE9 *texture)
+HRESULT WINAPI D3DXCreateCubeTextureFromFileInMemory(struct IDirect3DDevice9 *device,
+        const void *data, UINT datasize, struct IDirect3DCubeTexture9 **texture)
+{
+    TRACE("(%p, %p, %u, %p)\n", device, data, datasize, texture);
+
+    return D3DXCreateCubeTextureFromFileInMemoryEx(device, data, datasize, D3DX_DEFAULT, D3DX_DEFAULT,
+        0, D3DFMT_UNKNOWN, D3DPOOL_MANAGED, D3DX_DEFAULT, D3DX_DEFAULT, 0, NULL, NULL, texture);
+}
+
+HRESULT WINAPI D3DXCreateVolumeTexture(struct IDirect3DDevice9 *device, UINT width, UINT height, UINT depth,
+        UINT miplevels, DWORD usage, D3DFORMAT format, D3DPOOL pool, struct IDirect3DVolumeTexture9 **texture)
 {
     HRESULT hr;
 
@@ -937,20 +964,372 @@ HRESULT WINAPI D3DXCreateVolumeTexture(LPDIRECT3DDEVICE9 device,
                                                 usage, format, pool, texture, NULL);
 }
 
-HRESULT WINAPI D3DXFillTexture(LPDIRECT3DTEXTURE9 texture,
-                               LPD3DXFILL2D function,
-                               LPVOID funcdata)
+HRESULT WINAPI D3DXCreateVolumeTextureFromFileA(IDirect3DDevice9 *device,
+                                                const char *filename,
+                                                IDirect3DVolumeTexture9 **volume_texture)
+{
+    int len;
+    HRESULT hr;
+    void *data;
+    DWORD data_size;
+    WCHAR *filenameW;
+
+    TRACE("(%p, %s, %p): relay\n",
+            device, debugstr_a(filename), volume_texture);
+
+    if (!filename) return D3DERR_INVALIDCALL;
+
+    len = MultiByteToWideChar(CP_ACP, 0, filename, -1, NULL, 0);
+    filenameW = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
+    if (!filenameW) return E_OUTOFMEMORY;
+    MultiByteToWideChar(CP_ACP, 0, filename, -1, filenameW, len);
+
+    hr = map_view_of_file(filenameW, &data, &data_size);
+    HeapFree(GetProcessHeap(), 0, filenameW);
+    if (FAILED(hr)) return D3DXERR_INVALIDDATA;
+
+    hr = D3DXCreateVolumeTextureFromFileInMemoryEx(device, data, data_size, D3DX_DEFAULT, D3DX_DEFAULT, D3DX_DEFAULT,
+            D3DX_DEFAULT, 0, D3DFMT_UNKNOWN, D3DPOOL_MANAGED, D3DX_DEFAULT, D3DX_DEFAULT, 0, NULL, NULL, volume_texture);
+
+    UnmapViewOfFile(data);
+    return hr;
+}
+
+HRESULT WINAPI D3DXCreateVolumeTextureFromFileW(IDirect3DDevice9 *device,
+                                                const WCHAR *filename,
+                                                IDirect3DVolumeTexture9 **volume_texture)
+{
+    HRESULT hr;
+    void *data;
+    DWORD data_size;
+
+    TRACE("(%p, %s, %p): relay\n",
+            device, debugstr_w(filename), volume_texture);
+
+    if (!filename) return D3DERR_INVALIDCALL;
+
+    hr = map_view_of_file(filename, &data, &data_size);
+    if (FAILED(hr)) return D3DXERR_INVALIDDATA;
+
+    hr = D3DXCreateVolumeTextureFromFileInMemoryEx(device, data, data_size, D3DX_DEFAULT, D3DX_DEFAULT, D3DX_DEFAULT,
+            D3DX_DEFAULT, 0, D3DFMT_UNKNOWN, D3DPOOL_MANAGED, D3DX_DEFAULT, D3DX_DEFAULT, 0, NULL, NULL, volume_texture);
+
+    UnmapViewOfFile(data);
+    return hr;
+}
+
+HRESULT WINAPI D3DXCreateVolumeTextureFromFileExA(IDirect3DDevice9 *device,
+                                                  const char *filename,
+                                                  UINT width,
+                                                  UINT height,
+                                                  UINT depth,
+                                                  UINT mip_levels,
+                                                  DWORD usage,
+                                                  D3DFORMAT format,
+                                                  D3DPOOL pool,
+                                                  DWORD filter,
+                                                  DWORD mip_filter,
+                                                  D3DCOLOR color_key,
+                                                  D3DXIMAGE_INFO *src_info,
+                                                  PALETTEENTRY *palette,
+                                                  IDirect3DVolumeTexture9 **volume_texture)
+{
+    int len;
+    HRESULT hr;
+    WCHAR *filenameW;
+    void *data;
+    DWORD data_size;
+
+    TRACE("(%p, %s, %u, %u, %u, %u, %#x, %#x, %#x, %#x, %#x, %#x, %p, %p, %p): relay\n",
+            device, debugstr_a(filename), width, height, depth, mip_levels,
+            usage, format, pool, filter, mip_filter, color_key, src_info,
+            palette, volume_texture);
+
+    if (!filename) return D3DERR_INVALIDCALL;
+
+    len = MultiByteToWideChar(CP_ACP, 0, filename, -1, NULL, 0);
+    filenameW = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
+    if (!filenameW) return E_OUTOFMEMORY;
+    MultiByteToWideChar(CP_ACP, 0, filename, -1, filenameW, len);
+
+    hr = map_view_of_file(filenameW, &data, &data_size);
+    HeapFree(GetProcessHeap(), 0, filenameW);
+    if (FAILED(hr)) return D3DXERR_INVALIDDATA;
+
+    hr = D3DXCreateVolumeTextureFromFileInMemoryEx(device, data, data_size, width, height, depth,
+            mip_levels, usage, format, pool, filter, mip_filter, color_key, src_info, palette,
+            volume_texture);
+
+    UnmapViewOfFile(data);
+    return hr;
+}
+
+HRESULT WINAPI D3DXCreateVolumeTextureFromFileExW(IDirect3DDevice9 *device,
+                                                  const WCHAR *filename,
+                                                  UINT width,
+                                                  UINT height,
+                                                  UINT depth,
+                                                  UINT mip_levels,
+                                                  DWORD usage,
+                                                  D3DFORMAT format,
+                                                  D3DPOOL pool,
+                                                  DWORD filter,
+                                                  DWORD mip_filter,
+                                                  D3DCOLOR color_key,
+                                                  D3DXIMAGE_INFO *src_info,
+                                                  PALETTEENTRY *palette,
+                                                  IDirect3DVolumeTexture9 **volume_texture)
+{
+    HRESULT hr;
+    void *data;
+    DWORD data_size;
+
+    TRACE("(%p, %s, %u, %u, %u, %u, %#x, %#x, %#x, %#x, %#x, %#x, %p, %p, %p): relay\n",
+            device, debugstr_w(filename), width, height, depth, mip_levels,
+            usage, format, pool, filter, mip_filter, color_key, src_info,
+            palette, volume_texture);
+
+    if (!filename) return D3DERR_INVALIDCALL;
+
+    hr = map_view_of_file(filename, &data, &data_size);
+    if (FAILED(hr)) return D3DXERR_INVALIDDATA;
+
+    hr = D3DXCreateVolumeTextureFromFileInMemoryEx(device, data, data_size, width, height, depth,
+            mip_levels, usage, format, pool, filter, mip_filter, color_key, src_info, palette,
+            volume_texture);
+
+    UnmapViewOfFile(data);
+    return hr;
+}
+
+HRESULT WINAPI D3DXCreateVolumeTextureFromFileInMemory(IDirect3DDevice9 *device,
+                                                       const void *data,
+                                                       UINT data_size,
+                                                       IDirect3DVolumeTexture9 **volume_texture)
+{
+    TRACE("(%p, %p, %u, %p): relay\n", device, data, data_size, volume_texture);
+
+    return D3DXCreateVolumeTextureFromFileInMemoryEx(device, data, data_size, D3DX_DEFAULT, D3DX_DEFAULT,
+        D3DX_DEFAULT, D3DX_DEFAULT, 0, D3DFMT_UNKNOWN, D3DPOOL_MANAGED, D3DX_DEFAULT, D3DX_DEFAULT,
+        0, NULL, NULL, volume_texture);
+}
+
+HRESULT WINAPI D3DXCreateVolumeTextureFromFileInMemoryEx(IDirect3DDevice9 *device,
+                                                         const void *data,
+                                                         UINT data_size,
+                                                         UINT width,
+                                                         UINT height,
+                                                         UINT depth,
+                                                         UINT mip_levels,
+                                                         DWORD usage,
+                                                         D3DFORMAT format,
+                                                         D3DPOOL pool,
+                                                         DWORD filter,
+                                                         DWORD mip_filter,
+                                                         D3DCOLOR color_key,
+                                                         D3DXIMAGE_INFO *info,
+                                                         PALETTEENTRY *palette,
+                                                         IDirect3DVolumeTexture9 **volume_texture)
+{
+    HRESULT hr;
+    D3DCAPS9 caps;
+    D3DXIMAGE_INFO image_info;
+    BOOL dynamic_texture;
+    BOOL file_width = FALSE;
+    BOOL file_height = FALSE;
+    BOOL file_depth = FALSE;
+    BOOL file_format = FALSE;
+    BOOL file_mip_levels = FALSE;
+    IDirect3DVolumeTexture9 *tex, *buftex;
+
+    TRACE("(%p, %p, %u, %u, %u, %u, %u, %#x, %#x, %#x, %#x, %#x, %#x, %p, %p, %p)\n",
+            device, data, data_size, width, height, depth, mip_levels, usage, format, pool,
+            filter, mip_filter, color_key, info, palette, volume_texture);
+
+    if (!device || !data || !data_size || !volume_texture)
+        return D3DERR_INVALIDCALL;
+
+    hr = D3DXGetImageInfoFromFileInMemory(data, data_size, &image_info);
+    if (FAILED(hr)) return hr;
+
+    if (image_info.ImageFileFormat != D3DXIFF_DDS)
+        return D3DXERR_INVALIDDATA;
+
+    if (width == 0 || width == D3DX_DEFAULT_NONPOW2)
+        width = image_info.Width;
+    if (width == D3DX_DEFAULT)
+        width = make_pow2(image_info.Width);
+
+    if (height == 0 || height == D3DX_DEFAULT_NONPOW2)
+        height = image_info.Height;
+    if (height == D3DX_DEFAULT)
+        height = make_pow2(image_info.Height);
+
+    if (depth == 0 || depth == D3DX_DEFAULT_NONPOW2)
+        depth = image_info.Depth;
+    if (depth == D3DX_DEFAULT)
+        depth = make_pow2(image_info.Depth);
+
+    if (format == D3DFMT_UNKNOWN || format == D3DX_DEFAULT)
+        format = image_info.Format;
+
+    if (width == D3DX_FROM_FILE)
+    {
+        file_width = TRUE;
+        width = image_info.Width;
+    }
+
+    if (height == D3DX_FROM_FILE)
+    {
+        file_height = TRUE;
+        height = image_info.Height;
+    }
+
+    if (depth == D3DX_FROM_FILE)
+    {
+        file_depth = TRUE;
+        depth = image_info.Depth;
+    }
+
+    if (format == D3DFMT_FROM_FILE)
+    {
+        file_format = TRUE;
+        format = image_info.Format;
+    }
+
+    if (mip_levels == D3DX_FROM_FILE)
+    {
+        file_mip_levels = TRUE;
+        mip_levels = image_info.MipLevels;
+    }
+
+    hr = D3DXCheckVolumeTextureRequirements(device, &width, &height, &depth, &mip_levels, usage, &format, pool);
+    if (FAILED(hr)) return hr;
+
+    if ((file_width && width != image_info.Width)
+            || (file_height && height != image_info.Height)
+            || (file_depth && depth != image_info.Depth)
+            || (file_format && format != image_info.Format)
+            || (file_mip_levels && mip_levels != image_info.MipLevels))
+        return D3DERR_NOTAVAILABLE;
+
+    hr = IDirect3DDevice9_GetDeviceCaps(device, &caps);
+    if (FAILED(hr))
+        return D3DERR_INVALIDCALL;
+
+    if (mip_levels > image_info.MipLevels)
+    {
+        FIXME("Generation of mipmaps for volume textures is not implemented yet\n");
+        mip_levels = image_info.MipLevels;
+    }
+
+    dynamic_texture = (caps.Caps2 & D3DCAPS2_DYNAMICTEXTURES) && (usage & D3DUSAGE_DYNAMIC);
+    if (pool == D3DPOOL_DEFAULT && !dynamic_texture)
+    {
+        hr = D3DXCreateVolumeTexture(device, width, height, depth, mip_levels, usage, format, D3DPOOL_SYSTEMMEM, &buftex);
+        tex = buftex;
+    }
+    else
+    {
+        hr = D3DXCreateVolumeTexture(device, width, height, depth, mip_levels, usage, format, pool, &tex);
+        buftex = NULL;
+    }
+
+    if (FAILED(hr)) return hr;
+
+    hr = load_volume_texture_from_dds(tex, data, palette, filter, color_key, &image_info);
+    if (FAILED(hr))
+    {
+        IDirect3DVolumeTexture9_Release(tex);
+        return hr;
+    }
+
+    if (buftex)
+    {
+        hr = D3DXCreateVolumeTexture(device, width, height, depth, mip_levels, usage, format, pool, &tex);
+        if (FAILED(hr))
+        {
+            IDirect3DVolumeTexture9_Release(buftex);
+            return hr;
+        }
+
+        IDirect3DDevice9_UpdateTexture(device, (IDirect3DBaseTexture9 *)buftex, (IDirect3DBaseTexture9 *)tex);
+        IDirect3DVolumeTexture9_Release(buftex);
+    }
+
+    if (info)
+        *info = image_info;
+
+    *volume_texture = tex;
+    return D3D_OK;
+}
+
+static inline void fill_texture(const struct pixel_format_desc *format, BYTE *pos, const D3DXVECTOR4 *value)
+{
+    DWORD c;
+
+    for (c = 0; c < format->bytes_per_pixel; c++)
+        pos[c] = 0;
+
+    for (c = 0; c < 4; c++)
+    {
+        float comp_value;
+        DWORD i, v = 0, mask32 = format->bits[c] == 32 ? ~0U : ((1 << format->bits[c]) - 1);
+
+        switch (c)
+        {
+            case 0: /* Alpha */
+                comp_value = value->w;
+                break;
+            case 1: /* Red */
+                comp_value = value->x;
+                break;
+            case 2: /* Green */
+                comp_value = value->y;
+                break;
+            case 3: /* Blue */
+                comp_value = value->z;
+                break;
+        }
+
+        if (format->type == FORMAT_ARGBF16)
+            v = float_32_to_16(comp_value);
+        else if (format->type == FORMAT_ARGBF)
+            v = *(DWORD *)&comp_value;
+        else if (format->type == FORMAT_ARGB)
+            v = comp_value * ((1 << format->bits[c]) - 1) + 0.5f;
+        else
+            FIXME("Unhandled format type %#x\n", format->type);
+
+        for (i = 0; i < format->bits[c] + format->shift[c]; i += 8)
+        {
+            BYTE byte, mask;
+
+            if (format->shift[c] > i)
+            {
+                mask = mask32 << (format->shift[c] - i);
+                byte = (v << (format->shift[c] - i)) & mask;
+            }
+            else
+            {
+                mask = mask32 >> (i - format->shift[c]);
+                byte = (v >> (i - format->shift[c])) & mask;
+            }
+            pos[i / 8] |= byte;
+        }
+    }
+}
+
+HRESULT WINAPI D3DXFillTexture(struct IDirect3DTexture9 *texture, LPD3DXFILL2D function, void *funcdata)
 {
     DWORD miplevels;
-    DWORD m, i, x, y, c, v;
+    DWORD m, x, y;
     D3DSURFACE_DESC desc;
     D3DLOCKED_RECT lock_rect;
     D3DXVECTOR4 value;
     D3DXVECTOR2 coord, size;
-    const PixelFormatDesc *format;
-    BYTE *data, *pos;
-    BYTE byte, mask;
-    float comp_value;
+    const struct pixel_format_desc *format;
+    BYTE *data;
 
     if (texture == NULL || function == NULL)
         return D3DERR_INVALIDCALL;
@@ -963,7 +1342,7 @@ HRESULT WINAPI D3DXFillTexture(LPDIRECT3DTEXTURE9 texture,
             return D3DERR_INVALIDCALL;
 
         format = get_format_info(desc.Format);
-        if (format->format == D3DFMT_UNKNOWN)
+        if (format->type != FORMAT_ARGB && format->type != FORMAT_ARGBF16 && format->type != FORMAT_ARGBF)
         {
             FIXME("Unsupported texture format %#x\n", desc.Format);
             return D3DERR_INVALIDCALL;
@@ -989,38 +1368,7 @@ HRESULT WINAPI D3DXFillTexture(LPDIRECT3DTEXTURE9 texture,
 
                 function(&value, &coord, &size, funcdata);
 
-                pos = data + y * lock_rect.Pitch + x * format->bytes_per_pixel;
-
-                for (i = 0; i < format->bytes_per_pixel; i++)
-                    pos[i] = 0;
-
-                for (c = 0; c < 4; c++)
-                {
-                    switch (c)
-                    {
-                        case 0: /* Alpha */
-                            comp_value = value.w;
-                            break;
-                        case 1: /* Red */
-                            comp_value = value.x;
-                            break;
-                        case 2: /* Green */
-                            comp_value = value.y;
-                            break;
-                        case 3: /* Blue */
-                            comp_value = value.z;
-                            break;
-                    }
-
-                    v = comp_value * ((1 << format->bits[c]) - 1) + 0.5f;
-
-                    for (i = 0; i < format->bits[c] + format->shift[c]; i += 8)
-                    {
-                        mask = ((1 << format->bits[c]) - 1) << format->shift[c] >> i;
-                        byte = (v << format->shift[c] >> i) & mask;
-                        pos[i / 8] |= byte;
-                    }
-                }
+                fill_texture(format, data + y * lock_rect.Pitch + x * format->bytes_per_pixel, &value);
             }
         }
         IDirect3DTexture9_UnlockRect(texture, m);
@@ -1029,14 +1377,273 @@ HRESULT WINAPI D3DXFillTexture(LPDIRECT3DTEXTURE9 texture,
     return D3D_OK;
 }
 
-HRESULT WINAPI D3DXCreateCubeTextureFromFileInMemoryEx(LPDIRECT3DDEVICE9 pDevice, LPCVOID pSrcData, UINT SrcDataSize,
-        UINT Size, UINT MipLevels, DWORD Usage, D3DFORMAT Format, D3DPOOL Pool, DWORD Filter, DWORD MipFilter, D3DCOLOR ColorKey,
-        D3DXIMAGE_INFO *pSrcInfo, PALETTEENTRY *pPalette, LPDIRECT3DCUBETEXTURE9 *ppCubeTexture)
+HRESULT WINAPI D3DXCreateCubeTextureFromFileInMemoryEx(IDirect3DDevice9 *device,
+                                                       const void *src_data,
+                                                       UINT src_data_size,
+                                                       UINT size,
+                                                       UINT mip_levels,
+                                                       DWORD usage,
+                                                       D3DFORMAT format,
+                                                       D3DPOOL pool,
+                                                       DWORD filter,
+                                                       DWORD mip_filter,
+                                                       D3DCOLOR color_key,
+                                                       D3DXIMAGE_INFO *src_info,
+                                                       PALETTEENTRY *palette,
+                                                       IDirect3DCubeTexture9 **cube_texture)
 {
-    FIXME("(%p, %p, %u, %u, %u, %#x, %#x, %#x, %#x, %#x, %#x, %p, %p, %p): stub\n", pDevice, pSrcData, SrcDataSize, Size, MipLevels,
-            Usage, Format, Pool, Filter, MipFilter, ColorKey, pSrcInfo, pPalette, ppCubeTexture);
+    HRESULT hr;
+    D3DCAPS9 caps;
+    UINT loaded_miplevels;
+    D3DXIMAGE_INFO img_info;
+    BOOL dynamic_texture;
+    BOOL file_size = FALSE;
+    BOOL file_format = FALSE;
+    BOOL file_mip_levels = FALSE;
+    IDirect3DCubeTexture9 *tex, *buftex;
 
-    return E_NOTIMPL;
+    TRACE("(%p, %p, %u, %u, %u, %#x, %#x, %#x, %#x, %#x, %#x, %p, %p, %p)\n", device,
+        src_data, src_data_size, size, mip_levels, usage, format, pool, filter, mip_filter,
+        color_key, src_info, palette, cube_texture);
+
+    if (!device || !cube_texture || !src_data || !src_data_size)
+        return D3DERR_INVALIDCALL;
+
+    hr = D3DXGetImageInfoFromFileInMemory(src_data, src_data_size, &img_info);
+    if (FAILED(hr))
+        return hr;
+
+    if (img_info.ImageFileFormat != D3DXIFF_DDS)
+        return D3DXERR_INVALIDDATA;
+
+    if (img_info.Width != img_info.Height)
+        return D3DXERR_INVALIDDATA;
+
+    if (size == 0 || size == D3DX_DEFAULT_NONPOW2)
+        size = img_info.Width;
+    if (size == D3DX_DEFAULT)
+        size = make_pow2(img_info.Width);
+
+    if (format == D3DFMT_UNKNOWN || format == D3DX_DEFAULT)
+        format = img_info.Format;
+
+    if (size == D3DX_FROM_FILE)
+    {
+        file_size = TRUE;
+        size = img_info.Width;
+    }
+
+    if (format == D3DFMT_FROM_FILE)
+    {
+        file_format = TRUE;
+        format = img_info.Format;
+    }
+
+    if (mip_levels == D3DX_FROM_FILE)
+    {
+        file_mip_levels = TRUE;
+        mip_levels = img_info.MipLevels;
+    }
+
+    hr = D3DXCheckCubeTextureRequirements(device, &size, &mip_levels, usage, &format, pool);
+    if (FAILED(hr))
+        return hr;
+
+    if ((file_size && size != img_info.Width)
+            || (file_format && format != img_info.Format)
+            || (file_mip_levels && mip_levels != img_info.MipLevels))
+        return D3DERR_NOTAVAILABLE;
+
+    hr = IDirect3DDevice9_GetDeviceCaps(device, &caps);
+    if (FAILED(hr))
+        return D3DERR_INVALIDCALL;
+
+    if (mip_levels > img_info.MipLevels && (D3DFMT_DXT1 <= img_info.Format && img_info.Format <= D3DFMT_DXT5))
+    {
+        FIXME("Generation of mipmaps for compressed pixel formats not supported yet\n");
+        mip_levels = img_info.MipLevels;
+    }
+
+    dynamic_texture = (caps.Caps2 & D3DCAPS2_DYNAMICTEXTURES) && (usage & D3DUSAGE_DYNAMIC);
+    if (pool == D3DPOOL_DEFAULT && !dynamic_texture)
+    {
+        hr = D3DXCreateCubeTexture(device, size, mip_levels, usage, format, D3DPOOL_SYSTEMMEM, &buftex);
+        tex = buftex;
+    }
+    else
+    {
+        hr = D3DXCreateCubeTexture(device, size, mip_levels, usage, format, pool, &tex);
+        buftex = NULL;
+    }
+    if (FAILED(hr))
+        return hr;
+
+    hr = load_cube_texture_from_dds(tex, src_data, palette, filter, color_key, &img_info);
+    if (FAILED(hr))
+    {
+        IDirect3DCubeTexture9_Release(tex);
+        return hr;
+    }
+
+    loaded_miplevels = min(IDirect3DCubeTexture9_GetLevelCount(tex), img_info.MipLevels);
+    hr = D3DXFilterTexture((IDirect3DBaseTexture9*) tex, palette, loaded_miplevels - 1, mip_filter);
+    if (FAILED(hr))
+    {
+        IDirect3DCubeTexture9_Release(tex);
+        return hr;
+    }
+
+    if (buftex)
+    {
+        hr = D3DXCreateCubeTexture(device, size, mip_levels, usage, format, pool, &tex);
+        if (FAILED(hr))
+        {
+            IDirect3DCubeTexture9_Release(buftex);
+            return hr;
+        }
+
+        IDirect3DDevice9_UpdateTexture(device, (IDirect3DBaseTexture9 *)buftex, (IDirect3DBaseTexture9 *)tex);
+        IDirect3DCubeTexture9_Release(buftex);
+    }
+
+    if (src_info)
+        *src_info = img_info;
+
+    *cube_texture = tex;
+    return D3D_OK;
+}
+
+
+HRESULT WINAPI D3DXCreateCubeTextureFromFileA(IDirect3DDevice9 *device,
+                                              const char *src_filename,
+                                              IDirect3DCubeTexture9 **cube_texture)
+{
+    int len;
+    HRESULT hr;
+    WCHAR *filename;
+    void *data;
+    DWORD data_size;
+
+    TRACE("(%p, %s, %p): relay\n", device, wine_dbgstr_a(src_filename), cube_texture);
+
+    if (!src_filename) return D3DERR_INVALIDCALL;
+
+    len = MultiByteToWideChar(CP_ACP, 0, src_filename, -1, NULL, 0);
+    filename = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
+    if (!filename) return E_OUTOFMEMORY;
+    MultiByteToWideChar(CP_ACP, 0, src_filename, -1, filename, len);
+
+    hr = map_view_of_file(filename, &data, &data_size);
+    if (FAILED(hr))
+    {
+        HeapFree(GetProcessHeap(), 0, filename);
+        return D3DXERR_INVALIDDATA;
+    }
+
+    hr = D3DXCreateCubeTextureFromFileInMemoryEx(device, data, data_size, D3DX_DEFAULT, D3DX_DEFAULT,
+        0, D3DFMT_UNKNOWN, D3DPOOL_MANAGED, D3DX_DEFAULT, D3DX_DEFAULT, 0, NULL, NULL, cube_texture);
+
+    UnmapViewOfFile(data);
+    HeapFree(GetProcessHeap(), 0, filename);
+    return hr;
+}
+
+HRESULT WINAPI D3DXCreateCubeTextureFromFileW(IDirect3DDevice9 *device,
+                                              const WCHAR *src_filename,
+                                              IDirect3DCubeTexture9 **cube_texture)
+{
+    HRESULT hr;
+    void *data;
+    DWORD data_size;
+
+    TRACE("(%p, %s, %p): relay\n", device, wine_dbgstr_w(src_filename), cube_texture);
+
+    hr = map_view_of_file(src_filename, &data, &data_size);
+    if (FAILED(hr)) return D3DXERR_INVALIDDATA;
+
+    hr = D3DXCreateCubeTextureFromFileInMemoryEx(device, data, data_size, D3DX_DEFAULT, D3DX_DEFAULT,
+        0, D3DFMT_UNKNOWN, D3DPOOL_MANAGED, D3DX_DEFAULT, D3DX_DEFAULT, 0, NULL, NULL, cube_texture);
+
+    UnmapViewOfFile(data);
+    return hr;
+}
+
+HRESULT WINAPI D3DXCreateCubeTextureFromFileExA(IDirect3DDevice9 *device,
+                                                const char *src_filename,
+                                                UINT size,
+                                                UINT mip_levels,
+                                                DWORD usage,
+                                                D3DFORMAT format,
+                                                D3DPOOL pool,
+                                                DWORD filter,
+                                                DWORD mip_filter,
+                                                D3DCOLOR color_key,
+                                                D3DXIMAGE_INFO *image_info,
+                                                PALETTEENTRY *palette,
+                                                IDirect3DCubeTexture9 **cube_texture)
+{
+    int len;
+    HRESULT hr;
+    WCHAR *filename;
+    void *data;
+    DWORD data_size;
+
+    TRACE("(%p, %s, %u, %u, %#x, %#x, %#x, %#x, %#x, %#x, %p, %p, %p): relay\n",
+            device, wine_dbgstr_a(src_filename), size, mip_levels, usage, format,
+            pool, filter, mip_filter, color_key, image_info, palette, cube_texture);
+
+    if (!src_filename) return D3DERR_INVALIDCALL;
+
+    len = MultiByteToWideChar(CP_ACP, 0, src_filename, -1, NULL, 0);
+    filename = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
+    if (!filename) return E_OUTOFMEMORY;
+    MultiByteToWideChar(CP_ACP, 0, src_filename, -1, filename, len);
+
+    hr = map_view_of_file(filename, &data, &data_size);
+    if (FAILED(hr))
+    {
+        HeapFree(GetProcessHeap(), 0, filename);
+        return D3DXERR_INVALIDDATA;
+    }
+
+    hr = D3DXCreateCubeTextureFromFileInMemoryEx(device, data, data_size, size, mip_levels,
+        usage, format, pool, filter, mip_filter, color_key, image_info, palette, cube_texture);
+
+    UnmapViewOfFile(data);
+    HeapFree(GetProcessHeap(), 0, filename);
+    return hr;
+}
+
+HRESULT WINAPI D3DXCreateCubeTextureFromFileExW(IDirect3DDevice9 *device,
+                                                const WCHAR *src_filename,
+                                                UINT size,
+                                                UINT mip_levels,
+                                                DWORD usage,
+                                                D3DFORMAT format,
+                                                D3DPOOL pool,
+                                                DWORD filter,
+                                                DWORD mip_filter,
+                                                D3DCOLOR color_key,
+                                                D3DXIMAGE_INFO *image_info,
+                                                PALETTEENTRY *palette,
+                                                IDirect3DCubeTexture9 **cube_texture)
+{
+    HRESULT hr;
+    void *data;
+    DWORD data_size;
+
+    TRACE("(%p, %s, %u, %u, %#x, %#x, %#x, %#x, %#x, %#x, %p, %p, %p): relay\n",
+            device, wine_dbgstr_w(src_filename), size, mip_levels, usage, format,
+            pool, filter, mip_filter, color_key, image_info, palette, cube_texture);
+
+    hr = map_view_of_file(src_filename, &data, &data_size);
+    if (FAILED(hr)) return D3DXERR_INVALIDDATA;
+
+    hr = D3DXCreateCubeTextureFromFileInMemoryEx(device, data, data_size, size, mip_levels,
+        usage, format, pool, filter, mip_filter, color_key, image_info, palette, cube_texture);
+
+    UnmapViewOfFile(data);
+    return hr;
 }
 
 enum cube_coord
@@ -1071,20 +1678,16 @@ static float get_cube_coord(enum cube_coord coord, unsigned int x, unsigned int 
     }
 }
 
-HRESULT WINAPI D3DXFillCubeTexture(LPDIRECT3DCUBETEXTURE9 texture,
-                                   LPD3DXFILL3D function,
-                                   LPVOID funcdata)
+HRESULT WINAPI D3DXFillCubeTexture(struct IDirect3DCubeTexture9 *texture, LPD3DXFILL3D function, void *funcdata)
 {
     DWORD miplevels;
-    DWORD m, i, x, y, c, f, v;
+    DWORD m, x, y, f;
     D3DSURFACE_DESC desc;
     D3DLOCKED_RECT lock_rect;
     D3DXVECTOR4 value;
     D3DXVECTOR3 coord, size;
-    const PixelFormatDesc *format;
-    BYTE *data, *pos;
-    BYTE byte, mask;
-    float comp_value;
+    const struct pixel_format_desc *format;
+    BYTE *data;
     static const enum cube_coord coordmap[6][3] =
         {
             {ONE, YCOORDINV, XCOORDINV},
@@ -1106,7 +1709,7 @@ HRESULT WINAPI D3DXFillCubeTexture(LPDIRECT3DCUBETEXTURE9 texture,
             return D3DERR_INVALIDCALL;
 
         format = get_format_info(desc.Format);
-        if (format->format == D3DFMT_UNKNOWN)
+        if (format->type != FORMAT_ARGB && format->type != FORMAT_ARGBF16 && format->type != FORMAT_ARGBF)
         {
             FIXME("Unsupported texture format %#x\n", desc.Format);
             return D3DERR_INVALIDCALL;
@@ -1133,38 +1736,7 @@ HRESULT WINAPI D3DXFillCubeTexture(LPDIRECT3DCUBETEXTURE9 texture,
 
                     function(&value, &coord, &size, funcdata);
 
-                    pos = data + y * lock_rect.Pitch + x * format->bytes_per_pixel;
-
-                    for (i = 0; i < format->bytes_per_pixel; i++)
-                        pos[i] = 0;
-
-                    for (c = 0; c < 4; c++)
-                    {
-                        switch (c)
-                        {
-                            case 0: /* Alpha */
-                                comp_value = value.w;
-                                break;
-                            case 1: /* Red */
-                                comp_value = value.x;
-                                break;
-                            case 2: /* Green */
-                                comp_value = value.y;
-                                break;
-                            case 3: /* Blue */
-                                comp_value = value.z;
-                                break;
-                        }
-
-                        v = comp_value * ((1 << format->bits[c]) - 1) + 0.5f;
-
-                        for (i = 0; i < format->bits[c] + format->shift[c]; i += 8)
-                        {
-                            mask = ((1 << format->bits[c]) - 1) << format->shift[c] >> i;
-                            byte = (v << format->shift[c] >> i) & mask;
-                            pos[i / 8] |= byte;
-                        }
-                    }
+                    fill_texture(format, data + y * lock_rect.Pitch + x * format->bytes_per_pixel, &value);
                 }
             }
             IDirect3DCubeTexture9_UnlockRect(texture, f, m);
@@ -1174,20 +1746,16 @@ HRESULT WINAPI D3DXFillCubeTexture(LPDIRECT3DCUBETEXTURE9 texture,
     return D3D_OK;
 }
 
-HRESULT WINAPI D3DXFillVolumeTexture(LPDIRECT3DVOLUMETEXTURE9 texture,
-                                     LPD3DXFILL3D function,
-                                     LPVOID funcdata)
+HRESULT WINAPI D3DXFillVolumeTexture(struct IDirect3DVolumeTexture9 *texture, LPD3DXFILL3D function, void *funcdata)
 {
     DWORD miplevels;
-    DWORD m, i, x, y, z, c, v;
+    DWORD m, x, y, z;
     D3DVOLUME_DESC desc;
     D3DLOCKED_BOX lock_box;
     D3DXVECTOR4 value;
     D3DXVECTOR3 coord, size;
-    const PixelFormatDesc *format;
-    BYTE *data, *pos;
-    BYTE byte, mask;
-    float comp_value;
+    const struct pixel_format_desc *format;
+    BYTE *data;
 
     if (texture == NULL || function == NULL)
         return D3DERR_INVALIDCALL;
@@ -1200,7 +1768,7 @@ HRESULT WINAPI D3DXFillVolumeTexture(LPDIRECT3DVOLUMETEXTURE9 texture,
             return D3DERR_INVALIDCALL;
 
         format = get_format_info(desc.Format);
-        if (format->format == D3DFMT_UNKNOWN)
+        if (format->type != FORMAT_ARGB && format->type != FORMAT_ARGBF16 && format->type != FORMAT_ARGBF)
         {
             FIXME("Unsupported texture format %#x\n", desc.Format);
             return D3DERR_INVALIDCALL;
@@ -1231,38 +1799,8 @@ HRESULT WINAPI D3DXFillVolumeTexture(LPDIRECT3DVOLUMETEXTURE9 texture,
 
                     function(&value, &coord, &size, funcdata);
 
-                    pos = data + z * lock_box.SlicePitch + y * lock_box.RowPitch + x * format->bytes_per_pixel;
-
-                    for (i = 0; i < format->bytes_per_pixel; i++)
-                        pos[i] = 0;
-
-                    for (c = 0; c < 4; c++)
-                    {
-                        switch (c)
-                        {
-                            case 0: /* Alpha */
-                                comp_value = value.w;
-                                break;
-                            case 1: /* Red */
-                                comp_value = value.x;
-                                break;
-                            case 2: /* Green */
-                                comp_value = value.y;
-                                break;
-                            case 3: /* Blue */
-                                comp_value = value.z;
-                                break;
-                        }
-
-                        v = comp_value * ((1 << format->bits[c]) - 1) + 0.5f;
-
-                        for (i = 0; i < format->bits[c] + format->shift[c]; i += 8)
-                        {
-                            mask = ((1 << format->bits[c]) - 1) << format->shift[c] >> i;
-                            byte = (v << format->shift[c] >> i) & mask;
-                            pos[i / 8] |= byte;
-                        }
-                    }
+                    fill_texture(format, data + z * lock_box.SlicePitch + y * lock_box.RowPitch
+                            + x * format->bytes_per_pixel, &value);
                 }
             }
         }
@@ -1270,4 +1808,95 @@ HRESULT WINAPI D3DXFillVolumeTexture(LPDIRECT3DVOLUMETEXTURE9 texture,
     }
 
     return D3D_OK;
+}
+
+HRESULT WINAPI D3DXSaveTextureToFileA(const char *dst_filename, D3DXIMAGE_FILEFORMAT file_format,
+        IDirect3DBaseTexture9 *src_texture, const PALETTEENTRY *src_palette)
+{
+    int len;
+    WCHAR *filename;
+    HRESULT hr;
+    ID3DXBuffer *buffer;
+
+    TRACE("(%s, %#x, %p, %p): relay\n",
+            wine_dbgstr_a(dst_filename), file_format, src_texture, src_palette);
+
+    if (!dst_filename) return D3DERR_INVALIDCALL;
+
+    len = MultiByteToWideChar(CP_ACP, 0, dst_filename, -1, NULL, 0);
+    filename = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
+    if (!filename) return E_OUTOFMEMORY;
+    MultiByteToWideChar(CP_ACP, 0, dst_filename, -1, filename, len);
+
+    hr = D3DXSaveTextureToFileInMemory(&buffer, file_format, src_texture, src_palette);
+    if (SUCCEEDED(hr))
+    {
+        hr = write_buffer_to_file(filename, buffer);
+        ID3DXBuffer_Release(buffer);
+    }
+
+    HeapFree(GetProcessHeap(), 0, filename);
+    return hr;
+}
+
+HRESULT WINAPI D3DXSaveTextureToFileW(const WCHAR *dst_filename, D3DXIMAGE_FILEFORMAT file_format,
+        IDirect3DBaseTexture9 *src_texture, const PALETTEENTRY *src_palette)
+{
+    HRESULT hr;
+    ID3DXBuffer *buffer;
+
+    TRACE("(%s, %#x, %p, %p): relay\n",
+        wine_dbgstr_w(dst_filename), file_format, src_texture, src_palette);
+
+    if (!dst_filename) return D3DERR_INVALIDCALL;
+
+    hr = D3DXSaveTextureToFileInMemory(&buffer, file_format, src_texture, src_palette);
+    if (SUCCEEDED(hr))
+    {
+        hr = write_buffer_to_file(dst_filename, buffer);
+        ID3DXBuffer_Release(buffer);
+    }
+
+    return hr;
+}
+
+HRESULT WINAPI D3DXSaveTextureToFileInMemory(ID3DXBuffer **dst_buffer, D3DXIMAGE_FILEFORMAT file_format,
+        IDirect3DBaseTexture9 *src_texture, const PALETTEENTRY *src_palette)
+{
+    HRESULT hr;
+    D3DRESOURCETYPE type;
+    IDirect3DSurface9 *surface;
+
+    TRACE("(%p, %#x, %p, %p)\n",
+        dst_buffer, file_format, src_texture, src_palette);
+
+    if (!dst_buffer || !src_texture) return D3DERR_INVALIDCALL;
+
+    if (file_format == D3DXIFF_DDS)
+    {
+        FIXME("DDS file format isn't supported yet\n");
+        return E_NOTIMPL;
+    }
+
+    type = IDirect3DBaseTexture9_GetType(src_texture);
+    switch (type)
+    {
+        case D3DRTYPE_TEXTURE:
+        case D3DRTYPE_CUBETEXTURE:
+            hr = get_surface(type, src_texture, D3DCUBEMAP_FACE_POSITIVE_X, 0, &surface);
+            break;
+        case D3DRTYPE_VOLUMETEXTURE:
+            FIXME("Volume textures aren't supported yet\n");
+            return E_NOTIMPL;
+        default:
+            return D3DERR_INVALIDCALL;
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        hr = D3DXSaveSurfaceToFileInMemory(dst_buffer, file_format, surface, src_palette, NULL);
+        IDirect3DSurface9_Release(surface);
+    }
+
+    return hr;
 }

@@ -85,6 +85,18 @@ typedef struct _NegoHelper {
     } crypt;
 } NegoHelper, *PNegoHelper;
 
+typedef struct _NtlmCredentials
+{
+    HelperMode mode;
+
+    /* these are all in the Unix codepage */
+    char *username_arg;
+    char *domain_arg;
+    char *password; /* not nul-terminated */
+    int pwlen;
+    int no_cached_credentials; /* don't try to use cached Samba credentials */
+} NtlmCredentials, *PNtlmCredentials;
+
 typedef enum _sign_direction {
     NTLM_SEND,
     NTLM_RECV
@@ -176,10 +188,34 @@ void SECUR32_arc4Cleanup(arc4_info *a4i) DECLSPEC_HIDDEN;
 #define NTLMSSP_NEGOTIATE_KEY_EXCHANGE              0x40000000
 #define NTLMSSP_NEGOTIATE_56                        0x80000000
 
+SECURITY_STATUS SEC_ENTRY ntlm_AcquireCredentialsHandleW(SEC_WCHAR *, SEC_WCHAR *,
+    ULONG, PLUID, PVOID, SEC_GET_KEY_FN, PVOID, PCredHandle, PTimeStamp) DECLSPEC_HIDDEN;
+SECURITY_STATUS SEC_ENTRY ntlm_InitializeSecurityContextW(PCredHandle, PCtxtHandle,
+    SEC_WCHAR *, ULONG fContextReq, ULONG, ULONG, PSecBufferDesc, ULONG, PCtxtHandle,
+    PSecBufferDesc, ULONG *, PTimeStamp) DECLSPEC_HIDDEN;
+SECURITY_STATUS SEC_ENTRY ntlm_AcceptSecurityContext(PCredHandle, PCtxtHandle, PSecBufferDesc,
+    ULONG, ULONG, PCtxtHandle, PSecBufferDesc, ULONG *, PTimeStamp) DECLSPEC_HIDDEN;
+SECURITY_STATUS SEC_ENTRY ntlm_QueryContextAttributesA(PCtxtHandle, ULONG, void *) DECLSPEC_HIDDEN;
+SECURITY_STATUS SEC_ENTRY ntlm_QueryContextAttributesW(PCtxtHandle, ULONG, void *) DECLSPEC_HIDDEN;
+SECURITY_STATUS SEC_ENTRY ntlm_EncryptMessage(PCtxtHandle, ULONG, PSecBufferDesc, ULONG) DECLSPEC_HIDDEN;
+SECURITY_STATUS SEC_ENTRY ntlm_DecryptMessage(PCtxtHandle, PSecBufferDesc, ULONG, PULONG) DECLSPEC_HIDDEN;
+SECURITY_STATUS SEC_ENTRY ntlm_FreeCredentialsHandle(PCredHandle) DECLSPEC_HIDDEN;
+SECURITY_STATUS SEC_ENTRY ntlm_DeleteSecurityContext(PCtxtHandle) DECLSPEC_HIDDEN;
+SECURITY_STATUS SEC_ENTRY ntlm_MakeSignature(PCtxtHandle, ULONG, PSecBufferDesc, ULONG) DECLSPEC_HIDDEN;
+SECURITY_STATUS SEC_ENTRY ntlm_VerifySignature(PCtxtHandle, PSecBufferDesc, ULONG, PULONG) DECLSPEC_HIDDEN;
+
+SecPkgInfoW *ntlm_package_infoW;
+SecPkgInfoA *ntlm_package_infoA;
 
 /* schannel internal interface */
 typedef struct schan_imp_session_opaque *schan_imp_session;
-typedef struct schan_imp_certificate_credentials_opaque *schan_imp_certificate_credentials;
+
+typedef struct schan_credentials
+{
+    ULONG credential_use;
+    void *credentials;
+    DWORD enabled_protocols;
+} schan_credentials;
 
 struct schan_transport;
 
@@ -207,24 +243,25 @@ extern int schan_push(struct schan_transport *t, const void *buff, size_t *buff_
 extern schan_imp_session schan_session_for_transport(struct schan_transport* t) DECLSPEC_HIDDEN;
 
 /* schannel implementation interface */
-extern BOOL schan_imp_create_session(schan_imp_session *session, BOOL is_server,
-                                     schan_imp_certificate_credentials cred) DECLSPEC_HIDDEN;
+extern BOOL schan_imp_create_session(schan_imp_session *session, schan_credentials *cred) DECLSPEC_HIDDEN;
 extern void schan_imp_dispose_session(schan_imp_session session) DECLSPEC_HIDDEN;
 extern void schan_imp_set_session_transport(schan_imp_session session,
                                             struct schan_transport *t) DECLSPEC_HIDDEN;
+extern void schan_imp_set_session_target(schan_imp_session session, const char *target) DECLSPEC_HIDDEN;
 extern SECURITY_STATUS schan_imp_handshake(schan_imp_session session) DECLSPEC_HIDDEN;
 extern unsigned int schan_imp_get_session_cipher_block_size(schan_imp_session session) DECLSPEC_HIDDEN;
 extern unsigned int schan_imp_get_max_message_size(schan_imp_session session) DECLSPEC_HIDDEN;
 extern SECURITY_STATUS schan_imp_get_connection_info(schan_imp_session session,
                                                      SecPkgContext_ConnectionInfo *info) DECLSPEC_HIDDEN;
-extern SECURITY_STATUS schan_imp_get_session_peer_certificate(schan_imp_session session,
+extern SECURITY_STATUS schan_imp_get_session_peer_certificate(schan_imp_session session, HCERTSTORE,
                                                               PCCERT_CONTEXT *cert) DECLSPEC_HIDDEN;
 extern SECURITY_STATUS schan_imp_send(schan_imp_session session, const void *buffer,
                                       SIZE_T *length) DECLSPEC_HIDDEN;
 extern SECURITY_STATUS schan_imp_recv(schan_imp_session session, void *buffer,
                                       SIZE_T *length) DECLSPEC_HIDDEN;
-extern BOOL schan_imp_allocate_certificate_credentials(schan_imp_certificate_credentials *c) DECLSPEC_HIDDEN;
-extern void schan_imp_free_certificate_credentials(schan_imp_certificate_credentials c) DECLSPEC_HIDDEN;
+extern BOOL schan_imp_allocate_certificate_credentials(schan_credentials*) DECLSPEC_HIDDEN;
+extern void schan_imp_free_certificate_credentials(schan_credentials*) DECLSPEC_HIDDEN;
+extern DWORD schan_imp_enabled_protocols(void) DECLSPEC_HIDDEN;
 extern BOOL schan_imp_init(void) DECLSPEC_HIDDEN;
 extern void schan_imp_deinit(void) DECLSPEC_HIDDEN;
 

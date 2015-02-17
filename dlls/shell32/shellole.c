@@ -63,6 +63,7 @@ static const struct {
 	LPFNCREATEINSTANCE	lpfnCI;
 } InterfaceTable[] = {
 
+	{&CLSID_ApplicationAssociationRegistration, ApplicationAssociationRegistration_Constructor},
 	{&CLSID_AutoComplete,   IAutoComplete_Constructor},
 	{&CLSID_ControlPanel,	IControlPanel_Constructor},
 	{&CLSID_DragDropHelper, IDropTargetHelper_Constructor},
@@ -99,7 +100,7 @@ static const struct {
  *     exported by ordinal
  *
  * SEE ALSO
- *     CoCreateInstace, SHLoadOLE
+ *     CoCreateInstance, SHLoadOLE
  */
 HRESULT WINAPI SHCoCreateInstance(
 	LPCWSTR aclsid,
@@ -112,10 +113,10 @@ HRESULT WINAPI SHCoCreateInstance(
 	IID	iid;
 	const	CLSID * myclsid = clsid;
 	WCHAR	sKeyName[MAX_PATH];
-	const	WCHAR sCLSID[7] = {'C','L','S','I','D','\\','\0'};
+	static const WCHAR sCLSID[] = {'C','L','S','I','D','\\','\0'};
 	WCHAR	sClassID[60];
-	const WCHAR sInProcServer32[16] ={'\\','I','n','p','r','o','c','S','e','r','v','e','r','3','2','\0'};
-	const WCHAR sLoadWithoutCOM[15] ={'L','o','a','d','W','i','t','h','o','u','t','C','O','M','\0'};
+	static const WCHAR sInProcServer32[] = {'\\','I','n','p','r','o','c','S','e','r','v','e','r','3','2','\0'};
+	static const WCHAR sLoadWithoutCOM[] = {'L','o','a','d','W','i','t','h','o','u','t','C','O','M','\0'};
 	WCHAR	sDllPath[MAX_PATH];
 	HKEY	hKey = 0;
 	DWORD	dwSize;
@@ -507,7 +508,7 @@ HRESULT WINAPI SHCreateDefClassObject(
 	if (! IsEqualCLSID(riid, &IID_IClassFactory) ) return E_NOINTERFACE;
 	if (! (pcf = IDefClF_fnConstructor(lpfnCI, (PLONG)pcRefDll, riidInst))) return E_OUTOFMEMORY;
 	*ppv = pcf;
-	return NOERROR;
+	return S_OK;
 }
 
 /*************************************************************************
@@ -792,4 +793,15 @@ HRESULT WINAPI SHPropStgWriteMultiple(IPropertyStorage *pps, UINT *uCodePage,
 
     hres = IPropertyStorage_WriteMultiple(pps, cpspec, rgpspec, rgvar, propidNameFirst);
     return hres;
+}
+
+/*************************************************************************
+ *  SHCreateQueryCancelAutoPlayMoniker [SHELL32.@]
+ */
+HRESULT WINAPI SHCreateQueryCancelAutoPlayMoniker(IMoniker **moniker)
+{
+    TRACE("%p\n", moniker);
+
+    if (!moniker) return E_INVALIDARG;
+    return CreateClassMoniker(&CLSID_QueryCancelAutoPlay, moniker);
 }

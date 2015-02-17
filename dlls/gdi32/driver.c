@@ -28,7 +28,6 @@
 #include <stdio.h>
 #include "windef.h"
 #include "winbase.h"
-#include "winreg.h"
 #include "ddrawgdi.h"
 #include "wine/winbase16.h"
 
@@ -94,44 +93,16 @@ static struct graphics_driver *create_driver( HMODULE module )
  */
 static const struct gdi_dc_funcs *get_display_driver(void)
 {
-    struct graphics_driver *driver;
-    char buffer[MAX_PATH], libname[32], *name, *next;
-    HMODULE module = 0;
-    HKEY hkey;
-
-    if (display_driver) return display_driver->funcs;  /* already loaded */
-
-    strcpy( buffer, "x11" );  /* default value */
-    /* @@ Wine registry key: HKCU\Software\Wine\Drivers */
-    if (!RegOpenKeyA( HKEY_CURRENT_USER, "Software\\Wine\\Drivers", &hkey ))
+    if (!display_driver)
     {
-        DWORD type, count = sizeof(buffer);
-        RegQueryValueExA( hkey, "Graphics", 0, &type, (LPBYTE) buffer, &count );
-        RegCloseKey( hkey );
-    }
+        HMODULE user32 = LoadLibraryA( "user32.dll" );
+        HWND (WINAPI *pGetDesktopWindow)(void) = (void *)GetProcAddress( user32, "GetDesktopWindow" );
 
-    name = buffer;
-    while (name)
-    {
-        next = strchr( name, ',' );
-        if (next) *next++ = 0;
-
-        snprintf( libname, sizeof(libname), "wine%s.drv", name );
-        if ((module = LoadLibraryA( libname )) != 0) break;
-        name = next;
-    }
-
-    if (!(driver = create_driver( module )))
-    {
-        MESSAGE( "Could not create graphics driver '%s'\n", buffer );
-        FreeLibrary( module );
-        ExitProcess(1);
-    }
-    if (InterlockedCompareExchangePointer( (void **)&display_driver, driver, NULL ))
-    {
-        /* somebody beat us to it */
-        FreeLibrary( driver->module );
-        HeapFree( GetProcessHeap(), 0, driver );
+        if (!pGetDesktopWindow() || !display_driver)
+        {
+            WARN( "failed to load the display driver, falling back to null driver\n" );
+            __wine_set_display_driver( 0 );
+        }
     }
     return display_driver->funcs;
 }
@@ -153,6 +124,7 @@ const struct gdi_dc_funcs *DRIVER_load_driver( LPCWSTR name )
     if ((module = GetModuleHandleW( name )))
     {
         if (display_driver && display_driver->module == module) return display_driver->funcs;
+
         EnterCriticalSection( &driver_section );
         LIST_FOR_EACH_ENTRY( driver, &drivers, struct graphics_driver, entry )
         {
@@ -187,6 +159,23 @@ done:
 }
 
 
+/***********************************************************************
+ *           __wine_set_display_driver    (GDI32.@)
+ */
+void CDECL __wine_set_display_driver( HMODULE module )
+{
+    struct graphics_driver *driver;
+
+    if (!(driver = create_driver( module )))
+    {
+        ERR( "Could not create graphics driver\n" );
+        ExitProcess(1);
+    }
+    if (InterlockedCompareExchangePointer( (void **)&display_driver, driver, NULL ))
+        HeapFree( GetProcessHeap(), 0, driver );
+}
+
+
 static INT nulldrv_AbortDoc( PHYSDEV dev )
 {
     return 0;
@@ -198,18 +187,8 @@ static BOOL nulldrv_Arc( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
     return TRUE;
 }
 
-static INT nulldrv_ChoosePixelFormat( PHYSDEV dev, const PIXELFORMATDESCRIPTOR *descr )
-{
-    return 0;
-}
-
 static BOOL nulldrv_Chord( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
                            INT xstart, INT ystart, INT xend, INT yend )
-{
-    return TRUE;
-}
-
-static BOOL nulldrv_CreateBitmap( PHYSDEV dev, HBITMAP bitmap )
 {
     return TRUE;
 }
@@ -227,16 +206,6 @@ static BOOL nulldrv_CreateDC( PHYSDEV *dev, LPCWSTR driver, LPCWSTR device,
     return FALSE;
 }
 
-static HBITMAP nulldrv_CreateDIBSection( PHYSDEV dev, HBITMAP bitmap, BITMAPINFO *info, UINT usage )
-{
-    return bitmap;
-}
-
-static BOOL nulldrv_DeleteBitmap( HBITMAP bitmap )
-{
-    return TRUE;
-}
-
 static BOOL nulldrv_DeleteDC( PHYSDEV dev )
 {
     assert(0);  /* should never be called */
@@ -246,11 +215,6 @@ static BOOL nulldrv_DeleteDC( PHYSDEV dev )
 static BOOL nulldrv_DeleteObject( PHYSDEV dev, HGDIOBJ obj )
 {
     return TRUE;
-}
-
-static INT nulldrv_DescribePixelFormat( PHYSDEV dev, INT format, UINT size, PIXELFORMATDESCRIPTOR * descr )
-{
-    return 0;
 }
 
 static DWORD nulldrv_DeviceCapabilities( LPSTR buffer, LPCSTR device, LPCSTR port,
@@ -301,12 +265,6 @@ static BOOL nulldrv_ExtFloodFill( PHYSDEV dev, INT x, INT y, COLORREF color, UIN
     return TRUE;
 }
 
-static BOOL nulldrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags, const RECT *rect,
-                                LPCWSTR str, UINT count, const INT *dx )
-{
-    return TRUE;
-}
-
 static BOOL nulldrv_FontIsLinked( PHYSDEV dev )
 {
     return FALSE;
@@ -320,6 +278,11 @@ static BOOL nulldrv_GdiComment( PHYSDEV dev, UINT size, const BYTE *data )
 static BOOL nulldrv_GdiRealizationInfo( PHYSDEV dev, void *info )
 {
     return FALSE;
+}
+
+static UINT nulldrv_GetBoundsRect( PHYSDEV dev, RECT *rect, UINT flags )
+{
+    return DCB_RESET;
 }
 
 static BOOL nulldrv_GetCharABCWidths( PHYSDEV dev, UINT first, UINT last, LPABC abc )
@@ -361,6 +324,7 @@ static INT nulldrv_GetDeviceCaps( PHYSDEV dev, INT cap )
 
 static BOOL nulldrv_GetDeviceGammaRamp( PHYSDEV dev, void *ramp )
 {
+    SetLastError( ERROR_INVALID_PARAMETER );
     return FALSE;
 }
 
@@ -390,22 +354,18 @@ static BOOL nulldrv_GetICMProfile( PHYSDEV dev, LPDWORD size, LPWSTR filename )
     return FALSE;
 }
 
+static DWORD nulldrv_GetImage( PHYSDEV dev, BITMAPINFO *info, struct gdi_image_bits *bits,
+                               struct bitblt_coords *src )
+{
+    return ERROR_NOT_SUPPORTED;
+}
+
 static DWORD nulldrv_GetKerningPairs( PHYSDEV dev, DWORD count, LPKERNINGPAIR pairs )
 {
     return 0;
 }
 
 static UINT nulldrv_GetOutlineTextMetrics( PHYSDEV dev, UINT size, LPOUTLINETEXTMETRICW otm )
-{
-    return 0;
-}
-
-static COLORREF nulldrv_GetPixel( PHYSDEV dev, INT x, INT y )
-{
-    return CLR_INVALID;
-}
-
-static INT nulldrv_GetPixelFormat( PHYSDEV dev )
 {
     return 0;
 }
@@ -420,14 +380,12 @@ static UINT nulldrv_GetTextCharsetInfo( PHYSDEV dev, LPFONTSIGNATURE fs, DWORD f
     return DEFAULT_CHARSET;
 }
 
-static BOOL nulldrv_GetTextExtentExPoint( PHYSDEV dev, LPCWSTR str, INT count, INT max_ext,
-                                          INT *fit, INT *dx, SIZE *size )
+static BOOL nulldrv_GetTextExtentExPoint( PHYSDEV dev, LPCWSTR str, INT count, INT *dx )
 {
     return FALSE;
 }
 
-static BOOL nulldrv_GetTextExtentExPointI( PHYSDEV dev, const WORD *indices, INT count, INT max_ext,
-                                           INT *fit, INT *dx, SIZE *size )
+static BOOL nulldrv_GetTextExtentExPointI( PHYSDEV dev, const WORD *indices, INT count, INT *dx )
 {
     return FALSE;
 }
@@ -483,24 +441,34 @@ static BOOL nulldrv_Pie( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
 
 static BOOL nulldrv_PolyPolygon( PHYSDEV dev, const POINT *points, const INT *counts, UINT polygons )
 {
-    /* FIXME: could be implemented with Polygon */
     return TRUE;
 }
 
 static BOOL nulldrv_PolyPolyline( PHYSDEV dev, const POINT *points, const DWORD *counts, DWORD lines )
 {
-    /* FIXME: could be implemented with Polyline */
     return TRUE;
 }
 
 static BOOL nulldrv_Polygon( PHYSDEV dev, const POINT *points, INT count )
 {
-    return TRUE;
+    INT counts[1] = { count };
+
+    return PolyPolygon( dev->hdc, points, counts, 1 );
 }
 
 static BOOL nulldrv_Polyline( PHYSDEV dev, const POINT *points, INT count )
 {
-    return TRUE;
+    DWORD counts[1] = { count };
+
+    if (count < 0) return FALSE;
+    return PolyPolyline( dev->hdc, points, counts, 1 );
+}
+
+static DWORD nulldrv_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info,
+                               const struct gdi_image_bits *bits, struct bitblt_coords *src,
+                               struct bitblt_coords *dst, DWORD rop )
+{
+    return ERROR_SUCCESS;
 }
 
 static UINT nulldrv_RealizeDefaultPalette( PHYSDEV dev )
@@ -534,15 +502,9 @@ static HBITMAP nulldrv_SelectBitmap( PHYSDEV dev, HBITMAP bitmap )
     return bitmap;
 }
 
-static HBRUSH nulldrv_SelectBrush( PHYSDEV dev, HBRUSH brush, HBITMAP bitmap,
-                                   const BITMAPINFO *info, void *bits, UINT usage )
+static HBRUSH nulldrv_SelectBrush( PHYSDEV dev, HBRUSH brush, const struct brush_pattern *pattern )
 {
     return brush;
-}
-
-static HFONT nulldrv_SelectFont( PHYSDEV dev, HFONT font )
-{
-    return 0;
 }
 
 static HPALETTE nulldrv_SelectPalette( PHYSDEV dev, HPALETTE palette, BOOL bkgnd )
@@ -550,7 +512,7 @@ static HPALETTE nulldrv_SelectPalette( PHYSDEV dev, HPALETTE palette, BOOL bkgnd
     return palette;
 }
 
-static HPEN nulldrv_SelectPen( PHYSDEV dev, HPEN pen )
+static HPEN nulldrv_SelectPen( PHYSDEV dev, HPEN pen, const struct brush_pattern *pattern )
 {
     return pen;
 }
@@ -570,6 +532,11 @@ static INT nulldrv_SetBkMode( PHYSDEV dev, INT mode )
     return mode;
 }
 
+static UINT nulldrv_SetBoundsRect( PHYSDEV dev, RECT *rect, UINT flags )
+{
+    return DCB_RESET;
+}
+
 static COLORREF nulldrv_SetDCBrushColor( PHYSDEV dev, COLORREF color )
 {
     return color;
@@ -580,12 +547,7 @@ static COLORREF nulldrv_SetDCPenColor( PHYSDEV dev, COLORREF color )
     return color;
 }
 
-static UINT nulldrv_SetDIBColorTable( PHYSDEV dev, UINT pos, UINT count, const RGBQUAD *colors )
-{
-    return 0;
-}
-
-static void nulldrv_SetDeviceClipping( PHYSDEV dev, HRGN vis_rgn, HRGN clip_rgn )
+static void nulldrv_SetDeviceClipping( PHYSDEV dev, HRGN rgn )
 {
 }
 
@@ -596,6 +558,7 @@ static DWORD nulldrv_SetLayout( PHYSDEV dev, DWORD layout )
 
 static BOOL nulldrv_SetDeviceGammaRamp( PHYSDEV dev, void *ramp )
 {
+    SetLastError( ERROR_INVALID_PARAMETER );
     return FALSE;
 }
 
@@ -607,11 +570,6 @@ static DWORD nulldrv_SetMapperFlags( PHYSDEV dev, DWORD flags )
 static COLORREF nulldrv_SetPixel( PHYSDEV dev, INT x, INT y, COLORREF color )
 {
     return color;
-}
-
-static BOOL nulldrv_SetPixelFormat( PHYSDEV dev, INT format, const PIXELFORMATDESCRIPTOR *descr )
-{
-    return FALSE;
 }
 
 static INT nulldrv_SetPolyFillMode( PHYSDEV dev, INT mode )
@@ -664,74 +622,14 @@ static INT nulldrv_StartPage( PHYSDEV dev )
     return 1;
 }
 
-static BOOL nulldrv_SwapBuffers( PHYSDEV dev )
-{
-    return TRUE;
-}
-
 static BOOL nulldrv_UnrealizePalette( HPALETTE palette )
 {
     return FALSE;
 }
 
-static BOOL nulldrv_wglCopyContext( HGLRC ctx_src, HGLRC ctx_dst, UINT mask )
+static struct opengl_funcs *nulldrv_wine_get_wgl_driver( PHYSDEV dev, UINT version )
 {
-    return FALSE;
-}
-
-static HGLRC nulldrv_wglCreateContext( PHYSDEV dev )
-{
-    return 0;
-}
-
-static HGLRC nulldrv_wglCreateContextAttribsARB( PHYSDEV dev, HGLRC share_ctx, const int *attribs )
-{
-    return 0;
-}
-
-static BOOL nulldrv_wglDeleteContext( HGLRC ctx )
-{
-    return FALSE;
-}
-
-static PROC nulldrv_wglGetProcAddress( LPCSTR name )
-{
-    return NULL;
-}
-
-static HDC nulldrv_wglGetPbufferDCARB( PHYSDEV dev, void *pbuffer )
-{
-    return 0;
-}
-
-static BOOL nulldrv_wglMakeCurrent( PHYSDEV dev, HGLRC ctx )
-{
-    return FALSE;
-}
-
-static BOOL nulldrv_wglMakeContextCurrentARB( PHYSDEV dev_draw, PHYSDEV dev_read, HGLRC ctx )
-{
-    return FALSE;
-}
-
-static BOOL nulldrv_wglSetPixelFormatWINE( PHYSDEV dev, INT format, const PIXELFORMATDESCRIPTOR *descr )
-{
-    return FALSE;
-}
-
-static BOOL nulldrv_wglShareLists( HGLRC ctx1, HGLRC ctx2 )
-{
-    return FALSE;
-}
-
-static BOOL nulldrv_wglUseFontBitmapsA( PHYSDEV dev, DWORD start, DWORD count, DWORD base )
-{
-    return FALSE;
-}
-
-static BOOL nulldrv_wglUseFontBitmapsW( PHYSDEV dev, DWORD start, DWORD count, DWORD base )
-{
-    return FALSE;
+    return (void *)-1;
 }
 
 const struct gdi_dc_funcs null_driver =
@@ -744,17 +642,12 @@ const struct gdi_dc_funcs null_driver =
     nulldrv_ArcTo,                      /* pArcTo */
     nulldrv_BeginPath,                  /* pBeginPath */
     nulldrv_BlendImage,                 /* pBlendImage */
-    nulldrv_ChoosePixelFormat,          /* pChoosePixelFormat */
     nulldrv_Chord,                      /* pChord */
     nulldrv_CloseFigure,                /* pCloseFigure */
-    nulldrv_CreateBitmap,               /* pCreateBitmap */
     nulldrv_CreateCompatibleDC,         /* pCreateCompatibleDC */
     nulldrv_CreateDC,                   /* pCreateDC */
-    nulldrv_CreateDIBSection,           /* pCreateDIBSection */
-    nulldrv_DeleteBitmap,               /* pDeleteBitmap */
     nulldrv_DeleteDC,                   /* pDeleteDC */
     nulldrv_DeleteObject,               /* pDeleteObject */
-    nulldrv_DescribePixelFormat,        /* pDescribePixelFormat */
     nulldrv_DeviceCapabilities,         /* pDeviceCapabilities */
     nulldrv_Ellipse,                    /* pEllipse */
     nulldrv_EndDoc,                     /* pEndDoc */
@@ -775,6 +668,7 @@ const struct gdi_dc_funcs null_driver =
     nulldrv_FrameRgn,                   /* pFrameRgn */
     nulldrv_GdiComment,                 /* pGdiComment */
     nulldrv_GdiRealizationInfo,         /* pGdiRealizationInfo */
+    nulldrv_GetBoundsRect,              /* pGetBoundsRect */
     nulldrv_GetCharABCWidths,           /* pGetCharABCWidths */
     nulldrv_GetCharABCWidthsI,          /* pGetCharABCWidthsI */
     nulldrv_GetCharWidth,               /* pGetCharWidth */
@@ -790,7 +684,6 @@ const struct gdi_dc_funcs null_driver =
     nulldrv_GetNearestColor,            /* pGetNearestColor */
     nulldrv_GetOutlineTextMetrics,      /* pGetOutlineTextMetrics */
     nulldrv_GetPixel,                   /* pGetPixel */
-    nulldrv_GetPixelFormat,             /* pGetPixelFormat */
     nulldrv_GetSystemPaletteEntries,    /* pGetSystemPaletteEntries */
     nulldrv_GetTextCharsetInfo,         /* pGetTextCharsetInfo */
     nulldrv_GetTextExtentExPoint,       /* pGetTextExtentExPoint */
@@ -836,9 +729,9 @@ const struct gdi_dc_funcs null_driver =
     nulldrv_SetArcDirection,            /* pSetArcDirection */
     nulldrv_SetBkColor,                 /* pSetBkColor */
     nulldrv_SetBkMode,                  /* pSetBkMode */
+    nulldrv_SetBoundsRect,              /* pSetBoundsRect */
     nulldrv_SetDCBrushColor,            /* pSetDCBrushColor */
     nulldrv_SetDCPenColor,              /* pSetDCPenColor */
-    nulldrv_SetDIBColorTable,           /* pSetDIBColorTable */
     nulldrv_SetDIBitsToDevice,          /* pSetDIBitsToDevice */
     nulldrv_SetDeviceClipping,          /* pSetDeviceClipping */
     nulldrv_SetDeviceGammaRamp,         /* pSetDeviceGammaRamp */
@@ -846,7 +739,6 @@ const struct gdi_dc_funcs null_driver =
     nulldrv_SetMapMode,                 /* pSetMapMode */
     nulldrv_SetMapperFlags,             /* pSetMapperFlags */
     nulldrv_SetPixel,                   /* pSetPixel */
-    nulldrv_SetPixelFormat,             /* pSetPixelFormat */
     nulldrv_SetPolyFillMode,            /* pSetPolyFillMode */
     nulldrv_SetROP2,                    /* pSetROP2 */
     nulldrv_SetRelAbs,                  /* pSetRelAbs */
@@ -866,21 +758,11 @@ const struct gdi_dc_funcs null_driver =
     nulldrv_StretchDIBits,              /* pStretchDIBits */
     nulldrv_StrokeAndFillPath,          /* pStrokeAndFillPath */
     nulldrv_StrokePath,                 /* pStrokePath */
-    nulldrv_SwapBuffers,                /* pSwapBuffers */
     nulldrv_UnrealizePalette,           /* pUnrealizePalette */
     nulldrv_WidenPath,                  /* pWidenPath */
-    nulldrv_wglCopyContext,             /* pwglCopyContext */
-    nulldrv_wglCreateContext,           /* pwglCreateContext */
-    nulldrv_wglCreateContextAttribsARB, /* pwglCreateContextAttribsARB */
-    nulldrv_wglDeleteContext,           /* pwglDeleteContext */
-    nulldrv_wglGetPbufferDCARB,         /* pwglGetPbufferDCARB */
-    nulldrv_wglGetProcAddress,          /* pwglGetProcAddress */
-    nulldrv_wglMakeContextCurrentARB,   /* pwglMakeContextCurrentARB */
-    nulldrv_wglMakeCurrent,             /* pwglMakeCurrent */
-    nulldrv_wglSetPixelFormatWINE,      /* pwglSetPixelFormatWINE */
-    nulldrv_wglShareLists,              /* pwglShareLists */
-    nulldrv_wglUseFontBitmapsA,         /* pwglUseFontBitmapsA */
-    nulldrv_wglUseFontBitmapsW,         /* pwglUseFontBitmapsW */
+    nulldrv_wine_get_wgl_driver,        /* wine_get_wgl_driver */
+
+    GDI_PRIORITY_NULL_DRV               /* priority */
 };
 
 
@@ -1176,9 +1058,11 @@ INT WINAPI Escape( HDC hdc, INT escape, INT in_count, LPCSTR in_data, LPVOID out
 
     case QUERYESCSUPPORT:
         {
-            const INT *ptr = (const INT *)in_data;
-            if (in_count < sizeof(INT)) return 0;
-            switch(*ptr)
+            DWORD code;
+
+            if (in_count < sizeof(SHORT)) return 0;
+            code = (in_count < sizeof(DWORD)) ? *(const USHORT *)in_data : *(const DWORD *)in_data;
+            switch (code)
             {
             case ABORTDOC:
             case ENDDOC:
@@ -1221,16 +1105,15 @@ INT WINAPI Escape( HDC hdc, INT escape, INT in_count, LPCSTR in_data, LPVOID out
 INT WINAPI ExtEscape( HDC hdc, INT nEscape, INT cbInput, LPCSTR lpszInData,
                       INT cbOutput, LPSTR lpszOutData )
 {
-    INT ret = 0;
+    PHYSDEV physdev;
+    INT ret;
     DC * dc = get_dc_ptr( hdc );
 
-    if (dc)
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pExtEscape );
-        update_dc( dc );
-        ret = physdev->funcs->pExtEscape( physdev, nEscape, cbInput, lpszInData, cbOutput, lpszOutData );
-        release_dc_ptr( dc );
-    }
+    if (!dc) return 0;
+    update_dc( dc );
+    physdev = GET_DC_PHYSDEV( dc, pExtEscape );
+    ret = physdev->funcs->pExtEscape( physdev, nEscape, cbInput, lpszInData, cbOutput, lpszOutData );
+    release_dc_ptr( dc );
     return ret;
 }
 

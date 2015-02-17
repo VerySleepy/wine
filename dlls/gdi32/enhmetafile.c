@@ -50,7 +50,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(enhmetafile);
 
 typedef struct
 {
-    GDIOBJHDR      header;
     ENHMETAHEADER  *emh;
     BOOL           on_disk;   /* true if metafile is on disk */
 } ENHMETAFILEOBJ;
@@ -270,7 +269,7 @@ HENHMETAFILE EMF_Create_HENHMETAFILE(ENHMETAHEADER *emh, BOOL on_disk )
     metaObj->emh = emh;
     metaObj->on_disk = on_disk;
 
-    if (!(hmf = alloc_gdi_handle( &metaObj->header, OBJ_ENHMETAFILE, NULL )))
+    if (!(hmf = alloc_gdi_handle( metaObj, OBJ_ENHMETAFILE, NULL )))
         HeapFree( GetProcessHeap(), 0, metaObj );
     return hmf;
 }
@@ -1417,7 +1416,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
         if ((info->state.mode != MM_ISOTROPIC) && (info->state.mode != MM_ANISOTROPIC))
 	    break;
         if (!lpScaleWindowExtEx->xNum || !lpScaleWindowExtEx->xDenom || 
-            !lpScaleWindowExtEx->xNum || !lpScaleWindowExtEx->yDenom)
+            !lpScaleWindowExtEx->yNum || !lpScaleWindowExtEx->yDenom)
             break;
         info->state.wndExtX = MulDiv(info->state.wndExtX, lpScaleWindowExtEx->xNum,
                                lpScaleWindowExtEx->xDenom);
@@ -2231,7 +2230,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
  *   This function behaves differently in Win9x and WinNT.
  *
  *   In WinNT, the DC's world transform is updated as the EMF changes
- *    the Window/Viewport Extent and Origin or it's world transform.
+ *    the Window/Viewport Extent and Origin or its world transform.
  *    The actual Window/Viewport Extent and Origin are left untouched.
  *
  *   In Win9x, the DC is left untouched, and PlayEnhMetaFileRecord
@@ -2693,11 +2692,8 @@ typedef struct gdi_mf_comment
  *         Translate from old style to new style.
  *
  */
-HENHMETAFILE WINAPI SetWinMetaFileBits(UINT cbBuffer,
-					   CONST BYTE *lpbBuffer,
-					   HDC hdcRef,
-					   CONST METAFILEPICT *lpmfp
-					   )
+HENHMETAFILE WINAPI SetWinMetaFileBits(UINT cbBuffer, const BYTE *lpbBuffer, HDC hdcRef,
+                                       const METAFILEPICT *lpmfp)
 {
     static const WCHAR szDisplayW[] = { 'D','I','S','P','L','A','Y','\0' };
     HMETAFILE hmf = NULL;

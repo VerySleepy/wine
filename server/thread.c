@@ -59,10 +59,10 @@ static const unsigned int supported_cpus = CPU_FLAG(CPU_x86);
 static const unsigned int supported_cpus = CPU_FLAG(CPU_x86_64) | CPU_FLAG(CPU_x86);
 #elif defined(__powerpc__)
 static const unsigned int supported_cpus = CPU_FLAG(CPU_POWERPC);
-#elif defined(__sparc__)
-static const unsigned int supported_cpus = CPU_FLAG(CPU_SPARC);
 #elif defined(__arm__)
 static const unsigned int supported_cpus = CPU_FLAG(CPU_ARM);
+#elif defined(__aarch64__)
+static const unsigned int supported_cpus = CPU_FLAG(CPU_ARM64);
 #else
 #error Unsupported CPU
 #endif
@@ -75,6 +75,9 @@ struct thread_wait
     struct thread          *thread;     /* owner thread */
     int                     count;      /* count of objects */
     int                     flags;
+    int                     abandoned;
+    enum select_op          select;
+    client_ptr_t            key;        /* wait key for keyed events */
     client_ptr_t            cookie;     /* magic cookie to return to client */
     timeout_t               timeout;
     struct timeout_user    *user;
@@ -95,7 +98,7 @@ struct thread_apc
 };
 
 static void dump_thread_apc( struct object *obj, int verbose );
-static int thread_apc_signaled( struct object *obj, struct thread *thread );
+static int thread_apc_signaled( struct object *obj, struct wait_queue_entry *entry );
 static void thread_apc_destroy( struct object *obj );
 static void clear_apc_queue( struct list *queue );
 
@@ -123,7 +126,7 @@ static const struct object_ops thread_apc_ops =
 /* thread operations */
 
 static void dump_thread( struct object *obj, int verbose );
-static int thread_signaled( struct object *obj, struct thread *thread );
+static int thread_signaled( struct object *obj, struct wait_queue_entry *entry );
 static unsigned int thread_map_access( struct object *obj, unsigned int access );
 static void thread_poll_event( struct fd *fd, int event );
 static void destroy_thread( struct object *obj );
@@ -214,7 +217,18 @@ struct thread *create_thread( int fd, struct process *process )
 {
     struct thread *thread;
 
-    if (!(thread = alloc_object( &thread_ops ))) return NULL;
+    if (process->is_terminating)
+    {
+        close( fd );
+        set_error( STATUS_PROCESS_IS_TERMINATING );
+        return NULL;
+    }
+
+    if (!(thread = alloc_object( &thread_ops )))
+    {
+        close( fd );
+        return NULL;
+    }
 
     init_thread_structure( thread );
 
@@ -227,6 +241,7 @@ struct thread *create_thread( int fd, struct process *process )
 
     if (!(thread->id = alloc_ptid( thread )))
     {
+        close( fd );
         release_object( thread );
         return NULL;
     }
@@ -314,7 +329,7 @@ static void dump_thread( struct object *obj, int verbose )
              thread->id, thread->unix_pid, thread->unix_tid, thread->state );
 }
 
-static int thread_signaled( struct object *obj, struct thread *thread )
+static int thread_signaled( struct object *obj, struct wait_queue_entry *entry )
 {
     struct thread *mythread = (struct thread *)obj;
     return (mythread->state == TERMINATED);
@@ -322,9 +337,10 @@ static int thread_signaled( struct object *obj, struct thread *thread )
 
 static unsigned int thread_map_access( struct object *obj, unsigned int access )
 {
-    if (access & GENERIC_READ)    access |= STANDARD_RIGHTS_READ | SYNCHRONIZE;
-    if (access & GENERIC_WRITE)   access |= STANDARD_RIGHTS_WRITE | SYNCHRONIZE;
-    if (access & GENERIC_EXECUTE) access |= STANDARD_RIGHTS_EXECUTE;
+    if (access & GENERIC_READ)    access |= STANDARD_RIGHTS_READ | THREAD_QUERY_INFORMATION | THREAD_GET_CONTEXT | THREAD_QUERY_LIMITED_INFORMATION;
+    if (access & GENERIC_WRITE)   access |= STANDARD_RIGHTS_WRITE | THREAD_SET_INFORMATION | THREAD_SET_CONTEXT |
+                                            THREAD_TERMINATE | THREAD_SUSPEND_RESUME | THREAD_SET_LIMITED_INFORMATION;
+    if (access & GENERIC_EXECUTE) access |= STANDARD_RIGHTS_EXECUTE | SYNCHRONIZE | THREAD_QUERY_LIMITED_INFORMATION;
     if (access & GENERIC_ALL)     access |= THREAD_ALL_ACCESS;
     return access & ~(GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL);
 }
@@ -337,7 +353,7 @@ static void dump_thread_apc( struct object *obj, int verbose )
     fprintf( stderr, "APC owner=%p type=%u\n", apc->owner, apc->call.type );
 }
 
-static int thread_apc_signaled( struct object *obj, struct thread *thread )
+static int thread_apc_signaled( struct object *obj, struct wait_queue_entry *entry )
 {
     struct thread_apc *apc = (struct thread_apc *)obj;
     return apc->executed;
@@ -440,10 +456,10 @@ affinity_t get_thread_affinity( struct thread *thread )
 
         if (!sched_getaffinity( thread->unix_tid, sizeof(set), &set ))
             for (i = 0; i < 8 * sizeof(mask); i++)
-                if (CPU_ISSET( i, &set )) mask |= 1 << i;
+                if (CPU_ISSET( i, &set )) mask |= (affinity_t)1 << i;
     }
 #endif
-    if (!mask) mask = ~0;
+    if (!mask) mask = ~(affinity_t)0;
     return mask;
 }
 
@@ -475,7 +491,7 @@ static void set_thread_info( struct thread *thread,
         if ((req->affinity & thread->process->affinity) != req->affinity)
             set_error( STATUS_INVALID_PARAMETER );
         else if (thread->state == TERMINATED)
-            set_error( STATUS_ACCESS_DENIED );
+            set_error( STATUS_THREAD_IS_TERMINATING );
         else if (set_thread_affinity( thread, req->affinity ))
             file_set_error();
     }
@@ -536,6 +552,26 @@ void remove_queue( struct object *obj, struct wait_queue_entry *entry )
     release_object( obj );
 }
 
+struct thread *get_wait_queue_thread( struct wait_queue_entry *entry )
+{
+    return entry->wait->thread;
+}
+
+enum select_op get_wait_queue_select_op( struct wait_queue_entry *entry )
+{
+    return entry->wait->select;
+}
+
+client_ptr_t get_wait_queue_key( struct wait_queue_entry *entry )
+{
+    return entry->wait->key;
+}
+
+void make_wait_abandoned( struct wait_queue_entry *entry )
+{
+    entry->wait->abandoned = 1;
+}
+
 /* finish waiting */
 static void end_wait( struct thread *thread )
 {
@@ -552,7 +588,8 @@ static void end_wait( struct thread *thread )
 }
 
 /* build the thread wait structure */
-static int wait_on( unsigned int count, struct object *objects[], int flags, timeout_t timeout )
+static int wait_on( const select_op_t *select_op, unsigned int count, struct object *objects[],
+                    int flags, timeout_t timeout )
 {
     struct thread_wait *wait;
     struct wait_queue_entry *entry;
@@ -563,14 +600,16 @@ static int wait_on( unsigned int count, struct object *objects[], int flags, tim
     wait->thread  = current;
     wait->count   = count;
     wait->flags   = flags;
+    wait->select  = select_op->op;
     wait->user    = NULL;
     wait->timeout = timeout;
+    wait->abandoned = 0;
     current->wait = wait;
 
     for (i = 0, entry = wait->queues; i < count; i++, entry++)
     {
         struct object *obj = objects[i];
-        entry->thread = current;
+        entry->wait = wait;
         if (!obj->ops->add_queue( obj, entry ))
         {
             wait->count = i;
@@ -581,10 +620,29 @@ static int wait_on( unsigned int count, struct object *objects[], int flags, tim
     return 1;
 }
 
+static int wait_on_handles( const select_op_t *select_op, unsigned int count, const obj_handle_t *handles,
+                            int flags, timeout_t timeout )
+{
+    struct object *objects[MAXIMUM_WAIT_OBJECTS];
+    unsigned int i;
+    int ret = 0;
+
+    assert( count <= MAXIMUM_WAIT_OBJECTS );
+
+    for (i = 0; i < count; i++)
+        if (!(objects[i] = get_handle_obj( current->process, handles[i], SYNCHRONIZE, NULL )))
+            break;
+
+    if (i == count) ret = wait_on( select_op, count, objects, flags, timeout );
+
+    while (i > 0) release_object( objects[--i] );
+    return ret;
+}
+
 /* check if the thread waiting condition is satisfied */
 static int check_wait( struct thread *thread )
 {
-    int i, signaled;
+    int i;
     struct thread_wait *wait = thread->wait;
     struct wait_queue_entry *entry;
 
@@ -596,31 +654,28 @@ static int check_wait( struct thread *thread )
     /* Suspended threads may not acquire locks, but they can run system APCs */
     if (thread->process->suspend + thread->suspend > 0) return -1;
 
-    if (wait->flags & SELECT_ALL)
+    if (wait->select == SELECT_WAIT_ALL)
     {
         int not_ok = 0;
         /* Note: we must check them all anyway, as some objects may
          * want to do something when signaled, even if others are not */
         for (i = 0, entry = wait->queues; i < wait->count; i++, entry++)
-            not_ok |= !entry->obj->ops->signaled( entry->obj, thread );
+            not_ok |= !entry->obj->ops->signaled( entry->obj, entry );
         if (not_ok) goto other_checks;
         /* Wait satisfied: tell it to all objects */
-        signaled = 0;
         for (i = 0, entry = wait->queues; i < wait->count; i++, entry++)
-            if (entry->obj->ops->satisfied( entry->obj, thread ))
-                signaled = STATUS_ABANDONED_WAIT_0;
-        return signaled;
+            entry->obj->ops->satisfied( entry->obj, entry );
+        return wait->abandoned ? STATUS_ABANDONED_WAIT_0 : STATUS_WAIT_0;
     }
     else
     {
         for (i = 0, entry = wait->queues; i < wait->count; i++, entry++)
         {
-            if (!entry->obj->ops->signaled( entry->obj, thread )) continue;
+            if (!entry->obj->ops->signaled( entry->obj, entry )) continue;
             /* Wait satisfied: tell it to the object */
-            signaled = i;
-            if (entry->obj->ops->satisfied( entry->obj, thread ))
-                signaled = i + STATUS_ABANDONED_WAIT_0;
-            return signaled;
+            entry->obj->ops->satisfied( entry->obj, entry );
+            if (wait->abandoned) i += STATUS_ABANDONED_WAIT_0;
+            return i;
         }
     }
 
@@ -646,12 +701,12 @@ static int send_thread_wakeup( struct thread *thread, client_ptr_t cookie, int s
     else if (errno == EPIPE)
         kill_thread( thread, 0 );  /* normal death */
     else
-        fatal_protocol_perror( thread, "write" );
+        fatal_protocol_error( thread, "write: %s\n", strerror( errno ));
     return -1;
 }
 
 /* attempt to wake up a thread */
-/* return >0 if OK, 0 if the wait condition is still not satisfied */
+/* return >0 if OK, 0 if the wait condition is still not satisfied and -1 on error */
 int wake_thread( struct thread *thread )
 {
     int signaled, count;
@@ -665,9 +720,39 @@ int wake_thread( struct thread *thread )
         if (debug_level) fprintf( stderr, "%04x: *wakeup* signaled=%d\n", thread->id, signaled );
         end_wait( thread );
         if (send_thread_wakeup( thread, cookie, signaled ) == -1) /* error */
-	    break;
+        {
+            if (!count) count = -1;
+            break;
+        }
     }
     return count;
+}
+
+/* attempt to wake up a thread from a wait queue entry, assuming that it is signaled */
+int wake_thread_queue_entry( struct wait_queue_entry *entry )
+{
+    struct thread_wait *wait = entry->wait;
+    struct thread *thread = wait->thread;
+    int signaled;
+    client_ptr_t cookie;
+
+    if (thread->wait != wait) return 0;  /* not the current wait */
+    if (thread->process->suspend + thread->suspend > 0) return 0;  /* cannot acquire locks */
+
+    assert( wait->select != SELECT_WAIT_ALL );
+
+    signaled = entry - wait->queues;
+    entry->obj->ops->satisfied( entry->obj, entry );
+    if (wait->abandoned) signaled += STATUS_ABANDONED_WAIT_0;
+
+    cookie = wait->cookie;
+    if (debug_level) fprintf( stderr, "%04x: *wakeup* signaled=%d\n", thread->id, signaled );
+    end_wait( thread );
+
+    if (send_thread_wakeup( thread, cookie, signaled ) != -1)
+        wake_thread( thread );  /* check other waits too */
+
+    return 1;
 }
 
 /* thread wait timeout */
@@ -704,39 +789,62 @@ static int signal_object( obj_handle_t handle )
 }
 
 /* select on a list of handles */
-static timeout_t select_on( unsigned int count, client_ptr_t cookie, const obj_handle_t *handles,
-                            int flags, timeout_t timeout, obj_handle_t signal_obj )
+static timeout_t select_on( const select_op_t *select_op, data_size_t op_size, client_ptr_t cookie,
+                            int flags, timeout_t timeout )
 {
     int ret;
-    unsigned int i;
-    struct object *objects[MAXIMUM_WAIT_OBJECTS];
+    unsigned int count;
+    struct object *object;
 
     if (timeout <= 0) timeout = current_time - timeout;
 
-    if (count > MAXIMUM_WAIT_OBJECTS)
+    switch (select_op->op)
     {
+    case SELECT_NONE:
+        if (!wait_on( select_op, 0, NULL, flags, timeout )) return timeout;
+        break;
+
+    case SELECT_WAIT:
+    case SELECT_WAIT_ALL:
+        count = (op_size - offsetof( select_op_t, wait.handles )) / sizeof(select_op->wait.handles[0]);
+        if (op_size < offsetof( select_op_t, wait.handles ) || count > MAXIMUM_WAIT_OBJECTS)
+        {
+            set_error( STATUS_INVALID_PARAMETER );
+            return 0;
+        }
+        if (!wait_on_handles( select_op, count, select_op->wait.handles, flags, timeout ))
+            return timeout;
+        break;
+
+    case SELECT_SIGNAL_AND_WAIT:
+        if (!wait_on_handles( select_op, 1, &select_op->signal_and_wait.wait, flags, timeout ))
+            return timeout;
+        if (select_op->signal_and_wait.signal)
+        {
+            if (!signal_object( select_op->signal_and_wait.signal ))
+            {
+                end_wait( current );
+                return timeout;
+            }
+            /* check if we woke ourselves up */
+            if (!current->wait) return timeout;
+        }
+        break;
+
+    case SELECT_KEYED_EVENT_WAIT:
+    case SELECT_KEYED_EVENT_RELEASE:
+        object = (struct object *)get_keyed_event_obj( current->process, select_op->keyed_event.handle,
+                         select_op->op == SELECT_KEYED_EVENT_WAIT ? KEYEDEVENT_WAIT : KEYEDEVENT_WAKE );
+        if (!object) return timeout;
+        ret = wait_on( select_op, 1, &object, flags, timeout );
+        release_object( object );
+        if (!ret) return timeout;
+        current->wait->key = select_op->keyed_event.key;
+        break;
+
+    default:
         set_error( STATUS_INVALID_PARAMETER );
         return 0;
-    }
-    for (i = 0; i < count; i++)
-    {
-        if (!(objects[i] = get_handle_obj( current->process, handles[i], SYNCHRONIZE, NULL )))
-            break;
-    }
-
-    if (i < count) goto done;
-    if (!wait_on( count, objects, flags, timeout )) goto done;
-
-    /* signal the object */
-    if (signal_obj)
-    {
-        if (!signal_object( signal_obj ))
-        {
-            end_wait( current );
-            goto done;
-        }
-        /* check if we woke ourselves up */
-        if (!current->wait) goto done;
     }
 
     if ((ret = check_wait( current )) != -1)
@@ -744,7 +852,7 @@ static timeout_t select_on( unsigned int count, client_ptr_t cookie, const obj_h
         /* condition is already satisfied */
         end_wait( current );
         set_error( ret );
-        goto done;
+        return timeout;
     }
 
     /* now we need to wait */
@@ -754,14 +862,11 @@ static timeout_t select_on( unsigned int count, client_ptr_t cookie, const obj_h
                                                       thread_timeout, current->wait )))
         {
             end_wait( current );
-            goto done;
+            return timeout;
         }
     }
     current->wait->cookie = cookie;
     set_error( STATUS_PENDING );
-
-done:
-    while (i > 0) release_object( objects[--i] );
     return timeout;
 }
 
@@ -769,12 +874,13 @@ done:
 void wake_up( struct object *obj, int max )
 {
     struct list *ptr;
+    int ret;
 
     LIST_FOR_EACH( ptr, &obj->wait_queue )
     {
         struct wait_queue_entry *entry = LIST_ENTRY( ptr, struct wait_queue_entry, entry );
-        if (!wake_thread( entry->thread )) continue;
-        if (max && !--max) break;
+        if (!(ret = wake_thread( get_wait_queue_thread( entry )))) continue;
+        if (ret > 0 && max && !--max) break;
         /* restart at the head of the list since a wake up can change the object wait queue */
         ptr = &obj->wait_queue;
     }
@@ -947,6 +1053,8 @@ int thread_add_inflight_fd( struct thread *thread, int client, int server )
             thread->inflight[i].server = server;
             return i;
         }
+
+    close( server );
     return -1;
 }
 
@@ -986,7 +1094,7 @@ void kill_thread( struct thread *thread, int violent_death )
     if (thread->wait)
     {
         while (thread->wait) end_wait( thread );
-        send_thread_wakeup( thread, 0, STATUS_PENDING );
+        send_thread_wakeup( thread, 0, thread->exit_code );
         /* if it is waiting on the socket, we don't need to send a SIGQUIT */
         violent_death = 0;
     }
@@ -1023,7 +1131,7 @@ static unsigned int get_context_system_regs( enum cpu_type cpu )
     case CPU_x86_64:  return SERVER_CTX_DEBUG_REGISTERS;
     case CPU_POWERPC: return 0;
     case CPU_ARM:     return 0;
-    case CPU_SPARC:   return 0;
+    case CPU_ARM64:   return 0;
     }
     return 0;
 }
@@ -1050,11 +1158,11 @@ void break_thread( struct thread *thread )
     case CPU_POWERPC:
         data.exception.address = thread->context->ctl.powerpc_regs.iar;
         break;
-    case CPU_SPARC:
-        data.exception.address = thread->context->ctl.sparc_regs.pc;
-        break;
     case CPU_ARM:
         data.exception.address = thread->context->ctl.arm_regs.pc;
+        break;
+    case CPU_ARM64:
+        data.exception.address = thread->context->ctl.arm64_regs.pc;
         break;
     }
     generate_debug_event( thread, EXCEPTION_DEBUG_EVENT, &data );
@@ -1094,6 +1202,21 @@ struct token *thread_get_impersonation_token( struct thread *thread )
         return thread->process->token;
 }
 
+/* check if a cpu type can be supported on this server */
+int is_cpu_supported( enum cpu_type cpu )
+{
+    unsigned int prefix_cpu_mask = get_prefix_cpu_mask();
+
+    if (CPU_FLAG(cpu) && (supported_cpus & prefix_cpu_mask & CPU_FLAG(cpu))) return 1;
+    if (!(supported_cpus & prefix_cpu_mask))
+        set_error( STATUS_NOT_SUPPORTED );
+    else if (supported_cpus & CPU_FLAG(cpu))
+        set_error( STATUS_INVALID_IMAGE_WIN_64 );  /* server supports it but not the prefix */
+    else
+        set_error( STATUS_INVALID_IMAGE_FORMAT );
+    return 0;
+}
+
 /* create a new thread */
 DECL_HANDLER(new_thread)
 {
@@ -1123,7 +1246,6 @@ DECL_HANDLER(new_thread)
 /* initialize a new thread */
 DECL_HANDLER(init_thread)
 {
-    unsigned int prefix_cpu_mask = get_prefix_cpu_mask();
     struct process *process = current->process;
     int wait_fd, reply_fd;
 
@@ -1162,14 +1284,7 @@ DECL_HANDLER(init_thread)
 
     if (!process->peb)  /* first thread, initialize the process too */
     {
-        if (!CPU_FLAG(req->cpu) || !(supported_cpus & prefix_cpu_mask & CPU_FLAG(req->cpu)))
-        {
-            if (!(supported_cpus & CPU_64BIT_MASK))
-                set_error( STATUS_NOT_SUPPORTED );
-            else
-                set_error( STATUS_NOT_REGISTRY_FILE );  /* server supports it but not the prefix */
-            return;
-        }
+        if (!is_cpu_supported( req->cpu )) return;
         process->unix_pid = current->unix_pid;
         process->peb      = req->entry;
         process->cpu      = req->cpu;
@@ -1198,7 +1313,7 @@ DECL_HANDLER(init_thread)
     reply->tid     = get_thread_id( current );
     reply->version = SERVER_PROTOCOL_VERSION;
     reply->server_start = server_start_time;
-    reply->all_cpus     = supported_cpus & prefix_cpu_mask;
+    reply->all_cpus     = supported_cpus & get_prefix_cpu_mask();
     return;
 
  error:
@@ -1304,17 +1419,19 @@ DECL_HANDLER(resume_thread)
 /* select on a handle list */
 DECL_HANDLER(select)
 {
+    select_op_t select_op;
+    data_size_t op_size;
     struct thread_apc *apc;
-    unsigned int count;
     const apc_result_t *result = get_req_data();
-    const obj_handle_t *handles = (const obj_handle_t *)(result + 1);
 
     if (get_req_data_size() < sizeof(*result))
     {
         set_error( STATUS_INVALID_PARAMETER );
         return;
     }
-    count = (get_req_data_size() - sizeof(*result)) / sizeof(obj_handle_t);
+    op_size = min( get_req_data_size() - sizeof(*result), sizeof(select_op) );
+    memset( &select_op, 0, sizeof(select_op) );
+    memcpy( &select_op, result + 1, op_size );
 
     /* first store results of previous apc */
     if (req->prev_apc)
@@ -1342,7 +1459,7 @@ DECL_HANDLER(select)
         release_object( apc );
     }
 
-    reply->timeout = select_on( count, req->cookie, handles, req->flags, req->timeout, req->signal );
+    reply->timeout = select_on( &select_op, op_size, req->cookie, req->flags, req->timeout );
 
     if (get_error() == STATUS_USER_APC)
     {

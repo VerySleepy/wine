@@ -31,186 +31,194 @@ WINE_DEFAULT_DEBUG_CHANNEL(dmscript);
 WINE_DECLARE_DEBUG_CHANNEL(dmfile);
 
 
-static ULONG WINAPI IDirectMusicScriptImpl_IUnknown_AddRef (LPUNKNOWN iface);
-static ULONG WINAPI IDirectMusicScriptImpl_IDirectMusicScript_AddRef (LPDIRECTMUSICSCRIPT iface);
-static ULONG WINAPI IDirectMusicScriptImpl_IDirectMusicObject_AddRef (LPDIRECTMUSICOBJECT iface);
-static ULONG WINAPI IDirectMusicScriptImpl_IPersistStream_AddRef (LPPERSISTSTREAM iface);
-
 /*****************************************************************************
  * IDirectMusicScriptImpl implementation
  */
-/* IDirectMusicScriptImpl IUnknown part: */
-static HRESULT WINAPI IDirectMusicScriptImpl_IUnknown_QueryInterface (LPUNKNOWN iface, REFIID riid, LPVOID *ppobj) {
-  ICOM_THIS_MULTI(IDirectMusicScriptImpl, UnknownVtbl, iface);
-  TRACE("(%p, %s, %p)\n", This, debugstr_dmguid(riid), ppobj);
-  
-  if (IsEqualIID (riid, &IID_IUnknown)) {
-    *ppobj = &This->UnknownVtbl;
-    IDirectMusicScriptImpl_IUnknown_AddRef ((LPUNKNOWN)&This->UnknownVtbl);
-    return S_OK;	
-  } else if (IsEqualIID (riid, &IID_IDirectMusicScript)) {
-    *ppobj = &This->ScriptVtbl;
-    IDirectMusicScriptImpl_IDirectMusicScript_AddRef ((LPDIRECTMUSICSCRIPT)&This->ScriptVtbl);
+typedef struct IDirectMusicScriptImpl {
+    IDirectMusicScript IDirectMusicScript_iface;
+    const IDirectMusicObjectVtbl *ObjectVtbl;
+    const IPersistStreamVtbl *PersistStreamVtbl;
+    LONG ref;
+    IDirectMusicPerformance *pPerformance;
+    DMUS_OBJECTDESC *pDesc;
+    DMUS_IO_SCRIPT_HEADER *pHeader;
+    DMUS_IO_VERSION *pVersion;
+    WCHAR *pwzLanguage;
+    WCHAR *pwzSource;
+} IDirectMusicScriptImpl;
+
+static inline IDirectMusicScriptImpl *impl_from_IDirectMusicScript(IDirectMusicScript *iface)
+{
+  return CONTAINING_RECORD(iface, IDirectMusicScriptImpl, IDirectMusicScript_iface);
+}
+
+static HRESULT WINAPI IDirectMusicScriptImpl_QueryInterface(IDirectMusicScript *iface, REFIID riid,
+        void **ret_iface)
+{
+    IDirectMusicScriptImpl *This = impl_from_IDirectMusicScript(iface);
+
+    TRACE("(%p, %s, %p)\n", This, debugstr_dmguid(riid), ret_iface);
+
+    *ret_iface = NULL;
+
+    if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IDirectMusicScript))
+        *ret_iface = iface;
+    else if (IsEqualIID(riid, &IID_IDirectMusicObject))
+        *ret_iface = &This->ObjectVtbl;
+    else if (IsEqualIID(riid, &IID_IPersistStream))
+        *ret_iface = &This->PersistStreamVtbl;
+    else {
+        WARN("(%p, %s, %p): not found\n", This, debugstr_dmguid(riid), ret_iface);
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown*)*ret_iface);
     return S_OK;
-  } else if (IsEqualIID (riid, &IID_IDirectMusicObject)) {
-    *ppobj = &This->ObjectVtbl;
-    IDirectMusicScriptImpl_IDirectMusicObject_AddRef ((LPDIRECTMUSICOBJECT)&This->ObjectVtbl);		
-    return S_OK;
-  } else if (IsEqualIID (riid, &IID_IPersistStream)) {
-    *ppobj = &This->PersistStreamVtbl;
-    IDirectMusicScriptImpl_IPersistStream_AddRef ((LPPERSISTSTREAM)&This->PersistStreamVtbl);		
-    return S_OK;
-  }
-  
-  WARN("(%p, %s, %p): not found\n", This, debugstr_dmguid(riid), ppobj);
-  return E_NOINTERFACE;
 }
 
-static ULONG WINAPI IDirectMusicScriptImpl_IUnknown_AddRef (LPUNKNOWN iface) {
-  ICOM_THIS_MULTI(IDirectMusicScriptImpl, UnknownVtbl, iface);
-  ULONG ref = InterlockedIncrement(&This->ref);
+static ULONG WINAPI IDirectMusicScriptImpl_AddRef(IDirectMusicScript *iface)
+{
+    IDirectMusicScriptImpl *This = impl_from_IDirectMusicScript(iface);
+    LONG ref = InterlockedIncrement(&This->ref);
 
-  TRACE("(%p): AddRef from %d\n", This, ref - 1);
+    TRACE("(%p) ref=%d\n", This, ref);
 
-  DMSCRIPT_LockModule();
-
-  return ref;
+    return ref;
 }
 
-static ULONG WINAPI IDirectMusicScriptImpl_IUnknown_Release (LPUNKNOWN iface) {
-  ICOM_THIS_MULTI(IDirectMusicScriptImpl, UnknownVtbl, iface);
-  ULONG ref = InterlockedDecrement(&This->ref);
+static ULONG WINAPI IDirectMusicScriptImpl_Release(IDirectMusicScript *iface)
+{
+    IDirectMusicScriptImpl *This = impl_from_IDirectMusicScript(iface);
+    LONG ref = InterlockedDecrement(&This->ref);
 
-  TRACE("(%p): ReleaseRef to %d\n", This, ref);
+    TRACE("(%p) ref=%d\n", This, ref);
 
-  if (ref == 0) {
-    HeapFree(GetProcessHeap(), 0, This->pHeader);
-    HeapFree(GetProcessHeap(), 0, This->pVersion);
-    HeapFree(GetProcessHeap(), 0, This->pwzLanguage);
-    HeapFree(GetProcessHeap(), 0, This->pwzSource);
-    HeapFree(GetProcessHeap(), 0, This);
-  }
+    if (!ref) {
+        HeapFree(GetProcessHeap(), 0, This->pHeader);
+        HeapFree(GetProcessHeap(), 0, This->pVersion);
+        HeapFree(GetProcessHeap(), 0, This->pwzLanguage);
+        HeapFree(GetProcessHeap(), 0, This->pwzSource);
+        HeapFree(GetProcessHeap(), 0, This->pDesc);
+        HeapFree(GetProcessHeap(), 0, This);
+        DMSCRIPT_UnlockModule();
+    }
 
-  DMSCRIPT_UnlockModule();
-  
-  return ref;
+    return ref;
 }
 
-static const IUnknownVtbl DirectMusicScript_Unknown_Vtbl = {
-  IDirectMusicScriptImpl_IUnknown_QueryInterface,
-  IDirectMusicScriptImpl_IUnknown_AddRef,
-  IDirectMusicScriptImpl_IUnknown_Release
-};
-
-/* IDirectMusicScriptImpl IDirectMusicScript part: */
-static HRESULT WINAPI IDirectMusicScriptImpl_IDirectMusicScript_QueryInterface (LPDIRECTMUSICSCRIPT iface, REFIID riid, LPVOID *ppobj) {
-  ICOM_THIS_MULTI(IDirectMusicScriptImpl, ScriptVtbl, iface);
-  return IDirectMusicScriptImpl_IUnknown_QueryInterface ((LPUNKNOWN)&This->UnknownVtbl, riid, ppobj);
-}
-
-static ULONG WINAPI IDirectMusicScriptImpl_IDirectMusicScript_AddRef (LPDIRECTMUSICSCRIPT iface) {
-  ICOM_THIS_MULTI(IDirectMusicScriptImpl, ScriptVtbl, iface);
-  return IDirectMusicScriptImpl_IUnknown_AddRef ((LPUNKNOWN)&This->UnknownVtbl);
-}
-
-static ULONG WINAPI IDirectMusicScriptImpl_IDirectMusicScript_Release (LPDIRECTMUSICSCRIPT iface) {
-  ICOM_THIS_MULTI(IDirectMusicScriptImpl, ScriptVtbl, iface);
-  return IDirectMusicScriptImpl_IUnknown_Release ((LPUNKNOWN)&This->UnknownVtbl);
-}
-
-static HRESULT WINAPI IDirectMusicScriptImpl_IDirectMusicScript_Init (LPDIRECTMUSICSCRIPT iface, IDirectMusicPerformance* pPerformance, DMUS_SCRIPT_ERRORINFO* pErrorInfo) {
-  ICOM_THIS_MULTI(IDirectMusicScriptImpl, ScriptVtbl, iface);
+static HRESULT WINAPI IDirectMusicScriptImpl_Init(IDirectMusicScript *iface,
+        IDirectMusicPerformance *pPerformance, DMUS_SCRIPT_ERRORINFO *pErrorInfo)
+{
+  IDirectMusicScriptImpl *This = impl_from_IDirectMusicScript(iface);
   FIXME("(%p, %p, %p): stub\n", This, pPerformance, pErrorInfo);
   This->pPerformance = pPerformance;
   return S_OK;
 }
 
-static HRESULT WINAPI IDirectMusicScriptImpl_IDirectMusicScript_CallRoutine (LPDIRECTMUSICSCRIPT iface, WCHAR* pwszRoutineName, DMUS_SCRIPT_ERRORINFO* pErrorInfo) {
-  ICOM_THIS_MULTI(IDirectMusicScriptImpl, ScriptVtbl, iface);
+static HRESULT WINAPI IDirectMusicScriptImpl_CallRoutine(IDirectMusicScript *iface,
+        WCHAR *pwszRoutineName, DMUS_SCRIPT_ERRORINFO *pErrorInfo)
+{
+  IDirectMusicScriptImpl *This = impl_from_IDirectMusicScript(iface);
   FIXME("(%p, %s, %p): stub\n", This, debugstr_w(pwszRoutineName), pErrorInfo);
   /*return E_NOTIMPL;*/
   return S_OK;
   /*return E_FAIL;*/
 }
 
-static HRESULT WINAPI IDirectMusicScriptImpl_IDirectMusicScript_SetVariableVariant (LPDIRECTMUSICSCRIPT iface, WCHAR* pwszVariableName, VARIANT varValue, BOOL fSetRef, DMUS_SCRIPT_ERRORINFO* pErrorInfo) {
-  ICOM_THIS_MULTI(IDirectMusicScriptImpl, ScriptVtbl, iface);
+static HRESULT WINAPI IDirectMusicScriptImpl_SetVariableVariant(IDirectMusicScript *iface,
+        WCHAR *pwszVariableName, VARIANT varValue, BOOL fSetRef, DMUS_SCRIPT_ERRORINFO *pErrorInfo)
+{
+  IDirectMusicScriptImpl *This = impl_from_IDirectMusicScript(iface);
   FIXME("(%p, %s, FIXME, %d, %p): stub\n", This, debugstr_w(pwszVariableName),/* varValue,*/ fSetRef, pErrorInfo);
   return S_OK;
 }
 
-static HRESULT WINAPI IDirectMusicScriptImpl_IDirectMusicScript_GetVariableVariant (LPDIRECTMUSICSCRIPT iface, WCHAR* pwszVariableName, VARIANT* pvarValue, DMUS_SCRIPT_ERRORINFO* pErrorInfo) {
-  ICOM_THIS_MULTI(IDirectMusicScriptImpl, ScriptVtbl, iface);
+static HRESULT WINAPI IDirectMusicScriptImpl_GetVariableVariant(IDirectMusicScript *iface,
+        WCHAR *pwszVariableName, VARIANT *pvarValue, DMUS_SCRIPT_ERRORINFO *pErrorInfo)
+{
+  IDirectMusicScriptImpl *This = impl_from_IDirectMusicScript(iface);
   FIXME("(%p, %s, %p, %p): stub\n", This, debugstr_w(pwszVariableName), pvarValue, pErrorInfo);
   return S_OK;
 }
 
-static HRESULT WINAPI IDirectMusicScriptImpl_IDirectMusicScript_SetVariableNumber (LPDIRECTMUSICSCRIPT iface, WCHAR* pwszVariableName, LONG lValue, DMUS_SCRIPT_ERRORINFO* pErrorInfo) {
-  ICOM_THIS_MULTI(IDirectMusicScriptImpl, ScriptVtbl, iface);
+static HRESULT WINAPI IDirectMusicScriptImpl_SetVariableNumber(IDirectMusicScript *iface,
+        WCHAR *pwszVariableName, LONG lValue, DMUS_SCRIPT_ERRORINFO *pErrorInfo)
+{
+  IDirectMusicScriptImpl *This = impl_from_IDirectMusicScript(iface);
   FIXME("(%p, %s, %i, %p): stub\n", This, debugstr_w(pwszVariableName), lValue, pErrorInfo);
   return S_OK;
 }
 
-static HRESULT WINAPI IDirectMusicScriptImpl_IDirectMusicScript_GetVariableNumber (LPDIRECTMUSICSCRIPT iface, WCHAR* pwszVariableName, LONG* plValue, DMUS_SCRIPT_ERRORINFO* pErrorInfo) {
-  ICOM_THIS_MULTI(IDirectMusicScriptImpl, ScriptVtbl, iface);
+static HRESULT WINAPI IDirectMusicScriptImpl_GetVariableNumber(IDirectMusicScript *iface,
+        WCHAR *pwszVariableName, LONG *plValue, DMUS_SCRIPT_ERRORINFO *pErrorInfo)
+{
+  IDirectMusicScriptImpl *This = impl_from_IDirectMusicScript(iface);
   FIXME("(%p, %s, %p, %p): stub\n", This, debugstr_w(pwszVariableName), plValue, pErrorInfo);
   return S_OK;
 }
 
-static HRESULT WINAPI IDirectMusicScriptImpl_IDirectMusicScript_SetVariableObject (LPDIRECTMUSICSCRIPT iface, WCHAR* pwszVariableName, IUnknown* punkValue, DMUS_SCRIPT_ERRORINFO* pErrorInfo) {
-  ICOM_THIS_MULTI(IDirectMusicScriptImpl, ScriptVtbl, iface);
+static HRESULT WINAPI IDirectMusicScriptImpl_SetVariableObject(IDirectMusicScript *iface,
+        WCHAR *pwszVariableName, IUnknown *punkValue, DMUS_SCRIPT_ERRORINFO *pErrorInfo)
+{
+  IDirectMusicScriptImpl *This = impl_from_IDirectMusicScript(iface);
   FIXME("(%p, %s, %p, %p): stub\n", This, debugstr_w(pwszVariableName), punkValue, pErrorInfo);
   return S_OK;
 }
 
-static HRESULT WINAPI IDirectMusicScriptImpl_IDirectMusicScript_GetVariableObject (LPDIRECTMUSICSCRIPT iface, WCHAR* pwszVariableName, REFIID riid, LPVOID* ppv, DMUS_SCRIPT_ERRORINFO* pErrorInfo) {
-  ICOM_THIS_MULTI(IDirectMusicScriptImpl, ScriptVtbl, iface);
+static HRESULT WINAPI IDirectMusicScriptImpl_GetVariableObject(IDirectMusicScript *iface,
+        WCHAR *pwszVariableName, REFIID riid, void **ppv, DMUS_SCRIPT_ERRORINFO *pErrorInfo)
+{
+  IDirectMusicScriptImpl *This = impl_from_IDirectMusicScript(iface);
   FIXME("(%p, %s, %s, %p, %p): stub\n", This, debugstr_w(pwszVariableName), debugstr_dmguid(riid), ppv, pErrorInfo);
   return S_OK;
 }
 
-static HRESULT WINAPI IDirectMusicScriptImpl_IDirectMusicScript_EnumRoutine (LPDIRECTMUSICSCRIPT iface, DWORD dwIndex, WCHAR* pwszName) {
-  ICOM_THIS_MULTI(IDirectMusicScriptImpl, ScriptVtbl, iface);
+static HRESULT WINAPI IDirectMusicScriptImpl_EnumRoutine(IDirectMusicScript *iface, DWORD dwIndex,
+        WCHAR *pwszName)
+{
+  IDirectMusicScriptImpl *This = impl_from_IDirectMusicScript(iface);
   FIXME("(%p, %d, %p): stub\n", This, dwIndex, pwszName);
   return S_OK;
 }
 
-static HRESULT WINAPI IDirectMusicScriptImpl_IDirectMusicScript_EnumVariable (LPDIRECTMUSICSCRIPT iface, DWORD dwIndex, WCHAR* pwszName) {
-  ICOM_THIS_MULTI(IDirectMusicScriptImpl, ScriptVtbl, iface);
+static HRESULT WINAPI IDirectMusicScriptImpl_EnumVariable(IDirectMusicScript *iface, DWORD dwIndex,
+        WCHAR *pwszName)
+{
+  IDirectMusicScriptImpl *This = impl_from_IDirectMusicScript(iface);
   FIXME("(%p, %d, %p): stub\n", This, dwIndex, pwszName);
   return S_OK;
 }
 
-static const IDirectMusicScriptVtbl DirectMusicScript_Script_Vtbl = {
-  IDirectMusicScriptImpl_IDirectMusicScript_QueryInterface,
-  IDirectMusicScriptImpl_IDirectMusicScript_AddRef,
-  IDirectMusicScriptImpl_IDirectMusicScript_Release,
-  IDirectMusicScriptImpl_IDirectMusicScript_Init,
-  IDirectMusicScriptImpl_IDirectMusicScript_CallRoutine,
-  IDirectMusicScriptImpl_IDirectMusicScript_SetVariableVariant,
-  IDirectMusicScriptImpl_IDirectMusicScript_GetVariableVariant,
-  IDirectMusicScriptImpl_IDirectMusicScript_SetVariableNumber,
-  IDirectMusicScriptImpl_IDirectMusicScript_GetVariableNumber,
-  IDirectMusicScriptImpl_IDirectMusicScript_SetVariableObject,
-  IDirectMusicScriptImpl_IDirectMusicScript_GetVariableObject,
-  IDirectMusicScriptImpl_IDirectMusicScript_EnumRoutine,
-  IDirectMusicScriptImpl_IDirectMusicScript_EnumVariable
+static const IDirectMusicScriptVtbl dmscript_vtbl = {
+    IDirectMusicScriptImpl_QueryInterface,
+    IDirectMusicScriptImpl_AddRef,
+    IDirectMusicScriptImpl_Release,
+    IDirectMusicScriptImpl_Init,
+    IDirectMusicScriptImpl_CallRoutine,
+    IDirectMusicScriptImpl_SetVariableVariant,
+    IDirectMusicScriptImpl_GetVariableVariant,
+    IDirectMusicScriptImpl_SetVariableNumber,
+    IDirectMusicScriptImpl_GetVariableNumber,
+    IDirectMusicScriptImpl_SetVariableObject,
+    IDirectMusicScriptImpl_GetVariableObject,
+    IDirectMusicScriptImpl_EnumRoutine,
+    IDirectMusicScriptImpl_EnumVariable
 };
 
 /* IDirectMusicScriptImpl IDirectMusicObject part: */
 static HRESULT WINAPI IDirectMusicScriptImpl_IDirectMusicObject_QueryInterface (LPDIRECTMUSICOBJECT iface, REFIID riid, LPVOID *ppobj) {
   ICOM_THIS_MULTI(IDirectMusicScriptImpl, ObjectVtbl, iface);
-  return IDirectMusicScriptImpl_IUnknown_QueryInterface ((LPUNKNOWN)&This->UnknownVtbl, riid, ppobj);
+  return IDirectMusicScript_QueryInterface(&This->IDirectMusicScript_iface, riid, ppobj);
 }
 
 static ULONG WINAPI IDirectMusicScriptImpl_IDirectMusicObject_AddRef (LPDIRECTMUSICOBJECT iface) {
   ICOM_THIS_MULTI(IDirectMusicScriptImpl, ObjectVtbl, iface);
-  return IDirectMusicScriptImpl_IUnknown_AddRef ((LPUNKNOWN)&This->UnknownVtbl);
+  return IDirectMusicScript_AddRef (&This->IDirectMusicScript_iface);
 }
 
 static ULONG WINAPI IDirectMusicScriptImpl_IDirectMusicObject_Release (LPDIRECTMUSICOBJECT iface) {
   ICOM_THIS_MULTI(IDirectMusicScriptImpl, ObjectVtbl, iface);
-  return IDirectMusicScriptImpl_IUnknown_Release ((LPUNKNOWN)&This->UnknownVtbl);
+  return IDirectMusicScript_Release (&This->IDirectMusicScript_iface);
 }
 
 static HRESULT WINAPI IDirectMusicScriptImpl_IDirectMusicObject_GetDescriptor (LPDIRECTMUSICOBJECT iface, LPDMUS_OBJECTDESC pDesc) {
@@ -415,29 +423,26 @@ static const IDirectMusicObjectVtbl DirectMusicScript_Object_Vtbl = {
 /* IDirectMusicScriptImpl IPersistStream part: */
 static HRESULT WINAPI IDirectMusicScriptImpl_IPersistStream_QueryInterface (LPPERSISTSTREAM iface, REFIID riid, LPVOID *ppobj) {
   ICOM_THIS_MULTI(IDirectMusicScriptImpl, PersistStreamVtbl, iface);
-  return IDirectMusicScriptImpl_IUnknown_QueryInterface ((LPUNKNOWN)&This->UnknownVtbl, riid, ppobj);
+  return IDirectMusicScript_QueryInterface(&This->IDirectMusicScript_iface, riid, ppobj);
 }
 
 static ULONG WINAPI IDirectMusicScriptImpl_IPersistStream_AddRef (LPPERSISTSTREAM iface) {
   ICOM_THIS_MULTI(IDirectMusicScriptImpl, PersistStreamVtbl, iface);
-  return IDirectMusicScriptImpl_IUnknown_AddRef ((LPUNKNOWN)&This->UnknownVtbl);
+  return IDirectMusicScript_AddRef(&This->IDirectMusicScript_iface);
 }
 
 static ULONG WINAPI IDirectMusicScriptImpl_IPersistStream_Release (LPPERSISTSTREAM iface) {
   ICOM_THIS_MULTI(IDirectMusicScriptImpl, PersistStreamVtbl, iface);
-  return IDirectMusicScriptImpl_IUnknown_Release ((LPUNKNOWN)&This->UnknownVtbl);
+  return IDirectMusicScript_Release(&This->IDirectMusicScript_iface);
 }
 
 static HRESULT WINAPI IDirectMusicScriptImpl_IPersistStream_GetClassID (LPPERSISTSTREAM iface, CLSID* pClassID) {
-  ICOM_THIS_MULTI(IDirectMusicScriptImpl, PersistStreamVtbl, iface);
-  TRACE("(%p, %p)\n", This, pClassID);
-  *pClassID = CLSID_DirectMusicScript;
-  return S_OK;
+  TRACE("(%p, %p) method not implemented\n", iface, pClassID);
+
+  return E_NOTIMPL;
 }
 
 static HRESULT WINAPI IDirectMusicScriptImpl_IPersistStream_IsDirty (LPPERSISTSTREAM iface) {
-  ICOM_THIS_MULTI(IDirectMusicScriptImpl, PersistStreamVtbl, iface);  
-  FIXME("(%p): stub, always S_FALSE\n", This);
   return S_FALSE;
 }
 
@@ -689,23 +694,32 @@ static const IPersistStreamVtbl DirectMusicScript_PersistStream_Vtbl = {
 };
 
 /* for ClassFactory */
-HRESULT WINAPI DMUSIC_CreateDirectMusicScriptImpl (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) {
-  IDirectMusicScriptImpl* obj;
-  
+HRESULT WINAPI DMUSIC_CreateDirectMusicScriptImpl(REFIID lpcGUID, void **ppobj, IUnknown *pUnkOuter)
+{
+  IDirectMusicScriptImpl *obj;
+  HRESULT hr;
+
+  *ppobj = NULL;
+
+  if (pUnkOuter)
+    return CLASS_E_NOAGGREGATION;
+
   obj = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectMusicScriptImpl));
-  if (NULL == obj) {
-    *ppobj = NULL;
+  if (!obj)
     return E_OUTOFMEMORY;
-  }
-  obj->UnknownVtbl = &DirectMusicScript_Unknown_Vtbl;
-  obj->ScriptVtbl = &DirectMusicScript_Script_Vtbl;
+
+  obj->IDirectMusicScript_iface.lpVtbl = &dmscript_vtbl;
   obj->ObjectVtbl = &DirectMusicScript_Object_Vtbl;
   obj->PersistStreamVtbl = &DirectMusicScript_PersistStream_Vtbl;
   obj->pDesc = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(DMUS_OBJECTDESC));
   DM_STRUCT_INIT(obj->pDesc);
   obj->pDesc->dwValidData |= DMUS_OBJ_CLASS;
   obj->pDesc->guidClass = CLSID_DirectMusicScript;
-  obj->ref = 0; /* will be inited by QueryInterface */
+  obj->ref = 1;
 
-  return IDirectMusicScriptImpl_IUnknown_QueryInterface ((LPUNKNOWN)&obj->UnknownVtbl, lpcGUID, ppobj);
+  DMSCRIPT_LockModule();
+  hr = IDirectMusicScript_QueryInterface(&obj->IDirectMusicScript_iface, lpcGUID, ppobj);
+  IDirectMusicScript_Release(&obj->IDirectMusicScript_iface);
+
+  return hr;
 }

@@ -118,7 +118,7 @@ static unsigned dbg_fetch_context(void)
  * or exception is silently continued(return FALSE)
  * is_debug means the exception is a breakpoint or single step exception
  */
-static unsigned dbg_exception_prolog(BOOL is_debug, const EXCEPTION_RECORD* rec)
+static BOOL dbg_exception_prolog(BOOL is_debug, const EXCEPTION_RECORD* rec)
 {
     ADDRESS64   addr;
     BOOL        is_break;
@@ -286,8 +286,8 @@ static BOOL tgt_process_active_close_process(struct dbg_process* pcs, BOOL kill)
 static void fetch_module_name(void* name_addr, BOOL unicode, void* mod_addr,
                               WCHAR* buffer, size_t bufsz, BOOL is_pcs)
 {
-    static WCHAR        pcspid[] = {'P','r','o','c','e','s','s','_','%','0','8','x',0};
-    static WCHAR        dlladdr[] = {'D','L','L','_','%','0','8','l','x',0};
+    static const WCHAR pcspid[] = {'P','r','o','c','e','s','s','_','%','0','8','x',0};
+    static const WCHAR dlladdr[] = {'D','L','L','_','%','0','8','l','x',0};
 
     memory_get_string_indirect(dbg_curr_process, name_addr, unicode, buffer, bufsz);
     if (!buffer[0] &&
@@ -587,7 +587,7 @@ void     dbg_active_wait_for_first_exception(void)
     wait_exception();
 }
 
-static	unsigned dbg_start_debuggee(LPSTR cmdLine)
+static BOOL dbg_start_debuggee(LPSTR cmdLine)
 {
     PROCESS_INFORMATION	info;
     STARTUPINFOA	startup, current;
@@ -602,8 +602,8 @@ static	unsigned dbg_start_debuggee(LPSTR cmdLine)
     startup.wShowWindow = (current.dwFlags & STARTF_USESHOWWINDOW) ?
         current.wShowWindow : SW_SHOWNORMAL;
 
-    /* FIXME: shouldn't need the CREATE_NEW_CONSOLE, but as usual CUI:s need it
-     * while GUI:s don't
+    /* FIXME: shouldn't need the CREATE_NEW_CONSOLE, but as usual CUIs need it
+     * while GUIs don't
      */
     flags = DEBUG_PROCESS | CREATE_NEW_CONSOLE;
     if (!DBG_IVAR(AlsoDebugProcChild)) flags |= DEBUG_ONLY_THIS_PROCESS;
@@ -667,6 +667,52 @@ static BOOL str2int(const char* str, DWORD_PTR* val)
     return str < ptr && !*ptr;
 }
 
+static HANDLE create_temp_file(void)
+{
+    static const WCHAR prefixW[] = {'w','d','b',0};
+    WCHAR path[MAX_PATH], name[MAX_PATH];
+
+    if (!GetTempPathW( MAX_PATH, path ) || !GetTempFileNameW( path, prefixW, 0, name ))
+        return INVALID_HANDLE_VALUE;
+    return CreateFileW( name, GENERIC_READ|GENERIC_WRITE|DELETE, FILE_SHARE_DELETE,
+                        NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE, 0 );
+}
+
+static void output_system_info(void)
+{
+#ifdef __i386__
+    static const char platform[] = "i386";
+#elif defined(__x86_64__)
+    static const char platform[] = "x86_64";
+#elif defined(__powerpc__)
+    static const char platform[] = "powerpc";
+#elif defined(__arm__)
+    static const char platform[] = "arm";
+#elif defined(__aarch64__)
+    static const char platform[] = "arm64";
+#else
+# error CPU unknown
+#endif
+
+    const char *(CDECL *wine_get_build_id)(void);
+    void (CDECL *wine_get_host_version)( const char **sysname, const char **release );
+    BOOL is_wow64;
+
+    wine_get_build_id = (void *)GetProcAddress(GetModuleHandleA("ntdll.dll"), "wine_get_build_id");
+    wine_get_host_version = (void *)GetProcAddress(GetModuleHandleA("ntdll.dll"), "wine_get_host_version");
+    if (!IsWow64Process( dbg_curr_process->handle, &is_wow64 )) is_wow64 = FALSE;
+
+    dbg_printf( "System information:\n" );
+    if (wine_get_build_id) dbg_printf( "    Wine build: %s\n", wine_get_build_id() );
+    dbg_printf( "    Platform: %s%s\n", platform, is_wow64 ? " (WOW64)" : "" );
+    if (wine_get_host_version)
+    {
+        const char *sysname, *release;
+        wine_get_host_version( &sysname, &release );
+        dbg_printf( "    Host system: %s\n", sysname );
+        dbg_printf( "    Host version: %s\n", release );
+    }
+}
 
 /******************************************************************
  *		dbg_active_attach
@@ -754,78 +800,116 @@ enum dbg_start    dbg_active_launch(int argc, char* argv[])
  */
 enum dbg_start dbg_active_auto(int argc, char* argv[])
 {
-    HANDLE              hFile;
+    HANDLE thread = 0, event = 0, input, output = INVALID_HANDLE_VALUE;
     enum dbg_start      ds = start_error_parse;
 
-    if (!strcmp(argv[0], "--auto"))
-    {
-        /* auto mode */
-        argc--; argv++;
-        ds = dbg_active_attach(argc, argv);
-        if (ds != start_ok) {
-            msgbox_res_id(NULL, IDS_INVALID_PARAMS, IDS_AUTO_CAPTION, MB_OK);
-            return ds;
-        }
-        if (!display_crash_dialog()) {
-            dbg_init_console();
-            dbg_start_interactive(INVALID_HANDLE_VALUE);
-            return start_ok;
-        }
+    DBG_IVAR(BreakOnDllLoad) = 0;
 
-        hFile = parser_generate_command_file("echo Modules:", "info share",
-                                             "echo Threads:", "info threads",
-                                             "backtrace", "detach", NULL);
+    /* auto mode */
+    argc--; argv++;
+    ds = dbg_active_attach(argc, argv);
+    if (ds != start_ok) {
+        msgbox_res_id(NULL, IDS_INVALID_PARAMS, IDS_AUTO_CAPTION, MB_OK);
+        return ds;
     }
-    else if (!strcmp(argv[0], "--minidump"))
-    {
-        const char*     file = NULL;
-        char            tmp[8 + 1 + MAX_PATH]; /* minidump <file> */
 
-        argc--; argv++;
-        /* hard stuff now ; we can get things like:
-         * --minidump <pid>                     1 arg
-         * --minidump <pid> <evt>               2 args
-         * --minidump <file> <pid>              2 args
-         * --minidump <file> <pid> <evt>        3 args
-         */
-        switch (argc)
+    switch (display_crash_dialog())
+    {
+    case ID_DEBUG:
+        AllocConsole();
+        dbg_init_console();
+        dbg_start_interactive(INVALID_HANDLE_VALUE);
+        return start_ok;
+    case ID_DETAILS:
+        event = CreateEventW( NULL, TRUE, FALSE, NULL );
+        if (event) thread = display_crash_details( event );
+        if (thread) dbg_houtput = output = create_temp_file();
+        break;
+    }
+
+    input = parser_generate_command_file("echo Modules:", "info share",
+                                         "echo Threads:", "info threads", NULL);
+    if (input == INVALID_HANDLE_VALUE) return start_error_parse;
+
+    if (dbg_curr_process->active_debuggee)
+        dbg_active_wait_for_first_exception();
+
+    dbg_interactiveP = TRUE;
+    parser_handle(input);
+
+    if (output != INVALID_HANDLE_VALUE)
+    {
+        output_system_info();
+        SetEvent( event );
+        WaitForSingleObject( thread, INFINITE );
+        CloseHandle( output );
+        CloseHandle( thread );
+        CloseHandle( event );
+    }
+
+    CloseHandle( input );
+    dbg_curr_process->process_io->close_process(dbg_curr_process, TRUE);
+    return start_ok;
+}
+
+/******************************************************************
+ *		dbg_active_minidump
+ *
+ * Starts (<pid> or <pid> <evt>) in minidump mode
+ */
+enum dbg_start dbg_active_minidump(int argc, char* argv[])
+{
+    HANDLE              hFile;
+    enum dbg_start      ds = start_error_parse;
+    const char*     file = NULL;
+    char            tmp[8 + 1 + 2 + MAX_PATH]; /* minidump "<file>" */
+
+    dbg_houtput = GetStdHandle(STD_ERROR_HANDLE);
+    DBG_IVAR(BreakOnDllLoad) = 0;
+
+    argc--; argv++;
+    /* hard stuff now ; we can get things like:
+     * --minidump <pid>                     1 arg
+     * --minidump <pid> <evt>               2 args
+     * --minidump <file> <pid>              2 args
+     * --minidump <file> <pid> <evt>        3 args
+     */
+    switch (argc)
+    {
+    case 1:
+        ds = dbg_active_attach(argc, argv);
+        break;
+    case 2:
+        if ((ds = dbg_active_attach(argc, argv)) != start_ok)
         {
-        case 1:
-            ds = dbg_active_attach(argc, argv);
-            break;
-        case 2:
-            if ((ds = dbg_active_attach(argc, argv)) != start_ok)
-            {
-                file = argv[0];
-                ds = dbg_active_attach(argc - 1, argv + 1);
-            }
-            break;
-        case 3:
             file = argv[0];
             ds = dbg_active_attach(argc - 1, argv + 1);
-            break;
-        default:
-            return start_error_parse;
         }
-        if (ds != start_ok) return ds;
-        memcpy(tmp, "minidump \"", 10);
-        if (!file)
-        {
-            char        path[MAX_PATH];
-
-            GetTempPathA(sizeof(path), path);
-            GetTempFileNameA(path, "WD", 0, tmp + 10);
-        }
-        else strcpy(tmp + 10, file);
-        strcat(tmp, "\"");
-        if (!file)
-        {
-            /* FIXME: should generate unix name as well */
-            dbg_printf("Capturing program state in %s\n", tmp + 9);
-        }
-        hFile = parser_generate_command_file(tmp, "detach", NULL);
+        break;
+    case 3:
+        file = argv[0];
+        ds = dbg_active_attach(argc - 1, argv + 1);
+        break;
+    default:
+        return start_error_parse;
     }
-    else return start_error_parse;
+    if (ds != start_ok) return ds;
+    memcpy(tmp, "minidump \"", 10);
+    if (!file)
+    {
+        char        path[MAX_PATH];
+
+        GetTempPathA(sizeof(path), path);
+        GetTempFileNameA(path, "WD", 0, tmp + 10);
+    }
+    else strcpy(tmp + 10, file);
+    strcat(tmp, "\"");
+    if (!file)
+    {
+        /* FIXME: should generate unix name as well */
+        dbg_printf("Capturing program state in %s\n", tmp + 9);
+    }
+    hFile = parser_generate_command_file(tmp, "detach", NULL);
     if (hFile == INVALID_HANDLE_VALUE) return start_error_parse;
 
     if (dbg_curr_process->active_debuggee)
@@ -839,7 +923,16 @@ enum dbg_start dbg_active_auto(int argc, char* argv[])
 
 static BOOL tgt_process_active_close_process(struct dbg_process* pcs, BOOL kill)
 {
-    if (pcs == dbg_curr_process)
+    if (kill)
+    {
+        DWORD exit_code = 0;
+
+        if (pcs == dbg_curr_process && dbg_curr_thread->in_exception)
+            exit_code = dbg_curr_thread->excpt_record.ExceptionCode;
+
+        TerminateProcess(pcs->handle, exit_code);
+    }
+    else if (pcs == dbg_curr_process)
     {
         /* remove all set breakpoints in debuggee code */
         break_set_xpoints(FALSE);
@@ -853,11 +946,8 @@ static BOOL tgt_process_active_close_process(struct dbg_process* pcs, BOOL kill)
             ContinueDebugEvent(dbg_curr_pid, dbg_curr_tid, DBG_CONTINUE);
         }
     }
-    if (kill)
-    {
-        TerminateProcess(pcs->handle, 0);
-    }
-    else
+
+    if (!kill)
     {
         if (!DebugActiveProcessStop(pcs->pid)) return FALSE;
     }

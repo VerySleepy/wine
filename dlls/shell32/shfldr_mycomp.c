@@ -112,9 +112,9 @@ HRESULT WINAPI ISF_MyComputer_Constructor (IUnknown * pUnkOuter, REFIID riid, LP
     sf->IPersistFolder2_iface.lpVtbl = &vt_PersistFolder2;
     sf->pidlRoot = _ILCreateMyComputer ();    /* my qualified pidl */
 
-    if (FAILED (IUnknown_QueryInterface (&sf->IShellFolder2_iface, riid, ppv)))
+    if (FAILED (IShellFolder2_QueryInterface (&sf->IShellFolder2_iface, riid, ppv)))
     {
-        IUnknown_Release (&sf->IShellFolder2_iface);
+        IShellFolder2_Release (&sf->IShellFolder2_iface);
         return E_NOINTERFACE;
     }
 
@@ -140,7 +140,7 @@ static HRESULT WINAPI ISF_MyComputer_fnQueryInterface (IShellFolder2 *iface,
         IsEqualIID (riid, &IID_IShellFolder) ||
         IsEqualIID (riid, &IID_IShellFolder2))
     {
-        *ppvObj = This;
+        *ppvObj = &This->IShellFolder2_iface;
     }
     else if (IsEqualIID (riid, &IID_IPersist) ||
              IsEqualIID (riid, &IID_IPersistFolder) ||
@@ -255,7 +255,8 @@ static DWORD get_drive_map(void)
                                       'P','o','l','i','c','i','e','s','\\',
                                       'E','x','p','l','o','r','e','r',0};
     static const WCHAR nodrivesW[] = {'N','o','D','r','i','v','e','s',0};
-    static DWORD drive_mask, init_done;
+    static DWORD drive_mask;
+    static BOOL init_done = FALSE;
 
     if (!init_done)
     {
@@ -277,7 +278,7 @@ static DWORD get_drive_map(void)
             RegCloseKey( hkey );
         }
         drive_mask = mask;
-        init_done = 1;
+        init_done = TRUE;
     }
 
     return GetLogicalDrives() & ~drive_mask;
@@ -410,7 +411,7 @@ static HRESULT WINAPI ISF_MyComputer_fnCompareIDs (IShellFolder2 *iface,
     HRESULT hr;
 
     TRACE ("(%p)->(0x%08lx,pidl1=%p,pidl2=%p)\n", This, lParam, pidl1, pidl2);
-    hr = SHELL32_CompareIDs ((IShellFolder*)&This->IShellFolder2_iface, lParam, pidl1, pidl2);
+    hr = SHELL32_CompareIDs(&This->IShellFolder2_iface, lParam, pidl1, pidl2);
     TRACE ("-- 0x%08x\n", hr);
     return hr;
 }
@@ -532,9 +533,7 @@ static HRESULT WINAPI ISF_MyComputer_fnGetUIObjectOf (IShellFolder2 * iface,
 
     if (IsEqualIID (riid, &IID_IContextMenu) && (cidl >= 1))
     {
-        pObj = (LPUNKNOWN) ISvItemCm_Constructor ((IShellFolder *) iface,
-                                              This->pidlRoot, apidl, cidl);
-        hr = S_OK;
+        return ItemMenu_Constructor((IShellFolder*) iface, This->pidlRoot, apidl, cidl, riid, ppvOut);
     }
     else if (IsEqualIID (riid, &IID_IDataObject) && (cidl >= 1))
     {
@@ -558,14 +557,14 @@ static HRESULT WINAPI ISF_MyComputer_fnGetUIObjectOf (IShellFolder2 * iface,
     }
     else if (IsEqualIID (riid, &IID_IDropTarget) && (cidl >= 1))
     {
-        hr = IShellFolder_QueryInterface (iface, &IID_IDropTarget,
+        hr = IShellFolder2_QueryInterface (iface, &IID_IDropTarget,
                                           (LPVOID *) &pObj);
     }
     else if ((IsEqualIID(riid,&IID_IShellLinkW) ||
               IsEqualIID(riid,&IID_IShellLinkA)) && (cidl == 1))
     {
         pidl = ILCombine (This->pidlRoot, apidl[0]);
-        hr = IShellLink_ConstructFromFile(NULL, riid, pidl, (LPVOID*) &pObj);
+        hr = IShellLink_ConstructFromFile(NULL, riid, pidl, &pObj);
         SHFree (pidl);
     }
     else 
@@ -628,7 +627,7 @@ static HRESULT WINAPI ISF_MyComputer_fnGetDisplayNameOf (IShellFolder2 *iface,
                     static const WCHAR wantsForParsingW[] =
                      { 'W','a','n','t','s','F','o','r','P','a','r','s','i','n',
                      'g',0 };
-                    int bWantsForParsing = FALSE;
+                    BOOL bWantsForParsing = FALSE;
                     WCHAR szRegPath[100];
                     LONG r;
 
@@ -846,7 +845,7 @@ static HRESULT WINAPI ISF_MyComputer_fnGetDetailsOf (IShellFolder2 *iface,
     switch (iColumn)
     {
         case 0:        /* name */
-            hr = IShellFolder_GetDisplayNameOf (iface, pidl,
+            hr = IShellFolder2_GetDisplayNameOf (iface, pidl,
                        SHGDN_NORMAL | SHGDN_INFOLDER, &psd->str);
             break;
         case 1:        /* type */
@@ -914,7 +913,7 @@ static HRESULT WINAPI IMCFldr_PersistFolder2_QueryInterface (
 {
     IMyComputerFolderImpl *This = impl_from_IPersistFolder2(iface);
     TRACE ("(%p)\n", This);
-    return IUnknown_QueryInterface (&This->IShellFolder2_iface, iid, ppvObj);
+    return IShellFolder2_QueryInterface (&This->IShellFolder2_iface, iid, ppvObj);
 }
 
 /************************************************************************
@@ -924,7 +923,7 @@ static ULONG WINAPI IMCFldr_PersistFolder2_AddRef (IPersistFolder2 * iface)
 {
     IMyComputerFolderImpl *This = impl_from_IPersistFolder2(iface);
     TRACE ("(%p)->(count=%u)\n", This, This->ref);
-    return IUnknown_AddRef (&This->IShellFolder2_iface);
+    return IShellFolder2_AddRef (&This->IShellFolder2_iface);
 }
 
 /************************************************************************
@@ -934,7 +933,7 @@ static ULONG WINAPI IMCFldr_PersistFolder2_Release (IPersistFolder2 * iface)
 {
     IMyComputerFolderImpl *This = impl_from_IPersistFolder2(iface);
     TRACE ("(%p)->(count=%u)\n", This, This->ref);
-    return IUnknown_Release (&This->IShellFolder2_iface);
+    return IShellFolder2_Release (&This->IShellFolder2_iface);
 }
 
 /************************************************************************

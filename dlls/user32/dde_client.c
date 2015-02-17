@@ -175,7 +175,7 @@ HCONV WINAPI DdeConnect(DWORD idInst, HSZ hszService, HSZ hszTopic,
 
     /* note: sent messages shall not use packing */
     SendMessageTimeoutW( HWND_BROADCAST, WM_DDE_INITIATE, (WPARAM)hwndClient, MAKELPARAM(aSrv, aTpc),
-                         SMTO_ABORTIFHUNG, 2000, NULL );
+                         SMTO_ABORTIFHUNG, 0, NULL );
 
     pInstance = WDML_GetInstance(idInst);
     if (!pInstance)
@@ -321,8 +321,8 @@ static WDML_XACT*	WDML_ClientQueueAdvise(WDML_CONV* pConv, UINT wType, UINT wFmt
 
     /* pack DdeAdvise	*/
     pDdeAdvise = GlobalLock(pXAct->hMem);
-    pDdeAdvise->fAckReq   = (wType & XTYPF_ACKREQ) ? TRUE : FALSE;
-    pDdeAdvise->fDeferUpd = (wType & XTYPF_NODATA) ? TRUE : FALSE;
+    pDdeAdvise->fAckReq   = (wType & XTYPF_ACKREQ) != 0;
+    pDdeAdvise->fDeferUpd = (wType & XTYPF_NODATA) != 0;
     pDdeAdvise->cfFormat  = wFmt;
     GlobalUnlock(pXAct->hMem);
 
@@ -857,7 +857,7 @@ static WDML_QUEUE_STATE WDML_HandleIncomingData(WDML_CONV* pConv, MSG* msg, HDDE
      * XTYP_ADVDATA and callback should return the proper status.
      */
     pLink = WDML_FindLink(pConv->instance, (HCONV)pConv, WDML_CLIENT_SIDE, hsz,
-                          uiLo ? TRUE : FALSE, wdh.cfFormat);
+                          uiLo != 0, wdh.cfFormat);
     if (!pLink)
     {
 	WDML_DecHSZ(pConv->instance, hsz);
@@ -1017,22 +1017,20 @@ static WDML_QUEUE_STATE WDML_HandleReply(WDML_CONV* pConv, MSG* msg, HDDEDATA* h
  */
 static HDDEDATA WDML_SyncWaitTransactionReply(HCONV hConv, DWORD dwTimeout, const WDML_XACT* pXAct, DWORD *ack)
 {
-    DWORD	dwTime;
+    DWORD	start, elapsed;
     DWORD	err;
     WDML_CONV*	pConv;
 
     TRACE("Starting wait for a timeout of %d ms\n", dwTimeout);
 
-    /* FIXME: time 32 bit wrap around */
-    dwTimeout += GetCurrentTime();
-
-    while ((dwTime = GetCurrentTime()) < dwTimeout)
+    start = GetTickCount();
+    while ((elapsed = GetTickCount() - start) < dwTimeout)
     {
 	/* we cannot be in the crit sect all the time because when client and server run in a
 	 * single process they need to share the access to the internal data
 	 */
 	if (MsgWaitForMultipleObjects(0, NULL, FALSE,
-				      dwTimeout - dwTime, QS_POSTMESSAGE) == WAIT_OBJECT_0)
+				      dwTimeout - elapsed, QS_POSTMESSAGE) == WAIT_OBJECT_0)
 	{
 	    MSG		msg;
 
@@ -1246,14 +1244,18 @@ BOOL WINAPI DdeAbandonTransaction(DWORD idInst, HCONV hConv, DWORD idTransaction
         {
             if ((pConv = WDML_GetConv(hConv, TRUE)) && pConv->instance == pInstance)
             {
-                for (pXAct = pConv->transactions; pXAct; pXAct = pXAct->next)
-                {
+
+                pXAct = pConv->transactions;
+                while (pXAct) {
+                    WDML_XACT *nextXAct = pXAct->next;
+
                     if (pXAct->dwTimeout == TIMEOUT_ASYNC &&
                         (idTransaction == 0 || pXAct->xActID == idTransaction))
                     {
                         WDML_UnQueueTransaction(pConv, pXAct);
                         WDML_FreeTransaction(pInstance, pXAct, TRUE);
                     }
+                    pXAct = nextXAct;
                 }
             }
         }
@@ -1262,13 +1264,16 @@ BOOL WINAPI DdeAbandonTransaction(DWORD idInst, HCONV hConv, DWORD idTransaction
             for (pConv = pInstance->convs[WDML_CLIENT_SIDE]; pConv; pConv = pConv->next)
             {
                 if (!(pConv->wStatus & ST_CONNECTED)) continue;
-                for (pXAct = pConv->transactions; pXAct; pXAct = pXAct->next)
-                {
+                pXAct = pConv->transactions;
+                while (pXAct) {
+                    WDML_XACT *nextXAct = pXAct->next;
+
                     if (pXAct->dwTimeout == TIMEOUT_ASYNC)
                     {
                         WDML_UnQueueTransaction(pConv, pXAct);
                         WDML_FreeTransaction(pInstance, pXAct, TRUE);
                     }
+                    pXAct = nextXAct;
                 }
             }
         }

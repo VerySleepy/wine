@@ -37,6 +37,125 @@ WINE_DEFAULT_DEBUG_CHANNEL(mshtml);
 
 /* Parts of npapi.h */
 
+#define NP_VERSION_MAJOR 0
+#define NP_VERSION_MINOR 25
+
+typedef unsigned char NPBool;
+typedef INT16 NPError;
+typedef INT16 NPReason;
+typedef char *NPMIMEType;
+
+typedef struct _NPP {
+    void *pdata;
+    void *ndata;
+} NPP_t, *NPP;
+
+typedef struct _NPStream {
+    void *pdata;
+    void *ndata;
+    const char *url;
+    UINT32 end;
+    UINT32 lastmodified;
+    void *notifyData;
+    const char *headers;
+} NPStream;
+
+typedef struct _NPSavedData {
+    INT32 len;
+    void *buf;
+} NPSavedData;
+
+typedef struct _NPRect {
+    UINT16 top;
+    UINT16 left;
+    UINT16 bottom;
+    UINT16 right;
+} NPRect;
+
+typedef enum {
+    NPFocusNext = 0,
+    NPFocusPrevious = 1
+} NPFocusDirection;
+
+#define NP_ABI_MASK 0
+
+typedef enum {
+    NPPVpluginNameString = 1,
+    NPPVpluginDescriptionString,
+    NPPVpluginWindowBool,
+    NPPVpluginTransparentBool,
+    NPPVjavaClass,
+    NPPVpluginWindowSize,
+    NPPVpluginTimerInterval,
+    NPPVpluginScriptableInstance = (10 | NP_ABI_MASK),
+    NPPVpluginScriptableIID = 11,
+    NPPVjavascriptPushCallerBool = 12,
+    NPPVpluginKeepLibraryInMemory = 13,
+    NPPVpluginNeedsXEmbed = 14,
+    NPPVpluginScriptableNPObject = 15,
+    NPPVformValue = 16,
+    NPPVpluginUrlRequestsDisplayedBool = 17,
+    NPPVpluginWantsAllNetworkStreams = 18,
+    NPPVpluginNativeAccessibleAtkPlugId = 19,
+    NPPVpluginCancelSrcStream = 20,
+    NPPVSupportsAdvancedKeyHandling = 21
+} NPPVariable;
+
+typedef enum {
+    NPNVxDisplay = 1,
+    NPNVxtAppContext,
+    NPNVnetscapeWindow,
+    NPNVjavascriptEnabledBool,
+    NPNVasdEnabledBool,
+    NPNVisOfflineBool,
+    NPNVserviceManager = (10 | NP_ABI_MASK),
+    NPNVDOMElement     = (11 | NP_ABI_MASK),
+    NPNVDOMWindow      = (12 | NP_ABI_MASK),
+    NPNVToolkit        = (13 | NP_ABI_MASK),
+    NPNVSupportsXEmbedBool = 14,
+    NPNVWindowNPObject = 15,
+    NPNVPluginElementNPObject = 16,
+    NPNVSupportsWindowless = 17,
+    NPNVprivateModeBool = 18,
+    NPNVsupportsAdvancedKeyHandling = 21
+} NPNVariable;
+
+typedef enum {
+    NPWindowTypeWindow = 1,
+    NPWindowTypeDrawable
+} NPWindowType;
+
+typedef struct _NPWindow {
+    void *window;
+    INT32 x;
+    INT32 y;
+    UINT32 width;
+    UINT32 height;
+    NPRect clipRect;
+    NPWindowType type;
+} NPWindow;
+
+typedef struct _NPFullPrint {
+    NPBool pluginPrinted;
+    NPBool printOne;
+    void *platformPrint;
+} NPFullPrint;
+
+typedef struct _NPEmbedPrint {
+    NPWindow window;
+    void *platformPrint;
+} NPEmbedPrint;
+
+typedef struct _NPPrint {
+    UINT16 mode;
+    union {
+        NPFullPrint fullPrint;
+        NPEmbedPrint embedPrint;
+    } print;
+} NPPrint;
+
+typedef HRGN NPRegion;
+
 #define NPERR_BASE                         0
 #define NPERR_NO_ERROR                    (NPERR_BASE + 0)
 #define NPERR_GENERIC_ERROR               (NPERR_BASE + 1)
@@ -92,10 +211,11 @@ typedef struct _NPPluginFuncs {
     NPP_LostFocusPtr lostfocus;
 } NPPluginFuncs;
 
-static nsIDOMElement *get_dom_element(NPP instance)
+static nsIDOMHTMLElement *get_dom_element(NPP instance)
 {
     nsISupports *instance_unk = (nsISupports*)instance->ndata;
     nsIPluginInstance *plugin_instance;
+    nsIDOMHTMLElement *html_elem;
     nsIDOMElement *elem;
     nsresult nsres;
 
@@ -112,17 +232,24 @@ static nsIDOMElement *get_dom_element(NPP instance)
         return NULL;
     }
 
-    return elem;
+    nsres = nsIDOMElement_QueryInterface(elem, &IID_nsIDOMHTMLElement, (void**)&html_elem);
+    nsIDOMElement_Release(elem);
+    if(NS_FAILED(nsres)) {
+        ERR("Could not get nsIDOMHTMLElement iface: %08x\n", nsres);
+        return NULL;
+    }
+
+    return html_elem;
 }
 
-static HTMLWindow *get_elem_window(nsIDOMElement *elem)
+static HTMLInnerWindow *get_elem_window(nsIDOMHTMLElement *elem)
 {
     nsIDOMWindow *nswindow;
     nsIDOMDocument *nsdoc;
-    HTMLWindow *window;
+    HTMLOuterWindow *window;
     nsresult nsres;
 
-    nsres = nsIDOMElement_GetOwnerDocument(elem, &nsdoc);
+    nsres = nsIDOMHTMLElement_GetOwnerDocument(elem, &nsdoc);
     if(NS_FAILED(nsres))
         return NULL;
 
@@ -134,114 +261,18 @@ static HTMLWindow *get_elem_window(nsIDOMElement *elem)
     window = nswindow_to_window(nswindow);
     nsIDOMWindow_Release(nswindow);
 
-    return window;
-}
-
-static BOOL parse_classid(const PRUnichar *classid, CLSID *clsid)
-{
-    const WCHAR *ptr;
-    unsigned len;
-    HRESULT hres;
-
-    static const PRUnichar clsidW[] = {'c','l','s','i','d',':'};
-
-    if(strncmpiW(classid, clsidW, sizeof(clsidW)/sizeof(WCHAR)))
-        return FALSE;
-
-    ptr = classid + sizeof(clsidW)/sizeof(WCHAR);
-    len = strlenW(ptr);
-
-    if(len == 38) {
-        hres = CLSIDFromString(ptr, clsid);
-    }else if(len == 36) {
-        WCHAR buf[39];
-
-        buf[0] = '{';
-        memcpy(buf+1, ptr, len*sizeof(WCHAR));
-        buf[37] = '}';
-        buf[38] = 0;
-        hres = CLSIDFromString(buf, clsid);
-    }else {
-        return FALSE;
-    }
-
-    return SUCCEEDED(hres);
-}
-
-static BOOL get_elem_clsid(nsIDOMElement *elem, CLSID *clsid)
-{
-    nsAString attr_str, val_str;
-    nsresult nsres;
-    BOOL ret = FALSE;
-
-    static const PRUnichar classidW[] = {'c','l','a','s','s','i','d',0};
-
-    nsAString_InitDepend(&attr_str, classidW);
-    nsAString_Init(&val_str, NULL);
-    nsres = nsIDOMElement_GetAttribute(elem, &attr_str, &val_str);
-    nsAString_Finish(&attr_str);
-    if(NS_SUCCEEDED(nsres)) {
-        const PRUnichar *val;
-
-        nsAString_GetData(&val_str, &val);
-        if(*val)
-            ret = parse_classid(val, clsid);
-    }else {
-        ERR("GetAttribute failed: %08x\n", nsres);
-    }
-
-    nsAString_Finish(&attr_str);
-    return ret;
-}
-
-static IUnknown *create_activex_object(HTMLWindow *window, nsIDOMElement *nselem, CLSID *clsid)
-{
-    IClassFactoryEx *cfex;
-    IClassFactory *cf;
-    IUnknown *obj;
-    DWORD policy;
-    HRESULT hres;
-
-    if(!get_elem_clsid(nselem, clsid)) {
-        WARN("Could not determine element CLSID\n");
-        return NULL;
-    }
-
-    TRACE("clsid %s\n", debugstr_guid(clsid));
-
-    policy = 0;
-    hres = IInternetHostSecurityManager_ProcessUrlAction(&window->doc->IInternetHostSecurityManager_iface,
-            URLACTION_ACTIVEX_RUN, (BYTE*)&policy, sizeof(policy), (BYTE*)clsid, sizeof(GUID), 0, 0);
-    if(FAILED(hres) || policy != URLPOLICY_ALLOW) {
-        WARN("ProcessUrlAction returned %08x %x\n", hres, policy);
-        return NULL;
-    }
-
-    hres = CoGetClassObject(clsid, CLSCTX_INPROC_SERVER|CLSCTX_LOCAL_SERVER, NULL, &IID_IClassFactory, (void**)&cf);
-    if(FAILED(hres))
-        return NULL;
-
-    hres = IClassFactory_QueryInterface(cf, &IID_IClassFactoryEx, (void**)&cfex);
-    if(SUCCEEDED(hres)) {
-        FIXME("Use IClassFactoryEx\n");
-        IClassFactoryEx_Release(cfex);
-    }
-
-    hres = IClassFactory_CreateInstance(cf, NULL, &IID_IUnknown, (void**)&obj);
-    if(FAILED(hres))
-        return NULL;
-
-    return obj;
+    return window->base.inner_window;
 }
 
 static NPError CDECL NPP_New(NPMIMEType pluginType, NPP instance, UINT16 mode, INT16 argc, char **argn,
         char **argv, NPSavedData *saved)
 {
-    nsIDOMElement *nselem;
-    HTMLWindow *window;
-    IUnknown *obj;
-    CLSID clsid;
+    HTMLPluginContainer *container;
+    nsIDOMHTMLElement *nselem;
+    HTMLInnerWindow *window;
+    HTMLDOMNode *node;
     NPError err = NPERR_NO_ERROR;
+    HRESULT hres;
 
     TRACE("(%s %p %x %d %p %p %p)\n", debugstr_a(pluginType), instance, mode, argc, argn, argv, saved);
 
@@ -254,27 +285,34 @@ static NPError CDECL NPP_New(NPMIMEType pluginType, NPP instance, UINT16 mode, I
     window = get_elem_window(nselem);
     if(!window) {
         ERR("Could not get element's window object\n");
-        nsIDOMElement_Release(nselem);
+        nsIDOMHTMLElement_Release(nselem);
         return NPERR_GENERIC_ERROR;
     }
 
-    obj = create_activex_object(window, nselem, &clsid);
-    if(obj) {
-        PluginHost *host;
-        HRESULT hres;
+    hres = get_node(window->doc, (nsIDOMNode*)nselem, TRUE, &node);
+    nsIDOMHTMLElement_Release(nselem);
+    if(FAILED(hres))
+        return NPERR_GENERIC_ERROR;
 
-        hres = create_plugin_host(window->doc, nselem, obj, &clsid, &host);
-        nsIDOMElement_Release(nselem);
-        IUnknown_Release(obj);
-        if(SUCCEEDED(hres))
-            instance->pdata = host;
-        else
-            err = NPERR_GENERIC_ERROR;
-    }else {
-        err = NPERR_GENERIC_ERROR;
+    hres = IHTMLDOMNode_QueryInterface(&node->IHTMLDOMNode_iface, &IID_HTMLPluginContainer,
+            (void**)&container);
+    node_release(node);
+    if(FAILED(hres)) {
+        ERR("Not an object element\n");
+        return NPERR_GENERIC_ERROR;
     }
 
-    nsIDOMElement_Release(nselem);
+    if(!container->plugin_host) {
+        hres = create_plugin_host(window->doc, container);
+        if(FAILED(hres))
+            err = NPERR_GENERIC_ERROR;
+    }else {
+        TRACE("plugin host already associated.\n");
+    }
+
+    instance->pdata = container->plugin_host;
+
+    node_release(&container->element.node);
     return err;
 }
 

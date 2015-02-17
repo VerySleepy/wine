@@ -46,7 +46,11 @@ WINE_DEFAULT_DEBUG_CHANNEL(msxml);
 typedef struct _xmlparser
 {
     IXMLParser IXMLParser_iface;
+    IXMLNodeFactory *nodefactory;
+    IUnknown *input;
     LONG ref;
+
+    int flags;
 } xmlparser;
 
 static inline xmlparser *impl_from_IXMLParser( IXMLParser *iface )
@@ -73,7 +77,7 @@ static HRESULT WINAPI xmlparser_QueryInterface(IXMLParser* iface, REFIID riid, v
         return E_NOINTERFACE;
     }
 
-    IXMLParser_AddRef((IUnknown*)*ppvObject);
+    IXMLParser_AddRef(iface);
     return S_OK;
 }
 
@@ -93,6 +97,12 @@ static ULONG WINAPI xmlparser_Release(IXMLParser* iface)
     TRACE("(%p)->(%d)\n", This, ref);
     if ( ref == 0 )
     {
+        if(This->input)
+            IUnknown_Release(This->input);
+
+        if(This->nodefactory)
+            IXMLNodeFactory_Release(This->nodefactory);
+
         heap_free( This );
     }
 
@@ -104,18 +114,33 @@ static HRESULT WINAPI xmlparser_SetFactory(IXMLParser *iface, IXMLNodeFactory *p
 {
     xmlparser *This = impl_from_IXMLParser( iface );
 
-    FIXME("(%p %p)\n", This, pNodeFactory);
+    TRACE("(%p %p)\n", This, pNodeFactory);
 
-    return E_NOTIMPL;
+    if(This->nodefactory)
+        IXMLNodeFactory_Release(This->nodefactory);
+
+    This->nodefactory = pNodeFactory;
+    if(This->nodefactory)
+        IXMLNodeFactory_AddRef(This->nodefactory);
+
+    return S_OK;
 }
 
 static HRESULT WINAPI xmlparser_GetFactory(IXMLParser *iface, IXMLNodeFactory **ppNodeFactory)
 {
     xmlparser *This = impl_from_IXMLParser( iface );
 
-    FIXME("(%p, %p)\n", This, ppNodeFactory);
+    TRACE("(%p, %p)\n", This, ppNodeFactory);
 
-    return E_NOTIMPL;
+    if(!ppNodeFactory)
+        return E_INVALIDARG;
+
+    *ppNodeFactory = This->nodefactory;
+
+    if(*ppNodeFactory)
+        IXMLNodeFactory_AddRef(*ppNodeFactory);
+
+    return S_OK;
 }
 
 static HRESULT WINAPI xmlparser_Abort(IXMLParser *iface, BSTR bstrErrorInfo)
@@ -186,9 +211,9 @@ static ULONG WINAPI xmlparser_GetFlags(IXMLParser *iface)
 {
     xmlparser *This = impl_from_IXMLParser( iface );
 
-    FIXME("(%p)\n", This);
+    TRACE("(%p)\n", This);
 
-    return 0;
+    return This->flags;
 }
 
 static HRESULT WINAPI xmlparser_GetURL(IXMLParser *iface, const WCHAR **ppBuf)
@@ -225,9 +250,18 @@ static HRESULT WINAPI xmlparser_SetInput(IXMLParser *iface, IUnknown *pStm)
 {
     xmlparser *This = impl_from_IXMLParser( iface );
 
-    FIXME("(%p %p)\n", This, pStm);
+    TRACE("(%p %p)\n", This, pStm);
 
-    return E_NOTIMPL;
+    if(!pStm)
+        return E_INVALIDARG;
+
+    if(This->input)
+        IUnknown_Release(This->input);
+
+    This->input = pStm;
+    IUnknown_AddRef(This->input);
+
+    return S_OK;
 }
 
 static HRESULT WINAPI xmlparser_PushData(IXMLParser *iface, const char *pData,
@@ -338,9 +372,11 @@ static HRESULT WINAPI xmlparser_SetFlags(IXMLParser *iface, ULONG flags)
 {
     xmlparser *This = impl_from_IXMLParser( iface );
 
-    FIXME("(%p %d)\n", This, flags);
+    TRACE("(%p %d)\n", This, flags);
 
-    return E_NOTIMPL;
+    This->flags = flags;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI xmlparser_SetSecureBaseURL(IXMLParser *iface, const WCHAR *baseUrl)
@@ -397,20 +433,20 @@ static const struct IXMLParserVtbl xmlparser_vtbl =
     xmlparser_GetSecureBaseURL
 };
 
-HRESULT XMLParser_create(IUnknown* pUnkOuter, void**ppObj)
+HRESULT XMLParser_create(void **ppObj)
 {
     xmlparser *This;
 
-    TRACE("(%p,%p)\n", pUnkOuter, ppObj);
-
-    if (pUnkOuter)
-        FIXME("support aggregation, outer\n");
+    TRACE("(%p)\n", ppObj);
 
     This = heap_alloc( sizeof(xmlparser) );
     if(!This)
         return E_OUTOFMEMORY;
 
     This->IXMLParser_iface.lpVtbl = &xmlparser_vtbl;
+    This->nodefactory = NULL;
+    This->input = NULL;
+    This->flags = 0;
     This->ref = 1;
 
     *ppObj = &This->IXMLParser_iface;

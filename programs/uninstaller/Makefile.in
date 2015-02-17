@@ -1,4 +1,3 @@
-EXTRADEFS = -DWINE_NO_UNICODE_MACROS
 MODULE    = uninstaller.exe
 APPMODE   = -mconsole -municode
 IMPORTS   = advapi32
@@ -8,6 +7,3 @@ C_SRCS = \
 	main.c
 
 RC_SRCS = uninstaller.rc
-PO_SRCS = uninstaller.rc
-
-@MAKE_PROG_RULES@

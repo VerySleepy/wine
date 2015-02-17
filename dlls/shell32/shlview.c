@@ -290,9 +290,9 @@ static void CheckToolbar(IShellViewImpl * This)
 	if (IsInCommDlg(This))
 	{
 	  IShellBrowser_SendControlMsg(This->pShellBrowser, FCW_TOOLBAR, TB_CHECKBUTTON,
-		FCIDM_TB_SMALLICON, (This->FolderSettings.ViewMode==FVM_LIST)? TRUE : FALSE, &result);
+                FCIDM_TB_SMALLICON, This->FolderSettings.ViewMode == FVM_LIST, &result);
 	  IShellBrowser_SendControlMsg(This->pShellBrowser, FCW_TOOLBAR, TB_CHECKBUTTON,
-		FCIDM_TB_REPORTVIEW, (This->FolderSettings.ViewMode==FVM_DETAILS)? TRUE : FALSE, &result);
+                FCIDM_TB_REPORTVIEW, This->FolderSettings.ViewMode == FVM_DETAILS, &result);
 	  IShellBrowser_SendControlMsg(This->pShellBrowser, FCW_TOOLBAR, TB_ENABLEBUTTON,
 		FCIDM_TB_SMALLICON, TRUE, &result);
 	  IShellBrowser_SendControlMsg(This->pShellBrowser, FCW_TOOLBAR, TB_ENABLEBUTTON,
@@ -380,19 +380,19 @@ static BOOL ShellView_CreateList (IShellViewImpl * This)
         This->ListViewSortInfo.nHeaderID = -1;
         This->ListViewSortInfo.nLastHeaderID = -1;
 
-       if (This->FolderSettings.fFlags & FWF_DESKTOP) {
-         /*
-          * FIXME: look at the registry value
-          * HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\ListviewShadow
-          * and activate drop shadows if necessary
-          */
-         if (0)
-           SendMessageW(This->hWndList, LVM_SETTEXTBKCOLOR, 0, CLR_NONE);
-         else
-           SendMessageW(This->hWndList, LVM_SETTEXTBKCOLOR, 0, GetSysColor(COLOR_DESKTOP));
+        if (This->FolderSettings.fFlags & FWF_DESKTOP) {
+          /*
+           * FIXME: look at the registry value
+           * HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\ListviewShadow
+           * and activate drop shadows if necessary
+           */
+           if (0)
+             SendMessageW(This->hWndList, LVM_SETTEXTBKCOLOR, 0, CLR_NONE);
+           else
+             SendMessageW(This->hWndList, LVM_SETTEXTBKCOLOR, 0, GetSysColor(COLOR_DESKTOP));
 
-         SendMessageW(This->hWndList, LVM_SETTEXTCOLOR, 0, RGB(255,255,255));
-       }
+           SendMessageW(This->hWndList, LVM_SETTEXTCOLOR, 0, RGB(255,255,255));
+        }
 
         /*  UpdateShellSettings(); */
 	return TRUE;
@@ -406,6 +406,7 @@ static BOOL ShellView_CreateList (IShellViewImpl * This)
 static void ShellView_InitList(IShellViewImpl *This)
 {
     IShellDetails *details = NULL;
+    HIMAGELIST big_icons, small_icons;
     LVCOLUMNW lvColumn;
     SHELLDETAILS sd;
     WCHAR nameW[50];
@@ -414,9 +415,10 @@ static void ShellView_InitList(IShellViewImpl *This)
 
     TRACE("(%p)\n", This);
 
+    Shell_GetImageLists( &big_icons, &small_icons );
     SendMessageW(This->hWndList, LVM_DELETEALLITEMS, 0, 0);
-    SendMessageW(This->hWndList, LVM_SETIMAGELIST, LVSIL_SMALL, (LPARAM)ShellSmallIconList);
-    SendMessageW(This->hWndList, LVM_SETIMAGELIST, LVSIL_NORMAL, (LPARAM)ShellBigIconList);
+    SendMessageW(This->hWndList, LVM_SETIMAGELIST, LVSIL_SMALL, (LPARAM)small_icons);
+    SendMessageW(This->hWndList, LVM_SETIMAGELIST, LVSIL_NORMAL, (LPARAM)big_icons);
 
     lvColumn.mask = LVCF_FMT | LVCF_WIDTH | LVCF_TEXT;
     lvColumn.pszText = nameW;
@@ -606,7 +608,7 @@ static BOOLEAN LV_AddItem(IShellViewImpl * This, LPCITEMIDLIST pidl)
 	lvItem.lParam = (LPARAM) ILClone(ILFindLastID(pidl));				/*set the item's data*/
 	lvItem.pszText = LPSTR_TEXTCALLBACKW;			/*get text on a callback basis*/
 	lvItem.iImage = I_IMAGECALLBACK;			/*get the image on a callback basis*/
-	return (-1==ListView_InsertItemW(This->hWndList, &lvItem))? FALSE: TRUE;
+        return ListView_InsertItemW(This->hWndList, &lvItem) != -1;
 }
 
 /**********************************************************
@@ -1018,7 +1020,6 @@ static void ShellView_DoContextMenu(IShellViewImpl * This, WORD x, WORD y, BOOL 
 	BOOL	fExplore = FALSE;
 	HWND	hwndTree = 0;
 	LPCONTEXTMENU	pContextMenu = NULL;
-	IContextMenu2 *pCM = NULL;
 	CMINVOKECOMMANDINFO	cmi;
 
 	TRACE("(%p)->(0x%08x 0x%08x 0x%08x) stub\n",This, x, y, bDefault);
@@ -1093,9 +1094,11 @@ static void ShellView_DoContextMenu(IShellViewImpl * This, WORD x, WORD y, BOOL 
 	}
 	else	/* background context menu */
 	{
+	  IContextMenu2 *pCM;
+
 	  hMenu = CreatePopupMenu();
 
-	  pCM = ISvBgCm_Constructor(This->pSFParent, FALSE);
+	  BackgroundMenu_Constructor(This->pSFParent, FALSE, &IID_IContextMenu2, (void**)&pCM);
 	  IContextMenu2_QueryContextMenu(pCM, hMenu, 0, FCIDM_SHVIEWFIRST, FCIDM_SHVIEWLAST, 0);
 
 	  uCommand = TrackPopupMenu( hMenu, TPM_LEFTALIGN | TPM_RETURNCMD,x,y,0,This->hWnd,NULL);
@@ -1716,6 +1719,8 @@ static LRESULT CALLBACK ShellView_WndProc(HWND hWnd, UINT uMessage, WPARAM wPara
 				break;
 
 	  case WM_GETDLGCODE:   return SendMessageW(pThis->hWndList, uMessage, 0, 0);
+          case WM_SETFONT:      return SendMessageW(pThis->hWndList, WM_SETFONT, wParam, lParam);
+          case WM_GETFONT:      return SendMessageW(pThis->hWndList, WM_GETFONT, wParam, lParam);
 
 	  case WM_DESTROY:	
 	  			RevokeDragDrop(pThis->hWnd);
@@ -1748,17 +1753,11 @@ static HRESULT WINAPI IShellView_fnQueryInterface(IShellView2 *iface, REFIID rii
 
 	*ppvObj = NULL;
 
-	if(IsEqualIID(riid, &IID_IUnknown))
+	if(IsEqualIID(riid, &IID_IUnknown) ||
+	   IsEqualIID(riid, &IID_IShellView) ||
+	   IsEqualIID(riid, &IID_IShellView2))
 	{
-	  *ppvObj = This;
-	}
-	else if(IsEqualIID(riid, &IID_IShellView))
-	{
-          *ppvObj = This;
-	}
-	else if(IsEqualIID(riid, &IID_IShellView2))
-	{
-          *ppvObj = This;
+	  *ppvObj = &This->IShellView2_iface;
 	}
 	else if(IsEqualIID(riid, &IID_IShellFolderView))
 	{
@@ -1998,7 +1997,7 @@ static HRESULT WINAPI IShellView_fnGetCurrentInfo(IShellView2 *iface, LPFOLDERSE
 	if (!lpfs) return E_INVALIDARG;
 
 	*lpfs = This->FolderSettings;
-	return NOERROR;
+	return S_OK;
 }
 
 static HRESULT WINAPI IShellView_fnAddPropertySheetPages(IShellView2 *iface, DWORD dwReserved,
@@ -2049,10 +2048,7 @@ static HRESULT WINAPI IShellView_fnGetItemObject(IShellView2 *iface, UINT uItem,
     case SVGIO_BACKGROUND:
 
         if (IsEqualIID(&IID_IContextMenu, riid))
-        {
-            *ppvOut = ISvBgCm_Constructor(This->pSFParent, FALSE);
-            hr = S_OK;
-        }
+            return BackgroundMenu_Constructor(This->pSFParent, FALSE, riid, ppvOut);
         else
             FIXME("unsupported interface requested %s\n", debugstr_guid(riid));
 
@@ -2081,9 +2077,14 @@ static HRESULT WINAPI IShellView2_fnCreateViewWindow2(IShellView2 *iface,
         LPSV2CVW2_PARAMS view_params)
 {
     IShellViewImpl *This = impl_from_IShellView2(iface);
+    INITCOMMONCONTROLSEX icex;
     WNDCLASSW wc;
     HRESULT hr;
     HWND wnd;
+
+    icex.dwSize = sizeof( icex );
+    icex.dwICC = ICC_LISTVIEW_CLASSES;
+    InitCommonControlsEx( &icex );
 
     TRACE("(%p)->(view_params %p)\n", iface, view_params);
 
@@ -2559,7 +2560,7 @@ static HRESULT WINAPI ISVDropSource_QueryContinueDrag(
 	else if (!(grfKeyState & MK_LBUTTON) && !(grfKeyState & MK_RBUTTON))
 	  return DRAGDROP_S_DROP;
 	else
-	  return NOERROR;
+	  return S_OK;
 }
 
 static HRESULT WINAPI ISVDropSource_GiveFeedback(

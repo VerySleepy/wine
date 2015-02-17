@@ -67,6 +67,7 @@ typedef enum {
 #define EXP_SPECIAL_FOLDER_SIG  0xa0000005
 #define EXP_DARWIN_ID_SIG       0xa0000006
 #define EXP_SZ_ICON_SIG         0xa0000007
+#define EXP_PROPERTYSTORAGE_SIG 0xa0000009
 
 typedef struct tagDATABLOCKHEADER
 {
@@ -99,6 +100,22 @@ typedef struct tagLINK_SZ_BLOCK
     WCHAR bufW[MAX_PATH];
 } LINK_SZ_BLOCK;
 
+typedef struct tagLINK_PROPERTYSTORAGE_GUID
+{
+    DWORD size;
+    DWORD magic;
+    GUID fmtid;
+} LINK_PROPERTYSTORAGE_GUID;
+
+typedef struct tagLINK_PROPERTYSTORAGE_VALUE
+{
+    DWORD size;
+    DWORD pid;
+    BYTE unknown8;
+    DWORD vt;
+    DWORD unknown25;
+} LINK_PROPERTYSTORAGE_VALUE;
+
 typedef struct _LOCATION_INFO
 {
     DWORD  dwTotalSize;
@@ -121,7 +138,7 @@ typedef struct _LOCAL_VOLUME_INFO
 typedef struct _NETWORK_VOLUME_INFO
 {
     DWORD dwSize;
-    DWORD dwUnkown1;
+    DWORD dwUnknown1;
     DWORD dwShareNameOfs;
     DWORD dwReserved;
     DWORD dwUnknown2;
@@ -171,14 +188,14 @@ static const lnk_string* fetch_string(int unicode)
 }
 
 
-static int dump_pidl(void)
+static void dump_pidl(void)
 {
     const lnk_string *pidl;
     int i, n = 0, sz = 0;
 
     pidl = fetch_string(FALSE);
     if (!pidl)
-        return -1;
+        return;
 
     printf("PIDL\n");
     printf("----\n\n");
@@ -202,18 +219,16 @@ static int dump_pidl(void)
         printf("\n");
     }
     printf("\n");
-
-    return 0;
 }
 
-static int dump_string(const char *what, int unicode)
+static void dump_string(const char *what, int unicode)
 {
     const lnk_string *data;
     unsigned sz;
 
     data = fetch_string(unicode);
     if (!data)
-        return -1;
+        return;
     printf("%s : ", what);
     sz = data->size;
     if (unicode)
@@ -221,18 +236,16 @@ static int dump_string(const char *what, int unicode)
     else
         while (sz) printf("%c", data->str.a[data->size - sz--]);
     printf("\n");
-
-    return 0;
 }
 
-static int dump_location(void)
+static void dump_location(void)
 {
     const LOCATION_INFO *loc;
     const char *p;
 
     loc = fetch_block();
     if (!loc)
-        return -1;
+        return;
     p = (const char*)loc;
 
     printf("Location\n");
@@ -280,8 +293,6 @@ static int dump_location(void)
         printf("(\"%s\")", &p[loc->dwFinalPathOfs]);
     printf("\n");
     printf("\n");
-
-    return 0;
 }
 
 static const unsigned char table_dec85[0x80] = {
@@ -295,7 +306,7 @@ static const unsigned char table_dec85[0x80] = {
 0x47,0x48,0x49,0x4a,0x4b,0x4c,0x4d,0x4e,0x4f,0x50,0x51,0x52,0xff,0x53,0x54,0xff,
 };
 
-static int base85_to_guid( const char *str, LPGUID guid )
+static BOOL base85_to_guid( const char *str, LPGUID guid )
 {
     DWORD i, val = 0, base = 1, *p;
     unsigned char ch;
@@ -310,18 +321,18 @@ static int base85_to_guid( const char *str, LPGUID guid )
         }
         ch = str[i];
         if( ch >= 0x80 )
-            return 0;
+            return FALSE;
         val += table_dec85[ch] * base;
         if( table_dec85[ch] == 0xff )
-            return 0;
+            return FALSE;
         if( (i%5) == 4 )
             p[i/5] = val;
         base *= 85;
     }
-    return 1;
+    return TRUE;
 }
 
-static int dump_special_folder_block(const DATABLOCK_HEADER* bhdr)
+static void dump_special_folder_block(const DATABLOCK_HEADER* bhdr)
 {
     const EXP_SPECIAL_FOLDER *sfb = (const EXP_SPECIAL_FOLDER*)bhdr;
     printf("Special folder block\n");
@@ -329,10 +340,9 @@ static int dump_special_folder_block(const DATABLOCK_HEADER* bhdr)
     printf("folder  = 0x%04x\n", sfb->idSpecialFolder);
     printf("offset  = %d\n", sfb->cbOffset);
     printf("\n");
-    return 0;
 }
 
-static int dump_sz_block(const DATABLOCK_HEADER* bhdr, const char* label)
+static void dump_sz_block(const DATABLOCK_HEADER* bhdr, const char* label)
 {
     const LINK_SZ_BLOCK *szp = (const LINK_SZ_BLOCK*)bhdr;
     printf("String block\n");
@@ -340,10 +350,9 @@ static int dump_sz_block(const DATABLOCK_HEADER* bhdr, const char* label)
     printf("magic   = %x\n", szp->magic);
     printf("%s    = %s\n", label, szp->bufA);
     printf("\n");
-    return 0;
 }
 
-static int dump_darwin_id(const DATABLOCK_HEADER* bhdr)
+static void dump_darwin_id(const DATABLOCK_HEADER* bhdr)
 {
     const LINK_SZ_BLOCK *szp = (const LINK_SZ_BLOCK*)bhdr;
     char comp_str[40];
@@ -382,11 +391,96 @@ static int dump_darwin_id(const DATABLOCK_HEADER* bhdr)
     printf("  component: %s\n", comp_str );
     printf("  feature:   %s\n", feat_str);
     printf("\n");
-
-    return 0;
 }
 
-static int dump_raw_block(const DATABLOCK_HEADER* bhdr)
+static void dump_property_storage_value(const LINK_PROPERTYSTORAGE_VALUE *lnk_value_hdr,
+    DWORD data_size)
+{
+    BOOL got_terminator = FALSE;
+    int i, value_size;
+    const unsigned char *value;
+
+    while (data_size >= sizeof(DWORD))
+    {
+        if (!lnk_value_hdr->size)
+        {
+            got_terminator = TRUE;
+            break;
+        }
+
+        if (lnk_value_hdr->size > data_size || lnk_value_hdr->size < sizeof(*lnk_value_hdr))
+        {
+            printf("  size: %d (invalid)\n", lnk_value_hdr->size);
+            return;
+        }
+
+        printf("  pid: %d\n", lnk_value_hdr->pid);
+        printf("    unknown8: %d\n", lnk_value_hdr->unknown8);
+        printf("    vartype: %d\n", lnk_value_hdr->vt);
+        printf("    unknown25: %d\n", lnk_value_hdr->unknown25);
+
+        value_size = lnk_value_hdr->size - sizeof(*lnk_value_hdr);
+        value = (const unsigned char*)(lnk_value_hdr+1);
+
+        printf("    value (%2d bytes) : ",value_size);
+        for(i=0; i<value_size; i++)
+            printf("%02x ",value[i]);
+        printf("\n\n");
+
+        data_size -= lnk_value_hdr->size;
+        lnk_value_hdr = (void*)((char*)lnk_value_hdr + lnk_value_hdr->size);
+    }
+
+    if (!got_terminator)
+        printf("  missing terminator!\n");
+}
+
+static void dump_property_storage(const DATABLOCK_HEADER* bhdr)
+{
+    int data_size;
+    const LINK_PROPERTYSTORAGE_GUID *lnk_guid_hdr;
+    BOOL got_terminator = FALSE;
+
+    printf("Property Storage\n");
+    printf("--------------\n\n");
+
+    data_size=bhdr->cbSize-sizeof(*bhdr);
+
+    lnk_guid_hdr=(void*)((const char*)bhdr+sizeof(*bhdr));
+
+    while (data_size >= sizeof(DWORD))
+    {
+        if (!lnk_guid_hdr->size)
+        {
+            got_terminator = TRUE;
+            break;
+        }
+
+        if (lnk_guid_hdr->size > data_size || lnk_guid_hdr->size < sizeof(*lnk_guid_hdr))
+        {
+            printf("size: %d (invalid)\n", lnk_guid_hdr->size);
+            return;
+        }
+
+        if (lnk_guid_hdr->magic != 0x53505331)
+            printf("magic: %x\n", lnk_guid_hdr->magic);
+
+        printf("fmtid: %s\n", get_guid_str(&lnk_guid_hdr->fmtid));
+
+        dump_property_storage_value((void*)(lnk_guid_hdr + 1), lnk_guid_hdr->size - sizeof(*lnk_guid_hdr));
+
+        data_size -= lnk_guid_hdr->size;
+
+        lnk_guid_hdr = (void*)((char*)lnk_guid_hdr + lnk_guid_hdr->size);
+    }
+
+    if (!got_terminator)
+        printf("missing terminator!\n");
+
+    printf("\n");
+}
+
+static void dump_raw_block(const DATABLOCK_HEADER* bhdr)
 {
     int data_size;
 
@@ -423,8 +517,6 @@ static int dump_raw_block(const DATABLOCK_HEADER* bhdr)
         }
     }
     printf("\n");
-
-    return 1;
 }
 
 static const GUID CLSID_ShellLink = {0x00021401L, 0, 0, {0xC0,0,0,0,0,0,0,0x46}};
@@ -538,6 +630,9 @@ void lnk_dump(void)
             break;
         case EXP_DARWIN_ID_SIG:
             dump_darwin_id(bhdr);
+            break;
+        case EXP_PROPERTYSTORAGE_SIG:
+            dump_property_storage(bhdr);
             break;
         default:
             dump_raw_block(bhdr);

@@ -52,10 +52,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
             DisableThreadLibraryCalls(hinstDLL);
             hInstance = hinstDLL;
             break;
-        case DLL_PROCESS_DETACH:
-            break;
-        default:
-            break;
     }
     return TRUE;
 }
@@ -276,7 +272,7 @@ static HCERTCHAINENGINE CRYPTDLG_MakeEngine(CERT_VERIFY_CERTIFICATE_TRUST *cert)
     {
         trust = CertOpenStore(CERT_STORE_PROV_COLLECTION, 0, 0,
          CERT_STORE_CREATE_NEW_FLAG, NULL);
-        if (root)
+        if (trust)
         {
             for (i = 0; i < cert->cTrustStores; i++)
                 CertAddStoreToCollection(trust, cert->rghstoreTrust[i], 0, 0);

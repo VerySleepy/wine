@@ -115,7 +115,7 @@ typedef enum _KEY_VALUE_INFORMATION_CLASS {
 
 #endif
 
-static NTSTATUS (WINAPI * pRtlCreateUnicodeStringFromAsciiz)(PUNICODE_STRING, LPCSTR);
+static BOOLEAN  (WINAPI * pRtlCreateUnicodeStringFromAsciiz)(PUNICODE_STRING, LPCSTR);
 static void     (WINAPI * pRtlInitUnicodeString)(PUNICODE_STRING,PCWSTR);
 static NTSTATUS (WINAPI * pRtlFreeUnicodeString)(PUNICODE_STRING);
 static NTSTATUS (WINAPI * pNtDeleteValueKey)(IN HANDLE, IN PUNICODE_STRING);
@@ -124,18 +124,19 @@ static NTSTATUS (WINAPI * pRtlCheckRegistryKey)(IN ULONG,IN PWSTR);
 static NTSTATUS (WINAPI * pRtlOpenCurrentUser)(IN ACCESS_MASK, PHANDLE);
 static NTSTATUS (WINAPI * pNtOpenKey)(PHANDLE, IN ACCESS_MASK, IN POBJECT_ATTRIBUTES);
 static NTSTATUS (WINAPI * pNtClose)(IN HANDLE);
-static NTSTATUS (WINAPI * pNtDeleteValueKey)(IN HANDLE, IN PUNICODE_STRING);
 static NTSTATUS (WINAPI * pNtFlushKey)(HANDLE);
 static NTSTATUS (WINAPI * pNtDeleteKey)(HANDLE);
 static NTSTATUS (WINAPI * pNtCreateKey)( PHANDLE retkey, ACCESS_MASK access, const OBJECT_ATTRIBUTES *attr,
                              ULONG TitleIndex, const UNICODE_STRING *class, ULONG options,
                              PULONG dispos );
+static NTSTATUS (WINAPI * pNtQueryKey)(HANDLE,KEY_INFORMATION_CLASS,PVOID,ULONG,PULONG);
 static NTSTATUS (WINAPI * pNtQueryValueKey)(HANDLE,const UNICODE_STRING *,KEY_VALUE_INFORMATION_CLASS,void *,DWORD,DWORD *);
 static NTSTATUS (WINAPI * pNtSetValueKey)(HANDLE, const PUNICODE_STRING, ULONG,
                                ULONG, const void*, ULONG  );
 static NTSTATUS (WINAPI * pNtQueryInformationProcess)(HANDLE,PROCESSINFOCLASS,PVOID,ULONG,PULONG);
 static NTSTATUS (WINAPI * pRtlFormatCurrentUserKeyPath)(PUNICODE_STRING);
-static NTSTATUS (WINAPI * pRtlCreateUnicodeString)( PUNICODE_STRING, LPCWSTR);
+static LONG     (WINAPI * pRtlCompareUnicodeString)(const PUNICODE_STRING,const PUNICODE_STRING,BOOLEAN);
+static BOOLEAN  (WINAPI * pRtlCreateUnicodeString)(PUNICODE_STRING, LPCWSTR);
 static LPVOID   (WINAPI * pRtlReAllocateHeap)(IN PVOID, IN ULONG, IN PVOID, IN ULONG);
 static NTSTATUS (WINAPI * pRtlAppendUnicodeToString)(PUNICODE_STRING, PCWSTR);
 static NTSTATUS (WINAPI * pRtlUnicodeStringToAnsiString)(PSTRING, PUNICODE_STRING, BOOL);
@@ -143,7 +144,6 @@ static NTSTATUS (WINAPI * pRtlFreeHeap)(PVOID, ULONG, PVOID);
 static LPVOID   (WINAPI * pRtlAllocateHeap)(PVOID,ULONG,ULONG);
 static NTSTATUS (WINAPI * pRtlZeroMemory)(PVOID, ULONG);
 static NTSTATUS (WINAPI * pRtlpNtQueryValueKey)(HANDLE,ULONG*,PBYTE,DWORD*,void *);
-static NTSTATUS (WINAPI * pRtlOpenCurrentUser)(ACCESS_MASK,HANDLE*);
 
 static HMODULE hntdll = 0;
 static int CurrentTest = 0;
@@ -168,7 +168,6 @@ static BOOL InitFunctionPtrs(void)
     NTDLL_GET_PROC(RtlCreateUnicodeStringFromAsciiz)
     NTDLL_GET_PROC(RtlCreateUnicodeString)
     NTDLL_GET_PROC(RtlFreeUnicodeString)
-    NTDLL_GET_PROC(NtDeleteValueKey)
     NTDLL_GET_PROC(RtlQueryRegistryValues)
     NTDLL_GET_PROC(RtlCheckRegistryKey)
     NTDLL_GET_PROC(RtlOpenCurrentUser)
@@ -177,11 +176,13 @@ static BOOL InitFunctionPtrs(void)
     NTDLL_GET_PROC(NtCreateKey)
     NTDLL_GET_PROC(NtFlushKey)
     NTDLL_GET_PROC(NtDeleteKey)
+    NTDLL_GET_PROC(NtQueryKey)
     NTDLL_GET_PROC(NtQueryValueKey)
     NTDLL_GET_PROC(NtQueryInformationProcess)
     NTDLL_GET_PROC(NtSetValueKey)
     NTDLL_GET_PROC(NtOpenKey)
     NTDLL_GET_PROC(RtlFormatCurrentUserKeyPath)
+    NTDLL_GET_PROC(RtlCompareUnicodeString)
     NTDLL_GET_PROC(RtlReAllocateHeap)
     NTDLL_GET_PROC(RtlAppendUnicodeToString)
     NTDLL_GET_PROC(RtlUnicodeStringToAnsiString)
@@ -208,7 +209,7 @@ static NTSTATUS WINAPI QueryRoutine (IN PCWSTR ValueName, IN ULONG ValueType, IN
 
         ValName = pRtlAllocateHeap(GetProcessHeap(), 0, ValueNameLength);
 
-        WideCharToMultiByte(0, 0, ValueName, ValueNameLength+1,ValName, ValueNameLength, 0, 0);
+        WideCharToMultiByte(CP_ACP, 0, ValueName, ValueNameLength+1, ValName, ValueNameLength, NULL, NULL);
 
         trace("ValueName: %s\n", ValName);
     }
@@ -396,7 +397,8 @@ static void test_NtCreateKey(void)
 
     /* Only attributes */
     status = pNtCreateKey(NULL, 0, &attr, 0, 0, 0, 0);
-    ok(status == STATUS_ACCESS_VIOLATION, "Expected STATUS_ACCESS_VIOLATION, got: 0x%08x\n", status);
+    ok(status == STATUS_ACCESS_VIOLATION || status == STATUS_ACCESS_DENIED /* Win7 */,
+       "Expected STATUS_ACCESS_VIOLATION or STATUS_ACCESS_DENIED, got: 0x%08x\n", status);
 
     /* Length > sizeof(OBJECT_ATTRIBUTES) */
     attr.Length *= 2;
@@ -1243,6 +1245,86 @@ static void test_redirection(void)
     pNtClose( key64 );
 }
 
+static void test_long_value_name(void)
+{
+    HANDLE key;
+    NTSTATUS status, expected;
+    OBJECT_ATTRIBUTES attr;
+    UNICODE_STRING ValName;
+    DWORD i;
+
+    InitializeObjectAttributes(&attr, &winetestpath, 0, 0, 0);
+    status = pNtOpenKey(&key, KEY_WRITE|KEY_READ, &attr);
+    ok(status == STATUS_SUCCESS, "NtOpenKey Failed: 0x%08x\n", status);
+
+    ValName.MaximumLength = 0xfffc;
+    ValName.Length = ValName.MaximumLength - sizeof(WCHAR);
+    ValName.Buffer = HeapAlloc(GetProcessHeap(), 0, ValName.MaximumLength);
+    for (i = 0; i < ValName.Length / sizeof(WCHAR); i++)
+        ValName.Buffer[i] = 'a';
+    ValName.Buffer[i] = 0;
+
+    status = pNtDeleteValueKey(key, &ValName);
+    ok(status == STATUS_OBJECT_NAME_NOT_FOUND, "NtDeleteValueKey with nonexistent long value name returned 0x%08x\n", status);
+    status = pNtSetValueKey(key, &ValName, 0, REG_DWORD, &i, sizeof(i));
+    ok(status == STATUS_INVALID_PARAMETER || broken(status == STATUS_SUCCESS) /* nt4 */,
+       "NtSetValueKey with long value name returned 0x%08x\n", status);
+    expected = (status == STATUS_SUCCESS) ? STATUS_SUCCESS : STATUS_OBJECT_NAME_NOT_FOUND;
+    status = pNtDeleteValueKey(key, &ValName);
+    ok(status == expected, "NtDeleteValueKey with long value name returned 0x%08x\n", status);
+
+    status = pNtQueryValueKey(key, &ValName, KeyValueBasicInformation, NULL, 0, &i);
+    ok(status == STATUS_OBJECT_NAME_NOT_FOUND, "NtQueryValueKey with nonexistent long value name returned 0x%08x\n", status);
+
+    pRtlFreeUnicodeString(&ValName);
+    pNtClose(key);
+}
+
+static void test_NtQueryKey(void)
+{
+    HANDLE key;
+    NTSTATUS status;
+    OBJECT_ATTRIBUTES attr;
+    ULONG length, len;
+    KEY_NAME_INFORMATION *info = NULL;
+    UNICODE_STRING str;
+
+    InitializeObjectAttributes(&attr, &winetestpath, 0, 0, 0);
+    status = pNtOpenKey(&key, KEY_READ, &attr);
+    ok(status == STATUS_SUCCESS, "NtOpenKey Failed: 0x%08x\n", status);
+
+    status = pNtQueryKey(key, KeyNameInformation, NULL, 0, &length);
+    if (status == STATUS_INVALID_PARAMETER) {
+        win_skip("KeyNameInformation is not supported\n");
+        pNtClose(key);
+        return;
+    }
+    todo_wine ok(status == STATUS_BUFFER_TOO_SMALL, "NtQueryKey Failed: 0x%08x\n", status);
+    info = HeapAlloc(GetProcessHeap(), 0, length);
+
+    /* non-zero buffer size, but insufficient */
+    status = pNtQueryKey(key, KeyNameInformation, info, sizeof(*info), &len);
+    ok(status == STATUS_BUFFER_OVERFLOW, "NtQueryKey Failed: 0x%08x\n", status);
+    ok(length == len, "got %d, expected %d\n", len, length);
+    ok(info->NameLength == winetestpath.Length, "got %d, expected %d\n",
+       info->NameLength, winetestpath.Length);
+
+    /* correct buffer size */
+    status = pNtQueryKey(key, KeyNameInformation, info, length, &len);
+    ok(status == STATUS_SUCCESS, "NtQueryKey Failed: 0x%08x\n", status);
+    ok(length == len, "got %d, expected %d\n", len, length);
+
+    str.Buffer = info->Name;
+    str.Length = info->NameLength;
+    ok(pRtlCompareUnicodeString(&winetestpath, &str, TRUE) == 0,
+       "got %s, expected %s\n",
+       wine_dbgstr_wn(str.Buffer, str.Length/sizeof(WCHAR)),
+       wine_dbgstr_wn(winetestpath.Buffer, winetestpath.Length/sizeof(WCHAR)));
+
+    HeapFree(GetProcessHeap(), 0, info);
+    pNtClose(key);
+}
+
 START_TEST(reg)
 {
     static const WCHAR winetest[] = {'\\','W','i','n','e','T','e','s','t',0};
@@ -1263,7 +1345,9 @@ START_TEST(reg)
     test_RtlQueryRegistryValues();
     test_RtlpNtQueryValueKey();
     test_NtFlushKey();
+    test_NtQueryKey();
     test_NtQueryValueKey();
+    test_long_value_name();
     test_NtDeleteKey();
     test_symlinks();
     test_redirection();

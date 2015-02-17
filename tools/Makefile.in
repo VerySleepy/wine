@@ -1,95 +1,34 @@
-DEFS      = -D__WINESRC__ $(EXTRADEFS)
-EXTRAINCL = @FREETYPEINCL@
-FREETYPELIBS = @FREETYPELIBS@
-
 PROGRAMS = \
-	fnt2bdf$(EXEEXT) \
-	fnt2fon$(EXEEXT) \
-	make_ctests$(EXEEXT) \
-	make_xftmpl$(EXEEXT) \
-	relpath$(EXEEXT) \
-	sfnt2fnt$(EXEEXT) \
-	wine.inf \
-	wineapploader
+	make_xftmpl$(EXEEXT)
 
-MANPAGE = winemaker.man
-
-EXTRA_MANPAGES = \
-	winemaker.de.man \
-	winemaker.fr.man
+MANPAGES = \
+	winemaker.de.UTF-8.man.in \
+	winemaker.fr.UTF-8.man.in \
+	winemaker.man.in
 
 C_SRCS = \
-	fnt2bdf.c \
-	fnt2fon.c \
-	make_ctests.c \
 	make_xftmpl.c \
-	makedep.c \
-	relpath.c \
-	sfnt2fnt.c
+	makedep.c
 
-EXTRASUBDIRS = winapi
-
-INSTALLDIRS = \
-	$(DESTDIR)$(bindir) \
-	$(DESTDIR)$(datadir)/applications \
-	$(DESTDIR)$(datadir)/wine \
-	$(DESTDIR)$(mandir)/man$(prog_manext) \
-	$(DESTDIR)$(mandir)/de.UTF-8/man$(prog_manext) \
-	$(DESTDIR)$(mandir)/fr.UTF-8/man$(prog_manext)
+IN_SRCS = \
+	wineapploader.in
 
 UPDATE_DESKTOP_DATABASE = update-desktop-database
 
-all: makedep$(EXEEXT) $(PROGRAMS)
-
-@MAKE_RULES@
-
-makedep$(EXEEXT) $(EXEEXT:%=makedep): makedep.o
-	$(CC) $(CFLAGS) -o $@ makedep.o $(LDFLAGS)
-
-make_ctests$(EXEEXT): make_ctests.o
-	$(CC) $(CFLAGS) -o $@ make_ctests.o $(LDFLAGS)
+all: wineapploader
 
 make_xftmpl$(EXEEXT): make_xftmpl.o
 	$(CC) $(CFLAGS) -o $@ make_xftmpl.o $(LIBPORT) $(LDFLAGS)
 
-fnt2bdf$(EXEEXT): fnt2bdf.o
-	$(CC) $(CFLAGS) -o $@ fnt2bdf.o $(LIBPORT) $(LDFLAGS)
+.PHONY: install install-lib install-dev uninstall
 
-fnt2fon$(EXEEXT): fnt2fon.o
-	$(CC) $(CFLAGS) -o $@ fnt2fon.o $(LIBPORT) $(LDFLAGS)
-
-relpath$(EXEEXT): relpath.o
-	$(CC) $(CFLAGS) -o $@ relpath.o $(LIBPORT) $(LDFLAGS)
-
-sfnt2fnt$(EXEEXT): sfnt2fnt.o relpath$(EXEEXT)
-	$(CC) $(CFLAGS) -o $@ sfnt2fnt.o $(LIBWINE) $(LIBPORT) $(LDFLAGS) $(FREETYPELIBS) $(LDRPATH_LOCAL)
-
-wine.inf: wine.inf.in
-	LC_ALL=C sed -e 's,@PACKAGE_STRING\@,@PACKAGE_STRING@,g' $(srcdir)/wine.inf.in >$@ || ($(RM) $@ && false)
-
-wineapploader: wineapploader.in
-	sed -e 's,@bindir\@,$(bindir),g' $(srcdir)/wineapploader.in >$@ || ($(RM) $@ && false)
-
-install install-lib:: wine.inf $(INSTALLDIRS)
-	$(INSTALL_DATA) wine.inf $(DESTDIR)$(datadir)/wine/wine.inf
-	$(INSTALL_DATA) $(srcdir)/l_intl.nls $(DESTDIR)$(datadir)/wine/l_intl.nls
+install install-lib::
 	$(INSTALL_DATA) $(srcdir)/wine.desktop $(DESTDIR)$(datadir)/applications/wine.desktop
 	-$(UPDATE_DESKTOP_DATABASE)
 
-install install-dev:: $(DESTDIR)$(bindir) install-man-pages
+install install-dev:: install-man-pages
 	$(INSTALL_SCRIPT) $(srcdir)/winemaker $(DESTDIR)$(bindir)/winemaker
 
-install-man-pages:: $(EXTRA_MANPAGES) $(INSTALLDIRS)
-	$(INSTALL_DATA) winemaker.de.man $(DESTDIR)$(mandir)/de.UTF-8/man$(prog_manext)/winemaker.$(prog_manext)
-	$(INSTALL_DATA) winemaker.fr.man $(DESTDIR)$(mandir)/fr.UTF-8/man$(prog_manext)/winemaker.$(prog_manext)
-
 uninstall::
-	$(RM) $(DESTDIR)$(datadir)/wine/wine.inf \
-		$(DESTDIR)$(datadir)/wine/l_intl.nls \
-		$(DESTDIR)$(datadir)/applications/wine.desktop \
-		$(DESTDIR)$(bindir)/winemaker \
-		$(DESTDIR)$(mandir)/de.UTF-8/man$(prog_manext)/winemaker.$(prog_manext) \
-		$(DESTDIR)$(mandir)/fr.UTF-8/man$(prog_manext)/winemaker.$(prog_manext)
+	$(RM) $(DESTDIR)$(datadir)/applications/wine.desktop $(DESTDIR)$(bindir)/winemaker
 	-$(UPDATE_DESKTOP_DATABASE)
-
-depend: makedep$(EXEEXT)

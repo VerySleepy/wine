@@ -1763,6 +1763,7 @@ static DWORD get_drive_connection( WCHAR letter, LPWSTR remote, LPDWORD size )
     struct mountmgr_unix_drive *data = (struct mountmgr_unix_drive *)buffer;
     HANDLE mgr;
     DWORD ret = WN_NOT_CONNECTED;
+    DWORD bytes_returned;
 
     if ((mgr = CreateFileW( MOUNTMGR_DOS_DEVICE_NAME, GENERIC_READ|GENERIC_WRITE,
                             FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
@@ -1774,7 +1775,7 @@ static DWORD get_drive_connection( WCHAR letter, LPWSTR remote, LPDWORD size )
     memset( data, 0, sizeof(*data) );
     data->letter = letter;
     if (DeviceIoControl( mgr, IOCTL_MOUNTMGR_QUERY_UNIX_DRIVE, data, sizeof(*data),
-                         data, sizeof(buffer), NULL, NULL ))
+                         data, sizeof(buffer), &bytes_returned, NULL ))
     {
         char *p, *mount_point = buffer + data->mount_point_offset;
         DWORD len;
@@ -1892,6 +1893,12 @@ DWORD WINAPI WNetGetUniversalNameA ( LPCSTR lpLocalPath, DWORD dwInfoLevel,
     {
         LPUNIVERSAL_NAME_INFOA info = lpBuffer;
 
+        if (GetDriveTypeA(lpLocalPath) != DRIVE_REMOTE)
+        {
+            err = ERROR_NOT_CONNECTED;
+            break;
+        }
+
         size = sizeof(*info) + lstrlenA(lpLocalPath) + 1;
         if (*lpBufferSize < size)
         {
@@ -1900,7 +1907,6 @@ DWORD WINAPI WNetGetUniversalNameA ( LPCSTR lpLocalPath, DWORD dwInfoLevel,
         }
         info->lpUniversalName = (char *)info + sizeof(*info);
         lstrcpyA(info->lpUniversalName, lpLocalPath);
-        *lpBufferSize = size;
         err = WN_NO_ERROR;
         break;
     }
@@ -1934,6 +1940,12 @@ DWORD WINAPI WNetGetUniversalNameW ( LPCWSTR lpLocalPath, DWORD dwInfoLevel,
     {
         LPUNIVERSAL_NAME_INFOW info = lpBuffer;
 
+        if (GetDriveTypeW(lpLocalPath) != DRIVE_REMOTE)
+        {
+            err = ERROR_NOT_CONNECTED;
+            break;
+        }
+
         size = sizeof(*info) + (lstrlenW(lpLocalPath) + 1) * sizeof(WCHAR);
         if (*lpBufferSize < size)
         {
@@ -1942,7 +1954,6 @@ DWORD WINAPI WNetGetUniversalNameW ( LPCWSTR lpLocalPath, DWORD dwInfoLevel,
         }
         info->lpUniversalName = (LPWSTR)((char *)info + sizeof(*info));
         lstrcpyW(info->lpUniversalName, lpLocalPath);
-        *lpBufferSize = size;
         err = WN_NO_ERROR;
         break;
     }

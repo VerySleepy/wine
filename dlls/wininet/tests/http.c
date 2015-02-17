@@ -1,5 +1,5 @@
 /*
- * Wininet - Http tests
+ * Wininet - HTTP tests
  *
  * Copyright 2002 Aric Stewart
  * Copyright 2004 Mike McCormack
@@ -27,9 +27,16 @@
 #include "windef.h"
 #include "winbase.h"
 #include "wininet.h"
-#include "winsock.h"
+#include "winineti.h"
+#include "winsock2.h"
 
 #include "wine/test.h"
+
+/* Undocumented security flags */
+#define _SECURITY_FLAG_CERT_REV_FAILED    0x00800000
+#define _SECURITY_FLAG_CERT_INVALID_CA    0x01000000
+#define _SECURITY_FLAG_CERT_INVALID_CN    0x02000000
+#define _SECURITY_FLAG_CERT_INVALID_DATE  0x04000000
 
 #define TEST_URL "http://test.winehq.org/tests/hello.html"
 
@@ -72,7 +79,7 @@ static BOOL first_connection_to_test_url = TRUE;
                status < MAX_INTERNET_STATUS && status_string[status] ? \
                status_string[status] : "unknown");                      \
             if (expect[status]) expect[status]--; \
-            else optional[status]--; \
+            else if(optional[status]) optional[status]--; \
         } \
         notified[status]++; \
     }while(0)
@@ -107,8 +114,7 @@ static DWORD req_error;
 
 #define TESTF_REDIRECT      0x01
 #define TESTF_COMPRESSED    0x02
-#define TESTF_ALLOW_COOKIE  0x04
-#define TESTF_CHUNKED       0x08
+#define TESTF_CHUNKED       0x04
 
 typedef struct {
     const char *url;
@@ -139,12 +145,12 @@ static const test_data_t test_data[] = {
         TESTF_REDIRECT
     },
     {
-        "http://www.codeweavers.com/",
-        "http://www.codeweavers.com/",
-        "www.codeweavers.com",
-        "",
+        "http://test.winehq.org/tests/gzip.php",
+        "http://test.winehq.org/tests/gzip.php",
+        "test.winehq.org",
+        "/tests/gzip.php",
         "Accept-Encoding: gzip, deflate",
-        TESTF_COMPRESSED|TESTF_ALLOW_COOKIE
+        TESTF_COMPRESSED
     },
     {
         "http://test.winehq.org/tests/post.php",
@@ -159,6 +165,15 @@ static const test_data_t test_data[] = {
 };
 
 static INTERNET_STATUS_CALLBACK (WINAPI *pInternetSetStatusCallbackA)(HINTERNET ,INTERNET_STATUS_CALLBACK);
+static INTERNET_STATUS_CALLBACK (WINAPI *pInternetSetStatusCallbackW)(HINTERNET ,INTERNET_STATUS_CALLBACK);
+static BOOL (WINAPI *pInternetGetSecurityInfoByURLA)(LPSTR,PCCERT_CHAIN_CONTEXT*,DWORD*);
+
+static int strcmp_wa(LPCWSTR strw, const char *stra)
+{
+    WCHAR buf[512];
+    MultiByteToWideChar(CP_ACP, 0, stra, -1, buf, sizeof(buf)/sizeof(WCHAR));
+    return lstrcmpW(strw, buf);
+}
 
 static BOOL proxy_active(void)
 {
@@ -177,6 +192,123 @@ static BOOL proxy_active(void)
     RegCloseKey(internet_settings);
 
     return proxy_enable != 0;
+}
+
+#define test_status_code(a,b) _test_status_code(__LINE__,a,b, FALSE)
+#define test_status_code_todo(a,b) _test_status_code(__LINE__,a,b, TRUE)
+static void _test_status_code(unsigned line, HINTERNET req, DWORD excode, BOOL is_todo)
+{
+    DWORD code, size, index;
+    char exbuf[10], bufa[10];
+    WCHAR bufw[10];
+    BOOL res;
+
+    code = 0xdeadbeef;
+    size = sizeof(code);
+    res = HttpQueryInfoA(req, HTTP_QUERY_STATUS_CODE|HTTP_QUERY_FLAG_NUMBER, &code, &size, NULL);
+    ok_(__FILE__,line)(res, "[1] HttpQueryInfoA(HTTP_QUERY_STATUS_CODE|number) failed: %u\n", GetLastError());
+    if (is_todo)
+        todo_wine ok_(__FILE__,line)(code == excode, "code = %d, expected %d\n", code, excode);
+    else
+        ok_(__FILE__,line)(code == excode, "code = %d, expected %d\n", code, excode);
+    ok_(__FILE__,line)(size == sizeof(code), "size = %u\n", size);
+
+    code = 0xdeadbeef;
+    index = 0;
+    size = sizeof(code);
+    res = HttpQueryInfoA(req, HTTP_QUERY_STATUS_CODE|HTTP_QUERY_FLAG_NUMBER, &code, &size, &index);
+    ok_(__FILE__,line)(res, "[2] HttpQueryInfoA(HTTP_QUERY_STATUS_CODE|number index) failed: %u\n", GetLastError());
+    if (is_todo)
+        todo_wine ok_(__FILE__,line)(code == excode, "code = %d, expected %d\n", code, excode);
+    else
+        ok_(__FILE__,line)(!index, "index = %d, expected 0\n", code);
+    ok_(__FILE__,line)(size == sizeof(code), "size = %u\n", size);
+
+    sprintf(exbuf, "%u", excode);
+
+    size = sizeof(bufa);
+    res = HttpQueryInfoA(req, HTTP_QUERY_STATUS_CODE, bufa, &size, NULL);
+    ok_(__FILE__,line)(res, "[3] HttpQueryInfoA(HTTP_QUERY_STATUS_CODE) failed: %u\n", GetLastError());
+    if (is_todo)
+        todo_wine ok_(__FILE__,line)(!strcmp(bufa, exbuf), "unexpected status code %s, expected %s\n", bufa, exbuf);
+    else
+        ok_(__FILE__,line)(!strcmp(bufa, exbuf), "unexpected status code %s, expected %s\n", bufa, exbuf);
+    ok_(__FILE__,line)(size == strlen(exbuf), "unexpected size %d for \"%s\"\n", size, exbuf);
+
+    size = 0;
+    res = HttpQueryInfoA(req, HTTP_QUERY_STATUS_CODE, NULL, &size, NULL);
+    ok_(__FILE__,line)(!res && GetLastError() == ERROR_INSUFFICIENT_BUFFER,
+                       "[4] HttpQueryInfoA(HTTP_QUERY_STATUS_CODE) failed: %u\n", GetLastError());
+    ok_(__FILE__,line)(size == strlen(exbuf)+1, "unexpected size %d for \"%s\"\n", size, exbuf);
+
+    size = sizeof(bufw);
+    res = HttpQueryInfoW(req, HTTP_QUERY_STATUS_CODE, bufw, &size, NULL);
+    ok_(__FILE__,line)(res, "[5] HttpQueryInfoW(HTTP_QUERY_STATUS_CODE) failed: %u\n", GetLastError());
+    if (is_todo)
+        todo_wine ok_(__FILE__,line)(!strcmp_wa(bufw, exbuf), "unexpected status code %s, expected %s\n", bufa, exbuf);
+    else
+        ok_(__FILE__,line)(!strcmp_wa(bufw, exbuf), "unexpected status code %s, expected %s\n", bufa, exbuf);
+    ok_(__FILE__,line)(size == strlen(exbuf)*sizeof(WCHAR), "unexpected size %d for \"%s\"\n", size, exbuf);
+
+    size = 0;
+    res = HttpQueryInfoW(req, HTTP_QUERY_STATUS_CODE, bufw, &size, NULL);
+    ok_(__FILE__,line)(!res && GetLastError() == ERROR_INSUFFICIENT_BUFFER,
+                       "[6] HttpQueryInfoW(HTTP_QUERY_STATUS_CODE) failed: %u\n", GetLastError());
+    ok_(__FILE__,line)(size == (strlen(exbuf)+1)*sizeof(WCHAR), "unexpected size %d for \"%s\"\n", size, exbuf);
+
+    if(0) {
+    size = sizeof(bufw);
+    res = HttpQueryInfoW(req, HTTP_QUERY_STATUS_CODE, NULL, &size, NULL);
+    ok(!res && GetLastError() == ERROR_INVALID_PARAMETER, "HttpQueryInfo(HTTP_QUERY_STATUS_CODE) failed: %u\n", GetLastError());
+    ok(size == sizeof(bufw), "unexpected size %d\n", size);
+    }
+
+    code = 0xdeadbeef;
+    index = 1;
+    size = sizeof(code);
+    res = HttpQueryInfoA(req, HTTP_QUERY_STATUS_CODE|HTTP_QUERY_FLAG_NUMBER, &code, &size, &index);
+    ok_(__FILE__,line)(!res && GetLastError() == ERROR_HTTP_HEADER_NOT_FOUND,
+                       "[7] HttpQueryInfoA failed: %x(%d)\n", res, GetLastError());
+
+    code = 0xdeadbeef;
+    size = sizeof(code);
+    res = HttpQueryInfoA(req, HTTP_QUERY_STATUS_CODE|HTTP_QUERY_FLAG_REQUEST_HEADERS, &code, &size, NULL);
+    ok_(__FILE__,line)(!res && GetLastError() == ERROR_HTTP_INVALID_QUERY_REQUEST,
+                       "[8] HttpQueryInfoA failed: %x(%d)\n", res, GetLastError());
+}
+
+#define test_request_flags(a,b) _test_request_flags(__LINE__,a,b,FALSE)
+#define test_request_flags_todo(a,b) _test_request_flags(__LINE__,a,b,TRUE)
+static void _test_request_flags(unsigned line, HINTERNET req, DWORD exflags, BOOL is_todo)
+{
+    DWORD flags, size;
+    BOOL res;
+
+    flags = 0xdeadbeef;
+    size = sizeof(flags);
+    res = InternetQueryOptionW(req, INTERNET_OPTION_REQUEST_FLAGS, &flags, &size);
+    ok_(__FILE__,line)(res, "InternetQueryOptionW(INTERNET_OPTION_REQUEST_FLAGS) failed: %u\n", GetLastError());
+
+    /* FIXME: Remove once we have INTERNET_REQFLAG_CACHE_WRITE_DISABLED implementation */
+    flags &= ~INTERNET_REQFLAG_CACHE_WRITE_DISABLED;
+    if(!is_todo)
+        ok_(__FILE__,line)(flags == exflags, "flags = %x, expected %x\n", flags, exflags);
+    else
+        todo_wine ok_(__FILE__,line)(flags == exflags, "flags = %x, expected %x\n", flags, exflags);
+}
+
+#define test_http_version(a) _test_http_version(__LINE__,a)
+static void _test_http_version(unsigned line, HINTERNET req)
+{
+    HTTP_VERSION_INFO v = {0xdeadbeef, 0xdeadbeef};
+    DWORD size;
+    BOOL res;
+
+    size = sizeof(v);
+    res = InternetQueryOptionW(req, INTERNET_OPTION_HTTP_VERSION, &v, &size);
+    ok_(__FILE__,line)(res, "InternetQueryOptionW(INTERNET_OPTION_HTTP_VERSION) failed: %u\n", GetLastError());
+    ok_(__FILE__,line)(v.dwMajorVersion == 1, "dwMajorVersion = %d\n", v.dwMajorVersion);
+    ok_(__FILE__,line)(v.dwMinorVersion == 1, "dwMinorVersion = %d\n", v.dwMinorVersion);
 }
 
 static int close_handle_cnt;
@@ -208,12 +340,16 @@ static VOID WINAPI callback(
             trace("%04x:Callback %p 0x%lx INTERNET_STATUS_CONNECTING_TO_SERVER \"%s\" %d\n",
                 GetCurrentThreadId(), hInternet, dwContext,
                 (LPCSTR)lpvStatusInformation,dwStatusInformationLength);
+            ok(dwStatusInformationLength == strlen(lpvStatusInformation)+1, "unexpected size %u\n",
+               dwStatusInformationLength);
             *(LPSTR)lpvStatusInformation = '\0';
             break;
         case INTERNET_STATUS_CONNECTED_TO_SERVER:
             trace("%04x:Callback %p 0x%lx INTERNET_STATUS_CONNECTED_TO_SERVER \"%s\" %d\n",
                 GetCurrentThreadId(), hInternet, dwContext,
                 (LPCSTR)lpvStatusInformation,dwStatusInformationLength);
+            ok(dwStatusInformationLength == strlen(lpvStatusInformation)+1, "unexpected size %u\n",
+               dwStatusInformationLength);
             *(LPSTR)lpvStatusInformation = '\0';
             break;
         case INTERNET_STATUS_SENDING_REQUEST:
@@ -279,7 +415,7 @@ static VOID WINAPI callback(
             trace("%04x:Callback %p 0x%lx INTERNET_STATUS_HANDLE_CLOSING %p %d\n",
                 GetCurrentThreadId(), hInternet, dwContext,
                 *(HINTERNET *)lpvStatusInformation, dwStatusInformationLength);
-            if(!--close_handle_cnt)
+            if(!InterlockedDecrement(&close_handle_cnt))
                 SetEvent(hCompleteEvent);
             break;
         case INTERNET_STATUS_REQUEST_COMPLETE:
@@ -293,7 +429,8 @@ static VOID WINAPI callback(
                 GetCurrentThreadId(), hInternet, dwContext,
                 iar->dwResult,iar->dwError,dwStatusInformationLength);
             req_error = iar->dwError;
-            SetEvent(hCompleteEvent);
+            if(!close_handle_cnt)
+                SetEvent(hCompleteEvent);
             break;
         }
         case INTERNET_STATUS_REDIRECT:
@@ -327,7 +464,6 @@ static void close_async_handle(HINTERNET handle, HANDLE complete_event, int hand
     ok(res, "InternetCloseHandle failed: %u\n", GetLastError());
     WaitForSingleObject(hCompleteEvent, INFINITE);
     CHECK_NOTIFIED2(INTERNET_STATUS_HANDLE_CLOSING, handle_cnt);
-    SET_EXPECT2(INTERNET_STATUS_HANDLE_CLOSING, handle_cnt);
 }
 
 static void InternetReadFile_test(int flags, const test_data_t *test)
@@ -335,12 +471,12 @@ static void InternetReadFile_test(int flags, const test_data_t *test)
     char *post_data = NULL;
     BOOL res, on_async = TRUE;
     CHAR buffer[4000];
-    DWORD length, post_len = 0;
-    DWORD out;
+    WCHAR wbuffer[4000];
+    DWORD length, length2, index, exlen = 0, post_len = 0;
     const char *types[2] = { "*", NULL };
     HINTERNET hi, hic = 0, hor = 0;
 
-    hCompleteEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+    hCompleteEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
 
     trace("Starting InternetReadFile test with flags 0x%x on url %s\n",flags,test->url);
 
@@ -369,7 +505,7 @@ static void InternetReadFile_test(int flags, const test_data_t *test)
 
     trace("HttpOpenRequestA <--\n");
     hor = HttpOpenRequestA(hic, test->post_data ? "POST" : "GET", test->path, NULL, NULL, types,
-                           INTERNET_FLAG_KEEP_CONNECTION | INTERNET_FLAG_RESYNCHRONIZE,
+                           INTERNET_FLAG_KEEP_CONNECTION | INTERNET_FLAG_RELOAD,
                            0xdeadbead);
     if (hor == 0x0 && GetLastError() == ERROR_INTERNET_NAME_NOT_RESOLVED) {
         /*
@@ -385,6 +521,8 @@ static void InternetReadFile_test(int flags, const test_data_t *test)
 
     if (hor == 0x0) goto abort;
 
+    test_request_flags(hor, INTERNET_REQFLAG_NO_HEADERS);
+
     length = sizeof(buffer);
     res = InternetQueryOptionA(hor, INTERNET_OPTION_URL, buffer, &length);
     ok(res, "InternetQueryOptionA(INTERNET_OPTION_URL) failed: %u\n", GetLastError());
@@ -399,10 +537,8 @@ static void InternetReadFile_test(int flags, const test_data_t *test)
     CHECK_NOTIFIED(INTERNET_STATUS_HANDLE_CREATED);
     CHECK_NOT_NOTIFIED(INTERNET_STATUS_RESOLVING_NAME);
     CHECK_NOT_NOTIFIED(INTERNET_STATUS_NAME_RESOLVED);
-    if(test->flags & TESTF_ALLOW_COOKIE) {
-        SET_OPTIONAL(INTERNET_STATUS_COOKIE_SENT);
-        SET_OPTIONAL(INTERNET_STATUS_COOKIE_RECEIVED);
-    }
+    SET_OPTIONAL2(INTERNET_STATUS_COOKIE_SENT,2);
+    SET_OPTIONAL2(INTERNET_STATUS_COOKIE_RECEIVED,2);
     if (first_connection_to_test_url)
     {
         SET_EXPECT(INTERNET_STATUS_RESOLVING_NAME);
@@ -427,12 +563,14 @@ static void InternetReadFile_test(int flags, const test_data_t *test)
     if(test->flags & TESTF_COMPRESSED) {
         BOOL b = TRUE;
 
-        res = InternetSetOption(hor, INTERNET_OPTION_HTTP_DECODING, &b, sizeof(b));
+        res = InternetSetOptionA(hor, INTERNET_OPTION_HTTP_DECODING, &b, sizeof(b));
         ok(res || broken(!res && GetLastError() == ERROR_INTERNET_INVALID_OPTION),
            "InternetSetOption failed: %u\n", GetLastError());
         if(!res)
             goto abort;
     }
+
+    test_status_code(hor, 0);
 
     trace("HttpSendRequestA -->\n");
     if(test->post_data) {
@@ -456,10 +594,8 @@ static void InternetReadFile_test(int flags, const test_data_t *test)
     }
     HeapFree(GetProcessHeap(), 0, post_data);
 
-    if(test->flags & TESTF_ALLOW_COOKIE) {
-        CLEAR_NOTIFIED(INTERNET_STATUS_COOKIE_SENT);
-        CLEAR_NOTIFIED(INTERNET_STATUS_COOKIE_RECEIVED);
-    }
+    CLEAR_NOTIFIED(INTERNET_STATUS_COOKIE_SENT);
+    CLEAR_NOTIFIED(INTERNET_STATUS_COOKIE_RECEIVED);
     if (first_connection_to_test_url)
     {
         if (! proxy_active())
@@ -490,30 +626,89 @@ static void InternetReadFile_test(int flags, const test_data_t *test)
     CLEAR_NOTIFIED(INTERNET_STATUS_CONNECTING_TO_SERVER);
     CLEAR_NOTIFIED(INTERNET_STATUS_CONNECTED_TO_SERVER);
 
-    length = 4;
-    res = InternetQueryOptionA(hor,INTERNET_OPTION_REQUEST_FLAGS,&out,&length);
-    ok(res, "InternetQueryOptionA(INTERNET_OPTION_REQUEST) failed with error %d\n", GetLastError());
+    test_request_flags(hor, 0);
 
     length = 100;
     res = InternetQueryOptionA(hor,INTERNET_OPTION_URL,buffer,&length);
     ok(res, "InternetQueryOptionA(INTERNET_OPTION_URL) failed with error %d\n", GetLastError());
 
-    length = sizeof(buffer);
+    length = sizeof(buffer)-1;
+    memset(buffer, 0x77, sizeof(buffer));
     res = HttpQueryInfoA(hor,HTTP_QUERY_RAW_HEADERS,buffer,&length,0x0);
     ok(res, "HttpQueryInfoA(HTTP_QUERY_RAW_HEADERS) failed with error %d\n", GetLastError());
-    buffer[length]=0;
+    /* show that the function writes data past the length returned */
+    ok(buffer[length-2], "Expected any header character, got 0x00\n");
+    ok(!buffer[length-1], "Expected 0x00, got %02X\n", buffer[length-1]);
+    ok(!buffer[length], "Expected 0x00, got %02X\n", buffer[length]);
+    ok(buffer[length+1] == 0x77, "Expected 0x77, got %02X\n", buffer[length+1]);
+
+    length2 = length;
+    res = HttpQueryInfoA(hor,HTTP_QUERY_RAW_HEADERS,buffer,&length2,0x0);
+    ok(!res, "Expected 0x00, got %d\n", res);
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "Unexpected last error: %d\n", GetLastError());
+    ok(length2 == length+1, "Expected %d, got %d\n", length+1, length2);
+    /* the in length of the buffer must be +1 but the length returned does not count this */
+    length2 = length+1;
+    memset(buffer, 0x77, sizeof(buffer));
+    res = HttpQueryInfoA(hor,HTTP_QUERY_RAW_HEADERS,buffer,&length2,0x0);
+    ok(res, "HttpQueryInfoA(HTTP_QUERY_RAW_HEADERS) failed with error %d\n", GetLastError());
+    ok(buffer[length2] == 0x00, "Expected 0x00, got %02X\n", buffer[length2]);
+    ok(buffer[length2+1] == 0x77, "Expected 0x77, got %02X\n", buffer[length2+1]);
+    ok(length2 == length, "Value should not have changed: %d != %d\n", length2, length);
+
+    length = sizeof(wbuffer)-sizeof(WCHAR);
+    memset(wbuffer, 0x77, sizeof(wbuffer));
+    res = HttpQueryInfoW(hor, HTTP_QUERY_RAW_HEADERS, wbuffer, &length, 0x0);
+    ok(res, "HttpQueryInfoW(HTTP_QUERY_RAW_HEADERS) failed with error %d\n", GetLastError());
+    ok(length % sizeof(WCHAR) == 0, "Expected that length is a multiple of sizeof(WCHAR), got %d.\n", length);
+    length /= sizeof(WCHAR);
+    /* show that the function writes data past the length returned */
+    ok(wbuffer[length-2], "Expected any header character, got 0x0000\n");
+    ok(!wbuffer[length-1], "Expected 0x0000, got %04X\n", wbuffer[length-1]);
+    ok(!wbuffer[length], "Expected 0x0000, got %04X\n", wbuffer[length]);
+    ok(wbuffer[length+1] == 0x7777 || broken(wbuffer[length+1] != 0x7777),
+       "Expected 0x7777, got %04X\n", wbuffer[length+1]);
+
+    length2 = length*sizeof(WCHAR);
+    res = HttpQueryInfoW(hor,HTTP_QUERY_RAW_HEADERS,wbuffer,&length2,0x0);
+    ok(!res, "Expected 0x00, got %d\n", res);
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "Unexpected last error: %d\n", GetLastError());
+    ok(length2 % sizeof(WCHAR) == 0, "Expected that length is a multiple of sizeof(WCHAR), got %d.\n", length2);
+    length2 /= sizeof(WCHAR);
+    ok(length2 == length+1, "Expected %d, got %d\n", length+1, length2);
+    /* the in length of the buffer must be +1 but the length returned does not count this */
+    length2 = (length+1)*sizeof(WCHAR);
+    memset(wbuffer, 0x77, sizeof(wbuffer));
+    res = HttpQueryInfoW(hor,HTTP_QUERY_RAW_HEADERS,wbuffer,&length2,0x0);
+    ok(res, "HttpQueryInfoW(HTTP_QUERY_RAW_HEADERS) failed with error %d\n", GetLastError());
+    ok(length2 % sizeof(WCHAR) == 0, "Expected that length is a multiple of sizeof(WCHAR), got %d.\n", length2);
+    length2 /= sizeof(WCHAR);
+    ok(!wbuffer[length2], "Expected 0x0000, got %04X\n", wbuffer[length2]);
+    ok(wbuffer[length2+1] == 0x7777, "Expected 0x7777, got %04X\n", wbuffer[length2+1]);
+    ok(length2 == length, "Value should not have changed: %d != %d\n", length2, length);
 
     length = sizeof(buffer);
     res = InternetQueryOptionA(hor, INTERNET_OPTION_URL, buffer, &length);
     ok(res, "InternetQueryOptionA(INTERNET_OPTION_URL) failed: %u\n", GetLastError());
     ok(!strcmp(buffer, test->redirected_url), "Wrong URL %s\n", buffer);
 
+    index = 0;
+    length = 0;
+    SetLastError(0xdeadbeef);
+    ok(HttpQueryInfoA(hor,HTTP_QUERY_CONTENT_LENGTH,NULL,&length,&index) == FALSE,"Query worked\n");
+    if(test->flags & TESTF_COMPRESSED)
+        ok(GetLastError() == ERROR_HTTP_HEADER_NOT_FOUND,
+           "expected ERROR_HTTP_HEADER_NOT_FOUND, got %u\n", GetLastError());
+    ok(index == 0, "Index was incremented\n");
+
+    index = 0;
     length = 16;
-    res = HttpQueryInfoA(hor,HTTP_QUERY_CONTENT_LENGTH,&buffer,&length,0x0);
+    res = HttpQueryInfoA(hor,HTTP_QUERY_CONTENT_LENGTH,&buffer,&length,&index);
     trace("Option HTTP_QUERY_CONTENT_LENGTH -> %i  %s  (%u)\n",res,buffer,GetLastError());
     if(test->flags & TESTF_COMPRESSED)
         ok(!res && GetLastError() == ERROR_HTTP_HEADER_NOT_FOUND,
            "expected ERROR_HTTP_HEADER_NOT_FOUND, got %x (%u)\n", res, GetLastError());
+    ok(!res || index == 1, "Index was not incremented although result is %x (index = %u)\n", res, index);
 
     length = 100;
     res = HttpQueryInfoA(hor,HTTP_QUERY_CONTENT_TYPE,buffer,&length,0x0);
@@ -539,12 +734,25 @@ static void InternetReadFile_test(int flags, const test_data_t *test)
     {
         if (flags & INTERNET_FLAG_ASYNC)
             SET_EXPECT(INTERNET_STATUS_REQUEST_COMPLETE);
+
+        /* IE11 calls those in InternetQueryDataAvailable call. */
+        SET_OPTIONAL(INTERNET_STATUS_RECEIVING_RESPONSE);
+        SET_OPTIONAL(INTERNET_STATUS_RESPONSE_RECEIVED);
+
+        length = 0;
         res = InternetQueryDataAvailable(hor,&length,0x0,0x0);
+
+        CLEAR_NOTIFIED(INTERNET_STATUS_RECEIVING_RESPONSE);
+
         if (flags & INTERNET_FLAG_ASYNC)
         {
             if (res)
             {
                 CHECK_NOT_NOTIFIED(INTERNET_STATUS_REQUEST_COMPLETE);
+                if(exlen) {
+                    ok(length >= exlen, "length %u < exlen %u\n", length, exlen);
+                    exlen = 0;
+                }
             }
             else if (GetLastError() == ERROR_IO_PENDING)
             {
@@ -553,7 +761,10 @@ static void InternetReadFile_test(int flags, const test_data_t *test)
                 if(!(test->flags & TESTF_CHUNKED))
                     ok(!length, "InternetQueryDataAvailable returned ERROR_IO_PENDING and %u length\n", length);
                 WaitForSingleObject(hCompleteEvent, INFINITE);
+                exlen = length;
+                ok(exlen, "length = 0\n");
                 CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_COMPLETE);
+                CLEAR_NOTIFIED(INTERNET_STATUS_RESPONSE_RECEIVED);
                 ok(req_error, "req_error = 0\n");
                 continue;
             }else {
@@ -562,6 +773,8 @@ static void InternetReadFile_test(int flags, const test_data_t *test)
         }else {
             ok(res, "InternetQueryDataAvailable failed: %u\n", GetLastError());
         }
+        CLEAR_NOTIFIED(INTERNET_STATUS_RESPONSE_RECEIVED);
+
         trace("LENGTH %d\n", length);
         if(test->flags & TESTF_CHUNKED)
             ok(length <= 8192, "length = %d, expected <= 8192\n", length);
@@ -600,7 +813,7 @@ static void InternetReadFile_chunked_test(void)
 {
     BOOL res;
     CHAR buffer[4000];
-    DWORD length;
+    DWORD length, got;
     const char *types[2] = { "*", NULL };
     HINTERNET hi, hic = 0, hor = 0;
 
@@ -623,7 +836,7 @@ static void InternetReadFile_chunked_test(void)
 
     trace("HttpOpenRequestA <--\n");
     hor = HttpOpenRequestA(hic, "GET", "/tests/chunked", NULL, NULL, types,
-                           INTERNET_FLAG_KEEP_CONNECTION | INTERNET_FLAG_RESYNCHRONIZE,
+                           INTERNET_FLAG_KEEP_CONNECTION | INTERNET_FLAG_RELOAD,
                            0xdeadbead);
     if (hor == 0x0 && GetLastError() == ERROR_INTERNET_NAME_NOT_RESOLVED) {
         /*
@@ -645,6 +858,8 @@ static void InternetReadFile_chunked_test(void)
     ok(res || (GetLastError() == ERROR_INTERNET_NAME_NOT_RESOLVED),
        "Synchronous HttpSendRequest returning 0, error %u\n", GetLastError());
     trace("HttpSendRequestA <--\n");
+
+    test_request_flags(hor, 0);
 
     length = 100;
     res = HttpQueryInfoA(hor,HTTP_QUERY_CONTENT_TYPE,buffer,&length,0x0);
@@ -678,7 +893,6 @@ static void InternetReadFile_chunked_test(void)
         trace("got %u available\n",length);
         if (length)
         {
-            DWORD got;
             char *buffer = HeapAlloc(GetProcessHeap(),0,length+1);
 
             res = InternetReadFile(hor,buffer,length,&got);
@@ -692,7 +906,13 @@ static void InternetReadFile_chunked_test(void)
             if (!got) break;
         }
         if (length == 0)
+        {
+            got = 0xdeadbeef;
+            res = InternetReadFile( hor, buffer, 1, &got );
+            ok( res, "InternetReadFile failed: %u\n", GetLastError() );
+            ok( !got, "got %u\n", got );
             break;
+        }
     }
 abort:
     trace("aborting\n");
@@ -712,9 +932,9 @@ static void InternetReadFileExA_test(int flags)
     DWORD length;
     const char *types[2] = { "*", NULL };
     HINTERNET hi, hic = 0, hor = 0;
-    INTERNET_BUFFERS inetbuffers;
+    INTERNET_BUFFERSA inetbuffers;
 
-    hCompleteEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+    hCompleteEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
 
     trace("Starting InternetReadFileExA test with flags 0x%x\n",flags);
 
@@ -742,7 +962,7 @@ static void InternetReadFileExA_test(int flags)
 
     trace("HttpOpenRequestA <--\n");
     hor = HttpOpenRequestA(hic, "GET", "/tests/redirect", NULL, NULL, types,
-                           INTERNET_FLAG_KEEP_CONNECTION | INTERNET_FLAG_RESYNCHRONIZE,
+                           INTERNET_FLAG_KEEP_CONNECTION | INTERNET_FLAG_RELOAD,
                            0xdeadbead);
     if (hor == 0x0 && GetLastError() == ERROR_INTERNET_NAME_NOT_RESOLVED) {
         /*
@@ -766,6 +986,7 @@ static void InternetReadFileExA_test(int flags)
         SET_EXPECT(INTERNET_STATUS_RESOLVING_NAME);
         SET_EXPECT(INTERNET_STATUS_NAME_RESOLVED);
     }
+    SET_OPTIONAL2(INTERNET_STATUS_COOKIE_SENT, 2);
     SET_EXPECT(INTERNET_STATUS_CONNECTING_TO_SERVER);
     SET_EXPECT(INTERNET_STATUS_CONNECTED_TO_SERVER);
     SET_EXPECT2(INTERNET_STATUS_SENDING_REQUEST, 2);
@@ -819,27 +1040,30 @@ static void InternetReadFileExA_test(int flags)
         CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_COMPLETE);
     else
         todo_wine CHECK_NOT_NOTIFIED(INTERNET_STATUS_REQUEST_COMPLETE);
+    CLEAR_NOTIFIED(INTERNET_STATUS_COOKIE_SENT);
     /* Sent on WinXP only if first_connection_to_test_url is TRUE, on Win98 always sent */
     CLEAR_NOTIFIED(INTERNET_STATUS_CONNECTING_TO_SERVER);
     CLEAR_NOTIFIED(INTERNET_STATUS_CONNECTED_TO_SERVER);
 
     /* tests invalid dwStructSize */
-    inetbuffers.dwStructSize = sizeof(INTERNET_BUFFERS)+1;
+    inetbuffers.dwStructSize = sizeof(inetbuffers)+1;
     inetbuffers.lpcszHeader = NULL;
     inetbuffers.dwHeadersLength = 0;
     inetbuffers.dwBufferLength = 10;
     inetbuffers.lpvBuffer = HeapAlloc(GetProcessHeap(), 0, 10);
     inetbuffers.dwOffsetHigh = 1234;
     inetbuffers.dwOffsetLow = 5678;
-    rc = InternetReadFileEx(hor, &inetbuffers, 0, 0xdeadcafe);
+    rc = InternetReadFileExA(hor, &inetbuffers, 0, 0xdeadcafe);
     ok(!rc && (GetLastError() == ERROR_INVALID_PARAMETER),
         "InternetReadFileEx should have failed with ERROR_INVALID_PARAMETER instead of %s, %u\n",
         rc ? "TRUE" : "FALSE", GetLastError());
     HeapFree(GetProcessHeap(), 0, inetbuffers.lpvBuffer);
 
+    test_request_flags(hor, 0);
+
     /* tests to see whether lpcszHeader is used - it isn't */
-    inetbuffers.dwStructSize = sizeof(INTERNET_BUFFERS);
-    inetbuffers.lpcszHeader = (LPCTSTR)0xdeadbeef;
+    inetbuffers.dwStructSize = sizeof(inetbuffers);
+    inetbuffers.lpcszHeader = (LPCSTR)0xdeadbeef;
     inetbuffers.dwHeadersLength = 255;
     inetbuffers.dwBufferLength = 0;
     inetbuffers.lpvBuffer = NULL;
@@ -847,16 +1071,16 @@ static void InternetReadFileExA_test(int flags)
     inetbuffers.dwOffsetLow = 5678;
     SET_EXPECT(INTERNET_STATUS_RECEIVING_RESPONSE);
     SET_EXPECT(INTERNET_STATUS_RESPONSE_RECEIVED);
-    rc = InternetReadFileEx(hor, &inetbuffers, 0, 0xdeadcafe);
+    rc = InternetReadFileExA(hor, &inetbuffers, 0, 0xdeadcafe);
     ok(rc, "InternetReadFileEx failed with error %u\n", GetLastError());
-        trace("read %i bytes\n", inetbuffers.dwBufferLength);
+    trace("read %i bytes\n", inetbuffers.dwBufferLength);
     todo_wine
     {
         CHECK_NOT_NOTIFIED(INTERNET_STATUS_RECEIVING_RESPONSE);
         CHECK_NOT_NOTIFIED(INTERNET_STATUS_RESPONSE_RECEIVED);
     }
 
-    rc = InternetReadFileEx(NULL, &inetbuffers, 0, 0xdeadcafe);
+    rc = InternetReadFileExA(NULL, &inetbuffers, 0, 0xdeadcafe);
     ok(!rc && (GetLastError() == ERROR_INVALID_HANDLE),
         "InternetReadFileEx should have failed with ERROR_INVALID_HANDLE instead of %s, %u\n",
         rc ? "TRUE" : "FALSE", GetLastError());
@@ -866,7 +1090,7 @@ static void InternetReadFileExA_test(int flags)
 
     while (TRUE)
     {
-        inetbuffers.dwStructSize = sizeof(INTERNET_BUFFERS);
+        inetbuffers.dwStructSize = sizeof(inetbuffers);
         inetbuffers.dwBufferLength = 1024;
         inetbuffers.lpvBuffer = HeapAlloc(GetProcessHeap(), 0, inetbuffers.dwBufferLength+1);
         inetbuffers.dwOffsetHigh = 1234;
@@ -944,14 +1168,18 @@ static void InternetOpenUrlA_test(void)
   DWORD size, readbytes, totalbytes=0;
   BOOL ret;
 
-  myhinternet = InternetOpen("Winetest",0,NULL,NULL,INTERNET_FLAG_NO_CACHE_WRITE);
+  ret = DeleteUrlCacheEntryA(TEST_URL);
+  ok(ret || GetLastError() == ERROR_FILE_NOT_FOUND,
+          "DeleteUrlCacheEntry returned %x, GetLastError() = %d\n", ret, GetLastError());
+
+  myhinternet = InternetOpenA("Winetest",0,NULL,NULL,INTERNET_FLAG_NO_CACHE_WRITE);
   ok((myhinternet != 0), "InternetOpen failed, error %u\n",GetLastError());
   size = 0x400;
-  ret = InternetCanonicalizeUrl(TEST_URL, buffer, &size,ICU_BROWSER_MODE);
+  ret = InternetCanonicalizeUrlA(TEST_URL, buffer, &size,ICU_BROWSER_MODE);
   ok( ret, "InternetCanonicalizeUrl failed, error %u\n",GetLastError());
 
   SetLastError(0);
-  myhttp = InternetOpenUrl(myhinternet, TEST_URL, 0, 0,
+  myhttp = InternetOpenUrlA(myhinternet, TEST_URL, 0, 0,
 			   INTERNET_FLAG_RELOAD|INTERNET_FLAG_NO_CACHE_WRITE|INTERNET_FLAG_TRANSFER_BINARY,0);
   if (GetLastError() == ERROR_INTERNET_NAME_NOT_RESOLVED)
     return; /* WinXP returns this when not connected to the net */
@@ -965,6 +1193,9 @@ static void InternetOpenUrlA_test(void)
 
   InternetCloseHandle(myhttp);
   InternetCloseHandle(myhinternet);
+
+  ret = DeleteUrlCacheEntryA(TEST_URL);
+  ok(!ret && GetLastError() == ERROR_FILE_NOT_FOUND, "INTERNET_FLAG_NO_CACHE_WRITE flag doesn't work\n");
 }
 
 static void HttpSendRequestEx_test(void)
@@ -973,7 +1204,7 @@ static void HttpSendRequestEx_test(void)
     HINTERNET hConnect;
     HINTERNET hRequest;
 
-    INTERNET_BUFFERS BufferIn;
+    INTERNET_BUFFERSA BufferIn;
     DWORD dwBytesWritten, dwBytesRead, error;
     CHAR szBuffer[256];
     int i;
@@ -982,14 +1213,14 @@ static void HttpSendRequestEx_test(void)
     static char szPostData[] = "mode=Test";
     static const char szContentType[] = "Content-Type: application/x-www-form-urlencoded";
 
-    hSession = InternetOpen("Wine Regression Test",
+    hSession = InternetOpenA("Wine Regression Test",
             INTERNET_OPEN_TYPE_PRECONFIG,NULL,NULL,0);
     ok( hSession != NULL ,"Unable to open Internet session\n");
-    hConnect = InternetConnect(hSession, "crossover.codeweavers.com",
+    hConnect = InternetConnectA(hSession, "test.winehq.org",
             INTERNET_DEFAULT_HTTP_PORT, NULL, NULL, INTERNET_SERVICE_HTTP, 0,
             0);
-    ok( hConnect != NULL, "Unable to connect to http://crossover.codeweavers.com\n");
-    hRequest = HttpOpenRequest(hConnect, "POST", "/posttest.php",
+    ok( hConnect != NULL, "Unable to connect to http://test.winehq.org\n");
+    hRequest = HttpOpenRequestA(hConnect, "POST", "/tests/post.php",
             NULL, NULL, NULL, INTERNET_FLAG_NO_CACHE_WRITE, 0);
     if (!hRequest && GetLastError() == ERROR_INTERNET_NAME_NOT_RESOLVED)
     {
@@ -998,9 +1229,10 @@ static void HttpSendRequestEx_test(void)
     }
     ok( hRequest != NULL, "Failed to open request handle err %u\n", GetLastError());
 
+    test_request_flags(hRequest, INTERNET_REQFLAG_NO_HEADERS);
 
-    BufferIn.dwStructSize = sizeof( INTERNET_BUFFERS);
-    BufferIn.Next = (LPINTERNET_BUFFERS)0xdeadcab;
+    BufferIn.dwStructSize = sizeof(BufferIn);
+    BufferIn.Next = (INTERNET_BUFFERSA*)0xdeadcab;
     BufferIn.lpcszHeader = szContentType;
     BufferIn.dwHeadersLength = sizeof(szContentType)-1;
     BufferIn.dwHeadersTotal = sizeof(szContentType)-1;
@@ -1011,16 +1243,22 @@ static void HttpSendRequestEx_test(void)
     BufferIn.dwOffsetHigh = 0;
 
     SetLastError(0xdeadbeef);
-    ret = HttpSendRequestEx(hRequest, &BufferIn, NULL, 0 ,0);
+    ret = HttpSendRequestExA(hRequest, &BufferIn, NULL, 0 ,0);
     error = GetLastError();
     ok(ret, "HttpSendRequestEx Failed with error %u\n", error);
     ok(error == ERROR_SUCCESS, "expected ERROR_SUCCESS, got %u\n", error);
+
+    test_request_flags(hRequest, INTERNET_REQFLAG_NO_HEADERS);
 
     for (i = 3; szPostData[i]; i++)
         ok(InternetWriteFile(hRequest, &szPostData[i], 1, &dwBytesWritten),
                 "InternetWriteFile failed\n");
 
-    ok(HttpEndRequest(hRequest, NULL, 0, 0), "HttpEndRequest Failed\n");
+    test_request_flags(hRequest, INTERNET_REQFLAG_NO_HEADERS);
+
+    ok(HttpEndRequestA(hRequest, NULL, 0, 0), "HttpEndRequest Failed\n");
+
+    test_request_flags(hRequest, 0);
 
     ok(InternetReadFile(hRequest, szBuffer, 255, &dwBytesRead),
             "Unable to read response\n");
@@ -1068,20 +1306,122 @@ static void InternetOpenRequest_test(void)
     }
     ok(request != NULL, "Failed to open request handle err %u\n", GetLastError());
 
-    ret = HttpSendRequest(request, NULL, 0, NULL, 0);
+    ret = HttpSendRequestW(request, NULL, 0, NULL, 0);
     ok(ret, "HttpSendRequest failed: %u\n", GetLastError());
     ok(InternetCloseHandle(request), "Close request handle failed\n");
 
     request = HttpOpenRequestW(connect, NULL, slash, NULL, NULL, typesW, INTERNET_FLAG_NO_CACHE_WRITE, 0);
     ok(request != NULL, "Failed to open request handle err %u\n", GetLastError());
 
-    ret = HttpSendRequest(request, NULL, 0, NULL, 0);
+    ret = HttpSendRequestA(request, NULL, 0, NULL, 0);
     ok(ret, "HttpSendRequest failed: %u\n", GetLastError());
     ok(InternetCloseHandle(request), "Close request handle failed\n");
 
 done:
     ok(InternetCloseHandle(connect), "Close connect handle failed\n");
     ok(InternetCloseHandle(session), "Close session handle failed\n");
+}
+
+static void test_cache_read(void)
+{
+    HINTERNET session, connection, req;
+    FILETIME now, tomorrow, yesterday;
+    BYTE content[1000], buf[2000];
+    char file_path[MAX_PATH];
+    ULARGE_INTEGER li;
+    HANDLE file;
+    DWORD size;
+    unsigned i;
+    BOOL res;
+
+    static const char cache_only_url[] = "http://test.winehq.org/tests/cache-only";
+    BYTE cache_headers[] = "HTTP/1.1 200 OK\r\n\r\n";
+
+    trace("Testing cache read...\n");
+
+    hCompleteEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
+
+    for(i = 0; i < sizeof(content); i++)
+        content[i] = '0' + (i%10);
+
+    GetSystemTimeAsFileTime(&now);
+    li.u.HighPart = now.dwHighDateTime;
+    li.u.LowPart = now.dwLowDateTime;
+    li.QuadPart += (LONGLONG)10000000 * 3600 * 24;
+    tomorrow.dwHighDateTime = li.u.HighPart;
+    tomorrow.dwLowDateTime = li.u.LowPart;
+    li.QuadPart -= (LONGLONG)10000000 * 3600 * 24 * 2;
+    yesterday.dwHighDateTime = li.u.HighPart;
+    yesterday.dwLowDateTime = li.u.LowPart;
+
+    res = CreateUrlCacheEntryA(cache_only_url, sizeof(content), "", file_path, 0);
+    ok(res, "CreateUrlCacheEntryA failed: %u\n", GetLastError());
+
+    file = CreateFileA(file_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    ok(file != INVALID_HANDLE_VALUE, "CreateFile failed\n");
+
+    WriteFile(file, content, sizeof(content), &size, NULL);
+    CloseHandle(file);
+
+    res = CommitUrlCacheEntryA(cache_only_url, file_path, tomorrow, yesterday, NORMAL_CACHE_ENTRY,
+                               cache_headers, sizeof(cache_headers)-1, "", 0);
+    ok(res, "CommitUrlCacheEntryA failed: %u\n", GetLastError());
+
+    session = InternetOpenA("", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, INTERNET_FLAG_ASYNC);
+    ok(session != NULL,"InternetOpen failed with error %u\n", GetLastError());
+
+    pInternetSetStatusCallbackA(session, callback);
+
+    SET_EXPECT(INTERNET_STATUS_HANDLE_CREATED);
+    connection = InternetConnectA(session, "test.winehq.org", INTERNET_DEFAULT_HTTP_PORT,
+            NULL, NULL, INTERNET_SERVICE_HTTP, 0x0, 0xdeadbeef);
+    ok(connection != NULL,"InternetConnect failed with error %u\n", GetLastError());
+    CHECK_NOTIFIED(INTERNET_STATUS_HANDLE_CREATED);
+
+    SET_EXPECT(INTERNET_STATUS_HANDLE_CREATED);
+    req = HttpOpenRequestA(connection, "GET", "/tests/cache-only", NULL, NULL, NULL, 0, 0xdeadbead);
+    ok(req != NULL, "HttpOpenRequest failed: %u\n", GetLastError());
+    CHECK_NOTIFIED(INTERNET_STATUS_HANDLE_CREATED);
+
+    SET_WINE_ALLOW(INTERNET_STATUS_CONNECTING_TO_SERVER);
+    SET_WINE_ALLOW(INTERNET_STATUS_CONNECTED_TO_SERVER);
+    SET_WINE_ALLOW(INTERNET_STATUS_SENDING_REQUEST);
+    SET_WINE_ALLOW(INTERNET_STATUS_REQUEST_SENT);
+    SET_WINE_ALLOW(INTERNET_STATUS_RECEIVING_RESPONSE);
+    SET_WINE_ALLOW(INTERNET_STATUS_RESPONSE_RECEIVED);
+    SET_WINE_ALLOW(INTERNET_STATUS_REQUEST_COMPLETE);
+
+    res = HttpSendRequestA(req, NULL, -1, NULL, 0);
+    todo_wine
+    ok(res, "HttpSendRequest failed: %u\n", GetLastError());
+
+    if(res) {
+        size = 0;
+        res = InternetQueryDataAvailable(req, &size, 0, 0);
+        ok(res, "InternetQueryDataAvailable failed: %u\n", GetLastError());
+        ok(size  == sizeof(content), "size = %u\n", size);
+
+        size = sizeof(buf);
+        res = InternetReadFile(req, buf, sizeof(buf), &size);
+        ok(res, "InternetReadFile failed: %u\n", GetLastError());
+        ok(size == sizeof(content), "size = %u\n", size);
+        ok(!memcmp(content, buf, sizeof(content)), "unexpected content\n");
+    }
+
+    close_async_handle(session, hCompleteEvent, 2);
+
+    CLEAR_NOTIFIED(INTERNET_STATUS_CONNECTING_TO_SERVER);
+    CLEAR_NOTIFIED(INTERNET_STATUS_CONNECTED_TO_SERVER);
+    CLEAR_NOTIFIED(INTERNET_STATUS_SENDING_REQUEST);
+    CLEAR_NOTIFIED(INTERNET_STATUS_REQUEST_SENT);
+    CLEAR_NOTIFIED(INTERNET_STATUS_RECEIVING_RESPONSE);
+    CLEAR_NOTIFIED(INTERNET_STATUS_RESPONSE_RECEIVED);
+    CLEAR_NOTIFIED(INTERNET_STATUS_REQUEST_COMPLETE);
+
+    res = DeleteUrlCacheEntryA(cache_only_url);
+    ok(res, "DeleteUrlCacheEntryA failed: %u\n", GetLastError());
+
+    CloseHandle(hCompleteEvent);
 }
 
 static void test_http_cache(void)
@@ -1125,18 +1465,18 @@ static void test_http_cache(void)
     ok(GetLastError() == ERROR_INTERNET_ITEM_NOT_FOUND, "GetLastError()=%u\n", GetLastError());
     ok(!size, "size = %d\n", size);
 
-    ret = HttpSendRequest(request, NULL, 0, NULL, 0);
+    ret = HttpSendRequestA(request, NULL, 0, NULL, 0);
     ok(ret, "HttpSendRequest failed: %u\n", GetLastError());
 
     size = sizeof(file_name);
     ret = InternetQueryOptionA(request, INTERNET_OPTION_DATAFILE_NAME, file_name, &size);
     ok(ret, "InternetQueryOptionA(INTERNET_OPTION_DATAFILE_NAME) failed: %u\n", GetLastError());
 
-    file = CreateFile(file_name, GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
+    file = CreateFileA(file_name, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
                       FILE_ATTRIBUTE_NORMAL, NULL);
     ok(file != INVALID_HANDLE_VALUE, "Could not create file: %u\n", GetLastError());
     file_size = GetFileSize(file, NULL);
-    todo_wine ok(file_size == 106, "file size = %u\n", file_size);
+    ok(file_size == 106, "file size = %u\n", file_size);
 
     size = sizeof(buf);
     ret = InternetReadFile(request, buf, sizeof(buf), &size);
@@ -1144,20 +1484,23 @@ static void test_http_cache(void)
     ok(size == 100, "size = %u\n", size);
 
     file_size = GetFileSize(file, NULL);
-    todo_wine ok(file_size == 106, "file size = %u\n", file_size);
+    ok(file_size == 106, "file size = %u\n", file_size);
     CloseHandle(file);
+
+    ret = DeleteFileA(file_name);
+    ok(!ret && GetLastError() == ERROR_SHARING_VIOLATION, "Deleting file returned %x(%u)\n", ret, GetLastError());
 
     ok(InternetCloseHandle(request), "Close request handle failed\n");
 
-    file = CreateFile(file_name, GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
+    file = CreateFileA(file_name, GENERIC_READ, 0, NULL, OPEN_EXISTING,
                       FILE_ATTRIBUTE_NORMAL, NULL);
     ok(file != INVALID_HANDLE_VALUE, "Could not create file: %u\n", GetLastError());
     CloseHandle(file);
 
     /* Send the same request, requiring it to be retrieved from the cache */
-    request = HttpOpenRequest(connect, "GET", "/tests/hello.html", NULL, NULL, NULL, INTERNET_FLAG_FROM_CACHE, 0);
+    request = HttpOpenRequestA(connect, "GET", "/tests/hello.html", NULL, NULL, NULL, INTERNET_FLAG_FROM_CACHE, 0);
 
-    ret = HttpSendRequest(request, NULL, 0, NULL, 0);
+    ret = HttpSendRequestA(request, NULL, 0, NULL, 0);
     ok(ret, "HttpSendRequest failed\n");
 
     size = sizeof(buf);
@@ -1176,7 +1519,7 @@ static void test_http_cache(void)
     ok(GetLastError() == ERROR_INTERNET_ITEM_NOT_FOUND, "GetLastError()=%u\n", GetLastError());
     ok(!size, "size = %d\n", size);
 
-    ret = HttpSendRequest(request, NULL, 0, NULL, 0);
+    ret = HttpSendRequestA(request, NULL, 0, NULL, 0);
     ok(ret, "HttpSendRequest failed: %u\n", GetLastError());
 
     size = sizeof(file_name);
@@ -1184,7 +1527,7 @@ static void test_http_cache(void)
     ret = InternetQueryOptionA(request, INTERNET_OPTION_DATAFILE_NAME, file_name, &size);
     if (ret)
     {
-        file = CreateFile(file_name, GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
+        file = CreateFileA(file_name, GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
                       FILE_ATTRIBUTE_NORMAL, NULL);
         ok(file != INVALID_HANDLE_VALUE, "Could not create file: %u\n", GetLastError());
         CloseHandle(file);
@@ -1198,6 +1541,80 @@ static void test_http_cache(void)
     ok(InternetCloseHandle(request), "Close request handle failed\n");
     ok(InternetCloseHandle(connect), "Close connect handle failed\n");
     ok(InternetCloseHandle(session), "Close session handle failed\n");
+
+    test_cache_read();
+}
+
+static void InternetLockRequestFile_test(void)
+{
+    HINTERNET session, connect, request;
+    char file_name[MAX_PATH];
+    HANDLE lock, lock2;
+    DWORD size;
+    BOOL ret;
+
+    static const char *types[] = { "*", "", NULL };
+
+    session = InternetOpenA("Wine Regression Test", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
+    ok(session != NULL ,"Unable to open Internet session\n");
+
+    connect = InternetConnectA(session, "test.winehq.org", INTERNET_DEFAULT_HTTP_PORT, NULL, NULL,
+                              INTERNET_SERVICE_HTTP, 0, 0);
+    ok(connect != NULL, "Unable to connect to http://test.winehq.org with error %d\n", GetLastError());
+
+    request = HttpOpenRequestA(connect, NULL, "/tests/hello.html", NULL, NULL, types, INTERNET_FLAG_NEED_FILE|INTERNET_FLAG_RELOAD, 0);
+    if (!request && GetLastError() == ERROR_INTERNET_NAME_NOT_RESOLVED)
+    {
+        skip( "Network unreachable, skipping test\n" );
+
+        ok(InternetCloseHandle(connect), "Close connect handle failed\n");
+        ok(InternetCloseHandle(session), "Close session handle failed\n");
+
+        return;
+    }
+    ok(request != NULL, "Failed to open request handle err %u\n", GetLastError());
+
+    size = sizeof(file_name);
+    ret = InternetQueryOptionA(request, INTERNET_OPTION_DATAFILE_NAME, file_name, &size);
+    ok(!ret, "InternetQueryOptionA(INTERNET_OPTION_DATAFILE_NAME) succeeded\n");
+    ok(GetLastError() == ERROR_INTERNET_ITEM_NOT_FOUND, "GetLastError()=%u\n", GetLastError());
+    ok(!size, "size = %d\n", size);
+
+    lock = NULL;
+    ret = InternetLockRequestFile(request, &lock);
+    ok(!ret && GetLastError() == ERROR_FILE_NOT_FOUND, "InternetLockRequestFile returned: %x(%u)\n", ret, GetLastError());
+
+    ret = HttpSendRequestA(request, NULL, 0, NULL, 0);
+    ok(ret, "HttpSendRequest failed: %u\n", GetLastError());
+
+    size = sizeof(file_name);
+    ret = InternetQueryOptionA(request, INTERNET_OPTION_DATAFILE_NAME, file_name, &size);
+    ok(ret, "InternetQueryOptionA(INTERNET_OPTION_DATAFILE_NAME) failed: %u\n", GetLastError());
+
+    ret = InternetLockRequestFile(request, &lock);
+    ok(ret, "InternetLockRequestFile returned: %x(%u)\n", ret, GetLastError());
+    ok(lock != NULL, "lock == NULL\n");
+
+    ret = InternetLockRequestFile(request, &lock2);
+    ok(ret, "InternetLockRequestFile returned: %x(%u)\n", ret, GetLastError());
+    ok(lock == lock2, "lock != lock2\n");
+
+    ret = InternetUnlockRequestFile(lock2);
+    ok(ret, "InternetUnlockRequestFile failed: %u\n", GetLastError());
+
+    ret = DeleteFileA(file_name);
+    ok(!ret && GetLastError() == ERROR_SHARING_VIOLATION, "Deleting file returned %x(%u)\n", ret, GetLastError());
+
+    ok(InternetCloseHandle(request), "Close request handle failed\n");
+
+    ret = DeleteFileA(file_name);
+    ok(!ret && GetLastError() == ERROR_SHARING_VIOLATION, "Deleting file returned %x(%u)\n", ret, GetLastError());
+
+    ret = InternetUnlockRequestFile(lock);
+    ok(ret, "InternetUnlockRequestFile failed: %u\n", GetLastError());
+
+    ret = DeleteFileA(file_name);
+    ok(ret, "Deleting file returned %x(%u)\n", ret, GetLastError());
 }
 
 static void HttpHeaders_test(void)
@@ -1210,15 +1627,16 @@ static void HttpHeaders_test(void)
     DWORD     len = 256;
     DWORD     oldlen;
     DWORD     index = 0;
+    BOOL      ret;
 
-    hSession = InternetOpen("Wine Regression Test",
+    hSession = InternetOpenA("Wine Regression Test",
             INTERNET_OPEN_TYPE_PRECONFIG,NULL,NULL,0);
     ok( hSession != NULL ,"Unable to open Internet session\n");
-    hConnect = InternetConnect(hSession, "crossover.codeweavers.com",
+    hConnect = InternetConnectA(hSession, "test.winehq.org",
             INTERNET_DEFAULT_HTTP_PORT, NULL, NULL, INTERNET_SERVICE_HTTP, 0,
             0);
-    ok( hConnect != NULL, "Unable to connect to http://crossover.codeweavers.com\n");
-    hRequest = HttpOpenRequest(hConnect, "POST", "/posttest.php",
+    ok( hConnect != NULL, "Unable to connect to http://test.winehq.org\n");
+    hRequest = HttpOpenRequestA(hConnect, "POST", "/tests/post.php",
             NULL, NULL, NULL, INTERNET_FLAG_NO_CACHE_WRITE, 0);
     if (!hRequest && GetLastError() == ERROR_INTERNET_NAME_NOT_RESOLVED)
     {
@@ -1230,16 +1648,16 @@ static void HttpHeaders_test(void)
     index = 0;
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
                buffer,&len,&index)==0,"Warning hearder reported as Existing\n");
 
-    ok(HttpAddRequestHeaders(hRequest,"Warning:test1",-1,HTTP_ADDREQ_FLAG_ADD),
+    ok(HttpAddRequestHeadersA(hRequest,"Warning:test1",-1,HTTP_ADDREQ_FLAG_ADD),
             "Failed to add new header\n");
 
     index = 0;
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
                 buffer,&len,&index),"Unable to query header\n");
     ok(index == 1, "Index was not incremented\n");
     ok(strcmp(buffer,"test1")==0, "incorrect string was returned(%s)\n",buffer);
@@ -1247,14 +1665,16 @@ static void HttpHeaders_test(void)
     ok((len < sizeof(buffer)) && (buffer[len] == 0), "Buffer not NULL-terminated\n"); /* len show only 5 characters but the buffer is NULL-terminated*/
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
                 buffer,&len,&index)==0,"Second Index Should Not Exist\n");
 
     index = 0;
     len = 5; /* could store the string but not the NULL terminator */
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
                 buffer,&len,&index) == FALSE,"Query succeeded on a too small buffer\n");
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "Unexpected last error: %d\n", GetLastError());
+    ok(index == 0, "Index was incremented\n");
     ok(strcmp(buffer,"Warning")==0, "incorrect string was returned(%s)\n",buffer); /* string not touched */
     ok(len == 6, "Invalid length (exp. 6, got %d)\n", len); /* unlike success, the length includes the NULL-terminator */
 
@@ -1262,7 +1682,7 @@ static void HttpHeaders_test(void)
     index = 0;
     len = sizeof(buffer);
     SetLastError(0xdeadbeef);
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_RAW_HEADERS_CRLF|HTTP_QUERY_FLAG_REQUEST_HEADERS,
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_RAW_HEADERS_CRLF|HTTP_QUERY_FLAG_REQUEST_HEADERS,
                 NULL,&len,&index) == FALSE,"Query worked\n");
     ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "Unexpected last error: %d\n", GetLastError());
     ok(len > 40, "Invalid length (exp. more than 40, got %d)\n", len);
@@ -1272,7 +1692,7 @@ static void HttpHeaders_test(void)
     index = 0;
     len = 15;
     SetLastError(0xdeadbeef);
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_RAW_HEADERS_CRLF|HTTP_QUERY_FLAG_REQUEST_HEADERS,
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_RAW_HEADERS_CRLF|HTTP_QUERY_FLAG_REQUEST_HEADERS,
                 NULL,&len,&index) == FALSE,"Query worked\n");
     ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "Unexpected last error: %d\n", GetLastError());
     ok(len > 40, "Invalid length (exp. more than 40, got %d)\n", len);
@@ -1281,7 +1701,7 @@ static void HttpHeaders_test(void)
     index = 0;
     len = 0;
     SetLastError(0xdeadbeef);
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_RAW_HEADERS_CRLF|HTTP_QUERY_FLAG_REQUEST_HEADERS,
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_RAW_HEADERS_CRLF|HTTP_QUERY_FLAG_REQUEST_HEADERS,
                 NULL,&len,&index) == FALSE,"Query worked\n");
     ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "Unexpected last error: %d\n", GetLastError());
     ok(len > 40, "Invalid length (exp. more than 40, got %d)\n", len);
@@ -1293,13 +1713,13 @@ static void HttpHeaders_test(void)
     index = 0;
     len = sizeof(buffer);
     memset(buffer, 'x', sizeof(buffer));
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_RAW_HEADERS_CRLF|HTTP_QUERY_FLAG_REQUEST_HEADERS,
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_RAW_HEADERS_CRLF|HTTP_QUERY_FLAG_REQUEST_HEADERS,
                 buffer,&len,&index),"Unable to query header\n");
     ok(len + sizeof(CHAR) <= oldlen, "Result longer than advertised\n");
     ok((len < sizeof(buffer)-sizeof(CHAR)) && (buffer[len/sizeof(CHAR)] == 0),"No NUL at end\n");
     ok(len == strlen(buffer) * sizeof(CHAR), "Length wrong\n");
     /* what's in the middle differs between Wine and Windows so currently we check only the beginning and the end */
-    ok(strncmp(buffer, "POST /posttest.php HTTP/1", 25)==0, "Invalid beginning of headers string\n");
+    ok(strncmp(buffer, "POST /tests/post.php HTTP/1", 25)==0, "Invalid beginning of headers string\n");
     ok(strcmp(buffer + strlen(buffer) - 4, "\r\n\r\n")==0, "Invalid end of headers string\n");
     ok(index == 0, "Index was incremented\n");
 
@@ -1332,174 +1752,195 @@ static void HttpHeaders_test(void)
     index = 0;
     len = sizeof(buffer);
     memset(buffer, 'x', sizeof(buffer));
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_RAW_HEADERS_CRLF,
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_RAW_HEADERS_CRLF,
                 buffer,&len,&index) == TRUE,"Query failed\n");
     ok(len == 2, "Expected 2, got %d\n", len);
     ok(strcmp(buffer, "\r\n") == 0, "Expected CRLF, got '%s'\n", buffer);
     ok(index == 0, "Index was incremented\n");
 
-    ok(HttpAddRequestHeaders(hRequest,"Warning:test2",-1,HTTP_ADDREQ_FLAG_ADD),
+    ok(HttpAddRequestHeadersA(hRequest,"Warning:test2",-1,HTTP_ADDREQ_FLAG_ADD),
             "Failed to add duplicate header using HTTP_ADDREQ_FLAG_ADD\n");
 
     index = 0;
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
                 buffer,&len,&index),"Unable to query header\n");
     ok(index == 1, "Index was not incremented\n");
     ok(strcmp(buffer,"test1")==0, "incorrect string was returned(%s)\n",buffer);
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
                 buffer,&len,&index),"Failed to get second header\n");
     ok(index == 2, "Index was not incremented\n");
     ok(strcmp(buffer,"test2")==0, "incorrect string was returned(%s)\n",buffer);
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
                 buffer,&len,&index)==0,"Third Header Should Not Exist\n");
 
-    ok(HttpAddRequestHeaders(hRequest,"Warning:test3",-1,HTTP_ADDREQ_FLAG_REPLACE), "Failed to replace header using HTTP_ADDREQ_FLAG_REPLACE\n");
+    ok(HttpAddRequestHeadersA(hRequest,"Warning:test3",-1,HTTP_ADDREQ_FLAG_REPLACE), "Failed to replace header using HTTP_ADDREQ_FLAG_REPLACE\n");
 
     index = 0;
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
                 buffer,&len,&index),"Unable to query header\n");
     ok(index == 1, "Index was not incremented\n");
     ok(strcmp(buffer,"test2")==0, "incorrect string was returned(%s)\n",buffer);
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
                 buffer,&len,&index),"Failed to get second header\n");
     ok(index == 2, "Index was not incremented\n");
     ok(strcmp(buffer,"test3")==0, "incorrect string was returned(%s)\n",buffer);
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
                 buffer,&len,&index)==0,"Third Header Should Not Exist\n");
 
-    ok(HttpAddRequestHeaders(hRequest,"Warning:test4",-1,HTTP_ADDREQ_FLAG_ADD_IF_NEW)==0, "HTTP_ADDREQ_FLAG_ADD_IF_NEW replaced existing header\n");
+    ok(HttpAddRequestHeadersA(hRequest,"Warning:test4",-1,HTTP_ADDREQ_FLAG_ADD_IF_NEW)==0, "HTTP_ADDREQ_FLAG_ADD_IF_NEW replaced existing header\n");
 
     index = 0;
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
                 buffer,&len,&index),"Unable to query header\n");
     ok(index == 1, "Index was not incremented\n");
     ok(strcmp(buffer,"test2")==0, "incorrect string was returned(%s)\n",buffer);
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
                 buffer,&len,&index),"Failed to get second header\n");
     ok(index == 2, "Index was not incremented\n");
     ok(strcmp(buffer,"test3")==0, "incorrect string was returned(%s)\n",buffer);
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
                 buffer,&len,&index)==0,"Third Header Should Not Exist\n");
 
-    ok(HttpAddRequestHeaders(hRequest,"Warning:test4",-1, HTTP_ADDREQ_FLAG_COALESCE), "HTTP_ADDREQ_FLAG_COALESCE Did not work\n");
+    ok(HttpAddRequestHeadersA(hRequest,"Warning:test4",-1, HTTP_ADDREQ_FLAG_COALESCE), "HTTP_ADDREQ_FLAG_COALESCE Did not work\n");
 
     index = 0;
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS,
                 buffer,&len,&index),"Unable to query header\n");
     ok(index == 1, "Index was not incremented\n");
     ok(strcmp(buffer,"test2, test4")==0, "incorrect string was returned(%s)\n", buffer);
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Failed to get second header\n");
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Failed to get second header\n");
     ok(index == 2, "Index was not incremented\n");
     ok(strcmp(buffer,"test3")==0, "incorrect string was returned(%s)\n",buffer);
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index)==0,"Third Header Should Not Exist\n");
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index)==0,"Third Header Should Not Exist\n");
 
-    ok(HttpAddRequestHeaders(hRequest,"Warning:test5",-1, HTTP_ADDREQ_FLAG_COALESCE_WITH_COMMA), "HTTP_ADDREQ_FLAG_COALESCE Did not work\n");
+    ok(HttpAddRequestHeadersA(hRequest,"Warning:test5",-1, HTTP_ADDREQ_FLAG_COALESCE_WITH_COMMA), "HTTP_ADDREQ_FLAG_COALESCE Did not work\n");
 
     index = 0;
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Unable to query header\n");
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Unable to query header\n");
     ok(index == 1, "Index was not incremented\n");
     ok(strcmp(buffer,"test2, test4, test5")==0, "incorrect string was returned(%s)\n",buffer);
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Failed to get second header\n");
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Failed to get second header\n");
     ok(index == 2, "Index was not incremented\n");
     ok(strcmp(buffer,"test3")==0, "incorrect string was returned(%s)\n",buffer);
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index)==0,"Third Header Should Not Exist\n");
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index)==0,"Third Header Should Not Exist\n");
 
-    ok(HttpAddRequestHeaders(hRequest,"Warning:test6",-1, HTTP_ADDREQ_FLAG_COALESCE_WITH_SEMICOLON), "HTTP_ADDREQ_FLAG_COALESCE Did not work\n");
+    ok(HttpAddRequestHeadersA(hRequest,"Warning:test6",-1, HTTP_ADDREQ_FLAG_COALESCE_WITH_SEMICOLON), "HTTP_ADDREQ_FLAG_COALESCE Did not work\n");
 
     index = 0;
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Unable to query header\n");
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Unable to query header\n");
     ok(index == 1, "Index was not incremented\n");
     ok(strcmp(buffer,"test2, test4, test5; test6")==0, "incorrect string was returned(%s)\n",buffer);
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Failed to get second header\n");
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Failed to get second header\n");
     ok(index == 2, "Index was not incremented\n");
     ok(strcmp(buffer,"test3")==0, "incorrect string was returned(%s)\n",buffer);
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index)==0,"Third Header Should Not Exist\n");
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index)==0,"Third Header Should Not Exist\n");
 
-    ok(HttpAddRequestHeaders(hRequest,"Warning:test7",-1, HTTP_ADDREQ_FLAG_ADD|HTTP_ADDREQ_FLAG_REPLACE), "HTTP_ADDREQ_FLAG_ADD with HTTP_ADDREQ_FLAG_REPALCE Did not work\n");
+    ok(HttpAddRequestHeadersA(hRequest,"Warning:test7",-1, HTTP_ADDREQ_FLAG_ADD|HTTP_ADDREQ_FLAG_REPLACE), "HTTP_ADDREQ_FLAG_ADD with HTTP_ADDREQ_FLAG_REPALCE Did not work\n");
 
     index = 0;
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Unable to query header\n");
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Unable to query header\n");
     ok(index == 1, "Index was not incremented\n");
     ok(strcmp(buffer,"test3")==0, "incorrect string was returned(%s)\n",buffer);
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Failed to get second header\n");
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Failed to get second header\n");
     ok(index == 2, "Index was not incremented\n");
     ok(strcmp(buffer,"test7")==0, "incorrect string was returned(%s)\n",buffer);
     len = sizeof(buffer);
     strcpy(buffer,"Warning");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index)==0,"Third Header Should Not Exist\n");
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index)==0,"Third Header Should Not Exist\n");
 
     /* Ensure that blank headers are ignored and don't cause a failure */
-    ok(HttpAddRequestHeaders(hRequest,"\r\nBlankTest:value\r\n\r\n",-1, HTTP_ADDREQ_FLAG_ADD_IF_NEW), "Failed to add header with blank entries in list\n");
+    ok(HttpAddRequestHeadersA(hRequest,"\r\nBlankTest:value\r\n\r\n",-1, HTTP_ADDREQ_FLAG_ADD_IF_NEW), "Failed to add header with blank entries in list\n");
 
     index = 0;
     len = sizeof(buffer);
     strcpy(buffer,"BlankTest");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Unable to query header\n");
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Unable to query header\n");
     ok(index == 1, "Index was not incremented\n");
     ok(strcmp(buffer,"value")==0, "incorrect string was returned(%s)\n",buffer);
 
     /* Ensure that malformed header separators are ignored and don't cause a failure */
-    ok(HttpAddRequestHeaders(hRequest,"\r\rMalformedTest:value\n\nMalformedTestTwo: value2\rMalformedTestThree: value3\n\n\r\r\n",-1, HTTP_ADDREQ_FLAG_ADD|HTTP_ADDREQ_FLAG_REPLACE),
+    ok(HttpAddRequestHeadersA(hRequest,"\r\rMalformedTest:value\n\nMalformedTestTwo: value2\rMalformedTestThree: value3\n\n\r\r\n",-1, HTTP_ADDREQ_FLAG_ADD|HTTP_ADDREQ_FLAG_REPLACE),
         "Failed to add header with malformed entries in list\n");
 
     index = 0;
     len = sizeof(buffer);
     strcpy(buffer,"MalformedTest");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Unable to query header\n");
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Unable to query header\n");
     ok(index == 1, "Index was not incremented\n");
     ok(strcmp(buffer,"value")==0, "incorrect string was returned(%s)\n",buffer);
     index = 0;
     len = sizeof(buffer);
     strcpy(buffer,"MalformedTestTwo");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Unable to query header\n");
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Unable to query header\n");
     ok(index == 1, "Index was not incremented\n");
     ok(strcmp(buffer,"value2")==0, "incorrect string was returned(%s)\n",buffer);
     index = 0;
     len = sizeof(buffer);
     strcpy(buffer,"MalformedTestThree");
-    ok(HttpQueryInfo(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Unable to query header\n");
+    ok(HttpQueryInfoA(hRequest,HTTP_QUERY_CUSTOM|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer,&len,&index),"Unable to query header\n");
     ok(index == 1, "Index was not incremented\n");
     ok(strcmp(buffer,"value3")==0, "incorrect string was returned(%s)\n",buffer);
+
+    ret = HttpAddRequestHeadersA(hRequest, "Authorization: Basic\r\n", -1, HTTP_ADDREQ_FLAG_ADD);
+    ok(ret, "unable to add header %u\n", GetLastError());
+
+    index = 0;
+    buffer[0] = 0;
+    len = sizeof(buffer);
+    ret = HttpQueryInfoA(hRequest, HTTP_QUERY_AUTHORIZATION|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer, &len, &index);
+    ok(ret, "unable to query header %u\n", GetLastError());
+    ok(index == 1, "index was not incremented\n");
+    ok(!strcmp(buffer, "Basic"), "incorrect string was returned (%s)\n", buffer);
+
+    ret = HttpAddRequestHeadersA(hRequest, "Authorization:\r\n", -1, HTTP_ADDREQ_FLAG_REPLACE);
+    ok(ret, "unable to remove header %u\n", GetLastError());
+
+    index = 0;
+    len = sizeof(buffer);
+    SetLastError(0xdeadbeef);
+    ok(!HttpQueryInfoA(hRequest, HTTP_QUERY_AUTHORIZATION|HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer, &len, &index),
+       "header still present\n");
+    ok(GetLastError() == ERROR_HTTP_HEADER_NOT_FOUND, "got %u\n", GetLastError());
 
     ok(InternetCloseHandle(hRequest), "Close request handle failed\n");
 done:
@@ -1564,23 +2005,38 @@ static const char page1[] =
 "<BODY>The quick brown fox jumped over the lazy dog<P></BODY>\r\n"
 "</HTML>\r\n\r\n";
 
+static const char ok_with_length[] =
+"HTTP/1.1 200 OK\r\n"
+"Connection: Keep-Alive\r\n"
+"Content-Length: 18\r\n\r\n"
+"HTTP/1.1 211 OK\r\n\r\n";
+
+static const char ok_with_length2[] =
+"HTTP/1.1 210 OK\r\n"
+"Connection: Keep-Alive\r\n"
+"Content-Length: 19\r\n\r\n"
+"HTTP/1.1 211 OK\r\n\r\n";
+
 struct server_info {
     HANDLE hEvent;
     int port;
-    int num_testH_retrievals;
 };
+
+static int test_cache_gzip;
+static const char *send_buffer;
 
 static DWORD CALLBACK server_thread(LPVOID param)
 {
     struct server_info *si = param;
-    int r, c, i, on;
+    int r, c = -1, i, on, count = 0;
     SOCKET s;
     struct sockaddr_in sa;
     char buffer[0x100];
     WSADATA wsaData;
     int last_request = 0;
     char host_header[22];
-    static int test_b = 0;
+    static BOOL test_b = FALSE;
+    static int test_no_cache = 0;
 
     WSAStartup(MAKEWORD(1,1), &wsaData);
 
@@ -1608,7 +2064,8 @@ static DWORD CALLBACK server_thread(LPVOID param)
 
     do
     {
-        c = accept(s, NULL, NULL);
+        if(c == -1)
+            c = accept(s, NULL, NULL);
 
         memset(buffer, 0, sizeof buffer);
         for(i=0; i<(sizeof buffer-1); i++)
@@ -1719,7 +2176,7 @@ static DWORD CALLBACK server_thread(LPVOID param)
         }
         if (!test_b && strstr(buffer, "/testB HTTP/1.1"))
         {
-            test_b = 1;
+            test_b = TRUE;
             send(c, okmsg, sizeof okmsg-1, 0);
             recvfrom(c, buffer, sizeof buffer, 0, NULL, NULL);
             send(c, okmsg, sizeof okmsg-1, 0);
@@ -1758,17 +2215,27 @@ static DWORD CALLBACK server_thread(LPVOID param)
         {
             send(c, page1, sizeof page1-1, 0);
         }
-        if (strstr(buffer, "GET /testH"))
+
+        if (strstr(buffer, "GET /testJ"))
         {
-            si->num_testH_retrievals++;
-            if (!strstr(buffer, "Content-Length: 0"))
+            if (count == 0)
             {
-                send(c, okmsg, sizeof okmsg-1, 0);
-                send(c, page1, sizeof page1-1, 0);
+                count++;
+                send(c, ok_with_length, sizeof(ok_with_length)-1, 0);
             }
             else
-                send(c, notokmsg, sizeof notokmsg-1, 0);
+            {
+                send(c, ok_with_length2, sizeof(ok_with_length2)-1, 0);
+                count = 0;
+            }
         }
+        if (strstr(buffer, "GET /testH"))
+        {
+            send(c, ok_with_length2, sizeof(ok_with_length2)-1, 0);
+            recvfrom(c, buffer, sizeof(buffer), 0, NULL, NULL);
+            send(c, ok_with_length, sizeof(ok_with_length)-1, 0);
+        }
+
         if (strstr(buffer, "GET /test_no_content"))
         {
             static const char nocontentmsg[] = "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n";
@@ -1781,9 +2248,76 @@ static DWORD CALLBACK server_thread(LPVOID param)
             WaitForSingleObject(conn_close_event, INFINITE);
             trace("closing connection\n");
         }
+        if (strstr(buffer, "GET /test_cache_control_no_cache"))
+        {
+            static const char no_cache_response[] = "HTTP/1.1 200 OK\r\nCache-Control: no-cache\r\n\r\nsome content";
+            if(!test_no_cache++)
+                send(c, no_cache_response, sizeof(no_cache_response)-1, 0);
+            else
+                send(c, okmsg, sizeof(okmsg)-1, 0);
+        }
+        if (strstr(buffer, "GET /test_cache_control_no_store"))
+        {
+            static const char no_cache_response[] = "HTTP/1.1 200 OK\r\nCache-Control: junk, \t No-StOrE\r\n\r\nsome content";
+            send(c, no_cache_response, sizeof(no_cache_response)-1, 0);
+        }
+        if (strstr(buffer, "GET /test_cache_gzip"))
+        {
+            static const char gzip_response[] = "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Type: text/html\r\n\r\n"
+                "\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03\x4b\xaf\xca\x2c\x50\x28"
+                "\x49\x2d\x2e\xe1\x02\x00\x62\x92\xc7\x6c\x0a\x00\x00\x00";
+            if(!test_cache_gzip++)
+                send(c, gzip_response, sizeof(gzip_response), 0);
+            else
+                send(c, notokmsg, sizeof(notokmsg)-1, 0);
+        }
+        if (strstr(buffer, "HEAD /test_head")) {
+            static const char head_response[] =
+                "HTTP/1.1 200 OK\r\n"
+                "Connection: Keep-Alive\r\n"
+                "Content-Length: 100\r\n"
+                "\r\n";
+
+            send(c, head_response, sizeof(head_response), 0);
+            continue;
+        }
+        if (strstr(buffer, "GET /send_from_buffer"))
+            send(c, send_buffer, strlen(send_buffer), 0);
+        if (strstr(buffer, "/test_cache_control_verb"))
+        {
+            if (!memcmp(buffer, "GET ", sizeof("GET ")-1) &&
+                !strstr(buffer, "Cache-Control: no-cache\r\n")) send(c, okmsg, sizeof(okmsg)-1, 0);
+            else if (strstr(buffer, "Cache-Control: no-cache\r\n")) send(c, okmsg, sizeof(okmsg)-1, 0);
+            else send(c, notokmsg, sizeof(notokmsg)-1, 0);
+        }
+        if (strstr(buffer, "/test_request_content_length"))
+        {
+            static char msg[] = "HTTP/1.1 200 OK\r\nConnection: Keep-Alive\r\n\r\n";
+            static int seen_content_length;
+
+            if (!seen_content_length)
+            {
+                if (strstr(buffer, "Content-Length: 0"))
+                {
+                    seen_content_length = 1;
+                    send(c, msg, sizeof msg-1, 0);
+                }
+                else send(c, notokmsg, sizeof notokmsg-1, 0);
+                WaitForSingleObject(hCompleteEvent, 5000);
+            }
+            else
+            {
+                if (strstr(buffer, "Content-Length: 0")) send(c, msg, sizeof msg-1, 0);
+                else send(c, notokmsg, sizeof notokmsg-1, 0);
+                WaitForSingleObject(hCompleteEvent, 5000);
+            }
+        }
+        if (strstr(buffer, "GET /test_premature_disconnect"))
+            trace("closing connection\n");
 
         shutdown(c, 2);
         closesocket(c);
+        c = -1;
     } while (!last_request);
 
     closesocket(s);
@@ -1794,19 +2328,22 @@ static DWORD CALLBACK server_thread(LPVOID param)
 static void test_basic_request(int port, const char *verb, const char *url)
 {
     HINTERNET hi, hc, hr;
-    DWORD r, count;
+    DWORD r, count, error;
     char buffer[0x100];
 
-    hi = InternetOpen(NULL, INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    hi = InternetOpenA(NULL, INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
     ok(hi != NULL, "open failed\n");
 
-    hc = InternetConnect(hi, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    hc = InternetConnectA(hi, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
     ok(hc != NULL, "connect failed\n");
 
-    hr = HttpOpenRequest(hc, verb, url, NULL, NULL, NULL, 0, 0);
+    hr = HttpOpenRequestA(hc, verb, url, NULL, NULL, NULL, 0, 0);
     ok(hr != NULL, "HttpOpenRequest failed\n");
 
-    r = HttpSendRequest(hr, NULL, 0, NULL, 0);
+    SetLastError(0xdeadbeef);
+    r = HttpSendRequestA(hr, NULL, 0, NULL, 0);
+    error = GetLastError();
+    ok(error == ERROR_SUCCESS || broken(error != ERROR_SUCCESS), "expected ERROR_SUCCESS, got %u\n", error);
     ok(r, "HttpSendRequest failed\n");
 
     count = 0;
@@ -1822,52 +2359,26 @@ static void test_basic_request(int port, const char *verb, const char *url)
     InternetCloseHandle(hi);
 }
 
-static void test_last_error(int port)
-{
-    HINTERNET hi, hc, hr;
-    DWORD error;
-    BOOL r;
-
-    hi = InternetOpen(NULL, INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
-    ok(hi != NULL, "open failed\n");
-
-    hc = InternetConnect(hi, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
-    ok(hc != NULL, "connect failed\n");
-
-    hr = HttpOpenRequest(hc, NULL, "/test1", NULL, NULL, NULL, 0, 0);
-    ok(hr != NULL, "HttpOpenRequest failed\n");
-
-    SetLastError(0xdeadbeef);
-    r = HttpSendRequest(hr, NULL, 0, NULL, 0);
-    error = GetLastError();
-    ok(r, "HttpSendRequest failed\n");
-    ok(error == ERROR_SUCCESS || broken(error != ERROR_SUCCESS), "expected ERROR_SUCCESS, got %u\n", error);
-
-    InternetCloseHandle(hr);
-    InternetCloseHandle(hc);
-    InternetCloseHandle(hi);
-}
-
 static void test_proxy_indirect(int port)
 {
     HINTERNET hi, hc, hr;
-    DWORD r, sz, val;
+    DWORD r, sz;
     char buffer[0x40];
 
-    hi = InternetOpen(NULL, 0, NULL, NULL, 0);
+    hi = InternetOpenA(NULL, 0, NULL, NULL, 0);
     ok(hi != NULL, "open failed\n");
 
-    hc = InternetConnect(hi, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    hc = InternetConnectA(hi, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
     ok(hc != NULL, "connect failed\n");
 
-    hr = HttpOpenRequest(hc, NULL, "/test2", NULL, NULL, NULL, 0, 0);
+    hr = HttpOpenRequestA(hc, NULL, "/test2", NULL, NULL, NULL, 0, 0);
     ok(hr != NULL, "HttpOpenRequest failed\n");
 
-    r = HttpSendRequest(hr, NULL, 0, NULL, 0);
-    ok(r, "HttpSendRequest failed\n");
+    r = HttpSendRequestA(hr, NULL, 0, NULL, 0);
+    ok(r, "HttpSendRequest failed %u\n", GetLastError());
 
     sz = sizeof buffer;
-    r = HttpQueryInfo(hr, HTTP_QUERY_PROXY_AUTHENTICATE, buffer, &sz, NULL);
+    r = HttpQueryInfoA(hr, HTTP_QUERY_PROXY_AUTHENTICATE, buffer, &sz, NULL);
     ok(r || GetLastError() == ERROR_HTTP_HEADER_NOT_FOUND, "HttpQueryInfo failed: %d\n", GetLastError());
     if (!r)
     {
@@ -1876,33 +2387,26 @@ static void test_proxy_indirect(int port)
     }
     ok(!strcmp(buffer, "Basic realm=\"placebo\""), "proxy auth info wrong\n");
 
-    sz = sizeof buffer;
-    r = HttpQueryInfo(hr, HTTP_QUERY_STATUS_CODE, buffer, &sz, NULL);
-    ok(r, "HttpQueryInfo failed\n");
-    ok(!strcmp(buffer, "407"), "proxy code wrong\n");
-
-    sz = sizeof val;
-    r = HttpQueryInfo(hr, HTTP_QUERY_STATUS_CODE|HTTP_QUERY_FLAG_NUMBER, &val, &sz, NULL);
-    ok(r, "HttpQueryInfo failed\n");
-    ok(val == 407, "proxy code wrong\n");
+    test_status_code(hr, 407);
+    test_request_flags(hr, 0);
 
     sz = sizeof buffer;
-    r = HttpQueryInfo(hr, HTTP_QUERY_STATUS_TEXT, buffer, &sz, NULL);
+    r = HttpQueryInfoA(hr, HTTP_QUERY_STATUS_TEXT, buffer, &sz, NULL);
     ok(r, "HttpQueryInfo failed\n");
     ok(!strcmp(buffer, "Proxy Authentication Required"), "proxy text wrong\n");
 
     sz = sizeof buffer;
-    r = HttpQueryInfo(hr, HTTP_QUERY_VERSION, buffer, &sz, NULL);
+    r = HttpQueryInfoA(hr, HTTP_QUERY_VERSION, buffer, &sz, NULL);
     ok(r, "HttpQueryInfo failed\n");
     ok(!strcmp(buffer, "HTTP/1.1"), "http version wrong\n");
 
     sz = sizeof buffer;
-    r = HttpQueryInfo(hr, HTTP_QUERY_SERVER, buffer, &sz, NULL);
+    r = HttpQueryInfoA(hr, HTTP_QUERY_SERVER, buffer, &sz, NULL);
     ok(r, "HttpQueryInfo failed\n");
     ok(!strcmp(buffer, "winetest"), "http server wrong\n");
 
     sz = sizeof buffer;
-    r = HttpQueryInfo(hr, HTTP_QUERY_CONTENT_ENCODING, buffer, &sz, NULL);
+    r = HttpQueryInfoA(hr, HTTP_QUERY_CONTENT_ENCODING, buffer, &sz, NULL);
     ok(GetLastError() == ERROR_HTTP_HEADER_NOT_FOUND, "HttpQueryInfo should fail\n");
     ok(r == FALSE, "HttpQueryInfo failed\n");
 
@@ -1915,50 +2419,347 @@ out:
 static void test_proxy_direct(int port)
 {
     HINTERNET hi, hc, hr;
-    DWORD r, sz;
-    char buffer[0x40];
+    DWORD r, sz, error;
+    char buffer[0x40], *url;
+    WCHAR bufferW[0x40];
+    static const char url_fmt[] = "http://test.winehq.org:%u/test2";
     static CHAR username[] = "mike",
-                password[] = "1101";
+                password[] = "1101",
+                useragent[] = "winetest";
+    static const WCHAR usernameW[]  = {'m','i','k','e',0},
+                       passwordW[]  = {'1','1','0','1',0},
+                       useragentW[] = {'w','i','n','e','t','e','s','t',0};
+
+    /* specify proxy type without the proxy and bypass */
+    SetLastError(0xdeadbeef);
+    hi = InternetOpenW(NULL, INTERNET_OPEN_TYPE_PROXY, NULL, NULL, 0);
+    error = GetLastError();
+    ok(error == ERROR_INVALID_PARAMETER ||
+        broken(error == ERROR_SUCCESS) /* WinXPProSP2 */, "got %u\n", error);
+    ok(hi == NULL || broken(!!hi) /* WinXPProSP2 */, "open should have failed\n");
 
     sprintf(buffer, "localhost:%d\n", port);
-    hi = InternetOpen(NULL, INTERNET_OPEN_TYPE_PROXY, buffer, NULL, 0);
+    hi = InternetOpenA(NULL, INTERNET_OPEN_TYPE_PROXY, buffer, NULL, 0);
     ok(hi != NULL, "open failed\n");
 
     /* try connect without authorization */
-    hc = InternetConnect(hi, "test.winehq.org/", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    hc = InternetConnectA(hi, "test.winehq.org", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
     ok(hc != NULL, "connect failed\n");
 
-    hr = HttpOpenRequest(hc, NULL, "/test2", NULL, NULL, NULL, 0, 0);
+    hr = HttpOpenRequestA(hc, NULL, "/test2", NULL, NULL, NULL, 0, 0);
     ok(hr != NULL, "HttpOpenRequest failed\n");
 
-    r = HttpSendRequest(hr, NULL, 0, NULL, 0);
-    ok(r, "HttpSendRequest failed\n");
+    sz = 0;
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_PROXY_PASSWORD, NULL, &sz);
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "got %u\n", GetLastError());
+    ok(!r, "unexpected success\n");
+    ok(sz == 1, "got %u\n", sz);
 
-    sz = sizeof buffer;
-    r = HttpQueryInfo(hr, HTTP_QUERY_STATUS_CODE, buffer, &sz, NULL);
-    ok(r, "HttpQueryInfo failed\n");
-    ok(!strcmp(buffer, "407"), "proxy code wrong\n");
+    sz = 0;
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_PROXY_USERNAME, NULL, &sz);
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "got %u\n", GetLastError());
+    ok(!r, "unexpected success\n");
+    ok(sz == 1, "got %u\n", sz);
 
+    sz = sizeof(buffer);
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_PROXY_PASSWORD, buffer, &sz);
+    ok(r, "unexpected failure %u\n", GetLastError());
+    ok(!sz, "got %u\n", sz);
+
+    sz = sizeof(buffer);
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_PROXY_USERNAME, buffer, &sz);
+    ok(r, "unexpected failure %u\n", GetLastError());
+    ok(!sz, "got %u\n", sz);
+
+    sz = 0;
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_PASSWORD, NULL, &sz);
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "got %u\n", GetLastError());
+    ok(!r, "unexpected success\n");
+    ok(sz == 1, "got %u\n", sz);
+
+    sz = 0;
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_USERNAME, NULL, &sz);
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "got %u\n", GetLastError());
+    ok(!r, "unexpected success\n");
+    ok(sz == 1, "got %u\n", sz);
+
+    sz = sizeof(buffer);
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_PASSWORD, buffer, &sz);
+    ok(r, "unexpected failure %u\n", GetLastError());
+    ok(!sz, "got %u\n", sz);
+
+    sz = sizeof(buffer);
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_USERNAME, buffer, &sz);
+    ok(r, "unexpected failure %u\n", GetLastError());
+    ok(!sz, "got %u\n", sz);
+
+    sz = 0;
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_URL, NULL, &sz);
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "got %u\n", GetLastError());
+    ok(!r, "unexpected success\n");
+    ok(sz == 34, "got %u\n", sz);
+
+    sz = sizeof(buffer);
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_URL, buffer, &sz);
+    ok(r, "unexpected failure %u\n", GetLastError());
+    ok(sz == 33, "got %u\n", sz);
+
+    r = HttpSendRequestW(hr, NULL, 0, NULL, 0);
+    ok(r || broken(!r), "HttpSendRequest failed %u\n", GetLastError());
+    if (!r)
+    {
+        win_skip("skipping proxy tests on broken wininet\n");
+        goto done;
+    }
+
+    test_status_code(hr, 407);
 
     /* set the user + password then try again */
-    todo_wine {
-    r = InternetSetOption(hr, INTERNET_OPTION_PROXY_USERNAME, username, 4);
+    r = InternetSetOptionA(hi, INTERNET_OPTION_PROXY_USERNAME, username, 4);
+    ok(!r, "unexpected success\n");
+
+    r = InternetSetOptionA(hc, INTERNET_OPTION_PROXY_USERNAME, username, 4);
     ok(r, "failed to set user\n");
 
-    r = InternetSetOption(hr, INTERNET_OPTION_PROXY_PASSWORD, password, 4);
+    r = InternetSetOptionA(hr, INTERNET_OPTION_PROXY_USERNAME, username, 4);
+    ok(r, "failed to set user\n");
+
+    buffer[0] = 0;
+    sz = 3;
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_PROXY_USERNAME, buffer, &sz);
+    ok(!r, "unexpected failure %u\n", GetLastError());
+    ok(!buffer[0], "got %s\n", buffer);
+    ok(sz == strlen(username) + 1, "got %u\n", sz);
+
+    buffer[0] = 0;
+    sz = 0;
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_PROXY_USERNAME, buffer, &sz);
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "got %u\n", GetLastError());
+    ok(!r, "unexpected success\n");
+    ok(sz == strlen(username) + 1, "got %u\n", sz);
+
+    bufferW[0] = 0;
+    sz = 0;
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionW(hr, INTERNET_OPTION_PROXY_USERNAME, bufferW, &sz);
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "got %u\n", GetLastError());
+    ok(!r, "unexpected success\n");
+    ok(sz == (lstrlenW(usernameW) + 1) * sizeof(WCHAR), "got %u\n", sz);
+
+    buffer[0] = 0;
+    sz = sizeof(buffer);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_PROXY_USERNAME, buffer, &sz);
+    ok(r, "failed to get username\n");
+    ok(!strcmp(buffer, username), "got %s\n", buffer);
+    ok(sz == strlen(username), "got %u\n", sz);
+
+    buffer[0] = 0;
+    sz = sizeof(bufferW);
+    r = InternetQueryOptionW(hr, INTERNET_OPTION_PROXY_USERNAME, bufferW, &sz);
+    ok(r, "failed to get username\n");
+    ok(!lstrcmpW(bufferW, usernameW), "wrong username\n");
+    ok(sz == lstrlenW(usernameW), "got %u\n", sz);
+
+    r = InternetSetOptionA(hr, INTERNET_OPTION_PROXY_USERNAME, username, 1);
+    ok(r, "failed to set user\n");
+
+    buffer[0] = 0;
+    sz = sizeof(buffer);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_PROXY_USERNAME, buffer, &sz);
+    ok(r, "failed to get username\n");
+    ok(!strcmp(buffer, username), "got %s\n", buffer);
+    ok(sz == strlen(username), "got %u\n", sz);
+
+    r = InternetSetOptionA(hi, INTERNET_OPTION_USER_AGENT, useragent, 1);
+    ok(r, "failed to set useragent\n");
+
+    buffer[0] = 0;
+    sz = 0;
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionA(hi, INTERNET_OPTION_USER_AGENT, buffer, &sz);
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "got %u\n", GetLastError());
+    ok(!r, "unexpected success\n");
+    ok(sz == strlen(useragent) + 1, "got %u\n", sz);
+
+    buffer[0] = 0;
+    sz = sizeof(buffer);
+    r = InternetQueryOptionA(hi, INTERNET_OPTION_USER_AGENT, buffer, &sz);
+    ok(r, "failed to get user agent\n");
+    ok(!strcmp(buffer, useragent), "got %s\n", buffer);
+    ok(sz == strlen(useragent), "got %u\n", sz);
+
+    bufferW[0] = 0;
+    sz = 0;
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionW(hi, INTERNET_OPTION_USER_AGENT, bufferW, &sz);
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "got %u\n", GetLastError());
+    ok(!r, "unexpected success\n");
+    ok(sz == (lstrlenW(useragentW) + 1) * sizeof(WCHAR), "got %u\n", sz);
+
+    bufferW[0] = 0;
+    sz = sizeof(bufferW);
+    r = InternetQueryOptionW(hi, INTERNET_OPTION_USER_AGENT, bufferW, &sz);
+    ok(r, "failed to get user agent\n");
+    ok(!lstrcmpW(bufferW, useragentW), "wrong user agent\n");
+    ok(sz == lstrlenW(useragentW), "got %u\n", sz);
+
+    r = InternetSetOptionA(hr, INTERNET_OPTION_USERNAME, username, 1);
+    ok(r, "failed to set user\n");
+
+    buffer[0] = 0;
+    sz = 0;
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_USERNAME, buffer, &sz);
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "got %u\n", GetLastError());
+    ok(!r, "unexpected success\n");
+    ok(sz == strlen(username) + 1, "got %u\n", sz);
+
+    buffer[0] = 0;
+    sz = sizeof(buffer);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_USERNAME, buffer, &sz);
+    ok(r, "failed to get user\n");
+    ok(!strcmp(buffer, username), "got %s\n", buffer);
+    ok(sz == strlen(username), "got %u\n", sz);
+
+    bufferW[0] = 0;
+    sz = 0;
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionW(hr, INTERNET_OPTION_USERNAME, bufferW, &sz);
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "got %u\n", GetLastError());
+    ok(!r, "unexpected success\n");
+    ok(sz == (lstrlenW(usernameW) + 1) * sizeof(WCHAR), "got %u\n", sz);
+
+    bufferW[0] = 0;
+    sz = sizeof(bufferW);
+    r = InternetQueryOptionW(hr, INTERNET_OPTION_USERNAME, bufferW, &sz);
+    ok(r, "failed to get user\n");
+    ok(!lstrcmpW(bufferW, usernameW), "wrong user\n");
+    ok(sz == lstrlenW(usernameW), "got %u\n", sz);
+
+    r = InternetSetOptionA(hr, INTERNET_OPTION_PASSWORD, password, 1);
     ok(r, "failed to set password\n");
-    }
 
-    r = HttpSendRequest(hr, NULL, 0, NULL, 0);
-    ok(r, "HttpSendRequest failed\n");
+    buffer[0] = 0;
+    sz = 0;
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_PASSWORD, buffer, &sz);
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "got %u\n", GetLastError());
+    ok(!r, "unexpected success\n");
+    ok(sz == strlen(password) + 1, "got %u\n", sz);
+
+    buffer[0] = 0;
+    sz = sizeof(buffer);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_PASSWORD, buffer, &sz);
+    ok(r, "failed to get password\n");
+    ok(!strcmp(buffer, password), "got %s\n", buffer);
+    ok(sz == strlen(password), "got %u\n", sz);
+
+    bufferW[0] = 0;
+    sz = 0;
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionW(hr, INTERNET_OPTION_PASSWORD, bufferW, &sz);
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "got %u\n", GetLastError());
+    ok(!r, "unexpected success\n");
+    ok(sz == (lstrlenW(passwordW) + 1) * sizeof(WCHAR), "got %u\n", sz);
+
+    bufferW[0] = 0;
+    sz = sizeof(bufferW);
+    r = InternetQueryOptionW(hr, INTERNET_OPTION_PASSWORD, bufferW, &sz);
+    ok(r, "failed to get password\n");
+    ok(!lstrcmpW(bufferW, passwordW), "wrong password\n");
+    ok(sz == lstrlenW(passwordW), "got %u\n", sz);
+
+    url = HeapAlloc(GetProcessHeap(), 0, strlen(url_fmt) + 11);
+    sprintf(url, url_fmt, port);
+    buffer[0] = 0;
+    sz = 0;
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_URL, buffer, &sz);
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "got %u\n", GetLastError());
+    ok(!r, "unexpected success\n");
+    ok(sz == strlen(url) + 1, "got %u\n", sz);
+
+    buffer[0] = 0;
+    sz = sizeof(buffer);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_URL, buffer, &sz);
+    ok(r, "failed to get url\n");
+    ok(!strcmp(buffer, url), "got %s\n", buffer);
+    ok(sz == strlen(url), "got %u\n", sz);
+
+    bufferW[0] = 0;
+    sz = 0;
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionW(hr, INTERNET_OPTION_URL, bufferW, &sz);
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "got %u\n", GetLastError());
+    ok(!r, "unexpected success\n");
+    ok(sz == (strlen(url) + 1) * sizeof(WCHAR), "got %u\n", sz);
+
+    bufferW[0] = 0;
+    sz = sizeof(bufferW);
+    r = InternetQueryOptionW(hr, INTERNET_OPTION_URL, bufferW, &sz);
+    ok(r, "failed to get url\n");
+    ok(!strcmp_wa(bufferW, url), "wrong url\n");
+    ok(sz == strlen(url), "got %u\n", sz);
+    HeapFree(GetProcessHeap(), 0, url);
+
+    r = InternetSetOptionA(hr, INTERNET_OPTION_PROXY_PASSWORD, password, 4);
+    ok(r, "failed to set password\n");
+
+    buffer[0] = 0;
+    sz = 0;
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_PROXY_PASSWORD, buffer, &sz);
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "got %u\n", GetLastError());
+    ok(!r, "unexpected success\n");
+    ok(sz == strlen(password) + 1, "got %u\n", sz);
+
+    buffer[0] = 0;
+    sz = sizeof(buffer);
+    r = InternetQueryOptionA(hr, INTERNET_OPTION_PROXY_PASSWORD, buffer, &sz);
+    ok(r, "failed to get password\n");
+    ok(!strcmp(buffer, password), "got %s\n", buffer);
+    ok(sz == strlen(password), "got %u\n", sz);
+
+    bufferW[0] = 0;
+    sz = 0;
+    SetLastError(0xdeadbeef);
+    r = InternetQueryOptionW(hr, INTERNET_OPTION_PROXY_PASSWORD, bufferW, &sz);
+    ok(GetLastError() == ERROR_INSUFFICIENT_BUFFER, "got %u\n", GetLastError());
+    ok(!r, "unexpected success\n");
+    ok(sz == (lstrlenW(passwordW) + 1) * sizeof(WCHAR), "got %u\n", sz);
+
+    bufferW[0] = 0;
+    sz = sizeof(bufferW);
+    r = InternetQueryOptionW(hr, INTERNET_OPTION_PROXY_PASSWORD, bufferW, &sz);
+    ok(r, "failed to get password\n");
+    ok(!lstrcmpW(bufferW, passwordW), "wrong password\n");
+    ok(sz == lstrlenW(passwordW), "got %u\n", sz);
+
+    r = HttpSendRequestW(hr, NULL, 0, NULL, 0);
+    if (!r)
+    {
+        win_skip("skipping proxy tests on broken wininet\n");
+        goto done;
+    }
+    ok(r, "HttpSendRequest failed %u\n", GetLastError());
     sz = sizeof buffer;
-    r = HttpQueryInfo(hr, HTTP_QUERY_STATUS_CODE, buffer, &sz, NULL);
+    r = HttpQueryInfoA(hr, HTTP_QUERY_STATUS_CODE, buffer, &sz, NULL);
     ok(r, "HttpQueryInfo failed\n");
-    todo_wine {
     ok(!strcmp(buffer, "200"), "proxy code wrong\n");
-    }
 
-
+done:
     InternetCloseHandle(hr);
     InternetCloseHandle(hc);
     InternetCloseHandle(hi);
@@ -1966,65 +2767,89 @@ static void test_proxy_direct(int port)
 
 static void test_header_handling_order(int port)
 {
-    static char authorization[] = "Authorization: Basic dXNlcjpwd2Q=";
-    static char connection[]    = "Connection: Close";
-
+    static const char authorization[] = "Authorization: Basic dXNlcjpwd2Q=";
+    static const char connection[]    = "Connection: Close";
     static const char *types[2] = { "*", NULL };
+    char data[32];
     HINTERNET session, connect, request;
-    DWORD size, status;
+    DWORD size, status, data_len;
     BOOL ret;
 
-    session = InternetOpen("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    session = InternetOpenA("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
     ok(session != NULL, "InternetOpen failed\n");
 
-    connect = InternetConnect(session, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    connect = InternetConnectA(session, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
     ok(connect != NULL, "InternetConnect failed\n");
 
-    request = HttpOpenRequest(connect, NULL, "/test3", NULL, NULL, types, INTERNET_FLAG_KEEP_CONNECTION, 0);
+    request = HttpOpenRequestA(connect, NULL, "/test3", NULL, NULL, types, INTERNET_FLAG_KEEP_CONNECTION, 0);
     ok(request != NULL, "HttpOpenRequest failed\n");
 
-    ret = HttpAddRequestHeaders(request, authorization, ~0u, HTTP_ADDREQ_FLAG_ADD);
+    ret = HttpAddRequestHeadersA(request, authorization, ~0u, HTTP_ADDREQ_FLAG_ADD);
     ok(ret, "HttpAddRequestHeaders failed\n");
 
-    ret = HttpSendRequest(request, NULL, 0, NULL, 0);
+    ret = HttpSendRequestA(request, NULL, 0, NULL, 0);
     ok(ret, "HttpSendRequest failed\n");
 
-    status = 0;
-    size = sizeof(status);
-    ret = HttpQueryInfo( request, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &size, NULL );
-    ok(ret, "HttpQueryInfo failed\n");
-    ok(status == 200, "request failed with status %u\n", status);
+    test_status_code(request, 200);
+    test_request_flags(request, 0);
 
     InternetCloseHandle(request);
 
-    request = HttpOpenRequest(connect, NULL, "/test4", NULL, NULL, types, INTERNET_FLAG_KEEP_CONNECTION, 0);
+    request = HttpOpenRequestA(connect, NULL, "/test4", NULL, NULL, types, INTERNET_FLAG_KEEP_CONNECTION, 0);
     ok(request != NULL, "HttpOpenRequest failed\n");
 
-    ret = HttpSendRequest(request, connection, ~0u, NULL, 0);
+    ret = HttpSendRequestA(request, connection, ~0u, NULL, 0);
     ok(ret, "HttpSendRequest failed\n");
 
     status = 0;
     size = sizeof(status);
-    ret = HttpQueryInfo( request, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &size, NULL );
+    ret = HttpQueryInfoA( request, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &size, NULL );
     ok(ret, "HttpQueryInfo failed\n");
     ok(status == 200 || status == 400 /* IE6 */, "got status %u, expected 200 or 400\n", status);
 
     InternetCloseHandle(request);
+    InternetCloseHandle(connect);
 
-    request = HttpOpenRequest(connect, "POST", "/test7", NULL, NULL, types, INTERNET_FLAG_KEEP_CONNECTION, 0);
+    connect = InternetConnectA(session, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    ok(connect != NULL, "InternetConnect failed\n");
+
+    request = HttpOpenRequestA(connect, "POST", "/test7", NULL, NULL, types, INTERNET_FLAG_KEEP_CONNECTION, 0);
     ok(request != NULL, "HttpOpenRequest failed\n");
 
-    ret = HttpAddRequestHeaders(request, "Content-Length: 100\r\n", ~0u, HTTP_ADDREQ_FLAG_ADD_IF_NEW);
+    ret = HttpAddRequestHeadersA(request, "Content-Length: 100\r\n", ~0u, HTTP_ADDREQ_FLAG_ADD_IF_NEW);
     ok(ret, "HttpAddRequestHeaders failed\n");
 
-    ret = HttpSendRequest(request, connection, ~0u, NULL, 0);
+    ret = HttpSendRequestA(request, connection, ~0u, NULL, 0);
     ok(ret, "HttpSendRequest failed\n");
 
     status = 0;
     size = sizeof(status);
-    ret = HttpQueryInfo( request, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &size, NULL );
+    ret = HttpQueryInfoA( request, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &size, NULL );
     ok(ret, "HttpQueryInfo failed\n");
-    ok(status == 200 || status == 400 /* IE6 */, "got status %u, expected 200 or 400\n", status);
+    ok(status == 200, "got status %u, expected 200\n", status);
+
+    InternetCloseHandle(request);
+    InternetCloseHandle(connect);
+
+    connect = InternetConnectA(session, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    ok(connect != NULL, "InternetConnect failed\n");
+
+    request = HttpOpenRequestA(connect, "POST", "/test7b", NULL, NULL, types, 0, 0);
+    ok(request != NULL, "HttpOpenRequest failed\n");
+
+    ret = HttpAddRequestHeadersA(request, "Content-Length: 100\r\n", ~0u, HTTP_ADDREQ_FLAG_ADD_IF_NEW);
+    ok(ret, "HttpAddRequestHeaders failed\n");
+
+    data_len = sizeof(data);
+    memset(data, 'a', sizeof(data));
+    ret = HttpSendRequestA(request, connection, ~0u, data, data_len);
+    ok(ret, "HttpSendRequest failed\n");
+
+    status = 0;
+    size = sizeof(status);
+    ret = HttpQueryInfoA( request, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &size, NULL );
+    ok(ret, "HttpQueryInfo failed\n");
+    ok(status == 200, "got status %u, expected 200\n", status);
 
     InternetCloseHandle(request);
     InternetCloseHandle(connect);
@@ -2034,68 +2859,51 @@ static void test_header_handling_order(int port)
 static void test_connection_header(int port)
 {
     HINTERNET ses, con, req;
-    DWORD size, status;
     BOOL ret;
 
-    ses = InternetOpen("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    ses = InternetOpenA("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
     ok(ses != NULL, "InternetOpen failed\n");
 
-    con = InternetConnect(ses, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    con = InternetConnectA(ses, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
     ok(con != NULL, "InternetConnect failed\n");
 
-    req = HttpOpenRequest(con, NULL, "/test8", NULL, NULL, NULL, INTERNET_FLAG_KEEP_CONNECTION, 0);
+    req = HttpOpenRequestA(con, NULL, "/test8", NULL, NULL, NULL, INTERNET_FLAG_KEEP_CONNECTION, 0);
     ok(req != NULL, "HttpOpenRequest failed\n");
 
-    ret = HttpSendRequest(req, NULL, 0, NULL, 0);
+    ret = HttpSendRequestA(req, NULL, 0, NULL, 0);
     ok(ret, "HttpSendRequest failed\n");
 
-    status = 0;
-    size = sizeof(status);
-    ret = HttpQueryInfo(req, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &size, NULL);
-    ok(ret, "HttpQueryInfo failed\n");
-    ok(status == 200, "request failed with status %u\n", status);
+    test_status_code(req, 200);
 
     InternetCloseHandle(req);
 
-    req = HttpOpenRequest(con, NULL, "/test9", NULL, NULL, NULL, 0, 0);
+    req = HttpOpenRequestA(con, NULL, "/test9", NULL, NULL, NULL, 0, 0);
     ok(req != NULL, "HttpOpenRequest failed\n");
 
-    ret = HttpSendRequest(req, NULL, 0, NULL, 0);
+    ret = HttpSendRequestA(req, NULL, 0, NULL, 0);
     ok(ret, "HttpSendRequest failed\n");
 
-    status = 0;
-    size = sizeof(status);
-    ret = HttpQueryInfo(req, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &size, NULL);
-    ok(ret, "HttpQueryInfo failed\n");
-    ok(status == 200, "request failed with status %u\n", status);
+    test_status_code(req, 200);
 
     InternetCloseHandle(req);
 
-    req = HttpOpenRequest(con, NULL, "/test9", NULL, NULL, NULL, INTERNET_FLAG_NO_CACHE_WRITE, 0);
+    req = HttpOpenRequestA(con, NULL, "/test9", NULL, NULL, NULL, INTERNET_FLAG_NO_CACHE_WRITE, 0);
     ok(req != NULL, "HttpOpenRequest failed\n");
 
-    ret = HttpSendRequest(req, NULL, 0, NULL, 0);
+    ret = HttpSendRequestA(req, NULL, 0, NULL, 0);
     ok(ret, "HttpSendRequest failed\n");
 
-    status = 0;
-    size = sizeof(status);
-    ret = HttpQueryInfo(req, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &size, NULL);
-    ok(ret, "HttpQueryInfo failed\n");
-    ok(status == 200, "request failed with status %u\n", status);
+    test_status_code(req, 200);
 
     InternetCloseHandle(req);
 
-    req = HttpOpenRequest(con, "POST", "/testA", NULL, NULL, NULL, INTERNET_FLAG_NO_CACHE_WRITE, 0);
+    req = HttpOpenRequestA(con, "POST", "/testA", NULL, NULL, NULL, INTERNET_FLAG_NO_CACHE_WRITE, 0);
     ok(req != NULL, "HttpOpenRequest failed\n");
 
-    ret = HttpSendRequest(req, NULL, 0, NULL, 0);
+    ret = HttpSendRequestA(req, NULL, 0, NULL, 0);
     ok(ret, "HttpSendRequest failed\n");
 
-    status = 0;
-    size = sizeof(status);
-    ret = HttpQueryInfo(req, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &size, NULL);
-    ok(ret, "HttpQueryInfo failed\n");
-    ok(status == 200, "request failed with status %u\n", status);
+    test_status_code(req, 200);
 
     InternetCloseHandle(req);
     InternetCloseHandle(con);
@@ -2107,30 +2915,236 @@ static void test_http1_1(int port)
     HINTERNET ses, con, req;
     BOOL ret;
 
-    ses = InternetOpen("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    ses = InternetOpenA("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
     ok(ses != NULL, "InternetOpen failed\n");
 
-    con = InternetConnect(ses, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    con = InternetConnectA(ses, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
     ok(con != NULL, "InternetConnect failed\n");
 
-    req = HttpOpenRequest(con, NULL, "/testB", NULL, NULL, NULL, INTERNET_FLAG_KEEP_CONNECTION, 0);
+    req = HttpOpenRequestA(con, NULL, "/testB", NULL, NULL, NULL, INTERNET_FLAG_KEEP_CONNECTION, 0);
     ok(req != NULL, "HttpOpenRequest failed\n");
 
-    ret = HttpSendRequest(req, NULL, 0, NULL, 0);
+    ret = HttpSendRequestA(req, NULL, 0, NULL, 0);
     if (ret)
     {
         InternetCloseHandle(req);
 
-        req = HttpOpenRequest(con, NULL, "/testB", NULL, NULL, NULL, INTERNET_FLAG_KEEP_CONNECTION, 0);
+        req = HttpOpenRequestA(con, NULL, "/testB", NULL, NULL, NULL, INTERNET_FLAG_KEEP_CONNECTION, 0);
         ok(req != NULL, "HttpOpenRequest failed\n");
 
-        ret = HttpSendRequest(req, NULL, 0, NULL, 0);
+        ret = HttpSendRequestA(req, NULL, 0, NULL, 0);
         ok(ret, "HttpSendRequest failed\n");
     }
 
     InternetCloseHandle(req);
     InternetCloseHandle(con);
     InternetCloseHandle(ses);
+}
+
+static void test_connection_closing(int port)
+{
+    HINTERNET session, connection, req;
+    DWORD res;
+
+    hCompleteEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
+
+    session = InternetOpenA("", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, INTERNET_FLAG_ASYNC);
+    ok(session != NULL,"InternetOpen failed with error %u\n", GetLastError());
+
+    pInternetSetStatusCallbackA(session, callback);
+
+    SET_EXPECT(INTERNET_STATUS_HANDLE_CREATED);
+    connection = InternetConnectA(session, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0x0, 0xdeadbeef);
+    ok(connection != NULL,"InternetConnect failed with error %u\n", GetLastError());
+    CHECK_NOTIFIED(INTERNET_STATUS_HANDLE_CREATED);
+
+    SET_EXPECT(INTERNET_STATUS_HANDLE_CREATED);
+    req = HttpOpenRequestA(connection, "GET", "/testJ", NULL, NULL, NULL, INTERNET_FLAG_KEEP_CONNECTION, 0xdeadbeaf);
+    ok(req != NULL, "HttpOpenRequest failed: %u\n", GetLastError());
+    CHECK_NOTIFIED(INTERNET_STATUS_HANDLE_CREATED);
+
+    SET_OPTIONAL(INTERNET_STATUS_COOKIE_SENT);
+    SET_OPTIONAL(INTERNET_STATUS_DETECTING_PROXY);
+    SET_EXPECT(INTERNET_STATUS_CONNECTING_TO_SERVER);
+    SET_EXPECT(INTERNET_STATUS_CONNECTED_TO_SERVER);
+    SET_EXPECT(INTERNET_STATUS_SENDING_REQUEST);
+    SET_EXPECT(INTERNET_STATUS_REQUEST_SENT);
+    SET_EXPECT(INTERNET_STATUS_RECEIVING_RESPONSE);
+    SET_EXPECT(INTERNET_STATUS_RESPONSE_RECEIVED);
+    SET_OPTIONAL(INTERNET_STATUS_CLOSING_CONNECTION);
+    SET_OPTIONAL(INTERNET_STATUS_CONNECTION_CLOSED);
+    SET_EXPECT(INTERNET_STATUS_REQUEST_COMPLETE);
+
+    res = HttpSendRequestA(req, NULL, 0, NULL, 0);
+    ok(!res && (GetLastError() == ERROR_IO_PENDING),
+       "Asynchronous HttpSendRequest NOT returning 0 with error ERROR_IO_PENDING\n");
+    WaitForSingleObject(hCompleteEvent, INFINITE);
+    ok(req_error == ERROR_SUCCESS, "req_error = %u\n", req_error);
+
+    CLEAR_NOTIFIED(INTERNET_STATUS_COOKIE_SENT);
+    CLEAR_NOTIFIED(INTERNET_STATUS_DETECTING_PROXY);
+    CHECK_NOTIFIED(INTERNET_STATUS_CONNECTING_TO_SERVER);
+    CHECK_NOTIFIED(INTERNET_STATUS_CONNECTED_TO_SERVER);
+    CHECK_NOTIFIED(INTERNET_STATUS_SENDING_REQUEST);
+    CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_SENT);
+    CHECK_NOTIFIED(INTERNET_STATUS_RECEIVING_RESPONSE);
+    CHECK_NOTIFIED(INTERNET_STATUS_RESPONSE_RECEIVED);
+    CLEAR_NOTIFIED(INTERNET_STATUS_CLOSING_CONNECTION);
+    CLEAR_NOTIFIED(INTERNET_STATUS_CONNECTION_CLOSED);
+    CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_COMPLETE);
+
+    test_status_code(req, 200);
+
+    SET_OPTIONAL(INTERNET_STATUS_COOKIE_SENT);
+    SET_OPTIONAL(INTERNET_STATUS_DETECTING_PROXY);
+    SET_EXPECT(INTERNET_STATUS_CONNECTING_TO_SERVER);
+    SET_EXPECT(INTERNET_STATUS_CONNECTED_TO_SERVER);
+    SET_EXPECT(INTERNET_STATUS_SENDING_REQUEST);
+    SET_EXPECT(INTERNET_STATUS_REQUEST_SENT);
+    SET_EXPECT(INTERNET_STATUS_RECEIVING_RESPONSE);
+    SET_EXPECT(INTERNET_STATUS_RESPONSE_RECEIVED);
+    SET_EXPECT(INTERNET_STATUS_REQUEST_COMPLETE);
+
+    res = HttpSendRequestA(req, NULL, 0, NULL, 0);
+    ok(!res && (GetLastError() == ERROR_IO_PENDING),
+            "Asynchronous HttpSendRequest NOT returning 0 with error ERROR_IO_PENDING\n");
+    WaitForSingleObject(hCompleteEvent, INFINITE);
+    ok(req_error == ERROR_SUCCESS, "req_error = %u\n", req_error);
+
+    CLEAR_NOTIFIED(INTERNET_STATUS_COOKIE_SENT);
+    CLEAR_NOTIFIED(INTERNET_STATUS_DETECTING_PROXY);
+    CHECK_NOTIFIED(INTERNET_STATUS_CONNECTING_TO_SERVER);
+    CHECK_NOTIFIED(INTERNET_STATUS_CONNECTED_TO_SERVER);
+    CHECK_NOTIFIED(INTERNET_STATUS_SENDING_REQUEST);
+    CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_SENT);
+    CHECK_NOTIFIED(INTERNET_STATUS_RECEIVING_RESPONSE);
+    CHECK_NOTIFIED(INTERNET_STATUS_RESPONSE_RECEIVED);
+    CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_COMPLETE);
+
+    test_status_code(req, 210);
+
+    SET_OPTIONAL(INTERNET_STATUS_COOKIE_SENT);
+    SET_OPTIONAL(INTERNET_STATUS_DETECTING_PROXY);
+    SET_EXPECT(INTERNET_STATUS_CONNECTING_TO_SERVER);
+    SET_EXPECT(INTERNET_STATUS_CONNECTED_TO_SERVER);
+    SET_EXPECT(INTERNET_STATUS_SENDING_REQUEST);
+    SET_EXPECT(INTERNET_STATUS_REQUEST_SENT);
+    SET_EXPECT(INTERNET_STATUS_RECEIVING_RESPONSE);
+    SET_EXPECT(INTERNET_STATUS_RESPONSE_RECEIVED);
+    SET_OPTIONAL(INTERNET_STATUS_CLOSING_CONNECTION);
+    SET_OPTIONAL(INTERNET_STATUS_CONNECTION_CLOSED);
+    SET_EXPECT(INTERNET_STATUS_REQUEST_COMPLETE);
+
+    res = HttpSendRequestA(req, NULL, 0, NULL, 0);
+    ok(!res && (GetLastError() == ERROR_IO_PENDING),
+       "Asynchronous HttpSendRequest NOT returning 0 with error ERROR_IO_PENDING\n");
+    WaitForSingleObject(hCompleteEvent, INFINITE);
+    ok(req_error == ERROR_SUCCESS, "req_error = %u\n", req_error);
+
+    CLEAR_NOTIFIED(INTERNET_STATUS_COOKIE_SENT);
+    CLEAR_NOTIFIED(INTERNET_STATUS_DETECTING_PROXY);
+    CHECK_NOTIFIED(INTERNET_STATUS_CONNECTING_TO_SERVER);
+    CHECK_NOTIFIED(INTERNET_STATUS_CONNECTED_TO_SERVER);
+    CHECK_NOTIFIED(INTERNET_STATUS_SENDING_REQUEST);
+    CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_SENT);
+    CHECK_NOTIFIED(INTERNET_STATUS_RECEIVING_RESPONSE);
+    CHECK_NOTIFIED(INTERNET_STATUS_RESPONSE_RECEIVED);
+    CLEAR_NOTIFIED(INTERNET_STATUS_CLOSING_CONNECTION);
+    CLEAR_NOTIFIED(INTERNET_STATUS_CONNECTION_CLOSED);
+    CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_COMPLETE);
+
+    test_status_code(req, 200);
+
+    SET_WINE_ALLOW(INTERNET_STATUS_CLOSING_CONNECTION);
+    SET_WINE_ALLOW(INTERNET_STATUS_CONNECTION_CLOSED);
+
+    close_async_handle(session, hCompleteEvent, 2);
+    CloseHandle(hCompleteEvent);
+}
+
+static void test_successive_HttpSendRequest(int port)
+{
+    HINTERNET session, connection, req;
+    DWORD res;
+
+    hCompleteEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
+
+    session = InternetOpenA("", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, INTERNET_FLAG_ASYNC);
+    ok(session != NULL,"InternetOpen failed with error %u\n", GetLastError());
+
+    pInternetSetStatusCallbackA(session, callback);
+
+    SET_EXPECT(INTERNET_STATUS_HANDLE_CREATED);
+    connection = InternetConnectA(session, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0x0, 0xdeadbeef);
+    ok(connection != NULL,"InternetConnect failed with error %u\n", GetLastError());
+    CHECK_NOTIFIED(INTERNET_STATUS_HANDLE_CREATED);
+
+    SET_EXPECT(INTERNET_STATUS_HANDLE_CREATED);
+    req = HttpOpenRequestA(connection, "GET", "/testH", NULL, NULL, NULL, INTERNET_FLAG_KEEP_CONNECTION, 0xdeadbeaf);
+    ok(req != NULL, "HttpOpenRequest failed: %u\n", GetLastError());
+    CHECK_NOTIFIED(INTERNET_STATUS_HANDLE_CREATED);
+
+    SET_OPTIONAL(INTERNET_STATUS_COOKIE_SENT);
+    SET_OPTIONAL(INTERNET_STATUS_DETECTING_PROXY);
+    SET_EXPECT(INTERNET_STATUS_CONNECTING_TO_SERVER);
+    SET_EXPECT(INTERNET_STATUS_CONNECTED_TO_SERVER);
+    SET_EXPECT(INTERNET_STATUS_SENDING_REQUEST);
+    SET_EXPECT(INTERNET_STATUS_REQUEST_SENT);
+    SET_EXPECT(INTERNET_STATUS_RECEIVING_RESPONSE);
+    SET_EXPECT(INTERNET_STATUS_RESPONSE_RECEIVED);
+    SET_EXPECT(INTERNET_STATUS_REQUEST_COMPLETE);
+
+    res = HttpSendRequestA(req, NULL, 0, NULL, 0);
+    ok(!res && (GetLastError() == ERROR_IO_PENDING),
+            "Asynchronous HttpSendRequest NOT returning 0 with error ERROR_IO_PENDING\n");
+    WaitForSingleObject(hCompleteEvent, INFINITE);
+    ok(req_error == ERROR_SUCCESS, "req_error = %u\n", req_error);
+
+    CLEAR_NOTIFIED(INTERNET_STATUS_COOKIE_SENT);
+    CLEAR_NOTIFIED(INTERNET_STATUS_DETECTING_PROXY);
+    CHECK_NOTIFIED(INTERNET_STATUS_CONNECTING_TO_SERVER);
+    CHECK_NOTIFIED(INTERNET_STATUS_CONNECTED_TO_SERVER);
+    CHECK_NOTIFIED(INTERNET_STATUS_SENDING_REQUEST);
+    CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_SENT);
+    CHECK_NOTIFIED(INTERNET_STATUS_RECEIVING_RESPONSE);
+    CHECK_NOTIFIED(INTERNET_STATUS_RESPONSE_RECEIVED);
+    CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_COMPLETE);
+
+    test_status_code(req, 210);
+
+    SET_OPTIONAL(INTERNET_STATUS_COOKIE_SENT);
+    SET_OPTIONAL(INTERNET_STATUS_DETECTING_PROXY);
+    SET_EXPECT(INTERNET_STATUS_SENDING_REQUEST);
+    SET_EXPECT(INTERNET_STATUS_REQUEST_SENT);
+    SET_EXPECT(INTERNET_STATUS_RECEIVING_RESPONSE);
+    SET_EXPECT(INTERNET_STATUS_RESPONSE_RECEIVED);
+    SET_OPTIONAL(INTERNET_STATUS_CLOSING_CONNECTION);
+    SET_OPTIONAL(INTERNET_STATUS_CONNECTION_CLOSED);
+    SET_EXPECT(INTERNET_STATUS_REQUEST_COMPLETE);
+
+    res = HttpSendRequestA(req, NULL, 0, NULL, 0);
+    ok(!res && (GetLastError() == ERROR_IO_PENDING),
+       "Asynchronous HttpSendRequest NOT returning 0 with error ERROR_IO_PENDING\n");
+    WaitForSingleObject(hCompleteEvent, INFINITE);
+    ok(req_error == ERROR_SUCCESS, "req_error = %u\n", req_error);
+
+    CLEAR_NOTIFIED(INTERNET_STATUS_COOKIE_SENT);
+    CLEAR_NOTIFIED(INTERNET_STATUS_DETECTING_PROXY);
+    CHECK_NOTIFIED(INTERNET_STATUS_SENDING_REQUEST);
+    CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_SENT);
+    CHECK_NOTIFIED(INTERNET_STATUS_RECEIVING_RESPONSE);
+    CHECK_NOTIFIED(INTERNET_STATUS_RESPONSE_RECEIVED);
+    CLEAR_NOTIFIED(INTERNET_STATUS_CLOSING_CONNECTION);
+    CLEAR_NOTIFIED(INTERNET_STATUS_CONNECTION_CLOSED);
+    CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_COMPLETE);
+
+    test_status_code(req, 200);
+
+    SET_WINE_ALLOW(INTERNET_STATUS_CLOSING_CONNECTION);
+    SET_WINE_ALLOW(INTERNET_STATUS_CONNECTION_CLOSED);
+
+    close_async_handle(session, hCompleteEvent, 2);
+    CloseHandle(hCompleteEvent);
 }
 
 static void test_no_content(int port)
@@ -2140,7 +3154,7 @@ static void test_no_content(int port)
 
     trace("Testing 204 no content response...\n");
 
-    hCompleteEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+    hCompleteEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
 
     session = InternetOpenA("", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, INTERNET_FLAG_ASYNC);
     ok(session != NULL,"InternetOpen failed with error %u\n", GetLastError());
@@ -2183,12 +3197,17 @@ static void test_no_content(int port)
     CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_SENT);
     CHECK_NOTIFIED(INTERNET_STATUS_RECEIVING_RESPONSE);
     CHECK_NOTIFIED(INTERNET_STATUS_RESPONSE_RECEIVED);
-    CHECK_NOTIFIED(INTERNET_STATUS_CLOSING_CONNECTION);
-    CHECK_NOTIFIED(INTERNET_STATUS_CONNECTION_CLOSED);
     CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_COMPLETE);
 
     close_async_handle(session, hCompleteEvent, 2);
     CloseHandle(hCompleteEvent);
+
+    /*
+     * The connection should be closed before closing handle. This is true for most
+     * wininet versions (including Wine), but some old win2k versions fail to do that.
+     */
+    CHECK_NOTIFIED(INTERNET_STATUS_CLOSING_CONNECTION);
+    CHECK_NOTIFIED(INTERNET_STATUS_CONNECTION_CLOSED);
 }
 
 static void test_conn_close(int port)
@@ -2199,8 +3218,8 @@ static void test_conn_close(int port)
 
     trace("Testing connection close connection...\n");
 
-    hCompleteEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
-    conn_close_event = CreateEvent(NULL, FALSE, FALSE, NULL);
+    hCompleteEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
+    conn_close_event = CreateEventW(NULL, FALSE, FALSE, NULL);
 
     session = InternetOpenA("", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, INTERNET_FLAG_ASYNC);
     ok(session != NULL,"InternetOpen failed with error %u\n", GetLastError());
@@ -2252,10 +3271,16 @@ static void test_conn_close(int port)
     res = InternetReadFile(req, buf, avail, &size);
     ok(res, "InternetReadFile failed: %u\n", GetLastError());
 
+    /* IE11 calls those in InternetQueryDataAvailable call. */
+    SET_OPTIONAL(INTERNET_STATUS_RECEIVING_RESPONSE);
+    SET_OPTIONAL(INTERNET_STATUS_RESPONSE_RECEIVED);
+
     res = InternetQueryDataAvailable(req, &avail, 0, 0);
     ok(!res && (GetLastError() == ERROR_IO_PENDING),
        "Asynchronous HttpSendRequest NOT returning 0 with error ERROR_IO_PENDING\n");
     ok(!avail, "avail = %u, expected 0\n", avail);
+
+    CLEAR_NOTIFIED(INTERNET_STATUS_RECEIVING_RESPONSE);
 
     SET_EXPECT(INTERNET_STATUS_CLOSING_CONNECTION);
     SET_EXPECT(INTERNET_STATUS_CONNECTION_CLOSED);
@@ -2263,12 +3288,206 @@ static void test_conn_close(int port)
     SetEvent(conn_close_event);
     WaitForSingleObject(hCompleteEvent, INFINITE);
     ok(req_error == ERROR_SUCCESS, "req_error = %u\n", req_error);
+    CLEAR_NOTIFIED(INTERNET_STATUS_RESPONSE_RECEIVED);
     CHECK_NOTIFIED(INTERNET_STATUS_CLOSING_CONNECTION);
     CHECK_NOTIFIED(INTERNET_STATUS_CONNECTION_CLOSED);
     CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_COMPLETE);
 
     close_async_handle(session, hCompleteEvent, 2);
     CloseHandle(hCompleteEvent);
+}
+
+static void test_no_cache(int port)
+{
+    static const char cache_control_no_cache[] = "/test_cache_control_no_cache";
+    static const char cache_control_no_store[] = "/test_cache_control_no_store";
+    static const char cache_url_fmt[] = "http://localhost:%d%s";
+
+    char cache_url[256], buf[256];
+    HINTERNET ses, con, req;
+    DWORD read, size;
+    BOOL ret;
+
+    trace("Testing no-cache header\n");
+
+    ses = InternetOpenA("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    ok(ses != NULL,"InternetOpen failed with error %u\n", GetLastError());
+
+    con = InternetConnectA(ses, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    ok(con != NULL, "InternetConnect failed with error %u\n", GetLastError());
+
+    req = HttpOpenRequestA(con, NULL, cache_control_no_cache, NULL, NULL, NULL, 0, 0);
+    ok(req != NULL, "HttpOpenRequest failed\n");
+
+    sprintf(cache_url, cache_url_fmt, port, cache_control_no_cache);
+    DeleteUrlCacheEntryA(cache_url);
+
+    ret = HttpSendRequestA(req, NULL, 0, NULL, 0);
+    ok(ret, "HttpSendRequest failed with error %u\n", GetLastError());
+    size = 0;
+    while(InternetReadFile(req, buf, sizeof(buf), &read) && read)
+        size += read;
+    ok(size == 12, "read %d bytes of data\n", size);
+    InternetCloseHandle(req);
+
+    req = HttpOpenRequestA(con, NULL, cache_control_no_cache, NULL, NULL, NULL, 0, 0);
+    ok(req != NULL, "HttpOpenRequest failed\n");
+
+    ret = HttpSendRequestA(req, NULL, 0, NULL, 0);
+    ok(ret, "HttpSendRequest failed with error %u\n", GetLastError());
+    size = 0;
+    while(InternetReadFile(req, buf, sizeof(buf), &read) && read)
+        size += read;
+    ok(size == 0, "read %d bytes of data\n", size);
+    InternetCloseHandle(req);
+    DeleteUrlCacheEntryA(cache_url);
+
+    req = HttpOpenRequestA(con, NULL, cache_control_no_store, NULL, NULL, NULL, 0, 0);
+    ok(req != NULL, "HttpOpenRequest failed\n");
+
+    sprintf(cache_url, cache_url_fmt, port, cache_control_no_store);
+    DeleteUrlCacheEntryA(cache_url);
+
+    ret = HttpSendRequestA(req, NULL, 0, NULL, 0);
+    ok(ret, "HttpSendRequest failed with error %u\n", GetLastError());
+    size = 0;
+    while(InternetReadFile(req, buf, sizeof(buf), &read) && read)
+        size += read;
+    ok(size == 12, "read %d bytes of data\n", size);
+    InternetCloseHandle(req);
+
+    ret = DeleteUrlCacheEntryA(cache_url);
+    ok(!ret && GetLastError()==ERROR_FILE_NOT_FOUND, "cache entry should not exist\n");
+
+    InternetCloseHandle(con);
+    InternetCloseHandle(ses);
+}
+
+static void test_cache_read_gzipped(int port)
+{
+    static const char cache_url_fmt[] = "http://localhost:%d%s";
+    static const char get_gzip[] = "/test_cache_gzip";
+    static const char content[] = "gzip test\n";
+    static const char text_html[] = "text/html";
+    static const char raw_header[] = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n";
+
+    HINTERNET ses, con, req;
+    DWORD read, size;
+    char cache_url[256], buf[256];
+    BOOL ret;
+
+    trace("Testing reading compressed content from cache\n");
+
+    ses = InternetOpenA("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    ok(ses != NULL,"InternetOpen failed with error %u\n", GetLastError());
+
+    con = InternetConnectA(ses, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    ok(con != NULL, "InternetConnect failed with error %u\n", GetLastError());
+
+    req = HttpOpenRequestA(con, NULL, get_gzip, NULL, NULL, NULL, 0, 0);
+    ok(req != NULL, "HttpOpenRequest failed\n");
+
+    ret = TRUE;
+    ret = InternetSetOptionA(req, INTERNET_OPTION_HTTP_DECODING, &ret, sizeof(ret));
+    if(!ret && GetLastError()==ERROR_INTERNET_INVALID_OPTION) {
+        win_skip("INTERNET_OPTION_HTTP_DECODING not supported\n");
+        InternetCloseHandle(req);
+        InternetCloseHandle(con);
+        InternetCloseHandle(ses);
+        return;
+    }
+    ok(ret, "InternetSetOption(INTERNET_OPTION_HTTP_DECODING) failed: %d\n", GetLastError());
+
+    ret = HttpSendRequestA(req, "Accept-Encoding: gzip", -1, NULL, 0);
+    ok(ret, "HttpSendRequest failed with error %u\n", GetLastError());
+    size = 0;
+    while(InternetReadFile(req, buf+size, sizeof(buf)-size, &read) && read)
+        size += read;
+    ok(size == 10, "read %d bytes of data\n", size);
+    buf[size] = 0;
+    ok(!strncmp(buf, content, size), "incorrect page content: %s\n", buf);
+
+    size = sizeof(buf)-1;
+    ret = HttpQueryInfoA(req, HTTP_QUERY_CONTENT_TYPE, buf, &size, 0);
+    ok(ret, "HttpQueryInfo(HTTP_QUERY_CONTENT_TYPE) failed: %d\n", GetLastError());
+    buf[size] = 0;
+    ok(!strncmp(text_html, buf, size), "buf = %s\n", buf);
+
+    size = sizeof(buf)-1;
+    ret = HttpQueryInfoA(req, HTTP_QUERY_RAW_HEADERS_CRLF, buf, &size, 0);
+    ok(ret, "HttpQueryInfo(HTTP_QUERY_CONTENT_TYPE) failed: %d\n", GetLastError());
+    buf[size] = 0;
+    ok(!strncmp(raw_header, buf, size), "buf = %s\n", buf);
+    InternetCloseHandle(req);
+
+    req = HttpOpenRequestA(con, NULL, get_gzip, NULL, NULL, NULL, INTERNET_FLAG_FROM_CACHE, 0);
+    ok(req != NULL, "HttpOpenRequest failed\n");
+
+    ret = TRUE;
+    ret = InternetSetOptionA(req, INTERNET_OPTION_HTTP_DECODING, &ret, sizeof(ret));
+    ok(ret, "InternetSetOption(INTERNET_OPTION_HTTP_DECODING) failed: %d\n", GetLastError());
+
+    ret = HttpSendRequestA(req, "Accept-Encoding: gzip", -1, NULL, 0);
+    ok(ret, "HttpSendRequest failed with error %u\n", GetLastError());
+    size = 0;
+    while(InternetReadFile(req, buf+size, sizeof(buf)-1-size, &read) && read)
+        size += read;
+    todo_wine ok(size == 10, "read %d bytes of data\n", size);
+    buf[size] = 0;
+    ok(!strncmp(buf, content, size), "incorrect page content: %s\n", buf);
+
+    size = sizeof(buf);
+    ret = HttpQueryInfoA(req, HTTP_QUERY_CONTENT_ENCODING, buf, &size, 0);
+    ok(!ret && GetLastError()==ERROR_HTTP_HEADER_NOT_FOUND,
+            "HttpQueryInfo(HTTP_QUERY_CONTENT_ENCODING) returned %d, %d\n",
+            ret, GetLastError());
+
+    size = sizeof(buf)-1;
+    ret = HttpQueryInfoA(req, HTTP_QUERY_CONTENT_TYPE, buf, &size, 0);
+    todo_wine ok(ret, "HttpQueryInfo(HTTP_QUERY_CONTENT_TYPE) failed: %d\n", GetLastError());
+    buf[size] = 0;
+    todo_wine ok(!strncmp(text_html, buf, size), "buf = %s\n", buf);
+    InternetCloseHandle(req);
+
+    /* Decompression doesn't work while reading from cache */
+    test_cache_gzip = 0;
+    sprintf(cache_url, cache_url_fmt, port, get_gzip);
+    DeleteUrlCacheEntryA(cache_url);
+
+    req = HttpOpenRequestA(con, NULL, get_gzip, NULL, NULL, NULL, 0, 0);
+    ok(req != NULL, "HttpOpenRequest failed\n");
+
+    ret = HttpSendRequestA(req, "Accept-Encoding: gzip", -1, NULL, 0);
+    ok(ret, "HttpSendRequest failed with error %u\n", GetLastError());
+    size = 0;
+    while(InternetReadFile(req, buf+size, sizeof(buf)-1-size, &read) && read)
+        size += read;
+    ok(size == 31, "read %d bytes of data\n", size);
+    InternetCloseHandle(req);
+
+    req = HttpOpenRequestA(con, NULL, get_gzip, NULL, NULL, NULL, INTERNET_FLAG_FROM_CACHE, 0);
+    ok(req != NULL, "HttpOpenRequest failed\n");
+
+    ret = TRUE;
+    ret = InternetSetOptionA(req, INTERNET_OPTION_HTTP_DECODING, &ret, sizeof(ret));
+    ok(ret, "InternetSetOption(INTERNET_OPTION_HTTP_DECODING) failed: %d\n", GetLastError());
+
+    ret = HttpSendRequestA(req, "Accept-Encoding: gzip", -1, NULL, 0);
+    ok(ret, "HttpSendRequest failed with error %u\n", GetLastError());
+    size = 0;
+    while(InternetReadFile(req, buf+size, sizeof(buf)-1-size, &read) && read)
+        size += read;
+    todo_wine ok(size == 31, "read %d bytes of data\n", size);
+
+    size = sizeof(buf);
+    ret = HttpQueryInfoA(req, HTTP_QUERY_CONTENT_ENCODING, buf, &size, 0);
+    todo_wine ok(ret, "HttpQueryInfo(HTTP_QUERY_CONTENT_ENCODING) failed: %d\n", GetLastError());
+    InternetCloseHandle(req);
+
+    InternetCloseHandle(con);
+    InternetCloseHandle(ses);
+
+    DeleteUrlCacheEntryA(cache_url);
 }
 
 static void test_HttpSendRequestW(int port)
@@ -2278,13 +3497,13 @@ static void test_HttpSendRequestW(int port)
     DWORD error;
     BOOL ret;
 
-    ses = InternetOpen("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, INTERNET_FLAG_ASYNC);
+    ses = InternetOpenA("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, INTERNET_FLAG_ASYNC);
     ok(ses != NULL, "InternetOpen failed\n");
 
-    con = InternetConnect(ses, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    con = InternetConnectA(ses, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
     ok(con != NULL, "InternetConnect failed\n");
 
-    req = HttpOpenRequest(con, NULL, "/test1", NULL, NULL, NULL, 0, 0);
+    req = HttpOpenRequestA(con, NULL, "/test1", NULL, NULL, NULL, 0, 0);
     ok(req != NULL, "HttpOpenRequest failed\n");
 
     SetLastError(0xdeadbeef);
@@ -2304,50 +3523,46 @@ static void test_HttpSendRequestW(int port)
 static void test_cookie_header(int port)
 {
     HINTERNET ses, con, req;
-    DWORD size, status, error;
+    DWORD size, error;
     BOOL ret;
     char buffer[64];
 
-    ses = InternetOpen("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    ses = InternetOpenA("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
     ok(ses != NULL, "InternetOpen failed\n");
 
-    con = InternetConnect(ses, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    con = InternetConnectA(ses, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
     ok(con != NULL, "InternetConnect failed\n");
 
-    InternetSetCookie("http://localhost", "cookie", "biscuit");
+    InternetSetCookieA("http://localhost", "cookie", "biscuit");
 
-    req = HttpOpenRequest(con, NULL, "/testC", NULL, NULL, NULL, INTERNET_FLAG_KEEP_CONNECTION, 0);
+    req = HttpOpenRequestA(con, NULL, "/testC", NULL, NULL, NULL, INTERNET_FLAG_KEEP_CONNECTION, 0);
     ok(req != NULL, "HttpOpenRequest failed\n");
 
     buffer[0] = 0;
     size = sizeof(buffer);
     SetLastError(0xdeadbeef);
-    ret = HttpQueryInfo(req, HTTP_QUERY_COOKIE | HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer, &size, NULL);
+    ret = HttpQueryInfoA(req, HTTP_QUERY_COOKIE | HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer, &size, NULL);
     error = GetLastError();
     ok(!ret, "HttpQueryInfo succeeded\n");
     ok(error == ERROR_HTTP_HEADER_NOT_FOUND, "got %u expected ERROR_HTTP_HEADER_NOT_FOUND\n", error);
 
-    ret = HttpAddRequestHeaders(req, "Cookie: cookie=not biscuit\r\n", ~0u, HTTP_ADDREQ_FLAG_ADD);
+    ret = HttpAddRequestHeadersA(req, "Cookie: cookie=not biscuit\r\n", ~0u, HTTP_ADDREQ_FLAG_ADD);
     ok(ret, "HttpAddRequestHeaders failed: %u\n", GetLastError());
 
     buffer[0] = 0;
     size = sizeof(buffer);
-    ret = HttpQueryInfo(req, HTTP_QUERY_COOKIE | HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer, &size, NULL);
+    ret = HttpQueryInfoA(req, HTTP_QUERY_COOKIE | HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer, &size, NULL);
     ok(ret, "HttpQueryInfo failed: %u\n", GetLastError());
     ok(!strcmp(buffer, "cookie=not biscuit"), "got '%s' expected \'cookie=not biscuit\'\n", buffer);
 
-    ret = HttpSendRequest(req, NULL, 0, NULL, 0);
+    ret = HttpSendRequestA(req, NULL, 0, NULL, 0);
     ok(ret, "HttpSendRequest failed: %u\n", GetLastError());
 
-    status = 0;
-    size = sizeof(status);
-    ret = HttpQueryInfo(req, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &size, NULL);
-    ok(ret, "HttpQueryInfo failed\n");
-    ok(status == 200, "request failed with status %u\n", status);
+    test_status_code(req, 200);
 
     buffer[0] = 0;
     size = sizeof(buffer);
-    ret = HttpQueryInfo(req, HTTP_QUERY_COOKIE | HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer, &size, NULL);
+    ret = HttpQueryInfoA(req, HTTP_QUERY_COOKIE | HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer, &size, NULL);
     ok(ret, "HttpQueryInfo failed: %u\n", GetLastError());
     ok(!strcmp(buffer, "cookie=biscuit"), "got '%s' expected \'cookie=biscuit\'\n", buffer);
 
@@ -2359,26 +3574,48 @@ static void test_cookie_header(int port)
 static void test_basic_authentication(int port)
 {
     HINTERNET session, connect, request;
-    DWORD size, status;
     BOOL ret;
 
-    session = InternetOpen("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    session = InternetOpenA("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
     ok(session != NULL, "InternetOpen failed\n");
 
-    connect = InternetConnect(session, "localhost", port, "user", "pwd", INTERNET_SERVICE_HTTP, 0, 0);
+    connect = InternetConnectA(session, "localhost", port, "user", "pwd", INTERNET_SERVICE_HTTP, 0, 0);
     ok(connect != NULL, "InternetConnect failed\n");
 
-    request = HttpOpenRequest(connect, NULL, "/test3", NULL, NULL, NULL, 0, 0);
+    request = HttpOpenRequestA(connect, NULL, "/test3", NULL, NULL, NULL, 0, 0);
     ok(request != NULL, "HttpOpenRequest failed\n");
 
-    ret = HttpSendRequest(request, NULL, 0, NULL, 0);
+    ret = HttpSendRequestA(request, NULL, 0, NULL, 0);
     ok(ret, "HttpSendRequest failed %u\n", GetLastError());
 
-    status = 0;
-    size = sizeof(status);
-    ret = HttpQueryInfo( request, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &size, NULL );
-    ok(ret, "HttpQueryInfo failed\n");
-    ok(status == 200, "request failed with status %u\n", status);
+    test_status_code(request, 200);
+    test_request_flags(request, 0);
+
+    InternetCloseHandle(request);
+    InternetCloseHandle(connect);
+    InternetCloseHandle(session);
+}
+
+static void test_premature_disconnect(int port)
+{
+    HINTERNET session, connect, request;
+    DWORD err;
+    BOOL ret;
+
+    session = InternetOpenA("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    ok(session != NULL, "InternetOpen failed\n");
+
+    connect = InternetConnectA(session, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    ok(connect != NULL, "InternetConnect failed\n");
+
+    request = HttpOpenRequestA(connect, NULL, "/premature_disconnect", NULL, NULL, NULL, INTERNET_FLAG_KEEP_CONNECTION, 0);
+    ok(request != NULL, "HttpOpenRequest failed\n");
+
+    SetLastError(0xdeadbeef);
+    ret = HttpSendRequestA(request, NULL, 0, NULL, 0);
+    err = GetLastError();
+    todo_wine ok(!ret, "HttpSendRequest succeeded\n");
+    todo_wine ok(err == ERROR_HTTP_INVALID_SERVER_RESPONSE, "got %u\n", err);
 
     InternetCloseHandle(request);
     InternetCloseHandle(connect);
@@ -2388,38 +3625,35 @@ static void test_basic_authentication(int port)
 static void test_invalid_response_headers(int port)
 {
     HINTERNET session, connect, request;
-    DWORD size, status;
+    DWORD size;
     BOOL ret;
     char buffer[256];
 
-    session = InternetOpen("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    session = InternetOpenA("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
     ok(session != NULL, "InternetOpen failed\n");
 
-    connect = InternetConnect(session, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    connect = InternetConnectA(session, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
     ok(connect != NULL, "InternetConnect failed\n");
 
-    request = HttpOpenRequest(connect, NULL, "/testE", NULL, NULL, NULL, 0, 0);
+    request = HttpOpenRequestA(connect, NULL, "/testE", NULL, NULL, NULL, 0, 0);
     ok(request != NULL, "HttpOpenRequest failed\n");
 
-    ret = HttpSendRequest(request, NULL, 0, NULL, 0);
+    ret = HttpSendRequestA(request, NULL, 0, NULL, 0);
     ok(ret, "HttpSendRequest failed %u\n", GetLastError());
 
-    status = 0;
-    size = sizeof(status);
-    ret = HttpQueryInfo( request, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &size, NULL );
-    ok(ret, "HttpQueryInfo failed\n");
-    ok(status == 401, "unexpected status %u\n", status);
+    test_status_code(request, 401);
+    test_request_flags(request, 0);
 
     buffer[0] = 0;
     size = sizeof(buffer);
-    ret = HttpQueryInfo( request, HTTP_QUERY_RAW_HEADERS, buffer, &size, NULL);
+    ret = HttpQueryInfoA( request, HTTP_QUERY_RAW_HEADERS, buffer, &size, NULL);
     ok(ret, "HttpQueryInfo failed\n");
     ok(!strcmp(buffer, "HTTP/1.0 401 Anonymous requests or requests on unsecure channel are not allowed"),
        "headers wrong \"%s\"\n", buffer);
 
     buffer[0] = 0;
     size = sizeof(buffer);
-    ret = HttpQueryInfo( request, HTTP_QUERY_SERVER, buffer, &size, NULL);
+    ret = HttpQueryInfoA( request, HTTP_QUERY_SERVER, buffer, &size, NULL);
     ok(ret, "HttpQueryInfo failed\n");
     ok(!strcmp(buffer, "winetest"), "server wrong \"%s\"\n", buffer);
 
@@ -2431,24 +3665,28 @@ static void test_invalid_response_headers(int port)
 static void test_response_without_headers(int port)
 {
     HINTERNET hi, hc, hr;
-    DWORD r, count, size, status;
+    DWORD r, count, size;
     char buffer[1024];
 
     SetLastError(0xdeadbeef);
-    hi = InternetOpen(NULL, INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    hi = InternetOpenA(NULL, INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
     ok(hi != NULL, "open failed %u\n", GetLastError());
 
     SetLastError(0xdeadbeef);
-    hc = InternetConnect(hi, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    hc = InternetConnectA(hi, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
     ok(hc != NULL, "connect failed %u\n", GetLastError());
 
     SetLastError(0xdeadbeef);
-    hr = HttpOpenRequest(hc, NULL, "/testG", NULL, NULL, NULL, 0, 0);
+    hr = HttpOpenRequestA(hc, NULL, "/testG", NULL, NULL, NULL, 0, 0);
     ok(hr != NULL, "HttpOpenRequest failed %u\n", GetLastError());
 
+    test_request_flags(hr, INTERNET_REQFLAG_NO_HEADERS);
+
     SetLastError(0xdeadbeef);
-    r = HttpSendRequest(hr, NULL, 0, NULL, 0);
+    r = HttpSendRequestA(hr, NULL, 0, NULL, 0);
     ok(r, "HttpSendRequest failed %u\n", GetLastError());
+
+    test_request_flags_todo(hr, INTERNET_REQFLAG_NO_HEADERS);
 
     count = 0;
     memset(buffer, 0, sizeof buffer);
@@ -2458,31 +3696,27 @@ static void test_response_without_headers(int port)
     todo_wine ok(count == sizeof page1 - 1, "count was wrong\n");
     todo_wine ok(!memcmp(buffer, page1, sizeof page1), "http data wrong\n");
 
-    status = 0;
-    size = sizeof(status);
-    SetLastError(0xdeadbeef);
-    r = HttpQueryInfo(hr, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &size, NULL );
-    todo_wine ok(r, "HttpQueryInfo failed %u\n", GetLastError());
-    todo_wine ok(status == 200, "expected status 200 got %u\n", status);
+    test_status_code(hr, 200);
+    test_request_flags_todo(hr, INTERNET_REQFLAG_NO_HEADERS);
 
     buffer[0] = 0;
     size = sizeof(buffer);
     SetLastError(0xdeadbeef);
-    r = HttpQueryInfo(hr, HTTP_QUERY_STATUS_TEXT, buffer, &size, NULL );
+    r = HttpQueryInfoA(hr, HTTP_QUERY_STATUS_TEXT, buffer, &size, NULL );
     ok(r, "HttpQueryInfo failed %u\n", GetLastError());
     ok(!strcmp(buffer, "OK"), "expected OK got: \"%s\"\n", buffer);
 
     buffer[0] = 0;
     size = sizeof(buffer);
     SetLastError(0xdeadbeef);
-    r = HttpQueryInfo(hr, HTTP_QUERY_VERSION, buffer, &size, NULL);
+    r = HttpQueryInfoA(hr, HTTP_QUERY_VERSION, buffer, &size, NULL);
     ok(r, "HttpQueryInfo failed %u\n", GetLastError());
     ok(!strcmp(buffer, "HTTP/1.0"), "expected HTTP/1.0 got: \"%s\"\n", buffer);
 
     buffer[0] = 0;
     size = sizeof(buffer);
     SetLastError(0xdeadbeef);
-    r = HttpQueryInfo(hr, HTTP_QUERY_RAW_HEADERS, buffer, &size, NULL);
+    r = HttpQueryInfoA(hr, HTTP_QUERY_RAW_HEADERS, buffer, &size, NULL);
     ok(r, "HttpQueryInfo failed %u\n", GetLastError());
     ok(!strcmp(buffer, "HTTP/1.0 200 OK"), "raw headers wrong: \"%s\"\n", buffer);
 
@@ -2491,102 +3725,145 @@ static void test_response_without_headers(int port)
     InternetCloseHandle(hi);
 }
 
+static void test_head_request(int port)
+{
+    DWORD len, content_length;
+    HINTERNET ses, con, req;
+    BYTE buf[100];
+    BOOL ret;
+
+    ses = InternetOpenA("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    ok(ses != NULL, "InternetOpen failed\n");
+
+    con = InternetConnectA(ses, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    ok(con != NULL, "InternetConnect failed\n");
+
+    req = HttpOpenRequestA(con, "HEAD", "/test_head", NULL, NULL, NULL, INTERNET_FLAG_KEEP_CONNECTION, 0);
+    ok(req != NULL, "HttpOpenRequest failed\n");
+
+    ret = HttpSendRequestA(req, NULL, 0, NULL, 0);
+    ok(ret, "HttpSendRequest failed: %u\n", GetLastError());
+
+    len = sizeof(content_length);
+    content_length = -1;
+    ret = HttpQueryInfoA(req, HTTP_QUERY_FLAG_NUMBER|HTTP_QUERY_CONTENT_LENGTH, &content_length, &len, 0);
+    ok(ret, "HttpQueryInfo dailed: %u\n", GetLastError());
+    ok(len == sizeof(DWORD), "len = %u\n", len);
+    ok(content_length == 100, "content_length = %u\n", content_length);
+
+    len = -1;
+    ret = InternetReadFile(req, buf, sizeof(buf), &len);
+    ok(ret, "InternetReadFile failed: %u\n", GetLastError());
+
+    len = -1;
+    ret = InternetReadFile(req, buf, sizeof(buf), &len);
+    ok(ret, "InternetReadFile failed: %u\n", GetLastError());
+
+    InternetCloseHandle(req);
+    InternetCloseHandle(con);
+    InternetCloseHandle(ses);
+}
+
 static void test_HttpQueryInfo(int port)
 {
     HINTERNET hi, hc, hr;
-    DWORD size, index;
+    DWORD size, index, error;
     char buffer[1024];
     BOOL ret;
 
-    hi = InternetOpen(NULL, INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    hi = InternetOpenA(NULL, INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
     ok(hi != NULL, "InternetOpen failed\n");
 
-    hc = InternetConnect(hi, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    hc = InternetConnectA(hi, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
     ok(hc != NULL, "InternetConnect failed\n");
 
-    hr = HttpOpenRequest(hc, NULL, "/testD", NULL, NULL, NULL, 0, 0);
+    hr = HttpOpenRequestA(hc, NULL, "/testD", NULL, NULL, NULL, 0, 0);
     ok(hr != NULL, "HttpOpenRequest failed\n");
 
-    ret = HttpSendRequest(hr, NULL, 0, NULL, 0);
+    size = sizeof(buffer);
+    ret = HttpQueryInfoA(hr, HTTP_QUERY_STATUS_TEXT, buffer, &size, &index);
+    error = GetLastError();
+    ok(!ret || broken(ret), "HttpQueryInfo succeeded\n");
+    if (!ret) ok(error == ERROR_HTTP_HEADER_NOT_FOUND, "got %u expected ERROR_HTTP_HEADER_NOT_FOUND\n", error);
+
+    ret = HttpSendRequestA(hr, NULL, 0, NULL, 0);
     ok(ret, "HttpSendRequest failed\n");
 
     index = 0;
     size = sizeof(buffer);
-    ret = HttpQueryInfo(hr, HTTP_QUERY_HOST | HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer, &size, &index);
+    ret = HttpQueryInfoA(hr, HTTP_QUERY_HOST | HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer, &size, &index);
     ok(ret, "HttpQueryInfo failed %u\n", GetLastError());
     ok(index == 1, "expected 1 got %u\n", index);
 
     index = 0;
     size = sizeof(buffer);
-    ret = HttpQueryInfo(hr, HTTP_QUERY_DATE | HTTP_QUERY_FLAG_SYSTEMTIME, buffer, &size, &index);
+    ret = HttpQueryInfoA(hr, HTTP_QUERY_DATE | HTTP_QUERY_FLAG_SYSTEMTIME, buffer, &size, &index);
     ok(ret, "HttpQueryInfo failed %u\n", GetLastError());
     ok(index == 1, "expected 1 got %u\n", index);
 
     index = 0;
     size = sizeof(buffer);
-    ret = HttpQueryInfo(hr, HTTP_QUERY_RAW_HEADERS, buffer, &size, &index);
+    ret = HttpQueryInfoA(hr, HTTP_QUERY_RAW_HEADERS, buffer, &size, &index);
     ok(ret, "HttpQueryInfo failed %u\n", GetLastError());
     ok(index == 0, "expected 0 got %u\n", index);
 
     size = sizeof(buffer);
-    ret = HttpQueryInfo(hr, HTTP_QUERY_RAW_HEADERS, buffer, &size, &index);
+    ret = HttpQueryInfoA(hr, HTTP_QUERY_RAW_HEADERS, buffer, &size, &index);
     ok(ret, "HttpQueryInfo failed %u\n", GetLastError());
     ok(index == 0, "expected 0 got %u\n", index);
 
+    index = 0xdeadbeef; /* invalid start index */
     size = sizeof(buffer);
-    ret = HttpQueryInfo(hr, HTTP_QUERY_RAW_HEADERS_CRLF, buffer, &size, &index);
-    ok(ret, "HttpQueryInfo failed %u\n", GetLastError());
-    ok(index == 0, "expected 0 got %u\n", index);
-
-    size = sizeof(buffer);
-    ret = HttpQueryInfo(hr, HTTP_QUERY_STATUS_TEXT, buffer, &size, &index);
-    ok(ret, "HttpQueryInfo failed %u\n", GetLastError());
-    ok(index == 0, "expected 0 got %u\n", index);
-
-    size = sizeof(buffer);
-    ret = HttpQueryInfo(hr, HTTP_QUERY_VERSION, buffer, &size, &index);
-    ok(ret, "HttpQueryInfo failed %u\n", GetLastError());
-    ok(index == 0, "expected 0 got %u\n", index);
+    ret = HttpQueryInfoA(hr, HTTP_QUERY_RAW_HEADERS, buffer, &size, &index);
+    todo_wine ok(!ret, "HttpQueryInfo should have failed\n");
+    todo_wine ok(GetLastError() == ERROR_HTTP_HEADER_NOT_FOUND,
+       "Expected ERROR_HTTP_HEADER_NOT_FOUND, got %u\n", GetLastError());
 
     index = 0;
     size = sizeof(buffer);
-    ret = HttpQueryInfo(hr, HTTP_QUERY_STATUS_CODE, buffer, &size, &index);
+    ret = HttpQueryInfoA(hr, HTTP_QUERY_RAW_HEADERS_CRLF, buffer, &size, &index);
     ok(ret, "HttpQueryInfo failed %u\n", GetLastError());
     ok(index == 0, "expected 0 got %u\n", index);
 
-    index = 0;
     size = sizeof(buffer);
-    ret = HttpQueryInfo(hr, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, buffer, &size, &index);
+    ret = HttpQueryInfoA(hr, HTTP_QUERY_STATUS_TEXT, buffer, &size, &index);
     ok(ret, "HttpQueryInfo failed %u\n", GetLastError());
     ok(index == 0, "expected 0 got %u\n", index);
+
+    size = sizeof(buffer);
+    ret = HttpQueryInfoA(hr, HTTP_QUERY_VERSION, buffer, &size, &index);
+    ok(ret, "HttpQueryInfo failed %u\n", GetLastError());
+    ok(index == 0, "expected 0 got %u\n", index);
+
+    test_status_code(hr, 200);
 
     index = 0xdeadbeef;
     size = sizeof(buffer);
-    ret = HttpQueryInfo(hr, HTTP_QUERY_FORWARDED, buffer, &size, &index);
+    ret = HttpQueryInfoA(hr, HTTP_QUERY_FORWARDED, buffer, &size, &index);
     ok(!ret, "HttpQueryInfo succeeded\n");
     ok(index == 0xdeadbeef, "expected 0xdeadbeef got %u\n", index);
 
     index = 0;
     size = sizeof(buffer);
-    ret = HttpQueryInfo(hr, HTTP_QUERY_SERVER, buffer, &size, &index);
+    ret = HttpQueryInfoA(hr, HTTP_QUERY_SERVER, buffer, &size, &index);
     ok(ret, "HttpQueryInfo failed %u\n", GetLastError());
     ok(index == 1, "expected 1 got %u\n", index);
 
     index = 0;
     size = sizeof(buffer);
     strcpy(buffer, "Server");
-    ret = HttpQueryInfo(hr, HTTP_QUERY_CUSTOM, buffer, &size, &index);
+    ret = HttpQueryInfoA(hr, HTTP_QUERY_CUSTOM, buffer, &size, &index);
     ok(ret, "HttpQueryInfo failed %u\n", GetLastError());
     ok(index == 1, "expected 1 got %u\n", index);
 
     index = 0;
     size = sizeof(buffer);
-    ret = HttpQueryInfo(hr, HTTP_QUERY_SET_COOKIE, buffer, &size, &index);
+    ret = HttpQueryInfoA(hr, HTTP_QUERY_SET_COOKIE, buffer, &size, &index);
     ok(ret, "HttpQueryInfo failed %u\n", GetLastError());
     ok(index == 1, "expected 1 got %u\n", index);
 
     size = sizeof(buffer);
-    ret = HttpQueryInfo(hr, HTTP_QUERY_SET_COOKIE, buffer, &size, &index);
+    ret = HttpQueryInfoA(hr, HTTP_QUERY_SET_COOKIE, buffer, &size, &index);
     ok(ret, "HttpQueryInfo failed %u\n", GetLastError());
     ok(index == 2, "expected 2 got %u\n", index);
 
@@ -2597,105 +3874,117 @@ static void test_HttpQueryInfo(int port)
 
 static void test_options(int port)
 {
+    INTERNET_DIAGNOSTIC_SOCKET_INFO idsi;
     HINTERNET ses, con, req;
     DWORD size, error;
     DWORD_PTR ctx;
     BOOL ret;
 
-    ses = InternetOpen("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    ses = InternetOpenA("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
     ok(ses != NULL, "InternetOpen failed\n");
 
     SetLastError(0xdeadbeef);
-    ret = InternetSetOption(ses, INTERNET_OPTION_CONTEXT_VALUE, NULL, 0);
+    ret = InternetSetOptionA(ses, INTERNET_OPTION_CONTEXT_VALUE, NULL, 0);
     error = GetLastError();
     ok(!ret, "InternetSetOption succeeded\n");
     ok(error == ERROR_INVALID_PARAMETER, "expected ERROR_INVALID_PARAMETER, got %u\n", error);
 
     SetLastError(0xdeadbeef);
-    ret = InternetSetOption(ses, INTERNET_OPTION_CONTEXT_VALUE, NULL, sizeof(ctx));
+    ret = InternetSetOptionA(ses, INTERNET_OPTION_CONTEXT_VALUE, NULL, sizeof(ctx));
     ok(!ret, "InternetSetOption succeeded\n");
     error = GetLastError();
     ok(error == ERROR_INVALID_PARAMETER, "expected ERROR_INVALID_PARAMETER, got %u\n", error);
 
     SetLastError(0xdeadbeef);
-    ret = InternetSetOption(ses, INTERNET_OPTION_CONTEXT_VALUE, &ctx, 0);
+    ret = InternetSetOptionA(ses, INTERNET_OPTION_CONTEXT_VALUE, &ctx, 0);
     ok(!ret, "InternetSetOption succeeded\n");
     error = GetLastError();
     ok(error == ERROR_INVALID_PARAMETER, "expected ERROR_INVALID_PARAMETER, got %u\n", error);
 
     ctx = 1;
-    ret = InternetSetOption(ses, INTERNET_OPTION_CONTEXT_VALUE, &ctx, sizeof(ctx));
+    ret = InternetSetOptionA(ses, INTERNET_OPTION_CONTEXT_VALUE, &ctx, sizeof(ctx));
     ok(ret, "InternetSetOption failed %u\n", GetLastError());
 
     SetLastError(0xdeadbeef);
-    ret = InternetQueryOption(ses, INTERNET_OPTION_CONTEXT_VALUE, NULL, NULL);
+    ret = InternetQueryOptionA(ses, INTERNET_OPTION_CONTEXT_VALUE, NULL, NULL);
     error = GetLastError();
     ok(!ret, "InternetQueryOption succeeded\n");
     ok(error == ERROR_INVALID_PARAMETER, "expected ERROR_INVALID_PARAMETER, got %u\n", error);
 
     SetLastError(0xdeadbeef);
-    ret = InternetQueryOption(ses, INTERNET_OPTION_CONTEXT_VALUE, &ctx, NULL);
+    ret = InternetQueryOptionA(ses, INTERNET_OPTION_CONTEXT_VALUE, &ctx, NULL);
     error = GetLastError();
     ok(!ret, "InternetQueryOption succeeded\n");
     ok(error == ERROR_INVALID_PARAMETER, "expected ERROR_INVALID_PARAMETER, got %u\n", error);
 
     size = 0;
     SetLastError(0xdeadbeef);
-    ret = InternetQueryOption(ses, INTERNET_OPTION_CONTEXT_VALUE, NULL, &size);
+    ret = InternetQueryOptionA(ses, INTERNET_OPTION_CONTEXT_VALUE, NULL, &size);
     error = GetLastError();
     ok(!ret, "InternetQueryOption succeeded\n");
     ok(error == ERROR_INSUFFICIENT_BUFFER, "expected ERROR_INSUFFICIENT_BUFFER, got %u\n", error);
 
     size = sizeof(ctx);
     SetLastError(0xdeadbeef);
-    ret = InternetQueryOption(NULL, INTERNET_OPTION_CONTEXT_VALUE, &ctx, &size);
+    ret = InternetQueryOptionA(NULL, INTERNET_OPTION_CONTEXT_VALUE, &ctx, &size);
     error = GetLastError();
     ok(!ret, "InternetQueryOption succeeded\n");
     ok(error == ERROR_INTERNET_INCORRECT_HANDLE_TYPE, "expected ERROR_INTERNET_INCORRECT_HANDLE_TYPE, got %u\n", error);
 
     ctx = 0xdeadbeef;
     size = sizeof(ctx);
-    ret = InternetQueryOption(ses, INTERNET_OPTION_CONTEXT_VALUE, &ctx, &size);
+    ret = InternetQueryOptionA(ses, INTERNET_OPTION_CONTEXT_VALUE, &ctx, &size);
     ok(ret, "InternetQueryOption failed %u\n", GetLastError());
     ok(ctx == 1, "expected 1 got %lu\n", ctx);
 
-    con = InternetConnect(ses, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    con = InternetConnectA(ses, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
     ok(con != NULL, "InternetConnect failed\n");
 
     ctx = 0xdeadbeef;
     size = sizeof(ctx);
-    ret = InternetQueryOption(con, INTERNET_OPTION_CONTEXT_VALUE, &ctx, &size);
+    ret = InternetQueryOptionA(con, INTERNET_OPTION_CONTEXT_VALUE, &ctx, &size);
     ok(ret, "InternetQueryOption failed %u\n", GetLastError());
     ok(ctx == 0, "expected 0 got %lu\n", ctx);
 
     ctx = 2;
-    ret = InternetSetOption(con, INTERNET_OPTION_CONTEXT_VALUE, &ctx, sizeof(ctx));
+    ret = InternetSetOptionA(con, INTERNET_OPTION_CONTEXT_VALUE, &ctx, sizeof(ctx));
     ok(ret, "InternetSetOption failed %u\n", GetLastError());
 
     ctx = 0xdeadbeef;
     size = sizeof(ctx);
-    ret = InternetQueryOption(con, INTERNET_OPTION_CONTEXT_VALUE, &ctx, &size);
+    ret = InternetQueryOptionA(con, INTERNET_OPTION_CONTEXT_VALUE, &ctx, &size);
     ok(ret, "InternetQueryOption failed %u\n", GetLastError());
     ok(ctx == 2, "expected 2 got %lu\n", ctx);
 
-    req = HttpOpenRequest(con, NULL, "/test1", NULL, NULL, NULL, 0, 0);
+    req = HttpOpenRequestA(con, NULL, "/test1", NULL, NULL, NULL, 0, 0);
     ok(req != NULL, "HttpOpenRequest failed\n");
 
     ctx = 0xdeadbeef;
     size = sizeof(ctx);
-    ret = InternetQueryOption(req, INTERNET_OPTION_CONTEXT_VALUE, &ctx, &size);
+    ret = InternetQueryOptionA(req, INTERNET_OPTION_CONTEXT_VALUE, &ctx, &size);
     ok(ret, "InternetQueryOption failed %u\n", GetLastError());
     ok(ctx == 0, "expected 0 got %lu\n", ctx);
 
     ctx = 3;
-    ret = InternetSetOption(req, INTERNET_OPTION_CONTEXT_VALUE, &ctx, sizeof(ctx));
+    ret = InternetSetOptionA(req, INTERNET_OPTION_CONTEXT_VALUE, &ctx, sizeof(ctx));
     ok(ret, "InternetSetOption failed %u\n", GetLastError());
 
     ctx = 0xdeadbeef;
     size = sizeof(ctx);
-    ret = InternetQueryOption(req, INTERNET_OPTION_CONTEXT_VALUE, &ctx, &size);
+    ret = InternetQueryOptionA(req, INTERNET_OPTION_CONTEXT_VALUE, &ctx, &size);
     ok(ret, "InternetQueryOption failed %u\n", GetLastError());
     ok(ctx == 3, "expected 3 got %lu\n", ctx);
+
+    size = sizeof(idsi);
+    ret = InternetQueryOptionA(req, INTERNET_OPTION_DIAGNOSTIC_SOCKET_INFO, &idsi, &size);
+    ok(ret, "InternetQueryOption failed %u\n", GetLastError());
+
+    size = 0;
+    SetLastError(0xdeadbeef);
+    ret = InternetQueryOptionA(req, INTERNET_OPTION_SECURITY_CERTIFICATE_STRUCT, NULL, &size);
+    error = GetLastError();
+    ok(!ret, "InternetQueryOption succeeded\n");
+    ok(error == ERROR_INTERNET_INVALID_OPERATION, "expected ERROR_INTERNET_INVALID_OPERATION, got %u\n", error);
 
     /* INTERNET_OPTION_PROXY */
     SetLastError(0xdeadbeef);
@@ -2723,68 +4012,161 @@ static void test_options(int port)
     InternetCloseHandle(ses);
 }
 
-static void test_url_caching(int port, int *num_retrievals)
-{
-    HINTERNET hi, hc, hr;
-    DWORD r, count;
-    char buffer[0x100];
+typedef struct {
+    const char *response_text;
+    int status_code;
+    const char *status_text;
+    const char *raw_headers;
+} http_status_test_t;
 
-    ok(*num_retrievals == 0, "expected 0 retrievals prior to test\n");
-
-    hi = InternetOpen(NULL, INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
-    ok(hi != NULL, "open failed\n");
-
-    hc = InternetConnect(hi, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
-    ok(hc != NULL, "connect failed\n");
-
-    /* Pre-load the cache: */
-    hr = HttpOpenRequest(hc, "GET", "/testH", NULL, NULL, NULL, 0, 0);
-    ok(hr != NULL, "HttpOpenRequest failed\n");
-
-    r = HttpSendRequest(hr, NULL, 0, NULL, 0);
-    ok(r, "HttpSendRequest failed\n");
-
-    ok(*num_retrievals == 1, "expected 1 retrievals, got %d\n", *num_retrievals);
-
-    count = 0;
-    memset(buffer, 0, sizeof buffer);
-    SetLastError(0xdeadbeef);
-    r = InternetReadFile(hr, buffer, sizeof buffer, &count);
-    ok(r, "InternetReadFile failed %u\n", GetLastError());
-    ok(count == sizeof page1 - 1, "count was wrong\n");
-    ok(!memcmp(buffer, page1, sizeof page1), "http data wrong\n");
-
-    InternetCloseHandle(hr);
-
-    /* Send the same request, requiring it to be retrieved from the cache */
-    hr = HttpOpenRequest(hc, "GET", "/testH", NULL, NULL, NULL, INTERNET_FLAG_FROM_CACHE, 0);
-    ok(hr != NULL, "HttpOpenRequest failed\n");
-
-    r = HttpSendRequest(hr, NULL, 0, NULL, 0);
-    /* Older Windows versions succeed with this request, newer ones fail with
-     * ERROR_FILE_NOT_FOUND.  Accept either, as the older version allows us
-     * to verify that the server isn't contacted.
-     */
-    if (!r)
-        ok(GetLastError() == ERROR_FILE_NOT_FOUND,
-           "expected ERROR_FILE_NOT_FOUND, got %d\n", GetLastError());
-    else
+static const http_status_test_t http_status_tests[] = {
     {
-        /* The server shouldn't be contacted for this request. */
-        todo_wine
-        ok(*num_retrievals == 1, "expected 1 retrievals\n");
-
-        count = 0;
-        memset(buffer, 0, sizeof buffer);
-        SetLastError(0xdeadbeef);
-        r = InternetReadFile(hr, buffer, sizeof buffer, &count);
-        ok(r, "InternetReadFile failed %u\n", GetLastError());
-        ok(count == sizeof page1 - 1, "count was wrong\n");
-        ok(!memcmp(buffer, page1, sizeof page1), "http data wrong\n");
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Length: 1\r\n"
+        "\r\nx",
+        200,
+        "OK"
+    },
+    {
+        "HTTP/1.1 404 Fail\r\n"
+        "Content-Length: 1\r\n"
+        "\r\nx",
+        404,
+        "Fail"
+    },
+    {
+        "HTTP/1.1 200\r\n"
+        "Content-Length: 1\r\n"
+        "\r\nx",
+        200,
+        ""
+    },
+    {
+        "HTTP/1.1 410 \r\n"
+        "Content-Length: 1\r\n"
+        "\r\nx",
+        410,
+        ""
     }
+};
 
-    InternetCloseHandle(hc);
-    InternetCloseHandle(hi);
+static void test_http_status(int port)
+{
+    HINTERNET ses, con, req;
+    char buf[1000];
+    DWORD i, size;
+    BOOL res;
+
+    for(i=0; i < sizeof(http_status_tests)/sizeof(*http_status_tests); i++) {
+        send_buffer = http_status_tests[i].response_text;
+
+        ses = InternetOpenA(NULL, INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+        ok(ses != NULL, "InternetOpen failed\n");
+
+        con = InternetConnectA(ses, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+        ok(con != NULL, "InternetConnect failed\n");
+
+        req = HttpOpenRequestA(con, NULL, "/send_from_buffer", NULL, NULL, NULL, 0, 0);
+        ok(req != NULL, "HttpOpenRequest failed\n");
+
+        res = HttpSendRequestA(req, NULL, 0, NULL, 0);
+        ok(res, "HttpSendRequest failed\n");
+
+        test_status_code(req, http_status_tests[i].status_code);
+
+        size = sizeof(buf);
+        res = HttpQueryInfoA(req, HTTP_QUERY_STATUS_TEXT, buf, &size, NULL);
+        ok(res, "HttpQueryInfo failed: %u\n", GetLastError());
+        ok(!strcmp(buf, http_status_tests[i].status_text), "[%u] Unexpected status text \"%s\", expected \"%s\"\n",
+           i, buf, http_status_tests[i].status_text);
+
+        InternetCloseHandle(req);
+        InternetCloseHandle(con);
+        InternetCloseHandle(ses);
+    }
+}
+
+static void test_cache_control_verb(int port)
+{
+    HINTERNET session, connect, request;
+    BOOL ret;
+
+    session = InternetOpenA("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    ok(session != NULL, "InternetOpen failed\n");
+
+    connect = InternetConnectA(session, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    ok(connect != NULL, "InternetConnect failed\n");
+
+    request = HttpOpenRequestA(connect, "RPC_OUT_DATA", "/test_cache_control_verb", NULL, NULL, NULL,
+                              INTERNET_FLAG_NO_CACHE_WRITE, 0);
+    ok(request != NULL, "HttpOpenRequest failed\n");
+    ret = HttpSendRequestA(request, NULL, 0, NULL, 0);
+    ok(ret, "HttpSendRequest failed %u\n", GetLastError());
+    test_status_code(request, 200);
+    InternetCloseHandle(request);
+
+    request = HttpOpenRequestA(connect, "POST", "/test_cache_control_verb", NULL, NULL, NULL,
+                              INTERNET_FLAG_NO_CACHE_WRITE, 0);
+    ok(request != NULL, "HttpOpenRequest failed\n");
+    ret = HttpSendRequestA(request, NULL, 0, NULL, 0);
+    ok(ret, "HttpSendRequest failed %u\n", GetLastError());
+    test_status_code(request, 200);
+    InternetCloseHandle(request);
+
+    request = HttpOpenRequestA(connect, "HEAD", "/test_cache_control_verb", NULL, NULL, NULL,
+                              INTERNET_FLAG_NO_CACHE_WRITE, 0);
+    ok(request != NULL, "HttpOpenRequest failed\n");
+    ret = HttpSendRequestA(request, NULL, 0, NULL, 0);
+    ok(ret, "HttpSendRequest failed %u\n", GetLastError());
+    test_status_code(request, 200);
+    InternetCloseHandle(request);
+
+    request = HttpOpenRequestA(connect, "GET", "/test_cache_control_verb", NULL, NULL, NULL,
+                              INTERNET_FLAG_NO_CACHE_WRITE, 0);
+    ok(request != NULL, "HttpOpenRequest failed\n");
+    ret = HttpSendRequestA(request, NULL, 0, NULL, 0);
+    ok(ret, "HttpSendRequest failed %u\n", GetLastError());
+    test_status_code(request, 200);
+    InternetCloseHandle(request);
+
+    InternetCloseHandle(connect);
+    InternetCloseHandle(session);
+}
+
+static void test_request_content_length(int port)
+{
+    char data[] = {'t','e','s','t'};
+    HINTERNET ses, con, req;
+    BOOL ret;
+
+    hCompleteEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
+
+    ses = InternetOpenA("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    ok(ses != NULL, "InternetOpen failed\n");
+
+    con = InternetConnectA(ses, "localhost", port, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    ok(con != NULL, "InternetConnect failed\n");
+
+    req = HttpOpenRequestA(con, "POST", "/test_request_content_length", NULL, NULL, NULL,
+                           INTERNET_FLAG_KEEP_CONNECTION, 0);
+    ok(req != NULL, "HttpOpenRequest failed\n");
+
+    ret = HttpSendRequestA(req, NULL, 0, NULL, 0);
+    ok(ret, "HttpSendRequest failed %u\n", GetLastError());
+    test_status_code(req, 200);
+
+    SetEvent(hCompleteEvent);
+
+    ret = HttpSendRequestA(req, NULL, 0, data, sizeof(data));
+    ok(ret, "HttpSendRequest failed %u\n", GetLastError());
+    test_status_code(req, 200);
+
+    SetEvent(hCompleteEvent);
+
+    InternetCloseHandle(req);
+    InternetCloseHandle(con);
+    InternetCloseHandle(ses);
+    CloseHandle(hCompleteEvent);
 }
 
 static void test_http_connection(void)
@@ -2793,9 +4175,8 @@ static void test_http_connection(void)
     HANDLE hThread;
     DWORD id = 0, r;
 
-    si.hEvent = CreateEvent(NULL, 0, 0, NULL);
+    si.hEvent = CreateEventW(NULL, 0, 0, NULL);
     si.port = 7531;
-    si.num_testH_retrievals = 0;
 
     hThread = CreateThread(NULL, 0, server_thread, (LPVOID) &si, 0, &id);
     ok( hThread != NULL, "create thread failed\n");
@@ -2822,11 +4203,18 @@ static void test_http_connection(void)
     test_response_without_headers(si.port);
     test_HttpQueryInfo(si.port);
     test_HttpSendRequestW(si.port);
-    test_last_error(si.port);
     test_options(si.port);
-    test_url_caching(si.port, &si.num_testH_retrievals);
     test_no_content(si.port);
     test_conn_close(si.port);
+    test_no_cache(si.port);
+    test_cache_read_gzipped(si.port);
+    test_http_status(si.port);
+    test_premature_disconnect(si.port);
+    test_connection_closing(si.port);
+    test_cache_control_verb(si.port);
+    test_successive_HttpSendRequest(si.port);
+    test_head_request(si.port);
+    test_request_content_length(si.port);
 
     /* send the basic request again to shutdown the server thread */
     test_basic_request(si.port, "GET", "/quit");
@@ -2845,64 +4233,491 @@ static void release_cert_info(INTERNET_CERTIFICATE_INFOA *info)
     LocalFree(info->lpszEncryptionAlgName);
 }
 
+typedef struct {
+    const char *ex_subject;
+    const char *ex_issuer;
+} cert_struct_test_t;
+
+static const cert_struct_test_t test_winehq_org_cert = {
+    "GT98380011\r\n"
+    "See www.rapidssl.com/resources/cps (c)14\r\n"
+    "Domain Control Validated - RapidSSL(R)\r\n"
+    "*.winehq.org",
+
+    "US\r\n"
+    "GeoTrust Inc.\r\n"
+    "RapidSSL SHA256 CA - G3"
+};
+
+static const cert_struct_test_t test_winehq_com_cert = {
+    "US\r\n"
+    "Minnesota\r\n"
+    "Saint Paul\r\n"
+    "WineHQ\r\n"
+    "test.winehq.com\r\n"
+    "webmaster@winehq.org",
+
+    "US\r\n"
+    "Minnesota\r\n"
+    "WineHQ\r\n"
+    "test.winehq.com\r\n"
+    "webmaster@winehq.org"
+};
+
+static void test_cert_struct(HINTERNET req, const cert_struct_test_t *test)
+{
+    INTERNET_CERTIFICATE_INFOA info;
+    DWORD size;
+    BOOL res;
+
+    memset(&info, 0x5, sizeof(info));
+
+    size = sizeof(info);
+    res = InternetQueryOptionA(req, INTERNET_OPTION_SECURITY_CERTIFICATE_STRUCT, &info, &size);
+    ok(res, "InternetQueryOption failed: %u\n", GetLastError());
+    ok(size == sizeof(info), "size = %u\n", size);
+
+    ok(!strcmp(info.lpszSubjectInfo, test->ex_subject), "lpszSubjectInfo = %s\n", info.lpszSubjectInfo);
+    ok(!strcmp(info.lpszIssuerInfo, test->ex_issuer), "lpszIssuerInfo = %s\n", info.lpszIssuerInfo);
+    ok(!info.lpszSignatureAlgName, "lpszSignatureAlgName = %s\n", info.lpszSignatureAlgName);
+    ok(!info.lpszEncryptionAlgName, "lpszEncryptionAlgName = %s\n", info.lpszEncryptionAlgName);
+    ok(!info.lpszProtocolName, "lpszProtocolName = %s\n", info.lpszProtocolName);
+    ok(info.dwKeySize >= 128 && info.dwKeySize <= 256, "dwKeySize = %u\n", info.dwKeySize);
+
+    release_cert_info(&info);
+}
+
+#define test_security_info(a,b,c) _test_security_info(__LINE__,a,b,c)
+static void _test_security_info(unsigned line, const char *urlc, DWORD error, DWORD ex_flags)
+{
+    char url[INTERNET_MAX_URL_LENGTH];
+    const CERT_CHAIN_CONTEXT *chain;
+    DWORD flags;
+    BOOL res;
+
+    if(!pInternetGetSecurityInfoByURLA) {
+        win_skip("pInternetGetSecurityInfoByURLA not available\n");
+        return;
+    }
+
+    strcpy(url, urlc);
+    chain = (void*)0xdeadbeef;
+    flags = 0xdeadbeef;
+    res = pInternetGetSecurityInfoByURLA(url, &chain, &flags);
+    if(error == ERROR_SUCCESS) {
+        ok_(__FILE__,line)(res, "InternetGetSecurityInfoByURLA failed: %u\n", GetLastError());
+        ok_(__FILE__,line)(chain != NULL, "chain = NULL\n");
+        ok_(__FILE__,line)(flags == ex_flags, "flags = %x\n", flags);
+        CertFreeCertificateChain(chain);
+    }else {
+        ok_(__FILE__,line)(!res && GetLastError() == error,
+                           "InternetGetSecurityInfoByURLA returned: %x(%u), exected %u\n", res, GetLastError(), error);
+    }
+}
+
+#define test_secflags_option(a,b,c) _test_secflags_option(__LINE__,a,b,c)
+static void _test_secflags_option(unsigned line, HINTERNET req, DWORD ex_flags, DWORD opt_flags)
+{
+    DWORD flags, size;
+    BOOL res;
+
+    flags = 0xdeadbeef;
+    size = sizeof(flags);
+    res = InternetQueryOptionW(req, INTERNET_OPTION_SECURITY_FLAGS, &flags, &size);
+    ok_(__FILE__,line)(res, "InternetQueryOptionW(INTERNET_OPTION_SECURITY_FLAGS) failed: %u\n", GetLastError());
+    ok_(__FILE__,line)((flags & ~opt_flags) == ex_flags, "INTERNET_OPTION_SECURITY_FLAGS flags = %x, expected %x\n",
+                       flags, ex_flags);
+
+    /* Option 98 is undocumented and seems to be the same as INTERNET_OPTION_SECURITY_FLAGS */
+    flags = 0xdeadbeef;
+    size = sizeof(flags);
+    res = InternetQueryOptionW(req, 98, &flags, &size);
+    ok_(__FILE__,line)(res, "InternetQueryOptionW(98) failed: %u\n", GetLastError());
+    ok_(__FILE__,line)((flags & ~opt_flags) == ex_flags, "INTERNET_OPTION_SECURITY_FLAGS(98) flags = %x, expected %x\n",
+                       flags, ex_flags);
+}
+
+#define set_secflags(a,b,c) _set_secflags(__LINE__,a,b,c)
+static void _set_secflags(unsigned line, HINTERNET req, BOOL use_undoc, DWORD flags)
+{
+    BOOL res;
+
+    res = InternetSetOptionW(req, use_undoc ? 99 : INTERNET_OPTION_SECURITY_FLAGS, &flags, sizeof(flags));
+    ok_(__FILE__,line)(res, "InternetSetOption(INTERNET_OPTION_SECURITY_FLAGS) failed: %u\n", GetLastError());
+}
+
+static void test_security_flags(void)
+{
+    INTERNET_CERTIFICATE_INFOA *cert;
+    HINTERNET ses, conn, req;
+    DWORD size, flags;
+    char buf[100];
+    BOOL res;
+
+    trace("Testing security flags...\n");
+
+    hCompleteEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
+
+    ses = InternetOpenA("WineTest", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, INTERNET_FLAG_ASYNC);
+    ok(ses != NULL, "InternetOpen failed\n");
+
+    pInternetSetStatusCallbackA(ses, &callback);
+
+    SET_EXPECT(INTERNET_STATUS_HANDLE_CREATED);
+    conn = InternetConnectA(ses, "test.winehq.com", INTERNET_DEFAULT_HTTPS_PORT,
+                            NULL, NULL, INTERNET_SERVICE_HTTP, INTERNET_FLAG_SECURE, 0xdeadbeef);
+    ok(conn != NULL, "InternetConnect failed with error %u\n", GetLastError());
+    CHECK_NOTIFIED(INTERNET_STATUS_HANDLE_CREATED);
+
+    SET_EXPECT(INTERNET_STATUS_HANDLE_CREATED);
+    req = HttpOpenRequestA(conn, "GET", "/tests/hello.html", NULL, NULL, NULL,
+                          INTERNET_FLAG_SECURE|INTERNET_FLAG_KEEP_CONNECTION|INTERNET_FLAG_RELOAD|INTERNET_FLAG_NO_CACHE_WRITE,
+                          0xdeadbeef);
+    ok(req != NULL, "HttpOpenRequest failed\n");
+    CHECK_NOTIFIED(INTERNET_STATUS_HANDLE_CREATED);
+
+    flags = 0xdeadbeef;
+    size = sizeof(flags);
+    res = InternetQueryOptionW(req, 98, &flags, &size);
+    if(!res && GetLastError() == ERROR_INVALID_PARAMETER) {
+        win_skip("Incomplete security flags support, skipping\n");
+
+        close_async_handle(ses, hCompleteEvent, 2);
+        CloseHandle(hCompleteEvent);
+        return;
+    }
+
+    test_secflags_option(req, 0, 0);
+    test_security_info("https://test.winehq.com/data/some_file.html?q", ERROR_INTERNET_ITEM_NOT_FOUND, 0);
+
+    set_secflags(req, TRUE, SECURITY_FLAG_IGNORE_REVOCATION);
+    test_secflags_option(req, SECURITY_FLAG_IGNORE_REVOCATION, 0);
+
+    set_secflags(req, TRUE, SECURITY_FLAG_IGNORE_CERT_CN_INVALID);
+    test_secflags_option(req, SECURITY_FLAG_IGNORE_REVOCATION|SECURITY_FLAG_IGNORE_CERT_CN_INVALID, 0);
+
+    set_secflags(req, FALSE, SECURITY_FLAG_IGNORE_UNKNOWN_CA);
+    test_secflags_option(req, SECURITY_FLAG_IGNORE_UNKNOWN_CA|SECURITY_FLAG_IGNORE_REVOCATION|SECURITY_FLAG_IGNORE_CERT_CN_INVALID, 0);
+
+    flags = SECURITY_FLAG_IGNORE_CERT_CN_INVALID|SECURITY_FLAG_SECURE;
+    res = InternetSetOptionW(req, 99, &flags, sizeof(flags));
+    ok(!res && GetLastError() == ERROR_INTERNET_OPTION_NOT_SETTABLE, "InternetSetOption(99) failed: %u\n", GetLastError());
+
+    SET_EXPECT(INTERNET_STATUS_RESOLVING_NAME);
+    SET_EXPECT(INTERNET_STATUS_NAME_RESOLVED);
+    SET_EXPECT(INTERNET_STATUS_CONNECTING_TO_SERVER);
+    SET_EXPECT(INTERNET_STATUS_CONNECTED_TO_SERVER);
+    SET_OPTIONAL(INTERNET_STATUS_CLOSING_CONNECTION); /* IE11 calls it, it probably reconnects. */
+    SET_OPTIONAL(INTERNET_STATUS_CONNECTION_CLOSED); /* IE11 */
+    SET_OPTIONAL(INTERNET_STATUS_CONNECTING_TO_SERVER); /* IE11 */
+    SET_OPTIONAL(INTERNET_STATUS_CONNECTED_TO_SERVER); /* IE11 */
+    SET_EXPECT(INTERNET_STATUS_SENDING_REQUEST);
+    SET_EXPECT(INTERNET_STATUS_REQUEST_SENT);
+    SET_EXPECT(INTERNET_STATUS_RECEIVING_RESPONSE);
+    SET_EXPECT(INTERNET_STATUS_RESPONSE_RECEIVED);
+    SET_EXPECT(INTERNET_STATUS_REQUEST_COMPLETE);
+    SET_OPTIONAL(INTERNET_STATUS_DETECTING_PROXY);
+    SET_OPTIONAL(INTERNET_STATUS_COOKIE_SENT);
+
+    res = HttpSendRequestA(req, NULL, 0, NULL, 0);
+    ok(!res && GetLastError() == ERROR_IO_PENDING, "HttpSendRequest failed: %u\n", GetLastError());
+
+    WaitForSingleObject(hCompleteEvent, INFINITE);
+    ok(req_error == ERROR_SUCCESS, "req_error = %d\n", req_error);
+
+    CHECK_NOTIFIED(INTERNET_STATUS_RESOLVING_NAME);
+    CHECK_NOTIFIED(INTERNET_STATUS_NAME_RESOLVED);
+    CHECK_NOTIFIED2(INTERNET_STATUS_CONNECTING_TO_SERVER, 2);
+    CHECK_NOTIFIED2(INTERNET_STATUS_CONNECTED_TO_SERVER, 2);
+    CHECK_NOTIFIED(INTERNET_STATUS_CLOSING_CONNECTION);
+    CHECK_NOTIFIED(INTERNET_STATUS_CONNECTION_CLOSED);
+    CHECK_NOTIFIED(INTERNET_STATUS_SENDING_REQUEST);
+    CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_SENT);
+    CHECK_NOTIFIED(INTERNET_STATUS_RECEIVING_RESPONSE);
+    CHECK_NOTIFIED(INTERNET_STATUS_RESPONSE_RECEIVED);
+    CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_COMPLETE);
+    CLEAR_NOTIFIED(INTERNET_STATUS_DETECTING_PROXY);
+    CLEAR_NOTIFIED(INTERNET_STATUS_COOKIE_SENT);
+
+    test_request_flags(req, 0);
+    test_secflags_option(req, SECURITY_FLAG_SECURE|SECURITY_FLAG_IGNORE_UNKNOWN_CA
+            |SECURITY_FLAG_IGNORE_REVOCATION|SECURITY_FLAG_IGNORE_CERT_CN_INVALID|SECURITY_FLAG_STRENGTH_STRONG, 0);
+
+    res = InternetReadFile(req, buf, sizeof(buf), &size);
+    ok(res, "InternetReadFile failed: %u\n", GetLastError());
+    ok(size, "size = 0\n");
+
+    /* Collect all existing persistent connections */
+    res = InternetSetOptionA(NULL, INTERNET_OPTION_SETTINGS_CHANGED, NULL, 0);
+    ok(res, "InternetSetOption(INTERNET_OPTION_END_BROWSER_SESSION) failed: %u\n", GetLastError());
+
+    SET_EXPECT(INTERNET_STATUS_HANDLE_CREATED);
+    req = HttpOpenRequestA(conn, "GET", "/tests/hello.html", NULL, NULL, NULL,
+                          INTERNET_FLAG_SECURE|INTERNET_FLAG_KEEP_CONNECTION|INTERNET_FLAG_RELOAD|INTERNET_FLAG_NO_CACHE_WRITE,
+                          0xdeadbeef);
+    ok(req != NULL, "HttpOpenRequest failed\n");
+    CHECK_NOTIFIED(INTERNET_STATUS_HANDLE_CREATED);
+
+    flags = INTERNET_ERROR_MASK_COMBINED_SEC_CERT|INTERNET_ERROR_MASK_LOGIN_FAILURE_DISPLAY_ENTITY_BODY;
+    res = InternetSetOptionA(req, INTERNET_OPTION_ERROR_MASK, (void*)&flags, sizeof(flags));
+    ok(res, "InternetQueryOption(INTERNET_OPTION_ERROR_MASK failed: %u\n", GetLastError());
+
+    SET_EXPECT(INTERNET_STATUS_CONNECTING_TO_SERVER);
+    SET_EXPECT(INTERNET_STATUS_CONNECTED_TO_SERVER);
+    SET_OPTIONAL(INTERNET_STATUS_CLOSING_CONNECTION); /* IE11 calls it, it probably reconnects. */
+    SET_OPTIONAL(INTERNET_STATUS_CONNECTION_CLOSED); /* IE11 */
+    SET_OPTIONAL(INTERNET_STATUS_CONNECTING_TO_SERVER); /* IE11 */
+    SET_OPTIONAL(INTERNET_STATUS_CONNECTED_TO_SERVER); /* IE11 */
+    SET_EXPECT(INTERNET_STATUS_CLOSING_CONNECTION);
+    SET_EXPECT(INTERNET_STATUS_CONNECTION_CLOSED);
+    SET_EXPECT(INTERNET_STATUS_REQUEST_COMPLETE);
+    SET_OPTIONAL(INTERNET_STATUS_COOKIE_SENT);
+    SET_OPTIONAL(INTERNET_STATUS_DETECTING_PROXY);
+
+    res = HttpSendRequestA(req, NULL, 0, NULL, 0);
+    ok(!res && GetLastError() == ERROR_IO_PENDING, "HttpSendRequest failed: %u\n", GetLastError());
+
+    WaitForSingleObject(hCompleteEvent, INFINITE);
+    ok(req_error == ERROR_INTERNET_SEC_CERT_REV_FAILED || broken(req_error == ERROR_INTERNET_SEC_CERT_ERRORS),
+       "req_error = %d\n", req_error);
+
+    size = 0;
+    res = InternetQueryOptionW(req, INTERNET_OPTION_SECURITY_CERTIFICATE_STRUCT, NULL, &size);
+    ok(res || GetLastError() == ERROR_INSUFFICIENT_BUFFER, "InternetQueryOption failed: %d\n", GetLastError());
+    ok(size == sizeof(INTERNET_CERTIFICATE_INFOA), "size = %u\n", size);
+    cert = HeapAlloc(GetProcessHeap(), 0, size);
+    cert->lpszSubjectInfo = NULL;
+    cert->lpszIssuerInfo = NULL;
+    cert->lpszSignatureAlgName = (char *)0xdeadbeef;
+    cert->lpszEncryptionAlgName = (char *)0xdeadbeef;
+    cert->lpszProtocolName = (char *)0xdeadbeef;
+    cert->dwKeySize = 0xdeadbeef;
+    res = InternetQueryOptionW(req, INTERNET_OPTION_SECURITY_CERTIFICATE_STRUCT, cert, &size);
+    ok(res, "InternetQueryOption failed: %u\n", GetLastError());
+    if (res)
+    {
+        ok(cert->lpszSubjectInfo && strlen(cert->lpszSubjectInfo) > 1, "expected a non-empty subject name\n");
+        ok(cert->lpszIssuerInfo && strlen(cert->lpszIssuerInfo) > 1, "expected a non-empty issuer name\n");
+        ok(!cert->lpszSignatureAlgName, "unexpected signature algorithm name\n");
+        ok(!cert->lpszEncryptionAlgName, "unexpected encryption algorithm name\n");
+        ok(!cert->lpszProtocolName, "unexpected protocol name\n");
+        ok(cert->dwKeySize != 0xdeadbeef, "unexpected key size\n");
+    }
+    HeapFree(GetProcessHeap(), 0, cert);
+
+    CHECK_NOTIFIED2(INTERNET_STATUS_CONNECTING_TO_SERVER, 2);
+    CHECK_NOTIFIED2(INTERNET_STATUS_CONNECTED_TO_SERVER, 2);
+    CHECK_NOTIFIED2(INTERNET_STATUS_CLOSING_CONNECTION, 2);
+    CHECK_NOTIFIED2(INTERNET_STATUS_CONNECTION_CLOSED, 2);
+    CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_COMPLETE);
+    CLEAR_NOTIFIED(INTERNET_STATUS_COOKIE_SENT);
+    CLEAR_NOTIFIED(INTERNET_STATUS_DETECTING_PROXY);
+
+    if(req_error != ERROR_INTERNET_SEC_CERT_REV_FAILED) {
+        win_skip("Unexpected cert errors %u, skipping security flags tests\n", req_error);
+
+        close_async_handle(ses, hCompleteEvent, 3);
+        CloseHandle(hCompleteEvent);
+        return;
+    }
+
+    size = sizeof(buf);
+    res = HttpQueryInfoA(req, HTTP_QUERY_CONTENT_ENCODING, buf, &size, 0);
+    ok(!res && GetLastError() == ERROR_HTTP_HEADER_NOT_FOUND, "HttpQueryInfoA(HTTP_QUERY_CONTENT_ENCODING) failed: %u\n", GetLastError());
+
+    test_request_flags(req, 8);
+    /* IE11 finds both rev failure and invalid CA. Previous versions required rev failure
+       to be ignored before invalid CA was reported. */
+    test_secflags_option(req, _SECURITY_FLAG_CERT_REV_FAILED, _SECURITY_FLAG_CERT_INVALID_CA);
+
+    set_secflags(req, FALSE, SECURITY_FLAG_IGNORE_REVOCATION);
+    test_secflags_option(req, _SECURITY_FLAG_CERT_REV_FAILED|SECURITY_FLAG_IGNORE_REVOCATION, _SECURITY_FLAG_CERT_INVALID_CA);
+
+    SET_EXPECT(INTERNET_STATUS_CONNECTING_TO_SERVER);
+    SET_EXPECT(INTERNET_STATUS_CONNECTED_TO_SERVER);
+    SET_EXPECT(INTERNET_STATUS_CLOSING_CONNECTION);
+    SET_EXPECT(INTERNET_STATUS_CONNECTION_CLOSED);
+    SET_EXPECT(INTERNET_STATUS_REQUEST_COMPLETE);
+    SET_OPTIONAL(INTERNET_STATUS_COOKIE_SENT);
+    SET_OPTIONAL(INTERNET_STATUS_DETECTING_PROXY);
+
+    res = HttpSendRequestA(req, NULL, 0, NULL, 0);
+    ok(!res && GetLastError() == ERROR_IO_PENDING, "HttpSendRequest failed: %u\n", GetLastError());
+
+    WaitForSingleObject(hCompleteEvent, INFINITE);
+    ok(req_error == ERROR_INTERNET_SEC_CERT_ERRORS, "req_error = %d\n", req_error);
+
+    CHECK_NOTIFIED(INTERNET_STATUS_CONNECTING_TO_SERVER);
+    CHECK_NOTIFIED(INTERNET_STATUS_CONNECTED_TO_SERVER);
+    CHECK_NOTIFIED(INTERNET_STATUS_CLOSING_CONNECTION);
+    CHECK_NOTIFIED(INTERNET_STATUS_CONNECTION_CLOSED);
+    CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_COMPLETE);
+    CLEAR_NOTIFIED(INTERNET_STATUS_COOKIE_SENT);
+    CLEAR_NOTIFIED(INTERNET_STATUS_DETECTING_PROXY);
+
+    test_request_flags(req, INTERNET_REQFLAG_NO_HEADERS);
+    test_secflags_option(req, SECURITY_FLAG_IGNORE_REVOCATION|_SECURITY_FLAG_CERT_REV_FAILED|_SECURITY_FLAG_CERT_INVALID_CA, 0);
+    test_security_info("https://test.winehq.com/data/some_file.html?q", ERROR_INTERNET_ITEM_NOT_FOUND, 0);
+
+    set_secflags(req, FALSE, SECURITY_FLAG_IGNORE_UNKNOWN_CA);
+    test_secflags_option(req, _SECURITY_FLAG_CERT_INVALID_CA|_SECURITY_FLAG_CERT_REV_FAILED
+            |SECURITY_FLAG_IGNORE_REVOCATION|SECURITY_FLAG_IGNORE_UNKNOWN_CA, 0);
+    test_http_version(req);
+
+    SET_EXPECT(INTERNET_STATUS_CONNECTING_TO_SERVER);
+    SET_EXPECT(INTERNET_STATUS_CONNECTED_TO_SERVER);
+    SET_OPTIONAL(INTERNET_STATUS_CLOSING_CONNECTION); /* IE11 calls it, it probably reconnects. */
+    SET_OPTIONAL(INTERNET_STATUS_CONNECTION_CLOSED); /* IE11 */
+    SET_OPTIONAL(INTERNET_STATUS_CONNECTING_TO_SERVER); /* IE11 */
+    SET_OPTIONAL(INTERNET_STATUS_CONNECTED_TO_SERVER); /* IE11 */
+    SET_EXPECT(INTERNET_STATUS_SENDING_REQUEST);
+    SET_EXPECT(INTERNET_STATUS_REQUEST_SENT);
+    SET_EXPECT(INTERNET_STATUS_RECEIVING_RESPONSE);
+    SET_EXPECT(INTERNET_STATUS_RESPONSE_RECEIVED);
+    SET_EXPECT(INTERNET_STATUS_REQUEST_COMPLETE);
+    SET_OPTIONAL(INTERNET_STATUS_COOKIE_SENT);
+    SET_OPTIONAL(INTERNET_STATUS_DETECTING_PROXY);
+
+    res = HttpSendRequestA(req, NULL, 0, NULL, 0);
+    ok(!res && GetLastError() == ERROR_IO_PENDING, "HttpSendRequest failed: %u\n", GetLastError());
+
+    WaitForSingleObject(hCompleteEvent, INFINITE);
+    ok(req_error == ERROR_SUCCESS, "req_error = %d\n", req_error);
+
+    CHECK_NOTIFIED2(INTERNET_STATUS_CONNECTING_TO_SERVER, 2);
+    CHECK_NOTIFIED2(INTERNET_STATUS_CONNECTED_TO_SERVER, 2);
+    CHECK_NOTIFIED(INTERNET_STATUS_CLOSING_CONNECTION);
+    CHECK_NOTIFIED(INTERNET_STATUS_CONNECTION_CLOSED);
+    CHECK_NOTIFIED(INTERNET_STATUS_SENDING_REQUEST);
+    CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_SENT);
+    CHECK_NOTIFIED(INTERNET_STATUS_RECEIVING_RESPONSE);
+    CHECK_NOTIFIED(INTERNET_STATUS_RESPONSE_RECEIVED);
+    CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_COMPLETE);
+    CLEAR_NOTIFIED(INTERNET_STATUS_COOKIE_SENT);
+    CLEAR_NOTIFIED(INTERNET_STATUS_DETECTING_PROXY);
+
+    test_request_flags(req, 0);
+    test_secflags_option(req, SECURITY_FLAG_SECURE|SECURITY_FLAG_IGNORE_UNKNOWN_CA|SECURITY_FLAG_IGNORE_REVOCATION
+            |SECURITY_FLAG_STRENGTH_STRONG|_SECURITY_FLAG_CERT_REV_FAILED|_SECURITY_FLAG_CERT_INVALID_CA, 0);
+
+    test_cert_struct(req, &test_winehq_com_cert);
+    test_security_info("https://test.winehq.com/data/some_file.html?q", 0,
+            _SECURITY_FLAG_CERT_INVALID_CA|_SECURITY_FLAG_CERT_REV_FAILED);
+
+    res = InternetReadFile(req, buf, sizeof(buf), &size);
+    ok(res, "InternetReadFile failed: %u\n", GetLastError());
+    ok(size, "size = 0\n");
+
+    close_async_handle(ses, hCompleteEvent, 3);
+
+    /* Collect all existing persistent connections */
+    res = InternetSetOptionA(NULL, INTERNET_OPTION_SETTINGS_CHANGED, NULL, 0);
+    ok(res, "InternetSetOption(INTERNET_OPTION_END_BROWSER_SESSION) failed: %u\n", GetLastError());
+
+    /* Make another request, without setting security flags */
+
+    ses = InternetOpenA("WineTest", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, INTERNET_FLAG_ASYNC);
+    ok(ses != NULL, "InternetOpen failed\n");
+
+    pInternetSetStatusCallbackA(ses, &callback);
+
+    SET_EXPECT(INTERNET_STATUS_HANDLE_CREATED);
+    conn = InternetConnectA(ses, "test.winehq.com", INTERNET_DEFAULT_HTTPS_PORT,
+                            NULL, NULL, INTERNET_SERVICE_HTTP, INTERNET_FLAG_SECURE, 0xdeadbeef);
+    ok(conn != NULL, "InternetConnect failed with error %u\n", GetLastError());
+    CHECK_NOTIFIED(INTERNET_STATUS_HANDLE_CREATED);
+
+    SET_EXPECT(INTERNET_STATUS_HANDLE_CREATED);
+    req = HttpOpenRequestA(conn, "GET", "/tests/hello.html", NULL, NULL, NULL,
+                          INTERNET_FLAG_SECURE|INTERNET_FLAG_KEEP_CONNECTION|INTERNET_FLAG_RELOAD|INTERNET_FLAG_NO_CACHE_WRITE,
+                          0xdeadbeef);
+    ok(req != NULL, "HttpOpenRequest failed\n");
+    CHECK_NOTIFIED(INTERNET_STATUS_HANDLE_CREATED);
+
+    test_secflags_option(req, SECURITY_FLAG_SECURE|SECURITY_FLAG_IGNORE_UNKNOWN_CA|SECURITY_FLAG_STRENGTH_STRONG
+            |SECURITY_FLAG_IGNORE_REVOCATION|_SECURITY_FLAG_CERT_REV_FAILED|_SECURITY_FLAG_CERT_INVALID_CA, 0);
+    test_http_version(req);
+
+    SET_EXPECT(INTERNET_STATUS_CONNECTING_TO_SERVER);
+    SET_EXPECT(INTERNET_STATUS_CONNECTED_TO_SERVER);
+    SET_OPTIONAL(INTERNET_STATUS_CLOSING_CONNECTION); /* IE11 calls it, it probably reconnects. */
+    SET_OPTIONAL(INTERNET_STATUS_CONNECTION_CLOSED); /* IE11 */
+    SET_OPTIONAL(INTERNET_STATUS_CONNECTING_TO_SERVER); /* IE11 */
+    SET_OPTIONAL(INTERNET_STATUS_CONNECTED_TO_SERVER); /* IE11 */
+    SET_EXPECT(INTERNET_STATUS_SENDING_REQUEST);
+    SET_EXPECT(INTERNET_STATUS_REQUEST_SENT);
+    SET_EXPECT(INTERNET_STATUS_RECEIVING_RESPONSE);
+    SET_EXPECT(INTERNET_STATUS_RESPONSE_RECEIVED);
+    SET_EXPECT(INTERNET_STATUS_REQUEST_COMPLETE);
+    SET_OPTIONAL(INTERNET_STATUS_COOKIE_SENT);
+
+    res = HttpSendRequestA(req, NULL, 0, NULL, 0);
+    ok(!res && GetLastError() == ERROR_IO_PENDING, "HttpSendRequest failed: %u\n", GetLastError());
+
+    WaitForSingleObject(hCompleteEvent, INFINITE);
+    ok(req_error == ERROR_SUCCESS, "req_error = %d\n", req_error);
+
+    CHECK_NOTIFIED2(INTERNET_STATUS_CONNECTING_TO_SERVER, 2);
+    CHECK_NOTIFIED2(INTERNET_STATUS_CONNECTED_TO_SERVER, 2);
+    CHECK_NOTIFIED(INTERNET_STATUS_CLOSING_CONNECTION);
+    CHECK_NOTIFIED(INTERNET_STATUS_CONNECTION_CLOSED);
+    CHECK_NOTIFIED(INTERNET_STATUS_SENDING_REQUEST);
+    CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_SENT);
+    CHECK_NOTIFIED(INTERNET_STATUS_RECEIVING_RESPONSE);
+    CHECK_NOTIFIED(INTERNET_STATUS_RESPONSE_RECEIVED);
+    CHECK_NOTIFIED(INTERNET_STATUS_REQUEST_COMPLETE);
+    CLEAR_NOTIFIED(INTERNET_STATUS_COOKIE_SENT);
+
+    test_request_flags(req, 0);
+    test_secflags_option(req, SECURITY_FLAG_SECURE|SECURITY_FLAG_IGNORE_UNKNOWN_CA|SECURITY_FLAG_STRENGTH_STRONG
+            |SECURITY_FLAG_IGNORE_REVOCATION|_SECURITY_FLAG_CERT_REV_FAILED|_SECURITY_FLAG_CERT_INVALID_CA, 0);
+
+    res = InternetReadFile(req, buf, sizeof(buf), &size);
+    ok(res, "InternetReadFile failed: %u\n", GetLastError());
+    ok(size, "size = 0\n");
+
+    close_async_handle(ses, hCompleteEvent, 2);
+
+    CloseHandle(hCompleteEvent);
+
+    test_security_info("http://test.winehq.com/data/some_file.html?q", ERROR_INTERNET_ITEM_NOT_FOUND, 0);
+    test_security_info("file:///c:/dir/file.txt", ERROR_INTERNET_ITEM_NOT_FOUND, 0);
+    test_security_info("xxx:///c:/dir/file.txt", ERROR_INTERNET_ITEM_NOT_FOUND, 0);
+}
+
 static void test_secure_connection(void)
 {
     static const WCHAR gizmo5[] = {'G','i','z','m','o','5',0};
-    static const WCHAR testbot[] = {'t','e','s','t','b','o','t','.','w','i','n','e','h','q','.','o','r','g',0};
+    static const WCHAR testsite[] = {'t','e','s','t','.','w','i','n','e','h','q','.','o','r','g',0};
     static const WCHAR get[] = {'G','E','T',0};
-    static const WCHAR slash[] = {'/',0};
+    static const WCHAR testpage[] = {'/','t','e','s','t','s','/','h','e','l','l','o','.','h','t','m','l',0};
     HINTERNET ses, con, req;
     DWORD size, flags;
     INTERNET_CERTIFICATE_INFOA *certificate_structA = NULL;
     INTERNET_CERTIFICATE_INFOW *certificate_structW = NULL;
     BOOL ret;
 
-    ses = InternetOpen("Gizmo5", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
+    ses = InternetOpenA("Gizmo5", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
     ok(ses != NULL, "InternetOpen failed\n");
 
-    con = InternetConnect(ses, "testbot.winehq.org",
+    con = InternetConnectA(ses, "test.winehq.org",
                           INTERNET_DEFAULT_HTTPS_PORT, NULL, NULL,
                           INTERNET_SERVICE_HTTP, 0, 0);
     ok(con != NULL, "InternetConnect failed\n");
 
-    req = HttpOpenRequest(con, "GET", "/", NULL, NULL, NULL,
+    req = HttpOpenRequestA(con, "GET", "/tests/hello.html", NULL, NULL, NULL,
                           INTERNET_FLAG_SECURE, 0);
     ok(req != NULL, "HttpOpenRequest failed\n");
 
-    ret = HttpSendRequest(req, NULL, 0, NULL, 0);
+    ret = HttpSendRequestA(req, NULL, 0, NULL, 0);
     ok(ret, "HttpSendRequest failed: %d\n", GetLastError());
 
     size = sizeof(flags);
-    ret = InternetQueryOption(req, INTERNET_OPTION_SECURITY_FLAGS, &flags, &size);
+    ret = InternetQueryOptionA(req, INTERNET_OPTION_SECURITY_FLAGS, &flags, &size);
     ok(ret, "InternetQueryOption failed: %d\n", GetLastError());
     ok(flags & SECURITY_FLAG_SECURE, "expected secure flag to be set\n");
 
-    ret = InternetQueryOptionA(req, INTERNET_OPTION_SECURITY_CERTIFICATE_STRUCT,
-                               NULL, &size);
-    ok(ret || GetLastError() == ERROR_INSUFFICIENT_BUFFER, "InternetQueryOption failed: %d\n", GetLastError());
-    ok(size == sizeof(INTERNET_CERTIFICATE_INFOA), "size = %d\n", size);
-    certificate_structA = HeapAlloc(GetProcessHeap(), 0, size);
-    ret = InternetQueryOption(req, INTERNET_OPTION_SECURITY_CERTIFICATE_STRUCT,
-                              certificate_structA, &size);
-    ok(ret, "InternetQueryOption failed: %d\n", GetLastError());
-    if (ret)
-    {
-        ok(certificate_structA->lpszSubjectInfo &&
-           strlen(certificate_structA->lpszSubjectInfo) > 1,
-           "expected a non-empty subject name\n");
-        ok(certificate_structA->lpszIssuerInfo &&
-           strlen(certificate_structA->lpszIssuerInfo) > 1,
-           "expected a non-empty issuer name\n");
-        ok(!certificate_structA->lpszSignatureAlgName,
-           "unexpected signature algorithm name\n");
-        ok(!certificate_structA->lpszEncryptionAlgName,
-           "unexpected encryption algorithm name\n");
-        ok(!certificate_structA->lpszProtocolName,
-           "unexpected protocol name\n");
-        ok(certificate_structA->dwKeySize, "expected a non-zero key size\n");
-        release_cert_info(certificate_structA);
-    }
-    HeapFree(GetProcessHeap(), 0, certificate_structA);
+    test_cert_struct(req, &test_winehq_org_cert);
 
     /* Querying the same option through InternetQueryOptionW still results in
      * ASCII strings being returned.
@@ -2913,7 +4728,7 @@ static void test_secure_connection(void)
     ok(ret || GetLastError() == ERROR_INSUFFICIENT_BUFFER, "InternetQueryOption failed: %d\n", GetLastError());
     ok(size == sizeof(INTERNET_CERTIFICATE_INFOW), "size = %d\n", size);
     certificate_structW = HeapAlloc(GetProcessHeap(), 0, size);
-    ret = InternetQueryOption(req, INTERNET_OPTION_SECURITY_CERTIFICATE_STRUCT,
+    ret = InternetQueryOptionA(req, INTERNET_OPTION_SECURITY_CERTIFICATE_STRUCT,
                               certificate_structW, &size);
     certificate_structA = (INTERNET_CERTIFICATE_INFOA *)certificate_structW;
     ok(ret, "InternetQueryOption failed: %d\n", GetLastError());
@@ -2944,22 +4759,22 @@ static void test_secure_connection(void)
     ses = InternetOpenW(gizmo5, INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
     ok(ses != NULL, "InternetOpen failed\n");
 
-    con = InternetConnectW(ses, testbot,
+    con = InternetConnectW(ses, testsite,
                           INTERNET_DEFAULT_HTTPS_PORT, NULL, NULL,
                           INTERNET_SERVICE_HTTP, 0, 0);
     ok(con != NULL, "InternetConnect failed\n");
 
-    req = HttpOpenRequestW(con, get, slash, NULL, NULL, NULL,
-                          INTERNET_FLAG_SECURE, 0);
+    req = HttpOpenRequestW(con, get, testpage, NULL, NULL, NULL,
+                          INTERNET_FLAG_SECURE|INTERNET_FLAG_RELOAD, 0);
     ok(req != NULL, "HttpOpenRequest failed\n");
 
-    ret = HttpSendRequest(req, NULL, 0, NULL, 0);
+    ret = HttpSendRequestA(req, NULL, 0, NULL, 0);
     ok(ret, "HttpSendRequest failed: %d\n", GetLastError());
 
     size = sizeof(flags);
-    ret = InternetQueryOption(req, INTERNET_OPTION_SECURITY_FLAGS, &flags, &size);
+    ret = InternetQueryOptionA(req, INTERNET_OPTION_SECURITY_FLAGS, &flags, &size);
     ok(ret, "InternetQueryOption failed: %d\n", GetLastError());
-    ok(flags & SECURITY_FLAG_SECURE, "expected secure flag to be set\n");
+    ok(flags & SECURITY_FLAG_SECURE, "expected secure flag to be set, got %x\n", flags);
 
     ret = InternetQueryOptionA(req, INTERNET_OPTION_SECURITY_CERTIFICATE_STRUCT,
                                NULL, &size);
@@ -3032,47 +4847,46 @@ static void test_user_agent_header(void)
     char buffer[64];
     BOOL ret;
 
-    ses = InternetOpen("Gizmo5", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
+    ses = InternetOpenA("Gizmo5", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
     ok(ses != NULL, "InternetOpen failed\n");
 
-    con = InternetConnect(ses, "test.winehq.org", 80, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    con = InternetConnectA(ses, "test.winehq.org", 80, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
     ok(con != NULL, "InternetConnect failed\n");
 
-    req = HttpOpenRequest(con, "GET", "/tests/hello.html", "HTTP/1.0", NULL, NULL, 0, 0);
+    req = HttpOpenRequestA(con, "GET", "/tests/hello.html", "HTTP/1.0", NULL, NULL, 0, 0);
     ok(req != NULL, "HttpOpenRequest failed\n");
 
     size = sizeof(buffer);
-    ret = HttpQueryInfo(req, HTTP_QUERY_USER_AGENT | HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer, &size, NULL);
+    ret = HttpQueryInfoA(req, HTTP_QUERY_USER_AGENT | HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer, &size, NULL);
     err = GetLastError();
     ok(!ret, "HttpQueryInfo succeeded\n");
     ok(err == ERROR_HTTP_HEADER_NOT_FOUND, "expected ERROR_HTTP_HEADER_NOT_FOUND, got %u\n", err);
 
-    ret = HttpAddRequestHeaders(req, "User-Agent: Gizmo Project\r\n", ~0u, HTTP_ADDREQ_FLAG_ADD_IF_NEW);
+    ret = HttpAddRequestHeadersA(req, "User-Agent: Gizmo Project\r\n", ~0u, HTTP_ADDREQ_FLAG_ADD_IF_NEW);
     ok(ret, "HttpAddRequestHeaders succeeded\n");
 
     size = sizeof(buffer);
-    ret = HttpQueryInfo(req, HTTP_QUERY_USER_AGENT | HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer, &size, NULL);
+    ret = HttpQueryInfoA(req, HTTP_QUERY_USER_AGENT | HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer, &size, NULL);
     err = GetLastError();
     ok(ret, "HttpQueryInfo failed\n");
-    ok(err == ERROR_HTTP_HEADER_NOT_FOUND, "expected ERROR_HTTP_HEADER_NOT_FOUND, got %u\n", err);
 
     InternetCloseHandle(req);
 
-    req = HttpOpenRequest(con, "GET", "/", "HTTP/1.0", NULL, NULL, 0, 0);
+    req = HttpOpenRequestA(con, "GET", "/", "HTTP/1.0", NULL, NULL, 0, 0);
     ok(req != NULL, "HttpOpenRequest failed\n");
 
     size = sizeof(buffer);
-    ret = HttpQueryInfo(req, HTTP_QUERY_ACCEPT | HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer, &size, NULL);
+    ret = HttpQueryInfoA(req, HTTP_QUERY_ACCEPT | HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer, &size, NULL);
     err = GetLastError();
     ok(!ret, "HttpQueryInfo succeeded\n");
     ok(err == ERROR_HTTP_HEADER_NOT_FOUND, "expected ERROR_HTTP_HEADER_NOT_FOUND, got %u\n", err);
 
-    ret = HttpAddRequestHeaders(req, "Accept: audio/*, image/*, text/*\r\nUser-Agent: Gizmo Project\r\n", ~0u, HTTP_ADDREQ_FLAG_ADD_IF_NEW);
+    ret = HttpAddRequestHeadersA(req, "Accept: audio/*, image/*, text/*\r\nUser-Agent: Gizmo Project\r\n", ~0u, HTTP_ADDREQ_FLAG_ADD_IF_NEW);
     ok(ret, "HttpAddRequestHeaders failed\n");
 
     buffer[0] = 0;
     size = sizeof(buffer);
-    ret = HttpQueryInfo(req, HTTP_QUERY_ACCEPT | HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer, &size, NULL);
+    ret = HttpQueryInfoA(req, HTTP_QUERY_ACCEPT | HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer, &size, NULL);
     ok(ret, "HttpQueryInfo failed: %u\n", GetLastError());
     ok(!strcmp(buffer, "audio/*, image/*, text/*"), "got '%s' expected 'audio/*, image/*, text/*'\n", buffer);
 
@@ -3089,16 +4903,16 @@ static void test_bogus_accept_types_array(void)
     char buffer[32];
     BOOL ret;
 
-    ses = InternetOpen("MERONG(0.9/;p)", INTERNET_OPEN_TYPE_DIRECT, "", "", 0);
-    con = InternetConnect(ses, "www.winehq.org", 80, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
-    req = HttpOpenRequest(con, "POST", "/post/post_action.php", "HTTP/1.0", "", types, INTERNET_FLAG_FORMS_SUBMIT, 0);
+    ses = InternetOpenA("MERONG(0.9/;p)", INTERNET_OPEN_TYPE_DIRECT, "", "", 0);
+    con = InternetConnectA(ses, "www.winehq.org", 80, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    req = HttpOpenRequestA(con, "POST", "/post/post_action.php", "HTTP/1.0", "", types, INTERNET_FLAG_FORMS_SUBMIT, 0);
 
     ok(req != NULL, "HttpOpenRequest failed: %u\n", GetLastError());
 
     buffer[0] = 0;
     size = sizeof(buffer);
     SetLastError(0xdeadbeef);
-    ret = HttpQueryInfo(req, HTTP_QUERY_ACCEPT | HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer, &size, NULL);
+    ret = HttpQueryInfoA(req, HTTP_QUERY_ACCEPT | HTTP_QUERY_FLAG_REQUEST_HEADERS, buffer, &size, NULL);
     error = GetLastError();
     ok(!ret || broken(ret), "HttpQueryInfo succeeded\n");
     if (!ret) ok(error == ERROR_HTTP_HEADER_NOT_FOUND, "expected ERROR_HTTP_HEADER_NOT_FOUND, got %u\n", error);
@@ -3124,19 +4938,27 @@ static void WINAPI cb(HINTERNET handle, DWORD_PTR context, DWORD status, LPVOID 
 
     trace("%p 0x%08lx %u %p 0x%08x\n", handle, context, status, info, size);
 
-    if (status == INTERNET_STATUS_REQUEST_COMPLETE)
-    {
+    switch(status) {
+    case INTERNET_STATUS_REQUEST_COMPLETE:
         trace("request handle: 0x%08lx\n", result->dwResult);
         ctx->req = (HINTERNET)result->dwResult;
         SetEvent(ctx->event);
-    }
-    if (status == INTERNET_STATUS_HANDLE_CLOSING)
-    {
+        break;
+    case INTERNET_STATUS_HANDLE_CLOSING: {
         DWORD type = INTERNET_HANDLE_TYPE_CONNECT_HTTP, size = sizeof(type);
 
-        if (InternetQueryOption(handle, INTERNET_OPTION_HANDLE_TYPE, &type, &size))
+        if (InternetQueryOptionA(handle, INTERNET_OPTION_HANDLE_TYPE, &type, &size))
             ok(type != INTERNET_HANDLE_TYPE_CONNECT_HTTP, "unexpected callback\n");
         SetEvent(ctx->event);
+        break;
+    }
+    case INTERNET_STATUS_NAME_RESOLVED:
+    case INTERNET_STATUS_CONNECTING_TO_SERVER:
+    case INTERNET_STATUS_CONNECTED_TO_SERVER: {
+        char *str = info;
+        ok(str[0] && str[1], "Got string: %s\n", str);
+        ok(size == strlen(str)+1, "unexpected size %u\n", size);
+    }
     }
 }
 
@@ -3148,10 +4970,24 @@ static void test_open_url_async(void)
     struct context ctx;
     ULONG type;
 
-    ctx.req = NULL;
-    ctx.event = CreateEvent(NULL, TRUE, FALSE, "Z:_home_hans_jaman-installer.exe_ev1");
+    /* Collect all existing persistent connections */
+    ret = InternetSetOptionA(NULL, INTERNET_OPTION_SETTINGS_CHANGED, NULL, 0);
+    ok(ret, "InternetSetOption(INTERNET_OPTION_END_BROWSER_SESSION) failed: %u\n", GetLastError());
 
-    ses = InternetOpen("AdvancedInstaller", 0, NULL, NULL, INTERNET_FLAG_ASYNC);
+    /*
+     * Some versions of IE6 fail those tests. They pass some notification data as UNICODE string, while
+     * other versions never do. They also hang of following tests. We disable it for everything older
+     * than IE7.
+     */
+    if(!pInternetGetSecurityInfoByURLA) {
+        win_skip("Skipping async open on too old wininet version.\n");
+        return;
+    }
+
+    ctx.req = NULL;
+    ctx.event = CreateEventA(NULL, TRUE, FALSE, "Z:_home_hans_jaman-installer.exe_ev1");
+
+    ses = InternetOpenA("AdvancedInstaller", 0, NULL, NULL, INTERNET_FLAG_ASYNC);
     ok(ses != NULL, "InternetOpen failed\n");
 
     SetLastError(0xdeadbeef);
@@ -3165,23 +5001,23 @@ static void test_open_url_async(void)
     ok(!ret, "InternetSetOptionA failed\n");
     ok(error == ERROR_INTERNET_OPTION_NOT_SETTABLE, "got %u expected ERROR_INTERNET_OPTION_NOT_SETTABLE\n", error);
 
-    pInternetSetStatusCallbackA(ses, cb);
+    pInternetSetStatusCallbackW(ses, cb);
     ResetEvent(ctx.event);
 
-    req = InternetOpenUrl(ses, "http://test.winehq.org", NULL, 0, 0, (DWORD_PTR)&ctx);
+    req = InternetOpenUrlA(ses, "http://test.winehq.org", NULL, 0, 0, (DWORD_PTR)&ctx);
     ok(!req && GetLastError() == ERROR_IO_PENDING, "InternetOpenUrl failed\n");
 
     WaitForSingleObject(ctx.event, INFINITE);
 
     type = 0;
     size = sizeof(type);
-    ret = InternetQueryOption(ctx.req, INTERNET_OPTION_HANDLE_TYPE, &type, &size);
+    ret = InternetQueryOptionA(ctx.req, INTERNET_OPTION_HANDLE_TYPE, &type, &size);
     ok(ret, "InternetQueryOption failed: %u\n", GetLastError());
     ok(type == INTERNET_HANDLE_TYPE_HTTP_REQUEST,
        "expected INTERNET_HANDLE_TYPE_HTTP_REQUEST, got %u\n", type);
 
     size = 0;
-    ret = HttpQueryInfo(ctx.req, HTTP_QUERY_RAW_HEADERS_CRLF, NULL, &size, NULL);
+    ret = HttpQueryInfoA(ctx.req, HTTP_QUERY_RAW_HEADERS_CRLF, NULL, &size, NULL);
     ok(!ret && GetLastError() == ERROR_INSUFFICIENT_BUFFER, "HttpQueryInfo failed\n");
     ok(size > 0, "expected size > 0\n");
 
@@ -3207,9 +5043,9 @@ struct notification
 {
     enum api     function; /* api responsible for notification */
     unsigned int status;   /* status received */
-    int          async;    /* delivered from another thread? */
-    int          todo;
-    int          optional;
+    BOOL         async;    /* delivered from another thread? */
+    BOOL         todo;
+    BOOL         optional;
 };
 
 struct info
@@ -3221,6 +5057,8 @@ struct info
     HANDLE       wait;
     DWORD        thread;
     unsigned int line;
+    DWORD        expect_result;
+    BOOL         is_aborted;
 };
 
 static CRITICAL_SECTION notification_cs;
@@ -3233,11 +5071,27 @@ static void CALLBACK check_notification( HINTERNET handle, DWORD_PTR context, DW
 
     EnterCriticalSection( &notification_cs );
 
+    if(info->is_aborted) {
+        LeaveCriticalSection(&notification_cs);
+        return;
+    }
+
     if (status == INTERNET_STATUS_HANDLE_CREATED)
     {
         DWORD size = sizeof(struct info *);
         HttpQueryInfoA( handle, INTERNET_OPTION_CONTEXT_VALUE, &info, &size, 0 );
+    }else if(status == INTERNET_STATUS_REQUEST_COMPLETE) {
+        INTERNET_ASYNC_RESULT *ar = (INTERNET_ASYNC_RESULT*)buffer;
+
+        ok(buflen == sizeof(*ar), "unexpected buflen = %d\n", buflen);
+        if(info->expect_result == ERROR_SUCCESS) {
+            ok(ar->dwResult == 1, "ar->dwResult = %ld, expected 1\n", ar->dwResult);
+        }else {
+            ok(!ar->dwResult, "ar->dwResult = %ld, expected 1\n", ar->dwResult);
+            ok(ar->dwError == info->expect_result, "ar->dwError = %d, expected %d\n", ar->dwError, info->expect_result);
+        }
     }
+
     i = info->index;
     if (i >= info->count)
     {
@@ -3245,7 +5099,8 @@ static void CALLBACK check_notification( HINTERNET handle, DWORD_PTR context, DW
         return;
     }
 
-    while (info->test[i].status != status && info->test[i].optional &&
+    while (info->test[i].status != status &&
+        (info->test[i].optional || info->test[i].todo) &&
         i < info->count - 1 &&
         info->test[i].function == info->test[i + 1].function)
     {
@@ -3276,36 +5131,142 @@ static void CALLBACK check_notification( HINTERNET handle, DWORD_PTR context, DW
     LeaveCriticalSection( &notification_cs );
 }
 
-static void setup_test( struct info *info, enum api function, unsigned int line )
+static void setup_test( struct info *info, enum api function, unsigned int line, DWORD expect_result )
 {
     info->function = function;
     info->line = line;
+    info->expect_result = expect_result;
 }
+
+struct notification_data
+{
+    const struct notification *test;
+    const unsigned int count;
+    const char *method;
+    const char *host;
+    const char *path;
+    const char *data;
+    BOOL expect_conn_failure;
+};
 
 static const struct notification async_send_request_ex_test[] =
 {
-    { internet_connect,      INTERNET_STATUS_HANDLE_CREATED, 0 },
-    { http_open_request,     INTERNET_STATUS_HANDLE_CREATED, 0 },
-    { http_send_request_ex,  INTERNET_STATUS_DETECTING_PROXY, 1, 0, 1 },
-    { http_send_request_ex,  INTERNET_STATUS_RESOLVING_NAME, 1, 0, 1 },
-    { http_send_request_ex,  INTERNET_STATUS_NAME_RESOLVED, 1, 0, 1 },
-    { http_send_request_ex,  INTERNET_STATUS_CONNECTING_TO_SERVER, 1 },
-    { http_send_request_ex,  INTERNET_STATUS_CONNECTED_TO_SERVER, 1 },
-    { http_send_request_ex,  INTERNET_STATUS_SENDING_REQUEST, 1 },
-    { http_send_request_ex,  INTERNET_STATUS_REQUEST_SENT, 1 },
-    { http_send_request_ex,  INTERNET_STATUS_REQUEST_COMPLETE, 1 },
-    { internet_writefile,    INTERNET_STATUS_SENDING_REQUEST, 0 },
-    { internet_writefile,    INTERNET_STATUS_REQUEST_SENT, 0 },
-    { http_end_request,      INTERNET_STATUS_RECEIVING_RESPONSE, 1 },
-    { http_end_request,      INTERNET_STATUS_RESPONSE_RECEIVED, 1 },
-    { http_end_request,      INTERNET_STATUS_REQUEST_COMPLETE, 1 },
-    { internet_close_handle, INTERNET_STATUS_CLOSING_CONNECTION, 0, 0, 1 },
-    { internet_close_handle, INTERNET_STATUS_CONNECTION_CLOSED, 0, 0, 1 },
-    { internet_close_handle, INTERNET_STATUS_HANDLE_CLOSING, 0, },
-    { internet_close_handle, INTERNET_STATUS_HANDLE_CLOSING, 0, }
+    { internet_connect,      INTERNET_STATUS_HANDLE_CREATED, FALSE },
+    { http_open_request,     INTERNET_STATUS_HANDLE_CREATED, FALSE },
+    { http_send_request_ex,  INTERNET_STATUS_DETECTING_PROXY, TRUE, FALSE, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_COOKIE_SENT, TRUE, FALSE, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_RESOLVING_NAME, TRUE, FALSE, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_NAME_RESOLVED, TRUE, FALSE, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_CONNECTING_TO_SERVER, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_CONNECTED_TO_SERVER, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_SENDING_REQUEST, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_REQUEST_SENT, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_REQUEST_COMPLETE, TRUE },
+    { internet_writefile,    INTERNET_STATUS_SENDING_REQUEST, FALSE },
+    { internet_writefile,    INTERNET_STATUS_REQUEST_SENT, FALSE },
+    { http_end_request,      INTERNET_STATUS_RECEIVING_RESPONSE, TRUE },
+    { http_end_request,      INTERNET_STATUS_RESPONSE_RECEIVED, TRUE },
+    { http_end_request,      INTERNET_STATUS_REQUEST_COMPLETE, TRUE },
+    { internet_close_handle, INTERNET_STATUS_CLOSING_CONNECTION, FALSE, FALSE, TRUE },
+    { internet_close_handle, INTERNET_STATUS_CONNECTION_CLOSED, FALSE, FALSE, TRUE },
+    { internet_close_handle, INTERNET_STATUS_HANDLE_CLOSING, FALSE, },
+    { internet_close_handle, INTERNET_STATUS_HANDLE_CLOSING, FALSE, }
 };
 
-static void test_async_HttpSendRequestEx(void)
+static const struct notification async_send_request_ex_test2[] =
+{
+    { internet_connect,      INTERNET_STATUS_HANDLE_CREATED, FALSE },
+    { http_open_request,     INTERNET_STATUS_HANDLE_CREATED, FALSE },
+    { http_send_request_ex,  INTERNET_STATUS_DETECTING_PROXY, TRUE, FALSE, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_COOKIE_SENT, TRUE, FALSE, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_RESOLVING_NAME, TRUE, FALSE, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_NAME_RESOLVED, TRUE, FALSE, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_CONNECTING_TO_SERVER, TRUE, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_CONNECTED_TO_SERVER, TRUE, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_SENDING_REQUEST, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_REQUEST_SENT, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_REQUEST_COMPLETE, TRUE },
+    { http_end_request,      INTERNET_STATUS_RECEIVING_RESPONSE, TRUE },
+    { http_end_request,      INTERNET_STATUS_RESPONSE_RECEIVED, TRUE },
+    { http_end_request,      INTERNET_STATUS_REQUEST_COMPLETE, TRUE },
+    { internet_close_handle, INTERNET_STATUS_CLOSING_CONNECTION, FALSE, FALSE, TRUE },
+    { internet_close_handle, INTERNET_STATUS_CONNECTION_CLOSED, FALSE, FALSE, TRUE },
+    { internet_close_handle, INTERNET_STATUS_HANDLE_CLOSING, FALSE, },
+    { internet_close_handle, INTERNET_STATUS_HANDLE_CLOSING, FALSE, }
+};
+
+static const struct notification async_send_request_ex_resolve_failure_test[] =
+{
+    { internet_connect,      INTERNET_STATUS_HANDLE_CREATED, FALSE },
+    { http_open_request,     INTERNET_STATUS_HANDLE_CREATED, FALSE },
+    { http_send_request_ex,  INTERNET_STATUS_DETECTING_PROXY, TRUE, FALSE, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_RESOLVING_NAME, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_DETECTING_PROXY, TRUE, FALSE, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_REQUEST_COMPLETE, TRUE },
+    { http_end_request,      INTERNET_STATUS_REQUEST_COMPLETE, TRUE },
+    { internet_close_handle, INTERNET_STATUS_CLOSING_CONNECTION, FALSE, FALSE, TRUE },
+    { internet_close_handle, INTERNET_STATUS_CONNECTION_CLOSED, FALSE, FALSE, TRUE },
+    { internet_close_handle, INTERNET_STATUS_HANDLE_CLOSING, FALSE, },
+    { internet_close_handle, INTERNET_STATUS_HANDLE_CLOSING, FALSE, }
+};
+
+static const struct notification async_send_request_ex_chunked_test[] =
+{
+    { internet_connect,      INTERNET_STATUS_HANDLE_CREATED },
+    { http_open_request,     INTERNET_STATUS_HANDLE_CREATED },
+    { http_send_request_ex,  INTERNET_STATUS_DETECTING_PROXY, TRUE, FALSE, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_COOKIE_SENT, TRUE, FALSE, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_RESOLVING_NAME, TRUE, FALSE, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_NAME_RESOLVED, TRUE, FALSE, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_CONNECTING_TO_SERVER, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_CONNECTED_TO_SERVER, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_SENDING_REQUEST, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_REQUEST_SENT, TRUE },
+    { http_send_request_ex,  INTERNET_STATUS_REQUEST_COMPLETE, TRUE },
+    { http_end_request,      INTERNET_STATUS_RECEIVING_RESPONSE, TRUE },
+    { http_end_request,      INTERNET_STATUS_RESPONSE_RECEIVED, TRUE },
+    { http_end_request,      INTERNET_STATUS_REQUEST_COMPLETE, TRUE },
+    { internet_close_handle, INTERNET_STATUS_CLOSING_CONNECTION },
+    { internet_close_handle, INTERNET_STATUS_CONNECTION_CLOSED },
+    { internet_close_handle, INTERNET_STATUS_HANDLE_CLOSING },
+    { internet_close_handle, INTERNET_STATUS_HANDLE_CLOSING }
+};
+
+static const struct notification_data notification_data[] = {
+    {
+        async_send_request_ex_chunked_test,
+        sizeof(async_send_request_ex_chunked_test)/sizeof(async_send_request_ex_chunked_test[0]),
+        "GET",
+        "test.winehq.org",
+        "tests/data.php"
+    },
+    {
+        async_send_request_ex_test,
+        sizeof(async_send_request_ex_test)/sizeof(async_send_request_ex_test[0]),
+        "POST",
+        "test.winehq.org",
+        "tests/post.php",
+        "Public ID=codeweavers"
+    },
+    {
+        async_send_request_ex_test2,
+        sizeof(async_send_request_ex_test)/sizeof(async_send_request_ex_test[0]),
+        "POST",
+        "test.winehq.org",
+        "tests/post.php"
+    },
+    {
+        async_send_request_ex_resolve_failure_test,
+        sizeof(async_send_request_ex_resolve_failure_test)/sizeof(async_send_request_ex_resolve_failure_test[0]),
+        "GET",
+        "brokenhost",
+        "index.html",
+        NULL,
+        TRUE
+    }
+};
+
+static void test_async_HttpSendRequestEx(const struct notification_data *nd)
 {
     BOOL ret;
     HINTERNET ses, req, con;
@@ -3313,72 +5274,90 @@ static void test_async_HttpSendRequestEx(void)
     DWORD size, written, error;
     INTERNET_BUFFERSA b;
     static const char *accept[2] = {"*/*", NULL};
-    static char data[] = "Public ID=codeweavers";
     char buffer[32];
+
+    trace("Async HttpSendRequestEx test (%s %s)\n", nd->method, nd->host);
 
     InitializeCriticalSection( &notification_cs );
 
-    info.test  = async_send_request_ex_test;
-    info.count = sizeof(async_send_request_ex_test)/sizeof(async_send_request_ex_test[0]);
+    info.test  = nd->test;
+    info.count = nd->count;
     info.index = 0;
-    info.wait = CreateEvent( NULL, FALSE, FALSE, NULL );
+    info.wait = CreateEventW( NULL, FALSE, FALSE, NULL );
     info.thread = GetCurrentThreadId();
+    info.is_aborted = FALSE;
 
-    ses = InternetOpen( "winetest", 0, NULL, NULL, INTERNET_FLAG_ASYNC );
+    ses = InternetOpenA( "winetest", 0, NULL, NULL, INTERNET_FLAG_ASYNC );
     ok( ses != NULL, "InternetOpen failed\n" );
 
     pInternetSetStatusCallbackA( ses, check_notification );
 
-    setup_test( &info, internet_connect, __LINE__ );
-    con = InternetConnect( ses, "crossover.codeweavers.com", 80, NULL, NULL, INTERNET_SERVICE_HTTP, 0, (DWORD_PTR)&info );
+    setup_test( &info, internet_connect, __LINE__, ERROR_SUCCESS );
+    con = InternetConnectA( ses, nd->host, 80, NULL, NULL, INTERNET_SERVICE_HTTP, 0, (DWORD_PTR)&info );
     ok( con != NULL, "InternetConnect failed %u\n", GetLastError() );
 
     WaitForSingleObject( info.wait, 10000 );
 
-    setup_test( &info, http_open_request, __LINE__ );
-    req = HttpOpenRequest( con, "POST", "posttest.php", NULL, NULL, accept, 0, (DWORD_PTR)&info );
+    setup_test( &info, http_open_request, __LINE__, ERROR_SUCCESS );
+    req = HttpOpenRequestA( con, nd->method, nd->path, NULL, NULL, accept, 0, (DWORD_PTR)&info );
     ok( req != NULL, "HttpOpenRequest failed %u\n", GetLastError() );
 
     WaitForSingleObject( info.wait, 10000 );
 
-    memset( &b, 0, sizeof(INTERNET_BUFFERSA) );
-    b.dwStructSize = sizeof(INTERNET_BUFFERSA);
-    b.lpcszHeader = "Content-Type: application/x-www-form-urlencoded";
-    b.dwHeadersLength = strlen( b.lpcszHeader );
-    b.dwBufferTotal = strlen( data );
+    if(nd->data) {
+        memset( &b, 0, sizeof(INTERNET_BUFFERSA) );
+        b.dwStructSize = sizeof(INTERNET_BUFFERSA);
+        b.lpcszHeader = "Content-Type: application/x-www-form-urlencoded";
+        b.dwHeadersLength = strlen( b.lpcszHeader );
+        b.dwBufferTotal = nd->data ? strlen( nd->data ) : 0;
+    }
 
-    setup_test( &info, http_send_request_ex, __LINE__ );
-    ret = HttpSendRequestExA( req, &b, NULL, 0x28, 0 );
+    setup_test( &info, http_send_request_ex, __LINE__,
+            nd->expect_conn_failure ? ERROR_INTERNET_NAME_NOT_RESOLVED : ERROR_SUCCESS );
+    ret = HttpSendRequestExA( req, nd->data ? &b : NULL, NULL, 0x28, 0 );
     ok( !ret && GetLastError() == ERROR_IO_PENDING, "HttpSendRequestExA failed %d %u\n", ret, GetLastError() );
 
-    WaitForSingleObject( info.wait, 10000 );
+    error = WaitForSingleObject( info.wait, 10000 );
+    if(error != WAIT_OBJECT_0) {
+        skip("WaitForSingleObject returned %d, assuming DNS problem\n", error);
+        info.is_aborted = TRUE;
+        goto abort;
+    }
 
     size = sizeof(buffer);
     SetLastError( 0xdeadbeef );
     ret = HttpQueryInfoA( req, HTTP_QUERY_CONTENT_ENCODING, buffer, &size, 0 );
     error = GetLastError();
     ok( !ret, "HttpQueryInfoA failed %u\n", GetLastError() );
-    todo_wine
-    ok( error == ERROR_INTERNET_INCORRECT_HANDLE_STATE,
-        "expected ERROR_INTERNET_INCORRECT_HANDLE_STATE got %u\n", error );
+    if(nd->expect_conn_failure) {
+        ok(error == ERROR_HTTP_HEADER_NOT_FOUND, "expected ERROR_HTTP_HEADER_NOT_FOUND got %u\n", error );
+    }else {
+        todo_wine
+        ok(error == ERROR_INTERNET_INCORRECT_HANDLE_STATE,
+            "expected ERROR_INTERNET_INCORRECT_HANDLE_STATE got %u\n", error );
+    }
 
-    written = 0;
-    size = strlen( data );
-    setup_test( &info, internet_writefile, __LINE__ );
-    ret = InternetWriteFile( req, data, size, &written );
-    ok( ret, "InternetWriteFile failed %u\n", GetLastError() );
-    ok( written == size, "expected %u got %u\n", written, size );
+    if (nd->data)
+    {
+        written = 0;
+        size = strlen( nd->data );
+        setup_test( &info, internet_writefile, __LINE__, ERROR_SUCCESS );
+        ret = InternetWriteFile( req, nd->data, size, &written );
+        ok( ret, "InternetWriteFile failed %u\n", GetLastError() );
+        ok( written == size, "expected %u got %u\n", written, size );
 
-    WaitForSingleObject( info.wait, 10000 );
+        WaitForSingleObject( info.wait, 10000 );
+
+        SetLastError( 0xdeadbeef );
+        ret = HttpEndRequestA( req, (void *)nd->data, 0x28, 0 );
+        error = GetLastError();
+        ok( !ret, "HttpEndRequestA succeeded\n" );
+        ok( error == ERROR_INVALID_PARAMETER, "expected ERROR_INVALID_PARAMETER got %u\n", error );
+    }
 
     SetLastError( 0xdeadbeef );
-    ret = HttpEndRequestA( req, (void *)data, 0x28, 0 );
-    error = GetLastError();
-    ok( !ret, "HttpEndRequestA succeeded\n" );
-    ok( error == ERROR_INVALID_PARAMETER, "expected ERROR_INVALID_PARAMETER got %u\n", error );
-
-    SetLastError( 0xdeadbeef );
-    setup_test( &info, http_end_request, __LINE__ );
+    setup_test( &info, http_end_request, __LINE__,
+            nd->expect_conn_failure ? ERROR_INTERNET_OPERATION_CANCELLED : ERROR_SUCCESS);
     ret = HttpEndRequestA( req, NULL, 0x28, 0 );
     error = GetLastError();
     ok( !ret, "HttpEndRequestA succeeded\n" );
@@ -3386,7 +5365,8 @@ static void test_async_HttpSendRequestEx(void)
 
     WaitForSingleObject( info.wait, 10000 );
 
-    setup_test( &info, internet_close_handle, __LINE__ );
+    setup_test( &info, internet_close_handle, __LINE__, ERROR_SUCCESS );
+ abort:
     InternetCloseHandle( req );
     InternetCloseHandle( con );
     InternetCloseHandle( ses );
@@ -3440,9 +5420,7 @@ static void test_InternetCloseHandle(void)
     ok(!res && (GetLastError() == ERROR_IO_PENDING),
        "Asynchronous HttpSendRequest NOT returning 0 with error ERROR_IO_PENDING\n");
 
-    len = sizeof(flags);
-    res = InternetQueryOptionA(closetest_req, INTERNET_OPTION_REQUEST_FLAGS, &flags, &len);
-    ok(res, "InternetQueryOptionA(%p INTERNET_OPTION_URL) failed: %u\n", closetest_req, GetLastError());
+    test_request_flags(closetest_req, INTERNET_REQFLAG_NO_HEADERS);
 
     res = InternetCloseHandle(closetest_session);
     ok(res, "InternetCloseHandle failed: %u\n", GetLastError());
@@ -3462,6 +5440,60 @@ static void test_InternetCloseHandle(void)
     ok(!res && GetLastError() == ERROR_INVALID_HANDLE,
        "InternetQueryOptionA(%p INTERNET_OPTION_URL) failed: %x %u, expected TRUE ERROR_INVALID_HANDLE\n",
        closetest_req, res, GetLastError());
+}
+
+static void test_connection_failure(void)
+{
+    HINTERNET session, connect, request;
+    DWORD error;
+    BOOL ret;
+
+    session = InternetOpenA("winetest", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
+    ok(session != NULL, "failed to get session handle\n");
+
+    connect = InternetConnectA(session, "localhost", 1, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    ok(connect != NULL, "failed to get connection handle\n");
+
+    request = HttpOpenRequestA(connect, NULL, "/", NULL, NULL, NULL, 0, 0);
+    ok(request != NULL, "failed to get request handle\n");
+
+    SetLastError(0xdeadbeef);
+    ret = HttpSendRequestA(request, NULL, 0, NULL, 0);
+    error = GetLastError();
+    ok(!ret, "unexpected success\n");
+    ok(error == ERROR_INTERNET_CANNOT_CONNECT, "wrong error %u\n", error);
+
+    InternetCloseHandle(request);
+    InternetCloseHandle(connect);
+    InternetCloseHandle(session);
+}
+
+static void test_default_service_port(void)
+{
+    HINTERNET session, connect, request;
+    DWORD error;
+    BOOL ret;
+
+    session = InternetOpenA("winetest", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    ok(session != NULL, "InternetOpen failed\n");
+
+    connect = InternetConnectA(session, "test.winehq.org", INTERNET_INVALID_PORT_NUMBER, NULL, NULL,
+                              INTERNET_SERVICE_HTTP, 0, 0);
+    ok(connect != NULL, "InternetConnect failed\n");
+
+    request = HttpOpenRequestA(connect, NULL, "/", NULL, NULL, NULL, INTERNET_FLAG_SECURE, 0);
+    ok(request != NULL, "HttpOpenRequest failed\n");
+
+    SetLastError(0xdeadbeef);
+    ret = HttpSendRequestA(request, NULL, 0, NULL, 0);
+    error = GetLastError();
+    ok(!ret, "HttpSendRequest succeeded\n");
+    ok(error == ERROR_INTERNET_SECURITY_CHANNEL_ERROR || error == ERROR_INTERNET_CANNOT_CONNECT,
+       "got %u\n", error);
+
+    InternetCloseHandle(request);
+    InternetCloseHandle(connect);
+    InternetCloseHandle(session);
 }
 
 static void init_status_tests(void)
@@ -3502,6 +5534,55 @@ static void init_status_tests(void)
 #undef STATUS_STRING
 }
 
+static void WINAPI header_cb( HINTERNET handle, DWORD_PTR ctx, DWORD status, LPVOID info, DWORD len )
+{
+    if (status == INTERNET_STATUS_REQUEST_COMPLETE) SetEvent( (HANDLE)ctx );
+}
+
+static void test_concurrent_header_access(void)
+{
+    HINTERNET ses, con, req;
+    DWORD index, len, err;
+    BOOL ret;
+    char buf[128];
+    HANDLE wait = CreateEventW( NULL, FALSE, FALSE, NULL );
+
+    ses = InternetOpenA( "winetest", 0, NULL, NULL, INTERNET_FLAG_ASYNC );
+    ok( ses != NULL, "InternetOpenA failed\n" );
+
+    con = InternetConnectA( ses, "test.winehq.org", INTERNET_DEFAULT_HTTP_PORT, NULL, NULL,
+                            INTERNET_SERVICE_HTTP, 0, 0 );
+    ok( con != NULL, "InternetConnectA failed %u\n", GetLastError() );
+
+    req = HttpOpenRequestA( con, NULL, "/", NULL, NULL, NULL, 0, (DWORD_PTR)wait );
+    ok( req != NULL, "HttpOpenRequestA failed %u\n", GetLastError() );
+
+    pInternetSetStatusCallbackA( req, header_cb );
+
+    SetLastError( 0xdeadbeef );
+    ret = HttpSendRequestA( req, NULL, 0, NULL, 0 );
+    err = GetLastError();
+    ok( !ret, "HttpSendRequestA succeeded\n" );
+    ok( err == ERROR_IO_PENDING, "got %u\n", ERROR_IO_PENDING );
+
+    ret = HttpAddRequestHeadersA( req, "winetest: winetest", ~0u, HTTP_ADDREQ_FLAG_ADD );
+    ok( ret, "HttpAddRequestHeadersA failed %u\n", GetLastError() );
+
+    index = 0;
+    len = sizeof(buf);
+    ret = HttpQueryInfoA( req, HTTP_QUERY_RAW_HEADERS_CRLF|HTTP_QUERY_FLAG_REQUEST_HEADERS,
+                          buf, &len, &index );
+    ok( ret, "HttpQueryInfoA failed %u\n", GetLastError() );
+    ok( strstr( buf, "winetest: winetest" ) != NULL, "header missing\n" );
+
+    WaitForSingleObject( wait, 5000 );
+
+    InternetCloseHandle( req );
+    InternetCloseHandle( con );
+    InternetCloseHandle( ses );
+    CloseHandle( wait );
+}
+
 START_TEST(http)
 {
     HMODULE hdll;
@@ -3513,20 +5594,26 @@ START_TEST(http)
     }
 
     pInternetSetStatusCallbackA = (void*)GetProcAddress(hdll, "InternetSetStatusCallbackA");
+    pInternetSetStatusCallbackW = (void*)GetProcAddress(hdll, "InternetSetStatusCallbackW");
+    pInternetGetSecurityInfoByURLA = (void*)GetProcAddress(hdll, "InternetGetSecurityInfoByURLA");
 
     init_status_tests();
     test_InternetCloseHandle();
     InternetReadFile_test(INTERNET_FLAG_ASYNC, &test_data[0]);
     InternetReadFile_test(INTERNET_FLAG_ASYNC, &test_data[1]);
     InternetReadFile_test(0, &test_data[1]);
-    first_connection_to_test_url = TRUE;
     InternetReadFile_test(INTERNET_FLAG_ASYNC, &test_data[2]);
+    test_security_flags();
     InternetReadFile_test(0, &test_data[2]);
     InternetReadFileExA_test(INTERNET_FLAG_ASYNC);
     test_open_url_async();
-    test_async_HttpSendRequestEx();
+    test_async_HttpSendRequestEx(&notification_data[0]);
+    test_async_HttpSendRequestEx(&notification_data[1]);
+    test_async_HttpSendRequestEx(&notification_data[2]);
+    test_async_HttpSendRequestEx(&notification_data[3]);
     InternetOpenRequest_test();
     test_http_cache();
+    InternetLockRequestFile_test();
     InternetOpenUrlA_test();
     HttpHeaders_test();
     test_http_connection();
@@ -3536,4 +5623,7 @@ START_TEST(http)
     InternetReadFile_chunked_test();
     HttpSendRequestEx_test();
     InternetReadFile_test(INTERNET_FLAG_ASYNC, &test_data[3]);
+    test_connection_failure();
+    test_default_service_port();
+    test_concurrent_header_access();
 }

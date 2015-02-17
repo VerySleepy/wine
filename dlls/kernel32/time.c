@@ -67,9 +67,9 @@ static const int MonthLengths[2][12] =
 	{ 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
 };
 
-static inline int IsLeapYear(int Year)
+static inline BOOL IsLeapYear(int Year)
 {
-	return Year % 4 == 0 && (Year % 100 != 0 || Year % 400 == 0) ? 1 : 0;
+    return Year % 4 == 0 && (Year % 100 != 0 || Year % 400 == 0);
 }
 
 /***********************************************************************
@@ -152,7 +152,7 @@ static int TIME_DayLightCompareDate( const SYSTEMTIME *date,
 static DWORD TIME_CompTimeZoneID ( const TIME_ZONE_INFORMATION *pTZinfo,
     FILETIME *lpFileTime, BOOL islocal )
 {
-    int ret;
+    int ret, year;
     BOOL beforeStandardDate, afterDaylightDate;
     DWORD retval = TIME_ZONE_ID_INVALID;
     LONGLONG llTime = 0; /* initialized to prevent gcc complaining */
@@ -177,20 +177,29 @@ static DWORD TIME_CompTimeZoneID ( const TIME_ZONE_INFORMATION *pTZinfo,
 
         if (!islocal) {
             FILETIME2LL( lpFileTime, llTime );
-            llTime -= ( pTZinfo->Bias + pTZinfo->DaylightBias )
-                * (LONGLONG)600000000;
+            llTime -= pTZinfo->Bias * (LONGLONG)600000000;
             LL2FILETIME( llTime, &ftTemp)
             lpFileTime = &ftTemp;
         }
 
         FileTimeToSystemTime(lpFileTime, &SysTime);
-        
-         /* check for daylight savings */
-        ret = TIME_DayLightCompareDate( &SysTime, &pTZinfo->StandardDate);
-        if (ret == -2)
-          return TIME_ZONE_ID_INVALID;
+        year = SysTime.wYear;
 
-        beforeStandardDate = ret < 0;
+        if (!islocal) {
+            llTime -= pTZinfo->DaylightBias * (LONGLONG)600000000;
+            LL2FILETIME( llTime, &ftTemp)
+            FileTimeToSystemTime(lpFileTime, &SysTime);
+        }
+
+        /* check for daylight savings */
+        if(year == SysTime.wYear) {
+            ret = TIME_DayLightCompareDate( &SysTime, &pTZinfo->StandardDate);
+            if (ret == -2)
+                return TIME_ZONE_ID_INVALID;
+
+            beforeStandardDate = ret < 0;
+        } else
+            beforeStandardDate = SysTime.wYear < year;
 
         if (!islocal) {
             llTime -= ( pTZinfo->StandardBias - pTZinfo->DaylightBias )
@@ -199,11 +208,14 @@ static DWORD TIME_CompTimeZoneID ( const TIME_ZONE_INFORMATION *pTZinfo,
             FileTimeToSystemTime(lpFileTime, &SysTime);
         }
 
-        ret = TIME_DayLightCompareDate( &SysTime, &pTZinfo->DaylightDate);
-        if (ret == -2)
-          return TIME_ZONE_ID_INVALID;
+        if(year == SysTime.wYear) {
+            ret = TIME_DayLightCompareDate( &SysTime, &pTZinfo->DaylightDate);
+            if (ret == -2)
+                return TIME_ZONE_ID_INVALID;
 
-        afterDaylightDate = ret >= 0;
+            afterDaylightDate = ret >= 0;
+        } else
+            afterDaylightDate = SysTime.wYear > year;
 
         retval = TIME_ZONE_ID_STANDARD;
         if( pTZinfo->DaylightDate.wMonth <  pTZinfo->StandardDate.wMonth ) {
@@ -602,7 +614,7 @@ BOOL WINAPI GetProcessTimes( HANDLE hprocess, LPFILETIME lpCreationTime,
 int WINAPI GetCalendarInfoA(LCID lcid, CALID Calendar, CALTYPE CalType,
 			    LPSTR lpCalData, int cchData, LPDWORD lpValue)
 {
-    int ret;
+    int ret, cchDataW = cchData;
     LPWSTR lpCalDataW = NULL;
 
     if (NLS_IsUnicodeOnlyLcid(lcid))
@@ -611,13 +623,14 @@ int WINAPI GetCalendarInfoA(LCID lcid, CALID Calendar, CALTYPE CalType,
       return 0;
     }
 
-    if (cchData &&
-        !(lpCalDataW = HeapAlloc(GetProcessHeap(), 0, cchData*sizeof(WCHAR))))
-      return 0;
+    if (!cchData && !(CalType & CAL_RETURN_NUMBER))
+        cchDataW = GetCalendarInfoW(lcid, Calendar, CalType, NULL, 0, NULL);
+    if (!(lpCalDataW = HeapAlloc(GetProcessHeap(), 0, cchDataW*sizeof(WCHAR))))
+        return 0;
 
-    ret = GetCalendarInfoW(lcid, Calendar, CalType, lpCalDataW, cchData, lpValue);
+    ret = GetCalendarInfoW(lcid, Calendar, CalType, lpCalDataW, cchDataW, lpValue);
     if(ret && lpCalDataW && lpCalData)
-      WideCharToMultiByte(CP_ACP, 0, lpCalDataW, cchData, lpCalData, cchData, NULL, NULL);
+        ret = WideCharToMultiByte(CP_ACP, 0, lpCalDataW, -1, lpCalData, cchData, NULL, NULL);
     else if (CalType & CAL_RETURN_NUMBER)
         ret *= sizeof(WCHAR);
     HeapFree(GetProcessHeap(), 0, lpCalDataW);
@@ -656,11 +669,14 @@ int WINAPI GetCalendarInfoW(LCID Locale, CALID Calendar, CALTYPE CalType,
      * for the CALTYPES not requiring GetLocaleInfoA */
     switch (CalType & ~(CAL_NOUSEROVERRIDE|CAL_RETURN_NUMBER|CAL_USE_CP_ACP)) {
 	case CAL_ICALINTVALUE:
-            FIXME("Unimplemented caltype %d\n", CalType & 0xffff);
-	    return 0;
+            if (CalType & CAL_RETURN_NUMBER)
+                return GetLocaleInfoW(Locale, LOCALE_RETURN_NUMBER | LOCALE_ICALENDARTYPE,
+                        (LPWSTR)lpValue, 2);
+            return GetLocaleInfoW(Locale, LOCALE_ICALENDARTYPE, lpCalData, cchData);
 	case CAL_SCALNAME:
             FIXME("Unimplemented caltype %d\n", CalType & 0xffff);
-	    return 0;
+            if (lpCalData) *lpCalData = 0;
+	    return 1;
 	case CAL_IYEAROFFSETRANGE:
             FIXME("Unimplemented caltype %d\n", CalType & 0xffff);
 	    return 0;
@@ -780,6 +796,18 @@ int WINAPI GetCalendarInfoW(LCID Locale, CALID Calendar, CALTYPE CalType,
             return 0;
     }
     return 0;
+}
+
+/*********************************************************************
+ *	GetCalendarInfoEx				(KERNEL32.@)
+ */
+int WINAPI GetCalendarInfoEx(LPCWSTR locale, CALID calendar, LPCWSTR lpReserved, CALTYPE caltype,
+    LPWSTR data, int len, DWORD *value)
+{
+    LCID lcid = LocaleNameToLCID(locale, 0);
+    FIXME("(%s, %d, %p, 0x%08x, %p, %d, %p): semi-stub\n", debugstr_w(locale), calendar, lpReserved, caltype,
+        data, len, value);
+    return GetCalendarInfoW(lcid, calendar, caltype, data, len, value);
 }
 
 /*********************************************************************
@@ -1065,4 +1093,25 @@ BOOL WINAPI GetSystemTimes(LPFILETIME lpIdleTime, LPFILETIME lpKernelTime, LPFIL
     FIXME("(%p,%p,%p): Stub!\n", lpIdleTime, lpKernelTime, lpUserTime);
 
     return FALSE;
+}
+
+/***********************************************************************
+ *           GetDynamicTimeZoneInformation   (KERNEL32.@)
+ */
+DWORD WINAPI GetDynamicTimeZoneInformation(PDYNAMIC_TIME_ZONE_INFORMATION info)
+{
+    FIXME("(%p) stub!\n", info);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return TIME_ZONE_ID_INVALID;
+}
+
+/***********************************************************************
+ *           QueryUnbiasedInterruptTime   (KERNEL32.@)
+ */
+BOOL WINAPI QueryUnbiasedInterruptTime(ULONGLONG *time)
+{
+    TRACE("(%p)\n", time);
+    if (!time) return FALSE;
+    RtlQueryUnbiasedInterruptTime(time);
+    return TRUE;
 }

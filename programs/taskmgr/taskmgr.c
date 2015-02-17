@@ -21,12 +21,11 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define WIN32_LEAN_AND_MEAN    /* Exclude rarely-used stuff from Windows headers */
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <windows.h>
 #include <commctrl.h>
-#include <stdlib.h>
-#include <memory.h>
-#include <stdio.h>
 #include <winnt.h>
 
 #include "wine/unicode.h"
@@ -1008,12 +1007,12 @@ TaskManagerWndProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
         return TRUE;
 
     case WM_SIZE:
-        /* Handle the window sizing in it's own function */
+        /* Handle the window sizing in its own function */
         OnSize(wParam, LOWORD(lParam), HIWORD(lParam));
         break;
 
     case WM_MOVE:
-        /* Handle the window moving in it's own function */
+        /* Handle the window moving in its own function */
         OnMove(wParam, LOWORD(lParam), HIWORD(lParam));
         break;
 
@@ -1102,6 +1101,5 @@ int APIENTRY WinMain(HINSTANCE hInstance,
  
     /* Save our settings to the registry */
     SaveSettings();
-    PerfDataUninitialize();
     return 0;
 }

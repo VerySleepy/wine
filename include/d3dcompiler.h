@@ -21,27 +21,54 @@
 
 #include "d3d11shader.h"
 
-#define D3DCOMPILE_DEBUG                          0x0001
-#define D3DCOMPILE_SKIP_VALIDATION                0x0002
-#define D3DCOMPILE_SKIP_OPTIMIZATION              0x0004
-#define D3DCOMPILE_PACK_MATRIX_ROW_MAJOR          0x0008
-#define D3DCOMPILE_PACK_MATRIX_COLUMN_MAJOR       0x0010
-#define D3DCOMPILE_PARTIAL_PRECISION              0x0020
-#define D3DCOMPILE_FORCE_VS_SOFTWARE_NO_OPT       0x0040
-#define D3DCOMPILE_FORCE_PS_SOFTWARE_NO_OPT       0x0080
-#define D3DCOMPILE_NO_PRESHADER                   0x0100
-#define D3DCOMPILE_AVOID_FLOW_CONTROL             0x0200
-#define D3DCOMPILE_PREFER_FLOW_CONTROL            0x0400
-#define D3DCOMPILE_ENABLE_STRICTNESS              0x0800
-#define D3DCOMPILE_ENABLE_BACKWARDS_COMPATIBILITY 0x1000
-#define D3DCOMPILE_IEEE_STRICTNESS                0x2000
-#define D3DCOMPILE_OPTIMIZATION_LEVEL0            0x4000
-#define D3DCOMPILE_OPTIMIZATION_LEVEL1            0x0000
-#define D3DCOMPILE_OPTIMIZATION_LEVEL2            0xC000
-#define D3DCOMPILE_OPTIMIZATION_LEVEL3            0x8000
-#define D3DCOMPILE_WARNINGS_ARE_ERRORS           0x40000
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#if defined(__GNUC__)
+#define D3DCOMPILER_DLL_W (const WCHAR[]){'d','3','d','c','o','m','p','i','l','e','r','_','4','3','.','d','l','l',0}
+#elif defined(_MSC_VER)
+#define D3DCOMPILER_DLL_W L"d3dcompiler_43.dll"
+#else
+static const WCHAR D3DCOMPILER_DLL_W[] = {'d','3','d','c','o','m','p','i','l','e','r','_','4','3','.','d','l','l',0};
+#endif
+
+#define D3DCOMPILER_DLL_A  "d3dcompiler_43.dll"
+#define D3DCOMPILER_DLL    WINELIB_NAME_AW(D3DCOMPILER_DLL_)
+
+#define D3DCOMPILE_DEBUG                            0x00000001
+#define D3DCOMPILE_SKIP_VALIDATION                  0x00000002
+#define D3DCOMPILE_SKIP_OPTIMIZATION                0x00000004
+#define D3DCOMPILE_PACK_MATRIX_ROW_MAJOR            0x00000008
+#define D3DCOMPILE_PACK_MATRIX_COLUMN_MAJOR         0x00000010
+#define D3DCOMPILE_PARTIAL_PRECISION                0x00000020
+#define D3DCOMPILE_FORCE_VS_SOFTWARE_NO_OPT         0x00000040
+#define D3DCOMPILE_FORCE_PS_SOFTWARE_NO_OPT         0x00000080
+#define D3DCOMPILE_NO_PRESHADER                     0x00000100
+#define D3DCOMPILE_AVOID_FLOW_CONTROL               0x00000200
+#define D3DCOMPILE_PREFER_FLOW_CONTROL              0x00000400
+#define D3DCOMPILE_ENABLE_STRICTNESS                0x00000800
+#define D3DCOMPILE_ENABLE_BACKWARDS_COMPATIBILITY   0x00001000
+#define D3DCOMPILE_IEEE_STRICTNESS                  0x00002000
+#define D3DCOMPILE_OPTIMIZATION_LEVEL0              0x00004000
+#define D3DCOMPILE_OPTIMIZATION_LEVEL1              0x00000000
+#define D3DCOMPILE_OPTIMIZATION_LEVEL2              0x0000c000
+#define D3DCOMPILE_OPTIMIZATION_LEVEL3              0x00008000
+#define D3DCOMPILE_RESERVED16                       0x00010000
+#define D3DCOMPILE_RESERVED17                       0x00020000
+#define D3DCOMPILE_WARNINGS_ARE_ERRORS              0x00040000
+#define D3DCOMPILE_RESOURCES_MAY_ALIAS              0x00080000
+
+#define D3D_DISASM_ENABLE_COLOR_CODE                0x00000001
+#define D3D_DISASM_ENABLE_DEFAULT_VALUE_PRINTS      0x00000002
+#define D3D_DISASM_ENABLE_INSTRUCTION_NUMBERING     0x00000004
+#define D3D_DISASM_ENABLE_INSTRUCTION_CYCLE         0x00000008
+#define D3D_DISASM_DISABLE_DEBUG_INFO               0x00000010
 
 HRESULT WINAPI D3DCompile(const void *data, SIZE_T data_size, const char *filename,
+        const D3D_SHADER_MACRO *defines, ID3DInclude *include, const char *entrypoint,
+        const char *target, UINT sflags, UINT eflags, ID3DBlob **shader, ID3DBlob **error_messages);
+typedef HRESULT (WINAPI *pD3DCompile)(const void *data, SIZE_T data_size, const char *filename,
         const D3D_SHADER_MACRO *defines, ID3DInclude *include, const char *entrypoint,
         const char *target, UINT sflags, UINT eflags, ID3DBlob **shader, ID3DBlob **error_messages);
 
@@ -71,6 +98,10 @@ typedef enum D3D_BLOB_PART
     D3D_BLOB_TEST_COMPILE_PERF
 } D3D_BLOB_PART;
 
+HRESULT WINAPI D3DDisassemble(const void *data, SIZE_T data_size,
+        UINT flags, const char *comments, ID3DBlob **disassembly);
+typedef HRESULT (WINAPI *pD3DDisassemble)(const void *data, SIZE_T data_size,
+        UINT flags, const char *comments, ID3DBlob **disassembly);
 HRESULT WINAPI D3DGetBlobPart(const void *data, SIZE_T data_size, D3D_BLOB_PART part, UINT flags, ID3DBlob **blob);
 HRESULT WINAPI D3DGetInputSignatureBlob(const void *data, SIZE_T data_size, ID3DBlob **blob);
 HRESULT WINAPI D3DGetOutputSignatureBlob(const void *data, SIZE_T data_size, ID3DBlob **blob);
@@ -84,5 +115,12 @@ HRESULT WINAPI D3DCreateBlob(SIZE_T data_size, ID3DBlob **blob);
 HRESULT WINAPI D3DPreprocess(const void *data, SIZE_T size, const char *filename,
         const D3D_SHADER_MACRO *defines, ID3DInclude *include,
         ID3DBlob **shader, ID3DBlob **error_messages);
+typedef HRESULT (WINAPI *pD3DPreprocess)(const void *data, SIZE_T size, const char *filename,
+        const D3D_SHADER_MACRO *defines, ID3DInclude *include,
+        ID3DBlob **shader, ID3DBlob **error_messages);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

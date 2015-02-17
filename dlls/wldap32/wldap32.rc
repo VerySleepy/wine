@@ -20,6 +20,8 @@
 
 #include "windef.h"
 
+#pragma makedep po
+
 LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 
 STRINGTABLE
@@ -112,7 +114,7 @@ STRINGTABLE
     85 "Timeout"
     86 "Auth Unknown"
     87 "Filter Error"
-    88 "User Cancelled"
+    88 "User Canceled"
     89 "Parameter Error"
     90 "No Memory"
     91 "Can't connect to the LDAP server"

@@ -140,7 +140,8 @@ BOOL nulldrv_PolyBezierTo( PHYSDEV dev, const POINT *points, DWORD count )
 BOOL nulldrv_PolyDraw( PHYSDEV dev, const POINT *points, const BYTE *types, DWORD count )
 {
     POINT *line_pts = NULL, *bzr_pts = NULL, bzr[4];
-    INT i, num_pts, num_bzr_pts, space, size;
+    DWORD i;
+    INT num_pts, num_bzr_pts, space, size;
 
     /* check for valid point types */
     for (i = 0; i < count; i++)
@@ -152,12 +153,11 @@ BOOL nulldrv_PolyDraw( PHYSDEV dev, const POINT *points, const BYTE *types, DWOR
         case PT_LINETO:
             break;
         case PT_BEZIERTO:
-            if((i + 2 < count) && (types[i + 1] == PT_BEZIERTO) &&
-               ((types[i + 2] & ~PT_CLOSEFIGURE) == PT_BEZIERTO))
-            {
-                i += 2;
-                break;
-            }
+            if (i + 2 >= count) return FALSE;
+            if (types[i + 1] != PT_BEZIERTO) return FALSE;
+            if ((types[i + 2] & ~PT_CLOSEFIGURE) != PT_BEZIERTO) return FALSE;
+            i += 2;
+            break;
         default:
             return FALSE;
         }
@@ -226,149 +226,6 @@ BOOL nulldrv_PolylineTo( PHYSDEV dev, const POINT *points, INT count )
     return ret;
 }
 
-BOOL nulldrv_GradientFill( PHYSDEV dev, TRIVERTEX *vert_array, ULONG nvert,
-                           void * grad_array, ULONG ngrad, ULONG mode )
-{
-    unsigned int i;
-
-    switch(mode)
-    {
-    case GRADIENT_FILL_RECT_H:
-        for(i = 0; i < ngrad; i++)
-        {
-            GRADIENT_RECT *rect = ((GRADIENT_RECT *)grad_array) + i;
-            TRIVERTEX *v1 = vert_array + rect->UpperLeft;
-            TRIVERTEX *v2 = vert_array + rect->LowerRight;
-            int y1 = v1->y < v2->y ? v1->y : v2->y;
-            int y2 = v2->y > v1->y ? v2->y : v1->y;
-            int x, dx;
-            if (v1->x > v2->x)
-            {
-                TRIVERTEX *t = v2;
-                v2 = v1;
-                v1 = t;
-            }
-            dx = v2->x - v1->x;
-            for (x = 0; x < dx; x++)
-            {
-                POINT pts[2];
-                HPEN hPen, hOldPen;
-
-                hPen = CreatePen( PS_SOLID, 1, RGB(
-                                      (v1->Red   * (dx - x) + v2->Red   * x) / dx >> 8,
-                                      (v1->Green * (dx - x) + v2->Green * x) / dx >> 8,
-                                      (v1->Blue  * (dx - x) + v2->Blue  * x) / dx >> 8));
-                hOldPen = SelectObject( dev->hdc, hPen );
-                pts[0].x = v1->x + x;
-                pts[0].y = y1;
-                pts[1].x = v1->x + x;
-                pts[1].y = y2;
-                Polyline( dev->hdc, &pts[0], 2 );
-                DeleteObject( SelectObject(dev->hdc, hOldPen ) );
-            }
-        }
-        break;
-    case GRADIENT_FILL_RECT_V:
-        for(i = 0; i < ngrad; i++)
-        {
-            GRADIENT_RECT *rect = ((GRADIENT_RECT *)grad_array) + i;
-            TRIVERTEX *v1 = vert_array + rect->UpperLeft;
-            TRIVERTEX *v2 = vert_array + rect->LowerRight;
-            int x1 = v1->x < v2->x ? v1->x : v2->x;
-            int x2 = v2->x > v1->x ? v2->x : v1->x;
-            int y, dy;
-            if (v1->y > v2->y)
-            {
-                TRIVERTEX *t = v2;
-                v2 = v1;
-                v1 = t;
-            }
-            dy = v2->y - v1->y;
-            for (y = 0; y < dy; y++)
-            {
-                POINT pts[2];
-                HPEN hPen, hOldPen;
-
-                hPen = CreatePen( PS_SOLID, 1, RGB(
-                                      (v1->Red   * (dy - y) + v2->Red   * y) / dy >> 8,
-                                      (v1->Green * (dy - y) + v2->Green * y) / dy >> 8,
-                                      (v1->Blue  * (dy - y) + v2->Blue  * y) / dy >> 8));
-                hOldPen = SelectObject( dev->hdc, hPen );
-                pts[0].x = x1;
-                pts[0].y = v1->y + y;
-                pts[1].x = x2;
-                pts[1].y = v1->y + y;
-                Polyline( dev->hdc, &pts[0], 2 );
-                DeleteObject( SelectObject(dev->hdc, hOldPen ) );
-            }
-        }
-        break;
-    case GRADIENT_FILL_TRIANGLE:
-        for (i = 0; i < ngrad; i++)
-        {
-            GRADIENT_TRIANGLE *tri = ((GRADIENT_TRIANGLE *)grad_array) + i;
-            TRIVERTEX *v1 = vert_array + tri->Vertex1;
-            TRIVERTEX *v2 = vert_array + tri->Vertex2;
-            TRIVERTEX *v3 = vert_array + tri->Vertex3;
-            int y, dy;
-
-            if (v1->y > v2->y)
-            { TRIVERTEX *t = v1; v1 = v2; v2 = t; }
-            if (v2->y > v3->y)
-            {
-                TRIVERTEX *t = v2; v2 = v3; v3 = t;
-                if (v1->y > v2->y)
-                { t = v1; v1 = v2; v2 = t; }
-            }
-            /* v1->y <= v2->y <= v3->y */
-
-            dy = v3->y - v1->y;
-            for (y = 0; y < dy; y++)
-            {
-                /* v1->y <= y < v3->y */
-                TRIVERTEX *v = y < (v2->y - v1->y) ? v1 : v3;
-                /* (v->y <= y < v2->y) || (v2->y <= y < v->y) */
-                int dy2 = v2->y - v->y;
-                int y2 = y + v1->y - v->y;
-
-                int x1 = (v3->x     * y  + v1->x     * (dy  - y )) / dy;
-                int x2 = (v2->x     * y2 + v-> x     * (dy2 - y2)) / dy2;
-                int r1 = (v3->Red   * y  + v1->Red   * (dy  - y )) / dy;
-                int r2 = (v2->Red   * y2 + v-> Red   * (dy2 - y2)) / dy2;
-                int g1 = (v3->Green * y  + v1->Green * (dy  - y )) / dy;
-                int g2 = (v2->Green * y2 + v-> Green * (dy2 - y2)) / dy2;
-                int b1 = (v3->Blue  * y  + v1->Blue  * (dy  - y )) / dy;
-                int b2 = (v2->Blue  * y2 + v-> Blue  * (dy2 - y2)) / dy2;
-
-                int x;
-                if (x1 < x2)
-                {
-                    int dx = x2 - x1;
-                    for (x = 0; x < dx; x++)
-                        SetPixel (dev->hdc, x + x1, y + v1->y, RGB(
-                                      (r1 * (dx - x) + r2 * x) / dx >> 8,
-                                      (g1 * (dx - x) + g2 * x) / dx >> 8,
-                                      (b1 * (dx - x) + b2 * x) / dx >> 8));
-                }
-                else
-                {
-                    int dx = x1 - x2;
-                    for (x = 0; x < dx; x++)
-                        SetPixel (dev->hdc, x + x2, y + v1->y, RGB(
-                                      (r2 * (dx - x) + r1 * x) / dx >> 8,
-                                      (g2 * (dx - x) + g1 * x) / dx >> 8,
-                                      (b2 * (dx - x) + b1 * x) / dx >> 8));
-                }
-            }
-        }
-        break;
-    default:
-        return FALSE;
-    }
-
-    return TRUE;
-}
-
 /***********************************************************************
  *           LineTo    (GDI32.@)
  */
@@ -425,16 +282,15 @@ BOOL WINAPI Arc( HDC hdc, INT left, INT top, INT right,
                      INT bottom, INT xstart, INT ystart,
                      INT xend, INT yend )
 {
-    BOOL ret = FALSE;
+    PHYSDEV physdev;
+    BOOL ret;
     DC * dc = get_dc_ptr( hdc );
 
-    if (dc)
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pArc );
-        update_dc( dc );
-        ret = physdev->funcs->pArc( physdev, left, top, right, bottom, xstart, ystart, xend, yend );
-        release_dc_ptr( dc );
-    }
+    if (!dc) return FALSE;
+    update_dc( dc );
+    physdev = GET_DC_PHYSDEV( dc, pArc );
+    ret = physdev->funcs->pArc( physdev, left, top, right, bottom, xstart, ystart, xend, yend );
+    release_dc_ptr( dc );
     return ret;
 }
 
@@ -539,16 +395,15 @@ BOOL WINAPI Ellipse( HDC hdc, INT left, INT top,
 BOOL WINAPI Rectangle( HDC hdc, INT left, INT top,
                            INT right, INT bottom )
 {
-    BOOL ret = FALSE;
+    PHYSDEV physdev;
+    BOOL ret;
     DC * dc = get_dc_ptr( hdc );
 
-    if (dc)
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pRectangle );
-        update_dc( dc );
-        ret = physdev->funcs->pRectangle( physdev, left, top, right, bottom );
-        release_dc_ptr( dc );
-    }
+    if (!dc) return FALSE;
+    update_dc( dc );
+    physdev = GET_DC_PHYSDEV( dc, pRectangle );
+    ret = physdev->funcs->pRectangle( physdev, left, top, right, bottom );
+    release_dc_ptr( dc );
     return ret;
 }
 
@@ -559,16 +414,15 @@ BOOL WINAPI Rectangle( HDC hdc, INT left, INT top,
 BOOL WINAPI RoundRect( HDC hdc, INT left, INT top, INT right,
                            INT bottom, INT ell_width, INT ell_height )
 {
-    BOOL ret = FALSE;
+    PHYSDEV physdev;
+    BOOL ret;
     DC *dc = get_dc_ptr( hdc );
 
-    if (dc)
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pRoundRect );
-        update_dc( dc );
-        ret = physdev->funcs->pRoundRect( physdev, left, top, right, bottom, ell_width, ell_height );
-        release_dc_ptr( dc );
-    }
+    if (!dc) return FALSE;
+    update_dc( dc );
+    physdev = GET_DC_PHYSDEV( dc, pRoundRect );
+    ret = physdev->funcs->pRoundRect( physdev, left, top, right, bottom, ell_width, ell_height );
+    release_dc_ptr( dc );
     return ret;
 }
 
@@ -577,16 +431,15 @@ BOOL WINAPI RoundRect( HDC hdc, INT left, INT top, INT right,
  */
 COLORREF WINAPI SetPixel( HDC hdc, INT x, INT y, COLORREF color )
 {
-    COLORREF ret = 0;
+    PHYSDEV physdev;
+    COLORREF ret;
     DC * dc = get_dc_ptr( hdc );
 
-    if (dc)
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pSetPixel );
-        update_dc( dc );
-        ret = physdev->funcs->pSetPixel( physdev, x, y, color );
-        release_dc_ptr( dc );
-    }
+    if (!dc) return 0;
+    update_dc( dc );
+    physdev = GET_DC_PHYSDEV( dc, pSetPixel );
+    ret = physdev->funcs->pSetPixel( physdev, x, y, color );
+    release_dc_ptr( dc );
     return ret;
 }
 
@@ -595,18 +448,15 @@ COLORREF WINAPI SetPixel( HDC hdc, INT x, INT y, COLORREF color )
  */
 BOOL WINAPI SetPixelV( HDC hdc, INT x, INT y, COLORREF color )
 {
-    BOOL ret = FALSE;
+    PHYSDEV physdev;
     DC * dc = get_dc_ptr( hdc );
 
-    if (dc)
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pSetPixel );
-        update_dc( dc );
-        physdev->funcs->pSetPixel( physdev, x, y, color );
-        ret = TRUE;
-        release_dc_ptr( dc );
-    }
-    return ret;
+    if (!dc) return FALSE;
+    update_dc( dc );
+    physdev = GET_DC_PHYSDEV( dc, pSetPixel );
+    physdev->funcs->pSetPixel( physdev, x, y, color );
+    release_dc_ptr( dc );
+    return TRUE;
 }
 
 /***********************************************************************
@@ -614,173 +464,61 @@ BOOL WINAPI SetPixelV( HDC hdc, INT x, INT y, COLORREF color )
  */
 COLORREF WINAPI GetPixel( HDC hdc, INT x, INT y )
 {
-    COLORREF ret = CLR_INVALID;
+    PHYSDEV physdev;
+    COLORREF ret;
     DC * dc = get_dc_ptr( hdc );
 
-    if (dc)
-    {
-        update_dc( dc );
-        /* FIXME: should this be in the graphics driver? */
-        if (PtVisible( hdc, x, y ))
-        {
-            PHYSDEV physdev = GET_DC_PHYSDEV( dc, pGetPixel );
-            ret = physdev->funcs->pGetPixel( physdev, x, y );
-        }
-        release_dc_ptr( dc );
-    }
+    if (!dc) return CLR_INVALID;
+    update_dc( dc );
+    physdev = GET_DC_PHYSDEV( dc, pGetPixel );
+    ret = physdev->funcs->pGetPixel( physdev, x, y );
+    release_dc_ptr( dc );
     return ret;
 }
 
 
 /******************************************************************************
- * ChoosePixelFormat [GDI32.@]
- * Matches a pixel format to given format
+ * GdiSetPixelFormat [GDI32.@]
  *
- * PARAMS
- *    hdc  [I] Device context to search for best pixel match
- *    ppfd [I] Pixel format for which a match is sought
- *
- * RETURNS
- *    Success: Pixel format index closest to given format
- *    Failure: 0
+ * Probably not the correct semantics, it's supposed to be an internal backend for SetPixelFormat.
  */
-INT WINAPI ChoosePixelFormat( HDC hdc, const PIXELFORMATDESCRIPTOR* ppfd )
+BOOL WINAPI GdiSetPixelFormat( HDC hdc, INT format, const PIXELFORMATDESCRIPTOR *descr )
 {
-    INT ret = 0;
-    DC * dc = get_dc_ptr( hdc );
+    DC *dc;
+    BOOL ret = TRUE;
 
-    TRACE("(%p,%p)\n",hdc,ppfd);
+    TRACE("(%p,%d,%p)\n", hdc, format, descr);
 
-    if (dc)
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pChoosePixelFormat );
-        ret = physdev->funcs->pChoosePixelFormat( physdev, ppfd );
-        release_dc_ptr( dc );
-    }
+    if (!(dc = get_dc_ptr( hdc ))) return FALSE;
+
+    if (!dc->pixel_format) dc->pixel_format = format;
+    else ret = (dc->pixel_format == format);
+    release_dc_ptr( dc );
     return ret;
 }
 
 
 /******************************************************************************
- * SetPixelFormat [GDI32.@]
- * Sets pixel format of device context
+ * GdiDescribePixelFormat [GDI32.@]
  *
- * PARAMS
- *    hdc          [I] Device context to search for best pixel match
- *    iPixelFormat [I] Pixel format index
- *    ppfd         [I] Pixel format for which a match is sought
- *
- * RETURNS
- *    Success: TRUE
- *    Failure: FALSE
+ * Probably not the correct semantics, it's supposed to be an internal backend for DescribePixelFormat.
  */
-BOOL WINAPI SetPixelFormat( HDC hdc, INT iPixelFormat,
-                            const PIXELFORMATDESCRIPTOR *ppfd)
+INT WINAPI GdiDescribePixelFormat( HDC hdc, INT format, UINT size, PIXELFORMATDESCRIPTOR *descr )
 {
-    INT bRet = FALSE;
-    DC * dc = get_dc_ptr( hdc );
-
-    TRACE("(%p,%d,%p)\n",hdc,iPixelFormat,ppfd);
-
-    if (dc)
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pSetPixelFormat );
-        update_dc( dc );
-        bRet = physdev->funcs->pSetPixelFormat( physdev, iPixelFormat, ppfd );
-        release_dc_ptr( dc );
-    }
-    return bRet;
+    FIXME( "(%p,%d,%d,%p): stub\n", hdc, format, size, descr );
+    return 0;
 }
 
 
 /******************************************************************************
- * GetPixelFormat [GDI32.@]
- * Gets index of pixel format of DC
+ * GdiSwapBuffers [GDI32.@]
  *
- * PARAMETERS
- *    hdc [I] Device context whose pixel format index is sought
- *
- * RETURNS
- *    Success: Currently selected pixel format
- *    Failure: 0
+ * Probably not the correct semantics, it's supposed to be an internal backend for SwapBuffers.
  */
-INT WINAPI GetPixelFormat( HDC hdc )
+BOOL WINAPI GdiSwapBuffers( HDC hdc )
 {
-    INT ret = 0;
-    DC * dc = get_dc_ptr( hdc );
-
-    TRACE("(%p)\n",hdc);
-
-    if (dc)
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pGetPixelFormat );
-        update_dc( dc );
-        ret = physdev->funcs->pGetPixelFormat( physdev );
-        release_dc_ptr( dc );
-    }
-    return ret;
-}
-
-
-/******************************************************************************
- * DescribePixelFormat [GDI32.@]
- * Gets info about pixel format from DC
- *
- * PARAMS
- *    hdc          [I] Device context
- *    iPixelFormat [I] Pixel format selector
- *    nBytes       [I] Size of buffer
- *    ppfd         [O] Pointer to structure to receive pixel format data
- *
- * RETURNS
- *    Success: Maximum pixel format index of the device context
- *    Failure: 0
- */
-INT WINAPI DescribePixelFormat( HDC hdc, INT iPixelFormat, UINT nBytes,
-                                LPPIXELFORMATDESCRIPTOR ppfd )
-{
-    INT ret = 0;
-    DC * dc = get_dc_ptr( hdc );
-
-    TRACE("(%p,%d,%d,%p): stub\n",hdc,iPixelFormat,nBytes,ppfd);
-
-    if (dc)
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pDescribePixelFormat );
-        update_dc( dc );
-        ret = physdev->funcs->pDescribePixelFormat( physdev, iPixelFormat, nBytes, ppfd );
-        release_dc_ptr( dc );
-    }
-    return ret;
-}
-
-
-/******************************************************************************
- * SwapBuffers [GDI32.@]
- * Exchanges front and back buffers of window
- *
- * PARAMS
- *    hdc [I] Device context whose buffers get swapped
- *
- * RETURNS
- *    Success: TRUE
- *    Failure: FALSE
- */
-BOOL WINAPI SwapBuffers( HDC hdc )
-{
-    INT bRet = FALSE;
-    DC * dc = get_dc_ptr( hdc );
-
-    TRACE("(%p)\n",hdc);
-
-    if (dc)
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pSwapBuffers );
-        update_dc( dc );
-        bRet = physdev->funcs->pSwapBuffers( physdev );
-        release_dc_ptr( dc );
-    }
-    return bRet;
+    FIXME( "(%p): stub\n", hdc );
+    return FALSE;
 }
 
 
@@ -789,16 +527,15 @@ BOOL WINAPI SwapBuffers( HDC hdc )
  */
 BOOL WINAPI PaintRgn( HDC hdc, HRGN hrgn )
 {
-    BOOL ret = FALSE;
+    PHYSDEV physdev;
+    BOOL ret;
     DC * dc = get_dc_ptr( hdc );
 
-    if (dc)
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pPaintRgn );
-        update_dc( dc );
-        ret = physdev->funcs->pPaintRgn( physdev, hrgn );
-        release_dc_ptr( dc );
-    }
+    if (!dc) return FALSE;
+    update_dc( dc );
+    physdev = GET_DC_PHYSDEV( dc, pPaintRgn );
+    ret = physdev->funcs->pPaintRgn( physdev, hrgn );
+    release_dc_ptr( dc );
     return ret;
 }
 
@@ -808,16 +545,15 @@ BOOL WINAPI PaintRgn( HDC hdc, HRGN hrgn )
  */
 BOOL WINAPI FillRgn( HDC hdc, HRGN hrgn, HBRUSH hbrush )
 {
-    BOOL retval = FALSE;
+    PHYSDEV physdev;
+    BOOL retval;
     DC * dc = get_dc_ptr( hdc );
 
-    if (dc)
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pFillRgn );
-        update_dc( dc );
-        retval = physdev->funcs->pFillRgn( physdev, hrgn, hbrush );
-        release_dc_ptr( dc );
-    }
+    if (!dc) return FALSE;
+    update_dc( dc );
+    physdev = GET_DC_PHYSDEV( dc, pFillRgn );
+    retval = physdev->funcs->pFillRgn( physdev, hrgn, hbrush );
+    release_dc_ptr( dc );
     return retval;
 }
 
@@ -828,16 +564,15 @@ BOOL WINAPI FillRgn( HDC hdc, HRGN hrgn, HBRUSH hbrush )
 BOOL WINAPI FrameRgn( HDC hdc, HRGN hrgn, HBRUSH hbrush,
                           INT nWidth, INT nHeight )
 {
-    BOOL ret = FALSE;
+    PHYSDEV physdev;
+    BOOL ret;
     DC *dc = get_dc_ptr( hdc );
 
-    if (dc)
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pFrameRgn );
-        update_dc( dc );
-        ret = physdev->funcs->pFrameRgn( physdev, hrgn, hbrush, nWidth, nHeight );
-        release_dc_ptr( dc );
-    }
+    if (!dc) return FALSE;
+    update_dc( dc );
+    physdev = GET_DC_PHYSDEV( dc, pFrameRgn );
+    ret = physdev->funcs->pFrameRgn( physdev, hrgn, hbrush, nWidth, nHeight );
+    release_dc_ptr( dc );
     return ret;
 }
 
@@ -847,16 +582,15 @@ BOOL WINAPI FrameRgn( HDC hdc, HRGN hrgn, HBRUSH hbrush,
  */
 BOOL WINAPI InvertRgn( HDC hdc, HRGN hrgn )
 {
-    BOOL ret = FALSE;
+    PHYSDEV physdev;
+    BOOL ret;
     DC *dc = get_dc_ptr( hdc );
 
-    if (dc)
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pInvertRgn );
-        update_dc( dc );
-        ret = physdev->funcs->pInvertRgn( physdev, hrgn );
-        release_dc_ptr( dc );
-    }
+    if (!dc) return FALSE;
+    update_dc( dc );
+    physdev = GET_DC_PHYSDEV( dc, pInvertRgn );
+    ret = physdev->funcs->pInvertRgn( physdev, hrgn );
+    release_dc_ptr( dc );
     return ret;
 }
 
@@ -866,16 +600,15 @@ BOOL WINAPI InvertRgn( HDC hdc, HRGN hrgn )
  */
 BOOL WINAPI Polyline( HDC hdc, const POINT* pt, INT count )
 {
-    BOOL ret = FALSE;
+    PHYSDEV physdev;
+    BOOL ret;
     DC * dc = get_dc_ptr( hdc );
 
-    if (dc)
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pPolyline );
-        update_dc( dc );
-        ret = physdev->funcs->pPolyline( physdev, pt, count );
-        release_dc_ptr( dc );
-    }
+    if (!dc) return FALSE;
+    update_dc( dc );
+    physdev = GET_DC_PHYSDEV( dc, pPolyline );
+    ret = physdev->funcs->pPolyline( physdev, pt, count );
+    release_dc_ptr( dc );
     return ret;
 }
 
@@ -909,16 +642,15 @@ BOOL WINAPI PolylineTo( HDC hdc, const POINT* pt, DWORD cCount )
  */
 BOOL WINAPI Polygon( HDC hdc, const POINT* pt, INT count )
 {
-    BOOL ret = FALSE;
+    PHYSDEV physdev;
+    BOOL ret;
     DC * dc = get_dc_ptr( hdc );
 
-    if (dc)
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pPolygon );
-        update_dc( dc );
-        ret = physdev->funcs->pPolygon( physdev, pt, count );
-        release_dc_ptr( dc );
-    }
+    if (!dc) return FALSE;
+    update_dc( dc );
+    physdev = GET_DC_PHYSDEV( dc, pPolygon );
+    ret = physdev->funcs->pPolygon( physdev, pt, count );
+    release_dc_ptr( dc );
     return ret;
 }
 
@@ -929,16 +661,15 @@ BOOL WINAPI Polygon( HDC hdc, const POINT* pt, INT count )
 BOOL WINAPI PolyPolygon( HDC hdc, const POINT* pt, const INT* counts,
                              UINT polygons )
 {
-    BOOL ret = FALSE;
+    PHYSDEV physdev;
+    BOOL ret;
     DC * dc = get_dc_ptr( hdc );
 
-    if (dc)
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pPolyPolygon );
-        update_dc( dc );
-        ret = physdev->funcs->pPolyPolygon( physdev, pt, counts, polygons );
-        release_dc_ptr( dc );
-    }
+    if (!dc) return FALSE;
+    update_dc( dc );
+    physdev = GET_DC_PHYSDEV( dc, pPolyPolygon );
+    ret = physdev->funcs->pPolyPolygon( physdev, pt, counts, polygons );
+    release_dc_ptr( dc );
     return ret;
 }
 
@@ -948,16 +679,15 @@ BOOL WINAPI PolyPolygon( HDC hdc, const POINT* pt, const INT* counts,
 BOOL WINAPI PolyPolyline( HDC hdc, const POINT* pt, const DWORD* counts,
                             DWORD polylines )
 {
-    BOOL ret = FALSE;
+    PHYSDEV physdev;
+    BOOL ret;
     DC * dc = get_dc_ptr( hdc );
 
-    if (dc)
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pPolyPolyline );
-        update_dc( dc );
-        ret = physdev->funcs->pPolyPolyline( physdev, pt, counts, polylines );
-        release_dc_ptr( dc );
-    }
+    if (!dc) return FALSE;
+    update_dc( dc );
+    physdev = GET_DC_PHYSDEV( dc, pPolyPolyline );
+    ret = physdev->funcs->pPolyPolyline( physdev, pt, counts, polylines );
+    release_dc_ptr( dc );
     return ret;
 }
 
@@ -967,17 +697,15 @@ BOOL WINAPI PolyPolyline( HDC hdc, const POINT* pt, const DWORD* counts,
 BOOL WINAPI ExtFloodFill( HDC hdc, INT x, INT y, COLORREF color,
                               UINT fillType )
 {
-    BOOL ret = FALSE;
+    PHYSDEV physdev;
+    BOOL ret;
     DC * dc = get_dc_ptr( hdc );
 
-    if (dc)
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pExtFloodFill );
-
-        update_dc( dc );
-        ret = physdev->funcs->pExtFloodFill( physdev, x, y, color, fillType );
-        release_dc_ptr( dc );
-    }
+    if (!dc) return FALSE;
+    update_dc( dc );
+    physdev = GET_DC_PHYSDEV( dc, pExtFloodFill );
+    ret = physdev->funcs->pExtFloodFill( physdev, x, y, color, fillType );
+    release_dc_ptr( dc );
     return ret;
 }
 
@@ -1360,20 +1088,30 @@ POINT *GDI_Bezier( const POINT *Points, INT count, INT *nPtsOut )
 
 /******************************************************************************
  *           GdiGradientFill   (GDI32.@)
- *
- *  FIXME: we don't support the Alpha channel properly
  */
 BOOL WINAPI GdiGradientFill( HDC hdc, TRIVERTEX *vert_array, ULONG nvert,
-                          void * grad_array, ULONG ngrad, ULONG mode )
+                             void *grad_array, ULONG ngrad, ULONG mode )
 {
-    DC *dc = get_dc_ptr( hdc );
+    DC *dc;
     PHYSDEV physdev;
     BOOL ret;
+    ULONG i;
 
     TRACE("%p vert_array:%p nvert:%d grad_array:%p ngrad:%d\n", hdc, vert_array, nvert, grad_array, ngrad);
 
-    if (!dc) return FALSE;
+    if (!vert_array || !nvert || !grad_array || !ngrad || mode > GRADIENT_FILL_TRIANGLE)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    for (i = 0; i < ngrad * (mode == GRADIENT_FILL_TRIANGLE ? 3 : 2); i++)
+        if (((ULONG *)grad_array)[i] >= nvert) return FALSE;
 
+    if (!(dc = get_dc_ptr( hdc )))
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
     update_dc( dc );
     physdev = GET_DC_PHYSDEV( dc, pGradientFill );
     ret = physdev->funcs->pGradientFill( physdev, vert_array, nvert, grad_array, ngrad, mode );

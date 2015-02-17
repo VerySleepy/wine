@@ -2,6 +2,7 @@
  * Implementation of IShellBrowser interface
  *
  * Copyright 2011 Piotr Caban for CodeWeavers
+ * Copyright 2012 Jacek Caban for CodeWeavers
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,52 +19,47 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "ieframe.h"
+#include <assert.h>
 
-#include "shdeprecated.h"
-#include "docobjectservice.h"
+#include "ieframe.h"
+#include "exdispid.h"
 
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(ieframe);
-
-typedef struct {
-    IShellBrowser IShellBrowser_iface;
-    IBrowserService IBrowserService_iface;
-    IDocObjectService IDocObjectService_iface;
-
-    LONG ref;
-} ShellBrowser;
 
 static inline ShellBrowser *impl_from_IShellBrowser(IShellBrowser *iface)
 {
     return CONTAINING_RECORD(iface, ShellBrowser, IShellBrowser_iface);
 }
 
-static HRESULT WINAPI ShellBrowser_QueryInterface(
-        IShellBrowser* iface,
-        REFIID riid,
-        void **ppvObject)
+static HRESULT WINAPI ShellBrowser_QueryInterface(IShellBrowser* iface, REFIID riid, void **ppv)
 {
     ShellBrowser *This = impl_from_IShellBrowser(iface);
-    *ppvObject = NULL;
 
-    if(IsEqualGUID(&IID_IShellBrowser, riid) || IsEqualGUID(&IID_IOleWindow, riid)
-        || IsEqualGUID(&IID_IUnknown, riid))
-        *ppvObject = &This->IShellBrowser_iface;
-    else if(IsEqualGUID(&IID_IBrowserService, riid))
-        *ppvObject = &This->IBrowserService_iface;
-    else if(IsEqualGUID(&IID_IDocObjectService, riid))
-        *ppvObject = &This->IDocObjectService_iface;
-
-    if(*ppvObject) {
-        TRACE("%p %s %p\n", This, debugstr_guid(riid), ppvObject);
-        IUnknown_AddRef((IUnknown*)*ppvObject);
-        return S_OK;
+    if(IsEqualGUID(&IID_IUnknown, riid)) {
+        TRACE("(%p)->(IID_IUnknown %p)\n", This, ppv);
+        *ppv = &This->IShellBrowser_iface;
+    }else if(IsEqualGUID(&IID_IOleWindow, riid)) {
+        TRACE("(%p)->(IID_IOleWindow %p)\n", This, ppv);
+        *ppv = &This->IShellBrowser_iface;
+    }else if(IsEqualGUID(&IID_IShellBrowser, riid)) {
+        TRACE("(%p)->(IID_IShellBrowser %p)\n", This, ppv);
+        *ppv = &This->IShellBrowser_iface;
+    }else if(IsEqualGUID(&IID_IBrowserService, riid)) {
+        TRACE("(%p)->(IID_IBrowserService %p)\n", This, ppv);
+        *ppv = &This->IBrowserService_iface;
+    }else if(IsEqualGUID(&IID_IDocObjectService, riid)) {
+        TRACE("(%p)->(IID_IDocObjectService %p)\n", This, ppv);
+        *ppv = &This->IDocObjectService_iface;
+    }else {
+        FIXME("%p %s %p\n", This, debugstr_guid(riid), ppv);
+        *ppv = NULL;
+        return E_NOINTERFACE;
     }
 
-    FIXME("%p %s %p\n", This, debugstr_guid(riid), ppvObject);
-    return E_NOINTERFACE;
+    IUnknown_AddRef((IUnknown*)*ppv);
+    return S_OK;
 }
 
 static ULONG WINAPI ShellBrowser_AddRef(
@@ -77,16 +73,18 @@ static ULONG WINAPI ShellBrowser_AddRef(
     return ref;
 }
 
-static ULONG WINAPI ShellBrowser_Release(
-        IShellBrowser* iface)
+static ULONG WINAPI ShellBrowser_Release(IShellBrowser* iface)
 {
     ShellBrowser *This = impl_from_IShellBrowser(iface);
     LONG ref = InterlockedDecrement(&This->ref);
 
     TRACE("(%p) ref=%d\n", This, ref);
 
-    if(!ref)
+    if(!ref) {
+        assert(!This->doc_host);
         heap_free(This);
+    }
+
     return ref;
 }
 
@@ -653,10 +651,79 @@ static HRESULT WINAPI DocObjectService_FireBeforeNavigate2(
         BOOL *pfCancel)
 {
     ShellBrowser *This = impl_from_IDocObjectService(iface);
-    FIXME("%p %p %s %x %s %p %d %s %d %p\n", This, pDispatch, debugstr_w(lpszUrl),
+    VARIANT var_url, var_flags, var_frame_name, var_post_data, var_post_data2, var_headers;
+    VARIANTARG params[7];
+    DISPPARAMS dp = {params, NULL, 7, 0};
+    VARIANT_BOOL cancel = VARIANT_FALSE;
+    SAFEARRAY *post_data;
+
+    TRACE("%p %p %s %x %s %p %d %s %d %p\n", This, pDispatch, debugstr_w(lpszUrl),
             dwFlags, debugstr_w(lpszFrameName), pPostData, cbPostData,
             debugstr_w(lpszHeaders), fPlayNavSound, pfCancel);
-    return E_NOTIMPL;
+
+    if(cbPostData) {
+        post_data = SafeArrayCreateVector(VT_UI1, 0, cbPostData);
+        if(!post_data)
+            return E_OUTOFMEMORY;
+        memcpy(post_data->pvData, pPostData, cbPostData);
+    }else {
+        post_data = NULL;
+    }
+
+    V_VT(params) = VT_BOOL|VT_BYREF;
+    V_BOOLREF(params) = &cancel;
+
+    V_VT(params+1) = (VT_BYREF|VT_VARIANT);
+    V_VARIANTREF(params+1) = &var_headers;
+    V_VT(&var_headers) = VT_BSTR;
+    V_BSTR(&var_headers) = lpszHeaders ? SysAllocString(lpszHeaders) : NULL;
+
+    V_VT(params+2) = (VT_BYREF|VT_VARIANT);
+    V_VARIANTREF(params+2) = &var_post_data2;
+    V_VT(&var_post_data2) = (VT_BYREF|VT_VARIANT);
+    V_VARIANTREF(&var_post_data2) = &var_post_data;
+
+    if(post_data) {
+        V_VT(&var_post_data) = VT_UI1|VT_ARRAY;
+        V_ARRAY(&var_post_data) = post_data;
+    }else {
+        V_VT(&var_post_data) = VT_EMPTY;
+    }
+
+    V_VT(params+3) = (VT_BYREF|VT_VARIANT);
+    V_VARIANTREF(params+3) = &var_frame_name;
+    V_VT(&var_frame_name) = VT_BSTR;
+    V_BSTR(&var_frame_name) = lpszFrameName ? SysAllocString(lpszFrameName) : NULL;
+
+    V_VT(params+4) = (VT_BYREF|VT_VARIANT);
+    V_VARIANTREF(params+4) = &var_flags;
+    V_VT(&var_flags) = VT_I4;
+    V_I4(&var_flags) = 0;
+
+    V_VT(params+5) = (VT_BYREF|VT_VARIANT);
+    V_VARIANTREF(params+5) = &var_url;
+    V_VT(&var_url) = VT_BSTR;
+    V_BSTR(&var_url) = SysAllocString(lpszUrl);
+
+    V_VT(params+6) = (VT_DISPATCH);
+    V_DISPATCH(params+6) = (IDispatch*)This->doc_host->wb;
+
+    /* Keep reference to This. It may be released in event handler. */
+    IShellBrowser_AddRef(&This->IShellBrowser_iface);
+
+    TRACE(">>>\n");
+    call_sink(This->doc_host->cps.wbe2, DISPID_BEFORENAVIGATE2, &dp);
+    TRACE("<<<\n");
+
+    IShellBrowser_Release(&This->IShellBrowser_iface);
+
+    SysFreeString(V_BSTR(&var_url));
+    SysFreeString(V_BSTR(&var_headers));
+    SysFreeString(V_BSTR(&var_frame_name));
+    SafeArrayDestroy(post_data);
+
+    *pfCancel = !!cancel;
+    return S_OK;
 }
 
 static HRESULT WINAPI DocObjectService_FireNavigateComplete2(
@@ -665,8 +732,55 @@ static HRESULT WINAPI DocObjectService_FireNavigateComplete2(
         DWORD dwFlags)
 {
     ShellBrowser *This = impl_from_IDocObjectService(iface);
-    FIXME("%p %p %x\n", This, pHTMLWindow2, dwFlags);
-    return E_NOTIMPL;
+    DocHost *doc_host = This->doc_host;
+    IHTMLPrivateWindow *priv_window;
+    VARIANTARG params[2];
+    DISPPARAMS dp = {params, NULL, 2, 0};
+    VARIANT url_var;
+    BSTR url;
+    HRESULT hres;
+
+    TRACE("%p %p %x\n", This, pHTMLWindow2, dwFlags);
+
+    if(doc_host->travellog.loading_pos != -1) {
+        WARN("histupdate not notified\n");
+        doc_host->travellog.position = doc_host->travellog.loading_pos;
+        doc_host->travellog.loading_pos = -1;
+    }
+
+    hres = IHTMLWindow2_QueryInterface(pHTMLWindow2, &IID_IHTMLPrivateWindow, (void**)&priv_window);
+    if(FAILED(hres))
+        return hres;
+
+    hres = IHTMLPrivateWindow_GetAddressBarUrl(priv_window, &url);
+    IHTMLPrivateWindow_Release(priv_window);
+    if(FAILED(hres))
+        return hres;
+
+    TRACE("got URL %s\n", debugstr_w(url));
+    set_dochost_url(This->doc_host, url);
+
+    V_VT(params) = (VT_BYREF|VT_VARIANT);
+    V_VARIANTREF(params) = &url_var;
+
+    V_VT(params+1) = VT_DISPATCH;
+    V_DISPATCH(params+1) = (IDispatch*)doc_host->wb;
+
+    V_VT(&url_var) = VT_BSTR;
+    V_BSTR(&url_var) = url;
+
+    /* Keep reference to This. It may be released in event handler. */
+    IShellBrowser_AddRef(&This->IShellBrowser_iface);
+
+    TRACE(">>>\n");
+    call_sink(This->doc_host->cps.wbe2, DISPID_NAVIGATECOMPLETE2, &dp);
+    TRACE("<<<\n");
+
+    SysFreeString(url);
+
+    This->doc_host->busy = VARIANT_FALSE;
+    IShellBrowser_Release(&This->IShellBrowser_iface);
+    return S_OK;
 }
 
 static HRESULT WINAPI DocObjectService_FireDownloadBegin(
@@ -691,8 +805,48 @@ static HRESULT WINAPI DocObjectService_FireDocumentComplete(
         DWORD dwFlags)
 {
     ShellBrowser *This = impl_from_IDocObjectService(iface);
-    FIXME("%p %p %x\n", This, pHTMLWindow, dwFlags);
-    return E_NOTIMPL;
+    IHTMLPrivateWindow *priv_window;
+    VARIANTARG params[2];
+    DISPPARAMS dp = {params, NULL, 2, 0};
+    VARIANT url_var;
+    BSTR url;
+    HRESULT hres;
+
+    TRACE("%p %p %x\n", This, pHTMLWindow, dwFlags);
+
+    hres = IHTMLWindow2_QueryInterface(pHTMLWindow, &IID_IHTMLPrivateWindow, (void**)&priv_window);
+    if(FAILED(hres))
+        return hres;
+
+    hres = IHTMLPrivateWindow_GetAddressBarUrl(priv_window, &url);
+    IHTMLPrivateWindow_Release(priv_window);
+    if(FAILED(hres))
+        return hres;
+
+    TRACE("got URL %s\n", debugstr_w(url));
+
+    V_VT(params) = (VT_BYREF|VT_VARIANT);
+    V_VARIANTREF(params) = &url_var;
+
+    V_VT(params+1) = VT_DISPATCH;
+    V_DISPATCH(params+1) = (IDispatch*)This->doc_host->wb;
+
+    V_VT(&url_var) = VT_BSTR;
+    V_BSTR(&url_var) = url;
+
+    /* Keep reference to This. It may be released in event handler. */
+    IShellBrowser_AddRef(&This->IShellBrowser_iface);
+
+    TRACE(">>>\n");
+    call_sink(This->doc_host->cps.wbe2, DISPID_DOCUMENTCOMPLETE, &dp);
+    TRACE("<<<\n");
+
+    SysFreeString(url);
+    if(This->doc_host)
+        This->doc_host->busy = VARIANT_FALSE;
+
+    IShellBrowser_Release(&This->IShellBrowser_iface);
+    return S_OK;
 }
 
 static HRESULT WINAPI DocObjectService_UpdateDesktopComponent(
@@ -759,7 +913,7 @@ static const IDocObjectServiceVtbl DocObjectServiceVtbl = {
     DocObjectService_IsErrorUrl
 };
 
-HRESULT ShellBrowser_Create(IShellBrowser **ppv)
+HRESULT create_browser_service(DocHost *doc_host, ShellBrowser **ret)
 {
     ShellBrowser *sb;
 
@@ -772,7 +926,80 @@ HRESULT ShellBrowser_Create(IShellBrowser **ppv)
     sb->IDocObjectService_iface.lpVtbl = &DocObjectServiceVtbl;
 
     sb->ref = 1;
+    sb->doc_host = doc_host;
 
-    *ppv = &sb->IShellBrowser_iface;
+    *ret = sb;
     return S_OK;
+}
+
+void detach_browser_service(ShellBrowser *sb)
+{
+    sb->doc_host = NULL;
+    IShellBrowser_Release(&sb->IShellBrowser_iface);
+}
+
+static inline NewWindowManager *impl_from_INewWindowManager(INewWindowManager *iface)
+{
+    return CONTAINING_RECORD(iface, NewWindowManager, INewWindowManager_iface);
+}
+
+static HRESULT WINAPI NewWindowManager_QueryInterface(INewWindowManager *iface, REFIID riid, void **ppv)
+{
+    NewWindowManager *This = impl_from_INewWindowManager(iface);
+
+    if(IsEqualGUID(&IID_IUnknown, riid)) {
+        TRACE("(%p)->(IID_IUnknown %p)\n", This, ppv);
+        *ppv = &This->INewWindowManager_iface;
+    }else if(IsEqualGUID(&IID_INewWindowManager, riid)) {
+        TRACE("(%p)->(IID_INewWindowManager %p)\n", This, ppv);
+        *ppv = &This->INewWindowManager_iface;
+    }else {
+        WARN("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppv);
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown*)*ppv);
+    return S_OK;
+}
+
+static ULONG WINAPI NewWindowManager_AddRef(INewWindowManager *iface)
+{
+    NewWindowManager *This = impl_from_INewWindowManager(iface);
+
+    TRACE("(%p)\n", This);
+
+    return IOleClientSite_AddRef(&This->doc_host->IOleClientSite_iface);
+}
+
+static ULONG WINAPI NewWindowManager_Release(INewWindowManager *iface)
+{
+    NewWindowManager *This = impl_from_INewWindowManager(iface);
+
+    TRACE("(%p)\n", This);
+
+    return IOleClientSite_Release(&This->doc_host->IOleClientSite_iface);
+}
+
+static HRESULT WINAPI NewWindowManager_EvaluateNewWindow(INewWindowManager *iface, LPCWSTR pszUrl,
+        LPCWSTR pszName, LPCWSTR pszUrlContext, LPCWSTR pszFeatures, BOOL fReplace, DWORD dwFlags,
+        DWORD dwUserActionTime)
+{
+    NewWindowManager *This = impl_from_INewWindowManager(iface);
+    FIXME("(%p)->(%s %s %s %s %x %x %d)\n", This, debugstr_w(pszUrl), debugstr_w(pszName), debugstr_w(pszUrlContext),
+          debugstr_w(pszFeatures), fReplace, dwFlags, dwUserActionTime);
+    return S_OK;
+}
+
+static const INewWindowManagerVtbl NewWindowManagerVtbl = {
+    NewWindowManager_QueryInterface,
+    NewWindowManager_AddRef,
+    NewWindowManager_Release,
+    NewWindowManager_EvaluateNewWindow
+};
+
+void NewWindowManager_Init(DocHost *doc_host)
+{
+    doc_host->nwm.INewWindowManager_iface.lpVtbl = &NewWindowManagerVtbl;
+    doc_host->nwm.doc_host = doc_host;
 }

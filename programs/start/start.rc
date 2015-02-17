@@ -20,6 +20,8 @@
 
 #include "resources.h"
 
+#pragma makedep po
+
 LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 
 STRINGTABLE
@@ -30,38 +32,24 @@ start [options] program_filename [...]\n\
 start [options] document_filename\n\
 \n\
 Options:\n\
-/M[inimized] Start the program minimized.\n\
-/MAX[imized] Start the program maximized.\n\
-/R[estored]  Start the program normally (neither minimized nor maximized).\n\
-/W[ait]      Wait for started program to finish, then exit with its exit code.\n\
-/Unix        Use a Unix filename and start the file like windows explorer.\n\
-/ProgIDOpen  Open a document using the following progID.\n\
-/L           Show end-user license.\n\
-/?           Display this help and exit.\n\
-\n\
-start.exe version 0.2 Copyright (C) 2003, Dan Kegel\n\
-Start comes with ABSOLUTELY NO WARRANTY; for details run with /L option.\n\
-This is free software, and you are welcome to redistribute it\n\
-under certain conditions; run 'start /L' for details.\n\
-"
-
-STRING_LICENSE, "start.exe version 0.2 Copyright (C) 2003, Dan Kegel\n\
-This program is free software; you can redistribute it and/or\n\
-modify it under the terms of the GNU Lesser Public License\n\
-as published by the Free Software Foundation; either version 2.1\n\
-of the License, or (at your option) any later version.\n\
-\n\
-This program is distributed in the hope that it will be useful,\n\
-but WITHOUT ANY WARRANTY; without even the implied warranty of\n\
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n\
-GNU Lesser Public License for more details.\n\
-\n\
-You should have received a copy of the GNU Lesser Public License\n\
-along with this program; if not, write to the Free Software\n\
-Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.\n\
-\n\
-See the COPYING.LIB file for license information.\n\
-"
+\"title\"      Specifies the title of the child windows.\n\
+/d directory Start the program in the specified directory.\n\
+/b           Don't create a new console for the program.\n\
+/i           Start the program with fresh environment variables.\n\
+/min         Start the program minimized.\n\
+/max         Start the program maximized.\n\
+/low         Start the program in the idle priority class.\n\
+/normal      Start the program in the normal priority class.\n\
+/high        Start the program in the high priority class.\n\
+/realtime    Start the program in the realtime priority class.\n\
+/abovenormal Start the program in the abovenormal priority class.\n\
+/belownormal Start the program in the belownormal priority class.\n\
+/node n      Start the program on the specified NUMA node.\n\
+/affinity mask Start the program with the specified affinity mask.\n\
+/wait        Wait for the started program to finish, then exit with its exit code.\n\
+/unix        Use a Unix filename and start the file like windows explorer.\n\
+/ProgIDOpen  Open a document using the specified progID.\n\
+/?           Display this help and exit.\n"
 
 STRING_EXECFAIL, "Application could not be started, or no application associated with the specified file.\nShellExecuteEx failed"
 

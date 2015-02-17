@@ -262,6 +262,8 @@ static void winstation_init(void)
         if (handle) SetThreadDesktop( handle );
     }
     HeapFree( GetProcessHeap(), 0, buffer );
+
+    register_desktop_class();
 }
 
 
@@ -277,12 +279,6 @@ static BOOL process_attach(void)
 
     /* Setup palette function pointers */
     palette_init();
-
-    /* Initialize built-in window classes */
-    CLASS_RegisterBuiltinClasses();
-
-    /* Initialize message spying */
-    if (!SPY_Init()) return FALSE;
 
     return TRUE;
 }
@@ -312,6 +308,8 @@ static void thread_detach(void)
     if (thread_info->msg_window) WIN_DestroyThreadWindows( thread_info->msg_window );
     CloseHandle( thread_info->server_queue );
     HeapFree( GetProcessHeap(), 0, thread_info->wmchar_data );
+    HeapFree( GetProcessHeap(), 0, thread_info->key_state );
+    HeapFree( GetProcessHeap(), 0, thread_info->rawinput );
 
     exiting_thread_id = 0;
 }
@@ -324,18 +322,25 @@ static void thread_detach(void)
  */
 BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
 {
+    static const WCHAR imm32_dllW[] = {'i','m','m','3','2','.','d','l','l',0};
+    static HMODULE imm32_module;
     BOOL ret = TRUE;
+
     switch(reason)
     {
     case DLL_PROCESS_ATTACH:
         user32_module = inst;
         ret = process_attach();
+        if(ret)
+            imm32_module = LoadLibraryW(imm32_dllW);
         break;
     case DLL_THREAD_DETACH:
         thread_detach();
         break;
     case DLL_PROCESS_DETACH:
         USER_unload_driver();
+        FreeLibrary(imm32_module);
+        DeleteCriticalSection(&user_section);
         break;
     }
     return ret;

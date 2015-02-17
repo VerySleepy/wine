@@ -81,11 +81,20 @@ static BOOL fill_sym_lvalue(const SYMBOL_INFO* sym, ULONG_PTR base,
     else if (sym->Flags & SYMFLAG_REGREL)
     {
         DWORD_PTR* pval;
+        size_t  l;
 
+        *buffer++ = '['; sz--;
         if (!memory_get_register(sym->Register, &pval, buffer, sz))
             return FALSE;
+        l = strlen(buffer);
+        sz -= l;
+        buffer += l;
         lvalue->cookie = DLV_TARGET;
         lvalue->addr.Offset = (ULONG64)*pval + sym->Address;
+        if ((LONG_PTR)sym->Address >= 0)
+            snprintf(buffer, sz, "+%ld]", (ULONG_PTR)sym->Address);
+        else
+            snprintf(buffer, sz, "-%ld]", -(LONG_PTR)sym->Address);
     }
     else if (sym->Flags & SYMFLAG_VALUEPRESENT)
     {
@@ -633,7 +642,8 @@ BOOL symbol_get_line(const char* filename, const char* name,
     struct sgv_data     sgv;
     char                buffer[512];
     DWORD               opt, disp;
-    unsigned            i, found = FALSE;
+    unsigned            i;
+    BOOL                found = FALSE;
     IMAGEHLP_LINE64     il;
 
     sgv.num        = 0;
@@ -711,7 +721,7 @@ void symbol_print_local(const SYMBOL_INFO* sym, DWORD_PTR base, BOOL detailed)
     {
         print_value(&lvalue, 0, 1);
         if (detailed)
-            dbg_printf(" (%s%s)",
+            dbg_printf(" (%s %s)",
                        (sym->Flags & SYMFLAG_PARAMETER) ? "parameter" : "local",
                        buffer);
     }
@@ -740,7 +750,7 @@ static BOOL CALLBACK info_locals_cb(PSYMBOL_INFO sym, ULONG size, PVOID ctx)
     return TRUE;
 }
 
-int symbol_info_locals(void)
+BOOL symbol_info_locals(void)
 {
     IMAGEHLP_STACK_FRAME        ihsf;
     ADDRESS64                   addr;

@@ -1,7 +1,5 @@
-DEFS      = -D__WINESRC__ $(EXTRADEFS)
-
 PROGRAMS = winebuild$(EXEEXT)
-MANPAGE  = winebuild.man
+MANPAGES = winebuild.man.in
 
 C_SRCS = \
 	import.c \
@@ -14,16 +12,14 @@ C_SRCS = \
 	spec32.c \
 	utils.c
 
-INSTALLDIRS = $(DESTDIR)$(bindir) $(DESTDIR)$(mandir)/man$(prog_manext)
-
-all: $(PROGRAMS)
-
-@MAKE_RULES@
+OBJS = $(C_SRCS:.c=.o)
 
 winebuild$(EXEEXT): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LIBPORT) $(LDFLAGS)
 
-install install-dev:: $(PROGRAMS) $(DESTDIR)$(bindir)
+.PHONY: install install-dev uninstall
+
+install install-dev:: $(PROGRAMS) install-man-pages
 	$(INSTALL_PROGRAM) winebuild$(EXEEXT) $(DESTDIR)$(bindir)/winebuild$(EXEEXT)
 
 uninstall::

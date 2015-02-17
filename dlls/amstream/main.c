@@ -3,9 +3,6 @@
  *
  * Copyright 2004 Christian Costa
  *
- * This file contains the (internal) driver registration functions,
- * driver enumeration APIs and DirectDraw creation functions.
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -52,8 +49,6 @@ BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpv)
             instance = hInstDLL;
             DisableThreadLibraryCalls(hInstDLL);
 	    break;
-	case DLL_PROCESS_DETACH:
-	    break;
     }
     return TRUE;
 }
@@ -62,11 +57,15 @@ BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpv)
  * Multimedia Streams ClassFactory
  */
 typedef struct {
-    IClassFactory ITF_IClassFactory;
-
+    IClassFactory IClassFactory_iface;
     LONG ref;
     HRESULT (*pfnCreateInstance)(IUnknown *pUnkOuter, LPVOID *ppObj);
 } IClassFactoryImpl;
+
+static inline IClassFactoryImpl *impl_from_IClassFactory(IClassFactory *iface)
+{
+    return CONTAINING_RECORD(iface, IClassFactoryImpl, IClassFactory_iface);
+}
 
 struct object_creation_info
 {
@@ -78,36 +77,34 @@ static const struct object_creation_info object_creation[] =
 {
     { &CLSID_AMMultiMediaStream, AM_create },
     { &CLSID_AMDirectDrawStream, AM_create },
+    { &CLSID_AMAudioData, AMAudioData_create },
     { &CLSID_MediaStreamFilter, MediaStreamFilter_create }
 };
 
-static HRESULT WINAPI
-AMCF_QueryInterface(LPCLASSFACTORY iface,REFIID riid,LPVOID *ppobj)
+static HRESULT WINAPI AMCF_QueryInterface(IClassFactory *iface, REFIID riid, void **ppobj)
 {
-    IClassFactoryImpl *This = (IClassFactoryImpl *)iface;
-
     if (IsEqualGUID(riid, &IID_IUnknown)
 	|| IsEqualGUID(riid, &IID_IClassFactory))
     {
 	IClassFactory_AddRef(iface);
-	*ppobj = This;
+        *ppobj = iface;
 	return S_OK;
     }
 
-    WARN("(%p)->(%s,%p),not found\n",This,debugstr_guid(riid),ppobj);
+    *ppobj = NULL;
+    WARN("(%p)->(%s,%p), not found\n", iface, debugstr_guid(riid), ppobj);
     return E_NOINTERFACE;
 }
 
-static ULONG WINAPI AMCF_AddRef(LPCLASSFACTORY iface)
+static ULONG WINAPI AMCF_AddRef(IClassFactory *iface)
 {
-    IClassFactoryImpl *This = (IClassFactoryImpl *)iface;
+    IClassFactoryImpl *This = impl_from_IClassFactory(iface);
     return InterlockedIncrement(&This->ref);
 }
 
-static ULONG WINAPI AMCF_Release(LPCLASSFACTORY iface)
+static ULONG WINAPI AMCF_Release(IClassFactory *iface)
 {
-    IClassFactoryImpl *This = (IClassFactoryImpl *)iface;
-
+    IClassFactoryImpl *This = impl_from_IClassFactory(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
     if (ref == 0)
@@ -117,10 +114,10 @@ static ULONG WINAPI AMCF_Release(LPCLASSFACTORY iface)
 }
 
 
-static HRESULT WINAPI AMCF_CreateInstance(LPCLASSFACTORY iface, LPUNKNOWN pOuter,
-					  REFIID riid, LPVOID *ppobj)
+static HRESULT WINAPI AMCF_CreateInstance(IClassFactory *iface, IUnknown *pOuter,
+                                          REFIID riid, void **ppobj)
 {
-    IClassFactoryImpl *This = (IClassFactoryImpl *)iface;
+    IClassFactoryImpl *This = impl_from_IClassFactory(iface);
     HRESULT hres;
     LPUNKNOWN punk;
     
@@ -135,9 +132,9 @@ static HRESULT WINAPI AMCF_CreateInstance(LPCLASSFACTORY iface, LPUNKNOWN pOuter
     return hres;
 }
 
-static HRESULT WINAPI AMCF_LockServer(LPCLASSFACTORY iface,BOOL dolock)
+static HRESULT WINAPI AMCF_LockServer(IClassFactory *iface, BOOL dolock)
 {
-    IClassFactoryImpl *This = (IClassFactoryImpl *)iface;
+    IClassFactoryImpl *This = impl_from_IClassFactory(iface);
     FIXME("(%p)->(%d),stub!\n",This,dolock);
     return S_OK;
 }
@@ -194,12 +191,12 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID *ppv)
     factory = HeapAlloc(GetProcessHeap(), 0, sizeof(*factory));
     if (factory == NULL) return E_OUTOFMEMORY;
 
-    factory->ITF_IClassFactory.lpVtbl = &DSCF_Vtbl;
+    factory->IClassFactory_iface.lpVtbl = &DSCF_Vtbl;
     factory->ref = 1;
 
     factory->pfnCreateInstance = object_creation[i].pfnCreateInstance;
 
-    *ppv = &(factory->ITF_IClassFactory);
+    *ppv = &factory->IClassFactory_iface;
     return S_OK;
 }
 

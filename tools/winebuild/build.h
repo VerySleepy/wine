@@ -140,7 +140,7 @@ typedef struct
 
 enum target_cpu
 {
-    CPU_x86, CPU_x86_64, CPU_SPARC, CPU_POWERPC, CPU_ARM, CPU_LAST = CPU_ARM
+    CPU_x86, CPU_x86_64, CPU_POWERPC, CPU_ARM, CPU_ARM64, CPU_LAST = CPU_ARM64
 };
 
 enum target_platform
@@ -178,7 +178,7 @@ struct strarray
 
 #define FLAG_CPU(cpu)  (0x01000 << (cpu))
 #define FLAG_CPU_MASK  (FLAG_CPU(CPU_LAST + 1) - FLAG_CPU(0))
-#define FLAG_CPU_WIN64 (FLAG_CPU(CPU_x86_64))
+#define FLAG_CPU_WIN64 (FLAG_CPU(CPU_x86_64) | FLAG_CPU(CPU_ARM64))
 #define FLAG_CPU_WIN32 (FLAG_CPU_MASK & ~FLAG_CPU_WIN64)
 
 #define MAX_ORDINALS  65535
@@ -229,7 +229,7 @@ extern char *xstrdup( const char *str );
 extern char *strupper(char *s);
 extern int strendswith(const char* str, const char* end);
 extern char *strmake(const char* fmt, ...) __attribute__((__format__ (__printf__, 1, 2 )));
-extern struct strarray *strarray_init(void);
+extern struct strarray *strarray_fromstring( const char *str, const char *delim );
 extern void strarray_add( struct strarray *array, ... );
 extern void strarray_addv( struct strarray *array, char * const *argv );
 extern void strarray_free( struct strarray *array );
@@ -246,10 +246,11 @@ extern int output( const char *format, ... )
 extern void output_cfi( const char *format, ... )
    __attribute__ ((__format__ (__printf__, 1, 2)));
 extern void spawn( struct strarray *array );
-extern char *find_tool( const char *name, const char * const *names );
+extern struct strarray *find_tool( const char *name, const char * const *names );
 extern struct strarray *get_as_command(void);
 extern struct strarray *get_ld_command(void);
 extern const char *get_nm_command(void);
+extern void cleanup_tmp_files(void);
 extern char *get_temp_file_name( const char *prefix, const char *suffix );
 extern void output_standard_file_header(void);
 extern FILE *open_input_file( const char *srcdir, const char *name );
@@ -271,7 +272,6 @@ extern const char *func_declaration( const char *func );
 extern const char *asm_globl( const char *func );
 extern const char *get_asm_ptr_keyword(void);
 extern const char *get_asm_string_keyword(void);
-extern const char *get_asm_short_keyword(void);
 extern const char *get_asm_rodata_section(void);
 extern const char *get_asm_string_section(void);
 extern void output_function_size( const char *name );
@@ -347,7 +347,6 @@ extern int nb_errors;
 extern int display_warnings;
 extern int kill_at;
 extern int verbose;
-extern int save_temps;
 extern int link_ext_symbols;
 extern int force_pointer_size;
 extern int unwind_tables;
@@ -358,9 +357,11 @@ extern FILE *output_file;
 extern const char *output_file_name;
 extern char **lib_path;
 
-extern char *as_command;
-extern char *ld_command;
-extern char *nm_command;
+extern struct strarray *as_command;
+extern struct strarray *cc_command;
+extern struct strarray *ld_command;
+extern struct strarray *nm_command;
 extern char *cpu_option;
+extern int thumb_mode;
 
 #endif  /* __WINE_BUILD_H */

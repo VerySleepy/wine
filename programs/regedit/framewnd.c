@@ -21,7 +21,6 @@
 #define WIN32_LEAN_AND_MEAN     /* Exclude rarely-used stuff from Windows headers */
 
 #include <windows.h>
-#include <tchar.h>
 #include <commctrl.h>
 #include <commdlg.h>
 #include <cderr.h>
@@ -31,13 +30,16 @@
 
 #include "main.h"
 #include "regproc.h"
+#include "wine/debug.h"
 #include "wine/unicode.h"
+
+WINE_DEFAULT_DEBUG_CHANNEL(regedit);
 
 /********************************************************************************
  * Global and Local Variables:
  */
 
-static WCHAR favoritesKey[] =  {'S','o','f','t','w','a','r','e','\\','M','i','c','r','o','s','o','f','t','\\','W','i','n','d','o','w','s','\\','C','u','r','r','e','n','t','V','e','r','s','i','o','n','\\','A','p','p','l','e','t','s','\\','R','e','g','E','d','i','t','\\','F','a','v','o','r','i','t','e','s',0};
+static const WCHAR favoritesKey[] =  {'S','o','f','t','w','a','r','e','\\','M','i','c','r','o','s','o','f','t','\\','W','i','n','d','o','w','s','\\','C','u','r','r','e','n','t','V','e','r','s','i','o','n','\\','A','p','p','l','e','t','s','\\','R','e','g','E','d','i','t','\\','F','a','v','o','r','i','t','e','s',0};
 static BOOL bInMenuLoop = FALSE;        /* Tells us if we are in the menu loop */
 static WCHAR favoriteName[128];
 static WCHAR searchString[128];
@@ -284,7 +286,7 @@ static UINT_PTR CALLBACK ExportRegistryFile_OFNHookProc(HWND hdlg, UINT uiMsg, W
                 BOOL export_branch = FALSE;
                 WCHAR* path = GetItemFullPath(g_pChildWnd->hTreeWnd, NULL, FALSE);
                 SendDlgItemMessageW(hdlg, IDC_EXPORT_PATH, WM_SETTEXT, 0, (LPARAM)path);
-                if (path && strlenW(path) > 0)
+                if (path && path[0])
                     export_branch = TRUE;
                 HeapFree(GetProcessHeap(), 0, path);
                 CheckRadioButton(hdlg, IDC_EXPORT_ALL, IDC_EXPORT_SELECTED, export_branch ? IDC_EXPORT_SELECTED : IDC_EXPORT_ALL);
@@ -409,6 +411,7 @@ static BOOL PrintRegistryHive(HWND hWnd, LPCWSTR path)
     pd.nMinPage    = 1;
     pd.nMaxPage    = 0xFFFF;
     if (PrintDlgW(&pd)) {
+        FIXME("printing is not yet implemented.\n");
         /* GDI calls to render output. */
         DeleteDC(pd.hDC); /* Delete DC when done.*/
     }
@@ -421,11 +424,13 @@ static BOOL PrintRegistryHive(HWND hWnd, LPCWSTR path)
         switch (pd.dwResultAction) {
         case PD_RESULT_APPLY:
             /*The user clicked the Apply button and later clicked the Cancel button. This indicates that the user wants to apply the changes made in the property sheet, but does not yet want to print. The PRINTDLGEX structure contains the information specified by the user at the time the Apply button was clicked. */
+            FIXME("printing is not yet implemented.\n");
             break;
         case PD_RESULT_CANCEL:
             /*The user clicked the Cancel button. The information in the PRINTDLGEX structure is unchanged. */
             break;
         case PD_RESULT_PRINT:
+            FIXME("printing is not yet implemented.\n");
             /*The user clicked the Print button. The PRINTDLGEX structure contains the information specified by the user. */
             break;
         default:

@@ -18,14 +18,11 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-enum dib_info_flags
-{
-    private_color_table = 1
-};
-
 typedef struct
 {
     int bit_count, width, height;
+    int compression;
+    RECT rect;  /* visible rectangle relative to bitmap origin */
     int stride; /* stride in bytes.  Will be -ve for bottom-up dibs (see bits). */
     struct gdi_image_bits bits; /* bits.ptr points to the top-left corner of the dib. */
 
@@ -33,10 +30,8 @@ typedef struct
     int red_shift, green_shift, blue_shift;
     int red_len, green_len, blue_len;
 
-    RGBQUAD *color_table;
+    const RGBQUAD *color_table;
     DWORD color_table_size;
-
-    enum dib_info_flags flags;
 
     const struct primitive_funcs *funcs;
 } dib_info;
@@ -67,69 +62,108 @@ typedef struct
     void *xor;
 } rop_mask_bits;
 
+struct dibdrv_physdev;
+struct cached_font;
+
+typedef struct dib_brush
+{
+    UINT     style;
+    UINT     hatch;
+    INT      rop;   /* rop2 last used to create the brush bits */
+    COLORREF colorref;
+    dib_info dib;
+    rop_mask_bits masks;
+    struct brush_pattern pattern;
+    BOOL (*rects)(struct dibdrv_physdev *pdev, struct dib_brush *brush, dib_info *dib,
+                  int num, const RECT *rects, INT rop);
+} dib_brush;
+
+struct intensity_range
+{
+    BYTE r_min, r_max;
+    BYTE g_min, g_max;
+    BYTE b_min, b_max;
+};
+
 typedef struct dibdrv_physdev
 {
     struct gdi_physdev dev;
     dib_info dib;
+    dib_brush brush;
 
     HRGN clip;
-    DWORD defer;
+    RECT *bounds;
+    struct cached_font *font;
 
     /* pen */
-    COLORREF pen_colorref;
-    DWORD pen_color, pen_and, pen_xor;
+    DWORD pen_style, pen_endcap, pen_join;
+    BOOL pen_uses_region, pen_is_ext;
+    int pen_width;
+    dib_brush pen_brush;
     dash_pattern pen_pattern;
     dash_pos dash_pos;
-    BOOL   (* pen_lines)(struct dibdrv_physdev *pdev, int num, POINT *pts);
-
-    /* brush */
-    UINT brush_style;
-    UINT brush_hatch;
-    INT brush_rop;   /* PatBlt, for example, can override the DC's rop2 */
-    COLORREF brush_colorref;
-    DWORD brush_color, brush_and, brush_xor;
-    dib_info brush_dib;
-    void *brush_and_bits, *brush_xor_bits;
-    BOOL   (* brush_rects)(struct dibdrv_physdev *pdev, dib_info *dib, int num, const RECT *rects, HRGN clip);
-
-    /* background */
-    DWORD bkgnd_color, bkgnd_and, bkgnd_xor;
+    rop_mask dash_masks[2];
+    BOOL   (* pen_lines)(struct dibdrv_physdev *pdev, int num, POINT *pts, BOOL close, HRGN region);
 } dibdrv_physdev;
-
-#define DEFER_FORMAT     1
-#define DEFER_PEN        2
-#define DEFER_BRUSH      4
 
 extern BOOL     dibdrv_AlphaBlend( PHYSDEV dst_dev, struct bitblt_coords *dst,
                                    PHYSDEV src_dev, struct bitblt_coords *src, BLENDFUNCTION blend ) DECLSPEC_HIDDEN;
+extern BOOL     dibdrv_Arc( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
+                            INT start_x, INT start_y, INT end_x, INT end_y ) DECLSPEC_HIDDEN;
+extern BOOL     dibdrv_ArcTo( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
+                              INT start_x, INT start_y, INT end_x, INT end_y ) DECLSPEC_HIDDEN;
 extern DWORD    dibdrv_BlendImage( PHYSDEV dev, BITMAPINFO *info, const struct gdi_image_bits *bits,
                                    struct bitblt_coords *src, struct bitblt_coords *dst, BLENDFUNCTION func ) DECLSPEC_HIDDEN;
-extern DWORD    dibdrv_GetImage( PHYSDEV dev, HBITMAP hbitmap, BITMAPINFO *info,
-                                 struct gdi_image_bits *bits, struct bitblt_coords *src ) DECLSPEC_HIDDEN;
+extern BOOL     dibdrv_Chord( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
+                              INT start_x, INT start_y, INT end_x, INT end_y ) DECLSPEC_HIDDEN;
+extern BOOL     dibdrv_Ellipse( PHYSDEV dev, INT left, INT top, INT right, INT bottom ) DECLSPEC_HIDDEN;
+extern BOOL     dibdrv_ExtFloodFill( PHYSDEV dev, INT x, INT y, COLORREF color, UINT type ) DECLSPEC_HIDDEN;
+extern BOOL     dibdrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags,
+                                   const RECT *rect, LPCWSTR str, UINT count, const INT *dx ) DECLSPEC_HIDDEN;
+extern DWORD    dibdrv_GetImage( PHYSDEV dev, BITMAPINFO *info, struct gdi_image_bits *bits,
+                                 struct bitblt_coords *src ) DECLSPEC_HIDDEN;
+extern COLORREF dibdrv_GetNearestColor( PHYSDEV dev, COLORREF color ) DECLSPEC_HIDDEN;
 extern COLORREF dibdrv_GetPixel( PHYSDEV dev, INT x, INT y ) DECLSPEC_HIDDEN;
+extern BOOL     dibdrv_GradientFill( PHYSDEV dev, TRIVERTEX *vert_array, ULONG nvert,
+                                     void *grad_array, ULONG ngrad, ULONG mode ) DECLSPEC_HIDDEN;
 extern BOOL     dibdrv_LineTo( PHYSDEV dev, INT x, INT y ) DECLSPEC_HIDDEN;
 extern BOOL     dibdrv_PatBlt( PHYSDEV dev, struct bitblt_coords *dst, DWORD rop ) DECLSPEC_HIDDEN;
 extern BOOL     dibdrv_PaintRgn( PHYSDEV dev, HRGN hrgn ) DECLSPEC_HIDDEN;
+extern BOOL     dibdrv_Pie( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
+                            INT start_x, INT start_y, INT end_x, INT end_y ) DECLSPEC_HIDDEN;
+extern BOOL     dibdrv_PolyPolygon( PHYSDEV dev, const POINT *pt, const INT *counts, DWORD polygons ) DECLSPEC_HIDDEN;
 extern BOOL     dibdrv_PolyPolyline( PHYSDEV dev, const POINT* pt, const DWORD* counts,
                                      DWORD polylines ) DECLSPEC_HIDDEN;
+extern BOOL     dibdrv_Polygon( PHYSDEV dev, const POINT *pt, INT count ) DECLSPEC_HIDDEN;
 extern BOOL     dibdrv_Polyline( PHYSDEV dev, const POINT* pt, INT count ) DECLSPEC_HIDDEN;
-extern DWORD    dibdrv_PutImage( PHYSDEV dev, HBITMAP hbitmap, HRGN clip, BITMAPINFO *info,
+extern DWORD    dibdrv_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info,
                                  const struct gdi_image_bits *bits, struct bitblt_coords *src,
                                  struct bitblt_coords *dst, DWORD rop ) DECLSPEC_HIDDEN;
 extern BOOL     dibdrv_Rectangle( PHYSDEV dev, INT left, INT top, INT right, INT bottom ) DECLSPEC_HIDDEN;
-extern HBRUSH   dibdrv_SelectBrush( PHYSDEV dev, HBRUSH hbrush, HBITMAP bitmap,
-                                    const BITMAPINFO *info, void *bits, UINT usage ) DECLSPEC_HIDDEN;
-extern HPEN     dibdrv_SelectPen( PHYSDEV dev, HPEN hpen ) DECLSPEC_HIDDEN;
+extern BOOL     dibdrv_RoundRect( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
+                                  INT ellipse_width, INT ellipse_height ) DECLSPEC_HIDDEN;
+extern HBRUSH   dibdrv_SelectBrush( PHYSDEV dev, HBRUSH hbrush, const struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
+extern HFONT    dibdrv_SelectFont( PHYSDEV dev, HFONT font, UINT *aa_flags ) DECLSPEC_HIDDEN;
+extern HPEN     dibdrv_SelectPen( PHYSDEV dev, HPEN hpen, const struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
 extern COLORREF dibdrv_SetDCBrushColor( PHYSDEV dev, COLORREF color ) DECLSPEC_HIDDEN;
 extern COLORREF dibdrv_SetDCPenColor( PHYSDEV dev, COLORREF color ) DECLSPEC_HIDDEN;
 extern COLORREF dibdrv_SetPixel( PHYSDEV dev, INT x, INT y, COLORREF color ) DECLSPEC_HIDDEN;
 extern BOOL     dibdrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
                                    PHYSDEV src_dev, struct bitblt_coords *src, DWORD rop ) DECLSPEC_HIDDEN;
+extern struct opengl_funcs *dibdrv_wine_get_wgl_driver( PHYSDEV dev, UINT version ) DECLSPEC_HIDDEN;
 
 static inline dibdrv_physdev *get_dibdrv_pdev( PHYSDEV dev )
 {
     return (dibdrv_physdev *)dev;
 }
+
+struct line_params
+{
+    int err_start, err_add_1, err_add_2, bias;
+    unsigned int length;
+    int x_inc, y_inc;
+    BOOL x_major;
+};
 
 struct stretch_params
 {
@@ -141,18 +175,26 @@ struct stretch_params
 typedef struct primitive_funcs
 {
     void            (* solid_rects)(const dib_info *dib, int num, const RECT *rc, DWORD and, DWORD xor);
+    void             (* solid_line)(const dib_info *dib, const POINT *start, const struct line_params *params,
+                                    DWORD and, DWORD xor);
     void          (* pattern_rects)(const dib_info *dib, int num, const RECT *rc, const POINT *orign,
-                                    const dib_info *brush, void *and_bits, void *xor_bits);
+                                    const dib_info *brush, const rop_mask_bits *bits);
     void              (* copy_rect)(const dib_info *dst, const RECT *rc, const dib_info *src,
                                     const POINT *origin, int rop2, int overlap);
     void             (* blend_rect)(const dib_info *dst, const RECT *rc, const dib_info *src,
                                     const POINT *origin, BLENDFUNCTION blend);
-    DWORD             (* get_pixel)(const dib_info *dib, const POINT *pt);
+    BOOL          (* gradient_rect)(const dib_info *dib, const RECT *rc, const TRIVERTEX *v, int mode);
+    void             (* draw_glyph)(const dib_info *dst, const RECT *rc, const dib_info *glyph,
+                                    const POINT *origin, DWORD text_pixel, const struct intensity_range *ranges);
+    void    (* draw_subpixel_glyph)(const dib_info *dst, const RECT *rc, const dib_info *glyph,
+                                    const POINT *origin, DWORD text_pixel );
+    DWORD             (* get_pixel)(const dib_info *dib, int x, int y);
     DWORD     (* colorref_to_pixel)(const dib_info *dib, COLORREF color);
     COLORREF  (* pixel_to_colorref)(const dib_info *dib, DWORD pixel);
-    void             (* convert_to)(dib_info *dst, const dib_info *src, const RECT *src_rect);
-    BOOL       (* create_rop_masks)(const dib_info *dib, const dib_info *hatch,
+    void             (* convert_to)(dib_info *dst, const dib_info *src, const RECT *src_rect, BOOL dither);
+    void       (* create_rop_masks)(const dib_info *dib, const BYTE *hatch_ptr,
                                     const rop_mask *fg, const rop_mask *bg, rop_mask_bits *bits);
+    void    (* create_dither_masks)(const dib_info *dib, int rop2, COLORREF color, rop_mask_bits *bits);
     void            (* stretch_row)(const dib_info *dst_dib, const POINT *dst_start,
                                     const dib_info *src_dib, const POINT *src_start,
                                     const struct stretch_params *params, int mode, BOOL keep_dst);
@@ -188,34 +230,50 @@ typedef struct
     DWORD octant;
 } bres_params;
 
+struct clipped_rects
+{
+    RECT *rects;
+    int   count;
+    RECT  buffer[32];
+};
+
 extern void get_rop_codes(INT rop, struct rop_codes *codes) DECLSPEC_HIDDEN;
-extern void calc_and_xor_masks(INT rop, DWORD color, DWORD *and, DWORD *xor) DECLSPEC_HIDDEN;
-extern void update_brush_rop( dibdrv_physdev *pdev, INT rop ) DECLSPEC_HIDDEN;
 extern void reset_dash_origin(dibdrv_physdev *pdev) DECLSPEC_HIDDEN;
-extern BOOL init_dib_info(dib_info *dib, const BITMAPINFOHEADER *bi, const DWORD *bit_fields,
-                          RGBQUAD *color_table, int color_table_size, void *bits,
-                          enum dib_info_flags flags) DECLSPEC_HIDDEN;
-extern BOOL init_dib_info_from_brush(dib_info *dib, const BITMAPINFO *bi, void *bits, UINT usage, HPALETTE pal) DECLSPEC_HIDDEN;
-extern BOOL init_dib_info_from_bitmapinfo(dib_info *dib, const BITMAPINFO *info, void *bits,
-                                          enum dib_info_flags flags) DECLSPEC_HIDDEN;
-extern BOOL init_dib_info_from_bitmapobj(dib_info *dib, BITMAPOBJ *bmp, enum dib_info_flags flags) DECLSPEC_HIDDEN;
+extern void init_dib_info_from_bitmapinfo(dib_info *dib, const BITMAPINFO *info, void *bits) DECLSPEC_HIDDEN;
+extern BOOL init_dib_info_from_bitmapobj(dib_info *dib, BITMAPOBJ *bmp) DECLSPEC_HIDDEN;
 extern void free_dib_info(dib_info *dib) DECLSPEC_HIDDEN;
-extern void free_pattern_brush(dibdrv_physdev *pdev) DECLSPEC_HIDDEN;
+extern void free_pattern_brush(dib_brush *brush) DECLSPEC_HIDDEN;
 extern void copy_dib_color_info(dib_info *dst, const dib_info *src) DECLSPEC_HIDDEN;
 extern BOOL convert_dib(dib_info *dst, const dib_info *src) DECLSPEC_HIDDEN;
-extern DWORD get_pixel_color(dibdrv_physdev *pdev, COLORREF color, BOOL mono_fixup) DECLSPEC_HIDDEN;
-extern BOOL brush_rects( dibdrv_physdev *pdev, int num, const RECT *rects ) DECLSPEC_HIDDEN;
-extern HRGN add_extra_clipping_region( dibdrv_physdev *pdev, HRGN rgn ) DECLSPEC_HIDDEN;
-extern void restore_clipping_region( dibdrv_physdev *pdev, HRGN rgn ) DECLSPEC_HIDDEN;
+extern DWORD get_pixel_color( HDC hdc, const dib_info *dib, COLORREF color, BOOL mono_fixup ) DECLSPEC_HIDDEN;
+extern int clip_rect_to_dib( const dib_info *dib, RECT *rc ) DECLSPEC_HIDDEN;
+extern int get_clipped_rects( const dib_info *dib, const RECT *rc, HRGN clip, struct clipped_rects *clip_rects ) DECLSPEC_HIDDEN;
+extern void add_clipped_bounds( dibdrv_physdev *dev, const RECT *rect, HRGN clip ) DECLSPEC_HIDDEN;
 extern int clip_line(const POINT *start, const POINT *end, const RECT *clip,
                      const bres_params *params, POINT *pt1, POINT *pt2) DECLSPEC_HIDDEN;
+extern void release_cached_font( struct cached_font *font ) DECLSPEC_HIDDEN;
 
-static inline BOOL defer_pen(dibdrv_physdev *pdev)
+static inline void init_clipped_rects( struct clipped_rects *clip_rects )
 {
-    return pdev->defer & (DEFER_FORMAT | DEFER_PEN);
+    clip_rects->count = 0;
+    clip_rects->rects = clip_rects->buffer;
 }
 
-static inline BOOL defer_brush(dibdrv_physdev *pdev)
+static inline void free_clipped_rects( struct clipped_rects *clip_rects )
 {
-    return pdev->defer & (DEFER_FORMAT | DEFER_BRUSH);
+    if (clip_rects->rects != clip_rects->buffer) HeapFree( GetProcessHeap(), 0, clip_rects->rects );
+}
+
+/* compute the x coordinate corresponding to y on the specified edge */
+static inline int edge_coord( int y, int x1, int y1, int x2, int y2 )
+{
+    if (x2 > x1)  /* always follow the edge from right to left to get correct rounding */
+        return x2 + (y - y2) * (x2 - x1) / (y2 - y1);
+    else
+        return x1 + (y - y1) * (x2 - x1) / (y2 - y1);
+}
+
+static inline const RGBQUAD *get_dib_color_table( const dib_info *dib )
+{
+    return dib->color_table ? dib->color_table : get_default_color_table( dib->bit_count );
 }

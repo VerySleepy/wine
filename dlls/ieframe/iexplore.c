@@ -190,7 +190,7 @@ static void add_favs_to_menu(HMENU favmenu, HMENU menu, LPCWSTR dir)
     res = CoCreateInstance(&CLSID_InternetShortcut, NULL, CLSCTX_INPROC_SERVER, &IID_IUniformResourceLocatorW, (PVOID*)&urlobj);
 
     if(SUCCEEDED(res))
-        res = IUnknown_QueryInterface(urlobj, &IID_IPersistFile, (PVOID*)&urlfile);
+        res = IUnknown_QueryInterface((IUnknown*)urlobj, &IID_IPersistFile, (PVOID*)&urlfile);
 
     if(SUCCEEDED(res))
     {
@@ -243,7 +243,7 @@ static void add_favs_to_menu(HMENU favmenu, HMENU menu, LPCWSTR dir)
         IPersistFile_Release(urlfile);
 
     if(urlobj)
-        IUnknown_Release(urlobj);
+        IUnknown_Release((IUnknown*)urlobj);
 
     FindClose(findhandle);
 }
@@ -363,7 +363,7 @@ static INT_PTR CALLBACK ie_dialog_open_proc(HWND hwnd, UINT msg, WPARAM wparam, 
                     HWND hwndurl = GetDlgItem(hwnd, IDC_BROWSE_OPEN_URL);
                     int len = GetWindowTextLengthW(hwndurl);
 
-                    EnableWindow(GetDlgItem(hwnd, IDOK), len ? TRUE : FALSE);
+                    EnableWindow(GetDlgItem(hwnd, IDOK), len != 0);
                     break;
                 }
                 case IDOK:
@@ -439,7 +439,7 @@ static void create_rebar(HWND hwnd)
     REBARBANDINFOW bandinf;
     WCHAR addr[40];
     HIMAGELIST imagelist;
-    WCHAR idb_ietoolbar[] = {'I','D','B','_','I','E','T','O','O','L','B','A','R',0};
+    SIZE toolbar_size;
 
     LoadStringW(ieframe_instance, IDS_ADDRESS, addr, sizeof(addr)/sizeof(addr[0]));
 
@@ -450,32 +450,31 @@ static void create_rebar(HWND hwnd)
     rebarinf.cbSize = sizeof(rebarinf);
     rebarinf.fMask = 0;
     rebarinf.himl = NULL;
-    rebarinf.cbSize = sizeof(rebarinf);
 
     SendMessageW(hwndRebar, RB_SETBARINFO, 0, (LPARAM)&rebarinf);
 
-    hwndToolbar = CreateWindowExW(TBSTYLE_EX_MIXEDBUTTONS, TOOLBARCLASSNAMEW, NULL, TBSTYLE_FLAT | WS_CHILD | WS_VISIBLE,
+    hwndToolbar = CreateWindowExW(TBSTYLE_EX_MIXEDBUTTONS, TOOLBARCLASSNAMEW, NULL, TBSTYLE_FLAT | WS_CHILD | WS_VISIBLE | CCS_NORESIZE,
             0, 0, 0, 0, hwndRebar, (HMENU)IDC_BROWSE_TOOLBAR, ieframe_instance, NULL);
 
-    imagelist = ImageList_LoadImageW(ieframe_instance, idb_ietoolbar, 32, 0, CLR_NONE, IMAGE_BITMAP, LR_CREATEDIBSECTION);
+    imagelist = ImageList_LoadImageW(ieframe_instance, MAKEINTRESOURCEW(IDB_IETOOLBAR), 32, 0, CLR_NONE, IMAGE_BITMAP, LR_CREATEDIBSECTION);
 
     SendMessageW(hwndToolbar, TB_SETIMAGELIST, 0, (LPARAM)imagelist);
     SendMessageW(hwndToolbar, TB_BUTTONSTRUCTSIZE, sizeof(TBBUTTON), 0);
-    add_tb_button(hwndToolbar, 0, 0, IDS_TB_BACK);
-    add_tb_button(hwndToolbar, 1, 0, IDS_TB_FORWARD);
-    add_tb_button(hwndToolbar, 2, 0, IDS_TB_STOP);
-    add_tb_button(hwndToolbar, 3, 0, IDS_TB_REFRESH);
+    add_tb_button(hwndToolbar, 0, ID_BROWSE_BACK, IDS_TB_BACK);
+    add_tb_button(hwndToolbar, 1, ID_BROWSE_FORWARD, IDS_TB_FORWARD);
+    add_tb_button(hwndToolbar, 2, ID_BROWSE_STOP, IDS_TB_STOP);
+    add_tb_button(hwndToolbar, 3, ID_BROWSE_REFRESH, IDS_TB_REFRESH);
     add_tb_button(hwndToolbar, 4, ID_BROWSE_HOME, IDS_TB_HOME);
     add_tb_separator(hwndToolbar);
     add_tb_button(hwndToolbar, 5, ID_BROWSE_PRINT, IDS_TB_PRINT);
     SendMessageW(hwndToolbar, TB_SETBUTTONSIZE, 0, MAKELPARAM(55,50));
-    SendMessageW(hwndToolbar, TB_AUTOSIZE, 0, 0);
+    SendMessageW(hwndToolbar, TB_GETMAXSIZE, 0, (LPARAM)&toolbar_size);
 
     bandinf.cbSize = sizeof(bandinf);
-    bandinf.fMask = RBBIM_STYLE | RBBIM_CHILD | RBBIM_CHILDSIZE | RBBIM_SIZE;
+    bandinf.fMask = RBBIM_STYLE | RBBIM_CHILD | RBBIM_CHILDSIZE;
     bandinf.fStyle = RBBS_CHILDEDGE;
-    bandinf.cx = 100;
-    bandinf.cyMinChild = 52;
+    bandinf.cxMinChild = toolbar_size.cx;
+    bandinf.cyMinChild = toolbar_size.cy+2;
     bandinf.hwndChild = hwndToolbar;
 
     SendMessageW(hwndRebar, RB_INSERTBANDW, -1, (LPARAM)&bandinf);
@@ -486,6 +485,7 @@ static void create_rebar(HWND hwnd)
     bandinf.fMask |= RBBIM_TEXT;
     bandinf.fStyle = RBBS_CHILDEDGE | RBBS_BREAK;
     bandinf.lpText = addr;
+    bandinf.cxMinChild = 100;
     bandinf.cyMinChild = 20;
     bandinf.hwndChild = hwndAddress;
 
@@ -518,8 +518,8 @@ static LRESULT iewnd_OnSize(InternetExplorer *This, INT width, INT height)
 
     adjust_ie_docobj_rect(This->frame_hwnd, &docarea);
 
-    if(This->doc_host->doc_host.hwnd)
-        SetWindowPos(This->doc_host->doc_host.hwnd, NULL, docarea.left, docarea.top, docarea.right, docarea.bottom,
+    if(This->doc_host.hwnd)
+        SetWindowPos(This->doc_host.hwnd, NULL, docarea.left, docarea.top, docarea.right, docarea.bottom,
                      SWP_NOZORDER | SWP_NOACTIVATE);
 
     SetWindowPos(hwndRebar, NULL, 0, 0, width, barHeight, SWP_NOZORDER | SWP_NOACTIVATE);
@@ -550,6 +550,18 @@ static LRESULT iewnd_OnNotify(InternetExplorer *This, WPARAM wparam, LPARAM lpar
         }
     }
 
+    if(hdr->idFrom == IDC_BROWSE_REBAR && hdr->code == RBN_HEIGHTCHANGE)
+    {
+        RECT docarea;
+
+        GetClientRect(This->frame_hwnd, &docarea);
+        adjust_ie_docobj_rect(This->frame_hwnd, &docarea);
+
+        if(This->doc_host.hwnd)
+            SetWindowPos(This->doc_host.hwnd, NULL, docarea.left, docarea.top, docarea.right, docarea.bottom,
+                    SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+
     return 0;
 }
 
@@ -577,11 +589,11 @@ static LRESULT iewnd_OnCommand(InternetExplorer *This, HWND hwnd, UINT msg, WPAR
             break;
 
         case ID_BROWSE_PRINT:
-            if(This->doc_host->doc_host.document)
+            if(This->doc_host.document)
             {
                 IOleCommandTarget* target;
 
-                if(FAILED(IUnknown_QueryInterface(This->doc_host->doc_host.document, &IID_IOleCommandTarget, (LPVOID*)&target)))
+                if(FAILED(IUnknown_QueryInterface(This->doc_host.document, &IID_IOleCommandTarget, (LPVOID*)&target)))
                     break;
 
                 IOleCommandTarget_Exec(target, &CGID_MSHTML, IDM_PRINT, OLECMDEXECOPT_DODEFAULT, NULL, NULL);
@@ -592,6 +604,22 @@ static LRESULT iewnd_OnCommand(InternetExplorer *This, HWND hwnd, UINT msg, WPAR
 
         case ID_BROWSE_HOME:
             IWebBrowser2_GoHome(&This->IWebBrowser2_iface);
+            break;
+
+        case ID_BROWSE_BACK:
+            IWebBrowser2_GoBack(&This->IWebBrowser2_iface);
+            break;
+
+        case ID_BROWSE_FORWARD:
+            IWebBrowser2_GoForward(&This->IWebBrowser2_iface);
+            break;
+
+        case ID_BROWSE_STOP:
+            IWebBrowser2_Stop(&This->IWebBrowser2_iface);
+            break;
+
+        case ID_BROWSE_REFRESH:
+            IWebBrowser2_Refresh(&This->IWebBrowser2_iface);
             break;
 
         case ID_BROWSE_ABOUT:
@@ -641,10 +669,13 @@ static LRESULT WINAPI ie_window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         return 0;
     case WM_SHOWWINDOW:
         TRACE("WM_SHOWWINDOW %lx\n", wparam);
-        if(wparam)
+        if(wparam) {
             IWebBrowser2_AddRef(&This->IWebBrowser2_iface);
-        else
+            InterlockedIncrement(&This->extern_ref);
+        }else {
+            release_extern_ref(This, TRUE);
             IWebBrowser2_Release(&This->IWebBrowser2_iface);
+        }
         break;
     case WM_DESTROY:
         return iewnd_OnDestroy(This);
@@ -655,7 +686,7 @@ static LRESULT WINAPI ie_window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
     case WM_NOTIFY:
         return iewnd_OnNotify(This, wparam, lparam);
     case WM_DOCHOSTTASK:
-        return process_dochost_tasks(&This->doc_host->doc_host);
+        return process_dochost_tasks(&This->doc_host);
     case WM_UPDATEADDRBAR:
         return update_addrbar(This, lparam);
     }
@@ -676,7 +707,7 @@ void register_iewindow_class(void)
     wc.hIcon = LoadIconW(GetModuleHandleW(0), MAKEINTRESOURCEW(IDI_APPICON));
     wc.hIconSm = LoadImageW(GetModuleHandleW(0), MAKEINTRESOURCEW(IDI_APPICON), IMAGE_ICON,
                             GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED);
-    wc.hCursor = LoadCursorW(0, MAKEINTRESOURCEW(IDC_ARROW));
+    wc.hCursor = LoadCursorW(0, (LPWSTR)IDC_ARROW);
     wc.hbrBackground = 0;
     wc.lpszClassName = szIEWinFrame;
     wc.lpszMenuName = NULL;
@@ -698,37 +729,26 @@ static void create_frame_hwnd(InternetExplorer *This)
                 | WS_MINIMIZEBOX | WS_MAXIMIZEBOX,
             CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
             NULL, NULL /* FIXME */, ieframe_instance, This);
+
+    This->doc_host.frame_hwnd = This->frame_hwnd;
+    create_doc_view_hwnd(&This->doc_host);
 }
 
-static inline IEDocHost *impl_from_DocHost(DocHost *iface)
+static inline InternetExplorer *impl_from_DocHost(DocHost *iface)
 {
-    return CONTAINING_RECORD(iface, IEDocHost, doc_host);
+    return CONTAINING_RECORD(iface, InternetExplorer, doc_host);
 }
 
 static ULONG IEDocHost_addref(DocHost *iface)
 {
-    IEDocHost *This = impl_from_DocHost(iface);
-    LONG ref = InterlockedIncrement(&This->ref);
-
-    TRACE("(%p) ref=%d\n", This, ref);
-
-    return ref;
+    InternetExplorer *This = impl_from_DocHost(iface);
+    return IWebBrowser2_AddRef(&This->IWebBrowser2_iface);
 }
 
 static ULONG IEDocHost_release(DocHost *iface)
 {
-    IEDocHost *This = impl_from_DocHost(iface);
-    LONG ref = InterlockedDecrement(&This->ref);
-
-    TRACE("(%p) ref=%d\n", This, ref);
-
-    if(!ref) {
-        if(This->ie)
-            ERR("This->ie is not NULL\n");
-        heap_free(This);
-    }
-
-    return ref;
+    InternetExplorer *This = impl_from_DocHost(iface);
+    return IWebBrowser2_Release(&This->IWebBrowser2_iface);
 }
 
 static void WINAPI DocHostContainer_GetDocObjRect(DocHost* This, RECT* rc)
@@ -739,26 +759,24 @@ static void WINAPI DocHostContainer_GetDocObjRect(DocHost* This, RECT* rc)
 
 static HRESULT WINAPI DocHostContainer_SetStatusText(DocHost *iface, LPCWSTR text)
 {
-    IEDocHost *This = impl_from_DocHost(iface);
-    return update_ie_statustext(This->ie, text);
+    InternetExplorer *This = impl_from_DocHost(iface);
+    return update_ie_statustext(This, text);
 }
 
 static void WINAPI DocHostContainer_SetURL(DocHost* iface, LPCWSTR url)
 {
-    IEDocHost *This = impl_from_DocHost(iface);
+    InternetExplorer *This = impl_from_DocHost(iface);
 
-    if(!This->ie)
-        return;
-
-    This->ie->nohome = FALSE;
-    SendMessageW(This->ie->frame_hwnd, WM_UPDATEADDRBAR, 0, (LPARAM)url);
+    This->nohome = FALSE;
+    SendMessageW(This->frame_hwnd, WM_UPDATEADDRBAR, 0, (LPARAM)url);
 }
 
 static HRESULT DocHostContainer_exec(DocHost* This, const GUID *cmd_group, DWORD cmdid, DWORD execopt, VARIANT *in,
         VARIANT *out)
 {
-    return S_OK;
+    return E_NOTIMPL;
 }
+
 static const IDocHostContainerVtbl DocHostContainerVtbl = {
     IEDocHost_addref,
     IEDocHost_release,
@@ -776,24 +794,15 @@ static HRESULT create_ie(InternetExplorer **ret_obj)
     if(!ret)
         return E_OUTOFMEMORY;
 
-    ret->doc_host = heap_alloc_zero(sizeof(IEDocHost));
-    if(!ret->doc_host) {
-        heap_free(ret);
-        return E_OUTOFMEMORY;
-    }
-
     ret->ref = 1;
-    ret->doc_host->ref = 1;
-    ret->doc_host->ie = ret;
 
-    DocHost_Init(&ret->doc_host->doc_host, (IDispatch*)&ret->IWebBrowser2_iface, &DocHostContainerVtbl);
+    DocHost_Init(&ret->doc_host, &ret->IWebBrowser2_iface, &DocHostContainerVtbl);
 
     InternetExplorer_WebBrowser_Init(ret);
 
-    HlinkFrame_Init(&ret->hlink_frame, (IUnknown*)&ret->IWebBrowser2_iface, &ret->doc_host->doc_host);
+    HlinkFrame_Init(&ret->hlink_frame, (IUnknown*)&ret->IWebBrowser2_iface, &ret->doc_host);
 
     create_frame_hwnd(ret);
-    ret->doc_host->doc_host.frame_hwnd = ret->frame_hwnd;
 
     InterlockedIncrement(&obj_cnt);
     list_add_tail(&ie_list, &ret->entry);
@@ -957,6 +966,7 @@ static HDDEDATA WINAPI dde_proc(UINT type, UINT uFmt, HCONV hConv, HSZ hsz1, HSZ
 
         if(DdeGetData(data, (BYTE*)url, size, 0) != size) {
             ERR("error during read\n");
+            heap_free(url);
             break;
         }
 
@@ -998,9 +1008,8 @@ static void init_dde(void)
     if(!ddestr_openurl)
         WARN("Failed to create string handle: %u\n", DdeGetLastError(dde_inst));
 
-    res = HandleToULong(DdeNameService(dde_inst, ddestr_iexplore, 0, DNS_REGISTER));
-    if(res != DMLERR_NO_ERROR)
-        WARN("DdeNameService failed: %u\n", res);
+    if(!DdeNameService(dde_inst, ddestr_iexplore, 0, DNS_REGISTER))
+        WARN("DdeNameService failed\n");
 }
 
 static void release_dde(void)

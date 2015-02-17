@@ -125,6 +125,7 @@ static void test_message_from_string_wide(void)
     static const WCHAR s_sp002sp001[] = {' ',' ','0','0','0','2',',',' ',' ','0','0','1',0};
     static const WCHAR s_sp002sp003[] = {' ',' ','0','0','0','2',',',' ','0','0','0','0','3',0};
     static const WCHAR s_sp001004[]   = {' ',' ','0','0','1',',','0','0','0','0','0','4',0};
+    static const WCHAR s_null[]       = {'(','n','u','l','l',')',0};
 
     static const WCHAR init_buf[] = {'x', 'x', 'x', 'x', 'x', 'x'};
     static const WCHAR broken_buf[] = {'t','e','s','t','x','x'};
@@ -380,6 +381,12 @@ static void test_message_from_string_wide(void)
         0, out, sizeof(out)/sizeof(WCHAR));
     ok(!lstrcmpW(s_crlfcrlf, out), "failed out=%s\n", wine_dbgstr_w(out));
     ok(r==4,"failed: r=%d\n", r);
+
+    /* null string as argument */
+    r = doitW(FORMAT_MESSAGE_FROM_STRING, fmt_1, 0,
+        0, out, sizeof(out)/sizeof(WCHAR), NULL);
+    ok(!lstrcmpW(s_null, out),"failed out=[%s]\n", wine_dbgstr_w(out));
+    ok(r==6,"failed: r=%d\n",r);
 
     /* precision and width */
 
@@ -700,6 +707,12 @@ static void test_message_from_string(void)
     ok(!strcmp("\r\n\r\n", out),"failed out=[%s]\n",out);
     ok(r==4,"failed: r=%d\n",r);
 
+    /* null string as argument */
+    r = doit(FORMAT_MESSAGE_FROM_STRING, "%1", 0,
+        0, out, sizeof(out)/sizeof(CHAR), NULL);
+    ok(!strcmp("(null)", out),"failed out=[%s]\n",out);
+    ok(r==6,"failed: r=%d\n",r);
+
     /* precision and width */
 
     r = doit(FORMAT_MESSAGE_FROM_STRING, "%1!3s!",
@@ -982,6 +995,195 @@ static void test_message_ignore_inserts_wide(void)
                          sizeof(out)/sizeof(WCHAR), NULL);
     ok(ret == 2, "Expected FormatMessageW to return 2, got %d\n", ret);
     ok(!lstrcmpW(s_2sp, out), "Expected output string \"  \", got %s\n", wine_dbgstr_w(out));
+}
+
+static void test_message_wrap(void)
+{
+    DWORD ret;
+    int i;
+    CHAR in[300], out[300], ref[300];
+
+    /* No need for wrapping */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 20,
+                         "short long line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 15, "Expected FormatMessageW to return 15, got %d\n", ret);
+    ok(!strcmp("short long line", out),"failed out=[%s]\n",out);
+
+    /* Wrap the last word */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 11,
+                         "short long line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 16, "Expected FormatMessageW to return 16, got %d\n", ret);
+    ok(!strcmp("short long\r\nline", out),"failed out=[%s]\n",out);
+
+    /* Wrap the very last word */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 20,
+                         "short long long line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 21, "Expected FormatMessageW to return 21, got %d\n", ret);
+    ok(!strcmp("short long long\r\nline", out),"failed out=[%s]\n",out);
+
+    /* Strictly less than 10 characters per line! */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 10,
+                         "short long line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 16, "Expected FormatMessageW to return 16, got %d\n", ret);
+    ok(!strcmp("short\r\nlong line", out),"failed out=[%s]\n",out);
+
+    /* Handling of duplicate spaces */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 16,
+                         "short long    line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 16, "Expected FormatMessageW to return 16, got %d\n", ret);
+    ok(!strcmp("short long\r\nline", out),"failed out=[%s]\n",out);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 16,
+                         "short long    wordlongerthanaline", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 33, "Expected FormatMessageW to return 33, got %d\n", ret);
+    ok(!strcmp("short long\r\nwordlongerthanal\r\nine", out),"failed out=[%s]\n",out);
+
+    /* Breaking in the middle of spaces */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 12,
+                         "short long    line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 18, "Expected FormatMessageW to return 18, got %d\n", ret);
+    ok(!strcmp("short long\r\n  line", out),"failed out=[%s]\n",out);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 12,
+                         "short long    wordlongerthanaline", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 35, "Expected FormatMessageW to return 35, got %d\n", ret);
+    ok(!strcmp("short long\r\n\r\nwordlongerth\r\nanaline", out),"failed out=[%s]\n",out);
+
+    /* Handling of start-of-string spaces */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 15,
+                         "   short line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 13, "Expected FormatMessageW to return 13, got %d\n", ret);
+    ok(!strcmp("   short line", out),"failed out=[%s]\n",out);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 11,
+                         "   shortlong line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 17, "Expected FormatMessageW to return 17, got %d\n", ret);
+    ok(!strcmp("\r\nshortlong\r\nline", out),"failed out=[%s]\n",out);
+
+    /* Handling of start-of-line spaces */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 11,
+                         "l1%n   shortlong line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 21, "Expected FormatMessageW to return 21, got %d\n", ret);
+    ok(!strcmp("l1\r\n\r\nshortlong\r\nline", out),"failed out=[%s]\n",out);
+
+    /* Pure space wrapping */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 5,
+                         "                ", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 7, "Expected FormatMessageW to return 7, got %d\n", ret);
+    ok(!strcmp("\r\n\r\n\r\n ", out),"failed out=[%s]\n",out);
+
+    /* Handling of trailing spaces */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 5,
+                         "l1               ", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 10, "Expected FormatMessageW to return 10, got %d\n", ret);
+    ok(!strcmp("l1\r\n\r\n\r\n  ", out),"failed out=[%s]\n",out);
+
+    /* Word that just fills the line */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 8,
+                         "shortlon", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 10, "Expected FormatMessageW to return 10, got %d\n", ret);
+    ok(!strcmp("shortlon\r\n", out),"failed out=[%s]\n",out);
+
+    /* Word longer than the line */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 8,
+                         "shortlongline", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 15, "Expected FormatMessageW to return 15, got %d\n", ret);
+    ok(!strcmp("shortlon\r\ngline", out),"failed out=[%s]\n",out);
+
+    /* Wrap the line multiple times */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 7,
+                         "short long line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 17, "Expected FormatMessageW to return 17, got %d\n", ret);
+    ok(!strcmp("short\r\nlong\r\nline", out),"failed out=[%s]\n",out);
+
+    /* '\n's in the source are ignored */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 11,
+                         "short\nlong line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 16, "Expected FormatMessageW to return 16, got %d\n", ret);
+    ok(!strcmp("short long\r\nline", out),"failed out=[%s]\n",out);
+
+    /* Wrap even before a '%n' */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 8,
+                         "shortlon%n", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 12, "Expected FormatMessageW to return 12, got %d\n", ret);
+    ok(!strcmp("shortlon\r\n\r\n", out),"failed out=[%s]\n",out);
+
+    /* '%n's count as starting a new line and combine with line wrapping */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 10,
+                         "short%nlong line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 16, "Expected FormatMessageW to return 16, got %d\n", ret);
+    ok(!strcmp("short\r\nlong line", out),"failed out=[%s]\n",out);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 8,
+                         "short%nlong line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 17, "Expected FormatMessageW to return 17, got %d\n", ret);
+    ok(!strcmp("short\r\nlong\r\nline", out),"failed out=[%s]\n",out);
+
+    /* '%r's also count as starting a new line and all */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 10,
+                         "short%rlong line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 15, "Expected FormatMessageW to return 15, got %d\n", ret);
+    ok(!strcmp("short\rlong line", out),"failed out=[%s]\n",out);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 8,
+                         "short%rlong line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 16, "Expected FormatMessageW to return 16, got %d\n", ret);
+    ok(!strcmp("short\rlong\r\nline", out),"failed out=[%s]\n",out);
+
+    /* IGNORE_INSERTS does not prevent line wrapping or disable '%n' */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | FORMAT_MESSAGE_IGNORE_INSERTS | 8,
+                         "short%nlong line%1", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 19, "Expected FormatMessageW to return 19, got %d\n", ret);
+    ok(!strcmp("short\r\nlong\r\nline%1", out),"failed out=[%s]\n",out);
+
+    /* MAX_WIDTH_MASK is the same as specifying an infinite line width */
+    strcpy(in, "first line%n");
+    strcpy(ref, "first line\r\n");
+    for (i=0; i < 26; i++)
+    {
+        strcat(in, "123456789 ");
+        strcat(ref, "123456789 ");
+    }
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | FORMAT_MESSAGE_MAX_WIDTH_MASK,
+                         in, 0, 0, out, sizeof(out), NULL);
+    ok(ret == 272, "Expected FormatMessageW to return 272, got %d\n", ret);
+    ok(!strcmp(ref, out),"failed out=[%s]\n",out);
+
+    /* Wrapping and non-space characters */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 11,
+                         "short long\tline", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 16, "Expected FormatMessageW to return 16, got %d\n", ret);
+    ok(!strcmp("short\r\nlong\tline", out),"failed out=[%s]\n",out);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 11,
+                         "short long-line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 16, "Expected FormatMessageW to return 16, got %d\n", ret);
+    ok(!strcmp("short\r\nlong-line", out),"failed out=[%s]\n",out);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 11,
+                         "short long_line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 16, "Expected FormatMessageW to return 16, got %d\n", ret);
+    ok(!strcmp("short\r\nlong_line", out),"failed out=[%s]\n",out);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 11,
+                         "short long.line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 16, "Expected FormatMessageW to return 16, got %d\n", ret);
+    ok(!strcmp("short\r\nlong.line", out),"failed out=[%s]\n",out);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 11,
+                         "short long,line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 16, "Expected FormatMessageW to return 16, got %d\n", ret);
+    ok(!strcmp("short\r\nlong,line", out),"failed out=[%s]\n",out);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 11,
+                         "short long!line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 16, "Expected FormatMessageW to return 16, got %d\n", ret);
+    ok(!strcmp("short\r\nlong!line", out),"failed out=[%s]\n",out);
+
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_STRING | 11,
+                         "short long?line", 0, 0, out, sizeof(out), NULL);
+    ok(ret == 16, "Expected FormatMessageW to return 16, got %d\n", ret);
+    ok(!strcmp("short\r\nlong?line", out),"failed out=[%s]\n",out);
 }
 
 static void test_message_insufficient_buffer(void)
@@ -1341,12 +1543,17 @@ static void test_message_from_hmodule(void)
     HMODULE h;
     CHAR out[0x100] = {0};
 
-    h = GetModuleHandle("kernel32.dll");
+    h = GetModuleHandleA("kernel32.dll");
     ok(h != 0, "GetModuleHandle failed\n");
 
     /*Test existing messageID; as the message strings from wine's kernel32 differ from windows' kernel32 we don't compare
     the strings but only test that FormatMessage doesn't return 0*/
     ret = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_FROM_HMODULE, h, 7/*=ERROR_ARENA_TRASHED*/,
+                         MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), out, sizeof(out)/sizeof(CHAR), NULL);
+    ok(ret != 0, "FormatMessageA returned 0\n");
+
+    /* Test HRESULT. It's not documented but in practice _com_error::ErrorMessage relies on this. */
+    ret = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_FROM_HMODULE, h, 0x80070005 /* E_ACCESSDENIED */,
                          MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), out, sizeof(out)/sizeof(CHAR), NULL);
     ok(ret != 0, "FormatMessageA returned 0\n");
 
@@ -1580,6 +1787,7 @@ START_TEST(format_msg)
 
     test_message_from_string();
     test_message_ignore_inserts();
+    test_message_wrap();
     test_message_insufficient_buffer();
     test_message_null_buffer();
     test_message_allocate_buffer();

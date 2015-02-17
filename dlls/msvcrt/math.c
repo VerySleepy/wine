@@ -18,6 +18,7 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #include "config.h"
+#include "wine/port.h"
 
 #include <stdio.h>
 #define __USE_ISOC9X 1
@@ -33,13 +34,15 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(msvcrt);
 
-#ifndef HAVE_FINITE
-#ifndef finite /* Could be a macro */
-#ifdef isfinite
-#define finite(x) isfinite(x)
-#else
-#define finite(x) (!isnan(x)) /* At least catch some cases */
+#ifndef HAVE_FINITEF
+#define finitef(x) isfinite(x)
 #endif
+
+#ifndef HAVE_ISNANF
+#ifdef HAVE_ISNAN
+#define isnanf(x) isnan(x)
+#else
+#define isnanf(x) 0
 #endif
 #endif
 
@@ -48,6 +51,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(msvcrt);
 #endif
 
 typedef int (CDECL *MSVCRT_matherr_func)(struct MSVCRT__exception *);
+typedef double LDOUBLE;  /* long double is just a double */
 
 static MSVCRT_matherr_func MSVCRT_default_matherr_func = NULL;
 
@@ -68,7 +72,64 @@ int CDECL MSVCRT__set_SSE2_enable(int flag)
     return sse2_enabled;
 }
 
-#ifdef __x86_64__
+#if defined(__x86_64__) || defined(__arm__)
+
+/*********************************************************************
+ *      _chgsignf (MSVCRT.@)
+ */
+float CDECL MSVCRT__chgsignf( float num )
+{
+    /* FIXME: +-infinity,Nan not tested */
+    return -num;
+}
+
+/*********************************************************************
+ *      _copysignf (MSVCRT.@)
+ */
+float CDECL MSVCRT__copysignf( float num, float sign )
+{
+    /* FIXME: Behaviour for Nan/Inf? */
+    if (sign < 0.0)
+        return num < 0.0 ? num : -num;
+    return num < 0.0 ? -num : num;
+}
+
+/*********************************************************************
+ *      _finitef (MSVCRT.@)
+ */
+int CDECL MSVCRT__finitef( float num )
+{
+    return finitef(num) != 0; /* See comment for _isnan() */
+}
+
+/*********************************************************************
+ *      _isnanf (MSVCRT.@)
+ */
+INT CDECL MSVCRT__isnanf( float num )
+{
+    /* Some implementations return -1 for true(glibc), msvcrt/crtdll return 1.
+     * Do the same, as the result may be used in calculations
+     */
+    return isnanf(num) != 0;
+}
+
+/*********************************************************************
+ *      _logbf (MSVCRT.@)
+ */
+float CDECL MSVCRT__logbf( float num )
+{
+    if (!finitef(num)) *MSVCRT__errno() = MSVCRT_EDOM;
+    return logbf(num);
+}
+
+/*********************************************************************
+ *      _nextafterf (MSVCRT.@)
+ */
+float CDECL MSVCRT__nextafterf( float num, float next )
+{
+    if (!finitef(num) || !finitef(next)) *MSVCRT__errno() = MSVCRT_EDOM;
+    return nextafterf( num, next );
+}
 
 /*********************************************************************
  *      MSVCRT_acosf (MSVCRT.@)
@@ -232,6 +293,14 @@ float CDECL MSVCRT_ceilf( float x )
 }
 
 /*********************************************************************
+ *      fabsf (MSVCRT.@)
+ */
+float CDECL MSVCRT_fabsf( float x )
+{
+  return fabsf(x);
+}
+
+/*********************************************************************
  *      floorf (MSVCRT.@)
  */
 float CDECL MSVCRT_floorf( float x )
@@ -271,7 +340,7 @@ double CDECL MSVCRT_modff( float x, float *iptr )
  */
 double CDECL MSVCRT_acos( double x )
 {
-  if (x < -1.0 || x > 1.0 || !finite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (x < -1.0 || x > 1.0 || !isfinite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
   /* glibc implements acos() as the FPU equivalent of atan2(sqrt(1 - x ^ 2), x).
    * asin() uses a similar construction. This is bad because as x gets nearer to
    * 1 the error in the expression "1 - x^2" can get relatively large due to
@@ -285,7 +354,7 @@ double CDECL MSVCRT_acos( double x )
  */
 double CDECL MSVCRT_asin( double x )
 {
-  if (x < -1.0 || x > 1.0 || !finite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (x < -1.0 || x > 1.0 || !isfinite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
   return atan2(x, sqrt((1 - x) * (1 + x)));
 }
 
@@ -294,7 +363,7 @@ double CDECL MSVCRT_asin( double x )
  */
 double CDECL MSVCRT_atan( double x )
 {
-  if (!finite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (!isfinite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
   return atan(x);
 }
 
@@ -303,7 +372,7 @@ double CDECL MSVCRT_atan( double x )
  */
 double CDECL MSVCRT_atan2( double x, double y )
 {
-  if (!finite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (!isfinite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
   return atan2(x,y);
 }
 
@@ -312,7 +381,7 @@ double CDECL MSVCRT_atan2( double x, double y )
  */
 double CDECL MSVCRT_cos( double x )
 {
-  if (!finite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (!isfinite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
   return cos(x);
 }
 
@@ -321,7 +390,7 @@ double CDECL MSVCRT_cos( double x )
  */
 double CDECL MSVCRT_cosh( double x )
 {
-  if (!finite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (!isfinite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
   return cosh(x);
 }
 
@@ -330,7 +399,7 @@ double CDECL MSVCRT_cosh( double x )
  */
 double CDECL MSVCRT_exp( double x )
 {
-  if (!finite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (!isfinite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
   return exp(x);
 }
 
@@ -339,7 +408,7 @@ double CDECL MSVCRT_exp( double x )
  */
 double CDECL MSVCRT_fmod( double x, double y )
 {
-  if (!finite(x) || !finite(y)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (!isfinite(x) || !isfinite(y)) *MSVCRT__errno() = MSVCRT_EDOM;
   return fmod(x,y);
 }
 
@@ -348,7 +417,7 @@ double CDECL MSVCRT_fmod( double x, double y )
  */
 double CDECL MSVCRT_log( double x)
 {
-  if (x < 0.0 || !finite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (x < 0.0 || !isfinite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
   if (x == 0.0) *MSVCRT__errno() = MSVCRT_ERANGE;
   return log(x);
 }
@@ -358,7 +427,7 @@ double CDECL MSVCRT_log( double x)
  */
 double CDECL MSVCRT_log10( double x )
 {
-  if (x < 0.0 || !finite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (x < 0.0 || !isfinite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
   if (x == 0.0) *MSVCRT__errno() = MSVCRT_ERANGE;
   return log10(x);
 }
@@ -370,7 +439,7 @@ double CDECL MSVCRT_pow( double x, double y )
 {
   /* FIXME: If x < 0 and y is not integral, set EDOM */
   double z = pow(x,y);
-  if (!finite(z)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (!isfinite(z)) *MSVCRT__errno() = MSVCRT_EDOM;
   return z;
 }
 
@@ -379,7 +448,7 @@ double CDECL MSVCRT_pow( double x, double y )
  */
 double CDECL MSVCRT_sin( double x )
 {
-  if (!finite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (!isfinite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
   return sin(x);
 }
 
@@ -388,7 +457,7 @@ double CDECL MSVCRT_sin( double x )
  */
 double CDECL MSVCRT_sinh( double x )
 {
-  if (!finite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (!isfinite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
   return sinh(x);
 }
 
@@ -397,7 +466,7 @@ double CDECL MSVCRT_sinh( double x )
  */
 double CDECL MSVCRT_sqrt( double x )
 {
-  if (x < 0.0 || !finite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (x < 0.0 || !isfinite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
   return sqrt(x);
 }
 
@@ -406,7 +475,7 @@ double CDECL MSVCRT_sqrt( double x )
  */
 double CDECL MSVCRT_tan( double x )
 {
-  if (!finite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (!isfinite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
   return tan(x);
 }
 
@@ -415,7 +484,7 @@ double CDECL MSVCRT_tan( double x )
  */
 double CDECL MSVCRT_tanh( double x )
 {
-  if (!finite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (!isfinite(x)) *MSVCRT__errno() = MSVCRT_EDOM;
   return tanh(x);
 }
 
@@ -572,6 +641,15 @@ double CDECL _CItanh(void)
   return MSVCRT_tanh(x);
 }
 
+/*********************************************************************
+ *                  _ftol   (MSVCRT.@)
+ */
+LONGLONG CDECL MSVCRT__ftol(void)
+{
+    FPU_DOUBLE(x);
+    return (LONGLONG)x;
+}
+
 #endif /* defined(__GNUC__) && defined(__i386__) */
 
 /*********************************************************************
@@ -624,7 +702,7 @@ int CDECL MSVCRT__fpclass(double num)
   }
   return signbit(num) ? MSVCRT__FPCLASS_NN : MSVCRT__FPCLASS_PN;
 #else
-  if (!finite(num))
+  if (!isfinite(num))
     return MSVCRT__FPCLASS_QNAN;
   return num == 0.0 ? MSVCRT__FPCLASS_PZ : (num < 0 ? MSVCRT__FPCLASS_NN : MSVCRT__FPCLASS_PN);
 #endif
@@ -701,6 +779,14 @@ MSVCRT_long CDECL MSVCRT_labs( MSVCRT_long n )
 }
 
 /*********************************************************************
+ *		llabs (MSVCRT.@)
+ */
+MSVCRT_longlong CDECL MSVCRT_llabs( MSVCRT_longlong n )
+{
+    return n >= 0 ? n : -n;
+}
+
+/*********************************************************************
  *		_abs64 (MSVCRT.@)
  */
 __int64 CDECL _abs64( __int64 n )
@@ -713,7 +799,7 @@ __int64 CDECL _abs64( __int64 n )
  */
 double CDECL MSVCRT__logb(double num)
 {
-  if (!finite(num)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (!isfinite(num)) *MSVCRT__errno() = MSVCRT_EDOM;
   return logb(num);
 }
 
@@ -722,7 +808,7 @@ double CDECL MSVCRT__logb(double num)
  */
 double CDECL MSVCRT__scalb(double num, MSVCRT_long power)
 {
-  if (!finite(num)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (!isfinite(num)) *MSVCRT__errno() = MSVCRT_EDOM;
   return ldexp(num, power);
 }
 
@@ -922,7 +1008,7 @@ double CDECL MSVCRT_ldexp(double num, MSVCRT_long exp)
 {
   double z = ldexp(num,exp);
 
-  if (!finite(z))
+  if (!isfinite(z))
     *MSVCRT__errno() = MSVCRT_ERANGE;
   else if (z == 0 && signbit(z))
     z = 0.0; /* Convert -0 -> +0 */
@@ -1129,7 +1215,6 @@ int CDECL _controlfp_s(unsigned int *cur, unsigned int newval, unsigned int mask
     if (!MSVCRT_CHECK_PMT( !(newval & mask & ~all_flags) ))
     {
         if (cur) *cur = _controlfp( 0, 0 );  /* retrieve it anyway */
-        *MSVCRT__errno() = MSVCRT_EINVAL;
         return MSVCRT_EINVAL;
     }
     val = _controlfp( newval, mask );
@@ -1153,7 +1238,7 @@ double CDECL MSVCRT__copysign(double num, double sign)
  */
 int CDECL MSVCRT__finite(double num)
 {
-  return (finite(num)?1:0); /* See comment for _isnan() */
+  return isfinite(num) != 0; /* See comment for _isnan() */
 }
 
 /*********************************************************************
@@ -1182,7 +1267,7 @@ INT CDECL MSVCRT__isnan(double num)
   /* Some implementations return -1 for true(glibc), msvcrt/crtdll return 1.
    * Do the same, as the result may be used in calculations
    */
-  return isnan(num) ? 1 : 0;
+  return isnan(num) != 0;
 }
 
 /*********************************************************************
@@ -1218,7 +1303,7 @@ double CDECL MSVCRT__jn(int n, double num)
 double CDECL MSVCRT__y0(double num)
 {
   double retval;
-  if (!finite(num)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (!isfinite(num)) *MSVCRT__errno() = MSVCRT_EDOM;
   retval  = y0(num);
   if (MSVCRT__fpclass(retval) == MSVCRT__FPCLASS_NINF)
   {
@@ -1234,7 +1319,7 @@ double CDECL MSVCRT__y0(double num)
 double CDECL MSVCRT__y1(double num)
 {
   double retval;
-  if (!finite(num)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (!isfinite(num)) *MSVCRT__errno() = MSVCRT_EDOM;
   retval  = y1(num);
   if (MSVCRT__fpclass(retval) == MSVCRT__FPCLASS_NINF)
   {
@@ -1250,7 +1335,7 @@ double CDECL MSVCRT__y1(double num)
 double CDECL MSVCRT__yn(int order, double num)
 {
   double retval;
-  if (!finite(num)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (!isfinite(num)) *MSVCRT__errno() = MSVCRT_EDOM;
   retval  = yn(order,num);
   if (MSVCRT__fpclass(retval) == MSVCRT__FPCLASS_NINF)
   {
@@ -1266,7 +1351,7 @@ double CDECL MSVCRT__yn(int order, double num)
 double CDECL MSVCRT__nextafter(double num, double next)
 {
   double retval;
-  if (!finite(num) || !finite(next)) *MSVCRT__errno() = MSVCRT_EDOM;
+  if (!isfinite(num) || !isfinite(next)) *MSVCRT__errno() = MSVCRT_EDOM;
   retval = nextafter(num,next);
   return retval;
 }
@@ -1274,7 +1359,7 @@ double CDECL MSVCRT__nextafter(double num, double next)
 /*********************************************************************
  *		_ecvt (MSVCRT.@)
  */
-char * CDECL _ecvt( double number, int ndigits, int *decpt, int *sign )
+char * CDECL MSVCRT__ecvt( double number, int ndigits, int *decpt, int *sign )
 {
     int prec, len;
     thread_data_t *data = msvcrt_get_thread_data();
@@ -1318,22 +1403,17 @@ char * CDECL _ecvt( double number, int ndigits, int *decpt, int *sign )
 /*********************************************************************
  *		_ecvt_s (MSVCRT.@)
  */
-int CDECL _ecvt_s( char *buffer, MSVCRT_size_t length, double number, int ndigits, int *decpt, int *sign )
+int CDECL MSVCRT__ecvt_s( char *buffer, MSVCRT_size_t length, double number, int ndigits, int *decpt, int *sign )
 {
     int prec, len;
     char *result;
     const char infret[] = "1#INF";
 
-    if(!MSVCRT_CHECK_PMT(buffer != NULL) || !MSVCRT_CHECK_PMT(decpt != NULL) || !MSVCRT_CHECK_PMT(sign != NULL))
-    {
-        *MSVCRT__errno() = MSVCRT_EINVAL;
-        return MSVCRT_EINVAL;
-    }
-    if(!MSVCRT_CHECK_PMT(length > 2) || !MSVCRT_CHECK_PMT(ndigits < (int)length - 1))
-    {
-        *MSVCRT__errno() = MSVCRT_ERANGE;
-        return MSVCRT_ERANGE;
-    }
+    if (!MSVCRT_CHECK_PMT(buffer != NULL)) return MSVCRT_EINVAL;
+    if (!MSVCRT_CHECK_PMT(decpt != NULL)) return MSVCRT_EINVAL;
+    if (!MSVCRT_CHECK_PMT(sign != NULL)) return MSVCRT_EINVAL;
+    if (!MSVCRT_CHECK_PMT_ERR( length > 2, MSVCRT_ERANGE )) return MSVCRT_ERANGE;
+    if (!MSVCRT_CHECK_PMT_ERR(ndigits < (int)length - 1, MSVCRT_ERANGE )) return MSVCRT_ERANGE;
 
     /* special case - inf */
     if(number == HUGE_VAL || number == -HUGE_VAL)
@@ -1384,7 +1464,7 @@ int CDECL _ecvt_s( char *buffer, MSVCRT_size_t length, double number, int ndigit
 /***********************************************************************
  *		_fcvt  (MSVCRT.@)
  */
-char * CDECL _fcvt( double number, int ndigits, int *decpt, int *sign )
+char * CDECL MSVCRT__fcvt( double number, int ndigits, int *decpt, int *sign )
 {
     thread_data_t *data = msvcrt_get_thread_data();
     int stop, dec1, dec2;
@@ -1467,7 +1547,7 @@ char * CDECL _fcvt( double number, int ndigits, int *decpt, int *sign )
 /***********************************************************************
  *		_fcvt_s  (MSVCRT.@)
  */
-int CDECL _fcvt_s(char* outbuffer, MSVCRT_size_t size, double number, int ndigits, int *decpt, int *sign)
+int CDECL MSVCRT__fcvt_s(char* outbuffer, MSVCRT_size_t size, double number, int ndigits, int *decpt, int *sign)
 {
     int stop, dec1, dec2;
     char *ptr1, *ptr2, *first;
@@ -1556,7 +1636,7 @@ int CDECL _fcvt_s(char* outbuffer, MSVCRT_size_t size, double number, int ndigit
 /***********************************************************************
  *		_gcvt  (MSVCRT.@)
  */
-char * CDECL _gcvt( double number, int ndigit, char *buff )
+char * CDECL MSVCRT__gcvt( double number, int ndigit, char *buff )
 {
     if(!buff) {
         *MSVCRT__errno() = MSVCRT_EINVAL;
@@ -1575,7 +1655,7 @@ char * CDECL _gcvt( double number, int ndigit, char *buff )
 /***********************************************************************
  *              _gcvt_s  (MSVCRT.@)
  */
-int CDECL _gcvt_s(char *buff, MSVCRT_size_t size, double number, int digits)
+int CDECL MSVCRT__gcvt_s(char *buff, MSVCRT_size_t size, double number, int digits)
 {
     int len;
 
@@ -2126,4 +2206,400 @@ void __cdecl __libm_sse2_tanf(void)
     __asm__ __volatile__( "movd %0,%%xmm0" : : "g" (f) );
 }
 
+/***********************************************************************
+ *		__libm_sse2_sqrt_precise   (MSVCR110.@)
+ */
+void __cdecl __libm_sse2_sqrt_precise(void)
+{
+    double d;
+    __asm__ __volatile__( "movq %%xmm0,%0" : "=m" (d) );
+    d = sqrt( d );
+    __asm__ __volatile__( "movq %0,%%xmm0" : : "m" (d) );
+}
+
 #endif  /* __i386__ */
+
+/*********************************************************************
+ *      cbrt (MSVCR120.@)
+ */
+double CDECL MSVCR120_cbrt(double x)
+{
+#ifdef HAVE_CBRT
+    return cbrt(x);
+#else
+    return x < 0 ? -pow(-x, 1.0 / 3.0) : pow(x, 1.0 / 3.0);
+#endif
+}
+
+/*********************************************************************
+ *      cbrtf (MSVCR120.@)
+ */
+float CDECL MSVCR120_cbrtf(float x)
+{
+#ifdef HAVE_CBRTF
+    return cbrtf(x);
+#else
+    return MSVCR120_cbrt(x);
+#endif
+}
+
+/*********************************************************************
+ *      cbrtl (MSVCR120.@)
+ */
+LDOUBLE CDECL MSVCR120_cbrtl(LDOUBLE x)
+{
+    return MSVCR120_cbrt(x);
+}
+
+/*********************************************************************
+ *      exp2 (MSVCR120.@)
+ */
+double CDECL MSVCR120_exp2(double x)
+{
+#ifdef HAVE_EXP2
+    return exp2(x);
+#else
+    return pow(2, x);
+#endif
+}
+
+/*********************************************************************
+ *      exp2f (MSVCR120.@)
+ */
+float CDECL MSVCR120_exp2f(float x)
+{
+#ifdef HAVE_EXP2F
+    return exp2f(x);
+#else
+    return MSVCR120_exp2(x);
+#endif
+}
+
+/*********************************************************************
+ *      exp2l (MSVCR120.@)
+ */
+LDOUBLE CDECL MSVCR120_exp2l(LDOUBLE x)
+{
+    return MSVCR120_exp2(x);
+}
+
+/*********************************************************************
+ *      log2 (MSVCR120.@)
+ */
+double CDECL MSVCR120_log2(double x)
+{
+#ifdef HAVE_LOG2
+    return log2(x);
+#else
+    return log(x) / log(2);
+#endif
+}
+
+/*********************************************************************
+ *      log2f (MSVCR120.@)
+ */
+float CDECL MSVCR120_log2f(float x)
+{
+#ifdef HAVE_LOG2F
+    return log2f(x);
+#else
+    return MSVCR120_log2(x);
+#endif
+}
+
+/*********************************************************************
+ *      log2l (MSVCR120.@)
+ */
+LDOUBLE CDECL MSVCR120_log2l(LDOUBLE x)
+{
+    return MSVCR120_log2(x);
+}
+
+/*********************************************************************
+ *      rint (MSVCR120.@)
+ */
+double CDECL MSVCR120_rint(double x)
+{
+#ifdef HAVE_RINT
+    return rint(x);
+#else
+    return x >= 0 ? floor(x + 0.5) : ceil(x - 0.5);
+#endif
+}
+
+/*********************************************************************
+ *      rintf (MSVCR120.@)
+ */
+float CDECL MSVCR120_rintf(float x)
+{
+#ifdef HAVE_RINTF
+    return rintf(x);
+#else
+    return MSVCR120_rint(x);
+#endif
+}
+
+/*********************************************************************
+ *      rintl (MSVCR120.@)
+ */
+LDOUBLE CDECL MSVCR120_rintl(LDOUBLE x)
+{
+    return MSVCR120_rint(x);
+}
+
+/*********************************************************************
+ *      lrint (MSVCR120.@)
+ */
+MSVCRT_long CDECL MSVCR120_lrint(double x)
+{
+#ifdef HAVE_LRINT
+    return lrint(x);
+#else
+    return MSVCR120_rint(x);
+#endif
+}
+
+/*********************************************************************
+ *      lrintf (MSVCR120.@)
+ */
+MSVCRT_long CDECL MSVCR120_lrintf(float x)
+{
+#ifdef HAVE_LRINTF
+    return lrintf(x);
+#else
+    return MSVCR120_lrint(x);
+#endif
+}
+
+/*********************************************************************
+ *      lrintl (MSVCR120.@)
+ */
+MSVCRT_long CDECL MSVCR120_lrintl(LDOUBLE x)
+{
+    return MSVCR120_lrint(x);
+}
+
+/*********************************************************************
+ *      llrint (MSVCR120.@)
+ */
+MSVCRT_longlong CDECL MSVCR120_llrint(double x)
+{
+#ifdef HAVE_LLRINT
+    return llrint(x);
+#else
+    return MSVCR120_rint(x);
+#endif
+}
+
+/*********************************************************************
+ *      llrintf (MSVCR120.@)
+ */
+MSVCRT_longlong CDECL MSVCR120_llrintf(float x)
+{
+#ifdef HAVE_LLRINTF
+    return llrintf(x);
+#else
+    return MSVCR120_llrint(x);
+#endif
+}
+
+/*********************************************************************
+ *      rintl (MSVCR120.@)
+ */
+MSVCRT_longlong CDECL MSVCR120_llrintl(LDOUBLE x)
+{
+    return MSVCR120_llrint(x);
+}
+
+/*********************************************************************
+ *      round (MSVCR120.@)
+ */
+double CDECL MSVCR120_round(double x)
+{
+#ifdef HAVE_ROUND
+    return round(x);
+#else
+    return MSVCR120_rint(x);
+#endif
+}
+
+/*********************************************************************
+ *      roundf (MSVCR120.@)
+ */
+float CDECL MSVCR120_roundf(float x)
+{
+#ifdef HAVE_ROUNDF
+    return roundf(x);
+#else
+    return MSVCR120_round(x);
+#endif
+}
+
+/*********************************************************************
+ *      roundl (MSVCR120.@)
+ */
+LDOUBLE CDECL MSVCR120_roundl(LDOUBLE x)
+{
+    return MSVCR120_round(x);
+}
+
+/*********************************************************************
+ *      lround (MSVCR120.@)
+ */
+MSVCRT_long CDECL MSVCR120_lround(double x)
+{
+#ifdef HAVE_LROUND
+    return lround(x);
+#else
+    return MSVCR120_round(x);
+#endif
+}
+
+/*********************************************************************
+ *      lroundf (MSVCR120.@)
+ */
+MSVCRT_long CDECL MSVCR120_lroundf(float x)
+{
+#ifdef HAVE_LROUNDF
+    return lroundf(x);
+#else
+    return MSVCR120_lround(x);
+#endif
+}
+
+/*********************************************************************
+ *      lroundl (MSVCR120.@)
+ */
+MSVCRT_long CDECL MSVCR120_lroundl(LDOUBLE x)
+{
+    return MSVCR120_lround(x);
+}
+
+/*********************************************************************
+ *      llround (MSVCR120.@)
+ */
+MSVCRT_longlong CDECL MSVCR120_llround(double x)
+{
+#ifdef HAVE_LLROUND
+    return llround(x);
+#else
+    return MSVCR120_round(x);
+#endif
+}
+
+/*********************************************************************
+ *      llroundf (MSVCR120.@)
+ */
+MSVCRT_longlong CDECL MSVCR120_llroundf(float x)
+{
+#ifdef HAVE_LLROUNDF
+    return llroundf(x);
+#else
+    return MSVCR120_llround(x);
+#endif
+}
+
+/*********************************************************************
+ *      roundl (MSVCR120.@)
+ */
+MSVCRT_longlong CDECL MSVCR120_llroundl(LDOUBLE x)
+{
+    return MSVCR120_llround(x);
+}
+
+/*********************************************************************
+ *      trunc (MSVCR120.@)
+ */
+double CDECL MSVCR120_trunc(double x)
+{
+#ifdef HAVE_TRUNC
+    return trunc(x);
+#else
+    return (x > 0) ? floor(x) : ceil(x);
+#endif
+}
+
+/*********************************************************************
+ *      truncf (MSVCR120.@)
+ */
+float CDECL MSVCR120_truncf(float x)
+{
+#ifdef HAVE_TRUNCF
+    return truncf(x);
+#else
+    return MSVCR120_trunc(x);
+#endif
+}
+
+/*********************************************************************
+ *      truncl (MSVCR120.@)
+ */
+LDOUBLE CDECL MSVCR120_truncl(LDOUBLE x)
+{
+    return MSVCR120_trunc(x);
+}
+
+/*********************************************************************
+ *      _dclass (MSVCR120.@)
+ */
+short CDECL MSVCR120__dclass(double x)
+{
+    switch (MSVCRT__fpclass(x)) {
+    case MSVCRT__FPCLASS_QNAN:
+    case MSVCRT__FPCLASS_SNAN:
+        return MSVCRT_FP_NAN;
+    case MSVCRT__FPCLASS_NINF:
+    case MSVCRT__FPCLASS_PINF:
+        return MSVCRT_FP_INFINITE;
+    case MSVCRT__FPCLASS_ND:
+    case MSVCRT__FPCLASS_PD:
+        return MSVCRT_FP_SUBNORMAL;
+    case MSVCRT__FPCLASS_NN:
+    case MSVCRT__FPCLASS_PN:
+    default:
+        return MSVCRT_FP_NORMAL;
+    case MSVCRT__FPCLASS_NZ:
+    case MSVCRT__FPCLASS_PZ:
+        return MSVCRT_FP_ZERO;
+    }
+}
+
+/*********************************************************************
+ *      _fdclass (MSVCR120.@)
+ */
+short CDECL MSVCR120__fdclass(float x)
+{
+    return MSVCR120__dclass(x);
+}
+
+/*********************************************************************
+ *      _ldclass (MSVCR120.@)
+ */
+short CDECL MSVCR120__ldclass(LDOUBLE x)
+{
+    return MSVCR120__dclass(x);
+}
+
+/*********************************************************************
+ *      _dtest (MSVCR120.@)
+ */
+short CDECL MSVCR120__dtest(double *x)
+{
+    return MSVCR120__dclass(*x);
+}
+
+/*********************************************************************
+ *      _fdtest (MSVCR120.@)
+ */
+short CDECL MSVCR120__fdtest(float *x)
+{
+    return MSVCR120__dclass(*x);
+}
+
+/*********************************************************************
+ *      _ldtest (MSVCR120.@)
+ */
+short CDECL MSVCR120__ldtest(LDOUBLE *x)
+{
+    return MSVCR120__dclass(*x);
+}

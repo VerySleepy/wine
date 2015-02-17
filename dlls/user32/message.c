@@ -56,8 +56,6 @@ WINE_DECLARE_DEBUG_CHANNEL(key);
 
 #define MAX_PACK_COUNT 4
 
-#define SYS_TIMER_RATE  55   /* min. timer rate in ms (actually 54.925)*/
-
 /* the various structures that can be sent in messages, in platform-independent layout */
 struct packed_CREATESTRUCTW
 {
@@ -292,7 +290,7 @@ const struct builtin_class_descr MESSAGE_builtin_class =
     0,                    /* style */
     WINPROC_MESSAGE,      /* proc */
     0,                    /* extra */
-    IDC_ARROW,            /* cursor */
+    0,                    /* cursor */
     0                     /* brush */
 };
 
@@ -424,14 +422,14 @@ static const unsigned int message_unicode_flags[] =
 };
 
 /* check whether a given message type includes pointers */
-static inline int is_pointer_message( UINT message )
+static inline BOOL is_pointer_message( UINT message )
 {
     if (message >= 8*sizeof(message_pointer_flags)) return FALSE;
     return (message_pointer_flags[message / 32] & SET(message)) != 0;
 }
 
 /* check whether a given message type contains Unicode (or ASCII) chars */
-static inline int is_unicode_message( UINT message )
+static inline BOOL is_unicode_message( UINT message )
 {
     if (message >= 8*sizeof(message_unicode_flags)) return FALSE;
     return (message_unicode_flags[message / 32] & SET(message)) != 0;
@@ -586,6 +584,17 @@ static BOOL CALLBACK broadcast_message_callback( HWND hwnd, LPARAM lparam )
     return TRUE;
 }
 
+DWORD get_input_codepage( void )
+{
+    DWORD cp;
+    int ret;
+    HKL hkl = GetKeyboardLayout( 0 );
+
+    ret = GetLocaleInfoW( LOWORD(hkl), LOCALE_IDEFAULTANSICODEPAGE | LOCALE_RETURN_NUMBER,
+                          (WCHAR *)&cp, sizeof(cp) / sizeof(WCHAR) );
+    if (!ret) cp = CP_ACP;
+    return cp;
+}
 
 /***********************************************************************
  *		map_wparam_AtoW
@@ -596,6 +605,7 @@ BOOL map_wparam_AtoW( UINT message, WPARAM *wparam, enum wm_char_mapping mapping
 {
     char ch[2];
     WCHAR wch[2];
+    DWORD cp = get_input_codepage();
 
     wch[0] = wch[1] = 0;
     switch(message)
@@ -614,7 +624,7 @@ BOOL map_wparam_AtoW( UINT message, WPARAM *wparam, enum wm_char_mapping mapping
             {
                 ch[0] = low;
                 ch[1] = HIBYTE(*wparam);
-                RtlMultiByteToUnicodeN( wch, sizeof(wch), NULL, ch, 2 );
+                MultiByteToWideChar( cp, 0, ch, 2, wch, 2 );
                 TRACE( "map %02x,%02x -> %04x mapping %u\n", (BYTE)ch[0], (BYTE)ch[1], wch[0], mapping );
                 if (data) data->lead_byte[mapping] = 0;
             }
@@ -622,14 +632,14 @@ BOOL map_wparam_AtoW( UINT message, WPARAM *wparam, enum wm_char_mapping mapping
             {
                 ch[0] = data->lead_byte[mapping];
                 ch[1] = low;
-                RtlMultiByteToUnicodeN( wch, sizeof(wch), NULL, ch, 2 );
+                MultiByteToWideChar( cp, 0, ch, 2, wch, 2 );
                 TRACE( "map stored %02x,%02x -> %04x mapping %u\n", (BYTE)ch[0], (BYTE)ch[1], wch[0], mapping );
                 data->lead_byte[mapping] = 0;
             }
             else if (!IsDBCSLeadByte( low ))
             {
                 ch[0] = low;
-                RtlMultiByteToUnicodeN( wch, sizeof(wch), NULL, ch, 1 );
+                MultiByteToWideChar( cp, 0, ch, 1, wch, 2 );
                 TRACE( "map %02x -> %04x\n", (BYTE)ch[0], wch[0] );
                 if (data) data->lead_byte[mapping] = 0;
             }
@@ -657,14 +667,14 @@ BOOL map_wparam_AtoW( UINT message, WPARAM *wparam, enum wm_char_mapping mapping
     case WM_MENUCHAR:
         ch[0] = LOBYTE(*wparam);
         ch[1] = HIBYTE(*wparam);
-        RtlMultiByteToUnicodeN( wch, sizeof(wch), NULL, ch, 2 );
+        MultiByteToWideChar( cp, 0, ch, 2, wch, 2 );
         *wparam = MAKEWPARAM(wch[0], wch[1]);
         break;
     case WM_IME_CHAR:
         ch[0] = HIBYTE(*wparam);
         ch[1] = LOBYTE(*wparam);
-        if (ch[0]) RtlMultiByteToUnicodeN( wch, sizeof(wch[0]), NULL, ch, 2 );
-        else RtlMultiByteToUnicodeN( wch, sizeof(wch[0]), NULL, ch + 1, 1 );
+        if (ch[0]) MultiByteToWideChar( cp, 0, ch, 2, wch, 2 );
+        else MultiByteToWideChar( cp, 0, ch + 1, 1, wch, 1 );
         *wparam = MAKEWPARAM(wch[0], HIWORD(*wparam));
         break;
     }
@@ -679,9 +689,10 @@ BOOL map_wparam_AtoW( UINT message, WPARAM *wparam, enum wm_char_mapping mapping
  */
 static void map_wparam_WtoA( MSG *msg, BOOL remove )
 {
-    BYTE ch[2];
+    BYTE ch[4];
     WCHAR wch[2];
     DWORD len;
+    DWORD cp = get_input_codepage();
 
     switch(msg->message)
     {
@@ -690,7 +701,7 @@ static void map_wparam_WtoA( MSG *msg, BOOL remove )
         {
             wch[0] = LOWORD(msg->wParam);
             ch[0] = ch[1] = 0;
-            RtlUnicodeToMultiByteN( (LPSTR)ch, 2, &len, wch, sizeof(wch[0]) );
+            len = WideCharToMultiByte( cp, 0, wch, 1, (LPSTR)ch, 2, NULL, NULL );
             if (len == 2)  /* DBCS char */
             {
                 struct wm_char_mapping_data *data = get_user_thread_info()->wmchar_data;
@@ -718,13 +729,13 @@ static void map_wparam_WtoA( MSG *msg, BOOL remove )
         wch[0] = LOWORD(msg->wParam);
         wch[1] = HIWORD(msg->wParam);
         ch[0] = ch[1] = 0;
-        RtlUnicodeToMultiByteN( (LPSTR)ch, 2, NULL, wch, sizeof(wch) );
+        WideCharToMultiByte( cp, 0, wch, 2, (LPSTR)ch, 4, NULL, NULL );
         msg->wParam = MAKEWPARAM( ch[0] | (ch[1] << 8), 0 );
         break;
     case WM_IME_CHAR:
         wch[0] = LOWORD(msg->wParam);
         ch[0] = ch[1] = 0;
-        RtlUnicodeToMultiByteN( (LPSTR)ch, 2, &len, wch, sizeof(wch[0]) );
+        len = WideCharToMultiByte( cp, 0, wch, 1, (LPSTR)ch, 2, NULL, NULL );
         if (len == 2)
             msg->wParam = MAKEWPARAM( (ch[0] << 8) | ch[1], HIWORD(msg->wParam) );
         else
@@ -1988,6 +1999,7 @@ static BOOL post_dde_message( struct packed_message *data, const struct send_mes
     HGLOBAL     hunlock = 0;
     int         i;
     DWORD       res;
+    ULONGLONG   hpack;
 
     if (!UnpackDDElParam( info->msg, info->lparam, &uiLo, &uiHi ))
         return FALSE;
@@ -2008,7 +2020,7 @@ static BOOL post_dde_message( struct packed_message *data, const struct send_mes
             HGLOBAL h = dde_get_pair( (HANDLE)uiHi );
             if (h)
             {
-                ULONGLONG hpack = pack_ptr( h );
+                hpack = pack_ptr( h );
                 /* send back the value of h on the other side */
                 push_data( data, &hpack, sizeof(hpack) );
                 lp = uiLo;
@@ -2254,19 +2266,130 @@ static void send_parent_notify( HWND hwnd, WORD event, WORD idChild, POINT pt )
  * Tell the server we have passed the message to the app
  * (even though we may end up dropping it later on)
  */
-static void accept_hardware_message( UINT hw_id, BOOL remove, HWND new_hwnd )
+static void accept_hardware_message( UINT hw_id, BOOL remove )
 {
     SERVER_START_REQ( accept_hardware_message )
     {
         req->hw_id   = hw_id;
         req->remove  = remove;
-        req->new_win = wine_server_user_handle( new_hwnd );
         if (wine_server_call( req ))
             FIXME("Failed to reply to MSG_HARDWARE message. Message may not be removed from queue.\n");
     }
     SERVER_END_REQ;
 }
 
+
+static BOOL process_rawinput_message( MSG *msg, const struct hardware_msg_data *msg_data )
+{
+    struct user_thread_info *thread_info = get_user_thread_info();
+    RAWINPUT *rawinput = thread_info->rawinput;
+
+    if (!rawinput)
+    {
+        thread_info->rawinput = HeapAlloc( GetProcessHeap(), 0, sizeof(*rawinput) );
+        if (!(rawinput = thread_info->rawinput)) return FALSE;
+    }
+
+    rawinput->header.dwType = msg_data->rawinput.type;
+    if (msg_data->rawinput.type == RIM_TYPEMOUSE)
+    {
+        static const unsigned int button_flags[] =
+        {
+            0,                              /* MOUSEEVENTF_MOVE */
+            RI_MOUSE_LEFT_BUTTON_DOWN,      /* MOUSEEVENTF_LEFTDOWN */
+            RI_MOUSE_LEFT_BUTTON_UP,        /* MOUSEEVENTF_LEFTUP */
+            RI_MOUSE_RIGHT_BUTTON_DOWN,     /* MOUSEEVENTF_RIGHTDOWN */
+            RI_MOUSE_RIGHT_BUTTON_UP,       /* MOUSEEVENTF_RIGHTUP */
+            RI_MOUSE_MIDDLE_BUTTON_DOWN,    /* MOUSEEVENTF_MIDDLEDOWN */
+            RI_MOUSE_MIDDLE_BUTTON_UP,      /* MOUSEEVENTF_MIDDLEUP */
+        };
+        unsigned int i;
+
+        rawinput->header.dwSize  = FIELD_OFFSET(RAWINPUT, data) + sizeof(RAWMOUSE);
+        rawinput->header.hDevice = WINE_MOUSE_HANDLE;
+        rawinput->header.wParam  = 0;
+
+        rawinput->data.mouse.usFlags           = MOUSE_MOVE_RELATIVE;
+        rawinput->data.mouse.u.s.usButtonFlags = 0;
+        rawinput->data.mouse.u.s.usButtonData  = 0;
+        for (i = 1; i < sizeof(button_flags) / sizeof(*button_flags); ++i)
+        {
+            if (msg_data->flags & (1 << i))
+                rawinput->data.mouse.u.s.usButtonFlags |= button_flags[i];
+        }
+        if (msg_data->flags & MOUSEEVENTF_WHEEL)
+        {
+            rawinput->data.mouse.u.s.usButtonFlags |= RI_MOUSE_WHEEL;
+            rawinput->data.mouse.u.s.usButtonData   = msg_data->rawinput.mouse.data;
+        }
+        if (msg_data->flags & MOUSEEVENTF_HWHEEL)
+        {
+            rawinput->data.mouse.u.s.usButtonFlags |= RI_MOUSE_HORIZONTAL_WHEEL;
+            rawinput->data.mouse.u.s.usButtonData   = msg_data->rawinput.mouse.data;
+        }
+        if (msg_data->flags & MOUSEEVENTF_XDOWN)
+        {
+            if (msg_data->rawinput.mouse.data == XBUTTON1)
+                rawinput->data.mouse.u.s.usButtonFlags |= RI_MOUSE_BUTTON_4_DOWN;
+            else if (msg_data->rawinput.mouse.data == XBUTTON2)
+                rawinput->data.mouse.u.s.usButtonFlags |= RI_MOUSE_BUTTON_5_DOWN;
+        }
+        if (msg_data->flags & MOUSEEVENTF_XUP)
+        {
+            if (msg_data->rawinput.mouse.data == XBUTTON1)
+                rawinput->data.mouse.u.s.usButtonFlags |= RI_MOUSE_BUTTON_4_UP;
+            else if (msg_data->rawinput.mouse.data == XBUTTON2)
+                rawinput->data.mouse.u.s.usButtonFlags |= RI_MOUSE_BUTTON_5_UP;
+        }
+
+        rawinput->data.mouse.ulRawButtons       = 0;
+        rawinput->data.mouse.lLastX             = msg_data->rawinput.mouse.x;
+        rawinput->data.mouse.lLastY             = msg_data->rawinput.mouse.y;
+        rawinput->data.mouse.ulExtraInformation = msg_data->info;
+    }
+    else if (msg_data->rawinput.type == RIM_TYPEKEYBOARD)
+    {
+        rawinput->header.dwSize  = FIELD_OFFSET(RAWINPUT, data) + sizeof(RAWKEYBOARD);
+        rawinput->header.hDevice = WINE_KEYBOARD_HANDLE;
+        rawinput->header.wParam  = 0;
+
+        rawinput->data.keyboard.MakeCode = msg_data->rawinput.kbd.scan;
+        rawinput->data.keyboard.Flags    = msg_data->flags & KEYEVENTF_KEYUP ? RI_KEY_BREAK : RI_KEY_MAKE;
+        if (msg_data->flags & KEYEVENTF_EXTENDEDKEY) rawinput->data.keyboard.Flags |= RI_KEY_E0;
+        rawinput->data.keyboard.Reserved = 0;
+
+        switch (msg_data->rawinput.kbd.vkey)
+        {
+        case VK_LSHIFT:
+        case VK_RSHIFT:
+            rawinput->data.keyboard.VKey   = VK_SHIFT;
+            rawinput->data.keyboard.Flags &= ~RI_KEY_E0;
+            break;
+        case VK_LCONTROL:
+        case VK_RCONTROL:
+            rawinput->data.keyboard.VKey = VK_CONTROL;
+            break;
+        case VK_LMENU:
+        case VK_RMENU:
+            rawinput->data.keyboard.VKey = VK_MENU;
+            break;
+        default:
+            rawinput->data.keyboard.VKey = msg_data->rawinput.kbd.vkey;
+            break;
+        }
+
+        rawinput->data.keyboard.Message          = msg_data->rawinput.kbd.message;
+        rawinput->data.keyboard.ExtraInformation = msg_data->info;
+    }
+    else
+    {
+        FIXME("Unhandled rawinput type %#x.\n", msg_data->rawinput.type);
+        return FALSE;
+    }
+
+    msg->lParam = (LPARAM)rawinput;
+    return TRUE;
+}
 
 /***********************************************************************
  *          process_keyboard_message
@@ -2336,13 +2459,13 @@ static BOOL process_keyboard_message( MSG *msg, UINT hw_id, HWND hwnd_filter,
     {
         /* skip this message */
         HOOK_CallHooks( WH_CBT, HCBT_KEYSKIPPED, LOWORD(msg->wParam), msg->lParam, TRUE );
-        accept_hardware_message( hw_id, TRUE, 0 );
+        accept_hardware_message( hw_id, TRUE );
         return FALSE;
     }
-    accept_hardware_message( hw_id, remove, 0 );
+    accept_hardware_message( hw_id, remove );
 
-    if ( msg->message == WM_KEYDOWN || msg->message == WM_KEYUP )
-        if ( ImmProcessKey(msg->hwnd, GetKeyboardLayout(0), msg->wParam, msg->lParam, 0) )
+    if ( remove && msg->message == WM_KEYDOWN )
+        if (ImmProcessKey(msg->hwnd, GetKeyboardLayout(0), msg->wParam, msg->lParam, 0) )
             msg->wParam = VK_PROCESSKEY;
 
     return TRUE;
@@ -2383,7 +2506,7 @@ static BOOL process_mouse_message( MSG *msg, UINT hw_id, ULONG_PTR extra_info, H
 
     if (!msg->hwnd || !WIN_IsCurrentThread( msg->hwnd ))
     {
-        accept_hardware_message( hw_id, TRUE, msg->hwnd );
+        accept_hardware_message( hw_id, TRUE );
         return FALSE;
     }
 
@@ -2472,7 +2595,7 @@ static BOOL process_mouse_message( MSG *msg, UINT hw_id, ULONG_PTR extra_info, H
         hook.wHitTestCode = hittest;
         hook.dwExtraInfo  = extra_info;
         HOOK_CallHooks( WH_CBT, HCBT_CLICKSKIPPED, message, (LPARAM)&hook, TRUE );
-        accept_hardware_message( hw_id, TRUE, 0 );
+        accept_hardware_message( hw_id, TRUE );
         return FALSE;
     }
 
@@ -2480,11 +2603,11 @@ static BOOL process_mouse_message( MSG *msg, UINT hw_id, ULONG_PTR extra_info, H
     {
         SendMessageW( msg->hwnd, WM_SETCURSOR, (WPARAM)msg->hwnd,
                       MAKELONG( hittest, msg->message ));
-        accept_hardware_message( hw_id, TRUE, 0 );
+        accept_hardware_message( hw_id, TRUE );
         return FALSE;
     }
 
-    accept_hardware_message( hw_id, remove, 0 );
+    accept_hardware_message( hw_id, remove );
 
     if (!remove || info.hwndCapture)
     {
@@ -2558,14 +2681,17 @@ static BOOL process_mouse_message( MSG *msg, UINT hw_id, ULONG_PTR extra_info, H
  *
  * Process a hardware message; return TRUE if message should be passed on to the app
  */
-static BOOL process_hardware_message( MSG *msg, UINT hw_id, ULONG_PTR extra_info, HWND hwnd_filter,
-                                      UINT first, UINT last, BOOL remove )
+static BOOL process_hardware_message( MSG *msg, UINT hw_id, const struct hardware_msg_data *msg_data,
+                                      HWND hwnd_filter, UINT first, UINT last, BOOL remove )
 {
+    if (msg->message == WM_INPUT)
+        return process_rawinput_message( msg, msg_data );
+
     if (is_keyboard_message( msg->message ))
         return process_keyboard_message( msg, hw_id, hwnd_filter, first, last, remove );
 
     if (is_mouse_message( msg->message ))
-        return process_mouse_message( msg, hw_id, extra_info, hwnd_filter, first, last, remove );
+        return process_mouse_message( msg, hw_id, msg_data->info, hwnd_filter, first, last, remove );
 
     ERR( "unknown message type %x\n", msg->message );
     return FALSE;
@@ -2651,6 +2777,11 @@ static BOOL peek_message( MSG *msg, HWND hwnd, UINT first, UINT last, UINT flags
         if (res)
         {
             HeapFree( GetProcessHeap(), 0, buffer );
+            if (res == STATUS_PENDING)
+            {
+                thread_info->wake_mask = changed_mask & (QS_SENDMESSAGE | QS_SMRESULT);
+                thread_info->changed_mask = changed_mask;
+            }
             if (res != STATUS_BUFFER_OVERFLOW) return FALSE;
             if (!(buffer = HeapAlloc( GetProcessHeap(), 0, buffer_size ))) return FALSE;
             continue;
@@ -2683,6 +2814,7 @@ static BOOL peek_message( MSG *msg, HWND hwnd, UINT first, UINT last, UINT flags
             if (size >= sizeof(msg_data->winevent))
             {
                 WINEVENTPROC hook_proc;
+                HMODULE free_module = 0;
 
                 hook_proc = wine_server_get_ptr( msg_data->winevent.hook_proc );
                 size -= sizeof(msg_data->winevent);
@@ -2693,7 +2825,7 @@ static BOOL peek_message( MSG *msg, HWND hwnd, UINT first, UINT last, UINT flags
                     size = min( size, (MAX_PATH - 1) * sizeof(WCHAR) );
                     memcpy( module, &msg_data->winevent + 1, size );
                     module[size / sizeof(WCHAR)] = 0;
-                    if (!(hook_proc = get_hook_proc( hook_proc, module )))
+                    if (!(hook_proc = get_hook_proc( hook_proc, module, &free_module )))
                     {
                         ERR( "invalid winevent hook module name %s\n", debugstr_w(module) );
                         continue;
@@ -2715,6 +2847,8 @@ static BOOL peek_message( MSG *msg, HWND hwnd, UINT first, UINT last, UINT flags
                              GetCurrentThreadId(), hook_proc,
                              msg_data->winevent.hook, info.msg.message, info.msg.hwnd, info.msg.wParam,
                              info.msg.lParam, msg_data->winevent.tid, info.msg.time);
+
+                if (free_module) FreeLibrary(free_module);
             }
             continue;
         case MSG_HOOK_LL:
@@ -2765,7 +2899,7 @@ static BOOL peek_message( MSG *msg, HWND hwnd, UINT first, UINT last, UINT flags
                 info.msg.pt.x = msg_data->hardware.x;
                 info.msg.pt.y = msg_data->hardware.y;
                 hw_id         = msg_data->hardware.hw_id;
-                if (!process_hardware_message( &info.msg, hw_id, msg_data->hardware.info,
+                if (!process_hardware_message( &info.msg, hw_id, &msg_data->hardware,
                                                hwnd, first, last, flags & PM_REMOVE ))
                 {
                     TRACE("dropping msg %x\n", info.msg.message );
@@ -2788,7 +2922,11 @@ static BOOL peek_message( MSG *msg, HWND hwnd, UINT first, UINT last, UINT flags
                     handle_internal_message( info.msg.hwnd, info.msg.message,
                                              info.msg.wParam, info.msg.lParam );
                     /* if this is a nested call return right away */
-                    if (first == info.msg.message && last == info.msg.message) return FALSE;
+                    if (first == info.msg.message && last == info.msg.message)
+                    {
+                        HeapFree( GetProcessHeap(), 0, buffer );
+                        return FALSE;
+                    }
                 }
                 else
                     peek_message( msg, info.msg.hwnd, info.msg.message,
@@ -2870,7 +3008,9 @@ static HANDLE get_server_queue_handle(void)
  */
 static void wait_message_reply( UINT flags )
 {
+    struct user_thread_info *thread_info = get_user_thread_info();
     HANDLE server_queue = get_server_queue_handle();
+    unsigned int wake_mask = QS_SMRESULT | ((flags & SMTO_BLOCK) ? 0 : QS_SENDMESSAGE);
 
     for (;;)
     {
@@ -2878,13 +3018,14 @@ static void wait_message_reply( UINT flags )
 
         SERVER_START_REQ( set_queue_mask )
         {
-            req->wake_mask    = QS_SMRESULT | ((flags & SMTO_BLOCK) ? 0 : QS_SENDMESSAGE);
-            req->changed_mask = req->wake_mask;
+            req->wake_mask    = wake_mask;
+            req->changed_mask = wake_mask;
             req->skip_wait    = 1;
-            if (!wine_server_call( req ))
-                wake_bits = reply->wake_bits;
+            if (!wine_server_call( req )) wake_bits = reply->wake_bits & wake_mask;
         }
         SERVER_END_REQ;
+
+        thread_info->wake_mask = thread_info->changed_mask = 0;
 
         if (wake_bits & QS_SMRESULT) return;  /* got a result */
         if (wake_bits & QS_SENDMESSAGE)
@@ -2894,9 +3035,46 @@ static void wait_message_reply( UINT flags )
             continue;
         }
 
-        wow_handlers.wait_message( 1, &server_queue, INFINITE, QS_SENDMESSAGE, 0 );
+        wow_handlers.wait_message( 1, &server_queue, INFINITE, wake_mask, 0 );
     }
 }
+
+
+/***********************************************************************
+ *           wait_objects
+ *
+ * Wait for multiple objects including the server queue, with specific queue masks.
+ */
+static DWORD wait_objects( DWORD count, const HANDLE *handles, DWORD timeout,
+                           DWORD wake_mask, DWORD changed_mask, DWORD flags )
+{
+    struct user_thread_info *thread_info = get_user_thread_info();
+    DWORD ret;
+
+    assert( count );  /* we must have at least the server queue */
+
+    flush_window_surfaces( TRUE );
+
+    if (thread_info->wake_mask != wake_mask || thread_info->changed_mask != changed_mask)
+    {
+        SERVER_START_REQ( set_queue_mask )
+        {
+            req->wake_mask    = wake_mask;
+            req->changed_mask = changed_mask;
+            req->skip_wait    = 0;
+            wine_server_call( req );
+        }
+        SERVER_END_REQ;
+        thread_info->wake_mask = wake_mask;
+        thread_info->changed_mask = changed_mask;
+    }
+
+    ret = wow_handlers.wait_message( count, handles, timeout, changed_mask, flags );
+
+    if (ret != WAIT_TIMEOUT) thread_info->wake_mask = thread_info->changed_mask = 0;
+    return ret;
+}
+
 
 /***********************************************************************
  *		put_message_in_queue
@@ -3112,7 +3290,9 @@ static BOOL send_message( struct send_message_info *info, DWORD_PTR *res_ptr, BO
  */
 NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, UINT flags )
 {
+    struct user_thread_info *thread_info = get_user_thread_info();
     struct send_message_info info;
+    int prev_x, prev_y, new_x, new_y;
     NTSTATUS ret;
     BOOL wait;
 
@@ -3149,10 +3329,22 @@ NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, UINT flags )
             req->input.hw.lparam = MAKELONG( input->u.hi.wParamL, input->u.hi.wParamH );
             break;
         }
+        if (thread_info->key_state) wine_server_set_reply( req, thread_info->key_state, 256 );
         ret = wine_server_call( req );
         wait = reply->wait;
+        prev_x = reply->prev_x;
+        prev_y = reply->prev_y;
+        new_x  = reply->new_x;
+        new_y  = reply->new_y;
     }
     SERVER_END_REQ;
+
+    if (!ret)
+    {
+        if (thread_info->key_state) thread_info->key_state_time = GetTickCount();
+        if ((flags & SEND_HWMSG_INJECTED) && (prev_x != new_x || prev_y != new_y))
+            USER_Driver->pSetCursorPos( new_x, new_y );
+    }
 
     if (wait)
     {
@@ -3538,6 +3730,21 @@ void WINAPI PostQuitMessage( INT exit_code )
     SERVER_END_REQ;
 }
 
+/* check for driver events if we detect that the app is not properly consuming messages */
+static inline void check_for_driver_events( UINT msg )
+{
+    if (get_user_thread_info()->message_count > 200)
+    {
+        flush_window_surfaces( FALSE );
+        USER_Driver->pMsgWaitForMultipleObjectsEx( 0, NULL, 0, QS_ALLINPUT, 0 );
+    }
+    else if (msg == WM_TIMER || msg == WM_SYSTIMER)
+    {
+        /* driver events should have priority over timers, so make sure we'll check for them soon */
+        get_user_thread_info()->message_count += 100;
+    }
+    else get_user_thread_info()->message_count++;
+}
 
 /***********************************************************************
  *		PeekMessageW  (USER32.@)
@@ -3547,15 +3754,19 @@ BOOL WINAPI DECLSPEC_HOTPATCH PeekMessageW( MSG *msg_out, HWND hwnd, UINT first,
     MSG msg;
 
     USER_CheckNotLock();
-
-    /* check for graphics events */
-    USER_Driver->pMsgWaitForMultipleObjectsEx( 0, NULL, 0, QS_ALLINPUT, 0 );
+    check_for_driver_events( 0 );
 
     if (!peek_message( &msg, hwnd, first, last, flags, 0 ))
     {
-        if (!(flags & PM_NOYIELD)) wow_handlers.wait_message( 0, NULL, 0, 0, 0 );
-        return FALSE;
+        DWORD ret;
+
+        flush_window_surfaces( TRUE );
+        ret = wow_handlers.wait_message( 0, NULL, 0, QS_ALLINPUT, 0 );
+        /* if we received driver events, check again for a pending message */
+        if (ret == WAIT_TIMEOUT || !peek_message( &msg, hwnd, first, last, flags, 0 )) return FALSE;
     }
+
+    check_for_driver_events( msg.message );
 
     /* copy back our internal safe copy of message data to msg_out.
      * msg_out is a variable from the *program*, so it can't be used
@@ -3592,9 +3803,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetMessageW( MSG *msg, HWND hwnd, UINT first, UINT
     unsigned int mask = QS_POSTMESSAGE | QS_SENDMESSAGE;  /* Always selected */
 
     USER_CheckNotLock();
-
-    /* check for graphics events */
-    USER_Driver->pMsgWaitForMultipleObjectsEx( 0, NULL, 0, QS_ALLINPUT, 0 );
+    check_for_driver_events( 0 );
 
     if (first || last)
     {
@@ -3609,8 +3818,9 @@ BOOL WINAPI DECLSPEC_HOTPATCH GetMessageW( MSG *msg, HWND hwnd, UINT first, UINT
 
     while (!peek_message( msg, hwnd, first, last, PM_REMOVE | (mask << 16), mask ))
     {
-        wow_handlers.wait_message( 1, &server_queue, INFINITE, mask, 0 );
+        wait_objects( 1, &server_queue, INFINITE, mask & (QS_SENDMESSAGE | QS_SMRESULT), mask, 0 );
     }
+    check_for_driver_events( msg->message );
 
     return (msg->message != WM_QUIT);
 }
@@ -3659,8 +3869,9 @@ BOOL WINAPI IsDialogMessageA( HWND hwndDlg, LPMSG pmsg )
 BOOL WINAPI TranslateMessage( const MSG *msg )
 {
     UINT message;
-    WCHAR wp[2];
+    WCHAR wp[8];
     BYTE state[256];
+    INT len;
 
     if (msg->message < WM_KEYFIRST || msg->message > WM_KEYLAST) return FALSE;
     if (msg->message != WM_KEYDOWN && msg->message != WM_SYSKEYDOWN) return TRUE;
@@ -3682,22 +3893,23 @@ BOOL WINAPI TranslateMessage( const MSG *msg )
     }
 
     GetKeyboardState( state );
-    /* FIXME : should handle ToUnicode yielding 2 */
-    switch (ToUnicode(msg->wParam, HIWORD(msg->lParam), state, wp, 2, 0))
+    len = ToUnicode(msg->wParam, HIWORD(msg->lParam), state, wp, sizeof(wp)/sizeof(WCHAR), 0);
+    if (len == -1)
     {
-    case 1:
-        message = (msg->message == WM_KEYDOWN) ? WM_CHAR : WM_SYSCHAR;
-        TRACE_(key)("1 -> PostMessageW(%p,%s,%04x,%08lx)\n",
-            msg->hwnd, SPY_GetMsgName(message, msg->hwnd), wp[0], msg->lParam);
-        PostMessageW( msg->hwnd, message, wp[0], msg->lParam );
-        break;
-
-    case -1:
         message = (msg->message == WM_KEYDOWN) ? WM_DEADCHAR : WM_SYSDEADCHAR;
         TRACE_(key)("-1 -> PostMessageW(%p,%s,%04x,%08lx)\n",
             msg->hwnd, SPY_GetMsgName(message, msg->hwnd), wp[0], msg->lParam);
         PostMessageW( msg->hwnd, message, wp[0], msg->lParam );
-        break;
+    }
+    else if (len > 0)
+    {
+        INT i;
+
+        message = (msg->message == WM_KEYDOWN) ? WM_CHAR : WM_SYSCHAR;
+        TRACE_(key)("%d -> PostMessageW(%p,%s,<x>,%08lx) for <x> in %s\n", len, msg->hwnd,
+            SPY_GetMsgName(message, msg->hwnd), msg->lParam, debugstr_wn(wp, len));
+        for (i = 0; i < len; i++)
+            PostMessageW( msg->hwnd, message, wp[i], msg->lParam );
     }
     return TRUE;
 }
@@ -3722,7 +3934,7 @@ LRESULT WINAPI DECLSPEC_HOTPATCH DispatchMessageA( const MSG* msg )
                 retval = CallWindowProcA( (WNDPROC)msg->lParam, msg->hwnd,
                                           msg->message, msg->wParam, GetTickCount() );
             }
-            __EXCEPT_PAGE_FAULT
+            __EXCEPT_ALL
             {
                 retval = 0;
             }
@@ -3793,7 +4005,7 @@ LRESULT WINAPI DECLSPEC_HOTPATCH DispatchMessageW( const MSG* msg )
                 retval = CallWindowProcW( (WNDPROC)msg->lParam, msg->hwnd,
                                           msg->message, msg->wParam, GetTickCount() );
             }
-            __EXCEPT_PAGE_FAULT
+            __EXCEPT_ALL
             {
                 retval = 0;
             }
@@ -3915,7 +4127,7 @@ BOOL WINAPI WaitMessage(void)
 /***********************************************************************
  *		MsgWaitForMultipleObjectsEx   (USER32.@)
  */
-DWORD WINAPI MsgWaitForMultipleObjectsEx( DWORD count, CONST HANDLE *pHandles,
+DWORD WINAPI MsgWaitForMultipleObjectsEx( DWORD count, const HANDLE *pHandles,
                                           DWORD timeout, DWORD mask, DWORD flags )
 {
     HANDLE handles[MAXIMUM_WAIT_OBJECTS];
@@ -3927,28 +4139,19 @@ DWORD WINAPI MsgWaitForMultipleObjectsEx( DWORD count, CONST HANDLE *pHandles,
         return WAIT_FAILED;
     }
 
-    /* set the queue mask */
-    SERVER_START_REQ( set_queue_mask )
-    {
-        req->wake_mask    = (flags & MWMO_INPUTAVAILABLE) ? mask : 0;
-        req->changed_mask = mask;
-        req->skip_wait    = 0;
-        wine_server_call( req );
-    }
-    SERVER_END_REQ;
-
     /* add the queue to the handle list */
     for (i = 0; i < count; i++) handles[i] = pHandles[i];
     handles[count] = get_server_queue_handle();
 
-    return wow_handlers.wait_message( count+1, handles, timeout, mask, flags );
+    return wait_objects( count+1, handles, timeout,
+                         (flags & MWMO_INPUTAVAILABLE) ? mask : 0, mask, flags );
 }
 
 
 /***********************************************************************
  *		MsgWaitForMultipleObjects (USER32.@)
  */
-DWORD WINAPI MsgWaitForMultipleObjects( DWORD count, CONST HANDLE *handles,
+DWORD WINAPI MsgWaitForMultipleObjects( DWORD count, const HANDLE *handles,
                                         BOOL wait_all, DWORD timeout, DWORD mask )
 {
     return MsgWaitForMultipleObjectsEx( count, handles, timeout, mask,
@@ -4038,7 +4241,7 @@ typedef struct BroadcastParm
     UINT msg;
     WPARAM wp;
     LPARAM lp;
-    DWORD success;
+    BOOL success;
     HWINSTA winsta;
 } BroadcastParm;
 
@@ -4079,7 +4282,7 @@ static BOOL CALLBACK bcast_childwindow( HWND hw, LPARAM lp )
         return TRUE;
 
 fail:
-        parm->success = 0;
+        parm->success = FALSE;
         return FALSE;
     }
     else if (parm->flags & BSF_POSTMESSAGE)
@@ -4238,12 +4441,14 @@ UINT_PTR WINAPI SetTimer( HWND hwnd, UINT_PTR id, UINT timeout, TIMERPROC proc )
 
     if (proc) winproc = WINPROC_AllocProc( (WNDPROC)proc, FALSE );
 
+    timeout = min( max( USER_TIMER_MINIMUM, timeout ), USER_TIMER_MAXIMUM );
+
     SERVER_START_REQ( set_win_timer )
     {
         req->win    = wine_server_user_handle( hwnd );
         req->msg    = WM_TIMER;
         req->id     = id;
-        req->rate   = max( timeout, SYS_TIMER_RATE );
+        req->rate   = timeout;
         req->lparam = (ULONG_PTR)winproc;
         if (!wine_server_call_err( req ))
         {
@@ -4269,12 +4474,14 @@ UINT_PTR WINAPI SetSystemTimer( HWND hwnd, UINT_PTR id, UINT timeout, TIMERPROC 
 
     if (proc) winproc = WINPROC_AllocProc( (WNDPROC)proc, FALSE );
 
+    timeout = min( max( USER_TIMER_MINIMUM, timeout ), USER_TIMER_MAXIMUM );
+
     SERVER_START_REQ( set_win_timer )
     {
         req->win    = wine_server_user_handle( hwnd );
         req->msg    = WM_SYSTIMER;
         req->id     = id;
-        req->rate   = max( timeout, SYS_TIMER_RATE );
+        req->rate   = timeout;
         req->lparam = (ULONG_PTR)winproc;
         if (!wine_server_call_err( req ))
         {
@@ -4400,5 +4607,14 @@ BOOL WINAPI IsHungAppWindow( HWND hWnd )
 BOOL WINAPI ChangeWindowMessageFilter( UINT message, DWORD flag )
 {
     FIXME( "%x %08x\n", message, flag );
+    return TRUE;
+}
+
+/******************************************************************
+ *      ChangeWindowMessageFilterEx (USER32.@)
+ */
+BOOL WINAPI ChangeWindowMessageFilterEx( HWND hwnd, UINT message, DWORD action, CHANGEFILTERSTRUCT *changefilter )
+{
+    FIXME( "%p %x %d %p\n", hwnd, message, action, changefilter );
     return TRUE;
 }

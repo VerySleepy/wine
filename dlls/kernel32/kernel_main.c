@@ -41,8 +41,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(process);
 
 extern int CDECL __wine_set_signal_handler(unsigned, int (*)(unsigned));
 
-static ULONGLONG server_start_time;
-
 /***********************************************************************
  *           set_entry_point
  */
@@ -83,11 +81,9 @@ static void set_entry_point( HMODULE module, const char *name, DWORD rva )
  */
 static BOOL process_attach( HMODULE module )
 {
-    SYSTEM_TIMEOFDAY_INFORMATION ti;
     RTL_USER_PROCESS_PARAMETERS *params = NtCurrentTeb()->Peb->ProcessParameters;
 
-    NtQuerySystemInformation( SystemTimeOfDayInformation, &ti, sizeof(ti), NULL );
-    server_start_time = ti.liKeBootTime.QuadPart;
+    NtQuerySystemInformation( SystemBasicInformation, &system_info, sizeof(system_info), NULL );
 
     /* Setup registry locale information */
     LOCALE_InitRegistry();
@@ -105,7 +101,13 @@ static BOOL process_attach( HMODULE module )
         /* Securom checks for this one when version is NT */
         set_entry_point( module, "FT_Thunk", 0 );
     }
-    else LoadLibraryA( "krnl386.exe16" );
+    else
+    {
+        LDR_MODULE *ldr;
+
+        if (LdrFindEntryForAddress( GetModuleHandleW( 0 ), &ldr ) || !(ldr->Flags & LDR_WINE_INTERNAL))
+            LoadLibraryA( "krnl386.exe16" );
+    }
 
     /* finish the process initialisation for console bits, if needed */
     __wine_set_signal_handler(SIGINT, CONSOLE_HandleCtrlC);
@@ -177,12 +179,12 @@ INT WINAPI MulDiv( INT nMultiplicand, INT nMultiplier, INT nDivisor)
 /******************************************************************************
  *           GetTickCount64       (KERNEL32.@)
  */
-ULONGLONG WINAPI GetTickCount64(void)
+ULONGLONG WINAPI DECLSPEC_HOTPATCH GetTickCount64(void)
 {
-    LARGE_INTEGER now;
+    LARGE_INTEGER counter, frequency;
 
-    NtQuerySystemTime( &now );
-    return (now.QuadPart - server_start_time) / 10000;
+    NtQueryPerformanceCounter( &counter, &frequency );
+    return counter.QuadPart * 1000 / frequency.QuadPart;
 }
 
 
@@ -199,10 +201,8 @@ ULONGLONG WINAPI GetTickCount64(void)
  *
  * NOTES
  *  The value returned will wrap around every 2^32 milliseconds.
- *  Under Windows, tick 0 is the moment at which the system is rebooted.
- *  Under Wine, tick 0 begins at the moment the wineserver process is started.
  */
-DWORD WINAPI GetTickCount(void)
+DWORD WINAPI DECLSPEC_HOTPATCH GetTickCount(void)
 {
     return GetTickCount64();
 }

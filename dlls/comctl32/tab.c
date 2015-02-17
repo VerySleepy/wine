@@ -252,22 +252,29 @@ static inline LRESULT TAB_SetCurSel (TAB_INFO *infoPtr, INT iItem)
 
   TRACE("(%p %d)\n", infoPtr, iItem);
 
-  if (iItem < 0)
-      infoPtr->iSelected = -1;
-  else if (iItem >= infoPtr->uNumItem)
+  if (iItem >= (INT)infoPtr->uNumItem)
       return -1;
-  else {
-      if (prevItem != iItem) {
-          if (prevItem != -1)
-              TAB_GetItem(infoPtr, prevItem)->dwState &= ~TCIS_BUTTONPRESSED;
-          TAB_GetItem(infoPtr, iItem)->dwState |= TCIS_BUTTONPRESSED;
 
+  if (prevItem != iItem) {
+      if (prevItem != -1)
+          TAB_GetItem(infoPtr, prevItem)->dwState &= ~TCIS_BUTTONPRESSED;
+
+      if (iItem >= 0)
+      {
+          TAB_GetItem(infoPtr, iItem)->dwState |= TCIS_BUTTONPRESSED;
           infoPtr->iSelected = iItem;
           infoPtr->uFocus = iItem;
-          TAB_EnsureSelectionVisible(infoPtr);
-          TAB_InvalidateTabArea(infoPtr);
       }
+      else
+      {
+          infoPtr->iSelected = -1;
+          infoPtr->uFocus = -1;
+      }
+
+      TAB_EnsureSelectionVisible(infoPtr);
+      TAB_InvalidateTabArea(infoPtr);
   }
+
   return prevItem;
 }
 
@@ -684,7 +691,8 @@ TAB_LButtonDown (TAB_INFO *infoPtr, WPARAM wParam, LPARAM lParam)
           break;
         }
 
-      TAB_SendSimpleNotify(infoPtr, TCN_SELCHANGING);
+      if (TAB_SendSimpleNotify(infoPtr, TCN_SELCHANGING))
+        return 0;
 
       if (pressed)
         TAB_DeselectAll (infoPtr, FALSE);
@@ -1022,37 +1030,18 @@ static void TAB_SetupScrolling(
     /*
      * Calculate the position of the scroll control.
      */
-    if(infoPtr->dwStyle & TCS_VERTICAL)
-    {
-      controlPos.right = clientRect->right;
-      controlPos.left  = controlPos.right - 2 * GetSystemMetrics(SM_CXHSCROLL);
+    controlPos.right = clientRect->right;
+    controlPos.left  = controlPos.right - 2 * GetSystemMetrics(SM_CXHSCROLL);
 
-      if (infoPtr->dwStyle & TCS_BOTTOM)
-      {
-        controlPos.top    = clientRect->bottom - infoPtr->tabHeight;
-        controlPos.bottom = controlPos.top + GetSystemMetrics(SM_CYHSCROLL);
-      }
-      else
-      {
-        controlPos.bottom = clientRect->top + infoPtr->tabHeight;
-        controlPos.top    = controlPos.bottom - GetSystemMetrics(SM_CYHSCROLL);
-      }
+    if (infoPtr->dwStyle & TCS_BOTTOM)
+    {
+      controlPos.top    = clientRect->bottom - infoPtr->tabHeight;
+      controlPos.bottom = controlPos.top + GetSystemMetrics(SM_CYHSCROLL);
     }
     else
     {
-      controlPos.right = clientRect->right;
-      controlPos.left  = controlPos.right - 2 * GetSystemMetrics(SM_CXHSCROLL);
-
-      if (infoPtr->dwStyle & TCS_BOTTOM)
-      {
-        controlPos.top    = clientRect->bottom - infoPtr->tabHeight;
-        controlPos.bottom = controlPos.top + GetSystemMetrics(SM_CYHSCROLL);
-      }
-      else
-      {
-        controlPos.bottom = clientRect->top + infoPtr->tabHeight;
-        controlPos.top    = controlPos.bottom - GetSystemMetrics(SM_CYHSCROLL);
-      }
+      controlPos.bottom = clientRect->top + infoPtr->tabHeight;
+      controlPos.top    = controlPos.bottom - GetSystemMetrics(SM_CYHSCROLL);
     }
 
     /*
@@ -1916,9 +1905,8 @@ TAB_DrawItemInterior(const TAB_INFO *infoPtr, HDC hdc, INT iItem, RECT *drawRect
     /* Draw the text */
     if(infoPtr->dwStyle & TCS_VERTICAL) /* if we are vertical rotate the text and each character */
     {
-      static const WCHAR ArialW[] = { 'A','r','i','a','l',0 };
       LOGFONTW logfont;
-      HFONT hFont = 0;
+      HFONT hFont;
       INT nEscapement = 900;
       INT nOrientation = 900;
 
@@ -1929,21 +1917,9 @@ TAB_DrawItemInterior(const TAB_INFO *infoPtr, HDC hdc, INT iItem, RECT *drawRect
       }
 
       /* to get a font with the escapement and orientation we are looking for, we need to */
-      /* call CreateFontIndirectA, which requires us to set the values of the logfont we pass in */
-      if (!GetObjectW((infoPtr->hFont) ?
-                infoPtr->hFont : GetStockObject(SYSTEM_FONT),
-                sizeof(LOGFONTW),&logfont))
-      {
-        INT iPointSize = 9;
-
-        lstrcpyW(logfont.lfFaceName, ArialW);
-        logfont.lfHeight = -MulDiv(iPointSize, GetDeviceCaps(hdc, LOGPIXELSY),
-                                    72);
-        logfont.lfWeight = FW_NORMAL;
-        logfont.lfItalic = 0;
-        logfont.lfUnderline = 0;
-        logfont.lfStrikeOut = 0;
-      }
+      /* call CreateFontIndirect, which requires us to set the values of the logfont we pass in */
+      if (!GetObjectW(infoPtr->hFont, sizeof(logfont), &logfont))
+        GetObjectW(GetStockObject(DEFAULT_GUI_FONT), sizeof(logfont), &logfont);
 
       logfont.lfEscapement = nEscapement;
       logfont.lfOrientation = nOrientation;
@@ -2878,13 +2854,12 @@ static LRESULT TAB_DeleteItem (TAB_INFO *infoPtr, INT iItem)
 
     if (iItem < 0 || iItem >= infoPtr->uNumItem) return FALSE;
 
+    TAB_InvalidateTabArea(infoPtr);
     item = TAB_GetItem(infoPtr, iItem);
     Free(item->pszText);
     Free(item);
     infoPtr->uNumItem--;
     DPA_DeletePtr(infoPtr->items, iItem);
-
-    TAB_InvalidateTabArea(infoPtr);
 
     if (infoPtr->uNumItem == 0)
     {
@@ -3020,7 +2995,7 @@ static LRESULT TAB_Create (HWND hwnd, LPARAM lParam)
   TEXTMETRICW fontMetrics;
   HDC hdc;
   HFONT hOldFont;
-  DWORD dwStyle;
+  DWORD style;
 
   infoPtr = Alloc (sizeof(TAB_INFO));
 
@@ -3054,11 +3029,13 @@ static LRESULT TAB_Create (HWND hwnd, LPARAM lParam)
   /* The tab control always has the WS_CLIPSIBLINGS style. Even
      if you don't specify it in CreateWindow. This is necessary in
      order for paint to work correctly. This follows windows behaviour. */
-  dwStyle = GetWindowLongW(hwnd, GWL_STYLE);
-  SetWindowLongW(hwnd, GWL_STYLE, dwStyle|WS_CLIPSIBLINGS);
+  style = GetWindowLongW(hwnd, GWL_STYLE);
+  if (style & TCS_VERTICAL) style |= TCS_MULTILINE;
+  style |= WS_CLIPSIBLINGS;
+  SetWindowLongW(hwnd, GWL_STYLE, style);
 
-  infoPtr->dwStyle = dwStyle | WS_CLIPSIBLINGS;
-  infoPtr->exStyle = (dwStyle & TCS_FLATBUTTONS) ? TCS_EX_FLATSEPARATORS : 0;
+  infoPtr->dwStyle = style;
+  infoPtr->exStyle = (style & TCS_FLATBUTTONS) ? TCS_EX_FLATSEPARATORS : 0;
 
   if (infoPtr->dwStyle & TCS_TOOLTIPS) {
     /* Create tooltip control */

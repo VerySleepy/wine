@@ -21,6 +21,8 @@
 
 #include "resource.h"
 
+#pragma makedep po
+
 LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 
 STRINGTABLE {
@@ -29,7 +31,7 @@ STRINGTABLE {
      IDS_ABOUT,   "Copyright 2000 Joshua Thielen"
 }
 
-MENU_WINEMINE MENU
+IDM_WINEMINE MENU
 {
     POPUP "&Game" {
         MENUITEM "&New\tF2",       IDM_NEW
@@ -43,7 +45,7 @@ MENU_WINEMINE MENU
         MENUITEM SEPARATOR
         MENUITEM "&Fastest Times", IDM_TIMES
         MENUITEM SEPARATOR
-        MENUITEM "E&xit\tAlt+X",   IDM_EXIT
+        MENUITEM "E&xit",          IDM_EXIT
     }
     POPUP "&Help" {
         MENUITEM "&About WineMine",   IDM_ABOUT
@@ -55,7 +57,7 @@ STYLE DS_MODALFRAME | DS_3DLOOK | WS_VISIBLE | WS_CAPTION | WS_SYSMENU | WS_POPU
 FONT 8, "MS Shell Dlg"
 CAPTION "Fastest Times"
 {
-    GROUPBOX        "Fastest Times", -1,  10,  10, 150,  45
+    GROUPBOX        "Fastest times", -1,  10,  10, 150,  45
     LTEXT           "Beginner",      -1,  20,  20,  50,   8
     LTEXT           "Advanced",      -1,  20,  30,  50,   8
     LTEXT           "Expert",        -1,  20,  40,  50,   8
@@ -96,19 +98,18 @@ CAPTION "Custom Game"
 IDA_WINEMINE ACCELERATORS
 {
     VK_F2, IDM_NEW, VIRTKEY
-    "X", IDM_EXIT, VIRTKEY, ALT
 }
 
 LANGUAGE LANG_NEUTRAL,SUBLANG_NEUTRAL
 
 /* @makedep: winemine.ico */
-WINEMINE ICON winemine.ico
+IDI_WINEMINE ICON winemine.ico
 
 /* @makedep: faces.bmp */
-FACES BITMAP faces.bmp
+IDI_FACES BITMAP faces.bmp
 
 /* @makedep: leds.bmp */
-LEDS BITMAP leds.bmp
+IDI_LEDS BITMAP leds.bmp
 
 /* @makedep: mines.bmp */
-MINES BITMAP mines.bmp
+IDI_MINES BITMAP mines.bmp

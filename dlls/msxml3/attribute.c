@@ -43,12 +43,20 @@ WINE_DEFAULT_DEBUG_CHANNEL(msxml);
 
 #ifdef HAVE_LIBXML2
 
+static const xmlChar xmlns[] = "xmlns";
+
 typedef struct _domattr
 {
     xmlnode node;
     IXMLDOMAttribute IXMLDOMAttribute_iface;
     LONG ref;
 } domattr;
+
+static const tid_t domattr_se_tids[] = {
+    IXMLDOMNode_tid,
+    IXMLDOMAttribute_tid,
+    NULL_tid
+};
 
 static inline domattr *impl_from_IXMLDOMAttribute( IXMLDOMAttribute *iface )
 {
@@ -74,6 +82,10 @@ static HRESULT WINAPI domattr_QueryInterface(
     {
         return *ppvObject ? S_OK : E_NOINTERFACE;
     }
+    else if(IsEqualGUID( riid, &IID_ISupportErrorInfo ))
+    {
+        return node_create_supporterrorinfo(domattr_se_tids, ppvObject);
+    }
     else
     {
         TRACE("Unsupported interface %s\n", debugstr_guid(riid));
@@ -81,7 +93,7 @@ static HRESULT WINAPI domattr_QueryInterface(
         return E_NOINTERFACE;
     }
 
-    IXMLDOMText_AddRef((IUnknown*)*ppvObject);
+    IXMLDOMAttribute_AddRef(iface);
     return S_OK;
 }
 
@@ -115,12 +127,7 @@ static HRESULT WINAPI domattr_GetTypeInfoCount(
     UINT* pctinfo )
 {
     domattr *This = impl_from_IXMLDOMAttribute( iface );
-
-    TRACE("(%p)->(%p)\n", This, pctinfo);
-
-    *pctinfo = 1;
-
-    return S_OK;
+    return IDispatchEx_GetTypeInfoCount(&This->node.dispex.IDispatchEx_iface, pctinfo);
 }
 
 static HRESULT WINAPI domattr_GetTypeInfo(
@@ -129,13 +136,8 @@ static HRESULT WINAPI domattr_GetTypeInfo(
     ITypeInfo** ppTInfo )
 {
     domattr *This = impl_from_IXMLDOMAttribute( iface );
-    HRESULT hr;
-
-    TRACE("(%p)->(%u %u %p)\n", This, iTInfo, lcid, ppTInfo);
-
-    hr = get_typeinfo(IXMLDOMAttribute_tid, ppTInfo);
-
-    return hr;
+    return IDispatchEx_GetTypeInfo(&This->node.dispex.IDispatchEx_iface,
+        iTInfo, lcid, ppTInfo);
 }
 
 static HRESULT WINAPI domattr_GetIDsOfNames(
@@ -144,23 +146,8 @@ static HRESULT WINAPI domattr_GetIDsOfNames(
     UINT cNames, LCID lcid, DISPID* rgDispId )
 {
     domattr *This = impl_from_IXMLDOMAttribute( iface );
-    ITypeInfo *typeinfo;
-    HRESULT hr;
-
-    TRACE("(%p)->(%s %p %u %u %p)\n", This, debugstr_guid(riid), rgszNames, cNames,
-          lcid, rgDispId);
-
-    if(!rgszNames || cNames == 0 || !rgDispId)
-        return E_INVALIDARG;
-
-    hr = get_typeinfo(IXMLDOMAttribute_tid, &typeinfo);
-    if(SUCCEEDED(hr))
-    {
-        hr = ITypeInfo_GetIDsOfNames(typeinfo, rgszNames, cNames, rgDispId);
-        ITypeInfo_Release(typeinfo);
-    }
-
-    return hr;
+    return IDispatchEx_GetIDsOfNames(&This->node.dispex.IDispatchEx_iface,
+        riid, rgszNames, cNames, lcid, rgDispId);
 }
 
 static HRESULT WINAPI domattr_Invoke(
@@ -170,20 +157,8 @@ static HRESULT WINAPI domattr_Invoke(
     EXCEPINFO* pExcepInfo, UINT* puArgErr )
 {
     domattr *This = impl_from_IXMLDOMAttribute( iface );
-    ITypeInfo *typeinfo;
-    HRESULT hr;
-
-    TRACE("(%p)->(%d %s %d %d %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid),
-          lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
-
-    hr = get_typeinfo(IXMLDOMAttribute_tid, &typeinfo);
-    if(SUCCEEDED(hr))
-    {
-        hr = ITypeInfo_Invoke(typeinfo, &This->IXMLDOMAttribute_iface, dispIdMember, wFlags,
-                pDispParams, pVarResult, pExcepInfo, puArgErr);
-        ITypeInfo_Release(typeinfo);
-    }
-    return hr;
+    return IDispatchEx_Invoke(&This->node.dispex.IDispatchEx_iface,
+        dispIdMember, riid, lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
 }
 
 static HRESULT WINAPI domattr_get_nodeName(
@@ -448,11 +423,40 @@ static HRESULT WINAPI domattr_get_definition(
 
 static HRESULT WINAPI domattr_get_nodeTypedValue(
     IXMLDOMAttribute *iface,
-    VARIANT* var1)
+    VARIANT* value)
 {
     domattr *This = impl_from_IXMLDOMAttribute( iface );
-    FIXME("(%p)->(%p)\n", This, var1);
-    return return_null_var(var1);
+    IXMLDOMDocument *doc;
+    HRESULT hr;
+
+    TRACE("(%p)->(%p)\n", This, value);
+
+    hr = IXMLDOMAttribute_get_ownerDocument(iface, &doc);
+    if (hr == S_OK)
+    {
+        IXMLDOMDocument3 *doc3;
+
+        hr = IXMLDOMDocument_QueryInterface(doc, &IID_IXMLDOMDocument3, (void**)&doc3);
+        IXMLDOMDocument_Release(doc);
+
+        if (hr == S_OK)
+        {
+            VARIANT schemas;
+
+            hr = IXMLDOMDocument3_get_schemas(doc3, &schemas);
+            IXMLDOMDocument3_Release(doc3);
+
+            if (hr != S_OK)
+                return IXMLDOMAttribute_get_value(iface, value);
+            else
+            {
+                FIXME("need to query schema for attribute type\n");
+                VariantClear(&schemas);
+            }
+        }
+    }
+
+    return return_null_var(value);
 }
 
 static HRESULT WINAPI domattr_put_nodeTypedValue(
@@ -495,7 +499,7 @@ static HRESULT WINAPI domattr_get_xml(
 
     TRACE("(%p)->(%p)\n", This, p);
 
-    return node_get_xml(&This->node, FALSE, FALSE, p);
+    return node_get_xml(&This->node, FALSE, p);
 }
 
 static HRESULT WINAPI domattr_transformNode(
@@ -540,8 +544,29 @@ static HRESULT WINAPI domattr_get_namespaceURI(
     BSTR* p)
 {
     domattr *This = impl_from_IXMLDOMAttribute( iface );
+    xmlNsPtr ns = This->node.node->ns;
+
     TRACE("(%p)->(%p)\n", This, p);
-    return node_get_namespaceURI(&This->node, p);
+
+    if (!p)
+        return E_INVALIDARG;
+
+    *p = NULL;
+
+    if (ns)
+    {
+        /* special case for default namespace definition */
+        if (xmlStrEqual(This->node.node->name, xmlns))
+            *p = bstr_from_xmlChar(xmlns);
+        else if (xmlStrEqual(ns->prefix, xmlns))
+            *p = SysAllocStringLen(NULL, 0);
+        else if (ns->href)
+            *p = bstr_from_xmlChar(ns->href);
+    }
+
+    TRACE("uri: %s\n", debugstr_w(*p));
+
+    return *p ? S_OK : S_FALSE;
 }
 
 static HRESULT WINAPI domattr_get_prefix(
@@ -549,8 +574,26 @@ static HRESULT WINAPI domattr_get_prefix(
     BSTR* prefix)
 {
     domattr *This = impl_from_IXMLDOMAttribute( iface );
+    xmlNsPtr ns = This->node.node->ns;
+
     TRACE("(%p)->(%p)\n", This, prefix);
-    return node_get_prefix( &This->node, prefix );
+
+    if (!prefix) return E_INVALIDARG;
+
+    *prefix = NULL;
+
+    if (ns)
+    {
+        /* special case for default namespace definition */
+        if (xmlStrEqual(This->node.node->name, xmlns))
+            *prefix = bstr_from_xmlChar(xmlns);
+        else if (ns->prefix)
+            *prefix = bstr_from_xmlChar(ns->prefix);
+    }
+
+    TRACE("prefix: %s\n", debugstr_w(*prefix));
+
+    return *prefix ? S_OK : S_FALSE;
 }
 
 static HRESULT WINAPI domattr_get_baseName(
@@ -601,7 +644,7 @@ static HRESULT WINAPI domattr_put_value(
 
     TRACE("(%p)->(%s)\n", This, debugstr_variant(&value));
 
-    return node_put_value(&This->node, &value);
+    return node_put_value_escaped(&This->node, &value);
 }
 
 static const struct IXMLDOMAttributeVtbl domattr_vtbl =

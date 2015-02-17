@@ -49,6 +49,7 @@ static BOOL ODBC_LoadDriverManager(void);
 static BOOL ODBC_LoadDMFunctions(void);
 
 WINE_DEFAULT_DEBUG_CHANNEL(odbc);
+WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
 static SQLRETURN (*pSQLAllocConnect)(SQLHENV,SQLHDBC*);
 static SQLRETURN (*pSQLAllocEnv)(SQLHENV*);
@@ -75,6 +76,7 @@ static SQLRETURN (*pSQLConnect)(SQLHDBC,SQLCHAR*,SQLSMALLINT,SQLCHAR*,SQLSMALLIN
 static SQLRETURN (*pSQLConnectW)(SQLHDBC,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLWCHAR*,SQLSMALLINT);
 static SQLRETURN (*pSQLCopyDesc)(SQLHDESC,SQLHDESC);
 static SQLRETURN (*pSQLDataSources)(SQLHENV,SQLUSMALLINT,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*);
+static SQLRETURN (*pSQLDataSourcesA)(SQLHENV,SQLUSMALLINT,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*);
 static SQLRETURN (*pSQLDataSourcesW)(SQLHENV,SQLUSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*);
 static SQLRETURN (*pSQLDescribeCol)(SQLHSTMT,SQLUSMALLINT,SQLCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLSMALLINT*,SQLUINTEGER*,SQLSMALLINT*,SQLSMALLINT*);
 static SQLRETURN (*pSQLDescribeColW)(SQLHSTMT,SQLUSMALLINT,SQLWCHAR*,SQLSMALLINT,SQLSMALLINT*,SQLSMALLINT*,SQLULEN*,SQLSMALLINT*,SQLSMALLINT*);
@@ -193,9 +195,9 @@ static void ODBC_ReplicateODBCInstToRegistry (SQLHENV hEnv)
 {
     HKEY hODBCInst;
     LONG reg_ret;
-    int success;
+    BOOL success;
 
-    success = 0;
+    success = FALSE;
     TRACE ("Driver settings are not currently replicated to the registry\n");
     if ((reg_ret = RegCreateKeyExA (HKEY_LOCAL_MACHINE,
             "Software\\ODBC\\ODBCINST.INI", 0, NULL,
@@ -214,7 +216,7 @@ static void ODBC_ReplicateODBCInstToRegistry (SQLHENV hEnv)
             CHAR desc [256];
             SQLSMALLINT sizedesc;
 
-            success = 1;
+            success = TRUE;
             dirn = SQL_FETCH_FIRST;
             while ((sql_ret = SQLDrivers (hEnv, dirn, (SQLCHAR*)desc, sizeof(desc),
                     &sizedesc, NULL, 0, NULL)) == SQL_SUCCESS ||
@@ -233,14 +235,14 @@ static void ODBC_ReplicateODBCInstToRegistry (SQLHENV hEnv)
                         {
                             TRACE ("Error %d replicating driver %s\n",
                                     reg_ret, desc);
-                            success = 0;
+                            success = FALSE;
                         }
                     }
                     else if (reg_ret != ERROR_SUCCESS)
                     {
                         TRACE ("Error %d checking for %s in drivers\n",
                                 reg_ret, desc);
-                        success = 0;
+                        success = FALSE;
                     }
                     if ((reg_ret = RegCreateKeyExA (hODBCInst, desc, 0,
                             NULL, REG_OPTION_NON_VOLATILE,
@@ -262,20 +264,20 @@ static void ODBC_ReplicateODBCInstToRegistry (SQLHENV hEnv)
                     {
                         TRACE ("Error %d ensuring driver key %s\n",
                                 reg_ret, desc);
-                        success = 0;
+                        success = FALSE;
                     }
                 }
                 else
                 {
                     WARN ("Unusually long driver name %s not replicated\n",
                             desc);
-                    success = 0;
+                    success = FALSE;
                 }
             }
             if (sql_ret != SQL_NO_DATA)
             {
                 TRACE ("Error %d enumerating drivers\n", (int)sql_ret);
-                success = 0;
+                success = FALSE;
             }
             if ((reg_ret = RegCloseKey (hDrivers)) != ERROR_SUCCESS)
             {
@@ -321,7 +323,7 @@ static void ODBC_ReplicateODBCInstToRegistry (SQLHENV hEnv)
  * that this will add a requirement that this function be called after
  * ODBC_ReplicateODBCInstToRegistry)
  */
-static void ODBC_ReplicateODBCToRegistry (int is_user, SQLHENV hEnv)
+static void ODBC_ReplicateODBCToRegistry (BOOL is_user, SQLHENV hEnv)
 {
     HKEY hODBC;
     LONG reg_ret;
@@ -331,17 +333,17 @@ static void ODBC_ReplicateODBCToRegistry (int is_user, SQLHENV hEnv)
     SQLSMALLINT sizedsn;
     CHAR desc [256];
     SQLSMALLINT sizedesc;
-    int success;
+    BOOL success;
     const char *which = is_user ? "user" : "system";
 
-    success = 0;
+    success = FALSE;
     if ((reg_ret = RegCreateKeyExA (
             is_user ? HKEY_CURRENT_USER : HKEY_LOCAL_MACHINE,
             "Software\\ODBC\\ODBC.INI", 0, NULL, REG_OPTION_NON_VOLATILE,
             KEY_ALL_ACCESS /* a couple more than we need */, NULL, &hODBC,
             NULL)) == ERROR_SUCCESS)
     {
-        success = 1;
+        success = TRUE;
         dirn = is_user ? SQL_FETCH_FIRST_USER : SQL_FETCH_FIRST_SYSTEM;
         while ((sql_ret = SQLDataSources (hEnv, dirn,
                 (SQLCHAR*)dsn, sizeof(dsn), &sizedsn,
@@ -368,14 +370,14 @@ static void ODBC_ReplicateODBCToRegistry (int is_user, SQLHENV hEnv)
                         {
                             TRACE ("Error %d replicating description of "
                                     "%s(%s)\n", reg_ret, dsn, desc);
-                            success = 0;
+                            success = FALSE;
                         }
                     }
                     else if (reg_ret != ERROR_SUCCESS)
                     {
                         TRACE ("Error %d checking for description of %s\n",
                                 reg_ret, dsn);
-                        success = 0;
+                        success = FALSE;
                     }
                     if ((reg_ret = RegCloseKey (hDSN)) != ERROR_SUCCESS)
                     {
@@ -387,21 +389,21 @@ static void ODBC_ReplicateODBCToRegistry (int is_user, SQLHENV hEnv)
                 {
                     TRACE ("Error %d opening %s DSN key %s\n",
                             reg_ret, which, dsn);
-                    success = 0;
+                    success = FALSE;
                 }
             }
             else
             {
                 WARN ("Unusually long %s data source name %s (%s) not "
                         "replicated\n", which, dsn, desc);
-                success = 0;
+                success = FALSE;
             }
         }
         if (sql_ret != SQL_NO_DATA)
         {
             TRACE ("Error %d enumerating %s datasources\n",
                     (int)sql_ret, which);
-            success = 0;
+            success = FALSE;
         }
         if ((reg_ret = RegCloseKey (hODBC)) != ERROR_SUCCESS)
         {
@@ -446,8 +448,8 @@ static void ODBC_ReplicateToRegistry (void)
     if ((sql_ret = SQLAllocEnv (&hEnv)) == SQL_SUCCESS)
     {
         ODBC_ReplicateODBCInstToRegistry (hEnv);
-        ODBC_ReplicateODBCToRegistry (0 /* system dsns */, hEnv);
-        ODBC_ReplicateODBCToRegistry (1 /* user dsns */, hEnv);
+        ODBC_ReplicateODBCToRegistry (FALSE /* system dsns */, hEnv);
+        ODBC_ReplicateODBCToRegistry (TRUE /* user dsns */, hEnv);
 
         if ((sql_ret = SQLFreeEnv (hEnv)) != SQL_SUCCESS)
         {
@@ -464,39 +466,25 @@ static void ODBC_ReplicateToRegistry (void)
 
 /***********************************************************************
  * DllMain [Internal] Initializes the internal 'ODBC32.DLL'.
- *
- * PARAMS
- *     hinstDLL    [I] handle to the DLL's instance
- *     fdwReason   [I]
- *     lpvReserved [I] reserved, must be NULL
- *
- * RETURNS
- *     Success: TRUE
- *     Failure: FALSE
  */
-
-BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
+BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD reason, LPVOID reserved)
 {
-    TRACE("Initializing or Finalizing proxy ODBC: %p,%x,%p\n", hinstDLL, fdwReason, lpvReserved);
+    TRACE("proxy ODBC: %p,%x,%p\n", hinstDLL, reason, reserved);
 
-    if (fdwReason == DLL_PROCESS_ATTACH)
+    switch (reason)
     {
-       TRACE("Loading ODBC...\n");
+    case DLL_PROCESS_ATTACH:
        DisableThreadLibraryCalls(hinstDLL);
        if (ODBC_LoadDriverManager())
        {
           ODBC_LoadDMFunctions();
           ODBC_ReplicateToRegistry();
        }
-    }
-    else if (fdwReason == DLL_PROCESS_DETACH)
-    {
-      TRACE("Unloading ODBC...\n");
-      if (dmHandle)
-      {
-         wine_dlclose(dmHandle,NULL,0);
-         dmHandle = NULL;
-      }
+       break;
+
+    case DLL_PROCESS_DETACH:
+      if (reserved) break;
+      if (dmHandle) wine_dlclose(dmHandle,NULL,0);
     }
 
     return TRUE;
@@ -584,6 +572,7 @@ static BOOL ODBC_LoadDMFunctions(void)
     LOAD_FUNC(SQLConnectW);
     LOAD_FUNC(SQLCopyDesc);
     LOAD_FUNC(SQLDataSources);
+    LOAD_FUNC(SQLDataSourcesA);
     LOAD_FUNC(SQLDataSourcesW);
     LOAD_FUNC(SQLDescribeCol);
     LOAD_FUNC(SQLDescribeColW);
@@ -686,7 +675,7 @@ static BOOL ODBC_LoadDMFunctions(void)
 SQLRETURN WINAPI SQLAllocConnect(SQLHENV EnvironmentHandle, SQLHDBC *ConnectionHandle)
 {
         SQLRETURN ret;
-        TRACE("Env=%lx\n",EnvironmentHandle);
+        TRACE("Env=%p\n",EnvironmentHandle);
 
         if (!pSQLAllocConnect)
         {
@@ -696,7 +685,7 @@ SQLRETURN WINAPI SQLAllocConnect(SQLHENV EnvironmentHandle, SQLHDBC *ConnectionH
         }
 
         ret = pSQLAllocConnect(EnvironmentHandle, ConnectionHandle);
-        TRACE("Returns ret=%d, Handle %lx\n",ret, *ConnectionHandle);
+        TRACE("Returns ret=%d, Handle %p\n",ret, *ConnectionHandle);
         return ret;
 }
 
@@ -717,7 +706,7 @@ SQLRETURN WINAPI  SQLAllocEnv(SQLHENV *EnvironmentHandle)
         }
 
         ret = pSQLAllocEnv(EnvironmentHandle);
-        TRACE("Returns ret=%d, Env=%lx\n",ret, *EnvironmentHandle);
+        TRACE("Returns ret=%d, Env=%p\n",ret, *EnvironmentHandle);
         return ret;
 }
 
@@ -728,7 +717,7 @@ SQLRETURN WINAPI  SQLAllocEnv(SQLHENV *EnvironmentHandle)
 SQLRETURN WINAPI SQLAllocHandle(SQLSMALLINT HandleType, SQLHANDLE InputHandle, SQLHANDLE *OutputHandle)
 {
         SQLRETURN ret;
-        TRACE("(Type=%d, Handle=%lx)\n",HandleType,InputHandle);
+        TRACE("(Type=%d, Handle=%p)\n",HandleType,InputHandle);
 
         if (!pSQLAllocHandle)
         {
@@ -749,7 +738,7 @@ SQLRETURN WINAPI SQLAllocHandle(SQLSMALLINT HandleType, SQLHANDLE InputHandle, S
         }
 
         ret = pSQLAllocHandle(HandleType, InputHandle, OutputHandle);
-        TRACE("Returns ret=%d, Handle=%lx\n",ret, *OutputHandle);
+        TRACE("Returns ret=%d, Handle=%p\n",ret, *OutputHandle);
         return ret;
 }
 
@@ -761,7 +750,7 @@ SQLRETURN WINAPI SQLAllocStmt(SQLHDBC ConnectionHandle, SQLHSTMT *StatementHandl
 {
         SQLRETURN ret;
 
-        TRACE("(Connection=%lx)\n",ConnectionHandle);
+        TRACE("(Connection=%p)\n",ConnectionHandle);
 
         if (!pSQLAllocStmt)
         {
@@ -771,7 +760,7 @@ SQLRETURN WINAPI SQLAllocStmt(SQLHDBC ConnectionHandle, SQLHSTMT *StatementHandl
         }
 
         ret = pSQLAllocStmt(ConnectionHandle, StatementHandle);
-        TRACE ("Returns ret=%d, Handle=%lx\n", ret, *StatementHandle);
+        TRACE ("Returns ret=%d, Handle=%p\n", ret, *StatementHandle);
         return ret;
 }
 
@@ -862,7 +851,7 @@ SQLRETURN WINAPI SQLCancel(SQLHSTMT StatementHandle)
 SQLRETURN WINAPI  SQLCloseCursor(SQLHSTMT StatementHandle)
 {
         SQLRETURN ret;
-        TRACE("(Handle=%lx)\n",StatementHandle);
+        TRACE("(Handle=%p)\n",StatementHandle);
 
         if (!pSQLCloseCursor) return SQL_ERROR;
 
@@ -949,7 +938,7 @@ SQLRETURN WINAPI SQLDataSources(SQLHENV EnvironmentHandle,
 {
         SQLRETURN ret;
 
-        TRACE("EnvironmentHandle = %p\n", (LPVOID)EnvironmentHandle);
+        TRACE("EnvironmentHandle = %p\n", EnvironmentHandle);
 
         if (!pSQLDataSources) return SQL_ERROR;
 
@@ -969,6 +958,32 @@ SQLRETURN WINAPI SQLDataSources(SQLHENV EnvironmentHandle,
         return ret;
 }
 
+SQLRETURN WINAPI SQLDataSourcesA(SQLHENV EnvironmentHandle,
+             SQLUSMALLINT Direction, SQLCHAR *ServerName,
+             SQLSMALLINT BufferLength1, SQLSMALLINT *NameLength1,
+             SQLCHAR *Description, SQLSMALLINT BufferLength2,
+             SQLSMALLINT *NameLength2)
+{
+    SQLRETURN ret;
+
+    TRACE("EnvironmentHandle = %p\n", EnvironmentHandle);
+
+    if (!pSQLDataSourcesA) return SQL_ERROR;
+
+    ret = pSQLDataSourcesA(EnvironmentHandle, Direction, ServerName,
+                           BufferLength1, NameLength1, Description, BufferLength2, NameLength2);
+    if (TRACE_ON(odbc))
+    {
+       TRACE("returns: %d \t", ret);
+       if (NameLength1 && *NameLength1 > 0)
+         TRACE("DataSource = %s,", ServerName);
+       if (NameLength2 && *NameLength2 > 0)
+         TRACE(" Description = %s", Description);
+       TRACE("\n");
+    }
+
+    return ret;
+}
 
 /*************************************************************************
  *				SQLDescribeCol           [ODBC32.008]
@@ -993,7 +1008,7 @@ SQLRETURN WINAPI SQLDescribeCol(SQLHSTMT StatementHandle,
 SQLRETURN WINAPI SQLDisconnect(SQLHDBC ConnectionHandle)
 {
         SQLRETURN ret;
-        TRACE("(Handle=%lx)\n", ConnectionHandle);
+        TRACE("(Handle=%p)\n", ConnectionHandle);
 
         if (!pSQLDisconnect) return SQL_ERROR;
 
@@ -1086,7 +1101,7 @@ SQLRETURN WINAPI SQLFetchScroll(SQLHSTMT StatementHandle, SQLSMALLINT FetchOrien
 SQLRETURN WINAPI SQLFreeConnect(SQLHDBC ConnectionHandle)
 {
         SQLRETURN ret;
-        TRACE("(Handle=%lx)\n",ConnectionHandle);
+        TRACE("(Handle=%p)\n",ConnectionHandle);
 
         if (!pSQLFreeConnect) return SQL_ERROR;
 
@@ -1102,7 +1117,7 @@ SQLRETURN WINAPI SQLFreeConnect(SQLHDBC ConnectionHandle)
 SQLRETURN WINAPI SQLFreeEnv(SQLHENV EnvironmentHandle)
 {
         SQLRETURN ret;
-        TRACE("(Env=%lx)\n",EnvironmentHandle);
+        TRACE("(Env=%p)\n",EnvironmentHandle);
 
         if (!pSQLFreeEnv) return SQL_ERROR;
 
@@ -1118,7 +1133,7 @@ SQLRETURN WINAPI SQLFreeEnv(SQLHENV EnvironmentHandle)
 SQLRETURN WINAPI SQLFreeHandle(SQLSMALLINT HandleType, SQLHANDLE Handle)
 {
         SQLRETURN ret;
-        TRACE("(Type=%d, Handle=%lx)\n",HandleType,Handle);
+        TRACE("(Type=%d, Handle=%p)\n",HandleType,Handle);
 
         if (!pSQLFreeHandle) return SQL_ERROR;
 
@@ -1134,7 +1149,7 @@ SQLRETURN WINAPI SQLFreeHandle(SQLSMALLINT HandleType, SQLHANDLE Handle)
 SQLRETURN WINAPI SQLFreeStmt(SQLHSTMT StatementHandle, SQLUSMALLINT Option)
 {
         SQLRETURN ret;
-        TRACE("(Handle %lx, Option=%d)\n",StatementHandle, Option);
+        TRACE("(Handle %p, Option=%d)\n",StatementHandle, Option);
 
         if (!pSQLFreeStmt) return SQL_ERROR;
 
@@ -1900,11 +1915,19 @@ SQLRETURN WINAPI SQLDrivers(
     SQLSMALLINT        cbDriverAttrMax,
     SQLSMALLINT           *pcbDriverAttr)
 {
-        TRACE("\n");
+        SQLRETURN ret;
+
+        TRACE("direction=%d\n", fDirection);
 
         if (!pSQLDrivers) return SQL_ERROR;
-        return pSQLDrivers(henv, fDirection, szDriverDesc, cbDriverDescMax, pcbDriverDesc,
-                           szDriverAttributes, cbDriverAttrMax, pcbDriverAttr);
+        ret = pSQLDrivers(henv, fDirection, szDriverDesc, cbDriverDescMax, pcbDriverDesc,
+                          szDriverAttributes, cbDriverAttrMax, pcbDriverAttr);
+
+        if (ret == SQL_NO_DATA && fDirection == SQL_FETCH_FIRST)
+            ERR_(winediag)("No ODBC drivers could be found. "
+                           "Check the settings for your libodbc provider.\n");
+
+        return ret;
 }
 
 
@@ -1967,7 +1990,7 @@ SQLRETURN WINAPI SQLSetScrollOptions(
         return pSQLSetScrollOptions(statement_handle, f_concurrency, crow_keyset, crow_rowset);
 }
 
-static int SQLColAttributes_KnownStringAttribute(SQLUSMALLINT fDescType)
+static BOOL SQLColAttributes_KnownStringAttribute(SQLUSMALLINT fDescType)
 {
     static const SQLUSMALLINT attrList[] =
     {
@@ -1992,9 +2015,9 @@ static int SQLColAttributes_KnownStringAttribute(SQLUSMALLINT fDescType)
     unsigned int i;
 
     for (i = 0; i < sizeof(attrList) / sizeof(SQLUSMALLINT); i++) {
-        if (attrList[i] == fDescType) return 1;
+        if (attrList[i] == fDescType) return TRUE;
     }
-    return 0;
+    return FALSE;
 }
 
 /*************************************************************************
@@ -2011,7 +2034,7 @@ SQLRETURN WINAPI SQLColAttributesW(
 {
         SQLRETURN iResult;
 
-        TRACE("hstmt=0x%08lx icol=%d fDescType=%d rgbDesc=%p cbDescMax=%d pcbDesc=%p pfDesc=%p\n",
+        TRACE("hstmt=%p icol=%d fDescType=%d rgbDesc=%p cbDescMax=%d pcbDesc=%p pfDesc=%p\n",
             hstmt, icol, fDescType, rgbDesc, cbDescMax, pcbDesc, pfDesc);
 
         if (!pSQLColAttributesW) return SQL_ERROR;
@@ -2057,7 +2080,7 @@ SQLRETURN WINAPI SQLConnectW(SQLHDBC ConnectionHandle,
 SQLRETURN WINAPI SQLDescribeColW(SQLHSTMT StatementHandle,
              SQLUSMALLINT ColumnNumber, WCHAR *ColumnName,
              SQLSMALLINT BufferLength, SQLSMALLINT *NameLength,
-             SQLSMALLINT *DataType, SQLUINTEGER *ColumnSize,
+             SQLSMALLINT *DataType, SQLULEN *ColumnSize,
              SQLSMALLINT *DecimalDigits, SQLSMALLINT *Nullable)
 {
         SQLRETURN iResult;
@@ -2154,7 +2177,7 @@ SQLRETURN WINAPI SQLColAttributeW (SQLHSTMT StatementHandle,
 {
         SQLRETURN iResult;
 
-        TRACE("StatementHandle=0x%08lx ColumnNumber=%d FieldIdentifier=%d CharacterAttribute=%p BufferLength=%d StringLength=%p NumericAttribute=%p\n",
+        TRACE("StatementHandle=%p ColumnNumber=%d FieldIdentifier=%d CharacterAttribute=%p BufferLength=%d StringLength=%p NumericAttribute=%p\n",
             StatementHandle, ColumnNumber, FieldIdentifier,
             CharacterAttribute, BufferLength, StringLength, NumericAttribute);
 
@@ -2212,7 +2235,7 @@ SQLRETURN WINAPI SQLGetDescRecW(SQLHDESC DescriptorHandle,
              SQLSMALLINT RecNumber, WCHAR *Name,
              SQLSMALLINT BufferLength, SQLSMALLINT *StringLength,
              SQLSMALLINT *Type, SQLSMALLINT *SubType,
-             SQLINTEGER *Length, SQLSMALLINT *Precision,
+             SQLLEN *Length, SQLSMALLINT *Precision,
              SQLSMALLINT *Scale, SQLSMALLINT *Nullable)
 {
         TRACE("\n");
@@ -2261,7 +2284,7 @@ SQLRETURN WINAPI SQLGetStmtAttrW(SQLHSTMT StatementHandle,
 {
         SQLRETURN iResult;
 
-        TRACE("Attribute = (%02ld) Value = %p BufferLength = (%ld) StringLength = %p\n",
+        TRACE("Attribute = (%02d) Value = %p BufferLength = (%d) StringLength = %p\n",
             Attribute, Value, BufferLength, StringLength);
 
         if (Value == NULL) {
@@ -2479,7 +2502,7 @@ SQLRETURN WINAPI SQLDataSourcesW(SQLHENV EnvironmentHandle,
 {
         SQLRETURN ret;
 
-        TRACE("EnvironmentHandle = %p\n", (LPVOID)EnvironmentHandle);
+        TRACE("EnvironmentHandle = %p\n", EnvironmentHandle);
 
         if (!pSQLDataSourcesW) return SQL_ERROR;
 
@@ -2633,11 +2656,19 @@ SQLRETURN WINAPI SQLDriversW(
     SQLSMALLINT        cbDriverAttrMax,
     SQLSMALLINT           *pcbDriverAttr)
 {
-        TRACE("\n");
+        SQLRETURN ret;
+
+        TRACE("direction=%d\n", fDirection);
 
         if (!pSQLDriversW) return SQL_ERROR;
-        return pSQLDriversW(henv, fDirection, szDriverDesc, cbDriverDescMax, pcbDriverDesc,
-                            szDriverAttributes, cbDriverAttrMax, pcbDriverAttr);
+        ret = pSQLDriversW(henv, fDirection, szDriverDesc, cbDriverDescMax, pcbDriverDesc,
+                           szDriverAttributes, cbDriverAttrMax, pcbDriverAttr);
+
+        if (ret == SQL_NO_DATA && fDirection == SQL_FETCH_FIRST)
+            ERR_(winediag)("No ODBC drivers could be found. "
+                           "Check the settings for your libodbc provider.\n");
+
+        return ret;
 }
 
 /*************************************************************************
@@ -2661,7 +2692,7 @@ SQLRETURN WINAPI SQLSetStmtAttrW(SQLHSTMT StatementHandle,
                  SQLINTEGER StringLength)
 {
         SQLRETURN iResult;
-        TRACE("Attribute = (%02ld) Value = %p StringLength = (%ld)\n",
+        TRACE("Attribute = (%02d) Value = %p StringLength = (%d)\n",
             Attribute, Value, StringLength);
 
         if (!pSQLSetStmtAttrW) return SQL_ERROR;

@@ -1,8 +1,8 @@
-EXTRADEFS = -DWINE_NO_UNICODE_MACROS
 MODULE    = wmic.exe
 APPMODE   = -mconsole -municode
+IMPORTS   = oleaut32 ole32 user32
 
 C_SRCS = \
 	main.c
 
-@MAKE_PROG_RULES@
+RC_SRCS = wmic.rc

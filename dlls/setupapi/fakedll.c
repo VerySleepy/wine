@@ -245,11 +245,13 @@ done:
 }
 
 /* build a complete fake dll from scratch */
-static BOOL build_fake_dll( HANDLE file )
+static BOOL build_fake_dll( HANDLE file, const WCHAR *name )
 {
+    static const WCHAR dotexeW[] = { '.','e','x','e',0 };
     IMAGE_DOS_HEADER *dos;
     IMAGE_NT_HEADERS *nt;
     struct dll_info info;
+    const WCHAR *ext;
     BYTE *buffer;
     BOOL ret = FALSE;
     DWORD lfanew = (sizeof(*dos) + sizeof(fakedll_signature) + 15) & ~15;
@@ -273,13 +275,19 @@ static BOOL build_fake_dll( HANDLE file )
 
     nt = info.nt = (IMAGE_NT_HEADERS *)(buffer + lfanew);
     /* some fields are copied from the source dll */
-#ifdef _WIN64
+#if defined __x86_64__
     nt->FileHeader.Machine = IMAGE_FILE_MACHINE_AMD64;
+#elif defined __aarch64__
+    nt->FileHeader.Machine = IMAGE_FILE_MACHINE_ARM64;
+#elif defined __arm__
+    nt->FileHeader.Machine = IMAGE_FILE_MACHINE_ARMNT;
+#elif defined __powerpc__
+    nt->FileHeader.Machine = IMAGE_FILE_MACHINE_POWERPC;
 #else
     nt->FileHeader.Machine = IMAGE_FILE_MACHINE_I386;
 #endif
     nt->FileHeader.TimeDateStamp = 0;
-    nt->FileHeader.Characteristics = IMAGE_FILE_DLL;
+    nt->FileHeader.Characteristics = 0;
     nt->OptionalHeader.MajorLinkerVersion = 1;
     nt->OptionalHeader.MinorLinkerVersion = 0;
     nt->OptionalHeader.MajorOperatingSystemVersion = 1;
@@ -311,6 +319,9 @@ static BOOL build_fake_dll( HANDLE file )
 
     nt->OptionalHeader.AddressOfEntryPoint = info.mem_pos;
     nt->OptionalHeader.BaseOfCode          = info.mem_pos;
+
+    ext = strrchrW( name, '.' );
+    if (!ext || strcmpiW( ext, dotexeW )) nt->FileHeader.Characteristics |= IMAGE_FILE_DLL;
 
     if (nt->FileHeader.Characteristics & IMAGE_FILE_DLL)
     {
@@ -394,13 +405,13 @@ static void *load_fake_dll( const WCHAR *name, SIZE_T *size )
     if ((p = strrchrW( name, '\\' ))) name = p + 1;
 
     i = 0;
-    if (build_dir) maxlen = strlen(build_dir) + sizeof("/programs/") + strlenW(name);
+    len = strlenW( name );
+    if (build_dir) maxlen = strlen(build_dir) + sizeof("/programs/") + len;
     while ((path = wine_dll_enum_load_path( i++ ))) maxlen = max( maxlen, strlen(path) );
-    maxlen += sizeof("/fakedlls") + strlenW(name) + 2;
+    maxlen += sizeof("/fakedlls") + len + sizeof(".fake");
 
     if (!(file = HeapAlloc( GetProcessHeap(), 0, maxlen ))) return NULL;
 
-    len = strlenW( name );
     pos = maxlen - len - sizeof(".fake");
     if (!dll_name_WtoA( file + pos, name, len )) goto done;
     file[--pos] = '/';
@@ -770,7 +781,7 @@ static BOOL CALLBACK register_resource( HMODULE module, LPCWSTR type, LPWSTR nam
 
 static void register_fake_dll( const WCHAR *name, const void *data, size_t size )
 {
-    static const WCHAR atlW[] = {'a','t','l','.','d','l','l',0};
+    static const WCHAR atlW[] = {'a','t','l','1','0','0','.','d','l','l',0};
     static const WCHAR moduleW[] = {'M','O','D','U','L','E',0};
     static const WCHAR regtypeW[] = {'W','I','N','E','_','R','E','G','I','S','T','R','Y',0};
     static const WCHAR manifestW[] = {'W','I','N','E','_','M','A','N','I','F','E','S','T',0};
@@ -791,20 +802,14 @@ static void register_fake_dll( const WCHAR *name, const void *data, size_t size 
 
     if (!registrar)
     {
-        /* create the object by hand since we can't guarantee that atl and ole32 are registered */
-        IClassFactory *cf;
-        HRESULT (WINAPI *pDllGetClassObject)( REFCLSID clsid, REFIID iid, LPVOID *ppv );
+        HRESULT (WINAPI *pAtlCreateRegistrar)(IRegistrar**);
         HMODULE atl = LoadLibraryW( atlW );
 
-        if ((pDllGetClassObject = (void *)GetProcAddress( atl, "DllGetClassObject" )))
-        {
-            hr = pDllGetClassObject( &CLSID_Registrar, &IID_IClassFactory, (void **)&cf );
-            if (SUCCEEDED( hr ))
-            {
-                hr = IClassFactory_CreateInstance( cf, NULL, &IID_IRegistrar, (void **)&registrar );
-                IClassFactory_Release( cf );
-            }
-        }
+        if ((pAtlCreateRegistrar = (void *)GetProcAddress( atl, "AtlCreateRegistrar" )))
+            hr = pAtlCreateRegistrar( &registrar );
+        else
+            hr = E_NOINTERFACE;
+
         if (!registrar)
         {
             ERR( "failed to create IRegistrar: %x\n", hr );
@@ -969,7 +974,7 @@ BOOL create_fake_dll( const WCHAR *name, const WCHAR *source )
     else
     {
         WARN( "fake dll %s not found for %s\n", debugstr_w(source), debugstr_w(name) );
-        ret = build_fake_dll( h );
+        ret = build_fake_dll( h, name );
     }
 
     CloseHandle( h );

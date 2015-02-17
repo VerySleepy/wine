@@ -35,6 +35,8 @@
 #include "wine/unicode.h"
 #include "wine/debug.h"
 
+#include "advapi32_misc.h"
+
 WINE_DEFAULT_DEBUG_CHANNEL(advapi);
 
 /******************************************************************************
@@ -57,7 +59,7 @@ GetUserNameA( LPSTR lpszName, LPDWORD lpSize )
     BOOL ret;
     DWORD sizeW = *lpSize;
 
-    if (!(buffer = HeapAlloc( GetProcessHeap(), 0, sizeW * sizeof(WCHAR) )))
+    if (!(buffer = heap_alloc( sizeW * sizeof(WCHAR) )))
     {
         SetLastError( ERROR_NOT_ENOUGH_MEMORY );
         return FALSE;
@@ -69,7 +71,7 @@ GetUserNameA( LPSTR lpszName, LPDWORD lpSize )
     else
         *lpSize = sizeW;
 
-    HeapFree( GetProcessHeap(), 0, buffer );
+    heap_free( buffer );
     return ret;
 }
 
@@ -134,7 +136,7 @@ BOOL WINAPI GetCurrentHwProfileA(LPHW_PROFILE_INFOA pInfo)
 	pInfo->dwDockInfo = DOCKINFO_DOCKED;
 	strcpy(pInfo->szHwProfileGuid,"{12340001-1234-1234-1234-123456789012}");
 	strcpy(pInfo->szHwProfileName,"Wine Profile");
-	return 1;
+	return TRUE;
 }
 
 /******************************************************************************
@@ -268,10 +270,23 @@ BOOL WINAPI InitiateSystemShutdownW( LPWSTR lpMachineName, LPWSTR lpMessage, DWO
 BOOL WINAPI LogonUserA( LPCSTR lpszUsername, LPCSTR lpszDomain, LPCSTR lpszPassword,
                         DWORD dwLogonType, DWORD dwLogonProvider, PHANDLE phToken )
 {
-    FIXME("%s %s %p 0x%08x 0x%08x %p - stub\n", debugstr_a(lpszUsername),
+    WCHAR *usernameW = NULL, *domainW = NULL, *passwordW = NULL;
+    BOOL ret = FALSE;
+
+    TRACE("%s %s %p 0x%08x 0x%08x %p\n", debugstr_a(lpszUsername),
           debugstr_a(lpszDomain), lpszPassword, dwLogonType, dwLogonProvider, phToken);
 
-    return TRUE;
+    if (lpszUsername && !(usernameW = strdupAW( lpszUsername ))) return FALSE;
+    if (lpszDomain && !(domainW = strdupAW( lpszUsername ))) goto done;
+    if (lpszPassword && !(passwordW = strdupAW( lpszPassword ))) goto done;
+
+    ret = LogonUserW( usernameW, domainW, passwordW, dwLogonType, dwLogonProvider, phToken );
+
+done:
+    heap_free( usernameW );
+    heap_free( domainW );
+    heap_free( passwordW );
+    return ret;
 }
 
 BOOL WINAPI LogonUserW( LPCWSTR lpszUsername, LPCWSTR lpszDomain, LPCWSTR lpszPassword,
@@ -280,6 +295,7 @@ BOOL WINAPI LogonUserW( LPCWSTR lpszUsername, LPCWSTR lpszDomain, LPCWSTR lpszPa
     FIXME("%s %s %p 0x%08x 0x%08x %p - stub\n", debugstr_w(lpszUsername),
           debugstr_w(lpszDomain), lpszPassword, dwLogonType, dwLogonProvider, phToken);
 
+    *phToken = (HANDLE *)0xdeadbeef;
     return TRUE;
 }
 

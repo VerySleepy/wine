@@ -763,7 +763,10 @@ UINT msi_set_last_used_source(LPCWSTR product, LPCWSTR usersid,
 
     r = OpenSourceKey(product, &source, MSICODE_PRODUCT, context, FALSE);
     if (r != ERROR_SUCCESS)
+    {
+        msi_free(buffer);
         return r;
+    }
 
     sprintfW(buffer, format, typechar, index, value);
 
@@ -1150,7 +1153,7 @@ UINT WINAPI MsiSourceListAddSourceExW( LPCWSTR szProduct, LPCWSTR szUserSid,
     list_init(&sourcelist);
     rc = fill_source_list(&sourcelist, typekey, &count);
     if (rc != ERROR_NO_MORE_ITEMS)
-        return rc;
+        goto done;
 
     size = (lstrlenW(source) + 1) * sizeof(WCHAR);
 

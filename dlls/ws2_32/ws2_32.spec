@@ -97,6 +97,7 @@
 @ stdcall WSAResetEvent(long) kernel32.ResetEvent
 @ stdcall WSASend(long ptr long ptr long ptr ptr)
 @ stdcall WSASendDisconnect(long ptr)
+@ stdcall WSASendMsg(long ptr long ptr ptr ptr)
 @ stdcall WSASendTo(long ptr long ptr long ptr long ptr ptr)
 @ stdcall WSASetEvent(long) kernel32.SetEvent
 @ stdcall WSASetServiceA(ptr long long)
@@ -120,3 +121,4 @@
 @ stdcall getaddrinfo(str str ptr ptr) WS_getaddrinfo
 @ stdcall getnameinfo(ptr long ptr long ptr long long) WS_getnameinfo
 @ stdcall inet_ntop(long ptr ptr long) WS_inet_ntop
+@ stdcall inet_pton(long ptr ptr) WS_inet_pton

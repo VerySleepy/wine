@@ -22,9 +22,11 @@
  *
  */
 
-#include <windows.h>
-#include <shlwapi.h>
 #include <stdio.h>
+#include <windows.h>
+#include <commdlg.h>
+#include <shellapi.h>
+#include <shlwapi.h>
 
 #include "main.h"
 #include "dialog.h"
@@ -614,8 +616,8 @@ static int AlertFileDoesNotExist(LPCWSTR szFileName)
 static void HandleCommandLine(LPWSTR cmdline)
 {
     WCHAR delimiter;
-    int opt_print=0;
-    
+    BOOL opt_print = FALSE;
+
     /* skip white space */
     while (*cmdline == ' ') cmdline++;
 
@@ -642,7 +644,7 @@ static void HandleCommandLine(LPWSTR cmdline)
         {
             case 'p':
             case 'P':
-                opt_print=1;
+                opt_print = TRUE;
                 break;
         }
     }
@@ -788,7 +790,7 @@ int PASCAL WinMain(HINSTANCE hInstance, HINSTANCE prev, LPSTR cmdline, int show)
 
     while (GetMessageW(&msg, 0, 0, 0))
     {
-        if (!TranslateAcceleratorW(Globals.hMainWnd, hAccel, &msg) && !IsDialogMessageW(Globals.hFindReplaceDlg, &msg))
+        if (!IsDialogMessageW(Globals.hFindReplaceDlg, &msg) && !TranslateAcceleratorW(Globals.hMainWnd, hAccel, &msg))
 	{
 	    TranslateMessage(&msg);
             DispatchMessageW(&msg);

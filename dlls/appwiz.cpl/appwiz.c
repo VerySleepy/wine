@@ -314,6 +314,7 @@ static BOOL ReadApplicationsFromRegistry(HKEY root)
 err:
     RegCloseKey(hkeyApp);
     if (info) FreeAppInfo(info);
+    HeapFree(GetProcessHeap(), 0, command);
     return FALSE;
 }
 
@@ -476,7 +477,7 @@ static void InstallProgram(HWND hWnd)
         sei.cbSize = sizeof(sei);
         sei.lpVerb = openW;
         sei.nShow = SW_SHOWDEFAULT;
-        sei.fMask = SEE_MASK_NO_CONSOLE;
+        sei.fMask = 0;
         sei.lpFile = ofn.lpstrFile;
 
         ShellExecuteExW(&sei);
@@ -566,7 +567,7 @@ static void SetInfoDialogText(HKEY hKey, LPCWSTR lpKeyName, LPCWSTR lpAltMessage
     /* if hKey is null, lpKeyName contains the string we want to check */
     if (hKey == NULL)
     {
-        if ((lpKeyName) && (lstrlenW(lpKeyName) > 0))
+        if (lpKeyName && lpKeyName[0])
             SetWindowTextW(hWndDlgItem, lpKeyName);
         else
             SetWindowTextW(hWndDlgItem, lpAltMessage);
@@ -576,7 +577,7 @@ static void SetInfoDialogText(HKEY hKey, LPCWSTR lpKeyName, LPCWSTR lpAltMessage
         buflen = MAX_STRING_LEN;
 
         if ((RegQueryValueExW(hKey, lpKeyName, 0, 0, (LPBYTE) buf, &buflen) ==
-           ERROR_SUCCESS) && (lstrlenW(buf) > 0))
+           ERROR_SUCCESS) && buf[0])
             SetWindowTextW(hWndDlgItem, buf);
         else
             SetWindowTextW(hWndDlgItem, lpAltMessage);
@@ -590,9 +591,9 @@ static void SetInfoDialogText(HKEY hKey, LPCWSTR lpKeyName, LPCWSTR lpAltMessage
  *              msg     - reason for calling function
  *              wParam  - additional parameter
  *              lParam  - additional parameter
- * Returns    : Dependant on message
+ * Returns    : Depends on the message
  */
-static BOOL CALLBACK SupportInfoDlgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+static INT_PTR CALLBACK SupportInfoDlgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     APPINFO *iter;
     HKEY hkey;
@@ -681,8 +682,7 @@ static BOOL CALLBACK SupportInfoDlgProc(HWND hWnd, UINT msg, WPARAM wParam, LPAR
  */
 static void SupportInfo(HWND hWnd, int id)
 {
-    DialogBoxParamW(hInst, MAKEINTRESOURCEW(IDD_INFO), hWnd, (DLGPROC)
-        SupportInfoDlgProc, (LPARAM) id);
+    DialogBoxParamW(hInst, MAKEINTRESOURCEW(IDD_INFO), hWnd, SupportInfoDlgProc, id);
 }
 
 /* Definition of column headers for AddListViewColumns function */
@@ -820,9 +820,9 @@ static HIMAGELIST ResetApplicationList(BOOL bFirstRun, HWND hWnd, HIMAGELIST hIm
  *              msg     - reason for calling function
  *              wParam  - additional parameter
  *              lParam  - additional parameter
- * Returns    : Dependant on message
+ * Returns    : Depends on the message
  */
-static BOOL CALLBACK MainDlgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+static INT_PTR CALLBACK MainDlgProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     int selitem;
     static HIMAGELIST hImageList;
@@ -947,7 +947,7 @@ static void StartApplet(HWND hWnd)
     psp.hInstance = hInst;
     psp.u.pszTemplate = MAKEINTRESOURCEW (IDD_MAIN);
     psp.u2.pszIcon = NULL;
-    psp.pfnDlgProc = (DLGPROC) MainDlgProc;
+    psp.pfnDlgProc = MainDlgProc;
     psp.pszTitle = tab_title;
     psp.lParam = 0;
 
@@ -970,12 +970,18 @@ static void StartApplet(HWND hWnd)
 static LONG start_params(const WCHAR *params)
 {
     static const WCHAR install_geckoW[] = {'i','n','s','t','a','l','l','_','g','e','c','k','o',0};
+    static const WCHAR install_monoW[] = {'i','n','s','t','a','l','l','_','m','o','n','o',0};
 
     if(!params)
         return FALSE;
 
     if(!strcmpW(params, install_geckoW)) {
-        install_wine_gecko();
+        install_addon(ADDON_GECKO);
+        return TRUE;
+    }
+
+    if(!strcmpW(params, install_monoW)) {
+        install_addon(ADDON_MONO);
         return TRUE;
     }
 
@@ -990,7 +996,7 @@ static LONG start_params(const WCHAR *params)
  *              message - reason for calling function
  *              lParam1 - additional parameter
  *              lParam2 - additional parameter
- * Returns    : Dependant on message
+ * Returns    : Depends on the message
  */
 LONG CALLBACK CPlApplet(HWND hwndCPL, UINT message, LPARAM lParam1, LPARAM lParam2)
 {
@@ -1000,7 +1006,7 @@ LONG CALLBACK CPlApplet(HWND hwndCPL, UINT message, LPARAM lParam1, LPARAM lPara
     {
         case CPL_INIT:
             iccEx.dwSize = sizeof(iccEx);
-            iccEx.dwICC = ICC_LISTVIEW_CLASSES | ICC_TAB_CLASSES;
+            iccEx.dwICC = ICC_LISTVIEW_CLASSES | ICC_TAB_CLASSES | ICC_LINK_CLASS;
 
             InitCommonControlsEx(&iccEx);
 

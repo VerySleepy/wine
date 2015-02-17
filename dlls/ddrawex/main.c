@@ -2,9 +2,6 @@
  *
  * Copyright 2006 Ulrich Czekalla
  *
- * This file contains the (internal) driver registration functions,
- * driver enumeration APIs and DirectDraw creation functions.
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -39,243 +36,175 @@ WINE_DEFAULT_DEBUG_CHANNEL(ddrawex);
 
 static HINSTANCE instance;
 
-/******************************************************************************
- * DirectDraw ClassFactory implementation
- ******************************************************************************/
-typedef struct
+struct ddrawex_class_factory
 {
     IClassFactory IClassFactory_iface;
     LONG ref;
-    HRESULT (*pfnCreateInstance)(IUnknown *pUnkOuter, REFIID iid, LPVOID *ppObj);
-} IClassFactoryImpl;
+    HRESULT (*pfnCreateInstance)(IUnknown *outer, REFIID iid, void **out);
+};
 
-static inline IClassFactoryImpl *impl_from_IClassFactory(IClassFactory *iface)
+static inline struct ddrawex_class_factory *impl_from_IClassFactory(IClassFactory *iface)
 {
-    return CONTAINING_RECORD(iface, IClassFactoryImpl, IClassFactory_iface);
+    return CONTAINING_RECORD(iface, struct ddrawex_class_factory, IClassFactory_iface);
 }
 
-/*******************************************************************************
- * IDirectDrawClassFactory::QueryInterface
- *
- *******************************************************************************/
-static HRESULT WINAPI IDirectDrawClassFactoryImpl_QueryInterface(IClassFactory *iface, REFIID riid,
-        void **obj)
+static HRESULT WINAPI ddrawex_class_factory_QueryInterface(IClassFactory *iface, REFIID riid, void **out)
 {
-    IClassFactoryImpl *This = impl_from_IClassFactory(iface);
+    TRACE("iface %p, riid %s, out %p.\n", iface, debugstr_guid(riid), out);
 
-    TRACE("(%p)->(%s,%p)\n", This, debugstr_guid(riid), obj);
-
-    if (IsEqualGUID(riid, &IID_IUnknown)
-        || IsEqualGUID(riid, &IID_IClassFactory))
+    if (IsEqualGUID(riid, &IID_IClassFactory)
+            || IsEqualGUID(riid, &IID_IUnknown))
     {
         IClassFactory_AddRef(iface);
-        *obj = This;
+        *out = iface;
         return S_OK;
     }
 
-    WARN("(%p)->(%s,%p),not found\n",This,debugstr_guid(riid),obj);
+    WARN("%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid(riid));
+
+    *out = NULL;
     return E_NOINTERFACE;
 }
 
-/*******************************************************************************
- * IDirectDrawClassFactory::AddRef
- *
- *******************************************************************************/
-static ULONG WINAPI IDirectDrawClassFactoryImpl_AddRef(IClassFactory *iface)
+static ULONG WINAPI ddrawex_class_factory_AddRef(IClassFactory *iface)
 {
-    IClassFactoryImpl *This = impl_from_IClassFactory(iface);
-    ULONG ref = InterlockedIncrement(&This->ref);
+    struct ddrawex_class_factory *factory = impl_from_IClassFactory(iface);
+    ULONG refcount = InterlockedIncrement(&factory->ref);
 
-    TRACE("(%p)->() incrementing from %d.\n", This, ref - 1);
+    TRACE("%p increasing refcount to %u.\n", iface, refcount);
 
-    return ref;
+    return refcount;
 }
 
-/*******************************************************************************
- * IDirectDrawClassFactory::Release
- *
- *******************************************************************************/
-static ULONG WINAPI IDirectDrawClassFactoryImpl_Release(IClassFactory *iface)
+static ULONG WINAPI ddrawex_class_factory_Release(IClassFactory *iface)
 {
-    IClassFactoryImpl *This = impl_from_IClassFactory(iface);
-    ULONG ref = InterlockedDecrement(&This->ref);
+    struct ddrawex_class_factory *factory = impl_from_IClassFactory(iface);
+    ULONG refcount = InterlockedDecrement(&factory->ref);
 
-    TRACE("(%p)->() decrementing from %d.\n", This, ref+1);
+    TRACE("%p decreasing refcount to %u.\n", iface, refcount);
 
-    if (ref == 0)
-        HeapFree(GetProcessHeap(), 0, This);
+    if (!refcount)
+        HeapFree(GetProcessHeap(), 0, factory);
 
-    return ref;
+    return refcount;
 }
 
-
-/*******************************************************************************
- * IDirectDrawClassFactory::CreateInstance
- *
- *******************************************************************************/
-static HRESULT WINAPI IDirectDrawClassFactoryImpl_CreateInstance(IClassFactory *iface,
-        IUnknown *UnkOuter, REFIID riid, void **obj)
+static HRESULT WINAPI ddrawex_class_factory_CreateInstance(IClassFactory *iface,
+        IUnknown *outer_unknown, REFIID riid, void **out)
 {
-    IClassFactoryImpl *This = impl_from_IClassFactory(iface);
+    struct ddrawex_class_factory *factory = impl_from_IClassFactory(iface);
 
-    TRACE("(%p)->(%p,%s,%p)\n",This,UnkOuter,debugstr_guid(riid),obj);
+    TRACE("iface %p, outer_unknown %p, riid %s, out %p.\n",
+            iface, outer_unknown, debugstr_guid(riid), out);
 
-    return This->pfnCreateInstance(UnkOuter, riid, obj);
+    return factory->pfnCreateInstance(outer_unknown, riid, out);
 }
 
-/*******************************************************************************
- * IDirectDrawClassFactory::LockServer
- *
- *******************************************************************************/
-static HRESULT WINAPI IDirectDrawClassFactoryImpl_LockServer(IClassFactory *iface,BOOL dolock)
+static HRESULT WINAPI ddrawex_class_factory_LockServer(IClassFactory *iface, BOOL dolock)
 {
-    IClassFactoryImpl *This = impl_from_IClassFactory(iface);
-
-    FIXME("(%p)->(%d),stub!\n",This,dolock);
+    FIXME("iface %p, dolock %#x stub!\n", iface, dolock);
 
     return S_OK;
 }
 
-
-/*******************************************************************************
- * The class factory VTable
- *******************************************************************************/
-static const IClassFactoryVtbl IClassFactory_Vtbl =
+static const IClassFactoryVtbl ddrawex_class_factory_vtbl =
 {
-    IDirectDrawClassFactoryImpl_QueryInterface,
-    IDirectDrawClassFactoryImpl_AddRef,
-    IDirectDrawClassFactoryImpl_Release,
-    IDirectDrawClassFactoryImpl_CreateInstance,
-    IDirectDrawClassFactoryImpl_LockServer
+    ddrawex_class_factory_QueryInterface,
+    ddrawex_class_factory_AddRef,
+    ddrawex_class_factory_Release,
+    ddrawex_class_factory_CreateInstance,
+    ddrawex_class_factory_LockServer,
 };
 
-
-/******************************************************************************
- * DirectDrawFactory implementation
- ******************************************************************************/
-typedef struct
+struct ddrawex_factory
 {
     IDirectDrawFactory IDirectDrawFactory_iface;
     LONG ref;
-} IDirectDrawFactoryImpl;
+};
 
-static inline IDirectDrawFactoryImpl *impl_from_IDirectDrawFactory(IDirectDrawFactory *iface)
+static inline struct ddrawex_factory *impl_from_IDirectDrawFactory(IDirectDrawFactory *iface)
 {
-    return CONTAINING_RECORD(iface, IDirectDrawFactoryImpl, IDirectDrawFactory_iface);
+    return CONTAINING_RECORD(iface, struct ddrawex_factory, IDirectDrawFactory_iface);
 }
 
-/*******************************************************************************
- * IDirectDrawFactory::QueryInterface
- *
- *******************************************************************************/
-static HRESULT WINAPI IDirectDrawFactoryImpl_QueryInterface(IDirectDrawFactory *iface, REFIID riid,
-        void **obj)
+static HRESULT WINAPI ddrawex_factory_QueryInterface(IDirectDrawFactory *iface, REFIID riid, void **out)
 {
-    IDirectDrawFactoryImpl *This = impl_from_IDirectDrawFactory(iface);
+    TRACE("iface %p, riid %s, out %p.\n", iface, debugstr_guid(riid), out);
 
-    TRACE("(%p)->(%s,%p)\n", This, debugstr_guid(riid), obj);
-
-    if (IsEqualGUID(riid, &IID_IUnknown)
-        || IsEqualGUID(riid, &IID_IDirectDrawFactory))
+    if (IsEqualGUID(riid, &IID_IDirectDrawFactory)
+            || IsEqualGUID(riid, &IID_IUnknown))
     {
         IDirectDrawFactory_AddRef(iface);
-        *obj = This;
+        *out = iface;
         return S_OK;
     }
 
-    WARN("(%p)->(%s,%p),not found\n",This,debugstr_guid(riid),obj);
+    WARN("%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid(riid));
+
+    *out = NULL;
     return E_NOINTERFACE;
 }
 
-/*******************************************************************************
- * IDirectDrawFactory::AddRef
- *
- *******************************************************************************/
-static ULONG WINAPI IDirectDrawFactoryImpl_AddRef(IDirectDrawFactory *iface)
+static ULONG WINAPI ddrawex_factory_AddRef(IDirectDrawFactory *iface)
 {
-    IDirectDrawFactoryImpl *This = impl_from_IDirectDrawFactory(iface);
-    ULONG ref = InterlockedIncrement(&This->ref);
+    struct ddrawex_factory *factory = impl_from_IDirectDrawFactory(iface);
+    ULONG refcount = InterlockedIncrement(&factory->ref);
 
-    TRACE("(%p)->() incrementing from %d.\n", This, ref - 1);
+    TRACE("%p increasing refcount to %u.\n", iface, refcount);
 
-    return ref;
+    return refcount;
 }
 
-/*******************************************************************************
- * IDirectDrawFactory::Release
- *
- *******************************************************************************/
-static ULONG WINAPI IDirectDrawFactoryImpl_Release(IDirectDrawFactory *iface)
+static ULONG WINAPI ddrawex_factory_Release(IDirectDrawFactory *iface)
 {
-    IDirectDrawFactoryImpl *This = impl_from_IDirectDrawFactory(iface);
-    ULONG ref = InterlockedDecrement(&This->ref);
+    struct ddrawex_factory *factory = impl_from_IDirectDrawFactory(iface);
+    ULONG refcount = InterlockedDecrement(&factory->ref);
 
-    TRACE("(%p)->() decrementing from %d.\n", This, ref+1);
+    TRACE("%p decreasing refcount to %u.\n", iface, refcount);
 
-    if (ref == 0)
-        HeapFree(GetProcessHeap(), 0, This);
+    if (!refcount)
+        HeapFree(GetProcessHeap(), 0, factory);
 
-    return ref;
+    return refcount;
 }
 
-/*******************************************************************************
- * IDirectDrawFactoryImpl_DirectDrawEnumerate
- *******************************************************************************/
-static HRESULT WINAPI
-IDirectDrawFactoryImpl_DirectDrawEnumerate(IDirectDrawFactory* iface,
-                                           LPDDENUMCALLBACKW lpCallback,
-                                           LPVOID lpContext)
+static HRESULT WINAPI ddrawex_factory_DirectDrawEnumerate(IDirectDrawFactory *iface,
+        LPDDENUMCALLBACKW cb, void *ctx)
 {
-    FIXME("Stub!\n");
+    FIXME("iface %p, cb %p, ctx %p stub!\n", iface, cb, ctx);
+
     return E_FAIL;
 }
 
-
-/*******************************************************************************
- * Direct Draw Factory VTable
- *******************************************************************************/
-static const IDirectDrawFactoryVtbl IDirectDrawFactory_Vtbl =
+static const IDirectDrawFactoryVtbl ddrawex_factory_vtbl =
 {
-    IDirectDrawFactoryImpl_QueryInterface,
-    IDirectDrawFactoryImpl_AddRef,
-    IDirectDrawFactoryImpl_Release,
-    IDirectDrawFactoryImpl_CreateDirectDraw,
-    IDirectDrawFactoryImpl_DirectDrawEnumerate,
+    ddrawex_factory_QueryInterface,
+    ddrawex_factory_AddRef,
+    ddrawex_factory_Release,
+    ddrawex_factory_CreateDirectDraw,
+    ddrawex_factory_DirectDrawEnumerate,
 };
 
-/***********************************************************************
- * CreateDirectDrawFactory
- *
- ***********************************************************************/
-static HRESULT
-CreateDirectDrawFactory(IUnknown* UnkOuter, REFIID iid, void **obj)
+static HRESULT ddrawex_factory_create(IUnknown *outer_unknown, REFIID riid, void **out)
 {
+    struct ddrawex_factory *factory;
     HRESULT hr;
-    IDirectDrawFactoryImpl *This = NULL;
 
-    TRACE("(%p,%s,%p)\n", UnkOuter, debugstr_guid(iid), obj);
+    TRACE("outer_unknown %p, riid %s, out %p.\n", outer_unknown, debugstr_guid(riid), out);
 
-    if (UnkOuter != NULL)
+    if (outer_unknown)
         return CLASS_E_NOAGGREGATION;
 
-    This = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectDrawFactoryImpl));
-
-    if(!This)
-    {
-        ERR("Out of memory when creating DirectDraw\n");
+    if (!(factory = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*factory))))
         return E_OUTOFMEMORY;
-    }
 
-    This->IDirectDrawFactory_iface.lpVtbl = &IDirectDrawFactory_Vtbl;
+    factory->IDirectDrawFactory_iface.lpVtbl = &ddrawex_factory_vtbl;
 
-    hr = IDirectDrawFactory_QueryInterface(&This->IDirectDrawFactory_iface, iid,  obj);
-
-    if (FAILED(hr))
-        HeapFree(GetProcessHeap(), 0, This);
+    if (FAILED(hr = ddrawex_factory_QueryInterface(&factory->IDirectDrawFactory_iface, riid, out)))
+        HeapFree(GetProcessHeap(), 0, factory);
 
     return hr;
 }
-
 
 /*******************************************************************************
  * DllCanUnloadNow [DDRAWEX.@]  Determines whether the DLL is in use.
@@ -289,11 +218,11 @@ HRESULT WINAPI DllCanUnloadNow(void)
 /*******************************************************************************
  * DllGetClassObject [DDRAWEX.@]
  */
-HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID *ppv)
+HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void **out)
 {
-    IClassFactoryImpl *factory;
+    struct ddrawex_class_factory *factory;
 
-    TRACE("ddrawex (%s,%s,%p)\n", debugstr_guid(rclsid), debugstr_guid(riid), ppv);
+    TRACE("rclsid %s, riid %s, out %p.\n", debugstr_guid(rclsid), debugstr_guid(riid), out);
 
     if (!IsEqualGUID( &IID_IClassFactory, riid)
         && !IsEqualGUID( &IID_IUnknown, riid))
@@ -308,12 +237,12 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID *ppv)
     factory = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*factory));
     if (factory == NULL) return E_OUTOFMEMORY;
 
-    factory->IClassFactory_iface.lpVtbl = &IClassFactory_Vtbl;
+    factory->IClassFactory_iface.lpVtbl = &ddrawex_class_factory_vtbl;
     factory->ref = 1;
 
-    factory->pfnCreateInstance = CreateDirectDrawFactory;
+    factory->pfnCreateInstance = ddrawex_factory_create;
 
-    *ppv = factory;
+    *out = factory;
 
     return S_OK;
 }
@@ -322,13 +251,13 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID *ppv)
 /***********************************************************************
  * DllMain
  */
-BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD reason, LPVOID lpv)
+BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, void *reserved)
 {
     switch (reason)
     {
     case DLL_PROCESS_ATTACH:
-        instance = hInstDLL;
-        DisableThreadLibraryCalls( hInstDLL );
+        instance = inst;
+        DisableThreadLibraryCalls( inst );
         break;
     }
     return TRUE;

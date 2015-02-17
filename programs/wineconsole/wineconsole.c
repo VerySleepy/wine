@@ -377,8 +377,8 @@ void     WINECON_SetConfig(struct inner_data* data, const struct config_data* cf
     {
         CONSOLE_CURSOR_INFO cinfo;
         cinfo.dwSize = cfg->cursor_size;
-        /* <FIXME>: this hack is needed to pass thru the invariant test operation on server side
-         * (no notification is sent when invariant operation is requested
+        /* <FIXME>: this hack is needed to pass through the invariant test operation on the server side
+         * (no notification is sent when invariant operation is requested)
          */
         cinfo.bVisible = !cfg->cursor_visible;
         SetConsoleCursorInfo(data->hConOut, &cinfo);
@@ -519,6 +519,7 @@ static void WINECON_Delete(struct inner_data* data)
     if (data->hConIn)		CloseHandle(data->hConIn);
     if (data->hConOut)		CloseHandle(data->hConOut);
     if (data->hSynchro)		CloseHandle(data->hSynchro);
+    HeapFree(GetProcessHeap(), 0, data->curcfg.registry);
     HeapFree(GetProcessHeap(), 0, data->cells);
     HeapFree(GetProcessHeap(), 0, data);
 }
@@ -760,7 +761,7 @@ static UINT WINECON_ParseOptions(const char* lpCmdLine, struct wc_init* wci)
         if (strncmp(wci->ptr, "--use-event=", 12) == 0)
         {
             char*           end;
-            wci->event = (HANDLE)strtol(wci->ptr + 12, &end, 10);
+            wci->event = ULongToHandle( strtoul(wci->ptr + 12, &end, 10) );
             if (end == wci->ptr + 12) return IDS_CMD_INVALID_EVENT_ID;
             wci->mode = from_event;
             wci->ptr = end;
@@ -780,6 +781,9 @@ static UINT WINECON_ParseOptions(const char* lpCmdLine, struct wc_init* wci)
             else
                 return IDS_CMD_INVALID_BACKEND;
         }
+        else if (!strncmp(wci->ptr, "--help", 6) &&
+                 (!wci->ptr[6] || wci->ptr[6] == ' ' || wci->ptr[6] == '\t'))
+            return IDS_CMD_ABOUT|WINECON_CMD_SHOW_USAGE;
         else
             return IDS_CMD_INVALID_OPTION|WINECON_CMD_SHOW_USAGE;
     }
@@ -788,8 +792,7 @@ static UINT WINECON_ParseOptions(const char* lpCmdLine, struct wc_init* wci)
         return 0;
 
     while (*wci->ptr == ' ' || *wci->ptr == '\t') wci->ptr++;
-    if (*wci->ptr == 0)
-        return IDS_CMD_ABOUT|WINECON_CMD_SHOW_USAGE;
+    if (*wci->ptr == 0) wci->ptr = "cmd";
 
     return 0;
 }

@@ -1,6 +1,5 @@
 MODULE    = wineps.drv
 IMPORTS   = user32 gdi32 winspool advapi32
-EXTRAINCL = @CUPSINCL@
 
 C_SRCS = \
 	afm.c \
@@ -60,45 +59,7 @@ C_SRCS = \
 	text.c \
 	type1.c \
 	type1afm.c \
-	type42.c
+	type42.c \
+	vertical.c
 
-RC_SRCS = \
-	wps_Bg.rc \
-	wps_Cs.rc \
-	wps_Da.rc \
-	wps_De.rc \
-	wps_En.rc \
-	wps_Es.rc \
-	wps_Fr.rc \
-	wps_He.rc \
-	wps_Hu.rc \
-	wps_It.rc \
-	wps_Ja.rc \
-	wps_Ko.rc \
-	wps_Lt.rc \
-	wps_Nl.rc \
-	wps_No.rc \
-	wps_Pl.rc \
-	wps_Pt.rc \
-	wps_Ro.rc \
-	wps_Ru.rc \
-	wps_Si.rc \
-	wps_Sk.rc \
-	wps_Sv.rc \
-	wps_Tr.rc \
-	wps_Uk.rc \
-	wps_Zh.rc
-
-EXTRASUBDIRS = data
-
-@MAKE_DLL_RULES@
-
-install-ppd:: $(DESTDIR)$(datadir)/wine dummy
-	$(INSTALL_DATA) $(srcdir)/generic.ppd $(DESTDIR)$(datadir)/wine/generic.ppd
-
-.PHONY: install-ppd
-
-@WOW64_DISABLE@ install install-lib:: install-ppd
-
-uninstall::
-	$(RM) $(DESTDIR)$(datadir)/wine/generic.ppd
+RC_SRCS = wineps.rc

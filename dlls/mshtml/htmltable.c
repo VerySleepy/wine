@@ -17,6 +17,7 @@
  */
 
 #include <stdarg.h>
+#include <assert.h>
 
 #define COBJMACROS
 
@@ -38,7 +39,6 @@ struct HTMLTable {
     IHTMLTable2 IHTMLTable2_iface;
     IHTMLTable3 IHTMLTable3_iface;
 
-    ConnectionPoint cp;
     nsIDOMHTMLTableElement *nstable;
 };
 
@@ -55,6 +55,57 @@ static inline HTMLTable *impl_from_IHTMLTable2(IHTMLTable2 *iface)
 static inline HTMLTable *impl_from_IHTMLTable3(IHTMLTable3 *iface)
 {
     return CONTAINING_RECORD(iface, HTMLTable, IHTMLTable3_iface);
+}
+
+static HRESULT var2str(const VARIANT *p, nsAString *nsstr)
+{
+    BSTR str;
+    BOOL ret;
+    HRESULT hres;
+
+    switch(V_VT(p)) {
+    case VT_BSTR:
+        return nsAString_Init(nsstr, V_BSTR(p))?
+            S_OK : E_OUTOFMEMORY;
+    case VT_R8:
+        hres = VarBstrFromR8(V_R8(p), 0, 0, &str);
+        break;
+    case VT_R4:
+        hres = VarBstrFromR4(V_R4(p), 0, 0, &str);
+        break;
+    case VT_I4:
+        hres = VarBstrFromI4(V_I4(p), 0, 0, &str);
+        break;
+    default:
+        FIXME("unsupported arg %s\n", debugstr_variant(p));
+        return E_NOTIMPL;
+    }
+    if (FAILED(hres))
+        return hres;
+
+    ret = nsAString_Init(nsstr, str);
+    SysFreeString(str);
+    return ret ? S_OK : E_OUTOFMEMORY;
+}
+
+static HRESULT nsstr_to_truncated_bstr(const nsAString *nsstr, BSTR *ret_ptr)
+{
+    const PRUnichar *str, *ptr, *end = NULL;
+    BSTR ret;
+
+    nsAString_GetData(nsstr, &str);
+
+    for(ptr = str; isdigitW(*ptr); ptr++);
+    if(*ptr == '.') {
+        for(end = ptr++; isdigitW(*ptr); ptr++);
+        if(*ptr)
+            end = NULL;
+    }
+
+    ret = end ? SysAllocStringLen(str, end-str) : SysAllocString(str);
+
+    *ret_ptr = ret;
+    return ret ? S_OK : E_OUTOFMEMORY;
 }
 
 static HRESULT WINAPI HTMLTable_QueryInterface(IHTMLTable *iface,
@@ -128,7 +179,7 @@ static HRESULT WINAPI HTMLTable_get_cols(IHTMLTable *iface, LONG *p)
 static HRESULT WINAPI HTMLTable_put_border(IHTMLTable *iface, VARIANT v)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(v)\n", This);
+    FIXME("(%p)->(%s)\n", This, debugstr_variant(&v));
     return E_NOTIMPL;
 }
 
@@ -142,15 +193,34 @@ static HRESULT WINAPI HTMLTable_get_border(IHTMLTable *iface, VARIANT *p)
 static HRESULT WINAPI HTMLTable_put_frame(IHTMLTable *iface, BSTR v)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(%s)\n", This, debugstr_w(v));
-    return E_NOTIMPL;
+    nsAString str;
+    nsresult nsres;
+
+    TRACE("(%p)->(%s)\n", This, debugstr_w(v));
+
+    nsAString_InitDepend(&str, v);
+    nsres = nsIDOMHTMLTableElement_SetFrame(This->nstable, &str);
+    nsAString_Finish(&str);
+
+    if (NS_FAILED(nsres)) {
+        ERR("SetFrame(%s) failed: %08x\n", debugstr_w(v), nsres);
+        return E_FAIL;
+    }
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLTable_get_frame(IHTMLTable *iface, BSTR *p)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    nsAString str;
+    nsresult nsres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    nsAString_Init(&str, NULL);
+    nsres = nsIDOMHTMLTableElement_GetFrame(This->nstable, &str);
+
+    return return_nsstr(nsres, &str, p);
 }
 
 static HRESULT WINAPI HTMLTable_put_rules(IHTMLTable *iface, BSTR v)
@@ -170,29 +240,85 @@ static HRESULT WINAPI HTMLTable_get_rules(IHTMLTable *iface, BSTR *p)
 static HRESULT WINAPI HTMLTable_put_cellSpacing(IHTMLTable *iface, VARIANT v)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(v)\n", This);
-    return E_NOTIMPL;
+    nsAString nsstr;
+    WCHAR buf[64];
+    nsresult nsres;
+
+    TRACE("(%p)->(%s)\n", This, debugstr_variant(&v));
+
+    switch(V_VT(&v)) {
+    case VT_BSTR:
+        nsAString_InitDepend(&nsstr, V_BSTR(&v));
+        break;
+    case VT_I4: {
+        static const WCHAR formatW[] = {'%','d',0};
+        sprintfW(buf, formatW, V_I4(&v));
+        nsAString_InitDepend(&nsstr, buf);
+        break;
+    }
+    default:
+        FIXME("unsupported arg %s\n", debugstr_variant(&v));
+        return E_NOTIMPL;
+    }
+
+    nsres = nsIDOMHTMLTableElement_SetCellSpacing(This->nstable, &nsstr);
+    nsAString_Finish(&nsstr);
+    if(NS_FAILED(nsres)) {
+        ERR("SetCellSpacing failed: %08x\n", nsres);
+        return E_FAIL;
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLTable_get_cellSpacing(IHTMLTable *iface, VARIANT *p)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    nsAString nsstr;
+    nsresult nsres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    nsAString_Init(&nsstr, NULL);
+    nsres = nsIDOMHTMLTableElement_GetCellSpacing(This->nstable, &nsstr);
+    V_VT(p) = VT_BSTR;
+    return return_nsstr(nsres, &nsstr, &V_BSTR(p));
 }
 
 static HRESULT WINAPI HTMLTable_put_cellPadding(IHTMLTable *iface, VARIANT v)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(v)\n", This);
-    return E_NOTIMPL;
+    nsAString val;
+    HRESULT hres;
+    nsresult nsres;
+
+    TRACE("(%p)->(%s)\n", This, debugstr_variant(&v));
+
+    hres = var2str(&v, &val);
+    if(FAILED(hres))
+        return hres;
+
+    nsres = nsIDOMHTMLTableElement_SetCellPadding(This->nstable, &val);
+    nsAString_Finish(&val);
+    if(NS_FAILED(nsres)) {
+        ERR("Set Width(%s) failed, err = %08x\n", debugstr_variant(&v), nsres);
+        return E_FAIL;
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLTable_get_cellPadding(IHTMLTable *iface, VARIANT *p)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    nsAString val;
+    nsresult nsres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    nsAString_Init(&val, NULL);
+    nsres = nsIDOMHTMLTableElement_GetCellPadding(This->nstable, &val);
+    return return_nsstr_variant(nsres, &val, p);
 }
 
 static HRESULT WINAPI HTMLTable_put_background(IHTMLTable *iface, BSTR v)
@@ -212,21 +338,54 @@ static HRESULT WINAPI HTMLTable_get_background(IHTMLTable *iface, BSTR *p)
 static HRESULT WINAPI HTMLTable_put_bgColor(IHTMLTable *iface, VARIANT v)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(v)\n", This);
-    return E_NOTIMPL;
+    nsAString val;
+    nsresult nsres;
+
+    TRACE("(%p)->(%s)\n", This, debugstr_variant(&v));
+
+    if(!variant_to_nscolor(&v, &val))
+        return S_OK;
+
+    nsres = nsIDOMHTMLTableElement_SetBgColor(This->nstable, &val);
+    nsAString_Finish(&val);
+    if (NS_FAILED(nsres)){
+        ERR("Set BgColor(%s) failed!\n", debugstr_variant(&v));
+        return E_FAIL;
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLTable_get_bgColor(IHTMLTable *iface, VARIANT *p)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    nsAString strColor;
+    nsresult nsres;
+    HRESULT hres;
+    const PRUnichar *color;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    nsAString_Init(&strColor, NULL);
+    nsres = nsIDOMHTMLTableElement_GetBgColor(This->nstable, &strColor);
+
+    if(NS_SUCCEEDED(nsres)) {
+       nsAString_GetData(&strColor, &color);
+       V_VT(p) = VT_BSTR;
+       hres = nscolor_to_str(color, &V_BSTR(p));
+    }else {
+       ERR("SetBgColor failed: %08x\n", nsres);
+       hres = E_FAIL;
+    }
+
+    nsAString_Finish(&strColor);
+    return hres;
 }
 
 static HRESULT WINAPI HTMLTable_put_borderColor(IHTMLTable *iface, VARIANT v)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(v)\n", This);
+    FIXME("(%p)->(%s)\n", This, debugstr_variant(&v));
     return E_NOTIMPL;
 }
 
@@ -240,7 +399,7 @@ static HRESULT WINAPI HTMLTable_get_borderColor(IHTMLTable *iface, VARIANT *p)
 static HRESULT WINAPI HTMLTable_put_borderColorLight(IHTMLTable *iface, VARIANT v)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(v)\n", This);
+    FIXME("(%p)->(%s)\n", This, debugstr_variant(&v));
     return E_NOTIMPL;
 }
 
@@ -254,7 +413,7 @@ static HRESULT WINAPI HTMLTable_get_borderColorLight(IHTMLTable *iface, VARIANT 
 static HRESULT WINAPI HTMLTable_put_borderColorDark(IHTMLTable *iface, VARIANT v)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(v)\n", This);
+    FIXME("(%p)->(%s)\n", This, debugstr_variant(&v));
     return E_NOTIMPL;
 }
 
@@ -268,15 +427,34 @@ static HRESULT WINAPI HTMLTable_get_borderColorDark(IHTMLTable *iface, VARIANT *
 static HRESULT WINAPI HTMLTable_put_align(IHTMLTable *iface, BSTR v)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(%s)\n", This, debugstr_w(v));
-    return E_NOTIMPL;
+    nsAString val;
+    nsresult nsres;
+
+    TRACE("(%p)->(%s)\n", This, debugstr_w(v));
+
+    nsAString_InitDepend(&val, v);
+
+    nsres = nsIDOMHTMLTableElement_SetAlign(This->nstable, &val);
+    nsAString_Finish(&val);
+    if (NS_FAILED(nsres)){
+        ERR("Set Align(%s) failed!\n", debugstr_w(v));
+        return E_FAIL;
+    }
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLTable_get_align(IHTMLTable *iface, BSTR *p)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    nsAString val;
+    nsresult nsres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    nsAString_Init(&val, NULL);
+    nsres = nsIDOMHTMLTableElement_GetAlign(This->nstable, &val);
+
+    return return_nsstr(nsres, &val, p);
 }
 
 static HRESULT WINAPI HTMLTable_refresh(IHTMLTable *iface)
@@ -300,8 +478,7 @@ static HRESULT WINAPI HTMLTable_get_rows(IHTMLTable *iface, IHTMLElementCollecti
         return E_FAIL;
     }
 
-    *p = create_collection_from_htmlcol(This->element.node.doc, (IUnknown*)&This->IHTMLTable_iface,
-            nscol);
+    *p = create_collection_from_htmlcol(This->element.node.doc, nscol);
 
     nsIDOMHTMLCollection_Release(nscol);
     return S_OK;
@@ -310,21 +487,58 @@ static HRESULT WINAPI HTMLTable_get_rows(IHTMLTable *iface, IHTMLElementCollecti
 static HRESULT WINAPI HTMLTable_put_width(IHTMLTable *iface, VARIANT v)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(v)\n", This);
-    return E_NOTIMPL;
+    nsAString val;
+    HRESULT hres;
+    nsresult nsres;
+
+    TRACE("(%p)->(%s)\n", This, debugstr_variant(&v));
+    hres = var2str(&v, &val);
+
+    if (FAILED(hres)){
+        ERR("Set Width(%s) failed when initializing a nsAString, err = %08x\n",
+            debugstr_variant(&v), hres);
+        return hres;
+    }
+
+    nsres = nsIDOMHTMLTableElement_SetWidth(This->nstable, &val);
+    nsAString_Finish(&val);
+
+    if (NS_FAILED(nsres)){
+        ERR("Set Width(%s) failed, err = %08x\n", debugstr_variant(&v), nsres);
+        return E_FAIL;
+    }
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLTable_get_width(IHTMLTable *iface, VARIANT *p)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    nsAString val;
+    BSTR bstr;
+    nsresult nsres;
+    HRESULT hres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+    nsAString_Init(&val, NULL);
+    nsres = nsIDOMHTMLTableElement_GetWidth(This->nstable, &val);
+    if (NS_FAILED(nsres)){
+        ERR("Get Width failed!\n");
+        nsAString_Finish(&val);
+        return E_FAIL;
+    }
+
+    hres = nsstr_to_truncated_bstr(&val, &bstr);
+    nsAString_Finish(&val);
+
+    V_VT(p) = VT_BSTR;
+    V_BSTR(p) = bstr;
+    return hres;
 }
 
 static HRESULT WINAPI HTMLTable_put_height(IHTMLTable *iface, VARIANT v)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(v)\n", This);
+    FIXME("(%p)->(%s)\n", This, debugstr_variant(&v));
     return E_NOTIMPL;
 }
 
@@ -380,8 +594,21 @@ static HRESULT WINAPI HTMLTable_get_tFoot(IHTMLTable *iface, IHTMLTableSection *
 static HRESULT WINAPI HTMLTable_get_tBodies(IHTMLTable *iface, IHTMLElementCollection **p)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    nsIDOMHTMLCollection *nscol = NULL;
+    nsresult nsres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    nsres = nsIDOMHTMLTableElement_GetTBodies(This->nstable, &nscol);
+    if(NS_FAILED(nsres)) {
+        ERR("GetTBodies failed: %08x\n", nsres);
+        return E_FAIL;
+    }
+
+    *p = create_collection_from_htmlcol(This->element.node.doc, nscol);
+
+    nsIDOMHTMLCollection_Release(nscol);
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLTable_get_caption(IHTMLTable *iface, IHTMLTableCaption **p)
@@ -436,15 +663,41 @@ static HRESULT WINAPI HTMLTable_deleteCaption(IHTMLTable *iface)
 static HRESULT WINAPI HTMLTable_insertRow(IHTMLTable *iface, LONG index, IDispatch **row)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(%d %p)\n", This, index, row);
-    return E_NOTIMPL;
+    nsIDOMHTMLElement *nselem;
+    HTMLElement *elem;
+    nsresult nsres;
+    HRESULT hres;
+
+    TRACE("(%p)->(%d %p)\n", This, index, row);
+    nsres = nsIDOMHTMLTableElement_InsertRow(This->nstable, index, &nselem);
+    if(NS_FAILED(nsres)) {
+        ERR("Insert Row at %d failed: %08x\n", index, nsres);
+        return E_FAIL;
+    }
+
+    hres = HTMLTableRow_Create(This->element.node.doc, nselem, &elem);
+    nsIDOMHTMLElement_Release(nselem);
+    if (FAILED(hres)) {
+        ERR("Create TableRow failed: %08x\n", hres);
+        return hres;
+    }
+
+    *row = (IDispatch *)&elem->IHTMLElement_iface;
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLTable_deleteRow(IHTMLTable *iface, LONG index)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(%d)\n", This, index);
-    return E_NOTIMPL;
+    nsresult nsres;
+
+    TRACE("(%p)->(%d)\n", This, index);
+    nsres = nsIDOMHTMLTableElement_DeleteRow(This->nstable, index);
+    if(NS_FAILED(nsres)) {
+        ERR("Delete Row failed: %08x\n", nsres);
+        return E_FAIL;
+    }
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLTable_get_readyState(IHTMLTable *iface, BSTR *p)
@@ -457,7 +710,7 @@ static HRESULT WINAPI HTMLTable_get_readyState(IHTMLTable *iface, BSTR *p)
 static HRESULT WINAPI HTMLTable_put_onreadystatechange(IHTMLTable *iface, VARIANT v)
 {
     HTMLTable *This = impl_from_IHTMLTable(iface);
-    FIXME("(%p)->(v)\n", This);
+    FIXME("(%p)->(%s)\n", This, debugstr_variant(&v));
     return E_NOTIMPL;
 }
 
@@ -683,15 +936,35 @@ static HRESULT WINAPI HTMLTable3_Invoke(IHTMLTable3 *iface, DISPID dispIdMember,
 static HRESULT WINAPI HTMLTable3_put_summary(IHTMLTable3 *iface, BSTR v)
 {
     HTMLTable *This = impl_from_IHTMLTable3(iface);
-    FIXME("(%p)->(%s)\n", This, debugstr_w(v));
-    return E_NOTIMPL;
+    nsAString str;
+    nsresult nsres;
+
+    TRACE("(%p)->(%s)\n", This, debugstr_w(v));
+
+    nsAString_InitDepend(&str, v);
+
+    nsres = nsIDOMHTMLTableElement_SetSummary(This->nstable, &str);
+
+    nsAString_Finish(&str);
+    if (NS_FAILED(nsres)) {
+        ERR("Set summary(%s) failed: %08x\n", debugstr_w(v), nsres);
+        return E_FAIL;
+    }
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLTable3_get_summary(IHTMLTable3 *iface, BSTR * p)
 {
     HTMLTable *This = impl_from_IHTMLTable3(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    nsAString str;
+    nsresult nsres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    nsAString_Init(&str, NULL);
+    nsres = nsIDOMHTMLTableElement_GetSummary(This->nstable, &str);
+
+    return return_nsstr(nsres, &str, p);
 }
 
 static const IHTMLTable3Vtbl HTMLTable3Vtbl = {
@@ -728,10 +1001,10 @@ static HRESULT HTMLTable_QI(HTMLDOMNode *iface, REFIID riid, void **ppv)
         *ppv = &This->IHTMLTable_iface;
     }else if(IsEqualGUID(&IID_IHTMLTable2, riid)) {
         TRACE("(%p)->(IID_IHTMLTable2 %p)\n", This, ppv);
-        *ppv = &This->IHTMLTable_iface;
+        *ppv = &This->IHTMLTable2_iface;
     }else if(IsEqualGUID(&IID_IHTMLTable3, riid)) {
         TRACE("(%p)->(IID_IHTMLTable3 %p)\n", This, ppv);
-        *ppv = &This->IHTMLTable_iface;
+        *ppv = &This->IHTMLTable3_iface;
     }
 
     if(*ppv) {
@@ -742,26 +1015,57 @@ static HRESULT HTMLTable_QI(HTMLDOMNode *iface, REFIID riid, void **ppv)
     return HTMLElement_QI(&This->element.node, riid, ppv);
 }
 
-static void HTMLTable_destructor(HTMLDOMNode *iface)
+static void HTMLTable_traverse(HTMLDOMNode *iface, nsCycleCollectionTraversalCallback *cb)
 {
     HTMLTable *This = impl_from_HTMLDOMNode(iface);
 
     if(This->nstable)
-        nsIDOMHTMLTableElement_Release(This->nstable);
-
-    HTMLElement_destructor(&This->element.node);
+        note_cc_edge((nsISupports*)This->nstable, "This->nstable", cb);
 }
+
+static void HTMLTable_unlink(HTMLDOMNode *iface)
+{
+    HTMLTable *This = impl_from_HTMLDOMNode(iface);
+
+    if(This->nstable) {
+        nsIDOMHTMLTableElement *nstable = This->nstable;
+
+        This->nstable = NULL;
+        nsIDOMHTMLTableElement_Release(nstable);
+    }
+}
+
+static const cpc_entry_t HTMLTable_cpc[] = {
+    {&DIID_HTMLTableEvents},
+    HTMLELEMENT_CPC,
+    {NULL}
+};
 
 static const NodeImplVtbl HTMLTableImplVtbl = {
     HTMLTable_QI,
-    HTMLTable_destructor,
+    HTMLElement_destructor,
+    HTMLTable_cpc,
     HTMLElement_clone,
-    HTMLElement_get_attr_col
+    HTMLElement_handle_event,
+    HTMLElement_get_attr_col,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    HTMLTable_traverse,
+    HTMLTable_unlink
 };
 
 static const tid_t HTMLTable_iface_tids[] = {
     HTMLELEMENT_TIDS,
     IHTMLTable_tid,
+    IHTMLTable2_tid,
+    IHTMLTable3_tid,
     0
 };
 
@@ -783,16 +1087,13 @@ HRESULT HTMLTable_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem, HTMLE
 
     ret->element.node.vtbl = &HTMLTableImplVtbl;
     ret->IHTMLTable_iface.lpVtbl = &HTMLTableVtbl;
-
-    nsres = nsIDOMHTMLElement_QueryInterface(nselem, &IID_nsIDOMHTMLTableElement, (void**)&ret->nstable);
-    if(NS_FAILED(nsres)) {
-        ERR("Could not get nsIDOMHTMLTableElement iface: %08x\n", nsres);
-        heap_free(ret);
-        return E_FAIL;
-    }
+    ret->IHTMLTable2_iface.lpVtbl = &HTMLTable2Vtbl;
+    ret->IHTMLTable3_iface.lpVtbl = &HTMLTable3Vtbl;
 
     HTMLElement_Init(&ret->element, doc, nselem, &HTMLTable_dispex);
-    ConnectionPoint_Init(&ret->cp, &ret->element.cp_container, &DIID_HTMLTableEvents, NULL);
+
+    nsres = nsIDOMHTMLElement_QueryInterface(nselem, &IID_nsIDOMHTMLTableElement, (void**)&ret->nstable);
+    assert(nsres == NS_OK);
 
     *elem = &ret->element;
     return S_OK;

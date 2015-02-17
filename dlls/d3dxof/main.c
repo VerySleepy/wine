@@ -3,9 +3,6 @@
  *
  * Copyright 2004 Christian Costa
  *
- * This file contains the (internal) driver registration functions,
- * driver enumeration APIs and DirectDraw creation functions.
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -53,8 +50,6 @@ BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpv)
         case DLL_PROCESS_ATTACH:
             instance = hInstDLL;
             DisableThreadLibraryCalls(hInstDLL);
-	    break;
-	case DLL_PROCESS_DETACH:
 	    break;
     }
     return TRUE;
@@ -140,7 +135,7 @@ static HRESULT WINAPI XFCF_CreateInstance(LPCLASSFACTORY iface, LPUNKNOWN pOuter
 static HRESULT WINAPI XFCF_LockServer(LPCLASSFACTORY iface, BOOL dolock)
 {
     IClassFactoryImpl *This = impl_from_IClassFactory(iface);
-    FIXME("(%p)->(%d),stub!\n",This,dolock);
+    FIXME("(%p)->(%d), stub!\n",This,dolock);
     return S_OK;
 }
 

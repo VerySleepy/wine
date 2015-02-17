@@ -21,12 +21,11 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define WIN32_LEAN_AND_MEAN    /* Exclude rarely-used stuff from Windows headers */
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <windows.h>
 #include <commctrl.h>
-#include <stdlib.h>
-#include <memory.h>
-#include <stdio.h>
 
 #include "wine/unicode.h"
 #include "taskmgr.h"
@@ -245,7 +244,7 @@ static BOOL CALLBACK EnumWindowsProc(HWND hWnd, LPARAM lParam)
 {
     HICON hIcon;
     WCHAR wszText[256];
-    BOOL  bLargeIcon;
+    BOOL  bLargeIcon = TaskManagerSettings.View_LargeIcons;
     BOOL  bHung = FALSE;
     typedef int (__stdcall *IsHungAppWindowProc)(HWND);
     IsHungAppWindowProc IsHungAppWindow;
@@ -254,8 +253,6 @@ static BOOL CALLBACK EnumWindowsProc(HWND hWnd, LPARAM lParam)
     /* Skip our window */
     if (hWnd == hMainWnd)
         return TRUE;
-
-    bLargeIcon = TaskManagerSettings.View_LargeIcons ? TRUE : FALSE;
 
     /* Check and see if this is a top-level app window */
     if (!GetWindowTextW(hWnd, wszText, sizeof(wszText)/sizeof(WCHAR)) ||
@@ -891,7 +888,7 @@ ApplicationPageWndProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
         UpdateApplicationListControlViewSetting();
 
         /* Start our refresh thread */
-        CreateThread(NULL, 0, ApplicationPageRefreshThread, NULL, 0, NULL);
+        CloseHandle( CreateThread(NULL, 0, ApplicationPageRefreshThread, NULL, 0, NULL));
 
         return TRUE;
 

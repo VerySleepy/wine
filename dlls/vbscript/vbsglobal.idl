@@ -16,6 +16,8 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#pragma makedep regtypelib
+
 import "oaidl.idl";
 
 #include "vbscript_defs.h"
@@ -85,7 +87,7 @@ library VBScript_Global
         [id(DISPID_GLOBAL_VBYESNO), readonly]
         VARIANT vbYesNo;
 
-        [id(DISPID_GLOBAL_VBYESNOCANCEL), readonly]
+        [id(DISPID_GLOBAL_VBRETRYCANCEL), readonly]
         VARIANT vbRetryCancel;
 
         [id(DISPID_GLOBAL_VBCRITICAL), readonly]

@@ -154,7 +154,7 @@ const char* get_symbol_str(const char* symname)
         parsed_symbol   symbol;
 
         symbol_init(&symbol, symname);
-        if (symbol_demangle(&symbol) == -1)
+        if (!symbol_demangle(&symbol))
             ret = symname;
         else if (symbol.flags & SYM_DATA)
         {
@@ -243,13 +243,14 @@ dumpers[] =
     {SIG_LNK,           get_kind_lnk,   lnk_dump},
     {SIG_EMF,           get_kind_emf,   emf_dump},
     {SIG_FNT,           get_kind_fnt,   fnt_dump},
+    {SIG_MSFT,          get_kind_msft,  msft_dump},
     {SIG_UNKNOWN,       NULL,           NULL} /* sentinel */
 };
 
-int dump_analysis(const char *name, file_dumper fn, enum FileSig wanted_sig)
+BOOL dump_analysis(const char *name, file_dumper fn, enum FileSig wanted_sig)
 {
     int			fd;
-    int			ret = 1;
+    BOOL                ret = TRUE;
     struct stat		s;
     const struct dumper *dpr;
 
@@ -283,7 +284,7 @@ int dump_analysis(const char *name, file_dumper fn, enum FileSig wanted_sig)
     if (dpr->kind == SIG_UNKNOWN)
     {
 	printf("Can't get a suitable file signature, aborting\n");
-	ret = 0;
+        ret = FALSE;
     }
 
     if (ret) printf("Done dumping %s\n", name);

@@ -263,7 +263,9 @@ static BOOL DIALOG_CreateControls32( HWND hwnd, LPCSTR template, const DLG_TEMPL
     {
         template = (LPCSTR)DIALOG_GetControl32( (const WORD *)template, &info,
                                                 dlgTemplate->dialogEx );
-        /* Is this it? */
+        info.style &= ~WS_POPUP;
+        info.style |= WS_CHILD;
+
         if (info.style & WS_BORDER)
         {
             info.style &= ~WS_BORDER;
@@ -315,6 +317,8 @@ static BOOL DIALOG_CreateControls32( HWND hwnd, LPCSTR template, const DLG_TEMPL
         }
         if (!hwndCtrl)
         {
+            WARN("control %s %s creation failed\n", debugstr_w(info.className),
+                 debugstr_w(info.windowName));
             if (dlgTemplate->style & DS_NOFAILCREATE) continue;
             return FALSE;
         }
@@ -553,11 +557,13 @@ static HWND DIALOG_CreateIndirect( HINSTANCE hInst, LPCVOID dlgTemplate,
     rect.left = rect.top = 0;
     rect.right = MulDiv(template.cx, xBaseUnit, 4);
     rect.bottom =  MulDiv(template.cy, yBaseUnit, 8);
-    if (template.style & WS_CHILD)
+
+    if (template.style & DS_CONTROL)
         template.style &= ~(WS_CAPTION|WS_SYSMENU);
+    template.style |= DS_3DLOOK;
     if (template.style & DS_MODALFRAME)
         template.exStyle |= WS_EX_DLGMODALFRAME;
-    if (template.style & DS_CONTROL)
+    if ((template.style & DS_CONTROL) || !(template.style & WS_CHILD))
         template.exStyle |= WS_EX_CONTROLPARENT;
     AdjustWindowRectEx( &rect, template.style, (hMenu != 0), template.exStyle );
     pos.x = rect.left;
@@ -691,15 +697,17 @@ static HWND DIALOG_CreateIndirect( HINSTANCE hInst, LPCVOID dlgTemplate,
         if (dlgProc)
         {
             HWND focus = GetNextDlgTabItem( hwnd, 0, FALSE );
+            if (!focus) focus = GetNextDlgGroupItem( hwnd, 0, FALSE );
             if (SendMessageW( hwnd, WM_INITDIALOG, (WPARAM)focus, param ) && IsWindow( hwnd ) &&
                 ((~template.style & DS_CONTROL) || (template.style & WS_VISIBLE)))
             {
                 /* By returning TRUE, app has requested a default focus assignment.
                  * WM_INITDIALOG may have changed the tab order, so find the first
                  * tabstop control again. */
-                dlgInfo->hwndFocus = GetNextDlgTabItem( hwnd, 0, FALSE );
-                if( dlgInfo->hwndFocus )
-                    SetFocus( dlgInfo->hwndFocus );
+                focus = GetNextDlgTabItem( hwnd, 0, FALSE );
+                if (!focus) focus = GetNextDlgGroupItem( hwnd, 0, FALSE );
+                if (focus)
+                    SetFocus( focus );
             }
         }
 
@@ -924,7 +932,8 @@ BOOL WINAPI EndDialog( HWND hwnd, INT_PTR retval )
     dlgInfo->flags |= DF_END;
     wasEnabled = (dlgInfo->flags & DF_OWNERENABLED);
 
-    if (wasEnabled && (owner = GetWindow( hwnd, GW_OWNER )))
+    owner = GetWindow( hwnd, GW_OWNER );
+    if (wasEnabled && owner)
         DIALOG_EnableOwner( owner );
 
     /* Windows sets the focus to the dialog itself in EndDialog */
@@ -938,7 +947,16 @@ BOOL WINAPI EndDialog( HWND hwnd, INT_PTR retval )
     SetWindowPos(hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE
                  | SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW);
 
-    if (hwnd == GetActiveWindow()) WINPOS_ActivateOtherWindow( hwnd );
+    if (hwnd == GetActiveWindow())
+    {
+        /* If this dialog was given an owner then set the focus to that owner
+           even when the owner is disabled (normally when a window closes any
+           disabled windows cannot receive the focus). */
+        if (owner)
+            SetForegroundWindow( owner );
+        else
+            WINPOS_ActivateOtherWindow( hwnd );
+    }
 
     /* unblock dialog loop */
     PostMessageA(hwnd, WM_NULL, 0, 0);
@@ -1260,7 +1278,7 @@ BOOL WINAPI IsDialogMessageW( HWND hwndDlg, LPMSG msg )
                 else if (DC_HASDEFID == HIWORD(dw = SendMessageW (hwndDlg, DM_GETDEFID, 0, 0)))
                 {
                     HWND hwndDef = DIALOG_IdToHwnd(hwndDlg, LOWORD(dw));
-                    if (hwndDef ? IsWindowEnabled(hwndDef) : LOWORD(dw)==IDOK)
+                    if (!hwndDef || IsWindowEnabled(hwndDef))
                         SendMessageW( hwndDlg, WM_COMMAND, MAKEWPARAM( LOWORD(dw), BN_CLICKED ), (LPARAM)hwndDef);
                 }
                 else
@@ -1495,8 +1513,7 @@ BOOL WINAPI CheckRadioButton( HWND hwndDlg, int firstID,
     radioGroup.lastID = lastID;
     radioGroup.checkID = checkID;
 
-    return EnumChildWindows(hwndDlg, (WNDENUMPROC)CheckRB,
-                            (LPARAM)&radioGroup);
+    return EnumChildWindows(hwndDlg, CheckRB, (LPARAM)&radioGroup);
 }
 
 

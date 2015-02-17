@@ -108,11 +108,25 @@ HRESULT WINAPI DwmFlush(void)
 }
 
 /**********************************************************************
+ *        DwmInvalidateIconicBitmaps      (DWMAPI.@)
+ */
+HRESULT WINAPI DwmInvalidateIconicBitmaps(HWND hwnd)
+{
+    static BOOL once;
+
+    if (!once++) FIXME("(%p) stub\n", hwnd);
+
+    return E_NOTIMPL;
+}
+
+/**********************************************************************
  *           DwmSetWindowAttribute         (DWMAPI.@)
  */
 HRESULT WINAPI DwmSetWindowAttribute(HWND hwnd, DWORD attributenum, LPCVOID attribute, DWORD size)
 {
-    FIXME("(%p, %x, %p, %x) stub\n", hwnd, attributenum, attribute, size);
+    static BOOL once;
+
+    if (!once++) FIXME("(%p, %x, %p, %x) stub\n", hwnd, attributenum, attribute, size);
 
     return E_NOTIMPL;
 }
@@ -206,5 +220,35 @@ HRESULT WINAPI DwmRegisterThumbnail(HWND dest, HWND src, PHTHUMBNAIL thumbnail_i
 {
     FIXME("(%p %p %p) stub\n", dest, src, thumbnail_id);
 
+    return E_NOTIMPL;
+}
+
+/**********************************************************************
+ *           DwmGetCompositionTimingInfo         (DWMAPI.@)
+ */
+HRESULT WINAPI DwmGetCompositionTimingInfo(HWND hwnd, DWM_TIMING_INFO *info)
+{
+    static int i;
+
+    if(!i++) FIXME("(%p %p)\n", hwnd, info);
+
+    return E_NOTIMPL;
+}
+
+/**********************************************************************
+ *           DwmAttachMilContent         (DWMAPI.@)
+ */
+HRESULT WINAPI DwmAttachMilContent(HWND hwnd)
+{
+    FIXME("(%p) stub\n", hwnd);
+    return E_NOTIMPL;
+}
+
+/**********************************************************************
+ *           DwmDetachMilContent         (DWMAPI.@)
+ */
+HRESULT WINAPI DwmDetachMilContent(HWND hwnd)
+{
+    FIXME("(%p) stub\n", hwnd);
     return E_NOTIMPL;
 }

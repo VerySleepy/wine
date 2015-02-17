@@ -134,12 +134,12 @@ static HRESULT HTMLTitleElement_QI(HTMLDOMNode *iface, REFIID riid, void **ppv)
 {
     HTMLTitleElement *This = HTMLTitleElement_from_HTMLDOMNode(iface);
 
-    if(IsEqualGUID(&IID_IHTMLTitleElement, riid)) {
-        TRACE("(%p)->(IID_IHTMLTitleElement %p)\n", This, ppv);
+    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
+
+    if(IsEqualGUID(&IID_IHTMLTitleElement, riid))
         *ppv = &This->IHTMLTitleElement_iface;
-    }else {
+    else
         return HTMLElement_QI(&This->element.node, riid, ppv);
-    }
 
     IUnknown_AddRef((IUnknown*)*ppv);
     return S_OK;
@@ -155,7 +155,9 @@ static void HTMLTitleElement_destructor(HTMLDOMNode *iface)
 static const NodeImplVtbl HTMLTitleElementImplVtbl = {
     HTMLTitleElement_QI,
     HTMLTitleElement_destructor,
+    HTMLElement_cpc,
     HTMLElement_clone,
+    HTMLElement_handle_event,
     HTMLElement_get_attr_col
 };
 
@@ -292,12 +294,12 @@ static HRESULT HTMLHeadElement_QI(HTMLDOMNode *iface, REFIID riid, void **ppv)
 {
     HTMLHeadElement *This = impl_from_HTMLDOMNode(iface);
 
-    if(IsEqualGUID(&IID_IHTMLHeadElement, riid)) {
-        TRACE("(%p)->(IID_IHTMLHeadElement %p)\n", This, ppv);
+    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
+
+    if(IsEqualGUID(&IID_IHTMLHeadElement, riid))
         *ppv = &This->IHTMLHeadElement_iface;
-    }else {
+    else
         return HTMLElement_QI(&This->element.node, riid, ppv);
-    }
 
     IUnknown_AddRef((IUnknown*)*ppv);
     return S_OK;
@@ -313,7 +315,9 @@ static void HTMLHeadElement_destructor(HTMLDOMNode *iface)
 static const NodeImplVtbl HTMLHeadElementImplVtbl = {
     HTMLHeadElement_QI,
     HTMLHeadElement_destructor,
+    HTMLElement_cpc,
     HTMLElement_clone,
+    HTMLElement_handle_event,
     HTMLElement_get_attr_col
 };
 

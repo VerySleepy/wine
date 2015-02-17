@@ -40,6 +40,9 @@
 #ifdef HAVE_UNISTD_H
 # include <unistd.h>
 #endif
+#ifdef HAVE_MACH_MACH_H
+#include <mach/mach.h>
+#endif
 
 #ifdef sun
 /* FIXME:  Unfortunately swapctl can't be used with largefile.... */
@@ -64,6 +67,7 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(heap);
+WINE_DECLARE_DEBUG_CHANNEL(globalmem);
 
 /* address where we try to map the system heap */
 #define SYSTEM_HEAP_BASE  ((void*)0x80000000)
@@ -292,8 +296,9 @@ BOOL WINAPI HeapQueryInformation( HANDLE heap, HEAP_INFORMATION_CLASS info_class
 
 BOOL WINAPI HeapSetInformation( HANDLE heap, HEAP_INFORMATION_CLASS infoclass, PVOID info, SIZE_T size)
 {
-    FIXME("%p %d %p %ld\n", heap, infoclass, info, size );
-    return TRUE;
+    NTSTATUS ret = RtlSetHeapInformation( heap, infoclass, info, size );
+    if (ret) SetLastError( RtlNtStatusToDosError(ret) );
+    return !ret;
 }
 
 /*
@@ -369,8 +374,6 @@ HGLOBAL WINAPI GlobalAlloc(
           return 0;
       }
 
-      RtlLockHeap(GetProcessHeap());
-
       pintern = HeapAlloc(GetProcessHeap(), 0, sizeof(GLOBAL32_INTERN));
       if (pintern)
       {
@@ -399,7 +402,6 @@ HGLOBAL WINAPI GlobalAlloc(
               pintern->Pointer = NULL;
       }
 
-      RtlUnlockHeap(GetProcessHeap());
       if (!pintern) return 0;
       TRACE( "(flags=%04x) returning handle %p pointer %p\n",
              flags, INTERN_TO_HANDLE(pintern), pintern->Pointer );
@@ -648,6 +650,8 @@ HGLOBAL WINAPI GlobalReAlloc(
       if(ISPOINTER(hmem))
       {
          /* reallocate fixed memory */
+         if (!(flags & GMEM_MOVEABLE))
+            heap_flags |= HEAP_REALLOC_IN_PLACE_ONLY;
          hnew=HeapReAlloc(GetProcessHeap(), heap_flags, hmem, size);
       }
       else
@@ -1146,14 +1150,21 @@ BOOL WINAPI GlobalMemoryStatusEx( LPMEMORYSTATUSEX lpmemex )
     SYSTEM_INFO si;
 #ifdef linux
     FILE *f;
-#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__OpenBSD__)
-    unsigned long val;
-    int mib[2];
-    size_t size_sys;
-#elif defined(__APPLE__)
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__) || defined(__APPLE__)
+    DWORDLONG total;
+#ifdef __APPLE__
     unsigned int val;
+#else
+    unsigned long val;
+#endif
     int mib[2];
     size_t size_sys;
+#ifdef HW_MEMSIZE
+    uint64_t val64;
+#endif
+#ifdef VM_SWAPUSAGE
+    struct xsw_usage swap;
+#endif
 #elif defined(sun)
     unsigned long pagesize,maxpages,freepages,swapspace,swapfree;
     struct anoninfo swapinf;
@@ -1218,19 +1229,79 @@ BOOL WINAPI GlobalMemoryStatusEx( LPMEMORYSTATUSEX lpmemex )
         }
         fclose( f );
     }
-#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__APPLE__)
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__) || defined(__APPLE__)
+    total = 0;
+    lpmemex->ullAvailPhys = 0;
+
     mib[0] = CTL_HW;
-    mib[1] = HW_PHYSMEM;
-    size_sys = sizeof(val);
-    sysctl(mib, 2, &val, &size_sys, NULL, 0);
-    if (val) lpmemex->ullTotalPhys = val;
-    mib[1] = HW_USERMEM;
-    size_sys = sizeof(val);
-    sysctl(mib, 2, &val, &size_sys, NULL, 0);
-    if (!val) val = lpmemex->ullTotalPhys;
-    lpmemex->ullAvailPhys = val;
-    lpmemex->ullTotalPageFile = val;
-    lpmemex->ullAvailPageFile = val;
+#ifdef HW_MEMSIZE
+    mib[1] = HW_MEMSIZE;
+    size_sys = sizeof(val64);
+    if (!sysctl(mib, 2, &val64, &size_sys, NULL, 0) && size_sys == sizeof(val64) && val64)
+        total = val64;
+#endif
+
+#ifdef HAVE_MACH_MACH_H
+    {
+        host_name_port_t host = mach_host_self();
+        mach_msg_type_number_t count;
+
+#ifdef HOST_VM_INFO64_COUNT
+        vm_size_t page_size;
+        vm_statistics64_data_t vm_stat;
+
+        count = HOST_VM_INFO64_COUNT;
+        if (host_statistics64(host, HOST_VM_INFO64, (host_info64_t)&vm_stat, &count) == KERN_SUCCESS &&
+            host_page_size(host, &page_size) == KERN_SUCCESS)
+            lpmemex->ullAvailPhys = (vm_stat.free_count + vm_stat.inactive_count) * (DWORDLONG)page_size;
+#endif
+        if (!total)
+        {
+            host_basic_info_data_t info;
+            count = HOST_BASIC_INFO_COUNT;
+            if (host_info(host, HOST_BASIC_INFO, (host_info_t)&info, &count) == KERN_SUCCESS)
+                total = info.max_mem;
+        }
+
+        mach_port_deallocate(mach_task_self(), host);
+    }
+#endif
+
+    if (!total)
+    {
+        mib[1] = HW_PHYSMEM;
+        size_sys = sizeof(val);
+        if (!sysctl(mib, 2, &val, &size_sys, NULL, 0) && size_sys == sizeof(val) && val)
+            total = val;
+    }
+
+    if (total)
+        lpmemex->ullTotalPhys = total;
+
+    if (!lpmemex->ullAvailPhys)
+    {
+        mib[1] = HW_USERMEM;
+        size_sys = sizeof(val);
+        if (!sysctl(mib, 2, &val, &size_sys, NULL, 0) && size_sys == sizeof(val) && val)
+            lpmemex->ullAvailPhys = val;
+    }
+
+    if (!lpmemex->ullAvailPhys)
+        lpmemex->ullAvailPhys = lpmemex->ullTotalPhys;
+
+    lpmemex->ullTotalPageFile = lpmemex->ullAvailPhys;
+    lpmemex->ullAvailPageFile = lpmemex->ullAvailPhys;
+
+#ifdef VM_SWAPUSAGE
+    mib[0] = CTL_VM;
+    mib[1] = VM_SWAPUSAGE;
+    size_sys = sizeof(swap);
+    if (!sysctl(mib, 2, &swap, &size_sys, NULL, 0) && size_sys == sizeof(swap))
+    {
+        lpmemex->ullTotalPageFile = swap.xsu_total;
+        lpmemex->ullAvailPageFile = swap.xsu_avail;
+    }
+#endif
 #elif defined ( sun )
     pagesize=sysconf(_SC_PAGESIZE);
     maxpages=sysconf(_SC_PHYS_PAGES);
@@ -1289,7 +1360,7 @@ BOOL WINAPI GlobalMemoryStatusEx( LPMEMORYSTATUSEX lpmemex )
 
     cached_memstatus = *lpmemex;
 
-    TRACE("<-- LPMEMORYSTATUSEX: dwLength %d, dwMemoryLoad %d, ullTotalPhys %s, ullAvailPhys %s,"
+    TRACE_(globalmem)("<-- LPMEMORYSTATUSEX: dwLength %d, dwMemoryLoad %d, ullTotalPhys %s, ullAvailPhys %s,"
           " ullTotalPageFile %s, ullAvailPageFile %s, ullTotalVirtual %s, ullAvailVirtual %s\n",
           lpmemex->dwLength, lpmemex->dwMemoryLoad, wine_dbgstr_longlong(lpmemex->ullTotalPhys),
           wine_dbgstr_longlong(lpmemex->ullAvailPhys), wine_dbgstr_longlong(lpmemex->ullTotalPageFile),
@@ -1305,7 +1376,7 @@ BOOL WINAPI GlobalMemoryStatusEx( LPMEMORYSTATUSEX lpmemex )
  * roughly how much they are able to allocate
  *
  * RETURNS
- *	None
+ *      None
  */
 VOID WINAPI GlobalMemoryStatus( LPMEMORYSTATUS lpBuffer )
 {
@@ -1333,13 +1404,14 @@ VOID WINAPI GlobalMemoryStatus( LPMEMORYSTATUS lpBuffer )
     {
         lpBuffer->dwTotalPhys = min( memstatus.ullTotalPhys, MAXDWORD );
         lpBuffer->dwAvailPhys = min( memstatus.ullAvailPhys, MAXDWORD );
-        lpBuffer->dwTotalPageFile = min( memstatus.ullTotalPageFile, MAXDWORD );
+        /* Limit value for apps that do not expect so much memory. Remove last 512 kb to make Sacrifice demo happy. */
+        lpBuffer->dwTotalPageFile = min( memstatus.ullTotalPageFile, 0xfff7ffff );
         lpBuffer->dwAvailPageFile = min( memstatus.ullAvailPageFile, MAXDWORD );
         lpBuffer->dwTotalVirtual = min( memstatus.ullTotalVirtual, MAXDWORD );
         lpBuffer->dwAvailVirtual = min( memstatus.ullAvailVirtual, MAXDWORD );
 
     }
-    else	/* duplicate NT bug */
+    else /* duplicate NT bug */
     {
         lpBuffer->dwTotalPhys = memstatus.ullTotalPhys;
         lpBuffer->dwAvailPhys = memstatus.ullAvailPhys;
@@ -1370,9 +1442,23 @@ VOID WINAPI GlobalMemoryStatus( LPMEMORYSTATUS lpBuffer )
         if (lpBuffer->dwAvailPageFile > MAXLONG) lpBuffer->dwAvailPageFile = MAXLONG;
     }
 
-    TRACE("Length %u, MemoryLoad %u, TotalPhys %lx, AvailPhys %lx,"
+    TRACE_(globalmem)("Length %u, MemoryLoad %u, TotalPhys %lx, AvailPhys %lx,"
           " TotalPageFile %lx, AvailPageFile %lx, TotalVirtual %lx, AvailVirtual %lx\n",
           lpBuffer->dwLength, lpBuffer->dwMemoryLoad, lpBuffer->dwTotalPhys,
           lpBuffer->dwAvailPhys, lpBuffer->dwTotalPageFile, lpBuffer->dwAvailPageFile,
           lpBuffer->dwTotalVirtual, lpBuffer->dwAvailVirtual );
+}
+
+BOOL WINAPI GetSystemFileCacheSize(PSIZE_T mincache, PSIZE_T maxcache, PDWORD flags)
+{
+    FIXME("stub: %p %p %p\n", mincache, maxcache, flags);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+BOOL WINAPI SetSystemFileCacheSize(SIZE_T mincache, SIZE_T maxcache, DWORD flags)
+{
+    FIXME("stub: %ld %ld %d\n", mincache, maxcache, flags);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
 }

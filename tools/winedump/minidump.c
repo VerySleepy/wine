@@ -102,7 +102,7 @@ void mdmp_dump(void)
         case ThreadListStream:
         {
             const MINIDUMP_THREAD_LIST* mtl = (const MINIDUMP_THREAD_LIST*)stream;
-            const MINIDUMP_THREAD*      mt = &mtl->Threads[0];
+            const MINIDUMP_THREAD*      mt = mtl->Threads;
             unsigned int                i;
 
             printf("Threads: %u\n", mtl->NumberOfThreads);
@@ -129,7 +129,7 @@ void mdmp_dump(void)
         case 0xFFF0:
         {
             const MINIDUMP_MODULE_LIST* mml = (const MINIDUMP_MODULE_LIST*)stream;
-            const MINIDUMP_MODULE*      mm = &mml->Modules[0];
+            const MINIDUMP_MODULE*      mm = mml->Modules;
             unsigned int                i;
             const char*                 p1;
             const char*                 p2;
@@ -224,7 +224,7 @@ void mdmp_dump(void)
         case MemoryListStream:
         {
             const MINIDUMP_MEMORY_LIST*         mml = (const MINIDUMP_MEMORY_LIST*)stream;
-            const MINIDUMP_MEMORY_DESCRIPTOR*   mmd = &mml->MemoryRanges[0];
+            const MINIDUMP_MEMORY_DESCRIPTOR*   mmd = mml->MemoryRanges;
             unsigned int                        i;
 
             printf("Memory Ranges: %u\n", mml->NumberOfMemoryRanges);
@@ -290,6 +290,12 @@ void mdmp_dump(void)
             case PROCESSOR_ARCHITECTURE_AMD64:
                 str = "X86_64";
                 break;
+            case PROCESSOR_ARCHITECTURE_MSIL:
+                str = "MSIL";
+                break;
+            case PROCESSOR_ARCHITECTURE_NEUTRAL:
+                str = "Neutral";
+                break;
             default:
                 str = "???";
                 break;
@@ -310,7 +316,7 @@ void mdmp_dump(void)
                 case 0: str = (msi->PlatformId == VER_PLATFORM_WIN32_NT) ? "NT 4.0" : "95"; break;
                 case 10: str = "98"; break;
                 case 90: str = "ME"; break;
-                default: str = "5-????"; break;
+                default: str = "4-????"; break;
                 }
                 break;
             case 5:
@@ -318,8 +324,38 @@ void mdmp_dump(void)
                 {
                 case 0: str = "2000"; break;
                 case 1: str = "XP"; break;
-                case 2: str = "Server 2003"; break;
+                case 2:
+                    if (msi->u.s.ProductType == 1) str = "XP";
+                    else if (msi->u.s.ProductType == 3) str = "Server 2003";
+                    else str = "5-????";
+                    break;
                 default: str = "5-????"; break;
+                }
+                break;
+            case 6:
+                switch (msi->MinorVersion)
+                {
+                case 0:
+                    if (msi->u.s.ProductType == 1) str = "Vista";
+                    else if (msi->u.s.ProductType == 3) str = "Server 2008";
+                    else str = "6-????";
+                    break;
+                case 1:
+                    if (msi->u.s.ProductType == 1) str = "Win7";
+                    else if (msi->u.s.ProductType == 3) str = "Server 2008 R2";
+                    else str = "6-????";
+                    break;
+                case 2:
+                    if (msi->u.s.ProductType == 1) str = "Win8";
+                    else if (msi->u.s.ProductType == 3) str = "Server 2012";
+                    else str = "6-????";
+                    break;
+                case 3:
+                    if (msi->u.s.ProductType == 1) str = "Win8.1";
+                    else if (msi->u.s.ProductType == 3) str = "Server 2012 R2";
+                    else str = "6-????";
+                    break;
+                default: str = "6-????"; break;
                 }
                 break;
             default: str = "???"; break;
@@ -333,13 +369,28 @@ void mdmp_dump(void)
             if (msi->ProcessorArchitecture == PROCESSOR_ARCHITECTURE_INTEL)
             {
                 printf("  x86.VendorId: %.12s\n",
-                       (const char*)&msi->Cpu.X86CpuInfo.VendorId[0]);
+                       (const char*)msi->Cpu.X86CpuInfo.VendorId);
                 printf("  x86.VersionInformation: %x\n",
                        msi->Cpu.X86CpuInfo.VersionInformation);
                 printf("  x86.FeatureInformation: %x\n",
                        msi->Cpu.X86CpuInfo.FeatureInformation);
                 printf("  x86.AMDExtendedCpuFeatures: %x\n",
                        msi->Cpu.X86CpuInfo.AMDExtendedCpuFeatures);
+            }
+            if (sizeof(MINIDUMP_SYSTEM_INFO) + 4 > dir->Location.DataSize &&
+                msi->CSDVersionRva >= dir->Location.Rva + 4)
+            {
+                const char*  code = PRD(dir->Location.Rva + sizeof(MINIDUMP_SYSTEM_INFO), 4);
+                const DWORD* wes;
+                if (code && code[0] == 'W' && code[1] == 'I' && code[2] == 'N' && code[3] == 'E' &&
+                    *(wes = (const DWORD*)(code += 4)) >= 3)
+                {
+                    /* assume we have wine extensions */
+                    printf("  Wine details:\n");
+                    printf("    build-id: %s\n", code + wes[1]);
+                    printf("    system: %s\n", code + wes[2]);
+                    printf("    release: %s\n", code + wes[3]);
+                }
             }
         }
         break;

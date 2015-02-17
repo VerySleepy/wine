@@ -95,6 +95,9 @@ typedef struct tagOFNA {
 	LPARAM		lCustData;
 	LPOFNHOOKPROC	lpfnHook;
 	LPCSTR		lpTemplateName;
+        void           *pvReserved;
+        DWORD           dwReserved;
+        DWORD           FlagsEx;
 } OPENFILENAMEA,*LPOPENFILENAMEA;
 
 typedef struct tagOFNW {
@@ -118,13 +121,16 @@ typedef struct tagOFNW {
 	LPARAM		lCustData;
 	LPOFNHOOKPROC	lpfnHook;
 	LPCWSTR		lpTemplateName;
+        void           *pvReserved;
+        DWORD           dwReserved;
+        DWORD           FlagsEx;
 } OPENFILENAMEW,*LPOPENFILENAMEW;
 
 DECL_WINELIB_TYPE_AW(OPENFILENAME)
 DECL_WINELIB_TYPE_AW(LPOPENFILENAME)
 
 #ifndef CDSIZEOF_STRUCT
-#define CDSIZEOF_STRUCT(type,field) ((int)&(((type *)0)->field) + sizeof(((type*)0)->field))
+#define CDSIZEOF_STRUCT(type,field) ((INT_PTR)&(((type *)0)->field) + sizeof(((type*)0)->field))
 #endif
 
 #define OPENFILENAME_SIZE_VERSION_400A CDSIZEOF_STRUCT(OPENFILENAMEA,lpTemplateName)
@@ -312,31 +318,31 @@ DECL_WINELIB_TYPE_AW(LPCHOOSEFONT)
 #define CF_SCREENFONTS               0x00000001
 #define CF_PRINTERFONTS              0x00000002
 #define CF_BOTH                      (CF_SCREENFONTS | CF_PRINTERFONTS)
-#define CF_SHOWHELP                  0x00000004L
-#define CF_ENABLEHOOK                0x00000008L
-#define CF_ENABLETEMPLATE            0x00000010L
-#define CF_ENABLETEMPLATEHANDLE      0x00000020L
-#define CF_INITTOLOGFONTSTRUCT       0x00000040L
-#define CF_USESTYLE                  0x00000080L
-#define CF_EFFECTS                   0x00000100L
-#define CF_APPLY                     0x00000200L
-#define CF_ANSIONLY                  0x00000400L
+#define CF_SHOWHELP                  __MSABI_LONG(0x00000004)
+#define CF_ENABLEHOOK                __MSABI_LONG(0x00000008)
+#define CF_ENABLETEMPLATE            __MSABI_LONG(0x00000010)
+#define CF_ENABLETEMPLATEHANDLE      __MSABI_LONG(0x00000020)
+#define CF_INITTOLOGFONTSTRUCT       __MSABI_LONG(0x00000040)
+#define CF_USESTYLE                  __MSABI_LONG(0x00000080)
+#define CF_EFFECTS                   __MSABI_LONG(0x00000100)
+#define CF_APPLY                     __MSABI_LONG(0x00000200)
+#define CF_ANSIONLY                  __MSABI_LONG(0x00000400)
 #define CF_SCRIPTSONLY               CF_ANSIONLY
-#define CF_NOVECTORFONTS             0x00000800L
+#define CF_NOVECTORFONTS             __MSABI_LONG(0x00000800)
 #define CF_NOOEMFONTS                CF_NOVECTORFONTS
-#define CF_NOSIMULATIONS             0x00001000L
-#define CF_LIMITSIZE                 0x00002000L
-#define CF_FIXEDPITCHONLY            0x00004000L
-#define CF_WYSIWYG                   0x00008000L /* use with CF_SCREENFONTS & CF_PRINTERFONTS */
-#define CF_FORCEFONTEXIST            0x00010000L
-#define CF_SCALABLEONLY              0x00020000L
-#define CF_TTONLY                    0x00040000L
-#define CF_NOFACESEL                 0x00080000L
-#define CF_NOSTYLESEL                0x00100000L
-#define CF_NOSIZESEL                 0x00200000L
-#define CF_SELECTSCRIPT              0x00400000L
-#define CF_NOSCRIPTSEL               0x00800000L
-#define CF_NOVERTFONTS               0x01000000L
+#define CF_NOSIMULATIONS             __MSABI_LONG(0x00001000)
+#define CF_LIMITSIZE                 __MSABI_LONG(0x00002000)
+#define CF_FIXEDPITCHONLY            __MSABI_LONG(0x00004000)
+#define CF_WYSIWYG                   __MSABI_LONG(0x00008000) /* use with CF_SCREENFONTS & CF_PRINTERFONTS */
+#define CF_FORCEFONTEXIST            __MSABI_LONG(0x00010000)
+#define CF_SCALABLEONLY              __MSABI_LONG(0x00020000)
+#define CF_TTONLY                    __MSABI_LONG(0x00040000)
+#define CF_NOFACESEL                 __MSABI_LONG(0x00080000)
+#define CF_NOSTYLESEL                __MSABI_LONG(0x00100000)
+#define CF_NOSIZESEL                 __MSABI_LONG(0x00200000)
+#define CF_SELECTSCRIPT              __MSABI_LONG(0x00400000)
+#define CF_NOSCRIPTSEL               __MSABI_LONG(0x00800000)
+#define CF_NOVERTFONTS               __MSABI_LONG(0x01000000)
 
 #define SIMULATED_FONTTYPE      0x8000
 #define PRINTER_FONTTYPE        0x4000
@@ -525,8 +531,8 @@ static const WCHAR HELPMSGSTRINGW[] = { 'c','o','m','m','d','l','g','_',
         (void)SNDMSG(_hdlg, CDM_SETDEFEXT, 0, (LPARAM)(LPSTR)_pszext)
 
 
-typedef UINT (CALLBACK *LPPRINTHOOKPROC) (HWND, UINT, WPARAM, LPARAM);
-typedef UINT (CALLBACK *LPSETUPHOOKPROC) (HWND, UINT, WPARAM, LPARAM);
+typedef UINT_PTR (CALLBACK *LPPRINTHOOKPROC) (HWND, UINT, WPARAM, LPARAM);
+typedef UINT_PTR (CALLBACK *LPSETUPHOOKPROC) (HWND, UINT, WPARAM, LPARAM);
 
 typedef struct tagPDA
 {
@@ -755,6 +761,40 @@ typedef struct tagPDEXW
 
 DECL_WINELIB_TYPE_AW(PRINTDLGEX)
 DECL_WINELIB_TYPE_AW(LPPRINTDLGEX)
+
+#ifdef STDMETHOD
+
+DEFINE_GUID(IID_IPrintDialogCallback, 0x5852a2c3,0x6530,0x11d1,0xb6,0xa3,0x00,0x00,0xf8,0x75,0x7b,0xf9);
+#define INTERFACE IPrintDialogCallback
+DECLARE_INTERFACE_(IPrintDialogCallback,IUnknown)
+{
+    /*** IUnknown methods ***/
+    STDMETHOD_(HRESULT,QueryInterface)(THIS_ REFIID,void **) PURE;
+    STDMETHOD_(ULONG,AddRef)(THIS) PURE;
+    STDMETHOD_(ULONG,Release)(THIS) PURE;
+    /*** IPrintDialogCallback methods ***/
+    STDMETHOD(InitDone)(THIS) PURE;
+    STDMETHOD(SelectionChange)(THIS) PURE;
+    STDMETHOD(HandleMessage)(THIS_ HWND,UINT,WPARAM,LPARAM,LRESULT *) PURE;
+};
+#undef INTERFACE
+
+DEFINE_GUID(IID_IPrintDialogServices, 0x509aaeda,0x5639,0x11d1,0xb6,0xa1,0x00,0x00,0xf8,0x75,0x7b,0xf9);
+#define INTERFACE IPrintDialogServices
+DECLARE_INTERFACE_(IPrintDialogServices,IUnknown)
+{
+    /*** IUnknown methods ***/
+    STDMETHOD_(HRESULT,QueryInterface)(THIS_ REFIID,void **) PURE;
+    STDMETHOD_(ULONG,AddRef)(THIS) PURE;
+    STDMETHOD_(ULONG,Release)(THIS) PURE;
+    /*** IPrintDialogServices methods ***/
+    STDMETHOD(GetCurrentDevMode)(THIS_ LPDEVMODEW,UINT *) PURE;
+    STDMETHOD(GetCurrentPrinterName)(THIS_ LPWSTR,UINT *) PURE;
+    STDMETHOD(GetCurrentPortName)(THIS_ LPWSTR,UINT *) PURE;
+};
+#undef INTERFACE
+
+#endif /* STDMETHOD */
 
 BOOL  WINAPI ChooseColorA(LPCHOOSECOLORA lpChCol);
 BOOL  WINAPI ChooseColorW(LPCHOOSECOLORW lpChCol);

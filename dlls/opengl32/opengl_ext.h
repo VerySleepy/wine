@@ -19,33 +19,8 @@
 #ifndef __DLLS_OPENGL32_OPENGL_EXT_H
 #define __DLLS_OPENGL32_OPENGL_EXT_H
 
-#undef APIENTRY
-#undef CALLBACK
-#undef WINAPI
-
-#define XMD_H /* This is to prevent the Xmd.h inclusion bug :-/ */
-#include <GL/gl.h>
-#undef  XMD_H
-
-#undef APIENTRY
-#undef CALLBACK
-#undef WINAPI
-
-/* Redefines the constants */
-#define CALLBACK    __stdcall
-#define WINAPI      __stdcall
-#define APIENTRY    WINAPI
-
-/* X11 locking */
-
-extern void (*wine_tsx11_lock_ptr)(void);
-extern void (*wine_tsx11_unlock_ptr)(void);
-
-/* As GLX relies on X, this is needed */
-void enter_gl(void);
-#define ENTER_GL() enter_gl()
-#define LEAVE_GL() wine_tsx11_unlock_ptr()
-
+#include "windef.h"
+#include "wine/wgl.h"
 
 typedef struct {
   const char  *name;     /* name of the extension */
@@ -53,8 +28,9 @@ typedef struct {
   void  *func;     /* pointer to the Wine function for this extension */
 } OpenGL_extension;
 
-extern void *extension_funcs[];
 extern const OpenGL_extension extension_registry[];
 extern const int extension_registry_size;
+
+extern BOOL WINAPI wglSetPixelFormatWINE( HDC hdc, int format );
 
 #endif /* __DLLS_OPENGL32_OPENGL_EXT_H */

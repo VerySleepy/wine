@@ -129,10 +129,10 @@ static BOOL XIMPreEditStateNotifyCallback(XIC xic, XPointer p, XPointer data)
     switch (state)
     {
     case XIMPreeditEnable:
-        IME_SetOpenStatus(TRUE, TRUE);
+        IME_SetOpenStatus(TRUE);
         break;
     case XIMPreeditDisable:
-        IME_SetOpenStatus(FALSE, TRUE);
+        IME_SetOpenStatus(FALSE);
         break;
     default:
         break;
@@ -143,7 +143,7 @@ static BOOL XIMPreEditStateNotifyCallback(XIC xic, XPointer p, XPointer data)
 static int XIMPreEditStartCallback(XIC ic, XPointer client_data, XPointer call_data)
 {
     TRACE("PreEditStartCallback %p\n",ic);
-    IME_SetOpenStatus(TRUE, FALSE);
+    IME_SetCompositionStatus(TRUE);
     ximInComposeMode = TRUE;
     return -1;
 }
@@ -157,7 +157,7 @@ static void XIMPreEditDoneCallback(XIC ic, XPointer client_data, XPointer call_d
     dwCompStringSize = 0;
     dwCompStringLength = 0;
     CompositionString = NULL;
-    IME_SetOpenStatus(FALSE, FALSE);
+    IME_SetCompositionStatus(FALSE);
 }
 
 static void XIMPreEditDrawCallback(XIM ic, XPointer client_data,
@@ -257,55 +257,32 @@ void X11DRV_ForceXIMReset(HWND hwnd)
     {
         char* leftover;
         TRACE("Forcing Reset %p\n",ic);
-        wine_tsx11_lock();
         leftover = XmbResetIC(ic);
         XFree(leftover);
-        wine_tsx11_unlock();
     }
 }
 
-BOOL X11DRV_SetPreeditState(HWND hwnd, BOOL fOpen)
+void X11DRV_SetPreeditState(HWND hwnd, BOOL fOpen)
 {
     XIC ic;
     XIMPreeditState state;
-    XVaNestedList attr_set, attr_get;
-    BOOL ret;
+    XVaNestedList attr;
 
     ic = X11DRV_get_ic(hwnd);
     if (!ic)
-        return FALSE;
+        return;
 
     if (fOpen)
         state = XIMPreeditEnable;
     else
         state = XIMPreeditDisable;
 
-    ret = FALSE;
-    wine_tsx11_lock();
-
-    attr_set = XVaCreateNestedList(0, XNPreeditState, state, NULL);
-    if (attr_set == NULL)
-        goto error1;
-
-    attr_get = XVaCreateNestedList(0, XNPreeditState, &state, NULL);
-    if (attr_get == NULL)
-        goto error2;
-
-    if (XSetICValues(ic, XNPreeditAttributes, attr_set, NULL) != NULL)
-        goto error3;
-
-    /* SCIM claims it supports XNPreeditState, but seems to ignore */
-    state = XIMPreeditUnKnown;
-    ret = XGetICValues(ic, XNPreeditAttributes, attr_get, NULL) == NULL &&
-          ((fOpen && state == XIMPreeditEnable) ||
-           (!fOpen && state == XIMPreeditDisable));
-error3:
-    XFree(attr_get);
-error2:
-    XFree(attr_set);
-error1:
-    wine_tsx11_unlock();
-    return ret;
+    attr = XVaCreateNestedList(0, XNPreeditState, state, NULL);
+    if (attr != NULL)
+    {
+        XSetICValues(ic, XNPreeditAttributes, attr, NULL);
+        XFree(attr);
+    }
 }
 
 
@@ -316,8 +293,6 @@ error1:
  */
 BOOL X11DRV_InitXIM( const char *input_style )
 {
-    BOOL ret;
-
     if (!strcasecmp(input_style, "offthespot"))
         ximStyleRequest = STYLE_OFFTHESPOT;
     else if (!strcasecmp(input_style, "overthespot"))
@@ -325,18 +300,17 @@ BOOL X11DRV_InitXIM( const char *input_style )
     else if (!strcasecmp(input_style, "root"))
         ximStyleRequest = STYLE_ROOT;
 
-    wine_tsx11_lock();
-    if (!(ret = XSupportsLocale()))
+    if (!XSupportsLocale())
     {
         WARN("X does not support locale.\n");
+        return FALSE;
     }
-    else if (XSetLocaleModifiers("") == NULL)
+    if (XSetLocaleModifiers("") == NULL)
     {
         WARN("Could not set locale modifiers.\n");
-        ret = FALSE;
+        return FALSE;
     }
-    wine_tsx11_unlock();
-    return ret;
+    return TRUE;
 }
 
 
@@ -349,9 +323,7 @@ static void X11DRV_DestroyIM(XIM xim, XPointer p, XPointer data)
     TRACE("xim = %p, p = %p\n", xim, p);
     thread_data->xim = NULL;
     ximStyle = 0;
-    wine_tsx11_lock();
     XRegisterIMInstantiateCallback( thread_data->display, NULL, NULL, NULL, open_xim_callback, NULL );
-    wine_tsx11_unlock();
 }
 
 /***********************************************************************
@@ -473,9 +445,7 @@ static BOOL open_xim( Display *display )
     else
         thread_data->font_set = NULL;
 
-    wine_tsx11_unlock();
     IME_UpdateAssociation(NULL);
-    wine_tsx11_lock();
     return TRUE;
 }
 
@@ -489,10 +459,8 @@ void X11DRV_SetupXIM(void)
 {
     Display *display = thread_display();
 
-    wine_tsx11_lock();
     if (!open_xim( display ))
         XRegisterIMInstantiateCallback( display, NULL, NULL, NULL, open_xim_callback, NULL );
-    wine_tsx11_unlock();
 }
 
 static BOOL X11DRV_DestroyIC(XIC xic, XPointer p, XPointer data)
@@ -510,15 +478,13 @@ XIC X11DRV_CreateIC(XIM xim, struct x11drv_win_data *data)
     XVaNestedList preedit = NULL;
     XVaNestedList status = NULL;
     XIC xic;
-    XICCallback destroy = {(XPointer)data, (XICProc)X11DRV_DestroyIC};
+    XICCallback destroy = {(XPointer)data, X11DRV_DestroyIC};
     XICCallback P_StateNotifyCB, P_StartCB, P_DoneCB, P_DrawCB, P_CaretCB;
     LANGID langid = PRIMARYLANGID(LANGIDFROMLCID(GetThreadLocale()));
     Window win = data->whole_window;
     XFontSet fontSet = x11drv_thread_data()->font_set;
 
     TRACE("xim = %p\n", xim);
-
-    wine_tsx11_lock();
 
     /* use complex and slow XIC initialization method only for CJK */
     if (langid != LANG_CHINESE &&
@@ -531,7 +497,6 @@ XIC X11DRV_CreateIC(XIM xim, struct x11drv_win_data *data)
                         XNFocusWindow, win,
                         XNDestroyCallback, &destroy,
                         NULL);
-        wine_tsx11_unlock();
         data->xic = xic;
         return xic;
     }
@@ -542,8 +507,8 @@ XIC X11DRV_CreateIC(XIM xim, struct x11drv_win_data *data)
     P_DoneCB.client_data = NULL;
     P_DrawCB.client_data = NULL;
     P_CaretCB.client_data = NULL;
-    P_StateNotifyCB.callback = (XICProc)XIMPreEditStateNotifyCallback;
-    P_StartCB.callback = (XICProc)XIMPreEditStartCallback;
+    P_StateNotifyCB.callback = XIMPreEditStateNotifyCallback;
+    P_StartCB.callback = XIMPreEditStartCallback;
     P_DoneCB.callback = (XICProc)XIMPreEditDoneCallback;
     P_DrawCB.callback = (XICProc)XIMPreEditDrawCallback;
     P_CaretCB.callback = (XICProc)XIMPreEditCaretCallback;
@@ -630,8 +595,6 @@ XIC X11DRV_CreateIC(XIM xim, struct x11drv_win_data *data)
         XFree(preedit);
     if (status != NULL)
         XFree(status);
-
-    wine_tsx11_unlock();
 
     return xic;
 }

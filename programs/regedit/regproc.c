@@ -23,6 +23,7 @@
 
 #include <limits.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <fcntl.h>
 #include <io.h>
 #include <windows.h>
@@ -254,7 +255,7 @@ static DWORD getDataType(LPWSTR *lpValue, DWORD* parse_type)
 /******************************************************************************
  * Replaces escape sequences with the characters.
  */
-static void REGPROC_unescape_string(WCHAR* str)
+static int REGPROC_unescape_string(WCHAR* str)
 {
     int str_idx = 0;            /* current character under analysis */
     int val_idx = 0;            /* the last character of the unescaped string */
@@ -265,6 +266,12 @@ static void REGPROC_unescape_string(WCHAR* str)
             switch (str[str_idx]) {
             case 'n':
                 str[val_idx] = '\n';
+                break;
+            case 'r':
+                str[val_idx] = '\r';
+                break;
+            case '0':
+                str[val_idx] = '\0';
                 break;
             case '\\':
             case '"':
@@ -281,6 +288,7 @@ static void REGPROC_unescape_string(WCHAR* str)
         }
     }
     str[val_idx] = '\0';
+    return val_idx;
 }
 
 static BOOL parseKeyName(LPWSTR lpKeyName, HKEY *hKey, LPWSTR *lpKeyPath)
@@ -312,7 +320,7 @@ static BOOL parseKeyName(LPWSTR lpKeyName, HKEY *hKey, LPWSTR *lpKeyPath)
     *hKey = NULL;
 
     for (i = 0; i < REG_CLASS_NUMBER; i++) {
-        if (CompareStringW(LOCALE_USER_DEFAULT, 0, lpKeyName, len, reg_class_namesW[i], len) == CSTR_EQUAL &&
+        if (CompareStringW(LOCALE_USER_DEFAULT, 0, lpKeyName, len, reg_class_namesW[i], -1) == CSTR_EQUAL &&
             len == lstrlenW(reg_class_namesW[i])) {
             *hKey = reg_class_keys[i];
             break;
@@ -363,19 +371,10 @@ static LONG setValue(WCHAR* val_name, WCHAR* val_data, BOOL is_unicode)
 
     if (dwParseType == REG_SZ)          /* no conversion for string */
     {
-        REGPROC_unescape_string(val_data);
-        /* Compute dwLen after REGPROC_unescape_string because it may
-         * have changed the string length and we don't want to store
-         * the extra garbage in the registry.
-         */
-        dwLen = lstrlenW(val_data);
-        if(val_data[dwLen-1] != '"')
+        dwLen = REGPROC_unescape_string(val_data);
+        if(!dwLen || val_data[dwLen-1] != '"')
             return ERROR_INVALID_DATA;
-        if (dwLen>0 && val_data[dwLen-1]=='"')
-        {
-            dwLen--;
-            val_data[dwLen]='\0';
-        }
+        val_data[dwLen-1] = '\0'; /* remove last quotes */
         lpbData = (BYTE*) val_data;
         dwLen++;  /* include terminating null */
         dwLen = dwLen * sizeof(WCHAR); /* size is in bytes */
@@ -609,7 +608,7 @@ static void processRegEntry(WCHAR* stdInput, BOOL isUnicode)
 
 /******************************************************************************
  * Processes a registry file.
- * Correctly processes comments (in # form), line continuation.
+ * Correctly processes comments (in # and ; form), line continuation.
  *
  * Parameters:
  *   in - input stream to read from
@@ -709,7 +708,7 @@ static void processRegLinesA(FILE *in, char* first_chars)
             }
 
             /* If it is a comment line then discard it and go around again */
-            if (line [0] == '#') {
+            if (line [0] == '#' || line [0] == ';') {
                 s = line;
                 continue;
             }
@@ -836,7 +835,7 @@ static void processRegLinesW(FILE *in)
             }
 
             /* If it is a comment line then discard it and go around again */
-            if (*line == '#') {
+            if (*line == '#' || *line == ';') {
                 if (*s_eol == '\r' && *(s_eol+1) == '\n')
                     line = s_eol + 2;
                 else
@@ -967,6 +966,13 @@ static void REGPROC_export_string(WCHAR **line_buf, DWORD *line_buf_size, DWORD 
             (*line_buf)[pos++] = 'n';
             break;
 
+        case '\r':
+            extra++;
+            REGPROC_resize_char_buffer(line_buf, line_buf_size, *line_len + str_len + extra);
+            (*line_buf)[pos++] = '\\';
+            (*line_buf)[pos++] = 'r';
+            break;
+
         case '\\':
         case '"':
             extra++;
@@ -997,7 +1003,7 @@ static void REGPROC_export_binary(WCHAR **line_buf, DWORD *line_buf_size, DWORD 
     if (type == REG_BINARY) {
         hex_prefix = hex;
     } else {
-        const WCHAR hex_format[] = {'h','e','x','(','%','u',')',':',0};
+        const WCHAR hex_format[] = {'h','e','x','(','%','x',')',':',0};
         hex_prefix = hex_buf;
         sprintfW(hex_buf, hex_format, type);
         if ((type == REG_SZ || type == REG_EXPAND_SZ || type == REG_MULTI_SZ) && !unicode)
@@ -1017,12 +1023,13 @@ static void REGPROC_export_binary(WCHAR **line_buf, DWORD *line_buf_size, DWORD 
     /* - The 2 spaces that concat places at the start of the
      *   line effectively reduce the space available for data.
      * - If the value name and hex prefix are very long
-     *   ( > REG_FILE_HEX_LINE_LEN) then we may overestimate
+     *   ( > REG_FILE_HEX_LINE_LEN) or *line_len divides
+     *   without a remainder then we may overestimate
      *   the needed number of lines by one. But that's ok.
-     * - The trailing linefeed takes the place of a comma so
-     *   it's accounted for already.
+     * - The trailing '\r' takes the place of a comma so
+     *   we only need to add 1 for the trailing '\n'
      */
-    *line_len += *line_len / (REG_FILE_HEX_LINE_LEN - concat_prefix) * concat_len;
+    *line_len += *line_len / (REG_FILE_HEX_LINE_LEN - concat_prefix) * concat_len + 1;
     REGPROC_resize_char_buffer(line_buf, line_buf_size, *line_len);
     lstrcpyW(*line_buf + hex_pos, hex_prefix);
     if (value_size)
@@ -1178,10 +1185,7 @@ static void export_hkey(FILE *file, HKEY key,
                     lstrcpyW(*line_buf + line_len, start);
                     line_len += len;
 
-                    /* At this point we know wstr is '\0'-terminated
-                     * so we can subtract 1 from the size
-                     */
-                    REGPROC_export_string(line_buf, line_buf_size, &line_len, wstr, val_size1 / sizeof(WCHAR) - 1);
+                    REGPROC_export_string(line_buf, line_buf_size, &line_len, wstr, lstrlenW(wstr));
 
                     REGPROC_resize_char_buffer(line_buf, line_buf_size, line_len + lstrlenW(end));
                     lstrcpyW(*line_buf + line_len, end);

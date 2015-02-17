@@ -25,17 +25,85 @@
 
 #include "windows.h"
 #include "ole2.h"
-#include "initguid.h"
-
+#include "xmlparser.h"
 #include "wine/test.h"
 
-DEFINE_GUID(IID_IXMLParser, 0xd242361e, 0x51a0, 0x11d2, 0x9c,0xaf, 0x00,0x60,0xb0,0xec,0x3d,0x39);
-DEFINE_GUID(CLSID_XMLParser30, 0xf5078f31, 0xc551, 0x11d3, 0x89,0xb9, 0x00,0x00,0xf8,0x1f,0xe2,0x21);
+
+static HRESULT WINAPI nodefact_QueryInterface(IXMLNodeFactory *iface,
+        REFIID riid, void **ppvObject)
+{
+    *ppvObject = NULL;
+
+    if (IsEqualGUID(riid, &IID_IXMLNodeFactory) ||
+        IsEqualGUID(riid, &IID_IUnknown))
+        *ppvObject = iface;
+    else
+        return E_NOINTERFACE;
+
+    return S_OK;
+}
+
+static ULONG WINAPI nodefact_AddRef(IXMLNodeFactory *iface)
+{
+    return 2;
+}
+
+static ULONG WINAPI nodefact_Release(IXMLNodeFactory *iface)
+{
+    return 1;
+}
+
+static HRESULT WINAPI nodefact_NotifyEvent(IXMLNodeFactory *iface,
+        IXMLNodeSource *pSource, XML_NODEFACTORY_EVENT iEvt)
+{
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI nodefact_BeginChildren(IXMLNodeFactory *iface,
+        IXMLNodeSource *pSource, XML_NODE_INFO *pNodeInfo)
+{
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI nodefact_EndChildren(IXMLNodeFactory *iface,
+        IXMLNodeSource *pSource, BOOL fEmpty, XML_NODE_INFO *pNodeInfo)
+{
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI nodefact_Error(IXMLNodeFactory *iface,
+        IXMLNodeSource *pSource, HRESULT hrErrorCode, USHORT cNumRecs,
+        XML_NODE_INFO **ppNodeInfo)
+{
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI nodefact_CreateNode(IXMLNodeFactory *iface, IXMLNodeSource *pSource,
+        PVOID pNodeParent, USHORT cNumRecs, XML_NODE_INFO **ppNodeInfo)
+{
+    return E_NOTIMPL;
+}
+
+static const IXMLNodeFactoryVtbl nodefactoryVtbl =
+{
+    nodefact_QueryInterface,
+    nodefact_AddRef,
+    nodefact_Release,
+    nodefact_NotifyEvent,
+    nodefact_BeginChildren,
+    nodefact_EndChildren,
+    nodefact_Error,
+    nodefact_CreateNode
+};
+
+static IXMLNodeFactory thenodefactory = { &nodefactoryVtbl };
 
 static void create_test(void)
 {
     HRESULT hr;
-    IUnknown *parser;
+    IXMLParser *parser;
+    IXMLNodeFactory *nodefactory;
+    DWORD flags;
 
     hr = CoCreateInstance(&CLSID_XMLParser30, NULL, CLSCTX_INPROC_SERVER, &IID_IXMLParser, (void**)&parser);
     if (FAILED(hr))
@@ -44,7 +112,39 @@ static void create_test(void)
         return;
     }
 
-    IUnknown_Release(parser);
+    flags = IXMLParser_GetFlags(parser);
+    ok(flags == 0, "Expected 0 got %d\n", flags);
+
+    hr = IXMLParser_SetFlags(parser, XMLFLAG_SAX);
+    ok(hr == S_OK, "Expected S_OK got 0x%08x\n", hr);
+
+    flags = IXMLParser_GetFlags(parser);
+    ok(flags == XMLFLAG_SAX, "Expected 0 got %d\n", flags);
+
+    hr = IXMLParser_GetFactory(parser, NULL);
+    ok(hr == E_INVALIDARG, "Expected S_OK got 0x%08x\n", hr);
+
+    hr = IXMLParser_GetFactory(parser, &nodefactory);
+    ok(hr == S_OK, "Expected S_OK got 0x%08x\n", hr);
+    ok(nodefactory == NULL, "expected NULL\n");
+
+    hr = IXMLParser_SetFactory(parser, &thenodefactory);
+    ok(hr == S_OK, "Expected S_OK got 0x%08x\n", hr);
+
+    hr = IXMLParser_GetFactory(parser, &nodefactory);
+    ok(hr == S_OK, "Expected S_OK got 0x%08x\n", hr);
+    ok(nodefactory == &thenodefactory, "expected NULL\n");
+
+    hr = IXMLParser_SetInput(parser, NULL);
+    ok(hr == E_INVALIDARG, "Expected S_OK got 0x%08x\n", hr);
+
+    hr = IXMLParser_SetFactory(parser, NULL);
+    ok(hr == S_OK, "Expected S_OK got 0x%08x\n", hr);
+
+    hr = IXMLParser_SetFlags(parser, 0);
+    ok(hr == S_OK, "Expected S_OK got 0x%08x\n", hr);
+
+    IXMLParser_Release(parser);
 }
 
 START_TEST(xmlparser)

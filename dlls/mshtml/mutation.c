@@ -19,6 +19,7 @@
 #include "config.h"
 
 #include <stdarg.h>
+#include <assert.h>
 
 #define COBJMACROS
 
@@ -30,7 +31,9 @@
 #include "shlguid.h"
 
 #include "mshtml_private.h"
+#include "htmlscript.h"
 #include "htmlevent.h"
+#include "binding.h"
 
 #include "wine/debug.h"
 
@@ -228,6 +231,7 @@ static nsresult run_bind_to_tree(HTMLDocumentNode *doc, nsISupports *nsiface, ns
     if(node->vtbl->bind_to_tree)
         node->vtbl->bind_to_tree(node);
 
+    node_release(node);
     return nsres;
 }
 
@@ -262,8 +266,11 @@ static void parse_complete(HTMLDocumentObj *doc)
     call_explorer_69(doc);
     if(doc->view_sink)
         IAdviseSink_OnViewChange(doc->view_sink, DVASPECT_CONTENT, -1);
-    call_property_onchanged(&doc->basedoc.cp_propnotif, 1005);
+    call_property_onchanged(&doc->basedoc.cp_container, 1005);
     call_explorer_69(doc);
+
+    if(doc->webbrowser && doc->usermode != EDITMODE && !(doc->basedoc.window->load_flags & BINDING_REFRESH))
+        IDocObjectService_FireNavigateComplete2(doc->doc_object_service, &doc->basedoc.window->base.IHTMLWindow2_iface, 0);
 
     /* FIXME: IE7 calls EnableModelless(TRUE), EnableModelless(FALSE) and sets interactive state here */
 }
@@ -283,6 +290,7 @@ static nsresult run_end_load(HTMLDocumentNode *This, nsISupports *arg1, nsISuppo
         parse_complete(This->basedoc.doc_obj);
     }
 
+    bind_event_scripts(This);
     set_ready_state(This->basedoc.window, READYSTATE_INTERACTIVE);
     return NS_OK;
 }
@@ -290,10 +298,18 @@ static nsresult run_end_load(HTMLDocumentNode *This, nsISupports *arg1, nsISuppo
 static nsresult run_insert_script(HTMLDocumentNode *doc, nsISupports *script_iface, nsISupports *parser_iface)
 {
     nsIDOMHTMLScriptElement *nsscript;
+    HTMLScriptElement *script_elem;
     nsIParser *nsparser = NULL;
+    script_queue_entry_t *iter;
+    HTMLInnerWindow *window;
     nsresult nsres;
+    HRESULT hres;
 
     TRACE("(%p)->(%p)\n", doc, script_iface);
+
+    window = doc->window;
+    if(!window)
+        return NS_OK;
 
     nsres = nsISupports_QueryInterface(script_iface, &IID_nsIDOMHTMLScriptElement, (void**)&nsscript);
     if(NS_FAILED(nsres)) {
@@ -309,17 +325,39 @@ static nsresult run_insert_script(HTMLDocumentNode *doc, nsISupports *script_ifa
         }
     }
 
-    if(nsparser)
-        nsIParser_BeginEvaluatingParserInsertedScript(nsparser);
-
-    doc_insert_script(doc->basedoc.window, nsscript);
+    hres = script_elem_from_nsscript(doc, nsscript, &script_elem);
+    nsIDOMHTMLScriptElement_Release(nsscript);
+    if(FAILED(hres))
+        return NS_ERROR_FAILURE;
 
     if(nsparser) {
+        nsIParser_BeginEvaluatingParserInsertedScript(nsparser);
+        window->parser_callback_cnt++;
+    }
+
+    IHTMLWindow2_AddRef(&window->base.IHTMLWindow2_iface);
+
+    doc_insert_script(window, script_elem);
+
+    while(!list_empty(&window->script_queue)) {
+        iter = LIST_ENTRY(list_head(&window->script_queue), script_queue_entry_t, entry);
+        list_remove(&iter->entry);
+        if(!iter->script->parsed)
+            doc_insert_script(window, iter->script);
+        IHTMLScriptElement_Release(&iter->script->IHTMLScriptElement_iface);
+        heap_free(iter);
+    }
+
+    IHTMLWindow2_Release(&window->base.IHTMLWindow2_iface);
+
+    if(nsparser) {
+        window->parser_callback_cnt--;
         nsIParser_EndEvaluatingParserInsertedScript(nsparser);
         nsIParser_Release(nsparser);
     }
 
-    nsIDOMHTMLScriptElement_Release(nsscript);
+    IHTMLScriptElement_Release(&script_elem->IHTMLScriptElement_iface);
+
     return NS_OK;
 }
 
@@ -488,27 +526,32 @@ static void NSAPI nsDocumentObserver_CharacterDataChanged(nsIDocumentObserver *i
 }
 
 static void NSAPI nsDocumentObserver_AttributeWillChange(nsIDocumentObserver *iface, nsIDocument *aDocument,
-        nsIContent *aContent, PRInt32 aNameSpaceID, nsIAtom *aAttribute, PRInt32 aModType)
+        nsIContent *aContent, LONG aNameSpaceID, nsIAtom *aAttribute, LONG aModType)
 {
 }
 
 static void NSAPI nsDocumentObserver_AttributeChanged(nsIDocumentObserver *iface, nsIDocument *aDocument,
-        nsIContent *aContent, PRInt32 aNameSpaceID, nsIAtom *aAttribute, PRInt32 aModType)
+        nsIContent *aContent, LONG aNameSpaceID, nsIAtom *aAttribute, LONG aModType)
+{
+}
+
+static void NSAPI nsDocumentObserver_AttributeSetToCurrentValue(nsIDocumentObserver *iface, nsIDocument *aDocument,
+        void *aElement, LONG aNameSpaceID, nsIAtom *aAttribute)
 {
 }
 
 static void NSAPI nsDocumentObserver_ContentAppended(nsIDocumentObserver *iface, nsIDocument *aDocument,
-        nsIContent *aContainer, nsIContent *aFirstNewContent, PRInt32 aNewIndexInContainer)
+        nsIContent *aContainer, nsIContent *aFirstNewContent, LONG aNewIndexInContainer)
 {
 }
 
 static void NSAPI nsDocumentObserver_ContentInserted(nsIDocumentObserver *iface, nsIDocument *aDocument,
-        nsIContent *aContainer, nsIContent *aChild, PRInt32 aIndexInContainer)
+        nsIContent *aContainer, nsIContent *aChild, LONG aIndexInContainer)
 {
 }
 
 static void NSAPI nsDocumentObserver_ContentRemoved(nsIDocumentObserver *iface, nsIDocument *aDocument,
-        nsIContent *aContainer, nsIContent *aChild, PRInt32 aIndexInContainer,
+        nsIContent *aContainer, nsIContent *aChild, LONG aIndexInContainer,
         nsIContent *aProviousSibling)
 {
 }
@@ -549,27 +592,27 @@ static void NSAPI nsDocumentObserver_EndLoad(nsIDocumentObserver *iface, nsIDocu
 }
 
 static void NSAPI nsDocumentObserver_ContentStatesChanged(nsIDocumentObserver *iface, nsIDocument *aDocument,
-        nsIContent *aContent, nsEventStates aStateMask)
+        nsIContent *aContent, EventStates aStateMask)
 {
 }
 
 static void NSAPI nsDocumentObserver_DocumentStatesChanged(nsIDocumentObserver *iface, nsIDocument *aDocument,
-        nsEventStates aStateMask)
+        EventStates aStateMask)
 {
 }
 
 static void NSAPI nsDocumentObserver_StyleSheetAdded(nsIDocumentObserver *iface, nsIDocument *aDocument,
-        nsIStyleSheet *aStyleSheet, PRBool aDocumentSheet)
+        nsIStyleSheet *aStyleSheet, cpp_bool aDocumentSheet)
 {
 }
 
 static void NSAPI nsDocumentObserver_StyleSheetRemoved(nsIDocumentObserver *iface, nsIDocument *aDocument,
-        nsIStyleSheet *aStyleSheet, PRBool aDocumentSheet)
+        nsIStyleSheet *aStyleSheet, cpp_bool aDocumentSheet)
 {
 }
 
 static void NSAPI nsDocumentObserver_StyleSheetApplicableStateChanged(nsIDocumentObserver *iface,
-        nsIDocument *aDocument, nsIStyleSheet *aStyleSheet, PRBool aApplicable)
+        nsIDocument *aDocument, nsIStyleSheet *aStyleSheet, cpp_bool aApplicable)
 {
 }
 
@@ -594,61 +637,81 @@ static void NSAPI nsDocumentObserver_BindToDocument(nsIDocumentObserver *iface, 
     HTMLDocumentNode *This = impl_from_nsIDocumentObserver(iface);
     nsIDOMHTMLIFrameElement *nsiframe;
     nsIDOMHTMLFrameElement *nsframe;
+    nsIDOMHTMLScriptElement *nsscript;
+    nsIDOMHTMLElement *nselem;
     nsIDOMComment *nscomment;
-    nsIDOMElement *nselem;
     nsresult nsres;
 
-    TRACE("(%p)\n", This);
+    TRACE("(%p)->(%p %p)\n", This, aDocument, aContent);
 
-    nsres = nsISupports_QueryInterface(aContent, &IID_nsIDOMElement, (void**)&nselem);
+    nsres = nsIContent_QueryInterface(aContent, &IID_nsIDOMHTMLElement, (void**)&nselem);
     if(NS_SUCCEEDED(nsres)) {
         check_event_attr(This, nselem);
-        nsIDOMElement_Release(nselem);
+        nsIDOMHTMLElement_Release(nselem);
     }
 
-    nsres = nsISupports_QueryInterface(aContent, &IID_nsIDOMComment, (void**)&nscomment);
+    nsres = nsIContent_QueryInterface(aContent, &IID_nsIDOMComment, (void**)&nscomment);
     if(NS_SUCCEEDED(nsres)) {
         TRACE("comment node\n");
 
         add_script_runner(This, run_insert_comment, (nsISupports*)nscomment, NULL);
         nsIDOMComment_Release(nscomment);
+        return;
     }
 
-    nsres = nsISupports_QueryInterface(aContent, &IID_nsIDOMHTMLIFrameElement, (void**)&nsiframe);
+    nsres = nsIContent_QueryInterface(aContent, &IID_nsIDOMHTMLIFrameElement, (void**)&nsiframe);
     if(NS_SUCCEEDED(nsres)) {
         TRACE("iframe node\n");
 
         add_script_runner(This, run_bind_to_tree, (nsISupports*)nsiframe, NULL);
         nsIDOMHTMLIFrameElement_Release(nsiframe);
+        return;
     }
 
-    nsres = nsISupports_QueryInterface(aContent, &IID_nsIDOMHTMLFrameElement, (void**)&nsframe);
+    nsres = nsIContent_QueryInterface(aContent, &IID_nsIDOMHTMLFrameElement, (void**)&nsframe);
     if(NS_SUCCEEDED(nsres)) {
         TRACE("frame node\n");
 
         add_script_runner(This, run_bind_to_tree, (nsISupports*)nsframe, NULL);
         nsIDOMHTMLFrameElement_Release(nsframe);
+        return;
+    }
+
+    nsres = nsIContent_QueryInterface(aContent, &IID_nsIDOMHTMLScriptElement, (void**)&nsscript);
+    if(NS_SUCCEEDED(nsres)) {
+        HTMLScriptElement *script_elem;
+        HRESULT hres;
+
+        TRACE("script element\n");
+
+        hres = script_elem_from_nsscript(This, nsscript, &script_elem);
+        nsIDOMHTMLScriptElement_Release(nsscript);
+        if(FAILED(hres))
+            return;
+
+        if(script_elem->parse_on_bind)
+            add_script_runner(This, run_insert_script, (nsISupports*)nsscript, NULL);
+
+        IHTMLScriptElement_Release(&script_elem->IHTMLScriptElement_iface);
     }
 }
 
-static nsresult NSAPI nsDocumentObserver_DoneAddingChildren(nsIDocumentObserver *iface, nsIContent *aContent,
-        PRBool aHaveNotified, nsIParser *aParser)
+static void NSAPI nsDocumentObserver_AttemptToExecuteScript(nsIDocumentObserver *iface, nsIContent *aContent,
+        nsIParser *aParser, cpp_bool *aBlock)
 {
     HTMLDocumentNode *This = impl_from_nsIDocumentObserver(iface);
     nsIDOMHTMLScriptElement *nsscript;
     nsresult nsres;
 
-    TRACE("(%p)->(%p %x)\n", This, aContent, aHaveNotified);
+    TRACE("(%p)->(%p %p %p)\n", This, aContent, aParser, aBlock);
 
-    nsres = nsISupports_QueryInterface(aContent, &IID_nsIDOMHTMLScriptElement, (void**)&nsscript);
+    nsres = nsIContent_QueryInterface(aContent, &IID_nsIDOMHTMLScriptElement, (void**)&nsscript);
     if(NS_SUCCEEDED(nsres)) {
         TRACE("script node\n");
 
         add_script_runner(This, run_insert_script, (nsISupports*)nsscript, (nsISupports*)aParser);
         nsIDOMHTMLScriptElement_Release(nsscript);
     }
-
-    return NS_OK;
 }
 
 static const nsIDocumentObserverVtbl nsDocumentObserverVtbl = {
@@ -659,6 +722,7 @@ static const nsIDocumentObserverVtbl nsDocumentObserverVtbl = {
     nsDocumentObserver_CharacterDataChanged,
     nsDocumentObserver_AttributeWillChange,
     nsDocumentObserver_AttributeChanged,
+    nsDocumentObserver_AttributeSetToCurrentValue,
     nsDocumentObserver_ContentAppended,
     nsDocumentObserver_ContentInserted,
     nsDocumentObserver_ContentRemoved,
@@ -677,7 +741,7 @@ static const nsIDocumentObserverVtbl nsDocumentObserverVtbl = {
     nsDocumentObserver_StyleRuleAdded,
     nsDocumentObserver_StyleRuleRemoved,
     nsDocumentObserver_BindToDocument,
-    nsDocumentObserver_DoneAddingChildren
+    nsDocumentObserver_AttemptToExecuteScript
 };
 
 void init_document_mutation(HTMLDocumentNode *doc)
@@ -710,6 +774,22 @@ void release_document_mutation(HTMLDocumentNode *doc)
 
     nsIContentUtils_RemoveDocumentObserver(content_utils, nsdoc, &doc->nsIDocumentObserver_iface);
     nsIDocument_Release(nsdoc);
+}
+
+JSContext *get_context_from_document(nsIDOMHTMLDocument *nsdoc)
+{
+    nsIDocument *doc;
+    JSContext *ctx;
+    nsresult nsres;
+
+    nsres = nsIDOMHTMLDocument_QueryInterface(nsdoc, &IID_nsIDocument, (void**)&doc);
+    assert(nsres == NS_OK);
+
+    ctx = nsIContentUtils_GetContextFromDocument(content_utils, doc);
+    nsIDocument_Release(doc);
+
+    TRACE("ret %p\n", ctx);
+    return ctx;
 }
 
 void init_mutation(nsIComponentManager *component_manager)

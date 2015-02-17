@@ -29,54 +29,72 @@ WINE_DEFAULT_DEBUG_CHANNEL(ieframe);
 LONG module_ref = 0;
 HINSTANCE ieframe_instance;
 
-const char *debugstr_variant(const VARIANT *v)
+static ITypeLib *typelib;
+static ITypeInfo *typeinfos[LAST_tid];
+
+static REFIID tid_ids[] = {
+#define XIID(iface) &IID_ ## iface,
+#define XCLSID(class) &CLSID_ ## class,
+TID_LIST
+#undef XIID
+#undef XCLSID
+};
+
+static HRESULT load_typelib(void)
 {
-    if(!v)
-        return "(null)";
-
-    switch(V_VT(v)) {
-    case VT_EMPTY:
-        return "{VT_EMPTY}";
-    case VT_NULL:
-        return "{VT_NULL}";
-    case VT_I4:
-        return wine_dbg_sprintf("{VT_I4: %d}", V_I4(v));
-    case VT_R8:
-        return wine_dbg_sprintf("{VT_R8: %lf}", V_R8(v));
-    case VT_BSTR:
-        return wine_dbg_sprintf("{VT_BSTR: %s}", debugstr_w(V_BSTR(v)));
-    case VT_DISPATCH:
-        return wine_dbg_sprintf("{VT_DISPATCH: %p}", V_DISPATCH(v));
-    case VT_BOOL:
-        return wine_dbg_sprintf("{VT_BOOL: %x}", V_BOOL(v));
-    default:
-        return wine_dbg_sprintf("{vt %d}", V_VT(v));
-    }
-}
-
-static ITypeInfo *wb_typeinfo = NULL;
-
-HRESULT get_typeinfo(ITypeInfo **typeinfo)
-{
-    ITypeLib *typelib;
     HRESULT hres;
+    ITypeLib *tl;
 
-    if(wb_typeinfo) {
-        *typeinfo = wb_typeinfo;
-        return S_OK;
-    }
-
-    hres = LoadRegTypeLib(&LIBID_SHDocVw, 1, 1, LOCALE_SYSTEM_DEFAULT, &typelib);
+    hres = LoadRegTypeLib(&LIBID_SHDocVw, 1, 1, LOCALE_SYSTEM_DEFAULT, &tl);
     if(FAILED(hres)) {
         ERR("LoadRegTypeLib failed: %08x\n", hres);
         return hres;
     }
 
-    hres = ITypeLib_GetTypeInfoOfGuid(typelib, &IID_IWebBrowser2, &wb_typeinfo);
-    ITypeLib_Release(typelib);
-
-    *typeinfo = wb_typeinfo;
+    if(InterlockedCompareExchangePointer((void**)&typelib, tl, NULL))
+        ITypeLib_Release(tl);
     return hres;
+}
+
+HRESULT get_typeinfo(tid_t tid, ITypeInfo **typeinfo)
+{
+    HRESULT hres;
+
+    if(!typelib)
+        hres = load_typelib();
+    if(!typelib)
+        return hres;
+
+    if(!typeinfos[tid]) {
+        ITypeInfo *ti;
+
+        hres = ITypeLib_GetTypeInfoOfGuid(typelib, tid_ids[tid], &ti);
+        if(FAILED(hres)) {
+            ERR("GetTypeInfoOfGuid(%s) failed: %08x\n", debugstr_guid(tid_ids[tid]), hres);
+            return hres;
+        }
+
+        if(InterlockedCompareExchangePointer((void**)(typeinfos+tid), ti, NULL))
+            ITypeInfo_Release(ti);
+    }
+
+    *typeinfo = typeinfos[tid];
+    return S_OK;
+}
+
+static void release_typelib(void)
+{
+    unsigned i;
+
+    if(!typelib)
+        return;
+
+    for(i=0; i < sizeof(typeinfos)/sizeof(*typeinfos); i++) {
+        if(typeinfos[i])
+            ITypeInfo_Release(typeinfos[i]);
+    }
+
+    ITypeLib_Release(typelib);
 }
 
 static HRESULT WINAPI ClassFactory_QueryInterface(IClassFactory *iface, REFIID riid, void **ppv)
@@ -158,16 +176,6 @@ static const IClassFactoryVtbl CUrlHistoryFactoryVtbl = {
 
 static IClassFactory CUrlHistoryFactory = { &CUrlHistoryFactoryVtbl };
 
-static const IClassFactoryVtbl TaskbarListFactoryVtbl = {
-    ClassFactory_QueryInterface,
-    ClassFactory_AddRef,
-    ClassFactory_Release,
-    TaskbarList_Create,
-    ClassFactory_LockServer
-};
-
-static IClassFactory TaskbarListFactory = { &TaskbarListFactoryVtbl };
-
 /******************************************************************
  *              DllMain (ieframe.@)
  */
@@ -185,9 +193,9 @@ BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpv)
         DisableThreadLibraryCalls(ieframe_instance);
         break;
     case DLL_PROCESS_DETACH:
+        if (lpv) break;
         unregister_iewindow_class();
-        if(wb_typeinfo)
-            ITypeInfo_Release(wb_typeinfo);
+        release_typelib();
     }
 
     return TRUE;
@@ -208,7 +216,6 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID *ppv)
         return IClassFactory_QueryInterface(&WebBrowserV1Factory, riid, ppv);
     }
 
-
     if(IsEqualGUID(rclsid, &CLSID_InternetShortcut)) {
         TRACE("(CLSID_InternetShortcut %s %p)\n", debugstr_guid(riid), ppv);
         return IClassFactory_QueryInterface(&InternetShortcutFactory, riid, ppv);
@@ -218,12 +225,6 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID *ppv)
         TRACE("(CLSID_CUrlHistory %s %p)\n", debugstr_guid(riid), ppv);
         return IClassFactory_QueryInterface(&CUrlHistoryFactory, riid, ppv);
     }
-
-    if(IsEqualGUID(&CLSID_TaskbarList, rclsid)) {
-        TRACE("(CLSID_TaskbarList %s %p)\n", debugstr_guid(riid), ppv);
-        return IClassFactory_QueryInterface(&TaskbarListFactory, riid, ppv);
-    }
-
 
     FIXME("%s %s %p\n", debugstr_guid(rclsid), debugstr_guid(riid), ppv);
     return CLASS_E_CLASSNOTAVAILABLE;

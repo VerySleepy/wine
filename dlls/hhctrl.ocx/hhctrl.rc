@@ -21,6 +21,8 @@
 
 #include "resource.h"
 
+#pragma makedep po
+
 LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 
 STRINGTABLE
@@ -76,3 +78,6 @@ LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
 
 /* @makedep: hhtoolbar.bmp */
 IDB_HHTOOLBAR BITMAP hhtoolbar.bmp
+
+/* @makedep: hhtreeview.bmp */
+IDB_HHTREEVIEW BITMAP hhtreeview.bmp

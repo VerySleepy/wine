@@ -1,6 +1,5 @@
 MODULE    = itss.dll
 IMPORTS   = uuid urlmon shlwapi ole32
-EXTRADEFS = -DCOM_NO_WINDOWS_H
 
 C_SRCS = \
 	chm_lib.c \
@@ -10,8 +9,6 @@ C_SRCS = \
 	protocol.c \
 	storage.c
 
-IDL_R_SRCS = itss.idl
+IDL_SRCS = itss.idl
 
 RC_SRCS = rsrc.rc
-
-@MAKE_DLL_RULES@

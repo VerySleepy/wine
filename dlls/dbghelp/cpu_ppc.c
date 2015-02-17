@@ -28,8 +28,8 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(dbghelp);
 
-static unsigned ppc_get_addr(HANDLE hThread, const CONTEXT* ctx,
-                             enum cpu_addr ca, ADDRESS64* addr)
+static BOOL ppc_get_addr(HANDLE hThread, const CONTEXT* ctx,
+                         enum cpu_addr ca, ADDRESS64* addr)
 {
    switch (ca)
     {
@@ -72,6 +72,18 @@ static const char* ppc_fetch_regname(unsigned regno)
     return NULL;
 }
 
+static BOOL ppc_fetch_minidump_thread(struct dump_context* dc, unsigned index, unsigned flags, const CONTEXT* ctx)
+{
+    FIXME("NIY\n");
+    return FALSE;
+}
+
+static BOOL ppc_fetch_minidump_module(struct dump_context* dc, unsigned index, unsigned flags)
+{
+    FIXME("NIY\n");
+    return FALSE;
+}
+
 DECLSPEC_HIDDEN struct cpu cpu_ppc = {
     IMAGE_FILE_MACHINE_POWERPC,
     4,
@@ -82,4 +94,6 @@ DECLSPEC_HIDDEN struct cpu cpu_ppc = {
     ppc_map_dwarf_register,
     ppc_fetch_context_reg,
     ppc_fetch_regname,
+    ppc_fetch_minidump_thread,
+    ppc_fetch_minidump_module,
 };

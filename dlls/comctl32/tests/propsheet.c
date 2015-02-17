@@ -45,7 +45,7 @@ static void flush_events(void)
     while (diff > 0)
     {
         if (MsgWaitForMultipleObjects( 0, NULL, FALSE, min_timeout, QS_ALLINPUT ) == WAIT_TIMEOUT) break;
-        while (PeekMessage( &msg, 0, 0, 0, PM_REMOVE )) DispatchMessage( &msg );
+        while (PeekMessageA( &msg, 0, 0, 0, PM_REMOVE )) DispatchMessageA( &msg );
         diff = time - GetTickCount();
     }
 }
@@ -132,7 +132,7 @@ static void test_title(void)
     hdlg = (HWND)PropertySheetA(&psh);
     ok(hdlg != INVALID_HANDLE_VALUE, "got invalid handle value %p\n", hdlg);
 
-    style = GetWindowLong(hdlg, GWL_STYLE);
+    style = GetWindowLongA(hdlg, GWL_STYLE);
     ok(style == (WS_POPUP|WS_VISIBLE|WS_CLIPSIBLINGS|WS_CAPTION|WS_SYSMENU|
                  DS_CONTEXTHELP|DS_MODALFRAME|DS_SETFONT|DS_3DLOOK),
        "got unexpected style: %x\n", style);
@@ -172,14 +172,17 @@ static void test_nopage(void)
     ok(hdlg != INVALID_HANDLE_VALUE, "got invalid handle value %p\n", hdlg);
 
     ShowWindow(hdlg,SW_NORMAL);
-    SendMessage(hdlg, PSM_REMOVEPAGE, 0, 0);
-    hpage = PropSheet_GetCurrentPageHwnd(hdlg);
-    ok(hpage == NULL, "expected no current page, got %p, index=%d\n", hpage, PropSheet_HwndToIndex(hdlg, hpage));
+    SendMessageA(hdlg, PSM_REMOVEPAGE, 0, 0);
+    hpage = /* PropSheet_GetCurrentPageHwnd(hdlg); */
+        (HWND)SendMessageA(hdlg, PSM_GETCURRENTPAGEHWND, 0, 0);
+    active_page = /* PropSheet_HwndToIndex(hdlg, hpage)); */
+        (int)SendMessageA(hdlg, PSM_HWNDTOINDEX, (WPARAM)hpage, 0);
+    ok(hpage == NULL, "expected no current page, got %p, index=%d\n", hpage, active_page);
     flush_events();
     RedrawWindow(hdlg,NULL,NULL,RDW_UPDATENOW|RDW_ERASENOW);
 
     /* Check that the property sheet was fully redrawn */
-    ok(!PeekMessage(&msg, 0, WM_PAINT, WM_PAINT, PM_NOREMOVE),
+    ok(!PeekMessageA(&msg, 0, WM_PAINT, WM_PAINT, PM_NOREMOVE),
        "expected no pending WM_PAINT messages\n");
     DestroyWindow(hdlg);
 }
@@ -208,7 +211,7 @@ static void register_parent_wnd_class(void)
     cls.cbWndExtra = 0;
     cls.hInstance = GetModuleHandleA(NULL);
     cls.hIcon = 0;
-    cls.hCursor = LoadCursorA(0, IDC_ARROW);
+    cls.hCursor = LoadCursorA(0, (LPCSTR)IDC_ARROW);
     cls.hbrBackground = GetStockObject(WHITE_BRUSH);
     cls.lpszMenuName = NULL;
     cls.lpszClassName = "parent class";
@@ -260,12 +263,13 @@ static INT_PTR CALLBACK nav_page_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM
             LPNMHDR hdr = (LPNMHDR)lparam;
             switch(hdr->code){
             case PSN_SETACTIVE:
-                active_page = PropSheet_HwndToIndex(hdr->hwndFrom, hwnd);
+                active_page = /* PropSheet_HwndToIndex(hdr->hwndFrom, hwnd); */
+                    (int)SendMessageA(hdr->hwndFrom, PSM_HWNDTOINDEX, (WPARAM)hwnd, 0);
                 return TRUE;
             case PSN_KILLACTIVE:
                 /* prevent navigation away from the fourth page */
                 if(active_page == 3){
-                    SetWindowLongPtr(hwnd, DWLP_MSGRESULT, TRUE);
+                    SetWindowLongPtrA(hwnd, DWLP_MSGRESULT, TRUE);
                     return TRUE;
                 }
             }
@@ -273,6 +277,37 @@ static INT_PTR CALLBACK nav_page_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM
         }
     }
     return FALSE;
+}
+
+static WNDPROC old_nav_dialog_proc;
+
+static LRESULT CALLBACK new_nav_dialog_proc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
+{
+    switch (msg)
+    {
+    case DM_SETDEFID:
+        ok( IsWindowEnabled( GetDlgItem(hwnd, wp) ), "button is not enabled\n" );
+        break;
+    }
+    return CallWindowProcW( old_nav_dialog_proc, hwnd, msg, wp, lp );
+}
+
+static LRESULT CALLBACK hook_proc( int code, WPARAM wp, LPARAM lp )
+{
+    static BOOL done;
+    if (code == HCBT_CREATEWND)
+    {
+        CBT_CREATEWNDW *c = (CBT_CREATEWNDW *)lp;
+
+        /* The first dialog created will be the parent dialog */
+        if (!done && c->lpcs->lpszClass == MAKEINTRESOURCEW(WC_DIALOG))
+        {
+            old_nav_dialog_proc = (WNDPROC)SetWindowLongPtrW( (HWND)wp, GWLP_WNDPROC, (LONG_PTR)new_nav_dialog_proc );
+            done = TRUE;
+        }
+    }
+
+    return CallNextHookEx( NULL, code, wp, lp );
 }
 
 static void test_wiznavigation(void)
@@ -287,31 +322,35 @@ static void test_wiznavigation(void)
     BOOL hwndtoindex_supported = TRUE;
     const INT nextID = 12324;
     const INT backID = 12323;
+    HHOOK hook;
+
+    /* set up a hook proc in order to subclass the main dialog early on */
+    hook = SetWindowsHookExW( WH_CBT, hook_proc, NULL, GetCurrentThreadId() );
 
     /* create the property sheet pages */
     memset(psp, 0, sizeof(PROPSHEETPAGEA) * 4);
 
     psp[0].dwSize = sizeof(PROPSHEETPAGEA);
     psp[0].hInstance = GetModuleHandleA(NULL);
-    U(psp[0]).pszTemplate = MAKEINTRESOURCE(IDD_PROP_PAGE_INTRO);
+    U(psp[0]).pszTemplate = (LPCSTR)MAKEINTRESOURCE(IDD_PROP_PAGE_INTRO);
     psp[0].pfnDlgProc = nav_page_proc;
     hpsp[0] = CreatePropertySheetPageA(&psp[0]);
 
     psp[1].dwSize = sizeof(PROPSHEETPAGEA);
     psp[1].hInstance = GetModuleHandleA(NULL);
-    U(psp[1]).pszTemplate = MAKEINTRESOURCE(IDD_PROP_PAGE_EDIT);
+    U(psp[1]).pszTemplate = (LPCSTR)MAKEINTRESOURCE(IDD_PROP_PAGE_EDIT);
     psp[1].pfnDlgProc = nav_page_proc;
     hpsp[1] = CreatePropertySheetPageA(&psp[1]);
 
     psp[2].dwSize = sizeof(PROPSHEETPAGEA);
     psp[2].hInstance = GetModuleHandleA(NULL);
-    U(psp[2]).pszTemplate = MAKEINTRESOURCE(IDD_PROP_PAGE_RADIO);
+    U(psp[2]).pszTemplate = (LPCSTR)MAKEINTRESOURCE(IDD_PROP_PAGE_RADIO);
     psp[2].pfnDlgProc = nav_page_proc;
     hpsp[2] = CreatePropertySheetPageA(&psp[2]);
 
     psp[3].dwSize = sizeof(PROPSHEETPAGEA);
     psp[3].hInstance = GetModuleHandleA(NULL);
-    U(psp[3]).pszTemplate = MAKEINTRESOURCE(IDD_PROP_PAGE_EXIT);
+    U(psp[3]).pszTemplate = (LPCSTR)MAKEINTRESOURCE(IDD_PROP_PAGE_EXIT);
     psp[3].pfnDlgProc = nav_page_proc;
     hpsp[3] = CreatePropertySheetPageA(&psp[3]);
 
@@ -328,74 +367,75 @@ static void test_wiznavigation(void)
 
     ok(active_page == 0, "Active page should be 0. Is: %d\n", active_page);
 
-    style = GetWindowLong(hdlg, GWL_STYLE) & ~(DS_CONTEXTHELP|WS_SYSMENU);
+    style = GetWindowLongA(hdlg, GWL_STYLE) & ~(DS_CONTEXTHELP|WS_SYSMENU);
     ok(style == (WS_POPUP|WS_VISIBLE|WS_CLIPSIBLINGS|WS_CAPTION|
                  DS_MODALFRAME|DS_SETFONT|DS_3DLOOK),
        "got unexpected style: %x\n", style);
 
     control = GetFocus();
-    controlID = GetWindowLongPtr(control, GWLP_ID);
+    controlID = GetWindowLongPtrA(control, GWLP_ID);
     ok(controlID == nextID, "Focus should have been set to the Next button. Expected: %d, Found: %ld\n", nextID, controlID);
 
     /* simulate pressing the Next button */
-    SendMessage(hdlg, PSM_PRESSBUTTON, PSBTN_NEXT, 0);
+    SendMessageA(hdlg, PSM_PRESSBUTTON, PSBTN_NEXT, 0);
     if (!active_page) hwndtoindex_supported = FALSE;
     if (hwndtoindex_supported)
         ok(active_page == 1, "Active page should be 1 after pressing Next. Is: %d\n", active_page);
 
     control = GetFocus();
-    controlID = GetWindowLongPtr(control, GWLP_ID);
+    controlID = GetWindowLongPtrA(control, GWLP_ID);
     ok(controlID == IDC_PS_EDIT1, "Focus should be set to the first item on the second page. Expected: %d, Found: %ld\n", IDC_PS_EDIT1, controlID);
 
-    defidres = SendMessage(hdlg, DM_GETDEFID, 0, 0);
+    defidres = SendMessageA(hdlg, DM_GETDEFID, 0, 0);
     ok(defidres == MAKELRESULT(nextID, DC_HASDEFID), "Expected default button ID to be %d, is %d\n", nextID, LOWORD(defidres));
 
     /* set the focus to the second edit box on this page */
     SetFocus(GetNextDlgTabItem(hdlg, control, FALSE));
 
     /* press next again */
-    SendMessage(hdlg, PSM_PRESSBUTTON, PSBTN_NEXT, 0);
+    SendMessageA(hdlg, PSM_PRESSBUTTON, PSBTN_NEXT, 0);
     if (hwndtoindex_supported)
         ok(active_page == 2, "Active page should be 2 after pressing Next. Is: %d\n", active_page);
 
     control = GetFocus();
-    controlID = GetWindowLongPtr(control, GWLP_ID);
+    controlID = GetWindowLongPtrA(control, GWLP_ID);
     ok(controlID == IDC_PS_RADIO1, "Focus should have been set to item on third page. Expected: %d, Found %ld\n", IDC_PS_RADIO1, controlID);
 
     /* back button */
-    SendMessage(hdlg, PSM_PRESSBUTTON, PSBTN_BACK, 0);
+    SendMessageA(hdlg, PSM_PRESSBUTTON, PSBTN_BACK, 0);
     if (hwndtoindex_supported)
         ok(active_page == 1, "Active page should be 1 after pressing Back. Is: %d\n", active_page);
 
     control = GetFocus();
-    controlID = GetWindowLongPtr(control, GWLP_ID);
+    controlID = GetWindowLongPtrA(control, GWLP_ID);
     ok(controlID == IDC_PS_EDIT1, "Focus should have been set to the first item on second page. Expected: %d, Found %ld\n", IDC_PS_EDIT1, controlID);
 
-    defidres = SendMessage(hdlg, DM_GETDEFID, 0, 0);
+    defidres = SendMessageA(hdlg, DM_GETDEFID, 0, 0);
     ok(defidres == MAKELRESULT(backID, DC_HASDEFID), "Expected default button ID to be %d, is %d\n", backID, LOWORD(defidres));
 
     /* press next twice */
-    SendMessage(hdlg, PSM_PRESSBUTTON, PSBTN_NEXT, 0);
+    SendMessageA(hdlg, PSM_PRESSBUTTON, PSBTN_NEXT, 0);
     if (hwndtoindex_supported)
         ok(active_page == 2, "Active page should be 2 after pressing Next. Is: %d\n", active_page);
-    SendMessage(hdlg, PSM_PRESSBUTTON, PSBTN_NEXT, 0);
+    SendMessageA(hdlg, PSM_PRESSBUTTON, PSBTN_NEXT, 0);
     if (hwndtoindex_supported)
         ok(active_page == 3, "Active page should be 3 after pressing Next. Is: %d\n", active_page);
     else
         active_page = 3;
 
     control = GetFocus();
-    controlID = GetWindowLongPtr(control, GWLP_ID);
+    controlID = GetWindowLongPtrA(control, GWLP_ID);
     ok(controlID == nextID, "Focus should have been set to the Next button. Expected: %d, Found: %ld\n", nextID, controlID);
 
     /* try to navigate away, but shouldn't be able to */
-    SendMessage(hdlg, PSM_PRESSBUTTON, PSBTN_BACK, 0);
+    SendMessageA(hdlg, PSM_PRESSBUTTON, PSBTN_BACK, 0);
     ok(active_page == 3, "Active page should still be 3 after pressing Back. Is: %d\n", active_page);
 
-    defidres = SendMessage(hdlg, DM_GETDEFID, 0, 0);
+    defidres = SendMessageA(hdlg, DM_GETDEFID, 0, 0);
     ok(defidres == MAKELRESULT(nextID, DC_HASDEFID), "Expected default button ID to be %d, is %d\n", nextID, LOWORD(defidres));
 
     DestroyWindow(hdlg);
+    UnhookWindowsHookEx( hook );
 }
 
 static void test_buttons(void)
@@ -484,7 +524,7 @@ page_with_custom_default_button_dlg_proc(HWND hdlg, UINT msg, WPARAM wparam, LPA
 
 static void test_custom_default_button(void)
 {
-    HWND hdlg;
+    HWND hdlg, page;
     PROPSHEETPAGEA psp[1];
     PROPSHEETHEADERA psh;
     MSG msg;
@@ -493,7 +533,7 @@ static void test_custom_default_button(void)
     psp[0].dwSize = sizeof (PROPSHEETPAGEA);
     psp[0].dwFlags = PSP_USETITLE;
     psp[0].hInstance = GetModuleHandleA(NULL);
-    U(psp[0]).pszTemplate = MAKEINTRESOURCE(IDD_PROP_PAGE_WITH_CUSTOM_DEFAULT_BUTTON);
+    U(psp[0]).pszTemplate = (LPCSTR)MAKEINTRESOURCE(IDD_PROP_PAGE_WITH_CUSTOM_DEFAULT_BUTTON);
     U2(psp[0]).pszIcon = NULL;
     psp[0].pfnDlgProc = page_with_custom_default_button_dlg_proc;
     psp[0].pszTitle = "Page1";
@@ -519,24 +559,26 @@ static void test_custom_default_button(void)
     ok(hdlg != INVALID_HANDLE_VALUE, "Cannot create the property sheet\n");
 
     /* Set the Add button as the default button. */
-    SendMessage(hdlg, DM_SETDEFID, (WPARAM)IDC_PS_PUSHBUTTON1, 0);
+    SendMessageA(hdlg, DM_SETDEFID, (WPARAM)IDC_PS_PUSHBUTTON1, 0);
 
     /* Make sure the default button is the Add button. */
-    result = SendMessage(hdlg, DM_GETDEFID, 0, 0);
+    result = SendMessageA(hdlg, DM_GETDEFID, 0, 0);
     ok(DC_HASDEFID == HIWORD(result), "The property sheet does not have a default button\n");
     ok(IDC_PS_PUSHBUTTON1 == LOWORD(result), "The default button is not the Add button\n");
 
     /* At this point, the combobox should have keyboard focus, so we press ENTER.
      * Pull the lever, Kronk! */
-    keybd_event(VK_RETURN, 0, 0, 0);
+    page = (HWND)SendMessageW(hdlg, PSM_GETCURRENTPAGEHWND, 0, 0);
+    PostMessageW(GetDlgItem(page, IDC_PS_COMBO1), WM_KEYDOWN, VK_RETURN, 0);
 
     /* Process all the messages in the queue for this thread. */
-    while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+    while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE))
     {
-        if (!PropSheet_IsDialogMessage(hdlg, &msg))
+        /* (!PropSheet_IsDialogMessage(hdlg, &msg)) */
+        if (!((BOOL)SendMessageA(hdlg, PSM_ISDIALOGMESSAGE, 0, (LPARAM)&msg)))
         {
             TranslateMessage(&msg);
-            DispatchMessage(&msg);
+            DispatchMessageA(&msg);
         }
     }
 
@@ -667,8 +709,6 @@ static void save_message(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, 
         (message < WM_MOUSEFIRST || message > WM_MOUSEHWHEEL) &&
         message != 0x90)
     {
-        /*trace("check_message: %04x, %04x\n", message, receiver);*/
-
         msg.message = message;
         msg.flags = sent|wparam|lparam|id;
         msg.wParam = wParam;
@@ -682,7 +722,7 @@ static LRESULT CALLBACK sheet_callback_messages_proc (HWND hwnd, UINT msg, WPARA
 {
     save_message(hwnd, msg, wParam, lParam, RECEIVER_SHEET_WINPROC);
 
-    return CallWindowProc (oldWndProc, hwnd, msg, wParam, lParam);
+    return CallWindowProcA(oldWndProc, hwnd, msg, wParam, lParam);
 }
 
 static int CALLBACK sheet_callback_messages(HWND hwnd, UINT msg, LPARAM lParam)
@@ -692,8 +732,8 @@ static int CALLBACK sheet_callback_messages(HWND hwnd, UINT msg, LPARAM lParam)
     switch (msg)
     {
     case PSCB_INITIALIZED:
-        oldWndProc = (WNDPROC)GetWindowLongPtr (hwnd, GWLP_WNDPROC);
-        SetWindowLongPtr (hwnd, GWLP_WNDPROC, (LONG_PTR)&sheet_callback_messages_proc);
+        oldWndProc = (WNDPROC)GetWindowLongPtrA(hwnd, GWLP_WNDPROC);
+        SetWindowLongPtrA(hwnd, GWLP_WNDPROC, (LONG_PTR)&sheet_callback_messages_proc);
         return TRUE;
     }
 
@@ -721,7 +761,7 @@ static void test_messages(void)
     psp.dwSize = sizeof(psp);
     psp.dwFlags = 0;
     psp.hInstance = GetModuleHandleA(NULL);
-    U(psp).pszTemplate = MAKEINTRESOURCE(IDD_PROP_PAGE_MESSAGE_TEST);
+    U(psp).pszTemplate = (LPCSTR)MAKEINTRESOURCE(IDD_PROP_PAGE_MESSAGE_TEST);
     U2(psp).pszIcon = NULL;
     psp.pfnDlgProc = page_dlg_proc_messages;
     psp.lParam = 0;
@@ -750,7 +790,7 @@ static void test_messages(void)
 
 static void test_PSM_ADDPAGE(void)
 {
-    HPROPSHEETPAGE hpsp[3];
+    HPROPSHEETPAGE hpsp[5];
     PROPSHEETPAGEA psp;
     PROPSHEETHEADERA psh;
     HWND hdlg, tab;
@@ -761,7 +801,7 @@ static void test_PSM_ADDPAGE(void)
     psp.dwSize = sizeof(psp);
     psp.dwFlags = 0;
     psp.hInstance = GetModuleHandleA(NULL);
-    U(psp).pszTemplate = MAKEINTRESOURCE(IDD_PROP_PAGE_MESSAGE_TEST);
+    U(psp).pszTemplate = (LPCSTR)MAKEINTRESOURCE(IDD_PROP_PAGE_MESSAGE_TEST);
     U2(psp).pszIcon = NULL;
     psp.pfnDlgProc = page_dlg_proc_messages;
     psp.lParam = 0;
@@ -770,6 +810,12 @@ static void test_PSM_ADDPAGE(void)
     hpsp[0] = CreatePropertySheetPageA(&psp);
     hpsp[1] = CreatePropertySheetPageA(&psp);
     hpsp[2] = CreatePropertySheetPageA(&psp);
+
+    U(psp).pszTemplate = (LPCSTR)MAKEINTRESOURCE(IDD_PROP_PAGE_ERROR);
+    hpsp[3] = CreatePropertySheetPageA(&psp);
+
+    psp.dwFlags = PSP_PREMATURE;
+    hpsp[4] = CreatePropertySheetPageA(&psp);
 
     memset(&psh, 0, sizeof(psh));
     psh.dwSize = PROPSHEETHEADERA_V1_SIZE;
@@ -803,6 +849,27 @@ if (0)
 
     ret = SendMessageA(hdlg, PSM_ADDPAGE, 0, (LPARAM)hpsp[2]);
     ok(ret == TRUE, "got %d\n", ret);
+
+    r = SendMessageA(tab, TCM_GETITEMCOUNT, 0, 0);
+    ok(r == 3, "got %d\n", r);
+
+    /* add property sheet page that can't be created */
+    ret = SendMessageA(hdlg, PSM_ADDPAGE, 0, (LPARAM)hpsp[3]);
+    ok(ret == TRUE, "got %d\n", ret);
+
+    r = SendMessageA(tab, TCM_GETITEMCOUNT, 0, 0);
+    ok(r == 4, "got %d\n", r);
+
+    /* select page that can't be created */
+    ret = SendMessageA(hdlg, PSM_SETCURSEL, 3, 1);
+    ok(ret == TRUE, "got %d\n", ret);
+
+    r = SendMessageA(tab, TCM_GETITEMCOUNT, 0, 0);
+    ok(r == 3, "got %d\n", r);
+
+    /* test PSP_PREMATURE flag with incorrect property sheet page */
+    ret = SendMessageA(hdlg, PSM_ADDPAGE, 0, (LPARAM)hpsp[4]);
+    ok(ret == FALSE, "got %d\n", ret);
 
     r = SendMessageA(tab, TCM_GETITEMCOUNT, 0, 0);
     ok(r == 3, "got %d\n", r);

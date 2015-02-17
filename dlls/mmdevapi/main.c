@@ -32,10 +32,9 @@
 #include "olectl.h"
 #include "rpcproxy.h"
 #include "propsys.h"
-#include "initguid.h"
 #include "propkeydef.h"
 #include "mmdeviceapi.h"
-#include "dshow.h"
+#include "mmsystem.h"
 #include "dsound.h"
 #include "audioclient.h"
 #include "endpointvolume.h"
@@ -97,6 +96,9 @@ static BOOL load_driver(const WCHAR *name, DriverFuncs *driver)
     LDFC(GetAudioEndpoint);
     LDFC(GetAudioSessionManager);
 #undef LDFC
+
+    /* optional - do not fail if not found */
+    driver->pGetPropValue = (void*)GetProcAddress(driver->module, "GetPropValue");
 
     driver->priority = driver->pGetPriority();
     lstrcpyW(driver->module_name, driver_module);
@@ -163,7 +165,7 @@ static BOOL init_driver(void)
             *next = ',';
     }
 
-    return drvs.module ? TRUE : FALSE;
+    return drvs.module != 0;
 }
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
@@ -177,6 +179,8 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
             DisableThreadLibraryCalls(hinstDLL);
             break;
         case DLL_PROCESS_DETACH:
+            if(lpvReserved)
+                break;
             MMDevEnum_Free();
             break;
     }
@@ -203,7 +207,7 @@ static inline IClassFactoryImpl *impl_from_IClassFactory(IClassFactory *iface)
 }
 
 static HRESULT WINAPI
-MMCF_QueryInterface(LPCLASSFACTORY iface, REFIID riid, LPVOID *ppobj)
+MMCF_QueryInterface(IClassFactory *iface, REFIID riid, void **ppobj)
 {
     IClassFactoryImpl *This = impl_from_IClassFactory(iface);
     TRACE("(%p, %s, %p)\n", This, debugstr_guid(riid), ppobj);
@@ -213,7 +217,7 @@ MMCF_QueryInterface(LPCLASSFACTORY iface, REFIID riid, LPVOID *ppobj)
         IsEqualIID(riid, &IID_IClassFactory))
     {
         *ppobj = iface;
-        IUnknown_AddRef(iface);
+        IClassFactory_AddRef(iface);
         return S_OK;
     }
     *ppobj = NULL;
@@ -272,7 +276,7 @@ static IClassFactoryImpl MMDEVAPI_CF[] = {
 
 HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID *ppv)
 {
-    int i = 0;
+    unsigned int i = 0;
     TRACE("(%s, %s, %p)\n", debugstr_guid(rclsid), debugstr_guid(riid), ppv);
 
     if(!init_driver()){
@@ -296,7 +300,7 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID *ppv)
     for (i = 0; i < sizeof(MMDEVAPI_CF)/sizeof(MMDEVAPI_CF[0]); ++i)
     {
         if (IsEqualGUID(rclsid, MMDEVAPI_CF[i].rclsid)) {
-            IUnknown_AddRef(&MMDEVAPI_CF[i].IClassFactory_iface);
+            IClassFactory_AddRef(&MMDEVAPI_CF[i].IClassFactory_iface);
             *ppv = &MMDEVAPI_CF[i];
             return S_OK;
         }

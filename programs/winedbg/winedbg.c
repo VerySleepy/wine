@@ -35,11 +35,11 @@
  *
  * - minidump
  *      + ensure that all commands work as expected in minidump reload function
- *        (and reenable parser usager)
+ *        (and re-enable parser usage)
  * - CPU adherence
- *      + we always assume the stack grows as on i386 (ie downwards)
+ *      + we always assume the stack grows as on i386 (i.e. downwards)
  * - UI
- *      + enable back the limited output (depth of structure printing and number of 
+ *      + re-enable the limited output (depth of structure printing and number of
  *        lines)
  *      + make the output as close as possible to what gdb does
  * - symbol management:
@@ -89,11 +89,11 @@ DWORD_PTR	        dbg_curr_tid = 0;
 DWORD_PTR	        dbg_curr_pid = 0;
 CONTEXT                 dbg_context;
 BOOL    	        dbg_interactiveP = FALSE;
+HANDLE                  dbg_houtput = 0;
 
 static struct list      dbg_process_list = LIST_INIT(dbg_process_list);
 
 struct dbg_internal_var         dbg_internal_vars[DBG_IV_LAST];
-static HANDLE                   dbg_houtput;
 
 static void dbg_outputA(const char* buffer, int len)
 {
@@ -566,20 +566,20 @@ static int dbg_winedbg_usage(BOOL advanced)
     if (advanced)
     {
     dbg_printf("Usage:\n"
-               "   winedbg cmdline         launch process 'cmdline' (as if you were starting\n"
+               "   winedbg <cmdline>       launch process <cmdline> (as if you were starting\n"
                "                           it with wine) and run WineDbg on it\n"
-               "   winedbg <num>           attach to running process of pid <num> and run\n"
+               "   winedbg <num>           attach to running process of wpid <num> and run\n"
                "                           WineDbg on it\n"
-               "   winedbg --gdb cmdline   launch process 'cmdline' (as if you were starting\n"
+               "   winedbg --gdb <cmdline> launch process <cmdline> (as if you were starting\n"
                "                           wine) and run gdb (proxied) on it\n"
-               "   winedbg --gdb <num>     attach to running process of pid <num> and run\n"
+               "   winedbg --gdb <num>     attach to running process of wpid <num> and run\n"
                "                           gdb (proxied) on it\n"
-               "   winedbg file.mdmp       reload the minidump file.mdmp into memory and run\n"
+               "   winedbg <file.mdmp>     reload the minidump <file.mdmp> into memory and run\n"
                "                           WineDbg on it\n"
                "   winedbg --help          prints advanced options\n");
     }
     else
-        dbg_printf("Usage:\n\twinedbg [ [ --gdb ] [ prog-name [ prog-args ] | <num> | file.mdmp | --help ]\n");
+        dbg_printf("Usage:\n\twinedbg [ [ --gdb ] [ <prog-name> [ <prog-args> ] | <num> | <file.mdmp> | --help ]\n");
     return 0;
 }
 
@@ -616,10 +616,10 @@ extern struct backend_cpu be_i386;
 extern struct backend_cpu be_ppc;
 #elif defined(__x86_64__)
 extern struct backend_cpu be_x86_64;
-#elif defined(__sparc__)
-extern struct backend_cpu be_sparc;
-#elif defined(__arm__)
+#elif defined(__arm__) && !defined(__ARMEB__)
 extern struct backend_cpu be_arm;
+#elif defined(__aarch64__) && !defined(__AARCH64EB__)
+extern struct backend_cpu be_arm64;
 #else
 # error CPU unknown
 #endif
@@ -636,10 +636,10 @@ int main(int argc, char** argv)
     be_cpu = &be_ppc;
 #elif defined(__x86_64__)
     be_cpu = &be_x86_64;
-#elif defined(__sparc__)
-    be_cpu = &be_sparc;
-#elif defined(__arm__)
+#elif defined(__arm__) && !defined(__ARMEB__)
     be_cpu = &be_arm;
+#elif defined(__aarch64__) && !defined(__AARCH64EB__)
+    be_cpu = &be_arm64;
 #else
 # error CPU unknown
 #endif
@@ -668,12 +668,18 @@ int main(int argc, char** argv)
     SymSetOptions((SymGetOptions() & ~(SYMOPT_UNDNAME)) |
                   SYMOPT_LOAD_LINES | SYMOPT_DEFERRED_LOADS | SYMOPT_AUTO_PUBLICS);
 
-    if (argc && (!strcmp(argv[0], "--auto") || !strcmp(argv[0], "--minidump")))
+    if (argc && !strcmp(argv[0], "--auto"))
     {
-        /* force some internal variables */
-        DBG_IVAR(BreakOnDllLoad) = 0;
-        dbg_houtput = GetStdHandle(STD_ERROR_HANDLE);
         switch (dbg_active_auto(argc, argv))
+        {
+        case start_ok:          return 0;
+        case start_error_parse: return dbg_winedbg_usage(FALSE);
+        case start_error_init:  return -1;
+        }
+    }
+    if (argc && !strcmp(argv[0], "--minidump"))
+    {
+        switch (dbg_active_minidump(argc, argv))
         {
         case start_ok:          return 0;
         case start_error_parse: return dbg_winedbg_usage(FALSE);

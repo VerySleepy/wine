@@ -56,12 +56,12 @@ static HRESULT WINAPI LangBarMgr_QueryInterface(ITfLangBarMgr *iface, REFIID iid
 
     if (IsEqualIID(iid, &IID_IUnknown) || IsEqualIID(iid, &IID_ITfLangBarMgr))
     {
-        *ppvOut = This;
+        *ppvOut = &This->ITfLangBarMgr_iface;
     }
 
     if (*ppvOut)
     {
-        IUnknown_AddRef(iface);
+        ITfLangBarMgr_AddRef(iface);
         return S_OK;
     }
 
@@ -192,7 +192,7 @@ HRESULT LangBarMgr_Constructor(IUnknown *pUnkOuter, IUnknown **ppOut)
     This->ITfLangBarMgr_iface.lpVtbl = &LangBarMgr_LangBarMgrVtbl;
     This->refCount = 1;
 
-    TRACE("returning %p\n", This);
-    *ppOut = (IUnknown *)This;
+    *ppOut = (IUnknown *)&This->ITfLangBarMgr_iface;
+    TRACE("returning %p\n", *ppOut);
     return S_OK;
 }

@@ -33,9 +33,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(actctx);
 
-
-#define ACTCTX_FAKE_HANDLE ((HANDLE) 0xf00baa)
-
 /***********************************************************************
  * CreateActCtxA (KERNEL32.@)
  *
@@ -200,14 +197,18 @@ void WINAPI ReleaseActCtx(HANDLE hActCtx)
 /***********************************************************************
  * ZombifyActCtx (KERNEL32.@)
  *
- * Release a reference to an activation context.
+ * Deactivate context without releasing it.
  */
 BOOL WINAPI ZombifyActCtx(HANDLE hActCtx)
 {
-  FIXME("%p\n", hActCtx);
-  if (hActCtx != ACTCTX_FAKE_HANDLE)
-    return FALSE;
-  return TRUE;
+    NTSTATUS status;
+
+    if ((status = RtlZombifyActivationContext(hActCtx)))
+    {
+        SetLastError(RtlNtStatusToDosError(status));
+        return FALSE;
+    }
+    return TRUE;
 }
 
 /***********************************************************************
@@ -272,10 +273,15 @@ BOOL WINAPI FindActCtxSectionGuid(DWORD dwFlags, const GUID* lpExtGuid,
                                   ULONG ulId, const GUID* lpSearchGuid,
                                   PACTCTX_SECTION_KEYED_DATA pInfo)
 {
-  FIXME("%08x %s %u %s %p\n", dwFlags, debugstr_guid(lpExtGuid),
-       ulId, debugstr_guid(lpSearchGuid), pInfo);
-  SetLastError( ERROR_CALL_NOT_IMPLEMENTED);
-  return FALSE;
+    NTSTATUS status;
+
+    if ((status = RtlFindActivationContextSectionGuid(dwFlags, lpExtGuid, ulId, lpSearchGuid, pInfo)))
+    {
+        SetLastError(RtlNtStatusToDosError(status));
+        return FALSE;
+    }
+
+    return TRUE;
 }
 
 /***********************************************************************

@@ -21,9 +21,6 @@
 #include "config.h"
 
 #include "x11drv.h"
-#include "wine/debug.h"
-
-WINE_DEFAULT_DEBUG_CHANNEL(x11drv);
 
 
 static DWORD get_user_dashes( char *res, const DWORD *style, DWORD len )
@@ -57,7 +54,7 @@ static DWORD get_user_dashes( char *res, const DWORD *style, DWORD len )
 /***********************************************************************
  *           SelectPen   (X11DRV.@)
  */
-HPEN X11DRV_SelectPen( PHYSDEV dev, HPEN hpen )
+HPEN X11DRV_SelectPen( PHYSDEV dev, HPEN hpen, const struct brush_pattern *pattern )
 {
     static const char PEN_dash[]          = { 16,8 };
     static const char PEN_dot[]           = { 4,4 };

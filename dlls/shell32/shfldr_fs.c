@@ -59,14 +59,13 @@ WINE_DEFAULT_DEBUG_CHANNEL (shell);
 */
 
 typedef struct {
-    const IUnknownVtbl        *lpVtbl;
-    LONG                ref;
-    const IShellFolder2Vtbl   *lpvtblShellFolder;
-    const IPersistFolder3Vtbl *lpvtblPersistFolder3;
-    const IDropTargetVtbl     *lpvtblDropTarget;
-    const ISFHelperVtbl       *lpvtblSFHelper;
-
-    IUnknown *pUnkOuter; /* used for aggregation */
+    IUnknown IUnknown_inner;
+    LONG ref;
+    IShellFolder2 IShellFolder2_iface;
+    IPersistFolder3 IPersistFolder3_iface;
+    IDropTarget IDropTarget_iface;
+    ISFHelper ISFHelper_iface;
+    IUnknown *outer_unk;
 
     CLSID *pclsid;
 
@@ -79,45 +78,30 @@ typedef struct {
     BOOL fAcceptFmt;       /* flag for pending Drop */
 } IGenericSFImpl;
 
-static const IUnknownVtbl unkvt;
-static const IShellFolder2Vtbl sfvt;
-static const IPersistFolder3Vtbl vt_FSFldr_PersistFolder3; /* IPersistFolder3 for a FS_Folder */
-static const IDropTargetVtbl dtvt;
-static const ISFHelperVtbl shvt;
-
-static inline IGenericSFImpl *impl_from_IShellFolder2( IShellFolder2 *iface )
+static inline IGenericSFImpl *impl_from_IUnknown(IUnknown *iface)
 {
-    return (IGenericSFImpl *)((char*)iface - FIELD_OFFSET(IGenericSFImpl, lpvtblShellFolder));
+    return CONTAINING_RECORD(iface, IGenericSFImpl, IUnknown_inner);
 }
 
-static inline IGenericSFImpl *impl_from_IPersistFolder3( IPersistFolder3 *iface )
+static inline IGenericSFImpl *impl_from_IShellFolder2(IShellFolder2 *iface)
 {
-    return (IGenericSFImpl *)((char*)iface - FIELD_OFFSET(IGenericSFImpl, lpvtblPersistFolder3));
+    return CONTAINING_RECORD(iface, IGenericSFImpl, IShellFolder2_iface);
 }
 
-static inline IGenericSFImpl *impl_from_IDropTarget( IDropTarget *iface )
+static inline IGenericSFImpl *impl_from_IPersistFolder3(IPersistFolder3 *iface)
 {
-    return (IGenericSFImpl *)((char*)iface - FIELD_OFFSET(IGenericSFImpl, lpvtblDropTarget));
+    return CONTAINING_RECORD(iface, IGenericSFImpl, IPersistFolder3_iface);
 }
 
-static inline IGenericSFImpl *impl_from_ISFHelper( ISFHelper *iface )
+static inline IGenericSFImpl *impl_from_IDropTarget(IDropTarget *iface)
 {
-    return (IGenericSFImpl *)((char*)iface - FIELD_OFFSET(IGenericSFImpl, lpvtblSFHelper));
+    return CONTAINING_RECORD(iface, IGenericSFImpl, IDropTarget_iface);
 }
 
-
-/*
-  converts This to an interface pointer
-*/
-#define _IUnknown_(This)        ((IUnknown*)&(This)->lpVtbl)
-#define _IShellFolder_(This)    ((IShellFolder*)&(This)->lpvtblShellFolder)
-#define _IShellFolder2_(This)   ((IShellFolder2*)&(This)->lpvtblShellFolder)
-#define _IPersist_(This)        (&(This)->lpvtblPersistFolder3)
-#define _IPersistFolder_(This)  (&(This)->lpvtblPersistFolder3)
-#define _IPersistFolder2_(This) (&(This)->lpvtblPersistFolder3)
-#define _IPersistFolder3_(This) (&(This)->lpvtblPersistFolder3)
-#define _IDropTarget_(This)     (&(This)->lpvtblDropTarget)
-#define _ISFHelper_(This)       (&(This)->lpvtblSFHelper)
+static inline IGenericSFImpl *impl_from_ISFHelper(ISFHelper *iface)
+{
+    return CONTAINING_RECORD(iface, IGenericSFImpl, ISFHelper_iface);
+}
 
 /**************************************************************************
 * registers clipboardformat once
@@ -132,40 +116,32 @@ static void SF_RegisterClipFmt (IGenericSFImpl * This)
 }
 
 /**************************************************************************
-* we need a separate IUnknown to handle aggregation
-* (inner IUnknown)
+* inner IUnknown
 */
-static HRESULT WINAPI IUnknown_fnQueryInterface (IUnknown * iface, REFIID riid, LPVOID * ppvObj)
+static HRESULT WINAPI IUnknown_fnQueryInterface(IUnknown *iface, REFIID riid, void **ppvObj)
 {
-    IGenericSFImpl *This = (IGenericSFImpl *)iface;
+    IGenericSFImpl *This = impl_from_IUnknown(iface);
 
-    TRACE ("(%p)->(%s,%p)\n", This, shdebugstr_guid (riid), ppvObj);
+    TRACE("(%p)->(%s,%p)\n", This, shdebugstr_guid(riid), ppvObj);
 
     *ppvObj = NULL;
 
     if (IsEqualIID (riid, &IID_IUnknown))
-        *ppvObj = _IUnknown_ (This);
-    else if (IsEqualIID (riid, &IID_IShellFolder))
-        *ppvObj = _IShellFolder_ (This);
-    else if (IsEqualIID (riid, &IID_IShellFolder2))
-        *ppvObj = _IShellFolder_ (This);
-    else if (IsEqualIID (riid, &IID_IPersist))
-        *ppvObj = _IPersist_ (This);
-    else if (IsEqualIID (riid, &IID_IPersistFolder))
-        *ppvObj = _IPersistFolder_ (This);
-    else if (IsEqualIID (riid, &IID_IPersistFolder2))
-        *ppvObj = _IPersistFolder2_ (This);
-    else if (IsEqualIID (riid, &IID_IPersistFolder3))
-        *ppvObj = _IPersistFolder3_ (This);
+        *ppvObj = &This->IUnknown_inner;
+    else if (IsEqualIID(riid, &IID_IShellFolder) || IsEqualIID(riid, &IID_IShellFolder2))
+        *ppvObj = &This->IShellFolder2_iface;
+    else if (IsEqualIID(riid, &IID_IPersist) || IsEqualIID(riid, &IID_IPersistFolder) ||
+            IsEqualIID(riid, &IID_IPersistFolder2) || IsEqualIID(riid, &IID_IPersistFolder3))
+        *ppvObj = &This->IPersistFolder3_iface;
     else if (IsEqualIID (riid, &IID_ISFHelper))
-        *ppvObj = _ISFHelper_ (This);
+        *ppvObj = &This->ISFHelper_iface;
     else if (IsEqualIID (riid, &IID_IDropTarget)) {
-        *ppvObj = _IDropTarget_ (This);
-        SF_RegisterClipFmt (This);
+        *ppvObj = &This->IDropTarget_iface;
+        SF_RegisterClipFmt(This);
     }
 
     if (*ppvObj) {
-        IUnknown_AddRef ((IUnknown *) (*ppvObj));
+        IUnknown_AddRef((IUnknown *)*ppvObj);
         TRACE ("-- Interface = %p\n", *ppvObj);
         return S_OK;
     }
@@ -173,31 +149,31 @@ static HRESULT WINAPI IUnknown_fnQueryInterface (IUnknown * iface, REFIID riid, 
     return E_NOINTERFACE;
 }
 
-static ULONG WINAPI IUnknown_fnAddRef (IUnknown * iface)
+static ULONG WINAPI IUnknown_fnAddRef(IUnknown *iface)
 {
-    IGenericSFImpl *This = (IGenericSFImpl *)iface;
-    ULONG refCount = InterlockedIncrement(&This->ref);
+    IGenericSFImpl *This = impl_from_IUnknown(iface);
+    ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE ("(%p)->(count=%u)\n", This, refCount - 1);
+    TRACE("(%p) ref=%d\n", This, ref);
 
-    return refCount;
+    return ref;
 }
 
-static ULONG WINAPI IUnknown_fnRelease (IUnknown * iface)
+static ULONG WINAPI IUnknown_fnRelease(IUnknown *iface)
 {
-    IGenericSFImpl *This = (IGenericSFImpl *)iface;
-    ULONG refCount = InterlockedDecrement(&This->ref);
+    IGenericSFImpl *This = impl_from_IUnknown(iface);
+    ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE ("(%p)->(count=%u)\n", This, refCount + 1);
+    TRACE("(%p) ref=%d\n", This, ref);
 
-    if (!refCount) {
-        TRACE ("-- destroying IShellFolder(%p)\n", This);
+    if (!ref) {
+        TRACE("-- destroying IShellFolder(%p)\n", This);
 
-        SHFree (This->pidlRoot);
-        SHFree (This->sPathTarget);
-        LocalFree (This);
+        SHFree(This->pidlRoot);
+        SHFree(This->sPathTarget);
+        LocalFree(This);
     }
-    return refCount;
+    return ref;
 }
 
 static const IUnknownVtbl unkvt =
@@ -218,85 +194,34 @@ static const shvheader GenericSFHeader[] = {
 #define GENERICSHELLVIEWCOLUMNS 5
 
 /**************************************************************************
-* IFSFolder_Constructor
-*
-* NOTES
-*  creating undocumented ShellFS_Folder as part of an aggregation
-*  {F3364BA0-65B9-11CE-A9BA-00AA004AE837}
-*
-*/
-HRESULT WINAPI
-IFSFolder_Constructor (IUnknown * pUnkOuter, REFIID riid, LPVOID * ppv)
-{
-    IGenericSFImpl *sf;
-
-    TRACE ("unkOut=%p %s\n", pUnkOuter, shdebugstr_guid (riid));
-
-    if (pUnkOuter && !IsEqualIID (riid, &IID_IUnknown))
-        return CLASS_E_NOAGGREGATION;
-    sf = LocalAlloc (LMEM_ZEROINIT, sizeof (IGenericSFImpl));
-    if (!sf)
-        return E_OUTOFMEMORY;
-
-    sf->ref = 0;
-    sf->lpVtbl = &unkvt;
-    sf->lpvtblShellFolder = &sfvt;
-    sf->lpvtblPersistFolder3 = &vt_FSFldr_PersistFolder3;
-    sf->lpvtblDropTarget = &dtvt;
-    sf->lpvtblSFHelper = &shvt;
-    sf->pclsid = (CLSID *) & CLSID_ShellFSFolder;
-    sf->pUnkOuter = pUnkOuter ? pUnkOuter : _IUnknown_ (sf);
-
-    if (FAILED (IUnknown_QueryInterface (_IUnknown_ (sf), riid, ppv))) {
-        IUnknown_Release (_IUnknown_ (sf));
-        return E_NOINTERFACE;
-    }
-
-    TRACE ("--%p\n", *ppv);
-    return S_OK;
-}
-
-/**************************************************************************
  *  IShellFolder_fnQueryInterface
- *
- * PARAMETERS
- *  REFIID riid       [in ] Requested InterfaceID
- *  LPVOID* ppvObject [out] Interface* to hold the result
  */
-static HRESULT WINAPI
-IShellFolder_fnQueryInterface (IShellFolder2 * iface, REFIID riid,
-                               LPVOID * ppvObj)
+static HRESULT WINAPI IShellFolder_fnQueryInterface(IShellFolder2 *iface, REFIID riid,
+        void **ppvObj)
 {
     IGenericSFImpl *This = impl_from_IShellFolder2(iface);
 
-    TRACE ("(%p)->(%s,%p)\n", This, shdebugstr_guid (riid), ppvObj);
-
-    return IUnknown_QueryInterface (This->pUnkOuter, riid, ppvObj);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppvObj);
 }
 
 /**************************************************************************
 *  IShellFolder_AddRef
 */
-
-static ULONG WINAPI IShellFolder_fnAddRef (IShellFolder2 * iface)
+static ULONG WINAPI IShellFolder_fnAddRef(IShellFolder2 *iface)
 {
     IGenericSFImpl *This = impl_from_IShellFolder2(iface);
 
-    TRACE ("(%p)->(count=%u)\n", This, This->ref);
-
-    return IUnknown_AddRef (This->pUnkOuter);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 /**************************************************************************
  *  IShellFolder_fnRelease
  */
-static ULONG WINAPI IShellFolder_fnRelease (IShellFolder2 * iface)
+static ULONG WINAPI IShellFolder_fnRelease(IShellFolder2 *iface)
 {
     IGenericSFImpl *This = impl_from_IShellFolder2(iface);
 
-    TRACE ("(%p)->(count=%u)\n", This, This->ref);
-
-    return IUnknown_Release (This->pUnkOuter);
+    return IUnknown_Release(This->outer_unk);
 }
 
 /**************************************************************************
@@ -419,8 +344,8 @@ IShellFolder_fnParseDisplayName (IShellFolder2 * iface,
             } else {
                 /* it's the last element */
                 if (pdwAttributes && *pdwAttributes) {
-                    hr = SHELL32_GetItemAttributes (_IShellFolder_ (This),
-                     pidlTemp, pdwAttributes);
+                    hr = SHELL32_GetItemAttributes((IShellFolder *)&This->IShellFolder2_iface,
+                            pidlTemp, pdwAttributes);
                 }
             }
         }
@@ -518,7 +443,7 @@ IShellFolder_fnCompareIDs (IShellFolder2 * iface, LPARAM lParam,
     int nReturn;
 
     TRACE ("(%p)->(0x%08lx,pidl1=%p,pidl2=%p)\n", This, lParam, pidl1, pidl2);
-    nReturn = SHELL32_CompareIDs (_IShellFolder_ (This), lParam, pidl1, pidl2);
+    nReturn = SHELL32_CompareIDs(&This->IShellFolder2_iface, lParam, pidl1, pidl2);
     TRACE ("-- %i\n", nReturn);
     return nReturn;
 }
@@ -542,7 +467,7 @@ IShellFolder_fnCreateViewObject (IShellFolder2 * iface, HWND hwndOwner,
         *ppvOut = NULL;
 
         if (IsEqualIID (riid, &IID_IDropTarget)) {
-            hr = IShellFolder_QueryInterface (iface, &IID_IDropTarget, ppvOut);
+            hr = IShellFolder2_QueryInterface (iface, &IID_IDropTarget, ppvOut);
         } else if (IsEqualIID (riid, &IID_IContextMenu)) {
             FIXME ("IContextMenu not implemented\n");
             hr = E_NOTIMPL;
@@ -599,7 +524,7 @@ IShellFolder_fnGetAttributesOf (IShellFolder2 * iface, UINT cidl,
     else {
         while (cidl > 0 && *apidl) {
             pdump (*apidl);
-            SHELL32_GetItemAttributes (_IShellFolder_ (This), *apidl, rgfInOut);
+            SHELL32_GetItemAttributes((IShellFolder *)&This->IShellFolder2_iface, *apidl, rgfInOut);
             apidl++;
             cidl--;
         }
@@ -676,7 +601,7 @@ HRESULT SHELL32_CreateExtensionUIObject(IShellFolder2 *iface,
     if(FAILED(hr))
         return hr;
 
-    hr = IShellFolder_GetDisplayNameOf(iface, pidl, SHGDN_FORPARSING, &path);
+    hr = IShellFolder2_GetDisplayNameOf(iface, pidl, SHGDN_FORPARSING, &path);
     if(SUCCEEDED(hr))
         hr = StrRetToStrW(&path, NULL, &file);
     if(FAILED(hr)) {
@@ -744,9 +669,7 @@ IShellFolder_fnGetUIObjectOf (IShellFolder2 * iface,
         }
 
         if (IsEqualIID (riid, &IID_IContextMenu) && (cidl >= 1)) {
-            pObj = (LPUNKNOWN) ISvItemCm_Constructor ((IShellFolder *) iface,
-             This->pidlRoot, apidl, cidl);
-            hr = S_OK;
+            return ItemMenu_Constructor((IShellFolder*)iface, This->pidlRoot, apidl, cidl, riid, ppvOut);
         } else if (IsEqualIID (riid, &IID_IDataObject) && (cidl >= 1)) {
             pObj = (LPUNKNOWN) IDataObject_Constructor (hwndOwner,
              This->pidlRoot, apidl, cidl);
@@ -762,12 +685,12 @@ IShellFolder_fnGetUIObjectOf (IShellFolder2 * iface,
             SHFree (pidl);
             hr = S_OK;
         } else if (IsEqualIID (riid, &IID_IDropTarget) && (cidl >= 1)) {
-            hr = IShellFolder_QueryInterface (iface, &IID_IDropTarget,
+            hr = IShellFolder2_QueryInterface (iface, &IID_IDropTarget,
              (LPVOID *) & pObj);
         } else if ((IsEqualIID(riid,&IID_IShellLinkW) ||
          IsEqualIID(riid,&IID_IShellLinkA)) && (cidl == 1)) {
             pidl = ILCombine (This->pidlRoot, apidl[0]);
-            hr = IShellLink_ConstructFromFile(NULL, riid, pidl, (LPVOID*)&pObj);
+            hr = IShellLink_ConstructFromFile(NULL, riid, pidl, &pObj);
             SHFree (pidl);
         } else {
             hr = E_NOINTERFACE;
@@ -1072,7 +995,7 @@ IShellFolder_fnGetDetailsOf (IShellFolder2 * iface, LPCITEMIDLIST pidl,
         /* the data from the pidl */
         switch (iColumn) {
         case 0:                /* name */
-            hr = IShellFolder_GetDisplayNameOf (iface, pidl,
+            hr = IShellFolder2_GetDisplayNameOf (iface, pidl,
              SHGDN_NORMAL | SHGDN_INFOLDER, &psd->str);
             break;
         case 1:                /* size */
@@ -1131,32 +1054,25 @@ static const IShellFolder2Vtbl sfvt =
  * ISFHelper for IShellFolder implementation
  */
 
-static HRESULT WINAPI
-ISFHelper_fnQueryInterface (ISFHelper * iface, REFIID riid, LPVOID * ppvObj)
+static HRESULT WINAPI ISFHelper_fnQueryInterface(ISFHelper *iface, REFIID riid, void **ppvObj)
 {
     IGenericSFImpl *This = impl_from_ISFHelper(iface);
 
-    TRACE ("(%p)->(count=%u)\n", This, This->ref);
-
-    return IUnknown_QueryInterface (This->pUnkOuter, riid, ppvObj);
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppvObj);
 }
 
-static ULONG WINAPI ISFHelper_fnAddRef (ISFHelper * iface)
+static ULONG WINAPI ISFHelper_fnAddRef(ISFHelper *iface)
 {
     IGenericSFImpl *This = impl_from_ISFHelper(iface);
 
-    TRACE ("(%p)->(count=%u)\n", This, This->ref);
-
-    return IUnknown_AddRef (This->pUnkOuter);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
-static ULONG WINAPI ISFHelper_fnRelease (ISFHelper * iface)
+static ULONG WINAPI ISFHelper_fnRelease(ISFHelper *iface)
 {
     IGenericSFImpl *This = impl_from_ISFHelper(iface);
 
-    TRACE ("(%p)\n", This);
-
-    return IUnknown_Release (This->pUnkOuter);
+    return IUnknown_Release(This->outer_unk);
 }
 
 /****************************************************************************
@@ -1183,8 +1099,8 @@ ISFHelper_fnGetUniqueName (ISFHelper * iface, LPWSTR pwszName, UINT uLen)
 
     lstrcpynW (pwszName, wszNewFolder, uLen);
 
-    hr = IShellFolder_fnEnumObjects (_IShellFolder2_ (This), 0,
-     SHCONTF_FOLDERS | SHCONTF_NONFOLDERS | SHCONTF_INCLUDEHIDDEN, &penum);
+    hr = IShellFolder2_EnumObjects(&This->IShellFolder2_iface, 0,
+            SHCONTF_FOLDERS | SHCONTF_NONFOLDERS | SHCONTF_INCLUDEHIDDEN, &penum);
     if (penum) {
         LPITEMIDLIST pidl;
         DWORD dwFetched;
@@ -1222,7 +1138,7 @@ ISFHelper_fnAddFolder (ISFHelper * iface, HWND hwnd, LPCWSTR pwszName,
 {
     IGenericSFImpl *This = impl_from_ISFHelper(iface);
     WCHAR wszNewDir[MAX_PATH];
-    DWORD bRes;
+    BOOL bRes;
     HRESULT hres = E_FAIL;
 
     TRACE ("(%p)(%s %p)\n", This, debugstr_w(pwszName), ppidlOut);
@@ -1238,8 +1154,8 @@ ISFHelper_fnAddFolder (ISFHelper * iface, HWND hwnd, LPCWSTR pwszName,
 
         lstrcpyW(wszNewDir, pwszName);
 
-        hres = IShellFolder_ParseDisplayName((IShellFolder*)&This->lpvtblShellFolder,
-                hwnd, NULL, wszNewDir, NULL, &relPidl, NULL);
+        hres = IShellFolder2_ParseDisplayName(&This->IShellFolder2_iface, hwnd, NULL, wszNewDir,
+                NULL, &relPidl, NULL);
 
         if (SUCCEEDED(hres)) {
             LPITEMIDLIST fullPidl;
@@ -1444,43 +1360,34 @@ static const ISFHelperVtbl shvt =
  * IFSFldr_PersistFolder3_QueryInterface
  *
  */
-static HRESULT WINAPI
-IFSFldr_PersistFolder3_QueryInterface (IPersistFolder3 * iface, REFIID iid,
-                                       LPVOID * ppvObj)
+static HRESULT WINAPI IFSFldr_PersistFolder3_QueryInterface(IPersistFolder3 *iface, REFIID iid,
+        void **ppv)
 {
     IGenericSFImpl *This = impl_from_IPersistFolder3(iface);
 
-    TRACE ("(%p)\n", This);
-
-    return IUnknown_QueryInterface (This->pUnkOuter, iid, ppvObj);
+    return IUnknown_QueryInterface(This->outer_unk, iid, ppv);
 }
 
 /************************************************************************
  * IFSFldr_PersistFolder3_AddRef
  *
  */
-static ULONG WINAPI
-IFSFldr_PersistFolder3_AddRef (IPersistFolder3 * iface)
+static ULONG WINAPI IFSFldr_PersistFolder3_AddRef(IPersistFolder3 *iface)
 {
     IGenericSFImpl *This = impl_from_IPersistFolder3(iface);
 
-    TRACE ("(%p)->(count=%u)\n", This, This->ref);
-
-    return IUnknown_AddRef (This->pUnkOuter);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
 /************************************************************************
  * IFSFldr_PersistFolder3_Release
  *
  */
-static ULONG WINAPI
-IFSFldr_PersistFolder3_Release (IPersistFolder3 * iface)
+static ULONG WINAPI IFSFldr_PersistFolder3_Release(IPersistFolder3 *iface)
 {
     IGenericSFImpl *This = impl_from_IPersistFolder3(iface);
 
-    TRACE ("(%p)->(count=%u)\n", This, This->ref);
-
-    return IUnknown_Release (This->pUnkOuter);
+    return IUnknown_Release(This->outer_unk);
 }
 
 /************************************************************************
@@ -1632,7 +1539,7 @@ IFSFldr_PersistFolder3_GetFolderTargetInfo (IPersistFolder3 * iface,
     return E_NOTIMPL;
 }
 
-static const IPersistFolder3Vtbl vt_FSFldr_PersistFolder3 =
+static const IPersistFolder3Vtbl pfvt =
 {
     IFSFldr_PersistFolder3_QueryInterface,
     IFSFldr_PersistFolder3_AddRef,
@@ -1647,53 +1554,25 @@ static const IPersistFolder3Vtbl vt_FSFldr_PersistFolder3 =
 /****************************************************************************
  * ISFDropTarget implementation
  */
-static BOOL
-ISFDropTarget_QueryDrop (IDropTarget * iface, DWORD dwKeyState,
-                         LPDWORD pdwEffect)
+static HRESULT WINAPI ISFDropTarget_QueryInterface(IDropTarget *iface, REFIID riid, void **ppv)
 {
-    DWORD dwEffect = *pdwEffect;
-
     IGenericSFImpl *This = impl_from_IDropTarget(iface);
 
-    *pdwEffect = DROPEFFECT_NONE;
-
-    if (This->fAcceptFmt) { /* Does our interpretation of the keystate ... */
-        *pdwEffect = KeyStateToDropEffect (dwKeyState);
-
-        /* ... matches the desired effect ? */
-        if (dwEffect & *pdwEffect) {
-            return TRUE;
-        }
-    }
-    return FALSE;
+    return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
 }
 
-static HRESULT WINAPI
-ISFDropTarget_QueryInterface (IDropTarget * iface, REFIID riid, LPVOID * ppvObj)
+static ULONG WINAPI ISFDropTarget_AddRef(IDropTarget *iface)
 {
     IGenericSFImpl *This = impl_from_IDropTarget(iface);
 
-    TRACE ("(%p)\n", This);
-
-    return IUnknown_QueryInterface (This->pUnkOuter, riid, ppvObj);
+    return IUnknown_AddRef(This->outer_unk);
 }
 
-static ULONG WINAPI ISFDropTarget_AddRef (IDropTarget * iface)
+static ULONG WINAPI ISFDropTarget_Release(IDropTarget *iface)
 {
     IGenericSFImpl *This = impl_from_IDropTarget(iface);
 
-    TRACE ("(%p)\n", This);
-
-    return IUnknown_AddRef (This->pUnkOuter);
-}
-
-static ULONG WINAPI ISFDropTarget_Release (IDropTarget * iface)
-{
-    IGenericSFImpl *This = impl_from_IDropTarget(iface);
-
-    TRACE ("(%p)\n", This);
-
-    return IUnknown_Release (This->pUnkOuter);
+    return IUnknown_Release(This->outer_unk);
 }
 
 static HRESULT WINAPI
@@ -1707,11 +1586,11 @@ ISFDropTarget_DragEnter (IDropTarget * iface, IDataObject * pDataObject,
     TRACE ("(%p)->(DataObject=%p)\n", This, pDataObject);
 
     InitFormatEtc (fmt, This->cfShellIDList, TYMED_HGLOBAL);
-
-    This->fAcceptFmt = (S_OK == IDataObject_QueryGetData (pDataObject, &fmt)) ?
-     TRUE : FALSE;
-
-    ISFDropTarget_QueryDrop (iface, dwKeyState, pdwEffect);
+    This->fAcceptFmt = IDataObject_QueryGetData (pDataObject, &fmt) == S_OK;
+    if (This->fAcceptFmt)
+        *pdwEffect = KeyStateToDropEffect(dwKeyState);
+    else
+        *pdwEffect = DROPEFFECT_NONE;
 
     return S_OK;
 }
@@ -1727,7 +1606,10 @@ ISFDropTarget_DragOver (IDropTarget * iface, DWORD dwKeyState, POINTL pt,
     if (!pdwEffect)
         return E_INVALIDARG;
 
-    ISFDropTarget_QueryDrop (iface, dwKeyState, pdwEffect);
+    if (This->fAcceptFmt)
+        *pdwEffect = KeyStateToDropEffect(dwKeyState);
+    else
+        *pdwEffect = DROPEFFECT_NONE;
 
     return S_OK;
 }
@@ -1763,3 +1645,33 @@ static const IDropTargetVtbl dtvt = {
     ISFDropTarget_DragLeave,
     ISFDropTarget_Drop
 };
+
+HRESULT WINAPI IFSFolder_Constructor(IUnknown *outer_unk, REFIID riid, void **ppv)
+{
+    IGenericSFImpl *sf;
+    HRESULT hr;
+
+    TRACE("outer_unk=%p %s\n", outer_unk, shdebugstr_guid(riid));
+
+    if (outer_unk && !IsEqualIID(riid, &IID_IUnknown))
+        return CLASS_E_NOAGGREGATION;
+
+    sf = LocalAlloc(LMEM_ZEROINIT, sizeof(*sf));
+    if (!sf)
+        return E_OUTOFMEMORY;
+
+    sf->ref = 1;
+    sf->IUnknown_inner.lpVtbl = &unkvt;
+    sf->IShellFolder2_iface.lpVtbl = &sfvt;
+    sf->IPersistFolder3_iface.lpVtbl = &pfvt;
+    sf->IDropTarget_iface.lpVtbl = &dtvt;
+    sf->ISFHelper_iface.lpVtbl = &shvt;
+    sf->pclsid = (CLSID *) & CLSID_ShellFSFolder;
+    sf->outer_unk = outer_unk ? outer_unk : &sf->IUnknown_inner;
+
+    hr = IUnknown_QueryInterface(&sf->IUnknown_inner, riid, ppv);
+    IUnknown_Release(&sf->IUnknown_inner);
+
+    TRACE ("--%p\n", *ppv);
+    return hr;
+}

@@ -49,6 +49,12 @@ static const WCHAR wszZonesKey[] = {'S','o','f','t','w','a','r','e','\\',
                                     'C','u','r','r','e','n','t','V','e','r','s','i','o','n','\\',
                                     'I','n','t','e','r','n','e','t',' ','S','e','t','t','i','n','g','s','\\',
                                     'Z','o','n','e','s','\\',0};
+static const WCHAR zone_map_keyW[] = {'S','o','f','t','w','a','r','e','\\',
+                                      'M','i','c','r','o','s','o','f','t','\\',
+                                      'W','i','n','d','o','w','s','\\',
+                                      'C','u','r','r','e','n','t','V','e','r','s','i','o','n','\\',
+                                      'I','n','t','e','r','n','e','t',' ','S','e','t','t','i','n','g','s','\\',
+                                      'Z','o','n','e','M','a','p',0};
 static const WCHAR wszZoneMapDomainsKey[] = {'S','o','f','t','w','a','r','e','\\',
                                              'M','i','c','r','o','s','o','f','t','\\',
                                              'W','i','n','d','o','w','s','\\',
@@ -235,11 +241,9 @@ static BOOL matches_domain_pattern(LPCWSTR pattern, LPCWSTR str, BOOL implicit_w
              *
              * Doesn't match the pattern.
              */
-            if(str_len > pattern_len) {
-                if(str[str_len-pattern_len-1] == '.' && !strcmpiW(str+(str_len-pattern_len), pattern)) {
-                    matches = TRUE;
-                    *matched = str+(str_len-pattern_len);
-                }
+            if(str[str_len-pattern_len-1] == '.' && !strcmpiW(str+(str_len-pattern_len), pattern)) {
+                matches = TRUE;
+                *matched = str+(str_len-pattern_len);
             }
         } else {
             /* The pattern doesn't have an implicit wildcard, or an explicit wildcard,
@@ -294,7 +298,7 @@ static BOOL get_zone_for_scheme(HKEY key, LPCWSTR schema, DWORD *zone)
  * search_domain_for_zone [internal]
  *
  * Searches the specified 'domain' registry key to see if 'host' maps into it, or any
- * of it's subdomain registry keys.
+ * of its subdomain registry keys.
  *
  * Returns S_OK if a match is found, S_FALSE if no matches were found, or an error code.
  */
@@ -386,7 +390,7 @@ static HRESULT search_domain_for_zone(HKEY domains, LPCWSTR domain, DWORD domain
             /* There's a chance that 'host' implicitly mapped into 'domain', in
              * which case we check to see if 'domain' contains zone information.
              *
-             * This can only happen if 'domain' is it's own domain name.
+             * This can only happen if 'domain' is its own domain name.
              *  Example:
              *      "google.com" (domain name = "google.com")
              *
@@ -395,7 +399,7 @@ static HRESULT search_domain_for_zone(HKEY domains, LPCWSTR domain, DWORD domain
              *
              *  Then host would map directly into the "google.com" domain key.
              *
-             * If 'domain' has more than just it's domain name, or it does not
+             * If 'domain' has more than just its domain name, or it does not
              * have a domain name, then we don't perform the check. The reason
              * for this is that these domains don't allow implicit mappings.
              *  Example:
@@ -602,7 +606,7 @@ static HRESULT map_url_to_zone(LPCWSTR url, DWORD *zone, LPWSTR *ret_url)
         memcpy(secur_url, url, size);
     }
 
-    hres = CreateUri(secur_url, 0, 0, &secur_uri);
+    hres = CreateUri(secur_url, Uri_CREATE_ALLOW_IMPLICIT_FILE_SCHEME, 0, &secur_uri);
     if(FAILED(hres)) {
         CoTaskMemFree(secur_url);
         return hres;
@@ -736,7 +740,7 @@ static HRESULT generate_security_id(IUri *uri, BYTE *secid, DWORD *secid_len, DW
 
         if(len+sizeof(DWORD) > *secid_len) {
             SysFreeString(display_uri);
-            return HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
+            return E_NOT_SUFFICIENT_BUFFER;
         }
 
         WideCharToMultiByte(CP_ACP, 0, display_uri, -1, (LPSTR)secid, len, NULL, NULL);
@@ -772,7 +776,7 @@ static HRESULT generate_security_id(IUri *uri, BYTE *secid, DWORD *secid_len, DW
         if(len+sizeof(DWORD) > *secid_len) {
             SysFreeString(host);
             SysFreeString(scheme);
-            return HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
+            return E_NOT_SUFFICIENT_BUFFER;
         }
 
         WideCharToMultiByte(CP_ACP, 0, scheme, -1, (LPSTR)secid, len, NULL, NULL);
@@ -805,7 +809,7 @@ static HRESULT get_security_id_for_url(LPCWSTR url, BYTE *secid, DWORD *secid_le
     if(FAILED(hres))
         return hres == 0x80041001 ? E_INVALIDARG : hres;
 
-    hres = CreateUri(secur_url, 0, 0, &uri);
+    hres = CreateUri(secur_url, Uri_CREATE_ALLOW_IMPLICIT_FILE_SCHEME, 0, &uri);
     CoTaskMemFree(secur_url);
     if(FAILED(hres))
         return hres;
@@ -854,31 +858,23 @@ static HRESULT WINAPI SecManagerImpl_QueryInterface(IInternetSecurityManagerEx2*
 {
     SecManagerImpl *This = impl_from_IInternetSecurityManagerEx2(iface);
 
-    TRACE("(%p)->(%s,%p)\n",This,debugstr_guid(riid),ppvObject);
+    TRACE("(%p)->(%s %p)\n",This,debugstr_guid(riid),ppvObject);
 
-    /* Perform a sanity check on the parameters.*/
-    if ( (This==0) || (ppvObject==0) )
+    if(!ppvObject)
 	return E_INVALIDARG;
 
-    /* Initialize the return parameter */
-    *ppvObject = 0;
-
-    /* Compare the riid with the interface IDs implemented by this object.*/
-    if (IsEqualIID(&IID_IUnknown, riid) ||
-        IsEqualIID(&IID_IInternetSecurityManager, riid) ||
-        IsEqualIID(&IID_IInternetSecurityManagerEx, riid) ||
-        IsEqualIID(&IID_IInternetSecurityManagerEx2, riid))
+    if(IsEqualIID(&IID_IUnknown, riid) ||
+       IsEqualIID(&IID_IInternetSecurityManager, riid) ||
+       IsEqualIID(&IID_IInternetSecurityManagerEx, riid) ||
+       IsEqualIID(&IID_IInternetSecurityManagerEx2, riid)) {
         *ppvObject = iface;
-
-    /* Check that we obtained an interface.*/
-    if (!*ppvObject) {
+    } else {
         WARN("not supported interface %s\n", debugstr_guid(riid));
+        *ppvObject = NULL;
         return E_NOINTERFACE;
     }
 
-    /* Query Interface always increases the reference count by one when it is successful */
-    IInternetSecurityManager_AddRef(iface);
-
+    IInternetSecurityManagerEx2_AddRef(iface);
     return S_OK;
 }
 
@@ -1371,7 +1367,7 @@ static HRESULT WINAPI ZoneMgrImpl_QueryInterface(IInternetZoneManagerEx2* iface,
     }
 
     *ppvObject = iface;
-    IInternetZoneManager_AddRef(iface);
+    IInternetZoneManagerEx2_AddRef(iface);
     return S_OK;
 }
 
@@ -1745,7 +1741,7 @@ static HRESULT WINAPI ZoneMgrImpl_GetZoneAttributesEx(IInternetZoneManagerEx2* i
     if (dwFlags)
         FIXME("dwFlags 0x%x ignored\n", dwFlags);
 
-    return IInternetZoneManager_GetZoneAttributes(iface, dwZone, pZoneAttributes);
+    return IInternetZoneManagerEx2_GetZoneAttributes(iface, dwZone, pZoneAttributes);
 }
 
 
@@ -2074,4 +2070,33 @@ HRESULT WINAPI CompareSecurityIds(BYTE *secid1, DWORD size1, BYTE *secid2, DWORD
 {
     FIXME("(%p %d %p %d %x)\n", secid1, size1, secid2, size2, reserved);
     return E_NOTIMPL;
+}
+
+/********************************************************************
+ *      IsInternetESCEnabledLocal (URLMON.108)
+ *
+ * Undocumented, returns TRUE if IE is running in Enhanced Security Configuration.
+ */
+BOOL WINAPI IsInternetESCEnabledLocal(void)
+{
+    static BOOL esc_initialized, esc_enabled;
+
+    TRACE("()\n");
+
+    if(!esc_initialized) {
+        DWORD type, size, val;
+        HKEY zone_map;
+
+        static const WCHAR iehardenW[] = {'I','E','H','a','r','d','e','n',0};
+
+        if(RegOpenKeyExW(HKEY_CURRENT_USER, zone_map_keyW, 0, KEY_QUERY_VALUE, &zone_map) == ERROR_SUCCESS) {
+            size = sizeof(DWORD);
+            if(RegQueryValueExW(zone_map, iehardenW, NULL, &type, (BYTE*)&val, &size) == ERROR_SUCCESS)
+                esc_enabled = type == REG_DWORD && val != 0;
+            RegCloseKey(zone_map);
+        }
+        esc_initialized = TRUE;
+    }
+
+    return esc_enabled;
 }

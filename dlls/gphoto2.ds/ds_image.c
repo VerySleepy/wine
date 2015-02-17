@@ -383,7 +383,6 @@ TW_UINT16 GPHOTO2_ImageNativeXferGet (pTW_IDENTITY pOrigin,
     BITMAPINFO bmpInfo;
     LPBYTE bits;
     JSAMPROW samprow, oldsamprow;
-    HDC dc;
 
     FIXME("DG_IMAGE/DAT_IMAGENATIVEXFER/MSG_GET: implemented, but expect program crash due to DIB.\n");
 
@@ -425,8 +424,7 @@ TW_UINT16 GPHOTO2_ImageNativeXferGet (pTW_IDENTITY pOrigin,
     bmpInfo.bmiHeader.biYPelsPerMeter = 0;
     bmpInfo.bmiHeader.biClrUsed = 0;
     bmpInfo.bmiHeader.biClrImportant = 0;
-    hDIB = CreateDIBSection ((dc = GetDC(activeDS.hwndOwner)), &bmpInfo,
-			     DIB_RGB_COLORS, (LPVOID)&bits, 0, 0);
+    hDIB = CreateDIBSection (0, &bmpInfo, DIB_RGB_COLORS, (LPVOID)&bits, 0, 0);
     if (!hDIB) {
 	FIXME("Failed creating DIB.\n");
 	gp_file_unref (activeDS.file);
@@ -437,7 +435,8 @@ TW_UINT16 GPHOTO2_ImageNativeXferGet (pTW_IDENTITY pOrigin,
     samprow = HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,activeDS.jd.output_width*activeDS.jd.output_components);
     oldsamprow = samprow;
     while ( activeDS.jd.output_scanline<activeDS.jd.output_height ) {
-	int i, x = pjpeg_read_scanlines(&activeDS.jd,&samprow,1);
+        unsigned int i;
+        int x = pjpeg_read_scanlines(&activeDS.jd,&samprow,1);
 	if (x != 1) {
 		FIXME("failed to read current scanline?\n");
 		break;
@@ -454,7 +453,6 @@ TW_UINT16 GPHOTO2_ImageNativeXferGet (pTW_IDENTITY pOrigin,
     HeapFree (GetProcessHeap(), 0, samprow);
     gp_file_unref (activeDS.file);
     activeDS.file = NULL;
-    ReleaseDC (activeDS.hwndOwner, dc);
     *pHandle = (UINT_PTR)hDIB;
     activeDS.twCC = TWCC_SUCCESS;
     activeDS.currentState = 7;
@@ -568,7 +566,6 @@ _get_gphoto2_file_as_DIB(
     struct jpeg_source_mgr		xjsm;
     struct jpeg_decompress_struct	jd;
     struct jpeg_error_mgr		jerr;
-    HDC 		dc;
     BITMAPINFO 		bmpInfo;
     LPBYTE		bits;
     JSAMPROW		samprow, oldsamprow;
@@ -636,7 +633,7 @@ _get_gphoto2_file_as_DIB(
     bmpInfo.bmiHeader.biYPelsPerMeter = 0;
     bmpInfo.bmiHeader.biClrUsed = 0;
     bmpInfo.bmiHeader.biClrImportant = 0;
-    *hDIB = CreateDIBSection ((dc = GetDC(hwnd)), &bmpInfo, DIB_RGB_COLORS, (LPVOID)&bits, 0, 0);
+    *hDIB = CreateDIBSection(0, &bmpInfo, DIB_RGB_COLORS, (LPVOID)&bits, 0, 0);
     if (!*hDIB) {
 	FIXME("Failed creating DIB.\n");
 	gp_file_unref (file);
@@ -645,7 +642,8 @@ _get_gphoto2_file_as_DIB(
     samprow = HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,jd.output_width*jd.output_components);
     oldsamprow = samprow;
     while ( jd.output_scanline<jd.output_height ) {
-	int i, x = pjpeg_read_scanlines(&jd,&samprow,1);
+        unsigned int i;
+        int x = pjpeg_read_scanlines(&jd,&samprow,1);
 	if (x != 1) {
 	    FIXME("failed to read current scanline?\n");
 	    break;
@@ -659,7 +657,6 @@ _get_gphoto2_file_as_DIB(
 	bits = (LPBYTE)(((UINT_PTR)bits + 3) & ~3);
 	samprow = oldsamprow;
     }
-    if (hwnd) ReleaseDC (hwnd, dc);
     HeapFree (GetProcessHeap(), 0, samprow);
     gp_file_unref (file);
     return TWRC_SUCCESS;

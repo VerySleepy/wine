@@ -159,7 +159,7 @@ HRESULT SHELL32_ParseNextElement (IShellFolder2 * psf, HWND hwndOwner, LPBC pbc,
     TRACE ("(%p, %p, %p, %s)\n", psf, pbc, pidlInOut ? *pidlInOut : NULL, debugstr_w (szNext));
 
     /* get the shellfolder for the child pidl and let it analyse further */
-    hr = IShellFolder_BindToObject (psf, *pidlInOut, pbc, &IID_IShellFolder, (LPVOID *) & psfChild);
+    hr = IShellFolder2_BindToObject (psf, *pidlInOut, pbc, &IID_IShellFolder, (LPVOID *) & psfChild);
 
     if (SUCCEEDED(hr)) {
 	hr = IShellFolder_ParseDisplayName (psfChild, hwndOwner, pbc, szNext, pEaten, &pidlOut, pdwAttributes);
@@ -350,17 +350,17 @@ HRESULT SHELL32_GetDisplayNameOfChild (IShellFolder2 * psf,
     if (pidlFirst) {
 	IShellFolder2 *psfChild;
 
-	hr = IShellFolder_BindToObject (psf, pidlFirst, NULL, &IID_IShellFolder, (LPVOID *) & psfChild);
+	hr = IShellFolder2_BindToObject (psf, pidlFirst, NULL, &IID_IShellFolder, (LPVOID *) & psfChild);
 	if (SUCCEEDED (hr)) {
 	    STRRET strTemp;
 	    LPITEMIDLIST pidlNext = ILGetNext (pidl);
 
-	    hr = IShellFolder_GetDisplayNameOf (psfChild, pidlNext, dwFlags, &strTemp);
+	    hr = IShellFolder2_GetDisplayNameOf (psfChild, pidlNext, dwFlags, &strTemp);
 	    if (SUCCEEDED (hr)) {
 		if(!StrRetToStrNW (szOut, dwOutLen, &strTemp, pidlNext))
                     hr = E_FAIL;
 	    }
-	    IShellFolder_Release (psfChild);
+	    IShellFolder2_Release (psfChild);
 	}
 	ILFree (pidlFirst);
     } else
@@ -482,16 +482,14 @@ HRESULT SHELL32_GetItemAttributes (IShellFolder * psf, LPCITEMIDLIST pidl, LPDWO
 /***********************************************************************
  *  SHELL32_CompareIDs
  */
-HRESULT SHELL32_CompareIDs (IShellFolder * iface, LPARAM lParam, LPCITEMIDLIST pidl1, LPCITEMIDLIST pidl2)
+HRESULT SHELL32_CompareIDs(IShellFolder2 *sf, LPARAM lParam, LPCITEMIDLIST pidl1,
+        LPCITEMIDLIST pidl2)
 {
-    int type1,
-      type2;
+    int type1, type2;
     char szTemp1[MAX_PATH];
     char szTemp2[MAX_PATH];
     HRESULT nReturn;
-    LPITEMIDLIST firstpidl,
-      nextpidl1,
-      nextpidl2;
+    LPITEMIDLIST firstpidl, nextpidl1, nextpidl2;
     IShellFolder *psf;
 
     /* test for empty pidls */
@@ -533,13 +531,13 @@ HRESULT SHELL32_CompareIDs (IShellFolder * iface, LPARAM lParam, LPCITEMIDLIST p
     isEmpty2 = _ILIsDesktop (nextpidl2);
 
     if (isEmpty1 && isEmpty2) {
-        return MAKE_HRESULT( SEVERITY_SUCCESS, 0, 0 );
+        nReturn = MAKE_HRESULT( SEVERITY_SUCCESS, 0, 0 );
     } else if (isEmpty1) {
-        return MAKE_HRESULT( SEVERITY_SUCCESS, 0, (WORD)-1 );
+        nReturn = MAKE_HRESULT( SEVERITY_SUCCESS, 0, (WORD)-1 );
     } else if (isEmpty2) {
-        return MAKE_HRESULT( SEVERITY_SUCCESS, 0, 1 );
+        nReturn = MAKE_HRESULT( SEVERITY_SUCCESS, 0, 1 );
     /* optimizing end */
-    } else if (SUCCEEDED (IShellFolder_BindToObject (iface, firstpidl, NULL, &IID_IShellFolder, (LPVOID *) & psf))) {
+    } else if (SUCCEEDED(IShellFolder2_BindToObject(sf, firstpidl, NULL, &IID_IShellFolder, (void **)&psf))) {
 	nReturn = IShellFolder_CompareIDs (psf, lParam, nextpidl1, nextpidl2);
 	IShellFolder_Release (psf);
     }
@@ -590,5 +588,16 @@ HRESULT WINAPI SHOpenFolderAndSelectItems( PCIDLIST_ABSOLUTE pidlFolder, UINT ci
                               PCUITEMID_CHILD_ARRAY *apidl, DWORD flags )
 {
     FIXME("%p %u %p 0x%x: stub\n", pidlFolder, cidl, apidl, flags);
+    return E_NOTIMPL;
+}
+
+/***********************************************************************
+ *  SHGetSetFolderCustomSettings
+ *
+ *   Only in XP (up to SP2) and Server 2003
+ */
+HRESULT WINAPI SHGetSetFolderCustomSettings( LPSHFOLDERCUSTOMSETTINGS fcs, LPCSTR path, DWORD flag )
+{
+    FIXME("%p %s 0x%x: stub\n", fcs, path, flag);
     return E_NOTIMPL;
 }

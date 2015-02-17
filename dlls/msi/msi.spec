@@ -97,10 +97,10 @@
 101 stub MsiProcessAdvertiseScriptA
 102 stub MsiProcessAdvertiseScriptW
 103 stdcall MsiProcessMessage(long long long)
-104 stub MsiProvideComponentA
+104 stdcall MsiProvideComponentA(str str str long ptr ptr)
 105 stdcall MsiProvideComponentFromDescriptorA(str ptr ptr ptr)
 106 stdcall MsiProvideComponentFromDescriptorW(wstr ptr ptr ptr)
-107 stub MsiProvideComponentW
+107 stdcall MsiProvideComponentW(wstr wstr wstr long ptr ptr)
 108 stdcall MsiProvideQualifiedComponentA(str str long ptr ptr)
 109 stdcall MsiProvideQualifiedComponentW(wstr wstr long ptr ptr)
 110 stdcall MsiQueryFeatureStateA(str str)
@@ -229,9 +229,9 @@
 233 stub MsiDeleteUserDataA
 234 stub MsiDeleteUserDataW
 235 stub Migrate10CachedPackagesA
-236 stub Migrate10CachedPackagesW
-237 stub MsiRemovePatchesA
-238 stub MsiRemovePatchesW
+236 stdcall Migrate10CachedPackagesW(ptr ptr ptr long)
+237 stdcall MsiRemovePatchesA(str str long str)
+238 stdcall MsiRemovePatchesW(wstr wstr long wstr)
 239 stdcall MsiApplyMultiplePatchesA(str str str)
 240 stdcall MsiApplyMultiplePatchesW(wstr wstr wstr)
 241 stub MsiExtractPatchXMLDataA
@@ -244,8 +244,8 @@
 248 stdcall MsiGetProductInfoExW(wstr wstr long wstr ptr ptr)
 249 stdcall MsiQueryComponentStateA(str str long str ptr)
 250 stdcall MsiQueryComponentStateW(wstr wstr long wstr ptr)
-251 stub MsiQueryFeatureStateExA
-252 stub MsiQueryFeatureStateExW
+251 stdcall MsiQueryFeatureStateExA(str str long str ptr)
+252 stdcall MsiQueryFeatureStateExW(wstr wstr long wstr ptr)
 253 stdcall MsiDeterminePatchSequenceA(str str long long ptr)
 254 stdcall MsiDeterminePatchSequenceW(wstr wstr long long ptr)
 255 stdcall MsiSourceListAddSourceExA(str str long long str long)
@@ -282,10 +282,10 @@
 286 stdcall MsiEndTransaction(long)
 287 stub MsiJoinTransaction
 288 stub MsiSetOfflineContextW
-289 stub MsiEnumComponentsExA
-290 stub MsiEnumComponentsExW
-291 stub MsiEnumClientsExA
-292 stub MsiEnumClientsExW
+289 stdcall MsiEnumComponentsExA(str long long ptr ptr ptr ptr)
+290 stdcall MsiEnumComponentsExW(wstr long long ptr ptr ptr ptr)
+291 stdcall MsiEnumClientsExA(str str long long ptr ptr ptr ptr)
+292 stdcall MsiEnumClientsExW(wstr wstr long long ptr ptr ptr ptr)
 293 stub MsiGetComponentPathExA
 294 stub MsiGetComponentPathExW
 295 stub QueryInstanceCount

@@ -24,15 +24,12 @@
 #include "dlgs.h"
 
 /* Common dialogs implementation globals */
-#define COMDLG32_Atom	((ATOM)0xa000)	/* MS uses this one to identify props */
+#define COMDLG32_Atom   MAKEINTATOM(0xa000)     /* MS uses this one to identify props */
 
 extern HINSTANCE	COMDLG32_hInstance DECLSPEC_HIDDEN;
 
 void	COMDLG32_SetCommDlgExtendedError(DWORD err) DECLSPEC_HIDDEN;
 LPVOID	COMDLG32_AllocMem(int size) __WINE_ALLOC_SIZE(1) DECLSPEC_HIDDEN;
-
-/* handle<-handle16 conversion */
-#define HINSTANCE_32(h16)           ((HINSTANCE)(ULONG_PTR)(h16))
 
 /* Find/Replace local definitions */
 
@@ -151,12 +148,35 @@ typedef struct {
 #define IDS_COLOR_AQUA                  1054
 #define IDS_COLOR_WHITE                 1055
 
+/* Color dialog controls */
+#define IDC_COLOR_LUMBAR 702
+#define IDC_COLOR_EDIT_H 703
+#define IDC_COLOR_EDIT_S 704
+#define IDC_COLOR_EDIT_L 705
+#define IDC_COLOR_EDIT_R 706
+#define IDC_COLOR_EDIT_G 707
+#define IDC_COLOR_EDIT_B 708
+#define IDC_COLOR_RESULT 709
+#define IDC_COLOR_GRAPH  710
+#define IDC_COLOR_ADD    712
+#define IDC_COLOR_RES    713
+#define IDC_COLOR_DEFINE 719
+#define IDC_COLOR_PREDEF 720
+#define IDC_COLOR_USRDEF 721
+#define IDC_COLOR_HL     723
+#define IDC_COLOR_SL     724
+#define IDC_COLOR_LL     725
+#define IDC_COLOR_RL     726
+#define IDC_COLOR_GL     727
+#define IDC_COLOR_BL     728
+
 #define IDS_FONT_SIZE    1200
 #define IDS_SAVE_BUTTON  1201
 #define IDS_SAVE_IN      1202
 #define IDS_SAVE         1203
 #define IDS_SAVE_AS      1204
 #define IDS_OPEN_FILE    1205
+#define IDS_SELECT_FOLDER 1206
 
 #define IDS_FAKEDOCTEXT  1300
 
@@ -179,6 +199,9 @@ int FILEDLG95_ValidatePathAction(LPWSTR lpstrPathAndFile, IShellFolder **ppsf,
                                  HWND hwnd, DWORD flags, BOOL isSaveDlg, int defAction) DECLSPEC_HIDDEN;
 int COMDLG32_SplitFileNames(LPWSTR lpstrEdit, UINT nStrLen, LPWSTR *lpstrFileList, UINT *sizeUsed) DECLSPEC_HIDDEN;
 void FILEDLG95_OnOpenMessage(HWND hwnd, int idCaption, int idText) DECLSPEC_HIDDEN;
+
+extern BOOL GetFileName31A( OPENFILENAMEA *lpofn, UINT dlgType ) DECLSPEC_HIDDEN;
+extern BOOL GetFileName31W( OPENFILENAMEW *lpofn, UINT dlgType ) DECLSPEC_HIDDEN;
 
 /* ITEMIDLIST */
 

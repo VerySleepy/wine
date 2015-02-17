@@ -56,7 +56,7 @@ static void scrollbar_test_track(void)
 {
     /* test that scrollbar tracking is terminated when
      * the control looses mouse capture */
-    SendMessage( hScroll, WM_LBUTTONDOWN, 0, MAKELPARAM( 1, 1));
+    SendMessageA( hScroll, WM_LBUTTONDOWN, 0, MAKELPARAM( 1, 1));
     /* a normal return from the sendmessage */
     /* not normal for instance by closing the windws */
     ok( IsWindow( hScroll), "Scrollbar has gone!\n");
@@ -241,7 +241,6 @@ static void scrollbar_test_default( DWORD style)
         ok( min == 0 && max == 0,
                 "Scroll bar range is %d,%d. Expected 0,0. Style %08x\n", min, max, style);
     else
-todo_wine
         ok(( min == 0 && max == 100) ||
                 broken( min == 0 && max == 0), /* Win 9x/ME */
                 "Scroll bar range is %d,%d. Expected 0,100. Style %08x\n", min, max, style);
@@ -253,7 +252,6 @@ todo_wine
         ok( min == 0 && max == 0,
                 "Scroll bar range is %d,%d. Expected 0,0. Style %08x\n", min, max, style);
     else
-todo_wine
         ok(( min == 0 && max == 100) ||
                 broken( min == 0 && max == 0), /* Win 9x/ME */
                 "Scroll bar range is %d,%d. Expected 0,100. Style %08x\n", min, max, style);
@@ -263,7 +261,6 @@ todo_wine
     if( !( style & ( WS_VSCROLL | WS_HSCROLL)))
         ok( !ret, "GetScrollInfo succeeded unexpectedly. Style is %08x\n", style);
     else
-todo_wine
         ok( ret ||
                 broken( !ret), /* Win 9x/ME */
                 "GetScrollInfo failed unexpectedly. Style is %08x\n", style);
@@ -273,7 +270,6 @@ todo_wine
     if( !( style & ( WS_VSCROLL | WS_HSCROLL)))
         ok( !ret, "GetScrollInfo succeeded unexpectedly. Style is %08x\n", style);
     else
-todo_wine
         ok( ret ||
                 broken( !ret), /* Win 9x/ME */
                 "GetScrollInfo failed unexpectedly. Style is %08x\n", style);
@@ -302,13 +298,10 @@ todo_wine
         if (bThemeActive || style != WS_HSCROLL)
 todo_wine
             ok( (winstyle & (WS_HSCROLL|WS_VSCROLL)) == ( style | WS_VSCROLL),
-                    "unexpected style change %08x expected %08x\n",
-                    (winstyle & (WS_HSCROLL|WS_VSCROLL)), style | WS_VSCROLL);
+                "unexpected style change %08x/%08x\n", winstyle, style);
         else
-            ok( (winstyle & (WS_HSCROLL|WS_VSCROLL)) == style ||
-                    broken((winstyle & (WS_HSCROLL|WS_VSCROLL)) == (WS_HSCROLL|WS_VSCROLL)), /* Win 9x/ME */
-                    "unexpected style change %08x expected %08x\n",
-                    (winstyle & (WS_HSCROLL|WS_VSCROLL)), style);
+            ok( (winstyle & (WS_HSCROLL|WS_VSCROLL)) == style,
+                "unexpected style change %08x/%08x\n", winstyle, style);
     }
     /* do the test again with H and V reversed.
      * Start with a clean window */
@@ -341,13 +334,10 @@ todo_wine
         if (bThemeActive || style != WS_VSCROLL)
 todo_wine
             ok( (winstyle & (WS_HSCROLL|WS_VSCROLL)) == ( style | WS_HSCROLL),
-                    "unexpected style change %08x expected %08x\n",
-                    (winstyle & (WS_HSCROLL|WS_VSCROLL)), style | WS_HSCROLL);
+                "unexpected style change %08x/%08x\n", winstyle, style);
         else
-            ok( (winstyle & (WS_HSCROLL|WS_VSCROLL)) == style ||
-                    broken((winstyle & (WS_HSCROLL|WS_VSCROLL)) == (WS_HSCROLL|WS_VSCROLL)), /* Win 9x/ME */
-                    "unexpected style change %08x expected %08x\n",
-                    (winstyle & (WS_HSCROLL|WS_VSCROLL)), style);
+            ok( (winstyle & (WS_HSCROLL|WS_VSCROLL)) == style,
+                "unexpected style change %08x/%08x\n", winstyle, style);
     }
     /* Slightly change the test to use SetScrollInfo
      * Start with a clean window */
@@ -381,7 +371,7 @@ todo_wine
     ret = EnableScrollBar( hwnd, SB_HORZ, ESB_ENABLE_BOTH);
     ok( !ret, "Horizontal window scroll bar was not enabled\n");
     DestroyWindow( hwnd);
-    /* finally, check if adding a WS_[HV]SColl style of a  window makes the scroll info
+    /* finally, check if adding a WS_[HV]SCROLL style of a window makes the scroll info
      * available */
     if( style & (WS_HSCROLL | WS_VSCROLL)) return;/* only test if not yet set */
     /* Start with a clean window */
@@ -402,6 +392,98 @@ todo_wine
     DestroyWindow( hwnd);
 }
 
+static LRESULT CALLBACK scroll_init_proc(HWND hwnd, UINT msg,
+                                        WPARAM wparam, LPARAM lparam)
+{
+    SCROLLINFO horz, vert;
+    CREATESTRUCTA *cs = (CREATESTRUCTA *)lparam;
+    BOOL h_ret, v_ret;
+
+    switch(msg)
+    {
+        case WM_NCCREATE:
+            return cs->lpCreateParams ? DefWindowProcA(hwnd, msg, wparam, lparam) :
+                                        TRUE;
+
+        case WM_CREATE:
+            horz.cbSize = sizeof horz;
+            horz.fMask  = SIF_ALL;
+            horz.nMin   = 0xdeadbeaf;
+            horz.nMax   = 0xbaadc0de;
+            vert = horz;
+            h_ret = GetScrollInfo(hwnd, SB_HORZ, &horz);
+            v_ret = GetScrollInfo(hwnd, SB_VERT, &vert);
+
+            if(cs->lpCreateParams)
+            {
+                /* WM_NCCREATE was passed to DefWindowProc */
+                if(cs->style & (WS_VSCROLL | WS_HSCROLL))
+                {
+                    ok(h_ret && v_ret, "GetScrollInfo() should return NON-zero "
+                            "but got h_ret=%d v_ret=%d\n", h_ret, v_ret);
+                    ok(vert.nMin == 0 && vert.nMax == 100,
+                            "unexpected init values(SB_VERT): min=%d max=%d\n",
+                            vert.nMin, vert.nMax);
+                    ok(horz.nMin == 0 && horz.nMax == 100,
+                            "unexpected init values(SB_HORZ): min=%d max=%d\n",
+                            horz.nMin, horz.nMax);
+                }
+                else
+                {
+                    ok(!h_ret && !v_ret, "GetScrollInfo() should return zeru, "
+                            "but got h_ret=%d v_ret=%d\n", h_ret, v_ret);
+                    ok(vert.nMin == 0xdeadbeaf && vert.nMax == 0xbaadc0de,
+                            "unexpected  initialization(SB_VERT): min=%d max=%d\n",
+                            vert.nMin, vert.nMax);
+                    ok(horz.nMin == 0xdeadbeaf && horz.nMax == 0xbaadc0de,
+                            "unexpected  initialization(SB_HORZ): min=%d max=%d\n",
+                            horz.nMin, horz.nMax);
+                }
+            }
+            else
+            {
+                ok(!h_ret && !v_ret, "GetScrollInfo() should return zeru, "
+                    "but got h_ret=%d v_ret=%d\n", h_ret, v_ret);
+                ok(horz.nMin == 0xdeadbeaf && horz.nMax == 0xbaadc0de &&
+                    vert.nMin == 0xdeadbeaf && vert.nMax == 0xbaadc0de,
+                        "unexpected initialization\n");
+            }
+            return FALSE; /* abort creation */
+
+        default:
+            /* need for WM_GETMINMAXINFO, which precedes WM_NCCREATE */
+            return 0;
+    }
+}
+
+static void scrollbar_test_init(void)
+{
+    WNDCLASSEXA wc;
+    CHAR cls_name[] = "scroll_test_class";
+    LONG style[] = {WS_VSCROLL, WS_HSCROLL, WS_VSCROLL | WS_HSCROLL, 0};
+    int i;
+
+    memset( &wc, 0, sizeof wc );
+    wc.cbSize        = sizeof wc;
+    wc.style         = CS_VREDRAW | CS_HREDRAW;
+    wc.hInstance     = GetModuleHandleA(0);
+    wc.hCursor       = LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
+    wc.hbrBackground = GetStockObject(WHITE_BRUSH);
+    wc.lpszClassName = cls_name;
+    wc.lpfnWndProc   = scroll_init_proc;
+    RegisterClassExA(&wc);
+
+    for(i = 0; i < sizeof style / sizeof style[0]; i++)
+    {
+        /* need not to destroy these windows due creation abort */
+        CreateWindowExA(0, cls_name, NULL, style[i],
+                100, 100, 100, 100, NULL, NULL, wc.hInstance, (LPVOID)TRUE);
+        CreateWindowExA(0, cls_name, NULL, style[i],
+                100, 100, 100, 100, NULL, NULL, wc.hInstance, (LPVOID)FALSE);
+    }
+    UnregisterClassA(cls_name, wc.hInstance);
+}
+
 START_TEST ( scroll )
 {
     WNDCLASSA wc;
@@ -413,7 +495,7 @@ START_TEST ( scroll )
     wc.cbWndExtra = 0;
     wc.hInstance = GetModuleHandleA(NULL);
     wc.hIcon = NULL;
-    wc.hCursor = LoadCursorA(NULL, IDC_IBEAM);
+    wc.hCursor = LoadCursorA(NULL, (LPCSTR)IDC_IBEAM);
     wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
     wc.lpszMenuName = NULL;
     wc.lpszClassName = "MyTestWnd";
@@ -449,6 +531,8 @@ START_TEST ( scroll )
     scrollbar_test_default( WS_HSCROLL);
     scrollbar_test_default( WS_VSCROLL);
     scrollbar_test_default( WS_HSCROLL | WS_VSCROLL);
+
+    scrollbar_test_init();
 
     DestroyWindow(hScroll);
     DestroyWindow(hMainWnd);

@@ -11,6 +11,7 @@
 @ stdcall lineCompleteTransfer(long long ptr long)
 @ stdcall lineConfigDialog(long long str) lineConfigDialogA
 @ stdcall lineConfigDialogA(long long str)
+@ stdcall lineConfigDialogW(long long wstr)
 @ stdcall lineConfigDialogEdit(long long str ptr long ptr) lineConfigDialogEditA
 @ stdcall lineConfigDialogEditA(long long str ptr long ptr)
 @ stdcall lineConfigProvider(long long)
@@ -19,6 +20,7 @@
 @ stdcall lineDevSpecificFeature(long long ptr long)
 @ stdcall lineDial(long str long) lineDialA
 @ stdcall lineDialA(long str long)
+@ stdcall lineDialW(long wstr long)
 @ stdcall lineDrop(long str long)
 @ stdcall lineForward(long long long ptr long ptr ptr) lineForwardA
 @ stdcall lineForwardA(long long long ptr long ptr ptr)
@@ -41,6 +43,7 @@
 @ stdcall lineGetConfRelatedCalls(long ptr)
 @ stdcall lineGetCountry(long long ptr) lineGetCountryA
 @ stdcall lineGetCountryA(long long ptr)
+@ stdcall lineGetCountryW(long long ptr)
 @ stdcall lineGetDevCaps(long long long long ptr) lineGetDevCapsA
 @ stdcall lineGetDevCapsA(long long long long ptr)
 @ stdcall lineGetDevCapsW(long long long long ptr)
@@ -53,6 +56,7 @@
 @ stdcall lineGetIconA(long str ptr)
 @ stdcall lineGetLineDevStatus(long ptr) lineGetLineDevStatusA
 @ stdcall lineGetLineDevStatusA(long ptr)
+@ stdcall lineGetMessage(long ptr long)
 @ stdcall lineGetNewCalls(long long long ptr)
 @ stdcall lineGetNumRings(long long ptr)
 @ stdcall lineGetProviderList(long ptr) lineGetProviderListA
@@ -68,6 +72,7 @@
 @ stdcall lineHold(long)
 @ stdcall lineInitialize(ptr long ptr str ptr)
 @ stdcall lineInitializeExA(ptr long ptr str ptr ptr ptr)
+@ stdcall lineInitializeExW(ptr long ptr wstr ptr ptr ptr)
 @ stdcall lineMakeCall(long ptr str long ptr) lineMakeCallA
 @ stdcall lineMakeCallA(long ptr str long ptr)
 @ stdcall lineMakeCallW(long ptr wstr long ptr)
@@ -78,6 +83,7 @@
 @ stdcall lineNegotiateExtVersion(long long long long long ptr)
 @ stdcall lineOpen(long long ptr long long long long long ptr) lineOpenA
 @ stdcall lineOpenA(long long ptr long long long long long ptr)
+@ stdcall lineOpenW(long long ptr long long long long long ptr)
 @ stdcall linePark(long long str ptr) lineParkA
 @ stdcall lineParkA(long long str ptr)
 @ stdcall linePickup(long long ptr str str) linePickupA
@@ -115,8 +121,10 @@
 @ stdcall lineSwapHold(long long)
 @ stdcall lineTranslateAddress(long long long str long long ptr) lineTranslateAddressA
 @ stdcall lineTranslateAddressA(long long long str long long ptr)
+@ stdcall lineTranslateAddressW(long long long wstr long long ptr)
 @ stdcall lineTranslateDialog(long long long long str) lineTranslateDialogA
 @ stdcall lineTranslateDialogA(long long long long str)
+@ stdcall lineTranslateDialogW(long long long long wstr)
 @ stdcall lineUncompleteCall(long long)
 @ stdcall lineUnhold(long)
 @ stdcall lineUnpark(long long ptr str) lineUnparkA
@@ -138,12 +146,15 @@
 @ stdcall phoneGetIcon(long str ptr) phoneGetIconA
 @ stdcall phoneGetIconA(long str ptr)
 @ stdcall phoneGetLamp(long long ptr)
+@ stdcall phoneGetMessage(long ptr long)
 @ stdcall phoneGetRing(long ptr ptr)
 @ stdcall phoneGetStatus(long ptr) phoneGetStatusA
 @ stdcall phoneGetStatusA(long ptr)
 @ stdcall phoneGetStatusMessages(long ptr ptr ptr)
 @ stdcall phoneGetVolume(long long ptr)
 @ stdcall phoneInitialize(ptr long ptr str ptr)
+@ stdcall phoneInitializeExA(ptr long ptr str ptr ptr ptr)
+@ stdcall phoneInitializeExW(ptr long ptr str ptr ptr ptr)
 @ stdcall phoneNegotiateAPIVersion(long long long long ptr ptr)
 @ stdcall phoneNegotiateExtVersion(long long long long long ptr)
 @ stdcall phoneOpen(long long ptr long long long long)
@@ -160,6 +171,7 @@
 @ stdcall phoneShutdown(long)
 @ stdcall tapiGetLocationInfo(str str) tapiGetLocationInfoA
 @ stdcall tapiGetLocationInfoA(str str)
+@ stdcall tapiGetLocationInfoW(wstr wstr)
 @ stub    tapiRequestDrop
 @ stdcall tapiRequestMakeCall(str str str str) tapiRequestMakeCallA
 @ stdcall tapiRequestMakeCallA(str str str str)

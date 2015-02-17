@@ -154,7 +154,6 @@ void msi_free_action_script( MSIPACKAGE *package, UINT script )
 
 static void free_package_structures( MSIPACKAGE *package )
 {
-    INT i;
     struct list *item, *cursor;
 
     LIST_FOR_EACH_SAFE( item, cursor, &package->features )
@@ -283,11 +282,14 @@ static void free_package_structures( MSIPACKAGE *package )
 
     if (package->script)
     {
-        for (i = 0; i < TOTAL_SCRIPTS; i++)
+        INT i;
+        UINT j;
+
+        for (i = 0; i < SCRIPT_MAX; i++)
             msi_free_action_script( package, i );
 
-        for (i = 0; i < package->script->UniqueActionsCount; i++)
-            msi_free( package->script->UniqueActions[i] );
+        for (j = 0; j < package->script->UniqueActionsCount; j++)
+            msi_free( package->script->UniqueActions[j] );
 
         msi_free( package->script->UniqueActions );
         msi_free( package->script );
@@ -339,13 +341,14 @@ static void free_package_structures( MSIPACKAGE *package )
     remove_tracked_tempfiles(package);
 
     /* cleanup control event subscriptions */
-    ControlEvent_CleanupSubscriptions( package );
+    msi_event_cleanup_all_subscriptions( package );
 }
 
 static void MSI_FreePackage( MSIOBJECTHDR *arg)
 {
-    UINT i;
     MSIPACKAGE *package = (MSIPACKAGE *)arg;
+
+    msi_destroy_assembly_caches( package );
 
     if( package->dialog )
         msi_dialog_destroy( package->dialog );
@@ -353,10 +356,6 @@ static void MSI_FreePackage( MSIOBJECTHDR *arg)
     msiobj_release( &package->db->hdr );
     free_package_structures(package);
     CloseHandle( package->log_file );
-
-    for (i = 0; i < CLR_VERSION_MAX; i++)
-        if (package->cache_net[i]) IAssemblyCache_Release( package->cache_net[i] );
-    if (package->cache_sxs) IAssemblyCache_Release( package->cache_sxs );
 
     if (package->delete_on_close) DeleteFileW( package->localfile );
     msi_free( package->localfile );
@@ -387,7 +386,7 @@ static UINT create_temp_property_table(MSIPACKAGE *package)
     return rc;
 }
 
-UINT msi_clone_properties(MSIPACKAGE *package)
+UINT msi_clone_properties( MSIDATABASE *db )
 {
     static const WCHAR query_select[] = {
         'S','E','L','E','C','T',' ','*',' ','F','R','O','M',' ',
@@ -404,7 +403,7 @@ UINT msi_clone_properties(MSIPACKAGE *package)
     MSIQUERY *view_select;
     UINT rc;
 
-    rc = MSI_DatabaseOpenViewW( package->db, query_select, &view_select );
+    rc = MSI_DatabaseOpenViewW( db, query_select, &view_select );
     if (rc != ERROR_SUCCESS)
         return rc;
 
@@ -425,7 +424,7 @@ UINT msi_clone_properties(MSIPACKAGE *package)
         if (rc != ERROR_SUCCESS)
             break;
 
-        rc = MSI_DatabaseOpenViewW( package->db, query_insert, &view_insert );
+        rc = MSI_DatabaseOpenViewW( db, query_insert, &view_insert );
         if (rc != ERROR_SUCCESS)
         {
             msiobj_release( &rec_select->hdr );
@@ -441,7 +440,7 @@ UINT msi_clone_properties(MSIPACKAGE *package)
 
             TRACE("insert failed, trying update\n");
 
-            rc = MSI_DatabaseOpenViewW( package->db, query_update, &view_update );
+            rc = MSI_DatabaseOpenViewW( db, query_update, &view_update );
             if (rc != ERROR_SUCCESS)
             {
                 WARN("open view failed %u\n", rc);
@@ -486,7 +485,7 @@ static UINT set_installed_prop( MSIPACKAGE *package )
     if (r == ERROR_SUCCESS)
     {
         RegCloseKey( hkey );
-        msi_set_property( package->db, szInstalled, szOne );
+        msi_set_property( package->db, szInstalled, szOne, -1 );
     }
     return r;
 }
@@ -528,7 +527,7 @@ static UINT set_user_sid_prop( MSIPACKAGE *package )
     if (!ConvertSidToStringSidW( psid, &sid_str ))
         goto done;
 
-    r = msi_set_property( package->db, szUserSID, sid_str );
+    r = msi_set_property( package->db, szUserSID, sid_str, -1 );
 
 done:
     LocalFree( sid_str );
@@ -641,10 +640,12 @@ static void set_msi_assembly_prop(MSIPACKAGE *package)
         return;
 
     size = GetFileVersionInfoSizeW(fusion, &handle);
-    if (!size) return;
+    if (!size)
+        goto done;
 
     version = msi_alloc(size);
-    if (!version) return;
+    if (!version)
+        goto done;
 
     if (!GetFileVersionInfoW(fusion, handle, size, version))
         goto done;
@@ -660,7 +661,7 @@ static void set_msi_assembly_prop(MSIPACKAGE *package)
     if (!val_len || !verstr)
         goto done;
 
-    msi_set_property(package->db, netasm, verstr);
+    msi_set_property( package->db, netasm, verstr, -1 );
 
 done:
     msi_free(fusion);
@@ -669,12 +670,11 @@ done:
 
 static VOID set_installer_properties(MSIPACKAGE *package)
 {
-    WCHAR pth[MAX_PATH];
     WCHAR *ptr;
     OSVERSIONINFOEXW OSVersion;
     MEMORYSTATUSEX msex;
     DWORD verval, len;
-    WCHAR verstr[10], bufstr[20];
+    WCHAR pth[MAX_PATH], verstr[11], bufstr[22];
     HDC dc;
     HKEY hkey;
     LPWSTR username, companyname;
@@ -704,14 +704,13 @@ static VOID set_installer_properties(MSIPACKAGE *package)
     static const WCHAR szVersion9x[] = {'V','e','r','s','i','o','n','9','X',0};
     static const WCHAR szVersionNT[] = {'V','e','r','s','i','o','n','N','T',0};
     static const WCHAR szMsiNTProductType[] = {'M','s','i','N','T','P','r','o','d','u','c','t','T','y','p','e',0};
-    static const WCHAR szFormat[] = {'%','l','i',0};
+    static const WCHAR szFormat[] = {'%','u',0};
+    static const WCHAR szFormat2[] = {'%','u','.','%','u',0};
     static const WCHAR szWindowsBuild[] = {'W','i','n','d','o','w','s','B','u','i','l','d',0};
     static const WCHAR szServicePackLevel[] = {'S','e','r','v','i','c','e','P','a','c','k','L','e','v','e','l',0};
-    static const WCHAR szSix[] = {'6',0 };
     static const WCHAR szVersionMsi[] = { 'V','e','r','s','i','o','n','M','s','i',0 };
     static const WCHAR szVersionDatabase[] = { 'V','e','r','s','i','o','n','D','a','t','a','b','a','s','e',0 };
     static const WCHAR szPhysicalMemory[] = { 'P','h','y','s','i','c','a','l','M','e','m','o','r','y',0 };
-    static const WCHAR szFormat2[] = {'%','l','i','.','%','l','i',0};
     static const WCHAR szScreenX[] = {'S','c','r','e','e','n','X',0};
     static const WCHAR szScreenY[] = {'S','c','r','e','e','n','Y',0};
     static const WCHAR szColorBits[] = {'C','o','l','o','r','B','i','t','s',0};
@@ -752,6 +751,8 @@ static VOID set_installer_properties(MSIPACKAGE *package)
     static const WCHAR szPrintHoodFolder[] = {'P','r','i','n','t','H','o','o','d','F','o','l','d','e','r',0};
     static const WCHAR szRecentFolder[] = {'R','e','c','e','n','t','F','o','l','d','e','r',0};
     static const WCHAR szComputerName[] = {'C','o','m','p','u','t','e','r','N','a','m','e',0};
+    static const WCHAR szBrowseProperty[] = {'_','B','r','o','w','s','e','P','r','o','p','e','r','t','y',0};
+    static const WCHAR szInstallDir[] = {'I','N','S','T','A','L','L','D','I','R',0};
 
     /*
      * Other things that probably should be set:
@@ -762,183 +763,182 @@ static VOID set_installer_properties(MSIPACKAGE *package)
 
     SHGetFolderPathW(NULL, CSIDL_COMMON_APPDATA, NULL, 0, pth);
     strcatW(pth, szBackSlash);
-    msi_set_property(package->db, szCommonAppDataFolder, pth);
+    msi_set_property( package->db, szCommonAppDataFolder, pth, -1 );
 
     SHGetFolderPathW(NULL, CSIDL_FAVORITES, NULL, 0, pth);
     strcatW(pth, szBackSlash);
-    msi_set_property(package->db, szFavoritesFolder, pth);
+    msi_set_property( package->db, szFavoritesFolder, pth, -1 );
 
     SHGetFolderPathW(NULL, CSIDL_FONTS, NULL, 0, pth);
     strcatW(pth, szBackSlash);
-    msi_set_property(package->db, szFontsFolder, pth);
+    msi_set_property( package->db, szFontsFolder, pth, -1 );
 
     SHGetFolderPathW(NULL, CSIDL_SENDTO, NULL, 0, pth);
     strcatW(pth, szBackSlash);
-    msi_set_property(package->db, szSendToFolder, pth);
+    msi_set_property( package->db, szSendToFolder, pth, -1 );
 
     SHGetFolderPathW(NULL, CSIDL_STARTMENU, NULL, 0, pth);
     strcatW(pth, szBackSlash);
-    msi_set_property(package->db, szStartMenuFolder, pth);
+    msi_set_property( package->db, szStartMenuFolder, pth, -1 );
 
     SHGetFolderPathW(NULL, CSIDL_STARTUP, NULL, 0, pth);
     strcatW(pth, szBackSlash);
-    msi_set_property(package->db, szStartupFolder, pth);
+    msi_set_property( package->db, szStartupFolder, pth, -1 );
 
     SHGetFolderPathW(NULL, CSIDL_TEMPLATES, NULL, 0, pth);
     strcatW(pth, szBackSlash);
-    msi_set_property(package->db, szTemplateFolder, pth);
+    msi_set_property( package->db, szTemplateFolder, pth, -1 );
 
     SHGetFolderPathW(NULL, CSIDL_DESKTOP, NULL, 0, pth);
     strcatW(pth, szBackSlash);
-    msi_set_property(package->db, szDesktopFolder, pth);
+    msi_set_property( package->db, szDesktopFolder, pth, -1 );
 
     /* FIXME: set to AllUsers profile path if ALLUSERS is set */
     SHGetFolderPathW(NULL, CSIDL_PROGRAMS, NULL, 0, pth);
     strcatW(pth, szBackSlash);
-    msi_set_property(package->db, szProgramMenuFolder, pth);
+    msi_set_property( package->db, szProgramMenuFolder, pth, -1 );
 
     SHGetFolderPathW(NULL, CSIDL_ADMINTOOLS, NULL, 0, pth);
     strcatW(pth, szBackSlash);
-    msi_set_property(package->db, szAdminToolsFolder, pth);
+    msi_set_property( package->db, szAdminToolsFolder, pth, -1 );
 
     SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, pth);
     strcatW(pth, szBackSlash);
-    msi_set_property(package->db, szAppDataFolder, pth);
+    msi_set_property( package->db, szAppDataFolder, pth, -1 );
 
     SHGetFolderPathW(NULL, CSIDL_SYSTEM, NULL, 0, pth);
     strcatW(pth, szBackSlash);
-    msi_set_property(package->db, szSystemFolder, pth);
-    msi_set_property(package->db, szSystem16Folder, pth);
+    msi_set_property( package->db, szSystemFolder, pth, -1 );
+    msi_set_property( package->db, szSystem16Folder, pth, -1 );
 
     SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, pth);
     strcatW(pth, szBackSlash);
-    msi_set_property(package->db, szLocalAppDataFolder, pth);
+    msi_set_property( package->db, szLocalAppDataFolder, pth, -1 );
 
     SHGetFolderPathW(NULL, CSIDL_MYPICTURES, NULL, 0, pth);
     strcatW(pth, szBackSlash);
-    msi_set_property(package->db, szMyPicturesFolder, pth);
+    msi_set_property( package->db, szMyPicturesFolder, pth, -1 );
 
     SHGetFolderPathW(NULL, CSIDL_PERSONAL, NULL, 0, pth);
     strcatW(pth, szBackSlash);
-    msi_set_property(package->db, szPersonalFolder, pth);
+    msi_set_property( package->db, szPersonalFolder, pth, -1 );
 
     SHGetFolderPathW(NULL, CSIDL_WINDOWS, NULL, 0, pth);
     strcatW(pth, szBackSlash);
-    msi_set_property(package->db, szWindowsFolder, pth);
+    msi_set_property( package->db, szWindowsFolder, pth, -1 );
     
     SHGetFolderPathW(NULL, CSIDL_PRINTHOOD, NULL, 0, pth);
     strcatW(pth, szBackSlash);
-    msi_set_property(package->db, szPrintHoodFolder, pth);
+    msi_set_property( package->db, szPrintHoodFolder, pth, -1 );
 
     SHGetFolderPathW(NULL, CSIDL_NETHOOD, NULL, 0, pth);
     strcatW(pth, szBackSlash);
-    msi_set_property(package->db, szNetHoodFolder, pth);
+    msi_set_property( package->db, szNetHoodFolder, pth, -1 );
 
     SHGetFolderPathW(NULL, CSIDL_RECENT, NULL, 0, pth);
     strcatW(pth, szBackSlash);
-    msi_set_property(package->db, szRecentFolder, pth);
+    msi_set_property( package->db, szRecentFolder, pth, -1 );
 
     /* Physical Memory is specified in MB. Using total amount. */
     msex.dwLength = sizeof(msex);
     GlobalMemoryStatusEx( &msex );
-    sprintfW( bufstr, szIntFormat, (int)(msex.ullTotalPhys / 1024 / 1024) );
-    msi_set_property(package->db, szPhysicalMemory, bufstr);
+    len = sprintfW( bufstr, szIntFormat, (int)(msex.ullTotalPhys / 1024 / 1024) );
+    msi_set_property( package->db, szPhysicalMemory, bufstr, len );
 
     SHGetFolderPathW(NULL, CSIDL_WINDOWS, NULL, 0, pth);
     ptr = strchrW(pth,'\\');
     if (ptr) *(ptr + 1) = 0;
-    msi_set_property(package->db, szWindowsVolume, pth);
+    msi_set_property( package->db, szWindowsVolume, pth, -1 );
     
-    GetTempPathW(MAX_PATH,pth);
-    msi_set_property(package->db, szTempFolder, pth);
+    len = GetTempPathW(MAX_PATH, pth);
+    msi_set_property( package->db, szTempFolder, pth, len );
 
     /* in a wine environment the user is always admin and privileged */
-    msi_set_property(package->db, szAdminUser, szOne);
-    msi_set_property(package->db, szPrivileged, szOne);
+    msi_set_property( package->db, szAdminUser, szOne, -1 );
+    msi_set_property( package->db, szPrivileged, szOne, -1 );
 
     /* set the os things */
     OSVersion.dwOSVersionInfoSize = sizeof(OSVERSIONINFOEXW);
     GetVersionExW((OSVERSIONINFOW *)&OSVersion);
     verval = OSVersion.dwMinorVersion + OSVersion.dwMajorVersion * 100;
-    sprintfW(verstr, szFormat, verval);
+    len = sprintfW( verstr, szFormat, verval );
     switch (OSVersion.dwPlatformId)
     {
         case VER_PLATFORM_WIN32_WINDOWS:    
-            msi_set_property(package->db, szVersion9x, verstr);
+            msi_set_property( package->db, szVersion9x, verstr, len );
             break;
         case VER_PLATFORM_WIN32_NT:
-            msi_set_property(package->db, szVersionNT, verstr);
-            sprintfW(verstr, szFormat,OSVersion.wProductType);
-            msi_set_property(package->db, szMsiNTProductType, verstr);
+            msi_set_property( package->db, szVersionNT, verstr, len );
+            len = sprintfW( bufstr, szFormat,OSVersion.wProductType );
+            msi_set_property( package->db, szMsiNTProductType, bufstr, len );
             break;
     }
-    sprintfW(verstr, szFormat, OSVersion.dwBuildNumber);
-    msi_set_property(package->db, szWindowsBuild, verstr);
-    /* just fudge this */
-    msi_set_property(package->db, szServicePackLevel, szSix);
+    len = sprintfW( bufstr, szFormat, OSVersion.dwBuildNumber );
+    msi_set_property( package->db, szWindowsBuild, bufstr, len );
+    len = sprintfW( bufstr, szFormat, OSVersion.wServicePackMajor );
+    msi_set_property( package->db, szServicePackLevel, bufstr, len );
 
-    sprintfW( bufstr, szFormat2, MSI_MAJORVERSION, MSI_MINORVERSION);
-    msi_set_property( package->db, szVersionMsi, bufstr );
-    sprintfW( bufstr, szFormat, MSI_MAJORVERSION * 100);
-    msi_set_property( package->db, szVersionDatabase, bufstr );
+    len = sprintfW( bufstr, szFormat2, MSI_MAJORVERSION, MSI_MINORVERSION );
+    msi_set_property( package->db, szVersionMsi, bufstr, len );
+    len = sprintfW( bufstr, szFormat, MSI_MAJORVERSION * 100 );
+    msi_set_property( package->db, szVersionDatabase, bufstr, len );
 
     GetNativeSystemInfo( &sys_info );
-    sprintfW( bufstr, szIntFormat, sys_info.wProcessorLevel );
+    len = sprintfW( bufstr, szIntFormat, sys_info.wProcessorLevel );
+    msi_set_property( package->db, szIntel, bufstr, len );
     if (sys_info.u.s.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_INTEL)
     {
-        msi_set_property( package->db, szIntel, bufstr );
-
         GetSystemDirectoryW( pth, MAX_PATH );
         PathAddBackslashW( pth );
-        msi_set_property( package->db, szSystemFolder, pth );
+        msi_set_property( package->db, szSystemFolder, pth, -1 );
 
         SHGetFolderPathW( NULL, CSIDL_PROGRAM_FILES, NULL, 0, pth );
         PathAddBackslashW( pth );
-        msi_set_property( package->db, szProgramFilesFolder, pth );
+        msi_set_property( package->db, szProgramFilesFolder, pth, -1 );
 
         SHGetFolderPathW( NULL, CSIDL_PROGRAM_FILES_COMMON, NULL, 0, pth );
         PathAddBackslashW( pth );
-        msi_set_property( package->db, szCommonFilesFolder, pth );
+        msi_set_property( package->db, szCommonFilesFolder, pth, -1 );
     }
     else if (sys_info.u.s.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_AMD64)
     {
-        msi_set_property( package->db, szMsiAMD64, bufstr );
-        msi_set_property( package->db, szMsix64, bufstr );
-        msi_set_property( package->db, szVersionNT64, verstr );
+        msi_set_property( package->db, szMsiAMD64, bufstr, -1 );
+        msi_set_property( package->db, szMsix64, bufstr, -1 );
+        msi_set_property( package->db, szVersionNT64, verstr, -1 );
 
         GetSystemDirectoryW( pth, MAX_PATH );
         PathAddBackslashW( pth );
-        msi_set_property( package->db, szSystem64Folder, pth );
+        msi_set_property( package->db, szSystem64Folder, pth, -1 );
 
         GetSystemWow64DirectoryW( pth, MAX_PATH );
         PathAddBackslashW( pth );
-        msi_set_property( package->db, szSystemFolder, pth );
+        msi_set_property( package->db, szSystemFolder, pth, -1 );
 
         SHGetFolderPathW( NULL, CSIDL_PROGRAM_FILES, NULL, 0, pth );
         PathAddBackslashW( pth );
-        msi_set_property( package->db, szProgramFiles64Folder, pth );
+        msi_set_property( package->db, szProgramFiles64Folder, pth, -1 );
 
         SHGetFolderPathW( NULL, CSIDL_PROGRAM_FILESX86, NULL, 0, pth );
         PathAddBackslashW( pth );
-        msi_set_property( package->db, szProgramFilesFolder, pth );
+        msi_set_property( package->db, szProgramFilesFolder, pth, -1 );
 
         SHGetFolderPathW( NULL, CSIDL_PROGRAM_FILES_COMMON, NULL, 0, pth );
         PathAddBackslashW( pth );
-        msi_set_property( package->db, szCommonFiles64Folder, pth );
+        msi_set_property( package->db, szCommonFiles64Folder, pth, -1 );
 
         SHGetFolderPathW( NULL, CSIDL_PROGRAM_FILES_COMMONX86, NULL, 0, pth );
         PathAddBackslashW( pth );
-        msi_set_property( package->db, szCommonFilesFolder, pth );
+        msi_set_property( package->db, szCommonFilesFolder, pth, -1 );
     }
 
     /* Screen properties. */
     dc = GetDC(0);
-    sprintfW( bufstr, szIntFormat, GetDeviceCaps( dc, HORZRES ) );
-    msi_set_property( package->db, szScreenX, bufstr );
-    sprintfW( bufstr, szIntFormat, GetDeviceCaps( dc, VERTRES ));
-    msi_set_property( package->db, szScreenY, bufstr );
-    sprintfW( bufstr, szIntFormat, GetDeviceCaps( dc, BITSPIXEL ));
-    msi_set_property( package->db, szColorBits, bufstr );
+    len = sprintfW( bufstr, szIntFormat, GetDeviceCaps(dc, HORZRES) );
+    msi_set_property( package->db, szScreenX, bufstr, len );
+    len = sprintfW( bufstr, szIntFormat, GetDeviceCaps(dc, VERTRES) );
+    msi_set_property( package->db, szScreenY, bufstr, len );
+    len = sprintfW( bufstr, szIntFormat, GetDeviceCaps(dc, BITSPIXEL) );
+    msi_set_property( package->db, szColorBits, bufstr, len );
     ReleaseDC(0, dc);
 
     /* USERNAME and COMPANYNAME */
@@ -950,10 +950,10 @@ static VOID set_installer_properties(MSIPACKAGE *package)
     {
         if (!username &&
             (username = msi_reg_get_val_str( hkey, szDefName )))
-            msi_set_property( package->db, szUSERNAME, username );
+            msi_set_property( package->db, szUSERNAME, username, -1 );
         if (!companyname &&
             (companyname = msi_reg_get_val_str( hkey, szDefCompany )))
-            msi_set_property( package->db, szCOMPANYNAME, companyname );
+            msi_set_property( package->db, szCOMPANYNAME, companyname, -1 );
         CloseHandle( hkey );
     }
     if ((!username || !companyname) &&
@@ -961,10 +961,10 @@ static VOID set_installer_properties(MSIPACKAGE *package)
     {
         if (!username &&
             (username = msi_reg_get_val_str( hkey, szRegisteredUser )))
-            msi_set_property( package->db, szUSERNAME, username );
+            msi_set_property( package->db, szUSERNAME, username, -1 );
         if (!companyname &&
             (companyname = msi_reg_get_val_str( hkey, szRegisteredOrganization )))
-            msi_set_property( package->db, szCOMPANYNAME, companyname );
+            msi_set_property( package->db, szCOMPANYNAME, companyname, -1 );
         CloseHandle( hkey );
     }
     msi_free( username );
@@ -977,7 +977,7 @@ static VOID set_installer_properties(MSIPACKAGE *package)
     GetSystemTime( &systemtime );
     if (GetDateFormatW( LOCALE_USER_DEFAULT, DATE_SHORTDATE, &systemtime,
                         NULL, bufstr, sizeof(bufstr)/sizeof(bufstr[0]) ))
-        msi_set_property( package->db, szDate, bufstr );
+        msi_set_property( package->db, szDate, bufstr, -1 );
     else
         ERR("Couldn't set Date property: GetDateFormat failed with error %d\n", GetLastError());
 
@@ -985,22 +985,22 @@ static VOID set_installer_properties(MSIPACKAGE *package)
                         TIME_FORCE24HOURFORMAT | TIME_NOTIMEMARKER,
                         &systemtime, NULL, bufstr,
                         sizeof(bufstr)/sizeof(bufstr[0]) ))
-        msi_set_property( package->db, szTime, bufstr );
+        msi_set_property( package->db, szTime, bufstr, -1 );
     else
         ERR("Couldn't set Time property: GetTimeFormat failed with error %d\n", GetLastError());
 
     set_msi_assembly_prop( package );
 
     langid = GetUserDefaultLangID();
-    sprintfW(bufstr, szIntFormat, langid);
-    msi_set_property( package->db, szUserLanguageID, bufstr );
+    len = sprintfW( bufstr, szIntFormat, langid );
+    msi_set_property( package->db, szUserLanguageID, bufstr, len );
 
     langid = GetSystemDefaultLangID();
-    sprintfW(bufstr, szIntFormat, langid);
-    msi_set_property( package->db, szSystemLangID, bufstr );
+    len = sprintfW( bufstr, szIntFormat, langid );
+    msi_set_property( package->db, szSystemLangID, bufstr, len );
 
-    sprintfW(bufstr, szIntFormat, MsiQueryProductStateW(package->ProductCode));
-    msi_set_property( package->db, szProductState, bufstr );
+    len = sprintfW( bufstr, szIntFormat, MsiQueryProductStateW(package->ProductCode) );
+    msi_set_property( package->db, szProductState, bufstr, len );
 
     len = 0;
     if (!GetUserNameW( NULL, &len ) && GetLastError() == ERROR_INSUFFICIENT_BUFFER)
@@ -1009,7 +1009,7 @@ static VOID set_installer_properties(MSIPACKAGE *package)
         if ((username = msi_alloc( len * sizeof(WCHAR) )))
         {
             if (GetUserNameW( username, &len ))
-                msi_set_property( package->db, szLogonUser, username );
+                msi_set_property( package->db, szLogonUser, username, len - 1 );
             msi_free( username );
         }
     }
@@ -1020,10 +1020,11 @@ static VOID set_installer_properties(MSIPACKAGE *package)
         if ((computername = msi_alloc( len * sizeof(WCHAR) )))
         {
             if (GetComputerNameW( computername, &len ))
-                msi_set_property( package->db, szComputerName, computername );
+                msi_set_property( package->db, szComputerName, computername, len );
             msi_free( computername );
         }
     }
+    msi_set_property( package->db, szBrowseProperty, szInstallDir, -1 );
 }
 
 static UINT msi_load_summary_properties( MSIPACKAGE *package )
@@ -1076,10 +1077,11 @@ static UINT msi_load_summary_properties( MSIPACKAGE *package )
     if (rc != ERROR_SUCCESS)
     {
         WARN("Unable to query rev number: %d\n", rc);
+        msi_free( package_code );
         goto done;
     }
 
-    msi_set_property( package->db, szPackageCode, package_code );
+    msi_set_property( package->db, szPackageCode, package_code, len );
     msi_free( package_code );
 
     /* load package attributes */
@@ -1147,16 +1149,17 @@ void msi_adjust_privilege_properties( MSIPACKAGE *package )
     if (msi_get_property_int( package->db, szAllUsers, 0 ) == 2)
     {
         TRACE("resetting ALLUSERS property from 2 to 1\n");
-        msi_set_property( package->db, szAllUsers, szOne );
+        msi_set_property( package->db, szAllUsers, szOne, -1 );
     }
-    msi_set_property( package->db, szAdminUser, szOne );
+    msi_set_property( package->db, szAdminUser, szOne, -1 );
 }
 
 MSIPACKAGE *MSI_CreatePackage( MSIDATABASE *db, LPCWSTR base_url )
 {
-    static const WCHAR szpi[] = {'%','i',0};
+    static const WCHAR fmtW[] = {'%','u',0};
     MSIPACKAGE *package;
-    WCHAR uilevel[10];
+    WCHAR uilevel[11];
+    int len;
     UINT r;
 
     TRACE("%p\n", db);
@@ -1172,17 +1175,17 @@ MSIPACKAGE *MSI_CreatePackage( MSIDATABASE *db, LPCWSTR base_url )
         package->BaseURL = strdupW( base_url );
 
         create_temp_property_table( package );
-        msi_clone_properties( package );
+        msi_clone_properties( package->db );
         msi_adjust_privilege_properties( package );
 
         package->ProductCode = msi_dup_property( package->db, szProductCode );
         package->script = msi_alloc_zero( sizeof(MSISCRIPT) );
 
-        set_installed_prop( package );
         set_installer_properties( package );
 
-        sprintfW(uilevel,szpi,gUILevel);
-        msi_set_property(package->db, szUILevel, uilevel);
+        package->ui_level = gUILevel;
+        len = sprintfW( uilevel, fmtW, gUILevel & INSTALLUILEVEL_MASK );
+        msi_set_property( package->db, szUILevel, uilevel, len );
 
         r = msi_load_summary_properties( package );
         if (r != ERROR_SUCCESS)
@@ -1268,9 +1271,18 @@ UINT msi_create_empty_local_file( LPWSTR path, LPCWSTR suffix )
     return ERROR_SUCCESS;
 }
 
+enum platform parse_platform( const WCHAR *str )
+{
+    if (!str[0] || !strcmpW( str, szIntel )) return PLATFORM_INTEL;
+    else if (!strcmpW( str, szIntel64 )) return PLATFORM_INTEL64;
+    else if (!strcmpW( str, szX64 ) || !strcmpW( str, szAMD64 )) return PLATFORM_X64;
+    else if (!strcmpW( str, szARM )) return PLATFORM_ARM;
+    return PLATFORM_UNKNOWN;
+}
+
 static UINT msi_parse_summary( MSISUMMARYINFO *si, MSIPACKAGE *package )
 {
-    WCHAR *template, *p, *q;
+    WCHAR *template, *p, *q, *platform;
     DWORD i, count;
 
     package->version = msi_suminfo_get_int32( si, PID_PAGECOUNT );
@@ -1290,14 +1302,16 @@ static UINT msi_parse_summary( MSISUMMARYINFO *si, MSIPACKAGE *package )
         return ERROR_PATCH_PACKAGE_INVALID;
     }
     *p = 0;
-    if ((q = strchrW( template, ',' ))) *q = 0;
-    if (!template[0] || !strcmpW( template, szIntel ))
-        package->platform = PLATFORM_INTEL;
-    else if (!strcmpW( template, szIntel64 ))
-        package->platform = PLATFORM_INTEL64;
-    else if (!strcmpW( template, szX64 ) || !strcmpW( template, szAMD64 ))
-        package->platform = PLATFORM_X64;
-    else
+    platform = template;
+    if ((q = strchrW( platform, ',' ))) *q = 0;
+    package->platform = parse_platform( platform );
+    while (package->platform == PLATFORM_UNKNOWN && q)
+    {
+        platform = q + 1;
+        if ((q = strchrW( platform, ',' ))) *q = 0;
+        package->platform = parse_platform( platform );
+    }
+    if (package->platform == PLATFORM_UNKNOWN)
     {
         WARN("unknown platform %s\n", debugstr_w(template));
         msi_free( template );
@@ -1337,14 +1351,14 @@ static UINT msi_parse_summary( MSISUMMARYINFO *si, MSIPACKAGE *package )
 
 static UINT validate_package( MSIPACKAGE *package )
 {
-    BOOL is_wow64;
     UINT i;
 
     if (package->platform == PLATFORM_INTEL64)
-    {
         return ERROR_INSTALL_PLATFORM_UNSUPPORTED;
-    }
-    IsWow64Process( GetCurrentProcess(), &is_wow64 );
+#ifndef __arm__
+    if (package->platform == PLATFORM_ARM)
+        return ERROR_INSTALL_PLATFORM_UNSUPPORTED;
+#endif
     if (package->platform == PLATFORM_X64)
     {
         if (!is_64bit && !is_wow64)
@@ -1451,6 +1465,9 @@ static UINT get_registered_local_package( const WCHAR *product, const WCHAR *pac
     if (!strcmpiW( package, unsquashed ))
     {
         WCHAR *filename = msi_reg_get_val_str( props_key, INSTALLPROPERTY_LOCALPACKAGEW );
+        if (!filename)
+            goto done;
+
         strcpyW( localfile, filename );
         msi_free( filename );
         r = ERROR_SUCCESS;
@@ -1504,6 +1521,28 @@ static UINT get_local_package( const WCHAR *filename, WCHAR *localfile )
     msi_free( package_code );
     msi_free( product_code );
     msiobj_release( &db->hdr );
+    return r;
+}
+
+UINT msi_set_original_database_property( MSIDATABASE *db, const WCHAR *package )
+{
+    UINT r;
+
+    if (UrlIsW( package, URLIS_URL ))
+        r = msi_set_property( db, szOriginalDatabase, package, -1 );
+    else if (package[0] == '#')
+        r = msi_set_property( db, szOriginalDatabase, db->path, -1 );
+    else
+    {
+        DWORD len;
+        WCHAR *path;
+
+        if (!(len = GetFullPathNameW( package, 0, NULL, NULL ))) return GetLastError();
+        if (!(path = msi_alloc( len * sizeof(WCHAR) ))) return ERROR_OUTOFMEMORY;
+        len = GetFullPathNameW( package, len, path, NULL );
+        r = msi_set_property( db, szOriginalDatabase, path, len );
+        msi_free( path );
+    }
     return r;
 }
 
@@ -1564,13 +1603,17 @@ UINT MSI_OpenPackageW(LPCWSTR szPackage, MSIPACKAGE **pPackage)
         {
             r = msi_create_empty_local_file( localfile, dotmsi );
             if (r != ERROR_SUCCESS)
+            {
+                msi_free ( base_url );
                 return r;
+            }
 
             if (!CopyFileW( file, localfile, FALSE ))
             {
                 r = GetLastError();
                 WARN("unable to copy package %s to %s (%u)\n", debugstr_w(file), debugstr_w(localfile), r);
                 DeleteFileW( localfile );
+                msi_free ( base_url );
                 return r;
             }
             delete_on_close = TRUE;
@@ -1578,7 +1621,10 @@ UINT MSI_OpenPackageW(LPCWSTR szPackage, MSIPACKAGE **pPackage)
         TRACE("opening package %s\n", debugstr_w( localfile ));
         r = MSI_OpenDatabaseW( localfile, MSIDBOPEN_TRANSACT, &db );
         if (r != ERROR_SUCCESS)
+        {
+            msi_free ( base_url );
             return r;
+        }
     }
     package = MSI_CreatePackage( db, base_url );
     msi_free( base_url );
@@ -1608,19 +1654,8 @@ UINT MSI_OpenPackageW(LPCWSTR szPackage, MSIPACKAGE **pPackage)
         msiobj_release( &package->hdr );
         return r;
     }
-    msi_set_property( package->db, szDatabase, db->path );
-
-    if( UrlIsW( szPackage, URLIS_URL ) )
-        msi_set_property( package->db, szOriginalDatabase, szPackage );
-    else if( szPackage[0] == '#' )
-        msi_set_property( package->db, szOriginalDatabase, db->path );
-    else
-    {
-        WCHAR fullpath[MAX_PATH];
-
-        GetFullPathNameW( szPackage, MAX_PATH, fullpath, NULL );
-        msi_set_property( package->db, szOriginalDatabase, fullpath );
-    }
+    msi_set_property( package->db, szDatabase, db->path, -1 );
+    set_installed_prop( package );
     msi_set_context( package );
 
     while (1)
@@ -1642,10 +1677,13 @@ UINT MSI_OpenPackageW(LPCWSTR szPackage, MSIPACKAGE **pPackage)
         }
         index++;
     }
-    if (index)
+    if (index) msi_adjust_privilege_properties( package );
+
+    r = msi_set_original_database_property( package->db, szPackage );
+    if (r != ERROR_SUCCESS)
     {
-        msi_clone_properties( package );
-        msi_adjust_privilege_properties( package );
+        msiobj_release( &package->hdr );
+        return r;
     }
     if (gszLogFile)
         package->log_file = CreateFileW( gszLogFile, GENERIC_WRITE, FILE_SHARE_WRITE, NULL,
@@ -1749,13 +1787,11 @@ MSIHANDLE WINAPI MsiGetActiveDatabase(MSIHANDLE hInstall)
 
 INT MSI_ProcessMessage( MSIPACKAGE *package, INSTALLMESSAGE eMessageType, MSIRECORD *record )
 {
-    static const WCHAR szActionData[] =
-        {'A','c','t','i','o','n','D','a','t','a',0};
-    static const WCHAR szSetProgress[] =
-        {'S','e','t','P','r','o','g','r','e','s','s',0};
-    static const WCHAR szActionText[] =
-        {'A','c','t','i','o','n','T','e','x','t',0};
-    LPWSTR message;
+    static const WCHAR szActionData[] = {'A','c','t','i','o','n','D','a','t','a',0};
+    static const WCHAR szSetProgress[] = {'S','e','t','P','r','o','g','r','e','s','s',0};
+    static const WCHAR szActionText[] = {'A','c','t','i','o','n','T','e','x','t',0};
+    MSIRECORD *uirow;
+    LPWSTR deformated, message;
     DWORD i, len, total_len, log_type = 0;
     INT rc = 0;
     char *msg;
@@ -1894,29 +1930,37 @@ INT MSI_ProcessMessage( MSIPACKAGE *package, INSTALLMESSAGE eMessageType, MSIREC
     switch (eMessageType & 0xff000000)
     {
     case INSTALLMESSAGE_ACTIONDATA:
-        /* FIXME: format record here instead of in ui_actiondata to get the
-         * correct action data for external scripts */
-        ControlEvent_FireSubscribedEvent(package, szActionData, record);
-        break;
-    case INSTALLMESSAGE_ACTIONSTART:
-    {
-        MSIRECORD *uirow;
-        LPWSTR deformated;
-        LPCWSTR action_text = MSI_RecordGetString(record, 2);
-
-        deformat_string(package, action_text, &deformated);
+        deformat_string(package, MSI_RecordGetString(record, 2), &deformated);
         uirow = MSI_CreateRecord(1);
         MSI_RecordSetStringW(uirow, 1, deformated);
-        TRACE("INSTALLMESSAGE_ACTIONSTART: %s\n", debugstr_w(deformated));
         msi_free(deformated);
 
-        ControlEvent_FireSubscribedEvent(package, szActionText, uirow);
+        msi_event_fire( package, szActionData, uirow );
+        msiobj_release(&uirow->hdr);
+
+        if (package->action_progress_increment)
+        {
+            uirow = MSI_CreateRecord(2);
+            MSI_RecordSetInteger(uirow, 1, 2);
+            MSI_RecordSetInteger(uirow, 2, package->action_progress_increment);
+            msi_event_fire( package, szSetProgress, uirow );
+            msiobj_release(&uirow->hdr);
+        }
+        break;
+
+    case INSTALLMESSAGE_ACTIONSTART:
+        deformat_string(package, MSI_RecordGetString(record, 2), &deformated);
+        uirow = MSI_CreateRecord(1);
+        MSI_RecordSetStringW(uirow, 1, deformated);
+        msi_free(deformated);
+
+        msi_event_fire( package, szActionText, uirow );
 
         msiobj_release(&uirow->hdr);
         break;
-    }
+
     case INSTALLMESSAGE_PROGRESS:
-        ControlEvent_FireSubscribedEvent(package, szSetProgress, record);
+        msi_event_fire( package, szSetProgress, record );
         break;
     }
 
@@ -2012,7 +2056,7 @@ void msi_reset_folders( MSIPACKAGE *package, BOOL source )
     }
 }
 
-UINT msi_set_property( MSIDATABASE *db, LPCWSTR szName, LPCWSTR szValue )
+UINT msi_set_property( MSIDATABASE *db, const WCHAR *name, const WCHAR *value, int len )
 {
     static const WCHAR insert_query[] = {
         'I','N','S','E','R','T',' ','I','N','T','O',' ',
@@ -2033,34 +2077,34 @@ UINT msi_set_property( MSIDATABASE *db, LPCWSTR szName, LPCWSTR szValue )
     WCHAR query[1024];
     UINT rc;
 
-    TRACE("%p %s %s\n", db, debugstr_w(szName), debugstr_w(szValue));
+    TRACE("%p %s %s %d\n", db, debugstr_w(name), debugstr_wn(value, len), len);
 
-    if (!szName)
+    if (!name)
         return ERROR_INVALID_PARAMETER;
 
     /* this one is weird... */
-    if (!szName[0])
-        return szValue ? ERROR_FUNCTION_FAILED : ERROR_SUCCESS;
+    if (!name[0])
+        return value ? ERROR_FUNCTION_FAILED : ERROR_SUCCESS;
 
-    rc = msi_get_property(db, szName, 0, &sz);
-    if (!szValue || !*szValue)
+    if (value && len < 0) len = strlenW( value );
+
+    rc = msi_get_property( db, name, 0, &sz );
+    if (!value || (!*value && !len))
     {
-        sprintfW(query, delete_query, szName);
+        sprintfW( query, delete_query, name );
     }
     else if (rc == ERROR_MORE_DATA || rc == ERROR_SUCCESS)
     {
-        sprintfW(query, update_query, szName);
-
+        sprintfW( query, update_query, name );
         row = MSI_CreateRecord(1);
-        MSI_RecordSetStringW(row, 1, szValue);
+        msi_record_set_string( row, 1, value, len );
     }
     else
     {
-        strcpyW(query, insert_query);
-
+        strcpyW( query, insert_query );
         row = MSI_CreateRecord(2);
-        MSI_RecordSetStringW(row, 1, szName);
-        MSI_RecordSetStringW(row, 2, szValue);
+        msi_record_set_string( row, 1, name, -1 );
+        msi_record_set_string( row, 2, value, len );
     }
 
     rc = MSI_DatabaseOpenViewW(db, query, &view);
@@ -2117,7 +2161,7 @@ UINT WINAPI MsiSetPropertyW( MSIHANDLE hInstall, LPCWSTR szName, LPCWSTR szValue
         return ERROR_SUCCESS;
     }
 
-    ret = msi_set_property( package->db, szName, szValue );
+    ret = msi_set_property( package->db, szName, szValue, -1 );
     if (ret == ERROR_SUCCESS && !strcmpW( szName, szSourceDir ))
         msi_reset_folders( package, TRUE );
 
@@ -2175,7 +2219,7 @@ UINT msi_get_property( MSIDATABASE *db, LPCWSTR szName,
     }
 
     if (rc == ERROR_SUCCESS)
-        TRACE("returning %s for property %s\n", debugstr_w(szValueBuf),
+        TRACE("returning %s for property %s\n", debugstr_wn(szValueBuf, *pchValueBuf),
             debugstr_w(szName));
     else if (rc == ERROR_MORE_DATA)
         TRACE("need %d sized buffer for %s\n", *pchValueBuf,
@@ -2226,6 +2270,7 @@ static UINT MSI_GetProperty( MSIHANDLE handle, LPCWSTR name,
     MSIRECORD *row = NULL;
     UINT r = ERROR_FUNCTION_FAILED;
     LPCWSTR val = NULL;
+    DWORD len = 0;
 
     TRACE("%u %s %p %p\n", handle, debugstr_w(name),
           szValueBuf->str.w, pchValueBuf );
@@ -2240,7 +2285,6 @@ static UINT MSI_GetProperty( MSIHANDLE handle, LPCWSTR name,
         IWineMsiRemotePackage *remote_package;
         LPWSTR value = NULL;
         BSTR bname;
-        DWORD len;
 
         remote_package = (IWineMsiRemotePackage *)msi_get_remote( handle );
         if (!remote_package)
@@ -2253,7 +2297,6 @@ static UINT MSI_GetProperty( MSIHANDLE handle, LPCWSTR name,
             return ERROR_OUTOFMEMORY;
         }
 
-        len = 0;
         hr = IWineMsiRemotePackage_GetProperty( remote_package, bname, NULL, &len );
         if (FAILED(hr))
             goto done;
@@ -2270,7 +2313,7 @@ static UINT MSI_GetProperty( MSIHANDLE handle, LPCWSTR name,
         if (FAILED(hr))
             goto done;
 
-        r = msi_strcpy_to_awstring( value, szValueBuf, pchValueBuf );
+        r = msi_strcpy_to_awstring( value, len, szValueBuf, pchValueBuf );
 
         /* Bug required by Adobe installers */
         if (!szValueBuf->unicode && !szValueBuf->str.a)
@@ -2294,12 +2337,12 @@ done:
 
     row = msi_get_property_row( package->db, name );
     if (row)
-        val = MSI_RecordGetString( row, 1 );
+        val = msi_record_get_string( row, 1, (int *)&len );
 
     if (!val)
         val = szEmpty;
 
-    r = msi_strcpy_to_awstring( val, szValueBuf, pchValueBuf );
+    r = msi_strcpy_to_awstring( val, len, szValueBuf, pchValueBuf );
 
     if (row)
         msiobj_release( &row->hdr );
@@ -2355,7 +2398,7 @@ static HRESULT WINAPI mrp_QueryInterface( IWineMsiRemotePackage *iface,
     if( IsEqualCLSID( riid, &IID_IUnknown ) ||
         IsEqualCLSID( riid, &IID_IWineMsiRemotePackage ) )
     {
-        IUnknown_AddRef( iface );
+        IWineMsiRemotePackage_AddRef( iface );
         *ppobj = iface;
         return S_OK;
     }

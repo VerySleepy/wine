@@ -19,6 +19,8 @@
 
 #include "wordpad.h"
 
+#pragma makedep po
+
 LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 
 IDM_MAINMENU MENU
@@ -44,7 +46,7 @@ BEGIN
         MENUITEM "Cu&t\tCtrl+X",                ID_EDIT_CUT
         MENUITEM "&Copy\tCtrl+C",               ID_EDIT_COPY
         MENUITEM "&Paste\tCtrl+V",              ID_EDIT_PASTE
-        MENUITEM "&Clear\tDEL",                 ID_EDIT_CLEAR
+        MENUITEM "&Clear\tDel",                 ID_EDIT_CLEAR
         MENUITEM "&Select all\tCtrl+A",         ID_EDIT_SELECTALL
         MENUITEM SEPARATOR
         MENUITEM "&Find...\tCtrl+F",            ID_FIND
@@ -66,9 +68,9 @@ BEGIN
     POPUP "&View"
     BEGIN
         MENUITEM "&Toolbar",        ID_TOGGLE_TOOLBAR
-        MENUITEM "&Formatbar",      ID_TOGGLE_FORMATBAR
+        MENUITEM "&Format Bar",     ID_TOGGLE_FORMATBAR
         MENUITEM "&Ruler",          ID_TOGGLE_RULER
-        MENUITEM "&Statusbar",      ID_TOGGLE_STATUSBAR
+        MENUITEM "&Status Bar",     ID_TOGGLE_STATUSBAR
         MENUITEM SEPARATOR
         MENUITEM "&Options...",     ID_VIEWPROPERTIES
     END
@@ -184,13 +186,13 @@ BEGIN
     STRING_SAVE_LOSEFORMATTING,  "You have chosen to save in plain text format, " \
                                  "which will cause all formatting to be lost. " \
                                  "Are you sure that you wish to do this?"
-    STRING_INVALID_NUMBER,       "Invalid number format"
-    STRING_OLE_STORAGE_NOT_SUPPORTED, "OLE storage documents are not supported"
+    STRING_INVALID_NUMBER,       "Invalid number format."
+    STRING_OLE_STORAGE_NOT_SUPPORTED, "OLE storage documents are not supported."
     STRING_WRITE_FAILED,              "Could not save the file."
     STRING_WRITE_ACCESS_DENIED,       "You do not have access to save the file."
     STRING_OPEN_FAILED,               "Could not open the file."
     STRING_OPEN_ACCESS_DENIED,        "You do not have access to open the file."
-    STRING_PRINTING_NOT_IMPLEMENTED,  "Printing not implemented"
+    STRING_PRINTING_NOT_IMPLEMENTED,  "Printing not implemented."
     STRING_MAX_TAB_STOPS,             "Cannot add more than 32 tab stops."
 END
 
@@ -259,10 +261,34 @@ BEGIN
     RADIOBUTTON "Wrap text by the &margin", IDC_PAGEFMT_WM, 10, 65, 138, 15
     GROUPBOX "Toolbars", -1, 155, 10, 115, 85
     CHECKBOX "&Toolbar", IDC_PAGEFMT_TB, 165, 20, 80, 15
-    CHECKBOX "&Formatbar", IDC_PAGEFMT_FB, 165, 38, 80, 15
+    CHECKBOX "&Format Bar", IDC_PAGEFMT_FB, 165, 38, 80, 15
     CHECKBOX "&Ruler", IDC_PAGEFMT_RU, 165, 56, 80, 15
-    CHECKBOX "&Statusbar", IDC_PAGEFMT_SB, 165, 74, 80, 15
+    CHECKBOX "&Status Bar", IDC_PAGEFMT_SB, 165, 74, 80, 15
     LTEXT "", IDC_PAGEFMT_ID, 0,0,0,0
+END
+
+MAINACCELTABLE ACCELERATORS
+BEGIN
+    "1",          ID_BACK_1,          VIRTKEY, CONTROL
+    "2",          ID_BACK_2,          VIRTKEY, CONTROL
+    VK_F3,        ID_FIND_NEXT,       VIRTKEY
+    "#msgctxt#accelerator Align Left#L",   ID_ALIGN_LEFT, VIRTKEY, CONTROL
+    "#msgctxt#accelerator Align Center#E", ID_ALIGN_CENTER, VIRTKEY, CONTROL
+    "#msgctxt#accelerator Align Right#R",  ID_ALIGN_RIGHT, VIRTKEY, CONTROL
+    "#msgctxt#accelerator Find#F",         ID_FIND, VIRTKEY, CONTROL
+    "#msgctxt#accelerator Replace#H",      ID_REPLACE, VIRTKEY, CONTROL
+    "#msgctxt#accelerator Select All#A",   ID_EDIT_SELECTALL, VIRTKEY, CONTROL
+    "#msgctxt#accelerator Cut#X",          ID_EDIT_CUT, VIRTKEY, CONTROL
+    "#msgctxt#accelerator Copy#C",         ID_EDIT_COPY, VIRTKEY, CONTROL
+    "#msgctxt#accelerator Undo#Z",         ID_EDIT_UNDO, VIRTKEY, CONTROL
+    "#msgctxt#accelerator Redo#Y",         ID_EDIT_REDO, VIRTKEY, CONTROL
+    "#msgctxt#accelerator Bold#B",         ID_FORMAT_BOLD, VIRTKEY, CONTROL
+    "#msgctxt#accelerator Italic#I",       ID_FORMAT_ITALIC, VIRTKEY, CONTROL
+    "#msgctxt#accelerator Underline#U",    ID_FORMAT_UNDERLINE, VIRTKEY, CONTROL
+    "#msgctxt#accelerator New#N",          ID_FILE_NEW, VIRTKEY, CONTROL
+    "#msgctxt#accelerator Open#O",         ID_FILE_OPEN, VIRTKEY, CONTROL
+    "#msgctxt#accelerator Save#S",         ID_FILE_SAVE, VIRTKEY, CONTROL
+    "#msgctxt#accelerator Print#P",        ID_PRINT, VIRTKEY, CONTROL
 END
 
 LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL

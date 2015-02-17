@@ -154,7 +154,7 @@ static int format_exception_msg( const EXCEPTION_POINTERS *ptr, char *buffer, in
         len = snprintf( buffer, size, "Unhandled PIC return in vm86 mode");
         break;
     default:
-        len = snprintf( buffer, size, "Unhandled exception 0x%08x", rec->ExceptionCode);
+        len = snprintf( buffer, size, "Unhandled exception 0x%08x in thread %x", rec->ExceptionCode, GetCurrentThreadId());
         break;
     }
     if ((len<0) || (len>=size))
@@ -346,7 +346,7 @@ EXIT:
  *
  * returns TRUE for the two first conditions, FALSE for the last
  */
-static	int	start_debugger_atomic(PEXCEPTION_POINTERS epointers)
+static BOOL start_debugger_atomic(PEXCEPTION_POINTERS epointers)
 {
     static HANDLE	hRunOnce /* = 0 */;
 
@@ -461,7 +461,7 @@ LONG WINAPI UnhandledExceptionFilter(PEXCEPTION_POINTERS epointers)
 /***********************************************************************
  *            SetUnhandledExceptionFilter   (KERNEL32.@)
  */
-LPTOP_LEVEL_EXCEPTION_FILTER WINAPI SetUnhandledExceptionFilter(
+LPTOP_LEVEL_EXCEPTION_FILTER WINAPI DECLSPEC_HOTPATCH SetUnhandledExceptionFilter(
                                           LPTOP_LEVEL_EXCEPTION_FILTER filter )
 {
     LPTOP_LEVEL_EXCEPTION_FILTER old = top_filter;

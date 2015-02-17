@@ -56,6 +56,7 @@ typedef struct tagCLASS
     HINSTANCE        hInstance;     /* Module that created the task */
     HICON            hIcon;         /* Default icon */
     HICON            hIconSm;       /* Default small icon */
+    HICON            hIconSmIntern; /* Internal small icon, derived from hIcon */
     HCURSOR          hCursor;       /* Default cursor */
     HBRUSH           hbrBackground; /* Default background */
     ATOM             atomName;      /* Name of the class */
@@ -63,6 +64,7 @@ typedef struct tagCLASS
 } CLASS;
 
 static struct list class_list = LIST_INIT( class_list );
+static INIT_ONCE init_once = INIT_ONCE_STATIC_INIT;
 
 #define CLASS_OTHER_PROCESS ((CLASS *)1)
 
@@ -115,6 +117,47 @@ ATOM get_int_atom_value( LPCWSTR name )
         if (ret > 0xffff) return 0;
     }
     return ret;
+}
+
+
+/***********************************************************************
+ *           is_comctl32_class
+ */
+static BOOL is_comctl32_class( const WCHAR *name )
+{
+    static const WCHAR classesW[][20] =
+    {
+        {'C','o','m','b','o','B','o','x','E','x','3','2',0},
+        {'m','s','c','t','l','s','_','h','o','t','k','e','y','3','2',0},
+        {'m','s','c','t','l','s','_','p','r','o','g','r','e','s','s','3','2',0},
+        {'m','s','c','t','l','s','_','s','t','a','t','u','s','b','a','r','3','2',0},
+        {'m','s','c','t','l','s','_','t','r','a','c','k','b','a','r','3','2',0},
+        {'m','s','c','t','l','s','_','u','p','d','o','w','n','3','2',0},
+        {'N','a','t','i','v','e','F','o','n','t','C','t','l',0},
+        {'R','e','B','a','r','W','i','n','d','o','w','3','2',0},
+        {'S','y','s','A','n','i','m','a','t','e','3','2',0},
+        {'S','y','s','D','a','t','e','T','i','m','e','P','i','c','k','3','2',0},
+        {'S','y','s','H','e','a','d','e','r','3','2',0},
+        {'S','y','s','I','P','A','d','d','r','e','s','s','3','2',0},
+        {'S','y','s','L','i','s','t','V','i','e','w','3','2',0},
+        {'S','y','s','M','o','n','t','h','C','a','l','3','2',0},
+        {'S','y','s','P','a','g','e','r',0},
+        {'S','y','s','T','a','b','C','o','n','t','r','o','l','3','2',0},
+        {'S','y','s','T','r','e','e','V','i','e','w','3','2',0},
+        {'T','o','o','l','b','a','r','W','i','n','d','o','w','3','2',0},
+        {'t','o','o','l','t','i','p','s','_','c','l','a','s','s','3','2',0},
+    };
+
+    int min = 0, max = (sizeof(classesW) / sizeof(classesW[0])) - 1;
+
+    while (min <= max)
+    {
+        int res, pos = (min + max) / 2;
+        if (!(res = strcmpiW( name, classesW[pos] ))) return TRUE;
+        if (res < 0) max = pos - 1;
+        else min = pos + 1;
+    }
+    return FALSE;
 }
 
 
@@ -259,33 +302,47 @@ static void CLASS_FreeClass( CLASS *classPtr )
  *           CLASS_FindClass
  *
  * Return a pointer to the class.
- * hinstance has been normalized by the caller.
  */
 static CLASS *CLASS_FindClass( LPCWSTR name, HINSTANCE hinstance )
 {
+    static const WCHAR comctl32W[] = {'c','o','m','c','t','l','3','2','.','d','l','l',0};
     struct list *ptr;
     ATOM atom = get_int_atom_value( name );
 
-    USER_Lock();
+    GetDesktopWindow();  /* create the desktop window to trigger builtin class registration */
 
-    LIST_FOR_EACH( ptr, &class_list )
+    if (!name) return NULL;
+
+    for (;;)
     {
-        CLASS *class = LIST_ENTRY( ptr, CLASS, entry );
-        if (atom)
+        USER_Lock();
+
+        LIST_FOR_EACH( ptr, &class_list )
         {
-            if (class->atomName != atom) continue;
+            CLASS *class = LIST_ENTRY( ptr, CLASS, entry );
+            if (atom)
+            {
+                if (class->atomName != atom) continue;
+            }
+            else
+            {
+                if (strcmpiW( class->name, name )) continue;
+            }
+            if (!class->local || class->hInstance == hinstance)
+            {
+                TRACE("%s %p -> %p\n", debugstr_w(name), hinstance, class);
+                return class;
+            }
         }
-        else
-        {
-            if (!name || strcmpiW( class->name, name )) continue;
-        }
-        if (!hinstance || !class->local || class->hInstance == hinstance)
-        {
-            TRACE("%s %p -> %p\n", debugstr_w(name), hinstance, class);
-            return class;
-        }
+        USER_Unlock();
+
+        if (atom) break;
+        if (!is_comctl32_class( name )) break;
+        if (GetModuleHandleW( comctl32W )) break;
+        if (!LoadLibraryW( comctl32W )) break;
+        TRACE( "%s retrying after loading comctl32\n", debugstr_w(name) );
     }
-    USER_Unlock();
+
     TRACE("%s %p -> not found\n", debugstr_w(name), hinstance);
     return NULL;
 }
@@ -367,7 +424,7 @@ static void register_builtin( const struct builtin_class_descr *descr )
     if (!(classPtr = CLASS_RegisterClass( descr->name, user32_module, FALSE,
                                           descr->style, 0, descr->extra ))) return;
 
-    classPtr->hCursor       = LoadCursorA( 0, (LPSTR)descr->cursor );
+    if (descr->cursor) classPtr->hCursor = LoadCursorA( 0, (LPSTR)descr->cursor );
     classPtr->hbrBackground = descr->brush;
     classPtr->winproc       = BUILTIN_WINPROC( descr->proc );
     release_class_ptr( classPtr );
@@ -375,11 +432,10 @@ static void register_builtin( const struct builtin_class_descr *descr )
 
 
 /***********************************************************************
- *           CLASS_RegisterBuiltinClasses
+ *           register_builtins
  */
-void CLASS_RegisterBuiltinClasses(void)
+static BOOL WINAPI register_builtins( INIT_ONCE *once, void *param, void **context )
 {
-    register_builtin( &DESKTOP_builtin_class );
     register_builtin( &BUTTON_builtin_class );
     register_builtin( &COMBO_builtin_class );
     register_builtin( &COMBOLBOX_builtin_class );
@@ -389,9 +445,29 @@ void CLASS_RegisterBuiltinClasses(void)
     register_builtin( &LISTBOX_builtin_class );
     register_builtin( &MDICLIENT_builtin_class );
     register_builtin( &MENU_builtin_class );
-    register_builtin( &MESSAGE_builtin_class );
     register_builtin( &SCROLL_builtin_class );
     register_builtin( &STATIC_builtin_class );
+    register_builtin( &IME_builtin_class );
+    return TRUE;
+}
+
+
+/***********************************************************************
+ *           register_builtin_classes
+ */
+void register_builtin_classes(void)
+{
+    InitOnceExecuteOnce( &init_once, register_builtins, NULL, NULL );
+}
+
+
+/***********************************************************************
+ *           register_desktop_class
+ */
+void register_desktop_class(void)
+{
+    register_builtin( &DESKTOP_builtin_class );
+    register_builtin( &MESSAGE_builtin_class );
 }
 
 
@@ -487,6 +563,8 @@ ATOM WINAPI RegisterClassExA( const WNDCLASSEXA* wc )
     CLASS *classPtr;
     HINSTANCE instance;
 
+    GetDesktopWindow();  /* create the desktop window to trigger builtin class registration */
+
     if (wc->cbSize != sizeof(*wc) || wc->cbClsExtra < 0 || wc->cbWndExtra < 0 ||
         wc->hInstance == user32_module)  /* we can't register a class for user32 */
     {
@@ -518,6 +596,10 @@ ATOM WINAPI RegisterClassExA( const WNDCLASSEXA* wc )
 
     classPtr->hIcon         = wc->hIcon;
     classPtr->hIconSm       = wc->hIconSm;
+    classPtr->hIconSmIntern = wc->hIcon && !wc->hIconSm ?
+                                            CopyImage( wc->hIcon, IMAGE_ICON,
+                                                GetSystemMetrics( SM_CXSMICON ),
+                                                GetSystemMetrics( SM_CYSMICON ), 0 ) : NULL;
     classPtr->hCursor       = wc->hCursor;
     classPtr->hbrBackground = wc->hbrBackground;
     classPtr->winproc       = WINPROC_AllocProc( wc->lpfnWndProc, FALSE );
@@ -535,6 +617,8 @@ ATOM WINAPI RegisterClassExW( const WNDCLASSEXW* wc )
     ATOM atom;
     CLASS *classPtr;
     HINSTANCE instance;
+
+    GetDesktopWindow();  /* create the desktop window to trigger builtin class registration */
 
     if (wc->cbSize != sizeof(*wc) || wc->cbClsExtra < 0 || wc->cbWndExtra < 0 ||
         wc->hInstance == user32_module)  /* we can't register a class for user32 */
@@ -556,6 +640,10 @@ ATOM WINAPI RegisterClassExW( const WNDCLASSEXW* wc )
 
     classPtr->hIcon         = wc->hIcon;
     classPtr->hIconSm       = wc->hIconSm;
+    classPtr->hIconSmIntern = wc->hIcon && !wc->hIconSm ?
+                                            CopyImage( wc->hIcon, IMAGE_ICON,
+                                                GetSystemMetrics( SM_CXSMICON ),
+                                                GetSystemMetrics( SM_CYSMICON ), 0 ) : NULL;
     classPtr->hCursor       = wc->hCursor;
     classPtr->hbrBackground = wc->hbrBackground;
     classPtr->winproc       = WINPROC_AllocProc( wc->lpfnWndProc, TRUE );
@@ -587,6 +675,8 @@ BOOL WINAPI UnregisterClassA( LPCSTR className, HINSTANCE hInstance )
 BOOL WINAPI UnregisterClassW( LPCWSTR className, HINSTANCE hInstance )
 {
     CLASS *classPtr = NULL;
+
+    GetDesktopWindow();  /* create the desktop window to trigger builtin class registration */
 
     SERVER_START_REQ( destroy_class )
     {
@@ -741,7 +831,7 @@ static ULONG_PTR CLASS_GetClassLong( HWND hwnd, INT offset, UINT size,
         retvalue = (ULONG_PTR)class->hIcon;
         break;
     case GCLP_HICONSM:
-        retvalue = (ULONG_PTR)class->hIconSm;
+        retvalue = (ULONG_PTR)(class->hIconSm ? class->hIconSm : class->hIconSmIntern);
         break;
     case GCL_STYLE:
         retvalue = class->style;
@@ -884,10 +974,27 @@ static ULONG_PTR CLASS_SetClassLong( HWND hwnd, INT offset, LONG_PTR newval,
         break;
     case GCLP_HICON:
         retval = (ULONG_PTR)class->hIcon;
+        if (retval && class->hIconSmIntern)
+        {
+            DestroyIcon(class->hIconSmIntern);
+            class->hIconSmIntern = NULL;
+        }
+        if (newval && !class->hIconSm)
+            class->hIconSmIntern = CopyImage( (HICON)newval, IMAGE_ICON,
+                      GetSystemMetrics( SM_CXSMICON ), GetSystemMetrics( SM_CYSMICON ), 0 );
         class->hIcon = (HICON)newval;
         break;
     case GCLP_HICONSM:
         retval = (ULONG_PTR)class->hIconSm;
+        if (retval && !newval)
+            class->hIconSmIntern = class->hIcon ? CopyImage( class->hIcon, IMAGE_ICON,
+                                                GetSystemMetrics( SM_CXSMICON ),
+                                                GetSystemMetrics( SM_CYSMICON ), 0 ) : NULL;
+        else if (!retval && newval && class->hIconSmIntern)
+        {
+            DestroyIcon(class->hIconSmIntern);
+            class->hIconSmIntern = NULL;
+        }
         class->hIconSm = (HICON)newval;
         break;
     case GCL_STYLE:
@@ -1099,7 +1206,7 @@ BOOL WINAPI GetClassInfoExA( HINSTANCE hInstance, LPCSTR name, WNDCLASSEXA *wc )
     wc->cbWndExtra    = classPtr->cbWndExtra;
     wc->hInstance     = (hInstance == user32_module) ? 0 : hInstance;
     wc->hIcon         = classPtr->hIcon;
-    wc->hIconSm       = classPtr->hIconSm;
+    wc->hIconSm       = classPtr->hIconSm ? classPtr->hIconSm : classPtr->hIconSmIntern;
     wc->hCursor       = classPtr->hCursor;
     wc->hbrBackground = classPtr->hbrBackground;
     wc->lpszMenuName  = CLASS_GetMenuNameA( classPtr );
@@ -1141,7 +1248,7 @@ BOOL WINAPI GetClassInfoExW( HINSTANCE hInstance, LPCWSTR name, WNDCLASSEXW *wc 
     wc->cbWndExtra    = classPtr->cbWndExtra;
     wc->hInstance     = (hInstance == user32_module) ? 0 : hInstance;
     wc->hIcon         = classPtr->hIcon;
-    wc->hIconSm       = classPtr->hIconSm;
+    wc->hIconSm       = classPtr->hIconSm ? classPtr->hIconSm : classPtr->hIconSmIntern;
     wc->hCursor       = classPtr->hCursor;
     wc->hbrBackground = classPtr->hbrBackground;
     wc->lpszMenuName  = CLASS_GetMenuNameW( classPtr );

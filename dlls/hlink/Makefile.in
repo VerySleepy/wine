@@ -9,6 +9,4 @@ C_SRCS = \
 	hlink_main.c \
 	link.c
 
-IDL_R_SRCS = hlink_classes.idl
-
-@MAKE_DLL_RULES@
+IDL_SRCS = hlink_classes.idl

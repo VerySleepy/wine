@@ -37,26 +37,34 @@ static HRESULT WINAPI ProvideClassInfo_QueryInterface(IProvideClassInfo2 *iface,
         REFIID riid, LPVOID *ppobj)
 {
     WebBrowser *This = impl_from_IProvideClassInfo2(iface);
-    return IWebBrowser_QueryInterface(&This->IWebBrowser2_iface, riid, ppobj);
+    return IWebBrowser2_QueryInterface(&This->IWebBrowser2_iface, riid, ppobj);
 }
 
 static ULONG WINAPI ProvideClassInfo_AddRef(IProvideClassInfo2 *iface)
 {
     WebBrowser *This = impl_from_IProvideClassInfo2(iface);
-    return IWebBrowser_AddRef(&This->IWebBrowser2_iface);
+    return IWebBrowser2_AddRef(&This->IWebBrowser2_iface);
 }
 
 static ULONG WINAPI ProvideClassInfo_Release(IProvideClassInfo2 *iface)
 {
     WebBrowser *This = impl_from_IProvideClassInfo2(iface);
-    return IWebBrowser_Release(&This->IWebBrowser2_iface);
+    return IWebBrowser2_Release(&This->IWebBrowser2_iface);
 }
 
-static HRESULT WINAPI ProvideClassInfo_GetClassInfo(IProvideClassInfo2 *iface, LPTYPEINFO *ppTI)
+static HRESULT WINAPI ProvideClassInfo_GetClassInfo(IProvideClassInfo2 *iface, ITypeInfo **ppTI)
 {
     WebBrowser *This = impl_from_IProvideClassInfo2(iface);
-    FIXME("(%p)->(%p)\n", This, ppTI);
-    return E_NOTIMPL;
+    HRESULT hres;
+
+    TRACE("(%p)->(%p)\n", This, ppTI);
+
+    hres = get_typeinfo(This->version > 1 ? WebBrowser_tid : WebBrowser_V1_tid, ppTI);
+    if(FAILED(hres))
+        return hres;
+
+    ITypeInfo_AddRef(*ppTI);
+    return S_OK;
 }
 
 static HRESULT WINAPI ProvideClassInfo_GetGUID(IProvideClassInfo2 *iface,

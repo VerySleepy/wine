@@ -20,6 +20,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <assert.h>
 
 #define COBJMACROS
 
@@ -39,6 +40,102 @@
 WINE_DEFAULT_DEBUG_CHANNEL(mshtml);
 
 #define DOCHOST_DOCCANNAVIGATE  0
+
+typedef struct {
+    IEnumUnknown IEnumUnknown_iface;
+    LONG ref;
+} EnumUnknown;
+
+static inline EnumUnknown *impl_from_IEnumUnknown(IEnumUnknown *iface)
+{
+    return CONTAINING_RECORD(iface, EnumUnknown, IEnumUnknown_iface);
+}
+
+static HRESULT WINAPI EnumUnknown_QueryInterface(IEnumUnknown *iface, REFIID riid, void **ppv)
+{
+    EnumUnknown *This = impl_from_IEnumUnknown(iface);
+
+    if(IsEqualGUID(&IID_IUnknown, riid)) {
+        TRACE("(%p)->(IID_IUnknown %p)\n", This, ppv);
+        *ppv = &This->IEnumUnknown_iface;
+    }else if(IsEqualGUID(&IID_IEnumUnknown, riid)) {
+        TRACE("(%p)->(IID_IEnumUnknown %p)\n", This, ppv);
+        *ppv = &This->IEnumUnknown_iface;
+    }else {
+        WARN("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppv);
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown*)*ppv);
+    return S_OK;
+}
+
+static ULONG WINAPI EnumUnknown_AddRef(IEnumUnknown *iface)
+{
+    EnumUnknown *This = impl_from_IEnumUnknown(iface);
+    LONG ref = InterlockedIncrement(&This->ref);
+
+    TRACE("(%p) ref=%d\n", This, ref);
+
+    return ref;
+}
+
+static ULONG WINAPI EnumUnknown_Release(IEnumUnknown *iface)
+{
+    EnumUnknown *This = impl_from_IEnumUnknown(iface);
+    LONG ref = InterlockedDecrement(&This->ref);
+
+    TRACE("(%p) ref=%d\n", This, ref);
+
+    if(!ref)
+        heap_free(This);
+
+    return ref;
+}
+
+static HRESULT WINAPI EnumUnknown_Next(IEnumUnknown *iface, ULONG celt, IUnknown **rgelt, ULONG *pceltFetched)
+{
+    EnumUnknown *This = impl_from_IEnumUnknown(iface);
+
+    TRACE("(%p)->(%u %p %p)\n", This, celt, rgelt, pceltFetched);
+
+    /* FIXME: It's not clear if we should ever return something here */
+    if(pceltFetched)
+        *pceltFetched = 0;
+    return S_FALSE;
+}
+
+static HRESULT WINAPI EnumUnknown_Skip(IEnumUnknown *iface, ULONG celt)
+{
+    EnumUnknown *This = impl_from_IEnumUnknown(iface);
+    FIXME("(%p)->(%u)\n", This, celt);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI EnumUnknown_Reset(IEnumUnknown *iface)
+{
+    EnumUnknown *This = impl_from_IEnumUnknown(iface);
+    FIXME("(%p)\n", This);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI EnumUnknown_Clone(IEnumUnknown *iface, IEnumUnknown **ppenum)
+{
+    EnumUnknown *This = impl_from_IEnumUnknown(iface);
+    FIXME("(%p)->(%p)\n", This, ppenum);
+    return E_NOTIMPL;
+}
+
+static const IEnumUnknownVtbl EnumUnknownVtbl = {
+    EnumUnknown_QueryInterface,
+    EnumUnknown_AddRef,
+    EnumUnknown_Release,
+    EnumUnknown_Next,
+    EnumUnknown_Skip,
+    EnumUnknown_Reset,
+    EnumUnknown_Clone
+};
 
 /**********************************************************
  * IOleObject implementation
@@ -93,12 +190,73 @@ static void update_hostinfo(HTMLDocumentObj *This, DOCHOSTUIINFO *hostinfo)
     }
 }
 
+/* Calls undocumented 84 cmd of CGID_ShellDocView */
+void call_docview_84(HTMLDocumentObj *doc)
+{
+    IOleCommandTarget *olecmd;
+    VARIANT var;
+    HRESULT hres;
+
+    if(!doc->client)
+        return;
+
+    hres = IOleClientSite_QueryInterface(doc->client, &IID_IOleCommandTarget, (void**)&olecmd);
+    if(FAILED(hres))
+        return;
+
+    VariantInit(&var);
+    hres = IOleCommandTarget_Exec(olecmd, &CGID_ShellDocView, 84, 0, NULL, &var);
+    IOleCommandTarget_Release(olecmd);
+    if(SUCCEEDED(hres) && V_VT(&var) != VT_NULL)
+        FIXME("handle result\n");
+}
+
+void set_document_navigation(HTMLDocumentObj *doc, BOOL doc_can_navigate)
+{
+    VARIANT var;
+
+    if(!doc->client_cmdtrg)
+        return;
+
+    if(doc_can_navigate) {
+        V_VT(&var) = VT_UNKNOWN;
+        V_UNKNOWN(&var) = (IUnknown*)&doc->basedoc.window->base.IHTMLWindow2_iface;
+    }
+
+    IOleCommandTarget_Exec(doc->client_cmdtrg, &CGID_DocHostCmdPriv, DOCHOST_DOCCANNAVIGATE, 0,
+            doc_can_navigate ? &var : NULL, NULL);
+}
+
+static void load_settings(HTMLDocumentObj *doc)
+{
+    HKEY settings_key;
+    DWORD val, size;
+    LONG res;
+
+    static const WCHAR ie_keyW[] = {
+        'S','O','F','T','W','A','R','E','\\',
+        'M','i','c','r','o','s','o','f','t','\\',
+        'I','n','t','e','r','n','e','t',' ','E','x','p','l','o','r','e','r',0};
+    static const WCHAR zoomW[] = {'Z','o','o','m',0};
+    static const WCHAR zoom_factorW[] = {'Z','o','o','m','F','a','c','t','o','r',0};
+
+    res = RegOpenKeyW(HKEY_CURRENT_USER, ie_keyW, &settings_key);
+    if(res != ERROR_SUCCESS)
+        return;
+
+    size = sizeof(val);
+    res = RegGetValueW(settings_key, zoomW, zoom_factorW, RRF_RT_REG_DWORD, NULL, &val, &size);
+    RegCloseKey(settings_key);
+    if(res == ERROR_SUCCESS)
+        set_viewer_zoom(doc->nscontainer, (float)val/100000);
+}
+
 static HRESULT WINAPI OleObject_SetClientSite(IOleObject *iface, IOleClientSite *pClientSite)
 {
     HTMLDocument *This = impl_from_IOleObject(iface);
     IOleCommandTarget *cmdtrg = NULL;
     IOleWindow *ole_window;
-    IServiceProvider *sp;
+    IBrowserService *browser_service;
     BOOL hostui_setup;
     VARIANT silent;
     HWND hwnd;
@@ -115,6 +273,11 @@ static HRESULT WINAPI OleObject_SetClientSite(IOleObject *iface, IOleClientSite 
         This->doc_obj->usermode = UNKNOWN_USERMODE;
     }
 
+    if(This->doc_obj->client_cmdtrg) {
+        IOleCommandTarget_Release(This->doc_obj->client_cmdtrg);
+        This->doc_obj->client_cmdtrg = NULL;
+    }
+
     if(This->doc_obj->hostui && !This->doc_obj->custom_hostui) {
         IDocHostUIHandler_Release(This->doc_obj->hostui);
         This->doc_obj->hostui = NULL;
@@ -125,6 +288,21 @@ static HRESULT WINAPI OleObject_SetClientSite(IOleObject *iface, IOleClientSite 
         This->doc_obj->doc_object_service = NULL;
     }
 
+    if(This->doc_obj->webbrowser) {
+        IUnknown_Release(This->doc_obj->webbrowser);
+        This->doc_obj->webbrowser = NULL;
+    }
+
+    if(This->doc_obj->browser_service) {
+        IUnknown_Release(This->doc_obj->browser_service);
+        This->doc_obj->browser_service = NULL;
+    }
+
+    if(This->doc_obj->travel_log) {
+        ITravelLog_Release(This->doc_obj->travel_log);
+        This->doc_obj->travel_log = NULL;
+    }
+
     memset(&This->doc_obj->hostinfo, 0, sizeof(DOCHOSTUIINFO));
 
     if(!pClientSite)
@@ -133,25 +311,6 @@ static HRESULT WINAPI OleObject_SetClientSite(IOleObject *iface, IOleClientSite 
     IOleClientSite_AddRef(pClientSite);
     This->doc_obj->client = pClientSite;
 
-    hres = IOleClientSite_QueryInterface(pClientSite, &IID_IServiceProvider, (void**)&sp);
-    if(SUCCEEDED(hres)) {
-        IBrowserService *browser_service;
-        IDocObjectService *doc_object_service;
-
-        hres = IServiceProvider_QueryService(sp, &IID_IShellBrowser,
-                &IID_IBrowserService, (void**)&browser_service);
-        if(SUCCEEDED(hres)) {
-            hres = IBrowserService_QueryInterface(browser_service,
-                    &IID_IDocObjectService, (void**)&doc_object_service);
-            if(SUCCEEDED(hres))
-                This->doc_obj->doc_object_service = doc_object_service;
-
-            IBrowserService_Release(browser_service);
-        }
-
-        IServiceProvider_Release(sp);
-    }
-
     hostui_setup = This->doc_obj->hostui_setup;
 
     if(!This->doc_obj->hostui) {
@@ -159,7 +318,7 @@ static HRESULT WINAPI OleObject_SetClientSite(IOleObject *iface, IOleClientSite 
 
         This->doc_obj->custom_hostui = FALSE;
 
-        hres = IOleObject_QueryInterface(pClientSite, &IID_IDocHostUIHandler, (void**)&uihandler);
+        hres = IOleClientSite_QueryInterface(pClientSite, &IID_IDocHostUIHandler, (void**)&uihandler);
         if(SUCCEEDED(hres))
             This->doc_obj->hostui = uihandler;
     }
@@ -185,7 +344,7 @@ static HRESULT WINAPI OleObject_SetClientSite(IOleObject *iface, IOleClientSite 
             if(hres == S_OK && key_path) {
                 if(key_path[0]) {
                     /* FIXME: use key_path */
-                    TRACE("key_path = %s\n", debugstr_w(key_path));
+                    FIXME("key_path = %s\n", debugstr_w(key_path));
                 }
                 CoTaskMemFree(key_path);
             }
@@ -194,10 +353,10 @@ static HRESULT WINAPI OleObject_SetClientSite(IOleObject *iface, IOleClientSite 
                     (void**)&uihandler2);
             if(SUCCEEDED(hres)) {
                 hres = IDocHostUIHandler2_GetOverrideKeyPath(uihandler2, &override_key_path, 0);
-                if(hres == S_OK && override_key_path && override_key_path[0]) {
+                if(hres == S_OK && override_key_path) {
                     if(override_key_path[0]) {
                         /*FIXME: use override_key_path */
-                        TRACE("override_key_path = %s\n", debugstr_w(override_key_path));
+                        FIXME("override_key_path = %s\n", debugstr_w(override_key_path));
                     }
                     CoTaskMemFree(override_key_path);
                 }
@@ -208,6 +367,8 @@ static HRESULT WINAPI OleObject_SetClientSite(IOleObject *iface, IOleClientSite 
         }
     }
 
+    load_settings(This->doc_obj);
+
     /* Native calls here GetWindow. What is it for?
      * We don't have anything to do with it here (yet). */
     hres = IOleClientSite_QueryInterface(pClientSite, &IID_IOleWindow, (void**)&ole_window);
@@ -216,16 +377,51 @@ static HRESULT WINAPI OleObject_SetClientSite(IOleObject *iface, IOleClientSite 
         IOleWindow_Release(ole_window);
     }
 
+    hres = do_query_service((IUnknown*)pClientSite, &IID_IShellBrowser,
+            &IID_IBrowserService, (void**)&browser_service);
+    if(SUCCEEDED(hres)) {
+        ITravelLog *travel_log;
+
+        This->doc_obj->browser_service = (IUnknown*)browser_service;
+
+        hres = IBrowserService_GetTravelLog(browser_service, &travel_log);
+        if(SUCCEEDED(hres))
+            This->doc_obj->travel_log = travel_log;
+    }else {
+        browser_service = NULL;
+    }
+
     hres = IOleClientSite_QueryInterface(pClientSite, &IID_IOleCommandTarget, (void**)&cmdtrg);
     if(SUCCEEDED(hres)) {
         VARIANT var;
         OLECMD cmd = {OLECMDID_SETPROGRESSTEXT, 0};
 
+        This->doc_obj->client_cmdtrg = cmdtrg;
+
         if(!hostui_setup) {
-            V_VT(&var) = VT_UNKNOWN;
-            V_UNKNOWN(&var) = (IUnknown*)&This->window->IHTMLWindow2_iface;
-            IOleCommandTarget_Exec(cmdtrg, &CGID_DocHostCmdPriv, DOCHOST_DOCCANNAVIGATE, 0, &var, NULL);
+            IDocObjectService *doc_object_service;
+            IWebBrowser2 *wb;
+
+            set_document_navigation(This->doc_obj, TRUE);
+
+            if(browser_service) {
+                hres = IBrowserService_QueryInterface(browser_service,
+                        &IID_IDocObjectService, (void**)&doc_object_service);
+                if(SUCCEEDED(hres)) {
+                    This->doc_obj->doc_object_service = doc_object_service;
+
+                    /*
+                     * Some embedding routines, esp. in regards to use of IDocObjectService, differ if
+                     * embedder supports IWebBrowserApp.
+                     */
+                    hres = do_query_service((IUnknown*)pClientSite, &IID_IWebBrowserApp, &IID_IWebBrowser2, (void**)&wb);
+                    if(SUCCEEDED(hres))
+                        This->doc_obj->webbrowser = (IUnknown*)wb;
+                }
+            }
         }
+
+        call_docview_84(This->doc_obj);
 
         IOleCommandTarget_QueryStatus(cmdtrg, NULL, 1, &cmd, NULL);
 
@@ -235,8 +431,6 @@ static HRESULT WINAPI OleObject_SetClientSite(IOleObject *iface, IOleClientSite 
                 OLECMDEXECOPT_DONTPROMPTUSER, &var, NULL);
         IOleCommandTarget_Exec(cmdtrg, NULL, OLECMDID_SETPROGRESSPOS, 
                 OLECMDEXECOPT_DONTPROMPTUSER, &var, NULL);
-
-        IOleCommandTarget_Release(cmdtrg);
     }
 
     if(This->doc_obj->usermode == UNKNOWN_USERMODE)
@@ -248,7 +442,7 @@ static HRESULT WINAPI OleObject_SetClientSite(IOleObject *iface, IOleClientSite 
     hres = get_client_disp_property(This->doc_obj->client, DISPID_AMBIENT_SILENT, &silent);
     if(SUCCEEDED(hres)) {
         if(V_VT(&silent) != VT_BOOL)
-            WARN("V_VT(silent) = %d\n", V_VT(&silent));
+            WARN("silent = %s\n", debugstr_variant(&silent));
         else if(V_BOOL(&silent))
             FIXME("silent == true\n");
     }
@@ -698,7 +892,7 @@ static HRESULT WINAPI OleControl_OnAmbientPropertyChange(IOleControl *iface, DIS
                 This->doc_obj->usermode = EDITMODE;
             }
         }else {
-            FIXME("V_VT(res)=%d\n", V_VT(&res));
+            FIXME("usermode=%s\n", debugstr_variant(&res));
         }
         return S_OK;
     case DISPID_AMBIENT_DLCONTROL:
@@ -717,7 +911,7 @@ static HRESULT WINAPI OleControl_OnAmbientPropertyChange(IOleControl *iface, DIS
                 hres = E_FAIL;
             }
         }else {
-            FIXME("V_VT(res)=%d\n", V_VT(&res));
+            FIXME("offlineconnected=%s\n", debugstr_variant(&res));
         }
         return S_OK;
     case DISPID_AMBIENT_SILENT:
@@ -733,7 +927,7 @@ static HRESULT WINAPI OleControl_OnAmbientPropertyChange(IOleControl *iface, DIS
                 hres = E_FAIL;
             }
         }else {
-            FIXME("V_VT(res)=%d\n", V_VT(&res));
+            FIXME("silent=%s\n", debugstr_variant(&res));
         }
         return S_OK;
     case DISPID_AMBIENT_USERAGENT:
@@ -864,8 +1058,19 @@ static HRESULT WINAPI OleContainer_ParseDisplayName(IOleContainer *iface, IBindC
 static HRESULT WINAPI OleContainer_EnumObjects(IOleContainer *iface, DWORD grfFlags, IEnumUnknown **ppenum)
 {
     HTMLDocument *This = impl_from_IOleContainer(iface);
-    FIXME("(%p)->(%x %p)\n", This, grfFlags, ppenum);
-    return E_NOTIMPL;
+    EnumUnknown *ret;
+
+    TRACE("(%p)->(%x %p)\n", This, grfFlags, ppenum);
+
+    ret = heap_alloc(sizeof(*ret));
+    if(!ret)
+        return E_OUTOFMEMORY;
+
+    ret->IEnumUnknown_iface.lpVtbl = &EnumUnknownVtbl;
+    ret->ref = 1;
+
+    *ppenum = &ret->IEnumUnknown_iface;
+    return S_OK;
 }
 
 static HRESULT WINAPI OleContainer_LockContainer(IOleContainer *iface, BOOL fLock)
@@ -883,6 +1088,61 @@ static const IOleContainerVtbl OleContainerVtbl = {
     OleContainer_EnumObjects,
     OleContainer_LockContainer
 };
+
+static inline HTMLDocumentObj *impl_from_ITargetContainer(ITargetContainer *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLDocumentObj, ITargetContainer_iface);
+}
+
+static HRESULT WINAPI TargetContainer_QueryInterface(ITargetContainer *iface, REFIID riid, void **ppv)
+{
+    HTMLDocumentObj *This = impl_from_ITargetContainer(iface);
+    return ICustomDoc_QueryInterface(&This->ICustomDoc_iface, riid, ppv);
+}
+
+static ULONG WINAPI TargetContainer_AddRef(ITargetContainer *iface)
+{
+    HTMLDocumentObj *This = impl_from_ITargetContainer(iface);
+    return ICustomDoc_AddRef(&This->ICustomDoc_iface);
+}
+
+static ULONG WINAPI TargetContainer_Release(ITargetContainer *iface)
+{
+    HTMLDocumentObj *This = impl_from_ITargetContainer(iface);
+    return ICustomDoc_Release(&This->ICustomDoc_iface);
+}
+
+static HRESULT WINAPI TargetContainer_GetFrameUrl(ITargetContainer *iface, LPWSTR *ppszFrameSrc)
+{
+    HTMLDocumentObj *This = impl_from_ITargetContainer(iface);
+    FIXME("(%p)->(%p)\n", This, ppszFrameSrc);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI TargetContainer_GetFramesContainer(ITargetContainer *iface, IOleContainer **ppContainer)
+{
+    HTMLDocumentObj *This = impl_from_ITargetContainer(iface);
+
+    TRACE("(%p)->(%p)\n", This, ppContainer);
+
+    /* NOTE: we should return wrapped interface here */
+    IOleContainer_AddRef(&This->basedoc.IOleContainer_iface);
+    *ppContainer = &This->basedoc.IOleContainer_iface;
+    return S_OK;
+}
+
+static const ITargetContainerVtbl TargetContainerVtbl = {
+    TargetContainer_QueryInterface,
+    TargetContainer_AddRef,
+    TargetContainer_Release,
+    TargetContainer_GetFrameUrl,
+    TargetContainer_GetFramesContainer
+};
+
+void TargetContainer_Init(HTMLDocumentObj *This)
+{
+    This->ITargetContainer_iface.lpVtbl = &TargetContainerVtbl;
+}
 
 /**********************************************************
  * IObjectSafety implementation

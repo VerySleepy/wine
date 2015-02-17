@@ -40,6 +40,7 @@
 
 #include "wine/itss.h"
 #include "wine/unicode.h"
+#include "wine/list.h"
 
 #define WB_GOBACK     0
 #define WB_GOFORWARD  1
@@ -102,9 +103,13 @@ typedef struct CHMInfo
     char **strings;
     DWORD strings_size;
 
+    WCHAR *compiledFile;
+    WCHAR *defWindow;
     WCHAR *defTopic;
     WCHAR *defTitle;
     WCHAR *defToc;
+
+    UINT codePage;
 } CHMInfo;
 
 #define TAB_CONTENTS   0
@@ -132,34 +137,60 @@ typedef struct {
 } SearchTab;
 
 typedef struct {
+    HIMAGELIST hImageList;
+} ContentsTab;
+
+struct wintype_stringsW {
+    WCHAR *pszType;
+    WCHAR *pszCaption;
+    WCHAR *pszToc;
+    WCHAR *pszIndex;
+    WCHAR *pszFile;
+    WCHAR *pszHome;
+    WCHAR *pszJump1;
+    WCHAR *pszJump2;
+    WCHAR *pszUrlJump1;
+    WCHAR *pszUrlJump2;
+    WCHAR *pszCustomTabs;
+};
+
+struct wintype_stringsA {
+    char *pszType;
+    char *pszCaption;
+    char *pszToc;
+    char *pszIndex;
+    char *pszFile;
+    char *pszHome;
+    char *pszJump1;
+    char *pszJump2;
+    char *pszUrlJump1;
+    char *pszUrlJump2;
+    char *pszCustomTabs;
+};
+
+typedef struct {
     IOleClientSite *client_site;
     IWebBrowser2 *web_browser;
     IOleObject *wb_object;
 
     HH_WINTYPEW WinType;
 
-    LPWSTR pszType;
-    LPWSTR pszCaption;
-    LPWSTR pszToc;
-    LPWSTR pszIndex;
-    LPWSTR pszFile;
-    LPWSTR pszHome;
-    LPWSTR pszJump1;
-    LPWSTR pszJump2;
-    LPWSTR pszUrlJump1;
-    LPWSTR pszUrlJump2;
-    LPWSTR pszCustomTabs;
+    struct wintype_stringsA stringsA;
+    struct wintype_stringsW stringsW;
 
+    struct list entry;
     CHMInfo *pCHMInfo;
     ContentItem *content;
     IndexItem *index;
     IndexPopup popup;
     SearchTab search;
+    ContentsTab contents;
     HWND hwndTabCtrl;
     HWND hwndSizeBar;
     HFONT hFont;
 
     HHTab tabs[TAB_FAVORITES+1];
+    int viewer_initialized;
     DWORD current_tab;
 } HHInfo;
 
@@ -181,16 +212,23 @@ CHMInfo *CloseCHM(CHMInfo *pCHMInfo) DECLSPEC_HIDDEN;
 void SetChmPath(ChmPath*,LPCWSTR,LPCWSTR) DECLSPEC_HIDDEN;
 IStream *GetChmStream(CHMInfo*,LPCWSTR,ChmPath*) DECLSPEC_HIDDEN;
 LPWSTR FindContextAlias(CHMInfo*,DWORD) DECLSPEC_HIDDEN;
+WCHAR *GetDocumentTitle(CHMInfo*,LPCWSTR) DECLSPEC_HIDDEN;
 
-HHInfo *CreateHelpViewer(LPCWSTR) DECLSPEC_HIDDEN;
+HHInfo *CreateHelpViewer(HHInfo*,LPCWSTR,HWND) DECLSPEC_HIDDEN;
 void ReleaseHelpViewer(HHInfo*) DECLSPEC_HIDDEN;
 BOOL NavigateToUrl(HHInfo*,LPCWSTR) DECLSPEC_HIDDEN;
 BOOL NavigateToChm(HHInfo*,LPCWSTR,LPCWSTR) DECLSPEC_HIDDEN;
+void MergeChmProperties(HH_WINTYPEW*,HHInfo*,BOOL) DECLSPEC_HIDDEN;
+void UpdateHelpWindow(HHInfo *info) DECLSPEC_HIDDEN;
 
 void InitSearch(HHInfo *info, const char *needle) DECLSPEC_HIDDEN;
 void ReleaseSearch(HHInfo *info) DECLSPEC_HIDDEN;
 
 LPCWSTR skip_schema(LPCWSTR url) DECLSPEC_HIDDEN;
+void wintype_stringsA_free(struct wintype_stringsA *stringsA) DECLSPEC_HIDDEN;
+void wintype_stringsW_free(struct wintype_stringsW *stringsW) DECLSPEC_HIDDEN;
+WCHAR *decode_html(const char *html_fragment, int html_fragment_len, UINT code_page) DECLSPEC_HIDDEN;
+HHInfo *find_window(const WCHAR *window) DECLSPEC_HIDDEN;
 
 /* memory allocation functions */
 
@@ -262,6 +300,19 @@ static inline LPWSTR strdupAtoW(LPCSTR str)
     return strdupnAtoW(str, -1);
 }
 
+static inline LPSTR strdupWtoA(LPCWSTR str)
+{
+    LPSTR ret;
+    DWORD len;
+
+    if(!str)
+        return NULL;
+
+    len = WideCharToMultiByte(CP_ACP, 0, str, -1, NULL, 0, NULL, NULL);
+    ret = heap_alloc(len);
+    WideCharToMultiByte(CP_ACP, 0, str, -1, ret, len, NULL, NULL);
+    return ret;
+}
 
 
 extern HINSTANCE hhctrl_hinstance DECLSPEC_HIDDEN;

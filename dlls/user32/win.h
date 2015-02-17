@@ -45,6 +45,7 @@ typedef struct tagWND
     HINSTANCE      hInstance;     /* Window hInstance (from CreateWindow) */
     RECT           rectClient;    /* Client area rel. to parent client area */
     RECT           rectWindow;    /* Whole window rel. to parent client area */
+    RECT           visible_rect;  /* Visible part of the whole rect, rel. to parent client area */
     RECT           normal_rect;   /* Normal window rect saved when maximized/minimized */
     POINT          min_pos;       /* Position for minimized window */
     POINT          max_pos;       /* Position for maximized window */
@@ -59,7 +60,9 @@ typedef struct tagWND
     HMENU          hSysMenu;      /* window's copy of System Menu */
     HICON          hIcon;         /* window's icon */
     HICON          hIconSmall;    /* window's small icon */
+    struct window_surface *surface; /* Window surface if any */
     struct tagDIALOGINFO *dlgInfo;/* Dialog additional info (dialogs only) */
+    int            pixel_format;  /* Pixel format set by the graphics driver */
     int            cbWndExtra;    /* class cbWndExtra at window creation */
     DWORD_PTR      userdata;      /* User private data */
     DWORD          wExtra[1];     /* Window extra bytes */
@@ -73,10 +76,14 @@ typedef struct tagWND
 #define WIN_ISUNICODE             0x0010 /* Window is Unicode */
 #define WIN_NEEDS_SHOW_OWNEDPOPUP 0x0020 /* WM_SHOWWINDOW:SC_SHOW must be sent in the next ShowOwnedPopup call */
 #define WIN_CHILDREN_MOVED        0x0040 /* children may have moved, ignore stored positions */
+#define WIN_HIDDEN                0x0080 /* hidden by an explicit SWP_HIDEWINDOW (as opposed to WM_SETREDRAW) */
 
   /* Window functions */
 extern HWND get_hwnd_message_parent(void) DECLSPEC_HIDDEN;
 extern BOOL is_desktop_window( HWND hwnd ) DECLSPEC_HIDDEN;
+extern struct window_surface dummy_surface DECLSPEC_HIDDEN;
+extern void register_window_surface( struct window_surface *old, struct window_surface *new ) DECLSPEC_HIDDEN;
+extern void flush_window_surfaces( BOOL idle ) DECLSPEC_HIDDEN;
 extern WND *WIN_GetPtr( HWND hwnd ) DECLSPEC_HIDDEN;
 extern HWND WIN_GetFullHandle( HWND hwnd ) DECLSPEC_HIDDEN;
 extern HWND WIN_IsCurrentProcess( HWND hwnd ) DECLSPEC_HIDDEN;

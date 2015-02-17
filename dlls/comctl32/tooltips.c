@@ -171,6 +171,8 @@ typedef struct
 #define ICON_HEIGHT 16
 #define ICON_WIDTH  16
 
+#define MAX_TEXT_SIZE_A 80 /* maximum retrieving text size by ANSI message */
+
 static LRESULT CALLBACK
 TOOLTIPS_SubclassProc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR uId, DWORD_PTR dwRef);
 
@@ -232,7 +234,7 @@ TOOLTIPS_customdraw_fill(const TOOLTIPS_INFO *infoPtr, NMTTCUSTOMDRAW *lpnmttcd,
 static inline DWORD
 TOOLTIPS_notify_customdraw (DWORD dwDrawStage, NMTTCUSTOMDRAW *lpnmttcd)
 {
-    LRESULT result = CDRF_DODEFAULT;
+    LRESULT result;
     lpnmttcd->nmcd.dwDrawStage = dwDrawStage;
 
     TRACE("Notifying stage %d, flags %x, id %x\n", lpnmttcd->nmcd.dwDrawStage,
@@ -624,7 +626,7 @@ TOOLTIPS_Show (TOOLTIPS_INFO *infoPtr, BOOL track_activate)
     TOOLTIPS_CalcTipSize (infoPtr, &size);
     TRACE("size %d x %d\n", size.cx, size.cy);
 
-    if (track_activate)
+    if (track_activate && (toolPtr->uFlags & TTF_TRACK))
     {
         rect.left = infoPtr->xTrackPos;
         rect.top  = infoPtr->yTrackPos;
@@ -943,6 +945,22 @@ TOOLTIPS_GetToolFromPoint (const TOOLTIPS_INFO *infoPtr, HWND hwnd, const POINT 
     return -1;
 }
 
+static inline void
+TOOLTIPS_CopyInfoT (const TTTOOL_INFO *toolPtr, TTTOOLINFOW *ti, BOOL isW)
+{
+    if (ti->lpszText) {
+        if (toolPtr->lpszText == NULL ||
+            IS_INTRESOURCE(toolPtr->lpszText) ||
+            toolPtr->lpszText == LPSTR_TEXTCALLBACKW)
+            ti->lpszText = toolPtr->lpszText;
+        else if (isW)
+            strcpyW (ti->lpszText, toolPtr->lpszText);
+        else
+            /* ANSI version, the buffer is maximum 80 bytes without null. */
+            WideCharToMultiByte(CP_ACP, 0, toolPtr->lpszText, -1,
+                                (LPSTR)ti->lpszText, MAX_TEXT_SIZE_A, NULL, NULL);
+    }
+}
 
 static BOOL
 TOOLTIPS_IsWindowActive (HWND hwnd)
@@ -973,9 +991,17 @@ TOOLTIPS_CheckTool (const TOOLTIPS_INFO *infoPtr, BOOL bShowTest)
     if (nTool == -1)
 	return -1;
 
-    if (!(GetWindowLongW (infoPtr->hwndSelf, GWL_STYLE) & TTS_ALWAYSTIP) && bShowTest) {
-	if (!TOOLTIPS_IsWindowActive (GetWindow (infoPtr->hwndSelf, GW_OWNER)))
-	    return -1;
+    if (!(GetWindowLongW (infoPtr->hwndSelf, GWL_STYLE) & TTS_ALWAYSTIP) && bShowTest)
+    {
+        TTTOOL_INFO *ti = &infoPtr->tools[nTool];
+        HWND hwnd = (ti->uFlags & TTF_IDISHWND) ? (HWND)ti->uId : ti->hwnd;
+
+        if (!TOOLTIPS_IsWindowActive(hwnd))
+        {
+            TRACE("not active: hwnd %p, parent %p, active %p\n",
+                  hwnd, GetParent(hwnd), GetActiveWindow());
+            return -1;
+        }
     }
 
     TRACE("tool %d\n", nTool);
@@ -1011,6 +1037,9 @@ TOOLTIPS_AddToolT (TOOLTIPS_INFO *infoPtr, const TTTOOLINFOW *ti, BOOL isW)
 	   infoPtr->hwndSelf, ti->hwnd, ti->uId,
 	   (ti->uFlags & TTF_IDISHWND) ? " TTF_IDISHWND" : "");
 
+    if (ti->cbSize >= TTTOOLINFOW_V2_SIZE && !ti->lpszText && isW)
+        return FALSE;
+
     if (infoPtr->uNumTools == 0) {
 	infoPtr->tools = Alloc (sizeof(TTTOOL_INFO));
 	toolPtr = infoPtr->tools;
@@ -1034,27 +1063,29 @@ TOOLTIPS_AddToolT (TOOLTIPS_INFO *infoPtr, const TTTOOLINFOW *ti, BOOL isW)
     toolPtr->rect   = ti->rect;
     toolPtr->hinst  = ti->hinst;
 
-    if (IS_INTRESOURCE(ti->lpszText)) {
-	TRACE("add string id %x\n", LOWORD(ti->lpszText));
-	toolPtr->lpszText = ti->lpszText;
-    }
-    else if (ti->lpszText) {
-	if (TOOLTIPS_IsCallbackString(ti->lpszText, isW)) {
-	    TRACE("add CALLBACK!\n");
-	    toolPtr->lpszText = LPSTR_TEXTCALLBACKW;
-	}
-	else if (isW) {
-	    INT len = lstrlenW (ti->lpszText);
-	    TRACE("add text %s!\n", debugstr_w(ti->lpszText));
-	    toolPtr->lpszText =	Alloc ((len + 1)*sizeof(WCHAR));
-	    strcpyW (toolPtr->lpszText, ti->lpszText);
-	}
-	else {
-	    INT len = MultiByteToWideChar(CP_ACP, 0, (LPSTR)ti->lpszText, -1, NULL, 0);
-	    TRACE("add text \"%s\"!\n", (LPSTR)ti->lpszText);
-	    toolPtr->lpszText =	Alloc (len * sizeof(WCHAR));
-	    MultiByteToWideChar(CP_ACP, 0, (LPSTR)ti->lpszText, -1, toolPtr->lpszText, len);
-	}
+    if (ti->cbSize >= TTTOOLINFOW_V1_SIZE) {
+        if (IS_INTRESOURCE(ti->lpszText)) {
+            TRACE("add string id %x\n", LOWORD(ti->lpszText));
+            toolPtr->lpszText = ti->lpszText;
+        }
+        else if (ti->lpszText) {
+            if (TOOLTIPS_IsCallbackString(ti->lpszText, isW)) {
+                TRACE("add CALLBACK!\n");
+                toolPtr->lpszText = LPSTR_TEXTCALLBACKW;
+            }
+            else if (isW) {
+                INT len = lstrlenW (ti->lpszText);
+                TRACE("add text %s!\n", debugstr_w(ti->lpszText));
+                toolPtr->lpszText =	Alloc ((len + 1)*sizeof(WCHAR));
+                strcpyW (toolPtr->lpszText, ti->lpszText);
+            }
+            else {
+                INT len = MultiByteToWideChar(CP_ACP, 0, (LPSTR)ti->lpszText, -1, NULL, 0);
+                TRACE("add text \"%s\"!\n", (LPSTR)ti->lpszText);
+                toolPtr->lpszText =	Alloc (len * sizeof(WCHAR));
+                MultiByteToWideChar(CP_ACP, 0, (LPSTR)ti->lpszText, -1, toolPtr->lpszText, len);
+            }
+        }
     }
 
     if (ti->cbSize >= TTTOOLINFOW_V2_SIZE)
@@ -1199,8 +1230,7 @@ TOOLTIPS_EnumToolsT (const TOOLTIPS_INFO *infoPtr, UINT uIndex, TTTOOLINFOW *ti,
     ti->uId      = toolPtr->uId;
     ti->rect     = toolPtr->rect;
     ti->hinst    = toolPtr->hinst;
-/*    ti->lpszText = toolPtr->lpszText; */
-    ti->lpszText = NULL;  /* FIXME */
+    TOOLTIPS_CopyInfoT (toolPtr, ti, isW);
 
     if (ti->cbSize >= TTTOOLINFOA_V2_SIZE)
 	ti->lParam = toolPtr->lParam;
@@ -1246,8 +1276,7 @@ TOOLTIPS_GetCurrentToolT (const TOOLTIPS_INFO *infoPtr, TTTOOLINFOW *ti, BOOL is
 	    ti->uFlags   = toolPtr->uFlags;
 	    ti->rect     = toolPtr->rect;
 	    ti->hinst    = toolPtr->hinst;
-/*	    ti->lpszText = toolPtr->lpszText; */
-	    ti->lpszText = NULL;  /* FIXME */
+	    TOOLTIPS_CopyInfoT (toolPtr, ti, isW);
 
 	    if (ti->cbSize >= TTTOOLINFOW_V2_SIZE)
 		ti->lParam = toolPtr->lParam;
@@ -1328,12 +1357,13 @@ TOOLTIPS_GetTextT (const TOOLTIPS_INFO *infoPtr, TTTOOLINFOW *ti, BOOL isW)
 
         /* NB this API is broken, there is no way for the app to determine
            what size buffer it requires nor a way to specify how long the
-           one it supplies is.  We'll assume it's up to INFOTIPSIZE */
+           one it supplies is.  According to the test result, it's up to
+           80 bytes by the ANSI version. */
 
         buffer[0] = '\0';
         TOOLTIPS_GetTipText(infoPtr, nTool, buffer);
         WideCharToMultiByte(CP_ACP, 0, buffer, -1, (LPSTR)ti->lpszText,
-                                                   INFOTIPSIZE, NULL, NULL);
+                                                   MAX_TEXT_SIZE_A, NULL, NULL);
     }
 
     return 0;
@@ -1385,8 +1415,7 @@ TOOLTIPS_GetToolInfoT (const TOOLTIPS_INFO *infoPtr, TTTOOLINFOW *ti, BOOL isW)
     ti->uFlags   = toolPtr->uFlags;
     ti->rect     = toolPtr->rect;
     ti->hinst    = toolPtr->hinst;
-/*    lpToolInfo->lpszText = toolPtr->lpszText; */
-    ti->lpszText = NULL;  /* FIXME */
+    TOOLTIPS_CopyInfoT (toolPtr, ti, isW);
 
     if (ti->cbSize >= TTTOOLINFOW_V2_SIZE)
 	ti->lParam = toolPtr->lParam;
@@ -1420,8 +1449,7 @@ TOOLTIPS_HitTestT (const TOOLTIPS_INFO *infoPtr, LPTTHITTESTINFOW lptthit,
 	lptthit->ti.uId      = toolPtr->uId;
 	lptthit->ti.rect     = toolPtr->rect;
 	lptthit->ti.hinst    = toolPtr->hinst;
-/*	lptthit->ti.lpszText = toolPtr->lpszText; */
-	lptthit->ti.lpszText = NULL;  /* FIXME */
+	TOOLTIPS_CopyInfoT (toolPtr, &lptthit->ti, isW);
 	if (lptthit->ti.cbSize >= TTTOOLINFOW_V2_SIZE)
 	    lptthit->ti.lParam   = toolPtr->lParam;
     }

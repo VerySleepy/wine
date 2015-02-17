@@ -41,6 +41,8 @@ WINE_DEFAULT_DEBUG_CHANNEL(htmlhelp);
 HINSTANCE hhctrl_hinstance;
 BOOL hh_process = FALSE;
 
+extern struct list window_list;
+
 BOOL WINAPI DllMain(HINSTANCE hInstance, DWORD fdwReason, LPVOID lpvReserved)
 {
     TRACE("(%p,%d,%p)\n", hInstance, fdwReason, lpvReserved);
@@ -50,8 +52,6 @@ BOOL WINAPI DllMain(HINSTANCE hInstance, DWORD fdwReason, LPVOID lpvReserved)
     case DLL_PROCESS_ATTACH:
         hhctrl_hinstance = hInstance;
         DisableThreadLibraryCalls(hInstance);
-        break;
-    case DLL_PROCESS_DETACH:
         break;
     }
     return TRUE;
@@ -98,7 +98,7 @@ static const char *command_to_string(UINT command)
 #undef X
 }
 
-static BOOL resolve_filename(const WCHAR *filename, WCHAR *fullname, DWORD buflen, const WCHAR **index, const WCHAR **window)
+static BOOL resolve_filename(const WCHAR *filename, WCHAR *fullname, DWORD buflen, WCHAR **index, WCHAR **window)
 {
     const WCHAR *extra;
     WCHAR chm_file[MAX_PATH];
@@ -161,29 +161,41 @@ HWND WINAPI HtmlHelpW(HWND caller, LPCWSTR filename, UINT command, DWORD_PTR dat
     case HH_DISPLAY_TOC:
     case HH_DISPLAY_INDEX:
     case HH_DISPLAY_SEARCH:{
-        HHInfo *info;
         BOOL res;
         NMHDR nmhdr;
+        HHInfo *info = NULL;
+        WCHAR *window = NULL;
         const WCHAR *index = NULL;
+        WCHAR *default_index = NULL;
         int tab_index = TAB_CONTENTS;
-        const WCHAR *default_index = NULL;
 
         if (!filename)
             return NULL;
 
-        if (!resolve_filename(filename, fullname, MAX_PATH, &default_index, NULL))
+        if (!resolve_filename(filename, fullname, MAX_PATH, &default_index, &window))
         {
             WARN("can't find %s\n", debugstr_w(filename));
             return 0;
         }
         index = default_index;
 
-        info = CreateHelpViewer(fullname);
+        if (window)
+            info = find_window(window);
+
+        info = CreateHelpViewer(info, fullname, caller);
         if(!info)
+        {
+            heap_free(default_index);
+            heap_free(window);
             return NULL;
+        }
 
         if(!index)
             index = info->WinType.pszFile;
+        if(!info->WinType.pszType)
+            info->WinType.pszType = info->stringsW.pszType = window;
+        else
+            heap_free(window);
 
         /* called to load a specified topic */
         switch(command)
@@ -191,14 +203,25 @@ HWND WINAPI HtmlHelpW(HWND caller, LPCWSTR filename, UINT command, DWORD_PTR dat
         case HH_DISPLAY_TOPIC:
         case HH_DISPLAY_TOC:
             if (data)
-                index = (const WCHAR *)data;
+            {
+                static const WCHAR delimW[] = {':',':',0};
+                const WCHAR *i = (const WCHAR *)data;
+
+                index = strstrW(i, delimW);
+                if(index)
+                {
+                    if(memcmp(info->pCHMInfo->szFile, i, index-i))
+                        FIXME("Opening a CHM file in the context of another is not supported.\n");
+                    index += strlenW(delimW);
+                }
+                else
+                    index = i;
+            }
             break;
         }
 
         res = NavigateToChm(info, info->pCHMInfo->szFile, index);
-
-        if (default_index)
-            heap_free((WCHAR*)default_index);
+        heap_free(default_index);
 
         if(!res)
         {
@@ -232,25 +255,39 @@ HWND WINAPI HtmlHelpW(HWND caller, LPCWSTR filename, UINT command, DWORD_PTR dat
         return info->WinType.hwndHelp;
     }
     case HH_HELP_CONTEXT: {
-        HHInfo *info;
+        WCHAR *window = NULL;
+        HHInfo *info = NULL;
         LPWSTR url;
 
         if (!filename)
             return NULL;
 
-        if (!resolve_filename(filename, fullname, MAX_PATH, NULL, NULL))
+        if (!resolve_filename(filename, fullname, MAX_PATH, NULL, &window))
         {
             WARN("can't find %s\n", debugstr_w(filename));
             return 0;
         }
 
-        info = CreateHelpViewer(fullname);
+        if (window)
+            info = find_window(window);
+
+        info = CreateHelpViewer(info, fullname, caller);
         if(!info)
+        {
+            heap_free(window);
             return NULL;
+        }
+
+        if(!info->WinType.pszType)
+            info->WinType.pszType = info->stringsW.pszType = window;
+        else
+            heap_free(window);
 
         url = FindContextAlias(info->pCHMInfo, data);
         if(!url)
         {
+            if(!data) /* there may legitimately be no context alias for id 0 */
+                return info->WinType.hwndHelp;
             ReleaseHelpViewer(info);
             return NULL;
         }
@@ -269,6 +306,67 @@ HWND WINAPI HtmlHelpW(HWND caller, LPCWSTR filename, UINT command, DWORD_PTR dat
         }
         return 0;
     }
+    case HH_CLOSE_ALL: {
+        HHInfo *info, *next;
+
+        LIST_FOR_EACH_ENTRY_SAFE(info, next, &window_list, HHInfo, entry)
+        {
+            TRACE("Destroying window %s.\n", debugstr_w(info->WinType.pszType));
+            ReleaseHelpViewer(info);
+        }
+        return 0;
+    }
+    case HH_SET_WIN_TYPE: {
+        HH_WINTYPEW *wintype = (HH_WINTYPEW *)data;
+        WCHAR *window = NULL;
+        HHInfo *info = NULL;
+
+        if (!filename && wintype->pszType)
+            window = strdupW(wintype->pszType);
+        else if (!filename || !resolve_filename(filename, fullname, MAX_PATH, NULL, &window) || !window)
+        {
+            WARN("can't find window name: %s\n", debugstr_w(filename));
+            return 0;
+        }
+        info = find_window(window);
+        if (!info)
+        {
+            info = heap_alloc_zero(sizeof(HHInfo));
+            info->WinType.pszType = info->stringsW.pszType = window;
+            list_add_tail(&window_list, &info->entry);
+        }
+        else
+            heap_free(window);
+
+        TRACE("Changing WINTYPE, fsValidMembers=0x%x\n", wintype->fsValidMembers);
+
+        MergeChmProperties(wintype, info, TRUE);
+        UpdateHelpWindow(info);
+        return 0;
+    }
+    case HH_GET_WIN_TYPE: {
+        HH_WINTYPEW *wintype = (HH_WINTYPEW *)data;
+        WCHAR *window = NULL;
+        HHInfo *info = NULL;
+
+        if (!filename || !resolve_filename(filename, fullname, MAX_PATH, NULL, &window) || !window)
+        {
+            WARN("can't find window name: %s\n", debugstr_w(filename));
+            return 0;
+        }
+        info = find_window(window);
+        if (!info)
+        {
+            WARN("Could not find window named %s.\n", debugstr_w(window));
+            heap_free(window);
+            return (HWND)~0;
+        }
+
+        TRACE("Retrieving WINTYPE for %s.\n", debugstr_w(window));
+        *wintype = info->WinType;
+        heap_free(window);
+        return 0;
+    }
     default:
         FIXME("HH case %s not handled.\n", command_to_string( command ));
     }
@@ -276,21 +374,47 @@ HWND WINAPI HtmlHelpW(HWND caller, LPCWSTR filename, UINT command, DWORD_PTR dat
     return 0;
 }
 
+static void wintypeAtoW(const HH_WINTYPEA *data, HH_WINTYPEW *wdata, struct wintype_stringsW *stringsW)
+{
+    memcpy(wdata, data, sizeof(*data));
+    /* convert all of the ANSI strings to Unicode */
+    wdata->pszType       = stringsW->pszType       = strdupAtoW(data->pszType);
+    wdata->pszCaption    = stringsW->pszCaption    = strdupAtoW(data->pszCaption);
+    wdata->pszToc        = stringsW->pszToc        = strdupAtoW(data->pszToc);
+    wdata->pszIndex      = stringsW->pszIndex      = strdupAtoW(data->pszIndex);
+    wdata->pszFile       = stringsW->pszFile       = strdupAtoW(data->pszFile);
+    wdata->pszHome       = stringsW->pszHome       = strdupAtoW(data->pszHome);
+    wdata->pszJump1      = stringsW->pszJump1      = strdupAtoW(data->pszJump1);
+    wdata->pszJump2      = stringsW->pszJump2      = strdupAtoW(data->pszJump2);
+    wdata->pszUrlJump1   = stringsW->pszUrlJump1   = strdupAtoW(data->pszUrlJump1);
+    wdata->pszUrlJump2   = stringsW->pszUrlJump2   = strdupAtoW(data->pszUrlJump2);
+    wdata->pszCustomTabs = stringsW->pszCustomTabs = strdupAtoW(data->pszCustomTabs);
+}
+
+static void wintypeWtoA(const HH_WINTYPEW *wdata, HH_WINTYPEA *data, struct wintype_stringsA *stringsA)
+{
+    memcpy(data, wdata, sizeof(*wdata));
+    /* convert all of the Unicode strings to ANSI */
+    data->pszType       = stringsA->pszType       = strdupWtoA(wdata->pszType);
+    data->pszCaption    = stringsA->pszCaption    = strdupWtoA(wdata->pszCaption);
+    data->pszToc        = stringsA->pszToc        = strdupWtoA(wdata->pszToc);
+    data->pszIndex      = stringsA->pszFile       = strdupWtoA(wdata->pszIndex);
+    data->pszFile       = stringsA->pszFile       = strdupWtoA(wdata->pszFile);
+    data->pszHome       = stringsA->pszHome       = strdupWtoA(wdata->pszHome);
+    data->pszJump1      = stringsA->pszJump1      = strdupWtoA(wdata->pszJump1);
+    data->pszJump2      = stringsA->pszJump2      = strdupWtoA(wdata->pszJump2);
+    data->pszUrlJump1   = stringsA->pszUrlJump1   = strdupWtoA(wdata->pszUrlJump1);
+    data->pszUrlJump2   = stringsA->pszUrlJump2   = strdupWtoA(wdata->pszUrlJump2);
+    data->pszCustomTabs = stringsA->pszCustomTabs = strdupWtoA(wdata->pszCustomTabs);
+}
+
 /******************************************************************
  *		HtmlHelpA (HHCTRL.OCX.14)
  */
 HWND WINAPI HtmlHelpA(HWND caller, LPCSTR filename, UINT command, DWORD_PTR data)
 {
-    WCHAR *wfile = NULL, *wdata = NULL;
-    DWORD len;
-    HWND result;
-
-    if (filename)
-    {
-        len = MultiByteToWideChar( CP_ACP, 0, filename, -1, NULL, 0 );
-        wfile = heap_alloc(len*sizeof(WCHAR));
-        MultiByteToWideChar( CP_ACP, 0, filename, -1, wfile, len );
-    }
+    WCHAR *wfile = strdupAtoW( filename );
+    HWND result = 0;
 
     if (data)
     {
@@ -300,22 +424,46 @@ HWND WINAPI HtmlHelpA(HWND caller, LPCSTR filename, UINT command, DWORD_PTR data
         case HH_DISPLAY_SEARCH:
         case HH_DISPLAY_TEXT_POPUP:
         case HH_GET_LAST_ERROR:
-        case HH_GET_WIN_TYPE:
         case HH_KEYWORD_LOOKUP:
-        case HH_SET_WIN_TYPE:
         case HH_SYNC:
             FIXME("structures not handled yet\n");
             break;
+
+        case HH_SET_WIN_TYPE:
+        {
+            struct wintype_stringsW stringsW;
+            HH_WINTYPEW wdata;
+
+            wintypeAtoW((HH_WINTYPEA *)data, &wdata, &stringsW);
+            result = HtmlHelpW( caller, wfile, command, (DWORD_PTR)&wdata );
+            wintype_stringsW_free(&stringsW);
+            goto done;
+        }
+        case HH_GET_WIN_TYPE:
+        {
+            HH_WINTYPEW wdata;
+            HHInfo *info;
+
+            result = HtmlHelpW( caller, wfile, command, (DWORD_PTR)&wdata );
+            if (!wdata.pszType) break;
+            info = find_window(wdata.pszType);
+            if (!info) break;
+            wintype_stringsA_free(&info->stringsA);
+            wintypeWtoA(&wdata, (HH_WINTYPEA *)data, &info->stringsA);
+            goto done;
+        }
 
         case HH_DISPLAY_INDEX:
         case HH_DISPLAY_TOPIC:
         case HH_DISPLAY_TOC:
         case HH_GET_WIN_HANDLE:
         case HH_SAFE_DISPLAY_TOPIC:
-            len = MultiByteToWideChar( CP_ACP, 0, (const char*)data, -1, NULL, 0 );
-            wdata = heap_alloc(len*sizeof(WCHAR));
-            MultiByteToWideChar( CP_ACP, 0, (const char*)data, -1, wdata, len );
-            break;
+        {
+            WCHAR *wdata = strdupAtoW( (const char *)data );
+            result = HtmlHelpW( caller, wfile, command, (DWORD_PTR)wdata );
+            heap_free(wdata);
+            goto done;
+        }
 
         case HH_CLOSE_ALL:
         case HH_HELP_CONTEXT:
@@ -333,10 +481,9 @@ HWND WINAPI HtmlHelpA(HWND caller, LPCSTR filename, UINT command, DWORD_PTR data
         }
     }
 
-    result = HtmlHelpW( caller, wfile, command, wdata ? (DWORD_PTR)wdata : data );
-
+    result = HtmlHelpW( caller, wfile, command, data );
+done:
     heap_free(wfile);
-    heap_free(wdata);
     return result;
 }
 

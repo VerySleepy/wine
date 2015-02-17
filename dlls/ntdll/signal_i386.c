@@ -32,7 +32,6 @@
 #ifdef HAVE_UNISTD_H
 # include <unistd.h>
 #endif
-
 #ifdef HAVE_SYS_PARAM_H
 # include <sys/param.h>
 #endif
@@ -43,16 +42,17 @@
 #  include <sys/syscall.h>
 # endif
 #endif
-
 #ifdef HAVE_SYS_VM86_H
 # include <sys/vm86.h>
 #endif
-
 #ifdef HAVE_SYS_SIGNAL_H
 # include <sys/signal.h>
 #endif
 #ifdef HAVE_SYS_SYSCTL_H
 # include <sys/sysctl.h>
+#endif
+#ifdef HAVE_SYS_UCONTEXT_H
+# include <sys/ucontext.h>
 #endif
 
 #include "ntstatus.h"
@@ -100,9 +100,58 @@ typedef struct
  * signal context platform-specific definitions
  */
 
-#ifdef linux
+#ifdef __linux__
 
-typedef ucontext_t SIGCONTEXT;
+#ifndef HAVE_SYS_UCONTEXT_H
+
+enum
+{
+    REG_GS, REG_FS, REG_ES, REG_DS, REG_EDI, REG_ESI, REG_EBP, REG_ESP,
+    REG_EBX, REG_EDX, REG_ECX, REG_EAX, REG_TRAPNO, REG_ERR, REG_EIP,
+    REG_CS, REG_EFL, REG_UESP, REG_SS, NGREG
+};
+
+typedef int greg_t;
+typedef greg_t gregset_t[NGREG];
+
+struct _libc_fpreg
+{
+    unsigned short significand[4];
+    unsigned short exponent;
+};
+
+struct _libc_fpstate
+{
+    unsigned long cw;
+    unsigned long sw;
+    unsigned long tag;
+    unsigned long ipoff;
+    unsigned long cssel;
+    unsigned long dataoff;
+    unsigned long datasel;
+    struct _libc_fpreg _st[8];
+    unsigned long status;
+};
+
+typedef struct _libc_fpstate* fpregset_t;
+
+typedef struct
+{
+    gregset_t     gregs;
+    fpregset_t    fpregs;
+    unsigned long oldmask;
+    unsigned long cr2;
+} mcontext_t;
+
+typedef struct ucontext
+{
+    unsigned long     uc_flags;
+    struct ucontext  *uc_link;
+    stack_t           uc_stack;
+    mcontext_t        uc_mcontext;
+    sigset_t          uc_sigmask;
+} ucontext_t;
+#endif /* HAVE_SYS_UCONTEXT_H */
 
 #define EAX_sig(context)     ((context)->uc_mcontext.gregs[REG_EAX])
 #define EBX_sig(context)     ((context)->uc_mcontext.gregs[REG_EBX])
@@ -128,7 +177,6 @@ typedef ucontext_t SIGCONTEXT;
 #define FPU_sig(context)     ((FLOATING_SAVE_AREA*)((context)->uc_mcontext.fpregs))
 #define FPUX_sig(context)    (FPU_sig(context) && !((context)->uc_mcontext.fpregs->status >> 16) ? (XMM_SAVE_AREA32 *)(FPU_sig(context) + 1) : NULL)
 
-#define VM86_EAX 0 /* the %eax value while vm86_enter is executing */
 #define VIF_FLAG 0x00080000
 #define VIP_FLAG 0x00100000
 
@@ -178,12 +226,18 @@ __ASM_GLOBAL_FUNC(vm86_enter,
 # define __HAVE_VM86
 #endif
 
-#endif  /* linux */
+#ifdef __ANDROID__
+/* custom signal restorer since we may have unmapped the one in vdso, and bionic doesn't check for that */
+void rt_sigreturn(void);
+__ASM_GLOBAL_FUNC( rt_sigreturn,
+                   "movl $173,%eax\n\t"  /* NR_rt_sigreturn */
+                   "int $0x80" );
+#endif
 
-#ifdef BSDI
+#elif defined (__BSDI__)
 
 #include <machine/frame.h>
-typedef struct trapframe SIGCONTEXT;
+typedef struct trapframe ucontext_t;
 
 #define EAX_sig(context)     ((context)->tf_eax)
 #define EBX_sig(context)     ((context)->tf_ebx)
@@ -206,44 +260,36 @@ typedef struct trapframe SIGCONTEXT;
 #define FPU_sig(context)     NULL  /* FIXME */
 #define FPUX_sig(context)    NULL  /* FIXME */
 
-#endif /* bsdi */
-
-#if defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__DragonFly__)
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__DragonFly__)
 
 #include <machine/trap.h>
 
-typedef struct sigcontext SIGCONTEXT;
+#define EAX_sig(context)     ((context)->uc_mcontext.mc_eax)
+#define EBX_sig(context)     ((context)->uc_mcontext.mc_ebx)
+#define ECX_sig(context)     ((context)->uc_mcontext.mc_ecx)
+#define EDX_sig(context)     ((context)->uc_mcontext.mc_edx)
+#define ESI_sig(context)     ((context)->uc_mcontext.mc_esi)
+#define EDI_sig(context)     ((context)->uc_mcontext.mc_edi)
+#define EBP_sig(context)     ((context)->uc_mcontext.mc_ebp)
 
-#define EAX_sig(context)     ((context)->sc_eax)
-#define EBX_sig(context)     ((context)->sc_ebx)
-#define ECX_sig(context)     ((context)->sc_ecx)
-#define EDX_sig(context)     ((context)->sc_edx)
-#define ESI_sig(context)     ((context)->sc_esi)
-#define EDI_sig(context)     ((context)->sc_edi)
-#define EBP_sig(context)     ((context)->sc_ebp)
+#define CS_sig(context)      ((context)->uc_mcontext.mc_cs)
+#define DS_sig(context)      ((context)->uc_mcontext.mc_ds)
+#define ES_sig(context)      ((context)->uc_mcontext.mc_es)
+#define FS_sig(context)      ((context)->uc_mcontext.mc_fs)
+#define GS_sig(context)      ((context)->uc_mcontext.mc_gs)
+#define SS_sig(context)      ((context)->uc_mcontext.mc_ss)
 
-#define CS_sig(context)      ((context)->sc_cs)
-#define DS_sig(context)      ((context)->sc_ds)
-#define ES_sig(context)      ((context)->sc_es)
-#define FS_sig(context)      ((context)->sc_fs)
-#define GS_sig(context)      ((context)->sc_gs)
-#define SS_sig(context)      ((context)->sc_ss)
+#define TRAP_sig(context)    ((context)->uc_mcontext.mc_trapno)
+#define ERROR_sig(context)   ((context)->uc_mcontext.mc_err)
+#define EFL_sig(context)     ((context)->uc_mcontext.mc_eflags)
 
-#define TRAP_sig(context)    ((context)->sc_trapno)
-#define ERROR_sig(context)   ((context)->sc_err)
-#define EFL_sig(context)     ((context)->sc_eflags)
-
-#define EIP_sig(context)     ((context)->sc_eip)
-#define ESP_sig(context)     ((context)->sc_esp)
+#define EIP_sig(context)     ((context)->uc_mcontext.mc_eip)
+#define ESP_sig(context)     ((context)->uc_mcontext.mc_esp)
 
 #define FPU_sig(context)     NULL  /* FIXME */
 #define FPUX_sig(context)    NULL  /* FIXME */
 
-#endif  /* __FreeBSD__ */
-
-#ifdef __OpenBSD__
-
-typedef struct sigcontext SIGCONTEXT;
+#elif defined (__OpenBSD__)
 
 #define EAX_sig(context)     ((context)->sc_eax)
 #define EBX_sig(context)     ((context)->sc_ebx)
@@ -273,17 +319,10 @@ typedef struct sigcontext SIGCONTEXT;
 #define T_MCHK T_MACHK
 #define T_XMMFLT T_XFTRAP
 
-#endif  /* __OpenBSD__ */
-
-#if defined(__svr4__) || defined(_SCO_DS) || defined(__sun)
+#elif defined(__svr4__) || defined(_SCO_DS) || defined(__sun)
 
 #ifdef _SCO_DS
 #include <sys/regset.h>
-#endif
-#include <sys/ucontext.h>
-typedef struct ucontext SIGCONTEXT;
-
-#ifdef _SCO_DS
 #define gregs regs
 #endif
 
@@ -323,12 +362,7 @@ typedef struct ucontext SIGCONTEXT;
 #define FPU_sig(context)     NULL  /* FIXME */
 #define FPUX_sig(context)    NULL  /* FIXME */
 
-#endif  /* svr4 || SCO_DS */
-
-#ifdef __APPLE__
-# include <sys/ucontext.h>
-
-typedef ucontext_t SIGCONTEXT;
+#elif defined (__APPLE__)
 
 /* work around silly renaming of struct members in OS X 10.5 */
 #if __DARWIN_UNIX03 && defined(_STRUCT_X86_EXCEPTION_STATE32)
@@ -375,14 +409,7 @@ typedef ucontext_t SIGCONTEXT;
 #define FPUX_sig(context)    ((XMM_SAVE_AREA32 *)&(context)->uc_mcontext->fs.fpu_fcw)
 #endif
 
-#endif /* __APPLE__ */
-
-#if defined(__NetBSD__)
-# include <sys/ucontext.h>
-# include <sys/types.h>
-# include <signal.h>
-
-typedef ucontext_t SIGCONTEXT;
+#elif defined(__NetBSD__)
 
 #define EAX_sig(context)       ((context)->uc_mcontext.__gregs[_REG_EAX])
 #define EBX_sig(context)       ((context)->uc_mcontext.__gregs[_REG_EBX])
@@ -411,7 +438,35 @@ typedef ucontext_t SIGCONTEXT;
 #define T_MCHK T_MCA
 #define T_XMMFLT T_XMM
 
-#endif /* __NetBSD__ */
+#elif defined(__GNU__)
+
+#define EAX_sig(context)     ((context)->uc_mcontext.gregs[REG_EAX])
+#define EBX_sig(context)     ((context)->uc_mcontext.gregs[REG_EBX])
+#define ECX_sig(context)     ((context)->uc_mcontext.gregs[REG_ECX])
+#define EDX_sig(context)     ((context)->uc_mcontext.gregs[REG_EDX])
+#define ESI_sig(context)     ((context)->uc_mcontext.gregs[REG_ESI])
+#define EDI_sig(context)     ((context)->uc_mcontext.gregs[REG_EDI])
+#define EBP_sig(context)     ((context)->uc_mcontext.gregs[REG_EBP])
+#define ESP_sig(context)     ((context)->uc_mcontext.gregs[REG_ESP])
+
+#define CS_sig(context)      ((context)->uc_mcontext.gregs[REG_CS])
+#define DS_sig(context)      ((context)->uc_mcontext.gregs[REG_DS])
+#define ES_sig(context)      ((context)->uc_mcontext.gregs[REG_ES])
+#define SS_sig(context)      ((context)->uc_mcontext.gregs[REG_SS])
+#define FS_sig(context)      ((context)->uc_mcontext.gregs[REG_FS])
+#define GS_sig(context)      ((context)->uc_mcontext.gregs[REG_GS])
+
+#define EFL_sig(context)     ((context)->uc_mcontext.gregs[REG_EFL])
+#define EIP_sig(context)     ((context)->uc_mcontext.gregs[REG_EIP])
+#define TRAP_sig(context)    ((context)->uc_mcontext.gregs[REG_TRAPNO])
+#define ERROR_sig(context)   ((context)->uc_mcontext.gregs[REG_ERR])
+
+#define FPU_sig(context)     ((FLOATING_SAVE_AREA *)&(context)->uc_mcontext.fpregs.fp_reg_set.fpchip_state)
+#define FPUX_sig(context)    NULL
+
+#else
+#error You must define the signal context functions for your platform
+#endif /* linux */
 
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
 
@@ -423,14 +478,14 @@ static size_t signal_stack_size;
 
 static wine_signal_handler handlers[256];
 
-static int fpux_support;  /* whether the CPU support extended fpu context */
+static BOOL fpux_support;  /* whether the CPU supports extended fpu context */
 
 extern void DECLSPEC_NORETURN __wine_restore_regs( const CONTEXT *context );
 
 enum i386_trap_code
 {
     TRAP_x86_UNKNOWN    = -1,  /* Unknown fault (TRAP_sig not defined) */
-#if defined(__FreeBSD__) || defined (__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__OpenBSD__)
+#if defined(__FreeBSD__) || defined (__FreeBSD_kernel__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__)
     TRAP_x86_DIVIDE     = T_DIVIDE,     /* Division by zero exception */
     TRAP_x86_TRCTRAP    = T_TRCTRAP,    /* Single-step exception */
     TRAP_x86_NMI        = T_NMI,        /* NMI interrupt */
@@ -500,7 +555,7 @@ static inline int dispatch_signal(unsigned int sig)
  *
  * Get the trap code for a signal.
  */
-static inline enum i386_trap_code get_trap_code( const SIGCONTEXT *sigcontext )
+static inline enum i386_trap_code get_trap_code( const ucontext_t *sigcontext )
 {
 #ifdef TRAP_sig
     return TRAP_sig(sigcontext);
@@ -514,7 +569,7 @@ static inline enum i386_trap_code get_trap_code( const SIGCONTEXT *sigcontext )
  *
  * Get the error code for a signal.
  */
-static inline WORD get_error_code( const SIGCONTEXT *sigcontext )
+static inline WORD get_error_code( const ucontext_t *sigcontext )
 {
 #ifdef ERROR_sig
     return ERROR_sig(sigcontext);
@@ -899,7 +954,7 @@ __ASM_GLOBAL_FUNC( clear_alignment_flag,
  * Handler initialization when the full context is not needed.
  * Return the stack pointer to use for pushing the exception data.
  */
-static inline void *init_handler( const SIGCONTEXT *sigcontext, WORD *fs, WORD *gs )
+static inline void *init_handler( const ucontext_t *sigcontext, WORD *fs, WORD *gs )
 {
     TEB *teb = get_current_teb();
 
@@ -1061,7 +1116,7 @@ static void fpux_to_fpu( FLOATING_SAVE_AREA *fpu, const XMM_SAVE_AREA32 *fpux )
  *
  * Build a context structure from the signal info.
  */
-static inline void save_context( CONTEXT *context, const SIGCONTEXT *sigcontext, WORD fs, WORD gs )
+static inline void save_context( CONTEXT *context, const ucontext_t *sigcontext, WORD fs, WORD gs )
 {
     struct ntdll_thread_data * const regs = ntdll_get_thread_data();
     FLOATING_SAVE_AREA *fpu = FPU_sig(sigcontext);
@@ -1101,7 +1156,7 @@ static inline void save_context( CONTEXT *context, const SIGCONTEXT *sigcontext,
     {
         context->ContextFlags |= CONTEXT_FLOATING_POINT | CONTEXT_EXTENDED_REGISTERS;
         memcpy( context->ExtendedRegisters, fpux, sizeof(*fpux) );
-        fpux_support = 1;
+        fpux_support = TRUE;
         if (!fpu) fpux_to_fpu( &context->FloatSave, fpux );
     }
     if (!fpu && !fpux) save_fpu( context );
@@ -1113,7 +1168,7 @@ static inline void save_context( CONTEXT *context, const SIGCONTEXT *sigcontext,
  *
  * Restore the signal info from the context.
  */
-static inline void restore_context( const CONTEXT *context, SIGCONTEXT *sigcontext )
+static inline void restore_context( const CONTEXT *context, ucontext_t *sigcontext )
 {
     struct ntdll_thread_data * const regs = ntdll_get_thread_data();
     FLOATING_SAVE_AREA *fpu = FPU_sig(sigcontext);
@@ -1517,14 +1572,89 @@ static inline DWORD is_privileged_instr( CONTEXT *context )
     }
 }
 
+/***********************************************************************
+ *           check_invalid_gs
+ *
+ * Check for fault caused by invalid %gs value (some copy protection schemes mess with it).
+ */
+static inline BOOL check_invalid_gs( CONTEXT *context )
+{
+    unsigned int prefix_count = 0;
+    const BYTE *instr = (BYTE *)context->Eip;
+    WORD system_gs = ntdll_get_thread_data()->gs;
+
+    if (context->SegGs == system_gs) return FALSE;
+    if (!wine_ldt_is_system( context->SegCs )) return FALSE;
+    /* only handle faults in system libraries */
+    if (virtual_is_valid_code_address( instr, 1 )) return FALSE;
+
+    for (;;) switch(*instr)
+    {
+    /* instruction prefixes */
+    case 0x2e:  /* %cs: */
+    case 0x36:  /* %ss: */
+    case 0x3e:  /* %ds: */
+    case 0x26:  /* %es: */
+    case 0x64:  /* %fs: */
+    case 0x66:  /* opcode size */
+    case 0x67:  /* addr size */
+    case 0xf0:  /* lock */
+    case 0xf2:  /* repne */
+    case 0xf3:  /* repe */
+        if (++prefix_count >= 15) return FALSE;
+        instr++;
+        continue;
+    case 0x65:  /* %gs: */
+        TRACE( "%04x/%04x at %p, fixing up\n", context->SegGs, system_gs, instr );
+        context->SegGs = system_gs;
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
 
 #include "pshpack1.h"
-struct atl_thunk
+union atl_thunk
 {
-    DWORD movl;  /* movl this,4(%esp) */
-    DWORD this;
-    BYTE  jmp;   /* jmp func */
-    int   func;
+    struct
+    {
+        DWORD movl;  /* movl this,4(%esp) */
+        DWORD this;
+        BYTE  jmp;   /* jmp func */
+        int   func;
+    } t1;
+    struct
+    {
+        BYTE  movl;  /* movl this,ecx */
+        DWORD this;
+        BYTE  jmp;   /* jmp func */
+        int   func;
+    } t2;
+    struct
+    {
+        BYTE  movl1; /* movl this,edx */
+        DWORD this;
+        BYTE  movl2; /* movl func,ecx */
+        DWORD func;
+        WORD  jmp;   /* jmp ecx */
+    } t3;
+    struct
+    {
+        BYTE  movl1; /* movl this,ecx */
+        DWORD this;
+        BYTE  movl2; /* movl func,eax */
+        DWORD func;
+        WORD  jmp;   /* jmp eax */
+    } t4;
+    struct
+    {
+        DWORD inst1; /* pop ecx
+                      * pop eax
+                      * push ecx
+                      * jmp 4(%eax) */
+        WORD  inst2;
+    } t5;
 };
 #include "poppack.h"
 
@@ -1535,26 +1665,78 @@ struct atl_thunk
  */
 static BOOL check_atl_thunk( EXCEPTION_RECORD *rec, CONTEXT *context )
 {
-    const struct atl_thunk *thunk = (const struct atl_thunk *)rec->ExceptionInformation[1];
-    BOOL ret = FALSE;
+    const union atl_thunk *thunk = (const union atl_thunk *)rec->ExceptionInformation[1];
+    union atl_thunk thunk_copy;
+    SIZE_T thunk_len;
 
-    __TRY
+    thunk_len = virtual_uninterrupted_read_memory( thunk, &thunk_copy, sizeof(*thunk) );
+    if (!thunk_len) return FALSE;
+
+    if (thunk_len >= sizeof(thunk_copy.t1) && thunk_copy.t1.movl == 0x042444c7 &&
+                                              thunk_copy.t1.jmp == 0xe9)
     {
-        if (thunk->movl == 0x042444c7 && thunk->jmp == 0xe9)
+        if (virtual_uninterrupted_write_memory( (DWORD *)context->Esp + 1,
+            &thunk_copy.t1.this, sizeof(DWORD) ) == sizeof(DWORD))
         {
-            *((DWORD *)context->Esp + 1) = thunk->this;
-            context->Eip = (DWORD_PTR)(&thunk->func + 1) + thunk->func;
-            TRACE( "emulating ATL thunk at %p, func=%08x arg=%08x\n",
-                   thunk, context->Eip, *((DWORD *)context->Esp + 1) );
-            ret = TRUE;
+            context->Eip = (DWORD_PTR)(&thunk->t1.func + 1) + thunk_copy.t1.func;
+            TRACE( "emulating ATL thunk type 1 at %p, func=%08x arg=%08x\n",
+                   thunk, context->Eip, thunk_copy.t1.this );
+            return TRUE;
         }
     }
-    __EXCEPT_PAGE_FAULT
+    else if (thunk_len >= sizeof(thunk_copy.t2) && thunk_copy.t2.movl == 0xb9 &&
+                                                   thunk_copy.t2.jmp == 0xe9)
     {
-        return FALSE;
+        context->Ecx = thunk_copy.t2.this;
+        context->Eip = (DWORD_PTR)(&thunk->t2.func + 1) + thunk_copy.t2.func;
+        TRACE( "emulating ATL thunk type 2 at %p, func=%08x ecx=%08x\n",
+               thunk, context->Eip, context->Ecx );
+        return TRUE;
     }
-    __ENDTRY
-    return ret;
+    else if (thunk_len >= sizeof(thunk_copy.t3) && thunk_copy.t3.movl1 == 0xba &&
+                                                   thunk_copy.t3.movl2 == 0xb9 &&
+                                                   thunk_copy.t3.jmp == 0xe1ff)
+    {
+        context->Edx = thunk_copy.t3.this;
+        context->Ecx = thunk_copy.t3.func;
+        context->Eip = thunk_copy.t3.func;
+        TRACE( "emulating ATL thunk type 3 at %p, func=%08x ecx=%08x edx=%08x\n",
+               thunk, context->Eip, context->Ecx, context->Edx );
+        return TRUE;
+    }
+    else if (thunk_len >= sizeof(thunk_copy.t4) && thunk_copy.t4.movl1 == 0xb9 &&
+                                                   thunk_copy.t4.movl2 == 0xb8 &&
+                                                   thunk_copy.t4.jmp == 0xe0ff)
+    {
+        context->Ecx = thunk_copy.t4.this;
+        context->Eax = thunk_copy.t4.func;
+        context->Eip = thunk_copy.t4.func;
+        TRACE( "emulating ATL thunk type 4 at %p, func=%08x eax=%08x ecx=%08x\n",
+               thunk, context->Eip, context->Eax, context->Ecx );
+        return TRUE;
+    }
+    else if (thunk_len >= sizeof(thunk_copy.t5) && thunk_copy.t5.inst1 == 0xff515859 &&
+                                                   thunk_copy.t5.inst2 == 0x0460)
+    {
+        DWORD func, stack[2];
+        if (virtual_uninterrupted_read_memory( (DWORD *)context->Esp,
+            stack, sizeof(stack) ) == sizeof(stack) &&
+            virtual_uninterrupted_read_memory( (DWORD *)stack[1] + 1,
+            &func, sizeof(DWORD) ) == sizeof(DWORD) &&
+            virtual_uninterrupted_write_memory( (DWORD *)context->Esp + 1,
+            &stack[0], sizeof(stack[0]) ) == sizeof(stack[0]))
+        {
+            context->Ecx = stack[0];
+            context->Eax = stack[1];
+            context->Esp = context->Esp + sizeof(DWORD);
+            context->Eip = func;
+            TRACE( "emulating ATL thunk type 5 at %p, func=%08x eax=%08x ecx=%08x esp=%08x\n",
+                   thunk, context->Eip, context->Eax, context->Ecx, context->Esp );
+            return TRUE;
+        }
+    }
+
+    return FALSE;
 }
 
 
@@ -1563,7 +1745,7 @@ static BOOL check_atl_thunk( EXCEPTION_RECORD *rec, CONTEXT *context )
  *
  * Setup the exception record and context on the thread stack.
  */
-static EXCEPTION_RECORD *setup_exception_record( SIGCONTEXT *sigcontext, void *stack_ptr,
+static EXCEPTION_RECORD *setup_exception_record( ucontext_t *sigcontext, void *stack_ptr,
                                                  WORD fs, WORD gs, raise_func func )
 {
     struct stack_layout
@@ -1665,7 +1847,7 @@ static EXCEPTION_RECORD *setup_exception_record( SIGCONTEXT *sigcontext, void *s
  * sigcontext so that the return from the signal handler will call
  * the raise function.
  */
-static EXCEPTION_RECORD *setup_exception( SIGCONTEXT *sigcontext, raise_func func )
+static EXCEPTION_RECORD *setup_exception( ucontext_t *sigcontext, raise_func func )
 {
     WORD fs, gs;
     void *stack = init_handler( sigcontext, &fs, &gs );
@@ -1722,17 +1904,22 @@ static void WINAPI raise_segv_exception( EXCEPTION_RECORD *rec, CONTEXT *context
     case EXCEPTION_ACCESS_VIOLATION:
         if (rec->NumberParameters == 2)
         {
-            if (rec->ExceptionInformation[0] == EXCEPTION_EXECUTE_FAULT && check_atl_thunk( rec, context ))
+            if (rec->ExceptionInformation[1] == 0xffffffff && check_invalid_gs( context ))
                 goto done;
             if (!(rec->ExceptionCode = virtual_handle_fault( (void *)rec->ExceptionInformation[1],
                                                              rec->ExceptionInformation[0] )))
                 goto done;
-            /* send EXCEPTION_EXECUTE_FAULT only if data execution prevention is enabled */
-            if (rec->ExceptionInformation[0] == EXCEPTION_EXECUTE_FAULT)
+            if (rec->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+                rec->ExceptionInformation[0] == EXCEPTION_EXECUTE_FAULT)
             {
                 ULONG flags;
                 NtQueryInformationProcess( GetCurrentProcess(), ProcessExecuteFlags,
                                            &flags, sizeof(flags), NULL );
+
+                if (!(flags & MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION) && check_atl_thunk( rec, context ))
+                    goto done;
+
+                /* send EXCEPTION_EXECUTE_FAULT only if data execution prevention is enabled */
                 if (!(flags & MEM_EXECUTE_OPTION_DISABLE))
                     rec->ExceptionInformation[0] = EXCEPTION_READ_FAULT;
             }
@@ -1771,9 +1958,10 @@ static void WINAPI raise_trap_exception( EXCEPTION_RECORD *rec, CONTEXT *context
         if( !(context->EFlags & 0x100) || (ntdll_get_thread_data()->dr7 & 0xff) )
         {
             /* (possible) hardware breakpoint, fetch the debug registers */
+            DWORD saved_flags = context->ContextFlags;
             context->ContextFlags = CONTEXT_DEBUG_REGISTERS;
             NtGetContextThread(GetCurrentThread(), context);
-            context->ContextFlags |= CONTEXT_FULL;  /* restore flags */
+            context->ContextFlags |= saved_flags;  /* restore flags */
         }
 
         context->EFlags &= ~0x100;  /* clear single-step flag */
@@ -1855,7 +2043,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 {
     WORD fs, gs;
     EXCEPTION_RECORD *rec;
-    SIGCONTEXT *context = sigcontext;
+    ucontext_t *context = sigcontext;
     void *stack = init_handler( sigcontext, &fs, &gs );
 
     /* check for page fault inside the thread stack */
@@ -1937,7 +2125,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
  */
 static void trap_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 {
-    SIGCONTEXT *context = sigcontext;
+    ucontext_t *context = sigcontext;
     EXCEPTION_RECORD *rec = setup_exception( context, raise_trap_exception );
 
     switch(get_trap_code(context))
@@ -1963,7 +2151,7 @@ static void trap_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 static void fpe_handler( int signal, siginfo_t *siginfo, void *sigcontext )
 {
     CONTEXT *win_context;
-    SIGCONTEXT *context = sigcontext;
+    ucontext_t *context = sigcontext;
     EXCEPTION_RECORD *rec = setup_exception( context, raise_generic_exception );
 
     win_context = get_exception_context( rec );
@@ -2229,7 +2417,10 @@ void signal_init_process(void)
 #ifdef SA_ONSTACK
     sig_act.sa_flags |= SA_ONSTACK;
 #endif
-
+#ifdef __ANDROID__
+    sig_act.sa_flags |= SA_RESTORER;
+    sig_act.sa_restorer = rt_sigreturn;
+#endif
     sig_act.sa_sigaction = int_handler;
     if (sigaction( SIGINT, &sig_act, NULL ) == -1) goto error;
     sig_act.sa_sigaction = fpe_handler;
@@ -2571,6 +2762,29 @@ __ASM_STDCALL_FUNC( DbgUserBreakPoint, 0, "int $3; ret")
  *           NtCurrentTeb   (NTDLL.@)
  */
 __ASM_STDCALL_FUNC( NtCurrentTeb, 0, ".byte 0x64\n\tmovl 0x18,%eax\n\tret" )
+
+
+/**************************************************************************
+ *           _chkstk   (NTDLL.@)
+ */
+__ASM_STDCALL_FUNC( _chkstk, 0,
+                   "negl %eax\n\t"
+                   "addl %esp,%eax\n\t"
+                   "xchgl %esp,%eax\n\t"
+                   "movl 0(%eax),%eax\n\t"  /* copy return address from old location */
+                   "movl %eax,0(%esp)\n\t"
+                   "ret" )
+
+/**************************************************************************
+ *           _alloca_probe   (NTDLL.@)
+ */
+__ASM_STDCALL_FUNC( _alloca_probe, 0,
+                   "negl %eax\n\t"
+                   "addl %esp,%eax\n\t"
+                   "xchgl %esp,%eax\n\t"
+                   "movl 0(%eax),%eax\n\t"  /* copy return address from old location */
+                   "movl %eax,0(%esp)\n\t"
+                   "ret" )
 
 
 /**********************************************************************

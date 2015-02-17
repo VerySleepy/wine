@@ -158,9 +158,9 @@ static const struct
     { "i786",    CPU_x86 },
     { "amd64",   CPU_x86_64 },
     { "x86_64",  CPU_x86_64 },
-    { "sparc",   CPU_SPARC },
     { "powerpc", CPU_POWERPC },
-    { "arm",     CPU_ARM }
+    { "arm",     CPU_ARM },
+    { "aarch64", CPU_ARM64 }
 };
 
 static const struct
@@ -217,12 +217,12 @@ struct options
 static const enum target_cpu build_cpu = CPU_x86;
 #elif defined(__x86_64__)
 static const enum target_cpu build_cpu = CPU_x86_64;
-#elif defined(__sparc__)
-static const enum target_cpu build_cpu = CPU_SPARC;
 #elif defined(__powerpc__)
 static const enum target_cpu build_cpu = CPU_POWERPC;
 #elif defined(__arm__)
 static const enum target_cpu build_cpu = CPU_ARM;
+#elif defined(__aarch64__)
+static const enum target_cpu build_cpu = CPU_ARM64;
 #else
 #error Unsupported CPU
 #endif
@@ -268,9 +268,12 @@ static char* get_temp_file(const char* prefix, const char* suffix)
     fd = mkstemps( tmp, strlen(suffix) );
     if (fd == -1)
     {
-        /* could not create it in current directory, try in /tmp */
+        /* could not create it in current directory, try in TMPDIR */
+        const char* tmpdir;
+
         free(tmp);
-        tmp = strmake("/tmp/%s-XXXXXX%s", prefix, suffix);
+        if (!(tmpdir = getenv("TMPDIR"))) tmpdir = "/tmp";
+        tmp = strmake("%s/%s-XXXXXX%s", tmpdir, prefix, suffix);
         fd = mkstemps( tmp, strlen(suffix) );
         if (fd == -1) error( "could not create temp file\n" );
     }
@@ -330,6 +333,85 @@ static const strarray* get_translator(struct options *opts)
     return ret;
 }
 
+static int try_link( const strarray *prefix, const strarray *link_tool, const char *cflags )
+{
+    const char *in = get_temp_file( "try_link", ".c" );
+    const char *out = get_temp_file( "try_link", ".out" );
+    const char *err = get_temp_file( "try_link", ".err" );
+    strarray *link = strarray_dup( link_tool );
+    int sout = -1, serr = -1;
+    int ret;
+
+    create_file( in, 0644, "int main(void){return 1;}\n" );
+
+    strarray_add( link, "-o" );
+    strarray_add( link, out );
+    strarray_addall( link, strarray_fromstring( cflags, " " ) );
+    strarray_add( link, in );
+
+    sout = dup( fileno(stdout) );
+    freopen( err, "w", stdout );
+    serr = dup( fileno(stderr) );
+    freopen( err, "w", stderr );
+    ret = spawn( prefix, link, 1 );
+    if (sout >= 0)
+    {
+        dup2( sout, fileno(stdout) );
+        close( sout );
+    }
+    if (serr >= 0)
+    {
+        dup2( serr, fileno(stderr) );
+        close( serr );
+    }
+    strarray_free( link );
+    return ret;
+}
+
+static const strarray* get_lddllflags( const struct options *opts, const strarray *link_tool )
+{
+    strarray *flags = strarray_alloc();
+    switch (opts->target_platform)
+    {
+    case PLATFORM_APPLE:
+        strarray_add( flags, "-bundle" );
+        strarray_add( flags, "-multiply_defined" );
+        strarray_add( flags, "suppress" );
+        if (opts->target_cpu == CPU_POWERPC)
+        {
+            strarray_add( flags, "-read_only_relocs" );
+            strarray_add( flags, "warning" );
+        }
+        break;
+
+    case PLATFORM_SOLARIS:
+    case PLATFORM_UNSPECIFIED:
+        strarray_add( flags, "-shared" );
+        strarray_add( flags, "-Wl,-Bsymbolic" );
+
+        /* Try all options first - this is likely to succeed on modern compilers */
+        if (!try_link( opts->prefix, link_tool, "-fPIC -shared -Wl,-Bsymbolic "
+                       "-Wl,-z,defs -Wl,-init,__wine_spec_init,-fini,_wine_spec_fini" ))
+        {
+            strarray_add( flags, "-Wl,-z,defs" );
+            strarray_add( flags, "-Wl,-init,__wine_spec_init,-fini,__wine_spec_fini" );
+        }
+        else /* otherwise figure out which ones are allowed */
+        {
+            if (!try_link( opts->prefix, link_tool, "-fPIC -shared -Wl,-Bsymbolic -Wl,-z,defs" ))
+                strarray_add( flags, "-Wl,-z,defs" );
+            if (!try_link( opts->prefix, link_tool, "-fPIC -shared -Wl,-Bsymbolic "
+                           "-Wl,-init,__wine_spec_init,-fini,_wine_spec_fini" ))
+                strarray_add( flags, "-Wl,-init,__wine_spec_init,-fini,__wine_spec_fini" );
+        }
+        break;
+
+    default:
+        assert(0);
+    }
+    return flags;
+}
+
 /* check that file is a library for the correct platform */
 static int check_platform( struct options *opts, const char *file )
 {
@@ -343,11 +425,9 @@ static int check_platform( struct options *opts, const char *file )
             if (!memcmp( header, "\177ELF", 4 ))
             {
                 if (header[4] == 2)  /* 64-bit */
-                    ret = (opts->force_pointer_size == 8 ||
-                           (!opts->force_pointer_size && opts->target_cpu == CPU_x86_64));
+                    ret = (opts->target_cpu == CPU_x86_64 || opts->target_cpu == CPU_ARM64);
                 else
-                    ret = (opts->force_pointer_size == 4 ||
-                           (!opts->force_pointer_size && opts->target_cpu != CPU_x86_64));
+                    ret = (opts->target_cpu != CPU_x86_64 && opts->target_cpu != CPU_ARM64);
             }
         }
         close( fd );
@@ -363,25 +443,37 @@ static char *get_lib_dir( struct options *opts )
 
     for (i = 0; i < sizeof(stdlibpath)/sizeof(stdlibpath[0]); i++)
     {
-        char *p, *buffer = xmalloc( strlen(stdlibpath[i]) + strlen(libwine) + 3 );
+        char *p, *buffer = xmalloc( strlen(stdlibpath[i]) + strlen("/arm-linux-gnueabi") + strlen(libwine) + 1 );
         strcpy( buffer, stdlibpath[i] );
         p = buffer + strlen(buffer);
         while (p > buffer && p[-1] == '/') p--;
         strcpy( p, libwine );
         if (check_platform( opts, buffer )) goto found;
         if (p > buffer + 2 && (!memcmp( p - 2, "32", 2 ) || !memcmp( p - 2, "64", 2 ))) p -= 2;
-        if (opts->force_pointer_size == 4 || (!opts->force_pointer_size && opts->target_cpu != CPU_x86_64))
+        if (opts->target_cpu != CPU_x86_64 && opts->target_cpu != CPU_ARM64)
         {
             strcpy( p, "32" );
             strcat( p, libwine );
             if (check_platform( opts, buffer )) goto found;
         }
-        if (opts->force_pointer_size == 8 || (!opts->force_pointer_size && opts->target_cpu == CPU_x86_64))
+        if (opts->target_cpu == CPU_x86_64 || opts->target_cpu == CPU_ARM64)
         {
             strcpy( p, "64" );
             strcat( p, libwine );
             if (check_platform( opts, buffer )) goto found;
         }
+        switch(opts->target_cpu)
+        {
+        case CPU_x86:     strcpy( p, "/i386-linux-gnu" ); break;
+        case CPU_x86_64:  strcpy( p, "/x86_64-linux-gnu" ); break;
+        case CPU_ARM:     strcpy( p, "/arm-linux-gnueabi" ); break;
+        case CPU_ARM64:   strcpy( p, "/aarch64-linux-gnu" ); break;
+        case CPU_POWERPC: strcpy( p, "/powerpc-linux-gnu" ); break;
+        default:
+            assert(0);
+        }
+        strcat( p, libwine );
+        if (check_platform( opts, buffer )) goto found;
         free( buffer );
         continue;
 
@@ -395,10 +487,10 @@ static char *get_lib_dir( struct options *opts )
 static void compile(struct options* opts, const char* lang)
 {
     strarray* comp_args = strarray_alloc();
-    unsigned int j;
+    unsigned int i, j;
     int gcc_defs = 0;
-    char* gcc;
-    char* gpp;
+    strarray* gcc;
+    strarray* gpp;
 
     strarray_addall(comp_args, get_translator(opts));
     switch(opts->processor)
@@ -409,16 +501,19 @@ static void compile(struct options* opts, const char* lang)
 	/* mixing different C and C++ compilers isn't supported in configure anyway */
 	case proc_cc:
 	case proc_cxx:
-            gcc = build_tool_name(opts, "gcc", CC);
-            gpp = build_tool_name(opts, "g++", CXX);
+            gcc = strarray_fromstring(build_tool_name(opts, "gcc", CC), " ");
+            gpp = strarray_fromstring(build_tool_name(opts, "g++", CXX), " ");
             for ( j = 0; !gcc_defs && j < comp_args->size; j++ )
             {
                 const char *cc = comp_args->base[j];
 
-                gcc_defs = strendswith(cc, gcc) || strendswith(cc, gpp);
+                for (i = 0; !gcc_defs && i < gcc->size; i++)
+                    gcc_defs = gcc->base[i][0] != '-' && strendswith(cc, gcc->base[i]);
+                for (i = 0; !gcc_defs && i < gpp->size; i++)
+                    gcc_defs = gpp->base[i][0] != '-' && strendswith(cc, gpp->base[i]);
             }
-            free(gcc);
-            free(gpp);
+            strarray_free(gcc);
+            strarray_free(gpp);
             break;
     }
 
@@ -432,10 +527,11 @@ static void compile(struct options* opts, const char* lang)
             strarray_add(comp_args, "-fshort-wchar");
             strarray_add(comp_args, "-DWINE_UNICODE_NATIVE");
 	}
-        strarray_addall(comp_args, strarray_fromstring(DLLFLAGS, " "));
+        strarray_add(comp_args, "-D_REENTRANT");
+        strarray_add(comp_args, "-fPIC");
     }
 
-    if (opts->target_cpu == CPU_x86_64)
+    if (opts->target_cpu == CPU_x86_64 || opts->target_cpu == CPU_ARM64)
     {
         strarray_add(comp_args, "-DWIN64");
         strarray_add(comp_args, "-D_WIN64");
@@ -471,6 +567,16 @@ static void compile(struct options* opts, const char* lang)
             strarray_add(comp_args, "-D_stdcall=__attribute__((__stdcall__)) __attribute__((__force_align_arg_pointer__))");
             strarray_add(comp_args, "-D_cdecl=__attribute__((__cdecl__)) __attribute__((__force_align_arg_pointer__))");
         }
+        else if (opts->target_cpu == CPU_ARM || opts->target_cpu == CPU_ARM64)
+        {
+            strarray_add(comp_args, "-D__stdcall=");
+            strarray_add(comp_args, "-D__cdecl=");
+            strarray_add(comp_args, "-D_stdcall=");
+            strarray_add(comp_args, "-D_cdecl=");
+            strarray_add(comp_args, "-D__fastcall=");
+            strarray_add(comp_args, "-D_fastcall=");
+            fastcall_done = 1;
+        }
         else
         {
             strarray_add(comp_args, "-D__stdcall=__attribute__((__stdcall__))");
@@ -502,7 +608,7 @@ static void compile(struct options* opts, const char* lang)
     strarray_add(comp_args, "-D__int8=char");
     strarray_add(comp_args, "-D__int16=short");
     strarray_add(comp_args, "-D__int32=int");
-    if (opts->target_cpu == CPU_x86_64)
+    if (opts->target_cpu == CPU_x86_64 || opts->target_cpu == CPU_ARM64)
         strarray_add(comp_args, "-D__int64=long");
     else
         strarray_add(comp_args, "-D__int64=long long");
@@ -785,6 +891,8 @@ static void build(struct options* opts)
         if (opts->win16_app)
             error( "Building 16-bit code is not supported for Windows\n" );
 
+        strarray_addall(link_args, get_translator(opts));
+
         if (opts->shared)
         {
             /* run winebuild to generate the .def file */
@@ -801,16 +909,13 @@ static void build(struct options* opts)
             spawn(opts->prefix, spec_args, 0);
             strarray_free(spec_args);
 
-            if (opts->target) strarray_add(link_args, strmake("%s-dllwrap", opts->target));
-            else strarray_add(link_args, "dllwrap");
+            strarray_add(link_args, "-shared");
             if (verbose) strarray_add(link_args, "-v");
-            strarray_add(link_args, "-k");
-            strarray_add(link_args, "--def");
+            strarray_add(link_args, "-Wl,--kill-at");
             strarray_add(link_args, spec_def_name);
         }
         else
         {
-            strarray_addall(link_args, get_translator(opts));
             strarray_add(link_args, opts->gui_app ? "-mwindows" : "-mconsole");
             if (opts->nodefaultlibs) strarray_add(link_args, "-nodefaultlibs");
         }
@@ -824,7 +929,8 @@ static void build(struct options* opts)
         if (opts->image_base)
             strarray_add(link_args, strmake("-Wl,--image-base,%s", opts->image_base));
 
-        if (opts->large_address_aware) strarray_add( link_args, "-Wl,--large-address-aware" );
+        if (opts->large_address_aware && opts->target_cpu == CPU_x86)
+            strarray_add( link_args, "-Wl,--large-address-aware" );
 
         if (opts->unicode_app && !opts->shared)
             strarray_add(link_args, mingw_unicode_hack(opts));
@@ -838,7 +944,6 @@ static void build(struct options* opts)
             add_library(opts, lib_dirs, files, "kernel32");
             add_library(opts, lib_dirs, files, "ntdll");
         }
-        if (opts->shared && !opts->nostdlib) add_library(opts, lib_dirs, files, "wine");
         if (!opts->shared && opts->use_msvcrt && opts->target_platform == PLATFORM_CYGWIN)
             add_library(opts, lib_dirs, files, "msvcrt");
 
@@ -928,10 +1033,14 @@ static void build(struct options* opts)
 
     /* run winebuild to generate the .spec.o file */
     spec_args = get_winebuild_args( opts );
+    strarray_add( spec_args, strmake( "--cc-cmd=%s", build_tool_name( opts, "gcc", CC )));
+    strarray_add( spec_args, strmake( "--ld-cmd=%s", build_tool_name( opts, "ld", LD )));
+
     spec_o_name = get_temp_file(output_name, ".spec.o");
     if (opts->force_pointer_size)
         strarray_add(spec_args, strmake("-m%u", 8 * opts->force_pointer_size ));
-    strarray_addall(spec_args, strarray_fromstring(DLLFLAGS, " "));
+    strarray_add(spec_args, "-D_REENTRANT");
+    strarray_add(spec_args, "-fPIC");
     strarray_add(spec_args, opts->shared ? "--dll" : "--exe");
     if (fake_module)
     {
@@ -995,7 +1104,7 @@ static void build(struct options* opts)
 
     /* link everything together now */
     strarray_addall(link_args, get_translator(opts));
-    strarray_addall(link_args, strarray_fromstring(LDDLLFLAGS, " "));
+    strarray_addall(link_args, get_lddllflags(opts, link_args));
 
     strarray_add(link_args, "-o");
     strarray_add(link_args, strmake("%s.so", output_file));
@@ -1059,7 +1168,7 @@ static void build(struct options* opts)
     strarray_free (link_args);
 
     /* set the base address */
-    if (opts->image_base)
+    if (opts->image_base && !opts->target)
     {
         const char *prelink = PRELINK;
         if (prelink[0] && strcmp(prelink,"false"))
@@ -1181,20 +1290,29 @@ static void parse_target_option( struct options *opts, const char *target )
 
     /* get the CPU part */
 
-    if (!(p = strchr( spec, '-' ))) error( "Invalid target specification '%s'\n", target );
-    *p++ = 0;
-    for (i = 0; i < sizeof(cpu_names)/sizeof(cpu_names[0]); i++)
+    if ((p = strchr( spec, '-' )))
     {
-        if (!strcmp( cpu_names[i].name, spec ))
+        *p++ = 0;
+        for (i = 0; i < sizeof(cpu_names)/sizeof(cpu_names[0]); i++)
         {
-            opts->target_cpu = cpu_names[i].cpu;
-            break;
+            if (!strcmp( cpu_names[i].name, spec ))
+            {
+                opts->target_cpu = cpu_names[i].cpu;
+                break;
+            }
         }
+        if (i == sizeof(cpu_names)/sizeof(cpu_names[0]))
+            error( "Unrecognized CPU '%s'\n", spec );
+        platform = p;
+        if ((p = strrchr( p, '-' ))) platform = p + 1;
     }
-    if (i == sizeof(cpu_names)/sizeof(cpu_names[0]))
-        error( "Unrecognized CPU '%s'\n", spec );
-    platform = p;
-    if ((p = strrchr( p, '-' ))) platform = p + 1;
+    else if (!strcmp( spec, "mingw32" ))
+    {
+        opts->target_cpu = CPU_x86;
+        platform = spec;
+    }
+    else
+        error( "Invalid target specification '%s'\n", target );
 
     /* get the OS part */
 
@@ -1387,12 +1505,23 @@ int main(int argc, char **argv)
                     {
                         if (opts.target_cpu == CPU_x86_64)
                             opts.target_cpu = CPU_x86;
+                        else if (opts.target_cpu == CPU_ARM64)
+                            opts.target_cpu = CPU_ARM;
                         opts.force_pointer_size = 4;
 			raw_linker_arg = 1;
                     }
 		    else if (strcmp("-m64", argv[i]) == 0)
                     {
+                        if (opts.target_cpu == CPU_x86)
+                            opts.target_cpu = CPU_x86_64;
+                        else if (opts.target_cpu == CPU_ARM)
+                            opts.target_cpu = CPU_ARM64;
                         opts.force_pointer_size = 8;
+			raw_linker_arg = 1;
+                    }
+                    else if (!strcmp("-marm", argv[i] ) || !strcmp("-mthumb", argv[i] ))
+                    {
+                        strarray_add(opts.winebuild_args, argv[i]);
 			raw_linker_arg = 1;
                     }
                     else if (strncmp("-mcpu=", argv[i], 6) == 0)

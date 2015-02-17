@@ -88,6 +88,10 @@ static NTSTATUS  (WINAPI *pRtlSetThreadErrorMode)(DWORD, LPDWORD);
 static IMAGE_BASE_RELOCATION *(WINAPI *pLdrProcessRelocationBlock)(void*,UINT,USHORT*,INT_PTR);
 static CHAR *    (WINAPI *pRtlIpv4AddressToStringA)(const IN_ADDR *, LPSTR);
 static NTSTATUS  (WINAPI *pRtlIpv4AddressToStringExA)(const IN_ADDR *, USHORT, LPSTR, PULONG);
+static NTSTATUS  (WINAPI *pRtlIpv4StringToAddressA)(PCSTR, BOOLEAN, PCSTR *, IN_ADDR *);
+static NTSTATUS  (WINAPI *pLdrAddRefDll)(ULONG, HMODULE);
+static NTSTATUS  (WINAPI *pLdrLockLoaderLock)(ULONG, ULONG*, ULONG_PTR*);
+static NTSTATUS  (WINAPI *pLdrUnlockLoaderLock)(ULONG, ULONG_PTR);
 
 static HMODULE hkernel32 = 0;
 static BOOL      (WINAPI *pIsWow64Process)(HANDLE, PBOOL);
@@ -131,6 +135,10 @@ static void InitFunctionPtrs(void)
         pLdrProcessRelocationBlock  = (void *)GetProcAddress(hntdll, "LdrProcessRelocationBlock");
         pRtlIpv4AddressToStringA = (void *)GetProcAddress(hntdll, "RtlIpv4AddressToStringA");
         pRtlIpv4AddressToStringExA = (void *)GetProcAddress(hntdll, "RtlIpv4AddressToStringExA");
+        pRtlIpv4StringToAddressA = (void *)GetProcAddress(hntdll, "RtlIpv4StringToAddressA");
+        pLdrAddRefDll = (void *)GetProcAddress(hntdll, "LdrAddRefDll");
+        pLdrLockLoaderLock = (void *)GetProcAddress(hntdll, "LdrLockLoaderLock");
+        pLdrUnlockLoaderLock = (void *)GetProcAddress(hntdll, "LdrUnlockLoaderLock");
     }
     hkernel32 = LoadLibraryA("kernel32.dll");
     ok(hkernel32 != 0, "LoadLibrary failed\n");
@@ -1154,7 +1162,7 @@ static void test_RtlIpv4AddressToString(void)
     CHAR buffer[20];
     CHAR *res;
     IN_ADDR ip;
-    DWORD len;
+    DWORD_PTR len;
 
     if (!pRtlIpv4AddressToStringA)
     {
@@ -1175,7 +1183,7 @@ static void test_RtlIpv4AddressToString(void)
 
     res = pRtlIpv4AddressToStringA(&ip, NULL);
     ok( (res == (char *)~0) ||
-        broken(res == (char *)0 + len),        /* XP and w2003 */
+        broken(res == (char *)len),        /* XP and w2003 */
         "got %p (expected ~0)\n", res);
 
     if (0) {
@@ -1312,6 +1320,284 @@ static void test_RtlIpv4AddressToStringEx(void)
         res, size, buffer);
 }
 
+static void test_RtlIpv4StringToAddress(void)
+{
+    NTSTATUS res;
+    IN_ADDR ip, expected_ip;
+    PCSTR terminator;
+    CHAR dummy;
+    struct
+    {
+        PCSTR address;
+        NTSTATUS res;
+        int terminator_offset;
+        int ip[4];
+        BOOL strict_is_different;
+        NTSTATUS res_strict;
+        int terminator_offset_strict;
+        int ip_strict[4];
+    } tests[] =
+    {
+        { "",                STATUS_INVALID_PARAMETER,  0, { -1 } },
+        { " ",               STATUS_INVALID_PARAMETER,  0, { -1 } },
+        { "1.1.1.1",         STATUS_SUCCESS,            7, {   1,   1,   1,   1 } },
+        { "0.0.0.0",         STATUS_SUCCESS,            7, {   0,   0,   0,   0 } },
+        { "255.255.255.255", STATUS_SUCCESS,           15, { 255, 255, 255, 255 } },
+        { "255.255.255.255:123",
+                             STATUS_SUCCESS,           15, { 255, 255, 255, 255 } },
+        { "255.255.255.256", STATUS_INVALID_PARAMETER, 15, { -1 } },
+        { "255.255.255.4294967295",
+                             STATUS_INVALID_PARAMETER, 22, { -1 } },
+        { "255.255.255.4294967296",
+                             STATUS_INVALID_PARAMETER, 21, { -1 } },
+        { "255.255.255.4294967297",
+                             STATUS_INVALID_PARAMETER, 21, { -1 } },
+        { "a",               STATUS_INVALID_PARAMETER,  0, { -1 } },
+        { "1.1.1.0xaA",      STATUS_SUCCESS,           10, {   1,   1,   1, 170 },
+                       TRUE, STATUS_INVALID_PARAMETER,  8, { -1 } },
+        { "1.1.1.0XaA",      STATUS_SUCCESS,           10, {   1,   1,   1, 170 },
+                       TRUE, STATUS_INVALID_PARAMETER,  8, { -1 } },
+        { "1.1.1.0x",        STATUS_INVALID_PARAMETER,  8, { -1 } },
+        { "1.1.1.0xff",      STATUS_SUCCESS,           10, {   1,   1,   1, 255 },
+                       TRUE, STATUS_INVALID_PARAMETER,  8, { -1 } },
+        { "1.1.1.0x100",     STATUS_INVALID_PARAMETER, 11, { -1 },
+                       TRUE, STATUS_INVALID_PARAMETER,  8, { -1 } },
+        { "1.1.1.0xffffffff",STATUS_INVALID_PARAMETER, 16, { -1 },
+                       TRUE, STATUS_INVALID_PARAMETER,  8, { -1 } },
+        { "1.1.1.0x100000000",
+                             STATUS_INVALID_PARAMETER, 16, { -1, 0, 0, 0 },
+                       TRUE, STATUS_INVALID_PARAMETER,  8, { -1 } },
+        { "1.1.1.010",       STATUS_SUCCESS,            9, {   1,   1,   1,   8 },
+                       TRUE, STATUS_INVALID_PARAMETER,  7, { -1 } },
+        { "1.1.1.00",        STATUS_SUCCESS,            8, {   1,   1,   1,   0 },
+                       TRUE, STATUS_INVALID_PARAMETER,  7, { -1 } },
+        { "1.1.1.007",       STATUS_SUCCESS,            9, {   1,   1,   1,   7 },
+                       TRUE, STATUS_INVALID_PARAMETER,  7, { -1 } },
+        { "1.1.1.08",        STATUS_INVALID_PARAMETER,  7, { -1 } },
+        { "1.1.1.008",       STATUS_SUCCESS,            8, {   1,   1,   1,   0 },
+                       TRUE, STATUS_INVALID_PARAMETER,  7, { -1 } },
+        { "1.1.1.0a",        STATUS_SUCCESS,            7, {   1,   1,   1,   0 } },
+        { "1.1.1.0o10",      STATUS_SUCCESS,            7, {   1,   1,   1,   0 } },
+        { "1.1.1.0b10",      STATUS_SUCCESS,            7, {   1,   1,   1,   0 } },
+        { "1.1.1.-2",        STATUS_INVALID_PARAMETER,  6, { -1 } },
+        { "1",               STATUS_SUCCESS,            1, {   0,   0,   0,   1 },
+                       TRUE, STATUS_INVALID_PARAMETER,  1, { -1 } },
+        { "-1",              STATUS_INVALID_PARAMETER,  0, { -1 } },
+        { "203569230",       STATUS_SUCCESS,            9, {  12,  34,  56,  78 },
+                       TRUE, STATUS_INVALID_PARAMETER,  9, { -1 } },
+        { "1.223756",        STATUS_SUCCESS,            8, {   1,   3, 106,  12 },
+                       TRUE, STATUS_INVALID_PARAMETER,  8, { -1 } },
+        { "3.4.756",         STATUS_SUCCESS,            7, {   3,   4,   2, 244 },
+                       TRUE, STATUS_INVALID_PARAMETER,  7, { -1 } },
+        { "3.4.756.1",       STATUS_INVALID_PARAMETER,  9, { -1 } },
+        { "3.4.65536",       STATUS_INVALID_PARAMETER,  9, { -1 } },
+        { "3.4.5.6.7",       STATUS_INVALID_PARAMETER,  7, { -1 } },
+        { "3.4.5.+6",        STATUS_INVALID_PARAMETER,  6, { -1 } },
+        { " 3.4.5.6",        STATUS_INVALID_PARAMETER,  0, { -1 } },
+        { "\t3.4.5.6",       STATUS_INVALID_PARAMETER,  0, { -1 } },
+        { "3.4.5.6 ",        STATUS_SUCCESS,            7, {   3,   4,   5,   6 } },
+        { "3. 4.5.6",        STATUS_INVALID_PARAMETER,  2, { -1 } },
+        { ".",               STATUS_INVALID_PARAMETER,  1, { -1 } },
+        { "..",              STATUS_INVALID_PARAMETER,  1, { -1 } },
+        { "1.",              STATUS_INVALID_PARAMETER,  2, { -1 } },
+        { "1..",             STATUS_INVALID_PARAMETER,  3, { -1 } },
+        { ".1",              STATUS_INVALID_PARAMETER,  1, { -1 } },
+        { ".1.",             STATUS_INVALID_PARAMETER,  1, { -1 } },
+        { ".1.2.3",          STATUS_INVALID_PARAMETER,  1, { -1 } },
+        { "0.1.2.3",         STATUS_SUCCESS,            7, {   0,   1,   2,   3 } },
+        { "0.1.2.3.",        STATUS_INVALID_PARAMETER,  7, { -1 } },
+        { "[0.1.2.3]",       STATUS_INVALID_PARAMETER,  0, { -1 } },
+        { "::1",             STATUS_INVALID_PARAMETER,  0, { -1 } },
+        { ":1",              STATUS_INVALID_PARAMETER,  0, { -1 } },
+    };
+    const int testcount = sizeof(tests) / sizeof(tests[0]);
+    int i;
+
+    if (!pRtlIpv4StringToAddressA)
+    {
+        skip("RtlIpv4StringToAddress not available\n");
+        return;
+    }
+
+    if (0)
+    {
+        /* leaving either parameter NULL crashes on Windows */
+        res = pRtlIpv4StringToAddressA(NULL, FALSE, &terminator, &ip);
+        res = pRtlIpv4StringToAddressA("1.1.1.1", FALSE, NULL, &ip);
+        res = pRtlIpv4StringToAddressA("1.1.1.1", FALSE, &terminator, NULL);
+        /* same for the wide char version */
+        /*
+        res = pRtlIpv4StringToAddressW(NULL, FALSE, &terminatorW, &ip);
+        res = pRtlIpv4StringToAddressW(L"1.1.1.1", FALSE, NULL, &ip);
+        res = pRtlIpv4StringToAddressW(L"1.1.1.1", FALSE, &terminatorW, NULL);
+        */
+    }
+
+    for (i = 0; i < testcount; i++)
+    {
+        /* non-strict */
+        terminator = &dummy;
+        ip.S_un.S_addr = 0xabababab;
+        res = pRtlIpv4StringToAddressA(tests[i].address, FALSE, &terminator, &ip);
+        ok(res == tests[i].res,
+           "[%s] res = 0x%08x, expected 0x%08x\n",
+           tests[i].address, res, tests[i].res);
+        ok(terminator == tests[i].address + tests[i].terminator_offset,
+           "[%s] terminator = %p, expected %p\n",
+           tests[i].address, terminator, tests[i].address + tests[i].terminator_offset);
+        if (tests[i].ip[0] == -1)
+            expected_ip.S_un.S_addr = 0xabababab;
+        else
+        {
+            expected_ip.S_un.S_un_b.s_b1 = tests[i].ip[0];
+            expected_ip.S_un.S_un_b.s_b2 = tests[i].ip[1];
+            expected_ip.S_un.S_un_b.s_b3 = tests[i].ip[2];
+            expected_ip.S_un.S_un_b.s_b4 = tests[i].ip[3];
+        }
+        ok(ip.S_un.S_addr == expected_ip.S_un.S_addr,
+           "[%s] ip = %08x, expected %08x\n",
+           tests[i].address, ip.S_un.S_addr, expected_ip.S_un.S_addr);
+
+        if (!tests[i].strict_is_different)
+        {
+            tests[i].res_strict = tests[i].res;
+            tests[i].terminator_offset_strict = tests[i].terminator_offset;
+            tests[i].ip_strict[0] = tests[i].ip[0];
+            tests[i].ip_strict[1] = tests[i].ip[1];
+            tests[i].ip_strict[2] = tests[i].ip[2];
+            tests[i].ip_strict[3] = tests[i].ip[3];
+        }
+        /* strict */
+        terminator = &dummy;
+        ip.S_un.S_addr = 0xabababab;
+        res = pRtlIpv4StringToAddressA(tests[i].address, TRUE, &terminator, &ip);
+        ok(res == tests[i].res_strict,
+           "[%s] res = 0x%08x, expected 0x%08x\n",
+           tests[i].address, res, tests[i].res_strict);
+        ok(terminator == tests[i].address + tests[i].terminator_offset_strict,
+           "[%s] terminator = %p, expected %p\n",
+           tests[i].address, terminator, tests[i].address + tests[i].terminator_offset_strict);
+        if (tests[i].ip_strict[0] == -1)
+            expected_ip.S_un.S_addr = 0xabababab;
+        else
+        {
+            expected_ip.S_un.S_un_b.s_b1 = tests[i].ip_strict[0];
+            expected_ip.S_un.S_un_b.s_b2 = tests[i].ip_strict[1];
+            expected_ip.S_un.S_un_b.s_b3 = tests[i].ip_strict[2];
+            expected_ip.S_un.S_un_b.s_b4 = tests[i].ip_strict[3];
+        }
+        ok(ip.S_un.S_addr == expected_ip.S_un.S_addr,
+           "[%s] ip = %08x, expected %08x\n",
+           tests[i].address, ip.S_un.S_addr, expected_ip.S_un.S_addr);
+    }
+}
+
+static void test_LdrAddRefDll(void)
+{
+    HMODULE mod, mod2;
+    NTSTATUS status;
+    BOOL ret;
+
+    if (!pLdrAddRefDll)
+    {
+        win_skip( "LdrAddRefDll not supported\n" );
+        return;
+    }
+
+    mod = LoadLibraryA("comctl32.dll");
+    ok(mod != NULL, "got %p\n", mod);
+    ret = FreeLibrary(mod);
+    ok(ret, "got %d\n", ret);
+
+    mod2 = GetModuleHandleA("comctl32.dll");
+    ok(mod2 == NULL, "got %p\n", mod2);
+
+    /* load, addref and release 2 times */
+    mod = LoadLibraryA("comctl32.dll");
+    ok(mod != NULL, "got %p\n", mod);
+    status = pLdrAddRefDll(0, mod);
+    ok(status == STATUS_SUCCESS, "got 0x%08x\n", status);
+    ret = FreeLibrary(mod);
+    ok(ret, "got %d\n", ret);
+
+    mod2 = GetModuleHandleA("comctl32.dll");
+    ok(mod2 != NULL, "got %p\n", mod2);
+    ret = FreeLibrary(mod);
+    ok(ret, "got %d\n", ret);
+
+    mod2 = GetModuleHandleA("comctl32.dll");
+    ok(mod2 == NULL, "got %p\n", mod2);
+
+    /* pin refcount */
+    mod = LoadLibraryA("comctl32.dll");
+    ok(mod != NULL, "got %p\n", mod);
+    status = pLdrAddRefDll(LDR_ADDREF_DLL_PIN, mod);
+    ok(status == STATUS_SUCCESS, "got 0x%08x\n", status);
+
+    ret = FreeLibrary(mod);
+    ok(ret, "got %d\n", ret);
+    ret = FreeLibrary(mod);
+    ok(ret, "got %d\n", ret);
+    ret = FreeLibrary(mod);
+    ok(ret, "got %d\n", ret);
+    ret = FreeLibrary(mod);
+    ok(ret, "got %d\n", ret);
+
+    mod2 = GetModuleHandleA("comctl32.dll");
+    ok(mod2 != NULL, "got %p\n", mod2);
+}
+
+static void test_LdrLockLoaderLock(void)
+{
+    ULONG_PTR magic;
+    ULONG result;
+    NTSTATUS status;
+
+    if (!pLdrLockLoaderLock)
+    {
+        win_skip("LdrLockLoaderLock() is not available\n");
+        return;
+    }
+
+    /* invalid flags */
+    result = 10;
+    magic = 0xdeadbeef;
+    status = pLdrLockLoaderLock(0x10, &result, &magic);
+    ok(status == STATUS_INVALID_PARAMETER_1, "got 0x%08x\n", status);
+    ok(result == 0, "got %d\n", result);
+    ok(magic == 0, "got %lx\n", magic);
+
+    magic = 0xdeadbeef;
+    status = pLdrLockLoaderLock(0x10, NULL, &magic);
+    ok(status == STATUS_INVALID_PARAMETER_1, "got 0x%08x\n", status);
+    ok(magic == 0, "got %lx\n", magic);
+
+    result = 10;
+    status = pLdrLockLoaderLock(0x10, &result, NULL);
+    ok(status == STATUS_INVALID_PARAMETER_1, "got 0x%08x\n", status);
+    ok(result == 0, "got %d\n", result);
+
+    /* non-blocking mode, result is null */
+    magic = 0xdeadbeef;
+    status = pLdrLockLoaderLock(0x2, NULL, &magic);
+    ok(status == STATUS_INVALID_PARAMETER_2, "got 0x%08x\n", status);
+    ok(magic == 0, "got %lx\n", magic);
+
+    /* magic pointer is null */
+    result = 10;
+    status = pLdrLockLoaderLock(0, &result, NULL);
+    ok(status == STATUS_INVALID_PARAMETER_3, "got 0x%08x\n", status);
+    ok(result == 0, "got %d\n", result);
+
+    /* lock in non-blocking mode */
+    result = 0;
+    magic = 0;
+    status = pLdrLockLoaderLock(0x2, &result, &magic);
+    ok(status == STATUS_SUCCESS, "got 0x%08x\n", status);
+    ok(result == 1, "got %d\n", result);
+    ok(magic != 0, "got %lx\n", magic);
+    pLdrUnlockLoaderLock(0, magic);
+}
 
 START_TEST(rtl)
 {
@@ -1336,4 +1622,7 @@ START_TEST(rtl)
     test_LdrProcessRelocationBlock();
     test_RtlIpv4AddressToString();
     test_RtlIpv4AddressToStringEx();
+    test_RtlIpv4StringToAddress();
+    test_LdrAddRefDll();
+    test_LdrLockLoaderLock();
 }

@@ -18,7 +18,7 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "windows.h"
+#include "objbase.h"
 #include "gdiplus.h"
 #include "wine/test.h"
 #include <math.h>
@@ -156,15 +156,16 @@ static void test_getpathdata(void)
     GpStatus status;
     INT count;
 
-    GdipCreatePath(FillModeAlternate, &path);
+    status = GdipCreatePath(FillModeAlternate, &path);
+    expect(Ok, status);
     status = GdipAddPathLine(path, 5.0, 5.0, 100.0, 50.0);
     expect(Ok, status);
 
-    /* Prepare storage. Made by wrapper class. */
     status = GdipGetPointCount(path, &count);
     expect(Ok, status);
+    expect(2, count);
 
-    data.Count  = 2;
+    data.Count  = count;
     data.Types  = GdipAlloc(sizeof(BYTE) * count);
     data.Points = GdipAlloc(sizeof(PointF) * count);
 

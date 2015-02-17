@@ -45,45 +45,16 @@
 /*****************************************************************************
  * Interfaces
  */
-typedef struct IDirectMusicChordMapImpl IDirectMusicChordMapImpl;
-typedef struct IDirectMusicComposerImpl IDirectMusicComposerImpl;
 typedef struct IDirectMusicChordMapTrack IDirectMusicChordMapTrack;
 typedef struct IDirectMusicSignPostTrack IDirectMusicSignPostTrack;
 	
 /*****************************************************************************
  * ClassFactory
  */
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicChordMapImpl (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicComposerImpl (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicChordMapTrack (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicSignPostTrack (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
-
-/*****************************************************************************
- * IDirectMusicChordMapImpl implementation structure
- */
-struct IDirectMusicChordMapImpl {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicChordMapVtbl *ChordMapVtbl;
-  const IDirectMusicObjectVtbl *ObjectVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG  ref;
-
-  /* IDirectMusicChordMapImpl fields */
-  LPDMUS_OBJECTDESC pDesc;
-
-};
-
-/*****************************************************************************
- * IDirectMusicComposerImpl implementation structure
- */
-struct IDirectMusicComposerImpl {
-  /* IUnknown fields */
-  const IDirectMusicComposerVtbl *lpVtbl;
-  LONG  ref;
-
-  /* IDirectMusicComposerImpl fields */
-};
+extern HRESULT WINAPI create_dmchordmap(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmcomposer(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmchordmaptrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmsignposttrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
 
 /*****************************************************************************
  * IDirectMusicChordMapTrack implementation structure

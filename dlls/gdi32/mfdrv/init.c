@@ -60,6 +60,24 @@ static INT MFDRV_ExtEscape( PHYSDEV dev, INT nEscape, INT cbInput, LPCVOID in_da
 
 
 /******************************************************************
+ *         MFDRV_GetBoundsRect
+ */
+static UINT MFDRV_GetBoundsRect( PHYSDEV dev, RECT *rect, UINT flags )
+{
+    return 0;
+}
+
+
+/******************************************************************
+ *         MFDRV_SetBoundsRect
+ */
+static UINT MFDRV_SetBoundsRect( PHYSDEV dev, RECT *rect, UINT flags )
+{
+    return 0;
+}
+
+
+/******************************************************************
  *         MFDRV_GetDeviceCaps
  *
  *A very simple implementation that returns DT_METAFILE
@@ -89,17 +107,12 @@ static const struct gdi_dc_funcs MFDRV_Funcs =
     NULL,                            /* pArcTo */
     MFDRV_BeginPath,                 /* pBeginPath */
     NULL,                            /* pBlendImage */
-    NULL,                            /* pChoosePixelFormat */
     MFDRV_Chord,                     /* pChord */
     MFDRV_CloseFigure,               /* pCloseFigure */
-    NULL,                            /* pCreateBitmap */
     MFDRV_CreateCompatibleDC,        /* pCreateCompatibleDC */
     NULL,                            /* pCreateDC */
-    NULL,                            /* pCreateDIBSection */
-    NULL,                            /* pDeleteBitmap */
     MFDRV_DeleteDC,                  /* pDeleteDC */
     MFDRV_DeleteObject,              /* pDeleteObject */
-    NULL,                            /* pDescribePixelFormat */
     NULL,                            /* pDeviceCapabilities */
     MFDRV_Ellipse,                   /* pEllipse */
     NULL,                            /* pEndDoc */
@@ -120,6 +133,7 @@ static const struct gdi_dc_funcs MFDRV_Funcs =
     MFDRV_FrameRgn,                  /* pFrameRgn */
     NULL,                            /* pGdiComment */
     NULL,                            /* pGdiRealizationInfo */
+    MFDRV_GetBoundsRect,             /* pGetBoundsRect */
     NULL,                            /* pGetCharABCWidths */
     NULL,                            /* pGetCharABCWidthsI */
     NULL,                            /* pGetCharWidth */
@@ -135,7 +149,6 @@ static const struct gdi_dc_funcs MFDRV_Funcs =
     NULL,                            /* pGetNearestColor */
     NULL,                            /* pGetOutlineTextMetrics */
     NULL,                            /* pGetPixel */
-    NULL,                            /* pGetPixelFormat */
     NULL,                            /* pGetSystemPaletteEntries */
     NULL,                            /* pGetTextCharsetInfo */
     NULL,                            /* pGetTextExtentExPoint */
@@ -181,9 +194,9 @@ static const struct gdi_dc_funcs MFDRV_Funcs =
     NULL,                            /* pSetArcDirection */
     MFDRV_SetBkColor,                /* pSetBkColor */
     MFDRV_SetBkMode,                 /* pSetBkMode */
+    MFDRV_SetBoundsRect,             /* pSetBoundsRect */
     MFDRV_SetDCBrushColor,           /* pSetDCBrushColor*/
     MFDRV_SetDCPenColor,             /* pSetDCPenColor*/
-    NULL,                            /* pSetDIBColorTable */
     MFDRV_SetDIBitsToDevice,         /* pSetDIBitsToDevice */
     NULL,                            /* pSetDeviceClipping */
     NULL,                            /* pSetDeviceGammaRamp */
@@ -191,7 +204,6 @@ static const struct gdi_dc_funcs MFDRV_Funcs =
     MFDRV_SetMapMode,                /* pSetMapMode */
     MFDRV_SetMapperFlags,            /* pSetMapperFlags */
     MFDRV_SetPixel,                  /* pSetPixel */
-    NULL,                            /* pSetPixelFormat */
     MFDRV_SetPolyFillMode,           /* pSetPolyFillMode */
     MFDRV_SetROP2,                   /* pSetROP2 */
     MFDRV_SetRelAbs,                 /* pSetRelAbs */
@@ -211,9 +223,10 @@ static const struct gdi_dc_funcs MFDRV_Funcs =
     MFDRV_StretchDIBits,             /* pStretchDIBits */
     MFDRV_StrokeAndFillPath,         /* pStrokeAndFillPath */
     MFDRV_StrokePath,                /* pStrokePath */
-    NULL,                            /* pSwapBuffers */
     NULL,                            /* pUnrealizePalette */
-    MFDRV_WidenPath                  /* pWidenPath */
+    MFDRV_WidenPath,                 /* pWidenPath */
+    NULL,                            /* wine_get_wgl_driver */
+    GDI_PRIORITY_GRAPHICS_DRV        /* priority */
 };
 
 
@@ -308,6 +321,7 @@ HDC WINAPI CreateMetaFileW( LPCWSTR filename )
     DC *dc;
     METAFILEDRV_PDEVICE *physDev;
     HANDLE hFile;
+    DWORD bytes_written;
 
     TRACE("%s\n", debugstr_w(filename) );
 
@@ -322,9 +336,10 @@ HDC WINAPI CreateMetaFileW( LPCWSTR filename )
             free_dc_ptr( dc );
             return 0;
         }
-        if (!WriteFile( hFile, physDev->mh, sizeof(*physDev->mh), NULL,
-			NULL )) {
+        if (!WriteFile( hFile, physDev->mh, sizeof(*physDev->mh),
+                        &bytes_written, NULL )) {
             free_dc_ptr( dc );
+            CloseHandle (hFile );
             return 0;
 	}
 	physDev->hFile = hFile;
@@ -373,11 +388,12 @@ static DC *MFDRV_CloseMetaFile( HDC hdc )
 {
     DC *dc;
     METAFILEDRV_PDEVICE *physDev;
+    DWORD bytes_written;
 
     TRACE("(%p)\n", hdc );
 
     if (!(dc = get_dc_ptr( hdc ))) return NULL;
-    if (dc->header.type != OBJ_METADC)
+    if (GetObjectType( hdc ) != OBJ_METADC)
     {
         release_dc_ptr( dc );
         return NULL;
@@ -409,7 +425,7 @@ static DC *MFDRV_CloseMetaFile( HDC hdc )
 
 	physDev->mh->mtType = METAFILE_MEMORY; /* This is what windows does */
         if (!WriteFile(physDev->hFile, physDev->mh, sizeof(*physDev->mh),
-                       NULL, NULL)) {
+                       &bytes_written, NULL)) {
             free_dc_ptr( dc );
             return 0;
         }

@@ -125,8 +125,13 @@ BOOL WINAPI SetupGetInfInformationA(LPCVOID InfSpec, DWORD SearchControl,
 
     if (InfSpec && SearchControl >= INFINFO_INF_NAME_IS_ABSOLUTE)
     {
-        len = lstrlenA(InfSpec) + 1;
+        len = MultiByteToWideChar(CP_ACP, 0, InfSpec, -1, NULL, 0);
         inf = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
+        if (!inf)
+        {
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            return FALSE;
+        }
         MultiByteToWideChar(CP_ACP, 0, InfSpec, -1, inf, len);
     }
 
@@ -286,7 +291,7 @@ BOOL WINAPI SetupQueryInfFileInformationW(PSP_INF_INFORMATION InfInformation,
     if (InfIndex != 0)
         FIXME("Appended INF files are not handled\n");
 
-    ptr = (LPWSTR)&InfInformation->VersionData[0];
+    ptr = (LPWSTR)InfInformation->VersionData;
     len = lstrlenW(ptr);
 
     if (RequiredSize)
@@ -607,7 +612,7 @@ BOOL WINAPI SetupGetTargetPathW( HINF hinf, PINFCONTEXT context, PCWSTR section,
         else
         {
             SetLastError( ERROR_INSUFFICIENT_BUFFER );
-            HeapFree( GetProcessHeap(), 0, dir );
+            if (dir != systemdir) HeapFree( GetProcessHeap(), 0, dir );
             return FALSE;
         }
     }
@@ -674,7 +679,7 @@ BOOL WINAPI SetupQueryInfOriginalFileInformationW(
         return FALSE;
     }
 
-    inf_path = (LPWSTR)&InfInformation->VersionData[0];
+    inf_path = (LPWSTR)InfInformation->VersionData;
 
     /* FIXME: we should get OriginalCatalogName from CatalogFile line in
      * the original inf file and cache it, but that would require building a

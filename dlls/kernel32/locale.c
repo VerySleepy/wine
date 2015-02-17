@@ -33,7 +33,6 @@
 #include <stdlib.h>
 
 #ifdef __APPLE__
-# include <CoreFoundation/CFBundle.h>
 # include <CoreFoundation/CFLocale.h>
 # include <CoreFoundation/CFString.h>
 #endif
@@ -61,12 +60,6 @@ static const union cptable *ansi_cptable;
 static const union cptable *oem_cptable;
 static const union cptable *mac_cptable;
 static const union cptable *unix_cptable;  /* NULL if UTF8 */
-
-static const WCHAR szNlsKeyName[] = {
-    'M','a','c','h','i','n','e','\\','S','y','s','t','e','m','\\',
-    'C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t','\\',
-    'C','o','n','t','r','o','l','\\','N','l','s','\0'
-};
 
 static const WCHAR szLocaleKeyName[] = {
     'M','a','c','h','i','n','e','\\','S','y','s','t','e','m','\\',
@@ -167,6 +160,107 @@ static LCID lcid_LC_PAPER;
 static LCID lcid_LC_MEASUREMENT;
 static LCID lcid_LC_TELEPHONE;
 
+static const WCHAR iCalendarTypeW[] = {'i','C','a','l','e','n','d','a','r','T','y','p','e',0};
+static const WCHAR iCountryW[] = {'i','C','o','u','n','t','r','y',0};
+static const WCHAR iCurrDigitsW[] = {'i','C','u','r','r','D','i','g','i','t','s',0};
+static const WCHAR iCurrencyW[] = {'i','C','u','r','r','e','n','c','y',0};
+static const WCHAR iDateW[] = {'i','D','a','t','e',0};
+static const WCHAR iDigitsW[] = {'i','D','i','g','i','t','s',0};
+static const WCHAR iFirstDayOfWeekW[] = {'i','F','i','r','s','t','D','a','y','O','f','W','e','e','k',0};
+static const WCHAR iFirstWeekOfYearW[] = {'i','F','i','r','s','t','W','e','e','k','O','f','Y','e','a','r',0};
+static const WCHAR iLDateW[] = {'i','L','D','a','t','e',0};
+static const WCHAR iLZeroW[] = {'i','L','Z','e','r','o',0};
+static const WCHAR iMeasureW[] = {'i','M','e','a','s','u','r','e',0};
+static const WCHAR iNegCurrW[] = {'i','N','e','g','C','u','r','r',0};
+static const WCHAR iNegNumberW[] = {'i','N','e','g','N','u','m','b','e','r',0};
+static const WCHAR iPaperSizeW[] = {'i','P','a','p','e','r','S','i','z','e',0};
+static const WCHAR iTLZeroW[] = {'i','T','L','Z','e','r','o',0};
+static const WCHAR iTimePrefixW[] = {'i','T','i','m','e','P','r','e','f','i','x',0};
+static const WCHAR iTimeW[] = {'i','T','i','m','e',0};
+static const WCHAR s1159W[] = {'s','1','1','5','9',0};
+static const WCHAR s2359W[] = {'s','2','3','5','9',0};
+static const WCHAR sCountryW[] = {'s','C','o','u','n','t','r','y',0};
+static const WCHAR sCurrencyW[] = {'s','C','u','r','r','e','n','c','y',0};
+static const WCHAR sDateW[] = {'s','D','a','t','e',0};
+static const WCHAR sDecimalW[] = {'s','D','e','c','i','m','a','l',0};
+static const WCHAR sGroupingW[] = {'s','G','r','o','u','p','i','n','g',0};
+static const WCHAR sLanguageW[] = {'s','L','a','n','g','u','a','g','e',0};
+static const WCHAR sListW[] = {'s','L','i','s','t',0};
+static const WCHAR sLongDateW[] = {'s','L','o','n','g','D','a','t','e',0};
+static const WCHAR sMonDecimalSepW[] = {'s','M','o','n','D','e','c','i','m','a','l','S','e','p',0};
+static const WCHAR sMonGroupingW[] = {'s','M','o','n','G','r','o','u','p','i','n','g',0};
+static const WCHAR sMonThousandSepW[] = {'s','M','o','n','T','h','o','u','s','a','n','d','S','e','p',0};
+static const WCHAR sNativeDigitsW[] = {'s','N','a','t','i','v','e','D','i','g','i','t','s',0};
+static const WCHAR sNegativeSignW[] = {'s','N','e','g','a','t','i','v','e','S','i','g','n',0};
+static const WCHAR sPositiveSignW[] = {'s','P','o','s','i','t','i','v','e','S','i','g','n',0};
+static const WCHAR sShortDateW[] = {'s','S','h','o','r','t','D','a','t','e',0};
+static const WCHAR sThousandW[] = {'s','T','h','o','u','s','a','n','d',0};
+static const WCHAR sTimeFormatW[] = {'s','T','i','m','e','F','o','r','m','a','t',0};
+static const WCHAR sTimeW[] = {'s','T','i','m','e',0};
+static const WCHAR sYearMonthW[] = {'s','Y','e','a','r','M','o','n','t','h',0};
+static const WCHAR NumShapeW[] = {'N','u','m','s','h','a','p','e',0};
+
+static struct registry_value
+{
+    DWORD           lctype;
+    const WCHAR    *name;
+    WCHAR          *cached_value;
+} registry_values[] =
+{
+    { LOCALE_ICALENDARTYPE, iCalendarTypeW },
+    { LOCALE_ICURRDIGITS, iCurrDigitsW },
+    { LOCALE_ICURRENCY, iCurrencyW },
+    { LOCALE_IDIGITS, iDigitsW },
+    { LOCALE_IFIRSTDAYOFWEEK, iFirstDayOfWeekW },
+    { LOCALE_IFIRSTWEEKOFYEAR, iFirstWeekOfYearW },
+    { LOCALE_ILZERO, iLZeroW },
+    { LOCALE_IMEASURE, iMeasureW },
+    { LOCALE_INEGCURR, iNegCurrW },
+    { LOCALE_INEGNUMBER, iNegNumberW },
+    { LOCALE_IPAPERSIZE, iPaperSizeW },
+    { LOCALE_ITIME, iTimeW },
+    { LOCALE_S1159, s1159W },
+    { LOCALE_S2359, s2359W },
+    { LOCALE_SCURRENCY, sCurrencyW },
+    { LOCALE_SDATE, sDateW },
+    { LOCALE_SDECIMAL, sDecimalW },
+    { LOCALE_SGROUPING, sGroupingW },
+    { LOCALE_SLIST, sListW },
+    { LOCALE_SLONGDATE, sLongDateW },
+    { LOCALE_SMONDECIMALSEP, sMonDecimalSepW },
+    { LOCALE_SMONGROUPING, sMonGroupingW },
+    { LOCALE_SMONTHOUSANDSEP, sMonThousandSepW },
+    { LOCALE_SNEGATIVESIGN, sNegativeSignW },
+    { LOCALE_SPOSITIVESIGN, sPositiveSignW },
+    { LOCALE_SSHORTDATE, sShortDateW },
+    { LOCALE_STHOUSAND, sThousandW },
+    { LOCALE_STIME, sTimeW },
+    { LOCALE_STIMEFORMAT, sTimeFormatW },
+    { LOCALE_SYEARMONTH, sYearMonthW },
+    /* The following are not listed under MSDN as supported,
+     * but seem to be used and also stored in the registry.
+     */
+    { LOCALE_ICOUNTRY, iCountryW },
+    { LOCALE_IDATE, iDateW },
+    { LOCALE_ILDATE, iLDateW },
+    { LOCALE_ITLZERO, iTLZeroW },
+    { LOCALE_SCOUNTRY, sCountryW },
+    { LOCALE_SABBREVLANGNAME, sLanguageW },
+    /* The following are used in XP and later */
+    { LOCALE_IDIGITSUBSTITUTION, NumShapeW },
+    { LOCALE_SNATIVEDIGITS, sNativeDigitsW },
+    { LOCALE_ITIMEMARKPOSN, iTimePrefixW }
+};
+
+static CRITICAL_SECTION cache_section;
+static CRITICAL_SECTION_DEBUG critsect_debug =
+{
+    0, 0, &cache_section,
+    { &critsect_debug.ProcessLocksList, &critsect_debug.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": cache_section") }
+};
+static CRITICAL_SECTION cache_section = { &critsect_debug, -1, 0, 0, 0, 0 };
+
 /* Copy Ascii string to Unicode without using codepages */
 static inline void strcpynAtoW( WCHAR *dst, const char *src, size_t n )
 {
@@ -178,6 +272,10 @@ static inline void strcpynAtoW( WCHAR *dst, const char *src, size_t n )
     if (n) *dst = 0;
 }
 
+static inline unsigned short get_table_entry( const unsigned short *table, WCHAR ch )
+{
+    return table[table[table[ch >> 8] + ((ch >> 4) & 0x0f)] + (ch & 0xf)];
+}
 
 /***********************************************************************
  *		get_lcid_codepage
@@ -218,6 +316,7 @@ static const union cptable *get_codepage_table( unsigned int codepage )
     case CP_THREAD_ACP:
         if (NtCurrentTeb()->CurrentLocale == GetUserDefaultLCID()) return ansi_cptable;
         codepage = get_lcid_codepage( NtCurrentTeb()->CurrentLocale );
+        if (!codepage) return ansi_cptable;
         /* fall through */
     default:
         if (codepage == ansi_cptable->info.codepage) return ansi_cptable;
@@ -933,6 +1032,14 @@ LCID WINAPI GetSystemDefaultLCID(void)
     return lcid;
 }
 
+/***********************************************************************
+ *		GetSystemDefaultLocaleName (KERNEL32.@)
+ */
+INT WINAPI GetSystemDefaultLocaleName(LPWSTR localename, INT len)
+{
+    LCID lcid = GetSystemDefaultLCID();
+    return LCIDToLocaleName(lcid, localename, len, 0);
+}
 
 /***********************************************************************
  *		GetUserDefaultUILanguage (KERNEL32.@)
@@ -982,14 +1089,22 @@ LCID WINAPI LocaleNameToLCID( LPCWSTR name, DWORD flags )
 
     if (flags) FIXME( "unsupported flags %x\n", flags );
 
+    if (name == LOCALE_NAME_USER_DEFAULT)
+        return GetUserDefaultLCID();
+
+    /* string parsing */
     parse_locale_name( name, &locale_name );
 
     TRACE( "found lcid %x for %s, matches %d\n",
            locale_name.lcid, debugstr_w(name), locale_name.matches );
 
     if (!locale_name.matches)
-        WARN( "locale %s not recognized, defaulting to English\n", debugstr_w(name) );
-    else if (locale_name.matches == 1)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+
+    if (locale_name.matches == 1)
         WARN( "locale %s not recognized, defaulting to %s\n",
               debugstr_w(name), debugstr_w(locale_name.lang) );
 
@@ -1009,103 +1124,16 @@ INT WINAPI LCIDToLocaleName( LCID lcid, LPWSTR name, INT count, DWORD flags )
 
 
 /******************************************************************************
- *		get_locale_value_name
+ *		get_locale_registry_value
  *
- * Gets the registry value name for a given lctype.
+ * Gets the registry value name and cache for a given lctype.
  */
-static const WCHAR *get_locale_value_name( DWORD lctype )
+static struct registry_value *get_locale_registry_value( DWORD lctype )
 {
-    static const WCHAR iCalendarTypeW[] = {'i','C','a','l','e','n','d','a','r','T','y','p','e',0};
-    static const WCHAR iCountryW[] = {'i','C','o','u','n','t','r','y',0};
-    static const WCHAR iCurrDigitsW[] = {'i','C','u','r','r','D','i','g','i','t','s',0};
-    static const WCHAR iCurrencyW[] = {'i','C','u','r','r','e','n','c','y',0};
-    static const WCHAR iDateW[] = {'i','D','a','t','e',0};
-    static const WCHAR iDigitsW[] = {'i','D','i','g','i','t','s',0};
-    static const WCHAR iFirstDayOfWeekW[] = {'i','F','i','r','s','t','D','a','y','O','f','W','e','e','k',0};
-    static const WCHAR iFirstWeekOfYearW[] = {'i','F','i','r','s','t','W','e','e','k','O','f','Y','e','a','r',0};
-    static const WCHAR iLDateW[] = {'i','L','D','a','t','e',0};
-    static const WCHAR iLZeroW[] = {'i','L','Z','e','r','o',0};
-    static const WCHAR iMeasureW[] = {'i','M','e','a','s','u','r','e',0};
-    static const WCHAR iNegCurrW[] = {'i','N','e','g','C','u','r','r',0};
-    static const WCHAR iNegNumberW[] = {'i','N','e','g','N','u','m','b','e','r',0};
-    static const WCHAR iPaperSizeW[] = {'i','P','a','p','e','r','S','i','z','e',0};
-    static const WCHAR iTLZeroW[] = {'i','T','L','Z','e','r','o',0};
-    static const WCHAR iTimePrefixW[] = {'i','T','i','m','e','P','r','e','f','i','x',0};
-    static const WCHAR iTimeW[] = {'i','T','i','m','e',0};
-    static const WCHAR s1159W[] = {'s','1','1','5','9',0};
-    static const WCHAR s2359W[] = {'s','2','3','5','9',0};
-    static const WCHAR sCountryW[] = {'s','C','o','u','n','t','r','y',0};
-    static const WCHAR sCurrencyW[] = {'s','C','u','r','r','e','n','c','y',0};
-    static const WCHAR sDateW[] = {'s','D','a','t','e',0};
-    static const WCHAR sDecimalW[] = {'s','D','e','c','i','m','a','l',0};
-    static const WCHAR sGroupingW[] = {'s','G','r','o','u','p','i','n','g',0};
-    static const WCHAR sLanguageW[] = {'s','L','a','n','g','u','a','g','e',0};
-    static const WCHAR sListW[] = {'s','L','i','s','t',0};
-    static const WCHAR sLongDateW[] = {'s','L','o','n','g','D','a','t','e',0};
-    static const WCHAR sMonDecimalSepW[] = {'s','M','o','n','D','e','c','i','m','a','l','S','e','p',0};
-    static const WCHAR sMonGroupingW[] = {'s','M','o','n','G','r','o','u','p','i','n','g',0};
-    static const WCHAR sMonThousandSepW[] = {'s','M','o','n','T','h','o','u','s','a','n','d','S','e','p',0};
-    static const WCHAR sNativeDigitsW[] = {'s','N','a','t','i','v','e','D','i','g','i','t','s',0};
-    static const WCHAR sNegativeSignW[] = {'s','N','e','g','a','t','i','v','e','S','i','g','n',0};
-    static const WCHAR sPositiveSignW[] = {'s','P','o','s','i','t','i','v','e','S','i','g','n',0};
-    static const WCHAR sShortDateW[] = {'s','S','h','o','r','t','D','a','t','e',0};
-    static const WCHAR sThousandW[] = {'s','T','h','o','u','s','a','n','d',0};
-    static const WCHAR sTimeFormatW[] = {'s','T','i','m','e','F','o','r','m','a','t',0};
-    static const WCHAR sTimeW[] = {'s','T','i','m','e',0};
-    static const WCHAR sYearMonthW[] = {'s','Y','e','a','r','M','o','n','t','h',0};
-    static const WCHAR NumShapeW[] = {'N','u','m','s','h','a','p','e',0};
-
-    switch (lctype)
-    {
-    /* These values are used by SetLocaleInfo and GetLocaleInfo, and
-     * the values are stored in the registry, confirmed under Windows.
-     */
-    case LOCALE_ICALENDARTYPE:    return iCalendarTypeW;
-    case LOCALE_ICURRDIGITS:      return iCurrDigitsW;
-    case LOCALE_ICURRENCY:        return iCurrencyW;
-    case LOCALE_IDIGITS:          return iDigitsW;
-    case LOCALE_IFIRSTDAYOFWEEK:  return iFirstDayOfWeekW;
-    case LOCALE_IFIRSTWEEKOFYEAR: return iFirstWeekOfYearW;
-    case LOCALE_ILZERO:           return iLZeroW;
-    case LOCALE_IMEASURE:         return iMeasureW;
-    case LOCALE_INEGCURR:         return iNegCurrW;
-    case LOCALE_INEGNUMBER:       return iNegNumberW;
-    case LOCALE_IPAPERSIZE:       return iPaperSizeW;
-    case LOCALE_ITIME:            return iTimeW;
-    case LOCALE_S1159:            return s1159W;
-    case LOCALE_S2359:            return s2359W;
-    case LOCALE_SCURRENCY:        return sCurrencyW;
-    case LOCALE_SDATE:            return sDateW;
-    case LOCALE_SDECIMAL:         return sDecimalW;
-    case LOCALE_SGROUPING:        return sGroupingW;
-    case LOCALE_SLIST:            return sListW;
-    case LOCALE_SLONGDATE:        return sLongDateW;
-    case LOCALE_SMONDECIMALSEP:   return sMonDecimalSepW;
-    case LOCALE_SMONGROUPING:     return sMonGroupingW;
-    case LOCALE_SMONTHOUSANDSEP:  return sMonThousandSepW;
-    case LOCALE_SNEGATIVESIGN:    return sNegativeSignW;
-    case LOCALE_SPOSITIVESIGN:    return sPositiveSignW;
-    case LOCALE_SSHORTDATE:       return sShortDateW;
-    case LOCALE_STHOUSAND:        return sThousandW;
-    case LOCALE_STIME:            return sTimeW;
-    case LOCALE_STIMEFORMAT:      return sTimeFormatW;
-    case LOCALE_SYEARMONTH:       return sYearMonthW;
-
-    /* The following are not listed under MSDN as supported,
-     * but seem to be used and also stored in the registry.
-     */
-    case LOCALE_ICOUNTRY:         return iCountryW;
-    case LOCALE_IDATE:            return iDateW;
-    case LOCALE_ILDATE:           return iLDateW;
-    case LOCALE_ITLZERO:          return iTLZeroW;
-    case LOCALE_SCOUNTRY:         return sCountryW;
-    case LOCALE_SABBREVLANGNAME:  return sLanguageW;
-
-    /* The following are used in XP and later */
-    case LOCALE_IDIGITSUBSTITUTION: return NumShapeW;
-    case LOCALE_SNATIVEDIGITS:      return sNativeDigitsW;
-    case LOCALE_ITIMEMARKPOSN:      return iTimePrefixW;
-    }
+    int i;
+    for (i=0; i < sizeof(registry_values)/sizeof(registry_values[0]); i++)
+        if (registry_values[i].lctype == lctype)
+            return &registry_values[i];
     return NULL;
 }
 
@@ -1116,7 +1144,7 @@ static const WCHAR *get_locale_value_name( DWORD lctype )
  * Retrieve user-modified locale info from the registry.
  * Return length, 0 on error, -1 if not found.
  */
-static INT get_registry_locale_info( LPCWSTR value, LPWSTR buffer, INT len )
+static INT get_registry_locale_info( struct registry_value *registry_value, LPWSTR buffer, INT len )
 {
     DWORD size;
     INT ret;
@@ -1126,54 +1154,94 @@ static INT get_registry_locale_info( LPCWSTR value, LPWSTR buffer, INT len )
     KEY_VALUE_PARTIAL_INFORMATION *info;
     static const int info_size = FIELD_OFFSET(KEY_VALUE_PARTIAL_INFORMATION, Data);
 
-    if (!(hkey = create_registry_key())) return -1;
+    RtlEnterCriticalSection( &cache_section );
 
-    RtlInitUnicodeString( &nameW, value );
-    size = info_size + len * sizeof(WCHAR);
-
-    if (!(info = HeapAlloc( GetProcessHeap(), 0, size )))
+    if (!registry_value->cached_value)
     {
-        NtClose( hkey );
-        SetLastError( ERROR_NOT_ENOUGH_MEMORY );
-        return 0;
-    }
-
-    status = NtQueryValueKey( hkey, &nameW, KeyValuePartialInformation, info, size, &size );
-
-    if (!status)
-    {
-        ret = (size - info_size) / sizeof(WCHAR);
-        /* append terminating null if needed */
-        if (!ret || ((WCHAR *)info->Data)[ret-1])
+        if (!(hkey = create_registry_key()))
         {
-            if (ret < len || !buffer) ret++;
+            RtlLeaveCriticalSection( &cache_section );
+            return -1;
+        }
+
+        RtlInitUnicodeString( &nameW, registry_value->name );
+        size = info_size + len * sizeof(WCHAR);
+
+        if (!(info = HeapAlloc( GetProcessHeap(), 0, size )))
+        {
+            NtClose( hkey );
+            SetLastError( ERROR_NOT_ENOUGH_MEMORY );
+            RtlLeaveCriticalSection( &cache_section );
+            return 0;
+        }
+
+        status = NtQueryValueKey( hkey, &nameW, KeyValuePartialInformation, info, size, &size );
+
+        NtClose( hkey );
+
+        if (!status)
+        {
+            INT length = (size - info_size) / sizeof(WCHAR);
+            LPWSTR cached_value;
+
+            if (!length || ((WCHAR *)&info->Data)[length-1])
+                length++;
+
+            cached_value = HeapAlloc( GetProcessHeap(), 0, length * sizeof(WCHAR) );
+
+            if (!cached_value)
+            {
+                HeapFree( GetProcessHeap(), 0, info );
+                SetLastError( ERROR_NOT_ENOUGH_MEMORY );
+                RtlLeaveCriticalSection( &cache_section );
+                return 0;
+            }
+
+            memcpy( cached_value, info->Data, (length-1) * sizeof(WCHAR) );
+            cached_value[length-1] = 0;
+            HeapFree( GetProcessHeap(), 0, info );
+            registry_value->cached_value = cached_value;
+        }
+        else
+        {
+            if (status == STATUS_BUFFER_OVERFLOW && !buffer)
+            {
+                ret = (size - info_size) / sizeof(WCHAR);
+                if (!ret || ((WCHAR *)&info->Data)[ret-1])
+                    ret++;
+            }
+            else if (status == STATUS_OBJECT_NAME_NOT_FOUND)
+            {
+                ret = -1;
+            }
             else
             {
-                SetLastError( ERROR_INSUFFICIENT_BUFFER );
+                SetLastError( RtlNtStatusToDosError(status) );
                 ret = 0;
             }
+            HeapFree( GetProcessHeap(), 0, info );
+            RtlLeaveCriticalSection( &cache_section );
+            return ret;
         }
-        if (ret && buffer)
+    }
+
+    ret = lstrlenW( registry_value->cached_value ) + 1;
+
+    if (buffer)
+    {
+        if (ret > len)
         {
-            memcpy( buffer, info->Data, (ret-1) * sizeof(WCHAR) );
-            buffer[ret-1] = 0;
+            SetLastError( ERROR_INSUFFICIENT_BUFFER );
+            ret = 0;
+        }
+        else
+        {
+            lstrcpyW( buffer, registry_value->cached_value );
         }
     }
-    else if (status == STATUS_BUFFER_OVERFLOW && !buffer)
-    {
-        ret = (size - info_size) / sizeof(WCHAR) + 1;
-    }
-    else if (status == STATUS_OBJECT_NAME_NOT_FOUND)
-    {
-        ret = -1;
-    }
-    else
-    {
-        SetLastError( RtlNtStatusToDosError(status) );
-        ret = 0;
-    }
-    NtClose( hkey );
-    HeapFree( GetProcessHeap(), 0, info );
+
+    RtlLeaveCriticalSection( &cache_section );
+
     return ret;
 }
 
@@ -1254,6 +1322,10 @@ INT WINAPI GetLocaleInfoA( LCID lcid, LCTYPE lctype, LPSTR buffer, INT len )
     return ret;
 }
 
+static int get_value_base_by_lctype( LCTYPE lctype )
+{
+    return lctype == LOCALE_ILANGUAGE || lctype == LOCALE_IDEFAULTLANGUAGE ? 16 : 10;
+}
 
 /******************************************************************************
  *		GetLocaleInfoW (KERNEL32.@)
@@ -1296,7 +1368,7 @@ INT WINAPI GetLocaleInfoW( LCID lcid, LCTYPE lctype, LPWSTR buffer, INT len )
     if (!(lcflags & LOCALE_NOUSEROVERRIDE) &&
         lcid == convert_default_lcid( LOCALE_USER_DEFAULT, lctype ))
     {
-        const WCHAR *value = get_locale_value_name(lctype);
+        struct registry_value *value = get_locale_registry_value(lctype);
 
         if (value)
         {
@@ -1307,7 +1379,7 @@ INT WINAPI GetLocaleInfoW( LCID lcid, LCTYPE lctype, LPWSTR buffer, INT len )
                 if (ret > 0)
                 {
                     WCHAR *end;
-                    UINT number = strtolW( tmp, &end, 10 );
+                    UINT number = strtolW( tmp, &end, get_value_base_by_lctype( lctype ) );
                     if (*end)  /* invalid number */
                     {
                         SetLastError( ERROR_INVALID_FLAGS );
@@ -1380,7 +1452,7 @@ INT WINAPI GetLocaleInfoW( LCID lcid, LCTYPE lctype, LPWSTR buffer, INT len )
         if (!tmp) return 0;
         memcpy( tmp, p + 1, *p * sizeof(WCHAR) );
         tmp[*p] = 0;
-        number = strtolW( tmp, &end, 10 );
+        number = strtolW( tmp, &end, get_value_base_by_lctype( lctype ) );
         if (!*end)
             memcpy( buffer, &number, sizeof(number) );
         else  /* invalid number */
@@ -1404,6 +1476,32 @@ INT WINAPI GetLocaleInfoW( LCID lcid, LCTYPE lctype, LPWSTR buffer, INT len )
     return ret;
 }
 
+/******************************************************************************
+ *           GetLocaleInfoEx (KERNEL32.@)
+ */
+INT WINAPI GetLocaleInfoEx(LPCWSTR locale, LCTYPE info, LPWSTR buffer, INT len)
+{
+    LCID lcid = LocaleNameToLCID(locale, 0);
+
+    TRACE("%s, lcid=0x%x, 0x%x\n", debugstr_w(locale), lcid, info);
+
+    if (!lcid) return 0;
+
+    /* special handling for neutral locale names */
+    if (info == LOCALE_SNAME && strlenW(locale) == 2)
+    {
+        if (len && len < 3)
+        {
+            SetLastError(ERROR_INSUFFICIENT_BUFFER);
+            return 0;
+        }
+
+        if (len) strcpyW(buffer, locale);
+        return 3;
+    }
+
+    return GetLocaleInfoW(lcid, info, buffer, len);
+}
 
 /******************************************************************************
  *		SetLocaleInfoA	[KERNEL32.@]
@@ -1463,14 +1561,14 @@ BOOL WINAPI SetLocaleInfoA(LCID lcid, LCTYPE lctype, LPCSTR data)
  */
 BOOL WINAPI SetLocaleInfoW( LCID lcid, LCTYPE lctype, LPCWSTR data )
 {
-    const WCHAR *value;
+    struct registry_value *value;
     static const WCHAR intlW[] = {'i','n','t','l',0 };
     UNICODE_STRING valueW;
     NTSTATUS status;
     HANDLE hkey;
 
     lctype &= 0xffff;
-    value = get_locale_value_name( lctype );
+    value = get_locale_registry_value( lctype );
 
     if (!data || !value)
     {
@@ -1484,16 +1582,21 @@ BOOL WINAPI SetLocaleInfoW( LCID lcid, LCTYPE lctype, LPCWSTR data )
         return FALSE;
     }
 
-    TRACE("setting %x (%s) to %s\n", lctype, debugstr_w(value), debugstr_w(data) );
+    TRACE("setting %x (%s) to %s\n", lctype, debugstr_w(value->name), debugstr_w(data) );
 
     /* FIXME: should check that data to set is sane */
 
     /* FIXME: profile functions should map to registry */
-    WriteProfileStringW( intlW, value, data );
+    WriteProfileStringW( intlW, value->name, data );
 
     if (!(hkey = create_registry_key())) return FALSE;
-    RtlInitUnicodeString( &valueW, value );
+    RtlInitUnicodeString( &valueW, value->name );
     status = NtSetValueKey( hkey, &valueW, 0, REG_SZ, data, (strlenW(data)+1)*sizeof(WCHAR) );
+
+    RtlEnterCriticalSection( &cache_section );
+    HeapFree( GetProcessHeap(), 0, value->cached_value );
+    value->cached_value = NULL;
+    RtlLeaveCriticalSection( &cache_section );
 
     if (lctype == LOCALE_SSHORTDATE || lctype == LOCALE_SLONGDATE)
     {
@@ -1524,12 +1627,17 @@ BOOL WINAPI SetLocaleInfoW( LCID lcid, LCTYPE lctype, LPCWSTR data )
       else
         lctype = LOCALE_ILDATE;
 
-      value = get_locale_value_name( lctype );
+      value = get_locale_registry_value( lctype );
 
-      WriteProfileStringW( intlW, value, szBuff );
+      WriteProfileStringW( intlW, value->name, szBuff );
 
-      RtlInitUnicodeString( &valueW, value );
+      RtlInitUnicodeString( &valueW, value->name );
       status = NtSetValueKey( hkey, &valueW, 0, REG_SZ, szBuff, sizeof(szBuff) );
+
+      RtlEnterCriticalSection( &cache_section );
+      HeapFree( GetProcessHeap(), 0, value->cached_value );
+      value->cached_value = NULL;
+      RtlLeaveCriticalSection( &cache_section );
     }
 
     NtClose( hkey );
@@ -1848,6 +1956,131 @@ BOOL WINAPI EnumSystemCodePagesW( CODEPAGE_ENUMPROCW lpfnCodePageEnum, DWORD fla
 
 
 /***********************************************************************
+ *              utf7_write_w
+ *
+ * Helper for utf7_mbstowcs
+ *
+ * RETURNS
+ *   TRUE on success, FALSE on error
+ */
+static inline BOOL utf7_write_w(WCHAR *dst, int dstlen, int *index, WCHAR character)
+{
+    if (dstlen > 0)
+    {
+        if (*index >= dstlen)
+            return FALSE;
+
+        dst[*index] = character;
+    }
+
+    (*index)++;
+
+    return TRUE;
+}
+
+/***********************************************************************
+ *              utf7_mbstowcs
+ *
+ * UTF-7 to UTF-16 string conversion, helper for MultiByteToWideChar
+ *
+ * RETURNS
+ *   On success, the number of characters written
+ *   On dst buffer overflow, -1
+ */
+static int utf7_mbstowcs(const char *src, int srclen, WCHAR *dst, int dstlen)
+{
+    static const signed char base64_decoding_table[] =
+    {
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, /* 0x00-0x0F */
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, /* 0x10-0x1F */
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 62, -1, -1, -1, 63, /* 0x20-0x2F */
+        52, 53, 54, 55, 56, 57, 58, 59, 60, 61, -1, -1, -1, -1, -1, -1, /* 0x30-0x3F */
+        -1,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, /* 0x40-0x4F */
+        15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -1, -1, -1, -1, -1, /* 0x50-0x5F */
+        -1, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, /* 0x60-0x6F */
+        41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, -1, -1, -1, -1, -1  /* 0x70-0x7F */
+    };
+
+    const char *source_end = src + srclen;
+    int dest_index = 0;
+
+    DWORD byte_pair = 0;
+    short offset = 0;
+
+    while (src < source_end)
+    {
+        if (*src == '+')
+        {
+            src++;
+            if (src >= source_end)
+                break;
+
+            if (*src == '-')
+            {
+                /* just a plus sign escaped as +- */
+                if (!utf7_write_w(dst, dstlen, &dest_index, '+'))
+                    return -1;
+                src++;
+                continue;
+            }
+
+            do
+            {
+                signed char sextet = *src;
+                if (sextet == '-')
+                {
+                    /* skip over the dash and end base64 decoding
+                     * the current, unfinished byte pair is discarded */
+                    src++;
+                    offset = 0;
+                    break;
+                }
+                if (sextet < 0)
+                {
+                    /* the next character of src is < 0 and therefore not part of a base64 sequence
+                     * the current, unfinished byte pair is NOT discarded in this case
+                     * this is probably a bug in Windows */
+                    break;
+                }
+
+                sextet = base64_decoding_table[sextet];
+                if (sextet == -1)
+                {
+                    /* -1 means that the next character of src is not part of a base64 sequence
+                     * in other words, all sextets in this base64 sequence have been processed
+                     * the current, unfinished byte pair is discarded */
+                    offset = 0;
+                    break;
+                }
+
+                byte_pair = (byte_pair << 6) | sextet;
+                offset += 6;
+
+                if (offset >= 16)
+                {
+                    /* this byte pair is done */
+                    if (!utf7_write_w(dst, dstlen, &dest_index, (byte_pair >> (offset - 16)) & 0xFFFF))
+                        return -1;
+                    offset -= 16;
+                }
+
+                src++;
+            }
+            while (src < source_end);
+        }
+        else
+        {
+            /* we have to convert to unsigned char in case *src < 0 */
+            if (!utf7_write_w(dst, dstlen, &dest_index, (unsigned char)*src))
+                return -1;
+            src++;
+        }
+    }
+
+    return dest_index;
+}
+
+/***********************************************************************
  *              MultiByteToWideChar   (KERNEL32.@)
  *
  * Convert a multibyte character string into a Unicode string.
@@ -1876,7 +2109,7 @@ INT WINAPI MultiByteToWideChar( UINT page, DWORD flags, LPCSTR src, INT srclen,
     const union cptable *table;
     int ret;
 
-    if (!src || (!dst && dstlen))
+    if (!src || !srclen || (!dst && dstlen))
     {
         SetLastError( ERROR_INVALID_PARAMETER );
         return 0;
@@ -1887,17 +2120,21 @@ INT WINAPI MultiByteToWideChar( UINT page, DWORD flags, LPCSTR src, INT srclen,
     switch(page)
     {
     case CP_SYMBOL:
-        if( flags)
+        if (flags)
         {
-            SetLastError( ERROR_INVALID_PARAMETER );
+            SetLastError( ERROR_INVALID_FLAGS );
             return 0;
         }
         ret = wine_cpsymbol_mbstowcs( src, srclen, dst, dstlen );
         break;
     case CP_UTF7:
-        FIXME("UTF-7 not supported\n");
-        SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
-        return 0;
+        if (flags)
+        {
+            SetLastError( ERROR_INVALID_FLAGS );
+            return 0;
+        }
+        ret = utf7_mbstowcs( src, srclen, dst, dstlen );
+        break;
     case CP_UNIXCP:
         if (unix_cptable)
         {
@@ -1937,6 +2174,127 @@ INT WINAPI MultiByteToWideChar( UINT page, DWORD flags, LPCSTR src, INT srclen,
 
 
 /***********************************************************************
+ *              utf7_can_directly_encode
+ *
+ * Helper for utf7_wcstombs
+ */
+static inline BOOL utf7_can_directly_encode(WCHAR codepoint)
+{
+    static const BOOL directly_encodable_table[] =
+    {
+        1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, /* 0x00 - 0x0F */
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, /* 0x10 - 0x1F */
+        1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, /* 0x20 - 0x2F */
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, /* 0x30 - 0x3F */
+        0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, /* 0x40 - 0x4F */
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, /* 0x50 - 0x5F */
+        0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, /* 0x60 - 0x6F */
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1                 /* 0x70 - 0x7A */
+    };
+
+    return codepoint <= 0x7A ? directly_encodable_table[codepoint] : FALSE;
+}
+
+/***********************************************************************
+ *              utf7_write_c
+ *
+ * Helper for utf7_wcstombs
+ *
+ * RETURNS
+ *   TRUE on success, FALSE on error
+ */
+static inline BOOL utf7_write_c(char *dst, int dstlen, int *index, char character)
+{
+    if (dstlen > 0)
+    {
+        if (*index >= dstlen)
+            return FALSE;
+
+        dst[*index] = character;
+    }
+
+    (*index)++;
+
+    return TRUE;
+}
+
+/***********************************************************************
+ *              utf7_wcstombs
+ *
+ * UTF-16 to UTF-7 string conversion, helper for WideCharToMultiByte
+ *
+ * RETURNS
+ *   On success, the number of characters written
+ *   On dst buffer overflow, -1
+ */
+static int utf7_wcstombs(const WCHAR *src, int srclen, char *dst, int dstlen)
+{
+    static const char base64_encoding_table[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    const WCHAR *source_end = src + srclen;
+    int dest_index = 0;
+
+    while (src < source_end)
+    {
+        if (*src == '+')
+        {
+            if (!utf7_write_c(dst, dstlen, &dest_index, '+'))
+                return -1;
+            if (!utf7_write_c(dst, dstlen, &dest_index, '-'))
+                return -1;
+            src++;
+        }
+        else if (utf7_can_directly_encode(*src))
+        {
+            if (!utf7_write_c(dst, dstlen, &dest_index, *src))
+                return -1;
+            src++;
+        }
+        else
+        {
+            unsigned int offset = 0;
+            DWORD byte_pair = 0;
+
+            if (!utf7_write_c(dst, dstlen, &dest_index, '+'))
+                return -1;
+
+            while (src < source_end && !utf7_can_directly_encode(*src))
+            {
+                byte_pair = (byte_pair << 16) | *src;
+                offset += 16;
+                while (offset >= 6)
+                {
+                    if (!utf7_write_c(dst, dstlen, &dest_index, base64_encoding_table[(byte_pair >> (offset - 6)) & 0x3F]))
+                        return -1;
+                    offset -= 6;
+                }
+                src++;
+            }
+
+            if (offset)
+            {
+                /* Windows won't create a padded base64 character if there's not room for the - sign too
+                 * this is probably a bug in Windows */
+                if (dstlen > 0 && dest_index + 1 >= dstlen)
+                    return -1;
+
+                byte_pair <<= (6 - offset);
+                if (!utf7_write_c(dst, dstlen, &dest_index, base64_encoding_table[byte_pair & 0x3F]))
+                    return -1;
+            }
+
+            /* Windows always explicitly terminates the base64 sequence
+               even though RFC 2152 (page 3, rule 2) does not require this */
+            if (!utf7_write_c(dst, dstlen, &dest_index, '-'))
+                return -1;
+        }
+    }
+
+    return dest_index;
+}
+
+/***********************************************************************
  *              WideCharToMultiByte   (KERNEL32.@)
  *
  * Convert a Unicode character string into a multibyte string.
@@ -1967,7 +2325,7 @@ INT WINAPI WideCharToMultiByte( UINT page, DWORD flags, LPCWSTR src, INT srclen,
     const union cptable *table;
     int ret, used_tmp;
 
-    if (!src || (!dst && dstlen))
+    if (!src || !srclen || (!dst && dstlen))
     {
         SetLastError( ERROR_INVALID_PARAMETER );
         return 0;
@@ -1978,7 +2336,13 @@ INT WINAPI WideCharToMultiByte( UINT page, DWORD flags, LPCWSTR src, INT srclen,
     switch(page)
     {
     case CP_SYMBOL:
-        if( flags || defchar || used)
+        /* when using CP_SYMBOL, ERROR_INVALID_FLAGS takes precedence */
+        if (flags)
+        {
+            SetLastError( ERROR_INVALID_FLAGS );
+            return 0;
+        }
+        if (defchar || used)
         {
             SetLastError( ERROR_INVALID_PARAMETER );
             return 0;
@@ -1986,9 +2350,19 @@ INT WINAPI WideCharToMultiByte( UINT page, DWORD flags, LPCWSTR src, INT srclen,
         ret = wine_cpsymbol_wcstombs( src, srclen, dst, dstlen );
         break;
     case CP_UTF7:
-        FIXME("UTF-7 not supported\n");
-        SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
-        return 0;
+        /* when using CP_UTF7, ERROR_INVALID_PARAMETER takes precedence */
+        if (defchar || used)
+        {
+            SetLastError( ERROR_INVALID_PARAMETER );
+            return 0;
+        }
+        if (flags)
+        {
+            SetLastError( ERROR_INVALID_FLAGS );
+            return 0;
+        }
+        ret = utf7_wcstombs( src, srclen, dst, dstlen );
+        break;
     case CP_UNIXCP:
         if (unix_cptable)
         {
@@ -1998,7 +2372,11 @@ INT WINAPI WideCharToMultiByte( UINT page, DWORD flags, LPCWSTR src, INT srclen,
         }
         /* fall through */
     case CP_UTF8:
-        if (used) *used = FALSE;  /* all chars are valid for UTF-8 */
+        if (defchar || used)
+        {
+            SetLastError( ERROR_INVALID_PARAMETER );
+            return 0;
+        }
         ret = wine_utf8_wcstombs( flags, src, srclen, dst, dstlen );
         break;
     default:
@@ -2163,6 +2541,21 @@ BOOL WINAPI IsValidLocale( LCID lcid, DWORD flags )
                             (LPCWSTR)LOCALE_ILANGUAGE, LANGIDFROMLCID(lcid)) != 0;
 }
 
+/******************************************************************************
+ *           IsValidLocaleName   (KERNEL32.@)
+ */
+BOOL WINAPI IsValidLocaleName( LPCWSTR locale )
+{
+    struct locale_name locale_name;
+
+    /* string parsing */
+    parse_locale_name( locale, &locale_name );
+
+    TRACE( "found lcid %x for %s, matches %d\n",
+           locale_name.lcid, debugstr_w(locale), locale_name.matches );
+
+    return locale_name.matches > 0;
+}
 
 static BOOL CALLBACK enum_lang_proc_a( HMODULE hModule, LPCSTR type,
                                        LPCSTR name, WORD LangID, LONG_PTR lParam )
@@ -2245,7 +2638,7 @@ static BOOL CALLBACK enum_locale_ex_proc( HMODULE module, LPCWSTR type,
         neutral = 0;
     flags = LOCALE_WINDOWS;
     flags |= neutral ? LOCALE_NEUTRALDATA : LOCALE_SPECIFICDATA;
-    if (data->flags && ~(data->flags & flags)) return TRUE;
+    if (data->flags && !(data->flags & flags)) return TRUE;
     return data->proc( buffer, flags, data->lparam );
 }
 
@@ -2357,6 +2750,9 @@ BOOL WINAPI GetStringTypeW( DWORD type, LPCWSTR src, INT count, LPWORD chartype 
             if ((c>=0x0600)&&(c<=0x06FF)) type3 |= C3_KASHIDA;
             if ((c>=0x3000)&&(c<=0x303F)) type3 |= C3_SYMBOL;
 
+            if ((c>=0xD800)&&(c<=0xDBFF)) type3 |= C3_HIGHSURROGATE;
+            if ((c>=0xDC00)&&(c<=0xDFFF)) type3 |= C3_LOWSURROGATE;
+
             if ((c>=0xFF00)&&(c<=0xFF60)) type3 |= C3_FULLWIDTH;
             if ((c>=0xFF00)&&(c<=0xFF20)) type3 |= C3_SYMBOL;
             if ((c>=0xFF3B)&&(c<=0xFF40)) type3 |= C3_SYMBOL;
@@ -2465,16 +2861,34 @@ BOOL WINAPI GetStringTypeExA( LCID locale, DWORD type, LPCSTR src, INT count, LP
     return GetStringTypeA(locale, type, src, count, chartype);
 }
 
-
 /*************************************************************************
- *           LCMapStringW    (KERNEL32.@)
+ *           LCMapStringEx   (KERNEL32.@)
  *
- * See LCMapStringA.
+ * Map characters in a locale sensitive string.
+ *
+ * PARAMS
+ *  name     [I] Locale name for the conversion.
+ *  flags    [I] Flags controlling the mapping (LCMAP_ constants from "winnls.h")
+ *  src      [I] String to map
+ *  srclen   [I] Length of src in chars, or -1 if src is NUL terminated
+ *  dst      [O] Destination for mapped string
+ *  dstlen   [I] Length of dst in characters
+ *  version  [I] reserved, must be NULL
+ *  reserved [I] reserved, must be NULL
+ *  lparam   [I] reserved, must be 0
+ *
+ * RETURNS
+ *  Success: The length of the mapped string in dst, including the NUL terminator.
+ *  Failure: 0. Use GetLastError() to determine the cause.
  */
-INT WINAPI LCMapStringW(LCID lcid, DWORD flags, LPCWSTR src, INT srclen,
-                        LPWSTR dst, INT dstlen)
+INT WINAPI LCMapStringEx(LPCWSTR name, DWORD flags, LPCWSTR src, INT srclen, LPWSTR dst, INT dstlen,
+                         LPNLSVERSIONINFO version, LPVOID reserved, LPARAM lparam)
 {
     LPWSTR dst_ptr;
+
+    if (version) FIXME("unsupported version structure %p\n", version);
+    if (reserved) FIXME("unsupported reserved pointer %p\n", reserved);
+    if (lparam) FIXME("unsupported lparam %lx\n", lparam);
 
     if (!src || !srclen || dstlen < 0)
     {
@@ -2494,8 +2908,6 @@ INT WINAPI LCMapStringW(LCID lcid, DWORD flags, LPCWSTR src, INT srclen,
 
     if (!dstlen) dst = NULL;
 
-    lcid = ConvertDefaultLocale(lcid);
-
     if (flags & LCMAP_SORTKEY)
     {
         INT ret;
@@ -2507,8 +2919,8 @@ INT WINAPI LCMapStringW(LCID lcid, DWORD flags, LPCWSTR src, INT srclen,
 
         if (srclen < 0) srclen = strlenW(src);
 
-        TRACE("(0x%04x,0x%08x,%s,%d,%p,%d)\n",
-              lcid, flags, debugstr_wn(src, srclen), srclen, dst, dstlen);
+        TRACE("(%s,0x%08x,%s,%d,%p,%d)\n",
+              debugstr_w(name), flags, debugstr_wn(src, srclen), srclen, dst, dstlen);
 
         ret = wine_get_sortkey(flags, src, srclen, (char *)dst, dstlen);
         if (ret == 0)
@@ -2527,8 +2939,8 @@ INT WINAPI LCMapStringW(LCID lcid, DWORD flags, LPCWSTR src, INT srclen,
 
     if (srclen < 0) srclen = strlenW(src) + 1;
 
-    TRACE("(0x%04x,0x%08x,%s,%d,%p,%d)\n",
-          lcid, flags, debugstr_wn(src, srclen), srclen, dst, dstlen);
+    TRACE("(%s,0x%08x,%s,%d,%p,%d)\n",
+          debugstr_w(name), flags, debugstr_wn(src, srclen), srclen, dst, dstlen);
 
     if (!dst) /* return required string length */
     {
@@ -2594,6 +3006,20 @@ INT WINAPI LCMapStringW(LCID lcid, DWORD flags, LPCWSTR src, INT srclen,
     }
 
     return dst_ptr - dst;
+}
+
+/*************************************************************************
+ *           LCMapStringW    (KERNEL32.@)
+ *
+ * See LCMapStringA.
+ */
+INT WINAPI LCMapStringW(LCID lcid, DWORD flags, LPCWSTR src, INT srclen,
+                        LPWSTR dst, INT dstlen)
+{
+    TRACE("(0x%04x,0x%08x,%s,%d,%p,%d)\n",
+          lcid, flags, debugstr_wn(src, srclen), srclen, dst, dstlen);
+
+    return LCMapStringEx(NULL, flags, src, srclen, dst, dstlen, NULL, NULL, 0);
 }
 
 /*************************************************************************
@@ -2665,7 +3091,7 @@ INT WINAPI LCMapStringA(LCID lcid, DWORD flags, LPCSTR src, INT srclen,
         goto map_string_exit;
     }
 
-    dstlenW = LCMapStringW(lcid, flags, srcW, srclenW, NULL, 0);
+    dstlenW = LCMapStringEx(NULL, flags, srcW, srclenW, NULL, 0, NULL, NULL, 0);
     if (!dstlenW)
         goto map_string_exit;
 
@@ -2676,7 +3102,7 @@ INT WINAPI LCMapStringA(LCID lcid, DWORD flags, LPCSTR src, INT srclen,
         goto map_string_exit;
     }
 
-    LCMapStringW(lcid, flags, srcW, srclenW, dstW, dstlenW);
+    LCMapStringEx(NULL, flags, srcW, srclenW, dstW, dstlenW, NULL, NULL, 0);
     ret = WideCharToMultiByte(locale_cp, 0, dstW, dstlenW, dst, dstlen, NULL, NULL);
     HeapFree(GetProcessHeap(), 0, dstW);
 
@@ -2796,10 +3222,27 @@ INT WINAPI FoldStringW(DWORD dwFlags, LPCWSTR src, INT srclen,
  *
  * See CompareStringA.
  */
-INT WINAPI CompareStringW(LCID lcid, DWORD style,
+INT WINAPI CompareStringW(LCID lcid, DWORD flags,
                           LPCWSTR str1, INT len1, LPCWSTR str2, INT len2)
 {
+    return CompareStringEx(NULL, flags, str1, len1, str2, len2, NULL, NULL, 0);
+}
+
+/******************************************************************************
+ *           CompareStringEx    (KERNEL32.@)
+ */
+INT WINAPI CompareStringEx(LPCWSTR locale, DWORD flags, LPCWSTR str1, INT len1,
+                           LPCWSTR str2, INT len2, LPNLSVERSIONINFO version, LPVOID reserved, LPARAM lParam)
+{
+    DWORD supported_flags = NORM_IGNORECASE|NORM_IGNORENONSPACE|NORM_IGNORESYMBOLS|SORT_STRINGSORT
+                           |NORM_IGNOREKANATYPE|NORM_IGNOREWIDTH|LOCALE_USE_CP_ACP;
+    DWORD semistub_flags = NORM_LINGUISTIC_CASING|LINGUISTIC_IGNORECASE|0x10000000;
+    /* 0x10000000 is related to diacritics in Arabic, Japanese, and Hebrew */
     INT ret;
+
+    if (version) FIXME("unexpected version parameter\n");
+    if (reserved) FIXME("unexpected reserved value\n");
+    if (lParam) FIXME("unexpected lParam\n");
 
     if (!str1 || !str2)
     {
@@ -2807,21 +3250,19 @@ INT WINAPI CompareStringW(LCID lcid, DWORD style,
         return 0;
     }
 
-    if( style & ~(NORM_IGNORECASE|NORM_IGNORENONSPACE|NORM_IGNORESYMBOLS|
-        SORT_STRINGSORT|NORM_IGNOREKANATYPE|NORM_IGNOREWIDTH|LOCALE_USE_CP_ACP|0x10000000) )
+    if (flags & ~(supported_flags|semistub_flags))
     {
         SetLastError(ERROR_INVALID_FLAGS);
         return 0;
     }
 
-    /* this style is related to diacritics in Arabic, Japanese, and Hebrew */
-    if (style & 0x10000000)
-        WARN("Ignoring unknown style 0x10000000\n");
+    if (flags & semistub_flags)
+        FIXME("semi-stub behavor for flag(s) 0x%x\n", flags & semistub_flags);
 
     if (len1 < 0) len1 = strlenW(str1);
     if (len2 < 0) len2 = strlenW(str2);
 
-    ret = wine_compare_string(style, str1, len1, str2, len2);
+    ret = wine_compare_string(flags, str1, len1, str2, len2);
 
     if (ret) /* need to translate result */
         return (ret < 0) ? CSTR_LESS_THAN : CSTR_GREATER_THAN;
@@ -2835,7 +3276,7 @@ INT WINAPI CompareStringW(LCID lcid, DWORD style,
  *
  * PARAMS
  *  lcid  [I] LCID for the comparison
- *  style [I] Flags for the comparison (NORM_ constants from "winnls.h").
+ *  flags [I] Flags for the comparison (NORM_ constants from "winnls.h").
  *  str1  [I] First string to compare
  *  len1  [I] Length of str1, or -1 if str1 is NUL terminated
  *  str2  [I] Second string to compare
@@ -2846,13 +3287,13 @@ INT WINAPI CompareStringW(LCID lcid, DWORD style,
  *           str1 is less than, equal to or greater than str2 respectively.
  *  Failure: FALSE. Use GetLastError() to determine the cause.
  */
-INT WINAPI CompareStringA(LCID lcid, DWORD style,
+INT WINAPI CompareStringA(LCID lcid, DWORD flags,
                           LPCSTR str1, INT len1, LPCSTR str2, INT len2)
 {
     WCHAR *buf1W = NtCurrentTeb()->StaticUnicodeBuffer;
     WCHAR *buf2W = buf1W + 130;
     LPWSTR str1W, str2W;
-    INT len1W, len2W, ret;
+    INT len1W = 0, len2W = 0, ret;
     UINT locale_cp = CP_ACP;
 
     if (!str1 || !str2)
@@ -2863,43 +3304,93 @@ INT WINAPI CompareStringA(LCID lcid, DWORD style,
     if (len1 < 0) len1 = strlen(str1);
     if (len2 < 0) len2 = strlen(str2);
 
-    if (!(style & LOCALE_USE_CP_ACP)) locale_cp = get_lcid_codepage( lcid );
+    if (!(flags & LOCALE_USE_CP_ACP)) locale_cp = get_lcid_codepage( lcid );
 
-    len1W = MultiByteToWideChar(locale_cp, 0, str1, len1, buf1W, 130);
-    if (len1W)
+    if (len1)
+    {
+        if (len1 <= 130) len1W = MultiByteToWideChar(locale_cp, 0, str1, len1, buf1W, 130);
+        if (len1W)
+            str1W = buf1W;
+        else
+        {
+            len1W = MultiByteToWideChar(locale_cp, 0, str1, len1, NULL, 0);
+            str1W = HeapAlloc(GetProcessHeap(), 0, len1W * sizeof(WCHAR));
+            if (!str1W)
+            {
+                SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+                return 0;
+            }
+            MultiByteToWideChar(locale_cp, 0, str1, len1, str1W, len1W);
+        }
+    }
+    else
+    {
+        len1W = 0;
         str1W = buf1W;
-    else
-    {
-        len1W = MultiByteToWideChar(locale_cp, 0, str1, len1, NULL, 0);
-        str1W = HeapAlloc(GetProcessHeap(), 0, len1W * sizeof(WCHAR));
-        if (!str1W)
-        {
-            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-            return 0;
-        }
-        MultiByteToWideChar(locale_cp, 0, str1, len1, str1W, len1W);
-    }
-    len2W = MultiByteToWideChar(locale_cp, 0, str2, len2, buf2W, 130);
-    if (len2W)
-        str2W = buf2W;
-    else
-    {
-        len2W = MultiByteToWideChar(locale_cp, 0, str2, len2, NULL, 0);
-        str2W = HeapAlloc(GetProcessHeap(), 0, len2W * sizeof(WCHAR));
-        if (!str2W)
-        {
-            if (str1W != buf1W) HeapFree(GetProcessHeap(), 0, str1W);
-            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-            return 0;
-        }
-        MultiByteToWideChar(locale_cp, 0, str2, len2, str2W, len2W);
     }
 
-    ret = CompareStringW(lcid, style, str1W, len1W, str2W, len2W);
+    if (len2)
+    {
+        if (len2 <= 130) len2W = MultiByteToWideChar(locale_cp, 0, str2, len2, buf2W, 130);
+        if (len2W)
+            str2W = buf2W;
+        else
+        {
+            len2W = MultiByteToWideChar(locale_cp, 0, str2, len2, NULL, 0);
+            str2W = HeapAlloc(GetProcessHeap(), 0, len2W * sizeof(WCHAR));
+            if (!str2W)
+            {
+                if (str1W != buf1W) HeapFree(GetProcessHeap(), 0, str1W);
+                SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+                return 0;
+            }
+            MultiByteToWideChar(locale_cp, 0, str2, len2, str2W, len2W);
+        }
+    }
+    else
+    {
+        len2W = 0;
+        str2W = buf2W;
+    }
+
+    ret = CompareStringEx(NULL, flags, str1W, len1W, str2W, len2W, NULL, NULL, 0);
 
     if (str1W != buf1W) HeapFree(GetProcessHeap(), 0, str1W);
     if (str2W != buf2W) HeapFree(GetProcessHeap(), 0, str2W);
     return ret;
+}
+
+/******************************************************************************
+ *           CompareStringOrdinal    (KERNEL32.@)
+ */
+INT WINAPI CompareStringOrdinal(const WCHAR *str1, INT len1, const WCHAR *str2, INT len2, BOOL ignore_case)
+{
+    int ret, len;
+
+    if (!str1 || !str2)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    if (len1 < 0) len1 = strlenW(str1);
+    if (len2 < 0) len2 = strlenW(str2);
+
+    len = min(len1, len2);
+    if (ignore_case)
+    {
+        ret = memicmpW(str1, str2, len);
+    }
+    else
+    {
+        ret = 0;
+        for (; len > 0; len--)
+            if ((ret = (*str1++ - *str2++))) break;
+    }
+    if (!ret) ret = len1 - len2;
+
+    if (ret < 0) return CSTR_LESS_THAN;
+    if (ret > 0) return CSTR_GREATER_THAN;
+    return CSTR_EQUAL;
 }
 
 /*************************************************************************
@@ -3019,16 +3510,16 @@ void LOCALE_Init(void)
 
     if (user_locale_country_ref)
     {
-        user_locale_string_ref = CFStringCreateWithFormat(NULL, NULL, CFSTR("%@_%@.UTF-8"),
+        user_locale_string_ref = CFStringCreateWithFormat(NULL, NULL, CFSTR("%@_%@"),
             user_locale_lang_ref, user_locale_country_ref);
     }
     else
     {
-        user_locale_string_ref = CFStringCreateWithFormat(NULL, NULL, CFSTR("%@.UTF-8"),
-            user_locale_lang_ref);
+        user_locale_string_ref = CFStringCreateCopy(NULL, user_locale_lang_ref);
     }
 
     CFStringGetCString( user_locale_string_ref, user_locale, sizeof(user_locale), kCFStringEncodingUTF8 );
+    strcat(user_locale, ".UTF-8");
 
     unix_cp = CP_UTF8;  /* default to utf-8 even if we don't get a valid locale */
     setenv( "LANG", user_locale, 0 );
@@ -3047,12 +3538,13 @@ void LOCALE_Init(void)
         /* Retrieve the preferred language as chosen in System Preferences. */
         /* If language is a less specific variant of locale (e.g. 'en' vs. 'en_US'),
            leave things be. */
-        CFArrayRef all_locales = CFLocaleCopyAvailableLocaleIdentifiers();
-        CFArrayRef preferred_locales = CFBundleCopyLocalizationsForPreferences( all_locales, NULL );
+        CFArrayRef preferred_langs = CFLocaleCopyPreferredLanguages();
+        CFStringRef canonical_lang_string_ref = CFLocaleCreateCanonicalLanguageIdentifierFromString(NULL, user_locale_string_ref);
         CFStringRef user_language_string_ref;
-        if (preferred_locales && CFArrayGetCount( preferred_locales ) &&
-            (user_language_string_ref = CFArrayGetValueAtIndex( preferred_locales, 0 )) &&
-            !CFEqual(user_language_string_ref, user_locale_lang_ref))
+        if (preferred_langs && canonical_lang_string_ref && CFArrayGetCount( preferred_langs ) &&
+            (user_language_string_ref = CFArrayGetValueAtIndex( preferred_langs, 0 )) &&
+            !CFEqual(user_language_string_ref, user_locale_lang_ref) &&
+            !CFEqual(user_language_string_ref, canonical_lang_string_ref))
         {
             struct locale_name locale_name;
             WCHAR buffer[128];
@@ -3060,11 +3552,12 @@ void LOCALE_Init(void)
             strcpynAtoW( buffer, user_locale, sizeof(buffer)/sizeof(WCHAR) );
             parse_locale_name( buffer, &locale_name );
             lcid_LC_MESSAGES = locale_name.lcid;
-            TRACE( "setting lcid_LC_MESSAGES to '%s'\n", user_locale );
+            TRACE( "setting lcid_LC_MESSAGES to '%s' %04x\n", user_locale, lcid_LC_MESSAGES );
         }
-        CFRelease( all_locales );
-        if (preferred_locales)
-            CFRelease( preferred_locales );
+        if (preferred_langs)
+            CFRelease( preferred_langs );
+        if (canonical_lang_string_ref)
+            CFRelease( canonical_lang_string_ref );
     }
 
     CFRelease( user_locale_ref );
@@ -3118,29 +3611,6 @@ static HANDLE NLS_RegOpenKey(HANDLE hRootKey, LPCWSTR szKeyName)
         hkey = 0;
 
     return hkey;
-}
-
-static BOOL NLS_RegEnumSubKey(HANDLE hKey, UINT ulIndex, LPWSTR szKeyName,
-                              ULONG keyNameSize)
-{
-    BYTE buffer[80];
-    KEY_BASIC_INFORMATION *info = (KEY_BASIC_INFORMATION *)buffer;
-    DWORD dwLen;
-
-    if (NtEnumerateKey( hKey, ulIndex, KeyBasicInformation, buffer,
-                        sizeof(buffer), &dwLen) != STATUS_SUCCESS ||
-        info->NameLength > keyNameSize)
-    {
-        return FALSE;
-    }
-
-    TRACE("info->Name %s info->NameLength %d\n", debugstr_w(info->Name), info->NameLength);
-
-    memcpy( szKeyName, info->Name, info->NameLength);
-    szKeyName[info->NameLength / sizeof(WCHAR)] = '\0';
-
-    TRACE("returning %s\n", debugstr_w(szKeyName));
-    return TRUE;
 }
 
 static BOOL NLS_RegEnumValue(HANDLE hKey, UINT ulIndex,
@@ -3232,17 +3702,6 @@ static BOOL NLS_GetLanguageGroupName(LGRPID lgrpid, LPWSTR szName, ULONG nameSiz
     return bRet;
 }
 
-/* Registry keys for NLS related information */
-
-static const WCHAR szCountryListName[] = {
-    'M','a','c','h','i','n','e','\\','S','o','f','t','w','a','r','e','\\',
-    'M','i','c','r','o','s','o','f','t','\\','W','i','n','d','o','w','s','\\',
-    'C','u','r','r','e','n','t','V','e','r','s','i','o','n','\\',
-    'T','e','l','e','p','h','o','n','y','\\',
-    'C','o','u','n','t','r','y',' ','L','i','s','t','\0'
-};
-
-
 /* Callback function ptrs for EnumSystemLanguageGroupsA/W */
 typedef struct
 {
@@ -3290,7 +3749,7 @@ static BOOL NLS_EnumSystemLanguageGroups(ENUMLANGUAGEGROUP_CALLBACKS *lpProcs)
         if (NLS_RegEnumValue( hKey, ulIndex, szNumber, sizeof(szNumber),
                               szValue, sizeof(szValue) ))
         {
-            BOOL bInstalled = szValue[0] == '1' ? TRUE : FALSE;
+            BOOL bInstalled = szValue[0] == '1';
             LGRPID lgrpid = strtoulW( szNumber, NULL, 16 );
 
             TRACE("grpid %s (%sinstalled)\n", debugstr_w(szNumber),
@@ -3589,70 +4048,6 @@ BOOL WINAPI EnumLanguageGroupLocalesW(LANGGROUPLOCALE_ENUMPROCW pLangGrpLcEnumPr
 }
 
 /******************************************************************************
- *           EnumSystemGeoID    (KERNEL32.@)
- *
- * Call a users function for every location available on the system.
- *
- * PARAMS
- *  geoclass     [I] Type of information desired (SYSGEOTYPE enum from "winnls.h")
- *  reserved     [I] Reserved, set to 0
- *  pGeoEnumProc [I] Callback function to call for each location
- *
- * RETURNS
- *  Success: TRUE.
- *  Failure: FALSE. Use GetLastError() to determine the cause.
- */
-BOOL WINAPI EnumSystemGeoID(GEOCLASS geoclass, GEOID reserved, GEO_ENUMPROC pGeoEnumProc)
-{
-    static const WCHAR szCountryCodeValueName[] = {
-      'C','o','u','n','t','r','y','C','o','d','e','\0'
-    };
-    WCHAR szNumber[10];
-    HANDLE hKey;
-    ULONG ulIndex = 0;
-
-    TRACE("(0x%08X,0x%08X,%p)\n", geoclass, reserved, pGeoEnumProc);
-
-    if (geoclass != GEOCLASS_NATION || reserved || !pGeoEnumProc)
-    {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-
-    hKey = NLS_RegOpenKey( 0, szCountryListName );
-
-    while (NLS_RegEnumSubKey( hKey, ulIndex, szNumber, sizeof(szNumber) ))
-    {
-        BOOL bContinue = TRUE;
-        DWORD dwGeoId;
-        HANDLE hSubKey = NLS_RegOpenKey( hKey, szNumber );
-
-        if (hSubKey)
-        {
-            if (NLS_RegGetDword( hSubKey, szCountryCodeValueName, &dwGeoId ))
-            {
-                TRACE("Got geoid %d\n", dwGeoId);
-
-                if (!pGeoEnumProc( dwGeoId ))
-                    bContinue = FALSE;
-            }
-
-            NtClose( hSubKey );
-        }
-
-        if (!bContinue)
-            break;
-
-        ulIndex++;
-    }
-
-    if (hKey)
-        NtClose( hKey );
-
-    return TRUE;
-}
-
-/******************************************************************************
  *           InvalidateNLSCache           (KERNEL32.@)
  *
  * Invalidate the cache of NLS values.
@@ -3834,18 +4229,495 @@ BOOL WINAPI EnumUILanguagesW(UILANGUAGE_ENUMPROCW pUILangEnumProc, DWORD dwFlags
     return TRUE;
 }
 
-INT WINAPI GetGeoInfoW(GEOID GeoId, GEOTYPE GeoType, LPWSTR lpGeoData, 
-                int cchData, LANGID language)
+enum locationkind {
+    LOCATION_NATION = 0,
+    LOCATION_REGION,
+    LOCATION_BOTH
+};
+
+struct geoinfo_t {
+    GEOID id;
+    WCHAR iso2W[3];
+    WCHAR iso3W[4];
+    GEOID parent;
+    INT   uncode;
+    enum locationkind kind;
+};
+
+static const struct geoinfo_t geoinfodata[] = {
+    { 2, {'A','G',0}, {'A','T','G',0}, 10039880,  28 }, /* Antigua and Barbuda */
+    { 3, {'A','F',0}, {'A','F','G',0}, 47614,   4 }, /* Afghanistan */
+    { 4, {'D','Z',0}, {'D','Z','A',0}, 42487,  12 }, /* Algeria */
+    { 5, {'A','Z',0}, {'A','Z','E',0}, 47611,  31 }, /* Azerbaijan */
+    { 6, {'A','L',0}, {'A','L','B',0}, 47610,   8 }, /* Albania */
+    { 7, {'A','M',0}, {'A','R','M',0}, 47611,  51 }, /* Armenia */
+    { 8, {'A','D',0}, {'A','N','D',0}, 47610,  20 }, /* Andorra */
+    { 9, {'A','O',0}, {'A','G','O',0}, 42484,  24 }, /* Angola */
+    { 10, {'A','S',0}, {'A','S','M',0}, 26286,  16 }, /* American Samoa */
+    { 11, {'A','R',0}, {'A','R','G',0}, 31396,  32 }, /* Argentina */
+    { 12, {'A','U',0}, {'A','U','S',0}, 10210825,  36 }, /* Australia */
+    { 14, {'A','T',0}, {'A','U','T',0}, 10210824,  40 }, /* Austria */
+    { 17, {'B','H',0}, {'B','H','R',0}, 47611,  48 }, /* Bahrain */
+    { 18, {'B','B',0}, {'B','R','B',0}, 10039880,  52 }, /* Barbados */
+    { 19, {'B','W',0}, {'B','W','A',0}, 10039883,  72 }, /* Botswana */
+    { 20, {'B','M',0}, {'B','M','U',0}, 23581,  60 }, /* Bermuda */
+    { 21, {'B','E',0}, {'B','E','L',0}, 10210824,  56 }, /* Belgium */
+    { 22, {'B','S',0}, {'B','H','S',0}, 10039880,  44 }, /* Bahamas, The */
+    { 23, {'B','D',0}, {'B','G','D',0}, 47614,  50 }, /* Bangladesh */
+    { 24, {'B','Z',0}, {'B','L','Z',0}, 27082,  84 }, /* Belize */
+    { 25, {'B','A',0}, {'B','I','H',0}, 47610,  70 }, /* Bosnia and Herzegovina */
+    { 26, {'B','O',0}, {'B','O','L',0}, 31396,  68 }, /* Bolivia */
+    { 27, {'M','M',0}, {'M','M','R',0}, 47599, 104 }, /* Myanmar */
+    { 28, {'B','J',0}, {'B','E','N',0}, 42483, 204 }, /* Benin */
+    { 29, {'B','Y',0}, {'B','L','R',0}, 47609, 112 }, /* Belarus */
+    { 30, {'S','B',0}, {'S','L','B',0}, 20900,  90 }, /* Solomon Islands */
+    { 32, {'B','R',0}, {'B','R','A',0}, 31396,  76 }, /* Brazil */
+    { 34, {'B','T',0}, {'B','T','N',0}, 47614,  64 }, /* Bhutan */
+    { 35, {'B','G',0}, {'B','G','R',0}, 47609, 100 }, /* Bulgaria */
+    { 37, {'B','N',0}, {'B','R','N',0}, 47599,  96 }, /* Brunei */
+    { 38, {'B','I',0}, {'B','D','I',0}, 47603, 108 }, /* Burundi */
+    { 39, {'C','A',0}, {'C','A','N',0}, 23581, 124 }, /* Canada */
+    { 40, {'K','H',0}, {'K','H','M',0}, 47599, 116 }, /* Cambodia */
+    { 41, {'T','D',0}, {'T','C','D',0}, 42484, 148 }, /* Chad */
+    { 42, {'L','K',0}, {'L','K','A',0}, 47614, 144 }, /* Sri Lanka */
+    { 43, {'C','G',0}, {'C','O','G',0}, 42484, 178 }, /* Congo */
+    { 44, {'C','D',0}, {'C','O','D',0}, 42484, 180 }, /* Congo (DRC) */
+    { 45, {'C','N',0}, {'C','H','N',0}, 47600, 156 }, /* China */
+    { 46, {'C','L',0}, {'C','H','L',0}, 31396, 152 }, /* Chile */
+    { 49, {'C','M',0}, {'C','M','R',0}, 42484, 120 }, /* Cameroon */
+    { 50, {'K','M',0}, {'C','O','M',0}, 47603, 174 }, /* Comoros */
+    { 51, {'C','O',0}, {'C','O','L',0}, 31396, 170 }, /* Colombia */
+    { 54, {'C','R',0}, {'C','R','I',0}, 27082, 188 }, /* Costa Rica */
+    { 55, {'C','F',0}, {'C','A','F',0}, 42484, 140 }, /* Central African Republic */
+    { 56, {'C','U',0}, {'C','U','B',0}, 10039880, 192 }, /* Cuba */
+    { 57, {'C','V',0}, {'C','P','V',0}, 42483, 132 }, /* Cape Verde */
+    { 59, {'C','Y',0}, {'C','Y','P',0}, 47611, 196 }, /* Cyprus */
+    { 61, {'D','K',0}, {'D','N','K',0}, 10039882, 208 }, /* Denmark */
+    { 62, {'D','J',0}, {'D','J','I',0}, 47603, 262 }, /* Djibouti */
+    { 63, {'D','M',0}, {'D','M','A',0}, 10039880, 212 }, /* Dominica */
+    { 65, {'D','O',0}, {'D','O','M',0}, 10039880, 214 }, /* Dominican Republic */
+    { 66, {'E','C',0}, {'E','C','U',0}, 31396, 218 }, /* Ecuador */
+    { 67, {'E','G',0}, {'E','G','Y',0}, 42487, 818 }, /* Egypt */
+    { 68, {'I','E',0}, {'I','R','L',0}, 10039882, 372 }, /* Ireland */
+    { 69, {'G','Q',0}, {'G','N','Q',0}, 42484, 226 }, /* Equatorial Guinea */
+    { 70, {'E','E',0}, {'E','S','T',0}, 10039882, 233 }, /* Estonia */
+    { 71, {'E','R',0}, {'E','R','I',0}, 47603, 232 }, /* Eritrea */
+    { 72, {'S','V',0}, {'S','L','V',0}, 27082, 222 }, /* El Salvador */
+    { 73, {'E','T',0}, {'E','T','H',0}, 47603, 231 }, /* Ethiopia */
+    { 75, {'C','Z',0}, {'C','Z','E',0}, 47609, 203 }, /* Czech Republic */
+    { 77, {'F','I',0}, {'F','I','N',0}, 10039882, 246 }, /* Finland */
+    { 78, {'F','J',0}, {'F','J','I',0}, 20900, 242 }, /* Fiji Islands */
+    { 80, {'F','M',0}, {'F','S','M',0}, 21206, 583 }, /* Micronesia */
+    { 81, {'F','O',0}, {'F','R','O',0}, 10039882, 234 }, /* Faroe Islands */
+    { 84, {'F','R',0}, {'F','R','A',0}, 10210824, 250 }, /* France */
+    { 86, {'G','M',0}, {'G','M','B',0}, 42483, 270 }, /* Gambia, The */
+    { 87, {'G','A',0}, {'G','A','B',0}, 42484, 266 }, /* Gabon */
+    { 88, {'G','E',0}, {'G','E','O',0}, 47611, 268 }, /* Georgia */
+    { 89, {'G','H',0}, {'G','H','A',0}, 42483, 288 }, /* Ghana */
+    { 90, {'G','I',0}, {'G','I','B',0}, 47610, 292 }, /* Gibraltar */
+    { 91, {'G','D',0}, {'G','R','D',0}, 10039880, 308 }, /* Grenada */
+    { 93, {'G','L',0}, {'G','R','L',0}, 23581, 304 }, /* Greenland */
+    { 94, {'D','E',0}, {'D','E','U',0}, 10210824, 276 }, /* Germany */
+    { 98, {'G','R',0}, {'G','R','C',0}, 47610, 300 }, /* Greece */
+    { 99, {'G','T',0}, {'G','T','M',0}, 27082, 320 }, /* Guatemala */
+    { 100, {'G','N',0}, {'G','I','N',0}, 42483, 324 }, /* Guinea */
+    { 101, {'G','Y',0}, {'G','U','Y',0}, 31396, 328 }, /* Guyana */
+    { 103, {'H','T',0}, {'H','T','I',0}, 10039880, 332 }, /* Haiti */
+    { 104, {'H','K',0}, {'H','K','G',0}, 47600, 344 }, /* Hong Kong S.A.R. */
+    { 106, {'H','N',0}, {'H','N','D',0}, 27082, 340 }, /* Honduras */
+    { 108, {'H','R',0}, {'H','R','V',0}, 47610, 191 }, /* Croatia */
+    { 109, {'H','U',0}, {'H','U','N',0}, 47609, 348 }, /* Hungary */
+    { 110, {'I','S',0}, {'I','S','L',0}, 10039882, 352 }, /* Iceland */
+    { 111, {'I','D',0}, {'I','D','N',0}, 47599, 360 }, /* Indonesia */
+    { 113, {'I','N',0}, {'I','N','D',0}, 47614, 356 }, /* India */
+    { 114, {'I','O',0}, {'I','O','T',0}, 39070,  86 }, /* British Indian Ocean Territory */
+    { 116, {'I','R',0}, {'I','R','N',0}, 47614, 364 }, /* Iran */
+    { 117, {'I','L',0}, {'I','S','R',0}, 47611, 376 }, /* Israel */
+    { 118, {'I','T',0}, {'I','T','A',0}, 47610, 380 }, /* Italy */
+    { 119, {'C','I',0}, {'C','I','V',0}, 42483, 384 }, /* Côte d'Ivoire */
+    { 121, {'I','Q',0}, {'I','R','Q',0}, 47611, 368 }, /* Iraq */
+    { 122, {'J','P',0}, {'J','P','N',0}, 47600, 392 }, /* Japan */
+    { 124, {'J','M',0}, {'J','A','M',0}, 10039880, 388 }, /* Jamaica */
+    { 125, {'S','J',0}, {'S','J','M',0}, 10039882, 744 }, /* Jan Mayen */
+    { 126, {'J','O',0}, {'J','O','R',0}, 47611, 400 }, /* Jordan */
+    { 127, {'X','X',0}, {'X','X',0}, 161832256 }, /* Johnston Atoll */
+    { 129, {'K','E',0}, {'K','E','N',0}, 47603, 404 }, /* Kenya */
+    { 130, {'K','G',0}, {'K','G','Z',0}, 47590, 417 }, /* Kyrgyzstan */
+    { 131, {'K','P',0}, {'P','R','K',0}, 47600, 408 }, /* North Korea */
+    { 133, {'K','I',0}, {'K','I','R',0}, 21206, 296 }, /* Kiribati */
+    { 134, {'K','R',0}, {'K','O','R',0}, 47600, 410 }, /* Korea */
+    { 136, {'K','W',0}, {'K','W','T',0}, 47611, 414 }, /* Kuwait */
+    { 137, {'K','Z',0}, {'K','A','Z',0}, 47590, 398 }, /* Kazakhstan */
+    { 138, {'L','A',0}, {'L','A','O',0}, 47599, 418 }, /* Laos */
+    { 139, {'L','B',0}, {'L','B','N',0}, 47611, 422 }, /* Lebanon */
+    { 140, {'L','V',0}, {'L','V','A',0}, 10039882, 428 }, /* Latvia */
+    { 141, {'L','T',0}, {'L','T','U',0}, 10039882, 440 }, /* Lithuania */
+    { 142, {'L','R',0}, {'L','B','R',0}, 42483, 430 }, /* Liberia */
+    { 143, {'S','K',0}, {'S','V','K',0}, 47609, 703 }, /* Slovakia */
+    { 145, {'L','I',0}, {'L','I','E',0}, 10210824, 438 }, /* Liechtenstein */
+    { 146, {'L','S',0}, {'L','S','O',0}, 10039883, 426 }, /* Lesotho */
+    { 147, {'L','U',0}, {'L','U','X',0}, 10210824, 442 }, /* Luxembourg */
+    { 148, {'L','Y',0}, {'L','B','Y',0}, 42487, 434 }, /* Libya */
+    { 149, {'M','G',0}, {'M','D','G',0}, 47603, 450 }, /* Madagascar */
+    { 151, {'M','O',0}, {'M','A','C',0}, 47600, 446 }, /* Macao S.A.R. */
+    { 152, {'M','D',0}, {'M','D','A',0}, 47609, 498 }, /* Moldova */
+    { 154, {'M','N',0}, {'M','N','G',0}, 47600, 496 }, /* Mongolia */
+    { 156, {'M','W',0}, {'M','W','I',0}, 47603, 454 }, /* Malawi */
+    { 157, {'M','L',0}, {'M','L','I',0}, 42483, 466 }, /* Mali */
+    { 158, {'M','C',0}, {'M','C','O',0}, 10210824, 492 }, /* Monaco */
+    { 159, {'M','A',0}, {'M','A','R',0}, 42487, 504 }, /* Morocco */
+    { 160, {'M','U',0}, {'M','U','S',0}, 47603, 480 }, /* Mauritius */
+    { 162, {'M','R',0}, {'M','R','T',0}, 42483, 478 }, /* Mauritania */
+    { 163, {'M','T',0}, {'M','L','T',0}, 47610, 470 }, /* Malta */
+    { 164, {'O','M',0}, {'O','M','N',0}, 47611, 512 }, /* Oman */
+    { 165, {'M','V',0}, {'M','D','V',0}, 47614, 462 }, /* Maldives */
+    { 166, {'M','X',0}, {'M','E','X',0}, 27082, 484 }, /* Mexico */
+    { 167, {'M','Y',0}, {'M','Y','S',0}, 47599, 458 }, /* Malaysia */
+    { 168, {'M','Z',0}, {'M','O','Z',0}, 47603, 508 }, /* Mozambique */
+    { 173, {'N','E',0}, {'N','E','R',0}, 42483, 562 }, /* Niger */
+    { 174, {'V','U',0}, {'V','U','T',0}, 20900, 548 }, /* Vanuatu */
+    { 175, {'N','G',0}, {'N','G','A',0}, 42483, 566 }, /* Nigeria */
+    { 176, {'N','L',0}, {'N','L','D',0}, 10210824, 528 }, /* Netherlands */
+    { 177, {'N','O',0}, {'N','O','R',0}, 10039882, 578 }, /* Norway */
+    { 178, {'N','P',0}, {'N','P','L',0}, 47614, 524 }, /* Nepal */
+    { 180, {'N','R',0}, {'N','R','U',0}, 21206, 520 }, /* Nauru */
+    { 181, {'S','R',0}, {'S','U','R',0}, 31396, 740 }, /* Suriname */
+    { 182, {'N','I',0}, {'N','I','C',0}, 27082, 558 }, /* Nicaragua */
+    { 183, {'N','Z',0}, {'N','Z','L',0}, 10210825, 554 }, /* New Zealand */
+    { 184, {'P','S',0}, {'P','S','E',0}, 47611, 275 }, /* Palestinian Authority */
+    { 185, {'P','Y',0}, {'P','R','Y',0}, 31396, 600 }, /* Paraguay */
+    { 187, {'P','E',0}, {'P','E','R',0}, 31396, 604 }, /* Peru */
+    { 190, {'P','K',0}, {'P','A','K',0}, 47614, 586 }, /* Pakistan */
+    { 191, {'P','L',0}, {'P','O','L',0}, 47609, 616 }, /* Poland */
+    { 192, {'P','A',0}, {'P','A','N',0}, 27082, 591 }, /* Panama */
+    { 193, {'P','T',0}, {'P','R','T',0}, 47610, 620 }, /* Portugal */
+    { 194, {'P','G',0}, {'P','N','G',0}, 20900, 598 }, /* Papua New Guinea */
+    { 195, {'P','W',0}, {'P','L','W',0}, 21206, 585 }, /* Palau */
+    { 196, {'G','W',0}, {'G','N','B',0}, 42483, 624 }, /* Guinea-Bissau */
+    { 197, {'Q','A',0}, {'Q','A','T',0}, 47611, 634 }, /* Qatar */
+    { 198, {'R','E',0}, {'R','E','U',0}, 47603, 638 }, /* Reunion */
+    { 199, {'M','H',0}, {'M','H','L',0}, 21206, 584 }, /* Marshall Islands */
+    { 200, {'R','O',0}, {'R','O','U',0}, 47609, 642 }, /* Romania */
+    { 201, {'P','H',0}, {'P','H','L',0}, 47599, 608 }, /* Philippines */
+    { 202, {'P','R',0}, {'P','R','I',0}, 10039880, 630 }, /* Puerto Rico */
+    { 203, {'R','U',0}, {'R','U','S',0}, 47609, 643 }, /* Russia */
+    { 204, {'R','W',0}, {'R','W','A',0}, 47603, 646 }, /* Rwanda */
+    { 205, {'S','A',0}, {'S','A','U',0}, 47611, 682 }, /* Saudi Arabia */
+    { 206, {'P','M',0}, {'S','P','M',0}, 23581, 666 }, /* St. Pierre and Miquelon */
+    { 207, {'K','N',0}, {'K','N','A',0}, 10039880, 659 }, /* St. Kitts and Nevis */
+    { 208, {'S','C',0}, {'S','Y','C',0}, 47603, 690 }, /* Seychelles */
+    { 209, {'Z','A',0}, {'Z','A','F',0}, 10039883, 710 }, /* South Africa */
+    { 210, {'S','N',0}, {'S','E','N',0}, 42483, 686 }, /* Senegal */
+    { 212, {'S','I',0}, {'S','V','N',0}, 47610, 705 }, /* Slovenia */
+    { 213, {'S','L',0}, {'S','L','E',0}, 42483, 694 }, /* Sierra Leone */
+    { 214, {'S','M',0}, {'S','M','R',0}, 47610, 674 }, /* San Marino */
+    { 215, {'S','G',0}, {'S','G','P',0}, 47599, 702 }, /* Singapore */
+    { 216, {'S','O',0}, {'S','O','M',0}, 47603, 706 }, /* Somalia */
+    { 217, {'E','S',0}, {'E','S','P',0}, 47610, 724 }, /* Spain */
+    { 218, {'L','C',0}, {'L','C','A',0}, 10039880, 662 }, /* St. Lucia */
+    { 219, {'S','D',0}, {'S','D','N',0}, 42487, 736 }, /* Sudan */
+    { 220, {'S','J',0}, {'S','J','M',0}, 10039882, 744 }, /* Svalbard */
+    { 221, {'S','E',0}, {'S','W','E',0}, 10039882, 752 }, /* Sweden */
+    { 222, {'S','Y',0}, {'S','Y','R',0}, 47611, 760 }, /* Syria */
+    { 223, {'C','H',0}, {'C','H','E',0}, 10210824, 756 }, /* Switzerland */
+    { 224, {'A','E',0}, {'A','R','E',0}, 47611, 784 }, /* United Arab Emirates */
+    { 225, {'T','T',0}, {'T','T','O',0}, 10039880, 780 }, /* Trinidad and Tobago */
+    { 227, {'T','H',0}, {'T','H','A',0}, 47599, 764 }, /* Thailand */
+    { 228, {'T','J',0}, {'T','J','K',0}, 47590, 762 }, /* Tajikistan */
+    { 231, {'T','O',0}, {'T','O','N',0}, 26286, 776 }, /* Tonga */
+    { 232, {'T','G',0}, {'T','G','O',0}, 42483, 768 }, /* Togo */
+    { 233, {'S','T',0}, {'S','T','P',0}, 42484, 678 }, /* São Tomé and Príncipe */
+    { 234, {'T','N',0}, {'T','U','N',0}, 42487, 788 }, /* Tunisia */
+    { 235, {'T','R',0}, {'T','U','R',0}, 47611, 792 }, /* Turkey */
+    { 236, {'T','V',0}, {'T','U','V',0}, 26286, 798 }, /* Tuvalu */
+    { 237, {'T','W',0}, {'T','W','N',0}, 47600, 158 }, /* Taiwan */
+    { 238, {'T','M',0}, {'T','K','M',0}, 47590, 795 }, /* Turkmenistan */
+    { 239, {'T','Z',0}, {'T','Z','A',0}, 47603, 834 }, /* Tanzania */
+    { 240, {'U','G',0}, {'U','G','A',0}, 47603, 800 }, /* Uganda */
+    { 241, {'U','A',0}, {'U','K','R',0}, 47609, 804 }, /* Ukraine */
+    { 242, {'G','B',0}, {'G','B','R',0}, 10039882, 826 }, /* United Kingdom */
+    { 244, {'U','S',0}, {'U','S','A',0}, 23581, 840 }, /* United States */
+    { 245, {'B','F',0}, {'B','F','A',0}, 42483, 854 }, /* Burkina Faso */
+    { 246, {'U','Y',0}, {'U','R','Y',0}, 31396, 858 }, /* Uruguay */
+    { 247, {'U','Z',0}, {'U','Z','B',0}, 47590, 860 }, /* Uzbekistan */
+    { 248, {'V','C',0}, {'V','C','T',0}, 10039880, 670 }, /* St. Vincent and the Grenadines */
+    { 249, {'V','E',0}, {'V','E','N',0}, 31396, 862 }, /* Bolivarian Republic of Venezuela */
+    { 251, {'V','N',0}, {'V','N','M',0}, 47599, 704 }, /* Vietnam */
+    { 252, {'V','I',0}, {'V','I','R',0}, 10039880, 850 }, /* Virgin Islands */
+    { 253, {'V','A',0}, {'V','A','T',0}, 47610, 336 }, /* Vatican City */
+    { 254, {'N','A',0}, {'N','A','M',0}, 10039883, 516 }, /* Namibia */
+    { 257, {'E','H',0}, {'E','S','H',0}, 42487, 732 }, /* Western Sahara (disputed) */
+    { 258, {'X','X',0}, {'X','X',0}, 161832256 }, /* Wake Island */
+    { 259, {'W','S',0}, {'W','S','M',0}, 26286, 882 }, /* Samoa */
+    { 260, {'S','Z',0}, {'S','W','Z',0}, 10039883, 748 }, /* Swaziland */
+    { 261, {'Y','E',0}, {'Y','E','M',0}, 47611, 887 }, /* Yemen */
+    { 263, {'Z','M',0}, {'Z','M','B',0}, 47603, 894 }, /* Zambia */
+    { 264, {'Z','W',0}, {'Z','W','E',0}, 47603, 716 }, /* Zimbabwe */
+    { 269, {'C','S',0}, {'S','C','G',0}, 47610, 891 }, /* Serbia and Montenegro (Former) */
+    { 270, {'M','E',0}, {'M','N','E',0}, 47610, 499 }, /* Montenegro */
+    { 271, {'R','S',0}, {'S','R','B',0}, 47610, 688 }, /* Serbia */
+    { 273, {'C','W',0}, {'C','U','W',0}, 10039880, 531 }, /* Curaçao */
+    { 276, {'S','S',0}, {'S','S','D',0}, 42487, 728 }, /* South Sudan */
+    { 300, {'A','I',0}, {'A','I','A',0}, 10039880, 660 }, /* Anguilla */
+    { 301, {'A','Q',0}, {'A','T','A',0}, 39070,  10 }, /* Antarctica */
+    { 302, {'A','W',0}, {'A','B','W',0}, 10039880, 533 }, /* Aruba */
+    { 303, {'X','X',0}, {'X','X',0}, 39070 }, /* Ascension Island */
+    { 304, {'X','X',0}, {'X','X',0}, 10210825 }, /* Ashmore and Cartier Islands */
+    { 305, {'X','X',0}, {'X','X',0}, 161832256 }, /* Baker Island */
+    { 306, {'B','V',0}, {'B','V','T',0}, 39070,  74 }, /* Bouvet Island */
+    { 307, {'K','Y',0}, {'C','Y','M',0}, 10039880, 136 }, /* Cayman Islands */
+    { 308, {'X','X',0}, {'X','X',0}, 10210824, 0, LOCATION_BOTH }, /* Channel Islands */
+    { 309, {'C','X',0}, {'C','X','R',0}, 12, 162 }, /* Christmas Island */
+    { 310, {'X','X',0}, {'X','X',0}, 27114 }, /* Clipperton Island */
+    { 311, {'C','C',0}, {'C','C','K',0}, 10210825, 166 }, /* Cocos (Keeling) Islands */
+    { 312, {'C','K',0}, {'C','O','K',0}, 26286, 184 }, /* Cook Islands */
+    { 313, {'X','X',0}, {'X','X',0}, 10210825 }, /* Coral Sea Islands */
+    { 314, {'X','X',0}, {'X','X',0}, 114 }, /* Diego Garcia */
+    { 315, {'F','K',0}, {'F','L','K',0}, 31396, 238 }, /* Falkland Islands (Islas Malvinas) */
+    { 317, {'G','F',0}, {'G','U','F',0}, 31396, 254 }, /* French Guiana */
+    { 318, {'P','F',0}, {'P','Y','F',0}, 26286, 258 }, /* French Polynesia */
+    { 319, {'T','F',0}, {'A','T','F',0}, 39070, 260 }, /* French Southern and Antarctic Lands */
+    { 321, {'G','P',0}, {'G','L','P',0}, 10039880, 312 }, /* Guadeloupe */
+    { 322, {'G','U',0}, {'G','U','M',0}, 21206, 316 }, /* Guam */
+    { 323, {'X','X',0}, {'X','X',0}, 39070 }, /* Guantanamo Bay */
+    { 324, {'G','G',0}, {'G','G','Y',0}, 308, 831 }, /* Guernsey */
+    { 325, {'H','M',0}, {'H','M','D',0}, 39070, 334 }, /* Heard Island and McDonald Islands */
+    { 326, {'X','X',0}, {'X','X',0}, 161832256 }, /* Howland Island */
+    { 327, {'X','X',0}, {'X','X',0}, 161832256 }, /* Jarvis Island */
+    { 328, {'J','E',0}, {'J','E','Y',0}, 308, 832 }, /* Jersey */
+    { 329, {'X','X',0}, {'X','X',0}, 161832256 }, /* Kingman Reef */
+    { 330, {'M','Q',0}, {'M','T','Q',0}, 10039880, 474 }, /* Martinique */
+    { 331, {'Y','T',0}, {'M','Y','T',0}, 47603, 175 }, /* Mayotte */
+    { 332, {'M','S',0}, {'M','S','R',0}, 10039880, 500 }, /* Montserrat */
+    { 333, {'A','N',0}, {'A','N','T',0}, 10039880, 530, LOCATION_BOTH }, /* Netherlands Antilles (Former) */
+    { 334, {'N','C',0}, {'N','C','L',0}, 20900, 540 }, /* New Caledonia */
+    { 335, {'N','U',0}, {'N','I','U',0}, 26286, 570 }, /* Niue */
+    { 336, {'N','F',0}, {'N','F','K',0}, 10210825, 574 }, /* Norfolk Island */
+    { 337, {'M','P',0}, {'M','N','P',0}, 21206, 580 }, /* Northern Mariana Islands */
+    { 338, {'X','X',0}, {'X','X',0}, 161832256 }, /* Palmyra Atoll */
+    { 339, {'P','N',0}, {'P','C','N',0}, 26286, 612 }, /* Pitcairn Islands */
+    { 340, {'X','X',0}, {'X','X',0}, 337 }, /* Rota Island */
+    { 341, {'X','X',0}, {'X','X',0}, 337 }, /* Saipan */
+    { 342, {'G','S',0}, {'S','G','S',0}, 39070, 239 }, /* South Georgia and the South Sandwich Islands */
+    { 343, {'S','H',0}, {'S','H','N',0}, 42483, 654 }, /* St. Helena */
+    { 346, {'X','X',0}, {'X','X',0}, 337 }, /* Tinian Island */
+    { 347, {'T','K',0}, {'T','K','L',0}, 26286, 772 }, /* Tokelau */
+    { 348, {'X','X',0}, {'X','X',0}, 39070 }, /* Tristan da Cunha */
+    { 349, {'T','C',0}, {'T','C','A',0}, 10039880, 796 }, /* Turks and Caicos Islands */
+    { 351, {'V','G',0}, {'V','G','B',0}, 10039880,  92 }, /* Virgin Islands, British */
+    { 352, {'W','F',0}, {'W','L','F',0}, 26286, 876 }, /* Wallis and Futuna */
+    { 742, {'X','X',0}, {'X','X',0}, 39070, 0, LOCATION_REGION }, /* Africa */
+    { 2129, {'X','X',0}, {'X','X',0}, 39070, 0, LOCATION_REGION }, /* Asia */
+    { 10541, {'X','X',0}, {'X','X',0}, 39070, 0, LOCATION_REGION }, /* Europe */
+    { 15126, {'I','M',0}, {'I','M','N',0}, 10039882, 833 }, /* Man, Isle of */
+    { 19618, {'M','K',0}, {'M','K','D',0}, 47610, 807 }, /* Macedonia, Former Yugoslav Republic of */
+    { 20900, {'X','X',0}, {'X','X',0}, 27114, 0, LOCATION_REGION }, /* Melanesia */
+    { 21206, {'X','X',0}, {'X','X',0}, 27114, 0, LOCATION_REGION }, /* Micronesia */
+    { 21242, {'X','X',0}, {'X','X',0}, 161832256 }, /* Midway Islands */
+    { 23581, {'X','X',0}, {'X','X',0}, 10026358, 0, LOCATION_REGION }, /* Northern America */
+    { 26286, {'X','X',0}, {'X','X',0}, 27114, 0, LOCATION_REGION }, /* Polynesia */
+    { 27082, {'X','X',0}, {'X','X',0}, 161832257, 0, LOCATION_REGION }, /* Central America */
+    { 27114, {'X','X',0}, {'X','X',0}, 39070, 0, LOCATION_REGION }, /* Oceania */
+    { 30967, {'S','X',0}, {'S','X','M',0}, 10039880, 534 }, /* Sint Maarten (Dutch part) */
+    { 31396, {'X','X',0}, {'X','X',0}, 161832257, 0, LOCATION_REGION }, /* South America */
+    { 31706, {'M','F',0}, {'M','A','F',0}, 10039880, 663 }, /* Saint Martin (French part) */
+    { 39070, {'X','X',0}, {'X','X',0}, 39070, 0, LOCATION_REGION }, /* World */
+    { 42483, {'X','X',0}, {'X','X',0}, 742, 0, LOCATION_REGION }, /* Western Africa */
+    { 42484, {'X','X',0}, {'X','X',0}, 742, 0, LOCATION_REGION }, /* Middle Africa */
+    { 42487, {'X','X',0}, {'X','X',0}, 742, 0, LOCATION_REGION }, /* Northern Africa */
+    { 47590, {'X','X',0}, {'X','X',0}, 2129, 0, LOCATION_REGION }, /* Central Asia */
+    { 47599, {'X','X',0}, {'X','X',0}, 2129, 0, LOCATION_REGION }, /* South-Eastern Asia */
+    { 47600, {'X','X',0}, {'X','X',0}, 2129, 0, LOCATION_REGION }, /* Eastern Asia */
+    { 47603, {'X','X',0}, {'X','X',0}, 742, 0, LOCATION_REGION }, /* Eastern Africa */
+    { 47609, {'X','X',0}, {'X','X',0}, 10541, 0, LOCATION_REGION }, /* Eastern Europe */
+    { 47610, {'X','X',0}, {'X','X',0}, 10541, 0, LOCATION_REGION }, /* Southern Europe */
+    { 47611, {'X','X',0}, {'X','X',0}, 2129, 0, LOCATION_REGION }, /* Middle East */
+    { 47614, {'X','X',0}, {'X','X',0}, 2129, 0, LOCATION_REGION }, /* Southern Asia */
+    { 7299303, {'T','L',0}, {'T','L','S',0}, 47599, 626 }, /* Democratic Republic of Timor-Leste */
+    { 10026358, {'X','X',0}, {'X','X',0}, 39070, 0, LOCATION_REGION }, /* Americas */
+    { 10028789, {'A','X',0}, {'A','L','A',0}, 10039882, 248 }, /* Åland Islands */
+    { 10039880, {'X','X',0}, {'X','X',0}, 161832257, 0, LOCATION_REGION }, /* Caribbean */
+    { 10039882, {'X','X',0}, {'X','X',0}, 10541, 0, LOCATION_REGION }, /* Northern Europe */
+    { 10039883, {'X','X',0}, {'X','X',0}, 742, 0, LOCATION_REGION }, /* Southern Africa */
+    { 10210824, {'X','X',0}, {'X','X',0}, 10541, 0, LOCATION_REGION }, /* Western Europe */
+    { 10210825, {'X','X',0}, {'X','X',0}, 27114, 0, LOCATION_REGION }, /* Australia and New Zealand */
+    { 161832015, {'B','L',0}, {'B','L','M',0}, 10039880, 652 }, /* Saint Barthélemy */
+    { 161832256, {'U','M',0}, {'U','M','I',0}, 27114, 581 }, /* U.S. Minor Outlying Islands */
+    { 161832257, {'X','X',0}, {'X','X',0}, 10026358, 0, LOCATION_REGION }, /* Latin America and the Caribbean */
+};
+
+static const struct geoinfo_t *get_geoinfo_dataptr(GEOID geoid)
 {
-    FIXME("%d %d %p %d %d\n", GeoId, GeoType, lpGeoData, cchData, language);
-    return 0;
+    int min, max;
+
+    min = 0;
+    max = sizeof(geoinfodata)/sizeof(struct geoinfo_t)-1;
+
+    while (min <= max) {
+        const struct geoinfo_t *ptr;
+        int n = (min+max)/2;
+
+        ptr = &geoinfodata[n];
+        if (geoid == ptr->id)
+            /* we don't need empty entries */
+            return *ptr->iso2W ? ptr : NULL;
+
+        if (ptr->id > geoid)
+            max = n-1;
+        else
+            min = n+1;
+    }
+
+    return NULL;
 }
 
-INT WINAPI GetGeoInfoA(GEOID GeoId, GEOTYPE GeoType, LPSTR lpGeoData, 
-                int cchData, LANGID language)
+/******************************************************************************
+ *           GetGeoInfoW (KERNEL32.@)
+ */
+INT WINAPI GetGeoInfoW(GEOID geoid, GEOTYPE geotype, LPWSTR data, int data_len, LANGID lang)
 {
-    FIXME("%d %d %p %d %d\n", GeoId, GeoType, lpGeoData, cchData, language);
-    return 0;
+    const struct geoinfo_t *ptr;
+    const WCHAR *str = NULL;
+    WCHAR buffW[12];
+    LONG val = 0;
+    INT len;
+
+    TRACE("%d %d %p %d %d\n", geoid, geotype, data, data_len, lang);
+
+    if (!(ptr = get_geoinfo_dataptr(geoid))) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+
+    switch (geotype) {
+    case GEO_NATION:
+        val = geoid;
+        break;
+    case GEO_ISO_UN_NUMBER:
+        val = ptr->uncode;
+        break;
+    case GEO_PARENT:
+        val = ptr->parent;
+        break;
+    case GEO_ISO2:
+    case GEO_ISO3:
+    {
+        str = geotype == GEO_ISO2 ? ptr->iso2W : ptr->iso3W;
+        break;
+    }
+    case GEO_RFC1766:
+    case GEO_LCID:
+    case GEO_FRIENDLYNAME:
+    case GEO_OFFICIALNAME:
+    case GEO_TIMEZONES:
+    case GEO_OFFICIALLANGUAGES:
+    case GEO_LATITUDE:
+    case GEO_LONGITUDE:
+        FIXME("type %d is not supported\n", geotype);
+        SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+        return 0;
+    default:
+        WARN("unrecognized type %d\n", geotype);
+        SetLastError(ERROR_INVALID_FLAGS);
+        return 0;
+    }
+
+    if (val) {
+        static const WCHAR fmtW[] = {'%','d',0};
+        sprintfW(buffW, fmtW, val);
+        str = buffW;
+    }
+
+    len = strlenW(str) + 1;
+    if (!data || !data_len)
+        return len;
+
+    memcpy(data, str, min(len, data_len)*sizeof(WCHAR));
+    if (data_len < len)
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+    return data_len < len ? 0 : len;
+}
+
+/******************************************************************************
+ *           GetGeoInfoA (KERNEL32.@)
+ */
+INT WINAPI GetGeoInfoA(GEOID geoid, GEOTYPE geotype, LPSTR data, int data_len, LANGID lang)
+{
+    WCHAR *buffW;
+    INT len;
+
+    TRACE("%d %d %p %d %d\n", geoid, geotype, data, data_len, lang);
+
+    len = GetGeoInfoW(geoid, geotype, NULL, 0, lang);
+    if (!len)
+        return 0;
+
+    buffW = HeapAlloc(GetProcessHeap(), 0, len*sizeof(WCHAR));
+    if (!buffW)
+        return 0;
+
+    GetGeoInfoW(geoid, geotype, buffW, len, lang);
+    len = WideCharToMultiByte(CP_ACP, 0, buffW, -1, NULL, 0, NULL, NULL);
+    if (!data || !data_len) {
+        HeapFree(GetProcessHeap(), 0, buffW);
+        return len;
+    }
+
+    len = WideCharToMultiByte(CP_ACP, 0, buffW, -1, data, data_len, NULL, NULL);
+    HeapFree(GetProcessHeap(), 0, buffW);
+
+    if (data_len < len)
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+    return data_len < len ? 0 : len;
+}
+
+/******************************************************************************
+ *           EnumSystemGeoID    (KERNEL32.@)
+ *
+ * Call a users function for every location available on the system.
+ *
+ * PARAMS
+ *  geoclass   [I] Type of information desired (SYSGEOTYPE enum from "winnls.h")
+ *  parent     [I] GEOID for the parent
+ *  enumproc   [I] Callback function to call for each location
+ *
+ * RETURNS
+ *  Success: TRUE.
+ *  Failure: FALSE. Use GetLastError() to determine the cause.
+ */
+BOOL WINAPI EnumSystemGeoID(GEOCLASS geoclass, GEOID parent, GEO_ENUMPROC enumproc)
+{
+    INT i;
+
+    TRACE("(%d, %d, %p)\n", geoclass, parent, enumproc);
+
+    if (!enumproc) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    if (geoclass != GEOCLASS_NATION && geoclass != GEOCLASS_REGION) {
+        SetLastError(ERROR_INVALID_FLAGS);
+        return FALSE;
+    }
+
+    for (i = 0; i < sizeof(geoinfodata)/sizeof(struct geoinfo_t); i++) {
+        const struct geoinfo_t *ptr = &geoinfodata[i];
+
+        if (geoclass == GEOCLASS_NATION && (ptr->kind == LOCATION_REGION))
+            continue;
+
+        if (geoclass == GEOCLASS_REGION && (ptr->kind == LOCATION_NATION))
+            continue;
+
+        if (parent && ptr->parent != parent)
+            continue;
+
+        if (!enumproc(ptr->id))
+            return TRUE;
+    }
+
+    return TRUE;
 }
 
 INT WINAPI GetUserDefaultLocaleName(LPWSTR localename, int buffersize)
@@ -3879,16 +4751,165 @@ BOOL WINAPI IsNormalizedString(NORM_FORM NormForm, LPCWSTR lpString, INT cwLengt
     return FALSE;
 }
 
+enum {
+    BASE = 36,
+    TMIN = 1,
+    TMAX = 26,
+    SKEW = 38,
+    DAMP = 700,
+    INIT_BIAS = 72,
+    INIT_N = 128
+};
+
+static inline INT adapt(INT delta, INT numpoints, BOOL firsttime)
+{
+    INT k;
+
+    delta /= (firsttime ? DAMP : 2);
+    delta += delta/numpoints;
+
+    for(k=0; delta>((BASE-TMIN)*TMAX)/2; k+=BASE)
+        delta /= BASE-TMIN;
+    return k+((BASE-TMIN+1)*delta)/(delta+SKEW);
+}
+
 /******************************************************************************
  *           IdnToAscii (KERNEL32.@)
+ * Implementation of Punycode based on RFC 3492.
  */
 INT WINAPI IdnToAscii(DWORD dwFlags, LPCWSTR lpUnicodeCharStr, INT cchUnicodeChar,
                       LPWSTR lpASCIICharStr, INT cchASCIIChar)
 {
-    FIXME("%x %p %d %p %d\n", dwFlags, lpUnicodeCharStr, cchUnicodeChar,
+    static const WCHAR prefixW[] = {'x','n','-','-'};
+
+    WCHAR *norm_str;
+    INT i, label_start, label_end, norm_len, out_label, out = 0;
+
+    TRACE("%x %p %d %p %d\n", dwFlags, lpUnicodeCharStr, cchUnicodeChar,
         lpASCIICharStr, cchASCIIChar);
-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-    return 0;
+
+    norm_len = IdnToNameprepUnicode(dwFlags, lpUnicodeCharStr, cchUnicodeChar, NULL, 0);
+    if(!norm_len)
+        return 0;
+    norm_str = HeapAlloc(GetProcessHeap(), 0, norm_len*sizeof(WCHAR));
+    if(!norm_str) {
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        return 0;
+    }
+    norm_len = IdnToNameprepUnicode(dwFlags, lpUnicodeCharStr,
+            cchUnicodeChar, norm_str, norm_len);
+    if(!norm_len) {
+        HeapFree(GetProcessHeap(), 0, norm_str);
+        return 0;
+    }
+
+    for(label_start=0; label_start<norm_len;) {
+        INT n = INIT_N, bias = INIT_BIAS;
+        INT delta = 0, b = 0, h;
+
+        out_label = out;
+        for(i=label_start; i<norm_len && norm_str[i]!='.' &&
+                norm_str[i]!=0x3002 && norm_str[i]!='\0'; i++)
+            if(norm_str[i] < 0x80)
+                b++;
+        label_end = i;
+
+        if(b == label_end-label_start) {
+            if(label_end < norm_len)
+                b++;
+            if(!lpASCIICharStr) {
+                out += b;
+            }else if(out+b <= cchASCIIChar) {
+                memcpy(lpASCIICharStr+out, norm_str+label_start, b*sizeof(WCHAR));
+                out += b;
+            }else {
+                HeapFree(GetProcessHeap(), 0, norm_str);
+                SetLastError(ERROR_INSUFFICIENT_BUFFER);
+                return 0;
+            }
+            label_start = label_end+1;
+            continue;
+        }
+
+        if(!lpASCIICharStr) {
+            out += 5+b; /* strlen(xn--...-) */
+        }else if(out+5+b <= cchASCIIChar) {
+            memcpy(lpASCIICharStr+out, prefixW, sizeof(prefixW));
+            out += 4;
+            for(i=label_start; i<label_end; i++)
+                if(norm_str[i] < 0x80)
+                    lpASCIICharStr[out++] = norm_str[i];
+            lpASCIICharStr[out++] = '-';
+        }else {
+            HeapFree(GetProcessHeap(), 0, norm_str);
+            SetLastError(ERROR_INSUFFICIENT_BUFFER);
+            return 0;
+        }
+        if(!b)
+            out--;
+
+        for(h=b; h<label_end-label_start;) {
+            INT m = 0xffff, q, k;
+
+            for(i=label_start; i<label_end; i++) {
+                if(norm_str[i]>=n && m>norm_str[i])
+                    m = norm_str[i];
+            }
+            delta += (m-n)*(h+1);
+            n = m;
+
+            for(i=label_start; i<label_end; i++) {
+                if(norm_str[i] < n) {
+                    delta++;
+                }else if(norm_str[i] == n) {
+                    for(q=delta, k=BASE; ; k+=BASE) {
+                        INT t = k<=bias ? TMIN : k>=bias+TMAX ? TMAX : k-bias;
+                        INT disp = q<t ? q : t+(q-t)%(BASE-t);
+                        if(!lpASCIICharStr) {
+                            out++;
+                        }else if(out+1 <= cchASCIIChar) {
+                            lpASCIICharStr[out++] = disp<='z'-'a' ?
+                                'a'+disp : '0'+disp-'z'+'a'-1;
+                        }else {
+                            HeapFree(GetProcessHeap(), 0, norm_str);
+                            SetLastError(ERROR_INSUFFICIENT_BUFFER);
+                            return 0;
+                        }
+                        if(q < t)
+                            break;
+                        q = (q-t)/(BASE-t);
+                    }
+                    bias = adapt(delta, h+1, h==b);
+                    delta = 0;
+                    h++;
+                }
+            }
+            delta++;
+            n++;
+        }
+
+        if(out-out_label > 63) {
+            HeapFree(GetProcessHeap(), 0, norm_str);
+            SetLastError(ERROR_INVALID_NAME);
+            return 0;
+        }
+
+        if(label_end < norm_len) {
+            if(!lpASCIICharStr) {
+                out++;
+            }else if(out+1 <= cchASCIIChar) {
+                lpASCIICharStr[out++] = norm_str[label_end] ? '.' : 0;
+            }else {
+                HeapFree(GetProcessHeap(), 0, norm_str);
+                SetLastError(ERROR_INSUFFICIENT_BUFFER);
+                return 0;
+            }
+        }
+        label_start = label_end+1;
+    }
+
+    HeapFree(GetProcessHeap(), 0, norm_str);
+    return out;
 }
 
 /******************************************************************************
@@ -3897,10 +4918,213 @@ INT WINAPI IdnToAscii(DWORD dwFlags, LPCWSTR lpUnicodeCharStr, INT cchUnicodeCha
 INT WINAPI IdnToNameprepUnicode(DWORD dwFlags, LPCWSTR lpUnicodeCharStr, INT cchUnicodeChar,
                                 LPWSTR lpNameprepCharStr, INT cchNameprepChar)
 {
-    FIXME("%x %p %d %p %d\n", dwFlags, lpUnicodeCharStr, cchUnicodeChar,
+    enum {
+        UNASSIGNED = 0x1,
+        PROHIBITED = 0x2,
+        BIDI_RAL   = 0x4,
+        BIDI_L     = 0x8
+    };
+
+    extern const unsigned short nameprep_char_type[];
+    extern const WCHAR nameprep_mapping[];
+    const WCHAR *ptr;
+    WORD flags;
+    WCHAR buf[64], *map_str, norm_str[64], ch;
+    DWORD i, map_len, norm_len, mask, label_start, label_end, out = 0;
+    BOOL have_bidi_ral, prohibit_bidi_ral, ascii_only;
+
+    TRACE("%x %p %d %p %d\n", dwFlags, lpUnicodeCharStr, cchUnicodeChar,
         lpNameprepCharStr, cchNameprepChar);
-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-    return 0;
+
+    if(dwFlags & ~(IDN_ALLOW_UNASSIGNED|IDN_USE_STD3_ASCII_RULES)) {
+        SetLastError(ERROR_INVALID_FLAGS);
+        return 0;
+    }
+
+    if(!lpUnicodeCharStr || cchUnicodeChar<-1) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+
+    if(cchUnicodeChar == -1)
+        cchUnicodeChar = strlenW(lpUnicodeCharStr)+1;
+    if(!cchUnicodeChar || (cchUnicodeChar==1 && lpUnicodeCharStr[0]==0)) {
+        SetLastError(ERROR_INVALID_NAME);
+        return 0;
+    }
+
+    for(label_start=0; label_start<cchUnicodeChar;) {
+        ascii_only = TRUE;
+        for(i=label_start; i<cchUnicodeChar; i++) {
+            ch = lpUnicodeCharStr[i];
+
+            if(i!=cchUnicodeChar-1 && !ch) {
+                SetLastError(ERROR_INVALID_NAME);
+                return 0;
+            }
+            /* check if ch is one of label separators defined in RFC3490 */
+            if(!ch || ch=='.' || ch==0x3002 || ch==0xff0e || ch==0xff61)
+                break;
+
+            if(ch > 0x7f) {
+                ascii_only = FALSE;
+                continue;
+            }
+
+            if((dwFlags&IDN_USE_STD3_ASCII_RULES) == 0)
+                continue;
+            if((ch>='a' && ch<='z') || (ch>='A' && ch<='Z')
+                    || (ch>='0' && ch<='9') || ch=='-')
+                continue;
+
+            SetLastError(ERROR_INVALID_NAME);
+            return 0;
+        }
+        label_end = i;
+        /* last label may be empty */
+        if(label_start==label_end && ch) {
+            SetLastError(ERROR_INVALID_NAME);
+            return 0;
+        }
+
+        if((dwFlags&IDN_USE_STD3_ASCII_RULES) && (lpUnicodeCharStr[label_start]=='-' ||
+                    lpUnicodeCharStr[label_end-1]=='-')) {
+            SetLastError(ERROR_INVALID_NAME);
+            return 0;
+        }
+
+        if(ascii_only) {
+            /* maximal label length is 63 characters */
+            if(label_end-label_start > 63) {
+                SetLastError(ERROR_INVALID_NAME);
+                return 0;
+            }
+            if(label_end < cchUnicodeChar)
+                label_end++;
+
+            if(!lpNameprepCharStr) {
+                out += label_end-label_start;
+            }else if(out+label_end-label_start <= cchNameprepChar) {
+                memcpy(lpNameprepCharStr+out, lpUnicodeCharStr+label_start,
+                        (label_end-label_start)*sizeof(WCHAR));
+                if(lpUnicodeCharStr[label_end-1] > 0x7f)
+                    lpNameprepCharStr[out+label_end-label_start-1] = '.';
+                out += label_end-label_start;
+            }else {
+                SetLastError(ERROR_INSUFFICIENT_BUFFER);
+                return 0;
+            }
+
+            label_start = label_end;
+            continue;
+        }
+
+        map_len = 0;
+        for(i=label_start; i<label_end; i++) {
+            ch = lpUnicodeCharStr[i];
+            ptr = nameprep_mapping + nameprep_mapping[ch>>8];
+            ptr = nameprep_mapping + ptr[(ch>>4)&0x0f] + 3*(ch&0x0f);
+
+            if(!ptr[0]) map_len++;
+            else if(!ptr[1]) map_len++;
+            else if(!ptr[2]) map_len += 2;
+            else if(ptr[0]!=0xffff || ptr[1]!=0xffff || ptr[2]!=0xffff) map_len += 3;
+        }
+        if(map_len*sizeof(WCHAR) > sizeof(buf)) {
+            map_str = HeapAlloc(GetProcessHeap(), 0, map_len*sizeof(WCHAR));
+            if(!map_str) {
+                SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+                return 0;
+            }
+        }else {
+            map_str = buf;
+        }
+        map_len = 0;
+        for(i=label_start; i<label_end; i++) {
+            ch = lpUnicodeCharStr[i];
+            ptr = nameprep_mapping + nameprep_mapping[ch>>8];
+            ptr = nameprep_mapping + ptr[(ch>>4)&0x0f] + 3*(ch&0x0f);
+
+            if(!ptr[0]) {
+                map_str[map_len++] = ch;
+            }else if(!ptr[1]) {
+                map_str[map_len++] = ptr[0];
+            }else if(!ptr[2]) {
+                map_str[map_len++] = ptr[0];
+                map_str[map_len++] = ptr[1];
+            }else if(ptr[0]!=0xffff || ptr[1]!=0xffff || ptr[2]!=0xffff) {
+                map_str[map_len++] = ptr[0];
+                map_str[map_len++] = ptr[1];
+                map_str[map_len++] = ptr[2];
+            }
+        }
+
+        norm_len = FoldStringW(MAP_FOLDCZONE, map_str, map_len,
+                norm_str, sizeof(norm_str)/sizeof(WCHAR)-1);
+        if(map_str != buf)
+            HeapFree(GetProcessHeap(), 0, map_str);
+        if(!norm_len) {
+            if(GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+                SetLastError(ERROR_INVALID_NAME);
+            return 0;
+        }
+
+        if(label_end < cchUnicodeChar) {
+            norm_str[norm_len++] = lpUnicodeCharStr[label_end] ? '.' : 0;
+            label_end++;
+        }
+
+        if(!lpNameprepCharStr) {
+            out += norm_len;
+        }else if(out+norm_len <= cchNameprepChar) {
+            memcpy(lpNameprepCharStr+out, norm_str, norm_len*sizeof(WCHAR));
+            out += norm_len;
+        }else {
+            SetLastError(ERROR_INSUFFICIENT_BUFFER);
+            return 0;
+        }
+
+        have_bidi_ral = prohibit_bidi_ral = FALSE;
+        mask = PROHIBITED;
+        if((dwFlags&IDN_ALLOW_UNASSIGNED) == 0)
+            mask |= UNASSIGNED;
+        for(i=0; i<norm_len; i++) {
+            ch = norm_str[i];
+            flags = get_table_entry( nameprep_char_type, ch );
+
+            if(flags & mask) {
+                SetLastError((flags & PROHIBITED) ? ERROR_INVALID_NAME
+                        : ERROR_NO_UNICODE_TRANSLATION);
+                return 0;
+            }
+
+            if(flags & BIDI_RAL)
+                have_bidi_ral = TRUE;
+            if(flags & BIDI_L)
+                prohibit_bidi_ral = TRUE;
+        }
+
+        if(have_bidi_ral) {
+            ch = norm_str[0];
+            flags = get_table_entry( nameprep_char_type, ch );
+            if((flags & BIDI_RAL) == 0)
+                prohibit_bidi_ral = TRUE;
+
+            ch = norm_str[norm_len-1];
+            flags = get_table_entry( nameprep_char_type, ch );
+            if((flags & BIDI_RAL) == 0)
+                prohibit_bidi_ral = TRUE;
+        }
+
+        if(have_bidi_ral && prohibit_bidi_ral) {
+            SetLastError(ERROR_INVALID_NAME);
+            return 0;
+        }
+
+        label_start = label_end;
+    }
+
+    return out;
 }
 
 /******************************************************************************
@@ -3909,8 +5133,161 @@ INT WINAPI IdnToNameprepUnicode(DWORD dwFlags, LPCWSTR lpUnicodeCharStr, INT cch
 INT WINAPI IdnToUnicode(DWORD dwFlags, LPCWSTR lpASCIICharStr, INT cchASCIIChar,
                         LPWSTR lpUnicodeCharStr, INT cchUnicodeChar)
 {
-    FIXME("%x %p %d %p %d\n", dwFlags, lpASCIICharStr, cchASCIIChar,
+    extern const unsigned short nameprep_char_type[];
+
+    INT i, label_start, label_end, out_label, out = 0;
+    WCHAR ch;
+
+    TRACE("%x %p %d %p %d\n", dwFlags, lpASCIICharStr, cchASCIIChar,
         lpUnicodeCharStr, cchUnicodeChar);
-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-    return 0;
+
+    for(label_start=0; label_start<cchASCIIChar;) {
+        INT n = INIT_N, pos = 0, old_pos, w, k, bias = INIT_BIAS, delim=0, digit, t;
+
+        out_label = out;
+        for(i=label_start; i<cchASCIIChar; i++) {
+            ch = lpASCIICharStr[i];
+
+            if(ch>0x7f || (i!=cchASCIIChar-1 && !ch)) {
+                SetLastError(ERROR_INVALID_NAME);
+                return 0;
+            }
+
+            if(!ch || ch=='.')
+                break;
+            if(ch == '-')
+                delim = i;
+
+            if((dwFlags&IDN_USE_STD3_ASCII_RULES) == 0)
+                continue;
+            if((ch>='a' && ch<='z') || (ch>='A' && ch<='Z')
+                    || (ch>='0' && ch<='9') || ch=='-')
+                continue;
+
+            SetLastError(ERROR_INVALID_NAME);
+            return 0;
+        }
+        label_end = i;
+        /* last label may be empty */
+        if(label_start==label_end && ch) {
+            SetLastError(ERROR_INVALID_NAME);
+            return 0;
+        }
+
+        if((dwFlags&IDN_USE_STD3_ASCII_RULES) && (lpASCIICharStr[label_start]=='-' ||
+                    lpASCIICharStr[label_end-1]=='-')) {
+            SetLastError(ERROR_INVALID_NAME);
+            return 0;
+        }
+        if(label_end-label_start > 63) {
+            SetLastError(ERROR_INVALID_NAME);
+            return 0;
+        }
+
+        if(label_end-label_start<4 ||
+                tolowerW(lpASCIICharStr[label_start])!='x' ||
+                tolowerW(lpASCIICharStr[label_start+1])!='n' ||
+                lpASCIICharStr[label_start+2]!='-' || lpASCIICharStr[label_start+3]!='-') {
+            if(label_end < cchASCIIChar)
+                label_end++;
+
+            if(!lpUnicodeCharStr) {
+                out += label_end-label_start;
+            }else if(out+label_end-label_start <= cchUnicodeChar) {
+                memcpy(lpUnicodeCharStr+out, lpASCIICharStr+label_start,
+                        (label_end-label_start)*sizeof(WCHAR));
+                out += label_end-label_start;
+            }else {
+                SetLastError(ERROR_INSUFFICIENT_BUFFER);
+                return 0;
+            }
+
+            label_start = label_end;
+            continue;
+        }
+
+        if(delim == label_start+3)
+            delim++;
+        if(!lpUnicodeCharStr) {
+            out += delim-label_start-4;
+        }else if(out+delim-label_start-4 <= cchUnicodeChar) {
+            memcpy(lpUnicodeCharStr+out, lpASCIICharStr+label_start+4,
+                    (delim-label_start-4)*sizeof(WCHAR));
+            out += delim-label_start-4;
+        }else {
+            SetLastError(ERROR_INSUFFICIENT_BUFFER);
+            return 0;
+        }
+        if(out != out_label)
+            delim++;
+
+        for(i=delim; i<label_end;) {
+            old_pos = pos;
+            w = 1;
+            for(k=BASE; ; k+=BASE) {
+                ch = i<label_end ? tolowerW(lpASCIICharStr[i++]) : 0;
+                if((ch<'a' || ch>'z') && (ch<'0' || ch>'9')) {
+                    SetLastError(ERROR_INVALID_NAME);
+                    return 0;
+                }
+                digit = ch<='9' ? ch-'0'+'z'-'a'+1 : ch-'a';
+                pos += digit*w;
+                t = k<=bias ? TMIN : k>=bias+TMAX ? TMAX : k-bias;
+                if(digit < t)
+                    break;
+                w *= BASE-t;
+            }
+            bias = adapt(pos-old_pos, out-out_label+1, old_pos==0);
+            n += pos/(out-out_label+1);
+            pos %= out-out_label+1;
+
+            if((dwFlags&IDN_ALLOW_UNASSIGNED)==0 &&
+                    get_table_entry(nameprep_char_type, n)==1/*UNASSIGNED*/) {
+                SetLastError(ERROR_INVALID_NAME);
+                return 0;
+            }
+            if(!lpUnicodeCharStr) {
+                out++;
+            }else if(out+1 <= cchASCIIChar) {
+                memmove(lpUnicodeCharStr+out_label+pos+1,
+                        lpUnicodeCharStr+out_label+pos,
+                        (out-out_label-pos)*sizeof(WCHAR));
+                lpUnicodeCharStr[out_label+pos] = n;
+                out++;
+            }else {
+                SetLastError(ERROR_INSUFFICIENT_BUFFER);
+                return 0;
+            }
+            pos++;
+        }
+
+        if(out-out_label > 63) {
+            SetLastError(ERROR_INVALID_NAME);
+            return 0;
+        }
+
+        if(label_end < cchASCIIChar) {
+            if(!lpUnicodeCharStr) {
+                out++;
+            }else if(out+1 <= cchUnicodeChar) {
+                lpUnicodeCharStr[out++] = lpASCIICharStr[label_end];
+            }else {
+                SetLastError(ERROR_INSUFFICIENT_BUFFER);
+                return 0;
+            }
+        }
+        label_start = label_end+1;
+    }
+
+    return out;
+}
+
+
+/******************************************************************************
+ *           GetUserPreferredUILanguages (KERNEL32.@)
+ */
+BOOL WINAPI GetUserPreferredUILanguages(DWORD flags, PULONG numlangs, PZZWSTR langbuffer, PULONG bufferlen)
+{
+    FIXME( "stub: %u %p %p %p\n", flags, numlangs, langbuffer, bufferlen );
+    return FALSE;
 }

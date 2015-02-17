@@ -49,6 +49,12 @@ typedef struct _domfrag
     LONG ref;
 } domfrag;
 
+static const tid_t domfrag_se_tids[] = {
+    IXMLDOMNode_tid,
+    IXMLDOMDocumentFragment_tid,
+    NULL_tid
+};
+
 static inline domfrag *impl_from_IXMLDOMDocumentFragment( IXMLDOMDocumentFragment *iface )
 {
     return CONTAINING_RECORD(iface, domfrag, IXMLDOMDocumentFragment_iface);
@@ -73,6 +79,10 @@ static HRESULT WINAPI domfrag_QueryInterface(
     {
         return *ppvObject ? S_OK : E_NOINTERFACE;
     }
+    else if(IsEqualGUID( riid, &IID_ISupportErrorInfo ))
+    {
+        return node_create_supporterrorinfo(domfrag_se_tids, ppvObject);
+    }
     else
     {
         TRACE("Unsupported interface %s\n", debugstr_guid(riid));
@@ -80,7 +90,7 @@ static HRESULT WINAPI domfrag_QueryInterface(
         return E_NOINTERFACE;
     }
 
-    IXMLDOMText_AddRef((IUnknown*)*ppvObject);
+    IXMLDOMDocumentFragment_AddRef(iface);
     return S_OK;
 }
 
@@ -114,12 +124,7 @@ static HRESULT WINAPI domfrag_GetTypeInfoCount(
     UINT* pctinfo )
 {
     domfrag *This = impl_from_IXMLDOMDocumentFragment( iface );
-
-    TRACE("(%p)->(%p)\n", This, pctinfo);
-
-    *pctinfo = 1;
-
-    return S_OK;
+    return IDispatchEx_GetTypeInfoCount(&This->node.dispex.IDispatchEx_iface, pctinfo);
 }
 
 static HRESULT WINAPI domfrag_GetTypeInfo(
@@ -128,13 +133,8 @@ static HRESULT WINAPI domfrag_GetTypeInfo(
     ITypeInfo** ppTInfo )
 {
     domfrag *This = impl_from_IXMLDOMDocumentFragment( iface );
-    HRESULT hr;
-
-    TRACE("(%p)->(%u %u %p)\n", This, iTInfo, lcid, ppTInfo);
-
-    hr = get_typeinfo(IXMLDOMDocumentFragment_tid, ppTInfo);
-
-    return hr;
+    return IDispatchEx_GetTypeInfo(&This->node.dispex.IDispatchEx_iface,
+        iTInfo, lcid, ppTInfo);
 }
 
 static HRESULT WINAPI domfrag_GetIDsOfNames(
@@ -143,23 +143,8 @@ static HRESULT WINAPI domfrag_GetIDsOfNames(
     UINT cNames, LCID lcid, DISPID* rgDispId )
 {
     domfrag *This = impl_from_IXMLDOMDocumentFragment( iface );
-    ITypeInfo *typeinfo;
-    HRESULT hr;
-
-    TRACE("(%p)->(%s %p %u %u %p)\n", This, debugstr_guid(riid), rgszNames, cNames,
-          lcid, rgDispId);
-
-    if(!rgszNames || cNames == 0 || !rgDispId)
-        return E_INVALIDARG;
-
-    hr = get_typeinfo(IXMLDOMDocumentFragment_tid, &typeinfo);
-    if(SUCCEEDED(hr))
-    {
-        hr = ITypeInfo_GetIDsOfNames(typeinfo, rgszNames, cNames, rgDispId);
-        ITypeInfo_Release(typeinfo);
-    }
-
-    return hr;
+    return IDispatchEx_GetIDsOfNames(&This->node.dispex.IDispatchEx_iface,
+        riid, rgszNames, cNames, lcid, rgDispId);
 }
 
 static HRESULT WINAPI domfrag_Invoke(
@@ -169,21 +154,8 @@ static HRESULT WINAPI domfrag_Invoke(
     EXCEPINFO* pExcepInfo, UINT* puArgErr )
 {
     domfrag *This = impl_from_IXMLDOMDocumentFragment( iface );
-    ITypeInfo *typeinfo;
-    HRESULT hr;
-
-    TRACE("(%p)->(%d %s %d %d %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid),
-          lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
-
-    hr = get_typeinfo(IXMLDOMDocumentFragment_tid, &typeinfo);
-    if(SUCCEEDED(hr))
-    {
-        hr = ITypeInfo_Invoke(typeinfo, &This->IXMLDOMDocumentFragment_iface, dispIdMember,
-                wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
-        ITypeInfo_Release(typeinfo);
-    }
-
-    return hr;
+    return IDispatchEx_Invoke(&This->node.dispex.IDispatchEx_iface,
+        dispIdMember, riid, lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
 }
 
 static HRESULT WINAPI domfrag_get_nodeName(
@@ -205,14 +177,8 @@ static HRESULT WINAPI domfrag_get_nodeValue(
     VARIANT* value)
 {
     domfrag *This = impl_from_IXMLDOMDocumentFragment( iface );
-
-    FIXME("(%p)->(%p)\n", This, value);
-
-    if(!value)
-        return E_INVALIDARG;
-
-    V_VT(value) = VT_NULL;
-    return S_FALSE;
+    TRACE("(%p)->(%p)\n", This, value);
+    return return_null_var(value);
 }
 
 static HRESULT WINAPI domfrag_put_nodeValue(
@@ -467,7 +433,7 @@ static HRESULT WINAPI domfrag_put_dataType(
 {
     domfrag *This = impl_from_IXMLDOMDocumentFragment( iface );
 
-    FIXME("(%p)->(%s)\n", This, debugstr_w(p));
+    TRACE("(%p)->(%s)\n", This, debugstr_w(p));
 
     if(!p)
         return E_INVALIDARG;
@@ -483,7 +449,7 @@ static HRESULT WINAPI domfrag_get_xml(
 
     TRACE("(%p)->(%p)\n", This, p);
 
-    return node_get_xml(&This->node, FALSE, FALSE, p);
+    return node_get_xml(&This->node, FALSE, p);
 }
 
 static HRESULT WINAPI domfrag_transformNode(

@@ -1,10 +1,7 @@
 MODULE    = inseng.dll
 IMPORTS   = uuid ole32 advapi32
-EXTRADEFS = -DCOM_NO_WINDOWS_H
 
 C_SRCS = \
 	inseng_main.c
 
-IDL_R_SRCS = inseng.idl
-
-@MAKE_DLL_RULES@
+IDL_SRCS = inseng.idl

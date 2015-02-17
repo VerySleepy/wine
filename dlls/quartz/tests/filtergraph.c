@@ -236,7 +236,7 @@ static void test_graph_builder_addfilter(void)
 
     hr = IGraphBuilder_AddFilter(pgraph, pF, NULL);
     ok(hr == S_OK, "IGraphBuilder_AddFilter returned: %x\n", hr);
-    IMediaFilter_Release(pF);
+    IBaseFilter_Release(pF);
 }
 
 static void test_mediacontrol(void)
@@ -247,26 +247,26 @@ static void test_mediacontrol(void)
     IMediaFilter *filter = NULL;
     IMediaControl *control = NULL;
 
-    IFilterGraph2_SetDefaultSyncSource(pgraph);
-    hr = IFilterGraph2_QueryInterface(pgraph, &IID_IMediaSeeking, (void**) &seeking);
+    IGraphBuilder_SetDefaultSyncSource(pgraph);
+    hr = IGraphBuilder_QueryInterface(pgraph, &IID_IMediaSeeking, (void**) &seeking);
     ok(hr == S_OK, "QueryInterface IMediaControl failed: %08x\n", hr);
     if (FAILED(hr))
         return;
 
-    hr = IFilterGraph2_QueryInterface(pgraph, &IID_IMediaFilter, (void**) &filter);
+    hr = IGraphBuilder_QueryInterface(pgraph, &IID_IMediaFilter, (void**) &filter);
     ok(hr == S_OK, "QueryInterface IMediaFilter failed: %08x\n", hr);
     if (FAILED(hr))
     {
-        IUnknown_Release(seeking);
+        IMediaSeeking_Release(seeking);
         return;
     }
 
-    hr = IFilterGraph2_QueryInterface(pgraph, &IID_IMediaControl, (void**) &control);
+    hr = IGraphBuilder_QueryInterface(pgraph, &IID_IMediaControl, (void**) &control);
     ok(hr == S_OK, "QueryInterface IMediaControl failed: %08x\n", hr);
     if (FAILED(hr))
     {
-        IUnknown_Release(seeking);
-        IUnknown_Release(filter);
+        IMediaSeeking_Release(seeking);
+        IMediaFilter_Release(filter);
         return;
     }
 
@@ -288,9 +288,9 @@ static void test_mediacontrol(void)
     hr = IMediaControl_GetState(control, 1000, NULL);
     ok(hr == E_POINTER, "GetState expected %08x, got %08x\n", E_POINTER, hr);
 
-    IUnknown_Release(control);
-    IUnknown_Release(seeking);
-    IUnknown_Release(filter);
+    IMediaControl_Release(control);
+    IMediaSeeking_Release(seeking);
+    IMediaFilter_Release(filter);
     releasefiltergraph();
 }
 
@@ -1556,9 +1556,10 @@ static void test_render_filter_priority(void)
     static const WCHAR wszFilterInstanceName4[] = {'T', 'e', 's', 't', 'f', 'i', 'l', 't', 'e', 'r', 'I',
                                                         'n', 's', 't', 'a', 'n', 'c', 'e', '4', 0 };
 
-    /* Test which renderer of two already added to the graph will be chosen (one is "exact" match, other is
-       "wildcard" match. Seems to very by order in which filters are added to the graph, thus indicating
-       no preference given to exact match. */
+    /* Test which renderer of two already added to the graph will be chosen
+     * (one is "exact" match, other is "wildcard" match. Seems to depend
+     * on the order in which filters are added to the graph, thus indicating
+     * no preference given to exact match. */
     hr = CoCreateInstance(&CLSID_FilterGraph, NULL, CLSCTX_INPROC_SERVER, &IID_IFilterGraph2, (LPVOID*)&pgraph2);
     ok(hr == S_OK, "CoCreateInstance failed with %08x\n", hr);
     if (!pgraph2) return;
@@ -1640,7 +1641,7 @@ static void test_render_filter_priority(void)
     ok(hr == E_POINTER, "IFilterGraph2_Disconnect failed. Expected E_POINTER, received %08x\n", hr);
 
     get_connected_filter_name(ptestfilter, ConnectedFilterName2);
-    ok(lstrcmp(ConnectedFilterName1, ConnectedFilterName2),
+    ok(strcmp(ConnectedFilterName1, ConnectedFilterName2),
         "expected connected filters to be different but got %s both times\n", ConnectedFilterName1);
 
     IFilterGraph2_Release(pgraph2);
@@ -1696,7 +1697,7 @@ static void test_render_filter_priority(void)
     ok(hr == S_OK, "IFilterGraph2_Render failed with %08x\n", hr);
 
     get_connected_filter_name(ptestfilter, ConnectedFilterName1);
-    ok(!lstrcmp(ConnectedFilterName1, "TestfilterInstance3") || !lstrcmp(ConnectedFilterName1, "TestfilterInstance2"),
+    ok(!strcmp(ConnectedFilterName1, "TestfilterInstance3") || !strcmp(ConnectedFilterName1, "TestfilterInstance2"),
             "unexpected connected filter: %s\n", ConnectedFilterName1);
 
     IFilterGraph2_Release(pgraph2);
@@ -1748,9 +1749,9 @@ static void test_render_filter_priority(void)
     ok(hr == S_OK, "IFilterGraph2_Render failed with %08x\n", hr);
 
     get_connected_filter_name(ptestfilter, ConnectedFilterName2);
-    ok(!lstrcmp(ConnectedFilterName2, "TestfilterInstance3") || !lstrcmp(ConnectedFilterName2, "TestfilterInstance2"),
+    ok(!strcmp(ConnectedFilterName2, "TestfilterInstance3") || !strcmp(ConnectedFilterName2, "TestfilterInstance2"),
             "unexpected connected filter: %s\n", ConnectedFilterName2);
-    ok(lstrcmp(ConnectedFilterName1, ConnectedFilterName2),
+    ok(strcmp(ConnectedFilterName1, ConnectedFilterName2),
         "expected connected filters to be different but got %s both times\n", ConnectedFilterName1);
 
     IFilterGraph2_Release(pgraph2);
@@ -1795,8 +1796,8 @@ static void test_render_filter_priority(void)
 
     rgf2.dwVersion = 2;
     rgf2.dwMerit = MERIT_UNLIKELY;
-    S1(U(rgf2)).cPins2 = 1;
-    S1(U(rgf2)).rgPins2 = rgPins2;
+    S2(U(rgf2)).cPins2 = 1;
+    S2(U(rgf2)).rgPins2 = rgPins2;
     rgPins2[0].dwFlags = REG_PINFLAG_B_RENDERER;
     rgPins2[0].cInstances = 1;
     rgPins2[0].nMediaTypes = 1;
@@ -1822,7 +1823,7 @@ static void test_render_filter_priority(void)
                     &CLSID_LegacyAmFilterCategory, NULL, &rgf2);
         ok(hr == S_OK, "IFilterMapper2_RegisterFilter failed with %x\n", hr);
 
-        S1(U(rgf2)).cPins2 = 2;
+        S2(U(rgf2)).cPins2 = 2;
         rgPins2[0].dwFlags = 0;
         rgPinType[0].clsMinorType = &mediasubtype1;
 
@@ -1844,19 +1845,19 @@ static void test_render_filter_priority(void)
         ok(hr == S_OK, "IFilterGraph2_Render failed with %08x\n", hr);
 
         get_connected_filter_name(ptestfilter, ConnectedFilterName1);
-        ok(!lstrcmp(ConnectedFilterName1, "TestfilterInstance3"),
+        ok(!strcmp(ConnectedFilterName1, "TestfilterInstance3"),
            "unexpected connected filter: %s\n", ConnectedFilterName1);
-    }
 
-    hr = IFilterMapper2_UnregisterFilter(pMapper2, &CLSID_LegacyAmFilterCategory, NULL,
-            &CLSID_TestFilter2);
-    ok(SUCCEEDED(hr), "IFilterMapper2_UnregisterFilter failed with %x\n", hr);
-    hr = IFilterMapper2_UnregisterFilter(pMapper2, &CLSID_LegacyAmFilterCategory, NULL,
-            &CLSID_TestFilter3);
-    ok(SUCCEEDED(hr), "IFilterMapper2_UnregisterFilter failed with %x\n", hr);
-    hr = IFilterMapper2_UnregisterFilter(pMapper2, &CLSID_LegacyAmFilterCategory, NULL,
-             &CLSID_TestFilter4);
-    ok(SUCCEEDED(hr), "IFilterMapper2_UnregisterFilter failed with %x\n", hr);
+        hr = IFilterMapper2_UnregisterFilter(pMapper2, &CLSID_LegacyAmFilterCategory, NULL,
+                &CLSID_TestFilter2);
+        ok(hr == S_OK, "IFilterMapper2_UnregisterFilter failed with %x\n", hr);
+        hr = IFilterMapper2_UnregisterFilter(pMapper2, &CLSID_LegacyAmFilterCategory, NULL,
+                &CLSID_TestFilter3);
+        ok(hr == S_OK, "IFilterMapper2_UnregisterFilter failed with %x\n", hr);
+        hr = IFilterMapper2_UnregisterFilter(pMapper2, &CLSID_LegacyAmFilterCategory, NULL,
+                 &CLSID_TestFilter4);
+        ok(hr == S_OK, "IFilterMapper2_UnregisterFilter failed with %x\n", hr);
+    }
 
     out:
 
@@ -1883,6 +1884,7 @@ START_TEST(filtergraph)
         skip("Creating filtergraph returned %08x, skipping tests\n", hr);
         return;
     }
+    IGraphBuilder_Release(pgraph);
     test_render_run(avifile);
     test_render_run(mpegfile);
     test_graph_builder();

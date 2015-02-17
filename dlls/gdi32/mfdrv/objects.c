@@ -49,7 +49,7 @@ UINT MFDRV_AddHandle( PHYSDEV dev, HGDIOBJ obj )
                                        physDev->handles,
                                        physDev->handles_size * sizeof(physDev->handles[0]));
     }
-    physDev->handles[index] = obj;
+    physDev->handles[index] = get_full_gdi_handle( obj );
 
     physDev->cur_handles++; 
     if(physDev->cur_handles > physDev->mh->mtNoObjects)
@@ -104,7 +104,7 @@ BOOL MFDRV_DeleteObject( PHYSDEV dev, HGDIOBJ obj )
 
     index = MFDRV_FindObject(dev, obj);
     if( index < 0 )
-        return 0;
+        return FALSE;
 
     mr.rdSize = sizeof mr / 2;
     mr.rdFunction = META_DELETEOBJECT;
@@ -174,88 +174,47 @@ INT16 MFDRV_CreateBrushIndirect(PHYSDEV dev, HBRUSH hBrush )
 	    break;
 	}
     case BS_PATTERN:
+    case BS_DIBPATTERN:
         {
             char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
             BITMAPINFO *dst_info, *src_info = (BITMAPINFO *)buffer;
-            struct gdi_image_bits bits;
-	    COLORREF cref;
+            DWORD info_size;
+            char *dst_ptr;
+            void *bits;
+            UINT usage;
 
-            if (!get_bitmap_image( (HANDLE)logbrush.lbHatch, src_info, &bits )) goto done;
-	    if (src_info->bmiHeader.biBitCount != 1)
-            {
-	        FIXME("Trying to store a colour pattern brush\n");
-                if (bits.free) bits.free( &bits );
-		goto done;
-	    }
+            if (!get_brush_bitmap_info( hBrush, src_info, &bits, &usage )) goto done;
 
-	    size = FIELD_OFFSET( METARECORD, rdParm[2] ) +
-                FIELD_OFFSET( BITMAPINFO, bmiColors[2] ) + src_info->bmiHeader.biSizeImage;
+            info_size = get_dib_info_size( src_info, usage );
+	    size = FIELD_OFFSET( METARECORD, rdParm[2] ) + info_size + src_info->bmiHeader.biSizeImage;
 
-            if (!(mr = HeapAlloc( GetProcessHeap(), 0, size )))
-            {
-                if (bits.free) bits.free( &bits );
-                goto done;
-            }
+            if (!(mr = HeapAlloc( GetProcessHeap(), 0, size ))) goto done;
 	    mr->rdFunction = META_DIBCREATEPATTERNBRUSH;
 	    mr->rdSize = size / 2;
-	    mr->rdParm[0] = BS_PATTERN;
-	    mr->rdParm[1] = DIB_RGB_COLORS;
+	    mr->rdParm[0] = logbrush.lbStyle;
+	    mr->rdParm[1] = usage;
             dst_info = (BITMAPINFO *)(mr->rdParm + 2);
-            dst_info->bmiHeader = src_info->bmiHeader;
-            dst_info->bmiHeader.biClrUsed = 0;
-	    cref = GetTextColor( dev->hdc );
-            dst_info->bmiColors[0].rgbRed = GetRValue(cref);
-            dst_info->bmiColors[0].rgbGreen = GetGValue(cref);
-            dst_info->bmiColors[0].rgbBlue = GetBValue(cref);
-            dst_info->bmiColors[0].rgbReserved = 0;
-	    cref = GetBkColor( dev->hdc );
-            dst_info->bmiColors[1].rgbRed = GetRValue(cref);
-            dst_info->bmiColors[1].rgbGreen = GetGValue(cref);
-            dst_info->bmiColors[1].rgbBlue = GetBValue(cref);
-            dst_info->bmiColors[1].rgbReserved = 0;
+            memcpy( dst_info, src_info, info_size );
+            if (dst_info->bmiHeader.biClrUsed == 1 << dst_info->bmiHeader.biBitCount)
+                dst_info->bmiHeader.biClrUsed = 0;
+            dst_ptr = (char *)dst_info + info_size;
 
             /* always return a bottom-up DIB */
             if (dst_info->bmiHeader.biHeight < 0)
             {
                 int i, width_bytes = get_dib_stride( dst_info->bmiHeader.biWidth,
                                                      dst_info->bmiHeader.biBitCount );
-                char *dst_ptr = (char *)&dst_info->bmiColors[2];
                 dst_info->bmiHeader.biHeight = -dst_info->bmiHeader.biHeight;
                 dst_ptr += (dst_info->bmiHeader.biHeight - 1) * width_bytes;
                 for (i = 0; i < dst_info->bmiHeader.biHeight; i++, dst_ptr -= width_bytes)
-                    memcpy( dst_ptr, (char *)bits.ptr + i * width_bytes, width_bytes );
+                    memcpy( dst_ptr, (char *)bits + i * width_bytes, width_bytes );
             }
-            else memcpy( &dst_info->bmiColors[2], bits.ptr, dst_info->bmiHeader.biSizeImage );
-            if (bits.free) bits.free( &bits );
+            else memcpy( dst_ptr, bits, src_info->bmiHeader.biSizeImage );
 	    break;
 	}
 
-    case BS_DIBPATTERN:
-        {
-              BITMAPINFO *info = (BITMAPINFO *)logbrush.lbHatch;
-	      DWORD bmSize, biSize;
-
-	      if (info->bmiHeader.biCompression)
-		  bmSize = info->bmiHeader.biSizeImage;
-	      else
-		  bmSize = get_dib_image_size( info );
-	      biSize = bitmap_info_size(info, LOWORD(logbrush.lbColor));
-	      size = sizeof(METARECORD) + biSize + bmSize + 2;
-	      mr = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size);
-              if (!mr)
-              {
-                  GlobalUnlock( (HGLOBAL)logbrush.lbHatch );
-                  goto done;
-              }
-	      mr->rdFunction = META_DIBCREATEPATTERNBRUSH;
-	      mr->rdSize = size / 2;
-	      *(mr->rdParm) = logbrush.lbStyle;
-	      *(mr->rdParm + 1) = LOWORD(logbrush.lbColor);
-	      memcpy(mr->rdParm + 2, info, biSize + bmSize);
-	      break;
-	}
 	default:
-	    FIXME("Unkonwn brush style %x\n", logbrush.lbStyle);
+	    FIXME("Unknown brush style %x\n", logbrush.lbStyle);
 	    return 0;
     }
     r = MFDRV_WriteRecord( dev, mr, mr->rdSize * 2);
@@ -270,8 +229,7 @@ done:
 /***********************************************************************
  *           MFDRV_SelectBrush
  */
-HBRUSH MFDRV_SelectBrush( PHYSDEV dev, HBRUSH hbrush, HBITMAP bitmap,
-                          const BITMAPINFO *info, void *bits, UINT usage )
+HBRUSH MFDRV_SelectBrush( PHYSDEV dev, HBRUSH hbrush, const struct brush_pattern *pattern )
 {
     INT16 index;
 
@@ -327,11 +285,12 @@ static UINT16 MFDRV_CreateFontIndirect(PHYSDEV dev, HFONT hFont, LOGFONTW *logfo
 /***********************************************************************
  *           MFDRV_SelectFont
  */
-HFONT MFDRV_SelectFont( PHYSDEV dev, HFONT hfont )
+HFONT MFDRV_SelectFont( PHYSDEV dev, HFONT hfont, UINT *aa_flags )
 {
     LOGFONTW font;
     INT16 index;
 
+    *aa_flags = GGO_BITMAP;  /* no point in anti-aliasing on metafiles */
     index = MFDRV_FindObject(dev, hfont);
     if( index < 0 )
     {
@@ -365,7 +324,7 @@ static UINT16 MFDRV_CreatePenIndirect(PHYSDEV dev, HPEN hPen, LOGPEN16 *logpen)
 /***********************************************************************
  *           MFDRV_SelectPen
  */
-HPEN MFDRV_SelectPen( PHYSDEV dev, HPEN hpen )
+HPEN MFDRV_SelectPen( PHYSDEV dev, HPEN hpen, const struct brush_pattern *pattern )
 {
     LOGPEN16 logpen;
     INT16 index;

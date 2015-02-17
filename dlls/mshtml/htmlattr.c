@@ -43,16 +43,16 @@ static HRESULT WINAPI HTMLDOMAttribute_QueryInterface(IHTMLDOMAttribute *iface,
 {
     HTMLDOMAttribute *This = impl_from_IHTMLDOMAttribute(iface);
 
+    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
+
     if(IsEqualGUID(&IID_IUnknown, riid)) {
-        TRACE("(%p)->(IID_IUnknown %p)\n", This, ppv);
         *ppv = &This->IHTMLDOMAttribute_iface;
     }else if(IsEqualGUID(&IID_IHTMLDOMAttribute, riid)) {
-        TRACE("(%p)->(IID_IHTMLDOMAttribute %p)\n", This, ppv);
         *ppv = &This->IHTMLDOMAttribute_iface;
     }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
         return *ppv ? S_OK : E_NOINTERFACE;
     }else {
-        WARN("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppv);
+        WARN("%s not supported\n", debugstr_mshtml_guid(riid));
         *ppv =  NULL;
         return E_NOINTERFACE;
     }
@@ -81,6 +81,7 @@ static ULONG WINAPI HTMLDOMAttribute_Release(IHTMLDOMAttribute *iface)
     if(!ref) {
         assert(!This->elem);
         release_dispex(&This->dispex);
+        heap_free(This->name);
         heap_free(This);
     }
 
@@ -124,14 +125,38 @@ static HRESULT WINAPI HTMLDOMAttribute_get_nodeName(IHTMLDOMAttribute *iface, BS
 
     TRACE("(%p)->(%p)\n", This, p);
 
+    if(!This->elem) {
+        if(!This->name) {
+            FIXME("No name available\n");
+            return E_FAIL;
+        }
+
+        *p = SysAllocString(This->name);
+        return *p ? S_OK : E_OUTOFMEMORY;
+    }
+
     return IDispatchEx_GetMemberName(&This->elem->node.dispex.IDispatchEx_iface, This->dispid, p);
 }
 
-static HRESULT WINAPI HTMLDOMAttribute_put_nodeName(IHTMLDOMAttribute *iface, VARIANT v)
+static HRESULT WINAPI HTMLDOMAttribute_put_nodeValue(IHTMLDOMAttribute *iface, VARIANT v)
 {
     HTMLDOMAttribute *This = impl_from_IHTMLDOMAttribute(iface);
-    FIXME("(%p)->(%s)\n", This, debugstr_variant(&v));
-    return E_NOTIMPL;
+    DISPID dispidNamed = DISPID_PROPERTYPUT;
+    DISPPARAMS dp = {&v, &dispidNamed, 1, 1};
+    EXCEPINFO ei;
+    VARIANT ret;
+
+    TRACE("(%p)->(%s)\n", This, debugstr_variant(&v));
+
+    if(!This->elem) {
+        FIXME("NULL This->elem\n");
+        return E_UNEXPECTED;
+    }
+
+    memset(&ei, 0, sizeof(ei));
+
+    return IDispatchEx_InvokeEx(&This->elem->node.dispex.IDispatchEx_iface, This->dispid, LOCALE_SYSTEM_DEFAULT,
+            DISPATCH_PROPERTYPUT, &dp, &ret, &ei, NULL);
 }
 
 static HRESULT WINAPI HTMLDOMAttribute_get_nodeValue(IHTMLDOMAttribute *iface, VARIANT *p)
@@ -155,8 +180,45 @@ static HRESULT WINAPI HTMLDOMAttribute_get_nodeValue(IHTMLDOMAttribute *iface, V
 static HRESULT WINAPI HTMLDOMAttribute_get_specified(IHTMLDOMAttribute *iface, VARIANT_BOOL *p)
 {
     HTMLDOMAttribute *This = impl_from_IHTMLDOMAttribute(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    nsIDOMAttr *nsattr;
+    nsAString nsname;
+    BSTR name;
+    nsresult nsres;
+    HRESULT hres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    if(!This->elem || !This->elem->nselem) {
+        FIXME("NULL This->elem\n");
+        return E_UNEXPECTED;
+    }
+
+    if(get_dispid_type(This->dispid) != DISPEXPROP_BUILTIN) {
+        *p = VARIANT_TRUE;
+        return S_OK;
+    }
+
+    hres = IDispatchEx_GetMemberName(&This->elem->node.dispex.IDispatchEx_iface, This->dispid, &name);
+    if(FAILED(hres))
+        return hres;
+
+    /* FIXME: This is not exactly right, we have some attributes that don't map directly to Gecko attributes. */
+    nsAString_InitDepend(&nsname, name);
+    nsres = nsIDOMHTMLElement_GetAttributeNode(This->elem->nselem, &nsname, &nsattr);
+    nsAString_Finish(&nsname);
+    SysFreeString(name);
+    if(NS_FAILED(nsres))
+        return E_FAIL;
+
+    /* If the Gecko attribute node can be found, we know that the attribute is specified.
+       There is no point in calling GetSpecified */
+    if(nsattr) {
+        nsIDOMAttr_Release(nsattr);
+        *p = VARIANT_TRUE;
+    }else {
+        *p = VARIANT_FALSE;
+    }
+    return S_OK;
 }
 
 static const IHTMLDOMAttributeVtbl HTMLDOMAttributeVtbl = {
@@ -168,7 +230,7 @@ static const IHTMLDOMAttributeVtbl HTMLDOMAttributeVtbl = {
     HTMLDOMAttribute_GetIDsOfNames,
     HTMLDOMAttribute_Invoke,
     HTMLDOMAttribute_get_nodeName,
-    HTMLDOMAttribute_put_nodeName,
+    HTMLDOMAttribute_put_nodeValue,
     HTMLDOMAttribute_get_nodeValue,
     HTMLDOMAttribute_get_specified
 };
@@ -184,7 +246,7 @@ static dispex_static_data_t HTMLDOMAttribute_dispex = {
     HTMLDOMAttribute_iface_tids
 };
 
-HRESULT HTMLDOMAttribute_Create(HTMLElement *elem, DISPID dispid, HTMLDOMAttribute **attr)
+HRESULT HTMLDOMAttribute_Create(const WCHAR *name, HTMLElement *elem, DISPID dispid, HTMLDOMAttribute **attr)
 {
     HTMLAttributeCollection *col;
     HTMLDOMAttribute *ret;
@@ -194,22 +256,34 @@ HRESULT HTMLDOMAttribute_Create(HTMLElement *elem, DISPID dispid, HTMLDOMAttribu
     if(!ret)
         return E_OUTOFMEMORY;
 
-    hres = HTMLElement_get_attr_col(&elem->node, &col);
-    if(FAILED(hres)) {
-        heap_free(ret);
-        return hres;
-    }
-    IHTMLAttributeCollection_Release(&col->IHTMLAttributeCollection_iface);
-
     ret->IHTMLDOMAttribute_iface.lpVtbl = &HTMLDOMAttributeVtbl;
     ret->ref = 1;
-
     ret->dispid = dispid;
     ret->elem = elem;
-    list_add_tail(&elem->attrs->attrs, &ret->entry);
 
     init_dispex(&ret->dispex, (IUnknown*)&ret->IHTMLDOMAttribute_iface,
             &HTMLDOMAttribute_dispex);
+
+    /* For attributes attached to an element, (elem,dispid) pair should be valid used for its operation. */
+    if(elem) {
+        hres = HTMLElement_get_attr_col(&elem->node, &col);
+        if(FAILED(hres)) {
+            IHTMLDOMAttribute_Release(&ret->IHTMLDOMAttribute_iface);
+            return hres;
+        }
+        IHTMLAttributeCollection_Release(&col->IHTMLAttributeCollection_iface);
+
+        list_add_tail(&elem->attrs->attrs, &ret->entry);
+    }
+
+    /* For detached attributes we may still do most operations if we have its name available. */
+    if(name) {
+        ret->name = heap_strdupW(name);
+        if(!ret->name) {
+            IHTMLDOMAttribute_Release(&ret->IHTMLDOMAttribute_iface);
+            return E_OUTOFMEMORY;
+        }
+    }
 
     *attr = ret;
     return S_OK;

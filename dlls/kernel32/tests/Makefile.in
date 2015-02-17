@@ -3,7 +3,6 @@ IMPORTS   = user32 advapi32
 
 C_SRCS = \
 	actctx.c \
-	alloc.c \
 	atom.c \
 	change.c \
 	codepage.c \
@@ -37,5 +36,3 @@ C_SRCS = \
 	volume.c
 
 RC_SRCS = resource.rc
-
-@MAKE_TEST_RULES@

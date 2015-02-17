@@ -1412,7 +1412,8 @@ DWORD WINAPI SetupGetFileCompressionInfoW( PCWSTR source, PWSTR *name, PDWORD so
         return ERROR_INVALID_PARAMETER;
 
     ret = SetupGetFileCompressionInfoExW( source, NULL, 0, &required, NULL, NULL, NULL );
-    if (!(actual_name = MyMalloc( required ))) return ERROR_NOT_ENOUGH_MEMORY;
+    if (!(actual_name = MyMalloc( required * sizeof(WCHAR) )))
+        return ERROR_NOT_ENOUGH_MEMORY;
 
     ret = SetupGetFileCompressionInfoExW( source, actual_name, required, &required,
                                           source_size, target_size, type );
@@ -1458,7 +1459,7 @@ static DWORD decompress_file_lz( LPCWSTR source, LPCWSTR target )
 
 struct callback_context
 {
-    int has_extracted;
+    BOOL has_extracted;
     LPCWSTR target;
 };
 
@@ -1477,7 +1478,7 @@ static UINT CALLBACK decompress_or_copy_callback( PVOID context, UINT notificati
         TRACE("Requesting extraction of cabinet file %s\n",
               wine_dbgstr_w(info->NameInCabinet));
         strcpyW( info->FullTargetName, context_info->target );
-        context_info->has_extracted = 1;
+        context_info->has_extracted = TRUE;
         return FILEOP_DOIT;
     }
     default: return NO_ERROR;
@@ -1502,7 +1503,7 @@ static DWORD decompress_file_cab( LPCWSTR source, LPCWSTR target )
  */
 DWORD WINAPI SetupDecompressOrCopyFileA( PCSTR source, PCSTR target, PUINT type )
 {
-    DWORD ret = FALSE;
+    DWORD ret = 0;
     WCHAR *sourceW = NULL, *targetW = NULL;
 
     if (source && !(sourceW = MultiByteToUnicode( source, CP_ACP ))) return FALSE;

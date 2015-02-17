@@ -136,7 +136,7 @@ MMRESULT WINAPI joyConfigChanged(DWORD flags)
 /**************************************************************************
  * 				joyGetNumDevs		[WINMM.@]
  */
-UINT WINAPI joyGetNumDevs(void)
+UINT WINAPI DECLSPEC_HOTPATCH joyGetNumDevs(void)
 {
     UINT	ret = 0;
     int		i;
@@ -152,7 +152,7 @@ UINT WINAPI joyGetNumDevs(void)
 /**************************************************************************
  * 				joyGetDevCapsW		[WINMM.@]
  */
-MMRESULT WINAPI joyGetDevCapsW(UINT_PTR wID, LPJOYCAPSW lpCaps, UINT wSize)
+MMRESULT WINAPI DECLSPEC_HOTPATCH joyGetDevCapsW(UINT_PTR wID, LPJOYCAPSW lpCaps, UINT wSize)
 {
     if (wID >= MAXJOYSTICK)	return JOYERR_PARMS;
     if (!JOY_LoadDriver(wID))	return MMSYSERR_NODRIVER;
@@ -166,7 +166,7 @@ MMRESULT WINAPI joyGetDevCapsW(UINT_PTR wID, LPJOYCAPSW lpCaps, UINT wSize)
 /**************************************************************************
  * 				joyGetDevCapsA		[WINMM.@]
  */
-MMRESULT WINAPI joyGetDevCapsA(UINT_PTR wID, LPJOYCAPSA lpCaps, UINT wSize)
+MMRESULT WINAPI DECLSPEC_HOTPATCH joyGetDevCapsA(UINT_PTR wID, LPJOYCAPSA lpCaps, UINT wSize)
 {
     JOYCAPSW	jcw;
     MMRESULT	ret;
@@ -215,11 +215,12 @@ MMRESULT WINAPI joyGetDevCapsA(UINT_PTR wID, LPJOYCAPSA lpCaps, UINT wSize)
 /**************************************************************************
  *                              joyGetPosEx             [WINMM.@]
  */
-MMRESULT WINAPI joyGetPosEx(UINT wID, LPJOYINFOEX lpInfo)
+MMRESULT WINAPI DECLSPEC_HOTPATCH joyGetPosEx(UINT wID, LPJOYINFOEX lpInfo)
 {
     TRACE("(%d, %p);\n", wID, lpInfo);
 
-    if (wID >= MAXJOYSTICK)	return JOYERR_PARMS;
+    if (!lpInfo) return MMSYSERR_INVALPARAM;
+    if (wID >= MAXJOYSTICK || lpInfo->dwSize < sizeof(JOYINFOEX)) return JOYERR_PARMS;
     if (!JOY_LoadDriver(wID))	return MMSYSERR_NODRIVER;
 
     lpInfo->dwXpos = 0;
@@ -244,6 +245,7 @@ MMRESULT WINAPI joyGetPos(UINT wID, LPJOYINFO lpInfo)
 {
     TRACE("(%d, %p);\n", wID, lpInfo);
 
+    if (!lpInfo) return MMSYSERR_INVALPARAM;
     if (wID >= MAXJOYSTICK)	return JOYERR_PARMS;
     if (!JOY_LoadDriver(wID))	return MMSYSERR_NODRIVER;
 
@@ -277,11 +279,14 @@ MMRESULT WINAPI joyReleaseCapture(UINT wID)
 
     if (wID >= MAXJOYSTICK)		return JOYERR_PARMS;
     if (!JOY_LoadDriver(wID))		return MMSYSERR_NODRIVER;
-    if (!JOY_Sticks[wID].hCapture)	return JOYERR_NOCANDO;
-
-    KillTimer(JOY_Sticks[wID].hCapture, JOY_Sticks[wID].wTimer);
-    JOY_Sticks[wID].hCapture = 0;
-    JOY_Sticks[wID].wTimer = 0;
+    if (JOY_Sticks[wID].hCapture)
+    {
+        KillTimer(JOY_Sticks[wID].hCapture, JOY_Sticks[wID].wTimer);
+        JOY_Sticks[wID].hCapture = 0;
+        JOY_Sticks[wID].wTimer = 0;
+    }
+    else
+        TRACE("Joystick is not captured, ignoring request.\n");
 
     return JOYERR_NOERROR;
 }
@@ -294,7 +299,8 @@ MMRESULT WINAPI joySetCapture(HWND hWnd, UINT wID, UINT wPeriod, BOOL bChanged)
     TRACE("(%p, %04X, %d, %d);\n",  hWnd, wID, wPeriod, bChanged);
 
     if (wID >= MAXJOYSTICK || hWnd == 0) return JOYERR_PARMS;
-    if (wPeriod<JOY_PERIOD_MIN || wPeriod>JOY_PERIOD_MAX) return JOYERR_PARMS;
+    if (wPeriod<JOY_PERIOD_MIN) wPeriod = JOY_PERIOD_MIN;
+    else if(wPeriod>JOY_PERIOD_MAX) wPeriod = JOY_PERIOD_MAX;
     if (!JOY_LoadDriver(wID)) return MMSYSERR_NODRIVER;
 
     if (JOY_Sticks[wID].hCapture || !IsWindow(hWnd))
@@ -319,7 +325,7 @@ MMRESULT WINAPI joySetThreshold(UINT wID, UINT wThreshold)
 {
     TRACE("(%04X, %d);\n", wID, wThreshold);
 
-    if (wID >= MAXJOYSTICK) return MMSYSERR_INVALPARAM;
+    if (wID >= MAXJOYSTICK || wThreshold > 65535) return MMSYSERR_INVALPARAM;
 
     JOY_Sticks[wID].threshold = wThreshold;
 

@@ -45,7 +45,7 @@ static UINT EMFDRV_AddHandle( PHYSDEV dev, HGDIOBJ obj )
 				       physDev->handles,
 				       physDev->handles_size * sizeof(physDev->handles[0]));
     }
-    physDev->handles[index] = obj;
+    physDev->handles[index] = get_full_gdi_handle( obj );
 
     physDev->cur_handles++;
     if(physDev->cur_handles > physDev->emh->nHandles)
@@ -81,7 +81,7 @@ BOOL EMFDRV_DeleteObject( PHYSDEV dev, HGDIOBJ obj )
     UINT index;
     BOOL ret = TRUE;
 
-    if(!(index = EMFDRV_FindObject(dev, obj))) return 0;
+    if(!(index = EMFDRV_FindObject(dev, obj))) return FALSE;
 
     emr.emr.iType = EMR_DELETEOBJECT;
     emr.emr.nSize = sizeof(emr);
@@ -132,86 +132,54 @@ DWORD EMFDRV_CreateBrushIndirect( PHYSDEV dev, HBRUSH hBrush )
 	    index = 0;
       }
       break;
-    case BS_DIBPATTERN:
-      {
-	EMRCREATEDIBPATTERNBRUSHPT *emr;
-	DWORD bmSize, biSize, size;
-	BITMAPINFO *info = (BITMAPINFO *)logbrush.lbHatch;
-
-	if (info->bmiHeader.biCompression)
-            bmSize = info->bmiHeader.biSizeImage;
-        else
-	    bmSize = get_dib_image_size( info );
-	biSize = bitmap_info_size(info, LOWORD(logbrush.lbColor));
-	size = sizeof(EMRCREATEDIBPATTERNBRUSHPT) + biSize + bmSize;
-	emr = HeapAlloc( GetProcessHeap(), 0, size );
-	if(!emr) break;
-	emr->emr.iType = EMR_CREATEDIBPATTERNBRUSHPT;
-	emr->emr.nSize = size;
-	emr->ihBrush = index = EMFDRV_AddHandle( dev, hBrush );
-	emr->iUsage = LOWORD(logbrush.lbColor);
-	emr->offBmi = sizeof(EMRCREATEDIBPATTERNBRUSHPT);
-	emr->cbBmi = biSize;
-	emr->offBits = sizeof(EMRCREATEDIBPATTERNBRUSHPT) + biSize;
-	emr->cbBits = bmSize;
-	memcpy((char *)emr + sizeof(EMRCREATEDIBPATTERNBRUSHPT), info,
-	       biSize + bmSize );
-
-	if(!EMFDRV_WriteRecord( dev, &emr->emr ))
-	    index = 0;
-	HeapFree( GetProcessHeap(), 0, emr );
-      }
-      break;
-
     case BS_PATTERN:
+    case BS_DIBPATTERN:
       {
         EMRCREATEDIBPATTERNBRUSHPT *emr;
         char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
-        BITMAPINFO *dst_info, *src_info = (BITMAPINFO *)buffer;
-        struct gdi_image_bits bits;
-        DWORD size;
+        BITMAPINFO *info = (BITMAPINFO *)buffer;
+        DWORD info_size;
+        void *bits;
+        UINT usage;
 
-        if (!get_bitmap_image( (HANDLE)logbrush.lbHatch, src_info, &bits )) break;
-        if (src_info->bmiHeader.biBitCount != 1)
+        if (!get_brush_bitmap_info( hBrush, info, &bits, &usage )) break;
+        info_size = get_dib_info_size( info, usage );
+
+        emr = HeapAlloc( GetProcessHeap(), 0,
+                         sizeof(EMRCREATEDIBPATTERNBRUSHPT)+info_size+info->bmiHeader.biSizeImage );
+        if(!emr) break;
+
+        if (logbrush.lbStyle == BS_PATTERN && info->bmiHeader.biBitCount == 1)
         {
-            FIXME("Trying to create a color pattern brush\n");
-            if (bits.free) bits.free( &bits );
-            break;
+            /* Presumably to reduce the size of the written EMF, MS supports an
+             * undocumented iUsage value of 2, indicating a mono bitmap without the
+             * 8 byte 2 entry black/white palette. Stupidly, they could have saved
+             * over 20 bytes more by also ignoring the BITMAPINFO fields that are
+             * irrelevant/constant for monochrome bitmaps.
+             * FIXME: It may be that the DIB functions themselves accept this value.
+             */
+            emr->emr.iType = EMR_CREATEMONOBRUSH;
+            usage = DIB_PAL_MONO;
+            /* FIXME: There is an extra DWORD written by native before the BMI.
+             *        Not sure what its meant to contain.
+             */
+            emr->offBmi = sizeof( EMRCREATEDIBPATTERNBRUSHPT ) + sizeof(DWORD);
+            emr->cbBmi = sizeof( BITMAPINFOHEADER );
         }
-
-        /* FIXME: There is an extra DWORD written by native before the BMI.
-         *        Not sure what its meant to contain.
-         */
-        size = sizeof(EMRCREATEDIBPATTERNBRUSHPT) + sizeof(DWORD) +
-            sizeof(BITMAPINFOHEADER) + src_info->bmiHeader.biSizeImage;
-
-        emr = HeapAlloc( GetProcessHeap(), 0, size );
-        if(!emr)
+        else
         {
-            if (bits.free) bits.free( &bits );
-            break;
+            emr->emr.iType = EMR_CREATEDIBPATTERNBRUSHPT;
+            emr->offBmi = sizeof( EMRCREATEDIBPATTERNBRUSHPT );
+            emr->cbBmi = info_size;
         }
-
-        dst_info = (BITMAPINFO *)((LPBYTE)(emr + 1) + sizeof(DWORD));
-        dst_info->bmiHeader = src_info->bmiHeader;
-        memcpy( &dst_info->bmiHeader + 1, bits.ptr, dst_info->bmiHeader.biSizeImage );
-        if (bits.free) bits.free( &bits );
-
-        emr->emr.iType = EMR_CREATEMONOBRUSH;
-        emr->emr.nSize = size;
         emr->ihBrush = index = EMFDRV_AddHandle( dev, hBrush );
-        /* Presumably to reduce the size of the written EMF, MS supports an
-         * undocumented iUsage value of 2, indicating a mono bitmap without the
-         * 8 byte 2 entry black/white palette. Stupidly, they could have saved
-         * over 20 bytes more by also ignoring the BITMAPINFO fields that are
-         * irrelevant/constant for monochrome bitmaps.
-         * FIXME: It may be that the DIB functions themselves accept this value.
-         */
-        emr->iUsage = DIB_PAL_MONO;
-        emr->offBmi = (LPBYTE)dst_info - (LPBYTE)emr;
-        emr->cbBmi = sizeof( BITMAPINFOHEADER );
+        emr->iUsage = usage;
         emr->offBits = emr->offBmi + emr->cbBmi;
-        emr->cbBits = dst_info->bmiHeader.biSizeImage;
+        emr->cbBits = info->bmiHeader.biSizeImage;
+        emr->emr.nSize = emr->offBits + emr->cbBits;
+
+        memcpy( (BYTE *)emr + emr->offBmi, info, emr->cbBmi );
+        memcpy( (BYTE *)emr + emr->offBits, bits, emr->cbBits );
 
         if(!EMFDRV_WriteRecord( dev, &emr->emr ))
             index = 0;
@@ -230,8 +198,7 @@ DWORD EMFDRV_CreateBrushIndirect( PHYSDEV dev, HBRUSH hBrush )
 /***********************************************************************
  *           EMFDRV_SelectBrush
  */
-HBRUSH EMFDRV_SelectBrush( PHYSDEV dev, HBRUSH hBrush, HBITMAP bitmap,
-                           const BITMAPINFO *info, void *bits, UINT usage )
+HBRUSH EMFDRV_SelectBrush( PHYSDEV dev, HBRUSH hBrush, const struct brush_pattern *pattern )
 {
     EMFDRV_PDEVICE *physDev = (EMFDRV_PDEVICE*)dev;
     EMRSELECTOBJECT emr;
@@ -276,7 +243,7 @@ static BOOL EMFDRV_CreateFontIndirect(PHYSDEV dev, HFONT hFont )
     EMREXTCREATEFONTINDIRECTW emr;
     int i;
 
-    if (!GetObjectW( hFont, sizeof(emr.elfw.elfLogFont), &emr.elfw.elfLogFont )) return 0;
+    if (!GetObjectW( hFont, sizeof(emr.elfw.elfLogFont), &emr.elfw.elfLogFont )) return FALSE;
 
     emr.emr.iType = EMR_EXTCREATEFONTINDIRECTW;
     emr.emr.nSize = (sizeof(emr) + 3) / 4 * 4;
@@ -310,7 +277,7 @@ static BOOL EMFDRV_CreateFontIndirect(PHYSDEV dev, HFONT hFont )
 /***********************************************************************
  *           EMFDRV_SelectFont
  */
-HFONT EMFDRV_SelectFont( PHYSDEV dev, HFONT hFont )
+HFONT EMFDRV_SelectFont( PHYSDEV dev, HFONT hFont, UINT *aa_flags )
 {
     EMFDRV_PDEVICE *physDev = (EMFDRV_PDEVICE*)dev;
     EMRSELECTOBJECT emr;
@@ -347,8 +314,9 @@ HFONT EMFDRV_SelectFont( PHYSDEV dev, HFONT hFont )
     if(!EMFDRV_WriteRecord( dev, &emr.emr ))
         return 0;
 done:
+    *aa_flags = GGO_BITMAP;  /* no point in anti-aliasing on metafiles */
     dev = GET_NEXT_PHYSDEV( dev, pSelectFont );
-    dev->funcs->pSelectFont( dev, hFont );
+    dev->funcs->pSelectFont( dev, hFont, aa_flags );
     return hFont;
 }
 
@@ -394,7 +362,7 @@ static DWORD EMFDRV_CreatePenIndirect(PHYSDEV dev, HPEN hPen)
 /******************************************************************
  *         EMFDRV_SelectPen
  */
-HPEN EMFDRV_SelectPen(PHYSDEV dev, HPEN hPen )
+HPEN EMFDRV_SelectPen(PHYSDEV dev, HPEN hPen, const struct brush_pattern *pattern )
 {
     EMFDRV_PDEVICE *physDev = (EMFDRV_PDEVICE*)dev;
     EMRSELECTOBJECT emr;
@@ -535,7 +503,7 @@ COLORREF EMFDRV_SetDCPenColor( PHYSDEV dev, COLORREF color )
 /******************************************************************
  *         EMFDRV_GdiComment
  */
-BOOL EMFDRV_GdiComment(PHYSDEV dev, UINT bytes, CONST BYTE *buffer)
+BOOL EMFDRV_GdiComment(PHYSDEV dev, UINT bytes, const BYTE *buffer)
 {
     EMRGDICOMMENT *emr;
     UINT total, rounded_size;

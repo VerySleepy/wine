@@ -44,7 +44,7 @@ static NET_API_STATUS (WINAPI *pNetGetJoinInformation)(LPCWSTR,LPWSTR*,PNETSETUP
 static WCHAR user_name[UNLEN + 1];
 static WCHAR computer_name[MAX_COMPUTERNAME_LENGTH + 1];
 
-static int init_wksta_tests(void)
+static BOOL init_wksta_tests(void)
 {
     DWORD dwSize;
     BOOL rc;
@@ -54,14 +54,14 @@ static int init_wksta_tests(void)
     rc=GetUserNameW(user_name, &dwSize);
     if (rc==FALSE && GetLastError()==ERROR_CALL_NOT_IMPLEMENTED) {
         win_skip("GetUserNameW is not implemented\n");
-        return 0;
+        return FALSE;
     }
     ok(rc, "User Name Retrieved\n");
 
     computer_name[0] = 0;
     dwSize = sizeof(computer_name)/sizeof(computer_name[0]);
     ok(GetComputerNameW(computer_name, &dwSize), "Computer Name Retrieved\n");
-    return 1;
+    return TRUE;
 }
 
 static void run_get_comp_name_tests(void)
@@ -79,12 +79,17 @@ static void run_wkstausergetinfo_tests(void)
     LPWKSTA_USER_INFO_1 ui1 = NULL;
     LPWKSTA_USER_INFO_1101 ui1101 = NULL;
     DWORD dwSize;
+    NET_API_STATUS rc;
 
     /* Level 0 */
-    ok(pNetWkstaUserGetInfo(NULL, 0, (LPBYTE *)&ui0) == NERR_Success,
-       "NetWkstaUserGetInfo is unsuccessful\n");
+    rc = pNetWkstaUserGetInfo(NULL, 0, (LPBYTE *)&ui0);
+    if (rc == NERR_WkstaNotStarted)
+    {
+        skip("Workstation service not running\n");
+        return;
+    }
+    ok(!rc && ui0, "got %d and %p (expected NERR_Success and != NULL\n", rc, ui0);
 
-    ok(ui0 != NULL, "ui0 is NULL\n");
     /* This failure occurred when I ran sshd as service and didn't authenticate
      * Since the test dereferences ui0, the rest of this test is worthless
      */
@@ -168,7 +173,7 @@ static void run_wkstatransportenum_tests(void)
     /* final check: valid return, actually get data back */
     apiReturn = pNetWkstaTransportEnum(NULL, 0, &bufPtr, MAX_PREFERRED_LENGTH,
         &entriesRead, &totalEntries, NULL);
-    ok(apiReturn == NERR_Success || apiReturn == ERROR_NETWORK_UNREACHABLE,
+    ok(apiReturn == NERR_Success || apiReturn == ERROR_NETWORK_UNREACHABLE || apiReturn == NERR_WkstaNotStarted,
        "NetWkstaTransportEnum returned %d\n", apiReturn);
     if (apiReturn == NERR_Success) {
         /* WKSTA_TRANSPORT_INFO_0 *transports = (WKSTA_TRANSPORT_INFO_0 *)bufPtr; */

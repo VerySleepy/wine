@@ -20,6 +20,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <assert.h>
 
 #define COBJMACROS
 
@@ -80,6 +81,9 @@ static HRESULT WINAPI InternetHostSecurityManager_ProcessUrlAction(IInternetHost
 
     TRACE("(%p)->(%d %p %d %p %d %x %x)\n", This, dwAction, pPolicy, cbPolicy, pContext, cbContext, dwFlags, dwReserved);
 
+    if(!This->basedoc.window)
+        return E_UNEXPECTED;
+
     url = This->basedoc.window->url ? This->basedoc.window->url : about_blankW;
 
     return IInternetSecurityManager_ProcessUrlAction(This->basedoc.window->secmgr, url, dwAction, pPolicy, cbPolicy,
@@ -101,9 +105,7 @@ static HRESULT confirm_safety_load(HTMLDocumentNode *This, struct CONFIRMSAFETY 
         CATID init_catid = CATID_SafeForInitializing;
 
         hres = ICatInformation_IsClassOfCategories(This->catmgr, &cs->clsid, 1, &init_catid, 0, NULL);
-        if(FAILED(hres))
-            return hres;
-
+        assert(SUCCEEDED(hres));
         *ret = hres == S_OK ? URLPOLICY_ALLOW : URLPOLICY_DISALLOW;
     }
 
@@ -183,6 +185,9 @@ static HRESULT WINAPI InternetHostSecurityManager_QueryCustomPolicy(IInternetHos
     HRESULT hres;
 
     TRACE("(%p)->(%s %p %p %p %d %x)\n", This, debugstr_guid(guidKey), ppPolicy, pcbPolicy, pContext, cbContext, dwReserved);
+
+    if(!This->basedoc.window)
+        return E_UNEXPECTED;
 
     url = This->basedoc.window->url ? This->basedoc.window->url : about_blankW;
 

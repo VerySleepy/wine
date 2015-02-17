@@ -157,40 +157,50 @@ INT EMFDRV_SetArcDirection(PHYSDEV dev, INT arcDirection)
 
 INT EMFDRV_ExcludeClipRect( PHYSDEV dev, INT left, INT top, INT right, INT bottom )
 {
+    PHYSDEV next = GET_NEXT_PHYSDEV( dev, pExcludeClipRect );
     EMREXCLUDECLIPRECT emr;
+
     emr.emr.iType      = EMR_EXCLUDECLIPRECT;
     emr.emr.nSize      = sizeof(emr);
     emr.rclClip.left   = left;
     emr.rclClip.top    = top;
     emr.rclClip.right  = right;
     emr.rclClip.bottom = bottom;
-    return EMFDRV_WriteRecord( dev, &emr.emr );
+    if (!EMFDRV_WriteRecord( dev, &emr.emr )) return ERROR;
+    return next->funcs->pExcludeClipRect( next, left, top, right, bottom );
 }
 
 INT EMFDRV_IntersectClipRect( PHYSDEV dev, INT left, INT top, INT right, INT bottom)
 {
+    PHYSDEV next = GET_NEXT_PHYSDEV( dev, pIntersectClipRect );
     EMRINTERSECTCLIPRECT emr;
+
     emr.emr.iType      = EMR_INTERSECTCLIPRECT;
     emr.emr.nSize      = sizeof(emr);
     emr.rclClip.left   = left;
     emr.rclClip.top    = top;
     emr.rclClip.right  = right;
     emr.rclClip.bottom = bottom;
-    return EMFDRV_WriteRecord( dev, &emr.emr );
+    if (!EMFDRV_WriteRecord( dev, &emr.emr )) return ERROR;
+    return next->funcs->pIntersectClipRect( next, left, top, right, bottom );
 }
 
 INT EMFDRV_OffsetClipRgn( PHYSDEV dev, INT x, INT y )
 {
+    PHYSDEV next = GET_NEXT_PHYSDEV( dev, pOffsetClipRgn );
     EMROFFSETCLIPRGN emr;
+
     emr.emr.iType   = EMR_OFFSETCLIPRGN;
     emr.emr.nSize   = sizeof(emr);
     emr.ptlOffset.x = x;
     emr.ptlOffset.y = y;
-    return EMFDRV_WriteRecord( dev, &emr.emr );
+    if (!EMFDRV_WriteRecord( dev, &emr.emr )) return ERROR;
+    return next->funcs->pOffsetClipRgn( next, x, y );
 }
 
 INT EMFDRV_ExtSelectClipRgn( PHYSDEV dev, HRGN hrgn, INT mode )
 {
+    PHYSDEV next = GET_NEXT_PHYSDEV( dev, pExtSelectClipRgn );
     EMREXTSELECTCLIPRGN *emr;
     DWORD size, rgnsize;
     BOOL ret;
@@ -213,7 +223,7 @@ INT EMFDRV_ExtSelectClipRgn( PHYSDEV dev, HRGN hrgn, INT mode )
 
     ret = EMFDRV_WriteRecord( dev, &emr->emr );
     HeapFree( GetProcessHeap(), 0, emr );
-    return ret ? SIMPLEREGION : ERROR;
+    return ret ? next->funcs->pExtSelectClipRgn( next, hrgn, mode ) : ERROR;
 }
 
 INT EMFDRV_SetMapMode( PHYSDEV dev, INT mode )
@@ -252,7 +262,7 @@ BOOL EMFDRV_SetWindowExtEx( PHYSDEV dev, INT cx, INT cy, SIZE *size )
     emr.szlExtent.cx = cx;
     emr.szlExtent.cy = cy;
 
-    if (!EMFDRV_WriteRecord( dev, &emr.emr )) return 0;
+    if (!EMFDRV_WriteRecord( dev, &emr.emr )) return FALSE;
     return next->funcs->pSetWindowExtEx( next, cx, cy, size );
 }
 
@@ -266,7 +276,7 @@ BOOL EMFDRV_SetViewportOrgEx( PHYSDEV dev, INT x, INT y, POINT *pt )
     emr.ptlOrigin.x = x;
     emr.ptlOrigin.y = y;
 
-    if (!EMFDRV_WriteRecord( dev, &emr.emr )) return 0;
+    if (!EMFDRV_WriteRecord( dev, &emr.emr )) return FALSE;
     return next->funcs->pSetViewportOrgEx( next, x, y, pt );
 }
 
@@ -280,7 +290,7 @@ BOOL EMFDRV_SetWindowOrgEx( PHYSDEV dev, INT x, INT y, POINT *pt )
     emr.ptlOrigin.x = x;
     emr.ptlOrigin.y = y;
 
-    if (!EMFDRV_WriteRecord( dev, &emr.emr )) return 0;
+    if (!EMFDRV_WriteRecord( dev, &emr.emr )) return FALSE;
     return next->funcs->pSetWindowOrgEx( next, x, y, pt );
 }
 
@@ -296,7 +306,7 @@ BOOL EMFDRV_ScaleViewportExtEx( PHYSDEV dev, INT xNum, INT xDenom, INT yNum, INT
     emr.yNum      = yNum;
     emr.yDenom    = yDenom;
 
-    if (!EMFDRV_WriteRecord( dev, &emr.emr )) return 0;
+    if (!EMFDRV_WriteRecord( dev, &emr.emr )) return FALSE;
     return next->funcs->pScaleViewportExtEx( next, xNum, xDenom, yNum, yDenom, size );
 }
 
@@ -312,7 +322,7 @@ BOOL EMFDRV_ScaleWindowExtEx( PHYSDEV dev, INT xNum, INT xDenom, INT yNum, INT y
     emr.yNum      = yNum;
     emr.yDenom    = yDenom;
 
-    if (!EMFDRV_WriteRecord( dev, &emr.emr )) return 0;
+    if (!EMFDRV_WriteRecord( dev, &emr.emr )) return FALSE;
     return next->funcs->pScaleWindowExtEx( next, xNum, xDenom, yNum, yDenom, size );
 }
 
@@ -366,7 +376,7 @@ BOOL EMFDRV_OffsetViewportOrgEx( PHYSDEV dev, INT x, INT y, POINT *pt )
     emr.ptlOrigin.x = prev.x + x;
     emr.ptlOrigin.y = prev.y + y;
 
-    if (!EMFDRV_WriteRecord( dev, &emr.emr )) return 0;
+    if (!EMFDRV_WriteRecord( dev, &emr.emr )) return FALSE;
     return next->funcs->pOffsetViewportOrgEx( next, x, y, pt );
 }
 
@@ -383,7 +393,7 @@ BOOL EMFDRV_OffsetWindowOrgEx( PHYSDEV dev, INT x, INT y, POINT *pt )
     emr.ptlOrigin.x = prev.x + x;
     emr.ptlOrigin.y = prev.y + y;
 
-    if (!EMFDRV_WriteRecord( dev, &emr.emr )) return 0;
+    if (!EMFDRV_WriteRecord( dev, &emr.emr )) return FALSE;
     return next->funcs->pOffsetWindowOrgEx( next, x, y, pt );
 }
 
@@ -464,13 +474,15 @@ BOOL EMFDRV_FlattenPath( PHYSDEV dev )
 
 BOOL EMFDRV_SelectClipPath( PHYSDEV dev, INT iMode )
 {
+    PHYSDEV next = GET_NEXT_PHYSDEV( dev, pSelectClipPath );
     EMRSELECTCLIPPATH emr;
 
     emr.emr.iType = EMR_SELECTCLIPPATH;
     emr.emr.nSize = sizeof(emr);
     emr.iMode = iMode;
 
-    return EMFDRV_WriteRecord( dev, &emr.emr );
+    if (!EMFDRV_WriteRecord( dev, &emr.emr )) return FALSE;
+    return next->funcs->pSelectClipPath( next, iMode );
 }
 
 BOOL EMFDRV_StrokeAndFillPath( PHYSDEV dev )
@@ -515,43 +527,5 @@ INT EMFDRV_GetDeviceCaps(PHYSDEV dev, INT cap)
 {
     EMFDRV_PDEVICE *physDev = (EMFDRV_PDEVICE*) dev;
 
-    switch(cap) {
-
-    case HORZRES:
-        return physDev->horzres;
-    case VERTRES:
-        return physDev->vertres;
-    case LOGPIXELSX:
-        return physDev->logpixelsx;
-    case LOGPIXELSY:
-        return physDev->logpixelsy;
-    case HORZSIZE:
-        return physDev->horzsize;
-    case VERTSIZE:
-        return physDev->vertsize;
-    case BITSPIXEL:
-        return physDev->bitspixel;
-    case TEXTCAPS:
-        return physDev->textcaps;
-    case RASTERCAPS:
-        return physDev->rastercaps;
-    case TECHNOLOGY:
-        return physDev->technology;
-    case PLANES:
-        return physDev->planes;
-    case NUMCOLORS:
-        return physDev->numcolors;
-    case CURVECAPS:
-        return (CC_CIRCLES | CC_PIE | CC_CHORD | CC_ELLIPSES | CC_WIDE |
-                CC_STYLED | CC_WIDESTYLED | CC_INTERIORS | CC_ROUNDRECT);
-    case LINECAPS:
-        return (LC_POLYLINE | LC_MARKER | LC_POLYMARKER | LC_WIDE |
-                LC_STYLED | LC_WIDESTYLED | LC_INTERIORS);
-    case POLYGONALCAPS:
-        return (PC_POLYGON | PC_RECTANGLE | PC_WINDPOLYGON | PC_SCANLINE |
-                PC_WIDE | PC_STYLED | PC_WIDESTYLED | PC_INTERIORS);
-    default:
-        FIXME("Unimplemented cap %d\n", cap);
-	return 0;
-    }
+    return GetDeviceCaps( physDev->ref_dc, cap );
 }

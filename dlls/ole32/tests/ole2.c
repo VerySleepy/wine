@@ -20,6 +20,7 @@
 
 #define COBJMACROS
 #define CONST_VTABLE
+#define WIN32_LEAN_AND_MEAN
 
 #include <stdarg.h>
 
@@ -32,9 +33,47 @@
 
 #define ok_ole_success(hr, func) ok(hr == S_OK, func " failed with error 0x%08x\n", hr)
 
+#define DEFINE_EXPECT(func) \
+    static BOOL expect_ ## func = FALSE, called_ ## func = FALSE
+
+#define SET_EXPECT(func) \
+    expect_ ## func = TRUE
+
+#define CHECK_EXPECT2(func) \
+    do { \
+        ok(expect_ ##func, "unexpected call " #func "\n"); \
+        called_ ## func = TRUE; \
+    }while(0)
+
+#define CHECK_EXPECT(func) \
+    do { \
+        CHECK_EXPECT2(func); \
+        expect_ ## func = FALSE; \
+    }while(0)
+
+#define CHECK_CALLED(func) \
+    do { \
+        ok(called_ ## func, "expected " #func "\n"); \
+        expect_ ## func = called_ ## func = FALSE; \
+    }while(0)
+
+DEFINE_EXPECT(Storage_Stat);
+DEFINE_EXPECT(Storage_OpenStream_CompObj);
+DEFINE_EXPECT(Storage_SetClass);
+DEFINE_EXPECT(Storage_CreateStream_CompObj);
+DEFINE_EXPECT(Storage_OpenStream_Ole);
+
 static IPersistStorage OleObjectPersistStg;
 static IOleCache *cache;
 static IRunnableObject *runnable;
+
+static const CLSID CLSID_WineTestOld =
+{ /* 9474ba1a-258b-490b-bc13-516e9239acd0 */
+    0x9474ba1a,
+    0x258b,
+    0x490b,
+    {0xbc, 0x13, 0x51, 0x6e, 0x92, 0x39, 0xac, 0xd0}
+};
 
 static const CLSID CLSID_WineTest =
 { /* 9474ba1a-258b-490b-bc13-516e9239ace0 */
@@ -615,7 +654,7 @@ static HRESULT WINAPI OleObjectCF_QueryInterface(IClassFactory *iface, REFIID ri
     if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IClassFactory))
     {
         *ppv = iface;
-        IUnknown_AddRef(iface);
+        IClassFactory_AddRef(iface);
         return S_OK;
     }
     *ppv = NULL;
@@ -724,6 +763,84 @@ static const IRunnableObjectVtbl OleObjectRunnableVtbl =
 static IRunnableObject OleObjectRunnable = { &OleObjectRunnableVtbl };
 
 static const CLSID CLSID_Equation3 = {0x0002CE02, 0x0000, 0x0000, {0xC0,0x00,0x00,0x00,0x00,0x00,0x00,0x46} };
+
+static HRESULT WINAPI viewobject_QueryInterface(IViewObject *iface, REFIID riid, void **obj)
+{
+    if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IViewObject))
+    {
+        *obj = iface;
+        return S_OK;
+    }
+
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI viewobject_AddRef(IViewObject *iface)
+{
+    return 2;
+}
+
+static ULONG WINAPI viewobject_Release(IViewObject *iface)
+{
+    return 1;
+}
+
+static HRESULT WINAPI viewobject_Draw(IViewObject *iface, DWORD aspect, LONG index,
+    void *paspect, DVTARGETDEVICE *ptd, HDC hdcTargetDev, HDC hdcDraw,
+    LPCRECTL bounds, LPCRECTL wbounds, BOOL (STDMETHODCALLTYPE *pfnContinue)(ULONG_PTR dwContinue),
+    ULONG_PTR dwContinue)
+{
+    ok(index == -1, "index=%d\n", index);
+    return S_OK;
+}
+
+static HRESULT WINAPI viewobject_GetColorSet(IViewObject *iface, DWORD draw_aspect, LONG index,
+    void *aspect, DVTARGETDEVICE *ptd, HDC hicTargetDev, LOGPALETTE **colorset)
+{
+    ok(0, "unexpected call GetColorSet\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI viewobject_Freeze(IViewObject *iface, DWORD draw_aspect, LONG index,
+    void *aspect, DWORD *freeze)
+{
+    ok(0, "unexpected call Freeze\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI viewobject_Unfreeze(IViewObject *iface, DWORD freeze)
+{
+    ok(0, "unexpected call Unfreeze\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI viewobject_SetAdvise(IViewObject *iface, DWORD aspects, DWORD advf, IAdviseSink *sink)
+{
+    ok(0, "unexpected call SetAdvise\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI viewobject_GetAdvise(IViewObject *iface, DWORD *aspects, DWORD *advf,
+    IAdviseSink **sink)
+{
+    ok(0, "unexpected call GetAdvise\n");
+    return E_NOTIMPL;
+}
+
+static const struct IViewObjectVtbl viewobjectvtbl = {
+    viewobject_QueryInterface,
+    viewobject_AddRef,
+    viewobject_Release,
+    viewobject_Draw,
+    viewobject_GetColorSet,
+    viewobject_Freeze,
+    viewobject_Unfreeze,
+    viewobject_SetAdvise,
+    viewobject_GetAdvise
+};
+
+static IViewObject viewobject = { &viewobjectvtbl };
 
 static void test_OleCreate(IStorage *pStorage)
 {
@@ -913,6 +1030,7 @@ static void test_OleCreate(IStorage *pStorage)
     IOleObject_Release(pObject);
     CHECK_NO_EXTRA_METHODS();
     trace("end\n");
+    g_expected_fetc = NULL;
 }
 
 static void test_OleLoad(IStorage *pStorage)
@@ -995,7 +1113,7 @@ static HRESULT WINAPI AdviseSink_QueryInterface(IAdviseSink *iface, REFIID riid,
     if (IsEqualIID(riid, &IID_IAdviseSink) || IsEqualIID(riid, &IID_IUnknown))
     {
         *ppv = iface;
-        IUnknown_AddRef(iface);
+        IAdviseSink_AddRef(iface);
         return S_OK;
     }
     *ppv = NULL;
@@ -1259,7 +1377,7 @@ static void test_data_cache(void)
         { NULL, 0 }
     };
 
-    GetSystemDirectory(szSystemDir, sizeof(szSystemDir)/sizeof(szSystemDir[0]));
+    GetSystemDirectoryA(szSystemDir, sizeof(szSystemDir)/sizeof(szSystemDir[0]));
 
     expected_method_list = methods_cacheinitnew;
 
@@ -1277,11 +1395,11 @@ static void test_data_cache(void)
     hr = CreateDataCache(NULL, &CLSID_NULL, &IID_IOleCache2, (LPVOID *)&pOleCache);
     ok_ole_success(hr, "CreateDataCache");
 
-    hr = IOleCache_QueryInterface(pOleCache, &IID_IPersistStorage, (LPVOID *)&pPS);
+    hr = IOleCache2_QueryInterface(pOleCache, &IID_IPersistStorage, (LPVOID *)&pPS);
     ok_ole_success(hr, "IOleCache_QueryInterface(IID_IPersistStorage)");
-    hr = IOleCache_QueryInterface(pOleCache, &IID_IViewObject, (LPVOID *)&pViewObject);
+    hr = IOleCache2_QueryInterface(pOleCache, &IID_IViewObject, (LPVOID *)&pViewObject);
     ok_ole_success(hr, "IOleCache_QueryInterface(IID_IViewObject)");
-    hr = IOleCache_QueryInterface(pOleCache, &IID_IOleCacheControl, (LPVOID *)&pOleCacheControl);
+    hr = IOleCache2_QueryInterface(pOleCache, &IID_IOleCacheControl, (LPVOID *)&pOleCacheControl);
     ok_ole_success(hr, "IOleCache_QueryInterface(IID_IOleCacheControl)");
 
     hr = IViewObject_SetAdvise(pViewObject, DVASPECT_ICON, ADVF_PRIMEFIRST, &AdviseSink);
@@ -1297,16 +1415,16 @@ static void test_data_cache(void)
     ok_ole_success(hr, "IPersistStorage_GetClassID");
     ok(IsEqualCLSID(&clsid, &IID_NULL), "clsid should be blank\n");
 
-    hr = IOleCache_Uncache(pOleCache, 0xdeadbeef);
+    hr = IOleCache2_Uncache(pOleCache, 0xdeadbeef);
     ok(hr == OLE_E_NOCONNECTION, "IOleCache_Uncache with invalid value should return OLE_E_NOCONNECTION instead of 0x%x\n", hr);
 
     /* Both tests crash on NT4 and below. StgCreatePropSetStg is only available on w2k and above. */
     if (GetProcAddress(GetModuleHandleA("ole32.dll"), "StgCreatePropSetStg"))
     {
-        hr = IOleCache_Cache(pOleCache, NULL, 0, &dwConnection);
+        hr = IOleCache2_Cache(pOleCache, NULL, 0, &dwConnection);
         ok(hr == E_INVALIDARG, "IOleCache_Cache with NULL fmtetc should have returned E_INVALIDARG instead of 0x%08x\n", hr);
 
-        hr = IOleCache_Cache(pOleCache, NULL, 0, NULL);
+        hr = IOleCache2_Cache(pOleCache, NULL, 0, NULL);
         ok(hr == E_INVALIDARG, "IOleCache_Cache with NULL pdwConnection should have returned E_INVALIDARG instead of 0x%08x\n", hr);
     }
     else
@@ -1321,7 +1439,7 @@ static void test_data_cache(void)
         for (i = 0; i < 7; i++)
         {
             fmtetc.tymed = 1 << i;
-            hr = IOleCache_Cache(pOleCache, &fmtetc, 0, &dwConnection);
+            hr = IOleCache2_Cache(pOleCache, &fmtetc, 0, &dwConnection);
             if ((fmtetc.cfFormat == CF_METAFILEPICT && fmtetc.tymed == TYMED_MFPICT) ||
                 (fmtetc.cfFormat == CF_BITMAP && fmtetc.tymed == TYMED_GDI) ||
                 (fmtetc.cfFormat == CF_DIB && fmtetc.tymed == TYMED_HGLOBAL) ||
@@ -1338,7 +1456,7 @@ static void test_data_cache(void)
                     fmtetc.cfFormat, fmtetc.tymed, hr);
             if (SUCCEEDED(hr))
             {
-                hr = IOleCache_Uncache(pOleCache, dwConnection);
+                hr = IOleCache2_Uncache(pOleCache, dwConnection);
                 ok_ole_success(hr, "IOleCache_Uncache");
             }
         }
@@ -1347,13 +1465,13 @@ static void test_data_cache(void)
     fmtetc.cfFormat = CF_BITMAP;
     fmtetc.dwAspect = DVASPECT_THUMBNAIL;
     fmtetc.tymed = TYMED_GDI;
-    hr = IOleCache_Cache(pOleCache, &fmtetc, 0, &dwConnection);
+    hr = IOleCache2_Cache(pOleCache, &fmtetc, 0, &dwConnection);
     ok_ole_success(hr, "IOleCache_Cache");
 
     fmtetc.cfFormat = 0;
     fmtetc.dwAspect = DVASPECT_ICON;
     fmtetc.tymed = TYMED_MFPICT;
-    hr = IOleCache_Cache(pOleCache, &fmtetc, 0, &dwConnection);
+    hr = IOleCache2_Cache(pOleCache, &fmtetc, 0, &dwConnection);
     ok_ole_success(hr, "IOleCache_Cache");
 
     MultiByteToWideChar(CP_ACP, 0, szSystemDir, -1, wszPath, sizeof(wszPath)/sizeof(wszPath[0]));
@@ -1362,15 +1480,15 @@ static void test_data_cache(void)
     fmtetc.cfFormat = CF_METAFILEPICT;
     stgmedium.tymed = TYMED_MFPICT;
     U(stgmedium).hMetaFilePict = OleMetafilePictFromIconAndLabel(
-        LoadIcon(NULL, IDI_APPLICATION), wszPath, wszPath, 0);
+        LoadIconA(NULL, (LPSTR)IDI_APPLICATION), wszPath, wszPath, 0);
     stgmedium.pUnkForRelease = NULL;
 
     fmtetc.dwAspect = DVASPECT_CONTENT;
-    hr = IOleCache_SetData(pOleCache, &fmtetc, &stgmedium, FALSE);
+    hr = IOleCache2_SetData(pOleCache, &fmtetc, &stgmedium, FALSE);
     ok(hr == OLE_E_BLANK, "IOleCache_SetData for aspect not in cache should have return OLE_E_BLANK instead of 0x%08x\n", hr);
 
     fmtetc.dwAspect = DVASPECT_ICON;
-    hr = IOleCache_SetData(pOleCache, &fmtetc, &stgmedium, FALSE);
+    hr = IOleCache2_SetData(pOleCache, &fmtetc, &stgmedium, FALSE);
     ok_ole_success(hr, "IOleCache_SetData");
     ReleaseStgMedium(&stgmedium);
 
@@ -1419,7 +1537,7 @@ static void test_data_cache(void)
 
     IPersistStorage_Release(pPS);
     IViewObject_Release(pViewObject);
-    IOleCache_Release(pOleCache);
+    IOleCache2_Release(pOleCache);
     IOleCacheControl_Release(pOleCacheControl);
 
     CHECK_NO_EXTRA_METHODS();
@@ -1431,9 +1549,9 @@ static void test_data_cache(void)
     hr = CreateDataCache(NULL, &CLSID_NULL, &IID_IOleCache2, (LPVOID *)&pOleCache);
     ok_ole_success(hr, "CreateDataCache");
 
-    hr = IOleCache_QueryInterface(pOleCache, &IID_IPersistStorage, (LPVOID *)&pPS);
+    hr = IOleCache2_QueryInterface(pOleCache, &IID_IPersistStorage, (LPVOID *)&pPS);
     ok_ole_success(hr, "IOleCache_QueryInterface(IID_IPersistStorage)");
-    hr = IOleCache_QueryInterface(pOleCache, &IID_IViewObject, (LPVOID *)&pViewObject);
+    hr = IOleCache2_QueryInterface(pOleCache, &IID_IViewObject, (LPVOID *)&pViewObject);
     ok_ole_success(hr, "IOleCache_QueryInterface(IID_IViewObject)");
 
     hr = IViewObject_SetAdvise(pViewObject, DVASPECT_ICON, ADVF_PRIMEFIRST, &AdviseSink);
@@ -1450,7 +1568,7 @@ static void test_data_cache(void)
     fmtetc.lindex = -1;
     fmtetc.ptd = NULL;
     fmtetc.tymed = TYMED_MFPICT;
-    hr = IOleCache_Cache(pOleCache, &fmtetc, 0, &dwConnection);
+    hr = IOleCache2_Cache(pOleCache, &fmtetc, 0, &dwConnection);
     ok(hr == CACHE_S_SAMECACHE, "IOleCache_Cache with already loaded data format type should return CACHE_S_SAMECACHE instead of 0x%x\n", hr);
 
     rcBounds.left = 0;
@@ -1484,13 +1602,13 @@ static void test_data_cache(void)
     DeleteDC(hdcMem);
 
     todo_wine {
-    hr = IOleCache_InitCache(pOleCache, &DataObject);
+    hr = IOleCache2_InitCache(pOleCache, &DataObject);
     ok(hr == CACHE_E_NOCACHE_UPDATED, "IOleCache_InitCache should have returned CACHE_E_NOCACHE_UPDATED instead of 0x%08x\n", hr);
     }
 
     IPersistStorage_Release(pPS);
     IViewObject_Release(pViewObject);
-    IOleCache_Release(pOleCache);
+    IOleCache2_Release(pOleCache);
 
     todo_wine {
     CHECK_NO_EXTRA_METHODS();
@@ -1501,16 +1619,16 @@ static void test_data_cache(void)
 
     expected_method_list = methods_cachethenrun;
 
-    hr = IOleCache_QueryInterface(pOleCache, &IID_IDataObject, (LPVOID *)&pCacheDataObject);
+    hr = IOleCache2_QueryInterface(pOleCache, &IID_IDataObject, (LPVOID *)&pCacheDataObject);
     ok_ole_success(hr, "IOleCache_QueryInterface(IID_IDataObject)");
-    hr = IOleCache_QueryInterface(pOleCache, &IID_IOleCacheControl, (LPVOID *)&pOleCacheControl);
+    hr = IOleCache2_QueryInterface(pOleCache, &IID_IOleCacheControl, (LPVOID *)&pOleCacheControl);
     ok_ole_success(hr, "IOleCache_QueryInterface(IID_IOleCacheControl)");
 
     fmtetc.cfFormat = CF_METAFILEPICT;
     fmtetc.dwAspect = DVASPECT_CONTENT;
     fmtetc.tymed = TYMED_MFPICT;
 
-    hr = IOleCache_Cache(pOleCache, &fmtetc, 0, &dwConnection);
+    hr = IOleCache2_Cache(pOleCache, &fmtetc, 0, &dwConnection);
     ok_ole_success(hr, "IOleCache_Cache");
 
     hr = IDataObject_GetData(pCacheDataObject, &fmtetc, &stgmedium);
@@ -1520,14 +1638,14 @@ static void test_data_cache(void)
     fmtetc.dwAspect = DVASPECT_CONTENT;
     fmtetc.tymed = TYMED_HGLOBAL;
 
-    hr = IOleCache_Cache(pOleCache, &fmtetc, 0, &dwConnection);
+    hr = IOleCache2_Cache(pOleCache, &fmtetc, 0, &dwConnection);
     ok(hr == CACHE_S_FORMATETC_NOTSUPPORTED, "got %08x\n", hr);
 
     hr = IDataObject_GetData(pCacheDataObject, &fmtetc, &stgmedium);
     ok(hr == OLE_E_BLANK, "got %08x\n", hr);
 
     fmtetc.cfFormat = cf_test_2;
-    hr = IOleCache_Cache(pOleCache, &fmtetc, ADVF_PRIMEFIRST, &dwConnection);
+    hr = IOleCache2_Cache(pOleCache, &fmtetc, ADVF_PRIMEFIRST, &dwConnection);
     ok(hr == CACHE_S_FORMATETC_NOTSUPPORTED, "got %08x\n", hr);
 
     hr = IDataObject_GetData(pCacheDataObject, &fmtetc, &stgmedium);
@@ -1537,7 +1655,7 @@ static void test_data_cache(void)
     ok_ole_success(hr, "IOleCacheControl_OnRun");
 
     fmtetc.cfFormat = cf_test_3;
-    hr = IOleCache_Cache(pOleCache, &fmtetc, 0, &dwConnection);
+    hr = IOleCache2_Cache(pOleCache, &fmtetc, 0, &dwConnection);
     ok(hr == CACHE_S_FORMATETC_NOTSUPPORTED, "got %08x\n", hr);
 
     fmtetc.cfFormat = cf_test_1;
@@ -1555,7 +1673,7 @@ static void test_data_cache(void)
 
     IOleCacheControl_Release(pOleCacheControl);
     IDataObject_Release(pCacheDataObject);
-    IOleCache_Release(pOleCache);
+    IOleCache2_Release(pOleCache);
 
     CHECK_NO_EXTRA_METHODS();
 
@@ -1620,6 +1738,9 @@ static void test_default_handler(void)
 
     hr = IOleObject_GetClientSite(pObject, &pClientSite);
     ok_ole_success(hr, "IOleObject_GetClientSite");
+
+    hr = IOleObject_SetClientSite(pObject, pClientSite);
+    ok_ole_success(hr, "IOleObject_SetClientSite");
 
     hr = IOleObject_GetClipboardData(pObject, 0, &pDataObject);
     ok(hr == OLE_E_NOTRUNNING,
@@ -1841,14 +1962,394 @@ static const IUnknownVtbl UnknownVtbl =
     Unknown_Release
 };
 
-static IUnknown Unknown = { &UnknownVtbl };
+static IUnknown unknown = { &UnknownVtbl };
+
+static void test_OleRun(void)
+{
+    HRESULT hr;
+
+    hr = OleRun(&unknown);
+    ok(hr == S_OK, "OleRun failed 0x%08x\n", hr);
+}
 
 static void test_OleLockRunning(void)
 {
     HRESULT hr;
 
-    hr = OleLockRunning((LPUNKNOWN)&Unknown, TRUE, FALSE);
+    hr = OleLockRunning((LPUNKNOWN)&unknown, TRUE, FALSE);
     ok(hr == S_OK, "OleLockRunning failed 0x%08x\n", hr);
+}
+
+static void test_OleDraw(void)
+{
+    HRESULT hr;
+    RECT rect;
+
+    hr = OleDraw((IUnknown*)&viewobject, 0, (HDC)0x1, NULL);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = OleDraw(NULL, 0, (HDC)0x1, NULL);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+
+    hr = OleDraw(NULL, 0, (HDC)0x1, &rect);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+}
+
+static const WCHAR comp_objW[] = {1,'C','o','m','p','O','b','j',0};
+static IStream *comp_obj_stream;
+static IStream *ole_stream;
+
+static HRESULT WINAPI Storage_QueryInterface(IStorage *iface, REFIID riid, void **ppvObject)
+{
+    ok(0, "unexpected call to QueryInterface\n");
+    return E_NOTIMPL;
+}
+
+static ULONG WINAPI Storage_AddRef(IStorage *iface)
+{
+    ok(0, "unexpected call to AddRef\n");
+    return 2;
+}
+
+static ULONG WINAPI Storage_Release(IStorage *iface)
+{
+    ok(0, "unexpected call to Release\n");
+    return 1;
+}
+
+static HRESULT WINAPI Storage_CreateStream(IStorage *iface, LPCOLESTR pwcsName, DWORD grfMode, DWORD reserved1, DWORD reserved2, IStream **ppstm)
+{
+    ULARGE_INTEGER size = {{0}};
+    LARGE_INTEGER pos = {{0}};
+    HRESULT hr;
+
+    CHECK_EXPECT(Storage_CreateStream_CompObj);
+    ok(!lstrcmpW(pwcsName, comp_objW), "pwcsName = %s\n", wine_dbgstr_w(pwcsName));
+    todo_wine ok(grfMode == (STGM_CREATE|STGM_SHARE_EXCLUSIVE|STGM_READWRITE), "grfMode = %x\n", grfMode);
+    ok(!reserved1, "reserved1 = %x\n", reserved1);
+    ok(!reserved2, "reserved2 = %x\n", reserved2);
+    ok(!!ppstm, "ppstm = NULL\n");
+
+    *ppstm = comp_obj_stream;
+    IStream_AddRef(comp_obj_stream);
+    hr = IStream_Seek(comp_obj_stream, pos, STREAM_SEEK_SET, NULL);
+    ok(hr == S_OK, "IStream_Seek returned %x\n", hr);
+    hr = IStream_SetSize(comp_obj_stream, size);
+    ok(hr == S_OK, "IStream_SetSize returned %x\n", hr);
+    return S_OK;
+}
+
+static HRESULT WINAPI Storage_OpenStream(IStorage *iface, LPCOLESTR pwcsName, void *reserved1, DWORD grfMode, DWORD reserved2, IStream **ppstm)
+{
+    static  const WCHAR ole1W[] = {1,'O','l','e',0};
+
+    LARGE_INTEGER pos = {{0}};
+    HRESULT hr;
+
+    ok(!reserved1, "reserved1 = %p\n", reserved1);
+    ok(!reserved2, "reserved2 = %x\n", reserved2);
+    ok(!!ppstm, "ppstm = NULL\n");
+
+    if(!lstrcmpW(pwcsName, comp_objW)) {
+        CHECK_EXPECT2(Storage_OpenStream_CompObj);
+        ok(grfMode == STGM_SHARE_EXCLUSIVE, "grfMode = %x\n", grfMode);
+
+        *ppstm = comp_obj_stream;
+        IStream_AddRef(comp_obj_stream);
+        hr = IStream_Seek(comp_obj_stream, pos, STREAM_SEEK_SET, NULL);
+        ok(hr == S_OK, "IStream_Seek returned %x\n", hr);
+        return S_OK;
+    }else if(!lstrcmpW(pwcsName, ole1W)) {
+        CHECK_EXPECT(Storage_OpenStream_Ole);
+        ok(grfMode == (STGM_SHARE_EXCLUSIVE|STGM_READWRITE), "grfMode = %x\n", grfMode);
+
+        *ppstm = ole_stream;
+        IStream_AddRef(ole_stream);
+        hr = IStream_Seek(ole_stream, pos, STREAM_SEEK_SET, NULL);
+        ok(hr == S_OK, "IStream_Seek returned %x\n", hr);
+        return S_OK;
+    }
+
+    ok(0, "unexpected call to OpenStream: %s\n", wine_dbgstr_w(pwcsName));
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI Storage_CreateStorage(IStorage *iface, LPCOLESTR pwcsName, DWORD grfMode, DWORD dwStgFmt, DWORD reserved2, IStorage **ppstg)
+{
+    ok(0, "unexpected call to CreateStorage\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI Storage_OpenStorage(IStorage *iface, LPCOLESTR pwcsName, IStorage *pstgPriority, DWORD grfMode, SNB snbExclude, DWORD reserved, IStorage **ppstg)
+{
+    ok(0, "unexpected call to OpenStorage\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI Storage_CopyTo(IStorage *iface, DWORD ciidExclude, const IID *rgiidExclude, SNB snbExclude, IStorage *pstgDest)
+{
+    ok(0, "unexpected call to CopyTo\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI Storage_MoveElementTo(IStorage *iface, LPCOLESTR pwcsName, IStorage *pstgDest, LPCOLESTR pwcsNewName, DWORD grfFlags)
+{
+    ok(0, "unexpected call to MoveElementTo\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI Storage_Commit(IStorage *iface, DWORD grfCommitFlags)
+{
+    ok(0, "unexpected call to Commit\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI Storage_Revert(IStorage *iface)
+{
+    ok(0, "unexpected call to Revert\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI Storage_EnumElements(IStorage *iface, DWORD reserved1, void *reserved2, DWORD reserved3, IEnumSTATSTG **ppenum)
+{
+    ok(0, "unexpected call to EnumElements\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI Storage_DestroyElement(IStorage *iface, LPCOLESTR pwcsName)
+{
+    ok(0, "unexpected call to DestroyElement\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI Storage_RenameElement(IStorage *iface, LPCOLESTR pwcsOldName, LPCOLESTR pwcsNewName)
+{
+    ok(0, "unexpected call to RenameElement\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI Storage_SetElementTimes(IStorage *iface, LPCOLESTR pwcsName, const FILETIME *pctime, const FILETIME *patime, const FILETIME *pmtime)
+{
+    ok(0, "unexpected call to SetElementTimes\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI Storage_SetClass(IStorage *iface, REFCLSID clsid)
+{
+    CHECK_EXPECT(Storage_SetClass);
+    ok(IsEqualIID(clsid, &CLSID_WineTest), "clsid = %s\n", wine_dbgstr_guid(clsid));
+    return S_OK;
+}
+
+static HRESULT WINAPI Storage_SetStateBits(IStorage *iface, DWORD grfStateBits, DWORD grfMask)
+{
+    ok(0, "unexpected call to SetStateBits\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI Storage_Stat(IStorage *iface, STATSTG *pstatstg, DWORD grfStatFlag)
+{
+    CHECK_EXPECT2(Storage_Stat);
+    ok(pstatstg != NULL, "pstatstg = NULL\n");
+    ok(grfStatFlag == STATFLAG_NONAME, "grfStatFlag = %x\n", grfStatFlag);
+
+    memset(pstatstg, 0, sizeof(STATSTG));
+    pstatstg->type = STGTY_STORAGE;
+    pstatstg->clsid = CLSID_WineTestOld;
+    return S_OK;
+}
+
+static IStorageVtbl StorageVtbl =
+{
+    Storage_QueryInterface,
+    Storage_AddRef,
+    Storage_Release,
+    Storage_CreateStream,
+    Storage_OpenStream,
+    Storage_CreateStorage,
+    Storage_OpenStorage,
+    Storage_CopyTo,
+    Storage_MoveElementTo,
+    Storage_Commit,
+    Storage_Revert,
+    Storage_EnumElements,
+    Storage_DestroyElement,
+    Storage_RenameElement,
+    Storage_SetElementTimes,
+    Storage_SetClass,
+    Storage_SetStateBits,
+    Storage_Stat
+};
+
+static IStorage Storage = { &StorageVtbl };
+
+static void test_OleDoAutoConvert(void)
+{
+    static const WCHAR clsidW[] = {'C','L','S','I','D','\\',0};
+    static struct {
+        DWORD reserved1;
+        DWORD version;
+        DWORD reserved2[5];
+        DWORD ansi_user_type_len;
+        DWORD ansi_clipboard_format_len;
+        DWORD reserved3;
+        DWORD unicode_marker;
+        DWORD unicode_user_type_len;
+        DWORD unicode_clipboard_format_len;
+        DWORD reserved4;
+    } comp_obj_data;
+    static struct {
+        DWORD version;
+        DWORD flags;
+        DWORD link_update_option;
+        DWORD reserved1;
+        DWORD reserved_moniker_stream_size;
+        DWORD relative_source_moniker_stream_size;
+        DWORD absolute_source_moniker_stream_size;
+        DWORD clsid_indicator;
+        CLSID clsid;
+        DWORD reserved_display_name;
+        DWORD reserved2;
+        DWORD local_update_time;
+        DWORD local_check_update_time;
+        DWORD remote_update_time;
+    } ole_data;
+
+    LARGE_INTEGER pos = {{0}};
+    WCHAR buf[39+6];
+    DWORD i, ret;
+    HKEY root;
+    CLSID clsid;
+    HRESULT hr;
+
+    hr = CreateStreamOnHGlobal(NULL, TRUE, &comp_obj_stream);
+    ok(hr == S_OK, "CreateStreamOnHGlobal returned %x\n", hr);
+    hr = IStream_Write(comp_obj_stream, (char*)&comp_obj_data, sizeof(comp_obj_data), NULL);
+    ok(hr == S_OK, "IStream_Write returned %x\n", hr);
+
+    hr = CreateStreamOnHGlobal(NULL, TRUE, &ole_stream);
+    ok(hr == S_OK, "CreateStreamOnHGlobal returned %x\n", hr);
+    hr = IStream_Write(ole_stream, (char*)&ole_data, sizeof(ole_data), NULL);
+    ok(hr == S_OK, "IStream_Write returned %x\n", hr);
+
+    clsid = IID_WineTest;
+    hr = OleDoAutoConvert(NULL, &clsid);
+    ok(hr == E_INVALIDARG, "OleDoAutoConvert returned %x\n", hr);
+    ok(IsEqualIID(&clsid, &IID_NULL), "clsid = %s\n", wine_dbgstr_guid(&clsid));
+
+    if(0) /* crashes on Win7 */
+        OleDoAutoConvert(&Storage, NULL);
+
+    clsid = IID_WineTest;
+    SET_EXPECT(Storage_Stat);
+    hr = OleDoAutoConvert(&Storage, &clsid);
+    ok(hr == REGDB_E_CLASSNOTREG, "OleDoAutoConvert returned %x\n", hr);
+    CHECK_CALLED(Storage_Stat);
+    ok(IsEqualIID(&clsid, &CLSID_WineTestOld), "clsid = %s\n", wine_dbgstr_guid(&clsid));
+
+    lstrcpyW(buf, clsidW);
+    StringFromGUID2(&CLSID_WineTestOld, buf+6, 39);
+
+    ret = RegCreateKeyExW(HKEY_CLASSES_ROOT, buf, 0, NULL, 0,
+            KEY_READ | KEY_WRITE | KEY_CREATE_SUB_KEY, NULL, &root, NULL);
+    if(ret != ERROR_SUCCESS) {
+        win_skip("not enough permissions to create CLSID key (%u)\n", ret);
+        return;
+    }
+
+    clsid = IID_WineTest;
+    SET_EXPECT(Storage_Stat);
+    hr = OleDoAutoConvert(&Storage, &clsid);
+    ok(hr == REGDB_E_KEYMISSING, "OleDoAutoConvert returned %x\n", hr);
+    CHECK_CALLED(Storage_Stat);
+    ok(IsEqualIID(&clsid, &CLSID_WineTestOld), "clsid = %s\n", wine_dbgstr_guid(&clsid));
+
+    hr = OleSetAutoConvert(&CLSID_WineTestOld, &CLSID_WineTest);
+    ok_ole_success(hr, "OleSetAutoConvert");
+
+    hr = OleGetAutoConvert(&CLSID_WineTestOld, &clsid);
+    ok_ole_success(hr, "OleGetAutoConvert");
+    ok(IsEqualIID(&clsid, &CLSID_WineTest), "incorrect clsid: %s\n", wine_dbgstr_guid(&clsid));
+
+    clsid = IID_WineTest;
+    SET_EXPECT(Storage_Stat);
+    SET_EXPECT(Storage_OpenStream_CompObj);
+    SET_EXPECT(Storage_SetClass);
+    SET_EXPECT(Storage_CreateStream_CompObj);
+    SET_EXPECT(Storage_OpenStream_Ole);
+    hr = OleDoAutoConvert(&Storage, &clsid);
+    ok(hr == S_OK, "OleDoAutoConvert returned %x\n", hr);
+    CHECK_CALLED(Storage_Stat);
+    CHECK_CALLED(Storage_OpenStream_CompObj);
+    CHECK_CALLED(Storage_SetClass);
+    CHECK_CALLED(Storage_CreateStream_CompObj);
+    CHECK_CALLED(Storage_OpenStream_Ole);
+    ok(IsEqualIID(&clsid, &CLSID_WineTest), "clsid = %s\n", wine_dbgstr_guid(&clsid));
+
+    hr = IStream_Seek(comp_obj_stream, pos, STREAM_SEEK_SET, NULL);
+    ok(hr == S_OK, "IStream_Seek returned %x\n", hr);
+    hr = IStream_Read(comp_obj_stream, &comp_obj_data, sizeof(comp_obj_data), NULL);
+    ok(hr == S_OK, "IStream_Read returned %x\n", hr);
+    ok(comp_obj_data.reserved1 == 0xfffe0001, "reserved1 = %x\n", comp_obj_data.reserved1);
+    ok(comp_obj_data.version == 0xa03, "version = %x\n", comp_obj_data.version);
+    ok(comp_obj_data.reserved2[0] == -1, "reserved2[0] = %x\n", comp_obj_data.reserved2[0]);
+    ok(IsEqualIID(comp_obj_data.reserved2+1, &CLSID_WineTestOld), "reserved2 = %s\n", wine_dbgstr_guid((CLSID*)(comp_obj_data.reserved2+1)));
+    ok(!comp_obj_data.ansi_user_type_len, "ansi_user_type_len = %d\n", comp_obj_data.ansi_user_type_len);
+    ok(!comp_obj_data.ansi_clipboard_format_len, "ansi_clipboard_format_len = %d\n", comp_obj_data.ansi_clipboard_format_len);
+    ok(!comp_obj_data.reserved3, "reserved3 = %x\n", comp_obj_data.reserved3);
+    ok(comp_obj_data.unicode_marker == 0x71b239f4, "unicode_marker = %x\n", comp_obj_data.unicode_marker);
+    ok(!comp_obj_data.unicode_user_type_len, "unicode_user_type_len = %d\n", comp_obj_data.unicode_user_type_len);
+    ok(!comp_obj_data.unicode_clipboard_format_len, "unicode_clipboard_format_len = %d\n", comp_obj_data.unicode_clipboard_format_len);
+    ok(!comp_obj_data.reserved4, "reserved4 %d\n", comp_obj_data.reserved4);
+
+    hr = IStream_Seek(ole_stream, pos, STREAM_SEEK_SET, NULL);
+    ok(hr == S_OK, "IStream_Seek returned %x\n", hr);
+    hr = IStream_Read(ole_stream, &ole_data, sizeof(ole_data), NULL);
+    ok(hr == S_OK, "IStream_Read returned %x\n", hr);
+    ok(ole_data.version == 0, "version = %x\n", ole_data.version);
+    ok(ole_data.flags == 4, "flags = %x\n", ole_data.flags);
+    for(i=2; i<sizeof(ole_data)/sizeof(DWORD); i++)
+        ok(((DWORD*)&ole_data)[i] == 0, "ole_data[%d] = %x\n", i, ((DWORD*)&ole_data)[i]);
+
+    SET_EXPECT(Storage_OpenStream_Ole);
+    hr = SetConvertStg(&Storage, TRUE);
+    ok(hr == S_OK, "SetConvertStg returned %x\n", hr);
+    CHECK_CALLED(Storage_OpenStream_Ole);
+
+    SET_EXPECT(Storage_OpenStream_CompObj);
+    SET_EXPECT(Storage_Stat);
+    SET_EXPECT(Storage_CreateStream_CompObj);
+    hr = WriteFmtUserTypeStg(&Storage, 0, NULL);
+    ok(hr == S_OK, "WriteFmtUserTypeStg returned %x\n", hr);
+    todo_wine CHECK_CALLED(Storage_OpenStream_CompObj);
+    CHECK_CALLED(Storage_Stat);
+    CHECK_CALLED(Storage_CreateStream_CompObj);
+    hr = IStream_Seek(comp_obj_stream, pos, STREAM_SEEK_SET, NULL);
+    ok(hr == S_OK, "IStream_Seek returned %x\n", hr);
+    hr = IStream_Read(comp_obj_stream, &comp_obj_data, sizeof(comp_obj_data), NULL);
+    ok(hr == S_OK, "IStream_Read returned %x\n", hr);
+    ok(comp_obj_data.reserved1 == 0xfffe0001, "reserved1 = %x\n", comp_obj_data.reserved1);
+    ok(comp_obj_data.version == 0xa03, "version = %x\n", comp_obj_data.version);
+    ok(comp_obj_data.reserved2[0] == -1, "reserved2[0] = %x\n", comp_obj_data.reserved2[0]);
+    ok(IsEqualIID(comp_obj_data.reserved2+1, &CLSID_WineTestOld), "reserved2 = %s\n", wine_dbgstr_guid((CLSID*)(comp_obj_data.reserved2+1)));
+    ok(!comp_obj_data.ansi_user_type_len, "ansi_user_type_len = %d\n", comp_obj_data.ansi_user_type_len);
+    ok(!comp_obj_data.ansi_clipboard_format_len, "ansi_clipboard_format_len = %d\n", comp_obj_data.ansi_clipboard_format_len);
+    ok(!comp_obj_data.reserved3, "reserved3 = %x\n", comp_obj_data.reserved3);
+    ok(comp_obj_data.unicode_marker == 0x71b239f4, "unicode_marker = %x\n", comp_obj_data.unicode_marker);
+    ok(!comp_obj_data.unicode_user_type_len, "unicode_user_type_len = %d\n", comp_obj_data.unicode_user_type_len);
+    ok(!comp_obj_data.unicode_clipboard_format_len, "unicode_clipboard_format_len = %d\n", comp_obj_data.unicode_clipboard_format_len);
+    ok(!comp_obj_data.reserved4, "reserved4 %d\n", comp_obj_data.reserved4);
+
+    ret = IStream_Release(comp_obj_stream);
+    ok(!ret, "comp_obj_stream was not freed\n");
+    ret = IStream_Release(ole_stream);
+    ok(!ret, "ole_stream was not freed\n");
+
+    ret = RegDeleteKeyA(root, "AutoConvertTo");
+    ok(ret == ERROR_SUCCESS, "RegDeleteKey error %u\n", ret);
+    ret = RegDeleteKeyA(root, "");
+    ok(ret == ERROR_SUCCESS, "RegDeleteKey error %u\n", ret);
+    RegCloseKey(root);
 }
 
 START_TEST(ole2)
@@ -1886,7 +2387,10 @@ START_TEST(ole2)
     test_data_cache();
     test_default_handler();
     test_runnable();
+    test_OleRun();
     test_OleLockRunning();
+    test_OleDraw();
+    test_OleDoAutoConvert();
 
     CoUninitialize();
 }

@@ -58,8 +58,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(dbghelp_msc);
 
-#define MAX_PATHNAME_LEN 1024
-
 struct pdb_stream_name
 {
     const char* name;
@@ -651,9 +649,9 @@ static struct symt* codeview_add_type_array(struct codeview_type_parse* ctp,
     return &symt_new_array(ctp->module, 0, -arr_len, elem, index)->symt;
 }
 
-static int codeview_add_type_enum_field_list(struct module* module,
-                                             struct symt_enum* symt,
-                                             const union codeview_reftype* ref_type)
+static BOOL codeview_add_type_enum_field_list(struct module* module,
+                                              struct symt_enum* symt,
+                                              const union codeview_reftype* ref_type)
 {
     const unsigned char*                ptr = ref_type->fieldlist.list;
     const unsigned char*                last = (const BYTE*)ref_type + ref_type->generic.len + 2;
@@ -933,6 +931,18 @@ static int codeview_add_type_struct_field_list(struct codeview_type_parse* ctp,
                 ptr += 2 + 2 + 4 + (strlen(type->onemethod_v3.name) + 1);
                 break;
             }
+            break;
+
+        case LF_INDEX_V1:
+            if (!codeview_add_type_struct_field_list(ctp, symt, type->index_v1.ref))
+                return FALSE;
+            ptr += 2 + 2;
+            break;
+
+        case LF_INDEX_V2:
+            if (!codeview_add_type_struct_field_list(ctp, symt, type->index_v2.ref))
+                return FALSE;
+            ptr += 2 + 2 + 4;
             break;
 
         default:
@@ -1315,12 +1325,12 @@ static struct symt* codeview_parse_one_type(struct codeview_type_parse* ctp,
     default:
         FIXME("Unsupported type-id leaf %x\n", type->generic.id);
         dump(type, 2 + type->generic.len);
-        return FALSE;
+        return NULL;
     }
     return codeview_add_type(curr_type, symt) ? symt : NULL;
 }
 
-static int codeview_parse_type_table(struct codeview_type_parse* ctp)
+static BOOL codeview_parse_type_table(struct codeview_type_parse* ctp)
 {
     unsigned int                curr_type = FIRST_DEFINABLE_TYPE;
     const union codeview_type*  type;
@@ -1358,7 +1368,8 @@ static void codeview_snarf_linetab(const struct msc_debug_info* msc_dbg, const B
 {
     const BYTE*                 ptr = linetab;
     int				nfile, nseg;
-    int				i, j, k;
+    int                         i, j;
+    unsigned int                k;
     const unsigned int*         filetab;
     const unsigned int*         lt_ptr;
     const unsigned short*       linenos;
@@ -1544,14 +1555,13 @@ static inline void codeview_add_variable(const struct msc_debug_info* msc_dbg,
     }
 }
 
-static int codeview_snarf(const struct msc_debug_info* msc_dbg, const BYTE* root, 
-                          int offset, int size, BOOL do_globals)
+static BOOL codeview_snarf(const struct msc_debug_info* msc_dbg, const BYTE* root,
+                           int offset, int size, BOOL do_globals)
 {
     struct symt_function*               curr_func = NULL;
     int                                 i, length;
     struct symt_block*                  block = NULL;
     struct symt*                        symt;
-    const char*                         name;
     struct symt_compiland*              compiland = NULL;
     struct location                     loc;
 
@@ -1947,9 +1957,13 @@ static int codeview_snarf(const struct msc_debug_info* msc_dbg, const BYTE* root
 	case S_PROCREF_V1:
 	case S_DATAREF_V1:
 	case S_LPROCREF_V1:
-            name = (const char*)sym + length;
-            length += (*name + 1 + 3) & ~3;
-            break;
+            {
+                const char* name;
+
+                name = (const char*)sym + length;
+                length += (*name + 1 + 3) & ~3;
+                break;
+            }
 
         case S_MSTOOL_V3: /* just to silence a few warnings */
         case S_MSTOOLINFO_V3:
@@ -1972,7 +1986,12 @@ static int codeview_snarf(const struct msc_debug_info* msc_dbg, const BYTE* root
         case S_SECTINFO_V3:
         case S_SUBSECTINFO_V3:
         case S_ENTRYPOINT_V3:
+        case 0x113e:
         case 0x1139:
+        case 0x1141:
+        case 0x1142:
+        case 0x1143:
+        case 0x1144:
             TRACE("Unsupported symbol id %x\n", sym->generic.id);
             break;
 
@@ -1988,8 +2007,8 @@ static int codeview_snarf(const struct msc_debug_info* msc_dbg, const BYTE* root
     return TRUE;
 }
 
-static int codeview_snarf_public(const struct msc_debug_info* msc_dbg, const BYTE* root,
-                                 int offset, int size)
+static BOOL codeview_snarf_public(const struct msc_debug_info* msc_dbg, const BYTE* root,
+                                  int offset, int size)
 
 {
     int                                 i, length;
@@ -2223,7 +2242,7 @@ static void pdb_free_file(struct pdb_file_info* pdb_file)
     HeapFree(GetProcessHeap(), 0, pdb_file->stream_dict);
 }
 
-static BOOL pdb_load_stream_name_table(struct pdb_file_info* pdb_file, const char* str, unsigned cb)
+static void pdb_load_stream_name_table(struct pdb_file_info* pdb_file, const char* str, unsigned cb)
 {
     DWORD*      pdw;
     DWORD*      ok_bits;
@@ -2236,7 +2255,7 @@ static BOOL pdb_load_stream_name_table(struct pdb_file_info* pdb_file, const cha
     count = *pdw++;
 
     pdb_file->stream_dict = HeapAlloc(GetProcessHeap(), 0, (numok + 1) * sizeof(struct pdb_stream_name) + cb);
-    if (!pdb_file->stream_dict) return FALSE;
+    if (!pdb_file->stream_dict) return;
     cpstr = (char*)(pdb_file->stream_dict + numok + 1);
     memcpy(cpstr, str, cb);
 
@@ -2246,7 +2265,7 @@ static BOOL pdb_load_stream_name_table(struct pdb_file_info* pdb_file, const cha
     if (*pdw++ != 0)
     {
         FIXME("unexpected value\n");
-        return -1;
+        return;
     }
 
     for (i = j = 0; i < count; i++)
@@ -2262,7 +2281,6 @@ static BOOL pdb_load_stream_name_table(struct pdb_file_info* pdb_file, const cha
     /* add sentinel */
     pdb_file->stream_dict[numok].name = NULL;
     pdb_file->fpoext_stream = -1;
-    return j == numok && i == count;
 }
 
 static unsigned pdb_get_stream_by_name(const struct pdb_file_info* pdb_file, const char* name)
@@ -2512,6 +2530,7 @@ static BOOL pdb_init(const struct pdb_lookup* pdb_lookup, struct pdb_file_info* 
         if (pdb_lookup->kind != PDB_JG)
         {
             WARN("Found %s, but wrong PDB kind\n", pdb_lookup->filename);
+            pdb_free(root);
             return FALSE;
         }
         pdb_file->kind = PDB_JG;
@@ -2624,7 +2643,7 @@ static void pdb_process_symbol_imports(const struct process* pcs,
         while (imp < (const PDB_SYMBOL_IMPORT*)last)
         {
             ptr = (const char*)imp + sizeof(*imp) + strlen(imp->filename);
-            if (i >= CV_MAX_MODULES) FIXME("Out of bounds !!!\n");
+            if (i >= CV_MAX_MODULES) FIXME("Out of bounds!!!\n");
             if (!strcasecmp(pdb_lookup->filename, imp->filename))
             {
                 if (module_index != -1) FIXME("Twice the entry\n");
@@ -2657,7 +2676,7 @@ static void pdb_process_symbol_imports(const struct process* pcs,
         pdb_module_info->used_subfiles = 1;
     }
     cv_current_module = &cv_zmodules[module_index];
-    if (cv_current_module->allowed) FIXME("Already allowed ??\n");
+    if (cv_current_module->allowed) FIXME("Already allowed??\n");
     cv_current_module->allowed = TRUE;
 }
 
@@ -2905,8 +2924,8 @@ struct zvalue
     struct hash_table_elt       elt;
 };
 
-#define PEV_ERROR(pev, msg)       snprintf((pev)->error, sizeof((pev)->error), "%s", (msg)),FALSE
-#define PEV_ERROR1(pev, msg, pmt) snprintf((pev)->error, sizeof((pev)->error), (msg), (pmt)),FALSE
+#define PEV_ERROR(pev, msg)       snprintf((pev)->error, sizeof((pev)->error), "%s", (msg))
+#define PEV_ERROR1(pev, msg, pmt) snprintf((pev)->error, sizeof((pev)->error), (msg), (pmt))
 
 #if 0
 static void pev_dump_stack(struct pevaluator* pev)
@@ -3240,7 +3259,7 @@ static BOOL codeview_process_info(const struct process* pcs,
                 ctp.table  = (const BYTE*)(ctp.offset + types->cTypes);
 
                 cv_current_module = &cv_zmodules[0];
-                if (cv_current_module->allowed) FIXME("Already allowed ??\n");
+                if (cv_current_module->allowed) FIXME("Already allowed??\n");
                 cv_current_module->allowed = TRUE;
 
                 codeview_parse_type_table(&ctp);

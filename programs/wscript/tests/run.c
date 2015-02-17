@@ -34,8 +34,8 @@
 #define SET_EXPECT(func) \
     expect_ ## func = TRUE
 
-#define SET_CALLED(func) \
-    called_ ## func = TRUE
+#define CLEAR_CALLED(func) \
+    expect_ ## func = called_ ## func = FALSE
 
 #define CHECK_EXPECT2(func) \
     do { \
@@ -254,10 +254,10 @@ static HRESULT WINAPI Dispatch_Invoke(IDispatch *iface, DISPID dispIdMember, REF
         ok(pdp->cArgs == 0, "cArgs = %d\n", pdp->cArgs);
         ok(!pdp->cNamedArgs, "cNamedArgs = %d\n", pdp->cNamedArgs);
         V_VT(pVarResult) = VT_BSTR;
-        res = GetFullPathNameA(script_name, sizeof(fullPath)/sizeof(WCHAR), fullPath, &pos);
-        if(!res || res > sizeof(fullPath)/sizeof(WCHAR))
+        res = GetFullPathNameA(script_name, sizeof(fullPath), fullPath, &pos);
+        if(!res || res > sizeof(fullPath))
             return E_FAIL;
-        if(!(V_BSTR(pVarResult) = SysAllocString(a2bstr(pos))))
+        if(!(V_BSTR(pVarResult) = a2bstr(pos)))
             return E_OUTOFMEMORY;
         break;
     }
@@ -270,10 +270,10 @@ static HRESULT WINAPI Dispatch_Invoke(IDispatch *iface, DISPID dispIdMember, REF
         ok(pdp->cArgs == 0, "cArgs = %d\n", pdp->cArgs);
         ok(!pdp->cNamedArgs, "cNamedArgs = %d\n", pdp->cNamedArgs);
         V_VT(pVarResult) = VT_BSTR;
-        res = GetFullPathNameA(script_name, sizeof(fullPath)/sizeof(WCHAR), fullPath, NULL);
-        if(!res || res > sizeof(fullPath)/sizeof(WCHAR))
+        res = GetFullPathNameA(script_name, sizeof(fullPath), fullPath, NULL);
+        if(!res || res > sizeof(fullPath))
             return E_FAIL;
-        if(!(V_BSTR(pVarResult) = SysAllocString(a2bstr(fullPath))))
+        if(!(V_BSTR(pVarResult) = a2bstr(fullPath)))
             return E_OUTOFMEMORY;
         break;
     }
@@ -341,7 +341,6 @@ static IClassFactory testobj_cf = { &ClassFactoryVtbl };
 
 static void run_test(const char *file_name)
 {
-    SECURITY_ATTRIBUTES sa = {sizeof(sa), 0, TRUE};
     char command[MAX_PATH];
     STARTUPINFOA si = {sizeof(si)};
     PROCESS_INFORMATION pi;
@@ -355,7 +354,7 @@ static void run_test(const char *file_name)
     bres = CreateProcessA(NULL, command, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi);
     if(!bres) {
         win_skip("script.exe is not available\n");
-        SET_CALLED(reportSuccess);
+        CLEAR_CALLED(reportSuccess);
         return;
     }
 
@@ -367,7 +366,7 @@ static void run_test(const char *file_name)
     CHECK_CALLED(reportSuccess);
 }
 
-static BOOL WINAPI test_enum_proc(HMODULE module, LPCTSTR type, LPSTR name, LONG_PTR param)
+static BOOL WINAPI test_enum_proc(HMODULE module, LPCSTR type, LPSTR name, LONG_PTR param)
 {
     const char *script_data, *ext;
     DWORD script_size, size;
@@ -419,7 +418,7 @@ static BOOL init_key(const char *key_name, const char *def_value, BOOL init)
     DWORD res;
 
     if(!init) {
-        RegDeleteKey(HKEY_CLASSES_ROOT, key_name);
+        RegDeleteKeyA(HKEY_CLASSES_ROOT, key_name);
         return TRUE;
     }
 
@@ -461,7 +460,12 @@ START_TEST(run)
     int argc;
 
     CoInitializeEx(NULL, COINIT_MULTITHREADED);
-    register_activex();
+
+    if(!register_activex()) {
+        skip("Could not register ActiveX object.\n");
+        CoUninitialize();
+        return;
+    }
 
     argc = winetest_get_mainargs(&argv);
     if(argc > 2)

@@ -20,15 +20,12 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define WIN32_LEAN_AND_MEAN        /* Exclude rarely-used stuff from Windows headers */
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+
 #include <windows.h>
 #include <commctrl.h>
-#include <stdlib.h>
-#include <memory.h>
-#include <tchar.h>
-#include <stdio.h>
-
-#include <math.h>
 #include "graphctl.h"
 #include "taskmgr.h"
 
@@ -156,13 +153,12 @@ static void GraphCtrl_Resize(TGraphCtrl* this)
     this->m_dVerticalFactor = (double)this->m_nPlotHeight / this->m_dRange;
 }
 
-BOOL GraphCtrl_Create(TGraphCtrl* this, HWND hWnd, HWND hParentWnd, UINT nID)
+void GraphCtrl_Create(TGraphCtrl* this, HWND hWnd, HWND hParentWnd, UINT nID)
 {
     GraphCtrl_Init(this);
     this->m_hParentWnd = hParentWnd;
     this->m_hWnd = hWnd;
     GraphCtrl_Resize(this);
-    return 0;
 }
 
 static void GraphCtrl_InvalidateCtrl(TGraphCtrl* this)

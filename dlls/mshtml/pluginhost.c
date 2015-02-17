@@ -19,6 +19,7 @@
 #include "config.h"
 
 #include <stdarg.h>
+#include <assert.h>
 
 #define COBJMACROS
 
@@ -181,19 +182,16 @@ static void load_plugin(PluginHost *host)
     FIXME("No IPersistPropertyBag iface\n");
 }
 
-static void activate_plugin(PluginHost *host)
+static void initialize_plugin_object(PluginHost *host)
 {
     IClientSecurity *client_security;
     IQuickActivate *quick_activate;
+    IOleObject *ole_obj = NULL;
     IOleCommandTarget *cmdtrg;
-    IOleObject *ole_obj;
+    IViewObjectEx *view_obj;
     IDispatchEx *dispex;
     IDispatch *disp;
-    RECT rect;
     HRESULT hres;
-
-    if(!host->plugin_unk)
-        return;
 
     /* Note native calls QI on plugin for an undocumented IID and CLSID_HTMLDocument */
 
@@ -211,22 +209,56 @@ static void activate_plugin(PluginHost *host)
         QACONTAINER container = {sizeof(container)};
         QACONTROL control = {sizeof(control)};
 
+        TRACE("Using IQuickActivate\n");
+
         container.pClientSite = &host->IOleClientSite_iface;
         container.dwAmbientFlags = QACONTAINER_SUPPORTSMNEMONICS|QACONTAINER_MESSAGEREFLECT|QACONTAINER_USERMODE;
         container.pAdviseSink = &host->IAdviseSinkEx_iface;
         container.pPropertyNotifySink = &host->IPropertyNotifySink_iface;
 
         hres = IQuickActivate_QuickActivate(quick_activate, &container, &control);
+        IQuickActivate_Release(quick_activate);
         if(FAILED(hres))
             FIXME("QuickActivate failed: %08x\n", hres);
     }else {
-        FIXME("No IQuickActivate\n");
-        return;
+        DWORD status = 0;
+
+        hres = IUnknown_QueryInterface(host->plugin_unk, &IID_IOleObject, (void**)&ole_obj);
+        if(SUCCEEDED(hres)) {
+            hres = IOleObject_GetMiscStatus(ole_obj, DVASPECT_CONTENT, &status);
+            TRACE("GetMiscStatus returned %08x %x\n", hres, status);
+
+            hres = IOleObject_SetClientSite(ole_obj, &host->IOleClientSite_iface);
+            IOleObject_Release(ole_obj);
+            if(FAILED(hres)) {
+                FIXME("SetClientSite failed: %08x\n", hres);
+                return;
+            }
+        }else {
+            TRACE("Plugin does not support IOleObject\n");
+        }
     }
 
     load_plugin(host);
 
-    /* NOTE: Native QIs for IViewObjectEx, IActiveScript, an undocumented IID, IOleControl and IRunnableObject */
+    if(ole_obj) {
+        hres = IUnknown_QueryInterface(host->plugin_unk, &IID_IViewObjectEx, (void**)&view_obj);
+        if(SUCCEEDED(hres)) {
+            DWORD view_status = 0;
+
+            hres = IViewObjectEx_SetAdvise(view_obj, DVASPECT_CONTENT, 0, (IAdviseSink*)&host->IAdviseSinkEx_iface);
+            if(FAILED(hres))
+                WARN("SetAdvise failed: %08x\n", hres);
+
+            hres = IViewObjectEx_GetViewStatus(view_obj, &view_status);
+            IViewObjectEx_Release(view_obj);
+            TRACE("GetViewStatus returned %08x %x\n", hres, view_status);
+        }
+    }
+
+    update_readystate(host);
+
+    /* NOTE: Native QIs for IActiveScript, an undocumented IID, IOleControl and IRunnableObject */
 
     hres = IUnknown_QueryInterface(host->plugin_unk, &IID_IDispatchEx, (void**)&dispex);
     if(SUCCEEDED(hres)) {
@@ -245,6 +277,13 @@ static void activate_plugin(PluginHost *host)
         FIXME("Use IOleCommandTarget\n");
         IOleCommandTarget_Release(cmdtrg);
     }
+}
+
+static void embed_plugin_object(PluginHost *host)
+{
+    IOleObject *ole_obj;
+    RECT rect;
+    HRESULT hres;
 
     hres = IUnknown_QueryInterface(host->plugin_unk, &IID_IOleObject, (void**)&ole_obj);
     if(FAILED(hres)) {
@@ -285,11 +324,51 @@ void update_plugin_window(PluginHost *host, HWND hwnd, const RECT *rect)
 
     if(!host->hwnd) {
         host->hwnd = hwnd;
-        activate_plugin(host);
+        embed_plugin_object(host);
     }
 
     if(rect_changed && host->ip_object)
         IOleInPlaceObject_SetObjectRects(host->ip_object, &host->rect, &host->rect);
+}
+
+static void notif_enabled(PluginHost *plugin_host)
+{
+    DISPPARAMS args = {NULL, NULL, 0, 0};
+    IDispatch *disp;
+    ULONG err = 0;
+    VARIANT res;
+    HRESULT hres;
+
+    hres = IUnknown_QueryInterface(plugin_host->plugin_unk, &IID_IDispatch, (void**)&disp);
+    if(FAILED(hres)) {
+        FIXME("Could not get IDispatch iface: %08x\n", hres);
+        return;
+    }
+
+    V_VT(&res) = VT_EMPTY;
+    hres = IDispatch_Invoke(disp, DISPID_ENABLED, &IID_NULL, 0/*FIXME*/, DISPATCH_PROPERTYGET, &args, &res, NULL, &err);
+    IDispatch_Release(disp);
+    if(SUCCEEDED(hres)) {
+        FIXME("Got enabled %s\n", debugstr_variant(&res));
+        VariantClear(&res);
+    }
+}
+
+void notif_container_change(HTMLPluginContainer *plugin_container, DISPID dispid)
+{
+    IOleControl *ole_control;
+    HRESULT hres;
+
+    if(!plugin_container->plugin_host || !plugin_container->plugin_host->plugin_unk)
+        return;
+
+    notif_enabled(plugin_container->plugin_host);
+
+    hres = IUnknown_QueryInterface(plugin_container->plugin_host->plugin_unk, &IID_IOleControl, (void**)&ole_control);
+    if(SUCCEEDED(hres)) {
+        IOleControl_OnAmbientPropertyChange(ole_control, dispid);
+        IOleControl_Release(ole_control);
+    }
 }
 
 HRESULT get_plugin_disp(HTMLPluginContainer *plugin_container, IDispatch **ret)
@@ -354,7 +433,7 @@ HRESULT get_plugin_dispid(HTMLPluginContainer *plugin_container, WCHAR *name, DI
     }else if(plugin_container->props_len == plugin_container->props_size) {
         DISPID *new_props;
 
-        new_props = heap_realloc(plugin_container->props, plugin_container->props_size*2);
+        new_props = heap_realloc(plugin_container->props, plugin_container->props_size*2*sizeof(DISPID));
         if(!new_props)
             return E_OUTOFMEMORY;
 
@@ -391,6 +470,363 @@ HRESULT invoke_plugin_prop(HTMLPluginContainer *plugin_container, DISPID id, LCI
 
     return IDispatch_Invoke(host->disp, plugin_container->props[id-MSHTML_DISPID_CUSTOM_MIN], &IID_NULL,
             lcid, flags, params, res, ei, NULL);
+}
+
+typedef struct {
+    DISPID id;
+    IDispatch *disp;
+} sink_entry_t;
+
+struct PHEventSink {
+    IDispatch IDispatch_iface;
+
+    LONG ref;
+
+    PluginHost *host;
+    ITypeInfo *typeinfo;
+    GUID iid;
+    DWORD cookie;
+    BOOL is_dispiface;
+
+    sink_entry_t *handlers;
+    DWORD handlers_cnt;
+    DWORD handlers_size;
+};
+
+static sink_entry_t *find_sink_entry(PHEventSink *sink, DISPID id)
+{
+    sink_entry_t *iter;
+
+    for(iter = sink->handlers; iter < sink->handlers+sink->handlers_cnt; iter++) {
+        if(iter->id == id)
+            return iter;
+    }
+
+    return NULL;
+}
+
+static void add_sink_handler(PHEventSink *sink, DISPID id, IDispatch *disp)
+{
+    sink_entry_t *entry = find_sink_entry(sink, id);
+
+    if(entry) {
+        if(entry->disp)
+            IDispatch_Release(entry->disp);
+    }else {
+        if(!sink->handlers_size) {
+            sink->handlers = heap_alloc(4*sizeof(*sink->handlers));
+            if(!sink->handlers)
+                return;
+            sink->handlers_size = 4;
+        }else if(sink->handlers_cnt == sink->handlers_size) {
+            sink_entry_t *new_handlers;
+
+            new_handlers = heap_realloc(sink->handlers, 2*sink->handlers_size*sizeof(*sink->handlers));
+            if(!new_handlers)
+                return;
+            sink->handlers = new_handlers;
+            sink->handlers_size *= 2;
+        }
+        entry = sink->handlers + sink->handlers_cnt++;
+        entry->id = id;
+    }
+
+    IDispatch_AddRef(disp);
+    entry->disp = disp;
+}
+
+static inline PHEventSink *PHEventSink_from_IDispatch(IDispatch *iface)
+{
+    return CONTAINING_RECORD(iface, PHEventSink, IDispatch_iface);
+}
+
+static HRESULT WINAPI PHEventSink_QueryInterface(IDispatch *iface, REFIID riid, void **ppv)
+{
+    PHEventSink *This = PHEventSink_from_IDispatch(iface);
+
+    if(IsEqualGUID(riid, &IID_IUnknown)) {
+        TRACE("(%p)->(IID_IUnknown %p)\n", This, ppv);
+        *ppv = &This->IDispatch_iface;
+    }else if(IsEqualGUID(riid, &IID_IDispatch)) {
+        TRACE("(%p)->(IID_IDispatch %p)\n", This, ppv);
+        *ppv = &This->IDispatch_iface;
+    }else if(This->is_dispiface && IsEqualGUID(riid, &This->iid)) {
+        TRACE("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppv);
+        *ppv = &This->IDispatch_iface;
+    }else {
+        WARN("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppv);
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown*)*ppv);
+    return S_OK;
+}
+
+static ULONG WINAPI PHEventSink_AddRef(IDispatch *iface)
+{
+    PHEventSink *This = PHEventSink_from_IDispatch(iface);
+    LONG ref = InterlockedIncrement(&This->ref);
+
+    TRACE("(%p)\n", This);
+
+    return ref;
+}
+
+static ULONG WINAPI PHEventSink_Release(IDispatch *iface)
+{
+    PHEventSink *This = PHEventSink_from_IDispatch(iface);
+    LONG ref = InterlockedDecrement(&This->ref);
+
+    TRACE("(%p)\n", This);
+
+    if(!ref) {
+        unsigned i;
+
+        assert(!This->host);
+
+        for(i=0; i < This->handlers_cnt; i++) {
+            if(This->handlers[i].disp)
+                IDispatch_Release(This->handlers[i].disp);
+        }
+        heap_free(This->handlers);
+        heap_free(This);
+    }
+
+    return ref;
+}
+
+static HRESULT WINAPI PHEventSink_GetTypeInfoCount(IDispatch *iface, UINT *pctinfo)
+{
+    PHEventSink *This = PHEventSink_from_IDispatch(iface);
+    FIXME("(%p)->(%p)\n", This, pctinfo);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI PHEventSink_GetTypeInfo(IDispatch *iface, UINT iTInfo,
+        LCID lcid, ITypeInfo **ppTInfo)
+{
+    PHEventSink *This = PHEventSink_from_IDispatch(iface);
+    FIXME("(%p)->(%d %d %p)\n", This, iTInfo, lcid, ppTInfo);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI PHEventSink_GetIDsOfNames(IDispatch *iface, REFIID riid, LPOLESTR *rgszNames,
+        UINT cNames, LCID lcid, DISPID *rgDispId)
+{
+    PHEventSink *This = PHEventSink_from_IDispatch(iface);
+    FIXME("(%p)->(%s %p %u %d %p)\n", This, debugstr_guid(riid), rgszNames, cNames, lcid, rgDispId);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI PHEventSink_Invoke(IDispatch *iface, DISPID dispIdMember, REFIID riid, LCID lcid,
+        WORD wFlags, DISPPARAMS *pDispParams, VARIANT *pVarResult, EXCEPINFO *pExcepInfo, UINT *puArgErr)
+{
+    PHEventSink *This = PHEventSink_from_IDispatch(iface);
+    IDispatchEx *dispex;
+    sink_entry_t *entry;
+    HRESULT hres;
+
+    TRACE("(%p)->(%d %s %d %x %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid), lcid, wFlags,
+          pDispParams, pVarResult, pExcepInfo, puArgErr);
+
+    if(!This->host) {
+        WARN("No host\n");
+        return E_UNEXPECTED;
+    }
+
+    entry = find_sink_entry(This, dispIdMember);
+    if(!entry || !entry->disp) {
+        WARN("No handler %d\n", dispIdMember);
+        if(pVarResult)
+            V_VT(pVarResult) = VT_EMPTY;
+        return S_OK;
+    }
+
+    hres = IDispatch_QueryInterface(entry->disp, &IID_IDispatchEx, (void**)&dispex);
+
+    TRACE("(%p) %d >>>\n", This, entry->id);
+    if(SUCCEEDED(hres)) {
+        hres = IDispatchEx_InvokeEx(dispex, DISPID_VALUE, lcid, wFlags, pDispParams, pVarResult, pExcepInfo, NULL);
+        IDispatchEx_Release(dispex);
+    }else {
+        hres = IDispatch_Invoke(entry->disp, DISPID_VALUE, riid, lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
+    }
+    if(SUCCEEDED(hres))
+        TRACE("(%p) %d <<<\n", This, entry->id);
+    else
+        WARN("(%p) %d <<< %08x\n", This, entry->id, hres);
+    return hres;
+}
+
+static const IDispatchVtbl PHCPDispatchVtbl = {
+    PHEventSink_QueryInterface,
+    PHEventSink_AddRef,
+    PHEventSink_Release,
+    PHEventSink_GetTypeInfoCount,
+    PHEventSink_GetTypeInfo,
+    PHEventSink_GetIDsOfNames,
+    PHEventSink_Invoke
+};
+
+static PHEventSink *create_event_sink(PluginHost *plugin_host, ITypeInfo *typeinfo)
+{
+    IConnectionPointContainer *cp_container;
+    PHEventSink *ret;
+    IConnectionPoint *cp;
+    TYPEATTR *typeattr;
+    TYPEKIND typekind;
+    GUID guid;
+    HRESULT hres;
+
+    hres = ITypeInfo_GetTypeAttr(typeinfo, &typeattr);
+    if(FAILED(hres))
+        return NULL;
+
+    typekind = typeattr->typekind;
+    guid = typeattr->guid;
+    ITypeInfo_ReleaseTypeAttr(typeinfo, typeattr);
+
+    TRACE("guid %s typekind %d\n", debugstr_guid(&guid), typekind);
+
+    if(typekind != TKIND_INTERFACE && typekind != TKIND_DISPATCH) {
+        WARN("invalid typekind %d\n", typekind);
+        return NULL;
+    }
+
+    hres = IUnknown_QueryInterface(plugin_host->plugin_unk, &IID_IConnectionPointContainer, (void**)&cp_container);
+    if(FAILED(hres)) {
+        WARN("Could not get IConnectionPointContainer iface: %08x\n", hres);
+        return NULL;
+    }
+
+    hres = IConnectionPointContainer_FindConnectionPoint(cp_container, &guid, &cp);
+    IConnectionPointContainer_Release(cp_container);
+    if(FAILED(hres)) {
+        WARN("Could not find %s connection point\n", debugstr_guid(&guid));
+        return NULL;
+    }
+
+    ret = heap_alloc_zero(sizeof(*ret));
+    if(ret) {
+        ret->IDispatch_iface.lpVtbl = &PHCPDispatchVtbl;
+        ret->ref = 1;
+        ret->host = plugin_host;
+        ret->iid = guid;
+        ret->is_dispiface = typekind == TKIND_DISPATCH;
+
+        ITypeInfo_AddRef(typeinfo);
+        ret->typeinfo = typeinfo;
+
+        hres = IConnectionPoint_Advise(cp, (IUnknown*)&ret->IDispatch_iface, &ret->cookie);
+    }else {
+        hres = E_OUTOFMEMORY;
+    }
+
+    IConnectionPoint_Release(cp);
+    if(FAILED(hres)) {
+        WARN("Advise failed: %08x\n", hres);
+        return NULL;
+    }
+
+    return ret;
+}
+
+static ITypeInfo *get_eventiface_info(HTMLPluginContainer *plugin_container, ITypeInfo *class_info)
+{
+    int impl_types, i, impl_flags;
+    ITypeInfo *ret = NULL;
+    TYPEATTR *typeattr;
+    HREFTYPE ref;
+    HRESULT hres;
+
+    hres = ITypeInfo_GetTypeAttr(class_info, &typeattr);
+    if(FAILED(hres))
+        return NULL;
+
+    if(typeattr->typekind != TKIND_COCLASS) {
+        WARN("not coclass\n");
+        ITypeInfo_ReleaseTypeAttr(class_info, typeattr);
+        return NULL;
+    }
+
+    impl_types = typeattr->cImplTypes;
+    ITypeInfo_ReleaseTypeAttr(class_info, typeattr);
+
+    for(i=0; i<impl_types; i++) {
+        hres = ITypeInfo_GetImplTypeFlags(class_info, i, &impl_flags);
+        if(FAILED(hres))
+            continue;
+
+        if((impl_flags & IMPLTYPEFLAG_FSOURCE)) {
+            if(!(impl_flags & IMPLTYPEFLAG_FDEFAULT)) {
+                FIXME("Handle non-default source iface\n");
+                continue;
+            }
+
+            hres = ITypeInfo_GetRefTypeOfImplType(class_info, i, &ref);
+            if(FAILED(hres))
+                continue;
+
+            hres = ITypeInfo_GetRefTypeInfo(class_info, ref, &ret);
+            if(FAILED(hres))
+                ret = NULL;
+        }
+    }
+
+    return ret;
+}
+
+void bind_activex_event(HTMLDocumentNode *doc, HTMLPluginContainer *plugin_container, WCHAR *event, IDispatch *disp)
+{
+    PluginHost *plugin_host = plugin_container->plugin_host;
+    ITypeInfo *class_info, *source_info;
+    DISPID id;
+    HRESULT hres;
+
+    TRACE("(%p %p %s %p)\n", doc, plugin_host, debugstr_w(event), disp);
+
+    if(!plugin_host || !plugin_host->plugin_unk) {
+        WARN("detached element %p\n", plugin_host);
+        return;
+    }
+
+    if(plugin_host->sink) {
+        source_info = plugin_host->sink->typeinfo;
+        ITypeInfo_AddRef(source_info);
+    }else {
+        IProvideClassInfo *provide_ci;
+
+        hres = IUnknown_QueryInterface(plugin_host->plugin_unk, &IID_IProvideClassInfo, (void**)&provide_ci);
+        if(FAILED(hres)) {
+            FIXME("No IProvideClassInfo, try GetTypeInfo?\n");
+            return;
+        }
+
+        hres = IProvideClassInfo_GetClassInfo(provide_ci, &class_info);
+        IProvideClassInfo_Release(provide_ci);
+        if(FAILED(hres) || !class_info) {
+            WARN("GetClassInfo failed: %08x\n", hres);
+            return;
+        }
+
+        source_info = get_eventiface_info(plugin_container, class_info);
+        ITypeInfo_Release(class_info);
+        if(!source_info)
+            return;
+    }
+
+    hres = ITypeInfo_GetIDsOfNames(source_info, &event, 1, &id);
+    if(FAILED(hres))
+        WARN("Could not get disp id: %08x\n", hres);
+    else if(!plugin_host->sink)
+        plugin_host->sink = create_event_sink(plugin_host, source_info);
+
+    ITypeInfo_Release(source_info);
+    if(FAILED(hres) || !plugin_host->sink)
+        return;
+
+    add_sink_handler(plugin_host->sink, id, disp);
 }
 
 static inline PluginHost *impl_from_IOleClientSite(IOleClientSite *iface)
@@ -444,7 +880,7 @@ static HRESULT WINAPI PHClientSite_QueryInterface(IOleClientSite *iface, REFIID 
         return E_NOINTERFACE;
     }
 
-    IOleClientSite_AddRef((IUnknown*)*ppv);
+    IUnknown_AddRef((IUnknown*)*ppv);
     return S_OK;
 }
 
@@ -458,6 +894,29 @@ static ULONG WINAPI PHClientSite_AddRef(IOleClientSite *iface)
     return ref;
 }
 
+static void release_plugin_ifaces(PluginHost *This)
+{
+    if(This->disp) {
+        IDispatch_Release(This->disp);
+        This->disp = NULL;
+    }
+
+    if(This->ip_object) {
+        IOleInPlaceObject_Release(This->ip_object);
+        This->ip_object = NULL;
+    }
+
+    if(This->plugin_unk) {
+        IUnknown *unk = This->plugin_unk;
+        LONG ref;
+
+        This->plugin_unk = NULL;
+        ref = IUnknown_Release(unk);
+
+        TRACE("plugin ref = %d\n", ref);
+    }
+}
+
 static ULONG WINAPI PHClientSite_Release(IOleClientSite *iface)
 {
     PluginHost *This = impl_from_IOleClientSite(iface);
@@ -466,15 +925,15 @@ static ULONG WINAPI PHClientSite_Release(IOleClientSite *iface)
     TRACE("(%p) ref=%d\n", This, ref);
 
     if(!ref) {
-        if(This->disp)
-            IDispatch_Release(This->disp);
-        if(This->ip_object)
-            IOleInPlaceObject_Release(This->ip_object);
+        release_plugin_ifaces(This);
+        if(This->sink) {
+            This->sink->host = NULL;
+            IDispatch_Release(&This->sink->IDispatch_iface);
+            This->sink = NULL;
+        }
         list_remove(&This->entry);
         if(This->element)
             This->element->plugin_host = NULL;
-        if(This->plugin_unk)
-            IUnknown_Release(This->plugin_unk);
         heap_free(This);
     }
 
@@ -497,12 +956,12 @@ static HRESULT WINAPI PHClientSite_GetMoniker(IOleClientSite *iface, DWORD dwAss
 
     switch(dwWhichMoniker) {
     case OLEWHICHMK_CONTAINER:
-        if(!This->doc || !This->doc->basedoc.window || !This->doc->basedoc.window->mon) {
+        if(!This->doc || !This->doc->window || !This->doc->window->mon) {
             FIXME("no moniker\n");
             return E_UNEXPECTED;
         }
 
-        *ppmk = This->doc->basedoc.window->mon;
+        *ppmk = This->doc->window->mon;
         IMoniker_AddRef(*ppmk);
         break;
     default:
@@ -798,8 +1257,10 @@ static HRESULT WINAPI PHInPlaceSite_ContextSensitiveHelp(IOleInPlaceSiteEx *ifac
 static HRESULT WINAPI PHInPlaceSite_CanInPlaceActivate(IOleInPlaceSiteEx *iface)
 {
     PluginHost *This = impl_from_IOleInPlaceSiteEx(iface);
-    FIXME("(%p)\n", This);
-    return E_NOTIMPL;
+
+    TRACE("(%p)\n", This);
+
+    return S_OK;
 }
 
 static HRESULT WINAPI PHInPlaceSite_OnInPlaceActivate(IOleInPlaceSiteEx *iface)
@@ -812,11 +1273,6 @@ static HRESULT WINAPI PHInPlaceSite_OnInPlaceActivate(IOleInPlaceSiteEx *iface)
 static HRESULT WINAPI PHInPlaceSite_OnUIActivate(IOleInPlaceSiteEx *iface)
 {
     PluginHost *This = impl_from_IOleInPlaceSiteEx(iface);
-    DISPPARAMS args = {NULL, NULL, 0, 0};
-    IDispatch *disp;
-    ULONG err = 0;
-    VARIANT res;
-    HRESULT hres;
 
     TRACE("(%p)\n", This);
 
@@ -827,20 +1283,7 @@ static HRESULT WINAPI PHInPlaceSite_OnUIActivate(IOleInPlaceSiteEx *iface)
 
     This->ui_active = TRUE;
 
-    hres = IUnknown_QueryInterface(This->plugin_unk, &IID_IDispatch, (void**)&disp);
-    if(FAILED(hres)) {
-        FIXME("Could not get IDispatch iface: %08x\n", hres);
-        return hres;
-    }
-
-    V_VT(&res) = VT_EMPTY;
-    hres = IDispatch_Invoke(disp, DISPID_ENABLED, &IID_NULL, 0/*FIXME*/, DISPATCH_PROPERTYGET, &args, &res, NULL, &err);
-    IDispatch_Release(disp);
-    if(SUCCEEDED(hres)) {
-        FIXME("Got enabled %s\n", debugstr_variant(&res));
-        VariantClear(&res);
-    }
-
+    notif_enabled(This);
     return S_OK;
 }
 
@@ -877,8 +1320,10 @@ static HRESULT WINAPI PHInPlaceSite_GetWindowContext(IOleInPlaceSiteEx *iface,
         return hres;
 
     hres = create_ip_window(ppDoc);
-    if(FAILED(hres))
+    if(FAILED(hres)) {
+        IOleInPlaceFrame_Release(ip_frame);
         return hres;
+    }
 
     *ppFrame = ip_frame;
     *lprcPosRect = This->rect;
@@ -1107,12 +1552,12 @@ static HRESULT WINAPI PHBindHost_CreateMoniker(IBindHost *iface, LPOLESTR szName
 
     TRACE("(%p)->(%s %p %p %x)\n", This, debugstr_w(szName), pBC, ppmk, dwReserved);
 
-    if(!This->doc || !This->doc->basedoc.window || !This->doc->basedoc.window->mon) {
+    if(!This->doc || !This->doc->window || !This->doc->window->mon) {
         FIXME("no moniker\n");
         return E_UNEXPECTED;
     }
 
-    return CreateURLMoniker(This->doc->basedoc.window->mon, szName, ppmk);
+    return CreateURLMoniker(This->doc->window->mon, szName, ppmk);
 }
 
 static HRESULT WINAPI PHBindHost_MonikerBindToStorage(IBindHost *iface, IMoniker *pMk, IBindCtx *pBC,
@@ -1179,7 +1624,7 @@ static HRESULT WINAPI PHServiceProvider_QueryService(IServiceProvider *iface, RE
         return E_NOINTERFACE;
     }
 
-    return IServiceProvider_QueryService(&This->doc->basedoc.window->IServiceProvider_iface,
+    return IServiceProvider_QueryService(&This->doc->basedoc.window->base.IServiceProvider_iface,
             guidService, riid, ppv);
 }
 
@@ -1190,26 +1635,376 @@ static const IServiceProviderVtbl ServiceProviderVtbl = {
     PHServiceProvider_QueryService
 };
 
-static HRESULT assoc_element(PluginHost *host, HTMLDocumentNode *doc, nsIDOMElement *nselem)
+static BOOL parse_classid(const PRUnichar *classid, CLSID *clsid)
 {
-    HTMLPluginContainer *container_elem;
-    HTMLDOMNode *node;
+    const WCHAR *ptr;
+    unsigned len;
     HRESULT hres;
 
-    hres = get_node(doc, (nsIDOMNode*)nselem, TRUE, &node);
-    if(FAILED(hres))
-        return hres;
+    static const PRUnichar clsidW[] = {'c','l','s','i','d',':'};
 
-    hres = IHTMLDOMNode_QueryInterface(&node->IHTMLDOMNode_iface, &IID_HTMLPluginContainer,
-            (void**)&container_elem);
-    if(FAILED(hres)) {
-        ERR("Not an object element\n");
-        return hres;
+    if(strncmpiW(classid, clsidW, sizeof(clsidW)/sizeof(WCHAR)))
+        return FALSE;
+
+    ptr = classid + sizeof(clsidW)/sizeof(WCHAR);
+    len = strlenW(ptr);
+
+    if(len == 38) {
+        hres = CLSIDFromString(ptr, clsid);
+    }else if(len == 36) {
+        WCHAR buf[39];
+
+        buf[0] = '{';
+        memcpy(buf+1, ptr, len*sizeof(WCHAR));
+        buf[37] = '}';
+        buf[38] = 0;
+        hres = CLSIDFromString(buf, clsid);
+    }else {
+        return FALSE;
     }
 
-    container_elem->plugin_host = host;
-    host->element = container_elem;
+    return SUCCEEDED(hres);
+}
+
+static BOOL get_elem_clsid(nsIDOMHTMLElement *elem, CLSID *clsid)
+{
+    const PRUnichar *val;
+    nsAString val_str;
+    nsresult nsres;
+    BOOL ret = FALSE;
+
+    static const PRUnichar classidW[] = {'c','l','a','s','s','i','d',0};
+
+    nsres = get_elem_attr_value(elem, classidW, &val_str, &val);
+    if(NS_SUCCEEDED(nsres)) {
+        if(*val)
+            ret = parse_classid(val, clsid);
+        nsAString_Finish(&val_str);
+    }
+
+    return ret;
+}
+
+typedef struct {
+    IBindStatusCallback IBindStatusCallback_iface;
+    IWindowForBindingUI IWindowForBindingUI_iface;
+    LONG ref;
+} InstallCallback;
+
+static inline InstallCallback *impl_from_IBindStatusCallback(IBindStatusCallback *iface)
+{
+    return CONTAINING_RECORD(iface, InstallCallback, IBindStatusCallback_iface);
+}
+
+static HRESULT WINAPI InstallCallback_QueryInterface(IBindStatusCallback *iface,
+        REFIID riid, void **ppv)
+{
+    InstallCallback *This = impl_from_IBindStatusCallback(iface);
+
+    if(IsEqualGUID(&IID_IUnknown, riid)) {
+        TRACE("(%p)->(IID_IUnknown %p)\n", This, ppv);
+        *ppv = &This->IBindStatusCallback_iface;
+    }else if(IsEqualGUID(&IID_IBindStatusCallback, riid)) {
+        TRACE("(%p)->(IID_IBindStatusCallback %p)\n", This, ppv);
+        *ppv = &This->IBindStatusCallback_iface;
+    }else if(IsEqualGUID(&IID_IWindowForBindingUI, riid)) {
+        TRACE("(%p)->(IID_IWindowForBindingUI %p)\n", This, ppv);
+        *ppv = &This->IWindowForBindingUI_iface;
+    }else {
+        TRACE("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppv);
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown*)*ppv);
     return S_OK;
+}
+
+static ULONG WINAPI InstallCallback_AddRef(IBindStatusCallback *iface)
+{
+    InstallCallback *This = impl_from_IBindStatusCallback(iface);
+    LONG ref = InterlockedIncrement(&This->ref);
+
+    TRACE("(%p) ref=%d\n", This, ref);
+
+    return ref;
+}
+
+static ULONG WINAPI InstallCallback_Release(IBindStatusCallback *iface)
+{
+    InstallCallback *This = impl_from_IBindStatusCallback(iface);
+    LONG ref = InterlockedIncrement(&This->ref);
+
+    TRACE("(%p) ref=%d\n", This, ref);
+
+    if(!ref)
+        heap_free(This);
+
+    return ref;
+}
+
+static HRESULT WINAPI InstallCallback_OnStartBinding(IBindStatusCallback *iface,
+        DWORD dwReserved, IBinding *pib)
+{
+    InstallCallback *This = impl_from_IBindStatusCallback(iface);
+    TRACE("(%p)->(%x %p)\n", This, dwReserved, pib);
+    return S_OK;
+}
+
+static HRESULT WINAPI InstallCallback_GetPriority(IBindStatusCallback *iface, LONG *pnPriority)
+{
+    InstallCallback *This = impl_from_IBindStatusCallback(iface);
+    TRACE("(%p)->(%p)\n", This, pnPriority);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI InstallCallback_OnLowResource(IBindStatusCallback *iface, DWORD dwReserved)
+{
+    InstallCallback *This = impl_from_IBindStatusCallback(iface);
+    TRACE("(%p)->(%x)\n", This, dwReserved);
+    return S_OK;
+}
+
+static HRESULT WINAPI InstallCallback_OnProgress(IBindStatusCallback *iface, ULONG ulProgress,
+        ULONG ulProgressMax, ULONG ulStatusCode, LPCWSTR szStatusText)
+{
+    InstallCallback *This = impl_from_IBindStatusCallback(iface);
+    TRACE("(%p)->(%u %u %u %s)\n", This, ulProgress, ulProgressMax, ulStatusCode, debugstr_w(szStatusText));
+    return S_OK;
+}
+
+static HRESULT WINAPI InstallCallback_OnStopBinding(IBindStatusCallback *iface,
+        HRESULT hresult, LPCWSTR szError)
+{
+    InstallCallback *This = impl_from_IBindStatusCallback(iface);
+    TRACE("(%p)->(%08x %s)\n", This, hresult, debugstr_w(szError));
+    return S_OK;
+}
+
+static HRESULT WINAPI InstallCallback_GetBindInfo(IBindStatusCallback *iface,
+        DWORD* grfBINDF, BINDINFO* pbindinfo)
+{
+    InstallCallback *This = impl_from_IBindStatusCallback(iface);
+
+    TRACE("(%p)->(%p %p)\n", This, grfBINDF, pbindinfo);
+
+    *grfBINDF = BINDF_ASYNCHRONOUS;
+    return S_OK;
+}
+
+static HRESULT WINAPI InstallCallback_OnDataAvailable(IBindStatusCallback *iface, DWORD grfBSCF,
+        DWORD dwSize, FORMATETC* pformatetc, STGMEDIUM* pstgmed)
+{
+    InstallCallback *This = impl_from_IBindStatusCallback(iface);
+    ERR("(%p)\n", This);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI InstallCallback_OnObjectAvailable(IBindStatusCallback *iface,
+        REFIID riid, IUnknown* punk)
+{
+    InstallCallback *This = impl_from_IBindStatusCallback(iface);
+    ERR("(%p)\n", This);
+    return E_NOTIMPL;
+}
+
+static IBindStatusCallbackVtbl InstallCallbackVtbl = {
+    InstallCallback_QueryInterface,
+    InstallCallback_AddRef,
+    InstallCallback_Release,
+    InstallCallback_OnStartBinding,
+    InstallCallback_GetPriority,
+    InstallCallback_OnLowResource,
+    InstallCallback_OnProgress,
+    InstallCallback_OnStopBinding,
+    InstallCallback_GetBindInfo,
+    InstallCallback_OnDataAvailable,
+    InstallCallback_OnObjectAvailable
+};
+
+static inline InstallCallback *impl_from_IWindowForBindingUI(IWindowForBindingUI *iface)
+{
+    return CONTAINING_RECORD(iface, InstallCallback, IWindowForBindingUI_iface);
+}
+
+static HRESULT WINAPI WindowForBindingUI_QueryInterface(IWindowForBindingUI *iface, REFIID riid, void **ppv)
+{
+    InstallCallback *This = impl_from_IWindowForBindingUI(iface);
+    return IBindStatusCallback_QueryInterface(&This->IBindStatusCallback_iface, riid, ppv);
+}
+
+static ULONG WINAPI WindowForBindingUI_AddRef(IWindowForBindingUI *iface)
+{
+    InstallCallback *This = impl_from_IWindowForBindingUI(iface);
+    return IBindStatusCallback_AddRef(&This->IBindStatusCallback_iface);
+}
+
+static ULONG WINAPI WindowForBindingUI_Release(IWindowForBindingUI *iface)
+{
+    InstallCallback *This = impl_from_IWindowForBindingUI(iface);
+    return IBindStatusCallback_Release(&This->IBindStatusCallback_iface);
+}
+
+static HRESULT WINAPI WindowForBindingUI_GetWindow(IWindowForBindingUI *iface, REFGUID rguidReason, HWND *phwnd)
+{
+    InstallCallback *This = impl_from_IWindowForBindingUI(iface);
+    FIXME("(%p)->(%s %p)\n", This, debugstr_guid(rguidReason), phwnd);
+    *phwnd = NULL;
+    return S_OK;
+}
+
+static const IWindowForBindingUIVtbl WindowForBindingUIVtbl = {
+    WindowForBindingUI_QueryInterface,
+    WindowForBindingUI_AddRef,
+    WindowForBindingUI_Release,
+    WindowForBindingUI_GetWindow
+};
+
+typedef struct {
+    struct list entry;
+    IUri *uri;
+} install_entry_t;
+
+static struct list install_list = LIST_INIT(install_list);
+
+static CRITICAL_SECTION cs_install_list;
+static CRITICAL_SECTION_DEBUG cs_install_list_dbg =
+{
+    0, 0, &cs_install_list,
+    { &cs_install_list_dbg.ProcessLocksList, &cs_install_list_dbg.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": install_list") }
+};
+static CRITICAL_SECTION cs_install_list = { &cs_install_list_dbg, -1, 0, 0, 0, 0 };
+
+static void install_codebase(const WCHAR *url)
+{
+    InstallCallback *callback;
+    IBindCtx *bctx;
+    HRESULT hres;
+
+    callback = heap_alloc(sizeof(*callback));
+    if(!callback)
+        return;
+
+    callback->IBindStatusCallback_iface.lpVtbl = &InstallCallbackVtbl;
+    callback->IWindowForBindingUI_iface.lpVtbl = &WindowForBindingUIVtbl;
+    callback->ref = 1;
+
+    hres = CreateAsyncBindCtx(0, &callback->IBindStatusCallback_iface, NULL, &bctx);
+    IBindStatusCallback_Release(&callback->IBindStatusCallback_iface);
+    if(FAILED(hres))
+        return;
+
+    hres = AsyncInstallDistributionUnit(NULL, NULL, NULL, 0, 0, url, bctx, NULL, 0);
+    IBindCtx_Release(bctx);
+    if(FAILED(hres))
+        WARN("FAILED: %08x\n", hres);
+}
+
+static void check_codebase(HTMLInnerWindow *window, nsIDOMHTMLElement *nselem)
+{
+    BOOL is_on_list = FALSE;
+    install_entry_t *iter;
+    const PRUnichar *val;
+    nsAString val_str;
+    IUri *uri = NULL;
+    nsresult nsres;
+    HRESULT hres;
+
+    static const PRUnichar codebaseW[] = {'c','o','d','e','b','a','s','e',0};
+
+    nsres = get_elem_attr_value(nselem, codebaseW, &val_str, &val);
+    if(NS_SUCCEEDED(nsres)) {
+        if(*val) {
+            hres = CoInternetCombineUrlEx(window->base.outer_window->uri, val, 0, &uri, 0);
+            if(FAILED(hres))
+                uri = NULL;
+        }
+        nsAString_Finish(&val_str);
+    }
+
+    if(!uri)
+        return;
+
+    EnterCriticalSection(&cs_install_list);
+
+    LIST_FOR_EACH_ENTRY(iter, &install_list, install_entry_t, entry) {
+        BOOL eq;
+
+        hres = IUri_IsEqual(uri, iter->uri, &eq);
+        if(SUCCEEDED(hres) && eq) {
+            TRACE("already proceeded\n");
+            is_on_list = TRUE;
+            break;
+        }
+    }
+
+    if(!is_on_list) {
+        iter = heap_alloc(sizeof(*iter));
+        if(iter) {
+            IUri_AddRef(uri);
+            iter->uri = uri;
+
+            list_add_tail(&install_list, &iter->entry);
+        }
+    }
+
+    LeaveCriticalSection(&cs_install_list);
+
+    if(!is_on_list) {
+        BSTR display_uri;
+
+        hres = IUri_GetDisplayUri(uri, &display_uri);
+        if(SUCCEEDED(hres)) {
+            install_codebase(display_uri);
+            SysFreeString(display_uri);
+        }
+    }
+
+    IUri_Release(uri);
+}
+
+static IUnknown *create_activex_object(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem, CLSID *clsid)
+{
+    IClassFactoryEx *cfex;
+    IClassFactory *cf;
+    IUnknown *obj;
+    DWORD policy;
+    HRESULT hres;
+
+    if(!get_elem_clsid(nselem, clsid)) {
+        WARN("Could not determine element CLSID\n");
+        return NULL;
+    }
+
+    TRACE("clsid %s\n", debugstr_guid(clsid));
+
+    policy = 0;
+    hres = IInternetHostSecurityManager_ProcessUrlAction(&doc->IInternetHostSecurityManager_iface,
+            URLACTION_ACTIVEX_RUN, (BYTE*)&policy, sizeof(policy), (BYTE*)clsid, sizeof(GUID), 0, 0);
+    if(FAILED(hres) || policy != URLPOLICY_ALLOW) {
+        WARN("ProcessUrlAction returned %08x %x\n", hres, policy);
+        return NULL;
+    }
+
+    hres = CoGetClassObject(clsid, CLSCTX_INPROC_SERVER|CLSCTX_LOCAL_SERVER, NULL, &IID_IClassFactory, (void**)&cf);
+    if(hres == REGDB_E_CLASSNOTREG)
+        check_codebase(doc->window, nselem);
+    if(FAILED(hres))
+        return NULL;
+
+    hres = IClassFactory_QueryInterface(cf, &IID_IClassFactoryEx, (void**)&cfex);
+    if(SUCCEEDED(hres)) {
+        FIXME("Use IClassFactoryEx\n");
+        IClassFactoryEx_Release(cfex);
+    }
+
+    hres = IClassFactory_CreateInstance(cf, NULL, &IID_IUnknown, (void**)&obj);
+    IClassFactory_Release(cf);
+    if(FAILED(hres))
+        return NULL;
+
+    return obj;
 }
 
 void detach_plugin_host(PluginHost *host)
@@ -1239,23 +2034,56 @@ void detach_plugin_host(PluginHost *host)
         }
     }
 
+    if(host->sink) {
+        IConnectionPointContainer *cp_container;
+        IConnectionPoint *cp;
+
+        assert(host->plugin_unk != NULL);
+
+        hres = IUnknown_QueryInterface(host->plugin_unk, &IID_IConnectionPointContainer, (void**)&cp_container);
+        if(SUCCEEDED(hres)) {
+            hres = IConnectionPointContainer_FindConnectionPoint(cp_container, &host->sink->iid, &cp);
+            IConnectionPointContainer_Release(cp_container);
+            if(SUCCEEDED(hres)) {
+                IConnectionPoint_Unadvise(cp, host->sink->cookie);
+                IConnectionPoint_Release(cp);
+            }
+        }
+
+        host->sink->host = NULL;
+        IDispatch_Release(&host->sink->IDispatch_iface);
+        host->sink = NULL;
+    }
+
+    release_plugin_ifaces(host);
+
     if(host->element) {
         host->element->plugin_host = NULL;
         host->element = NULL;
     }
 
     list_remove(&host->entry);
+    list_init(&host->entry);
     host->doc = NULL;
 }
 
-HRESULT create_plugin_host(HTMLDocumentNode *doc, nsIDOMElement *nselem, IUnknown *unk, const CLSID *clsid, PluginHost **ret)
+HRESULT create_plugin_host(HTMLDocumentNode *doc, HTMLPluginContainer *container)
 {
     PluginHost *host;
-    HRESULT hres;
+    IUnknown *unk;
+    CLSID clsid;
+
+    assert(!container->plugin_host);
+
+    unk = create_activex_object(doc, container->element.nselem, &clsid);
+    if(!unk)
+        return E_FAIL;
 
     host = heap_alloc_zero(sizeof(*host));
-    if(!host)
+    if(!host) {
+        IUnknown_Release(unk);
         return E_OUTOFMEMORY;
+    }
 
     host->IOleClientSite_iface.lpVtbl      = &OleClientSiteVtbl;
     host->IAdviseSinkEx_iface.lpVtbl       = &AdviseSinkExVtbl;
@@ -1268,19 +2096,16 @@ HRESULT create_plugin_host(HTMLDocumentNode *doc, nsIDOMElement *nselem, IUnknow
 
     host->ref = 1;
 
-    hres = assoc_element(host, doc, nselem);
-    if(FAILED(hres)) {
-        heap_free(host);
-        return hres;
-    }
-
-    IUnknown_AddRef(unk);
     host->plugin_unk = unk;
-    host->clsid = *clsid;
+    host->clsid = clsid;
 
     host->doc = doc;
     list_add_tail(&doc->plugin_hosts, &host->entry);
 
-    *ret = host;
+    container->plugin_host = host;
+    host->element = container;
+
+    initialize_plugin_object(host);
+
     return S_OK;
 }

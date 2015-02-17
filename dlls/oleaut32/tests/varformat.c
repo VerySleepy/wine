@@ -26,7 +26,7 @@
 
 #include "windef.h"
 #include "winbase.h"
-#include "winsock.h"
+#include "winsock2.h"
 #include "wine/test.h"
 #include "winuser.h"
 #include "wingdi.h"
@@ -39,19 +39,17 @@
 
 static HMODULE hOleaut32;
 
+static HRESULT (WINAPI *pVarBstrCmp)(BSTR,BSTR,LCID,ULONG);
 static HRESULT (WINAPI *pVarFormatNumber)(LPVARIANT,int,int,int,int,ULONG,BSTR*);
 static HRESULT (WINAPI *pVarFormat)(LPVARIANT,LPOLESTR,int,int,ULONG,BSTR*);
 static HRESULT (WINAPI *pVarWeekdayName)(int,int,int,ULONG,BSTR*);
 
-/* Have I8/UI8 data type? */
-#define HAVE_OLEAUT32_I8      HAVE_FUNC(VarI8FromI1)
-
-/* Is a given function exported from oleaut32? */
-#define HAVE_FUNC(func) ((void*)GetProcAddress(hOleaut32, #func) != NULL)
+/* Has I8/UI8 data type? */
+static BOOL has_i8;
 
 /* Get a conversion function ptr, return if function not available */
 #define CHECKPTR(func) p##func = (void*)GetProcAddress(hOleaut32, #func); \
-  if (!p##func) { trace("function " # func " not available, not testing it\n"); return; }
+  if (!p##func) { win_skip("function " # func " not available, not testing it\n"); return; }
 
 static inline int strcmpW( const WCHAR *str1, const WCHAR *str2 )
 {
@@ -95,7 +93,7 @@ static void test_VarFormatNumber(void)
   FMT_NUMBER(VT_UI2, V_UI2);
   FMT_NUMBER(VT_I4, V_I4);
   FMT_NUMBER(VT_UI4, V_UI4);
-  if (HAVE_OLEAUT32_I8)
+  if (has_i8)
   {
     FMT_NUMBER(VT_I8, V_I8);
     FMT_NUMBER(VT_UI8, V_UI8);
@@ -277,7 +275,7 @@ static void test_VarFormat(void)
   VNUMFMT(VT_I1,V_I1);
   VNUMFMT(VT_I2,V_I2);
   VNUMFMT(VT_I4,V_I4);
-  if (HAVE_OLEAUT32_I8)
+  if (has_i8)
   {
     VNUMFMT(VT_I8,V_I8);
   }
@@ -285,7 +283,7 @@ static void test_VarFormat(void)
   VNUMFMT(VT_UI1,V_UI1);
   VNUMFMT(VT_UI2,V_UI2);
   VNUMFMT(VT_UI4,V_UI4);
-  if (HAVE_OLEAUT32_I8)
+  if (has_i8)
   {
     VNUMFMT(VT_UI8,V_UI8);
   }
@@ -525,28 +523,30 @@ static void test_VarWeekdayName(void)
      "Null pointer: expected E_INVALIDARG, got 0x%08x\n", hres);
 
   /* Check all combinations */
-  for (iWeekday = 1; iWeekday <= 7; ++iWeekday)
-  {
-    for (fAbbrev = 0; fAbbrev <= 1; ++fAbbrev)
+  pVarBstrCmp = (void*)GetProcAddress(hOleaut32, "VarBstrCmp");
+  if (pVarBstrCmp)
+    for (iWeekday = 1; iWeekday <= 7; ++iWeekday)
     {
-      /* 0 = Default, 1 = Sunday, 2 = Monday, .. */
-      for (iFirstDay = 0; iFirstDay <= 7; ++iFirstDay)
+      for (fAbbrev = 0; fAbbrev <= 1; ++fAbbrev)
       {
-        VARWDN_O(iWeekday, fAbbrev, iFirstDay, 0);
-        if (iFirstDay == 0)
-          firstDay = defaultFirstDay;
-        else
-          /* Translate from 0=Sunday to 0=Monday in the modulo 7 space */
-          firstDay = iFirstDay - 2;
-        day = (7 + iWeekday - 1 + firstDay) % 7;
-        ok(VARCMP_EQ == VarBstrCmp(out, dayNames[day][fAbbrev],
-                                   LOCALE_USER_DEFAULT, 0),
-           "VarWeekdayName(%d,%d,%d): got wrong dayname: '%s'\n",
-           iWeekday, fAbbrev, iFirstDay, buff);
-        SysFreeString(out);
+        /* 0 = Default, 1 = Sunday, 2 = Monday, .. */
+        for (iFirstDay = 0; iFirstDay <= 7; ++iFirstDay)
+        {
+          VARWDN_O(iWeekday, fAbbrev, iFirstDay, 0);
+          if (iFirstDay == 0)
+            firstDay = defaultFirstDay;
+          else
+            /* Translate from 0=Sunday to 0=Monday in the modulo 7 space */
+            firstDay = iFirstDay - 2;
+          day = (7 + iWeekday - 1 + firstDay) % 7;
+          ok(VARCMP_EQ == pVarBstrCmp(out, dayNames[day][fAbbrev],
+                                      LOCALE_USER_DEFAULT, 0),
+             "VarWeekdayName(%d,%d,%d): got wrong dayname: '%s'\n",
+             iWeekday, fAbbrev, iFirstDay, buff);
+          SysFreeString(out);
+        }
       }
     }
-  }
 
   /* Cleanup */
   for (day = 0; day <= 6; ++day)
@@ -561,6 +561,8 @@ static void test_VarWeekdayName(void)
 START_TEST(varformat)
 {
   hOleaut32 = GetModuleHandleA("oleaut32.dll");
+
+  has_i8 = GetProcAddress(hOleaut32, "VarI8FromI1") != NULL;
 
   test_VarFormatNumber();
   test_VarFormat();

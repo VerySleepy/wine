@@ -109,7 +109,7 @@ typedef struct
 # define O_DIRECTORY 0200000 /* must be directory */
 #endif
 
-#ifdef SYS_getdents64
+#ifdef __NR_getdents64
 typedef struct
 {
     ULONG64        d_ino;
@@ -119,9 +119,10 @@ typedef struct
     char           d_name[256];
 } KERNEL_DIRENT64;
 
+#undef getdents64
 static inline int getdents64( int fd, char *de, unsigned int size )
 {
-    return syscall( SYS_getdents64, fd, de, size );
+    return syscall( __NR_getdents64, fd, de, size );
 }
 #define USE_GETDENTS
 #endif
@@ -145,7 +146,7 @@ struct file_identity
 };
 
 static struct file_identity ignored_files[MAX_IGNORED_FILES];
-static int ignored_files_count;
+static unsigned int ignored_files_count;
 
 union file_directory_info
 {
@@ -157,10 +158,11 @@ union file_directory_info
     FILE_ID_FULL_DIRECTORY_INFORMATION id_full;
 };
 
-static int show_dot_files = -1;
+static BOOL show_dot_files;
+static RTL_RUN_ONCE init_once = RTL_RUN_ONCE_INIT;
 
 /* at some point we may want to allow Winelib apps to set this */
-static const int is_case_sensitive = FALSE;
+static const BOOL is_case_sensitive = FALSE;
 
 UNICODE_STRING system_dir = { 0, 0, NULL };  /* system directory */
 
@@ -186,7 +188,7 @@ static inline BOOL is_invalid_dos_char( WCHAR ch )
 }
 
 /* check if the device can be a mounted volume */
-static inline int is_valid_mounted_device( const struct stat *st )
+static inline BOOL is_valid_mounted_device( const struct stat *st )
 {
 #if defined(linux) || defined(__sun__)
     return S_ISBLK( st->st_mode );
@@ -227,15 +229,15 @@ static inline unsigned int dir_info_size( FILE_INFORMATION_CLASS class, unsigned
     switch (class)
     {
     case FileDirectoryInformation:
-        return (FIELD_OFFSET( FILE_DIRECTORY_INFORMATION, FileName[len] ) + 3) & ~3;
+        return (FIELD_OFFSET( FILE_DIRECTORY_INFORMATION, FileName[len] ) + 7) & ~7;
     case FileBothDirectoryInformation:
-        return (FIELD_OFFSET( FILE_BOTH_DIRECTORY_INFORMATION, FileName[len] ) + 3) & ~3;
+        return (FIELD_OFFSET( FILE_BOTH_DIRECTORY_INFORMATION, FileName[len] ) + 7) & ~7;
     case FileFullDirectoryInformation:
-        return (FIELD_OFFSET( FILE_FULL_DIRECTORY_INFORMATION, FileName[len] ) + 3) & ~3;
+        return (FIELD_OFFSET( FILE_FULL_DIRECTORY_INFORMATION, FileName[len] ) + 7) & ~7;
     case FileIdBothDirectoryInformation:
-        return (FIELD_OFFSET( FILE_ID_BOTH_DIRECTORY_INFORMATION, FileName[len] ) + 3) & ~3;
+        return (FIELD_OFFSET( FILE_ID_BOTH_DIRECTORY_INFORMATION, FileName[len] ) + 7) & ~7;
     case FileIdFullDirectoryInformation:
-        return (FIELD_OFFSET( FILE_ID_FULL_DIRECTORY_INFORMATION, FileName[len] ) + 3) & ~3;
+        return (FIELD_OFFSET( FILE_ID_FULL_DIRECTORY_INFORMATION, FileName[len] ) + 7) & ~7;
     default:
         assert(0);
         return 0;
@@ -245,6 +247,13 @@ static inline unsigned int dir_info_size( FILE_INFORMATION_CLASS class, unsigned
 static inline unsigned int max_dir_info_size( FILE_INFORMATION_CLASS class )
 {
     return dir_info_size( class, MAX_DIR_ENTRY_LEN );
+}
+
+static inline BOOL has_wildcard( const UNICODE_STRING *mask )
+{
+    return (!mask ||
+            memchrW( mask->Buffer, '*', mask->Length / sizeof(WCHAR) ) ||
+            memchrW( mask->Buffer, '?', mask->Length / sizeof(WCHAR) ));
 }
 
 
@@ -314,10 +323,17 @@ static char *get_default_com_device( int num )
         ret[strlen(ret) - 1] = '0' + num - 1;
     }
 #elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
-    ret = RtlAllocateHeap( GetProcessHeap(), 0, sizeof("/dev/cuad0") );
+    ret = RtlAllocateHeap( GetProcessHeap(), 0, sizeof("/dev/cuau0") );
     if (ret)
     {
-        strcpy( ret, "/dev/cuad0" );
+        strcpy( ret, "/dev/cuau0" );
+        ret[strlen(ret) - 1] = '0' + num - 1;
+    }
+#elif defined(__DragonFly__)
+    ret = RtlAllocateHeap( GetProcessHeap(), 0, sizeof("/dev/cuaa0") );
+    if (ret)
+    {
+        strcpy( ret, "/dev/cuaa0" );
         ret[strlen(ret) - 1] = '0' + num - 1;
     }
 #else
@@ -350,6 +366,107 @@ static char *get_default_lpt_device( int num )
     return ret;
 }
 
+#ifdef __ANDROID__
+
+static char *unescape_field( char *str )
+{
+    char *in, *out;
+
+    for (in = out = str; *in; in++, out++)
+    {
+        *out = *in;
+        if (in[0] == '\\')
+        {
+            if (in[1] == '\\')
+            {
+                out[0] = '\\';
+                in++;
+            }
+            else if (in[1] == '0' && in[2] == '4' && in[3] == '0')
+            {
+                out[0] = ' ';
+                in += 3;
+            }
+            else if (in[1] == '0' && in[2] == '1' && in[3] == '1')
+            {
+                out[0] = '\t';
+                in += 3;
+            }
+            else if (in[1] == '0' && in[2] == '1' && in[3] == '2')
+            {
+                out[0] = '\n';
+                in += 3;
+            }
+            else if (in[1] == '1' && in[2] == '3' && in[3] == '4')
+            {
+                out[0] = '\\';
+                in += 3;
+            }
+        }
+    }
+    *out = '\0';
+
+    return str;
+}
+
+static inline char *get_field( char **str )
+{
+    char *ret;
+
+    ret = strsep( str, " \t" );
+    if (*str) *str += strspn( *str, " \t" );
+
+    return ret;
+}
+/************************************************************************
+ *                    getmntent_replacement
+ *
+ * getmntent replacement for Android.
+ *
+ * NB returned static buffer is not thread safe; protect with dir_section.
+ */
+static struct mntent *getmntent_replacement( FILE *f )
+{
+    static struct mntent entry;
+    static char buf[4096];
+    char *p, *start;
+
+    do
+    {
+        if (!fgets( buf, sizeof(buf), f )) return NULL;
+        p = strchr( buf, '\n' );
+        if (p) *p = '\0';
+        else /* Partially unread line, move file ptr to end */
+        {
+            char tmp[1024];
+            while (fgets( tmp, sizeof(tmp), f ))
+                if (strchr( tmp, '\n' )) break;
+        }
+        start = buf + strspn( buf, " \t" );
+    } while (start[0] == '\0' || start[0] == '#');
+
+    p = get_field( &start );
+    entry.mnt_fsname = p ? unescape_field( p ) : (char *)"";
+
+    p = get_field( &start );
+    entry.mnt_dir = p ? unescape_field( p ) : (char *)"";
+
+    p = get_field( &start );
+    entry.mnt_type = p ? unescape_field( p ) : (char *)"";
+
+    p = get_field( &start );
+    entry.mnt_opts = p ? unescape_field( p ) : (char *)"";
+
+    p = get_field( &start );
+    entry.mnt_freq = p ? atoi(p) : 0;
+
+    p = get_field( &start );
+    entry.mnt_passno = p ? atoi(p) : 0;
+
+    return &entry;
+}
+#define getmntent getmntent_replacement
+#endif
 
 /***********************************************************************
  *           DIR_get_drives_info
@@ -486,7 +603,7 @@ static char *parse_mount_entries( FILE *f, dev_t dev, ino_t ino )
 }
 #endif
 
-#if defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
+#if defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__DragonFly__)
 #include <fstab.h>
 static char *parse_mount_entries( FILE *f, dev_t dev, ino_t ino )
 {
@@ -569,17 +686,25 @@ static char *get_default_drive_device( const char *root )
 
     RtlEnterCriticalSection( &dir_section );
 
+#ifdef __ANDROID__
+    if ((f = fopen( "/proc/mounts", "r" )))
+    {
+        device = parse_mount_entries( f, st.st_dev, st.st_ino );
+        fclose( f );
+    }
+#else
     if ((f = fopen( "/etc/mtab", "r" )))
     {
         device = parse_mount_entries( f, st.st_dev, st.st_ino );
-        endmntent( f );
+        fclose( f );
     }
     /* look through fstab too in case it's not mounted (for instance if it's an audio CD) */
     if (!device && (f = fopen( "/etc/fstab", "r" )))
     {
         device = parse_mount_entries( f, st.st_dev, st.st_ino );
-        endmntent( f );
+        fclose( f );
     }
+#endif
     if (device)
     {
         ret = RtlAllocateHeap( GetProcessHeap(), 0, strlen(device) + 1 );
@@ -587,7 +712,7 @@ static char *get_default_drive_device( const char *root )
     }
     RtlLeaveCriticalSection( &dir_section );
 
-#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__ )
+#elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__ ) || defined(__DragonFly__)
     char *device = NULL;
     int fd, res = -1;
     struct stat st;
@@ -711,7 +836,11 @@ static char *get_device_mount_point( dev_t dev )
 
     RtlEnterCriticalSection( &dir_section );
 
+#ifdef __ANDROID__
+    if ((f = fopen( "/proc/mounts", "r" )))
+#else
     if ((f = fopen( "/etc/mtab", "r" )))
+#endif
     {
         struct mntent *entry;
         struct stat st;
@@ -750,7 +879,7 @@ static char *get_device_mount_point( dev_t dev )
                 break;
             }
         }
-        endmntent( f );
+        fclose( f );
     }
     RtlLeaveCriticalSection( &dir_section );
 #elif defined(__APPLE__)
@@ -766,8 +895,8 @@ static char *get_device_mount_point( dev_t dev )
         if (stat( entry[i].f_mntfromname, &st ) == -1) continue;
         if (S_ISBLK(st.st_mode) && st.st_rdev == dev)
         {
-            ret = RtlAllocateHeap( GetProcessHeap(), 0, strlen(entry[i].f_mntfromname) + 1 );
-            if (ret) strcpy( ret, entry[i].f_mntfromname );
+            ret = RtlAllocateHeap( GetProcessHeap(), 0, strlen(entry[i].f_mntonname) + 1 );
+            if (ret) strcpy( ret, entry[i].f_mntonname );
             break;
         }
     }
@@ -1022,7 +1151,7 @@ static BOOLEAN get_dir_case_sensitivity( const char *dir )
  *
  * Initialize the show_dot_files options.
  */
-static void init_options(void)
+static DWORD WINAPI init_options( RTL_RUN_ONCE *once, void *param, void **context )
 {
     static const WCHAR WineW[] = {'S','o','f','t','w','a','r','e','\\','W','i','n','e',0};
     static const WCHAR ShowDotFilesW[] = {'S','h','o','w','D','o','t','F','i','l','e','s',0};
@@ -1031,8 +1160,6 @@ static void init_options(void)
     DWORD dummy;
     OBJECT_ATTRIBUTES attr;
     UNICODE_STRING nameW;
-
-    show_dot_files = 0;
 
     RtlOpenCurrentUser( KEY_ALL_ACCESS, &root );
     attr.Length = sizeof(attr);
@@ -1063,6 +1190,7 @@ static void init_options(void)
 #ifdef linux
     ignore_file( "/sys" );
 #endif
+    return TRUE;
 }
 
 
@@ -1075,7 +1203,8 @@ BOOL DIR_is_hidden_file( const UNICODE_STRING *name )
 {
     WCHAR *p, *end;
 
-    if (show_dot_files == -1) init_options();
+    RtlRunOnceExecuteOnce( &init_once, init_options, NULL, NULL );
+
     if (show_dot_files) return FALSE;
 
     end = p = name->Buffer + name->Length/sizeof(WCHAR);
@@ -1169,7 +1298,7 @@ static ULONG hash_short_file_name( const UNICODE_STRING *name, LPWSTR buffer )
  */
 static BOOLEAN match_filename( const UNICODE_STRING *name_str, const UNICODE_STRING *mask_str )
 {
-    int mismatch;
+    BOOL mismatch;
     const WCHAR *name = name_str->Buffer;
     const WCHAR *mask = mask_str->Buffer;
     const WCHAR *name_end = name + name_str->Length / sizeof(WCHAR);
@@ -1252,7 +1381,7 @@ static union file_directory_info *append_entry( void *info_ptr, IO_STATUS_BLOCK 
     WCHAR short_nameW[12];
     WCHAR *filename;
     UNICODE_STRING str;
-    ULONG attributes = 0;
+    ULONG attributes;
 
     io->u.Status = STATUS_SUCCESS;
     long_len = ntdll_umbstowcs( 0, long_name, strlen(long_name), long_nameW, MAX_DIR_ENTRY_LEN );
@@ -1289,12 +1418,7 @@ static union file_directory_info *append_entry( void *info_ptr, IO_STATUS_BLOCK 
         if (!match_filename( &str, mask )) return NULL;
     }
 
-    if (lstat( long_name, &st ) == -1) return NULL;
-    if (S_ISLNK( st.st_mode ))
-    {
-        if (stat( long_name, &st ) == -1) return NULL;
-        if (S_ISDIR( st.st_mode )) attributes |= FILE_ATTRIBUTE_REPARSE_POINT;
-    }
+    if (get_file_info( long_name, &st, &attributes ) == -1) return NULL;
     if (is_ignored_file( &st ))
     {
         TRACE( "ignoring file %s\n", long_name );
@@ -1312,10 +1436,9 @@ static union file_directory_info *append_entry( void *info_ptr, IO_STATUS_BLOCK 
     info = (union file_directory_info *)((char *)info_ptr + io->Information);
     if (st.st_dev != curdir.dev) st.st_ino = 0;  /* ignore inode if on a different device */
     /* all the structures start with a FileDirectoryInformation layout */
-    fill_stat_info( &st, info, class );
+    fill_file_info( &st, attributes, info, class );
     info->dir.NextEntryOffset = total_len;
     info->dir.FileIndex = 0;  /* NTFS always has 0 here, so let's not bother with it */
-    info->dir.FileAttributes |= attributes;
 
     switch (class)
     {
@@ -1356,7 +1479,7 @@ static union file_directory_info *append_entry( void *info_ptr, IO_STATUS_BLOCK 
         assert(0);
         return NULL;
     }
-    memcpy( filename, long_nameW, total_len - ((char *)filename - (char *)info) );
+    memcpy( filename, long_nameW, long_len * sizeof(WCHAR) );
     io->Information += total_len;
     return info;
 }
@@ -1377,7 +1500,6 @@ static KERNEL_DIRENT *start_vfat_ioctl( int fd )
 
     if (!de)
     {
-        const size_t page_size = getpagesize();
         SIZE_T size = 2 * sizeof(*de) + page_size;
         void *addr = NULL;
 
@@ -1702,6 +1824,15 @@ static inline int wine_getdirentries(int fd, char *buf, int nbytes, long *basep)
     return res;
 }
 
+static inline int dir_reclen(struct dirent *de)
+{
+#ifdef HAVE_STRUCT_DIRENT_D_RECLEN
+    return de->d_reclen;
+#else
+    return _DIRENT_RECLEN(de->d_namlen);
+#endif
+}
+
 /***********************************************************************
  *           read_directory_getdirentries
  *
@@ -1747,9 +1878,9 @@ static int read_directory_getdirentries( int fd, IO_STATUS_BLOCK *io, void *buff
         /* check if we got . and .. from getdirentries */
         if (res > 0)
         {
-            if (!strcmp( de->d_name, "." ) && res > de->d_reclen)
+            if (!strcmp( de->d_name, "." ) && res > dir_reclen(de))
             {
-                struct dirent *next_de = (struct dirent *)(data + de->d_reclen);
+                struct dirent *next_de = (struct dirent *)(data + dir_reclen(de));
                 if (!strcmp( next_de->d_name, ".." )) fake_dot_dot = 0;
             }
         }
@@ -1785,7 +1916,7 @@ static int read_directory_getdirentries( int fd, IO_STATUS_BLOCK *io, void *buff
 
     while (res > 0)
     {
-        res -= de->d_reclen;
+        res -= dir_reclen(de);
         if (de->d_fileno &&
             !(fake_dot_dot && (!strcmp( de->d_name, "." ) || !strcmp( de->d_name, ".." ))) &&
             ((info = append_entry( buffer, io, length, de->d_name, NULL, mask, class ))))
@@ -1808,11 +1939,12 @@ static int read_directory_getdirentries( int fd, IO_STATUS_BLOCK *io, void *buff
                 last_info = NULL;
                 goto restart;
             }
+            if (!has_wildcard( mask )) break;
             /* if we have to return but the buffer contains more data, restart with a smaller size */
             if (res > 0 && (single_entry || io->Information + max_dir_info_size(class) > length))
             {
                 lseek( fd, (unsigned long)restart_pos, SEEK_SET );
-                size = (char *)de + de->d_reclen - data;
+                size = (char *)de + dir_reclen(de) - data;
                 io->Information = restart_info_pos;
                 last_info = restart_last_info;
                 goto restart;
@@ -1821,13 +1953,10 @@ static int read_directory_getdirentries( int fd, IO_STATUS_BLOCK *io, void *buff
         /* move on to the next entry */
         if (res > 0)
         {
-            de = (struct dirent *)((char *)de + de->d_reclen);
+            de = (struct dirent *)((char *)de + dir_reclen(de));
             continue;
         }
         if (size < initial_size) break;  /* already restarted once, give up now */
-        size = min( size, length - io->Information );
-        /* if size is too small don't bother to continue */
-        if (size < max_dir_info_size(class) && last_info) break;
         restart_last_info = last_info;
         restart_info_pos = io->Information;
     restart:
@@ -1985,13 +2114,6 @@ done:
 }
 
 
-static inline WCHAR *mempbrkW( const WCHAR *ptr, const WCHAR *accept, size_t n )
-{
-    const WCHAR *end;
-    for (end = ptr + n; ptr < end; ptr++) if (strchrW( accept, *ptr )) return (WCHAR *)ptr;
-    return NULL;
-}
-
 /******************************************************************************
  *  NtQueryDirectoryFile	[NTDLL.@]
  *  ZwQueryDirectoryFile	[NTDLL.@]
@@ -2006,7 +2128,6 @@ NTSTATUS WINAPI NtQueryDirectoryFile( HANDLE handle, HANDLE event,
                                       BOOLEAN restart_scan )
 {
     int cwd, fd, needs_close;
-    static const WCHAR wszWildcards[] = { '*','?',0 };
 
     TRACE("(%p %p %p %p %p %p 0x%08x 0x%08x 0x%08x %s 0x%08x\n",
           handle, event, apc_routine, apc_context, io, buffer,
@@ -2026,6 +2147,7 @@ NTSTATUS WINAPI NtQueryDirectoryFile( HANDLE handle, HANDLE event,
     case FileIdBothDirectoryInformation:
     case FileIdFullDirectoryInformation:
         if (length < dir_info_size( info_class, 1 )) return io->u.Status = STATUS_INFO_LENGTH_MISMATCH;
+        if (!buffer) return io->u.Status = STATUS_ACCESS_VIOLATION;
         break;
     default:
         FIXME( "Unsupported file info class %d\n", info_class );
@@ -2037,9 +2159,9 @@ NTSTATUS WINAPI NtQueryDirectoryFile( HANDLE handle, HANDLE event,
 
     io->Information = 0;
 
-    RtlEnterCriticalSection( &dir_section );
+    RtlRunOnceExecuteOnce( &init_once, init_options, NULL, NULL );
 
-    if (show_dot_files == -1) init_options();
+    RtlEnterCriticalSection( &dir_section );
 
     cwd = open( ".", O_RDONLY );
     if (fchdir( fd ) != -1)
@@ -2052,7 +2174,7 @@ NTSTATUS WINAPI NtQueryDirectoryFile( HANDLE handle, HANDLE event,
         if ((read_directory_vfat( fd, io, buffer, length, single_entry,
                                   mask, restart_scan, info_class )) != -1) goto done;
 #endif
-        if (mask && !mempbrkW( mask->Buffer, wszWildcards, mask->Length / sizeof(WCHAR) ) &&
+        if (!has_wildcard( mask ) &&
             read_directory_stat( fd, io, buffer, length, single_entry,
                                  mask, restart_scan, info_class ) != -1) goto done;
 #ifdef USE_GETDENTS
@@ -2086,15 +2208,15 @@ NTSTATUS WINAPI NtQueryDirectoryFile( HANDLE handle, HANDLE event,
  * There must be at least MAX_DIR_ENTRY_LEN+2 chars available at pos.
  */
 static NTSTATUS find_file_in_dir( char *unix_name, int pos, const WCHAR *name, int length,
-                                  int check_case, int *is_win_dir )
+                                  BOOLEAN check_case, BOOLEAN *is_win_dir )
 {
     WCHAR buffer[MAX_DIR_ENTRY_LEN];
     UNICODE_STRING str;
-    BOOLEAN spaces;
+    BOOLEAN spaces, is_name_8_dot_3;
     DIR *dir;
     struct dirent *de;
     struct stat st;
-    int ret, used_default, is_name_8_dot_3;
+    int ret, used_default;
 
     /* try a shortcut for this directory */
 
@@ -2123,6 +2245,9 @@ static NTSTATUS find_file_in_dir( char *unix_name, int pos, const WCHAR *name, i
     str.Length = length * sizeof(WCHAR);
     str.MaximumLength = str.Length;
     is_name_8_dot_3 = RtlIsNameLegalDOS8Dot3( &str, NULL, &spaces ) && !spaces;
+#ifndef VFAT_IOCTL_READDIR_BOTH
+    is_name_8_dot_3 = is_name_8_dot_3 && length >= 8 && name[4] == '~';
+#endif
 
     if (!is_name_8_dot_3 && !get_dir_case_sensitivity( unix_name )) goto not_found;
 
@@ -2360,7 +2485,7 @@ static void init_redirects(void)
  *
  * Check if path matches a redirect name. If yes, return matched length.
  */
-static int match_redirect( const WCHAR *path, int len, const WCHAR *redir, int check_case )
+static int match_redirect( const WCHAR *path, int len, const WCHAR *redir, BOOLEAN check_case )
 {
     int i = 0;
 
@@ -2395,7 +2520,7 @@ static int match_redirect( const WCHAR *path, int len, const WCHAR *redir, int c
  *
  * Retrieve the Unix path corresponding to a redirected path if any.
  */
-static int get_redirect_path( char *unix_name, int pos, const WCHAR *name, int length, int check_case )
+static int get_redirect_path( char *unix_name, int pos, const WCHAR *name, int length, BOOLEAN check_case )
 {
     unsigned int i;
     int len;
@@ -2419,7 +2544,7 @@ static int get_redirect_path( char *unix_name, int pos, const WCHAR *name, int l
 
 static const unsigned int nb_redirects = 0;
 
-static int get_redirect_path( char *unix_name, int pos, const WCHAR *name, int length, int check_case )
+static int get_redirect_path( char *unix_name, int pos, const WCHAR *name, int length, BOOLEAN check_case )
 {
     return 0;
 }
@@ -2731,7 +2856,7 @@ static NTSTATUS lookup_unix_name( const WCHAR *name, int name_len, char **buffer
     while (name_len)
     {
         const WCHAR *end, *next;
-        int is_win_dir = 0;
+        BOOLEAN is_win_dir = FALSE;
 
         end = name;
         while (end < name + name_len && !IS_SEPARATOR(*end)) end++;
@@ -3006,6 +3131,8 @@ NTSTATUS WINAPI RtlWow64EnableFsRedirection( BOOLEAN enable )
 NTSTATUS WINAPI RtlWow64EnableFsRedirectionEx( ULONG disable, ULONG *old_value )
 {
     if (!is_wow64) return STATUS_NOT_IMPLEMENTED;
+    if (((ULONG_PTR)old_value >> 16) == 0) return STATUS_ACCESS_VIOLATION;
+
     *old_value = !ntdll_get_thread_data()->wow64_redir;
     ntdll_get_thread_data()->wow64_redir = !disable;
     return STATUS_SUCCESS;
@@ -3174,8 +3301,10 @@ struct read_changes_info
     HANDLE FileHandle;
     PVOID Buffer;
     ULONG BufferSize;
+    ULONG data_size;
     PIO_APC_ROUTINE apc;
     void           *apc_arg;
+    char            data[1];
 };
 
 /* callback for ioctl user APC */
@@ -3189,14 +3318,13 @@ static void WINAPI read_changes_user_apc( void *arg, IO_STATUS_BLOCK *io, ULONG 
 static NTSTATUS read_changes_apc( void *user, PIO_STATUS_BLOCK iosb, NTSTATUS status, void **apc )
 {
     struct read_changes_info *info = user;
-    char data[PATH_MAX];
     NTSTATUS ret;
     int size;
 
     SERVER_START_REQ( read_change )
     {
         req->handle = wine_server_obj_handle( info->FileHandle );
-        wine_server_set_reply( req, data, PATH_MAX );
+        wine_server_set_reply( req, info->data, info->data_size );
         ret = wine_server_call( req );
         size = wine_server_reply_size( reply );
     }
@@ -3207,7 +3335,7 @@ static NTSTATUS read_changes_apc( void *user, PIO_STATUS_BLOCK iosb, NTSTATUS st
         PFILE_NOTIFY_INFORMATION pfni = info->Buffer;
         int i, left = info->BufferSize;
         DWORD *last_entry_offset = NULL;
-        struct filesystem_event *event = (struct filesystem_event*)data;
+        struct filesystem_event *event = (struct filesystem_event*)info->data;
 
         while (size && left >= sizeof(*pfni))
         {
@@ -3280,6 +3408,7 @@ NtNotifyChangeDirectoryFile( HANDLE FileHandle, HANDLE Event,
 {
     struct read_changes_info *info;
     NTSTATUS status;
+    ULONG size = max( 4096, BufferSize );
     ULONG_PTR cvalue = ApcRoutine ? 0 : (ULONG_PTR)ApcContext;
 
     TRACE("%p %p %p %p %p %p %u %u %d\n",
@@ -3292,7 +3421,7 @@ NtNotifyChangeDirectoryFile( HANDLE FileHandle, HANDLE Event,
     if (CompletionFilter == 0 || (CompletionFilter & ~FILE_NOTIFY_ALL))
         return STATUS_INVALID_PARAMETER;
 
-    info = RtlAllocateHeap( GetProcessHeap(), 0, sizeof *info );
+    info = RtlAllocateHeap( GetProcessHeap(), 0, offsetof( struct read_changes_info, data[size] ));
     if (!info)
         return STATUS_NO_MEMORY;
 
@@ -3301,6 +3430,7 @@ NtNotifyChangeDirectoryFile( HANDLE FileHandle, HANDLE Event,
     info->BufferSize = BufferSize;
     info->apc        = ApcRoutine;
     info->apc_arg    = ApcContext;
+    info->data_size  = size;
 
     SERVER_START_REQ( read_directory_changes )
     {

@@ -1,7 +1,7 @@
 MODULE    = dinput.dll
 IMPORTLIB = dinput
 IMPORTS   = dxguid uuid comctl32 ole32 user32 advapi32
-EXTRALIBS = @IOKITLIB@
+EXTRALIBS = $(IOKIT_LIBS) $(FORCEFEEDBACK_LIBS)
 
 C_SRCS = \
 	config.c \
@@ -18,15 +18,6 @@ C_SRCS = \
 
 IMPLIB_SRCS = data_formats.c
 
-IDL_R_SRCS = dinput_classes.idl
+IDL_SRCS = dinput_classes.idl
 
-PO_SRCS = dinput.rc
-
-RC_SRCS = \
-	dinput.rc \
-	dinput_En.rc \
-	dinput_It.rc \
-	dinput_Ko.rc \
-	dinput_Lt.rc
-
-@MAKE_DLL_RULES@
+RC_SRCS = dinput.rc

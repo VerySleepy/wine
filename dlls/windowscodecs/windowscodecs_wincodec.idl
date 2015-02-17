@@ -16,6 +16,9 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#pragma makedep proxy
+#pragma makedep register
+
 #include "wincodec.idl"
 
 [
@@ -81,6 +84,13 @@ coclass WICIcoDecoder { interface IWICBitmapDecoder; }
 coclass WICJpegDecoder { interface IWICBitmapDecoder; }
 
 [
+    helpstring("WIC JPEG Encoder"),
+    threading(both),
+    uuid(1a34f5c1-4a5a-46dc-b644-1f4567e7a676)
+]
+coclass WICJpegEncoder { interface IWICBitmapEncoder; }
+
+[
     helpstring("WIC TIFF Decoder"),
     threading(both),
     uuid(b54e85d9-fe23-499f-8b88-6acea713752b)
@@ -114,3 +124,59 @@ coclass WICDefaultFormatConverter { interface IWICFormatConverter; }
     uuid(b11fc79a-67cc-43e6-a9ce-e3d54945d304)
 ]
 coclass WineTgaDecoder { interface IWICBitmapDecoder; }
+
+[
+    helpstring("WIC Unknown Metadata Reader"),
+    threading(both),
+    uuid(699745c2-5066-4b82-a8e3-d40478dbec8c)
+]
+coclass WICUnknownMetadataReader { interface IWICMetadataReader; }
+
+[
+    helpstring("WIC Ifd Metadata Reader"),
+    threading(both),
+    uuid(8f914656-9d0a-4eb2-9019-0bf96d8a9ee6)
+]
+coclass WICIfdMetadataReader { interface IWICIfdMetadataReader; }
+
+[
+    helpstring("WIC Png tEXt Metadata Reader"),
+    threading(both),
+    uuid(4b59afcc-b8c3-408a-b670-89e5fab6fda7)
+]
+coclass WICPngTextMetadataReader { interface IWICMetadataReader; }
+
+[
+    helpstring("WIC LSD Metadata Reader"),
+    threading(both),
+    uuid(41070793-59e4-479a-a1f7-954adc2ef5fc)
+]
+coclass WICLSDMetadataReader { interface IWICMetadataReader; }
+
+[
+    helpstring("WIC IMD Metadata Reader"),
+    threading(both),
+    uuid(7447a267-0015-42c8-a8f1-fb3b94c68361)
+]
+coclass WICIMDMetadataReader { interface IWICMetadataReader; }
+
+[
+    helpstring("WIC GCE Metadata Reader"),
+    threading(both),
+    uuid(b92e345d-f52d-41f3-b562-081bc772e3b9)
+]
+coclass WICGCEMetadataReader { interface IWICMetadataReader; }
+
+[
+    helpstring("WIC Application Extension Reader"),
+    threading(both),
+    uuid(1767b93a-b021-44ea-920f-863c11f4f768)
+]
+coclass WICAPEMetadataReader { interface IWICMetadataReader; }
+
+[
+    helpstring("WIC Comment Extension Reader"),
+    threading(both),
+    uuid(32557d3b-69dc-4f95-836e-f5972b2f6159)
+]
+coclass WICGifCommentMetadataReader { interface IWICMetadataReader; }

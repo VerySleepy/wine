@@ -25,12 +25,14 @@
 #include <png.h>
 #endif
 
+#define NONAMELESSUNION
 #define COBJMACROS
 
 #include "windef.h"
 #include "winbase.h"
 #include "objbase.h"
 #include "wincodec.h"
+#include "wincodecsdk.h"
 
 #include "wincodecs_private.h"
 
@@ -38,6 +40,120 @@
 #include "wine/library.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wincodecs);
+
+static const WCHAR wszPngInterlaceOption[] = {'I','n','t','e','r','l','a','c','e','O','p','t','i','o','n',0};
+
+static HRESULT read_png_chunk(IStream *stream, BYTE *type, BYTE **data, ULONG *data_size)
+{
+    BYTE header[8];
+    HRESULT hr;
+    ULONG bytesread;
+
+    hr = IStream_Read(stream, header, 8, &bytesread);
+    if (FAILED(hr) || bytesread < 8)
+    {
+        if (SUCCEEDED(hr))
+            hr = E_FAIL;
+        return hr;
+    }
+
+    *data_size = header[0] << 24 | header[1] << 16 | header[2] << 8 | header[3];
+
+    memcpy(type, &header[4], 4);
+
+    if (data)
+    {
+        *data = HeapAlloc(GetProcessHeap(), 0, *data_size);
+        if (!*data)
+            return E_OUTOFMEMORY;
+
+        hr = IStream_Read(stream, *data, *data_size, &bytesread);
+
+        if (FAILED(hr) || bytesread < *data_size)
+        {
+            if (SUCCEEDED(hr))
+                hr = E_FAIL;
+            HeapFree(GetProcessHeap(), 0, *data);
+            *data = NULL;
+            return hr;
+        }
+
+        /* Windows ignores CRC of the chunk */
+    }
+
+    return S_OK;
+}
+
+static HRESULT LoadTextMetadata(IStream *stream, const GUID *preferred_vendor,
+    DWORD persist_options, MetadataItem **items, DWORD *item_count)
+{
+    HRESULT hr;
+    BYTE type[4];
+    BYTE *data;
+    ULONG data_size;
+    ULONG name_len, value_len;
+    BYTE *name_end_ptr;
+    LPSTR name, value;
+    MetadataItem *result;
+
+    hr = read_png_chunk(stream, type, &data, &data_size);
+    if (FAILED(hr)) return hr;
+
+    name_end_ptr = memchr(data, 0, data_size);
+
+    name_len = name_end_ptr - data;
+
+    if (!name_end_ptr || name_len > 79)
+    {
+        HeapFree(GetProcessHeap(), 0, data);
+        return E_FAIL;
+    }
+
+    value_len = data_size - name_len - 1;
+
+    result = HeapAlloc(GetProcessHeap(), 0, sizeof(MetadataItem));
+    name = HeapAlloc(GetProcessHeap(), 0, name_len + 1);
+    value = HeapAlloc(GetProcessHeap(), 0, value_len + 1);
+    if (!result || !name || !value)
+    {
+        HeapFree(GetProcessHeap(), 0, data);
+        HeapFree(GetProcessHeap(), 0, result);
+        HeapFree(GetProcessHeap(), 0, name);
+        HeapFree(GetProcessHeap(), 0, value);
+        return E_OUTOFMEMORY;
+    }
+
+    PropVariantInit(&result[0].schema);
+    PropVariantInit(&result[0].id);
+    PropVariantInit(&result[0].value);
+
+    memcpy(name, data, name_len + 1);
+    memcpy(value, name_end_ptr + 1, value_len);
+    value[value_len] = 0;
+
+    result[0].id.vt = VT_LPSTR;
+    result[0].id.u.pszVal = name;
+    result[0].value.vt = VT_LPSTR;
+    result[0].value.u.pszVal = value;
+
+    *items = result;
+    *item_count = 1;
+
+    HeapFree(GetProcessHeap(), 0, data);
+
+    return S_OK;
+}
+
+static const MetadataHandlerVtbl TextReader_Vtbl = {
+    0,
+    &CLSID_WICPngTextMetadataReader,
+    LoadTextMetadata
+};
+
+HRESULT PngTextReader_CreateInstance(REFIID iid, void** ppv)
+{
+    return MetadataReader_Create(&TextReader_Vtbl, iid, ppv);
+}
 
 #ifdef SONAME_LIBPNG
 
@@ -52,6 +168,7 @@ MAKE_FUNCPTR(png_error);
 MAKE_FUNCPTR(png_get_bit_depth);
 MAKE_FUNCPTR(png_get_color_type);
 MAKE_FUNCPTR(png_get_error_ptr);
+MAKE_FUNCPTR(png_get_iCCP);
 MAKE_FUNCPTR(png_get_image_height);
 MAKE_FUNCPTR(png_get_image_width);
 MAKE_FUNCPTR(png_get_io_ptr);
@@ -59,14 +176,16 @@ MAKE_FUNCPTR(png_get_pHYs);
 MAKE_FUNCPTR(png_get_PLTE);
 MAKE_FUNCPTR(png_get_tRNS);
 MAKE_FUNCPTR(png_set_bgr);
+MAKE_FUNCPTR(png_set_crc_action);
 MAKE_FUNCPTR(png_set_error_fn);
-#if HAVE_PNG_SET_EXPAND_GRAY_1_2_4_TO_8
+#ifdef HAVE_PNG_SET_EXPAND_GRAY_1_2_4_TO_8
 MAKE_FUNCPTR(png_set_expand_gray_1_2_4_to_8);
 #else
 MAKE_FUNCPTR(png_set_gray_1_2_4_to_8);
 #endif
 MAKE_FUNCPTR(png_set_filler);
 MAKE_FUNCPTR(png_set_gray_to_rgb);
+MAKE_FUNCPTR(png_set_interlace_handling);
 MAKE_FUNCPTR(png_set_IHDR);
 MAKE_FUNCPTR(png_set_pHYs);
 MAKE_FUNCPTR(png_set_read_fn);
@@ -81,13 +200,28 @@ MAKE_FUNCPTR(png_write_info);
 MAKE_FUNCPTR(png_write_rows);
 #undef MAKE_FUNCPTR
 
+static CRITICAL_SECTION init_png_cs;
+static CRITICAL_SECTION_DEBUG init_png_cs_debug =
+{
+    0, 0, &init_png_cs,
+    { &init_png_cs_debug.ProcessLocksList,
+      &init_png_cs_debug.ProcessLocksList },
+    0, 0, { (DWORD_PTR)(__FILE__ ": init_png_cs") }
+};
+static CRITICAL_SECTION init_png_cs = { &init_png_cs_debug, -1, 0, 0, 0, 0 };
+
 static void *load_libpng(void)
 {
-    if((libpng_handle = wine_dlopen(SONAME_LIBPNG, RTLD_NOW, NULL, 0)) != NULL) {
+    void *result;
+
+    EnterCriticalSection(&init_png_cs);
+
+    if(!libpng_handle && (libpng_handle = wine_dlopen(SONAME_LIBPNG, RTLD_NOW, NULL, 0)) != NULL) {
 
 #define LOAD_FUNCPTR(f) \
     if((p##f = wine_dlsym(libpng_handle, #f, NULL, 0)) == NULL) { \
         libpng_handle = NULL; \
+        LeaveCriticalSection(&init_png_cs); \
         return NULL; \
     }
         LOAD_FUNCPTR(png_create_read_struct);
@@ -99,6 +233,7 @@ static void *load_libpng(void)
         LOAD_FUNCPTR(png_get_bit_depth);
         LOAD_FUNCPTR(png_get_color_type);
         LOAD_FUNCPTR(png_get_error_ptr);
+        LOAD_FUNCPTR(png_get_iCCP);
         LOAD_FUNCPTR(png_get_image_height);
         LOAD_FUNCPTR(png_get_image_width);
         LOAD_FUNCPTR(png_get_io_ptr);
@@ -106,14 +241,16 @@ static void *load_libpng(void)
         LOAD_FUNCPTR(png_get_PLTE);
         LOAD_FUNCPTR(png_get_tRNS);
         LOAD_FUNCPTR(png_set_bgr);
+        LOAD_FUNCPTR(png_set_crc_action);
         LOAD_FUNCPTR(png_set_error_fn);
-#if HAVE_PNG_SET_EXPAND_GRAY_1_2_4_TO_8
+#ifdef HAVE_PNG_SET_EXPAND_GRAY_1_2_4_TO_8
         LOAD_FUNCPTR(png_set_expand_gray_1_2_4_to_8);
 #else
         LOAD_FUNCPTR(png_set_gray_1_2_4_to_8);
 #endif
         LOAD_FUNCPTR(png_set_filler);
         LOAD_FUNCPTR(png_set_gray_to_rgb);
+        LOAD_FUNCPTR(png_set_interlace_handling);
         LOAD_FUNCPTR(png_set_IHDR);
         LOAD_FUNCPTR(png_set_pHYs);
         LOAD_FUNCPTR(png_set_read_fn);
@@ -129,7 +266,12 @@ static void *load_libpng(void)
 
 #undef LOAD_FUNCPTR
     }
-    return libpng_handle;
+
+    result = libpng_handle;
+
+    LeaveCriticalSection(&init_png_cs);
+
+    return result;
 }
 
 static void user_error_fn(png_structp png_ptr, png_const_charp error_message)
@@ -152,6 +294,7 @@ static void user_warning_fn(png_structp png_ptr, png_const_charp warning_message
 typedef struct {
     IWICBitmapDecoder IWICBitmapDecoder_iface;
     IWICBitmapFrameDecode IWICBitmapFrameDecode_iface;
+    IWICMetadataBlockReader IWICMetadataBlockReader_iface;
     LONG ref;
     png_structp png_ptr;
     png_infop info_ptr;
@@ -175,6 +318,11 @@ static inline PngDecoder *impl_from_IWICBitmapFrameDecode(IWICBitmapFrameDecode 
     return CONTAINING_RECORD(iface, PngDecoder, IWICBitmapFrameDecode_iface);
 }
 
+static inline PngDecoder *impl_from_IWICMetadataBlockReader(IWICMetadataBlockReader *iface)
+{
+    return CONTAINING_RECORD(iface, PngDecoder, IWICMetadataBlockReader_iface);
+}
+
 static const IWICBitmapFrameDecodeVtbl PngDecoder_FrameVtbl;
 
 static HRESULT WINAPI PngDecoder_QueryInterface(IWICBitmapDecoder *iface, REFIID iid,
@@ -187,7 +335,7 @@ static HRESULT WINAPI PngDecoder_QueryInterface(IWICBitmapDecoder *iface, REFIID
 
     if (IsEqualIID(&IID_IUnknown, iid) || IsEqualIID(&IID_IWICBitmapDecoder, iid))
     {
-        *ppv = This;
+        *ppv = &This->IWICBitmapDecoder_iface;
     }
     else
     {
@@ -229,11 +377,22 @@ static ULONG WINAPI PngDecoder_Release(IWICBitmapDecoder *iface)
     return ref;
 }
 
-static HRESULT WINAPI PngDecoder_QueryCapability(IWICBitmapDecoder *iface, IStream *pIStream,
-    DWORD *pdwCapability)
+static HRESULT WINAPI PngDecoder_QueryCapability(IWICBitmapDecoder *iface, IStream *stream,
+    DWORD *capability)
 {
-    FIXME("(%p,%p,%p): stub\n", iface, pIStream, pdwCapability);
-    return E_NOTIMPL;
+    HRESULT hr;
+
+    TRACE("(%p,%p,%p)\n", iface, stream, capability);
+
+    if (!stream || !capability) return E_INVALIDARG;
+
+    hr = IWICBitmapDecoder_Initialize(iface, stream, WICDecodeMetadataCacheOnDemand);
+    if (hr != S_OK) return hr;
+
+    *capability = WICBitmapDecoderCapabilityCanDecodeAllImages |
+                  WICBitmapDecoderCapabilityCanDecodeSomeImages;
+    /* FIXME: WICBitmapDecoderCapabilityCanEnumerateMetadata */
+    return S_OK;
 }
 
 static void user_read_data(png_structp png_ptr, png_bytep data, png_size_t length)
@@ -305,6 +464,7 @@ static HRESULT WINAPI PngDecoder_Initialize(IWICBitmapDecoder *iface, IStream *p
         goto end;
     }
     ppng_set_error_fn(This->png_ptr, jmpbuf, user_error_fn, user_warning_fn);
+    ppng_set_crc_action(This->png_ptr, PNG_CRC_QUIET_USE, PNG_CRC_QUIET_USE);
 
     /* seek to the start of the stream */
     seek.QuadPart = 0;
@@ -331,7 +491,7 @@ static HRESULT WINAPI PngDecoder_Initialize(IWICBitmapDecoder *iface, IStream *p
         {
             if (bit_depth < 8)
             {
-#if HAVE_PNG_SET_EXPAND_GRAY_1_2_4_TO_8
+#ifdef HAVE_PNG_SET_EXPAND_GRAY_1_2_4_TO_8
                 ppng_set_expand_gray_1_2_4_to_8(This->png_ptr);
 #else
                 ppng_set_gray_1_2_4_to_8(This->png_ptr);
@@ -497,27 +657,37 @@ static HRESULT WINAPI PngDecoder_GetMetadataQueryReader(IWICBitmapDecoder *iface
 static HRESULT WINAPI PngDecoder_GetPreview(IWICBitmapDecoder *iface,
     IWICBitmapSource **ppIBitmapSource)
 {
-    FIXME("(%p,%p): stub\n", iface, ppIBitmapSource);
-    return E_NOTIMPL;
+    TRACE("(%p,%p)\n", iface, ppIBitmapSource);
+
+    if (!ppIBitmapSource) return E_INVALIDARG;
+
+    *ppIBitmapSource = NULL;
+    return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 }
 
 static HRESULT WINAPI PngDecoder_GetColorContexts(IWICBitmapDecoder *iface,
     UINT cCount, IWICColorContext **ppIColorContexts, UINT *pcActualCount)
 {
-    FIXME("(%p,%u,%p,%p)\n", iface, cCount, ppIColorContexts, pcActualCount);
-    return E_NOTIMPL;
+    TRACE("(%p,%u,%p,%p)\n", iface, cCount, ppIColorContexts, pcActualCount);
+    return WINCODEC_ERR_UNSUPPORTEDOPERATION;
 }
 
 static HRESULT WINAPI PngDecoder_GetThumbnail(IWICBitmapDecoder *iface,
     IWICBitmapSource **ppIThumbnail)
 {
     TRACE("(%p,%p)\n", iface, ppIThumbnail);
+
+    if (!ppIThumbnail) return E_INVALIDARG;
+
+    *ppIThumbnail = NULL;
     return WINCODEC_ERR_CODECNOTHUMBNAIL;
 }
 
 static HRESULT WINAPI PngDecoder_GetFrameCount(IWICBitmapDecoder *iface,
     UINT *pCount)
 {
+    if (!pCount) return E_INVALIDARG;
+
     *pCount = 1;
     return S_OK;
 }
@@ -528,7 +698,7 @@ static HRESULT WINAPI PngDecoder_GetFrame(IWICBitmapDecoder *iface,
     PngDecoder *This = impl_from_IWICBitmapDecoder(iface);
     TRACE("(%p,%u,%p)\n", iface, index, ppIBitmapFrame);
 
-    if (!This->initialized) return WINCODEC_ERR_NOTINITIALIZED;
+    if (!This->initialized) return WINCODEC_ERR_FRAMEMISSING;
 
     if (index != 0) return E_INVALIDARG;
 
@@ -559,13 +729,18 @@ static const IWICBitmapDecoderVtbl PngDecoder_Vtbl = {
 static HRESULT WINAPI PngDecoder_Frame_QueryInterface(IWICBitmapFrameDecode *iface, REFIID iid,
     void **ppv)
 {
+    PngDecoder *This = impl_from_IWICBitmapFrameDecode(iface);
     if (!ppv) return E_INVALIDARG;
 
     if (IsEqualIID(&IID_IUnknown, iid) ||
         IsEqualIID(&IID_IWICBitmapSource, iid) ||
         IsEqualIID(&IID_IWICBitmapFrameDecode, iid))
     {
-        *ppv = iface;
+        *ppv = &This->IWICBitmapFrameDecode_iface;
+    }
+    else if (IsEqualIID(&IID_IWICMetadataBlockReader, iid))
+    {
+        *ppv = &This->IWICMetadataBlockReader_iface;
     }
     else
     {
@@ -580,13 +755,13 @@ static HRESULT WINAPI PngDecoder_Frame_QueryInterface(IWICBitmapFrameDecode *ifa
 static ULONG WINAPI PngDecoder_Frame_AddRef(IWICBitmapFrameDecode *iface)
 {
     PngDecoder *This = impl_from_IWICBitmapFrameDecode(iface);
-    return IUnknown_AddRef((IUnknown*)This);
+    return IWICBitmapDecoder_AddRef(&This->IWICBitmapDecoder_iface);
 }
 
 static ULONG WINAPI PngDecoder_Frame_Release(IWICBitmapFrameDecode *iface)
 {
     PngDecoder *This = impl_from_IWICBitmapFrameDecode(iface);
-    return IUnknown_Release((IUnknown*)This);
+    return IWICBitmapDecoder_Release(&This->IWICBitmapDecoder_iface);
 }
 
 static HRESULT WINAPI PngDecoder_Frame_GetSize(IWICBitmapFrameDecode *iface,
@@ -647,7 +822,7 @@ static HRESULT WINAPI PngDecoder_Frame_CopyPalette(IWICBitmapFrameDecode *iface,
     png_colorp png_palette;
     int num_palette;
     WICColor palette[256];
-    png_bytep trans;
+    png_bytep trans_alpha;
     int num_trans;
     png_color_16p trans_values;
     int i;
@@ -671,21 +846,16 @@ static HRESULT WINAPI PngDecoder_Frame_CopyPalette(IWICBitmapFrameDecode *iface,
         goto end;
     }
 
+    ret = ppng_get_tRNS(This->png_ptr, This->info_ptr, &trans_alpha, &num_trans, &trans_values);
+    if (!ret) num_trans = 0;
+
     for (i=0; i<num_palette; i++)
     {
-        palette[i] = (0xff000000|
+        BYTE alpha = (i < num_trans) ? trans_alpha[i] : 0xff;
+        palette[i] = (alpha << 24 |
                       png_palette[i].red << 16|
                       png_palette[i].green << 8|
                       png_palette[i].blue);
-    }
-
-    ret = ppng_get_tRNS(This->png_ptr, This->info_ptr, &trans, &num_trans, &trans_values);
-    if (ret)
-    {
-        for (i=0; i<num_trans; i++)
-        {
-            palette[trans[i]] = 0x00000000;
-        }
     }
 
 end:
@@ -719,15 +889,49 @@ static HRESULT WINAPI PngDecoder_Frame_GetMetadataQueryReader(IWICBitmapFrameDec
 static HRESULT WINAPI PngDecoder_Frame_GetColorContexts(IWICBitmapFrameDecode *iface,
     UINT cCount, IWICColorContext **ppIColorContexts, UINT *pcActualCount)
 {
-    FIXME("(%p,%u,%p,%p): stub\n", iface, cCount, ppIColorContexts, pcActualCount);
-    return E_NOTIMPL;
+    PngDecoder *This = impl_from_IWICBitmapFrameDecode(iface);
+    png_charp name;
+    BYTE *profile;
+    png_uint_32 len;
+    int compression_type;
+    HRESULT hr;
+
+    TRACE("(%p,%u,%p,%p)\n", iface, cCount, ppIColorContexts, pcActualCount);
+
+    if (!pcActualCount) return E_INVALIDARG;
+
+    EnterCriticalSection(&This->lock);
+
+    if (ppng_get_iCCP(This->png_ptr, This->info_ptr, &name, &compression_type, (void *)&profile, &len))
+    {
+        if (cCount && ppIColorContexts)
+        {
+            hr = IWICColorContext_InitializeFromMemory(*ppIColorContexts, profile, len);
+            if (FAILED(hr))
+            {
+                LeaveCriticalSection(&This->lock);
+                return hr;
+            }
+        }
+        *pcActualCount = 1;
+    }
+    else
+        *pcActualCount = 0;
+
+    LeaveCriticalSection(&This->lock);
+
+    return S_OK;
 }
 
 static HRESULT WINAPI PngDecoder_Frame_GetThumbnail(IWICBitmapFrameDecode *iface,
     IWICBitmapSource **ppIThumbnail)
 {
-    FIXME("(%p,%p): stub\n", iface, ppIThumbnail);
-    return E_NOTIMPL;
+    TRACE("(%p,%p)\n", iface, ppIThumbnail);
+
+    if (!ppIThumbnail) return E_INVALIDARG;
+
+    *ppIThumbnail = NULL;
+    return WINCODEC_ERR_CODECNOTHUMBNAIL;
 }
 
 static const IWICBitmapFrameDecodeVtbl PngDecoder_FrameVtbl = {
@@ -744,18 +948,76 @@ static const IWICBitmapFrameDecodeVtbl PngDecoder_FrameVtbl = {
     PngDecoder_Frame_GetThumbnail
 };
 
-HRESULT PngDecoder_CreateInstance(IUnknown *pUnkOuter, REFIID iid, void** ppv)
+static HRESULT WINAPI PngDecoder_Block_QueryInterface(IWICMetadataBlockReader *iface, REFIID iid,
+    void **ppv)
+{
+    PngDecoder *This = impl_from_IWICMetadataBlockReader(iface);
+    return IWICBitmapFrameDecode_QueryInterface(&This->IWICBitmapFrameDecode_iface, iid, ppv);
+}
+
+static ULONG WINAPI PngDecoder_Block_AddRef(IWICMetadataBlockReader *iface)
+{
+    PngDecoder *This = impl_from_IWICMetadataBlockReader(iface);
+    return IWICBitmapDecoder_AddRef(&This->IWICBitmapDecoder_iface);
+}
+
+static ULONG WINAPI PngDecoder_Block_Release(IWICMetadataBlockReader *iface)
+{
+    PngDecoder *This = impl_from_IWICMetadataBlockReader(iface);
+    return IWICBitmapDecoder_Release(&This->IWICBitmapDecoder_iface);
+}
+
+static HRESULT WINAPI PngDecoder_Block_GetContainerFormat(IWICMetadataBlockReader *iface,
+    GUID *pguidContainerFormat)
+{
+    if (!pguidContainerFormat) return E_INVALIDARG;
+    memcpy(pguidContainerFormat, &GUID_ContainerFormatPng, sizeof(GUID));
+    return S_OK;
+}
+
+static HRESULT WINAPI PngDecoder_Block_GetCount(IWICMetadataBlockReader *iface,
+    UINT *pcCount)
+{
+    static int once;
+    TRACE("%p,%p\n", iface, pcCount);
+    if (!once++) FIXME("stub\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI PngDecoder_Block_GetReaderByIndex(IWICMetadataBlockReader *iface,
+    UINT nIndex, IWICMetadataReader **ppIMetadataReader)
+{
+    FIXME("%p,%d,%p\n", iface, nIndex, ppIMetadataReader);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI PngDecoder_Block_GetEnumerator(IWICMetadataBlockReader *iface,
+    IEnumUnknown **ppIEnumMetadata)
+{
+    FIXME("%p,%p\n", iface, ppIEnumMetadata);
+    return E_NOTIMPL;
+}
+
+static const IWICMetadataBlockReaderVtbl PngDecoder_BlockVtbl = {
+    PngDecoder_Block_QueryInterface,
+    PngDecoder_Block_AddRef,
+    PngDecoder_Block_Release,
+    PngDecoder_Block_GetContainerFormat,
+    PngDecoder_Block_GetCount,
+    PngDecoder_Block_GetReaderByIndex,
+    PngDecoder_Block_GetEnumerator,
+};
+
+HRESULT PngDecoder_CreateInstance(REFIID iid, void** ppv)
 {
     PngDecoder *This;
     HRESULT ret;
 
-    TRACE("(%p,%s,%p)\n", pUnkOuter, debugstr_guid(iid), ppv);
+    TRACE("(%s,%p)\n", debugstr_guid(iid), ppv);
 
     *ppv = NULL;
 
-    if (pUnkOuter) return CLASS_E_NOAGGREGATION;
-
-    if (!libpng_handle && !load_libpng())
+    if (!load_libpng())
     {
         ERR("Failed reading PNG because unable to find %s\n",SONAME_LIBPNG);
         return E_FAIL;
@@ -766,6 +1028,7 @@ HRESULT PngDecoder_CreateInstance(IUnknown *pUnkOuter, REFIID iid, void** ppv)
 
     This->IWICBitmapDecoder_iface.lpVtbl = &PngDecoder_Vtbl;
     This->IWICBitmapFrameDecode_iface.lpVtbl = &PngDecoder_FrameVtbl;
+    This->IWICMetadataBlockReader_iface.lpVtbl = &PngDecoder_BlockVtbl;
     This->ref = 1;
     This->png_ptr = NULL;
     This->info_ptr = NULL;
@@ -775,8 +1038,8 @@ HRESULT PngDecoder_CreateInstance(IUnknown *pUnkOuter, REFIID iid, void** ppv)
     InitializeCriticalSection(&This->lock);
     This->lock.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": PngDecoder.lock");
 
-    ret = IUnknown_QueryInterface((IUnknown*)This, iid, ppv);
-    IUnknown_Release((IUnknown*)This);
+    ret = IWICBitmapDecoder_QueryInterface(&This->IWICBitmapDecoder_iface, iid, ppv);
+    IWICBitmapDecoder_Release(&This->IWICBitmapDecoder_iface);
 
     return ret;
 }
@@ -821,6 +1084,10 @@ typedef struct PngEncoder {
     BOOL frame_committed;
     BOOL committed;
     CRITICAL_SECTION lock;
+    BOOL interlace;
+    BYTE *data;
+    UINT stride;
+    UINT passes;
 } PngEncoder;
 
 static inline PngEncoder *impl_from_IWICBitmapEncoder(IWICBitmapEncoder *iface)
@@ -859,20 +1126,44 @@ static HRESULT WINAPI PngFrameEncode_QueryInterface(IWICBitmapFrameEncode *iface
 static ULONG WINAPI PngFrameEncode_AddRef(IWICBitmapFrameEncode *iface)
 {
     PngEncoder *This = impl_from_IWICBitmapFrameEncode(iface);
-    return IUnknown_AddRef((IUnknown*)This);
+    return IWICBitmapEncoder_AddRef(&This->IWICBitmapEncoder_iface);
 }
 
 static ULONG WINAPI PngFrameEncode_Release(IWICBitmapFrameEncode *iface)
 {
     PngEncoder *This = impl_from_IWICBitmapFrameEncode(iface);
-    return IUnknown_Release((IUnknown*)This);
+    return IWICBitmapEncoder_Release(&This->IWICBitmapEncoder_iface);
 }
 
 static HRESULT WINAPI PngFrameEncode_Initialize(IWICBitmapFrameEncode *iface,
     IPropertyBag2 *pIEncoderOptions)
 {
     PngEncoder *This = impl_from_IWICBitmapFrameEncode(iface);
+    BOOL interlace;
+    PROPBAG2 opts[1]= {{0}};
+    VARIANT opt_values[1];
+    HRESULT opt_hres[1];
+    HRESULT hr;
+
     TRACE("(%p,%p)\n", iface, pIEncoderOptions);
+
+    opts[0].pstrName = (LPOLESTR)wszPngInterlaceOption;
+    opts[0].vt = VT_BOOL;
+
+    if (pIEncoderOptions)
+    {
+        hr = IPropertyBag2_Read(pIEncoderOptions, 1, opts, NULL, opt_values, opt_hres);
+
+        if (FAILED(hr))
+            return hr;
+    }
+    else
+        memset(opt_values, 0, sizeof(opt_values));
+
+    if (V_VT(&opt_values[0]) == VT_EMPTY)
+        interlace = FALSE;
+    else
+        interlace = (V_BOOL(&opt_values[0]) != 0);
 
     EnterCriticalSection(&This->lock);
 
@@ -881,6 +1172,8 @@ static HRESULT WINAPI PngFrameEncode_Initialize(IWICBitmapFrameEncode *iface,
         LeaveCriticalSection(&This->lock);
         return WINCODEC_ERR_WRONGSTATE;
     }
+
+    This->interlace = interlace;
 
     This->frame_initialized = TRUE;
 
@@ -1019,8 +1312,21 @@ static HRESULT WINAPI PngFrameEncode_WritePixels(IWICBitmapFrameEncode *iface,
 
     if (!This->info_written)
     {
+        if (This->interlace)
+        {
+            /* libpng requires us to write all data multiple times in this case. */
+            This->stride = (This->format->bpp * This->width + 7)/8;
+            This->data = HeapAlloc(GetProcessHeap(), 0, This->height * This->stride);
+            if (!This->data)
+            {
+                LeaveCriticalSection(&This->lock);
+                return E_OUTOFMEMORY;
+            }
+        }
+
         ppng_set_IHDR(This->png_ptr, This->info_ptr, This->width, This->height,
-            This->format->bit_depth, This->format->color_type, PNG_INTERLACE_NONE,
+            This->format->bit_depth, This->format->color_type,
+            This->interlace ? PNG_INTERLACE_ADAM7 : PNG_INTERLACE_NONE,
             PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
 
         if (This->xres != 0.0 && This->yres != 0.0)
@@ -1037,7 +1343,24 @@ static HRESULT WINAPI PngFrameEncode_WritePixels(IWICBitmapFrameEncode *iface,
         if (This->format->swap_rgb)
             ppng_set_bgr(This->png_ptr);
 
+        if (This->interlace)
+            This->passes = ppng_set_interlace_handling(This->png_ptr);
+
         This->info_written = TRUE;
+    }
+
+    if (This->interlace)
+    {
+        /* Just store the data so we can write it in multiple passes in Commit. */
+        for (i=0; i<lineCount; i++)
+            memcpy(This->data + This->stride * (This->lines_written + i),
+                   pbPixels + cbStride * i,
+                   This->stride);
+
+        This->lines_written += lineCount;
+
+        LeaveCriticalSection(&This->lock);
+        return S_OK;
     }
 
     row_pointers = HeapAlloc(GetProcessHeap(), 0, lineCount * sizeof(png_byte*));
@@ -1065,70 +1388,20 @@ static HRESULT WINAPI PngFrameEncode_WriteSource(IWICBitmapFrameEncode *iface,
 {
     PngEncoder *This = impl_from_IWICBitmapFrameEncode(iface);
     HRESULT hr;
-    WICRect rc;
-    WICPixelFormatGUID guid;
-    UINT stride;
-    BYTE *pixeldata;
     TRACE("(%p,%p,%p)\n", iface, pIBitmapSource, prc);
 
-    if (!This->frame_initialized || !This->width || !This->height)
+    if (!This->frame_initialized)
         return WINCODEC_ERR_WRONGSTATE;
 
-    if (!This->format)
-    {
-        hr = IWICBitmapSource_GetPixelFormat(pIBitmapSource, &guid);
-        if (FAILED(hr)) return hr;
-        hr = IWICBitmapFrameEncode_SetPixelFormat(iface, &guid);
-        if (FAILED(hr)) return hr;
-    }
-
-    hr = IWICBitmapSource_GetPixelFormat(pIBitmapSource, &guid);
-    if (FAILED(hr)) return hr;
-    if (memcmp(&guid, This->format->guid, sizeof(GUID)) != 0)
-    {
-        /* FIXME: should use WICConvertBitmapSource to convert */
-        ERR("format %s unsupported\n", debugstr_guid(&guid));
-        return E_FAIL;
-    }
-
-    if (This->xres == 0.0 || This->yres == 0.0)
-    {
-        double xres, yres;
-        hr = IWICBitmapSource_GetResolution(pIBitmapSource, &xres, &yres);
-        if (FAILED(hr)) return hr;
-        hr = IWICBitmapFrameEncode_SetResolution(iface, xres, yres);
-        if (FAILED(hr)) return hr;
-    }
-
-    if (!prc)
-    {
-        UINT width, height;
-        hr = IWICBitmapSource_GetSize(pIBitmapSource, &width, &height);
-        if (FAILED(hr)) return hr;
-        rc.X = 0;
-        rc.Y = 0;
-        rc.Width = width;
-        rc.Height = height;
-        prc = &rc;
-    }
-
-    if (prc->Width != This->width) return E_INVALIDARG;
-
-    stride = (This->format->bpp * This->width + 7)/8;
-
-    pixeldata = HeapAlloc(GetProcessHeap(), 0, stride * prc->Height);
-    if (!pixeldata) return E_OUTOFMEMORY;
-
-    hr = IWICBitmapSource_CopyPixels(pIBitmapSource, prc, stride,
-        stride*prc->Height, pixeldata);
+    hr = configure_write_source(iface, pIBitmapSource, prc,
+        This->format ? This->format->guid : NULL, This->width, This->height,
+        This->xres, This->yres);
 
     if (SUCCEEDED(hr))
     {
-        hr = IWICBitmapFrameEncode_WritePixels(iface, prc->Height, stride,
-            stride*prc->Height, pixeldata);
+        hr = write_source(iface, pIBitmapSource, prc,
+            This->format->guid, This->format->bpp, This->width, This->height);
     }
-
-    HeapFree(GetProcessHeap(), 0, pixeldata);
 
     return hr;
 }
@@ -1136,6 +1409,7 @@ static HRESULT WINAPI PngFrameEncode_WriteSource(IWICBitmapFrameEncode *iface,
 static HRESULT WINAPI PngFrameEncode_Commit(IWICBitmapFrameEncode *iface)
 {
     PngEncoder *This = impl_from_IWICBitmapFrameEncode(iface);
+    png_byte **row_pointers=NULL;
     jmp_buf jmpbuf;
     TRACE("(%p)\n", iface);
 
@@ -1151,13 +1425,34 @@ static HRESULT WINAPI PngFrameEncode_Commit(IWICBitmapFrameEncode *iface)
     if (setjmp(jmpbuf))
     {
         LeaveCriticalSection(&This->lock);
+        HeapFree(GetProcessHeap(), 0, row_pointers);
         return E_FAIL;
     }
     ppng_set_error_fn(This->png_ptr, jmpbuf, user_error_fn, user_warning_fn);
 
+    if (This->interlace)
+    {
+        int i;
+
+        row_pointers = HeapAlloc(GetProcessHeap(), 0, This->height * sizeof(png_byte*));
+        if (!row_pointers)
+        {
+            LeaveCriticalSection(&This->lock);
+            return E_OUTOFMEMORY;
+        }
+
+        for (i=0; i<This->height; i++)
+            row_pointers[i] = This->data + This->stride * i;
+
+        for (i=0; i<This->passes; i++)
+            ppng_write_rows(This->png_ptr, row_pointers, This->height);
+    }
+
     ppng_write_end(This->png_ptr, This->info_ptr);
 
     This->frame_committed = TRUE;
+
+    HeapFree(GetProcessHeap(), 0, row_pointers);
 
     LeaveCriticalSection(&This->lock);
 
@@ -1199,7 +1494,7 @@ static HRESULT WINAPI PngEncoder_QueryInterface(IWICBitmapEncoder *iface, REFIID
     if (IsEqualIID(&IID_IUnknown, iid) ||
         IsEqualIID(&IID_IWICBitmapEncoder, iid))
     {
-        *ppv = This;
+        *ppv = &This->IWICBitmapEncoder_iface;
     }
     else
     {
@@ -1236,6 +1531,7 @@ static ULONG WINAPI PngEncoder_Release(IWICBitmapEncoder *iface)
             ppng_destroy_write_struct(&This->png_ptr, &This->info_ptr);
         if (This->stream)
             IStream_Release(This->stream);
+        HeapFree(GetProcessHeap(), 0, This->data);
         HeapFree(GetProcessHeap(), 0, This);
     }
 
@@ -1359,6 +1655,8 @@ static HRESULT WINAPI PngEncoder_CreateNewFrame(IWICBitmapEncoder *iface,
 {
     PngEncoder *This = impl_from_IWICBitmapEncoder(iface);
     HRESULT hr;
+    PROPBAG2 opts[1]= {{0}};
+
     TRACE("(%p,%p,%p)\n", iface, ppIFrameEncode, ppIEncoderOptions);
 
     EnterCriticalSection(&This->lock);
@@ -1375,7 +1673,11 @@ static HRESULT WINAPI PngEncoder_CreateNewFrame(IWICBitmapEncoder *iface,
         return WINCODEC_ERR_NOTINITIALIZED;
     }
 
-    hr = CreatePropertyBag2(ppIEncoderOptions);
+    opts[0].pstrName = (LPOLESTR)wszPngInterlaceOption;
+    opts[0].vt = VT_BOOL;
+    opts[0].dwType = PROPBAG2_TYPE_DATA;
+
+    hr = CreatePropertyBag2(opts, 1, ppIEncoderOptions);
     if (FAILED(hr))
     {
         LeaveCriticalSection(&This->lock);
@@ -1435,18 +1737,16 @@ static const IWICBitmapEncoderVtbl PngEncoder_Vtbl = {
     PngEncoder_GetMetadataQueryWriter
 };
 
-HRESULT PngEncoder_CreateInstance(IUnknown *pUnkOuter, REFIID iid, void** ppv)
+HRESULT PngEncoder_CreateInstance(REFIID iid, void** ppv)
 {
     PngEncoder *This;
     HRESULT ret;
 
-    TRACE("(%p,%s,%p)\n", pUnkOuter, debugstr_guid(iid), ppv);
+    TRACE("(%s,%p)\n", debugstr_guid(iid), ppv);
 
     *ppv = NULL;
 
-    if (pUnkOuter) return CLASS_E_NOAGGREGATION;
-
-    if (!libpng_handle && !load_libpng())
+    if (!load_libpng())
     {
         ERR("Failed writing PNG because unable to find %s\n",SONAME_LIBPNG);
         return E_FAIL;
@@ -1472,24 +1772,25 @@ HRESULT PngEncoder_CreateInstance(IUnknown *pUnkOuter, REFIID iid, void** ppv)
     This->lines_written = 0;
     This->frame_committed = FALSE;
     This->committed = FALSE;
+    This->data = NULL;
     InitializeCriticalSection(&This->lock);
     This->lock.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": PngEncoder.lock");
 
-    ret = IUnknown_QueryInterface((IUnknown*)This, iid, ppv);
-    IUnknown_Release((IUnknown*)This);
+    ret = IWICBitmapEncoder_QueryInterface(&This->IWICBitmapEncoder_iface, iid, ppv);
+    IWICBitmapEncoder_Release(&This->IWICBitmapEncoder_iface);
 
     return ret;
 }
 
 #else /* !HAVE_PNG_H */
 
-HRESULT PngDecoder_CreateInstance(IUnknown *pUnkOuter, REFIID iid, void** ppv)
+HRESULT PngDecoder_CreateInstance(REFIID iid, void** ppv)
 {
     ERR("Trying to load PNG picture, but PNG support is not compiled in.\n");
     return E_FAIL;
 }
 
-HRESULT PngEncoder_CreateInstance(IUnknown *pUnkOuter, REFIID iid, void** ppv)
+HRESULT PngEncoder_CreateInstance(REFIID iid, void** ppv)
 {
     ERR("Trying to save PNG picture, but PNG support is not compiled in.\n");
     return E_FAIL;

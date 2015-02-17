@@ -1,7 +1,5 @@
-DEFS      = -D__WINESRC__ $(EXTRADEFS)
-
 PROGRAMS = winedump$(EXEEXT)
-MANPAGE  = winedump.man
+MANPAGES = winedump.man.in
 
 C_SRCS = \
 	debug.c \
@@ -22,18 +20,17 @@ C_SRCS = \
 	pdb.c \
 	pe.c \
 	search.c \
-	symbol.c
+	symbol.c \
+	tlb.c
 
-INSTALLDIRS = $(DESTDIR)$(bindir) $(DESTDIR)$(mandir)/man$(prog_manext)
-
-all: $(PROGRAMS)
-
-@MAKE_RULES@
+OBJS = $(C_SRCS:.c=.o)
 
 winedump$(EXEEXT): $(OBJS)
 	$(CC) $(CFLAGS) -o winedump$(EXEEXT) $(OBJS) $(LIBPORT) $(LDFLAGS)
 
-install install-dev:: $(PROGRAMS) $(DESTDIR)$(bindir)
+.PHONY: install install-dev uninstall
+
+install install-dev:: $(PROGRAMS) install-man-pages
 	$(INSTALL_PROGRAM) winedump$(EXEEXT) $(DESTDIR)$(bindir)/winedump$(EXEEXT)
 	$(INSTALL_SCRIPT) $(srcdir)/function_grep.pl $(DESTDIR)$(bindir)/function_grep.pl
 

@@ -41,7 +41,6 @@
 #include "winbase.h"
 #include "wingdi.h"
 #include "winuser.h"
-#include "wine/unicode.h"
 
 #define SetResSize(res, tag)	set_dword((res), (tag), (res)->size - get_dword((res), (tag)))
 
@@ -274,6 +273,68 @@ static void string_to_upper(string_t *str)
     {
         internal_error(__FILE__, __LINE__, "Invalid string type %d\n", str->type);
     }
+}
+
+static int parse_accel_string( const string_t *key, int flags )
+{
+    int keycode;
+
+    if(key->type == str_char)
+    {
+        if (key->str.cstr[0] == '#') return 0;  /* ignore message contexts */
+	if((flags & WRC_AF_VIRTKEY) &&
+           !((key->str.cstr[0] >= 'A' && key->str.cstr[0] <= 'Z') ||
+             (key->str.cstr[0] >= '0' && key->str.cstr[0] <= '9')))
+        {
+            print_location( &key->loc );
+            error("VIRTKEY code is not equal to ascii value\n");
+        }
+
+	if(key->str.cstr[0] == '^' && (flags & WRC_AF_CONTROL) != 0)
+	{
+            print_location( &key->loc );
+            error("Cannot use both '^' and CONTROL modifier\n");
+	}
+	else if(key->str.cstr[0] == '^')
+	{
+            keycode = toupper((unsigned char)key->str.cstr[1]) - '@';
+            if(keycode >= ' ')
+            {
+                print_location( &key->loc );
+                error("Control-code out of range\n");
+            }
+	}
+	else
+            keycode = key->str.cstr[0];
+    }
+    else
+    {
+        if (key->str.wstr[0] == '#') return 0;  /* ignore message contexts */
+	if((flags & WRC_AF_VIRTKEY) &&
+           !((key->str.wstr[0] >= 'A' && key->str.wstr[0] <= 'Z') ||
+             (key->str.wstr[0] >= '0' && key->str.wstr[0] <= '9')))
+        {
+            print_location( &key->loc );
+            error("VIRTKEY code is not equal to ascii value\n");
+        }
+	if(key->str.wstr[0] == '^' && (flags & WRC_AF_CONTROL) != 0)
+	{
+            print_location( &key->loc );
+            error("Cannot use both '^' and CONTROL modifier\n");
+	}
+	else if(key->str.wstr[0] == '^')
+	{
+            keycode = toupperW(key->str.wstr[1]) - '@';
+            if(keycode >= ' ')
+            {
+                print_location( &key->loc );
+                error("Control-code out of range\n");
+            }
+	}
+	else
+            keycode = key->str.wstr[0];
+    }
+    return keycode;
 }
 
 /*
@@ -514,8 +575,10 @@ static res_t *accelerator2res(name_id_t *name, accelerator_t *acc)
 		restag = put_res_header(res, WRC_RT_ACCELERATOR, NULL, name, acc->memopt, &(acc->lvc));
 		while(ev)
 		{
+			int key = ev->key;
+			if (ev->str) key = parse_accel_string( ev->str, ev->flags );
 			put_word(res, ev->flags | (ev->next ? 0 : 0x80));
-			put_word(res, ev->key);
+			put_word(res, key);
 			put_word(res, ev->id);
 			put_word(res, 0);	/* Padding */
 			ev = ev->next;
@@ -527,8 +590,10 @@ static res_t *accelerator2res(name_id_t *name, accelerator_t *acc)
 		restag = put_res_header(res, WRC_RT_ACCELERATOR, NULL, name, acc->memopt, NULL);
 		while(ev)
 		{
+			int key = ev->key;
+			if (ev->str) key = parse_accel_string( ev->str, ev->flags );
 			put_byte(res, ev->flags | (ev->next ? 0 : 0x80));
-			put_word(res, ev->key);
+			put_word(res, key);
 			put_word(res, ev->id);
 			ev = ev->next;
 		}
@@ -617,6 +682,7 @@ static res_t *dialog2res(name_id_t *name, dialog_t *dlg)
 			}
 			put_string(res, dlg->font->name, str_unicode, TRUE, dlg->lvc.language);
 		}
+                else if (dlg->style->or_mask & DS_SETFONT) put_word( res, 0x7fff );
 
 		put_pad(res);
 		while(ctrl)
@@ -894,86 +960,48 @@ static res_t *cursorgroup2res(name_id_t *name, cursor_group_t *curg)
 
 	res = new_res();
 	restag = put_res_header(res, WRC_RT_GROUP_CURSOR, NULL, name, curg->memopt, &(curg->lvc));
-	if(win32)
-	{
-		put_word(res, 0);	/* Reserved */
-		/* FIXME: The ResType in the NEWHEADER structure should
-		 * contain 14 according to the MS win32 doc. This is
-		 * not the case with the BRC compiler and I really doubt
-		 * the latter. Putting one here is compliant to win16 spec,
-		 * but who knows the true value?
-		 */
-		put_word(res, 2);	/* ResType */
-		put_word(res, curg->ncursor);
+
+    put_word(res, 0);	/* Reserved */
+    /* FIXME: The ResType in the NEWHEADER structure should
+     * contain 14 according to the MS win32 doc. This is
+     * not the case with the BRC compiler and I really doubt
+     * the latter. Putting one here is compliant to win16 spec,
+     * but who knows the true value?
+     */
+    put_word(res, 2);	/* ResType */
+    put_word(res, curg->ncursor);
 #if 0
-		for(cur = curg->cursorlist; cur; cur = cur->next)
+    for(cur = curg->cursorlist; cur; cur = cur->next)
 #else
-		cur = curg->cursorlist;
-		while(cur->next)
-			cur = cur->next;
-		for(; cur; cur = cur->prev)
+    cur = curg->cursorlist;
+    while(cur->next)
+        cur = cur->next;
+    for(; cur; cur = cur->prev)
 #endif
-		{
-			put_word(res, cur->width);
-			/* FIXME: The height of a cursor is half the size of
-			 * the bitmap's height. BRC puts the height from the
-			 * BITMAPINFOHEADER here instead of the cursorfile's
-			 * height. MS doesn't seem to care...
-			 */
-			put_word(res, cur->height);
-			/* FIXME: The next two are reversed in BRC and I don't
-			 * know why. Probably a bug. But, we can safely ignore
-			 * it because win16 does not support color cursors.
-			 * A warning should have been generated by the parser.
-			 */
-			put_word(res, cur->planes);
-			put_word(res, cur->bits);
-			/* FIXME: The +4 is the hotspot in the cursor resource.
-			 * However, I could not find this in the documentation.
-			 * The hotspot bytes must either be included or MS
-			 * doesn't care.
-			 */
-			put_dword(res, cur->data->size +4);
-			put_word(res, cur->id);
-		}
-	}
-	else /* win16 */
-	{
-		put_word(res, 0);	/* Reserved */
-		put_word(res, 2);	/* ResType */
-		put_word(res, curg->ncursor);
-#if 0
-		for(cur = curg->cursorlist; cur; cur = cur->next)
-#else
-		cur = curg->cursorlist;
-		while(cur->next)
-			cur = cur->next;
-		for(; cur; cur = cur->prev)
-#endif
-		{
-			put_word(res, cur->width);
-			/* FIXME: The height of a cursor is half the size of
-			 * the bitmap's height. BRC puts the height from the
-			 * BITMAPINFOHEADER here instead of the cursorfile's
-			 * height. MS doesn't seem to care...
-			 */
-			put_word(res, cur->height);
-			/* FIXME: The next two are reversed in BRC and I don't
-			 * know why. Probably a bug. But, we can safely ignore
-			 * it because win16 does not support color cursors.
-			 * A warning should have been generated by the parser.
-			 */
-			put_word(res, cur->planes);
-			put_word(res, cur->bits);
-			/* FIXME: The +4 is the hotspot in the cursor resource.
-			 * However, I could not find this in the documentation.
-			 * The hotspot bytes must either be included or MS
-			 * doesn't care.
-			 */
-			put_dword(res, cur->data->size +4);
-			put_word(res, cur->id);
-		}
-	}
+    {
+        put_word(res, cur->width);
+        /* FIXME: The height of a cursor is half the size of
+         * the bitmap's height. BRC puts the height from the
+         * BITMAPINFOHEADER here instead of the cursorfile's
+         * height. MS doesn't seem to care...
+         */
+        put_word(res, cur->height);
+        /* FIXME: The next two are reversed in BRC and I don't
+         * know why. Probably a bug. But, we can safely ignore
+         * it because win16 does not support color cursors.
+         * A warning should have been generated by the parser.
+         */
+        put_word(res, cur->planes);
+        put_word(res, cur->bits);
+        /* FIXME: The +4 is the hotspot in the cursor resource.
+         * However, I could not find this in the documentation.
+         * The hotspot bytes must either be included or MS
+         * doesn't care.
+         */
+        put_dword(res, cur->data->size +4);
+        put_word(res, cur->id);
+    }
+
 	SetResSize(res, restag);	/* Set ResourceSize */
 	if(win32)
 		put_pad(res);
@@ -1037,46 +1065,28 @@ static res_t *icongroup2res(name_id_t *name, icon_group_t *icog)
 
 	res = new_res();
 	restag = put_res_header(res, WRC_RT_GROUP_ICON, NULL, name, icog->memopt, &(icog->lvc));
-	if(win32)
-	{
-		put_word(res, 0);	/* Reserved */
-		/* FIXME: The ResType in the NEWHEADER structure should
-		 * contain 14 according to the MS win32 doc. This is
-		 * not the case with the BRC compiler and I really doubt
-		 * the latter. Putting one here is compliant to win16 spec,
-		 * but who knows the true value?
-		 */
-		put_word(res, 1);	/* ResType */
-		put_word(res, icog->nicon);
-		for(ico = icog->iconlist; ico; ico = ico->next)
-		{
-			put_byte(res, ico->width);
-			put_byte(res, ico->height);
-			put_byte(res, ico->nclr);
-			put_byte(res, 0);	/* Reserved */
-			put_word(res, ico->planes);
-			put_word(res, ico->bits);
-			put_dword(res, ico->data->size);
-			put_word(res, ico->id);
-		}
-	}
-	else /* win16 */
-	{
-		put_word(res, 0);	/* Reserved */
-		put_word(res, 1);	/* ResType */
-		put_word(res, icog->nicon);
-		for(ico = icog->iconlist; ico; ico = ico->next)
-		{
-			put_byte(res, ico->width);
-			put_byte(res, ico->height);
-			put_byte(res, ico->nclr);
-			put_byte(res, 0);	/* Reserved */
-			put_word(res, ico->planes);
-			put_word(res, ico->bits);
-			put_dword(res, ico->data->size);
-			put_word(res, ico->id);
-		}
-	}
+
+    put_word(res, 0);	/* Reserved */
+    /* FIXME: The ResType in the NEWHEADER structure should
+     * contain 14 according to the MS win32 doc. This is
+     * not the case with the BRC compiler and I really doubt
+     * the latter. Putting one here is compliant to win16 spec,
+     * but who knows the true value?
+     */
+    put_word(res, 1);	/* ResType */
+    put_word(res, icog->nicon);
+    for(ico = icog->iconlist; ico; ico = ico->next)
+    {
+        put_byte(res, ico->width);
+        put_byte(res, ico->height);
+        put_byte(res, ico->nclr);
+        put_byte(res, 0);	/* Reserved */
+        put_word(res, ico->planes);
+        put_word(res, ico->bits);
+        put_dword(res, ico->data->size);
+        put_word(res, ico->id);
+    }
+
 	SetResSize(res, restag);	/* Set ResourceSize */
 	if(win32)
 		put_pad(res);

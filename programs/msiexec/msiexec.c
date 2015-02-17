@@ -23,6 +23,7 @@
 
 #include <windows.h>
 #include <msi.h>
+#include <winsvc.h>
 #include <objbase.h>
 #include <stdio.h>
 
@@ -108,10 +109,8 @@ static BOOL IsProductCode(LPWSTR str)
 static VOID StringListAppend(struct string_list **list, LPCWSTR str)
 {
 	struct string_list *entry;
-	DWORD size;
 
-	size = sizeof *entry + lstrlenW(str) * sizeof (WCHAR);
-	entry = HeapAlloc(GetProcessHeap(), 0, size);
+	entry = HeapAlloc(GetProcessHeap(), 0, FIELD_OFFSET(struct string_list, str[lstrlenW(str) + 1]));
 	if(!entry)
 	{
 		WINE_ERR("Out of memory!\n");
@@ -345,29 +344,57 @@ static DWORD DoDllUnregisterServer(LPCWSTR DllName)
 
 static DWORD DoRegServer(void)
 {
+    static const WCHAR msiserverW[] = {'M','S','I','S','e','r','v','e','r',0};
+    static const WCHAR msiexecW[] = {'\\','m','s','i','e','x','e','c',' ','/','V',0};
     SC_HANDLE scm, service;
-    CHAR path[MAX_PATH+12];
-    DWORD ret = 0;
+    WCHAR path[MAX_PATH+12];
+    DWORD len, ret = 0;
 
-    scm = OpenSCManagerA(NULL, SERVICES_ACTIVE_DATABASEA, SC_MANAGER_CREATE_SERVICE);
-    if (!scm)
+    if (!(scm = OpenSCManagerW(NULL, SERVICES_ACTIVE_DATABASEW, SC_MANAGER_CREATE_SERVICE)))
     {
         fprintf(stderr, "Failed to open the service control manager.\n");
         return 1;
     }
-
-    GetSystemDirectoryA(path, MAX_PATH);
-    lstrcatA(path, "\\msiexec.exe /V");
-
-    service = CreateServiceA(scm, "MSIServer", "MSIServer", GENERIC_ALL,
-                             SERVICE_WIN32_SHARE_PROCESS, SERVICE_DEMAND_START,
-                             SERVICE_ERROR_NORMAL, path, NULL, NULL,
-                             NULL, NULL, NULL);
-
-    if (service) CloseServiceHandle(service);
+    len = GetSystemDirectoryW(path, MAX_PATH);
+    lstrcpyW(path + len, msiexecW);
+    if ((service = CreateServiceW(scm, msiserverW, msiserverW, GENERIC_ALL,
+                                  SERVICE_WIN32_SHARE_PROCESS, SERVICE_DEMAND_START,
+                                  SERVICE_ERROR_NORMAL, path, NULL, NULL, NULL, NULL, NULL)))
+    {
+        CloseServiceHandle(service);
+    }
     else if (GetLastError() != ERROR_SERVICE_EXISTS)
     {
         fprintf(stderr, "Failed to create MSI service\n");
+        ret = 1;
+    }
+    CloseServiceHandle(scm);
+    return ret;
+}
+
+static DWORD DoUnregServer(void)
+{
+    static const WCHAR msiserverW[] = {'M','S','I','S','e','r','v','e','r',0};
+    SC_HANDLE scm, service;
+    DWORD ret = 0;
+
+    if (!(scm = OpenSCManagerW(NULL, SERVICES_ACTIVE_DATABASEW, SC_MANAGER_CONNECT)))
+    {
+        fprintf(stderr, "Failed to open service control manager\n");
+        return 1;
+    }
+    if ((service = OpenServiceW(scm, msiserverW, DELETE)))
+    {
+        if (!DeleteService(service))
+        {
+            fprintf(stderr, "Failed to delete MSI service\n");
+            ret = 1;
+        }
+        CloseServiceHandle(service);
+    }
+    else if (GetLastError() != ERROR_SERVICE_DOES_NOT_EXIST)
+    {
+        fprintf(stderr, "Failed to open MSI service\n");
         ret = 1;
     }
     CloseServiceHandle(scm);
@@ -395,11 +422,12 @@ static int chomp( WCHAR *str )
 {
 	enum chomp_state state = cs_token;
 	WCHAR *p, *out;
-	int count = 1, ignore;
+        int count = 1;
+        BOOL ignore;
 
 	for( p = str, out = str; *p; p++ )
 	{
-		ignore = 1;
+                ignore = TRUE;
 		switch( state )
 		{
 		case cs_whitespace:
@@ -413,7 +441,7 @@ static int chomp( WCHAR *str )
 				break;
 			default:
 				count++;
-				ignore = 0;
+                                ignore = FALSE;
 				state = cs_token;
 			}
 			break;
@@ -429,7 +457,7 @@ static int chomp( WCHAR *str )
 				*out++ = 0;
 				break;
 			default:
-				ignore = 0;
+                                ignore = FALSE;
 			}
 			break;
 
@@ -440,7 +468,7 @@ static int chomp( WCHAR *str )
 				state = cs_token;
 				break;
 			default:
-				ignore = 0;
+                                ignore = FALSE;
 			}
 			break;
 		}
@@ -603,6 +631,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			WINE_TRACE("argvW[%d] = %s\n", i, wine_dbgstr_w(argvW[i]));
 			PackageName = argvW[i];
 			StringListAppend(&property_list, ActionAdmin);
+			WINE_FIXME("Administrative installs are not currently supported\n");
 		}
 		else if(msi_option_prefix(argvW[i], "f"))
 		{
@@ -841,7 +870,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 				ExitProcess(1);
 			}
 		}
-		else if(msi_option_equal(argvW[i], "p"))
+		else if(msi_option_equal(argvW[i], "p") || msi_option_equal(argvW[i], "update"))
 		{
 			FunctionPatch = TRUE;
 			i++;
@@ -883,8 +912,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			}
 			else if(msi_strequal(argvW[i]+2, "b+!"))
 			{
-				InstallUILevel = INSTALLUILEVEL_BASIC|INSTALLUILEVEL_ENDDIALOG;
-				WINE_FIXME("Unknown modifier: !\n");
+				WINE_FIXME("Unhandled modifier: !\n");
+				InstallUILevel = INSTALLUILEVEL_BASIC|INSTALLUILEVEL_ENDDIALOG|INSTALLUILEVEL_HIDECANCEL;
+			}
+			else if(msi_strequal(argvW[i]+2, "b-!"))
+			{
+				WINE_FIXME("Unhandled modifier: !\n");
+				InstallUILevel = INSTALLUILEVEL_BASIC|INSTALLUILEVEL_PROGRESSONLY|INSTALLUILEVEL_HIDECANCEL;
+			}
+			else if(msi_strequal(argvW[i]+2, "b!"))
+			{
+				WINE_FIXME("Unhandled modifier: !\n");
+				InstallUILevel = INSTALLUILEVEL_BASIC|INSTALLUILEVEL_HIDECANCEL;
 			}
 			else
 			{
@@ -978,7 +1017,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	}
 	else if (FunctionUnregServer)
 	{
-		WINE_FIXME( "/unregserver not implemented yet, ignoring\n" );
+		ReturnCode = DoUnregServer();
 	}
 	else if (FunctionServer)
 	{

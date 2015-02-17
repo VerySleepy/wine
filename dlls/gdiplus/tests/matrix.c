@@ -20,8 +20,7 @@
 
 #include <math.h>
 
-#include "windows.h"
-#include <stdio.h>
+#include "objbase.h"
 #include "gdiplus.h"
 #include "wine/test.h"
 
@@ -76,6 +75,9 @@ static void test_transform(void)
     }
 
     GdipCreateMatrix2(1.0, -2.0, 30.0, 40.0, -500.0, 600.0, &matrix);
+
+    status = GdipTransformMatrixPoints(matrix, pts, 0);
+    expect(InvalidParameter, status);
 
     status = GdipTransformMatrixPoints(matrix, pts, 10);
     expect(Ok, status);

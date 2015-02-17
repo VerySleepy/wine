@@ -39,12 +39,13 @@ WINE_DEFAULT_DEBUG_CHANNEL(threadpool);
 
 #define WORKER_TIMEOUT 30000 /* 30 seconds */
 
-static LONG num_workers;
-static LONG num_work_items;
-static LONG num_busy_workers;
-
+/* threadpool_cs must be held while modifying the following elements */
 static struct list work_item_list = LIST_INIT(work_item_list);
-static HANDLE work_item_event;
+static LONG num_workers;
+static LONG num_busy_workers;
+static LONG num_items_processed;
+
+static RTL_CONDITION_VARIABLE threadpool_cond = RTL_CONDITION_VARIABLE_INIT;
 
 static RTL_CRITICAL_SECTION threadpool_cs;
 static RTL_CRITICAL_SECTION_DEBUG critsect_debug =
@@ -84,78 +85,42 @@ static inline LONG interlocked_dec( PLONG dest )
 
 static void WINAPI worker_thread_proc(void * param)
 {
-    interlocked_inc(&num_workers);
+    struct list *item;
+    struct work_item *work_item_ptr, work_item;
+    LARGE_INTEGER timeout;
+    timeout.QuadPart = -(WORKER_TIMEOUT * (ULONGLONG)10000);
 
-    /* free the work item memory sooner to reduce memory usage */
-    while (TRUE)
+    RtlEnterCriticalSection( &threadpool_cs );
+    num_workers++;
+
+    for (;;)
     {
-        if (num_work_items > 0)
+        if ((item = list_head( &work_item_list )))
         {
-            struct list *item;
-            RtlEnterCriticalSection(&threadpool_cs);
-            item = list_head(&work_item_list);
-            if (item)
-            {
-                struct work_item *work_item_ptr = LIST_ENTRY(item, struct work_item, entry);
-                struct work_item work_item;
-                list_remove(&work_item_ptr->entry);
-                interlocked_dec(&num_work_items);
+            work_item_ptr = LIST_ENTRY( item, struct work_item, entry );
+            list_remove( &work_item_ptr->entry );
+            num_busy_workers++;
+            num_items_processed++;
+            RtlLeaveCriticalSection( &threadpool_cs );
 
-                RtlLeaveCriticalSection(&threadpool_cs);
+            /* copy item to stack and do the work */
+            work_item = *work_item_ptr;
+            RtlFreeHeap( GetProcessHeap(), 0, work_item_ptr );
+            TRACE("executing %p(%p)\n", work_item.function, work_item.context);
+            work_item.function( work_item.context );
 
-                work_item = *work_item_ptr;
-                RtlFreeHeap(GetProcessHeap(), 0, work_item_ptr);
-
-                TRACE("executing %p(%p)\n", work_item.function, work_item.context);
-
-                interlocked_inc(&num_busy_workers);
-
-                /* do the work */
-                work_item.function(work_item.context);
-
-                interlocked_dec(&num_busy_workers);
-            }
-            else
-                RtlLeaveCriticalSection(&threadpool_cs);
+            RtlEnterCriticalSection( &threadpool_cs );
+            num_busy_workers--;
         }
-        else
-        {
-            NTSTATUS status;
-            LARGE_INTEGER timeout;
-            timeout.QuadPart = -(WORKER_TIMEOUT * (ULONGLONG)10000);
-            status = NtWaitForSingleObject(work_item_event, FALSE, &timeout);
-            if (status != STATUS_WAIT_0)
-                break;
-        }
+        else if (RtlSleepConditionVariableCS( &threadpool_cond, &threadpool_cs, &timeout ) != STATUS_SUCCESS)
+            break;
     }
 
-    interlocked_dec(&num_workers);
-
-    RtlExitUserThread(0);
+    num_workers--;
+    RtlLeaveCriticalSection( &threadpool_cs );
+    RtlExitUserThread( 0 );
 
     /* never reached */
-}
-
-static NTSTATUS add_work_item_to_queue(struct work_item *work_item)
-{
-    NTSTATUS status;
-
-    RtlEnterCriticalSection(&threadpool_cs);
-    list_add_tail(&work_item_list, &work_item->entry);
-    num_work_items++;
-    RtlLeaveCriticalSection(&threadpool_cs);
-
-    if (!work_item_event)
-    {
-        HANDLE sem;
-        status = NtCreateSemaphore(&sem, SEMAPHORE_ALL_ACCESS, NULL, 1, INT_MAX);
-        if (interlocked_cmpxchg_ptr( &work_item_event, sem, 0 ))
-            NtClose(sem);  /* somebody beat us to it */
-    }
-    else
-        status = NtReleaseSemaphore(work_item_event, 1, NULL);
-
-    return status;
 }
 
 /***********************************************************************
@@ -184,6 +149,7 @@ NTSTATUS WINAPI RtlQueueWorkItem(PRTL_WORK_ITEM_ROUTINE Function, PVOID Context,
 {
     HANDLE thread;
     NTSTATUS status;
+    LONG items_processed;
     struct work_item *work_item = RtlAllocateHeap(GetProcessHeap(), 0, sizeof(struct work_item));
 
     if (!work_item)
@@ -195,39 +161,40 @@ NTSTATUS WINAPI RtlQueueWorkItem(PRTL_WORK_ITEM_ROUTINE Function, PVOID Context,
     if (Flags & ~WT_EXECUTELONGFUNCTION)
         FIXME("Flags 0x%x not supported\n", Flags);
 
-    status = add_work_item_to_queue(work_item);
+    RtlEnterCriticalSection( &threadpool_cs );
+    list_add_tail( &work_item_list, &work_item->entry );
+    status = (num_workers > num_busy_workers) ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+    items_processed = num_items_processed;
+    RtlLeaveCriticalSection( &threadpool_cs );
 
     /* FIXME: tune this algorithm to not be as aggressive with creating threads
      * if WT_EXECUTELONGFUNCTION isn't specified */
-    if ((status == STATUS_SUCCESS) &&
-        ((num_workers == 0) || (num_workers == num_busy_workers)))
+    if (status == STATUS_SUCCESS)
+        RtlWakeConditionVariable( &threadpool_cond );
+    else
     {
-        status = RtlCreateUserThread( GetCurrentProcess(), NULL, FALSE,
-                                    NULL, 0, 0,
-                                    worker_thread_proc, NULL, &thread, NULL );
-        if (status == STATUS_SUCCESS)
-            NtClose( thread );
+        status = RtlCreateUserThread( GetCurrentProcess(), NULL, FALSE, NULL, 0, 0,
+                                      worker_thread_proc, NULL, &thread, NULL );
 
         /* NOTE: we don't care if we couldn't create the thread if there is at
          * least one other available to process the request */
-        if ((num_workers > 0) && (status != STATUS_SUCCESS))
-            status = STATUS_SUCCESS;
+        if (status == STATUS_SUCCESS)
+            NtClose( thread );
+        else
+        {
+            RtlEnterCriticalSection( &threadpool_cs );
+            if (num_workers > 0 || num_items_processed != items_processed)
+                status = STATUS_SUCCESS;
+            else
+                list_remove( &work_item->entry );
+            RtlLeaveCriticalSection( &threadpool_cs );
+
+            if (status != STATUS_SUCCESS)
+                RtlFreeHeap( GetProcessHeap(), 0, work_item );
+        }
     }
 
-    if (status != STATUS_SUCCESS)
-    {
-        RtlEnterCriticalSection(&threadpool_cs);
-
-        interlocked_dec(&num_work_items);
-        list_remove(&work_item->entry);
-        RtlFreeHeap(GetProcessHeap(), 0, work_item);
-
-        RtlLeaveCriticalSection(&threadpool_cs);
-
-        return status;
-    }
-
-    return STATUS_SUCCESS;
+    return status;
 }
 
 /***********************************************************************
@@ -235,12 +202,14 @@ NTSTATUS WINAPI RtlQueueWorkItem(PRTL_WORK_ITEM_ROUTINE Function, PVOID Context,
  */
 static DWORD CALLBACK iocp_poller(LPVOID Arg)
 {
+    HANDLE cport = Arg;
+
     while( TRUE )
     {
         PRTL_OVERLAPPED_COMPLETION_ROUTINE callback;
         LPVOID overlapped;
         IO_STATUS_BLOCK iosb;
-        NTSTATUS res = NtRemoveIoCompletion( compl_port, (PULONG_PTR)&callback, (PULONG_PTR)&overlapped, &iosb, NULL );
+        NTSTATUS res = NtRemoveIoCompletion( cport, (PULONG_PTR)&callback, (PULONG_PTR)&overlapped, &iosb, NULL );
         if (res)
         {
             ERR("NtRemoveIoCompletion failed: 0x%x\n", res);
@@ -297,7 +266,7 @@ NTSTATUS WINAPI RtlSetIoCompletionCallback(HANDLE FileHandle, PRTL_OVERLAPPED_CO
             if (!res)
             {
                 /* FIXME native can start additional threads in case of e.g. hung callback function. */
-                res = RtlQueueWorkItem( iocp_poller, NULL, WT_EXECUTEDEFAULT );
+                res = RtlQueueWorkItem( iocp_poller, cport, WT_EXECUTEDEFAULT );
                 if (!res)
                     compl_port = cport;
                 else
@@ -344,7 +313,7 @@ static DWORD CALLBACK wait_thread_proc(LPVOID Arg)
 {
     struct wait_work_item *wait_work_item = Arg;
     NTSTATUS status;
-    BOOLEAN alertable = (wait_work_item->Flags & WT_EXECUTEINIOTHREAD) ? TRUE : FALSE;
+    BOOLEAN alertable = (wait_work_item->Flags & WT_EXECUTEINIOTHREAD) != 0;
     HANDLE handles[2] = { wait_work_item->Object, wait_work_item->CancelEvent };
     LARGE_INTEGER timeout;
     HANDLE completion_event;
@@ -353,7 +322,7 @@ static DWORD CALLBACK wait_thread_proc(LPVOID Arg)
 
     while (TRUE)
     {
-        status = NtWaitForMultipleObjects( 2, handles, FALSE, alertable,
+        status = NtWaitForMultipleObjects( 2, handles, TRUE, alertable,
                                            get_nt_timeout( &timeout, wait_work_item->Milliseconds ) );
         if (status == STATUS_WAIT_0 || status == STATUS_TIMEOUT)
         {
@@ -553,6 +522,7 @@ struct queue_timer
 
 struct timer_queue
 {
+    DWORD magic;
     RTL_CRITICAL_SECTION cs;
     struct list timers;          /* sorted by expiration time */
     BOOL quit;         /* queue should be deleted; once set, never unset */
@@ -561,6 +531,7 @@ struct timer_queue
 };
 
 #define EXPIRE_NEVER (~(ULONGLONG) 0)
+#define TIMER_QUEUE_MAGIC 0x516d6954  /* TimQ */
 
 static void queue_remove_timer(struct queue_timer *t)
 {
@@ -605,9 +576,9 @@ static DWORD WINAPI timer_callback_wrapper(LPVOID p)
 
 static inline ULONGLONG queue_current_time(void)
 {
-    LARGE_INTEGER now;
-    NtQuerySystemTime(&now);
-    return now.QuadPart / 10000;
+    LARGE_INTEGER now, freq;
+    NtQueryPerformanceCounter(&now, &freq);
+    return now.QuadPart * 1000 / freq.QuadPart;
 }
 
 static void queue_add_timer(struct queue_timer *t, ULONGLONG time,
@@ -651,13 +622,21 @@ static void queue_timer_expire(struct timer_queue *q)
     RtlEnterCriticalSection(&q->cs);
     if (list_head(&q->timers))
     {
+        ULONGLONG now, next;
         t = LIST_ENTRY(list_head(&q->timers), struct queue_timer, entry);
-        if (!t->destroy && t->expire <= queue_current_time())
+        if (!t->destroy && t->expire <= ((now = queue_current_time())))
         {
             ++t->runcount;
-            queue_move_timer(
-                t, t->period ? queue_current_time() + t->period : EXPIRE_NEVER,
-                FALSE);
+            if (t->period)
+            {
+                next = t->expire + t->period;
+                /* avoid trigger cascade if overloaded / hibernated */
+                if (next < now)
+                    next = now + t->period;
+            }
+            else
+                next = EXPIRE_NEVER;
+            queue_move_timer(t, next, FALSE);
         }
         else
             t = NULL;
@@ -740,6 +719,7 @@ static void WINAPI timer_queue_thread_proc(LPVOID p)
 
     NtClose(q->event);
     RtlDeleteCriticalSection(&q->cs);
+    q->magic = 0;
     RtlFreeHeap(GetProcessHeap(), 0, q);
 }
 
@@ -780,6 +760,7 @@ NTSTATUS WINAPI RtlCreateTimerQueue(PHANDLE NewTimerQueue)
     RtlInitializeCriticalSection(&q->cs);
     list_init(&q->timers);
     q->quit = FALSE;
+    q->magic = TIMER_QUEUE_MAGIC;
     status = NtCreateEvent(&q->event, EVENT_ALL_ACCESS, NULL, SynchronizationEvent, FALSE);
     if (status != STATUS_SUCCESS)
     {
@@ -822,7 +803,7 @@ NTSTATUS WINAPI RtlDeleteTimerQueueEx(HANDLE TimerQueue, HANDLE CompletionEvent)
     HANDLE thread;
     NTSTATUS status;
 
-    if (!q)
+    if (!q || q->magic != TIMER_QUEUE_MAGIC)
         return STATUS_INVALID_HANDLE;
 
     thread = q->thread;
@@ -877,7 +858,7 @@ static struct timer_queue *get_timer_queue(HANDLE TimerQueue)
                     (void **) &default_timer_queue, q, NULL);
                 if (p)
                     /* Got beat to the punch.  */
-                    RtlDeleteTimerQueueEx(p, NULL);
+                    RtlDeleteTimerQueueEx(q, NULL);
             }
         }
         return default_timer_queue;
@@ -900,7 +881,7 @@ static struct timer_queue *get_timer_queue(HANDLE TimerQueue)
  *                 after the first callback.  If zero, the timer will only
  *                 fire once.  It still needs to be deleted with
  *                 RtlDeleteTimer.
- * Flags       [I] Flags controling the execution of the callback.  In
+ * Flags       [I] Flags controlling the execution of the callback.  In
  *                 addition to the WT_* thread pool flags (see
  *                 RtlQueueWorkItem), WT_EXECUTEINTIMERTHREAD and
  *                 WT_EXECUTEONLYONCE are supported.
@@ -917,8 +898,9 @@ NTSTATUS WINAPI RtlCreateTimer(PHANDLE NewTimer, HANDLE TimerQueue,
     NTSTATUS status;
     struct queue_timer *t;
     struct timer_queue *q = get_timer_queue(TimerQueue);
-    if (!q)
-        return STATUS_NO_MEMORY;
+
+    if (!q) return STATUS_NO_MEMORY;
+    if (q->magic != TIMER_QUEUE_MAGIC) return STATUS_INVALID_HANDLE;
 
     t = RtlAllocateHeap(GetProcessHeap(), 0, sizeof *t);
     if (!t)
@@ -1015,7 +997,11 @@ NTSTATUS WINAPI RtlDeleteTimer(HANDLE TimerQueue, HANDLE Timer,
         return STATUS_INVALID_PARAMETER_1;
     q = t->q;
     if (CompletionEvent == INVALID_HANDLE_VALUE)
+    {
         status = NtCreateEvent(&event, EVENT_ALL_ACCESS, NULL, SynchronizationEvent, FALSE);
+        if (status == STATUS_SUCCESS)
+            status = STATUS_PENDING;
+    }
     else if (CompletionEvent)
         event = CompletionEvent;
 
@@ -1029,7 +1015,10 @@ NTSTATUS WINAPI RtlDeleteTimer(HANDLE TimerQueue, HANDLE Timer,
     if (CompletionEvent == INVALID_HANDLE_VALUE && event)
     {
         if (status == STATUS_PENDING)
+        {
             NtWaitForSingleObject(event, FALSE, NULL);
+            status = STATUS_SUCCESS;
+        }
         NtClose(event);
     }
 

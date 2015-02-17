@@ -65,25 +65,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(dbghelp);
  */
 
 unsigned   dbghelp_options = SYMOPT_UNDNAME;
-HANDLE     hMsvcrt = NULL;
-
-/***********************************************************************
- *           DllMain (DEBUGHLP.@)
- */
-BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
-{
-    switch (fdwReason)
-    {
-    case DLL_PROCESS_ATTACH:    break;
-    case DLL_PROCESS_DETACH:
-        if (hMsvcrt) FreeLibrary(hMsvcrt);
-        break;
-    case DLL_THREAD_ATTACH:     break;
-    case DLL_THREAD_DETACH:     break;
-    default:                    break;
-    }
-    return TRUE;
-}
 
 static struct process* process_first /* = NULL */;
 
@@ -151,9 +132,9 @@ const char* wine_dbgstr_addr(const ADDRESS64* addr)
     }
 }
 
-extern struct cpu       cpu_i386, cpu_x86_64, cpu_ppc, cpu_sparc, cpu_arm;
+extern struct cpu       cpu_i386, cpu_x86_64, cpu_ppc, cpu_arm, cpu_arm64;
 
-static struct cpu*      dbghelp_cpus[] = {&cpu_i386, &cpu_x86_64, &cpu_ppc, &cpu_sparc, &cpu_arm, NULL};
+static struct cpu*      dbghelp_cpus[] = {&cpu_i386, &cpu_x86_64, &cpu_ppc, &cpu_arm, &cpu_arm64, NULL};
 struct cpu*             dbghelp_current_cpu =
 #if defined(__i386__)
     &cpu_i386
@@ -161,10 +142,10 @@ struct cpu*             dbghelp_current_cpu =
     &cpu_x86_64
 #elif defined(__powerpc__)
     &cpu_ppc
-#elif defined(__sparc__)
-    &cpu_sparc
 #elif defined(__arm__)
     &cpu_arm
+#elif defined(__aarch64__)
+    &cpu_arm64
 #else
 #error define support for your CPU
 #endif

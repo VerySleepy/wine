@@ -36,8 +36,8 @@ WINE_DEFAULT_DEBUG_CHANNEL(d3d_shader);
 #define WINED3DSP_DCL_USAGEINDEX_MASK           (0xf << WINED3DSP_DCL_USAGEINDEX_SHIFT)
 
 /* DCL sampler type */
-#define WINED3DSP_TEXTURETYPE_SHIFT             27
-#define WINED3DSP_TEXTURETYPE_MASK              (0xf << WINED3DSP_TEXTURETYPE_SHIFT)
+#define WINED3D_SM1_RESOURCE_TYPE_SHIFT         27
+#define WINED3D_SM1_RESOURCE_TYPE_MASK          (0xf << WINED3D_SM1_RESOURCE_TYPE_SHIFT)
 
 /* Opcode-related masks */
 #define WINED3DSI_OPCODE_MASK                   0x0000ffff
@@ -97,6 +97,15 @@ enum WINED3DSHADER_ADDRESSMODE_TYPE
 {
     WINED3DSHADER_ADDRMODE_ABSOLUTE = 0 << WINED3DSHADER_ADDRESSMODE_SHIFT,
     WINED3DSHADER_ADDRMODE_RELATIVE = 1 << WINED3DSHADER_ADDRESSMODE_SHIFT,
+};
+
+enum wined3d_sm1_resource_type
+{
+    WINED3D_SM1_RESOURCE_UNKNOWN        = 0x0,
+    WINED3D_SM1_RESOURCE_TEXTURE_1D     = 0x1,
+    WINED3D_SM1_RESOURCE_TEXTURE_2D     = 0x2,
+    WINED3D_SM1_RESOURCE_TEXTURE_CUBE   = 0x3,
+    WINED3D_SM1_RESOURCE_TEXTURE_3D     = 0x4,
 };
 
 enum wined3d_sm1_opcode
@@ -204,6 +213,13 @@ struct wined3d_sm1_data
 {
     struct wined3d_shader_version shader_version;
     const struct wined3d_sm1_opcode_info *opcode_table;
+
+    struct wined3d_shader_src_param src_rel_addr[4];
+    struct wined3d_shader_src_param pred_rel_addr;
+    struct wined3d_shader_src_param dst_rel_addr;
+    struct wined3d_shader_src_param src_param[4];
+    struct wined3d_shader_src_param pred_param;
+    struct wined3d_shader_dst_param dst_param;
 };
 
 /* This table is not order or position dependent. */
@@ -370,6 +386,15 @@ static const struct wined3d_sm1_opcode_info ps_opcode_table[] =
     {0,                       0, 0, WINED3DSIH_TABLE_SIZE,   0,                           0                          },
 };
 
+static const enum wined3d_shader_resource_type resource_type_table[] =
+{
+    /* WINED3D_SM1_RESOURCE_UNKNOWN */      WINED3D_SHADER_RESOURCE_NONE,
+    /* WINED3D_SM1_RESOURCE_TEXTURE_1D */   WINED3D_SHADER_RESOURCE_TEXTURE_1D,
+    /* WINED3D_SM1_RESOURCE_TEXTURE_2D */   WINED3D_SHADER_RESOURCE_TEXTURE_2D,
+    /* WINED3D_SM1_RESOURCE_TEXTURE_CUBE */ WINED3D_SHADER_RESOURCE_TEXTURE_CUBE,
+    /* WINED3D_SM1_RESOURCE_TEXTURE_3D */   WINED3D_SHADER_RESOURCE_TEXTURE_3D,
+};
+
 /* Read a parameter opcode from the input stream,
  * and possibly a relative addressing token.
  * Return the number of tokens read */
@@ -440,11 +465,13 @@ static void shader_parse_src_param(DWORD param, const struct wined3d_shader_src_
 {
     src->reg.type = ((param & WINED3DSP_REGTYPE_MASK) >> WINED3DSP_REGTYPE_SHIFT)
             | ((param & WINED3DSP_REGTYPE_MASK2) >> WINED3DSP_REGTYPE_SHIFT2);
-    src->reg.idx = param & WINED3DSP_REGNUM_MASK;
-    src->reg.array_idx = ~0U;
+    src->reg.data_type = WINED3D_DATA_FLOAT;
+    src->reg.idx[0].offset = param & WINED3DSP_REGNUM_MASK;
+    src->reg.idx[0].rel_addr = rel_addr;
+    src->reg.idx[1].offset = ~0U;
+    src->reg.idx[1].rel_addr = NULL;
     src->swizzle = (param & WINED3DSP_SWIZZLE_MASK) >> WINED3DSP_SWIZZLE_SHIFT;
     src->modifiers = (param & WINED3DSP_SRCMOD_MASK) >> WINED3DSP_SRCMOD_SHIFT;
-    src->reg.rel_addr = rel_addr;
 }
 
 static void shader_parse_dst_param(DWORD param, const struct wined3d_shader_src_param *rel_addr,
@@ -452,12 +479,14 @@ static void shader_parse_dst_param(DWORD param, const struct wined3d_shader_src_
 {
     dst->reg.type = ((param & WINED3DSP_REGTYPE_MASK) >> WINED3DSP_REGTYPE_SHIFT)
             | ((param & WINED3DSP_REGTYPE_MASK2) >> WINED3DSP_REGTYPE_SHIFT2);
-    dst->reg.idx = param & WINED3DSP_REGNUM_MASK;
-    dst->reg.array_idx = ~0U;
+    dst->reg.data_type = WINED3D_DATA_FLOAT;
+    dst->reg.idx[0].offset = param & WINED3DSP_REGNUM_MASK;
+    dst->reg.idx[0].rel_addr = rel_addr;
+    dst->reg.idx[1].offset = ~0U;
+    dst->reg.idx[1].rel_addr = NULL;
     dst->write_mask = (param & WINED3D_SM1_WRITEMASK_MASK) >> WINED3D_SM1_WRITEMASK_SHIFT;
     dst->modifiers = (param & WINED3DSP_DSTMOD_MASK) >> WINED3DSP_DSTMOD_SHIFT;
     dst->shift = (param & WINED3DSP_DSTSHIFT_MASK) >> WINED3DSP_DSTSHIFT_SHIFT;
-    dst->reg.rel_addr = rel_addr;
 }
 
 /* Read the parameters of an unrecognized opcode from the input stream
@@ -519,10 +548,7 @@ static void *shader_sm1_init(const DWORD *byte_code, const struct wined3d_shader
 
     priv = HeapAlloc(GetProcessHeap(), 0, sizeof(*priv));
     if (!priv)
-    {
-        ERR("Failed to allocate private data\n");
         return NULL;
-    }
 
     if (output_signature)
     {
@@ -568,36 +594,9 @@ static void shader_sm1_read_header(void *data, const DWORD **ptr, struct wined3d
     *shader_version = priv->shader_version;
 }
 
-static void shader_sm1_read_opcode(void *data, const DWORD **ptr, struct wined3d_shader_instruction *ins,
-        UINT *param_size)
+static void shader_sm1_read_src_param(struct wined3d_sm1_data *priv, const DWORD **ptr,
+        struct wined3d_shader_src_param *src_param, struct wined3d_shader_src_param *src_rel_addr)
 {
-    struct wined3d_sm1_data *priv = data;
-    const struct wined3d_sm1_opcode_info *opcode_info;
-    DWORD opcode_token;
-
-    opcode_token = *(*ptr)++;
-    opcode_info = shader_get_opcode(priv, opcode_token);
-    if (!opcode_info)
-    {
-        FIXME("Unrecognized opcode: token=0x%08x\n", opcode_token);
-        ins->handler_idx = WINED3DSIH_TABLE_SIZE;
-        *param_size = shader_skip_unrecognized(priv, *ptr);
-        return;
-    }
-
-    ins->handler_idx = opcode_info->handler_idx;
-    ins->flags = (opcode_token & WINED3D_OPCODESPECIFICCONTROL_MASK) >> WINED3D_OPCODESPECIFICCONTROL_SHIFT;
-    ins->coissue = opcode_token & WINED3DSI_COISSUE;
-    ins->predicate = opcode_token & WINED3DSHADER_INSTRUCTION_PREDICATED;
-    ins->dst_count = opcode_info->dst_count ? 1 : 0;
-    ins->src_count = opcode_info->param_count - opcode_info->dst_count;
-    *param_size = shader_skip_opcode(priv, opcode_info, opcode_token);
-}
-
-static void shader_sm1_read_src_param(void *data, const DWORD **ptr, struct wined3d_shader_src_param *src_param,
-        struct wined3d_shader_src_param *src_rel_addr)
-{
-    struct wined3d_sm1_data *priv = data;
     DWORD token, addr_token;
 
     *ptr += shader_get_param(priv, *ptr, &token, &addr_token);
@@ -612,10 +611,9 @@ static void shader_sm1_read_src_param(void *data, const DWORD **ptr, struct wine
     }
 }
 
-static void shader_sm1_read_dst_param(void *data, const DWORD **ptr, struct wined3d_shader_dst_param *dst_param,
-        struct wined3d_shader_src_param *dst_rel_addr)
+static void shader_sm1_read_dst_param(struct wined3d_sm1_data *priv, const DWORD **ptr,
+        struct wined3d_shader_dst_param *dst_param, struct wined3d_shader_src_param *dst_rel_addr)
 {
-    struct wined3d_sm1_data *priv = data;
     DWORD token, addr_token;
 
     *ptr += shader_get_param(priv, *ptr, &token, &addr_token);
@@ -632,34 +630,158 @@ static void shader_sm1_read_dst_param(void *data, const DWORD **ptr, struct wine
 
 static void shader_sm1_read_semantic(const DWORD **ptr, struct wined3d_shader_semantic *semantic)
 {
+    enum wined3d_sm1_resource_type resource_type;
     DWORD usage_token = *(*ptr)++;
     DWORD dst_token = *(*ptr)++;
 
     semantic->usage = (usage_token & WINED3DSP_DCL_USAGE_MASK) >> WINED3DSP_DCL_USAGE_SHIFT;
     semantic->usage_idx = (usage_token & WINED3DSP_DCL_USAGEINDEX_MASK) >> WINED3DSP_DCL_USAGEINDEX_SHIFT;
-    semantic->sampler_type = (usage_token & WINED3DSP_TEXTURETYPE_MASK) >> WINED3DSP_TEXTURETYPE_SHIFT;
+    resource_type = (usage_token & WINED3D_SM1_RESOURCE_TYPE_MASK) >> WINED3D_SM1_RESOURCE_TYPE_SHIFT;
+    if (resource_type >= ARRAY_SIZE(resource_type_table))
+    {
+        FIXME("Unhandled resource type %#x.\n", resource_type);
+        semantic->resource_type = WINED3D_SHADER_RESOURCE_NONE;
+    }
+    else
+    {
+        semantic->resource_type = resource_type_table[resource_type];
+    }
+    semantic->resource_data_type = WINED3D_DATA_FLOAT;
     shader_parse_dst_param(dst_token, NULL, &semantic->reg);
 }
 
-static void shader_sm1_read_comment(const DWORD **ptr, const char **comment, UINT *comment_size)
+static void shader_sm1_read_immconst(const DWORD **ptr, struct wined3d_shader_src_param *src_param,
+        enum wined3d_immconst_type type, enum wined3d_data_type data_type)
+{
+    UINT count = type == WINED3D_IMMCONST_VEC4 ? 4 : 1;
+    src_param->reg.type = WINED3DSPR_IMMCONST;
+    src_param->reg.data_type = data_type;
+    src_param->reg.idx[0].offset = ~0U;
+    src_param->reg.idx[0].rel_addr = NULL;
+    src_param->reg.idx[1].offset = ~0U;
+    src_param->reg.idx[1].rel_addr = NULL;
+    src_param->reg.immconst_type = type;
+    memcpy(src_param->reg.immconst_data, *ptr, count * sizeof(DWORD));
+    src_param->swizzle = WINED3DSP_NOSWIZZLE;
+    src_param->modifiers = 0;
+
+    *ptr += count;
+}
+
+static void shader_sm1_read_comment(const DWORD **ptr)
 {
     DWORD token = **ptr;
+    const char *comment;
     UINT size;
 
-    if ((token & WINED3DSI_OPCODE_MASK) != WINED3D_SM1_OP_COMMENT)
+    while ((token & WINED3DSI_OPCODE_MASK) == WINED3D_SM1_OP_COMMENT)
     {
-        *comment = NULL;
+        size = (token & WINED3DSI_COMMENTSIZE_MASK) >> WINED3DSI_COMMENTSIZE_SHIFT;
+        comment = (const char *)++(*ptr);
+        *ptr += size;
+
+        if (size > 1 && *(const DWORD *)comment == WINEMAKEFOURCC('T', 'E', 'X', 'T'))
+        {
+            const char *end = comment + size * sizeof(token);
+            const char *p = comment + sizeof(token);
+            const char *line = p;
+
+            TRACE("// TEXT\n");
+            while (p != end)
+            {
+                if (*p == '\n')
+                {
+                    UINT len = p - line;
+                    if (len && *(p - 1) == '\r') --len;
+                    TRACE("// %s\n", debugstr_an(line, len));
+                    line = ++p;
+                }
+                else ++p;
+            }
+            if (line != p)
+                TRACE("// %s\n", debugstr_an(line, p - line));
+        }
+        else if (size)
+            TRACE("// %s\n", debugstr_an(comment, size * sizeof(token)));
+        else
+            break;
+
+        token = **ptr;
+    }
+}
+
+static void shader_sm1_read_instruction(void *data, const DWORD **ptr, struct wined3d_shader_instruction *ins)
+{
+    const struct wined3d_sm1_opcode_info *opcode_info;
+    struct wined3d_sm1_data *priv = data;
+    DWORD opcode_token;
+    unsigned int i;
+    const DWORD *p;
+
+    shader_sm1_read_comment(ptr);
+
+    opcode_token = *(*ptr)++;
+    if (!(opcode_info = shader_get_opcode(priv, opcode_token)))
+    {
+        FIXME("Unrecognized opcode: token=0x%08x.\n", opcode_token);
+        ins->handler_idx = WINED3DSIH_TABLE_SIZE;
+        *ptr += shader_skip_unrecognized(priv, *ptr);
         return;
     }
 
-    size = (token & WINED3DSI_COMMENTSIZE_MASK) >> WINED3DSI_COMMENTSIZE_SHIFT;
-    *comment = (const char *)++(*ptr);
-    *comment_size = size * sizeof(DWORD);
-    *ptr += size;
+    ins->handler_idx = opcode_info->handler_idx;
+    ins->flags = (opcode_token & WINED3D_OPCODESPECIFICCONTROL_MASK) >> WINED3D_OPCODESPECIFICCONTROL_SHIFT;
+    ins->coissue = opcode_token & WINED3DSI_COISSUE;
+    ins->predicate = opcode_token & WINED3DSHADER_INSTRUCTION_PREDICATED ? &priv->pred_param : NULL;
+    ins->dst_count = opcode_info->dst_count ? 1 : 0;
+    ins->dst = &priv->dst_param;
+    ins->src_count = opcode_info->param_count - opcode_info->dst_count;
+    ins->src = priv->src_param;
+
+    p = *ptr;
+    *ptr += shader_skip_opcode(priv, opcode_info, opcode_token);
+
+    if (ins->handler_idx == WINED3DSIH_DCL)
+    {
+        shader_sm1_read_semantic(&p, &ins->declaration.semantic);
+    }
+    else if (ins->handler_idx == WINED3DSIH_DEF)
+    {
+        shader_sm1_read_dst_param(priv, &p, &priv->dst_param, &priv->dst_rel_addr);
+        shader_sm1_read_immconst(&p, &priv->src_param[0], WINED3D_IMMCONST_VEC4, WINED3D_DATA_FLOAT);
+    }
+    else if (ins->handler_idx == WINED3DSIH_DEFI)
+    {
+        shader_sm1_read_dst_param(priv, &p, &priv->dst_param, &priv->dst_rel_addr);
+        shader_sm1_read_immconst(&p, &priv->src_param[0], WINED3D_IMMCONST_VEC4, WINED3D_DATA_INT);
+    }
+    else if (ins->handler_idx == WINED3DSIH_DEFB)
+    {
+        shader_sm1_read_dst_param(priv, &p, &priv->dst_param, &priv->dst_rel_addr);
+        shader_sm1_read_immconst(&p, &priv->src_param[0], WINED3D_IMMCONST_SCALAR, WINED3D_DATA_UINT);
+    }
+    else
+    {
+        /* Destination token */
+        if (ins->dst_count)
+            shader_sm1_read_dst_param(priv, &p, &priv->dst_param, &priv->dst_rel_addr);
+
+        /* Predication token */
+        if (ins->predicate)
+            shader_sm1_read_src_param(priv, &p, &priv->pred_param, &priv->pred_rel_addr);
+
+        /* Other source tokens */
+        for (i = 0; i < ins->src_count; ++i)
+        {
+            shader_sm1_read_src_param(priv, &p, &priv->src_param[i], &priv->src_rel_addr[i]);
+        }
+    }
 }
 
 static BOOL shader_sm1_is_end(void *data, const DWORD **ptr)
 {
+    shader_sm1_read_comment(ptr);
+
     if (**ptr == WINED3DSP_END)
     {
         ++(*ptr);
@@ -674,10 +796,6 @@ const struct wined3d_shader_frontend sm1_shader_frontend =
     shader_sm1_init,
     shader_sm1_free,
     shader_sm1_read_header,
-    shader_sm1_read_opcode,
-    shader_sm1_read_src_param,
-    shader_sm1_read_dst_param,
-    shader_sm1_read_semantic,
-    shader_sm1_read_comment,
+    shader_sm1_read_instruction,
     shader_sm1_is_end,
 };

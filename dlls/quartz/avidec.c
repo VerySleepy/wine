@@ -43,7 +43,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(quartz);
 typedef struct AVIDecImpl
 {
     TransformFilter tf;
-    IUnknown *seekthru_unk;
 
     HIC hvid;
     BITMAPINFOHEADER* pBihIn;
@@ -53,9 +52,14 @@ typedef struct AVIDecImpl
 
 static const IBaseFilterVtbl AVIDec_Vtbl;
 
+static inline AVIDecImpl *impl_from_TransformFilter( TransformFilter *iface )
+{
+    return CONTAINING_RECORD(iface, AVIDecImpl, tf.filter);
+}
+
 static HRESULT WINAPI AVIDec_StartStreaming(TransformFilter* pTransformFilter)
 {
-    AVIDecImpl* This = (AVIDecImpl*)pTransformFilter;
+    AVIDecImpl* This = impl_from_TransformFilter(pTransformFilter);
     DWORD result;
 
     TRACE("(%p)->()\n", This);
@@ -71,13 +75,13 @@ static HRESULT WINAPI AVIDec_StartStreaming(TransformFilter* pTransformFilter)
 }
 
 static HRESULT WINAPI AVIDec_EndFlush(TransformFilter *pTransformFilter) {
-    AVIDecImpl* This = (AVIDecImpl*)pTransformFilter;
+    AVIDecImpl* This = impl_from_TransformFilter(pTransformFilter);
     This->late = -1;
     return S_OK;
 }
 
 static HRESULT WINAPI AVIDec_NotifyDrop(TransformFilter *pTransformFilter, IBaseFilter *sender, Quality qm) {
-    AVIDecImpl *This = (AVIDecImpl*)pTransformFilter;
+    AVIDecImpl *This = impl_from_TransformFilter(pTransformFilter);
 
     EnterCriticalSection(&This->tf.filter.csFilter);
     if (qm.Late > 0)
@@ -102,7 +106,7 @@ static int AVIDec_DropSample(AVIDecImpl *This, REFERENCE_TIME tStart) {
 
 static HRESULT WINAPI AVIDec_Receive(TransformFilter *tf, IMediaSample *pSample)
 {
-    AVIDecImpl* This = (AVIDecImpl *)tf;
+    AVIDecImpl* This = impl_from_TransformFilter(tf);
     AM_MEDIA_TYPE amt;
     HRESULT hr;
     DWORD res;
@@ -114,7 +118,7 @@ static HRESULT WINAPI AVIDec_Receive(TransformFilter *tf, IMediaSample *pSample)
     LONGLONG tStart, tStop;
     DWORD flags = 0;
 
-    EnterCriticalSection(&This->tf.filter.csFilter);
+    EnterCriticalSection(&This->tf.csReceive);
     hr = IMediaSample_GetPointer(pSample, &pbSrcStream);
     if (FAILED(hr))
     {
@@ -192,24 +196,23 @@ static HRESULT WINAPI AVIDec_Receive(TransformFilter *tf, IMediaSample *pSample)
     else
         IMediaSample_SetMediaTime(pOutSample, NULL, NULL);
 
-    LeaveCriticalSection(&This->tf.filter.csFilter);
+    LeaveCriticalSection(&This->tf.csReceive);
     hr = BaseOutputPinImpl_Deliver((BaseOutputPin*)This->tf.ppPins[1], pOutSample);
+    EnterCriticalSection(&This->tf.csReceive);
     if (hr != S_OK && hr != VFW_E_NOT_CONNECTED)
         ERR("Error sending sample (%x)\n", hr);
-    IMediaSample_Release(pOutSample);
-    return hr;
 
 error:
     if (pOutSample)
         IMediaSample_Release(pOutSample);
 
-    LeaveCriticalSection(&This->tf.filter.csFilter);
+    LeaveCriticalSection(&This->tf.csReceive);
     return hr;
 }
 
 static HRESULT WINAPI AVIDec_StopStreaming(TransformFilter* pTransformFilter)
 {
-    AVIDecImpl* This = (AVIDecImpl*)pTransformFilter;
+    AVIDecImpl* This = impl_from_TransformFilter(pTransformFilter);
     DWORD result;
 
     TRACE("(%p)->()\n", This);
@@ -228,7 +231,7 @@ static HRESULT WINAPI AVIDec_StopStreaming(TransformFilter* pTransformFilter)
 
 static HRESULT WINAPI AVIDec_SetMediaType(TransformFilter *tf, PIN_DIRECTION dir, const AM_MEDIA_TYPE * pmt)
 {
-    AVIDecImpl* This = (AVIDecImpl*)tf;
+    AVIDecImpl* This = impl_from_TransformFilter(tf);
     HRESULT hr = VFW_E_TYPE_NOT_ACCEPTED;
 
     TRACE("(%p)->(%p)\n", This, pmt);
@@ -329,7 +332,7 @@ failed:
 
 static HRESULT WINAPI AVIDec_CompleteConnect(TransformFilter *tf, PIN_DIRECTION dir, IPin *pin)
 {
-    AVIDecImpl* This = (AVIDecImpl*)tf;
+    AVIDecImpl* This = impl_from_TransformFilter(tf);
 
     TRACE("(%p)\n", This);
 
@@ -338,7 +341,7 @@ static HRESULT WINAPI AVIDec_CompleteConnect(TransformFilter *tf, PIN_DIRECTION 
 
 static HRESULT WINAPI AVIDec_BreakConnect(TransformFilter *tf, PIN_DIRECTION dir)
 {
-    AVIDecImpl *This = (AVIDecImpl *)tf;
+    AVIDecImpl *This = impl_from_TransformFilter(tf);
 
     TRACE("(%p)->()\n", This);
 
@@ -361,7 +364,7 @@ static HRESULT WINAPI AVIDec_BreakConnect(TransformFilter *tf, PIN_DIRECTION dir
 
 static HRESULT WINAPI AVIDec_DecideBufferSize(TransformFilter *tf, IMemAllocator *pAlloc, ALLOCATOR_PROPERTIES *ppropInputRequest)
 {
-    AVIDecImpl *pAVI = (AVIDecImpl*)tf;
+    AVIDecImpl *pAVI = impl_from_TransformFilter(tf);
     ALLOCATOR_PROPERTIES actual;
 
     if (!ppropInputRequest->cbAlign)
@@ -408,14 +411,6 @@ HRESULT AVIDec_create(IUnknown * pUnkOuter, LPVOID * ppv)
 
     if (FAILED(hr))
         return hr;
-    else
-    {
-        ISeekingPassThru *passthru;
-        hr = CoCreateInstance(&CLSID_SeekingPassThru, (IUnknown*)This, CLSCTX_INPROC_SERVER, &IID_IUnknown, (void**)&This->seekthru_unk);
-        IUnknown_QueryInterface(This->seekthru_unk, &IID_ISeekingPassThru, (void**)&passthru);
-        ISeekingPassThru_Init(passthru, FALSE, (IPin*)This->tf.ppPins[0]);
-        ISeekingPassThru_Release(passthru);
-    }
 
     This->hvid = NULL;
     This->pBihIn = NULL;
@@ -426,23 +421,9 @@ HRESULT AVIDec_create(IUnknown * pUnkOuter, LPVOID * ppv)
     return hr;
 }
 
-static HRESULT WINAPI AVIDec_QueryInterface(IBaseFilter * iface, REFIID riid, LPVOID * ppv)
-{
-    HRESULT hr;
-    AVIDecImpl *This = (AVIDecImpl *)iface;
-    TRACE("(%p/%p)->(%s, %p)\n", This, iface, qzdebugstr_guid(riid), ppv);
-
-    if (IsEqualIID(riid, &IID_IMediaSeeking))
-        return IUnknown_QueryInterface(This->seekthru_unk, riid, ppv);
-
-    hr = TransformFilterImpl_QueryInterface(iface, riid, ppv);
-
-    return hr;
-}
-
 static const IBaseFilterVtbl AVIDec_Vtbl =
 {
-    AVIDec_QueryInterface,
+    TransformFilterImpl_QueryInterface,
     BaseFilterImpl_AddRef,
     TransformFilterImpl_Release,
     BaseFilterImpl_GetClassID,

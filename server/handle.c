@@ -235,19 +235,28 @@ static obj_handle_t alloc_entry( struct handle_table *table, void *obj, unsigned
 }
 
 /* allocate a handle for an object, incrementing its refcount */
+static obj_handle_t alloc_handle_entry( struct process *process, void *ptr,
+                                        unsigned int access, unsigned int attr )
+{
+    struct object *obj = ptr;
+
+    assert( !(access & RESERVED_ALL) );
+    if (attr & OBJ_INHERIT) access |= RESERVED_INHERIT;
+    if (!process->handles)
+    {
+        set_error( STATUS_PROCESS_IS_TERMINATING );
+        return 0;
+    }
+    return alloc_entry( process->handles, obj, access );
+}
+
+/* allocate a handle for an object, incrementing its refcount */
 /* return the handle, or 0 on error */
 obj_handle_t alloc_handle_no_access_check( struct process *process, void *ptr, unsigned int access, unsigned int attr )
 {
     struct object *obj = ptr;
-
-    access &= ~RESERVED_ALL;
-    if (attr & OBJ_INHERIT) access |= RESERVED_INHERIT;
-    if (!process->handles)
-    {
-        set_error( STATUS_NO_MEMORY );
-        return 0;
-    }
-    return alloc_entry( process->handles, obj, access );
+    access = obj->ops->map_access( obj, access ) & ~RESERVED_ALL;
+    return alloc_handle_entry( process, ptr, access, attr );
 }
 
 /* allocate a handle for an object, checking the dacl allows the process to */
@@ -256,9 +265,9 @@ obj_handle_t alloc_handle_no_access_check( struct process *process, void *ptr, u
 obj_handle_t alloc_handle( struct process *process, void *ptr, unsigned int access, unsigned int attr )
 {
     struct object *obj = ptr;
-    access = obj->ops->map_access( obj, access );
+    access = obj->ops->map_access( obj, access ) & ~RESERVED_ALL;
     if (access && !check_object_access( obj, &access )) return 0;
-    return alloc_handle_no_access_check( process, ptr, access, attr );
+    return alloc_handle_entry( process, ptr, access, attr );
 }
 
 /* allocate a global handle for an object, incrementing its refcount */
@@ -531,8 +540,15 @@ obj_handle_t duplicate_handle( struct process *src, obj_handle_t src_handle, str
     {
         if (options & DUP_HANDLE_MAKE_GLOBAL)
             res = alloc_global_handle_no_access_check( obj, access );
+        else if ((options & DUP_HANDLE_CLOSE_SOURCE) && src == dst &&
+                 entry && !(entry->access & RESERVED_CLOSE_PROTECT))
+        {
+            if (attr & OBJ_INHERIT) access |= RESERVED_INHERIT;
+            entry->access = access;
+            res = src_handle;
+        }
         else
-            res = alloc_handle_no_access_check( dst, obj, access, attr );
+            res = alloc_handle_entry( dst, obj, access, attr );
     }
 
     release_object( obj );
@@ -581,7 +597,7 @@ DECL_HANDLER(set_handle_info)
 /* duplicate a handle */
 DECL_HANDLER(dup_handle)
 {
-    struct process *src, *dst;
+    struct process *src, *dst = NULL;
 
     reply->handle = 0;
     if ((src = get_process_from_handle( req->src_process, PROCESS_DUP_HANDLE )))
@@ -598,7 +614,8 @@ DECL_HANDLER(dup_handle)
             release_object( dst );
         }
         /* close the handle no matter what happened */
-        if (req->options & DUP_HANDLE_CLOSE_SOURCE) reply->closed = !close_handle( src, req->src_handle );
+        if ((req->options & DUP_HANDLE_CLOSE_SOURCE) && (src != dst || req->src_handle != reply->handle))
+            reply->closed = !close_handle( src, req->src_handle );
         reply->self = (src == current->process);
         release_object( src );
     }

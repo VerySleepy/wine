@@ -44,7 +44,6 @@ int nb_errors = 0;
 int display_warnings = 0;
 int kill_at = 0;
 int verbose = 0;
-int save_temps = 0;
 int link_ext_symbols = 0;
 int force_pointer_size = 0;
 int unwind_tables = 0;
@@ -53,12 +52,12 @@ int unwind_tables = 0;
 enum target_cpu target_cpu = CPU_x86;
 #elif defined(__x86_64__)
 enum target_cpu target_cpu = CPU_x86_64;
-#elif defined(__sparc__)
-enum target_cpu target_cpu = CPU_SPARC;
 #elif defined(__powerpc__)
 enum target_cpu target_cpu = CPU_POWERPC;
 #elif defined(__arm__)
 enum target_cpu target_cpu = CPU_ARM;
+#elif defined(__aarch64__)
+enum target_cpu target_cpu = CPU_ARM64;
 #else
 #error Unsupported CPU
 #endif
@@ -85,10 +84,17 @@ const char *output_file_name = NULL;
 static const char *output_file_source_name;
 static int fake_module;
 
-char *as_command = NULL;
-char *ld_command = NULL;
-char *nm_command = NULL;
+struct strarray *as_command = NULL;
+struct strarray *cc_command = NULL;
+struct strarray *ld_command = NULL;
+struct strarray *nm_command = NULL;
 char *cpu_option = NULL;
+
+#ifdef __thumb__
+int thumb_mode = 1;
+#else
+int thumb_mode = 0;
+#endif
 
 static int nb_res_files;
 static char **res_files;
@@ -191,12 +197,21 @@ static void set_target( const char *target )
 
     /* get the CPU part */
 
-    if (!(p = strchr( spec, '-' ))) fatal_error( "Invalid target specification '%s'\n", target );
-    *p++ = 0;
-    if ((target_cpu = get_cpu_from_name( spec )) == -1)
-        fatal_error( "Unrecognized CPU '%s'\n", spec );
-    platform = p;
-    if ((p = strrchr( p, '-' ))) platform = p + 1;
+    if ((p = strchr( spec, '-' )))
+    {
+        *p++ = 0;
+        if ((target_cpu = get_cpu_from_name( spec )) == -1)
+            fatal_error( "Unrecognized CPU '%s'\n", spec );
+        platform = p;
+        if ((p = strrchr( p, '-' ))) platform = p + 1;
+    }
+    else if (!strcmp( spec, "mingw32" ))
+    {
+        target_cpu = CPU_x86;
+        platform = spec;
+    }
+    else
+        fatal_error( "Invalid target specification '%s'\n", target );
 
     /* get the OS part */
 
@@ -233,6 +248,7 @@ static const char usage_str[] =
 "Options:\n"
 "       --as-cmd=AS           Command to use for assembling (default: as)\n"
 "   -b, --target=TARGET       Specify target CPU and platform for cross-compiling\n"
+"       --cc-cmd=CC           C compiler to use for assembling (default: fall back to --as-cmd)\n"
 "   -d, --delay-lib=LIB       Import the specified library in delayed mode\n"
 "   -D SYM                    Ignored for C flags compatibility\n"
 "   -e, --entry=FUNC          Set the DLL entry point function (default: DllMain)\n"
@@ -278,6 +294,7 @@ enum long_options_values
     LONG_OPT_EXE,
     LONG_OPT_IMPLIB,
     LONG_OPT_ASCMD,
+    LONG_OPT_CCCMD,
     LONG_OPT_EXTERNAL_SYMS,
     LONG_OPT_FAKE_MODULE,
     LONG_OPT_LARGE_ADDRESS_AWARE,
@@ -299,6 +316,7 @@ static const struct option long_options[] =
     { "exe",           0, 0, LONG_OPT_EXE },
     { "implib",        0, 0, LONG_OPT_IMPLIB },
     { "as-cmd",        1, 0, LONG_OPT_ASCMD },
+    { "cc-cmd",        1, 0, LONG_OPT_CCCMD },
     { "external-symbols", 0, 0, LONG_OPT_EXTERNAL_SYMS },
     { "fake-module",   0, 0, LONG_OPT_FAKE_MODULE },
     { "large-address-aware", 0, 0, LONG_OPT_LARGE_ADDRESS_AWARE },
@@ -347,6 +365,7 @@ static char **parse_options( int argc, char **argv, DLLSPEC *spec )
 {
     char *p;
     int optc;
+    int save_temps = 0;
 
     while ((optc = getopt_long( argc, argv, short_options, long_options, NULL )) != -1)
     {
@@ -383,8 +402,10 @@ static char **parse_options( int argc, char **argv, DLLSPEC *spec )
             if (!strcmp( optarg, "16" )) spec->type = SPEC_WIN16;
             else if (!strcmp( optarg, "32" )) force_pointer_size = 4;
             else if (!strcmp( optarg, "64" )) force_pointer_size = 8;
+            else if (!strcmp( optarg, "arm" )) thumb_mode = 0;
+            else if (!strcmp( optarg, "thumb" )) thumb_mode = 1;
             else if (!strncmp( optarg, "cpu=", 4 )) cpu_option = xstrdup( optarg + 4 );
-            else fatal_error( "Invalid -m option '%s', expected -m16, -m32, -m64 or -mcpu\n", optarg );
+            else fatal_error( "Unknown -m option '%s'\n", optarg );
             break;
         case 'M':
             spec->main_module = xstrdup( optarg );
@@ -465,7 +486,10 @@ static char **parse_options( int argc, char **argv, DLLSPEC *spec )
             set_exec_mode( MODE_IMPLIB );
             break;
         case LONG_OPT_ASCMD:
-            as_command = xstrdup( optarg );
+            as_command = strarray_fromstring( optarg, " " );
+            break;
+        case LONG_OPT_CCCMD:
+            cc_command = strarray_fromstring( optarg, " " );
             break;
         case LONG_OPT_FAKE_MODULE:
             fake_module = 1;
@@ -477,10 +501,10 @@ static char **parse_options( int argc, char **argv, DLLSPEC *spec )
             spec->characteristics |= IMAGE_FILE_LARGE_ADDRESS_AWARE;
             break;
         case LONG_OPT_LDCMD:
-            ld_command = xstrdup( optarg );
+            ld_command = strarray_fromstring( optarg, " " );
             break;
         case LONG_OPT_NMCMD:
-            nm_command = xstrdup( optarg );
+            nm_command = strarray_fromstring( optarg, " " );
             break;
         case LONG_OPT_NXCOMPAT:
             if (optarg[0] == 'n' || optarg[0] == 'N')
@@ -503,6 +527,8 @@ static char **parse_options( int argc, char **argv, DLLSPEC *spec )
             break;
         }
     }
+
+    if (!save_temps) atexit( cleanup_tmp_files );
 
     if (spec->file_name && !strchr( spec->file_name, '.' ))
         strcat( spec->file_name, exec_mode == MODE_EXE ? ".exe" : ".dll" );

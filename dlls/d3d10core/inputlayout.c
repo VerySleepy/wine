@@ -19,7 +19,6 @@
 
 #include "config.h"
 #include "wine/port.h"
-#include <assert.h>
 
 #include "d3d10core_private.h"
 
@@ -42,7 +41,7 @@ static HRESULT isgn_handler(const char *data, DWORD data_size, DWORD tag, void *
 
 static HRESULT d3d10_input_layout_to_wined3d_declaration(const D3D10_INPUT_ELEMENT_DESC *element_descs,
         UINT element_count, const void *shader_byte_code, SIZE_T shader_byte_code_length,
-        WINED3DVERTEXELEMENT **wined3d_elements, UINT *wined3d_element_count)
+        struct wined3d_vertex_element **wined3d_elements, UINT *wined3d_element_count)
 {
     struct wined3d_shader_signature is;
     HRESULT hr;
@@ -73,23 +72,21 @@ static HRESULT d3d10_input_layout_to_wined3d_declaration(const D3D10_INPUT_ELEME
             if (!strcmp(element_descs[i].SemanticName, is.elements[j].semantic_name)
                     && element_descs[i].SemanticIndex == is.elements[j].semantic_idx)
             {
-                WINED3DVERTEXELEMENT *e = &(*wined3d_elements)[(*wined3d_element_count)++];
+                struct wined3d_vertex_element *e = &(*wined3d_elements)[(*wined3d_element_count)++];
                 const D3D10_INPUT_ELEMENT_DESC *f = &element_descs[i];
 
                 e->format = wined3dformat_from_dxgi_format(f->Format);
                 e->input_slot = f->InputSlot;
                 e->offset = f->AlignedByteOffset;
                 e->output_slot = is.elements[j].register_idx;
-                e->method = WINED3DDECLMETHOD_DEFAULT;
+                e->method = WINED3D_DECL_METHOD_DEFAULT;
                 e->usage = 0;
                 e->usage_idx = 0;
 
-                if (f->AlignedByteOffset == D3D10_APPEND_ALIGNED_ELEMENT)
-                    FIXME("D3D10_APPEND_ALIGNED_ELEMENT not supported\n");
                 if (f->InputSlotClass != D3D10_INPUT_PER_VERTEX_DATA)
                     FIXME("Ignoring input slot class (%#x)\n", f->InputSlotClass);
                 if (f->InstanceDataStepRate)
-                    FIXME("Ignoring instace data step rate (%#x)\n", f->InstanceDataStepRate);
+                    FIXME("Ignoring instance data step rate (%#x)\n", f->InstanceDataStepRate);
 
                 break;
             }
@@ -218,7 +215,7 @@ HRESULT d3d10_input_layout_init(struct d3d10_input_layout *layout, struct d3d10_
         const D3D10_INPUT_ELEMENT_DESC *element_descs, UINT element_count,
         const void *shader_byte_code, SIZE_T shader_byte_code_length)
 {
-    WINED3DVERTEXELEMENT *wined3d_elements;
+    struct wined3d_vertex_element *wined3d_elements;
     UINT wined3d_element_count;
     HRESULT hr;
 

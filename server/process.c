@@ -60,7 +60,7 @@ static int shutdown_stage;  /* current stage in the shutdown process */
 /* process operations */
 
 static void process_dump( struct object *obj, int verbose );
-static int process_signaled( struct object *obj, struct thread *thread );
+static int process_signaled( struct object *obj, struct wait_queue_entry *entry );
 static unsigned int process_map_access( struct object *obj, unsigned int access );
 static void process_poll_event( struct fd *fd, int event );
 static void process_destroy( struct object *obj );
@@ -110,7 +110,7 @@ struct startup_info
 };
 
 static void startup_info_dump( struct object *obj, int verbose );
-static int startup_info_signaled( struct object *obj, struct thread *thread );
+static int startup_info_signaled( struct object *obj, struct wait_queue_entry *entry );
 static void startup_info_destroy( struct object *obj );
 
 static const struct object_ops startup_info_ops =
@@ -323,6 +323,7 @@ struct thread *create_process( int fd, struct thread *parent_thread, int inherit
     process->suspend         = 0;
     process->is_system       = 0;
     process->debug_children  = 0;
+    process->is_terminating  = 0;
     process->console         = NULL;
     process->startup_state   = STARTUP_IN_PROGRESS;
     process->startup_info    = NULL;
@@ -333,12 +334,14 @@ struct thread *create_process( int fd, struct thread *parent_thread, int inherit
     process->desktop         = 0;
     process->token           = NULL;
     process->trace_data      = 0;
+    process->rawinput_mouse  = NULL;
+    process->rawinput_kbd    = NULL;
     list_init( &process->thread_list );
     list_init( &process->locks );
     list_init( &process->classes );
     list_init( &process->dlls );
+    list_init( &process->rawinput_devices );
 
-    process->start_time = current_time;
     process->end_time = 0;
     list_add_tail( &process_list, &process->entry );
 
@@ -437,7 +440,7 @@ static void process_dump( struct object *obj, int verbose )
     fprintf( stderr, "Process id=%04x handles=%p\n", process->id, process->handles );
 }
 
-static int process_signaled( struct object *obj, struct thread *thread )
+static int process_signaled( struct object *obj, struct wait_queue_entry *entry )
 {
     struct process *process = (struct process *)obj;
     return !process->running_threads;
@@ -445,9 +448,10 @@ static int process_signaled( struct object *obj, struct thread *thread )
 
 static unsigned int process_map_access( struct object *obj, unsigned int access )
 {
-    if (access & GENERIC_READ)    access |= STANDARD_RIGHTS_READ | SYNCHRONIZE;
-    if (access & GENERIC_WRITE)   access |= STANDARD_RIGHTS_WRITE | SYNCHRONIZE;
-    if (access & GENERIC_EXECUTE) access |= STANDARD_RIGHTS_EXECUTE;
+    if (access & GENERIC_READ)    access |= STANDARD_RIGHTS_READ | PROCESS_QUERY_INFORMATION | PROCESS_VM_READ;
+    if (access & GENERIC_WRITE)   access |= STANDARD_RIGHTS_WRITE | PROCESS_SET_QUOTA | PROCESS_SET_INFORMATION | PROCESS_SUSPEND_RESUME |
+                                            PROCESS_VM_WRITE | PROCESS_DUP_HANDLE | PROCESS_CREATE_PROCESS | PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION;
+    if (access & GENERIC_EXECUTE) access |= STANDARD_RIGHTS_EXECUTE | SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE;
     if (access & GENERIC_ALL)     access |= PROCESS_ALL_ACCESS;
     return access & ~(GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL);
 }
@@ -479,7 +483,7 @@ static void startup_info_dump( struct object *obj, int verbose )
              info->data->hstdin, info->data->hstdout, info->data->hstderr );
 }
 
-static int startup_info_signaled( struct object *obj, struct thread *thread )
+static int startup_info_signaled( struct object *obj, struct wait_queue_entry *entry )
 {
     struct startup_info *info = (struct startup_info *)obj;
     return info->process && info->process->startup_state != STARTUP_IN_PROGRESS;
@@ -567,6 +571,8 @@ static void terminate_process( struct process *process, struct thread *skip, int
     struct thread *thread;
 
     grab_object( process );  /* make sure it doesn't get freed when threads die */
+    process->is_terminating = 1;
+
 restart:
     LIST_FOR_EACH_ENTRY( thread, &process->thread_list, struct thread, proc_entry )
     {
@@ -622,9 +628,9 @@ static void process_killed( struct process *process )
     assert( list_empty( &process->thread_list ));
     process->end_time = current_time;
     if (!process->is_system) close_process_desktop( process );
-    close_process_handles( process );
     process->winstation = 0;
     process->desktop = 0;
+    close_process_handles( process );
     if (process->idle_event)
     {
         release_object( process->idle_event );
@@ -634,6 +640,12 @@ static void process_killed( struct process *process )
     /* close the console attached to this process, if any */
     free_console( process );
 
+    while ((ptr = list_head( &process->rawinput_devices )))
+    {
+        struct rawinput_device_entry *entry = LIST_ENTRY( ptr, struct rawinput_device_entry, entry );
+        list_remove( &entry->entry );
+        free( entry );
+    }
     while ((ptr = list_head( &process->dlls )))
     {
         struct process_dll *dll = LIST_ENTRY( ptr, struct process_dll, entry );
@@ -847,6 +859,7 @@ struct process_snapshot *process_snap( int *count )
         ptr->count    = process->obj.refcount;
         ptr->priority = process->priority;
         ptr->handles  = get_handle_table_count(process);
+        ptr->unix_pid = process->unix_pid;
         grab_object( process );
         ptr++;
     }
@@ -885,6 +898,11 @@ DECL_HANDLER(new_process)
         close( socket_fd );
         return;
     }
+    if (!is_cpu_supported( req->cpu ))
+    {
+        close( socket_fd );
+        return;
+    }
 
     if (!req->info_size)  /* create an orphaned process */
     {
@@ -893,14 +911,21 @@ DECL_HANDLER(new_process)
     }
 
     /* build the startup info for a new process */
-    if (!(info = alloc_object( &startup_info_ops ))) return;
+    if (!(info = alloc_object( &startup_info_ops )))
+    {
+        close( socket_fd );
+        return;
+    }
     info->exe_file = NULL;
     info->process  = NULL;
     info->data     = NULL;
 
     if (req->exe_file &&
         !(info->exe_file = get_file_obj( current->process, req->exe_file, FILE_READ_DATA )))
+    {
+        close( socket_fd );
         goto done;
+    }
 
     info->data_size = get_req_data_size();
     info->info_size = min( req->info_size, info->data_size );
@@ -911,7 +936,11 @@ DECL_HANDLER(new_process)
         data_size_t env_size = info->data_size - info->info_size;
         data_size_t info_size = min( req->info_size, FIELD_OFFSET( startup_info_t, curdir_len ));
 
-        if (!(info->data = mem_alloc( sizeof(*info->data) + env_size ))) goto done;
+        if (!(info->data = mem_alloc( sizeof(*info->data) + env_size )))
+        {
+            close( socket_fd );
+            goto done;
+        }
         memcpy( info->data, get_req_data(), info_size );
         memset( (char *)info->data + info_size, 0, sizeof(*info->data) - info_size );
         memcpy( info->data + 1, (const char *)get_req_data() + req->info_size, env_size );
@@ -922,7 +951,11 @@ DECL_HANDLER(new_process)
     {
         data_size_t pos = sizeof(*info->data);
 
-        if (!(info->data = memdup( get_req_data(), info->data_size ))) goto done;
+        if (!(info->data = memdup( get_req_data(), info->data_size )))
+        {
+            close( socket_fd );
+            goto done;
+        }
 #define FIXUP_LEN(len) do { (len) = min( (len), info->info_size - pos ); pos += (len); } while(0)
         FIXUP_LEN( info->data->curdir_len );
         FIXUP_LEN( info->data->dllpath_len );
@@ -937,7 +970,8 @@ DECL_HANDLER(new_process)
 
     if (!(thread = create_process( socket_fd, current, req->inherit_all ))) goto done;
     process = thread->process;
-    process->debug_children = !(req->create_flags & DEBUG_ONLY_THIS_PROCESS);
+    process->debug_children = (req->create_flags & DEBUG_PROCESS)
+        && !(req->create_flags & DEBUG_ONLY_THIS_PROCESS);
     process->startup_info = (struct startup_info *)grab_object( info );
 
     /* connect to the window station */
@@ -1046,6 +1080,7 @@ DECL_HANDLER(init_process_done)
     list_add_head( &process->dlls, &dll->entry );
 
     process->ldt_copy = req->ldt_copy;
+    process->start_time = current_time;
 
     generate_startup_debug_events( process, req->entry );
     set_process_startup_state( process, STARTUP_DONE );
@@ -1072,12 +1107,16 @@ DECL_HANDLER(terminate_process)
 {
     struct process *process;
 
-    if ((process = get_process_from_handle( req->handle, PROCESS_TERMINATE )))
+    if (req->handle)
     {
-        reply->self = (current->process == process);
-        terminate_process( process, current, req->exit_code );
-        release_object( process );
+        process = get_process_from_handle( req->handle, PROCESS_TERMINATE );
+        if (!process) return;
     }
+    else process = (struct process *)grab_object( current->process );
+
+    reply->self = (current->process == process);
+    terminate_process( process, current, req->exit_code );
+    release_object( process );
 }
 
 /* fetch information about a process */
@@ -1104,6 +1143,12 @@ DECL_HANDLER(get_process_info)
 static void set_process_affinity( struct process *process, affinity_t affinity )
 {
     struct thread *thread;
+
+    if (!process->running_threads)
+    {
+        set_error( STATUS_PROCESS_IS_TERMINATING );
+        return;
+    }
 
     process->affinity = affinity;
 

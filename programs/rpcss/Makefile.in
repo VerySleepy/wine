@@ -1,4 +1,3 @@
-EXTRADEFS = -D__WINESRC__
 MODULE    = rpcss.exe
 APPMODE   = -mconsole
 IMPORTS   = rpcrt4
@@ -8,8 +7,6 @@ C_SRCS = \
 	irotp.c \
 	rpcss_main.c
 
-IDL_S_SRCS = \
+IDL_SRCS = \
 	epm.idl \
 	irot.idl
-
-@MAKE_PROG_RULES@

@@ -30,17 +30,20 @@ WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
 
 #define CTXARG_T DWORDLONG
 #define IActiveScriptParseVtbl IActiveScriptParse64Vtbl
+#define IActiveScriptParseProcedure2Vtbl IActiveScriptParseProcedure2_64Vtbl
 
 #else
 
 #define CTXARG_T DWORD
 #define IActiveScriptParseVtbl IActiveScriptParse32Vtbl
+#define IActiveScriptParseProcedure2Vtbl IActiveScriptParseProcedure2_32Vtbl
 
 #endif
 
 struct VBScript {
     IActiveScript IActiveScript_iface;
     IActiveScriptParse IActiveScriptParse_iface;
+    IActiveScriptParseProcedure2 IActiveScriptParseProcedure2_iface;
     IObjectSafety IObjectSafety_iface;
 
     LONG ref;
@@ -74,10 +77,10 @@ static HRESULT exec_global_code(script_ctx_t *ctx, vbscode_t *code)
 {
     HRESULT hres;
 
-    code->global_executed = TRUE;
+    code->pending_exec = FALSE;
 
     IActiveScriptSite_OnEnterScript(ctx->site);
-    hres = exec_script(ctx, &code->global_code, NULL, NULL, NULL);
+    hres = exec_script(ctx, &code->main_code, NULL, NULL, NULL);
     IActiveScriptSite_OnLeaveScript(ctx->site);
 
     return hres;
@@ -88,7 +91,7 @@ static void exec_queued_code(script_ctx_t *ctx)
     vbscode_t *iter;
 
     LIST_FOR_EACH_ENTRY(iter, &ctx->code_list, vbscode_t, entry) {
-        if(!iter->global_executed)
+        if(iter->pending_exec)
             exec_global_code(ctx, iter);
     }
 }
@@ -112,6 +115,8 @@ static HRESULT set_ctx_site(VBScript *This)
 
 static void release_script(script_ctx_t *ctx)
 {
+    class_desc_t *class_desc;
+
     collect_objects(ctx);
 
     release_dynamic_vars(ctx->global_vars);
@@ -125,6 +130,13 @@ static void release_script(script_ctx_t *ctx)
             IDispatch_Release(iter->disp);
         heap_free(iter->name);
         heap_free(iter);
+    }
+
+    while(ctx->procs) {
+        class_desc = ctx->procs;
+        ctx->procs = class_desc->next;
+
+        heap_free(class_desc);
     }
 
     if(ctx->host_global) {
@@ -153,12 +165,15 @@ static void release_script(script_ctx_t *ctx)
     }
 
     if(ctx->script_obj) {
-        IDispatchEx_Release(&ctx->script_obj->IDispatchEx_iface);
+        ScriptDisp *script_obj = ctx->script_obj;
+
         ctx->script_obj = NULL;
+        script_obj->ctx = NULL;
+        IDispatchEx_Release(&script_obj->IDispatchEx_iface);
     }
 
-    vbsheap_free(&ctx->heap);
-    vbsheap_init(&ctx->heap);
+    heap_pool_free(&ctx->heap);
+    heap_pool_init(&ctx->heap);
 }
 
 static void destroy_script(script_ctx_t *ctx)
@@ -201,8 +216,7 @@ static void decrease_state(VBScript *This, SCRIPTSTATE state)
         break;
     case SCRIPTSTATE_CLOSED:
         break;
-    default:
-        assert(0);
+    DEFAULT_UNREACHABLE;
     }
 }
 
@@ -224,6 +238,9 @@ static HRESULT WINAPI VBScript_QueryInterface(IActiveScript *iface, REFIID riid,
     }else if(IsEqualGUID(riid, &IID_IActiveScriptParse)) {
         TRACE("(%p)->(IID_IActiveScriptParse %p)\n", This, ppv);
         *ppv = &This->IActiveScriptParse_iface;
+    }else if(IsEqualGUID(riid, &IID_IActiveScriptParseProcedure2)) {
+        TRACE("(%p)->(IID_IActiveScriptParseProcedure2 %p)\n", This, ppv);
+        *ppv = &This->IActiveScriptParseProcedure2_iface;
     }else if(IsEqualGUID(riid, &IID_IObjectSafety)) {
         TRACE("(%p)->(IID_IObjectSafety %p)\n", This, ppv);
         *ppv = &This->IObjectSafety_iface;
@@ -550,7 +567,7 @@ static HRESULT WINAPI VBScriptParse_InitNew(IActiveScriptParse *iface)
         return E_OUTOFMEMORY;
 
     ctx->safeopt = This->safeopt;
-    vbsheap_init(&ctx->heap);
+    heap_pool_init(&ctx->heap);
     list_init(&ctx->objects);
     list_init(&ctx->code_list);
     list_init(&ctx->named_items);
@@ -594,11 +611,16 @@ static HRESULT WINAPI VBScriptParse_ParseScriptText(IActiveScriptParse *iface,
     if(This->thread_id != GetCurrentThreadId() || This->state == SCRIPTSTATE_CLOSED)
         return E_UNEXPECTED;
 
-    hres = compile_script(This->ctx, pstrCode, &code);
+    hres = compile_script(This->ctx, pstrCode, pstrDelimiter, &code);
     if(FAILED(hres))
         return hres;
 
-    return is_started(This) ? exec_global_code(This->ctx, code) : S_OK;
+    if(!is_started(This)) {
+        code->pending_exec = TRUE;
+        return S_OK;
+    }
+
+    return exec_global_code(This->ctx, code);
 }
 
 static const IActiveScriptParseVtbl VBScriptParseVtbl = {
@@ -608,6 +630,59 @@ static const IActiveScriptParseVtbl VBScriptParseVtbl = {
     VBScriptParse_InitNew,
     VBScriptParse_AddScriptlet,
     VBScriptParse_ParseScriptText
+};
+
+static inline VBScript *impl_from_IActiveScriptParseProcedure2(IActiveScriptParseProcedure2 *iface)
+{
+    return CONTAINING_RECORD(iface, VBScript, IActiveScriptParseProcedure2_iface);
+}
+
+static HRESULT WINAPI VBScriptParseProcedure_QueryInterface(IActiveScriptParseProcedure2 *iface, REFIID riid, void **ppv)
+{
+    VBScript *This = impl_from_IActiveScriptParseProcedure2(iface);
+    return IActiveScript_QueryInterface(&This->IActiveScript_iface, riid, ppv);
+}
+
+static ULONG WINAPI VBScriptParseProcedure_AddRef(IActiveScriptParseProcedure2 *iface)
+{
+    VBScript *This = impl_from_IActiveScriptParseProcedure2(iface);
+    return IActiveScript_AddRef(&This->IActiveScript_iface);
+}
+
+static ULONG WINAPI VBScriptParseProcedure_Release(IActiveScriptParseProcedure2 *iface)
+{
+    VBScript *This = impl_from_IActiveScriptParseProcedure2(iface);
+    return IActiveScript_Release(&This->IActiveScript_iface);
+}
+
+static HRESULT WINAPI VBScriptParseProcedure_ParseProcedureText(IActiveScriptParseProcedure2 *iface,
+        LPCOLESTR pstrCode, LPCOLESTR pstrFormalParams, LPCOLESTR pstrProcedureName,
+        LPCOLESTR pstrItemName, IUnknown *punkContext, LPCOLESTR pstrDelimiter,
+        CTXARG_T dwSourceContextCookie, ULONG ulStartingLineNumber, DWORD dwFlags, IDispatch **ppdisp)
+{
+    VBScript *This = impl_from_IActiveScriptParseProcedure2(iface);
+    vbscode_t *code;
+    HRESULT hres;
+
+    TRACE("(%p)->(%s %s %s %s %p %s %s %u %x %p)\n", This, debugstr_w(pstrCode), debugstr_w(pstrFormalParams),
+          debugstr_w(pstrProcedureName), debugstr_w(pstrItemName), punkContext, debugstr_w(pstrDelimiter),
+          wine_dbgstr_longlong(dwSourceContextCookie), ulStartingLineNumber, dwFlags, ppdisp);
+
+    if(This->thread_id != GetCurrentThreadId() || This->state == SCRIPTSTATE_CLOSED)
+        return E_UNEXPECTED;
+
+    hres = compile_script(This->ctx, pstrCode, pstrDelimiter, &code);
+    if(FAILED(hres))
+        return hres;
+
+    return create_procedure_disp(This->ctx, code, ppdisp);
+}
+
+static const IActiveScriptParseProcedure2Vtbl VBScriptParseProcedureVtbl = {
+    VBScriptParseProcedure_QueryInterface,
+    VBScriptParseProcedure_AddRef,
+    VBScriptParseProcedure_Release,
+    VBScriptParseProcedure_ParseProcedureText,
 };
 
 static inline VBScript *impl_from_IObjectSafety(IObjectSafety *iface)
@@ -685,6 +760,7 @@ HRESULT WINAPI VBScriptFactory_CreateInstance(IClassFactory *iface, IUnknown *pU
 
     ret->IActiveScript_iface.lpVtbl = &VBScriptVtbl;
     ret->IActiveScriptParse_iface.lpVtbl = &VBScriptParseVtbl;
+    ret->IActiveScriptParseProcedure2_iface.lpVtbl = &VBScriptParseProcedureVtbl;
     ret->IObjectSafety_iface.lpVtbl = &VBScriptSafetyVtbl;
 
     ret->ref = 1;

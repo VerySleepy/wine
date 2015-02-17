@@ -20,13 +20,12 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
-	
-#define WIN32_LEAN_AND_MEAN		/*  Exclude rarely-used stuff from Windows headers */
+
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <windows.h>
 #include <commctrl.h>
-#include <stdlib.h>
-#include <memory.h>
-#include <stdio.h>
 #include <winnt.h>
 
 #include "wine/unicode.h"
@@ -98,13 +97,12 @@ static void AdjustFrameSize(HWND hCntrl, HWND hDlg, int nXDifference, int nYDiff
     } else {
         cx = rc.left + nXDifference;
         cy = rc.top + nYDifference;
-        sx = sy = 0;
         SetWindowPos(hCntrl, NULL, cx, cy, 0, 0, SWP_NOACTIVATE|SWP_NOOWNERZORDER|SWP_NOSIZE|SWP_NOZORDER);
     }
     InvalidateRect(hCntrl, NULL, TRUE);
 }
 		 
-static void AdjustControlPostion(HWND hCntrl, HWND hDlg, int nXDifference, int nYDifference)
+static void AdjustControlPosition(HWND hCntrl, HWND hDlg, int nXDifference, int nYDifference)
 {
     AdjustFrameSize(hCntrl, hDlg, nXDifference, nYDifference, 0);
 }
@@ -140,7 +138,7 @@ static DWORD WINAPI PerformancePageRefreshThread(void *lpParameter)
 
 	WCHAR	Text[256];
 
-	static const WCHAR    wszFormatDigit[] = {'%','d',0};
+	static const WCHAR    wszFormatDigit[] = {'%','u',0};
 	WCHAR    wszMemUsage[255];
 
 	LoadStringW(hInst, IDS_STATUS_BAR_MEMORY_USAGE, wszMemUsage, sizeof(wszMemUsage)/sizeof(WCHAR));
@@ -168,8 +166,8 @@ static DWORD WINAPI PerformancePageRefreshThread(void *lpParameter)
 		{
 			ULONG CpuUsage;
 			ULONG CpuKernelUsage;
-			int nBarsUsed1;
-			int nBarsUsed2;
+			int nBarsUsed1, nBarsUsed2;
+			DWORD_PTR args[2];
 
 			/*  Reset our event */
 			ResetEvent(hPerformancePageEvent);
@@ -185,8 +183,14 @@ static DWORD WINAPI PerformancePageRefreshThread(void *lpParameter)
 			wsprintfW(Text, wszFormatDigit, CommitChargeLimit);
 			SetWindowTextW(hPerformancePageCommitChargeLimitEdit, Text);
 			wsprintfW(Text, wszFormatDigit, CommitChargePeak);
+
 			SetWindowTextW(hPerformancePageCommitChargePeakEdit, Text);
-			wsprintfW(Text, wszMemUsage, CommitChargeTotal, CommitChargeLimit);
+
+			args[0] = CommitChargeTotal;
+			args[1] = CommitChargeLimit;
+			FormatMessageW(FORMAT_MESSAGE_FROM_STRING|FORMAT_MESSAGE_ARGUMENT_ARRAY,
+			               wszMemUsage, 0, 0, Text,
+			               sizeof(Text)/sizeof(*Text), (__ms_va_list*)args);
 			SendMessageW(hStatusWnd, SB_SETTEXTW, 2, (LPARAM)Text);
 
 			/* 
@@ -338,7 +342,7 @@ PerformancePageWndProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
         GraphCtrl_SetPlotColor(&PerformancePageMemUsageHistoryGraph, 0, RGB(255, 255, 0)) ;
 		/*  Start our refresh thread */
 #ifdef RUN_PERF_PAGE
-        CreateThread(NULL, 0, PerformancePageRefreshThread, NULL, 0, NULL);
+        CloseHandle( CreateThread(NULL, 0, PerformancePageRefreshThread, NULL, 0, NULL));
 #endif
 
 		/* 
@@ -400,18 +404,18 @@ PerformancePageWndProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
         AdjustCntrlPos(IDS_TOTALS_PROCESS_COUNT, hDlg, 0, nYDifference);
         AdjustCntrlPos(IDS_TOTALS_THREAD_COUNT, hDlg, 0, nYDifference);
 
-        AdjustControlPostion(hPerformancePageCommitChargeTotalEdit, hDlg, 0, nYDifference);
-        AdjustControlPostion(hPerformancePageCommitChargeLimitEdit, hDlg, 0, nYDifference);
-        AdjustControlPostion(hPerformancePageCommitChargePeakEdit, hDlg, 0, nYDifference);
-        AdjustControlPostion(hPerformancePageKernelMemoryTotalEdit, hDlg, 0, nYDifference);
-        AdjustControlPostion(hPerformancePageKernelMemoryPagedEdit, hDlg, 0, nYDifference);
-        AdjustControlPostion(hPerformancePageKernelMemoryNonPagedEdit, hDlg, 0, nYDifference);
-        AdjustControlPostion(hPerformancePagePhysicalMemoryTotalEdit, hDlg, 0, nYDifference);
-        AdjustControlPostion(hPerformancePagePhysicalMemoryAvailableEdit, hDlg, 0, nYDifference);
-        AdjustControlPostion(hPerformancePagePhysicalMemorySystemCacheEdit, hDlg, 0, nYDifference);
-        AdjustControlPostion(hPerformancePageTotalsHandleCountEdit, hDlg, 0, nYDifference);
-        AdjustControlPostion(hPerformancePageTotalsProcessCountEdit, hDlg, 0, nYDifference);
-        AdjustControlPostion(hPerformancePageTotalsThreadCountEdit, hDlg, 0, nYDifference);
+        AdjustControlPosition(hPerformancePageCommitChargeTotalEdit, hDlg, 0, nYDifference);
+        AdjustControlPosition(hPerformancePageCommitChargeLimitEdit, hDlg, 0, nYDifference);
+        AdjustControlPosition(hPerformancePageCommitChargePeakEdit, hDlg, 0, nYDifference);
+        AdjustControlPosition(hPerformancePageKernelMemoryTotalEdit, hDlg, 0, nYDifference);
+        AdjustControlPosition(hPerformancePageKernelMemoryPagedEdit, hDlg, 0, nYDifference);
+        AdjustControlPosition(hPerformancePageKernelMemoryNonPagedEdit, hDlg, 0, nYDifference);
+        AdjustControlPosition(hPerformancePagePhysicalMemoryTotalEdit, hDlg, 0, nYDifference);
+        AdjustControlPosition(hPerformancePagePhysicalMemoryAvailableEdit, hDlg, 0, nYDifference);
+        AdjustControlPosition(hPerformancePagePhysicalMemorySystemCacheEdit, hDlg, 0, nYDifference);
+        AdjustControlPosition(hPerformancePageTotalsHandleCountEdit, hDlg, 0, nYDifference);
+        AdjustControlPosition(hPerformancePageTotalsProcessCountEdit, hDlg, 0, nYDifference);
+        AdjustControlPosition(hPerformancePageTotalsThreadCountEdit, hDlg, 0, nYDifference);
 
         {
             static int lastX, lastY;

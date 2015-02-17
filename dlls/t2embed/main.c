@@ -39,8 +39,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
         case DLL_PROCESS_ATTACH:
             DisableThreadLibraryCalls(hinstDLL);
             break;
-        case DLL_PROCESS_DETACH:
-            break;
     }
 
     return TRUE;
@@ -84,5 +82,11 @@ LONG WINAPI TTIsEmbeddingEnabled(HDC hDC, BOOL *enabled)
 {
     FIXME("(%p %p) stub\n", hDC, enabled);
     if (enabled) *enabled = FALSE;
+    return E_API_NOTIMPL;
+}
+
+LONG WINAPI TTDeleteEmbeddedFont(HANDLE hFontReference, ULONG flags, ULONG *status)
+{
+    FIXME("(%p 0x%08x %p) stub\n", hFontReference, flags, status);
     return E_API_NOTIMPL;
 }

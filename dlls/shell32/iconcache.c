@@ -59,7 +59,10 @@ typedef struct
 	DWORD dwAccessTime;
 } SIC_ENTRY, * LPSIC_ENTRY;
 
-static HDPA		sic_hdpa = 0;
+static HDPA sic_hdpa;
+static INIT_ONCE sic_init_once = INIT_ONCE_STATIC_INIT;
+static HIMAGELIST ShellSmallIconList;
+static HIMAGELIST ShellBigIconList;
 
 static CRITICAL_SECTION SHELL32_SicCS;
 static CRITICAL_SECTION_DEBUG critsect_debug =
@@ -337,54 +340,9 @@ static INT SIC_LoadIcon (LPCWSTR sSourceFile, INT dwSourceIndex, DWORD dwFlags)
 	return SIC_IconAppend (sSourceFile, dwSourceIndex, hiconSmall, hiconLarge, dwFlags);
 }
 /*****************************************************************************
- * SIC_GetIconIndex			[internal]
- *
- * Parameters
- *	sSourceFile	[IN]	filename of file containing the icon
- *	index		[IN]	index/resID (negated) in this file
- *
- * NOTES
- *  look in the cache for a proper icon. if not available the icon is taken
- *  from the file and cached
- */
-INT SIC_GetIconIndex (LPCWSTR sSourceFile, INT dwSourceIndex, DWORD dwFlags )
-{
-	SIC_ENTRY sice;
-	INT ret, index = INVALID_INDEX;
-	WCHAR path[MAX_PATH];
-
-	TRACE("%s %i\n", debugstr_w(sSourceFile), dwSourceIndex);
-
-	GetFullPathNameW(sSourceFile, MAX_PATH, path, NULL);
-	sice.sSourceFile = path;
-	sice.dwSourceIndex = dwSourceIndex;
-	sice.dwFlags = dwFlags;
-
-	EnterCriticalSection(&SHELL32_SicCS);
-
-	if (NULL != DPA_GetPtr (sic_hdpa, 0))
-	{
-	  /* search linear from position 0*/
-	  index = DPA_Search (sic_hdpa, &sice, 0, SIC_CompareEntries, 0, 0);
-	}
-
-	if ( INVALID_INDEX == index )
-	{
-          ret = SIC_LoadIcon (sSourceFile, dwSourceIndex, dwFlags);
-	}
-	else
-	{
-	  TRACE("-- found\n");
-	  ret = ((LPSIC_ENTRY)DPA_GetPtr(sic_hdpa, index))->dwListIndex;
-	}
-
-	LeaveCriticalSection(&SHELL32_SicCS);
-	return ret;
-}
-/*****************************************************************************
  * SIC_Initialize			[internal]
  */
-BOOL SIC_Initialize(void)
+static BOOL WINAPI SIC_Initialize( INIT_ONCE *once, void *param, void **context )
 {
 	HICON		hSm, hLg;
 	int		cx_small, cy_small;
@@ -396,9 +354,6 @@ BOOL SIC_Initialize(void)
 	cy_large = GetSystemMetrics(SM_CYICON);
 
 	TRACE("\n");
-
-	if (sic_hdpa)	/* already initialized?*/
-	  return TRUE;
 
 	sic_hdpa = DPA_Create(16);
 
@@ -452,14 +407,61 @@ void SIC_Destroy(void)
 
 	if (sic_hdpa) DPA_DestroyCallback(sic_hdpa, sic_free, NULL );
 
-	sic_hdpa = NULL;
-	ImageList_Destroy(ShellSmallIconList);
-	ShellSmallIconList = 0;
-	ImageList_Destroy(ShellBigIconList);
-	ShellBigIconList = 0;
+	if (ShellSmallIconList)
+	    ImageList_Destroy(ShellSmallIconList);
+	if (ShellBigIconList)
+	    ImageList_Destroy(ShellBigIconList);
 
 	LeaveCriticalSection(&SHELL32_SicCS);
 	DeleteCriticalSection(&SHELL32_SicCS);
+}
+
+/*****************************************************************************
+ * SIC_GetIconIndex			[internal]
+ *
+ * Parameters
+ *	sSourceFile	[IN]	filename of file containing the icon
+ *	index		[IN]	index/resID (negated) in this file
+ *
+ * NOTES
+ *  look in the cache for a proper icon. if not available the icon is taken
+ *  from the file and cached
+ */
+INT SIC_GetIconIndex (LPCWSTR sSourceFile, INT dwSourceIndex, DWORD dwFlags )
+{
+	SIC_ENTRY sice;
+	INT ret, index = INVALID_INDEX;
+	WCHAR path[MAX_PATH];
+
+	TRACE("%s %i\n", debugstr_w(sSourceFile), dwSourceIndex);
+
+	GetFullPathNameW(sSourceFile, MAX_PATH, path, NULL);
+	sice.sSourceFile = path;
+	sice.dwSourceIndex = dwSourceIndex;
+	sice.dwFlags = dwFlags;
+
+        InitOnceExecuteOnce( &sic_init_once, SIC_Initialize, NULL, NULL );
+
+	EnterCriticalSection(&SHELL32_SicCS);
+
+	if (NULL != DPA_GetPtr (sic_hdpa, 0))
+	{
+	  /* search linear from position 0*/
+	  index = DPA_Search (sic_hdpa, &sice, 0, SIC_CompareEntries, 0, 0);
+	}
+
+	if ( INVALID_INDEX == index )
+	{
+          ret = SIC_LoadIcon (sSourceFile, dwSourceIndex, dwFlags);
+	}
+	else
+	{
+	  TRACE("-- found\n");
+	  ret = ((LPSIC_ENTRY)DPA_GetPtr(sic_hdpa, index))->dwListIndex;
+	}
+
+	LeaveCriticalSection(&SHELL32_SicCS);
+	return ret;
 }
 
 /*****************************************************************************
@@ -509,6 +511,8 @@ static int SIC_LoadOverlayIcon(int icon_idx)
 	    RegCloseKey(hKeyShellIcons);
 	}
 
+        InitOnceExecuteOnce( &sic_init_once, SIC_Initialize, NULL, NULL );
+
 	return SIC_LoadIcon(iconPath, iconIdx, 0);
 }
 
@@ -520,15 +524,12 @@ static int SIC_LoadOverlayIcon(int icon_idx)
  *
  */
 BOOL WINAPI Shell_GetImageLists(HIMAGELIST * lpBigList, HIMAGELIST * lpSmallList)
-{	TRACE("(%p,%p)\n",lpBigList,lpSmallList);
-	if (lpBigList)
-	{ *lpBigList = ShellBigIconList;
-	}
-	if (lpSmallList)
-	{ *lpSmallList = ShellSmallIconList;
-	}
-
-	return TRUE;
+{
+    TRACE("(%p,%p)\n",lpBigList,lpSmallList);
+    InitOnceExecuteOnce( &sic_init_once, SIC_Initialize, NULL, NULL );
+    if (lpBigList) *lpBigList = ShellBigIconList;
+    if (lpSmallList) *lpSmallList = ShellSmallIconList;
+    return TRUE;
 }
 /*************************************************************************
  * PidlToSicIndex			[INTERNAL]
@@ -556,6 +557,8 @@ BOOL PidlToSicIndex (
 	int		iShortcutDefaultIndex = INVALID_INDEX;
 
 	TRACE("sf=%p pidl=%p %s\n", sh, pidl, bBigIcon?"Big":"Small");
+
+        InitOnceExecuteOnce( &sic_init_once, SIC_Initialize, NULL, NULL );
 
 	if (SUCCEEDED (IShellFolder_GetUIObjectOf(sh, 0, 1, &pidl, &IID_IExtractIconW, 0, (void **)&ei)))
 	{
@@ -875,4 +878,45 @@ INT WINAPI SHGetIconOverlayIndexW(LPCWSTR pszIconPath, INT iIconIndex)
   FIXME("%s, %d\n", debugstr_w(pszIconPath), iIconIndex);
 
   return -1;
+}
+
+/****************************************************************************
+ * SHGetStockIconInfo [SHELL32.@]
+ *
+ * Receive information for builtin icons
+ *
+ * PARAMS
+ *  id      [I]  selected icon-id to get information for
+ *  flags   [I]  selects the information to receive
+ *  sii     [IO] SHSTOCKICONINFO structure to fill
+ *
+ * RETURNS
+ *  Success: S_OK
+ *  Failure: A HRESULT failure code
+ *
+ */
+HRESULT WINAPI SHGetStockIconInfo(SHSTOCKICONID id, UINT flags, SHSTOCKICONINFO *sii)
+{
+    static const WCHAR shell32dll[] = {'\\','s','h','e','l','l','3','2','.','d','l','l',0};
+
+    FIXME("(%d, 0x%x, %p) semi-stub\n", id, flags, sii);
+    if ((id < 0) || (id >= SIID_MAX_ICONS) || !sii || (sii->cbSize != sizeof(SHSTOCKICONINFO))) {
+        return E_INVALIDARG;
+    }
+
+    GetSystemDirectoryW(sii->szPath, MAX_PATH);
+
+    /* no icons defined: use default */
+    sii->iIcon = -IDI_SHELL_DOCUMENT;
+    lstrcatW(sii->szPath, shell32dll);
+
+    if (flags)
+        FIXME("flags 0x%x not implemented\n", flags);
+
+    sii->hIcon = NULL;
+    sii->iSysImageIndex = -1;
+
+    TRACE("%3d: returning %s (%d)\n", id, debugstr_w(sii->szPath), sii->iIcon);
+
+    return S_OK;
 }

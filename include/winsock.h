@@ -107,14 +107,12 @@
 
 #endif /* __WINE_WINSOCKAPI_STDLIB_H */
 
-#ifndef __WINESRC__
-# include <windows.h>
-#else
-# include <windef.h>
-#endif
+#include <windows.h>
 
 #ifndef _WINSOCKAPI_
 #define _WINSOCKAPI_
+
+#include <inaddr.h>
 
 #ifdef USE_WS_PREFIX
 typedef unsigned char  WS_u_char;
@@ -263,6 +261,7 @@ extern "C" {
 #define IPPROTO_UDP                17
 #define IPPROTO_IDP                22
 #define IPPROTO_IPV6               41
+#define IPPROTO_ICMPV6             58
 #define IPPROTO_ND                 77
 #define IPPROTO_RAW                255
 #define IPPROTO_MAX                256
@@ -275,6 +274,7 @@ extern "C" {
 #define WS_IPPROTO_UDP             17
 #define WS_IPPROTO_IDP             22
 #define WS_IPPROTO_IPV6            41
+#define WS_IPPROTO_ICMPV6          58
 #define WS_IPPROTO_ND              77
 #define WS_IPPROTO_RAW             255
 #define WS_IPPROTO_MAX             256
@@ -591,34 +591,6 @@ static inline ULONG __wine_ulong_swap(ULONG l)
 #define WS_INADDR_NONE             0xffffffff
 #endif /* USE_WS_PREFIX */
 
-typedef struct WS(in_addr)
-{
-    union {
-        struct {
-            WS(u_char) s_b1,s_b2,s_b3,s_b4;
-        } S_un_b;
-        struct {
-            WS(u_short) s_w1,s_w2;
-        } S_un_w;
-        ULONG S_addr;
-    } S_un;
-#ifndef USE_WS_PREFIX
-#define s_addr  S_un.S_addr
-#define s_host  S_un.S_un_b.s_b2
-#define s_net   S_un.S_un_b.s_b1
-#define s_imp   S_un.S_un_w.s_w2
-#define s_impno S_un.S_un_b.s_b4
-#define s_lh    S_un.S_un_b.s_b3
-#else
-#define WS_s_addr  S_un.S_addr
-#define WS_s_host  S_un.S_un_b.s_b2
-#define WS_s_net   S_un.S_un_b.s_b1
-#define WS_s_imp   S_un.S_un_w.s_w2
-#define WS_s_impno S_un.S_un_b.s_b4
-#define WS_s_lh    S_un.S_un_b.s_b3
-#endif /* USE_WS_PREFIX */
-} IN_ADDR, *PIN_ADDR, *LPIN_ADDR;
-
 typedef struct WS(sockaddr_in)
 {
     short              sin_family;
@@ -690,6 +662,7 @@ typedef struct WS(WSAData)
 #define SO_RCVTIMEO                0x1006
 #define SO_ERROR                   0x1007
 #define SO_TYPE                    0x1008
+#define SO_BSP_STATE               0x1009
 
 
 #define IOCPARM_MASK               0x7f
@@ -724,6 +697,7 @@ typedef struct WS(WSAData)
 #define WS_SO_RCVTIMEO             0x1006
 #define WS_SO_ERROR                0x1007
 #define WS_SO_TYPE                 0x1008
+#define WS_SO_BSP_STATE            0x1009
 
 #define WS_IOCPARM_MASK            0x7f
 #define WS_IOC_VOID                0x20000000

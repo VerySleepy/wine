@@ -131,24 +131,24 @@ static HRESULT activate_inplace(WebBrowser *This, IOleClientSite *active_site)
         return hres;
     }
 
-    hres = IOleInPlaceSite_CanInPlaceActivate(This->inplace);
+    hres = IOleInPlaceSiteEx_CanInPlaceActivate(This->inplace);
     if(hres != S_OK) {
         WARN("CanInPlaceActivate returned: %08x\n", hres);
-        IOleInPlaceSite_Release(This->inplace);
+        IOleInPlaceSiteEx_Release(This->inplace);
         This->inplace = NULL;
         return E_FAIL;
     }
 
-    hres = IOleInPlaceSite_GetWindow(This->inplace, &parent_hwnd);
+    hres = IOleInPlaceSiteEx_GetWindow(This->inplace, &parent_hwnd);
     if(SUCCEEDED(hres))
         SHSetParentHwnd(This->shell_embedding_hwnd, parent_hwnd);
 
-    IOleInPlaceSite_OnInPlaceActivate(This->inplace);
+    IOleInPlaceSiteEx_OnInPlaceActivate(This->inplace);
 
     This->frameinfo.cb = sizeof(OLEINPLACEFRAMEINFO);
-    IOleInPlaceSite_GetWindowContext(This->inplace, &This->doc_host.frame, &This->uiwindow,
-                                     &This->pos_rect, &This->clip_rect,
-                                     &This->frameinfo);
+    IOleInPlaceSiteEx_GetWindowContext(This->inplace, &This->doc_host.frame, &This->uiwindow,
+                                       &This->pos_rect, &This->clip_rect,
+                                       &This->frameinfo);
 
     SetWindowPos(This->shell_embedding_hwnd, NULL,
                  This->pos_rect.left, This->pos_rect.top,
@@ -192,7 +192,7 @@ static HRESULT activate_ui(WebBrowser *This, IOleClientSite *active_site)
     if(FAILED(hres))
         return hres;
 
-    IOleInPlaceSite_OnUIActivate(This->inplace);
+    IOleInPlaceSiteEx_OnUIActivate(This->inplace);
 
     if(This->doc_host.frame)
         IOleInPlaceFrame_SetActiveObject(This->doc_host.frame, &This->IOleInPlaceActiveObject_iface, wszitem);
@@ -270,7 +270,7 @@ static void release_client_site(WebBrowser *This)
     }
 
     if(This->inplace) {
-        IOleInPlaceSite_Release(This->inplace);
+        IOleInPlaceSiteEx_Release(This->inplace);
         This->inplace = NULL;
     }
 
@@ -290,6 +290,115 @@ static void release_client_site(WebBrowser *This)
     }
 }
 
+typedef struct {
+    IEnumOLEVERB IEnumOLEVERB_iface;
+    LONG ref;
+    LONG iter;
+} EnumOLEVERB;
+
+static inline EnumOLEVERB *impl_from_IEnumOLEVERB(IEnumOLEVERB *iface)
+{
+    return CONTAINING_RECORD(iface, EnumOLEVERB, IEnumOLEVERB_iface);
+}
+
+static HRESULT WINAPI EnumOLEVERB_QueryInterface(IEnumOLEVERB *iface, REFIID riid, void **ppv)
+{
+    EnumOLEVERB *This = impl_from_IEnumOLEVERB(iface);
+
+    if(IsEqualGUID(&IID_IUnknown, riid)) {
+        TRACE("(%p)->(IID_IUnknown %p)\n", This, ppv);
+        *ppv = &This->IEnumOLEVERB_iface;
+    }else if(IsEqualGUID(&IID_IEnumOLEVERB, riid)) {
+        TRACE("(%p)->(IID_IEnumOLEVERB %p)\n", This, ppv);
+        *ppv = &This->IEnumOLEVERB_iface;
+    }else {
+        WARN("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppv);
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown*)*ppv);
+    return S_OK;
+}
+
+static ULONG WINAPI EnumOLEVERB_AddRef(IEnumOLEVERB *iface)
+{
+    EnumOLEVERB *This = impl_from_IEnumOLEVERB(iface);
+    LONG ref = InterlockedIncrement(&This->ref);
+
+    TRACE("(%p) ref=%d\n", This, ref);
+
+    return ref;
+}
+
+static ULONG WINAPI EnumOLEVERB_Release(IEnumOLEVERB *iface)
+{
+    EnumOLEVERB *This = impl_from_IEnumOLEVERB(iface);
+    LONG ref = InterlockedDecrement(&This->ref);
+
+    TRACE("(%p) ref=%d\n", This, ref);
+
+    if(!ref)
+        heap_free(This);
+
+    return ref;
+}
+
+static HRESULT WINAPI EnumOLEVERB_Next(IEnumOLEVERB *iface, ULONG celt, OLEVERB *rgelt, ULONG *pceltFetched)
+{
+    EnumOLEVERB *This = impl_from_IEnumOLEVERB(iface);
+
+    static const OLEVERB verbs[] =
+        {{OLEIVERB_PRIMARY},{OLEIVERB_INPLACEACTIVATE},{OLEIVERB_UIACTIVATE},{OLEIVERB_SHOW},{OLEIVERB_HIDE}};
+
+    TRACE("(%p)->(%u %p %p)\n", This, celt, rgelt, pceltFetched);
+
+    /* There are a few problems with this implementation, but that's how it seems to work in native. See tests. */
+    if(pceltFetched)
+        *pceltFetched = 0;
+
+    if(This->iter == sizeof(verbs)/sizeof(*verbs))
+        return S_FALSE;
+
+    if(celt)
+        *rgelt = verbs[This->iter++];
+    return S_OK;
+}
+
+static HRESULT WINAPI EnumOLEVERB_Skip(IEnumOLEVERB *iface, ULONG celt)
+{
+    EnumOLEVERB *This = impl_from_IEnumOLEVERB(iface);
+    TRACE("(%p)->(%u)\n", This, celt);
+    return S_OK;
+}
+
+static HRESULT WINAPI EnumOLEVERB_Reset(IEnumOLEVERB *iface)
+{
+    EnumOLEVERB *This = impl_from_IEnumOLEVERB(iface);
+
+    TRACE("(%p)\n", This);
+
+    This->iter = 0;
+    return S_OK;
+}
+
+static HRESULT WINAPI EnumOLEVERB_Clone(IEnumOLEVERB *iface, IEnumOLEVERB **ppenum)
+{
+    EnumOLEVERB *This = impl_from_IEnumOLEVERB(iface);
+    FIXME("(%p)->(%p)\n", This, ppenum);
+    return E_NOTIMPL;
+}
+
+static const IEnumOLEVERBVtbl EnumOLEVERBVtbl = {
+    EnumOLEVERB_QueryInterface,
+    EnumOLEVERB_AddRef,
+    EnumOLEVERB_Release,
+    EnumOLEVERB_Next,
+    EnumOLEVERB_Skip,
+    EnumOLEVERB_Reset,
+    EnumOLEVERB_Clone
+};
+
 /**********************************************************************
  * Implement the IOleObject interface for the WebBrowser control
  */
@@ -302,19 +411,19 @@ static inline WebBrowser *impl_from_IOleObject(IOleObject *iface)
 static HRESULT WINAPI OleObject_QueryInterface(IOleObject *iface, REFIID riid, void **ppv)
 {
     WebBrowser *This = impl_from_IOleObject(iface);
-    return IWebBrowser_QueryInterface(&This->IWebBrowser2_iface, riid, ppv);
+    return IWebBrowser2_QueryInterface(&This->IWebBrowser2_iface, riid, ppv);
 }
 
 static ULONG WINAPI OleObject_AddRef(IOleObject *iface)
 {
     WebBrowser *This = impl_from_IOleObject(iface);
-    return IWebBrowser_AddRef(&This->IWebBrowser2_iface);
+    return IWebBrowser2_AddRef(&This->IWebBrowser2_iface);
 }
 
 static ULONG WINAPI OleObject_Release(IOleObject *iface)
 {
     WebBrowser *This = impl_from_IOleObject(iface);
-    return IWebBrowser_Release(&This->IWebBrowser2_iface);
+    return IWebBrowser2_Release(&This->IWebBrowser2_iface);
 }
 
 static HRESULT WINAPI OleObject_SetClientSite(IOleObject *iface, LPOLECLIENTSITE pClientSite)
@@ -333,6 +442,9 @@ static HRESULT WINAPI OleObject_SetClientSite(IOleObject *iface, LPOLECLIENTSITE
     release_client_site(This);
 
     if(!pClientSite) {
+        on_commandstate_change(&This->doc_host, CSC_NAVIGATEBACK, VARIANT_FALSE);
+        on_commandstate_change(&This->doc_host, CSC_NAVIGATEFORWARD, VARIANT_FALSE);
+
         if(This->doc_host.document)
             deactivate_document(&This->doc_host);
         return S_OK;
@@ -407,7 +519,7 @@ static HRESULT WINAPI OleObject_Close(IOleObject *iface, DWORD dwSaveOption)
     TRACE("(%p)->(%d)\n", This, dwSaveOption);
 
     if(dwSaveOption != OLECLOSE_NOSAVE) {
-        FIXME("unimplemnted flag: %x\n", dwSaveOption);
+        FIXME("unimplemented flag: %x\n", dwSaveOption);
         return E_NOTIMPL;
     }
 
@@ -418,8 +530,8 @@ static HRESULT WINAPI OleObject_Close(IOleObject *iface, DWORD dwSaveOption)
         IOleInPlaceUIWindow_SetActiveObject(This->uiwindow, NULL, NULL);
 
     if(This->inplace) {
-        IOleInPlaceSite_OnUIDeactivate(This->inplace, FALSE);
-        IOleInPlaceSite_OnInPlaceDeactivate(This->inplace);
+        IOleInPlaceSiteEx_OnUIDeactivate(This->inplace, FALSE);
+        IOleInPlaceSiteEx_OnInPlaceDeactivate(This->inplace);
     }
 
     return IOleObject_SetClientSite(iface, NULL);
@@ -461,8 +573,8 @@ static HRESULT WINAPI OleObject_DoVerb(IOleObject *iface, LONG iVerb, struct tag
 {
     WebBrowser *This = impl_from_IOleObject(iface);
 
-    TRACE("(%p)->(%d %p %p %d %p %p)\n", This, iVerb, lpmsg, pActiveSite, lindex, hwndParent,
-            lprcPosRect);
+    TRACE("(%p)->(%d %p %p %d %p %s)\n", This, iVerb, lpmsg, pActiveSite, lindex, hwndParent,
+          wine_dbgstr_rect(lprcPosRect));
 
     switch (iVerb)
     {
@@ -477,6 +589,8 @@ static HRESULT WINAPI OleObject_DoVerb(IOleObject *iface, LONG iVerb, struct tag
         return activate_inplace(This, pActiveSite);
     case OLEIVERB_HIDE:
         TRACE("OLEIVERB_HIDE\n");
+        if(This->inplace)
+            IOleInPlaceSiteEx_OnInPlaceDeactivate(This->inplace);
         if(This->shell_embedding_hwnd)
             ShowWindow(This->shell_embedding_hwnd, SW_HIDE);
         return S_OK;
@@ -491,8 +605,20 @@ static HRESULT WINAPI OleObject_DoVerb(IOleObject *iface, LONG iVerb, struct tag
 static HRESULT WINAPI OleObject_EnumVerbs(IOleObject *iface, IEnumOLEVERB **ppEnumOleVerb)
 {
     WebBrowser *This = impl_from_IOleObject(iface);
+    EnumOLEVERB *ret;
+
     TRACE("(%p)->(%p)\n", This, ppEnumOleVerb);
-    return OleRegEnumVerbs(&CLSID_WebBrowser, ppEnumOleVerb);
+
+    ret = heap_alloc(sizeof(*ret));
+    if(!ret)
+        return E_OUTOFMEMORY;
+
+    ret->IEnumOLEVERB_iface.lpVtbl = &EnumOLEVERBVtbl;
+    ret->ref = 1;
+    ret->iter = 0;
+
+    *ppEnumOleVerb = &ret->IEnumOLEVERB_iface;
+    return S_OK;
 }
 
 static HRESULT WINAPI OleObject_Update(IOleObject *iface)
@@ -628,19 +754,19 @@ static HRESULT WINAPI OleInPlaceObject_QueryInterface(IOleInPlaceObject *iface,
         REFIID riid, LPVOID *ppobj)
 {
     WebBrowser *This = impl_from_IOleInPlaceObject(iface);
-    return IWebBrowser_QueryInterface(&This->IWebBrowser2_iface, riid, ppobj);
+    return IWebBrowser2_QueryInterface(&This->IWebBrowser2_iface, riid, ppobj);
 }
 
 static ULONG WINAPI OleInPlaceObject_AddRef(IOleInPlaceObject *iface)
 {
     WebBrowser *This = impl_from_IOleInPlaceObject(iface);
-    return IWebBrowser_AddRef(&This->IWebBrowser2_iface);
+    return IWebBrowser2_AddRef(&This->IWebBrowser2_iface);
 }
 
 static ULONG WINAPI OleInPlaceObject_Release(IOleInPlaceObject *iface)
 {
     WebBrowser *This = impl_from_IOleInPlaceObject(iface);
-    return IWebBrowser_Release(&This->IWebBrowser2_iface);
+    return IWebBrowser2_Release(&This->IWebBrowser2_iface);
 }
 
 static HRESULT WINAPI OleInPlaceObject_GetWindow(IOleInPlaceObject *iface, HWND* phwnd)
@@ -667,7 +793,7 @@ static HRESULT WINAPI OleInPlaceObject_InPlaceDeactivate(IOleInPlaceObject *ifac
     FIXME("(%p)\n", This);
 
     if(This->inplace) {
-        IOleInPlaceSite_Release(This->inplace);
+        IOleInPlaceSiteEx_Release(This->inplace);
         This->inplace = NULL;
     }
 
@@ -737,19 +863,19 @@ static HRESULT WINAPI OleControl_QueryInterface(IOleControl *iface,
         REFIID riid, LPVOID *ppobj)
 {
     WebBrowser *This = impl_from_IOleControl(iface);
-    return IWebBrowser_QueryInterface(&This->IWebBrowser2_iface, riid, ppobj);
+    return IWebBrowser2_QueryInterface(&This->IWebBrowser2_iface, riid, ppobj);
 }
 
 static ULONG WINAPI OleControl_AddRef(IOleControl *iface)
 {
     WebBrowser *This = impl_from_IOleControl(iface);
-    return IWebBrowser_AddRef(&This->IWebBrowser2_iface);
+    return IWebBrowser2_AddRef(&This->IWebBrowser2_iface);
 }
 
 static ULONG WINAPI OleControl_Release(IOleControl *iface)
 {
     WebBrowser *This = impl_from_IOleControl(iface);
-    return IWebBrowser_Release(&This->IWebBrowser2_iface);
+    return IWebBrowser2_Release(&This->IWebBrowser2_iface);
 }
 
 static HRESULT WINAPI OleControl_GetControlInfo(IOleControl *iface, LPCONTROLINFO pCI)

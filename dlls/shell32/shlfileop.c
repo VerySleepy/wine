@@ -53,6 +53,9 @@ WINE_DEFAULT_DEBUG_CHANNEL(shell);
 
 #define FO_MASK         0xF
 
+#define DE_SAMEFILE      0x71
+#define DE_DESTSAMETREE  0x7D
+
 static const WCHAR wWildcardFile[] = {'*',0};
 static const WCHAR wWildcardChars[] = {'*','?',0};
 
@@ -344,36 +347,36 @@ HRESULT WINAPI SHIsFileAvailableOffline(LPCWSTR path, LPDWORD status)
  * Asks for confirmation when bShowUI is true and deletes the directory and
  * all its subdirectories and files if necessary.
  */
-static BOOL SHELL_DeleteDirectoryW(HWND hwnd, LPCWSTR pszDir, BOOL bShowUI)
+static DWORD SHELL_DeleteDirectoryW(HWND hwnd, LPCWSTR pszDir, BOOL bShowUI)
 {
-	BOOL    ret = TRUE;
-	HANDLE  hFind;
-	WIN32_FIND_DATAW wfd;
-	WCHAR   szTemp[MAX_PATH];
+    DWORD    ret = 0;
+    HANDLE  hFind;
+    WIN32_FIND_DATAW wfd;
+    WCHAR   szTemp[MAX_PATH];
 
-	/* Make sure the directory exists before eventually prompting the user */
-	PathCombineW(szTemp, pszDir, wWildcardFile);
-	hFind = FindFirstFileW(szTemp, &wfd);
-	if (hFind == INVALID_HANDLE_VALUE)
-	  return FALSE;
+    PathCombineW(szTemp, pszDir, wWildcardFile);
+    hFind = FindFirstFileW(szTemp, &wfd);
 
-	if (!bShowUI || (ret = SHELL_ConfirmDialogW(hwnd, ASK_DELETE_FOLDER, pszDir, NULL)))
-	{
-	  do
-	  {
-	    if (IsDotDir(wfd.cFileName))
-	      continue;
-	    PathCombineW(szTemp, pszDir, wfd.cFileName);
-	    if (FILE_ATTRIBUTE_DIRECTORY & wfd.dwFileAttributes)
-	      ret = SHELL_DeleteDirectoryW(hwnd, szTemp, FALSE);
-	    else
-	      ret = (SHNotifyDeleteFileW(szTemp) == ERROR_SUCCESS);
-	  } while (ret && FindNextFileW(hFind, &wfd));
-	}
-	FindClose(hFind);
-	if (ret)
-	  ret = (SHNotifyRemoveDirectoryW(pszDir) == ERROR_SUCCESS);
-	return ret;
+    if (hFind != INVALID_HANDLE_VALUE) {
+        if (!bShowUI || SHELL_ConfirmDialogW(hwnd, ASK_DELETE_FOLDER, pszDir, NULL)) {
+            do {
+                if (IsDotDir(wfd.cFileName))
+                    continue;
+                PathCombineW(szTemp, pszDir, wfd.cFileName);
+                if (FILE_ATTRIBUTE_DIRECTORY & wfd.dwFileAttributes)
+                    ret = SHELL_DeleteDirectoryW(hwnd, szTemp, FALSE);
+                else
+                    ret = SHNotifyDeleteFileW(szTemp);
+            } while (!ret && FindNextFileW(hFind, &wfd));
+        }
+        FindClose(hFind);
+    }
+    if (ret == ERROR_SUCCESS)
+        ret = SHNotifyRemoveDirectoryW(pszDir);
+
+    return ret == ERROR_PATH_NOT_FOUND ?
+        0x7C: /* DE_INVALIDFILES (legacy Windows error) */
+        ret;
 }
 
 /**************************************************************************
@@ -1134,7 +1137,7 @@ static BOOL copy_file_to_file(FILE_OPERATION *op, const WCHAR *szFrom, const WCH
     if (!(op->req->fFlags & FOF_NOCONFIRMATION) && PathFileExistsW(szTo))
     {
         if (!SHELL_ConfirmDialogW(op->req->hwnd, ASK_OVERWRITE_FILE, PathFindFileNameW(szTo), op))
-            return 0;
+            return FALSE;
     }
 
     return SHNotifyCopyFileW(szFrom, szTo, FALSE) == 0;
@@ -1177,7 +1180,7 @@ static void create_dest_dirs(LPCWSTR szDestDir)
 }
 
 /* the FO_COPY operation */
-static HRESULT copy_files(FILE_OPERATION *op, const FILE_LIST *flFrom, FILE_LIST *flTo)
+static DWORD copy_files(FILE_OPERATION *op, const FILE_LIST *flFrom, FILE_LIST *flTo)
 {
     DWORD i;
     const FILE_ENTRY *entryToCopy;
@@ -1325,11 +1328,10 @@ static BOOL confirm_delete_list(HWND hWnd, DWORD fFlags, BOOL fTrash, const FILE
 }
 
 /* the FO_DELETE operation */
-static HRESULT delete_files(LPSHFILEOPSTRUCTW lpFileOp, const FILE_LIST *flFrom)
+static DWORD delete_files(LPSHFILEOPSTRUCTW lpFileOp, const FILE_LIST *flFrom)
 {
     const FILE_ENTRY *fileEntry;
-    DWORD i;
-    BOOL bPathExists;
+    DWORD i, ret;
     BOOL bTrash;
 
     if (!flFrom->dwNumFiles)
@@ -1375,12 +1377,13 @@ static HRESULT delete_files(LPSHFILEOPSTRUCTW lpFileOp, const FILE_LIST *flFrom)
         
         /* delete the file or directory */
         if (IsAttribFile(fileEntry->attributes))
-            bPathExists = DeleteFileW(fileEntry->szFullPath);
+            ret = DeleteFileW(fileEntry->szFullPath) ?
+                    ERROR_SUCCESS : GetLastError();
         else
-            bPathExists = SHELL_DeleteDirectoryW(lpFileOp->hwnd, fileEntry->szFullPath, FALSE);
+            ret = SHELL_DeleteDirectoryW(lpFileOp->hwnd, fileEntry->szFullPath, FALSE);
 
-        if (!bPathExists)
-            return ERROR_PATH_NOT_FOUND;
+        if (ret)
+            return ret;
     }
 
     return ERROR_SUCCESS;
@@ -1425,14 +1428,18 @@ static void move_to_dir(LPSHFILEOPSTRUCTW lpFileOp, const FILE_ENTRY *feFrom, co
 }
 
 /* the FO_MOVE operation */
-static HRESULT move_files(LPSHFILEOPSTRUCTW lpFileOp, const FILE_LIST *flFrom, const FILE_LIST *flTo)
+static DWORD move_files(LPSHFILEOPSTRUCTW lpFileOp, const FILE_LIST *flFrom, const FILE_LIST *flTo)
 {
     DWORD i;
+    INT mismatched = 0;
     const FILE_ENTRY *entryToMove;
     const FILE_ENTRY *fileDest;
 
-    if (!flFrom->dwNumFiles || !flTo->dwNumFiles)
-        return ERROR_CANCELLED;
+    if (!flFrom->dwNumFiles)
+        return ERROR_SUCCESS;
+
+    if (!flTo->dwNumFiles)
+        return ERROR_FILE_NOT_FOUND;
 
     if (!(lpFileOp->fFlags & FOF_MULTIDESTFILES) &&
         flTo->dwNumFiles > 1 && flFrom->dwNumFiles > 1)
@@ -1450,22 +1457,29 @@ static HRESULT move_files(LPSHFILEOPSTRUCTW lpFileOp, const FILE_LIST *flFrom, c
     if (!PathFileExistsW(flTo->feFiles[0].szDirectory))
         return ERROR_CANCELLED;
 
-    if ((lpFileOp->fFlags & FOF_MULTIDESTFILES) &&
-        flFrom->dwNumFiles != flTo->dwNumFiles)
-    {
-        return ERROR_CANCELLED;
-    }
+    if (lpFileOp->fFlags & FOF_MULTIDESTFILES)
+        mismatched = flFrom->dwNumFiles - flTo->dwNumFiles;
 
     fileDest = &flTo->feFiles[0];
     for (i = 0; i < flFrom->dwNumFiles; i++)
     {
         entryToMove = &flFrom->feFiles[i];
 
-        if (lpFileOp->fFlags & FOF_MULTIDESTFILES)
-            fileDest = &flTo->feFiles[i];
-
         if (!PathFileExistsW(fileDest->szDirectory))
             return ERROR_CANCELLED;
+
+        if (lpFileOp->fFlags & FOF_MULTIDESTFILES)
+        {
+            if (i >= flTo->dwNumFiles)
+                break;
+            fileDest = &flTo->feFiles[i];
+            if (mismatched && !fileDest->bExists)
+            {
+                create_dest_dirs(flTo->feFiles[i].szFullPath);
+                flTo->feFiles[i].bExists = TRUE;
+                flTo->feFiles[i].attributes = FILE_ATTRIBUTE_DIRECTORY;
+            }
+        }
 
         if (fileDest->bExists && IsAttribDir(fileDest->attributes))
             move_to_dir(lpFileOp, entryToMove, fileDest);
@@ -1473,11 +1487,19 @@ static HRESULT move_files(LPSHFILEOPSTRUCTW lpFileOp, const FILE_LIST *flFrom, c
             SHNotifyMoveFileW(entryToMove->szFullPath, fileDest->szFullPath);
     }
 
+    if (mismatched > 0)
+    {
+        if (flFrom->bAnyDirectories)
+            return DE_DESTSAMETREE;
+        else
+            return DE_SAMEFILE;
+    }
+
     return ERROR_SUCCESS;
 }
 
 /* the FO_RENAME files */
-static HRESULT rename_files(LPSHFILEOPSTRUCTW lpFileOp, const FILE_LIST *flFrom, const FILE_LIST *flTo)
+static DWORD rename_files(LPSHFILEOPSTRUCTW lpFileOp, const FILE_LIST *flFrom, const FILE_LIST *flTo)
 {
     const FILE_ENTRY *feFrom;
     const FILE_ENTRY *feTo;
@@ -1541,6 +1563,7 @@ int WINAPI SHFileOperationW(LPSHFILEOPSTRUCTW lpFileOp)
     ZeroMemory(&op, sizeof(op));
     op.req = lpFileOp;
     op.bManyItems = (flFrom.dwNumFiles > 1);
+    lpFileOp->fAnyOperationsAborted = FALSE;
 
     switch (lpFileOp->wFunc)
     {
@@ -1708,7 +1731,7 @@ DWORD WINAPI SheChangeDirW(LPWSTR path)
 /*************************************************************************
  * IsNetDrive			[SHELL32.66]
  */
-BOOL WINAPI IsNetDrive(DWORD drive)
+int WINAPI IsNetDrive(int drive)
 {
 	char root[4];
 	strcpy(root, "A:\\");
@@ -1720,7 +1743,7 @@ BOOL WINAPI IsNetDrive(DWORD drive)
 /*************************************************************************
  * RealDriveType                [SHELL32.524]
  */
-INT WINAPI RealDriveType(INT drive, BOOL bQueryNet)
+int WINAPI RealDriveType(int drive, BOOL bQueryNet)
 {
     char root[] = "A:\\";
     root[0] += (char)drive;

@@ -73,8 +73,8 @@ static HRESULT WINAPI IStream_fnQueryInterface(IStream *iface, REFIID riid, LPVO
   if(IsEqualIID(riid, &IID_IUnknown) ||
      IsEqualIID(riid, &IID_IStream))
   {
-    *ppvObj = This;
     IStream_AddRef(iface);
+    *ppvObj = iface;
     return S_OK;
   }
   return E_NOINTERFACE;
@@ -231,22 +231,22 @@ static HRESULT WINAPI IStream_fnCopyTo(IStream *iface, IStream* pstm, ULARGE_INT
   ulSize = cb.QuadPart;
   while (ulSize)
   {
-    ULONG ulLeft, ulAmt;
+    ULONG ulLeft, ulRead, ulWritten;
 
     ulLeft = ulSize > sizeof(copyBuff) ? sizeof(copyBuff) : ulSize;
 
     /* Read */
-    hRet = IStream_fnRead(iface, copyBuff, ulLeft, &ulAmt);
-    if (pcbRead)
-      pcbRead->QuadPart += ulAmt;
-    if (FAILED(hRet) || ulAmt != ulLeft)
+    hRet = IStream_fnRead(iface, copyBuff, ulLeft, &ulRead);
+    if (FAILED(hRet) || ulRead == 0)
       break;
+    if (pcbRead)
+      pcbRead->QuadPart += ulRead;
 
     /* Write */
-    hRet = IStream_fnWrite(pstm, copyBuff, ulLeft, &ulAmt);
+    hRet = IStream_fnWrite(pstm, copyBuff, ulRead, &ulWritten);
     if (pcbWritten)
-      pcbWritten->QuadPart += ulAmt;
-    if (FAILED(hRet) || ulAmt != ulLeft)
+      pcbWritten->QuadPart += ulWritten;
+    if (FAILED(hRet) || ulWritten != ulLeft)
       break;
 
     ulSize -= ulLeft;
@@ -294,16 +294,14 @@ static HRESULT WINAPI IStream_fnLockUnlockRegion(IStream *iface, ULARGE_INTEGER 
 static HRESULT WINAPI IStream_fnStat(IStream *iface, STATSTG* lpStat,
                                      DWORD grfStatFlag)
 {
-  ISHFileStream *This = impl_from_IStream(iface);
-  BY_HANDLE_FILE_INFORMATION fi;
-  HRESULT hRet = S_OK;
+    ISHFileStream *This = impl_from_IStream(iface);
+    BY_HANDLE_FILE_INFORMATION fi;
 
-  TRACE("(%p,%p,%d)\n", This, lpStat, grfStatFlag);
+    TRACE("(%p,%p,%d)\n", This, lpStat, grfStatFlag);
 
-  if (!grfStatFlag)
-    hRet = STG_E_INVALIDPOINTER;
-  else
-  {
+    if (!grfStatFlag)
+        return STG_E_INVALIDPOINTER;
+
     memset(&fi, 0, sizeof(fi));
     GetFileInformationByHandle(This->hFile, &fi);
 
@@ -322,8 +320,8 @@ static HRESULT WINAPI IStream_fnStat(IStream *iface, STATSTG* lpStat,
     memcpy(&lpStat->clsid, &IID_IStream, sizeof(CLSID));
     lpStat->grfStateBits = This->grfStateBits;
     lpStat->reserved = 0;
-  }
-  return hRet;
+
+    return S_OK;
 }
 
 /*************************************************************************
@@ -364,22 +362,21 @@ static const IStreamVtbl SHLWAPI_fsVTable =
  */
 static IStream *IStream_Create(LPCWSTR lpszPath, HANDLE hFile, DWORD dwMode)
 {
- ISHFileStream* fileStream;
+    ISHFileStream *fileStream;
 
- fileStream = HeapAlloc(GetProcessHeap(), 0, sizeof(ISHFileStream));
+    fileStream = HeapAlloc(GetProcessHeap(), 0, sizeof(ISHFileStream));
+    if (!fileStream) return NULL;
 
- if (fileStream)
- {
-   fileStream->IStream_iface.lpVtbl = &SHLWAPI_fsVTable;
-   fileStream->ref = 1;
-   fileStream->hFile = hFile;
-   fileStream->dwMode = dwMode;
-   fileStream->lpszPath = StrDupW(lpszPath);
-   fileStream->type = 0; /* FIXME */
-   fileStream->grfStateBits = 0; /* FIXME */
- }
- TRACE ("Returning %p\n", fileStream);
- return &fileStream->IStream_iface;
+    fileStream->IStream_iface.lpVtbl = &SHLWAPI_fsVTable;
+    fileStream->ref = 1;
+    fileStream->hFile = hFile;
+    fileStream->dwMode = dwMode;
+    fileStream->lpszPath = StrDupW(lpszPath);
+    fileStream->type = 0; /* FIXME */
+    fileStream->grfStateBits = 0; /* FIXME */
+
+    TRACE ("Returning %p\n", fileStream);
+    return &fileStream->IStream_iface;
 }
 
 /*************************************************************************
@@ -420,11 +417,9 @@ HRESULT WINAPI SHCreateStreamOnFileEx(LPCWSTR lpszPath, DWORD dwMode,
   /* Access */
   switch (STGM_ACCESS_MODE(dwMode))
   {
+  case STGM_WRITE:
   case STGM_READWRITE:
     dwAccess = GENERIC_READ|GENERIC_WRITE;
-    break;
-  case STGM_WRITE:
-    dwAccess = GENERIC_WRITE;
     break;
   case STGM_READ:
     dwAccess = GENERIC_READ;
@@ -437,6 +432,7 @@ HRESULT WINAPI SHCreateStreamOnFileEx(LPCWSTR lpszPath, DWORD dwMode,
   switch (STGM_SHARE_MODE(dwMode))
   {
   case 0:
+  case STGM_SHARE_DENY_NONE:
     dwShare = FILE_SHARE_READ|FILE_SHARE_WRITE;
     break;
   case STGM_SHARE_DENY_READ:
@@ -447,9 +443,6 @@ HRESULT WINAPI SHCreateStreamOnFileEx(LPCWSTR lpszPath, DWORD dwMode,
     break;
   case STGM_SHARE_EXCLUSIVE:
     dwShare = 0;
-    break;
-  case STGM_SHARE_DENY_NONE:
-    dwShare = FILE_SHARE_READ|FILE_SHARE_WRITE;
     break;
   default:
     return E_INVALIDARG;
@@ -527,7 +520,7 @@ HRESULT WINAPI SHCreateStreamOnFileA(LPCSTR lpszPath, DWORD dwMode,
   if (!lpszPath)
     return HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND);
 
-  MultiByteToWideChar(0, 0, lpszPath, -1, szPath, MAX_PATH);
+  MultiByteToWideChar(CP_ACP, 0, lpszPath, -1, szPath, MAX_PATH);
   return SHCreateStreamOnFileW(szPath, dwMode, lppStream);
 }
 

@@ -72,6 +72,19 @@
 WINE_DEFAULT_DEBUG_CHANNEL(bitmap);
 
 
+static HGDIOBJ DIB_SelectObject( HGDIOBJ handle, HDC hdc );
+static INT DIB_GetObject( HGDIOBJ handle, INT count, LPVOID buffer );
+static BOOL DIB_DeleteObject( HGDIOBJ handle );
+
+static const struct gdi_obj_funcs dib_funcs =
+{
+    DIB_SelectObject,  /* pSelectObject */
+    DIB_GetObject,     /* pGetObjectA */
+    DIB_GetObject,     /* pGetObjectW */
+    NULL,              /* pUnrealizeObject */
+    DIB_DeleteObject   /* pDeleteObject */
+};
+
 /***********************************************************************
  *           bitmap_info_size
  *
@@ -90,7 +103,8 @@ int bitmap_info_size( const BITMAPINFO * info, WORD coloruse )
     }
     else  /* assume BITMAPINFOHEADER */
     {
-        colors = get_dib_num_of_colors( info );
+        if (info->bmiHeader.biClrUsed) colors = min( info->bmiHeader.biClrUsed, 256 );
+        else colors = info->bmiHeader.biBitCount > 8 ? 0 : 1 << info->bmiHeader.biBitCount;
         if (info->bmiHeader.biCompression == BI_BITFIELDS) masks = 3;
         size = max( info->bmiHeader.biSize, sizeof(BITMAPINFOHEADER) + masks * sizeof(DWORD) );
         return size + colors * ((coloruse == DIB_RGB_COLORS) ? sizeof(RGBQUAD) : sizeof(WORD));
@@ -113,6 +127,11 @@ static BOOL is_valid_dib_format( const BITMAPINFOHEADER *info, BOOL allow_compre
     }
 
     if (!info->biPlanes) return FALSE;
+
+    /* check for size overflow */
+    if (!info->biBitCount) return FALSE;
+    if (UINT_MAX / info->biBitCount < info->biWidth) return FALSE;
+    if (UINT_MAX / get_dib_stride( info->biWidth, info->biBitCount ) < abs( info->biHeight )) return FALSE;
 
     switch (info->biBitCount)
     {
@@ -167,18 +186,23 @@ static BOOL bitmapinfoheader_from_user_bitmapinfo( BITMAPINFOHEADER *dst, const 
 
 /*******************************************************************************************
  *  Fill out a true BITMAPINFO from a variable sized BITMAPINFO / BITMAPCOREINFO.
+ *
+ * The resulting sanitized BITMAPINFO is guaranteed to have:
+ * - biSize set to sizeof(BITMAPINFOHEADER)
+ * - biSizeImage set to the actual image size even for non-compressed DIB
+ * - biClrUsed set to the size of the color table, and 0 only when there is no color table
+ * - color table present only for <= 8 bpp, always starts at info->bmiColors
  */
 static BOOL bitmapinfo_from_user_bitmapinfo( BITMAPINFO *dst, const BITMAPINFO *info,
                                              UINT coloruse, BOOL allow_compression )
 {
     void *src_colors;
-    unsigned int colors;
 
+    if (coloruse > DIB_PAL_COLORS + 1) return FALSE;  /* FIXME: handle DIB_PAL_COLORS+1 format */
     if (!bitmapinfoheader_from_user_bitmapinfo( &dst->bmiHeader, &info->bmiHeader )) return FALSE;
     if (!is_valid_dib_format( &dst->bmiHeader, allow_compression )) return FALSE;
 
     src_colors = (char *)info + info->bmiHeader.biSize;
-    colors = get_dib_num_of_colors( dst );
 
     if (dst->bmiHeader.biCompression == BI_BITFIELDS)
     {
@@ -186,12 +210,23 @@ static BOOL bitmapinfo_from_user_bitmapinfo( BITMAPINFO *dst, const BITMAPINFO *
         memcpy( dst->bmiColors, info->bmiColors, 3 * sizeof(DWORD) );
         dst->bmiHeader.biClrUsed = 0;
     }
-    else if (colors)
+    else if (dst->bmiHeader.biBitCount <= 8)
     {
+        unsigned int colors = dst->bmiHeader.biClrUsed;
+        unsigned int max_colors = 1 << dst->bmiHeader.biBitCount;
+
+        if (!colors) colors = max_colors;
+        else colors = min( colors, max_colors );
+
         if (coloruse == DIB_PAL_COLORS)
+        {
             memcpy( dst->bmiColors, src_colors, colors * sizeof(WORD) );
+            max_colors = colors;
+        }
         else if (info->bmiHeader.biSize != sizeof(BITMAPCOREHEADER))
+        {
             memcpy( dst->bmiColors, src_colors, colors * sizeof(RGBQUAD) );
+        }
         else
         {
             unsigned int i;
@@ -204,8 +239,11 @@ static BOOL bitmapinfo_from_user_bitmapinfo( BITMAPINFO *dst, const BITMAPINFO *
                 dst->bmiColors[i].rgbReserved = 0;
             }
         }
-        dst->bmiHeader.biClrUsed = colors;
+        memset( dst->bmiColors + colors, 0, (max_colors - colors) * sizeof(RGBQUAD) );
+        dst->bmiHeader.biClrUsed = max_colors;
     }
+    else dst->bmiHeader.biClrUsed = 0;
+
     return TRUE;
 }
 
@@ -213,10 +251,11 @@ static int fill_color_table_from_palette( BITMAPINFO *info, HDC hdc )
 {
     PALETTEENTRY palEntry[256];
     HPALETTE palette = GetCurrentObject( hdc, OBJ_PAL );
-    int i, colors = get_dib_num_of_colors( info );
+    int i, colors = 1 << info->bmiHeader.biBitCount;
+
+    info->bmiHeader.biClrUsed = colors;
 
     if (!palette) return 0;
-    if (!colors) return 0;
 
     memset( palEntry, 0, sizeof(palEntry) );
     if (!GetPaletteEntries( palette, 0, colors, palEntry ))
@@ -233,6 +272,31 @@ static int fill_color_table_from_palette( BITMAPINFO *info, HDC hdc )
     return colors;
 }
 
+BOOL fill_color_table_from_pal_colors( BITMAPINFO *info, HDC hdc )
+{
+    PALETTEENTRY entries[256];
+    RGBQUAD table[256];
+    HPALETTE palette;
+    const WORD *index = (const WORD *)info->bmiColors;
+    int i, count, colors = info->bmiHeader.biClrUsed;
+
+    if (!colors) return TRUE;
+    if (!(palette = GetCurrentObject( hdc, OBJ_PAL ))) return FALSE;
+    if (!(count = GetPaletteEntries( palette, 0, colors, entries ))) return FALSE;
+
+    for (i = 0; i < colors; i++, index++)
+    {
+        table[i].rgbRed   = entries[*index % count].peRed;
+        table[i].rgbGreen = entries[*index % count].peGreen;
+        table[i].rgbBlue  = entries[*index % count].peBlue;
+        table[i].rgbReserved = 0;
+    }
+    info->bmiHeader.biClrUsed = 1 << info->bmiHeader.biBitCount;
+    memcpy( info->bmiColors, table, colors * sizeof(RGBQUAD) );
+    memset( info->bmiColors + colors, 0, (info->bmiHeader.biClrUsed - colors) * sizeof(RGBQUAD) );
+    return TRUE;
+}
+
 static void *get_pixel_ptr( const BITMAPINFO *info, void *bits, int x, int y )
 {
     const int width = info->bmiHeader.biWidth, height = info->bmiHeader.biHeight;
@@ -246,7 +310,7 @@ static void *get_pixel_ptr( const BITMAPINFO *info, void *bits, int x, int y )
 
 static BOOL build_rle_bitmap( const BITMAPINFO *info, struct gdi_image_bits *bits, HRGN *clip )
 {
-    int i = 0;
+    DWORD i = 0;
     int left, right;
     int x, y, width = info->bmiHeader.biWidth, height = info->bmiHeader.biHeight;
     HRGN run = NULL;
@@ -403,7 +467,7 @@ INT nulldrv_StretchDIBits( PHYSDEV dev, INT xDst, INT yDst, INT widthDst, INT he
     INT ret = 0;
     INT height = abs( src_info->bmiHeader.biHeight );
     BOOL top_down = src_info->bmiHeader.biHeight < 0, non_stretch_from_origin = FALSE;
-    RECT rect, clip_rect;
+    RECT rect;
 
     TRACE("%d %d %d %d <- %d %d %d %d rop %08x\n", xDst, yDst, widthDst, heightDst,
           xSrc, ySrc, widthSrc, heightSrc, rop);
@@ -412,7 +476,7 @@ INT nulldrv_StretchDIBits( PHYSDEV dev, INT xDst, INT yDst, INT widthDst, INT he
     src_bits.is_copy = FALSE;
     src_bits.free = NULL;
 
-    if (coloruse == DIB_PAL_COLORS && !fill_color_table_from_palette( src_info, dev->hdc )) return 0;
+    if (coloruse == DIB_PAL_COLORS && !fill_color_table_from_pal_colors( src_info, dev->hdc )) return 0;
 
     rect.left   = xDst;
     rect.top    = yDst;
@@ -485,13 +549,12 @@ INT nulldrv_StretchDIBits( PHYSDEV dev, INT xDst, INT yDst, INT widthDst, INT he
     src.visrect.bottom = height;
     if (!intersect_rect( &src.visrect, &src.visrect, &rect )) goto done;
 
+    if (rop == SRCCOPY) ret = height;
+    else ret = src_info->bmiHeader.biHeight;
+
     get_bounding_rect( &rect, dst.x, dst.y, dst.width, dst.height );
 
-    if (get_clip_box( dc, &clip_rect ))
-        intersect_rect( &dst.visrect, &rect, &clip_rect );
-    else
-        dst.visrect = rect;
-    if (is_rect_empty( &dst.visrect )) goto done;
+    if (!clip_visrect( dc, &dst.visrect, &rect )) goto done;
 
     if (!intersect_vis_rectangles( &dst, &src )) goto done;
 
@@ -499,7 +562,7 @@ INT nulldrv_StretchDIBits( PHYSDEV dev, INT xDst, INT yDst, INT widthDst, INT he
 
     dev = GET_DC_PHYSDEV( dc, pPutImage );
     copy_bitmapinfo( dst_info, src_info );
-    err = dev->funcs->pPutImage( dev, 0, clip, dst_info, &src_bits, &src, &dst, rop );
+    err = dev->funcs->pPutImage( dev, clip, dst_info, &src_bits, &src, &dst, rop );
     if (err == ERROR_BAD_FORMAT)
     {
         /* 1-bpp destination without a color table requires a fake 1-entry table
@@ -514,11 +577,11 @@ INT nulldrv_StretchDIBits( PHYSDEV dev, INT xDst, INT yDst, INT widthDst, INT he
             dst_info->bmiHeader.biClrUsed = 1;
         }
 
-        if (!(err = convert_bits( src_info, &src, dst_info, &src_bits, FALSE )))
+        if (!(err = convert_bits( src_info, &src, dst_info, &src_bits )))
         {
             /* get rid of the fake 1-bpp table */
             if (dst_info->bmiHeader.biClrUsed == 1) dst_info->bmiHeader.biClrUsed = 0;
-            err = dev->funcs->pPutImage( dev, 0, clip, dst_info, &src_bits, &src, &dst, rop );
+            err = dev->funcs->pPutImage( dev, clip, dst_info, &src_bits, &src, &dst, rop );
         }
     }
 
@@ -526,11 +589,9 @@ INT nulldrv_StretchDIBits( PHYSDEV dev, INT xDst, INT yDst, INT widthDst, INT he
     {
         copy_bitmapinfo( src_info, dst_info );
         err = stretch_bits( src_info, &src, dst_info, &dst, &src_bits, GetStretchBltMode( dev->hdc ) );
-        if (!err) err = dev->funcs->pPutImage( dev, 0, NULL, dst_info, &src_bits, &src, &dst, rop );
+        if (!err) err = dev->funcs->pPutImage( dev, NULL, dst_info, &src_bits, &src, &dst, rop );
     }
     if (err) ret = 0;
-    else if (rop == SRCCOPY) ret = height;
-    else ret = src_info->bmiHeader.biHeight;
 
 done:
     if (src_bits.free) src_bits.free( &src_bits );
@@ -547,6 +608,7 @@ INT WINAPI StretchDIBits(HDC hdc, INT xDst, INT yDst, INT widthDst, INT heightDs
 {
     char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
     BITMAPINFO *info = (BITMAPINFO *)buffer;
+    PHYSDEV physdev;
     DC *dc;
     INT ret = 0;
 
@@ -559,8 +621,8 @@ INT WINAPI StretchDIBits(HDC hdc, INT xDst, INT yDst, INT widthDst, INT heightDs
 
     if ((dc = get_dc_ptr( hdc )))
     {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pStretchDIBits );
         update_dc( dc );
+        physdev = GET_DC_PHYSDEV( dc, pStretchDIBits );
         ret = physdev->funcs->pStretchDIBits( physdev, xDst, yDst, widthDst, heightDst,
                                               xSrc, ySrc, widthSrc, heightSrc, bits, info, coloruse, rop );
         release_dc_ptr( dc );
@@ -602,9 +664,8 @@ INT WINAPI SetDIBits( HDC hdc, HBITMAP hbitmap, UINT startscan,
     struct bitblt_coords src, dst;
     INT src_to_dst_offset;
     HRGN clip = 0;
-    const struct gdi_dc_funcs *funcs;
 
-    if (!bitmapinfo_from_user_bitmapinfo( src_info, info, coloruse, TRUE ))
+    if (!bitmapinfo_from_user_bitmapinfo( src_info, info, coloruse, TRUE ) || coloruse > DIB_PAL_COLORS)
     {
         SetLastError( ERROR_INVALID_PARAMETER );
         return 0;
@@ -624,7 +685,7 @@ INT WINAPI SetDIBits( HDC hdc, HBITMAP hbitmap, UINT startscan,
     src_bits.free = NULL;
     src_bits.param = NULL;
 
-    if (coloruse == DIB_PAL_COLORS && !fill_color_table_from_palette( src_info, hdc )) return 0;
+    if (coloruse == DIB_PAL_COLORS && !fill_color_table_from_pal_colors( src_info, hdc )) return 0;
 
     if (!(bitmap = GDI_GetObjPtr( hbitmap, OBJ_BITMAP ))) return 0;
 
@@ -639,8 +700,8 @@ INT WINAPI SetDIBits( HDC hdc, HBITMAP hbitmap, UINT startscan,
 
     dst.visrect.left   = 0;
     dst.visrect.top    = 0;
-    dst.visrect.right  = bitmap->bitmap.bmWidth;
-    dst.visrect.bottom = bitmap->bitmap.bmHeight;
+    dst.visrect.right  = bitmap->dib.dsBm.bmWidth;
+    dst.visrect.bottom = bitmap->dib.dsBm.bmHeight;
 
     src.visrect.left   = 0;
     src.visrect.top    = 0;
@@ -659,8 +720,6 @@ INT WINAPI SetDIBits( HDC hdc, HBITMAP hbitmap, UINT startscan,
         /* Unlike the bottom-up case, Windows doesn't limit lines. */
         if (lines < src.visrect.bottom) src.visrect.bottom = lines;
     }
-
-    funcs = get_bitmap_funcs( bitmap );
 
     result = lines;
 
@@ -681,24 +740,11 @@ INT WINAPI SetDIBits( HDC hdc, HBITMAP hbitmap, UINT startscan,
 
     copy_bitmapinfo( dst_info, src_info );
 
-    err = funcs->pPutImage( NULL, hbitmap, clip, dst_info, &src_bits, &src, &dst, 0 );
+    err = put_image_into_bitmap( bitmap, clip, dst_info, &src_bits, &src, &dst );
     if (err == ERROR_BAD_FORMAT)
     {
-        void *ptr;
-
-        dst_info->bmiHeader.biWidth = dst.width;
-        ptr = HeapAlloc( GetProcessHeap(), 0, get_dib_image_size( dst_info ));
-        if (ptr)
-        {
-            err = convert_bitmapinfo( src_info, src_bits.ptr, &src, dst_info, ptr, FALSE );
-            if (src_bits.free) src_bits.free( &src_bits );
-            src_bits.ptr = ptr;
-            src_bits.is_copy = TRUE;
-            src_bits.free = free_heap_bits;
-            if (!err)
-                err = funcs->pPutImage( NULL, hbitmap, clip, dst_info, &src_bits, &src, &dst, 0 );
-        }
-        else err = ERROR_OUTOFMEMORY;
+        err = convert_bits( src_info, &src, dst_info, &src_bits );
+        if (!err) err = put_image_into_bitmap( bitmap, clip, dst_info, &src_bits, &src, &dst );
     }
     if(err) result = 0;
 
@@ -734,7 +780,7 @@ INT nulldrv_SetDIBitsToDevice( PHYSDEV dev, INT x_dst, INT y_dst, DWORD cx, DWOR
     src_bits.free = NULL;
 
     if (!lines) return 0;
-    if (coloruse == DIB_PAL_COLORS && !fill_color_table_from_palette( src_info, dev->hdc )) return 0;
+    if (coloruse == DIB_PAL_COLORS && !fill_color_table_from_pal_colors( src_info, dev->hdc )) return 0;
 
     if (src_info->bmiHeader.biCompression == BI_RLE4 || src_info->bmiHeader.biCompression == BI_RLE8)
     {
@@ -796,11 +842,11 @@ INT nulldrv_SetDIBitsToDevice( PHYSDEV dev, INT x_dst, INT y_dst, DWORD cx, DWOR
     dst.height = cy;
     if (GetLayout( dev->hdc ) & LAYOUT_RTL) dst.x -= cx - 1;
 
-    dst.visrect.left = dst.x;
-    dst.visrect.top = dst.y;
-    dst.visrect.right = dst.x + cx;
-    dst.visrect.bottom = dst.y + cy;
-    if (get_clip_box( dc, &rect )) intersect_rect( &dst.visrect, &dst.visrect, &rect );
+    rect.left = dst.x;
+    rect.top = dst.y;
+    rect.right = dst.x + cx;
+    rect.bottom = dst.y + cy;
+    if (!clip_visrect( dc, &dst.visrect, &rect )) goto done;
 
     offset_rect( &src.visrect, dst.x - src.x, dst.y - src.y );
     intersect_rect( &rect, &src.visrect, &dst.visrect );
@@ -811,23 +857,11 @@ INT nulldrv_SetDIBitsToDevice( PHYSDEV dev, INT x_dst, INT y_dst, DWORD cx, DWOR
 
     dev = GET_DC_PHYSDEV( dc, pPutImage );
     copy_bitmapinfo( dst_info, src_info );
-    err = dev->funcs->pPutImage( dev, 0, clip, dst_info, &src_bits, &src, &dst, SRCCOPY );
+    err = dev->funcs->pPutImage( dev, clip, dst_info, &src_bits, &src, &dst, SRCCOPY );
     if (err == ERROR_BAD_FORMAT)
     {
-        void *ptr;
-
-        dst_info->bmiHeader.biWidth = src.visrect.right - src.visrect.left;
-        ptr = HeapAlloc( GetProcessHeap(), 0, get_dib_image_size( dst_info ));
-        if (ptr)
-        {
-            err = convert_bitmapinfo( src_info, src_bits.ptr, &src, dst_info, ptr, FALSE );
-            if (src_bits.free) src_bits.free( &src_bits );
-            src_bits.ptr = ptr;
-            src_bits.is_copy = TRUE;
-            src_bits.free = free_heap_bits;
-            if (!err) err = dev->funcs->pPutImage( dev, 0, clip, dst_info, &src_bits, &src, &dst, SRCCOPY );
-        }
-        else err = ERROR_OUTOFMEMORY;
+        err = convert_bits( src_info, &src, dst_info, &src_bits );
+        if (!err) err = dev->funcs->pPutImage( dev, clip, dst_info, &src_bits, &src, &dst, SRCCOPY );
     }
     if (err) lines = 0;
 
@@ -847,6 +881,7 @@ INT WINAPI SetDIBitsToDevice(HDC hdc, INT xDest, INT yDest, DWORD cx,
 {
     char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
     BITMAPINFO *info = (BITMAPINFO *)buffer;
+    PHYSDEV physdev;
     INT ret = 0;
     DC *dc;
 
@@ -859,8 +894,8 @@ INT WINAPI SetDIBitsToDevice(HDC hdc, INT xDest, INT yDest, DWORD cx,
 
     if ((dc = get_dc_ptr( hdc )))
     {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pSetDIBitsToDevice );
         update_dc( dc );
+        physdev = GET_DC_PHYSDEV( dc, pSetDIBitsToDevice );
         ret = physdev->funcs->pSetDIBitsToDevice( physdev, xDest, yDest, cx, cy, xSrc,
                                                   ySrc, startscan, lines, bits, info, coloruse );
         release_dc_ptr( dc );
@@ -871,7 +906,7 @@ INT WINAPI SetDIBitsToDevice(HDC hdc, INT xDest, INT yDest, DWORD cx,
 /***********************************************************************
  *           SetDIBColorTable    (GDI32.@)
  */
-UINT WINAPI SetDIBColorTable( HDC hdc, UINT startpos, UINT entries, CONST RGBQUAD *colors )
+UINT WINAPI SetDIBColorTable( HDC hdc, UINT startpos, UINT entries, const RGBQUAD *colors )
 {
     DC * dc;
     UINT result = 0;
@@ -881,20 +916,20 @@ UINT WINAPI SetDIBColorTable( HDC hdc, UINT startpos, UINT entries, CONST RGBQUA
 
     if ((bitmap = GDI_GetObjPtr( dc->hBitmap, OBJ_BITMAP )))
     {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pSetDIBColorTable );
-
-        /* Check if currently selected bitmap is a DIB */
-        if (bitmap->color_table)
+        if (startpos < bitmap->dib.dsBmih.biClrUsed)
         {
-            if (startpos < bitmap->nb_colors)
-            {
-                if (startpos + entries > bitmap->nb_colors) entries = bitmap->nb_colors - startpos;
-                memcpy(bitmap->color_table + startpos, colors, entries * sizeof(RGBQUAD));
-                result = entries;
-            }
+            result = min( entries, bitmap->dib.dsBmih.biClrUsed - startpos );
+            memcpy(bitmap->color_table + startpos, colors, result * sizeof(RGBQUAD));
         }
         GDI_ReleaseObj( dc->hBitmap );
-        physdev->funcs->pSetDIBColorTable( physdev, startpos, entries, colors );
+
+        if (result)  /* update colors of selected objects */
+        {
+            SetTextColor( hdc, dc->textColor );
+            SetBkColor( hdc, dc->backgroundColor );
+            SelectObject( hdc, dc->hPen );
+            SelectObject( hdc, dc->hBrush );
+        }
     }
     release_dc_ptr( dc );
     return result;
@@ -914,15 +949,10 @@ UINT WINAPI GetDIBColorTable( HDC hdc, UINT startpos, UINT entries, RGBQUAD *col
 
     if ((bitmap = GDI_GetObjPtr( dc->hBitmap, OBJ_BITMAP )))
     {
-        /* Check if currently selected bitmap is a DIB */
-        if (bitmap->color_table)
+        if (startpos < bitmap->dib.dsBmih.biClrUsed)
         {
-            if (startpos < bitmap->nb_colors)
-            {
-                if (startpos + entries > bitmap->nb_colors) entries = bitmap->nb_colors - startpos;
-                memcpy(colors, bitmap->color_table + startpos, entries * sizeof(RGBQUAD));
-                result = entries;
-            }
+            result = min( entries, bitmap->dib.dsBmih.biClrUsed - startpos );
+            memcpy(colors, bitmap->color_table + startpos, result * sizeof(RGBQUAD));
         }
         GDI_ReleaseObj( dc->hBitmap );
     }
@@ -930,32 +960,7 @@ UINT WINAPI GetDIBColorTable( HDC hdc, UINT startpos, UINT entries, RGBQUAD *col
     return result;
 }
 
-static const RGBQUAD DefLogPaletteQuads[20] = { /* Copy of Default Logical Palette */
-/* rgbBlue, rgbGreen, rgbRed, rgbReserved */
-    { 0x00, 0x00, 0x00, 0x00 },
-    { 0x00, 0x00, 0x80, 0x00 },
-    { 0x00, 0x80, 0x00, 0x00 },
-    { 0x00, 0x80, 0x80, 0x00 },
-    { 0x80, 0x00, 0x00, 0x00 },
-    { 0x80, 0x00, 0x80, 0x00 },
-    { 0x80, 0x80, 0x00, 0x00 },
-    { 0xc0, 0xc0, 0xc0, 0x00 },
-    { 0xc0, 0xdc, 0xc0, 0x00 },
-    { 0xf0, 0xca, 0xa6, 0x00 },
-    { 0xf0, 0xfb, 0xff, 0x00 },
-    { 0xa4, 0xa0, 0xa0, 0x00 },
-    { 0x80, 0x80, 0x80, 0x00 },
-    { 0x00, 0x00, 0xff, 0x00 },
-    { 0x00, 0xff, 0x00, 0x00 },
-    { 0x00, 0xff, 0xff, 0x00 },
-    { 0xff, 0x00, 0x00, 0x00 },
-    { 0xff, 0x00, 0xff, 0x00 },
-    { 0xff, 0xff, 0x00, 0x00 },
-    { 0xff, 0xff, 0xff, 0x00 }
-};
-
 static const DWORD bit_fields_888[3] = {0xff0000, 0x00ff00, 0x0000ff};
-static const DWORD bit_fields_565[3] = {0xf800, 0x07e0, 0x001f};
 static const DWORD bit_fields_555[3] = {0x7c00, 0x03e0, 0x001f};
 
 static int fill_query_info( BITMAPINFO *info, BITMAPOBJ *bmp )
@@ -963,28 +968,20 @@ static int fill_query_info( BITMAPINFO *info, BITMAPOBJ *bmp )
     BITMAPINFOHEADER header;
 
     header.biSize   = info->bmiHeader.biSize; /* Ensure we don't overwrite the original size when we copy back */
-    header.biWidth  = bmp->bitmap.bmWidth;
-    header.biHeight = bmp->bitmap.bmHeight;
+    header.biWidth  = bmp->dib.dsBm.bmWidth;
+    header.biHeight = bmp->dib.dsBm.bmHeight;
     header.biPlanes = 1;
+    header.biBitCount = bmp->dib.dsBm.bmBitsPixel;
 
-    if (bmp->dib)
+    switch (header.biBitCount)
     {
-        header.biBitCount = bmp->dib->dsBm.bmBitsPixel;
-        switch (bmp->dib->dsBm.bmBitsPixel)
-        {
-        case 16:
-        case 32:
-            header.biCompression = BI_BITFIELDS;
-            break;
-        default:
-            header.biCompression = BI_RGB;
-            break;
-        }
-    }
-    else
-    {
-        header.biCompression = (bmp->bitmap.bmBitsPixel > 8) ? BI_BITFIELDS : BI_RGB;
-        header.biBitCount = bmp->bitmap.bmBitsPixel;
+    case 16:
+    case 32:
+        header.biCompression = BI_BITFIELDS;
+        break;
+    default:
+        header.biCompression = BI_RGB;
+        break;
     }
 
     header.biSizeImage = get_dib_image_size( (BITMAPINFO *)&header );
@@ -1005,7 +1002,7 @@ static int fill_query_info( BITMAPINFO *info, BITMAPOBJ *bmp )
     else
         info->bmiHeader = header;
 
-    return abs(bmp->bitmap.bmHeight);
+    return bmp->dib.dsBm.bmHeight;
 }
 
 /************************************************************************
@@ -1015,24 +1012,21 @@ static int fill_query_info( BITMAPINFO *info, BITMAPOBJ *bmp )
  */
 static void copy_color_info(BITMAPINFO *dst, const BITMAPINFO *src, UINT coloruse)
 {
-    unsigned int colors = get_dib_num_of_colors( src );
-    RGBQUAD *src_colors = (RGBQUAD *)((char *)src + src->bmiHeader.biSize);
-
-    assert( src->bmiHeader.biSize >= sizeof(BITMAPINFOHEADER) );
+    assert( src->bmiHeader.biSize == sizeof(BITMAPINFOHEADER) );
 
     if (dst->bmiHeader.biSize == sizeof(BITMAPCOREHEADER))
     {
         BITMAPCOREINFO *core = (BITMAPCOREINFO *)dst;
         if (coloruse == DIB_PAL_COLORS)
-            memcpy( core->bmciColors, src_colors, colors * sizeof(WORD) );
+            memcpy( core->bmciColors, src->bmiColors, src->bmiHeader.biClrUsed * sizeof(WORD) );
         else
         {
             unsigned int i;
-            for (i = 0; i < colors; i++)
+            for (i = 0; i < src->bmiHeader.biClrUsed; i++)
             {
-                core->bmciColors[i].rgbtRed   = src_colors[i].rgbRed;
-                core->bmciColors[i].rgbtGreen = src_colors[i].rgbGreen;
-                core->bmciColors[i].rgbtBlue  = src_colors[i].rgbBlue;
+                core->bmciColors[i].rgbtRed   = src->bmiColors[i].rgbRed;
+                core->bmciColors[i].rgbtGreen = src->bmiColors[i].rgbGreen;
+                core->bmciColors[i].rgbtBlue  = src->bmiColors[i].rgbBlue;
             }
         }
     }
@@ -1044,89 +1038,146 @@ static void copy_color_info(BITMAPINFO *dst, const BITMAPINFO *src, UINT colorus
         if (src->bmiHeader.biCompression == BI_BITFIELDS)
             /* bitfields are always at bmiColors even in larger structures */
             memcpy( dst->bmiColors, src->bmiColors, 3 * sizeof(DWORD) );
-        else if (colors)
+        else if (src->bmiHeader.biClrUsed)
         {
             void *colorptr = (char *)dst + dst->bmiHeader.biSize;
             unsigned int size;
 
             if (coloruse == DIB_PAL_COLORS)
-                size = colors * sizeof(WORD);
+                size = src->bmiHeader.biClrUsed * sizeof(WORD);
             else
-                size = colors * sizeof(RGBQUAD);
-            memcpy( colorptr, src_colors, size );
+                size = src->bmiHeader.biClrUsed * sizeof(RGBQUAD);
+            memcpy( colorptr, src->bmiColors, size );
         }
+    }
+}
+
+const RGBQUAD *get_default_color_table( int bpp )
+{
+    static const RGBQUAD table_1[2] =
+    {
+        { 0x00, 0x00, 0x00 }, { 0xff, 0xff, 0xff }
+    };
+    static const RGBQUAD table_4[16] =
+    {
+        { 0x00, 0x00, 0x00 }, { 0x00, 0x00, 0x80 }, { 0x00, 0x80, 0x00 }, { 0x00, 0x80, 0x80 },
+        { 0x80, 0x00, 0x00 }, { 0x80, 0x00, 0x80 }, { 0x80, 0x80, 0x00 }, { 0x80, 0x80, 0x80 },
+        { 0xc0, 0xc0, 0xc0 }, { 0x00, 0x00, 0xff }, { 0x00, 0xff, 0x00 }, { 0x00, 0xff, 0xff },
+        { 0xff, 0x00, 0x00 }, { 0xff, 0x00, 0xff }, { 0xff, 0xff, 0x00 }, { 0xff, 0xff, 0xff },
+    };
+    static const RGBQUAD table_8[256] =
+    {
+        /* first and last 10 entries are the default system palette entries */
+        { 0x00, 0x00, 0x00 }, { 0x00, 0x00, 0x80 }, { 0x00, 0x80, 0x00 }, { 0x00, 0x80, 0x80 },
+        { 0x80, 0x00, 0x00 }, { 0x80, 0x00, 0x80 }, { 0x80, 0x80, 0x00 }, { 0xc0, 0xc0, 0xc0 },
+        { 0xc0, 0xdc, 0xc0 }, { 0xf0, 0xca, 0xa6 }, { 0x00, 0x20, 0x40 }, { 0x00, 0x20, 0x60 },
+        { 0x00, 0x20, 0x80 }, { 0x00, 0x20, 0xa0 }, { 0x00, 0x20, 0xc0 }, { 0x00, 0x20, 0xe0 },
+        { 0x00, 0x40, 0x00 }, { 0x00, 0x40, 0x20 }, { 0x00, 0x40, 0x40 }, { 0x00, 0x40, 0x60 },
+        { 0x00, 0x40, 0x80 }, { 0x00, 0x40, 0xa0 }, { 0x00, 0x40, 0xc0 }, { 0x00, 0x40, 0xe0 },
+        { 0x00, 0x60, 0x00 }, { 0x00, 0x60, 0x20 }, { 0x00, 0x60, 0x40 }, { 0x00, 0x60, 0x60 },
+        { 0x00, 0x60, 0x80 }, { 0x00, 0x60, 0xa0 }, { 0x00, 0x60, 0xc0 }, { 0x00, 0x60, 0xe0 },
+        { 0x00, 0x80, 0x00 }, { 0x00, 0x80, 0x20 }, { 0x00, 0x80, 0x40 }, { 0x00, 0x80, 0x60 },
+        { 0x00, 0x80, 0x80 }, { 0x00, 0x80, 0xa0 }, { 0x00, 0x80, 0xc0 }, { 0x00, 0x80, 0xe0 },
+        { 0x00, 0xa0, 0x00 }, { 0x00, 0xa0, 0x20 }, { 0x00, 0xa0, 0x40 }, { 0x00, 0xa0, 0x60 },
+        { 0x00, 0xa0, 0x80 }, { 0x00, 0xa0, 0xa0 }, { 0x00, 0xa0, 0xc0 }, { 0x00, 0xa0, 0xe0 },
+        { 0x00, 0xc0, 0x00 }, { 0x00, 0xc0, 0x20 }, { 0x00, 0xc0, 0x40 }, { 0x00, 0xc0, 0x60 },
+        { 0x00, 0xc0, 0x80 }, { 0x00, 0xc0, 0xa0 }, { 0x00, 0xc0, 0xc0 }, { 0x00, 0xc0, 0xe0 },
+        { 0x00, 0xe0, 0x00 }, { 0x00, 0xe0, 0x20 }, { 0x00, 0xe0, 0x40 }, { 0x00, 0xe0, 0x60 },
+        { 0x00, 0xe0, 0x80 }, { 0x00, 0xe0, 0xa0 }, { 0x00, 0xe0, 0xc0 }, { 0x00, 0xe0, 0xe0 },
+        { 0x40, 0x00, 0x00 }, { 0x40, 0x00, 0x20 }, { 0x40, 0x00, 0x40 }, { 0x40, 0x00, 0x60 },
+        { 0x40, 0x00, 0x80 }, { 0x40, 0x00, 0xa0 }, { 0x40, 0x00, 0xc0 }, { 0x40, 0x00, 0xe0 },
+        { 0x40, 0x20, 0x00 }, { 0x40, 0x20, 0x20 }, { 0x40, 0x20, 0x40 }, { 0x40, 0x20, 0x60 },
+        { 0x40, 0x20, 0x80 }, { 0x40, 0x20, 0xa0 }, { 0x40, 0x20, 0xc0 }, { 0x40, 0x20, 0xe0 },
+        { 0x40, 0x40, 0x00 }, { 0x40, 0x40, 0x20 }, { 0x40, 0x40, 0x40 }, { 0x40, 0x40, 0x60 },
+        { 0x40, 0x40, 0x80 }, { 0x40, 0x40, 0xa0 }, { 0x40, 0x40, 0xc0 }, { 0x40, 0x40, 0xe0 },
+        { 0x40, 0x60, 0x00 }, { 0x40, 0x60, 0x20 }, { 0x40, 0x60, 0x40 }, { 0x40, 0x60, 0x60 },
+        { 0x40, 0x60, 0x80 }, { 0x40, 0x60, 0xa0 }, { 0x40, 0x60, 0xc0 }, { 0x40, 0x60, 0xe0 },
+        { 0x40, 0x80, 0x00 }, { 0x40, 0x80, 0x20 }, { 0x40, 0x80, 0x40 }, { 0x40, 0x80, 0x60 },
+        { 0x40, 0x80, 0x80 }, { 0x40, 0x80, 0xa0 }, { 0x40, 0x80, 0xc0 }, { 0x40, 0x80, 0xe0 },
+        { 0x40, 0xa0, 0x00 }, { 0x40, 0xa0, 0x20 }, { 0x40, 0xa0, 0x40 }, { 0x40, 0xa0, 0x60 },
+        { 0x40, 0xa0, 0x80 }, { 0x40, 0xa0, 0xa0 }, { 0x40, 0xa0, 0xc0 }, { 0x40, 0xa0, 0xe0 },
+        { 0x40, 0xc0, 0x00 }, { 0x40, 0xc0, 0x20 }, { 0x40, 0xc0, 0x40 }, { 0x40, 0xc0, 0x60 },
+        { 0x40, 0xc0, 0x80 }, { 0x40, 0xc0, 0xa0 }, { 0x40, 0xc0, 0xc0 }, { 0x40, 0xc0, 0xe0 },
+        { 0x40, 0xe0, 0x00 }, { 0x40, 0xe0, 0x20 }, { 0x40, 0xe0, 0x40 }, { 0x40, 0xe0, 0x60 },
+        { 0x40, 0xe0, 0x80 }, { 0x40, 0xe0, 0xa0 }, { 0x40, 0xe0, 0xc0 }, { 0x40, 0xe0, 0xe0 },
+        { 0x80, 0x00, 0x00 }, { 0x80, 0x00, 0x20 }, { 0x80, 0x00, 0x40 }, { 0x80, 0x00, 0x60 },
+        { 0x80, 0x00, 0x80 }, { 0x80, 0x00, 0xa0 }, { 0x80, 0x00, 0xc0 }, { 0x80, 0x00, 0xe0 },
+        { 0x80, 0x20, 0x00 }, { 0x80, 0x20, 0x20 }, { 0x80, 0x20, 0x40 }, { 0x80, 0x20, 0x60 },
+        { 0x80, 0x20, 0x80 }, { 0x80, 0x20, 0xa0 }, { 0x80, 0x20, 0xc0 }, { 0x80, 0x20, 0xe0 },
+        { 0x80, 0x40, 0x00 }, { 0x80, 0x40, 0x20 }, { 0x80, 0x40, 0x40 }, { 0x80, 0x40, 0x60 },
+        { 0x80, 0x40, 0x80 }, { 0x80, 0x40, 0xa0 }, { 0x80, 0x40, 0xc0 }, { 0x80, 0x40, 0xe0 },
+        { 0x80, 0x60, 0x00 }, { 0x80, 0x60, 0x20 }, { 0x80, 0x60, 0x40 }, { 0x80, 0x60, 0x60 },
+        { 0x80, 0x60, 0x80 }, { 0x80, 0x60, 0xa0 }, { 0x80, 0x60, 0xc0 }, { 0x80, 0x60, 0xe0 },
+        { 0x80, 0x80, 0x00 }, { 0x80, 0x80, 0x20 }, { 0x80, 0x80, 0x40 }, { 0x80, 0x80, 0x60 },
+        { 0x80, 0x80, 0x80 }, { 0x80, 0x80, 0xa0 }, { 0x80, 0x80, 0xc0 }, { 0x80, 0x80, 0xe0 },
+        { 0x80, 0xa0, 0x00 }, { 0x80, 0xa0, 0x20 }, { 0x80, 0xa0, 0x40 }, { 0x80, 0xa0, 0x60 },
+        { 0x80, 0xa0, 0x80 }, { 0x80, 0xa0, 0xa0 }, { 0x80, 0xa0, 0xc0 }, { 0x80, 0xa0, 0xe0 },
+        { 0x80, 0xc0, 0x00 }, { 0x80, 0xc0, 0x20 }, { 0x80, 0xc0, 0x40 }, { 0x80, 0xc0, 0x60 },
+        { 0x80, 0xc0, 0x80 }, { 0x80, 0xc0, 0xa0 }, { 0x80, 0xc0, 0xc0 }, { 0x80, 0xc0, 0xe0 },
+        { 0x80, 0xe0, 0x00 }, { 0x80, 0xe0, 0x20 }, { 0x80, 0xe0, 0x40 }, { 0x80, 0xe0, 0x60 },
+        { 0x80, 0xe0, 0x80 }, { 0x80, 0xe0, 0xa0 }, { 0x80, 0xe0, 0xc0 }, { 0x80, 0xe0, 0xe0 },
+        { 0xc0, 0x00, 0x00 }, { 0xc0, 0x00, 0x20 }, { 0xc0, 0x00, 0x40 }, { 0xc0, 0x00, 0x60 },
+        { 0xc0, 0x00, 0x80 }, { 0xc0, 0x00, 0xa0 }, { 0xc0, 0x00, 0xc0 }, { 0xc0, 0x00, 0xe0 },
+        { 0xc0, 0x20, 0x00 }, { 0xc0, 0x20, 0x20 }, { 0xc0, 0x20, 0x40 }, { 0xc0, 0x20, 0x60 },
+        { 0xc0, 0x20, 0x80 }, { 0xc0, 0x20, 0xa0 }, { 0xc0, 0x20, 0xc0 }, { 0xc0, 0x20, 0xe0 },
+        { 0xc0, 0x40, 0x00 }, { 0xc0, 0x40, 0x20 }, { 0xc0, 0x40, 0x40 }, { 0xc0, 0x40, 0x60 },
+        { 0xc0, 0x40, 0x80 }, { 0xc0, 0x40, 0xa0 }, { 0xc0, 0x40, 0xc0 }, { 0xc0, 0x40, 0xe0 },
+        { 0xc0, 0x60, 0x00 }, { 0xc0, 0x60, 0x20 }, { 0xc0, 0x60, 0x40 }, { 0xc0, 0x60, 0x60 },
+        { 0xc0, 0x60, 0x80 }, { 0xc0, 0x60, 0xa0 }, { 0xc0, 0x60, 0xc0 }, { 0xc0, 0x60, 0xe0 },
+        { 0xc0, 0x80, 0x00 }, { 0xc0, 0x80, 0x20 }, { 0xc0, 0x80, 0x40 }, { 0xc0, 0x80, 0x60 },
+        { 0xc0, 0x80, 0x80 }, { 0xc0, 0x80, 0xa0 }, { 0xc0, 0x80, 0xc0 }, { 0xc0, 0x80, 0xe0 },
+        { 0xc0, 0xa0, 0x00 }, { 0xc0, 0xa0, 0x20 }, { 0xc0, 0xa0, 0x40 }, { 0xc0, 0xa0, 0x60 },
+        { 0xc0, 0xa0, 0x80 }, { 0xc0, 0xa0, 0xa0 }, { 0xc0, 0xa0, 0xc0 }, { 0xc0, 0xa0, 0xe0 },
+        { 0xc0, 0xc0, 0x00 }, { 0xc0, 0xc0, 0x20 }, { 0xc0, 0xc0, 0x40 }, { 0xc0, 0xc0, 0x60 },
+        { 0xc0, 0xc0, 0x80 }, { 0xc0, 0xc0, 0xa0 }, { 0xf0, 0xfb, 0xff }, { 0xa4, 0xa0, 0xa0 },
+        { 0x80, 0x80, 0x80 }, { 0x00, 0x00, 0xff }, { 0x00, 0xff, 0x00 }, { 0x00, 0xff, 0xff },
+        { 0xff, 0x00, 0x00 }, { 0xff, 0x00, 0xff }, { 0xff, 0xff, 0x00 }, { 0xff, 0xff, 0xff },
+    };
+
+    switch (bpp)
+    {
+    case 1: return table_1;
+    case 4: return table_4;
+    case 8: return table_8;
+    default: return NULL;
     }
 }
 
 void fill_default_color_table( BITMAPINFO *info )
 {
-    int i;
-
-    switch (info->bmiHeader.biBitCount)
-    {
-    case 1:
-        info->bmiColors[0].rgbRed = info->bmiColors[0].rgbGreen = info->bmiColors[0].rgbBlue = 0;
-        info->bmiColors[0].rgbReserved = 0;
-        info->bmiColors[1].rgbRed = info->bmiColors[1].rgbGreen = info->bmiColors[1].rgbBlue = 0xff;
-        info->bmiColors[1].rgbReserved = 0;
-        break;
-
-    case 4:
-        /* The EGA palette is the first and last 8 colours of the default palette
-           with the innermost pair swapped */
-        memcpy(info->bmiColors,     DefLogPaletteQuads,      7 * sizeof(RGBQUAD));
-        memcpy(info->bmiColors + 7, DefLogPaletteQuads + 12, 1 * sizeof(RGBQUAD));
-        memcpy(info->bmiColors + 8, DefLogPaletteQuads +  7, 1 * sizeof(RGBQUAD));
-        memcpy(info->bmiColors + 9, DefLogPaletteQuads + 13, 7 * sizeof(RGBQUAD));
-        break;
-
-    case 8:
-        memcpy(info->bmiColors, DefLogPaletteQuads, 10 * sizeof(RGBQUAD));
-        memcpy(info->bmiColors + 246, DefLogPaletteQuads + 10, 10 * sizeof(RGBQUAD));
-        for (i = 10; i < 246; i++)
-        {
-            info->bmiColors[i].rgbRed      = (i & 0x07) << 5;
-            info->bmiColors[i].rgbGreen    = (i & 0x38) << 2;
-            info->bmiColors[i].rgbBlue     =  i & 0xc0;
-            info->bmiColors[i].rgbReserved = 0;
-        }
-        break;
-
-    default:
-        ERR("called with bitcount %d\n", info->bmiHeader.biBitCount);
-    }
     info->bmiHeader.biClrUsed = 1 << info->bmiHeader.biBitCount;
+    memcpy( info->bmiColors, get_default_color_table( info->bmiHeader.biBitCount ),
+            info->bmiHeader.biClrUsed * sizeof(RGBQUAD) );
 }
 
 void get_ddb_bitmapinfo( BITMAPOBJ *bmp, BITMAPINFO *info )
 {
     info->bmiHeader.biSize          = sizeof(info->bmiHeader);
-    info->bmiHeader.biWidth         = bmp->bitmap.bmWidth;
-    info->bmiHeader.biHeight        = -bmp->bitmap.bmHeight;
+    info->bmiHeader.biWidth         = bmp->dib.dsBm.bmWidth;
+    info->bmiHeader.biHeight        = -bmp->dib.dsBm.bmHeight;
     info->bmiHeader.biPlanes        = 1;
-    info->bmiHeader.biBitCount      = bmp->bitmap.bmBitsPixel;
+    info->bmiHeader.biBitCount      = bmp->dib.dsBm.bmBitsPixel;
     info->bmiHeader.biCompression   = BI_RGB;
     info->bmiHeader.biXPelsPerMeter = 0;
     info->bmiHeader.biYPelsPerMeter = 0;
     info->bmiHeader.biClrUsed       = 0;
     info->bmiHeader.biClrImportant  = 0;
-    if (info->bmiHeader.biBitCount <= 8) fill_default_color_table( info );
 }
 
 BITMAPINFO *copy_packed_dib( const BITMAPINFO *src_info, UINT usage )
 {
     char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
     BITMAPINFO *ret, *info = (BITMAPINFO *)buffer;
-    int info_size, image_size;
+    unsigned int info_size;
 
     if (!bitmapinfo_from_user_bitmapinfo( info, src_info, usage, FALSE )) return NULL;
 
-    info_size = bitmap_info_size( info, usage );
-    image_size = get_dib_image_size( info );
-    if ((ret = HeapAlloc( GetProcessHeap(), 0, info_size + image_size )))
+    info_size = get_dib_info_size( info, usage );
+    if ((ret = HeapAlloc( GetProcessHeap(), 0, info_size + info->bmiHeader.biSizeImage )))
     {
         memcpy( ret, info, info_size );
-        memcpy( (char *)ret + info_size, (char *)src_info + bitmap_info_size(src_info,usage), image_size );
+        memcpy( (char *)ret + info_size, (char *)src_info + bitmap_info_size( src_info, usage ),
+                info->bmiHeader.biSizeImage );
     }
     return ret;
 }
@@ -1157,7 +1208,6 @@ INT WINAPI GetDIBits(
     BITMAPINFO *dst_info = (BITMAPINFO *)dst_bmibuf;
     char src_bmibuf[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
     BITMAPINFO *src_info = (BITMAPINFO *)src_bmibuf;
-    const struct gdi_dc_funcs *funcs;
     struct gdi_image_bits src_bits;
     struct bitblt_coords src, dst;
     BOOL empty_rect = FALSE;
@@ -1165,6 +1215,7 @@ INT WINAPI GetDIBits(
     /* Since info may be a BITMAPCOREINFO or any of the larger BITMAPINFO structures, we'll use our
        own copy and transfer the colour info back at the end */
     if (!bitmapinfoheader_from_user_bitmapinfo( &dst_info->bmiHeader, &info->bmiHeader )) return 0;
+    if (coloruse > DIB_PAL_COLORS) return 0;
     if (bits &&
         (dst_info->bmiHeader.biCompression == BI_JPEG || dst_info->bmiHeader.biCompression == BI_PNG))
         return 0;
@@ -1183,12 +1234,10 @@ INT WINAPI GetDIBits(
 	return 0;
     }
 
-    funcs = get_bitmap_funcs( bmp );
-
     src.visrect.left   = 0;
     src.visrect.top    = 0;
-    src.visrect.right  = bmp->bitmap.bmWidth;
-    src.visrect.bottom = bmp->bitmap.bmHeight;
+    src.visrect.right  = bmp->dib.dsBm.bmWidth;
+    src.visrect.bottom = bmp->dib.dsBm.bmHeight;
 
     dst.visrect.left   = 0;
     dst.visrect.top    = 0;
@@ -1292,7 +1341,7 @@ INT WINAPI GetDIBits(
         lines = src.height;
     }
 
-    err = funcs->pGetImage( NULL, hbitmap, src_info, bits ? &src_bits : NULL, bits ? &src : NULL );
+    err = get_image_from_bitmap( bmp, src_info, bits ? &src_bits : NULL, bits ? &src : NULL );
 
     if (err) goto done;
 
@@ -1342,22 +1391,22 @@ INT WINAPI GetDIBits(
         else
             dst_info->bmiHeader.biHeight = -src.height;
 
-        convert_bitmapinfo( src_info, src_bits.ptr, &src, dst_info, bits, FALSE );
+        convert_bitmapinfo( src_info, src_bits.ptr, &src, dst_info, bits );
         if (src_bits.free) src_bits.free( &src_bits );
         ret = lines;
     }
     else
-        ret = empty_rect ? FALSE : TRUE;
+        ret = !empty_rect;
 
     if (coloruse == DIB_PAL_COLORS)
     {
         WORD *index = (WORD *)dst_info->bmiColors;
-        int colors = get_dib_num_of_colors( dst_info );
-        for (i = 0; i < colors; i++, index++)
+        for (i = 0; i < dst_info->bmiHeader.biClrUsed; i++, index++)
             *index = i;
     }
 
     copy_color_info( info, dst_info, coloruse );
+    if (info->bmiHeader.biSize != sizeof(BITMAPCOREHEADER)) info->bmiHeader.biClrUsed = 0;
 
 done:
     release_dc_ptr( dc );
@@ -1382,6 +1431,7 @@ HBITMAP WINAPI CreateDIBitmap( HDC hdc, const BITMAPINFOHEADER *header,
 
     if (!bitmapinfoheader_from_user_bitmapinfo( &info, header )) return 0;
     if (info.biCompression == BI_JPEG || info.biCompression == BI_PNG) return 0;
+    if (coloruse > DIB_PAL_COLORS + 1) return 0;
     if (info.biWidth < 0) return 0;
 
     /* Top-down DIBs have a negative height */
@@ -1411,60 +1461,29 @@ HBITMAP WINAPI CreateDIBitmap( HDC hdc, const BITMAPINFOHEADER *header,
     return handle;
 }
 
-/* Copy/synthesize RGB palette from BITMAPINFO */
-static void DIB_CopyColorTable( DC *dc, BITMAPOBJ *bmp, WORD coloruse, const BITMAPINFO *info )
-{
-    unsigned int colors, i;
-
-    colors = get_dib_num_of_colors( info );
-    if (!(bmp->color_table = HeapAlloc(GetProcessHeap(), 0, colors * sizeof(RGBQUAD) ))) return;
-    bmp->nb_colors = colors;
-
-    if (coloruse == DIB_RGB_COLORS)
-    {
-        memcpy( bmp->color_table, info->bmiColors, colors * sizeof(RGBQUAD));
-    }
-    else
-    {
-        PALETTEENTRY entries[256];
-        const WORD *index = (const WORD *)info->bmiColors;
-        UINT count = GetPaletteEntries( dc->hPalette, 0, colors, entries );
-
-        for (i = 0; i < colors; i++, index++)
-        {
-            PALETTEENTRY *entry = &entries[*index % count];
-            bmp->color_table[i].rgbRed = entry->peRed;
-            bmp->color_table[i].rgbGreen = entry->peGreen;
-            bmp->color_table[i].rgbBlue = entry->peBlue;
-            bmp->color_table[i].rgbReserved = 0;
-        }
-    }
-}
 
 /***********************************************************************
  *           CreateDIBSection    (GDI32.@)
  */
-HBITMAP WINAPI CreateDIBSection(HDC hdc, CONST BITMAPINFO *bmi, UINT usage,
+HBITMAP WINAPI CreateDIBSection(HDC hdc, const BITMAPINFO *bmi, UINT usage,
                                 VOID **bits, HANDLE section, DWORD offset)
 {
     char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
     BITMAPINFO *info = (BITMAPINFO *)buffer;
     HBITMAP ret = 0;
-    DC *dc;
-    BOOL bDesktopDC = FALSE;
-    DIBSECTION *dib;
     BITMAPOBJ *bmp;
     void *mapBits = NULL;
 
     if (bits) *bits = NULL;
     if (!bitmapinfo_from_user_bitmapinfo( info, bmi, usage, FALSE )) return 0;
+    if (usage > DIB_PAL_COLORS) return 0;
     if (info->bmiHeader.biPlanes != 1)
     {
         if (info->bmiHeader.biPlanes * info->bmiHeader.biBitCount > 16) return 0;
         WARN( "%u planes not properly supported\n", info->bmiHeader.biPlanes );
     }
 
-    if (!(dib = HeapAlloc( GetProcessHeap(), 0, sizeof(*dib) ))) return 0;
+    if (!(bmp = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*bmp) ))) return 0;
 
     TRACE("format (%d,%d), planes %d, bpp %d, %s, size %d %s\n",
           info->bmiHeader.biWidth, info->bmiHeader.biHeight,
@@ -1472,35 +1491,42 @@ HBITMAP WINAPI CreateDIBSection(HDC hdc, CONST BITMAPINFO *bmi, UINT usage,
           info->bmiHeader.biCompression == BI_BITFIELDS? "BI_BITFIELDS" : "BI_RGB",
           info->bmiHeader.biSizeImage, usage == DIB_PAL_COLORS? "PAL" : "RGB");
 
-    dib->dsBm.bmType       = 0;
-    dib->dsBm.bmWidth      = info->bmiHeader.biWidth;
-    dib->dsBm.bmHeight     = abs( info->bmiHeader.biHeight );
-    dib->dsBm.bmWidthBytes = get_dib_stride( info->bmiHeader.biWidth, info->bmiHeader.biBitCount );
-    dib->dsBm.bmPlanes     = info->bmiHeader.biPlanes;
-    dib->dsBm.bmBitsPixel  = info->bmiHeader.biBitCount;
-    dib->dsBm.bmBits       = NULL;
-    dib->dsBmih            = info->bmiHeader;
+    bmp->dib.dsBm.bmType       = 0;
+    bmp->dib.dsBm.bmWidth      = info->bmiHeader.biWidth;
+    bmp->dib.dsBm.bmHeight     = abs( info->bmiHeader.biHeight );
+    bmp->dib.dsBm.bmWidthBytes = get_dib_stride( info->bmiHeader.biWidth, info->bmiHeader.biBitCount );
+    bmp->dib.dsBm.bmPlanes     = info->bmiHeader.biPlanes;
+    bmp->dib.dsBm.bmBitsPixel  = info->bmiHeader.biBitCount;
+    bmp->dib.dsBmih            = info->bmiHeader;
 
-    /* set number of entries in bmi.bmiColors table */
-    if( info->bmiHeader.biBitCount <= 8 )
-        dib->dsBmih.biClrUsed = 1 << info->bmiHeader.biBitCount;
+    if (info->bmiHeader.biBitCount <= 8)  /* build the color table */
+    {
+        if (usage == DIB_PAL_COLORS && !fill_color_table_from_pal_colors( info, hdc ))
+            goto error;
+        bmp->dib.dsBmih.biClrUsed = info->bmiHeader.biClrUsed;
+        if (!(bmp->color_table = HeapAlloc( GetProcessHeap(), 0,
+                                            bmp->dib.dsBmih.biClrUsed * sizeof(RGBQUAD) )))
+            goto error;
+        memcpy( bmp->color_table, info->bmiColors, bmp->dib.dsBmih.biClrUsed * sizeof(RGBQUAD) );
+    }
 
     /* set dsBitfields values */
     if (info->bmiHeader.biBitCount == 16 && info->bmiHeader.biCompression == BI_RGB)
     {
-        dib->dsBmih.biCompression = BI_BITFIELDS;
-        dib->dsBitfields[0] = 0x7c00;
-        dib->dsBitfields[1] = 0x03e0;
-        dib->dsBitfields[2] = 0x001f;
+        bmp->dib.dsBmih.biCompression = BI_BITFIELDS;
+        bmp->dib.dsBitfields[0] = 0x7c00;
+        bmp->dib.dsBitfields[1] = 0x03e0;
+        bmp->dib.dsBitfields[2] = 0x001f;
     }
     else if (info->bmiHeader.biCompression == BI_BITFIELDS)
     {
-        dib->dsBitfields[0] =  *(const DWORD *)bmi->bmiColors;
-        dib->dsBitfields[1] =  *((const DWORD *)bmi->bmiColors + 1);
-        dib->dsBitfields[2] =  *((const DWORD *)bmi->bmiColors + 2);
-        if (!dib->dsBitfields[0] || !dib->dsBitfields[1] || !dib->dsBitfields[2]) goto error;
+        if (usage == DIB_PAL_COLORS) goto error;
+        bmp->dib.dsBitfields[0] =  *(const DWORD *)info->bmiColors;
+        bmp->dib.dsBitfields[1] =  *((const DWORD *)info->bmiColors + 1);
+        bmp->dib.dsBitfields[2] =  *((const DWORD *)info->bmiColors + 2);
+        if (!bmp->dib.dsBitfields[0] || !bmp->dib.dsBitfields[1] || !bmp->dib.dsBitfields[2]) goto error;
     }
-    else dib->dsBitfields[0] = dib->dsBitfields[1] = dib->dsBitfields[2] = 0;
+    else bmp->dib.dsBitfields[0] = bmp->dib.dsBitfields[1] = bmp->dib.dsBitfields[2] = 0;
 
     /* get storage location for DIB bits */
 
@@ -1512,63 +1538,144 @@ HBITMAP WINAPI CreateDIBSection(HDC hdc, CONST BITMAPINFO *bmi, UINT usage,
 
         GetSystemInfo( &SystemInfo );
         mapOffset = offset - (offset % SystemInfo.dwAllocationGranularity);
-        mapSize = dib->dsBmih.biSizeImage + (offset - mapOffset);
+        mapSize = bmp->dib.dsBmih.biSizeImage + (offset - mapOffset);
         mapBits = MapViewOfFile( section, FILE_MAP_ALL_ACCESS, 0, mapOffset, mapSize );
-        if (mapBits) dib->dsBm.bmBits = (char *)mapBits + (offset - mapOffset);
+        if (mapBits) bmp->dib.dsBm.bmBits = (char *)mapBits + (offset - mapOffset);
     }
     else
     {
         offset = 0;
-        dib->dsBm.bmBits = VirtualAlloc( NULL, dib->dsBmih.biSizeImage,
-                                         MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE );
+        bmp->dib.dsBm.bmBits = VirtualAlloc( NULL, bmp->dib.dsBmih.biSizeImage,
+                                             MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE );
     }
-    dib->dshSection = section;
-    dib->dsOffset = offset;
+    bmp->dib.dshSection = section;
+    bmp->dib.dsOffset = offset;
 
-    if (!dib->dsBm.bmBits)
-    {
-        HeapFree( GetProcessHeap(), 0, dib );
-        return 0;
-    }
+    if (!bmp->dib.dsBm.bmBits) goto error;
 
-    /* If the reference hdc is null, take the desktop dc */
-    if (hdc == 0)
-    {
-        hdc = CreateCompatibleDC(0);
-        bDesktopDC = TRUE;
-    }
+    if (!(ret = alloc_gdi_handle( bmp, OBJ_BITMAP, &dib_funcs ))) goto error;
 
-    if (!(dc = get_dc_ptr( hdc ))) goto error;
-
-    /* create Device Dependent Bitmap and add DIB pointer */
-    ret = CreateBitmap( dib->dsBm.bmWidth, dib->dsBm.bmHeight, 1,
-                        (info->bmiHeader.biBitCount == 1) ? 1 : GetDeviceCaps(hdc, BITSPIXEL), NULL );
-
-    if (ret && ((bmp = GDI_GetObjPtr(ret, OBJ_BITMAP))))
-    {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pCreateDIBSection );
-        bmp->dib = dib;
-        bmp->funcs = physdev->funcs;
-        /* create local copy of DIB palette */
-        if (info->bmiHeader.biBitCount <= 8) DIB_CopyColorTable( dc, bmp, usage, info );
-        GDI_ReleaseObj( ret );
-
-        if (!physdev->funcs->pCreateDIBSection( physdev, ret, info, usage ))
-        {
-            DeleteObject( ret );
-            ret = 0;
-        }
-    }
-
-    release_dc_ptr( dc );
-    if (bDesktopDC) DeleteDC( hdc );
-    if (ret && bits) *bits = dib->dsBm.bmBits;
+    if (bits) *bits = bmp->dib.dsBm.bmBits;
     return ret;
 
 error:
-    if (bDesktopDC) DeleteDC( hdc );
     if (section) UnmapViewOfFile( mapBits );
-    else if (!offset) VirtualFree( dib->dsBm.bmBits, 0, MEM_RELEASE );
-    HeapFree( GetProcessHeap(), 0, dib );
+    else VirtualFree( bmp->dib.dsBm.bmBits, 0, MEM_RELEASE );
+    HeapFree( GetProcessHeap(), 0, bmp->color_table );
+    HeapFree( GetProcessHeap(), 0, bmp );
     return 0;
+}
+
+
+/***********************************************************************
+ *           DIB_SelectObject
+ */
+static HGDIOBJ DIB_SelectObject( HGDIOBJ handle, HDC hdc )
+{
+    HGDIOBJ ret;
+    BITMAPOBJ *bitmap;
+    DC *dc;
+    PHYSDEV physdev;
+
+    if (!(dc = get_dc_ptr( hdc ))) return 0;
+
+    if (GetObjectType( hdc ) != OBJ_MEMDC)
+    {
+        ret = 0;
+        goto done;
+    }
+    ret = dc->hBitmap;
+    if (handle == dc->hBitmap) goto done;  /* nothing to do */
+
+    if (!(bitmap = GDI_GetObjPtr( handle, OBJ_BITMAP )))
+    {
+        ret = 0;
+        goto done;
+    }
+
+    if (GDI_get_ref_count( handle ))
+    {
+        WARN( "Bitmap already selected in another DC\n" );
+        GDI_ReleaseObj( handle );
+        ret = 0;
+        goto done;
+    }
+
+    physdev = GET_DC_PHYSDEV( dc, pSelectBitmap );
+    if (!physdev->funcs->pSelectBitmap( physdev, handle ))
+    {
+        GDI_ReleaseObj( handle );
+        ret = 0;
+    }
+    else
+    {
+        dc->hBitmap = handle;
+        GDI_inc_ref_count( handle );
+        dc->dirty = 0;
+        dc->vis_rect.left   = 0;
+        dc->vis_rect.top    = 0;
+        dc->vis_rect.right  = bitmap->dib.dsBm.bmWidth;
+        dc->vis_rect.bottom = bitmap->dib.dsBm.bmHeight;
+        dc->device_rect = dc->vis_rect;
+        GDI_ReleaseObj( handle );
+        DC_InitDC( dc );
+        GDI_dec_ref_count( ret );
+    }
+
+ done:
+    release_dc_ptr( dc );
+    return ret;
+}
+
+
+/***********************************************************************
+ *           DIB_GetObject
+ */
+static INT DIB_GetObject( HGDIOBJ handle, INT count, LPVOID buffer )
+{
+    INT ret = 0;
+    BITMAPOBJ *bmp = GDI_GetObjPtr( handle, OBJ_BITMAP );
+
+    if (!bmp) return 0;
+
+    if (!buffer) ret = sizeof(BITMAP);
+    else if (count >= sizeof(DIBSECTION))
+    {
+        DIBSECTION *dib = buffer;
+        *dib = bmp->dib;
+        dib->dsBmih.biHeight = abs( dib->dsBmih.biHeight );
+        ret = sizeof(DIBSECTION);
+    }
+    else if (count >= sizeof(BITMAP))
+    {
+        BITMAP *bitmap = buffer;
+        *bitmap = bmp->dib.dsBm;
+        ret = sizeof(BITMAP);
+    }
+
+    GDI_ReleaseObj( handle );
+    return ret;
+}
+
+
+/***********************************************************************
+ *           DIB_DeleteObject
+ */
+static BOOL DIB_DeleteObject( HGDIOBJ handle )
+{
+    BITMAPOBJ *bmp;
+
+    if (!(bmp = free_gdi_handle( handle ))) return FALSE;
+
+    if (bmp->dib.dshSection)
+    {
+        SYSTEM_INFO SystemInfo;
+        GetSystemInfo( &SystemInfo );
+        UnmapViewOfFile( (char *)bmp->dib.dsBm.bmBits -
+                         (bmp->dib.dsOffset % SystemInfo.dwAllocationGranularity) );
+    }
+    else VirtualFree( bmp->dib.dsBm.bmBits, 0, MEM_RELEASE );
+
+    HeapFree(GetProcessHeap(), 0, bmp->color_table);
+    return HeapFree( GetProcessHeap(), 0, bmp );
 }

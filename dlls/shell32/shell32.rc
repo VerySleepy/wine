@@ -20,6 +20,8 @@
 
 #include "shresdef.h"
 
+#pragma makedep po
+
 LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 
 MENU_001 MENU
@@ -196,54 +198,41 @@ the folder?"
         IDS_RUNDLG_BROWSE_FILTER_ALL "All files (*.*)"
 
         /* shell folder path default values */
-	IDS_PROGRAMS                "Start Menu\\Programs"
+	/* FIXME: Some will be unused until desktop.ini support is implemented */
+	IDS_PROGRAMS                "Programs"
 	IDS_PERSONAL                "My Documents"
 	IDS_FAVORITES               "Favorites"
-	IDS_STARTUP                 "Start Menu\\Programs\\StartUp"
-	IDS_RECENT                  "Recent"
-	IDS_SENDTO                  "SendTo"
+	IDS_STARTUP                 "StartUp"
 	IDS_STARTMENU               "Start Menu"
 	IDS_MYMUSIC                 "My Music"
-	IDS_MYVIDEO                 "My Videos"
+	IDS_MYVIDEOS                "My Videos"
 	IDS_DESKTOPDIRECTORY        "#msgctxt#directory#Desktop"
 	IDS_NETHOOD                 "NetHood"
 	IDS_TEMPLATES               "Templates"
-	IDS_APPDATA                 "Application Data"
 	IDS_PRINTHOOD               "PrintHood"
-	IDS_LOCAL_APPDATA           "Local Settings\\Application Data"
-	IDS_INTERNET_CACHE          "Local Settings\\Temporary Internet Files"
-	IDS_COOKIES                 "Cookies"
-	IDS_HISTORY                 "Local Settings\\History"
+	IDS_HISTORY                 "History"
 	IDS_PROGRAM_FILES           "Program Files"
 	IDS_PROGRAM_FILESX86        "Program Files (x86)"
 	IDS_MYPICTURES              "My Pictures"
-	IDS_PROGRAM_FILES_COMMON    "Program Files\\Common Files"
-	IDS_PROGRAM_FILES_COMMONX86 "Program Files (x86)\\Common Files"
+	IDS_COMMON_FILES            "Common Files"
 	IDS_COMMON_DOCUMENTS        "Documents"
-	IDS_ADMINTOOLS              "Start Menu\\Programs\\Administrative Tools"
+	IDS_ADMINTOOLS              "Administrative Tools"
 	IDS_COMMON_MUSIC            "Music"
 	IDS_COMMON_PICTURES         "Pictures"
-	IDS_COMMON_VIDEO            "Videos"
-	IDS_CDBURN_AREA             "Local Settings\\Application Data\\Microsoft\\CD Burning"
+	IDS_COMMON_VIDEOS           "Videos"
 	IDS_CONTACTS                "Contacts"
 	IDS_LINKS                   "Links"
-	IDS_PHOTO_ALBUMS            "Pictures\\Slide Shows"
-	IDS_PLAYLISTS               "Music\\Playlists"
-	IDS_PUBLIC_DOWNLOADS        "Downloads"
-	IDS_PUBLIC_GAME_TASKS       "Microsoft\\Windows\\GameExplorer"
-	IDS_PUBLIC_LIBRARIES        "Microsoft\\Windows\\Libraries"
-	IDS_PUBLIC_RINGTONES        "Microsoft\\Windows\\Ringtones"
-	IDS_SAMPLE_MUSIC            "Music\\Sample Music"
-	IDS_SAMPLE_PICTURES         "Pictures\\Sample Pictures"
-	IDS_SAMPLE_PLAYLISTS        "Music\\Sample Playlists"
-	IDS_SAMPLE_VIDEOS           "Videos\\Sample Videos"
+	IDS_SLIDE_SHOWS             "Slide Shows"
+	IDS_PLAYLISTS               "Playlists"
+	IDS_SAMPLE_MUSIC            "Sample Music"
+	IDS_SAMPLE_PICTURES         "Sample Pictures"
+	IDS_SAMPLE_PLAYLISTS        "Sample Playlists"
+	IDS_SAMPLE_VIDEOS           "Sample Videos"
 	IDS_SAVED_GAMES             "Saved Games"
 	IDS_SAVED_SEARCHES          "Searches"
 	IDS_USER_PROFILES           "Users"
-	IDS_COMMON_OEM_LINKS        "OEM Links"
 	IDS_DOCUMENTS               "Documents"
 	IDS_DOWNLOADS               "Downloads"
-	IDS_LOCAL_APPDATA_LOW       "AppData\\LocalLow"
 
 	IDS_NEWFOLDER		"New Folder"
 
@@ -271,11 +260,85 @@ License as published by the Free Software Foundation; either \
 version 2.1 of the License, or (at your option) any later version.\n\n\
 Wine is distributed in the hope that it will be useful, \
 but WITHOUT ANY WARRANTY; without even the implied warranty of \
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU \
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU \
 Lesser General Public License for more details.\n\n\
 You should have received a copy of the GNU Lesser General Public \
 License along with Wine; if not, write to the Free Software \
 Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA."
+}
+
+SHBRSFORFOLDER_MSGBOX DIALOG 15, 40, 190, 195
+STYLE DS_MODALFRAME | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME | DS_SETFONT | DS_3DLOOK
+CAPTION "Browse for Folder"
+FONT 8, "MS Shell Dlg"
+{
+ DEFPUSHBUTTON "OK", 1, 80, 176, 50, 14, BS_DEFPUSHBUTTON | WS_GROUP | WS_TABSTOP
+ PUSHBUTTON "Cancel", 2, 134, 176, 50, 14, WS_GROUP | WS_TABSTOP
+ LTEXT "", IDD_TITLE, 5, 4, 180, 12
+ LTEXT "", IDD_STATUS, 5, 25, 180, 12
+ CONTROL "", IDD_TREEVIEW, "SysTreeView32",
+ 	TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT |
+	WS_BORDER | WS_TABSTOP,
+	5, 40, 180, 120
+}
+
+SHNEWBRSFORFOLDER_MSGBOX DIALOG 15, 40, 216, 195
+STYLE DS_MODALFRAME | WS_CAPTION | WS_SYSMENU | WS_SIZEBOX | DS_MODALFRAME | DS_SETFONT | DS_3DLOOK
+CAPTION "Browse for Folder"
+FONT 8, "MS Shell Dlg"
+{
+ LTEXT "", IDD_TITLE, 5, 8, 198, 24
+ LTEXT "", IDD_STATUS, 5, 25, 198, 12
+ LTEXT "Folder:", IDD_FOLDER, 5, 156, 40, 12
+ CONTROL "", IDD_TREEVIEW, "SysTreeView32",
+	TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_EDITLABELS |
+	WS_BORDER | WS_TABSTOP,
+	5, 38, 205, 105
+ EDITTEXT IDD_FOLDERTEXT, 46, 154, 164, 14, WS_BORDER | WS_GROUP | WS_TABSTOP
+ PUSHBUTTON "&Make New Folder", IDD_MAKENEWFOLDER, 5, 176, 95, 14, WS_GROUP | WS_TABSTOP
+ DEFPUSHBUTTON "OK", IDOK, 105, 176, 50, 14, BS_DEFPUSHBUTTON | WS_GROUP | WS_TABSTOP
+ PUSHBUTTON "Cancel", IDCANCEL, 160, 176, 50, 14, WS_GROUP | WS_TABSTOP
+}
+
+SHELL_YESTOALL_MSGBOX DIALOG 200, 100, 280, 90
+STYLE DS_MODALFRAME | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+CAPTION "Message"
+FONT 8, "MS Shell Dlg"
+{
+    DEFPUSHBUTTON "&Yes", IDYES, 34, 69, 53, 14, WS_GROUP | WS_TABSTOP
+    PUSHBUTTON "Yes to &all", IDD_YESTOALL, 92, 69, 65, 14, WS_GROUP | WS_TABSTOP
+    PUSHBUTTON "&No", IDNO, 162, 69, 53, 14, WS_GROUP | WS_TABSTOP
+    PUSHBUTTON "Cancel", IDCANCEL, 220, 69, 53, 14, WS_GROUP | WS_TABSTOP
+    ICON "", IDD_ICON, 10, 10, 16, 16
+    LTEXT "", IDD_MESSAGE, 40, 10, 238, 52, 0
+}
+
+SHELL_ABOUT_MSGBOX DIALOG 15, 40, 225, 152
+STYLE DS_MODALFRAME | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+CAPTION "About %s"
+FONT 10, "MS Shell Dlg"
+{
+ DEFPUSHBUTTON "OK", IDOK, 153, 133, 65, 14, WS_TABSTOP
+ PUSHBUTTON "Wine &license", IDC_ABOUT_LICENSE, 153, 113, 65, 14, WS_TABSTOP
+ LISTBOX IDC_ABOUT_LISTBOX, 8, 65, 137, 82, LBS_NOTIFY | WS_VSCROLL | WS_BORDER
+ ICON "", stc1, 10, 10, 30, 30
+ LTEXT "", IDC_ABOUT_STATIC_TEXT1, 42, 10, 180, 10
+ LTEXT "", IDC_ABOUT_STATIC_TEXT2, 42, 22, 180, 10
+ LTEXT "Running on %s", IDC_ABOUT_STATIC_TEXT3, 42, 34, 180, 10
+ LTEXT "Wine was brought to you by:", IDC_ABOUT_WINE_TEXT, 8, 54, 214, 10
+}
+
+SHELL_RUN_DLG DIALOG 0, 0, 235, 83
+STYLE DS_MODALFRAME | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+FONT 8, "MS Shell Dlg"
+{
+ ICON "", IDC_RUNDLG_ICON, 7, 11, 18, 20, WS_VISIBLE
+ LTEXT "Type the name of a program, folder, document, or Internet resource, and Wine will open it for you.", IDC_RUNDLG_DESCRIPTION, 36, 11, 182, 18
+ LTEXT "&Open:", IDC_RUNDLG_LABEL, 7, 39, 35, 10
+ CONTROL "", IDC_RUNDLG_EDITPATH, "COMBOBOX", WS_TABSTOP | WS_GROUP | WS_VSCROLL | WS_VISIBLE | CBS_DISABLENOSCROLL | CBS_AUTOHSCROLL | CBS_DROPDOWN, 45, 37, 185, 100
+ DEFPUSHBUTTON "OK", IDOK, 72, 63, 50, 14, WS_TABSTOP
+ PUSHBUTTON "Cancel", IDCANCEL, 126, 63, 50, 14, WS_TABSTOP
+ PUSHBUTTON "&Browse...", IDC_RUNDLG_BROWSE, 180, 63, 50, 14, WS_TABSTOP
 }
 
 LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL

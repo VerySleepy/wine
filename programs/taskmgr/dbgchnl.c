@@ -20,17 +20,16 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
-    
-#define WIN32_LEAN_AND_MEAN    /* Exclude rarely-used stuff from Windows headers */
-#include <windows.h>
+
 #include <ctype.h>
-#include <commctrl.h>
-#include <stdlib.h>
-#include <memory.h>
 #include <stdio.h>
+#include <stdlib.h>
+
+#include <windows.h>
+#include <commctrl.h>
 #include <winnt.h>
 #include <dbghelp.h>
-    
+
 #include "taskmgr.h"
 #include "perfdata.h"
 #include "column.h"
@@ -224,20 +223,15 @@ static void DebugChannels_FillList(HWND hChannelLV)
 
 static void DebugChannels_OnCreate(HWND hwndDlg)
 {
+    static WCHAR fixmeW[] = {'F','i','x','m','e','\0'};
+    static WCHAR errW[]   = {'E','r','r','\0'};
+    static WCHAR warnW[]  = {'W','a','r','n','\0'};
+    static WCHAR traceW[] = {'T','r','a','c','e','\0'};
     HWND        hLV = GetDlgItem(hwndDlg, IDC_DEBUG_CHANNELS_LIST);
     LVCOLUMNW   lvc;
-
     WCHAR debug_channelW[255];
-    WCHAR fixmeW[255];
-    WCHAR errW[255];
-    WCHAR warnW[255];
-    WCHAR traceW[255];
 
     LoadStringW(hInst, IDS_DEBUG_CHANNEL, debug_channelW, sizeof(debug_channelW)/sizeof(WCHAR));
-    LoadStringW(hInst, IDS_DEBUG_CHANNEL_FIXME, fixmeW, sizeof(fixmeW)/sizeof(WCHAR));
-    LoadStringW(hInst, IDS_DEBUG_CHANNEL_ERR, errW, sizeof(errW)/sizeof(WCHAR));
-    LoadStringW(hInst, IDS_DEBUG_CHANNEL_WARN, warnW, sizeof(warnW)/sizeof(WCHAR));
-    LoadStringW(hInst, IDS_DEBUG_CHANNEL_TRACE, traceW, sizeof(traceW)/sizeof(WCHAR));
 
     lvc.mask = LVCF_FMT | LVCF_TEXT | LVCF_WIDTH;
     lvc.fmt = LVCFMT_LEFT;

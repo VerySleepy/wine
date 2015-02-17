@@ -1009,19 +1009,16 @@ static INT_PTR CALLBACK DialogProc(HWND hwndDlg, UINT msg, WPARAM wParam, LPARAM
                         InitializeDialog(hwndDlg);
                         break;
                 }
+                break;
             }
         case WM_COMMAND:
+            switch (HIWORD(wParam))
             {
-                switch (HIWORD(wParam))
-                {
-                    case BN_CLICKED:
-                        ButtonClicked(hwndDlg,LOWORD(wParam),
-                                (HWND)lParam);
-                        break;
-                    case CBN_SELCHANGE:
-                        ComboChanged(hwndDlg,LOWORD(wParam),
-                                (HWND)lParam);
-                }
+                case BN_CLICKED:
+                    ButtonClicked(hwndDlg,LOWORD(wParam), (HWND)lParam);
+                    break;
+                case CBN_SELCHANGE:
+                    ComboChanged(hwndDlg,LOWORD(wParam), (HWND)lParam);
             }
     }
 

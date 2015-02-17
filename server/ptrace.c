@@ -40,8 +40,10 @@
 #ifdef HAVE_SYS_SYSCALL_H
 # include <sys/syscall.h>
 #endif
-#ifdef HAVE_SYS_THR_H
+#ifdef HAVE_SYS_UCONTEXT_H
 # include <sys/ucontext.h>
+#endif
+#ifdef HAVE_SYS_THR_H
 # include <sys/thr.h>
 #endif
 #include <unistd.h>
@@ -98,7 +100,11 @@
 static inline int ptrace(int req, ...) { errno = EPERM; return -1; /*FAIL*/ }
 #endif  /* HAVE_SYS_PTRACE_H */
 
-/* handle a status returned by wait4 */
+#ifndef __WALL
+#define __WALL 0
+#endif
+
+/* handle a status returned by waitpid */
 static int handle_child_status( struct thread *thread, int pid, int status, int want_sig )
 {
     if (WIFSTOPPED(status))
@@ -130,23 +136,6 @@ static int handle_child_status( struct thread *thread, int pid, int status, int 
     return 0;
 }
 
-/* wait4 wrapper to handle missing __WALL flag in older kernels */
-static inline pid_t wait4_wrapper( pid_t pid, int *status, int options, struct rusage *usage )
-{
-#ifdef __WALL
-    static int wall_flag = __WALL;
-
-    for (;;)
-    {
-        pid_t ret = wait4( pid, status, options | wall_flag, usage );
-        if (ret != -1 || !wall_flag || errno != EINVAL) return ret;
-        wall_flag = 0;
-    }
-#else
-    return wait4( pid, status, options, usage );
-#endif
-}
-
 /* handle a SIGCHLD signal */
 void sigchld_callback(void)
 {
@@ -154,7 +143,7 @@ void sigchld_callback(void)
 
     for (;;)
     {
-        if (!(pid = wait4_wrapper( -1, &status, WUNTRACED | WNOHANG, NULL ))) break;
+        if (!(pid = waitpid( -1, &status, WUNTRACED | WNOHANG | __WALL ))) break;
         if (pid != -1)
         {
             struct thread *thread = get_thread_from_tid( pid );
@@ -182,26 +171,26 @@ static int get_ptrace_tid( struct thread *thread )
 }
 
 /* wait for a ptraced child to get a certain signal */
-static int wait4_thread( struct thread *thread, int signal )
+static int waitpid_thread( struct thread *thread, int signal )
 {
     int res, status;
 
     start_watchdog();
     for (;;)
     {
-        if ((res = wait4_wrapper( get_ptrace_pid(thread), &status, WUNTRACED, NULL )) == -1)
+        if ((res = waitpid( get_ptrace_pid(thread), &status, WUNTRACED | __WALL )) == -1)
         {
             if (errno == EINTR)
             {
                 if (!watchdog_triggered()) continue;
-                if (debug_level) fprintf( stderr, "%04x: *watchdog* wait4 aborted\n", thread->id );
+                if (debug_level) fprintf( stderr, "%04x: *watchdog* waitpid aborted\n", thread->id );
             }
             else if (errno == ECHILD)  /* must have died */
             {
                 thread->unix_pid = -1;
                 thread->unix_tid = -1;
             }
-            else perror( "wait4" );
+            else perror( "waitpid" );
             stop_watchdog();
             return 0;
         }
@@ -216,8 +205,8 @@ static int wait4_thread( struct thread *thread, int signal )
 static inline int tkill( int tgid, int pid, int sig )
 {
 #ifdef __linux__
-    int ret = syscall( SYS_tgkill, tgid, pid, sig );
-    if (ret < 0 && errno == ENOSYS) ret = syscall( SYS_tkill, pid, sig );
+    int ret = syscall( __NR_tgkill, tgid, pid, sig );
+    if (ret < 0 && errno == ENOSYS) ret = syscall( __NR_tkill, pid, sig );
     return ret;
 #elif (defined(__FreeBSD__) || defined (__FreeBSD_kernel__)) && defined(HAVE_THR_KILL2)
     return thr_kill2( tgid, pid, sig );
@@ -292,7 +281,7 @@ static int suspend_for_ptrace( struct thread *thread )
         if (errno == ESRCH) thread->unix_pid = thread->unix_tid = -1;  /* thread got killed */
         goto error;
     }
-    if (wait4_thread( thread, SIGSTOP )) return 1;
+    if (waitpid_thread( thread, SIGSTOP )) return 1;
     resume_after_ptrace( thread );
  error:
     set_error( STATUS_ACCESS_DENIED );
@@ -335,7 +324,7 @@ static struct thread *get_ptrace_thread( struct process *process )
     {
         if (thread->unix_pid != -1) return thread;
     }
-    set_error( STATUS_ACCESS_DENIED );  /* process is dead */
+    set_error( STATUS_PROCESS_IS_TERMINATING );  /* process is dead */
     return NULL;
 }
 
@@ -541,10 +530,13 @@ void get_selector_entry( struct thread *thread, int entry, unsigned int *base,
 }
 
 
-#if defined(linux) && (defined(__i386__) || defined(__x86_64__))
+#if defined(linux) && (defined(HAVE_SYS_USER_H) || defined(HAVE_ASM_USER_H)) \
+    && (defined(__i386__) || defined(__x86_64__))
 
 #ifdef HAVE_SYS_USER_H
-# include <sys/user.h>
+#include <sys/user.h>
+#elif defined(HAVE_ASM_USER_H)
+#include <asm/user.h>
 #endif
 
 /* debug register offset in struct user */
@@ -656,7 +648,7 @@ void set_thread_context( struct thread *thread, const context_t *context, unsign
 }
 
 #elif defined(__i386__) && defined(PTRACE_GETDBREGS) && defined(PTRACE_SETDBREGS) && \
-    (defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__OpenBSD__) || defined(__NetBSD__))
+    (defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__))
 
 #include <machine/reg.h>
 

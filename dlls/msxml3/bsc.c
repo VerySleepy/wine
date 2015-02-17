@@ -174,7 +174,7 @@ static HRESULT WINAPI bsc_OnStopBinding(
             DWORD len = GlobalSize(hglobal);
             char *ptr = GlobalLock(hglobal);
 
-            This->hres = hr = This->onDataAvailable(This->obj, ptr, len);
+            This->hres = This->onDataAvailable(This->obj, ptr, len);
 
             GlobalUnlock(hglobal);
         }
@@ -242,12 +242,9 @@ static const struct IBindStatusCallbackVtbl bsc_vtbl =
     bsc_OnObjectAvailable
 };
 
-HRESULT bind_url(LPCWSTR url, HRESULT (*onDataAvailable)(void*,char*,DWORD), void *obj, bsc_t **ret)
+HRESULT create_moniker_from_url(LPCWSTR url, IMoniker **mon)
 {
     WCHAR fileUrl[INTERNET_MAX_URL_LENGTH];
-    bsc_t *bsc;
-    IBindCtx *pbc;
-    HRESULT hr;
 
     TRACE("%s\n", debugstr_w(url));
 
@@ -262,13 +259,25 @@ HRESULT bind_url(LPCWSTR url, HRESULT (*onDataAvailable)(void*,char*,DWORD), voi
             return E_FAIL;
         }
 
-        if(FAILED(UrlCreateFromPathW(url, fileUrl, &needed, 0)))
+        if(FAILED(UrlCreateFromPathW(fullpath, fileUrl, &needed, 0)))
         {
             ERR("can't create url from path\n");
             return E_FAIL;
         }
         url = fileUrl;
     }
+
+    return CreateURLMonikerEx(NULL, url, mon, 0);
+}
+
+HRESULT bind_url(IMoniker *mon, HRESULT (*onDataAvailable)(void*,char*,DWORD),
+        void *obj, bsc_t **ret)
+{
+    bsc_t *bsc;
+    IBindCtx *pbc;
+    HRESULT hr;
+
+    TRACE("%p\n", mon);
 
     hr = CreateBindCtx(0, &pbc);
     if(FAILED(hr))
@@ -287,17 +296,10 @@ HRESULT bind_url(LPCWSTR url, HRESULT (*onDataAvailable)(void*,char*,DWORD), voi
     hr = RegisterBindStatusCallback(pbc, &bsc->IBindStatusCallback_iface, NULL, 0);
     if(SUCCEEDED(hr))
     {
-        IMoniker *moniker;
-
-        hr = CreateURLMoniker(NULL, url, &moniker);
-        if(SUCCEEDED(hr))
-        {
-            IStream *stream;
-            hr = IMoniker_BindToStorage(moniker, pbc, NULL, &IID_IStream, (LPVOID*)&stream);
-            IMoniker_Release(moniker);
-            if(stream)
-                IStream_Release(stream);
-        }
+        IStream *stream;
+        hr = IMoniker_BindToStorage(mon, pbc, NULL, &IID_IStream, (LPVOID*)&stream);
+        if(stream)
+            IStream_Release(stream);
         IBindCtx_Release(pbc);
     }
 

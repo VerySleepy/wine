@@ -55,6 +55,8 @@
 
 #include "wine/library.h"
 #include "wine/debug.h"
+#undef ERR
+#define ERR (-1)
 
 WINE_DEFAULT_DEBUG_CHANNEL(curses);
 
@@ -97,7 +99,6 @@ MAKE_FUNCPTR(getmaxx)
 #ifndef getmaxy
 MAKE_FUNCPTR(getmaxy)
 #endif
-MAKE_FUNCPTR(getmouse)
 MAKE_FUNCPTR(has_colors)
 MAKE_FUNCPTR(init_pair)
 MAKE_FUNCPTR(initscr)
@@ -120,6 +121,7 @@ MAKE_FUNCPTR(waddchnstr)
 MAKE_FUNCPTR(wmove)
 MAKE_FUNCPTR(wgetch)
 #ifdef HAVE_MOUSEMASK
+MAKE_FUNCPTR(getmouse)
 MAKE_FUNCPTR(mouseinterval)
 MAKE_FUNCPTR(mousemask)
 #endif
@@ -161,7 +163,6 @@ static BOOL WCCURSES_bind_libcurses(void)
 #ifndef getmaxy
     LOAD_FUNCPTR(getmaxy)
 #endif
-    LOAD_FUNCPTR(getmouse)
     LOAD_FUNCPTR(has_colors)
     LOAD_FUNCPTR(init_pair)
     LOAD_FUNCPTR(initscr)
@@ -184,6 +185,7 @@ static BOOL WCCURSES_bind_libcurses(void)
     LOAD_FUNCPTR(wmove)
     LOAD_FUNCPTR(wgetch)
 #ifdef HAVE_MOUSEMASK
+    LOAD_FUNCPTR(getmouse)
     LOAD_FUNCPTR(mouseinterval)
     LOAD_FUNCPTR(mousemask)
 #endif
@@ -212,7 +214,6 @@ sym_not_found:
 #ifndef getmaxy
 #define getmaxy p_getmaxy
 #endif
-#define getmouse p_getmouse
 #define has_colors p_has_colors
 #define init_pair p_init_pair
 #define initscr p_initscr
@@ -220,8 +221,11 @@ sym_not_found:
 #define intrflush p_intrflush
 #endif
 #define keypad p_keypad
+#ifdef HAVE_MOUSEMASK
+#define getmouse p_getmouse
 #define mouseinterval p_mouseinterval
 #define mousemask p_mousemask
+#endif
 #define newpad p_newpad
 #ifndef nodelay
 #define nodelay p_nodelay
@@ -298,7 +302,7 @@ static void	WCCURSES_ShapeCursor(struct inner_data* data, int size, int vis, BOO
 {
     /* we can't do much about the size... */
     data->curcfg.cursor_size = size;
-    data->curcfg.cursor_visible = vis ? TRUE : FALSE;
+    data->curcfg.cursor_visible = vis != 0;
     WCCURSES_PosCursor(data);
 }
 
@@ -587,7 +591,7 @@ static unsigned WCCURSES_FillSimpleChar(INPUT_RECORD* ir, unsigned real_inchar)
          */
         if ((inchar = wgetch(stdscr)) != ERR)
         {
-            /* we got a alt-something key... */
+            /* we got an alt-something key... */
             cks = LEFT_ALT_PRESSED;
         }
         else
@@ -668,7 +672,7 @@ static unsigned WCCURSES_FillMouse(INPUT_RECORD* ir)
     WINE_TRACE("[%u]: (%d, %d) %08lx\n", 
                mevt.id, mevt.x, mevt.y, (unsigned long)mevt.bstate);
 
-    /* macros to ease mapping ncurse button numbering to windows' one */
+    /* macros to ease mapping ncurses button numbering to windows' one */
 #define	BTN1_BIT	FROM_LEFT_1ST_BUTTON_PRESSED
 #define	BTN2_BIT	RIGHTMOST_BUTTON_PRESSED
 #define	BTN3_BIT	FROM_LEFT_2ND_BUTTON_PRESSED

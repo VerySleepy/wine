@@ -184,7 +184,7 @@ static int FM_InitMenuPopup(HMENU hmenu, LPCITEMIDLIST pAlternatePidl)
 	      LPITEMIDLIST pidlTemp = NULL;
 	      ULONG ulFetched;
 
-	      while ((!bAbortInit) && (NOERROR == IEnumIDList_Next(lpe,1,&pidlTemp,&ulFetched)))
+	      while ((!bAbortInit) && (S_OK == IEnumIDList_Next(lpe,1,&pidlTemp,&ulFetched)))
 	      {
 		if (SUCCEEDED (IShellFolder_GetAttributesOf(lpsf, 1, (LPCITEMIDLIST*)&pidlTemp, &ulItemAttr)))
 		{
@@ -372,7 +372,7 @@ static BOOL FileMenu_AppendItemW(
 	if ((menudata == 0) || (MenuInfo.cbSize != sizeof(MENUINFO)))
 	{
 	  ERR("menudata corrupt: %p %u\n", menudata, MenuInfo.cbSize);
-	  return 0;
+	  return FALSE;
 	}
 
 	menudata->bFixedItems = TRUE;
@@ -549,7 +549,7 @@ BOOL WINAPI FileMenu_GetLastSelectedItemPidls(
 	LPCITEMIDLIST	*ppidlItem)
 {
 	FIXME("0x%08x %p %p\n",uReserved, ppidlFolder, ppidlItem);
-	return 0;
+	return FALSE;
 }
 
 #define FM_ICON_SIZE	16
@@ -758,7 +758,7 @@ BOOL WINAPI FileMenu_DeleteItemByFirstID(
 	UINT	uID)
 {
 	TRACE("%p 0x%08x\n", hMenu, uID);
-	return 0;
+	return FALSE;
 }
 
 /*************************************************************************
@@ -767,7 +767,7 @@ BOOL WINAPI FileMenu_DeleteItemByFirstID(
 BOOL WINAPI FileMenu_DeleteSeparator(HMENU hMenu)
 {
 	TRACE("%p\n", hMenu);
-	return 0;
+	return FALSE;
 }
 
 /*************************************************************************
@@ -779,7 +779,7 @@ BOOL WINAPI FileMenu_EnableItemByCmd(
 	BOOL	bEnable)
 {
 	TRACE("%p 0x%08x 0x%08x\n", hMenu, uID,bEnable);
-	return 0;
+	return FALSE;
 }
 
 /*************************************************************************
@@ -1275,7 +1275,8 @@ HRESULT WINAPI CDefFolderMenu_Create2(LPCITEMIDLIST pidlFolder, HWND hwnd, UINT 
     }
     else
         folder_pidl=ILClone(pidlFolder);
-    system_menu = (IContextMenu*)ISvItemCm_Constructor(psf,folder_pidl,(const LPCITEMIDLIST*)apidl,cidl);
+
+    ItemMenu_Constructor(psf, folder_pidl, (const LPCITEMIDLIST*)apidl, cidl, &IID_IContextMenu, (void**)&system_menu);
     hres= SHELL_CreateContextMenu(hwnd,system_menu,psf,folder_pidl,apidl,cidl,ahkeys,nKeys,&IID_IContextMenu,(void**)ppcm);
     IContextMenu_Release(system_menu);
     ILFree(folder_pidl);
@@ -1300,7 +1301,8 @@ HRESULT WINAPI SHCreateDefaultContextMenu(const DEFCONTEXTMENU *pdcm, REFIID rii
         folder_pidl=ILClone(pdcm->pidlFolder);
     if(pdcm->cKeys==0)
         FIXME("Loading shell extensions using IQueryAssociations not yet supported\n");
-    system_menu = (IContextMenu*)ISvItemCm_Constructor(folder,folder_pidl,(const LPCITEMIDLIST*)pdcm->apidl,pdcm->cidl);
+
+    ItemMenu_Constructor(folder, folder_pidl, (const LPCITEMIDLIST*)pdcm->apidl, pdcm->cidl, &IID_IContextMenu, (void**)&system_menu);
     ret = SHELL_CreateContextMenu(pdcm->hwnd,system_menu,folder,folder_pidl,(LPCITEMIDLIST*)pdcm->apidl,pdcm->cidl,pdcm->aKeys,pdcm->cKeys,riid,ppv);
     IContextMenu_Release(system_menu);
     ILFree(folder_pidl);

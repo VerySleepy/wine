@@ -24,6 +24,7 @@
 
 #include <stdarg.h>
 #include <string.h>
+#include <stdio.h>
 #include <sys/types.h>
 
 #ifdef HAVE_NETINET_IN_H
@@ -146,7 +147,9 @@ static DNS_STATUS dns_map_h_errno( int error )
     case HOST_NOT_FOUND: return DNS_ERROR_RCODE_NAME_ERROR;
     case TRY_AGAIN:      return DNS_ERROR_RCODE_SERVER_FAILURE;
     case NO_RECOVERY:    return DNS_ERROR_RCODE_REFUSED;
+#ifdef NETDB_INTERNAL
     case NETDB_INTERNAL: return DNS_ERROR_RCODE;
+#endif
     default:
         FIXME( "unmapped error code: %d\n", error );
         return DNS_ERROR_RCODE_NOT_IMPLEMENTED;
@@ -159,8 +162,7 @@ static char *dns_dname_from_msg( ns_msg msg, const unsigned char *pos )
     char *str, dname[NS_MAXDNAME] = ".";
 
     /* returns *compressed* length, ignore it */
-    len = dns_ns_name_uncompress( ns_msg_base( msg ), ns_msg_end( msg ),
-                                  pos, dname, sizeof(dname) );
+    dns_ns_name_uncompress( ns_msg_base(msg), ns_msg_end(msg), pos, dname, sizeof(dname) );
 
     len = strlen( dname );
     str = heap_alloc( len + 1 );
@@ -564,7 +566,7 @@ static DNS_STATUS dns_get_serverlist( PIP4_ARRAY addrs, PDWORD len )
     unsigned int size;
     int i;
 
-    size = sizeof(IP4_ARRAY) + sizeof(IP4_ADDRESS) * (_res.nscount - 1);
+    size = FIELD_OFFSET(IP4_ARRAY, AddrArray[_res.nscount]);
     if (!addrs || *len < size)
     {
         *len = size;
@@ -579,13 +581,13 @@ static DNS_STATUS dns_get_serverlist( PIP4_ARRAY addrs, PDWORD len )
     return ERROR_SUCCESS;
 }
 
-static DNS_STATUS dns_do_query( PCSTR name, WORD type, DWORD options,
-                                PDNS_RECORDA *result )
+#define DNS_MAX_PACKET_SIZE 4096
+static DNS_STATUS dns_do_query( PCSTR name, WORD type, DWORD options, PDNS_RECORDA *result )
 {
     DNS_STATUS ret = DNS_ERROR_RCODE_NOT_IMPLEMENTED;
 
     unsigned int i, num;
-    unsigned char answer[NS_PACKETSZ];
+    unsigned char answer[DNS_MAX_PACKET_SIZE];
     ns_sect sections[] = { ns_s_an, ns_s_ar };
     ns_msg msg;
 

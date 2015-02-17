@@ -1,9 +1,6 @@
-EXTRADEFS = -DWINE_NO_UNICODE_MACROS
 MODULE    = winepath.exe
 APPMODE   = -mconsole -municode
 
 C_SRCS = winepath.c
 
-MANPAGE = winepath.man
-
-@MAKE_PROG_RULES@
+MANPAGES = winepath.man.in

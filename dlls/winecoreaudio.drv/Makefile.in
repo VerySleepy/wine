@@ -1,7 +1,7 @@
 MODULE    = winecoreaudio.drv
 IMPORTS   = uuid ole32 user32
 DELAYIMPORTS = winmm
-EXTRALIBS = @COREAUDIO@
+EXTRALIBS = $(COREAUDIO_LIBS)
 
 C_SRCS = \
 	audiounit.c \
@@ -9,5 +9,3 @@ C_SRCS = \
 	coremidi.c \
 	midi.c \
 	mmdevdrv.c
-
-@MAKE_DLL_RULES@

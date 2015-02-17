@@ -29,12 +29,25 @@
 #include "winuser.h"
 #include "winnls.h"
 #include "winternl.h"
+#include "controls.h"
 #include "user_private.h"
 
 #include "wine/unicode.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(win);
+
+#define IMM_INIT_MAGIC 0x19650412
+static HWND (WINAPI *imm_get_ui_window)(HKL);
+
+/* MSIME messages */
+static UINT WM_MSIME_SERVICE;
+static UINT WM_MSIME_RECONVERTOPTIONS;
+static UINT WM_MSIME_MOUSE;
+static UINT WM_MSIME_RECONVERTREQUEST;
+static UINT WM_MSIME_RECONVERT;
+static UINT WM_MSIME_QUERYPOSITION;
+static UINT WM_MSIME_DOCUMENTFEED;
 
 /* USER signal proc flags and codes */
 /* See UserSignalProc for comments */
@@ -321,12 +334,14 @@ static BOOL CALLBACK monitor_enum( HMONITOR monitor, HDC hdc, LPRECT rect, LPARA
     else if (!info->max_area)  /* if not intersecting, check for min distance */
     {
         UINT distance;
-        INT x, y;
+        UINT x, y;
 
-        if (rect->left >= info->rect.right) x = info->rect.right - rect->left;
-        else x = rect->right - info->rect.left;
-        if (rect->top >= info->rect.bottom) y = info->rect.bottom - rect->top;
-        else y = rect->bottom - info->rect.top;
+        if (info->rect.right <= rect->left) x = rect->left - info->rect.right;
+        else if (rect->right <= info->rect.left) x = info->rect.left - rect->right;
+        else x = 0;
+        if (info->rect.bottom <= rect->top) y = rect->top - info->rect.bottom;
+        else if (rect->bottom <= info->rect.top) y = info->rect.top - rect->bottom;
+        else y = 0;
         distance = x * x + y * y;
         if (distance < info->min_distance)
         {
@@ -351,15 +366,19 @@ HMONITOR WINAPI MonitorFromRect( LPRECT rect, DWORD flags )
 {
     struct monitor_enum_info info;
 
-    /* make sure the desktop window exists */
-    GetDesktopWindow();
-
     info.rect         = *rect;
     info.max_area     = 0;
     info.min_distance = ~0u;
     info.primary      = 0;
     info.nearest      = 0;
     info.ret          = 0;
+
+    if (IsRectEmpty(&info.rect))
+    {
+        info.rect.right = info.rect.left + 1;
+        info.rect.bottom = info.rect.top + 1;
+    }
+
     if (!EnumDisplayMonitors( 0, NULL, monitor_enum, (LPARAM)&info )) return 0;
     if (!info.ret)
     {
@@ -413,6 +432,9 @@ BOOL WINAPI GetMonitorInfoA(HMONITOR hMonitor, LPMONITORINFO lpMonitorInfo)
     MONITORINFOEXA *miA = (MONITORINFOEXA*)lpMonitorInfo;
     BOOL ret;
 
+    if((miA->cbSize != sizeof(MONITORINFOEXA)) && (miA->cbSize != sizeof(MONITORINFO)))
+        return FALSE;
+
     miW.cbSize = sizeof(miW);
 
     ret = GetMonitorInfoW(hMonitor, (MONITORINFO*)&miW);
@@ -421,7 +443,7 @@ BOOL WINAPI GetMonitorInfoA(HMONITOR hMonitor, LPMONITORINFO lpMonitorInfo)
     miA->rcMonitor = miW.rcMonitor;
     miA->rcWork = miW.rcWork;
     miA->dwFlags = miW.dwFlags;
-    if(miA->cbSize >= offsetof(MONITORINFOEXA, szDevice) + sizeof(miA->szDevice))
+    if(miA->cbSize == sizeof(MONITORINFOEXA))
         WideCharToMultiByte(CP_ACP, 0, miW.szDevice, -1, miA->szDevice, sizeof(miA->szDevice), NULL, NULL);
     return ret;
 }
@@ -431,7 +453,12 @@ BOOL WINAPI GetMonitorInfoA(HMONITOR hMonitor, LPMONITORINFO lpMonitorInfo)
  */
 BOOL WINAPI GetMonitorInfoW(HMONITOR hMonitor, LPMONITORINFO lpMonitorInfo)
 {
-    BOOL ret = USER_Driver->pGetMonitorInfo( hMonitor, lpMonitorInfo );
+    BOOL ret;
+
+    if (lpMonitorInfo->cbSize != sizeof(MONITORINFOEXW) && lpMonitorInfo->cbSize != sizeof(MONITORINFO))
+        return FALSE;
+
+    ret = USER_Driver->pGetMonitorInfo( hMonitor, lpMonitorInfo );
     if (ret)
         TRACE("flags %04x, monitor %s, work %s\n", lpMonitorInfo->dwFlags,
               wine_dbgstr_rect(&lpMonitorInfo->rcMonitor),
@@ -461,7 +488,7 @@ void WINAPI RegisterSystemThread(DWORD flags, DWORD reserved)
 BOOL WINAPI RegisterShellHookWindow ( HWND hWnd )
 {
     FIXME("(%p): stub\n", hWnd);
-    return 0;
+    return FALSE;
 }
 
 
@@ -505,7 +532,7 @@ HDEVNOTIFY WINAPI RegisterDeviceNotificationA(HANDLE hnd, LPVOID notifyfilter, D
  * notifications about a device.
  *
  * PARAMS
- *     hRecepient           [I] Window or service status handle that
+ *     hRecipient           [I] Window or service status handle that
  *                              will receive notifications.
  *     pNotificationFilter  [I] DEV_BROADCAST_HDR followed by some
  *                              type-specific data.
@@ -518,13 +545,13 @@ HDEVNOTIFY WINAPI RegisterDeviceNotificationA(HANDLE hnd, LPVOID notifyfilter, D
  * NOTES
  *
  * The dwFlags parameter can be one of two values:
- *| DEVICE_NOTIFY_WINDOW_HANDLE  - hRecepient is a window handle
- *| DEVICE_NOTIFY_SERVICE_HANDLE - hRecepient is a service status handle
+ *| DEVICE_NOTIFY_WINDOW_HANDLE  - hRecipient is a window handle
+ *| DEVICE_NOTIFY_SERVICE_HANDLE - hRecipient is a service status handle
  */
-HDEVNOTIFY WINAPI RegisterDeviceNotificationW(HANDLE hRecepient, LPVOID pNotificationFilter, DWORD dwFlags)
+HDEVNOTIFY WINAPI RegisterDeviceNotificationW(HANDLE hRecipient, LPVOID pNotificationFilter, DWORD dwFlags)
 {
     FIXME("(hwnd=%p, filter=%p,flags=0x%08x) returns a fake device notification handle!\n",
-          hRecepient,pNotificationFilter,dwFlags );
+          hRecipient,pNotificationFilter,dwFlags );
     return (HDEVNOTIFY) 0xcafeaffe;
 }
 
@@ -583,10 +610,32 @@ VOID WINAPI LoadLocalFonts(VOID)
 /***********************************************************************
  *		User32InitializeImmEntryTable
  */
-BOOL WINAPI User32InitializeImmEntryTable(LPVOID ptr)
+BOOL WINAPI User32InitializeImmEntryTable(DWORD magic)
 {
-  FIXME("(%p): stub\n", ptr);
-  return TRUE;
+    static const WCHAR imm32_dllW[] = {'i','m','m','3','2','.','d','l','l',0};
+    HMODULE imm32 = GetModuleHandleW(imm32_dllW);
+
+    TRACE("(%x)\n", magic);
+
+    if (!imm32 || magic != IMM_INIT_MAGIC)
+        return FALSE;
+
+    if (imm_get_ui_window)
+        return TRUE;
+
+    WM_MSIME_SERVICE = RegisterWindowMessageA("MSIMEService");
+    WM_MSIME_RECONVERTOPTIONS = RegisterWindowMessageA("MSIMEReconvertOptions");
+    WM_MSIME_MOUSE = RegisterWindowMessageA("MSIMEMouseOperation");
+    WM_MSIME_RECONVERTREQUEST = RegisterWindowMessageA("MSIMEReconvertRequest");
+    WM_MSIME_RECONVERT = RegisterWindowMessageA("MSIMEReconvert");
+    WM_MSIME_QUERYPOSITION = RegisterWindowMessageA("MSIMEQueryPosition");
+    WM_MSIME_DOCUMENTFEED = RegisterWindowMessageA("MSIMEDocumentFeed");
+
+    /* this part is not compatible with native imm32.dll */
+    imm_get_ui_window = (void*)GetProcAddress(imm32, "__wine_get_ui_window");
+    if (!imm_get_ui_window)
+        FIXME("native imm32.dll not supported\n");
+    return TRUE;
 }
 
 /**********************************************************************
@@ -650,4 +699,117 @@ VOID WINAPI DisableProcessWindowsGhosting(VOID)
   FIXME(": stub\n");
   SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
   return;
+}
+
+/**********************************************************************
+ * UserHandleGrantAccess [USER32.@]
+ *
+ */
+BOOL WINAPI UserHandleGrantAccess(HANDLE handle, HANDLE job, BOOL grant)
+{
+    FIXME("(%p,%p,%d): stub\n", handle, job, grant);
+    return TRUE;
+}
+
+/**********************************************************************
+ * RegisterPowerSettingNotification [USER32.@]
+ */
+HPOWERNOTIFY WINAPI RegisterPowerSettingNotification(HANDLE recipient, const GUID *guid, DWORD flags)
+{
+    FIXME("(%p,%s,%x): stub\n", recipient, debugstr_guid(guid), flags);
+    return NULL;
+}
+
+/**********************************************************************
+ * SetGestureConfig [USER32.@]
+ */
+BOOL WINAPI SetGestureConfig( HWND hwnd, DWORD reserved, UINT id, PGESTURECONFIG config, UINT size )
+{
+    FIXME("(%p %08x %u %p %u): stub\n", hwnd, reserved, id, config, size);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+/**********************************************************************
+ * IsTouchWindow [USER32.@]
+ */
+BOOL WINAPI IsTouchWindow( HWND hwnd, PULONG flags )
+{
+    FIXME("(%p %p): stub\n", hwnd, flags);
+    return FALSE;
+}
+
+static const WCHAR imeW[] = {'I','M','E',0};
+const struct builtin_class_descr IME_builtin_class =
+{
+    imeW,               /* name */
+    0,                  /* style  */
+    WINPROC_IME,        /* proc */
+    2*sizeof(LONG_PTR), /* extra */
+    IDC_ARROW,          /* cursor */
+    0                   /* brush */
+};
+
+static BOOL is_ime_ui_msg( UINT msg )
+{
+    switch(msg) {
+    case WM_IME_STARTCOMPOSITION:
+    case WM_IME_ENDCOMPOSITION:
+    case WM_IME_COMPOSITION:
+    case WM_IME_SETCONTEXT:
+    case WM_IME_NOTIFY:
+    case WM_IME_CONTROL:
+    case WM_IME_COMPOSITIONFULL:
+    case WM_IME_SELECT:
+    case WM_IME_CHAR:
+    case WM_IME_REQUEST:
+    case WM_IME_KEYDOWN:
+    case WM_IME_KEYUP:
+        return TRUE;
+    default:
+        if ((msg == WM_MSIME_RECONVERTOPTIONS) ||
+                (msg == WM_MSIME_SERVICE) ||
+                (msg == WM_MSIME_MOUSE) ||
+                (msg == WM_MSIME_RECONVERTREQUEST) ||
+                (msg == WM_MSIME_RECONVERT) ||
+                (msg == WM_MSIME_QUERYPOSITION) ||
+                (msg == WM_MSIME_DOCUMENTFEED))
+            return TRUE;
+
+        return FALSE;
+    }
+}
+
+LRESULT WINAPI ImeWndProcA( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam )
+{
+    HWND uiwnd;
+
+    if (msg==WM_CREATE || msg==WM_NCCREATE)
+        return TRUE;
+
+    if (imm_get_ui_window && is_ime_ui_msg(msg))
+    {
+        if ((uiwnd = imm_get_ui_window(GetKeyboardLayout(0))))
+            return SendMessageA(uiwnd, msg, wParam, lParam);
+        return FALSE;
+    }
+
+    return DefWindowProcA(hwnd, msg, wParam, lParam);
+}
+
+LRESULT WINAPI ImeWndProcW( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam )
+{
+    HWND uiwnd;
+
+    if (msg==WM_CREATE || msg==WM_NCCREATE)
+        return TRUE;
+
+    if (imm_get_ui_window && is_ime_ui_msg(msg))
+    {
+        if ((uiwnd = imm_get_ui_window(GetKeyboardLayout(0))))
+            return SendMessageW(uiwnd, msg, wParam, lParam);
+        return FALSE;
+    }
+
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
 }

@@ -139,9 +139,9 @@ static DWORD map_file(const char *file_name, const char **ret)
 
     size = GetFileSize(file, NULL);
 
-    map = CreateFileMapping(file, NULL, PAGE_READONLY, 0, 0, NULL);
+    map = CreateFileMappingA(file, NULL, PAGE_READONLY, 0, 0, NULL);
     CloseHandle(file);
-    ok(map != NULL, "CreateFileMapping(%s) failed: %u\n", file_name, GetLastError());
+    ok(map != NULL, "CreateFileMappingA(%s) failed: %u\n", file_name, GetLastError());
     if(!map)
         return 0;
 
@@ -276,7 +276,8 @@ static void test_output(const char *out_data, DWORD out_size, const char *exp_da
     const char *out_ptr = out_data, *exp_ptr = exp_data, *out_nl, *exp_nl, *err;
     DWORD line = 0;
     static const char todo_wine_cmd[] = {'@','t','o','d','o','_','w','i','n','e','@'};
-    BOOL is_todo_wine;
+    static const char resync_cmd[] = {'-','-','-'};
+    BOOL is_todo_wine, is_out_resync, is_exp_resync;
 
     while(out_ptr < out_data+out_size && exp_ptr < exp_data+exp_size) {
         line++;
@@ -290,6 +291,10 @@ static void test_output(const char *out_data, DWORD out_size, const char *exp_da
             exp_ptr += sizeof(todo_wine_cmd);
             winetest_start_todo("wine");
         }
+        is_exp_resync=(exp_ptr+sizeof(resync_cmd) <= exp_nl &&
+                       !memcmp(exp_ptr, resync_cmd, sizeof(resync_cmd)));
+        is_out_resync=(out_ptr+sizeof(resync_cmd) <= out_nl &&
+                       !memcmp(out_ptr, resync_cmd, sizeof(resync_cmd)));
 
         err = compare_line(out_ptr, out_nl, exp_ptr, exp_nl);
         if(err == out_nl)
@@ -298,18 +303,35 @@ static void test_output(const char *out_data, DWORD out_size, const char *exp_da
         else if(err == exp_nl)
             ok(0, "excess characters on line %d (got '%.*s', wanted '%.*s')\n",
                line, (int)(out_nl-out_ptr), out_ptr, (int)(exp_nl-exp_ptr), exp_ptr);
+        else if (!err && is_todo_wine && is_out_resync && is_exp_resync)
+            /* Consider that the todo_wine was to deal with extra lines,
+             * not for the resync line itself
+             */
+            err = NULL;
         else
             ok(!err, "unexpected char 0x%x position %d in line %d (got '%.*s', wanted '%.*s')\n",
                (err ? *err : 0), (err ? (int)(err-out_ptr) : -1), line, (int)(out_nl-out_ptr), out_ptr, (int)(exp_nl-exp_ptr), exp_ptr);
 
         if(is_todo_wine) winetest_end_todo("wine");
 
-        exp_ptr = exp_nl+1;
-        out_ptr = out_nl+1;
-        if(out_nl+1 < out_data+out_size && out_nl[0] == '\r' && out_nl[1] == '\n')
-            out_ptr++;
-        if(exp_nl+1 < exp_data+exp_size && exp_nl[0] == '\r' && exp_nl[1] == '\n')
-            exp_ptr++;
+        if (is_exp_resync && err && is_todo_wine)
+        {
+            exp_ptr -= sizeof(todo_wine_cmd);
+            /* If we rewind to the beginning of the line, don't increment line number */
+            line--;
+        }
+        else if (!is_exp_resync || (is_exp_resync && !err))
+        {
+            exp_ptr = exp_nl+1;
+            if(exp_nl+1 < exp_data+exp_size && exp_nl[0] == '\r' && exp_nl[1] == '\n')
+                exp_ptr++;
+        }
+        if (!is_out_resync || (is_out_resync && !err))
+        {
+            out_ptr = out_nl+1;
+            if(out_nl+1 < out_data+out_size && out_nl[0] == '\r' && out_nl[1] == '\n')
+                out_ptr++;
+        }
     }
 
     ok(exp_ptr >= exp_data+exp_size, "unexpected end of output in line %d, missing %s\n", line, exp_ptr);
@@ -386,7 +408,7 @@ static DWORD load_resource(const char *name, const char *type, const char **ret)
     return size;
 }
 
-static BOOL WINAPI test_enum_proc(HMODULE module, LPCTSTR type, LPSTR name, LONG_PTR param)
+static BOOL WINAPI test_enum_proc(HMODULE module, LPCSTR type, LPSTR name, LONG_PTR param)
 {
     const char *cmd_data, *out_data;
     DWORD cmd_size, out_size;
@@ -437,8 +459,14 @@ START_TEST(batch)
     drive[0] = workdir[0];
     drive[1] = workdir[1]; /* Should be ':' */
     memcpy(path, workdir + drive_len, (workdir_len - drive_len) * sizeof(drive[0]));
-    path[workdir_len - drive_len] = '\\';
-    path_len = workdir_len - drive_len + 1;
+
+    /* Only add trailing backslash to 'path' for non-root directory */
+    if (workdir_len - drive_len > 1) {
+        path[workdir_len - drive_len] = '\\';
+        path_len = workdir_len - drive_len + 1;
+    } else {
+        path_len = 1; /* \ */
+    }
     shortpath_len = GetShortPathNameA(path, shortpath,
                                       sizeof(shortpath)/sizeof(shortpath[0]));
 

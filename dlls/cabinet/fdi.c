@@ -536,70 +536,27 @@ static BOOL FDI_read_entries(
         PMORE_ISCAB_INFO pmii)
 {
   int num_folders, num_files, header_resv, folder_resv = 0;
-  LONG base_offset, cabsize;
+  LONG cabsize;
   USHORT setid, cabidx, flags;
   cab_UBYTE buf[64], block_resv;
   char *prevname = NULL, *previnfo = NULL, *nextname = NULL, *nextinfo = NULL;
 
   TRACE("(fdi == ^%p, hf == %ld, pfdici == ^%p)\n", fdi, hf, pfdici);
 
-  /* 
-   * FIXME: I just noticed that I am memorizing the initial file pointer
-   * offset and restoring it before reading in the rest of the header
-   * information in the cabinet.  Perhaps that's correct -- that is, perhaps
-   * this API is supposed to support "streaming" cabinets which are embedded
-   * in other files, or cabinets which begin at file offsets other than zero.
-   * Otherwise, I should instead go to the absolute beginning of the file.
-   * (Either way, the semantics of wine's FDICopy require me to leave the
-   * file pointer where it is afterwards -- If Windows does not do so, we
-   * ought to duplicate the native behavior in the FDIIsCabinet API, not here.
-   * 
-   * So, the answer lies in Windows; will native cabinet.dll recognize a
-   * cabinet "file" embedded in another file?  Note that cabextract.c does
-   * support this, which implies that Microsoft's might.  I haven't tried it
-   * yet so I don't know.  ATM, most of wine's FDI cabinet routines (except
-   * this one) would not work in this way.  To fix it, we could just make the
-   * various references to absolute file positions in the code relative to an
-   * initial "beginning" offset.  Because the FDICopy API doesn't take a
-   * file-handle like this one, we would therein need to search through the
-   * file for the beginning of the cabinet (as we also do in cabextract.c).
-   * Note that this limits us to a maximum of one cabinet per. file: the first.
-   *
-   * So, in summary: either the code below is wrong, or the rest of fdi.c is
-   * wrong... I cannot imagine that both are correct ;)  One of these flaws
-   * should be fixed after determining the behavior on Windows.   We ought
-   * to check both FDIIsCabinet and FDICopy for the right behavior.
-   *
-   * -gmt
-   */
-
-  /* get basic offset & size info */
-  base_offset = FDI_getoffset(fdi, hf);
-
-  if (fdi->seek(hf, 0, SEEK_END) == -1) {
-    if (pmii) set_error( fdi, FDIERROR_NOT_A_CABINET, 0 );
-    return FALSE;
-  }
-
-  cabsize = FDI_getoffset(fdi, hf);
-
-  if ((cabsize == -1) || (base_offset == -1) || 
-      ( fdi->seek(hf, base_offset, SEEK_SET) == -1 )) {
-    if (pmii) set_error( fdi, FDIERROR_NOT_A_CABINET, 0 );
-    return FALSE;
-  }
-
   /* read in the CFHEADER */
   if (fdi->read(hf, buf, cfhead_SIZEOF) != cfhead_SIZEOF) {
     if (pmii) set_error( fdi, FDIERROR_NOT_A_CABINET, 0 );
     return FALSE;
   }
-  
+
   /* check basic MSCF signature */
   if (EndGetI32(buf+cfhead_Signature) != 0x4643534d) {
     if (pmii) set_error( fdi, FDIERROR_NOT_A_CABINET, 0 );
     return FALSE;
   }
+
+  /* get the cabinet size */
+  cabsize = EndGetI32(buf+cfhead_CabinetSize);
 
   /* get the number of folders */
   num_folders = EndGetI16(buf+cfhead_NumFolders);
@@ -703,14 +660,14 @@ static BOOL FDI_read_entries(
   pfdici->cFiles    = num_files;
   pfdici->setID     = setid;
   pfdici->iCabinet  = cabidx;
-  pfdici->fReserve  = (flags & cfheadRESERVE_PRESENT) ? TRUE : FALSE;
-  pfdici->hasprev   = (flags & cfheadPREV_CABINET) ? TRUE : FALSE;
-  pfdici->hasnext   = (flags & cfheadNEXT_CABINET) ? TRUE : FALSE;
+  pfdici->fReserve  = (flags & cfheadRESERVE_PRESENT) != 0;
+  pfdici->hasprev   = (flags & cfheadPREV_CABINET) != 0;
+  pfdici->hasnext   = (flags & cfheadNEXT_CABINET) != 0;
   return TRUE;
 }
 
 /***********************************************************************
- *		FDIIsCabinet (CABINET.21)
+ * FDIIsCabinet (CABINET.21)
  *
  * Informs the caller as to whether or not the provided file handle is
  * really a cabinet or not, filling out the provided PFDICABINETINFO
@@ -725,7 +682,7 @@ static BOOL FDI_read_entries(
  *               be filled out with information about the cabinet
  *               file indicated by hf if, indeed, it is determined
  *               to be a cabinet.
- * 
+ *
  * RETURNS
  *   TRUE  if the file is a cabinet.  The info pointed to by pfdici will
  *         be provided.
@@ -736,10 +693,7 @@ static BOOL FDI_read_entries(
  * INCLUDES
  *   fdi.c
  */
-BOOL __cdecl FDIIsCabinet(
-	HFDI            hfdi,
-	INT_PTR         hf,
-	PFDICABINETINFO pfdici)
+BOOL __cdecl FDIIsCabinet(HFDI hfdi, INT_PTR hf, PFDICABINETINFO pfdici)
 {
   BOOL rv;
   FDI_Int *fdi = get_fdi_ptr( hfdi );
@@ -748,14 +702,7 @@ BOOL __cdecl FDIIsCabinet(
 
   if (!fdi) return FALSE;
 
-  if (!hf) {
-    ERR("(!hf)!\n");
-    SetLastError(ERROR_INVALID_HANDLE);
-    return FALSE;
-  }
-
   if (!pfdici) {
-    ERR("(!pfdici)!\n");
     SetLastError(ERROR_BAD_ARGUMENTS);
     return FALSE;
   }
@@ -820,20 +767,20 @@ static int QTMfdi_init(int window, int level, fdi_decomp_state *decomp_state) {
 
   /* initialize arithmetic coding models */
 
-  QTMfdi_initmodel(&QTM(model7), &QTM(m7sym)[0], 7, 0);
+  QTMfdi_initmodel(&QTM(model7), QTM(m7sym), 7, 0);
 
-  QTMfdi_initmodel(&QTM(model00), &QTM(m00sym)[0], 0x40, 0x00);
-  QTMfdi_initmodel(&QTM(model40), &QTM(m40sym)[0], 0x40, 0x40);
-  QTMfdi_initmodel(&QTM(model80), &QTM(m80sym)[0], 0x40, 0x80);
-  QTMfdi_initmodel(&QTM(modelC0), &QTM(mC0sym)[0], 0x40, 0xC0);
+  QTMfdi_initmodel(&QTM(model00), QTM(m00sym), 0x40, 0x00);
+  QTMfdi_initmodel(&QTM(model40), QTM(m40sym), 0x40, 0x40);
+  QTMfdi_initmodel(&QTM(model80), QTM(m80sym), 0x40, 0x80);
+  QTMfdi_initmodel(&QTM(modelC0), QTM(mC0sym), 0x40, 0xC0);
 
   /* model 4 depends on table size, ranges from 20 to 24  */
-  QTMfdi_initmodel(&QTM(model4), &QTM(m4sym)[0], (msz < 24) ? msz : 24, 0);
+  QTMfdi_initmodel(&QTM(model4), QTM(m4sym), (msz < 24) ? msz : 24, 0);
   /* model 5 depends on table size, ranges from 20 to 36  */
-  QTMfdi_initmodel(&QTM(model5), &QTM(m5sym)[0], (msz < 36) ? msz : 36, 0);
+  QTMfdi_initmodel(&QTM(model5), QTM(m5sym), (msz < 36) ? msz : 36, 0);
   /* model 6pos depends on table size, ranges from 20 to 42 */
-  QTMfdi_initmodel(&QTM(model6pos), &QTM(m6psym)[0], msz, 0);
-  QTMfdi_initmodel(&QTM(model6len), &QTM(m6lsym)[0], 27, 0);
+  QTMfdi_initmodel(&QTM(model6pos), QTM(m6psym), msz, 0);
+  QTMfdi_initmodel(&QTM(model6len), QTM(m6lsym), 27, 0);
 
   return DECR_OK;
 }
@@ -2046,14 +1993,14 @@ static int fdi_decomp(const struct fdi_file *fi, int savemode, fdi_decomp_state 
       /* outlen=0 means this block was the last contiguous part
          of a split block, continued in the next cabinet */
       if (outlen == 0) {
-        int pathlen, filenamelen, idx, i;
+        int pathlen, filenamelen;
         INT_PTR cabhf;
         char fullpath[MAX_PATH], userpath[256];
         FDINOTIFICATION fdin;
         FDICABINETINFO fdici;
         char emptystring = '\0';
         cab_UBYTE buf2[64];
-        int success = FALSE;
+        BOOL success = FALSE;
         struct fdi_folder *fol = NULL, *linkfol = NULL; 
         struct fdi_file   *file = NULL, *linkfile = NULL;
 
@@ -2061,28 +2008,28 @@ static int fdi_decomp(const struct fdi_file *fi, int savemode, fdi_decomp_state 
 
         /* set up the next decomp_state... */
         if (!(cab->next)) {
+          unsigned int i;
+
           if (!cab->mii.hasnext) return DECR_INPUT;
 
           if (!((cab->next = CAB(fdi)->alloc(sizeof(fdi_decomp_state)))))
             return DECR_NOMEMORY;
-        
+
           ZeroMemory(cab->next, sizeof(fdi_decomp_state));
 
           /* copy pszCabPath to userpath */
           ZeroMemory(userpath, 256);
-          pathlen = (pszCabPath) ? strlen(pszCabPath) : 0;
+          pathlen = pszCabPath ? strlen(pszCabPath) : 0;
           if (pathlen) {
-            if (pathlen < 256) {
-              for (i = 0; i <= pathlen; i++)
-                userpath[i] = pszCabPath[i];
-            } /* else we are in a weird place... let's leave it blank and see if the user fixes it */
-          } 
+            if (pathlen < 256) /* else we are in a weird place... let's leave it blank and see if the user fixes it */
+              strcpy(userpath, pszCabPath);
+          }
 
           /* initial fdintNEXT_CABINET notification */
           ZeroMemory(&fdin, sizeof(FDINOTIFICATION));
-          fdin.psz1 = (cab->mii.nextname) ? cab->mii.nextname : &emptystring;
-          fdin.psz2 = (cab->mii.nextinfo) ? cab->mii.nextinfo : &emptystring;
-          fdin.psz3 = &userpath[0];
+          fdin.psz1 = cab->mii.nextname ? cab->mii.nextname : &emptystring;
+          fdin.psz2 = cab->mii.nextinfo ? cab->mii.nextinfo : &emptystring;
+          fdin.psz3 = userpath;
           fdin.fdie = FDIERROR_NONE;
           fdin.pv = pvUser;
 
@@ -2091,7 +2038,7 @@ static int fdi_decomp(const struct fdi_file *fi, int savemode, fdi_decomp_state 
           do {
 
             pathlen = strlen(userpath);
-            filenamelen = (cab->mii.nextname) ? strlen(cab->mii.nextname) : 0;
+            filenamelen = cab->mii.nextname ? strlen(cab->mii.nextname) : 0;
 
             /* slight overestimation here to save CPU cycles in the developer's brain */
             if ((pathlen + filenamelen + 3) > MAX_PATH) {
@@ -2100,16 +2047,17 @@ static int fdi_decomp(const struct fdi_file *fi, int savemode, fdi_decomp_state 
             }
 
             /* paste the path and filename together */
-            idx = 0;
+            fullpath[0] = '\0';
             if (pathlen) {
-              for (i = 0; i < pathlen; i++) fullpath[idx++] = userpath[i];
-              if (fullpath[idx - 1] != '\\') fullpath[idx++] = '\\';
+              strcpy(fullpath, userpath);
+              if (fullpath[pathlen - 1] != '\\')
+                strcat(fullpath, "\\");
             }
-            if (filenamelen) for (i = 0; i < filenamelen; i++) fullpath[idx++] = cab->mii.nextname[i];
-            fullpath[idx] = '\0';
-        
+            if (filenamelen)
+              strcat(fullpath, cab->mii.nextname);
+
             TRACE("full cab path/file name: %s\n", debugstr_a(fullpath));
-        
+
             /* try to get a handle to the cabfile */
             cabhf = CAB(fdi)->open(fullpath, _O_RDONLY|_O_BINARY, _S_IREAD | _S_IWRITE);
             if (cabhf == -1) {
@@ -2118,14 +2066,14 @@ static int fdi_decomp(const struct fdi_file *fi, int savemode, fdi_decomp_state 
               if (((*pfnfdin)(fdintNEXT_CABINET, &fdin))) return DECR_USERABORT;
               continue;
             }
-        
+
             if (cabhf == 0) {
               ERR("PFDI_OPEN returned zero for %s.\n", fullpath);
               fdin.fdie = FDIERROR_CABINET_NOT_FOUND;
               if (((*pfnfdin)(fdintNEXT_CABINET, &fdin))) return DECR_USERABORT;
               continue;
             }
- 
+
             /* check if it's really a cabfile. Note that this doesn't implement the bug */
             if (!FDI_read_entries(CAB(fdi), cabhf, &fdici, &(cab->next->mii))) {
               WARN("FDIIsCabinet failed.\n");
@@ -2479,7 +2427,6 @@ BOOL __cdecl FDICopy(
   FDICABINETINFO    fdici;
   FDINOTIFICATION   fdin;
   INT_PTR           cabhf, filehf = 0;
-  int               idx;
   unsigned int      i;
   char              fullpath[MAX_PATH];
   size_t            pathlen, filenamelen;
@@ -2490,9 +2437,9 @@ BOOL __cdecl FDICopy(
   fdi_decomp_state *decomp_state;
   FDI_Int *fdi = get_fdi_ptr( hfdi );
 
-  TRACE("(hfdi == ^%p, pszCabinet == ^%p, pszCabPath == ^%p, flags == %0d, "
+  TRACE("(hfdi == ^%p, pszCabinet == %s, pszCabPath == %s, flags == %x, "
         "pfnfdin == ^%p, pfnfdid == ^%p, pvUser == ^%p)\n",
-        hfdi, pszCabinet, pszCabPath, flags, pfnfdin, pfnfdid, pvUser);
+        hfdi, debugstr_a(pszCabinet), debugstr_a(pszCabPath), flags, pfnfdin, pfnfdid, pvUser);
 
   if (!fdi) return FALSE;
 
@@ -2503,8 +2450,8 @@ BOOL __cdecl FDICopy(
   }
   ZeroMemory(decomp_state, sizeof(fdi_decomp_state));
 
-  pathlen = (pszCabPath) ? strlen(pszCabPath) : 0;
-  filenamelen = (pszCabinet) ? strlen(pszCabinet) : 0;
+  pathlen = pszCabPath ? strlen(pszCabPath) : 0;
+  filenamelen = pszCabinet ? strlen(pszCabinet) : 0;
 
   /* slight overestimation here to save CPU cycles in the developer's brain */
   if ((pathlen + filenamelen + 3) > MAX_PATH) {
@@ -2515,12 +2462,11 @@ BOOL __cdecl FDICopy(
   }
 
   /* paste the path and filename together */
-  idx = 0;
-  if (pathlen) {
-    for (i = 0; i < pathlen; i++) fullpath[idx++] = pszCabPath[i];
-  }
-  if (filenamelen) for (i = 0; i < filenamelen; i++) fullpath[idx++] = pszCabinet[i];
-  fullpath[idx] = '\0';
+  fullpath[0] = '\0';
+  if (pathlen)
+    strcpy(fullpath, pszCabPath);
+  if (filenamelen)
+    strcat(fullpath, pszCabinet);
 
   TRACE("full cab path/file name: %s\n", debugstr_a(fullpath));
 
@@ -2535,12 +2481,12 @@ BOOL __cdecl FDICopy(
 
   /* check if it's really a cabfile. Note that this doesn't implement the bug */
   if (!FDI_read_entries(fdi, cabhf, &fdici, &(CAB(mii)))) {
-    ERR("FDIIsCabinet failed: %u.\n", fdi->perf->erfOper);
+    WARN("FDI_read_entries failed: %u\n", fdi->perf->erfOper);
     fdi->free(decomp_state);
     fdi->close(cabhf);
     return FALSE;
   }
-   
+
   /* cabinet notification */
   ZeroMemory(&fdin, sizeof(FDINOTIFICATION));
   fdin.setID = fdici.setID;
@@ -2703,13 +2649,13 @@ BOOL __cdecl FDICopy(
 
     /* find the folder for this file if necc. */
     if (filehf) {
-      int i2;
-
       fol = CAB(firstfol);
       if ((file->index & cffileCONTINUED_TO_NEXT) == cffileCONTINUED_TO_NEXT) {
         /* pick the last folder */
         while (fol->next) fol = fol->next;
       } else {
+        unsigned int i2;
+
         for (i2 = 0; (i2 < file->index); i2++)
           if (fol->next) /* bug resistance, should always be true */
             fol = fol->next;
@@ -2815,7 +2761,7 @@ BOOL __cdecl FDICopy(
       fdin.pv = pvUser;
       fdin.psz1 = (char *)file->filename;
       fdin.hf = filehf;
-      fdin.cb = (file->attribs & cffile_A_EXEC) ? TRUE : FALSE; /* FIXME: is that right? */
+      fdin.cb = (file->attribs & cffile_A_EXEC) != 0; /* FIXME: is that right? */
       fdin.date = file->date;
       fdin.time = file->time;
       fdin.attribs = file->attribs; /* FIXME: filter _A_EXEC? */

@@ -52,7 +52,7 @@ void WINAPI DOSVM_Int16Handler( CONTEXT *context )
    BIOSDATA *data = NULL;
    BYTE ascii, scan;
 
-   switch AH_reg(context) {
+   switch (AH_reg(context)) {
 
    case 0x00: /* Get Keystroke */
       /* Returns: AH = Scan code
@@ -160,7 +160,7 @@ void WINAPI DOSVM_Int16Handler( CONTEXT *context )
  * Return value will always be TRUE and returned keystroke will be
  * removed from buffer.
  */
-int DOSVM_Int16ReadChar(BYTE *ascii, BYTE *scan, CONTEXT *waitctx)
+BOOL DOSVM_Int16ReadChar(BYTE *ascii, BYTE *scan, CONTEXT *waitctx)
 {
     BIOSDATA *data = DOSVM_BiosData();
     WORD CurOfs = data->NextKbdCharPtr;
@@ -195,7 +195,7 @@ int DOSVM_Int16ReadChar(BYTE *ascii, BYTE *scan, CONTEXT *waitctx)
     return TRUE;
 }
 
-int DOSVM_Int16AddChar(BYTE ascii,BYTE scan)
+BOOL DOSVM_Int16AddChar(BYTE ascii,BYTE scan)
 {
   BIOSDATA *data = DOSVM_BiosData();
   WORD CurOfs = data->FirstKbdCharPtr;
@@ -204,12 +204,12 @@ int DOSVM_Int16AddChar(BYTE ascii,BYTE scan)
   TRACE("(%02x,%02x)\n",ascii,scan);
   if (NextOfs >= data->KbdBufferEnd) NextOfs = data->KbdBufferStart;
   /* check if buffer is full */
-  if (NextOfs == data->NextKbdCharPtr) return 0;
+  if (NextOfs == data->NextKbdCharPtr) return FALSE;
 
   /* okay, insert character in ring buffer */
   ((BYTE*)data)[CurOfs] = ascii;
   ((BYTE*)data)[CurOfs+1] = scan;
 
   data->FirstKbdCharPtr = NextOfs;
-  return 1;
+  return TRUE;
 }

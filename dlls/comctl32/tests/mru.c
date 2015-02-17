@@ -45,7 +45,7 @@ typedef struct tagMRUINFOA
     UINT    fFlags;
     HKEY    hKey;
     LPCSTR  lpszSubKey;
-    PROC    lpfnCompare;
+    int (CALLBACK *lpfnCompare)(LPCSTR, LPCSTR);
 } MRUINFOA;
 
 typedef struct tagMRUINFOW
@@ -55,7 +55,7 @@ typedef struct tagMRUINFOW
     UINT    fFlags;
     HKEY    hKey;
     LPCWSTR lpszSubKey;
-    PROC    lpfnCompare;
+    int (CALLBACK *lpfnCompare)(LPCWSTR, LPCWSTR);
 } MRUINFOW;
 
 #define MRU_STRING     0  /* this one's invented */
@@ -221,7 +221,7 @@ static void check_reg_entries(const char *mrulist, const char**items)
     }
 }
 
-static INT CALLBACK cmp_mru_strA(LPCVOID data1, LPCVOID data2)
+static int CALLBACK cmp_mru_strA(LPCSTR data1, LPCSTR data2)
 {
     return lstrcmpiA(data1, data2);
 }
@@ -252,7 +252,7 @@ static void test_MRUListA(void)
     infoA.fFlags = MRU_STRING;
     infoA.hKey = NULL;
     infoA.lpszSubKey = REG_TEST_SUBKEYA;
-    infoA.lpfnCompare = (PROC)cmp_mru_strA;
+    infoA.lpfnCompare = cmp_mru_strA;
 
     SetLastError(0);
     hMRU = pCreateMRUListA(&infoA);
@@ -266,7 +266,7 @@ static void test_MRUListA(void)
     infoA.fFlags = MRU_STRING;
     infoA.hKey = NULL;
     infoA.lpszSubKey = REG_TEST_SUBKEYA;
-    infoA.lpfnCompare = (PROC)cmp_mru_strA;
+    infoA.lpfnCompare = cmp_mru_strA;
 
     SetLastError(0);
     hMRU = pCreateMRUListA(&infoA);
@@ -280,7 +280,7 @@ static void test_MRUListA(void)
     infoA.fFlags = MRU_STRING;
     infoA.hKey = NULL;
     infoA.lpszSubKey = REG_TEST_SUBKEYA;
-    infoA.lpfnCompare = (PROC)cmp_mru_strA;
+    infoA.lpfnCompare = cmp_mru_strA;
 
     SetLastError(0);
     hMRU = pCreateMRUListA(&infoA);
@@ -294,7 +294,7 @@ static void test_MRUListA(void)
     infoA.fFlags = MRU_STRING;
     infoA.hKey = NULL;
     infoA.lpszSubKey = NULL;
-    infoA.lpfnCompare = (PROC)cmp_mru_strA;
+    infoA.lpfnCompare = cmp_mru_strA;
 
     SetLastError(0);
     hMRU = pCreateMRUListA(&infoA);
@@ -312,7 +312,7 @@ static void test_MRUListA(void)
     infoA.fFlags = MRU_STRING;
     infoA.hKey = hKey;
     infoA.lpszSubKey = REG_TEST_SUBKEYA;
-    infoA.lpfnCompare = (PROC)cmp_mru_strA;
+    infoA.lpfnCompare = cmp_mru_strA;
 
     hMRU = pCreateMRUListA(&infoA);
     ok(hMRU && !GetLastError(),
@@ -409,7 +409,7 @@ static void test_MRUListA(void)
         /* check entry 0 */
         buffer[0] = 0;
         iRet = pEnumMRUListA(hMRU, 0, buffer, 255);
-        ok(iRet == lstrlen(checks[3]), "EnumMRUList expected %d, got %d\n", lstrlen(checks[3]), iRet);
+        ok(iRet == lstrlenA(checks[3]), "EnumMRUList expected %d, got %d\n", lstrlenA(checks[3]), iRet);
         ok(strcmp(buffer, checks[3]) == 0, "EnumMRUList expected %s, got %s\n", checks[3], buffer);
 
         /* check entry 0 with a too small buffer */
@@ -418,7 +418,7 @@ static void test_MRUListA(void)
         buffer[2] = 'A'; /* unchanged */
         buffer[3] = 0;   /* unchanged */
         iRet = pEnumMRUListA(hMRU, 0, buffer, 2);
-        ok(iRet == lstrlen(checks[3]), "EnumMRUList expected %d, got %d\n", lstrlen(checks[3]), iRet);
+        ok(iRet == lstrlenA(checks[3]), "EnumMRUList expected %d, got %d\n", lstrlenA(checks[3]), iRet);
         ok(strcmp(buffer, "T") == 0, "EnumMRUList expected %s, got %s\n", "T", buffer);
         /* make sure space after buffer has old values */
         ok(buffer[2] == 'A', "EnumMRUList expected %02x, got %02x\n", 'A', buffer[2]);
@@ -426,13 +426,13 @@ static void test_MRUListA(void)
         /* check entry 1 */
         buffer[0] = 0;
         iRet = pEnumMRUListA(hMRU, 1, buffer, 255);
-        ok(iRet == lstrlen(checks[1]), "EnumMRUList expected %d, got %d\n", lstrlen(checks[1]), iRet);
+        ok(iRet == lstrlenA(checks[1]), "EnumMRUList expected %d, got %d\n", lstrlenA(checks[1]), iRet);
         ok(strcmp(buffer, checks[1]) == 0, "EnumMRUList expected %s, got %s\n", checks[1], buffer);
 
         /* check entry 2 */
         buffer[0] = 0;
         iRet = pEnumMRUListA(hMRU, 2, buffer, 255);
-        ok(iRet == lstrlen(checks[2]), "EnumMRUList expected %d, got %d\n", lstrlen(checks[2]), iRet);
+        ok(iRet == lstrlenA(checks[2]), "EnumMRUList expected %d, got %d\n", lstrlenA(checks[2]), iRet);
         ok(strcmp(buffer, checks[2]) == 0, "EnumMRUList expected %s, got %s\n", checks[2], buffer);
 
         /* check out of bounds entry 3 */
@@ -448,11 +448,26 @@ static void test_MRUListA(void)
     /* FreeMRUList(NULL) crashes on Win98 OSR0 */
 }
 
+typedef struct {
+    MRUINFOA mruA;
+    BOOL ret;
+} create_lazya_t;
+
+static const create_lazya_t create_lazyA[] = {
+    {{ sizeof(MRUINFOA) + 1, 0, 0, HKEY_CURRENT_USER, NULL, NULL }, FALSE },
+    {{ sizeof(MRUINFOA) - 1, 0, 0, HKEY_CURRENT_USER, NULL, NULL }, FALSE },
+    {{ sizeof(MRUINFOA) + 1, 0, 0, HKEY_CURRENT_USER, "WineTest", NULL }, TRUE },
+    {{ sizeof(MRUINFOA) - 1, 0, 0, HKEY_CURRENT_USER, "WineTest", NULL }, TRUE },
+    {{ sizeof(MRUINFOA), 0, 0, HKEY_CURRENT_USER, "WineTest", NULL }, TRUE },
+    {{ sizeof(MRUINFOA), 0, 0, HKEY_CURRENT_USER, NULL, NULL }, FALSE },
+    {{ sizeof(MRUINFOA), 0, 0, NULL, "WineTest", NULL }, FALSE },
+    {{ 0, 0, 0, NULL, "WineTest", NULL }, FALSE },
+    {{ 0, 0, 0, HKEY_CURRENT_USER, "WineTest", NULL }, TRUE }
+};
+
 static void test_CreateMRUListLazyA(void)
 {
-    HANDLE hMRU;
-    HKEY hKey;
-    MRUINFOA listA = { 0 };
+    int i;
 
     if (!pCreateMRUListLazyA || !pFreeMRUList)
     {
@@ -460,28 +475,20 @@ static void test_CreateMRUListLazyA(void)
         return;
     }
 
-    /* wrong size */
-    listA.cbSize = sizeof(listA) + 1;
-    hMRU = pCreateMRUListLazyA(&listA, 0, 0, 0);
-    ok(hMRU == NULL, "Expected NULL handle, got %p\n", hMRU);
-    listA.cbSize = 4;
-    hMRU = pCreateMRUListLazyA(&listA, 0, 0, 0);
-    ok(hMRU == NULL, "Expected NULL handle, got %p\n", hMRU);
-    /* NULL hKey */
-    listA.cbSize = sizeof(listA);
-    listA.hKey = NULL;
-    hMRU = pCreateMRUListLazyA(&listA, 0, 0, 0);
-    ok(hMRU == NULL, "Expected NULL handle, got %p\n", hMRU);
-    /* NULL subkey */
-    ok(!RegCreateKeyA(HKEY_CURRENT_USER, REG_TEST_KEYA, &hKey),
-       "Couldn't create test key \"%s\"\n", REG_TEST_KEYA);
-    listA.cbSize = sizeof(listA);
-    listA.hKey = hKey;
-    listA.lpszSubKey = NULL;
-    hMRU = pCreateMRUListLazyA(&listA, 0, 0, 0);
-    ok(hMRU == NULL || broken(hMRU != NULL), /* Win9x */
-       "Expected NULL handle, got %p\n", hMRU);
-    if (hMRU) pFreeMRUList(hMRU);
+    for (i = 0; i < sizeof(create_lazyA)/sizeof(create_lazya_t); i++)
+    {
+        const create_lazya_t *ptr = &create_lazyA[i];
+        HANDLE hMRU;
+
+        hMRU = pCreateMRUListLazyA((MRUINFOA*)&ptr->mruA, 0, 0, 0);
+        if (ptr->ret)
+        {
+            ok(hMRU != NULL, "%d: got %p\n", i, hMRU);
+            pFreeMRUList(hMRU);
+        }
+        else
+            ok(hMRU == NULL, "%d: got %p\n", i, hMRU);
+    }
 }
 
 static void test_EnumMRUList(void)

@@ -147,6 +147,7 @@ struct file_load_info
 
 static void key_dump( struct object *obj, int verbose );
 static unsigned int key_map_access( struct object *obj, unsigned int access );
+static struct security_descriptor *key_get_sd( struct object *obj );
 static int key_close_handle( struct object *obj, struct process *process, obj_handle_t handle );
 static void key_destroy( struct object *obj );
 
@@ -162,7 +163,7 @@ static const struct object_ops key_ops =
     no_signal,               /* signal */
     no_get_fd,               /* get_fd */
     key_map_access,          /* map_access */
-    default_get_sd,          /* get_sd */
+    key_get_sd,              /* get_sd */
     default_set_sd,          /* set_sd */
     no_lookup_name,          /* lookup_name */
     no_open_file,            /* open_file */
@@ -334,6 +335,52 @@ static unsigned int key_map_access( struct object *obj, unsigned int access )
     /* filter the WOW64 masks, as they aren't real access bits */
     return access & ~(GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL |
                       KEY_WOW64_64KEY | KEY_WOW64_32KEY);
+}
+
+static struct security_descriptor *key_get_sd( struct object *obj )
+{
+    static struct security_descriptor *key_default_sd;
+
+    if (obj->sd) return obj->sd;
+
+    if (!key_default_sd)
+    {
+        size_t users_sid_len = security_sid_len( security_builtin_users_sid );
+        size_t admins_sid_len = security_sid_len( security_builtin_admins_sid );
+        size_t dacl_len = sizeof(ACL) + 2 * offsetof( ACCESS_ALLOWED_ACE, SidStart )
+                          + users_sid_len + admins_sid_len;
+        ACCESS_ALLOWED_ACE *aaa;
+        ACL *dacl;
+
+        key_default_sd = mem_alloc( sizeof(*key_default_sd) + 2 * admins_sid_len + dacl_len );
+        key_default_sd->control   = SE_DACL_PRESENT;
+        key_default_sd->owner_len = admins_sid_len;
+        key_default_sd->group_len = admins_sid_len;
+        key_default_sd->sacl_len  = 0;
+        key_default_sd->dacl_len  = dacl_len;
+        memcpy( key_default_sd + 1, security_builtin_admins_sid, admins_sid_len );
+        memcpy( (char *)(key_default_sd + 1) + admins_sid_len, security_builtin_admins_sid, admins_sid_len );
+
+        dacl = (ACL *)((char *)(key_default_sd + 1) + 2 * admins_sid_len);
+        dacl->AclRevision = ACL_REVISION;
+        dacl->Sbz1 = 0;
+        dacl->AclSize = dacl_len;
+        dacl->AceCount = 2;
+        dacl->Sbz2 = 0;
+        aaa = (ACCESS_ALLOWED_ACE *)(dacl + 1);
+        aaa->Header.AceType = ACCESS_ALLOWED_ACE_TYPE;
+        aaa->Header.AceFlags = INHERIT_ONLY_ACE | CONTAINER_INHERIT_ACE;
+        aaa->Header.AceSize = offsetof( ACCESS_ALLOWED_ACE, SidStart ) + users_sid_len;
+        aaa->Mask = GENERIC_READ;
+        memcpy( &aaa->SidStart, security_builtin_users_sid, users_sid_len );
+        aaa = (ACCESS_ALLOWED_ACE *)((char *)aaa + aaa->Header.AceSize);
+        aaa->Header.AceType = ACCESS_ALLOWED_ACE_TYPE;
+        aaa->Header.AceFlags = 0;
+        aaa->Header.AceSize = offsetof( ACCESS_ALLOWED_ACE, SidStart ) + admins_sid_len;
+        aaa->Mask = KEY_ALL_ACCESS;
+        memcpy( &aaa->SidStart, security_builtin_admins_sid, admins_sid_len );
+    }
+    return key_default_sd;
 }
 
 /* close the notification associated with a handle */
@@ -817,10 +864,12 @@ static struct key *create_key_recursive( struct key *key, const struct unicode_s
 static void enum_key( const struct key *key, int index, int info_class,
                       struct enum_key_reply *reply )
 {
+    static const WCHAR backslash[] = { '\\' };
     int i;
     data_size_t len, namelen, classlen;
     data_size_t max_subkey = 0, max_class = 0;
     data_size_t max_value = 0, max_data = 0;
+    const struct key *k;
     char *data;
 
     if (index != -1)  /* -1 means use the specified key directly */
@@ -838,6 +887,13 @@ static void enum_key( const struct key *key, int index, int info_class,
 
     switch(info_class)
     {
+    case KeyNameInformation:
+        namelen = 0;
+        for (k = key; k != root_key; k = k->parent)
+            namelen += k->namelen + sizeof(backslash);
+        if (!namelen) return;
+        namelen += sizeof(root_name) - sizeof(backslash);
+        /* fall through */
     case KeyBasicInformation:
         classlen = 0; /* only return the name */
         /* fall through */
@@ -886,6 +942,21 @@ static void enum_key( const struct key *key, int index, int info_class,
             reply->namelen = namelen;
             memcpy( data, key->name, namelen );
             memcpy( data + namelen, key->class, len - namelen );
+        }
+        else if (info_class == KeyNameInformation)
+        {
+            data_size_t pos = namelen;
+            reply->namelen = namelen;
+            for (k = key; k != root_key; k = k->parent)
+            {
+                pos -= k->namelen;
+                if (pos < len) memcpy( data + pos, k->name,
+                                       min( k->namelen, len - pos ) );
+                pos -= sizeof(backslash);
+                if (pos < len) memcpy( data + pos, backslash,
+                                       min( sizeof(backslash), len - pos ) );
+            }
+            memcpy( data, root_name, min( sizeof(root_name) - sizeof(backslash), len ) );
         }
         else
         {
@@ -1690,7 +1761,7 @@ void init_registry(void)
 
     /* switch to the config dir */
 
-    if (fchdir( config_dir_fd ) == -1) fatal_perror( "chdir to config dir" );
+    if (fchdir( config_dir_fd ) == -1) fatal_error( "chdir to config dir: %s\n", strerror( errno ));
 
     /* create the root key */
     root_key = alloc_key( &root_name, current_time );
@@ -1743,7 +1814,7 @@ void init_registry(void)
     set_periodic_save_timer();
 
     /* go back to the server dir */
-    if (fchdir( server_dir_fd ) == -1) fatal_perror( "chdir to server dir" );
+    if (fchdir( server_dir_fd ) == -1) fatal_error( "chdir to server dir: %s\n", strerror( errno ));
 }
 
 /* save a registry branch to a file */
@@ -1875,7 +1946,7 @@ static void periodic_save( void *arg )
     save_timeout_user = NULL;
     for (i = 0; i < save_branch_count; i++)
         save_branch( save_branch_info[i].key, save_branch_info[i].path );
-    if (fchdir( server_dir_fd ) == -1) fatal_perror( "chdir to server dir" );
+    if (fchdir( server_dir_fd ) == -1) fatal_error( "chdir to server dir: %s\n", strerror( errno ));
     set_periodic_save_timer();
 }
 
@@ -1901,7 +1972,7 @@ void flush_registry(void)
             perror( " " );
         }
     }
-    if (fchdir( server_dir_fd ) == -1) fatal_perror( "chdir to server dir" );
+    if (fchdir( server_dir_fd ) == -1) fatal_error( "chdir to server dir: %s\n", strerror( errno ));
 }
 
 /* determine if the thread is wow64 (32-bit client running on 64-bit prefix) */

@@ -79,7 +79,7 @@ static void asmparser_constF(struct asm_parser *This, DWORD reg, float x, float 
     TRACE_(parsed_shader)("def c%u, %f, %f, %f, %f\n", reg, x, y, z, w);
     if(!add_constF(This->shader, reg, x, y, z, w)) {
         ERR("Out of memory\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
 }
 
@@ -89,7 +89,7 @@ static void asmparser_constB(struct asm_parser *This, DWORD reg, BOOL x) {
     TRACE_(parsed_shader)("def b%u, %s\n", reg, x ? "true" : "false");
     if(!add_constB(This->shader, reg, x)) {
         ERR("Out of memory\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
 }
 
@@ -99,7 +99,7 @@ static void asmparser_constI(struct asm_parser *This, DWORD reg, INT x, INT y, I
     TRACE_(parsed_shader)("def i%u, %d, %d, %d, %d\n", reg, x, y, z, w);
     if(!add_constI(This->shader, reg, x, y, z, w)) {
         ERR("Out of memory\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
 }
 
@@ -108,18 +108,18 @@ static void asmparser_dcl_output(struct asm_parser *This, DWORD usage, DWORD num
     if(!This->shader) return;
     if(This->shader->type == ST_PIXEL) {
         asmparser_message(This, "Line %u: Output register declared in a pixel shader\n", This->line_no);
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
     if(!record_declaration(This->shader, usage, num, 0, TRUE, reg->regnum, reg->u.writemask, FALSE)) {
         ERR("Out of memory\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
 }
 
 static void asmparser_dcl_output_unsupported(struct asm_parser *This, DWORD usage, DWORD num,
                                              const struct shader_reg *reg) {
     asmparser_message(This, "Line %u: Output declaration unsupported in this shader version\n", This->line_no);
-    set_parse_status(This, PARSE_ERR);
+    set_parse_status(&This->status, PARSE_ERR);
 }
 
 static void asmparser_dcl_input(struct asm_parser *This, DWORD usage, DWORD num,
@@ -132,7 +132,7 @@ static void asmparser_dcl_input(struct asm_parser *This, DWORD usage, DWORD num,
         (mod != BWRITERSPDM_MSAMPCENTROID &&
          mod != BWRITERSPDM_PARTIALPRECISION))) {
         asmparser_message(This, "Line %u: Unsupported modifier in dcl instruction\n", This->line_no);
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
         return;
     }
 
@@ -143,7 +143,7 @@ static void asmparser_dcl_input(struct asm_parser *This, DWORD usage, DWORD num,
 
     if(!record_declaration(This->shader, usage, num, mod, FALSE, reg->regnum, reg->u.writemask, FALSE)) {
         ERR("Out of memory\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
 }
 
@@ -157,7 +157,7 @@ static void asmparser_dcl_input_ps_2(struct asm_parser *This, DWORD usage, DWORD
     This->funcs->dstreg(This, &instr, reg);
     if(!record_declaration(This->shader, usage, num, mod, FALSE, instr.dst.regnum, instr.dst.u.writemask, FALSE)) {
         ERR("Out of memory\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
 }
 
@@ -165,7 +165,7 @@ static void asmparser_dcl_input_unsupported(struct asm_parser *This,
         DWORD usage, DWORD num, DWORD mod, const struct shader_reg *reg)
 {
     asmparser_message(This, "Line %u: Input declaration unsupported in this shader version\n", This->line_no);
-    set_parse_status(This, PARSE_ERR);
+    set_parse_status(&This->status, PARSE_ERR);
 }
 
 static void asmparser_dcl_sampler(struct asm_parser *This, DWORD samptype,
@@ -177,12 +177,12 @@ static void asmparser_dcl_sampler(struct asm_parser *This, DWORD samptype,
         (mod != BWRITERSPDM_MSAMPCENTROID &&
          mod != BWRITERSPDM_PARTIALPRECISION))) {
         asmparser_message(This, "Line %u: Unsupported modifier in dcl instruction\n", This->line_no);
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
         return;
     }
     if(!record_sampler(This->shader, samptype, mod, regnum)) {
         ERR("Out of memory\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
 }
 
@@ -190,7 +190,7 @@ static void asmparser_dcl_sampler_unsupported(struct asm_parser *This,
         DWORD samptype, DWORD mod, DWORD regnum, unsigned int line_no)
 {
     asmparser_message(This, "Line %u: Sampler declaration unsupported in this shader version\n", This->line_no);
-    set_parse_status(This, PARSE_ERR);
+    set_parse_status(&This->status, PARSE_ERR);
 }
 
 static void asmparser_sincos(struct asm_parser *This, DWORD mod, DWORD shift,
@@ -200,14 +200,14 @@ static void asmparser_sincos(struct asm_parser *This, DWORD mod, DWORD shift,
 
     if(!srcs || srcs->count != 3) {
         asmparser_message(This, "Line %u: sincos (vs 2) has an incorrect number of source registers\n", This->line_no);
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
         return;
     }
 
     instr = alloc_instr(3);
     if(!instr) {
         ERR("Error allocating memory for the instruction\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
         return;
     }
 
@@ -223,7 +223,7 @@ static void asmparser_sincos(struct asm_parser *This, DWORD mod, DWORD shift,
 
     if(!add_instruction(This->shader, instr)) {
         ERR("Out of memory\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
 }
 
@@ -277,14 +277,14 @@ static void asmparser_texcoord(struct asm_parser *This, DWORD mod, DWORD shift,
 
     if(srcs) {
         asmparser_message(This, "Line %u: Source registers in texcoord instruction\n", This->line_no);
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
         return;
     }
 
     instr = alloc_instr(1);
     if(!instr) {
         ERR("Error allocating memory for the instruction\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
         return;
     }
 
@@ -303,7 +303,7 @@ static void asmparser_texcoord(struct asm_parser *This, DWORD mod, DWORD shift,
 
     if(!add_instruction(This->shader, instr)) {
         ERR("Out of memory\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
 }
 
@@ -314,14 +314,14 @@ static void asmparser_texcrd(struct asm_parser *This, DWORD mod, DWORD shift,
 
     if(!srcs || srcs->count != 1) {
         asmparser_message(This, "Line %u: Wrong number of source registers in texcrd instruction\n", This->line_no);
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
         return;
     }
 
     instr = alloc_instr(1);
     if(!instr) {
         ERR("Error allocating memory for the instruction\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
         return;
     }
 
@@ -336,7 +336,7 @@ static void asmparser_texcrd(struct asm_parser *This, DWORD mod, DWORD shift,
 
     if(!add_instruction(This->shader, instr)) {
         ERR("Out of memory\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
 }
 
@@ -346,7 +346,7 @@ static void asmparser_texkill(struct asm_parser *This,
 
     if(!instr) {
         ERR("Error allocating memory for the instruction\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
         return;
     }
 
@@ -367,7 +367,7 @@ static void asmparser_texkill(struct asm_parser *This,
 
     if(!add_instruction(This->shader, instr)) {
         ERR("Out of memory\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
 }
 
@@ -378,7 +378,7 @@ static void asmparser_texhelper(struct asm_parser *This, DWORD mod, DWORD shift,
 
     if(!instr) {
         ERR("Error allocating memory for the instruction\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
         return;
     }
 
@@ -403,7 +403,7 @@ static void asmparser_texhelper(struct asm_parser *This, DWORD mod, DWORD shift,
 
     if(!add_instruction(This->shader, instr)) {
         ERR("Out of memory\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
 }
 
@@ -423,14 +423,14 @@ static void asmparser_texld14(struct asm_parser *This, DWORD mod, DWORD shift,
 
     if(!srcs || srcs->count != 1) {
         asmparser_message(This, "Line %u: texld (PS 1.4) has a wrong number of source registers\n", This->line_no);
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
         return;
     }
 
     instr = alloc_instr(2);
     if(!instr) {
         ERR("Error allocating memory for the instruction\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
         return;
     }
 
@@ -457,7 +457,7 @@ static void asmparser_texld14(struct asm_parser *This, DWORD mod, DWORD shift,
 
     if(!add_instruction(This->shader, instr)) {
         ERR("Out of memory\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
 }
 
@@ -501,11 +501,10 @@ static void asmparser_texreg2rgb(struct asm_parser *This, DWORD mod, DWORD shift
  * go through asmparser_instr).
  */
 
-static void asmparser_instr(struct asm_parser *This, DWORD opcode,
-                            DWORD mod, DWORD shift,
-                            BWRITER_COMPARISON_TYPE comp,
-                            const struct shader_reg *dst,
-                            const struct src_regs *srcs, int expectednsrcs) {
+static void asmparser_instr(struct asm_parser *This, DWORD opcode, DWORD mod, DWORD shift,
+        enum bwriter_comparison_type comp, const struct shader_reg *dst,
+        const struct src_regs *srcs, int expectednsrcs)
+{
     struct instruction *instr;
     unsigned int i;
     BOOL firstreg = TRUE;
@@ -548,7 +547,8 @@ static void asmparser_instr(struct asm_parser *This, DWORD opcode,
         case BWRITERSIO_TEX:
             /* this encodes both the tex PS 1.x instruction and the
                texld 1.4/2.0+ instruction */
-            if(This->shader->version == BWRITERPS_VERSION(1, 1) ||
+            if(This->shader->version == BWRITERPS_VERSION(1, 0) ||
+               This->shader->version == BWRITERPS_VERSION(1, 1) ||
                This->shader->version == BWRITERPS_VERSION(1, 2) ||
                This->shader->version == BWRITERPS_VERSION(1, 3)) {
                 asmparser_tex(This, mod, shift, dst);
@@ -564,7 +564,7 @@ static void asmparser_instr(struct asm_parser *This, DWORD opcode,
 
     if(src_count != expectednsrcs) {
         asmparser_message(This, "Line %u: Wrong number of source registers\n", This->line_no);
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
         return;
     }
 
@@ -587,7 +587,7 @@ static void asmparser_instr(struct asm_parser *This, DWORD opcode,
     instr = alloc_instr(src_count);
     if(!instr) {
         ERR("Error allocating memory for the instruction\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
         return;
     }
 
@@ -602,7 +602,7 @@ static void asmparser_instr(struct asm_parser *This, DWORD opcode,
 
     if(!add_instruction(This->shader, instr)) {
         ERR("Out of memory\n");
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
 }
 
@@ -675,7 +675,7 @@ static void check_legacy_srcmod(struct asm_parser *This, DWORD srcmod) {
         asmparser_message(This, "Line %u: Source modifier %s not supported in this shader version\n",
                           This->line_no,
                           debug_print_srcmod(srcmod));
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
 }
 
@@ -684,7 +684,7 @@ static void check_abs_srcmod(struct asm_parser *This, DWORD srcmod) {
         asmparser_message(This, "Line %u: Source modifier %s not supported in this shader version\n",
                           This->line_no,
                           debug_print_srcmod(srcmod));
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
 }
 
@@ -694,7 +694,7 @@ static void check_loop_swizzle(struct asm_parser *This,
        (src->rel_reg && src->rel_reg->type == BWRITERSPR_LOOP &&
         src->rel_reg->u.swizzle != BWRITERVS_NOSWIZZLE)) {
         asmparser_message(This, "Line %u: Swizzle not allowed on aL register\n", This->line_no);
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
 }
 
@@ -702,7 +702,7 @@ static void check_shift_dstmod(struct asm_parser *This, DWORD shift) {
     if(shift != 0) {
         asmparser_message(This, "Line %u: Shift modifiers not supported in this shader version\n",
                           This->line_no);
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
 }
 
@@ -712,7 +712,7 @@ static void check_ps_dstmod(struct asm_parser *This, DWORD dstmod) {
         asmparser_message(This, "Line %u: Instruction modifier %s not supported in this shader version\n",
                           This->line_no,
                           debug_print_dstmod(dstmod));
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
 }
 
@@ -776,12 +776,12 @@ static void asmparser_srcreg_vs_1(struct asm_parser *This,
         asmparser_message(This, "Line %u: Source register %s not supported in VS 1\n",
                           This->line_no,
                           debug_print_srcreg(src));
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
     check_legacy_srcmod(This, src->srcmod);
     check_abs_srcmod(This, src->srcmod);
     reg = map_oldvs_register(src);
-    memcpy(&instr->src[num], &reg, sizeof(reg));
+    instr->src[num] = reg;
 }
 
 static const struct allowed_reg_type vs_2_reg_allowed[] = {
@@ -809,13 +809,13 @@ static void asmparser_srcreg_vs_2(struct asm_parser *This,
         asmparser_message(This, "Line %u: Source register %s not supported in VS 2\n",
                           This->line_no,
                           debug_print_srcreg(src));
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
     check_loop_swizzle(This, src);
     check_legacy_srcmod(This, src->srcmod);
     check_abs_srcmod(This, src->srcmod);
     reg = map_oldvs_register(src);
-    memcpy(&instr->src[num], &reg, sizeof(reg));
+    instr->src[num] = reg;
 }
 
 static const struct allowed_reg_type vs_3_reg_allowed[] = {
@@ -840,11 +840,11 @@ static void asmparser_srcreg_vs_3(struct asm_parser *This,
         asmparser_message(This, "Line %u: Source register %s not supported in VS 3.0\n",
                           This->line_no,
                           debug_print_srcreg(src));
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
     check_loop_swizzle(This, src);
     check_legacy_srcmod(This, src->srcmod);
-    memcpy(&instr->src[num], src, sizeof(*src));
+    instr->src[num] = *src;
 }
 
 static const struct allowed_reg_type ps_1_0123_reg_allowed[] = {
@@ -864,11 +864,11 @@ static void asmparser_srcreg_ps_1_0123(struct asm_parser *This,
         asmparser_message(This, "Line %u: Source register %s not supported in <== PS 1.3\n",
                           This->line_no,
                           debug_print_srcreg(src));
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
     check_abs_srcmod(This, src->srcmod);
     reg = map_oldps_register(src, FALSE);
-    memcpy(&instr->src[num], &reg, sizeof(reg));
+    instr->src[num] = reg;
 }
 
 static const struct allowed_reg_type ps_1_4_reg_allowed[] = {
@@ -888,11 +888,11 @@ static void asmparser_srcreg_ps_1_4(struct asm_parser *This,
         asmparser_message(This, "Line %u: Source register %s not supported in PS 1.4\n",
                           This->line_no,
                           debug_print_srcreg(src));
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
     check_abs_srcmod(This, src->srcmod);
     reg = map_oldps_register(src, TRUE);
-    memcpy(&instr->src[num], &reg, sizeof(reg));
+    instr->src[num] = reg;
 }
 
 static const struct allowed_reg_type ps_2_0_reg_allowed[] = {
@@ -917,12 +917,12 @@ static void asmparser_srcreg_ps_2(struct asm_parser *This,
         asmparser_message(This, "Line %u: Source register %s not supported in PS 2.0\n",
                           This->line_no,
                           debug_print_srcreg(src));
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
     check_legacy_srcmod(This, src->srcmod);
     check_abs_srcmod(This, src->srcmod);
     reg = map_oldps_register(src, TRUE);
-    memcpy(&instr->src[num], &reg, sizeof(reg));
+    instr->src[num] = reg;
 }
 
 static const struct allowed_reg_type ps_2_x_reg_allowed[] = {
@@ -949,12 +949,12 @@ static void asmparser_srcreg_ps_2_x(struct asm_parser *This,
         asmparser_message(This, "Line %u: Source register %s not supported in PS 2.x\n",
                           This->line_no,
                           debug_print_srcreg(src));
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
     check_legacy_srcmod(This, src->srcmod);
     check_abs_srcmod(This, src->srcmod);
     reg = map_oldps_register(src, TRUE);
-    memcpy(&instr->src[num], &reg, sizeof(reg));
+    instr->src[num] = reg;
 }
 
 static const struct allowed_reg_type ps_3_reg_allowed[] = {
@@ -980,11 +980,11 @@ static void asmparser_srcreg_ps_3(struct asm_parser *This,
         asmparser_message(This, "Line %u: Source register %s not supported in PS 3.0\n",
                           This->line_no,
                           debug_print_srcreg(src));
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
     check_loop_swizzle(This, src);
     check_legacy_srcmod(This, src->srcmod);
-    memcpy(&instr->src[num], src, sizeof(*src));
+    instr->src[num] = *src;
 }
 
 static void asmparser_dstreg_vs_1(struct asm_parser *This,
@@ -996,12 +996,12 @@ static void asmparser_dstreg_vs_1(struct asm_parser *This,
         asmparser_message(This, "Line %u: Destination register %s not supported in VS 1\n",
                           This->line_no,
                           debug_print_dstreg(dst));
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
     check_ps_dstmod(This, instr->dstmod);
     check_shift_dstmod(This, instr->shift);
     reg = map_oldvs_register(dst);
-    memcpy(&instr->dst, &reg, sizeof(reg));
+    instr->dst = reg;
     instr->has_dst = TRUE;
 }
 
@@ -1014,12 +1014,12 @@ static void asmparser_dstreg_vs_2(struct asm_parser *This,
         asmparser_message(This, "Line %u: Destination register %s not supported in VS 2.0\n",
                           This->line_no,
                           debug_print_dstreg(dst));
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
     check_ps_dstmod(This, instr->dstmod);
     check_shift_dstmod(This, instr->shift);
     reg = map_oldvs_register(dst);
-    memcpy(&instr->dst, &reg, sizeof(reg));
+    instr->dst = reg;
     instr->has_dst = TRUE;
 }
 
@@ -1030,11 +1030,11 @@ static void asmparser_dstreg_vs_3(struct asm_parser *This,
         asmparser_message(This, "Line %u: Destination register %s not supported in VS 3.0\n",
                           This->line_no,
                           debug_print_dstreg(dst));
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
     check_ps_dstmod(This, instr->dstmod);
     check_shift_dstmod(This, instr->shift);
-    memcpy(&instr->dst, dst, sizeof(*dst));
+    instr->dst = *dst;
     instr->has_dst = TRUE;
 }
 
@@ -1047,10 +1047,10 @@ static void asmparser_dstreg_ps_1_0123(struct asm_parser *This,
         asmparser_message(This, "Line %u: Destination register %s not supported in PS 1\n",
                           This->line_no,
                           debug_print_dstreg(dst));
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
     reg = map_oldps_register(dst, FALSE);
-    memcpy(&instr->dst, &reg, sizeof(reg));
+    instr->dst = reg;
     instr->has_dst = TRUE;
 }
 
@@ -1063,10 +1063,10 @@ static void asmparser_dstreg_ps_1_4(struct asm_parser *This,
         asmparser_message(This, "Line %u: Destination register %s not supported in PS 1\n",
                           This->line_no,
                           debug_print_dstreg(dst));
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
     reg = map_oldps_register(dst, TRUE);
-    memcpy(&instr->dst, &reg, sizeof(reg));
+    instr->dst = reg;
     instr->has_dst = TRUE;
 }
 
@@ -1079,11 +1079,11 @@ static void asmparser_dstreg_ps_2(struct asm_parser *This,
         asmparser_message(This, "Line %u: Destination register %s not supported in PS 2.0\n",
                           This->line_no,
                           debug_print_dstreg(dst));
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
     check_shift_dstmod(This, instr->shift);
     reg = map_oldps_register(dst, TRUE);
-    memcpy(&instr->dst, &reg, sizeof(reg));
+    instr->dst = reg;
     instr->has_dst = TRUE;
 }
 
@@ -1096,11 +1096,11 @@ static void asmparser_dstreg_ps_2_x(struct asm_parser *This,
         asmparser_message(This, "Line %u: Destination register %s not supported in PS 2.x\n",
                           This->line_no,
                           debug_print_dstreg(dst));
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
     check_shift_dstmod(This, instr->shift);
     reg = map_oldps_register(dst, TRUE);
-    memcpy(&instr->dst, &reg, sizeof(reg));
+    instr->dst = reg;
     instr->has_dst = TRUE;
 }
 
@@ -1111,10 +1111,10 @@ static void asmparser_dstreg_ps_3(struct asm_parser *This,
         asmparser_message(This, "Line %u: Destination register %s not supported in PS 3.0\n",
                           This->line_no,
                           debug_print_dstreg(dst));
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
     check_shift_dstmod(This, instr->shift);
-    memcpy(&instr->dst, dst, sizeof(*dst));
+    instr->dst = *dst;
     instr->has_dst = TRUE;
 }
 
@@ -1124,13 +1124,13 @@ static void asmparser_predicate_supported(struct asm_parser *This,
     if(!This->shader) return;
     if(This->shader->num_instrs == 0) ERR("Predicate without an instruction\n");
     This->shader->instr[This->shader->num_instrs - 1]->has_predicate = TRUE;
-    memcpy(&This->shader->instr[This->shader->num_instrs - 1]->predicate, predicate, sizeof(*predicate));
+    This->shader->instr[This->shader->num_instrs - 1]->predicate = *predicate;
 }
 
 static void asmparser_predicate_unsupported(struct asm_parser *This,
                                             const struct shader_reg *predicate) {
     asmparser_message(This, "Line %u: Predicate not supported in < VS 2.0 or PS 2.x\n", This->line_no);
-    set_parse_status(This, PARSE_ERR);
+    set_parse_status(&This->status, PARSE_ERR);
 }
 
 static void asmparser_coissue_supported(struct asm_parser *This) {
@@ -1138,14 +1138,14 @@ static void asmparser_coissue_supported(struct asm_parser *This) {
     if(!This->shader) return;
     if(This->shader->num_instrs == 0){
         asmparser_message(This, "Line %u: Coissue flag on the first shader instruction\n", This->line_no);
-        set_parse_status(This, PARSE_ERR);
+        set_parse_status(&This->status, PARSE_ERR);
     }
     This->shader->instr[This->shader->num_instrs-1]->coissue = TRUE;
 }
 
 static void asmparser_coissue_unsupported(struct asm_parser *This) {
     asmparser_message(This, "Line %u: Coissue is only supported in pixel shaders versions <= 1.4\n", This->line_no);
-    set_parse_status(This, PARSE_ERR);
+    set_parse_status(&This->status, PARSE_ERR);
 }
 
 static const struct asmparser_backend parser_vs_1 = {
@@ -1349,10 +1349,10 @@ static void gen_oldps_input(struct bwriter_shader *shader, DWORD texcoords) {
 void create_vs10_parser(struct asm_parser *ret) {
     TRACE_(parsed_shader)("vs_1_0\n");
 
-    ret->shader = asm_alloc(sizeof(*ret->shader));
+    ret->shader = d3dcompiler_alloc(sizeof(*ret->shader));
     if(!ret->shader) {
         ERR("Failed to allocate memory for the shader\n");
-        set_parse_status(ret, PARSE_ERR);
+        set_parse_status(&ret->status, PARSE_ERR);
         return;
     }
 
@@ -1365,10 +1365,10 @@ void create_vs10_parser(struct asm_parser *ret) {
 void create_vs11_parser(struct asm_parser *ret) {
     TRACE_(parsed_shader)("vs_1_1\n");
 
-    ret->shader = asm_alloc(sizeof(*ret->shader));
+    ret->shader = d3dcompiler_alloc(sizeof(*ret->shader));
     if(!ret->shader) {
         ERR("Failed to allocate memory for the shader\n");
-        set_parse_status(ret, PARSE_ERR);
+        set_parse_status(&ret->status, PARSE_ERR);
         return;
     }
 
@@ -1381,10 +1381,10 @@ void create_vs11_parser(struct asm_parser *ret) {
 void create_vs20_parser(struct asm_parser *ret) {
     TRACE_(parsed_shader)("vs_2_0\n");
 
-    ret->shader = asm_alloc(sizeof(*ret->shader));
+    ret->shader = d3dcompiler_alloc(sizeof(*ret->shader));
     if(!ret->shader) {
         ERR("Failed to allocate memory for the shader\n");
-        set_parse_status(ret, PARSE_ERR);
+        set_parse_status(&ret->status, PARSE_ERR);
         return;
     }
 
@@ -1397,10 +1397,10 @@ void create_vs20_parser(struct asm_parser *ret) {
 void create_vs2x_parser(struct asm_parser *ret) {
     TRACE_(parsed_shader)("vs_2_x\n");
 
-    ret->shader = asm_alloc(sizeof(*ret->shader));
+    ret->shader = d3dcompiler_alloc(sizeof(*ret->shader));
     if(!ret->shader) {
         ERR("Failed to allocate memory for the shader\n");
-        set_parse_status(ret, PARSE_ERR);
+        set_parse_status(&ret->status, PARSE_ERR);
         return;
     }
 
@@ -1413,10 +1413,10 @@ void create_vs2x_parser(struct asm_parser *ret) {
 void create_vs30_parser(struct asm_parser *ret) {
     TRACE_(parsed_shader)("vs_3_0\n");
 
-    ret->shader = asm_alloc(sizeof(*ret->shader));
+    ret->shader = d3dcompiler_alloc(sizeof(*ret->shader));
     if(!ret->shader) {
         ERR("Failed to allocate memory for the shader\n");
-        set_parse_status(ret, PARSE_ERR);
+        set_parse_status(&ret->status, PARSE_ERR);
         return;
     }
 
@@ -1428,10 +1428,10 @@ void create_vs30_parser(struct asm_parser *ret) {
 void create_ps10_parser(struct asm_parser *ret) {
     TRACE_(parsed_shader)("ps_1_0\n");
 
-    ret->shader = asm_alloc(sizeof(*ret->shader));
+    ret->shader = d3dcompiler_alloc(sizeof(*ret->shader));
     if(!ret->shader) {
         ERR("Failed to allocate memory for the shader\n");
-        set_parse_status(ret, PARSE_ERR);
+        set_parse_status(&ret->status, PARSE_ERR);
         return;
     }
 
@@ -1444,10 +1444,10 @@ void create_ps10_parser(struct asm_parser *ret) {
 void create_ps11_parser(struct asm_parser *ret) {
     TRACE_(parsed_shader)("ps_1_1\n");
 
-    ret->shader = asm_alloc(sizeof(*ret->shader));
+    ret->shader = d3dcompiler_alloc(sizeof(*ret->shader));
     if(!ret->shader) {
         ERR("Failed to allocate memory for the shader\n");
-        set_parse_status(ret, PARSE_ERR);
+        set_parse_status(&ret->status, PARSE_ERR);
         return;
     }
 
@@ -1460,10 +1460,10 @@ void create_ps11_parser(struct asm_parser *ret) {
 void create_ps12_parser(struct asm_parser *ret) {
     TRACE_(parsed_shader)("ps_1_2\n");
 
-    ret->shader = asm_alloc(sizeof(*ret->shader));
+    ret->shader = d3dcompiler_alloc(sizeof(*ret->shader));
     if(!ret->shader) {
         ERR("Failed to allocate memory for the shader\n");
-        set_parse_status(ret, PARSE_ERR);
+        set_parse_status(&ret->status, PARSE_ERR);
         return;
     }
 
@@ -1476,10 +1476,10 @@ void create_ps12_parser(struct asm_parser *ret) {
 void create_ps13_parser(struct asm_parser *ret) {
     TRACE_(parsed_shader)("ps_1_3\n");
 
-    ret->shader = asm_alloc(sizeof(*ret->shader));
+    ret->shader = d3dcompiler_alloc(sizeof(*ret->shader));
     if(!ret->shader) {
         ERR("Failed to allocate memory for the shader\n");
-        set_parse_status(ret, PARSE_ERR);
+        set_parse_status(&ret->status, PARSE_ERR);
         return;
     }
 
@@ -1492,10 +1492,10 @@ void create_ps13_parser(struct asm_parser *ret) {
 void create_ps14_parser(struct asm_parser *ret) {
     TRACE_(parsed_shader)("ps_1_4\n");
 
-    ret->shader = asm_alloc(sizeof(*ret->shader));
+    ret->shader = d3dcompiler_alloc(sizeof(*ret->shader));
     if(!ret->shader) {
         ERR("Failed to allocate memory for the shader\n");
-        set_parse_status(ret, PARSE_ERR);
+        set_parse_status(&ret->status, PARSE_ERR);
         return;
     }
 
@@ -1508,10 +1508,10 @@ void create_ps14_parser(struct asm_parser *ret) {
 void create_ps20_parser(struct asm_parser *ret) {
     TRACE_(parsed_shader)("ps_2_0\n");
 
-    ret->shader = asm_alloc(sizeof(*ret->shader));
+    ret->shader = d3dcompiler_alloc(sizeof(*ret->shader));
     if(!ret->shader) {
         ERR("Failed to allocate memory for the shader\n");
-        set_parse_status(ret, PARSE_ERR);
+        set_parse_status(&ret->status, PARSE_ERR);
         return;
     }
 
@@ -1524,10 +1524,10 @@ void create_ps20_parser(struct asm_parser *ret) {
 void create_ps2x_parser(struct asm_parser *ret) {
     TRACE_(parsed_shader)("ps_2_x\n");
 
-    ret->shader = asm_alloc(sizeof(*ret->shader));
+    ret->shader = d3dcompiler_alloc(sizeof(*ret->shader));
     if(!ret->shader) {
         ERR("Failed to allocate memory for the shader\n");
-        set_parse_status(ret, PARSE_ERR);
+        set_parse_status(&ret->status, PARSE_ERR);
         return;
     }
 
@@ -1540,10 +1540,10 @@ void create_ps2x_parser(struct asm_parser *ret) {
 void create_ps30_parser(struct asm_parser *ret) {
     TRACE_(parsed_shader)("ps_3_0\n");
 
-    ret->shader = asm_alloc(sizeof(*ret->shader));
+    ret->shader = d3dcompiler_alloc(sizeof(*ret->shader));
     if(!ret->shader) {
         ERR("Failed to allocate memory for the shader\n");
-        set_parse_status(ret, PARSE_ERR);
+        set_parse_status(&ret->status, PARSE_ERR);
         return;
     }
 

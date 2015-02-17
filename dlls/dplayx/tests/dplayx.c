@@ -17,6 +17,7 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#define COBJMACROS
 #include "wine/test.h"
 #include <stdio.h>
 #define INITGUID
@@ -63,7 +64,7 @@ DEFINE_GUID(GUID_NULL,0,0,0,0,0,0,0,0,0,0,0);
 
 typedef struct tagCallbackData
 {
-    LPDIRECTPLAY4 pDP;
+    IDirectPlay4 *pDP;
     UINT dwCounter1, dwCounter2;
     DWORD dwFlags;
     char szTrace1[1024], szTrace2[1024];
@@ -71,6 +72,13 @@ typedef struct tagCallbackData
     UINT dpidSize;
 } CallbackData, *lpCallbackData;
 
+struct provider_data
+{
+    int call_count;
+    GUID *guid_ptr[10];
+    GUID guid_data[10];
+    BOOL ret_value;
+};
 
 static LPSTR get_temp_buffer(void)
 {
@@ -86,8 +94,6 @@ static LPSTR get_temp_buffer(void)
 
 static LPCSTR Guid2str(const GUID *guid)
 {
-    LPSTR buffer = get_temp_buffer();
-
     if (!guid) return "(null)";
 
     /* Service providers */
@@ -123,12 +129,7 @@ static LPCSTR Guid2str(const GUID *guid)
     if (IsEqualGUID(guid, &DPAID_ComPort))
         return "DPAID_ComPort";
 
-    sprintf( buffer, "{%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}",
-             guid->Data1, guid->Data2, guid->Data3,
-             guid->Data4[0], guid->Data4[1], guid->Data4[2], guid->Data4[3],
-             guid->Data4[4], guid->Data4[5], guid->Data4[6], guid->Data4[7] );
-    return buffer;
-
+    return wine_dbgstr_guid(guid);
 }
 
 
@@ -581,10 +582,8 @@ static char dpid2char(DPID* dpid, DWORD dpidSize, DPID idPlayer)
     return '?';
 }
 
-static void check_messages( LPDIRECTPLAY4 pDP,
-                            DPID *dpid,
-                            DWORD dpidSize,
-                            lpCallbackData callbackData )
+static void check_messages( IDirectPlay4 *pDP, DPID *dpid, DWORD dpidSize,
+        lpCallbackData callbackData )
 {
     /* Retrieves all messages from the queue of pDP, performing tests
      * to check if we are receiving what we expect.
@@ -647,19 +646,19 @@ static void check_messages( LPDIRECTPLAY4 pDP,
     HeapFree( GetProcessHeap(), 0, lpData );
 }
 
-static void init_TCPIP_provider( LPDIRECTPLAY4 pDP,
-                                 LPCSTR strIPAddressString,
-                                 WORD port )
+static void init_TCPIP_provider( IDirectPlay4 *pDP, LPCSTR strIPAddressString, WORD port )
 {
 
     DPCOMPOUNDADDRESSELEMENT addressElements[3];
     LPVOID pAddress = NULL;
     DWORD dwAddressSize = 0;
-    LPDIRECTPLAYLOBBY3 pDPL;
+    IDirectPlayLobby3 *pDPL;
     HRESULT hr;
 
-    CoCreateInstance( &CLSID_DirectPlayLobby, NULL, CLSCTX_ALL,
-                      &IID_IDirectPlayLobby3A, (LPVOID*) &pDPL );
+    hr = CoCreateInstance( &CLSID_DirectPlayLobby, NULL, CLSCTX_ALL,
+                           &IID_IDirectPlayLobby3A, (LPVOID*) &pDPL );
+    ok (SUCCEEDED (hr), "CCI of CLSID_DirectPlayLobby / IID_IDirectPlayLobby3A failed\n");
+    if (FAILED (hr)) return;
 
     /* Service provider */
     addressElements[0].guidDataType = DPAID_ServiceProvider;
@@ -668,7 +667,7 @@ static void init_TCPIP_provider( LPDIRECTPLAY4 pDP,
 
     /* IP address string */
     addressElements[1].guidDataType = DPAID_INet;
-    addressElements[1].dwDataSize   = lstrlen(strIPAddressString) + 1;
+    addressElements[1].dwDataSize   = lstrlenA(strIPAddressString) + 1;
     addressElements[1].lpData       = (LPVOID) strIPAddressString;
 
     /* Optional Port number */
@@ -693,7 +692,7 @@ static void init_TCPIP_provider( LPDIRECTPLAY4 pDP,
     }
 
     hr = IDirectPlayX_InitializeConnection( pDP, pAddress, 0 );
-    todo_wine checkHR( DP_OK, hr );
+    checkHR( DP_OK, hr );
 
     HeapFree( GetProcessHeap(), 0, pAddress );
 
@@ -704,7 +703,7 @@ static BOOL CALLBACK EnumSessions_cb_join( LPCDPSESSIONDESC2 lpThisSD,
                                            DWORD dwFlags,
                                            LPVOID lpContext )
 {
-    LPDIRECTPLAY4 pDP = (LPDIRECTPLAY4) lpContext;
+    IDirectPlay4 *pDP = lpContext;
     DPSESSIONDESC2 dpsd;
     HRESULT hr;
 
@@ -730,7 +729,7 @@ static BOOL CALLBACK EnumSessions_cb_join( LPCDPSESSIONDESC2 lpThisSD,
 static void test_DirectPlayCreate(void)
 {
 
-    LPDIRECTPLAY pDP;
+    IDirectPlay *pDP;
     HRESULT hr;
 
     /* TODO: Check how it behaves with pUnk!=NULL */
@@ -751,10 +750,117 @@ static void test_DirectPlayCreate(void)
     if ( hr == DP_OK )
         IDirectPlayX_Release( pDP );
     hr = DirectPlayCreate( (LPGUID) &DPSPGUID_TCPIP, &pDP, NULL );
-    todo_wine checkHR( DP_OK, hr );
+    checkHR( DP_OK, hr );
     if ( hr == DP_OK )
         IDirectPlayX_Release( pDP );
 
+}
+
+static BOOL CALLBACK callback_providersA(GUID* guid, char *name, DWORD major, DWORD minor, void *arg)
+{
+    struct provider_data *prov = arg;
+
+    if (!prov) return TRUE;
+
+    if (prov->call_count < sizeof(prov->guid_data) / sizeof(prov->guid_data[0]))
+    {
+        prov->guid_ptr[prov->call_count] = guid;
+        prov->guid_data[prov->call_count] = *guid;
+
+        prov->call_count++;
+    }
+
+    if (prov->ret_value) /* Only trace when looping all providers */
+        trace("Provider #%d '%s' (%d.%d)\n", prov->call_count, name, major, minor);
+    return prov->ret_value;
+}
+
+static BOOL CALLBACK callback_providersW(GUID* guid, WCHAR *name, DWORD major, DWORD minor, void *arg)
+{
+    struct provider_data *prov = arg;
+
+    if (!prov) return TRUE;
+
+    if (prov->call_count < sizeof(prov->guid_data) / sizeof(prov->guid_data[0]))
+    {
+        prov->guid_ptr[prov->call_count] = guid;
+        prov->guid_data[prov->call_count] = *guid;
+
+        prov->call_count++;
+    }
+
+    return prov->ret_value;
+}
+
+static void test_EnumerateProviders(void)
+{
+    HRESULT hr;
+    int i;
+    struct provider_data arg;
+
+    memset(&arg, 0, sizeof(arg));
+    arg.ret_value = TRUE;
+
+    hr = DirectPlayEnumerateA(callback_providersA, NULL);
+    ok(SUCCEEDED(hr), "DirectPlayEnumerateA failed\n");
+
+    SetLastError(0xdeadbeef);
+    hr = DirectPlayEnumerateA(NULL, &arg);
+    ok(FAILED(hr), "DirectPlayEnumerateA expected to fail\n");
+    ok(GetLastError() == 0xdeadbeef, "Expected 0xdeadbeef, got 0x%x\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    hr = DirectPlayEnumerateA(NULL, NULL);
+    ok(FAILED(hr), "DirectPlayEnumerateA expected to fail\n");
+    ok(GetLastError() == 0xdeadbeef, "Expected 0xdeadbeef, got 0x%x\n", GetLastError());
+
+    hr = DirectPlayEnumerateA(callback_providersA, &arg);
+    ok(SUCCEEDED(hr), "DirectPlayEnumerateA failed\n");
+    ok(arg.call_count > 0, "Expected at least one valid provider\n");
+    trace("Found %d providers\n", arg.call_count);
+
+    /* The returned GUID values must have persisted after enumeration (bug 37185) */
+    for(i = 0; i < arg.call_count; i++)
+    {
+        ok(IsEqualGUID(arg.guid_ptr[i], &arg.guid_data[i]), "#%d Expected equal GUID values\n", i);
+    }
+
+    memset(&arg, 0, sizeof(arg));
+    arg.ret_value = FALSE;
+    hr = DirectPlayEnumerateA(callback_providersA, &arg);
+    ok(SUCCEEDED(hr), "DirectPlayEnumerateA failed\n");
+    ok(arg.call_count == 1, "Expected 1, got %d\n", arg.call_count);
+
+    hr = DirectPlayEnumerateW(callback_providersW, NULL);
+    ok(SUCCEEDED(hr), "DirectPlayEnumerateW failed\n");
+
+    SetLastError(0xdeadbeef);
+    hr = DirectPlayEnumerateW(NULL, &arg);
+    ok(FAILED(hr), "DirectPlayEnumerateW expected to fail\n");
+    ok(GetLastError() == 0xdeadbeef, "Expected 0xdeadbeef, got 0x%x\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    hr = DirectPlayEnumerateW(NULL, NULL);
+    ok(FAILED(hr), "DirectPlayEnumerateW expected to fail\n");
+    ok(GetLastError() == 0xdeadbeef, "Expected 0xdeadbeef, got 0x%x\n", GetLastError());
+
+    memset(&arg, 0, sizeof(arg));
+    arg.ret_value = TRUE;
+    hr = DirectPlayEnumerateW(callback_providersW, &arg);
+    ok(SUCCEEDED(hr), "DirectPlayEnumerateW failed\n");
+    ok(arg.call_count > 0, "Expected at least one valid provider\n");
+
+    /* The returned GUID values must have persisted after enumeration (bug 37185) */
+    for(i = 0; i < arg.call_count; i++)
+    {
+        ok(IsEqualGUID(arg.guid_ptr[i], &arg.guid_data[i]), "#%d Expected equal GUID values\n", i);
+    }
+
+    memset(&arg, 0, sizeof(arg));
+    arg.ret_value = FALSE;
+    hr = DirectPlayEnumerateW(callback_providersW, &arg);
+    ok(SUCCEEDED(hr), "DirectPlayEnumerateW failed\n");
+    ok(arg.call_count == 1, "Expected 1, got %d\n", arg.call_count);
 }
 
 /* EnumConnections */
@@ -764,7 +870,7 @@ static BOOL CALLBACK EnumAddress_cb2( REFGUID guidDataType,
                                       LPCVOID lpData,
                                       LPVOID lpContext )
 {
-    lpCallbackData callbackData = (lpCallbackData) lpContext;
+    lpCallbackData callbackData = lpContext;
 
     static REFGUID types[] = { &DPAID_TotalSize,
                                &DPAID_ServiceProvider,
@@ -799,8 +905,9 @@ static BOOL CALLBACK EnumConnections_cb( LPCGUID lpguidSP,
                                          LPVOID lpContext )
 {
 
-    lpCallbackData callbackData = (lpCallbackData) lpContext;
-    LPDIRECTPLAYLOBBY pDPL;
+    lpCallbackData callbackData = lpContext;
+    IDirectPlayLobby *pDPL;
+    HRESULT hr;
 
 
     if (!callbackData->dwFlags)
@@ -811,8 +918,11 @@ static BOOL CALLBACK EnumConnections_cb( LPCGUID lpguidSP,
     checkFlags( callbackData->dwFlags, dwFlags, FLAGS_DPCONNECTION );
 
     /* Get info from lpConnection */
-    CoCreateInstance( &CLSID_DirectPlayLobby, NULL, CLSCTX_ALL,
-                      &IID_IDirectPlayLobby3A, (LPVOID*) &pDPL );
+    hr = CoCreateInstance( &CLSID_DirectPlayLobby, NULL, CLSCTX_ALL,
+                           &IID_IDirectPlayLobby3A, (LPVOID*) &pDPL );
+    ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlayLobby / IID_IDirectPlayLobby3A failed\n");
+    if (FAILED(hr))
+        return FALSE;
 
     callbackData->dwCounter2 = 0;
     IDirectPlayLobby_EnumAddress( pDPL, EnumAddress_cb2, lpConnection,
@@ -827,14 +937,16 @@ static BOOL CALLBACK EnumConnections_cb( LPCGUID lpguidSP,
 static void test_EnumConnections(void)
 {
 
-    LPDIRECTPLAY4 pDP;
+    IDirectPlay4 *pDP;
     CallbackData callbackData;
     HRESULT hr;
 
 
-    CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                      &IID_IDirectPlay4A, (LPVOID*) &pDP );
+    hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                           &IID_IDirectPlay4A, (LPVOID*) &pDP );
 
+    ok (SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n");
+    if (FAILED(hr)) return;
 
     callbackData.dwCounter1 = 0;
     callbackData.dwFlags = 0;
@@ -902,7 +1014,7 @@ static BOOL CALLBACK EnumConnections_cb2( LPCGUID lpguidSP,
                                           DWORD dwFlags,
                                           LPVOID lpContext )
 {
-    LPDIRECTPLAY4 pDP = (LPDIRECTPLAY4) lpContext;
+    IDirectPlay4 *pDP = lpContext;
     HRESULT hr;
 
     /* Incorrect parameters */
@@ -917,9 +1029,9 @@ static BOOL CALLBACK EnumConnections_cb2( LPCGUID lpguidSP,
     if( IsEqualGUID(lpguidSP, &DPSPGUID_TCPIP) )
     {
         hr = IDirectPlayX_InitializeConnection( pDP, lpConnection, 0 );
-        todo_wine checkHR( DP_OK, hr );
+        checkHR( DP_OK, hr );
         hr = IDirectPlayX_InitializeConnection( pDP, lpConnection, 0 );
-        todo_wine checkHR( DPERR_ALREADYINITIALIZED, hr );
+        checkHR( DPERR_ALREADYINITIALIZED, hr );
     }
 
     return TRUE;
@@ -928,10 +1040,14 @@ static BOOL CALLBACK EnumConnections_cb2( LPCGUID lpguidSP,
 static void test_InitializeConnection(void)
 {
 
-    LPDIRECTPLAY4 pDP;
+    IDirectPlay4 *pDP;
+    HRESULT hr;
 
-    CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                      &IID_IDirectPlay4A, (LPVOID*) &pDP );
+    hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                           &IID_IDirectPlay4A, (LPVOID*) &pDP );
+
+    ok (SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n");
+    if (FAILED(hr)) return;
 
     IDirectPlayX_EnumConnections( pDP, &appGuid, EnumConnections_cb2, pDP, 0 );
 
@@ -943,14 +1059,17 @@ static void test_InitializeConnection(void)
 static void test_GetCaps(void)
 {
 
-    LPDIRECTPLAY4 pDP;
+    IDirectPlay4 *pDP;
     DPCAPS dpcaps;
     DWORD dwFlags;
     HRESULT hr;
 
 
-    CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                      &IID_IDirectPlay4A, (LPVOID*) &pDP );
+    hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                           &IID_IDirectPlay4A, (LPVOID*) &pDP );
+    ok (SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n");
+    if (FAILED(hr)) return;
+
     ZeroMemory( &dpcaps, sizeof(DPCAPS) );
 
     /* Service provider not ininitialized */
@@ -971,7 +1090,7 @@ static void test_GetCaps(void)
     {
 
         hr = IDirectPlayX_GetCaps( pDP, &dpcaps, dwFlags );
-        todo_wine checkHR( DP_OK, hr );
+        checkHR( DP_OK, hr );
 
 
         if ( hr == DP_OK )
@@ -1013,7 +1132,7 @@ static BOOL CALLBACK EnumSessions_cb2( LPCDPSESSIONDESC2 lpThisSD,
                                        DWORD dwFlags,
                                        LPVOID lpContext )
 {
-    LPDIRECTPLAY4 pDP = (LPDIRECTPLAY4) lpContext;
+    IDirectPlay4 *pDP = lpContext;
     DPSESSIONDESC2 dpsd;
     HRESULT hr;
 
@@ -1053,15 +1172,21 @@ static BOOL CALLBACK EnumSessions_cb2( LPCDPSESSIONDESC2 lpThisSD,
 static void test_Open(void)
 {
 
-    LPDIRECTPLAY4 pDP, pDP_server;
+    IDirectPlay4 *pDP, *pDP_server;
     DPSESSIONDESC2 dpsd, dpsd_server;
     HRESULT hr;
 
 
-    CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                      &IID_IDirectPlay4A, (LPVOID*) &pDP_server );
-    CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                      &IID_IDirectPlay4A, (LPVOID*) &pDP );
+    hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                           &IID_IDirectPlay4A, (LPVOID*) &pDP_server );
+    ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+    if (FAILED(hr)) return;
+
+    hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                           &IID_IDirectPlay4A, (LPVOID*) &pDP );
+    ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+    if (FAILED(hr)) return;
+
     ZeroMemory( &dpsd_server, sizeof(DPSESSIONDESC2) );
     ZeroMemory( &dpsd, sizeof(DPSESSIONDESC2) );
 
@@ -1074,7 +1199,7 @@ static void test_Open(void)
 
     /* Uninitialized  dpsd */
     hr = IDirectPlayX_Open( pDP_server, &dpsd_server, DPOPEN_CREATE );
-    todo_wine checkHR( DPERR_INVALIDPARAMS, hr );
+    checkHR( DPERR_INVALIDPARAMS, hr );
 
 
     dpsd_server.dwSize = sizeof(DPSESSIONDESC2);
@@ -1084,7 +1209,7 @@ static void test_Open(void)
 
     /* Regular operation */
     hr = IDirectPlayX_Open( pDP_server, &dpsd_server, DPOPEN_CREATE );
-    todo_wine checkHR( DP_OK, hr );
+    checkHR( DP_OK, hr );
 
     /* Opening twice */
     hr = IDirectPlayX_Open( pDP_server, &dpsd_server, DPOPEN_CREATE );
@@ -1180,7 +1305,7 @@ static BOOL CALLBACK EnumSessions_cb( LPCDPSESSIONDESC2 lpThisSD,
                                       DWORD dwFlags,
                                       LPVOID lpContext )
 {
-    lpCallbackData callbackData = (lpCallbackData) lpContext;
+    lpCallbackData callbackData = lpContext;
     callbackData->dwCounter1++;
 
     if ( dwFlags & DPESC_TIMEDOUT )
@@ -1207,16 +1332,18 @@ static BOOL CALLBACK EnumSessions_cb( LPCDPSESSIONDESC2 lpThisSD,
     return TRUE;
 }
 
-static LPDIRECTPLAY4 create_session(DPSESSIONDESC2 *lpdpsd)
+static IDirectPlay4 *create_session(DPSESSIONDESC2 *lpdpsd)
 {
 
-    LPDIRECTPLAY4 pDP;
+    IDirectPlay4 *pDP;
     DPNAME name;
     DPID dpid;
     HRESULT hr;
 
-    CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                      &IID_IDirectPlay4A, (LPVOID*) &pDP );
+    hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                           &IID_IDirectPlay4A, (LPVOID*) &pDP );
+    ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+    if (FAILED(hr)) return NULL;
 
     init_TCPIP_provider( pDP, "127.0.0.1", 0 );
 
@@ -1243,15 +1370,18 @@ static void test_EnumSessions(void)
 
 #define N_SESSIONS 6
 
-    LPDIRECTPLAY4 pDP, pDPserver[N_SESSIONS];
+    IDirectPlay4 *pDP, *pDPserver[N_SESSIONS];
     DPSESSIONDESC2 dpsd, dpsd_server[N_SESSIONS];
     CallbackData callbackData;
     HRESULT hr;
     UINT i;
 
 
-    CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                      &IID_IDirectPlay4A, (LPVOID*) &pDP );
+    hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                           &IID_IDirectPlay4A, (LPVOID*) &pDP );
+    ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+    if (FAILED(hr)) return;
+
     ZeroMemory( &dpsd, sizeof(DPSESSIONDESC2) );
     callbackData.dwCounter1 = -1; /* So that after a call to EnumSessions
                                      we get the exact number of sessions */
@@ -1337,6 +1467,7 @@ static void test_EnumSessions(void)
     for (i=0; i<N_SESSIONS; i++)
     {
         pDPserver[i] = create_session( &dpsd_server[i] );
+        if (!pDPserver[i]) return;
     }
 
 
@@ -1609,7 +1740,7 @@ static void test_EnumSessions(void)
 static void test_SessionDesc(void)
 {
 
-    LPDIRECTPLAY4 pDP[2];
+    IDirectPlay4 *pDP[2];
     DPSESSIONDESC2 dpsd;
     LPDPSESSIONDESC2 lpData[2];
     LPVOID lpDataMsg;
@@ -1622,8 +1753,10 @@ static void test_SessionDesc(void)
 
     for (i=0; i<2; i++)
     {
-        CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                          &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                               &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+        if (FAILED(hr)) return;
     }
     ZeroMemory( &dpsd, sizeof(DPSESSIONDESC2) );
 
@@ -1679,12 +1812,16 @@ static void test_SessionDesc(void)
     checkHR( DPERR_INVALIDPARAMS, hr );
     hr = IDirectPlayX_GetSessionDesc( pDP[0], NULL, NULL );
     checkHR( DPERR_INVALIDPARAM, hr );
+if(0)
+{
+    /* Crashes under Win7 */
     hr = IDirectPlayX_GetSessionDesc( pDP[0], lpData[0], NULL );
     checkHR( DPERR_INVALIDPARAM, hr );
     dwDataSize=-1;
     hr = IDirectPlayX_GetSessionDesc( pDP[0], lpData[0], &dwDataSize );
     checkHR( DPERR_INVALIDPARAMS, hr );
     check( -1, dwDataSize );
+}
 
     /* Get: Insufficient buffer size */
     dwDataSize=0;
@@ -1785,17 +1922,23 @@ static void test_SessionDesc(void)
 static void test_CreatePlayer(void)
 {
 
-    LPDIRECTPLAY4 pDP[2];
+    IDirectPlay4 *pDP[2];
     DPSESSIONDESC2 dpsd;
     DPNAME name;
     DPID dpid;
     HRESULT hr;
 
 
-    CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                      &IID_IDirectPlay4A, (LPVOID*) &pDP[0] );
-    CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                      &IID_IDirectPlay4A, (LPVOID*) &pDP[1] );
+    hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                           &IID_IDirectPlay4A, (LPVOID*) &pDP[0] );
+    ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+    if (FAILED(hr)) return;
+
+    hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                           &IID_IDirectPlay4A, (LPVOID*) &pDP[1] );
+    ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+    if (FAILED(hr)) return;
+
     ZeroMemory( &dpsd, sizeof(DPSESSIONDESC2) );
     ZeroMemory( &name, sizeof(DPNAME) );
 
@@ -1952,7 +2095,7 @@ static void test_CreatePlayer(void)
 static void test_GetPlayerCaps(void)
 {
 
-    LPDIRECTPLAY4 pDP[2];
+    IDirectPlay4 *pDP[2];
     DPSESSIONDESC2 dpsd;
     DPID dpid[2];
     HRESULT hr;
@@ -1964,8 +2107,10 @@ static void test_GetPlayerCaps(void)
 
     for (i=0; i<2; i++)
     {
-        CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                          &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        hr= CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                              &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+        if (FAILED(hr)) return;
     }
     ZeroMemory( &dpsd, sizeof(DPSESSIONDESC2) );
     dpsd.dwSize = sizeof(DPSESSIONDESC2);
@@ -2112,7 +2257,7 @@ static void test_GetPlayerCaps(void)
 
 static void test_PlayerData(void)
 {
-    LPDIRECTPLAY4 pDP;
+    IDirectPlay4 *pDP;
     DPSESSIONDESC2 dpsd;
     DPID dpid;
     HRESULT hr;
@@ -2132,8 +2277,10 @@ static void test_PlayerData(void)
     DWORD dwDataSizeGet   = dwDataSizeFake;
 
 
-    CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                      &IID_IDirectPlay4A, (LPVOID*) &pDP );
+    hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                           &IID_IDirectPlay4A, (LPVOID*) &pDP );
+    ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+    if (FAILED(hr)) return;
 
     /* No service provider */
     hr = IDirectPlayX_SetPlayerData( pDP, 0, (LPVOID) lpData,
@@ -2376,7 +2523,7 @@ static void test_PlayerData(void)
 static void test_PlayerName(void)
 {
 
-    LPDIRECTPLAY4 pDP[2];
+    IDirectPlay4 *pDP[2];
     DPSESSIONDESC2 dpsd;
     DPID dpid[2];
     HRESULT hr;
@@ -2390,8 +2537,10 @@ static void test_PlayerName(void)
 
     for (i=0; i<2; i++)
     {
-        CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                          &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        hr= CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                              &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+        if (FAILED(hr)) return;
     }
     ZeroMemory( &dpsd, sizeof(DPSESSIONDESC2) );
     ZeroMemory( &playerName, sizeof(DPNAME) );
@@ -2467,10 +2616,14 @@ static void test_PlayerName(void)
     checkHR( DPERR_INVALIDPLAYER, hr );
     check( 1024, dwDataSize );
 
+if(0)
+{
+    /* Crashes under Win7 */
     dwDataSize = -1;
     hr = IDirectPlayX_GetPlayerName( pDP[0], dpid[0], lpData, &dwDataSize );
     checkHR( DPERR_INVALIDPARAMS, hr );
     check( -1, dwDataSize );
+}
 
     hr = IDirectPlayX_GetPlayerName( pDP[0], dpid[0], lpData, NULL );
     checkHR( DPERR_INVALIDPARAMS, hr );
@@ -2525,6 +2678,13 @@ static void test_PlayerName(void)
     hr = IDirectPlayX_SetPlayerName( pDP[0], dpid[0], &playerName,
                                      DPSET_GUARANTEED );
     checkHR( DP_OK, hr );
+    dwDataSize = 1024;
+    hr = IDirectPlayX_GetPlayerName( pDP[0], dpid[0], lpData, &dwDataSize );
+    checkHR( DP_OK, hr );
+    check( 45, dwDataSize );
+    checkStr( U1(playerName).lpszShortNameA, U1(*(LPDPNAME)lpData).lpszShortNameA );
+    checkStr( U2(playerName).lpszLongNameA,  U2(*(LPDPNAME)lpData).lpszLongNameA );
+    check( 0, ((LPDPNAME)lpData)->dwFlags );
 
     /* - Local (no propagation) */
     U1(playerName).lpszShortNameA = (LPSTR) "no_propagation";
@@ -2616,7 +2776,7 @@ static BOOL CALLBACK EnumSessions_cb_join_secure( LPCDPSESSIONDESC2 lpThisSD,
                                                   DWORD dwFlags,
                                                   LPVOID lpContext )
 {
-    LPDIRECTPLAY4 pDP = (LPDIRECTPLAY4) lpContext;
+    IDirectPlay4 *pDP = lpContext;
     DPSESSIONDESC2 dpsd;
     DPCREDENTIALS dpCredentials;
     HRESULT hr;
@@ -2647,7 +2807,7 @@ static BOOL CALLBACK EnumSessions_cb_join_secure( LPCDPSESSIONDESC2 lpThisSD,
 static void test_GetPlayerAccount(void)
 {
 
-    LPDIRECTPLAY4 pDP[2];
+    IDirectPlay4 *pDP[2];
     DPSESSIONDESC2 dpsd;
     DPID dpid[2];
     HRESULT hr;
@@ -2659,8 +2819,10 @@ static void test_GetPlayerAccount(void)
 
     for (i=0; i<2; i++)
     {
-        CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                          &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                               &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+        if (FAILED(hr)) return;
     }
     ZeroMemory( &dpsd, sizeof(DPSESSIONDESC2) );
     dpsd.dwSize = sizeof(DPSESSIONDESC2);
@@ -2791,7 +2953,7 @@ static BOOL CALLBACK EnumAddress_cb( REFGUID guidDataType,
                                      LPCVOID lpData,
                                      LPVOID lpContext )
 {
-    lpCallbackData callbackData = (lpCallbackData) lpContext;
+    lpCallbackData callbackData = lpContext;
     static REFGUID types[] = { &DPAID_TotalSize,
                                &DPAID_ServiceProvider,
                                &DPAID_INet,
@@ -2829,8 +2991,8 @@ static BOOL CALLBACK EnumAddress_cb( REFGUID guidDataType,
 static void test_GetPlayerAddress(void)
 {
 
-    LPDIRECTPLAY4 pDP[2];
-    LPDIRECTPLAYLOBBY3 pDPL;
+    IDirectPlay4 *pDP[2];
+    IDirectPlayLobby3 *pDPL;
     DPSESSIONDESC2 dpsd;
     DPID dpid[2];
     CallbackData callbackData;
@@ -2843,13 +3005,16 @@ static void test_GetPlayerAddress(void)
 
     for (i=0; i<2; i++)
     {
-        CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                          &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                               &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+        if (FAILED(hr)) return;
     }
     ZeroMemory( &dpsd, sizeof(DPSESSIONDESC2) );
-    CoCreateInstance( &CLSID_DirectPlayLobby, NULL, CLSCTX_ALL,
-                      &IID_IDirectPlayLobby3A, (LPVOID*) &pDPL );
-
+    hr = CoCreateInstance( &CLSID_DirectPlayLobby, NULL, CLSCTX_ALL,
+                           &IID_IDirectPlayLobby3A, (LPVOID*) &pDPL );
+    ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlayLobby / IID_IDirectPlayLobby3A failed\n" );
+    if (FAILED(hr)) return;
 
     /* Uninitialized service provider */
     hr = IDirectPlayX_GetPlayerAddress( pDP[0], 0, lpData, &dwDataSize );
@@ -2964,7 +3129,7 @@ static void test_GetPlayerAddress(void)
 static void test_GetPlayerFlags(void)
 {
 
-    LPDIRECTPLAY4 pDP[2];
+    IDirectPlay4 *pDP[2];
     DPSESSIONDESC2 dpsd;
     DPID dpid[4];
     HRESULT hr;
@@ -2975,8 +3140,10 @@ static void test_GetPlayerFlags(void)
 
     for (i=0; i<2; i++)
     {
-        CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                          &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        hr= CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                              &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+        if (FAILED(hr)) return;
     }
     ZeroMemory( &dpsd, sizeof(DPSESSIONDESC2) );
     dpsd.dwSize = sizeof(DPSESSIONDESC2);
@@ -3070,7 +3237,7 @@ static void test_GetPlayerFlags(void)
 static void test_CreateGroup(void)
 {
 
-    LPDIRECTPLAY4 pDP;
+    IDirectPlay4 *pDP;
     DPSESSIONDESC2 dpsd;
     DPID idFrom, idTo, dpid, idGroup, idGroupParent;
     DPNAME groupName;
@@ -3086,8 +3253,10 @@ static void test_CreateGroup(void)
     CallbackData callbackData;
 
 
-    CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                      &IID_IDirectPlay4A, (LPVOID*) &pDP );
+    hr= CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                          &IID_IDirectPlay4A, (LPVOID*) &pDP );
+    ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+    if (FAILED(hr)) return;
     ZeroMemory( &dpsd, sizeof(DPSESSIONDESC2) );
     dpsd.dwSize = sizeof(DPSESSIONDESC2);
     dpsd.guidApplication = appGuid;
@@ -3377,7 +3546,7 @@ static void test_CreateGroup(void)
 static void test_GroupOwner(void)
 {
 
-    LPDIRECTPLAY4 pDP[2];
+    IDirectPlay4 *pDP[2];
     DPSESSIONDESC2 dpsd;
     DPID dpid[2], idGroup, idOwner;
     HRESULT hr;
@@ -3386,8 +3555,10 @@ static void test_GroupOwner(void)
 
     for (i=0; i<2; i++)
     {
-        CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                          &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                               &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+        if (FAILED(hr)) return;
     }
     ZeroMemory( &dpsd, sizeof(DPSESSIONDESC2) );
     dpsd.dwSize = sizeof(DPSESSIONDESC2);
@@ -3456,7 +3627,7 @@ static BOOL CALLBACK EnumPlayers_cb( DPID dpId,
                                      DWORD dwFlags,
                                      LPVOID lpContext )
 {
-    lpCallbackData callbackData = (lpCallbackData) lpContext;
+    lpCallbackData callbackData = lpContext;
     char playerIndex = dpid2char( callbackData->dpid,
                                   callbackData->dpidSize,
                                   dpId );
@@ -3492,7 +3663,7 @@ static BOOL CALLBACK EnumSessions_cb_EnumPlayers( LPCDPSESSIONDESC2 lpThisSD,
                                                   DWORD dwFlags,
                                                   LPVOID lpContext )
 {
-    lpCallbackData callbackData = (lpCallbackData) lpContext;
+    lpCallbackData callbackData = lpContext;
     HRESULT hr;
 
     if (dwFlags & DPESC_TIMEDOUT)
@@ -3543,7 +3714,7 @@ static BOOL CALLBACK EnumSessions_cb_EnumPlayers( LPCDPSESSIONDESC2 lpThisSD,
 
 static void test_EnumPlayers(void)
 {
-    LPDIRECTPLAY4 pDP[3];
+    IDirectPlay4 *pDP[3];
     DPSESSIONDESC2 dpsd[3];
     DPID dpid[5+2]; /* 5 players, 2 groups */
     CallbackData callbackData;
@@ -3553,8 +3724,10 @@ static void test_EnumPlayers(void)
 
     for (i=0; i<3; i++)
     {
-        CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                          &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                               &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+        if (FAILED(hr)) return;
 
         ZeroMemory( &dpsd[i], sizeof(DPSESSIONDESC2) );
         dpsd[i].dwSize = sizeof(DPSESSIONDESC2);
@@ -3785,7 +3958,7 @@ static BOOL CALLBACK EnumGroups_cb( DPID dpId,
                                     DWORD dwFlags,
                                     LPVOID lpContext )
 {
-    lpCallbackData callbackData = (lpCallbackData) lpContext;
+    lpCallbackData callbackData = lpContext;
     char playerIndex = dpid2char( callbackData->dpid,
                                   callbackData->dpidSize,
                                   dpId );
@@ -3813,7 +3986,7 @@ static BOOL CALLBACK EnumSessions_cb_EnumGroups( LPCDPSESSIONDESC2 lpThisSD,
                                                  DWORD dwFlags,
                                                  LPVOID lpContext )
 {
-    lpCallbackData callbackData = (lpCallbackData) lpContext;
+    lpCallbackData callbackData = lpContext;
     HRESULT hr;
 
     if (dwFlags & DPESC_TIMEDOUT)
@@ -3864,7 +4037,7 @@ static BOOL CALLBACK EnumSessions_cb_EnumGroups( LPCDPSESSIONDESC2 lpThisSD,
 
 static void test_EnumGroups(void)
 {
-    LPDIRECTPLAY4 pDP[3];
+    IDirectPlay4 *pDP[3];
     DPSESSIONDESC2 dpsd[3];
     DPID dpid[5];
     CallbackData callbackData;
@@ -3874,8 +4047,10 @@ static void test_EnumGroups(void)
 
     for (i=0; i<3; i++)
     {
-        CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                          &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                               &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+        if (FAILED(hr)) return;
 
         ZeroMemory( &dpsd[i], sizeof(DPSESSIONDESC2) );
         dpsd[i].dwSize = sizeof(DPSESSIONDESC2);
@@ -4089,7 +4264,7 @@ static void test_EnumGroups(void)
 
 static void test_EnumGroupsInGroup(void)
 {
-    LPDIRECTPLAY4 pDP[2];
+    IDirectPlay4 *pDP[2];
     DPSESSIONDESC2 dpsd[2];
     DPID dpid[6];
     CallbackData callbackData;
@@ -4099,8 +4274,10 @@ static void test_EnumGroupsInGroup(void)
 
     for (i=0; i<2; i++)
     {
-        CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                          &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                               &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+        if (FAILED(hr)) return;
 
         ZeroMemory( &dpsd[i], sizeof(DPSESSIONDESC2) );
         dpsd[i].dwSize = sizeof(DPSESSIONDESC2);
@@ -4322,7 +4499,7 @@ static void test_EnumGroupsInGroup(void)
 static void test_groups_p2p(void)
 {
 
-    LPDIRECTPLAY4 pDP[2];
+    IDirectPlay4 *pDP[2];
     DPSESSIONDESC2 dpsd;
     DPID idPlayer[6], idGroup[3];
     HRESULT hr;
@@ -4335,8 +4512,10 @@ static void test_groups_p2p(void)
 
     for (i=0; i<2; i++)
     {
-        CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                          &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                               &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+        if (FAILED(hr)) return;
     }
     ZeroMemory( &dpsd, sizeof(DPSESSIONDESC2) );
     dpsd.dwSize = sizeof(DPSESSIONDESC2);
@@ -4555,7 +4734,7 @@ static void test_groups_p2p(void)
 static void test_groups_cs(void)
 {
 
-    LPDIRECTPLAY4 pDP[2];
+    IDirectPlay4 *pDP[2];
     DPSESSIONDESC2 dpsd;
     DPID idPlayer[6], idGroup[3];
     CallbackData callbackData;
@@ -4568,8 +4747,10 @@ static void test_groups_cs(void)
 
     for (i=0; i<2; i++)
     {
-        CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                          &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                               &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+        if (FAILED(hr)) return;
     }
     ZeroMemory( &dpsd, sizeof(DPSESSIONDESC2) );
     dpsd.dwSize = sizeof(DPSESSIONDESC2);
@@ -4790,7 +4971,7 @@ static void test_groups_cs(void)
 static void test_Send(void)
 {
 
-    LPDIRECTPLAY4 pDP[2];
+    IDirectPlay4 *pDP[2];
     DPSESSIONDESC2 dpsd;
     DPID dpid[4], idFrom, idTo;
     CallbackData callbackData;
@@ -4805,8 +4986,10 @@ static void test_Send(void)
 
     for (i=0; i<2; i++)
     {
-        CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                          &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                               &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+        if (FAILED(hr)) return;
     }
     ZeroMemory( &dpsd, sizeof(DPSESSIONDESC2) );
 
@@ -5123,7 +5306,7 @@ static void test_Send(void)
 static void test_Receive(void)
 {
 
-    LPDIRECTPLAY4 pDP;
+    IDirectPlay4 *pDP;
     DPSESSIONDESC2 dpsd;
     DPID dpid[4], idFrom, idTo;
     HRESULT hr;
@@ -5139,8 +5322,10 @@ static void test_Receive(void)
     UINT i;
 
 
-    CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                      &IID_IDirectPlay4A, (LPVOID*) &pDP );
+    hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                           &IID_IDirectPlay4A, (LPVOID*) &pDP );
+    ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+    if (FAILED(hr)) return;
 
     ZeroMemory( &dpsd, sizeof(DPSESSIONDESC2) );
     dpsd.dwSize = sizeof(DPSESSIONDESC2);
@@ -5406,7 +5591,7 @@ static void test_Receive(void)
 static void test_GetMessageCount(void)
 {
 
-    LPDIRECTPLAY4 pDP[2];
+    IDirectPlay4 *pDP[2];
     DPSESSIONDESC2 dpsd;
     DPID dpid[4];
     HRESULT hr;
@@ -5420,8 +5605,10 @@ static void test_GetMessageCount(void)
 
     for (i=0; i<2; i++)
     {
-        CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                          &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                               &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+        if (FAILED(hr)) return;
     }
     ZeroMemory( &dpsd, sizeof(DPSESSIONDESC2) );
 
@@ -5627,7 +5814,7 @@ static void test_GetMessageCount(void)
 static void test_GetMessageQueue(void)
 {
 
-    LPDIRECTPLAY4 pDP[2];
+    IDirectPlay4 *pDP[2];
     DPSESSIONDESC2 dpsd;
     DPID dpid[4];
     CallbackData callbackData;
@@ -5641,8 +5828,10 @@ static void test_GetMessageQueue(void)
 
     for (i=0; i<2; i++)
     {
-        CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                          &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                               &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+        if (FAILED(hr)) return;
     }
     ZeroMemory( &dpsd, sizeof(DPSESSIONDESC2) );
 
@@ -5722,6 +5911,9 @@ static void test_GetMessageQueue(void)
     check( -1, dwNumBytes );
 
     /* - Remote players */
+if(0)
+{
+    /* Crash under Win7 */
     dwNumMsgs = dwNumBytes = -1;
     hr = IDirectPlayX_GetMessageQueue( pDP[0], 0, dpid[3],
                                        DPMESSAGEQUEUE_RECEIVE,
@@ -5729,6 +5921,7 @@ static void test_GetMessageQueue(void)
     checkHR( DPERR_INVALIDPLAYER, hr ); /* Player 3 is remote */
     check( -1, dwNumMsgs );
     check( -1, dwNumBytes );
+}
 
     dwNumMsgs = dwNumBytes = -1;
     hr = IDirectPlayX_GetMessageQueue( pDP[0], dpid[3], 0,
@@ -5934,7 +6127,7 @@ static void test_GetMessageQueue(void)
 static void test_remote_data_replication(void)
 {
 
-    LPDIRECTPLAY4 pDP[2];
+    IDirectPlay4 *pDP[2];
     DPSESSIONDESC2 dpsd;
     DPID dpid[2], idFrom, idTo;
     CallbackData callbackData;
@@ -5959,8 +6152,10 @@ static void test_remote_data_replication(void)
 
     for (i=0; i<2; i++)
     {
-        CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                          &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                               &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+        if (FAILED(hr)) return;
         init_TCPIP_provider( pDP[i], "127.0.0.1", 0 );
     }
     ZeroMemory( &dpsd, sizeof(DPSESSIONDESC2) );
@@ -6160,7 +6355,7 @@ static void test_remote_data_replication(void)
 static void test_host_migration(void)
 {
 
-    LPDIRECTPLAY4 pDP[2];
+    IDirectPlay4 *pDP[2];
     DPSESSIONDESC2 dpsd;
     DPID dpid[2], idFrom, idTo;
     HRESULT hr;
@@ -6175,8 +6370,10 @@ static void test_host_migration(void)
 
     for (i=0; i<2; i++)
     {
-        CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
-                          &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        hr = CoCreateInstance( &CLSID_DirectPlay, NULL, CLSCTX_ALL,
+                               &IID_IDirectPlay4A, (LPVOID*) &pDP[i] );
+        ok( SUCCEEDED(hr), "CCI of CLSID_DirectPlay / IID_IDirectPlay4A failed\n" );
+        if (FAILED(hr)) return;
         init_TCPIP_provider( pDP[i], "127.0.0.1", 0 );
     }
     ZeroMemory( &dpsd, sizeof(DPSESSIONDESC2) );
@@ -6287,16 +6484,187 @@ static void test_host_migration(void)
 
 }
 
+static void test_COM(void)
+{
+    IDirectPlay *dp;
+    IDirectPlay2A *dp2A;
+    IDirectPlay2 *dp2;
+    IDirectPlay3A *dp3A;
+    IDirectPlay3 *dp3;
+    IDirectPlay4A *dp4A;
+    IDirectPlay4 *dp4 = (IDirectPlay4*)0xdeadbeef;
+    IUnknown *unk;
+    ULONG refcount;
+    HRESULT hr;
+
+    /* COM aggregation */
+    hr = CoCreateInstance(&CLSID_DirectPlay, (IUnknown*)&dp4, CLSCTX_INPROC_SERVER, &IID_IUnknown,
+            (void**)&dp4);
+    ok(hr == CLASS_E_NOAGGREGATION || broken(hr == E_INVALIDARG),
+            "DirectPlay create failed: %08x, expected CLASS_E_NOAGGREGATION\n", hr);
+    ok(!dp4 || dp4 == (IDirectPlay4*)0xdeadbeef, "dp4 = %p\n", dp4);
+
+    /* Invalid RIID */
+    hr = CoCreateInstance(&CLSID_DirectPlay, NULL, CLSCTX_INPROC_SERVER, &IID_IDirectPlayLobby,
+            (void**)&dp4);
+    ok(hr == E_NOINTERFACE, "DirectPlay create failed: %08x, expected E_NOINTERFACE\n", hr);
+
+    /* Different refcount for all DirectPlay Interfaces */
+    hr = CoCreateInstance(&CLSID_DirectPlay, NULL, CLSCTX_INPROC_SERVER, &IID_IDirectPlay4,
+            (void**)&dp4);
+    ok(hr == S_OK, "DirectPlay create failed: %08x, expected S_OK\n", hr);
+    refcount = IDirectPlayX_AddRef(dp4);
+    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+
+    hr = IDirectPlayX_QueryInterface(dp4, &IID_IDirectPlay2A, (void**)&dp2A);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlay2A failed: %08x\n", hr);
+    refcount = IDirectPlay2_AddRef(dp2A);
+    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    IDirectPlay2_Release(dp2A);
+
+    hr = IDirectPlayX_QueryInterface(dp4, &IID_IDirectPlay2, (void**)&dp2);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlay2 failed: %08x\n", hr);
+    refcount = IDirectPlay2_AddRef(dp2);
+    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    IDirectPlay2_Release(dp2);
+
+    hr = IDirectPlayX_QueryInterface(dp4, &IID_IDirectPlay3A, (void**)&dp3A);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlay3A failed: %08x\n", hr);
+    refcount = IDirectPlay3_AddRef(dp3A);
+    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    IDirectPlay3_Release(dp3A);
+
+    hr = IDirectPlayX_QueryInterface(dp4, &IID_IDirectPlay3, (void**)&dp3);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlay3 failed: %08x\n", hr);
+    refcount = IDirectPlay3_AddRef(dp3);
+    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    IDirectPlay3_Release(dp3);
+
+    hr = IDirectPlayX_QueryInterface(dp4, &IID_IDirectPlay4A, (void**)&dp4A);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlay4A failed: %08x\n", hr);
+    refcount = IDirectPlayX_AddRef(dp4A);
+    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    IDirectPlayX_Release(dp4A);
+
+    /* IDirectPlay and IUnknown share a refcount */
+    hr = IDirectPlayX_QueryInterface(dp4, &IID_IDirectPlay, (void**)&dp);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlay failed: %08x\n", hr);
+    refcount = IDirectPlayX_AddRef(dp);
+    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    IDirectPlay_Release(dp);
+
+    hr = IDirectPlayX_QueryInterface(dp4, &IID_IUnknown, (void**)&unk);
+    ok(hr == S_OK, "QueryInterface for IID_IUnknown failed: %08x\n", hr);
+    refcount = IUnknown_AddRef(unk);
+    ok(refcount == 3, "refcount == %u, expected 3\n", refcount);
+    refcount = IUnknown_Release(unk);
+    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+
+    IUnknown_Release(unk);
+    IDirectPlay_Release(dp);
+    IDirectPlayX_Release(dp4A);
+    IDirectPlay3_Release(dp3);
+    IDirectPlay3_Release(dp3A);
+    IDirectPlay2_Release(dp2);
+    IDirectPlay2_Release(dp2A);
+    IDirectPlayX_Release(dp4);
+    refcount = IDirectPlayX_Release(dp4);
+    ok(refcount == 0, "refcount == %u, expected 0\n", refcount);
+}
+
+static void test_COM_dplobby(void)
+{
+    IDirectPlayLobby *dpl = (IDirectPlayLobby*)0xdeadbeef;
+    IDirectPlayLobbyA *dplA;
+    IDirectPlayLobby2A *dpl2A;
+    IDirectPlayLobby2 *dpl2;
+    IDirectPlayLobby3A *dpl3A;
+    IDirectPlayLobby3 *dpl3;
+    IUnknown *unk;
+    ULONG refcount;
+    HRESULT hr;
+
+    /* COM aggregation */
+    hr = CoCreateInstance(&CLSID_DirectPlayLobby, (IUnknown*)&dpl, CLSCTX_INPROC_SERVER,
+            &IID_IUnknown, (void**)&dpl);
+    ok(hr == CLASS_E_NOAGGREGATION || broken(hr == E_INVALIDARG),
+            "DirectPlayLobby create failed: %08x, expected CLASS_E_NOAGGREGATION\n", hr);
+    ok(!dpl || dpl == (IDirectPlayLobby*)0xdeadbeef, "dpl = %p\n", dpl);
+
+    /* Invalid RIID */
+    hr = CoCreateInstance(&CLSID_DirectPlayLobby, NULL, CLSCTX_INPROC_SERVER, &IID_IDirectPlay,
+            (void**)&dpl);
+    ok(hr == E_NOINTERFACE, "DirectPlayLobby create failed: %08x, expected E_NOINTERFACE\n", hr);
+
+    /* Different refcount for all DirectPlayLobby Interfaces */
+    hr = CoCreateInstance(&CLSID_DirectPlayLobby, NULL, CLSCTX_INPROC_SERVER, &IID_IDirectPlayLobby,
+            (void**)&dpl);
+    ok(hr == S_OK, "DirectPlayLobby create failed: %08x, expected S_OK\n", hr);
+    refcount = IDirectPlayLobby_AddRef(dpl);
+    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+
+    hr = IDirectPlayLobby_QueryInterface(dpl, &IID_IDirectPlayLobbyA, (void**)&dplA);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlayLobbyA failed: %08x\n", hr);
+    refcount = IDirectPlayLobby_AddRef(dplA);
+    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    IDirectPlayLobby_Release(dplA);
+
+    hr = IDirectPlayLobby_QueryInterface(dpl, &IID_IDirectPlayLobby2, (void**)&dpl2);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlayLobby2 failed: %08x\n", hr);
+    refcount = IDirectPlayLobby_AddRef(dpl2);
+    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    IDirectPlayLobby_Release(dpl2);
+
+    hr = IDirectPlayLobby_QueryInterface(dpl, &IID_IDirectPlayLobby2A, (void**)&dpl2A);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlayLobby2A failed: %08x\n", hr);
+    refcount = IDirectPlayLobby_AddRef(dpl2A);
+    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    IDirectPlayLobby_Release(dpl2A);
+
+    hr = IDirectPlayLobby_QueryInterface(dpl, &IID_IDirectPlayLobby3, (void**)&dpl3);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlayLobby3 failed: %08x\n", hr);
+    refcount = IDirectPlayLobby_AddRef(dpl3);
+    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    IDirectPlayLobby_Release(dpl3);
+
+    hr = IDirectPlayLobby_QueryInterface(dpl, &IID_IDirectPlayLobby3A, (void**)&dpl3A);
+    ok(hr == S_OK, "QueryInterface for IID_IDirectPlayLobby3A failed: %08x\n", hr);
+    refcount = IDirectPlayLobby_AddRef(dpl3A);
+    ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
+    IDirectPlayLobby_Release(dpl3A);
+
+    /* IDirectPlayLobby and IUnknown share a refcount */
+    hr = IDirectPlayX_QueryInterface(dpl, &IID_IUnknown, (void**)&unk);
+    ok(hr == S_OK, "QueryInterface for IID_IUnknown failed: %08x\n", hr);
+    refcount = IUnknown_AddRef(unk);
+    ok(refcount == 4, "refcount == %u, expected 4\n", refcount);
+    IDirectPlayLobby_Release(unk);
+
+    IUnknown_Release(unk);
+    IDirectPlayLobby_Release(dpl3);
+    IDirectPlayLobby_Release(dpl3A);
+    IDirectPlayLobby_Release(dpl2);
+    IDirectPlayLobby_Release(dpl2A);
+    IDirectPlayLobby_Release(dplA);
+    IDirectPlayLobby_Release(dpl);
+    refcount = IDirectPlayLobby_Release(dpl);
+    ok(refcount == 0, "refcount == %u, expected 0\n", refcount);
+}
+
 
 START_TEST(dplayx)
 {
+    CoInitialize( NULL );
+
+    test_COM();
+    test_COM_dplobby();
+    test_EnumerateProviders();
+
     if (!winetest_interactive)
     {
         skip("Run in interactive mode to run dplayx tests.\n");
         return;
     }
-
-    CoInitialize( NULL );
 
     trace("Running in interactive mode, tests will take a while\n");
 

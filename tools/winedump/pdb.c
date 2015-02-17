@@ -132,7 +132,6 @@ static DWORD    pdb_get_file_size(const struct pdb_reader* reader, unsigned idx)
 
 static void pdb_exit(struct pdb_reader* reader)
 {
-#if 1
     unsigned            i;
     unsigned char*      file;
     DWORD               size;
@@ -150,7 +149,7 @@ static void pdb_exit(struct pdb_reader* reader)
         dump_data(file, size, "    ");
         free(file);
     }
-#endif
+
     if (reader->read_file == pdb_jg_read_file)
     {
         free((char*)reader->u.jg.root);
@@ -174,12 +173,12 @@ static unsigned get_stream_by_name(struct pdb_reader* reader, const char* name)
 
     if (reader->read_file == pdb_jg_read_file)
     {
-        str = &reader->u.jg.root->names[0];
+        str = reader->u.jg.root->names;
         cbstr = reader->u.jg.root->cbNames;
     }
     else
     {
-        str = &reader->u.ds.root->names[0];
+        str = reader->u.ds.root->names;
         cbstr = reader->u.ds.root->cbNames;
     }
 
@@ -542,7 +541,7 @@ static void pdb_dump_symbols(struct pdb_reader* reader, PDB_STREAM_INDEXES* sidx
 
             /* line number info */
             if (lineno_size)
-                codeview_dump_linetab((const char*)modimage + symbol_size, lineno_size, TRUE, "        ");
+                codeview_dump_linetab((const char*)modimage + symbol_size, TRUE, "        ");
             /* anyway, lineno_size doesn't see to really be the size of the line number information, and
              * it's not clear yet when to call for linetab2...
              */
@@ -740,7 +739,7 @@ static void pdb_jg_dump(void)
                reader.u.jg.root->Age,
                (unsigned)reader.u.jg.root->cbNames);
 
-        pdw = (DWORD*)(&reader.u.jg.root->names[0] + reader.u.jg.root->cbNames);
+        pdw = (DWORD*)(reader.u.jg.root->names + reader.u.jg.root->cbNames);
         numok = *pdw++;
         count = *pdw++;
         printf("\tStreams directory:\n"
@@ -869,7 +868,7 @@ static void pdb_ds_dump(void)
      *  2: types
      *  3: modules
      * other known streams:
-     * - string table: it's index is in the stream table from ROOT object under "/names"
+     * - string table: its index is in the stream table from ROOT object under "/names"
      * those streams get their indexes out of the PDB_STREAM_INDEXES object
      * - FPO data
      * - segments
@@ -895,7 +894,7 @@ static void pdb_ds_dump(void)
                reader.u.ds.root->Age,
                get_guid_str(&reader.u.ds.root->guid),
                reader.u.ds.root->cbNames);
-        pdw = (DWORD*)(&reader.u.ds.root->names[0] + reader.u.ds.root->cbNames);
+        pdw = (DWORD*)(reader.u.ds.root->names + reader.u.ds.root->cbNames);
         numok = *pdw++;
         count = *pdw++;
         printf("\tStreams directory:\n"

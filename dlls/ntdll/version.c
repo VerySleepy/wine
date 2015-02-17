@@ -50,11 +50,14 @@ typedef enum
     NT40,    /* Windows NT 4.0 */
     NT2K,    /* Windows 2000 */
     WINXP,   /* Windows XP */
+    WINXP64, /* Windows XP 64-bit */
     WIN2K3,  /* Windows 2003 */
     WINVISTA,/* Windows Vista */
     WIN2K8,  /* Windows 2008 */
     WIN2K8R2,/* Windows 2008 R2 */
     WIN7,    /* Windows 7 */
+    WIN8,    /* Windows 8 */
+    WIN81,   /* Windows 8.1 */
     NB_WINDOWS_VERSIONS
 } WINDOWS_VERSION;
 
@@ -112,8 +115,8 @@ static const RTL_OSVERSIONINFOEXW VersionData[NB_WINDOWS_VERSIONS] =
     /* NT351 */
     {
         sizeof(RTL_OSVERSIONINFOEXW), 3, 51, 0x421, VER_PLATFORM_WIN32_NT,
-        {'S','e','r','v','i','c','e',' ','P','a','c','k',' ','2',0},
-        0, 0, 0, 0, 0
+        {'S','e','r','v','i','c','e',' ','P','a','c','k',' ','5',0},
+        5, 0, 0, VER_NT_WORKSTATION, 0
     },
     /* NT40 */
     {
@@ -133,6 +136,12 @@ static const RTL_OSVERSIONINFOEXW VersionData[NB_WINDOWS_VERSIONS] =
         {'S','e','r','v','i','c','e',' ','P','a','c','k',' ','3',0},
         3, 0, VER_SUITE_SINGLEUSERTS, VER_NT_WORKSTATION, 30 /* FIXME: Great, a reserved field with a value! */
     },
+    /* WINXP64 */
+    {
+        sizeof(RTL_OSVERSIONINFOEXW), 5, 2, 0xECE, VER_PLATFORM_WIN32_NT,
+        {'S','e','r','v','i','c','e',' ','P','a','c','k',' ','2',0},
+        2, 0, VER_SUITE_SINGLEUSERTS, VER_NT_WORKSTATION, 0
+    },
     /* WIN2K3 */
     {
         sizeof(RTL_OSVERSIONINFOEXW), 5, 2, 0xECE, VER_PLATFORM_WIN32_NT,
@@ -149,7 +158,7 @@ static const RTL_OSVERSIONINFOEXW VersionData[NB_WINDOWS_VERSIONS] =
     {
         sizeof(RTL_OSVERSIONINFOEXW), 6, 0, 0x1772, VER_PLATFORM_WIN32_NT,
         {'S','e','r','v','i','c','e',' ','P','a','c','k',' ','2',0},
-        0, 0, VER_SUITE_SINGLEUSERTS, VER_NT_SERVER, 0
+        2, 0, VER_SUITE_SINGLEUSERTS, VER_NT_SERVER, 0
     },
     /* WIN7 */
     {
@@ -162,6 +171,18 @@ static const RTL_OSVERSIONINFOEXW VersionData[NB_WINDOWS_VERSIONS] =
         sizeof(RTL_OSVERSIONINFOEXW), 6, 1, 0x1DB1, VER_PLATFORM_WIN32_NT,
         {'S','e','r','v','i','c','e',' ','P','a','c','k',' ','1',0},
         1, 0, VER_SUITE_SINGLEUSERTS, VER_NT_SERVER, 0
+    },
+    /* WIN8 */
+    {
+        sizeof(RTL_OSVERSIONINFOEXW), 6, 2, 0x23F0, VER_PLATFORM_WIN32_NT,
+        {' ',0},
+        0, 0, VER_SUITE_SINGLEUSERTS, VER_NT_WORKSTATION, 0
+    },
+    /* WIN81 */
+    {
+        sizeof(RTL_OSVERSIONINFOEXW), 6, 3, 0x2580, VER_PLATFORM_WIN32_NT,
+        {' ',0},
+        0, 0, VER_SUITE_SINGLEUSERTS, VER_NT_WORKSTATION, 0
     },
 
 };
@@ -178,11 +199,14 @@ static const char * const WinVersionNames[NB_WINDOWS_VERSIONS] =
     "nt40",                       /* NT40 */
     "win2000,win2k,nt2k,nt2000",  /* NT2K */
     "winxp",                      /* WINXP */
+    "winxp64",                    /* WINXP64 */
     "win2003,win2k3",             /* WIN2K3 */
     "vista,winvista",             /* WINVISTA*/
     "win2008,win2k8",             /* WIN2K8 */
     "win2008r2,win2k8r2",         /* WIN2K8R2 */
     "win7",                       /* WIN7 */
+    "win8",                       /* WIN8 */
+    "win81",                      /* WIN81 */
 };
 
 
@@ -460,13 +484,16 @@ void version_init( const WCHAR *appname )
 {
     static const WCHAR configW[] = {'S','o','f','t','w','a','r','e','\\','W','i','n','e',0};
     static const WCHAR appdefaultsW[] = {'A','p','p','D','e','f','a','u','l','t','s','\\',0};
-
+    static const BOOL is_win64 = (sizeof(void *) > sizeof(int));
     OBJECT_ATTRIBUTES attr;
     UNICODE_STRING nameW;
     HANDLE root, hkey, config_key;
     BOOL got_win_ver = FALSE;
 
-    current_version = &VersionData[WINXP];  /* default if nothing else is specified */
+    if (is_win64 || is_wow64)
+        current_version = &VersionData[WINXP64];  /* default if nothing else is specified */
+    else
+        current_version = &VersionData[WINXP];
 
     RtlOpenCurrentUser( KEY_ALL_ACCESS, &root );
     attr.Length = sizeof(attr);
@@ -544,7 +571,7 @@ done:
 }
 
 /***********************************************************************
- *           GetProductInfo       (NTDLL.@)
+ *           RtlGetProductInfo    (NTDLL.@)
  *
  * Gives info about the current Windows product type, in a format compatible
  * with the given Windows version
@@ -554,10 +581,22 @@ done:
 BOOLEAN WINAPI RtlGetProductInfo(DWORD dwOSMajorVersion, DWORD dwOSMinorVersion, DWORD dwSpMajorVersion,
                                  DWORD dwSpMinorVersion, PDWORD pdwReturnedProductType)
 {
-    FIXME("(%d,%d,%d,%d,%p): stub\n", dwOSMajorVersion, dwOSMinorVersion,
+    TRACE("(%d, %d, %d, %d, %p)\n", dwOSMajorVersion, dwOSMinorVersion,
           dwSpMajorVersion, dwSpMinorVersion, pdwReturnedProductType);
 
-    *pdwReturnedProductType = PRODUCT_ULTIMATE_N;
+    if (!pdwReturnedProductType)
+        return FALSE;
+
+    if (dwOSMajorVersion < 6)
+    {
+        *pdwReturnedProductType = PRODUCT_UNDEFINED;
+        return FALSE;
+    }
+
+    if (current_version->wProductType == VER_NT_WORKSTATION)
+        *pdwReturnedProductType = PRODUCT_ULTIMATE_N;
+    else
+        *pdwReturnedProductType = PRODUCT_STANDARD_SERVER;
 
     return TRUE;
 }

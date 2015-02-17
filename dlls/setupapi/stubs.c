@@ -46,7 +46,7 @@ CONFIGRET WINAPI CM_Connect_MachineA(PCSTR name, PHMACHINE machine)
  */
 CONFIGRET WINAPI CM_Connect_MachineW(PCWSTR name, PHMACHINE machine)
 {
-  FIXME("\n");
+  FIXME("stub\n");
   return  CR_ACCESS_DENIED;
 }
 
@@ -73,9 +73,19 @@ CONFIGRET WINAPI CM_Create_DevNodeW(PDEVINST pdnDevInst, DEVINSTID_W pDeviceID, 
  */
 CONFIGRET WINAPI CM_Disconnect_Machine(HMACHINE handle)
 {
-  FIXME("\n");
+  FIXME("stub\n");
   return  CR_SUCCESS;
 
+}
+
+/***********************************************************************
+ *             CM_Get_Device_ID_ExA  (SETUPAPI.@)
+ */
+DWORD WINAPI CM_Get_Device_ID_ExA(
+    DEVINST dnDevInst, PCHAR Buffer, ULONG BufferLen, ULONG ulFlags, HMACHINE hMachine)
+{
+    FIXME("0x%08x %p 0x%08x 0x%08x %p: stub\n", dnDevInst, Buffer, BufferLen, ulFlags, hMachine);
+    return CR_SUCCESS;
 }
 
 /***********************************************************************
@@ -84,7 +94,7 @@ CONFIGRET WINAPI CM_Disconnect_Machine(HMACHINE handle)
 DWORD WINAPI CM_Get_Device_ID_ExW(
     DEVINST dnDevInst, PWCHAR Buffer, ULONG BufferLen, ULONG ulFlags, HMACHINE hMachine)
 {
-    FIXME("0x%08x %p 0x%08x 0x%08x %p\n", dnDevInst, Buffer, BufferLen, ulFlags, hMachine);
+    FIXME("0x%08x %p 0x%08x 0x%08x %p: stub\n", dnDevInst, Buffer, BufferLen, ulFlags, hMachine);
     return CR_SUCCESS;
 }
 
@@ -94,7 +104,7 @@ DWORD WINAPI CM_Get_Device_ID_ExW(
 CONFIGRET WINAPI CM_Get_Device_ID_ListA(
     PCSTR pszFilter, PCHAR Buffer, ULONG BufferLen, ULONG ulFlags )
 {
-    FIXME("%s %p %d 0x%08x\n", debugstr_a(pszFilter), Buffer, BufferLen, ulFlags);
+    FIXME("%s %p %d 0x%08x: stub\n", debugstr_a(pszFilter), Buffer, BufferLen, ulFlags);
 
     if (BufferLen >= 2) Buffer[0] = Buffer[1] = 0;
     return CR_SUCCESS;
@@ -106,7 +116,7 @@ CONFIGRET WINAPI CM_Get_Device_ID_ListA(
 CONFIGRET WINAPI CM_Get_Device_ID_ListW(
     PCWSTR pszFilter, PWCHAR Buffer, ULONG BufferLen, ULONG ulFlags )
 {
-    FIXME("%s %p %d 0x%08x\n", debugstr_w(pszFilter), Buffer, BufferLen, ulFlags);
+    FIXME("%s %p %d 0x%08x: stub\n", debugstr_w(pszFilter), Buffer, BufferLen, ulFlags);
 
     if (BufferLen >= 2) Buffer[0] = Buffer[1] = 0;
     return CR_SUCCESS;
@@ -117,7 +127,7 @@ CONFIGRET WINAPI CM_Get_Device_ID_ListW(
  */
 CONFIGRET WINAPI CM_Get_Device_ID_List_SizeA( PULONG  pulLen, PCSTR  pszFilter, ULONG  ulFlags )
 {
-    FIXME("%p %s 0x%08x\n", pulLen, debugstr_a(pszFilter), ulFlags);
+    FIXME("%p %s 0x%08x: stub\n", pulLen, debugstr_a(pszFilter), ulFlags);
 
     return CR_SUCCESS;
 }
@@ -127,7 +137,7 @@ CONFIGRET WINAPI CM_Get_Device_ID_List_SizeA( PULONG  pulLen, PCSTR  pszFilter, 
  */
 CONFIGRET WINAPI CM_Get_Device_ID_List_SizeW( PULONG  pulLen, PCWSTR  pszFilter, ULONG  ulFlags )
 {
-    FIXME("%p %s 0x%08x\n", pulLen, debugstr_w(pszFilter), ulFlags);
+    FIXME("%p %s 0x%08x: stub\n", pulLen, debugstr_w(pszFilter), ulFlags);
 
     return CR_SUCCESS;
 }
@@ -209,7 +219,7 @@ BOOL WINAPI SetupOpenLog(BOOL Reserved)
  */
 INT WINAPI SetupPromptReboot( HSPFILEQ file_queue, HWND owner, BOOL scan_only )
 {
-    FIXME("%p, %p, %d\n", file_queue, owner, scan_only);
+    FIXME("%p, %p, %d: stub\n", file_queue, owner, scan_only);
     return 0;
 }
 
@@ -218,7 +228,7 @@ INT WINAPI SetupPromptReboot( HSPFILEQ file_queue, HWND owner, BOOL scan_only )
  */
 BOOL WINAPI SetupQueryDrivesInDiskSpaceListA(HDSKSPC disk_space, PSTR return_buffer, DWORD return_buffer_size, PDWORD required_size)
 {
-    FIXME("%p, %p, %d, %p\n", disk_space, return_buffer, return_buffer_size, required_size);
+    FIXME("%p, %p, %d, %p: stub\n", disk_space, return_buffer, return_buffer_size, required_size);
     return FALSE;
 }
 
@@ -227,8 +237,26 @@ BOOL WINAPI SetupQueryDrivesInDiskSpaceListA(HDSKSPC disk_space, PSTR return_buf
  */
 BOOL WINAPI SetupQueryDrivesInDiskSpaceListW(HDSKSPC disk_space, PWSTR return_buffer, DWORD return_buffer_size, PDWORD required_size)
 {
-    FIXME("%p, %p, %d, %p\n", disk_space, return_buffer, return_buffer_size, required_size);
+    FIXME("%p, %p, %d, %p: stub\n", disk_space, return_buffer, return_buffer_size, required_size);
     return FALSE;
+}
+
+/***********************************************************************
+ *      SetupAddToSourceListA (SETUPAPI.@)
+ */
+BOOL WINAPI SetupAddToSourceListA(DWORD flags, PCSTR source)
+{
+    FIXME("0x%08x %s: stub\n", flags, debugstr_a(source));
+    return TRUE;
+}
+
+/***********************************************************************
+ *      SetupAddToSourceListW (SETUPAPI.@)
+ */
+BOOL WINAPI SetupAddToSourceListW(DWORD flags, PCWSTR source)
+{
+    FIXME("0x%08x %s: stub\n", flags, debugstr_w(source));
+    return TRUE;
 }
 
 /***********************************************************************
@@ -236,7 +264,7 @@ BOOL WINAPI SetupQueryDrivesInDiskSpaceListW(HDSKSPC disk_space, PWSTR return_bu
  */
 BOOL WINAPI SetupSetSourceListA(DWORD flags, PCSTR *list, UINT count)
 {
-    FIXME("0x%08x %p %d\n", flags, list, count);
+    FIXME("0x%08x %p %d: stub\n", flags, list, count);
     return FALSE;
 }
 
@@ -245,7 +273,7 @@ BOOL WINAPI SetupSetSourceListA(DWORD flags, PCSTR *list, UINT count)
  */
 BOOL WINAPI SetupSetSourceListW(DWORD flags, PCWSTR *list, UINT count)
 {
-    FIXME("0x%08x %p %d\n", flags, list, count);
+    FIXME("0x%08x %p %d: stub\n", flags, list, count);
     return FALSE;
 }
 
@@ -282,7 +310,7 @@ BOOL WINAPI SetupDiGetClassImageIndex(PSP_CLASSIMAGELIST_DATA ClassImageListData
 BOOL WINAPI SetupDiOpenDeviceInfoA(HDEVINFO DeviceInfoSet, PCSTR DeviceInstanceId,
         HWND hwndParent, DWORD OpenFlags, PSP_DEVINFO_DATA DeviceInfoData)
 {
-    FIXME("%p %s %p 0x%08x %p\n", DeviceInfoSet, debugstr_a(DeviceInstanceId),
+    FIXME("%p %s %p 0x%08x %p: stub\n", DeviceInfoSet, debugstr_a(DeviceInstanceId),
           hwndParent, OpenFlags, DeviceInfoData);
     return FALSE;
 }
@@ -293,7 +321,7 @@ BOOL WINAPI SetupDiOpenDeviceInfoA(HDEVINFO DeviceInfoSet, PCSTR DeviceInstanceI
 BOOL WINAPI SetupDiOpenDeviceInfoW(HDEVINFO DeviceInfoSet, PCWSTR DeviceInstanceId,
         HWND hwndParent, DWORD OpenFlags, PSP_DEVINFO_DATA DeviceInfoData)
 {
-    FIXME("%p %s %p 0x%08x %p\n", DeviceInfoSet, debugstr_w(DeviceInstanceId),
+    FIXME("%p %s %p 0x%08x %p: stub\n", DeviceInfoSet, debugstr_w(DeviceInstanceId),
           hwndParent, OpenFlags, DeviceInfoData);
     return FALSE;
 }
@@ -339,6 +367,26 @@ CONFIGRET WINAPI CM_Locate_DevNode_ExW(PDEVINST pdnDevInst, DEVINSTID_W pDeviceI
 }
 
 /***********************************************************************
+ *      CM_Get_Device_Interface_List_SizeA (SETUPAPI.@)
+ */
+CONFIGRET WINAPI CM_Get_Device_Interface_List_SizeA(PULONG len, LPGUID class, DEVINSTID_A id,
+                                                    ULONG flags)
+{
+    FIXME("%p %p %s 0x%08x: stub\n", len, class, debugstr_a(id), flags);
+    return CR_FAILURE;
+}
+
+/***********************************************************************
+ *      CM_Get_Device_Interface_List_SizeW (SETUPAPI.@)
+ */
+CONFIGRET WINAPI CM_Get_Device_Interface_List_SizeW(PULONG len, LPGUID class, DEVINSTID_W id,
+                                                    ULONG flags)
+{
+    FIXME("%p %p %s 0x%08x: stub\n", len, class, debugstr_w(id), flags);
+    return CR_FAILURE;
+}
+
+/***********************************************************************
  *      CM_Get_Device_Interface_List_Size_ExA (SETUPAPI.@)
  */
 CONFIGRET WINAPI CM_Get_Device_Interface_List_Size_ExA(PULONG len, LPGUID class, DEVINSTID_A id,
@@ -359,12 +407,102 @@ CONFIGRET WINAPI CM_Get_Device_Interface_List_Size_ExW(PULONG len, LPGUID class,
 }
 
 /***********************************************************************
+ *      CM_Get_DevNode_Registry_Property_ExA (SETUPAPI.@)
+ */
+CONFIGRET WINAPI CM_Get_DevNode_Registry_Property_ExA(DEVINST dev, ULONG prop, PULONG regdatatype,
+    PVOID buf, PULONG len, ULONG flags, HMACHINE machine)
+{
+    FIXME("0x%08x %u %p %p %p 0x%08x %p: stub\n", dev, prop, regdatatype, buf, len, flags, machine);
+    return CR_FAILURE;
+}
+
+/***********************************************************************
+ *      CM_Get_DevNode_Registry_Property_ExW (SETUPAPI.@)
+ */
+CONFIGRET WINAPI CM_Get_DevNode_Registry_Property_ExW(DEVINST dev, ULONG prop, PULONG regdatatype,
+    PVOID buf, PULONG len, ULONG flags, HMACHINE machine)
+{
+    FIXME("0x%08x %u %p %p %p 0x%08x %p: stub\n", dev, prop, regdatatype, buf, len, flags, machine);
+    return CR_FAILURE;
+}
+
+/***********************************************************************
+ *      CM_Get_DevNode_Registry_PropertyA (SETUPAPI.@)
+ */
+CONFIGRET WINAPI CM_Get_DevNode_Registry_PropertyA(DEVINST dev, ULONG prop, PULONG regdatatype,
+    PVOID buf, PULONG len, ULONG flags)
+{
+    return CM_Get_DevNode_Registry_Property_ExA(dev, prop, regdatatype, buf, len, flags, NULL);
+}
+
+/***********************************************************************
+ *      CM_Get_DevNode_Registry_PropertyW (SETUPAPI.@)
+ */
+CONFIGRET WINAPI CM_Get_DevNode_Registry_PropertyW(DEVINST dev, ULONG prop, PULONG regdatatype,
+    PVOID buf, PULONG len, ULONG flags)
+{
+    return CM_Get_DevNode_Registry_Property_ExW(dev, prop, regdatatype, buf, len, flags, NULL);
+}
+
+/***********************************************************************
  *      CM_Enumerate_Classes (SETUPAPI.@)
  */
 CONFIGRET WINAPI CM_Enumerate_Classes(ULONG index, LPGUID class, ULONG flags)
 {
     FIXME("%u %p 0x%08x: stub\n", index, class, flags);
     return CR_NO_SUCH_VALUE;
+}
+
+/***********************************************************************
+ *      CM_Get_Class_Registry_PropertyA (SETUPAPI.@)
+ */
+CONFIGRET WINAPI CM_Get_Class_Registry_PropertyA(LPGUID class, ULONG prop, PULONG regdatatype,
+                                                 PVOID buf, ULONG len, ULONG flags, HMACHINE machine)
+{
+    FIXME("%p %u %p %p %u 0x%08x %p: stub\n", class, prop, regdatatype, buf, len, flags, machine);
+    return CR_FAILURE;
+}
+
+/***********************************************************************
+ *      CM_Get_Class_Registry_PropertyW (SETUPAPI.@)
+ */
+CONFIGRET WINAPI CM_Get_Class_Registry_PropertyW(LPGUID class, ULONG prop, PULONG regdatatype,
+                                                 PVOID buf, ULONG len, ULONG flags, HMACHINE machine)
+{
+    FIXME("%p %u %p %p %u 0x%08x %p: stub\n", class, prop, regdatatype, buf, len, flags, machine);
+    return CR_FAILURE;
+}
+
+CONFIGRET WINAPI CM_Reenumerate_DevNode(DEVINST dnDevInst, ULONG ulFlags)
+{
+    FIXME("0x%08x 0x%08x: stub\n", dnDevInst, ulFlags);
+    return CR_FAILURE;
+}
+
+CONFIGRET WINAPI CM_Reenumerate_DevNode_Ex(DEVINST dnDevInst, ULONG ulFlags, HMACHINE machine)
+{
+    FIXME("0x%08x 0x%08x %p: stub\n", dnDevInst, ulFlags, machine);
+    return CR_FAILURE;
+}
+
+/***********************************************************************
+ *      CM_Set_Class_Registry_PropertyA (SETUPAPI.@)
+ */
+CONFIGRET WINAPI CM_Set_Class_Registry_PropertyA(LPGUID class, ULONG prop, PVOID buf, ULONG len,
+                                                 ULONG flags, HMACHINE machine)
+{
+    FIXME("%p %u %p %u 0x%08x %p: stub\n", class, prop, buf, len, flags, machine);
+    return CR_FAILURE;
+}
+
+/***********************************************************************
+ *      CM_Set_Class_Registry_PropertyW (SETUPAPI.@)
+ */
+CONFIGRET WINAPI CM_Set_Class_Registry_PropertyW(LPGUID class, ULONG prop, PVOID buf, ULONG len,
+                                                 ULONG flags, HMACHINE machine)
+{
+    FIXME("%p %u %p %u 0x%08x %p: stub\n", class, prop, buf, len, flags, machine);
+    return CR_FAILURE;
 }
 
 /***********************************************************************
@@ -381,7 +519,7 @@ BOOL WINAPI SetupLogFileW(
     PCWSTR OtherInfo,
     DWORD Flags )
 {
-    FIXME("(%p, %p, '%s', '%s', %d, %p, %p, %p, %d): stub\n", FileLogHandle,
+    FIXME("(%p, %s, '%s', '%s', %d, %s, %s, %s, %d): stub\n", FileLogHandle,
         debugstr_w(LogSectionName), debugstr_w(SourceFileName),
         debugstr_w(TargetFileName), Checksum, debugstr_w(DiskTagfile),
         debugstr_w(DiskDescription), debugstr_w(OtherInfo), Flags);
@@ -425,6 +563,18 @@ BOOL WINAPI SetupDiBuildDriverInfoList(HDEVINFO DeviceInfoSet, PSP_DEVINFO_DATA 
  }
 
 /***********************************************************************
+ *              SetupDiDestroyDriverInfoList  (SETUPAPI.@)
+ */
+
+BOOL WINAPI SetupDiDestroyDriverInfoList(HDEVINFO DeviceInfoSet, PSP_DEVINFO_DATA DeviceInfoData, DWORD DriverType)
+{
+    FIXME("%p %p %d\n", DeviceInfoSet, DeviceInfoData, DriverType);
+
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+/***********************************************************************
  *              SetupDiDeleteDeviceInfo  (SETUPAPI.@)
  */
 
@@ -435,6 +585,28 @@ BOOL WINAPI SetupDiDeleteDeviceInfo(HDEVINFO DeviceInfoSet, PSP_DEVINFO_DATA Dev
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
  }
+
+/***********************************************************************
+ *              SetupDiDrawMiniIcon  (SETUPAPI.@)
+ */
+INT WINAPI SetupDiDrawMiniIcon(HDC hdc, RECT rc, INT MiniIconIndex, DWORD Flags)
+{
+    FIXME("(%p, %s, %d, %x) stub\n", hdc, wine_dbgstr_rect(&rc), MiniIconIndex, Flags);
+
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return 0;
+}
+
+/***********************************************************************
+ *              SetupDiGetClassBitmapIndex  (SETUPAPI.@)
+ */
+BOOL WINAPI SetupDiGetClassBitmapIndex(const GUID *ClassGuid, PINT MiniIconIndex)
+{
+    FIXME("(%s, %p) stub\n", debugstr_guid(ClassGuid), MiniIconIndex);
+
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
 
 /***********************************************************************
  *              SetupDiLoadClassIcon  (SETUPAPI.@)

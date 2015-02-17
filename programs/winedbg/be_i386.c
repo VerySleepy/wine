@@ -21,9 +21,9 @@
 #include "debugger.h"
 #include "wine/debug.h"
 
-WINE_DEFAULT_DEBUG_CHANNEL(winedbg);
-
 #ifdef __i386__
+
+WINE_DEFAULT_DEBUG_CHANNEL(winedbg);
 
   /* db_disasm.c */
 extern void             be_i386_disasm_one_insn(ADDRESS64* addr, int display);
@@ -69,8 +69,8 @@ static void* be_i386_linearize(HANDLE hThread, const ADDRESS64* addr)
     return NULL;
 }
 
-static unsigned be_i386_build_addr(HANDLE hThread, const CONTEXT* ctx, ADDRESS64* addr,
-                                   unsigned seg, unsigned long offset)
+static BOOL be_i386_build_addr(HANDLE hThread, const CONTEXT* ctx, ADDRESS64* addr,
+                               unsigned seg, unsigned long offset)
 {
     addr->Mode    = AddrModeFlat;
     addr->Segment = seg;
@@ -95,8 +95,8 @@ static unsigned be_i386_build_addr(HANDLE hThread, const CONTEXT* ctx, ADDRESS64
     return TRUE;
 }
 
-static unsigned be_i386_get_addr(HANDLE hThread, const CONTEXT* ctx, 
-                                 enum be_cpu_addr bca, ADDRESS64* addr)
+static BOOL be_i386_get_addr(HANDLE hThread, const CONTEXT* ctx,
+                             enum be_cpu_addr bca, ADDRESS64* addr)
 {
     switch (bca)
     {
@@ -110,7 +110,7 @@ static unsigned be_i386_get_addr(HANDLE hThread, const CONTEXT* ctx,
     return FALSE;
 }
 
-static unsigned be_i386_get_register_info(int regno, enum be_cpu_addr* kind)
+static BOOL be_i386_get_register_info(int regno, enum be_cpu_addr* kind)
 {
     switch (regno)
     {
@@ -121,7 +121,7 @@ static unsigned be_i386_get_register_info(int regno, enum be_cpu_addr* kind)
     return FALSE;
 }
 
-static void be_i386_single_step(CONTEXT* ctx, unsigned enable)
+static void be_i386_single_step(CONTEXT* ctx, BOOL enable)
 {
     if (enable) ctx->EFlags |= STEP_FLAG;
     else ctx->EFlags &= ~STEP_FLAG;
@@ -290,7 +290,7 @@ static struct dbg_internal_var be_i386_ctx[] =
     {0,                 NULL,           0,                                      dbg_itype_none}
 };
 
-static unsigned be_i386_is_step_over_insn(const void* insn)
+static BOOL be_i386_is_step_over_insn(const void* insn)
 {
     BYTE	ch;
 
@@ -349,15 +349,20 @@ static unsigned be_i386_is_step_over_insn(const void* insn)
     }
 }
 
-static unsigned be_i386_is_function_return(const void* insn)
+static BOOL be_i386_is_function_return(const void* insn)
 {
     BYTE ch;
 
     if (!dbg_read_memory(insn, &ch, sizeof(ch))) return FALSE;
+    if (ch == 0xF3) /* REP */
+    {
+        insn = (const char*)insn + 1;
+        if (!dbg_read_memory(insn, &ch, sizeof(ch))) return FALSE;
+    }
     return (ch == 0xC2) || (ch == 0xC3);
 }
 
-static unsigned be_i386_is_break_insn(const void* insn)
+static BOOL be_i386_is_break_insn(const void* insn)
 {
     BYTE        c;
 
@@ -397,7 +402,7 @@ static BOOL fetch_value(const char* addr, unsigned sz, int* value)
     return TRUE;
 }
 
-static unsigned be_i386_is_func_call(const void* insn, ADDRESS64* callee)
+static BOOL be_i386_is_func_call(const void* insn, ADDRESS64* callee)
 {
     BYTE                ch;
     int                 delta;
@@ -540,7 +545,7 @@ static unsigned be_i386_is_func_call(const void* insn, ADDRESS64* callee)
     }
 }
 
-static unsigned be_i386_is_jump(const void* insn, ADDRESS64* jumpee)
+static BOOL be_i386_is_jump(const void* insn, ADDRESS64* jumpee)
 {
     BYTE                ch;
     int                 delta;
@@ -628,9 +633,9 @@ static inline int be_i386_get_unused_DR(CONTEXT* ctx, DWORD** r)
     return -1;
 }
 
-static unsigned be_i386_insert_Xpoint(HANDLE hProcess, const struct be_process_io* pio, 
-                                      CONTEXT* ctx, enum be_xpoint_type type, 
-                                      void* addr, unsigned long* val, unsigned size)
+static BOOL be_i386_insert_Xpoint(HANDLE hProcess, const struct be_process_io* pio,
+                                  CONTEXT* ctx, enum be_xpoint_type type,
+                                  void* addr, unsigned long* val, unsigned size)
 {
     unsigned char       ch;
     SIZE_T              sz;
@@ -641,11 +646,11 @@ static unsigned be_i386_insert_Xpoint(HANDLE hProcess, const struct be_process_i
     switch (type)
     {
     case be_xpoint_break:
-        if (size != 0) return 0;
-        if (!pio->read(hProcess, addr, &ch, 1, &sz) || sz != 1) return 0;
+        if (size != 0) return FALSE;
+        if (!pio->read(hProcess, addr, &ch, 1, &sz) || sz != 1) return FALSE;
         *val = ch;
         ch = 0xcc;
-        if (!pio->write(hProcess, addr, &ch, 1, &sz) || sz != 1) return 0;
+        if (!pio->write(hProcess, addr, &ch, 1, &sz) || sz != 1) return FALSE;
         break;
     case be_xpoint_watch_exec:
         bits = DR7_RW_EXECUTE;
@@ -656,14 +661,14 @@ static unsigned be_i386_insert_Xpoint(HANDLE hProcess, const struct be_process_i
     case be_xpoint_watch_write:
         bits = DR7_RW_WRITE;
     hw_bp:
-        if ((reg = be_i386_get_unused_DR(ctx, &pr)) == -1) return 0;
+        if ((reg = be_i386_get_unused_DR(ctx, &pr)) == -1) return FALSE;
         *pr = (DWORD)addr;
         if (type != be_xpoint_watch_exec) switch (size)
         {
         case 4: bits |= DR7_LEN_4; break;
         case 2: bits |= DR7_LEN_2; break;
         case 1: bits |= DR7_LEN_1; break;
-        default: return 0;
+        default: return FALSE;
         }
         *val = reg;
         /* clear old values */
@@ -674,14 +679,14 @@ static unsigned be_i386_insert_Xpoint(HANDLE hProcess, const struct be_process_i
         break;
     default:
         dbg_printf("Unknown bp type %c\n", type);
-        return 0;
+        return FALSE;
     }
-    return 1;
+    return TRUE;
 }
 
-static unsigned be_i386_remove_Xpoint(HANDLE hProcess, const struct be_process_io* pio,
-                                      CONTEXT* ctx, enum be_xpoint_type type, 
-                                      void* addr, unsigned long val, unsigned size)
+static BOOL be_i386_remove_Xpoint(HANDLE hProcess, const struct be_process_io* pio,
+                                  CONTEXT* ctx, enum be_xpoint_type type,
+                                  void* addr, unsigned long val, unsigned size)
 {
     SIZE_T              sz;
     unsigned char       ch;
@@ -689,13 +694,13 @@ static unsigned be_i386_remove_Xpoint(HANDLE hProcess, const struct be_process_i
     switch (type)
     {
     case be_xpoint_break:
-        if (size != 0) return 0;
-        if (!pio->read(hProcess, addr, &ch, 1, &sz) || sz != 1) return 0;
+        if (size != 0) return FALSE;
+        if (!pio->read(hProcess, addr, &ch, 1, &sz) || sz != 1) return FALSE;
         if (ch != (unsigned char)0xCC)
             WINE_FIXME("Cannot get back %02x instead of 0xCC at %08lx\n",
                        ch, (unsigned long)addr);
         ch = (unsigned char)val;
-        if (!pio->write(hProcess, addr, &ch, 1, &sz) || sz != 1) return 0;
+        if (!pio->write(hProcess, addr, &ch, 1, &sz) || sz != 1) return FALSE;
         break;
     case be_xpoint_watch_exec:
     case be_xpoint_watch_read:
@@ -705,12 +710,12 @@ static unsigned be_i386_remove_Xpoint(HANDLE hProcess, const struct be_process_i
         break;
     default:
         dbg_printf("Unknown bp type %c\n", type);
-        return 0;
+        return FALSE;
     }
-    return 1;
+    return TRUE;
 }
 
-static unsigned be_i386_is_watchpoint_set(const CONTEXT* ctx, unsigned idx)
+static BOOL be_i386_is_watchpoint_set(const CONTEXT* ctx, unsigned idx)
 {
     return ctx->Dr6 & (1 << idx);
 }
@@ -731,8 +736,8 @@ static int be_i386_adjust_pc_for_break(CONTEXT* ctx, BOOL way)
     return 1;
 }
 
-static int be_i386_fetch_integer(const struct dbg_lvalue* lvalue, unsigned size,
-                                 unsigned ext_sign, LONGLONG* ret)
+static BOOL be_i386_fetch_integer(const struct dbg_lvalue* lvalue, unsigned size,
+                                  BOOL is_signed, LONGLONG* ret)
 {
     if (size != 1 && size != 2 && size != 4 && size != 8) return FALSE;
 
@@ -743,7 +748,7 @@ static int be_i386_fetch_integer(const struct dbg_lvalue* lvalue, unsigned size,
     if (!memory_read_value(lvalue, size, ret)) return FALSE;
 
     /* propagate sign information */
-    if (ext_sign && size < 8 && (*ret >> (size * 8 - 1)) != 0)
+    if (is_signed && size < 8 && (*ret >> (size * 8 - 1)) != 0)
     {
         ULONGLONG neg = -1;
         *ret |= neg << (size * 8);
@@ -751,8 +756,8 @@ static int be_i386_fetch_integer(const struct dbg_lvalue* lvalue, unsigned size,
     return TRUE;
 }
 
-static int be_i386_fetch_float(const struct dbg_lvalue* lvalue, unsigned size, 
-                               long double* ret)
+static BOOL be_i386_fetch_float(const struct dbg_lvalue* lvalue, unsigned size,
+                                long double* ret)
 {
     char        tmp[sizeof(long double)];
 
@@ -762,14 +767,19 @@ static int be_i386_fetch_float(const struct dbg_lvalue* lvalue, unsigned size,
     if (!memory_read_value(lvalue, size, tmp)) return FALSE;
 
     /* float & double types have to be promoted to a long double */
-    switch (size)
-    {
-    case sizeof(float):         *ret = *(float*)tmp;            break;
-    case sizeof(double):        *ret = *(double*)tmp;           break;
-    case sizeof(long double):   *ret = *(long double*)tmp;      break;
-    default:                    return FALSE;
-    }
+    if (size == sizeof(float)) *ret = *(float*)tmp;
+    else if (size == sizeof(double)) *ret = *(double*)tmp;
+    else if (size == sizeof(long double)) *ret = *(long double*)tmp;
+    else return FALSE;
+
     return TRUE;
+}
+
+static BOOL be_i386_store_integer(const struct dbg_lvalue* lvalue, unsigned size,
+                                  BOOL is_signed, LONGLONG val)
+{
+    /* this is simple as we're on a little endian CPU */
+    return memory_write_value(lvalue, size, &val);
 }
 
 struct backend_cpu be_i386 =
@@ -797,5 +807,6 @@ struct backend_cpu be_i386 =
     be_i386_adjust_pc_for_break,
     be_i386_fetch_integer,
     be_i386_fetch_float,
+    be_i386_store_integer,
 };
 #endif

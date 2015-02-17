@@ -27,9 +27,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef HAVE_UNISTD_H
-# include <unistd.h>
-#endif
 
 #include "debugger.h"
 #include "wine/exception.h"
@@ -184,7 +181,7 @@ list_arg:
     | pathname ':' identifier   { symbol_get_line($1, $3, &$$); }
     | '*' expr_lvalue	        { DWORD disp; ADDRESS64 addr; $$.SizeOfStruct = sizeof($$);
                                   types_extract_as_address(&$2, &addr);
-                                  SymGetLineFromAddr64(dbg_curr_process->handle, (unsigned long)memory_to_linear_addr(& addr), &disp, & $$); }
+                                  SymGetLineFromAddr64(dbg_curr_process->handle, (ULONG_PTR)memory_to_linear_addr(& addr), &disp, & $$); }
     ;
 
 run_command:
@@ -207,7 +204,7 @@ disassemble_command:
     ;
 
 set_command:
-      tSET lvalue_addr '=' expr_rvalue { memory_write_value(&$2, sizeof(int), &$4); }
+      tSET lvalue_addr '=' expr_lvalue { types_store_value(&$2, &$4); }
     | tSET '+' tIDENTIFIER      { info_wine_dbg_channel(TRUE, NULL, $3); }
     | tSET '+' tALL             { info_wine_dbg_channel(TRUE, NULL, "all"); }
     | tSET '-' tIDENTIFIER      { info_wine_dbg_channel(FALSE, NULL, $3); }

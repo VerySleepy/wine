@@ -28,8 +28,8 @@
 #include <math.h>
 
 #include "wine/test.h"
+#include "mmsystem.h"
 #include "dsound.h"
-#include "mmreg.h"
 #include "ks.h"
 #include "ksmedia.h"
 #include "dsound_test.h"
@@ -252,7 +252,7 @@ static int buffer_silence(play_state_t* state, DWORD size)
     return size;
 }
 
-static int buffer_service(play_state_t* state)
+static BOOL buffer_service(play_state_t* state)
 {
     DWORD last_play_pos,play_pos,buf_free;
     HRESULT rc;
@@ -291,7 +291,7 @@ static int buffer_service(play_state_t* state)
         trace("offset=%d free=%d written=%d / %d\n",
               state->offset,buf_free,state->written,state->wave_len);
     if (buf_free==0)
-        return 1;
+        return TRUE;
 
     if (state->written<state->wave_len)
     {
@@ -311,14 +311,14 @@ static int buffer_service(play_state_t* state)
         if (buffer_silence(state,buf_free)==-1)
             goto STOP;
     }
-    return 1;
+    return TRUE;
 
 STOP:
     if (winetest_debug > 1)
         trace("stopping playback\n");
     rc=IDirectSoundBuffer_Stop(state->dsbo);
     ok(rc==DS_OK,"IDirectSoundBuffer_Stop() failed: %08x\n", rc);
-    return 0;
+    return FALSE;
 }
 
 void test_buffer(LPDIRECTSOUND dso, LPDIRECTSOUNDBUFFER *dsbo,
@@ -381,7 +381,9 @@ void test_buffer(LPDIRECTSOUND dso, LPDIRECTSOUNDBUFFER *dsbo,
         rc=IDirectSoundBuffer_GetFormat(*dsbo,(WAVEFORMATEX*)&wfxe,size,NULL);
         wfx = wfxe.Format;
         ieee = IsEqualGUID(&wfxe.SubFormat, &KSDATAFORMAT_SUBTYPE_IEEE_FLOAT);
-    }
+    } else
+        return;
+
     ok(rc==DS_OK,
         "IDirectSoundBuffer_GetFormat() failed: %08x\n", rc);
     if (rc==DS_OK && winetest_debug > 1) {
@@ -801,7 +803,7 @@ static HRESULT test_secondary(LPGUID lpGuid, int play,
         ZeroMemory(&bufdesc, sizeof(bufdesc));
         bufdesc.dwSize=sizeof(bufdesc);
         bufdesc.dwFlags=DSBCAPS_GETCURRENTPOSITION2;
-        if (has_3d)
+        if (has_3dbuffer)
             bufdesc.dwFlags|=DSBCAPS_CTRL3D;
         else
             bufdesc.dwFlags|=
@@ -833,6 +835,14 @@ static HRESULT test_secondary(LPGUID lpGuid, int play,
            wfx.nSamplesPerSec,wfx.wBitsPerSample,wfx.nChannels,
            getDSBCAPS(bufdesc.dwFlags),rc);
         if (rc==DS_OK && secondary!=NULL) {
+            IDirectSound3DBuffer *ds3d;
+
+            rc=IDirectSoundBuffer_QueryInterface(secondary, &IID_IDirectSound3DBuffer, (void**)&ds3d);
+            ok((has_3dbuffer && rc==DS_OK) || (!has_3dbuffer && rc==E_NOINTERFACE),
+                    "Wrong return trying to get 3D buffer on %s3D secondary interface: %08x\n", has_3dbuffer ? "" : "non-", rc);
+            if(rc==DS_OK)
+                IDirectSound3DBuffer_Release(ds3d);
+
             if (!has_3d) {
                 LONG refvol,vol,refpan,pan;
 
@@ -1213,15 +1223,13 @@ static HRESULT test_primary_3d_with_listener(LPGUID lpGuid)
                             !(dscaps.dwFlags & DSCAPS_EMULDRIVER),1.0,0,
                             listener,0,0,FALSE,0);
 
-                todo_wine {
-                    temp_buffer = NULL;
-                    rc=IDirectSound3DListener_QueryInterface(listener,
-                    &IID_IKsPropertySet,(LPVOID *)&temp_buffer);
-                    ok(rc==DS_OK && temp_buffer!=NULL,
-                    "IDirectSound3DListener_QueryInterface didn't handle IKsPropertySet: ret = %08x\n", rc);
-                    if(temp_buffer)
-                        IKsPropertySet_Release(temp_buffer);
-                }
+                temp_buffer = NULL;
+                rc = IDirectSound3DListener_QueryInterface(listener, &IID_IKsPropertySet,
+                        (void **)&temp_buffer);
+                ok(rc==DS_OK && temp_buffer!=NULL,
+                        "IDirectSound3DListener_QueryInterface didn't handle IKsPropertySet: ret = %08x\n", rc);
+                if(temp_buffer)
+                    IKsPropertySet_Release(temp_buffer);
             }
 
             /* Testing the reference counting */
@@ -1230,15 +1238,12 @@ static HRESULT test_primary_3d_with_listener(LPGUID lpGuid)
                "references, should have 0\n",ref);
         }
 
-        todo_wine {
-            temp_buffer = NULL;
-            rc=IDirectSoundBuffer_QueryInterface(primary,
-            &IID_IKsPropertySet,(LPVOID *)&temp_buffer);
-            ok(rc==DS_OK && temp_buffer!=NULL,
-            "IDirectSoundBuffer_QueryInterface didn't handle IKsPropertySet on primary buffer: ret = %08x\n", rc);
-            if(temp_buffer)
-                IKsPropertySet_Release(temp_buffer);
-        }
+        temp_buffer = NULL;
+        rc = IDirectSoundBuffer_QueryInterface(primary, &IID_IKsPropertySet, (void **)&temp_buffer);
+        ok(rc==DS_OK && temp_buffer!=NULL,
+                "IDirectSoundBuffer_QueryInterface didn't handle IKsPropertySet on primary buffer: ret = %08x\n", rc);
+        if(temp_buffer)
+            IKsPropertySet_Release(temp_buffer);
 
         /* Testing the reference counting */
         ref=IDirectSoundBuffer_Release(primary);
@@ -1255,22 +1260,25 @@ return DSERR_GENERIC;
     return rc;
 }
 
+static unsigned driver_count = 0;
+
 static BOOL WINAPI dsenum_callback(LPGUID lpGuid, LPCSTR lpcstrDescription,
                                    LPCSTR lpcstrModule, LPVOID lpContext)
 {
     HRESULT rc;
     trace("*** Testing %s - %s ***\n",lpcstrDescription,lpcstrModule);
+    driver_count++;
 
     rc = test_for_driver(lpGuid);
     if (rc == DSERR_NODRIVER) {
         trace("  No Driver\n");
-        return 1;
+        return TRUE;
     } else if (rc == DSERR_ALLOCATED) {
         trace("  Already In Use\n");
-        return 1;
+        return TRUE;
     } else if (rc == E_FAIL) {
         trace("  No Device\n");
-        return 1;
+        return TRUE;
     }
 
     trace("  Testing the primary buffer\n");
@@ -1298,7 +1306,7 @@ static BOOL WINAPI dsenum_callback(LPGUID lpGuid, LPCSTR lpcstrDescription,
     test_secondary(lpGuid,winetest_interactive,1,1,1,0,0,1);
     test_secondary(lpGuid,winetest_interactive,1,1,1,0,1,1);
 
-    return 1;
+    return TRUE;
 }
 
 static void ds3d_tests(void)
@@ -1306,6 +1314,7 @@ static void ds3d_tests(void)
     HRESULT rc;
     rc=pDirectSoundEnumerateA(&dsenum_callback,NULL);
     ok(rc==DS_OK,"DirectSoundEnumerateA() failed: %08x\n",rc);
+    trace("tested %u DirectSound drivers\n", driver_count);
 }
 
 START_TEST(ds3d)
@@ -1314,7 +1323,7 @@ START_TEST(ds3d)
 
     CoInitialize(NULL);
 
-    hDsound = LoadLibrary("dsound.dll");
+    hDsound = LoadLibraryA("dsound.dll");
     if (hDsound)
     {
 
@@ -1328,7 +1337,7 @@ START_TEST(ds3d)
         FreeLibrary(hDsound);
     }
     else
-        skip("dsound.dll not found!\n");
+        skip("dsound.dll not found - skipping all tests\n");
 
     CoUninitialize();
 }

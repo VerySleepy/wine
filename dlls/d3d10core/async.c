@@ -33,9 +33,12 @@ static inline struct d3d10_query *impl_from_ID3D10Query(ID3D10Query *iface)
 
 static HRESULT STDMETHODCALLTYPE d3d10_query_QueryInterface(ID3D10Query *iface, REFIID riid, void **object)
 {
+    struct d3d10_query *query = impl_from_ID3D10Query(iface);
+
     TRACE("iface %p, riid %s, object %p.\n", iface, debugstr_guid(riid), object);
 
-    if (IsEqualGUID(riid, &IID_ID3D10Query)
+    if ((IsEqualGUID(riid, &IID_ID3D10Predicate) && query->predicate)
+            || IsEqualGUID(riid, &IID_ID3D10Query)
             || IsEqualGUID(riid, &IID_ID3D10Asynchronous)
             || IsEqualGUID(riid, &IID_ID3D10DeviceChild)
             || IsEqualGUID(riid, &IID_IUnknown))
@@ -70,6 +73,7 @@ static ULONG STDMETHODCALLTYPE d3d10_query_Release(ID3D10Query *iface)
 
     if (!refcount)
     {
+        ID3D10Device1_Release(This->device);
         HeapFree(GetProcessHeap(), 0, This);
     }
 
@@ -80,7 +84,12 @@ static ULONG STDMETHODCALLTYPE d3d10_query_Release(ID3D10Query *iface)
 
 static void STDMETHODCALLTYPE d3d10_query_GetDevice(ID3D10Query *iface, ID3D10Device **device)
 {
-    FIXME("iface %p, device %p stub!\n", iface, device);
+    struct d3d10_query *query = impl_from_ID3D10Query(iface);
+
+    TRACE("iface %p, device %p.\n", iface, device);
+
+    *device = (ID3D10Device *)query->device;
+    ID3D10Device_AddRef(*device);
 }
 
 static HRESULT STDMETHODCALLTYPE d3d10_query_GetPrivateData(ID3D10Query *iface,
@@ -162,10 +171,53 @@ static const struct ID3D10QueryVtbl d3d10_query_vtbl =
     d3d10_query_GetDesc,
 };
 
-HRESULT d3d10_query_init(struct d3d10_query *query)
+struct d3d10_query *unsafe_impl_from_ID3D10Query(ID3D10Query *iface)
 {
+    if (!iface)
+        return NULL;
+    assert(iface->lpVtbl == &d3d10_query_vtbl);
+    return CONTAINING_RECORD(iface, struct d3d10_query, ID3D10Query_iface);
+}
+
+HRESULT d3d10_query_init(struct d3d10_query *query, struct d3d10_device *device,
+        const D3D10_QUERY_DESC *desc, BOOL predicate)
+{
+    HRESULT hr;
+
+    static const enum wined3d_query_type query_type_map[] =
+    {
+        /* D3D10_QUERY_EVENT                    */  WINED3D_QUERY_TYPE_EVENT,
+        /* D3D10_QUERY_OCCLUSION                */  WINED3D_QUERY_TYPE_OCCLUSION,
+        /* D3D10_QUERY_TIMESTAMP                */  WINED3D_QUERY_TYPE_TIMESTAMP,
+        /* D3D10_QUERY_TIMESTAMP_DISJOINT       */  WINED3D_QUERY_TYPE_TIMESTAMP_DISJOINT,
+        /* D3D10_QUERY_PIPELINE_STATISTICS      */  WINED3D_QUERY_TYPE_PIPELINE_STATISTICS,
+        /* D3D10_QUERY_OCCLUSION_PREDICATE      */  WINED3D_QUERY_TYPE_OCCLUSION,
+        /* D3D10_QUERY_SO_STATISTICS            */  WINED3D_QUERY_TYPE_SO_STATISTICS,
+        /* D3D10_QUERY_SO_OVERFLOW_PREDICATE    */  WINED3D_QUERY_TYPE_SO_OVERFLOW,
+    };
+
+    if (desc->Query >= sizeof(query_type_map) / sizeof(*query_type_map))
+    {
+        FIXME("Unhandled query type %#x.\n", desc->Query);
+        return E_INVALIDARG;
+    }
+
+    if (desc->MiscFlags)
+        FIXME("Ignoring MiscFlags %#x.\n", desc->MiscFlags);
+
     query->ID3D10Query_iface.lpVtbl = &d3d10_query_vtbl;
     query->refcount = 1;
+
+    if (FAILED(hr = wined3d_query_create(device->wined3d_device,
+            query_type_map[desc->Query], query, &query->wined3d_query)))
+    {
+        WARN("Failed to create wined3d query, hr %#x.\n", hr);
+        return hr;
+    }
+
+    query->predicate = predicate;
+    query->device = &device->ID3D10Device1_iface;
+    ID3D10Device1_AddRef(query->device);
 
     return S_OK;
 }

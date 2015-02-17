@@ -8,7 +8,7 @@
 @ stdcall D3DXCheckTextureRequirements(ptr ptr ptr ptr long ptr ptr) d3dx9_36.D3DXCheckTextureRequirements
 @ stdcall D3DXCheckVersion(long long)
 @ stdcall D3DXCheckVolumeTextureRequirements(ptr ptr ptr ptr ptr long ptr ptr) d3dx9_36.D3DXCheckVolumeTextureRequirements
-@ stdcall D3DXCleanMesh(ptr ptr ptr ptr ptr) d3dx9_36.D3DXCleanMesh
+@ stdcall D3DXCleanMesh(long ptr ptr ptr ptr ptr) d3dx9_36.D3DXCleanMesh
 @ stdcall D3DXColorAdjustContrast(ptr ptr float) d3dx9_36.D3DXColorAdjustContrast
 @ stdcall D3DXColorAdjustSaturation(ptr ptr float) d3dx9_36.D3DXColorAdjustSaturation
 @ stdcall D3DXCompileShader(ptr long ptr ptr str str long ptr ptr ptr) d3dx9_36.D3DXCompileShader
@@ -76,7 +76,7 @@
 @ stdcall D3DXCreateNPatchMesh(ptr ptr) d3dx9_36.D3DXCreateNPatchMesh
 @ stdcall D3DXCreatePMeshFromStream(ptr long ptr ptr ptr ptr ptr) d3dx9_36.D3DXCreatePMeshFromStream
 @ stdcall D3DXCreatePatchMesh(ptr long long long ptr ptr ptr) d3dx9_36.D3DXCreatePatchMesh
-@ stdcall D3DXCreatePolygon(ptr long long ptr ptr) d3dx9_36.D3DXCreatePolygon
+@ stdcall D3DXCreatePolygon(ptr float long ptr ptr) d3dx9_36.D3DXCreatePolygon
 @ stdcall D3DXCreatePRTBuffer(long long long ptr) d3dx9_36.D3DXCreatePRTBuffer
 @ stdcall D3DXCreatePRTBufferTex(long long long long ptr) d3dx9_36.D3DXCreatePRTBufferTex
 @ stdcall D3DXCreatePRTCompBuffer(long long long ptr ptr ptr ptr) d3dx9_36.D3DXCreatePRTCompBuffer
@@ -275,17 +275,17 @@
 @ stdcall D3DXSaveVolumeToFileW(ptr long ptr ptr ptr) d3dx9_36.D3DXSaveVolumeToFileW
 @ stdcall D3DXSHAdd(ptr long ptr ptr) d3dx9_36.D3DXSHAdd
 @ stdcall D3DXSHDot(long ptr ptr) d3dx9_36.D3DXSHDot
-@ stdcall D3DXSHEvalConeLight(long ptr long long long long ptr ptr ptr) d3dx9_36.D3DXSHEvalConeLight
+@ stdcall D3DXSHEvalConeLight(long ptr float float float float ptr ptr ptr) d3dx9_36.D3DXSHEvalConeLight
 @ stdcall D3DXSHEvalDirection(ptr long ptr) d3dx9_36.D3DXSHEvalDirection
-@ stdcall D3DXSHEvalDirectionalLight(long ptr long long long long ptr ptr ptr) d3dx9_36.D3DXSHEvalDirectionalLight
-@ stdcall D3DXSHEvalHemisphereLight(long ptr long long ptr ptr ptr) d3dx9_36.D3DXSHEvalHemisphereLight
-@ stdcall D3DXSHEvalSphericalLight(long ptr long long long long ptr ptr ptr) d3dx9_36.D3DXSHEvalSphericalLight
+@ stdcall D3DXSHEvalDirectionalLight(long ptr float float float ptr ptr ptr) d3dx9_36.D3DXSHEvalDirectionalLight
+@ stdcall D3DXSHEvalHemisphereLight(long ptr int128 int128 ptr ptr ptr) d3dx9_36.D3DXSHEvalHemisphereLight
+@ stdcall D3DXSHEvalSphericalLight(long ptr float float float float ptr ptr ptr) d3dx9_36.D3DXSHEvalSphericalLight
 @ stdcall D3DXSHProjectCubeMap(long ptr ptr ptr ptr) d3dx9_36.D3DXSHProjectCubeMap
 @ stdcall D3DXSHPRTCompSplitMeshSC(ptr long long ptr long ptr long long ptr ptr long ptr ptr ptr ptr ptr) d3dx9_36.D3DXSHPRTCompSplitMeshSC
 @ stdcall D3DXSHPRTCompSuperCluster(ptr ptr long long ptr ptr) d3dx9_36.D3DXSHPRTCompSuperCluster
 @ stdcall D3DXSHRotate(ptr long ptr ptr) d3dx9_36.D3DXSHRotate
-@ stdcall D3DXSHRotateZ(ptr long long ptr) d3dx9_36.D3DXSHRotateZ
-@ stdcall D3DXSHScale(ptr long ptr ptr) d3dx9_36.D3DXSHScale
+@ stdcall D3DXSHRotateZ(ptr long float ptr) d3dx9_36.D3DXSHRotateZ
+@ stdcall D3DXSHScale(ptr long ptr float) d3dx9_36.D3DXSHScale
 @ stdcall D3DXSimplifyMesh(ptr ptr ptr ptr long long ptr) d3dx9_36.D3DXSimplifyMesh
 @ stdcall D3DXSphereBoundProbe(ptr float ptr ptr) d3dx9_36.D3DXSphereBoundProbe
 @ stdcall D3DXSplitMesh(ptr ptr long long ptr ptr ptr ptr ptr) d3dx9_36.D3DXSplitMesh

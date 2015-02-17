@@ -32,6 +32,7 @@
 #include "wingdi.h"
 #include "winnls.h"
 #include "controls.h"
+#include "wine/unicode.h"
 
 static HBRUSH hbrushPattern;
 static HBITMAP hbitmapWallPaper;
@@ -48,74 +49,87 @@ const struct builtin_class_descr DESKTOP_builtin_class =
     CS_DBLCLKS,           /* style */
     WINPROC_DESKTOP,      /* proc */
     0,                    /* extra */
-    IDC_ARROW,            /* cursor */
+    0,                    /* cursor */
     (HBRUSH)(COLOR_BACKGROUND+1)    /* brush */
 };
 
 
 /***********************************************************************
  *           DESKTOP_LoadBitmap
- *
- * Load a bitmap from a file. Used by SetDeskWallPaper().
  */
-static HBITMAP DESKTOP_LoadBitmap( HDC hdc, const char *filename )
+static HBITMAP DESKTOP_LoadBitmap( const WCHAR *filename )
 {
-    BITMAPFILEHEADER *fileHeader;
-    BITMAPINFO *bitmapInfo;
     HBITMAP hbitmap;
-    HFILE file;
-    LPSTR buffer;
-    LONG size;
 
-    /* Read all the file into memory */
-
-    if ((file = _lopen( filename, OF_READ )) == HFILE_ERROR)
+    if (!filename[0]) return 0;
+    hbitmap = LoadImageW( 0, filename, IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION | LR_LOADFROMFILE );
+    if (!hbitmap)
     {
-        UINT len = GetWindowsDirectoryA( NULL, 0 );
-        if (!(buffer = HeapAlloc( GetProcessHeap(), 0,
-                                  len + strlen(filename) + 2 )))
-            return 0;
-        GetWindowsDirectoryA( buffer, len + 1 );
-        strcat( buffer, "\\" );
-        strcat( buffer, filename );
-        file = _lopen( buffer, OF_READ );
-        HeapFree( GetProcessHeap(), 0, buffer );
+        WCHAR buffer[MAX_PATH];
+        UINT len = GetWindowsDirectoryW( buffer, MAX_PATH - 2 );
+        if (buffer[len - 1] != '\\') buffer[len++] = '\\';
+        lstrcpynW( buffer + len, filename, MAX_PATH - len );
+        hbitmap = LoadImageW( 0, buffer, IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION | LR_LOADFROMFILE );
     }
-    if (file == HFILE_ERROR) return 0;
-    size = _llseek( file, 0, 2 );
-    if (!(buffer = HeapAlloc( GetProcessHeap(), 0, size )))
-    {
-	_lclose( file );
-	return 0;
-    }
-    _llseek( file, 0, 0 );
-    size = _lread( file, buffer, size );
-    _lclose( file );
-    fileHeader = (BITMAPFILEHEADER *)buffer;
-    bitmapInfo = (BITMAPINFO *)(buffer + sizeof(BITMAPFILEHEADER));
-
-      /* Check header content */
-    if ((fileHeader->bfType != 0x4d42) || (size < fileHeader->bfSize))
-    {
-	HeapFree( GetProcessHeap(), 0, buffer );
-	return 0;
-    }
-    hbitmap = CreateDIBitmap( hdc, &bitmapInfo->bmiHeader, CBM_INIT,
-                                buffer + fileHeader->bfOffBits,
-                                bitmapInfo, DIB_RGB_COLORS );
-    HeapFree( GetProcessHeap(), 0, buffer );
     return hbitmap;
 }
 
+/***********************************************************************
+ *           init_wallpaper
+ */
+static void init_wallpaper( const WCHAR *wallpaper )
+{
+    HBITMAP hbitmap = DESKTOP_LoadBitmap( wallpaper );
 
+    if (hbitmapWallPaper) DeleteObject( hbitmapWallPaper );
+    hbitmapWallPaper = hbitmap;
+    if (hbitmap)
+    {
+	BITMAP bmp;
+	GetObjectA( hbitmap, sizeof(bmp), &bmp );
+	bitmapSize.cx = (bmp.bmWidth != 0) ? bmp.bmWidth : 1;
+	bitmapSize.cy = (bmp.bmHeight != 0) ? bmp.bmHeight : 1;
+        fTileWallPaper = GetProfileIntA( "desktop", "TileWallPaper", 0 );
+    }
+}
 
 /***********************************************************************
  *           DesktopWndProc
  */
 LRESULT WINAPI DesktopWndProc( HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam )
 {
-    if (message == WM_NCCREATE) return TRUE;
-    return 0;  /* all other messages are ignored */
+    static const WCHAR display_device_guid_propW[] = {
+        '_','_','w','i','n','e','_','d','i','s','p','l','a','y','_',
+        'd','e','v','i','c','e','_','g','u','i','d',0 };
+    static const WCHAR guid_formatW[] = {
+        '%','0','8','x','-','%','0','4','x','-','%','0','4','x','-','%','0','2','x','%','0','2','x','-',
+        '%','0','2','x','%','0','2','x','%','0','2','x','%','0','2','x','%','0','2','x','%','0','2','x',0};
+
+    switch (message)
+    {
+    case WM_NCCREATE:
+    {
+        CREATESTRUCTW *cs = (CREATESTRUCTW *)lParam;
+        const GUID *guid = cs->lpCreateParams;
+
+        if (guid)
+        {
+            ATOM atom;
+            WCHAR buffer[37];
+
+            if (GetAncestor( hwnd, GA_PARENT )) return FALSE;  /* refuse to create non-desktop window */
+
+            sprintfW( buffer, guid_formatW, guid->Data1, guid->Data2, guid->Data3,
+                      guid->Data4[0], guid->Data4[1], guid->Data4[2], guid->Data4[3],
+                      guid->Data4[4], guid->Data4[5], guid->Data4[6], guid->Data4[7] );
+            atom = GlobalAddAtomW( buffer );
+            SetPropW( hwnd, display_device_guid_propW, ULongToHandle( atom ) );
+        }
+        return TRUE;
+    }
+    default:
+        return 0;  /* all other messages are ignored */
+    }
 }
 
 /***********************************************************************
@@ -182,38 +196,14 @@ BOOL WINAPI PaintDesktop(HDC hdc)
  */
 BOOL WINAPI SetDeskWallPaper( LPCSTR filename )
 {
-    HBITMAP hbitmap;
-    HDC hdc;
-    char buffer[256];
-
-    if (filename == (LPSTR)-1)
-    {
-	GetProfileStringA( "desktop", "WallPaper", "(None)", buffer, 256 );
-	filename = buffer;
-    }
-    hdc = GetDC( 0 );
-    hbitmap = DESKTOP_LoadBitmap( hdc, filename );
-    ReleaseDC( 0, hdc );
-    if (hbitmapWallPaper) DeleteObject( hbitmapWallPaper );
-    hbitmapWallPaper = hbitmap;
-    fTileWallPaper = GetProfileIntA( "desktop", "TileWallPaper", 0 );
-    if (hbitmap)
-    {
-	BITMAP bmp;
-	GetObjectA( hbitmap, sizeof(bmp), &bmp );
-	bitmapSize.cx = (bmp.bmWidth != 0) ? bmp.bmWidth : 1;
-	bitmapSize.cy = (bmp.bmHeight != 0) ? bmp.bmHeight : 1;
-    }
-    return TRUE;
+    return SystemParametersInfoA( SPI_SETDESKWALLPAPER, MAX_PATH, (void *)filename, SPIF_UPDATEINIFILE );
 }
 
 
 /***********************************************************************
- *           DESKTOP_SetPattern
- *
- * Set the desktop pattern.
+ *           update_wallpaper
  */
-BOOL DESKTOP_SetPattern( LPCWSTR pattern )
+BOOL update_wallpaper( const WCHAR *wallpaper, const WCHAR *pattern )
 {
     int pat[8];
 
@@ -238,5 +228,7 @@ BOOL DESKTOP_SetPattern( LPCWSTR pattern )
             DeleteObject( hbitmap );
         }
     }
+    init_wallpaper( wallpaper );
+    RedrawWindow( GetDesktopWindow(), 0, 0, RDW_INVALIDATE | RDW_ERASE | RDW_NOCHILDREN );
     return TRUE;
 }

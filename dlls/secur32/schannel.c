@@ -25,10 +25,13 @@
 
 #include "windef.h"
 #include "winbase.h"
+#include "winreg.h"
 #include "winnls.h"
 #include "sspi.h"
 #include "schannel.h"
 #include "secur32_priv.h"
+
+#include "wine/unicode.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(secur32);
@@ -50,22 +53,23 @@ struct schan_handle
     enum schan_handle_type type;
 };
 
-struct schan_credentials
-{
-    ULONG credential_use;
-    schan_imp_certificate_credentials credentials;
-};
-
 struct schan_context
 {
     schan_imp_session session;
     ULONG req_ctx_attr;
+    const CERT_CONTEXT *cert;
 };
 
 static struct schan_handle *schan_handle_table;
 static struct schan_handle *schan_free_handles;
 static SIZE_T schan_handle_table_size;
 static SIZE_T schan_handle_count;
+
+/* Protocols enabled, only those may be used for the connection. */
+static DWORD config_enabled_protocols;
+
+/* Protocols disabled by default. They are enabled for using, but disabled when caller asks for default settings. */
+static DWORD config_default_disabled_protocols;
 
 static ULONG_PTR schan_alloc_handle(void *object, enum schan_handle_type type)
 {
@@ -146,10 +150,109 @@ static void *schan_get_object(ULONG_PTR handle_idx, enum schan_handle_type type)
     return handle->object;
 }
 
+static void read_config(void)
+{
+    DWORD enabled = 0, default_disabled = 0;
+    HKEY protocols_key, key;
+    WCHAR subkey_name[64];
+    unsigned i;
+    DWORD res;
+
+    static BOOL config_read = FALSE;
+
+    static const WCHAR protocol_config_key_name[] = {
+        'S','Y','S','T','E','M','\\',
+        'C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t','\\',
+        'C','o','n','t','r','o','l','\\',
+        'S','e','c','u','r','i','t','y','P','r','o','v','i','d','e','r','s','\\',
+        'S','C','H','A','N','N','E','L','\\',
+        'P','r','o','t','o','c','o','l','s',0 };
+
+    static const WCHAR clientW[] = {'\\','C','l','i','e','n','t',0};
+    static const WCHAR enabledW[] = {'e','n','a','b','l','e','d',0};
+    static const WCHAR disabledbydefaultW[] = {'D','i','s','a','b','l','e','d','B','y','D','e','f','a','u','l','t',0};
+
+    static const struct {
+        WCHAR key_name[20];
+        DWORD prot_client_flag;
+        BOOL enabled; /* If no config is present, enable the protocol */
+        BOOL disabled_by_default; /* Disable if caller asks for default protocol set */
+    } protocol_config_keys[] = {
+        {{'S','S','L',' ','2','.','0',0}, SP_PROT_SSL2_CLIENT, FALSE, TRUE}, /* NOTE: TRUE, TRUE on Windows */
+        {{'S','S','L',' ','3','.','0',0}, SP_PROT_SSL3_CLIENT, TRUE, FALSE},
+        {{'T','L','S',' ','1','.','0',0}, SP_PROT_TLS1_0_CLIENT, TRUE, FALSE},
+        {{'T','L','S',' ','1','.','1',0}, SP_PROT_TLS1_1_CLIENT, TRUE, FALSE /* NOTE: not enabled by default on Windows */ },
+        {{'T','L','S',' ','1','.','2',0}, SP_PROT_TLS1_2_CLIENT, TRUE, FALSE /* NOTE: not enabled by default on Windows */ }
+    };
+
+    /* No need for thread safety */
+    if(config_read)
+        return;
+
+    res = RegOpenKeyExW(HKEY_LOCAL_MACHINE, protocol_config_key_name, 0, KEY_READ, &protocols_key);
+    if(res == ERROR_SUCCESS) {
+        DWORD type, size, value;
+
+        for(i=0; i < sizeof(protocol_config_keys)/sizeof(*protocol_config_keys); i++) {
+            strcpyW(subkey_name, protocol_config_keys[i].key_name);
+            strcatW(subkey_name, clientW);
+            res = RegOpenKeyExW(protocols_key, subkey_name, 0, KEY_READ, &key);
+            if(res != ERROR_SUCCESS) {
+                if(protocol_config_keys[i].enabled)
+                    enabled |= protocol_config_keys[i].prot_client_flag;
+                if(protocol_config_keys[i].disabled_by_default)
+                    default_disabled |= protocol_config_keys[i].prot_client_flag;
+                continue;
+            }
+
+            size = sizeof(value);
+            res = RegQueryValueExW(key, enabledW, NULL, &type, (BYTE*)&value, &size);
+            if(res == ERROR_SUCCESS) {
+                if(type == REG_DWORD && value)
+                    enabled |= protocol_config_keys[i].prot_client_flag;
+            }else if(protocol_config_keys[i].enabled) {
+                enabled |= protocol_config_keys[i].prot_client_flag;
+            }
+
+            size = sizeof(value);
+            res = RegQueryValueExW(key, disabledbydefaultW, NULL, &type, (BYTE*)&value, &size);
+            if(res == ERROR_SUCCESS) {
+                if(type != REG_DWORD || value)
+                    default_disabled |= protocol_config_keys[i].prot_client_flag;
+            }else if(protocol_config_keys[i].disabled_by_default) {
+                default_disabled |= protocol_config_keys[i].prot_client_flag;
+            }
+
+            RegCloseKey(key);
+        }
+    }else {
+        /* No config, enable all known protocols. */
+        for(i=0; i < sizeof(protocol_config_keys)/sizeof(*protocol_config_keys); i++) {
+            if(protocol_config_keys[i].enabled)
+                enabled |= protocol_config_keys[i].prot_client_flag;
+            if(protocol_config_keys[i].disabled_by_default)
+                default_disabled |= protocol_config_keys[i].prot_client_flag;
+        }
+    }
+
+    RegCloseKey(protocols_key);
+
+    config_enabled_protocols = enabled & schan_imp_enabled_protocols();
+    config_default_disabled_protocols = default_disabled;
+    config_read = TRUE;
+
+    TRACE("enabled %x, disabled by default %x\n", config_enabled_protocols, config_default_disabled_protocols);
+}
+
 static SECURITY_STATUS schan_QueryCredentialsAttributes(
  PCredHandle phCredential, ULONG ulAttribute, VOID *pBuffer)
 {
+    struct schan_credentials *cred;
     SECURITY_STATUS ret;
+
+    cred = schan_get_object(phCredential->dwLower, SCHAN_HANDLE_CRED);
+    if(!cred)
+        return SEC_E_INVALID_HANDLE;
 
     switch (ulAttribute)
     {
@@ -178,14 +281,14 @@ static SECURITY_STATUS schan_QueryCredentialsAttributes(
             ret = SEC_E_INTERNAL_ERROR;
         break;
     case SECPKG_ATTR_SUPPORTED_PROTOCOLS:
-        if (pBuffer)
-        {
-            /* FIXME: get from OpenSSL? */
-            FIXME("SECPKG_ATTR_SUPPORTED_PROTOCOLS: stub\n");
-            ret = SEC_E_UNSUPPORTED_FUNCTION;
-        }
-        else
+        if(pBuffer) {
+            /* Regardless of MSDN documentation, tests show that this attribute takes into account
+             * what protocols are enabled for given credential. */
+            ((SecPkgCred_SupportedProtocols*)pBuffer)->grbitProtocol = cred->enabled_protocols;
+            ret = SEC_E_OK;
+        }else {
             ret = SEC_E_INTERNAL_ERROR;
+        }
         break;
     default:
         ret = SEC_E_UNSUPPORTED_FUNCTION;
@@ -290,6 +393,8 @@ static SECURITY_STATUS schan_AcquireClientCredentials(const SCHANNEL_CRED *schan
  PCredHandle phCredential, PTimeStamp ptsExpiry)
 {
     struct schan_credentials *creds;
+    unsigned enabled_protocols;
+    ULONG_PTR handle;
     SECURITY_STATUS st = SEC_E_OK;
 
     TRACE("schanCred %p, phCredential %p, ptsExpiry %p\n", schanCred, phCredential, ptsExpiry);
@@ -297,40 +402,49 @@ static SECURITY_STATUS schan_AcquireClientCredentials(const SCHANNEL_CRED *schan
     if (schanCred)
     {
         st = schan_CheckCreds(schanCred);
-        if (st == SEC_E_NO_CREDENTIALS)
-            st = SEC_E_OK;
+        if (st != SEC_E_OK && st != SEC_E_NO_CREDENTIALS)
+            return st;
+
+        st = SEC_E_OK;
+    }
+
+    read_config();
+    if(schanCred && schanCred->grbitEnabledProtocols)
+        enabled_protocols = schanCred->grbitEnabledProtocols & config_enabled_protocols;
+    else
+        enabled_protocols = config_enabled_protocols & ~config_default_disabled_protocols;
+    if(!enabled_protocols) {
+        ERR("Could not find matching protocol\n");
+        return SEC_E_NO_AUTHENTICATING_AUTHORITY;
     }
 
     /* For now, the only thing I'm interested in is the direction of the
      * connection, so just store it.
      */
-    if (st == SEC_E_OK)
+    creds = HeapAlloc(GetProcessHeap(), 0, sizeof(*creds));
+    if (!creds) return SEC_E_INSUFFICIENT_MEMORY;
+
+    handle = schan_alloc_handle(creds, SCHAN_HANDLE_CRED);
+    if (handle == SCHAN_INVALID_HANDLE) goto fail;
+
+    creds->credential_use = SECPKG_CRED_OUTBOUND;
+    if (!schan_imp_allocate_certificate_credentials(creds))
     {
-        ULONG_PTR handle;
-
-        creds = HeapAlloc(GetProcessHeap(), 0, sizeof(*creds));
-        if (!creds) return SEC_E_INSUFFICIENT_MEMORY;
-
-        handle = schan_alloc_handle(creds, SCHAN_HANDLE_CRED);
-        if (handle == SCHAN_INVALID_HANDLE) goto fail;
-
-        creds->credential_use = SECPKG_CRED_OUTBOUND;
-        if (!schan_imp_allocate_certificate_credentials(&creds->credentials))
-        {
-            schan_free_handle(handle, SCHAN_HANDLE_CRED);
-            goto fail;
-        }
-
-        phCredential->dwLower = handle;
-        phCredential->dwUpper = 0;
-
-        /* Outbound credentials have no expiry */
-        if (ptsExpiry)
-        {
-            ptsExpiry->LowPart = 0;
-            ptsExpiry->HighPart = 0;
-        }
+        schan_free_handle(handle, SCHAN_HANDLE_CRED);
+        goto fail;
     }
+
+    creds->enabled_protocols = enabled_protocols;
+    phCredential->dwLower = handle;
+    phCredential->dwUpper = 0;
+
+    /* Outbound credentials have no expiry */
+    if (ptsExpiry)
+    {
+        ptsExpiry->LowPart = 0;
+        ptsExpiry->HighPart = 0;
+    }
+
     return st;
 
 fail:
@@ -353,7 +467,7 @@ static SECURITY_STATUS schan_AcquireServerCredentials(const SCHANNEL_CRED *schan
         ULONG_PTR handle;
         struct schan_credentials *creds;
 
-        creds = HeapAlloc(GetProcessHeap(), 0, sizeof(*creds));
+        creds = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*creds));
         if (!creds) return SEC_E_INSUFFICIENT_MEMORY;
         creds->credential_use = SECPKG_CRED_INBOUND;
 
@@ -423,7 +537,7 @@ static SECURITY_STATUS SEC_ENTRY schan_FreeCredentialsHandle(
     if (!creds) return SEC_E_INVALID_HANDLE;
 
     if (creds->credential_use == SECPKG_CRED_OUTBOUND)
-        schan_imp_free_certificate_credentials(creds->credentials);
+        schan_imp_free_certificate_credentials(creds);
     HeapFree(GetProcessHeap(), 0, creds);
 
     return SEC_E_OK;
@@ -668,6 +782,7 @@ static SECURITY_STATUS SEC_ENTRY schan_InitializeSecurityContextW(
     struct schan_buffers *out_buffers;
     struct schan_credentials *cred;
     struct schan_transport transport;
+    SIZE_T expected_size = ~0UL;
     SECURITY_STATUS ret;
 
     TRACE("%p %p %s 0x%08x %d %d %p %d %p %p %p %p\n", phCredential, phContext,
@@ -695,6 +810,7 @@ static SECURITY_STATUS SEC_ENTRY schan_InitializeSecurityContextW(
         ctx = HeapAlloc(GetProcessHeap(), 0, sizeof(*ctx));
         if (!ctx) return SEC_E_INSUFFICIENT_MEMORY;
 
+        ctx->cert = NULL;
         handle = schan_alloc_handle(ctx, SCHAN_HANDLE_CTX);
         if (handle == SCHAN_INVALID_HANDLE)
         {
@@ -702,18 +818,66 @@ static SECURITY_STATUS SEC_ENTRY schan_InitializeSecurityContextW(
             return SEC_E_INTERNAL_ERROR;
         }
 
-        if (!schan_imp_create_session(&ctx->session, FALSE, cred->credentials))
+        if (!schan_imp_create_session(&ctx->session, cred))
         {
             schan_free_handle(handle, SCHAN_HANDLE_CTX);
             HeapFree(GetProcessHeap(), 0, ctx);
             return SEC_E_INTERNAL_ERROR;
         }
 
+        if (pszTargetName)
+        {
+            UINT len = WideCharToMultiByte( CP_UNIXCP, 0, pszTargetName, -1, NULL, 0, NULL, NULL );
+            char *target = HeapAlloc( GetProcessHeap(), 0, len );
+
+            if (target)
+            {
+                WideCharToMultiByte( CP_UNIXCP, 0, pszTargetName, -1, target, len, NULL, NULL );
+                schan_imp_set_session_target( ctx->session, target );
+                HeapFree( GetProcessHeap(), 0, target );
+            }
+        }
         phNewContext->dwLower = handle;
         phNewContext->dwUpper = 0;
     }
     else
     {
+        SIZE_T record_size = 0;
+        unsigned char *ptr;
+        SecBuffer *buffer;
+        int idx;
+
+        if (!pInput)
+            return SEC_E_INCOMPLETE_MESSAGE;
+
+        idx = schan_find_sec_buffer_idx(pInput, 0, SECBUFFER_TOKEN);
+        if (idx == -1)
+            return SEC_E_INCOMPLETE_MESSAGE;
+
+        buffer = &pInput->pBuffers[idx];
+        ptr = buffer->pvBuffer;
+        expected_size = 0;
+
+        while (buffer->cbBuffer > expected_size + 5)
+        {
+            record_size = 5 + ((ptr[3] << 8) | ptr[4]);
+
+            if (buffer->cbBuffer < expected_size + record_size)
+                break;
+
+            expected_size += record_size;
+            ptr += record_size;
+        }
+
+        if (!expected_size)
+        {
+            TRACE("Expected at least %lu bytes, but buffer only contains %u bytes.\n",
+                    max(6, record_size), buffer->cbBuffer);
+            return SEC_E_INCOMPLETE_MESSAGE;
+        }
+
+        TRACE("Using expected_size %lu.\n", expected_size);
+
         ctx = schan_get_object(phContext->dwLower, SCHAN_HANDLE_CTX);
     }
 
@@ -721,6 +885,7 @@ static SECURITY_STATUS SEC_ENTRY schan_InitializeSecurityContextW(
 
     transport.ctx = ctx;
     init_schan_buffers(&transport.in, pInput, schan_init_sec_ctx_get_next_buffer);
+    transport.in.limit = expected_size;
     init_schan_buffers(&transport.out, pOutput, schan_init_sec_ctx_get_next_buffer);
     schan_imp_set_session_transport(ctx->session, &transport);
 
@@ -821,7 +986,23 @@ static SECURITY_STATUS SEC_ENTRY schan_QueryContextAttributesW(
         case SECPKG_ATTR_REMOTE_CERT_CONTEXT:
         {
             PCCERT_CONTEXT *cert = buffer;
-            return schan_imp_get_session_peer_certificate(ctx->session, cert);
+
+            if (!ctx->cert) {
+                HCERTSTORE cert_store;
+                SECURITY_STATUS status;
+
+                cert_store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, CERT_STORE_CREATE_NEW_FLAG, NULL);
+                if(!cert_store)
+                    return GetLastError();
+
+                status = schan_imp_get_session_peer_certificate(ctx->session, cert_store, &ctx->cert);
+                CertCloseStore(cert_store, 0);
+                if(status != SEC_E_OK)
+                    return status;
+            }
+
+            *cert = CertDuplicateCertificateContext(ctx->cert);
+            return SEC_E_OK;
         }
         case SECPKG_ATTR_CONNECTION_INFO:
         {
@@ -1067,7 +1248,7 @@ static SECURITY_STATUS SEC_ENTRY schan_DecryptMessage(PCtxtHandle context_handle
         return SEC_E_INCOMPLETE_MESSAGE;
     }
 
-    data_size = buffer->cbBuffer;
+    data_size = expected_size - 5;
     data = HeapAlloc(GetProcessHeap(), 0, data_size);
 
     transport.ctx = ctx;
@@ -1080,23 +1261,18 @@ static SECURITY_STATUS SEC_ENTRY schan_DecryptMessage(PCtxtHandle context_handle
     {
         SIZE_T length = data_size - received;
         SECURITY_STATUS status = schan_imp_recv(ctx->session, data + received, &length);
+
         if (status == SEC_I_CONTINUE_NEEDED)
-        {
-            if (!received)
-            {
-                HeapFree(GetProcessHeap(), 0, data);
-                TRACE("Returning SEC_E_INCOMPLETE_MESSAGE\n");
-                return SEC_E_INCOMPLETE_MESSAGE;
-            }
             break;
-        }
-        else if (status != SEC_E_OK)
+
+        if (status != SEC_E_OK)
         {
             HeapFree(GetProcessHeap(), 0, data);
-            ERR("Returning %d\n", status);
+            ERR("Returning %x\n", status);
             return status;
         }
-        else if (!length)
+
+        if (!length)
             break;
 
         received += length;
@@ -1134,6 +1310,8 @@ static SECURITY_STATUS SEC_ENTRY schan_DeleteSecurityContext(PCtxtHandle context
     ctx = schan_free_handle(context_handle->dwLower, SCHAN_HANDLE_CTX);
     if (!ctx) return SEC_E_INVALID_HANDLE;
 
+    if (ctx->cert)
+        CertFreeCertificateContext(ctx->cert);
     schan_imp_dispose_session(ctx->session);
     HeapFree(GetProcessHeap(), 0, ctx);
 
@@ -1285,7 +1463,7 @@ void SECUR32_deinitSchannelSP(void)
         {
             struct schan_credentials *cred;
             cred = schan_free_handle(i, SCHAN_HANDLE_CRED);
-            schan_imp_free_certificate_credentials(cred->credentials);
+            schan_imp_free_certificate_credentials(cred);
             HeapFree(GetProcessHeap(), 0, cred);
         }
     }

@@ -37,11 +37,11 @@ typedef struct _WINE_CERT_PROP_HEADER
     DWORD propID;
     DWORD unknown; /* always 1 */
     DWORD cb;
-} WINE_CERT_PROP_HEADER, *PWINE_CERT_PROP_HEADER;
+} WINE_CERT_PROP_HEADER;
 
 static BOOL CRYPT_SerializeStoreElement(const void *context,
  const BYTE *encodedContext, DWORD cbEncodedContext, DWORD contextPropID,
- PCWINE_CONTEXT_INTERFACE contextInterface, DWORD dwFlags, BOOL omitHashes,
+ const WINE_CONTEXT_INTERFACE *contextInterface, DWORD dwFlags, BOOL omitHashes,
  BYTE *pbElement, DWORD *pcbElement)
 {
     BOOL ret;
@@ -80,7 +80,7 @@ static BOOL CRYPT_SerializeStoreElement(const void *context,
         }
         else
         {
-            PWINE_CERT_PROP_HEADER hdr;
+            WINE_CERT_PROP_HEADER *hdr;
             DWORD bufSize = 0;
             LPBYTE buf = NULL;
 
@@ -109,7 +109,7 @@ static BOOL CRYPT_SerializeStoreElement(const void *context,
                              &propSize);
                             if (ret)
                             {
-                                hdr = (PWINE_CERT_PROP_HEADER)pbElement;
+                                hdr = (WINE_CERT_PROP_HEADER*)pbElement;
                                 hdr->propID = prop;
                                 hdr->unknown = 1;
                                 hdr->cb = propSize;
@@ -128,7 +128,7 @@ static BOOL CRYPT_SerializeStoreElement(const void *context,
             } while (ret && prop != 0);
             CryptMemFree(buf);
 
-            hdr = (PWINE_CERT_PROP_HEADER)pbElement;
+            hdr = (WINE_CERT_PROP_HEADER*)pbElement;
             hdr->propID = contextPropID;
             hdr->unknown = 1;
             hdr->cb = cbEncodedContext;
@@ -409,7 +409,7 @@ const void *CRYPT_ReadSerializedElement(const BYTE *pbElement, DWORD cbElement,
             }
             else
             {
-                contextInterface->free(context);
+                Context_Release(context_from_ptr(context));
                 context = NULL;
             }
         }
@@ -461,7 +461,7 @@ static BOOL CRYPT_ReadSerializedStore(void *handle,
                      propHdr.propID == CERT_CTL_PROP_ID))
                     {
                         /* We have a new context, so free the existing one */
-                        contextInterface->free(context);
+                        Context_Release(context_from_ptr(context));
                     }
                     if (propHdr.cb > bufSize)
                     {
@@ -522,7 +522,7 @@ static BOOL CRYPT_ReadSerializedStore(void *handle,
             if (contextInterface && context)
             {
                 /* Free the last context added */
-                contextInterface->free(context);
+                Context_Release(context_from_ptr(context));
             }
             CryptMemFree(buf);
             ret = TRUE;
@@ -638,7 +638,7 @@ static BOOL CRYPT_SerializeContextsToStream(SerializedOutputFunc output,
             ret = TRUE;
     } while (ret && context != NULL);
     if (context)
-        contextInterface->free(context);
+        Context_Release(context_from_ptr(context));
     return ret;
 }
 
@@ -652,21 +652,21 @@ static BOOL CRYPT_WriteSerializedStoreToStream(HCERTSTORE store,
     ret = output(handle, fileHeader, sizeof(fileHeader));
     if (ret)
     {
-        memcpy(&interface, pCertInterface, sizeof(interface));
+        interface = *pCertInterface;
         interface.serialize = (SerializeElementFunc)CRYPT_SerializeCertNoHash;
         ret = CRYPT_SerializeContextsToStream(output, handle, &interface,
          store);
     }
     if (ret)
     {
-        memcpy(&interface, pCRLInterface, sizeof(interface));
+        interface = *pCRLInterface;
         interface.serialize = (SerializeElementFunc)CRYPT_SerializeCRLNoHash;
         ret = CRYPT_SerializeContextsToStream(output, handle, &interface,
          store);
     }
     if (ret)
     {
-        memcpy(&interface, pCTLInterface, sizeof(interface));
+        interface = *pCTLInterface;
         interface.serialize = (SerializeElementFunc)CRYPT_SerializeCTLNoHash;
         ret = CRYPT_SerializeContextsToStream(output, handle, &interface,
          store);
@@ -996,7 +996,7 @@ BOOL WINAPI CertAddSerializedElementToStore(HCERTSTORE hCertStore,
                 *pdwContentType = type;
             ret = contextInterface->addContextToStore(hCertStore, context,
              dwAddDisposition, ppvContext);
-            contextInterface->free(context);
+            Context_Release(context_from_ptr(context));
         }
         else
             ret = FALSE;

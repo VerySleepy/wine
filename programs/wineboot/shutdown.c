@@ -100,6 +100,14 @@ static void CALLBACK end_session_message_callback( HWND hwnd, UINT msg, ULONG_PT
                 msg == WM_QUERYENDSESSION ? "WM_QUERYENDSESSION" : (msg == WM_ENDSESSION ? "WM_ENDSESSION" : "Unknown"),
                 hwnd, lresult );
 
+    /* If the window was destroyed while the message was in its queue, SendMessageCallback()
+       calls us with a default 0 result.  Ignore it. */
+    if (!lresult && !IsWindow( hwnd ))
+    {
+        WINE_TRACE( "window was destroyed; ignoring FALSE lresult\n" );
+        lresult = TRUE;
+    }
+
     /* we only care if a WM_QUERYENDSESSION response is FALSE */
     cb_data->result = cb_data->result && lresult;
 
@@ -335,14 +343,14 @@ static BOOL CALLBACK shutdown_one_desktop( LPWSTR name, LPARAM force )
     if (hdesk == NULL)
     {
         WINE_ERR("Cannot open desktop %s, err=%i\n", wine_dbgstr_w(name), GetLastError());
-        return 0;
+        return FALSE;
     }
 
     if (!SetThreadDesktop( hdesk ))
     {
         CloseDesktop( hdesk );
         WINE_ERR("Cannot set thread desktop %s, err=%i\n", wine_dbgstr_w(name), GetLastError());
-        return 0;
+        return FALSE;
     }
 
     CloseDesktop( hdesk );

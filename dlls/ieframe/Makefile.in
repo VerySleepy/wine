@@ -10,44 +10,21 @@ C_SRCS = \
 	frame.c \
 	ie.c \
 	ieframe_main.c \
+	iehtmlwnd.c \
 	iexplore.c \
 	intshcut.c \
 	navigate.c \
 	oleobject.c \
 	persist.c \
 	shellbrowser.c \
-	taskbarlist.c \
+	shelluihelper.c \
 	urlhist.c \
 	view.c \
 	webbrowser.c
 
-RC_SRCS = \
-	De.rc \
-	En.rc \
-	Es.rc \
-	Fr.rc \
-	He.rc \
-	It.rc \
-	Ja.rc \
-	Ko.rc \
-	Lt.rc \
-	Nl.rc \
-	Pl.rc \
-	Pt.rc \
-	Ro.rc \
-	Ru.rc \
-	Si.rc \
-	Sr.rc \
-	Sv.rc \
-	Uk.rc \
-	ieframe.rc
-
-PO_SRCS = ieframe.rc
+RC_SRCS = ieframe.rc
 
 SVG_SRCS = \
 	ietoolbar.svg
 
-IDL_TLB_SRCS = ieframe_v1.idl
-IDL_R_SRCS   = ieframe_v1.idl
-
-@MAKE_DLL_RULES@
+IDL_SRCS = ieframe_v1.idl

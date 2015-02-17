@@ -30,14 +30,6 @@ static HRESULT (WINAPI *pLoadLibraryShim)(LPCWSTR szDllName, LPCWSTR szVersion,
 static HRESULT (WINAPI *pGetCORVersion)(LPWSTR pbuffer, DWORD cchBuffer,
                                         DWORD *dwLength);
 
-static CHAR string1[MAX_PATH], string2[MAX_PATH];
-
-#define ok_w2(format, szString1, szString2) \
-\
-    WideCharToMultiByte(CP_ACP, 0, szString1, -1, string1, MAX_PATH, NULL, NULL); \
-    WideCharToMultiByte(CP_ACP, 0, szString2, -1, string2, MAX_PATH, NULL, NULL); \
-    ok(!lstrcmpA(string1, string2), format, string1, string2)
-
 static BOOL init_functionpointers(void)
 {
     HRESULT hr;
@@ -106,16 +98,14 @@ static void test_GetCachePath(void)
     /* NULL pwzCachePath, pcchPath is 0 */
     size = 0;
     hr = pGetCachePath(ASM_CACHE_GAC, NULL, &size);
-    ok(hr == HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER),
-       "Expected HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER), got %08x\n", hr);
+    ok(hr == E_NOT_SUFFICIENT_BUFFER, "Expected E_NOT_SUFFICIENT_BUFFER, got %08x\n", hr);
     ok(size == lstrlenW(cachepath) + 1,
        "Expected %d, got %d\n", lstrlenW(cachepath) + 1, size);
 
     /* NULL pwszCachePath, pcchPath is MAX_PATH */
     size = MAX_PATH;
     hr = pGetCachePath(ASM_CACHE_GAC, NULL, &size);
-    ok(hr == HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER),
-       "Expected HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER), got %08x\n", hr);
+    ok(hr == E_NOT_SUFFICIENT_BUFFER, "Expected E_NOT_SUFFICIENT_BUFFER, got %08x\n", hr);
     ok(size == lstrlenW(cachepath) + 1,
        "Expected %d, got %d\n", lstrlenW(cachepath) + 1, size);
 
@@ -127,22 +117,21 @@ static void test_GetCachePath(void)
     lstrcpyW(path, nochange);
     hr = pGetCachePath(ASM_CACHE_GAC, path, NULL);
     ok(hr == E_INVALIDARG, "Expected E_INVALIDARG, got %08x\n", hr);
-    ok_w2("Expected \"%s\",  got \"%s\"\n", nochange, path);
+    ok( !lstrcmpW( nochange, path ), "Expected %s,  got %s\n", wine_dbgstr_w(nochange), wine_dbgstr_w(path));
 
     /* get the cache path */
     lstrcpyW(path, nochange);
     size = MAX_PATH;
     hr = pGetCachePath(ASM_CACHE_GAC, path, &size);
     ok(hr == S_OK, "Expected S_OK, got %08x\n", hr);
-    ok_w2("Expected \"%s\",  got \"%s\"\n", cachepath, path);
+    ok( !lstrcmpW( cachepath, path ), "Expected %s,  got %s\n", wine_dbgstr_w(cachepath), wine_dbgstr_w(path));
 
     /* pcchPath has no room for NULL terminator */
     lstrcpyW(path, nochange);
     size = lstrlenW(cachepath);
     hr = pGetCachePath(ASM_CACHE_GAC, path, &size);
-    ok(hr == HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER),
-       "Expected HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER), got %08x\n", hr);
-    ok_w2("Expected \"%s\",  got \"%s\"\n", nochange, path);
+    ok(hr == E_NOT_SUFFICIENT_BUFFER, "Expected E_NOT_SUFFICIENT_BUFFER, got %08x\n", hr);
+    ok( !lstrcmpW( nochange, path ), "Expected %s,  got %s\n", wine_dbgstr_w(nochange), wine_dbgstr_w(path));
 
     lstrcpyW(cachepath, windir);
     lstrcatW(cachepath, backslash);
@@ -156,7 +145,7 @@ static void test_GetCachePath(void)
        broken(hr == E_INVALIDARG), /* .NET 1.1 */
        "Expected S_OK, got %08x\n", hr);
     if (hr == S_OK)
-        ok_w2("Expected \"%s\",  got \"%s\"\n", cachepath, path);
+        ok( !lstrcmpW( cachepath, path ), "Expected %s,  got %s\n", wine_dbgstr_w(cachepath), wine_dbgstr_w(path));
 
     if (pGetCORVersion)
     {
@@ -191,7 +180,7 @@ static void test_GetCachePath(void)
         size = MAX_PATH;
         hr = pGetCachePath(ASM_CACHE_ZAP, path, &size);
         ok(hr == S_OK, "Expected S_OK, got %08x\n", hr);
-        ok_w2("Expected \"%s\",  got \"%s\"\n", cachepath, path);
+        ok( !lstrcmpW( cachepath, path ), "Expected %s,  got %s\n", wine_dbgstr_w(cachepath), wine_dbgstr_w(path));
     }
 
     /* two flags at once */
@@ -199,7 +188,7 @@ static void test_GetCachePath(void)
     size = MAX_PATH;
     hr = pGetCachePath(ASM_CACHE_GAC | ASM_CACHE_ROOT, path, &size);
     ok(hr == E_INVALIDARG, "Expected E_INVALIDARG, got %08x\n", hr);
-    ok_w2("Expected \"%s\",  got \"%s\"\n", nochange, path);
+    ok( !lstrcmpW( nochange, path ), "Expected %s,  got %s\n", wine_dbgstr_w(nochange), wine_dbgstr_w(path));
 }
 
 START_TEST(fusion)

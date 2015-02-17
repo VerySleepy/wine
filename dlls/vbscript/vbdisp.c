@@ -16,11 +16,15 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include <assert.h>
+
 #include "vbscript.h"
 
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(vbscript);
+
+#define FDEX_VERSION_MASK 0xf0000000
 
 static inline BOOL is_func_id(vbdisp_t *This, DISPID id)
 {
@@ -93,18 +97,19 @@ static VARIANT *get_propput_arg(const DISPPARAMS *dp)
     return NULL;
 }
 
-static HRESULT invoke_variant_prop(vbdisp_t *This, VARIANT *v, WORD flags, DISPPARAMS *dp, VARIANT *res)
+static HRESULT invoke_variant_prop(VARIANT *v, WORD flags, DISPPARAMS *dp, VARIANT *res)
 {
     HRESULT hres;
 
     switch(flags) {
     case DISPATCH_PROPERTYGET|DISPATCH_METHOD:
+    case DISPATCH_PROPERTYGET:
         if(dp->cArgs) {
             WARN("called with arguments\n");
             return DISP_E_MEMBERNOTFOUND; /* That's what tests show */
         }
 
-        hres = VariantCopy(res, v);
+        hres = VariantCopyInd(res, v);
         break;
 
     case DISPATCH_PROPERTYPUT: {
@@ -116,10 +121,15 @@ static HRESULT invoke_variant_prop(vbdisp_t *This, VARIANT *v, WORD flags, DISPP
             return DISP_E_PARAMNOTOPTIONAL;
         }
 
+        if(arg_cnt(dp)) {
+            FIXME("Arguments not supported\n");
+            return E_NOTIMPL;
+        }
+
         if(res)
             V_VT(res) = VT_EMPTY;
 
-        hres = VariantCopy(v, put_val);
+        hres = VariantCopyInd(v, put_val);
         break;
     }
 
@@ -133,7 +143,8 @@ static HRESULT invoke_variant_prop(vbdisp_t *This, VARIANT *v, WORD flags, DISPP
 
 static HRESULT invoke_builtin(vbdisp_t *This, const builtin_prop_t *prop, WORD flags, DISPPARAMS *dp, VARIANT *res)
 {
-    VARIANT *args;
+    VARIANT args[8];
+    unsigned argn, i;
 
     switch(flags) {
     case DISPATCH_PROPERTYGET:
@@ -143,6 +154,33 @@ static HRESULT invoke_builtin(vbdisp_t *This, const builtin_prop_t *prop, WORD f
         }
         break;
     case DISPATCH_PROPERTYGET|DISPATCH_METHOD:
+        if(!prop->proc && prop->flags == BP_GET) {
+            const int vt = prop->min_args, val = prop->max_args;
+            switch(vt) {
+            case VT_I2:
+                V_VT(res) = VT_I2;
+                V_I2(res) = val;
+                break;
+            case VT_I4:
+                V_VT(res) = VT_I4;
+                V_I4(res) = val;
+                break;
+            case VT_BSTR: {
+                const string_constant_t *str = (const string_constant_t*)prop->max_args;
+                BSTR ret;
+
+                ret = SysAllocStringLen(str->buf, str->len);
+                if(!ret)
+                    return E_OUTOFMEMORY;
+
+                V_VT(res) = VT_BSTR;
+                V_BSTR(res) = ret;
+                break;
+            }
+            DEFAULT_UNREACHABLE;
+            }
+            return S_OK;
+        }
         break;
     case DISPATCH_METHOD:
         if(prop->flags & (BP_GET|BP_GETPUT)) {
@@ -151,7 +189,7 @@ static HRESULT invoke_builtin(vbdisp_t *This, const builtin_prop_t *prop, WORD f
         }
         break;
     case DISPATCH_PROPERTYPUT:
-        if(!(prop->flags & (BP_GET|BP_GETPUT))) {
+        if(!(prop->flags & BP_GETPUT)) {
             FIXME("property does not support DISPATCH_PROPERTYPUT\n");
             return E_FAIL;
         }
@@ -163,15 +201,21 @@ static HRESULT invoke_builtin(vbdisp_t *This, const builtin_prop_t *prop, WORD f
         return E_NOTIMPL;
     }
 
-    if(arg_cnt(dp) < prop->min_args || arg_cnt(dp) > (prop->max_args ? prop->max_args : prop->min_args)) {
+    argn = arg_cnt(dp);
+
+    if(argn < prop->min_args || argn > (prop->max_args ? prop->max_args : prop->min_args)) {
         FIXME("invalid number of arguments\n");
         return E_FAIL;
     }
 
-    if(arg_cnt(dp) == 1 && V_VT(dp->rgvarg) == (VT_BYREF|VT_VARIANT))
-        args = V_VARIANTREF(dp->rgvarg);
-    else
-        args = dp->rgvarg;
+    assert(argn < sizeof(args)/sizeof(*args));
+
+    for(i=0; i < argn; i++) {
+        if(V_VT(dp->rgvarg+dp->cArgs-i-1) == (VT_BYREF|VT_VARIANT))
+            args[i] = *V_VARIANTREF(dp->rgvarg+dp->cArgs-i-1);
+        else
+            args[i] = dp->rgvarg[dp->cArgs-i-1];
+    }
 
     return prop->proc(This, args, dp->cArgs, res);
 }
@@ -189,7 +233,7 @@ static BOOL run_terminator(vbdisp_t *This)
 
     This->ref++;
     exec_script(This->desc->ctx, This->desc->funcs[This->desc->class_terminate_id].entries[VBDISP_CALLGET],
-            (IDispatch*)&This->IDispatchEx_iface, &dp, NULL);
+            This, &dp, NULL);
     return !--This->ref;
 }
 
@@ -199,6 +243,13 @@ static void clean_props(vbdisp_t *This)
 
     if(!This->desc)
         return;
+
+    for(i=0; i < This->desc->array_cnt; i++) {
+        if(This->arrays[i]) {
+            SafeArrayDestroy(This->arrays[i]);
+            This->arrays[i] = NULL;
+        }
+    }
 
     for(i=0; i < This->desc->prop_cnt; i++)
         VariantClear(This->props+i);
@@ -252,6 +303,7 @@ static ULONG WINAPI DispatchEx_Release(IDispatchEx *iface)
     if(!ref && run_terminator(This)) {
         clean_props(This);
         list_remove(&This->entry);
+        heap_free(This->arrays);
         heap_free(This);
     }
 
@@ -288,12 +340,14 @@ static HRESULT WINAPI DispatchEx_GetIDsOfNames(IDispatchEx *iface, REFIID riid,
 
 static HRESULT WINAPI DispatchEx_Invoke(IDispatchEx *iface, DISPID dispIdMember,
                                         REFIID riid, LCID lcid, WORD wFlags, DISPPARAMS *pDispParams,
-                            VARIANT *pVarResult, EXCEPINFO *pExcepInfo, UINT *puArgErr)
+                                        VARIANT *pVarResult, EXCEPINFO *pExcepInfo, UINT *puArgErr)
 {
     vbdisp_t *This = impl_from_IDispatchEx(iface);
-    FIXME("(%p)->(%d %s %d %d %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid),
+
+    TRACE("(%p)->(%d %s %d %d %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid),
           lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
-    return E_NOTIMPL;
+
+    return IDispatchEx_InvokeEx(&This->IDispatchEx_iface, dispIdMember, lcid, wFlags, pDispParams, pVarResult, pExcepInfo, NULL);
 }
 
 static HRESULT WINAPI DispatchEx_GetDispID(IDispatchEx *iface, BSTR bstrName, DWORD grfdex, DISPID *pid)
@@ -302,10 +356,14 @@ static HRESULT WINAPI DispatchEx_GetDispID(IDispatchEx *iface, BSTR bstrName, DW
 
     TRACE("(%p)->(%s %x %p)\n", This, debugstr_w(bstrName), grfdex, pid);
 
+    grfdex &= ~FDEX_VERSION_MASK;
+
     if(!This->desc)
         return E_UNEXPECTED;
 
-    if(grfdex & ~(fdexNameEnsure|fdexNameCaseInsensitive)) {
+    /* Tests show that fdexNameCaseSensitive is ignored */
+
+    if(grfdex & ~(fdexNameEnsure|fdexNameCaseInsensitive|fdexNameCaseSensitive)) {
         FIXME("unsupported flags %x\n", grfdex);
         return E_NOTIMPL;
     }
@@ -333,6 +391,15 @@ static HRESULT WINAPI DispatchEx_InvokeEx(IDispatchEx *iface, DISPID id, LCID lc
         function_t *func;
 
         switch(wFlags) {
+        case DISPATCH_PROPERTYGET:
+            func = This->desc->funcs[id].entries[VBDISP_CALLGET];
+            if(!func || (func->type != FUNC_PROPGET && func->type != FUNC_DEFGET)) {
+                WARN("no getter\n");
+                return DISP_E_MEMBERNOTFOUND;
+            }
+
+            return exec_script(This->desc->ctx, func, This, pdp, pvarRes);
+
         case DISPATCH_METHOD:
         case DISPATCH_METHOD|DISPATCH_PROPERTYGET:
             func = This->desc->funcs[id].entries[VBDISP_CALLGET];
@@ -341,7 +408,7 @@ static HRESULT WINAPI DispatchEx_InvokeEx(IDispatchEx *iface, DISPID id, LCID lc
                 return DISP_E_MEMBERNOTFOUND;
             }
 
-            return exec_script(This->desc->ctx, func, (IDispatch*)&This->IDispatchEx_iface, pdp, pvarRes);
+            return exec_script(This->desc->ctx, func, This, pdp, pvarRes);
         case DISPATCH_PROPERTYPUT: {
             VARIANT *put_val;
             DISPPARAMS dp = {NULL, NULL, 1, 0};
@@ -364,7 +431,7 @@ static HRESULT WINAPI DispatchEx_InvokeEx(IDispatchEx *iface, DISPID id, LCID lc
                 return DISP_E_MEMBERNOTFOUND;
             }
 
-            return exec_script(This->desc->ctx, func, (IDispatch*)&This->IDispatchEx_iface, &dp, NULL);
+            return exec_script(This->desc->ctx, func, This, &dp, NULL);
         }
         default:
             FIXME("flags %x\n", wFlags);
@@ -373,7 +440,7 @@ static HRESULT WINAPI DispatchEx_InvokeEx(IDispatchEx *iface, DISPID id, LCID lc
     }
 
     if(id < This->desc->prop_cnt + This->desc->func_cnt)
-        return invoke_variant_prop(This, This->props+(id-This->desc->func_cnt), wFlags, pdp, pvarRes);
+        return invoke_variant_prop(This->props+(id-This->desc->func_cnt), wFlags, pdp, pvarRes);
 
     if(This->desc->builtin_prop_cnt) {
         unsigned min = 0, max = This->desc->builtin_prop_cnt-1, i;
@@ -462,6 +529,7 @@ static inline vbdisp_t *unsafe_impl_from_IDispatch(IDispatch *iface)
 HRESULT create_vbdisp(const class_desc_t *desc, vbdisp_t **ret)
 {
     vbdisp_t *vbdisp;
+    HRESULT hres = S_OK;
 
     vbdisp = heap_alloc_zero( FIELD_OFFSET( vbdisp_t, props[desc->prop_cnt] ));
     if(!vbdisp)
@@ -471,20 +539,403 @@ HRESULT create_vbdisp(const class_desc_t *desc, vbdisp_t **ret)
     vbdisp->ref = 1;
     vbdisp->desc = desc;
 
-    if(desc->class_initialize_id) {
-        DISPPARAMS dp = {0};
-        HRESULT hres;
+    list_add_tail(&desc->ctx->objects, &vbdisp->entry);
 
-        hres = exec_script(desc->ctx, desc->funcs[desc->class_initialize_id].entries[VBDISP_CALLGET],
-                           (IDispatch*)&vbdisp->IDispatchEx_iface, &dp, NULL);
-        if(FAILED(hres)) {
-            IDispatchEx_Release(&vbdisp->IDispatchEx_iface);
-            return hres;
+    if(desc->array_cnt) {
+        vbdisp->arrays = heap_alloc_zero(desc->array_cnt * sizeof(*vbdisp->arrays));
+        if(vbdisp->arrays) {
+            unsigned i, j;
+
+            for(i=0; i < desc->array_cnt; i++) {
+                if(!desc->array_descs[i].dim_cnt)
+                    continue;
+
+                vbdisp->arrays[i] = SafeArrayCreate(VT_VARIANT, desc->array_descs[i].dim_cnt, desc->array_descs[i].bounds);
+                if(!vbdisp->arrays[i]) {
+                    hres = E_OUTOFMEMORY;
+                    break;
+                }
+            }
+
+            if(SUCCEEDED(hres)) {
+                for(i=0, j=0; i < desc->prop_cnt; i++) {
+                    if(desc->props[i].is_array) {
+                        V_VT(vbdisp->props+i) = VT_ARRAY|VT_BYREF|VT_VARIANT;
+                        V_ARRAYREF(vbdisp->props+i) = vbdisp->arrays + j++;
+                    }
+                }
+            }
+        }else {
+            hres = E_OUTOFMEMORY;
         }
     }
 
-    list_add_tail(&desc->ctx->objects, &vbdisp->entry);
+    if(SUCCEEDED(hres) && desc->class_initialize_id) {
+        DISPPARAMS dp = {0};
+        hres = exec_script(desc->ctx, desc->funcs[desc->class_initialize_id].entries[VBDISP_CALLGET],
+                           vbdisp, &dp, NULL);
+    }
+
+    if(FAILED(hres)) {
+        IDispatchEx_Release(&vbdisp->IDispatchEx_iface);
+        return hres;
+    }
+
     *ret = vbdisp;
+    return S_OK;
+}
+
+static HRESULT Procedure_invoke(vbdisp_t *This, VARIANT *args, unsigned args_cnt, VARIANT *res)
+{
+    script_ctx_t *ctx = This->desc->ctx;
+    HRESULT hres;
+
+    TRACE("\n");
+
+    IActiveScriptSite_OnEnterScript(ctx->site);
+    hres = exec_script(ctx, This->desc->value_func, NULL, NULL, NULL);
+    IActiveScriptSite_OnLeaveScript(ctx->site);
+
+    return hres;
+}
+
+static const builtin_prop_t procedure_props[] = {
+    {DISPID_VALUE,  Procedure_invoke, 0}
+};
+
+HRESULT create_procedure_disp(script_ctx_t *ctx, vbscode_t *code, IDispatch **ret)
+{
+    class_desc_t *desc;
+    vbdisp_t *vbdisp;
+    HRESULT hres;
+
+    desc = heap_alloc_zero(sizeof(*desc));
+    if(!desc)
+        return E_OUTOFMEMORY;
+
+    desc->ctx = ctx;
+    desc->builtin_prop_cnt = sizeof(procedure_props)/sizeof(*procedure_props);
+    desc->builtin_props = procedure_props;
+    desc->value_func = &code->main_code;
+
+    hres = create_vbdisp(desc, &vbdisp);
+    if(FAILED(hres)) {
+        heap_free(desc);
+        return hres;
+    }
+
+    desc->next = ctx->procs;
+    ctx->procs = desc;
+
+    *ret = (IDispatch*)&vbdisp->IDispatchEx_iface;
+    return S_OK;
+}
+
+struct _ident_map_t {
+    const WCHAR *name;
+    BOOL is_var;
+    union {
+        dynamic_var_t *var;
+        function_t *func;
+    } u;
+};
+
+static inline DISPID ident_to_id(ScriptDisp *This, ident_map_t *ident)
+{
+    return (ident-This->ident_map)+1;
+}
+
+static inline ident_map_t *id_to_ident(ScriptDisp *This, DISPID id)
+{
+    return 0 < id && id <= This->ident_map_cnt ? This->ident_map+id-1 : NULL;
+}
+
+static ident_map_t *add_ident(ScriptDisp *This, const WCHAR *name)
+{
+    ident_map_t *ret;
+
+    if(!This->ident_map_size) {
+        This->ident_map = heap_alloc(4 * sizeof(*This->ident_map));
+        if(!This->ident_map)
+            return NULL;
+        This->ident_map_size = 4;
+    }else if(This->ident_map_cnt == This->ident_map_size) {
+        ident_map_t *new_map;
+
+        new_map = heap_realloc(This->ident_map, 2*This->ident_map_size*sizeof(*new_map));
+        if(!new_map)
+            return NULL;
+        This->ident_map = new_map;
+        This->ident_map_size *= 2;
+    }
+
+    ret = This->ident_map + This->ident_map_cnt++;
+    ret->name = name;
+    return ret;
+}
+
+static inline ScriptDisp *ScriptDisp_from_IDispatchEx(IDispatchEx *iface)
+{
+    return CONTAINING_RECORD(iface, ScriptDisp, IDispatchEx_iface);
+}
+
+static HRESULT WINAPI ScriptDisp_QueryInterface(IDispatchEx *iface, REFIID riid, void **ppv)
+{
+    ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
+
+    if(IsEqualGUID(&IID_IUnknown, riid)) {
+        TRACE("(%p)->(IID_IUnknown %p)\n", This, ppv);
+        *ppv = &This->IDispatchEx_iface;
+    }else if(IsEqualGUID(&IID_IDispatch, riid)) {
+        TRACE("(%p)->(IID_IDispatch %p)\n", This, ppv);
+        *ppv = &This->IDispatchEx_iface;
+    }else if(IsEqualGUID(&IID_IDispatchEx, riid)) {
+        TRACE("(%p)->(IID_IDispatchEx %p)\n", This, ppv);
+        *ppv = &This->IDispatchEx_iface;
+    }else {
+        WARN("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppv);
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown*)*ppv);
+    return S_OK;
+}
+
+static ULONG WINAPI ScriptDisp_AddRef(IDispatchEx *iface)
+{
+    ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
+    LONG ref = InterlockedIncrement(&This->ref);
+
+    TRACE("(%p) ref=%d\n", This, ref);
+
+    return ref;
+}
+
+static ULONG WINAPI ScriptDisp_Release(IDispatchEx *iface)
+{
+    ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
+    LONG ref = InterlockedDecrement(&This->ref);
+
+    TRACE("(%p) ref=%d\n", This, ref);
+
+    if(!ref) {
+        assert(!This->ctx);
+        heap_free(This->ident_map);
+        heap_free(This);
+    }
+
+    return ref;
+}
+
+static HRESULT WINAPI ScriptDisp_GetTypeInfoCount(IDispatchEx *iface, UINT *pctinfo)
+{
+    ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
+
+    TRACE("(%p)->(%p)\n", This, pctinfo);
+
+    *pctinfo = 1;
+    return S_OK;
+}
+
+static HRESULT WINAPI ScriptDisp_GetTypeInfo(IDispatchEx *iface, UINT iTInfo, LCID lcid,
+                                              ITypeInfo **ppTInfo)
+{
+    ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
+    FIXME("(%p)->(%u %u %p)\n", This, iTInfo, lcid, ppTInfo);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ScriptDisp_GetIDsOfNames(IDispatchEx *iface, REFIID riid,
+        LPOLESTR *rgszNames, UINT cNames, LCID lcid, DISPID *rgDispId)
+{
+    ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
+    UINT i;
+    HRESULT hres;
+
+    TRACE("(%p)->(%s %p %u %u %p)\n", This, debugstr_guid(riid), rgszNames, cNames,
+          lcid, rgDispId);
+
+    for(i=0; i < cNames; i++) {
+        hres = IDispatchEx_GetDispID(&This->IDispatchEx_iface, rgszNames[i], 0, rgDispId+i);
+        if(FAILED(hres))
+            return hres;
+    }
+
+    return S_OK;
+}
+
+static HRESULT WINAPI ScriptDisp_Invoke(IDispatchEx *iface, DISPID dispIdMember, REFIID riid, LCID lcid,
+         WORD wFlags, DISPPARAMS *pDispParams, VARIANT *pVarResult, EXCEPINFO *pExcepInfo, UINT *puArgErr)
+{
+    ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
+
+    TRACE("(%p)->(%d %s %d %d %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid),
+          lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
+
+    return IDispatchEx_InvokeEx(&This->IDispatchEx_iface, dispIdMember, lcid, wFlags,
+            pDispParams, pVarResult, pExcepInfo, NULL);
+}
+
+static HRESULT WINAPI ScriptDisp_GetDispID(IDispatchEx *iface, BSTR bstrName, DWORD grfdex, DISPID *pid)
+{
+    ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
+    dynamic_var_t *var;
+    ident_map_t *ident;
+    function_t *func;
+
+    TRACE("(%p)->(%s %x %p)\n", This, debugstr_w(bstrName), grfdex, pid);
+
+    if(!This->ctx)
+        return E_UNEXPECTED;
+
+    for(ident = This->ident_map; ident < This->ident_map+This->ident_map_cnt; ident++) {
+        if(!strcmpiW(ident->name, bstrName)) {
+            *pid = ident_to_id(This, ident);
+            return S_OK;
+        }
+    }
+
+    for(var = This->ctx->global_vars; var; var = var->next) {
+        if(!strcmpiW(var->name, bstrName)) {
+            ident = add_ident(This, var->name);
+            if(!ident)
+                return E_OUTOFMEMORY;
+
+            ident->is_var = TRUE;
+            ident->u.var = var;
+            *pid = ident_to_id(This, ident);
+            return S_OK;
+        }
+    }
+
+    for(func = This->ctx->global_funcs; func; func = func->next) {
+        if(!strcmpiW(func->name, bstrName)) {
+            ident = add_ident(This, func->name);
+            if(!ident)
+                return E_OUTOFMEMORY;
+
+            ident->is_var = FALSE;
+            ident->u.func = func;
+            *pid =  ident_to_id(This, ident);
+            return S_OK;
+        }
+    }
+
+    *pid = -1;
+    return DISP_E_UNKNOWNNAME;
+}
+
+static HRESULT WINAPI ScriptDisp_InvokeEx(IDispatchEx *iface, DISPID id, LCID lcid, WORD wFlags, DISPPARAMS *pdp,
+        VARIANT *pvarRes, EXCEPINFO *pei, IServiceProvider *pspCaller)
+{
+    ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
+    ident_map_t *ident;
+    HRESULT hres;
+
+    TRACE("(%p)->(%x %x %x %p %p %p %p)\n", This, id, lcid, wFlags, pdp, pvarRes, pei, pspCaller);
+
+    ident = id_to_ident(This, id);
+    if(!ident)
+        return DISP_E_MEMBERNOTFOUND;
+
+    if(ident->is_var) {
+        if(ident->u.var->is_const) {
+            FIXME("const not supported\n");
+            return E_NOTIMPL;
+        }
+
+        return invoke_variant_prop(&ident->u.var->v, wFlags, pdp, pvarRes);
+    }
+
+    switch(wFlags) {
+    case DISPATCH_METHOD:
+    case DISPATCH_METHOD|DISPATCH_PROPERTYGET:
+        IActiveScriptSite_OnEnterScript(This->ctx->site);
+        hres = exec_script(This->ctx, ident->u.func, NULL, pdp, pvarRes);
+        IActiveScriptSite_OnLeaveScript(This->ctx->site);
+        break;
+    default:
+        FIXME("Unsupported flags %x\n", wFlags);
+        hres = E_NOTIMPL;
+    }
+
+    return hres;
+}
+
+static HRESULT WINAPI ScriptDisp_DeleteMemberByName(IDispatchEx *iface, BSTR bstrName, DWORD grfdex)
+{
+    ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
+    FIXME("(%p)->(%s %x)\n", This, debugstr_w(bstrName), grfdex);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ScriptDisp_DeleteMemberByDispID(IDispatchEx *iface, DISPID id)
+{
+    ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
+    FIXME("(%p)->(%x)\n", This, id);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ScriptDisp_GetMemberProperties(IDispatchEx *iface, DISPID id, DWORD grfdexFetch, DWORD *pgrfdex)
+{
+    ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
+    FIXME("(%p)->(%x %x %p)\n", This, id, grfdexFetch, pgrfdex);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ScriptDisp_GetMemberName(IDispatchEx *iface, DISPID id, BSTR *pbstrName)
+{
+    ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
+    FIXME("(%p)->(%x %p)\n", This, id, pbstrName);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ScriptDisp_GetNextDispID(IDispatchEx *iface, DWORD grfdex, DISPID id, DISPID *pid)
+{
+    ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
+    FIXME("(%p)->(%x %x %p)\n", This, grfdex, id, pid);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI ScriptDisp_GetNameSpaceParent(IDispatchEx *iface, IUnknown **ppunk)
+{
+    ScriptDisp *This = ScriptDisp_from_IDispatchEx(iface);
+    FIXME("(%p)->(%p)\n", This, ppunk);
+    return E_NOTIMPL;
+}
+
+static IDispatchExVtbl ScriptDispVtbl = {
+    ScriptDisp_QueryInterface,
+    ScriptDisp_AddRef,
+    ScriptDisp_Release,
+    ScriptDisp_GetTypeInfoCount,
+    ScriptDisp_GetTypeInfo,
+    ScriptDisp_GetIDsOfNames,
+    ScriptDisp_Invoke,
+    ScriptDisp_GetDispID,
+    ScriptDisp_InvokeEx,
+    ScriptDisp_DeleteMemberByName,
+    ScriptDisp_DeleteMemberByDispID,
+    ScriptDisp_GetMemberProperties,
+    ScriptDisp_GetMemberName,
+    ScriptDisp_GetNextDispID,
+    ScriptDisp_GetNameSpaceParent
+};
+
+HRESULT create_script_disp(script_ctx_t *ctx, ScriptDisp **ret)
+{
+    ScriptDisp *script_disp;
+
+    script_disp = heap_alloc_zero(sizeof(*script_disp));
+    if(!script_disp)
+        return E_OUTOFMEMORY;
+
+    script_disp->IDispatchEx_iface.lpVtbl = &ScriptDispVtbl;
+    script_disp->ref = 1;
+    script_disp->ctx = ctx;
+
+    *ret = script_disp;
     return S_OK;
 }
 
@@ -519,12 +970,75 @@ HRESULT disp_get_id(IDispatch *disp, BSTR name, vbdisp_invoke_type_t invoke_type
 
     hres = IDispatch_QueryInterface(disp, &IID_IDispatchEx, (void**)&dispex);
     if(FAILED(hres)) {
-        TRACE("unsing IDispatch\n");
+        TRACE("using IDispatch\n");
         return IDispatch_GetIDsOfNames(disp, &IID_NULL, &name, 1, 0, id);
     }
 
     hres = IDispatchEx_GetDispID(dispex, name, fdexNameCaseInsensitive, id);
     IDispatchEx_Release(dispex);
+    return hres;
+}
+
+#define RPC_E_SERVER_UNAVAILABLE 0x800706ba
+
+HRESULT map_hres(HRESULT hres)
+{
+    if(SUCCEEDED(hres) || HRESULT_FACILITY(hres) == FACILITY_VBS)
+        return hres;
+
+    switch(hres) {
+    case E_NOTIMPL:                  return MAKE_VBSERROR(VBSE_ACTION_NOT_SUPPORTED);
+    case E_NOINTERFACE:              return MAKE_VBSERROR(VBSE_OLE_NOT_SUPPORTED);
+    case DISP_E_UNKNOWNINTERFACE:    return MAKE_VBSERROR(VBSE_OLE_NO_PROP_OR_METHOD);
+    case DISP_E_MEMBERNOTFOUND:      return MAKE_VBSERROR(VBSE_OLE_NO_PROP_OR_METHOD);
+    case DISP_E_PARAMNOTFOUND:       return MAKE_VBSERROR(VBSE_NAMED_PARAM_NOT_FOUND);
+    case DISP_E_TYPEMISMATCH:        return MAKE_VBSERROR(VBSE_TYPE_MISMATCH);
+    case DISP_E_UNKNOWNNAME:         return MAKE_VBSERROR(VBSE_OLE_NO_PROP_OR_METHOD);
+    case DISP_E_NONAMEDARGS:         return MAKE_VBSERROR(VBSE_NAMED_ARGS_NOT_SUPPORTED);
+    case DISP_E_BADVARTYPE:          return MAKE_VBSERROR(VBSE_INVALID_TYPELIB_VARIABLE);
+    case DISP_E_OVERFLOW:            return MAKE_VBSERROR(VBSE_OVERFLOW);
+    case DISP_E_BADINDEX:            return MAKE_VBSERROR(VBSE_OUT_OF_BOUNDS);
+    case DISP_E_UNKNOWNLCID:         return MAKE_VBSERROR(VBSE_LOCALE_SETTING_NOT_SUPPORTED);
+    case DISP_E_ARRAYISLOCKED:       return MAKE_VBSERROR(VBSE_ARRAY_LOCKED);
+    case DISP_E_BADPARAMCOUNT:       return MAKE_VBSERROR(VBSE_FUNC_ARITY_MISMATCH);
+    case DISP_E_PARAMNOTOPTIONAL:    return MAKE_VBSERROR(VBSE_PARAMETER_NOT_OPTIONAL);
+    case DISP_E_NOTACOLLECTION:      return MAKE_VBSERROR(VBSE_NOT_ENUM);
+    case TYPE_E_DLLFUNCTIONNOTFOUND: return MAKE_VBSERROR(VBSE_INVALID_DLL_FUNCTION_NAME);
+    case TYPE_E_TYPEMISMATCH:        return MAKE_VBSERROR(VBSE_TYPE_MISMATCH);
+    case TYPE_E_OUTOFBOUNDS:         return MAKE_VBSERROR(VBSE_OUT_OF_BOUNDS);
+    case TYPE_E_IOERROR:             return MAKE_VBSERROR(VBSE_IO_ERROR);
+    case TYPE_E_CANTCREATETMPFILE:   return MAKE_VBSERROR(VBSE_CANT_CREATE_TMP_FILE);
+    case STG_E_FILENOTFOUND:         return MAKE_VBSERROR(VBSE_OLE_FILE_NOT_FOUND);
+    case STG_E_PATHNOTFOUND:         return MAKE_VBSERROR(VBSE_PATH_NOT_FOUND);
+    case STG_E_TOOMANYOPENFILES:     return MAKE_VBSERROR(VBSE_TOO_MANY_FILES);
+    case STG_E_ACCESSDENIED:         return MAKE_VBSERROR(VBSE_PERMISSION_DENIED);
+    case STG_E_INSUFFICIENTMEMORY:   return MAKE_VBSERROR(VBSE_OUT_OF_MEMORY);
+    case STG_E_NOMOREFILES:          return MAKE_VBSERROR(VBSE_TOO_MANY_FILES);
+    case STG_E_DISKISWRITEPROTECTED: return MAKE_VBSERROR(VBSE_PERMISSION_DENIED);
+    case STG_E_WRITEFAULT:           return MAKE_VBSERROR(VBSE_IO_ERROR);
+    case STG_E_READFAULT:            return MAKE_VBSERROR(VBSE_IO_ERROR);
+    case STG_E_SHAREVIOLATION:       return MAKE_VBSERROR(VBSE_PATH_FILE_ACCESS);
+    case STG_E_LOCKVIOLATION:        return MAKE_VBSERROR(VBSE_PERMISSION_DENIED);
+    case STG_E_FILEALREADYEXISTS:    return MAKE_VBSERROR(VBSE_FILE_ALREADY_EXISTS);
+    case STG_E_MEDIUMFULL:           return MAKE_VBSERROR(VBSE_DISK_FULL);
+    case STG_E_INVALIDNAME:          return MAKE_VBSERROR(VBSE_FILE_NOT_FOUND);
+    case STG_E_INUSE:                return MAKE_VBSERROR(VBSE_PERMISSION_DENIED);
+    case STG_E_NOTCURRENT:           return MAKE_VBSERROR(VBSE_PERMISSION_DENIED);
+    case STG_E_CANTSAVE:             return MAKE_VBSERROR(VBSE_IO_ERROR);
+    case REGDB_E_CLASSNOTREG:        return MAKE_VBSERROR(VBSE_CANT_CREATE_OBJECT);
+    case MK_E_UNAVAILABLE:           return MAKE_VBSERROR(VBSE_CANT_CREATE_OBJECT);
+    case MK_E_INVALIDEXTENSION:      return MAKE_VBSERROR(VBSE_OLE_FILE_NOT_FOUND);
+    case MK_E_CANTOPENFILE:          return MAKE_VBSERROR(VBSE_OLE_FILE_NOT_FOUND);
+    case CO_E_CLASSSTRING:           return MAKE_VBSERROR(VBSE_CANT_CREATE_OBJECT);
+    case CO_E_APPNOTFOUND:           return MAKE_VBSERROR(VBSE_CANT_CREATE_OBJECT);
+    case CO_E_APPDIDNTREG:           return MAKE_VBSERROR(VBSE_CANT_CREATE_OBJECT);
+    case E_ACCESSDENIED:             return MAKE_VBSERROR(VBSE_PERMISSION_DENIED);
+    case E_OUTOFMEMORY:              return MAKE_VBSERROR(VBSE_OUT_OF_MEMORY);
+    case E_INVALIDARG:               return MAKE_VBSERROR(VBSE_ILLEGAL_FUNC_CALL);
+    case RPC_E_SERVER_UNAVAILABLE:   return MAKE_VBSERROR(VBSE_SERVER_NOT_FOUND);
+    case CO_E_SERVER_EXEC_FAILURE:   return MAKE_VBSERROR(VBSE_CANT_CREATE_OBJECT);
+    }
+
     return hres;
 }
 
@@ -552,23 +1066,21 @@ HRESULT disp_call(script_ctx_t *ctx, IDispatch *disp, DISPID id, DISPPARAMS *dp,
     return hres;
 }
 
-HRESULT disp_propput(script_ctx_t *ctx, IDispatch *disp, DISPID id, VARIANT *val)
+HRESULT disp_propput(script_ctx_t *ctx, IDispatch *disp, DISPID id, DISPPARAMS *dp)
 {
-    DISPID propput_dispid = DISPID_PROPERTYPUT;
-    DISPPARAMS dp  = {val, &propput_dispid, 1, 1};
     IDispatchEx *dispex;
     EXCEPINFO ei = {0};
     HRESULT hres;
 
     hres = IDispatch_QueryInterface(disp, &IID_IDispatchEx, (void**)&dispex);
     if(SUCCEEDED(hres)) {
-        hres = IDispatchEx_InvokeEx(dispex, id, ctx->lcid, DISPATCH_PROPERTYPUT, &dp, NULL, &ei, NULL /* FIXME! */);
+        hres = IDispatchEx_InvokeEx(dispex, id, ctx->lcid, DISPATCH_PROPERTYPUT, dp, NULL, &ei, NULL /* FIXME! */);
         IDispatchEx_Release(dispex);
     }else {
         ULONG err = 0;
 
         TRACE("using IDispatch\n");
-        hres = IDispatch_Invoke(disp, id, &IID_NULL, ctx->lcid, DISPATCH_PROPERTYPUT, &dp, NULL, &ei, &err);
+        hres = IDispatch_Invoke(disp, id, &IID_NULL, ctx->lcid, DISPATCH_PROPERTYPUT, dp, NULL, &ei, &err);
     }
 
     return hres;

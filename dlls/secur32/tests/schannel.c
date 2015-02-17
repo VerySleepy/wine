@@ -17,15 +17,14 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
-#include <stdio.h>
+
 #include <stdarg.h>
 #include <windef.h>
-#include <winbase.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #define SECURITY_WIN32
 #include <security.h>
 #include <schannel.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
 
 #include "wine/test.h"
 
@@ -45,10 +44,11 @@ static ENCRYPT_MESSAGE_FN pEncryptMessage;
 static PCCERT_CONTEXT (WINAPI *pCertCreateCertificateContext)(DWORD,const BYTE*,DWORD);
 static BOOL (WINAPI *pCertFreeCertificateContext)(PCCERT_CONTEXT);
 static BOOL (WINAPI *pCertSetCertificateContextProperty)(PCCERT_CONTEXT,DWORD,DWORD,const void*);
+static PCCERT_CONTEXT (WINAPI *pCertEnumCertificatesInStore)(HCERTSTORE,PCCERT_CONTEXT);
 
 static BOOL (WINAPI *pCryptAcquireContextW)(HCRYPTPROV*, LPCWSTR, LPCWSTR, DWORD, DWORD);
 static BOOL (WINAPI *pCryptDestroyKey)(HCRYPTKEY);
-static BOOL (WINAPI *pCryptImportKey)(HCRYPTPROV,CONST BYTE*,DWORD,HCRYPTKEY,DWORD,HCRYPTKEY*);
+static BOOL (WINAPI *pCryptImportKey)(HCRYPTPROV,const BYTE*,DWORD,HCRYPTKEY,DWORD,HCRYPTKEY*);
 static BOOL (WINAPI *pCryptReleaseContext)(HCRYPTPROV,ULONG_PTR);
 
 static const BYTE bigCert[] = { 0x30, 0x7a, 0x02, 0x01, 0x01, 0x30, 0x02, 0x06,
@@ -122,7 +122,7 @@ static void InitFunctionPtrs(void)
     secdll = LoadLibraryA("secur32.dll");
     if(!secdll)
         secdll = LoadLibraryA("security.dll");
-    advapi32dll = GetModuleHandleA("advapi32.dll");
+    advapi32dll = LoadLibraryA("advapi32.dll");
 
 #define GET_PROC(h, func)  p ## func = (void*)GetProcAddress(h, #func)
 
@@ -148,6 +148,7 @@ static void InitFunctionPtrs(void)
     GET_PROC(crypt32dll, CertFreeCertificateContext);
     GET_PROC(crypt32dll, CertSetCertificateContextProperty);
     GET_PROC(crypt32dll, CertCreateCertificateContext);
+    GET_PROC(crypt32dll, CertEnumCertificatesInStore);
 
 #undef GET_PROC
 }
@@ -164,6 +165,31 @@ static void test_strength(PCredHandle handle)
     trace("strength %d - %d\n", strength.dwMinimumCipherStrength, strength.dwMaximumCipherStrength);
 }
 
+static void test_supported_protocols(CredHandle *handle, unsigned exprots)
+{
+    SecPkgCred_SupportedProtocols protocols;
+    SECURITY_STATUS status;
+
+    status = pQueryCredentialsAttributesA(handle, SECPKG_ATTR_SUPPORTED_PROTOCOLS, &protocols);
+    ok(status == SEC_E_OK, "QueryCredentialsAttributes failed: %08x\n", status);
+
+    if(exprots)
+        ok(protocols.grbitProtocol == exprots, "protocols.grbitProtocol = %x, expected %x\n", protocols.grbitProtocol, exprots);
+
+    trace("Supported protocols:\n");
+
+#define X(flag, name) do { if(protocols.grbitProtocol & flag) { trace(name "\n"); protocols.grbitProtocol &= ~flag; } }while(0)
+    X(SP_PROT_SSL2_CLIENT, "SSL 2 client");
+    X(SP_PROT_SSL3_CLIENT, "SSL 3 client");
+    X(SP_PROT_TLS1_0_CLIENT, "TLS 1.0 client");
+    X(SP_PROT_TLS1_1_CLIENT, "TLS 1.1 client");
+    X(SP_PROT_TLS1_2_CLIENT, "TLS 1.2 client");
+#undef X
+
+    if(protocols.grbitProtocol)
+        trace("Unknown flags: %x\n", protocols.grbitProtocol);
+}
+
 static void testAcquireSecurityContext(void)
 {
     BOOL has_schannel = FALSE;
@@ -171,6 +197,7 @@ static void testAcquireSecurityContext(void)
     ULONG i;
     SECURITY_STATUS st;
     CredHandle cred;
+    SecPkgCredentials_NamesA names;
     TimeStamp exp;
     SCHANNEL_CRED schanCred;
     PCCERT_CONTEXT certs[2];
@@ -259,14 +286,23 @@ static void testAcquireSecurityContext(void)
     st = pAcquireCredentialsHandleA(NULL, unisp_name_a, SECPKG_CRED_OUTBOUND,
      NULL, NULL, NULL, NULL, &cred, NULL);
     ok(st == SEC_E_OK, "AcquireCredentialsHandleA failed: %08x\n", st);
-    if(st == SEC_E_OK)
+    if(st == SEC_E_OK) {
+        st = pQueryCredentialsAttributesA(&cred, SECPKG_ATTR_SUPPORTED_PROTOCOLS, NULL);
+        ok(st == SEC_E_INTERNAL_ERROR, "QueryCredentialsAttributes failed: %08x, expected SEC_E_INTERNAL_ERROR\n", st);
+
+        test_supported_protocols(&cred, 0);
         pFreeCredentialsHandle(&cred);
+    }
     memset(&cred, 0, sizeof(cred));
     st = pAcquireCredentialsHandleA(NULL, unisp_name_a, SECPKG_CRED_OUTBOUND,
      NULL, NULL, NULL, NULL, &cred, &exp);
     ok(st == SEC_E_OK, "AcquireCredentialsHandleA failed: %08x\n", st);
     /* expriy is indeterminate in win2k3 */
     trace("expiry: %08x%08x\n", exp.HighPart, exp.LowPart);
+
+    st = pQueryCredentialsAttributesA(&cred, SECPKG_CRED_ATTR_NAMES, &names);
+    ok(st == SEC_E_NO_CREDENTIALS || st == SEC_E_UNSUPPORTED_FUNCTION /* before Vista */, "expected SEC_E_NO_CREDENTIALS, got %08x\n", st);
+
     pFreeCredentialsHandle(&cred);
 
     /* Bad version in SCHANNEL_CRED */
@@ -467,7 +503,25 @@ static void testAcquireSecurityContext(void)
     }
 }
 
-static const char http_request[] = "HEAD /test.html HTTP/1.1\r\nHost: www.codeweavers.com\r\nConnection: close\r\n\r\n";
+static void test_remote_cert(PCCERT_CONTEXT remote_cert)
+{
+    PCCERT_CONTEXT iter = NULL;
+    BOOL incl_remote = FALSE;
+    unsigned cert_cnt = 0;
+
+    ok(remote_cert->hCertStore != NULL, "hCertStore == NULL\n");
+
+    while((iter = pCertEnumCertificatesInStore(remote_cert->hCertStore, iter))) {
+        if(iter == remote_cert)
+            incl_remote = TRUE;
+        cert_cnt++;
+    }
+
+    ok(cert_cnt == 3, "cert_cnt = %u\n", cert_cnt);
+    ok(incl_remote, "context does not contain cert itself\n");
+}
+
+static const char http_request[] = "HEAD /test.html HTTP/1.1\r\nHost: www.winehq.org\r\nConnection: close\r\n\r\n";
 
 static void init_cred(SCHANNEL_CRED *cred)
 {
@@ -479,7 +533,7 @@ static void init_cred(SCHANNEL_CRED *cred)
     cred->aphMappers = NULL;
     cred->cSupportedAlgs = 0;
     cred->palgSupportedAlgs = NULL;
-    cred->grbitEnabledProtocols = SP_PROT_SSL3_CLIENT;
+    cred->grbitEnabledProtocols = SP_PROT_TLS1_CLIENT;
     cred->dwMinimumCipherStrength = 0;
     cred->dwMaximumCipherStrength = 0;
     cred->dwSessionLifespan = 0;
@@ -571,7 +625,10 @@ static void test_communication(void)
     SCHANNEL_CRED cred;
     CredHandle cred_handle;
     CtxtHandle context;
+    SecPkgCredentials_NamesA names;
     SecPkgContext_StreamSizes sizes;
+    SecPkgContext_ConnectionInfo conn_info;
+    CERT_CONTEXT *cert;
 
     SecBufferDesc buffers[2];
     SecBuffer *buf;
@@ -587,7 +644,7 @@ static void test_communication(void)
         return;
     }
 
-    /* Create a socket and connect to www.codeweavers.com */
+    /* Create a socket and connect to www.winehq.org */
     ret = WSAStartup(0x0202, &wsa_data);
     if (ret)
     {
@@ -595,10 +652,10 @@ static void test_communication(void)
         return;
     }
 
-    host = gethostbyname("www.codeweavers.com");
+    host = gethostbyname("www.winehq.org");
     if (!host)
     {
-        skip("Can't resolve www.codeweavers.com\n");
+        skip("Can't resolve www.winehq.org\n");
         return;
     }
 
@@ -615,7 +672,7 @@ static void test_communication(void)
     ret = connect(sock, (struct sockaddr *)&addr, sizeof(addr));
     if (ret == SOCKET_ERROR)
     {
-        skip("Can't connect to www.codeweavers.com\n");
+        skip("Can't connect to www.winehq.org\n");
         return;
     }
 
@@ -623,10 +680,12 @@ static void test_communication(void)
     init_cred(&cred);
     cred.dwFlags = SCH_CRED_NO_DEFAULT_CREDS|SCH_CRED_MANUAL_CRED_VALIDATION;
 
-    status = pAcquireCredentialsHandleA(NULL, (SEC_CHAR *)UNISP_NAME, SECPKG_CRED_OUTBOUND, NULL,
+    status = pAcquireCredentialsHandleA(NULL, (SEC_CHAR *)UNISP_NAME_A, SECPKG_CRED_OUTBOUND, NULL,
         &cred, NULL, NULL, &cred_handle, NULL);
     ok(status == SEC_E_OK, "AcquireCredentialsHandleA failed: %08x\n", status);
     if (status != SEC_E_OK) return;
+
+    test_supported_protocols(&cred_handle, SP_PROT_TLS1_CLIENT);
 
     /* Initialize the connection */
     init_buffers(&buffers[0], 4, buf_size);
@@ -640,21 +699,90 @@ static void test_communication(void)
 
     buffers[1].cBuffers = 1;
     buffers[1].pBuffers[0].BufferType = SECBUFFER_TOKEN;
-    data_size = buffers[0].pBuffers[0].cbBuffer;
+    buffers[0].pBuffers[0].cbBuffer = 1;
+    memset(buffers[1].pBuffers[0].pvBuffer, 0xfa, buf_size);
+    status = pInitializeSecurityContextA(&cred_handle, &context, (SEC_CHAR *)"localhost",
+            ISC_REQ_CONFIDENTIALITY|ISC_REQ_STREAM,
+            0, 0, &buffers[1], 0, NULL, &buffers[0], &attrs, NULL);
+todo_wine
+    ok(status == SEC_E_INVALID_TOKEN, "Expected SEC_E_INVALID_TOKEN, got %08x\n", status);
+todo_wine
+    ok(buffers[0].pBuffers[0].cbBuffer == 0, "Output buffer size was not set to 0.\n");
+
+    buffers[1].cBuffers = 1;
+    buffers[1].pBuffers[0].BufferType = SECBUFFER_TOKEN;
+    buffers[0].pBuffers[0].cbBuffer = 1;
+    memset(buffers[1].pBuffers[0].pvBuffer, 0, buf_size);
     status = pInitializeSecurityContextA(&cred_handle, &context, (SEC_CHAR *)"localhost",
             ISC_REQ_CONFIDENTIALITY|ISC_REQ_STREAM,
             0, 0, &buffers[1], 0, NULL, &buffers[0], &attrs, NULL);
     ok(status == SEC_E_INVALID_TOKEN, "Expected SEC_E_INVALID_TOKEN, got %08x\n", status);
+todo_wine
+    ok(buffers[0].pBuffers[0].cbBuffer == 0, "Output buffer size was not set to 0.\n");
+
+    buffers[0].pBuffers[0].cbBuffer = 0;
+    status = pInitializeSecurityContextA(&cred_handle, &context, (SEC_CHAR *)"localhost",
+            ISC_REQ_CONFIDENTIALITY|ISC_REQ_STREAM,
+            0, 0, &buffers[1], 0, NULL, &buffers[0], &attrs, NULL);
+todo_wine
+    ok(status == SEC_E_INSUFFICIENT_MEMORY || status == SEC_E_INVALID_TOKEN,
+       "Expected SEC_E_INSUFFICIENT_MEMORY or SEC_E_INVALID_TOKEN, got %08x\n", status);
 
     buffers[0].pBuffers[0].cbBuffer = buf_size;
-    buffers[1].cBuffers = 4;
-    buffers[1].pBuffers[0].cbBuffer = buf_size;
 
     status = pInitializeSecurityContextA(&cred_handle, NULL, (SEC_CHAR *)"localhost",
             ISC_REQ_CONFIDENTIALITY|ISC_REQ_STREAM,
             0, 0, NULL, 0, &context, &buffers[0], &attrs, NULL);
     ok(status == SEC_I_CONTINUE_NEEDED, "Expected SEC_I_CONTINUE_NEEDED, got %08x\n", status);
 
+    buf = &buffers[0].pBuffers[0];
+    send(sock, buf->pvBuffer, buf->cbBuffer, 0);
+    buf->cbBuffer = buf_size;
+
+    status = pInitializeSecurityContextA(&cred_handle, &context, (SEC_CHAR *)"localhost",
+            ISC_REQ_CONFIDENTIALITY|ISC_REQ_STREAM,
+            0, 0, NULL, 0, NULL, &buffers[0], &attrs, NULL);
+    ok(status == SEC_E_INCOMPLETE_MESSAGE, "Got unexpected status %#x.\n", status);
+    ok(buffers[0].pBuffers[0].cbBuffer == buf_size, "Output buffer size changed.\n");
+    ok(buffers[0].pBuffers[0].BufferType == SECBUFFER_TOKEN, "Output buffer type changed.\n");
+
+    buffers[1].cBuffers = 4;
+    buffers[1].pBuffers[0].cbBuffer = 0;
+
+    status = pInitializeSecurityContextA(&cred_handle, &context, (SEC_CHAR *)"localhost",
+            ISC_REQ_CONFIDENTIALITY|ISC_REQ_STREAM,
+            0, 0, &buffers[1], 0, NULL, &buffers[0], &attrs, NULL);
+    ok(status == SEC_E_INCOMPLETE_MESSAGE, "Got unexpected status %#x.\n", status);
+    ok(buffers[0].pBuffers[0].cbBuffer == buf_size, "Output buffer size changed.\n");
+    ok(buffers[0].pBuffers[0].BufferType == SECBUFFER_TOKEN, "Output buffer type changed.\n");
+
+    buf = &buffers[1].pBuffers[0];
+    buf->cbBuffer = buf_size;
+    ret = receive_data(sock, buf);
+    if (ret == -1)
+        return;
+
+    buffers[1].pBuffers[0].cbBuffer = 4;
+    status = pInitializeSecurityContextA(&cred_handle, &context, (SEC_CHAR *)"localhost",
+            ISC_REQ_CONFIDENTIALITY|ISC_REQ_STREAM,
+            0, 0, &buffers[1], 0, NULL, &buffers[0], &attrs, NULL);
+    ok(status == SEC_E_INCOMPLETE_MESSAGE, "Got unexpected status %#x.\n", status);
+    ok(buffers[0].pBuffers[0].cbBuffer == buf_size, "Output buffer size changed.\n");
+    ok(buffers[0].pBuffers[0].BufferType == SECBUFFER_TOKEN, "Output buffer type changed.\n");
+
+    buffers[1].pBuffers[0].cbBuffer = 5;
+    status = pInitializeSecurityContextA(&cred_handle, &context, (SEC_CHAR *)"localhost",
+            ISC_REQ_CONFIDENTIALITY|ISC_REQ_STREAM,
+            0, 0, &buffers[1], 0, NULL, &buffers[0], &attrs, NULL);
+    ok(status == SEC_E_INCOMPLETE_MESSAGE, "Got unexpected status %#x.\n", status);
+    ok(buffers[0].pBuffers[0].cbBuffer == buf_size, "Output buffer size changed.\n");
+    ok(buffers[0].pBuffers[0].BufferType == SECBUFFER_TOKEN, "Output buffer type changed.\n");
+
+    buffers[1].pBuffers[0].cbBuffer = ret;
+    status = pInitializeSecurityContextA(&cred_handle, &context, (SEC_CHAR *)"localhost",
+            ISC_REQ_CONFIDENTIALITY|ISC_REQ_STREAM,
+            0, 0, &buffers[1], 0, NULL, &buffers[0], &attrs, NULL);
+    buffers[1].pBuffers[0].cbBuffer = buf_size;
     while (status == SEC_I_CONTINUE_NEEDED)
     {
         buf = &buffers[0].pBuffers[0];
@@ -681,7 +809,26 @@ static void test_communication(void)
         return;
     }
 
-    pQueryContextAttributesA(&context, SECPKG_ATTR_STREAM_SIZES, &sizes);
+    status = pQueryCredentialsAttributesA(&cred_handle, SECPKG_CRED_ATTR_NAMES, &names);
+    ok(status == SEC_E_NO_CREDENTIALS || status == SEC_E_UNSUPPORTED_FUNCTION /* before Vista */, "expected SEC_E_NO_CREDENTIALS, got %08x\n", status);
+
+    status = pQueryContextAttributesA(&context, SECPKG_ATTR_REMOTE_CERT_CONTEXT, (void*)&cert);
+    ok(status == SEC_E_OK, "QueryContextAttributesW(SECPKG_ATTR_REMOTE_CERT_CONTEXT) failed: %08x\n", status);
+    if(status == SEC_E_OK) {
+        test_remote_cert(cert);
+        pCertFreeCertificateContext(cert);
+    }
+
+    status = pQueryContextAttributesA(&context, SECPKG_ATTR_CONNECTION_INFO, (void*)&conn_info);
+    ok(status == SEC_E_OK, "QueryContextAttributesW(SECPKG_ATTR_CONNECTION_INFO) failed: %08x\n", status);
+    if(status == SEC_E_OK) {
+        ok(conn_info.dwCipherStrength == 128 || conn_info.dwCipherStrength == 168,
+           "conn_info.dwCipherStrength = %d\n", conn_info.dwCipherStrength);
+        ok(conn_info.dwHashStrength >= 128, "conn_info.dwHashStrength = %d\n", conn_info.dwHashStrength);
+    }
+
+    status = pQueryContextAttributesA(&context, SECPKG_ATTR_STREAM_SIZES, &sizes);
+    ok(status == SEC_E_OK, "QueryContextAttributesW(SECPKG_ATTR_STREAM_SIZES) failed: %08x\n", status);
 
     reset_buffers(&buffers[0]);
 

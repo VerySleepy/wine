@@ -24,7 +24,10 @@
 #define WIN32_NO_STATUS
 #include <winsock2.h>
 #include <windows.h>
+#include <winternl.h>
 #include <ws2tcpip.h>
+#include <wsipx.h>
+#include <wsnwlink.h>
 #include <mswsock.h>
 #include <mstcpip.h>
 #include <stdio.h>
@@ -59,9 +62,15 @@
    k.keepaliveinterval = interval;
 
 /* Function pointers */
-static void   (WINAPI  *pFreeAddrInfoW)(PADDRINFOW) = 0;
-static int    (WINAPI  *pGetAddrInfoW)(LPCWSTR,LPCWSTR,const ADDRINFOW *,PADDRINFOW *) = 0;
-static PCSTR  (WINAPI  *pInetNtop)(INT,LPVOID,LPSTR,ULONG) = 0;
+static void  (WINAPI *pfreeaddrinfo)(struct addrinfo *);
+static int   (WINAPI *pgetaddrinfo)(LPCSTR,LPCSTR,const struct addrinfo *,struct addrinfo **);
+static void  (WINAPI *pFreeAddrInfoW)(PADDRINFOW);
+static int   (WINAPI *pGetAddrInfoW)(LPCWSTR,LPCWSTR,const ADDRINFOW *,PADDRINFOW *);
+static PCSTR (WINAPI *pInetNtop)(INT,LPVOID,LPSTR,ULONG);
+static int   (WINAPI *pInetPton)(INT,LPSTR,LPVOID);
+static int   (WINAPI *pWSALookupServiceBeginW)(LPWSAQUERYSETW,DWORD,LPHANDLE);
+static int   (WINAPI *pWSALookupServiceEnd)(HANDLE);
+static int   (WINAPI *pWSALookupServiceNextW)(HANDLE,DWORD,LPDWORD,LPWSAQUERYSETW);
 
 /**************** Structs and typedefs ***************/
 
@@ -143,6 +152,38 @@ typedef struct select_thread_params
     SOCKET s;
     BOOL ReadKilled;
 } select_thread_params;
+
+/* Tests used in both getaddrinfo and GetAddrInfoW */
+static const struct addr_hint_tests
+{
+    int family, socktype, protocol;
+    DWORD error;
+} hinttests[] = {
+    {AF_UNSPEC, SOCK_STREAM, IPPROTO_TCP, 0 },
+    {AF_UNSPEC, SOCK_STREAM, IPPROTO_UDP, 0 },
+    {AF_UNSPEC, SOCK_DGRAM,  IPPROTO_TCP, 0 },
+    {AF_UNSPEC, SOCK_DGRAM,  IPPROTO_UDP, 0 },
+    {AF_INET,   SOCK_STREAM, IPPROTO_TCP, 0 },
+    {AF_INET,   SOCK_STREAM, IPPROTO_UDP, 0 },
+    {AF_INET,   SOCK_DGRAM,  IPPROTO_TCP, 0 },
+    {AF_INET,   SOCK_DGRAM,  IPPROTO_UDP, 0 },
+    {AF_UNSPEC, 0,           IPPROTO_TCP, 0 },
+    {AF_UNSPEC, 0,           IPPROTO_UDP, 0 },
+    {AF_UNSPEC, SOCK_STREAM, 0,           0 },
+    {AF_UNSPEC, SOCK_DGRAM,  0,           0 },
+    {AF_INET,   0,           IPPROTO_TCP, 0 },
+    {AF_INET,   0,           IPPROTO_UDP, 0 },
+    {AF_INET,   SOCK_STREAM, 0,           0 },
+    {AF_INET,   SOCK_DGRAM,  0,           0 },
+    {AF_UNSPEC, 999,         IPPROTO_TCP, WSAESOCKTNOSUPPORT },
+    {AF_UNSPEC, 999,         IPPROTO_UDP, WSAESOCKTNOSUPPORT },
+    {AF_INET,   999,         IPPROTO_TCP, WSAESOCKTNOSUPPORT },
+    {AF_INET,   999,         IPPROTO_UDP, WSAESOCKTNOSUPPORT },
+    {AF_UNSPEC, SOCK_STREAM, 999,         0 },
+    {AF_UNSPEC, SOCK_STREAM, 999,         0 },
+    {AF_INET,   SOCK_DGRAM,  999,         0 },
+    {AF_INET,   SOCK_DGRAM,  999,         0 },
+};
 
 /**************** Static variables ***************/
 
@@ -257,22 +298,12 @@ static void read_zero_bytes ( SOCKET s )
     ok ( n <= 0, "garbage data received: %d bytes\n", n );
 }
 
-static int do_oob_send ( SOCKET s, char *buf, int buflen, int sendlen )
+static int do_synchronous_send ( SOCKET s, char *buf, int buflen, int sendlen, int flags )
 {
     char* last = buf + buflen, *p;
     int n = 1;
     for ( p = buf; n > 0 && p < last; p += n )
-        n = send ( s, p, min ( sendlen, last - p ), MSG_OOB );
-    wsa_ok ( n, 0 <=, "do_oob_send (%x): error %d\n" );
-    return p - buf;
-}
-
-static int do_synchronous_send ( SOCKET s, char *buf, int buflen, int sendlen )
-{
-    char* last = buf + buflen, *p;
-    int n = 1;
-    for ( p = buf; n > 0 && p < last; p += n )
-        n = send ( s, p, min ( sendlen, last - p ), 0 );
+        n = send ( s, p, min ( sendlen, last - p ), flags );
     wsa_ok ( n, 0 <=, "do_synchronous_send (%x): error %d\n" );
     return p - buf;
 }
@@ -307,6 +338,62 @@ static void check_so_opentype (void)
     len = sizeof (tmp);
     getsockopt ( INVALID_SOCKET, SOL_SOCKET, SO_OPENTYPE, (LPVOID) &tmp, &len );
     ok ( tmp == 0, "check_so_opentype: wrong startup value of SO_OPENTYPE: %d\n", tmp );
+}
+
+static void compare_addrinfo (ADDRINFO *a, ADDRINFO *b)
+{
+    for (; a && b ; a = a->ai_next, b = b->ai_next)
+    {
+        ok(a->ai_flags == b->ai_flags,
+           "Wrong flags %d != %d\n", a->ai_flags, b->ai_flags);
+        ok(a->ai_family == b->ai_family,
+           "Wrong family %d != %d\n", a->ai_family, b->ai_family);
+        ok(a->ai_socktype == b->ai_socktype,
+           "Wrong socktype %d != %d\n", a->ai_socktype, b->ai_socktype);
+        ok(a->ai_protocol == b->ai_protocol,
+           "Wrong protocol %d != %d\n", a->ai_protocol, b->ai_protocol);
+        ok(a->ai_addrlen == b->ai_addrlen,
+           "Wrong addrlen %lu != %lu\n", a->ai_addrlen, b->ai_addrlen);
+        ok(!memcmp(a->ai_addr, b->ai_addr, min(a->ai_addrlen, b->ai_addrlen)),
+           "Wrong address data\n");
+        if (a->ai_canonname && b->ai_canonname)
+        {
+            ok(!strcmp(a->ai_canonname, b->ai_canonname), "Wrong canonical name '%s' != '%s'\n",
+               a->ai_canonname, b->ai_canonname);
+        }
+        else
+            ok(!a->ai_canonname && !b->ai_canonname, "Expected both names absent (%p != %p)\n",
+               a->ai_canonname, b->ai_canonname);
+    }
+    ok(!a && !b, "Expected both addresses null (%p != %p)\n", a, b);
+}
+
+static void compare_addrinfow (ADDRINFOW *a, ADDRINFOW *b)
+{
+    for (; a && b ; a = a->ai_next, b = b->ai_next)
+    {
+        ok(a->ai_flags == b->ai_flags,
+           "Wrong flags %d != %d\n", a->ai_flags, b->ai_flags);
+        ok(a->ai_family == b->ai_family,
+           "Wrong family %d != %d\n", a->ai_family, b->ai_family);
+        ok(a->ai_socktype == b->ai_socktype,
+           "Wrong socktype %d != %d\n", a->ai_socktype, b->ai_socktype);
+        ok(a->ai_protocol == b->ai_protocol,
+           "Wrong protocol %d != %d\n", a->ai_protocol, b->ai_protocol);
+        ok(a->ai_addrlen == b->ai_addrlen,
+           "Wrong addrlen %lu != %lu\n", a->ai_addrlen, b->ai_addrlen);
+        ok(!memcmp(a->ai_addr, b->ai_addr, min(a->ai_addrlen, b->ai_addrlen)),
+           "Wrong address data\n");
+        if (a->ai_canonname && b->ai_canonname)
+        {
+            ok(!lstrcmpW(a->ai_canonname, b->ai_canonname), "Wrong canonical name '%s' != '%s'\n",
+               wine_dbgstr_w(a->ai_canonname), wine_dbgstr_w(b->ai_canonname));
+        }
+        else
+            ok(!a->ai_canonname && !b->ai_canonname, "Expected both names absent (%p != %p)\n",
+               a->ai_canonname, b->ai_canonname);
+    }
+    ok(!a && !b, "Expected both addresses null (%p != %p)\n", a, b);
 }
 
 /**************** Server utility functions ***************/
@@ -455,7 +542,7 @@ static VOID WINAPI simple_server ( server_params *par )
         ok ( pos == -1, "simple_server (%x): test pattern error: %d\n", id, pos);
 
         /* Echo data back */
-        n_sent = do_synchronous_send ( mem->sock[0].s, mem->sock[0].buf, n_expected, par->buflen );
+        n_sent = do_synchronous_send ( mem->sock[0].s, mem->sock[0].buf, n_expected, par->buflen, 0 );
         ok ( n_sent == n_expected,
              "simple_server (%x): sent less data than expected: %d of %d\n", id, n_sent, n_expected );
 
@@ -477,7 +564,7 @@ static VOID WINAPI oob_server ( server_params *par )
     test_params *gen = par->general;
     server_memory *mem;
     u_long atmark = 0;
-    int pos, n_recvd, n_expected = gen->n_chunks * gen->chunk_size, tmp,
+    int pos, n_sent, n_recvd, n_expected = gen->n_chunks * gen->chunk_size, tmp,
         id = GetCurrentThreadId();
 
     trace ( "oob_server (%x) starting\n", id );
@@ -502,19 +589,25 @@ static VOID WINAPI oob_server ( server_params *par )
     ok ( mem->sock[0].peer.sin_addr.s_addr == inet_addr ( gen->inet_addr ),
          "oob_server (%x): strange peer address\n", id );
 
-    /* check atmark state */
+    /* check initial atmark state */
     ioctlsocket ( mem->sock[0].s, SIOCATMARK, &atmark );
-    todo_wine ok ( atmark == 1, "oob_server (%x): unexpectedly at the OOB mark: %i\n", id, atmark );
+    ok ( atmark == 1, "oob_server (%x): unexpectedly at the OOB mark: %i\n", id, atmark );
 
-    /* Receive normal data and check atmark state */
+    /* Receive normal data */
     n_recvd = do_synchronous_recv ( mem->sock[0].s, mem->sock[0].buf, n_expected, par->buflen );
     ok ( n_recvd == n_expected,
-         "simple_server (%x): received less data than expected: %d of %d\n", id, n_recvd, n_expected );
+         "oob_server (%x): received less data than expected: %d of %d\n", id, n_recvd, n_expected );
     pos = test_buffer ( mem->sock[0].buf, gen->chunk_size, gen->n_chunks );
-    ok ( pos == -1, "simple_server (%x): test pattern error: %d\n", id, pos);
+    ok ( pos == -1, "oob_server (%x): test pattern error: %d\n", id, pos);
 
+    /* Echo data back */
+    n_sent = do_synchronous_send ( mem->sock[0].s, mem->sock[0].buf, n_expected, par->buflen, 0 );
+    ok ( n_sent == n_expected,
+         "oob_server (%x): sent less data than expected: %d of %d\n", id, n_sent, n_expected );
+
+    /* check atmark state */
     ioctlsocket ( mem->sock[0].s, SIOCATMARK, &atmark );
-    todo_wine ok ( atmark == 1, "oob_server (%x): unexpectedly at the OOB mark: %i\n", id, atmark );
+    ok ( atmark == 1, "oob_server (%x): unexpectedly at the OOB mark: %i\n", id, atmark );
 
     /* Receive a part of the out-of-band data and check atmark state */
     n_recvd = do_synchronous_recv ( mem->sock[0].s, mem->sock[0].buf, 8, par->buflen );
@@ -523,13 +616,13 @@ static VOID WINAPI oob_server ( server_params *par )
     n_expected -= 8;
 
     ioctlsocket ( mem->sock[0].s, SIOCATMARK, &atmark );
-    ok ( atmark == 0, "oob_server (%x): not at the OOB mark: %i\n", id, atmark );
+    todo_wine ok ( atmark == 0, "oob_server (%x): not at the OOB mark: %i\n", id, atmark );
 
     /* Receive the rest of the out-of-band data and check atmark state */
     do_synchronous_recv ( mem->sock[0].s, mem->sock[0].buf, n_expected, par->buflen );
 
     ioctlsocket ( mem->sock[0].s, SIOCATMARK, &atmark );
-    ok ( atmark == 0, "oob_server (%x): not at the OOB mark: %i\n", id, atmark );
+    todo_wine ok ( atmark == 0, "oob_server (%x): not at the OOB mark: %i\n", id, atmark );
 
     /* cleanup */
     wsa_ok ( closesocket ( mem->sock[0].s ),  0 ==, "oob_server (%x): closesocket error: %d\n" );
@@ -699,7 +792,7 @@ static VOID WINAPI simple_client ( client_params *par )
     trace ( "simple_client (%x) connected\n", id );
 
     /* send data to server */
-    n_sent = do_synchronous_send ( mem->s, mem->send_buf, n_expected, par->buflen );
+    n_sent = do_synchronous_send ( mem->s, mem->send_buf, n_expected, par->buflen, 0 );
     ok ( n_sent == n_expected,
          "simple_client (%x): sent less data than expected: %d of %d\n", id, n_sent, n_expected );
 
@@ -728,7 +821,7 @@ static VOID WINAPI oob_client ( client_params *par )
 {
     test_params *gen = par->general;
     client_memory *mem;
-    int n_sent, n_expected = gen->n_chunks * gen->chunk_size, id;
+    int pos, n_sent, n_recvd, n_expected = gen->n_chunks * gen->chunk_size, id;
 
     id = GetCurrentThreadId();
     trace ( "oob_client (%x): starting\n", id );
@@ -749,12 +842,19 @@ static VOID WINAPI oob_client ( client_params *par )
     trace ( "oob_client (%x) connected\n", id );
 
     /* send data to server */
-    n_sent = do_synchronous_send ( mem->s, mem->send_buf, n_expected, par->buflen );
+    n_sent = do_synchronous_send ( mem->s, mem->send_buf, n_expected, par->buflen, 0 );
     ok ( n_sent == n_expected,
          "oob_client (%x): sent less data than expected: %d of %d\n", id, n_sent, n_expected );
 
+    /* Receive data echoed back & check it */
+    n_recvd = do_synchronous_recv ( mem->s, mem->recv_buf, n_expected, par->buflen );
+    ok ( n_recvd == n_expected,
+         "simple_client (%x): received less data than expected: %d of %d\n", id, n_recvd, n_expected );
+    pos = test_buffer ( mem->recv_buf, gen->chunk_size, gen->n_chunks );
+    ok ( pos == -1, "simple_client (%x): test pattern error: %d\n", id, pos);
+
     /* send out-of-band data to server */
-    n_sent = do_oob_send ( mem->s, mem->send_buf, n_expected, par->buflen );
+    n_sent = do_synchronous_send ( mem->s, mem->send_buf, n_expected, par->buflen, MSG_OOB );
     ok ( n_sent == n_expected,
          "oob_client (%x): sent less data than expected: %d of %d\n", id, n_sent, n_expected );
 
@@ -797,7 +897,7 @@ static VOID WINAPI simple_mixed_client ( client_params *par )
     trace ( "simple_client (%x) connected\n", id );
 
     /* send data to server */
-    n_sent = do_synchronous_send ( mem->s, mem->send_buf, n_expected, par->buflen );
+    n_sent = do_synchronous_send ( mem->s, mem->send_buf, n_expected, par->buflen, 0 );
     ok ( n_sent == n_expected,
          "simple_client (%x): sent less data than expected: %d of %d\n", id, n_sent, n_expected );
 
@@ -968,14 +1068,17 @@ out:
 /* Tests for WSAStartup */
 static void test_WithoutWSAStartup(void)
 {
-    LPVOID ptr;
+    DWORD err;
 
     WSASetLastError(0xdeadbeef);
-    ptr = gethostbyname("localhost");
+    ok(WSASocketA(0, 0, 0, NULL, 0, 0) == INVALID_SOCKET, "WSASocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSANOTINITIALISED, "Expected 10093, received %d\n", err);
 
-    ok(ptr == NULL, "gethostbyname() succeeded unexpectedly: %d\n", WSAGetLastError());
-    ok(WSAGetLastError() == WSANOTINITIALISED, "gethostbyname() failed with unexpected error: %d\n",
-                WSAGetLastError());
+    WSASetLastError(0xdeadbeef);
+    ok(gethostbyname("localhost") == NULL, "gethostbyname() succeeded unexpectedly\n");
+    err = WSAGetLastError();
+    ok(err == WSANOTINITIALISED, "Expected 10093, received %d\n", err);
 }
 
 static void test_WithWSAStartup(void)
@@ -984,12 +1087,42 @@ static void test_WithWSAStartup(void)
     WORD version = MAKEWORD( 2, 2 );
     INT res;
     LPVOID ptr;
+    SOCKET src, dst;
+    DWORD error;
 
     res = WSAStartup( version, &data );
     ok(res == 0, "WSAStartup() failed unexpectedly: %d\n", res);
 
     ptr = gethostbyname("localhost");
     ok(ptr != NULL, "gethostbyname() failed unexpectedly: %d\n", WSAGetLastError());
+
+    ok(!tcp_socketpair(&src, &dst), "creating socket pair failed\n");
+
+    res = send(src, "TEST", 4, 0);
+    ok(res == 4, "send failed with error %d\n", WSAGetLastError());
+
+    WSACleanup();
+
+    res = WSAStartup( version, &data );
+    ok(res == 0, "WSAStartup() failed unexpectedly: %d\n", res);
+
+    /* show that sockets are destroyed automatically after WSACleanup */
+    todo_wine {
+    SetLastError(0xdeadbeef);
+    res = send(src, "TEST", 4, 0);
+    error = WSAGetLastError();
+    ok(res == SOCKET_ERROR, "send should have failed\n");
+    ok(error == WSAENOTSOCK, "expected 10038, got %d\n", error);
+
+    SetLastError(0xdeadbeef);
+    res = closesocket(dst);
+    error = WSAGetLastError();
+    ok(res == SOCKET_ERROR, "closesocket should have failed\n");
+    ok(error == WSAENOTSOCK, "expected 10038, got %d\n", error);
+    }
+
+    closesocket(src);
+    closesocket(dst);
 
     WSACleanup();
 }
@@ -1000,11 +1133,17 @@ static void Init (void)
 {
     WORD ver = MAKEWORD (2, 2);
     WSADATA data;
-    HMODULE hws2_32 = GetModuleHandle("ws2_32.dll");
+    HMODULE hws2_32 = GetModuleHandleA("ws2_32.dll");
 
+    pfreeaddrinfo = (void *)GetProcAddress(hws2_32, "freeaddrinfo");
+    pgetaddrinfo = (void *)GetProcAddress(hws2_32, "getaddrinfo");
     pFreeAddrInfoW = (void *)GetProcAddress(hws2_32, "FreeAddrInfoW");
     pGetAddrInfoW = (void *)GetProcAddress(hws2_32, "GetAddrInfoW");
     pInetNtop = (void *)GetProcAddress(hws2_32, "inet_ntop");
+    pInetPton = (void *)GetProcAddress(hws2_32, "inet_pton");
+    pWSALookupServiceBeginW = (void *)GetProcAddress(hws2_32, "WSALookupServiceBeginW");
+    pWSALookupServiceEnd = (void *)GetProcAddress(hws2_32, "WSALookupServiceEnd");
+    pWSALookupServiceNextW = (void *)GetProcAddress(hws2_32, "WSALookupServiceNextW");
 
     ok ( WSAStartup ( ver, &data ) == 0, "WSAStartup failed\n" );
     tls = TlsAlloc();
@@ -1096,11 +1235,28 @@ static const LINGER linger_testvals[] = {
 
 static void test_set_getsockopt(void)
 {
-    SOCKET s;
+    SOCKET s, s2;
     int i, err, lasterr;
     int timeout;
     LINGER lingval;
     int size;
+    WSAPROTOCOL_INFOA infoA;
+    WSAPROTOCOL_INFOW infoW;
+    char providername[WSAPROTOCOL_LEN + 1];
+    struct _prottest
+    {
+        int family, type, proto;
+    } prottest[] = {
+        {AF_INET, SOCK_STREAM, IPPROTO_TCP},
+        {AF_INET, SOCK_DGRAM, IPPROTO_UDP},
+        {AF_INET6, SOCK_STREAM, IPPROTO_TCP},
+        {AF_INET6, SOCK_DGRAM, IPPROTO_UDP}
+    };
+    union _csspace
+    {
+        CSADDR_INFO cs;
+        char space[128];
+    } csinfoA, csinfoB;
 
     s = socket(AF_INET, SOCK_STREAM, 0);
     ok(s!=INVALID_SOCKET, "socket() failed error: %d\n", WSAGetLastError());
@@ -1178,17 +1334,266 @@ static void test_set_getsockopt(void)
     SetLastError(0xdeadbeef);
     err = setsockopt(s, 0xffffffff, SO_RCVTIMEO, (char *) &timeout, size);
     ok( (err == SOCKET_ERROR) && (WSAGetLastError() == WSAEINVAL),
-        "got %d with %d (expected SOCKET_ERROR with WSAEINVAL\n",
+        "got %d with %d (expected SOCKET_ERROR with WSAEINVAL)\n",
         err, WSAGetLastError());
 
     timeout = SOCKTIMEOUT1;
     SetLastError(0xdeadbeef);
     err = setsockopt(s, 0x00008000, SO_RCVTIMEO, (char *) &timeout, size);
     ok( (err == SOCKET_ERROR) && (WSAGetLastError() == WSAEINVAL),
-        "got %d with %d (expected SOCKET_ERROR with WSAEINVAL\n",
+        "got %d with %d (expected SOCKET_ERROR with WSAEINVAL)\n",
+        err, WSAGetLastError());
+
+    /* Test SO_ERROR set/get */
+    SetLastError(0xdeadbeef);
+    i = 1234;
+    err = setsockopt(s, SOL_SOCKET, SO_ERROR, (char *) &i, size);
+todo_wine
+    ok( !err && !WSAGetLastError(),
+        "got %d with %d (expected 0 with 0)\n",
+        err, WSAGetLastError());
+
+    SetLastError(0xdeadbeef);
+    i = 4321;
+    err = getsockopt(s, SOL_SOCKET, SO_ERROR, (char *) &i, &size);
+todo_wine
+    ok( !err && !WSAGetLastError(),
+        "got %d with %d (expected 0 with 0)\n",
+        err, WSAGetLastError());
+todo_wine
+    ok (i == 1234, "got %d (expected 1234)\n", i);
+
+    /* Test invalid optlen */
+    SetLastError(0xdeadbeef);
+    size = 1;
+    err = getsockopt(s, SOL_SOCKET, SO_ERROR, (char *) &i, &size);
+todo_wine
+    ok( (err == SOCKET_ERROR) && (WSAGetLastError() == WSAEFAULT),
+        "got %d with %d (expected SOCKET_ERROR with WSAEFAULT)\n",
         err, WSAGetLastError());
 
     closesocket(s);
+
+    /* Test WS_IP_MULTICAST_TTL with 8, 16, 24 and 32 bits values */
+    s = socket(AF_INET, SOCK_DGRAM, 0);
+    ok(s != INVALID_SOCKET, "Failed to create socket\n");
+    size = sizeof(i);
+    for (i = 0; i < 4; i++)
+    {
+        int k, j;
+        const int tests[] = {0xffffff0a, 0xffff000b, 0xff00000c, 0x0000000d};
+        err = setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL, (char *) &tests[i], i + 1);
+        ok(!err, "Test [%d] Expected 0, got %d\n", i, err);
+        err = getsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL, (char *) &k, &size);
+        ok(!err, "Test [%d] Expected 0, got %d\n", i, err);
+        j = i != 3 ? tests[i] & ((1 << (i + 1) * 8) - 1) : tests[i];
+        ok(k == j, "Test [%d] Expected 0x%x, got 0x%x\n", i, j, k);
+    }
+    closesocket(s);
+
+    /* test SO_PROTOCOL_INFOA invalid parameters */
+    ok(getsockopt(INVALID_SOCKET, SOL_SOCKET, SO_PROTOCOL_INFOA, NULL, NULL),
+       "getsockopt should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAENOTSOCK, "expected 10038, got %d instead\n", err);
+    size = sizeof(WSAPROTOCOL_INFOA);
+    ok(getsockopt(INVALID_SOCKET, SOL_SOCKET, SO_PROTOCOL_INFOA, (char *) &infoA, &size),
+       "getsockopt should have failed\n");
+    ok(size == sizeof(WSAPROTOCOL_INFOA), "got size %d\n", size);
+    err = WSAGetLastError();
+    ok(err == WSAENOTSOCK, "expected 10038, got %d instead\n", err);
+    s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    ok(getsockopt(s, SOL_SOCKET, SO_PROTOCOL_INFOA, NULL, NULL),
+       "getsockopt should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEFAULT, "expected 10014, got %d instead\n", err);
+    ok(getsockopt(s, SOL_SOCKET, SO_PROTOCOL_INFOA, (char *) &infoA, NULL),
+       "getsockopt should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEFAULT, "expected 10014, got %d instead\n", err);
+    ok(getsockopt(s, SOL_SOCKET, SO_PROTOCOL_INFOA, NULL, &size),
+       "getsockopt should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEFAULT, "expected 10014, got %d instead\n", err);
+    size = sizeof(WSAPROTOCOL_INFOA) / 2;
+    ok(getsockopt(s, SOL_SOCKET, SO_PROTOCOL_INFOA, (char *) &infoA, &size),
+       "getsockopt should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEFAULT, "expected 10014, got %d instead\n", err);
+    ok(size == sizeof(WSAPROTOCOL_INFOA), "got size %d\n", size);
+    size = sizeof(WSAPROTOCOL_INFOA) * 2;
+    err = getsockopt(s, SOL_SOCKET, SO_PROTOCOL_INFOA, (char *) &infoA, &size);
+    ok(!err,"getsockopt failed with %d\n", WSAGetLastError());
+    ok(size == sizeof(WSAPROTOCOL_INFOA) * 2, "got size %d\n", size);
+
+    closesocket(s);
+
+    /* test SO_PROTOCOL_INFO structure returned for different protocols */
+    for (i = 0; i < sizeof(prottest) / sizeof(prottest[0]); i++)
+    {
+        s = socket(prottest[i].family, prottest[i].type, prottest[i].proto);
+        if (s == INVALID_SOCKET && prottest[i].family == AF_INET6) continue;
+
+        ok(s != INVALID_SOCKET, "Failed to create socket: %d\n",
+          WSAGetLastError());
+
+        /* compare both A and W version */
+        infoA.szProtocol[0] = 0;
+        size = sizeof(WSAPROTOCOL_INFOA);
+        err = getsockopt(s, SOL_SOCKET, SO_PROTOCOL_INFOA, (char *) &infoA, &size);
+        ok(!err,"getsockopt failed with %d\n", WSAGetLastError());
+        ok(size == sizeof(WSAPROTOCOL_INFOA), "got size %d\n", size);
+
+        infoW.szProtocol[0] = 0;
+        size = sizeof(WSAPROTOCOL_INFOW);
+        err = getsockopt(s, SOL_SOCKET, SO_PROTOCOL_INFOW, (char *) &infoW, &size);
+        ok(!err,"getsockopt failed with %d\n", WSAGetLastError());
+        ok(size == sizeof(WSAPROTOCOL_INFOW), "got size %d\n", size);
+
+        trace("provider name '%s', family %d, type %d, proto %d\n",
+              infoA.szProtocol, prottest[i].family, prottest[i].type, prottest[i].proto);
+
+        ok(infoA.szProtocol[0] || broken(!infoA.szProtocol[0]) /* NT4 */,
+           "WSAPROTOCOL_INFOA was not filled\n");
+        ok(infoW.szProtocol[0] || broken(!infoA.szProtocol[0]) /* NT4 */,
+           "WSAPROTOCOL_INFOW was not filled\n");
+
+        WideCharToMultiByte(CP_ACP, 0, infoW.szProtocol, -1,
+                            providername, sizeof(providername), NULL, NULL);
+        ok(!strcmp(infoA.szProtocol,providername),
+           "different provider names '%s' != '%s'\n", infoA.szProtocol, providername);
+
+        ok(!memcmp(&infoA, &infoW, FIELD_OFFSET(WSAPROTOCOL_INFOA, szProtocol)),
+           "SO_PROTOCOL_INFO[A/W] comparison failed\n");
+
+        /* Remove IF when WSAEnumProtocols support IPV6 data */
+        if (prottest[i].family == AF_INET6)
+        {
+            todo_wine
+            ok(infoA.iAddressFamily == prottest[i].family, "socket family invalid, expected %d received %d\n",
+               prottest[i].family, infoA.iAddressFamily);
+        }
+        else
+        {
+            ok(infoA.iAddressFamily == prottest[i].family, "socket family invalid, expected %d received %d\n",
+               prottest[i].family, infoA.iAddressFamily);
+        }        ok(infoA.iSocketType == prottest[i].type, "socket type invalid, expected %d received %d\n",
+           prottest[i].type, infoA.iSocketType);
+        ok(infoA.iProtocol == prottest[i].proto, "socket protocol invalid, expected %d received %d\n",
+           prottest[i].proto, infoA.iProtocol);
+
+        closesocket(s);
+    }
+
+    /* Test SO_BSP_STATE - Present only in >= Win 2008 */
+    s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    ok(s != INVALID_SOCKET, "Failed to create socket\n");
+    s2 = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    ok(s2 != INVALID_SOCKET, "Failed to create socket\n");
+
+    SetLastError(0xdeadbeef);
+    size = sizeof(csinfoA);
+    err = getsockopt(s, SOL_SOCKET, SO_BSP_STATE, (char *) &csinfoA, &size);
+    if (!err)
+    {
+        struct sockaddr_in saddr;
+        memset(&saddr, 0, sizeof(saddr));
+        saddr.sin_family = AF_INET;
+        saddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+        /* Socket is not bound, no information provided */
+        ok(!csinfoA.cs.LocalAddr.iSockaddrLength, "Expected 0, got %d\n", csinfoA.cs.LocalAddr.iSockaddrLength);
+        ok(csinfoA.cs.LocalAddr.lpSockaddr == NULL, "Expected NULL, got %p\n", csinfoA.cs.LocalAddr.lpSockaddr);
+        /* Socket is not connected, no information provided */
+        ok(!csinfoA.cs.RemoteAddr.iSockaddrLength, "Expected 0, got %d\n", csinfoA.cs.LocalAddr.iSockaddrLength);
+        ok(csinfoA.cs.RemoteAddr.lpSockaddr == NULL, "Expected NULL, got %p\n", csinfoA.cs.LocalAddr.lpSockaddr);
+
+        err = bind(s, (struct sockaddr*)&saddr, sizeof(saddr));
+        ok(!err, "Expected 0, got %d\n", err);
+        size = sizeof(csinfoA);
+        err = getsockopt(s, SOL_SOCKET, SO_BSP_STATE, (char *) &csinfoA, &size);
+        ok(!err, "Expected 0, got %d\n", err);
+
+        /* Socket is bound */
+        ok(csinfoA.cs.LocalAddr.iSockaddrLength, "Expected non-zero\n");
+        ok(csinfoA.cs.LocalAddr.lpSockaddr != NULL, "Expected non-null\n");
+        /* Socket is not connected, no information provided */
+        ok(!csinfoA.cs.RemoteAddr.iSockaddrLength, "Expected 0, got %d\n", csinfoA.cs.LocalAddr.iSockaddrLength);
+        ok(csinfoA.cs.RemoteAddr.lpSockaddr == NULL, "Expected NULL, got %p\n", csinfoA.cs.LocalAddr.lpSockaddr);
+
+        err = bind(s2, (struct sockaddr*)&saddr, sizeof(saddr));
+        ok(!err, "Expected 0, got %d\n", err);
+        err = getsockname(s2, (struct sockaddr *)&saddr, &size);
+        ok(!err, "Expected 0, got %d\n", err);
+        err = listen(s2, 1);
+        ok(!err, "Expected 0, got %d\n", err);
+        err = connect(s, (struct sockaddr*)&saddr, sizeof(saddr));
+        ok(!err, "Expected 0, got %d\n", err);
+        size = sizeof(saddr);
+        err = accept(s2, (struct sockaddr*)&saddr, &size);
+        ok(err != INVALID_SOCKET, "Failed to accept socket\n");
+        closesocket(s2);
+        s2 = err;
+
+        size = sizeof(csinfoA);
+        err = getsockopt(s, SOL_SOCKET, SO_BSP_STATE, (char *) &csinfoA, &size);
+        ok(!err, "Expected 0, got %d\n", err);
+        err = getsockopt(s2, SOL_SOCKET, SO_BSP_STATE, (char *) &csinfoB, &size);
+        ok(!err, "Expected 0, got %d\n", err);
+        ok(size == sizeof(csinfoA), "Got %d\n", size);
+        size = sizeof(saddr);
+        ok(size == csinfoA.cs.LocalAddr.iSockaddrLength, "Expected %d, got %d\n", size,
+           csinfoA.cs.LocalAddr.iSockaddrLength);
+        ok(size == csinfoA.cs.RemoteAddr.iSockaddrLength, "Expected %d, got %d\n", size,
+           csinfoA.cs.RemoteAddr.iSockaddrLength);
+        ok(!memcmp(csinfoA.cs.LocalAddr.lpSockaddr, csinfoB.cs.RemoteAddr.lpSockaddr, size),
+           "Expected matching addresses\n");
+        ok(!memcmp(csinfoB.cs.LocalAddr.lpSockaddr, csinfoA.cs.RemoteAddr.lpSockaddr, size),
+           "Expected matching addresses\n");
+        ok(csinfoA.cs.iSocketType == SOCK_STREAM, "Wrong socket type\n");
+        ok(csinfoB.cs.iSocketType == SOCK_STREAM, "Wrong socket type\n");
+        ok(csinfoA.cs.iProtocol == IPPROTO_TCP, "Wrong socket protocol\n");
+        ok(csinfoB.cs.iProtocol == IPPROTO_TCP, "Wrong socket protocol\n");
+
+        err = getpeername(s, (struct sockaddr *)&saddr, &size);
+        ok(!err, "Expected 0, got %d\n", err);
+        ok(!memcmp(&saddr, csinfoA.cs.RemoteAddr.lpSockaddr, size), "Expected matching addresses\n");
+        ok(!memcmp(&saddr, csinfoB.cs.LocalAddr.lpSockaddr, size), "Expected matching addresses\n");
+        err = getpeername(s2, (struct sockaddr *)&saddr, &size);
+        ok(!err, "Expected 0, got %d\n", err);
+        ok(!memcmp(&saddr, csinfoB.cs.RemoteAddr.lpSockaddr, size), "Expected matching addresses\n");
+        ok(!memcmp(&saddr, csinfoA.cs.LocalAddr.lpSockaddr, size), "Expected matching addresses\n");
+        err = getsockname(s, (struct sockaddr *)&saddr, &size);
+        ok(!err, "Expected 0, got %d\n", err);
+        ok(!memcmp(&saddr, csinfoA.cs.LocalAddr.lpSockaddr, size), "Expected matching addresses\n");
+        ok(!memcmp(&saddr, csinfoB.cs.RemoteAddr.lpSockaddr, size), "Expected matching addresses\n");
+        err = getsockname(s2, (struct sockaddr *)&saddr, &size);
+        ok(!err, "Expected 0, got %d\n", err);
+        ok(!memcmp(&saddr, csinfoB.cs.LocalAddr.lpSockaddr, size), "Expected matching addresses\n");
+        ok(!memcmp(&saddr, csinfoA.cs.RemoteAddr.lpSockaddr, size), "Expected matching addresses\n");
+
+        SetLastError(0xdeadbeef);
+        size = sizeof(CSADDR_INFO);
+        err = getsockopt(s, SOL_SOCKET, SO_BSP_STATE, (char *) &csinfoA, &size);
+        ok(err, "Expected non-zero\n");
+        ok(size == sizeof(CSADDR_INFO), "Got %d\n", size);
+        ok(GetLastError() == WSAEFAULT, "Expected 10014, got %d\n", GetLastError());
+
+        /* At least for IPv4 the size is exactly 56 bytes */
+        size = sizeof(*csinfoA.cs.LocalAddr.lpSockaddr) * 2 + sizeof(csinfoA.cs);
+        err = getsockopt(s, SOL_SOCKET, SO_BSP_STATE, (char *) &csinfoA, &size);
+        ok(!err, "Expected 0, got %d\n", err);
+        size--;
+        SetLastError(0xdeadbeef);
+        err = getsockopt(s, SOL_SOCKET, SO_BSP_STATE, (char *) &csinfoA, &size);
+        ok(err, "Expected non-zero\n");
+        ok(GetLastError() == WSAEFAULT, "Expected 10014, got %d\n", GetLastError());
+    }
+    else
+        ok(GetLastError() == WSAENOPROTOOPT, "Expected 10042, got %d\n", GetLastError());
+
+    closesocket(s);
+    closesocket(s2);
 }
 
 static void test_so_reuseaddr(void)
@@ -1197,6 +1602,7 @@ static void test_so_reuseaddr(void)
     SOCKET s1,s2;
     unsigned int rc,reuse;
     int size;
+    DWORD err;
 
     saddr.sin_family      = AF_INET;
     saddr.sin_port        = htons(9375);
@@ -1225,9 +1631,44 @@ static void test_so_reuseaddr(void)
     /* On Win2k3 and above, all SO_REUSEADDR seems to do is to allow binding to
      * a port immediately after closing another socket on that port, so
      * basically following the BSD socket semantics here. */
-    closesocket(s1);
     rc = bind(s2, (struct sockaddr*)&saddr, sizeof(saddr));
-    ok(rc==0, "bind() failed error: %d\n", WSAGetLastError());
+    if(rc==0)
+    {
+        int s3=socket(AF_INET, SOCK_STREAM, 0), s4;
+        trace("<= Win XP behavior of SO_REUSEADDR\n");
+
+        /* If we could bind again in the same port this is Windows version <= XP.
+         * Lets test if we can really connect to one of them. */
+        set_blocking(s1, FALSE);
+        set_blocking(s2, FALSE);
+        rc = listen(s1, 1);
+        ok(!rc, "listen() failed with error: %d\n", WSAGetLastError());
+        rc = listen(s2, 1);
+        ok(!rc, "listen() failed with error: %d\n", WSAGetLastError());
+        rc = connect(s3, (struct sockaddr*)&saddr, sizeof(saddr));
+        ok(!rc, "connecting to accepting socket failed %d\n", WSAGetLastError());
+
+        /* the delivery of the connection is random so we need to try on both sockets */
+        size = sizeof(saddr);
+        s4 = accept(s1, (struct sockaddr*)&saddr, &size);
+        if(s4 == INVALID_SOCKET)
+            s4 = accept(s2, (struct sockaddr*)&saddr, &size);
+        ok(s4 != INVALID_SOCKET, "none of the listening sockets could get the connection\n");
+
+        closesocket(s1);
+        closesocket(s3);
+        closesocket(s4);
+    }
+    else
+    {
+        trace(">= Win 2003 behavior of SO_REUSEADDR\n");
+        err = WSAGetLastError();
+        ok(err==WSAEACCES, "expected 10013, got %d\n", err);
+
+        closesocket(s1);
+        rc = bind(s2, (struct sockaddr*)&saddr, sizeof(saddr));
+        ok(rc==0, "bind() failed error: %d\n", WSAGetLastError());
+    }
 
     closesocket(s2);
 }
@@ -1241,7 +1682,8 @@ static void test_ip_pktinfo(void)
     struct sockaddr_in s1addr, s2addr, s3addr;
     GUID WSARecvMsg_GUID = WSAID_WSARECVMSG;
     LPFN_WSARECVMSG pWSARecvMsg = NULL;
-    unsigned int rc, foundhdr, yes = 1;
+    unsigned int rc, yes = 1;
+    BOOL foundhdr;
     DWORD dwBytes, dwSize, dwFlags;
     socklen_t addrlen;
     WSACMSGHDR *cmsg;
@@ -1252,7 +1694,7 @@ static void test_ip_pktinfo(void)
     int i, err;
 
     memset(&ov, 0, sizeof(ov));
-    ov.hEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+    ov.hEvent = CreateEventA(NULL, FALSE, FALSE, NULL);
     if (ov.hEvent == INVALID_HANDLE_VALUE)
     {
         skip("Could not create event object, some tests will be skipped. errno = %d\n", GetLastError());
@@ -1327,8 +1769,10 @@ static void test_ip_pktinfo(void)
          * Send a packet from the client to the server and test for specifying
          * a short control header.
          */
+        SetLastError(0xdeadbeef);
         rc=sendto(s2, msg, sizeof(msg), 0, (struct sockaddr*)&s2addr, sizeof(s2addr));
         ok(rc == sizeof(msg), "sendto() failed error: %d\n", WSAGetLastError());
+        ok(GetLastError() == ERROR_SUCCESS, "Expected 0, got %d\n", GetLastError());
         hdr.Control.len = 1;
         rc=pWSARecvMsg(s1, &hdr, &dwSize, NULL, NULL);
         err=WSAGetLastError();
@@ -1341,8 +1785,10 @@ static void test_ip_pktinfo(void)
         rc=pWSARecvMsg(s1, &hdr, NULL, &ov, NULL);
         err=WSAGetLastError();
         ok(rc != 0 && err == WSA_IO_PENDING, "WSARecvMsg() failed error: %d\n", err);
+        SetLastError(0xdeadbeef);
         rc=sendto(s2, msg, sizeof(msg), 0, (struct sockaddr*)&s2addr, sizeof(s2addr));
         ok(rc == sizeof(msg), "sendto() failed error: %d\n", WSAGetLastError());
+        ok(GetLastError() == ERROR_SUCCESS, "Expected 0, got %d\n", GetLastError());
         if (WaitForSingleObject(ov.hEvent, 100) != WAIT_OBJECT_0)
         {
             skip("Server side did not receive packet, some tests skipped.\n");
@@ -1585,7 +2031,8 @@ static DWORD WINAPI do_getservbyname( void *param )
     int i, j;
     struct servent *pserv[2];
 
-    ok ( WaitForSingleObject ( *starttest, TEST_TIMEOUT * 1000 ) != WAIT_TIMEOUT, "test_getservbyname: timeout waiting for start signal\n");
+    ok ( WaitForSingleObject ( *starttest, TEST_TIMEOUT * 1000 ) != WAIT_TIMEOUT,
+         "test_getservbyname: timeout waiting for start signal\n" );
 
     /* ensure that necessary buffer resizes are completed */
     for ( j = 0; j < 2; j++) {
@@ -1595,13 +2042,19 @@ static DWORD WINAPI do_getservbyname( void *param )
     for ( i = 0; i < NUM_QUERIES / 2; i++ ) {
         for ( j = 0; j < 2; j++ ) {
             pserv[j] = getservbyname ( serv[j].name, serv[j].proto );
-            ok ( pserv[j] != NULL, "getservbyname could not retrieve information for %s: %d\n", serv[j].name, WSAGetLastError() );
-            ok ( pserv[j]->s_port == htons(serv[j].port), "getservbyname returned the wrong port for %s: %d\n", serv[j].name, ntohs(pserv[j]->s_port) );
-            ok ( !strcmp ( pserv[j]->s_proto, serv[j].proto ), "getservbyname returned the wrong protocol for %s: %s\n", serv[j].name, pserv[j]->s_proto );
-            ok ( !strcmp ( pserv[j]->s_name, serv[j].name ), "getservbyname returned the wrong name for %s: %s\n", serv[j].name, pserv[j]->s_name );
+            ok ( pserv[j] != NULL || broken(pserv[j] == NULL) /* win8, fixed in win81 */,
+                 "getservbyname could not retrieve information for %s: %d\n", serv[j].name, WSAGetLastError() );
+            if ( !pserv[j] ) continue;
+            ok ( pserv[j]->s_port == htons(serv[j].port),
+                 "getservbyname returned the wrong port for %s: %d\n", serv[j].name, ntohs(pserv[j]->s_port) );
+            ok ( !strcmp ( pserv[j]->s_proto, serv[j].proto ),
+                 "getservbyname returned the wrong protocol for %s: %s\n", serv[j].name, pserv[j]->s_proto );
+            ok ( !strcmp ( pserv[j]->s_name, serv[j].name ),
+                 "getservbyname returned the wrong name for %s: %s\n", serv[j].name, pserv[j]->s_name );
         }
 
-        ok ( pserv[0] == pserv[1], "getservbyname: winsock resized servent buffer when not necessary\n" );
+        ok ( pserv[0] == pserv[1] || broken(pserv[0] != pserv[1]) /* win8, fixed in win81 */,
+             "getservbyname: winsock resized servent buffer when not necessary\n" );
     }
 
     return 0;
@@ -1613,7 +2066,7 @@ static void test_getservbyname(void)
     HANDLE starttest, thread[NUM_THREADS];
     DWORD thread_id[NUM_THREADS];
 
-    starttest = CreateEvent ( NULL, 1, 0, "test_getservbyname_starttest" );
+    starttest = CreateEventA ( NULL, 1, 0, "test_getservbyname_starttest" );
 
     /* create threads */
     for ( i = 0; i < NUM_THREADS; i++ ) {
@@ -1632,17 +2085,120 @@ static void test_WSASocket(void)
 {
     SOCKET sock = INVALID_SOCKET;
     WSAPROTOCOL_INFOA *pi;
-    int providers[] = {6, 0};
-    int ret, err;
+    int wsaproviders[] = {IPPROTO_TCP, IPPROTO_IP};
+    int autoprotocols[] = {IPPROTO_TCP, IPPROTO_UDP};
+    int items, err, size, socktype, i, j;
     UINT pi_size;
+
+    SetLastError(0xdeadbeef);
+    ok(WSASocketA(0, 0, 0, NULL, 0, 0) == INVALID_SOCKET,
+       "WSASocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEINVAL, "Expected 10022, received %d\n", err);
+
+    sock = WSASocketA(AF_INET, 0, 0, NULL, 0, 0);
+    ok(sock != INVALID_SOCKET, "WSASocketA should have succeeded\n");
+    closesocket(sock);
+
+    sock = WSASocketA(AF_INET, SOCK_STREAM, 0, NULL, 0, 0);
+    ok(sock != INVALID_SOCKET, "WSASocketA should have succeeded\n");
+    closesocket(sock);
+
+    SetLastError(0xdeadbeef);
+    ok(WSASocketA(0, SOCK_STREAM, -1, NULL, 0, 0) == INVALID_SOCKET,
+       "WSASocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEPROTONOSUPPORT, "Expected 10043, received %d\n", err);
+
+    SetLastError(0xdeadbeef);
+    ok(WSASocketA(0, -1, IPPROTO_UDP, NULL, 0, 0) == INVALID_SOCKET,
+       "WSASocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAESOCKTNOSUPPORT, "Expected 10044, received %d\n", err);
+
+    SetLastError(0xdeadbeef);
+    ok(WSASocketA(0, -1, 0, NULL, 0, 0) == INVALID_SOCKET,
+       "WSASocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEINVAL, "Expected 10022, received %d\n", err);
+
+    SetLastError(0xdeadbeef);
+    ok(WSASocketA(AF_INET, -1, 0, NULL, 0, 0) == INVALID_SOCKET,
+       "WSASocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAESOCKTNOSUPPORT, "Expected 10044, received %d\n", err);
+
+    SetLastError(0xdeadbeef);
+    ok(WSASocketA(AF_INET, 0, -1, NULL, 0, 0) == INVALID_SOCKET,
+       "WSASocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEPROTONOSUPPORT, "Expected 10043, received %d\n", err);
+
+    SetLastError(0xdeadbeef);
+    ok(WSASocketA(0, -1, -1, NULL, 0, 0) == INVALID_SOCKET,
+       "WSASocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAESOCKTNOSUPPORT, "Expected 10044, received %d\n", err);
+
+    SetLastError(0xdeadbeef);
+    ok(WSASocketA(-1, SOCK_STREAM, IPPROTO_UDP, NULL, 0, 0) == INVALID_SOCKET,
+       "WSASocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEAFNOSUPPORT, "Expected 10047, received %d\n", err);
+
+    sock = WSASocketA(AF_INET, 0, IPPROTO_TCP, NULL, 0, 0);
+    ok(sock != INVALID_SOCKET, "WSASocketA should have succeeded\n");
+    closesocket(sock);
+
+    SetLastError(0xdeadbeef);
+    ok(WSASocketA(0, SOCK_STREAM, 0, NULL, 0, 0) == INVALID_SOCKET,
+       "WSASocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEINVAL, "Expected 10022, received %d\n", err);
+
+    SetLastError(0xdeadbeef);
+    ok(WSASocketA(0, 0, 0xdead, NULL, 0, 0) == INVALID_SOCKET,
+       "WSASocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEPROTONOSUPPORT, "Expected 10043, received %d\n", err);
+
+    SetLastError(0xdeadbeef);
+    ok(WSASocketA(AF_INET, 0xdead, 0, NULL, 0, 0) == INVALID_SOCKET,
+       "WSASocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAESOCKTNOSUPPORT, "Expected 10044, received %d\n", err);
+
+    SetLastError(0xdeadbeef);
+    ok(WSASocketA(0, 0xdead, 0, NULL, 0, 0) == INVALID_SOCKET,
+       "WSASocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEINVAL, "Expected 10022, received %d\n", err);
+
+    sock = WSASocketA(0, 0, IPPROTO_TCP, NULL, 0, 0);
+    ok(sock != INVALID_SOCKET, "WSASocketA should have succeeded\n");
+    closesocket(sock);
+
+    /* SOCK_STREAM does not support IPPROTO_UDP */
+    SetLastError(0xdeadbeef);
+    ok(WSASocketA(AF_INET, SOCK_STREAM, IPPROTO_UDP, NULL, 0, 0) == INVALID_SOCKET,
+       "WSASocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEPROTONOSUPPORT, "Expected 10043, received %d\n", err);
+
+    /* SOCK_DGRAM does not support IPPROTO_TCP */
+    SetLastError(0xdeadbeef);
+    ok(WSASocketA(AF_INET, SOCK_DGRAM, IPPROTO_TCP, NULL, 0, 0) == INVALID_SOCKET,
+       "WSASocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEPROTONOSUPPORT, "Expected 10043, received %d\n", err);
 
     /* Set pi_size explicitly to a value below 2*sizeof(WSAPROTOCOL_INFOA)
      * to avoid a crash on win98.
      */
     pi_size = 0;
-    ret = WSAEnumProtocolsA(providers, NULL, &pi_size);
-    ok(ret == SOCKET_ERROR, "WSAEnumProtocolsA({6,0}, NULL, 0) returned %d\n",
-            ret);
+    items = WSAEnumProtocolsA(wsaproviders, NULL, &pi_size);
+    ok(items == SOCKET_ERROR, "WSAEnumProtocolsA({6,0}, NULL, 0) returned %d\n",
+            items);
     err = WSAGetLastError();
     ok(err == WSAENOBUFS, "WSAEnumProtocolsA error is %d, not WSAENOBUFS(%d)\n",
             err, WSAENOBUFS);
@@ -1654,11 +2210,11 @@ static void test_WSASocket(void)
         return;
     }
 
-    ret = WSAEnumProtocolsA(providers, pi, &pi_size);
-    ok(ret != SOCKET_ERROR, "WSAEnumProtocolsA failed, last error is %d\n",
+    items = WSAEnumProtocolsA(wsaproviders, pi, &pi_size);
+    ok(items != SOCKET_ERROR, "WSAEnumProtocolsA failed, last error is %d\n",
             WSAGetLastError());
 
-    if (ret == 0) {
+    if (items == 0) {
         skip("No protocols enumerated.\n");
         HeapFree(GetProcessHeap(), 0, pi);
         return;
@@ -1668,9 +2224,407 @@ static void test_WSASocket(void)
                       FROM_PROTOCOL_INFO, &pi[0], 0, 0);
     ok(sock != INVALID_SOCKET, "Failed to create socket: %d\n",
             WSAGetLastError());
-
     closesocket(sock);
+
+    /* find what parameters are used first: plain parameters or protocol info struct */
+    pi[0].iProtocol = -1;
+    pi[0].iSocketType = -1;
+    pi[0].iAddressFamily = -1;
+    ok(WSASocketA(0, 0, IPPROTO_UDP, &pi[0], 0, 0) == INVALID_SOCKET,
+       "WSASocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEAFNOSUPPORT, "Expected 10047, received %d\n", err);
+
+    pi[0].iProtocol = 0;
+    pi[0].iSocketType = 0;
+    pi[0].iAddressFamily = 0;
+    sock = WSASocketA(0, 0, IPPROTO_UDP, &pi[0], 0, 0);
+    if(sock != INVALID_SOCKET)
+    {
+      win_skip("must work only in OS <= 2003\n");
+      closesocket(sock);
+    }
+    else
+    {
+      err = WSAGetLastError();
+      ok(err == WSAEAFNOSUPPORT, "Expected 10047, received %d\n", err);
+    }
+
+    pi[0].iProtocol = IPPROTO_UDP;
+    pi[0].iSocketType = SOCK_DGRAM;
+    pi[0].iAddressFamily = AF_INET;
+    sock = WSASocketA(0, 0, 0, &pi[0], 0, 0);
+    ok(sock != INVALID_SOCKET, "Failed to create socket: %d\n",
+            WSAGetLastError());
+    size = sizeof(socktype);
+    socktype = 0xdead;
+    err = getsockopt(sock, SOL_SOCKET, SO_TYPE, (char *) &socktype, &size);
+    ok(!err,"getsockopt failed with %d\n", WSAGetLastError());
+    ok(socktype == SOCK_DGRAM, "Wrong socket type, expected %d received %d\n",
+       SOCK_DGRAM, socktype);
+    closesocket(sock);
+
+    sock = WSASocketA(AF_INET, SOCK_STREAM, IPPROTO_TCP, &pi[0], 0, 0);
+    ok(sock != INVALID_SOCKET, "Failed to create socket: %d\n",
+            WSAGetLastError());
+    size = sizeof(socktype);
+    socktype = 0xdead;
+    err = getsockopt(sock, SOL_SOCKET, SO_TYPE, (char *) &socktype, &size);
+    ok(!err,"getsockopt failed with %d\n", WSAGetLastError());
+    ok(socktype == SOCK_STREAM, "Wrong socket type, expected %d received %d\n",
+       SOCK_STREAM, socktype);
+    closesocket(sock);
+
     HeapFree(GetProcessHeap(), 0, pi);
+
+    pi_size = 0;
+    items = WSAEnumProtocolsA(NULL, NULL, &pi_size);
+    ok(items == SOCKET_ERROR, "WSAEnumProtocolsA(NULL, NULL, 0) returned %d\n",
+            items);
+    err = WSAGetLastError();
+    ok(err == WSAENOBUFS, "WSAEnumProtocolsA error is %d, not WSAENOBUFS(%d)\n",
+            err, WSAENOBUFS);
+
+    pi = HeapAlloc(GetProcessHeap(), 0, pi_size);
+    ok(pi != NULL, "Failed to allocate memory\n");
+    if (pi == NULL) {
+        skip("Can't continue without memory.\n");
+        return;
+    }
+
+    items = WSAEnumProtocolsA(NULL, pi, &pi_size);
+    ok(items != SOCKET_ERROR, "WSAEnumProtocolsA failed, last error is %d\n",
+            WSAGetLastError());
+
+    /* when no protocol and socket type are specified the first entry
+     * from WSAEnumProtocols that has the flag PFL_MATCHES_PROTOCOL_ZERO
+     * is returned */
+    sock = WSASocketA(AF_INET, 0, 0, NULL, 0, 0);
+    ok(sock != INVALID_SOCKET, "Failed to create socket: %d\n",
+            WSAGetLastError());
+
+    size = sizeof(socktype);
+    socktype = 0xdead;
+    err = getsockopt(sock, SOL_SOCKET, SO_TYPE, (char *) &socktype, &size);
+    ok(!err, "getsockopt failed with %d\n", WSAGetLastError());
+    for(i = 0; i < items; i++)
+    {
+        if(pi[i].dwProviderFlags & PFL_MATCHES_PROTOCOL_ZERO)
+        {
+            ok(socktype == pi[i].iSocketType, "Wrong socket type, expected %d received %d\n",
+               pi[i].iSocketType, socktype);
+             break;
+        }
+    }
+    ok(i != items, "Creating a socket without protocol and socket type didn't work\n");
+    closesocket(sock);
+
+    /* when no socket type is specified the first entry from WSAEnumProtocols
+     * that matches the protocol is returned */
+    for (i = 0; i < sizeof(autoprotocols) / sizeof(autoprotocols[0]); i++)
+    {
+        sock = WSASocketA(0, 0, autoprotocols[i], NULL, 0, 0);
+        ok(sock != INVALID_SOCKET, "Failed to create socket for protocol %d, received %d\n",
+                autoprotocols[i], WSAGetLastError());
+
+        size = sizeof(socktype);
+        socktype = 0xdead;
+        err = getsockopt(sock, SOL_SOCKET, SO_TYPE, (char *) &socktype, &size);
+        ok(!err, "getsockopt failed with %d\n", WSAGetLastError());
+
+        for (err = 1, j = 0; j < items; j++)
+        {
+            if (pi[j].iProtocol == autoprotocols[i])
+            {
+                if (socktype == pi[j].iSocketType)
+                    err = 0;
+                else
+                    ok(0, "Wrong socket type, expected %d received %d\n",
+                       pi[j].iSocketType, socktype);
+                break;
+            }
+        }
+        ok(!err, "Protocol %d not found in WSAEnumProtocols\n", autoprotocols[i]);
+
+        closesocket(sock);
+    }
+
+    HeapFree(GetProcessHeap(), 0, pi);
+
+    SetLastError(0xdeadbeef);
+    /* starting on vista the socket function returns error during the socket
+       creation and no longer in the socket operations (sendto, readfrom) */
+    sock = WSASocketA(AF_INET, SOCK_RAW, IPPROTO_ICMP, NULL, 0, 0);
+    if (sock == INVALID_SOCKET)
+    {
+        err = WSAGetLastError();
+        ok(err == WSAEACCES, "Expected 10013, received %d\n", err);
+        skip("SOCK_RAW is not supported\n");
+    }
+    else
+    {
+        trace("SOCK_RAW is supported\n");
+
+        size = sizeof(socktype);
+        socktype = 0xdead;
+        err = getsockopt(sock, SOL_SOCKET, SO_TYPE, (char *) &socktype, &size);
+        ok(!err, "getsockopt failed with %d\n", WSAGetLastError());
+        ok(socktype == SOCK_RAW, "Wrong socket type, expected %d received %d\n",
+           SOCK_RAW, socktype);
+        closesocket(sock);
+
+        todo_wine {
+        sock = WSASocketA(0, 0, IPPROTO_RAW, NULL, 0, 0);
+        ok(sock != INVALID_SOCKET, "Failed to create socket: %d\n",
+           WSAGetLastError());
+        size = sizeof(socktype);
+        socktype = 0xdead;
+        err = getsockopt(sock, SOL_SOCKET, SO_TYPE, (char *) &socktype, &size);
+        ok(!err, "getsockopt failed with %d\n", WSAGetLastError());
+        ok(socktype == SOCK_RAW, "Wrong socket type, expected %d received %d\n",
+           SOCK_RAW, socktype);
+        closesocket(sock);
+        }
+
+        sock = WSASocketA(AF_INET, SOCK_RAW, IPPROTO_TCP, NULL, 0, 0);
+        ok(sock != INVALID_SOCKET, "Failed to create socket: %d\n",
+           WSAGetLastError());
+        size = sizeof(socktype);
+        socktype = 0xdead;
+        err = getsockopt(sock, SOL_SOCKET, SO_TYPE, (char *) &socktype, &size);
+        ok(!err, "getsockopt failed with %d\n", WSAGetLastError());
+        ok(socktype == SOCK_RAW, "Wrong socket type, expected %d received %d\n",
+           SOCK_RAW, socktype);
+        closesocket(sock);
+    }
+
+    /* IPX socket tests */
+
+    SetLastError(0xdeadbeef);
+    sock = WSASocketA(AF_IPX, SOCK_DGRAM, NSPROTO_IPX, NULL, 0, 0);
+    if (sock == INVALID_SOCKET)
+    {
+        err = WSAGetLastError();
+        ok(err == WSAEAFNOSUPPORT || broken(err == WSAEPROTONOSUPPORT), "Expected 10047, received %d\n", err);
+        skip("IPX is not supported\n");
+    }
+    else
+    {
+        WSAPROTOCOL_INFOA info;
+        closesocket(sock);
+
+        trace("IPX is supported\n");
+
+        sock = WSASocketA(0, 0, NSPROTO_IPX, NULL, 0, 0);
+        ok(sock != INVALID_SOCKET, "Failed to create socket: %d\n",
+                WSAGetLastError());
+
+        size = sizeof(socktype);
+        socktype = 0xdead;
+        err = getsockopt(sock, SOL_SOCKET, SO_TYPE, (char *) &socktype, &size);
+        ok(!err,"getsockopt failed with %d\n", WSAGetLastError());
+        ok(socktype == SOCK_DGRAM, "Wrong socket type, expected %d received %d\n",
+           SOCK_DGRAM, socktype);
+
+        /* check socket family, type and protocol */
+        size = sizeof(WSAPROTOCOL_INFOA);
+        err = getsockopt(sock, SOL_SOCKET, SO_PROTOCOL_INFOA, (char *) &info, &size);
+        ok(!err,"getsockopt failed with %d\n", WSAGetLastError());
+        ok(info.iProtocol == NSPROTO_IPX, "expected protocol %d, received %d\n",
+           NSPROTO_IPX, info.iProtocol);
+        ok(info.iAddressFamily == AF_IPX, "expected family %d, received %d\n",
+           AF_IPX, info.iProtocol);
+        ok(info.iSocketType == SOCK_DGRAM, "expected type %d, received %d\n",
+           SOCK_DGRAM, info.iSocketType);
+        closesocket(sock);
+
+        /* SOCK_STREAM does not support NSPROTO_IPX */
+        SetLastError(0xdeadbeef);
+        ok(WSASocketA(AF_IPX, SOCK_STREAM, NSPROTO_IPX, NULL, 0, 0) == INVALID_SOCKET,
+           "WSASocketA should have failed\n");
+        err = WSAGetLastError();
+        ok(err == WSAEPROTONOSUPPORT, "Expected 10043, received %d\n", err);
+
+        /* test extended IPX support - that is adding any number between 0 and 255
+         * to the IPX protocol value will make it be used as IPX packet type */
+        for(i = 0;i <= 255;i += 17)
+        {
+          SetLastError(0xdeadbeef);
+          sock = WSASocketA(0, 0, NSPROTO_IPX + i, NULL, 0, 0);
+          ok(sock != INVALID_SOCKET, "Failed to create socket: %d\n",
+                  WSAGetLastError());
+
+          size = sizeof(int);
+          socktype = -1;
+          err = getsockopt(sock, NSPROTO_IPX, IPX_PTYPE, (char *) &socktype, &size);
+          ok(!err, "getsockopt failed with %d\n", WSAGetLastError());
+          ok(socktype == i, "Wrong IPX packet type, expected %d received %d\n",
+             i, socktype);
+
+          closesocket(sock);
+        }
+    }
+}
+
+static void test_WSADuplicateSocket(void)
+{
+    SOCKET source, dupsock;
+    WSAPROTOCOL_INFOA info;
+    DWORD err;
+    struct sockaddr_in addr;
+    int socktype, size, addrsize, ret;
+    char teststr[] = "TEST", buffer[16];
+
+    source = WSASocketA(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, 0);
+    ok(source != INVALID_SOCKET, "WSASocketA should have succeeded\n");
+
+    /* test invalid parameters */
+    SetLastError(0xdeadbeef);
+    ok(WSADuplicateSocketA(0, 0, NULL), "WSADuplicateSocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAENOTSOCK, "expected 10038, received %d\n", err);
+
+    SetLastError(0xdeadbeef);
+    ok(WSADuplicateSocketA(source, 0, NULL),
+       "WSADuplicateSocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEINVAL, "expected 10022, received %d\n", err);
+
+    SetLastError(0xdeadbeef);
+    ok(WSADuplicateSocketA(source, ~0, &info),
+       "WSADuplicateSocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEINVAL, "expected 10022, received %d\n", err);
+
+    SetLastError(0xdeadbeef);
+    ok(WSADuplicateSocketA(0, GetCurrentProcessId(), &info),
+       "WSADuplicateSocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAENOTSOCK, "expected 10038, received %d\n", err);
+
+    SetLastError(0xdeadbeef);
+    ok(WSADuplicateSocketA(source, GetCurrentProcessId(), NULL),
+       "WSADuplicateSocketA should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEFAULT, "expected 10014, received %d\n", err);
+
+    /* test returned structure */
+    memset(&info, 0, sizeof(info));
+    ok(!WSADuplicateSocketA(source, GetCurrentProcessId(), &info),
+       "WSADuplicateSocketA should have worked\n");
+
+    ok(info.iProtocol == IPPROTO_TCP, "expected protocol %d, received %d\n",
+       IPPROTO_TCP, info.iProtocol);
+    ok(info.iAddressFamily == AF_INET, "expected family %d, received %d\n",
+       AF_INET, info.iProtocol);
+    ok(info.iSocketType == SOCK_STREAM, "expected type %d, received %d\n",
+       SOCK_STREAM, info.iSocketType);
+
+    dupsock = WSASocketA(0, 0, 0, &info, 0, 0);
+    ok(dupsock != INVALID_SOCKET, "WSASocketA should have succeeded\n");
+
+    closesocket(dupsock);
+    closesocket(source);
+
+    /* create a socket, bind it, duplicate it then send data on source and
+     * receve in the duplicated socket */
+    source = WSASocketA(AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, 0);
+    ok(source != INVALID_SOCKET, "WSASocketA should have succeeded\n");
+
+    memset(&info, 0, sizeof(info));
+    ok(!WSADuplicateSocketA(source, GetCurrentProcessId(), &info),
+       "WSADuplicateSocketA should have worked\n");
+
+    ok(info.iProtocol == IPPROTO_UDP, "expected protocol %d, received %d\n",
+       IPPROTO_UDP, info.iProtocol);
+    ok(info.iAddressFamily == AF_INET, "expected family %d, received %d\n",
+       AF_INET, info.iProtocol);
+    ok(info.iSocketType == SOCK_DGRAM, "expected type %d, received %d\n",
+       SOCK_DGRAM, info.iSocketType);
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    ok(!bind(source, (struct sockaddr*)&addr, sizeof(addr)),
+       "bind should have worked\n");
+
+    /* read address to find out the port number to be used in sendto */
+    memset(&addr, 0, sizeof(addr));
+    addrsize = sizeof(addr);
+    ok(!getsockname(source, (struct sockaddr *) &addr, &addrsize),
+       "getsockname should have worked\n");
+    ok(addr.sin_port, "socket port should be != 0\n");
+
+    dupsock = WSASocketA(0, 0, 0, &info, 0, 0);
+    ok(dupsock != INVALID_SOCKET, "WSASocketA should have succeeded\n");
+
+    size = sizeof(int);
+    ret = getsockopt(dupsock, SOL_SOCKET, SO_TYPE, (char *) &socktype, &size);
+    ok(!ret, "getsockopt failed with %d\n", WSAGetLastError());
+    ok(socktype == SOCK_DGRAM, "Wrong socket type, expected %d received %d\n",
+       SOCK_DGRAM, socktype);
+
+    set_blocking(source, TRUE);
+
+    /* send data on source socket */
+    addrsize = sizeof(addr);
+    size = sendto(source, teststr, sizeof(teststr), 0, (struct sockaddr *) &addr, addrsize);
+    ok(size == sizeof(teststr), "got %d (err %d)\n", size, WSAGetLastError());
+
+    /* receive on duplicated socket */
+    addrsize = sizeof(addr);
+    memset(buffer, 0, sizeof(buffer));
+    size = recvfrom(dupsock, buffer, sizeof(teststr), 0, (struct sockaddr *) &addr, &addrsize);
+    ok(size == sizeof(teststr), "got %d (err %d)\n", size, WSAGetLastError());
+    buffer[sizeof(teststr) - 1] = 0;
+    ok(!strcmp(buffer, teststr), "expected '%s', received '%s'\n", teststr, buffer);
+
+    closesocket(dupsock);
+    closesocket(source);
+
+    /* show that the source socket need to be bound before the duplicated
+     * socket is created */
+    source = WSASocketA(AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, 0);
+    ok(source != INVALID_SOCKET, "WSASocketA should have succeeded\n");
+
+    memset(&info, 0, sizeof(info));
+    ok(!WSADuplicateSocketA(source, GetCurrentProcessId(), &info),
+       "WSADuplicateSocketA should have worked\n");
+
+    dupsock = WSASocketA(0, 0, 0, &info, 0, 0);
+    ok(dupsock != INVALID_SOCKET, "WSASocketA should have succeeded\n");
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    ok(!bind(source, (struct sockaddr*)&addr, sizeof(addr)),
+       "bind should have worked\n");
+
+    /* read address to find out the port number to be used in sendto */
+    memset(&addr, 0, sizeof(addr));
+    addrsize = sizeof(addr);
+    ok(!getsockname(source, (struct sockaddr *) &addr, &addrsize),
+       "getsockname should have worked\n");
+    ok(addr.sin_port, "socket port should be != 0\n");
+
+    set_blocking(source, TRUE);
+
+    addrsize = sizeof(addr);
+    size = sendto(source, teststr, sizeof(teststr), 0, (struct sockaddr *) &addr, addrsize);
+    ok(size == sizeof(teststr), "got %d (err %d)\n", size, WSAGetLastError());
+
+    SetLastError(0xdeadbeef);
+    addrsize = sizeof(addr);
+    memset(buffer, 0, sizeof(buffer));
+    todo_wine {
+    ok(recvfrom(dupsock, buffer, sizeof(teststr), 0, (struct sockaddr *) &addr, &addrsize) == -1,
+       "recvfrom should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEINVAL, "expected 10022, received %d\n", err);
+    }
+
+    closesocket(dupsock);
+    closesocket(source);
 }
 
 static void test_WSAAddressToStringA(void)
@@ -2060,6 +3014,7 @@ static void test_WSAStringToAddressA(void)
     CHAR address6[] = "::1";
     CHAR address7[] = "[::1]";
     CHAR address8[] = "[::1]:65535";
+    CHAR address9[] = "2001::1";
 
     len = 0;
     sockaddr.sin_family = AF_INET;
@@ -2143,6 +3098,12 @@ static void test_WSAStringToAddressA(void)
         (ret == SOCKET_ERROR && GLE == WSAEINVAL),
         "WSAStringToAddressA() failed for IPv6 address: %d\n", GLE);
 
+    len = sizeof(sockaddr);
+
+    ret = WSAStringToAddressA( address9, AF_INET, NULL, (SOCKADDR*)&sockaddr, &len );
+    GLE = WSAGetLastError();
+    ok( (ret == SOCKET_ERROR && GLE == WSAEINVAL),
+        "WSAStringToAddressA() should have failed with %d\n", GLE );
 }
 
 static void test_WSAStringToAddressW(void)
@@ -2163,6 +3124,7 @@ static void test_WSAStringToAddressW(void)
     WCHAR address6[] = {':',':','1','\0'};
     WCHAR address7[] = {'[',':',':','1',']','\0'};
     WCHAR address8[] = {'[',':',':','1',']',':','6','5','5','3','5','\0'};
+    WCHAR address9[] = {'2','0','0','1',':',':','1','\0'};
 
     len = 0;
     sockaddr.sin_family = AF_INET;
@@ -2259,6 +3221,12 @@ static void test_WSAStringToAddressW(void)
         (ret == SOCKET_ERROR && GLE == WSAEINVAL),
         "WSAStringToAddressW() failed for IPv6 address: %d\n", GLE);
 
+    len = sizeof(sockaddr);
+
+    ret = WSAStringToAddressW( address9, AF_INET, NULL, (SOCKADDR*)&sockaddr, &len );
+    GLE = WSAGetLastError();
+    ok( (ret == SOCKET_ERROR && GLE == WSAEINVAL),
+        "WSAStringToAddressW() should have failed with %d\n", GLE );
 }
 
 static DWORD WINAPI SelectReadThread(void *param)
@@ -2324,8 +3292,95 @@ static void test_errors(void)
     ok ( (ret == 0), "closesocket failed unexpectedly: %d\n", WSAGetLastError());
 }
 
+static void test_listen(void)
+{
+    SOCKET fdA, fdB;
+    int ret, acceptc, olen = sizeof(acceptc);
+    struct sockaddr_in address;
+
+    memset(&address, 0, sizeof(address));
+    address.sin_addr.s_addr = inet_addr("127.0.0.1");
+    address.sin_family = AF_INET;
+    address.sin_port = htons(SERVERPORT);
+
+    /* invalid socket tests */
+    SetLastError(0xdeadbeef);
+    ok ((listen(0, 0) == SOCKET_ERROR), "listen did not fail\n");
+    ret = WSAGetLastError();
+    ok (ret == WSAENOTSOCK, "expected 10038, received %d\n", ret);
+
+    SetLastError(0xdeadbeef);
+    ok ((listen(0xdeadbeef, 0) == SOCKET_ERROR), "listen did not fail\n");
+    ret = WSAGetLastError();
+    ok (ret == WSAENOTSOCK, "expected 10038, received %d\n", ret);
+
+    /* tcp tests */
+    fdA = socket(AF_INET, SOCK_STREAM, 0);
+    ok ((fdA != INVALID_SOCKET), "socket failed unexpectedly: %d\n", WSAGetLastError() );
+
+    fdB = socket(AF_INET, SOCK_STREAM, 0);
+    ok ((fdB != INVALID_SOCKET), "socket failed unexpectedly: %d\n", WSAGetLastError() );
+
+    SetLastError(0xdeadbeef);
+    ok ((listen(fdA, -2) == SOCKET_ERROR), "listen did not fail\n");
+    ret = WSAGetLastError();
+    ok (ret == WSAEINVAL, "expected 10022, received %d\n", ret);
+
+    SetLastError(0xdeadbeef);
+    ok ((listen(fdA, 1) == SOCKET_ERROR), "listen did not fail\n");
+    ret = WSAGetLastError();
+    ok (ret == WSAEINVAL, "expected 10022, received %d\n", ret);
+
+    SetLastError(0xdeadbeef);
+    ok ((listen(fdA, SOMAXCONN) == SOCKET_ERROR), "listen did not fail\n");
+    ret = WSAGetLastError();
+    ok (ret == WSAEINVAL, "expected 10022, received %d\n", ret);
+
+    ok (!bind(fdA, (struct sockaddr*) &address, sizeof(address)), "bind failed\n");
+
+    SetLastError(0xdeadbeef);
+    ok (bind(fdB, (struct sockaddr*) &address, sizeof(address)), "bind should have failed\n");
+    ok (ret == WSAEINVAL, "expected 10022, received %d\n", ret);
+
+    acceptc = 0xdead;
+    ret = getsockopt(fdA, SOL_SOCKET, SO_ACCEPTCONN, (char*)&acceptc, &olen);
+    ok (!ret, "getsockopt failed\n");
+    ok (acceptc == 0, "SO_ACCEPTCONN should be 0, received %d\n", acceptc);
+
+    ok (!listen(fdA, 0), "listen failed\n");
+    ok (!listen(fdA, SOMAXCONN), "double listen failed\n");
+
+    acceptc = 0xdead;
+    ret = getsockopt(fdA, SOL_SOCKET, SO_ACCEPTCONN, (char*)&acceptc, &olen);
+    ok (!ret, "getsockopt failed\n");
+    ok (acceptc == 1, "SO_ACCEPTCONN should be 1, received %d\n", acceptc);
+
+    SetLastError(0xdeadbeef);
+    ok ((listen(fdB, SOMAXCONN) == SOCKET_ERROR), "listen did not fail\n");
+    ret = WSAGetLastError();
+    ok (ret == WSAEINVAL, "expected 10022, received %d\n", ret);
+
+    ret = closesocket(fdB);
+    ok (ret == 0, "closesocket failed unexpectedly: %d\n", ret);
+
+    fdB = socket(AF_INET, SOCK_STREAM, 0);
+    ok ((fdB != INVALID_SOCKET), "socket failed unexpectedly: %d\n", WSAGetLastError() );
+
+    SetLastError(0xdeadbeef);
+    ok (bind(fdB, (struct sockaddr*) &address, sizeof(address)), "bind should have failed\n");
+    ret = WSAGetLastError();
+    ok (ret == WSAEADDRINUSE, "expected 10048, received %d\n", ret);
+
+    ret = closesocket(fdA);
+    ok (ret == 0, "closesocket failed unexpectedly: %d\n", ret);
+    ret = closesocket(fdB);
+    ok (ret == 0, "closesocket failed unexpectedly: %d\n", ret);
+}
+
 static void test_select(void)
 {
+    static const char tmp_buf[1024];
+
     SOCKET fdRead, fdWrite;
     fd_set readfds, writefds, exceptfds;
     unsigned int maxfd;
@@ -2365,9 +3420,7 @@ static void test_select(void)
     ok ( !FD_ISSET(fdRead, &exceptfds), "FD should not be set\n");
     ok ( !FD_ISSET(fdWrite, &exceptfds), "FD should not be set\n");
  
-    todo_wine {
     ok ((listen(fdWrite, SOMAXCONN) == SOCKET_ERROR), "listen did not fail\n");
-    }
     ret = closesocket(fdWrite);
     ok ( (ret == 0), "closesocket failed unexpectedly: %d\n", ret);
 
@@ -2426,6 +3479,79 @@ static void test_select(void)
     ok ( (ret == SOCKET_ERROR), "expected SOCKET_ERROR, got %i\n", ret);
     ok ( WSAGetLastError() == WSAENOTSOCK, "expected WSAENOTSOCK, got %i\n", WSAGetLastError());
     ok ( !FD_ISSET(fdRead, &exceptfds), "FD should not be set\n");
+
+    ok(!tcp_socketpair(&fdRead, &fdWrite), "creating socket pair failed\n");
+    maxfd = fdRead;
+    if(fdWrite > maxfd) maxfd = fdWrite;
+
+    FD_ZERO(&readfds);
+    FD_SET(fdRead, &readfds);
+    ret = select(fdRead+1, &readfds, NULL, NULL, &select_timeout);
+    ok(!ret, "select returned %d\n", ret);
+
+    FD_ZERO(&writefds);
+    FD_SET(fdWrite, &writefds);
+    ret = select(fdWrite+1, NULL, &writefds, NULL, &select_timeout);
+    ok(ret == 1, "select returned %d\n", ret);
+    ok(FD_ISSET(fdWrite, &writefds), "fdWrite socket is not in the set\n");
+
+    /* tests for overlapping fd_set pointers */
+    FD_ZERO(&readfds);
+    FD_SET(fdWrite, &readfds);
+    ret = select(fdWrite+1, &readfds, &readfds, NULL, &select_timeout);
+    ok(ret == 1, "select returned %d\n", ret);
+    ok(FD_ISSET(fdWrite, &readfds), "fdWrite socket is not in the set\n");
+
+    FD_ZERO(&readfds);
+    FD_SET(fdWrite, &readfds);
+    FD_SET(fdRead, &readfds);
+    ret = select(maxfd+1, &readfds, &readfds, NULL, &select_timeout);
+    ok(ret == 2, "select returned %d\n", ret);
+    ok(FD_ISSET(fdWrite, &readfds), "fdWrite socket is not in the set\n");
+    ok(FD_ISSET(fdRead, &readfds), "fdRead socket is not in the set\n");
+
+    ok(send(fdWrite, "test", 4, 0) == 4, "failed to send data\n");
+    FD_ZERO(&readfds);
+    FD_SET(fdRead, &readfds);
+    ret = select(fdRead+1, &readfds, NULL, NULL, &select_timeout);
+    ok(ret == 1, "select returned %d\n", ret);
+    ok(FD_ISSET(fdRead, &readfds), "fdRead socket is not in the set\n");
+
+    FD_ZERO(&readfds);
+    FD_SET(fdWrite, &readfds);
+    FD_SET(fdRead, &readfds);
+    ret = select(maxfd+1, &readfds, &readfds, NULL, &select_timeout);
+    ok(ret == 2, "select returned %d\n", ret);
+    ok(FD_ISSET(fdWrite, &readfds), "fdWrite socket is not in the set\n");
+    ok(FD_ISSET(fdRead, &readfds), "fdRead socket is not in the set\n");
+
+    while(1) {
+        FD_ZERO(&writefds);
+        FD_SET(fdWrite, &writefds);
+        ret = select(fdWrite+1, NULL, &writefds, NULL, &select_timeout);
+        if(!ret) break;
+        ok(send(fdWrite, tmp_buf, sizeof(tmp_buf), 0) > 0, "failed to send data\n");
+    }
+    FD_ZERO(&readfds);
+    FD_SET(fdWrite, &readfds);
+    FD_SET(fdRead, &readfds);
+    ret = select(maxfd+1, &readfds, &readfds, NULL, &select_timeout);
+    ok(ret == 1, "select returned %d\n", ret);
+    ok(!FD_ISSET(fdWrite, &readfds), "fdWrite socket is in the set\n");
+    ok(FD_ISSET(fdRead, &readfds), "fdRead socket is not in the set\n");
+
+    ok(send(fdRead, "test", 4, 0) == 4, "failed to send data\n");
+    Sleep(100);
+    FD_ZERO(&readfds);
+    FD_SET(fdWrite, &readfds);
+    FD_SET(fdRead, &readfds);
+    ret = select(maxfd+1, &readfds, &readfds, NULL, &select_timeout);
+    ok(ret == 2, "select returned %d\n", ret);
+    ok(FD_ISSET(fdWrite, &readfds), "fdWrite socket is not in the set\n");
+    ok(FD_ISSET(fdRead, &readfds), "fdRead socket is not in the set\n");
+
+    closesocket(fdRead);
+    closesocket(fdWrite);
 }
 
 static DWORD WINAPI AcceptKillThread(void *param)
@@ -2446,59 +3572,98 @@ static DWORD WINAPI AcceptKillThread(void *param)
 
 static int CALLBACK AlwaysDeferConditionFunc(LPWSABUF lpCallerId, LPWSABUF lpCallerData, LPQOS pQos,
                                              LPQOS lpGQOS, LPWSABUF lpCalleeId, LPWSABUF lpCalleeData,
-                                             GROUP FAR * g, DWORD_PTR dwCallbackData)
+                                             GROUP *g, DWORD_PTR dwCallbackData)
 {
     return CF_DEFER;
 }
 
-static void test_accept(void)
+static SOCKET setup_server_socket(struct sockaddr_in *addr, int *len)
 {
-    int ret;
-    SOCKET server_socket = INVALID_SOCKET, accepted = INVALID_SOCKET, connector = INVALID_SOCKET;
-    struct sockaddr_in address;
-    int socklen;
-    select_thread_params thread_params;
-    HANDLE thread_handle = NULL;
-    DWORD id;
+    int ret, val;
+    SOCKET server_socket;
 
     server_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (server_socket == INVALID_SOCKET)
     {
         trace("error creating server socket: %d\n", WSAGetLastError());
-        goto done;
+        return INVALID_SOCKET;
     }
+
+    val = 1;
+    ret = setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, (char *)&val, sizeof(val));
+    if (ret)
+    {
+        trace("error setting SO_REUSEADDR: %d\n", WSAGetLastError());
+        closesocket(server_socket);
+        return INVALID_SOCKET;
+    }
+
+    ret = bind(server_socket, (struct sockaddr *)addr, *len);
+    if (ret)
+    {
+        trace("error binding server socket: %d\n", WSAGetLastError());
+    }
+
+    ret = getsockname(server_socket, (struct sockaddr *)addr, len);
+    if (ret)
+    {
+        skip("failed to lookup bind address: %d\n", WSAGetLastError());
+        closesocket(server_socket);
+        return INVALID_SOCKET;
+    }
+
+    ret = listen(server_socket, 5);
+    if (ret)
+    {
+        trace("error making server socket listen: %d\n", WSAGetLastError());
+        closesocket(server_socket);
+        return INVALID_SOCKET;
+    }
+
+    return server_socket;
+}
+
+static SOCKET setup_connector_socket(struct sockaddr_in *addr, int len)
+{
+    int ret;
+    SOCKET connector;
+
+    connector = socket(AF_INET, SOCK_STREAM, 0);
+    ok(connector != INVALID_SOCKET, "failed to create connector socket %d\n", WSAGetLastError());
+
+    ret = connect(connector, (struct sockaddr *)addr, len);
+    ok(!ret, "connecting to accepting socket failed %d\n", WSAGetLastError());
+
+    return connector;
+}
+
+static void test_accept(void)
+{
+    int ret;
+    SOCKET server_socket, accepted = INVALID_SOCKET, connector;
+    struct sockaddr_in address;
+    SOCKADDR_STORAGE ss;
+    int socklen;
+    select_thread_params thread_params;
+    HANDLE thread_handle = NULL;
+    DWORD id;
 
     memset(&address, 0, sizeof(address));
     address.sin_addr.s_addr = inet_addr("127.0.0.1");
     address.sin_family = AF_INET;
-    ret = bind(server_socket, (struct sockaddr*) &address, sizeof(address));
-    if (ret != 0)
-    {
-        trace("error binding server socket: %d\n", WSAGetLastError());
-        goto done;
-    }
 
     socklen = sizeof(address);
-    ret = getsockname(server_socket, (struct sockaddr*)&address, &socklen);
-    if (ret != 0) {
-        skip("failed to lookup bind address, error %d\n", WSAGetLastError());
-        goto done;
+    server_socket = setup_server_socket(&address, &socklen);
+    if (server_socket == INVALID_SOCKET)
+    {
+        trace("error creating server socket: %d\n", WSAGetLastError());
+        return;
     }
 
-    ret = listen(server_socket, 5);
-    if (ret != 0)
-    {
-        trace("error making server socket listen: %d\n", WSAGetLastError());
-        goto done;
-    }
+    connector = setup_connector_socket(&address, socklen);
+    if (connector == INVALID_SOCKET) goto done;
 
     trace("Blocking accept next\n");
-
-    connector = socket(AF_INET, SOCK_STREAM, 0);
-    ok(connector != INVALID_SOCKET, "Failed to create connector socket, error %d\n", WSAGetLastError());
-
-    ret = connect(connector, (struct sockaddr*)&address, sizeof(address));
-    ok(ret == 0, "connecting to accepting socket failed, error %d\n", WSAGetLastError());
 
     accepted = WSAAccept(server_socket, NULL, NULL, AlwaysDeferConditionFunc, 0);
     ok(accepted == INVALID_SOCKET && WSAGetLastError() == WSATRY_AGAIN, "Failed to defer connection, %d\n", WSAGetLastError());
@@ -2534,6 +3699,80 @@ static void test_accept(void)
     WaitForSingleObject(thread_handle, 1000);
     ok(thread_params.ReadKilled || broken(!thread_params.ReadKilled) /* Win98/ME, after accept */,
        "closesocket did not wakeup accept\n");
+
+    closesocket(accepted);
+    closesocket(connector);
+    accepted = connector = server_socket = INVALID_SOCKET;
+
+    socklen = sizeof(address);
+    server_socket = setup_server_socket(&address, &socklen);
+    if (server_socket == INVALID_SOCKET) goto done;
+
+    connector = setup_connector_socket(&address, socklen);
+    if (connector == INVALID_SOCKET) goto done;
+
+    socklen = 0;
+    accepted = WSAAccept(server_socket, (struct sockaddr *)&ss, &socklen, NULL, 0);
+    ok(accepted == INVALID_SOCKET && WSAGetLastError() == WSAEFAULT, "got %d\n", WSAGetLastError());
+    ok(!socklen, "got %d\n", socklen);
+    closesocket(connector);
+    connector = INVALID_SOCKET;
+
+    socklen = sizeof(address);
+    connector = setup_connector_socket(&address, socklen);
+    if (connector == INVALID_SOCKET) goto done;
+
+    accepted = WSAAccept(server_socket, NULL, NULL, NULL, 0);
+    ok(accepted != INVALID_SOCKET, "Failed to accept connection, %d\n", WSAGetLastError());
+    closesocket(accepted);
+    closesocket(connector);
+    accepted = connector = INVALID_SOCKET;
+
+    socklen = sizeof(address);
+    connector = setup_connector_socket(&address, socklen);
+    if (connector == INVALID_SOCKET) goto done;
+
+    socklen = sizeof(ss);
+    memset(&ss, 0, sizeof(ss));
+    accepted = WSAAccept(server_socket, (struct sockaddr *)&ss, &socklen, NULL, 0);
+    ok(accepted != INVALID_SOCKET, "Failed to accept connection, %d\n", WSAGetLastError());
+    ok(socklen != sizeof(ss), "unexpected length\n");
+    ok(ss.ss_family, "family not set\n");
+    closesocket(accepted);
+    closesocket(connector);
+    accepted = connector = INVALID_SOCKET;
+
+    socklen = sizeof(address);
+    connector = setup_connector_socket(&address, socklen);
+    if (connector == INVALID_SOCKET) goto done;
+
+    socklen = 0;
+    accepted = accept(server_socket, (struct sockaddr *)&ss, &socklen);
+    ok(accepted == INVALID_SOCKET && WSAGetLastError() == WSAEFAULT, "got %d\n", WSAGetLastError());
+    ok(!socklen, "got %d\n", socklen);
+    closesocket(connector);
+    accepted = connector = INVALID_SOCKET;
+
+    socklen = sizeof(address);
+    connector = setup_connector_socket(&address, socklen);
+    if (connector == INVALID_SOCKET) goto done;
+
+    accepted = accept(server_socket, NULL, NULL);
+    ok(accepted != INVALID_SOCKET, "Failed to accept connection, %d\n", WSAGetLastError());
+    closesocket(accepted);
+    closesocket(connector);
+    accepted = connector = INVALID_SOCKET;
+
+    socklen = sizeof(address);
+    connector = setup_connector_socket(&address, socklen);
+    if (connector == INVALID_SOCKET) goto done;
+
+    socklen = sizeof(ss);
+    memset(&ss, 0, sizeof(ss));
+    accepted = accept(server_socket, (struct sockaddr *)&ss, &socklen);
+    ok(accepted != INVALID_SOCKET, "Failed to accept connection, %d\n", WSAGetLastError());
+    ok(socklen != sizeof(ss), "unexpected length\n");
+    ok(ss.ss_family, "family not set\n");
 
 done:
     if (accepted != INVALID_SOCKET)
@@ -2692,7 +3931,7 @@ static void test_getsockname(void)
         return;
     }
 
-    memcpy(&sa_get, &sa_set, sizeof(sa_set));
+    sa_get = sa_set;
     if (getsockname(sock, (struct sockaddr*) &sa_get, &sa_get_len) == 0)
         ok(0, "getsockname on unbound socket should fail\n");
     else {
@@ -2727,9 +3966,50 @@ static void test_getsockname(void)
 static void test_dns(void)
 {
     struct hostent *h;
+    union memaddress
+    {
+        char *chr;
+        void *mem;
+    } addr;
+    char **ptr;
+    int acount;
 
     h = gethostbyname("");
     ok(h != NULL, "gethostbyname(\"\") failed with %d\n", h_errno);
+
+    /* Use an address with valid alias names if possible */
+    h = gethostbyname("source.winehq.org");
+    if(!h)
+    {
+        skip("Can't test the hostent structure because gethostbyname failed\n");
+        return;
+    }
+
+    /* The returned struct must be allocated in a very strict way. First we need to
+     * count how many aliases there are because they must be located right after
+     * the struct hostent size. Knowing the amount of aliases we know the exact
+     * location of the first IP returned. Rule valid for >= XP, for older OS's
+     * it's somewhat the opposite. */
+    addr.mem = h + 1;
+    if(h->h_addr_list == addr.mem) /* <= W2K */
+    {
+        win_skip("Skipping hostent tests since this OS is unsupported\n");
+        return;
+    }
+
+    ok(h->h_aliases == addr.mem,
+       "hostent->h_aliases should be in %p, it is in %p\n", addr.mem, h->h_aliases);
+
+    for(ptr = h->h_aliases, acount = 1; *ptr; ptr++) acount++;
+    addr.chr += sizeof(*ptr) * acount;
+    ok(h->h_addr_list == addr.mem,
+       "hostent->h_addr_list should be in %p, it is in %p\n", addr.mem, h->h_addr_list);
+
+    for(ptr = h->h_addr_list, acount = 1; *ptr; ptr++) acount++;
+
+    addr.chr += sizeof(*ptr) * acount;
+    ok(h->h_addr_list[0] == addr.mem,
+       "hostent->h_addr_list[0] should be in %p, it is in %p\n", addr.mem, h->h_addr_list[0]);
 }
 
 /* Our winsock headers don't define gethostname because it conflicts with the
@@ -2934,10 +4214,121 @@ static void test_addr_to_print(void)
     pdst = pInetNtop(AF_INET6, (void*)&in6.s6_addr, dst6, 18);
     ok(pdst != NULL, "The pointer should be returned (%p)\n", pdst);
 }
+static void test_inet_pton(void)
+{
+    struct TEST_DATA
+    {
+        int family, ret;
+        DWORD err;
+        const char *printable, *collapsed, *raw_data;
+    } tests[] = {
+        {AF_UNSPEC, -1, WSAEFAULT,    /* Test 0 */
+        NULL, NULL, NULL},
+        {AF_INET, -1, WSAEFAULT,
+        NULL, NULL, NULL},
+        {AF_INET6, -1, WSAEFAULT,
+        NULL, NULL, NULL},
+        {AF_UNSPEC, -1, WSAEAFNOSUPPORT,
+        "127.0.0.1", NULL, NULL},
+        {AF_INET, 1, 0,
+        "127.0.0.1", "127.0.0.1",
+        "\x7f\x00\x00\x01"},
+        {AF_INET6, 0, 0,
+        "127.0.0.1", "127.0.0.1", NULL},
+        {AF_INET, 0, 0,
+        "::1/128", NULL, NULL},
+        {AF_INET6, 0, 0,
+        "::1/128", NULL, NULL},
+        {AF_UNSPEC, -1, WSAEAFNOSUPPORT,
+        "broken", NULL, NULL},
+        {AF_INET, 0, 0,
+        "broken", NULL, NULL},
+        {AF_INET6, 0, 0,              /* Test 10 */
+        "broken", NULL, NULL},
+        {AF_UNSPEC, -1, WSAEAFNOSUPPORT,
+        "177.32.45.20", NULL, NULL},
+        {AF_INET, 1, 0,
+        "177.32.45.20", "177.32.45.20",
+        "\xb1\x20\x2d\x14"},
+        {AF_INET6, 0, 0,
+        "177.32.45.20", NULL, NULL},
+        {AF_INET, 0, 0,
+        "2607:f0d0:1002:51::4", NULL, NULL},
+        {AF_INET6, 1, 0,
+        "2607:f0d0:1002:51::4", "2607:f0d0:1002:51::4",
+        "\x26\x07\xf0\xd0\x10\x02\x00\x51\x00\x00\x00\x00\x00\x00\x00\x04"},
+        {AF_INET, 0, 0,
+        "::177.32.45.20", NULL, NULL},
+        {AF_INET6, 1, 0,
+        "::177.32.45.20", "::177.32.45.20",
+        "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xb1\x20\x2d\x14"},
+        {AF_INET, 0, 0,
+        "fe80::0202:b3ff:fe1e:8329", NULL, NULL},
+        {AF_INET6, 1, 0,
+        "fe80::0202:b3ff:fe1e:8329", "fe80::202:b3ff:fe1e:8329",
+        "\xfe\x80\x00\x00\x00\x00\x00\x00\x02\x02\xb3\xff\xfe\x1e\x83\x29"},
+        {AF_INET6, 1, 0,              /* Test 20 */
+        "fe80::202:b3ff:fe1e:8329", "fe80::202:b3ff:fe1e:8329",
+        "\xfe\x80\x00\x00\x00\x00\x00\x00\x02\x02\xb3\xff\xfe\x1e\x83\x29"},
+        {AF_INET, 0, 0,
+        "a", NULL, NULL},
+        {AF_INET, 0, 0,
+        "a.b", NULL, NULL},
+        {AF_INET, 0, 0,
+        "a.b.c",  NULL, NULL},
+        {AF_INET, 0, 0,
+        "a.b.c.d", NULL, NULL},
+        {AF_INET6, 1, 0,
+        "2001:cdba:0000:0000:0000:0000:3257:9652", "2001:cdba::3257:9652",
+        "\x20\x01\xcd\xba\x00\x00\x00\x00\x00\x00\x00\x00\x32\x57\x96\x52"},
+        {AF_INET6, 1, 0,
+        "2001:cdba::3257:9652", "2001:cdba::3257:9652",
+        "\x20\x01\xcd\xba\x00\x00\x00\x00\x00\x00\x00\x00\x32\x57\x96\x52"},
+        {AF_INET6, 1, 0,
+        "2001:cdba:0:0:0:0:3257:9652", "2001:cdba::3257:9652",
+        "\x20\x01\xcd\xba\x00\x00\x00\x00\x00\x00\x00\x00\x32\x57\x96\x52"}
+    };
+    int i, ret;
+    DWORD err;
+    char buffer[64],str[64];
+    const char *ptr;
+
+    /* InetNtop and InetPton became available in Vista and Win2008 */
+    if (!pInetNtop || !pInetPton)
+    {
+        win_skip("InetNtop and/or InetPton not present, not executing tests\n");
+        return;
+    }
+
+    for (i = 0; i < sizeof(tests) / sizeof(tests[0]); i++)
+    {
+        WSASetLastError(0xdeadbeef);
+        ret = pInetPton(tests[i].family, (char *)tests[i].printable, buffer);
+        ok (ret == tests[i].ret, "Test [%d]: Expected %d, got %d\n", i, tests[i].ret, ret);
+        if (tests[i].ret == -1)
+        {
+            err = WSAGetLastError();
+            ok (tests[i].err == err, "Test [%d]: Expected 0x%x, got 0x%x\n", i, tests[i].err, err);
+        }
+        if (tests[i].ret != 1) continue;
+        ok (memcmp(buffer, tests[i].raw_data,
+            tests[i].family == AF_INET ? sizeof(struct in_addr) : sizeof(struct in6_addr)) == 0,
+            "Test [%d]: Expected binary data differs\n", i);
+
+        /* Test the result from Pton with Ntop */
+        strcpy (str, "deadbeef");
+        ptr = pInetNtop(tests[i].family, buffer, str, sizeof(str));
+        ok (ptr != NULL, "Test [%d]: Failed with NULL\n", i);
+        ok (ptr == str, "Test [%d]: Pointers differ (%p != %p)\n", i, ptr, str);
+        if (!ptr) continue;
+        ok (strcmp(ptr, tests[i].collapsed) == 0, "Test [%d]: Expected '%s', got '%s'\n",
+            i, tests[i].collapsed, ptr);
+    }
+}
 
 static void test_ioctlsocket(void)
 {
-    SOCKET sock;
+    SOCKET sock, src, dst;
     struct tcp_keepalive kalive;
     int ret, optval;
     static const LONG cmds[] = {FIONBIO, FIONREAD, SIOCATMARK};
@@ -2966,7 +4357,7 @@ static void test_ioctlsocket(void)
 
     ret = ioctlsocket(sock, SIOCATMARK, &arg);
     ok(ret != SOCKET_ERROR, "ioctlsocket failed unexpectedly\n");
-    todo_wine ok(arg, "SIOCATMARK expected a non-zero value\n");
+    ok(arg, "SIOCATMARK expected a non-zero value\n");
 
     /* when SO_OOBINLINE is set SIOCATMARK must always return TRUE */
     optval = 1;
@@ -2977,13 +4368,13 @@ static void test_ioctlsocket(void)
     ok(ret != SOCKET_ERROR, "ioctlsocket failed unexpectedly\n");
     ok(arg, "SIOCATMARK expected a non-zero value\n");
 
-    /* disable SO_OOBINLINE and get the same old bahavior */
+    /* disable SO_OOBINLINE and get the same old behavior */
     optval = 0;
     ret = setsockopt(sock, SOL_SOCKET, SO_OOBINLINE, (void *)&optval, sizeof(optval));
     ok(ret != SOCKET_ERROR, "setsockopt failed unexpectedly\n");
     arg = 0;
     ret = ioctlsocket(sock, SIOCATMARK, &arg);
-    todo_wine ok(arg, "SIOCATMARK expected a non-zero value\n");
+    ok(arg, "SIOCATMARK expected a non-zero value\n");
 
     ret = WSAIoctl(sock, SIO_KEEPALIVE_VALS, &arg, 0, NULL, 0, &arg, NULL, NULL);
     ok(ret == SOCKET_ERROR, "WSAIoctl succeeded unexpectedly\n");
@@ -3021,9 +4412,35 @@ static void test_ioctlsocket(void)
     ok(ret == 0 || broken(ret == SOCKET_ERROR), "WSAIoctl failed unexpectedly\n");
 
     closesocket(sock);
+
+    if (tcp_socketpair(&src, &dst) != 0)
+    {
+        ok(0, "creating socket pair failed, skipping test\n");
+        return;
+    }
+
+    /* test FIONREAD on TCP sockets */
+    optval = 0xdeadbeef;
+    ret = WSAIoctl(dst, FIONREAD, NULL, 0, &optval, sizeof(optval), &arg, NULL, NULL);
+    ok(ret == 0, "WSAIoctl failed unexpectedly with error %d\n", WSAGetLastError());
+    ok(optval == 0, "FIONREAD should have returned 0 bytes, got %d instead\n", optval);
+
+    optval = 0xdeadbeef;
+    ok(send(src, "TEST", 4, 0) == 4, "failed to send test data\n");
+    Sleep(100);
+    ret = WSAIoctl(dst, FIONREAD, NULL, 0, &optval, sizeof(optval), &arg, NULL, NULL);
+    ok(ret == 0, "WSAIoctl failed unexpectedly with error %d\n", WSAGetLastError());
+    ok(optval == 4, "FIONREAD should have returned 4 bytes, got %d instead\n", optval);
+
+    closesocket(dst);
+    optval = 0xdeadbeef;
+    ret = WSAIoctl(dst, FIONREAD, NULL, 0, &optval, sizeof(optval), &arg, NULL, NULL);
+    ok(ret == SOCKET_ERROR, "WSAIoctl succeeded unexpectedly\n");
+    ok(optval == 0xdeadbeef, "FIONREAD should not have changed last error, got %d instead\n", optval);
+    closesocket(src);
 }
 
-static int drain_pause=0;
+static BOOL drain_pause = FALSE;
 static DWORD WINAPI drain_socket_thread(LPVOID arg)
 {
     char buffer[1024];
@@ -3105,7 +4522,7 @@ static void test_send(void)
     buf.buf = buffer;
     buf.len = buflen;
 
-    ov.hEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+    ov.hEvent = CreateEventA(NULL, FALSE, FALSE, NULL);
     ok(ov.hEvent != NULL, "could not create event object, errno = %d\n", GetLastError());
     if (!ov.hEvent)
         goto end;
@@ -3162,7 +4579,11 @@ end:
     if (dst != INVALID_SOCKET)
         closesocket(dst);
     if (hThread != NULL)
+    {
+        dwRet = WaitForSingleObject(hThread, 500);
+        ok(dwRet == WAIT_OBJECT_0, "failed to wait for thread termination: %d\n", GetLastError());
         CloseHandle(hThread);
+    }
     if (ov.hEvent)
         CloseHandle(ov.hEvent);
     HeapFree(GetProcessHeap(), 0, buffer);
@@ -3201,7 +4622,7 @@ static LRESULT CALLBACK ws2_test_WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPA
         return 0;
     }
 
-    return DefWindowProc(hwnd, msg, wparam, lparam);
+    return DefWindowProcA(hwnd, msg, wparam, lparam);
 }
 
 static void get_event_details(int event, int *bit, char *name)
@@ -3457,7 +4878,7 @@ static void test_events(int useMessages)
     struct sockaddr_in addr;
     HANDLE hThread = NULL;
     HANDLE hEvent = INVALID_HANDLE_VALUE, hEvent2 = INVALID_HANDLE_VALUE;
-    WNDCLASSEX wndclass;
+    WNDCLASSEXA wndclass;
     HWND hWnd = NULL;
     char *buffer = NULL;
     int bufferSize = 1024*1024;
@@ -3497,12 +4918,18 @@ static void test_events(int useMessages)
         goto end;
     }
 
+    ret = set_blocking(src, TRUE);
+    ok(!ret, "set_blocking failed, error %d\n", WSAGetLastError());
+
     src2 = socket(AF_INET, SOCK_STREAM, 0);
     if (src2 == INVALID_SOCKET)
     {
         ok(0, "creating socket pair failed (%d), skipping test\n", GetLastError());
         goto end;
     }
+
+    ret = set_blocking(src2, TRUE);
+    ok(!ret, "set_blocking failed, error %d\n", WSAGetLastError());
 
     len = sizeof(BOOL);
     if (getsockopt(src, SOL_SOCKET, SO_OOBINLINE, (void *)&bret, &len) == SOCKET_ERROR)
@@ -3521,16 +4948,17 @@ static void test_events(int useMessages)
         wndclass.lpfnWndProc    = ws2_test_WndProc;
         wndclass.cbClsExtra     = 0;
         wndclass.cbWndExtra     = 0;
-        wndclass.hInstance      = GetModuleHandle(NULL);
-        wndclass.hIcon          = LoadIcon(NULL, IDI_APPLICATION);
-        wndclass.hIconSm        = LoadIcon(NULL, IDI_APPLICATION);
-        wndclass.hCursor        = LoadCursor(NULL, IDC_ARROW);
+        wndclass.hInstance      = GetModuleHandleA(NULL);
+        wndclass.hIcon          = LoadIconA(NULL, (LPCSTR)IDI_APPLICATION);
+        wndclass.hIconSm        = LoadIconA(NULL, (LPCSTR)IDI_APPLICATION);
+        wndclass.hCursor        = LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
         wndclass.hbrBackground  = (HBRUSH)(COLOR_WINDOW + 1);
         wndclass.lpszClassName  = szClassName;
         wndclass.lpszMenuName   = NULL;
-        RegisterClassEx(&wndclass);
+        RegisterClassExA(&wndclass);
 
-        hWnd = CreateWindow(szClassName, "WS2Test", WS_OVERLAPPEDWINDOW, 0, 0, 500, 500, NULL, NULL, GetModuleHandle(NULL), NULL);
+        hWnd = CreateWindowA(szClassName, "WS2Test", WS_OVERLAPPEDWINDOW,
+                            0, 0, 500, 500, NULL, NULL, GetModuleHandleA(NULL), NULL);
         if (!hWnd)
         {
             ok(0, "failed to create window: %d\n", GetLastError());
@@ -3544,12 +4972,18 @@ static void test_events(int useMessages)
             goto end;
         }
 
+        ok(set_blocking(src, TRUE) == SOCKET_ERROR, "set_blocking should failed!\n");
+        ok(WSAGetLastError() == WSAEINVAL, "expect WSAEINVAL, returned %x\n", WSAGetLastError());
+
         ret = WSAAsyncSelect(src2, hWnd, WM_SOCKET, FD_CONNECT | FD_READ | FD_OOB | FD_WRITE | FD_CLOSE);
         if (ret)
         {
             ok(0, "WSAAsyncSelect failed, error %d\n", ret);
             goto end;
         }
+
+        ok(set_blocking(src2, TRUE) == SOCKET_ERROR, "set_blocking should failed!\n");
+        ok(WSAGetLastError() == WSAEINVAL, "expect WSAEINVAL, returned %x\n", WSAGetLastError());
     }
     else
     {
@@ -3576,12 +5010,18 @@ static void test_events(int useMessages)
             goto end;
         }
 
+        ok(set_blocking(src, TRUE) == SOCKET_ERROR, "set_blocking should failed!\n");
+        ok(WSAGetLastError() == WSAEINVAL, "expect WSAEINVAL, returned %x\n", WSAGetLastError());
+
         ret = WSAEventSelect(src2, hEvent2, FD_CONNECT | FD_READ | FD_OOB | FD_WRITE | FD_CLOSE);
         if (ret)
         {
             ok(0, "WSAEventSelect failed, error %d\n", ret);
             goto end;
         }
+
+        ok(set_blocking(src2, TRUE) == SOCKET_ERROR, "set_blocking should failed!\n");
+        ok(WSAGetLastError() == WSAEINVAL, "expect WSAEINVAL, returned %x\n", WSAGetLastError());
     }
 
     server = socket(AF_INET, SOCK_STREAM, 0);
@@ -3667,14 +5107,14 @@ static void test_events(int useMessages)
         goto end;
     }
 
-    ov.hEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+    ov.hEvent = CreateEventA(NULL, FALSE, FALSE, NULL);
     if (ov.hEvent == NULL)
     {
         ok(0, "could not create event object, errno = %d\n", GetLastError());
         goto end;
     }
 
-    ov2.hEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+    ov2.hEvent = CreateEventA(NULL, FALSE, FALSE, NULL);
     if (ov2.hEvent == NULL)
     {
         ok(0, "could not create event object, errno = %d\n", GetLastError());
@@ -3687,23 +5127,29 @@ static void test_events(int useMessages)
     /* broken on all windows - FD_CONNECT error is garbage */
 
     /* Test simple send/recv */
+    SetLastError(0xdeadbeef);
     ret = send(dst, buffer, 100, 0);
     ok(ret == 100, "Failed to send buffer %d err %d\n", ret, GetLastError());
+    ok(GetLastError() == ERROR_SUCCESS, "Expected 0, got %d\n", GetLastError());
     ok_event_seq(src, hEvent, read_seq, NULL, 0);
 
+    SetLastError(0xdeadbeef);
     ret = recv(src, buffer, 1, MSG_PEEK);
     ok(ret == 1, "Failed to peek at recv buffer %d err %d\n", ret, GetLastError());
+    ok(GetLastError() == ERROR_SUCCESS, "Expected 0, got %d\n", GetLastError());
     ok_event_seq(src, hEvent, read_seq, NULL, 0);
 
+    SetLastError(0xdeadbeef);
     ret = recv(src, buffer, 50, 0);
     ok(ret == 50, "Failed to recv buffer %d err %d\n", ret, GetLastError());
+    ok(GetLastError() == ERROR_SUCCESS, "Expected 0, got %d\n", GetLastError());
     ok_event_seq(src, hEvent, read_seq, NULL, 0);
 
     ret = recv(src, buffer, 50, 0);
     ok(ret == 50, "Failed to recv buffer %d err %d\n", ret, GetLastError());
     ok_event_seq(src, hEvent, empty_seq, NULL, 0);
 
-    /* fun fact - events are reenabled even on failure, but only for messages */
+    /* fun fact - events are re-enabled even on failure, but only for messages */
     ret = send(dst, "1", 1, 0);
     ok(ret == 1, "Failed to send buffer %d err %d\n", ret, GetLastError());
     ok_event_seq(src, hEvent, read_seq, NULL, 0);
@@ -3720,8 +5166,10 @@ static void test_events(int useMessages)
     else
         ok_event_seq(src, hEvent, empty_seq, NULL, 0);
 
+    SetLastError(0xdeadbeef);
     ret = recv(src, buffer, 1, 0);
     ok(ret == 1, "Failed to recv buffer %d err %d\n", ret, GetLastError());
+    ok(GetLastError() == ERROR_SUCCESS, "Expected 0, got %d\n", GetLastError());
     ok_event_seq(src, hEvent, empty_seq, NULL, 0);
 
     /* Interaction with overlapped */
@@ -3763,8 +5211,10 @@ static void test_events(int useMessages)
         ok(buffer[1] == '2', "Got %c instead of 2\n", buffer[1]);
     }
 
+    SetLastError(0xdeadbeef);
     ret = send(dst, "1", 1, 0);
     ok(ret == 1, "Failed to send buffer %d err %d\n", ret, GetLastError());
+    ok(GetLastError() == ERROR_SUCCESS, "Expected 0, got %d\n", GetLastError());
     ok_event_seq(src, hEvent, read_seq, NULL, 0);
 
     ret = recv(src, buffer, 1, 0);
@@ -3833,12 +5283,12 @@ static void test_events(int useMessages)
      * take some of it, and we will get a short write. This will trigger
      * another FD_WRITE event as soon as data is sent and more space becomes
      * available, but not any earlier. */
-    drain_pause=1;
+    drain_pause = TRUE;
     do
     {
         ret = send(src, buffer, bufferSize, 0);
     } while (ret == bufferSize);
-    drain_pause=0;
+    drain_pause = FALSE;
     if (ret >= 0 || WSAGetLastError() == WSAEWOULDBLOCK)
     {
         Sleep(400); /* win9x */
@@ -3913,6 +5363,51 @@ static void test_events(int useMessages)
     ret = send(src2, "1", 1, 0);
     ok(ret == 1, "Sending to half-closed socket failed %d err %d\n", ret, GetLastError());
     ok_event_seq(src2, hEvent2, empty_seq, NULL, 0);
+
+    if (useMessages)
+    {
+        ret = WSAAsyncSelect(src, hWnd, WM_SOCKET, 0);
+        if (ret)
+        {
+            ok(0, "WSAAsyncSelect failed, error %d\n", ret);
+            goto end;
+        }
+
+        ret = set_blocking(src, TRUE);
+        ok(!ret, "set_blocking failed, error %d\n", WSAGetLastError());
+
+        ret = WSAAsyncSelect(src2, hWnd, WM_SOCKET, 0);
+        if (ret)
+        {
+            ok(0, "WSAAsyncSelect failed, error %d\n", ret);
+            goto end;
+        }
+
+        ret = set_blocking(src2, TRUE);
+        ok(!ret, "set_blocking failed, error %d\n", WSAGetLastError());
+    }
+    else
+    {
+        ret = WSAEventSelect(src, hEvent2, 0);
+        if (ret)
+        {
+            ok(0, "WSAAsyncSelect failed, error %d\n", ret);
+            goto end;
+        }
+
+        ret = set_blocking(src, TRUE);
+        ok(!ret, "set_blocking failed, error %d\n", WSAGetLastError());
+
+        ret = WSAEventSelect(src2, hEvent2, 0);
+        if (ret)
+        {
+            ok(0, "WSAAsyncSelect failed, error %d\n", ret);
+            goto end;
+        }
+
+        ret = set_blocking(src2, TRUE);
+        ok(!ret, "set_blocking failed, error %d\n", WSAGetLastError());
+    }
 
 end:
     if (src != INVALID_SOCKET)
@@ -3992,6 +5487,191 @@ end:
         closesocket(v6);
 }
 
+static void test_WSASendMsg(void)
+{
+    SOCKET sock, dst;
+    struct sockaddr_in sendaddr, sockaddr;
+    GUID WSASendMsg_GUID = WSAID_WSASENDMSG;
+    LPFN_WSASENDMSG pWSASendMsg = NULL;
+    char teststr[12] = "hello world", buffer[32];
+    WSABUF iovec[2];
+    WSAMSG msg;
+    DWORD bytesSent, err;
+    int ret, addrlen;
+
+    /* FIXME: Missing OVERLAPPED and OVERLAPPED COMPLETION ROUTINE tests */
+
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    ok(sock != INVALID_SOCKET, "socket() failed\n");
+
+    /* Obtain the WSASendMsg function */
+    WSAIoctl(sock, SIO_GET_EXTENSION_FUNCTION_POINTER, &WSASendMsg_GUID, sizeof(WSASendMsg_GUID),
+             &pWSASendMsg, sizeof(pWSASendMsg), &err, NULL, NULL);
+    if (!pWSASendMsg)
+    {
+        closesocket(sock);
+        win_skip("WSASendMsg is unsupported, some tests will be skipped.\n");
+        return;
+    }
+
+    /* fake address for now */
+    sendaddr.sin_family = AF_INET;
+    sendaddr.sin_port = htons(139);
+    sendaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    memset(&msg, 0, sizeof(msg));
+    iovec[0].buf      = teststr;
+    iovec[0].len      = sizeof(teststr);
+    iovec[1].buf      = teststr;
+    iovec[1].len      = sizeof(teststr) / 2;
+    msg.name          = (struct sockaddr *) &sendaddr;
+    msg.namelen       = sizeof(sendaddr);
+    msg.lpBuffers     = iovec;
+    msg.dwBufferCount = 1; /* send only one buffer for now */
+
+    WSASetLastError(0xdeadbeef);
+    ret = pWSASendMsg(INVALID_SOCKET, &msg, 0, NULL, NULL, NULL);
+    ok(ret == SOCKET_ERROR, "WSASendMsg should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAENOTSOCK, "expected 10038, got %d instead\n", err);
+
+    WSASetLastError(0xdeadbeef);
+    ret = pWSASendMsg(sock, NULL, 0, NULL, NULL, NULL);
+    ok(ret == SOCKET_ERROR, "WSASendMsg should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEFAULT, "expected 10014, got %d instead\n", err);
+
+    WSASetLastError(0xdeadbeef);
+    ret = pWSASendMsg(sock, NULL, 0, &bytesSent, NULL, NULL);
+    ok(ret == SOCKET_ERROR, "WSASendMsg should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEFAULT, "expected 10014, got %d instead\n", err);
+
+    WSASetLastError(0xdeadbeef);
+    ret = pWSASendMsg(sock, &msg, 0, NULL, NULL, NULL);
+    ok(ret == SOCKET_ERROR, "WSASendMsg should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEFAULT, "expected 10014, got %d instead\n", err);
+
+    closesocket(sock);
+
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    ok(sock != INVALID_SOCKET, "socket() failed\n");
+
+    dst = socket(AF_INET, SOCK_DGRAM, 0);
+    ok(dst != INVALID_SOCKET, "socket() failed\n");
+
+    memset(&sockaddr, 0, sizeof(sockaddr));
+    sockaddr.sin_family = AF_INET;
+    sockaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    ok(!bind(dst, (struct sockaddr*)&sockaddr, sizeof(sockaddr)),
+       "bind should have worked\n");
+
+    /* read address to find out the port number to be used in send */
+    memset(&sendaddr, 0, sizeof(sendaddr));
+    addrlen = sizeof(sendaddr);
+    ok(!getsockname(dst, (struct sockaddr *) &sendaddr, &addrlen),
+       "getsockname should have worked\n");
+    ok(sendaddr.sin_port, "socket port should be != 0\n");
+
+    /* ensure the sending socket is not bound */
+    WSASetLastError(0xdeadbeef);
+    addrlen = sizeof(sockaddr);
+    ret = getsockname(sock, (struct sockaddr*)&sockaddr, &addrlen);
+    ok(ret == SOCKET_ERROR, "getsockname should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEINVAL, "expected 10022, got %d instead\n", err);
+
+    set_blocking(sock, TRUE);
+
+    bytesSent = 0;
+    SetLastError(0xdeadbeef);
+    ret = pWSASendMsg(sock, &msg, 0, &bytesSent, NULL, NULL);
+    ok(!ret, "WSASendMsg should have worked\n");
+    ok(GetLastError() == 0 || broken(GetLastError() == 0xdeadbeef) /* Win <= 2008 */,
+       "Expected 0, got %d\n", GetLastError());
+    ok(bytesSent == iovec[0].len, "incorret bytes sent, expected %d, sent %d\n",
+       iovec[0].len, bytesSent);
+
+    /* receive data */
+    addrlen = sizeof(sockaddr);
+    memset(buffer, 0, sizeof(buffer));
+    SetLastError(0xdeadbeef);
+    ret = recvfrom(dst, buffer, sizeof(buffer), 0, (struct sockaddr *) &sockaddr, &addrlen);
+    ok(ret == bytesSent, "got %d, expected %d\n",
+       ret, bytesSent);
+    ok(GetLastError() == ERROR_SUCCESS, "Expected 0, got %d\n", GetLastError());
+
+    /* A successful call to WSASendMsg must have bound the socket */
+    addrlen = sizeof(sockaddr);
+    sockaddr.sin_port = 0;
+    sockaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    ret = getsockname(sock, (struct sockaddr*)&sockaddr, &addrlen);
+    ok(!ret, "getsockname should have worked\n");
+    ok(sockaddr.sin_addr.s_addr == htonl(INADDR_ANY), "expected 0.0.0.0, got %s\n",
+       inet_ntoa(sockaddr.sin_addr));
+    ok(sockaddr.sin_port, "sin_port should be != 0\n");
+
+    msg.dwBufferCount = 2; /* send both buffers */
+
+    bytesSent = 0;
+    SetLastError(0xdeadbeef);
+    ret = pWSASendMsg(sock, &msg, 0, &bytesSent, NULL, NULL);
+    ok(!ret, "WSASendMsg should have worked\n");
+    ok(bytesSent == iovec[0].len + iovec[1].len, "incorret bytes sent, expected %d, sent %d\n",
+       iovec[0].len + iovec[1].len, bytesSent);
+    ok(GetLastError() == 0 || broken(GetLastError() == 0xdeadbeef) /* Win <= 2008 */,
+       "Expected 0, got %d\n", GetLastError());
+
+    /* receive data */
+    addrlen = sizeof(sockaddr);
+    memset(buffer, 0, sizeof(buffer));
+    SetLastError(0xdeadbeef);
+    ret = recvfrom(dst, buffer, sizeof(buffer), 0, (struct sockaddr *) &sockaddr, &addrlen);
+    ok(ret == bytesSent, "got %d, expected %d\n",
+       ret, bytesSent);
+    ok(GetLastError() == ERROR_SUCCESS, "Expected 0, got %d\n", GetLastError());
+
+    closesocket(sock);
+    closesocket(dst);
+
+    /* a bad call to WSASendMsg will also bind the socket */
+    addrlen = sizeof(sockaddr);
+    sockaddr.sin_port = 0;
+    sockaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    ok(sock != INVALID_SOCKET, "socket() failed\n");
+    ok(pWSASendMsg(sock, &msg, 0, NULL, NULL, NULL) == SOCKET_ERROR, "WSASendMsg should have failed\n");
+todo_wine {
+    ok(!getsockname(sock, (struct sockaddr*)&sockaddr, &addrlen), "getsockname should have worked\n");
+    ok(sockaddr.sin_addr.s_addr == htonl(INADDR_ANY), "expected 0.0.0.0, got %s\n",
+       inet_ntoa(sockaddr.sin_addr));
+    ok(sockaddr.sin_port, "sin_port should be > 0\n");
+}
+    closesocket(sock);
+
+    /* a bad call without msg parameter will not trigger the auto-bind */
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    ok(sock != INVALID_SOCKET, "socket() failed\n");
+    ok(pWSASendMsg(sock, NULL, 0, NULL, NULL, NULL) == SOCKET_ERROR, "WSASendMsg should have failed\n");
+    ok(getsockname(sock, (struct sockaddr*)&sockaddr, &addrlen), "getsockname should have failed\n");
+    err = WSAGetLastError();
+    ok(err == WSAEINVAL, "expected 10022, got %d instead\n", err);
+    closesocket(sock);
+
+    /* SOCK_STREAM sockets are not supported */
+    bytesSent = 0;
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    ok(sock != INVALID_SOCKET, "socket() failed\n");
+    SetLastError(0xdeadbeef);
+    ret = pWSASendMsg(sock, &msg, 0, &bytesSent, NULL, NULL);
+    ok(ret == SOCKET_ERROR, "WSASendMsg should have failed\n");
+    err = WSAGetLastError();
+todo_wine
+    ok(err == WSAEINVAL, "expected 10014, got %d instead\n", err);
+    closesocket(sock);
+}
+
 static void test_WSASendTo(void)
 {
     SOCKET s;
@@ -4063,8 +5743,6 @@ static void test_WSARecv(void)
     BOOL bret;
     HANDLE thread;
 
-    memset(&ov, 0, sizeof(ov));
-
     tcp_socketpair(&src, &dest);
     if (src == INVALID_SOCKET || dest == INVALID_SOCKET)
     {
@@ -4072,11 +5750,44 @@ static void test_WSARecv(void)
         goto end;
     }
 
-    bufs.len = sizeof(buf);
-    bufs.buf = buf;
+    memset(&ov, 0, sizeof(ov));
     flags = 0;
+    bufs.len = 2;
+    bufs.buf = buf;
 
-    ov.hEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+    /* Send 4 bytes and receive in two calls of 2 */
+    SetLastError(0xdeadbeef);
+    iret = send(src, "test", 4, 0);
+    ok(iret == 4, "Expected 4, got %d\n", iret);
+    ok(GetLastError() == ERROR_SUCCESS, "Expected 0, got %d\n", GetLastError());
+    SetLastError(0xdeadbeef);
+    bytesReturned = 0xdeadbeef;
+    iret = WSARecv(dest, &bufs, 1, &bytesReturned, &flags, NULL, NULL);
+    ok(!iret, "Expected 0, got %d\n", iret);
+    ok(bytesReturned, "Expected 2, got %d\n", bytesReturned);
+    ok(GetLastError() == ERROR_SUCCESS, "Expected 0, got %d\n", GetLastError());
+    SetLastError(0xdeadbeef);
+    bytesReturned = 0xdeadbeef;
+    iret = WSARecv(dest, &bufs, 1, &bytesReturned, &flags, NULL, NULL);
+    ok(!iret, "Expected 0, got %d\n", iret);
+    ok(bytesReturned, "Expected 2, got %d\n", bytesReturned);
+    ok(GetLastError() == ERROR_SUCCESS, "Expected 0, got %d\n", GetLastError());
+
+    bufs.len = 4;
+    SetLastError(0xdeadbeef);
+    iret = send(src, "test", 4, 0);
+    ok(iret == 4, "Expected 4, got %d\n", iret);
+    ok(GetLastError() == ERROR_SUCCESS, "Expected 0, got %d\n", GetLastError());
+    SetLastError(0xdeadbeef);
+    bytesReturned = 0xdeadbeef;
+    iret = WSARecv(dest, &bufs, 1, &bytesReturned, &flags, NULL, NULL);
+    ok(!iret, "Expected 0, got %d\n", iret);
+    ok(bytesReturned, "Expected 4, got %d\n", bytesReturned);
+    ok(GetLastError() == ERROR_SUCCESS, "Expected 0, got %d\n", GetLastError());
+
+    bufs.len = sizeof(buf);
+
+    ov.hEvent = CreateEventA(NULL, FALSE, FALSE, NULL);
     ok(ov.hEvent != NULL, "could not create event object, errno = %d\n", GetLastError());
     if (!ov.hEvent)
         goto end;
@@ -4102,6 +5813,8 @@ static void test_WSARecv(void)
     todo_wine ok(!bret && (GetLastError() == ERROR_NETNAME_DELETED || broken(GetLastError() == ERROR_IO_INCOMPLETE) /* win9x */),
         "Did not get disconnect event: %d, error %d\n", bret, GetLastError());
     ok(bytesReturned == 0, "Bytes received is %d\n", bytesReturned);
+    closesocket(dest);
+    dest = INVALID_SOCKET;
 
     src = WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, 0);
     ok(src != INVALID_SOCKET, "failed to create socket %d\n", WSAGetLastError());
@@ -4134,6 +5847,7 @@ static void test_WSARecv(void)
 
     send(src, "test message", sizeof("test message"), 0);
     thread = CreateThread(NULL, 0, recv_thread, &dest, 0, &id);
+    WaitForSingleObject(thread, 3000);
     CloseHandle(thread);
 
 end:
@@ -4152,41 +5866,318 @@ static void test_GetAddrInfoW(void)
     static const WCHAR port[] = {'8','0',0};
     static const WCHAR empty[] = {0};
     static const WCHAR localhost[] = {'l','o','c','a','l','h','o','s','t',0};
-
-    int ret;
-    ADDRINFOW *result, hint;
+    static const WCHAR nxdomain[] =
+        {'n','x','d','o','m','a','i','n','.','c','o','d','e','w','e','a','v','e','r','s','.','c','o','m',0};
+    static const WCHAR zero[] = {'0',0};
+    int i, ret;
+    ADDRINFOW *result, *result2, *p, hint;
 
     if (!pGetAddrInfoW || !pFreeAddrInfoW)
     {
         win_skip("GetAddrInfoW and/or FreeAddrInfoW not present\n");
         return;
     }
-
     memset(&hint, 0, sizeof(ADDRINFOW));
 
+    result = (ADDRINFOW *)0xdeadbeef;
+    WSASetLastError(0xdeadbeef);
     ret = pGetAddrInfoW(NULL, NULL, NULL, &result);
     ok(ret == WSAHOST_NOT_FOUND, "got %d expected WSAHOST_NOT_FOUND\n", ret);
+    ok(WSAGetLastError() == WSAHOST_NOT_FOUND, "expected 11001, got %d\n", WSAGetLastError());
+    ok(result == NULL, "got %p\n", result);
 
     result = NULL;
+    WSASetLastError(0xdeadbeef);
     ret = pGetAddrInfoW(empty, NULL, NULL, &result);
-    todo_wine
-    {
     ok(!ret, "GetAddrInfoW failed with %d\n", WSAGetLastError());
     ok(result != NULL, "GetAddrInfoW failed\n");
-    }
+    ok(WSAGetLastError() == 0, "expected 0, got %d\n", WSAGetLastError());
     pFreeAddrInfoW(result);
 
+    result = NULL;
+    ret = pGetAddrInfoW(NULL, zero, NULL, &result);
+    ok(!ret, "GetAddrInfoW failed with %d\n", WSAGetLastError());
+    ok(result != NULL, "GetAddrInfoW failed\n");
+
+    result2 = NULL;
+    ret = pGetAddrInfoW(NULL, empty, NULL, &result2);
+    ok(!ret, "GetAddrInfoW failed with %d\n", WSAGetLastError());
+    ok(result2 != NULL, "GetAddrInfoW failed\n");
+    compare_addrinfow(result, result2);
+    pFreeAddrInfoW(result);
+    pFreeAddrInfoW(result2);
+
+    result = NULL;
+    ret = pGetAddrInfoW(empty, zero, NULL, &result);
+    ok(!ret, "GetAddrInfoW failed with %d\n", WSAGetLastError());
+    ok(WSAGetLastError() == 0, "expected 0, got %d\n", WSAGetLastError());
+    ok(result != NULL, "GetAddrInfoW failed\n");
+
+    result2 = NULL;
+    ret = pGetAddrInfoW(empty, empty, NULL, &result2);
+    ok(!ret, "GetAddrInfoW failed with %d\n", WSAGetLastError());
+    ok(result2 != NULL, "GetAddrInfoW failed\n");
+    compare_addrinfow(result, result2);
+    pFreeAddrInfoW(result);
+    pFreeAddrInfoW(result2);
+
+    result = NULL;
     ret = pGetAddrInfoW(localhost, NULL, NULL, &result);
     ok(!ret, "GetAddrInfoW failed with %d\n", WSAGetLastError());
     pFreeAddrInfoW(result);
 
+    result = NULL;
+    ret = pGetAddrInfoW(localhost, empty, NULL, &result);
+    ok(!ret, "GetAddrInfoW failed with %d\n", WSAGetLastError());
+    pFreeAddrInfoW(result);
+
+    result = NULL;
+    ret = pGetAddrInfoW(localhost, zero, NULL, &result);
+    ok(!ret, "GetAddrInfoW failed with %d\n", WSAGetLastError());
+    pFreeAddrInfoW(result);
+
+    result = NULL;
     ret = pGetAddrInfoW(localhost, port, NULL, &result);
     ok(!ret, "GetAddrInfoW failed with %d\n", WSAGetLastError());
     pFreeAddrInfoW(result);
 
-    ret = pGetAddrInfoW(localhost, port, &hint, &result);
+    result = NULL;
+    ret = pGetAddrInfoW(localhost, NULL, &hint, &result);
     ok(!ret, "GetAddrInfoW failed with %d\n", WSAGetLastError());
     pFreeAddrInfoW(result);
+
+    result = NULL;
+    SetLastError(0xdeadbeef);
+    ret = pGetAddrInfoW(localhost, port, &hint, &result);
+    ok(!ret, "GetAddrInfoW failed with %d\n", WSAGetLastError());
+    ok(WSAGetLastError() == 0, "expected 0, got %d\n", WSAGetLastError());
+    pFreeAddrInfoW(result);
+
+    result = (ADDRINFOW *)0xdeadbeef;
+    WSASetLastError(0xdeadbeef);
+    ret = pGetAddrInfoW(NULL, NULL, NULL, &result);
+    if(ret == 0)
+    {
+        skip("nxdomain returned success. Broken ISP redirects?\n");
+        return;
+    }
+    ok(ret == WSAHOST_NOT_FOUND, "got %d expected WSAHOST_NOT_FOUND\n", ret);
+    ok(WSAGetLastError() == WSAHOST_NOT_FOUND, "expected 11001, got %d\n", WSAGetLastError());
+    ok(result == NULL, "got %p\n", result);
+
+    result = (ADDRINFOW *)0xdeadbeef;
+    WSASetLastError(0xdeadbeef);
+    ret = pGetAddrInfoW(nxdomain, NULL, NULL, &result);
+    if(ret == 0)
+    {
+        skip("nxdomain returned success. Broken ISP redirects?\n");
+        return;
+    }
+    ok(ret == WSAHOST_NOT_FOUND, "got %d expected WSAHOST_NOT_FOUND\n", ret);
+    ok(WSAGetLastError() == WSAHOST_NOT_FOUND, "expected 11001, got %d\n", WSAGetLastError());
+    ok(result == NULL, "got %p\n", result);
+
+    for (i = 0;i < (sizeof(hinttests) / sizeof(hinttests[0]));i++)
+    {
+        hint.ai_family = hinttests[i].family;
+        hint.ai_socktype = hinttests[i].socktype;
+        hint.ai_protocol = hinttests[i].protocol;
+
+        result = NULL;
+        SetLastError(0xdeadbeef);
+        ret = pGetAddrInfoW(localhost, NULL, &hint, &result);
+        if (!ret)
+        {
+            if (hinttests[i].error)
+                ok(0, "test %d: GetAddrInfoW succeeded unexpectedly\n", i);
+            else
+            {
+                p = result;
+                do
+                {
+                    /* when AF_UNSPEC is used the return will be either AF_INET or AF_INET6 */
+                    if (hinttests[i].family == AF_UNSPEC)
+                        ok(p->ai_family == AF_INET || p->ai_family == AF_INET6,
+                           "test %d: expected AF_INET or AF_INET6, got %d\n",
+                           i, p->ai_family);
+                    else
+                        ok(p->ai_family == hinttests[i].family,
+                           "test %d: expected family %d, got %d\n",
+                           i, hinttests[i].family, p->ai_family);
+
+                    ok(p->ai_socktype == hinttests[i].socktype,
+                       "test %d: expected type %d, got %d\n",
+                       i, hinttests[i].socktype, p->ai_socktype);
+                    ok(p->ai_protocol == hinttests[i].protocol,
+                       "test %d: expected protocol %d, got %d\n",
+                       i, hinttests[i].protocol, p->ai_protocol);
+                    p = p->ai_next;
+                }
+                while (p);
+            }
+            pFreeAddrInfoW(result);
+        }
+        else
+        {
+            DWORD err = WSAGetLastError();
+            if (hinttests[i].error)
+                ok(hinttests[i].error == err, "test %d: GetAddrInfoW failed with error %d, expected %d\n",
+                   i, err, hinttests[i].error);
+            else
+                ok(0, "test %d: GetAddrInfoW failed with %d (err %d)\n", i, ret, err);
+        }
+    }
+}
+
+static void test_getaddrinfo(void)
+{
+    int i, ret;
+    ADDRINFOA *result, *result2, *p, hint;
+
+    if (!pgetaddrinfo || !pfreeaddrinfo)
+    {
+        win_skip("getaddrinfo and/or freeaddrinfo not present\n");
+        return;
+    }
+    memset(&hint, 0, sizeof(ADDRINFOA));
+
+    result = (ADDRINFOA *)0xdeadbeef;
+    WSASetLastError(0xdeadbeef);
+    ret = pgetaddrinfo(NULL, NULL, NULL, &result);
+    ok(ret == WSAHOST_NOT_FOUND, "got %d expected WSAHOST_NOT_FOUND\n", ret);
+    ok(WSAGetLastError() == WSAHOST_NOT_FOUND, "expected 11001, got %d\n", WSAGetLastError());
+    ok(result == NULL, "got %p\n", result);
+
+    result = NULL;
+    WSASetLastError(0xdeadbeef);
+    ret = pgetaddrinfo("", NULL, NULL, &result);
+    ok(!ret, "getaddrinfo failed with %d\n", WSAGetLastError());
+    ok(result != NULL, "getaddrinfo failed\n");
+    ok(WSAGetLastError() == 0, "expected 0, got %d\n", WSAGetLastError());
+    pfreeaddrinfo(result);
+
+    result = NULL;
+    ret = pgetaddrinfo(NULL, "0", NULL, &result);
+    ok(!ret, "getaddrinfo failed with %d\n", WSAGetLastError());
+    ok(result != NULL, "getaddrinfo failed\n");
+
+    result2 = NULL;
+    ret = pgetaddrinfo(NULL, "", NULL, &result2);
+    ok(!ret, "getaddrinfo failed with %d\n", WSAGetLastError());
+    ok(result2 != NULL, "getaddrinfo failed\n");
+    compare_addrinfo(result, result2);
+    pfreeaddrinfo(result);
+    pfreeaddrinfo(result2);
+
+    result = NULL;
+    WSASetLastError(0xdeadbeef);
+    ret = pgetaddrinfo("", "0", NULL, &result);
+    ok(!ret, "getaddrinfo failed with %d\n", WSAGetLastError());
+    ok(WSAGetLastError() == 0, "expected 0, got %d\n", WSAGetLastError());
+    ok(result != NULL, "getaddrinfo failed\n");
+
+    result2 = NULL;
+    ret = pgetaddrinfo("", "", NULL, &result2);
+    ok(!ret, "getaddrinfo failed with %d\n", WSAGetLastError());
+    ok(result2 != NULL, "getaddrinfo failed\n");
+    compare_addrinfo(result, result2);
+    pfreeaddrinfo(result);
+    pfreeaddrinfo(result2);
+
+    result = NULL;
+    ret = pgetaddrinfo("localhost", NULL, NULL, &result);
+    ok(!ret, "getaddrinfo failed with %d\n", WSAGetLastError());
+    pfreeaddrinfo(result);
+
+    result = NULL;
+    ret = pgetaddrinfo("localhost", "", NULL, &result);
+    ok(!ret, "getaddrinfo failed with %d\n", WSAGetLastError());
+    pfreeaddrinfo(result);
+
+    result = NULL;
+    ret = pgetaddrinfo("localhost", "0", NULL, &result);
+    ok(!ret, "getaddrinfo failed with %d\n", WSAGetLastError());
+    pfreeaddrinfo(result);
+
+    result = NULL;
+    ret = pgetaddrinfo("localhost", "80", NULL, &result);
+    ok(!ret, "getaddrinfo failed with %d\n", WSAGetLastError());
+    pfreeaddrinfo(result);
+
+    result = NULL;
+    ret = pgetaddrinfo("localhost", NULL, &hint, &result);
+    ok(!ret, "getaddrinfo failed with %d\n", WSAGetLastError());
+    pfreeaddrinfo(result);
+
+    result = NULL;
+    WSASetLastError(0xdeadbeef);
+    ret = pgetaddrinfo("localhost", "80", &hint, &result);
+    ok(!ret, "getaddrinfo failed with %d\n", WSAGetLastError());
+    ok(WSAGetLastError() == 0, "expected 0, got %d\n", WSAGetLastError());
+    pfreeaddrinfo(result);
+
+    result = (ADDRINFOA *)0xdeadbeef;
+    WSASetLastError(0xdeadbeef);
+    ret = pgetaddrinfo("nxdomain.codeweavers.com", NULL, NULL, &result);
+    if(ret == 0)
+    {
+        skip("nxdomain returned success. Broken ISP redirects?\n");
+        return;
+    }
+    ok(ret == WSAHOST_NOT_FOUND, "got %d expected WSAHOST_NOT_FOUND\n", ret);
+    ok(WSAGetLastError() == WSAHOST_NOT_FOUND, "expected 11001, got %d\n", WSAGetLastError());
+    ok(result == NULL, "got %p\n", result);
+
+    for (i = 0;i < (sizeof(hinttests) / sizeof(hinttests[0]));i++)
+    {
+        hint.ai_family = hinttests[i].family;
+        hint.ai_socktype = hinttests[i].socktype;
+        hint.ai_protocol = hinttests[i].protocol;
+
+        result = NULL;
+        SetLastError(0xdeadbeef);
+        ret = pgetaddrinfo("localhost", NULL, &hint, &result);
+        if(!ret)
+        {
+            if (hinttests[i].error)
+                ok(0, "test %d: getaddrinfo succeeded unexpectedly\n", i);
+            else
+            {
+                p = result;
+                do
+                {
+                    /* when AF_UNSPEC is used the return will be either AF_INET or AF_INET6 */
+                    if (hinttests[i].family == AF_UNSPEC)
+                        ok(p->ai_family == AF_INET || p->ai_family == AF_INET6,
+                           "test %d: expected AF_INET or AF_INET6, got %d\n",
+                           i, p->ai_family);
+                    else
+                        ok(p->ai_family == hinttests[i].family,
+                           "test %d: expected family %d, got %d\n",
+                           i, hinttests[i].family, p->ai_family);
+
+                    ok(p->ai_socktype == hinttests[i].socktype,
+                       "test %d: expected type %d, got %d\n",
+                       i, hinttests[i].socktype, p->ai_socktype);
+                    ok(p->ai_protocol == hinttests[i].protocol,
+                       "test %d: expected protocol %d, got %d\n",
+                       i, hinttests[i].protocol, p->ai_protocol);
+                    p = p->ai_next;
+                }
+                while (p);
+            }
+            pfreeaddrinfo(result);
+        }
+        else
+        {
+            DWORD err = WSAGetLastError();
+            if (hinttests[i].error)
+                ok(hinttests[i].error == err, "test %d: getaddrinfo failed with error %d, expected %d\n",
+                   i, err, hinttests[i].error);
+            else
+                ok(0, "test %d: getaddrinfo failed with %d (err %d)\n", i, ret, err);
+        }
+    }
 }
 
 static void test_ConnectEx(void)
@@ -4252,7 +6243,7 @@ static void test_ConnectEx(void)
         "returned %d + errno %d\n", bret, WSAGetLastError());
 
     bret = pConnectEx(connector, (struct sockaddr*)&address, addrlen, NULL, 0, &bytesReturned, &overlapped);
-    todo_wine ok(bret == FALSE && WSAGetLastError() == WSAEINVAL, "ConnectEx on a unbound socket "
+    ok(bret == FALSE && WSAGetLastError() == WSAEINVAL, "ConnectEx on a unbound socket "
         "returned %d + errno %d\n", bret, WSAGetLastError());
     if (bret == TRUE || WSAGetLastError() != WSAEINVAL)
     {
@@ -4284,7 +6275,7 @@ static void test_ConnectEx(void)
     ok(bret == FALSE && WSAGetLastError() == ERROR_INVALID_PARAMETER, "ConnectEx on a NULL overlapped "
         "returned %d + errno %d\n", bret, WSAGetLastError());
 
-    overlapped.hEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+    overlapped.hEvent = CreateEventA(NULL, FALSE, FALSE, NULL);
     if (overlapped.hEvent == NULL) {
         skip("could not create event object, errno = %d\n", GetLastError());
         goto end;
@@ -4411,17 +6402,18 @@ static void test_AcceptEx(void)
     SOCKET acceptor = INVALID_SOCKET;
     SOCKET connector = INVALID_SOCKET;
     SOCKET connector2 = INVALID_SOCKET;
-    struct sockaddr_in bindAddress;
-    int socklen;
-    GUID acceptExGuid = WSAID_ACCEPTEX;
+    struct sockaddr_in bindAddress, peerAddress, *readBindAddress, *readRemoteAddress;
+    int socklen, optlen;
+    GUID acceptExGuid = WSAID_ACCEPTEX, getAcceptExGuid = WSAID_GETACCEPTEXSOCKADDRS;
     LPFN_ACCEPTEX pAcceptEx = NULL;
+    LPFN_GETACCEPTEXSOCKADDRS pGetAcceptExSockaddrs = NULL;
     fd_set fds_accept, fds_send;
     struct timeval timeout = {0,10}; /* wait for 10 milliseconds */
     int got, conn1, i;
-    DWORD bytesReturned;
-    char buffer[1024];
+    DWORD bytesReturned, connect_time;
+    char buffer[1024], ipbuffer[32];
     OVERLAPPED overlapped;
-    int iret;
+    int iret, localSize = sizeof(struct sockaddr_in), remoteSize = localSize;
     BOOL bret;
     DWORD dwret;
 
@@ -4473,16 +6465,36 @@ static void test_AcceptEx(void)
         goto end;
     }
 
+    iret = WSAIoctl(listener, SIO_GET_EXTENSION_FUNCTION_POINTER, &getAcceptExGuid, sizeof(getAcceptExGuid),
+        &pGetAcceptExSockaddrs, sizeof(pGetAcceptExSockaddrs), &bytesReturned, NULL, NULL);
+    if (iret) {
+        skip("WSAIoctl failed to get GetAcceptExSockaddrs with ret %d + errno %d\n", iret, WSAGetLastError());
+        goto end;
+    }
+
     bret = pAcceptEx(INVALID_SOCKET, acceptor, buffer, sizeof(buffer) - 2*(sizeof(struct sockaddr_in) + 16),
         sizeof(struct sockaddr_in) + 16, sizeof(struct sockaddr_in) + 16,
         &bytesReturned, &overlapped);
     ok(bret == FALSE && WSAGetLastError() == WSAENOTSOCK, "AcceptEx on invalid listening socket "
         "returned %d + errno %d\n", bret, WSAGetLastError());
 
+    bret = pAcceptEx(listener, acceptor, buffer, sizeof(buffer) - 2*(sizeof(struct sockaddr_in) + 16),
+        sizeof(struct sockaddr_in) + 16, sizeof(struct sockaddr_in) + 16,
+        &bytesReturned, &overlapped);
+todo_wine
+    ok(bret == FALSE && WSAGetLastError() == WSAEINVAL, "AcceptEx on a non-listening socket "
+        "returned %d + errno %d\n", bret, WSAGetLastError());
+
+    iret = listen(listener, 5);
+    if (iret != 0) {
+        skip("listening failed, errno = %d\n", WSAGetLastError());
+        goto end;
+    }
+
     bret = pAcceptEx(listener, INVALID_SOCKET, buffer, sizeof(buffer) - 2*(sizeof(struct sockaddr_in) + 16),
         sizeof(struct sockaddr_in) + 16, sizeof(struct sockaddr_in) + 16,
         &bytesReturned, &overlapped);
-    ok(bret == FALSE && WSAGetLastError() == WSAEINVAL, "AcceptEx on invalid accepting socket "
+    ok(bret == FALSE && WSAGetLastError() == WSAENOTSOCK, "AcceptEx on invalid accepting socket "
         "returned %d + errno %d\n", bret, WSAGetLastError());
 
     bret = pAcceptEx(listener, acceptor, NULL, sizeof(buffer) - 2*(sizeof(struct sockaddr_in) + 16),
@@ -4495,13 +6507,31 @@ static void test_AcceptEx(void)
 
     bret = pAcceptEx(listener, acceptor, buffer, 0, 0, sizeof(struct sockaddr_in) + 16,
         &bytesReturned, &overlapped);
-    todo_wine ok(bret == FALSE && WSAGetLastError() == WSAEINVAL, "AcceptEx on too small local address size "
-        "returned %d + errno %d\n", bret, WSAGetLastError());
+    ok(bret == FALSE && (WSAGetLastError() == ERROR_IO_PENDING || broken(WSAGetLastError() == WSAEINVAL)) /* NT4 */,
+        "AcceptEx on too small local address size returned %d + errno %d\n",
+        bret, WSAGetLastError());
+    bret = CancelIo((HANDLE) listener);
+    ok(bret, "Failed to cancel pending accept socket\n");
+
+    bret = pAcceptEx(listener, acceptor, buffer, 0, sizeof(struct sockaddr_in) + 15,
+        sizeof(struct sockaddr_in) + 16, &bytesReturned, &overlapped);
+    ok(bret == FALSE && WSAGetLastError() == ERROR_IO_PENDING, "AcceptEx on too small local address "
+        "size returned %d + errno %d\n",
+        bret, WSAGetLastError());
+    bret = CancelIo((HANDLE) listener);
+    ok(bret, "Failed to cancel pending accept socket\n");
 
     bret = pAcceptEx(listener, acceptor, buffer, 0, sizeof(struct sockaddr_in) + 16, 0,
         &bytesReturned, &overlapped);
-    todo_wine ok(bret == FALSE && WSAGetLastError() == WSAEINVAL, "AcceptEx on too small remote address size "
-        "returned %d + errno %d\n", bret, WSAGetLastError());
+    ok(bret == FALSE && (WSAGetLastError() == WSAEFAULT || broken(WSAGetLastError() == WSAEINVAL)) /* NT4 */,
+        "AcceptEx on too small remote address size returned %d + errno %d\n", bret, WSAGetLastError());
+
+    bret = pAcceptEx(listener, acceptor, buffer, 0, sizeof(struct sockaddr_in) + 16,
+        sizeof(struct sockaddr_in) + 15, &bytesReturned, &overlapped);
+    ok(bret == FALSE && (WSAGetLastError() == ERROR_IO_PENDING || broken(WSAGetLastError() == WSAEINVAL)) /* NT4 */,
+        "AcceptEx on too small remote address size returned %d + errno %d\n", bret, WSAGetLastError());
+    bret = CancelIo((HANDLE) listener);
+    ok(bret, "Failed to cancel pending accept socket\n");
 
     bret = pAcceptEx(listener, acceptor, buffer, 0,
         sizeof(struct sockaddr_in) + 16, sizeof(struct sockaddr_in) + 16,
@@ -4509,19 +6539,11 @@ static void test_AcceptEx(void)
     ok(bret == FALSE && WSAGetLastError() == ERROR_INVALID_PARAMETER, "AcceptEx on a NULL overlapped "
         "returned %d + errno %d\n", bret, WSAGetLastError());
 
-    bret = pAcceptEx(listener, acceptor, buffer, sizeof(buffer) - 2*(sizeof(struct sockaddr_in) + 16),
-        sizeof(struct sockaddr_in) + 16, sizeof(struct sockaddr_in) + 16,
-        &bytesReturned, &overlapped);
-    todo_wine ok(bret == FALSE && WSAGetLastError() == WSAEINVAL, "AcceptEx on a non-listening socket "
+    bret = pAcceptEx(listener, acceptor, buffer, 0, 0, 0, &bytesReturned, NULL);
+    ok(bret == FALSE && WSAGetLastError() == ERROR_INVALID_PARAMETER, "AcceptEx on a NULL overlapped "
         "returned %d + errno %d\n", bret, WSAGetLastError());
 
-    iret = listen(listener, 5);
-    if (iret != 0) {
-        skip("listening failed, errno = %d\n", WSAGetLastError());
-        goto end;
-    }
-
-    overlapped.hEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+    overlapped.hEvent = CreateEventA(NULL, FALSE, FALSE, NULL);
     if (overlapped.hEvent == NULL) {
         skip("could not create event object, errno = %d\n", GetLastError());
         goto end;
@@ -4603,17 +6625,53 @@ static void test_AcceptEx(void)
         &bytesReturned, &overlapped);
     ok(bret == FALSE && WSAGetLastError() == ERROR_IO_PENDING, "AcceptEx returned %d + errno %d\n", bret, WSAGetLastError());
 
+    connect_time = 0xdeadbeef;
+    optlen = sizeof(connect_time);
+    iret = getsockopt(connector, SOL_SOCKET, SO_CONNECT_TIME, (char *)&connect_time, &optlen);
+    ok(!iret, "getsockopt failed %d\n", WSAGetLastError());
+    ok(connect_time == ~0u, "unexpected connect time %u\n", connect_time);
+
+    /* AcceptEx() still won't complete until we send data */
     iret = connect(connector, (struct sockaddr*)&bindAddress, sizeof(bindAddress));
     ok(iret == 0, "connecting to accepting socket failed, error %d\n", WSAGetLastError());
+
+    connect_time = 0xdeadbeef;
+    optlen = sizeof(connect_time);
+    iret = getsockopt(connector, SOL_SOCKET, SO_CONNECT_TIME, (char *)&connect_time, &optlen);
+    ok(!iret, "getsockopt failed %d\n", WSAGetLastError());
+    ok(connect_time < 0xdeadbeef, "unexpected connect time %u\n", connect_time);
 
     dwret = WaitForSingleObject(overlapped.hEvent, 0);
     ok(dwret == WAIT_TIMEOUT, "Waiting for accept event timeout failed with %d + errno %d\n", dwret, GetLastError());
 
+    iret = getsockname( connector, (struct sockaddr *)&peerAddress, &remoteSize);
+    ok( !iret, "getsockname failed.\n");
+
+    /* AcceptEx() could complete any time now */
     iret = send(connector, buffer, 1, 0);
     ok(iret == 1, "could not send 1 byte: send %d errno %d\n", iret, WSAGetLastError());
 
     dwret = WaitForSingleObject(overlapped.hEvent, 1000);
     ok(dwret == WAIT_OBJECT_0, "Waiting for accept event failed with %d + errno %d\n", dwret, GetLastError());
+
+    /* Check if the buffer from AcceptEx is decoded correctly */
+    pGetAcceptExSockaddrs(buffer, 2, sizeof(struct sockaddr_in) + 16, sizeof(struct sockaddr_in) + 16,
+                          (struct sockaddr **)&readBindAddress, &localSize,
+                          (struct sockaddr **)&readRemoteAddress, &remoteSize);
+    strcpy( ipbuffer, inet_ntoa(readBindAddress->sin_addr));
+    ok( readBindAddress->sin_addr.s_addr == bindAddress.sin_addr.s_addr,
+            "Local socket address is different %s != %s\n",
+            ipbuffer, inet_ntoa(bindAddress.sin_addr));
+    ok( readBindAddress->sin_port == bindAddress.sin_port,
+            "Local socket port is different: %d != %d\n",
+            readBindAddress->sin_port, bindAddress.sin_port);
+    strcpy( ipbuffer, inet_ntoa(readRemoteAddress->sin_addr));
+    ok( readRemoteAddress->sin_addr.s_addr == peerAddress.sin_addr.s_addr,
+            "Remote socket address is different %s != %s\n",
+            ipbuffer, inet_ntoa(peerAddress.sin_addr));
+    ok( readRemoteAddress->sin_port == peerAddress.sin_port,
+            "Remote socket port is different: %d != %d\n",
+            readRemoteAddress->sin_port, peerAddress.sin_port);
 
     bret = GetOverlappedResult((HANDLE)listener, &overlapped, &bytesReturned, FALSE);
     ok(bret, "GetOverlappedResult failed, error %d\n", GetLastError());
@@ -4851,6 +6909,7 @@ static void test_getpeername(void)
 {
     SOCKET sock;
     struct sockaddr_in sa, sa_out;
+    SOCKADDR_STORAGE ss;
     int sa_len;
     const char buf[] = "hello world";
     int ret;
@@ -4909,17 +6968,31 @@ static void test_getpeername(void)
            "Expected WSAGetLastError() to return WSAEFAULT, got %d\n", WSAGetLastError());
     }
 
-    sa_len = 0;
-    ret = getpeername(sock, (struct sockaddr*)&sa_out, &sa_len);
+    ret = getpeername(sock, (struct sockaddr*)&sa_out, NULL);
     ok(ret == SOCKET_ERROR, "Expected getpeername to return 0, got %d\n", ret);
     ok(WSAGetLastError() == WSAEFAULT,
        "Expected WSAGetLastError() to return WSAEFAULT, got %d\n", WSAGetLastError());
 
-    sa_len = sizeof(sa_out);
-    ret = getpeername(sock, (struct sockaddr*)&sa_out, &sa_len);
+    sa_len = 0;
+    ret = getpeername(sock, NULL, &sa_len);
+    ok(ret == SOCKET_ERROR, "Expected getpeername to return 0, got %d\n", ret);
+    ok(WSAGetLastError() == WSAEFAULT,
+       "Expected WSAGetLastError() to return WSAEFAULT, got %d\n", WSAGetLastError());
+    ok(!sa_len, "got %d\n", sa_len);
+
+    sa_len = 0;
+    ret = getpeername(sock, (struct sockaddr *)&ss, &sa_len);
+    ok(ret == SOCKET_ERROR, "Expected getpeername to return 0, got %d\n", ret);
+    ok(WSAGetLastError() == WSAEFAULT,
+       "Expected WSAGetLastError() to return WSAEFAULT, got %d\n", WSAGetLastError());
+    ok(!sa_len, "got %d\n", sa_len);
+
+    sa_len = sizeof(ss);
+    ret = getpeername(sock, (struct sockaddr *)&ss, &sa_len);
     ok(ret == 0, "Expected getpeername to return 0, got %d\n", ret);
-    ok(!memcmp(&sa, &sa_out, sizeof(sa)),
+    ok(!memcmp(&sa, &ss, sizeof(sa)),
        "Expected the returned structure to be identical to the connect structure\n");
+    ok(sa_len == sizeof(sa), "got %d\n", sa_len);
 
     closesocket(sock);
 }
@@ -4985,6 +7058,73 @@ static void test_sioRoutingInterfaceQuery(void)
     closesocket(sock);
 }
 
+static void test_sioAddressListChange(void)
+{
+    struct sockaddr_in bindAddress;
+    struct in_addr net_address;
+    WSAOVERLAPPED overlapped;
+    struct hostent *h;
+    DWORD num_bytes;
+    SOCKET sock;
+    int acount;
+    int ret;
+
+    if (!winetest_interactive)
+    {
+        skip("Cannot test SIO_ADDRESS_LIST_CHANGE, interactive tests must be enabled\n");
+        return;
+    }
+
+    /* Use gethostbyname to find the list of local network interfaces */
+    h = gethostbyname("");
+    if (!h)
+    {
+        skip("Cannot test SIO_ADDRESS_LIST_CHANGE, gethostbyname failed with %u\n",
+             WSAGetLastError());
+        return;
+    }
+    for (acount = 0; h->h_addr_list[acount]; acount++);
+    if (acount == 0)
+    {
+        skip("Cannot test SIO_ADDRESS_LIST_CHANGE, test requires a network card.\n");
+        return;
+    }
+    net_address.s_addr = *(ULONG *) h->h_addr_list[0];
+
+    /* Bind an overlapped socket to the first found network interface */
+    sock = WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
+    ok(sock != INVALID_SOCKET, "Expected socket to return a valid socket\n");
+    if (sock == INVALID_SOCKET)
+    {
+        skip("Cannot test SIO_ADDRESS_LIST_CHANGE, socket creation failed with %u\n",
+             WSAGetLastError());
+        return;
+    }
+    memset(&bindAddress, 0, sizeof(bindAddress));
+    bindAddress.sin_family = AF_INET;
+    bindAddress.sin_addr.s_addr = net_address.s_addr;
+    ret = bind(sock, (struct sockaddr*)&bindAddress, sizeof(bindAddress));
+    if (ret != 0)
+    {
+        skip("Cannot test SIO_ADDRESS_LIST_CHANGE, failed to bind, error %u\n", WSAGetLastError());
+        goto end;
+    }
+
+    /* Wait for address changes, request that the user connect/disconnect an interface */
+    memset(&overlapped, 0, sizeof(overlapped));
+    overlapped.hEvent = CreateEventA(NULL, FALSE, FALSE, NULL);
+    ret = WSAIoctl(sock, SIO_ADDRESS_LIST_CHANGE, NULL, 0, NULL, 0, &num_bytes, &overlapped, NULL);
+    ok(ret == SOCKET_ERROR, "WSAIoctl succeeded unexpectedly\n");
+    ok(WSAGetLastError() == WSA_IO_PENDING, "Expected pending last error %d\n", WSAGetLastError());
+    trace("Testing socket-based ipv4 address list change notification. Please connect/disconnect or"
+          " change the ipv4 address of any of the local network interfaces (10 second timeout).\n");
+    ret = WaitForSingleObject(overlapped.hEvent, 10000);
+    ok(ret == WAIT_OBJECT_0, "failed to get overlapped event %u\n", ret);
+
+end:
+    closesocket(sock);
+}
+
 static void test_synchronous_WSAIoctl(void)
 {
     HANDLE previous_port, io_port;
@@ -5032,16 +7172,16 @@ static HWND create_async_message_window(void)
     wndclass.cbClsExtra     = 0;
     wndclass.cbWndExtra     = 0;
     wndclass.hInstance      = GetModuleHandleA(NULL);
-    wndclass.hIcon          = LoadIconA(NULL, IDI_APPLICATION);
-    wndclass.hIconSm        = LoadIconA(NULL, IDI_APPLICATION);
-    wndclass.hCursor        = LoadCursorA(NULL, IDC_ARROW);
+    wndclass.hIcon          = LoadIconA(NULL, (LPCSTR)IDI_APPLICATION);
+    wndclass.hIconSm        = LoadIconA(NULL, (LPCSTR)IDI_APPLICATION);
+    wndclass.hCursor        = LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
     wndclass.hbrBackground  = (HBRUSH)(COLOR_WINDOW + 1);
     wndclass.lpszClassName  = class_name;
     wndclass.lpszMenuName   = NULL;
 
     RegisterClassExA(&wndclass);
 
-    hWnd = CreateWindow(class_name, "ws2_32 async message window", WS_OVERLAPPEDWINDOW,
+    hWnd = CreateWindowA(class_name, "ws2_32 async message window", WS_OVERLAPPEDWINDOW,
                         0, 0, 500, 500, NULL, NULL, GetModuleHandleA(NULL), NULL);
     if (!hWnd)
     {
@@ -5079,6 +7219,993 @@ static void test_WSAAsyncGetServByPort(void)
     DestroyWindow(hwnd);
 }
 
+static void test_WSAAsyncGetServByName(void)
+{
+    HWND hwnd = create_async_message_window();
+    HANDLE ret;
+    char buffer[MAXGETHOSTSTRUCT];
+
+    if (!hwnd)
+        return;
+
+    /* FIXME: The asynchronous window messages should be tested. */
+
+    /* Parameters are not checked when initiating the asynchronous operation.  */
+    ret = WSAAsyncGetServByName(hwnd, WM_ASYNCCOMPLETE, "", NULL, NULL, 0);
+    ok(ret != NULL, "WSAAsyncGetServByName returned NULL\n");
+
+    ret = WSAAsyncGetServByName(hwnd, WM_ASYNCCOMPLETE, "", "", buffer, MAXGETHOSTSTRUCT);
+    ok(ret != NULL, "WSAAsyncGetServByName returned NULL\n");
+
+    ret = WSAAsyncGetServByName(hwnd, WM_ASYNCCOMPLETE, "http", NULL, NULL, 0);
+    ok(ret != NULL, "WSAAsyncGetServByName returned NULL\n");
+
+    ret = WSAAsyncGetServByName(hwnd, WM_ASYNCCOMPLETE, "http", "tcp", buffer, MAXGETHOSTSTRUCT);
+    ok(ret != NULL, "WSAAsyncGetServByName returned NULL\n");
+
+    DestroyWindow(hwnd);
+}
+
+/*
+ * Provide consistent initialization for the AcceptEx IOCP tests.
+ */
+static SOCKET setup_iocp_src(struct sockaddr_in *bindAddress)
+{
+    SOCKET src, ret = INVALID_SOCKET;
+    int iret, socklen;
+
+    src = socket(AF_INET, SOCK_STREAM, 0);
+    if (src == INVALID_SOCKET)
+    {
+        skip("could not create listener socket, error %d\n", WSAGetLastError());
+        goto end;
+    }
+
+    memset(bindAddress, 0, sizeof(*bindAddress));
+    bindAddress->sin_family = AF_INET;
+    bindAddress->sin_addr.s_addr = inet_addr("127.0.0.1");
+    iret = bind(src, (struct sockaddr*)bindAddress, sizeof(*bindAddress));
+    if (iret != 0)
+    {
+        skip("failed to bind, error %d\n", WSAGetLastError());
+        goto end;
+    }
+
+    socklen = sizeof(*bindAddress);
+    iret = getsockname(src, (struct sockaddr*)bindAddress, &socklen);
+    if (iret != 0) {
+        skip("failed to lookup bind address, error %d\n", WSAGetLastError());
+        goto end;
+    }
+
+    if (set_blocking(src, FALSE))
+    {
+        skip("couldn't make socket non-blocking, error %d\n", WSAGetLastError());
+        goto end;
+    }
+
+    iret = listen(src, 5);
+    if (iret != 0)
+    {
+        skip("listening failed, errno = %d\n", WSAGetLastError());
+        goto end;
+    }
+
+    ret = src;
+end:
+    if (src != ret && ret == INVALID_SOCKET)
+        closesocket(src);
+    return ret;
+}
+
+static void test_completion_port(void)
+{
+    HANDLE previous_port, io_port;
+    WSAOVERLAPPED ov, *olp;
+    SOCKET src, dest, dup, connector = INVALID_SOCKET;
+    WSAPROTOCOL_INFOA info;
+    char buf[1024];
+    WSABUF bufs;
+    DWORD num_bytes, flags;
+    struct linger ling;
+    int iret;
+    BOOL bret;
+    ULONG_PTR key;
+    struct sockaddr_in bindAddress;
+    GUID acceptExGuid = WSAID_ACCEPTEX;
+    LPFN_ACCEPTEX pAcceptEx = NULL;
+
+    memset(buf, 0, sizeof(buf));
+    previous_port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
+    ok( previous_port != NULL, "Failed to create completion port %u\n", GetLastError());
+
+    memset(&ov, 0, sizeof(ov));
+
+    tcp_socketpair(&src, &dest);
+    if (src == INVALID_SOCKET || dest == INVALID_SOCKET)
+    {
+        skip("failed to create sockets\n");
+        goto end;
+    }
+
+    bufs.len = sizeof(buf);
+    bufs.buf = buf;
+    flags = 0;
+
+    ling.l_onoff = 1;
+    ling.l_linger = 0;
+    iret = setsockopt (src, SOL_SOCKET, SO_LINGER, (char *) &ling, sizeof(ling));
+    ok(!iret, "Failed to set linger %d\n", GetLastError());
+
+    io_port = CreateIoCompletionPort( (HANDLE)dest, previous_port, 125, 0 );
+    ok(io_port != NULL, "Failed to create completion port %u\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+
+    iret = WSARecv(dest, &bufs, 1, &num_bytes, &flags, &ov, NULL);
+    ok(iret == SOCKET_ERROR, "WSARecv returned %d\n", iret);
+    ok(GetLastError() == ERROR_IO_PENDING, "Last error was %d\n", GetLastError());
+
+    Sleep(100);
+
+    closesocket(src);
+    src = INVALID_SOCKET;
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+
+    bret = GetQueuedCompletionStatus(io_port, &num_bytes, &key, &olp, 100);
+    todo_wine ok(bret == FALSE, "GetQueuedCompletionStatus returned %d\n", bret);
+    todo_wine ok(GetLastError() == ERROR_NETNAME_DELETED, "Last error was %d\n", GetLastError());
+    ok(key == 125, "Key is %lu\n", key);
+    ok(num_bytes == 0, "Number of bytes received is %u\n", num_bytes);
+    ok(olp == &ov, "Overlapped structure is at %p\n", olp);
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+
+    bret = GetQueuedCompletionStatus(io_port, &num_bytes, &key, &olp, 100);
+    ok(bret == FALSE, "GetQueuedCompletionStatus returned %d\n", bret );
+    ok(GetLastError() == WAIT_TIMEOUT, "Last error was %d\n", GetLastError());
+    ok(key == 0xdeadbeef, "Key is %lu\n", key);
+    ok(num_bytes == 0xdeadbeef, "Number of bytes transferred is %u\n", num_bytes);
+    ok(!olp, "Overlapped structure is at %p\n", olp);
+
+    if (dest != INVALID_SOCKET)
+        closesocket(dest);
+
+    memset(&ov, 0, sizeof(ov));
+
+    tcp_socketpair(&src, &dest);
+    if (src == INVALID_SOCKET || dest == INVALID_SOCKET)
+    {
+        skip("failed to create sockets\n");
+        goto end;
+    }
+
+    bufs.len = sizeof(buf);
+    bufs.buf = buf;
+    flags = 0;
+
+    ling.l_onoff = 1;
+    ling.l_linger = 0;
+    iret = setsockopt (src, SOL_SOCKET, SO_LINGER, (char *) &ling, sizeof(ling));
+    ok(!iret, "Failed to set linger %d\n", GetLastError());
+
+    io_port = CreateIoCompletionPort((HANDLE)dest, previous_port, 125, 0);
+    ok(io_port != NULL, "failed to create completion port %u\n", GetLastError());
+
+    set_blocking(dest, FALSE);
+
+    closesocket(src);
+    src = INVALID_SOCKET;
+
+    Sleep(100);
+
+    num_bytes = 0xdeadbeef;
+    SetLastError(0xdeadbeef);
+
+    iret = WSASend(dest, &bufs, 1, &num_bytes, 0, &ov, NULL);
+    ok(iret == SOCKET_ERROR, "WSASend failed - %d\n", iret);
+    ok(GetLastError() == WSAECONNRESET, "Last error was %d\n", GetLastError());
+    ok(num_bytes == 0xdeadbeef, "Managed to send %d\n", num_bytes);
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+
+    bret = GetQueuedCompletionStatus( io_port, &num_bytes, &key, &olp, 200 );
+    ok(bret == FALSE, "GetQueuedCompletionStatus returned %u\n", bret );
+    ok(GetLastError() == WAIT_TIMEOUT, "Last error was %d\n", GetLastError());
+    ok(key == 0xdeadbeef, "Key is %lu\n", key);
+    ok(num_bytes == 0xdeadbeef, "Number of bytes transferred is %u\n", num_bytes);
+    ok(!olp, "Overlapped structure is at %p\n", olp);
+
+    if (dest != INVALID_SOCKET)
+        closesocket(dest);
+
+    dest = socket(AF_INET, SOCK_STREAM, 0);
+    if (dest == INVALID_SOCKET)
+    {
+        skip("could not create acceptor socket, error %d\n", WSAGetLastError());
+        goto end;
+    }
+
+    iret = WSAIoctl(dest, SIO_GET_EXTENSION_FUNCTION_POINTER, &acceptExGuid, sizeof(acceptExGuid),
+            &pAcceptEx, sizeof(pAcceptEx), &num_bytes, NULL, NULL);
+    if (iret)
+    {
+        skip("WSAIoctl failed to get AcceptEx with ret %d + errno %d\n", iret, WSAGetLastError());
+        goto end;
+    }
+
+    /* Test IOCP response on socket close (IOCP created after AcceptEx) */
+
+    if ((src = setup_iocp_src(&bindAddress)) == INVALID_SOCKET)
+        goto end;
+
+    SetLastError(0xdeadbeef);
+
+    bret = pAcceptEx(src, dest, buf, sizeof(buf) - 2*(sizeof(struct sockaddr_in) + 16),
+            sizeof(struct sockaddr_in) + 16, sizeof(struct sockaddr_in) + 16,
+            &num_bytes, &ov);
+    ok(bret == FALSE, "AcceptEx returned %d\n", bret);
+    ok(GetLastError() == ERROR_IO_PENDING, "Last error was %d\n", GetLastError());
+
+    io_port = CreateIoCompletionPort((HANDLE)src, previous_port, 125, 0);
+    ok(io_port != NULL, "failed to create completion port %u\n", GetLastError());
+
+    closesocket(src);
+    src = INVALID_SOCKET;
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+
+    bret = GetQueuedCompletionStatus(io_port, &num_bytes, &key, &olp, 100);
+    ok(bret == FALSE, "failed to get completion status %u\n", bret);
+    ok(GetLastError() == ERROR_OPERATION_ABORTED, "Last error was %d\n", GetLastError());
+    ok(key == 125, "Key is %lu\n", key);
+    ok(num_bytes == 0, "Number of bytes transferred is %u\n", num_bytes);
+    ok(olp == &ov, "Overlapped structure is at %p\n", olp);
+    ok(olp && (olp->Internal == (ULONG)STATUS_CANCELLED), "Internal status is %lx\n", olp ? olp->Internal : 0);
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+    bret = GetQueuedCompletionStatus( io_port, &num_bytes, &key, &olp, 200 );
+    ok(bret == FALSE, "failed to get completion status %u\n", bret);
+    ok(GetLastError() == WAIT_TIMEOUT, "Last error was %d\n", GetLastError());
+    ok(key == 0xdeadbeef, "Key is %lu\n", key);
+    ok(num_bytes == 0xdeadbeef, "Number of bytes transferred is %u\n", num_bytes);
+    ok(!olp, "Overlapped structure is at %p\n", olp);
+
+    /* Test IOCP response on socket close (IOCP created before AcceptEx) */
+
+    if ((src = setup_iocp_src(&bindAddress)) == INVALID_SOCKET)
+        goto end;
+
+    SetLastError(0xdeadbeef);
+
+    io_port = CreateIoCompletionPort((HANDLE)src, previous_port, 125, 0);
+    ok(io_port != NULL, "failed to create completion port %u\n", GetLastError());
+
+    bret = pAcceptEx(src, dest, buf, sizeof(buf) - 2*(sizeof(struct sockaddr_in) + 16),
+            sizeof(struct sockaddr_in) + 16, sizeof(struct sockaddr_in) + 16,
+            &num_bytes, &ov);
+    ok(bret == FALSE, "AcceptEx returned %d\n", bret);
+    ok(GetLastError() == ERROR_IO_PENDING, "Last error was %d\n", GetLastError());
+
+    closesocket(src);
+    src = INVALID_SOCKET;
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+
+    bret = GetQueuedCompletionStatus(io_port, &num_bytes, &key, &olp, 100);
+    ok(bret == FALSE, "failed to get completion status %u\n", bret);
+    ok(GetLastError() == ERROR_OPERATION_ABORTED, "Last error was %d\n", GetLastError());
+    ok(key == 125, "Key is %lu\n", key);
+    ok(num_bytes == 0, "Number of bytes transferred is %u\n", num_bytes);
+    ok(olp == &ov, "Overlapped structure is at %p\n", olp);
+    ok(olp && (olp->Internal == (ULONG)STATUS_CANCELLED), "Internal status is %lx\n", olp ? olp->Internal : 0);
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+    bret = GetQueuedCompletionStatus( io_port, &num_bytes, &key, &olp, 200 );
+    ok(bret == FALSE, "failed to get completion status %u\n", bret);
+    ok(GetLastError() == WAIT_TIMEOUT, "Last error was %d\n", GetLastError());
+    ok(key == 0xdeadbeef, "Key is %lu\n", key);
+    ok(num_bytes == 0xdeadbeef, "Number of bytes transferred is %u\n", num_bytes);
+    ok(!olp, "Overlapped structure is at %p\n", olp);
+
+    /* Test IOCP with duplicated handle */
+
+    if ((src = setup_iocp_src(&bindAddress)) == INVALID_SOCKET)
+        goto end;
+
+    SetLastError(0xdeadbeef);
+
+    io_port = CreateIoCompletionPort((HANDLE)src, previous_port, 125, 0);
+    ok(io_port != NULL, "failed to create completion port %u\n", GetLastError());
+
+    WSADuplicateSocketA( src, GetCurrentProcessId(), &info );
+    dup = WSASocketA(AF_INET, SOCK_STREAM, 0, &info, 0, WSA_FLAG_OVERLAPPED);
+    ok(dup != INVALID_SOCKET, "failed to duplicate socket!\n");
+
+    bret = pAcceptEx(dup, dest, buf, sizeof(buf) - 2*(sizeof(struct sockaddr_in) + 16),
+            sizeof(struct sockaddr_in) + 16, sizeof(struct sockaddr_in) + 16,
+            &num_bytes, &ov);
+    ok(bret == FALSE, "AcceptEx returned %d\n", bret);
+    ok(GetLastError() == ERROR_IO_PENDING, "Last error was %d\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+    bret = GetQueuedCompletionStatus( io_port, &num_bytes, &key, &olp, 200 );
+    ok(bret == FALSE, "failed to get completion status %u\n", bret);
+    ok(GetLastError() == WAIT_TIMEOUT, "Last error was %d\n", GetLastError());
+    ok(key == 0xdeadbeef, "Key is %lu\n", key);
+    ok(num_bytes == 0xdeadbeef, "Number of bytes transferred is %u\n", num_bytes);
+    ok(!olp, "Overlapped structure is at %p\n", olp);
+
+    closesocket(src);
+    src = INVALID_SOCKET;
+    closesocket(dup);
+    dup = INVALID_SOCKET;
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+    bret = GetQueuedCompletionStatus(io_port, &num_bytes, &key, &olp, 100);
+    ok(bret == FALSE, "failed to get completion status %u\n", bret);
+    ok(GetLastError() == ERROR_OPERATION_ABORTED, "Last error was %d\n", GetLastError());
+    ok(key == 125, "Key is %lu\n", key);
+    ok(num_bytes == 0, "Number of bytes transferred is %u\n", num_bytes);
+    ok(olp == &ov, "Overlapped structure is at %p\n", olp);
+    ok(olp && olp->Internal == (ULONG)STATUS_CANCELLED, "Internal status is %lx\n", olp ? olp->Internal : 0);
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+    bret = GetQueuedCompletionStatus( io_port, &num_bytes, &key, &olp, 200 );
+    ok(bret == FALSE, "failed to get completion status %u\n", bret);
+    ok(GetLastError() == WAIT_TIMEOUT, "Last error was %d\n", GetLastError());
+    ok(key == 0xdeadbeef, "Key is %lu\n", key);
+    ok(num_bytes == 0xdeadbeef, "Number of bytes transferred is %u\n", num_bytes);
+    ok(!olp, "Overlapped structure is at %p\n", olp);
+
+    /* Test IOCP with duplicated handle (closing duplicated handle) */
+
+    if ((src = setup_iocp_src(&bindAddress)) == INVALID_SOCKET)
+        goto end;
+
+    SetLastError(0xdeadbeef);
+
+    io_port = CreateIoCompletionPort((HANDLE)src, previous_port, 125, 0);
+    ok(io_port != NULL, "failed to create completion port %u\n", GetLastError());
+
+    WSADuplicateSocketA( src, GetCurrentProcessId(), &info );
+    dup = WSASocketA(AF_INET, SOCK_STREAM, 0, &info, 0, WSA_FLAG_OVERLAPPED);
+    ok(dup != INVALID_SOCKET, "failed to duplicate socket!\n");
+
+    bret = pAcceptEx(dup, dest, buf, sizeof(buf) - 2*(sizeof(struct sockaddr_in) + 16),
+            sizeof(struct sockaddr_in) + 16, sizeof(struct sockaddr_in) + 16,
+            &num_bytes, &ov);
+    ok(bret == FALSE, "AcceptEx returned %d\n", bret);
+    ok(GetLastError() == ERROR_IO_PENDING, "Last error was %d\n", GetLastError());
+
+    closesocket(dup);
+    dup = INVALID_SOCKET;
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+    bret = GetQueuedCompletionStatus( io_port, &num_bytes, &key, &olp, 200 );
+    ok(bret == FALSE, "failed to get completion status %u\n", bret);
+    ok(GetLastError() == WAIT_TIMEOUT, "Last error was %d\n", GetLastError());
+    ok(key == 0xdeadbeef, "Key is %lu\n", key);
+    ok(num_bytes == 0xdeadbeef, "Number of bytes transferred is %u\n", num_bytes);
+    ok(!olp, "Overlapped structure is at %p\n", olp);
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+    bret = GetQueuedCompletionStatus( io_port, &num_bytes, &key, &olp, 200 );
+    ok(bret == FALSE, "failed to get completion status %u\n", bret);
+    ok(GetLastError() == WAIT_TIMEOUT, "Last error was %d\n", GetLastError());
+    ok(key == 0xdeadbeef, "Key is %lu\n", key);
+    ok(num_bytes == 0xdeadbeef, "Number of bytes transferred is %u\n", num_bytes);
+    ok(!olp, "Overlapped structure is at %p\n", olp);
+
+    closesocket(src);
+    src = INVALID_SOCKET;
+
+    bret = GetQueuedCompletionStatus(io_port, &num_bytes, &key, &olp, 100);
+    ok(bret == FALSE, "failed to get completion status %u\n", bret);
+    ok(GetLastError() == ERROR_OPERATION_ABORTED, "Last error was %d\n", GetLastError());
+    ok(key == 125, "Key is %lu\n", key);
+    ok(num_bytes == 0, "Number of bytes transferred is %u\n", num_bytes);
+    ok(olp == &ov, "Overlapped structure is at %p\n", olp);
+    ok(olp && (olp->Internal == (ULONG)STATUS_CANCELLED), "Internal status is %lx\n", olp ? olp->Internal : 0);
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+    bret = GetQueuedCompletionStatus( io_port, &num_bytes, &key, &olp, 200 );
+    ok(bret == FALSE, "failed to get completion status %u\n", bret);
+    ok(GetLastError() == WAIT_TIMEOUT, "Last error was %d\n", GetLastError());
+    ok(key == 0xdeadbeef, "Key is %lu\n", key);
+    ok(num_bytes == 0xdeadbeef, "Number of bytes transferred is %u\n", num_bytes);
+    ok(!olp, "Overlapped structure is at %p\n", olp);
+
+    /* Test IOCP with duplicated handle (closing original handle) */
+
+    if ((src = setup_iocp_src(&bindAddress)) == INVALID_SOCKET)
+        goto end;
+
+    SetLastError(0xdeadbeef);
+
+    io_port = CreateIoCompletionPort((HANDLE)src, previous_port, 125, 0);
+    ok(io_port != NULL, "failed to create completion port %u\n", GetLastError());
+
+    WSADuplicateSocketA( src, GetCurrentProcessId(), &info );
+    dup = WSASocketA(AF_INET, SOCK_STREAM, 0, &info, 0, WSA_FLAG_OVERLAPPED);
+    ok(dup != INVALID_SOCKET, "failed to duplicate socket!\n");
+
+    bret = pAcceptEx(dup, dest, buf, sizeof(buf) - 2*(sizeof(struct sockaddr_in) + 16),
+            sizeof(struct sockaddr_in) + 16, sizeof(struct sockaddr_in) + 16,
+            &num_bytes, &ov);
+    ok(bret == FALSE, "AcceptEx returned %d\n", bret);
+    ok(GetLastError() == ERROR_IO_PENDING, "Last error was %d\n", GetLastError());
+
+    closesocket(src);
+    src = INVALID_SOCKET;
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+    bret = GetQueuedCompletionStatus( io_port, &num_bytes, &key, &olp, 200 );
+    ok(bret == FALSE, "failed to get completion status %u\n", bret);
+    ok(GetLastError() == WAIT_TIMEOUT, "Last error was %d\n", GetLastError());
+    ok(key == 0xdeadbeef, "Key is %lu\n", key);
+    ok(num_bytes == 0xdeadbeef, "Number of bytes transferred is %u\n", num_bytes);
+    ok(!olp, "Overlapped structure is at %p\n", olp);
+
+    closesocket(dup);
+    dup = INVALID_SOCKET;
+
+    bret = GetQueuedCompletionStatus(io_port, &num_bytes, &key, &olp, 100);
+    ok(bret == FALSE, "failed to get completion status %u\n", bret);
+    ok(GetLastError() == ERROR_OPERATION_ABORTED, "Last error was %d\n", GetLastError());
+    ok(key == 125, "Key is %lu\n", key);
+    ok(num_bytes == 0, "Number of bytes transferred is %u\n", num_bytes);
+    ok(olp == &ov, "Overlapped structure is at %p\n", olp);
+    ok(olp && (olp->Internal == (ULONG)STATUS_CANCELLED), "Internal status is %lx\n", olp ? olp->Internal : 0);
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+    bret = GetQueuedCompletionStatus( io_port, &num_bytes, &key, &olp, 200 );
+    ok(bret == FALSE, "failed to get completion status %u\n", bret);
+    ok(GetLastError() == WAIT_TIMEOUT, "Last error was %d\n", GetLastError());
+    ok(key == 0xdeadbeef, "Key is %lu\n", key);
+    ok(num_bytes == 0xdeadbeef, "Number of bytes transferred is %u\n", num_bytes);
+    ok(!olp, "Overlapped structure is at %p\n", olp);
+
+    /* Test IOCP without AcceptEx */
+
+    if ((src = setup_iocp_src(&bindAddress)) == INVALID_SOCKET)
+        goto end;
+
+    SetLastError(0xdeadbeef);
+
+    io_port = CreateIoCompletionPort((HANDLE)src, previous_port, 125, 0);
+    ok(io_port != NULL, "failed to create completion port %u\n", GetLastError());
+
+    closesocket(src);
+    src = INVALID_SOCKET;
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+    bret = GetQueuedCompletionStatus( io_port, &num_bytes, &key, &olp, 200 );
+    ok(bret == FALSE, "failed to get completion status %u\n", bret);
+    ok(GetLastError() == WAIT_TIMEOUT, "Last error was %d\n", GetLastError());
+    ok(key == 0xdeadbeef, "Key is %lu\n", key);
+    ok(num_bytes == 0xdeadbeef, "Number of bytes transferred is %u\n", num_bytes);
+    ok(!olp, "Overlapped structure is at %p\n", olp);
+
+    /* */
+
+    if ((src = setup_iocp_src(&bindAddress)) == INVALID_SOCKET)
+        goto end;
+
+    connector = socket(AF_INET, SOCK_STREAM, 0);
+    if (connector == INVALID_SOCKET) {
+        skip("could not create connector socket, error %d\n", WSAGetLastError());
+        goto end;
+    }
+
+    io_port = CreateIoCompletionPort((HANDLE)src, previous_port, 125, 0);
+    ok(io_port != NULL, "failed to create completion port %u\n", GetLastError());
+
+    io_port = CreateIoCompletionPort((HANDLE)dest, previous_port, 236, 0);
+    ok(io_port != NULL, "failed to create completion port %u\n", GetLastError());
+
+    bret = pAcceptEx(src, dest, buf, sizeof(buf) - 2*(sizeof(struct sockaddr_in) + 16),
+            sizeof(struct sockaddr_in) + 16, sizeof(struct sockaddr_in) + 16,
+            &num_bytes, &ov);
+    ok(bret == FALSE, "AcceptEx returned %d\n", bret);
+    ok(GetLastError() == ERROR_IO_PENDING, "Last error was %d\n", GetLastError());
+
+    iret = connect(connector, (struct sockaddr*)&bindAddress, sizeof(bindAddress));
+    ok(iret == 0, "connecting to accepting socket failed, error %d\n", GetLastError());
+
+    closesocket(connector);
+    connector = INVALID_SOCKET;
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+
+    bret = GetQueuedCompletionStatus(io_port, &num_bytes, &key, &olp, 100);
+    ok(bret == TRUE, "failed to get completion status %u\n", bret);
+    ok(GetLastError() == 0xdeadbeef, "Last error was %d\n", GetLastError());
+    ok(key == 125, "Key is %lu\n", key);
+    ok(num_bytes == 0, "Number of bytes transferred is %u\n", num_bytes);
+    ok(olp == &ov, "Overlapped structure is at %p\n", olp);
+    ok(olp && (olp->Internal == (ULONG)STATUS_SUCCESS), "Internal status is %lx\n", olp ? olp->Internal : 0);
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+    bret = GetQueuedCompletionStatus( io_port, &num_bytes, &key, &olp, 200 );
+    ok(bret == FALSE, "failed to get completion status %u\n", bret);
+    ok(GetLastError() == WAIT_TIMEOUT, "Last error was %d\n", GetLastError());
+    ok(key == 0xdeadbeef, "Key is %lu\n", key);
+    ok(num_bytes == 0xdeadbeef, "Number of bytes transferred is %u\n", num_bytes);
+    ok(!olp, "Overlapped structure is at %p\n", olp);
+
+    if (dest != INVALID_SOCKET)
+        closesocket(dest);
+    if (src != INVALID_SOCKET)
+        closesocket(dest);
+
+    /* */
+
+    if ((src = setup_iocp_src(&bindAddress)) == INVALID_SOCKET)
+        goto end;
+
+    dest = socket(AF_INET, SOCK_STREAM, 0);
+    if (dest == INVALID_SOCKET)
+    {
+        skip("could not create acceptor socket, error %d\n", WSAGetLastError());
+        goto end;
+    }
+
+    connector = socket(AF_INET, SOCK_STREAM, 0);
+    if (connector == INVALID_SOCKET) {
+        skip("could not create connector socket, error %d\n", WSAGetLastError());
+        goto end;
+    }
+
+    io_port = CreateIoCompletionPort((HANDLE)src, previous_port, 125, 0);
+    ok(io_port != NULL, "failed to create completion port %u\n", GetLastError());
+
+    io_port = CreateIoCompletionPort((HANDLE)dest, previous_port, 236, 0);
+    ok(io_port != NULL, "failed to create completion port %u\n", GetLastError());
+
+    bret = pAcceptEx(src, dest, buf, sizeof(buf) - 2*(sizeof(struct sockaddr_in) + 16),
+            sizeof(struct sockaddr_in) + 16, sizeof(struct sockaddr_in) + 16,
+            &num_bytes, &ov);
+    ok(bret == FALSE, "AcceptEx returned %d\n", bret);
+    ok(GetLastError() == ERROR_IO_PENDING, "Last error was %d\n", GetLastError());
+
+    iret = connect(connector, (struct sockaddr*)&bindAddress, sizeof(bindAddress));
+    ok(iret == 0, "connecting to accepting socket failed, error %d\n", GetLastError());
+
+    iret = send(connector, buf, 1, 0);
+    ok(iret == 1, "could not send 1 byte: send %d errno %d\n", iret, WSAGetLastError());
+
+    Sleep(100);
+
+    closesocket(dest);
+    dest = INVALID_SOCKET;
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+
+    bret = GetQueuedCompletionStatus(io_port, &num_bytes, &key, &olp, 100);
+    ok(bret == TRUE, "failed to get completion status %u\n", bret);
+    ok(GetLastError() == 0xdeadbeef, "Last error was %d\n", GetLastError());
+    ok(key == 125, "Key is %lu\n", key);
+    ok(num_bytes == 1, "Number of bytes transferred is %u\n", num_bytes);
+    ok(olp == &ov, "Overlapped structure is at %p\n", olp);
+    ok(olp && (olp->Internal == (ULONG)STATUS_SUCCESS), "Internal status is %lx\n", olp ? olp->Internal : 0);
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+    bret = GetQueuedCompletionStatus( io_port, &num_bytes, &key, &olp, 200 );
+    ok(bret == FALSE, "failed to get completion status %u\n", bret);
+    ok(GetLastError() == WAIT_TIMEOUT, "Last error was %d\n", GetLastError());
+    ok(key == 0xdeadbeef, "Key is %lu\n", key);
+    ok(num_bytes == 0xdeadbeef, "Number of bytes transferred is %u\n", num_bytes);
+    ok(!olp, "Overlapped structure is at %p\n", olp);
+
+    if (src != INVALID_SOCKET)
+        closesocket(src);
+    if (connector != INVALID_SOCKET)
+        closesocket(connector);
+
+    /* */
+
+    if ((src = setup_iocp_src(&bindAddress)) == INVALID_SOCKET)
+        goto end;
+
+    dest = socket(AF_INET, SOCK_STREAM, 0);
+    if (dest == INVALID_SOCKET)
+    {
+        skip("could not create acceptor socket, error %d\n", WSAGetLastError());
+        goto end;
+    }
+
+    connector = socket(AF_INET, SOCK_STREAM, 0);
+    if (connector == INVALID_SOCKET) {
+        skip("could not create connector socket, error %d\n", WSAGetLastError());
+        goto end;
+    }
+
+    io_port = CreateIoCompletionPort((HANDLE)src, previous_port, 125, 0);
+    ok(io_port != NULL, "failed to create completion port %u\n", GetLastError());
+
+    io_port = CreateIoCompletionPort((HANDLE)dest, previous_port, 236, 0);
+    ok(io_port != NULL, "failed to create completion port %u\n", GetLastError());
+
+    bret = pAcceptEx(src, dest, buf, sizeof(buf) - 2*(sizeof(struct sockaddr_in) + 16),
+            sizeof(struct sockaddr_in) + 16, sizeof(struct sockaddr_in) + 16,
+            &num_bytes, &ov);
+    ok(bret == FALSE, "AcceptEx returned %d\n", bret);
+    ok(GetLastError() == ERROR_IO_PENDING, "Last error was %d\n", GetLastError());
+
+    iret = connect(connector, (struct sockaddr*)&bindAddress, sizeof(bindAddress));
+    ok(iret == 0, "connecting to accepting socket failed, error %d\n", GetLastError());
+
+    closesocket(dest);
+    dest = INVALID_SOCKET;
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+
+    bret = GetQueuedCompletionStatus(io_port, &num_bytes, &key, &olp, 100);
+    ok(bret == FALSE, "failed to get completion status %u\n", bret);
+    todo_wine ok(GetLastError() == ERROR_NETNAME_DELETED ||
+                 GetLastError() == ERROR_OPERATION_ABORTED ||
+                 GetLastError() == ERROR_CONNECTION_ABORTED ||
+                 GetLastError() == ERROR_PIPE_NOT_CONNECTED /* win 2000 */,
+                 "Last error was %d\n", GetLastError());
+    ok(key == 125, "Key is %lu\n", key);
+    ok(num_bytes == 0, "Number of bytes transferred is %u\n", num_bytes);
+    ok(olp == &ov, "Overlapped structure is at %p\n", olp);
+    todo_wine ok(olp && (olp->Internal == (ULONG)STATUS_LOCAL_DISCONNECT ||
+                         olp->Internal == (ULONG)STATUS_CANCELLED ||
+                         olp->Internal == (ULONG)STATUS_CONNECTION_ABORTED ||
+                         olp->Internal == (ULONG)STATUS_PIPE_DISCONNECTED /* win 2000 */),
+                         "Internal status is %lx\n", olp ? olp->Internal : 0);
+
+    SetLastError(0xdeadbeef);
+    key = 0xdeadbeef;
+    num_bytes = 0xdeadbeef;
+    olp = (WSAOVERLAPPED *)0xdeadbeef;
+    bret = GetQueuedCompletionStatus( io_port, &num_bytes, &key, &olp, 200 );
+    ok(bret == FALSE, "failed to get completion status %u\n", bret);
+    ok(GetLastError() == WAIT_TIMEOUT, "Last error was %d\n", GetLastError());
+    ok(key == 0xdeadbeef, "Key is %lu\n", key);
+    ok(num_bytes == 0xdeadbeef, "Number of bytes transferred is %u\n", num_bytes);
+    ok(!olp, "Overlapped structure is at %p\n", olp);
+
+
+    end:
+    if (dest != INVALID_SOCKET)
+        closesocket(dest);
+    if (src != INVALID_SOCKET)
+        closesocket(src);
+    if (connector != INVALID_SOCKET)
+        closesocket(connector);
+    CloseHandle(previous_port);
+}
+
+static void test_address_list_query(void)
+{
+    SOCKET_ADDRESS_LIST *address_list;
+    DWORD bytes_returned, size;
+    unsigned int i;
+    SOCKET s;
+    int ret;
+
+    s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    ok(s != INVALID_SOCKET, "Failed to create socket, error %d.\n", WSAGetLastError());
+
+    bytes_returned = 0;
+    ret = WSAIoctl(s, SIO_ADDRESS_LIST_QUERY, NULL, 0, NULL, 0, &bytes_returned, NULL, NULL);
+    ok(ret == SOCKET_ERROR, "Got unexpected ret %d.\n", ret);
+    ok(WSAGetLastError() == WSAEFAULT, "Got unexpected error %d.\n", WSAGetLastError());
+    ok(bytes_returned >= FIELD_OFFSET(SOCKET_ADDRESS_LIST, Address[0]),
+            "Got unexpected bytes_returned %u.\n", bytes_returned);
+
+    size = bytes_returned;
+    bytes_returned = 0;
+    address_list = HeapAlloc(GetProcessHeap(), 0, size * 2);
+    ret = WSAIoctl(s, SIO_ADDRESS_LIST_QUERY, NULL, 0, address_list, size * 2, &bytes_returned, NULL, NULL);
+    ok(!ret, "Got unexpected ret %d, error %d.\n", ret, WSAGetLastError());
+    ok(bytes_returned == size, "Got unexpected bytes_returned %u, expected %u.\n", bytes_returned, size);
+
+    bytes_returned = FIELD_OFFSET(SOCKET_ADDRESS_LIST, Address[address_list->iAddressCount]);
+    for (i = 0; i < address_list->iAddressCount; ++i)
+    {
+        bytes_returned += address_list->Address[i].iSockaddrLength;
+    }
+    ok(size == bytes_returned, "Got unexpected size %u, expected %u.\n", size, bytes_returned);
+
+    ret = WSAIoctl(s, SIO_ADDRESS_LIST_QUERY, NULL, 0, address_list, size, NULL, NULL, NULL);
+    ok(ret == SOCKET_ERROR, "Got unexpected ret %d.\n", ret);
+    ok(WSAGetLastError() == WSAEFAULT, "Got unexpected error %d.\n", WSAGetLastError());
+
+    bytes_returned = 0xdeadbeef;
+    ret = WSAIoctl(s, SIO_ADDRESS_LIST_QUERY, NULL, 0, NULL, size, &bytes_returned, NULL, NULL);
+    ok(ret == SOCKET_ERROR, "Got unexpected ret %d.\n", ret);
+    ok(WSAGetLastError() == WSAEFAULT, "Got unexpected error %d.\n", WSAGetLastError());
+    ok(bytes_returned == size, "Got unexpected bytes_returned %u, expected %u.\n", bytes_returned, size);
+
+    ret = WSAIoctl(s, SIO_ADDRESS_LIST_QUERY, NULL, 0, address_list, 1, &bytes_returned, NULL, NULL);
+    ok(ret == SOCKET_ERROR, "Got unexpected ret %d.\n", ret);
+    ok(WSAGetLastError() == WSAEINVAL, "Got unexpected error %d.\n", WSAGetLastError());
+    ok(bytes_returned == 0, "Got unexpected bytes_returned %u.\n", bytes_returned);
+
+    ret = WSAIoctl(s, SIO_ADDRESS_LIST_QUERY, NULL, 0, address_list,
+            FIELD_OFFSET(SOCKET_ADDRESS_LIST, Address[0]), &bytes_returned, NULL, NULL);
+    ok(ret == SOCKET_ERROR, "Got unexpected ret %d.\n", ret);
+    ok(WSAGetLastError() == WSAEFAULT, "Got unexpected error %d.\n", WSAGetLastError());
+    ok(bytes_returned == size, "Got unexpected bytes_returned %u, expected %u.\n", bytes_returned, size);
+
+    HeapFree(GetProcessHeap(), 0, address_list);
+    closesocket(s);
+}
+
+static DWORD WINAPI inet_ntoa_thread_proc(void *param)
+{
+    ULONG addr;
+    const char *str;
+    HANDLE *event = param;
+
+    addr = inet_addr("4.3.2.1");
+    ok(addr == htonl(0x04030201), "expected 0x04030201, got %08x\n", addr);
+    str = inet_ntoa(*(struct in_addr *)&addr);
+    ok(!strcmp(str, "4.3.2.1"), "expected 4.3.2.1, got %s\n", str);
+
+    SetEvent(event[0]);
+    WaitForSingleObject(event[1], 3000);
+
+    return 0;
+}
+
+static void test_inet_ntoa(void)
+{
+    ULONG addr;
+    const char *str;
+    HANDLE thread, event[2];
+    DWORD tid;
+
+    addr = inet_addr("1.2.3.4");
+    ok(addr == htonl(0x01020304), "expected 0x01020304, got %08x\n", addr);
+    str = inet_ntoa(*(struct in_addr *)&addr);
+    ok(!strcmp(str, "1.2.3.4"), "expected 1.2.3.4, got %s\n", str);
+
+    event[0] = CreateEventW(NULL, TRUE, FALSE, NULL);
+    event[1] = CreateEventW(NULL, TRUE, FALSE, NULL);
+
+    thread = CreateThread(NULL, 0, inet_ntoa_thread_proc, event, 0, &tid);
+    WaitForSingleObject(event[0], 3000);
+
+    ok(!strcmp(str, "1.2.3.4"), "expected 1.2.3.4, got %s\n", str);
+
+    SetEvent(event[1]);
+    WaitForSingleObject(thread, 3000);
+
+    CloseHandle(event[0]);
+    CloseHandle(event[1]);
+    CloseHandle(thread);
+}
+
+static void test_WSALookupService(void)
+{
+    char buffer[4096], strbuff[128];
+    WSAQUERYSETW *qs = NULL;
+    HANDLE hnd;
+    PNLA_BLOB netdata;
+    int ret;
+    DWORD error, offset, bsize;
+
+    if (!pWSALookupServiceBeginW || !pWSALookupServiceEnd || !pWSALookupServiceNextW)
+    {
+        win_skip("WSALookupServiceBeginW or WSALookupServiceEnd or WSALookupServiceNextW not found\n");
+        return;
+    }
+
+    qs = (WSAQUERYSETW *)buffer;
+    memset(qs, 0, sizeof(*qs));
+
+    /* invalid parameter tests */
+    ret = pWSALookupServiceBeginW(NULL, 0, &hnd);
+    error = WSAGetLastError();
+    ok(ret == SOCKET_ERROR, "WSALookupServiceBeginW should have failed\n");
+todo_wine
+    ok(error == WSAEFAULT, "expected 10014, got %d\n", error);
+
+    ret = pWSALookupServiceBeginW(qs, 0, NULL);
+    error = WSAGetLastError();
+    ok(ret == SOCKET_ERROR, "WSALookupServiceBeginW should have failed\n");
+todo_wine
+    ok(error == WSAEFAULT, "expected 10014, got %d\n", error);
+
+    ret = pWSALookupServiceBeginW(qs, 0, &hnd);
+    error = WSAGetLastError();
+    ok(ret == SOCKET_ERROR, "WSALookupServiceBeginW should have failed\n");
+todo_wine
+    ok(error == WSAEINVAL
+       || broken(error == ERROR_INVALID_PARAMETER) /* == XP */
+       || broken(error == WSAEFAULT) /* == NT */
+       || broken(error == WSASERVICE_NOT_FOUND) /* == 2000 */,
+       "expected 10022, got %d\n", error);
+
+    ret = pWSALookupServiceEnd(NULL);
+    error = WSAGetLastError();
+todo_wine
+    ok(ret == SOCKET_ERROR, "WSALookupServiceEnd should have failed\n");
+todo_wine
+    ok(error == ERROR_INVALID_HANDLE, "expected 6, got %d\n", error);
+
+    /* standard network list query */
+    qs->dwSize = sizeof(*qs);
+    hnd = (HANDLE)0xdeadbeef;
+    ret = pWSALookupServiceBeginW(qs, LUP_RETURN_ALL | LUP_DEEP, &hnd);
+    error = WSAGetLastError();
+    if(ret && error == ERROR_INVALID_PARAMETER)
+    {
+        win_skip("the current WSALookupServiceBeginW test is not supported in win <= 2000\n");
+        return;
+    }
+
+todo_wine
+    ok(!ret, "WSALookupServiceBeginW failed unexpectedly with error %d\n", error);
+todo_wine
+    ok(hnd != (HANDLE)0xdeadbeef, "Handle was not filled\n");
+
+    offset = 0;
+    do
+    {
+        memset(qs, 0, sizeof(*qs));
+        bsize = sizeof(buffer);
+
+        if (pWSALookupServiceNextW(hnd, 0, &bsize, qs) == SOCKET_ERROR)
+        {
+            error = WSAGetLastError();
+            if (error == WSA_E_NO_MORE) break;
+            ok(0, "Error %d happened while listing services\n", error);
+            break;
+        }
+
+        WideCharToMultiByte(CP_ACP, 0, qs->lpszServiceInstanceName, -1,
+                            strbuff, sizeof(strbuff), NULL, NULL);
+        trace("Network Name: %s\n", strbuff);
+
+        /* network data is written in the blob field */
+        if (qs->lpBlob)
+        {
+            /* each network may have multiple NLA_BLOB information structures */
+            do
+            {
+                netdata = (PNLA_BLOB) &qs->lpBlob->pBlobData[offset];
+                switch (netdata->header.type)
+                {
+                    case NLA_RAW_DATA:
+                        trace("\tNLA Data Type: NLA_RAW_DATA\n");
+                        break;
+                    case NLA_INTERFACE:
+                        trace("\tNLA Data Type: NLA_INTERFACE\n");
+                        trace("\t\tType: %d\n", netdata->data.interfaceData.dwType);
+                        trace("\t\tSpeed: %d\n", netdata->data.interfaceData.dwSpeed);
+                        trace("\t\tAdapter Name: %s\n", netdata->data.interfaceData.adapterName);
+                        break;
+                    case NLA_802_1X_LOCATION:
+                        trace("\tNLA Data Type: NLA_802_1X_LOCATION\n");
+                        trace("\t\tInformation: %s\n", netdata->data.locationData.information);
+                        break;
+                    case NLA_CONNECTIVITY:
+                        switch (netdata->data.connectivity.type)
+                        {
+                            case NLA_NETWORK_AD_HOC:
+                                trace("\t\tNetwork Type: AD HOC\n");
+                                break;
+                            case NLA_NETWORK_MANAGED:
+                                trace("\t\tNetwork Type: Managed\n");
+                                break;
+                            case NLA_NETWORK_UNMANAGED:
+                                trace("\t\tNetwork Type: Unmanaged\n");
+                                break;
+                            case NLA_NETWORK_UNKNOWN:
+                                trace("\t\tNetwork Type: Unknown\n");
+                        }
+                        switch (netdata->data.connectivity.internet)
+                        {
+                            case NLA_INTERNET_NO:
+                                trace("\t\tInternet connectivity: No\n");
+                                break;
+                            case NLA_INTERNET_YES:
+                                trace("\t\tInternet connectivity: Yes\n");
+                                break;
+                            case NLA_INTERNET_UNKNOWN:
+                                trace("\t\tInternet connectivity: Unknown\n");
+                                break;
+                        }
+                        break;
+                    case NLA_ICS:
+                        trace("\tNLA Data Type: NLA_ICS\n");
+                        trace("\t\tSpeed: %d\n",
+                               netdata->data.ICS.remote.speed);
+                        trace("\t\tType: %d\n",
+                               netdata->data.ICS.remote.type);
+                        trace("\t\tState: %d\n",
+                               netdata->data.ICS.remote.state);
+                        WideCharToMultiByte(CP_ACP, 0, netdata->data.ICS.remote.machineName, -1,
+                            strbuff, sizeof(strbuff), NULL, NULL);
+                        trace("\t\tMachine Name: %s\n", strbuff);
+                        WideCharToMultiByte(CP_ACP, 0, netdata->data.ICS.remote.sharedAdapterName, -1,
+                            strbuff, sizeof(strbuff), NULL, NULL);
+                        trace("\t\tShared Adapter Name: %s\n", strbuff);
+                        break;
+                    default:
+                        trace("\tNLA Data Type: Unknown\n");
+                        break;
+                }
+            }
+            while (offset);
+        }
+    }
+    while (1);
+
+    ret = pWSALookupServiceEnd(hnd);
+    ok(!ret, "WSALookupServiceEnd failed unexpectedly\n");
+}
+
 /**************** Main program  ***************/
 
 START_TEST( sock )
@@ -5092,6 +8219,8 @@ START_TEST( sock )
 
     Init();
 
+    test_inet_ntoa();
+    test_inet_pton();
     test_set_getsockopt();
     test_so_reuseaddr();
     test_ip_pktinfo();
@@ -5108,6 +8237,7 @@ START_TEST( sock )
 
     test_getservbyname();
     test_WSASocket();
+    test_WSADuplicateSocket();
 
     test_WSAAddressToStringA();
     test_WSAAddressToStringW();
@@ -5116,6 +8246,7 @@ START_TEST( sock )
     test_WSAStringToAddressW();
 
     test_errors();
+    test_listen();
     test_select();
     test_accept();
     test_getpeername();
@@ -5126,6 +8257,7 @@ START_TEST( sock )
     test_dns();
     test_gethostbyname_hack();
 
+    test_WSASendMsg();
     test_WSASendTo();
     test_WSARecv();
 
@@ -5134,15 +8266,22 @@ START_TEST( sock )
 
     test_ipv6only();
     test_GetAddrInfoW();
-
+    test_getaddrinfo();
     test_AcceptEx();
     test_ConnectEx();
 
     test_sioRoutingInterfaceQuery();
+    test_sioAddressListChange();
+
+    test_WSALookupService();
 
     test_WSAAsyncGetServByPort();
+    test_WSAAsyncGetServByName();
 
-    /* this is a io heavy test, do it at the end so the kernel doesn't start dropping packets */
+    test_completion_port();
+    test_address_list_query();
+
+    /* this is an io heavy test, do it at the end so the kernel doesn't start dropping packets */
     test_send();
     test_synchronous_WSAIoctl();
 

@@ -1,42 +1,14 @@
 MODULE    = appwiz.cpl
 IMPORTS   = uuid urlmon advpack comctl32 advapi32 shell32 user32 comdlg32
 DELAYIMPORTS = msi
-EXTRADEFS = -DINSTALL_DATADIR="\"$(datadir)\""
 
 C_SRCS = \
 	addons.c \
 	appwiz.c
 
-RC_SRCS = \
-	Bg.rc \
-	Da.rc \
-	De.rc \
-	En.rc \
-	Es.rc \
-	Fr.rc \
-	He.rc \
-	Hu.rc \
-	It.rc \
-	Ja.rc \
-	Ko.rc \
-	Lt.rc \
-	Nl.rc \
-	No.rc \
-	Pl.rc \
-	Pt.rc \
-	Ro.rc \
-	Ru.rc \
-	Si.rc \
-	Sr.rc \
-	Sv.rc \
-	Tr.rc \
-	Uk.rc \
-	Zh.rc \
-	appwiz.rc
-
-PO_SRCS = appwiz.rc
+RC_SRCS = appwiz.rc
 
 SVG_SRCS = \
 	appwiz.svg
 
-@MAKE_DLL_RULES@
+addons_EXTRADEFS = -DINSTALL_DATADIR="\"${datadir}\""

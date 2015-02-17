@@ -29,6 +29,7 @@
 #include "winbase.h"
 #include "wingdi.h"
 #include "winnls.h"
+#include "imm.h"
 #include "win.h"
 #include "user_private.h"
 #include "controls.h"
@@ -47,7 +48,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(win);
 
 static short iF10Key = 0;
 static short iMenuSysKey = 0;
-static const WCHAR imm32W[] = { 'i','m','m','3','2','\0' };
 
 /***********************************************************************
  *           DEFWND_HandleWindowPosChanged
@@ -167,7 +167,7 @@ HBRUSH DEFWND_ControlColor( HDC hDC, UINT ctlType )
          * look different from the window background.
          */
         if (bk == GetSysColor(COLOR_WINDOW))
-            return SYSCOLOR_55AABrush;
+            return SYSCOLOR_Get55AABrush();
 
         UnrealizeObject( hb );
         return hb;
@@ -223,70 +223,6 @@ static void DEFWND_Print( HWND hwnd, HDC hdc, ULONG uFlags)
 }
 
 
-/*
- * helpers for calling IMM32
- *
- * WM_IME_* messages are generated only by IMM32,
- * so I assume imm32 is already LoadLibrary-ed.
- */
-static HWND DEFWND_ImmGetDefaultIMEWnd( HWND hwnd )
-{
-    HINSTANCE hInstIMM = GetModuleHandleW( imm32W );
-    HWND (WINAPI *pFunc)(HWND);
-    HWND hwndRet = 0;
-
-    if (!hInstIMM)
-    {
-        ERR( "cannot get IMM32 handle\n" );
-        return 0;
-    }
-
-    pFunc = (void*)GetProcAddress(hInstIMM,"ImmGetDefaultIMEWnd");
-    if ( pFunc != NULL )
-        hwndRet = (*pFunc)( hwnd );
-
-    return hwndRet;
-}
-
-static BOOL DEFWND_ImmIsUIMessageA( HWND hwndIME, UINT msg, WPARAM wParam, LPARAM lParam )
-{
-    HINSTANCE hInstIMM = GetModuleHandleW( imm32W );
-    BOOL (WINAPI *pFunc)(HWND,UINT,WPARAM,LPARAM);
-    BOOL fRet = FALSE;
-
-    if (!hInstIMM)
-    {
-        ERR( "cannot get IMM32 handle\n" );
-        return FALSE;
-    }
-
-    pFunc = (void*)GetProcAddress(hInstIMM,"ImmIsUIMessageA");
-    if ( pFunc != NULL )
-        fRet = (*pFunc)( hwndIME, msg, wParam, lParam );
-
-    return fRet;
-}
-
-static BOOL DEFWND_ImmIsUIMessageW( HWND hwndIME, UINT msg, WPARAM wParam, LPARAM lParam )
-{
-    HINSTANCE hInstIMM = GetModuleHandleW( imm32W );
-    BOOL (WINAPI *pFunc)(HWND,UINT,WPARAM,LPARAM);
-    BOOL fRet = FALSE;
-
-    if (!hInstIMM)
-    {
-        ERR( "cannot get IMM32 handle\n" );
-        return FALSE;
-    }
-
-    pFunc = (void*)GetProcAddress(hInstIMM,"ImmIsUIMessageW");
-    if ( pFunc != NULL )
-        fRet = (*pFunc)( hwndIME, msg, wParam, lParam );
-
-    return fRet;
-}
-
-
 
 /***********************************************************************
  *           DEFWND_DefWinProc
@@ -334,21 +270,11 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         return NC_HandleNCLButtonDblClk( hwnd, wParam, lParam );
 
     case WM_NCRBUTTONDOWN:
-        /* in Windows, capture is taken when right-clicking on the caption bar */
-        if (wParam==HTCAPTION)
-        {
-            SetCapture(hwnd);
-        }
-        break;
+        return NC_HandleNCRButtonDown( hwnd, wParam, lParam );
 
     case WM_RBUTTONUP:
         {
             POINT pt;
-
-            if (hwnd == GetCapture())
-                /* release capture if we took it on WM_NCRBUTTONDOWN */
-                ReleaseCapture();
-
             pt.x = (short)LOWORD(lParam);
             pt.y = (short)HIWORD(lParam);
             ClientToScreen(hwnd, &pt);
@@ -729,6 +655,16 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         SendMessageW( GetParent(hwnd), msg, wParam, lParam );
         break;
 
+    case WM_STYLECHANGED:
+        if (wParam == GWL_STYLE && (GetWindowLongW( hwnd, GWL_EXSTYLE ) & WS_EX_LAYERED))
+        {
+            STYLESTRUCT *style = (STYLESTRUCT *)lParam;
+            if ((style->styleOld ^ style->styleNew) & (WS_CAPTION|WS_THICKFRAME|WS_VSCROLL|WS_HSCROLL))
+                SetWindowPos( hwnd, 0, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER |
+                              SWP_NOSIZE | SWP_NOMOVE | SWP_NOCLIENTSIZE | SWP_NOCLIENTMOVE );
+        }
+        break;
+
     case WM_APPCOMMAND:
         {
             HWND parent = GetParent(hwnd);
@@ -837,6 +773,13 @@ LRESULT WINAPI DefWindowProcA( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             if (!IS_INTRESOURCE(cs->lpszName))
                 DEFWND_SetTextA( hwnd, cs->lpszName );
             result = 1;
+
+            if(cs->style & (WS_HSCROLL | WS_VSCROLL))
+            {
+                SCROLLINFO si = {sizeof si, SIF_ALL, 0, 100, 0, 0, 0};
+                SetScrollInfo( hwnd, SB_HORZ, &si, FALSE );
+                SetScrollInfo( hwnd, SB_VERT, &si, FALSE );
+            }
         }
         break;
 
@@ -888,21 +831,17 @@ LRESULT WINAPI DefWindowProcA( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
     case WM_IME_ENDCOMPOSITION:
     case WM_IME_SELECT:
     case WM_IME_NOTIFY:
+    case WM_IME_CONTROL:
         {
-            HWND hwndIME;
-
-            hwndIME = DEFWND_ImmGetDefaultIMEWnd( hwnd );
+            HWND hwndIME = ImmGetDefaultIMEWnd( hwnd );
             if (hwndIME)
                 result = SendMessageA( hwndIME, msg, wParam, lParam );
         }
         break;
     case WM_IME_SETCONTEXT:
         {
-            HWND hwndIME;
-
-            hwndIME = DEFWND_ImmGetDefaultIMEWnd( hwnd );
-            if (hwndIME)
-                result = DEFWND_ImmIsUIMessageA( hwndIME, msg, wParam, lParam );
+            HWND hwndIME = ImmGetDefaultIMEWnd( hwnd );
+            if (hwndIME) result = ImmIsUIMessageA( hwndIME, msg, wParam, lParam );
         }
         break;
 
@@ -984,6 +923,13 @@ LRESULT WINAPI DefWindowProcW(
             if (!IS_INTRESOURCE(cs->lpszName))
                 DEFWND_SetTextW( hwnd, cs->lpszName );
             result = 1;
+
+            if(cs->style & (WS_HSCROLL | WS_VSCROLL))
+            {
+                SCROLLINFO si = {sizeof si, SIF_ALL, 0, 100, 0, 0, 0};
+                SetScrollInfo( hwnd, SB_HORZ, &si, FALSE );
+                SetScrollInfo( hwnd, SB_VERT, &si, FALSE );
+            }
         }
         break;
 
@@ -1028,11 +974,8 @@ LRESULT WINAPI DefWindowProcW(
 
     case WM_IME_SETCONTEXT:
         {
-            HWND hwndIME;
-
-            hwndIME = DEFWND_ImmGetDefaultIMEWnd( hwnd );
-            if (hwndIME)
-                result = DEFWND_ImmIsUIMessageW( hwndIME, msg, wParam, lParam );
+            HWND hwndIME = ImmGetDefaultIMEWnd( hwnd );
+            if (hwndIME) result = ImmIsUIMessageW( hwndIME, msg, wParam, lParam );
         }
         break;
 
@@ -1041,10 +984,9 @@ LRESULT WINAPI DefWindowProcW(
     case WM_IME_ENDCOMPOSITION:
     case WM_IME_SELECT:
     case WM_IME_NOTIFY:
+    case WM_IME_CONTROL:
         {
-            HWND hwndIME;
-
-            hwndIME = DEFWND_ImmGetDefaultIMEWnd( hwnd );
+            HWND hwndIME = ImmGetDefaultIMEWnd( hwnd );
             if (hwndIME)
                 result = SendMessageW( hwndIME, msg, wParam, lParam );
         }

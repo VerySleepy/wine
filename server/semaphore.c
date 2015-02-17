@@ -45,8 +45,8 @@ struct semaphore
 
 static void semaphore_dump( struct object *obj, int verbose );
 static struct object_type *semaphore_get_type( struct object *obj );
-static int semaphore_signaled( struct object *obj, struct thread *thread );
-static int semaphore_satisfied( struct object *obj, struct thread *thread );
+static int semaphore_signaled( struct object *obj, struct wait_queue_entry *entry );
+static void semaphore_satisfied( struct object *obj, struct wait_queue_entry *entry );
 static unsigned int semaphore_map_access( struct object *obj, unsigned int access );
 static int semaphore_signal( struct object *obj, unsigned int access );
 
@@ -136,27 +136,26 @@ static struct object_type *semaphore_get_type( struct object *obj )
     return get_object_type( &str );
 }
 
-static int semaphore_signaled( struct object *obj, struct thread *thread )
+static int semaphore_signaled( struct object *obj, struct wait_queue_entry *entry )
 {
     struct semaphore *sem = (struct semaphore *)obj;
     assert( obj->ops == &semaphore_ops );
     return (sem->count > 0);
 }
 
-static int semaphore_satisfied( struct object *obj, struct thread *thread )
+static void semaphore_satisfied( struct object *obj, struct wait_queue_entry *entry )
 {
     struct semaphore *sem = (struct semaphore *)obj;
     assert( obj->ops == &semaphore_ops );
     assert( sem->count );
     sem->count--;
-    return 0;  /* not abandoned */
 }
 
 static unsigned int semaphore_map_access( struct object *obj, unsigned int access )
 {
-    if (access & GENERIC_READ)    access |= STANDARD_RIGHTS_READ | SYNCHRONIZE;
+    if (access & GENERIC_READ)    access |= STANDARD_RIGHTS_READ | SEMAPHORE_QUERY_STATE;
     if (access & GENERIC_WRITE)   access |= STANDARD_RIGHTS_WRITE | SEMAPHORE_MODIFY_STATE;
-    if (access & GENERIC_EXECUTE) access |= STANDARD_RIGHTS_EXECUTE;
+    if (access & GENERIC_EXECUTE) access |= STANDARD_RIGHTS_EXECUTE | SYNCHRONIZE;
     if (access & GENERIC_ALL)     access |= STANDARD_RIGHTS_ALL | SEMAPHORE_ALL_ACCESS;
     return access & ~(GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL);
 }
@@ -235,6 +234,20 @@ DECL_HANDLER(release_semaphore)
                                                    SEMAPHORE_MODIFY_STATE, &semaphore_ops )))
     {
         release_semaphore( sem, req->count, &reply->prev_count );
+        release_object( sem );
+    }
+}
+
+/* query details about the semaphore */
+DECL_HANDLER(query_semaphore)
+{
+    struct semaphore *sem;
+
+    if ((sem = (struct semaphore *)get_handle_obj( current->process, req->handle,
+                                                   SEMAPHORE_QUERY_STATE, &semaphore_ops )))
+    {
+        reply->current = sem->count;
+        reply->max = sem->max;
         release_object( sem );
     }
 }

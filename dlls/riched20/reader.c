@@ -52,8 +52,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(richedit);
 
-extern HANDLE me_heap;
-
 static int	_RTFGetChar(RTF_Info *);
 static void	_RTFGetToken (RTF_Info *);
 static void	_RTFGetToken2 (RTF_Info *);
@@ -258,7 +256,7 @@ void RTFInit(RTF_Info *info)
 	info->rtfLineNum = 0;
 	info->rtfLinePos = 0;
 	info->prevChar = EOF;
-	info->bumpLine = 0;
+        info->bumpLine = FALSE;
 
 	info->dwCPOutputCount = 0;
         if (!info->cpOutputBuffer)
@@ -712,7 +710,7 @@ static void _RTFGetToken2(RTF_Info *info)
 
 /*
  * Read the next character from the input.  This handles setting the
- * current line and position-within-line variables.  Those variable are
+ * current line and position-within-line variables.  Those variables are
  * set correctly whether lines end with CR, LF, or CRLF (the last being
  * the tricky case).
  *
@@ -724,7 +722,7 @@ static void _RTFGetToken2(RTF_Info *info)
 static int GetChar(RTF_Info *info)
 {
 	int	c;
-	int	oldBumpLine;
+        BOOL    oldBumpLine;
 
 	if ((c = _RTFGetChar(info)) != EOF)
 	{
@@ -732,16 +730,16 @@ static int GetChar(RTF_Info *info)
 		info->rtfTextBuf[info->rtfTextLen] = '\0';
 	}
 	if (info->prevChar == EOF)
-		info->bumpLine = 1;
-	oldBumpLine = info->bumpLine;	/* non-zero if prev char was line ending */
-	info->bumpLine = 0;
+                info->bumpLine = TRUE;
+        oldBumpLine = info->bumpLine; /* TRUE if prev char was line ending */
+        info->bumpLine = FALSE;
 	if (c == '\r')
-		info->bumpLine = 1;
+                info->bumpLine = TRUE;
 	else if (c == '\n')
 	{
-		info->bumpLine = 1;
+                info->bumpLine = TRUE;
 		if (info->prevChar == '\r')		/* oops, previous \r wasn't */
-			oldBumpLine = 0;	/* really a line ending */
+                        oldBumpLine = FALSE;	/* really a line ending */
 	}
 	++info->rtfLinePos;
 	if (oldBumpLine)	/* were we supposed to increment the */
@@ -2397,8 +2395,11 @@ CharAttr(RTF_Info *info)
                 font = RTFGetFont(info, info->rtfParam);
                 if (font)
                 {
-                        if (info->ansiCodePage != CP_UTF8)
+                        if (info->ansiCodePage != CP_UTF8 && info->codePage != font->rtfFCodePage)
+                        {
+                                RTFFlushOutputBuffer(info);
                                 info->codePage = font->rtfFCodePage;
+                        }
                         TRACE("font %d codepage %d\n", info->rtfParam, info->codePage);
                 }
                 else

@@ -46,9 +46,6 @@
 /*****************************************************************************
  * Interfaces
  */
-typedef struct IDirectMusicPerformance8Impl IDirectMusicPerformance8Impl;
-typedef struct IDirectMusicSegment8Impl IDirectMusicSegment8Impl;
-typedef struct IDirectMusicSegmentState8Impl IDirectMusicSegmentState8Impl;
 typedef struct IDirectMusicGraphImpl IDirectMusicGraphImpl;
 typedef struct IDirectMusicAudioPathImpl IDirectMusicAudioPathImpl;
 
@@ -65,21 +62,21 @@ typedef struct IDirectMusicWaveTrack IDirectMusicWaveTrack;
 /*****************************************************************************
  * ClassFactory
  */
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicPerformanceImpl (LPCGUID lpcGUID, LPVOID *ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicSegmentImpl (LPCGUID lpcGUID, LPVOID *ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicSegmentStateImpl (LPCGUID lpcGUID, LPVOID *ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicGraphImpl (LPCGUID lpcGUID, LPVOID *ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicAudioPathImpl (LPCGUID lpcGUID, LPVOID *ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmperformance(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmsegment(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmsegmentstate(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmgraph(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmaudiopath(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
 
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicLyricsTrack (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicMarkerTrack (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicParamControlTrack (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicSegTriggerTrack (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicSeqTrack (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicSysExTrack (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicTempoTrack (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicTimeSigTrack (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicWaveTrack (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmlyricstrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmmarkertrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmparamcontroltrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmsegtriggertrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmseqtrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmsysextrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmtempotrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmtimesigtrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmwavetrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
 
 
 /*****************************************************************************
@@ -122,93 +119,6 @@ typedef struct DMUSIC_PRIVATE_PCHANNEL_ {
 	DWORD group; /* ... in this group ... */
 	IDirectMusicPort *port; /* ... at this port */
 } DMUSIC_PRIVATE_PCHANNEL, *LPDMUSIC_PRIVATE_PCHANNEL;
-
-/*****************************************************************************
- * IDirectMusicPerformance8Impl implementation structure
- */
-struct IDirectMusicPerformance8Impl {
-  /* IUnknown fields */
-  const IDirectMusicPerformance8Vtbl *lpVtbl;
-  LONG                   ref;
-
-  /* IDirectMusicPerformanceImpl fields */
-  IDirectMusic8*         pDirectMusic;
-  IDirectSound*          pDirectSound;
-  IDirectMusicGraph*     pToolGraph;
-  DMUS_AUDIOPARAMS       pParams;
-
-  /* global parameters */
-  BOOL  fAutoDownload;
-  char  cMasterGrooveLevel;
-  float fMasterTempo;
-  long  lMasterVolume;
-	
-  /* performance channels */
-  DMUSIC_PRIVATE_PCHANNEL PChannel[32];
-
-   /* IDirectMusicPerformance8Impl fields */
-  IDirectMusicAudioPath* pDefaultPath;
-  HANDLE hNotification;
-  REFERENCE_TIME rtMinimum;
-
-  REFERENCE_TIME rtLatencyTime;
-  DWORD dwBumperLength;
-  DWORD dwPrepareTime;
-  /** Message Processing */
-  HANDLE         procThread;
-  DWORD          procThreadId;
-  REFERENCE_TIME procThreadStartTime;
-  BOOL           procThreadTicStarted;
-  CRITICAL_SECTION safe;
-  struct DMUS_PMSGItem* head; 
-  struct DMUS_PMSGItem* imm_head; 
-};
-
-/*****************************************************************************
- * IDirectMusicSegment8Impl implementation structure
- */
-struct IDirectMusicSegment8Impl {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicSegment8Vtbl *SegmentVtbl;
-  const IDirectMusicObjectVtbl *ObjectVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicSegment8Impl fields */
-  LPDMUS_OBJECTDESC      pDesc;
-  DMUS_IO_SEGMENT_HEADER header;
-  IDirectMusicGraph*     pGraph; 
-  struct list Tracks;
-};
-
-/*****************************************************************************
- * IDirectMusicSegmentState8Impl implementation structure
- */
-struct IDirectMusicSegmentState8Impl {
-  /* IUnknown fields */
-  const IDirectMusicSegmentState8Vtbl *lpVtbl;
-  LONG           ref;
-
-  /* IDirectMusicSegmentState8Impl fields */
-};
-
-/*****************************************************************************
- * IDirectMusicGraphImpl implementation structure
- */
-struct IDirectMusicGraphImpl {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicGraphVtbl *GraphVtbl;
-  const IDirectMusicObjectVtbl *ObjectVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicGraphImpl fields */
-  LPDMUS_OBJECTDESC pDesc;
-  WORD              num_tools;
-  struct list       Tools;
-};
 
 /*****************************************************************************
  * IDirectMusicAudioPathImpl implementation structure

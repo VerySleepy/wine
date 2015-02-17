@@ -1,10 +1,10 @@
 @ stub AllowPermLayer
 @ stub ApphelpCheckExe
-@ stub ApphelpCheckInstallShieldPackage
-@ stub ApphelpCheckMsiPackage
+@ stdcall ApphelpCheckInstallShieldPackage(ptr wstr)
+@ stdcall ApphelpCheckMsiPackage(ptr wstr)
 @ stub ApphelpCheckRunApp
 @ stub ApphelpCheckRunAppEx
-@ stub ApphelpCheckShellObject
+@ stdcall ApphelpCheckShellObject(ptr long ptr)
 @ stub ApphelpCreateAppcompatData
 @ stub ApphelpFixMsiPackage
 @ stub ApphelpFixMsiPackageExe
@@ -22,11 +22,11 @@
 @ stub SdbApphelpNotifyExSdbApphelpNotifyEx
 @ stub SdbBuildCompatEnvVariables
 @ stub SdbCloseApphelpInformation
-@ stub SdbCloseDatabase
+@ stdcall SdbCloseDatabase(ptr)
 @ stub SdbCloseDatabaseWrite
 @ stub SdbCloseLocalDatabase
 @ stub SdbCommitIndexes
-@ stub SdbCreateDatabase
+@ stdcall SdbCreateDatabase(wstr long)
 @ stub SdbCreateHelpCenterURL
 @ stub SdbCreateMsiTransformFile
 @ stub SdbDeclareIndex
@@ -62,7 +62,7 @@
 @ stub SdbGetFileImageType
 @ stub SdbGetFileImageTypeEx
 @ stub SdbGetFileInfo
-@ stub SdbGetFirstChild
+@ stdcall SdbGetFirstChild(ptr long)
 @ stub SdbGetIndex
 @ stub SdbGetItemFromItemRef
 @ stub SdbGetLayerName
@@ -83,7 +83,7 @@
 @ stub SdbGrabMatchingInfoEx
 @ stub SdbGUIDFromString
 @ stub SdbGUIDToString
-@ stub SdbInitDatabase
+@ stdcall SdbInitDatabase(long wstr)
 @ stub SdbInitDatabaseEx
 @ stub SdbIsNullGUID
 @ stub SdbIsStandardDatabase
@@ -96,7 +96,7 @@
 @ stub SdbOpenApphelpInformation
 @ stub SdbOpenApphelpInformationByID
 @ stub SdbOpenApphelpResourceFile
-@ stub SdbOpenDatabase
+@ stdcall SdbOpenDatabase(wstr long)
 @ stub SdbOpenDbFromGuid
 @ stub SdbOpenLocalDatabase
 @ stub SdbPackAppCompatData
@@ -164,4 +164,4 @@
 @ stub SetPermLayers
 @ stub ShimDbgPrint
 @ stub ShimDumpCache
-@ stub ShimFlushCache
+@ stdcall ShimFlushCache(ptr ptr str long)

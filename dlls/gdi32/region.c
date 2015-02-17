@@ -105,13 +105,6 @@ SOFTWARE.
 
 WINE_DEFAULT_DEBUG_CHANNEL(region);
 
-  /* GDI logical region object */
-typedef struct
-{
-    GDIOBJHDR   header;
-    WINEREGION  rgn;
-} RGNOBJ;
-
 
 static HGDIOBJ REGION_SelectObject( HGDIOBJ handle, HDC hdc );
 static BOOL REGION_DeleteObject( HGDIOBJ handle );
@@ -125,15 +118,12 @@ static const struct gdi_obj_funcs region_funcs =
     REGION_DeleteObject   /* pDeleteObject */
 };
 
-/*  1 if two RECTs overlap.
- *  0 if two RECTs do not overlap.
- */
-#define EXTENTCHECK(r1, r2) \
-	((r1)->right > (r2)->left && \
-	 (r1)->left < (r2)->right && \
-	 (r1)->bottom > (r2)->top && \
-	 (r1)->top < (r2)->bottom)
-
+/* Check if two RECTs overlap. */
+static inline BOOL overlapping( const RECT *r1, const RECT *r2 )
+{
+    return (r1->right > r2->left && r1->left < r2->right &&
+            r1->bottom > r2->top && r1->top < r2->bottom);
+}
 
 static BOOL add_rect( WINEREGION *reg, INT left, INT top, INT right, INT bottom )
 {
@@ -153,18 +143,16 @@ static BOOL add_rect( WINEREGION *reg, INT left, INT top, INT right, INT bottom 
     return TRUE;
 }
 
-#define EMPTY_REGION(pReg) do { \
-    (pReg)->numRects = 0; \
-    (pReg)->extents.left = (pReg)->extents.top = 0; \
-    (pReg)->extents.right = (pReg)->extents.bottom = 0; \
- } while(0)
+static inline void empty_region( WINEREGION *reg )
+{
+    reg->numRects = 0;
+    reg->extents.left = reg->extents.top = reg->extents.right = reg->extents.bottom = 0;
+}
 
-#define INRECT(r, x, y) \
-      ( ( ((r).right >  x)) && \
-        ( ((r).left <= x)) && \
-        ( ((r).bottom >  y)) && \
-        ( ((r).top <= y)) )
-
+static inline BOOL is_in_rect( const RECT *rect, int x, int y )
+{
+    return (rect->right > x && rect->left <= x && rect->bottom > y && rect->top <= y);
+}
 
 /*
  * number of points to buffer before sending them off
@@ -177,11 +165,39 @@ static BOOL add_rect( WINEREGION *reg, INT left, INT top, INT right, INT bottom 
  * the buffers together
  */
 
-typedef struct _POINTBLOCK {
+struct point_block
+{
     POINT pts[NUMPTSTOBUFFER];
-    struct _POINTBLOCK *next;
-} POINTBLOCK;
+    int count;
+    struct point_block *next;
+};
 
+static struct point_block *add_point( struct point_block *block, int x, int y )
+{
+    if (block->count == NUMPTSTOBUFFER)
+    {
+        struct point_block *new = HeapAlloc( GetProcessHeap(), 0, sizeof(*new) );
+        if (!new) return NULL;
+        block->next = new;
+        new->count = 0;
+        new->next = NULL;
+        block = new;
+    }
+    block->pts[block->count].x = x;
+    block->pts[block->count].y = y;
+    block->count++;
+    return block;
+}
+
+static void free_point_blocks( struct point_block *block )
+{
+    while (block)
+    {
+	struct point_block *tmp = block->next;
+	HeapFree( GetProcessHeap(), 0, block );
+	block = tmp;
+    }
+}
 
 
 /*
@@ -198,6 +214,22 @@ typedef struct _POINTBLOCK {
  *     overhead is out of the question.
  *     See the author for a derivation if needed.
  */
+
+
+/*
+ *     This structure contains all of the information needed
+ *     to run the bresenham algorithm.
+ *     The variables may be hardcoded into the declarations
+ *     instead of using this structure to make use of
+ *     register declarations.
+ */
+struct bres_info
+{
+    INT minor_axis;	/* minor axis        */
+    INT d;		/* decision variable */
+    INT m, m1;       	/* slope and slope+1 */
+    INT incr1, incr2;	/* error increments */
+};
 
 
 /*
@@ -219,76 +251,58 @@ typedef struct _POINTBLOCK {
  *  If it is moving to the left, then we don't want it to flip until
  *  we traverse an entire pixel.
  */
-#define BRESINITPGON(dy, x1, x2, xStart, d, m, m1, incr1, incr2) { \
-    int dx;      /* local storage */ \
-\
-    /* \
-     *  if the edge is horizontal, then it is ignored \
-     *  and assumed not to be processed.  Otherwise, do this stuff. \
-     */ \
-    if ((dy) != 0) { \
-        xStart = (x1); \
-        dx = (x2) - xStart; \
-        if (dx < 0) { \
-            m = dx / (dy); \
-            m1 = m - 1; \
-            incr1 = -2 * dx + 2 * (dy) * m1; \
-            incr2 = -2 * dx + 2 * (dy) * m; \
-            d = 2 * m * (dy) - 2 * dx - 2 * (dy); \
-        } else { \
-            m = dx / (dy); \
-            m1 = m + 1; \
-            incr1 = 2 * dx - 2 * (dy) * m1; \
-            incr2 = 2 * dx - 2 * (dy) * m; \
-            d = -2 * m * (dy) + 2 * dx; \
-        } \
-    } \
+static inline void bres_init_polygon( int dy, int x1, int x2, struct bres_info *bres )
+{
+    int dx;
+
+    /*
+     *  if the edge is horizontal, then it is ignored
+     *  and assumed not to be processed.  Otherwise, do this stuff.
+     */
+    if (!dy) return;
+
+    bres->minor_axis = x1;
+    dx = x2 - x1;
+    if (dx < 0)
+    {
+        bres->m = dx / dy;
+        bres->m1 = bres->m - 1;
+        bres->incr1 = -2 * dx + 2 * dy * bres->m1;
+        bres->incr2 = -2 * dx + 2 * dy * bres->m;
+        bres->d = 2 * bres->m * dy - 2 * dx - 2 * dy;
+    }
+    else
+    {
+        bres->m = dx / (dy);
+        bres->m1 = bres->m + 1;
+        bres->incr1 = 2 * dx - 2 * dy * bres->m1;
+        bres->incr2 = 2 * dx - 2 * dy * bres->m;
+        bres->d = -2 * bres->m * dy + 2 * dx;
+    }
 }
 
-#define BRESINCRPGON(d, minval, m, m1, incr1, incr2) { \
-    if (m1 > 0) { \
-        if (d > 0) { \
-            minval += m1; \
-            d += incr1; \
-        } \
-        else { \
-            minval += m; \
-            d += incr2; \
-        } \
-    } else {\
-        if (d >= 0) { \
-            minval += m1; \
-            d += incr1; \
-        } \
-        else { \
-            minval += m; \
-            d += incr2; \
-        } \
-    } \
+static inline void bres_incr_polygon( struct bres_info *bres )
+{
+    if (bres->m1 > 0) {
+        if (bres->d > 0) {
+            bres->minor_axis += bres->m1;
+            bres->d += bres->incr1;
+        }
+        else {
+            bres->minor_axis += bres->m;
+            bres->d += bres->incr2;
+        }
+    } else {
+        if (bres->d >= 0) {
+            bres->minor_axis += bres->m1;
+            bres->d += bres->incr1;
+        }
+        else {
+            bres->minor_axis += bres->m;
+            bres->d += bres->incr2;
+        }
+    }
 }
-
-/*
- *     This structure contains all of the information needed
- *     to run the bresenham algorithm.
- *     The variables may be hardcoded into the declarations
- *     instead of using this structure to make use of
- *     register declarations.
- */
-typedef struct {
-    INT minor_axis;	/* minor axis        */
-    INT d;		/* decision variable */
-    INT m, m1;       	/* slope and slope+1 */
-    INT incr1, incr2;	/* error increments */
-} BRESINFO;
-
-
-#define BRESINITPGONSTRUCT(dmaj, min1, min2, bres) \
-	BRESINITPGON(dmaj, min1, min2, bres.minor_axis, bres.d, \
-                     bres.m, bres.m1, bres.incr1, bres.incr2)
-
-#define BRESINCRPGONSTRUCT(bres) \
-        BRESINCRPGON(bres.d, bres.minor_axis, bres.m, bres.m1, bres.incr1, bres.incr2)
-
 
 
 /*
@@ -337,26 +351,19 @@ typedef struct {
  *     drawn (as with the even-odd rule).
  */
 
-/*
- * for the winding number rule
- */
-#define CLOCKWISE          1
-#define COUNTERCLOCKWISE  -1
-
-typedef struct _EdgeTableEntry {
-     INT ymax;           /* ycoord at which we exit this edge. */
-     BRESINFO bres;        /* Bresenham info to run the edge     */
-     struct _EdgeTableEntry *next;       /* next in the list     */
-     struct _EdgeTableEntry *back;       /* for insertion sort   */
-     struct _EdgeTableEntry *nextWETE;   /* for winding num rule */
-     int ClockWise;        /* flag for winding number rule       */
+typedef struct edge_table_entry {
+    struct list entry;
+    struct list winding_entry;
+    INT ymax;                     /* ycoord at which we exit this edge. */
+    struct bres_info bres;        /* Bresenham info to run the edge     */
+    int ClockWise;                /* flag for winding number rule       */
 } EdgeTableEntry;
 
 
 typedef struct _ScanLineList{
-     INT scanline;            /* the scanline represented */
-     EdgeTableEntry *edgelist;  /* header node              */
-     struct _ScanLineList *next;  /* next in the list       */
+    struct list edgelist;
+    INT scanline;            /* the scanline represented */
+    struct _ScanLineList *next;  /* next in the list       */
 } ScanLineList;
 
 
@@ -380,56 +387,6 @@ typedef struct _ScanLineListBlock {
 } ScanLineListBlock;
 
 
-/*
- *
- *     a few macros for the inner loops of the fill code where
- *     performance considerations don't allow a procedure call.
- *
- *     Evaluate the given edge at the given scanline.
- *     If the edge has expired, then we leave it and fix up
- *     the active edge table; otherwise, we increment the
- *     x value to be ready for the next scanline.
- *     The winding number rule is in effect, so we must notify
- *     the caller when the edge has been removed so he
- *     can reorder the Winding Active Edge Table.
- */
-#define EVALUATEEDGEWINDING(pAET, pPrevAET, y, fixWAET) { \
-   if (pAET->ymax == y) {          /* leaving this edge */ \
-      pPrevAET->next = pAET->next; \
-      pAET = pPrevAET->next; \
-      fixWAET = 1; \
-      if (pAET) \
-         pAET->back = pPrevAET; \
-   } \
-   else { \
-      BRESINCRPGONSTRUCT(pAET->bres); \
-      pPrevAET = pAET; \
-      pAET = pAET->next; \
-   } \
-}
-
-
-/*
- *     Evaluate the given edge at the given scanline.
- *     If the edge has expired, then we leave it and fix up
- *     the active edge table; otherwise, we increment the
- *     x value to be ready for the next scanline.
- *     The even-odd rule is in effect.
- */
-#define EVALUATEEDGEEVENODD(pAET, pPrevAET, y) { \
-   if (pAET->ymax == y) {          /* leaving this edge */ \
-      pPrevAET->next = pAET->next; \
-      pAET = pPrevAET->next; \
-      if (pAET) \
-         pAET->back = pPrevAET; \
-   } \
-   else { \
-      BRESINCRPGONSTRUCT(pAET->bres); \
-      pPrevAET = pAET; \
-      pAET = pAET->next; \
-   } \
-}
-
 /* Note the parameter order is different from the X11 equivalents */
 
 static BOOL REGION_CopyRegion(WINEREGION *d, WINEREGION *s);
@@ -446,9 +403,9 @@ static BOOL REGION_UnionRectWithRegion(const RECT *rect, WINEREGION *rgn);
 /***********************************************************************
  *            get_region_type
  */
-static inline INT get_region_type( const RGNOBJ *obj )
+static inline INT get_region_type( const WINEREGION *obj )
 {
-    switch(obj->rgn.numRects)
+    switch(obj->numRects)
     {
     case 0:  return NULLREGION;
     case 1:  return SIMPLEREGION;
@@ -484,7 +441,7 @@ static BOOL init_region( WINEREGION *pReg, INT n )
 {
     if (!(pReg->rects = HeapAlloc(GetProcessHeap(), 0, n * sizeof( RECT )))) return FALSE;
     pReg->size = n;
-    EMPTY_REGION(pReg);
+    empty_region(pReg);
     return TRUE;
 }
 
@@ -501,10 +458,10 @@ static void destroy_region( WINEREGION *pReg )
  */
 static BOOL REGION_DeleteObject( HGDIOBJ handle )
 {
-    RGNOBJ *rgn = free_gdi_handle( handle );
+    WINEREGION *rgn = free_gdi_handle( handle );
 
     if (!rgn) return FALSE;
-    HeapFree( GetProcessHeap(), 0, rgn->rgn.rects );
+    HeapFree( GetProcessHeap(), 0, rgn->rects );
     HeapFree( GetProcessHeap(), 0, rgn );
     return TRUE;
 }
@@ -569,7 +526,7 @@ static BOOL REGION_OffsetRegion( WINEREGION *rgn, WINEREGION *srcrgn, INT x, INT
  */
 INT WINAPI OffsetRgn( HRGN hrgn, INT x, INT y )
 {
-    RGNOBJ * obj = GDI_GetObjPtr( hrgn, OBJ_REGION );
+    WINEREGION *obj = GDI_GetObjPtr( hrgn, OBJ_REGION );
     INT ret;
 
     TRACE("%p %d,%d\n", hrgn, x, y);
@@ -577,7 +534,7 @@ INT WINAPI OffsetRgn( HRGN hrgn, INT x, INT y )
     if (!obj)
         return ERROR;
 
-    REGION_OffsetRegion( &obj->rgn, &obj->rgn, x, y);
+    REGION_OffsetRegion( obj, obj, x, y);
 
     ret = get_region_type( obj );
     GDI_ReleaseObj( hrgn );
@@ -604,14 +561,14 @@ INT WINAPI OffsetRgn( HRGN hrgn, INT x, INT y )
  */
 INT WINAPI GetRgnBox( HRGN hrgn, LPRECT rect )
 {
-    RGNOBJ * obj = GDI_GetObjPtr( hrgn, OBJ_REGION );
+    WINEREGION *obj = GDI_GetObjPtr( hrgn, OBJ_REGION );
     if (obj)
     {
 	INT ret;
-	rect->left = obj->rgn.extents.left;
-	rect->top = obj->rgn.extents.top;
-	rect->right = obj->rgn.extents.right;
-	rect->bottom = obj->rgn.extents.bottom;
+	rect->left = obj->extents.left;
+	rect->top = obj->extents.top;
+	rect->right = obj->extents.right;
+	rect->bottom = obj->extents.bottom;
 	TRACE("%p (%d,%d-%d,%d)\n", hrgn,
                rect->left, rect->top, rect->right, rect->bottom);
 	ret = get_region_type( obj );
@@ -640,19 +597,19 @@ INT WINAPI GetRgnBox( HRGN hrgn, LPRECT rect )
 HRGN WINAPI CreateRectRgn(INT left, INT top, INT right, INT bottom)
 {
     HRGN hrgn;
-    RGNOBJ *obj;
+    WINEREGION *obj;
 
     if (!(obj = HeapAlloc( GetProcessHeap(), 0, sizeof(*obj) ))) return 0;
 
     /* Allocate 2 rects by default to reduce the number of reallocs */
-    if (!init_region( &obj->rgn, RGN_DEFAULT_RECTS ))
+    if (!init_region( obj, RGN_DEFAULT_RECTS ))
     {
         HeapFree( GetProcessHeap(), 0, obj );
         return 0;
     }
-    if (!(hrgn = alloc_gdi_handle( &obj->header, OBJ_REGION, &region_funcs )))
+    if (!(hrgn = alloc_gdi_handle( obj, OBJ_REGION, &region_funcs )))
     {
-        HeapFree( GetProcessHeap(), 0, obj->rgn.rects );
+        HeapFree( GetProcessHeap(), 0, obj->rects );
         HeapFree( GetProcessHeap(), 0, obj );
         return 0;
     }
@@ -702,7 +659,7 @@ HRGN WINAPI CreateRectRgnIndirect( const RECT* rect )
 BOOL WINAPI SetRectRgn( HRGN hrgn, INT left, INT top,
 			  INT right, INT bottom )
 {
-    RGNOBJ * obj;
+    WINEREGION *obj;
 
     TRACE("%p %d,%d-%d,%d\n", hrgn, left, top, right, bottom );
 
@@ -713,14 +670,14 @@ BOOL WINAPI SetRectRgn( HRGN hrgn, INT left, INT top,
 
     if((left != right) && (top != bottom))
     {
-        obj->rgn.rects->left = obj->rgn.extents.left = left;
-        obj->rgn.rects->top = obj->rgn.extents.top = top;
-        obj->rgn.rects->right = obj->rgn.extents.right = right;
-        obj->rgn.rects->bottom = obj->rgn.extents.bottom = bottom;
-        obj->rgn.numRects = 1;
+        obj->rects->left = obj->extents.left = left;
+        obj->rects->top = obj->extents.top = top;
+        obj->rects->right = obj->extents.right = right;
+        obj->rects->bottom = obj->extents.bottom = bottom;
+        obj->numRects = 1;
     }
     else
-	EMPTY_REGION(&obj->rgn);
+	empty_region(obj);
 
     GDI_ReleaseObj( hrgn );
     return TRUE;
@@ -752,113 +709,93 @@ HRGN WINAPI CreateRoundRectRgn( INT left, INT top,
 				    INT right, INT bottom,
 				    INT ellipse_width, INT ellipse_height )
 {
-    RGNOBJ * obj;
+    WINEREGION *obj;
     HRGN hrgn = 0;
-    int asq, bsq, d, xd, yd;
-    RECT rect;
+    int a, b, i, x, y;
+    INT64 asq, bsq, dx, dy, err;
+    RECT *rects;
 
       /* Make the dimensions sensible */
 
     if (left > right) { INT tmp = left; left = right; right = tmp; }
     if (top > bottom) { INT tmp = top; top = bottom; bottom = tmp; }
+    /* the region is for the rectangle interior, but only at right and bottom for some reason */
+    right--;
+    bottom--;
 
-    ellipse_width = abs(ellipse_width);
-    ellipse_height = abs(ellipse_height);
-
-      /* Check parameters */
-
-    if (ellipse_width > right-left) ellipse_width = right-left;
-    if (ellipse_height > bottom-top) ellipse_height = bottom-top;
+    ellipse_width = min( right - left, abs( ellipse_width ));
+    ellipse_height = min( bottom - top, abs( ellipse_height ));
 
       /* Check if we can do a normal rectangle instead */
 
     if ((ellipse_width < 2) || (ellipse_height < 2))
         return CreateRectRgn( left, top, right, bottom );
 
-      /* Create region */
-
-    d = (ellipse_height < 128) ? ((3 * ellipse_height) >> 2) : 64;
     if (!(obj = HeapAlloc( GetProcessHeap(), 0, sizeof(*obj) ))) return 0;
-    if (!init_region( &obj->rgn, d ))
+    obj->size = ellipse_height;
+    obj->numRects = ellipse_height;
+    obj->extents.left   = left;
+    obj->extents.top    = top;
+    obj->extents.right  = right;
+    obj->extents.bottom = bottom;
+
+    obj->rects = rects = HeapAlloc( GetProcessHeap(), 0, obj->size * sizeof(RECT) );
+    if (!rects) goto done;
+
+    /* based on an algorithm by Alois Zingl */
+
+    a = ellipse_width - 1;
+    b = ellipse_height - 1;
+    asq = (INT64)8 * a * a;
+    bsq = (INT64)8 * b * b;
+    dx  = (INT64)4 * b * b * (1 - a);
+    dy  = (INT64)4 * a * a * (1 + (b % 2));
+    err = dx + dy + a * a * (b % 2);
+
+    x = 0;
+    y = ellipse_height / 2;
+
+    rects[y].left = left;
+    rects[y].right = right;
+
+    while (x <= ellipse_width / 2)
     {
-        HeapFree( GetProcessHeap(), 0, obj );
-        return 0;
+        INT64 e2 = 2 * err;
+        if (e2 >= dx)
+        {
+            x++;
+            err += dx += bsq;
+        }
+        if (e2 <= dy)
+        {
+            y++;
+            err += dy += asq;
+            rects[y].left = left + x;
+            rects[y].right = right - x;
+        }
     }
-
-      /* Ellipse algorithm, based on an article by K. Porter */
-      /* in DDJ Graphics Programming Column, 8/89 */
-
-    asq = ellipse_width * ellipse_width / 4;        /* a^2 */
-    bsq = ellipse_height * ellipse_height / 4;      /* b^2 */
-    d = bsq - asq * ellipse_height / 2 + asq / 4;   /* b^2 - a^2b + a^2/4 */
-    xd = 0;
-    yd = asq * ellipse_height;                      /* 2a^2b */
-
-    rect.left   = left + ellipse_width / 2;
-    rect.right  = right - ellipse_width / 2;
-
-      /* Loop to draw first half of quadrant */
-
-    while (xd < yd)
+    for (i = 0; i < ellipse_height / 2; i++)
     {
-	if (d > 0)  /* if nearest pixel is toward the center */
-	{
-	      /* move toward center */
-	    rect.top = top++;
-	    rect.bottom = rect.top + 1;
-	    if (!REGION_UnionRectWithRegion( &rect, &obj->rgn )) goto done;
-	    rect.top = --bottom;
-	    rect.bottom = rect.top + 1;
-	    if (!REGION_UnionRectWithRegion( &rect, &obj->rgn )) goto done;
-	    yd -= 2*asq;
-	    d  -= yd;
-	}
-	rect.left--;        /* next horiz point */
-	rect.right++;
-	xd += 2*bsq;
-	d  += bsq + xd;
+        rects[i].left = rects[b - i].left;
+        rects[i].right = rects[b - i].right;
+        rects[i].top = top + i;
+        rects[i].bottom = rects[i].top + 1;
     }
-
-      /* Loop to draw second half of quadrant */
-
-    d += (3 * (asq-bsq) / 2 - (xd+yd)) / 2;
-    while (yd >= 0)
+    for (; i < ellipse_height; i++)
     {
-	  /* next vertical point */
-	rect.top = top++;
-	rect.bottom = rect.top + 1;
-	if (!REGION_UnionRectWithRegion( &rect, &obj->rgn )) goto done;
-	rect.top = --bottom;
-	rect.bottom = rect.top + 1;
-	if (!REGION_UnionRectWithRegion( &rect, &obj->rgn )) goto done;
-	if (d < 0)   /* if nearest pixel is outside ellipse */
-	{
-	    rect.left--;     /* move away from center */
-	    rect.right++;
-	    xd += 2*bsq;
-	    d  += xd;
-	}
-	yd -= 2*asq;
-	d  += asq - yd;
+        rects[i].top = bottom - ellipse_height + i;
+        rects[i].bottom = rects[i].top + 1;
     }
+    rects[ellipse_height / 2].top = top + ellipse_height / 2;  /* extend to top of rectangle */
 
-      /* Add the inside rectangle */
-
-    if (top <= bottom)
-    {
-	rect.top = top;
-	rect.bottom = bottom;
-	if (!REGION_UnionRectWithRegion( &rect, &obj->rgn )) goto done;
-    }
-
-    hrgn = alloc_gdi_handle( &obj->header, OBJ_REGION, &region_funcs );
+    hrgn = alloc_gdi_handle( obj, OBJ_REGION, &region_funcs );
 
     TRACE("(%d,%d-%d,%d %dx%d): ret=%p\n",
 	  left, top, right, bottom, ellipse_width, ellipse_height, hrgn );
 done:
     if (!hrgn)
     {
-        HeapFree( GetProcessHeap(), 0, obj->rgn.rects );
+        HeapFree( GetProcessHeap(), 0, obj->rects );
         HeapFree( GetProcessHeap(), 0, obj );
     }
     return hrgn;
@@ -917,20 +854,6 @@ HRGN WINAPI CreateEllipticRgnIndirect( const RECT *rect )
 				 rect->bottom - rect->top );
 }
 
-/*********************************************************************
- *   get_wine_region
- *
- * Return the region data without making a copy.  The caller
- * must not alter anything and must call GDI_ReleaseObj() when
- * they have finished with the data.
- */
-const WINEREGION *get_wine_region(HRGN rgn)
-{
-    RGNOBJ *obj = GDI_GetObjPtr( rgn, OBJ_REGION );
-    if(!obj) return NULL;
-    return &obj->rgn;
-}
-
 /***********************************************************************
  *           GetRegionData   (GDI32.@)
  *
@@ -956,35 +879,35 @@ const WINEREGION *get_wine_region(HRGN rgn)
 DWORD WINAPI GetRegionData(HRGN hrgn, DWORD count, LPRGNDATA rgndata)
 {
     DWORD size;
-    RGNOBJ *obj = GDI_GetObjPtr( hrgn, OBJ_REGION );
+    WINEREGION *obj = GDI_GetObjPtr( hrgn, OBJ_REGION );
 
     TRACE(" %p count = %d, rgndata = %p\n", hrgn, count, rgndata);
 
     if(!obj) return 0;
 
-    size = obj->rgn.numRects * sizeof(RECT);
-    if(count < (size + sizeof(RGNDATAHEADER)) || rgndata == NULL)
+    size = obj->numRects * sizeof(RECT);
+    if (!rgndata || count < FIELD_OFFSET(RGNDATA, Buffer[size]))
     {
         GDI_ReleaseObj( hrgn );
 	if (rgndata) /* buffer is too small, signal it by return 0 */
 	    return 0;
-	else		/* user requested buffer size with rgndata NULL */
-	    return size + sizeof(RGNDATAHEADER);
+        /* user requested buffer size with NULL rgndata */
+        return FIELD_OFFSET(RGNDATA, Buffer[size]);
     }
 
     rgndata->rdh.dwSize = sizeof(RGNDATAHEADER);
     rgndata->rdh.iType = RDH_RECTANGLES;
-    rgndata->rdh.nCount = obj->rgn.numRects;
+    rgndata->rdh.nCount = obj->numRects;
     rgndata->rdh.nRgnSize = size;
-    rgndata->rdh.rcBound.left = obj->rgn.extents.left;
-    rgndata->rdh.rcBound.top = obj->rgn.extents.top;
-    rgndata->rdh.rcBound.right = obj->rgn.extents.right;
-    rgndata->rdh.rcBound.bottom = obj->rgn.extents.bottom;
+    rgndata->rdh.rcBound.left = obj->extents.left;
+    rgndata->rdh.rcBound.top = obj->extents.top;
+    rgndata->rdh.rcBound.right = obj->extents.right;
+    rgndata->rdh.rcBound.bottom = obj->extents.bottom;
 
-    memcpy( rgndata->Buffer, obj->rgn.rects, size );
+    memcpy( rgndata->Buffer, obj->rects, size );
 
     GDI_ReleaseObj( hrgn );
-    return size + sizeof(RGNDATAHEADER);
+    return FIELD_OFFSET(RGNDATA, Buffer[size]);
 }
 
 
@@ -1021,7 +944,7 @@ static void translate( POINT *pt, UINT count, const XFORM *xform )
 HRGN WINAPI ExtCreateRegion( const XFORM* lpXform, DWORD dwCount, const RGNDATA* rgndata)
 {
     HRGN hrgn = 0;
-    RGNOBJ *obj;
+    WINEREGION *obj;
 
     if (!rgndata)
     {
@@ -1068,7 +991,7 @@ HRGN WINAPI ExtCreateRegion( const XFORM* lpXform, DWORD dwCount, const RGNDATA*
 
     if (!(obj = HeapAlloc( GetProcessHeap(), 0, sizeof(*obj) ))) return 0;
 
-    if (init_region( &obj->rgn, rgndata->rdh.nCount ))
+    if (init_region( obj, rgndata->rdh.nCount ))
     {
 	const RECT *pCurRect, *pEndRect;
 
@@ -1077,10 +1000,10 @@ HRGN WINAPI ExtCreateRegion( const XFORM* lpXform, DWORD dwCount, const RGNDATA*
         {
             if (pCurRect->left < pCurRect->right && pCurRect->top < pCurRect->bottom)
             {
-                if (!REGION_UnionRectWithRegion( pCurRect, &obj->rgn )) goto done;
+                if (!REGION_UnionRectWithRegion( pCurRect, obj )) goto done;
             }
         }
-        hrgn = alloc_gdi_handle( &obj->header, OBJ_REGION, &region_funcs );
+        hrgn = alloc_gdi_handle( obj, OBJ_REGION, &region_funcs );
     }
     else
     {
@@ -1091,7 +1014,7 @@ HRGN WINAPI ExtCreateRegion( const XFORM* lpXform, DWORD dwCount, const RGNDATA*
 done:
     if (!hrgn)
     {
-        HeapFree( GetProcessHeap(), 0, obj->rgn.rects );
+        HeapFree( GetProcessHeap(), 0, obj->rects );
         HeapFree( GetProcessHeap(), 0, obj );
     }
     TRACE("%p %d %p returning %p\n", lpXform, dwCount, rgndata, hrgn );
@@ -1114,16 +1037,16 @@ done:
  */
 BOOL WINAPI PtInRegion( HRGN hrgn, INT x, INT y )
 {
-    RGNOBJ * obj;
+    WINEREGION *obj;
     BOOL ret = FALSE;
 
     if ((obj = GDI_GetObjPtr( hrgn, OBJ_REGION )))
     {
 	int i;
 
-	if (obj->rgn.numRects > 0 && INRECT(obj->rgn.extents, x, y))
-	    for (i = 0; i < obj->rgn.numRects; i++)
-		if (INRECT (obj->rgn.rects[i], x, y))
+	if (obj->numRects > 0 && is_in_rect(&obj->extents, x, y))
+	    for (i = 0; i < obj->numRects; i++)
+		if (is_in_rect(&obj->rects[i], x, y))
                 {
 		    ret = TRUE;
                     break;
@@ -1149,36 +1072,24 @@ BOOL WINAPI PtInRegion( HRGN hrgn, INT x, INT y )
  */
 BOOL WINAPI RectInRegion( HRGN hrgn, const RECT *rect )
 {
-    RGNOBJ * obj;
+    WINEREGION *obj;
     BOOL ret = FALSE;
     RECT rc;
 
     /* swap the coordinates to make right >= left and bottom >= top */
     /* (region building rectangles are normalized the same way) */
-    if( rect->top > rect->bottom) {
-        rc.top = rect->bottom;
-        rc.bottom = rect->top;
-    } else {
-        rc.top = rect->top;
-        rc.bottom = rect->bottom;
-    }
-    if( rect->right < rect->left) {
-        rc.right = rect->left;
-        rc.left = rect->right;
-    } else {
-        rc.right = rect->right;
-        rc.left = rect->left;
-    }
+    rc = *rect;
+    order_rect( &rc );
 
     if ((obj = GDI_GetObjPtr( hrgn, OBJ_REGION )))
     {
 	RECT *pCurRect, *pRectEnd;
 
     /* this is (just) a useful optimization */
-	if ((obj->rgn.numRects > 0) && EXTENTCHECK(&obj->rgn.extents, &rc))
+	if ((obj->numRects > 0) && overlapping(&obj->extents, &rc))
 	{
-	    for (pCurRect = obj->rgn.rects, pRectEnd = pCurRect +
-	     obj->rgn.numRects; pCurRect < pRectEnd; pCurRect++)
+	    for (pCurRect = obj->rects, pRectEnd = pCurRect +
+	     obj->numRects; pCurRect < pRectEnd; pCurRect++)
 	    {
 	        if (pCurRect->bottom <= rc.top)
 		    continue;             /* not far enough down yet */
@@ -1216,7 +1127,7 @@ BOOL WINAPI RectInRegion( HRGN hrgn, const RECT *rect )
  */
 BOOL WINAPI EqualRgn( HRGN hrgn1, HRGN hrgn2 )
 {
-    RGNOBJ *obj1, *obj2;
+    WINEREGION *obj1, *obj2;
     BOOL ret = FALSE;
 
     if ((obj1 = GDI_GetObjPtr( hrgn1, OBJ_REGION )))
@@ -1225,23 +1136,23 @@ BOOL WINAPI EqualRgn( HRGN hrgn1, HRGN hrgn2 )
 	{
 	    int i;
 
-	    if ( obj1->rgn.numRects != obj2->rgn.numRects ) goto done;
-            if ( obj1->rgn.numRects == 0 )
+	    if ( obj1->numRects != obj2->numRects ) goto done;
+            if ( obj1->numRects == 0 )
             {
                 ret = TRUE;
                 goto done;
 
             }
-            if (obj1->rgn.extents.left   != obj2->rgn.extents.left) goto done;
-            if (obj1->rgn.extents.right  != obj2->rgn.extents.right) goto done;
-            if (obj1->rgn.extents.top    != obj2->rgn.extents.top) goto done;
-            if (obj1->rgn.extents.bottom != obj2->rgn.extents.bottom) goto done;
-            for( i = 0; i < obj1->rgn.numRects; i++ )
+            if (obj1->extents.left   != obj2->extents.left) goto done;
+            if (obj1->extents.right  != obj2->extents.right) goto done;
+            if (obj1->extents.top    != obj2->extents.top) goto done;
+            if (obj1->extents.bottom != obj2->extents.bottom) goto done;
+            for( i = 0; i < obj1->numRects; i++ )
             {
-                if (obj1->rgn.rects[i].left   != obj2->rgn.rects[i].left) goto done;
-                if (obj1->rgn.rects[i].right  != obj2->rgn.rects[i].right) goto done;
-                if (obj1->rgn.rects[i].top    != obj2->rgn.rects[i].top) goto done;
-                if (obj1->rgn.rects[i].bottom != obj2->rgn.rects[i].bottom) goto done;
+                if (obj1->rects[i].left   != obj2->rects[i].left) goto done;
+                if (obj1->rects[i].right  != obj2->rects[i].right) goto done;
+                if (obj1->rects[i].top    != obj2->rects[i].top) goto done;
+                if (obj1->rects[i].bottom != obj2->rects[i].bottom) goto done;
 	    }
             ret = TRUE;
         done:
@@ -1268,6 +1179,17 @@ static BOOL REGION_UnionRectWithRegion(const RECT *rect, WINEREGION *rgn)
 }
 
 
+BOOL add_rect_to_region( HRGN rgn, const RECT *rect )
+{
+    WINEREGION *obj = GDI_GetObjPtr( rgn, OBJ_REGION );
+    BOOL ret;
+
+    if (!obj) return FALSE;
+    ret = REGION_UnionRectWithRegion( rect, obj );
+    GDI_ReleaseObj( rgn );
+    return ret;
+}
+
 /***********************************************************************
  *           REGION_CreateFrameRgn
  *
@@ -1280,24 +1202,24 @@ BOOL REGION_FrameRgn( HRGN hDest, HRGN hSrc, INT x, INT y )
 {
     WINEREGION tmprgn;
     BOOL bRet = FALSE;
-    RGNOBJ* destObj = NULL;
-    RGNOBJ *srcObj = GDI_GetObjPtr( hSrc, OBJ_REGION );
+    WINEREGION* destObj = NULL;
+    WINEREGION *srcObj = GDI_GetObjPtr( hSrc, OBJ_REGION );
 
     tmprgn.rects = NULL;
     if (!srcObj) return FALSE;
-    if (srcObj->rgn.numRects != 0)
+    if (srcObj->numRects != 0)
     {
         if (!(destObj = GDI_GetObjPtr( hDest, OBJ_REGION ))) goto done;
-        if (!init_region( &tmprgn, srcObj->rgn.numRects )) goto done;
+        if (!init_region( &tmprgn, srcObj->numRects )) goto done;
 
-        if (!REGION_OffsetRegion( &destObj->rgn, &srcObj->rgn, -x, 0)) goto done;
-        if (!REGION_OffsetRegion( &tmprgn, &srcObj->rgn, x, 0)) goto done;
-        if (!REGION_IntersectRegion( &destObj->rgn, &destObj->rgn, &tmprgn )) goto done;
-        if (!REGION_OffsetRegion( &tmprgn, &srcObj->rgn, 0, -y)) goto done;
-        if (!REGION_IntersectRegion( &destObj->rgn, &destObj->rgn, &tmprgn )) goto done;
-        if (!REGION_OffsetRegion( &tmprgn, &srcObj->rgn, 0, y)) goto done;
-        if (!REGION_IntersectRegion( &destObj->rgn, &destObj->rgn, &tmprgn )) goto done;
-        if (!REGION_SubtractRegion( &destObj->rgn, &srcObj->rgn, &destObj->rgn )) goto done;
+        if (!REGION_OffsetRegion( destObj, srcObj, -x, 0)) goto done;
+        if (!REGION_OffsetRegion( &tmprgn, srcObj, x, 0)) goto done;
+        if (!REGION_IntersectRegion( destObj, destObj, &tmprgn )) goto done;
+        if (!REGION_OffsetRegion( &tmprgn, srcObj, 0, -y)) goto done;
+        if (!REGION_IntersectRegion( destObj, destObj, &tmprgn )) goto done;
+        if (!REGION_OffsetRegion( &tmprgn, srcObj, 0, y)) goto done;
+        if (!REGION_IntersectRegion( destObj, destObj, &tmprgn )) goto done;
+        if (!REGION_SubtractRegion( destObj, srcObj, destObj )) goto done;
 	bRet = TRUE;
     }
 done:
@@ -1338,49 +1260,49 @@ done:
  */
 INT WINAPI CombineRgn(HRGN hDest, HRGN hSrc1, HRGN hSrc2, INT mode)
 {
-    RGNOBJ *destObj = GDI_GetObjPtr( hDest, OBJ_REGION );
+    WINEREGION *destObj = GDI_GetObjPtr( hDest, OBJ_REGION );
     INT result = ERROR;
 
     TRACE(" %p,%p -> %p mode=%x\n", hSrc1, hSrc2, hDest, mode );
     if (destObj)
     {
-        RGNOBJ *src1Obj = GDI_GetObjPtr( hSrc1, OBJ_REGION );
+        WINEREGION *src1Obj = GDI_GetObjPtr( hSrc1, OBJ_REGION );
 
 	if (src1Obj)
 	{
 	    TRACE("dump src1Obj:\n");
 	    if(TRACE_ON(region))
-	      REGION_DumpRegion(&src1Obj->rgn);
+	      REGION_DumpRegion(src1Obj);
 	    if (mode == RGN_COPY)
 	    {
-		if (REGION_CopyRegion( &destObj->rgn, &src1Obj->rgn ))
+		if (REGION_CopyRegion( destObj, src1Obj ))
                     result = get_region_type( destObj );
 	    }
 	    else
 	    {
-                RGNOBJ *src2Obj = GDI_GetObjPtr( hSrc2, OBJ_REGION );
+                WINEREGION *src2Obj = GDI_GetObjPtr( hSrc2, OBJ_REGION );
 
 		if (src2Obj)
 		{
 		    TRACE("dump src2Obj:\n");
 		    if(TRACE_ON(region))
-		        REGION_DumpRegion(&src2Obj->rgn);
+		        REGION_DumpRegion(src2Obj);
 		    switch (mode)
 		    {
 		    case RGN_AND:
-			if (REGION_IntersectRegion( &destObj->rgn, &src1Obj->rgn, &src2Obj->rgn ))
+			if (REGION_IntersectRegion( destObj, src1Obj, src2Obj ))
                             result = get_region_type( destObj );
 			break;
 		    case RGN_OR:
-			if (REGION_UnionRegion( &destObj->rgn, &src1Obj->rgn, &src2Obj->rgn ))
+			if (REGION_UnionRegion( destObj, src1Obj, src2Obj ))
                             result = get_region_type( destObj );
 			break;
 		    case RGN_XOR:
-			if (REGION_XorRegion( &destObj->rgn, &src1Obj->rgn, &src2Obj->rgn ))
+			if (REGION_XorRegion( destObj, src1Obj, src2Obj ))
                             result = get_region_type( destObj );
 			break;
 		    case RGN_DIFF:
-			if (REGION_SubtractRegion( &destObj->rgn, &src1Obj->rgn, &src2Obj->rgn ))
+			if (REGION_SubtractRegion( destObj, src1Obj, src2Obj ))
                             result = get_region_type( destObj );
 			break;
 		    }
@@ -1391,7 +1313,7 @@ INT WINAPI CombineRgn(HRGN hDest, HRGN hSrc1, HRGN hSrc2, INT mode)
 	}
 	TRACE("dump destObj:\n");
 	if(TRACE_ON(region))
-	  REGION_DumpRegion(&destObj->rgn);
+	  REGION_DumpRegion(destObj);
 
 	GDI_ReleaseObj( hDest );
     }
@@ -1509,13 +1431,13 @@ static BOOL REGION_MirrorRegion( WINEREGION *dst, WINEREGION *src, int width )
  */
 INT mirror_region( HRGN dst, HRGN src, INT width )
 {
-    RGNOBJ *src_rgn, *dst_rgn;
+    WINEREGION *src_rgn, *dst_rgn;
     INT ret = ERROR;
 
     if (!(src_rgn = GDI_GetObjPtr( src, OBJ_REGION ))) return ERROR;
     if ((dst_rgn = GDI_GetObjPtr( dst, OBJ_REGION )))
     {
-        if (REGION_MirrorRegion( &dst_rgn->rgn, &src_rgn->rgn, width )) ret = get_region_type( dst_rgn );
+        if (REGION_MirrorRegion( dst_rgn, src_rgn, width )) ret = get_region_type( dst_rgn );
         GDI_ReleaseObj( dst_rgn );
     }
     GDI_ReleaseObj( src_rgn );
@@ -2015,7 +1937,7 @@ static BOOL REGION_IntersectRegion(WINEREGION *newReg, WINEREGION *reg1,
 {
    /* check for trivial reject */
     if ( (!(reg1->numRects)) || (!(reg2->numRects))  ||
-	(!EXTENTCHECK(&reg1->extents, &reg2->extents)))
+	(!overlapping(&reg1->extents, &reg2->extents)))
 	newReg->numRects = 0;
     else
 	if (!REGION_RegionOp (newReg, reg1, reg2, REGION_IntersectO, NULL, NULL)) return FALSE;
@@ -2338,7 +2260,7 @@ static BOOL REGION_SubtractRegion(WINEREGION *regD, WINEREGION *regM, WINEREGION
 {
    /* check for trivial reject */
     if ( (!(regM->numRects)) || (!(regS->numRects))  ||
-	(!EXTENTCHECK(&regM->extents, &regS->extents)) )
+	(!overlapping(&regM->extents, &regS->extents)) )
 	return REGION_CopyRegion(regD, regM);
 
     if (!REGION_RegionOp (regD, regM, regS, REGION_SubtractO, REGION_SubtractNonO1, NULL))
@@ -2397,7 +2319,7 @@ static void REGION_InsertEdgeInET(EdgeTable *ET, EdgeTableEntry *ETE,
                 INT scanline, ScanLineListBlock **SLLBlock, INT *iSLLBlock)
 
 {
-    EdgeTableEntry *start, *prev;
+    struct list *ptr;
     ScanLineList *pSLL, *pPrevSLL;
     ScanLineListBlock *tmpSLLBlock;
 
@@ -2433,7 +2355,7 @@ static void REGION_InsertEdgeInET(EdgeTable *ET, EdgeTableEntry *ETE,
         pSLL = &((*SLLBlock)->SLLs[(*iSLLBlock)++]);
 
         pSLL->next = pPrevSLL->next;
-        pSLL->edgelist = NULL;
+        list_init( &pSLL->edgelist );
         pPrevSLL->next = pSLL;
     }
     pSLL->scanline = scanline;
@@ -2441,19 +2363,12 @@ static void REGION_InsertEdgeInET(EdgeTable *ET, EdgeTableEntry *ETE,
     /*
      * now insert the edge in the right bucket
      */
-    prev = NULL;
-    start = pSLL->edgelist;
-    while (start && (start->bres.minor_axis < ETE->bres.minor_axis))
+    LIST_FOR_EACH( ptr, &pSLL->edgelist )
     {
-        prev = start;
-        start = start->next;
+        struct edge_table_entry *entry = LIST_ENTRY( ptr, struct edge_table_entry, entry );
+        if (entry->bres.minor_axis >= ETE->bres.minor_axis) break;
     }
-    ETE->next = start;
-
-    if (prev)
-        prev->next = ETE;
-    else
-        pSLL->edgelist = ETE;
+    list_add_before( ptr, &ETE->entry );
 }
 
 /***********************************************************************
@@ -2480,8 +2395,8 @@ static void REGION_InsertEdgeInET(EdgeTable *ET, EdgeTableEntry *ETE,
  *     which an edge is initially entered.
  *
  */
-static void REGION_CreateETandAET(const INT *Count, INT nbpolygons,
-            const POINT *pts, EdgeTable *ET, EdgeTableEntry *AET,
+static void REGION_CreateEdgeTable(const INT *Count, INT nbpolygons,
+            const POINT *pts, EdgeTable *ET,
             EdgeTableEntry *pETEs, ScanLineListBlock *pSLLBlock)
 {
     const POINT *top, *bottom;
@@ -2489,15 +2404,6 @@ static void REGION_CreateETandAET(const INT *Count, INT nbpolygons,
     INT poly, count;
     int iSLLBlock = 0;
     int dy;
-
-
-    /*
-     *  initialize the Active Edge Table
-     */
-    AET->next = NULL;
-    AET->back = NULL;
-    AET->nextWETE = NULL;
-    AET->bres.minor_axis = SMALL_COORDINATE;
 
     /*
      *  initialize the Edge Table.
@@ -2552,7 +2458,7 @@ static void REGION_CreateETandAET(const INT *Count, INT nbpolygons,
              *  initialize integer edge algorithm
              */
 		dy = bottom->y - top->y;
-		BRESINITPGONSTRUCT(dy, top->x, bottom->x, pETEs->bres);
+		bres_init_polygon(dy, top->x, bottom->x, &pETEs->bres);
 
 		REGION_InsertEdgeInET(ET, pETEs, top->y, &pSLLBlock,
 								&iSLLBlock);
@@ -2577,29 +2483,20 @@ static void REGION_CreateETandAET(const INT *Count, INT nbpolygons,
  *     leaving them sorted by smaller x coordinate.
  *
  */
-static void REGION_loadAET(EdgeTableEntry *AET, EdgeTableEntry *ETEs)
+static void REGION_loadAET( struct list *AET, struct list *ETEs )
 {
-    EdgeTableEntry *pPrevAET;
-    EdgeTableEntry *tmp;
+    struct edge_table_entry *ptr, *next, *entry;
+    struct list *active;
 
-    pPrevAET = AET;
-    AET = AET->next;
-    while (ETEs)
+    LIST_FOR_EACH_ENTRY_SAFE( ptr, next, ETEs, struct edge_table_entry, entry )
     {
-        while (AET && (AET->bres.minor_axis < ETEs->bres.minor_axis))
+        LIST_FOR_EACH( active, AET )
         {
-            pPrevAET = AET;
-            AET = AET->next;
+            entry = LIST_ENTRY( active, struct edge_table_entry, entry );
+            if (entry->bres.minor_axis >= ptr->bres.minor_axis) break;
         }
-        tmp = ETEs->next;
-        ETEs->next = AET;
-        if (AET)
-            AET->back = ETEs;
-        ETEs->back = pPrevAET;
-        pPrevAET->next = ETEs;
-        pPrevAET = ETEs;
-
-        ETEs = tmp;
+        list_remove( &ptr->entry );
+        list_add_before( active, &ptr->entry );
     }
 }
 
@@ -2623,70 +2520,50 @@ static void REGION_loadAET(EdgeTableEntry *AET, EdgeTableEntry *ETEs)
  *         V------------------->       V---> ...
  *
  */
-static void REGION_computeWAET(EdgeTableEntry *AET)
+static void REGION_computeWAET( struct list *AET, struct list *WETE )
 {
-    register EdgeTableEntry *pWETE;
-    register int inside = 1;
-    register int isInside = 0;
+    struct edge_table_entry *active;
+    BOOL inside = TRUE;
+    int isInside = 0;
 
-    AET->nextWETE = NULL;
-    pWETE = AET;
-    AET = AET->next;
-    while (AET)
+    list_init( WETE );
+    LIST_FOR_EACH_ENTRY( active, AET, struct edge_table_entry, entry )
     {
-        if (AET->ClockWise)
+        if (active->ClockWise)
             isInside++;
         else
             isInside--;
 
-        if ((!inside && !isInside) ||
-            ( inside &&  isInside))
+        if ((!inside && !isInside) || (inside && isInside))
         {
-            pWETE->nextWETE = AET;
-            pWETE = AET;
+            list_add_tail( WETE, &active->winding_entry );
             inside = !inside;
         }
-        AET = AET->next;
     }
-    pWETE->nextWETE = NULL;
 }
 
 /***********************************************************************
  *     REGION_InsertionSort
  *
- *     Just a simple insertion sort using
- *     pointers and back pointers to sort the Active
- *     Edge Table.
+ *     Just a simple insertion sort to sort the Active Edge Table.
  *
  */
-static BOOL REGION_InsertionSort(EdgeTableEntry *AET)
+static BOOL REGION_InsertionSort( struct list *AET )
 {
-    EdgeTableEntry *pETEchase;
-    EdgeTableEntry *pETEinsert;
-    EdgeTableEntry *pETEchaseBackTMP;
+    struct edge_table_entry *active, *next, *insert;
     BOOL changed = FALSE;
 
-    AET = AET->next;
-    while (AET)
+    LIST_FOR_EACH_ENTRY_SAFE( active, next, AET, struct edge_table_entry, entry )
     {
-        pETEinsert = AET;
-        pETEchase = AET;
-        while (pETEchase->back->bres.minor_axis > AET->bres.minor_axis)
-            pETEchase = pETEchase->back;
-
-        AET = AET->next;
-        if (pETEchase != pETEinsert)
+        LIST_FOR_EACH_ENTRY( insert, AET, struct edge_table_entry, entry )
         {
-            pETEchaseBackTMP = pETEchase->back;
-            pETEinsert->back->next = AET;
-            if (AET)
-                AET->back = pETEinsert->back;
-            pETEinsert->next = pETEchase;
-            pETEchase->back->next = pETEinsert;
-            pETEchase->back = pETEinsert;
-            pETEinsert->back = pETEchaseBackTMP;
-            changed = TRUE;
+            if (insert == active) break;
+            if (insert->bres.minor_axis > active->bres.minor_axis) break;
         }
+        if (insert == active) continue;
+        list_remove( &active->entry );
+        list_add_before( &insert->entry, &active->entry );
+        changed = TRUE;
     }
     return changed;
 }
@@ -2714,33 +2591,30 @@ static void REGION_FreeStorage(ScanLineListBlock *pSLLBlock)
  *
  *     Create an array of rectangles from a list of points.
  */
-static BOOL REGION_PtsToRegion(int numFullPtBlocks, int iCurPtBlock,
-                               POINTBLOCK *FirstPtBlock, WINEREGION *reg)
+static BOOL REGION_PtsToRegion( struct point_block *FirstPtBlock, WINEREGION *reg )
 {
     RECT *rects;
     POINT *pts;
-    POINTBLOCK *CurPtBlock;
+    struct point_block *pb;
     int i;
     RECT *extents;
     INT numRects;
 
     extents = &reg->extents;
 
-    numRects = ((numFullPtBlocks * NUMPTSTOBUFFER) + iCurPtBlock) >> 1;
+    for (pb = FirstPtBlock, numRects = 0; pb; pb = pb->next) numRects += pb->count;
     if (!init_region( reg, numRects )) return FALSE;
 
     reg->size = numRects;
-    CurPtBlock = FirstPtBlock;
     rects = reg->rects - 1;
     numRects = 0;
     extents->left = LARGE_COORDINATE,  extents->right = SMALL_COORDINATE;
 
-    for ( ; numFullPtBlocks >= 0; numFullPtBlocks--) {
+    for (pb = FirstPtBlock; pb; pb = pb->next)
+    {
 	/* the loop uses 2 points per iteration */
-	i = NUMPTSTOBUFFER >> 1;
-	if (!numFullPtBlocks)
-	    i = iCurPtBlock >> 1;
-	for (pts = CurPtBlock->pts; i--; pts += 2) {
+	i = pb->count / 2;
+	for (pts = pb->pts; i--; pts += 2) {
 	    if (pts->x == pts[1].x)
 		continue;
 	    if (numRects && pts->x == rects->left && pts->y == rects->bottom &&
@@ -2759,7 +2633,6 @@ static BOOL REGION_PtsToRegion(int numFullPtBlocks, int iCurPtBlock,
 	    if (rects->right > extents->right)
 		extents->right = rects->right;
         }
-	CurPtBlock = CurPtBlock->next;
     }
 
     if (numRects) {
@@ -2783,22 +2656,17 @@ HRGN WINAPI CreatePolyPolygonRgn(const POINT *Pts, const INT *Count,
 		      INT nbpolygons, INT mode)
 {
     HRGN hrgn = 0;
-    RGNOBJ *obj;
-    EdgeTableEntry *pAET;            /* Active Edge Table       */
+    WINEREGION *obj;
     INT y;                           /* current scanline        */
-    int iPts = 0;                    /* number of pts in buffer */
-    EdgeTableEntry *pWETE;           /* Winding Edge Table Entry*/
+    struct list WETE, *pWETE;        /* Winding Edge Table */
     ScanLineList *pSLL;              /* current scanLineList    */
-    POINT *pts;                      /* output buffer           */
-    EdgeTableEntry *pPrevAET;        /* ptr to previous AET     */
     EdgeTable ET;                    /* header node for ET      */
-    EdgeTableEntry AET;              /* header node for AET     */
+    struct list AET;                 /* header for AET     */
     EdgeTableEntry *pETEs;           /* EdgeTableEntries pool   */
     ScanLineListBlock SLLBlock;      /* header for scanlinelist */
-    int fixWAET = FALSE;
-    POINTBLOCK FirstPtBlock, *curPtBlock; /* PtBlock buffers    */
-    POINTBLOCK *tmpPtBlock;
-    int numFullPtBlocks = 0;
+    BOOL fixWAET = FALSE;
+    struct point_block FirstPtBlock, *block; /* PtBlock buffers    */
+    struct edge_table_entry *active, *next;
     INT poly, total;
 
     TRACE("%p, count %d, polygons %d, mode %d\n", Pts, *Count, nbpolygons, mode);
@@ -2823,10 +2691,12 @@ HRGN WINAPI CreatePolyPolygonRgn(const POINT *Pts, const INT *Count,
     if (! (pETEs = HeapAlloc( GetProcessHeap(), 0, sizeof(EdgeTableEntry) * total )))
 	return 0;
 
-    pts = FirstPtBlock.pts;
-    REGION_CreateETandAET(Count, nbpolygons, Pts, &ET, &AET, pETEs, &SLLBlock);
+    REGION_CreateEdgeTable(Count, nbpolygons, Pts, &ET, pETEs, &SLLBlock);
+    list_init( &AET );
     pSLL = ET.scanlines.next;
-    curPtBlock = &FirstPtBlock;
+    block = &FirstPtBlock;
+    FirstPtBlock.count = 0;
+    FirstPtBlock.next  = NULL;
 
     if (mode != WINDING) {
         /*
@@ -2838,32 +2708,19 @@ HRGN WINAPI CreatePolyPolygonRgn(const POINT *Pts, const INT *Count,
              *  get to the next edge.
              */
             if (pSLL != NULL && y == pSLL->scanline) {
-                REGION_loadAET(&AET, pSLL->edgelist);
+                REGION_loadAET(&AET, &pSLL->edgelist);
                 pSLL = pSLL->next;
             }
-            pPrevAET = &AET;
-            pAET = AET.next;
 
-            /*
-             *  for each active edge
-             */
-            while (pAET) {
-                pts->x = pAET->bres.minor_axis,  pts->y = y;
-                pts++, iPts++;
+            LIST_FOR_EACH_ENTRY_SAFE( active, next, &AET, struct edge_table_entry, entry )
+            {
+                block = add_point( block, active->bres.minor_axis, y );
+                if (!block) goto done;
 
-                /*
-                 *  send out the buffer
-                 */
-                if (iPts == NUMPTSTOBUFFER) {
-                    tmpPtBlock = HeapAlloc( GetProcessHeap(), 0, sizeof(POINTBLOCK));
-		    if(!tmpPtBlock) goto done;
-                    curPtBlock->next = tmpPtBlock;
-                    curPtBlock = tmpPtBlock;
-                    pts = curPtBlock->pts;
-                    numFullPtBlocks++;
-                    iPts = 0;
-                }
-                EVALUATEEDGEEVENODD(pAET, pPrevAET, y);
+                if (active->ymax == y)  /* leaving this edge */
+                    list_remove( &active->entry );
+                else
+                    bres_incr_polygon( &active->bres );
             }
             REGION_InsertionSort(&AET);
         }
@@ -2878,42 +2735,33 @@ HRGN WINAPI CreatePolyPolygonRgn(const POINT *Pts, const INT *Count,
              *  get to the next edge.
              */
             if (pSLL != NULL && y == pSLL->scanline) {
-                REGION_loadAET(&AET, pSLL->edgelist);
-                REGION_computeWAET(&AET);
+                REGION_loadAET(&AET, &pSLL->edgelist);
+                REGION_computeWAET( &AET, &WETE );
                 pSLL = pSLL->next;
             }
-            pPrevAET = &AET;
-            pAET = AET.next;
-            pWETE = pAET;
+            pWETE = list_head( &WETE );
 
             /*
              *  for each active edge
              */
-            while (pAET) {
+            LIST_FOR_EACH_ENTRY_SAFE( active, next, &AET, struct edge_table_entry, entry )
+            {
                 /*
                  *  add to the buffer only those edges that
                  *  are in the Winding active edge table.
                  */
-                if (pWETE == pAET) {
-                    pts->x = pAET->bres.minor_axis,  pts->y = y;
-                    pts++, iPts++;
-
-                    /*
-                     *  send out the buffer
-                     */
-                    if (iPts == NUMPTSTOBUFFER) {
-                        tmpPtBlock = HeapAlloc( GetProcessHeap(), 0,
-					       sizeof(POINTBLOCK) );
-			if(!tmpPtBlock) goto done;
-                        curPtBlock->next = tmpPtBlock;
-                        curPtBlock = tmpPtBlock;
-                        pts = curPtBlock->pts;
-                        numFullPtBlocks++;
-                        iPts = 0;
-                    }
-                    pWETE = pWETE->nextWETE;
+                if (pWETE == &active->winding_entry) {
+                    block = add_point( block, active->bres.minor_axis, y );
+                    if (!block) goto done;
+                    pWETE = list_next( &WETE, pWETE );
                 }
-                EVALUATEEDGEWINDING(pAET, pPrevAET, y, fixWAET);
+                if (active->ymax == y)  /* leaving this edge */
+                {
+                    list_remove( &active->entry );
+                    fixWAET = TRUE;
+                }
+                else
+                    bres_incr_polygon( &active->bres );
             }
 
             /*
@@ -2921,7 +2769,7 @@ HRGN WINAPI CreatePolyPolygonRgn(const POINT *Pts, const INT *Count,
              *  we just resorted or have exited an edge.
              */
             if (REGION_InsertionSort(&AET) || fixWAET) {
-                REGION_computeWAET(&AET);
+                REGION_computeWAET( &AET, &WETE );
                 fixWAET = FALSE;
             }
         }
@@ -2929,24 +2777,20 @@ HRGN WINAPI CreatePolyPolygonRgn(const POINT *Pts, const INT *Count,
 
     if (!(obj = HeapAlloc( GetProcessHeap(), 0, sizeof(*obj) ))) goto done;
 
-    if (!REGION_PtsToRegion(numFullPtBlocks, iPts, &FirstPtBlock, &obj->rgn))
+    if (!REGION_PtsToRegion(&FirstPtBlock, obj))
     {
         HeapFree( GetProcessHeap(), 0, obj );
         goto done;
     }
-    if (!(hrgn = alloc_gdi_handle( &obj->header, OBJ_REGION, &region_funcs )))
+    if (!(hrgn = alloc_gdi_handle( obj, OBJ_REGION, &region_funcs )))
     {
-        HeapFree( GetProcessHeap(), 0, obj->rgn.rects );
+        HeapFree( GetProcessHeap(), 0, obj->rects );
         HeapFree( GetProcessHeap(), 0, obj );
     }
 
 done:
     REGION_FreeStorage(SLLBlock.next);
-    for (curPtBlock = FirstPtBlock.next; --numFullPtBlocks >= 0;) {
-	tmpPtBlock = curPtBlock->next;
-	HeapFree( GetProcessHeap(), 0, curPtBlock );
-	curPtBlock = tmpPtBlock;
-    }
+    free_point_blocks( FirstPtBlock.next );
     HeapFree( GetProcessHeap(), 0, pETEs );
     return hrgn;
 }

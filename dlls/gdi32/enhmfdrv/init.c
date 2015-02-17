@@ -44,17 +44,12 @@ static const struct gdi_dc_funcs EMFDRV_Funcs =
     NULL,                            /* pArcTo */
     EMFDRV_BeginPath,                /* pBeginPath */
     NULL,                            /* pBlendImage */
-    NULL,                            /* pChoosePixelFormat */
     EMFDRV_Chord,                    /* pChord */
     EMFDRV_CloseFigure,              /* pCloseFigure */
-    NULL,                            /* pCreateBitmap */
     NULL,                            /* pCreateCompatibleDC */
     NULL,                            /* pCreateDC */
-    NULL,                            /* pCreateDIBSection */
-    NULL,                            /* pDeleteBitmap */
     EMFDRV_DeleteDC,                 /* pDeleteDC */
     EMFDRV_DeleteObject,             /* pDeleteObject */
-    NULL,                            /* pDescribePixelFormat */
     NULL,                            /* pDeviceCapabilities */
     EMFDRV_Ellipse,                  /* pEllipse */
     NULL,                            /* pEndDoc */
@@ -75,6 +70,7 @@ static const struct gdi_dc_funcs EMFDRV_Funcs =
     EMFDRV_FrameRgn,                 /* pFrameRgn */
     EMFDRV_GdiComment,               /* pGdiComment */
     NULL,                            /* pGdiRealizationInfo */
+    NULL,                            /* pGetBoundsRect */
     NULL,                            /* pGetCharABCWidths */
     NULL,                            /* pGetCharABCWidthsI */
     NULL,                            /* pGetCharWidth */
@@ -90,7 +86,6 @@ static const struct gdi_dc_funcs EMFDRV_Funcs =
     NULL,                            /* pGetNearestColor */
     NULL,                            /* pGetOutlineTextMetrics */
     NULL,                            /* pGetPixel */
-    NULL,                            /* pGetPixelFormat */
     NULL,                            /* pGetSystemPaletteEntries */
     NULL,                            /* pGetTextCharsetInfo */
     NULL,                            /* pGetTextExtentExPoint */
@@ -109,8 +104,8 @@ static const struct gdi_dc_funcs EMFDRV_Funcs =
     EMFDRV_PaintRgn,                 /* pPaintRgn */
     EMFDRV_PatBlt,                   /* pPatBlt */
     EMFDRV_Pie,                      /* pPie */
-    NULL,                            /* pPolyBezier */
-    NULL,                            /* pPolyBezierTo */
+    EMFDRV_PolyBezier,               /* pPolyBezier */
+    EMFDRV_PolyBezierTo,             /* pPolyBezierTo */
     NULL,                            /* pPolyDraw */
     EMFDRV_PolyPolygon,              /* pPolyPolygon */
     EMFDRV_PolyPolyline,             /* pPolyPolyline */
@@ -136,9 +131,9 @@ static const struct gdi_dc_funcs EMFDRV_Funcs =
     EMFDRV_SetArcDirection,          /* pSetArcDirection */
     EMFDRV_SetBkColor,               /* pSetBkColor */
     EMFDRV_SetBkMode,                /* pSetBkMode */
+    NULL,                            /* pSetBoundsRect */
     EMFDRV_SetDCBrushColor,          /* pSetDCBrushColor*/
     EMFDRV_SetDCPenColor,            /* pSetDCPenColor*/
-    NULL,                            /* pSetDIBColorTable */
     EMFDRV_SetDIBitsToDevice,        /* pSetDIBitsToDevice */
     NULL,                            /* pSetDeviceClipping */
     NULL,                            /* pSetDeviceGammaRamp */
@@ -146,7 +141,6 @@ static const struct gdi_dc_funcs EMFDRV_Funcs =
     EMFDRV_SetMapMode,               /* pSetMapMode */
     EMFDRV_SetMapperFlags,           /* pSetMapperFlags */
     EMFDRV_SetPixel,                 /* pSetPixel */
-    NULL,                            /* pSetPixelFormat */
     EMFDRV_SetPolyFillMode,          /* pSetPolyFillMode */
     EMFDRV_SetROP2,                  /* pSetROP2 */
     NULL,                            /* pSetRelAbs */
@@ -166,9 +160,10 @@ static const struct gdi_dc_funcs EMFDRV_Funcs =
     EMFDRV_StretchDIBits,            /* pStretchDIBits */
     EMFDRV_StrokeAndFillPath,        /* pStrokeAndFillPath */
     EMFDRV_StrokePath,               /* pStrokePath */
-    NULL,                            /* pSwapBuffers */
     NULL,                            /* pUnrealizePalette */
-    EMFDRV_WidenPath                 /* pWidenPath */
+    EMFDRV_WidenPath,                /* pWidenPath */
+    NULL,                            /* wine_get_wgl_driver */
+    GDI_PRIORITY_GRAPHICS_DRV        /* priority */
 };
 
 
@@ -198,6 +193,7 @@ static BOOL EMFDRV_DeleteDC( PHYSDEV dev )
 BOOL EMFDRV_WriteRecord( PHYSDEV dev, EMR *emr )
 {
     DWORD len;
+    DWORD bytes_written;
     ENHMETAHEADER *emh;
     EMFDRV_PDEVICE *physDev = (EMFDRV_PDEVICE *)dev;
 
@@ -210,7 +206,7 @@ BOOL EMFDRV_WriteRecord( PHYSDEV dev, EMR *emr )
     physDev->emh->nRecords++;
 
     if(physDev->hFile) {
-        if (!WriteFile(physDev->hFile, emr, emr->nSize, NULL, NULL))
+        if (!WriteFile(physDev->hFile, emr, emr->nSize, &bytes_written, NULL))
 	    return FALSE;
     } else {
         DWORD nEmfSize = HeapSize(GetProcessHeap(), 0, physDev->emh);
@@ -318,11 +314,10 @@ HDC WINAPI CreateEnhMetaFileW(
     static const WCHAR displayW[] = {'D','I','S','P','L','A','Y',0};
     HDC ret;
     DC *dc;
-    HDC hRefDC = hdc ? hdc : CreateDCW(displayW,NULL,NULL,NULL); 
-        /* If no ref, use current display */
     EMFDRV_PDEVICE *physDev;
     HANDLE hFile;
     DWORD size = 0, length = 0;
+    DWORD bytes_written;
 
     TRACE("%s\n", debugstr_w(filename) );
 
@@ -355,19 +350,12 @@ HDC WINAPI CreateEnhMetaFileW(
     physDev->hFile = 0;
     physDev->dc_brush = 0;
     physDev->dc_pen = 0;
-    physDev->horzres = GetDeviceCaps(hRefDC, HORZRES);
-    physDev->vertres = GetDeviceCaps(hRefDC, VERTRES);
-    physDev->logpixelsx = GetDeviceCaps(hRefDC, LOGPIXELSX);
-    physDev->logpixelsy = GetDeviceCaps(hRefDC, LOGPIXELSY);
-    physDev->horzsize = GetDeviceCaps(hRefDC, HORZSIZE);
-    physDev->vertsize = GetDeviceCaps(hRefDC, VERTSIZE);
-    physDev->bitspixel = GetDeviceCaps(hRefDC, BITSPIXEL);
-    physDev->textcaps = GetDeviceCaps(hRefDC, TEXTCAPS);
-    physDev->rastercaps = GetDeviceCaps(hRefDC, RASTERCAPS);
-    physDev->technology = GetDeviceCaps(hRefDC, TECHNOLOGY);
-    physDev->planes = GetDeviceCaps(hRefDC, PLANES);
-    physDev->numcolors = GetDeviceCaps(hRefDC, NUMCOLORS);
+    physDev->screen_dc = 0;
     physDev->restoring = 0;
+    if (hdc)  /* if no ref, use current display */
+        physDev->ref_dc = hdc;
+    else
+        physDev->ref_dc = physDev->screen_dc = CreateDCW( displayW, NULL, NULL, NULL );
 
     SetVirtualResolution(physDev->dev.hdc, 0, 0, 0, 0);
 
@@ -401,16 +389,16 @@ HDC WINAPI CreateEnhMetaFileW(
     physDev->emh->nPalEntries = 0; /* I guess this should start at 0 */
 
     /* Size in pixels */
-    physDev->emh->szlDevice.cx = physDev->horzres;
-    physDev->emh->szlDevice.cy = physDev->vertres;
+    physDev->emh->szlDevice.cx = GetDeviceCaps( physDev->ref_dc, HORZRES );
+    physDev->emh->szlDevice.cy = GetDeviceCaps( physDev->ref_dc, VERTRES );
 
     /* Size in millimeters */
-    physDev->emh->szlMillimeters.cx = physDev->horzsize;
-    physDev->emh->szlMillimeters.cy = physDev->vertsize;
+    physDev->emh->szlMillimeters.cx = GetDeviceCaps( physDev->ref_dc, HORZSIZE );
+    physDev->emh->szlMillimeters.cy = GetDeviceCaps( physDev->ref_dc, VERTSIZE );
 
     /* Size in micrometers */
-    physDev->emh->szlMicrometers.cx = physDev->horzsize * 1000;
-    physDev->emh->szlMicrometers.cy = physDev->vertsize * 1000;
+    physDev->emh->szlMicrometers.cx = physDev->emh->szlMillimeters.cx * 1000;
+    physDev->emh->szlMicrometers.cy = physDev->emh->szlMillimeters.cy * 1000;
 
     memcpy((char *)physDev->emh + sizeof(ENHMETAHEADER), description, length);
 
@@ -421,8 +409,9 @@ HDC WINAPI CreateEnhMetaFileW(
             free_dc_ptr( dc );
             return 0;
         }
-        if (!WriteFile( hFile, physDev->emh, size, NULL, NULL )) {
+        if (!WriteFile( hFile, physDev->emh, size, &bytes_written, NULL )) {
             free_dc_ptr( dc );
+            CloseHandle( hFile );
             return 0;
 	}
 	physDev->hFile = hFile;
@@ -431,9 +420,6 @@ HDC WINAPI CreateEnhMetaFileW(
     TRACE("returning %p\n", physDev->dev.hdc);
     ret = physDev->dev.hdc;
     release_dc_ptr( dc );
-
-    if( !hdc )
-      DeleteDC( hRefDC );
 
     return ret;
 }
@@ -452,7 +438,7 @@ HENHMETAFILE WINAPI CloseEnhMetaFile(HDC hdc) /* [in] metafile DC */
     TRACE("(%p)\n", hdc );
 
     if (!(dc = get_dc_ptr( hdc ))) return NULL;
-    if (dc->header.type != OBJ_ENHMETADC)
+    if (GetObjectType( hdc ) != OBJ_ENHMETADC)
     {
         release_dc_ptr( dc );
         return NULL;
@@ -470,6 +456,7 @@ HENHMETAFILE WINAPI CloseEnhMetaFile(HDC hdc) /* [in] metafile DC */
 
     if (physDev->dc_brush) DeleteObject( physDev->dc_brush );
     if (physDev->dc_pen) DeleteObject( physDev->dc_pen );
+    if (physDev->screen_dc) DeleteDC( physDev->screen_dc );
 
     emr.emr.iType = EMR_EOF;
     emr.emr.nSize = sizeof(emr);

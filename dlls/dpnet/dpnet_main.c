@@ -122,6 +122,7 @@ static IClassFactoryImpl DPNET_CFS[] = {
   { { &DICF_Vtbl }, 1, &CLSID_DirectPlay8Peer,    DPNET_CreateDirectPlay8Peer },
   { { &DICF_Vtbl }, 1, &CLSID_DirectPlay8Address, DPNET_CreateDirectPlay8Address },
   { { &DICF_Vtbl }, 1, &CLSID_DirectPlay8LobbiedApplication, DPNET_CreateDirectPlay8LobbiedApp },
+  { { &DICF_Vtbl }, 1, &CLSID_DirectPlay8LobbyClient, DPNET_CreateDirectPlay8LobbyClient },
   { { &DICF_Vtbl }, 1, &CLSID_DirectPlay8ThreadPool, DPNET_CreateDirectPlay8ThreadPool},
   { { NULL }, 0, NULL, NULL }
 };
@@ -141,7 +142,7 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID *ppv)
 {
     int i = 0;
 
-    TRACE("(%p,%p,%p)\n", debugstr_guid(rclsid), debugstr_guid(riid), ppv);
+    TRACE("(%s,%s,%p)\n", debugstr_guid(rclsid), debugstr_guid(riid), ppv);
     /*
     if ( IsEqualCLSID( &IID_IClassFactory, riid ) ) {
     	*ppv = (LPVOID)&DPNET_CF;
@@ -158,7 +159,7 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID *ppv)
       ++i;
     }
 
-    FIXME("(%p,%p,%p): no interface found.\n", debugstr_guid(rclsid), debugstr_guid(riid), ppv);
+    FIXME("(%s,%s,%p): no interface found.\n", debugstr_guid(rclsid), debugstr_guid(riid), ppv);
     return CLASS_E_CLASSNOTAVAILABLE;
 }
 

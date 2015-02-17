@@ -4,7 +4,7 @@
 #include <crtdefs.h>
 
 #define CHAR_BIT 8
-#define MB_LEN_MAX 2
+#define MB_LEN_MAX 5
 
 #define SCHAR_MIN (-0x80)
 #define SCHAR_MAX   0x7f
@@ -37,5 +37,13 @@
 #define I64_MIN  _I64_MIN
 #define I64_MAX  _I64_MAX
 #define UI64_MAX _UI64_MAX
+
+#ifndef SIZE_MAX
+# ifdef _WIN64
+#  define SIZE_MAX UI64_MAX
+# else
+#  define SIZE_MAX UINT_MAX
+# endif
+#endif
 
 #endif /* __WINE_LIMITS_H */

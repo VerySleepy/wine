@@ -249,21 +249,24 @@ static HRESULT WINAPI ServiceProvider_QueryService(IServiceProvider *iface, REFG
         return IOleUndoManager_QueryInterface(This->doc_obj->undomgr, riid, ppv);
     }
 
+    if(IsEqualGUID(&SID_SContainerDispatch, guidService)) {
+        TRACE("SID_SContainerDispatch\n");
+        return IHTMLDocument2_QueryInterface(&This->IHTMLDocument2_iface, riid, ppv);
+    }
+
+    if(IsEqualGUID(&IID_IWindowForBindingUI, guidService)) {
+        TRACE("IID_IWindowForBindingUI\n");
+        return IWindowForBindingUI_QueryInterface(&This->doc_obj->IWindowForBindingUI_iface, riid, ppv);
+    }
+
     TRACE("(%p)->(%s %s %p)\n", This, debugstr_guid(guidService), debugstr_guid(riid), ppv);
 
     if(This->doc_obj->client) {
-        IServiceProvider *sp;
         HRESULT hres;
 
-        hres = IOleClientSite_QueryInterface(This->doc_obj->client,
-                &IID_IServiceProvider, (void**)&sp);
-        if(SUCCEEDED(hres)) {
-            hres = IServiceProvider_QueryService(sp, guidService, riid, ppv);
-            IServiceProvider_Release(sp);
-
-            if(SUCCEEDED(hres))
-                return hres;
-        }
+        hres = do_query_service((IUnknown*)This->doc_obj->client, guidService, riid, ppv);
+        if(SUCCEEDED(hres))
+            return hres;
     }
 
     FIXME("unknown service %s\n", debugstr_guid(guidService));

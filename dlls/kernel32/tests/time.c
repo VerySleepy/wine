@@ -336,6 +336,29 @@ static void test_GetTimeZoneInformation(void)
     l_time = system_time_to_minutes(&local);
     ok(l_time - s_time == diff, "got %d, expected %d\n",
        (LONG)(l_time - s_time), diff);
+
+    /* test 23:01, 31st of December date */
+    memset(&tzinfo, 0, sizeof(tzinfo));
+    tzinfo.StandardDate.wMonth = 10;
+    tzinfo.StandardDate.wDay = 5;
+    tzinfo.StandardDate.wHour = 2;
+    tzinfo.StandardDate.wMinute = 0;
+    tzinfo.DaylightDate.wMonth = 4;
+    tzinfo.DaylightDate.wDay = 1;
+    tzinfo.DaylightDate.wHour = 2;
+    tzinfo.Bias = 0;
+    tzinfo.StandardBias = 0;
+    tzinfo.DaylightBias = -60;
+    utc.wYear = 2012;
+    utc.wMonth = 12;
+    utc.wDay = 31;
+    utc.wHour = 23;
+    utc.wMinute = 1;
+    res = pSystemTimeToTzSpecificLocalTime(&tzinfo, &utc, &local);
+    ok(res, "SystemTimeToTzSpecificLocalTime error %u\n", GetLastError());
+    ok(local.wYear==2012 && local.wMonth==12 && local.wDay==31 && local.wHour==23 && local.wMinute==1,
+            "got (%d-%d-%d %02d:%02d), expected (2012-12-31 23:01)\n",
+            local.wYear, local.wMonth, local.wDay, local.wHour, local.wMinute);
 }
 
 static void test_FileTimeToSystemTime(void)
@@ -644,7 +667,7 @@ static void test_GetCalendarInfo(void)
     char bufferA[20];
     WCHAR bufferW[20];
     DWORD val1, val2;
-    int ret;
+    int ret, ret2;
 
     if (!pGetCalendarInfoA || !pGetCalendarInfoW)
     {
@@ -693,11 +716,26 @@ static void test_GetCalendarInfo(void)
     ret = pGetCalendarInfoW( 0x0409, CAL_GREGORIAN, CAL_ITWODIGITYEARMAX, NULL, 0, NULL );
     ok( ret, "GetCalendarInfoW failed err %u\n", GetLastError() );
     ok( ret == 5, "wrong size %u\n", ret );
+
+    ret = pGetCalendarInfoA( LANG_SYSTEM_DEFAULT, CAL_GREGORIAN, CAL_SDAYNAME1,
+                             bufferA, sizeof(bufferA), NULL);
+    ok( ret, "GetCalendarInfoA failed err %u\n", GetLastError() );
+    ret2 = pGetCalendarInfoA( LANG_SYSTEM_DEFAULT, CAL_GREGORIAN, CAL_SDAYNAME1,
+                              bufferA, 0, NULL);
+    ok( ret2, "GetCalendarInfoA failed err %u\n", GetLastError() );
+    ok( ret == ret2, "got %d, expected %d\n", ret2, ret );
+
+    ret2 = pGetCalendarInfoW( LANG_SYSTEM_DEFAULT, CAL_GREGORIAN, CAL_SDAYNAME1,
+                              bufferW, sizeof(bufferW), NULL);
+    ok( ret2, "GetCalendarInfoW failed err %u\n", GetLastError() );
+    ret2 = WideCharToMultiByte( CP_ACP, 0, bufferW, -1, NULL, 0, NULL, NULL );
+    ok( ret == ret2, "got %d, expected %d\n", ret, ret2 );
+
 }
 
 START_TEST(time)
 {
-    HMODULE hKernel = GetModuleHandle("kernel32");
+    HMODULE hKernel = GetModuleHandleA("kernel32");
     pTzSpecificLocalTimeToSystemTime = (void *)GetProcAddress(hKernel, "TzSpecificLocalTimeToSystemTime");
     pSystemTimeToTzSpecificLocalTime = (void *)GetProcAddress( hKernel, "SystemTimeToTzSpecificLocalTime");
     pGetCalendarInfoA = (void *)GetProcAddress(hKernel, "GetCalendarInfoA");

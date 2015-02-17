@@ -43,9 +43,16 @@
 
 #ifdef __APPLE__
 
+#ifndef __clang__
 __asm__(".zerofill WINE_DOS, WINE_DOS, ___wine_dos, 0x40000000");
 __asm__(".zerofill WINE_SHAREDHEAP, WINE_SHAREDHEAP, ___wine_shared_heap, 0x03000000");
 extern char __wine_dos[0x40000000], __wine_shared_heap[0x03000000];
+#else
+__asm__(".zerofill WINE_DOS, WINE_DOS");
+__asm__(".zerofill WINE_SHAREDHEAP, WINE_SHAREDHEAP");
+static char __wine_dos[0x40000000] __attribute__((section("WINE_DOS, WINE_DOS")));
+static char __wine_shared_heap[0x03000000] __attribute__((section("WINE_SHAREDHEAP, WINE_SHAREDHEAP")));
+#endif
 
 static const struct wine_preload_info wine_main_preload_info[] =
 {
@@ -107,7 +114,7 @@ static void check_command_line( int argc, char *argv[] )
 /* separate thread to check for NPTL and TLS features */
 static void *needs_pthread( void *arg )
 {
-    pid_t tid = syscall( SYS_gettid );
+    pid_t tid = syscall( 224 /* SYS_gettid */ );
     /* check for NPTL */
     if (tid != -1 && tid != getpid()) return (void *)1;
     /* check for TLS glibc */
@@ -174,7 +181,7 @@ static int pre_exec(void)
     return 1;  /* we have a preloader on x86-64 */
 }
 
-#elif (defined(__FreeBSD__) || defined (__FreeBSD_kernel__)) && defined(__i386__)
+#elif (defined(__FreeBSD__) || defined (__FreeBSD_kernel__) || defined(__DragonFly__))
 
 static int pre_exec(void)
 {

@@ -46,13 +46,15 @@ BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpv)
         DisableThreadLibraryCalls(hInstDLL);
         break;
     case DLL_PROCESS_DETACH:
+        if (lpv) break;
         netconn_unload();
+        release_typelib();
         break;
     }
     return TRUE;
 }
 
-typedef HRESULT (*fnCreateInstance)( IUnknown *outer, void **obj );
+typedef HRESULT (*fnCreateInstance)( void **obj );
 
 struct winhttp_cf
 {
@@ -109,14 +111,11 @@ static HRESULT WINAPI requestcf_CreateInstance(
     if (outer)
         return CLASS_E_NOAGGREGATION;
 
-    hr = cf->pfnCreateInstance( outer, (void **)&unknown );
+    hr = cf->pfnCreateInstance( (void **)&unknown );
     if (FAILED(hr))
         return hr;
 
     hr = IUnknown_QueryInterface( unknown, riid, obj );
-    if (FAILED(hr))
-        return hr;
-
     IUnknown_Release( unknown );
     return hr;
 }

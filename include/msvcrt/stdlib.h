@@ -140,6 +140,7 @@ typedef int (__cdecl *_onexit_t)(void);
 
 
 int           __cdecl _atodbl(_CRT_DOUBLE*,char*);
+int           __cdecl _atodbl_l(_CRT_DOUBLE*,char*,_locale_t);
 int           __cdecl _atoflt(_CRT_FLOAT*,char*);
 int           __cdecl _atoflt_l(_CRT_FLOAT*,char*,_locale_t);
 __int64       __cdecl _atoi64(const char*);
@@ -181,6 +182,7 @@ int           __cdecl abs(int);
 int           __cdecl atexit(void (*)(void));
 double        __cdecl atof(const char*);
 int           __cdecl atoi(const char*);
+int           __cdecl _atoi_l(const char*,_locale_t);
 __msvcrt_long __cdecl atol(const char*);
 void*         __cdecl calloc(size_t,size_t);
 #ifndef __i386__
@@ -201,6 +203,10 @@ void          __cdecl srand(unsigned int);
 double        __cdecl strtod(const char*,char**);
 __msvcrt_long __cdecl strtol(const char*,char**,int);
 __msvcrt_ulong __cdecl strtoul(const char*,char**,int);
+__int64       __cdecl _strtoi64(const char*,char**,int);
+__int64       __cdecl _strtoi64_l(const char*,char**,int,_locale_t);
+unsigned __int64 __cdecl _strtoui64(const char*,char**,int);
+unsigned __int64 __cdecl _strtoui64_l(const char*,char**,int,_locale_t);
 int           __cdecl system(const char*);
 void*         __cdecl bsearch(const void*,const void*,size_t,size_t,int (*)(const void*,const void*));
 void          __cdecl qsort(void*,size_t,size_t,int (*)(const void*,const void*));
@@ -237,6 +243,10 @@ size_t        __cdecl wcstombs(char*,const wchar_t*,size_t);
 errno_t       __cdecl wcstombs_s(size_t*,char*,size_t,const wchar_t*,size_t);
 __msvcrt_ulong __cdecl wcstoul(const wchar_t*,wchar_t**,int);
 int           __cdecl wctomb(char*,wchar_t);
+__int64       __cdecl _wcstoi64(const wchar_t*,wchar_t**,int);
+__int64       __cdecl _wcstoi64_l(const wchar_t*,wchar_t**,int,_locale_t);
+unsigned __int64 __cdecl _wcstoui64(const wchar_t*,wchar_t**,int);
+unsigned __int64 __cdecl _wcstoui64_l(const wchar_t*,wchar_t**,int,_locale_t);
 #endif /* _WSTDLIB_DEFINED */
 
 typedef void (__cdecl *_invalid_parameter_handler)(const wchar_t*, const wchar_t*, const wchar_t*, unsigned, uintptr_t);

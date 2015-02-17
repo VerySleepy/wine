@@ -336,7 +336,7 @@ static BYTE INT21_MapDrive( BYTE drive )
 {
     if (drive)
     {
-        WCHAR drivespec[3] = {'A', ':', 0};
+        WCHAR drivespec[] = {'A', ':', 0};
         UINT  drivetype;
 
         drivespec[0] += drive - 1;
@@ -359,7 +359,7 @@ static BYTE INT21_MapDrive( BYTE drive )
  */
 static void INT21_SetCurrentDrive( BYTE drive )
 {
-    WCHAR drivespec[3] = {'A', ':', 0};
+    WCHAR drivespec[] = {'A', ':', 0};
 
     drivespec[0] += drive;
 
@@ -599,7 +599,7 @@ static WORD INT21_GetHeapSelector( CONTEXT *context )
  */
 static BOOL INT21_FillDrivePB( BYTE drive )
 {
-    WCHAR       drivespec[3] = {'A', ':', 0};
+    WCHAR       drivespec[] = {'A', ':', 0};
     INT21_HEAP *heap = INT21_GetHeapPointer();
     INT21_DPB  *dpb;
     UINT        drivetype;
@@ -1087,7 +1087,7 @@ static BOOL INT21_CreateFile( CONTEXT *context,
     {
         winHandle = CreateFileW( pathW, winAccess, winSharing, NULL,
                                  winMode, winAttributes, 0 );
-        /* DOS allows to open files on a CDROM R/W */
+        /* DOS allows opening files on a CDROM R/W */
         if( winHandle == INVALID_HANDLE_VALUE &&
                 (GetLastError() == ERROR_WRITE_PROTECT ||
                  GetLastError() == ERROR_ACCESS_DENIED)) {
@@ -2451,7 +2451,7 @@ static void INT21_Ioctl_Block( CONTEXT *context )
 {
     BYTE *dataptr;
     BYTE  drive = INT21_MapDrive( BL_reg(context) );
-    WCHAR drivespec[4] = {'A', ':', '\\', 0};
+    WCHAR drivespec[] = {'A', ':', '\\', 0};
     UINT  drivetype;
 
     drivespec[0] += drive;
@@ -2491,6 +2491,14 @@ static void INT21_Ioctl_Block( CONTEXT *context )
 
         if (drivetype == DRIVE_REMOTE)
             SET_DX( context, (1<<9) | (1<<12) ); /* remote + no direct IO */
+        else if (drivetype == DRIVE_CDROM)
+            /* CDROM should be set to remote. If it set the app will
+             * call int2f to check if it cdrom or remote drive. */
+            SET_DX( context, (1<<12) );
+        else if (drivetype == DRIVE_FIXED)
+            /* This should define if drive support 0x0d, 0x0f and 0x08
+             * requests. The local fixed drive should do. */
+            SET_DX( context, (1<<11) );
         else
             SET_DX( context, 0 ); /* FIXME: use driver attr here */
         break;
@@ -2601,8 +2609,9 @@ static void INT21_Ioctl_Block( CONTEXT *context )
             {
                 WCHAR	label[12],fsname[9];
                 DWORD	serial;
+                TRACE( "GENERIC IOCTL - Get media id - %c:\n",
+                       'A' + drive );
 
-                drivespec[0] += drive;
                 GetVolumeInformationW(drivespec, label, 12, &serial, NULL, NULL, fsname, 9);
                 *(WORD*)dataptr	= 0;
                 memcpy(dataptr+2,&serial,4);
@@ -2728,7 +2737,7 @@ static void INT21_IoctlHPScanHandler( CONTEXT *context )
 static void INT21_Ioctl_Char( CONTEXT *context )
 {
     int status;
-    int IsConsoleIOHandle = 0;
+    BOOL IsConsoleIOHandle = FALSE;
     IO_STATUS_BLOCK io;
     FILE_INTERNAL_INFORMATION info;
     HANDLE handle = DosFileHandleToWin32Handle(BX_reg(context));
@@ -2737,7 +2746,7 @@ static void INT21_Ioctl_Char( CONTEXT *context )
     if (status)
     {
         if( VerifyConsoleIoHandle( handle))
-            IsConsoleIOHandle = 1;
+            IsConsoleIOHandle = TRUE;
         else {
             SET_AX( context, RtlNtStatusToDosError(status) );
             SET_CFLAG( context );
@@ -3428,7 +3437,7 @@ static int INT21_GetDiskSerialNumber( CONTEXT *context )
  *		INT21_SetDiskSerialNumber
  *
  */
-static int INT21_SetDiskSerialNumber( CONTEXT *context )
+static BOOL INT21_SetDiskSerialNumber( CONTEXT *context )
 {
 #if 0
     BYTE *dataptr = CTX_SEG_OFF_TO_LIN(context, context->SegDs, context->Edx);
@@ -3437,15 +3446,15 @@ static int INT21_SetDiskSerialNumber( CONTEXT *context )
     if (!is_valid_drive(drive))
     {
         SetLastError( ERROR_INVALID_DRIVE );
-        return 0;
+        return FALSE;
     }
 
     DRIVE_SetSerialNumber( drive, *(DWORD *)(dataptr + 2) );
-    return 1;
+    return TRUE;
 #else
     FIXME("Setting drive serial number is no longer supported\n");
     SetLastError( ERROR_NOT_SUPPORTED );
-    return 0;
+    return FALSE;
 #endif
 }
 
@@ -3454,7 +3463,7 @@ static int INT21_SetDiskSerialNumber( CONTEXT *context )
  *		INT21_GetFreeDiskSpace
  *
  */
-static int INT21_GetFreeDiskSpace( CONTEXT *context )
+static BOOL INT21_GetFreeDiskSpace( CONTEXT *context )
 {
     DWORD cluster_sectors, sector_bytes, free_clusters, total_clusters;
     WCHAR root[] = {'A',':','\\',0};
@@ -3464,7 +3473,8 @@ static int INT21_GetFreeDiskSpace( CONTEXT *context )
 
     root[0] += INT21_MapDrive(DL_reg(context));
     if (!GetDiskFreeSpaceW( root, &cluster_sectors, &sector_bytes,
-                            &free_clusters, &total_clusters )) return 0;
+                            &free_clusters, &total_clusters ))
+        return FALSE;
 
     /* Some old win31 apps (Lotus SmartSuite 5.1) crap out if there's too
      * much disk space, so Windows XP seems to apply the following limits:
@@ -3521,19 +3531,19 @@ static int INT21_GetFreeDiskSpace( CONTEXT *context )
     SET_BX( context, free_clusters );
     SET_CX( context, sector_bytes );
     SET_DX( context, total_clusters );
-    return 1;
+    return TRUE;
 }
 
 /******************************************************************
  *		INT21_GetDriveAllocInfo
  *
  */
-static int INT21_GetDriveAllocInfo( CONTEXT *context, BYTE drive )
+static BOOL INT21_GetDriveAllocInfo( CONTEXT *context, BYTE drive )
 {
     INT21_DPB  *dpb;
 
     drive = INT21_MapDrive( drive );
-    if (!INT21_FillDrivePB( drive )) return 0;
+    if (!INT21_FillDrivePB( drive )) return FALSE;
     dpb = &(INT21_GetHeapPointer()->misc_dpb_list[drive]);
     SET_AL( context, dpb->cluster_sectors + 1 );
     SET_CX( context, dpb->sector_bytes );
@@ -3541,7 +3551,7 @@ static int INT21_GetDriveAllocInfo( CONTEXT *context, BYTE drive )
 
     context->SegDs = INT21_GetHeapSelector( context );
     SET_BX( context, offsetof( INT21_HEAP, misc_dpb_list[drive].media_ID ) );
-    return 1;
+    return TRUE;
 }
 
 /***********************************************************************
@@ -3791,7 +3801,7 @@ static const WCHAR *INT21_FindPath; /* will point to current dta->fullPath searc
 /******************************************************************
  *		INT21_FindFirst
  */
-static int INT21_FindFirst( CONTEXT *context )
+static BOOL INT21_FindFirst( CONTEXT *context )
 {
     WCHAR *p, *q;
     const char *path;
@@ -3820,7 +3830,7 @@ static int INT21_FindFirst( CONTEXT *context )
         SetLastError( ERROR_FILE_NOT_FOUND );
         SET_AX( context, ERROR_FILE_NOT_FOUND );
         SET_CFLAG(context);
-        return 0;
+        return FALSE;
     }
     WideCharToMultiByte(CP_OEMCP, 0, maskW, 12, dta->mask, sizeof(dta->mask), NULL, NULL);
 
@@ -3833,7 +3843,7 @@ static int INT21_FindFirst( CONTEXT *context )
     dta->drive = toupperW(dta->fullPath[0]) - 'A';
     dta->count = 0;
     dta->search_attr = CL_reg(context);
-    return 1;
+    return TRUE;
 }
 
 /******************************************************************
@@ -3921,14 +3931,14 @@ static unsigned INT21_FindHelper(LPCWSTR fullPath, unsigned drive, unsigned coun
 /******************************************************************
  *		INT21_FindNext
  */
-static int INT21_FindNext( CONTEXT *context )
+static BOOL INT21_FindNext( CONTEXT *context )
 {
     FINDFILE_DTA *dta = (FINDFILE_DTA *)INT21_GetCurrentDTA(context);
     DWORD attr = dta->search_attr | FA_UNUSED | FA_ARCHIVE | FA_RDONLY;
     WIN32_FIND_DATAW entry;
     int n;
 
-    if (!dta->fullPath) return 0;
+    if (!dta->fullPath) return FALSE;
 
     n = INT21_FindHelper(dta->fullPath, dta->drive, dta->count, 
                          dta->mask, attr, &entry);
@@ -3953,11 +3963,11 @@ static int INT21_FindNext( CONTEXT *context )
             INT21_FindPath = dta->fullPath = NULL;
         }
         dta->count = n;
-        return 1;
+        return TRUE;
     }
     HeapFree( GetProcessHeap(), 0, dta->fullPath );
     INT21_FindPath = dta->fullPath = NULL;
-    return 0;
+    return FALSE;
 }
 
 /* microsoft's programmers should be shot for using CP/M style int21
@@ -3967,7 +3977,7 @@ static int INT21_FindNext( CONTEXT *context )
  *		INT21_FindFirstFCB
  *
  */
-static int INT21_FindFirstFCB( CONTEXT *context )
+static BOOL INT21_FindFirstFCB( CONTEXT *context )
 {
     BYTE *fcb = CTX_SEG_OFF_TO_LIN(context, context->SegDs, context->Edx);
     FINDFILE_FCB *pFCB;
@@ -3977,21 +3987,21 @@ static int INT21_FindFirstFCB( CONTEXT *context )
     if (*fcb == 0xff) pFCB = (FINDFILE_FCB *)(fcb + 7);
     else pFCB = (FINDFILE_FCB *)fcb;
     drive = INT21_MapDrive( pFCB->drive );
-    if (drive == MAX_DOS_DRIVES) return 0;
+    if (drive == MAX_DOS_DRIVES) return FALSE;
 
     p[0] = 'A' + drive;
     pFCB->fullPath = HeapAlloc(GetProcessHeap(), 0, MAX_PATH * sizeof(WCHAR));
-    if (!pFCB->fullPath) return 0;
+    if (!pFCB->fullPath) return FALSE;
     GetLongPathNameW(p, pFCB->fullPath, MAX_PATH);
     pFCB->count = 0;
-    return 1;
+    return TRUE;
 }
 
 /******************************************************************
  *		INT21_FindNextFCB
  *
  */
-static int INT21_FindNextFCB( CONTEXT *context )
+static BOOL INT21_FindNextFCB( CONTEXT *context )
 {
     BYTE *fcb = CTX_SEG_OFF_TO_LIN(context, context->SegDs, context->Edx);
     FINDFILE_FCB *pFCB;
@@ -4013,14 +4023,14 @@ static int INT21_FindNextFCB( CONTEXT *context )
         pFCB = (FINDFILE_FCB *)fcb;
     }
 
-    if (!pFCB->fullPath) return 0;
+    if (!pFCB->fullPath) return FALSE;
     n = INT21_FindHelper(pFCB->fullPath, INT21_MapDrive( pFCB->drive ),
                          pFCB->count, pFCB->filename, attr, &entry);
     if (!n)
     {
         HeapFree( GetProcessHeap(), 0, pFCB->fullPath );
         INT21_FindPath = pFCB->fullPath = NULL;
-        return 0;
+        return FALSE;
     }
     pFCB->count += n;
 
@@ -4046,7 +4056,7 @@ static int INT21_FindNextFCB( CONTEXT *context )
     else
         INT21_ToDosFCBFormat( entry.cFileName, nameW );
     WideCharToMultiByte(CP_OEMCP, 0, nameW, 11, ddl->filename, 11, NULL, NULL);
-    return 1;
+    return TRUE;
 }
 
 

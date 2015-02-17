@@ -26,12 +26,28 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <X11/Xlib.h>
+#include <X11/Xresource.h>
+#include <X11/Xutil.h>
+#ifdef HAVE_X11_EXTENSIONS_SHAPE_H
+#include <X11/extensions/shape.h>
+#endif
+#ifdef HAVE_X11_EXTENSIONS_XSHM_H
+# include <X11/extensions/XShm.h>
+# ifdef HAVE_SYS_SHM_H
+#  include <sys/shm.h>
+# endif
+# ifdef HAVE_SYS_IPC_H
+#  include <sys/ipc.h>
+# endif
+#endif
+
 #include "windef.h"
 #include "winbase.h"
 #include "wingdi.h"
 #include "winuser.h"
-#include "winternl.h"
 #include "x11drv.h"
+#include "winternl.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(bitblt);
@@ -582,6 +598,12 @@ int main()
 #endif  /* BITBLT_TEST */
 
 
+/* handler for XGetImage BadMatch errors */
+static int XGetImage_handler( Display *dpy, XErrorEvent *event, void *arg )
+{
+    return (event->request_code == X_GetImage && event->error_code == BadMatch);
+}
+
 /***********************************************************************
  *           BITBLT_GetDstArea
  *
@@ -593,9 +615,6 @@ static int BITBLT_GetDstArea(X11DRV_PDEVICE *physDev, Pixmap pixmap, GC gc, cons
     int exposures = 0;
     INT width  = visRectDst->right - visRectDst->left;
     INT height = visRectDst->bottom - visRectDst->top;
-    BOOL memdc = (GetObjectType( physDev->dev.hdc ) == OBJ_MEMDC);
-
-    wine_tsx11_lock();
 
     if (!X11DRV_PALETTE_XPixelToPalette || (physDev->depth == 1) ||
 	(X11DRV_PALETTE_PaletteFlags & X11DRV_PALETTE_VIRTUAL) )
@@ -607,25 +626,17 @@ static int BITBLT_GetDstArea(X11DRV_PDEVICE *physDev, Pixmap pixmap, GC gc, cons
     }
     else
     {
-        register INT x, y;
+        INT x, y;
         XImage *image;
 
-        if (memdc)
-            image = XGetImage( gdi_display, physDev->drawable,
-                               physDev->dc_rect.left + visRectDst->left,
-                               physDev->dc_rect.top + visRectDst->top,
-                               width, height, AllPlanes, ZPixmap );
-        else
-        {
-            /* Make sure we don't get a BadMatch error */
-            XCopyArea( gdi_display, physDev->drawable, pixmap, gc,
-                       physDev->dc_rect.left + visRectDst->left,
-                       physDev->dc_rect.top + visRectDst->top,
-                       width, height, 0, 0);
-            exposures++;
-            image = XGetImage( gdi_display, pixmap, 0, 0, width, height,
-                               AllPlanes, ZPixmap );
-        }
+        /* Make sure we don't get a BadMatch error */
+        XCopyArea( gdi_display, physDev->drawable, pixmap, gc,
+                   physDev->dc_rect.left + visRectDst->left,
+                   physDev->dc_rect.top + visRectDst->top,
+                   width, height, 0, 0);
+        exposures++;
+        image = XGetImage( gdi_display, pixmap, 0, 0, width, height,
+                           AllPlanes, ZPixmap );
         if (image)
         {
             for (y = 0; y < height; y++)
@@ -636,8 +647,6 @@ static int BITBLT_GetDstArea(X11DRV_PDEVICE *physDev, Pixmap pixmap, GC gc, cons
             XDestroyImage( image );
         }
     }
-
-    wine_tsx11_unlock();
     return exposures;
 }
 
@@ -705,14 +714,11 @@ void execute_rop( X11DRV_PDEVICE *physdev, Pixmap src_pixmap, GC gc, const RECT 
 
     pixmaps[SRC] = src_pixmap;
     pixmaps[TMP] = 0;
-    wine_tsx11_lock();
     pixmaps[DST] = XCreatePixmap( gdi_display, root_window, width, height, physdev->depth );
-    wine_tsx11_unlock();
 
     if (use_dst) BITBLT_GetDstArea( physdev, pixmaps[DST], gc, visrect );
     null_brush = use_pat && !X11DRV_SetupGCForPatBlt( physdev, gc, TRUE );
 
-    wine_tsx11_lock();
     for ( ; *opcode; opcode++)
     {
         if (OP_DST(*opcode) == DST) result = pixmaps[DST];
@@ -742,7 +748,7 @@ void execute_rop( X11DRV_PDEVICE *physdev, Pixmap src_pixmap, GC gc, const RECT 
     physdev->exposures += BITBLT_PutDstArea( physdev, result, visrect );
     XFreePixmap( gdi_display, pixmaps[DST] );
     if (pixmaps[TMP]) XFreePixmap( gdi_display, pixmaps[TMP] );
-    wine_tsx11_unlock();
+    add_device_bounds( physdev, visrect );
 }
 
 /***********************************************************************
@@ -756,9 +762,6 @@ BOOL X11DRV_PatBlt( PHYSDEV dev, struct bitblt_coords *dst, DWORD rop )
 
     if (usePat && !X11DRV_SetupGCForBrush( physDev )) return TRUE;
 
-    X11DRV_LockDIBSection( physDev, DIB_Status_GdiMod );
-
-    wine_tsx11_lock();
     XSetFunction( gdi_display, physDev->gc, OP_ROP(*opcode) );
 
     switch(rop)  /* a few special cases */
@@ -795,9 +798,7 @@ BOOL X11DRV_PatBlt( PHYSDEV dev, struct bitblt_coords *dst, DWORD rop )
                     physDev->dc_rect.top + dst->visrect.top,
                     dst->visrect.right - dst->visrect.left,
                     dst->visrect.bottom - dst->visrect.top );
-    wine_tsx11_unlock();
-
-    X11DRV_UnlockDIBSection( physDev, TRUE );
+    add_device_bounds( physDev, &dst->visrect );
     return TRUE;
 }
 
@@ -826,18 +827,15 @@ BOOL X11DRV_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
 
     width  = dst->visrect.right - dst->visrect.left;
     height = dst->visrect.bottom - dst->visrect.top;
-
-    X11DRV_LockDIBSection( physDevDst, DIB_Status_GdiMod );
-    if (physDevDst != physDevSrc) X11DRV_LockDIBSection( physDevSrc, DIB_Status_GdiMod );
-
     opcode = BITBLT_Opcodes[(rop >> 16) & 0xff];
+
+    add_device_bounds( physDevDst, &dst->visrect );
 
     /* a few optimizations for single-op ROPs */
     if (!opcode[1] && OP_SRCDST(opcode[0]) == OP_ARGS(SRC,DST))
     {
         if (same_format(physDevSrc, physDevDst))
         {
-            wine_tsx11_lock();
             XSetFunction( gdi_display, physDevDst->gc, OP_ROP(*opcode) );
             XCopyArea( gdi_display, physDevSrc->drawable,
                        physDevDst->drawable, physDevDst->gc,
@@ -847,14 +845,15 @@ BOOL X11DRV_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
                        physDevDst->dc_rect.left + dst->visrect.left,
                        physDevDst->dc_rect.top + dst->visrect.top );
             physDevDst->exposures++;
-            wine_tsx11_unlock();
-            goto done;
+            return TRUE;
         }
         if (physDevSrc->depth == 1)
         {
-            wine_tsx11_lock();
-            XSetBackground( gdi_display, physDevDst->gc, physDevDst->textPixel );
-            XSetForeground( gdi_display, physDevDst->gc, physDevDst->backgroundPixel );
+            int text_pixel = X11DRV_PALETTE_ToPhysical( physDevDst, GetTextColor(physDevDst->dev.hdc) );
+            int bkgnd_pixel = X11DRV_PALETTE_ToPhysical( physDevDst, GetBkColor(physDevDst->dev.hdc) );
+
+            XSetBackground( gdi_display, physDevDst->gc, text_pixel );
+            XSetForeground( gdi_display, physDevDst->gc, bkgnd_pixel );
             XSetFunction( gdi_display, physDevDst->gc, OP_ROP(*opcode) );
             XCopyPlane( gdi_display, physDevSrc->drawable,
                         physDevDst->drawable, physDevDst->gc,
@@ -864,12 +863,10 @@ BOOL X11DRV_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
                         physDevDst->dc_rect.left + dst->visrect.left,
                         physDevDst->dc_rect.top + dst->visrect.top, 1 );
             physDevDst->exposures++;
-            wine_tsx11_unlock();
-            goto done;
+            return TRUE;
         }
     }
 
-    wine_tsx11_lock();
     gc = XCreateGC( gdi_display, physDevDst->drawable, 0, NULL );
     XSetSubwindowMode( gdi_display, gc, IncludeInferiors );
     XSetGraphicsExposures( gdi_display, gc, False );
@@ -883,15 +880,18 @@ BOOL X11DRV_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
            to color or vice versa, the foreground and background color of
            the device context are used.  In fact, it also applies to the
            case when it is converted from mono to mono. */
+        int text_pixel = X11DRV_PALETTE_ToPhysical( physDevDst, GetTextColor(physDevDst->dev.hdc) );
+        int bkgnd_pixel = X11DRV_PALETTE_ToPhysical( physDevDst, GetBkColor(physDevDst->dev.hdc) );
+
         if (X11DRV_PALETTE_XPixelToPalette && physDevDst->depth != 1)
         {
-            XSetBackground( gdi_display, gc, X11DRV_PALETTE_XPixelToPalette[physDevDst->textPixel] );
-            XSetForeground( gdi_display, gc, X11DRV_PALETTE_XPixelToPalette[physDevDst->backgroundPixel]);
+            XSetBackground( gdi_display, gc, X11DRV_PALETTE_XPixelToPalette[text_pixel] );
+            XSetForeground( gdi_display, gc, X11DRV_PALETTE_XPixelToPalette[bkgnd_pixel]);
         }
         else
         {
-            XSetBackground( gdi_display, gc, physDevDst->textPixel );
-            XSetForeground( gdi_display, gc, physDevDst->backgroundPixel );
+            XSetBackground( gdi_display, gc, text_pixel );
+            XSetForeground( gdi_display, gc, bkgnd_pixel );
         }
         XCopyPlane( gdi_display, physDevSrc->drawable, src_pixmap, gc,
                     physDevSrc->dc_rect.left + src->visrect.left,
@@ -905,18 +905,11 @@ BOOL X11DRV_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
                    physDevSrc->dc_rect.top + src->visrect.top,
                    width, height, 0, 0 );
     }
-    wine_tsx11_unlock();
 
     execute_rop( physDevDst, src_pixmap, gc, &dst->visrect, rop );
 
-    wine_tsx11_lock();
     XFreePixmap( gdi_display, src_pixmap );
     XFreeGC( gdi_display, gc );
-    wine_tsx11_unlock();
-
-done:
-    if (physDevDst != physDevSrc) X11DRV_UnlockDIBSection( physDevSrc, FALSE );
-    X11DRV_UnlockDIBSection( physDevDst, TRUE );
     return TRUE;
 }
 
@@ -928,13 +921,32 @@ static void free_heap_bits( struct gdi_image_bits *bits )
 
 static void free_ximage_bits( struct gdi_image_bits *bits )
 {
-    wine_tsx11_lock();
     XFree( bits->ptr );
-    wine_tsx11_unlock();
+}
+
+/* only for use on sanitized BITMAPINFO structures */
+static inline int get_dib_info_size( const BITMAPINFO *info, UINT coloruse )
+{
+    if (info->bmiHeader.biCompression == BI_BITFIELDS)
+        return sizeof(BITMAPINFOHEADER) + 3 * sizeof(DWORD);
+    if (coloruse == DIB_PAL_COLORS)
+        return sizeof(BITMAPINFOHEADER) + info->bmiHeader.biClrUsed * sizeof(WORD);
+    return FIELD_OFFSET( BITMAPINFO, bmiColors[info->bmiHeader.biClrUsed] );
+}
+
+static inline int get_dib_stride( int width, int bpp )
+{
+    return ((width * bpp + 31) >> 3) & ~3;
+}
+
+static inline int get_dib_image_size( const BITMAPINFO *info )
+{
+    return get_dib_stride( info->bmiHeader.biWidth, info->bmiHeader.biBitCount )
+        * abs( info->bmiHeader.biHeight );
 }
 
 /* store the palette or color mask data in the bitmap info structure */
-static void set_color_info( PHYSDEV dev, const ColorShifts *color_shifts, BITMAPINFO *info )
+static void set_color_info( const XVisualInfo *vis, BITMAPINFO *info, BOOL has_alpha )
 {
     DWORD *colors = (DWORD *)((char *)info + info->bmiHeader.biSize);
 
@@ -951,7 +963,7 @@ static void set_color_info( PHYSDEV dev, const ColorShifts *color_shifts, BITMAP
         UINT i, count;
 
         info->bmiHeader.biClrUsed = 1 << info->bmiHeader.biBitCount;
-        count = X11DRV_GetSystemPaletteEntries( dev, 0, info->bmiHeader.biClrUsed, palette );
+        count = X11DRV_GetSystemPaletteEntries( NULL, 0, info->bmiHeader.biClrUsed, palette );
         for (i = 0; i < count; i++)
         {
             rgb[i].rgbRed   = palette[i].peRed;
@@ -963,23 +975,23 @@ static void set_color_info( PHYSDEV dev, const ColorShifts *color_shifts, BITMAP
         break;
     }
     case 16:
-        colors[0] = color_shifts->logicalRed.max << color_shifts->logicalRed.shift;
-        colors[1] = color_shifts->logicalGreen.max << color_shifts->logicalGreen.shift;
-        colors[2] = color_shifts->logicalBlue.max << color_shifts->logicalBlue.shift;
+        colors[0] = vis->red_mask;
+        colors[1] = vis->green_mask;
+        colors[2] = vis->blue_mask;
         info->bmiHeader.biCompression = BI_BITFIELDS;
         break;
     case 32:
-        colors[0] = color_shifts->logicalRed.max << color_shifts->logicalRed.shift;
-        colors[1] = color_shifts->logicalGreen.max << color_shifts->logicalGreen.shift;
-        colors[2] = color_shifts->logicalBlue.max << color_shifts->logicalBlue.shift;
-        if (colors[0] != 0xff0000 || colors[1] != 0x00ff00 || colors[2] != 0x0000ff)
+        colors[0] = vis->red_mask;
+        colors[1] = vis->green_mask;
+        colors[2] = vis->blue_mask;
+        if (colors[0] != 0xff0000 || colors[1] != 0x00ff00 || colors[2] != 0x0000ff || !has_alpha)
             info->bmiHeader.biCompression = BI_BITFIELDS;
         break;
     }
 }
 
 /* check if the specified color info is suitable for PutImage */
-static BOOL matching_color_info( PHYSDEV dev, const ColorShifts *color_shifts, const BITMAPINFO *info )
+static BOOL matching_color_info( const XVisualInfo *vis, const BITMAPINFO *info )
 {
     DWORD *colors = (DWORD *)((char *)info + info->bmiHeader.biSize);
 
@@ -996,7 +1008,7 @@ static BOOL matching_color_info( PHYSDEV dev, const ColorShifts *color_shifts, c
         UINT i, count;
 
         if (info->bmiHeader.biCompression != BI_RGB) return FALSE;
-        count = X11DRV_GetSystemPaletteEntries( dev, 0, 1 << info->bmiHeader.biBitCount, palette );
+        count = X11DRV_GetSystemPaletteEntries( NULL, 0, 1 << info->bmiHeader.biBitCount, palette );
         if (count != info->bmiHeader.biClrUsed) return FALSE;
         for (i = 0; i < count; i++)
         {
@@ -1008,33 +1020,137 @@ static BOOL matching_color_info( PHYSDEV dev, const ColorShifts *color_shifts, c
     }
     case 16:
         if (info->bmiHeader.biCompression == BI_BITFIELDS)
-            return (color_shifts->logicalRed.max << color_shifts->logicalRed.shift == colors[0] &&
-                    color_shifts->logicalGreen.max << color_shifts->logicalGreen.shift == colors[1] &&
-                    color_shifts->logicalBlue.max << color_shifts->logicalBlue.shift == colors[2]);
+            return (vis->red_mask == colors[0] &&
+                    vis->green_mask == colors[1] &&
+                    vis->blue_mask == colors[2]);
         if (info->bmiHeader.biCompression == BI_RGB)
-            return (color_shifts->logicalRed.max << color_shifts->logicalRed.shift     == 0x7c00 &&
-                    color_shifts->logicalGreen.max << color_shifts->logicalGreen.shift == 0x03e0 &&
-                    color_shifts->logicalBlue.max << color_shifts->logicalBlue.shift   == 0x001f);
+            return (vis->red_mask == 0x7c00 && vis->green_mask == 0x03e0 && vis->blue_mask == 0x001f);
         break;
     case 32:
         if (info->bmiHeader.biCompression == BI_BITFIELDS)
-            return (color_shifts->logicalRed.max << color_shifts->logicalRed.shift == colors[0] &&
-                    color_shifts->logicalGreen.max << color_shifts->logicalGreen.shift == colors[1] &&
-                    color_shifts->logicalBlue.max << color_shifts->logicalBlue.shift == colors[2]);
+            return (vis->red_mask == colors[0] &&
+                    vis->green_mask == colors[1] &&
+                    vis->blue_mask == colors[2]);
         /* fall through */
     case 24:
         if (info->bmiHeader.biCompression == BI_RGB)
-            return (color_shifts->logicalRed.max << color_shifts->logicalRed.shift     == 0xff0000 &&
-                    color_shifts->logicalGreen.max << color_shifts->logicalGreen.shift == 0x00ff00 &&
-                    color_shifts->logicalBlue.max << color_shifts->logicalBlue.shift   == 0x0000ff);
+            return (vis->red_mask == 0xff0000 && vis->green_mask == 0x00ff00 && vis->blue_mask == 0x0000ff);
         break;
     }
     return FALSE;
 }
 
-static inline BOOL is_r8g8b8( int depth, const ColorShifts *color_shifts )
+static inline BOOL is_r8g8b8( const XVisualInfo *vis )
 {
-    return depth == 24 && color_shifts->logicalBlue.shift == 0 && color_shifts->logicalRed.shift == 16;
+    const XPixmapFormatValues *format = pixmap_formats[vis->depth];
+    return format->bits_per_pixel == 24 && vis->red_mask == 0xff0000 && vis->blue_mask == 0x0000ff;
+}
+
+static inline BOOL image_needs_byteswap( XImage *image, BOOL is_r8g8b8, int bit_count )
+{
+#ifdef WORDS_BIGENDIAN
+    static const int client_byte_order = MSBFirst;
+#else
+    static const int client_byte_order = LSBFirst;
+#endif
+
+    switch (bit_count)
+    {
+    case 1:  return image->bitmap_bit_order != MSBFirst;
+    case 4:  return image->byte_order != MSBFirst;
+    case 16:
+    case 32: return image->byte_order != client_byte_order;
+    case 24: return (image->byte_order == MSBFirst) ^ !is_r8g8b8;
+    default: return FALSE;
+    }
+}
+
+/* copy image bits with byte swapping and/or pixel mapping */
+static void copy_image_byteswap( BITMAPINFO *info, const unsigned char *src, unsigned char *dst,
+                                 int src_stride, int dst_stride, int height,
+                                 BOOL byteswap, const int *mapping, unsigned int zeropad_mask )
+{
+    int x, y, padding_pos = abs(dst_stride) / sizeof(unsigned int) - 1;
+
+    if (!byteswap && !mapping)  /* simply copy */
+    {
+        if (src != dst)
+        {
+            for (y = 0; y < height; y++, src += src_stride, dst += dst_stride)
+            {
+                memcpy( dst, src, src_stride );
+                ((unsigned int *)dst)[padding_pos] &= zeropad_mask;
+            }
+        }
+        else if (zeropad_mask != ~0u)  /* only need to clear the padding */
+        {
+            for (y = 0; y < height; y++, dst += dst_stride)
+                ((unsigned int *)dst)[padding_pos] &= zeropad_mask;
+        }
+        return;
+    }
+
+    switch (info->bmiHeader.biBitCount)
+    {
+    case 1:
+        for (y = 0; y < height; y++, src += src_stride, dst += dst_stride)
+        {
+            for (x = 0; x < src_stride; x++) dst[x] = bit_swap[src[x]];
+            ((unsigned int *)dst)[padding_pos] &= zeropad_mask;
+        }
+        break;
+    case 4:
+        for (y = 0; y < height; y++, src += src_stride, dst += dst_stride)
+        {
+            if (mapping)
+            {
+                if (byteswap)
+                    for (x = 0; x < src_stride; x++)
+                        dst[x] = (mapping[src[x] & 0x0f] << 4) | mapping[src[x] >> 4];
+                else
+                    for (x = 0; x < src_stride; x++)
+                        dst[x] = mapping[src[x] & 0x0f] | (mapping[src[x] >> 4] << 4);
+            }
+            else
+                for (x = 0; x < src_stride; x++)
+                    dst[x] = (src[x] << 4) | (src[x] >> 4);
+            ((unsigned int *)dst)[padding_pos] &= zeropad_mask;
+        }
+        break;
+    case 8:
+        for (y = 0; y < height; y++, src += src_stride, dst += dst_stride)
+        {
+            for (x = 0; x < src_stride; x++) dst[x] = mapping[src[x]];
+            ((unsigned int *)dst)[padding_pos] &= zeropad_mask;
+        }
+        break;
+    case 16:
+        for (y = 0; y < height; y++, src += src_stride, dst += dst_stride)
+        {
+            for (x = 0; x < info->bmiHeader.biWidth; x++)
+                ((USHORT *)dst)[x] = RtlUshortByteSwap( ((const USHORT *)src)[x] );
+            ((unsigned int *)dst)[padding_pos] &= zeropad_mask;
+        }
+        break;
+    case 24:
+        for (y = 0; y < height; y++, src += src_stride, dst += dst_stride)
+        {
+            for (x = 0; x < info->bmiHeader.biWidth; x++)
+            {
+                unsigned char tmp = src[3 * x];
+                dst[3 * x]     = src[3 * x + 2];
+                dst[3 * x + 1] = src[3 * x + 1];
+                dst[3 * x + 2] = tmp;
+            }
+            ((unsigned int *)dst)[padding_pos] &= zeropad_mask;
+        }
+        break;
+    case 32:
+        for (y = 0; y < height; y++, src += src_stride, dst += dst_stride)
+            for (x = 0; x < info->bmiHeader.biWidth; x++)
+                ((ULONG *)dst)[x] = RtlUlongByteSwap( ((const ULONG *)src)[x] );
+        break;
+    }
 }
 
 /* copy the image bits, fixing up alignment and byte swapping as necessary */
@@ -1042,36 +1158,10 @@ DWORD copy_image_bits( BITMAPINFO *info, BOOL is_r8g8b8, XImage *image,
                        const struct gdi_image_bits *src_bits, struct gdi_image_bits *dst_bits,
                        struct bitblt_coords *coords, const int *mapping, unsigned int zeropad_mask )
 {
-#ifdef WORDS_BIGENDIAN
-    static const int client_byte_order = MSBFirst;
-#else
-    static const int client_byte_order = LSBFirst;
-#endif
-    BOOL need_byteswap;
-    int x, y, height = coords->visrect.bottom - coords->visrect.top;
+    BOOL need_byteswap = image_needs_byteswap( image, is_r8g8b8, info->bmiHeader.biBitCount );
+    int height = coords->visrect.bottom - coords->visrect.top;
     int width_bytes = image->bytes_per_line;
-    int padding_pos;
     unsigned char *src, *dst;
-
-    switch (info->bmiHeader.biBitCount)
-    {
-    case 1:
-        need_byteswap = (image->bitmap_bit_order != MSBFirst);
-        break;
-    case 4:
-        need_byteswap = (image->byte_order != MSBFirst);
-        break;
-    case 16:
-    case 32:
-        need_byteswap = (image->byte_order != client_byte_order);
-        break;
-    case 24:
-        need_byteswap = (image->byte_order == MSBFirst) ^ !is_r8g8b8;
-        break;
-    default:
-        need_byteswap = FALSE;
-        break;
-    }
 
     src = src_bits->ptr;
     if (info->bmiHeader.biHeight > 0)
@@ -1102,7 +1192,6 @@ DWORD copy_image_bits( BITMAPINFO *info, BOOL is_r8g8b8, XImage *image,
     }
 
     dst = dst_bits->ptr;
-    padding_pos = width_bytes/sizeof(unsigned int) - 1;
 
     if (info->bmiHeader.biHeight > 0)
     {
@@ -1110,215 +1199,92 @@ DWORD copy_image_bits( BITMAPINFO *info, BOOL is_r8g8b8, XImage *image,
         width_bytes = -width_bytes;
     }
 
-    if (need_byteswap || mapping)
-    {
-        switch (info->bmiHeader.biBitCount)
-        {
-        case 1:
-            for (y = 0; y < height; y++, src += image->bytes_per_line, dst += width_bytes)
-            {
-                for (x = 0; x < image->bytes_per_line; x++)
-                    dst[x] = bit_swap[src[x]];
-                ((unsigned int *)dst)[padding_pos] &= zeropad_mask;
-            }
-            break;
-        case 4:
-            for (y = 0; y < height; y++, src += image->bytes_per_line, dst += width_bytes)
-            {
-                if (mapping)
-                    for (x = 0; x < image->bytes_per_line; x++)
-                        dst[x] = (mapping[src[x] & 0x0f] << 4) | mapping[src[x] >> 4];
-                else
-                    for (x = 0; x < image->bytes_per_line; x++)
-                        dst[x] = (src[x] << 4) | (src[x] >> 4);
-                ((unsigned int *)dst)[padding_pos] &= zeropad_mask;
-            }
-            break;
-        case 8:
-            for (y = 0; y < height; y++, src += image->bytes_per_line, dst += width_bytes)
-            {
-                for (x = 0; x < image->bytes_per_line; x++)
-                    dst[x] = mapping[src[x]];
-                ((unsigned int *)dst)[padding_pos] &= zeropad_mask;
-            }
-            break;
-        case 16:
-            for (y = 0; y < height; y++, src += image->bytes_per_line, dst += width_bytes)
-            {
-                for (x = 0; x < info->bmiHeader.biWidth; x++)
-                    ((USHORT *)dst)[x] = RtlUshortByteSwap( ((const USHORT *)src)[x] );
-                ((unsigned int *)dst)[padding_pos] &= zeropad_mask;
-            }
-            break;
-        case 24:
-            for (y = 0; y < height; y++, src += image->bytes_per_line, dst += width_bytes)
-            {
-                for (x = 0; x < info->bmiHeader.biWidth; x++)
-                {
-                    unsigned char tmp = src[3 * x];
-                    dst[3 * x]     = src[3 * x + 2];
-                    dst[3 * x + 1] = src[3 * x + 1];
-                    dst[3 * x + 2] = tmp;
-                }
-                ((unsigned int *)dst)[padding_pos] &= zeropad_mask;
-            }
-            break;
-        case 32:
-            for (y = 0; y < height; y++, src += image->bytes_per_line, dst += width_bytes)
-                for (x = 0; x < info->bmiHeader.biWidth; x++)
-                    ((ULONG *)dst)[x] = RtlUlongByteSwap( ((const ULONG *)src)[x] );
-            break;
-        }
-    }
-    else if (src != dst)
-    {
-        for (y = 0; y < height; y++, src += image->bytes_per_line, dst += width_bytes)
-        {
-            memcpy( dst, src, image->bytes_per_line );
-            ((unsigned int *)dst)[padding_pos] &= zeropad_mask;
-        }
-    }
-    else  /* only need to clear the padding */
-    {
-        for (y = 0; y < height; y++, dst += width_bytes)
-            ((unsigned int *)dst)[padding_pos] &= zeropad_mask;
-    }
+    copy_image_byteswap( info, src, dst, image->bytes_per_line, width_bytes, height,
+                         need_byteswap, mapping, zeropad_mask );
     return ERROR_SUCCESS;
 }
 
 /***********************************************************************
  *           X11DRV_PutImage
  */
-DWORD X11DRV_PutImage( PHYSDEV dev, HBITMAP hbitmap, HRGN clip, BITMAPINFO *info,
+DWORD X11DRV_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info,
                        const struct gdi_image_bits *bits, struct bitblt_coords *src,
                        struct bitblt_coords *dst, DWORD rop )
 {
-    X11DRV_PDEVICE *physdev;
-    X_PHYSBITMAP *bitmap;
+    X11DRV_PDEVICE *physdev = get_x11drv_dev( dev );
     DWORD ret;
     XImage *image;
-    int depth;
+    XVisualInfo vis = default_visual;
     struct gdi_image_bits dst_bits;
     const XPixmapFormatValues *format;
-    const ColorShifts *color_shifts;
     const BYTE *opcode = BITBLT_Opcodes[(rop >> 16) & 0xff];
     const int *mapping = NULL;
 
-    if (hbitmap)
+    vis.depth = physdev->depth;
+    if (physdev->color_shifts)
     {
-        if (!(bitmap = X11DRV_get_phys_bitmap( hbitmap ))) return ERROR_INVALID_HANDLE;
-        physdev = NULL;
-        depth = bitmap->depth;
-        color_shifts = &bitmap->color_shifts;
+        vis.red_mask   = physdev->color_shifts->logicalRed.max   << physdev->color_shifts->logicalRed.shift;
+        vis.green_mask = physdev->color_shifts->logicalGreen.max << physdev->color_shifts->logicalGreen.shift;
+        vis.blue_mask  = physdev->color_shifts->logicalBlue.max  << physdev->color_shifts->logicalBlue.shift;
     }
-    else
-    {
-        physdev = get_x11drv_dev( dev );
-        bitmap = NULL;
-        depth = physdev->depth;
-        color_shifts = physdev->color_shifts;
-    }
-    format = pixmap_formats[depth];
+    format = pixmap_formats[vis.depth];
 
     if (info->bmiHeader.biPlanes != 1) goto update_format;
     if (info->bmiHeader.biBitCount != format->bits_per_pixel) goto update_format;
     /* FIXME: could try to handle 1-bpp using XCopyPlane */
-    if (!matching_color_info( dev, color_shifts, info )) goto update_format;
+    if (!matching_color_info( &vis, info )) goto update_format;
     if (!bits) return ERROR_SUCCESS;  /* just querying the format */
     if ((src->width != dst->width) || (src->height != dst->height)) return ERROR_TRANSFORM_NOT_SUPPORTED;
 
-    wine_tsx11_lock();
-    image = XCreateImage( gdi_display, visual, depth, ZPixmap, 0, NULL,
+    image = XCreateImage( gdi_display, vis.visual, vis.depth, ZPixmap, 0, NULL,
                           info->bmiHeader.biWidth, src->visrect.bottom - src->visrect.top, 32, 0 );
-    wine_tsx11_unlock();
     if (!image) return ERROR_OUTOFMEMORY;
 
     if (image->bits_per_pixel == 4 || image->bits_per_pixel == 8)
     {
-        if (bitmap || (!opcode[1] && OP_SRCDST(opcode[0]) == OP_ARGS(SRC,DST)))
+        if (!opcode[1] && OP_SRCDST(opcode[0]) == OP_ARGS(SRC,DST))
             mapping = X11DRV_PALETTE_PaletteToXPixel;
     }
 
-    ret = copy_image_bits( info, is_r8g8b8(depth,color_shifts), image, bits, &dst_bits, src, mapping, ~0u );
+    ret = copy_image_bits( info, is_r8g8b8(&vis), image, bits, &dst_bits, src, mapping, ~0u );
 
     if (!ret)
     {
+        BOOL restore_region = add_extra_clipping_region( physdev, clip );
         int width = dst->visrect.right - dst->visrect.left;
         int height = dst->visrect.bottom - dst->visrect.top;
 
         image->data = dst_bits.ptr;
-        /* hack: make sure the bits are readable if we are reading from a DIB section */
-        /* to be removed once we get rid of DIB access protections */
-        if (!dst_bits.is_copy) IsBadReadPtr( dst_bits.ptr, height * image->bytes_per_line );
 
-        if (bitmap)
+        /* optimization for single-op ROPs */
+        if (!opcode[1] && OP_SRCDST(opcode[0]) == OP_ARGS(SRC,DST))
         {
-            RGNDATA *clip_data = NULL;
-            GC gc;
-
-            if (clip) clip_data = X11DRV_GetRegionData( clip, 0 );
-            X11DRV_DIB_Lock( bitmap, DIB_Status_GdiMod );
-
-            wine_tsx11_lock();
-            gc = XCreateGC( gdi_display, bitmap->pixmap, 0, NULL );
-            XSetGraphicsExposures( gdi_display, gc, False );
-            if (clip_data) XSetClipRectangles( gdi_display, gc, 0, 0, (XRectangle *)clip_data->Buffer,
-                                               clip_data->rdh.nCount, YXBanded );
-            XPutImage( gdi_display, bitmap->pixmap, gc, image, src->visrect.left, 0,
-                       dst->visrect.left, dst->visrect.top, width, height );
-            XFreeGC( gdi_display, gc );
-            wine_tsx11_unlock();
-
-            X11DRV_DIB_Unlock( bitmap, TRUE );
-            HeapFree( GetProcessHeap(), 0, clip_data );
+            XSetFunction( gdi_display, physdev->gc, OP_ROP(*opcode) );
+            XPutImage( gdi_display, physdev->drawable, physdev->gc, image, src->visrect.left, 0,
+                       physdev->dc_rect.left + dst->visrect.left,
+                       physdev->dc_rect.top + dst->visrect.top, width, height );
         }
         else
         {
-            RGNDATA *saved_region = NULL;
+            GC gc = XCreateGC( gdi_display, physdev->drawable, 0, NULL );
+            Pixmap src_pixmap = XCreatePixmap( gdi_display, root_window, width, height, vis.depth );
 
-            if (clip) saved_region = add_extra_clipping_region( physdev, clip );
-            X11DRV_LockDIBSection( physdev, DIB_Status_GdiMod );
+            XSetSubwindowMode( gdi_display, gc, IncludeInferiors );
+            XSetGraphicsExposures( gdi_display, gc, False );
+            XPutImage( gdi_display, src_pixmap, gc, image, src->visrect.left, 0, 0, 0, width, height );
 
-            /* optimization for single-op ROPs */
-            if (!opcode[1] && OP_SRCDST(opcode[0]) == OP_ARGS(SRC,DST))
-            {
-                wine_tsx11_lock();
-                XSetFunction( gdi_display, physdev->gc, OP_ROP(*opcode) );
-                XPutImage( gdi_display, physdev->drawable, physdev->gc, image, src->visrect.left, 0,
-                           physdev->dc_rect.left + dst->visrect.left,
-                           physdev->dc_rect.top + dst->visrect.top, width, height );
-                wine_tsx11_unlock();
-            }
-            else
-            {
-                Pixmap src_pixmap;
-                GC gc;
+            execute_rop( physdev, src_pixmap, gc, &dst->visrect, rop );
 
-                wine_tsx11_lock();
-                gc = XCreateGC( gdi_display, physdev->drawable, 0, NULL );
-                XSetSubwindowMode( gdi_display, gc, IncludeInferiors );
-                XSetGraphicsExposures( gdi_display, gc, False );
-                src_pixmap = XCreatePixmap( gdi_display, root_window, width, height, depth );
-                XPutImage( gdi_display, src_pixmap, gc, image, src->visrect.left, 0, 0, 0, width, height );
-                wine_tsx11_unlock();
-
-                execute_rop( physdev, src_pixmap, gc, &dst->visrect, rop );
-
-                wine_tsx11_lock();
-                XFreePixmap( gdi_display, src_pixmap );
-                XFreeGC( gdi_display, gc );
-                wine_tsx11_unlock();
-            }
-
-            X11DRV_UnlockDIBSection( physdev, !ret );
-            restore_clipping_region( physdev, saved_region );
+            XFreePixmap( gdi_display, src_pixmap );
+            XFreeGC( gdi_display, gc );
         }
+
+        if (restore_region) restore_clipping_region( physdev );
+        add_device_bounds( physdev, &dst->visrect );
         image->data = NULL;
     }
 
-    wine_tsx11_lock();
     XDestroyImage( image );
-    wine_tsx11_unlock();
     if (dst_bits.free) dst_bits.free( &dst_bits );
     return ret;
 
@@ -1326,42 +1292,33 @@ update_format:
     info->bmiHeader.biPlanes   = 1;
     info->bmiHeader.biBitCount = format->bits_per_pixel;
     if (info->bmiHeader.biHeight > 0) info->bmiHeader.biHeight = -info->bmiHeader.biHeight;
-    set_color_info( dev, color_shifts, info );
+    set_color_info( &vis, info, FALSE );
     return ERROR_BAD_FORMAT;
 }
 
 /***********************************************************************
  *           X11DRV_GetImage
  */
-DWORD X11DRV_GetImage( PHYSDEV dev, HBITMAP hbitmap, BITMAPINFO *info,
+DWORD X11DRV_GetImage( PHYSDEV dev, BITMAPINFO *info,
                        struct gdi_image_bits *bits, struct bitblt_coords *src )
 {
-    X11DRV_PDEVICE *physdev;
-    X_PHYSBITMAP *bitmap;
+    X11DRV_PDEVICE *physdev = get_x11drv_dev( dev );
     DWORD ret = ERROR_SUCCESS;
     XImage *image;
+    XVisualInfo vis = default_visual;
     UINT align, x, y, width, height;
-    int depth;
     struct gdi_image_bits src_bits;
     const XPixmapFormatValues *format;
-    const ColorShifts *color_shifts;
     const int *mapping = NULL;
 
-    if (hbitmap)
+    vis.depth = physdev->depth;
+    if (physdev->color_shifts)
     {
-        if (!(bitmap = X11DRV_get_phys_bitmap( hbitmap ))) return ERROR_INVALID_HANDLE;
-        physdev = NULL;
-        depth = bitmap->depth;
-        color_shifts = &bitmap->color_shifts;
+        vis.red_mask   = physdev->color_shifts->logicalRed.max   << physdev->color_shifts->logicalRed.shift;
+        vis.green_mask = physdev->color_shifts->logicalGreen.max << physdev->color_shifts->logicalGreen.shift;
+        vis.blue_mask  = physdev->color_shifts->logicalBlue.max  << physdev->color_shifts->logicalBlue.shift;
     }
-    else
-    {
-        physdev = get_x11drv_dev( dev );
-        bitmap = NULL;
-        depth = physdev->depth;
-        color_shifts = physdev->color_shifts;
-    }
-    format = pixmap_formats[depth];
+    format = pixmap_formats[vis.depth];
 
     /* align start and width to 32-bit boundary */
     switch (format->bits_per_pixel)
@@ -1373,7 +1330,7 @@ DWORD X11DRV_GetImage( PHYSDEV dev, HBITMAP hbitmap, BITMAPINFO *info,
     case 24: align = 4;  break;
     case 32: align = 1;  break;
     default:
-        FIXME( "depth %u bpp %u not supported yet\n", depth, format->bits_per_pixel );
+        FIXME( "depth %u bpp %u not supported yet\n", vis.depth, format->bits_per_pixel );
         return ERROR_BAD_FORMAT;
     }
 
@@ -1383,7 +1340,7 @@ DWORD X11DRV_GetImage( PHYSDEV dev, HBITMAP hbitmap, BITMAPINFO *info,
     info->bmiHeader.biXPelsPerMeter = 0;
     info->bmiHeader.biYPelsPerMeter = 0;
     info->bmiHeader.biClrImportant  = 0;
-    set_color_info( dev, color_shifts, info );
+    set_color_info( &vis, info, FALSE );
 
     if (!bits) return ERROR_SUCCESS;  /* just querying the color information */
 
@@ -1397,43 +1354,24 @@ DWORD X11DRV_GetImage( PHYSDEV dev, HBITMAP hbitmap, BITMAPINFO *info,
     src->y -= y;
     OffsetRect( &src->visrect, -x, -y );
 
-    if (bitmap)
+    X11DRV_expect_error( gdi_display, XGetImage_handler, NULL );
+    image = XGetImage( gdi_display, physdev->drawable,
+                       physdev->dc_rect.left + x, physdev->dc_rect.top + y,
+                       width, height, AllPlanes, ZPixmap );
+    if (X11DRV_check_error())
     {
-        BITMAP bm;
-        GetObjectW( hbitmap, sizeof(bm), &bm );
-        width = min( width, bm.bmWidth - x );
-        height = min( height, bm.bmHeight - y );
-        X11DRV_DIB_Lock( bitmap, DIB_Status_GdiMod );
-        wine_tsx11_lock();
-        image = XGetImage( gdi_display, bitmap->pixmap, x, y, width, height, AllPlanes, ZPixmap );
-        wine_tsx11_unlock();
-        X11DRV_DIB_Unlock( bitmap, TRUE );
-    }
-    else if (GetObjectType( dev->hdc ) == OBJ_MEMDC)
-    {
-        X11DRV_LockDIBSection( physdev, DIB_Status_GdiMod );
-        width = min( width, physdev->dc_rect.right - physdev->dc_rect.left - x );
-        height = min( height, physdev->dc_rect.bottom - physdev->dc_rect.top - y );
-        wine_tsx11_lock();
-        image = XGetImage( gdi_display, physdev->drawable,
-                           physdev->dc_rect.left + x, physdev->dc_rect.top + y,
-                           width, height, AllPlanes, ZPixmap );
-        wine_tsx11_unlock();
-        X11DRV_UnlockDIBSection( physdev, FALSE );
-    }
-    else
-    {
-        Pixmap pixmap;
+        /* use a temporary pixmap to avoid the BadMatch error */
+        Pixmap pixmap = XCreatePixmap( gdi_display, root_window, width, height, vis.depth );
+        GC gc = XCreateGC( gdi_display, pixmap, 0, NULL );
 
-        wine_tsx11_lock();
-        /* use a temporary pixmap to avoid BadMatch errors */
-        pixmap = XCreatePixmap( gdi_display, root_window, width, height, depth );
-        XCopyArea( gdi_display, physdev->drawable, pixmap, get_bitmap_gc(depth),
+        XSetGraphicsExposures( gdi_display, gc, False );
+        XCopyArea( gdi_display, physdev->drawable, pixmap, gc,
                    physdev->dc_rect.left + x, physdev->dc_rect.top + y, width, height, 0, 0 );
         image = XGetImage( gdi_display, pixmap, 0, 0, width, height, AllPlanes, ZPixmap );
         XFreePixmap( gdi_display, pixmap );
-        wine_tsx11_unlock();
+        XFreeGC( gdi_display, gc );
     }
+
     if (!image) return ERROR_OUTOFMEMORY;
 
     info->bmiHeader.biWidth     = width;
@@ -1442,7 +1380,7 @@ DWORD X11DRV_GetImage( PHYSDEV dev, HBITMAP hbitmap, BITMAPINFO *info,
 
     src_bits.ptr     = image->data;
     src_bits.is_copy = TRUE;
-    ret = copy_image_bits( info, is_r8g8b8(depth,color_shifts), image, &src_bits, bits, src, mapping,
+    ret = copy_image_bits( info, is_r8g8b8(&vis), image, &src_bits, bits, src, mapping,
                            zeropad_masks[(width * image->bits_per_pixel) & 31] );
 
     if (!ret && bits->ptr == image->data)
@@ -1450,8 +1388,708 @@ DWORD X11DRV_GetImage( PHYSDEV dev, HBITMAP hbitmap, BITMAPINFO *info,
         bits->free = free_ximage_bits;
         image->data = NULL;
     }
-    wine_tsx11_lock();
     XDestroyImage( image );
-    wine_tsx11_unlock();
     return ret;
+}
+
+
+/***********************************************************************
+ *           put_pixmap_image
+ *
+ * Simplified equivalent of X11DRV_PutImage that writes directly to a pixmap.
+ */
+static DWORD put_pixmap_image( Pixmap pixmap, const XVisualInfo *vis,
+                               BITMAPINFO *info, const struct gdi_image_bits *bits )
+{
+    DWORD ret;
+    XImage *image;
+    GC gc;
+    struct bitblt_coords coords;
+    struct gdi_image_bits dst_bits;
+    const XPixmapFormatValues *format = pixmap_formats[vis->depth];
+    const int *mapping = NULL;
+
+    if (!format) return ERROR_INVALID_PARAMETER;
+    if (info->bmiHeader.biPlanes != 1) goto update_format;
+    if (info->bmiHeader.biBitCount != format->bits_per_pixel) goto update_format;
+    /* FIXME: could try to handle 1-bpp using XCopyPlane */
+    if (!matching_color_info( vis, info )) goto update_format;
+    if (!bits) return ERROR_SUCCESS;  /* just querying the format */
+
+    coords.x = 0;
+    coords.y = 0;
+    coords.width = info->bmiHeader.biWidth;
+    coords.height = abs( info->bmiHeader.biHeight );
+    SetRect( &coords.visrect, 0, 0, coords.width, coords.height );
+
+    image = XCreateImage( gdi_display, vis->visual, vis->depth, ZPixmap, 0, NULL,
+                          coords.width, coords.height, 32, 0 );
+    if (!image) return ERROR_OUTOFMEMORY;
+
+    if (image->bits_per_pixel == 4 || image->bits_per_pixel == 8)
+        mapping = X11DRV_PALETTE_PaletteToXPixel;
+
+    if (!(ret = copy_image_bits( info, is_r8g8b8(vis), image, bits, &dst_bits, &coords, mapping, ~0u )))
+    {
+        image->data = dst_bits.ptr;
+        gc = XCreateGC( gdi_display, pixmap, 0, NULL );
+        XPutImage( gdi_display, pixmap, gc, image, 0, 0, 0, 0, coords.width, coords.height );
+        XFreeGC( gdi_display, gc );
+        image->data = NULL;
+    }
+
+    XDestroyImage( image );
+    if (dst_bits.free) dst_bits.free( &dst_bits );
+    return ret;
+
+update_format:
+    info->bmiHeader.biPlanes   = 1;
+    info->bmiHeader.biBitCount = format->bits_per_pixel;
+    if (info->bmiHeader.biHeight > 0) info->bmiHeader.biHeight = -info->bmiHeader.biHeight;
+    set_color_info( vis, info, FALSE );
+    return ERROR_BAD_FORMAT;
+}
+
+
+/***********************************************************************
+ *           create_pixmap_from_image
+ */
+Pixmap create_pixmap_from_image( HDC hdc, const XVisualInfo *vis, const BITMAPINFO *info,
+                                 const struct gdi_image_bits *bits, UINT coloruse )
+{
+    static const RGBQUAD default_colortable[2] = { { 0x00, 0x00, 0x00 }, { 0xff, 0xff, 0xff } };
+    char dst_buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
+    char src_buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
+    BITMAPINFO *dst_info = (BITMAPINFO *)dst_buffer;
+    BITMAPINFO *src_info = (BITMAPINFO *)src_buffer;
+    struct gdi_image_bits dst_bits;
+    Pixmap pixmap;
+    DWORD err;
+    HBITMAP dib;
+
+    pixmap = XCreatePixmap( gdi_display, root_window,
+                            info->bmiHeader.biWidth, abs(info->bmiHeader.biHeight), vis->depth );
+    if (!pixmap) return 0;
+
+    memcpy( src_info, info, get_dib_info_size( info, coloruse ));
+    memcpy( dst_info, info, get_dib_info_size( info, coloruse ));
+
+    if (coloruse == DIB_PAL_COLORS ||
+        (err = put_pixmap_image( pixmap, vis, dst_info, bits )) == ERROR_BAD_FORMAT)
+    {
+        if (dst_info->bmiHeader.biBitCount == 1)  /* set a default color table for 1-bpp */
+            memcpy( dst_info->bmiColors, default_colortable, sizeof(default_colortable) );
+        dib = CreateDIBSection( hdc, dst_info, coloruse, &dst_bits.ptr, 0, 0 );
+        if (dib)
+        {
+            if (src_info->bmiHeader.biBitCount == 1 && !src_info->bmiHeader.biClrUsed)
+                memcpy( src_info->bmiColors, default_colortable, sizeof(default_colortable) );
+            SetDIBits( hdc, dib, 0, abs(info->bmiHeader.biHeight), bits->ptr, src_info, coloruse );
+            dst_bits.free = NULL;
+            dst_bits.is_copy = TRUE;
+            err = put_pixmap_image( pixmap, vis, dst_info, &dst_bits );
+            DeleteObject( dib );
+        }
+        else err = ERROR_OUTOFMEMORY;
+    }
+
+    if (!err) return pixmap;
+
+    XFreePixmap( gdi_display, pixmap );
+    return 0;
+
+}
+
+
+/***********************************************************************
+ *           get_pixmap_image
+ *
+ * Equivalent of X11DRV_GetImage that reads directly from a pixmap.
+ */
+DWORD get_pixmap_image( Pixmap pixmap, int width, int height, const XVisualInfo *vis,
+                        BITMAPINFO *info, struct gdi_image_bits *bits )
+{
+    DWORD ret = ERROR_SUCCESS;
+    XImage *image;
+    struct gdi_image_bits src_bits;
+    struct bitblt_coords coords;
+    const XPixmapFormatValues *format = pixmap_formats[vis->depth];
+    const int *mapping = NULL;
+
+    if (!format) return ERROR_INVALID_PARAMETER;
+
+    info->bmiHeader.biSize          = sizeof(info->bmiHeader);
+    info->bmiHeader.biWidth         = width;
+    info->bmiHeader.biHeight        = -height;
+    info->bmiHeader.biPlanes        = 1;
+    info->bmiHeader.biBitCount      = format->bits_per_pixel;
+    info->bmiHeader.biXPelsPerMeter = 0;
+    info->bmiHeader.biYPelsPerMeter = 0;
+    info->bmiHeader.biClrImportant  = 0;
+    set_color_info( vis, info, FALSE );
+
+    if (!bits) return ERROR_SUCCESS;  /* just querying the color information */
+
+    coords.x = 0;
+    coords.y = 0;
+    coords.width = width;
+    coords.height = height;
+    SetRect( &coords.visrect, 0, 0, width, height );
+
+    image = XGetImage( gdi_display, pixmap, 0, 0, width, height, AllPlanes, ZPixmap );
+    if (!image) return ERROR_OUTOFMEMORY;
+
+    info->bmiHeader.biSizeImage = height * image->bytes_per_line;
+
+    src_bits.ptr     = image->data;
+    src_bits.is_copy = TRUE;
+    ret = copy_image_bits( info, is_r8g8b8(vis), image, &src_bits, bits, &coords, mapping,
+                           zeropad_masks[(width * image->bits_per_pixel) & 31] );
+
+    if (!ret && bits->ptr == image->data)
+    {
+        bits->free = free_ximage_bits;
+        image->data = NULL;
+    }
+    XDestroyImage( image );
+    return ret;
+}
+
+
+struct x11drv_window_surface
+{
+    struct window_surface header;
+    Window                window;
+    GC                    gc;
+    XImage               *image;
+    RECT                  bounds;
+    BOOL                  byteswap;
+    BOOL                  is_argb;
+    COLORREF              color_key;
+    HRGN                  region;
+    void                 *bits;
+#ifdef HAVE_LIBXXSHM
+    XShmSegmentInfo       shminfo;
+#endif
+    CRITICAL_SECTION      crit;
+    BITMAPINFO            info;   /* variable size, must be last */
+};
+
+static struct x11drv_window_surface *get_x11_surface( struct window_surface *surface )
+{
+    return (struct x11drv_window_surface *)surface;
+}
+
+static inline UINT get_color_component( UINT color, UINT mask )
+{
+    int shift;
+    for (shift = 0; !(mask & 1); shift++) mask >>= 1;
+    return (color * mask / 255) << shift;
+}
+
+static inline void flush_rgn_data( HRGN rgn, RGNDATA *data )
+{
+    HRGN tmp = ExtCreateRegion( NULL, data->rdh.dwSize + data->rdh.nRgnSize, data );
+    CombineRgn( rgn, rgn, tmp, RGN_OR );
+    DeleteObject( tmp );
+    data->rdh.nCount = 0;
+}
+
+static inline void add_row( HRGN rgn, RGNDATA *data, int x, int y, int len )
+{
+    RECT *rect = (RECT *)data->Buffer + data->rdh.nCount;
+
+    if (len <= 0) return;
+    rect->left   = x;
+    rect->top    = y;
+    rect->right  = x + len;
+    rect->bottom = y + 1;
+    data->rdh.nCount++;
+    if (data->rdh.nCount * sizeof(RECT) > data->rdh.nRgnSize - sizeof(RECT))
+        flush_rgn_data( rgn, data );
+}
+
+/***********************************************************************
+ *           update_surface_region
+ */
+static void update_surface_region( struct x11drv_window_surface *surface )
+{
+#ifdef HAVE_LIBXSHAPE
+    char buffer[4096];
+    RGNDATA *data = (RGNDATA *)buffer;
+    BITMAPINFO *info = &surface->info;
+    UINT *masks = (UINT *)info->bmiColors;
+    int x, y, start, width;
+    HRGN rgn;
+
+    if (!shape_layered_windows) return;
+
+    if (!surface->is_argb && surface->color_key == CLR_INVALID)
+    {
+        XShapeCombineMask( gdi_display, surface->window, ShapeBounding, 0, 0, None, ShapeSet );
+        return;
+    }
+
+    data->rdh.dwSize = sizeof(data->rdh);
+    data->rdh.iType  = RDH_RECTANGLES;
+    data->rdh.nCount = 0;
+    data->rdh.nRgnSize = sizeof(buffer) - sizeof(data->rdh);
+
+    rgn = CreateRectRgn( 0, 0, 0, 0 );
+    width = surface->header.rect.right - surface->header.rect.left;
+
+    switch (info->bmiHeader.biBitCount)
+    {
+    case 16:
+    {
+        WORD *bits = surface->bits;
+        int stride = (width + 1) & ~1;
+        UINT mask = masks[0] | masks[1] | masks[2];
+
+        for (y = surface->header.rect.top; y < surface->header.rect.bottom; y++, bits += stride)
+        {
+            x = 0;
+            while (x < width)
+            {
+                while (x < width && (bits[x] & mask) == surface->color_key) x++;
+                start = x;
+                while (x < width && (bits[x] & mask) != surface->color_key) x++;
+                add_row( rgn, data, surface->header.rect.left + start, y, x - start );
+            }
+        }
+        break;
+    }
+    case 24:
+    {
+        BYTE *bits = surface->bits;
+        int stride = (width * 3 + 3) & ~3;
+
+        for (y = surface->header.rect.top; y < surface->header.rect.bottom; y++, bits += stride)
+        {
+            x = 0;
+            while (x < width)
+            {
+                while (x < width &&
+                       (bits[x * 3] == GetBValue(surface->color_key)) &&
+                       (bits[x * 3 + 1] == GetGValue(surface->color_key)) &&
+                       (bits[x * 3 + 2] == GetRValue(surface->color_key)))
+                    x++;
+                start = x;
+                while (x < width &&
+                       ((bits[x * 3] != GetBValue(surface->color_key)) ||
+                        (bits[x * 3 + 1] != GetGValue(surface->color_key)) ||
+                        (bits[x * 3 + 2] != GetRValue(surface->color_key))))
+                    x++;
+                add_row( rgn, data, surface->header.rect.left + start, y, x - start );
+            }
+        }
+        break;
+    }
+    case 32:
+    {
+        DWORD *bits = surface->bits;
+
+        if (info->bmiHeader.biCompression == BI_RGB)
+        {
+            for (y = surface->header.rect.top; y < surface->header.rect.bottom; y++, bits += width)
+            {
+                x = 0;
+                while (x < width)
+                {
+                    while (x < width &&
+                           ((bits[x] & 0xffffff) == surface->color_key ||
+                            (surface->is_argb && !(bits[x] & 0xff000000)))) x++;
+                    start = x;
+                    while (x < width &&
+                           !((bits[x] & 0xffffff) == surface->color_key ||
+                             (surface->is_argb && !(bits[x] & 0xff000000)))) x++;
+                    add_row( rgn, data, surface->header.rect.left + start, y, x - start );
+                }
+            }
+        }
+        else
+        {
+            UINT mask = masks[0] | masks[1] | masks[2];
+            for (y = surface->header.rect.top; y < surface->header.rect.bottom; y++, bits += width)
+            {
+                x = 0;
+                while (x < width)
+                {
+                    while (x < width && (bits[x] & mask) == surface->color_key) x++;
+                    start = x;
+                    while (x < width && (bits[x] & mask) != surface->color_key) x++;
+                    add_row( rgn, data, surface->header.rect.left + start, y, x - start );
+                }
+            }
+        }
+        break;
+    }
+    default:
+        assert(0);
+    }
+
+    if (data->rdh.nCount) flush_rgn_data( rgn, data );
+
+    if ((data = X11DRV_GetRegionData( rgn, 0 )))
+    {
+        XShapeCombineRectangles( gdi_display, surface->window, ShapeBounding, 0, 0,
+                                 (XRectangle *)data->Buffer, data->rdh.nCount, ShapeSet, YXBanded );
+        HeapFree( GetProcessHeap(), 0, data );
+    }
+
+    DeleteObject( rgn );
+#endif
+}
+
+/***********************************************************************
+ *           set_color_key
+ */
+static void set_color_key( struct x11drv_window_surface *surface, COLORREF key )
+{
+    UINT *masks = (UINT *)surface->info.bmiColors;
+
+    if (key == CLR_INVALID)
+        surface->color_key = CLR_INVALID;
+    else if (surface->info.bmiHeader.biBitCount <= 8)
+        surface->color_key = CLR_INVALID;
+    else if (key & (1 << 24))  /* PALETTEINDEX */
+        surface->color_key = 0;
+    else if (key >> 16 == 0x10ff)  /* DIBINDEX */
+        surface->color_key = 0;
+    else if (surface->info.bmiHeader.biBitCount == 24)
+        surface->color_key = key;
+    else if (surface->info.bmiHeader.biCompression == BI_RGB)
+        surface->color_key = (GetRValue(key) << 16) | (GetGValue(key) << 8) | GetBValue(key);
+    else
+        surface->color_key = get_color_component( GetRValue(key), masks[0] ) |
+                             get_color_component( GetGValue(key), masks[1] ) |
+                             get_color_component( GetBValue(key), masks[2] );
+}
+
+#ifdef HAVE_LIBXXSHM
+static int xshm_error_handler( Display *display, XErrorEvent *event, void *arg )
+{
+    return 1;  /* FIXME: should check event contents */
+}
+
+static XImage *create_shm_image( const XVisualInfo *vis, int width, int height, XShmSegmentInfo *shminfo )
+{
+    XImage *image;
+
+    shminfo->shmid = -1;
+    image = XShmCreateImage( gdi_display, vis->visual, vis->depth, ZPixmap, NULL, shminfo, width, height );
+    if (!image) return NULL;
+    if (image->bytes_per_line & 3) goto failed;  /* we need 32-bit alignment */
+
+    shminfo->shmid = shmget( IPC_PRIVATE, image->bytes_per_line * height, IPC_CREAT | 0700 );
+    if (shminfo->shmid == -1) goto failed;
+
+    shminfo->shmaddr = shmat( shminfo->shmid, 0, 0 );
+    if (shminfo->shmaddr != (char *)-1)
+    {
+        BOOL ok;
+
+        shminfo->readOnly = True;
+        X11DRV_expect_error( gdi_display, xshm_error_handler, NULL );
+        ok = (XShmAttach( gdi_display, shminfo ) != 0);
+        XSync( gdi_display, False );
+        if (!X11DRV_check_error() && ok)
+        {
+            image->data = shminfo->shmaddr;
+            shmctl( shminfo->shmid, IPC_RMID, 0 );
+            return image;
+        }
+        shmdt( shminfo->shmaddr );
+    }
+    shmctl( shminfo->shmid, IPC_RMID, 0 );
+    shminfo->shmid = -1;
+
+failed:
+    XDestroyImage( image );
+    return NULL;
+}
+#endif /* HAVE_LIBXXSHM */
+
+/***********************************************************************
+ *           x11drv_surface_lock
+ */
+static void x11drv_surface_lock( struct window_surface *window_surface )
+{
+    struct x11drv_window_surface *surface = get_x11_surface( window_surface );
+
+    EnterCriticalSection( &surface->crit );
+}
+
+/***********************************************************************
+ *           x11drv_surface_unlock
+ */
+static void x11drv_surface_unlock( struct window_surface *window_surface )
+{
+    struct x11drv_window_surface *surface = get_x11_surface( window_surface );
+
+    LeaveCriticalSection( &surface->crit );
+}
+
+/***********************************************************************
+ *           x11drv_surface_get_bitmap_info
+ */
+static void *x11drv_surface_get_bitmap_info( struct window_surface *window_surface, BITMAPINFO *info )
+{
+    struct x11drv_window_surface *surface = get_x11_surface( window_surface );
+
+    memcpy( info, &surface->info, get_dib_info_size( &surface->info, DIB_RGB_COLORS ));
+    return surface->bits;
+}
+
+/***********************************************************************
+ *           x11drv_surface_get_bounds
+ */
+static RECT *x11drv_surface_get_bounds( struct window_surface *window_surface )
+{
+    struct x11drv_window_surface *surface = get_x11_surface( window_surface );
+
+    return &surface->bounds;
+}
+
+/***********************************************************************
+ *           x11drv_surface_set_region
+ */
+static void x11drv_surface_set_region( struct window_surface *window_surface, HRGN region )
+{
+    RGNDATA *data;
+    struct x11drv_window_surface *surface = get_x11_surface( window_surface );
+
+    TRACE( "updating surface %p with %p\n", surface, region );
+
+    window_surface->funcs->lock( window_surface );
+    if (!region)
+    {
+        if (surface->region) DeleteObject( surface->region );
+        surface->region = 0;
+        XSetClipMask( gdi_display, surface->gc, None );
+    }
+    else
+    {
+        if (!surface->region) surface->region = CreateRectRgn( 0, 0, 0, 0 );
+        CombineRgn( surface->region, region, 0, RGN_COPY );
+        if ((data = X11DRV_GetRegionData( surface->region, 0 )))
+        {
+            XSetClipRectangles( gdi_display, surface->gc, 0, 0,
+                                (XRectangle *)data->Buffer, data->rdh.nCount, YXBanded );
+            HeapFree( GetProcessHeap(), 0, data );
+        }
+    }
+    window_surface->funcs->unlock( window_surface );
+}
+
+/***********************************************************************
+ *           x11drv_surface_flush
+ */
+static void x11drv_surface_flush( struct window_surface *window_surface )
+{
+    struct x11drv_window_surface *surface = get_x11_surface( window_surface );
+    unsigned char *src = surface->bits;
+    unsigned char *dst = (unsigned char *)surface->image->data;
+    struct bitblt_coords coords;
+
+    window_surface->funcs->lock( window_surface );
+    coords.x = 0;
+    coords.y = 0;
+    coords.width  = surface->header.rect.right - surface->header.rect.left;
+    coords.height = surface->header.rect.bottom - surface->header.rect.top;
+    SetRect( &coords.visrect, 0, 0, coords.width, coords.height );
+    if (IntersectRect( &coords.visrect, &coords.visrect, &surface->bounds ))
+    {
+        TRACE( "flushing %p %dx%d bounds %s bits %p\n",
+               surface, coords.width, coords.height,
+               wine_dbgstr_rect( &surface->bounds ), surface->bits );
+
+        if (surface->is_argb || surface->color_key != CLR_INVALID) update_surface_region( surface );
+
+        if (src != dst)
+        {
+            const int *mapping = NULL;
+            int width_bytes = surface->image->bytes_per_line;
+
+            if (surface->image->bits_per_pixel == 4 || surface->image->bits_per_pixel == 8)
+                mapping = X11DRV_PALETTE_PaletteToXPixel;
+
+            src += coords.visrect.top * width_bytes;
+            dst += coords.visrect.top * width_bytes;
+            copy_image_byteswap( &surface->info, src, dst, width_bytes, width_bytes,
+                                 coords.visrect.bottom - coords.visrect.top,
+                                 surface->byteswap, mapping, ~0u );
+        }
+
+#ifdef HAVE_LIBXXSHM
+        if (surface->shminfo.shmid != -1)
+            XShmPutImage( gdi_display, surface->window, surface->gc, surface->image,
+                          coords.visrect.left, coords.visrect.top,
+                          surface->header.rect.left + coords.visrect.left,
+                          surface->header.rect.top + coords.visrect.top,
+                          coords.visrect.right - coords.visrect.left,
+                          coords.visrect.bottom - coords.visrect.top, False );
+        else
+#endif
+        XPutImage( gdi_display, surface->window, surface->gc, surface->image,
+                   coords.visrect.left, coords.visrect.top,
+                   surface->header.rect.left + coords.visrect.left,
+                   surface->header.rect.top + coords.visrect.top,
+                   coords.visrect.right - coords.visrect.left,
+                   coords.visrect.bottom - coords.visrect.top );
+    }
+    reset_bounds( &surface->bounds );
+    window_surface->funcs->unlock( window_surface );
+}
+
+/***********************************************************************
+ *           x11drv_surface_destroy
+ */
+static void x11drv_surface_destroy( struct window_surface *window_surface )
+{
+    struct x11drv_window_surface *surface = get_x11_surface( window_surface );
+
+    TRACE( "freeing %p bits %p\n", surface, surface->bits );
+    if (surface->gc) XFreeGC( gdi_display, surface->gc );
+    if (surface->image)
+    {
+        if (surface->image->data != surface->bits) HeapFree( GetProcessHeap(), 0, surface->bits );
+#ifdef HAVE_LIBXXSHM
+        if (surface->shminfo.shmid != -1)
+        {
+            XShmDetach( gdi_display, &surface->shminfo );
+            shmdt( surface->shminfo.shmaddr );
+        }
+        else
+#endif
+        HeapFree( GetProcessHeap(), 0, surface->image->data );
+        surface->image->data = NULL;
+        XDestroyImage( surface->image );
+    }
+    surface->crit.DebugInfo->Spare[0] = 0;
+    DeleteCriticalSection( &surface->crit );
+    if (surface->region) DeleteObject( surface->region );
+    HeapFree( GetProcessHeap(), 0, surface );
+}
+
+static const struct window_surface_funcs x11drv_surface_funcs =
+{
+    x11drv_surface_lock,
+    x11drv_surface_unlock,
+    x11drv_surface_get_bitmap_info,
+    x11drv_surface_get_bounds,
+    x11drv_surface_set_region,
+    x11drv_surface_flush,
+    x11drv_surface_destroy
+};
+
+/***********************************************************************
+ *           create_surface
+ */
+struct window_surface *create_surface( Window window, const XVisualInfo *vis, const RECT *rect,
+                                       COLORREF color_key, BOOL use_alpha )
+{
+    const XPixmapFormatValues *format = pixmap_formats[vis->depth];
+    struct x11drv_window_surface *surface;
+    int width = rect->right - rect->left, height = rect->bottom - rect->top;
+    int colors = format->bits_per_pixel <= 8 ? 1 << format->bits_per_pixel : 3;
+
+    surface = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY,
+                         FIELD_OFFSET( struct x11drv_window_surface, info.bmiColors[colors] ));
+    if (!surface) return NULL;
+    surface->info.bmiHeader.biSize        = sizeof(surface->info.bmiHeader);
+    surface->info.bmiHeader.biWidth       = width;
+    surface->info.bmiHeader.biHeight      = -height; /* top-down */
+    surface->info.bmiHeader.biPlanes      = 1;
+    surface->info.bmiHeader.biBitCount    = format->bits_per_pixel;
+    surface->info.bmiHeader.biSizeImage   = get_dib_image_size( &surface->info );
+    set_color_info( vis, &surface->info, use_alpha );
+
+    InitializeCriticalSection( &surface->crit );
+    surface->crit.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": surface");
+
+    surface->header.funcs = &x11drv_surface_funcs;
+    surface->header.rect  = *rect;
+    surface->header.ref   = 1;
+    surface->window = window;
+    surface->is_argb = (use_alpha && vis->depth == 32 && surface->info.bmiHeader.biCompression == BI_RGB);
+    set_color_key( surface, color_key );
+    reset_bounds( &surface->bounds );
+
+#ifdef HAVE_LIBXXSHM
+    surface->image = create_shm_image( vis, width, height, &surface->shminfo );
+    if (!surface->image)
+#endif
+    {
+        surface->image = XCreateImage( gdi_display, vis->visual, vis->depth, ZPixmap, 0, NULL,
+                                       width, height, 32, 0 );
+        if (!surface->image) goto failed;
+        surface->image->data = HeapAlloc( GetProcessHeap(), 0, surface->info.bmiHeader.biSizeImage );
+        if (!surface->image->data) goto failed;
+    }
+
+    surface->gc = XCreateGC( gdi_display, window, 0, NULL );
+    XSetSubwindowMode( gdi_display, surface->gc, IncludeInferiors );
+    surface->byteswap = image_needs_byteswap( surface->image, is_r8g8b8(vis), format->bits_per_pixel );
+
+    if (surface->byteswap || format->bits_per_pixel == 4 || format->bits_per_pixel == 8)
+    {
+        /* allocate separate surface bits if byte swapping or palette mapping is required */
+        if (!(surface->bits  = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY,
+                                          surface->info.bmiHeader.biSizeImage )))
+            goto failed;
+    }
+    else surface->bits = surface->image->data;
+
+    TRACE( "created %p for %lx %s bits %p-%p image %p\n", surface, window, wine_dbgstr_rect(rect),
+           surface->bits, (char *)surface->bits + surface->info.bmiHeader.biSizeImage,
+           surface->image->data );
+
+    return &surface->header;
+
+failed:
+    x11drv_surface_destroy( &surface->header );
+    return NULL;
+}
+
+/***********************************************************************
+ *           set_surface_color_key
+ */
+void set_surface_color_key( struct window_surface *window_surface, COLORREF color_key )
+{
+    struct x11drv_window_surface *surface = get_x11_surface( window_surface );
+    COLORREF prev;
+
+    if (window_surface->funcs != &x11drv_surface_funcs) return;  /* we may get the null surface */
+
+    window_surface->funcs->lock( window_surface );
+    prev = surface->color_key;
+    set_color_key( surface, color_key );
+    if (surface->color_key != prev) update_surface_region( surface );
+    window_surface->funcs->unlock( window_surface );
+}
+
+/***********************************************************************
+ *           expose_surface
+ */
+HRGN expose_surface( struct window_surface *window_surface, const RECT *rect )
+{
+    struct x11drv_window_surface *surface = get_x11_surface( window_surface );
+    HRGN region = 0;
+
+    if (window_surface->funcs != &x11drv_surface_funcs) return 0;  /* we may get the null surface */
+
+    window_surface->funcs->lock( window_surface );
+    add_bounds_rect( &surface->bounds, rect );
+    if (surface->region)
+    {
+        region = CreateRectRgnIndirect( rect );
+        if (CombineRgn( region, region, surface->region, RGN_DIFF ) <= NULLREGION)
+        {
+            DeleteObject( region );
+            region = 0;
+        }
+    }
+    window_surface->funcs->unlock( window_surface );
+    return region;
 }

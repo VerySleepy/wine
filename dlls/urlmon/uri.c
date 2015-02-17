@@ -17,6 +17,8 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include <limits.h>
+
 #include "urlmon_main.h"
 #include "wine/debug.h"
 
@@ -24,9 +26,6 @@
 #include "shlwapi.h"
 
 #include "strsafe.h"
-
-#define UINT_MAX 0xffffffff
-#define USHORT_MAX 0xffff
 
 #define URI_DISPLAY_NO_ABSOLUTE_URI         0x1
 #define URI_DISPLAY_NO_DEFAULT_PORT_AUTH    0x2
@@ -50,6 +49,8 @@ static const IID IID_IUriObj = {0x4b364760,0x9f51,0x11df,{0x98,0x1c,0x08,0x00,0x
 typedef struct {
     IUri                IUri_iface;
     IUriBuilderFactory  IUriBuilderFactory_iface;
+    IPersistStream      IPersistStream_iface;
+    IMarshal            IMarshal_iface;
 
     LONG ref;
 
@@ -271,7 +272,7 @@ static inline BOOL is_drive_path(const WCHAR *str) {
 }
 
 static inline BOOL is_unc_path(const WCHAR *str) {
-    return (str[0] == '\\' && str[0] == '\\');
+    return (str[0] == '\\' && str[1] == '\\');
 }
 
 static inline BOOL is_forbidden_dos_path_char(WCHAR val) {
@@ -347,8 +348,8 @@ static inline BOOL is_hexdigit(WCHAR val) {
             (val >= '0' && val <= '9'));
 }
 
-static inline BOOL is_path_delim(WCHAR val) {
-    return (!val || val == '#' || val == '?');
+static inline BOOL is_path_delim(URL_SCHEME scheme, WCHAR val) {
+    return (!val || (val == '#' && scheme != URL_SCHEME_FILE) || val == '?');
 }
 
 static inline BOOL is_slash(WCHAR c)
@@ -409,7 +410,7 @@ static void apply_default_flags(DWORD *flags) {
  *  B.) It's an implicit file scheme.
  *  C.) It's a known hierarchical scheme and it has two '\\' after the scheme name.
  *      (the '\\' will be converted into "//" during canonicalization).
- *  D.) It's not a relative URI and "//" appears after the scheme name.
+ *  D.) "//" appears after the scheme name (or at the beginning if no scheme is given).
  */
 static inline BOOL is_hierarchical_uri(const WCHAR **ptr, const parse_data *data) {
     const WCHAR *start = *ptr;
@@ -421,108 +422,10 @@ static inline BOOL is_hierarchical_uri(const WCHAR **ptr, const parse_data *data
     else if(is_hierarchical_scheme(data->scheme_type) && (*ptr)[0] == '\\' && (*ptr)[1] == '\\') {
         *ptr += 2;
         return TRUE;
-    } else if(!data->is_relative && check_hierarchical(ptr))
+    } else if(data->scheme_type != URL_SCHEME_MAILTO && check_hierarchical(ptr))
         return TRUE;
 
     *ptr = start;
-    return FALSE;
-}
-
-/* Checks if the two Uri's are logically equivalent. It's a simple
- * comparison, since they are both of type Uri, and it can access
- * the properties of each Uri directly without the need to go
- * through the "IUri_Get*" interface calls.
- */
-static BOOL are_equal_simple(const Uri *a, const Uri *b) {
-    if(a->scheme_type == b->scheme_type) {
-        const BOOL known_scheme = a->scheme_type != URL_SCHEME_UNKNOWN;
-        const BOOL are_hierarchical =
-                (a->authority_start > -1 && b->authority_start > -1);
-
-        if(a->scheme_type == URL_SCHEME_FILE) {
-            if(a->canon_len == b->canon_len)
-                return !StrCmpIW(a->canon_uri, b->canon_uri);
-        }
-
-        /* Only compare the scheme names (if any) if their unknown scheme types. */
-        if(!known_scheme) {
-            if((a->scheme_start > -1 && b->scheme_start > -1) &&
-               (a->scheme_len == b->scheme_len)) {
-                /* Make sure the schemes are the same. */
-                if(StrCmpNW(a->canon_uri+a->scheme_start, b->canon_uri+b->scheme_start, a->scheme_len))
-                    return FALSE;
-            } else if(a->scheme_len != b->scheme_len)
-                /* One of the Uri's has a scheme name, while the other doesn't. */
-                return FALSE;
-        }
-
-        /* If they have a userinfo component, perform case sensitive compare. */
-        if((a->userinfo_start > -1 && b->userinfo_start > -1) &&
-           (a->userinfo_len == b->userinfo_len)) {
-            if(StrCmpNW(a->canon_uri+a->userinfo_start, b->canon_uri+b->userinfo_start, a->userinfo_len))
-                return FALSE;
-        } else if(a->userinfo_len != b->userinfo_len)
-            /* One of the Uri's had a userinfo, while the other one doesn't. */
-            return FALSE;
-
-        /* Check if they have a host name. */
-        if((a->host_start > -1 && b->host_start > -1) &&
-           (a->host_len == b->host_len)) {
-            /* Perform a case insensitive compare if they are a known scheme type. */
-            if(known_scheme) {
-                if(StrCmpNIW(a->canon_uri+a->host_start, b->canon_uri+b->host_start, a->host_len))
-                    return FALSE;
-            } else if(StrCmpNW(a->canon_uri+a->host_start, b->canon_uri+b->host_start, a->host_len))
-                return FALSE;
-        } else if(a->host_len != b->host_len)
-            /* One of the Uri's had a host, while the other one didn't. */
-            return FALSE;
-
-        if(a->has_port && b->has_port) {
-            if(a->port != b->port)
-                return FALSE;
-        } else if(a->has_port || b->has_port)
-            /* One had a port, while the other one didn't. */
-            return FALSE;
-
-        /* Windows is weird with how it handles paths. For example
-         * One URI could be "http://google.com" (after canonicalization)
-         * and one could be "http://google.com/" and the IsEqual function
-         * would still evaluate to TRUE, but, only if they are both hierarchical
-         * URIs.
-         */
-        if((a->path_start > -1 && b->path_start > -1) &&
-           (a->path_len == b->path_len)) {
-            if(StrCmpNW(a->canon_uri+a->path_start, b->canon_uri+b->path_start, a->path_len))
-                return FALSE;
-        } else if(are_hierarchical && a->path_len == -1 && b->path_len == 0) {
-            if(*(a->canon_uri+a->path_start) != '/')
-                return FALSE;
-        } else if(are_hierarchical && b->path_len == 1 && a->path_len == 0) {
-            if(*(b->canon_uri+b->path_start) != '/')
-                return FALSE;
-        } else if(a->path_len != b->path_len)
-            return FALSE;
-
-        /* Compare the query strings of the two URIs. */
-        if((a->query_start > -1 && b->query_start > -1) &&
-           (a->query_len == b->query_len)) {
-            if(StrCmpNW(a->canon_uri+a->query_start, b->canon_uri+b->query_start, a->query_len))
-                return FALSE;
-        } else if(a->query_len != b->query_len)
-            return FALSE;
-
-        if((a->fragment_start > -1 && b->fragment_start > -1) &&
-           (a->fragment_len == b->fragment_len)) {
-            if(StrCmpNW(a->canon_uri+a->fragment_start, b->canon_uri+b->fragment_start, a->fragment_len))
-                return FALSE;
-        } else if(a->fragment_len != b->fragment_len)
-            return FALSE;
-
-        /* If we get here, the two URIs are equivalent. */
-        return TRUE;
-    }
-
     return FALSE;
 }
 
@@ -671,7 +574,7 @@ void find_domain_name(const WCHAR *host, DWORD host_len,
         DWORD i;
         /* If the sec_last_tld is 3 characters long it HAS to be on the list of
          * recognized to still be considered part of the TLD name, otherwise
-         * its considered the domain name.
+         * it's considered the domain name.
          *  Ex: www.google.com.uk -> google.com.uk as the domain name.
          *      www.google.foo.uk -> foo.uk as the domain name.
          */
@@ -988,7 +891,7 @@ static BOOL ipv6_to_number(const ipv6_address *address, USHORT number[8]) {
                 /* Means we just passed the elision and need to add its values to
                  * 'number' before we do anything else.
                  */
-                DWORD j = 0;
+                INT j;
                 for(j = 0; j < address->elision_size; j+=2)
                     number[cur_component++] = 0;
 
@@ -1001,7 +904,8 @@ static BOOL ipv6_to_number(const ipv6_address *address, USHORT number[8]) {
 
     /* Case when the elision appears after the h16 components. */
     if(!already_passed_elision && address->elision) {
-        for(i = 0; i < address->elision_size; i+=2)
+        INT j;
+        for(j = 0; j < address->elision_size; j+=2)
             number[cur_component++] = 0;
     }
 
@@ -1447,7 +1351,7 @@ static BOOL parse_port(const WCHAR **ptr, parse_data *data, DWORD flags) {
 
         port = port*10 + (**ptr-'0');
 
-        if(port > USHORT_MAX) {
+        if(port > USHRT_MAX) {
             *ptr = data->port;
             data->port = NULL;
             return FALSE;
@@ -1714,7 +1618,7 @@ static BOOL parse_ipv6address(const WCHAR **ptr, parse_data *data, DWORD flags) 
                 /* An IPv6 address can have no more than 8 h16 components. */
                 if(ip.h16_count >= 8) {
                     *ptr = start;
-                    TRACE("(%p %p %x): Not a IPv6 address, to many h16 components.\n",
+                    TRACE("(%p %p %x): Not a IPv6 address, too many h16 components.\n",
                         ptr, data, flags);
                     return FALSE;
                 }
@@ -1938,7 +1842,7 @@ static BOOL parse_path_hierarchical(const WCHAR **ptr, parse_data *data, DWORD f
     static const WCHAR slash[] = {'/',0};
     const BOOL is_file = data->scheme_type == URL_SCHEME_FILE;
 
-    if(is_path_delim(**ptr)) {
+    if(is_path_delim(data->scheme_type, **ptr)) {
         if(data->scheme_type == URL_SCHEME_WILDCARD && !data->must_have_path) {
             data->path = NULL;
             data->path_len = 0;
@@ -1948,7 +1852,7 @@ static BOOL parse_path_hierarchical(const WCHAR **ptr, parse_data *data, DWORD f
             data->path_len = 1;
         }
     } else {
-        while(!is_path_delim(**ptr)) {
+        while(!is_path_delim(data->scheme_type, **ptr)) {
             if(**ptr == '%' && data->scheme_type != URL_SCHEME_UNKNOWN && !is_file) {
                 if(!check_pct_encoded(ptr)) {
                     *ptr = start;
@@ -2000,7 +1904,7 @@ static BOOL parse_path_hierarchical(const WCHAR **ptr, parse_data *data, DWORD f
     return TRUE;
 }
 
-/* Parses the path of an opaque URI (much less strict then the parser
+/* Parses the path of an opaque URI (much less strict than the parser
  * for a hierarchical URI).
  *
  * NOTE:
@@ -2013,10 +1917,17 @@ static BOOL parse_path_hierarchical(const WCHAR **ptr, parse_data *data, DWORD f
 static BOOL parse_path_opaque(const WCHAR **ptr, parse_data *data, DWORD flags) {
     const BOOL known_scheme = data->scheme_type != URL_SCHEME_UNKNOWN;
     const BOOL is_file = data->scheme_type == URL_SCHEME_FILE;
+    const BOOL is_mailto = data->scheme_type == URL_SCHEME_MAILTO;
 
-    data->path = *ptr;
+    if (is_mailto && (*ptr)[0] == '/' && (*ptr)[1] == '/')
+    {
+        if ((*ptr)[2]) data->path = *ptr + 2;
+        else data->path = NULL;
+    }
+    else
+        data->path = *ptr;
 
-    while(!is_path_delim(**ptr)) {
+    while(!is_path_delim(data->scheme_type, **ptr)) {
         if(**ptr == '%' && known_scheme) {
             if(!check_pct_encoded(ptr)) {
                 *ptr = data->path;
@@ -2034,7 +1945,7 @@ static BOOL parse_path_opaque(const WCHAR **ptr, parse_data *data, DWORD flags) 
         ++(*ptr);
     }
 
-    data->path_len = *ptr - data->path;
+    if (data->path) data->path_len = *ptr - data->path;
     TRACE("(%p %p %x): Parsed opaque URI path %s len=%d\n", ptr, data, flags,
         debugstr_wn(data->path, data->path_len), data->path_len);
     return TRUE;
@@ -2926,60 +2837,56 @@ static BOOL canonicalize_authority(const parse_data *data, Uri *uri, DWORD flags
  *      file:///c:/test%20test  -> file:///c:/test%20test
  *      file:///c:/test%test    -> file:///c:/test%25test
  */
-static BOOL canonicalize_path_hierarchical(const parse_data *data, Uri *uri,
-                                           DWORD flags, BOOL computeOnly) {
+static DWORD canonicalize_path_hierarchical(const WCHAR *path, DWORD path_len, URL_SCHEME scheme_type, BOOL has_host, DWORD flags,
+        BOOL is_implicit_scheme, WCHAR *ret_path) {
+    const BOOL known_scheme = scheme_type != URL_SCHEME_UNKNOWN;
+    const BOOL is_file = scheme_type == URL_SCHEME_FILE;
+    const BOOL is_res = scheme_type == URL_SCHEME_RES;
     const WCHAR *ptr;
-    const BOOL known_scheme = data->scheme_type != URL_SCHEME_UNKNOWN;
-    const BOOL is_file = data->scheme_type == URL_SCHEME_FILE;
-    const BOOL is_res = data->scheme_type == URL_SCHEME_RES;
-
     BOOL escape_pct = FALSE;
+    DWORD len = 0;
 
-    if(!data->path) {
-        uri->path_start = -1;
-        uri->path_len = 0;
-        return TRUE;
-    }
+    if(!path)
+        return 0;
 
-    uri->path_start = uri->canon_len;
-    ptr = data->path;
+    ptr = path;
 
-    if(is_file && uri->host_start == -1) {
+    if(is_file && !has_host) {
         /* Check if a '/' needs to be appended for the file scheme. */
-        if(data->path_len > 1 && is_drive_path(ptr) && !(flags & Uri_CREATE_FILE_USE_DOS_PATH)) {
-            if(!computeOnly)
-                uri->canon_uri[uri->canon_len] = '/';
-            uri->canon_len++;
+        if(path_len > 1 && is_drive_path(ptr) && !(flags & Uri_CREATE_FILE_USE_DOS_PATH)) {
+            if(ret_path)
+                ret_path[len] = '/';
+            len++;
             escape_pct = TRUE;
         } else if(*ptr == '/') {
             if(!(flags & Uri_CREATE_FILE_USE_DOS_PATH)) {
                 /* Copy the extra '/' over. */
-                if(!computeOnly)
-                    uri->canon_uri[uri->canon_len] = '/';
-                ++uri->canon_len;
+                if(ret_path)
+                    ret_path[len] = '/';
+                len++;
             }
             ++ptr;
         }
 
         if(is_drive_path(ptr)) {
-            if(!computeOnly) {
-                uri->canon_uri[uri->canon_len] = *ptr;
+            if(ret_path) {
+                ret_path[len] = *ptr;
                 /* If there's a '|' after the drive letter, convert it to a ':'. */
-                uri->canon_uri[uri->canon_len+1] = ':';
+                ret_path[len+1] = ':';
             }
             ptr += 2;
-            uri->canon_len += 2;
+            len += 2;
         }
     }
 
-    if(!is_file && *(data->path) && *(data->path) != '/') {
+    if(!is_file && *path && *path != '/') {
         /* Prepend a '/' to the path if it doesn't have one. */
-        if(!computeOnly)
-            uri->canon_uri[uri->canon_len] = '/';
-        ++uri->canon_len;
+        if(ret_path)
+            ret_path[len] = '/';
+        len++;
     }
 
-    for(; ptr < data->path+data->path_len; ++ptr) {
+    for(; ptr < path+path_len; ++ptr) {
         BOOL do_default_action = TRUE;
 
         if(*ptr == '%' && !is_res) {
@@ -2992,76 +2899,69 @@ static BOOL canonicalize_path_hierarchical(const parse_data *data, Uri *uri,
 
             if(force_encode || escape_pct) {
                 /* Escape the percent sign in the file URI. */
-                if(!computeOnly)
-                    pct_encode_val(*ptr, uri->canon_uri+uri->canon_len);
-                uri->canon_len += 3;
+                if(ret_path)
+                    pct_encode_val(*ptr, ret_path+len);
+                len += 3;
                 do_default_action = FALSE;
             } else if((is_unreserved(val) && known_scheme) ||
-                      (is_file && (is_unreserved(val) || is_reserved(val) ||
+                      (is_file && !is_implicit_scheme && (is_unreserved(val) || is_reserved(val) ||
                       (val && flags&Uri_CREATE_FILE_USE_DOS_PATH && !is_forbidden_dos_path_char(val))))) {
-                if(!computeOnly)
-                    uri->canon_uri[uri->canon_len] = val;
-                ++uri->canon_len;
+                if(ret_path)
+                    ret_path[len] = val;
+                len++;
 
                 ptr += 2;
                 continue;
             }
         } else if(*ptr == '/' && is_file && (flags & Uri_CREATE_FILE_USE_DOS_PATH)) {
             /* Convert the '/' back to a '\\'. */
-            if(!computeOnly)
-                uri->canon_uri[uri->canon_len] = '\\';
-            ++uri->canon_len;
+            if(ret_path)
+                ret_path[len] = '\\';
+            len++;
             do_default_action = FALSE;
         } else if(*ptr == '\\' && known_scheme) {
             if(!(is_file && (flags & Uri_CREATE_FILE_USE_DOS_PATH))) {
                 /* Convert '\\' into a '/'. */
-                if(!computeOnly)
-                    uri->canon_uri[uri->canon_len] = '/';
-                ++uri->canon_len;
+                if(ret_path)
+                    ret_path[len] = '/';
+                len++;
                 do_default_action = FALSE;
             }
         } else if(known_scheme && !is_res && !is_unreserved(*ptr) && !is_reserved(*ptr) &&
                   (!(flags & Uri_CREATE_NO_ENCODE_FORBIDDEN_CHARACTERS) || is_file)) {
-            if(!(is_file && (flags & Uri_CREATE_FILE_USE_DOS_PATH))) {
+            if(!is_file || !(flags & Uri_CREATE_FILE_USE_DOS_PATH)) {
                 /* Escape the forbidden character. */
-                if(!computeOnly)
-                    pct_encode_val(*ptr, uri->canon_uri+uri->canon_len);
-                uri->canon_len += 3;
+                if(ret_path)
+                    pct_encode_val(*ptr, ret_path+len);
+                len += 3;
                 do_default_action = FALSE;
             }
         }
 
         if(do_default_action) {
-            if(!computeOnly)
-                uri->canon_uri[uri->canon_len] = *ptr;
-            ++uri->canon_len;
+            if(ret_path)
+                ret_path[len] = *ptr;
+            len++;
         }
     }
-
-    uri->path_len = uri->canon_len - uri->path_start;
 
     /* Removing the dot segments only happens when it's not in
      * computeOnly mode and it's not a wildcard scheme. File schemes
      * with USE_DOS_PATH set don't get dot segments removed.
      */
     if(!(is_file && (flags & Uri_CREATE_FILE_USE_DOS_PATH)) &&
-       data->scheme_type != URL_SCHEME_WILDCARD) {
-        if(!(flags & Uri_CREATE_NO_CANONICALIZE) && !computeOnly) {
+       scheme_type != URL_SCHEME_WILDCARD) {
+        if(!(flags & Uri_CREATE_NO_CANONICALIZE) && ret_path) {
             /* Remove the dot segments (if any) and reset everything to the new
              * correct length.
              */
-            DWORD new_len = remove_dot_segments(uri->canon_uri+uri->path_start, uri->path_len);
-            uri->canon_len -= uri->path_len-new_len;
-            uri->path_len = new_len;
+            len = remove_dot_segments(ret_path, len);
         }
     }
 
-    if(!computeOnly)
-        TRACE("Canonicalized path %s len=%d\n",
-            debugstr_wn(uri->canon_uri+uri->path_start, uri->path_len),
-            uri->path_len);
-
-    return TRUE;
+    if(ret_path)
+        TRACE("Canonicalized path %s len=%d\n", debugstr_wn(ret_path, len), len);
+    return len;
 }
 
 /* Attempts to canonicalize the path for an opaque URI.
@@ -3086,6 +2986,7 @@ static BOOL canonicalize_path_opaque(const parse_data *data, Uri *uri, DWORD fla
     const WCHAR *ptr;
     const BOOL known_scheme = data->scheme_type != URL_SCHEME_UNKNOWN;
     const BOOL is_file = data->scheme_type == URL_SCHEME_FILE;
+    const BOOL is_mk = data->scheme_type == URL_SCHEME_MK;
 
     if(!data->path) {
         uri->path_start = -1;
@@ -3094,6 +2995,12 @@ static BOOL canonicalize_path_opaque(const parse_data *data, Uri *uri, DWORD fla
     }
 
     uri->path_start = uri->canon_len;
+
+    if(is_mk){
+        /* hijack this flag for SCHEME_MK to tell the function when to start
+         * converting slashes */
+        flags |= Uri_CREATE_FILE_USE_DOS_PATH;
+    }
 
     /* For javascript: URIs, simply copy path part without any canonicalization */
     if(data->scheme_type == URL_SCHEME_JAVASCRIPT) {
@@ -3137,13 +3044,15 @@ static BOOL canonicalize_path_opaque(const parse_data *data, Uri *uri, DWORD fla
             ++uri->canon_len;
             do_default_action = FALSE;
         } else if(*ptr == '\\') {
-            if(is_file && !(flags & Uri_CREATE_FILE_USE_DOS_PATH)) {
+            if((data->is_relative || is_mk || is_file) && !(flags & Uri_CREATE_FILE_USE_DOS_PATH)) {
                 /* Convert to a '/'. */
                 if(!computeOnly)
                     uri->canon_uri[uri->canon_len] = '/';
                 ++uri->canon_len;
                 do_default_action = FALSE;
             }
+        } else if(is_mk && *ptr == ':' && ptr + 1 < data->path + data->path_len && *(ptr + 1) == ':') {
+            flags &= ~Uri_CREATE_FILE_USE_DOS_PATH;
         } else if(known_scheme && !is_unreserved(*ptr) && !is_reserved(*ptr) &&
                   !(flags & Uri_CREATE_NO_ENCODE_FORBIDDEN_CHARACTERS)) {
             if(!(is_file && (flags & Uri_CREATE_FILE_USE_DOS_PATH))) {
@@ -3161,7 +3070,7 @@ static BOOL canonicalize_path_opaque(const parse_data *data, Uri *uri, DWORD fla
         }
     }
 
-    if(data->scheme_type == URL_SCHEME_MK && !computeOnly && !(flags & Uri_CREATE_NO_CANONICALIZE)) {
+    if(is_mk && !computeOnly && !(flags & Uri_CREATE_NO_CANONICALIZE)) {
         DWORD new_len = remove_dot_segments(uri->canon_uri + uri->path_start,
                                             uri->canon_len - uri->path_start);
         uri->canon_len = uri->path_start + new_len;
@@ -3210,8 +3119,13 @@ static BOOL canonicalize_hierpart(const parse_data *data, Uri *uri, DWORD flags,
             if(!canonicalize_path_opaque(data, uri, flags, computeOnly))
                 return FALSE;
         } else {
-            if(!canonicalize_path_hierarchical(data, uri, flags, computeOnly))
-                return FALSE;
+            if(!computeOnly)
+                uri->path_start = uri->canon_len;
+            uri->path_len = canonicalize_path_hierarchical(data->path, data->path_len, data->scheme_type, data->host_len != 0,
+                    flags, data->has_implicit_scheme, computeOnly ? NULL : uri->canon_uri+uri->canon_len);
+            uri->canon_len += uri->path_len;
+            if(!computeOnly && !uri->path_len)
+                uri->path_start = -1;
         }
     } else {
         /* Opaque URI's don't have an authority. */
@@ -3395,7 +3309,7 @@ static BOOL canonicalize_scheme(const parse_data *data, Uri *uri, DWORD flags, B
             uri->scheme_start = pos;
 
             TRACE("(%p %p %x): Canonicalized scheme=%s, len=%d.\n", data, uri, flags,
-                    debugstr_wn(uri->canon_uri,  uri->scheme_len), data->scheme_len);
+                    debugstr_wn(uri->canon_uri+uri->scheme_start,  data->scheme_len), data->scheme_len);
         }
 
         /* This happens in both computation modes. */
@@ -3932,7 +3846,8 @@ static HRESULT validate_components(const UriBuilder *builder, parse_data *data, 
 
     /* The URI is opaque if it doesn't have an authority component. */
     if(!data->is_relative)
-        data->is_opaque = !data->username && !data->password && !data->host && !data->has_port;
+        data->is_opaque = !data->username && !data->password && !data->host && !data->has_port
+            && data->scheme_type != URL_SCHEME_FILE;
     else
         data->is_opaque = !data->host && !data->has_port;
 
@@ -3950,6 +3865,150 @@ static HRESULT validate_components(const UriBuilder *builder, parse_data *data, 
 
     TRACE("(%p %p %x): Finished validating builder components.\n", builder, data, flags);
 
+    return S_OK;
+}
+
+static HRESULT compare_file_paths(const Uri *a, const Uri *b, BOOL *ret)
+{
+    WCHAR *canon_path_a, *canon_path_b;
+    DWORD len_a, len_b;
+
+    if(!a->path_len) {
+        *ret = !b->path_len;
+        return S_OK;
+    }
+
+    if(!b->path_len) {
+        *ret = FALSE;
+        return S_OK;
+    }
+
+    /* Fast path */
+    if(a->path_len == b->path_len && !memicmpW(a->canon_uri+a->path_start, b->canon_uri+b->path_start, a->path_len)) {
+        *ret = TRUE;
+        return S_OK;
+    }
+
+    len_a = canonicalize_path_hierarchical(a->canon_uri+a->path_start, a->path_len, a->scheme_type, FALSE, 0, FALSE, NULL);
+    len_b = canonicalize_path_hierarchical(b->canon_uri+b->path_start, b->path_len, b->scheme_type, FALSE, 0, FALSE, NULL);
+
+    canon_path_a = heap_alloc(len_a*sizeof(WCHAR));
+    if(!canon_path_a)
+        return E_OUTOFMEMORY;
+    canon_path_b = heap_alloc(len_b*sizeof(WCHAR));
+    if(!canon_path_b) {
+        heap_free(canon_path_a);
+        return E_OUTOFMEMORY;
+    }
+
+    len_a = canonicalize_path_hierarchical(a->canon_uri+a->path_start, a->path_len, a->scheme_type, FALSE, 0, FALSE, canon_path_a);
+    len_b = canonicalize_path_hierarchical(b->canon_uri+b->path_start, b->path_len, b->scheme_type, FALSE, 0, FALSE, canon_path_b);
+
+    *ret = len_a == len_b && !memicmpW(canon_path_a, canon_path_b, len_a);
+
+    heap_free(canon_path_a);
+    heap_free(canon_path_b);
+    return S_OK;
+}
+
+/* Checks if the two Uri's are logically equivalent. It's a simple
+ * comparison, since they are both of type Uri, and it can access
+ * the properties of each Uri directly without the need to go
+ * through the "IUri_Get*" interface calls.
+ */
+static HRESULT compare_uris(const Uri *a, const Uri *b, BOOL *ret) {
+    const BOOL known_scheme = a->scheme_type != URL_SCHEME_UNKNOWN;
+    const BOOL are_hierarchical = a->authority_start > -1 && b->authority_start > -1;
+    HRESULT hres;
+
+    *ret = FALSE;
+
+    if(a->scheme_type != b->scheme_type)
+        return S_OK;
+
+    /* Only compare the scheme names (if any) if their unknown scheme types. */
+    if(!known_scheme) {
+        if((a->scheme_start > -1 && b->scheme_start > -1) &&
+           (a->scheme_len == b->scheme_len)) {
+            /* Make sure the schemes are the same. */
+            if(StrCmpNW(a->canon_uri+a->scheme_start, b->canon_uri+b->scheme_start, a->scheme_len))
+                return S_OK;
+        } else if(a->scheme_len != b->scheme_len)
+            /* One of the Uri's has a scheme name, while the other doesn't. */
+            return S_OK;
+    }
+
+    /* If they have a userinfo component, perform case sensitive compare. */
+    if((a->userinfo_start > -1 && b->userinfo_start > -1) &&
+       (a->userinfo_len == b->userinfo_len)) {
+        if(StrCmpNW(a->canon_uri+a->userinfo_start, b->canon_uri+b->userinfo_start, a->userinfo_len))
+            return S_OK;
+    } else if(a->userinfo_len != b->userinfo_len)
+        /* One of the Uri's had a userinfo, while the other one doesn't. */
+        return S_OK;
+
+    /* Check if they have a host name. */
+    if((a->host_start > -1 && b->host_start > -1) &&
+       (a->host_len == b->host_len)) {
+        /* Perform a case insensitive compare if they are a known scheme type. */
+        if(known_scheme) {
+            if(StrCmpNIW(a->canon_uri+a->host_start, b->canon_uri+b->host_start, a->host_len))
+                return S_OK;
+        } else if(StrCmpNW(a->canon_uri+a->host_start, b->canon_uri+b->host_start, a->host_len))
+            return S_OK;
+    } else if(a->host_len != b->host_len)
+        /* One of the Uri's had a host, while the other one didn't. */
+        return S_OK;
+
+    if(a->has_port && b->has_port) {
+        if(a->port != b->port)
+            return S_OK;
+    } else if(a->has_port || b->has_port)
+        /* One had a port, while the other one didn't. */
+        return S_OK;
+
+    /* Windows is weird with how it handles paths. For example
+     * One URI could be "http://google.com" (after canonicalization)
+     * and one could be "http://google.com/" and the IsEqual function
+     * would still evaluate to TRUE, but, only if they are both hierarchical
+     * URIs.
+     */
+    if(a->scheme_type == URL_SCHEME_FILE) {
+        BOOL cmp;
+
+        hres = compare_file_paths(a, b, &cmp);
+        if(FAILED(hres) || !cmp)
+            return hres;
+    } else if((a->path_start > -1 && b->path_start > -1) &&
+       (a->path_len == b->path_len)) {
+        if(StrCmpNW(a->canon_uri+a->path_start, b->canon_uri+b->path_start, a->path_len))
+            return S_OK;
+    } else if(are_hierarchical && a->path_len == -1 && b->path_len == 0) {
+        if(*(a->canon_uri+a->path_start) != '/')
+            return S_OK;
+    } else if(are_hierarchical && b->path_len == 1 && a->path_len == 0) {
+        if(*(b->canon_uri+b->path_start) != '/')
+            return S_OK;
+    } else if(a->path_len != b->path_len)
+        return S_OK;
+
+    /* Compare the query strings of the two URIs. */
+    if((a->query_start > -1 && b->query_start > -1) &&
+       (a->query_len == b->query_len)) {
+        if(StrCmpNW(a->canon_uri+a->query_start, b->canon_uri+b->query_start, a->query_len))
+            return S_OK;
+    } else if(a->query_len != b->query_len)
+        return S_OK;
+
+    if((a->fragment_start > -1 && b->fragment_start > -1) &&
+       (a->fragment_len == b->fragment_len)) {
+        if(StrCmpNW(a->canon_uri+a->fragment_start, b->canon_uri+b->fragment_start, a->fragment_len))
+            return S_OK;
+    } else if(a->fragment_len != b->fragment_len)
+        return S_OK;
+
+    /* If we get here, the two URIs are equivalent. */
+    *ret = TRUE;
     return S_OK;
 }
 
@@ -4145,7 +4204,7 @@ static inline Uri* impl_from_IUri(IUri *iface)
     return CONTAINING_RECORD(iface, Uri, IUri_iface);
 }
 
-static inline void destory_uri_obj(Uri *This)
+static inline void destroy_uri_obj(Uri *This)
 {
     SysFreeString(This->raw_uri);
     heap_free(This->canon_uri);
@@ -4163,8 +4222,14 @@ static HRESULT WINAPI Uri_QueryInterface(IUri *iface, REFIID riid, void **ppv)
         TRACE("(%p)->(IID_IUri %p)\n", This, ppv);
         *ppv = &This->IUri_iface;
     }else if(IsEqualGUID(&IID_IUriBuilderFactory, riid)) {
-        TRACE("(%p)->(IID_IUriBuilderFactory %p)\n", This, riid);
+        TRACE("(%p)->(IID_IUriBuilderFactory %p)\n", This, ppv);
         *ppv = &This->IUriBuilderFactory_iface;
+    }else if(IsEqualGUID(&IID_IPersistStream, riid)) {
+        TRACE("(%p)->(IID_IPersistStream %p)\n", This, ppv);
+        *ppv = &This->IPersistStream_iface;
+    }else if(IsEqualGUID(&IID_IMarshal, riid)) {
+        TRACE("(%p)->(IID_IMarshal %p)\n", This, ppv);
+        *ppv = &This->IMarshal_iface;
     }else if(IsEqualGUID(&IID_IUriObj, riid)) {
         TRACE("(%p)->(IID_IUriObj %p)\n", This, ppv);
         *ppv = This;
@@ -4197,7 +4262,7 @@ static ULONG WINAPI Uri_Release(IUri *iface)
     TRACE("(%p) ref=%d\n", This, ref);
 
     if(!ref)
-        destory_uri_obj(This);
+        destroy_uri_obj(This);
 
     return ref;
 }
@@ -4206,22 +4271,24 @@ static HRESULT WINAPI Uri_GetPropertyBSTR(IUri *iface, Uri_PROPERTY uriProp, BST
 {
     Uri *This = impl_from_IUri(iface);
     HRESULT hres;
-    TRACE("(%p)->(%d %p %x)\n", This, uriProp, pbstrProperty, dwFlags);
+    TRACE("(%p %s)->(%d %p %x)\n", This, debugstr_w(This->canon_uri), uriProp, pbstrProperty, dwFlags);
 
+    if(!This->create_flags)
+        return E_UNEXPECTED;
     if(!pbstrProperty)
         return E_POINTER;
 
     if(uriProp > Uri_PROPERTY_STRING_LAST) {
-        /* Windows allocates an empty BSTR for invalid Uri_PROPERTY's. */
-        *pbstrProperty = SysAllocStringLen(NULL, 0);
-        if(!(*pbstrProperty))
-            return E_OUTOFMEMORY;
-
         /* It only returns S_FALSE for the ZONE property... */
-        if(uriProp == Uri_PROPERTY_ZONE)
+        if(uriProp == Uri_PROPERTY_ZONE) {
+            *pbstrProperty = SysAllocStringLen(NULL, 0);
+            if(!(*pbstrProperty))
+                return E_OUTOFMEMORY;
             return S_FALSE;
-        else
-            return S_OK;
+        }
+
+        *pbstrProperty = NULL;
+        return E_INVALIDARG;
     }
 
     /* Don't have support for flags yet. */
@@ -4496,8 +4563,10 @@ static HRESULT WINAPI Uri_GetPropertyLength(IUri *iface, Uri_PROPERTY uriProp, D
 {
     Uri *This = impl_from_IUri(iface);
     HRESULT hres;
-    TRACE("(%p)->(%d %p %x)\n", This, uriProp, pcchProperty, dwFlags);
+    TRACE("(%p %s)->(%d %p %x)\n", This, debugstr_w(This->canon_uri), uriProp, pcchProperty, dwFlags);
 
+    if(!This->create_flags)
+        return E_UNEXPECTED;
     if(!pcchProperty)
         return E_INVALIDARG;
 
@@ -4631,8 +4700,10 @@ static HRESULT WINAPI Uri_GetPropertyDWORD(IUri *iface, Uri_PROPERTY uriProp, DW
     Uri *This = impl_from_IUri(iface);
     HRESULT hres;
 
-    TRACE("(%p)->(%d %p %x)\n", This, uriProp, pcchProperty, dwFlags);
+    TRACE("(%p %s)->(%d %p %x)\n", This, debugstr_w(This->canon_uri), uriProp, pcchProperty, dwFlags);
 
+    if(!This->create_flags)
+        return E_UNEXPECTED;
     if(!pcchProperty)
         return E_INVALIDARG;
 
@@ -4681,7 +4752,8 @@ static HRESULT WINAPI Uri_GetPropertyDWORD(IUri *iface, Uri_PROPERTY uriProp, DW
 static HRESULT WINAPI Uri_HasProperty(IUri *iface, Uri_PROPERTY uriProp, BOOL *pfHasProperty)
 {
     Uri *This = impl_from_IUri(iface);
-    TRACE("(%p)->(%d %p)\n", This, uriProp, pfHasProperty);
+
+    TRACE("(%p %s)->(%d %p)\n", This, debugstr_w(This->canon_uri), uriProp, pfHasProperty);
 
     if(!pfHasProperty)
         return E_INVALIDARG;
@@ -4872,8 +4944,10 @@ static HRESULT WINAPI Uri_GetZone(IUri *iface, DWORD *pdwZone)
 static HRESULT WINAPI Uri_GetProperties(IUri *iface, DWORD *pdwProperties)
 {
     Uri *This = impl_from_IUri(iface);
-    TRACE("(%p)->(%p)\n", This, pdwProperties);
+    TRACE("(%p %s)->(%p)\n", This, debugstr_w(This->canon_uri), pdwProperties);
 
+    if(!This->create_flags)
+        return E_UNEXPECTED;
     if(!pdwProperties)
         return E_INVALIDARG;
 
@@ -4922,8 +4996,10 @@ static HRESULT WINAPI Uri_IsEqual(IUri *iface, IUri *pUri, BOOL *pfEqual)
     Uri *This = impl_from_IUri(iface);
     Uri *other;
 
-    TRACE("(%p)->(%p %p)\n", This, pUri, pfEqual);
+    TRACE("(%p %s)->(%p %p)\n", This, debugstr_w(This->canon_uri), pUri, pfEqual);
 
+    if(!This->create_flags)
+        return E_UNEXPECTED;
     if(!pfEqual)
         return E_POINTER;
 
@@ -4935,15 +5011,13 @@ static HRESULT WINAPI Uri_IsEqual(IUri *iface, IUri *pUri, BOOL *pfEqual)
     }
 
     /* Try to convert it to a Uri (allows for a more simple comparison). */
-    if((other = get_uri_obj(pUri)))
-        *pfEqual = are_equal_simple(This, other);
-    else {
-        /* Do it the hard way. */
+    if(!(other = get_uri_obj(pUri))) {
         FIXME("(%p)->(%p %p) No support for unknown IUri's yet.\n", iface, pUri, pfEqual);
         return E_NOTIMPL;
     }
 
-    return S_OK;
+    TRACE("comparing to %s\n", debugstr_w(other->canon_uri));
+    return compare_uris(This, other, pfEqual);
 }
 
 static const IUriVtbl UriVtbl = {
@@ -4985,47 +5059,19 @@ static inline Uri* impl_from_IUriBuilderFactory(IUriBuilderFactory *iface)
 static HRESULT WINAPI UriBuilderFactory_QueryInterface(IUriBuilderFactory *iface, REFIID riid, void **ppv)
 {
     Uri *This = impl_from_IUriBuilderFactory(iface);
-
-    if(IsEqualGUID(&IID_IUnknown, riid)) {
-        TRACE("(%p)->(IID_IUnknown %p)\n", This, ppv);
-        *ppv = &This->IUriBuilderFactory_iface;
-    }else if(IsEqualGUID(&IID_IUriBuilderFactory, riid)) {
-        TRACE("(%p)->(IID_IUriBuilderFactory %p)\n", This, ppv);
-        *ppv = &This->IUriBuilderFactory_iface;
-    }else if(IsEqualGUID(&IID_IUri, riid)) {
-        TRACE("(%p)->(IID_IUri %p)\n", This, ppv);
-        *ppv = &This->IUri_iface;
-    }else {
-        TRACE("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppv);
-        *ppv = NULL;
-        return E_NOINTERFACE;
-    }
-
-    IUnknown_AddRef((IUnknown*)*ppv);
-    return S_OK;
+    return IUri_QueryInterface(&This->IUri_iface, riid, ppv);
 }
 
 static ULONG WINAPI UriBuilderFactory_AddRef(IUriBuilderFactory *iface)
 {
     Uri *This = impl_from_IUriBuilderFactory(iface);
-    LONG ref = InterlockedIncrement(&This->ref);
-
-    TRACE("(%p) ref=%d\n", This, ref);
-
-    return ref;
+    return IUri_AddRef(&This->IUri_iface);
 }
 
 static ULONG WINAPI UriBuilderFactory_Release(IUriBuilderFactory *iface)
 {
     Uri *This = impl_from_IUriBuilderFactory(iface);
-    LONG ref = InterlockedDecrement(&This->ref);
-
-    TRACE("(%p) ref=%d\n", This, ref);
-
-    if(!ref)
-        destory_uri_obj(This);
-
-    return ref;
+    return IUri_Release(&This->IUri_iface);
 }
 
 static HRESULT WINAPI UriBuilderFactory_CreateIUriBuilder(IUriBuilderFactory *iface,
@@ -5074,15 +5120,553 @@ static const IUriBuilderFactoryVtbl UriBuilderFactoryVtbl = {
     UriBuilderFactory_CreateInitializedIUriBuilder
 };
 
-static Uri* create_uri_obj(void) {
-    Uri *ret = heap_alloc_zero(sizeof(Uri));
-    if(ret) {
-        ret->IUri_iface.lpVtbl = &UriVtbl;
-        ret->IUriBuilderFactory_iface.lpVtbl = &UriBuilderFactoryVtbl;
-        ret->ref = 1;
+static inline Uri* impl_from_IPersistStream(IPersistStream *iface)
+{
+    return CONTAINING_RECORD(iface, Uri, IPersistStream_iface);
+}
+
+static HRESULT WINAPI PersistStream_QueryInterface(IPersistStream *iface, REFIID riid, void **ppvObject)
+{
+    Uri *This = impl_from_IPersistStream(iface);
+    return IUri_QueryInterface(&This->IUri_iface, riid, ppvObject);
+}
+
+static ULONG WINAPI PersistStream_AddRef(IPersistStream *iface)
+{
+    Uri *This = impl_from_IPersistStream(iface);
+    return IUri_AddRef(&This->IUri_iface);
+}
+
+static ULONG WINAPI PersistStream_Release(IPersistStream *iface)
+{
+    Uri *This = impl_from_IPersistStream(iface);
+    return IUri_Release(&This->IUri_iface);
+}
+
+static HRESULT WINAPI PersistStream_GetClassID(IPersistStream *iface, CLSID *pClassID)
+{
+    Uri *This = impl_from_IPersistStream(iface);
+    TRACE("(%p)->(%p)\n", This, pClassID);
+
+    if(!pClassID)
+        return E_INVALIDARG;
+
+    *pClassID = CLSID_CUri;
+    return S_OK;
+}
+
+static HRESULT WINAPI PersistStream_IsDirty(IPersistStream *iface)
+{
+    Uri *This = impl_from_IPersistStream(iface);
+    TRACE("(%p)\n", This);
+    return S_FALSE;
+}
+
+struct persist_uri {
+    DWORD size;
+    DWORD unk1[2];
+    DWORD create_flags;
+    DWORD unk2[3];
+    DWORD fields_no;
+    BYTE data[1];
+};
+
+static HRESULT WINAPI PersistStream_Load(IPersistStream *iface, IStream *pStm)
+{
+    Uri *This = impl_from_IPersistStream(iface);
+    struct persist_uri *data;
+    parse_data parse;
+    DWORD size;
+    HRESULT hr;
+
+    TRACE("(%p)->(%p)\n", This, pStm);
+
+    if(This->create_flags)
+        return E_UNEXPECTED;
+    if(!pStm)
+        return E_INVALIDARG;
+
+    hr = IStream_Read(pStm, &size, sizeof(DWORD), NULL);
+    if(FAILED(hr))
+        return hr;
+    data = heap_alloc(size);
+    if(!data)
+        return E_OUTOFMEMORY;
+    hr = IStream_Read(pStm, data->unk1, size-sizeof(DWORD)-2, NULL);
+    if(FAILED(hr)) {
+        heap_free(data);
+        return hr;
     }
 
-    return ret;
+    if(size < sizeof(struct persist_uri)) {
+        heap_free(data);
+        return S_OK;
+    }
+
+    if(*(DWORD*)data->data != Uri_PROPERTY_RAW_URI) {
+        heap_free(data);
+        ERR("Can't find raw_uri\n");
+        return E_UNEXPECTED;
+    }
+
+    This->raw_uri = SysAllocString((WCHAR*)(data->data+sizeof(DWORD)*2));
+    if(!This->raw_uri) {
+        heap_free(data);
+        return E_OUTOFMEMORY;
+    }
+    This->create_flags = data->create_flags;
+    heap_free(data);
+    TRACE("%x %s\n", This->create_flags, debugstr_w(This->raw_uri));
+
+    memset(&parse, 0, sizeof(parse_data));
+    parse.uri = This->raw_uri;
+    if(!parse_uri(&parse, This->create_flags)) {
+        SysFreeString(This->raw_uri);
+        This->create_flags = 0;
+        return E_UNEXPECTED;
+    }
+
+    hr = canonicalize_uri(&parse, This, This->create_flags);
+    if(FAILED(hr)) {
+        SysFreeString(This->raw_uri);
+        This->create_flags = 0;
+        return hr;
+    }
+
+    return S_OK;
+}
+
+static inline BYTE* persist_stream_add_strprop(Uri *This, BYTE *p, DWORD type, DWORD len, WCHAR *data)
+{
+    len *= sizeof(WCHAR);
+    *(DWORD*)p = type;
+    p += sizeof(DWORD);
+    *(DWORD*)p = len+sizeof(WCHAR);
+    p += sizeof(DWORD);
+    memcpy(p, data, len);
+    p += len;
+    *(WCHAR*)p = 0;
+    return p+sizeof(WCHAR);
+}
+
+static inline void persist_stream_save(Uri *This, IStream *pStm, BOOL marshal, struct persist_uri *data)
+{
+    BYTE *p = NULL;
+
+    data->create_flags = This->create_flags;
+
+    if(This->create_flags) {
+        data->fields_no = 1;
+        p = persist_stream_add_strprop(This, data->data, Uri_PROPERTY_RAW_URI,
+                SysStringLen(This->raw_uri), This->raw_uri);
+    }
+    if(This->scheme_type!=URL_SCHEME_HTTP && This->scheme_type!=URL_SCHEME_HTTPS
+            && This->scheme_type!=URL_SCHEME_FTP)
+        return;
+
+    if(This->fragment_len) {
+        data->fields_no++;
+        p = persist_stream_add_strprop(This, p, Uri_PROPERTY_FRAGMENT,
+                This->fragment_len, This->canon_uri+This->fragment_start);
+    }
+
+    if(This->host_len) {
+        data->fields_no++;
+        if(This->host_type == Uri_HOST_IPV6)
+            p = persist_stream_add_strprop(This, p, Uri_PROPERTY_HOST,
+                    This->host_len-2, This->canon_uri+This->host_start+1);
+        else
+            p = persist_stream_add_strprop(This, p, Uri_PROPERTY_HOST,
+                    This->host_len, This->canon_uri+This->host_start);
+    }
+
+    if(This->userinfo_split > -1) {
+        data->fields_no++;
+        p = persist_stream_add_strprop(This, p, Uri_PROPERTY_PASSWORD,
+                This->userinfo_len-This->userinfo_split-1,
+                This->canon_uri+This->userinfo_start+This->userinfo_split+1);
+    }
+
+    if(This->path_len) {
+        data->fields_no++;
+        p = persist_stream_add_strprop(This, p, Uri_PROPERTY_PATH,
+                This->path_len, This->canon_uri+This->path_start);
+    } else if(marshal) {
+        WCHAR no_path = '/';
+        data->fields_no++;
+        p = persist_stream_add_strprop(This, p, Uri_PROPERTY_PATH, 1, &no_path);
+    }
+
+    if(This->has_port) {
+        data->fields_no++;
+        *(DWORD*)p = Uri_PROPERTY_PORT;
+        p += sizeof(DWORD);
+        *(DWORD*)p = sizeof(DWORD);
+        p += sizeof(DWORD);
+        *(DWORD*)p = This->port;
+        p += sizeof(DWORD);
+    }
+
+    if(This->query_len) {
+        data->fields_no++;
+        p = persist_stream_add_strprop(This, p, Uri_PROPERTY_QUERY,
+                This->query_len, This->canon_uri+This->query_start);
+    }
+
+    if(This->scheme_len) {
+        data->fields_no++;
+        p = persist_stream_add_strprop(This, p, Uri_PROPERTY_SCHEME_NAME,
+                This->scheme_len, This->canon_uri+This->scheme_start);
+    }
+
+    if(This->userinfo_start>-1 && This->userinfo_split!=0) {
+        data->fields_no++;
+        if(This->userinfo_split > -1)
+            p = persist_stream_add_strprop(This, p, Uri_PROPERTY_USER_NAME,
+                    This->userinfo_split, This->canon_uri+This->userinfo_start);
+        else
+            p = persist_stream_add_strprop(This, p, Uri_PROPERTY_USER_NAME,
+                    This->userinfo_len, This->canon_uri+This->userinfo_start);
+    }
+}
+
+static HRESULT WINAPI PersistStream_Save(IPersistStream *iface, IStream *pStm, BOOL fClearDirty)
+{
+    Uri *This = impl_from_IPersistStream(iface);
+    struct persist_uri *data;
+    ULARGE_INTEGER size;
+    HRESULT hres;
+
+    TRACE("(%p)->(%p %x)\n", This, pStm, fClearDirty);
+
+    if(!pStm)
+        return E_INVALIDARG;
+
+    hres = IPersistStream_GetSizeMax(&This->IPersistStream_iface, &size);
+    if(FAILED(hres))
+        return hres;
+
+    data = heap_alloc_zero(size.u.LowPart);
+    if(!data)
+        return E_OUTOFMEMORY;
+    data->size = size.u.LowPart;
+    persist_stream_save(This, pStm, FALSE, data);
+
+    hres = IStream_Write(pStm, data, data->size-2, NULL);
+    heap_free(data);
+    return hres;
+}
+
+static HRESULT WINAPI PersistStream_GetSizeMax(IPersistStream *iface, ULARGE_INTEGER *pcbSize)
+{
+    Uri *This = impl_from_IPersistStream(iface);
+    TRACE("(%p)->(%p)\n", This, pcbSize);
+
+    if(!pcbSize)
+        return E_INVALIDARG;
+
+    pcbSize->u.LowPart = 2+sizeof(struct persist_uri);
+    pcbSize->u.HighPart = 0;
+    if(This->create_flags)
+        pcbSize->u.LowPart += (SysStringLen(This->raw_uri)+1)*sizeof(WCHAR) + 2*sizeof(DWORD);
+    else /* there's no place for fields no */
+        pcbSize->u.LowPart -= sizeof(DWORD);
+    if(This->scheme_type!=URL_SCHEME_HTTP && This->scheme_type!=URL_SCHEME_HTTPS
+            && This->scheme_type!=URL_SCHEME_FTP)
+        return S_OK;
+
+    if(This->fragment_len)
+        pcbSize->u.LowPart += (This->fragment_len+1)*sizeof(WCHAR) + 2*sizeof(DWORD);
+    if(This->host_len) {
+        if(This->host_type == Uri_HOST_IPV6)
+            pcbSize->u.LowPart += (This->host_len-1)*sizeof(WCHAR) + 2*sizeof(DWORD);
+        else
+            pcbSize->u.LowPart += (This->host_len+1)*sizeof(WCHAR) + 2*sizeof(DWORD);
+    }
+    if(This->userinfo_split > -1)
+        pcbSize->u.LowPart += (This->userinfo_len-This->userinfo_split)*sizeof(WCHAR) + 2*sizeof(DWORD);
+    if(This->path_len)
+        pcbSize->u.LowPart += (This->path_len+1)*sizeof(WCHAR) + 2*sizeof(DWORD);
+    if(This->has_port)
+        pcbSize->u.LowPart += 3*sizeof(DWORD);
+    if(This->query_len)
+        pcbSize->u.LowPart += (This->query_len+1)*sizeof(WCHAR) + 2*sizeof(DWORD);
+    if(This->scheme_len)
+        pcbSize->u.LowPart += (This->scheme_len+1)*sizeof(WCHAR) + 2*sizeof(DWORD);
+    if(This->userinfo_start>-1 && This->userinfo_split!=0) {
+        if(This->userinfo_split > -1)
+            pcbSize->u.LowPart += (This->userinfo_split+1)*sizeof(WCHAR) + 2*sizeof(DWORD);
+        else
+            pcbSize->u.LowPart += (This->userinfo_len+1)*sizeof(WCHAR) + 2*sizeof(DWORD);
+    }
+    return S_OK;
+}
+
+static const IPersistStreamVtbl PersistStreamVtbl = {
+    PersistStream_QueryInterface,
+    PersistStream_AddRef,
+    PersistStream_Release,
+    PersistStream_GetClassID,
+    PersistStream_IsDirty,
+    PersistStream_Load,
+    PersistStream_Save,
+    PersistStream_GetSizeMax
+};
+
+static inline Uri* impl_from_IMarshal(IMarshal *iface)
+{
+    return CONTAINING_RECORD(iface, Uri, IMarshal_iface);
+}
+
+static HRESULT WINAPI Marshal_QueryInterface(IMarshal *iface, REFIID riid, void **ppvObject)
+{
+    Uri *This = impl_from_IMarshal(iface);
+    return IUri_QueryInterface(&This->IUri_iface, riid, ppvObject);
+}
+
+static ULONG WINAPI Marshal_AddRef(IMarshal *iface)
+{
+    Uri *This = impl_from_IMarshal(iface);
+    return IUri_AddRef(&This->IUri_iface);
+}
+
+static ULONG WINAPI Marshal_Release(IMarshal *iface)
+{
+    Uri *This = impl_from_IMarshal(iface);
+    return IUri_Release(&This->IUri_iface);
+}
+
+static HRESULT WINAPI Marshal_GetUnmarshalClass(IMarshal *iface, REFIID riid, void *pv,
+        DWORD dwDestContext, void *pvDestContext, DWORD mshlflags, CLSID *pCid)
+{
+    Uri *This = impl_from_IMarshal(iface);
+    TRACE("(%p)->(%s %p %x %p %x %p)\n", This, debugstr_guid(riid), pv,
+            dwDestContext, pvDestContext, mshlflags, pCid);
+
+    if(!pCid || (dwDestContext!=MSHCTX_LOCAL && dwDestContext!=MSHCTX_NOSHAREDMEM
+                && dwDestContext!=MSHCTX_INPROC))
+        return E_INVALIDARG;
+
+    *pCid = CLSID_CUri;
+    return S_OK;
+}
+
+struct inproc_marshal_uri {
+    DWORD size;
+    DWORD mshlflags;
+    DWORD unk[4]; /* process identifier? */
+    Uri *uri;
+};
+
+static HRESULT WINAPI Marshal_GetMarshalSizeMax(IMarshal *iface, REFIID riid, void *pv,
+        DWORD dwDestContext, void *pvDestContext, DWORD mshlflags, DWORD *pSize)
+{
+    Uri *This = impl_from_IMarshal(iface);
+    ULARGE_INTEGER size;
+    HRESULT hres;
+    TRACE("(%p)->(%s %p %x %p %x %p)\n", This, debugstr_guid(riid), pv,
+            dwDestContext, pvDestContext, mshlflags, pSize);
+
+    if(!pSize || (dwDestContext!=MSHCTX_LOCAL && dwDestContext!=MSHCTX_NOSHAREDMEM
+                && dwDestContext!=MSHCTX_INPROC))
+        return E_INVALIDARG;
+
+    if(dwDestContext == MSHCTX_INPROC) {
+        *pSize = sizeof(struct inproc_marshal_uri);
+        return S_OK;
+    }
+
+    hres = IPersistStream_GetSizeMax(&This->IPersistStream_iface, &size);
+    if(FAILED(hres))
+        return hres;
+    if(!This->path_len && (This->scheme_type==URL_SCHEME_HTTP
+                || This->scheme_type==URL_SCHEME_HTTPS
+                || This->scheme_type==URL_SCHEME_FTP))
+        size.u.LowPart += 3*sizeof(DWORD);
+    *pSize = size.u.LowPart+2*sizeof(DWORD);
+    return S_OK;
+}
+
+static HRESULT WINAPI Marshal_MarshalInterface(IMarshal *iface, IStream *pStm, REFIID riid,
+        void *pv, DWORD dwDestContext, void *pvDestContext, DWORD mshlflags)
+{
+    Uri *This = impl_from_IMarshal(iface);
+    DWORD *data;
+    DWORD size;
+    HRESULT hres;
+
+    TRACE("(%p)->(%p %s %p %x %p %x)\n", This, pStm, debugstr_guid(riid), pv,
+            dwDestContext, pvDestContext, mshlflags);
+
+    if(!pStm || mshlflags!=MSHLFLAGS_NORMAL || (dwDestContext!=MSHCTX_LOCAL
+                && dwDestContext!=MSHCTX_NOSHAREDMEM && dwDestContext!=MSHCTX_INPROC))
+        return E_INVALIDARG;
+
+    if(dwDestContext == MSHCTX_INPROC) {
+        struct inproc_marshal_uri data;
+
+        data.size = sizeof(data);
+        data.mshlflags = MSHCTX_INPROC;
+        data.unk[0] = 0;
+        data.unk[1] = 0;
+        data.unk[2] = 0;
+        data.unk[3] = 0;
+        data.uri = This;
+
+        hres = IStream_Write(pStm, &data, data.size, NULL);
+        if(FAILED(hres))
+            return hres;
+
+        IUri_AddRef(&This->IUri_iface);
+        return S_OK;
+    }
+
+    hres = IMarshal_GetMarshalSizeMax(iface, riid, pv, dwDestContext,
+            pvDestContext, mshlflags, &size);
+    if(FAILED(hres))
+        return hres;
+
+    data = heap_alloc_zero(size);
+    if(!data)
+        return E_OUTOFMEMORY;
+
+    data[0] = size;
+    data[1] = dwDestContext;
+    data[2] = size-2*sizeof(DWORD);
+    persist_stream_save(This, pStm, TRUE, (struct persist_uri*)(data+2));
+
+    hres = IStream_Write(pStm, data, data[0]-2, NULL);
+    heap_free(data);
+    return hres;
+}
+
+static HRESULT WINAPI Marshal_UnmarshalInterface(IMarshal *iface,
+        IStream *pStm, REFIID riid, void **ppv)
+{
+    Uri *This = impl_from_IMarshal(iface);
+    DWORD header[2];
+    HRESULT hres;
+
+    TRACE("(%p)->(%p %s %p)\n", This, pStm, debugstr_guid(riid), ppv);
+
+    if(This->create_flags)
+        return E_UNEXPECTED;
+    if(!pStm || !riid || !ppv)
+        return E_INVALIDARG;
+
+    hres = IStream_Read(pStm, header, sizeof(header), NULL);
+    if(FAILED(hres))
+        return hres;
+
+    if(header[1]!=MSHCTX_LOCAL && header[1]!=MSHCTX_NOSHAREDMEM
+            && header[1]!=MSHCTX_INPROC)
+        return E_UNEXPECTED;
+
+    if(header[1] == MSHCTX_INPROC) {
+        struct inproc_marshal_uri data;
+        parse_data parse;
+
+        hres = IStream_Read(pStm, data.unk, sizeof(data)-2*sizeof(DWORD), NULL);
+        if(FAILED(hres))
+            return hres;
+
+        This->raw_uri = SysAllocString(data.uri->raw_uri);
+        if(!This->raw_uri) {
+            return E_OUTOFMEMORY;
+        }
+
+        memset(&parse, 0, sizeof(parse_data));
+        parse.uri = This->raw_uri;
+
+        if(!parse_uri(&parse, data.uri->create_flags))
+            return E_INVALIDARG;
+
+        hres = canonicalize_uri(&parse, This, data.uri->create_flags);
+        if(FAILED(hres))
+            return hres;
+
+        This->create_flags = data.uri->create_flags;
+        IUri_Release(&data.uri->IUri_iface);
+
+        return IUri_QueryInterface(&This->IUri_iface, riid, ppv);
+    }
+
+    hres = IPersistStream_Load(&This->IPersistStream_iface, pStm);
+    if(FAILED(hres))
+        return hres;
+
+    return IUri_QueryInterface(&This->IUri_iface, riid, ppv);
+}
+
+static HRESULT WINAPI Marshal_ReleaseMarshalData(IMarshal *iface, IStream *pStm)
+{
+    Uri *This = impl_from_IMarshal(iface);
+    LARGE_INTEGER off;
+    DWORD header[2];
+    HRESULT hres;
+
+    TRACE("(%p)->(%p)\n", This, pStm);
+
+    if(!pStm)
+        return E_INVALIDARG;
+
+    hres = IStream_Read(pStm, header, 2*sizeof(DWORD), NULL);
+    if(FAILED(hres))
+        return hres;
+
+    if(header[1] == MSHCTX_INPROC) {
+        struct inproc_marshal_uri data;
+
+        hres = IStream_Read(pStm, data.unk, sizeof(data)-2*sizeof(DWORD), NULL);
+        if(FAILED(hres))
+            return hres;
+
+        IUri_Release(&data.uri->IUri_iface);
+        return S_OK;
+    }
+
+    off.u.LowPart = header[0]-sizeof(header)-2;
+    off.u.HighPart = 0;
+    return IStream_Seek(pStm, off, STREAM_SEEK_CUR, NULL);
+}
+
+static HRESULT WINAPI Marshal_DisconnectObject(IMarshal *iface, DWORD dwReserved)
+{
+    Uri *This = impl_from_IMarshal(iface);
+    TRACE("(%p)->(%x)\n", This, dwReserved);
+    return S_OK;
+}
+
+static const IMarshalVtbl MarshalVtbl = {
+    Marshal_QueryInterface,
+    Marshal_AddRef,
+    Marshal_Release,
+    Marshal_GetUnmarshalClass,
+    Marshal_GetMarshalSizeMax,
+    Marshal_MarshalInterface,
+    Marshal_UnmarshalInterface,
+    Marshal_ReleaseMarshalData,
+    Marshal_DisconnectObject
+};
+
+HRESULT Uri_Construct(IUnknown *pUnkOuter, LPVOID *ppobj)
+{
+    Uri *ret = heap_alloc_zero(sizeof(Uri));
+
+    TRACE("(%p %p)\n", pUnkOuter, ppobj);
+
+    *ppobj = ret;
+    if(!ret)
+        return E_OUTOFMEMORY;
+
+    ret->IUri_iface.lpVtbl = &UriVtbl;
+    ret->IUriBuilderFactory_iface.lpVtbl = &UriBuilderFactoryVtbl;
+    ret->IPersistStream_iface.lpVtbl = &PersistStreamVtbl;
+    ret->IMarshal_iface.lpVtbl = &MarshalVtbl;
+    ret->ref = 1;
+
+    *ppobj = &ret->IUri_iface;
+    return S_OK;
 }
 
 /***********************************************************************
@@ -5140,10 +5724,10 @@ HRESULT WINAPI CreateUri(LPCWSTR pwzURI, DWORD dwFlags, DWORD_PTR dwReserved, IU
     if(dwFlags & ~supported_flags)
         FIXME("Ignoring unsupported flag(s) %x\n", dwFlags & ~supported_flags);
 
-    ret = create_uri_obj();
-    if(!ret) {
+    hr = Uri_Construct(NULL, (void**)&ret);
+    if(FAILED(hr)) {
         *ppURI = NULL;
-        return E_OUTOFMEMORY;
+        return hr;
     }
 
     /* Explicitly set the default flags if it doesn't cause a flag conflict. */
@@ -5163,7 +5747,7 @@ HRESULT WINAPI CreateUri(LPCWSTR pwzURI, DWORD dwFlags, DWORD_PTR dwReserved, IU
     memset(&data, 0, sizeof(parse_data));
     data.uri = ret->raw_uri;
 
-    /* Validate and parse the URI into it's components. */
+    /* Validate and parse the URI into its components. */
     if(!parse_uri(&data, dwFlags)) {
         /* Encountered an unsupported or invalid URI */
         IUri_Release(&ret->IUri_iface);
@@ -5300,10 +5884,10 @@ static HRESULT build_uri(const UriBuilder *builder, IUri **uri, DWORD create_fla
         return hr;
     }
 
-    ret = create_uri_obj();
-    if(!ret) {
+    hr = Uri_Construct(NULL, (void**)&ret);
+    if(FAILED(hr)) {
         *uri = NULL;
-        return E_OUTOFMEMORY;
+        return hr;
     }
 
     hr = generate_uri(builder, &data, ret, create_flags);
@@ -5455,7 +6039,7 @@ static HRESULT WINAPI UriBuilder_SetIUri(IUriBuilder *iface, IUri *pIUri)
         Uri *uri;
 
         if((uri = get_uri_obj(pIUri))) {
-            /* Only reset the builder if it's Uri isn't the same as
+            /* Only reset the builder if its Uri isn't the same as
              * the Uri passed to the function.
              */
             if(This->uri != uri) {
@@ -5472,7 +6056,7 @@ static HRESULT WINAPI UriBuilder_SetIUri(IUriBuilder *iface, IUri *pIUri)
             return E_NOTIMPL;
         }
     } else if(This->uri)
-        /* Only reset the builder if it's Uri isn't NULL. */
+        /* Only reset the builder if its Uri isn't NULL. */
         reset_builder(This);
 
     return S_OK;
@@ -5782,6 +6366,10 @@ HRESULT WINAPI CreateIUriBuilder(IUri *pIUri, DWORD dwFlags, DWORD_PTR dwReserve
         Uri *uri;
 
         if((uri = get_uri_obj(pIUri))) {
+            if(!uri->create_flags) {
+                heap_free(ret);
+                return E_UNEXPECTED;
+            }
             IUri_AddRef(pIUri);
             ret->uri = uri;
 
@@ -5813,13 +6401,25 @@ static HRESULT merge_paths(parse_data *data, const WCHAR *base, DWORD base_len, 
     WCHAR *ptr;
 
     if(base_len) {
-        /* Find the characters that will be copied over from
-         * the base path.
-         */
-        end = memrchrW(base, '/', base_len);
-        if(!end && data->scheme_type == URL_SCHEME_FILE)
-            /* Try looking for a '\\'. */
-            end = memrchrW(base, '\\', base_len);
+        if(data->scheme_type == URL_SCHEME_MK && *relative == '/') {
+            /* Find '::' segment */
+            for(end = base; end < base+base_len-1; end++) {
+                if(end[0] == ':' && end[1] == ':') {
+                    end++;
+                    break;
+                }
+            }
+
+            /* If not found, try finding the end of @xxx: */
+            if(end == base+base_len-1)
+                end = *base == '@' ? memchr(base, ':', base_len) : NULL;
+        }else {
+            /* Find the characters that will be copied over from the base path. */
+            end = memrchrW(base, '/', base_len);
+            if(!end && data->scheme_type == URL_SCHEME_FILE)
+                /* Try looking for a '\\'. */
+                end = memrchrW(base, '\\', base_len);
+        }
     }
 
     if(end) {
@@ -5844,6 +6444,7 @@ static HRESULT merge_paths(parse_data *data, const WCHAR *base, DWORD base_len, 
     *ptr = '\0';
 
     *result_len = (ptr-*result);
+    TRACE("ret %s\n", debugstr_wn(*result, *result_len));
     return S_OK;
 }
 
@@ -5851,6 +6452,7 @@ static HRESULT combine_uri(Uri *base, Uri *relative, DWORD flags, IUri **result,
     Uri *ret;
     HRESULT hr;
     parse_data data;
+    Uri *proc_uri = base;
     DWORD create_flags = 0, len = 0;
 
     memset(&data, 0, sizeof(parse_data));
@@ -5866,12 +6468,12 @@ static HRESULT combine_uri(Uri *base, Uri *relative, DWORD flags, IUri **result,
             return E_OUTOFMEMORY;
         }
 
-        parse_uri(&data, 0);
+        parse_uri(&data, Uri_CREATE_ALLOW_IMPLICIT_FILE_SCHEME);
 
-        ret = create_uri_obj();
-        if(!ret) {
+        hr = Uri_Construct(NULL, (void**)&ret);
+        if(FAILED(hr)) {
             *result = NULL;
-            return E_OUTOFMEMORY;
+            return hr;
         }
 
         if(extras & COMBINE_URI_FORCE_FLAG_USE) {
@@ -5907,49 +6509,52 @@ static HRESULT combine_uri(Uri *base, Uri *relative, DWORD flags, IUri **result,
             create_flags |= Uri_CREATE_ALLOW_RELATIVE;
         }
 
-        if(base->authority_start > -1) {
-            if(base->userinfo_start > -1 && base->userinfo_split != 0) {
-                data.username = base->canon_uri+base->userinfo_start;
-                data.username_len = (base->userinfo_split > -1) ? base->userinfo_split : base->userinfo_len;
+        if(relative->authority_start > -1)
+            proc_uri = relative;
+
+        if(proc_uri->authority_start > -1) {
+            if(proc_uri->userinfo_start > -1 && proc_uri->userinfo_split != 0) {
+                data.username = proc_uri->canon_uri+proc_uri->userinfo_start;
+                data.username_len = (proc_uri->userinfo_split > -1) ? proc_uri->userinfo_split : proc_uri->userinfo_len;
             }
 
-            if(base->userinfo_split > -1) {
-                data.password = base->canon_uri+base->userinfo_start+base->userinfo_split+1;
-                data.password_len = base->userinfo_len-base->userinfo_split-1;
+            if(proc_uri->userinfo_split > -1) {
+                data.password = proc_uri->canon_uri+proc_uri->userinfo_start+proc_uri->userinfo_split+1;
+                data.password_len = proc_uri->userinfo_len-proc_uri->userinfo_split-1;
             }
 
-            if(base->host_start > -1) {
-                data.host = base->canon_uri+base->host_start;
-                data.host_len = base->host_len;
-                data.host_type = base->host_type;
+            if(proc_uri->host_start > -1) {
+                data.host = proc_uri->canon_uri+proc_uri->host_start;
+                data.host_len = proc_uri->host_len;
+                data.host_type = proc_uri->host_type;
             }
 
-            if(base->has_port) {
+            if(proc_uri->has_port) {
                 data.has_port = TRUE;
-                data.port_value = base->port;
+                data.port_value = proc_uri->port;
             }
         } else if(base->scheme_type != URL_SCHEME_FILE)
             data.is_opaque = TRUE;
 
-        if(relative->path_start == -1 || !relative->path_len) {
-            if(base->path_start > -1) {
-                data.path = base->canon_uri+base->path_start;
-                data.path_len = base->path_len;
-            } else if((base->path_start == -1 || !base->path_len) && !data.is_opaque) {
+        if(proc_uri == relative || relative->path_start == -1 || !relative->path_len) {
+            if(proc_uri->path_start > -1) {
+                data.path = proc_uri->canon_uri+proc_uri->path_start;
+                data.path_len = proc_uri->path_len;
+            } else if(!data.is_opaque) {
                 /* Just set the path as a '/' if the base didn't have
-                 * one and if it's an hierarchical URI.
+                 * one and if it's a hierarchical URI.
                  */
                 static const WCHAR slashW[] = {'/',0};
                 data.path = slashW;
                 data.path_len = 1;
             }
 
-            if(relative->query_start > -1) {
-                data.query = relative->canon_uri+relative->query_start;
-                data.query_len = relative->query_len;
-            } else if(base->query_start > -1) {
-                data.query = base->canon_uri+base->query_start;
-                data.query_len = base->query_len;
+            if(relative->query_start > -1)
+                proc_uri = relative;
+
+            if(proc_uri->query_start > -1) {
+                data.query = proc_uri->canon_uri+proc_uri->query_start;
+                data.query_len = proc_uri->query_len;
             }
         } else {
             const WCHAR *ptr, **pptr;
@@ -5961,7 +6566,7 @@ static HRESULT combine_uri(Uri *base, Uri *relative, DWORD flags, IUri **result,
              * relative path doesn't begin with a '/' then the base path and relative
              * path are merged together.
              */
-            if(relative->path_len && *(relative->canon_uri+relative->path_start) == '/') {
+            if(relative->path_len && *(relative->canon_uri+relative->path_start) == '/' && data.scheme_type != URL_SCHEME_MK) {
                 WCHAR *tmp = NULL;
                 BOOL copy_drive_path = FALSE;
 
@@ -6072,12 +6677,12 @@ static HRESULT combine_uri(Uri *base, Uri *relative, DWORD flags, IUri **result,
 
         generate_raw_uri(&data, data.uri, raw_flags);
 
-        ret = create_uri_obj();
-        if(!ret) {
+        hr = Uri_Construct(NULL, (void**)&ret);
+        if(FAILED(hr)) {
             SysFreeString(data.uri);
             heap_free(path);
             *result = NULL;
-            return E_OUTOFMEMORY;
+            return hr;
         }
 
         if(flags & URL_DONT_SIMPLIFY)
@@ -6202,7 +6807,7 @@ HRESULT WINAPI CoInternetCombineUrlEx(IUri *pBaseUri, LPCWSTR pwzRelativeUrl, DW
         }
     }
 
-    hr = CreateUri(pwzRelativeUrl, Uri_CREATE_ALLOW_RELATIVE, 0, &relative);
+    hr = CreateUri(pwzRelativeUrl, Uri_CREATE_ALLOW_RELATIVE|Uri_CREATE_ALLOW_IMPLICIT_FILE_SCHEME, 0, &relative);
     if(FAILED(hr)) {
         *ppCombinedUri = NULL;
         return hr;

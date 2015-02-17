@@ -30,6 +30,7 @@
 
 #include <initguid.h>
 #include <windows.h>
+#include <shellapi.h>
 #include <shobjidl.h>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -117,19 +118,12 @@ static BOOL create_combobox_item(IShellFolder *folder, LPCITEMIDLIST pidl, IImag
     HICON icon;
     strret.uType=STRRET_WSTR;
     hres = IShellFolder_GetDisplayNameOf(folder,pidl,SHGDN_FORADDRESSBAR,&strret);
+    if(SUCCEEDED(hres))
+        hres = StrRetToStrW(&strret, pidl, &item->pszText);
     if(FAILED(hres))
     {
         WINE_WARN("Could not get name for pidl\n");
         return FALSE;
-    }
-    switch(strret.uType)
-    {
-    case STRRET_WSTR:
-        item->pszText = strret.u.pOleStr;
-        break;
-    default:
-        WINE_FIXME("Unimplemented STRRET type:%u\n",strret.uType);
-        break;
     }
     hres = IShellFolder_GetUIObjectOf(folder,NULL,1,&pidl,&IID_IExtractIconW,
                                       &reserved,(void**)&extract_icon);
@@ -328,7 +322,7 @@ static void make_explorer_window(IShellFolder* startFolder)
     info = HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,sizeof(explorer_info));
     if(!info)
     {
-        WINE_ERR("Could not allocate a explorer_info struct\n");
+        WINE_ERR("Could not allocate an explorer_info struct\n");
         return;
     }
     hres = CoCreateInstance(&CLSID_ExplorerBrowser,NULL,CLSCTX_INPROC_SERVER,
@@ -642,9 +636,10 @@ static int copy_path_string(LPWSTR target, LPWSTR source)
     }
     else
     {
-        while (*source && !isspaceW(*source)) target[i++] = *source++;
+        while (*source && *source != ',') target[i++] = *source++;
         target[i] = 0;
     }
+    PathRemoveBackslashW(target);
     return i;
 }
 

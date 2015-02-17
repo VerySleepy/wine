@@ -66,7 +66,7 @@ static HMODULE load_driver_module( const WCHAR *name )
 {
     IMAGE_NT_HEADERS *nt;
     const IMAGE_IMPORT_DESCRIPTOR *imports;
-    size_t page_size = getpagesize();
+    SYSTEM_BASIC_INFORMATION info;
     int i;
     INT_PTR delta;
     ULONG size;
@@ -80,7 +80,8 @@ static HMODULE load_driver_module( const WCHAR *name )
     /* the loader does not apply relocations to non page-aligned binaries or executables,
      * we have to do it ourselves */
 
-    if (nt->OptionalHeader.SectionAlignment < page_size ||
+    NtQuerySystemInformation( SystemBasicInformation, &info, sizeof(info), NULL );
+    if (nt->OptionalHeader.SectionAlignment < info.PageSize ||
         !(nt->FileHeader.Characteristics & IMAGE_FILE_DLL))
     {
         DWORD old;
@@ -94,10 +95,10 @@ static HMODULE load_driver_module( const WCHAR *name )
             while (rel < end && rel->SizeOfBlock)
             {
                 void *page = (char *)module + rel->VirtualAddress;
-                VirtualProtect( page, page_size, PAGE_EXECUTE_READWRITE, &old );
+                VirtualProtect( page, info.PageSize, PAGE_EXECUTE_READWRITE, &old );
                 rel = LdrProcessRelocationBlock( page, (rel->SizeOfBlock - sizeof(*rel)) / sizeof(USHORT),
                                                  (USHORT *)(rel + 1), delta );
-                if (old != PAGE_EXECUTE_READWRITE) VirtualProtect( page, page_size, old, NULL );
+                if (old != PAGE_EXECUTE_READWRITE) VirtualProtect( page, info.PageSize, old, NULL );
                 if (!rel) goto error;
             }
             /* make sure we don't try again */
@@ -170,6 +171,7 @@ static NTSTATUS init_driver( HMODULE module, UNICODE_STRING *keyname )
 static BOOL load_driver(void)
 {
     static const WCHAR driversW[] = {'\\','d','r','i','v','e','r','s','\\',0};
+    static const WCHAR systemrootW[] = {'\\','S','y','s','t','e','m','R','o','o','t','\\',0};
     static const WCHAR postfixW[] = {'.','s','y','s',0};
     static const WCHAR ntprefixW[] = {'\\','?','?','\\',0};
     static const WCHAR ImagePathW[] = {'I','m','a','g','e','P','a','t','h',0};
@@ -209,6 +211,24 @@ static BOOL load_driver(void)
         }
         HeapFree( GetProcessHeap(), 0, str );
         if (!path) return FALSE;
+
+        if (!strncmpiW( path, systemrootW, 12 ))
+        {
+            WCHAR buffer[MAX_PATH];
+
+            GetWindowsDirectoryW(buffer, MAX_PATH);
+
+            str = HeapAlloc(GetProcessHeap(), 0, (size -11 + strlenW(buffer))
+                                                        * sizeof(WCHAR));
+            lstrcpyW(str, buffer);
+            lstrcatW(str, path + 11);
+            HeapFree( GetProcessHeap(), 0, path );
+            path = str;
+        }
+        else if (!strncmpW( path, ntprefixW, 4 ))
+            str = path + 4;
+        else
+            str = path;
     }
     else
     {
@@ -222,11 +242,8 @@ static BOOL load_driver(void)
         lstrcatW(path, driversW);
         lstrcatW(path, driver_name);
         lstrcatW(path, postfixW);
+        str = path;
     }
-
-    /* GameGuard uses an NT-style path name */
-    str = path;
-    if (!strncmpW( path, ntprefixW, 4 )) str += 4;
 
     WINE_TRACE( "loading driver %s\n", wine_dbgstr_w(str) );
 

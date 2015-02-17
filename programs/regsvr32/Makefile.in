@@ -1,13 +1,10 @@
-EXTRADEFS = -DWINE_NO_UNICODE_MACROS
 MODULE    = regsvr32.exe
 APPMODE   = -mconsole
-IMPORTS   = ole32
+IMPORTS   = ole32 user32
 
 C_SRCS = \
 	regsvr32.c
 
 RC_SRCS = regsvr32.rc
 
-MANPAGE = regsvr32.man
-
-@MAKE_PROG_RULES@
+MANPAGES = regsvr32.man.in

@@ -18,3 +18,27 @@
  */
 
 HRESULT create_oledb_convert(IUnknown *outer, void **obj) DECLSPEC_HIDDEN;
+HRESULT create_data_init(IUnknown *outer, void **obj) DECLSPEC_HIDDEN;
+HRESULT create_error_info(IUnknown *outer, void **obj) DECLSPEC_HIDDEN;
+HRESULT create_oledb_rowpos(IUnknown *outer, void **obj) DECLSPEC_HIDDEN;
+HRESULT create_dslocator(IUnknown *outer, void **obj) DECLSPEC_HIDDEN;
+
+static inline void *heap_alloc(size_t len)
+{
+    return HeapAlloc(GetProcessHeap(), 0, len);
+}
+
+static inline void *heap_alloc_zero(size_t len)
+{
+    return HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, len);
+}
+
+static inline void *heap_realloc_zero(void *mem, size_t len)
+{
+    return HeapReAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, mem, len);
+}
+
+static inline BOOL heap_free(void *mem)
+{
+    return HeapFree(GetProcessHeap(), 0, mem);
+}

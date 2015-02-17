@@ -16,6 +16,9 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#pragma makedep proxy
+#pragma makedep register
+
 cpp_quote("#include <wingdi.h>")
 #include "strmif.idl"
 
@@ -150,3 +153,17 @@ coclass ACMWrapper { interface IBaseFilter; }
     uuid(d51bd5a1-7548-11cf-a520-0080c77ef58a)
 ]
 coclass WAVEParser { interface IBaseFilter; }
+
+[
+    helpstring("Video Mixing Renderer"),
+    threading(both),
+    uuid(b87beb7b-8d29-423f-ae4d-6582c10175ac)
+]
+coclass VideoMixingRenderer { interface IBaseFilter; }
+
+[
+    helpstring("Video Mixing Renderer 9"),
+    threading(both),
+    uuid(51b4abf3-748f-4e3b-a276-c828330e926a)
+]
+coclass VideoMixingRenderer9 { interface IBaseFilter; }

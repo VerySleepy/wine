@@ -42,6 +42,10 @@
 
 #define ID_BROWSE_ADDFAV               1200
 #define ID_BROWSE_HOME                 1201
+#define ID_BROWSE_BACK                 1202
+#define ID_BROWSE_FORWARD              1203
+#define ID_BROWSE_STOP                 1204
+#define ID_BROWSE_REFRESH              1205
 
 #define ID_BROWSE_BAR_STD              1300
 #define ID_BROWSE_BAR_ADDR             1301
@@ -57,3 +61,13 @@
 #define IDS_TB_PRINT                   1105
 
 #define IDS_ADDRESS                    1106
+
+#define IDB_IETOOLBAR                  1400
+
+/* update status text in BINDSTATUS_* callback */
+#define IDS_STATUSFMT_FIRST            4096
+#define IDS_FINDINGRESOURCE            (IDS_STATUSFMT_FIRST + 1)
+#define IDS_BEGINDOWNLOADDATA          (IDS_STATUSFMT_FIRST + 4)
+#define IDS_ENDDOWNLOADDATA            (IDS_STATUSFMT_FIRST + 6)
+#define IDS_SENDINGREQUEST             (IDS_STATUSFMT_FIRST + 11)
+#define IDS_STATUSFMT_MAXLEN           256

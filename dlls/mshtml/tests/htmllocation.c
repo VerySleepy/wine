@@ -105,11 +105,8 @@ static int str_eq_wa(LPCWSTR strw, const char *stra)
 {
     CHAR buf[512];
 
-    if(strw == NULL || stra == NULL){
-        if((void*)strw == (void*)stra)
-            return 1;
-        return 0;
-    }
+    if(!strw || !stra)
+        return (void*)strw == (void*)stra;
 
     WideCharToMultiByte(CP_ACP, 0, strw, -1, buf, sizeof(buf), NULL, NULL);
     return !lstrcmpA(stra, buf);
@@ -131,6 +128,12 @@ static void test_href(IHTMLLocation *loc, const struct location_test *test)
         ok(str_eq_wa(str, test->href),
                 "%s: expected retrieved href to be L\"%s\", was: %s\n",
                 test->name, test->href, wine_dbgstr_w(str));
+    SysFreeString(str);
+
+    hres = IHTMLLocation_toString(loc, &str);
+    ok(hres == S_OK, "%s: toString failed: 0x%08x\n", test->name, hres);
+    ok(str_eq_wa(str, test->href), "%s: toString returned %s, expected %s\n",
+       test->name, wine_dbgstr_w(str), test->href);
     SysFreeString(str);
 }
 
@@ -172,7 +175,7 @@ static void test_host(IHTMLLocation *loc, const struct location_test *test)
     SysFreeString(str);
 }
 
-static void test_hostname(IHTMLLocation *loc, const struct location_test *test)
+static void test_hostname(IHTMLLocation *loc, IHTMLDocument2 *doc, const struct location_test *test)
 {
     HRESULT hres;
     BSTR str;
@@ -187,6 +190,14 @@ static void test_hostname(IHTMLLocation *loc, const struct location_test *test)
     if(hres == S_OK)
         ok(str_eq_wa(str, test->hostname),
                 "%s: expected retrieved hostname to be L\"%s\", was: %s\n",
+                test->name, test->hostname, wine_dbgstr_w(str));
+    SysFreeString(str);
+
+    hres = IHTMLDocument2_get_domain(doc, &str);
+    ok(hres == S_OK, "%s: get_domain failed: 0x%08x\n", test->name, hres);
+    if(hres == S_OK)
+        ok(str_eq_wa(str, test->hostname ? test->hostname : ""),
+                "%s: expected retrieved domain to be L\"%s\", was: %s\n",
                 test->name, test->hostname, wine_dbgstr_w(str));
     SysFreeString(str);
 }
@@ -345,7 +356,7 @@ static void perform_test(const struct location_test* test)
     test_href(location, test);
     test_protocol(location, test);
     test_host(location, test);
-    test_hostname(location, test);
+    test_hostname(location, doc, test);
     test_port(location, test);
     test_pathname(location, test);
     test_search(location, test);

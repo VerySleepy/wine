@@ -27,6 +27,7 @@
 #include "winbase.h"
 #include "objbase.h"
 #include "wbemcli.h"
+#include "wbemprov.h"
 #include "rpcproxy.h"
 
 #include "wbemprox_private.h"
@@ -36,7 +37,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(wbemprox);
 
 static HINSTANCE instance;
 
-typedef HRESULT (*fnCreateInstance)( IUnknown *pUnkOuter, LPVOID *ppObj );
+typedef HRESULT (*fnCreateInstance)( LPVOID *ppObj );
 
 typedef struct
 {
@@ -86,14 +87,11 @@ static HRESULT WINAPI wbemprox_cf_CreateInstance( IClassFactory *iface, LPUNKNOW
     if (pOuter)
         return CLASS_E_NOAGGREGATION;
 
-    r = This->pfnCreateInstance( pOuter, (LPVOID *)&punk );
+    r = This->pfnCreateInstance( (LPVOID *)&punk );
     if (FAILED(r))
         return r;
 
     r = IUnknown_QueryInterface( punk, riid, ppobj );
-    if (FAILED(r))
-        return r;
-
     IUnknown_Release( punk );
     return r;
 }
@@ -120,13 +118,10 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 
     switch (fdwReason)
     {
-        case DLL_WINE_PREATTACH:
-            return FALSE;    /* prefer native version */
         case DLL_PROCESS_ATTACH:
             instance = hinstDLL;
             DisableThreadLibraryCalls(hinstDLL);
-            break;
-        case DLL_PROCESS_DETACH:
+            init_table_list();
             break;
     }
 
@@ -139,7 +134,8 @@ HRESULT WINAPI DllGetClassObject( REFCLSID rclsid, REFIID iid, LPVOID *ppv )
 
     TRACE("%s %s %p\n", debugstr_guid(rclsid), debugstr_guid(iid), ppv);
 
-    if (IsEqualGUID( rclsid, &CLSID_WbemLocator ))
+    if (IsEqualGUID( rclsid, &CLSID_WbemLocator ) ||
+        IsEqualGUID( rclsid, &CLSID_WbemAdministrativeLocator ))
     {
        cf = &wbem_locator_cf.IClassFactory_iface;
     }

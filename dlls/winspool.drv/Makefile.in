@@ -2,41 +2,11 @@ EXTRADEFS = -D_SPOOL32_
 MODULE    = winspool.drv
 IMPORTLIB = winspool
 IMPORTS   = user32 gdi32 advapi32
-EXTRAINCL = @CUPSINCL@
+EXTRAINCL = $(CUPS_CFLAGS)
+EXTRALIBS = $(APPLICATIONSERVICES_LIBS)
 
 C_SRCS = \
 	info.c \
 	wspool.c
 
-RC_SRCS = \
-	Bg.rc \
-	Da.rc \
-	De.rc \
-	En.rc \
-	Eo.rc \
-	Es.rc \
-	Fi.rc \
-	Fr.rc \
-	He.rc \
-	Hu.rc \
-	It.rc \
-	Ja.rc \
-	Ko.rc \
-	Lt.rc \
-	Nl.rc \
-	No.rc \
-	Pl.rc \
-	Pt.rc \
-	Ro.rc \
-	Ru.rc \
-	Si.rc \
-	Sr.rc \
-	Sv.rc \
-	Tr.rc \
-	Uk.rc \
-	Zh.rc \
-	winspool.rc
-
-PO_SRCS = winspool.rc
-
-@MAKE_DLL_RULES@
+RC_SRCS = winspool.rc

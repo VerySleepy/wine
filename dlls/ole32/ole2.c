@@ -56,7 +56,7 @@ WINE_DECLARE_DEBUG_CHANNEL(accel);
 
 /******************************************************************************
  * These are static/global variables and internal data structures that the
- * OLE module uses to maintain it's state.
+ * OLE module uses to maintain its state.
  */
 typedef struct tagTrackerWindowInfo
 {
@@ -69,7 +69,7 @@ typedef struct tagTrackerWindowInfo
 
   BOOL       escPressed;
   HWND       curTargetHWND;	/* window the mouse is hovering over */
-  HWND       curDragTargetHWND; /* might be a ancestor of curTargetHWND */
+  HWND       curDragTargetHWND; /* might be an ancestor of curTargetHWND */
   IDropTarget* curDragTarget;
   POINTL     curMousePos;       /* current position of the mouse in screen coordinates */
   DWORD      dwKeyState;        /* current state of the shift and ctrl keys and the mouse buttons */
@@ -157,7 +157,6 @@ extern void OLEClipbrd_Initialize(void);
  */
 static void OLEDD_Initialize(void);
 static LRESULT WINAPI  OLEDD_DragTrackerWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-static void OLEDD_TrackMouseMove(TrackerWindowInfo* trackerInfo);
 static void OLEDD_TrackStateChange(TrackerWindowInfo* trackerInfo);
 static DWORD OLEDD_GetButtonState(void);
 
@@ -232,7 +231,7 @@ HRESULT WINAPI OleInitialize(LPVOID reserved)
 /******************************************************************************
  *		OleUninitialize	[OLE32.@]
  */
-void WINAPI OleUninitialize(void)
+void WINAPI DECLSPEC_HOTPATCH OleUninitialize(void)
 {
   TRACE("()\n");
 
@@ -290,7 +289,7 @@ static inline HANDLE get_droptarget_handle(HWND hwnd)
  */
 static inline BOOL is_droptarget(HWND hwnd)
 {
-    return get_droptarget_handle(hwnd) ? TRUE : FALSE;
+    return get_droptarget_handle(hwnd) != 0;
 }
 
 /*************************************************************
@@ -382,10 +381,12 @@ static HRESULT create_stream_from_map(HANDLE map, IStream **stream)
  * IDropTarget::QueryInterface().  Windows doesn't expose this because it
  * doesn't call CoMarshallInterface() in RegisterDragDrop().
  * The wrapper is only used internally, and only exists for the life of
- * the marshal. */
+ * the marshal.  We don't want to hold a ref on the app provided target
+ * as some apps destroy this prior to CoUninitialize without calling
+ * RevokeDragDrop.  The only (long-term) ref is held by the window prop. */
 typedef struct {
     IDropTarget IDropTarget_iface;
-    IDropTarget* inner;
+    HWND hwnd;
     LONG refs;
 } DropTargetWrapper;
 
@@ -420,12 +421,17 @@ static ULONG WINAPI DropTargetWrapper_Release(IDropTarget* iface)
 {
     DropTargetWrapper* This = impl_from_IDropTarget(iface);
     ULONG refs = InterlockedDecrement(&This->refs);
-    if (!refs)
-    {
-        IDropTarget_Release(This->inner);
-        HeapFree(GetProcessHeap(), 0, This);
-    }
+    if (!refs) HeapFree(GetProcessHeap(), 0, This);
     return refs;
+}
+
+static inline HRESULT get_target_from_wrapper( IDropTarget *wrapper, IDropTarget **target )
+{
+    DropTargetWrapper* This = impl_from_IDropTarget( wrapper );
+    *target = GetPropW( This->hwnd, prop_oledroptarget );
+    if (!*target) return DRAGDROP_E_NOTREGISTERED;
+    IDropTarget_AddRef( *target );
+    return S_OK;
 }
 
 static HRESULT WINAPI DropTargetWrapper_DragEnter(IDropTarget* iface,
@@ -434,8 +440,15 @@ static HRESULT WINAPI DropTargetWrapper_DragEnter(IDropTarget* iface,
                                                   POINTL pt,
                                                   DWORD* pdwEffect)
 {
-    DropTargetWrapper* This = impl_from_IDropTarget(iface);
-    return IDropTarget_DragEnter(This->inner, pDataObj, grfKeyState, pt, pdwEffect);
+    IDropTarget *target;
+    HRESULT r = get_target_from_wrapper( iface, &target );
+
+    if (SUCCEEDED( r ))
+    {
+        r = IDropTarget_DragEnter( target, pDataObj, grfKeyState, pt, pdwEffect );
+        IDropTarget_Release( target );
+    }
+    return r;
 }
 
 static HRESULT WINAPI DropTargetWrapper_DragOver(IDropTarget* iface,
@@ -443,14 +456,28 @@ static HRESULT WINAPI DropTargetWrapper_DragOver(IDropTarget* iface,
                                                  POINTL pt,
                                                  DWORD* pdwEffect)
 {
-    DropTargetWrapper* This = impl_from_IDropTarget(iface);
-    return IDropTarget_DragOver(This->inner, grfKeyState, pt, pdwEffect);
+    IDropTarget *target;
+    HRESULT r = get_target_from_wrapper( iface, &target );
+
+    if (SUCCEEDED( r ))
+    {
+        r = IDropTarget_DragOver( target, grfKeyState, pt, pdwEffect );
+        IDropTarget_Release( target );
+    }
+    return r;
 }
 
 static HRESULT WINAPI DropTargetWrapper_DragLeave(IDropTarget* iface)
 {
-    DropTargetWrapper* This = impl_from_IDropTarget(iface);
-    return IDropTarget_DragLeave(This->inner);
+    IDropTarget *target;
+    HRESULT r = get_target_from_wrapper( iface, &target );
+
+    if (SUCCEEDED( r ))
+    {
+        r = IDropTarget_DragLeave( target );
+        IDropTarget_Release( target );
+    }
+    return r;
 }
 
 static HRESULT WINAPI DropTargetWrapper_Drop(IDropTarget* iface,
@@ -459,8 +486,15 @@ static HRESULT WINAPI DropTargetWrapper_Drop(IDropTarget* iface,
                                              POINTL pt,
                                              DWORD* pdwEffect)
 {
-    DropTargetWrapper* This = impl_from_IDropTarget(iface);
-    return IDropTarget_Drop(This->inner, pDataObj, grfKeyState, pt, pdwEffect);
+    IDropTarget *target;
+    HRESULT r = get_target_from_wrapper( iface, &target );
+
+    if (SUCCEEDED( r ))
+    {
+        r = IDropTarget_Drop( target, pDataObj, grfKeyState, pt, pdwEffect );
+        IDropTarget_Release( target );
+    }
+    return r;
 }
 
 static const IDropTargetVtbl DropTargetWrapperVTbl =
@@ -474,15 +508,14 @@ static const IDropTargetVtbl DropTargetWrapperVTbl =
     DropTargetWrapper_Drop
 };
 
-static IDropTarget* WrapDropTarget(IDropTarget* inner)
+static IDropTarget* WrapDropTarget( HWND hwnd )
 {
     DropTargetWrapper* This = HeapAlloc(GetProcessHeap(), 0, sizeof(*This));
 
     if (This)
     {
-        IDropTarget_AddRef(inner);
         This->IDropTarget_iface.lpVtbl = &DropTargetWrapperVTbl;
-        This->inner = inner;
+        This->hwnd = hwnd;
         This->refs = 1;
     }
     return &This->IDropTarget_iface;
@@ -562,7 +595,7 @@ HRESULT WINAPI RegisterDragDrop(HWND hwnd, LPDROPTARGET pDropTarget)
   if(FAILED(hr)) return hr;
 
   /* IDropTarget::QueryInterface() shouldn't be called, some (broken) apps depend on this. */
-  wrapper = WrapDropTarget(pDropTarget);
+  wrapper = WrapDropTarget( hwnd );
   if(!wrapper)
   {
     IStream_Release(stream);
@@ -669,10 +702,7 @@ HRESULT WINAPI OleRegGetUserType(
   /*
    * Open the class id Key
    */
-  hres = RegOpenKeyW(HKEY_CLASSES_ROOT,
-		     keyName,
-		     &clsidKey);
-
+  hres = open_classes_key(HKEY_CLASSES_ROOT, keyName, MAXIMUM_ALLOWED, &clsidKey);
   if (hres != ERROR_SUCCESS)
     return REGDB_E_CLASSNOTREG;
 
@@ -739,7 +769,7 @@ HRESULT WINAPI DoDragDrop (
   HWND            hwndTrackWindow;
   MSG             msg;
 
-  TRACE("(%p, %p, %d, %p)\n", pDataObject, pDropSource, dwOKEffect, pdwEffect);
+  TRACE("(%p, %p, %08x, %p)\n", pDataObject, pDropSource, dwOKEffect, pdwEffect);
 
   if (!pDataObject || !pDropSource || !pdwEffect)
       return E_INVALIDARG;
@@ -851,11 +881,6 @@ HRESULT WINAPI OleRegGetMiscStatus(
   LONG    result;
 
   /*
-   * Initialize the out parameter.
-   */
-  *pdwStatus = 0;
-
-  /*
    * Build the key name we're looking for
    */
   sprintfW( keyName, clsidfmtW,
@@ -865,28 +890,27 @@ HRESULT WINAPI OleRegGetMiscStatus(
 
   TRACE("(%s, %d, %p)\n", debugstr_w(keyName), dwAspect, pdwStatus);
 
+  if (!pdwStatus) return E_INVALIDARG;
+
+  *pdwStatus = 0;
+
+  if (actctx_get_miscstatus(clsid, dwAspect, pdwStatus)) return S_OK;
+
   /*
    * Open the class id Key
    */
-  result = RegOpenKeyW(HKEY_CLASSES_ROOT,
-		       keyName,
-		       &clsidKey);
-
+  result = open_classes_key(HKEY_CLASSES_ROOT, keyName, MAXIMUM_ALLOWED, &clsidKey);
   if (result != ERROR_SUCCESS)
     return REGDB_E_CLASSNOTREG;
 
   /*
    * Get the MiscStatus
    */
-  result = RegOpenKeyW(clsidKey,
-		       miscstatusW,
-		       &miscStatusKey);
-
-
+  result = open_classes_key(clsidKey, miscstatusW, MAXIMUM_ALLOWED, &miscStatusKey);
   if (result != ERROR_SUCCESS)
   {
     RegCloseKey(clsidKey);
-    return REGDB_E_READREGDB;
+    return S_OK;
   }
 
   /*
@@ -899,10 +923,7 @@ HRESULT WINAPI OleRegGetMiscStatus(
    */
   sprintfW(keyName, dfmtW, dwAspect);
 
-  result = RegOpenKeyW(miscStatusKey,
-		       keyName,
-		       &aspectKey);
-
+  result = open_classes_key(miscStatusKey, keyName, MAXIMUM_ALLOWED, &aspectKey);
   if (result == ERROR_SUCCESS)
   {
     OLEUTL_ReadRegistryDWORDValue(aspectKey, pdwStatus);
@@ -941,7 +962,7 @@ static HRESULT WINAPI EnumOLEVERB_QueryInterface(
     if (IsEqualIID(riid, &IID_IUnknown) ||
         IsEqualIID(riid, &IID_IEnumOLEVERB))
     {
-        IUnknown_AddRef(iface);
+        IEnumOLEVERB_AddRef(iface);
         *ppv = iface;
         return S_OK;
     }
@@ -1299,10 +1320,7 @@ HRESULT WINAPI OleLoad(
   /*
    * Initialize the object with its IPersistStorage interface.
    */
-  hres = IOleObject_QueryInterface(pUnk,
-                                   &IID_IPersistStorage,
-                                   (void**)&persistStorage);
-
+  hres = IUnknown_QueryInterface(pUnk, &IID_IPersistStorage, (void**)&persistStorage);
   if (SUCCEEDED(hres))
   {
     hres = IPersistStorage_Load(persistStorage, pStg);
@@ -1313,7 +1331,7 @@ HRESULT WINAPI OleLoad(
 
   if (SUCCEEDED(hres) && pClientSite)
     /*
-     * Inform the new object of it's client site.
+     * Inform the new object of its client site.
      */
     hres = IOleObject_SetClientSite(pOleObject, pClientSite);
 
@@ -1626,7 +1644,7 @@ static BOOL OLEMenu_SetIsServerMenu( HMENU hmenu, OleMenuDescriptor *pOleMenuDes
     if ( nPos < nWidth )
     {
       /* Odd elements are server menu widths */
-      pOleMenuDescriptor->bIsServerItem = (i%2) ? TRUE : FALSE;
+      pOleMenuDescriptor->bIsServerItem = i%2;
       break;
     }
   }
@@ -1859,11 +1877,11 @@ HOLEMENU WINAPI OleCreateMenuDescriptor(
  * Destroy the shared menu descriptor
  */
 HRESULT WINAPI OleDestroyMenuDescriptor(
-  HOLEMENU hmenuDescriptor)
+    HOLEMENU hmenuDescriptor)
 {
-  if ( hmenuDescriptor )
-    GlobalFree( hmenuDescriptor );
-	return S_OK;
+    if ( hmenuDescriptor )
+        GlobalFree( hmenuDescriptor );
+    return S_OK;
 }
 
 /***********************************************************************
@@ -1887,72 +1905,73 @@ HRESULT WINAPI OleDestroyMenuDescriptor(
  *      these are non null.
  */
 HRESULT WINAPI OleSetMenuDescriptor(
-  HOLEMENU               hOleMenu,
-  HWND                   hwndFrame,
-  HWND                   hwndActiveObject,
-  LPOLEINPLACEFRAME        lpFrame,
-  LPOLEINPLACEACTIVEOBJECT lpActiveObject)
+    HOLEMENU               hOleMenu,
+    HWND                   hwndFrame,
+    HWND                   hwndActiveObject,
+    LPOLEINPLACEFRAME        lpFrame,
+    LPOLEINPLACEACTIVEOBJECT lpActiveObject)
 {
-  OleMenuDescriptor *pOleMenuDescriptor = NULL;
+    OleMenuDescriptor *pOleMenuDescriptor = NULL;
 
-  /* Check args */
-  if ( !hwndFrame || (hOleMenu && !hwndActiveObject) )
-    return E_INVALIDARG;
+    /* Check args */
+    if ( !hwndFrame || (hOleMenu && !hwndActiveObject) )
+        return E_INVALIDARG;
 
-  if ( lpFrame || lpActiveObject )
-  {
-     FIXME("(%p, %p, %p, %p, %p), Context sensitive help filtering not implemented!\n",
-	hOleMenu,
-	hwndFrame,
-	hwndActiveObject,
-	lpFrame,
-	lpActiveObject);
-  }
+    if ( lpFrame || lpActiveObject )
+    {
+        FIXME("(%p, %p, %p, %p, %p), Context sensitive help filtering not implemented!\n",
+        hOleMenu,
+        hwndFrame,
+        hwndActiveObject,
+        lpFrame,
+        lpActiveObject);
+    }
 
-  /* Set up a message hook to intercept the containers frame window messages.
-   * The message filter is responsible for dispatching menu messages from the
-   * shared menu which are intended for the object.
-   */
+    /* Set up a message hook to intercept the containers frame window messages.
+     * The message filter is responsible for dispatching menu messages from the
+     * shared menu which are intended for the object.
+     */
 
-  if ( hOleMenu )  /* Want to install dispatching code */
-  {
-    /* If OLEMenu hooks are already installed for this thread, fail
-     * Note: This effectively means that OleSetMenuDescriptor cannot
-     * be called twice in succession on the same frame window
-     * without first calling it with a null hOleMenu to uninstall */
-    if ( OLEMenu_IsHookInstalled( GetCurrentThreadId() ) )
-  return E_FAIL;
+    if ( hOleMenu )  /* Want to install dispatching code */
+    {
+        /* If OLEMenu hooks are already installed for this thread, fail
+         * Note: This effectively means that OleSetMenuDescriptor cannot
+         * be called twice in succession on the same frame window
+         * without first calling it with a null hOleMenu to uninstall
+         */
+        if ( OLEMenu_IsHookInstalled( GetCurrentThreadId() ) )
+            return E_FAIL;
 
-    /* Get the menu descriptor */
-    pOleMenuDescriptor = GlobalLock( hOleMenu );
-    if ( !pOleMenuDescriptor )
-      return E_UNEXPECTED;
+        /* Get the menu descriptor */
+        pOleMenuDescriptor = GlobalLock( hOleMenu );
+        if ( !pOleMenuDescriptor )
+            return E_UNEXPECTED;
 
-    /* Update the menu descriptor */
-    pOleMenuDescriptor->hwndFrame = hwndFrame;
-    pOleMenuDescriptor->hwndActiveObject = hwndActiveObject;
+        /* Update the menu descriptor */
+        pOleMenuDescriptor->hwndFrame = hwndFrame;
+        pOleMenuDescriptor->hwndActiveObject = hwndActiveObject;
 
-    GlobalUnlock( hOleMenu );
-    pOleMenuDescriptor = NULL;
+        GlobalUnlock( hOleMenu );
+        pOleMenuDescriptor = NULL;
 
-    /* Add a menu descriptor windows property to the frame window */
-    SetPropW( hwndFrame, prop_olemenuW, hOleMenu );
+        /* Add a menu descriptor windows property to the frame window */
+        SetPropW( hwndFrame, prop_olemenuW, hOleMenu );
 
-    /* Install thread scope message hooks for WH_GETMESSAGE and WH_CALLWNDPROC */
-    if ( !OLEMenu_InstallHooks( GetCurrentThreadId() ) )
-      return E_FAIL;
-  }
-  else  /* Want to uninstall dispatching code */
-  {
-    /* Uninstall the hooks */
-    if ( !OLEMenu_UnInstallHooks( GetCurrentThreadId() ) )
-      return E_FAIL;
+        /* Install thread scope message hooks for WH_GETMESSAGE and WH_CALLWNDPROC */
+        if ( !OLEMenu_InstallHooks( GetCurrentThreadId() ) )
+            return E_FAIL;
+    }
+    else  /* Want to uninstall dispatching code */
+    {
+        /* Uninstall the hooks */
+        if ( !OLEMenu_UnInstallHooks( GetCurrentThreadId() ) )
+            return E_FAIL;
 
-    /* Remove the menu descriptor property from the frame window */
-    RemovePropW( hwndFrame, prop_olemenuW );
-  }
+        /* Remove the menu descriptor property from the frame window */
+        RemovePropW( hwndFrame, prop_olemenuW );
+    }
 
-  return S_OK;
+    return S_OK;
 }
 
 /******************************************************************************
@@ -2179,10 +2198,6 @@ static LRESULT WINAPI OLEDD_DragTrackerWindowProc(
     }
     case WM_TIMER:
     case WM_MOUSEMOVE:
-    {
-      OLEDD_TrackMouseMove((TrackerWindowInfo*)GetWindowLongPtrA(hwnd, 0));
-      break;
-    }
     case WM_LBUTTONUP:
     case WM_MBUTTONUP:
     case WM_RBUTTONUP:
@@ -2190,7 +2205,9 @@ static LRESULT WINAPI OLEDD_DragTrackerWindowProc(
     case WM_MBUTTONDOWN:
     case WM_RBUTTONDOWN:
     {
-      OLEDD_TrackStateChange((TrackerWindowInfo*)GetWindowLongPtrA(hwnd, 0));
+      TrackerWindowInfo *trackerInfo = (TrackerWindowInfo*)GetWindowLongPtrA(hwnd, 0);
+      if (trackerInfo->trackingDone) break;
+      OLEDD_TrackStateChange(trackerInfo);
       break;
     }
     case WM_DESTROY:
@@ -2207,19 +2224,16 @@ static LRESULT WINAPI OLEDD_DragTrackerWindowProc(
 }
 
 /***
- * OLEDD_TrackMouseMove()
+ * OLEDD_TrackStateChange()
  *
  * This method is invoked while a drag and drop operation is in effect.
- * it will generate the appropriate callbacks in the drop source
- * and drop target. It will also provide the expected feedback to
- * the user.
  *
  * params:
  *    trackerInfo - Pointer to the structure identifying the
  *                  drag & drop operation that is currently
  *                  active.
  */
-static void OLEDD_TrackMouseMove(TrackerWindowInfo* trackerInfo)
+static void OLEDD_TrackStateChange(TrackerWindowInfo* trackerInfo)
 {
   HWND   hwndNewTarget = 0;
   HRESULT  hr = S_OK;
@@ -2231,6 +2245,10 @@ static void OLEDD_TrackMouseMove(TrackerWindowInfo* trackerInfo)
   pt.x = trackerInfo->curMousePos.x;
   pt.y = trackerInfo->curMousePos.y;
   hwndNewTarget = WindowFromPoint(pt);
+
+  trackerInfo->returnValue = IDropSource_QueryContinueDrag(trackerInfo->dropSource,
+                                                           trackerInfo->escPressed,
+                                                           trackerInfo->dwKeyState);
 
   /*
    * Every time, we re-initialize the effects passed to the
@@ -2248,7 +2266,8 @@ static void OLEDD_TrackMouseMove(TrackerWindowInfo* trackerInfo)
     IDropTarget_DragOver(trackerInfo->curDragTarget,
                          trackerInfo->dwKeyState,
                          trackerInfo->curMousePos,
-			 trackerInfo->pdwEffect);
+                         trackerInfo->pdwEffect);
+    *trackerInfo->pdwEffect &= trackerInfo->dwOKEffect;
   }
   else
   {
@@ -2290,6 +2309,7 @@ static void OLEDD_TrackMouseMove(TrackerWindowInfo* trackerInfo)
                                    trackerInfo->dwKeyState,
                                    trackerInfo->curMousePos,
                                    trackerInfo->pdwEffect);
+        *trackerInfo->pdwEffect &= trackerInfo->dwOKEffect;
 
         /* failed DragEnter() means invalid target */
         if (hr != S_OK)
@@ -2355,29 +2375,6 @@ static void OLEDD_TrackMouseMove(TrackerWindowInfo* trackerInfo)
 
     SetCursor(hCur);
   }
-}
-
-/***
- * OLEDD_TrackStateChange()
- *
- * This method is invoked while a drag and drop operation is in effect.
- * It is used to notify the drop target/drop source callbacks when
- * the state of the keyboard or mouse button change.
- *
- * params:
- *    trackerInfo - Pointer to the structure identifying the
- *                  drag & drop operation that is currently
- *                  active.
- */
-static void OLEDD_TrackStateChange(TrackerWindowInfo* trackerInfo)
-{
-  /*
-   * Ask the drop source what to do with the operation.
-   */
-  trackerInfo->returnValue = IDropSource_QueryContinueDrag(
-			       trackerInfo->dropSource,
-			       trackerInfo->escPressed,
-                               trackerInfo->dwKeyState);
 
   /*
    * All the return valued will stop the operation except the S_OK
@@ -2410,18 +2407,19 @@ static void OLEDD_TrackStateChange(TrackerWindowInfo* trackerInfo)
 	 */
         case DRAGDROP_S_DROP:
           if (*trackerInfo->pdwEffect != DROPEFFECT_NONE)
-            IDropTarget_Drop(trackerInfo->curDragTarget,
-                             trackerInfo->dataObject,
-                             trackerInfo->dwKeyState,
-                             trackerInfo->curMousePos,
-                             trackerInfo->pdwEffect);
+          {
+            hr = IDropTarget_Drop(trackerInfo->curDragTarget, trackerInfo->dataObject,
+                    trackerInfo->dwKeyState, trackerInfo->curMousePos, trackerInfo->pdwEffect);
+            if (FAILED(hr))
+              trackerInfo->returnValue = hr;
+          }
           else
             IDropTarget_DragLeave(trackerInfo->curDragTarget);
           break;
 
 	/*
 	 * If the source told us that we should cancel, fool the drop
-	 * target by telling it that the mouse left it's window.
+         * target by telling it that the mouse left its window.
 	 * Also set the drop effect to "NONE" in case the application
 	 * ignores the result of DoDragDrop.
 	 */
@@ -2523,32 +2521,24 @@ HRESULT WINAPI OleDraw(
 	IUnknown *pUnk,
 	DWORD dwAspect,
 	HDC hdcDraw,
-	LPCRECT lprcBounds)
+	LPCRECT rect)
 {
   HRESULT hres;
   IViewObject *viewobject;
 
+  if (!pUnk) return E_INVALIDARG;
+
   hres = IUnknown_QueryInterface(pUnk,
 				 &IID_IViewObject,
 				 (void**)&viewobject);
-
   if (SUCCEEDED(hres))
   {
-    RECTL rectl;
-
-    rectl.left = lprcBounds->left;
-    rectl.right = lprcBounds->right;
-    rectl.top = lprcBounds->top;
-    rectl.bottom = lprcBounds->bottom;
-    hres = IViewObject_Draw(viewobject, dwAspect, -1, 0, 0, 0, hdcDraw, &rectl, 0, 0, 0);
-
+    hres = IViewObject_Draw(viewobject, dwAspect, -1, 0, 0, 0, hdcDraw, (RECTL*)rect, 0, 0, 0);
     IViewObject_Release(viewobject);
     return hres;
   }
   else
-  {
     return DV_E_NOIVIEWOBJECT;
-  }
 }
 
 /***********************************************************************
@@ -2731,8 +2721,59 @@ done:
  */
 HRESULT WINAPI OleDoAutoConvert(LPSTORAGE pStg, LPCLSID pClsidNew)
 {
-    FIXME("(%p,%p) : stub\n",pStg,pClsidNew);
-    return E_NOTIMPL;
+    WCHAR *user_type_old, *user_type_new;
+    CLIPFORMAT cf;
+    STATSTG stat;
+    CLSID clsid;
+    HRESULT hr;
+
+    TRACE("(%p, %p)\n", pStg, pClsidNew);
+
+    *pClsidNew = CLSID_NULL;
+    if(!pStg)
+        return E_INVALIDARG;
+    hr = IStorage_Stat(pStg, &stat, STATFLAG_NONAME);
+    if(FAILED(hr))
+        return hr;
+
+    *pClsidNew = stat.clsid;
+    hr = OleGetAutoConvert(&stat.clsid, &clsid);
+    if(FAILED(hr))
+        return hr;
+
+    hr = IStorage_SetClass(pStg, &clsid);
+    if(FAILED(hr))
+        return hr;
+
+    hr = ReadFmtUserTypeStg(pStg, &cf, &user_type_old);
+    if(FAILED(hr)) {
+        cf = 0;
+        user_type_new = NULL;
+    }
+
+    hr = OleRegGetUserType(&clsid, USERCLASSTYPE_FULL, &user_type_new);
+    if(FAILED(hr))
+        user_type_new = NULL;
+
+    hr = WriteFmtUserTypeStg(pStg, cf, user_type_new);
+    CoTaskMemFree(user_type_new);
+    if(FAILED(hr))
+    {
+        CoTaskMemFree(user_type_old);
+        IStorage_SetClass(pStg, &stat.clsid);
+        return hr;
+    }
+
+    hr = SetConvertStg(pStg, TRUE);
+    if(FAILED(hr))
+    {
+        WriteFmtUserTypeStg(pStg, cf, user_type_old);
+        IStorage_SetClass(pStg, &stat.clsid);
+    }
+    else
+        *pClsidNew = clsid;
+    CoTaskMemFree(user_type_old);
+    return hr;
 }
 
 /******************************************************************************
@@ -2782,86 +2823,22 @@ static void OLE_FreeClipDataArray(ULONG count, CLIPDATA * pClipDataArray)
 
 /***********************************************************************
  *           PropSysAllocString			    [OLE32.@]
- * NOTES:
- *  Basically a copy of SysAllocStringLen.
+ * NOTES
+ *  Forward to oleaut32.
  */
 BSTR WINAPI PropSysAllocString(LPCOLESTR str)
 {
-    DWORD  bufferSize;
-    DWORD* newBuffer;
-    WCHAR* stringBuffer;
-    int len;
-
-    if (!str) return 0;
-
-    len = lstrlenW(str);
-    /*
-     * Find the length of the buffer passed-in, in bytes.
-     */
-    bufferSize = len * sizeof (WCHAR);
-
-    /*
-     * Allocate a new buffer to hold the string.
-     * Don't forget to keep an empty spot at the beginning of the
-     * buffer for the character count and an extra character at the
-     * end for the NULL.
-     */
-    newBuffer = HeapAlloc(GetProcessHeap(), 0,
-                          bufferSize + sizeof(WCHAR) + sizeof(DWORD));
-
-    /*
-     * If the memory allocation failed, return a null pointer.
-     */
-    if (newBuffer==0)
-      return 0;
-
-    /*
-     * Copy the length of the string in the placeholder.
-     */
-    *newBuffer = bufferSize;
-
-    /*
-     * Skip the byte count.
-     */
-    newBuffer++;
-
-    memcpy(newBuffer, str, bufferSize);
-
-    /*
-     * Make sure that there is a nul character at the end of the
-     * string.
-     */
-    stringBuffer = (WCHAR*)newBuffer;
-    stringBuffer[len] = '\0';
-
-    return stringBuffer;
+    return SysAllocString(str);
 }
 
 /***********************************************************************
  *           PropSysFreeString			    [OLE32.@]
  * NOTES
- *  Copy of SysFreeString.
+ *  Forward to oleaut32.
  */
 void WINAPI PropSysFreeString(LPOLESTR str)
 {
-    DWORD* bufferPointer;
-
-    /* NULL is a valid parameter */
-    if(!str) return;
-
-    /*
-     * We have to be careful when we free a BSTR pointer, it points to
-     * the beginning of the string but it skips the byte count contained
-     * before the string.
-     */
-    bufferPointer = (DWORD*)str;
-
-    bufferPointer--;
-
-    /*
-     * Free the memory from its "real" origin.
-     */
-    HeapFree(GetProcessHeap(), 0, bufferPointer);
+    SysFreeString(str);
 }
 
 /******************************************************************************
@@ -2873,8 +2850,10 @@ static inline HRESULT PROPVARIANT_ValidateType(VARTYPE vt)
     {
     case VT_EMPTY:
     case VT_NULL:
+    case VT_I1:
     case VT_I2:
     case VT_I4:
+    case VT_I8:
     case VT_R4:
     case VT_R8:
     case VT_CY:
@@ -2886,12 +2865,15 @@ static inline HRESULT PROPVARIANT_ValidateType(VARTYPE vt)
     case VT_UI1:
     case VT_UI2:
     case VT_UI4:
-    case VT_I8:
     case VT_UI8:
+    case VT_INT:
+    case VT_UINT:
     case VT_LPSTR:
     case VT_LPWSTR:
     case VT_FILETIME:
     case VT_BLOB:
+    case VT_DISPATCH:
+    case VT_UNKNOWN:
     case VT_STREAM:
     case VT_STORAGE:
     case VT_STREAMED_OBJECT:
@@ -2899,8 +2881,10 @@ static inline HRESULT PROPVARIANT_ValidateType(VARTYPE vt)
     case VT_BLOB_OBJECT:
     case VT_CF:
     case VT_CLSID:
+    case VT_I1|VT_VECTOR:
     case VT_I2|VT_VECTOR:
     case VT_I4|VT_VECTOR:
+    case VT_I8|VT_VECTOR:
     case VT_R4|VT_VECTOR:
     case VT_R8|VT_VECTOR:
     case VT_CY|VT_VECTOR:
@@ -2912,7 +2896,6 @@ static inline HRESULT PROPVARIANT_ValidateType(VARTYPE vt)
     case VT_UI1|VT_VECTOR:
     case VT_UI2|VT_VECTOR:
     case VT_UI4|VT_VECTOR:
-    case VT_I8|VT_VECTOR:
     case VT_UI8|VT_VECTOR:
     case VT_LPSTR|VT_VECTOR:
     case VT_LPWSTR|VT_VECTOR:
@@ -2939,14 +2922,19 @@ HRESULT WINAPI PropVariantClear(PROPVARIANT * pvar) /* [in/out] */
 
     hr = PROPVARIANT_ValidateType(pvar->vt);
     if (FAILED(hr))
+    {
+        memset(pvar, 0, sizeof(*pvar));
         return hr;
+    }
 
     switch(pvar->vt)
     {
     case VT_EMPTY:
     case VT_NULL:
+    case VT_I1:
     case VT_I2:
     case VT_I4:
+    case VT_I8:
     case VT_R4:
     case VT_R8:
     case VT_CY:
@@ -2957,16 +2945,19 @@ HRESULT WINAPI PropVariantClear(PROPVARIANT * pvar) /* [in/out] */
     case VT_UI1:
     case VT_UI2:
     case VT_UI4:
-    case VT_I8:
     case VT_UI8:
+    case VT_INT:
+    case VT_UINT:
     case VT_FILETIME:
         break;
+    case VT_DISPATCH:
+    case VT_UNKNOWN:
     case VT_STREAM:
     case VT_STREAMED_OBJECT:
     case VT_STORAGE:
     case VT_STORED_OBJECT:
         if (pvar->u.pStream)
-            IUnknown_Release(pvar->u.pStream);
+            IStream_Release(pvar->u.pStream);
         break;
     case VT_CLSID:
     case VT_LPSTR:
@@ -2980,8 +2971,7 @@ HRESULT WINAPI PropVariantClear(PROPVARIANT * pvar) /* [in/out] */
         CoTaskMemFree(pvar->u.blob.pBlobData);
         break;
     case VT_BSTR:
-        if (pvar->u.bstrVal)
-            PropSysFreeString(pvar->u.bstrVal);
+        PropSysFreeString(pvar->u.bstrVal);
         break;
     case VT_CF:
         if (pvar->u.pclipdata)
@@ -3024,12 +3014,14 @@ HRESULT WINAPI PropVariantClear(PROPVARIANT * pvar) /* [in/out] */
             }
         }
         else
+        {
             WARN("Invalid/unsupported type %d\n", pvar->vt);
+            hr = STG_E_INVALIDPARAMETER;
+        }
     }
 
-    ZeroMemory(pvar, sizeof(*pvar));
-
-    return S_OK;
+    memset(pvar, 0, sizeof(*pvar));
+    return hr;
 }
 
 /***********************************************************************
@@ -3066,30 +3058,41 @@ HRESULT WINAPI PropVariantCopy(PROPVARIANT *pvarDest,      /* [out] */
     case VT_ERROR:
     case VT_I8:
     case VT_UI8:
+    case VT_INT:
+    case VT_UINT:
     case VT_R8:
     case VT_CY:
     case VT_DATE:
     case VT_FILETIME:
         break;
+    case VT_DISPATCH:
+    case VT_UNKNOWN:
     case VT_STREAM:
     case VT_STREAMED_OBJECT:
     case VT_STORAGE:
     case VT_STORED_OBJECT:
-        IUnknown_AddRef((LPUNKNOWN)pvarDest->u.pStream);
+        if (pvarDest->u.pStream)
+            IStream_AddRef(pvarDest->u.pStream);
         break;
     case VT_CLSID:
         pvarDest->u.puuid = CoTaskMemAlloc(sizeof(CLSID));
         *pvarDest->u.puuid = *pvarSrc->u.puuid;
         break;
     case VT_LPSTR:
-        len = strlen(pvarSrc->u.pszVal);
-        pvarDest->u.pszVal = CoTaskMemAlloc((len+1)*sizeof(CHAR));
-        CopyMemory(pvarDest->u.pszVal, pvarSrc->u.pszVal, (len+1)*sizeof(CHAR));
+        if (pvarSrc->u.pszVal)
+        {
+            len = strlen(pvarSrc->u.pszVal);
+            pvarDest->u.pszVal = CoTaskMemAlloc((len+1)*sizeof(CHAR));
+            CopyMemory(pvarDest->u.pszVal, pvarSrc->u.pszVal, (len+1)*sizeof(CHAR));
+        }
         break;
     case VT_LPWSTR:
-        len = lstrlenW(pvarSrc->u.pwszVal);
-        pvarDest->u.pwszVal = CoTaskMemAlloc((len+1)*sizeof(WCHAR));
-        CopyMemory(pvarDest->u.pwszVal, pvarSrc->u.pwszVal, (len+1)*sizeof(WCHAR));
+        if (pvarSrc->u.pwszVal)
+        {
+            len = lstrlenW(pvarSrc->u.pwszVal);
+            pvarDest->u.pwszVal = CoTaskMemAlloc((len+1)*sizeof(WCHAR));
+            CopyMemory(pvarDest->u.pwszVal, pvarSrc->u.pwszVal, (len+1)*sizeof(WCHAR));
+        }
         break;
     case VT_BLOB:
     case VT_BLOB_OBJECT:
@@ -3149,7 +3152,7 @@ HRESULT WINAPI PropVariantCopy(PROPVARIANT *pvarDest,      /* [out] */
                 return E_INVALIDARG;
             }
             len = pvarSrc->u.capropvar.cElems;
-            pvarDest->u.capropvar.pElems = CoTaskMemAlloc(len * elemSize);
+            pvarDest->u.capropvar.pElems = len ? CoTaskMemAlloc(len * elemSize) : NULL;
             if (pvarSrc->vt == (VT_VECTOR | VT_VARIANT))
             {
                 for (i = 0; i < len; i++)

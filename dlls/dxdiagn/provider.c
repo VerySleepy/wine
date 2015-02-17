@@ -29,15 +29,15 @@
 #include "wine/unicode.h"
 #include "winver.h"
 #include "objidl.h"
-#include "dshow.h"
+#include "uuids.h"
 #include "vfw.h"
 #include "mmddk.h"
-#include "ddraw.h"
 #include "d3d9.h"
 #include "strmif.h"
 #include "initguid.h"
 #include "fil_data.h"
 #include "psapi.h"
+#include "wbemcli.h"
 
 #include "wine/debug.h"
 
@@ -66,6 +66,9 @@ static const WCHAR szSubSysId[] = {'s','z','S','u','b','S','y','s','I','d',0};
 static const WCHAR szRevisionId[] = {'s','z','R','e','v','i','s','i','o','n','I','d',0};
 static const WCHAR dwRefreshRate[] = {'d','w','R','e','f','r','e','s','h','R','a','t','e',0};
 static const WCHAR szManufacturer[] = {'s','z','M','a','n','u','f','a','c','t','u','r','e','r',0};
+static const WCHAR szChipType[] = {'s','z','C','h','i','p','T','y','p','e',0};
+static const WCHAR szDACType[] = {'s','z','D','A','C','T','y','p','e',0};
+static const WCHAR szRevision[] = {'s','z','R','e','v','i','s','i','o','n',0};
 
 struct IDxDiagProviderImpl
 {
@@ -554,6 +557,82 @@ static HRESULT fill_os_string_information(IDxDiagContainerImpl_Container *node, 
     return S_OK;
 }
 
+static HRESULT fill_processor_information(IDxDiagContainerImpl_Container *node)
+{
+    static const WCHAR szProcessorEnglish[] = {'s','z','P','r','o','c','e','s','s','o','r','E','n','g','l','i','s','h',0};
+
+    static const WCHAR cimv2W[] = {'\\','\\','.','\\','r','o','o','t','\\','c','i','m','v','2',0};
+    static const WCHAR proc_classW[] = {'W','i','n','3','2','_','P','r','o','c','e','s','s','o','r',0};
+    static const WCHAR nameW[] = {'N','a','m','e',0};
+    static const WCHAR max_clock_speedW[] = {'M','a','x','C','l','o','c','k','S','p','e','e','d',0};
+    static const WCHAR cpu_noW[] = {'N','u','m','b','e','r','O','f','L','o','g','i','c','a','l','P','r','o','c','e','s','s','o','r','s',0};
+
+    static const WCHAR processor_fmtW[] = {'%','s','(','%','d',' ','C','P','U','s',')',',',' ','~','%','d','M','H','z',0};
+
+    IWbemLocator *wbem_locator;
+    IWbemServices *wbem_service;
+    IWbemClassObject *wbem_class;
+    IEnumWbemClassObject *wbem_enum;
+    VARIANT cpu_name, cpu_no, clock_speed;
+    WCHAR print_buf[200];
+    BSTR bstr;
+    ULONG no;
+    HRESULT hr;
+
+    hr = CoCreateInstance(&CLSID_WbemLocator, NULL, CLSCTX_INPROC_SERVER, &IID_IWbemLocator, (void**)&wbem_locator);
+    if(FAILED(hr))
+        return hr;
+
+    bstr = SysAllocString(cimv2W);
+    if(!bstr) {
+        IWbemLocator_Release(wbem_locator);
+        return E_OUTOFMEMORY;
+    }
+    hr = IWbemLocator_ConnectServer(wbem_locator, bstr, NULL, NULL, NULL, 0, NULL, NULL, &wbem_service);
+    IWbemLocator_Release(wbem_locator);
+    SysFreeString(bstr);
+    if(FAILED(hr))
+        return hr;
+
+    bstr = SysAllocString(proc_classW);
+    if(!bstr) {
+        IWbemServices_Release(wbem_service);
+        return E_OUTOFMEMORY;
+    }
+    hr = IWbemServices_CreateInstanceEnum(wbem_service, bstr, WBEM_FLAG_SYSTEM_ONLY, NULL, &wbem_enum);
+    IWbemServices_Release(wbem_service);
+    SysFreeString(bstr);
+    if(FAILED(hr))
+        return hr;
+
+    hr = IEnumWbemClassObject_Next(wbem_enum, 1000, 1, &wbem_class, &no);
+    IEnumWbemClassObject_Release(wbem_enum);
+    if(FAILED(hr))
+        return hr;
+
+    hr = IWbemClassObject_Get(wbem_class, cpu_noW, 0, &cpu_no, NULL, NULL);
+    if(FAILED(hr)) {
+        IWbemClassObject_Release(wbem_class);
+        return hr;
+    }
+    hr = IWbemClassObject_Get(wbem_class, max_clock_speedW, 0, &clock_speed, NULL, NULL);
+    if(FAILED(hr)) {
+        IWbemClassObject_Release(wbem_class);
+        return hr;
+    }
+    hr = IWbemClassObject_Get(wbem_class, nameW, 0, &cpu_name, NULL, NULL);
+    IWbemClassObject_Release(wbem_class);
+    if(FAILED(hr))
+        return hr;
+
+    sprintfW(print_buf, processor_fmtW, V_BSTR(&cpu_name), V_I4(&cpu_no), V_I4(&clock_speed));
+    VariantClear(&cpu_name);
+    VariantClear(&cpu_no);
+    VariantClear(&clock_speed);
+
+    return add_bstr_property(node, szProcessorEnglish, print_buf);
+}
+
 static HRESULT build_systeminfo_tree(IDxDiagContainerImpl_Container *node)
 {
     static const WCHAR dwDirectXVersionMajor[] = {'d','w','D','i','r','e','c','t','X','V','e','r','s','i','o','n','M','a','j','o','r',0};
@@ -584,7 +663,6 @@ static HRESULT build_systeminfo_tree(IDxDiagContainerImpl_Container *node)
     static const WCHAR szSystemManufacturerEnglish[] = {'s','z','S','y','s','t','e','m','M','a','n','u','f','a','c','t','u','r','e','r','E','n','g','l','i','s','h',0};
     static const WCHAR szSystemModelEnglish[] = {'s','z','S','y','s','t','e','m','M','o','d','e','l','E','n','g','l','i','s','h',0};
     static const WCHAR szBIOSEnglish[] = {'s','z','B','I','O','S','E','n','g','l','i','s','h',0};
-    static const WCHAR szProcessorEnglish[] = {'s','z','P','r','o','c','e','s','s','o','r','E','n','g','l','i','s','h',0};
     static const WCHAR szSetupParamEnglish[] = {'s','z','S','e','t','u','p','P','a','r','a','m','E','n','g','l','i','s','h',0};
     static const WCHAR szDxDiagVersion[] = {'s','z','D','x','D','i','a','g','V','e','r','s','i','o','n',0};
 
@@ -598,6 +676,7 @@ static HRESULT build_systeminfo_tree(IDxDiagContainerImpl_Container *node)
     OSVERSIONINFOW info;
     DWORD count, usedpage_mb, availpage_mb;
     WCHAR buffer[MAX_PATH], computer_name[MAX_COMPUTERNAME_LENGTH + 1], print_buf[200], localized_pagefile_fmt[200];
+    DWORD_PTR args[2];
 
     hr = add_ui4_property(node, dwDirectXVersionMajor, 9);
     if (FAILED(hr))
@@ -678,7 +757,11 @@ static HRESULT build_systeminfo_tree(IDxDiagContainerImpl_Container *node)
     usedpage_mb = (DWORD)((msex.ullTotalPageFile - msex.ullAvailPageFile) / (1024 * 1024));
     availpage_mb = (DWORD)(msex.ullAvailPageFile / (1024 * 1024));
     LoadStringW(dxdiagn_instance, IDS_PAGE_FILE_FORMAT, localized_pagefile_fmt, sizeof(localized_pagefile_fmt)/sizeof(WCHAR));
-    snprintfW(print_buf, sizeof(print_buf)/sizeof(WCHAR), localized_pagefile_fmt, usedpage_mb, availpage_mb);
+    args[0] = usedpage_mb;
+    args[1] = availpage_mb;
+    FormatMessageW(FORMAT_MESSAGE_FROM_STRING|FORMAT_MESSAGE_ARGUMENT_ARRAY,
+                   localized_pagefile_fmt, 0, 0, print_buf,
+                   sizeof(print_buf)/sizeof(*print_buf), (__ms_va_list*)args);
 
     hr = add_bstr_property(node, szPageFileLocalized, print_buf);
     if (FAILED(hr))
@@ -720,7 +803,7 @@ static HRESULT build_systeminfo_tree(IDxDiagContainerImpl_Container *node)
     if (FAILED(hr))
         return hr;
 
-    hr = add_bstr_property(node, szProcessorEnglish, szEmpty);
+    hr = fill_processor_information(node);
     if (FAILED(hr))
         return hr;
 
@@ -832,10 +915,15 @@ static HRESULT fill_display_information_d3d(IDxDiagContainerImpl_Container *node
         static const WCHAR id_fmtW[] = {'0','x','%','0','4','x',0};
         static const WCHAR subsysid_fmtW[] = {'0','x','%','0','8','x',0};
         static const WCHAR mem_fmt[] = {'%','.','1','f',' ','M','B',0};
+        static const WCHAR b3DAccelerationExists[] = {'b','3','D','A','c','c','e','l','e','r','a','t','i','o','n','E','x','i','s','t','s',0};
+        static const WCHAR b3DAccelerationEnabled[] = {'b','3','D','A','c','c','e','l','e','r','a','t','i','o','n','E','n','a','b','l','e','d',0};
+        static const WCHAR bDDAccelerationEnabled[] = {'b','D','D','A','c','c','e','l','e','r','a','t','i','o','n','E','n','a','b','l','e','d',0};
 
         D3DADAPTER_IDENTIFIER9 adapter_info;
         D3DDISPLAYMODE adapter_mode;
+        D3DCAPS9 device_caps;
         DWORD available_mem = 0;
+        BOOL hardware_accel;
 
         snprintfW(buffer, sizeof(buffer)/sizeof(WCHAR), adapterid_fmtW, index);
         display_adapter = allocate_information_node(buffer);
@@ -936,6 +1024,18 @@ static HRESULT fill_display_information_d3d(IDxDiagContainerImpl_Container *node
         if (FAILED(hr))
             goto cleanup;
 
+        hr = add_bstr_property(display_adapter, szChipType, szEmpty);
+        if (FAILED(hr))
+            goto cleanup;
+
+        hr = add_bstr_property(display_adapter, szDACType, szEmpty);
+        if (FAILED(hr))
+            goto cleanup;
+
+        hr = add_bstr_property(display_adapter, szRevision, szEmpty);
+        if (FAILED(hr))
+            goto cleanup;
+
         if (!get_texture_memory(&adapter_info.DeviceIdentifier, &available_mem))
             WARN("get_texture_memory helper failed\n");
 
@@ -946,6 +1046,21 @@ static HRESULT fill_display_information_d3d(IDxDiagContainerImpl_Container *node
             goto cleanup;
 
         hr = add_bstr_property(display_adapter, szDisplayMemoryEnglish, buffer);
+        if (FAILED(hr))
+            goto cleanup;
+
+        hr = IDirect3D9_GetDeviceCaps(pDirect3D9, index, D3DDEVTYPE_HAL, &device_caps);
+        hardware_accel = SUCCEEDED(hr);
+
+        hr = add_bool_property(display_adapter, b3DAccelerationEnabled, hardware_accel);
+        if (FAILED(hr))
+            goto cleanup;
+
+        hr = add_bool_property(display_adapter, b3DAccelerationExists, hardware_accel);
+        if (FAILED(hr))
+            goto cleanup;
+
+        hr = add_bool_property(display_adapter, bDDAccelerationEnabled, hardware_accel);
         if (FAILED(hr))
             goto cleanup;
     }
@@ -962,7 +1077,7 @@ static HRESULT fill_display_information_fallback(IDxDiagContainerImpl_Container 
     static const WCHAR *empty_properties[] = {szDeviceIdentifier, szVendorId, szDeviceId,
                                               szKeyDeviceKey, szKeyDeviceID, szDriverName,
                                               szDriverVersion, szSubSysId, szRevisionId,
-                                              szManufacturer};
+                                              szManufacturer, szChipType, szDACType, szRevision};
 
     IDxDiagContainerImpl_Container *display_adapter;
     HRESULT hr;
@@ -1318,6 +1433,7 @@ static HRESULT fill_filter_data_information(IDxDiagContainerImpl_Container *subc
     HRESULT hr;
     IFilterMapper2 *pFileMapper = NULL;
     IAMFilterData *pFilterData = NULL;
+    BYTE *ppRF = NULL;
     REGFILTER2 *pRF = NULL;
     WCHAR bufferW[10];
     ULONG j;
@@ -1333,9 +1449,10 @@ static HRESULT fill_filter_data_information(IDxDiagContainerImpl_Container *subc
     if (FAILED(hr))
         goto cleanup;
 
-    hr = IAMFilterData_ParseFilterData(pFilterData, pData, cb, (BYTE **)&pRF);
+    hr = IAMFilterData_ParseFilterData(pFilterData, pData, cb, (BYTE **)&ppRF);
     if (FAILED(hr))
         goto cleanup;
+    pRF = ((REGFILTER2**)ppRF)[0];
 
     snprintfW(bufferW, sizeof(bufferW)/sizeof(bufferW[0]), szVersionFormat, pRF->dwVersion);
     hr = add_bstr_property(subcont, szVersionW, bufferW);
@@ -1344,16 +1461,16 @@ static HRESULT fill_filter_data_information(IDxDiagContainerImpl_Container *subc
 
     if (pRF->dwVersion == 1)
     {
-        for (j = 0; j < pRF->u.s.cPins; j++)
-            if (pRF->u.s.rgPins[j].bOutput)
+        for (j = 0; j < pRF->u.s1.cPins; j++)
+            if (pRF->u.s1.rgPins[j].bOutput)
                 dwNOutputs++;
             else
                 dwNInputs++;
     }
     else if (pRF->dwVersion == 2)
     {
-        for (j = 0; j < pRF->u.s1.cPins2; j++)
-            if (pRF->u.s1.rgPins2[j].dwFlags & REG_PINFLAG_B_OUTPUT)
+        for (j = 0; j < pRF->u.s2.cPins2; j++)
+            if (pRF->u.s2.rgPins2[j].dwFlags & REG_PINFLAG_B_OUTPUT)
                 dwNOutputs++;
             else
                 dwNInputs++;
@@ -1535,16 +1652,17 @@ static HRESULT build_directshowfilters_tree(IDxDiagContainerImpl_Container *node
             }
 
             hr = fill_filter_container(subcont, pMoniker);
+            IMoniker_Release(pMoniker);
             if (FAILED(hr))
             {
+                WARN("Skipping invalid filter\n");
                 free_information_tree(subcont);
-                IMoniker_Release(pMoniker);
-                break;
+                hr = S_OK;
+                continue;
             }
 
             add_subcontainer(node, subcont);
             i++;
-            IMoniker_Release(pMoniker);
         }
 
         IEnumMoniker_Release(pEnum);

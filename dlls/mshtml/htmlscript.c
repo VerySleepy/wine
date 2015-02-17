@@ -17,6 +17,7 @@
  */
 
 #include <stdarg.h>
+#include <assert.h>
 
 #define COBJMACROS
 
@@ -28,16 +29,10 @@
 #include "wine/debug.h"
 
 #include "mshtml_private.h"
+#include "htmlevent.h"
+#include "htmlscript.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mshtml);
-
-typedef struct {
-    HTMLElement element;
-
-    IHTMLScriptElement IHTMLScriptElement_iface;
-
-    nsIDOMHTMLScriptElement *nsscript;
-} HTMLScriptElement;
 
 static inline HTMLScriptElement *impl_from_IHTMLScriptElement(IHTMLScriptElement *iface)
 {
@@ -101,8 +96,57 @@ static HRESULT WINAPI HTMLScriptElement_Invoke(IHTMLScriptElement *iface, DISPID
 static HRESULT WINAPI HTMLScriptElement_put_src(IHTMLScriptElement *iface, BSTR v)
 {
     HTMLScriptElement *This = impl_from_IHTMLScriptElement(iface);
-    FIXME("(%p)->(%s)\n", This, debugstr_w(v));
-    return E_NOTIMPL;
+    HTMLInnerWindow *window;
+    nsIDOMNode *parent;
+    nsAString src_str;
+    nsresult nsres;
+
+    TRACE("(%p)->(%s)\n", This, debugstr_w(v));
+
+    if(!This->element.node.doc || !This->element.node.doc->window) {
+        WARN("no windoow\n");
+        return E_UNEXPECTED;
+    }
+
+    window = This->element.node.doc->window;
+
+    nsAString_InitDepend(&src_str, v);
+    nsres = nsIDOMHTMLScriptElement_SetSrc(This->nsscript, &src_str);
+    nsAString_Finish(&src_str);
+    if(NS_FAILED(nsres)) {
+        ERR("SetSrc failed: %08x\n", nsres);
+        return E_FAIL;
+    }
+
+    if(This->parsed) {
+        WARN("already parsed\n");
+        return S_OK;
+    }
+
+    if(window->parser_callback_cnt) {
+        script_queue_entry_t *queue;
+
+        queue = heap_alloc(sizeof(*queue));
+        if(!queue)
+            return E_OUTOFMEMORY;
+
+        IHTMLScriptElement_AddRef(&This->IHTMLScriptElement_iface);
+        queue->script = This;
+
+        list_add_tail(&window->script_queue, &queue->entry);
+        return S_OK;
+    }
+
+    nsres = nsIDOMHTMLElement_GetParentNode(This->element.nselem, &parent);
+    if(NS_FAILED(nsres) || !parent) {
+        TRACE("No parent, not executing\n");
+        This->parse_on_bind = TRUE;
+        return S_OK;
+    }
+
+    nsIDOMNode_Release(parent);
+    doc_insert_script(window, This);
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLScriptElement_get_src(IHTMLScriptElement *iface, BSTR *p)
@@ -149,15 +193,51 @@ static HRESULT WINAPI HTMLScriptElement_get_event(IHTMLScriptElement *iface, BST
 static HRESULT WINAPI HTMLScriptElement_put_text(IHTMLScriptElement *iface, BSTR v)
 {
     HTMLScriptElement *This = impl_from_IHTMLScriptElement(iface);
-    FIXME("(%p)->(%s)\n", This, debugstr_w(v));
-    return E_NOTIMPL;
+    HTMLInnerWindow *window;
+    nsIDOMNode *parent;
+    nsAString text_str;
+    nsresult nsres;
+
+    TRACE("(%p)->(%s)\n", This, debugstr_w(v));
+
+    if(!This->element.node.doc || !This->element.node.doc->window) {
+        WARN("no windoow\n");
+        return E_UNEXPECTED;
+    }
+
+    window = This->element.node.doc->window;
+
+    nsAString_InitDepend(&text_str, v);
+    nsres = nsIDOMHTMLScriptElement_SetText(This->nsscript, &text_str);
+    nsAString_Finish(&text_str);
+    if(NS_FAILED(nsres)) {
+        ERR("SetSrc failed: %08x\n", nsres);
+        return E_FAIL;
+    }
+
+    nsres = nsIDOMHTMLElement_GetParentNode(This->element.nselem, &parent);
+    if(NS_FAILED(nsres) || !parent) {
+        TRACE("No parent, not executing\n");
+        This->parse_on_bind = TRUE;
+        return S_OK;
+    }
+
+    nsIDOMNode_Release(parent);
+    doc_insert_script(window, This);
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLScriptElement_get_text(IHTMLScriptElement *iface, BSTR *p)
 {
     HTMLScriptElement *This = impl_from_IHTMLScriptElement(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    nsAString nsstr;
+    nsresult nsres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    nsAString_Init(&nsstr, NULL);
+    nsres = nsIDOMHTMLScriptElement_GetText(This->nsscript, &nsstr);
+    return return_nsstr(nsres, &nsstr, p);
 }
 
 static HRESULT WINAPI HTMLScriptElement_put_defer(IHTMLScriptElement *iface, VARIANT_BOOL v)
@@ -180,7 +260,7 @@ static HRESULT WINAPI HTMLScriptElement_put_defer(IHTMLScriptElement *iface, VAR
 static HRESULT WINAPI HTMLScriptElement_get_defer(IHTMLScriptElement *iface, VARIANT_BOOL *p)
 {
     HTMLScriptElement *This = impl_from_IHTMLScriptElement(iface);
-    PRBool defer = FALSE;
+    cpp_bool defer = FALSE;
     nsresult nsres;
 
     TRACE("(%p)->(%p)\n", This, p);
@@ -202,22 +282,28 @@ static HRESULT WINAPI HTMLScriptElement_get_defer(IHTMLScriptElement *iface, VAR
 static HRESULT WINAPI HTMLScriptElement_get_readyState(IHTMLScriptElement *iface, BSTR *p)
 {
     HTMLScriptElement *This = impl_from_IHTMLScriptElement(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    return get_readystate_string(This->readystate, p);
 }
 
 static HRESULT WINAPI HTMLScriptElement_put_onerror(IHTMLScriptElement *iface, VARIANT v)
 {
     HTMLScriptElement *This = impl_from_IHTMLScriptElement(iface);
-    FIXME("(%p)->(v(%d))\n", This, V_VT(&v));
-    return E_NOTIMPL;
+
+    FIXME("(%p)->(%s) semi-stub\n", This, debugstr_variant(&v));
+
+    return set_node_event(&This->element.node, EVENTID_ERROR, &v);
 }
 
 static HRESULT WINAPI HTMLScriptElement_get_onerror(IHTMLScriptElement *iface, VARIANT *p)
 {
     HTMLScriptElement *This = impl_from_IHTMLScriptElement(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    return get_node_event(&This->element.node, EVENTID_ERROR, p);
 }
 
 static HRESULT WINAPI HTMLScriptElement_put_type(IHTMLScriptElement *iface, BSTR v)
@@ -240,7 +326,6 @@ static HRESULT WINAPI HTMLScriptElement_put_type(IHTMLScriptElement *iface, BSTR
 static HRESULT WINAPI HTMLScriptElement_get_type(IHTMLScriptElement *iface, BSTR *p)
 {
     HTMLScriptElement *This = impl_from_IHTMLScriptElement(iface);
-    const PRUnichar *nstype;
     nsAString nstype_str;
     nsresult nsres;
 
@@ -248,14 +333,7 @@ static HRESULT WINAPI HTMLScriptElement_get_type(IHTMLScriptElement *iface, BSTR
 
     nsAString_Init(&nstype_str, NULL);
     nsres = nsIDOMHTMLScriptElement_GetType(This->nsscript, &nstype_str);
-    if(NS_FAILED(nsres))
-        ERR("GetType failed: %08x\n", nsres);
-
-    nsAString_GetData(&nstype_str, &nstype);
-    *p = *nstype ? SysAllocString(nstype) : NULL;
-    nsAString_Finish(&nstype_str);
-
-    return S_OK;
+    return return_nsstr(nsres, &nstype_str, p);
 }
 
 static const IHTMLScriptElementVtbl HTMLScriptElementVtbl = {
@@ -313,12 +391,6 @@ static HRESULT HTMLScriptElement_QI(HTMLDOMNode *iface, REFIID riid, void **ppv)
     return HTMLElement_QI(&This->element.node, riid, ppv);
 }
 
-static void HTMLScriptElement_destructor(HTMLDOMNode *iface)
-{
-    HTMLScriptElement *This = impl_from_HTMLDOMNode(iface);
-    HTMLElement_destructor(&This->element.node);
-}
-
 static HRESULT HTMLScriptElement_get_readystate(HTMLDOMNode *iface, BSTR *p)
 {
     HTMLScriptElement *This = impl_from_HTMLDOMNode(iface);
@@ -326,19 +398,65 @@ static HRESULT HTMLScriptElement_get_readystate(HTMLDOMNode *iface, BSTR *p)
     return IHTMLScriptElement_get_readyState(&This->IHTMLScriptElement_iface, p);
 }
 
+static void HTMLScriptElement_traverse(HTMLDOMNode *iface, nsCycleCollectionTraversalCallback *cb)
+{
+    HTMLScriptElement *This = impl_from_HTMLDOMNode(iface);
+
+    if(This->nsscript)
+        note_cc_edge((nsISupports*)This->nsscript, "This->nsscript", cb);
+}
+
+static void HTMLScriptElement_unlink(HTMLDOMNode *iface)
+{
+    HTMLScriptElement *This = impl_from_HTMLDOMNode(iface);
+
+    if(This->nsscript) {
+        nsIDOMHTMLScriptElement *nsscript = This->nsscript;
+
+        This->nsscript = NULL;
+        nsIDOMHTMLScriptElement_Release(nsscript);
+    }
+}
+
 static const NodeImplVtbl HTMLScriptElementImplVtbl = {
     HTMLScriptElement_QI,
-    HTMLScriptElement_destructor,
+    HTMLElement_destructor,
+    HTMLElement_cpc,
     HTMLElement_clone,
+    HTMLElement_handle_event,
     HTMLElement_get_attr_col,
     NULL,
     NULL,
     NULL,
     NULL,
     NULL,
+    HTMLScriptElement_get_readystate,
     NULL,
-    HTMLScriptElement_get_readystate
+    NULL,
+    NULL,
+    HTMLScriptElement_traverse,
+    HTMLScriptElement_unlink
 };
+
+HRESULT script_elem_from_nsscript(HTMLDocumentNode *doc, nsIDOMHTMLScriptElement *nsscript, HTMLScriptElement **ret)
+{
+    nsIDOMNode *nsnode;
+    HTMLDOMNode *node;
+    nsresult nsres;
+    HRESULT hres;
+
+    nsres = nsIDOMHTMLScriptElement_QueryInterface(nsscript, &IID_nsIDOMNode, (void**)&nsnode);
+    assert(nsres == NS_OK);
+
+    hres = get_node(doc, nsnode, TRUE, &node);
+    nsIDOMNode_Release(nsnode);
+    if(FAILED(hres))
+        return hres;
+
+    assert(node->vtbl == &HTMLScriptElementImplVtbl);
+    *ret = impl_from_HTMLDOMNode(node);
+    return S_OK;
+}
 
 static const tid_t HTMLScriptElement_iface_tids[] = {
     HTMLELEMENT_TIDS,
@@ -365,14 +483,10 @@ HRESULT HTMLScriptElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nsele
     ret->IHTMLScriptElement_iface.lpVtbl = &HTMLScriptElementVtbl;
     ret->element.node.vtbl = &HTMLScriptElementImplVtbl;
 
-    nsres = nsIDOMHTMLElement_QueryInterface(nselem, &IID_nsIDOMHTMLScriptElement, (void**)&ret->nsscript);
-    if(NS_FAILED(nsres)) {
-        ERR("Could not get nsIDOMHTMLScriptElement: %08x\n", nsres);
-        heap_free(ret);
-        return E_FAIL;
-    }
-
     HTMLElement_Init(&ret->element, doc, nselem, &HTMLScriptElement_dispex);
+
+    nsres = nsIDOMHTMLElement_QueryInterface(nselem, &IID_nsIDOMHTMLScriptElement, (void**)&ret->nsscript);
+    assert(nsres == NS_OK);
 
     *elem = &ret->element;
     return S_OK;

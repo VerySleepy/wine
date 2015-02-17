@@ -127,6 +127,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
             list_remove(&tdata->entry);
             LeaveCriticalSection(&threaddata_cs);
 
+            tdata->cs.DebugInfo->Spare[0] = 0;
             DeleteCriticalSection(&tdata->cs);
             if (tdata->connection)
                 ERR("tdata->connection should be NULL but is still set to %p\n", tdata->connection);
@@ -137,8 +138,11 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
         break;
 
     case DLL_PROCESS_DETACH:
+        if (lpvReserved) break; /* do nothing if process is shutting down */
         RPCRT4_destroy_all_protseqs();
         RPCRT4_ServerFreeAllRegisteredAuthInfo();
+        DeleteCriticalSection(&uuid_cs);
+        DeleteCriticalSection(&threaddata_cs);
         break;
     }
 
@@ -386,7 +390,8 @@ static RPC_STATUS RPC_UuidGetNodeAddress(BYTE *address)
  */
 RPC_STATUS WINAPI UuidCreateSequential(UUID *Uuid)
 {
-    static int initialised, count;
+    static BOOL initialised;
+    static int count;
 
     ULONGLONG time;
     static ULONGLONG timelast;
@@ -405,7 +410,7 @@ RPC_STATUS WINAPI UuidCreateSequential(UUID *Uuid)
         sequence &= 0x1fff;
 
         status = RPC_UuidGetNodeAddress(address);
-        initialised = 1;
+        initialised = TRUE;
     }
 
     /* Generate time element of the UUID. Account for going faster
@@ -871,6 +876,42 @@ RPC_STATUS RPC_ENTRY RpcErrorStartEnumeration(RPC_ERROR_ENUM_HANDLE* EnumHandle)
 }
 
 /******************************************************************************
+ * RpcErrorEndEnumeration   (rpcrt4.@)
+ */
+RPC_STATUS RPC_ENTRY RpcErrorEndEnumeration(RPC_ERROR_ENUM_HANDLE* EnumHandle)
+{
+    FIXME("(%p): stub\n", EnumHandle);
+    return RPC_S_OK;
+}
+
+/******************************************************************************
+ * RpcErrorSaveErrorInfo   (rpcrt4.@)
+ */
+RPC_STATUS RPC_ENTRY RpcErrorSaveErrorInfo(RPC_ERROR_ENUM_HANDLE *EnumHandle, void **ErrorBlob, SIZE_T *BlobSize)
+{
+    FIXME("(%p %p %p): stub\n", EnumHandle, ErrorBlob, BlobSize);
+    return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
+/******************************************************************************
+ * RpcErrorLoadErrorInfo   (rpcrt4.@)
+ */
+RPC_STATUS RPC_ENTRY RpcErrorLoadErrorInfo(void *ErrorBlob, SIZE_T BlobSize, RPC_ERROR_ENUM_HANDLE *EnumHandle)
+{
+    FIXME("(%p %lu %p): stub\n", ErrorBlob, BlobSize, EnumHandle);
+    return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
+/******************************************************************************
+ * RpcErrorGetNextRecord   (rpcrt4.@)
+ */
+RPC_STATUS RPC_ENTRY RpcErrorGetNextRecord(RPC_ERROR_ENUM_HANDLE *EnumHandle, BOOL CopyStrings, RPC_EXTENDED_ERROR_INFO *ErrorInfo)
+{
+    FIXME("(%p %x %p): stub\n", EnumHandle, CopyStrings, ErrorInfo);
+    return RPC_S_ENTRY_NOT_FOUND;
+}
+
+/******************************************************************************
  * RpcMgmtSetCancelTimeout   (rpcrt4.@)
  */
 RPC_STATUS RPC_ENTRY RpcMgmtSetCancelTimeout(LONG Timeout)
@@ -888,6 +929,7 @@ static struct threaddata *get_or_create_threaddata(void)
         if (!tdata) return NULL;
 
         InitializeCriticalSection(&tdata->cs);
+        tdata->cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": threaddata.cs");
         tdata->thread_id = GetCurrentThreadId();
 
         EnterCriticalSection(&threaddata_cs);

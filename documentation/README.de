@@ -32,25 +32,18 @@ Um Wine kompilieren und ausführen zu können, brauchen Sie eines der
 folgenden Betriebssysteme:
 
   Linux version 2.0.36 oder neuer
-  FreeBSD 6.3 oder neuer
+  FreeBSD 8.0 oder neuer
   Solaris x86 9 oder neuer
   NetBSD-current
-  Mac OS X 10.4 oder neuer
+  Mac OS X 10.5 oder neuer
 
-Da Wine Thread-Support auf Kernelebene benötigt, werden nur die oben
+Da Wine Thread-Unterstützung auf Kernelebene benötigt, werden nur die oben
 aufgeführten Betriebssysteme unterstützt.
 Andere Betriebssysteme, die Kernel-Threads unterstützen, werden unter
 Umständen in der Zukunft unterstützt.
 
-Linux-Info:
-  Obwohl Linux 2.2.x immer noch funktionieren sollte und Linux 2.0.x
-  vielleicht auch noch funktioniert (ältere 2.0.x-Versionen verzeichneten
-  Abstürze im Zusammenhang mit Threads), sollte man am besten einen
-  aktuellen Kernel wie 2.4.x oder 2.6.x verwenden.
-
 FreeBSD-Info:
-  Wine läuft prinzipiell erst ab FreeBSD 6.3 oder 7.0 richtig, wobei für
-  FreeBSD 6.3 zusätzliche Patches erhältlich sind. Siehe dazu auch
+  Wine läuft prinzipiell erst ab FreeBSD 8.0 richtig. Siehe dazu auch
   http://wiki.freebsd.org/Wine für weitere Informationen.
 
 Solaris-Info:
@@ -66,13 +59,13 @@ NetBSD-Info:
 
 Mac OS X Info:
   Sie benötigen mindestens Xcode 2.4 um richtig unter x86 kompilieren zu können.
+  Der Mac Treiber benötigt mindestens OS X 10.6 und kompiliert nicht unter 10.5.
 
 Unterstützte Dateisysteme:
-  Wine sollte auf den meisten Dateisystemen laufen. Ein paar
-  Kompatibilitäts-Probleme wurden auch gemeldet beim Dateizugriff über Samba.
+  Wine sollte auf den meisten Dateisystemen laufen. Kompatibilitätsprobleme
+  wurden allerdings beim Dateizugriff über Samba gemeldet.
   Weiterhin bietet NTFS nicht alle Dateisystemfunktionen, die von einigen
-  Programmen benötigt werden. Ein natives Linux Dateisystem wie ext3 wird
-  empfohlen.
+  Programmen benötigt werden. Ein natives Unix-Dateisystem wird empfohlen.
 
 Grundsätzliche Voraussetzungen:
   Sie müssen die Include-Dateien für X11-Entwicklung installiert haben
@@ -121,12 +114,9 @@ Vergessen Sie nicht, erst alle früheren Wine-Installationen zu entfernen.
 Führen Sie vor der Installation entweder "dpkg -r wine", "rpm -e wine" oder
 "make uninstall" aus.
 
+Nach der Installation können Sie das "winecfg" Tool ausführen.
 Die Konfigurations-Hinweise finden Sie im Support-Bereich
 von http://www.winehq.org.
-
-Im Falle von Library-Ladefehlern (z.B. "Error while loading shared libraries:
-libntdll.so") fügen Sie bitte den Library-Pfad zur Datei /etc/ld.so.conf hinzu
-und führen Sie ldconfig als root aus.
 
 6. AUSFÜHREN VON PROGRAMMEN
 
@@ -143,10 +133,7 @@ Beispiel: Um Notepad auszuführen:
     wine ~/.wine/drive_c/windows/notepad.exe  (die Dateinamen-Syntax
                                               von Unix benutzend)
 
-        wine notepad.exe lesmich.txt (Programmaufruf mit Parametern)
-
-Hinweis: Der Pfad zur Datei wird auch zum Pfad hinzugefügt, wenn ein
-         vollständiger Dateiname auf der Kommandozeile angegeben wird.
+    wine notepad.exe liesmich.txt (Programmaufruf mit Parametern)
 
 Wine ist nicht perfekt, daher können manche Programme abstürzen.
 In diesem Fall bekommen Sie einen Log vom Absturz, den Sie beifügen sollten,
@@ -156,7 +143,7 @@ wenn Sie den Fehler melden.
 
 WWW:    Eine große Anzahl an Informationen findet sich im WineHQ unter
         http://www.winehq.org/ : Verschiedene Wine Guides,
-        Applikations-Datenbank, Fehlerverfolgungs-System.
+        Applikations-Datenbank, Bugtracker.
         Das ist vermutlich der beste Ausgangspunkt.
 
 FAQ:    Die FAQ zu Wine befindet sich unter http://www.winehq.org/FAQ
@@ -175,7 +162,7 @@ IRC:    Online-Hilfe wird Ihnen im Chat-Kanal #WineHQ unter
         irc.freenode.net gewährt.
 
 Git:    Der aktuelle Wine-Entwicklungs-Zweig ist über Git verfügbar.
-        Besuchen Sie http://www.winehq.org/site/git für weitere Informationen.
+        Besuchen Sie http://www.winehq.org/git für weitere Informationen.
 
 Wenn Sie etwas hinzufügen oder einen Fehler beheben, senden Sie den Patch bitte
 (vorzugsweise mit git-format-patch) an die Liste wine-patches@winehq.org, um ihn

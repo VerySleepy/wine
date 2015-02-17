@@ -18,6 +18,8 @@
 
 #include "resource.h"
 
+#pragma makedep po
+
 LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 
 IDM_WINEFILE MENU
@@ -27,18 +29,14 @@ IDM_WINEFILE MENU
         MENUITEM "&Move...\tF7",                ID_FILE_MOVE
         MENUITEM "&Copy...\tF8",                ID_FILE_COPY
         MENUITEM "&Delete\tDel",                ID_FILE_DELETE
-        MENUITEM "Re&name...",                  109
+        MENUITEM "Re&name...",                  ID_RENAME
         MENUITEM "Propert&ies\tAlt+Enter",   ID_EDIT_PROPERTIES
         MENUITEM SEPARATOR
         MENUITEM "&Run...",                     ID_RUN
         MENUITEM SEPARATOR
-        MENUITEM "Cr&eate Directory...",        111
+        MENUITEM "Cr&eate Directory...",        ID_MKDIR
         MENUITEM SEPARATOR
-#ifndef _NO_EXTENSIONS
-        MENUITEM "E&xit\tAlt+X",                ID_FILE_EXIT
-#else
         MENUITEM "E&xit",                       ID_FILE_EXIT
-#endif
     }
 
     POPUP "&Disk"  {
@@ -64,11 +62,9 @@ IDM_WINEFILE MENU
         MENUITEM "&Font...",                    ID_SELECT_FONT
         MENUITEM SEPARATOR
         MENUITEM "&Toolbar",                    ID_VIEW_TOOL_BAR, CHECKED
-        MENUITEM "&Drivebar",                   ID_VIEW_DRIVE_BAR, CHECKED
+        MENUITEM "&Drive Bar",                  ID_VIEW_DRIVE_BAR, CHECKED
         MENUITEM "&Status Bar",                 ID_VIEW_STATUSBAR, CHECKED
-#ifndef _NO_EXTENSIONS
         MENUITEM "F&ull Screen\tCtrl+Shift+S",  ID_VIEW_FULLSCREEN
-#endif
         MENUITEM SEPARATOR
         MENUITEM "&Save settings on exit",      ID_VIEW_SAVESETTINGS
     }
@@ -109,15 +105,18 @@ STRINGTABLE
 {
     IDS_COL_NAME            "Name"
     IDS_COL_SIZE            "Size"
-    IDS_COL_CDATE           "CDate"
-    IDS_COL_ADATE           "ADate"
-    IDS_COL_MDATE           "MDate"
+    IDS_COL_CDATE           "Creation date"
+    IDS_COL_ADATE           "Access date"
+    IDS_COL_MDATE           "Modification date"
     IDS_COL_IDX             "Index/Inode"
     IDS_COL_LINKS           "Links"
     IDS_COL_ATTR            "Attributes"
     IDS_COL_SEC             "Security"
 
     IDS_FREE_SPACE_FMT      "%1 of %2 free"
+    IDS_UNIT_KB             "#msgctxt#unit kilobyte#kB"
+    IDS_UNIT_MB             "#msgctxt#unit megabyte#MB"
+    IDS_UNIT_GB             "#msgctxt#unit gigabyte#GB"
 }
 
 IDD_SELECT_DESTINATION DIALOG 15, 13, 210, 63
@@ -128,9 +127,9 @@ FONT 8, "MS Shell Dlg"
     CONTROL         "", 101, "Static", SS_SIMPLE|SS_NOPREFIX, 3, 6, 162, 10
     CONTROL         "&Path:", -1, "Static", SS_LEFTNOWORDWRAP|WS_GROUP, 3, 18, 60, 10
     EDITTEXT        201, 3, 29, 134, 12, ES_AUTOHSCROLL
-    DEFPUSHBUTTON   "OK", 1, 158, 6, 47, 14
-    PUSHBUTTON      "Cancel", 2, 158, 23, 47, 14
-    PUSHBUTTON      "&Browse...", 254, 158, 43, 47, 14
+    DEFPUSHBUTTON   "OK", 1, 145, 6, 60, 14
+    PUSHBUTTON      "Cancel", 2, 145, 23, 60, 14
+    PUSHBUTTON      "&Browse...", 254, 145, 43, 60, 14
 }
 
 IDD_DIALOG_VIEW_TYPE DIALOG 15, 13, 161, 105
@@ -140,7 +139,7 @@ FONT 8, "MS Shell Dlg"
 BEGIN
     LTEXT           "&Name:",-1,7,8,22,10
     EDITTEXT        IDC_VIEW_PATTERN,31,7,63,12,ES_AUTOHSCROLL
-    GROUPBOX        "File Type",-1,7,23,87,63
+    GROUPBOX        "File type",-1,7,23,87,63
     CONTROL         "&Directories",IDC_VIEW_TYPE_DIRECTORIES,"Button",
                     BS_AUTOCHECKBOX | WS_TABSTOP,13,34,70,10
     CONTROL         "&Programs",IDC_VIEW_TYPE_PROGRAMS,"Button",
@@ -178,12 +177,25 @@ BEGIN
     CONTROL         "&Archive",IDC_CHECK_ARCHIVE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,17,101,68,9
     CONTROL         "&System",IDC_CHECK_SYSTEM,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,92,101,68,9
     CONTROL         "&Compressed",IDC_CHECK_COMPRESSED,"Button", BS_AUTOCHECKBOX | WS_TABSTOP,17,111,68,9
-    GROUPBOX        "&Version Information",-1,7,129,234,79
+    GROUPBOX        "Version information",-1,7,129,234,79
     LISTBOX         IDC_LIST_PROP_VERSION_TYPES,13,139,107,63,LBS_SORT | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
     EDITTEXT        IDC_LIST_PROP_VERSION_VALUES,123,139,111,63,ES_MULTILINE | ES_READONLY | WS_VSCROLL
     DEFPUSHBUTTON   "OK",IDOK,191,91,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,191,110,50,14
 END
+
+IDA_WINEFILE ACCELERATORS
+{
+	VK_F1, ID_HELP, VIRTKEY
+	VK_F5, ID_REFRESH, VIRTKEY
+	VK_F7, ID_FILE_MOVE, VIRTKEY
+	VK_F8, ID_FILE_COPY, VIRTKEY
+	VK_DELETE, ID_FILE_DELETE, VIRTKEY
+	VK_RETURN, ID_ACTIVATE, VIRTKEY
+	VK_RETURN, ID_EDIT_PROPERTIES, VIRTKEY, ALT
+	"#msgctxt#accelerator Fullscreen#S", ID_VIEW_FULLSCREEN, VIRTKEY, SHIFT, CONTROL
+	VK_ADD, ID_PREFERRED_SIZES, VIRTKEY, CONTROL
+}
 
 LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
 

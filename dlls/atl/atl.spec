@@ -16,7 +16,7 @@
 21 stdcall AtlModuleTerm(ptr)
 22 stdcall AtlModuleUnregisterServer(ptr ptr)
 23 stdcall AtlModuleUpdateRegistryFromResourceD(ptr wstr long ptr ptr)
-24 stub AtlWaitWithMessageLoop
+24 stdcall AtlWaitWithMessageLoop(long)
 25 stub AtlSetErrorInfo
 26 stdcall AtlCreateTargetDC(long ptr)
 27 stdcall AtlHiMetricToPixel(ptr ptr)
@@ -25,9 +25,9 @@
 30 stdcall AtlComPtrAssign(ptr ptr)
 31 stdcall AtlComQIPtrAssign(ptr ptr ptr)
 32 stdcall AtlInternalQueryInterface(ptr ptr ptr ptr)
-34 stub AtlGetVersion
-35 stub AtlAxDialogBoxW
-36 stub AtlAxDialogBoxA
+34 stdcall AtlGetVersion(ptr)
+35 stdcall AtlAxDialogBoxW(long wstr long ptr long)
+36 stdcall AtlAxDialogBoxA(long str long ptr long)
 37 stdcall AtlAxCreateDialogW(long wstr long ptr long)
 38 stdcall AtlAxCreateDialogA(long str long ptr long)
 39 stdcall AtlAxCreateControl(ptr ptr ptr ptr)
@@ -40,12 +40,12 @@
 46 stdcall AtlModuleRegisterWndClassInfoA(ptr ptr ptr)
 47 stdcall AtlAxGetControl(long ptr)
 48 stdcall AtlAxGetHost(long ptr)
-49 stub AtlRegisterClassCategoriesHelper
+49 stdcall AtlRegisterClassCategoriesHelper(ptr ptr long)
 50 stdcall AtlIPersistStreamInit_Load(ptr ptr ptr ptr)
 51 stdcall AtlIPersistStreamInit_Save(ptr long ptr ptr ptr)
-52 stub AtlIPersistPropertyBag_Load
+52 stdcall AtlIPersistPropertyBag_Load(ptr ptr ptr ptr ptr)
 53 stub AtlIPersistPropertyBag_Save
-54 stub AtlGetObjectSourceInterface
+54 stdcall AtlGetObjectSourceInterface(ptr ptr ptr ptr ptr)
 55 stub AtlModuleUnRegisterTypeLib
 56 stdcall AtlModuleLoadTypeLib(ptr wstr ptr ptr)
 57 stdcall AtlModuleUnregisterServerEx(ptr long ptr)

@@ -20,15 +20,14 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
-    
-#define WIN32_LEAN_AND_MEAN    /* Exclude rarely-used stuff from Windows headers */
+
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <windows.h>
 #include <commctrl.h>
-#include <stdlib.h>
-#include <memory.h>
-#include <stdio.h>
 #include <winnt.h>
-    
+
 #include "wine/unicode.h"
 #include "taskmgr.h"
 #include "perfdata.h"
@@ -266,8 +265,8 @@ static void Graph_DrawMemUsageGraph(HDC hDC, HWND hWnd)
      * So first find out how many bars we can fit
      */
     nBars = ((rcClient.bottom - rcClient.top) - 25) / 3;
-        if (CommitChargeLimit)
-    nBarsUsed = (nBars * (int)((CommitChargeTotal * 100) / CommitChargeLimit)) / 100;
+    if (CommitChargeLimit)
+        nBarsUsed = (nBars * (int)((CommitChargeTotal * 100) / CommitChargeLimit)) / 100;
     nBarsFree = nBars - nBarsUsed;
 
     if (nBarsUsed < 0)     nBarsUsed = 0;

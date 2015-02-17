@@ -1,4 +1,3 @@
-EXTRADEFS = -DWINE_NO_UNICODE_MACROS
 MODULE    = msiexec.exe
 APPMODE   = -mwindows
 IMPORTS   = msi ole32 advapi32 user32
@@ -9,8 +8,6 @@ C_SRCS = \
 
 RC_SRCS = rsrc.rc
 
-MANPAGE = msiexec.man
+MANPAGES = msiexec.man.in
 
 SVG_SRCS = msiexec.svg
-
-@MAKE_PROG_RULES@

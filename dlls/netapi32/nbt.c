@@ -297,7 +297,7 @@ static UCHAR NetBTWaitForNameResponse(const NetBTAdapter *adapter, SOCKET fd,
     if (fd == INVALID_SOCKET) return NRC_BADDR;
     if (!answerCallback) return NRC_BADDR;
 
-    while (!found && ret == NRC_GOODRET && (now = GetTickCount()) < waitUntil)
+    while (!found && ret == NRC_GOODRET && (int)((now = GetTickCount()) - waitUntil) < 0)
     {
         DWORD msToWait = waitUntil - now;
         struct fd_set fds;
@@ -407,9 +407,8 @@ static BOOL NetBTFindNameAnswerCallback(void *pVoid, WORD answerCount,
     {
         if (queryData->cacheEntry == NULL)
         {
-            queryData->cacheEntry = HeapAlloc(
-             GetProcessHeap(), 0, sizeof(NBNameCacheEntry) +
-             (answerCount - 1) * sizeof(DWORD));
+            queryData->cacheEntry = HeapAlloc(GetProcessHeap(), 0,
+             FIELD_OFFSET(NBNameCacheEntry, addresses[answerCount]));
             if (queryData->cacheEntry)
                 queryData->cacheEntry->numAddresses = 0;
             else
@@ -541,8 +540,8 @@ static UCHAR NetBTinetResolve(const UCHAR name[NCBNAMSZ],
 
             if (addr != INADDR_NONE)
             {
-                *cacheEntry = HeapAlloc(GetProcessHeap(),
-                 0, sizeof(NBNameCacheEntry));
+                *cacheEntry = HeapAlloc(GetProcessHeap(), 0,
+                 FIELD_OFFSET(NBNameCacheEntry, addresses[1]));
                 if (*cacheEntry)
                 {
                     memcpy((*cacheEntry)->name, name, NCBNAMSZ);
@@ -561,14 +560,12 @@ static UCHAR NetBTinetResolve(const UCHAR name[NCBNAMSZ],
 
             if ((host = gethostbyname(toLookup)) != NULL)
             {
-                for (i = 0; ret == NRC_GOODRET && host->h_addr_list &&
-                 host->h_addr_list[i]; i++)
+                for (i = 0; host->h_addr_list && host->h_addr_list[i]; i++)
                     ;
                 if (host->h_addr_list && host->h_addr_list[0])
                 {
-                    *cacheEntry = HeapAlloc(
-                     GetProcessHeap(), 0, sizeof(NBNameCacheEntry) +
-                     (i - 1) * sizeof(DWORD));
+                    *cacheEntry = HeapAlloc(GetProcessHeap(), 0,
+                     FIELD_OFFSET(NBNameCacheEntry, addresses[i]));
                     if (*cacheEntry)
                     {
                         memcpy((*cacheEntry)->name, name, NCBNAMSZ);
@@ -1003,7 +1000,7 @@ static UCHAR NetBTCall(void *adapt, PNCB ncb, void **sess)
                     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout,
                      sizeof(timeout));
                 }
-                if (ncb->ncb_rto > 0)
+                if (ncb->ncb_sto > 0)
                 {
                     timeout = ncb->ncb_sto * 500;
                     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, (char*)&timeout,

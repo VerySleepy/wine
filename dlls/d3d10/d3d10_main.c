@@ -27,19 +27,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d10);
 
-/* At process attach */
-BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpv)
-{
-    TRACE("fdwReason=%d\n", fdwReason);
-    switch(fdwReason)
-    {
-    case DLL_PROCESS_ATTACH:
-        DisableThreadLibraryCalls( hInstDLL );
-        break;
-    }
-    return TRUE;
-}
-
 HRESULT WINAPI D3D10CreateDevice(IDXGIAdapter *adapter, D3D10_DRIVER_TYPE driver_type,
         HMODULE swrast, UINT flags, UINT sdk_version, ID3D10Device **device)
 {
@@ -122,6 +109,11 @@ HRESULT WINAPI D3D10CreateDevice(IDXGIAdapter *adapter, D3D10_DRIVER_TYPE driver
                 }
                 break;
             }
+
+            default:
+                FIXME("Unhandled driver type %#x.\n", driver_type);
+                IDXGIFactory_Release(factory);
+                return E_FAIL;
         }
     }
 
@@ -243,21 +235,39 @@ HRESULT WINAPI D3D10CreateEffectFromMemory(void *data, SIZE_T data_size, UINT fl
     return S_OK;
 }
 
-LPCSTR WINAPI D3D10GetVertexShaderProfile(ID3D10Device *device)
+HRESULT WINAPI D3D10CompileEffectFromMemory(void *data, SIZE_T data_size, const char *filename,
+        const D3D10_SHADER_MACRO *defines, ID3D10Include *include, UINT hlsl_flags, UINT fx_flags,
+        ID3D10Blob **effect, ID3D10Blob **errors)
+{
+    FIXME("data %p, data_size %lu, filename %s, defines %p, include %p,"
+            " hlsl_flags %#x, fx_flags %#x, effect %p, errors %p stub!\n",
+            data, data_size, wine_dbgstr_a(filename), defines, include,
+            hlsl_flags, fx_flags, effect, errors);
+
+    if (effect)
+        *effect = NULL;
+    if (errors)
+        *errors = NULL;
+
+    return E_NOTIMPL;
+}
+
+
+const char * WINAPI D3D10GetVertexShaderProfile(ID3D10Device *device)
 {
     FIXME("device %p stub!\n", device);
 
     return "vs_4_0";
 }
 
-LPCSTR WINAPI D3D10GetGeometryShaderProfile(ID3D10Device *device)
+const char * WINAPI D3D10GetGeometryShaderProfile(ID3D10Device *device)
 {
     FIXME("device %p stub!\n", device);
 
     return "gs_4_0";
 }
 
-LPCSTR WINAPI D3D10GetPixelShaderProfile(ID3D10Device *device)
+const char * WINAPI D3D10GetPixelShaderProfile(ID3D10Device *device)
 {
     FIXME("device %p stub!\n", device);
 

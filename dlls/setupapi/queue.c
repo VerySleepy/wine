@@ -39,9 +39,13 @@ WINE_DEFAULT_DEBUG_CHANNEL(setupapi);
 /* context structure for the default queue callback */
 struct default_callback_context
 {
-    HWND owner;
-    HWND progress;
-    UINT message;
+    DWORD     magic;
+    HWND      owner;
+    DWORD     unk1[4];
+    DWORD_PTR unk2[7];
+    HWND      progress;
+    UINT      message;
+    DWORD_PTR unk3[5];
 };
 
 struct file_op
@@ -978,7 +982,7 @@ static BOOL do_file_copyW( LPCWSTR source, LPCWSTR target, DWORD style,
             VS_FIXEDFILEINFO *TargetInfo;
             VS_FIXEDFILEINFO *SourceInfo;
             UINT length;
-            WCHAR  SubBlock[2]={'\\',0};
+            static const WCHAR SubBlock[]={'\\',0};
             DWORD  ret;
 
             VersionSource = HeapAlloc(GetProcessHeap(),0,VersionSizeSource);
@@ -1156,7 +1160,11 @@ BOOL WINAPI SetupInstallFileExW( HINF hinf, PINFCONTEXT inf_context, PCWSTR sour
             SetLastError( ERROR_NOT_ENOUGH_MEMORY );
             return FALSE;
         }
-        if (!SetupGetStringFieldW( inf_context, 1, inf_source, len, NULL )) return FALSE;
+        if (!SetupGetStringFieldW( inf_context, 1, inf_source, len, NULL ))
+        {
+            HeapFree( GetProcessHeap(), 0, inf_source );
+            return FALSE;
+        }
         source = inf_source;
     }
     else if (!source)
@@ -1478,8 +1486,9 @@ PVOID WINAPI SetupInitDefaultQueueCallbackEx( HWND owner, HWND progress, UINT ms
 {
     struct default_callback_context *context;
 
-    if ((context = HeapAlloc( GetProcessHeap(), 0, sizeof(*context) )))
+    if ((context = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*context) )))
     {
+        context->magic    = 0x43515053; /* "SPQC" */
         context->owner    = owner;
         context->progress = progress;
         context->message  = msg;

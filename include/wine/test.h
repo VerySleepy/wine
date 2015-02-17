@@ -60,9 +60,12 @@ extern void winetest_start_todo( const char* platform );
 extern int winetest_loop_todo(void);
 extern void winetest_end_todo( const char* platform );
 extern int winetest_get_mainargs( char*** pargv );
+extern LONG winetest_get_failures(void);
+extern void winetest_add_failures( LONG new_failures );
 extern void winetest_wait_child_process( HANDLE process );
 
 extern const char *wine_dbgstr_wn( const WCHAR *str, int n );
+extern const char *wine_dbgstr_guid( const GUID *guid );
 static inline const char *wine_dbgstr_w( const WCHAR *s ) { return wine_dbgstr_wn( s, -1 ); }
 
 /* strcmpW is available for tests compiled under Wine, but not in standalone
@@ -175,6 +178,7 @@ extern void __winetest_cdecl winetest_trace( const char *msg, ... );
 #ifdef STANDALONE
 
 #include <stdio.h>
+#include <excpt.h>
 
 #if defined(__x86_64__) && defined(__GNUC__) && defined(__WINE_USE_MSVCRT)
 # define __winetest_va_start(list,arg) __builtin_ms_va_start(list,arg)
@@ -256,7 +260,7 @@ static char *get_temp_buffer( size_t n )
     return res;
 }
 
-/* release extra space that we requested in gimme1() */
+/* release extra space that we requested in get_temp_buffer() */
 static void release_temp_buffer( char *ptr, size_t size )
 {
     tls_data *data = get_tls_data();
@@ -427,6 +431,17 @@ int winetest_get_mainargs( char*** pargv )
     return winetest_argc;
 }
 
+LONG winetest_get_failures(void)
+{
+    return failures;
+}
+
+void winetest_add_failures( LONG new_failures )
+{
+    while (new_failures-- > 0)
+        InterlockedIncrement( &failures );
+}
+
 void winetest_wait_child_process( HANDLE process )
 {
     DWORD exit_code = 1;
@@ -506,6 +521,19 @@ const char *wine_dbgstr_wn( const WCHAR *str, int n )
     }
     *dst++ = 0;
     release_temp_buffer( res, dst - res );
+    return res;
+}
+
+const char *wine_dbgstr_guid( const GUID *guid )
+{
+    char *res;
+
+    if (!guid) return "(null)";
+    res = get_temp_buffer( 39 ); /* CHARS_IN_GUID */
+    sprintf( res, "{%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}",
+             guid->Data1, guid->Data2, guid->Data3, guid->Data4[0],
+             guid->Data4[1], guid->Data4[2], guid->Data4[3], guid->Data4[4],
+             guid->Data4[5], guid->Data4[6], guid->Data4[7] );
     return res;
 }
 
@@ -590,7 +618,9 @@ static LONG CALLBACK exc_filter( EXCEPTION_POINTERS *ptrs )
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
+#ifdef __GNUC__
 void _fpreset(void) {} /* override the mingw fpu init code */
+#endif
 
 /* main function */
 int main( int argc, char **argv )

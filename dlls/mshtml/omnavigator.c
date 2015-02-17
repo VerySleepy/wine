@@ -44,9 +44,312 @@ typedef struct {
     HTMLMimeTypesCollection *mime_types;
 } OmNavigator;
 
-static inline OmNavigator *impl_from_IOmNavigator(IOmNavigator *iface)
+typedef struct {
+    DispatchEx dispex;
+    IHTMLDOMImplementation IHTMLDOMImplementation_iface;
+
+    LONG ref;
+} HTMLDOMImplementation;
+
+static inline HTMLDOMImplementation *impl_from_IHTMLDOMImplementation(IHTMLDOMImplementation *iface)
 {
-    return CONTAINING_RECORD(iface, OmNavigator, IOmNavigator_iface);
+    return CONTAINING_RECORD(iface, HTMLDOMImplementation, IHTMLDOMImplementation_iface);
+}
+
+static HRESULT WINAPI HTMLDOMImplementation_QueryInterface(IHTMLDOMImplementation *iface, REFIID riid, void **ppv)
+{
+    HTMLDOMImplementation *This = impl_from_IHTMLDOMImplementation(iface);
+
+    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
+
+    if(IsEqualGUID(&IID_IUnknown, riid) || IsEqualGUID(&IID_IHTMLDOMImplementation, riid)) {
+        *ppv = &This->IHTMLDOMImplementation_iface;
+    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
+        return *ppv ? S_OK : E_NOINTERFACE;
+    }else {
+        WARN("Unsupported interface %s\n", debugstr_mshtml_guid(riid));
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown*)*ppv);
+    return S_OK;
+}
+
+static ULONG WINAPI HTMLDOMImplementation_AddRef(IHTMLDOMImplementation *iface)
+{
+    HTMLDOMImplementation *This = impl_from_IHTMLDOMImplementation(iface);
+    LONG ref = InterlockedIncrement(&This->ref);
+
+    TRACE("(%p) ref=%d\n", This, ref);
+
+    return ref;
+}
+
+static ULONG WINAPI HTMLDOMImplementation_Release(IHTMLDOMImplementation *iface)
+{
+    HTMLDOMImplementation *This = impl_from_IHTMLDOMImplementation(iface);
+    LONG ref = InterlockedDecrement(&This->ref);
+
+    TRACE("(%p) ref=%d\n", This, ref);
+
+    if(!ref) {
+        release_dispex(&This->dispex);
+        heap_free(This);
+    }
+
+    return ref;
+}
+
+static HRESULT WINAPI HTMLDOMImplementation_GetTypeInfoCount(IHTMLDOMImplementation *iface, UINT *pctinfo)
+{
+    HTMLDOMImplementation *This = impl_from_IHTMLDOMImplementation(iface);
+
+    return IDispatchEx_GetTypeInfoCount(&This->dispex.IDispatchEx_iface, pctinfo);
+}
+
+static HRESULT WINAPI HTMLDOMImplementation_GetTypeInfo(IHTMLDOMImplementation *iface, UINT iTInfo,
+        LCID lcid, ITypeInfo **ppTInfo)
+{
+    HTMLDOMImplementation *This = impl_from_IHTMLDOMImplementation(iface);
+
+    return IDispatchEx_GetTypeInfo(&This->dispex.IDispatchEx_iface, iTInfo, lcid, ppTInfo);
+}
+
+static HRESULT WINAPI HTMLDOMImplementation_GetIDsOfNames(IHTMLDOMImplementation *iface, REFIID riid,
+        LPOLESTR *rgszNames, UINT cNames, LCID lcid, DISPID *rgDispId)
+{
+    HTMLDOMImplementation *This = impl_from_IHTMLDOMImplementation(iface);
+
+    return IDispatchEx_GetIDsOfNames(&This->dispex.IDispatchEx_iface, riid, rgszNames,
+            cNames, lcid, rgDispId);
+}
+
+static HRESULT WINAPI HTMLDOMImplementation_Invoke(IHTMLDOMImplementation *iface, DISPID dispIdMember,
+        REFIID riid, LCID lcid, WORD wFlags, DISPPARAMS *pDispParams, VARIANT *pVarResult,
+        EXCEPINFO *pExcepInfo, UINT *puArgErr)
+{
+    HTMLDOMImplementation *This = impl_from_IHTMLDOMImplementation(iface);
+
+    return IDispatchEx_Invoke(&This->dispex.IDispatchEx_iface, dispIdMember, riid,
+            lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
+}
+
+static HRESULT WINAPI HTMLDOMImplementation_hasFeature(IHTMLDOMImplementation *iface, BSTR feature,
+        VARIANT version, VARIANT_BOOL *pfHasFeature)
+{
+    HTMLDOMImplementation *This = impl_from_IHTMLDOMImplementation(iface);
+
+    FIXME("(%p)->(%s %s %p) returning false\n", This, debugstr_w(feature), debugstr_variant(&version), pfHasFeature);
+
+    *pfHasFeature = VARIANT_FALSE;
+    return S_OK;
+}
+
+static const IHTMLDOMImplementationVtbl HTMLDOMImplementationVtbl = {
+    HTMLDOMImplementation_QueryInterface,
+    HTMLDOMImplementation_AddRef,
+    HTMLDOMImplementation_Release,
+    HTMLDOMImplementation_GetTypeInfoCount,
+    HTMLDOMImplementation_GetTypeInfo,
+    HTMLDOMImplementation_GetIDsOfNames,
+    HTMLDOMImplementation_Invoke,
+    HTMLDOMImplementation_hasFeature
+};
+
+static const tid_t HTMLDOMImplementation_iface_tids[] = {
+    IHTMLDOMImplementation_tid,
+    0
+};
+static dispex_static_data_t HTMLDOMImplementation_dispex = {
+    NULL,
+    IHTMLDOMImplementation_tid,
+    NULL,
+    HTMLDOMImplementation_iface_tids
+};
+
+HRESULT create_dom_implementation(IHTMLDOMImplementation **ret)
+{
+    HTMLDOMImplementation *dom_implementation;
+
+    dom_implementation = heap_alloc_zero(sizeof(*dom_implementation));
+    if(!dom_implementation)
+        return E_OUTOFMEMORY;
+
+    dom_implementation->IHTMLDOMImplementation_iface.lpVtbl = &HTMLDOMImplementationVtbl;
+    dom_implementation->ref = 1;
+
+    init_dispex(&dom_implementation->dispex, (IUnknown*)&dom_implementation->IHTMLDOMImplementation_iface,
+            &HTMLDOMImplementation_dispex);
+
+    *ret = &dom_implementation->IHTMLDOMImplementation_iface;
+    return S_OK;
+}
+
+static inline OmHistory *impl_from_IOmHistory(IOmHistory *iface)
+{
+    return CONTAINING_RECORD(iface, OmHistory, IOmHistory_iface);
+}
+
+static HRESULT WINAPI OmHistory_QueryInterface(IOmHistory *iface, REFIID riid, void **ppv)
+{
+    OmHistory *This = impl_from_IOmHistory(iface);
+
+    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
+
+    if(IsEqualGUID(&IID_IUnknown, riid)) {
+        *ppv = &This->IOmHistory_iface;
+    }else if(IsEqualGUID(&IID_IOmHistory, riid)) {
+        *ppv = &This->IOmHistory_iface;
+    }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
+        return *ppv ? S_OK : E_NOINTERFACE;
+    }else {
+        WARN("Unsupported interface %s\n", debugstr_mshtml_guid(riid));
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown*)*ppv);
+    return S_OK;
+}
+
+static ULONG WINAPI OmHistory_AddRef(IOmHistory *iface)
+{
+    OmHistory *This = impl_from_IOmHistory(iface);
+    LONG ref = InterlockedIncrement(&This->ref);
+
+    TRACE("(%p) ref=%d\n", This, ref);
+
+    return ref;
+}
+
+static ULONG WINAPI OmHistory_Release(IOmHistory *iface)
+{
+    OmHistory *This = impl_from_IOmHistory(iface);
+    LONG ref = InterlockedDecrement(&This->ref);
+
+    TRACE("(%p) ref=%d\n", This, ref);
+
+    if(!ref) {
+        release_dispex(&This->dispex);
+        heap_free(This);
+    }
+
+    return ref;
+}
+
+static HRESULT WINAPI OmHistory_GetTypeInfoCount(IOmHistory *iface, UINT *pctinfo)
+{
+    OmHistory *This = impl_from_IOmHistory(iface);
+    FIXME("(%p)->(%p)\n", This, pctinfo);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI OmHistory_GetTypeInfo(IOmHistory *iface, UINT iTInfo,
+        LCID lcid, ITypeInfo **ppTInfo)
+{
+    OmHistory *This = impl_from_IOmHistory(iface);
+
+    return IDispatchEx_GetTypeInfo(&This->dispex.IDispatchEx_iface, iTInfo, lcid, ppTInfo);
+}
+
+static HRESULT WINAPI OmHistory_GetIDsOfNames(IOmHistory *iface, REFIID riid, LPOLESTR *rgszNames, UINT cNames,
+        LCID lcid, DISPID *rgDispId)
+{
+    OmHistory *This = impl_from_IOmHistory(iface);
+
+    return IDispatchEx_GetIDsOfNames(&This->dispex.IDispatchEx_iface, riid, rgszNames, cNames,
+            lcid, rgDispId);
+}
+
+static HRESULT WINAPI OmHistory_Invoke(IOmHistory *iface, DISPID dispIdMember, REFIID riid, LCID lcid,
+        WORD wFlags, DISPPARAMS *pDispParams, VARIANT *pVarResult, EXCEPINFO *pExcepInfo, UINT *puArgErr)
+{
+    OmHistory *This = impl_from_IOmHistory(iface);
+
+    return IDispatchEx_Invoke(&This->dispex.IDispatchEx_iface, dispIdMember, riid, lcid, wFlags,
+            pDispParams, pVarResult, pExcepInfo, puArgErr);
+}
+
+static HRESULT WINAPI OmHistory_get_length(IOmHistory *iface, short *p)
+{
+    OmHistory *This = impl_from_IOmHistory(iface);
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    if(!This->window || !This->window->base.outer_window->doc_obj
+            || !This->window->base.outer_window->doc_obj->travel_log) {
+        *p = 0;
+    }else {
+        *p = ITravelLog_CountEntries(This->window->base.outer_window->doc_obj->travel_log,
+                This->window->base.outer_window->doc_obj->browser_service);
+    }
+    return S_OK;
+}
+
+static HRESULT WINAPI OmHistory_back(IOmHistory *iface, VARIANT *pvargdistance)
+{
+    OmHistory *This = impl_from_IOmHistory(iface);
+    FIXME("(%p)->(%s)\n", This, debugstr_variant(pvargdistance));
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI OmHistory_forward(IOmHistory *iface, VARIANT *pvargdistance)
+{
+    OmHistory *This = impl_from_IOmHistory(iface);
+    FIXME("(%p)->(%s)\n", This, debugstr_variant(pvargdistance));
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI OmHistory_go(IOmHistory *iface, VARIANT *pvargdistance)
+{
+    OmHistory *This = impl_from_IOmHistory(iface);
+    FIXME("(%p)->(%s)\n", This, debugstr_variant(pvargdistance));
+    return E_NOTIMPL;
+}
+
+static const IOmHistoryVtbl OmHistoryVtbl = {
+    OmHistory_QueryInterface,
+    OmHistory_AddRef,
+    OmHistory_Release,
+    OmHistory_GetTypeInfoCount,
+    OmHistory_GetTypeInfo,
+    OmHistory_GetIDsOfNames,
+    OmHistory_Invoke,
+    OmHistory_get_length,
+    OmHistory_back,
+    OmHistory_forward,
+    OmHistory_go
+};
+
+static const tid_t OmHistory_iface_tids[] = {
+    IOmHistory_tid,
+    0
+};
+static dispex_static_data_t OmHistory_dispex = {
+    NULL,
+    DispHTMLHistory_tid,
+    NULL,
+    OmHistory_iface_tids
+};
+
+
+HRESULT create_history(HTMLInnerWindow *window, OmHistory **ret)
+{
+    OmHistory *history;
+
+    history = heap_alloc_zero(sizeof(*history));
+    if(!history)
+        return E_OUTOFMEMORY;
+
+    init_dispex(&history->dispex, (IUnknown*)&history->IOmHistory_iface, &OmHistory_dispex);
+    history->IOmHistory_iface.lpVtbl = &OmHistoryVtbl;
+    history->ref = 1;
+
+    history->window = window;
+
+    *ret = history;
+    return S_OK;
 }
 
 struct HTMLPluginsCollection {
@@ -67,17 +370,17 @@ static HRESULT WINAPI HTMLPluginsCollection_QueryInterface(IHTMLPluginsCollectio
 {
     HTMLPluginsCollection *This = impl_from_IHTMLPluginsCollection(iface);
 
+    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
+
     if(IsEqualGUID(&IID_IUnknown, riid)) {
-        TRACE("(%p)->(IID_IUnknown %p)\n", This, ppv);
         *ppv = &This->IHTMLPluginsCollection_iface;
     }else if(IsEqualGUID(&IID_IHTMLPluginsCollection, riid)) {
-        TRACE("(%p)->(IID_IHTMLPluginCollection %p)\n", This, ppv);
         *ppv = &This->IHTMLPluginsCollection_iface;
     }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
         return *ppv ? S_OK : E_NOINTERFACE;
     }else {
         *ppv = NULL;
-        WARN("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppv);
+        WARN("Unsupported interface %s\n", debugstr_mshtml_guid(riid));
         return E_NOINTERFACE;
     }
 
@@ -220,17 +523,17 @@ static HRESULT WINAPI HTMLMimeTypesCollection_QueryInterface(IHTMLMimeTypesColle
 {
     HTMLMimeTypesCollection *This = impl_from_IHTMLMimeTypesCollection(iface);
 
+    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
+
     if(IsEqualGUID(&IID_IUnknown, riid)) {
-        TRACE("(%p)->(IID_IUnknown %p)\n", This, ppv);
         *ppv = &This->IHTMLMimeTypesCollection_iface;
     }else if(IsEqualGUID(&IID_IHTMLMimeTypesCollection, riid)) {
-        TRACE("(%p)->(IID_IHTMLMimeTypesCollection %p)\n", This, ppv);
         *ppv = &This->IHTMLMimeTypesCollection_iface;
     }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
         return *ppv ? S_OK : E_NOINTERFACE;
     }else {
+        WARN("Unsupported interface %s\n", debugstr_mshtml_guid(riid));
         *ppv = NULL;
-        WARN("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppv);
         return E_NOINTERFACE;
     }
 
@@ -347,29 +650,31 @@ static HRESULT create_mime_types_collection(OmNavigator *navigator, HTMLMimeType
     return S_OK;
 }
 
+static inline OmNavigator *impl_from_IOmNavigator(IOmNavigator *iface)
+{
+    return CONTAINING_RECORD(iface, OmNavigator, IOmNavigator_iface);
+}
+
 static HRESULT WINAPI OmNavigator_QueryInterface(IOmNavigator *iface, REFIID riid, void **ppv)
 {
     OmNavigator *This = impl_from_IOmNavigator(iface);
 
-    *ppv = NULL;
+    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
 
     if(IsEqualGUID(&IID_IUnknown, riid)) {
-        TRACE("(%p)->(IID_IUnknown %p)\n", This, ppv);
         *ppv = &This->IOmNavigator_iface;
     }else if(IsEqualGUID(&IID_IOmNavigator, riid)) {
-        TRACE("(%p)->(IID_IOmNavigator %p)\n", This, ppv);
         *ppv = &This->IOmNavigator_iface;
     }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
         return *ppv ? S_OK : E_NOINTERFACE;
+    }else {
+        WARN("Unsupported interface %s\n", debugstr_mshtml_guid(riid));
+        *ppv = NULL;
+        return E_NOINTERFACE;
     }
 
-    if(*ppv) {
-        IUnknown_AddRef((IUnknown*)*ppv);
-        return S_OK;
-    }
-
-    WARN("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppv);
-    return E_NOINTERFACE;
+    IUnknown_AddRef((IUnknown*)*ppv);
+    return S_OK;
 }
 
 static ULONG WINAPI OmNavigator_AddRef(IOmNavigator *iface)
@@ -524,7 +829,7 @@ static HRESULT WINAPI OmNavigator_javaEnabled(IOmNavigator *iface, VARIANT_BOOL 
 
     FIXME("(%p)->(%p) semi-stub\n", This, enabled);
 
-    *enabled = VARIANT_FALSE;
+    *enabled = VARIANT_TRUE;
     return S_OK;
 }
 
@@ -578,8 +883,11 @@ static HRESULT WINAPI OmNavigator_get_plugins(IOmNavigator *iface, IHTMLPluginsC
 static HRESULT WINAPI OmNavigator_get_cookieEnabled(IOmNavigator *iface, VARIANT_BOOL *p)
 {
     OmNavigator *This = impl_from_IOmNavigator(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+
+    WARN("(%p)->(%p) semi-stub\n", This, p);
+
+    *p = VARIANT_TRUE;
+    return S_OK;
 }
 
 static HRESULT WINAPI OmNavigator_get_opsProfile(IOmNavigator *iface, IHTMLOpsProfile **p)
@@ -713,8 +1021,11 @@ static HRESULT WINAPI OmNavigator_get_connectionSpeed(IOmNavigator *iface, LONG 
 static HRESULT WINAPI OmNavigator_get_onLine(IOmNavigator *iface, VARIANT_BOOL *p)
 {
     OmNavigator *This = impl_from_IOmNavigator(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+
+    WARN("(%p)->(%p) semi-stub, returning true\n", This, p);
+
+    *p = VARIANT_TRUE;
+    return S_OK;
 }
 
 static HRESULT WINAPI OmNavigator_get_userProfile(IOmNavigator *iface, IHTMLOpsProfile **p)
@@ -770,6 +1081,9 @@ IOmNavigator *OmNavigator_Create(void)
     OmNavigator *ret;
 
     ret = heap_alloc_zero(sizeof(*ret));
+    if(!ret)
+        return NULL;
+
     ret->IOmNavigator_iface.lpVtbl = &OmNavigatorVtbl;
     ret->ref = 1;
 

@@ -40,6 +40,7 @@
 
 struct apartment;
 typedef struct apartment APARTMENT;
+typedef struct LocalServer LocalServer;
 
 DEFINE_OLEGUID( CLSID_DfMarshal, 0x0000030b, 0, 0 );
 
@@ -97,6 +98,8 @@ struct stub_manager
     ULONG             next_ipid;  /* currently unused (LOCK) */
     OXID_INFO         oxid_info;  /* string binding, ipid of rem unknown and other information (RO) */
 
+    IExternalConnection *extern_conn;
+
     /* We need to keep a count of the outstanding marshals, so we can enforce the
      * marshalling rules (ie, you can only unmarshal normal marshals once). Note
      * that these counts do NOT include unmarshalled interfaces, once a stream is
@@ -137,6 +140,7 @@ struct apartment
   struct list loaded_dlls; /* list of dlls loaded by this apartment (CS cs) */
   DWORD host_apt_tid;      /* thread ID of apartment hosting objects of differing threading model (CS cs) */
   HWND host_apt_hwnd;      /* handle to apartment window of host apartment (CS cs) */
+  LocalServer *local_server; /* A marshallable object exposing local servers (CS cs) */
 
   /* FIXME: OIDs should be given out by RPCSS */
   OID oidc;                /* object ID counter, starts at 1, zero is invalid OID (CS cs) */
@@ -169,10 +173,9 @@ struct oletls
 
 
 /* Global Interface Table Functions */
-
-extern void* StdGlobalInterfaceTable_Construct(void) DECLSPEC_HIDDEN;
+extern IGlobalInterfaceTable *get_std_git(void) DECLSPEC_HIDDEN;
+extern void release_std_git(void) DECLSPEC_HIDDEN;
 extern HRESULT StdGlobalInterfaceTable_GetFactory(LPVOID *ppv) DECLSPEC_HIDDEN;
-extern void* StdGlobalInterfaceTableInstance DECLSPEC_HIDDEN;
 
 HRESULT COM_OpenKeyForCLSID(REFCLSID clsid, LPCWSTR keyname, REGSAM access, HKEY *key) DECLSPEC_HIDDEN;
 HRESULT COM_OpenKeyForAppIdFromCLSID(REFCLSID clsid, REGSAM access, HKEY *subkey) DECLSPEC_HIDDEN;
@@ -185,7 +188,8 @@ ULONG stub_manager_int_release(struct stub_manager *This) DECLSPEC_HIDDEN;
 struct stub_manager *new_stub_manager(APARTMENT *apt, IUnknown *object) DECLSPEC_HIDDEN;
 ULONG stub_manager_ext_addref(struct stub_manager *m, ULONG refs, BOOL tableweak) DECLSPEC_HIDDEN;
 ULONG stub_manager_ext_release(struct stub_manager *m, ULONG refs, BOOL tableweak, BOOL last_unlock_releases) DECLSPEC_HIDDEN;
-struct ifstub *stub_manager_new_ifstub(struct stub_manager *m, IRpcStubBuffer *sb, IUnknown *iptr, REFIID iid, MSHLFLAGS flags) DECLSPEC_HIDDEN;
+struct ifstub *stub_manager_new_ifstub(struct stub_manager *m, IRpcStubBuffer *sb, IUnknown *iptr, REFIID iid,
+     DWORD dest_context, void *dest_context_data, MSHLFLAGS flags) DECLSPEC_HIDDEN;
 struct ifstub *stub_manager_find_ifstub(struct stub_manager *m, REFIID iid, MSHLFLAGS flags) DECLSPEC_HIDDEN;
 struct stub_manager *get_stub_manager(APARTMENT *apt, OID oid) DECLSPEC_HIDDEN;
 struct stub_manager *get_stub_manager_from_object(APARTMENT *apt, void *object) DECLSPEC_HIDDEN;
@@ -195,7 +199,7 @@ void stub_manager_release_marshal_data(struct stub_manager *m, ULONG refs, const
 HRESULT ipid_get_dispatch_params(const IPID *ipid, APARTMENT **stub_apt, IRpcStubBuffer **stub, IRpcChannelBuffer **chan, IID *iid, IUnknown **iface) DECLSPEC_HIDDEN;
 HRESULT start_apartment_remote_unknown(void) DECLSPEC_HIDDEN;
 
-HRESULT marshal_object(APARTMENT *apt, STDOBJREF *stdobjref, REFIID riid, IUnknown *obj, MSHLFLAGS mshlflags) DECLSPEC_HIDDEN;
+HRESULT marshal_object(APARTMENT *apt, STDOBJREF *stdobjref, REFIID riid, IUnknown *obj, DWORD dest_context, void *dest_context_data, MSHLFLAGS mshlflags) DECLSPEC_HIDDEN;
 
 /* RPC Backend */
 
@@ -206,7 +210,7 @@ HRESULT RPC_CreateClientChannel(const OXID *oxid, const IPID *ipid,
                                 const OXID_INFO *oxid_info,
                                 DWORD dest_context, void *dest_context_data,
                                 IRpcChannelBuffer **chan) DECLSPEC_HIDDEN;
-HRESULT RPC_CreateServerChannel(IRpcChannelBuffer **chan) DECLSPEC_HIDDEN;
+HRESULT RPC_CreateServerChannel(DWORD dest_context, void *dest_context_data, IRpcChannelBuffer **chan) DECLSPEC_HIDDEN;
 void    RPC_ExecuteCall(struct dispatch_params *params) DECLSPEC_HIDDEN;
 HRESULT RPC_RegisterInterface(REFIID riid) DECLSPEC_HIDDEN;
 void    RPC_UnregisterInterface(REFIID riid) DECLSPEC_HIDDEN;
@@ -307,5 +311,20 @@ extern UINT link_source_clipboard_format DECLSPEC_HIDDEN;
 extern UINT object_descriptor_clipboard_format DECLSPEC_HIDDEN;
 extern UINT link_source_descriptor_clipboard_format DECLSPEC_HIDDEN;
 extern UINT ole_private_data_clipboard_format DECLSPEC_HIDDEN;
+
+extern LSTATUS create_classes_key(HKEY, const WCHAR *, REGSAM, HKEY *) DECLSPEC_HIDDEN;
+extern LSTATUS open_classes_key(HKEY, const WCHAR *, REGSAM, HKEY *) DECLSPEC_HIDDEN;
+
+extern BOOL actctx_get_miscstatus(const CLSID*, DWORD, DWORD*) DECLSPEC_HIDDEN;
+
+static inline void *heap_alloc(size_t len)
+{
+    return HeapAlloc(GetProcessHeap(), 0, len);
+}
+
+static inline BOOL heap_free(void *mem)
+{
+    return HeapFree(GetProcessHeap(), 0, mem);
+}
 
 #endif /* __WINE_OLE_COMPOBJ_H */

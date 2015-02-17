@@ -19,7 +19,7 @@
 #ifndef _WS2DEF_
 #define _WS2DEF_
 
-/* FIXME: #include <inaddr.h> */
+#include <inaddr.h>
 
 #ifdef USE_WS_PREFIX
 #define WS(x)    WS_##x
@@ -77,6 +77,21 @@ typedef enum {
     ScopeLevelOrganization = 8,
     ScopeLevelGlobal       = 14
 } SCOPE_LEVEL;
+
+typedef struct _WSABUF
+{
+    ULONG len;
+    CHAR* buf;
+} WSABUF, *LPWSABUF;
+
+typedef struct _WSAMSG {
+    LPSOCKADDR  name;
+    INT         namelen;
+    LPWSABUF    lpBuffers;
+    DWORD       dwBufferCount;
+    WSABUF      Control;
+    DWORD       dwFlags;
+} WSAMSG, *PWSAMSG, *LPWSAMSG;
 
 /*
  * Macros for retrieving control message data returned by WSARecvMsg()

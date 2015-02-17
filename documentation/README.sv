@@ -10,6 +10,7 @@ till att porta Windows-kod till vanliga Unix-program.
 Wine är fri programvara, utgett under villkoren i GNU LGPL; se
 filen LICENSE för detaljer.
 
+
 2. KOM IGÅNG
 
 När du bygger Wine från källkod så rekommenderas du använda Wines
@@ -27,44 +28,38 @@ information och tips om hur problem kan lösas.
 För att kompilera och köra Wine krävs ett av följande:
 
   Linux version 2.0.36 eller senare
-  FreeBSD 6.3 eller senare
+  FreeBSD 8.0 eller senare
   Solaris x86 9 eller senare
   NetBSD-current
-  Mac OS X 10.4 eller senare
+  Mac OS X 10.5 eller senare
 
 Wine kräver stöd för trådar på kernelnivå, och därför är det bara
 operativsystemen ovan som stöds. Andra operativsystem som
 stöder kerneltrådar kommer eventuellt att stödjas i framtiden.
 
-Information för Linux
-  Även om Linux 2.2.x antagligen fortfarande fungerar, och Linux 2.0.x kanske
-  fungerar (tidiga 2.0.x-versioner uppvisade trådrelaterade problem), så är
-  det bäst att ha en aktuell kernel som 2.4.x eller 2.6.x.
+Information för FreeBSD:
+  Wine kommer i regel inte att fungera på FreeBSD-versioner äldre än 8.0.
+  Se http://wiki.freebsd.org/Wine för mer information.
 
-Information för FreeBSD
-  Wine kommer i regel inte fungera på FreeBSD-versioner äldre än 6.3 eller 7.0.
-  FreeBSD 6.3 kan uppdateras for att stödja Wine. Se
-  http://wiki.freebsd.org/Wine för mer information.
-
-Information för Solaris
+Information för Solaris:
   Wine måste antagligen byggas med GNU toolchain (gcc, gas etc.).
   Varning: även om gas installeras så är det inte säkert att det används av
   gcc. Det sägs att det är nödvändigt att antingen bygga gcc på nytt, eller
   skapa symboliska länkar från "cc", "as" och "ld" till GNU toolchain.
 
-Information för NetBSD
+Information för NetBSD:
   USER_LDT, SYSVSHM, SYSVSEM och SYSVMSG måste vara aktiverade i kerneln.
 
 Information för Mac OS X:
   Du behöver Xcode 2.4 eller senare för att korrekt kunna bygga Wine på x86.
+  Mac-drivrutinen kräver OS X 10.6 eller senare och kommer inte att byggas på 10.5.
 
 
-Stödda filsystem
+Stödda filsystem:
   Wine kan köra på de flesta filsystem, men det har rapporterats problem vad
   gäller kompatibilitet då samba används för att ansluta till filer. NTFS
   tillhandahåller inte heller alla filsystemsfunktioner som behövs av alla
-  program. Det rekommenderas att använda ett Linux-filsystem som exempelvis
-  ext3.
+  program. Det rekommenderas att använda ett riktigt Unix-filsystem.
 
 Grundläggande krav:
   Utvecklingsfilerna för X11 måste vara installerade (de kallas xlib6g-dev i
@@ -140,6 +135,12 @@ Internet:  Mycket information om Wine finns samlat på WineHQ på
 
 Frågor:    Frågor och svar om Wine finns samlade på http://www.winehq.org/FAQ
 
+Wiki:      Wines Wiki finns på http://wiki.winehq.org
+
+E-postlistor:
+           Det finns flera e-postlistor för Wine-användare och -utvecklare; se
+           http://www.winehq.org/forums för mer information.
+
 Fel:       Rapportera fel till Wines Bugzilla på http://bugs.winehq.org
            Sök i Bugzilla-databasen för att se om problemet redan finns
            rapporterat innan du sänder en felrapport.
@@ -149,12 +150,6 @@ IRC:       Hjälp finns tillgänglig online på kanalen #WineHQ på
 
 Git:       Wines nuvarande utvecklingsversion finns tillgänglig genom Git.
            Gå till http://www.winehq.org/git för mer information.
-
-E-postlistor:
-           Det finns flera e-postlistor för Wine-användare och -utvecklare; se
-           http://www.winehq.org/forums för mer information.
-
-Wiki:      Wines Wiki finns på http://wiki.winehq.org
 
 Om du lägger till något eller fixar ett fel, är det bra om du sänder
 en patch (förslagsvis med git-format-patch) till listan wine-patches@winehq.org

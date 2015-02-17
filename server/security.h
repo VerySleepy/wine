@@ -42,6 +42,8 @@ extern const LUID SeCreateGlobalPrivilege;
 extern const PSID security_world_sid;
 extern const PSID security_local_user_sid;
 extern const PSID security_local_system_sid;
+extern const PSID security_builtin_users_sid;
+extern const PSID security_builtin_admins_sid;
 
 
 /* token functions */
@@ -62,10 +64,15 @@ static inline const ACE_HEADER *ace_next( const ACE_HEADER *ace )
     return (const ACE_HEADER *)((const char *)ace + ace->AceSize);
 }
 
+static inline size_t security_sid_len( const SID *sid )
+{
+    return offsetof( SID, SubAuthority[sid->SubAuthorityCount] );
+}
+
 static inline int security_equal_sid( const SID *sid1, const SID *sid2 )
 {
     return ((sid1->SubAuthorityCount == sid2->SubAuthorityCount) &&
-            !memcmp( sid1, sid2, FIELD_OFFSET(SID, SubAuthority[sid1->SubAuthorityCount]) ));
+            !memcmp( sid1, sid2, security_sid_len( sid1 )));
 }
 
 extern void security_set_thread_token( struct thread *thread, obj_handle_t handle );
@@ -90,7 +97,7 @@ extern int sd_is_valid( const struct security_descriptor *sd, data_size_t size )
 /* gets the discretionary access control list from a security descriptor */
 static inline const ACL *sd_get_dacl( const struct security_descriptor *sd, int *present )
 {
-    *present = (sd->control & SE_DACL_PRESENT ? TRUE : FALSE);
+    *present = (sd->control & SE_DACL_PRESENT) != 0;
 
     if (sd->dacl_len)
         return (const ACL *)((const char *)(sd + 1) +
@@ -102,7 +109,7 @@ static inline const ACL *sd_get_dacl( const struct security_descriptor *sd, int 
 /* gets the system access control list from a security descriptor */
 static inline const ACL *sd_get_sacl( const struct security_descriptor *sd, int *present )
 {
-    *present = (sd->control & SE_SACL_PRESENT ? TRUE : FALSE);
+    *present = (sd->control & SE_SACL_PRESENT) != 0;
 
     if (sd->sacl_len)
         return (const ACL *)((const char *)(sd + 1) +

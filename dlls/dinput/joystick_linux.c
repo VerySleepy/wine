@@ -43,9 +43,6 @@
 # include <sys/ioctl.h>
 #endif
 #include <errno.h>
-#ifdef HAVE_SYS_ERRNO_H
-# include <sys/errno.h>
-#endif
 #ifdef HAVE_LINUX_IOCTL_H
 # include <linux/ioctl.h>
 #endif
@@ -74,6 +71,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(dinput);
 
 #define JOYDEV_NEW "/dev/input/js"
 #define JOYDEV_OLD "/dev/js"
+#define JOYDEVDRIVER " (js)"
 
 struct JoyDev
 {
@@ -109,10 +107,7 @@ static inline JoystickImpl *impl_from_IDirectInputDevice8W(IDirectInputDevice8W 
     return CONTAINING_RECORD(CONTAINING_RECORD(CONTAINING_RECORD(iface, IDirectInputDeviceImpl, IDirectInputDevice8W_iface),
            JoystickGenericImpl, base), JoystickImpl, generic);
 }
-static inline IDirectInputDevice8A *IDirectInputDevice8A_from_impl(JoystickImpl *This)
-{
-    return &This->generic.base.IDirectInputDevice8A_iface;
-}
+
 static inline IDirectInputDevice8W *IDirectInputDevice8W_from_impl(JoystickImpl *This)
 {
     return &This->generic.base.IDirectInputDevice8W_iface;
@@ -153,15 +148,27 @@ static INT find_joystick_devices(void)
 
         strcpy(joydev.name, "Wine Joystick");
 #if defined(JSIOCGNAME)
-        if (ioctl(fd, JSIOCGNAME(sizeof(joydev.name)), joydev.name) < 0)
+        if (ioctl(fd, JSIOCGNAME(sizeof(joydev.name) - sizeof(JOYDEVDRIVER)), joydev.name) < 0)
             WARN("ioctl(%s,JSIOCGNAME) failed: %s\n", joydev.device, strerror(errno));
 #endif
+
+        /* Append driver name */
+        strcat(joydev.name, JOYDEVDRIVER);
+
+        if (device_disabled_registry(joydev.name)) {
+            close(fd);
+            continue;
+        }
+
 #ifdef JSIOCGAXES
         if (ioctl(fd, JSIOCGAXES, &joydev.axis_count) < 0)
         {
             WARN("ioctl(%s,JSIOCGAXES) failed: %s, defauting to 2\n", joydev.device, strerror(errno));
             joydev.axis_count = 2;
         }
+#else
+        WARN("reading number of joystick axes unsupported in this platform, defaulting to 2\n");
+        joydev.axis_count = 2;
 #endif
 #ifdef JSIOCGBUTTONS
         if (ioctl(fd, JSIOCGBUTTONS, &joydev.button_count) < 0)
@@ -169,11 +176,14 @@ static INT find_joystick_devices(void)
             WARN("ioctl(%s,JSIOCGBUTTONS) failed: %s, defauting to 2\n", joydev.device, strerror(errno));
             joydev.button_count = 2;
         }
+#else
+        WARN("reading number of joystick buttons unsupported in this platform, defaulting to 2\n");
+        joydev.button_count = 2;
 #endif
 
         if (ioctl(fd, JSIOCGAXMAP, axes_map) < 0)
         {
-            WARN("ioctl(%s,JSIOCGNAME) failed: %s\n", joydev.device, strerror(errno));
+            WARN("ioctl(%s,JSIOCGAXMAP) failed: %s\n", joydev.device, strerror(errno));
             joydev.dev_axes_map = NULL;
         }
         else
@@ -213,15 +223,15 @@ static INT find_joystick_devices(void)
     return joystick_devices_count;
 }
 
-static BOOL joydev_enum_deviceA(DWORD dwDevType, DWORD dwFlags, LPDIDEVICEINSTANCEA lpddi, DWORD version, int id)
+static HRESULT joydev_enum_deviceA(DWORD dwDevType, DWORD dwFlags, LPDIDEVICEINSTANCEA lpddi, DWORD version, int id)
 {
     int fd = -1;
 
-    if (id >= find_joystick_devices()) return FALSE;
+    if (id >= find_joystick_devices()) return E_FAIL;
 
     if (dwFlags & DIEDFL_FORCEFEEDBACK) {
         WARN("force feedback not supported\n");
-        return FALSE;
+        return S_FALSE;
     }
 
     if ((dwDevType == 0) ||
@@ -231,7 +241,7 @@ static BOOL joydev_enum_deviceA(DWORD dwDevType, DWORD dwFlags, LPDIDEVICEINSTAN
         if ((fd = open(joystick_devices[id].device, O_RDONLY)) < 0)
         {
             WARN("open(%s, O_RDONLY) failed: %s\n", joystick_devices[id].name, strerror(errno));
-            return FALSE;
+            return S_FALSE;
         }
 
         /* Return joystick */
@@ -250,21 +260,21 @@ static BOOL joydev_enum_deviceA(DWORD dwDevType, DWORD dwFlags, LPDIDEVICEINSTAN
         lpddi->guidFFDriver = GUID_NULL;
         close(fd);
         TRACE("Enumerating the linux Joystick device: %s (%s)\n", joystick_devices[id].device, lpddi->tszProductName);
-        return TRUE;
+        return S_OK;
     }
 
-    return FALSE;
+    return S_FALSE;
 }
 
-static BOOL joydev_enum_deviceW(DWORD dwDevType, DWORD dwFlags, LPDIDEVICEINSTANCEW lpddi, DWORD version, int id)
+static HRESULT joydev_enum_deviceW(DWORD dwDevType, DWORD dwFlags, LPDIDEVICEINSTANCEW lpddi, DWORD version, int id)
 {
     int fd = -1;
 
-    if (id >= find_joystick_devices()) return FALSE;
+    if (id >= find_joystick_devices()) return E_FAIL;
 
     if (dwFlags & DIEDFL_FORCEFEEDBACK) {
         WARN("force feedback not supported\n");
-        return FALSE;
+        return S_FALSE;
     }
 
     if ((dwDevType == 0) ||
@@ -274,7 +284,7 @@ static BOOL joydev_enum_deviceW(DWORD dwDevType, DWORD dwFlags, LPDIDEVICEINSTAN
         if ((fd = open(joystick_devices[id].device, O_RDONLY)) < 0)
         {
             WARN("open(%s,O_RDONLY) failed: %s\n", joystick_devices[id].device, strerror(errno));
-            return FALSE;
+            return S_FALSE;
         }
 
         /* Return joystick */
@@ -292,10 +302,10 @@ static BOOL joydev_enum_deviceW(DWORD dwDevType, DWORD dwFlags, LPDIDEVICEINSTAN
         lpddi->guidFFDriver = GUID_NULL;
         close(fd);
         TRACE("Enumerating the linux Joystick device: %s (%s)\n", joystick_devices[id].device, joystick_devices[id].name);
-        return TRUE;
+        return S_OK;
     }
 
-    return FALSE;
+    return S_FALSE;
 }
 
 static HRESULT alloc_device(REFGUID rguid, IDirectInputImpl *dinput,
@@ -545,6 +555,42 @@ static HRESULT WINAPI JoystickLinuxAImpl_Acquire(LPDIRECTINPUTDEVICE8A iface)
 }
 
 /******************************************************************************
+  *     GetProperty : get input device properties
+  */
+static HRESULT WINAPI JoystickLinuxWImpl_GetProperty(LPDIRECTINPUTDEVICE8W iface, REFGUID rguid, LPDIPROPHEADER pdiph)
+{
+    JoystickImpl *This = impl_from_IDirectInputDevice8W(iface);
+
+    TRACE("(this=%p,%s,%p)\n", iface, debugstr_guid(rguid), pdiph);
+    _dump_DIPROPHEADER(pdiph);
+
+    if (!IS_DIPROP(rguid)) return DI_OK;
+
+    switch (LOWORD(rguid)) {
+
+        case (DWORD_PTR) DIPROP_JOYSTICKID:
+        {
+            LPDIPROPDWORD pd = (LPDIPROPDWORD)pdiph;
+
+            pd->dwData = get_joystick_index(&This->generic.base.guid);
+            TRACE("DIPROP_JOYSTICKID(%d)\n", pd->dwData);
+            break;
+        }
+
+    default:
+        return JoystickWGenericImpl_GetProperty(iface, rguid, pdiph);
+    }
+
+    return DI_OK;
+}
+
+static HRESULT WINAPI JoystickLinuxAImpl_GetProperty(LPDIRECTINPUTDEVICE8A iface, REFGUID rguid, LPDIPROPHEADER pdiph)
+{
+    JoystickImpl *This = impl_from_IDirectInputDevice8A(iface);
+    return JoystickLinuxWImpl_GetProperty(IDirectInputDevice8W_from_impl(This), rguid, pdiph);
+}
+
+/******************************************************************************
   *     Unacquire : frees the joystick
   */
 static HRESULT WINAPI JoystickLinuxWImpl_Unacquire(LPDIRECTINPUTDEVICE8W iface)
@@ -646,8 +692,7 @@ static void joy_polldev(LPDIRECTINPUTDEVICE8A iface)
             }
         }
         if (inst_id >= 0)
-            queue_event(iface, inst_id,
-                        value, jse.time, This->generic.base.dinput->evsequence++);
+            queue_event(iface, inst_id, value, GetCurrentTime(), This->generic.base.dinput->evsequence++);
     }
 }
 
@@ -658,7 +703,7 @@ static const IDirectInputDevice8AVtbl JoystickAvt =
         IDirectInputDevice2AImpl_Release,
 	JoystickAGenericImpl_GetCapabilities,
         IDirectInputDevice2AImpl_EnumObjects,
-	JoystickAGenericImpl_GetProperty,
+	JoystickLinuxAImpl_GetProperty,
 	JoystickAGenericImpl_SetProperty,
 	JoystickLinuxAImpl_Acquire,
 	JoystickLinuxAImpl_Unacquire,
@@ -694,7 +739,7 @@ static const IDirectInputDevice8WVtbl JoystickWvt =
     IDirectInputDevice2WImpl_Release,
     JoystickWGenericImpl_GetCapabilities,
     IDirectInputDevice2WImpl_EnumObjects,
-    JoystickWGenericImpl_GetProperty,
+    JoystickLinuxWImpl_GetProperty,
     JoystickWGenericImpl_SetProperty,
     JoystickLinuxWImpl_Acquire,
     JoystickLinuxWImpl_Unacquire,

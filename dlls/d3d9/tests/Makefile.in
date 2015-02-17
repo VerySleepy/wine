@@ -1,17 +1,8 @@
 TESTDLL   = d3d9.dll
-IMPORTS   = user32
+IMPORTS   = d3d9 user32 gdi32
 
 C_SRCS = \
-	buffer.c \
 	d3d9ex.c \
 	device.c \
-	query.c \
-	shader.c \
 	stateblock.c \
-	surface.c \
-	texture.c \
-	vertexdeclaration.c \
-	visual.c \
-	volume.c
-
-@MAKE_TEST_RULES@
+	visual.c

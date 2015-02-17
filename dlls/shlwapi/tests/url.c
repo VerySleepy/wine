@@ -297,7 +297,9 @@ static const TEST_URL_ESCAPE TEST_ESCAPE[] = {
     {"ftp://fo/o@bar.baz/fo#o\\bar", 0, 0, S_OK, "ftp://fo/o@bar.baz/fo#o\\bar"},
     {"ftp://localhost/o@bar.baz/fo#o\\bar", 0, 0, S_OK, "ftp://localhost/o@bar.baz/fo#o\\bar"},
     {"ftp:///fo/o@bar.baz/foo/bar", 0, 0, S_OK, "ftp:///fo/o@bar.baz/foo/bar"},
-    {"ftp:////fo/o@bar.baz/foo/bar", 0, 0, S_OK, "ftp:////fo/o@bar.baz/foo/bar"}
+    {"ftp:////fo/o@bar.baz/foo/bar", 0, 0, S_OK, "ftp:////fo/o@bar.baz/foo/bar"},
+
+    {"ftp\x1f\1end/", 0, 0, S_OK, "ftp%1F%01end/"}
 };
 
 /* ################ */
@@ -327,6 +329,8 @@ static const TEST_URL_COMBINE TEST_COMBINE[] = {
     {"http://www.winehq.org/test12", "#", 0, S_OK, "http://www.winehq.org/test12#"},
     {"http://www.winehq.org/test13#aaa", "#bbb", 0, S_OK, "http://www.winehq.org/test13#bbb"},
     {"http://www.winehq.org/test14#aaa/bbb#ccc", "#", 0, S_OK, "http://www.winehq.org/test14#"},
+    {"http://www.winehq.org/tests/?query=x/y/z", "tests15", 0, S_OK, "http://www.winehq.org/tests/tests15"},
+    {"http://www.winehq.org/tests/?query=x/y/z#example", "tests16", 0, S_OK, "http://www.winehq.org/tests/tests16"},
     {"file:///C:\\dir\\file.txt", "test.txt", 0, S_OK, "file:///C:/dir/test.txt"},
     {"file:///C:\\dir\\file.txt#hash\\hash", "test.txt", 0, S_OK, "file:///C:/dir/file.txt#hash/test.txt"},
     {"file:///C:\\dir\\file.html#hash\\hash", "test.html", 0, S_OK, "file:///C:/dir/test.html"},
@@ -343,7 +347,7 @@ static const TEST_URL_COMBINE TEST_COMBINE[] = {
     {"foo:today", "foo:calendar", 0, S_OK, "foo:calendar"},
     {"foo:today", "bar:calendar", 0, S_OK, "bar:calendar"},
     {"foo:/today", "foo:calendar", 0, S_OK, "foo:/calendar"},
-    {"foo:/today/", "foo:calendar", 0, S_OK, "foo:/today/calendar"},
+    {"Foo:/today/", "fOo:calendar", 0, S_OK, "foo:/today/calendar"},
     {"mk:@MSITStore:dir/test.chm::dir/index.html", "image.jpg", 0, S_OK, "mk:@MSITStore:dir/test.chm::dir/image.jpg"},
     {"mk:@MSITStore:dir/test.chm::dir/dir2/index.html", "../image.jpg", 0, S_OK, "mk:@MSITStore:dir/test.chm::dir/image.jpg"},
     /* UrlCombine case 2 tests.  Schemes do not match */
@@ -365,7 +369,7 @@ static const TEST_URL_COMBINE TEST_COMBINE[] = {
     {"outbind://xxxxxxxxx/","http:wine16/dir",0, S_OK,"http:wine16/dir"},
     {"http://xxxxxxxxx","outbind:wine17/dir",URL_PLUGGABLE_PROTOCOL, S_OK,"outbind:wine17/dir"},
     {"xxx://xxxxxxxxx","ftp:wine18/dir",URL_PLUGGABLE_PROTOCOL, S_OK,"ftp:wine18/dir"},
-    {"ftp://xxxxxxxxx/","xxx:wine19/dir",URL_PLUGGABLE_PROTOCOL, S_OK,"xxx:wine19/dir"},
+    {"ftp://xxxxxxxxx/","xXx:wine19/dir",URL_PLUGGABLE_PROTOCOL, S_OK,"xxx:wine19/dir"},
     {"outbind://xxxxxxxxx/","http:wine20/dir",URL_PLUGGABLE_PROTOCOL, S_OK,"http:wine20/dir"},
     {"file:///c:/dir/file.txt","index.html?test=c:/abc",URL_ESCAPE_SPACES_ONLY|URL_DONT_ESCAPE_EXTRA_INFO,S_OK,"file:///c:/dir/index.html?test=c:/abc"}
 };
@@ -450,7 +454,8 @@ static const struct {
     {	"file://e:/b/c",				FALSE,	TRUE	},
     {	"http:partial",					FALSE,	FALSE	},
     {	"mailto://www.winehq.org/test.html",		TRUE,	FALSE	},
-    {	"file:partial",					FALSE,	TRUE	}
+    {	"file:partial",					FALSE,	TRUE	},
+    {	"File:partial",					FALSE,	TRUE	},
 };
 
 /* ########################### */
@@ -459,7 +464,7 @@ static LPWSTR GetWideString(const char* szString)
 {
   LPWSTR wszString = HeapAlloc(GetProcessHeap(), 0, (2*INTERNET_MAX_URL_LENGTH) * sizeof(WCHAR));
 
-  MultiByteToWideChar(0, 0, szString, -1, wszString, INTERNET_MAX_URL_LENGTH);
+  MultiByteToWideChar(CP_ACP, 0, szString, -1, wszString, INTERNET_MAX_URL_LENGTH);
 
   return wszString;
 }
@@ -776,34 +781,6 @@ static void test_UrlGetPart(void)
 }
 
 /* ########################### */
-
-static void test_url_escape(const char *szUrl, DWORD dwFlags, HRESULT dwExpectReturn, const char *szExpectUrl)
-{
-    CHAR szReturnUrl[INTERNET_MAX_URL_LENGTH];
-    DWORD dwEscaped;
-    WCHAR ret_urlW[INTERNET_MAX_URL_LENGTH];
-    WCHAR *urlW, *expected_urlW;
-    dwEscaped=INTERNET_MAX_URL_LENGTH;
-
-    ok(pUrlEscapeA(szUrl, szReturnUrl, &dwEscaped, dwFlags) == dwExpectReturn,
-        "UrlEscapeA didn't return 0x%08x from \"%s\"\n", dwExpectReturn, szUrl);
-    ok(strcmp(szReturnUrl,szExpectUrl)==0, "Expected \"%s\", but got \"%s\" from \"%s\"\n", szExpectUrl, szReturnUrl, szUrl);
-
-    if (pUrlEscapeW) {
-        dwEscaped = INTERNET_MAX_URL_LENGTH;
-        urlW = GetWideString(szUrl);
-        expected_urlW = GetWideString(szExpectUrl);
-        ok(pUrlEscapeW(urlW, ret_urlW, &dwEscaped, dwFlags) == dwExpectReturn,
-            "UrlEscapeW didn't return 0x%08x from \"%s\"\n", dwExpectReturn, szUrl);
-        WideCharToMultiByte(CP_ACP,0,ret_urlW,-1,szReturnUrl,INTERNET_MAX_URL_LENGTH,0,0);
-        ok(lstrcmpW(ret_urlW, expected_urlW)==0,
-            "Expected \"%s\", but got \"%s\" from \"%s\" flags %08x\n",
-            szExpectUrl, szReturnUrl, szUrl, dwFlags);
-        FreeWideString(urlW);
-        FreeWideString(expected_urlW);
-    }
-}
-
 static void test_url_canonicalize(int index, const char *szUrl, DWORD dwFlags, HRESULT dwExpectReturn, HRESULT dwExpectReturnAlt, const char *szExpectUrl, BOOL todo)
 {
     CHAR szReturnUrl[INTERNET_MAX_URL_LENGTH];
@@ -847,18 +824,15 @@ static void test_url_canonicalize(int index, const char *szUrl, DWORD dwFlags, H
 }
 
 
-static void test_UrlEscape(void)
+static void test_UrlEscapeA(void)
 {
-    static const WCHAR out[] = { 'f','o','o','%','2','0','b','a','r',0 };
-
     DWORD size = 0;
     HRESULT ret;
     unsigned int i;
     char empty_string[] = "";
-    WCHAR overwrite[] = { 'f','o','o',' ','b','a','r',0,0,0 };
 
     if (!pUrlEscapeA) {
-        win_skip("UrlEscapeA noz found\n");
+        win_skip("UrlEscapeA not found\n");
         return;
     }
 
@@ -888,26 +862,68 @@ static void test_UrlEscape(void)
     ok(size == 34, "got %d, expected %d\n", size, 34);
     ok(empty_string[0] == 127, "String has changed, empty_string[0] = %d\n", empty_string[0]);
 
-    if(pUrlEscapeW) {
-        WCHAR wc;
+    for(i=0; i<sizeof(TEST_ESCAPE)/sizeof(TEST_ESCAPE[0]); i++) {
+        CHAR ret_url[INTERNET_MAX_URL_LENGTH];
 
-        size = sizeof(overwrite)/sizeof(WCHAR);
-        ret = pUrlEscapeW(overwrite, overwrite, &size, URL_ESCAPE_SPACES_ONLY);
-        ok(ret == S_OK, "got %x, expected S_OK\n", ret);
-        ok(size == 9, "got %d, expected 9\n", size);
-        ok(!lstrcmpW(overwrite, out), "got %s, expected %s\n", wine_dbgstr_w(overwrite), wine_dbgstr_w(out));
+        size = INTERNET_MAX_URL_LENGTH;
+        ret = pUrlEscapeA(TEST_ESCAPE[i].url, ret_url, &size, TEST_ESCAPE[i].flags);
+        ok(ret == TEST_ESCAPE[i].expectret, "UrlEscapeA returned 0x%08x instead of 0x%08x for \"%s\"\n",
+            ret, TEST_ESCAPE[i].expectret, TEST_ESCAPE[i].url);
+        ok(!strcmp(ret_url, TEST_ESCAPE[i].expecturl), "Expected \"%s\", but got \"%s\" for \"%s\"\n",
+            TEST_ESCAPE[i].expecturl, ret_url, TEST_ESCAPE[i].url);
+    }
+}
 
-        size = 1;
-        wc = 127;
-        ret = pUrlEscapeW(overwrite, &wc, &size, URL_ESCAPE_SPACES_ONLY);
-        ok(ret == E_POINTER, "got %x, expected %x\n", ret, E_POINTER);
-        ok(size == 10, "got %d, expected 9\n", size);
-        ok(wc == 127, "String has changed, wc = %d\n", wc);
+static void test_UrlEscapeW(void)
+{
+    static const WCHAR naW[] = {'f','t','p',31,255,250,0x2122,'e','n','d','/',0};
+    static const WCHAR naescapedW[] = {'f','t','p','%','1','F','%','F','F','%','F','A',0x2122,'e','n','d','/',0};
+    static const WCHAR out[] = {'f','o','o','%','2','0','b','a','r',0};
+    WCHAR overwrite[] = {'f','o','o',' ','b','a','r',0,0,0};
+    WCHAR ret_urlW[INTERNET_MAX_URL_LENGTH];
+    DWORD size = 0;
+    HRESULT ret;
+    WCHAR wc;
+    int i;
+
+    if (!pUrlEscapeW) {
+        win_skip("UrlEscapeW not found\n");
+        return;
     }
 
-    for(i=0; i<sizeof(TEST_ESCAPE)/sizeof(TEST_ESCAPE[0]); i++) {
-        test_url_escape(TEST_ESCAPE[i].url, TEST_ESCAPE[i].flags,
-                              TEST_ESCAPE[i].expectret, TEST_ESCAPE[i].expecturl);
+    size = sizeof(overwrite)/sizeof(WCHAR);
+    ret = pUrlEscapeW(overwrite, overwrite, &size, URL_ESCAPE_SPACES_ONLY);
+    ok(ret == S_OK, "got %x, expected S_OK\n", ret);
+    ok(size == 9, "got %d, expected 9\n", size);
+    ok(!lstrcmpW(overwrite, out), "got %s, expected %s\n", wine_dbgstr_w(overwrite), wine_dbgstr_w(out));
+
+    size = 1;
+    wc = 127;
+    ret = pUrlEscapeW(overwrite, &wc, &size, URL_ESCAPE_SPACES_ONLY);
+    ok(ret == E_POINTER, "got %x, expected %x\n", ret, E_POINTER);
+    ok(size == 10, "got %d, expected 10\n", size);
+    ok(wc == 127, "String has changed, wc = %d\n", wc);
+
+    /* non-ASCII range */
+    size = sizeof(ret_urlW)/sizeof(WCHAR);
+    ret = pUrlEscapeW(naW, ret_urlW, &size, 0);
+    ok(ret == S_OK, "got %x, expected S_OK\n", ret);
+    ok(!lstrcmpW(naescapedW, ret_urlW), "got %s, expected %s\n", wine_dbgstr_w(ret_urlW), wine_dbgstr_w(naescapedW));
+
+    for (i = 0; i < sizeof(TEST_ESCAPE)/sizeof(TEST_ESCAPE[0]); i++) {
+
+        WCHAR *urlW, *expected_urlW;
+
+        size = INTERNET_MAX_URL_LENGTH;
+        urlW = GetWideString(TEST_ESCAPE[i].url);
+        expected_urlW = GetWideString(TEST_ESCAPE[i].expecturl);
+        ret = pUrlEscapeW(urlW, ret_urlW, &size, TEST_ESCAPE[i].flags);
+        ok(ret == TEST_ESCAPE[i].expectret, "UrlEscapeW returned 0x%08x instead of 0x%08x for %s\n",
+           ret, TEST_ESCAPE[i].expectret, wine_dbgstr_w(urlW));
+        ok(!lstrcmpW(ret_urlW, expected_urlW), "Expected %s, but got %s for %s flags %08x\n",
+            wine_dbgstr_w(expected_urlW), wine_dbgstr_w(ret_urlW), wine_dbgstr_w(urlW), TEST_ESCAPE[i].flags);
+        FreeWideString(urlW);
+        FreeWideString(expected_urlW);
     }
 }
 
@@ -1062,7 +1078,7 @@ static void test_UrlCanonicalizeW(void)
         BOOL choped;
         int pos;
 
-        MultiByteToWideChar(CP_ACP, 0, "http://www.winehq.org/X", -1, szUrl, 128);
+        MultiByteToWideChar(CP_ACP, 0, "http://www.winehq.org/X", -1, szUrl, sizeof(szUrl)/sizeof(szUrl[0]));
         pos = lstrlenW(szUrl) - 1;
         szUrl[pos] = i;
         urllen = INTERNET_MAX_URL_LENGTH;
@@ -1079,18 +1095,19 @@ static void test_url_combine(const char *szUrl1, const char *szUrl2, DWORD dwFla
     HRESULT hr;
     CHAR szReturnUrl[INTERNET_MAX_URL_LENGTH];
     WCHAR wszReturnUrl[INTERNET_MAX_URL_LENGTH];
-    LPWSTR wszUrl1 = GetWideString(szUrl1);
-    LPWSTR wszUrl2 = GetWideString(szUrl2);
-    LPWSTR wszExpectUrl = GetWideString(szExpectUrl);
-    LPWSTR wszConvertedUrl;
+    LPWSTR wszUrl1, wszUrl2, wszExpectUrl, wszConvertedUrl;
 
     DWORD dwSize;
-    DWORD dwExpectLen = lstrlen(szExpectUrl);
+    DWORD dwExpectLen = lstrlenA(szExpectUrl);
 
     if (!pUrlCombineA) {
         win_skip("UrlCombineA not found\n");
         return;
     }
+
+    wszUrl1 = GetWideString(szUrl1);
+    wszUrl2 = GetWideString(szUrl2);
+    wszExpectUrl = GetWideString(szExpectUrl);
 
     hr = pUrlCombineA(szUrl1, szUrl2, NULL, NULL, dwFlags);
     ok(hr == E_INVALIDARG, "UrlCombineA returned 0x%08x, expected 0x%08x\n", hr, E_INVALIDARG);
@@ -1168,7 +1185,7 @@ static void test_UrlCreateFromPath(void)
         len = INTERNET_MAX_URL_LENGTH;
         ret = pUrlCreateFromPathA(TEST_URLFROMPATH[i].path, ret_url, &len, 0);
         ok(ret == TEST_URLFROMPATH[i].ret, "ret %08x from path %s\n", ret, TEST_URLFROMPATH[i].path);
-        ok(!lstrcmpi(ret_url, TEST_URLFROMPATH[i].url), "url %s from path %s\n", ret_url, TEST_URLFROMPATH[i].path);
+        ok(!lstrcmpiA(ret_url, TEST_URLFROMPATH[i].url), "url %s from path %s\n", ret_url, TEST_URLFROMPATH[i].path);
         ok(len == strlen(ret_url), "ret len %d from path %s\n", len, TEST_URLFROMPATH[i].path);
 
         if (pUrlCreateFromPathW) {
@@ -1219,7 +1236,7 @@ static void test_UrlIs(void)
     test_UrlIs_null(URLIS_URL);
 
     for(i = 0; i < sizeof(TEST_PATH_IS_URL) / sizeof(TEST_PATH_IS_URL[0]); i++) {
-	MultiByteToWideChar(CP_ACP, 0, TEST_PATH_IS_URL[i].path, -1, wurl, 80);
+	MultiByteToWideChar(CP_ACP, 0, TEST_PATH_IS_URL[i].path, -1, wurl, sizeof(wurl)/sizeof(*wurl));
 
         ret = pUrlIsA( TEST_PATH_IS_URL[i].path, URLIS_URL );
         ok( ret == TEST_PATH_IS_URL[i].expect,
@@ -1234,7 +1251,7 @@ static void test_UrlIs(void)
         }
     }
     for(i = 0; i < sizeof(TEST_URLIS_ATTRIBS) / sizeof(TEST_URLIS_ATTRIBS[0]); i++) {
-	MultiByteToWideChar(CP_ACP, 0, TEST_URLIS_ATTRIBS[i].url, -1, wurl, 80);
+	MultiByteToWideChar(CP_ACP, 0, TEST_URLIS_ATTRIBS[i].url, -1, wurl, sizeof(wurl)/sizeof(*wurl));
 
         ret = pUrlIsA( TEST_URLIS_ATTRIBS[i].url, URLIS_OPAQUE);
 	ok( ret == TEST_URLIS_ATTRIBS[i].expectOpaque,
@@ -1288,7 +1305,7 @@ static void test_UrlUnescape(void)
         ok(strcmp(szReturnUrl,TEST_URL_UNESCAPE[i].expect)==0, "Expected \"%s\", but got \"%s\" from \"%s\"\n", TEST_URL_UNESCAPE[i].expect, szReturnUrl, TEST_URL_UNESCAPE[i].url);
 
         ZeroMemory(szReturnUrl, sizeof(szReturnUrl));
-        /* if we set the bufferpointer to NULL here UrlUnescape  fails and string gets not converted */
+        /* if we set the buffer pointer to NULL here, UrlUnescape fails and the string is not converted */
         res = pUrlUnescapeA(TEST_URL_UNESCAPE[i].url, szReturnUrl, NULL, 0);
         ok(res == E_INVALIDARG,
             "UrlUnescapeA returned 0x%x (expected E_INVALIDARG) for \"%s\"\n",
@@ -1319,7 +1336,7 @@ static void test_UrlUnescape(void)
     ok(!strcmp(inplace, expected), "got %s expected %s\n", inplace, expected);
     ok(dwEscaped == 27, "got %d expected 27\n", dwEscaped);
 
-    /* if we set the bufferpointer to NULL, the string apparently still gets converted (Google Lively does this)) */
+    /* if we set the buffer pointer to NULL, the string apparently still gets converted (Google Lively does this) */
     res = pUrlUnescapeA(another_inplace, NULL, NULL, URL_UNESCAPE_INPLACE);
     ok(res == S_OK, "UrlUnescapeA returned 0x%x (expected S_OK)\n", res);
     ok(!strcmp(another_inplace, expected), "got %s expected %s\n", another_inplace, expected);
@@ -1330,7 +1347,7 @@ static void test_UrlUnescape(void)
         ok(res == S_OK, "UrlUnescapeW returned 0x%x (expected S_OK)\n", res);
         ok(dwEscaped == 50, "got %d expected 50\n", dwEscaped);
 
-        /* if we set the bufferpointer to NULL, the string apparently still gets converted (Google Lively does this)) */
+        /* if we set the buffer pointer to NULL, the string apparently still gets converted (Google Lively does this) */
         res = pUrlUnescapeW(another_inplaceW, NULL, NULL, URL_UNESCAPE_INPLACE);
         ok(res == S_OK, "UrlUnescapeW returned 0x%x (expected S_OK)\n", res);
 
@@ -1544,7 +1561,8 @@ START_TEST(url)
   test_UrlGetPart();
   test_UrlCanonicalizeA();
   test_UrlCanonicalizeW();
-  test_UrlEscape();
+  test_UrlEscapeA();
+  test_UrlEscapeW();
   test_UrlCombine();
   test_UrlCreateFromPath();
   test_UrlIs();

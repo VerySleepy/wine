@@ -37,8 +37,8 @@
 
 #include <winuser.rh>
 #include <commctrl.rh>
-/* FIXME: #include <dde.rh> */
-/* FIXME: #include <winnt.rh> */
+#include <dde.rh>
+#include <winnt.rh>
 #include <dlgs.h>
 #include <winver.h>
 

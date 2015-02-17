@@ -132,9 +132,7 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_GetDisplayModeList(IDXGIOutput *ifa
             iface, debug_dxgi_format(format), flags, mode_count, desc);
 
     if (!mode_count)
-    {
-        return S_OK;
-    }
+        return DXGI_ERROR_INVALID_CALL;
 
     if (format == DXGI_FORMAT_UNKNOWN)
     {
@@ -142,45 +140,50 @@ static HRESULT STDMETHODCALLTYPE dxgi_output_GetDisplayModeList(IDXGIOutput *ifa
         return S_OK;
     }
 
-    wined3d = IWineDXGIFactory_get_wined3d(This->adapter->parent);
+    wined3d = This->adapter->parent->wined3d;
     wined3d_format = wined3dformat_from_dxgi_format(format);
 
     EnterCriticalSection(&dxgi_cs);
-    max_count = wined3d_get_adapter_mode_count(wined3d, This->adapter->ordinal, wined3d_format);
+    max_count = wined3d_get_adapter_mode_count(wined3d, This->adapter->ordinal,
+            wined3d_format, WINED3D_SCANLINE_ORDERING_UNKNOWN);
 
     if (!desc)
     {
-        wined3d_decref(wined3d);
         LeaveCriticalSection(&dxgi_cs);
         *mode_count = max_count;
         return S_OK;
     }
 
-    *mode_count = min(*mode_count,max_count);
+    if (max_count > *mode_count)
+    {
+        LeaveCriticalSection(&dxgi_cs);
+        return DXGI_ERROR_MORE_DATA;
+    }
+
+    *mode_count = max_count;
 
     for (i = 0; i < *mode_count; ++i)
     {
-        WINED3DDISPLAYMODE mode;
+        struct wined3d_display_mode mode;
         HRESULT hr;
 
-        hr = wined3d_enum_adapter_modes(wined3d, This->adapter->ordinal, wined3d_format, i, &mode);
+        hr = wined3d_enum_adapter_modes(wined3d, This->adapter->ordinal, wined3d_format,
+                WINED3D_SCANLINE_ORDERING_UNKNOWN, i, &mode);
         if (FAILED(hr))
         {
             WARN("EnumAdapterModes failed, hr %#x.\n", hr);
-            wined3d_decref(wined3d);
             LeaveCriticalSection(&dxgi_cs);
             return hr;
         }
 
-        desc[i].Width = mode.Width;
-        desc[i].Height = mode.Height;
-        desc[i].RefreshRate.Numerator = mode.RefreshRate;
+        desc[i].Width = mode.width;
+        desc[i].Height = mode.height;
+        desc[i].RefreshRate.Numerator = mode.refresh_rate;
         desc[i].RefreshRate.Denominator = 1;
         desc[i].Format = format;
-        desc[i].ScanlineOrdering = DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED; /* FIXME */
+        desc[i].ScanlineOrdering = mode.scanline_ordering;
         desc[i].Scaling = DXGI_MODE_SCALING_UNSPECIFIED; /* FIXME */
     }
-    wined3d_decref(wined3d);
     LeaveCriticalSection(&dxgi_cs);
 
     return S_OK;

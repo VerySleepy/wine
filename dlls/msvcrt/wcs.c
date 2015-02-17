@@ -40,17 +40,21 @@ static BOOL n_format_enabled = TRUE;
 #include "printf.h"
 #undef PRINTF_WIDE
 
-/* _get_printf_count_output - not exported in native msvcrt */
+/*********************************************************************
+ *		_get_printf_count_output (MSVCR80.@)
+ */
 int CDECL MSVCRT__get_printf_count_output( void )
 {
     return n_format_enabled ? 1 : 0;
 }
 
-/* _set_printf_count_output - not exported in native msvcrt */
+/*********************************************************************
+ *		_set_printf_count_output (MSVCR80.@)
+ */
 int CDECL MSVCRT__set_printf_count_output( int enable )
 {
     BOOL old = n_format_enabled;
-    n_format_enabled = (enable ? TRUE : FALSE);
+    n_format_enabled = enable != 0;
     return old ? 1 : 0;
 }
 
@@ -69,13 +73,81 @@ MSVCRT_wchar_t* CDECL MSVCRT__wcsdup( const MSVCRT_wchar_t* str )
   return ret;
 }
 
+INT CDECL MSVCRT__wcsicmp_l(const MSVCRT_wchar_t *str1, const MSVCRT_wchar_t *str2, MSVCRT__locale_t locale)
+{
+    if(!MSVCRT_CHECK_PMT(str1 != NULL) || !MSVCRT_CHECK_PMT(str2 != NULL))
+        return MSVCRT__NLSCMPERROR;
+
+    return strcmpiW(str1, str2);
+}
+
+/*********************************************************************
+ *		_wcsicmp (MSVCRT.@)
+ */
+INT CDECL MSVCRT__wcsicmp( const MSVCRT_wchar_t* str1, const MSVCRT_wchar_t* str2 )
+{
+    return strcmpiW( str1, str2 );
+}
+
+/*********************************************************************
+ *              _wcsnicmp_l (MSVCRT.@)
+ */
+INT CDECL MSVCRT__wcsnicmp_l(const MSVCRT_wchar_t *str1, const MSVCRT_wchar_t *str2, INT n, MSVCRT__locale_t locale)
+{
+    return strncmpiW(str1, str2, n);
+}
+
+/*********************************************************************
+ *              _wcsnicmp (MSVCRT.@)
+ */
+INT CDECL MSVCRT__wcsnicmp(const MSVCRT_wchar_t *str1, const MSVCRT_wchar_t *str2, INT n)
+{
+    return MSVCRT__wcsnicmp_l(str1, str2, n, NULL);
+}
+
+/*********************************************************************
+ *              _wcsicoll_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__wcsicoll_l(const MSVCRT_wchar_t* str1, const MSVCRT_wchar_t* str2, MSVCRT__locale_t locale)
+{
+    MSVCRT_pthreadlocinfo locinfo;
+
+    if(!locale)
+        locinfo = get_locinfo();
+    else
+        locinfo = locale->locinfo;
+
+    if(!locinfo->lc_handle[MSVCRT_LC_COLLATE])
+        return strcmpiW(str1, str2);
+    return CompareStringW(locinfo->lc_handle[MSVCRT_LC_COLLATE], NORM_IGNORECASE,
+			  str1, -1, str2, -1)-CSTR_EQUAL;
+}
+
 /*********************************************************************
  *		_wcsicoll (MSVCRT.@)
  */
 INT CDECL MSVCRT__wcsicoll( const MSVCRT_wchar_t* str1, const MSVCRT_wchar_t* str2 )
 {
-  /* FIXME: handle collates */
-  return strcmpiW( str1, str2 );
+    return MSVCRT__wcsicoll_l(str1, str2, NULL);
+}
+
+/*********************************************************************
+ *              _wcsnicoll_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__wcsnicoll_l(const MSVCRT_wchar_t* str1, const MSVCRT_wchar_t* str2,
+			      MSVCRT_size_t count, MSVCRT__locale_t locale)
+{
+    MSVCRT_pthreadlocinfo locinfo;
+
+    if(!locale)
+        locinfo = get_locinfo();
+    else
+        locinfo = locale->locinfo;
+
+    if(!locinfo->lc_handle[MSVCRT_LC_COLLATE])
+        return strncmpiW(str1, str2, count);
+    return CompareStringW(locinfo->lc_handle[MSVCRT_LC_COLLATE], NORM_IGNORECASE,
+			  str1, count, str2, count)-CSTR_EQUAL;
 }
 
 /*********************************************************************
@@ -83,8 +155,7 @@ INT CDECL MSVCRT__wcsicoll( const MSVCRT_wchar_t* str1, const MSVCRT_wchar_t* st
  */
 INT CDECL MSVCRT__wcsnicoll( const MSVCRT_wchar_t* str1, const MSVCRT_wchar_t* str2, MSVCRT_size_t count )
 {
-  /* FIXME: handle collates */
-  return strncmpiW( str1, str2, count );
+    return MSVCRT__wcsnicoll_l(str1, str2, count, NULL);
 }
 
 /*********************************************************************
@@ -111,6 +182,26 @@ MSVCRT_wchar_t* CDECL MSVCRT__wcsrev( MSVCRT_wchar_t* str )
     *str++  = t;
   }
   return ret;
+}
+
+/*********************************************************************
+ *              _wcsset_s (MSVCRT.@)
+ */
+int CDECL MSVCRT__wcsset_s( MSVCRT_wchar_t *str, MSVCRT_size_t n, MSVCRT_wchar_t c )
+{
+    MSVCRT_wchar_t *p = str;
+
+    if(!MSVCRT_CHECK_PMT(str != NULL)) return MSVCRT_EINVAL;
+    if(!MSVCRT_CHECK_PMT(n)) return MSVCRT_EINVAL;
+
+    while(*p && --n) *p++ = c;
+    if(!n) {
+        str[0] = 0;
+        MSVCRT__invalid_parameter(NULL, NULL, NULL, 0, 0);
+        *MSVCRT__errno() = MSVCRT_EINVAL;
+        return MSVCRT_EINVAL;
+    }
+    return 0;
 }
 
 /*********************************************************************
@@ -163,9 +254,18 @@ INT CDECL MSVCRT__wcsupr_s( MSVCRT_wchar_t* str, MSVCRT_size_t n )
 }
 
 /******************************************************************
- *		_wcslwr_s (MSVCRT.@)
+ *              _wcsupr_l (MSVCRT.@)
  */
-int CDECL MSVCRT__wcslwr_s( MSVCRT_wchar_t* str, MSVCRT_size_t n )
+MSVCRT_wchar_t* CDECL MSVCRT__wcsupr_l( MSVCRT_wchar_t *str, MSVCRT__locale_t locale )
+{
+    MSVCRT__wcsupr_s_l( str, -1, locale);
+    return str;
+}
+
+/******************************************************************
+ *		_wcslwr_s_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__wcslwr_s_l( MSVCRT_wchar_t* str, MSVCRT_size_t n, MSVCRT__locale_t locale )
 {
   MSVCRT_wchar_t* ptr = str;
 
@@ -190,8 +290,60 @@ int CDECL MSVCRT__wcslwr_s( MSVCRT_wchar_t* str, MSVCRT_size_t n )
   return MSVCRT_EINVAL;
 }
 
+/******************************************************************
+ *		_wcslwr_s (MSVCRT.@)
+ */
+int CDECL MSVCRT__wcslwr_s( MSVCRT_wchar_t* str, MSVCRT_size_t n )
+{
+    return MSVCRT__wcslwr_s_l(str, n, NULL);
+}
+
+/******************************************************************
+ *		_wcslwr_l (MSVCRT.@)
+ */
+MSVCRT_wchar_t* CDECL MSVCRT__wcslwr_l( MSVCRT_wchar_t* str, MSVCRT__locale_t locale )
+{
+    MSVCRT__wcslwr_s_l(str, -1, locale);
+    return str;
+}
+
+/******************************************************************
+ *		_wcslwr (MSVCRT.@)
+ */
+MSVCRT_wchar_t* CDECL MSVCRT__wcslwr( MSVCRT_wchar_t* str )
+{
+    MSVCRT__wcslwr_s_l(str, -1, NULL);
+    return str;
+}
+
 /*********************************************************************
- * _wcstod_l - not exported in native msvcrt
+ *              _wcsncoll_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__wcsncoll_l(const MSVCRT_wchar_t* str1, const MSVCRT_wchar_t* str2,
+			      MSVCRT_size_t count, MSVCRT__locale_t locale)
+{
+    MSVCRT_pthreadlocinfo locinfo;
+
+    if(!locale)
+        locinfo = get_locinfo();
+    else
+        locinfo = locale->locinfo;
+
+    if(!locinfo->lc_handle[MSVCRT_LC_COLLATE])
+        return strncmpW(str1, str2, count);
+    return CompareStringW(locinfo->lc_handle[MSVCRT_LC_COLLATE], 0, str1, count, str2, count)-CSTR_EQUAL;
+}
+
+/*********************************************************************
+ *              _wcsncoll (MSVCRT.@)
+ */
+int CDECL MSVCRT__wcsncoll(const MSVCRT_wchar_t* str1, const MSVCRT_wchar_t* str2, MSVCRT_size_t count)
+{
+    return MSVCRT__wcsncoll_l(str1, str2, count, NULL);
+}
+
+/*********************************************************************
+ *		_wcstod_l (MSVCRT.@)
  */
 double CDECL MSVCRT__wcstod_l(const MSVCRT_wchar_t* str, MSVCRT_wchar_t** end,
         MSVCRT__locale_t locale)
@@ -202,12 +354,10 @@ double CDECL MSVCRT__wcstod_l(const MSVCRT_wchar_t* str, MSVCRT_wchar_t** end,
     int exp=0, sign=1;
     const MSVCRT_wchar_t *p;
     double ret;
-    BOOL found_digit = FALSE;
+    long double lret=1, expcnt = 10;
+    BOOL found_digit = FALSE, negexp;
 
-    if (!MSVCRT_CHECK_PMT(str != NULL)) {
-        *MSVCRT__errno() = MSVCRT_EINVAL;
-        return 0;
-    }
+    if (!MSVCRT_CHECK_PMT(str != NULL)) return 0;
 
     if(!locale)
         locinfo = get_locinfo();
@@ -290,10 +440,16 @@ double CDECL MSVCRT__wcstod_l(const MSVCRT_wchar_t* str, MSVCRT_wchar_t** end,
     _control87(MSVCRT__EM_DENORMAL|MSVCRT__EM_INVALID|MSVCRT__EM_ZERODIVIDE
             |MSVCRT__EM_OVERFLOW|MSVCRT__EM_UNDERFLOW|MSVCRT__EM_INEXACT, 0xffffffff);
 
-    if(exp>0)
-        ret = (double)sign*d*pow(10, exp);
-    else
-        ret = (double)sign*d/pow(10, -exp);
+    negexp = (exp < 0);
+    if(negexp)
+        exp = -exp;
+    while(exp) {
+        if(exp & 1)
+            lret *= expcnt;
+        exp /= 2;
+        expcnt = expcnt*expcnt;
+    }
+    ret = (long double)sign * (negexp ? d/lret : d*lret);
 
     _control87(fpcontrol, 0xffffffff);
 
@@ -309,7 +465,7 @@ double CDECL MSVCRT__wcstod_l(const MSVCRT_wchar_t* str, MSVCRT_wchar_t** end,
 /*********************************************************************
  * wcsrtombs_l (INTERNAL)
  */
-static MSVCRT_size_t CDECL MSVCRT_wcsrtombs_l(char *mbstr, const MSVCRT_wchar_t **wcstr,
+static MSVCRT_size_t MSVCRT_wcsrtombs_l(char *mbstr, const MSVCRT_wchar_t **wcstr,
         MSVCRT_size_t count, MSVCRT__locale_t locale)
 {
     MSVCRT_pthreadlocinfo locinfo;
@@ -324,8 +480,10 @@ static MSVCRT_size_t CDECL MSVCRT_wcsrtombs_l(char *mbstr, const MSVCRT_wchar_t 
     if(!mbstr) {
         tmp = WideCharToMultiByte(locinfo->lc_codepage, WC_NO_BEST_FIT_CHARS,
                 *wcstr, -1, NULL, 0, NULL, &used_default)-1;
-        if(used_default)
+        if(!tmp || used_default) {
+            *MSVCRT__errno() = MSVCRT_EILSEQ;
             return -1;
+        }
         return tmp;
     }
 
@@ -335,8 +493,10 @@ static MSVCRT_size_t CDECL MSVCRT_wcsrtombs_l(char *mbstr, const MSVCRT_wchar_t 
 
         size = WideCharToMultiByte(locinfo->lc_codepage, WC_NO_BEST_FIT_CHARS,
                 *wcstr, 1, buf, 3, NULL, &used_default);
-        if(used_default)
+        if(!size || used_default) {
+            *MSVCRT__errno() = MSVCRT_EILSEQ;
             return -1;
+        }
         if(tmp+size > count)
             return tmp;
 
@@ -393,18 +553,17 @@ static int MSVCRT_wcsrtombs_s_l(MSVCRT_size_t *ret, char *mbstr,
 
     if(!mbstr && !size && wcstr) {
         conv = MSVCRT_wcsrtombs_l(NULL, wcstr, 0, locale);
+        if(conv == -1)
+            return *MSVCRT__errno();
         if(ret)
             *ret = conv+1;
         return 0;
     }
 
-    if (!MSVCRT_CHECK_PMT(wcstr != NULL) || !MSVCRT_CHECK_PMT(*wcstr != NULL)
-            || !MSVCRT_CHECK_PMT(mbstr != NULL)) {
-        if(mbstr && size)
-            mbstr[0] = '\0';
-        *MSVCRT__errno() = MSVCRT_EINVAL;
-        return MSVCRT_EINVAL;
-    }
+    if (!MSVCRT_CHECK_PMT(mbstr != NULL)) return MSVCRT_EINVAL;
+    if (size) mbstr[0] = '\0';
+    if (!MSVCRT_CHECK_PMT(wcstr != NULL)) return MSVCRT_EINVAL;
+    if (!MSVCRT_CHECK_PMT(*wcstr != NULL)) return MSVCRT_EINVAL;
 
     if(count==MSVCRT__TRUNCATE || size<count)
         conv = size;
@@ -412,15 +571,18 @@ static int MSVCRT_wcsrtombs_s_l(MSVCRT_size_t *ret, char *mbstr,
         conv = count;
 
     conv = MSVCRT_wcsrtombs_l(mbstr, wcstr, conv, locale);
-    if(conv<size)
+    if(conv == -1) {
+        if(size)
+            mbstr[0] = '\0';
+        return *MSVCRT__errno();
+    }else if(conv < size)
         mbstr[conv++] = '\0';
     else if(conv==size && (count==MSVCRT__TRUNCATE || mbstr[conv-1]=='\0'))
         mbstr[conv-1] = '\0';
     else {
-        MSVCRT_INVALID_PMT("mbstr[size] is too small");
+        MSVCRT_INVALID_PMT("mbstr[size] is too small", MSVCRT_ERANGE);
         if(size)
             mbstr[0] = '\0';
-        *MSVCRT__errno() = MSVCRT_ERANGE;
         return MSVCRT_ERANGE;
     }
 
@@ -533,7 +695,7 @@ int CDECL MSVCRT_vsnprintf( char *str, MSVCRT_size_t len,
 }
 
 /*********************************************************************
-*		_vsnprintf_l (MSVCRT.@)
+ *		_vsnprintf_l (MSVCRT.@)
  */
 int CDECL MSVCRT_vsnprintf_l( char *str, MSVCRT_size_t len, const char *format,
                             MSVCRT__locale_t locale, __ms_va_list valist )
@@ -546,6 +708,29 @@ int CDECL MSVCRT_vsnprintf_l( char *str, MSVCRT_size_t len, const char *format,
             arg_clbk_valist, NULL, &valist);
     puts_clbk_str_a(&ctx, 1, &nullbyte);
     return ret;
+}
+
+/*********************************************************************
+ *		_vsprintf_l (MSVCRT.@)
+ */
+int CDECL MSVCRT_vsprintf_l( char *str, const char *format,
+                            MSVCRT__locale_t locale, __ms_va_list valist )
+{
+    return MSVCRT_vsnprintf_l(str, INT_MAX, format, locale, valist);
+}
+
+/*********************************************************************
+ *		_sprintf_l (MSVCRT.@)
+ */
+int CDECL MSVCRT_sprintf_l(char *str, const char *format,
+                           MSVCRT__locale_t locale, ...)
+{
+    int retval;
+    __ms_va_list valist;
+    __ms_va_start(valist, locale);
+    retval = MSVCRT_vsnprintf_l(str, INT_MAX, format, locale, valist);
+    __ms_va_end(valist);
+    return retval;
 }
 
 /*********************************************************************
@@ -572,8 +757,7 @@ int CDECL MSVCRT_vsnprintf_s_l( char *str, MSVCRT_size_t sizeOfBuffer,
 
     if(ret<0 || ret==len) {
         if(count!=MSVCRT__TRUNCATE && count>sizeOfBuffer) {
-            MSVCRT_INVALID_PMT("str[sizeOfBuffer] is too small");
-            *MSVCRT__errno() = MSVCRT_ERANGE;
+            MSVCRT_INVALID_PMT("str[sizeOfBuffer] is too small", MSVCRT_ERANGE);
             memset(str, 0, sizeOfBuffer);
         } else
             str[len-1] = '\0';
@@ -582,6 +766,29 @@ int CDECL MSVCRT_vsnprintf_s_l( char *str, MSVCRT_size_t sizeOfBuffer,
     }
 
     return ret;
+}
+
+/*********************************************************************
+ *		_vsprintf_s_l (MSVCRT.@)
+ */
+int CDECL MSVCRT_vsprintf_s_l( char *str, MSVCRT_size_t count, const char *format,
+                               MSVCRT__locale_t locale, __ms_va_list valist )
+{
+    return MSVCRT_vsnprintf_s_l(str, INT_MAX, count, format, locale, valist);
+}
+
+/*********************************************************************
+ *		_sprintf_s_l (MSVCRT.@)
+ */
+int CDECL MSVCRT_sprintf_s_l( char *str, MSVCRT_size_t count, const char *format,
+                              MSVCRT__locale_t locale, ...)
+{
+    int retval;
+    __ms_va_list valist;
+    __ms_va_start(valist, locale);
+    retval = MSVCRT_vsnprintf_s_l(str, INT_MAX, count, format, locale, valist);
+    __ms_va_end(valist);
+    return retval;
 }
 
 /*********************************************************************
@@ -618,6 +825,42 @@ int CDECL MSVCRT__vscprintf( const char *format, __ms_va_list valist )
 }
 
 /*********************************************************************
+ *		_vscprintf_p_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__vscprintf_p_l(const char *format,
+        MSVCRT__locale_t locale, __ms_va_list args)
+{
+    printf_arg args_ctx[MSVCRT__ARGMAX+1];
+    struct _str_ctx_a puts_ctx = {INT_MAX, NULL};
+    int ret;
+
+    memset(args_ctx, 0, sizeof(args_ctx));
+
+    ret = create_positional_ctx_a(args_ctx, format, args);
+    if(ret < 0)  {
+        MSVCRT__invalid_parameter(NULL, NULL, NULL, 0, 0);
+        *MSVCRT__errno() = MSVCRT_EINVAL;
+        return ret;
+    } else if(ret == 0) {
+        ret = pf_printf_a(puts_clbk_str_a, &puts_ctx, format, locale, FALSE, TRUE,
+                arg_clbk_valist, NULL, &args);
+    } else {
+        ret = pf_printf_a(puts_clbk_str_a, &puts_ctx, format, locale, TRUE, TRUE,
+                arg_clbk_positional, args_ctx, NULL);
+    }
+
+    return ret;
+}
+
+/*********************************************************************
+ *		_vscprintf_p (MSVCR80.@)
+ */
+int CDECL MSVCRT__vscprintf_p(const char *format, __ms_va_list argptr)
+{
+    return MSVCRT__vscprintf_p_l(format, NULL, argptr);
+}
+
+/*********************************************************************
  *		_snprintf (MSVCRT.@)
  */
 int CDECL MSVCRT__snprintf(char *str, unsigned int len, const char *format, ...)
@@ -626,6 +869,20 @@ int CDECL MSVCRT__snprintf(char *str, unsigned int len, const char *format, ...)
     __ms_va_list valist;
     __ms_va_start(valist, format);
     retval = MSVCRT_vsnprintf(str, len, format, valist);
+    __ms_va_end(valist);
+    return retval;
+}
+
+/*********************************************************************
+ *		_snprintf_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__snprintf_l(char *str, unsigned int count, MSVCRT__locale_t locale,
+    const char *format, ...)
+{
+    int retval;
+    __ms_va_list valist;
+    __ms_va_start(valist, format);
+    retval = MSVCRT_vsnprintf_l(str, count, format, locale, valist);
     __ms_va_end(valist);
     return retval;
 }
@@ -720,6 +977,15 @@ int CDECL MSVCRT_vswprintf_p_l(MSVCRT_wchar_t *buffer, MSVCRT_size_t length,
 }
 
 /*********************************************************************
+ * _vswprintf_p (MSVCR100.@)
+ */
+int CDECL MSVCRT__vswprintf_p(MSVCRT_wchar_t *buffer, MSVCRT_size_t length,
+        const MSVCRT_wchar_t *format, __ms_va_list args)
+{
+    return MSVCRT_vswprintf_p_l(buffer, length, format, NULL, args);
+}
+
+/*********************************************************************
  *              _vsnwprintf_s_l (MSVCRT.@)
  */
 int CDECL MSVCRT_vsnwprintf_s_l( MSVCRT_wchar_t *str, MSVCRT_size_t sizeOfBuffer,
@@ -742,8 +1008,7 @@ int CDECL MSVCRT_vsnwprintf_s_l( MSVCRT_wchar_t *str, MSVCRT_size_t sizeOfBuffer
 
     if(ret<0 || ret==len) {
         if(count!=MSVCRT__TRUNCATE && count>sizeOfBuffer) {
-            MSVCRT_INVALID_PMT("str[sizeOfBuffer] is too small");
-            *MSVCRT__errno() = MSVCRT_ERANGE;
+            MSVCRT_INVALID_PMT("str[sizeOfBuffer] is too small", MSVCRT_ERANGE);
             memset(str, 0, sizeOfBuffer*sizeof(MSVCRT_wchar_t));
         } else
             str[len-1] = '\0';
@@ -778,6 +1043,20 @@ int CDECL MSVCRT__snwprintf( MSVCRT_wchar_t *str, unsigned int len, const MSVCRT
 }
 
 /*********************************************************************
+ *		_snwprintf_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__snwprintf_l( MSVCRT_wchar_t *str, unsigned int len, const MSVCRT_wchar_t *format,
+        MSVCRT__locale_t locale, ...)
+{
+    int retval;
+    __ms_va_list valist;
+    __ms_va_start(valist, locale);
+    retval = MSVCRT_vsnwprintf_l(str, len, format, locale, valist);
+    __ms_va_end(valist);
+    return retval;
+}
+
+/*********************************************************************
  *		_snwprintf_s (MSVCRT.@)
  */
 int CDECL MSVCRT__snwprintf_s( MSVCRT_wchar_t *str, unsigned int len, unsigned int count,
@@ -787,6 +1066,20 @@ int CDECL MSVCRT__snwprintf_s( MSVCRT_wchar_t *str, unsigned int len, unsigned i
     __ms_va_list valist;
     __ms_va_start(valist, format);
     retval = MSVCRT_vsnwprintf_s_l(str, len, count, format, NULL, valist);
+    __ms_va_end(valist);
+    return retval;
+}
+
+/*********************************************************************
+ *              _snwprintf_s_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__snwprintf_s_l( MSVCRT_wchar_t *str, unsigned int len, unsigned int count,
+        const MSVCRT_wchar_t *format, MSVCRT__locale_t locale, ... )
+{
+    int retval;
+    __ms_va_list valist;
+    __ms_va_start(valist, locale);
+    retval = MSVCRT_vsnwprintf_s_l(str, len, count, format, locale, valist);
     __ms_va_end(valist);
     return retval;
 }
@@ -864,6 +1157,22 @@ int CDECL MSVCRT_swprintf_s(MSVCRT_wchar_t *str, MSVCRT_size_t numberOfElements,
 }
 
 /*********************************************************************
+ *              _swprintf_s_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__swprintf_s_l(MSVCRT_wchar_t *str, MSVCRT_size_t numberOfElements,
+        const MSVCRT_wchar_t *format, MSVCRT__locale_t locale, ... )
+{
+    __ms_va_list ap;
+    int r;
+
+    __ms_va_start(ap, locale);
+    r = MSVCRT_vsnwprintf_s_l(str, numberOfElements, INT_MAX, format, locale, ap);
+    __ms_va_end(ap);
+
+    return r;
+}
+
+/*********************************************************************
  *		_vswprintf (MSVCRT.@)
  */
 int CDECL MSVCRT_vswprintf( MSVCRT_wchar_t* str, const MSVCRT_wchar_t* format, __ms_va_list args )
@@ -902,6 +1211,14 @@ int CDECL MSVCRT__vscwprintf_l( const MSVCRT_wchar_t *format, MSVCRT__locale_t l
 int CDECL MSVCRT__vscwprintf_p_l( const MSVCRT_wchar_t *format, MSVCRT__locale_t locale, __ms_va_list args )
 {
     return MSVCRT_vswprintf_p_l( NULL, INT_MAX, format, locale, args );
+}
+
+/*********************************************************************
+ * _vscwprintf_p (MSVCR100.@)
+ */
+int CDECL MSVCRT__vscwprintf_p(const MSVCRT_wchar_t *format, __ms_va_list args)
+{
+    return MSVCRT_vswprintf_p_l(NULL, INT_MAX, format, NULL, args);
 }
 
 /*********************************************************************
@@ -978,6 +1295,21 @@ int CDECL MSVCRT_sprintf_p_l(char *buffer, MSVCRT_size_t length,
 }
 
 /*********************************************************************
+ * _sprintf_p (MSVCR100.@)
+ */
+int CDECL MSVCRT__sprintf_p(char *buffer, MSVCRT_size_t length, const char *format, ...)
+{
+    __ms_va_list valist;
+    int r;
+
+    __ms_va_start(valist, format);
+    r = MSVCRT_vsprintf_p_l(buffer, length, format, NULL, valist);
+    __ms_va_end(valist);
+
+    return r;
+}
+
+/*********************************************************************
  *		_swprintf_p_l (MSVCRT.@)
  */
 int CDECL MSVCRT_swprintf_p_l(MSVCRT_wchar_t *buffer, MSVCRT_size_t length,
@@ -994,12 +1326,28 @@ int CDECL MSVCRT_swprintf_p_l(MSVCRT_wchar_t *buffer, MSVCRT_size_t length,
 }
 
 /*********************************************************************
+ *              _wcscoll_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__wcscoll_l(const MSVCRT_wchar_t* str1, const MSVCRT_wchar_t* str2, MSVCRT__locale_t locale)
+{
+    MSVCRT_pthreadlocinfo locinfo;
+
+    if(!locale)
+        locinfo = get_locinfo();
+    else
+        locinfo = locale->locinfo;
+
+    if(!locinfo->lc_handle[MSVCRT_LC_COLLATE])
+        return strcmpW(str1, str2);
+    return CompareStringW(locinfo->lc_handle[MSVCRT_LC_COLLATE], 0, str1, -1, str2, -1)-CSTR_EQUAL;
+}
+
+/*********************************************************************
  *		wcscoll (MSVCRT.@)
  */
 int CDECL MSVCRT_wcscoll( const MSVCRT_wchar_t* str1, const MSVCRT_wchar_t* str2 )
 {
-  /* FIXME: handle collates */
-  return strcmpW( str1, str2 );
+    return MSVCRT__wcscoll_l(str1, str2, NULL);
 }
 
 /*********************************************************************
@@ -1007,29 +1355,28 @@ int CDECL MSVCRT_wcscoll( const MSVCRT_wchar_t* str1, const MSVCRT_wchar_t* str2
  */
 MSVCRT_wchar_t* CDECL MSVCRT_wcspbrk( const MSVCRT_wchar_t* str, const MSVCRT_wchar_t* accept )
 {
-  const MSVCRT_wchar_t* p;
-  while (*str)
-  {
-    for (p = accept; *p; p++) if (*p == *str) return (MSVCRT_wchar_t*)str;
-      str++;
-  }
-  return NULL;
+    const MSVCRT_wchar_t* p;
+
+    while (*str)
+    {
+        for (p = accept; *p; p++) if (*p == *str) return (MSVCRT_wchar_t*)str;
+        str++;
+    }
+    return NULL;
 }
 
 /*********************************************************************
  *		wcstok_s  (MSVCRT.@)
  */
-MSVCRT_wchar_t * CDECL wcstok_s( MSVCRT_wchar_t *str, const MSVCRT_wchar_t *delim,
+MSVCRT_wchar_t * CDECL MSVCRT_wcstok_s( MSVCRT_wchar_t *str, const MSVCRT_wchar_t *delim,
                                  MSVCRT_wchar_t **next_token )
 {
     MSVCRT_wchar_t *ret;
 
-    if (!MSVCRT_CHECK_PMT(delim != NULL) || !MSVCRT_CHECK_PMT(next_token != NULL) ||
-        !MSVCRT_CHECK_PMT(str != NULL || *next_token != NULL))
-    {
-        *MSVCRT__errno() = MSVCRT_EINVAL;
-        return NULL;
-    }
+    if (!MSVCRT_CHECK_PMT(delim != NULL)) return NULL;
+    if (!MSVCRT_CHECK_PMT(next_token != NULL)) return NULL;
+    if (!MSVCRT_CHECK_PMT(str != NULL || *next_token != NULL)) return NULL;
+
     if (!str) str = *next_token;
 
     while (*str && strchrW( delim, *str )) str++;
@@ -1046,7 +1393,97 @@ MSVCRT_wchar_t * CDECL wcstok_s( MSVCRT_wchar_t *str, const MSVCRT_wchar_t *deli
  */
 MSVCRT_wchar_t * CDECL MSVCRT_wcstok( MSVCRT_wchar_t *str, const MSVCRT_wchar_t *delim )
 {
-    return wcstok_s(str, delim, &msvcrt_get_thread_data()->wcstok_next);
+    return MSVCRT_wcstok_s(str, delim, &msvcrt_get_thread_data()->wcstok_next);
+}
+
+/*********************************************************************
+ *		_wctomb_s_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__wctomb_s_l(int *len, char *mbchar, MSVCRT_size_t size,
+        MSVCRT_wchar_t wch, MSVCRT__locale_t locale)
+{
+    MSVCRT_pthreadlocinfo locinfo;
+    BOOL error;
+    int mblen;
+
+    if(!mbchar && size>0) {
+        if(len)
+            *len = 0;
+        return 0;
+    }
+
+    if(len)
+        *len = -1;
+
+    if(!MSVCRT_CHECK_PMT(size <= INT_MAX))
+        return MSVCRT_EINVAL;
+
+    if(!locale)
+        locinfo = get_locinfo();
+    else
+        locinfo = locale->locinfo;
+
+    if(!locinfo->lc_codepage) {
+        if(wch > 0xff) {
+            if(mbchar && size>0)
+                memset(mbchar, 0, size);
+            *MSVCRT__errno() = MSVCRT_EILSEQ;
+            return MSVCRT_EILSEQ;
+        }
+
+        if(!MSVCRT_CHECK_PMT_ERR(size >= 1, MSVCRT_ERANGE))
+            return MSVCRT_ERANGE;
+
+        *mbchar = wch;
+        if(len)
+            *len = 1;
+        return 0;
+    }
+
+    mblen = WideCharToMultiByte(locinfo->lc_codepage, 0, &wch, 1, mbchar, size, NULL, &error);
+    if(!mblen || error) {
+        if(!mblen && GetLastError()==ERROR_INSUFFICIENT_BUFFER) {
+            if(mbchar && size>0)
+                memset(mbchar, 0, size);
+
+            MSVCRT_INVALID_PMT("insufficient buffer size", MSVCRT_ERANGE);
+            return MSVCRT_ERANGE;
+        }
+
+        *MSVCRT__errno() = MSVCRT_EILSEQ;
+        return MSVCRT_EILSEQ;
+    }
+
+    if(len)
+        *len = mblen;
+    return 0;
+}
+
+/*********************************************************************
+ *              wctomb_s (MSVCRT.@)
+ */
+int CDECL MSVCRT_wctomb_s(int *len, char *mbchar, MSVCRT_size_t size, MSVCRT_wchar_t wch)
+{
+    return MSVCRT__wctomb_s_l(len, mbchar, size, wch, NULL);
+}
+
+/*********************************************************************
+ *              _wctomb_l (MSVCRT.@)
+ */
+int CDECL MSVCRT__wctomb_l(char *dst, MSVCRT_wchar_t ch, MSVCRT__locale_t locale)
+{
+    int len;
+
+    MSVCRT__wctomb_s_l(&len, dst, dst ? MSVCRT_MB_LEN_MAX : 0, ch, locale);
+    return len;
+}
+
+/*********************************************************************
+ *		wctomb (MSVCRT.@)
+ */
+INT CDECL MSVCRT_wctomb( char *dst, MSVCRT_wchar_t ch )
+{
+    return MSVCRT__wctomb_l(dst, ch, NULL);
 }
 
 /*********************************************************************
@@ -1056,18 +1493,26 @@ INT CDECL MSVCRT_wctob( MSVCRT_wint_t wchar )
 {
     char out;
     BOOL error;
+    UINT codepage = get_locinfo()->lc_codepage;
 
-    if(WideCharToMultiByte( get_locinfo()->lc_codepage, 0, &wchar, 1, &out, 1, NULL, &error ) && !error)
+    if(!codepage) {
+        if (wchar < 0xff)
+            return (signed char)wchar;
+        else
+            return MSVCRT_EOF;
+    } else if(WideCharToMultiByte( codepage, 0, &wchar, 1, &out, 1, NULL, &error ) && !error)
         return (INT)out;
     return MSVCRT_EOF;
 }
 
 /*********************************************************************
- *		wctomb (MSVCRT.@)
+ *              wcrtomb (MSVCRT.@)
  */
-INT CDECL MSVCRT_wctomb( char *dst, MSVCRT_wchar_t ch )
+MSVCRT_size_t CDECL MSVCRT_wcrtomb( char *dst, MSVCRT_wchar_t ch, MSVCRT_mbstate_t *s)
 {
-    return WideCharToMultiByte( get_locinfo()->lc_codepage, 0, &ch, 1, dst, 6, NULL, NULL );
+    if(s)
+        *s = 0;
+    return MSVCRT_wctomb(dst, ch);
 }
 
 /*********************************************************************
@@ -1143,11 +1588,27 @@ INT CDECL MSVCRT_iswprint( MSVCRT_wchar_t wc )
 }
 
 /*********************************************************************
+ *		_iswpunct_l (MSVCRT.@)
+ */
+INT CDECL MSVCRT__iswpunct_l( MSVCRT_wchar_t wc, MSVCRT__locale_t locale )
+{
+    return ispunctW( wc );
+}
+
+/*********************************************************************
  *		iswpunct (MSVCRT.@)
  */
 INT CDECL MSVCRT_iswpunct( MSVCRT_wchar_t wc )
 {
     return ispunctW( wc );
+}
+
+/*********************************************************************
+ *		_iswspace_l (MSVCRT.@)
+ */
+INT CDECL MSVCRT__iswspace_l( MSVCRT_wchar_t wc, MSVCRT__locale_t locale )
+{
+    return isspaceW( wc );
 }
 
 /*********************************************************************
@@ -1181,26 +1642,36 @@ INT CDECL MSVCRT_wcscpy_s( MSVCRT_wchar_t* wcDest, MSVCRT_size_t numElement, con
 {
     MSVCRT_size_t size = 0;
 
-    if(!wcDest || !numElement)
-        return MSVCRT_EINVAL;
+    if(!MSVCRT_CHECK_PMT(wcDest)) return MSVCRT_EINVAL;
+    if(!MSVCRT_CHECK_PMT(numElement)) return MSVCRT_EINVAL;
 
     wcDest[0] = 0;
 
-    if(!wcSrc)
-    {
-        return MSVCRT_EINVAL;
-    }
+    if(!MSVCRT_CHECK_PMT(wcSrc)) return MSVCRT_EINVAL;
 
     size = strlenW(wcSrc) + 1;
 
-    if(size > numElement)
-    {
+    if(!MSVCRT_CHECK_PMT_ERR(size <= numElement, MSVCRT_ERANGE))
         return MSVCRT_ERANGE;
-    }
 
     memcpy( wcDest, wcSrc, size*sizeof(WCHAR) );
 
     return 0;
+}
+
+/******************************************************************
+ *		wcsncpy (MSVCRT.@)
+ */
+MSVCRT_wchar_t* __cdecl MSVCRT_wcsncpy( MSVCRT_wchar_t* s1,
+        const MSVCRT_wchar_t *s2, MSVCRT_size_t n )
+{
+    MSVCRT_size_t i;
+
+    for(i=0; i<n; i++)
+        if(!(s1[i] = s2[i])) break;
+    for(; i<n; i++)
+        s1[i] = 0;
+    return s1;
 }
 
 /******************************************************************
@@ -1209,28 +1680,39 @@ INT CDECL MSVCRT_wcscpy_s( MSVCRT_wchar_t* wcDest, MSVCRT_size_t numElement, con
 INT CDECL MSVCRT_wcsncpy_s( MSVCRT_wchar_t* wcDest, MSVCRT_size_t numElement, const MSVCRT_wchar_t *wcSrc,
                             MSVCRT_size_t count )
 {
-    MSVCRT_size_t size = 0;
+    WCHAR *p = wcDest;
+    BOOL truncate = (count == MSVCRT__TRUNCATE);
+
+    if(!wcDest && !numElement && !count)
+        return 0;
 
     if (!wcDest || !numElement)
         return MSVCRT_EINVAL;
 
-    wcDest[0] = 0;
-
     if (!wcSrc)
     {
+        *wcDest = 0;
         return count ? MSVCRT_EINVAL : 0;
     }
 
-    size = min(strlenW(wcSrc), count);
-
-    if (size >= numElement)
+    while (numElement && count && *wcSrc)
     {
+        *p++ = *wcSrc++;
+        numElement--;
+        count--;
+    }
+    if (!numElement && truncate)
+    {
+        *(p-1) = 0;
+        return MSVCRT_STRUNCATE;
+    }
+    else if (!numElement)
+    {
+        *wcDest = 0;
         return MSVCRT_ERANGE;
     }
 
-    memcpy( wcDest, wcSrc, size*sizeof(WCHAR) );
-    wcDest[size] = '\0';
-
+    *p = 0;
     return 0;
 }
 
@@ -1271,13 +1753,10 @@ INT CDECL MSVCRT_wcsncat_s(MSVCRT_wchar_t *dst, MSVCRT_size_t elem,
     MSVCRT_wchar_t dststart;
     INT ret = 0;
 
-    if (!MSVCRT_CHECK_PMT(dst != NULL) || !MSVCRT_CHECK_PMT(elem > 0))
-    {
-        *MSVCRT__errno() = MSVCRT_EINVAL;
-        return MSVCRT_EINVAL;
-    }
-    if (!MSVCRT_CHECK_PMT(src != NULL || count == 0))
-        return MSVCRT_EINVAL;
+    if (!MSVCRT_CHECK_PMT(dst != NULL)) return MSVCRT_EINVAL;
+    if (!MSVCRT_CHECK_PMT(elem > 0)) return MSVCRT_EINVAL;
+    if (!MSVCRT_CHECK_PMT(src != NULL || count == 0)) return MSVCRT_EINVAL;
+
     if (count == 0)
         return 0;
 
@@ -1288,7 +1767,7 @@ INT CDECL MSVCRT_wcsncat_s(MSVCRT_wchar_t *dst, MSVCRT_size_t elem,
     }
     if (dststart == elem)
     {
-        MSVCRT_INVALID_PMT("dst[elem] is not NULL terminated\n");
+        MSVCRT_INVALID_PMT("dst[elem] is not NULL terminated\n", MSVCRT_EINVAL);
         return MSVCRT_EINVAL;
     }
 
@@ -1309,7 +1788,7 @@ INT CDECL MSVCRT_wcsncat_s(MSVCRT_wchar_t *dst, MSVCRT_size_t elem,
         dst[dststart+srclen] = '\0';
         return ret;
     }
-    MSVCRT_INVALID_PMT("dst[elem] is too small");
+    MSVCRT_INVALID_PMT("dst[elem] is too small", MSVCRT_ERANGE);
     dst[0] = '\0';
     return MSVCRT_ERANGE;
 }
@@ -1327,11 +1806,9 @@ __int64 CDECL MSVCRT__wcstoi64_l(const MSVCRT_wchar_t *nptr,
 
     TRACE("(%s %p %d %p)\n", debugstr_w(nptr), endptr, base, locale);
 
-    if (!MSVCRT_CHECK_PMT(nptr != NULL) || !MSVCRT_CHECK_PMT(base == 0 || base >= 2) ||
-        !MSVCRT_CHECK_PMT(base <= 36)) {
-        *MSVCRT__errno() = MSVCRT_EINVAL;
-        return 0;
-    }
+    if (!MSVCRT_CHECK_PMT(nptr != NULL)) return 0;
+    if (!MSVCRT_CHECK_PMT(base == 0 || base >= 2)) return 0;
+    if (!MSVCRT_CHECK_PMT(base <= 36)) return 0;
 
     while(isspaceW(*nptr)) nptr++;
 
@@ -1354,7 +1831,7 @@ __int64 CDECL MSVCRT__wcstoi64_l(const MSVCRT_wchar_t *nptr,
     }
 
     while(*nptr) {
-        char cur = tolowerW(*nptr);
+        MSVCRT_wchar_t cur = tolowerW(*nptr);
         int v;
 
         if(isdigitW(cur)) {
@@ -1398,6 +1875,74 @@ __int64 CDECL MSVCRT__wcstoi64(const MSVCRT_wchar_t *nptr,
 }
 
 /*********************************************************************
+ *  _wcstol_l (MSVCRT.@)
+ */
+MSVCRT_long CDECL MSVCRT__wcstol_l(const MSVCRT_wchar_t *s,
+        MSVCRT_wchar_t **end, int base, MSVCRT__locale_t locale)
+{
+    __int64 ret = MSVCRT__wcstoi64_l(s, end, base, locale);
+
+    if(ret > MSVCRT_LONG_MAX) {
+        ret = MSVCRT_LONG_MAX;
+        *MSVCRT__errno() = MSVCRT_ERANGE;
+    }else if(ret < MSVCRT_LONG_MIN) {
+        ret = MSVCRT_LONG_MIN;
+        *MSVCRT__errno() = MSVCRT_ERANGE;
+    }
+    return ret;
+}
+
+/*********************************************************************
+ *  _wtoi_l (MSVCRT.@)
+ */
+int __cdecl MSVCRT__wtoi_l(const MSVCRT_wchar_t *str, MSVCRT__locale_t locale)
+{
+    __int64 ret = MSVCRT__wcstoi64_l(str, NULL, 10, locale);
+
+    if(ret > INT_MAX) {
+        ret = INT_MAX;
+        *MSVCRT__errno() = MSVCRT_ERANGE;
+    } else if(ret < INT_MIN) {
+        ret = INT_MIN;
+        *MSVCRT__errno() = MSVCRT_ERANGE;
+    }
+    return ret;
+}
+
+/*********************************************************************
+ *  _wtoi (MSVCRT.@)
+ */
+int __cdecl MSVCRT__wtoi(const MSVCRT_wchar_t *str)
+{
+    return MSVCRT__wtoi_l(str, NULL);
+}
+
+/*********************************************************************
+ *  _wtol_l (MSVCRT.@)
+ */
+MSVCRT_long __cdecl MSVCRT__wtol_l(const MSVCRT_wchar_t *str, MSVCRT__locale_t locale)
+{
+    __int64 ret = MSVCRT__wcstoi64_l(str, NULL, 10, locale);
+
+    if(ret > MSVCRT_LONG_MAX) {
+        ret = MSVCRT_LONG_MAX;
+        *MSVCRT__errno() = MSVCRT_ERANGE;
+    } else if(ret < MSVCRT_LONG_MIN) {
+        ret = MSVCRT_LONG_MIN;
+        *MSVCRT__errno() = MSVCRT_ERANGE;
+    }
+    return ret;
+}
+
+/*********************************************************************
+ *  _wtol (MSVCRT.@)
+ */
+MSVCRT_long __cdecl MSVCRT__wtol(const MSVCRT_wchar_t *str)
+{
+    return MSVCRT__wtol_l(str, NULL);
+}
+
+/*********************************************************************
  *  _wcstoui64_l (MSVCRT.@)
  *
  * FIXME: locale parameter is ignored
@@ -1410,11 +1955,9 @@ unsigned __int64 CDECL MSVCRT__wcstoui64_l(const MSVCRT_wchar_t *nptr,
 
     TRACE("(%s %p %d %p)\n", debugstr_w(nptr), endptr, base, locale);
 
-    if (!MSVCRT_CHECK_PMT(nptr != NULL) || !MSVCRT_CHECK_PMT(base == 0 || base >= 2) ||
-        !MSVCRT_CHECK_PMT(base <= 36)) {
-        *MSVCRT__errno() = MSVCRT_EINVAL;
-        return 0;
-    }
+    if (!MSVCRT_CHECK_PMT(nptr != NULL)) return 0;
+    if (!MSVCRT_CHECK_PMT(base == 0 || base >= 2)) return 0;
+    if (!MSVCRT_CHECK_PMT(base <= 36)) return 0;
 
     while(isspaceW(*nptr)) nptr++;
 
@@ -1437,10 +1980,10 @@ unsigned __int64 CDECL MSVCRT__wcstoui64_l(const MSVCRT_wchar_t *nptr,
     }
 
     while(*nptr) {
-        char cur = tolowerW(*nptr);
+        MSVCRT_wchar_t cur = tolowerW(*nptr);
         int v;
 
-        if(isdigit(cur)) {
+        if(isdigitW(cur)) {
             if(cur >= '0'+base)
                 break;
             v = *nptr-'0';
@@ -1474,6 +2017,29 @@ unsigned __int64 CDECL MSVCRT__wcstoui64(const MSVCRT_wchar_t *nptr,
     return MSVCRT__wcstoui64_l(nptr, endptr, base, NULL);
 }
 
+/*********************************************************************
+ *  _wcstoul_l (MSVCRT.@)
+ */
+MSVCRT_ulong __cdecl MSVCRT__wcstoul_l(const MSVCRT_wchar_t *s,
+        MSVCRT_wchar_t **end, int base, MSVCRT__locale_t locale)
+{
+    __int64 ret = MSVCRT__wcstoui64_l(s, end, base, locale);
+
+    if(ret > MSVCRT_ULONG_MAX) {
+        ret = MSVCRT_ULONG_MAX;
+        *MSVCRT__errno() = MSVCRT_ERANGE;
+    }
+    return ret;
+}
+
+/*********************************************************************
+   *  wcstoul (MSVCRT.@)
+    */
+MSVCRT_ulong __cdecl MSVCRT_wcstoul(const MSVCRT_wchar_t *s, MSVCRT_wchar_t **end, int base)
+{
+    return MSVCRT__wcstoul_l(s, end, base, NULL);
+}
+
 /******************************************************************
  *  wcsnlen (MSVCRT.@)
  */
@@ -1495,9 +2061,150 @@ int CDECL MSVCRT__towupper_l(MSVCRT_wint_t c, MSVCRT__locale_t locale)
 }
 
 /*********************************************************************
+ *              towupper (MSVCRT.@)
+ */
+int CDECL MSVCRT_towupper(MSVCRT_wint_t c)
+{
+    return MSVCRT__towupper_l(c, NULL);
+}
+
+/*********************************************************************
  *              _towlower_l (MSVCRT.@)
  */
 int CDECL MSVCRT__towlower_l(MSVCRT_wint_t c, MSVCRT__locale_t locale)
 {
     return tolowerW(c);
+}
+
+/*********************************************************************
+ *              towlower (MSVCRT.@)
+ */
+int CDECL MSVCRT_towlower(MSVCRT_wint_t c)
+{
+    return MSVCRT__towlower_l(c, NULL);
+}
+
+/*********************************************************************
+ *              wcschr (MSVCRT.@)
+ */
+MSVCRT_wchar_t* CDECL MSVCRT_wcschr(const MSVCRT_wchar_t *str, MSVCRT_wchar_t ch)
+{
+    return strchrW(str, ch);
+}
+
+/***********************************************************************
+ *              wcslen (MSVCRT.@)
+ */
+int CDECL MSVCRT_wcslen(const MSVCRT_wchar_t *str)
+{
+    return strlenW(str);
+}
+
+/*********************************************************************
+ *              wcsstr (MSVCRT.@)
+ */
+MSVCRT_wchar_t* CDECL MSVCRT_wcsstr(const MSVCRT_wchar_t *str, const MSVCRT_wchar_t *sub)
+{
+    return strstrW(str, sub);
+}
+
+/*********************************************************************
+ *              _wtoi64_l (MSVCRT.@)
+ */
+__int64 CDECL MSVCRT__wtoi64_l(const MSVCRT_wchar_t *str, MSVCRT__locale_t locale)
+{
+    ULONGLONG RunningTotal = 0;
+    BOOL bMinus = FALSE;
+
+    while (isspaceW(*str)) {
+        str++;
+    } /* while */
+
+    if (*str == '+') {
+        str++;
+    } else if (*str == '-') {
+        bMinus = TRUE;
+        str++;
+    } /* if */
+
+    while (*str >= '0' && *str <= '9') {
+        RunningTotal = RunningTotal * 10 + *str - '0';
+        str++;
+    } /* while */
+
+    return bMinus ? -RunningTotal : RunningTotal;
+}
+
+/*********************************************************************
+ *              _wtoi64 (MSVCRT.@)
+ */
+__int64 CDECL MSVCRT__wtoi64(const MSVCRT_wchar_t *str)
+{
+    return MSVCRT__wtoi64_l(str, NULL);
+}
+
+/*********************************************************************
+ *           wcsncmp    (MSVCRT.@)
+ */
+int CDECL MSVCRT_wcsncmp(const MSVCRT_wchar_t *str1, const MSVCRT_wchar_t *str2, int n)
+{
+    return strncmpW(str1, str2, n);
+}
+
+/*********************************************************************
+ *              _wcsxfrm_l (MSVCRT.@)
+ */
+MSVCRT_size_t CDECL MSVCRT__wcsxfrm_l(MSVCRT_wchar_t *dest, const MSVCRT_wchar_t *src,
+        MSVCRT_size_t len, MSVCRT__locale_t locale)
+{
+    MSVCRT_pthreadlocinfo locinfo;
+    int i, ret;
+
+    if(!MSVCRT_CHECK_PMT(src)) return INT_MAX;
+    if(!MSVCRT_CHECK_PMT(dest || !len)) return INT_MAX;
+
+    if(len > INT_MAX) {
+        FIXME("len > INT_MAX not supported\n");
+        len = INT_MAX;
+    }
+
+    if(!locale)
+        locinfo = get_locinfo();
+    else
+        locinfo = locale->locinfo;
+
+    if(!locinfo->lc_handle[MSVCRT_LC_COLLATE]) {
+        MSVCRT_wcsncpy(dest, src, len);
+        return strlenW(src);
+    }
+
+    ret = LCMapStringW(locinfo->lc_handle[MSVCRT_LC_COLLATE],
+            LCMAP_SORTKEY, src, -1, NULL, 0);
+    if(!ret) {
+        if(len) dest[0] = 0;
+        *MSVCRT__errno() = MSVCRT_EILSEQ;
+        return INT_MAX;
+    }
+    if(!len) return ret-1;
+
+    if(ret > len) {
+        dest[0] = 0;
+        *MSVCRT__errno() = MSVCRT_ERANGE;
+        return ret-1;
+    }
+
+    ret = LCMapStringW(locinfo->lc_handle[MSVCRT_LC_COLLATE],
+            LCMAP_SORTKEY, src, -1, dest, len) - 1;
+    for(i=ret; i>=0; i--)
+        dest[i] = ((unsigned char*)dest)[i];
+    return ret;
+}
+
+/*********************************************************************
+ *              wcsxfrm (MSVCRT.@)
+ */
+MSVCRT_size_t CDECL MSVCRT_wcsxfrm(MSVCRT_wchar_t *dest,
+        const MSVCRT_wchar_t *src, MSVCRT_size_t len)
+{
+    return MSVCRT__wcsxfrm_l(dest, src, len, NULL);
 }

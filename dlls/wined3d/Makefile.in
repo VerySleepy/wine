@@ -1,13 +1,13 @@
 MODULE    = wined3d.dll
 IMPORTLIB = wined3d
-IMPORTS   = uuid user32 gdi32 advapi32
+IMPORTS   = uuid opengl32 user32 gdi32 advapi32
 
 C_SRCS = \
 	arb_program_shader.c \
 	ati_fragment_shader.c \
 	buffer.c \
-	clipper.c \
 	context.c \
+	cs.c \
 	device.c \
 	directx.c \
 	drawprim.c \
@@ -17,6 +17,7 @@ C_SRCS = \
 	palette.c \
 	query.c \
 	resource.c \
+	sampler.c \
 	shader.c \
 	shader_sm1.c \
 	shader_sm4.c \
@@ -32,5 +33,3 @@ C_SRCS = \
 	wined3d_main.c
 
 RC_SRCS = version.rc
-
-@MAKE_DLL_RULES@

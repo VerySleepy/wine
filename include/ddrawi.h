@@ -432,7 +432,7 @@ typedef struct _DDHAL_DDMISCELLANEOUS2CALLBACKS {
     LPDDHAL_DESTROYDDLOCAL		DestroyDDLocal;
 } DDHAL_DDMISCELLANEOUS2CALLBACKS,*LPDDHAL_DDMISCELLANEOUS2CALLBACKS;
 
-typedef HRESULT (WINAPI *LPDDGAMMACALIBRATORPROC)(LPDDGAMMARAMP, LPBYTE);
+typedef HRESULT (WINAPI *LPDDGAMMACALIBRATORPROC)(DDGAMMARAMP *, BYTE *);
 
 /*****************************************************************************
  * driver info structure
@@ -505,7 +505,7 @@ typedef struct _DDHAL_SETMODEDATA {
 
 typedef struct _DDHAL_CREATESURFACEDATA {
     LPDDRAWI_DIRECTDRAW_GBL	lpDD;
-    LPDDSURFACEDESC		lpDDSurfaceDesc;
+    DDSURFACEDESC              *lpDDSurfaceDesc;
     LPDDRAWI_DDRAWSURFACE_LCL *	lplpSList;
     DWORD			dwSCnt;
     HRESULT			ddRVal;
@@ -514,7 +514,7 @@ typedef struct _DDHAL_CREATESURFACEDATA {
 
 typedef struct _DDHAL_CANCREATESURFACEDATA {
     LPDDRAWI_DIRECTDRAW_GBL	lpDD;
-    LPDDSURFACEDESC		lpDDSurfaceDesc;
+    DDSURFACEDESC              *lpDDSurfaceDesc;
     DWORD			bIsDifferentPixelFormat;
     HRESULT			ddRVal;
     LPDDHAL_CANCREATESURFACE	CanCreateSurface;
@@ -820,7 +820,7 @@ typedef struct _DDRAWI_DIRECTDRAW_GBL {
     /* DirectX 6.0 */
     ULONG_PTR			lpD3DHALCallbacks3;
     DWORD			dwNumZPixelFormats;
-    LPDDPIXELFORMAT		lpZPixelFormats;
+    DDPIXELFORMAT              *lpZPixelFormats;
     LPDDRAWI_DDMOTIONCOMP_INT	mcList;
     DWORD			hDDVxd;
     DDSCAPSEX			ddsCapsMore;
@@ -906,7 +906,7 @@ typedef struct _DDRAWI_DDRAWSURFACE_GBL_MORE {
     DWORD			cPageUnlocks;
     ULONG_PTR			hKernelSurface;
     DWORD			dwKernelRefCnt;
-    LPDDCOLORCONTROL		lpColorInfo;
+    DDCOLORCONTROL             *lpColorInfo;
     FLATPTR			fpNTAlias;
     DWORD			dwContentsStamp;
     LPVOID			lpvUnswappedDriverReserved;
@@ -936,7 +936,7 @@ typedef struct _DDRAWI_DDRAWSURFACE_MORE {
     DWORD			dwOverlayFlags;
     VOID			*rgjunc;
     LPDDRAWI_DDVIDEOPORT_LCL	lpVideoPort;
-    LPDDOVERLAYFX		lpddOverlayFX;
+    DDOVERLAYFX                *lpddOverlayFX;
     DDSCAPSEX			ddsCapsEx;
     DWORD			dwTextureStage;
     LPVOID			lpDDRAWReserved;
@@ -951,7 +951,7 @@ typedef struct _DDRAWI_DDRAWSURFACE_MORE {
     DWORD			qwDDrawReserved8[2];
     LPVOID			lpDDrawReserved9;
     DWORD			cSurfaces;
-    LPDDSURFACEDESC2		pCreatedDDSurfaceDesc2;
+    DDSURFACEDESC2             *pCreatedDDSurfaceDesc2;
     LPDDRAWI_DDRAWSURFACE_LCL	*slist;
     DWORD			dwFVF;
     LPVOID			lpVB;

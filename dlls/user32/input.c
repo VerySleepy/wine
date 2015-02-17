@@ -180,19 +180,7 @@ UINT WINAPI SendInput( UINT count, LPINPUT inputs, int size )
             /* we need to update the coordinates to what the server expects */
             INPUT input = inputs[i];
             update_mouse_coords( &input );
-            if (!(status = send_hardware_message( 0, &input, SEND_HWMSG_INJECTED )))
-            {
-                if ((input.u.mi.dwFlags & MOUSEEVENTF_MOVE) &&
-                    ((input.u.mi.dwFlags & MOUSEEVENTF_ABSOLUTE) || input.u.mi.dx || input.u.mi.dy))
-                {
-                    /* we have to actually move the cursor */
-                    POINT pt;
-                    GetCursorPos( &pt );
-                    if (!(input.u.mi.dwFlags & MOUSEEVENTF_ABSOLUTE) ||
-                        pt.x != input.u.mi.dx  || pt.y != input.u.mi.dy)
-                        USER_Driver->pSetCursorPos( pt.x, pt.y );
-                }
-            }
+            status = send_hardware_message( 0, &input, SEND_HWMSG_INJECTED );
         }
         else status = send_hardware_message( 0, &inputs[i], SEND_HWMSG_INJECTED );
 
@@ -278,7 +266,7 @@ BOOL WINAPI GetCursorInfo( PCURSORINFO pci )
 {
     BOOL ret;
 
-    if (!pci) return 0;
+    if (!pci) return FALSE;
 
     SERVER_START_REQ( get_thread_input )
     {
@@ -365,6 +353,12 @@ HWND WINAPI GetCapture(void)
 }
 
 
+static void check_for_events( UINT flags )
+{
+    if (USER_Driver->pMsgWaitForMultipleObjectsEx( 0, NULL, 0, flags, 0 ) == WAIT_TIMEOUT)
+        flush_window_surfaces( TRUE );
+}
+
 /**********************************************************************
  *		GetAsyncKeyState (USER32.@)
  *
@@ -374,21 +368,33 @@ HWND WINAPI GetCapture(void)
  */
 SHORT WINAPI DECLSPEC_HOTPATCH GetAsyncKeyState( INT key )
 {
+    struct user_thread_info *thread_info = get_user_thread_info();
     SHORT ret;
 
     if (key < 0 || key >= 256) return 0;
 
+    check_for_events( QS_INPUT );
+
     if ((ret = USER_Driver->pGetAsyncKeyState( key )) == -1)
     {
+        if (thread_info->key_state &&
+            !(thread_info->key_state[key] & 0xc0) &&
+            GetTickCount() - thread_info->key_state_time < 50)
+            return 0;
+
+        if (!thread_info->key_state) thread_info->key_state = HeapAlloc( GetProcessHeap(), 0, 256 );
+
         ret = 0;
         SERVER_START_REQ( get_key_state )
         {
             req->tid = 0;
             req->key = key;
+            if (thread_info->key_state) wine_server_set_reply( req, thread_info->key_state, 256 );
             if (!wine_server_call( req ))
             {
                 if (reply->state & 0x40) ret |= 0x0001;
                 if (reply->state & 0x80) ret |= 0x8000;
+                thread_info->key_state_time = GetTickCount();
             }
         }
         SERVER_END_REQ;
@@ -402,7 +408,7 @@ SHORT WINAPI DECLSPEC_HOTPATCH GetAsyncKeyState( INT key )
  */
 DWORD WINAPI GetQueueStatus( UINT flags )
 {
-    DWORD ret = 0;
+    DWORD ret;
 
     if (flags & ~(QS_ALLINPUT | QS_ALLPOSTMESSAGE | QS_SMRESULT))
     {
@@ -410,8 +416,7 @@ DWORD WINAPI GetQueueStatus( UINT flags )
         return 0;
     }
 
-    /* check for pending X events */
-    USER_Driver->pMsgWaitForMultipleObjectsEx( 0, NULL, 0, flags, 0 );
+    check_for_events( flags );
 
     SERVER_START_REQ( get_queue_status )
     {
@@ -429,10 +434,9 @@ DWORD WINAPI GetQueueStatus( UINT flags )
  */
 BOOL WINAPI GetInputState(void)
 {
-    DWORD ret = 0;
+    DWORD ret;
 
-    /* check for pending X events */
-    USER_Driver->pMsgWaitForMultipleObjectsEx( 0, NULL, 0, QS_INPUT, 0 );
+    check_for_events( QS_INPUT );
 
     SERVER_START_REQ( get_queue_status )
     {
@@ -474,37 +478,117 @@ BOOL WINAPI GetLastInputInfo(PLASTINPUTINFO plii)
 /******************************************************************
 *		GetRawInputDeviceList (USER32.@)
 */
-UINT WINAPI GetRawInputDeviceList(PRAWINPUTDEVICELIST pRawInputDeviceList, PUINT puiNumDevices, UINT cbSize)
+UINT WINAPI GetRawInputDeviceList(RAWINPUTDEVICELIST *devices, UINT *device_count, UINT size)
 {
-    FIXME("(pRawInputDeviceList=%p, puiNumDevices=%p, cbSize=%d) stub!\n", pRawInputDeviceList, puiNumDevices, cbSize);
+    TRACE("devices %p, device_count %p, size %u.\n", devices, device_count, size);
 
-    if(pRawInputDeviceList)
-        memset(pRawInputDeviceList, 0, sizeof *pRawInputDeviceList);
-    *puiNumDevices = 0;
-    return 0;
+    if (size != sizeof(*devices) || !device_count) return ~0U;
+
+    if (!devices)
+    {
+        *device_count = 2;
+        return 0;
+    }
+
+    if (*device_count < 2)
+    {
+        *device_count = 2;
+        return ~0U;
+    }
+
+    devices[0].hDevice = WINE_MOUSE_HANDLE;
+    devices[0].dwType = RIM_TYPEMOUSE;
+    devices[1].hDevice = WINE_KEYBOARD_HANDLE;
+    devices[1].dwType = RIM_TYPEKEYBOARD;
+
+    return 2;
 }
 
 
 /******************************************************************
 *		RegisterRawInputDevices (USER32.@)
 */
-BOOL WINAPI DECLSPEC_HOTPATCH RegisterRawInputDevices(PRAWINPUTDEVICE pRawInputDevices, UINT uiNumDevices, UINT cbSize)
+BOOL WINAPI DECLSPEC_HOTPATCH RegisterRawInputDevices(RAWINPUTDEVICE *devices, UINT device_count, UINT size)
 {
-    FIXME("(pRawInputDevices=%p, uiNumDevices=%d, cbSize=%d) stub!\n", pRawInputDevices, uiNumDevices, cbSize);
+    struct rawinput_device *d;
+    BOOL ret;
+    UINT i;
 
-    return TRUE;
+    TRACE("devices %p, device_count %u, size %u.\n", devices, device_count, size);
+
+    if (size != sizeof(*devices))
+    {
+        WARN("Invalid structure size %u.\n", size);
+        return FALSE;
+    }
+
+    if (!(d = HeapAlloc( GetProcessHeap(), 0, device_count * sizeof(*d) ))) return FALSE;
+
+    for (i = 0; i < device_count; ++i)
+    {
+        TRACE("device %u: page %#x, usage %#x, flags %#x, target %p.\n",
+                i, devices[i].usUsagePage, devices[i].usUsage,
+                devices[i].dwFlags, devices[i].hwndTarget);
+        if (devices[i].dwFlags & ~RIDEV_REMOVE)
+            FIXME("Unhandled flags %#x for device %u.\n", devices[i].dwFlags, i);
+
+        d[i].usage_page = devices[i].usUsagePage;
+        d[i].usage = devices[i].usUsage;
+        d[i].flags = devices[i].dwFlags;
+        d[i].target = wine_server_user_handle( devices[i].hwndTarget );
+    }
+
+    SERVER_START_REQ( update_rawinput_devices )
+    {
+        wine_server_add_data( req, d, device_count * sizeof(*d) );
+        ret = !wine_server_call( req );
+    }
+    SERVER_END_REQ;
+
+    HeapFree( GetProcessHeap(), 0, d );
+
+    return ret;
 }
 
 
 /******************************************************************
 *		GetRawInputData (USER32.@)
 */
-UINT WINAPI GetRawInputData(HRAWINPUT hRawInput, UINT uiCommand, LPVOID pData, PUINT pcbSize, UINT cbSizeHeader)
+UINT WINAPI GetRawInputData(HRAWINPUT rawinput, UINT command, void *data, UINT *data_size, UINT header_size)
 {
-    FIXME("(hRawInput=%p, uiCommand=%d, pData=%p, pcbSize=%p, cbSizeHeader=%d) stub!\n",
-            hRawInput, uiCommand, pData, pcbSize, cbSizeHeader);
+    RAWINPUT *ri = (RAWINPUT *)rawinput;
+    UINT s;
 
-    return 0;
+    TRACE("rawinput %p, command %#x, data %p, data_size %p, header_size %u.\n",
+            rawinput, command, data, data_size, header_size);
+
+    if (header_size != sizeof(RAWINPUTHEADER))
+    {
+        WARN("Invalid structure size %u.\n", header_size);
+        return ~0U;
+    }
+
+    switch (command)
+    {
+    case RID_INPUT:
+        s = ri->header.dwSize;
+        break;
+    case RID_HEADER:
+        s = sizeof(RAWINPUTHEADER);
+        break;
+    default:
+        return ~0U;
+    }
+
+    if (!data)
+    {
+        *data_size = s;
+        return 0;
+    }
+
+    if (*data_size < s) return ~0U;
+    memcpy(data, ri, s);
+    return s;
 }
 
 
@@ -522,29 +606,97 @@ UINT WINAPI DECLSPEC_HOTPATCH GetRawInputBuffer(PRAWINPUT pData, PUINT pcbSize, 
 /******************************************************************
 *		GetRawInputDeviceInfoA (USER32.@)
 */
-UINT WINAPI GetRawInputDeviceInfoA(HANDLE hDevice, UINT uiCommand, LPVOID pData, PUINT pcbSize)
+UINT WINAPI GetRawInputDeviceInfoA(HANDLE device, UINT command, void *data, UINT *data_size)
 {
-    FIXME("(hDevice=%p, uiCommand=%d, pData=%p, pcbSize=%p) stub!\n", hDevice, uiCommand, pData, pcbSize);
+    UINT ret;
 
-    return 0;
+    TRACE("device %p, command %u, data %p, data_size %p.\n", device, command, data, data_size);
+
+    ret = GetRawInputDeviceInfoW(device, command, data, data_size);
+    if (command == RIDI_DEVICENAME && ret && ret != ~0U)
+        ret = WideCharToMultiByte(CP_ACP, 0, data, -1, data, *data_size, NULL, NULL);
+
+    return ret;
 }
 
 
 /******************************************************************
 *		GetRawInputDeviceInfoW (USER32.@)
 */
-UINT WINAPI GetRawInputDeviceInfoW(HANDLE hDevice, UINT uiCommand, LPVOID pData, PUINT pcbSize)
+UINT WINAPI GetRawInputDeviceInfoW(HANDLE device, UINT command, void *data, UINT *data_size)
 {
-    FIXME("(hDevice=%p, uiCommand=%d, pData=%p, pcbSize=%p) stub!\n", hDevice, uiCommand, pData, pcbSize);
+    /* FIXME: Most of this is made up. */
+    static const WCHAR keyboard_name[] = {'\\','\\','?','\\','W','I','N','E','_','K','E','Y','B','O','A','R','D',0};
+    static const WCHAR mouse_name[] = {'\\','\\','?','\\','W','I','N','E','_','M','O','U','S','E',0};
+    static const RID_DEVICE_INFO_KEYBOARD keyboard_info = {0, 0, 1, 12, 3, 101};
+    static const RID_DEVICE_INFO_MOUSE mouse_info = {1, 5, 0, FALSE};
+    const WCHAR *name = NULL;
+    RID_DEVICE_INFO *info;
+    UINT s;
 
-    return 0;
+    TRACE("device %p, command %u, data %p, data_size %p.\n", device, command, data, data_size);
+
+    if (!data_size || (device != WINE_MOUSE_HANDLE && device != WINE_KEYBOARD_HANDLE)) return ~0U;
+
+    switch (command)
+    {
+    case RIDI_DEVICENAME:
+        if (device == WINE_MOUSE_HANDLE)
+        {
+            s = sizeof(mouse_name);
+            name = mouse_name;
+        }
+        else
+        {
+            s = sizeof(keyboard_name);
+            name = keyboard_name;
+        }
+        break;
+    case RIDI_DEVICEINFO:
+        s = sizeof(*info);
+        break;
+    default:
+        return ~0U;
+    }
+
+    if (!data)
+    {
+        *data_size = s;
+        return 0;
+    }
+
+    if (*data_size < s)
+    {
+        *data_size = s;
+        return ~0U;
+    }
+
+    if (command == RIDI_DEVICENAME)
+    {
+        memcpy(data, name, s);
+        return s;
+    }
+
+    info = data;
+    info->cbSize = sizeof(*info);
+    if (device == WINE_MOUSE_HANDLE)
+    {
+        info->dwType = RIM_TYPEMOUSE;
+        info->u.mouse = mouse_info;
+    }
+    else
+    {
+        info->dwType = RIM_TYPEKEYBOARD;
+        info->u.keyboard = keyboard_info;
+    }
+    return s;
 }
 
 
 /******************************************************************
 *		GetRegisteredRawInputDevices (USER32.@)
 */
-UINT WINAPI GetRegisteredRawInputDevices(PRAWINPUTDEVICE pRawInputDevices, PUINT puiNumDevices, UINT cbSize)
+UINT WINAPI DECLSPEC_HOTPATCH GetRegisteredRawInputDevices(PRAWINPUTDEVICE pRawInputDevices, PUINT puiNumDevices, UINT cbSize)
 {
     FIXME("(pRawInputDevices=%p, puiNumDevices=%p, cbSize=%d) stub!\n", pRawInputDevices, puiNumDevices, cbSize);
 
@@ -814,6 +966,11 @@ BOOL WINAPI GetKeyboardLayoutNameA(LPSTR pszKLID)
  */
 BOOL WINAPI GetKeyboardLayoutNameW(LPWSTR pwszKLID)
 {
+    if (!pwszKLID)
+    {
+        SetLastError(ERROR_NOACCESS);
+        return FALSE;
+    }
     return USER_Driver->pGetKeyboardLayoutName(pwszKLID);
 }
 
@@ -825,7 +982,7 @@ INT WINAPI GetKeyNameTextA(LONG lParam, LPSTR lpBuffer, INT nSize)
     WCHAR buf[256];
     INT ret;
 
-    if (!GetKeyNameTextW(lParam, buf, 256))
+    if (!nSize || !GetKeyNameTextW(lParam, buf, 256))
     {
         lpBuffer[0] = 0;
         return 0;
@@ -836,6 +993,8 @@ INT WINAPI GetKeyNameTextA(LONG lParam, LPSTR lpBuffer, INT nSize)
         ret = nSize - 1;
         lpBuffer[ret] = 0;
     }
+    else ret--;
+
     return ret;
 }
 
@@ -844,6 +1003,7 @@ INT WINAPI GetKeyNameTextA(LONG lParam, LPSTR lpBuffer, INT nSize)
  */
 INT WINAPI GetKeyNameTextW(LONG lParam, LPWSTR lpBuffer, INT nSize)
 {
+    if (!lpBuffer || !nSize) return 0;
     return USER_Driver->pGetKeyNameText( lParam, lpBuffer, nSize );
 }
 
@@ -919,62 +1079,9 @@ BOOL WINAPI BlockInput(BOOL fBlockIt)
  */
 UINT WINAPI GetKeyboardLayoutList(INT nBuff, HKL *layouts)
 {
-    HKEY hKeyKeyboard;
-    DWORD rc;
-    INT count = 0;
-    ULONG_PTR baselayout;
-    LANGID langid;
-    static const WCHAR szKeyboardReg[] = {'S','y','s','t','e','m','\\','C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t','\\','C','o','n','t','r','o','l','\\','K','e','y','b','o','a','r','d',' ','L','a','y','o','u','t','s',0};
+    TRACE_(keyboard)( "(%d, %p)\n", nBuff, layouts );
 
-    TRACE_(keyboard)("(%d,%p)\n",nBuff,layouts);
-
-    baselayout = GetUserDefaultLCID();
-    langid = PRIMARYLANGID(LANGIDFROMLCID(baselayout));
-    if (langid == LANG_CHINESE || langid == LANG_JAPANESE || langid == LANG_KOREAN)
-        baselayout |= 0xe001 << 16; /* IME */
-    else
-        baselayout |= baselayout << 16;
-
-    /* Enumerate the Registry */
-    rc = RegOpenKeyW(HKEY_LOCAL_MACHINE,szKeyboardReg,&hKeyKeyboard);
-    if (rc == ERROR_SUCCESS)
-    {
-        do {
-            WCHAR szKeyName[9];
-            HKL layout;
-            rc = RegEnumKeyW(hKeyKeyboard, count, szKeyName, 9);
-            if (rc == ERROR_SUCCESS)
-            {
-                layout = (HKL)strtoulW(szKeyName,NULL,16);
-                if (baselayout != 0 && layout == (HKL)baselayout)
-                    baselayout = 0; /* found in the registry do not add again */
-                if (nBuff && layouts)
-                {
-                    if (count >= nBuff ) break;
-                    layouts[count] = layout;
-                }
-                count ++;
-            }
-        } while (rc == ERROR_SUCCESS);
-        RegCloseKey(hKeyKeyboard);
-    }
-
-    /* make sure our base layout is on the list */
-    if (baselayout != 0)
-    {
-        if (nBuff && layouts)
-        {
-            if (count < nBuff)
-            {
-                layouts[count] = (HKL)baselayout;
-                count++;
-            }
-        }
-        else
-            count++;
-    }
-
-    return count;
+    return USER_Driver->pGetKeyboardLayoutList( nBuff, layouts );
 }
 
 

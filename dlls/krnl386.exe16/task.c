@@ -200,7 +200,7 @@ static SEGPTR TASK_AllocThunk(void)
         sel = pThunk->next;
         if (!sel)  /* Allocate a new segment */
         {
-            sel = GLOBAL_Alloc( GMEM_FIXED, sizeof(THUNKS) + (MIN_THUNKS-1)*8,
+            sel = GLOBAL_Alloc( GMEM_FIXED, FIELD_OFFSET( THUNKS, thunks[MIN_THUNKS] ),
                                 pTask->hPDB, WINE_LDT_FLAGS_CODE );
             if (!sel) return 0;
             TASK_CreateThunks( sel, 0, MIN_THUNKS );
@@ -226,7 +226,7 @@ static BOOL TASK_FreeThunk( SEGPTR thunk )
     THUNKS *pThunk;
     WORD sel, base;
 
-    if (!(pTask = TASK_GetCurrent())) return 0;
+    if (!(pTask = TASK_GetCurrent())) return FALSE;
     sel = pTask->hCSAlias;
     pThunk = (THUNKS *)pTask->thunks;
     base = (char *)pThunk - (char *)pTask;

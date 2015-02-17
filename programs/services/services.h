@@ -39,13 +39,16 @@ struct service_entry
     LPWSTR name;
     SERVICE_STATUS_PROCESS status;
     QUERY_SERVICE_CONFIGW config;
+    DWORD preshutdown_timeout;
     LPWSTR description;
     LPWSTR dependOnServices;
     LPWSTR dependOnGroups;
+    HANDLE process;
     HANDLE control_mutex;
     HANDLE control_pipe;
     HANDLE overlapped_event;
     HANDLE status_changed_event;
+    BOOL marked_for_delete;
 };
 
 extern struct scmdatabase *active_database;
@@ -55,7 +58,6 @@ extern struct scmdatabase *active_database;
 struct service_entry *scmdatabase_find_service(struct scmdatabase *db, LPCWSTR name);
 struct service_entry *scmdatabase_find_service_by_displayname(struct scmdatabase *db, LPCWSTR name);
 DWORD scmdatabase_add_service(struct scmdatabase *db, struct service_entry *entry);
-DWORD scmdatabase_remove_service(struct scmdatabase *db, struct service_entry *entry);
 
 DWORD scmdatabase_lock_startup(struct scmdatabase *db);
 void scmdatabase_unlock_startup(struct scmdatabase *db);
@@ -76,6 +78,7 @@ void service_lock_shared(struct service_entry *service);
 void service_lock_exclusive(struct service_entry *service);
 void service_unlock(struct service_entry *service);
 DWORD service_start(struct service_entry *service, DWORD service_argc, LPCWSTR *service_argv);
+void service_terminate(struct service_entry *service);
 BOOL service_send_command( struct service_entry *service, HANDLE pipe,
                            const void *data, DWORD size, DWORD *result );
 
@@ -85,7 +88,7 @@ extern DWORD service_pipe_timeout;
 extern DWORD service_kill_timeout;
 
 DWORD RPC_Init(void);
-DWORD RPC_MainLoop(void);
+DWORD events_loop(void);
 
 /* from utils.c */
 LPWSTR strdupW(LPCWSTR str);
@@ -103,7 +106,13 @@ static inline LPCWSTR get_display_name(struct service_entry *service)
 
 static inline BOOL is_marked_for_delete(struct service_entry *service)
 {
-    return service->entry.next == NULL;
+    return service->marked_for_delete;
+}
+
+static inline DWORD mark_for_delete(struct service_entry *service)
+{
+    service->marked_for_delete = TRUE;
+    return ERROR_SUCCESS;
 }
 
 #endif /*WINE_PROGRAMS_UTILS_H_*/

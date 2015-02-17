@@ -93,7 +93,7 @@ typedef struct {
  */
 BOOL DOSVM_IsDos32(void)
 {
-  return (dpmi_flag & 1) ? TRUE : FALSE;
+  return (dpmi_flag & 1) != 0;
 }
 
 
@@ -439,7 +439,7 @@ int DPMI_CallRMProc( CONTEXT *context, LPWORD stack, int args, int iret )
     LPWORD stack16;
     LPVOID addr = NULL; /* avoid gcc warning */
     RMCB *CurrRMCB;
-    int alloc = 0, already = 0;
+    BOOL alloc = FALSE, already = FALSE;
     BYTE *code;
 
     TRACE("EAX=%08x EBX=%08x ECX=%08x EDX=%08x\n",
@@ -490,7 +490,7 @@ callrmproc_again:
     }
     if (!already) {
         if (!context->SegSs) {
-            alloc = 1; /* allocate default stack */
+            alloc = TRUE; /* allocate default stack */
             stack16 = addr = DOSMEM_AllocBlock( 64, (UINT16 *)&(context->SegSs) );
             context->Esp = 64-2;
             stack16 += 32-1;
@@ -514,7 +514,7 @@ callrmproc_again:
         *(--stack16) = 0;
         /* adjust stack */
         context->Esp -= 2*sizeof(WORD);
-        already = 1;
+        already = TRUE;
     }
 
     if (CurrRMCB) {
@@ -702,7 +702,7 @@ FARPROC16 DPMI_AllocInternalRMCB( RMCBPROC proc )
 }
 
 
-static int DPMI_FreeRMCB( DWORD address )
+static BOOL DPMI_FreeRMCB( DWORD address )
 {
     RMCB *CurrRMCB = FirstRMCB;
     RMCB *PrevRMCB = NULL;
@@ -720,9 +720,9 @@ static int DPMI_FreeRMCB( DWORD address )
 	FirstRMCB = CurrRMCB->next;
 	DOSMEM_FreeBlock(PTR_REAL_TO_LIN(SELECTOROF(CurrRMCB->address),OFFSETOF(CurrRMCB->address)));
 	HeapFree(GetProcessHeap(), 0, CurrRMCB);
-	return 0;
+        return TRUE;
     }
-    return 1;
+    return FALSE;
 }
 
 
@@ -823,7 +823,7 @@ static void DOSVM_FreeRMCB( CONTEXT *context )
     FIXME("callback address: %04x:%04x\n",
           CX_reg(context), DX_reg(context));
 
-    if (DPMI_FreeRMCB(MAKELONG(DX_reg(context), CX_reg(context)))) {
+    if (!DPMI_FreeRMCB(MAKELONG(DX_reg(context), CX_reg(context)))) {
 	SET_AX( context, 0x8024 ); /* invalid callback address */
 	SET_CFLAG(context);
     }
@@ -1312,6 +1312,7 @@ void WINAPI DOSVM_Int31Handler( CONTEXT *context )
         TRACE("get free memory information\n");
         {
             MEMORYSTATUS status;
+            SYSTEM_BASIC_INFORMATION sbi;
 
             /* the layout is just the same as MEMMANINFO, but without
              * the dwSize entry.
@@ -1331,7 +1332,9 @@ void WINAPI DOSVM_Int31Handler( CONTEXT *context )
             } *info = CTX_SEG_OFF_TO_LIN( context, context->SegEs, context->Edi );
 
             GlobalMemoryStatus( &status );
-            info->wPageSize            = getpagesize();
+            NtQuerySystemInformation( SystemBasicInformation, &sbi, sizeof(sbi), NULL );
+
+            info->wPageSize            = sbi.PageSize;
             info->dwLargestFreeBlock   = status.dwAvailVirtual;
             info->dwMaxPagesAvailable  = info->dwLargestFreeBlock / info->wPageSize;
             info->dwMaxPagesLockable   = info->dwMaxPagesAvailable;
@@ -1418,11 +1421,14 @@ void WINAPI DOSVM_Int31Handler( CONTEXT *context )
         break;
 
     case 0x0604:  /* Get page size */
+    {
+        SYSTEM_BASIC_INFORMATION info;
         TRACE("get pagesize\n");
-        SET_BX( context, HIWORD(getpagesize()) );
-        SET_CX( context, LOWORD(getpagesize()) );
+        NtQuerySystemInformation( SystemBasicInformation, &info, sizeof(info), NULL );
+        SET_BX( context, HIWORD(info.PageSize) );
+        SET_CX( context, LOWORD(info.PageSize) );
         break;
-
+    }
     case 0x0700: /* Mark pages as paging candidates */
         TRACE( "mark pages as paging candidates - ignored (no paging)\n" );
         break;

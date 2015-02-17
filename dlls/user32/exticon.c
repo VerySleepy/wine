@@ -36,6 +36,7 @@
 #define NONAMELESSSTRUCT
 #include "windef.h"
 #include "winbase.h"
+#include "wingdi.h"
 #include "winuser.h"
 #include "winnls.h"
 #include "user_private.h"
@@ -119,9 +120,9 @@ static const IMAGE_RESOURCE_DIRECTORY *find_entry_by_id( const IMAGE_RESOURCE_DI
     while (min <= max)
     {
         pos = (min + max) / 2;
-        if (entry[pos].u1.s2.Id == id)
-            return (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + entry[pos].u2.s3.OffsetToDirectory);
-        if (entry[pos].u1.s2.Id > id) max = pos - 1;
+        if (entry[pos].u.Id == id)
+            return (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + entry[pos].u2.s2.OffsetToDirectory);
+        if (entry[pos].u.Id > id) max = pos - 1;
         else min = pos + 1;
     }
     return NULL;
@@ -138,7 +139,7 @@ static const IMAGE_RESOURCE_DIRECTORY *find_entry_default( const IMAGE_RESOURCE_
 {
     const IMAGE_RESOURCE_DIRECTORY_ENTRY *entry;
     entry = (const IMAGE_RESOURCE_DIRECTORY_ENTRY *)(dir + 1);
-    return (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + entry->u2.s3.OffsetToDirectory);
+    return (const IMAGE_RESOURCE_DIRECTORY *)((const char *)root + entry->u2.s2.OffsetToDirectory);
 }
 
 /*************************************************************************
@@ -215,9 +216,6 @@ static BYTE * ICO_LoadIcon( LPBYTE peimage, LPicoICONDIRENTRY lpiIDE, ULONG *uSi
  *
  * Reads .ico file and build phony ICONDIR struct
  */
-#define HEADER_SIZE		(sizeof(CURSORICONDIR) - sizeof (CURSORICONDIRENTRY))
-#define HEADER_SIZE_FILE	(sizeof(icoICONDIR) - sizeof (icoICONDIRENTRY))
-
 static BYTE * ICO_GetIconDirectory( LPBYTE peimage, LPicoICONDIR* lplpiID, ULONG *uSize )
 {
 	CURSORICONDIR	* lpcid;	/* icon resource in resource-dir format */
@@ -232,7 +230,7 @@ static BYTE * ICO_GetIconDirectory( LPBYTE peimage, LPicoICONDIR* lplpiID, ULONG
 	  return 0;
 
 	/* allocate the phony ICONDIR structure */
-	*uSize = lpcid->idCount * sizeof(CURSORICONDIRENTRY) + HEADER_SIZE;
+        *uSize = FIELD_OFFSET(CURSORICONDIR, idEntries[lpcid->idCount]);
 	if( (lpID = HeapAlloc(GetProcessHeap(),0, *uSize) ))
 	{
 	  /* copy the header */
@@ -422,47 +420,19 @@ static UINT ICO_ExtractIconExW(
 /* exe/dll */
 	else if( sig == IMAGE_NT_SIGNATURE )
 	{
-	  LPBYTE		idata,igdata;
-	  PIMAGE_DOS_HEADER	dheader;
-	  PIMAGE_NT_HEADERS	pe_header;
-	  PIMAGE_SECTION_HEADER	pe_sections;
-	  const IMAGE_RESOURCE_DIRECTORY *rootresdir,*iconresdir,*icongroupresdir;
-	  const IMAGE_RESOURCE_DATA_ENTRY *idataent,*igdataent;
-	  const IMAGE_RESOURCE_DIRECTORY_ENTRY *xresent;
-	  UINT	i, j;
+        BYTE *idata, *igdata;
+        const IMAGE_RESOURCE_DIRECTORY *rootresdir, *iconresdir, *icongroupresdir;
+        const IMAGE_RESOURCE_DATA_ENTRY *idataent, *igdataent;
+        const IMAGE_RESOURCE_DIRECTORY_ENTRY *xresent;
+        ULONG size;
+        UINT i;
 
-	  dheader = (PIMAGE_DOS_HEADER)peimage;
-	  pe_header = (PIMAGE_NT_HEADERS)(peimage+dheader->e_lfanew);	  /* it is a pe header, USER32_GetResourceTable checked that */
-	  pe_sections = (PIMAGE_SECTION_HEADER)(((char*)pe_header) + sizeof(DWORD) + sizeof(IMAGE_FILE_HEADER)
-	                                        + pe_header->FileHeader.SizeOfOptionalHeader);
-	  rootresdir = NULL;
-
-	  /* search for the root resource directory */
-	  for (i=0;i<pe_header->FileHeader.NumberOfSections;i++)
-	  {
-	    if (pe_sections[i].Characteristics & IMAGE_SCN_CNT_UNINITIALIZED_DATA)
-	      continue;
-	    if (fsizel < pe_sections[i].PointerToRawData+pe_sections[i].SizeOfRawData) {
-              FIXME("File %s too short (section is at %d bytes, real size is %d)\n",
-		      debugstr_w(lpszExeFileName),
-		      pe_sections[i].PointerToRawData+pe_sections[i].SizeOfRawData,
-		      fsizel
-	      );
-	      goto end;
-	    }
-	    /* FIXME: doesn't work when the resources are not in a separate section */
-	    if (pe_sections[i].VirtualAddress == pe_header->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_RESOURCE].VirtualAddress)
-	    {
-	      rootresdir = (PIMAGE_RESOURCE_DIRECTORY)(peimage+pe_sections[i].PointerToRawData);
-	      break;
-	    }
-	  }
-
-	  if (!rootresdir)
-	  {
-	    WARN("haven't found section for resource directory.\n");
-	    goto end;		/* failure */
-	  }
+        rootresdir = RtlImageDirectoryEntryToData((HMODULE)peimage, FALSE, IMAGE_DIRECTORY_ENTRY_RESOURCE, &size);
+        if (!rootresdir)
+        {
+            WARN("haven't found section for resource directory.\n");
+            goto end;
+        }
 
 	  /* search for the group icon directory */
 	  if (!(icongroupresdir = find_entry_by_id(rootresdir, LOWORD(RT_GROUP_ICON), rootresdir)))
@@ -488,7 +458,7 @@ static UINT ICO_ExtractIconExW(
 
 	    while(n<iconDirCount && xprdeTmp)
 	    {
-              if(xprdeTmp->u1.s2.Id ==  iId)
+              if(xprdeTmp->u.Id ==  iId)
               {
                   nIconIndex = n;
                   break;
@@ -524,31 +494,15 @@ static UINT ICO_ExtractIconExW(
 	    const IMAGE_RESOURCE_DIRECTORY *resdir;
 
 	    /* go down this resource entry, name */
-            resdir = (const IMAGE_RESOURCE_DIRECTORY *)((const char *)rootresdir + xresent->u2.s3.OffsetToDirectory);
+            resdir = (const IMAGE_RESOURCE_DIRECTORY *)((const char *)rootresdir + xresent->u2.s2.OffsetToDirectory);
 
 	    /* default language (0) */
 	    resdir = find_entry_default(resdir,rootresdir);
 	    igdataent = (const IMAGE_RESOURCE_DATA_ENTRY*)resdir;
 
 	    /* lookup address in mapped image for virtual address */
-	    igdata = NULL;
-
-	    for (j=0;j<pe_header->FileHeader.NumberOfSections;j++)
-	    {
-	      if (igdataent->OffsetToData < pe_sections[j].VirtualAddress)
-	        continue;
-	      if (igdataent->OffsetToData+igdataent->Size > pe_sections[j].VirtualAddress+pe_sections[j].SizeOfRawData)
-	        continue;
-
-	      if (igdataent->OffsetToData-pe_sections[j].VirtualAddress+pe_sections[j].PointerToRawData+igdataent->Size > fsizel) {
-                FIXME("overflow in PE lookup (%s has len %d, have offset %d), short file?\n", debugstr_w(lpszExeFileName), fsizel,
-	        	   igdataent->OffsetToData - pe_sections[j].VirtualAddress + pe_sections[j].PointerToRawData + igdataent->Size);
-	        goto end; /* failure */
-	      }
-	      igdata = peimage+(igdataent->OffsetToData-pe_sections[j].VirtualAddress+pe_sections[j].PointerToRawData);
-	    }
-
-	    if (!igdata)
+        igdata = RtlImageRvaToVa(RtlImageNtHeader((HMODULE)peimage), (HMODULE)peimage, igdataent->OffsetToData, NULL);
+        if (!igdata)
 	    {
 	      FIXME("no matching real address for icongroup!\n");
 	      goto end;	/* failure */
@@ -575,18 +529,9 @@ static UINT ICO_ExtractIconExW(
             }
 	    xresdir = find_entry_default(xresdir, rootresdir);
 	    idataent = (const IMAGE_RESOURCE_DATA_ENTRY*)xresdir;
-	    idata = NULL;
 
-	    /* map virtual to address in image */
-	    for (j=0;j<pe_header->FileHeader.NumberOfSections;j++)
-	    {
-	      if (idataent->OffsetToData < pe_sections[j].VirtualAddress)
-	        continue;
-	      if (idataent->OffsetToData+idataent->Size > pe_sections[j].VirtualAddress+pe_sections[j].SizeOfRawData)
-	        continue;
-	      idata = peimage+(idataent->OffsetToData-pe_sections[j].VirtualAddress+pe_sections[j].PointerToRawData);
-	    }
-	    if (!idata)
+        idata = RtlImageRvaToVa(RtlImageNtHeader((HMODULE)peimage), (HMODULE)peimage, idataent->OffsetToData, NULL);
+        if (!idata)
 	    {
 	      WARN("no matching real address found for icondata!\n");
 	      RetPtr[i]=0;

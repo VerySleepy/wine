@@ -140,16 +140,23 @@ static HRESULT WINAPI IClassFactory_fnCreateInstance(LPCLASSFACTORY iface,
   TRACE("(%p,%p,%s,%p)\n", iface, pOuter, debugstr_guid(riid),
 	ppobj);
 
-  if (ppobj == NULL || pOuter != NULL)
-    return E_FAIL;
+  if (!ppobj)
+    return E_INVALIDARG;
   *ppobj = NULL;
 
+  if (pOuter && !IsEqualGUID(&IID_IUnknown, riid))
+    return E_INVALIDARG;
+
   if (IsEqualGUID(&CLSID_AVIFile, &This->clsid))
-    return AVIFILE_CreateAVIFile(riid,ppobj);
+    return AVIFILE_CreateAVIFile(pOuter, riid, ppobj);
+  if (IsEqualGUID(&CLSID_WAVFile, &This->clsid))
+    return AVIFILE_CreateWAVFile(pOuter, riid, ppobj);
+
+  if (pOuter)
+    return CLASS_E_NOAGGREGATION;
+
   if (IsEqualGUID(&CLSID_ICMStream, &This->clsid))
     return AVIFILE_CreateICMStream(riid,ppobj);
-  if (IsEqualGUID(&CLSID_WAVFile, &This->clsid))
-    return AVIFILE_CreateWAVFile(riid,ppobj);
   if (IsEqualGUID(&CLSID_ACMStream, &This->clsid))
     return AVIFILE_CreateACMStream(riid,ppobj);
 
@@ -215,8 +222,6 @@ BOOL WINAPI DllMain(HINSTANCE hInstDll, DWORD fdwReason, LPVOID lpvReserved)
   case DLL_PROCESS_ATTACH:
     DisableThreadLibraryCalls(hInstDll);
     AVIFILE_hModule = hInstDll;
-    break;
-  case DLL_PROCESS_DETACH:
     break;
   };
 

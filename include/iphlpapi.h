@@ -26,6 +26,12 @@ extern "C" {
 #include <ipexport.h>
 #include <iptypes.h>
 
+DWORD WINAPI GetExtendedTcpTable(PVOID pTcpTable, PDWORD pdwSize, BOOL bOrder,
+ ULONG ulAf, TCP_TABLE_CLASS TableClass, ULONG Reserved);
+
+DWORD WINAPI GetExtendedUdpTable(PVOID pUdpTable, PDWORD pdwSize, BOOL bOrder,
+ ULONG ulAf, UDP_TABLE_CLASS TableClass, ULONG Reserved);
+
 DWORD WINAPI GetNumberOfInterfaces(PDWORD pdwNumIf);
 
 DWORD WINAPI GetIfEntry(PMIB_IFROW pIfRow);

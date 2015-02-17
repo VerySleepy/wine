@@ -119,8 +119,6 @@
 #include "winuser.h"
 #include "dshow.h"
 
-#include <assert.h>
-
 #include "wine/unicode.h"
 #include "wine/debug.h"
 
@@ -188,12 +186,12 @@ static pascal ComponentResult myDataHGetAvailableFileSize ( DataHandler dh,
     Handle storage = GetComponentInstanceStorage(dh);
     DHData *data = (DHData*)*storage;
     LONGLONG total;
-    LONGLONG avaliable;
+    LONGLONG available;
 
     TRACE("%p\n",dh);
 
-    IAsyncReader_Length(data->dataRef.pReader,&total,&avaliable);
-    *fileSize = avaliable;
+    IAsyncReader_Length(data->dataRef.pReader,&total,&available);
+    *fileSize = available;
     return noErr;
 }
 
@@ -202,11 +200,11 @@ static pascal ComponentResult myDataHGetFileSize ( DataHandler dh, long *fileSiz
     Handle storage = GetComponentInstanceStorage(dh);
     DHData *data = (DHData*)*storage;
     LONGLONG total;
-    LONGLONG avaliable;
+    LONGLONG available;
 
     TRACE("%p\n",dh);
 
-    IAsyncReader_Length(data->dataRef.pReader,&total,&avaliable);
+    IAsyncReader_Length(data->dataRef.pReader,&total,&available);
     *fileSize = total;
     return noErr;
 }
@@ -325,6 +323,22 @@ static pascal ComponentResult myDataHGetFileTypeOrdering ( DataHandler dh,
     return noErr;
 }
 
+typedef struct {
+    const char *const fname;
+    const int sig_length;
+    const BYTE sig[10];
+} signature;
+
+static const signature stream_sigs[] = {
+    {"video.asf",4,{0x30,0x26,0xb2,0x75}},
+    {"video.mov",8,{0x00,0x00,0x00,0x14,0x66,0x74,0x79,0x70}},
+    {"video.mp4",8,{0x00,0x00,0x00,0x18,0x66,0x74,0x79,0x70}},
+    {"video.m4v",8,{0x00,0x00,0x00,0x1c,0x66,0x74,0x79,0x70}},
+    {"video.flv",4,{0x46,0x4C,0x56,0x01}},
+    {"video.mpg",3,{0x00,0x00,0x01}},
+    {"avideo.rm",4,{0x2E,0x52,0x4D,0x46}}
+};
+
 static pascal ComponentResult myDataHGetFileName ( DataHandler dh, Str255 str)
 {
     Handle storage = GetComponentInstanceStorage(dh);
@@ -342,7 +356,21 @@ static pascal ComponentResult myDataHGetFileName ( DataHandler dh, Str255 str)
     else if(IsEqualIID(&data->dataRef.streamSubtype, &MEDIASUBTYPE_QTMovie))
         CFStringGetPascalString(CFSTR("video.mov"),str,256,kCFStringEncodingMacRoman);
     else
+    {
+        BYTE header[10] = {0,0,0,0,0,0,0,0,0,0};
+        int i;
+        IAsyncReader_SyncRead(data->dataRef.pReader, 0, 8, header);
+
+        for (i=0; i < sizeof(stream_sigs)/sizeof(signature); i++)
+            if (memcmp(header, stream_sigs[i].sig, stream_sigs[i].sig_length)==0)
+            {
+                str[0] = strlen(stream_sigs[i].fname);
+                memcpy(str + 1, stream_sigs[i].fname, str[0]);
+                return noErr;
+            }
+
         return badComponentSelector;
+    }
 
     return noErr;
 }
@@ -377,19 +405,62 @@ static pascal ComponentResult myDataHPlaybackHints(DataHandler dh, long flags,
     return noErr;
 }
 
+static pascal ComponentResult myDataHPlaybackHints64(DataHandler dh, long flags,
+                wide *minFileOffset, wide *maxFileOffset,
+                long bytesPerSecond)
+{
+    if (TRACE_ON(qtdatahandler))
+    {
+        SInt64 minFileOffset64 = WideToSInt64(*minFileOffset);
+        LONGLONG minFileOffsetLL = minFileOffset64;
+        SInt64 maxFileOffset64 = WideToSInt64(*maxFileOffset);
+        LONGLONG maxFileOffsetLL = maxFileOffset64;
+
+        TRACE("%s %s %li\n",wine_dbgstr_longlong(minFileOffsetLL), wine_dbgstr_longlong(maxFileOffsetLL), bytesPerSecond);
+    }
+    return noErr;
+}
+
 static pascal ComponentResult myDataHGetFileSize64(DataHandler dh, wide * fileSize)
 {
     Handle storage = GetComponentInstanceStorage(dh);
     DHData *data = (DHData*)*storage;
     LONGLONG total;
-    LONGLONG avaliable;
+    LONGLONG available;
     SInt64 total64;
 
     TRACE("%p\n",dh);
 
-    IAsyncReader_Length(data->dataRef.pReader,&total,&avaliable);
+    IAsyncReader_Length(data->dataRef.pReader,&total,&available);
     total64 = total;
     *fileSize = SInt64ToWide(total64);
+    return noErr;
+}
+
+static pascal ComponentResult myDataHGetFileSizeAsync ( DataHandler dh, wide *fileSize, DataHCompletionUPP CompletionRtn, long RefCon )
+{
+    Handle storage = GetComponentInstanceStorage(dh);
+    DHData *data = (DHData*)*storage;
+    LONGLONG total;
+    LONGLONG available;
+    SInt64 total64;
+
+    TRACE("%p\n",dh);
+
+    IAsyncReader_Length(data->dataRef.pReader,&total,&available);
+    total64 = total;
+    *fileSize = SInt64ToWide(total64);
+
+    if (CompletionRtn)
+    {
+        if (data->AsyncCompletionRtn)
+            InvokeDataHCompletionUPP(data->AsyncPtr, data->AsyncRefCon, noErr, data->AsyncCompletionRtn);
+
+        data->AsyncPtr = (Ptr)fileSize;
+        data->AsyncRefCon = RefCon;
+        data->AsyncCompletionRtn = CompletionRtn;
+    }
+
     return noErr;
 }
 
@@ -398,13 +469,13 @@ static pascal ComponentResult myDataHGetAvailableFileSize64(DataHandler dh, wide
     Handle storage = GetComponentInstanceStorage(dh);
     DHData *data = (DHData*)*storage;
     LONGLONG total;
-    LONGLONG avaliable;
+    LONGLONG available;
     SInt64 total64;
 
     TRACE("%p\n",dh);
 
-    IAsyncReader_Length(data->dataRef.pReader,&total,&avaliable);
-    total64 = avaliable;
+    IAsyncReader_Length(data->dataRef.pReader,&total,&available);
+    total64 = available;
     *fileSize = SInt64ToWide(total64);
     return noErr;
 }
@@ -424,7 +495,7 @@ static pascal ComponentResult myDataHScheduleData64( DataHandler dh,
     LONGLONG offset = fileOffset64;
     BYTE* buffer = (BYTE*)PlaceToPutDataPtr;
 
-    TRACE("%p %p %lli %li %li %p %p\n",dh, PlaceToPutDataPtr, offset, DataSize, RefCon, scheduleRec, CompletionRtn);
+    TRACE("%p %p %s %li %li %p %p\n",dh, PlaceToPutDataPtr, wine_dbgstr_longlong(offset), DataSize, RefCon, scheduleRec, CompletionRtn);
 
     hr = IAsyncReader_SyncRead(data->dataRef.pReader, offset, DataSize, buffer);
     TRACE("result %x\n",hr);
@@ -581,7 +652,13 @@ static const struct { LPVOID proc; ProcInfoType type;} componentFunctions[] =
     {NULL, 0}, /* kDataHGetDataAvailabilitySelect            */
     {NULL, 0}, /* 0x0038 */
     {NULL, 0}, /* 0x0039 */
-    {NULL, 0}, /* kDataHGetFileSizeAsyncSelect               */
+    {myDataHGetFileSizeAsync, kPascalStackBased
+            | RESULT_SIZE(SIZE_CODE(sizeof(ComponentResult)))
+            | STACK_ROUTINE_PARAMETER(1, SIZE_CODE(sizeof(DataHandler)))
+            | STACK_ROUTINE_PARAMETER(2, SIZE_CODE(sizeof(wide*)))
+            | STACK_ROUTINE_PARAMETER(3, SIZE_CODE(sizeof(DataHCompletionUPP)))
+            | STACK_ROUTINE_PARAMETER(4, SIZE_CODE(sizeof(long)))
+}, /* kDataHGetFileSizeAsyncSelect               */
     {NULL, 0}, /* kDataHGetDataRefAsTypeSelect               */
     {NULL, 0}, /* kDataHSetDataRefExtensionSelect            */
     {NULL, 0}, /* kDataHGetDataRefExtensionSelect            */
@@ -623,7 +700,14 @@ static const struct { LPVOID proc; ProcInfoType type;} componentFunctions_2[] =
             | STACK_ROUTINE_PARAMETER(4, SIZE_CODE(sizeof(unsigned long)))
             | STACK_ROUTINE_PARAMETER(5, SIZE_CODE(sizeof(long)))
 }, /* kDataHPlaybackHintsSelect     0x103 */
-    {NULL, 0}, /* kDataHPlaybackHints64Select   0x10E */
+    {myDataHPlaybackHints64, kPascalStackBased
+            | RESULT_SIZE(SIZE_CODE(sizeof(ComponentResult)))
+            | STACK_ROUTINE_PARAMETER(1, SIZE_CODE(sizeof(DataHandler)))
+            | STACK_ROUTINE_PARAMETER(2, SIZE_CODE(sizeof(long)))
+            | STACK_ROUTINE_PARAMETER(3, SIZE_CODE(sizeof(wide*)))
+            | STACK_ROUTINE_PARAMETER(4, SIZE_CODE(sizeof(wide*)))
+            | STACK_ROUTINE_PARAMETER(5, SIZE_CODE(sizeof(long)))
+}, /* kDataHPlaybackHints64Select   0x10E */
     {NULL, 0}, /* kDataHGetDataRateSelect       0x110 */
     {NULL, 0}, /* kDataHSetTimeHintsSelect      0x111 */
 };
@@ -664,6 +748,8 @@ static pascal ComponentResult myComponentCanDo(ComponentInstance ci, SInt16 ftnN
         return TRUE;
     if (ftnNumber == kDataHPlaybackHintsSelect)
         return TRUE;
+    if (ftnNumber == kDataHPlaybackHints64Select)
+        return TRUE;
     if (ftnNumber > kDataHGetDataAvailability64Select)
         return FALSE;
     TRACE("impl? %i\n",(componentFunctions[ftnNumber].proc != NULL));
@@ -696,6 +782,8 @@ static pascal ComponentResult myComponentRoutineProc ( ComponentParameters * cp,
             return callOurFunction(myComponentCanDo, uppCallComponentCanDoProcInfo,  cp);
         case kDataHPlaybackHintsSelect:
             return callOurFunction(componentFunctions_2[0].proc, componentFunctions_2[0].type, cp);
+        case kDataHPlaybackHints64Select:
+            return callOurFunction(componentFunctions_2[1].proc, componentFunctions_2[1].type, cp);
     }
 
     if (cp->what > 0 && cp->what <=kDataHGetDataAvailability64Select && componentFunctions[cp->what].proc)

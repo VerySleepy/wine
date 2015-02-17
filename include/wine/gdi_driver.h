@@ -21,7 +21,10 @@
 #ifndef __WINE_WINE_GDI_DRIVER_H
 #define __WINE_WINE_GDI_DRIVER_H
 
+#include "wine/list.h"
+
 struct gdi_dc_funcs;
+struct opengl_funcs;
 
 typedef struct gdi_physdev
 {
@@ -52,6 +55,13 @@ struct gdi_image_bits
     void   *param;     /* extra parameter for callback private use */
 };
 
+struct brush_pattern
+{
+    BITMAPINFO           *info;     /* DIB info */
+    struct gdi_image_bits bits;     /* DIB bits */
+    UINT                  usage;    /* color usage for DIB info */
+};
+
 struct gdi_dc_funcs
 {
     INT      (*pAbortDoc)(PHYSDEV);
@@ -62,17 +72,12 @@ struct gdi_dc_funcs
     BOOL     (*pArcTo)(PHYSDEV,INT,INT,INT,INT,INT,INT,INT,INT);
     BOOL     (*pBeginPath)(PHYSDEV);
     DWORD    (*pBlendImage)(PHYSDEV,BITMAPINFO*,const struct gdi_image_bits*,struct bitblt_coords*,struct bitblt_coords*,BLENDFUNCTION);
-    INT      (*pChoosePixelFormat)(PHYSDEV,const PIXELFORMATDESCRIPTOR *);
     BOOL     (*pChord)(PHYSDEV,INT,INT,INT,INT,INT,INT,INT,INT);
     BOOL     (*pCloseFigure)(PHYSDEV);
-    BOOL     (*pCreateBitmap)(PHYSDEV,HBITMAP);
     BOOL     (*pCreateCompatibleDC)(PHYSDEV,PHYSDEV*);
     BOOL     (*pCreateDC)(PHYSDEV*,LPCWSTR,LPCWSTR,LPCWSTR,const DEVMODEW*);
-    HBITMAP  (*pCreateDIBSection)(PHYSDEV,HBITMAP,BITMAPINFO *,UINT);
-    BOOL     (*pDeleteBitmap)(HBITMAP);
     BOOL     (*pDeleteDC)(PHYSDEV);
     BOOL     (*pDeleteObject)(PHYSDEV,HGDIOBJ);
-    INT      (*pDescribePixelFormat)(PHYSDEV,INT,UINT,PIXELFORMATDESCRIPTOR *);
     DWORD    (*pDeviceCapabilities)(LPSTR,LPCSTR,LPCSTR,WORD,LPSTR,LPDEVMODEA);
     BOOL     (*pEllipse)(PHYSDEV,INT,INT,INT,INT);
     INT      (*pEndDoc)(PHYSDEV);
@@ -91,8 +96,9 @@ struct gdi_dc_funcs
     BOOL     (*pFlattenPath)(PHYSDEV);
     BOOL     (*pFontIsLinked)(PHYSDEV);
     BOOL     (*pFrameRgn)(PHYSDEV,HRGN,HBRUSH,INT,INT);
-    BOOL     (*pGdiComment)(PHYSDEV,UINT,CONST BYTE*);
+    BOOL     (*pGdiComment)(PHYSDEV,UINT,const BYTE*);
     BOOL     (*pGdiRealizationInfo)(PHYSDEV,void*);
+    UINT     (*pGetBoundsRect)(PHYSDEV,RECT*,UINT);
     BOOL     (*pGetCharABCWidths)(PHYSDEV,UINT,UINT,LPABC);
     BOOL     (*pGetCharABCWidthsI)(PHYSDEV,UINT,UINT,WORD*,LPABC);
     BOOL     (*pGetCharWidth)(PHYSDEV,UINT,UINT,LPINT);
@@ -103,16 +109,15 @@ struct gdi_dc_funcs
     DWORD    (*pGetGlyphIndices)(PHYSDEV,LPCWSTR,INT,LPWORD,DWORD);
     DWORD    (*pGetGlyphOutline)(PHYSDEV,UINT,UINT,LPGLYPHMETRICS,DWORD,LPVOID,const MAT2*);
     BOOL     (*pGetICMProfile)(PHYSDEV,LPDWORD,LPWSTR);
-    DWORD    (*pGetImage)(PHYSDEV,HBITMAP,BITMAPINFO*,struct gdi_image_bits*,struct bitblt_coords*);
+    DWORD    (*pGetImage)(PHYSDEV,BITMAPINFO*,struct gdi_image_bits*,struct bitblt_coords*);
     DWORD    (*pGetKerningPairs)(PHYSDEV,DWORD,LPKERNINGPAIR);
     COLORREF (*pGetNearestColor)(PHYSDEV,COLORREF);
     UINT     (*pGetOutlineTextMetrics)(PHYSDEV,UINT,LPOUTLINETEXTMETRICW);
     COLORREF (*pGetPixel)(PHYSDEV,INT,INT);
-    INT      (*pGetPixelFormat)(PHYSDEV);
     UINT     (*pGetSystemPaletteEntries)(PHYSDEV,UINT,UINT,LPPALETTEENTRY);
     UINT     (*pGetTextCharsetInfo)(PHYSDEV,LPFONTSIGNATURE,DWORD);
-    BOOL     (*pGetTextExtentExPoint)(PHYSDEV,LPCWSTR,INT,INT,LPINT,LPINT,LPSIZE);
-    BOOL     (*pGetTextExtentExPointI)(PHYSDEV,const WORD*,INT,INT,LPINT,LPINT,LPSIZE);
+    BOOL     (*pGetTextExtentExPoint)(PHYSDEV,LPCWSTR,INT,LPINT);
+    BOOL     (*pGetTextExtentExPointI)(PHYSDEV,const WORD*,INT,LPINT);
     INT      (*pGetTextFace)(PHYSDEV,INT,LPWSTR);
     BOOL     (*pGetTextMetrics)(PHYSDEV,TEXTMETRICW*);
     BOOL     (*pGradientFill)(PHYSDEV,TRIVERTEX*,ULONG,void*,ULONG,ULONG);
@@ -135,7 +140,7 @@ struct gdi_dc_funcs
     BOOL     (*pPolygon)(PHYSDEV,const POINT*,INT);
     BOOL     (*pPolyline)(PHYSDEV,const POINT*,INT);
     BOOL     (*pPolylineTo)(PHYSDEV,const POINT*,INT);
-    DWORD    (*pPutImage)(PHYSDEV,HBITMAP,HRGN,BITMAPINFO*,const struct gdi_image_bits*,struct bitblt_coords*,struct bitblt_coords*,DWORD);
+    DWORD    (*pPutImage)(PHYSDEV,HRGN,BITMAPINFO*,const struct gdi_image_bits*,struct bitblt_coords*,struct bitblt_coords*,DWORD);
     UINT     (*pRealizeDefaultPalette)(PHYSDEV);
     UINT     (*pRealizePalette)(PHYSDEV,HPALETTE,BOOL);
     BOOL     (*pRectangle)(PHYSDEV,INT,INT,INT,INT);
@@ -146,25 +151,24 @@ struct gdi_dc_funcs
     BOOL     (*pScaleViewportExtEx)(PHYSDEV,INT,INT,INT,INT,SIZE*);
     BOOL     (*pScaleWindowExtEx)(PHYSDEV,INT,INT,INT,INT,SIZE*);
     HBITMAP  (*pSelectBitmap)(PHYSDEV,HBITMAP);
-    HBRUSH   (*pSelectBrush)(PHYSDEV,HBRUSH,HBITMAP,const BITMAPINFO*,void*,UINT);
+    HBRUSH   (*pSelectBrush)(PHYSDEV,HBRUSH,const struct brush_pattern*);
     BOOL     (*pSelectClipPath)(PHYSDEV,INT);
-    HFONT    (*pSelectFont)(PHYSDEV,HFONT);
+    HFONT    (*pSelectFont)(PHYSDEV,HFONT,UINT*);
     HPALETTE (*pSelectPalette)(PHYSDEV,HPALETTE,BOOL);
-    HPEN     (*pSelectPen)(PHYSDEV,HPEN);
+    HPEN     (*pSelectPen)(PHYSDEV,HPEN,const struct brush_pattern*);
     INT      (*pSetArcDirection)(PHYSDEV,INT);
     COLORREF (*pSetBkColor)(PHYSDEV,COLORREF);
     INT      (*pSetBkMode)(PHYSDEV,INT);
+    UINT     (*pSetBoundsRect)(PHYSDEV,RECT*,UINT);
     COLORREF (*pSetDCBrushColor)(PHYSDEV, COLORREF);
     COLORREF (*pSetDCPenColor)(PHYSDEV, COLORREF);
-    UINT     (*pSetDIBColorTable)(PHYSDEV,UINT,UINT,const RGBQUAD*);
     INT      (*pSetDIBitsToDevice)(PHYSDEV,INT,INT,DWORD,DWORD,INT,INT,UINT,UINT,LPCVOID,BITMAPINFO*,UINT);
-    VOID     (*pSetDeviceClipping)(PHYSDEV,HRGN,HRGN);
+    VOID     (*pSetDeviceClipping)(PHYSDEV,HRGN);
     BOOL     (*pSetDeviceGammaRamp)(PHYSDEV,LPVOID);
     DWORD    (*pSetLayout)(PHYSDEV,DWORD);
     INT      (*pSetMapMode)(PHYSDEV,INT);
     DWORD    (*pSetMapperFlags)(PHYSDEV,DWORD);
     COLORREF (*pSetPixel)(PHYSDEV,INT,INT,COLORREF);
-    BOOL     (*pSetPixelFormat)(PHYSDEV,INT,const PIXELFORMATDESCRIPTOR *);
     INT      (*pSetPolyFillMode)(PHYSDEV,INT);
     INT      (*pSetROP2)(PHYSDEV,INT);
     INT      (*pSetRelAbs)(PHYSDEV,INT);
@@ -184,27 +188,22 @@ struct gdi_dc_funcs
     INT      (*pStretchDIBits)(PHYSDEV,INT,INT,INT,INT,INT,INT,INT,INT,const void*,BITMAPINFO*,UINT,DWORD);
     BOOL     (*pStrokeAndFillPath)(PHYSDEV);
     BOOL     (*pStrokePath)(PHYSDEV);
-    BOOL     (*pSwapBuffers)(PHYSDEV);
     BOOL     (*pUnrealizePalette)(HPALETTE);
     BOOL     (*pWidenPath)(PHYSDEV);
+    struct opengl_funcs * (*wine_get_wgl_driver)(PHYSDEV,UINT);
 
-    /* OpenGL32 */
-    BOOL     (*pwglCopyContext)(HGLRC,HGLRC,UINT);
-    HGLRC    (*pwglCreateContext)(PHYSDEV);
-    HGLRC    (*pwglCreateContextAttribsARB)(PHYSDEV,HGLRC,const int*);
-    BOOL     (*pwglDeleteContext)(HGLRC);
-    HDC      (*pwglGetPbufferDCARB)(PHYSDEV,void*);
-    PROC     (*pwglGetProcAddress)(LPCSTR);
-    BOOL     (*pwglMakeContextCurrentARB)(PHYSDEV,PHYSDEV,HGLRC);
-    BOOL     (*pwglMakeCurrent)(PHYSDEV,HGLRC);
-    BOOL     (*pwglSetPixelFormatWINE)(PHYSDEV,INT,const PIXELFORMATDESCRIPTOR*);
-    BOOL     (*pwglShareLists)(HGLRC,HGLRC);
-    BOOL     (*pwglUseFontBitmapsA)(PHYSDEV,DWORD,DWORD,DWORD);
-    BOOL     (*pwglUseFontBitmapsW)(PHYSDEV,DWORD,DWORD,DWORD);
+    /* priority order for the driver on the stack */
+    UINT       priority;
 };
 
 /* increment this when you change the DC function table */
-#define WINE_GDI_DRIVER_VERSION 18
+#define WINE_GDI_DRIVER_VERSION 46
+
+#define GDI_PRIORITY_NULL_DRV        0  /* null driver */
+#define GDI_PRIORITY_FONT_DRV      100  /* any font driver */
+#define GDI_PRIORITY_GRAPHICS_DRV  200  /* any graphics driver */
+#define GDI_PRIORITY_DIB_DRV       300  /* the DIB driver */
+#define GDI_PRIORITY_PATH_DRV      400  /* the path driver */
 
 static inline PHYSDEV get_physdev_entry_point( PHYSDEV dev, size_t offset )
 {
@@ -217,17 +216,67 @@ static inline PHYSDEV get_physdev_entry_point( PHYSDEV dev, size_t offset )
 
 static inline void push_dc_driver( PHYSDEV *dev, PHYSDEV physdev, const struct gdi_dc_funcs *funcs )
 {
+    while ((*dev)->funcs->priority > funcs->priority) dev = &(*dev)->next;
     physdev->funcs = funcs;
     physdev->next = *dev;
     physdev->hdc = (*dev)->hdc;
     *dev = physdev;
 }
 
-static inline PHYSDEV pop_dc_driver( PHYSDEV *dev )
+/* support for window surfaces */
+
+struct window_surface;
+
+struct window_surface_funcs
 {
-    PHYSDEV ret = *dev;
-    *dev = ret->next;
+    void  (*lock)( struct window_surface *surface );
+    void  (*unlock)( struct window_surface *surface );
+    void* (*get_info)( struct window_surface *surface, BITMAPINFO *info );
+    RECT* (*get_bounds)( struct window_surface *surface );
+    void  (*set_region)( struct window_surface *surface, HRGN region );
+    void  (*flush)( struct window_surface *surface );
+    void  (*destroy)( struct window_surface *surface );
+};
+
+struct window_surface
+{
+    const struct window_surface_funcs *funcs; /* driver-specific implementations  */
+    struct list                        entry; /* entry in global list managed by user32 */
+    LONG                               ref;   /* reference count */
+    RECT                               rect;  /* constant, no locking needed */
+    /* driver-specific fields here */
+};
+
+static inline ULONG window_surface_add_ref( struct window_surface *surface )
+{
+    return InterlockedIncrement( &surface->ref );
+}
+
+static inline ULONG window_surface_release( struct window_surface *surface )
+{
+    ULONG ret = InterlockedDecrement( &surface->ref );
+    if (!ret) surface->funcs->destroy( surface );
     return ret;
 }
+
+/* the DC hook support is only exported on Win16, the 32-bit version is a Wine extension */
+
+#define DCHC_INVALIDVISRGN      0x0001
+#define DCHC_DELETEDC           0x0002
+#define DCHF_INVALIDATEVISRGN   0x0001
+#define DCHF_VALIDATEVISRGN     0x0002
+#define DCHF_RESETDC            0x0004  /* Wine extension */
+
+typedef BOOL (CALLBACK *DCHOOKPROC)(HDC,WORD,DWORD_PTR,LPARAM);
+
+WINGDIAPI DWORD_PTR WINAPI GetDCHook(HDC,DCHOOKPROC*);
+WINGDIAPI BOOL      WINAPI SetDCHook(HDC,DCHOOKPROC,DWORD_PTR);
+WINGDIAPI WORD      WINAPI SetHookFlags(HDC,WORD);
+
+extern void CDECL __wine_make_gdi_object_system( HGDIOBJ handle, BOOL set );
+extern void CDECL __wine_set_visible_region( HDC hdc, HRGN hrgn, const RECT *vis_rect,
+                                             const RECT *device_rect, struct window_surface *surface );
+extern void CDECL __wine_set_display_driver( HMODULE module );
+extern struct opengl_funcs * CDECL __wine_get_wgl_driver( HDC hdc, UINT version );
 
 #endif /* __WINE_WINE_GDI_DRIVER_H */

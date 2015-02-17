@@ -1,8 +1,8 @@
 MODULE    = winhttp.dll
 IMPORTLIB = winhttp
-IMPORTS   = uuid user32 advapi32
-DELAYIMPORTS = oleaut32 crypt32
-EXTRALIBS = @SOCKETLIBS@
+IMPORTS   = uuid jsproxy user32 advapi32
+DELAYIMPORTS = oleaut32 ole32 crypt32 secur32
+EXTRALIBS = $(CORESERVICES_LIBS) $(SOCKET_LIBS)
 
 C_SRCS = \
 	cookie.c \
@@ -13,8 +13,6 @@ C_SRCS = \
 	session.c \
 	url.c
 
-IDL_TLB_SRCS = winhttp_tlb.idl
+IDL_SRCS = winhttp_tlb.idl
 
-RC_SRCS = version.rc
-
-@MAKE_DLL_RULES@
+RC_SRCS = rsrc.rc

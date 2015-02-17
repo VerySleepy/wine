@@ -121,6 +121,9 @@ static const WCHAR de_engb2[] ={'E','n','g','l','i','s','c','h',' ',
                                 'K',0xF6,'n','i','g','r','e','i','c',0};
 static const WCHAR de_enus[] = {'E','n','g','l','i','s','c','h',' ',
                                 '(','U','S','A',')',0};
+static const WCHAR de_enus2[] ={'E','n','g','l','i','s','c','h',' ',
+                                '(','V','e','r','e','i','n','i','g','t','e',' ',
+                                'S','t','a','a','t','e','n',')',0};
 static const WCHAR de_de[] =   {'D','e','u','t','s','c','h',' ',
                                 '(','D','e','u','t','s','c','h','l','a','n','d',')',0};
 static const WCHAR de_deat[] = {'D','e','u','t','s','c','h',' ',
@@ -184,11 +187,11 @@ static const info_table_entry  info_table[] = {
     {MAKELANGID(LANG_ENGLISH, SUBLANG_NEUTRAL),        MAKELANGID(LANG_GERMAN, SUBLANG_DEFAULT),
          TODO_NAME, "en", de_en},
     {MAKELANGID(LANG_ENGLISH, SUBLANG_DEFAULT),        MAKELANGID(LANG_GERMAN, SUBLANG_DEFAULT),
-         TODO_NAME, "en-us", de_enus},
+         TODO_NAME, "en-us", de_enus, de_enus2},
     {MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_UK),     MAKELANGID(LANG_GERMAN, SUBLANG_DEFAULT),
          TODO_NAME, "en-gb", de_engb, de_engb2},
     {MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US),     MAKELANGID(LANG_GERMAN, SUBLANG_DEFAULT),
-         TODO_NAME, "en-us", de_enus},
+         TODO_NAME, "en-us", de_enus, de_enus2},
     {MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_CAN),    MAKELANGID(LANG_GERMAN, SUBLANG_DEFAULT),
          TODO_NAME, "en-ca", de_enca},
 
@@ -227,13 +230,7 @@ static BOOL init_function_ptrs(void)
 {
     HMODULE hMlang;
 
-    hMlang = LoadLibraryA("mlang.dll");
-    if (!hMlang)
-    {
-        skip("mlang not available\n");
-        return FALSE;
-    }
-
+    hMlang = GetModuleHandleA("mlang.dll");
     pConvertINetMultiByteToUnicode = (void *)GetProcAddress(hMlang, "ConvertINetMultiByteToUnicode");
     pConvertINetUnicodeToMultiByte = (void *)GetProcAddress(hMlang, "ConvertINetUnicodeToMultiByte");
     pRfc1766ToLcidA = (void *)GetProcAddress(hMlang, "Rfc1766ToLcidA");
@@ -490,15 +487,15 @@ static void test_EnumCodePages(IMultiLanguage2 *iML2, DWORD flags)
     ok(ret == S_OK, "IEnumCodePage_Reset: expected S_OK, got %08x\n", ret);
     n = 65536;
     ret = IEnumCodePage_Next(iEnumCP, 0, NULL, &n);
+    ok(ret == S_FALSE || ret == E_FAIL,
+            "IEnumCodePage_Next: expected S_FALSE or E_FAIL, got %08x\n", ret);
     if (ret == S_FALSE)
-        ok(n == 0 && ret == S_FALSE, "IEnumCodePage_Next: expected 0/S_FALSE, got %u/%08x\n", n, ret);
+        ok(n == 0, "IEnumCodePage_Next: expected 0/S_FALSE, got %u/%08x\n", n, ret);
     else if (ret == E_FAIL)
-        ok(n == 65536 && ret == E_FAIL, "IEnumCodePage_Next: expected 65536/E_FAIL, got %u/%08x\n", n, ret);
+        ok(n == 65536, "IEnumCodePage_Next: expected 65536/E_FAIL, got %u/%08x\n", n, ret);
     ret = IEnumCodePage_Next(iEnumCP, 0, NULL, NULL);
-    if (ret == S_FALSE)
-        ok(ret == S_FALSE, "IEnumCodePage_Next: expected S_FALSE, got %08x\n", ret);
-    else if (ret == E_FAIL)
-        ok(n == 65536 && ret == E_FAIL, "IEnumCodePage_Next: expected 65536/E_FAIL, got %u/%08x\n", n, ret);
+    ok(ret == S_FALSE || ret == E_FAIL,
+            "IEnumCodePage_Next: expected S_FALSE or E_FAIL, got %08x\n", ret);
 
     cpinfo = HeapAlloc(GetProcessHeap(), 0, sizeof(*cpinfo) * total * 2);
 
@@ -677,7 +674,7 @@ static void test_EnumCodePages(IMultiLanguage2 *iML2, DWORD flags)
     n = 0;
     ret = IEnumCodePage_Next(iEnumCP, 1, &cpinfo2, &n);
     ok(n == 1 && ret == S_OK, "IEnumCodePage_Next: expected 1/S_OK, got %u/%08x\n", n, ret);
-    cpinfo_cmp(&cpinfo[0], &cpinfo2);
+    cpinfo_cmp(cpinfo, &cpinfo2);
 
     if (0)
     {
@@ -697,6 +694,17 @@ static void test_EnumCodePages(IMultiLanguage2 *iML2, DWORD flags)
 
     HeapFree(GetProcessHeap(), 0, cpinfo);
     IEnumCodePage_Release(iEnumCP);
+}
+
+static void test_GetCharsetInfo_alias(IMultiLanguage *ml)
+{
+    WCHAR asciiW[] = {'a','s','c','i','i',0};
+    MIMECSETINFO info;
+    HRESULT hr;
+
+    hr = IMultiLanguage_GetCharsetInfo(ml, asciiW, &info);
+    ok(hr == S_OK, "got %08x\n", hr);
+    ok(!lstrcmpW(info.wszCharset, asciiW), "got %s\n", wine_dbgstr_w(info.wszCharset));
 }
 
 static void scriptinfo_cmp(SCRIPTINFO *sinfo1, SCRIPTINFO *sinfo2)
@@ -782,7 +790,7 @@ static void test_EnumScripts(IMultiLanguage2 *iML2, DWORD flags)
     n = 0;
     ret = IEnumScript_Next(iEnumScript, 1, &sinfo2, &n);
     ok(n == 1 && ret == S_OK, "IEnumScript_Next: expected 1/S_OK, got %u/%08x\n", n, ret);
-    scriptinfo_cmp(&sinfo[0], &sinfo2);
+    scriptinfo_cmp(sinfo, &sinfo2);
 
     if (0)
     {
@@ -809,7 +817,7 @@ static void IMLangFontLink_Test(IMLangFontLink* iMLFL)
     DWORD dwCodePages, dwManyCodePages;
     DWORD dwCmpCodePages;
     UINT CodePage;
-    static const WCHAR str[3] = { 'd', 0x0436, 0xff90 };
+    static const WCHAR str[] = { 'd', 0x0436, 0xff90 };
     LONG processed;
     HRESULT ret;
 
@@ -861,7 +869,7 @@ static void IMLangFontLink_Test(IMLangFontLink* iMLFL)
 
     dwCodePages = 0;
     processed = 0;
-    ret = IMLangFontLink_GetStrCodePages(iMLFL, &str[0], 1, 0, &dwCodePages, &processed);
+    ret = IMLangFontLink_GetStrCodePages(iMLFL, str, 1, 0, &dwCodePages, &processed);
     ok(ret == S_OK, "IMLangFontLink_GetStrCodePages error %x\n", ret);
     ok(dwCodePages == dwCmpCodePages, "expected %x, got %x\n", dwCmpCodePages, dwCodePages);
     ok(processed == 1, "expected 1, got %d\n", processed);
@@ -1914,10 +1922,276 @@ todo_wine {
     }
 }
 
+static void test_IMLangConvertCharset(IMultiLanguage *ml)
+{
+    IMLangConvertCharset *convert;
+    WCHAR strW[] = {'a','b','c','d',0};
+    UINT cp, src_size, dst_size;
+    char strA[] = "abcd";
+    WCHAR buffW[20];
+    HRESULT hr;
+
+    hr = IMultiLanguage_CreateConvertCharset(ml, CP_ACP, CP_UTF8, 0, &convert);
+todo_wine
+    ok(hr == S_FALSE, "expected S_FALSE got 0x%08x\n", hr);
+
+    hr = IMLangConvertCharset_GetSourceCodePage(convert, NULL);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+
+    cp = CP_UTF8;
+    hr = IMLangConvertCharset_GetSourceCodePage(convert, &cp);
+    ok(hr == S_OK, "expected S_OK got 0x%08x\n", hr);
+    ok(cp == CP_ACP, "got %d\n", cp);
+
+    hr = IMLangConvertCharset_GetDestinationCodePage(convert, NULL);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+
+    cp = CP_ACP;
+    hr = IMLangConvertCharset_GetDestinationCodePage(convert, &cp);
+    ok(hr == S_OK, "expected S_OK got 0x%08x\n", hr);
+    ok(cp == CP_UTF8, "got %d\n", cp);
+
+    /* DoConversionToUnicode */
+    hr = IMLangConvertCharset_Initialize(convert, CP_UTF8, CP_UNICODE, 0);
+    ok(hr == S_OK, "expected S_OK got 0x%08x\n", hr);
+
+    hr = IMLangConvertCharset_DoConversionToUnicode(convert, NULL, NULL, NULL, NULL);
+    ok(hr == E_FAIL || broken(hr == S_OK) /* win2k */, "got 0x%08x\n", hr);
+
+    src_size = -1;
+    dst_size = 20;
+    buffW[0] = 0;
+    buffW[4] = 4;
+    hr = IMLangConvertCharset_DoConversionToUnicode(convert, strA, &src_size, buffW, &dst_size);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(!memcmp(buffW, strW, 4*sizeof(WCHAR)), "got converted string %s\n", wine_dbgstr_wn(buffW, dst_size));
+    ok(dst_size == 4, "got %d\n", dst_size);
+    ok(buffW[4] == 4, "got %d\n", buffW[4]);
+    ok(src_size == 4, "got %d\n", src_size);
+
+    src_size = -1;
+    dst_size = 0;
+    buffW[0] = 1;
+    hr = IMLangConvertCharset_DoConversionToUnicode(convert, strA, &src_size, buffW, &dst_size);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(buffW[0] == 1, "got %d\n", buffW[0]);
+    ok(dst_size == 4, "got %d\n", dst_size);
+    ok(src_size == 4, "got %d\n", src_size);
+
+    hr = IMLangConvertCharset_Initialize(convert, CP_UNICODE, CP_UNICODE, 0);
+    ok(hr == S_OK, "expected S_OK got 0x%08x\n", hr);
+
+    IMLangConvertCharset_Release(convert);
+}
+
+static const char stream_data[] = "VCARD2.1test;test";
+static ULONG stream_pos;
+
+static HRESULT WINAPI stream_QueryInterface(IStream *iface, REFIID riid, void **obj)
+{
+    ok(FALSE, "unexpected call\n");
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI stream_AddRef(IStream *iface)
+{
+    ok(FALSE, "unexpected call\n");
+    return 2;
+}
+
+static ULONG WINAPI stream_Release(IStream *iface)
+{
+    ok(FALSE, "unexpected call\n");
+    return 1;
+}
+
+static HRESULT WINAPI stream_Read(IStream *iface, void *buf, ULONG len, ULONG *read)
+{
+    ULONG size;
+
+    if (stream_pos == sizeof(stream_data) - 1)
+    {
+        *read = 0;
+        return S_FALSE;
+    }
+    size = min(sizeof(stream_data) - 1 - stream_pos, len);
+    memcpy(buf, stream_data + stream_pos, size);
+    stream_pos += size;
+    *read = size;
+    return S_OK;
+}
+
+static HRESULT WINAPI stream_Write(IStream *iface, const void *buf, ULONG len, ULONG *written)
+{
+    ok(FALSE, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI stream_Seek(IStream *iface, LARGE_INTEGER move, DWORD origin,
+    ULARGE_INTEGER *newpos)
+{
+    if (origin == STREAM_SEEK_SET)
+        stream_pos = move.QuadPart;
+    else if (origin == STREAM_SEEK_CUR)
+        stream_pos += move.QuadPart;
+    else if (origin == STREAM_SEEK_END)
+        stream_pos = sizeof(stream_data) - 1 - move.QuadPart;
+
+    if (newpos) newpos->QuadPart = stream_pos;
+    return S_OK;
+}
+
+static HRESULT WINAPI stream_SetSize(IStream *iface, ULARGE_INTEGER newsize)
+{
+    ok(FALSE, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI stream_CopyTo(IStream *iface, IStream *stream, ULARGE_INTEGER len,
+    ULARGE_INTEGER *read, ULARGE_INTEGER *written)
+{
+    ok(FALSE, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI stream_Commit(IStream *iface, DWORD flags)
+{
+    ok(FALSE, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI stream_Revert(IStream *iface)
+{
+    ok(FALSE, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI stream_LockRegion(IStream *iface, ULARGE_INTEGER offset,
+    ULARGE_INTEGER len, DWORD locktype)
+{
+    ok(FALSE, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI stream_UnlockRegion(IStream *iface, ULARGE_INTEGER offset,
+    ULARGE_INTEGER len, DWORD locktype)
+{
+    ok(FALSE, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI stream_Stat(IStream *iface, STATSTG *stg, DWORD flag)
+{
+    ok(FALSE, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI stream_Clone(IStream *iface, IStream **stream)
+{
+    ok(FALSE, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static const IStreamVtbl stream_vtbl =
+{
+    stream_QueryInterface,
+    stream_AddRef,
+    stream_Release,
+    stream_Read,
+    stream_Write,
+    stream_Seek,
+    stream_SetSize,
+    stream_CopyTo,
+    stream_Commit,
+    stream_Revert,
+    stream_LockRegion,
+    stream_UnlockRegion,
+    stream_Stat,
+    stream_Clone
+};
+
+static IStream test_stream = { &stream_vtbl };
+
+static void test_DetectOutboundCodePageInIStream(IMultiLanguage3 *ml)
+{
+    HRESULT hr;
+    UINT nb_detected, detected[4];
+    UINT preferred[] = {1250,1251,1252,65001};
+    UINT preferred2[] = {1250,1251,1252};
+
+    nb_detected = 0;
+    memset(detected, 0, sizeof(detected));
+    hr = IMultiLanguage3_DetectOutboundCodePageInIStream(ml,
+        MLDETECTF_PRESERVE_ORDER, &test_stream, preferred,
+        sizeof(preferred)/sizeof(preferred[0]), detected, &nb_detected, NULL);
+    ok(hr == E_INVALIDARG, "got %08x\n", hr);
+
+    nb_detected = 1;
+    memset(detected, 0, sizeof(detected));
+    hr = IMultiLanguage3_DetectOutboundCodePageInIStream(ml,
+        MLDETECTF_PRESERVE_ORDER, &test_stream, preferred,
+        sizeof(preferred)/sizeof(preferred[0]), NULL, &nb_detected, NULL);
+    ok(hr == E_INVALIDARG, "got %08x\n", hr);
+
+    nb_detected = 1;
+    memset(detected, 0, sizeof(detected));
+    hr = IMultiLanguage3_DetectOutboundCodePageInIStream(ml,
+        MLDETECTF_PRESERVE_ORDER, &test_stream, preferred,
+        sizeof(preferred)/sizeof(preferred[0]), detected, &nb_detected, NULL);
+    ok(hr == S_OK, "got %08x\n", hr);
+    ok(nb_detected == 1, "got %u\n", nb_detected);
+    ok(detected[0] == 65001, "got %u\n", detected[0]);
+
+    nb_detected = 2;
+    memset(detected, 0, sizeof(detected));
+    hr = IMultiLanguage3_DetectOutboundCodePageInIStream(ml,
+        MLDETECTF_PRESERVE_ORDER, &test_stream, preferred,
+        sizeof(preferred)/sizeof(preferred[0]), detected, &nb_detected, NULL);
+    ok(hr == S_OK, "got %08x\n", hr);
+    todo_wine ok(nb_detected == 2, "got %u\n", nb_detected);
+    ok(detected[0] == 65001, "got %u\n", detected[0]);
+    todo_wine ok(detected[1] == 65000, "got %u\n", detected[1]);
+
+    nb_detected = 3;
+    memset(detected, 0, sizeof(detected));
+    hr = IMultiLanguage3_DetectOutboundCodePageInIStream(ml,
+        MLDETECTF_PRESERVE_ORDER, &test_stream, preferred,
+        sizeof(preferred)/sizeof(preferred[0]), detected, &nb_detected, NULL);
+    ok(hr == S_OK, "got %08x\n", hr);
+    todo_wine ok(nb_detected == 3, "got %u\n", nb_detected);
+    ok(detected[0] == 65001, "got %u\n", detected[0]);
+    todo_wine ok(detected[1] == 65000, "got %u\n", detected[1]);
+    todo_wine ok(detected[2] == 1200, "got %u\n", detected[2]);
+
+    nb_detected = 4;
+    memset(detected, 0, sizeof(detected));
+    hr = IMultiLanguage3_DetectOutboundCodePageInIStream(ml,
+        MLDETECTF_PRESERVE_ORDER, &test_stream, preferred,
+        sizeof(preferred)/sizeof(preferred[0]), detected, &nb_detected, NULL);
+    ok(hr == S_OK, "got %08x\n", hr);
+    todo_wine ok(nb_detected == 3, "got %u\n", nb_detected);
+    ok(detected[0] == 65001, "got %u\n", detected[0]);
+    todo_wine ok(detected[1] == 65000, "got %u\n", detected[1]);
+    todo_wine ok(detected[2] == 1200, "got %u\n", detected[2]);
+    ok(detected[3] == 0, "got %u\n", detected[3]);
+
+    nb_detected = 3;
+    memset(detected, 0, sizeof(detected));
+    hr = IMultiLanguage3_DetectOutboundCodePageInIStream(ml,
+        MLDETECTF_PRESERVE_ORDER, &test_stream, preferred2,
+        sizeof(preferred2)/sizeof(preferred2[0]), detected, &nb_detected, NULL);
+    ok(hr == S_OK, "got %08x\n", hr);
+    todo_wine ok(nb_detected == 3, "got %u\n", nb_detected);
+    ok(detected[0] == 65001, "got %u\n", detected[0]);
+    todo_wine ok(detected[1] == 65000, "got %u\n", detected[1]);
+    todo_wine ok(detected[2] == 1200, "got %u\n", detected[2]);
+}
+
 START_TEST(mlang)
 {
     IMultiLanguage  *iML = NULL;
     IMultiLanguage2 *iML2 = NULL;
+    IMultiLanguage3 *iML3 = NULL;
     IMLangFontLink  *iMLFL = NULL;
     IMLangFontLink2 *iMLFL2 = NULL;
     HRESULT ret;
@@ -1940,6 +2214,8 @@ START_TEST(mlang)
     if (ret != S_OK || !iML) return;
 
     test_GetNumberOfCodePageInfo((IMultiLanguage2 *)iML);
+    test_IMLangConvertCharset(iML);
+    test_GetCharsetInfo_alias(iML);
     IMultiLanguage_Release(iML);
 
 
@@ -1997,6 +2273,15 @@ START_TEST(mlang)
     test_GetFontUnicodeRanges(iMLFL2);
     test_CodePageToScriptID(iMLFL2);
     IMLangFontLink2_Release(iMLFL2);
+
+    trace("IMultiLanguage3\n");
+    ret = CoCreateInstance(&CLSID_CMultiLanguage, NULL, CLSCTX_INPROC_SERVER,
+                           &IID_IMultiLanguage3, (void **)&iML3);
+    if (ret == S_OK)
+    {
+        test_DetectOutboundCodePageInIStream(iML3);
+        IMultiLanguage3_Release(iML3);
+    }
 
     CoUninitialize();
 }

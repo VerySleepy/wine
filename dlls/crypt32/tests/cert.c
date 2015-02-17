@@ -351,7 +351,7 @@ static void checkHash(const BYTE *data, DWORD dataLen, ALG_ID algID,
      dwSizeWithNull,size);
 }
 
-static CHAR cspNameA[] = "WineCryptTemp";
+static const CHAR cspNameA[] = "WineCryptTemp";
 static WCHAR cspNameW[] = { 'W','i','n','e','C','r','y','p','t','T','e','m','p',0 };
 static const BYTE v1CertWithPubKey[] = {
 0x30,0x81,0x95,0x02,0x01,0x01,0x30,0x02,0x06,0x00,0x30,0x15,0x31,0x13,0x30,
@@ -660,7 +660,6 @@ static void testCreateCert(void)
      selfSignedCert, sizeof(selfSignedCert));
     ok(cert != NULL, "creating cert failed: %08x\n", GetLastError());
     /* Even in-memory certs are expected to have a store associated with them */
-    todo_wine
     ok(cert->hCertStore != NULL, "expected created cert to have a store\n");
     /* The cert doesn't have the archived property set (which would imply it
      * doesn't show up in enumerations.)
@@ -681,8 +680,8 @@ static void testCreateCert(void)
 
 static void testDupCert(void)
 {
-    HCERTSTORE store;
-    PCCERT_CONTEXT context, dupContext;
+    PCCERT_CONTEXT context, dupContext, storeContext, storeContext2, context2;
+    HCERTSTORE store, store2;
     BOOL ret;
 
     store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0,
@@ -720,9 +719,86 @@ static void testDupCert(void)
     }
     CertCloseStore(store, 0);
 
+    context = CertCreateCertificateContext(X509_ASN_ENCODING, bigCert, sizeof(bigCert));
+    ok(context != NULL, "CertCreateCertificateContext failed\n");
+
+    dupContext = CertDuplicateCertificateContext(context);
+    ok(dupContext == context, "context != dupContext\n");
+
+    ret = CertFreeCertificateContext(dupContext);
+    ok(ret, "CertFreeCertificateContext failed\n");
+
+    store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, CERT_STORE_CREATE_NEW_FLAG, NULL);
+    ok(store != NULL, "CertOpenStore failed: %d\n", GetLastError());
+
+    ret = CertAddCertificateContextToStore(store, context, CERT_STORE_ADD_NEW, &storeContext);
+    ok(ret, "CertAddCertificateContextToStore failed\n");
+    ok(storeContext != NULL && storeContext != context, "unexpected storeContext\n");
+    ok(storeContext->hCertStore == store, "unexpected hCertStore\n");
+
+    ok(storeContext->pbCertEncoded != context->pbCertEncoded, "unexpected pbCertEncoded\n");
+    ok(storeContext->cbCertEncoded == context->cbCertEncoded, "unexpected cbCertEncoded\n");
+    ok(storeContext->pCertInfo != context->pCertInfo, "unexpected pCertInfo\n");
+
+    store2 = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, CERT_STORE_CREATE_NEW_FLAG, NULL);
+    ok(store2 != NULL, "CertOpenStore failed: %d\n", GetLastError());
+
+    ret = CertAddCertificateContextToStore(store2, storeContext, CERT_STORE_ADD_NEW, &storeContext2);
+    ok(ret, "CertAddCertificateContextToStore failed\n");
+    ok(storeContext2 != NULL && storeContext2 != storeContext, "unexpected storeContext\n");
+    ok(storeContext2->hCertStore == store2, "unexpected hCertStore\n");
+
+    ok(storeContext2->pbCertEncoded != storeContext->pbCertEncoded, "unexpected pbCertEncoded\n");
+    ok(storeContext2->cbCertEncoded == storeContext->cbCertEncoded, "unexpected cbCertEncoded\n");
+    ok(storeContext2->pCertInfo != storeContext->pCertInfo, "unexpected pCertInfo\n");
+
+    CertFreeCertificateContext(storeContext2);
+    CertFreeCertificateContext(storeContext);
+
+    context2 = CertCreateCertificateContext(X509_ASN_ENCODING, certWithUsage, sizeof(certWithUsage));
+    ok(context2 != NULL, "CertCreateCertificateContext failed\n");
+
+    ok(context2->hCertStore == context->hCertStore, "Unexpected hCertStore\n");
+
+    CertFreeCertificateContext(context2);
+    ret = CertFreeCertificateContext(context);
+    ok(ret, "CertFreeCertificateContext failed\n");
+
+    CertCloseStore(store, 0);
+    CertCloseStore(store2, 0);
+
     SetLastError(0xdeadbeef);
     context = CertDuplicateCertificateContext(NULL);
     ok(context == NULL, "Expected context to be NULL\n");
+
+    ret = CertFreeCertificateContext(NULL);
+    ok(ret, "CertFreeCertificateContext failed\n");
+}
+
+static void testLinkCert(void)
+{
+    const CERT_CONTEXT *context, *link;
+    HCERTSTORE store;
+    BOOL ret;
+
+    context = CertCreateCertificateContext(X509_ASN_ENCODING, bigCert, sizeof(bigCert));
+    ok(context != NULL, "CertCreateCertificateContext failed\n");
+
+    store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, CERT_STORE_CREATE_NEW_FLAG, NULL);
+    ok(store != NULL, "CertOpenStore failed: %d\n", GetLastError());
+
+    ret = CertAddCertificateLinkToStore(store, context, CERT_STORE_ADD_NEW, &link);
+    ok(ret, "CertAddCertificateContextToStore failed\n");
+    ok(link != NULL && link != context, "unexpected storeContext\n");
+    ok(link->hCertStore == store, "unexpected hCertStore\n");
+
+    ok(link->pbCertEncoded == context->pbCertEncoded, "unexpected pbCertEncoded\n");
+    ok(link->cbCertEncoded == context->cbCertEncoded, "unexpected cbCertEncoded\n");
+    ok(link->pCertInfo == context->pCertInfo, "unexpected pCertInfo\n");
+
+    CertFreeCertificateContext(link);
+    CertFreeCertificateContext(context);
+    CertCloseStore(store, 0);
 }
 
 static BYTE subjectName3[] = { 0x30, 0x15, 0x31, 0x13, 0x30, 0x11, 0x06,
@@ -1488,8 +1564,12 @@ static const BYTE chain7_1[] = {
 static void testGetIssuerCert(void)
 {
     BOOL ret;
-    PCCERT_CONTEXT parent, child, cert1, cert2;
-    DWORD flags = 0xffffffff;
+    PCCERT_CONTEXT parent, child, cert1, cert2, cert3;
+    DWORD flags = 0xffffffff, size;
+    CERT_NAME_BLOB certsubject;
+    BYTE *certencoded;
+    WCHAR rootW[] = {'R', 'O', 'O', 'T', '\0'},
+          certname[] = {'C', 'N', '=', 'd', 'u', 'm', 'm', 'y', ',', ' ', 'T', '=', 'T', 'e', 's', 't', '\0'};
     HCERTSTORE store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0,
      CERT_STORE_CREATE_NEW_FLAG, NULL);
 
@@ -1564,6 +1644,7 @@ static void testGetIssuerCert(void)
     ok(ret, "CertAddEncodedCertificateToStore failed: %08x\n", GetLastError());
     parent = CertGetIssuerCertificateFromStore(store, child, NULL, &flags);
     ok(parent == NULL, "Expected no issuer\n");
+    ok(GetLastError() == CRYPT_E_NOT_FOUND, "Expected CRYPT_E_NOT_FOUND, got %08X\n", GetLastError());
     /* Adding an issuer allows one (and only one) issuer to be found */
     ret = CertAddEncodedCertificateToStore(store, X509_ASN_ENCODING,
      chain10_1, sizeof(chain10_1), CERT_STORE_ADD_ALWAYS, &cert1);
@@ -1572,6 +1653,7 @@ static void testGetIssuerCert(void)
     ok(parent == cert1, "Expected cert1 to be the issuer\n");
     parent = CertGetIssuerCertificateFromStore(store, child, parent, &flags);
     ok(parent == NULL, "Expected only one issuer\n");
+    ok(GetLastError() == CRYPT_E_NOT_FOUND, "Expected CRYPT_E_NOT_FOUND, got %08X\n", GetLastError());
     /* Adding a second issuer allows two issuers to be found - and the second
      * issuer is found before the first, implying certs are added to the head
      * of a list.
@@ -1585,6 +1667,7 @@ static void testGetIssuerCert(void)
     ok(parent == cert1, "Expected cert1 to be the second issuer\n");
     parent = CertGetIssuerCertificateFromStore(store, child, parent, &flags);
     ok(parent == NULL, "Expected no more than two issuers\n");
+    ok(GetLastError() == CRYPT_E_NOT_FOUND, "Expected CRYPT_E_NOT_FOUND, got %08X\n", GetLastError());
     CertFreeCertificateContext(child);
     CertFreeCertificateContext(cert1);
     CertFreeCertificateContext(cert2);
@@ -1601,6 +1684,7 @@ static void testGetIssuerCert(void)
     ok(ret, "CertAddEncodedCertificateToStore failed: %08x\n", GetLastError());
     parent = CertGetIssuerCertificateFromStore(store, child, NULL, &flags);
     ok(parent == NULL, "Expected no issuer\n");
+    ok(GetLastError() == CRYPT_E_NOT_FOUND, "Expected CRYPT_E_NOT_FOUND, got %08X\n", GetLastError());
     /* Adding an issuer allows one (and only one) issuer to be found */
     ret = CertAddEncodedCertificateToStore(store, X509_ASN_ENCODING,
      chain10_0, sizeof(chain10_0), CERT_STORE_ADD_ALWAYS, &cert1);
@@ -1609,6 +1693,7 @@ static void testGetIssuerCert(void)
     ok(parent == cert1, "Expected cert1 to be the issuer\n");
     parent = CertGetIssuerCertificateFromStore(store, child, parent, &flags);
     ok(parent == NULL, "Expected only one issuer\n");
+    ok(GetLastError() == CRYPT_E_NOT_FOUND, "Expected CRYPT_E_NOT_FOUND, got %08X\n", GetLastError());
     /* Adding a second issuer allows two issuers to be found - and the second
      * issuer is found before the first, implying certs are added to the head
      * of a list.
@@ -1622,9 +1707,47 @@ static void testGetIssuerCert(void)
     ok(parent == cert1, "Expected cert1 to be the second issuer\n");
     parent = CertGetIssuerCertificateFromStore(store, child, parent, &flags);
     ok(parent == NULL, "Expected no more than two issuers\n");
+    ok(GetLastError() == CRYPT_E_NOT_FOUND, "Expected CRYPT_E_NOT_FOUND, got %08X\n", GetLastError());
+
+    /* Self-sign a certificate, add to the store and test getting the issuer */
+    size = 0;
+    ok(CertStrToNameW(X509_ASN_ENCODING, certname, CERT_X500_NAME_STR, NULL, NULL, &size, NULL),
+       "CertStrToName should have worked\n");
+    certencoded = HeapAlloc(GetProcessHeap(), 0, size);
+    ok(CertStrToNameW(X509_ASN_ENCODING, certname, CERT_X500_NAME_STR, NULL, certencoded, &size, NULL),
+       "CertStrToName should have worked\n");
+    certsubject.pbData = certencoded;
+    certsubject.cbData = size;
+    cert3 = CertCreateSelfSignCertificate(0, &certsubject, 0, NULL, NULL, NULL, NULL, NULL);
+    ok(cert3 != NULL, "CertCreateSelfSignCertificate should have worked\n");
+    ret = CertAddCertificateContextToStore(store, cert3, CERT_STORE_ADD_REPLACE_EXISTING, 0);
+    ok(ret, "CertAddEncodedCertificateToStore failed: %08x\n", GetLastError());
+    CertFreeCertificateContext(cert3);
+    cert3 = CertEnumCertificatesInStore(store, NULL);
+    ok(cert3 != NULL, "CertEnumCertificatesInStore should have worked\n");
+    SetLastError(0xdeadbeef);
+    flags = 0;
+    parent = CertGetIssuerCertificateFromStore(store, cert3, NULL, &flags);
+    ok(!parent, "Expected NULL\n");
+    ok(GetLastError() == CRYPT_E_SELF_SIGNED,
+       "Expected CRYPT_E_SELF_SIGNED, got %08X\n", GetLastError());
     CertFreeCertificateContext(child);
     CertFreeCertificateContext(cert1);
     CertFreeCertificateContext(cert2);
+    CertCloseStore(store, 0);
+    HeapFree(GetProcessHeap(), 0, certencoded);
+
+    /* Test root storage self-signed certificate */
+    store = CertOpenStore(CERT_STORE_PROV_SYSTEM, 0, 0, CERT_SYSTEM_STORE_CURRENT_USER, rootW);
+    ok(store != NULL, "CertOpenStore failed: %08x\n", GetLastError());
+    flags = 0;
+    cert1 = CertEnumCertificatesInStore(store, NULL);
+    ok(cert1 != NULL, "CertEnumCertificatesInStore should have worked\n");
+    SetLastError(0xdeadbeef);
+    parent = CertGetIssuerCertificateFromStore(store, cert1, NULL, &flags);
+    ok(!parent, "Expected NULL\n");
+    ok(GetLastError() == CRYPT_E_SELF_SIGNED,
+       "Expected CRYPT_E_SELF_SIGNED, got %08X\n", GetLastError());
     CertCloseStore(store, 0);
 }
 
@@ -1765,6 +1888,73 @@ static void testVerifyCertSig(HCRYPTPROV csp, const CRYPT_DATA_BLOB *toBeSigned,
     DWORD size = 0;
     BOOL ret;
 
+    if (!pCryptEncodeObjectEx)
+    {
+        win_skip("no CryptEncodeObjectEx support\n");
+        return;
+    }
+    ret = CryptVerifyCertificateSignature(0, 0, NULL, 0, NULL);
+    ok(!ret && GetLastError() == ERROR_FILE_NOT_FOUND,
+     "Expected ERROR_FILE_NOT_FOUND, got %08x\n", GetLastError());
+    ret = CryptVerifyCertificateSignature(csp, 0, NULL, 0, NULL);
+    ok(!ret && GetLastError() == ERROR_FILE_NOT_FOUND,
+     "Expected ERROR_FILE_NOT_FOUND, got %08x\n", GetLastError());
+    ret = CryptVerifyCertificateSignature(csp, X509_ASN_ENCODING, NULL, 0,
+     NULL);
+    ok(!ret && (GetLastError() == CRYPT_E_ASN1_EOD ||
+     GetLastError() == OSS_BAD_ARG),
+     "Expected CRYPT_E_ASN1_EOD or OSS_BAD_ARG, got %08x\n", GetLastError());
+    info.ToBeSigned.cbData = toBeSigned->cbData;
+    info.ToBeSigned.pbData = toBeSigned->pbData;
+    info.SignatureAlgorithm.pszObjId = (LPSTR)sigOID;
+    info.SignatureAlgorithm.Parameters.cbData = 0;
+    info.Signature.cbData = sigLen;
+    info.Signature.pbData = (BYTE *)sig;
+    info.Signature.cUnusedBits = 0;
+    ret = pCryptEncodeObjectEx(X509_ASN_ENCODING, X509_CERT, &info,
+     CRYPT_ENCODE_ALLOC_FLAG, NULL, &cert, &size);
+    ok(ret, "CryptEncodeObjectEx failed: %08x\n", GetLastError());
+    if (cert)
+    {
+        PCERT_PUBLIC_KEY_INFO pubKeyInfo = NULL;
+        DWORD pubKeySize;
+
+        if (0)
+        {
+            /* Crashes prior to Vista */
+            ret = CryptVerifyCertificateSignature(csp, X509_ASN_ENCODING,
+             cert, size, NULL);
+        }
+        CryptExportPublicKeyInfoEx(csp, AT_SIGNATURE, X509_ASN_ENCODING,
+         (LPSTR)sigOID, 0, NULL, NULL, &pubKeySize);
+        pubKeyInfo = HeapAlloc(GetProcessHeap(), 0, pubKeySize);
+        if (pubKeyInfo)
+        {
+            ret = CryptExportPublicKeyInfoEx(csp, AT_SIGNATURE,
+             X509_ASN_ENCODING, (LPSTR)sigOID, 0, NULL, pubKeyInfo,
+             &pubKeySize);
+            ok(ret, "CryptExportKey failed: %08x\n", GetLastError());
+            if (ret)
+            {
+                ret = CryptVerifyCertificateSignature(csp, X509_ASN_ENCODING,
+                 cert, size, pubKeyInfo);
+                ok(ret, "CryptVerifyCertificateSignature failed: %08x\n",
+                 GetLastError());
+            }
+            HeapFree(GetProcessHeap(), 0, pubKeyInfo);
+        }
+        LocalFree(cert);
+    }
+}
+
+static void testVerifyCertSigEx(HCRYPTPROV csp, const CRYPT_DATA_BLOB *toBeSigned,
+ LPCSTR sigOID, const BYTE *sig, DWORD sigLen)
+{
+    CERT_SIGNED_CONTENT_INFO info;
+    LPBYTE cert = NULL;
+    DWORD size = 0;
+    BOOL ret;
+
     if (!pCryptVerifyCertificateSignatureEx)
     {
         win_skip("no CryptVerifyCertificateSignatureEx support\n");
@@ -1875,6 +2065,7 @@ static void testCertSigs(void)
 
     testSignCert(csp, &toBeSigned, szOID_RSA_SHA1RSA, sig, &sigSize);
     testVerifyCertSig(csp, &toBeSigned, szOID_RSA_SHA1RSA, sig, sigSize);
+    testVerifyCertSigEx(csp, &toBeSigned, szOID_RSA_SHA1RSA, sig, sigSize);
 
     CryptReleaseContext(csp, 0);
     ret = pCryptAcquireContextA(&csp, cspNameA, MS_DEF_PROV_A, PROV_RSA_FULL,
@@ -2030,7 +2221,6 @@ static void testCreateSelfSignCert(void)
         if (context)
         {
             DWORD size = 0;
-            PCRYPT_KEY_PROV_INFO info;
 
             /* The context must have a key provider info property */
             ret = CertGetCertificateContextProperty(context,
@@ -2038,24 +2228,25 @@ static void testCreateSelfSignCert(void)
             ok(ret && size, "Expected non-zero key provider info\n");
             if (size)
             {
-                info = HeapAlloc(GetProcessHeap(), 0, size);
-                if (info)
+                PCRYPT_KEY_PROV_INFO pInfo = HeapAlloc(GetProcessHeap(), 0, size);
+
+                if (pInfo)
                 {
                     ret = CertGetCertificateContextProperty(context,
-                     CERT_KEY_PROV_INFO_PROP_ID, info, &size);
+                     CERT_KEY_PROV_INFO_PROP_ID, pInfo, &size);
                     ok(ret, "CertGetCertificateContextProperty failed: %08x\n",
                      GetLastError());
                     if (ret)
                     {
                         /* Sanity-check the key provider */
-                        ok(!lstrcmpW(info->pwszContainerName, cspNameW),
+                        ok(!lstrcmpW(pInfo->pwszContainerName, cspNameW),
                          "Unexpected key container\n");
-                        ok(!lstrcmpW(info->pwszProvName, MS_DEF_PROV_W),
+                        ok(!lstrcmpW(pInfo->pwszProvName, MS_DEF_PROV_W),
                          "Unexpected provider\n");
-                        ok(info->dwKeySpec == AT_SIGNATURE,
-                         "Expected AT_SIGNATURE, got %d\n", info->dwKeySpec);
+                        ok(pInfo->dwKeySpec == AT_SIGNATURE,
+                         "Expected AT_SIGNATURE, got %d\n", pInfo->dwKeySpec);
                     }
-                    HeapFree(GetProcessHeap(), 0, info);
+                    HeapFree(GetProcessHeap(), 0, pInfo);
                 }
             }
 
@@ -2070,21 +2261,40 @@ static void testCreateSelfSignCert(void)
      CRYPT_DELETEKEYSET);
     ok(ret, "CryptAcquireContext failed: %08x\n", GetLastError());
 
+    /* Do the same test with a CSP, AT_KEYEXCHANGE and key info */
+    pCryptAcquireContextA(&csp, cspNameA, MS_DEF_PROV_A, PROV_RSA_FULL,
+     CRYPT_DELETEKEYSET);
+    ret = pCryptAcquireContextA(&csp, cspNameA, MS_DEF_PROV_A, PROV_RSA_FULL,
+     CRYPT_NEWKEYSET);
+    ok(ret, "CryptAcquireContext failed: %08x\n", GetLastError());
+    ret = CryptGenKey(csp, AT_SIGNATURE, 0, &key);
+    ok(ret, "CryptGenKey failed: %08x\n", GetLastError());
 
-    /* do the same test with AT_KEYEXCHANGE  and key info*/
     memset(&info,0,sizeof(info));
     info.dwProvType = PROV_RSA_FULL;
     info.dwKeySpec = AT_KEYEXCHANGE;
     info.pwszProvName = (LPWSTR) MS_DEF_PROV_W;
     info.pwszContainerName = cspNameW;
-    context = pCertCreateSelfSignCertificate(0, &name, 0, &info, NULL, NULL,
+    /* This should fail because the CSP doesn't have the specified key. */
+    SetLastError(0xdeadbeef);
+    context = pCertCreateSelfSignCertificate(csp, &name, 0, &info, NULL, NULL,
         NULL, NULL);
-    ok(context != NULL, "CertCreateSelfSignCertificate failed: %08x\n",
-        GetLastError());
+    ok(context == NULL, "expected failure\n");
+    if (context != NULL)
+        CertFreeCertificateContext(context);
+    else
+        ok(GetLastError() == NTE_NO_KEY, "expected NTE_NO_KEY, got %08x\n",
+            GetLastError());
+    /* Again, with a CSP, AT_SIGNATURE and key info */
+    info.dwKeySpec = AT_SIGNATURE;
+    SetLastError(0xdeadbeef);
+    context = pCertCreateSelfSignCertificate(csp, &name, 0, &info, NULL, NULL,
+        NULL, NULL);
+    ok(context != NULL,
+        "CertCreateSelfSignCertificate failed: %08x\n", GetLastError());
     if (context)
     {
         DWORD size = 0;
-        PCRYPT_KEY_PROV_INFO info;
 
         /* The context must have a key provider info property */
         ret = CertGetCertificateContextProperty(context,
@@ -2092,24 +2302,72 @@ static void testCreateSelfSignCert(void)
         ok(ret && size, "Expected non-zero key provider info\n");
         if (size)
         {
-            info = HeapAlloc(GetProcessHeap(), 0, size);
-            if (info)
+            PCRYPT_KEY_PROV_INFO pInfo = HeapAlloc(GetProcessHeap(), 0, size);
+
+            if (pInfo)
             {
                 ret = CertGetCertificateContextProperty(context,
-                    CERT_KEY_PROV_INFO_PROP_ID, info, &size);
+                    CERT_KEY_PROV_INFO_PROP_ID, pInfo, &size);
                 ok(ret, "CertGetCertificateContextProperty failed: %08x\n",
                     GetLastError());
                 if (ret)
                 {
                     /* Sanity-check the key provider */
-                    ok(!lstrcmpW(info->pwszContainerName, cspNameW),
+                    ok(!lstrcmpW(pInfo->pwszContainerName, cspNameW),
                         "Unexpected key container\n");
-                    ok(!lstrcmpW(info->pwszProvName, MS_DEF_PROV_W),
+                    ok(!lstrcmpW(pInfo->pwszProvName, MS_DEF_PROV_W),
                         "Unexpected provider\n");
-                    ok(info->dwKeySpec == AT_KEYEXCHANGE,
-                        "Expected AT_KEYEXCHANGE, got %d\n", info->dwKeySpec);
+                    ok(pInfo->dwKeySpec == AT_SIGNATURE,
+                        "Expected AT_SIGNATURE, got %d\n", pInfo->dwKeySpec);
                 }
-                HeapFree(GetProcessHeap(), 0, info);
+                HeapFree(GetProcessHeap(), 0, pInfo);
+            }
+        }
+
+        CertFreeCertificateContext(context);
+    }
+    CryptDestroyKey(key);
+
+    CryptReleaseContext(csp, 0);
+    ret = pCryptAcquireContextA(&csp, cspNameA, MS_DEF_PROV_A, PROV_RSA_FULL,
+     CRYPT_DELETEKEYSET);
+    ok(ret, "CryptAcquireContext failed: %08x\n", GetLastError());
+
+    /* Do the same test with no CSP, AT_KEYEXCHANGE and key info */
+    info.dwKeySpec = AT_KEYEXCHANGE;
+    context = pCertCreateSelfSignCertificate(0, &name, 0, &info, NULL, NULL,
+        NULL, NULL);
+    ok(context != NULL, "CertCreateSelfSignCertificate failed: %08x\n",
+        GetLastError());
+    if (context)
+    {
+        DWORD size = 0;
+
+        /* The context must have a key provider info property */
+        ret = CertGetCertificateContextProperty(context,
+            CERT_KEY_PROV_INFO_PROP_ID, NULL, &size);
+        ok(ret && size, "Expected non-zero key provider info\n");
+        if (size)
+        {
+            PCRYPT_KEY_PROV_INFO pInfo = HeapAlloc(GetProcessHeap(), 0, size);
+
+            if (pInfo)
+            {
+                ret = CertGetCertificateContextProperty(context,
+                    CERT_KEY_PROV_INFO_PROP_ID, pInfo, &size);
+                ok(ret, "CertGetCertificateContextProperty failed: %08x\n",
+                    GetLastError());
+                if (ret)
+                {
+                    /* Sanity-check the key provider */
+                    ok(!lstrcmpW(pInfo->pwszContainerName, cspNameW),
+                        "Unexpected key container\n");
+                    ok(!lstrcmpW(pInfo->pwszProvName, MS_DEF_PROV_W),
+                        "Unexpected provider\n");
+                    ok(pInfo->dwKeySpec == AT_KEYEXCHANGE,
+                        "Expected AT_KEYEXCHANGE, got %d\n", pInfo->dwKeySpec);
+                }
+                HeapFree(GetProcessHeap(), 0, pInfo);
             }
         }
 
@@ -2118,6 +2376,86 @@ static void testCreateSelfSignCert(void)
 
     pCryptAcquireContextA(&csp, cspNameA, MS_DEF_PROV_A, PROV_RSA_FULL,
         CRYPT_DELETEKEYSET);
+
+    /* Acquire a CSP and generate an AT_KEYEXCHANGE key in it. */
+    pCryptAcquireContextA(&csp, cspNameA, MS_DEF_PROV_A, PROV_RSA_FULL,
+     CRYPT_DELETEKEYSET);
+    ret = pCryptAcquireContextA(&csp, cspNameA, MS_DEF_PROV_A, PROV_RSA_FULL,
+     CRYPT_NEWKEYSET);
+    ok(ret, "CryptAcquireContext failed: %08x\n", GetLastError());
+
+    context = pCertCreateSelfSignCertificate(csp, &name, 0, NULL, NULL, NULL,
+     NULL, NULL);
+    ok(!context && GetLastError() == NTE_NO_KEY,
+     "Expected NTE_NO_KEY, got %08x\n", GetLastError());
+    ret = CryptGenKey(csp, AT_KEYEXCHANGE, 0, &key);
+    ok(ret, "CryptGenKey failed: %08x\n", GetLastError());
+    CryptDestroyKey(key);
+
+    memset(&info,0,sizeof(info));
+    info.dwProvType = PROV_RSA_FULL;
+    info.dwKeySpec = AT_SIGNATURE;
+    info.pwszProvName = (LPWSTR) MS_DEF_PROV_W;
+    info.pwszContainerName = cspNameW;
+    /* This should fail because the CSP doesn't have the specified key. */
+    SetLastError(0xdeadbeef);
+    context = pCertCreateSelfSignCertificate(csp, &name, 0, &info, NULL, NULL,
+        NULL, NULL);
+    ok(context == NULL, "expected failure\n");
+    if (context != NULL)
+        CertFreeCertificateContext(context);
+    else
+        ok(GetLastError() == NTE_NO_KEY, "expected NTE_NO_KEY, got %08x\n",
+            GetLastError());
+    /* Again, with a CSP, AT_KEYEXCHANGE and key info. This succeeds because the
+     * CSP has an AT_KEYEXCHANGE key in it.
+     */
+    info.dwKeySpec = AT_KEYEXCHANGE;
+    SetLastError(0xdeadbeef);
+    context = pCertCreateSelfSignCertificate(csp, &name, 0, &info, NULL, NULL,
+        NULL, NULL);
+    ok(context != NULL,
+        "CertCreateSelfSignCertificate failed: %08x\n", GetLastError());
+    if (context)
+    {
+        DWORD size = 0;
+
+        /* The context must have a key provider info property */
+        ret = CertGetCertificateContextProperty(context,
+            CERT_KEY_PROV_INFO_PROP_ID, NULL, &size);
+        ok(ret && size, "Expected non-zero key provider info\n");
+        if (size)
+        {
+            PCRYPT_KEY_PROV_INFO pInfo = HeapAlloc(GetProcessHeap(), 0, size);
+
+            if (pInfo)
+            {
+                ret = CertGetCertificateContextProperty(context,
+                    CERT_KEY_PROV_INFO_PROP_ID, pInfo, &size);
+                ok(ret, "CertGetCertificateContextProperty failed: %08x\n",
+                    GetLastError());
+                if (ret)
+                {
+                    /* Sanity-check the key provider */
+                    ok(!lstrcmpW(pInfo->pwszContainerName, cspNameW),
+                        "Unexpected key container\n");
+                    ok(!lstrcmpW(pInfo->pwszProvName, MS_DEF_PROV_W),
+                        "Unexpected provider\n");
+                    ok(pInfo->dwKeySpec == AT_KEYEXCHANGE,
+                        "Expected AT_KEYEXCHANGE, got %d\n", pInfo->dwKeySpec);
+                }
+                HeapFree(GetProcessHeap(), 0, pInfo);
+            }
+        }
+
+        CertFreeCertificateContext(context);
+    }
+
+    CryptReleaseContext(csp, 0);
+    ret = pCryptAcquireContextA(&csp, cspNameA, MS_DEF_PROV_A, PROV_RSA_FULL,
+     CRYPT_DELETEKEYSET);
+    ok(ret, "CryptAcquireContext failed: %08x\n", GetLastError());
+
 }
 
 static void testIntendedKeyUsage(void)
@@ -3253,6 +3591,11 @@ static void testVerifyRevocation(void)
     SetLastError(0xdeadbeef);
     ret = CertVerifyRevocation(X509_ASN_ENCODING, CERT_CONTEXT_REVOCATION_TYPE,
      1, (void **)certs, 0, NULL, &status);
+    if (!ret && GetLastError() == ERROR_FILE_NOT_FOUND)
+    {
+        win_skip("CERT_CONTEXT_REVOCATION_TYPE unsupported, skipping\n");
+        return;
+    }
     ok(!ret && GetLastError() == CRYPT_E_NO_REVOCATION_CHECK,
      "expected CRYPT_E_NO_REVOCATION_CHECK, got %08x\n", GetLastError());
     ok(status.dwError == CRYPT_E_NO_REVOCATION_CHECK,
@@ -3429,7 +3772,7 @@ static void testAcquireCertPrivateKey(void)
      &keyProvInfo);
     ret = pCryptAcquireCertificatePrivateKey(cert, 0, NULL, &csp, &keySpec,
      &callerFree);
-    ok(!ret && GetLastError() == CRYPT_E_NO_KEY_PROPERTY,
+    ok(!ret && (GetLastError() == CRYPT_E_NO_KEY_PROPERTY || GetLastError() == NTE_BAD_KEYSET /* win8 */),
      "Expected CRYPT_E_NO_KEY_PROPERTY, got %08x\n", GetLastError());
 
     pCryptAcquireContextA(&csp, cspNameA, MS_DEF_PROV_A, PROV_RSA_FULL,
@@ -3684,6 +4027,7 @@ START_TEST(cert)
     testFindCert();
     testGetSubjectCert();
     testGetIssuerCert();
+    testLinkCert();
 
     testCryptHashCert();
     testCertSigs();

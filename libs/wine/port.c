@@ -153,23 +153,22 @@ __ASM_GLOBAL_FUNC( wine_call_on_stack,
                    "mov sp, r2\n\t"     /* stack */
                    "mov r2, r0\n\t"     /* func -> scratch register */
                    "mov r0, r1\n\t"     /* arg */
-                   "mov LR, PC\n\t"     /* return after branch */
-                   "mov PC, r2\n\t"     /* call func */
+                   "blx r2\n\t"         /* call func */
                    "mov sp, r4\n\t"     /* restore old sp from local var */
                    "pop {r4,PC}")       /* fetch return address into pc */
-#elif defined(__sparc__) && defined(__GNUC__)
+#elif defined(__aarch64__) && defined(__GNUC__)
 __ASM_GLOBAL_FUNC( wine_call_on_stack,
-                   "save %sp, -96, %sp\n\t" /* push: change register window */
-                   "mov %sp, %l2\n\t"       /* store old sp in local var */
-                   "mov %i0, %l0\n\t"       /* func */
-                   "mov %i1, %l1\n\t"       /* arg */
-                   "sub %i2, 96, %sp\n\t"   /* stack */
-                   "call %l0, 0\n\t"        /* call func */
-                   "mov %l1, %o0\n\t"       /* delay slot:  arg for func */
-                   "mov %l2, %sp\n\t"       /* restore old sp from local var */
-                   "mov %o0, %i0\n\t"       /* move return value to right register window */
-                   "ret\n\t"                /* return */
-                   "restore\n\t")           /* delay slot: pop */
+                   "stp x29, x30, [sp,#-32]!\n\t"    /* save return address on stack */
+                   "str x19, [sp,#16]\n\t"           /* save register on stack */
+                   "mov x19, sp\n\t"                 /* store old sp in local var */
+                   "mov sp, x2\n\t"                  /* stack */
+                   "mov x2, x0\n\t"                  /* func -> scratch register */
+                   "mov x0, x1\n\t"                  /* arg */
+                   "blr x2\n\t"                      /* call func */
+                   "mov sp, x19\n\t"                 /* restore old sp from local var */
+                   "ldr x19, [sp,#16]\n\t"           /* restore register from stack */
+                   "ldp x29, x30, [sp],#32\n\t"      /* restore return address */
+                   "ret")                            /* return */
 #else
 #error You must implement wine_call_on_stack for your platform
 #endif

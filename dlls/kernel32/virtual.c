@@ -48,8 +48,6 @@
 WINE_DECLARE_DEBUG_CHANNEL(seh);
 WINE_DECLARE_DEBUG_CHANNEL(file);
 
-static unsigned int page_size;
-
 
 /***********************************************************************
  *             VirtualAlloc   (KERNEL32.@)
@@ -348,27 +346,24 @@ HANDLE WINAPI CreateFileMappingW( HANDLE hFile, LPSECURITY_ATTRIBUTES sa,
     protect &= ~sec_flags;
     if (!sec_type) sec_type = SEC_COMMIT;
 
+    /* Win9x compatibility */
+    if (!protect && (GetVersion() & 0x80000000)) protect = PAGE_READONLY;
+
     switch(protect)
     {
-    case 0:
-        protect = PAGE_READONLY;  /* Win9x compatibility */
-        /* fall through */
     case PAGE_READONLY:
     case PAGE_WRITECOPY:
-        access = STANDARD_RIGHTS_REQUIRED | SECTION_QUERY | SECTION_MAP_READ | SECTION_MAP_EXECUTE;
+        access = STANDARD_RIGHTS_REQUIRED | SECTION_QUERY | SECTION_MAP_READ;
         break;
     case PAGE_READWRITE:
-        access = STANDARD_RIGHTS_REQUIRED | SECTION_QUERY | SECTION_MAP_READ | SECTION_MAP_WRITE | SECTION_MAP_EXECUTE;
-        break;
-    case PAGE_EXECUTE:
-        access = STANDARD_RIGHTS_REQUIRED | SECTION_QUERY | SECTION_MAP_EXECUTE | SECTION_MAP_EXECUTE_EXPLICIT;
+        access = STANDARD_RIGHTS_REQUIRED | SECTION_QUERY | SECTION_MAP_READ | SECTION_MAP_WRITE;
         break;
     case PAGE_EXECUTE_READ:
     case PAGE_EXECUTE_WRITECOPY:
-        access = STANDARD_RIGHTS_REQUIRED | SECTION_QUERY | SECTION_MAP_READ | SECTION_MAP_EXECUTE | SECTION_MAP_EXECUTE_EXPLICIT;
+        access = STANDARD_RIGHTS_REQUIRED | SECTION_QUERY | SECTION_MAP_READ | SECTION_MAP_EXECUTE;
         break;
     case PAGE_EXECUTE_READWRITE:
-        access = STANDARD_RIGHTS_REQUIRED | SECTION_QUERY | SECTION_MAP_READ | SECTION_MAP_WRITE | SECTION_MAP_EXECUTE | SECTION_MAP_EXECUTE_EXPLICIT;
+        access = STANDARD_RIGHTS_REQUIRED | SECTION_QUERY | SECTION_MAP_READ | SECTION_MAP_WRITE | SECTION_MAP_EXECUTE;
         break;
     default:
         SetLastError( ERROR_INVALID_PARAMETER );
@@ -536,15 +531,21 @@ LPVOID WINAPI MapViewOfFileEx( HANDLE handle, DWORD access,
     NTSTATUS status;
     LARGE_INTEGER offset;
     ULONG protect;
+    BOOL exec;
 
     offset.u.LowPart  = offset_low;
     offset.u.HighPart = offset_high;
 
-    if (access & FILE_MAP_WRITE) protect = PAGE_READWRITE;
-    else if (access & FILE_MAP_COPY) protect = PAGE_WRITECOPY;
-    else protect = PAGE_READONLY;
+    exec = access & FILE_MAP_EXECUTE;
+    access &= ~FILE_MAP_EXECUTE;
 
-    if (access & FILE_MAP_EXECUTE) protect <<= 4;
+    if (access == FILE_MAP_COPY)
+        protect = exec ? PAGE_EXECUTE_WRITECOPY : PAGE_WRITECOPY;
+    else if (access & FILE_MAP_WRITE)
+        protect = exec ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE;
+    else if (access & FILE_MAP_READ)
+        protect = exec ? PAGE_EXECUTE_READ : PAGE_READONLY;
+    else protect = PAGE_NOACCESS;
 
     if ((status = NtMapViewOfSection( handle, GetCurrentProcess(), &addr, 0, 0, &offset,
                                       &count, ViewShare, 0, protect )) < 0)
@@ -645,19 +646,17 @@ BOOL WINAPI IsBadReadPtr( LPCVOID ptr, UINT size )
 {
     if (!size) return FALSE;  /* handle 0 size case w/o reference */
     if (!ptr) return TRUE;
-    
-    if (!page_size) page_size = getpagesize();
     __TRY
     {
         volatile const char *p = ptr;
         char dummy __attribute__((unused));
         UINT count = size;
 
-        while (count > page_size)
+        while (count > system_info.PageSize)
         {
             dummy = *p;
-            p += page_size;
-            count -= page_size;
+            p += system_info.PageSize;
+            count -= system_info.PageSize;
         }
         dummy = p[0];
         dummy = p[count - 1];
@@ -689,18 +688,16 @@ BOOL WINAPI IsBadWritePtr( LPVOID ptr, UINT size )
 {
     if (!size) return FALSE;  /* handle 0 size case w/o reference */
     if (!ptr) return TRUE;
-    
-    if (!page_size) page_size = getpagesize();
     __TRY
     {
         volatile char *p = ptr;
         UINT count = size;
 
-        while (count > page_size)
+        while (count > system_info.PageSize)
         {
             *p |= 0;
-            p += page_size;
-            count -= page_size;
+            p += system_info.PageSize;
+            count -= system_info.PageSize;
         }
         p[0] |= 0;
         p[count - 1] |= 0;

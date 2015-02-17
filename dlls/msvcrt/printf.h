@@ -48,7 +48,7 @@ static int FUNC_NAME(puts_clbk_str)(void *ctx, int len, const APICHAR *str)
         return len;
 
     if(out->len < len) {
-        memcpy(out->buf, str, out->len);
+        memcpy(out->buf, str, out->len*sizeof(APICHAR));
         out->buf += out->len;
         out->len = 0;
         return -1;
@@ -78,7 +78,7 @@ static inline int FUNC_NAME(pf_fill)(FUNC_NAME(puts_clbk) pf_puts, void *puts_ct
 {
     int i, r = 0, written;
 
-    if(flags->Sign && !(flags->Format=='d' || flags->Format=='i'))
+    if(flags->Sign && !strchr("diaeEfgG", flags->Format))
         flags->Sign = 0;
 
     if(left && flags->Sign) {
@@ -228,18 +228,8 @@ static inline int FUNC_NAME(pf_handle_string)(FUNC_NAME(puts_clbk) pf_puts, void
 static inline void FUNC_NAME(pf_rebuild_format_string)(char *p, FUNC_NAME(pf_flags) *flags)
 {
     *p++ = '%';
-    if(flags->Sign)
-        *p++ = flags->Sign;
-    if(flags->LeftAlign)
-        *p++ = flags->LeftAlign;
     if(flags->Alternate)
         *p++ = flags->Alternate;
-    if(flags->PadZero)
-        *p++ = flags->PadZero;
-    if(flags->FieldLength) {
-        sprintf(p, "%d", flags->FieldLength);
-        p += strlen(p);
-    }
     if(flags->Precision >= 0) {
         sprintf(p, ".%d", flags->Precision);
         p += strlen(p);
@@ -275,9 +265,11 @@ static inline void FUNC_NAME(pf_integer_conv)(APICHAR *buf, int buf_len,
     }
 
     i = 0;
-    if(x==0 && flags->Precision)
-        buf[i++] = '0';
-    else {
+    if(x == 0) {
+        flags->Alternate = 0;
+        if(flags->Precision)
+            buf[i++] = '0';
+    } else {
         while(x != 0) {
             j = (ULONGLONG)x%base;
             x = (ULONGLONG)x/base;
@@ -317,22 +309,25 @@ static inline void FUNC_NAME(pf_fixup_exponent)(char *buf)
 
     if(tmp[0] && (tmp[1]=='+' || tmp[1]=='-') &&
             isdigit(tmp[2]) && isdigit(tmp[3])) {
-        char final;
-
-        if (isdigit(tmp[4]))
-            return; /* Exponent already 3 digits */
+        BOOL two_digit_exp = (MSVCRT__get_output_format() == MSVCRT__TWO_DIGIT_EXPONENT);
 
         tmp += 2;
-        final = tmp[2];
+        if(isdigit(tmp[2])) {
+            if(two_digit_exp && tmp[0]=='0') {
+                tmp[0] = tmp[1];
+                tmp[1] = tmp[2];
+                tmp[2] = tmp[3];
+            }
+
+            return; /* Exponent already 3 digits */
+        }else if(two_digit_exp) {
+            return;
+        }
+
+        tmp[3] = tmp[2];
         tmp[2] = tmp[1];
         tmp[1] = tmp[0];
         tmp[0] = '0';
-
-        if(final == '\0') {
-            tmp[3] = '\0';
-            if(buf[0] == ' ')
-                memmove(buf, buf + 1, (tmp - buf) + 3);
-        }
     }
 }
 
@@ -403,7 +398,7 @@ int FUNC_NAME(pf_printf)(FUNC_NAME(puts_clbk) pf_puts, void *puts_ctx, const API
             p++;
         }
 
-        /* parse the widh */
+        /* parse the width */
         if(*p == '*') {
             p++;
             if(positional_params && (q = FUNC_NAME(pf_parse_int)(p, &i)) && *q=='$')
@@ -485,7 +480,7 @@ int FUNC_NAME(pf_printf)(FUNC_NAME(puts_clbk) pf_puts, void *puts_ctx, const API
             i = flags.Precision;
             flags.Precision = 2*sizeof(void*);
             FUNC_NAME(pf_integer_conv)(buf, sizeof(buf)/sizeof(APICHAR), &flags,
-                    pf_args(args_ctx, pos, VT_INT, valist).get_int);
+                                       (ULONG_PTR)pf_args(args_ctx, pos, VT_PTR, valist).get_ptr);
             flags.PadZero = 0;
             flags.Precision = i;
 
@@ -498,8 +493,7 @@ int FUNC_NAME(pf_printf)(FUNC_NAME(puts_clbk) pf_puts, void *puts_ctx, const API
             int *used;
 
             if(!n_format_enabled) {
-                MSVCRT_INVALID_PMT("\'n\' format specifier disabled");
-                *MSVCRT__errno() = MSVCRT_EINVAL;
+                MSVCRT_INVALID_PMT("\'n\' format specifier disabled", MSVCRT_EINVAL);
                 return -1;
             }
 
@@ -508,8 +502,14 @@ int FUNC_NAME(pf_printf)(FUNC_NAME(puts_clbk) pf_puts, void *puts_ctx, const API
             i = 0;
         } else if(flags.Format && strchr("diouxX", flags.Format)) {
             APICHAR *tmp = buf;
-            int max_len = (flags.FieldLength>flags.Precision ? flags.FieldLength : flags.Precision) + 10;
+            int max_len;
 
+            /* 0 padding is added after '0x' if Alternate flag is in use */
+            if((flags.Format=='x' || flags.Format=='X') && flags.PadZero && flags.Alternate
+                    && !flags.LeftAlign && flags.Precision<flags.FieldLength-2)
+                flags.Precision = flags.FieldLength - 2;
+
+            max_len = (flags.FieldLength>flags.Precision ? flags.FieldLength : flags.Precision) + 10;
             if(max_len > sizeof(buf)/sizeof(APICHAR))
                 tmp = HeapAlloc(GetProcessHeap(), 0, max_len);
             if(!tmp)
@@ -519,11 +519,13 @@ int FUNC_NAME(pf_printf)(FUNC_NAME(puts_clbk) pf_puts, void *puts_ctx, const API
                 FUNC_NAME(pf_integer_conv)(tmp, max_len, &flags, pf_args(args_ctx, pos,
                             VT_I8, valist).get_longlong);
             else if(flags.Format=='d' || flags.Format=='i')
-                FUNC_NAME(pf_integer_conv)(tmp, max_len, &flags, pf_args(args_ctx, pos,
-                            VT_INT, valist).get_int);
+                FUNC_NAME(pf_integer_conv)(tmp, max_len, &flags, flags.IntegerLength!='h' ?
+                        pf_args(args_ctx, pos, VT_INT, valist).get_int :
+                        (short)pf_args(args_ctx, pos, VT_INT, valist).get_int);
             else
-                FUNC_NAME(pf_integer_conv)(tmp, max_len, &flags, (unsigned)pf_args(
-                            args_ctx, pos, VT_INT, valist).get_int);
+                FUNC_NAME(pf_integer_conv)(tmp, max_len, &flags, flags.IntegerLength!='h' ?
+                        (unsigned)pf_args(args_ctx, pos, VT_INT, valist).get_int :
+                        (unsigned short)pf_args(args_ctx, pos, VT_INT, valist).get_int);
 
 #ifdef PRINTF_WIDE
             i = FUNC_NAME(pf_output_format_wstr)(pf_puts, puts_ctx, tmp, -1, &flags, locinfo);
@@ -534,8 +536,30 @@ int FUNC_NAME(pf_printf)(FUNC_NAME(puts_clbk) pf_puts, void *puts_ctx, const API
                 HeapFree(GetProcessHeap(), 0, tmp);
         } else if(flags.Format && strchr("aeEfgG", flags.Format)) {
             char float_fmt[20], buf_a[32], *tmp = buf_a, *decimal_point;
-            int max_len = (flags.FieldLength>flags.Precision ? flags.FieldLength : flags.Precision) + 10;
+            int len = flags.Precision + 10;
             double val = pf_args(args_ctx, pos, VT_R8, valist).get_double;
+            int r;
+            BOOL inf = FALSE, nan = FALSE;
+
+            if(isinf(val))
+                inf = TRUE;
+            else if(isnan(val))
+                nan = TRUE; /* FIXME: NaN value may be displayed as #IND or #QNAN */
+
+            if(inf || nan) {
+                if(nan || val<0)
+                    flags.Sign = '-';
+
+                if(flags.Format=='g' || flags.Format=='G')
+                    val = 1.1234; /* fraction will be overwritten with #INF or #IND string */
+                else
+                    val = 1;
+
+                if(flags.Format=='a') {
+                    if(flags.Precision==-1)
+                        flags.Precision = 6; /* strlen("#INF00") */
+                }
+            }
 
             if(flags.Format=='f') {
                 if(val>-10.0 && val<10.0)
@@ -545,28 +569,59 @@ int FUNC_NAME(pf_printf)(FUNC_NAME(puts_clbk) pf_puts, void *puts_ctx, const API
                 /* Default precision is 6, additional space for sign, separator and nullbyte is required */
                 i += (flags.Precision==-1 ? 6 : flags.Precision) + 3;
 
-                if(i > max_len)
-                    max_len = i;
+                if(i > len)
+                    len = i;
             }
 
-            if(max_len > sizeof(buf_a))
-                tmp = HeapAlloc(GetProcessHeap(), 0, max_len);
+            if(len > sizeof(buf_a))
+                tmp = HeapAlloc(GetProcessHeap(), 0, len);
             if(!tmp)
                 return -1;
 
             FUNC_NAME(pf_rebuild_format_string)(float_fmt, &flags);
+            if(val < 0) {
+                flags.Sign = '-';
+                val = -val;
+            }
 
             sprintf(tmp, float_fmt, val);
             if(toupper(flags.Format)=='E' || toupper(flags.Format)=='G')
                 FUNC_NAME(pf_fixup_exponent)(tmp);
 
             decimal_point = strchr(tmp, '.');
-            if(decimal_point)
+            if(decimal_point) {
                 *decimal_point = *locinfo->lconv->decimal_point;
 
-            i = FUNC_NAME(pf_output_str)(pf_puts, puts_ctx, tmp, strlen(tmp), locinfo);
+                if(inf || nan) {
+                    static const char inf_str[] = "#INF";
+                    static const char ind_str[] = "#IND";
+
+                    for(i=1; i<(inf ? sizeof(inf_str) : sizeof(ind_str)); i++) {
+                        if(decimal_point[i]<'0' || decimal_point[i]>'9')
+                            break;
+
+                        decimal_point[i] = inf ? inf_str[i-1] : ind_str[i-1];
+                    }
+
+                    if(i!=sizeof(inf_str) && i!=1)
+                        decimal_point[i-1]++;
+                }
+            }
+
+            len = strlen(tmp);
+            i = FUNC_NAME(pf_fill)(pf_puts, puts_ctx, len, &flags, TRUE);
+            if(i < 0)
+                return i;
+            r = FUNC_NAME(pf_output_str)(pf_puts, puts_ctx, tmp, len, locinfo);
+            if(r < 0)
+                return r;
+            i += r;
             if(tmp != buf_a)
                 HeapFree(GetProcessHeap(), 0, tmp);
+            r = FUNC_NAME(pf_fill)(pf_puts, puts_ctx, len, &flags, FALSE);
+            if(r < 0)
+                return r;
+            i += r;
         } else {
             if(invoke_invalid_param_handler) {
                 MSVCRT__invalid_parameter(NULL, NULL, NULL, 0, 0);

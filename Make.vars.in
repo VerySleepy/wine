@@ -6,46 +6,44 @@ bindir          = @bindir@
 libdir          = @libdir@
 datarootdir     = @datarootdir@
 datadir         = @datadir@
-infodir         = @infodir@
 mandir          = @mandir@
-fontdir         = $(datadir)/wine/fonts
+fontdir         = ${datadir}/wine/fonts
 includedir      = @includedir@/wine
-dlldir          = @libdir@/wine
-fakedlldir      = $(dlldir)/fakedlls
+dlldir          = @dlldir@
+fakedlldir      = ${dlldir}/fakedlls
 top_srcdir      = @top_srcdir@
 top_builddir    = @top_builddir@
 srcdir          = @srcdir@
-VPATH           = @srcdir@
 SHELL           = /bin/sh
 RM              = rm -f
 MV              = mv
 CC              = @CC@
+CXX             = @CXX@
+CPPBIN          = @CPPBIN@
 CROSSCC         = @CROSSCC@
 CFLAGS          = @CFLAGS@
 CPPFLAGS        = @CPPFLAGS@
 EXTRACFLAGS     = @EXTRACFLAGS@
+MSVCRTFLAGS     = @BUILTINFLAG@
 TARGETFLAGS     = @TARGETFLAGS@
+UNWINDFLAGS     = @UNWINDFLAGS@
 LIBS            = @LIBS@
 BISON           = @BISON@
 FLEX            = @FLEX@
 EXEEXT          = @EXEEXT@
-OBJEXT          = @OBJEXT@
-LIBEXT          = @LIBEXT@
-DLLEXT          = @DLLEXT@
-FAKEEXT         = $(DLLEXT:.so=.fake)
+DLLPREFIX       = @DLLPREFIX@
 TOOLSEXT        = @TOOLSEXT@
-IMPLIBEXT       = @IMPLIBEXT@
 DLLTOOL         = @DLLTOOL@
-DLLWRAP         = @DLLWRAP@
 AR              = @AR@
 ARFLAGS         = @ARFLAGS@
 RANLIB          = @RANLIB@
+STRIP           = @STRIP@
 LN_S            = @LN_S@
 TOOLSDIR        = @TOOLSDIR@
+LD              = @LD@
 LDFLAGS         = @LDFLAGS@
+DLLFLAGS        = @DLLFLAGS@
 PRELINK         = @PRELINK@
-LINT            = @LINT@
-LINTFLAGS       = @LINTFLAGS@
 FONTFORGE       = @FONTFORGE@
 RSVG            = @RSVG@
 CONVERT         = @CONVERT@
@@ -53,41 +51,28 @@ ICOTOOL         = @ICOTOOL@
 MSGFMT          = @MSGFMT@
 CROSSTARGET     = @CROSSTARGET@
 LINGUAS         = @LINGUAS@
-ALL_MO_FILES    = $(LINGUAS:%=@top_builddir@/po/%.mo)
-PORCFLAGS       = @PORCFLAGS@
-CROSSAR         = $(CROSSTARGET)-ar
-CROSSRANLIB     = $(CROSSTARGET)-ranlib
-MKINSTALLDIRS   = $(top_srcdir)/tools/mkinstalldirs -m 755
-WINAPI_CHECK    = $(top_srcdir)/tools/winapi/winapi_check
-BUILDIMAGE      = $(top_srcdir)/tools/buildimage
-C2MAN           = $(top_srcdir)/tools/c2man.pl
-RUNTEST         = $(top_srcdir)/tools/runtest
-MAKECTESTS      = $(TOOLSDIR)/tools/make_ctests$(TOOLSEXT)
-MAKEXFTMPL      = $(TOOLSDIR)/tools/make_xftmpl$(TOOLSEXT)
+RUNTESTFLAGS    = -q -P wine
 MAKEDEP         = $(TOOLSDIR)/tools/makedep$(TOOLSEXT)
-RELPATH         = $(TOOLSDIR)/tools/relpath$(TOOLSEXT)
-SFNT2FNT        = $(TOOLSDIR)/tools/sfnt2fnt$(TOOLSEXT)
-WIDL            = $(TOOLSDIR)/tools/widl/widl$(TOOLSEXT)
 WINEBUILD       = $(TOOLSDIR)/tools/winebuild/winebuild$(TOOLSEXT)
-WMC             = $(TOOLSDIR)/tools/wmc/wmc$(TOOLSEXT)
 WRC             = $(TOOLSDIR)/tools/wrc/wrc$(TOOLSEXT)
 LIBPORT         = $(top_builddir)/libs/port/libwine_port.a
 LIBWPP          = $(top_builddir)/libs/wpp/libwpp.a
 LIBWINE         = -L$(top_builddir)/libs/wine -lwine
-WINEGCC         = $(TOOLSDIR)/tools/winegcc/winegcc $(TARGETFLAGS) -B$(TOOLSDIR)/tools/winebuild --sysroot=$(top_builddir) @UNWINDFLAGS@
-CROSSWINEGCC    = $(TOOLSDIR)/tools/winegcc/winegcc $(CROSSTARGET:%=-b %) -B$(TOOLSDIR)/tools/winebuild --sysroot=$(top_builddir) --lib-suffix=.cross.a
-LDPATH          = @LDPATH@
+LIBWINE_STATIC  = $(top_builddir)/libs/wine/libwine_static.a
+SED_CMD         = LC_ALL=C sed -e 's,@bindir\@,$(bindir),g' -e 's,@dlldir\@,$(dlldir),g' -e 's,@PACKAGE_STRING\@,@PACKAGE_STRING@,g' -e 's,@PACKAGE_VERSION\@,@PACKAGE_VERSION@,g'
 LDRPATH_INSTALL = @LDRPATH_INSTALL@
 LDRPATH_LOCAL   = @LDRPATH_LOCAL@
-INSTALL         = @INSTALL@ $(INSTALL_FLAGS)
-INSTALL_PROGRAM = @INSTALL_PROGRAM@ $(INSTALL_PROGRAM_FLAGS)
-INSTALL_SCRIPT  = @INSTALL_SCRIPT@ $(INSTALL_SCRIPT_FLAGS)
-INSTALL_DATA    = @INSTALL_DATA@ $(INSTALL_DATA_FLAGS)
+INSTALL_PROGRAM = STRIPPROG="$(STRIP)" $(top_srcdir)/tools/install-sh $(INSTALL_PROGRAM_FLAGS)
+INSTALL_SCRIPT  = $(top_srcdir)/tools/install-sh $(INSTALL_SCRIPT_FLAGS)
+INSTALL_DATA    = $(top_srcdir)/tools/install-sh -m 644 $(INSTALL_DATA_FLAGS)
 prog_manext     = 1
 api_manext      = 3w
 conf_manext     = 5
+@ALL_VARS_RULES@
 @SET_MAKE@
 
 all:
+dummy:
+.PHONY: all dummy
 
 # End of common header

@@ -198,7 +198,7 @@ static void start_dosbox( const char *appname, const char *args )
         args[1] = "-conf";
         args[2] = config_file;
         args[3] = NULL;
-        ret = spawnvp( _P_WAIT, args[0], args );
+        ret = _spawnvp( _P_WAIT, args[0], args );
     }
     CloseHandle( file );
     DeleteFileW( config );
@@ -215,6 +215,8 @@ static void start_dos_exe( LPCSTR filename, LPCSTR cmdline )
     MEMORY_BASIC_INFORMATION mem_info;
     const char *reason;
 
+    start_dosbox( filename, cmdline );
+
     if (VirtualQuery( NULL, &mem_info, sizeof(mem_info) ) && mem_info.State != MEM_FREE)
     {
         __wine_load_dos_exe( filename, cmdline );
@@ -225,11 +227,9 @@ static void start_dos_exe( LPCSTR filename, LPCSTR cmdline )
     }
     else reason = "because the DOS memory range is unavailable";
 
-    start_dosbox( filename, cmdline );
-
     WINE_MESSAGE( "winevdm: Cannot start DOS application %s\n", filename );
     WINE_MESSAGE( "         %s.\n", reason );
-    WINE_MESSAGE( "         Try running this application with DOSBox.\n" );
+    WINE_MESSAGE( "         You should install DOSBox.\n" );
     ExitProcess(1);
 }
 
@@ -299,14 +299,13 @@ static BOOL read_pif_file( HANDLE hFile, char *progname, char *title,
         }
     }
     /* prepare the return data */
-    strncpy( progname, pifheader.program, sizeof(pifheader.program));
-    memcpy( title, pifheader.windowtitle, sizeof(pifheader.windowtitle));
-    title[ sizeof(pifheader.windowtitle) ] = '\0';
+    lstrcpynA( progname, pifheader.program, sizeof(pifheader.program)+1);
+    lstrcpynA( title, pifheader.windowtitle, sizeof(pifheader.windowtitle)+1);
     if( found386rec)
-        strncpy( optparams, pif386rec.optparams, sizeof( pif386rec.optparams));
+        lstrcpynA( optparams, pif386rec.optparams, sizeof( pif386rec.optparams)+1);
     else
-        strncpy( optparams, pifheader.optparams, sizeof(pifheader.optparams));
-    strncpy( startdir, pifheader.startdir, sizeof(pifheader.startdir));
+        lstrcpynA( optparams, pifheader.optparams, sizeof(pifheader.optparams)+1);
+    lstrcpynA( startdir, pifheader.startdir, sizeof(pifheader.startdir)+1);
     *closeonexit = pifheader.hdrflags1 & 0x10;
     *textmode = found386rec ? pif386rec.videoflags & 0x0010
                             : pifheader.hdrflags1 & 0x0002;
@@ -325,8 +324,8 @@ static VOID pif_cmd( char *filename, char *cmdline)
     char buf[128];
     char progname[64];
     char title[31];
-    char optparams[64];
-    char startdir[64];
+    char optparams[65];
+    char startdir[65];
     char *p;
     int closeonexit;
     int textmode;
@@ -393,19 +392,20 @@ static char *build_command_line( char **argv )
     len = 0;
     for (arg = argv; *arg; arg++)
     {
-        int has_space,bcount;
+        BOOL has_space;
+        int bcount;
         char* a;
 
-        has_space=0;
+        has_space=FALSE;
         bcount=0;
         a=*arg;
-        if( !*a ) has_space=1;
+        if( !*a ) has_space=TRUE;
         while (*a!='\0') {
             if (*a=='\\') {
                 bcount++;
             } else {
                 if (*a==' ' || *a=='\t') {
-                    has_space=1;
+                    has_space=TRUE;
                 } else if (*a=='"') {
                     /* doubling of '\' preceding a '"',
                      * plus escaping of said '"'
@@ -428,20 +428,20 @@ static char *build_command_line( char **argv )
     *p++ = (len < 256) ? len : 255;
     for (arg = argv; *arg; arg++)
     {
-        int has_space,has_quote;
+        BOOL has_space,has_quote;
         char* a;
 
         /* Check for quotes and spaces in this argument */
-        has_space=has_quote=0;
+        has_space=has_quote=FALSE;
         a=*arg;
-        if( !*a ) has_space=1;
+        if( !*a ) has_space=TRUE;
         while (*a!='\0') {
             if (*a==' ' || *a=='\t') {
-                has_space=1;
+                has_space=TRUE;
                 if (has_quote)
                     break;
             } else if (*a=='"') {
-                has_quote=1;
+                has_quote=TRUE;
                 if (has_space)
                     break;
             }
@@ -453,7 +453,6 @@ static char *build_command_line( char **argv )
             *p++='"';
         if (has_quote) {
             int bcount;
-            char* a;
 
             bcount=0;
             a=*arg;

@@ -46,6 +46,7 @@ static HANDLE (WINAPI *pSHAllocShared)(LPCVOID,DWORD,DWORD);
 static LPVOID (WINAPI *pSHLockShared)(HANDLE,DWORD);
 static BOOL   (WINAPI *pSHUnlockShared)(LPVOID);
 static BOOL   (WINAPI *pSHFreeShared)(HANDLE,DWORD);
+static HANDLE (WINAPI *pSHMapHandle)(HANDLE,DWORD,DWORD,DWORD,DWORD);
 static HRESULT(WINAPIV *pSHPackDispParams)(DISPPARAMS*,VARIANTARG*,UINT,...);
 static HRESULT(WINAPI *pIConnectionPoint_SimpleInvoke)(IConnectionPoint*,DISPID,DISPPARAMS*);
 static HRESULT(WINAPI *pIConnectionPoint_InvokeWithCancel)(IConnectionPoint*,DISPID,DISPPARAMS*,DWORD,DWORD);
@@ -204,17 +205,17 @@ static void test_GetAcceptLanguagesA(void)
     original[0] = 0;
     res_query = RegQueryValueExA(hroot, acceptlanguage, 0, NULL, (PBYTE)original, &len);
 
-    RegDeleteValue(hroot, acceptlanguage);
+    RegDeleteValueA(hroot, acceptlanguage);
 
     /* Some windows versions use "lang-COUNTRY" as default */
     memset(language, 0, sizeof(language));
     len = GetLocaleInfoA(lcid, LOCALE_SISO639LANGNAME, language, sizeof(language));
 
     if (len) {
-        lstrcat(language, "-");
+        lstrcatA(language, "-");
         memset(buffer, 0, sizeof(buffer));
         len = GetLocaleInfoA(lcid, LOCALE_SISO3166CTRYNAME, buffer, sizeof(buffer) - len - 1);
-        lstrcat(language, buffer);
+        lstrcatA(language, buffer);
     }
     else
     {
@@ -289,14 +290,15 @@ static void test_GetAcceptLanguagesA(void)
            When the buffer is large enough, the default language is returned
 
            When the buffer is too small for that fallback, win7_32 and w2k8_64
-           and above fail with HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER), but
-           recent os succeed and return a partial result while
-           older os succeed and overflow the buffer */
+           fail with E_NOT_SUFFICIENT_BUFFER, win8 fails with HRESULT_FROM_WIN32(ERROR_MORE_DATA),
+           other versions succeed and return a partial result while older os succeed
+           and overflow the buffer */
 
         ok(((hr == E_INVALIDARG) && (len == 0)) ||
             (((hr == S_OK) && !lstrcmpA(buffer, language)  && (len == lstrlenA(language))) ||
             ((hr == S_OK) && !memcmp(buffer, language, len)) ||
-            ((hr == __HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER)) && !len)),
+            ((hr == E_NOT_SUFFICIENT_BUFFER) && !len) ||
+            ((hr == __HRESULT_FROM_WIN32(ERROR_MORE_DATA)) && len == exactsize)),
             "==_#%d: got 0x%x with %d and %s\n", i, hr, len, buffer);
 
         if (exactsize > 1) {
@@ -307,7 +309,8 @@ static void test_GetAcceptLanguagesA(void)
             ok(((hr == E_INVALIDARG) && (len == 0)) ||
                 (((hr == S_OK) && !lstrcmpA(buffer, language)  && (len == lstrlenA(language))) ||
                 ((hr == S_OK) && !memcmp(buffer, language, len)) ||
-                ((hr == __HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER)) && !len)),
+                ((hr == E_NOT_SUFFICIENT_BUFFER) && !len) ||
+                ((hr == __HRESULT_FROM_WIN32(ERROR_MORE_DATA)) && len == exactsize - 1)),
                 "-1_#%d: got 0x%x with %d and %s\n", i, hr, len, buffer);
         }
 
@@ -318,15 +321,16 @@ static void test_GetAcceptLanguagesA(void)
         ok(((hr == E_INVALIDARG) && (len == 0)) ||
             (((hr == S_OK) && !lstrcmpA(buffer, language)  && (len == lstrlenA(language))) ||
             ((hr == S_OK) && !memcmp(buffer, language, len)) ||
-            ((hr == __HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER)) && !len)),
+            ((hr == E_NOT_SUFFICIENT_BUFFER) && !len) ||
+            ((hr == __HRESULT_FROM_WIN32(ERROR_MORE_DATA)) && len == 1)),
             "=1_#%d: got 0x%x with %d and %s\n", i, hr, len, buffer);
 
         len = maxlen;
         hr = pGetAcceptLanguagesA( NULL, &len);
 
         /* w2k3 and below: E_FAIL and untouched len,
-           since w2k8: S_OK and needed size (excluding 0) */
-        ok( ((hr == S_OK) && (len == exactsize)) ||
+           since w2k8: S_OK and needed size (excluding 0), win8 S_OK and size including 0. */
+        ok( ((hr == S_OK) && ((len == exactsize) || (len == exactsize + 1))) ||
             ((hr == E_FAIL) && (len == maxlen)),
             "NULL,max #%d: got 0x%x with %d and %s\n", i, hr, len, buffer);
 
@@ -334,7 +338,7 @@ static void test_GetAcceptLanguagesA(void)
     }
 
     /* without a value in the registry, a default language is returned */
-    RegDeleteValue(hroot, acceptlanguage);
+    RegDeleteValueA(hroot, acceptlanguage);
 
     len = maxlen;
     memset(buffer, '#', maxlen);
@@ -349,7 +353,8 @@ static void test_GetAcceptLanguagesA(void)
     buffer[maxlen] = 0;
     hr = pGetAcceptLanguagesA( buffer, &len);
     ok( (((hr == S_OK) || (hr == E_INVALIDARG)) && !memcmp(buffer, language, len)) ||
-        ((hr == __HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER)) && !len),
+        ((hr == E_NOT_SUFFICIENT_BUFFER) && !len) ||
+        ((hr == __HRESULT_FROM_WIN32(ERROR_CANNOT_COPY)) && !len),
         "=2: got 0x%x with %d and %s\n", hr, len, buffer);
 
     len = 1;
@@ -357,20 +362,21 @@ static void test_GetAcceptLanguagesA(void)
     buffer[maxlen] = 0;
     hr = pGetAcceptLanguagesA( buffer, &len);
     /* When the buffer is too small, win7_32 and w2k8_64 and above fail with
-       HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER), other versions suceed
-       and return a partial 0 terminated result while other versions
+       E_NOT_SUFFICIENT_BUFFER, win8 ERROR_CANNOT_COPY,
+       other versions succeed and return a partial 0 terminated result while other versions
        fail with E_INVALIDARG and return a partial unterminated result */
     ok( (((hr == S_OK) || (hr == E_INVALIDARG)) && !memcmp(buffer, language, len)) ||
-        ((hr == __HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER)) && !len),
+        ((hr == E_NOT_SUFFICIENT_BUFFER) && !len) ||
+        ((hr == __HRESULT_FROM_WIN32(ERROR_CANNOT_COPY)) && !len),
         "=1: got 0x%x with %d and %s\n", hr, len, buffer);
 
     len = 0;
     memset(buffer, '#', maxlen);
     buffer[maxlen] = 0;
     hr = pGetAcceptLanguagesA( buffer, &len);
-    /* w2k3 and below: E_FAIL, since w2k8: E_INVALIDARG */
-    ok((hr == E_FAIL) || (hr == E_INVALIDARG),
-        "got 0x%x (expected E_FAIL or E_INVALIDARG)\n", hr);
+    /* w2k3 and below: E_FAIL, since w2k8: E_INVALIDARG, win8 ERROR_CANNOT_COPY */
+    ok((hr == E_FAIL) || (hr == E_INVALIDARG) || (hr == __HRESULT_FROM_WIN32(ERROR_CANNOT_COPY)),
+        "got 0x%x\n", hr);
 
     memset(buffer, '#', maxlen);
     buffer[maxlen] = 0;
@@ -393,7 +399,7 @@ restore_original:
     }
     else
     {
-        RegDeleteValue(hroot, acceptlanguage);
+        RegDeleteValueA(hroot, acceptlanguage);
     }
     RegCloseKey(hroot);
 }
@@ -439,12 +445,20 @@ static void test_SHSearchMapInt(void)
   ok(i == values[0], "Len 3, expected %d, got %d\n", values[0], i);
 }
 
-static void test_alloc_shared(void)
+struct shared_struct
 {
+    DWORD value;
+    HANDLE handle;
+};
+
+static void test_alloc_shared(int argc, char **argv)
+{
+    char cmdline[MAX_PATH];
+    PROCESS_INFORMATION pi;
+    STARTUPINFOA si = { 0 };
     DWORD procid;
-    HANDLE hmem;
-    int val;
-    int* p;
+    HANDLE hmem, hmem2 = 0;
+    struct shared_struct val, *p;
     BOOL ret;
 
     procid=GetCurrentProcessId();
@@ -453,19 +467,106 @@ static void test_alloc_shared(void)
     ret = pSHFreeShared(hmem, procid);
     ok( ret, "SHFreeShared failed: %u\n", GetLastError());
 
-    val=0x12345678;
-    hmem=pSHAllocShared(&val,4,procid);
+    val.value = 0x12345678;
+    val.handle = 0;
+    hmem = pSHAllocShared(&val, sizeof(val), procid);
     ok(hmem!=NULL,"SHAllocShared(NULL...) failed: %u\n", GetLastError());
 
     p=pSHLockShared(hmem,procid);
     ok(p!=NULL,"SHLockShared failed: %u\n", GetLastError());
     if (p!=NULL)
-        ok(*p==val,"Wrong value in shared memory: %d instead of %d\n",*p,val);
+        ok(p->value == 0x12345678, "Wrong value in shared memory: %d instead of %d\n", p->value, 0x12345678);
     ret = pSHUnlockShared(p);
     ok( ret, "SHUnlockShared failed: %u\n", GetLastError());
 
+    sprintf(cmdline, "%s %s %d %p", argv[0], argv[1], procid, hmem);
+    ret = CreateProcessA(NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+    ok(ret, "could not create child process error: %u\n", GetLastError());
+    if (ret)
+    {
+        winetest_wait_child_process(pi.hProcess);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+
+        p = pSHLockShared(hmem, procid);
+        ok(p != NULL,"SHLockShared failed: %u\n", GetLastError());
+        if (p != NULL && p->value != 0x12345678)
+        {
+            ok(p->value == 0x12345679, "Wrong value in shared memory: %d instead of %d\n", p->value, 0x12345679);
+            hmem2 = p->handle;
+            ok(hmem2 != NULL, "Expected handle in shared memory\n");
+        }
+        ret = pSHUnlockShared(p);
+        ok(ret, "SHUnlockShared failed: %u\n", GetLastError());
+    }
+
     ret = pSHFreeShared(hmem, procid);
     ok( ret, "SHFreeShared failed: %u\n", GetLastError());
+
+    if (hmem2)
+    {
+        p = pSHLockShared(hmem2, procid);
+        ok(p != NULL,"SHLockShared failed: %u\n", GetLastError());
+        if (p != NULL)
+            ok(p->value == 0xDEADBEEF, "Wrong value in shared memory: %d instead of %d\n", p->value, 0xDEADBEEF);
+        ret = pSHUnlockShared(p);
+        ok(ret, "SHUnlockShared failed: %u\n", GetLastError());
+
+        ret = pSHFreeShared(hmem2, procid);
+        ok(ret, "SHFreeShared failed: %u\n", GetLastError());
+    }
+}
+
+static void test_alloc_shared_remote(DWORD procid, HANDLE hmem)
+{
+    struct shared_struct val, *p;
+    HANDLE hmem2;
+    BOOL ret;
+
+    /* test directly accessing shared memory of a remote process */
+    p = pSHLockShared(hmem, procid);
+    ok(p != NULL || broken(p == NULL) /* Windows 7/8 */, "SHLockShared failed: %u\n", GetLastError());
+    if (p == NULL)
+    {
+        win_skip("Subprocess failed to modify shared memory, skipping test\n");
+        return;
+    }
+
+    ok(p->value == 0x12345678, "Wrong value in shared memory: %d instead of %d\n", p->value, 0x12345678);
+    p->value++;
+
+    val.value = 0xDEADBEEF;
+    val.handle = 0;
+    p->handle = pSHAllocShared(&val, sizeof(val), procid);
+    ok(p->handle != NULL, "SHAllocShared failed: %u\n", GetLastError());
+
+    ret = pSHUnlockShared(p);
+    ok(ret, "SHUnlockShared failed: %u\n", GetLastError());
+
+    /* test SHMapHandle */
+    hmem2 = pSHMapHandle(hmem, procid, GetCurrentProcessId(), 0, 0);
+
+    /* It seems like Windows Vista/2008 uses a different internal implementation
+     * for shared memory, and calling SHMapHandle fails with ERROR_INVALID_HANDLE. */
+    ok(hmem2 != NULL || broken(hmem2 == NULL && GetLastError() == ERROR_INVALID_HANDLE),
+       "SHMapHandle failed: %u\n", GetLastError());
+    if (hmem2 == NULL && GetLastError() == ERROR_INVALID_HANDLE)
+    {
+        win_skip("Subprocess failed to map shared memory, skipping test\n");
+        return;
+    }
+
+    p = pSHLockShared(hmem2, GetCurrentProcessId());
+    ok(p != NULL, "SHLockShared failed: %u\n", GetLastError());
+
+    if (p != NULL)
+        ok(p->value == 0x12345679, "Wrong value in shared memory: %d instead of %d\n", p->value, 0x12345679);
+
+    ret = pSHUnlockShared(p);
+    ok(ret, "SHUnlockShared failed: %u\n", GetLastError());
+
+    ret = pSHFreeShared(hmem2, GetCurrentProcessId());
+    ok(ret, "SHFreeShared failed: %u\n", GetLastError());
 }
 
 static void test_fdsa(void)
@@ -833,7 +934,7 @@ static HRESULT WINAPI Disp_QueryInterface(
 
     if (*ppvObject)
     {
-        IUnknown_AddRef(This);
+        IDispatch_AddRef(This);
         return S_OK;
     }
 
@@ -948,7 +1049,7 @@ static HRESULT WINAPI Enum_QueryInterface(
 
     if (*ppvObject)
     {
-        IUnknown_AddRef(This);
+        IEnumConnections_AddRef(This);
         return S_OK;
     }
 
@@ -1040,7 +1141,7 @@ static HRESULT WINAPI ConPt_QueryInterface(
 
     if (*ppvObject)
     {
-        IUnknown_AddRef(This);
+        IConnectionPoint_AddRef(This);
         return S_OK;
     }
 
@@ -1181,7 +1282,7 @@ static HRESULT WINAPI EnumPt_QueryInterface(
 
     if (*ppvObject)
     {
-        IUnknown_AddRef(This);
+        IEnumConnectionPoints_AddRef(This);
         return S_OK;
     }
 
@@ -1217,7 +1318,7 @@ static HRESULT WINAPI EnumPt_Next(
     if (cConnections > 0 && iface->idx < iface->container->ptCount)
     {
         *rgcd = iface->container->pt[iface->idx];
-        IUnknown_AddRef(iface->container->pt[iface->idx]);
+        IConnectionPoint_AddRef(iface->container->pt[iface->idx]);
         if (pcFetched)
             *pcFetched = 1;
         iface->idx++;
@@ -1272,7 +1373,7 @@ static HRESULT WINAPI Contain_QueryInterface(
 
     if (*ppvObject)
     {
-        IUnknown_AddRef(This);
+        IConnectionPointContainer_AddRef(This);
         return S_OK;
     }
 
@@ -1300,7 +1401,7 @@ static ULONG WINAPI Contain_Release(
         {
             int i;
             for (i = 0; i < iface->ptCount; i++)
-                IUnknown_Release(iface->pt[i]);
+                IConnectionPoint_Release(iface->pt[i]);
             HeapFree(GetProcessHeap(),0,iface->pt);
         }
         HeapFree(GetProcessHeap(),0,This);
@@ -1456,7 +1557,7 @@ static HRESULT WINAPI Prop_QueryInterface(
 
     if (*ppvObject)
     {
-        IUnknown_AddRef(This);
+        IPropertyBag_AddRef(This);
         return S_OK;
     }
 
@@ -1538,7 +1639,6 @@ static void test_SHPropertyBag_ReadLONG(void)
     ok(out == 0xfeedface, "value should not have changed\n");
     rc = pSHPropertyBag_ReadLONG(&pb->IPropertyBag_iface, szName1, NULL);
     ok(rc == E_INVALIDARG || broken(rc == 0) || broken(rc == 1), "incorrect return %x\n",rc);
-    ok(out == 0xfeedface, "value should not have changed\n");
     rc = pSHPropertyBag_ReadLONG(&pb->IPropertyBag_iface, szName1, &out);
     ok(rc == DISP_E_BADVARTYPE || broken(rc == 0) || broken(rc == 1), "incorrect return %x\n",rc);
     ok(out == 0xfeedface  || broken(out == 0xfeedfa00), "value should not have changed %x\n",out);
@@ -1565,14 +1665,14 @@ static void test_SHSetWindowBits(void)
     clsA.cbWndExtra = 0;
     clsA.hInstance = GetModuleHandleA(NULL);
     clsA.hIcon = 0;
-    clsA.hCursor = LoadCursorA(0, IDC_ARROW);
+    clsA.hCursor = LoadCursorA(0, (LPSTR)IDC_ARROW);
     clsA.hbrBackground = NULL;
     clsA.lpszMenuName = NULL;
     clsA.lpszClassName = "Shlwapi test class";
     RegisterClassA(&clsA);
 
     hwnd = CreateWindowA("Shlwapi test class", "Test", WS_VISIBLE, 0, 0, 100, 100,
-                          NULL, NULL, GetModuleHandle(NULL), 0);
+                          NULL, NULL, GetModuleHandleA(NULL), 0);
     ok(IsWindow(hwnd), "failed to create window\n");
 
     /* null window */
@@ -1688,14 +1788,14 @@ if (0)
     flags = FDTF_NOAUTOREADINGORDER | FDTF_SHORTTIME;
     ret = pSHFormatDateTimeA(&filetime, &flags, buff, sizeof(buff));
     ok(ret == lstrlenA(buff)+1, "got %d\n", ret);
-    ret = GetTimeFormat(LOCALE_USER_DEFAULT, TIME_NOSECONDS, &st, NULL, buff2, sizeof(buff2));
+    ret = GetTimeFormatA(LOCALE_USER_DEFAULT, TIME_NOSECONDS, &st, NULL, buff2, sizeof(buff2));
     ok(ret == lstrlenA(buff2)+1, "got %d\n", ret);
     ok(lstrcmpA(buff, buff2) == 0, "expected (%s), got (%s)\n", buff2, buff);
 
     flags = FDTF_NOAUTOREADINGORDER | FDTF_LONGTIME;
     ret = pSHFormatDateTimeA(&filetime, &flags, buff, sizeof(buff));
     ok(ret == lstrlenA(buff)+1, "got %d\n", ret);
-    ret = GetTimeFormat(LOCALE_USER_DEFAULT, 0, &st, NULL, buff2, sizeof(buff2));
+    ret = GetTimeFormatA(LOCALE_USER_DEFAULT, 0, &st, NULL, buff2, sizeof(buff2));
     ok(ret == lstrlenA(buff2)+1, "got %d\n", ret);
     ok(lstrcmpA(buff, buff2) == 0, "expected (%s), got (%s)\n", buff2, buff);
 
@@ -1703,21 +1803,21 @@ if (0)
     flags = FDTF_NOAUTOREADINGORDER | FDTF_LONGTIME | FDTF_SHORTTIME;
     ret = pSHFormatDateTimeA(&filetime, &flags, buff, sizeof(buff));
     ok(ret == lstrlenA(buff)+1, "got %d\n", ret);
-    ret = GetTimeFormat(LOCALE_USER_DEFAULT, 0, &st, NULL, buff2, sizeof(buff2));
+    ret = GetTimeFormatA(LOCALE_USER_DEFAULT, 0, &st, NULL, buff2, sizeof(buff2));
     ok(ret == lstrlenA(buff2)+1, "got %d\n", ret);
     ok(lstrcmpA(buff, buff2) == 0, "expected (%s), got (%s)\n", buff2, buff);
 
     flags = FDTF_NOAUTOREADINGORDER | FDTF_SHORTDATE;
     ret = pSHFormatDateTimeA(&filetime, &flags, buff, sizeof(buff));
     ok(ret == lstrlenA(buff)+1, "got %d\n", ret);
-    ret = GetDateFormat(LOCALE_USER_DEFAULT, DATE_SHORTDATE, &st, NULL, buff2, sizeof(buff2));
+    ret = GetDateFormatA(LOCALE_USER_DEFAULT, DATE_SHORTDATE, &st, NULL, buff2, sizeof(buff2));
     ok(ret == lstrlenA(buff2)+1, "got %d\n", ret);
     ok(lstrcmpA(buff, buff2) == 0, "expected (%s), got (%s)\n", buff2, buff);
 
     flags = FDTF_NOAUTOREADINGORDER | FDTF_LONGDATE;
     ret = pSHFormatDateTimeA(&filetime, &flags, buff, sizeof(buff));
     ok(ret == lstrlenA(buff)+1, "got %d\n", ret);
-    ret = GetDateFormat(LOCALE_USER_DEFAULT, DATE_LONGDATE, &st, NULL, buff2, sizeof(buff2));
+    ret = GetDateFormatA(LOCALE_USER_DEFAULT, DATE_LONGDATE, &st, NULL, buff2, sizeof(buff2));
     ok(ret == lstrlenA(buff2)+1, "got %d\n", ret);
     ok(lstrcmpA(buff, buff2) == 0, "expected (%s), got (%s)\n", buff2, buff);
 
@@ -1725,7 +1825,7 @@ if (0)
     flags = FDTF_NOAUTOREADINGORDER | FDTF_LONGDATE | FDTF_SHORTDATE;
     ret = pSHFormatDateTimeA(&filetime, &flags, buff, sizeof(buff));
     ok(ret == lstrlenA(buff)+1, "got %d\n", ret);
-    ret = GetDateFormat(LOCALE_USER_DEFAULT, DATE_LONGDATE, &st, NULL, buff2, sizeof(buff2));
+    ret = GetDateFormatA(LOCALE_USER_DEFAULT, DATE_LONGDATE, &st, NULL, buff2, sizeof(buff2));
     ok(ret == lstrlenA(buff2)+1, "got %d\n", ret);
     ok(lstrcmpA(buff, buff2) == 0, "expected (%s), got (%s)\n", buff2, buff);
 
@@ -1733,12 +1833,12 @@ if (0)
     flags = FDTF_NOAUTOREADINGORDER | FDTF_LONGDATE | FDTF_SHORTTIME;
     ret = pSHFormatDateTimeA(&filetime, &flags, buff, sizeof(buff));
     ok(ret == lstrlenA(buff)+1, "got %d, length %d\n", ret, lstrlenA(buff)+1);
-    ret = GetTimeFormat(LOCALE_USER_DEFAULT, TIME_NOSECONDS, &st, NULL, buff3, sizeof(buff3));
+    ret = GetTimeFormatA(LOCALE_USER_DEFAULT, TIME_NOSECONDS, &st, NULL, buff3, sizeof(buff3));
     ok(ret == lstrlenA(buff3)+1, "got %d\n", ret);
     ok(lstrcmpA(buff3, buff + lstrlenA(buff) - lstrlenA(buff3)) == 0,
        "expected (%s), got (%s) for time part\n",
        buff3, buff + lstrlenA(buff) - lstrlenA(buff3));
-    ret = GetDateFormat(LOCALE_USER_DEFAULT, DATE_LONGDATE, &st, NULL, buff2, sizeof(buff2));
+    ret = GetDateFormatA(LOCALE_USER_DEFAULT, DATE_LONGDATE, &st, NULL, buff2, sizeof(buff2));
     ok(ret == lstrlenA(buff2)+1, "got %d\n", ret);
     buff[lstrlenA(buff2)] = '\0';
     ok(lstrcmpA(buff2, buff) == 0, "expected (%s) got (%s) for date part\n",
@@ -1747,12 +1847,12 @@ if (0)
     flags = FDTF_NOAUTOREADINGORDER | FDTF_LONGDATE | FDTF_LONGTIME;
     ret = pSHFormatDateTimeA(&filetime, &flags, buff, sizeof(buff));
     ok(ret == lstrlenA(buff)+1, "got %d\n", ret);
-    ret = GetTimeFormat(LOCALE_USER_DEFAULT, 0, &st, NULL, buff3, sizeof(buff3));
+    ret = GetTimeFormatA(LOCALE_USER_DEFAULT, 0, &st, NULL, buff3, sizeof(buff3));
     ok(ret == lstrlenA(buff3)+1, "got %d\n", ret);
     ok(lstrcmpA(buff3, buff + lstrlenA(buff) - lstrlenA(buff3)) == 0,
        "expected (%s), got (%s) for time part\n",
        buff3, buff + lstrlenA(buff) - lstrlenA(buff3));
-    ret = GetDateFormat(LOCALE_USER_DEFAULT, DATE_LONGDATE, &st, NULL, buff2, sizeof(buff2));
+    ret = GetDateFormatA(LOCALE_USER_DEFAULT, DATE_LONGDATE, &st, NULL, buff2, sizeof(buff2));
     ok(ret == lstrlenA(buff2)+1, "got %d\n", ret);
     buff[lstrlenA(buff2)] = '\0';
     ok(lstrcmpA(buff2, buff) == 0, "expected (%s) got (%s) for date part\n",
@@ -1761,10 +1861,10 @@ if (0)
     flags = FDTF_NOAUTOREADINGORDER | FDTF_SHORTDATE | FDTF_SHORTTIME;
     ret = pSHFormatDateTimeA(&filetime, &flags, buff, sizeof(buff));
     ok(ret == lstrlenA(buff)+1, "got %d\n", ret);
-    ret = GetDateFormat(LOCALE_USER_DEFAULT, DATE_SHORTDATE, &st, NULL, buff2, sizeof(buff2));
+    ret = GetDateFormatA(LOCALE_USER_DEFAULT, DATE_SHORTDATE, &st, NULL, buff2, sizeof(buff2));
     ok(ret == lstrlenA(buff2)+1, "got %d\n", ret);
     strcat(buff2, " ");
-    ret = GetTimeFormat(LOCALE_USER_DEFAULT, TIME_NOSECONDS, &st, NULL, buff3, sizeof(buff3));
+    ret = GetTimeFormatA(LOCALE_USER_DEFAULT, TIME_NOSECONDS, &st, NULL, buff3, sizeof(buff3));
     ok(ret == lstrlenA(buff3)+1, "got %d\n", ret);
     strcat(buff2, buff3);
     ok(lstrcmpA(buff, buff2) == 0, "expected (%s), got (%s)\n", buff2, buff);
@@ -1772,10 +1872,10 @@ if (0)
     flags = FDTF_NOAUTOREADINGORDER | FDTF_SHORTDATE | FDTF_LONGTIME;
     ret = pSHFormatDateTimeA(&filetime, &flags, buff, sizeof(buff));
     ok(ret == lstrlenA(buff)+1, "got %d\n", ret);
-    ret = GetDateFormat(LOCALE_USER_DEFAULT, DATE_SHORTDATE, &st, NULL, buff2, sizeof(buff2));
+    ret = GetDateFormatA(LOCALE_USER_DEFAULT, DATE_SHORTDATE, &st, NULL, buff2, sizeof(buff2));
     ok(ret == lstrlenA(buff2)+1, "got %d\n", ret);
     strcat(buff2, " ");
-    ret = GetTimeFormat(LOCALE_USER_DEFAULT, 0, &st, NULL, buff3, sizeof(buff3));
+    ret = GetTimeFormatA(LOCALE_USER_DEFAULT, 0, &st, NULL, buff3, sizeof(buff3));
     ok(ret == lstrlenA(buff3)+1, "got %d\n", ret);
     strcat(buff2, buff3);
     ok(lstrcmpA(buff, buff2) == 0, "expected (%s), got (%s)\n", buff2, buff);
@@ -1790,6 +1890,7 @@ static void test_SHFormatDateTimeW(void)
     INT ret;
     static const WCHAR spaceW[] = {' ',0};
 #define UNICODE_LTR_MARK 0x200e
+#define UNICODE_RTL_MARK 0x200f
 
     if(!pSHFormatDateTimeW)
     {
@@ -1919,9 +2020,9 @@ if (0)
     p2 = buff2;
     while (*p2 != '\0')
     {
-        while (*p1 == UNICODE_LTR_MARK)
+        while (*p1 == UNICODE_LTR_MARK || *p1 == UNICODE_RTL_MARK)
             p1++;
-        while (*p2 == UNICODE_LTR_MARK)
+        while (*p2 == UNICODE_LTR_MARK || *p2 == UNICODE_RTL_MARK)
             p2++;
         p1++;
         p2++;
@@ -1945,9 +2046,9 @@ if (0)
     p2 = buff2;
     while (*p2 != '\0')
     {
-        while (*p1 == UNICODE_LTR_MARK)
+        while (*p1 == UNICODE_LTR_MARK || *p1 == UNICODE_RTL_MARK)
             p1++;
-        while (*p2 == UNICODE_LTR_MARK)
+        while (*p2 == UNICODE_LTR_MARK || *p2 == UNICODE_RTL_MARK)
             p2++;
         p1++;
         p2++;
@@ -2105,7 +2206,7 @@ static HRESULT WINAPI IOleCommandTargetImpl_QueryInterface(IOleCommandTarget *if
 
     if(*ppvObj)
     {
-        IUnknown_AddRef(iface);
+        IOleCommandTarget_AddRef(iface);
         return S_OK;
     }
 
@@ -2216,7 +2317,7 @@ static HRESULT WINAPI IServiceProviderImpl_QueryInterface(IServiceProvider *ifac
 
     if(*ppvObj)
     {
-        IUnknown_AddRef(iface);
+        IServiceProvider_AddRef(iface);
         /* native uses redefined IID_IServiceProvider symbol, so we can't compare pointers */
         if (IsEqualIID(riid, &IID_IServiceProvider))
             add_call(&trace_got, 1, iface, &IID_IServiceProvider, 0, 0, 0);
@@ -2273,7 +2374,7 @@ static const IServiceProviderVtbl IServiceProviderImpl_Vtbl =
 
 static void test_IUnknown_QueryServiceExec(void)
 {
-    IServiceProvider *provider = IServiceProviderImpl_Construct();
+    IServiceProvider *provider;
     static const GUID dummy_serviceid = { 0xdeadbeef };
     static const GUID dummy_groupid = { 0xbeefbeef };
     call_trace_t trace_expected;
@@ -2287,9 +2388,13 @@ static void test_IUnknown_QueryServiceExec(void)
         return;
     }
 
+    provider = IServiceProviderImpl_Construct();
+
     /* null source pointer */
     hr = pIUnknown_QueryServiceExec(NULL, &dummy_serviceid, &dummy_groupid, 0, 0, 0, 0);
-    ok(hr == E_FAIL, "got 0x%08x\n", hr);
+    ok(hr == E_FAIL ||
+       hr == E_NOTIMPL, /* win 8 */
+       "got 0x%08x\n", hr);
 
     /* expected trace:
        IUnknown_QueryServiceExec( ptr1, serviceid, groupid, arg1, arg2, arg3, arg4);
@@ -2334,7 +2439,7 @@ static HRESULT WINAPI IProfferServiceImpl_QueryInterface(IProfferService *iface,
 
     if(*ppvObj)
     {
-        IUnknown_AddRef(iface);
+        IProfferService_AddRef(iface);
         return S_OK;
     }
 
@@ -2385,8 +2490,8 @@ static const IProfferServiceVtbl IProfferServiceImpl_Vtbl =
 
 static void test_IUnknown_ProfferService(void)
 {
-    IServiceProvider *provider = IServiceProviderImpl_Construct();
-    IProfferService *proff = IProfferServiceImpl_Construct();
+    IServiceProvider *provider;
+    IProfferService *proff;
     static const GUID dummy_serviceid = { 0xdeadbeef };
     call_trace_t trace_expected;
     HRESULT hr;
@@ -2400,9 +2505,14 @@ static void test_IUnknown_ProfferService(void)
         return;
     }
 
+    provider = IServiceProviderImpl_Construct();
+    proff = IProfferServiceImpl_Construct();
+
     /* null source pointer */
     hr = pIUnknown_ProfferService(NULL, &dummy_serviceid, 0, 0);
-    ok(hr == E_FAIL, "got 0x%08x\n", hr);
+    ok(hr == E_FAIL ||
+       hr == E_NOTIMPL, /* win 8 */
+       "got 0x%08x\n", hr);
 
     /* expected trace:
        IUnknown_ProfferService( ptr1, serviceid, arg1, arg2);
@@ -2467,7 +2577,7 @@ static void test_SHCreateWorkerWindowA(void)
     hwnd = pSHCreateWorkerWindowA(0, NULL, 0, 0, 0, 0);
     ok(hwnd != 0, "expected window\n");
 
-    GetClassName(hwnd, classA, 20);
+    GetClassNameA(hwnd, classA, 20);
     ok(lstrcmpA(classA, "WorkerA") == 0, "expected WorkerA class, got %s\n", classA);
 
     ret = GetWindowLongPtrA(hwnd, 0);
@@ -2475,7 +2585,7 @@ static void test_SHCreateWorkerWindowA(void)
 
     /* class info */
     memset(&cliA, 0, sizeof(cliA));
-    res = GetClassInfoA(GetModuleHandle("shlwapi.dll"), "WorkerA", &cliA);
+    res = GetClassInfoA(GetModuleHandleA("shlwapi.dll"), "WorkerA", &cliA);
     ok(res, "failed to get class info\n");
     ok(cliA.style == 0, "got 0x%08x\n", cliA.style);
     ok(cliA.cbClsExtra == 0, "got %d\n", cliA.cbClsExtra);
@@ -2488,7 +2598,7 @@ static void test_SHCreateWorkerWindowA(void)
     hwnd = pSHCreateWorkerWindowA(0, NULL, 0, 0, 0, 0xdeadbeef);
     ok(hwnd != 0, "expected window\n");
 
-    GetClassName(hwnd, classA, 20);
+    GetClassNameA(hwnd, classA, 20);
     ok(lstrcmpA(classA, "WorkerA") == 0, "expected WorkerA class, got %s\n", classA);
 
     ret = GetWindowLongPtrA(hwnd, 0);
@@ -2654,7 +2764,7 @@ static void test_SHIShellFolder_EnumObjects(void)
     IShellFolder_Release(folder);
 }
 
-static void write_inifile(LPCWSTR filename)
+static BOOL write_inifile(LPCWSTR filename)
 {
     DWORD written;
     HANDLE file;
@@ -2665,12 +2775,16 @@ static void write_inifile(LPCWSTR filename)
         "AnotherKey=asdf\r\n";
 
     file = CreateFileW(filename, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
-    if(file == INVALID_HANDLE_VALUE)
-        return;
+    if(file == INVALID_HANDLE_VALUE) {
+        win_skip("failed to create ini file at %s\n", wine_dbgstr_w(filename));
+        return FALSE;
+    }
 
     WriteFile(file, data, sizeof(data), &written, NULL);
 
     CloseHandle(file);
+
+    return TRUE;
 }
 
 #define verify_inifile(f, e) r_verify_inifile(__LINE__, f, e)
@@ -2681,6 +2795,7 @@ static void r_verify_inifile(unsigned l, LPCWSTR filename, LPCSTR exp)
     DWORD read;
 
     file = CreateFileW(filename, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
+
     if(file == INVALID_HANDLE_VALUE)
         return;
 
@@ -2699,52 +2814,54 @@ static void test_SHGetIniString(void)
     WCHAR out[64] = {0};
 
     static const WCHAR TestAppW[] = {'T','e','s','t','A','p','p',0};
-    static const WCHAR TestIniW[] = {'C',':','\\','t','e','s','t','.','i','n','i',0};
     static const WCHAR AKeyW[] = {'A','K','e','y',0};
     static const WCHAR AnotherKeyW[] = {'A','n','o','t','h','e','r','K','e','y',0};
     static const WCHAR JunkKeyW[] = {'J','u','n','k','K','e','y',0};
+    static const WCHAR testpathW[] = {'C',':','\\','t','e','s','t','.','i','n','i',0};
+    WCHAR pathW[MAX_PATH];
 
     if(!pSHGetIniStringW || is_win2k_and_lower){
         win_skip("SHGetIniStringW is not available\n");
         return;
     }
 
-    write_inifile(TestIniW);
+    lstrcpyW(pathW, testpathW);
+
+    if (!write_inifile(pathW))
+        return;
 
     if(0){
         /* these crash on Windows */
         pSHGetIniStringW(NULL, NULL, NULL, 0, NULL);
-        pSHGetIniStringW(NULL, AKeyW, out, sizeof(out), TestIniW);
-        pSHGetIniStringW(TestAppW, AKeyW, NULL, sizeof(out), TestIniW);
+        pSHGetIniStringW(NULL, AKeyW, out, sizeof(out), pathW);
+        pSHGetIniStringW(TestAppW, AKeyW, NULL, sizeof(out), pathW);
     }
 
-    ret = pSHGetIniStringW(TestAppW, AKeyW, out, 0, TestIniW);
+    ret = pSHGetIniStringW(TestAppW, AKeyW, out, 0, pathW);
     ok(ret == 0, "SHGetIniStringW should have given 0, instead: %d\n", ret);
 
     /* valid arguments */
-    ret = pSHGetIniStringW(TestAppW, NULL, out, sizeof(out), TestIniW);
-    ok(broken(ret == 0) || /* win 98 */
-            ret == 4, "SHGetIniStringW should have given 4, instead: %d\n", ret);
-    ok(!lstrcmpW(out, AKeyW), "Expected %s, got: %s\n",
-                wine_dbgstr_w(AKeyW), wine_dbgstr_w(out));
+    out[0] = 0;
+    SetLastError(0xdeadbeef);
+    ret = pSHGetIniStringW(TestAppW, NULL, out, sizeof(out), pathW);
+    ok(ret == 4, "SHGetIniStringW should have given 4, instead: %d\n", ret);
+    ok(!lstrcmpW(out, AKeyW), "Expected %s, got: %s, %d\n",
+                wine_dbgstr_w(AKeyW), wine_dbgstr_w(out), GetLastError());
 
-    ret = pSHGetIniStringW(TestAppW, AKeyW, out, sizeof(out), TestIniW);
-    ok(broken(ret == 0) || /* win 98 */
-                ret == 1, "SHGetIniStringW should have given 1, instead: %d\n", ret);
-    ok(broken(*out == 0) || /*win 98 */
-        !strcmp_wa(out, "1"), "Expected L\"1\", got: %s\n", wine_dbgstr_w(out));
+    ret = pSHGetIniStringW(TestAppW, AKeyW, out, sizeof(out), pathW);
+    ok(ret == 1, "SHGetIniStringW should have given 1, instead: %d\n", ret);
+    ok(!strcmp_wa(out, "1"), "Expected L\"1\", got: %s\n", wine_dbgstr_w(out));
 
-    ret = pSHGetIniStringW(TestAppW, AnotherKeyW, out, sizeof(out), TestIniW);
-    ok(broken(ret == 0) || /* win 98 */
-            ret == 4, "SHGetIniStringW should have given 4, instead: %d\n", ret);
-    ok(broken(*out == 0) || /* win 98 */
-            !strcmp_wa(out, "asdf"), "Expected L\"asdf\", got: %s\n", wine_dbgstr_w(out));
+    ret = pSHGetIniStringW(TestAppW, AnotherKeyW, out, sizeof(out), pathW);
+    ok(ret == 4, "SHGetIniStringW should have given 4, instead: %d\n", ret);
+    ok(!strcmp_wa(out, "asdf"), "Expected L\"asdf\", got: %s\n", wine_dbgstr_w(out));
 
-    ret = pSHGetIniStringW(TestAppW, JunkKeyW, out, sizeof(out), TestIniW);
+    out[0] = 1;
+    ret = pSHGetIniStringW(TestAppW, JunkKeyW, out, sizeof(out), pathW);
     ok(ret == 0, "SHGetIniStringW should have given 0, instead: %d\n", ret);
     ok(*out == 0, "Expected L\"\", got: %s\n", wine_dbgstr_w(out));
 
-    DeleteFileW(TestIniW);
+    DeleteFileW(pathW);
 }
 
 static void test_SHSetIniString(void)
@@ -2763,7 +2880,8 @@ static void test_SHSetIniString(void)
         return;
     }
 
-    write_inifile(TestIniW);
+    if (!write_inifile(TestIniW))
+        return;
 
     ret = pSHSetIniStringW(TestAppW, AKeyW, AValueW, TestIniW);
     ok(ret == TRUE, "SHSetIniStringW should not have failed\n");
@@ -2924,6 +3042,7 @@ static void init_pointers(void)
     MAKEFUNC(SHLockShared, 8);
     MAKEFUNC(SHUnlockShared, 9);
     MAKEFUNC(SHFreeShared, 10);
+    MAKEFUNC(SHMapHandle, 11);
     MAKEFUNC(GetAcceptLanguagesA, 14);
     MAKEFUNC(SHSetWindowBits, 165);
     MAKEFUNC(SHSetParentHwnd, 167);
@@ -3035,6 +3154,9 @@ static void test_SHSetParentHwnd(void)
 
 START_TEST(ordinal)
 {
+    char **argv;
+    int argc;
+
     hShlwapi = GetModuleHandleA("shlwapi.dll");
     is_win2k_and_lower = GetProcAddress(hShlwapi, "StrChrNW") == 0;
     is_win9x = GetProcAddress(hShlwapi, (LPSTR)99) == 0; /* StrCpyNXA */
@@ -3047,6 +3169,17 @@ START_TEST(ordinal)
 
     init_pointers();
 
+    argc = winetest_get_mainargs(&argv);
+    if (argc >= 4)
+    {
+        DWORD procid;
+        HANDLE hmem;
+        sscanf(argv[2], "%d", &procid);
+        sscanf(argv[3], "%p", &hmem);
+        test_alloc_shared_remote(procid, hmem);
+        return;
+    }
+
     hmlang = LoadLibraryA("mlang.dll");
     pLcidToRfc1766A = (void *)GetProcAddress(hmlang, "LcidToRfc1766A");
 
@@ -3055,7 +3188,7 @@ START_TEST(ordinal)
 
     test_GetAcceptLanguagesA();
     test_SHSearchMapInt();
-    test_alloc_shared();
+    test_alloc_shared(argc, argv);
     test_fdsa();
     test_GetShellSecurityDescriptor();
     test_SHPackDispParams();

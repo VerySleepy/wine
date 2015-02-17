@@ -1,4 +1,5 @@
 MODULE    = hhctrl.ocx
+IMPORTLIB = htmlhelp
 IMPORTS   = uuid advapi32 comctl32 shlwapi ole32 oleaut32 user32 gdi32
 
 C_SRCS = \
@@ -11,11 +12,10 @@ C_SRCS = \
 	stream.c \
 	webbrowser.c
 
-IDL_TLB_SRCS = hhctrl_tlb.idl
+IDL_SRCS = hhctrl_tlb.idl
 
 RC_SRCS = hhctrl.rc
-PO_SRCS = hhctrl.rc
 
-SVG_SRCS = hhtoolbar.svg
-
-@MAKE_DLL_RULES@
+SVG_SRCS = \
+	hhtoolbar.svg \
+	hhtreeview.svg

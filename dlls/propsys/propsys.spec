@@ -23,10 +23,10 @@
 
 @ stub ClearPropVariantArray
 @ stub ClearVariantArray
-@ stub DllCanUnloadNow
-@ stub DllGetClassObject
-@ stub DllRegisterServer
-@ stub DllUnregisterServer
+@ stdcall -private DllCanUnloadNow()
+@ stdcall -private DllGetClassObject(ptr ptr ptr)
+@ stdcall -private DllRegisterServer()
+@ stdcall -private DllUnregisterServer()
 @ stub InitPropVariantFromBooleanVector
 @ stdcall InitPropVariantFromBuffer(ptr long ptr)
 @ stub InitPropVariantFromCLSID
@@ -81,10 +81,10 @@
 @ stub PSGetNamedPropertyFromPropertyStorage
 @ stdcall PSGetPropertyDescription(ptr ptr ptr)
 @ stub PSGetPropertyDescriptionByName
-@ stub PSGetPropertyDescriptionListFromString
+@ stdcall PSGetPropertyDescriptionListFromString(ptr ptr ptr)
 @ stub PSGetPropertyFromPropertyStorage
 @ stub PSGetPropertyKeyFromName
-@ stub PSGetPropertySystem
+@ stdcall PSGetPropertySystem(ptr ptr)
 @ stub PSGetPropertyValue
 @ stub PSLookupPropertyHandlerCLSID
 @ stdcall PSPropertyKeyFromString(wstr ptr)
@@ -94,7 +94,7 @@
 @ stdcall PSStringFromPropertyKey(ptr ptr long)
 @ stdcall PSUnregisterPropertySchema(wstr)
 @ stdcall PropVariantChangeType(ptr ptr long long)
-@ stub PropVariantCompareEx
+@ stdcall PropVariantCompareEx(ptr ptr long long)
 @ stub PropVariantGetBooleanElem
 @ stub PropVariantGetDoubleElem
 @ stub PropVariantGetElementCount
@@ -120,15 +120,15 @@
 @ stub PropVariantToFileTimeVector
 @ stub PropVariantToFileTimeVectorAlloc
 @ stdcall PropVariantToGUID(ptr ptr)
-@ stub PropVariantToInt16
+@ stdcall PropVariantToInt16(ptr ptr)
 @ stub PropVariantToInt16Vector
 @ stub PropVariantToInt16VectorAlloc
 @ stub PropVariantToInt16WithDefault
-@ stub PropVariantToInt32
+@ stdcall PropVariantToInt32(ptr ptr)
 @ stub PropVariantToInt32Vector
 @ stub PropVariantToInt32VectorAlloc
 @ stub PropVariantToInt32WithDefault
-@ stub PropVariantToInt64
+@ stdcall PropVariantToInt64(ptr ptr)
 @ stub PropVariantToInt64Vector
 @ stub PropVariantToInt64VectorAlloc
 @ stub PropVariantToInt64WithDefault
@@ -138,15 +138,15 @@
 @ stub PropVariantToStringVector
 @ stub PropVariantToStringVectorAlloc
 @ stub PropVariantToStringWithDefault
-@ stub PropVariantToUInt16
+@ stdcall PropVariantToUInt16(ptr ptr)
 @ stub PropVariantToUInt16Vector
 @ stub PropVariantToUInt16VectorAlloc
 @ stub PropVariantToUInt16WithDefault
-@ stub PropVariantToUInt32
+@ stdcall PropVariantToUInt32(ptr ptr)
 @ stub PropVariantToUInt32Vector
 @ stub PropVariantToUInt32VectorAlloc
 @ stub PropVariantToUInt32WithDefault
-@ stub PropVariantToUInt64
+@ stdcall PropVariantToUInt64(ptr ptr)
 @ stub PropVariantToUInt64Vector
 @ stub PropVariantToUInt64VectorAlloc
 @ stub PropVariantToUInt64WithDefault

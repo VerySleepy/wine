@@ -42,7 +42,6 @@ typedef struct {
 } uninst_entry;
 static uninst_entry *entries = NULL;
 static unsigned int numentries = 0;
-static int list_need_update = 1;
 static int oldsel = -1;
 static WCHAR *sFilter;
 
@@ -50,7 +49,6 @@ static int FetchUninstallInformation(void);
 static void UninstallProgram(void);
 static int cmp_by_name(const void *a, const void *b);
 
-static const WCHAR BackSlashW[] = { '\\', 0 };
 static const WCHAR DisplayNameW[] = {'D','i','s','p','l','a','y','N','a','m','e',0};
 static const WCHAR PathUninstallW[] = {
         'S','o','f','t','w','a','r','e','\\',
@@ -309,5 +307,4 @@ static void UninstallProgram(void)
         }
     }
     WINE_TRACE("finished uninstall phase.\n");
-    list_need_update = 1;
 }

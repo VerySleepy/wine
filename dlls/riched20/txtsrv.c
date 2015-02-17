@@ -29,6 +29,7 @@
 #include "ole2.h"
 #include "oleauto.h"
 #include "richole.h"
+#include "tom.h"
 #include "imm.h"
 #include "textserv.h"
 #include "wine/debug.h"
@@ -54,56 +55,82 @@
 WINE_DEFAULT_DEBUG_CHANNEL(richedit);
 
 typedef struct ITextServicesImpl {
+   IUnknown IUnknown_inner;
    ITextServices ITextServices_iface;
-   ITextHost *pMyHost;
+   IUnknown *outer_unk;
    LONG ref;
+   ITextHost *pMyHost;
    CRITICAL_SECTION csTxtSrv;
    ME_TextEditor *editor;
    char spare[256];
 } ITextServicesImpl;
 
-static const ITextServicesVtbl textservices_Vtbl;
-
-/******************************************************************
- *        CreateTextServices (RICHED20.4)
- */
-HRESULT WINAPI CreateTextServices(IUnknown  * pUnkOuter,
-                                  ITextHost * pITextHost,
-                                  IUnknown  **ppUnk)
+static inline ITextServicesImpl *impl_from_IUnknown(IUnknown *iface)
 {
-   ITextServicesImpl *ITextImpl;
-   HRESULT hres;
-   TRACE("%p %p --> %p\n", pUnkOuter, pITextHost, ppUnk);
-   if (pITextHost == NULL)
-      return E_POINTER;
+   return CONTAINING_RECORD(iface, ITextServicesImpl, IUnknown_inner);
+}
 
-   ITextImpl = CoTaskMemAlloc(sizeof(*ITextImpl));
-   if (ITextImpl == NULL)
-      return E_OUTOFMEMORY;
-   InitializeCriticalSection(&ITextImpl->csTxtSrv);
-   ITextImpl->csTxtSrv.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": ITextServicesImpl.csTxtSrv");
-   ITextImpl->ref = 1;
-   ITextHost_AddRef(pITextHost);
-   ITextImpl->pMyHost = pITextHost;
-   ITextImpl->ITextServices_iface.lpVtbl = &textservices_Vtbl;
-   ITextImpl->editor = ME_MakeEditor(pITextHost, FALSE);
-   ITextImpl->editor->exStyleFlags = 0;
-   ITextImpl->editor->rcFormat.left = 0;
-   ITextImpl->editor->rcFormat.top = 0;
-   ITextImpl->editor->rcFormat.right = 0;
-   ITextImpl->editor->rcFormat.bottom = 0;
+static HRESULT WINAPI ITextServicesImpl_QueryInterface(IUnknown *iface, REFIID riid, void **ppv)
+{
+   ITextServicesImpl *This = impl_from_IUnknown(iface);
 
-   ME_HandleMessage(ITextImpl->editor, WM_CREATE, 0, 0, TRUE, &hres);
+   TRACE("(%p)->(%s, %p)\n", iface, debugstr_guid(riid), ppv);
 
-   if (pUnkOuter)
-   {
-      FIXME("Support aggregation\n");
-      return CLASS_E_NOAGGREGATION;
+   if (IsEqualIID(riid, &IID_IUnknown))
+      *ppv = &This->IUnknown_inner;
+   else if (IsEqualIID(riid, &IID_ITextServices))
+      *ppv = &This->ITextServices_iface;
+   else if (IsEqualIID(riid, &IID_IRichEditOle) || IsEqualIID(riid, &IID_ITextDocument)) {
+      if (!This->editor->reOle)
+         if (!CreateIRichEditOle(This->outer_unk, This->editor, (void **)(&This->editor->reOle)))
+            return E_OUTOFMEMORY;
+      if (IsEqualIID(riid, &IID_ITextDocument))
+         ME_GetITextDocumentInterface(This->editor->reOle, ppv);
+      else
+         *ppv = This->editor->reOle;
+   } else {
+      *ppv = NULL;
+      FIXME("Unknown interface: %s\n", debugstr_guid(riid));
+      return E_NOINTERFACE;
    }
 
-   *ppUnk = (IUnknown *)&ITextImpl->ITextServices_iface;
+   IUnknown_AddRef((IUnknown*)*ppv);
    return S_OK;
 }
+
+static ULONG WINAPI ITextServicesImpl_AddRef(IUnknown *iface)
+{
+   ITextServicesImpl *This = impl_from_IUnknown(iface);
+   LONG ref = InterlockedIncrement(&This->ref);
+
+   TRACE("(%p) ref=%d\n", This, ref);
+
+   return ref;
+}
+
+static ULONG WINAPI ITextServicesImpl_Release(IUnknown *iface)
+{
+   ITextServicesImpl *This = impl_from_IUnknown(iface);
+   LONG ref = InterlockedDecrement(&This->ref);
+
+   TRACE("(%p) ref=%d\n", This, ref);
+
+   if (!ref)
+   {
+      ME_DestroyEditor(This->editor);
+      This->csTxtSrv.DebugInfo->Spare[0] = 0;
+      DeleteCriticalSection(&This->csTxtSrv);
+      CoTaskMemFree(This);
+   }
+   return ref;
+}
+
+static const IUnknownVtbl textservices_inner_vtbl =
+{
+   ITextServicesImpl_QueryInterface,
+   ITextServicesImpl_AddRef,
+   ITextServicesImpl_Release
+};
 
 static inline ITextServicesImpl *impl_from_ITextServices(ITextServices *iface)
 {
@@ -113,46 +140,19 @@ static inline ITextServicesImpl *impl_from_ITextServices(ITextServices *iface)
 static HRESULT WINAPI fnTextSrv_QueryInterface(ITextServices *iface, REFIID riid, void **ppv)
 {
    ITextServicesImpl *This = impl_from_ITextServices(iface);
-
-   TRACE("(%p/%p)->(%s, %p)\n", This, iface, debugstr_guid(riid), ppv);
-   *ppv = NULL;
-   if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_ITextServices))
-      *ppv = This;
-
-   if (*ppv)
-   {
-      IUnknown_AddRef((IUnknown *)(*ppv));
-      TRACE ("-- Interface = %p\n", *ppv);
-      return S_OK;
-   }
-   FIXME("Unknown interface: %s\n", debugstr_guid(riid));
-   return E_NOINTERFACE;
+   return IUnknown_QueryInterface(This->outer_unk, riid, ppv);
 }
 
 static ULONG WINAPI fnTextSrv_AddRef(ITextServices *iface)
 {
    ITextServicesImpl *This = impl_from_ITextServices(iface);
-   DWORD ref = InterlockedIncrement(&This->ref);
-
-   TRACE("(%p/%p)->() AddRef from %d\n", This, iface, ref - 1);
-   return ref;
+   return IUnknown_AddRef(This->outer_unk);
 }
 
 static ULONG WINAPI fnTextSrv_Release(ITextServices *iface)
 {
    ITextServicesImpl *This = impl_from_ITextServices(iface);
-   DWORD ref = InterlockedDecrement(&This->ref);
-
-   TRACE("(%p/%p)->() Release from %d\n", This, iface, ref + 1);
-
-   if (!ref)
-   {
-      ITextHost_Release(This->pMyHost);
-      This->csTxtSrv.DebugInfo->Spare[0] = 0;
-      DeleteCriticalSection(&This->csTxtSrv);
-      CoTaskMemFree(This);
-   }
-   return ref;
+   return IUnknown_Release(This->outer_unk);
 }
 
 DECLSPEC_HIDDEN HRESULT WINAPI fnTextSrv_TxSendMessage(ITextServices *iface, UINT msg, WPARAM wparam,
@@ -273,7 +273,7 @@ DECLSPEC_HIDDEN HRESULT WINAPI fnTextSrv_TxGetText(ITextServices *iface, BSTR *p
          return E_OUTOFMEMORY;
 
       ME_CursorFromCharOfs(This->editor, 0, &start);
-      ME_GetTextW(This->editor, bstr, length, &start, INT_MAX, FALSE);
+      ME_GetTextW(This->editor, bstr, length, &start, INT_MAX, FALSE, FALSE);
       *pbstrText = bstr;
    } else {
       *pbstrText = NULL;
@@ -301,7 +301,7 @@ DECLSPEC_HIDDEN HRESULT WINAPI fnTextSrv_TxSetText(ITextServices *iface, LPCWSTR
    return S_OK;
 }
 
-DECLSPEC_HIDDEN HRESULT WINAPI fnTextSrv_TxGetCurrentTargetX(ITextServices *iface, LONG *x)
+DECLSPEC_HIDDEN HRESULT WINAPI fnTextSrv_TxGetCurTargetX(ITextServices *iface, LONG *x)
 {
    ITextServicesImpl *This = impl_from_ITextServices(iface);
 
@@ -363,14 +363,14 @@ DEFINE_THISCALL_WRAPPER(fnTextSrv_OnTxUIActivate,4)
 DEFINE_THISCALL_WRAPPER(fnTextSrv_OnTxUIDeactivate,4)
 DEFINE_THISCALL_WRAPPER(fnTextSrv_TxGetText,8)
 DEFINE_THISCALL_WRAPPER(fnTextSrv_TxSetText,8)
-DEFINE_THISCALL_WRAPPER(fnTextSrv_TxGetCurrentTargetX,8)
+DEFINE_THISCALL_WRAPPER(fnTextSrv_TxGetCurTargetX,8)
 DEFINE_THISCALL_WRAPPER(fnTextSrv_TxGetBaseLinePos,8)
 DEFINE_THISCALL_WRAPPER(fnTextSrv_TxGetNaturalSize,36)
 DEFINE_THISCALL_WRAPPER(fnTextSrv_TxGetDropTarget,8)
 DEFINE_THISCALL_WRAPPER(fnTextSrv_OnTxPropertyBitsChange,12)
 DEFINE_THISCALL_WRAPPER(fnTextSrv_TxGetCachedSize,12)
 
-static const ITextServicesVtbl textservices_Vtbl =
+static const ITextServicesVtbl textservices_vtbl =
 {
    fnTextSrv_QueryInterface,
    fnTextSrv_AddRef,
@@ -387,10 +387,49 @@ static const ITextServicesVtbl textservices_Vtbl =
    THISCALL(fnTextSrv_OnTxUIDeactivate),
    THISCALL(fnTextSrv_TxGetText),
    THISCALL(fnTextSrv_TxSetText),
-   THISCALL(fnTextSrv_TxGetCurrentTargetX),
+   THISCALL(fnTextSrv_TxGetCurTargetX),
    THISCALL(fnTextSrv_TxGetBaseLinePos),
    THISCALL(fnTextSrv_TxGetNaturalSize),
    THISCALL(fnTextSrv_TxGetDropTarget),
    THISCALL(fnTextSrv_OnTxPropertyBitsChange),
    THISCALL(fnTextSrv_TxGetCachedSize)
 };
+
+/******************************************************************
+ *        CreateTextServices (RICHED20.4)
+ */
+HRESULT WINAPI CreateTextServices(IUnknown  *pUnkOuter, ITextHost *pITextHost, IUnknown  **ppUnk)
+{
+   ITextServicesImpl *ITextImpl;
+   HRESULT hres;
+   TRACE("%p %p --> %p\n", pUnkOuter, pITextHost, ppUnk);
+   if (pITextHost == NULL)
+      return E_POINTER;
+
+   ITextImpl = CoTaskMemAlloc(sizeof(*ITextImpl));
+   if (ITextImpl == NULL)
+      return E_OUTOFMEMORY;
+   InitializeCriticalSection(&ITextImpl->csTxtSrv);
+   ITextImpl->csTxtSrv.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": ITextServicesImpl.csTxtSrv");
+   ITextImpl->ref = 1;
+   ITextHost_AddRef(pITextHost);
+   ITextImpl->pMyHost = pITextHost;
+   ITextImpl->IUnknown_inner.lpVtbl = &textservices_inner_vtbl;
+   ITextImpl->ITextServices_iface.lpVtbl = &textservices_vtbl;
+   ITextImpl->editor = ME_MakeEditor(pITextHost, FALSE);
+   ITextImpl->editor->exStyleFlags = 0;
+   ITextImpl->editor->rcFormat.left = 0;
+   ITextImpl->editor->rcFormat.top = 0;
+   ITextImpl->editor->rcFormat.right = 0;
+   ITextImpl->editor->rcFormat.bottom = 0;
+
+   ME_HandleMessage(ITextImpl->editor, WM_CREATE, 0, 0, TRUE, &hres);
+
+   if (pUnkOuter)
+      ITextImpl->outer_unk = pUnkOuter;
+   else
+      ITextImpl->outer_unk = &ITextImpl->IUnknown_inner;
+
+   *ppUnk = &ITextImpl->IUnknown_inner;
+   return S_OK;
+}

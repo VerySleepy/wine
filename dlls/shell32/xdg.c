@@ -282,7 +282,7 @@ BOOL XDG_MakeDirs(const char *path)
  */
 static int dskentry_encode(const char *value, char *output)
 {
-    int only_spc = TRUE;
+    BOOL only_spc = TRUE;
     int num_written = 0;
     const char *c;
     for (c = value; *c; c++)
@@ -572,6 +572,8 @@ void XDG_FreeParsedFile(XDG_PARSED_FILE *parsed)
         SHFree(group);
         group = next;
     }
+    SHFree(parsed->contents);
+    SHFree(parsed);
 }
 
 #define LINE_GROUP   1
@@ -942,7 +944,10 @@ HRESULT XDG_UserDirLookup(const char * const *xdg_dirs, const unsigned int num_d
         if (FAILED(hr))
         {
             if (hr == E_OUTOFMEMORY)
+            {
+                fclose(file);
                 goto xdg_user_dir_lookup_error;
+            }
             continue;
         }
     }

@@ -44,10 +44,10 @@ typedef struct tagWINE_PLAYSOUND
     LPCWSTR                     pszSound;
     HMODULE                     hMod;
     DWORD                       fdwSound;
-    struct tagWINE_PLAYSOUND*   lpNext;
+    HWAVEOUT                    hWave;
 } WINE_PLAYSOUND;
 
-static WINE_PLAYSOUND *PlaySoundList;
+static WINE_PLAYSOUND *PlaySoundCurrent;
 static BOOL bPlaySoundStop;
 
 static HMMIO	get_mmioFromFile(LPCWSTR lpszName)
@@ -206,12 +206,9 @@ static BOOL PlaySound_IsString(DWORD fdwSound, const void* psz)
 
 static void     PlaySound_Free(WINE_PLAYSOUND* wps)
 {
-    WINE_PLAYSOUND**    p;
-
     EnterCriticalSection(&WINMM_cs);
-    for (p = &PlaySoundList; *p && *p != wps; p = &((*p)->lpNext));
-    if (*p) *p = (*p)->lpNext;
-    if (PlaySoundList == NULL) SetEvent(psLastEvent);
+    PlaySoundCurrent = NULL;
+    SetEvent(psLastEvent);
     LeaveCriticalSection(&WINMM_cs);
     if (wps->bAlloc) HeapFree(GetProcessHeap(), 0, (void*)wps->pszSound);
     HeapFree(GetProcessHeap(), 0, wps);
@@ -341,6 +338,11 @@ static DWORD WINAPI proc_PlaySound(LPVOID arg)
             else goto errCleanUp;
         }
         hmmio = get_mmioFromProfile(wps->fdwSound, wps->pszSound);
+        if (!hmmio)
+        {
+            wps->fdwSound &= ~SND_ALIAS;
+            wps->fdwSound |= SND_FILENAME;
+        }
     }
     if (!hmmio && wps->fdwSound & SND_FILENAME)
     {
@@ -399,7 +401,7 @@ static DWORD WINAPI proc_PlaySound(LPVOID arg)
 	  (LPSTR)&mmckInfo.ckid, mmckInfo.fccType, mmckInfo.cksize);
 
     s.hEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
-    if (!s.hEvent)
+    if (!s.hEvent || bPlaySoundStop)
 	goto errCleanUp;
 
     if (waveOutOpen(&hWave, WAVE_MAPPER, lpWaveFormat, (DWORD_PTR)PlaySound_Callback,
@@ -423,6 +425,7 @@ static DWORD WINAPI proc_PlaySound(LPVOID arg)
 	goto errCleanUp;
     }
 
+    wps->hWave = hWave;
     s.dwEventCount = 1L; /* for first buffer */
     index = 0;
 
@@ -434,7 +437,6 @@ static DWORD WINAPI proc_PlaySound(LPVOID arg)
         {
 	    if (bPlaySoundStop)
             {
-		waveOutReset(hWave);
 		wps->bLoop = FALSE;
 		break;
 	    }
@@ -464,7 +466,15 @@ static DWORD WINAPI proc_PlaySound(LPVOID arg)
 errCleanUp:
     TRACE("Done playing=%s => %s!\n", debugstr_w(wps->pszSound), bRet ? "ok" : "ko");
     HeapFree(GetProcessHeap(), 0, lpWaveFormat);
-    if (hWave)		while (waveOutClose(hWave) == WAVERR_STILLPLAYING) Sleep(100);
+    if (hWave)
+    {
+        EnterCriticalSection(&WINMM_cs);
+        /* the CS prevents a concurrent waveOutReset */
+        wps->hWave = 0;
+        LeaveCriticalSection(&WINMM_cs);
+        while (waveOutClose(hWave) == WAVERR_STILLPLAYING)
+            Sleep(100);
+    }
     CloseHandle(s.hEvent);
     HeapFree(GetProcessHeap(), 0, waveHdr);
     if (hmmio) 		mmioClose(hmmio, 0);
@@ -482,7 +492,7 @@ static BOOL MULTIMEDIA_PlaySound(const void* pszSound, HMODULE hmod, DWORD fdwSo
 	  pszSound, hmod, fdwSound);
 
     /* SND_NOWAIT is ignored in w95/2k/xp. */
-    if ((fdwSound & SND_NOSTOP) && PlaySoundList != NULL)
+    if ((fdwSound & SND_NOSTOP) && PlaySoundCurrent != NULL)
 	return FALSE;
 
     /* alloc internal structure, if we need to play something */
@@ -496,12 +506,14 @@ static BOOL MULTIMEDIA_PlaySound(const void* pszSound, HMODULE hmod, DWORD fdwSo
     /* since several threads can enter PlaySound in parallel, we're not
      * sure, at this point, that another thread didn't start a new playsound
      */
-    while (PlaySoundList != NULL)
+    while (PlaySoundCurrent != NULL)
     {
         ResetEvent(psLastEvent);
         /* FIXME: doc says we have to stop all instances of pszSound if it's non
          * NULL... as of today, we stop all playing instances */
         bPlaySoundStop = TRUE;
+        if(PlaySoundCurrent->hWave)
+            waveOutReset(PlaySoundCurrent->hWave);
 
         LeaveCriticalSection(&WINMM_cs);
         WaitForSingleObject(psLastEvent, INFINITE);
@@ -510,8 +522,7 @@ static BOOL MULTIMEDIA_PlaySound(const void* pszSound, HMODULE hmod, DWORD fdwSo
         bPlaySoundStop = FALSE;
     }
 
-    if (wps) wps->lpNext = PlaySoundList;
-    PlaySoundList = wps;
+    PlaySoundCurrent = wps;
     LeaveCriticalSection(&WINMM_cs);
 
     if (!wps) return TRUE;
@@ -519,7 +530,7 @@ static BOOL MULTIMEDIA_PlaySound(const void* pszSound, HMODULE hmod, DWORD fdwSo
     if (fdwSound & SND_ASYNC)
     {
         HANDLE      handle;
-        wps->bLoop = (fdwSound & SND_LOOP) ? TRUE : FALSE;
+        wps->bLoop = (fdwSound & SND_LOOP) != 0;
         if ((handle = CreateThread(NULL, 0, proc_PlaySound, wps, 0, NULL)) != 0) {
             SetThreadPriority(handle, THREAD_PRIORITY_TIME_CRITICAL);
             CloseHandle(handle);
@@ -554,7 +565,7 @@ BOOL WINAPI PlaySoundW(LPCWSTR pszSoundW, HMODULE hmod, DWORD fdwSound)
  */
 BOOL WINAPI sndPlaySoundA(LPCSTR pszSoundA, UINT uFlags)
 {
-    uFlags &= SND_ASYNC|SND_LOOP|SND_MEMORY|SND_NODEFAULT|SND_NOSTOP|SND_SYNC;
+    uFlags &= SND_ALIAS_ID|SND_FILENAME|SND_ASYNC|SND_LOOP|SND_MEMORY|SND_NODEFAULT|SND_NOSTOP|SND_SYNC;
     return MULTIMEDIA_PlaySound(pszSoundA, 0, uFlags, FALSE);
 }
 
@@ -563,7 +574,7 @@ BOOL WINAPI sndPlaySoundA(LPCSTR pszSoundA, UINT uFlags)
  */
 BOOL WINAPI sndPlaySoundW(LPCWSTR pszSound, UINT uFlags)
 {
-    uFlags &= SND_ASYNC|SND_LOOP|SND_MEMORY|SND_NODEFAULT|SND_NOSTOP|SND_SYNC;
+    uFlags &= SND_ALIAS_ID|SND_FILENAME|SND_ASYNC|SND_LOOP|SND_MEMORY|SND_NODEFAULT|SND_NOSTOP|SND_SYNC;
     return MULTIMEDIA_PlaySound(pszSound, 0, uFlags, TRUE);
 }
 

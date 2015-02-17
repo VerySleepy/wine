@@ -45,7 +45,7 @@ static const char *separator_chars;
 static const char *comment_chars;
 
 /* valid characters in ordinal names */
-static const char valid_ordname_chars[] = "/$:-_@?abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+static const char valid_ordname_chars[] = "/$:-_@?<>abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
 static const char * const TypeNames[TYPE_NBTYPES] =
 {
@@ -403,9 +403,9 @@ static int parse_spec_stub( ORDDEF *odp, DLLSPEC *spec )
     odp->link_name = xstrdup("");
     /* don't bother generating stubs for Winelib */
     if (odp->flags & FLAG_CPU_MASK)
-        odp->flags &= FLAG_CPU(CPU_x86) | FLAG_CPU(CPU_x86_64);
+        odp->flags &= FLAG_CPU(CPU_x86) | FLAG_CPU(CPU_x86_64) | FLAG_CPU(CPU_ARM);
     else
-        odp->flags |= FLAG_CPU(CPU_x86) | FLAG_CPU(CPU_x86_64);
+        odp->flags |= FLAG_CPU(CPU_x86) | FLAG_CPU(CPU_x86_64) | FLAG_CPU(CPU_ARM);
 
     return parse_spec_arguments( odp, spec, 1 );
 }

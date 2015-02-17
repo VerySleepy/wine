@@ -33,14 +33,15 @@
 #define DCX_USESTYLE         0x00010000
 #endif
 
-static HWND hwnd_cache, hwnd_owndc, hwnd_classdc, hwnd_classdc2;
+static HWND hwnd_cache, hwnd_owndc, hwnd_classdc, hwnd_classdc2, hwnd_parent, hwnd_parentdc;
 
 /* test behavior of DC attributes with various GetDC/ReleaseDC combinations */
 static void test_dc_attributes(void)
 {
     HDC hdc, old_hdc;
     HDC hdcs[20];
-    INT i, rop, def_rop, found_dc;
+    INT i, rop, def_rop;
+    BOOL found_dc;
 
     /* test cache DC */
 
@@ -59,7 +60,7 @@ static void test_dc_attributes(void)
     ReleaseDC( hwnd_cache, hdc );
     old_hdc = hdc;
 
-    found_dc = 0;
+    found_dc = FALSE;
     for (i = 0; i < 20; i++)
     {
         hdc = hdcs[i] = GetDCEx( hwnd_cache, 0, DCX_USESTYLE | DCX_NORESETATTRS );
@@ -68,7 +69,7 @@ static void test_dc_attributes(void)
         ok( rop == def_rop, "wrong ROP2 %d after release %p/%p\n", rop, old_hdc, hdc );
         if (hdc == old_hdc)
         {
-            found_dc = 1;
+            found_dc = TRUE;
             SetROP2( hdc, R2_WHITE );
         }
     }
@@ -78,7 +79,7 @@ static void test_dc_attributes(void)
         old_hdc = hdcs[0];
         SetROP2( old_hdc, R2_WHITE );
     }
-    while (i >= 0) ReleaseDC( hwnd_cache, hdcs[--i] );
+    while (i > 0) ReleaseDC( hwnd_cache, hdcs[--i] );
 
     for (i = 0; i < 20; i++)
     {
@@ -91,7 +92,7 @@ static void test_dc_attributes(void)
         else
             ok( rop == def_rop, "wrong ROP2 %d after release %p/%p\n", rop, old_hdc, hdc );
     }
-    while (i >= 0) ReleaseDC( hwnd_cache, hdcs[--i] );
+    while (i > 0) ReleaseDC( hwnd_cache, hdcs[--i] );
 
     for (i = 0; i < 20; i++)
     {
@@ -107,7 +108,7 @@ static void test_dc_attributes(void)
         else
             ok( rop == def_rop, "wrong ROP2 %d after release %p/%p\n", rop, old_hdc, hdc );
     }
-    while (i >= 0) ReleaseDC( hwnd_cache, hdcs[--i] );
+    while (i > 0) ReleaseDC( hwnd_cache, hdcs[--i] );
 
     /* test own DC */
 
@@ -189,7 +190,7 @@ static void test_dc_visrgn(void)
 {
     HDC old_hdc, hdc;
     HRGN hrgn, hrgn2;
-    RECT rect;
+    RECT rect, parent_rect;
 
     /* cache DC */
 
@@ -324,6 +325,20 @@ static void test_dc_visrgn(void)
     ok( !(rect.left >= 20 && rect.top >= 20 && rect.right <= 30 && rect.bottom <= 30),
         "clip box must have been reset %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
     ReleaseDC( hwnd_classdc2, hdc );
+
+    /* parent DC */
+    hdc = GetDC( hwnd_parentdc );
+    GetClipBox( hdc, &rect );
+    ReleaseDC( hwnd_parentdc, hdc );
+
+    hdc = GetDC( hwnd_parent );
+    GetClipBox( hdc, &parent_rect );
+    ReleaseDC( hwnd_parent, hdc );
+
+    ok( rect.left == parent_rect.left, "rect.left = %d, expected %d\n", rect.left, parent_rect.left );
+    ok( rect.top == parent_rect.top, "rect.top = %d, expected %d\n", rect.top, parent_rect.top );
+    ok( rect.right == parent_rect.right, "rect.right = %d, expected %d\n", rect.right, parent_rect.right );
+    ok( rect.bottom == parent_rect.bottom, "rect.bottom = %d, expected %d\n", rect.bottom, parent_rect.bottom );
 }
 
 
@@ -331,8 +346,9 @@ static void test_dc_visrgn(void)
 static void test_begin_paint(void)
 {
     HDC old_hdc, hdc;
-    RECT rect;
+    RECT rect, parent_rect;
     PAINTSTRUCT ps;
+    COLORREF cr;
 
     /* cache DC */
 
@@ -404,6 +420,77 @@ static void test_begin_paint(void)
     GetClipBox( hdc, &rect );
     ok( !(rect.left >= 10 && rect.top >= 10 && rect.right <= 20 && rect.bottom <= 20),
         "clip box should have been reset %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+    ReleaseDC( hwnd_classdc2, hdc );
+    EndPaint( hwnd_classdc, &ps );
+
+    /* parent DC */
+    RedrawWindow( hwnd_parent, NULL, 0, RDW_VALIDATE|RDW_NOFRAME|RDW_NOERASE );
+    RedrawWindow( hwnd_parentdc, NULL, 0, RDW_INVALIDATE );
+    hdc = BeginPaint( hwnd_parentdc, &ps );
+    GetClipBox( hdc, &rect );
+    cr = SetPixel( hdc, 10, 10, RGB(255, 0, 0) );
+    ok( cr != -1, "error drawing outside of window client area\n" );
+    EndPaint( hwnd_parentdc, &ps );
+    GetClientRect( hwnd_parent, &parent_rect );
+
+    ok( rect.left == parent_rect.left, "rect.left = %d, expected %d\n", rect.left, parent_rect.left );
+    ok( rect.top == parent_rect.top, "rect.top = %d, expected %d\n", rect.top, parent_rect.top );
+    todo_wine ok( rect.right == parent_rect.right, "rect.right = %d, expected %d\n", rect.right, parent_rect.right );
+    todo_wine ok( rect.bottom == parent_rect.bottom, "rect.bottom = %d, expected %d\n", rect.bottom, parent_rect.bottom );
+
+    hdc = GetDC( hwnd_parent );
+    todo_wine ok( GetPixel( hdc, 10, 10 ) == cr, "error drawing outside of window client area\n" );
+    ReleaseDC( hwnd_parent, hdc );
+}
+
+/* test ScrollWindow with window DCs */
+static void test_scroll_window(void)
+{
+    PAINTSTRUCT ps;
+    HDC hdc;
+    RECT clip, rect;
+
+    /* ScrollWindow uses the window DC, ScrollWindowEx doesn't */
+
+    UpdateWindow( hwnd_owndc );
+    SetRect( &clip, 25, 25, 50, 50 );
+    ScrollWindow( hwnd_owndc, -5, -10, NULL, &clip );
+    hdc = BeginPaint( hwnd_owndc, &ps );
+    SetRectEmpty( &rect );
+    GetClipBox( hdc, &rect );
+    ok( rect.left >= 25 && rect.top >= 25 && rect.right <= 50 && rect.bottom <= 50,
+        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+    EndPaint( hwnd_owndc, &ps );
+
+    SetViewportExtEx( hdc, 2, 3, NULL );
+    SetViewportOrgEx( hdc, 30, 20, NULL );
+
+    ScrollWindow( hwnd_owndc, -5, -10, NULL, &clip );
+    hdc = BeginPaint( hwnd_owndc, &ps );
+    SetRectEmpty( &rect );
+    GetClipBox( hdc, &rect );
+    ok( rect.left >= 25 && rect.top >= 25 && rect.right <= 50 && rect.bottom <= 50,
+        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+    EndPaint( hwnd_owndc, &ps );
+
+    ScrollWindowEx( hwnd_owndc, -5, -10, NULL, &clip, 0, NULL, SW_INVALIDATE | SW_ERASE );
+    hdc = BeginPaint( hwnd_owndc, &ps );
+    SetRectEmpty( &rect );
+    GetClipBox( hdc, &rect );
+    ok( rect.left >= -5 && rect.top >= 5 && rect.right <= 20 && rect.bottom <= 30,
+        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+    EndPaint( hwnd_owndc, &ps );
+
+    SetViewportExtEx( hdc, 1, 1, NULL );
+    SetViewportOrgEx( hdc, 0, 0, NULL );
+
+    ScrollWindowEx( hwnd_owndc, -5, -10, NULL, &clip, 0, NULL, SW_INVALIDATE | SW_ERASE );
+    hdc = BeginPaint( hwnd_owndc, &ps );
+    SetRectEmpty( &rect );
+    GetClipBox( hdc, &rect );
+    ok( rect.left >= 25 && rect.top >= 25 && rect.right <= 50 && rect.bottom <= 50,
+        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+    EndPaint( hwnd_owndc, &ps );
 }
 
 static void test_invisible_create(void)
@@ -531,7 +618,7 @@ START_TEST(dce)
     cls.cbWndExtra = 0;
     cls.hInstance = GetModuleHandleA(0);
     cls.hIcon = 0;
-    cls.hCursor = LoadCursorA(0, IDC_ARROW);
+    cls.hCursor = LoadCursorA(0, (LPCSTR)IDC_ARROW);
     cls.hbrBackground = GetStockObject(WHITE_BRUSH);
     cls.lpszMenuName = NULL;
     cls.lpszClassName = "cache_class";
@@ -541,6 +628,9 @@ START_TEST(dce)
     RegisterClassA(&cls);
     cls.style = CS_DBLCLKS | CS_CLASSDC;
     cls.lpszClassName = "classdc_class";
+    RegisterClassA(&cls);
+    cls.style = CS_PARENTDC;
+    cls.lpszClassName = "parentdc_class";
     RegisterClassA(&cls);
 
     hwnd_cache = CreateWindowA("cache_class", NULL, WS_OVERLAPPED | WS_VISIBLE,
@@ -555,13 +645,20 @@ START_TEST(dce)
     hwnd_classdc2 = CreateWindowA("classdc_class", NULL, WS_OVERLAPPED | WS_VISIBLE,
                                   200, 200, 100, 100,
                                   0, 0, GetModuleHandleA(0), NULL );
+    hwnd_parent = CreateWindowA("static", NULL, WS_OVERLAPPED | WS_VISIBLE,
+                                400, 0, 100, 100, 0, 0, 0, NULL );
+    hwnd_parentdc = CreateWindowA("parentdc_class", NULL, WS_CHILD | WS_VISIBLE,
+                                  0, 0, 1, 1, hwnd_parent, 0, 0, NULL );
+
     test_dc_attributes();
     test_parameters();
     test_dc_visrgn();
     test_begin_paint();
+    test_scroll_window();
     test_invisible_create();
     test_dc_layout();
 
+    DestroyWindow(hwnd_parent);
     DestroyWindow(hwnd_classdc2);
     DestroyWindow(hwnd_classdc);
     DestroyWindow(hwnd_owndc);

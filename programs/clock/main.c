@@ -27,6 +27,7 @@
 
 #include "windows.h"
 #include "commdlg.h"
+#include "shellapi.h"
 
 #include "main.h"
 #include "winclock.h"
@@ -143,7 +144,7 @@ static VOID CLOCK_ChooseFont(VOID)
     cf.lStructSize = sizeof(cf);
     cf.hwndOwner = Globals.hMainWnd;
     cf.lpLogFont = &lf;
-    cf.Flags = CF_SCREENFONTS | CF_INITTOLOGFONTSTRUCT;
+    cf.Flags = CF_SCREENFONTS | CF_INITTOLOGFONTSTRUCT | CF_NOVERTFONTS;
     if (ChooseFontW(&cf)) {
 	Globals.logfont = lf;
 	CLOCK_ResetFont();

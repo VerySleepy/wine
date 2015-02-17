@@ -18,7 +18,7 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include <winsock.h>
+#include <winsock2.h>
 #include <wininet.h>
 #include <stdio.h>
 #include <errno.h>
@@ -92,7 +92,10 @@ send_buf (SOCKET s, const char *buf, size_t length)
 
     while (length > 0) {
         sent = send (s, buf, length, 0);
-        if (sent == SOCKET_ERROR) return 1;
+        if (sent == SOCKET_ERROR) {
+            if (errno == EINTR) continue;
+            return 1;
+        }
         buf += sent;
         length -= sent;
     }
@@ -200,6 +203,7 @@ send_file_direct (const char *name)
     total = 0;
     while ((bytes_read = recv (s, buffer+total, BUFLEN-total, 0))) {
         if ((signed)bytes_read == SOCKET_ERROR) {
+            if (errno == EINTR) continue;
             report (R_WARNING, "Error receiving reply: %d, %d",
                     errno, WSAGetLastError ());
             goto abort1;
@@ -263,7 +267,7 @@ send_file_wininet (const char *name)
     static const char extra_headers[] =
         CONTENT_HEADERS;
 
-    wininet_mod = LoadLibrary ("wininet.dll");
+    wininet_mod = LoadLibraryA("wininet.dll");
     if (wininet_mod == NULL)
         goto done;
     pInternetOpen = (void *)GetProcAddress(wininet_mod, "InternetOpenA");

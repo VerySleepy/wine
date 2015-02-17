@@ -19,13 +19,17 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include <stdlib.h>
 #include <windows.h>
 #include <psapi.h>
+#include <wine/debug.h>
 #include <wine/unicode.h>
 
 #include "taskkill.h"
 
-static int force_termination;
+WINE_DEFAULT_DEBUG_CHANNEL(taskkill);
+
+static BOOL force_termination = FALSE;
 
 static WCHAR **task_list;
 static unsigned int task_count;
@@ -36,13 +40,14 @@ struct pid_close_info
     BOOL found;
 };
 
-static int taskkill_vprintfW(const WCHAR *msg, va_list va_args)
+static int taskkill_vprintfW(const WCHAR *msg, __ms_va_list va_args)
 {
     int wlen;
     DWORD count, ret;
     WCHAR msg_buffer[8192];
 
-    wlen = vsprintfW(msg_buffer, msg, va_args);
+    wlen = FormatMessageW(FORMAT_MESSAGE_FROM_STRING, msg, 0, 0, msg_buffer,
+                          sizeof(msg_buffer)/sizeof(*msg_buffer), &va_args);
 
     ret = WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), msg_buffer, wlen, &count, NULL);
     if (!ret)
@@ -69,37 +74,37 @@ static int taskkill_vprintfW(const WCHAR *msg, va_list va_args)
     return count;
 }
 
-static int taskkill_printfW(const WCHAR *msg, ...)
+static int CDECL taskkill_printfW(const WCHAR *msg, ...)
 {
-    va_list va_args;
+    __ms_va_list va_args;
     int len;
 
-    va_start(va_args, msg);
+    __ms_va_start(va_args, msg);
     len = taskkill_vprintfW(msg, va_args);
-    va_end(va_args);
+    __ms_va_end(va_args);
 
     return len;
 }
 
-static int taskkill_message_printfW(int msg, ...)
+static int CDECL taskkill_message_printfW(int msg, ...)
 {
-    va_list va_args;
+    __ms_va_list va_args;
     WCHAR msg_buffer[8192];
     int len;
 
     LoadStringW(GetModuleHandleW(NULL), msg, msg_buffer,
         sizeof(msg_buffer)/sizeof(WCHAR));
 
-    va_start(va_args, msg);
+    __ms_va_start(va_args, msg);
     len = taskkill_vprintfW(msg_buffer, va_args);
-    va_end(va_args);
+    __ms_va_end(va_args);
 
     return len;
 }
 
 static int taskkill_message(int msg)
 {
-    static const WCHAR formatW[] = {'%','s',0};
+    static const WCHAR formatW[] = {'%','1',0};
     WCHAR msg_buffer[8192];
 
     LoadStringW(GetModuleHandleW(NULL), msg, msg_buffer,
@@ -442,33 +447,46 @@ static BOOL add_to_task_list(WCHAR *name)
  * options are detected as parameters when placed after options that accept one. */
 static BOOL process_arguments(int argc, WCHAR *argv[])
 {
-    static const WCHAR slashForceTerminate[] = {'/','f',0};
-    static const WCHAR slashImage[] = {'/','i','m',0};
-    static const WCHAR slashPID[] = {'/','p','i','d',0};
-    static const WCHAR slashHelp[] = {'/','?',0};
+    static const WCHAR opForceTerminate[] = {'f',0};
+    static const WCHAR opImage[] = {'i','m',0};
+    static const WCHAR opPID[] = {'p','i','d',0};
+    static const WCHAR opHelp[] = {'?',0};
+    static const WCHAR opTerminateChildren[] = {'t',0};
 
     if (argc > 1)
     {
         int i;
-        BOOL has_im = 0, has_pid = 0;
+        WCHAR *argdata;
+        BOOL has_im = FALSE, has_pid = FALSE;
 
         /* Only the lone help option is recognized. */
-        if (argc == 2 && !strcmpW(slashHelp, argv[1]))
+        if (argc == 2)
         {
-            taskkill_message(STRING_USAGE);
-            exit(0);
+            argdata = argv[1];
+            if ((*argdata == '/' || *argdata == '-') && !strcmpW(opHelp, argdata + 1))
+            {
+                taskkill_message(STRING_USAGE);
+                exit(0);
+            }
         }
 
         for (i = 1; i < argc; i++)
         {
-            int got_im = 0, got_pid = 0;
+            BOOL got_im = FALSE, got_pid = FALSE;
 
-            if (!strcmpiW(slashForceTerminate, argv[i]))
-                force_termination = 1;
+            argdata = argv[i];
+            if (*argdata != '/' && *argdata != '-')
+                goto invalid;
+            argdata++;
+
+            if (!strcmpiW(opTerminateChildren, argdata))
+                WINE_FIXME("argument T not supported\n");
+            if (!strcmpiW(opForceTerminate, argdata))
+                force_termination = TRUE;
             /* Options /IM and /PID appear to behave identically, except for
              * the fact that they cannot be specified at the same time. */
-            else if ((got_im = !strcmpiW(slashImage, argv[i])) ||
-                     (got_pid = !strcmpiW(slashPID, argv[i])))
+            else if ((got_im = !strcmpiW(opImage, argdata)) ||
+                     (got_pid = !strcmpiW(opPID, argdata)))
             {
                 if (!argv[i + 1])
                 {
@@ -477,8 +495,8 @@ static BOOL process_arguments(int argc, WCHAR *argv[])
                     return FALSE;
                 }
 
-                if (got_im) has_im = 1;
-                if (got_pid) has_pid = 1;
+                if (got_im) has_im = TRUE;
+                if (got_pid) has_pid = TRUE;
 
                 if (has_im && has_pid)
                 {
@@ -493,6 +511,7 @@ static BOOL process_arguments(int argc, WCHAR *argv[])
             }
             else
             {
+                invalid:
                 taskkill_message(STRING_INVALID_OPTION);
                 taskkill_message(STRING_USAGE);
                 return FALSE;

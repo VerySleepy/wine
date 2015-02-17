@@ -37,7 +37,7 @@
 
 enum target_cpu
 {
-    CPU_x86, CPU_x86_64, CPU_SPARC, CPU_POWERPC, CPU_ARM
+    CPU_x86, CPU_x86_64, CPU_POWERPC, CPU_ARM, CPU_ARM64
 };
 
 enum target_platform
@@ -78,6 +78,6 @@ void create_file(const char* name, int mode, const char* fmt, ...);
 file_type get_file_type(const char* filename);
 file_type get_lib_type(enum target_platform platform, strarray* path, const char *library,
                        const char *suffix, char** file);
-void spawn(const strarray* prefix, const strarray* arr, int ignore_errors);
+int spawn(const strarray* prefix, const strarray* arr, int ignore_errors);
 
 extern int verbose;

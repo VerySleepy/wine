@@ -52,6 +52,7 @@
 #include "handle.h"
 #include "thread.h"
 #include "request.h"
+#include "security.h"
 
 enum pipe_state
 {
@@ -77,6 +78,7 @@ struct pipe_server
     struct timeout_user *flush_poll;
     struct event        *event;
     unsigned int         options;    /* pipe options */
+    unsigned int         pipe_flags;
 };
 
 struct pipe_client
@@ -85,6 +87,7 @@ struct pipe_client
     struct fd           *fd;         /* pipe file descriptor */
     struct pipe_server  *server;     /* server that this client is connected to */
     unsigned int         flags;      /* file flags */
+    unsigned int         pipe_flags;
 };
 
 struct named_pipe
@@ -177,7 +180,7 @@ static const struct fd_ops pipe_server_fd_ops =
 
 /* client end functions */
 static void pipe_client_dump( struct object *obj, int verbose );
-static int pipe_client_signaled( struct object *obj, struct thread *thread );
+static int pipe_client_signaled( struct object *obj, struct wait_queue_entry *entry );
 static struct fd *pipe_client_get_fd( struct object *obj );
 static void pipe_client_destroy( struct object *obj );
 static void pipe_client_flush( struct fd *fd, struct event **event );
@@ -291,7 +294,7 @@ static void pipe_client_dump( struct object *obj, int verbose )
     fprintf( stderr, "Named pipe client server=%p\n", client->server );
 }
 
-static int pipe_client_signaled( struct object *obj, struct thread *thread )
+static int pipe_client_signaled( struct object *obj, struct wait_queue_entry *entry )
 {
     struct pipe_client *client = (struct pipe_client *) obj;
 
@@ -587,19 +590,6 @@ static enum server_fd_type pipe_client_get_fd_type( struct fd *fd )
     return FD_TYPE_PIPE;
 }
 
-static obj_handle_t alloc_wait_event( struct process *process )
-{
-    obj_handle_t handle = 0;
-    struct event *event = create_event( NULL, NULL, 0, 1, 0, NULL );
-
-    if (event)
-    {
-        handle = alloc_handle( process, event, EVENT_ALL_ACCESS, 0 );
-        release_object( event );
-    }
-    return handle;
-}
-
 static obj_handle_t pipe_server_ioctl( struct fd *fd, ioctl_code_t code, const async_data_t *async_data,
                                        int blocking, const void *data, data_size_t size )
 {
@@ -687,7 +677,7 @@ static obj_handle_t pipe_server_ioctl( struct fd *fd, ioctl_code_t code, const a
 }
 
 static struct named_pipe *create_named_pipe( struct directory *root, const struct unicode_str *name,
-                                             unsigned int attr )
+                                             unsigned int attr, const struct security_descriptor *sd )
 {
     struct object *obj;
     struct named_pipe *pipe = NULL;
@@ -737,7 +727,8 @@ static struct pipe_server *get_pipe_server_obj( struct process *process,
     return (struct pipe_server *) obj;
 }
 
-static struct pipe_server *create_pipe_server( struct named_pipe *pipe, unsigned int options )
+static struct pipe_server *create_pipe_server( struct named_pipe *pipe, unsigned int options,
+                                               unsigned int pipe_flags )
 {
     struct pipe_server *server;
 
@@ -750,6 +741,7 @@ static struct pipe_server *create_pipe_server( struct named_pipe *pipe, unsigned
     server->client = NULL;
     server->flush_poll = NULL;
     server->options = options;
+    server->pipe_flags = pipe_flags;
 
     list_add_head( &pipe->servers, &server->entry );
     grab_object( pipe );
@@ -762,7 +754,7 @@ static struct pipe_server *create_pipe_server( struct named_pipe *pipe, unsigned
     return server;
 }
 
-static struct pipe_client *create_pipe_client( unsigned int flags )
+static struct pipe_client *create_pipe_client( unsigned int flags, unsigned int pipe_flags )
 {
     struct pipe_client *client;
 
@@ -773,6 +765,7 @@ static struct pipe_client *create_pipe_client( unsigned int flags )
     client->fd = NULL;
     client->server = NULL;
     client->flags = flags;
+    client->pipe_flags = pipe_flags;
 
     return client;
 }
@@ -822,7 +815,7 @@ static struct object *named_pipe_open_file( struct object *obj, unsigned int acc
         return NULL;
     }
 
-    if ((client = create_pipe_client( options )))
+    if ((client = create_pipe_client( options, pipe->flags )))
     {
         if (!socketpair( PF_UNIX, SOCK_STREAM, 0, fds ))
         {
@@ -900,7 +893,7 @@ static obj_handle_t named_pipe_device_ioctl( struct fd *fd, ioctl_code_t code, c
             name.len = (buffer->NameLength / sizeof(WCHAR)) * sizeof(WCHAR);
             if (!(pipe = (struct named_pipe *)find_object( device->pipes, &name, OBJ_CASE_INSENSITIVE )))
             {
-                set_error( STATUS_PIPE_NOT_AVAILABLE );
+                set_error( STATUS_OBJECT_NAME_NOT_FOUND );
                 return 0;
             }
             if (!(server = find_available_server( pipe )))
@@ -949,6 +942,8 @@ DECL_HANDLER(create_named_pipe)
     struct pipe_server *server;
     struct unicode_str name;
     struct directory *root = NULL;
+    const struct object_attributes *objattr = get_req_data();
+    const struct security_descriptor *sd;
 
     if (!req->sharing || (req->sharing & ~(FILE_SHARE_READ | FILE_SHARE_WRITE)) ||
         (!(req->flags & NAMED_PIPE_MESSAGE_STREAM_WRITE) && (req->flags & NAMED_PIPE_MESSAGE_STREAM_READ)))
@@ -958,11 +953,17 @@ DECL_HANDLER(create_named_pipe)
     }
 
     reply->handle = 0;
-    get_req_unicode_str( &name );
-    if (req->rootdir && !(root = get_directory_obj( current->process, req->rootdir, 0 )))
+
+    if (!objattr_is_valid( objattr, get_req_data_size() ))
         return;
 
-    pipe = create_named_pipe( root, &name, req->attributes | OBJ_OPENIF );
+    sd = objattr->sd_len ? (const struct security_descriptor *)(objattr + 1) : NULL;
+    objattr_get_name( objattr, &name );
+
+    if (objattr->rootdir && !(root = get_directory_obj( current->process, objattr->rootdir, 0 )))
+        return;
+
+    pipe = create_named_pipe( root, &name, req->attributes | OBJ_OPENIF, sd );
 
     if (root) release_object( root );
     if (!pipe) return;
@@ -977,7 +978,7 @@ DECL_HANDLER(create_named_pipe)
         pipe->outsize = req->outsize;
         pipe->maxinstances = req->maxinstances;
         pipe->timeout = req->timeout;
-        pipe->flags = req->flags;
+        pipe->flags = req->flags & NAMED_PIPE_MESSAGE_STREAM_WRITE;
         pipe->sharing = req->sharing;
     }
     else
@@ -997,11 +998,15 @@ DECL_HANDLER(create_named_pipe)
         clear_error(); /* clear the name collision */
     }
 
-    server = create_pipe_server( pipe, req->options );
+    server = create_pipe_server( pipe, req->options, req->flags );
     if (server)
     {
         reply->handle = alloc_handle( current->process, server, req->access, req->attributes );
         server->pipe->instances++;
+        if (sd) default_set_sd( &server->obj, sd, OWNER_SECURITY_INFORMATION |
+                                                  GROUP_SECURITY_INFORMATION |
+                                                  DACL_SECURITY_INFORMATION |
+                                                  SACL_SECURITY_INFORMATION );
         release_object( server );
     }
 
@@ -1026,7 +1031,7 @@ DECL_HANDLER(get_named_pipe_info)
         server = client->server;
     }
 
-    reply->flags        = server->pipe->flags;
+    reply->flags        = client ? client->pipe_flags : server->pipe_flags;
     reply->sharing      = server->pipe->sharing;
     reply->maxinstances = server->pipe->maxinstances;
     reply->instances    = server->pipe->instances;
@@ -1040,4 +1045,42 @@ DECL_HANDLER(get_named_pipe_info)
         reply->flags |= NAMED_PIPE_SERVER_END;
         release_object(server);
     }
+}
+
+DECL_HANDLER(set_named_pipe_info)
+{
+    struct pipe_server *server;
+    struct pipe_client *client = NULL;
+
+    server = get_pipe_server_obj( current->process, req->handle, FILE_WRITE_ATTRIBUTES );
+    if (!server)
+    {
+        if (get_error() != STATUS_OBJECT_TYPE_MISMATCH)
+            return;
+
+        clear_error();
+        client = (struct pipe_client *)get_handle_obj( current->process, req->handle,
+                                                       0, &pipe_client_ops );
+        if (!client) return;
+        server = client->server;
+    }
+
+    if ((req->flags & ~(NAMED_PIPE_MESSAGE_STREAM_READ | NAMED_PIPE_NONBLOCKING_MODE)) ||
+            ((req->flags & NAMED_PIPE_MESSAGE_STREAM_READ) && !(server->pipe->flags & NAMED_PIPE_MESSAGE_STREAM_WRITE)))
+    {
+        set_error( STATUS_INVALID_PARAMETER );
+    }
+    else if (client)
+    {
+        client->pipe_flags = server->pipe->flags | req->flags;
+    }
+    else
+    {
+        server->pipe_flags = server->pipe->flags | req->flags;
+    }
+
+    if (client)
+        release_object(client);
+    else
+        release_object(server);
 }

@@ -6,9 +6,6 @@ C_SRCS = \
 	asmenum.c \
 	asmname.c \
 	assembly.c \
-	fusion.c \
-	fusion_main.c
+	fusion.c
 
 RC_SRCS = version.rc
-
-@MAKE_DLL_RULES@

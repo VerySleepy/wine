@@ -18,6 +18,8 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#pragma makedep register
+
 [
     helpstring("Shell Automation Service"),
     progid("Shell.Application.1"),
@@ -59,6 +61,12 @@ coclass KnownFolderManager { interface IKnownFolderManager; }
     threading(apartment),
     uuid(a07034fd-6caa-4954-ac3f-97a27216f98a)
 ] coclass QueryAssociations { interface IQueryAssociations; }
+
+[
+    helpstring("Manage Application associations"),
+    threading(apartment),
+    uuid(591209c7-767b-42b2-9fba-44ee4615f2c7)
+] coclass ApplicationAssociationRegistration { interface IApplicationAssociationRegistration; }
 
 [
     helpstring("Shell Drag and Drop Helper"),

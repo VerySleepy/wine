@@ -71,7 +71,7 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
     switch(reason)
     {
     case DLL_PROCESS_ATTACH:
-        LoadLibrary16( "krnl386.exe" );
+        if (LoadLibrary16( "krnl386.exe" ) < 32) return FALSE;
         /* fall through */
     case DLL_THREAD_ATTACH:
         thread_attach();
@@ -90,11 +90,11 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
 BOOL WINAPI KERNEL_DllEntryPoint( DWORD reasion, HINSTANCE16 inst, WORD ds,
                                   WORD heap, DWORD reserved1, WORD reserved2 )
 {
-    static int done;
+    static BOOL done;
 
     /* the entry point can be called multiple times */
     if (done) return TRUE;
-    done = 1;
+    done = TRUE;
 
     /* create the shared heap for broken win95 native dlls */
     HeapCreate( HEAP_SHARED, 0, 0 );
@@ -254,7 +254,14 @@ SEGPTR WINAPI KERNEL_AnsiLower16( SEGPTR strOrChar )
  */
 INT16 WINAPI KERNEL_lstrcmp16( LPCSTR str1, LPCSTR str2 )
 {
-    return (INT16)strcmp( str1, str2 );
+    int ret = strcmp( str1, str2 );
+
+    /* Looks too complicated, but in optimized strcpy we might get
+     * a 32bit wide difference and would truncate it to 16 bit, so
+     * erroneously returning equality. */
+    if (ret < 0) return -1;
+    if (ret > 0) return  1;
+    return 0;
 }
 
 /***********************************************************************
@@ -462,12 +469,11 @@ SEGPTR WINAPI lstrcatn16( SEGPTR dst, LPCSTR src, INT16 n )
  */
 BOOL16 WINAPI GetWinDebugInfo16(WINDEBUGINFO16 *lpwdi, UINT16 flags)
 {
-    FIXME("(%8lx,%d): stub returning 0\n",
-          (unsigned long)lpwdi, flags);
-    /* 0 means not in debugging mode/version */
+    FIXME("(%p,%d): stub returning FALSE\n", lpwdi, flags);
+    /* FALSE means not in debugging mode/version */
     /* Can this type of debugging be used in wine ? */
     /* Constants: WDI_OPTIONS WDI_FILTER WDI_ALLOCBREAK */
-    return 0;
+    return FALSE;
 }
 
 /***********************************************************************
@@ -475,11 +481,11 @@ BOOL16 WINAPI GetWinDebugInfo16(WINDEBUGINFO16 *lpwdi, UINT16 flags)
  */
 BOOL16 WINAPI SetWinDebugInfo16(WINDEBUGINFO16 *lpwdi)
 {
-    FIXME("(%8lx): stub returning 0\n", (unsigned long)lpwdi);
-    /* 0 means not in debugging mode/version */
+    FIXME("(%p): stub returning FALSE\n", lpwdi);
+    /* FALSE means not in debugging mode/version */
     /* Can this type of debugging be used in wine ? */
     /* Constants: WDI_OPTIONS WDI_FILTER WDI_ALLOCBREAK */
-    return 0;
+    return FALSE;
 }
 
 /***********************************************************************

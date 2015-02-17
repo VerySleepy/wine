@@ -27,10 +27,10 @@
 #include "dinput.h"
 
 struct enum_data {
-    LPDIRECTINPUT8 pDI;
-    LPDIACTIONFORMAT lpdiaf;
-    LPDIRECTINPUTDEVICE8 keyboard;
-    LPDIRECTINPUTDEVICE8 mouse;
+    IDirectInput8A *pDI;
+    DIACTIONFORMATA *lpdiaf;
+    IDirectInputDevice8A *keyboard;
+    IDirectInputDevice8A *mouse;
     const char* username;
     int ndevices;
 };
@@ -46,7 +46,7 @@ enum {
     DITEST_YAXIS
 };
 
-static DIACTION actionMapping[]=
+static DIACTIONA actionMapping[]=
 {
   /* axis */
   { 0, 0x01008A01 /* DIAXIS_DRIVINGR_STEER */ , 0, { "Steer" } },
@@ -60,12 +60,22 @@ static DIACTION actionMapping[]=
   { 4, DIMOUSE_YAXIS, 0, { "Y Axis" } }
 };
 
-static void test_device_input(
-    LPDIRECTINPUTDEVICE8 lpdid,
-    DWORD event_type,
-    DWORD event,
-    DWORD expected
-)
+static void flush_events(void)
+{
+    int diff = 200;
+    int min_timeout = 100;
+    DWORD time = GetTickCount() + diff;
+
+    while (diff > 0)
+    {
+        if (MsgWaitForMultipleObjects(0, NULL, FALSE, min_timeout, QS_ALLINPUT) == WAIT_TIMEOUT)
+            break;
+        diff = time - GetTickCount();
+        min_timeout = 50;
+    }
+}
+
+static void test_device_input(IDirectInputDevice8A *lpdid, DWORD event_type, DWORD event, DWORD expected)
 {
     HRESULT hr;
     DIDEVICEOBJECTDATA obj_data;
@@ -81,12 +91,14 @@ static void test_device_input(
     if (event_type == INPUT_MOUSE)
         mouse_event( event, 0, 0, 0, 0);
 
+    flush_events();
     IDirectInputDevice8_Poll(lpdid);
     hr = IDirectInputDevice8_GetDeviceData(lpdid, sizeof(obj_data), &obj_data, &data_size, 0);
 
     if (data_size != 1)
     {
         win_skip("We're not able to inject input into Windows dinput8 with events\n");
+        IDirectInputDevice_Unacquire(lpdid);
         return;
     }
 
@@ -105,6 +117,7 @@ static void test_device_input(
             mouse_event(MOUSEEVENTF_LEFTUP, 1, 1, 0, 0);
         }
 
+    flush_events();
     IDirectInputDevice8_Poll(lpdid);
 
     data_size = 1;
@@ -113,18 +126,15 @@ static void test_device_input(
     data_size = 1;
     hr = IDirectInputDevice8_GetDeviceData(lpdid, sizeof(obj_data), &obj_data, &data_size, 0);
     ok(hr == DI_OK && data_size == 1, "GetDeviceData() failed: %08x cnt:%d\n", hr, data_size);
+
+    IDirectInputDevice_Unacquire(lpdid);
 }
 
-static void test_build_action_map(
-    LPDIRECTINPUTDEVICE8 lpdid,
-    LPDIACTIONFORMAT lpdiaf,
-    int action_index,
-    DWORD expected_type,
-    DWORD expected_inst
-)
+static void test_build_action_map(IDirectInputDevice8A *lpdid, DIACTIONFORMATA *lpdiaf,
+                                  int action_index, DWORD expected_type, DWORD expected_inst)
 {
     HRESULT hr;
-    DIACTION *actions;
+    DIACTIONA *actions;
     DWORD instance, type, how;
     GUID assigned_to;
     DIDEVICEINSTANCEA ddi;
@@ -132,7 +142,7 @@ static void test_build_action_map(
     ddi.dwSize = sizeof(ddi);
     IDirectInputDevice_GetDeviceInfo(lpdid, &ddi);
 
-    hr = IDirectInputDevice8_BuildActionMap(lpdid, lpdiaf, NULL, DIDBAM_INITIALIZE);
+    hr = IDirectInputDevice8_BuildActionMap(lpdid, lpdiaf, NULL, DIDBAM_HWDEFAULTS);
     ok (SUCCEEDED(hr), "BuildActionMap failed hr=%08x\n", hr);
 
     actions = lpdiaf->rgoAction;
@@ -147,12 +157,8 @@ static void test_build_action_map(
     ok (IsEqualGUID(&assigned_to, &ddi.guidInstance), "Action and device GUID do not match action=%d\n", action_index);
 }
 
-static BOOL CALLBACK enumeration_callback(
-    LPCDIDEVICEINSTANCE lpddi,
-    LPDIRECTINPUTDEVICE8 lpdid,
-    DWORD dwFlags,
-    DWORD dwRemaining,
-    LPVOID pvRef)
+static BOOL CALLBACK enumeration_callback(const DIDEVICEINSTANCEA *lpddi, IDirectInputDevice8A *lpdid,
+                                          DWORD dwFlags, DWORD dwRemaining, LPVOID pvRef)
 {
     HRESULT hr;
     DIPROPDWORD dp;
@@ -195,8 +201,8 @@ static BOOL CALLBACK enumeration_callback(
     }
 
     /* Building and setting an action map */
-    /* It should not use any pre-stored mappings so we use DIDBAM_INITIALIZE */
-    hr = IDirectInputDevice8_BuildActionMap(lpdid, data->lpdiaf, NULL, DIDBAM_INITIALIZE);
+    /* It should not use any pre-stored mappings so we use DIDBAM_HWDEFAULTS */
+    hr = IDirectInputDevice8_BuildActionMap(lpdid, data->lpdiaf, NULL, DIDBAM_HWDEFAULTS);
     ok (SUCCEEDED(hr), "BuildActionMap failed hr=%08x\n", hr);
 
     /* Device has no data format and thus can't be acquired */
@@ -266,12 +272,13 @@ static BOOL CALLBACK enumeration_callback(
 static void test_action_mapping(void)
 {
     HRESULT hr;
-    HINSTANCE hinst = GetModuleHandle(NULL);
-    LPDIRECTINPUT8 pDI = NULL;
-    DIACTIONFORMAT af;
+    HINSTANCE hinst = GetModuleHandleA(NULL);
+    IDirectInput8A *pDI = NULL;
+    DIACTIONFORMATA af;
     struct enum_data data =  {pDI, &af, NULL, NULL, NULL, 0};
+    HWND hwnd;
 
-    hr = CoCreateInstance(&CLSID_DirectInput8, 0, 1, &IID_IDirectInput8A, (LPVOID*)&pDI);
+    hr = CoCreateInstance(&CLSID_DirectInput8, 0, CLSCTX_INPROC_SERVER, &IID_IDirectInput8A, (LPVOID*)&pDI);
     if (hr == DIERR_OLDDIRECTINPUTVERSION ||
         hr == DIERR_BETADIRECTINPUTVERSION ||
         hr == REGDB_E_CLASSNOTREG)
@@ -293,7 +300,7 @@ static void test_action_mapping(void)
 
     memset (&af, 0, sizeof(af));
     af.dwSize = sizeof(af);
-    af.dwActionSize = sizeof(DIACTION);
+    af.dwActionSize = sizeof(DIACTIONA);
     af.dwDataSize = 4 * sizeof(actionMapping) / sizeof(actionMapping[0]);
     af.dwNumActions = sizeof(actionMapping) / sizeof(actionMapping[0]);
     af.rgoAction = actionMapping;
@@ -310,6 +317,11 @@ static void test_action_mapping(void)
     hr = IDirectInput8_EnumDevicesBySemantics(pDI, NULL, &af, enumeration_callback, &data, DIEDBSFL_ATTACHEDONLY);
     ok (SUCCEEDED(hr), "EnumDevicesBySemantics failed: hr=%08x\n", hr);
 
+    hwnd = CreateWindowExA(WS_EX_TOPMOST, "static", "dinput",
+            WS_POPUP | WS_VISIBLE, 0, 0, 100, 100, NULL, NULL, NULL, NULL);
+    ok(hwnd != NULL, "failed to create window\n");
+    SetCursorPos(50, 50);
+
     if (data.keyboard != NULL)
     {
         /* Test keyboard BuildActionMap */
@@ -322,7 +334,7 @@ static void test_action_mapping(void)
         af.dwDataSize = 4 * DITEST_KEYBOARDSPACE;
         af.dwNumActions = DITEST_KEYBOARDSPACE;
 
-        hr = IDirectInputDevice8_BuildActionMap(data.keyboard, data.lpdiaf, NULL, DIDBAM_INITIALIZE);
+        hr = IDirectInputDevice8_BuildActionMap(data.keyboard, data.lpdiaf, NULL, DIDBAM_HWDEFAULTS);
         ok (hr == DI_NOEFFECT, "BuildActionMap should have no effect with no actions hr=%08x\n", hr);
 
         hr = IDirectInputDevice8_SetActionMap(data.keyboard, data.lpdiaf, NULL, 0);
@@ -340,6 +352,156 @@ static void test_action_mapping(void)
 
         test_device_input(data.mouse, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, 3);
     }
+
+    DestroyWindow(hwnd);
+}
+
+static void test_save_settings(void)
+{
+    HRESULT hr;
+    HINSTANCE hinst = GetModuleHandleA(NULL);
+    IDirectInput8A *pDI = NULL;
+    DIACTIONFORMATA af;
+    IDirectInputDevice8A *pKey;
+
+    static const GUID mapping_guid = { 0xcafecafe, 0x2, 0x3, { 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xa, 0xb } };
+    static const GUID other_guid = { 0xcafe, 0xcafe, 0x3, { 0x4, 0x5, 0x6, 0x7, 0x8, 0x9, 0xa, 0xb } };
+
+    static DIACTIONA actions[] = {
+        { 0, DIKEYBOARD_A , 0, { "Blam" } },
+        { 1, DIKEYBOARD_B , 0, { "Kapow"} }
+    };
+    static const DWORD results[] = {
+        DIDFT_MAKEINSTANCE(DIK_A) | DIDFT_PSHBUTTON,
+        DIDFT_MAKEINSTANCE(DIK_B) | DIDFT_PSHBUTTON
+    };
+    static const DWORD other_results[] = {
+        DIDFT_MAKEINSTANCE(DIK_C) | DIDFT_PSHBUTTON,
+        DIDFT_MAKEINSTANCE(DIK_D) | DIDFT_PSHBUTTON
+    };
+
+    hr = CoCreateInstance(&CLSID_DirectInput8, 0, CLSCTX_INPROC_SERVER, &IID_IDirectInput8A, (LPVOID*)&pDI);
+    if (hr == DIERR_OLDDIRECTINPUTVERSION ||
+        hr == DIERR_BETADIRECTINPUTVERSION ||
+        hr == REGDB_E_CLASSNOTREG)
+    {
+        win_skip("ActionMapping requires dinput8\n");
+        return;
+    }
+    ok (SUCCEEDED(hr), "DirectInput8 Create failed: hr=%08x\n", hr);
+    if (FAILED(hr)) return;
+
+    hr = IDirectInput8_Initialize(pDI,hinst, DIRECTINPUT_VERSION);
+    if (hr == DIERR_OLDDIRECTINPUTVERSION || hr == DIERR_BETADIRECTINPUTVERSION)
+    {
+        win_skip("ActionMapping requires dinput8\n");
+        return;
+    }
+    ok (SUCCEEDED(hr), "DirectInput8 Initialize failed: hr=%08x\n", hr);
+    if (FAILED(hr)) return;
+
+    hr = IDirectInput_CreateDevice(pDI, &GUID_SysKeyboard, &pKey, NULL);
+    ok (SUCCEEDED(hr), "IDirectInput_Create device failed hr: 0x%08x\n", hr);
+    if (FAILED(hr)) return;
+
+    memset (&af, 0, sizeof(af));
+    af.dwSize = sizeof(af);
+    af.dwActionSize = sizeof(DIACTIONA);
+    af.dwDataSize = 4 * sizeof(actions) / sizeof(actions[0]);
+    af.dwNumActions = sizeof(actions) / sizeof(actions[0]);
+    af.rgoAction = actions;
+    af.guidActionMap = mapping_guid;
+    af.dwGenre = 0x01000000; /* DIVIRTUAL_DRIVING_RACE */
+    af.dwBufferSize = 32;
+
+    /* Easy case. Ask for default mapping, save, ask for previous map and read it back */
+    hr = IDirectInputDevice8_BuildActionMap(pKey, &af, NULL, DIDBAM_HWDEFAULTS);
+    ok (SUCCEEDED(hr), "BuildActionMap failed hr=%08x\n", hr);
+
+    ok (results[0] == af.rgoAction[0].dwObjID,
+        "Mapped incorrectly expected: 0x%08x got: 0x%08x\n", results[0], af.rgoAction[0].dwObjID);
+
+    ok (results[1] == af.rgoAction[1].dwObjID,
+        "Mapped incorrectly expected: 0x%08x got: 0x%08x\n", results[1], af.rgoAction[1].dwObjID);
+
+    hr = IDirectInputDevice8_SetActionMap(pKey, &af, NULL, DIDSAM_FORCESAVE);
+    ok (SUCCEEDED(hr), "SetActionMap failed hr=%08x\n", hr);
+
+    if (hr == DI_SETTINGSNOTSAVED)
+    {
+        skip ("Can't test saving settings if SetActionMap returns DI_SETTINGSNOTSAVED\n");
+        return;
+    }
+
+    af.rgoAction[0].dwObjID = 0;
+    af.rgoAction[1].dwObjID = 0;
+    memset(&af.rgoAction[0].guidInstance, 0, sizeof(GUID));
+    memset(&af.rgoAction[1].guidInstance, 0, sizeof(GUID));
+
+    hr = IDirectInputDevice8_BuildActionMap(pKey, &af, NULL, 0);
+    ok (SUCCEEDED(hr), "BuildActionMap failed hr=%08x\n", hr);
+
+    ok (results[0] == af.rgoAction[0].dwObjID,
+        "Mapped incorrectly expected: 0x%08x got: 0x%08x\n", results[0], af.rgoAction[0].dwObjID);
+    ok (IsEqualGUID(&GUID_SysKeyboard, &af.rgoAction[0].guidInstance), "Action should be mapped to keyboard\n");
+
+    ok (results[1] == af.rgoAction[1].dwObjID,
+        "Mapped incorrectly expected: 0x%08x got: 0x%08x\n", results[1], af.rgoAction[1].dwObjID);
+    ok (IsEqualGUID(&GUID_SysKeyboard, &af.rgoAction[1].guidInstance), "Action should be mapped to keyboard\n");
+
+    /* Test that a different action map with no pre-stored settings, in spite of the flags,
+       does not try to load mappings and instead applies the default mapping */
+    af.guidActionMap = other_guid;
+
+    af.rgoAction[0].dwObjID = 0;
+    af.rgoAction[1].dwObjID = 0;
+    memset(&af.rgoAction[0].guidInstance, 0, sizeof(GUID));
+    memset(&af.rgoAction[1].guidInstance, 0, sizeof(GUID));
+
+    hr = IDirectInputDevice8_BuildActionMap(pKey, &af, NULL, 0);
+    ok (SUCCEEDED(hr), "BuildActionMap failed hr=%08x\n", hr);
+
+    ok (results[0] == af.rgoAction[0].dwObjID,
+        "Mapped incorrectly expected: 0x%08x got: 0x%08x\n", results[0], af.rgoAction[0].dwObjID);
+    ok (IsEqualGUID(&GUID_SysKeyboard, &af.rgoAction[0].guidInstance), "Action should be mapped to keyboard\n");
+
+    ok (results[1] == af.rgoAction[1].dwObjID,
+        "Mapped incorrectly expected: 0x%08x got: 0x%08x\n", results[1], af.rgoAction[1].dwObjID);
+    ok (IsEqualGUID(&GUID_SysKeyboard, &af.rgoAction[1].guidInstance), "Action should be mapped to keyboard\n");
+
+    af.guidActionMap = mapping_guid;
+    /* Hard case. Customized mapping, save, ask for previous map and read it back */
+    af.rgoAction[0].dwObjID = other_results[0];
+    af.rgoAction[0].dwHow = DIAH_USERCONFIG;
+    af.rgoAction[0].guidInstance = GUID_SysKeyboard;
+    af.rgoAction[1].dwObjID = other_results[1];
+    af.rgoAction[1].dwHow = DIAH_USERCONFIG;
+    af.rgoAction[1].guidInstance = GUID_SysKeyboard;
+
+    hr = IDirectInputDevice8_SetActionMap(pKey, &af, NULL, DIDSAM_FORCESAVE);
+    ok (SUCCEEDED(hr), "SetActionMap failed hr=%08x\n", hr);
+
+    if (hr == DI_SETTINGSNOTSAVED)
+    {
+        skip ("Can't test saving settings if SetActionMap returns DI_SETTINGSNOTSAVED\n");
+        return;
+    }
+
+    af.rgoAction[0].dwObjID = 0;
+    af.rgoAction[1].dwObjID = 0;
+    memset(&af.rgoAction[0].guidInstance, 0, sizeof(GUID));
+    memset(&af.rgoAction[1].guidInstance, 0, sizeof(GUID));
+
+    hr = IDirectInputDevice8_BuildActionMap(pKey, &af, NULL, 0);
+    ok (SUCCEEDED(hr), "BuildActionMap failed hr=%08x\n", hr);
+
+    ok (other_results[0] == af.rgoAction[0].dwObjID,
+        "Mapped incorrectly expected: 0x%08x got: 0x%08x\n", other_results[0], af.rgoAction[0].dwObjID);
+    ok (IsEqualGUID(&GUID_SysKeyboard, &af.rgoAction[0].guidInstance), "Action should be mapped to keyboard\n");
+
+    ok (other_results[1] == af.rgoAction[1].dwObjID,
+        "Mapped incorrectly expected: 0x%08x got: 0x%08x\n", other_results[1], af.rgoAction[1].dwObjID);
+    ok (IsEqualGUID(&GUID_SysKeyboard, &af.rgoAction[1].guidInstance), "Action should be mapped to keyboard\n");
 }
 
 START_TEST(device)
@@ -347,6 +509,7 @@ START_TEST(device)
     CoInitialize(NULL);
 
     test_action_mapping();
+    test_save_settings();
 
     CoUninitialize();
 }

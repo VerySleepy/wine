@@ -26,6 +26,16 @@
 #include "wine/test.h"
 #include "d3dx9.h"
 
+#ifndef NAN
+/* From wine/port.h */
+static inline float __port_nan(void)
+{
+    static const unsigned __nan_bytes = 0x7fc00000;
+    return *(const float *)&__nan_bytes;
+}
+#define NAN __port_nan()
+#endif
+
 /* Set the WINETEST_DEBUG environment variable to be greater than 1 for verbose
  * function call traces of ID3DXAllocateHierarchy callbacks. */
 #define TRACECALLBACK if(winetest_debug > 1) trace
@@ -111,8 +121,8 @@ static struct test_context *new_test_context(void)
     D3DPRESENT_PARAMETERS d3dpp = {0};
     struct test_context *test_context;
 
-    hwnd = CreateWindow("static", "d3dx9_test", 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
-    if (!hwnd)
+    if (!(hwnd = CreateWindowA("static", "d3dx9_test", WS_OVERLAPPEDWINDOW, 0, 0,
+            640, 480, NULL, NULL, NULL, NULL)))
     {
         skip("Couldn't create application window\n");
         goto error;
@@ -129,7 +139,7 @@ static struct test_context *new_test_context(void)
     d3dpp.Windowed = TRUE;
     d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
     hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd,
-                                 D3DCREATE_MIXED_VERTEXPROCESSING, &d3dpp, &device);
+                                 D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &device);
     if (FAILED(hr))
     {
         skip("Couldn't create IDirect3DDevice9 object %#x\n", hr);
@@ -278,7 +288,7 @@ static void compare_mesh(const char *name, ID3DXMesh *d3dxmesh, struct mesh *mes
 
         /* specify offset and size to avoid potential overruns */
         hr = IDirect3DVertexBuffer9_Lock(vertex_buffer, 0, number_of_vertices * sizeof(D3DXVECTOR3) * 2,
-                                         (LPVOID *)&vertices, D3DLOCK_DISCARD);
+                (void **)&vertices, D3DLOCK_DISCARD);
         ok(hr == D3D_OK, "Test %s, result %x, expected 0 (D3D_OK)\n", name, hr);
 
         if (hr != D3D_OK)
@@ -328,7 +338,8 @@ static void compare_mesh(const char *name, ID3DXMesh *d3dxmesh, struct mesh *mes
                name, index_buffer_description.Format, D3DFMT_INDEX16);
             ok(index_buffer_description.Type == D3DRTYPE_INDEXBUFFER, "Test %s, result %x, expected %x (D3DRTYPE_INDEXBUFFER)\n",
                name, index_buffer_description.Type, D3DRTYPE_INDEXBUFFER);
-            todo_wine ok(index_buffer_description.Usage == 0, "Test %s, result %x, expected %x\n", name, index_buffer_description.Usage, 0);
+            ok(index_buffer_description.Usage == 0, "Test %s, result %#x, expected %#x.\n",
+                    name, index_buffer_description.Usage, 0);
             ok(index_buffer_description.Pool == D3DPOOL_MANAGED, "Test %s, result %x, expected %x (D3DPOOL_MANAGED)\n",
                name, index_buffer_description.Pool, D3DPOOL_MANAGED);
             expected = number_of_faces * sizeof(WORD) * 3;
@@ -338,7 +349,7 @@ static void compare_mesh(const char *name, ID3DXMesh *d3dxmesh, struct mesh *mes
 
         /* specify offset and size to avoid potential overruns */
         hr = IDirect3DIndexBuffer9_Lock(index_buffer, 0, number_of_faces * sizeof(WORD) * 3,
-                                        (LPVOID *)&faces, D3DLOCK_DISCARD);
+                (void **)&faces, D3DLOCK_DISCARD);
         ok(hr == D3D_OK, "Test %s, result %x, expected 0 (D3D_OK)\n", name, hr);
 
         if (hr != D3D_OK)
@@ -1093,6 +1104,9 @@ static void D3DXIntersectTriTest(void)
     ok( compare(exp_v,got_v), "Expected v = %f, got %f\n",exp_v,got_v);
     ok( compare(exp_dist,got_dist), "Expected distance = %f, got %f\n",exp_dist,got_dist);
 
+    got_res = D3DXIntersectTri(&vertex[0], &vertex[1], &vertex[2], &position, &ray, NULL, NULL, NULL);
+    ok(got_res == exp_res, "Expected result = %d, got %d\n", exp_res, got_res);
+
 /*Only positive ray is taken in account*/
 
     vertex[0].x = 1.0f; vertex[0].y = 0.0f; vertex[0].z = 0.0f;
@@ -1108,6 +1122,9 @@ static void D3DXIntersectTriTest(void)
     got_res = D3DXIntersectTri(&vertex[0],&vertex[1],&vertex[2],&position,&ray,&got_u,&got_v,&got_dist);
     ok( got_res == exp_res, "Expected result = %d, got %d\n",exp_res,got_res);
 
+    got_res = D3DXIntersectTri(&vertex[0], &vertex[1], &vertex[2], &position, &ray, NULL, NULL, NULL);
+    ok(got_res == exp_res, "Expected result = %d, got %d\n", exp_res, got_res);
+
 /*Intersection between ray and triangle in a same plane is considered as empty*/
 
     vertex[0].x = 4.0f; vertex[0].y = 0.0f; vertex[0].z = 0.0f;
@@ -1122,6 +1139,9 @@ static void D3DXIntersectTriTest(void)
 
     got_res = D3DXIntersectTri(&vertex[0],&vertex[1],&vertex[2],&position,&ray,&got_u,&got_v,&got_dist);
     ok( got_res == exp_res, "Expected result = %d, got %d\n",exp_res,got_res);
+
+    got_res = D3DXIntersectTri(&vertex[0], &vertex[1], &vertex[2], &position, &ray, NULL, NULL, NULL);
+    ok(got_res == exp_res, "Expected result = %d, got %d\n", exp_res, got_res);
 }
 
 static void D3DXCreateMeshTest(void)
@@ -1165,8 +1185,8 @@ static void D3DXCreateMeshTest(void)
     hr = D3DXCreateMesh(1, 3, D3DXMESH_MANAGED, decl1, NULL, &d3dxmesh);
     ok(hr == D3DERR_INVALIDCALL, "Got result %x, expected %x (D3DERR_INVALIDCALL)\n", hr, D3DERR_INVALIDCALL);
 
-    wnd = CreateWindow("static", "d3dx9_test", 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
-    if (!wnd)
+    if (!(wnd = CreateWindowA("static", "d3dx9_test", WS_OVERLAPPEDWINDOW, 0, 0,
+            640, 480, NULL, NULL, NULL, NULL)))
     {
         skip("Couldn't create application window\n");
         return;
@@ -1182,7 +1202,7 @@ static void D3DXCreateMeshTest(void)
     ZeroMemory(&d3dpp, sizeof(d3dpp));
     d3dpp.Windowed = TRUE;
     d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd, D3DCREATE_MIXED_VERTEXPROCESSING, &d3dpp, &device);
+    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &device);
     if (FAILED(hr))
     {
         skip("Failed to create IDirect3DDevice9 object %#x\n", hr);
@@ -1372,8 +1392,8 @@ static void D3DXCreateMeshFVFTest(void)
     hr = D3DXCreateMeshFVF(1, 3, D3DXMESH_MANAGED, D3DFVF_XYZ | D3DFVF_NORMAL, NULL, &d3dxmesh);
     ok(hr == D3DERR_INVALIDCALL, "Got result %x, expected %x (D3DERR_INVALIDCALL)\n", hr, D3DERR_INVALIDCALL);
 
-    wnd = CreateWindow("static", "d3dx9_test", 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
-    if (!wnd)
+    if (!(wnd = CreateWindowA("static", "d3dx9_test", WS_OVERLAPPEDWINDOW, 0, 0,
+            640, 480, NULL, NULL, NULL, NULL)))
     {
         skip("Couldn't create application window\n");
         return;
@@ -1389,7 +1409,7 @@ static void D3DXCreateMeshFVFTest(void)
     ZeroMemory(&d3dpp, sizeof(d3dpp));
     d3dpp.Windowed = TRUE;
     d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd, D3DCREATE_MIXED_VERTEXPROCESSING, &d3dpp, &device);
+    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &device);
     if (FAILED(hr))
     {
         skip("Failed to create IDirect3DDevice9 object %#x\n", hr);
@@ -1778,16 +1798,16 @@ static void check_generated_effects_(int line, const D3DXMATERIAL *materials, DW
     }
 }
 
-static LPSTR strdupA(LPCSTR p)
+static char *strdupA(const char *p)
 {
-    LPSTR ret;
+    char *ret;
     if (!p) return NULL;
     ret = HeapAlloc(GetProcessHeap(), 0, strlen(p) + 1);
     if (ret) strcpy(ret, p);
     return ret;
 }
 
-static CALLBACK HRESULT ID3DXAllocateHierarchyImpl_DestroyFrame(ID3DXAllocateHierarchy *iface, LPD3DXFRAME frame)
+static HRESULT CALLBACK ID3DXAllocateHierarchyImpl_DestroyFrame(ID3DXAllocateHierarchy *iface, LPD3DXFRAME frame)
 {
     TRACECALLBACK("ID3DXAllocateHierarchyImpl_DestroyFrame(%p, %p)\n", iface, frame);
     if (frame) {
@@ -1797,9 +1817,10 @@ static CALLBACK HRESULT ID3DXAllocateHierarchyImpl_DestroyFrame(ID3DXAllocateHie
     return D3D_OK;
 }
 
-static CALLBACK HRESULT ID3DXAllocateHierarchyImpl_CreateFrame(ID3DXAllocateHierarchy *iface, LPCSTR name, LPD3DXFRAME *new_frame)
+static HRESULT CALLBACK ID3DXAllocateHierarchyImpl_CreateFrame(ID3DXAllocateHierarchy *iface,
+        const char *name, D3DXFRAME **new_frame)
 {
-    LPD3DXFRAME frame;
+    D3DXFRAME *frame;
 
     TRACECALLBACK("ID3DXAllocateHierarchyImpl_CreateFrame(%p, '%s', %p)\n", iface, name, new_frame);
     frame = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*frame));
@@ -1851,16 +1872,16 @@ static HRESULT destroy_mesh_container(LPD3DXMESHCONTAINER mesh_container)
     return D3D_OK;
 }
 
-static CALLBACK HRESULT ID3DXAllocateHierarchyImpl_DestroyMeshContainer(ID3DXAllocateHierarchy *iface, LPD3DXMESHCONTAINER mesh_container)
+static HRESULT CALLBACK ID3DXAllocateHierarchyImpl_DestroyMeshContainer(ID3DXAllocateHierarchy *iface, LPD3DXMESHCONTAINER mesh_container)
 {
     TRACECALLBACK("ID3DXAllocateHierarchyImpl_DestroyMeshContainer(%p, %p)\n", iface, mesh_container);
     return destroy_mesh_container(mesh_container);
 }
 
-static CALLBACK HRESULT ID3DXAllocateHierarchyImpl_CreateMeshContainer(ID3DXAllocateHierarchy *iface,
-        LPCSTR name, CONST D3DXMESHDATA *mesh_data, CONST D3DXMATERIAL *materials,
-        CONST D3DXEFFECTINSTANCE *effects, DWORD num_materials, CONST DWORD *adjacency,
-        LPD3DXSKININFO skin_info, LPD3DXMESHCONTAINER *new_mesh_container)
+static HRESULT CALLBACK ID3DXAllocateHierarchyImpl_CreateMeshContainer(ID3DXAllocateHierarchy *iface,
+        const char *name, const D3DXMESHDATA *mesh_data, const D3DXMATERIAL *materials,
+        const D3DXEFFECTINSTANCE *effects, DWORD num_materials, const DWORD *adjacency,
+        ID3DXSkinInfo *skin_info, D3DXMESHCONTAINER **new_mesh_container)
 {
     LPD3DXMESHCONTAINER mesh_container = NULL;
     int i;
@@ -2246,8 +2267,7 @@ static void D3DXLoadMeshTest(void)
     D3DXFRAME *frame_hier = NULL;
     D3DXMATRIX transform;
 
-    wnd = CreateWindow("static", "d3dx9_test", WS_POPUP, 0, 0, 1000, 1000, NULL, NULL, NULL, NULL);
-    if (!wnd)
+    if (!(wnd = CreateWindowA("static", "d3dx9_test", WS_POPUP, 0, 0, 1000, 1000, NULL, NULL, NULL, NULL)))
     {
         skip("Couldn't create application window\n");
         return;
@@ -2262,7 +2282,7 @@ static void D3DXLoadMeshTest(void)
     ZeroMemory(&d3dpp, sizeof(d3dpp));
     d3dpp.Windowed = TRUE;
     d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd, D3DCREATE_MIXED_VERTEXPROCESSING, &d3dpp, &device);
+    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &device);
     if (FAILED(hr))
     {
         skip("Failed to create IDirect3DDevice9 object %#x\n", hr);
@@ -2413,11 +2433,90 @@ cleanup:
     if (wnd) DestroyWindow(wnd);
 }
 
+static BOOL compute_box(struct mesh *mesh, float width, float height, float depth)
+{
+    unsigned int i, face;
+    static const D3DXVECTOR3 unit_box[] =
+    {
+        {-1.0f, -1.0f, -1.0f}, {-1.0f, -1.0f,  1.0f}, {-1.0f,  1.0f,  1.0f}, {-1.0f,  1.0f, -1.0f},
+        {-1.0f,  1.0f, -1.0f}, {-1.0f,  1.0f,  1.0f}, { 1.0f,  1.0f,  1.0f}, { 1.0f,  1.0f, -1.0f},
+        { 1.0f,  1.0f, -1.0f}, { 1.0f,  1.0f,  1.0f}, { 1.0f, -1.0f,  1.0f}, { 1.0f, -1.0f, -1.0f},
+        {-1.0f, -1.0f,  1.0f}, {-1.0f, -1.0f, -1.0f}, { 1.0f, -1.0f, -1.0f}, { 1.0f, -1.0f,  1.0f},
+        {-1.0f, -1.0f,  1.0f}, { 1.0f, -1.0f,  1.0f}, { 1.0f,  1.0f,  1.0f}, {-1.0f,  1.0f,  1.0f},
+        {-1.0f, -1.0f, -1.0f}, {-1.0f,  1.0f, -1.0f}, { 1.0f,  1.0f, -1.0f}, { 1.0f, -1.0f, -1.0f}
+    };
+    static const D3DXVECTOR3 normals[] =
+    {
+        {-1.0f,  0.0f, 0.0f}, { 0.0f, 1.0f, 0.0f}, { 1.0f, 0.0f,  0.0f},
+        { 0.0f, -1.0f, 0.0f}, { 0.0f, 0.0f, 1.0f}, { 0.0f, 0.0f, -1.0f}
+    };
+
+    if (!new_mesh(mesh, 24, 12))
+    {
+        return FALSE;
+    }
+
+    width /= 2.0f;
+    height /= 2.0f;
+    depth /= 2.0f;
+
+    for (i = 0; i < 24; i++)
+    {
+        mesh->vertices[i].position.x = width * unit_box[i].x;
+        mesh->vertices[i].position.y = height * unit_box[i].y;
+        mesh->vertices[i].position.z = depth * unit_box[i].z;
+        mesh->vertices[i].normal.x = normals[i / 4].x;
+        mesh->vertices[i].normal.y = normals[i / 4].y;
+        mesh->vertices[i].normal.z = normals[i / 4].z;
+    }
+
+    face = 0;
+    for (i = 0; i < 12; i++)
+    {
+        mesh->faces[i][0] = face++;
+        mesh->faces[i][1] = face++;
+        mesh->faces[i][2] = (i % 2) ? face - 4 : face;
+    }
+
+    return TRUE;
+}
+
+static void test_box(IDirect3DDevice9 *device, float width, float height, float depth)
+{
+    HRESULT hr;
+    ID3DXMesh *box;
+    struct mesh mesh;
+    char name[256];
+
+    hr = D3DXCreateBox(device, width, height, depth, &box, NULL);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK)\n", hr);
+    if (hr != D3D_OK)
+    {
+        skip("Couldn't create box\n");
+        return;
+    }
+
+    if (!compute_box(&mesh, width, height, depth))
+    {
+        skip("Couldn't create mesh\n");
+        box->lpVtbl->Release(box);
+        return;
+    }
+
+    mesh.fvf = D3DFVF_XYZ | D3DFVF_NORMAL;
+
+    sprintf(name, "box (%g, %g, %g)", width, height, depth);
+    compare_mesh(name, box, &mesh);
+
+    free_mesh(&mesh);
+
+    box->lpVtbl->Release(box);
+}
 static void D3DXCreateBoxTest(void)
 {
     HRESULT hr;
     HWND wnd;
-    WNDCLASS wc={0};
+    WNDCLASSA wc = {0};
     IDirect3D9* d3d;
     IDirect3DDevice9* device;
     D3DPRESENT_PARAMETERS d3dpp;
@@ -2435,14 +2534,14 @@ static void D3DXCreateBoxTest(void)
 
     wc.lpfnWndProc = DefWindowProcA;
     wc.lpszClassName = "d3dx9_test_wc";
-    if (!RegisterClass(&wc))
+    if (!RegisterClassA(&wc))
     {
         skip("RegisterClass failed\n");
         return;
     }
 
-    wnd = CreateWindow("d3dx9_test_wc", "d3dx9_test",
-                        WS_SYSMENU | WS_POPUP , 0, 0, 640, 480, 0, 0, 0, 0);
+    wnd = CreateWindowA("d3dx9_test_wc", "d3dx9_test", WS_OVERLAPPEDWINDOW,
+            0, 0, 640, 480, 0, 0, 0, 0);
     ok(wnd != NULL, "Expected to have a window, received NULL\n");
     if (!wnd)
     {
@@ -2461,7 +2560,7 @@ static void D3DXCreateBoxTest(void)
     memset(&d3dpp, 0, sizeof(d3dpp));
     d3dpp.Windowed = TRUE;
     d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd, D3DCREATE_MIXED_VERTEXPROCESSING, &d3dpp, &device);
+    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &device);
     if (FAILED(hr))
     {
         skip("Failed to create IDirect3DDevice9 object %#x\n", hr);
@@ -2470,44 +2569,190 @@ static void D3DXCreateBoxTest(void)
         return;
     }
 
-    hr = D3DXCreateBuffer(36 * sizeof(DWORD), &ppBuffer);
-    ok(hr==D3D_OK, "Expected D3D_OK, received %#x\n", hr);
-    if (FAILED(hr)) goto end;
-
     hr = D3DXCreateBox(device,2.0f,20.0f,4.9f,NULL, &ppBuffer);
-    todo_wine ok(hr==D3DERR_INVALIDCALL, "Expected D3DERR_INVALIDCALL, received %#x\n", hr);
+    ok(hr==D3DERR_INVALIDCALL, "Expected D3DERR_INVALIDCALL, received %#x\n", hr);
 
     hr = D3DXCreateBox(NULL,22.0f,20.0f,4.9f,&box, &ppBuffer);
-    todo_wine ok(hr==D3DERR_INVALIDCALL, "Expected D3DERR_INVALIDCALL, received %#x\n", hr);
+    ok(hr==D3DERR_INVALIDCALL, "Expected D3DERR_INVALIDCALL, received %#x\n", hr);
 
     hr = D3DXCreateBox(device,-2.0f,20.0f,4.9f,&box, &ppBuffer);
-    todo_wine ok(hr==D3DERR_INVALIDCALL, "Expected D3DERR_INVALIDCALL, received %#x\n", hr);
+    ok(hr==D3DERR_INVALIDCALL, "Expected D3DERR_INVALIDCALL, received %#x\n", hr);
 
     hr = D3DXCreateBox(device,22.0f,-20.0f,4.9f,&box, &ppBuffer);
-    todo_wine ok(hr==D3DERR_INVALIDCALL, "Expected D3DERR_INVALIDCALL, received %#x\n", hr);
+    ok(hr==D3DERR_INVALIDCALL, "Expected D3DERR_INVALIDCALL, received %#x\n", hr);
 
     hr = D3DXCreateBox(device,22.0f,20.0f,-4.9f,&box, &ppBuffer);
-    todo_wine ok(hr==D3DERR_INVALIDCALL, "Expected D3DERR_INVALIDCALL, received %#x\n", hr);
+    ok(hr==D3DERR_INVALIDCALL, "Expected D3DERR_INVALIDCALL, received %#x\n", hr);
 
+    ppBuffer = NULL;
     hr = D3DXCreateBox(device,10.9f,20.0f,4.9f,&box, &ppBuffer);
-    todo_wine ok(hr==D3D_OK, "Expected D3D_OK, received %#x\n", hr);
-
-    if (FAILED(hr))
-    {
-        skip("D3DXCreateBox failed\n");
-        goto end;
-    }
+    ok(hr==D3D_OK, "Expected D3D_OK, received %#x\n", hr);
 
     buffer = ID3DXBuffer_GetBufferPointer(ppBuffer);
     for(i=0; i<36; i++)
-        todo_wine ok(adjacency[i]==buffer[i], "expected adjacency %d: %#x, received %#x\n",i,adjacency[i], buffer[i]);
+        ok(adjacency[i]==buffer[i], "expected adjacency %d: %#x, received %#x\n",i,adjacency[i], buffer[i]);
 
     box->lpVtbl->Release(box);
+    ID3DXBuffer_Release(ppBuffer);
 
-end:
+    test_box(device, 10.9f, 20.0f, 4.9f);
+
     IDirect3DDevice9_Release(device);
     IDirect3D9_Release(d3d);
-    ID3DXBuffer_Release(ppBuffer);
+    DestroyWindow(wnd);
+}
+
+static BOOL compute_polygon(struct mesh *mesh, float length, unsigned int sides)
+{
+    unsigned int i;
+    float scale;
+
+    if (!new_mesh(mesh, sides + 1, sides))
+        return FALSE;
+
+    scale = 0.5f * length / sinf(D3DX_PI / sides);
+
+    mesh->vertices[0].position.x = 0.0f;
+    mesh->vertices[0].position.y = 0.0f;
+    mesh->vertices[0].position.z = 0.0f;
+    mesh->vertices[0].normal.x = 0.0f;
+    mesh->vertices[0].normal.y = 0.0f;
+    mesh->vertices[0].normal.z = 1.0f;
+
+    for (i = 0; i < sides; ++i)
+    {
+        mesh->vertices[i + 1].position.x = cosf(2.0f * D3DX_PI * i / sides) * scale;
+        mesh->vertices[i + 1].position.y = sinf(2.0f * D3DX_PI * i / sides) * scale;
+        mesh->vertices[i + 1].position.z = 0.0f;
+        mesh->vertices[i + 1].normal.x = 0.0f;
+        mesh->vertices[i + 1].normal.y = 0.0f;
+        mesh->vertices[i + 1].normal.z = 1.0f;
+
+        mesh->faces[i][0] = 0;
+        mesh->faces[i][1] = i + 1;
+        mesh->faces[i][2] = i + 2;
+    }
+
+    mesh->faces[sides - 1][2] = 1;
+
+    return TRUE;
+}
+
+static void test_polygon(IDirect3DDevice9 *device, float length, unsigned int sides)
+{
+    HRESULT hr;
+    ID3DXMesh *polygon;
+    struct mesh mesh;
+    char name[64];
+
+    hr = D3DXCreatePolygon(device, length, sides, &polygon, NULL);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK)\n", hr);
+    if (hr != D3D_OK)
+    {
+        skip("Couldn't create polygon\n");
+        return;
+    }
+
+    if (!compute_polygon(&mesh, length, sides))
+    {
+        skip("Couldn't create mesh\n");
+        polygon->lpVtbl->Release(polygon);
+        return;
+    }
+
+    mesh.fvf = D3DFVF_XYZ | D3DFVF_NORMAL;
+
+    sprintf(name, "polygon (%g, %d)", length, sides);
+    compare_mesh(name, polygon, &mesh);
+
+    free_mesh(&mesh);
+
+    polygon->lpVtbl->Release(polygon);
+}
+
+static void D3DXCreatePolygonTest(void)
+{
+    HRESULT hr;
+    HWND wnd;
+    IDirect3D9 *d3d;
+    IDirect3DDevice9 *device;
+    D3DPRESENT_PARAMETERS d3dpp;
+    ID3DXMesh *polygon;
+    ID3DXBuffer *adjacency;
+    DWORD (*buffer)[3], buffer_size;
+    unsigned int i;
+
+    if (!(wnd = CreateWindowA("static", "d3dx9_test", WS_OVERLAPPEDWINDOW, 0, 0,
+            640, 480, NULL, NULL, NULL, NULL)))
+    {
+        skip("Couldn't create application window\n");
+        return;
+    }
+    if (!(d3d = Direct3DCreate9(D3D_SDK_VERSION)))
+    {
+        skip("Couldn't create IDirect3D9 object\n");
+        DestroyWindow(wnd);
+        return;
+    }
+
+    memset(&d3dpp, 0, sizeof(d3dpp));
+    d3dpp.Windowed = TRUE;
+    d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
+    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd,
+            D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &device);
+    if (FAILED(hr))
+    {
+        skip("Failed to create IDirect3DDevice9 object %#x\n", hr);
+        IDirect3D9_Release(d3d);
+        DestroyWindow(wnd);
+        return;
+    }
+
+    hr = D3DXCreatePolygon(device, 2.0f, 11, NULL, &adjacency);
+    ok(hr == D3DERR_INVALIDCALL, "Expected D3DERR_INVALIDCALL, received %#x\n", hr);
+
+    hr = D3DXCreatePolygon(NULL, 2.0f, 11, &polygon, &adjacency);
+    ok(hr == D3DERR_INVALIDCALL, "Expected D3DERR_INVALIDCALL, received %#x\n", hr);
+
+    hr = D3DXCreatePolygon(device, -2.0f, 11, &polygon, &adjacency);
+    ok(hr == D3DERR_INVALIDCALL, "Expected D3DERR_INVALIDCALL, received %#x\n", hr);
+
+    polygon = (void *)0xdeadbeef;
+    adjacency = (void *)0xdeadbeef;
+    hr = D3DXCreatePolygon(device, 2.0f, 0, &polygon, &adjacency);
+    ok(hr == D3DERR_INVALIDCALL, "Expected D3DERR_INVALIDCALL, received %#x\n", hr);
+    ok(polygon == (void *)0xdeadbeef, "Polygon was changed to %p\n", polygon);
+    ok(adjacency == (void *)0xdeadbeef, "Adjacency was changed to %p\n", adjacency);
+
+    hr = D3DXCreatePolygon(device, 2.0f, 2, &polygon, &adjacency);
+    ok(hr == D3DERR_INVALIDCALL, "Expected D3DERR_INVALIDCALL, received %#x\n", hr);
+
+    adjacency = NULL;
+    hr = D3DXCreatePolygon(device, 3.0f, 11, &polygon, &adjacency);
+    ok(hr == D3D_OK, "Expected D3D_OK, received %#x\n", hr);
+
+    buffer_size = ID3DXBuffer_GetBufferSize(adjacency);
+    ok(buffer_size == 33 * sizeof(DWORD), "Wrong adjacency buffer size %u\n", buffer_size);
+
+    buffer = ID3DXBuffer_GetBufferPointer(adjacency);
+    for (i = 0; i < 11; ++i)
+    {
+        ok(buffer[i][0] == (i + 10) % 11, "Wrong adjacency[%d][0] = %u\n", i, buffer[i][0]);
+        ok(buffer[i][1] == ~0U, "Wrong adjacency[%d][1] = %u\n", i, buffer[i][1]);
+        ok(buffer[i][2] == (i + 1) % 11, "Wrong adjacency[%d][2] = %u\n", i, buffer[i][2]);
+    }
+
+    polygon->lpVtbl->Release(polygon);
+    ID3DXBuffer_Release(adjacency);
+
+    test_polygon(device, 2.0f, 3);
+    test_polygon(device, 10.0f, 3);
+    test_polygon(device, 10.0f, 5);
+    test_polygon(device, 10.0f, 10);
+    test_polygon(device, 20.0f, 10);
+
+    IDirect3DDevice9_Release(device);
+    IDirect3D9_Release(d3d);
     DestroyWindow(wnd);
 }
 
@@ -2569,12 +2814,12 @@ static BOOL compute_sphere(struct mesh *mesh, FLOAT radius, UINT slices, UINT st
     int slice, stack;
 
     /* theta = angle on xy plane wrt x axis */
-    theta_step = M_PI / stacks;
+    theta_step = D3DX_PI / stacks;
     theta_start = theta_step;
 
     /* phi = angle on xz plane wrt z axis */
-    phi_step = -2 * M_PI / slices;
-    phi_start = M_PI / 2;
+    phi_step = -2 * D3DX_PI / slices;
+    phi_start = D3DX_PI / 2;
 
     if (!compute_sincos_table(&theta, theta_start, theta_step, stacks))
     {
@@ -2745,14 +2990,13 @@ static void D3DXCreateSphereTest(void)
     hr = D3DXCreateSphere(NULL, 0.0f, 0, 1, NULL, NULL);
     ok(hr == D3DERR_INVALIDCALL, "Got result %x, expected %x (D3DERR_INVALIDCALL)\n",hr,D3DERR_INVALIDCALL);
 
-    wnd = CreateWindow("static", "d3dx9_test", 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
-    d3d = Direct3DCreate9(D3D_SDK_VERSION);
-    if (!wnd)
+    if (!(wnd = CreateWindowA("static", "d3dx9_test", WS_OVERLAPPEDWINDOW, 0, 0,
+            640, 480, NULL, NULL, NULL, NULL)))
     {
         skip("Couldn't create application window\n");
         return;
     }
-    if (!d3d)
+    if (!(d3d = Direct3DCreate9(D3D_SDK_VERSION)))
     {
         skip("Couldn't create IDirect3D9 object\n");
         DestroyWindow(wnd);
@@ -2762,7 +3006,7 @@ static void D3DXCreateSphereTest(void)
     ZeroMemory(&d3dpp, sizeof(d3dpp));
     d3dpp.Windowed = TRUE;
     d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd, D3DCREATE_MIXED_VERTEXPROCESSING, &d3dpp, &device);
+    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &device);
     if (FAILED(hr))
     {
         skip("Failed to create IDirect3DDevice9 object %#x\n", hr);
@@ -2807,8 +3051,8 @@ static BOOL compute_cylinder(struct mesh *mesh, FLOAT radius1, FLOAT radius2, FL
     int slice, stack;
 
     /* theta = angle on xy plane wrt x axis */
-    theta_step = -2 * M_PI / slices;
-    theta_start = M_PI / 2;
+    theta_step = -2 * D3DX_PI / slices;
+    theta_start = D3DX_PI / 2;
 
     if (!compute_sincos_table(&theta, theta_start, theta_step, slices))
     {
@@ -2989,14 +3233,13 @@ static void D3DXCreateCylinderTest(void)
     hr = D3DXCreateCylinder(NULL, 1.0f, 1.0f, 1.0f, 2, 1, &cylinder, NULL);
     ok(hr == D3DERR_INVALIDCALL, "Got result %x, expected %x (D3DERR_INVALIDCALL)\n",hr,D3DERR_INVALIDCALL);
 
-    wnd = CreateWindow("static", "d3dx9_test", 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
-    d3d = Direct3DCreate9(D3D_SDK_VERSION);
-    if (!wnd)
+    if (!(wnd = CreateWindowA("static", "d3dx9_test", WS_OVERLAPPEDWINDOW, 0, 0,
+            640, 480, NULL, NULL, NULL, NULL)))
     {
         skip("Couldn't create application window\n");
         return;
     }
-    if (!d3d)
+    if (!(d3d = Direct3DCreate9(D3D_SDK_VERSION)))
     {
         skip("Couldn't create IDirect3D9 object\n");
         DestroyWindow(wnd);
@@ -3006,7 +3249,7 @@ static void D3DXCreateCylinderTest(void)
     ZeroMemory(&d3dpp, sizeof(d3dpp));
     d3dpp.Windowed = TRUE;
     d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd, D3DCREATE_MIXED_VERTEXPROCESSING, &d3dpp, &device);
+    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &device);
     if (FAILED(hr))
     {
         skip("Failed to create IDirect3DDevice9 object %#x\n", hr);
@@ -3064,6 +3307,165 @@ static void D3DXCreateCylinderTest(void)
     test_cylinder(device, 3.0f, 2.0f, 4.0f, 3, 4);
     test_cylinder(device, 2.0f, 3.0f, 4.0f, 3, 4);
     test_cylinder(device, 3.0f, 4.0f, 5.0f, 11, 20);
+
+    IDirect3DDevice9_Release(device);
+    IDirect3D9_Release(d3d);
+    DestroyWindow(wnd);
+}
+
+static BOOL compute_torus(struct mesh *mesh, float innerradius, float outerradius, UINT sides, UINT rings)
+{
+    float phi, phi_step, sin_phi, cos_phi;
+    float theta, theta_step, sin_theta, cos_theta;
+    unsigned int numvert, numfaces, i, j;
+
+    numvert = sides * rings;
+    numfaces = numvert * 2;
+
+    if (!new_mesh(mesh, numvert, numfaces))
+        return FALSE;
+
+    phi_step = D3DX_PI / sides * 2.0f;
+    theta_step = D3DX_PI / rings * -2.0f;
+
+    theta = 0.0f;
+
+    for (i = 0; i < rings; ++i)
+    {
+        phi = 0.0f;
+
+        cos_theta = cosf(theta);
+        sin_theta = sinf(theta);
+
+        for (j = 0; j < sides; ++j)
+        {
+            sin_phi = sinf(phi);
+            cos_phi = cosf(phi);
+
+            mesh->vertices[i * sides + j].position.x = (innerradius * cos_phi + outerradius) * cos_theta;
+            mesh->vertices[i * sides + j].position.y = (innerradius * cos_phi + outerradius) * sin_theta;
+            mesh->vertices[i * sides + j].position.z = innerradius * sin_phi;
+            mesh->vertices[i * sides + j].normal.x = cos_phi * cos_theta;
+            mesh->vertices[i * sides + j].normal.y = cos_phi * sin_theta;
+            mesh->vertices[i * sides + j].normal.z = sin_phi;
+
+            phi += phi_step;
+        }
+
+        theta += theta_step;
+    }
+
+    for (i = 0; i < numfaces - sides * 2; ++i)
+    {
+        mesh->faces[i][0] = i % 2 ? i / 2 + sides : i / 2;
+        mesh->faces[i][1] = (i / 2 + 1) % sides ? i / 2 + 1 : i / 2 + 1 - sides;
+        mesh->faces[i][2] = (i + 1) % (sides * 2) ? (i + 1) / 2 + sides : (i + 1) / 2;
+    }
+
+    for (j = 0; i < numfaces; ++i, ++j)
+    {
+        mesh->faces[i][0] = i % 2 ? j / 2 : i / 2;
+        mesh->faces[i][1] = (i / 2 + 1) % sides ? i / 2 + 1 : i / 2 + 1 - sides;
+        mesh->faces[i][2] = i == numfaces - 1 ? 0 : (j + 1) / 2;
+    }
+
+    return TRUE;
+}
+
+static void test_torus(IDirect3DDevice9 *device, float innerradius, float outerradius, UINT sides, UINT rings)
+{
+    HRESULT hr;
+    ID3DXMesh *torus;
+    struct mesh mesh;
+    char name[256];
+
+    hr = D3DXCreateTorus(device, innerradius, outerradius, sides, rings, &torus, NULL);
+    ok(hr == D3D_OK, "Got result %#x, expected 0 (D3D_OK)\n", hr);
+    if (hr != D3D_OK)
+    {
+        skip("Couldn't create torus\n");
+        return;
+    }
+
+    if (!compute_torus(&mesh, innerradius, outerradius, sides, rings))
+    {
+        skip("Couldn't create mesh\n");
+        torus->lpVtbl->Release(torus);
+        return;
+    }
+
+    mesh.fvf = D3DFVF_XYZ | D3DFVF_NORMAL;
+
+    sprintf(name, "torus (%g, %g, %u, %u)", innerradius, outerradius, sides, rings);
+    compare_mesh(name, torus, &mesh);
+
+    free_mesh(&mesh);
+
+    torus->lpVtbl->Release(torus);
+}
+
+static void D3DXCreateTorusTest(void)
+{
+
+    HRESULT hr;
+    HWND wnd;
+    IDirect3D9* d3d;
+    IDirect3DDevice9* device;
+    D3DPRESENT_PARAMETERS d3dpp;
+    ID3DXMesh* torus = NULL;
+
+    if (!(wnd = CreateWindowA("static", "d3dx9_test", WS_OVERLAPPEDWINDOW, 0, 0,
+            640, 480, NULL, NULL, NULL, NULL)))
+    {
+        skip("Couldn't create application window\n");
+        return;
+    }
+
+    if (!(d3d = Direct3DCreate9(D3D_SDK_VERSION)))
+    {
+        skip("Couldn't create IDirect3D9 object\n");
+        DestroyWindow(wnd);
+        return;
+    }
+
+    ZeroMemory(&d3dpp, sizeof(d3dpp));
+    d3dpp.Windowed = TRUE;
+    d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
+    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &device);
+    if (FAILED(hr))
+    {
+        skip("Failed to create IDirect3DDevice9 object %#x\n", hr);
+        IDirect3D9_Release(d3d);
+        DestroyWindow(wnd);
+        return;
+    }
+
+    hr = D3DXCreateTorus(NULL, 0.0f, 0.0f, 3, 3, &torus, NULL);
+    ok(hr == D3DERR_INVALIDCALL, "Got result %#x, expected %#x (D3DERR_INVALIDCALL)\n", hr, D3DERR_INVALIDCALL);
+
+    hr = D3DXCreateTorus(device, -1.0f, 0.0f, 3, 3, &torus, NULL);
+    ok(hr == D3DERR_INVALIDCALL, "Got result %#x, expected %#x (D3DERR_INVALIDCALL)\n", hr, D3DERR_INVALIDCALL);
+
+    hr = D3DXCreateTorus(device, 0.0f, -1.0f, 3, 3, &torus, NULL);
+    ok(hr == D3DERR_INVALIDCALL, "Got result %#x, expected %#x (D3DERR_INVALIDCALL)\n", hr, D3DERR_INVALIDCALL);
+
+    hr = D3DXCreateTorus(device, 0.0f, 0.0f, 2, 3, &torus, NULL);
+    ok(hr == D3DERR_INVALIDCALL, "Got result %#x, expected %#x (D3DERR_INVALIDCALL)\n", hr, D3DERR_INVALIDCALL);
+
+    hr = D3DXCreateTorus(device, 0.0f, 0.0f, 3, 2, &torus, NULL);
+    ok(hr == D3DERR_INVALIDCALL, "Got result %#x, expected %#x (D3DERR_INVALIDCALL)\n", hr, D3DERR_INVALIDCALL);
+
+    hr = D3DXCreateTorus(device, 0.0f, 0.0f, 3, 3, NULL, NULL);
+    ok(hr == D3DERR_INVALIDCALL, "Got result %#x, expected %#x (D3DERR_INVALIDCALL)\n", hr, D3DERR_INVALIDCALL);
+
+    test_torus(device, 0.0f, 0.0f, 3, 3);
+    test_torus(device, 1.0f, 1.0f, 3, 3);
+    test_torus(device, 1.0f, 1.0f, 32, 64);
+    test_torus(device, 0.0f, 1.0f, 5, 5);
+    test_torus(device, 1.0f, 0.0f, 5, 5);
+    test_torus(device, 5.0f, 0.2f, 8, 8);
+    test_torus(device, 0.2f, 1.0f, 60, 3);
+    test_torus(device, 0.2f, 1.0f, 8, 70);
 
     IDirect3DDevice9_Release(device);
     IDirect3D9_Release(d3d);
@@ -3400,7 +3802,8 @@ static HRESULT create_outline(struct glyphinfo *glyph, void *raw_outline, int da
     return S_OK;
 }
 
-static BOOL compute_text_mesh(struct mesh *mesh, HDC hdc, LPCSTR text, FLOAT deviation, FLOAT extrusion, FLOAT otmEMSquare)
+static BOOL compute_text_mesh(struct mesh *mesh, HDC hdc, const char *text,
+        float deviation, float extrusion, float otmEMSquare)
 {
     HRESULT hr = E_FAIL;
     DWORD nb_vertices, nb_faces;
@@ -3433,18 +3836,18 @@ static BOOL compute_text_mesh(struct mesh *mesh, HDC hdc, LPCSTR text, FLOAT dev
 
         glyphs[i].offset_x = offset_x;
 
-        datasize = GetGlyphOutline(hdc, text[i], GGO_NATIVE, &gm, 0, NULL, &identity);
+        datasize = GetGlyphOutlineA(hdc, text[i], GGO_NATIVE, &gm, 0, NULL, &identity);
         if (datasize < 0) {
             hr = E_FAIL;
             goto error;
         }
         HeapFree(GetProcessHeap(), 0, raw_outline);
         raw_outline = HeapAlloc(GetProcessHeap(), 0, datasize);
-        if (!glyphs) {
+        if (!raw_outline) {
             hr = E_OUTOFMEMORY;
             goto error;
         }
-        datasize = GetGlyphOutline(hdc, text[i], GGO_NATIVE, &gm, datasize, raw_outline, &identity);
+        datasize = GetGlyphOutlineA(hdc, text[i], GGO_NATIVE, &gm, datasize, raw_outline, &identity);
 
         create_outline(&glyphs[i], raw_outline, datasize, deviation, otmEMSquare);
 
@@ -3676,7 +4079,8 @@ static void compare_text_outline_mesh(const char *name, ID3DXMesh *d3dxmesh, str
            name, index_buffer_description.Format, D3DFMT_INDEX16);
         ok(index_buffer_description.Type == D3DRTYPE_INDEXBUFFER, "Test %s, result %x, expected %x (D3DRTYPE_INDEXBUFFER)\n",
            name, index_buffer_description.Type, D3DRTYPE_INDEXBUFFER);
-        todo_wine ok(index_buffer_description.Usage == 0, "Test %s, result %x, expected %x\n", name, index_buffer_description.Usage, 0);
+        ok(index_buffer_description.Usage == 0, "Test %s, result %#x, expected %#x.\n",
+                name, index_buffer_description.Usage, 0);
         ok(index_buffer_description.Pool == D3DPOOL_MANAGED, "Test %s, result %x, expected %x (D3DPOOL_MANAGED)\n",
            name, index_buffer_description.Pool, D3DPOOL_MANAGED);
         expected = number_of_faces * sizeof(WORD) * 3;
@@ -3686,7 +4090,7 @@ static void compare_text_outline_mesh(const char *name, ID3DXMesh *d3dxmesh, str
 
     /* specify offset and size to avoid potential overruns */
     hr = IDirect3DVertexBuffer9_Lock(vertex_buffer, 0, number_of_vertices * sizeof(D3DXVECTOR3) * 2,
-                                     (LPVOID *)&vertices, D3DLOCK_DISCARD);
+            (void **)&vertices, D3DLOCK_DISCARD);
     ok(hr == D3D_OK, "Test %s, result %x, expected 0 (D3D_OK)\n", name, hr);
     if (hr != D3D_OK)
     {
@@ -3694,7 +4098,7 @@ static void compare_text_outline_mesh(const char *name, ID3DXMesh *d3dxmesh, str
         goto error;
     }
     hr = IDirect3DIndexBuffer9_Lock(index_buffer, 0, number_of_faces * sizeof(WORD) * 3,
-                                    (LPVOID *)&faces, D3DLOCK_DISCARD);
+            (void **)&faces, D3DLOCK_DISCARD);
     ok(hr == D3D_OK, "Test %s, result %x, expected 0 (D3D_OK)\n", name, hr);
     if (hr != D3D_OK)
     {
@@ -3902,22 +4306,22 @@ error:
     if (vertex_buffer) IDirect3DVertexBuffer9_Release(vertex_buffer);
 }
 
-static void test_createtext(IDirect3DDevice9 *device, HDC hdc, LPCSTR text, FLOAT deviation, FLOAT extrusion)
+static void test_createtext(IDirect3DDevice9 *device, HDC hdc, const char *text, float deviation, float extrusion)
 {
     HRESULT hr;
     ID3DXMesh *d3dxmesh;
     struct mesh mesh;
     char name[256];
-    OUTLINETEXTMETRIC otm;
+    OUTLINETEXTMETRICA otm;
     GLYPHMETRICS gm;
     GLYPHMETRICSFLOAT *glyphmetrics_float = HeapAlloc(GetProcessHeap(), 0, sizeof(GLYPHMETRICSFLOAT) * strlen(text));
     int i;
-    LOGFONT lf;
+    LOGFONTA lf;
     HFONT font = NULL, oldfont = NULL;
 
     sprintf(name, "text ('%s', %f, %f)", text, deviation, extrusion);
 
-    hr = D3DXCreateText(device, hdc, text, deviation, extrusion, &d3dxmesh, NULL, glyphmetrics_float);
+    hr = D3DXCreateTextA(device, hdc, text, deviation, extrusion, &d3dxmesh, NULL, glyphmetrics_float);
     ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK)\n", hr);
     if (hr != D3D_OK)
     {
@@ -3927,8 +4331,8 @@ static void test_createtext(IDirect3DDevice9 *device, HDC hdc, LPCSTR text, FLOA
 
     /* must select a modified font having lfHeight = otm.otmEMSquare before
      * calling GetGlyphOutline to get the expected values */
-    if (!GetObject(GetCurrentObject(hdc, OBJ_FONT), sizeof(lf), &lf) ||
-        !GetOutlineTextMetrics(hdc, sizeof(otm), &otm))
+    if (!GetObjectA(GetCurrentObject(hdc, OBJ_FONT), sizeof(lf), &lf)
+            || !GetOutlineTextMetricsA(hdc, sizeof(otm), &otm))
     {
         d3dxmesh->lpVtbl->Release(d3dxmesh);
         skip("Couldn't get text outline\n");
@@ -3936,8 +4340,8 @@ static void test_createtext(IDirect3DDevice9 *device, HDC hdc, LPCSTR text, FLOA
     }
     lf.lfHeight = otm.otmEMSquare;
     lf.lfWidth = 0;
-    font = CreateFontIndirect(&lf);
-    if (!font) {
+    if (!(font = CreateFontIndirectA(&lf)))
+    {
         d3dxmesh->lpVtbl->Release(d3dxmesh);
         skip("Couldn't create the modified font\n");
         return;
@@ -3984,18 +4388,16 @@ static void D3DXCreateTextTest(void)
     D3DPRESENT_PARAMETERS d3dpp;
     ID3DXMesh* d3dxmesh = NULL;
     HFONT hFont;
-    OUTLINETEXTMETRIC otm;
+    OUTLINETEXTMETRICA otm;
     int number_of_vertices;
     int number_of_faces;
 
-    wnd = CreateWindow("static", "d3dx9_test", WS_POPUP, 0, 0, 1000, 1000, NULL, NULL, NULL, NULL);
-    d3d = Direct3DCreate9(D3D_SDK_VERSION);
-    if (!wnd)
+    if (!(wnd = CreateWindowA("static", "d3dx9_test", WS_POPUP, 0, 0, 1000, 1000, NULL, NULL, NULL, NULL)))
     {
         skip("Couldn't create application window\n");
         return;
     }
-    if (!d3d)
+    if (!(d3d = Direct3DCreate9(D3D_SDK_VERSION)))
     {
         skip("Couldn't create IDirect3D9 object\n");
         DestroyWindow(wnd);
@@ -4005,7 +4407,7 @@ static void D3DXCreateTextTest(void)
     ZeroMemory(&d3dpp, sizeof(d3dpp));
     d3dpp.Windowed = TRUE;
     d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd, D3DCREATE_MIXED_VERTEXPROCESSING, &d3dpp, &device);
+    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &device);
     if (FAILED(hr))
     {
         skip("Failed to create IDirect3DDevice9 object %#x\n", hr);
@@ -4016,13 +4418,12 @@ static void D3DXCreateTextTest(void)
 
     hdc = CreateCompatibleDC(NULL);
 
-    hFont = CreateFont(12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                       OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-                       "Arial");
+    hFont = CreateFontA(12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, "Arial");
     SelectObject(hdc, hFont);
-    GetOutlineTextMetrics(hdc, sizeof(otm), &otm);
+    GetOutlineTextMetricsA(hdc, sizeof(otm), &otm);
 
-    hr = D3DXCreateText(device, hdc, "wine", 0.001f, 0.4f, NULL, NULL, NULL);
+    hr = D3DXCreateTextA(device, hdc, "wine", 0.001f, 0.4f, NULL, NULL, NULL);
     ok(hr == D3DERR_INVALIDCALL, "Got result %x, expected %x (D3DERR_INVALIDCALL)\n", hr, D3DERR_INVALIDCALL);
 
     /* D3DXCreateTextA page faults from passing NULL text */
@@ -4030,32 +4431,32 @@ static void D3DXCreateTextTest(void)
     hr = D3DXCreateTextW(device, hdc, NULL, 0.001f, 0.4f, &d3dxmesh, NULL, NULL);
     ok(hr == D3DERR_INVALIDCALL, "Got result %x, expected %x (D3DERR_INVALIDCALL)\n", hr, D3DERR_INVALIDCALL);
 
-    hr = D3DXCreateText(device, hdc, "", 0.001f, 0.4f, &d3dxmesh, NULL, NULL);
+    hr = D3DXCreateTextA(device, hdc, "", 0.001f, 0.4f, &d3dxmesh, NULL, NULL);
     ok(hr == D3DERR_INVALIDCALL, "Got result %x, expected %x (D3DERR_INVALIDCALL)\n", hr, D3DERR_INVALIDCALL);
 
-    hr = D3DXCreateText(device, hdc, " ", 0.001f, 0.4f, &d3dxmesh, NULL, NULL);
+    hr = D3DXCreateTextA(device, hdc, " ", 0.001f, 0.4f, &d3dxmesh, NULL, NULL);
     ok(hr == D3DERR_INVALIDCALL, "Got result %x, expected %x (D3DERR_INVALIDCALL)\n", hr, D3DERR_INVALIDCALL);
 
-    hr = D3DXCreateText(NULL, hdc, "wine", 0.001f, 0.4f, &d3dxmesh, NULL, NULL);
+    hr = D3DXCreateTextA(NULL, hdc, "wine", 0.001f, 0.4f, &d3dxmesh, NULL, NULL);
     ok(hr == D3DERR_INVALIDCALL, "Got result %x, expected %x (D3DERR_INVALIDCALL)\n", hr, D3DERR_INVALIDCALL);
 
-    hr = D3DXCreateText(device, NULL, "wine", 0.001f, 0.4f, &d3dxmesh, NULL, NULL);
+    hr = D3DXCreateTextA(device, NULL, "wine", 0.001f, 0.4f, &d3dxmesh, NULL, NULL);
     ok(hr == D3DERR_INVALIDCALL, "Got result %x, expected %x (D3DERR_INVALIDCALL)\n", hr, D3DERR_INVALIDCALL);
 
-    hr = D3DXCreateText(device, hdc, "wine", -FLT_MIN, 0.4f, &d3dxmesh, NULL, NULL);
+    hr = D3DXCreateTextA(device, hdc, "wine", -FLT_MIN, 0.4f, &d3dxmesh, NULL, NULL);
     ok(hr == D3DERR_INVALIDCALL, "Got result %x, expected %x (D3DERR_INVALIDCALL)\n", hr, D3DERR_INVALIDCALL);
 
-    hr = D3DXCreateText(device, hdc, "wine", 0.001f, -FLT_MIN, &d3dxmesh, NULL, NULL);
+    hr = D3DXCreateTextA(device, hdc, "wine", 0.001f, -FLT_MIN, &d3dxmesh, NULL, NULL);
     ok(hr == D3DERR_INVALIDCALL, "Got result %x, expected %x (D3DERR_INVALIDCALL)\n", hr, D3DERR_INVALIDCALL);
 
     /* deviation = 0.0f treated as if deviation = 1.0f / otm.otmEMSquare */
-    hr = D3DXCreateText(device, hdc, "wine", 1.0f / otm.otmEMSquare, 0.4f, &d3dxmesh, NULL, NULL);
+    hr = D3DXCreateTextA(device, hdc, "wine", 1.0f / otm.otmEMSquare, 0.4f, &d3dxmesh, NULL, NULL);
     ok(hr == D3D_OK, "Got result %x, expected %x (D3D_OK)\n", hr, D3D_OK);
     number_of_vertices = d3dxmesh->lpVtbl->GetNumVertices(d3dxmesh);
     number_of_faces = d3dxmesh->lpVtbl->GetNumFaces(d3dxmesh);
     if (SUCCEEDED(hr) && d3dxmesh) d3dxmesh->lpVtbl->Release(d3dxmesh);
 
-    hr = D3DXCreateText(device, hdc, "wine", 0.0f, 0.4f, &d3dxmesh, NULL, NULL);
+    hr = D3DXCreateTextA(device, hdc, "wine", 0.0f, 0.4f, &d3dxmesh, NULL, NULL);
     ok(hr == D3D_OK, "Got result %x, expected %x (D3D_OK)\n", hr, D3D_OK);
     ok(number_of_vertices == d3dxmesh->lpVtbl->GetNumVertices(d3dxmesh),
        "Got %d vertices, expected %d\n",
@@ -4065,16 +4466,17 @@ static void D3DXCreateTextTest(void)
        d3dxmesh->lpVtbl->GetNumVertices(d3dxmesh), number_of_faces);
     if (SUCCEEDED(hr) && d3dxmesh) d3dxmesh->lpVtbl->Release(d3dxmesh);
 
-#if 0
+if (0)
+{
     /* too much detail requested, so will appear to hang */
     trace("Waiting for D3DXCreateText to finish with deviation = FLT_MIN ...\n");
-    hr = D3DXCreateText(device, hdc, "wine", FLT_MIN, 0.4f, &d3dxmesh, NULL, NULL);
+    hr = D3DXCreateTextA(device, hdc, "wine", FLT_MIN, 0.4f, &d3dxmesh, NULL, NULL);
     ok(hr == D3D_OK, "Got result %x, expected %x (D3D_OK)\n", hr, D3D_OK);
     if (SUCCEEDED(hr) && d3dxmesh) d3dxmesh->lpVtbl->Release(d3dxmesh);
     trace("D3DXCreateText finish with deviation = FLT_MIN\n");
-#endif
+}
 
-    hr = D3DXCreateText(device, hdc, "wine", 0.001f, 0.4f, &d3dxmesh, NULL, NULL);
+    hr = D3DXCreateTextA(device, hdc, "wine", 0.001f, 0.4f, &d3dxmesh, NULL, NULL);
     ok(hr == D3D_OK, "Got result %x, expected %x (D3D_OK)\n", hr, D3D_OK);
     if (SUCCEEDED(hr) && d3dxmesh) d3dxmesh->lpVtbl->Release(d3dxmesh);
 
@@ -4282,8 +4684,8 @@ static void D3DXGenerateAdjacencyTest(void)
         },
     };
 
-    wnd = CreateWindow("static", "d3dx9_test", 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
-    if (!wnd)
+    if (!(wnd = CreateWindowA("static", "d3dx9_test", WS_OVERLAPPEDWINDOW, 0, 0,
+            640, 480, NULL, NULL, NULL, NULL)))
     {
         skip("Couldn't create application window\n");
         return;
@@ -4299,7 +4701,7 @@ static void D3DXGenerateAdjacencyTest(void)
     ZeroMemory(&d3dpp, sizeof(d3dpp));
     d3dpp.Windowed = TRUE;
     d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd, D3DCREATE_MIXED_VERTEXPROCESSING, &d3dpp, &device);
+    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &device);
     if (FAILED(hr))
     {
         skip("Failed to create IDirect3DDevice9 object %#x\n", hr);
@@ -4701,10 +5103,11 @@ static void test_create_skin_info(void)
 
     hr = D3DXCreateSkinInfoFVF(1, 0, 1, &skininfo);
     ok(hr == D3D_OK, "Expected D3D_OK, got %#x\n", hr);
-    if (skininfo) {
+    if (skininfo)
+    {
         DWORD dword_result;
-        FLOAT flt_result;
-        LPCSTR string_result;
+        float flt_result;
+        const char *string_result;
         D3DXMATRIX *transform;
         D3DXMATRIX identity_matrix;
 
@@ -4810,7 +5213,7 @@ static void test_create_skin_info(void)
             exp_vertices[0] = 0;
             exp_vertices[1] = 0x87654321;
             exp_weights[0] = 0.5;
-            exp_weights[1] = 0.0f / 0.0f; /* NAN */
+            exp_weights[1] = NAN;
             num_influences = 2;
 
             hr = skininfo->lpVtbl->SetBoneInfluence(skininfo, 1, num_influences, vertices, weights);
@@ -6361,11 +6764,6 @@ static void test_weld_vertices(void)
         D3DXVECTOR3 position;
         SHORT normal[4];
     };
-    struct vertex_color_float4
-    {
-        D3DXVECTOR3 position;
-        D3DXVECTOR4 color;
-    };
     struct vertex_texcoord_float16_2
     {
         D3DXVECTOR3 position;
@@ -6393,7 +6791,6 @@ static void test_weld_vertices(void)
     UINT vertex_size_color_ubyte4 = sizeof(struct vertex_color_ubyte4);
     UINT vertex_size_texcoord_short2 = sizeof(struct vertex_texcoord_short2);
     UINT vertex_size_normal_short4 = sizeof(struct vertex_normal_short4);
-    UINT vertex_size_color_float4 = sizeof(struct vertex_color_float4);
     UINT vertex_size_texcoord_float16_2 = sizeof(struct vertex_texcoord_float16_2);
     UINT vertex_size_texcoord_float16_4 = sizeof(struct vertex_texcoord_float16_4);
     UINT vertex_size_normal_udec3 = sizeof(struct vertex_normal_udec3);
@@ -6488,10 +6885,10 @@ static void test_weld_vertices(void)
         {0, 12, D3DDECLTYPE_D3DCOLOR, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR, 2},
         D3DDECL_END()
     };
-    D3DVERTEXELEMENT9 declaration_color2_float4[] =
+    D3DVERTEXELEMENT9 declaration_color1[] =
     {
         {0, 0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
-        {0, 12, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR, 2},
+        {0, 12, D3DDECLTYPE_D3DCOLOR, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR, 1},
         D3DDECL_END()
     };
     D3DVERTEXELEMENT9 declaration_texcoord_float16_2[] =
@@ -7355,34 +7752,38 @@ static void test_weld_vertices(void)
     const DWORD exp_face_remap26[] = {0, 1};
     const DWORD exp_vertex_remap26[] = {0, 1, 2, 3, 4, 5};
     const DWORD exp_new_num_vertices26 = ARRAY_SIZE(exp_vertices26);
-    /* Test 27. Weld color with usage index larger than 1. Check that the
-     * default epsilon of 1e-6f is used. */
-    D3DXVECTOR4 zero_float4 = {0.0f, 0.0f, 0.0f, 0.0f};
-    D3DXVECTOR4 almost_zero_float4 = {0.0f + FLT_EPSILON, 0.0f + FLT_EPSILON, 0.0f + FLT_EPSILON, 0.0f + FLT_EPSILON};
-    const struct vertex_color_float4 vertices27[] =
+    /* Test 27. Weld color with usage index 1 (specular). */
+    /* Previously this test used float color values and index > 1 but that case
+     * appears to be effectively unhandled in native so the test gave
+     * inconsistent results. */
+    const struct vertex_color vertices27[] =
     {
-        {{ 0.0f,  3.0f,  0.f}, zero_float4},
-        {{ 2.0f,  3.0f,  0.f}, zero_float4},
-        {{ 0.0f,  0.0f,  0.f}, zero_float4},
+        {{ 0.0f,  3.0f,  0.0f}, 0x00000000},
+        {{ 2.0f,  3.0f,  0.0f}, 0x10203040},
+        {{ 0.0f,  0.0f,  0.0f}, 0x50607080},
 
-        {{ 3.0f,  3.0f,  0.f}, almost_zero_float4},
-        {{ 3.0f,  0.0f,  0.f}, zero_float4},
-        {{ 1.0f,  0.0f,  0.f}, almost_zero_float4},
+        {{ 3.0f,  3.0f,  0.0f}, 0x11213141},
+        {{ 3.0f,  0.0f,  0.0f}, 0xffffffff},
+        {{ 1.0f,  0.0f,  0.0f}, 0x51617181},
     };
     const DWORD indices27[] = {0, 1, 2, 3, 4, 5};
     const DWORD attributes27[] = {0, 0};
     const UINT num_vertices27 = ARRAY_SIZE(vertices27);
     const UINT num_faces27 = ARRAY_SIZE(indices27) / VERTS_PER_FACE;
     DWORD flags27 = D3DXWELDEPSILONS_WELDPARTIALMATCHES;
-    const D3DXWELDEPSILONS epsilons27 = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f};
-    const DWORD adjacency27[] = {-1, 1, -1, -1, -1, 0};
-    const struct vertex_color_float4 exp_vertices27[] =
+    const D3DXWELDEPSILONS epsilons27 =
     {
-        {{ 0.0f,  3.0f,  0.f}, zero_float4},
-        {{ 2.0f,  3.0f,  0.f}, zero_float4},
-        {{ 0.0f,  0.0f,  0.f}, zero_float4},
+        1.1f, 0.0f, 0.0f, 0.0f, 2.0f / 255.0f, 0.0f,
+        {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f
+    };
+    const DWORD adjacency27[] = {-1, 1, -1, -1, -1, 0};
+    const struct vertex_color exp_vertices27[] =
+    {
+        {{ 0.0f,  3.0f,  0.0f}, 0x00000000},
+        {{ 2.0f,  3.0f,  0.0f}, 0x10203040},
+        {{ 0.0f,  0.0f,  0.0f}, 0x50607080},
 
-        {{ 3.0f,  0.0f,  0.f}, zero_float4},
+        {{ 3.0f,  0.0f,  0.0f}, 0xffffffff},
     };
     const DWORD exp_indices27[] = {0, 1, 2, 1, 3, 2};
     const DWORD exp_face_remap27[] = {0, 1};
@@ -7976,8 +8377,8 @@ static void test_weld_vertices(void)
             num_vertices27,
             num_faces27,
             options,
-            declaration_color2_float4,
-            vertex_size_color_float4,
+            declaration_color1,
+            vertex_size_color,
             flags27,
             &epsilons27,
             adjacency27,
@@ -8056,15 +8457,9 @@ static void test_weld_vertices(void)
             goto cleanup;
         }
         face_remap = HeapAlloc(GetProcessHeap(), 0, tc[i].num_faces * sizeof(*face_remap));
-        if (!adjacency_out)
+        if (!face_remap)
         {
             skip("Couldn't allocate face_remap array.\n");
-            goto cleanup;
-        }
-        hr = D3DXCreateBuffer(tc[i].num_vertices * sizeof(DWORD), &vertex_remap);
-        if (FAILED(hr))
-        {
-            skip("Couldn't create vertex_remap buffer.\n");
             goto cleanup;
         }
 
@@ -9267,6 +9662,17 @@ static void test_clone_mesh(void)
         {{ 1.0f,  0.0f,  0.f}, {0.099976f, 0.199951f, 0.099976f, 0.199951f}},
     };
     const UINT exp_vertex_size35 = sizeof(*exp_vertices35);
+    /* Test 36. Check that vertex buffer sharing is ok. */
+    const struct vertex_pn vertices36[] =
+    {
+        {{ 0.0f,  3.0f,  0.f}, up},
+        {{ 2.0f,  3.0f,  0.f}, up},
+        {{ 0.0f,  0.0f,  0.f}, up},
+    };
+    const UINT num_vertices36 = ARRAY_SIZE(vertices36);
+    const UINT num_faces36 = ARRAY_SIZE(vertices36) / VERTS_PER_FACE;
+    const UINT vertex_size36 = sizeof(*vertices36);
+    const DWORD clone_options36 = options | D3DXMESH_VB_SHARE;
     /* Common mesh data */
     ID3DXMesh *mesh = NULL;
     ID3DXMesh *mesh_clone = NULL;
@@ -9278,7 +9684,8 @@ static void test_clone_mesh(void)
         const UINT num_vertices;
         const UINT num_faces;
         const UINT vertex_size;
-        const DWORD options;
+        const DWORD create_options;
+        const DWORD clone_options;
         D3DVERTEXELEMENT9 *declaration;
         D3DVERTEXELEMENT9 *new_declaration;
         const BYTE *exp_vertices;
@@ -9294,6 +9701,7 @@ static void test_clone_mesh(void)
             num_faces0,
             vertex_size0,
             options,
+            options,
             declaration_pn,
             declaration_pn,
             (BYTE*)vertices0,
@@ -9306,6 +9714,7 @@ static void test_clone_mesh(void)
             num_vertices0,
             num_faces0,
             vertex_size0,
+            options_16bit,
             options_16bit,
             declaration_pn,
             declaration_pn,
@@ -9320,6 +9729,7 @@ static void test_clone_mesh(void)
             num_faces0,
             vertex_size0,
             options,
+            options,
             declaration_pn,
             declaration_pntc,
             (BYTE*)exp_vertices2,
@@ -9332,6 +9742,7 @@ static void test_clone_mesh(void)
             num_vertices0,
             num_faces0,
             vertex_size0,
+            options,
             options,
             declaration_pn,
             declaration_ptcn,
@@ -9346,6 +9757,7 @@ static void test_clone_mesh(void)
             num_faces4,
             vertex_size4,
             options,
+            options,
             declaration_ptc,
             declaration_ptc_float16_2,
             (BYTE*)exp_vertices4,
@@ -9358,6 +9770,7 @@ static void test_clone_mesh(void)
             num_vertices5,
             num_faces5,
             vertex_size5,
+            options,
             options,
             declaration_ptc,
             declaration_ptc_float16_4,
@@ -9372,6 +9785,7 @@ static void test_clone_mesh(void)
             num_faces6,
             vertex_size6,
             options,
+            options,
             declaration_ptc,
             declaration_ptc_float1,
             (BYTE*)exp_vertices6,
@@ -9384,6 +9798,7 @@ static void test_clone_mesh(void)
             num_vertices7,
             num_faces7,
             vertex_size7,
+            options,
             options,
             declaration_ptc,
             declaration_ptc_float3,
@@ -9398,6 +9813,7 @@ static void test_clone_mesh(void)
             num_faces8,
             vertex_size8,
             options,
+            options,
             declaration_ptc,
             declaration_ptc_float4,
             (BYTE*)exp_vertices8,
@@ -9410,6 +9826,7 @@ static void test_clone_mesh(void)
             num_vertices9,
             num_faces9,
             vertex_size9,
+            options,
             options,
             declaration_ptc,
             declaration_ptc_d3dcolor,
@@ -9424,6 +9841,7 @@ static void test_clone_mesh(void)
             num_faces10,
             vertex_size10,
             options,
+            options,
             declaration_ptc,
             declaration_ptc_ubyte4,
             (BYTE*)exp_vertices10,
@@ -9436,6 +9854,7 @@ static void test_clone_mesh(void)
             num_vertices11,
             num_faces11,
             vertex_size11,
+            options,
             options,
             declaration_ptc,
             declaration_ptc_short2,
@@ -9450,6 +9869,7 @@ static void test_clone_mesh(void)
             num_faces12,
             vertex_size12,
             options,
+            options,
             declaration_ptc,
             declaration_ptc_short4,
             (BYTE*)exp_vertices12,
@@ -9462,6 +9882,7 @@ static void test_clone_mesh(void)
             num_vertices13,
             num_faces13,
             vertex_size13,
+            options,
             options,
             declaration_ptc,
             declaration_ptc_ubyte4n,
@@ -9476,6 +9897,7 @@ static void test_clone_mesh(void)
             num_faces14,
             vertex_size14,
             options,
+            options,
             declaration_ptc,
             declaration_ptc_short2n,
             (BYTE*)exp_vertices14,
@@ -9488,6 +9910,7 @@ static void test_clone_mesh(void)
             num_vertices15,
             num_faces15,
             vertex_size15,
+            options,
             options,
             declaration_ptc,
             declaration_ptc_short4n,
@@ -9502,6 +9925,7 @@ static void test_clone_mesh(void)
             num_faces16,
             vertex_size16,
             options,
+            options,
             declaration_ptc,
             declaration_ptc_ushort2n,
             (BYTE*)exp_vertices16,
@@ -9514,6 +9938,7 @@ static void test_clone_mesh(void)
             num_vertices17,
             num_faces17,
             vertex_size17,
+            options,
             options,
             declaration_ptc,
             declaration_ptc_ushort4n,
@@ -9528,6 +9953,7 @@ static void test_clone_mesh(void)
             num_faces18,
             vertex_size18,
             options,
+            options,
             declaration_ptc,
             declaration_ptc_float16_2_partialu,
             (BYTE*)exp_vertices18,
@@ -9540,6 +9966,7 @@ static void test_clone_mesh(void)
             num_vertices19,
             num_faces19,
             vertex_size19,
+            options,
             options,
             declaration_pntc,
             declaration_pntc1,
@@ -9554,6 +9981,7 @@ static void test_clone_mesh(void)
             num_faces20,
             vertex_size20,
             options,
+            options,
             declaration_pntc1,
             declaration_pntc,
             (BYTE*)exp_vertices20,
@@ -9566,6 +9994,7 @@ static void test_clone_mesh(void)
             num_vertices21,
             num_faces21,
             vertex_size21,
+            options,
             options,
             declaration_ptc_float1,
             declaration_ptc,
@@ -9580,6 +10009,7 @@ static void test_clone_mesh(void)
             num_faces22,
             vertex_size22,
             options,
+            options,
             declaration_ptc_float1,
             declaration_ptc_float3,
             (BYTE*)exp_vertices22,
@@ -9592,6 +10022,7 @@ static void test_clone_mesh(void)
             num_vertices23,
             num_faces23,
             vertex_size23,
+            options,
             options,
             declaration_ptc_float1,
             declaration_ptc_float4,
@@ -9606,6 +10037,7 @@ static void test_clone_mesh(void)
             num_faces24,
             vertex_size24,
             options,
+            options,
             declaration_ptc_float1,
             declaration_ptc_d3dcolor,
             (BYTE*)exp_vertices24,
@@ -9618,6 +10050,7 @@ static void test_clone_mesh(void)
             num_vertices25,
             num_faces25,
             vertex_size25,
+            options,
             options,
             declaration_ptc_float1,
             declaration_ptc_ubyte4,
@@ -9632,6 +10065,7 @@ static void test_clone_mesh(void)
             num_faces26,
             vertex_size26,
             options,
+            options,
             declaration_ptc_float4,
             declaration_ptc_d3dcolor,
             (BYTE*)exp_vertices26,
@@ -9644,6 +10078,7 @@ static void test_clone_mesh(void)
             num_vertices27,
             num_faces27,
             vertex_size27,
+            options,
             options,
             declaration_ptc_d3dcolor,
             declaration_ptc_float4,
@@ -9658,6 +10093,7 @@ static void test_clone_mesh(void)
             num_faces28,
             vertex_size28,
             options,
+            options,
             declaration_ptc_ubyte4,
             declaration_ptc_float4,
             (BYTE*)exp_vertices28,
@@ -9670,6 +10106,7 @@ static void test_clone_mesh(void)
             num_vertices29,
             num_faces29,
             vertex_size29,
+            options,
             options,
             declaration_ptc_short2,
             declaration_ptc_float4,
@@ -9684,6 +10121,7 @@ static void test_clone_mesh(void)
             num_faces30,
             vertex_size30,
             options,
+            options,
             declaration_ptc_short4,
             declaration_ptc_float4,
             (BYTE*)exp_vertices30,
@@ -9696,6 +10134,7 @@ static void test_clone_mesh(void)
             num_vertices31,
             num_faces31,
             vertex_size31,
+            options,
             options,
             declaration_ptc_ubyte4n,
             declaration_ptc_float4,
@@ -9710,6 +10149,7 @@ static void test_clone_mesh(void)
             num_faces32,
             vertex_size32,
             options,
+            options,
             declaration_ptc_short2n,
             declaration_ptc_float4,
             (BYTE*)exp_vertices32,
@@ -9722,6 +10162,7 @@ static void test_clone_mesh(void)
             num_vertices33,
             num_faces33,
             vertex_size33,
+            options,
             options,
             declaration_ptc_short4n,
             declaration_ptc_float4,
@@ -9736,6 +10177,7 @@ static void test_clone_mesh(void)
             num_faces34,
             vertex_size34,
             options,
+            options,
             declaration_ptc_float16_2,
             declaration_ptc_float4,
             (BYTE*)exp_vertices34,
@@ -9749,10 +10191,25 @@ static void test_clone_mesh(void)
             num_faces35,
             vertex_size35,
             options,
+            options,
             declaration_ptc_float16_4,
             declaration_ptc_float4,
             (BYTE*)exp_vertices35,
             exp_vertex_size35
+        },
+        {
+            (BYTE*)vertices36,
+            NULL,
+            NULL,
+            num_vertices36,
+            num_faces36,
+            vertex_size36,
+            options,
+            clone_options36,
+            declaration_pn,
+            declaration_pn,
+            (BYTE*)vertices36,
+            vertex_size36
         },
     };
 
@@ -9771,7 +10228,7 @@ static void test_clone_mesh(void)
         UINT exp_new_decl_size, new_decl_size;
 
         hr = init_test_mesh(tc[i].num_faces, tc[i].num_vertices,
-                              tc[i].options,
+                              tc[i].create_options,
                               tc[i].declaration,
                               test_context->device, &mesh,
                               tc[i].vertices, tc[i].vertex_size,
@@ -9782,7 +10239,7 @@ static void test_clone_mesh(void)
             goto cleanup;
         }
 
-        hr = mesh->lpVtbl->CloneMesh(mesh, tc[i].options, tc[i].new_declaration,
+        hr = mesh->lpVtbl->CloneMesh(mesh, tc[i].clone_options, tc[i].new_declaration,
                                      test_context->device, &mesh_clone);
         ok(hr == D3D_OK, "CloneMesh test case %d failed. Got %x\n, expected D3D_OK\n", i, hr);
 
@@ -9834,11 +10291,316 @@ static void test_clone_mesh(void)
         mesh_clone = NULL;
     }
 
+    /* The following test shows that it is not possible to share a vertex buffer
+     * with D3DXMESH_VB_SHARE and change the vertex declaration at the same
+     * time. It reuses the test data from test 2.
+     */
+    hr = init_test_mesh(tc[2].num_faces, tc[2].num_vertices,
+                        tc[2].create_options,
+                        tc[2].declaration,
+                        test_context->device, &mesh,
+                        tc[2].vertices, tc[2].vertex_size,
+                        tc[2].indices, tc[2].attributes);
+    if (FAILED(hr))
+    {
+        skip("Couldn't initialize test mesh for D3DXMESH_VB_SHARE case."
+             " Got %x expected D3D_OK\n", hr);
+        goto cleanup;
+    }
+
+    hr = mesh->lpVtbl->CloneMesh(mesh, tc[2].create_options | D3DXMESH_VB_SHARE,
+                                 tc[2].new_declaration, test_context->device,
+                                 &mesh_clone);
+    ok(hr == D3DERR_INVALIDCALL, "CloneMesh D3DXMESH_VB_SHARE with new"
+       " declaration. Got %x, expected D3DERR_INVALIDCALL\n",
+       hr);
+    mesh->lpVtbl->Release(mesh);
+    mesh = NULL;
+    mesh_clone = NULL;
+
 cleanup:
     if (vertices) mesh->lpVtbl->UnlockVertexBuffer(mesh);
     if (mesh) mesh->lpVtbl->Release(mesh);
     if (mesh_clone) mesh_clone->lpVtbl->Release(mesh_clone);
     free_test_context(test_context);
+}
+
+static void test_valid_mesh(void)
+{
+    HRESULT hr;
+    struct test_context *test_context = NULL;
+    UINT i;
+    const DWORD options = D3DXMESH_32BIT | D3DXMESH_SYSTEMMEM;
+    const D3DVERTEXELEMENT9 declaration[] =
+    {
+        {0, 0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0},
+        D3DDECL_END()
+    };
+    const unsigned int VERTS_PER_FACE = 3;
+    /* mesh0 (one face)
+     *
+     * 0--1
+     * | /
+     * |/
+     * 2
+     */
+    const D3DXVECTOR3 vertices0[] =
+    {
+        { 0.0f,  3.0f,  0.f},
+        { 2.0f,  3.0f,  0.f},
+        { 0.0f,  0.0f,  0.f},
+    };
+    const DWORD indices0[] = {0, 1, 2};
+    const unsigned int num_vertices0 = ARRAY_SIZE(vertices0);
+    const unsigned int num_faces0 = ARRAY_SIZE(indices0) / VERTS_PER_FACE;
+    const DWORD adjacency0[] = {-1, -1, -1};
+    const HRESULT exp_hr0 = D3D_OK;
+    /* mesh1 (Simple bow-tie)
+     *
+     * 0--1 1--3
+     * | /   \ |
+     * |/     \|
+     * 2       4
+     */
+    const D3DXVECTOR3 vertices1[] =
+    {
+        { 0.0f,  3.0f,  0.f},
+        { 2.0f,  3.0f,  0.f},
+        { 0.0f,  0.0f,  0.f},
+
+        { 4.0f,  3.0f,  0.f},
+        { 4.0f,  0.0f,  0.f},
+    };
+    const DWORD indices1[] = {0, 1, 2, 1, 3, 4};
+    const unsigned int num_vertices1 = ARRAY_SIZE(vertices1);
+    const unsigned int num_faces1 = ARRAY_SIZE(indices1) / VERTS_PER_FACE;
+    const DWORD adjacency1[] = {-1, -1, -1, -1, -1, -1};
+    const HRESULT exp_hr1 = D3DXERR_INVALIDMESH;
+    /* Common mesh data */
+    ID3DXMesh *mesh = NULL;
+    UINT vertex_size = sizeof(D3DXVECTOR3);
+    ID3DXBuffer *errors_and_warnings = NULL;
+    struct
+    {
+        const D3DXVECTOR3 *vertices;
+        const DWORD *indices;
+        const UINT num_vertices;
+        const UINT num_faces;
+        const DWORD *adjacency;
+        const HRESULT exp_hr;
+    }
+    tc[] =
+    {
+        {
+            vertices0,
+            indices0,
+            num_vertices0,
+            num_faces0,
+            adjacency0,
+            exp_hr0,
+        },
+        {
+            vertices1,
+            indices1,
+            num_vertices1,
+            num_faces1,
+            adjacency1,
+            exp_hr1,
+        },
+    };
+
+    test_context = new_test_context();
+    if (!test_context)
+    {
+        skip("Couldn't create test context\n");
+        goto cleanup;
+    }
+
+    for (i = 0; i < ARRAY_SIZE(tc); i++)
+    {
+        hr = init_test_mesh(tc[i].num_faces, tc[i].num_vertices,
+                            options, declaration,
+                            test_context->device, &mesh,
+                            tc[i].vertices, vertex_size,
+                            tc[i].indices, NULL);
+        if (FAILED(hr))
+        {
+            skip("Couldn't initialize test mesh %d. Got %x expected D3D_OK\n", i, hr);
+            goto cleanup;
+        }
+
+        hr = D3DXValidMesh(mesh, tc[i].adjacency, &errors_and_warnings);
+        todo_wine ok(hr == tc[i].exp_hr, "D3DXValidMesh test case %d failed. "
+                     "Got %x\n, expected %x\n", i, hr, tc[i].exp_hr);
+
+        /* Note errors_and_warnings is deliberately not checked because that
+         * would require copying wast amounts of the text output. */
+        if (errors_and_warnings)
+        {
+            ID3DXBuffer_Release(errors_and_warnings);
+            errors_and_warnings = NULL;
+        }
+        mesh->lpVtbl->Release(mesh);
+        mesh = NULL;
+    }
+
+cleanup:
+    if (mesh) mesh->lpVtbl->Release(mesh);
+    free_test_context(test_context);
+}
+
+static void test_optimize_faces(void)
+{
+    HRESULT hr;
+    UINT i;
+    DWORD smallest_face_remap;
+    /* mesh0
+     *
+     * 0--1
+     * | /
+     * |/
+     * 2
+     */
+    const DWORD indices0[] = {0, 1, 2};
+    const UINT num_faces0 = 1;
+    const UINT num_vertices0 = 3;
+    const DWORD exp_face_remap0[] = {0};
+    /* mesh1
+     *
+     * 0--1 3
+     * | / /|
+     * |/ / |
+     * 2 5--4
+     */
+    const DWORD indices1[] = {0, 1, 2, 3, 4, 5};
+    const UINT num_faces1 = 2;
+    const UINT num_vertices1 = 6;
+    const DWORD exp_face_remap1[] = {1, 0};
+    /* mesh2
+     *
+     * 0--1
+     * | /|
+     * |/ |
+     * 2--3
+     */
+    const DWORD indices2[] = {0, 1, 2, 1, 3, 2};
+    const UINT num_faces2 = 2;
+    const UINT num_vertices2 = 4;
+    const DWORD exp_face_remap2[] = {1, 0};
+    /* mesh3
+     *
+     * 0--1
+     * | /|
+     * |/ |
+     * 2--3
+     * | /|
+     * |/ |
+     * 4--5
+     */
+    const DWORD indices3[] = {0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 4, 5};
+    const UINT num_faces3 = 4;
+    const UINT num_vertices3 = 6;
+    const DWORD exp_face_remap3[] = {3, 2, 1, 0};
+    /* mesh4
+     *
+     * 0--1
+     * | /|
+     * |/ |
+     * 2--3
+     * | /|
+     * |/ |
+     * 4--5
+     */
+    const WORD indices4[] = {0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 4, 5};
+    const UINT num_faces4 = 4;
+    const UINT num_vertices4 = 6;
+    const DWORD exp_face_remap4[] = {3, 2, 1, 0};
+    /* Test cases are stored in the tc array */
+    struct
+    {
+        const VOID *indices;
+        const UINT num_faces;
+        const UINT num_vertices;
+        const BOOL indices_are_32bit;
+        const DWORD *exp_face_remap;
+    }
+    tc[] =
+    {
+        {
+            indices0,
+            num_faces0,
+            num_vertices0,
+            TRUE,
+            exp_face_remap0
+        },
+        {
+            indices1,
+            num_faces1,
+            num_vertices1,
+            TRUE,
+            exp_face_remap1
+        },
+        {
+            indices2,
+            num_faces2,
+            num_vertices2,
+            TRUE,
+            exp_face_remap2
+        },
+        {
+            indices3,
+            num_faces3,
+            num_vertices3,
+            TRUE,
+            exp_face_remap3
+        },
+        {
+            indices4,
+            num_faces4,
+            num_vertices4,
+            FALSE,
+            exp_face_remap4
+        },
+    };
+
+    /* Go through all test cases */
+    for (i = 0; i < ARRAY_SIZE(tc); i++)
+    {
+        DWORD j;
+        DWORD *face_remap;
+        face_remap = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+                               tc[i].num_faces*sizeof(*face_remap));
+
+        hr = D3DXOptimizeFaces(tc[i].indices, tc[i].num_faces,
+                               tc[i].num_vertices, tc[i].indices_are_32bit,
+                               face_remap);
+        ok(hr == D3D_OK, "D3DXOptimizeFaces test case %d failed. "
+           "Got %x\n, expected D3D_OK\n", i, hr);
+
+        /* Compare face remap with expected face remap */
+        for (j = 0; j < tc[i].num_faces; j++)
+        {
+            ok(tc[i].exp_face_remap[j] == face_remap[j],
+               "Test case %d: Got face %d at %d, expected %d\n", i,
+               face_remap[j], j, tc[i].exp_face_remap[j]);
+        }
+
+        HeapFree(GetProcessHeap(), 0, face_remap);
+    }
+
+    /* face_remap must not be NULL */
+    hr = D3DXOptimizeFaces(tc[0].indices, tc[0].num_faces,
+                           tc[0].num_vertices, tc[0].indices_are_32bit,
+                           NULL);
+    ok(hr == D3DERR_INVALIDCALL, "D3DXOptimizeFaces passed NULL face_remap "
+       "pointer. Got %x\n, expected D3DERR_INVALIDCALL\n", hr);
+
+    /* Number of faces must be smaller than 2^15 */
+    hr = D3DXOptimizeFaces(tc[0].indices, 2 << 15,
+                           tc[0].num_vertices, FALSE,
+                           &smallest_face_remap);
+    ok(hr == D3DERR_INVALIDCALL, "D3DXOptimizeFaces should not accept 2^15 "
+    "faces when using 16-bit indices. Got %x\n, expected D3DERR_INVALIDCALL\n", hr);
 }
 
 START_TEST(mesh)
@@ -9852,9 +10614,11 @@ START_TEST(mesh)
     D3DXCreateMeshFVFTest();
     D3DXLoadMeshTest();
     D3DXCreateBoxTest();
+    D3DXCreatePolygonTest();
     D3DXCreateSphereTest();
     D3DXCreateCylinderTest();
     D3DXCreateTextTest();
+    D3DXCreateTorusTest();
     test_get_decl_length();
     test_get_decl_vertex_size();
     test_fvf_decl_conversion();
@@ -9865,4 +10629,6 @@ START_TEST(mesh)
     test_convert_point_reps_to_adjacency();
     test_weld_vertices();
     test_clone_mesh();
+    test_valid_mesh();
+    test_optimize_faces();
 }

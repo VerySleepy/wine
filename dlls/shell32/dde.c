@@ -82,6 +82,14 @@ static inline HDDEDATA Dde_OnRequest(UINT uFmt, HCONV hconv, HSZ hszTopic,
         FIXME( "returning fake program groups list\n" );
         return DdeCreateDataHandle( dwDDEInst, groups_data, sizeof(groups_data), 0, hszGroups, uFmt, 0 );
     }
+    else if (hszTopic == hszProgmanTopic && hszItem == hszProgmanService && uFmt == CF_TEXT)
+    {
+        static BYTE groups_data[] = "\r\n";
+        FIXME( "returning empty groups list\n" );
+	/* This is a workaround for an application which expects some data
+	 * and cannot handle NULL. */
+        return DdeCreateDataHandle( dwDDEInst, groups_data, sizeof(groups_data), 0, hszProgmanService, uFmt, 0 );
+    }
     FIXME( "%u %p %s %s: stub\n", uFmt, hconv, debugstr_hsz(hszTopic), debugstr_hsz(hszItem) );
     return NULL;
 }

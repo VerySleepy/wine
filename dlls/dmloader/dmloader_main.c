@@ -17,8 +17,22 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "dmloader_private.h"
+#include <stdarg.h>
+
+#define COBJMACROS
+
+#include "windef.h"
+#include "winbase.h"
+#include "winnt.h"
+#include "wingdi.h"
+#include "winuser.h"
+#include "winreg.h"
+#include "objbase.h"
 #include "rpcproxy.h"
+#include "initguid.h"
+#include "dmusici.h"
+
+#include "dmloader_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dmloader);
 
@@ -27,7 +41,7 @@ LONG module_ref = 0;
 
 typedef struct {
     IClassFactory IClassFactory_iface;
-    HRESULT WINAPI (*fnCreateInstance)(REFIID riid, void **ppv, IUnknown *pUnkOuter);
+    HRESULT WINAPI (*fnCreateInstance)(REFIID riid, void **ppv);
 } IClassFactoryImpl;
 
 /******************************************************************
@@ -73,13 +87,18 @@ static ULONG WINAPI ClassFactory_Release(IClassFactory *iface)
 }
 
 static HRESULT WINAPI ClassFactory_CreateInstance(IClassFactory *iface, IUnknown *pUnkOuter,
-    REFIID riid, void **ppv)
+    REFIID riid, void **ret_iface)
 {
     IClassFactoryImpl *This = impl_from_IClassFactory(iface);
 
-    TRACE ("(%p, %s, %p)\n", pUnkOuter, debugstr_dmguid(riid), ppv);
+    TRACE ("(%s, %p)\n", debugstr_dmguid(riid), ret_iface);
 
-    return This->fnCreateInstance(riid, ppv, pUnkOuter);
+    if (pUnkOuter) {
+        *ret_iface = NULL;
+        return CLASS_E_NOAGGREGATION;
+    }
+
+    return This->fnCreateInstance(riid, ret_iface);
 }
 
 static HRESULT WINAPI ClassFactory_LockServer(IClassFactory *iface, BOOL dolock)
@@ -102,9 +121,8 @@ static const IClassFactoryVtbl classfactory_vtbl = {
     ClassFactory_LockServer
 };
 
-static IClassFactoryImpl dm_loader_CF = {{&classfactory_vtbl}, DMUSIC_CreateDirectMusicLoaderImpl};
-static IClassFactoryImpl dm_container_CF = {{&classfactory_vtbl},
-                                            DMUSIC_CreateDirectMusicContainerImpl};
+static IClassFactoryImpl dm_loader_CF = {{&classfactory_vtbl}, create_dmloader};
+static IClassFactoryImpl dm_container_CF = {{&classfactory_vtbl}, create_dmcontainer};
 
 /******************************************************************
  *		DllMain
@@ -113,9 +131,6 @@ BOOL WINAPI DllMain (HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
 	if (fdwReason == DLL_PROCESS_ATTACH) {
                 instance = hinstDLL;
 		DisableThreadLibraryCalls(hinstDLL);
-		/* FIXME: Initialisation */
-	} else if (fdwReason == DLL_PROCESS_DETACH) {
-		/* FIXME: Cleanup */
 	}
 	return TRUE;
 }

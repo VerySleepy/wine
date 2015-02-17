@@ -1,7 +1,5 @@
-DEFS      = -D__WINESRC__ $(EXTRADEFS)
-
 PROGRAMS = widl$(EXEEXT)
-MANPAGE  = widl.man
+MANPAGES = widl.man.in
 
 C_SRCS = \
 	client.c \
@@ -21,16 +19,16 @@ C_SRCS = \
 LEX_SRCS   = parser.l
 BISON_SRCS = parser.y
 
-INSTALLDIRS = $(DESTDIR)$(bindir) $(DESTDIR)$(mandir)/man$(prog_manext)
+widl_EXTRADEFS = -DDEFAULT_INCLUDE_DIR=\"${includedir}/windows/\"
 
-all: $(PROGRAMS)
-
-@MAKE_RULES@
+OBJS = $(C_SRCS:.c=.o) $(BISON_SRCS:.y=.tab.o) $(LEX_SRCS:.l=.yy.o)
 
 widl$(EXEEXT): $(OBJS) $(LIBWPP)
 	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LIBWPP) $(LIBPORT) $(LDFLAGS)
 
-install install-dev:: $(PROGRAMS) $(DESTDIR)$(bindir)
+.PHONY: install install-dev uninstall
+
+install install-dev:: $(PROGRAMS) install-man-pages
 	$(INSTALL_PROGRAM) widl$(EXEEXT) $(DESTDIR)$(bindir)/widl$(EXEEXT)
 
 uninstall::

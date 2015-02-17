@@ -1,10 +1,8 @@
 MODULE    = comcat.dll
-IMPORTS   = uuid ole32 user32 advapi32
+IMPORTS   = ole32
 
 C_SRCS = \
 	comcat_main.c
 
 RC_SRCS = \
 	version.rc
-
-@MAKE_DLL_RULES@

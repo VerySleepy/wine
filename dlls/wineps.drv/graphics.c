@@ -351,15 +351,6 @@ BOOL PSDRV_PolyPolyline( PHYSDEV dev, const POINT* pts, const DWORD* counts, DWO
 
 
 /***********************************************************************
- *           PSDRV_Polyline
- */
-BOOL PSDRV_Polyline( PHYSDEV dev, const POINT* pt, INT count )
-{
-    return PSDRV_PolyPolyline( dev, pt, (LPDWORD) &count, 1 );
-}
-
-
-/***********************************************************************
  *           PSDRV_PolyPolygon
  */
 BOOL PSDRV_PolyPolygon( PHYSDEV dev, const POINT* pts, const INT* counts, UINT polygons )
@@ -398,15 +389,6 @@ BOOL PSDRV_PolyPolygon( PHYSDEV dev, const POINT* pts, const INT* counts, UINT p
     PSDRV_DrawLine(dev);
     PSDRV_ResetClip(dev);
     return TRUE;
-}
-
-
-/***********************************************************************
- *           PSDRV_Polygon
- */
-BOOL PSDRV_Polygon( PHYSDEV dev, const POINT* pt, INT count )
-{
-     return PSDRV_PolyPolygon( dev, pt, &count, 1 );
 }
 
 
@@ -539,6 +521,7 @@ static BOOL paint_path( PHYSDEV dev, BOOL stroke, BOOL fill )
     types = HeapAlloc( GetProcessHeap(), 0, size * sizeof(*types) );
     if (!points || !types) goto done;
     if (GetPath( dev->hdc, points, types, size ) == -1) goto done;
+    LPtoDP( dev->hdc, points, size );
 
     if (stroke) PSDRV_SetPen(dev);
     PSDRV_SetClip(dev);

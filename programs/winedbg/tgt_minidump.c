@@ -102,22 +102,43 @@ static BOOL tgt_process_minidump_read(HANDLE hProcess, const void* addr,
                                MemoryListStream, NULL, &stream, NULL))
     {
         MINIDUMP_MEMORY_LIST*   mml = stream;
-        MINIDUMP_MEMORY_DESCRIPTOR* mmd = &mml->MemoryRanges[0];
-        int                     i;
+        MINIDUMP_MEMORY_DESCRIPTOR* mmd = mml->MemoryRanges;
+        int                     i, found = -1;
+        SIZE_T                  ilen, prev_len = 0;
 
+        /* There's no reason that memory ranges inside a minidump do not overlap.
+         * So be smart when looking for a given memory range (either grab a
+         * range that covers the whole requested area, or if none, the range that
+         * has the largest overlap with requested area)
+         */
         for (i = 0; i < mml->NumberOfMemoryRanges; i++, mmd++)
         {
             if (get_addr64(mmd->StartOfMemoryRange) <= (DWORD_PTR)addr &&
                 (DWORD_PTR)addr < get_addr64(mmd->StartOfMemoryRange) + mmd->Memory.DataSize)
             {
-                len = min(len,
-                          get_addr64(mmd->StartOfMemoryRange) + mmd->Memory.DataSize - (DWORD_PTR)addr);
-                memcpy(buffer,
-                       (char*)private_data(dbg_curr_process)->mapping + mmd->Memory.Rva + (DWORD_PTR)addr - get_addr64(mmd->StartOfMemoryRange),
-                       len);
-                if (rlen) *rlen = len;
-                return TRUE;
+                ilen = min(len,
+                           get_addr64(mmd->StartOfMemoryRange) + mmd->Memory.DataSize - (DWORD_PTR)addr);
+                if (ilen == len) /* whole range is matched */
+                {
+                    found = i;
+                    prev_len = ilen;
+                    break;
+                }
+                if (found == -1 || ilen > prev_len) /* partial match, keep largest one */
+                {
+                    found = i;
+                    prev_len = ilen;
+                }
             }
+        }
+        if (found != -1)
+        {
+            mmd = &mml->MemoryRanges[found];
+            memcpy(buffer,
+                   (char*)private_data(dbg_curr_process)->mapping + mmd->Memory.Rva + (DWORD_PTR)addr - get_addr64(mmd->StartOfMemoryRange),
+                   prev_len);
+            if (rlen) *rlen = prev_len;
+            return TRUE;
         }
     }
     /* FIXME: this is a dirty hack to let the last frame in a bt to work
@@ -155,7 +176,7 @@ static BOOL is_pe_module_embedded(struct tgt_process_minidump_data* data,
         MINIDUMP_MODULE*        mm;
         unsigned                i;
 
-        for (i = 0, mm = &mml->Modules[0]; i < mml->NumberOfModules; i++, mm++)
+        for (i = 0, mm = mml->Modules; i < mml->NumberOfModules; i++, mm++)
         {
             if (get_addr64(mm->BaseOfImage) <= get_addr64(pe_mm->BaseOfImage) &&
                 get_addr64(mm->BaseOfImage) + mm->SizeOfImage >= get_addr64(pe_mm->BaseOfImage) + pe_mm->SizeOfImage)
@@ -174,10 +195,11 @@ static enum dbg_start minidump_do_reload(struct tgt_process_minidump_data* data)
     MINIDUMP_MODULE_LIST*       mml;
     MINIDUMP_MODULE*            mm;
     MINIDUMP_STRING*            mds;
+    MINIDUMP_DIRECTORY*         dir;
     WCHAR                       exec_name[1024];
     WCHAR                       nameW[1024];
     unsigned                    len;
-    static WCHAR                default_exec_name[] = {'<','m','i','n','i','d','u','m','p','-','e','x','e','c','>',0};
+    static const WCHAR          default_exec_name[] = {'<','m','i','n','i','d','u','m','p','-','e','x','e','c','>',0};
 
     /* fetch PID */
     if (MiniDumpReadDumpStream(data->mapping, MiscInfoStream, NULL, &stream, NULL))
@@ -196,7 +218,7 @@ static enum dbg_start minidump_do_reload(struct tgt_process_minidump_data* data)
         {
             WCHAR*      ptr;
 
-            mm = &mml->Modules[0];
+            mm = mml->Modules;
             mds = (MINIDUMP_STRING*)((char*)data->mapping + mm->ModuleNameRva);
             len = mds->Length / 2;
             memcpy(exec_name, mds->Buffer, mds->Length);
@@ -212,7 +234,7 @@ static enum dbg_start minidump_do_reload(struct tgt_process_minidump_data* data)
         }
     }
 
-    if (MiniDumpReadDumpStream(data->mapping, SystemInfoStream, NULL, &stream, NULL))
+    if (MiniDumpReadDumpStream(data->mapping, SystemInfoStream, &dir, &stream, NULL))
     {
         MINIDUMP_SYSTEM_INFO*   msi = stream;
         const char *str;
@@ -267,6 +289,12 @@ static enum dbg_start minidump_do_reload(struct tgt_process_minidump_data* data)
         case PROCESSOR_ARCHITECTURE_ARM:
             str = "ARM";
             break;
+        case PROCESSOR_ARCHITECTURE_MSIL:
+            str = "MSIL";
+            break;
+        case PROCESSOR_ARCHITECTURE_NEUTRAL:
+            str = "Neutral";
+            break;
         default:
             str = "???";
             break;
@@ -289,7 +317,7 @@ static enum dbg_start minidump_do_reload(struct tgt_process_minidump_data* data)
             case 0: str = (msi->PlatformId == VER_PLATFORM_WIN32_NT) ? "NT 4.0" : "95"; break;
             case 10: str = "98"; break;
             case 90: str = "ME"; break;
-            default: str = "5-????"; break;
+            default: str = "4-????"; break;
             }
             break;
         case 5:
@@ -297,14 +325,50 @@ static enum dbg_start minidump_do_reload(struct tgt_process_minidump_data* data)
             {
             case 0: str = "2000"; break;
             case 1: str = "XP"; break;
-            case 2: str = "Server 2003"; break;
+            case 2:
+                if (msi->u.s.ProductType == 1) str = "XP";
+                else if (msi->u.s.ProductType == 3) str = "Server 2003";
+                else str = "5-????";
+                break;
             default: str = "5-????"; break;
+            }
+            break;
+        case 6:
+            switch (msi->MinorVersion)
+            {
+            case 0:
+                if (msi->u.s.ProductType == 1) str = "Vista";
+                else if (msi->u.s.ProductType == 3) str = "Server 2008";
+                else str = "6-????";
+                break;
+            case 1:
+                if (msi->u.s.ProductType == 1) str = "Win7";
+                else if (msi->u.s.ProductType == 3) str = "Server 2008";
+                else str = "6-????";
+                break;
+            case 2: str = "Win8"; break;
+            default: str = "6-????"; break;
             }
             break;
         default: str = "???"; break;
         }
         dbg_printf(" on Windows %s (%u)\n", str, msi->BuildNumber);
         /* FIXME CSD: msi->CSDVersionRva */
+
+        if (sizeof(MINIDUMP_SYSTEM_INFO) + 4 > dir->Location.DataSize &&
+            msi->CSDVersionRva >= dir->Location.Rva + sizeof(MINIDUMP_SYSTEM_INFO) + 4)
+        {
+            const char*     code = (const char*)stream + sizeof(MINIDUMP_SYSTEM_INFO);
+            const DWORD*    wes;
+
+            if (code[0] == 'W' && code[1] == 'I' && code[2] == 'N' && code[3] == 'E' &&
+                *(wes = (const DWORD*)(code += 4)) >= 3)
+            {
+                /* assume we have wine extensions */
+                dbg_printf("    [on %s, on top of %s (%s)]\n",
+                           code + wes[1], code + wes[2], code + wes[3]);
+            }
+        }
     }
 
     dbg_curr_process = dbg_add_process(&be_process_minidump_io, pid, hProc);
@@ -332,7 +396,7 @@ static enum dbg_start minidump_do_reload(struct tgt_process_minidump_data* data)
         WCHAR   buffer[MAX_PATH];
 
         mml = stream;
-        for (i = 0, mm = &mml->Modules[0]; i < mml->NumberOfModules; i++, mm++)
+        for (i = 0, mm = mml->Modules; i < mml->NumberOfModules; i++, mm++)
         {
             mds = (MINIDUMP_STRING*)((char*)data->mapping + mm->ModuleNameRva);
             memcpy(nameW, mds->Buffer, mds->Length);
@@ -351,7 +415,7 @@ static enum dbg_start minidump_do_reload(struct tgt_process_minidump_data* data)
         WCHAR   buffer[MAX_PATH];
 
         mml = stream;
-        for (i = 0, mm = &mml->Modules[0]; i < mml->NumberOfModules; i++, mm++)
+        for (i = 0, mm = mml->Modules; i < mml->NumberOfModules; i++, mm++)
         {
             mds = (MINIDUMP_STRING*)((char*)data->mapping + mm->ModuleNameRva);
             memcpy(nameW, mds->Buffer, mds->Length);

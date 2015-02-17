@@ -210,7 +210,7 @@ BOOL WINAPI CryptSIPAddProvider(SIP_ADD_NEWPROVIDER *psNewProv)
     TRACE("%p\n", psNewProv);
 
     if (!psNewProv ||
-        psNewProv->cbStruct != sizeof(SIP_ADD_NEWPROVIDER) ||
+        psNewProv->cbStruct < FIELD_OFFSET(SIP_ADD_NEWPROVIDER, pwszGetCapFuncName) ||
         !psNewProv->pwszGetFuncName ||
         !psNewProv->pwszPutFuncName ||
         !psNewProv->pwszCreateFuncName ||
@@ -616,6 +616,7 @@ void crypt_sip_free(void)
         FreeLibrary(prov->info.hSIP);
         CryptMemFree(prov);
     }
+    DeleteCriticalSection(&providers_cs);
 }
 
 /* Loads the SIP for pgSubject into the global cache.  Returns FALSE if the
@@ -633,14 +634,17 @@ static BOOL CRYPT_LoadSIP(const GUID *pgSubject)
     if (!sip.pfPut || temp != lib)
         goto error;
     FreeLibrary(temp);
+    temp = NULL;
     sip.pfCreate = CRYPT_LoadSIPFunc(pgSubject, szCreate, &temp);
     if (!sip.pfCreate || temp != lib)
         goto error;
     FreeLibrary(temp);
+    temp = NULL;
     sip.pfVerify = CRYPT_LoadSIPFunc(pgSubject, szVerify, &temp);
     if (!sip.pfVerify || temp != lib)
         goto error;
     FreeLibrary(temp);
+    temp = NULL;
     sip.pfRemove = CRYPT_LoadSIPFunc(pgSubject, szRemoveSigned, &temp);
     if (!sip.pfRemove || temp != lib)
         goto error;

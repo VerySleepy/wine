@@ -6,6 +6,4 @@ C_SRCS = \
 	main.c \
 	surface.c
 
-IDL_R_SRCS = ddrawex.idl
-
-@MAKE_DLL_RULES@
+IDL_SRCS = ddrawex.idl

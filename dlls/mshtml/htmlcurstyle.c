@@ -42,6 +42,7 @@ struct HTMLCurrentStyle {
     LONG ref;
 
     nsIDOMCSSStyleDeclaration *nsstyle;
+    HTMLElement *elem;
 };
 
 static inline HTMLCurrentStyle *impl_from_IHTMLCurrentStyle(IHTMLCurrentStyle *iface)
@@ -68,34 +69,28 @@ static HRESULT WINAPI HTMLCurrentStyle_QueryInterface(IHTMLCurrentStyle *iface, 
 {
     HTMLCurrentStyle *This = impl_from_IHTMLCurrentStyle(iface);
 
-    *ppv = NULL;
+    TRACE("(%p)->(%s %p)\n", This, debugstr_mshtml_guid(riid), ppv);
 
     if(IsEqualGUID(&IID_IUnknown, riid)) {
-        TRACE("(%p)->(IID_IUnknown %p)\n", This, ppv);
         *ppv = &This->IHTMLCurrentStyle_iface;
     }else if(IsEqualGUID(&IID_IHTMLCurrentStyle, riid)) {
-        TRACE("(%p)->(IID_IHTMLCurrentStyle %p)\n", This, ppv);
         *ppv = &This->IHTMLCurrentStyle_iface;
     }else if(IsEqualGUID(&IID_IHTMLCurrentStyle2, riid)) {
-        TRACE("(%p)->(IID_IHTMLCurrentStyle2 %p)\n", This, ppv);
         *ppv = &This->IHTMLCurrentStyle2_iface;
     }else if(IsEqualGUID(&IID_IHTMLCurrentStyle3, riid)) {
-        TRACE("(%p)->(IID_IHTMLCurrentStyle3 %p)\n", This, ppv);
         *ppv = &This->IHTMLCurrentStyle3_iface;
     }else if(IsEqualGUID(&IID_IHTMLCurrentStyle4, riid)) {
-        TRACE("(%p)->(IID_IHTMLCurrentStyle4 %p)\n", This, ppv);
         *ppv = &This->IHTMLCurrentStyle4_iface;
     }else if(dispex_query_interface(&This->dispex, riid, ppv)) {
         return *ppv ? S_OK : E_NOINTERFACE;
+    }else {
+        *ppv = NULL;
+        WARN("unsupported %s\n", debugstr_mshtml_guid(riid));
+        return E_NOINTERFACE;
     }
 
-    if(*ppv) {
-        IUnknown_AddRef((IUnknown*)*ppv);
-        return S_OK;
-    }
-
-    WARN("unsupported %s\n", debugstr_guid(riid));
-    return E_NOINTERFACE;
+    IUnknown_AddRef((IUnknown*)*ppv);
+    return S_OK;
 }
 
 static ULONG WINAPI HTMLCurrentStyle_AddRef(IHTMLCurrentStyle *iface)
@@ -118,6 +113,7 @@ static ULONG WINAPI HTMLCurrentStyle_Release(IHTMLCurrentStyle *iface)
     if(!ref) {
         if(This->nsstyle)
             nsIDOMCSSStyleDeclaration_Release(This->nsstyle);
+        IHTMLElement_Release(&This->elem->IHTMLElement_iface);
         release_dispex(&This->dispex);
         heap_free(This);
     }
@@ -797,8 +793,8 @@ static HRESULT WINAPI HTMLCurrentStyle_get_overflowY(IHTMLCurrentStyle *iface, B
 static HRESULT WINAPI HTMLCurrentStyle_get_textTransform(IHTMLCurrentStyle *iface, BSTR *p)
 {
     HTMLCurrentStyle *This = impl_from_IHTMLCurrentStyle(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    TRACE("(%p)->(%p)\n", This, p);
+    return get_nsstyle_attr(This->nsstyle, STYLEID_TEXT_TRANSFORM, p, 0);
 }
 
 static const IHTMLCurrentStyleVtbl HTMLCurrentStyleVtbl = {
@@ -977,8 +973,11 @@ static HRESULT WINAPI HTMLCurrentStyle2_get_textUnderlinePosition(IHTMLCurrentSt
 static HRESULT WINAPI HTMLCurrentStyle2_get_hasLayout(IHTMLCurrentStyle2 *iface, VARIANT_BOOL *p)
 {
     HTMLCurrentStyle *This = impl_from_IHTMLCurrentStyle2(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+
+    FIXME("(%p)->(%p) returning true\n", This, p);
+
+    *p = VARIANT_TRUE;
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLCurrentStyle2_get_scrollbarBaseColor(IHTMLCurrentStyle2 *iface, VARIANT *p)
@@ -1054,8 +1053,18 @@ static HRESULT WINAPI HTMLCurrentStyle2_get_zoom(IHTMLCurrentStyle2 *iface, VARI
 static HRESULT WINAPI HTMLCurrentStyle2_get_filter(IHTMLCurrentStyle2 *iface, BSTR *p)
 {
     HTMLCurrentStyle *This = impl_from_IHTMLCurrentStyle2(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    if(This->elem->filter) {
+        *p = SysAllocString(This->elem->filter);
+        if(!*p)
+            return E_OUTOFMEMORY;
+    }else {
+        *p = NULL;
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLCurrentStyle2_get_textAlignLast(IHTMLCurrentStyle2 *iface, BSTR *p)
@@ -1348,6 +1357,9 @@ HRESULT HTMLCurrentStyle_Create(HTMLElement *elem, IHTMLCurrentStyle **p)
     ret->nsstyle = nsstyle;
 
     init_dispex(&ret->dispex, (IUnknown*)&ret->IHTMLCurrentStyle_iface,  &HTMLCurrentStyle_dispex);
+
+    IHTMLElement_AddRef(&elem->IHTMLElement_iface);
+    ret->elem = elem;
 
     *p = &ret->IHTMLCurrentStyle_iface;
     return S_OK;

@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <locale.h>
+#include <assert.h>
 #include "windef.h"
 #include "winbase.h"
 #include "wine/debug.h"
@@ -42,6 +43,10 @@ char	*value;
 char	*valtrans;
 } PPDTuple;
 
+struct map_context
+{
+    const char *ptr, *pos, *end;
+};
 
 /* map of page names in ppd file to Windows paper constants */
 
@@ -174,14 +179,11 @@ static const struct {
   {NULL,                      0}
 };
 
-static WORD UserPageType = DMPAPER_USER;
-static WORD UserBinType = DMBIN_USER;
-
 /***********************************************************************
  *
  *		PSDRV_PPDDecodeHex
  *
- * Copies str into a newly allocated string from the process heap subsituting
+ * Copies str into a newly allocated string from the process heap substituting
  * hex strings enclosed in '<' and '>' for their byte codes.
  *
  */
@@ -236,9 +238,10 @@ static char *PSDRV_PPDDecodeHex(char *str)
  *		PSDRV_PPDGetTransValue
  *
  */
-static BOOL PSDRV_PPDGetTransValue(char *start, PPDTuple *tuple)
+static BOOL PSDRV_PPDGetTransValue(const char *start, PPDTuple *tuple)
 {
-    char *buf, *end;
+    char *buf;
+    const char *end;
 
     end = strpbrk(start, "\r\n");
     if(end == start) return FALSE;
@@ -251,6 +254,32 @@ static BOOL PSDRV_PPDGetTransValue(char *start, PPDTuple *tuple)
     return TRUE;
 }
 
+static BOOL get_line( char *buf, int size, struct map_context *ctx )
+{
+    int i;
+    if (ctx->pos > ctx->end) return FALSE;
+
+    for (i = 0; i < size - 1; i++)
+    {
+        if (ctx->pos > ctx->end) break;
+        buf[i] = *ctx->pos++;
+
+        /* \r\n -> \n */
+        if (buf[i] == '\r' && ctx->pos <= ctx->end && *ctx->pos == '\n')
+        {
+            ctx->pos++;
+            buf[i] = '\n';
+        }
+
+        if (buf[i] == '\n' || buf[i] == '\r')
+        {
+            i++;
+            break;
+        }
+    }
+    buf[i] = '\0';
+    return TRUE;
+}
 
 /***********************************************************************
  *
@@ -259,38 +288,30 @@ static BOOL PSDRV_PPDGetTransValue(char *start, PPDTuple *tuple)
  * Passed string that should be surrounded by `"'s, return string alloced
  * from process heap.
  */
-static BOOL PSDRV_PPDGetInvocationValue(FILE *fp, char *pos, PPDTuple *tuple)
+static BOOL PSDRV_PPDGetInvocationValue(struct map_context *ctx, PPDTuple *tuple)
 {
-    char *start, *end, *buf;
-    char line[257];
-    int len;
+    const char *start;
+    char *buf, line[257];
 
-    start = pos + 1;
-    buf = HeapAlloc( PSDRV_Heap, 0, strlen(start) + 1 );
-    len = 0;
-    do {
-        end = strchr(start, '"');
-	if(end) {
-	    buf = HeapReAlloc( PSDRV_Heap, 0, buf,
-			       len + (end - start) + 1 );
-	    memcpy(buf + len, start, end - start);
-	    *(buf + len + (end - start)) = '\0';
-	    tuple->value = buf;
-	    start = strchr(end, '/');
-	    if(start)
-	        return PSDRV_PPDGetTransValue(start + 1, tuple);
-	    return TRUE;
-	} else {
-	    int sl = strlen(start);
-	    buf = HeapReAlloc( PSDRV_Heap, 0, buf, len + sl + 1 );
-	    strcpy(buf + len, start);
-	    len += sl;
-	}
-    } while( fgets((start = line), sizeof(line), fp) );
+    assert( *ctx->pos == '"' );
 
-    tuple->value = NULL;
-    HeapFree( PSDRV_Heap, 0, buf );
-    return FALSE;
+    ctx->pos++;
+    for (start = ctx->pos; ctx->pos <= ctx->end; ctx->pos++)
+        if (*ctx->pos == '"') break;
+    if (ctx->pos > ctx->end) return FALSE;
+    ctx->pos++;
+
+    buf = HeapAlloc( PSDRV_Heap, 0, ctx->pos - start );
+    memcpy( buf, start, ctx->pos - start - 1 );
+    buf[ctx->pos - start  - 1] = '\0';
+    tuple->value = buf;
+
+    if (get_line( line, sizeof(line), ctx ))
+    {
+        start = strchr( line, '/' );
+        if (start) return PSDRV_PPDGetTransValue( start + 1, tuple );
+    }
+    return TRUE;
 }
 
 
@@ -301,11 +322,11 @@ static BOOL PSDRV_PPDGetInvocationValue(FILE *fp, char *pos, PPDTuple *tuple)
  * Passed string that should be surrounded by `"'s. Expand <xx> as hex
  * return string alloced from process heap.
  */
-static BOOL PSDRV_PPDGetQuotedValue(FILE *fp, char *pos, PPDTuple *tuple)
+static BOOL PSDRV_PPDGetQuotedValue(struct map_context *ctx, PPDTuple *tuple)
 {
     char *buf;
 
-    if(!PSDRV_PPDGetInvocationValue(fp, pos, tuple))
+    if(!PSDRV_PPDGetInvocationValue(ctx, tuple))
         return FALSE;
     buf = PSDRV_PPDDecodeHex(tuple->value);
     HeapFree(PSDRV_Heap, 0, tuple->value);
@@ -358,10 +379,11 @@ static BOOL PSDRV_PPDGetSymbolValue(char *pos, PPDTuple *tuple)
  * Gets the next Keyword Option Value tuple from the file. Allocs space off
  * the process heap which should be free()ed by the caller if not needed.
  */
-static BOOL PSDRV_PPDGetNextTuple(FILE *fp, PPDTuple *tuple)
+static BOOL PSDRV_PPDGetNextTuple(struct map_context *ctx, PPDTuple *tuple)
 {
     char line[257], *opt, *cp, *trans, *endkey;
     BOOL gotoption;
+    struct map_context save;
 
  start:
 
@@ -370,32 +392,29 @@ static BOOL PSDRV_PPDGetNextTuple(FILE *fp, PPDTuple *tuple)
     memset(tuple, 0, sizeof(*tuple));
 
     do {
-        if(!fgets(line, sizeof(line), fp))
+        save = *ctx;
+        if(!get_line(line, sizeof(line), ctx))
             return FALSE;
 	if(line[0] == '*' && line[1] != '%' && strncmp(line, "*End", 4))
 	    break;
     } while(1);
 
-    if(line[strlen(line)-1] != '\n') {
+    cp = line + strlen(line) - 1;
+    if (*cp != '\n' && *cp != '\r')
+    {
         ERR("Line too long.\n");
-	goto start;
+        goto start;
     }
 
     for(cp = line; !isspace(*cp) && *cp != ':'; cp++)
         ;
 
     endkey = cp;
-    if(*cp == ':') { /* <key>: */
+    while (isspace(*cp)) cp++;
+    if (*cp == ':') /* <key>: */
         gotoption = FALSE;
-    } else {
-	while(isspace(*cp))
-	    cp++;
-	if(*cp == ':') { /* <key>  : */
-	    gotoption = FALSE;
-	} else { /* <key> <option> */
-	    opt = cp;
-	}
-    }
+    else /* <key> <option> */
+        opt = cp;
 
     tuple->key = HeapAlloc( PSDRV_Heap, 0, endkey - line + 1 );
     if(!tuple->key) return FALSE;
@@ -434,18 +453,20 @@ static BOOL PSDRV_PPDGetNextTuple(FILE *fp, PPDTuple *tuple)
     }
 
     /* cp should point to a ':', so we increment past it */
-        cp++;
+    cp++;
 
     while(isspace(*cp))
         cp++;
 
     switch(*cp) {
     case '"':
+        /* update the context pos so that it points to the opening quote */
+        ctx->pos = save.pos + (cp - line);
         if( (!gotoption && strncmp(tuple->key, "*?", 2) ) ||
 	     !strncmp(tuple->key, "*JCL", 4))
-	    PSDRV_PPDGetQuotedValue(fp, cp, tuple);
+	    PSDRV_PPDGetQuotedValue(ctx, tuple);
         else
-	    PSDRV_PPDGetInvocationValue(fp, cp, tuple);
+	    PSDRV_PPDGetInvocationValue(ctx, tuple);
 	break;
 
     case '^':
@@ -459,14 +480,12 @@ static BOOL PSDRV_PPDGetNextTuple(FILE *fp, PPDTuple *tuple)
 }
 
 /*********************************************************************
+ *                       get_pagesize
  *
- *		PSDRV_PPDGetPageSizeInfo
- *
- * Searches ppd PageSize list to return entry matching name or creates new
+ * Searches ppd PageSize list to return entry matching name or optionally creates new
  * entry which is appended to the list if name is not found.
- *
  */
-static PAGESIZE *PSDRV_PPDGetPageSizeInfo(PPD *ppd, char *name)
+static PAGESIZE *get_pagesize( PPD *ppd, char *name, BOOL create )
 {
     PAGESIZE *page;
 
@@ -476,9 +495,24 @@ static PAGESIZE *PSDRV_PPDGetPageSizeInfo(PPD *ppd, char *name)
             return page;
     }
 
+    if (!create) return NULL;
+
     page = HeapAlloc( PSDRV_Heap,  HEAP_ZERO_MEMORY, sizeof(*page) );
     list_add_tail(&ppd->PageSizes, &page->entry);
     return page;
+}
+
+static DUPLEX *get_duplex( PPD *ppd, const char *name )
+{
+    DUPLEX *duplex;
+
+    LIST_FOR_EACH_ENTRY( duplex, &ppd->Duplexes, DUPLEX, entry )
+    {
+        if (!strcmp( duplex->Name, name ))
+            return duplex;
+    }
+
+    return NULL;
 }
 
 /**********************************************************************
@@ -583,23 +617,65 @@ static BOOL parse_resolution(const char *str, SIZE *sz)
  *	PSDRV_AddSlot
  *
  */
-static INT PSDRV_AddSlot(PPD *ppd, LPCSTR szName, LPCSTR szFullName,
+static BOOL PSDRV_AddSlot(PPD *ppd, LPCSTR szName, LPCSTR szFullName,
 	LPSTR szInvocationString, WORD wWinBin)
 {
-    INPUTSLOT	*slot, **insert = &ppd->InputSlots;
-
-    while (*insert)
-	insert = &((*insert)->next);
-
-    slot = *insert = HeapAlloc(PSDRV_Heap, HEAP_ZERO_MEMORY, sizeof(INPUTSLOT));
-    if (!slot) return 1;
+    INPUTSLOT *slot = HeapAlloc( PSDRV_Heap, 0, sizeof(INPUTSLOT) );
+    if (!slot) return FALSE;
 
     slot->Name = szName;
     slot->FullName = szFullName;
     slot->InvocationString = szInvocationString;
     slot->WinBin = wWinBin;
 
-    return 0;
+    list_add_tail( &ppd->InputSlots, &slot->entry );
+    return TRUE;
+}
+
+static char *get_ppd_override( HANDLE printer, const char *value )
+{
+    DWORD err, type, needed;
+    char *data;
+
+    err = GetPrinterDataExA( printer, "PPD Overrides", value, &type, NULL, 0, &needed );
+    if (err != ERROR_MORE_DATA || type != REG_SZ || needed == 0) return NULL;
+
+    data = HeapAlloc( PSDRV_Heap, 0, needed );
+    if (data)
+    {
+        GetPrinterDataExA( printer, "PPD Overrides", value, &type, (BYTE*)data, needed, &needed );
+        TRACE( "got override %s: %s\n", value, data );
+    }
+    return data;
+}
+
+static BOOL map_file( const WCHAR *filename, struct map_context *c )
+{
+    HANDLE file, mapping;
+    LARGE_INTEGER size;
+
+    file = CreateFileW( filename, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL );
+    if (file == INVALID_HANDLE_VALUE) return FALSE;
+
+    if (!GetFileSizeEx( file, &size ) || size.u.HighPart)
+    {
+        CloseHandle( file );
+        return FALSE;
+    }
+
+    mapping = CreateFileMappingW( file, NULL, PAGE_READONLY, 0, 0, NULL );
+    CloseHandle( file );
+    if (!mapping) return FALSE;
+
+    c->pos = c->ptr = MapViewOfFile( mapping, FILE_MAP_READ, 0, 0, 0 );
+    c->end = c->ptr + size.u.LowPart - 1;
+    CloseHandle( mapping );
+    return TRUE;
+}
+
+static void unmap_file( struct map_context *c )
+{
+    UnmapViewOfFile( c->ptr );
 }
 
 /***********************************************************************
@@ -608,45 +684,58 @@ static INT PSDRV_AddSlot(PPD *ppd, LPCSTR szName, LPCSTR szFullName,
  *
  *
  */
-PPD *PSDRV_ParsePPD(char *fname)
+PPD *PSDRV_ParsePPD( const WCHAR *fname, HANDLE printer )
 {
-    FILE *fp;
     PPD *ppd;
     PPDTuple tuple;
     char *default_pagesize = NULL, *default_duplex = NULL;
+    char *def_pagesize_override = NULL, *def_duplex_override = NULL;
     PAGESIZE *page, *page_cursor2;
+    struct map_context c;
+    WORD UserPageType = DMPAPER_USER;
+    WORD UserBinType = DMBIN_USER;
 
-    TRACE("file '%s'\n", fname);
+    TRACE("file %s\n", debugstr_w(fname));
 
-    if((fp = fopen(fname, "r")) == NULL) {
-        WARN("Couldn't open ppd file '%s'\n", fname);
+    if (!map_file( fname, &c ))
+    {
+        WARN("Couldn't open ppd file %s\n", debugstr_w(fname));
         return NULL;
     }
 
     ppd = HeapAlloc( PSDRV_Heap, HEAP_ZERO_MEMORY, sizeof(*ppd));
     if(!ppd) {
         ERR("Unable to allocate memory for ppd\n");
-	fclose(fp);
+	unmap_file( &c );
 	return NULL;
     }
 
     ppd->ColorDevice = CD_NotSpecified;
-    list_init(&ppd->PageSizes);
+
+    list_init( &ppd->Resolutions );
+    list_init( &ppd->InstalledFonts );
+    list_init( &ppd->PageSizes );
+    list_init( &ppd->Constraints );
+    list_init( &ppd->InputSlots );
+    list_init( &ppd->Duplexes );
+
+    /* Some gimp-print ppd files don't contain a DefaultResolution line
+       so default to 300 */
+    ppd->DefaultResolution = 300;
 
     /*
      *	The Windows PostScript drivers create the following "virtual bin" for
      *	every PostScript printer
      */
-    if (PSDRV_AddSlot(ppd, NULL, "Automatically Select", NULL,
-	    DMBIN_FORMSOURCE))
+    if (!PSDRV_AddSlot( ppd, NULL, "Automatically Select", NULL, DMBIN_FORMSOURCE ))
     {
 	HeapFree (PSDRV_Heap, 0, ppd);
-	fclose(fp);
+	unmap_file( &c );
 	return NULL;
     }
 
-    while( PSDRV_PPDGetNextTuple(fp, &tuple)) {
-
+    while (PSDRV_PPDGetNextTuple( &c, &tuple ))
+    {
 	if(!strcmp("*NickName", tuple.key)) {
 	    ppd->NickName = tuple.value;
 	    tuple.value = NULL;
@@ -678,23 +767,33 @@ PPD *PSDRV_ParsePPD(char *fname)
                 WARN("failed to parse DefaultResolution %s\n", debugstr_a(tuple.value));
 	}
 
-	else if(!strcmp("*Font", tuple.key)) {
-	    FONTNAME *fn;
+        else if(!strcmp("*Resolution", tuple.key))
+        {
+            SIZE sz;
+            if (parse_resolution(tuple.option, &sz))
+            {
+                RESOLUTION *res;
 
-	    for(fn = ppd->InstalledFonts; fn && fn->next; fn = fn->next)
-	        ;
-	    if(!fn) {
-	        ppd->InstalledFonts = HeapAlloc(PSDRV_Heap,
-					       HEAP_ZERO_MEMORY, sizeof(*fn));
-		fn = ppd->InstalledFonts;
-	    } else {
-	       fn->next = HeapAlloc(PSDRV_Heap,
-					       HEAP_ZERO_MEMORY, sizeof(*fn));
-	       fn = fn->next;
-	    }
-	    fn->Name = tuple.option;
-	    tuple.option = NULL;
-	}
+                TRACE("Resolution %dx%d, invocation %s\n", sz.cx, sz.cy, tuple.value);
+
+                res = HeapAlloc( GetProcessHeap(), 0, sizeof(*res) );
+                res->resx = sz.cx;
+                res->resy = sz.cy;
+                res->InvocationString = tuple.value;
+                tuple.value = NULL;
+                list_add_tail( &ppd->Resolutions, &res->entry );
+            }
+            else
+                WARN("failed to parse Resolution %s\n", debugstr_a(tuple.option));
+        }
+
+        else if(!strcmp("*Font", tuple.key))
+        {
+            FONTNAME *fn = HeapAlloc( PSDRV_Heap, 0, sizeof(*fn) );
+            fn->Name = tuple.option;
+            tuple.option = NULL;
+            list_add_tail( &ppd->InstalledFonts, &fn->entry );
+        }
 
 	else if(!strcmp("*DefaultFont", tuple.key)) {
 	    ppd->DefaultFont = tuple.value;
@@ -716,26 +815,13 @@ PPD *PSDRV_ParsePPD(char *fname)
 	    tuple.value = NULL;
 	}
 
-	else if(!strcmp("*PageSize", tuple.key)) {
-	    page = PSDRV_PPDGetPageSizeInfo(ppd, tuple.option);
+        else if(!strcmp("*PageSize", tuple.key))
+        {
+            page = get_pagesize( ppd, tuple.option, TRUE );
 
 	    if(!page->Name) {
-	        int i;
-
 	        page->Name = tuple.option;
 		tuple.option = NULL;
-
-		for(i = 0; PageTrans[i].PSName; i++) {
-		    if(!strcmp(PageTrans[i].PSName, page->Name)) { /* case ? */
-		        page->WinPage = PageTrans[i].WinPage;
-			break;
-		    }
-		}
-		if(!page->WinPage) {
-		    TRACE("Can't find Windows page type for '%s' - using %u\n",
-			  page->Name, UserPageType);
-		    page->WinPage = UserPageType++;
-		}
 	    }
 	    if(!page->FullName) {
 	        if(tuple.opttrans) {
@@ -751,19 +837,36 @@ PPD *PSDRV_ParsePPD(char *fname)
 		page->InvocationString = tuple.value;
 	        tuple.value = NULL;
 	    }
-	}
+            if (!page->WinPage)
+            {
+                int i;
+                for (i = 0; PageTrans[i].PSName; i++)
+                {
+                    if (!strcmp( PageTrans[i].PSName, page->Name ))
+                    {
+                        page->WinPage = PageTrans[i].WinPage;
+                        break;
+                    }
+                }
+                if (!page->WinPage)
+                {
+                    TRACE( "Can't find Windows page type for %s - using %u\n", debugstr_a(page->Name), UserPageType );
+                    page->WinPage = UserPageType++;
+                }
+            }
+        }
 
-        else if(!strcmp("*DefaultPageSize", tuple.key)) {
-            if(default_pagesize) {
-                WARN("Already set default pagesize\n");
-            } else {
+        else if(!strcmp("*DefaultPageSize", tuple.key))
+        {
+            if (!default_pagesize)
+            {
                 default_pagesize = tuple.value;
                 tuple.value = NULL;
-           }
+            }
         }
 
         else if(!strcmp("*ImageableArea", tuple.key)) {
-	    page = PSDRV_PPDGetPageSizeInfo(ppd, tuple.option);
+            page = get_pagesize( ppd, tuple.option, TRUE );
 
 	    if(!page->Name) {
 	        page->Name = tuple.option;
@@ -785,9 +888,8 @@ PPD *PSDRV_ParsePPD(char *fname)
 #undef PIA
 	}
 
-
 	else if(!strcmp("*PaperDimension", tuple.key)) {
-	    page = PSDRV_PPDGetPageSizeInfo(ppd, tuple.option);
+            page = get_pagesize( ppd, tuple.option, TRUE );
 
 	    if(!page->Name) {
 	        page->Name = tuple.option;
@@ -820,23 +922,19 @@ PPD *PSDRV_ParsePPD(char *fname)
 		  ppd->LandscapeOrientation);
 	}
 
-	else if(!strcmp("*UIConstraints", tuple.key)) {
+        else if(!strcmp("*UIConstraints", tuple.key))
+        {
 	    char *start;
-	    CONSTRAINT *con, **insert = &ppd->Constraints;
-
-	    while(*insert)
-	        insert = &((*insert)->next);
-
-	    con = *insert = HeapAlloc( PSDRV_Heap, HEAP_ZERO_MEMORY,
-				       sizeof(*con) );
+            CONSTRAINT *con = HeapAlloc( PSDRV_Heap, 0, sizeof(*con) );
 
 	    start = tuple.value;
-
 	    con->Feature1 = PSDRV_PPDGetWord(start, &start);
 	    con->Value1 = PSDRV_PPDGetWord(start, &start);
 	    con->Feature2 = PSDRV_PPDGetWord(start, &start);
 	    con->Value2 = PSDRV_PPDGetWord(start, &start);
-	}
+
+            list_add_tail( &ppd->Constraints, &con->entry );
+        }
 
 	else if (!strcmp("*InputSlot", tuple.key))
 	{
@@ -884,38 +982,36 @@ PPD *PSDRV_ParsePPD(char *fname)
 	    TRACE("*TTRasterizer = %d\n", ppd->TTRasterizer);
 	}
 
-        else if(!strcmp("*Duplex", tuple.key)) {
-            DUPLEX **duplex;
-            for(duplex = &ppd->Duplexes; *duplex; duplex = &(*duplex)->next)
-                ;
-            *duplex = HeapAlloc(GetProcessHeap(), 0, sizeof(**duplex));
-            (*duplex)->Name = tuple.option;
-            (*duplex)->FullName = tuple.opttrans;
-            (*duplex)->InvocationString = tuple.value;
-            (*duplex)->next = NULL;
+        else if(!strcmp("*Duplex", tuple.key))
+        {
+            DUPLEX *duplex = HeapAlloc( GetProcessHeap(), 0, sizeof(*duplex) );
+            duplex->Name = tuple.option;
+            duplex->FullName = tuple.opttrans;
+            duplex->InvocationString = tuple.value;
             if(!strcasecmp("None", tuple.option) || !strcasecmp("False", tuple.option)
                || !strcasecmp("Simplex", tuple.option))
-                (*duplex)->WinDuplex = DMDUP_SIMPLEX;
+                duplex->WinDuplex = DMDUP_SIMPLEX;
             else if(!strcasecmp("DuplexNoTumble", tuple.option))
-                (*duplex)->WinDuplex = DMDUP_VERTICAL;
+                duplex->WinDuplex = DMDUP_VERTICAL;
             else if(!strcasecmp("DuplexTumble", tuple.option))
-                (*duplex)->WinDuplex = DMDUP_HORIZONTAL;
+                duplex->WinDuplex = DMDUP_HORIZONTAL;
             else if(!strcasecmp("Notcapable", tuple.option))
-                (*duplex)->WinDuplex = 0;
+                duplex->WinDuplex = 0;
             else {
                 FIXME("Unknown option %s for *Duplex defaulting to simplex\n", tuple.option);
-                (*duplex)->WinDuplex = DMDUP_SIMPLEX;
+                duplex->WinDuplex = DMDUP_SIMPLEX;
             }
             tuple.option = tuple.opttrans = tuple.value = NULL;
+            list_add_tail( &ppd->Duplexes, &duplex->entry );
         }
 
-        else if(!strcmp("*DefaultDuplex", tuple.key)) {
-            if(default_duplex) {
-                WARN("Already set default duplex\n");
-            } else {
+        else if (!strcmp("*DefaultDuplex", tuple.key))
+        {
+            if (!default_duplex)
+            {
                 default_duplex = tuple.value;
                 tuple.value = NULL;
-           }
+            }
         }
 
         HeapFree(PSDRV_Heap, 0, tuple.key);
@@ -944,37 +1040,40 @@ PPD *PSDRV_ParsePPD(char *fname)
     }
 
     ppd->DefaultPageSize = NULL;
-    if(default_pagesize) {
-	LIST_FOR_EACH_ENTRY(page, &ppd->PageSizes, PAGESIZE, entry) {
-            if(!strcmp(page->Name, default_pagesize)) {
-                ppd->DefaultPageSize = page;
-                TRACE("DefaultPageSize: %s\n", page->Name);
-                break;
-            }
-        }
-        HeapFree(PSDRV_Heap, 0, default_pagesize);
-    }
-    if(!ppd->DefaultPageSize) {
-        ppd->DefaultPageSize = LIST_ENTRY(list_head(&ppd->PageSizes), PAGESIZE, entry);
+    def_pagesize_override = get_ppd_override( printer, "DefaultPageSize" );
+    if (def_pagesize_override)
+        ppd->DefaultPageSize = get_pagesize( ppd, def_pagesize_override, FALSE );
+    if (!ppd->DefaultPageSize && default_pagesize)
+        ppd->DefaultPageSize = get_pagesize( ppd, default_pagesize, FALSE );
+
+    if (!ppd->DefaultPageSize)
+    {
+        struct list *head = list_head( &ppd->PageSizes );
+        if (head) ppd->DefaultPageSize = LIST_ENTRY( head, PAGESIZE, entry );
         TRACE("Setting DefaultPageSize to first in list\n");
     }
+    TRACE( "DefaultPageSize: %s\n", ppd->DefaultPageSize ? ppd->DefaultPageSize->Name : "<not set>" );
+
+    HeapFree( PSDRV_Heap, 0, def_pagesize_override );
+    HeapFree( PSDRV_Heap, 0, default_pagesize );
 
     ppd->DefaultDuplex = NULL;
-    if(default_duplex) {
-	DUPLEX *duplex;
-	for(duplex = ppd->Duplexes; duplex; duplex = duplex->next) {
-            if(!strcmp(duplex->Name, default_duplex)) {
-                ppd->DefaultDuplex = duplex;
-                TRACE("DefaultDuplex: %s\n", duplex->Name);
-                break;
-            }
-        }
-        HeapFree(PSDRV_Heap, 0, default_duplex);
-    }
-    if(!ppd->DefaultDuplex) {
-        ppd->DefaultDuplex = ppd->Duplexes;
+    def_duplex_override = get_ppd_override( printer, "DefaultDuplex" );
+    if (def_duplex_override)
+        ppd->DefaultDuplex = get_duplex( ppd, def_duplex_override );
+    if (!ppd->DefaultDuplex && default_duplex)
+        ppd->DefaultDuplex = get_duplex( ppd, default_duplex );
+
+    if (!ppd->DefaultDuplex)
+    {
+        struct list *head = list_head( &ppd->Duplexes );
+        if (head) ppd->DefaultDuplex = LIST_ENTRY( head, DUPLEX, entry );
         TRACE("Setting DefaultDuplex to first in list\n");
     }
+    TRACE( "DefaultDuplex: %s\n", ppd->DefaultDuplex ? ppd->DefaultDuplex->Name : "<not set>" );
+
+    HeapFree( PSDRV_Heap, 0, def_duplex_override );
+    HeapFree( PSDRV_Heap, 0, default_duplex );
 
 
     {
@@ -982,11 +1081,9 @@ PPD *PSDRV_ParsePPD(char *fname)
 	PAGESIZE *page;
 	CONSTRAINT *con;
 	INPUTSLOT *slot;
-	OPTION *option;
-	OPTIONENTRY *optionEntry;
 
-	for(fn = ppd->InstalledFonts; fn; fn = fn->next)
-	    TRACE("'%s'\n", fn->Name);
+        LIST_FOR_EACH_ENTRY( fn, &ppd->InstalledFonts, FONTNAME, entry )
+            TRACE("'%s'\n", fn->Name);
 
 	LIST_FOR_EACH_ENTRY(page, &ppd->PageSizes, PAGESIZE, entry) {
 	    TRACE("'%s' aka '%s' (%d) invoked by '%s'\n", page->Name,
@@ -1000,25 +1097,16 @@ PPD *PSDRV_ParsePPD(char *fname)
 		      page->PaperDimension->x, page->PaperDimension->y);
 	}
 
-	for(con = ppd->Constraints; con; con = con->next)
+        LIST_FOR_EACH_ENTRY( con, &ppd->Constraints, CONSTRAINT, entry )
 	    TRACE("CONSTRAINTS@ %s %s %s %s\n", con->Feature1,
 		  con->Value1, con->Feature2, con->Value2);
 
-	for(option = ppd->InstalledOptions; option; option = option->next) {
-	    TRACE("OPTION: %s %s %s\n", option->OptionName,
-		  option->FullName, option->DefaultOption);
-	    for(optionEntry = option->Options; optionEntry;
-		optionEntry = optionEntry->next)
-	        TRACE("\tOPTIONENTRY: %s %s %s\n", optionEntry->Name,
-		      optionEntry->FullName, optionEntry->InvocationString);
-	}
-
-	for(slot = ppd->InputSlots; slot; slot = slot->next)
+        LIST_FOR_EACH_ENTRY( slot, &ppd->InputSlots, INPUTSLOT, entry )
 	    TRACE("INPUTSLOTS '%s' Name '%s' (%d) Invocation '%s'\n",
 		  debugstr_a(slot->Name), slot->FullName, slot->WinBin,
 		  debugstr_a(slot->InvocationString));
     }
 
-    fclose(fp);
+    unmap_file( &c );
     return ppd;
 }

@@ -55,39 +55,26 @@ static inline DC *get_dc_obj( HDC hdc )
     DC *dc = GDI_GetObjPtr( hdc, 0 );
     if (!dc) return NULL;
 
-    if ((dc->header.type != OBJ_DC) &&
-        (dc->header.type != OBJ_MEMDC) &&
-        (dc->header.type != OBJ_METADC) &&
-        (dc->header.type != OBJ_ENHMETADC))
+    switch (GetObjectType( hdc ))
     {
+    case OBJ_DC:
+    case OBJ_MEMDC:
+    case OBJ_METADC:
+    case OBJ_ENHMETADC:
+        return dc;
+    default:
         GDI_ReleaseObj( hdc );
         SetLastError( ERROR_INVALID_HANDLE );
-        dc = NULL;
+        return NULL;
     }
-    return dc;
 }
 
 
 /***********************************************************************
- *           alloc_dc_ptr
+ *           set_initial_dc_state
  */
-DC *alloc_dc_ptr( WORD magic )
+static void set_initial_dc_state( DC *dc )
 {
-    DC *dc;
-
-    if (!(dc = HeapAlloc( GetProcessHeap(), 0, sizeof(*dc) ))) return NULL;
-
-    dc->nulldrv.funcs       = &null_driver;
-    dc->nulldrv.next        = NULL;
-    dc->dibdrv              = NULL;
-    dc->physDev             = &dc->nulldrv;
-    dc->thread              = GetCurrentThreadId();
-    dc->refcount            = 1;
-    dc->dirty               = 0;
-    dc->saveLevel           = 0;
-    dc->saved_dc            = 0;
-    dc->dwHookData          = 0;
-    dc->hookProc            = NULL;
     dc->wndOrgX             = 0;
     dc->wndOrgY             = 0;
     dc->wndExtX             = 1;
@@ -97,19 +84,7 @@ DC *alloc_dc_ptr( WORD magic )
     dc->vportExtX           = 1;
     dc->vportExtY           = 1;
     dc->miterLimit          = 10.0f; /* 10.0 is the default, from MSDN */
-    dc->flags               = 0;
     dc->layout              = 0;
-    dc->hClipRgn            = 0;
-    dc->hMetaRgn            = 0;
-    dc->hMetaClipRgn        = 0;
-    dc->hVisRgn             = 0;
-    dc->hPen                = GDI_inc_ref_count( GetStockObject( BLACK_PEN ));
-    dc->hBrush              = GDI_inc_ref_count( GetStockObject( WHITE_BRUSH ));
-    dc->hFont               = GDI_inc_ref_count( GetStockObject( SYSTEM_FONT ));
-    dc->hBitmap             = 0;
-    dc->hDevice             = 0;
-    dc->hPalette            = GetStockObject( DEFAULT_PALETTE );
-    dc->gdiFont             = 0;
     dc->font_code_page      = CP_ACP;
     dc->ROPmode             = R2_COPYPEN;
     dc->polyFillMode        = ALTERNATE;
@@ -129,7 +104,6 @@ DC *alloc_dc_ptr( WORD magic )
     dc->breakRem            = 0;
     dc->MapMode             = MM_TEXT;
     dc->GraphicsMode        = GM_COMPATIBLE;
-    dc->pAbortProc          = NULL;
     dc->CursPosX            = 0;
     dc->CursPosY            = 0;
     dc->ArcDirection        = AD_COUNTERCLOCKWISE;
@@ -142,13 +116,31 @@ DC *alloc_dc_ptr( WORD magic )
     dc->xformWorld2Vport    = dc->xformWorld2Wnd;
     dc->xformVport2World    = dc->xformWorld2Wnd;
     dc->vport2WorldValid    = TRUE;
-    dc->BoundsRect.left     = 0;
-    dc->BoundsRect.top      = 0;
-    dc->BoundsRect.right    = 0;
-    dc->BoundsRect.bottom   = 0;
-    PATH_InitGdiPath(&dc->path);
 
-    if (!(dc->hSelf = alloc_gdi_handle( &dc->header, magic, &dc_funcs )))
+    reset_bounds( &dc->bounds );
+}
+
+/***********************************************************************
+ *           alloc_dc_ptr
+ */
+DC *alloc_dc_ptr( WORD magic )
+{
+    DC *dc;
+
+    if (!(dc = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*dc) ))) return NULL;
+
+    dc->nulldrv.funcs       = &null_driver;
+    dc->physDev             = &dc->nulldrv;
+    dc->thread              = GetCurrentThreadId();
+    dc->refcount            = 1;
+    dc->hPen                = GDI_inc_ref_count( GetStockObject( BLACK_PEN ));
+    dc->hBrush              = GDI_inc_ref_count( GetStockObject( WHITE_BRUSH ));
+    dc->hFont               = GDI_inc_ref_count( GetStockObject( SYSTEM_FONT ));
+    dc->hPalette            = GetStockObject( DEFAULT_PALETTE );
+
+    set_initial_dc_state( dc );
+
+    if (!(dc->hSelf = alloc_gdi_handle( dc, magic, &dc_funcs )))
     {
         HeapFree( GetProcessHeap(), 0, dc );
         return NULL;
@@ -172,9 +164,9 @@ static void free_dc_state( DC *dc )
 {
     if (dc->hClipRgn) DeleteObject( dc->hClipRgn );
     if (dc->hMetaRgn) DeleteObject( dc->hMetaRgn );
-    if (dc->hMetaClipRgn) DeleteObject( dc->hMetaClipRgn );
     if (dc->hVisRgn) DeleteObject( dc->hVisRgn );
-    PATH_DestroyGdiPath( &dc->path );
+    if (dc->region) DeleteObject( dc->region );
+    if (dc->path) free_gdi_path( dc->path );
     HeapFree( GetProcessHeap(), 0, dc );
 }
 
@@ -188,11 +180,14 @@ void free_dc_ptr( DC *dc )
 
     while (dc->physDev != &dc->nulldrv)
     {
-        PHYSDEV physdev = pop_dc_driver( &dc->physDev );
+        PHYSDEV physdev = dc->physDev;
+        dc->physDev = physdev->next;
         physdev->funcs->pDeleteDC( physdev );
-        if (physdev == dc->dibdrv) dc->dibdrv = NULL;
     }
-    if (dc->dibdrv) dc->dibdrv->funcs->pDeleteDC( dc->dibdrv );
+    GDI_dec_ref_count( dc->hPen );
+    GDI_dec_ref_count( dc->hBrush );
+    GDI_dec_ref_count( dc->hFont );
+    if (dc->hBitmap) GDI_dec_ref_count( dc->hBitmap );
     free_gdi_handle( dc->hSelf );
     free_dc_state( dc );
 }
@@ -276,8 +271,10 @@ void DC_InitDC( DC* dc )
     SelectObject( dc->hSelf, dc->hPen );
     SelectObject( dc->hSelf, dc->hBrush );
     SelectObject( dc->hSelf, dc->hFont );
-    CLIPPING_UpdateGCRegion( dc );
+    update_dc_clipping( dc );
     SetVirtualResolution( dc->hSelf, 0, 0, 0, 0 );
+    physdev = GET_DC_PHYSDEV( dc, pSetBoundsRect );
+    physdev->funcs->pSetBoundsRect( physdev, &dc->bounds, dc->bounds_enabled ? DCB_ENABLE : DCB_DISABLE );
 }
 
 
@@ -369,14 +366,12 @@ INT nulldrv_SaveDC( PHYSDEV dev )
 {
     DC *newdc, *dc = get_nulldrv_dc( dev );
 
-    if (!(newdc = HeapAlloc( GetProcessHeap(), 0, sizeof(*newdc )))) return 0;
-    newdc->flags            = dc->flags;
+    if (!(newdc = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*newdc )))) return 0;
     newdc->layout           = dc->layout;
     newdc->hPen             = dc->hPen;
     newdc->hBrush           = dc->hBrush;
     newdc->hFont            = dc->hFont;
     newdc->hBitmap          = dc->hBitmap;
-    newdc->hDevice          = dc->hDevice;
     newdc->hPalette         = dc->hPalette;
     newdc->ROPmode          = dc->ROPmode;
     newdc->polyFillMode     = dc->polyFillMode;
@@ -413,15 +408,9 @@ INT nulldrv_SaveDC( PHYSDEV dev )
     newdc->vportExtY        = dc->vportExtY;
     newdc->virtual_res      = dc->virtual_res;
     newdc->virtual_size     = dc->virtual_size;
-    newdc->BoundsRect       = dc->BoundsRect;
-    newdc->gdiFont          = dc->gdiFont;
 
     /* Get/SetDCState() don't change hVisRgn field ("Undoc. Windows" p.559). */
 
-    newdc->hVisRgn      = 0;
-    newdc->hClipRgn     = 0;
-    newdc->hMetaRgn     = 0;
-    newdc->hMetaClipRgn = 0;
     if (dc->hClipRgn)
     {
         newdc->hClipRgn = CreateRectRgn( 0, 0, 0, 0 );
@@ -432,8 +421,6 @@ INT nulldrv_SaveDC( PHYSDEV dev )
         newdc->hMetaRgn = CreateRectRgn( 0, 0, 0, 0 );
         CombineRgn( newdc->hMetaRgn, dc->hMetaRgn, 0, RGN_COPY );
     }
-
-    /* don't bother recomputing hMetaClipRgn, we'll do that in SetDCState */
 
     if (!PATH_SavePath( newdc, dc ))
     {
@@ -449,7 +436,7 @@ INT nulldrv_SaveDC( PHYSDEV dev )
 
 
 /***********************************************************************
- *           restore_dc_state
+ *           nulldrv_RestoreDC
  */
 BOOL nulldrv_RestoreDC( PHYSDEV dev, INT level )
 {
@@ -468,9 +455,7 @@ BOOL nulldrv_RestoreDC( PHYSDEV dev, INT level )
 
     if (!PATH_RestorePath( dc, dcs )) return FALSE;
 
-    dc->flags            = dcs->flags;
     dc->layout           = dcs->layout;
-    dc->hDevice          = dcs->hDevice;
     dc->ROPmode          = dcs->ROPmode;
     dc->polyFillMode     = dcs->polyFillMode;
     dc->stretchBltMode   = dcs->stretchBltMode;
@@ -496,8 +481,6 @@ BOOL nulldrv_RestoreDC( PHYSDEV dev, INT level )
     dc->xformWorld2Vport = dcs->xformWorld2Vport;
     dc->xformVport2World = dcs->xformVport2World;
     dc->vport2WorldValid = dcs->vport2WorldValid;
-    dc->BoundsRect       = dcs->BoundsRect;
-
     dc->wndOrgX          = dcs->wndOrgX;
     dc->wndOrgY          = dcs->wndOrgY;
     dc->wndExtX          = dcs->wndExtX;
@@ -530,7 +513,7 @@ BOOL nulldrv_RestoreDC( PHYSDEV dev, INT level )
         dc->hMetaRgn = 0;
     }
     DC_UpdateXforms( dc );
-    CLIPPING_UpdateGCRegion( dc );
+    update_dc_clipping( dc );
 
     SelectObject( dev->hdc, dcs->hBitmap );
     SelectObject( dev->hdc, dcs->hBrush );
@@ -552,6 +535,44 @@ BOOL nulldrv_RestoreDC( PHYSDEV dev, INT level )
         free_dc_state( first_dcs );
         first_dcs = next;
     }
+    return TRUE;
+}
+
+
+/***********************************************************************
+ *           reset_dc_state
+ */
+static BOOL reset_dc_state( HDC hdc )
+{
+    DC *dc, *dcs, *next;
+
+    if (!(dc = get_dc_ptr( hdc ))) return FALSE;
+
+    set_initial_dc_state( dc );
+    SetBkColor( hdc, RGB( 255, 255, 255 ));
+    SetTextColor( hdc, RGB( 0, 0, 0 ));
+    SelectObject( hdc, GetStockObject( WHITE_BRUSH ));
+    SelectObject( hdc, GetStockObject( SYSTEM_FONT ));
+    SelectObject( hdc, GetStockObject( BLACK_PEN ));
+    SetVirtualResolution( hdc, 0, 0, 0, 0 );
+    GDISelectPalette( hdc, GetStockObject( DEFAULT_PALETTE ), FALSE );
+    SetBoundsRect( hdc, NULL, DCB_DISABLE );
+    AbortPath( hdc );
+
+    if (dc->hClipRgn) DeleteObject( dc->hClipRgn );
+    if (dc->hMetaRgn) DeleteObject( dc->hMetaRgn );
+    dc->hClipRgn = 0;
+    dc->hMetaRgn = 0;
+    update_dc_clipping( dc );
+
+    for (dcs = dc->saved_dc; dcs; dcs = next)
+    {
+        next = dcs->saved_dc;
+        free_dc_state( dcs );
+    }
+    dc->saved_dc = NULL;
+    dc->saveLevel = 0;
+    release_dc_ptr( dc );
     return TRUE;
 }
 
@@ -579,14 +600,15 @@ INT WINAPI SaveDC( HDC hdc )
  */
 BOOL WINAPI RestoreDC( HDC hdc, INT level )
 {
+    PHYSDEV physdev;
     DC *dc;
     BOOL success = FALSE;
 
     TRACE("%p %d\n", hdc, level );
     if ((dc = get_dc_ptr( hdc )))
     {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pRestoreDC );
         update_dc( dc );
+        physdev = GET_DC_PHYSDEV( dc, pRestoreDC );
         success = physdev->funcs->pRestoreDC( physdev, level );
         release_dc_ptr( dc );
     }
@@ -622,11 +644,10 @@ HDC WINAPI CreateDCW( LPCWSTR driver, LPCWSTR device, LPCWSTR output,
         ERR( "no driver found for %s\n", debugstr_w(buf) );
         return 0;
     }
-    if (!(dc = alloc_dc_ptr( OBJ_DC ))) goto error;
+    if (!(dc = alloc_dc_ptr( OBJ_DC ))) return 0;
     hdc = dc->hSelf;
 
     dc->hBitmap = GDI_inc_ref_count( GetStockObject( DEFAULT_BITMAP ));
-    if (!(dc->hVisRgn = CreateRectRgn( 0, 0, 1, 1 ))) goto error;
 
     TRACE("(driver=%s, device=%s, output=%s): returning %p\n",
           debugstr_w(driver), debugstr_w(device), debugstr_w(output), dc->hSelf );
@@ -636,7 +657,8 @@ HDC WINAPI CreateDCW( LPCWSTR driver, LPCWSTR device, LPCWSTR output,
         if (!funcs->pCreateDC( &dc->physDev, buf, device, output, initData ))
         {
             WARN("creation aborted by device\n" );
-            goto error;
+            free_dc_ptr( dc );
+            return 0;
         }
     }
 
@@ -644,15 +666,10 @@ HDC WINAPI CreateDCW( LPCWSTR driver, LPCWSTR device, LPCWSTR output,
     dc->vis_rect.top    = 0;
     dc->vis_rect.right  = GetDeviceCaps( hdc, DESKTOPHORZRES );
     dc->vis_rect.bottom = GetDeviceCaps( hdc, DESKTOPVERTRES );
-    SetRectRgn(dc->hVisRgn, dc->vis_rect.left, dc->vis_rect.top, dc->vis_rect.right, dc->vis_rect.bottom);
 
     DC_InitDC( dc );
     release_dc_ptr( dc );
     return hdc;
-
-error:
-    if (dc) free_dc_ptr( dc );
-    return 0;
 }
 
 
@@ -722,7 +739,7 @@ HDC WINAPI CreateCompatibleDC( HDC hdc )
 {
     DC *dc, *origDC;
     HDC ret;
-    const struct gdi_dc_funcs *funcs = &null_driver;
+    const struct gdi_dc_funcs *funcs;
     PHYSDEV physDev = NULL;
 
     GDI_CheckNotLock();
@@ -734,8 +751,9 @@ HDC WINAPI CreateCompatibleDC( HDC hdc )
         funcs = physDev->funcs;
         release_dc_ptr( origDC );
     }
+    else funcs = DRIVER_load_driver( displayW );
 
-    if (!(dc = alloc_dc_ptr( OBJ_MEMDC ))) goto error;
+    if (!(dc = alloc_dc_ptr( OBJ_MEMDC ))) return 0;
 
     TRACE("(%p): returning %p\n", hdc, dc->hSelf );
 
@@ -744,22 +762,28 @@ HDC WINAPI CreateCompatibleDC( HDC hdc )
     dc->vis_rect.top    = 0;
     dc->vis_rect.right  = 1;
     dc->vis_rect.bottom = 1;
-    if (!(dc->hVisRgn = CreateRectRgn( 0, 0, 1, 1 ))) goto error;   /* default bitmap is 1x1 */
+    dc->device_rect = dc->vis_rect;
 
     ret = dc->hSelf;
 
-    if (!funcs->pCreateCompatibleDC( physDev, &dc->physDev ))
+    if (funcs->pCreateCompatibleDC && !funcs->pCreateCompatibleDC( physDev, &dc->physDev ))
     {
         WARN("creation aborted by device\n");
-        goto error;
+        free_dc_ptr( dc );
+        return 0;
     }
+
+    if (!dib_driver.pCreateDC( &dc->physDev, NULL, NULL, NULL, NULL ))
+    {
+        free_dc_ptr( dc );
+        return 0;
+    }
+    physDev = GET_DC_PHYSDEV( dc, pSelectBitmap );
+    physDev->funcs->pSelectBitmap( physDev, dc->hBitmap );
+
     DC_InitDC( dc );
     release_dc_ptr( dc );
     return ret;
-
-error:
-    if (dc) free_dc_ptr( dc );
-    return 0;
 }
 
 
@@ -783,26 +807,12 @@ BOOL WINAPI DeleteDC( HDC hdc )
     }
 
     /* Call hook procedure to check whether is it OK to delete this DC */
-    if (dc->hookProc && !dc->hookProc( hdc, DCHC_DELETEDC, dc->dwHookData, 0 ))
+    if (dc->hookProc && !dc->hookProc( dc->hSelf, DCHC_DELETEDC, dc->dwHookData, 0 ))
     {
         release_dc_ptr( dc );
         return TRUE;
     }
-
-    while (dc->saveLevel)
-    {
-        DC *dcs = dc->saved_dc;
-        dc->saved_dc = dcs->saved_dc;
-        dc->saveLevel--;
-        free_dc_state( dcs );
-    }
-
-    AbortPath( hdc );
-    SelectObject( hdc, GetStockObject(BLACK_PEN) );
-    SelectObject( hdc, GetStockObject(WHITE_BRUSH) );
-    SelectObject( hdc, GetStockObject(SYSTEM_FONT) );
-    SelectObject( hdc, GetStockObject(DEFAULT_BITMAP) );
-
+    reset_dc_state( hdc );
     free_dc_ptr( dc );
     return TRUE;
 }
@@ -827,9 +837,9 @@ HDC WINAPI ResetDCW( HDC hdc, const DEVMODEW *devmode )
             dc->vis_rect.top    = 0;
             dc->vis_rect.right  = GetDeviceCaps( hdc, DESKTOPHORZRES );
             dc->vis_rect.bottom = GetDeviceCaps( hdc, DESKTOPVERTRES );
-            SetRectRgn( dc->hVisRgn, dc->vis_rect.left, dc->vis_rect.top,
-                        dc->vis_rect.right, dc->vis_rect.bottom );
-            CLIPPING_UpdateGCRegion( dc );
+            if (dc->hVisRgn) DeleteObject( dc->hVisRgn );
+            dc->hVisRgn = 0;
+            update_dc_clipping( dc );
         }
         release_dc_ptr( dc );
     }
@@ -902,12 +912,8 @@ COLORREF WINAPI SetBkColor( HDC hdc, COLORREF color )
     if (dc)
     {
         PHYSDEV physdev = GET_DC_PHYSDEV( dc, pSetBkColor );
-        color = physdev->funcs->pSetBkColor( physdev, color );
-        if (color != CLR_INVALID)
-        {
-            ret = dc->backgroundColor;
-            dc->backgroundColor = color;
-        }
+        ret = dc->backgroundColor;
+        dc->backgroundColor = physdev->funcs->pSetBkColor( physdev, color );
         release_dc_ptr( dc );
     }
     return ret;
@@ -943,12 +949,8 @@ COLORREF WINAPI SetTextColor( HDC hdc, COLORREF color )
     if (dc)
     {
         PHYSDEV physdev = GET_DC_PHYSDEV( dc, pSetTextColor );
-        color = physdev->funcs->pSetTextColor( physdev, color );
-        if (color != CLR_INVALID)
-        {
-            ret = dc->textColor;
-            dc->textColor = color;
-        }
+        ret = dc->textColor;
+        dc->textColor = physdev->funcs->pSetTextColor( physdev, color );
         release_dc_ptr( dc );
     }
     return ret;
@@ -1047,6 +1049,8 @@ INT WINAPI SetGraphicsMode( HDC hdc, INT mode )
         dc->GraphicsMode = mode;
     }
     release_dc_ptr( dc );
+    /* font metrics depend on the graphics mode */
+    if (ret) SelectObject(dc->hSelf, GetCurrentObject(dc->hSelf, OBJ_FONT));
     return ret;
 }
 
@@ -1258,8 +1262,6 @@ WORD WINAPI SetHookFlags( HDC hdc, WORD flags )
 
     if (!dc) return 0;
 
-    /* "Undocumented Windows" info is slightly confusing. */
-
     TRACE("hDC %p, flags %04x\n",hdc,flags);
 
     if (flags & DCHF_INVALIDATEVISRGN)
@@ -1268,6 +1270,8 @@ WORD WINAPI SetHookFlags( HDC hdc, WORD flags )
         ret = InterlockedExchange( &dc->dirty, 0 );
 
     GDI_ReleaseObj( hdc );
+
+    if (flags & DCHF_RESETDC) ret = reset_dc_state( hdc );
     return ret;
 }
 
@@ -1294,11 +1298,93 @@ BOOL WINAPI GetDeviceGammaRamp(HDC hDC, LPVOID ptr)
     TRACE("%p, %p\n", hDC, ptr);
     if( dc )
     {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pGetDeviceGammaRamp );
-        ret = physdev->funcs->pGetDeviceGammaRamp( physdev, ptr );
+        if (GetObjectType( hDC ) != OBJ_MEMDC)
+        {
+            PHYSDEV physdev = GET_DC_PHYSDEV( dc, pGetDeviceGammaRamp );
+            ret = physdev->funcs->pGetDeviceGammaRamp( physdev, ptr );
+        }
+        else SetLastError( ERROR_INVALID_PARAMETER );
 	release_dc_ptr( dc );
     }
     return ret;
+}
+
+static BOOL check_gamma_ramps(void *ptr)
+{
+    WORD *ramp = ptr;
+
+    while (ramp < (WORD*)ptr + 3 * 256)
+    {
+        float r_x, r_y, r_lx, r_ly, r_d, r_v, r_e, g_avg, g_min, g_max;
+        unsigned i, f, l, g_n, c;
+
+        f = ramp[0];
+        l = ramp[255];
+        if (f >= l)
+        {
+            TRACE("inverted or flat gamma ramp (%d->%d), rejected\n", f, l);
+            return FALSE;
+        }
+        r_d = l - f;
+        g_min = g_max = g_avg = 0.0;
+
+        /* check gamma ramp entries to estimate the gamma */
+        TRACE("analyzing gamma ramp (%d->%d)\n", f, l);
+        for (i=1, g_n=0; i<255; i++)
+        {
+            if (ramp[i] < f || ramp[i] > l)
+            {
+                TRACE("strange gamma ramp ([%d]=%d for %d->%d), rejected\n", i, ramp[i], f, l);
+                return FALSE;
+            }
+            c = ramp[i] - f;
+            if (!c) continue; /* avoid log(0) */
+
+            /* normalize entry values into 0..1 range */
+            r_x = i/255.0; r_y = c / r_d;
+            /* compute logarithms of values */
+            r_lx = log(r_x); r_ly = log(r_y);
+            /* compute gamma for this entry */
+            r_v = r_ly / r_lx;
+            /* compute differential (error estimate) for this entry */
+            /* some games use table-based logarithms that magnifies the error by 128 */
+            r_e = -r_lx * 128 / (c * r_lx * r_lx);
+
+            /* compute min & max while compensating for estimated error */
+            if (!g_n || g_min > (r_v + r_e)) g_min = r_v + r_e;
+            if (!g_n || g_max < (r_v - r_e)) g_max = r_v - r_e;
+
+            /* add to average */
+            g_avg += r_v;
+            g_n++;
+        }
+
+        if (!g_n)
+        {
+            TRACE("no gamma data, shouldn't happen\n");
+            return FALSE;
+        }
+        g_avg /= g_n;
+        TRACE("low bias is %d, high is %d, gamma is %5.3f\n", f, 65535-l, g_avg);
+
+        /* check that the gamma is reasonably uniform across the ramp */
+        if (g_max - g_min > 12.8)
+        {
+            TRACE("ramp not uniform (max=%f, min=%f, avg=%f), rejected\n", g_max, g_min, g_avg);
+            return FALSE;
+        }
+
+        /* check that the gamma is not too bright */
+        if (g_avg < 0.2)
+        {
+            TRACE("too bright gamma ( %5.3f), rejected\n", g_avg);
+            return FALSE;
+        }
+
+        ramp += 256;
+    }
+
+    return TRUE;
 }
 
 /***********************************************************************
@@ -1312,8 +1398,14 @@ BOOL WINAPI SetDeviceGammaRamp(HDC hDC, LPVOID ptr)
     TRACE("%p, %p\n", hDC, ptr);
     if( dc )
     {
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pSetDeviceGammaRamp );
-        ret = physdev->funcs->pSetDeviceGammaRamp( physdev, ptr );
+        if (GetObjectType( hDC ) != OBJ_MEMDC)
+        {
+            PHYSDEV physdev = GET_DC_PHYSDEV( dc, pSetDeviceGammaRamp );
+
+            if (check_gamma_ramps(ptr))
+                ret = physdev->funcs->pSetDeviceGammaRamp( physdev, ptr );
+        }
+        else SetLastError( ERROR_INVALID_PARAMETER );
 	release_dc_ptr( dc );
     }
     return ret;
@@ -1371,24 +1463,43 @@ HCOLORSPACE WINAPI SetColorSpace( HDC hDC, HCOLORSPACE hColorSpace )
  */
 UINT WINAPI GetBoundsRect(HDC hdc, LPRECT rect, UINT flags)
 {
-    UINT ret = 0;
+    PHYSDEV physdev;
+    RECT device_rect;
+    UINT ret;
     DC *dc = get_dc_ptr( hdc );
 
     if ( !dc ) return 0;
 
+    physdev = GET_DC_PHYSDEV( dc, pGetBoundsRect );
+    ret = physdev->funcs->pGetBoundsRect( physdev, &device_rect, DCB_RESET );
+    if (!ret)
+    {
+        release_dc_ptr( dc );
+        return 0;
+    }
+    if (dc->bounds_enabled && ret == DCB_SET) add_bounds_rect( &dc->bounds, &device_rect );
+
     if (rect)
     {
-        *rect = dc->BoundsRect;
-        ret = is_rect_empty( rect ) ? DCB_RESET : DCB_SET;
+        if (is_rect_empty( &dc->bounds ))
+        {
+            rect->left = rect->top = rect->right = rect->bottom = 0;
+            ret = DCB_RESET;
+        }
+        else
+        {
+            *rect = dc->bounds;
+            rect->left   = max( rect->left, 0 );
+            rect->top    = max( rect->top, 0 );
+            rect->right  = min( rect->right, dc->vis_rect.right - dc->vis_rect.left );
+            rect->bottom = min( rect->bottom, dc->vis_rect.bottom - dc->vis_rect.top );
+            ret = DCB_SET;
+        }
         DPtoLP( hdc, (POINT *)rect, 2 );
     }
-    if (flags & DCB_RESET)
-    {
-        dc->BoundsRect.left   = 0;
-        dc->BoundsRect.top    = 0;
-        dc->BoundsRect.right  = 0;
-        dc->BoundsRect.bottom = 0;
-    }
+    else ret = 0;
+
+    if (flags & DCB_RESET) reset_bounds( &dc->bounds );
     release_dc_ptr( dc );
     return ret;
 }
@@ -1399,43 +1510,36 @@ UINT WINAPI GetBoundsRect(HDC hdc, LPRECT rect, UINT flags)
  */
 UINT WINAPI SetBoundsRect(HDC hdc, const RECT* rect, UINT flags)
 {
+    PHYSDEV physdev;
     UINT ret;
     DC *dc;
 
     if ((flags & DCB_ENABLE) && (flags & DCB_DISABLE)) return 0;
     if (!(dc = get_dc_ptr( hdc ))) return 0;
 
-    ret = ((dc->flags & DC_BOUNDS_ENABLE) ? DCB_ENABLE : DCB_DISABLE) |
-           (is_rect_empty( &dc->BoundsRect ) ? DCB_RESET : DCB_SET);
-
-    if (flags & DCB_RESET)
+    physdev = GET_DC_PHYSDEV( dc, pSetBoundsRect );
+    ret = physdev->funcs->pSetBoundsRect( physdev, &dc->bounds, flags );
+    if (!ret)
     {
-        dc->BoundsRect.left   = 0;
-        dc->BoundsRect.top    = 0;
-        dc->BoundsRect.right  = 0;
-        dc->BoundsRect.bottom = 0;
+        release_dc_ptr( dc );
+        return 0;
     }
+
+    ret = (dc->bounds_enabled ? DCB_ENABLE : DCB_DISABLE) |
+          (is_rect_empty( &dc->bounds ) ? ret & DCB_SET : DCB_SET);
+
+    if (flags & DCB_RESET) reset_bounds( &dc->bounds );
 
     if ((flags & DCB_ACCUMULATE) && rect)
     {
         RECT rc = *rect;
 
         LPtoDP( hdc, (POINT *)&rc, 2 );
-        if (!is_rect_empty( &rc ))
-        {
-            if (!is_rect_empty( &dc->BoundsRect))
-            {
-                dc->BoundsRect.left   = min( dc->BoundsRect.left, rc.left );
-                dc->BoundsRect.top    = min( dc->BoundsRect.top, rc.top );
-                dc->BoundsRect.right  = max( dc->BoundsRect.right, rc.right );
-                dc->BoundsRect.bottom = max( dc->BoundsRect.bottom, rc.bottom );
-            }
-            else dc->BoundsRect = rc;
-        }
+        add_bounds_rect( &dc->bounds, &rc );
     }
 
-    if (flags & DCB_ENABLE) dc->flags |= DC_BOUNDS_ENABLE;
-    if (flags & DCB_DISABLE) dc->flags &= ~DC_BOUNDS_ENABLE;
+    if (flags & DCB_ENABLE) dc->bounds_enabled = TRUE;
+    if (flags & DCB_DISABLE) dc->bounds_enabled = FALSE;
 
     release_dc_ptr( dc );
     return ret;

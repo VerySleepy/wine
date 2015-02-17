@@ -1,7 +1,4 @@
-EXTRADEFS = -DCOM_NO_WINDOWS_H
 MODULE    = rsabase.dll
 IMPORTS   = rsaenh
 
 RC_SRCS = version.rc
-
-@MAKE_DLL_RULES@

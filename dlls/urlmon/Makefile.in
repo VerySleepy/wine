@@ -1,10 +1,11 @@
 MODULE    = urlmon.dll
 IMPORTLIB = urlmon
 IMPORTS   = uuid ole32 oleaut32 shell32 rpcrt4 shlwapi wininet user32 advapi32
-EXTRADEFS = -D_URLMON_ -DENTRY_PREFIX=URLMON_ -DPROXY_DELEGATION -DWINE_REGISTER_DLL \
-	    -DPROXY_CLSID_IS="{0x79EAC9F1,0xBAF9,0x11CE,{0x8C,0x82,0x00,0xAA,0x00,0x4B,0xA9,0x0B}}"
+EXTRADEFS = -D_URLMON_
+DELAYIMPORTS = advpack
 
 C_SRCS = \
+	axinstall.c \
 	bindctx.c \
 	binding.c \
 	bindprot.c \
@@ -18,7 +19,6 @@ C_SRCS = \
 	mimefilter.c \
 	mk.c \
 	protocol.c \
-	protproxy.c \
 	sec_mgr.c \
 	session.c \
 	umon.c \
@@ -27,11 +27,9 @@ C_SRCS = \
 	urlmon_main.c \
 	usrmarshal.c
 
-RC_SRCS = rsrc.rc
+RC_SRCS = urlmon.rc
 
-IDL_P_SRCS = urlmon_urlmon.idl
-IDL_R_SRCS = urlmon_urlmon.idl
+IDL_SRCS = urlmon_urlmon.idl
 
-EXTRA_OBJS = dlldata.o
-
-@MAKE_DLL_RULES@
+dlldata_EXTRADEFS = -DENTRY_PREFIX=URLMON_ -DPROXY_DELEGATION -DWINE_REGISTER_DLL \
+	    -DPROXY_CLSID_IS="{0x79EAC9F1,0xBAF9,0x11CE,{0x8C,0x82,0x00,0xAA,0x00,0x4B,0xA9,0x0B}}"

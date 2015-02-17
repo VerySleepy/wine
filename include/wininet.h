@@ -387,8 +387,8 @@ typedef struct _INTERNET_DIAGNOSTIC_SOCKET_INFO
 #define IDSI_FLAG_PROXY      0x00000004
 #define IDSI_FLAG_TUNNEL     0x00000008
 
-BOOLAPI InternetTimeFromSystemTimeA(CONST SYSTEMTIME *,DWORD ,LPSTR ,DWORD);
-BOOLAPI InternetTimeFromSystemTimeW(CONST SYSTEMTIME *,DWORD ,LPWSTR ,DWORD);
+BOOLAPI InternetTimeFromSystemTimeA(const SYSTEMTIME *,DWORD ,LPSTR ,DWORD);
+BOOLAPI InternetTimeFromSystemTimeW(const SYSTEMTIME *,DWORD ,LPWSTR ,DWORD);
 #define InternetTimeFromSystemTime WINELIB_NAME_AW(InternetTimeFromSystemTime)
 
 #define INTERNET_RFC1123_FORMAT    0
@@ -421,6 +421,7 @@ BOOLAPI InternetCombineUrlW(LPCWSTR ,LPCWSTR ,LPWSTR ,LPDWORD ,DWORD);
 #define ICU_NO_META     0x08000000
 #define ICU_ENCODE_SPACES_ONLY 0x04000000
 #define ICU_BROWSER_MODE 0x02000000
+#define ICU_ENCODE_PERCENT 0x00001000
 
 INTERNETAPI HINTERNET WINAPI InternetOpenA(LPCSTR ,DWORD ,LPCSTR ,LPCSTR ,DWORD);
 INTERNETAPI HINTERNET WINAPI InternetOpenW(LPCWSTR ,DWORD ,LPCWSTR ,LPCWSTR ,DWORD);
@@ -687,7 +688,7 @@ INTERNETAPI INTERNET_STATUS_CALLBACK WINAPI InternetSetStatusCallbackW(HINTERNET
 #define INTERNET_STATE_IDLE                     0x00000100
 #define INTERNET_STATE_BUSY                     0x00000200
 
-#define INTERNET_INVALID_STATUS_CALLBACK        ((INTERNET_STATUS_CALLBACK)(-1L))
+#define INTERNET_INVALID_STATUS_CALLBACK        ((INTERNET_STATUS_CALLBACK)(-1))
 
 #define FTP_TRANSFER_TYPE_UNKNOWN   0x00000000
 #define FTP_TRANSFER_TYPE_ASCII     0x00000001
@@ -805,17 +806,17 @@ DECL_WINELIB_TYPE_AW(LPGOPHER_FIND_DATA)
 #define GOPHER_TYPE_ASK             0x40000000
 #define GOPHER_TYPE_GOPHER_PLUS     0x80000000
 
-#define IS_GOPHER_FILE(type)            (BOOL)(((type) & GOPHER_TYPE_FILE_MASK) ? TRUE : FALSE)
-#define IS_GOPHER_DIRECTORY(type)       (BOOL)(((type) & GOPHER_TYPE_DIRECTORY) ? TRUE : FALSE)
-#define IS_GOPHER_PHONE_SERVER(type)    (BOOL)(((type) & GOPHER_TYPE_CSO) ? TRUE : FALSE)
-#define IS_GOPHER_ERROR(type)           (BOOL)(((type) & GOPHER_TYPE_ERROR) ? TRUE : FALSE)
-#define IS_GOPHER_INDEX_SERVER(type)    (BOOL)(((type) & GOPHER_TYPE_INDEX_SERVER) ? TRUE : FALSE)
-#define IS_GOPHER_TELNET_SESSION(type)  (BOOL)(((type) & GOPHER_TYPE_TELNET) ? TRUE : FALSE)
-#define IS_GOPHER_BACKUP_SERVER(type)   (BOOL)(((type) & GOPHER_TYPE_REDUNDANT) ? TRUE : FALSE)
-#define IS_GOPHER_TN3270_SESSION(type)  (BOOL)(((type) & GOPHER_TYPE_TN3270) ? TRUE : FALSE)
-#define IS_GOPHER_ASK(type)             (BOOL)(((type) & GOPHER_TYPE_ASK) ? TRUE : FALSE)
-#define IS_GOPHER_PLUS(type)            (BOOL)(((type) & GOPHER_TYPE_GOPHER_PLUS) ? TRUE : FALSE)
-#define IS_GOPHER_TYPE_KNOWN(type)      (BOOL)(((type) & GOPHER_TYPE_UNKNOWN) ? FALSE : TRUE)
+#define IS_GOPHER_FILE(type)            (BOOL)(((type) & GOPHER_TYPE_FILE_MASK) != 0)
+#define IS_GOPHER_DIRECTORY(type)       (BOOL)(((type) & GOPHER_TYPE_DIRECTORY) != 0)
+#define IS_GOPHER_PHONE_SERVER(type)    (BOOL)(((type) & GOPHER_TYPE_CSO) != 0)
+#define IS_GOPHER_ERROR(type)           (BOOL)(((type) & GOPHER_TYPE_ERROR) != 0)
+#define IS_GOPHER_INDEX_SERVER(type)    (BOOL)(((type) & GOPHER_TYPE_INDEX_SERVER) != 0)
+#define IS_GOPHER_TELNET_SESSION(type)  (BOOL)(((type) & GOPHER_TYPE_TELNET) != 0)
+#define IS_GOPHER_BACKUP_SERVER(type)   (BOOL)(((type) & GOPHER_TYPE_REDUNDANT) != 0)
+#define IS_GOPHER_TN3270_SESSION(type)  (BOOL)(((type) & GOPHER_TYPE_TN3270) != 0)
+#define IS_GOPHER_ASK(type)             (BOOL)(((type) & GOPHER_TYPE_ASK) != 0)
+#define IS_GOPHER_PLUS(type)            (BOOL)(((type) & GOPHER_TYPE_GOPHER_PLUS) != 0)
+#define IS_GOPHER_TYPE_KNOWN(type)      (BOOL)(!((type) & GOPHER_TYPE_UNKNOWN))
 #define GOPHER_TYPE_FILE_MASK       (GOPHER_TYPE_TEXT_FILE \
                                     | GOPHER_TYPE_MAC_BINHEX        \
                                     | GOPHER_TYPE_DOS_ARCHIVE       \
@@ -1304,6 +1305,16 @@ BOOLAPI HttpQueryInfoA(HINTERNET ,DWORD ,LPVOID ,LPDWORD ,LPDWORD);
 BOOLAPI HttpQueryInfoW(HINTERNET ,DWORD ,LPVOID ,LPDWORD ,LPDWORD);
 #define HttpQueryInfo  WINELIB_NAME_AW(HttpQueryInfo)
 
+typedef enum {
+    COOKIE_STATE_UNKNOWN,
+    COOKIE_STATE_ACCEPT,
+    COOKIE_STATE_PROMPT,
+    COOKIE_STATE_LEASH,
+    COOKIE_STATE_DOWNGRADE,
+    COOKIE_STATE_REJECT,
+    COOKIE_STATE_MAX = COOKIE_STATE_REJECT
+} InternetCookieState;
+
 BOOLAPI InternetClearAllPerSiteCookieDecisions(VOID);
 
 BOOLAPI InternetEnumPerSiteCookieDecisionA(LPSTR,ULONG *,ULONG *,ULONG);
@@ -1320,6 +1331,8 @@ BOOLAPI InternetEnumPerSiteCookieDecisionW(LPWSTR,ULONG *,ULONG *,ULONG);
 #define INTERNET_COOKIE_IS_RESTRICTED   0x00000200
 #define INTERNET_COOKIE_IE6             0x00000400
 #define INTERNET_COOKIE_IS_LEGACY       0x00000800
+#define INTERNET_COOKIE_NON_SCRIPT      0x00001000
+#define INTERNET_COOKIE_HTTPONLY        0x00002000
 
 BOOLAPI InternetGetCookieExA(LPCSTR,LPCSTR,LPSTR,LPDWORD,DWORD,LPVOID);
 BOOLAPI InternetGetCookieExW(LPCWSTR,LPCWSTR,LPWSTR,LPDWORD,DWORD,LPVOID);
@@ -1718,6 +1731,36 @@ INTERNETAPI BOOL WINAPI InternetSetDialStateW(LPCWSTR ,DWORD ,DWORD);
 BOOL WINAPI InternetGetConnectedStateExA(LPDWORD, LPSTR, DWORD, DWORD);
 BOOL WINAPI InternetGetConnectedStateExW(LPDWORD, LPWSTR, DWORD, DWORD);
 #define InternetGetConnectedStateEx WINELIB_NAME_AW(InternetGetConnectedStateEx)
+
+typedef struct AutoProxyHelperVtbl
+{
+    BOOL  (WINAPI *IsResolvable)(LPSTR);
+    DWORD (WINAPI *GetIPAddress)(LPSTR, LPDWORD);
+    DWORD (WINAPI *ResolveHostName)(LPSTR, LPSTR, LPDWORD);
+    BOOL  (WINAPI *IsInNet)(LPSTR, LPSTR, LPSTR);
+    BOOL  (WINAPI *IsResolvableEx)(LPSTR);
+    DWORD (WINAPI *GetIPAddressEx)(LPSTR, LPDWORD);
+    DWORD (WINAPI *ResolveHostNameEx)(LPSTR, LPSTR, LPDWORD);
+    BOOL  (WINAPI *IsInNetEx)(LPSTR, LPSTR);
+    DWORD (WINAPI *SortIpList)(LPSTR, LPSTR, LPDWORD);
+} AutoProxyHelperVtbl;
+
+typedef struct AutoProxyHelperFunctions
+{
+    const struct AutoProxyHelperVtbl *lpVtbl;
+} AutoProxyHelperFunctions;
+
+typedef struct
+{
+    DWORD dwStructSize;
+    LPSTR lpszScriptBuffer;
+    DWORD dwScriptBufferSize;
+} AUTO_PROXY_SCRIPT_BUFFER, *LPAUTO_PROXY_SCRIPT_BUFFER;
+
+typedef BOOL (CALLBACK *pfnInternetDeInitializeAutoProxyDll)(LPSTR, DWORD);
+typedef BOOL (CALLBACK *pfnInternetGetProxyInfo)(LPCSTR, DWORD, LPSTR, DWORD, LPSTR *, LPDWORD);
+typedef BOOL (CALLBACK *pfnInternetInitializeAutoProxyDll)(DWORD, LPSTR, LPSTR, AutoProxyHelperFunctions *,
+    LPAUTO_PROXY_SCRIPT_BUFFER);
 
 BOOL WINAPI InternetInitializeAutoProxyDll(DWORD);
 BOOL WINAPI DetectAutoProxyUrl(LPSTR, DWORD, DWORD);

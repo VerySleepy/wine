@@ -22,11 +22,14 @@
 
 #include "windef.h"
 #include "winbase.h"
+#include "winreg.h"
 #include "wingdi.h"
 #include "winuser.h"
 #include "winerror.h"
+#define NOFIX32
 #include "wintab.h"
 #include "wintab_internal.h"
+#include "wine/unicode.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wintab32);
@@ -34,7 +37,13 @@ WINE_DEFAULT_DEBUG_CHANNEL(wintab32);
 HWND hwndDefault = NULL;
 static const WCHAR
   WC_TABLETCLASSNAME[] = {'W','i','n','e','T','a','b','l','e','t','C','l','a','s','s',0};
-CRITICAL_SECTION csTablet;
+static CRITICAL_SECTION_DEBUG csTablet_debug =
+{
+    0, 0, &csTablet,
+    { &csTablet_debug.ProcessLocksList, &csTablet_debug.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": csTablet") }
+};
+CRITICAL_SECTION csTablet = { &csTablet_debug, -1, 0, 0, 0, 0 };
 
 int  (CDECL *pLoadTabletInfo)(HWND hwnddefault) = NULL;
 int  (CDECL *pGetCurrentPacket)(LPWTPACKET packet) = NULL;
@@ -63,10 +72,41 @@ static VOID TABLET_Unregister(void)
     UnregisterClassW(WC_TABLETCLASSNAME, NULL);
 }
 
+static HMODULE load_graphics_driver(void)
+{
+    static const WCHAR display_device_guid_propW[] = {
+        '_','_','w','i','n','e','_','d','i','s','p','l','a','y','_',
+        'd','e','v','i','c','e','_','g','u','i','d',0 };
+    static const WCHAR key_pathW[] = {
+        'S','y','s','t','e','m','\\',
+        'C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t','\\',
+        'C','o','n','t','r','o','l','\\',
+        'V','i','d','e','o','\\','{',0};
+    static const WCHAR displayW[] = {'}','\\','0','0','0','0',0};
+    static const WCHAR driverW[] = {'G','r','a','p','h','i','c','s','D','r','i','v','e','r',0};
+
+    HMODULE ret = 0;
+    HKEY hkey;
+    DWORD size;
+    WCHAR path[MAX_PATH];
+    WCHAR key[(sizeof(key_pathW) + sizeof(displayW)) / sizeof(WCHAR) + 40];
+    UINT guid_atom = HandleToULong( GetPropW( GetDesktopWindow(), display_device_guid_propW ));
+
+    if (!guid_atom) return 0;
+    memcpy( key, key_pathW, sizeof(key_pathW) );
+    if (!GlobalGetAtomNameW( guid_atom, key + strlenW(key), 40 )) return 0;
+    strcatW( key, displayW );
+    if (RegOpenKeyW( HKEY_LOCAL_MACHINE, key, &hkey )) return 0;
+    size = sizeof(path);
+    if (!RegQueryValueExW( hkey, driverW, NULL, NULL, (BYTE *)path, &size )) ret = LoadLibraryW( path );
+    RegCloseKey( hkey );
+    TRACE( "%s %p\n", debugstr_w(path), ret );
+    return ret;
+}
+
 BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpReserved)
 {
     static const WCHAR name[] = {'T','a','b','l','e','t',0};
-    HMODULE hx11drv;
 
     TRACE("%p, %x, %p\n",hInstDLL,fdwReason,lpReserved);
     switch (fdwReason)
@@ -74,31 +114,25 @@ BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpReserved)
         case DLL_PROCESS_ATTACH:
             TRACE("Initialization\n");
             DisableThreadLibraryCalls(hInstDLL);
-            InitializeCriticalSection(&csTablet);
-            csTablet.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": csTablet");
-            hx11drv = GetModuleHandleA("winex11.drv");
-            if (hx11drv)
+            TABLET_Register();
+            hwndDefault = CreateWindowW(WC_TABLETCLASSNAME, name,
+                                        WS_POPUPWINDOW,0,0,0,0,0,0,hInstDLL,0);
+            if (hwndDefault)
             {
-                pLoadTabletInfo = (void *)GetProcAddress(hx11drv, "LoadTabletInfo");
-                pAttachEventQueueToTablet = (void *)GetProcAddress(hx11drv, "AttachEventQueueToTablet");
-                pGetCurrentPacket = (void *)GetProcAddress(hx11drv, "GetCurrentPacket");
-                pWTInfoW = (void *)GetProcAddress(hx11drv, "WTInfoW");
-                TABLET_Register();
-                hwndDefault = CreateWindowW(WC_TABLETCLASSNAME, name,
-                                WS_POPUPWINDOW,0,0,0,0,0,0,hInstDLL,0);
+                HMODULE module = load_graphics_driver();
+                pLoadTabletInfo = (void *)GetProcAddress(module, "LoadTabletInfo");
+                pAttachEventQueueToTablet = (void *)GetProcAddress(module, "AttachEventQueueToTablet");
+                pGetCurrentPacket = (void *)GetProcAddress(module, "GetCurrentPacket");
+                pWTInfoW = (void *)GetProcAddress(module, "WTInfoW");
             }
             else
                 return FALSE;
             break;
         case DLL_PROCESS_DETACH:
+            if (lpReserved) break;
             TRACE("Detaching\n");
-            if (hwndDefault)
-            {
-                DestroyWindow(hwndDefault);
-                hwndDefault = 0;
-            }
+            if (hwndDefault) DestroyWindow(hwndDefault);
             TABLET_Unregister();
-            csTablet.DebugInfo->Spare[0] = 0;
             DeleteCriticalSection(&csTablet);
             break;
     }

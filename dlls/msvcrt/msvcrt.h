@@ -41,17 +41,25 @@
 #include "windef.h"
 #include "winbase.h"
 
-#define MSVCRT_LONG_MAX    0x7fffffffL
-#define MSVCRT_ULONG_MAX   0xffffffffUL
+#define MSVCRT_LONG_MAX    0x7fffffff
+#define MSVCRT_LONG_MIN    (-MSVCRT_LONG_MAX-1)
+#define MSVCRT_ULONG_MAX   0xffffffff
 #define MSVCRT_I64_MAX    (((__int64)0x7fffffff << 32) | 0xffffffff)
 #define MSVCRT_I64_MIN    (-MSVCRT_I64_MAX-1)
 #define MSVCRT_UI64_MAX   (((unsigned __int64)0xffffffff << 32) | 0xffffffff)
+#define MSVCRT_MB_LEN_MAX 5
+#ifdef _WIN64
+#define MSVCRT_SIZE_MAX MSVCRT_UI64_MAX
+#else
+#define MSVCRT_SIZE_MAX MSVCRT_ULONG_MAX
+#endif
 
 #define MSVCRT__MAX_DRIVE  3
 #define MSVCRT__MAX_DIR    256
 #define MSVCRT__MAX_FNAME  256
 #define MSVCRT__MAX_EXT    256
 
+typedef unsigned char  MSVCRT_bool;
 typedef unsigned short MSVCRT_wchar_t;
 typedef unsigned short MSVCRT_wint_t;
 typedef unsigned short MSVCRT_wctype_t;
@@ -59,6 +67,7 @@ typedef unsigned short MSVCRT__ino_t;
 typedef unsigned int   MSVCRT__fsize_t;
 typedef int            MSVCRT_long;
 typedef unsigned int   MSVCRT_ulong;
+typedef __int64        MSVCRT_longlong;
 #ifdef _WIN64
 typedef unsigned __int64 MSVCRT_size_t;
 typedef __int64 MSVCRT_intptr_t;
@@ -76,14 +85,14 @@ typedef __int64 DECLSPEC_ALIGN(8) MSVCRT___time64_t;
 typedef __int64 DECLSPEC_ALIGN(8) MSVCRT_fpos_t;
 typedef int MSVCRT_mbstate_t;
 
-typedef void (*__cdecl MSVCRT_terminate_handler)(void);
-typedef void (*__cdecl MSVCRT_terminate_function)(void);
-typedef void (*__cdecl MSVCRT_unexpected_handler)(void);
-typedef void (*__cdecl MSVCRT_unexpected_function)(void);
-typedef void (*__cdecl MSVCRT__se_translator_function)(unsigned int code, struct _EXCEPTION_POINTERS *info);
-typedef void (*__cdecl MSVCRT__beginthread_start_routine_t)(void *);
+typedef void (__cdecl *MSVCRT_terminate_handler)(void);
+typedef void (__cdecl *MSVCRT_terminate_function)(void);
+typedef void (__cdecl *MSVCRT_unexpected_handler)(void);
+typedef void (__cdecl *MSVCRT_unexpected_function)(void);
+typedef void (__cdecl *MSVCRT__se_translator_function)(unsigned int code, struct _EXCEPTION_POINTERS *info);
+typedef void (__cdecl *MSVCRT__beginthread_start_routine_t)(void *);
 typedef unsigned int (__stdcall *MSVCRT__beginthreadex_start_routine_t)(void *);
-typedef int (*__cdecl MSVCRT__onexit_t)(void);
+typedef int (__cdecl *MSVCRT__onexit_t)(void);
 typedef void (__cdecl *MSVCRT_invalid_parameter_handler)(const MSVCRT_wchar_t*, const MSVCRT_wchar_t*, const MSVCRT_wchar_t*, unsigned, MSVCRT_uintptr_t);
 typedef void (__cdecl *MSVCRT_purecall_handler)(void);
 typedef void (__cdecl *MSVCRT_security_error_handler)(int, void *);
@@ -108,6 +117,27 @@ typedef struct MSVCRT_tagLC_ID {
     unsigned short wCodePage;
 } MSVCRT_LC_ID, *MSVCRT_LPLC_ID;
 
+typedef struct {
+    union {
+        char *str[43];
+        struct {
+            char *short_wday[7];
+            char *wday[7];
+            char *short_mon[12];
+            char *mon[12];
+            char *am;
+            char *pm;
+            char *short_date;
+            char *date;
+            char *time;
+        } names;
+    } str;
+    LCID lcid;
+    int  unk[2];
+    MSVCRT_wchar_t *wstr[43];
+    char data[1];
+} MSVCRT___lc_time_data;
+
 typedef struct MSVCRT_threadlocaleinfostruct {
     int refcount;
     unsigned int lc_codepage;
@@ -131,7 +161,7 @@ typedef struct MSVCRT_threadlocaleinfostruct {
     unsigned short *pctype;
     unsigned char *pclmap;
     unsigned char *pcumap;
-    struct MSVCRT___lc_time_data *lc_time_curr;
+    MSVCRT___lc_time_data *lc_time_curr;
 } MSVCRT_threadlocinfo;
 
 typedef struct MSVCRT_threadmbcinfostruct {
@@ -155,7 +185,7 @@ typedef struct MSVCRT_localeinfo_struct
 
 
 /* TLS data */
-extern DWORD msvcrt_tls_index;
+extern DWORD msvcrt_tls_index DECLSPEC_HIDDEN;
 
 /* Keep in sync with msvcr90/tests/msvcr90.c */
 struct __thread_data {
@@ -178,7 +208,8 @@ struct __thread_data {
     struct MSVCRT_tm               *time_buffer;        /* buffer for localtime/gmtime */
     char                           *efcvt_buffer;       /* buffer for ecvt/fcvt */
     int                             unk3[2];
-    void                           *unk4[4];
+    void                           *unk4[3];
+    EXCEPTION_POINTERS             *xcptinfo;
     int                             fpecode;
     MSVCRT_pthreadmbcinfo           mbcinfo;
     MSVCRT_pthreadlocinfo           locinfo;
@@ -195,15 +226,18 @@ struct __thread_data {
 
 typedef struct __thread_data thread_data_t;
 
-extern thread_data_t *msvcrt_get_thread_data(void);
+extern thread_data_t *msvcrt_get_thread_data(void) DECLSPEC_HIDDEN;
 
-LCID MSVCRT_locale_to_LCID(const char *);
-extern MSVCRT__locale_t MSVCRT_locale;
-extern int MSVCRT___lc_codepage;
+LCID MSVCRT_locale_to_LCID(const char*, unsigned short*) DECLSPEC_HIDDEN;
+extern MSVCRT__locale_t MSVCRT_locale DECLSPEC_HIDDEN;
+extern unsigned int MSVCRT___lc_codepage;
 extern int MSVCRT___lc_collate_cp;
 extern WORD MSVCRT__ctype [257];
 
-void   msvcrt_set_errno(int);
+void msvcrt_set_errno(int) DECLSPEC_HIDDEN;
+#if _MSVCR_VER >= 80
+void throw_bad_alloc(const char*) DECLSPEC_HIDDEN;
+#endif
 
 void __cdecl _purecall(void);
 void __cdecl _amsg_exit(int errnum);
@@ -211,10 +245,12 @@ void __cdecl _amsg_exit(int errnum);
 extern char **MSVCRT__environ;
 extern MSVCRT_wchar_t **MSVCRT__wenviron;
 
-extern char ** msvcrt_SnapshotOfEnvironmentA(char **);
-extern MSVCRT_wchar_t ** msvcrt_SnapshotOfEnvironmentW(MSVCRT_wchar_t **);
+extern char ** msvcrt_SnapshotOfEnvironmentA(char **) DECLSPEC_HIDDEN;
+extern MSVCRT_wchar_t ** msvcrt_SnapshotOfEnvironmentW(MSVCRT_wchar_t **) DECLSPEC_HIDDEN;
 
-MSVCRT_wchar_t *msvcrt_wstrdupa(const char *);
+MSVCRT_wchar_t *msvcrt_wstrdupa(const char *) DECLSPEC_HIDDEN;
+
+extern unsigned int MSVCRT__commode;
 
 /* FIXME: This should be declared in new.h but it's not an extern "C" so
  * it would not be much use anyway. Even for Winelib applications.
@@ -224,28 +260,29 @@ int __cdecl MSVCRT__set_new_mode(int mode);
 void* __cdecl MSVCRT_operator_new(MSVCRT_size_t);
 void __cdecl MSVCRT_operator_delete(void*);
 
-typedef void* (*__cdecl malloc_func_t)(MSVCRT_size_t);
-typedef void  (*__cdecl free_func_t)(void*);
-
-extern char* __cdecl __unDName(char *,const char*,int,malloc_func_t,free_func_t,unsigned short int);
-extern char* __cdecl __unDNameEx(char *,const char*,int,malloc_func_t,free_func_t,void *,unsigned short int);
+typedef void* (__cdecl *malloc_func_t)(MSVCRT_size_t);
+typedef void  (__cdecl *free_func_t)(void*);
 
 /* Setup and teardown multi threaded locks */
-extern void msvcrt_init_mt_locks(void);
-extern void msvcrt_free_mt_locks(void);
+extern void msvcrt_init_mt_locks(void) DECLSPEC_HIDDEN;
+extern void msvcrt_free_locks(void) DECLSPEC_HIDDEN;
 
-extern BOOL msvcrt_init_locale(void);
-extern void msvcrt_init_math(void);
-extern void msvcrt_init_io(void);
-extern void msvcrt_free_io(void);
-extern void msvcrt_init_console(void);
-extern void msvcrt_free_console(void);
-extern void msvcrt_init_args(void);
-extern void msvcrt_free_args(void);
-extern void msvcrt_init_signals(void);
-extern void msvcrt_free_signals(void);
+extern void msvcrt_init_exception(void*) DECLSPEC_HIDDEN;
+extern BOOL msvcrt_init_locale(void) DECLSPEC_HIDDEN;
+extern void msvcrt_init_math(void) DECLSPEC_HIDDEN;
+extern void msvcrt_init_io(void) DECLSPEC_HIDDEN;
+extern void msvcrt_free_io(void) DECLSPEC_HIDDEN;
+extern void msvcrt_init_console(void) DECLSPEC_HIDDEN;
+extern void msvcrt_free_console(void) DECLSPEC_HIDDEN;
+extern void msvcrt_init_args(void) DECLSPEC_HIDDEN;
+extern void msvcrt_free_args(void) DECLSPEC_HIDDEN;
+extern void msvcrt_init_signals(void) DECLSPEC_HIDDEN;
+extern void msvcrt_free_signals(void) DECLSPEC_HIDDEN;
+extern void msvcrt_free_popen_data(void) DECLSPEC_HIDDEN;
+extern BOOL msvcrt_init_heap(void) DECLSPEC_HIDDEN;
+extern void msvcrt_destroy_heap(void) DECLSPEC_HIDDEN;
 
-extern unsigned msvcrt_create_io_inherit_block(WORD*, BYTE**);
+extern unsigned msvcrt_create_io_inherit_block(WORD*, BYTE**) DECLSPEC_HIDDEN;
 
 extern unsigned int __cdecl _control87(unsigned int, unsigned int);
 
@@ -329,6 +366,16 @@ struct MSVCRT_lconv {
     char n_sep_by_space;
     char p_sign_posn;
     char n_sign_posn;
+#if _MSVCR_VER >= 120
+    MSVCRT_wchar_t* _W_decimal_point;
+    MSVCRT_wchar_t* _W_thousands_sep;
+    MSVCRT_wchar_t* _W_int_curr_symbol;
+    MSVCRT_wchar_t* _W_currency_symbol;
+    MSVCRT_wchar_t* _W_mon_decimal_point;
+    MSVCRT_wchar_t* _W_mon_thousands_sep;
+    MSVCRT_wchar_t* _W_positive_sign;
+    MSVCRT_wchar_t* _W_negative_sign;
+#endif
 };
 
 struct MSVCRT__exception {
@@ -404,6 +451,23 @@ struct MSVCRT___JUMP_BUFFER
     struct MSVCRT__SETJMP_FLOAT128 Xmm13;
     struct MSVCRT__SETJMP_FLOAT128 Xmm14;
     struct MSVCRT__SETJMP_FLOAT128 Xmm15;
+};
+#elif defined(__arm__)
+struct MSVCRT___JUMP_BUFFER
+{
+    unsigned long Frame;
+    unsigned long R4;
+    unsigned long R5;
+    unsigned long R6;
+    unsigned long R7;
+    unsigned long R8;
+    unsigned long R9;
+    unsigned long R10;
+    unsigned long R11;
+    unsigned long Sp;
+    unsigned long Pc;
+    unsigned long Fpscr;
+    unsigned long long D[8];
 };
 #endif /* __i386__ */
 
@@ -690,6 +754,8 @@ struct MSVCRT__stat64 {
 #define MSVCRT__IOERR    0x0020
 #define MSVCRT__IOSTRG   0x0040
 #define MSVCRT__IORW     0x0080
+#define MSVCRT__USERBUF  0x0100
+#define MSVCRT__IOCOMMIT 0x4000
 
 #define MSVCRT__S_IEXEC  0x0040
 #define MSVCRT__S_IWRITE 0x0080
@@ -728,6 +794,9 @@ struct MSVCRT__stat64 {
 #define MSVCRT__O_TEXT          0x4000
 #define MSVCRT__O_BINARY        0x8000
 #define MSVCRT__O_RAW           MSVCRT__O_BINARY
+#define MSVCRT__O_WTEXT         0x10000
+#define MSVCRT__O_U16TEXT       0x20000
+#define MSVCRT__O_U8TEXT        0x40000
 
 /* _statusfp bit flags */
 #define MSVCRT__SW_INEXACT      0x00000001 /* inexact (precision) */
@@ -754,6 +823,13 @@ struct MSVCRT__stat64 {
 #define MSVCRT__FPCLASS_PD   0x0080  /* Positive Denormal */
 #define MSVCRT__FPCLASS_PN   0x0100  /* Positive Normal */
 #define MSVCRT__FPCLASS_PINF 0x0200  /* Positive Infinity */
+
+/* fpclassify constants */
+#define MSVCRT_FP_INFINITE   1
+#define MSVCRT_FP_NAN        2
+#define MSVCRT_FP_NORMAL    -1
+#define MSVCRT_FP_SUBNORMAL -2
+#define MSVCRT_FP_ZERO       0
 
 #define MSVCRT__MCW_EM        0x0008001f
 #define MSVCRT__MCW_IC        0x00040000
@@ -841,6 +917,8 @@ typedef void (__cdecl *MSVCRT___sighandler_t)(int);
 /* _get_output_format return code */
 #define MSVCRT__TWO_DIGIT_EXPONENT 0x1
 
+#define MSVCRT__NLSCMPERROR ((unsigned int)0x7fffffff)
+
 void  __cdecl    MSVCRT_free(void*);
 void* __cdecl    MSVCRT_malloc(MSVCRT_size_t);
 void* __cdecl    MSVCRT_calloc(MSVCRT_size_t,MSVCRT_size_t);
@@ -855,15 +933,29 @@ int __cdecl      MSVCRT__isleadbyte_l(int, MSVCRT__locale_t);
 void __cdecl     MSVCRT__lock_file(MSVCRT_FILE*);
 void __cdecl     MSVCRT__unlock_file(MSVCRT_FILE*);
 int __cdecl      MSVCRT_fgetc(MSVCRT_FILE*);
+int __cdecl      MSVCRT__fgetc_nolock(MSVCRT_FILE*);
+int __cdecl      MSVCRT__fputc_nolock(int,MSVCRT_FILE*);
 int __cdecl      MSVCRT_ungetc(int,MSVCRT_FILE*);
+int __cdecl      MSVCRT__ungetc_nolock(int,MSVCRT_FILE*);
 MSVCRT_wint_t __cdecl MSVCRT_fgetwc(MSVCRT_FILE*);
+MSVCRT_wint_t __cdecl MSVCRT__fgetwc_nolock(MSVCRT_FILE*);
+MSVCRT_wint_t __cdecl MSVCRT__fputwc_nolock(MSVCRT_wint_t,MSVCRT_FILE*);
 MSVCRT_wint_t __cdecl MSVCRT_ungetwc(MSVCRT_wint_t,MSVCRT_FILE*);
+MSVCRT_wint_t __cdecl MSVCRT__ungetwc_nolock(MSVCRT_wint_t, MSVCRT_FILE*);
+int __cdecl      MSVCRT__fseeki64_nolock(MSVCRT_FILE*,__int64,int);
+__int64 __cdecl  MSVCRT__ftelli64(MSVCRT_FILE* file);
+__int64 __cdecl  MSVCRT__ftelli64_nolock(MSVCRT_FILE*);
 void __cdecl     MSVCRT__exit(int);
 void __cdecl     MSVCRT_abort(void);
 MSVCRT_ulong* __cdecl MSVCRT___doserrno(void);
 int* __cdecl     MSVCRT__errno(void);
 char* __cdecl    MSVCRT_getenv(const char*);
+MSVCRT_size_t __cdecl MSVCRT__fread_nolock(void*,MSVCRT_size_t,MSVCRT_size_t,MSVCRT_FILE*);
+MSVCRT_size_t __cdecl MSVCRT__fread_nolock_s(void*,MSVCRT_size_t,MSVCRT_size_t,MSVCRT_size_t,MSVCRT_FILE*);
+MSVCRT_size_t __cdecl MSVCRT__fwrite_nolock(const void*,MSVCRT_size_t,MSVCRT_size_t,MSVCRT_FILE*);
 int __cdecl      MSVCRT_fclose(MSVCRT_FILE*);
+int __cdecl      MSVCRT__fclose_nolock(MSVCRT_FILE*);
+int __cdecl      MSVCRT__fflush_nolock(MSVCRT_FILE*);
 void __cdecl     MSVCRT_terminate(void);
 MSVCRT_FILE* __cdecl MSVCRT__iob_func(void);
 MSVCRT_clock_t __cdecl MSVCRT_clock(void);
@@ -876,26 +968,31 @@ int            __cdecl MSVCRT_vsnwprintf(MSVCRT_wchar_t *str, MSVCRT_size_t len,
                                        const MSVCRT_wchar_t *format, __ms_va_list valist );
 int            __cdecl MSVCRT__snwprintf(MSVCRT_wchar_t*, unsigned int, const MSVCRT_wchar_t*, ...);
 int            __cdecl MSVCRT_sprintf(char*,const char*,...);
+int            __cdecl MSVCRT__snprintf(char*,unsigned int,const char*,...);
 int            __cdecl MSVCRT__scprintf(const char*,...);
 int            __cdecl MSVCRT_raise(int sig);
+int            __cdecl MSVCRT__set_printf_count_output(int);
 
 #define MSVCRT__ENABLE_PER_THREAD_LOCALE 1
 #define MSVCRT__DISABLE_PER_THREAD_LOCALE 2
 
 extern MSVCRT__locale_t MSVCRT_locale;
-MSVCRT_pthreadlocinfo get_locinfo(void);
-MSVCRT_pthreadmbcinfo get_mbcinfo(void);
+MSVCRT_pthreadlocinfo get_locinfo(void) DECLSPEC_HIDDEN;
+MSVCRT_pthreadmbcinfo get_mbcinfo(void) DECLSPEC_HIDDEN;
 void __cdecl MSVCRT__free_locale(MSVCRT__locale_t);
-void free_locinfo(MSVCRT_pthreadlocinfo);
-void free_mbcinfo(MSVCRT_pthreadmbcinfo);
-int _setmbcp_l(int, LCID, MSVCRT_pthreadmbcinfo);
+void free_locinfo(MSVCRT_pthreadlocinfo) DECLSPEC_HIDDEN;
+void free_mbcinfo(MSVCRT_pthreadmbcinfo) DECLSPEC_HIDDEN;
+int _setmbcp_l(int, LCID, MSVCRT_pthreadmbcinfo) DECLSPEC_HIDDEN;
 
 #ifndef __WINE_MSVCRT_TEST
 int            __cdecl MSVCRT__write(int,const void*,unsigned int);
 int            __cdecl _getch(void);
 int            __cdecl _ismbblead(unsigned int);
+int            __cdecl _ismbclegal(unsigned int c);
 int            __cdecl _ismbstrail(const unsigned char* start, const unsigned char* str);
+int            __cdecl MSVCRT_mbtowc(MSVCRT_wchar_t*,const char*,MSVCRT_size_t);
 MSVCRT_size_t  __cdecl MSVCRT_mbstowcs(MSVCRT_wchar_t*,const char*,MSVCRT_size_t);
+MSVCRT_size_t  __cdecl MSVCRT_wcstombs(char*,const MSVCRT_wchar_t*,MSVCRT_size_t);
 MSVCRT_intptr_t __cdecl MSVCRT__spawnve(int,const char*,const char* const *,const char* const *);
 MSVCRT_intptr_t __cdecl MSVRT__spawnvpe(int,const char*,const char* const *,const char* const *);
 MSVCRT_intptr_t __cdecl MSVCRT__wspawnve(int,const MSVCRT_wchar_t*,const MSVCRT_wchar_t* const *,const MSVCRT_wchar_t* const *);
@@ -914,6 +1011,7 @@ int*    __cdecl  __p___mb_cur_max(void);
 unsigned int*  __cdecl __p__fmode(void);
 MSVCRT_wchar_t* __cdecl MSVCRT__wcsdup(const MSVCRT_wchar_t*);
 MSVCRT_wchar_t*** __cdecl MSVCRT___p__wenviron(void);
+INT     __cdecl MSVCRT_wctomb(char*,MSVCRT_wchar_t);
 char*   __cdecl MSVCRT__strdate(char* date);
 char*   __cdecl MSVCRT__strtime(char* date);
 int     __cdecl _setmbcp(int);
@@ -928,6 +1026,10 @@ void __cdecl MSVCRT__invalid_parameter(const MSVCRT_wchar_t *expr, const MSVCRT_
                                        const MSVCRT_wchar_t *file, unsigned int line, MSVCRT_uintptr_t arg);
 int __cdecl      MSVCRT__toupper_l(int,MSVCRT__locale_t);
 int __cdecl      MSVCRT__tolower_l(int,MSVCRT__locale_t);
+int __cdecl      MSVCRT__strnicoll_l(const char*, const char*, MSVCRT_size_t, MSVCRT__locale_t);
+int __cdecl      MSVCRT__strncoll_l(const char*, const char*, MSVCRT_size_t, MSVCRT__locale_t);
+unsigned int __cdecl MSVCRT__get_output_format(void);
+char* __cdecl MSVCRT_strtok_s(char*, const char*, char**);
 
 /* Maybe one day we'll enable the invalid parameter handlers with the full set of information (msvcrXXd)
  *      #define MSVCRT_INVALID_PMT(x) MSVCRT_call_invalid_parameter_handler(x, __FUNCTION__, __FILE__, __LINE__, 0)
@@ -937,8 +1039,9 @@ int __cdecl      MSVCRT__tolower_l(int,MSVCRT__locale_t);
  * NB : MSVCRT_call_invalid_parameter_handler is a wrapper around MSVCRT__invalid_parameter in order
  * to do the Ansi to Unicode transformation
  */
-#define MSVCRT_INVALID_PMT(x) MSVCRT__invalid_parameter(NULL, NULL, NULL, 0, 0)
-#define MSVCRT_CHECK_PMT(x)   ((x) || (MSVCRT_INVALID_PMT(0),FALSE))
+#define MSVCRT_INVALID_PMT(x,err)   (*MSVCRT__errno() = (err), MSVCRT__invalid_parameter(NULL, NULL, NULL, 0, 0))
+#define MSVCRT_CHECK_PMT_ERR(x,err) ((x) || (MSVCRT_INVALID_PMT( 0, (err) ), FALSE))
+#define MSVCRT_CHECK_PMT(x)         MSVCRT_CHECK_PMT_ERR((x), MSVCRT_EINVAL)
 #endif
 
 #define MSVCRT__ARGMAX 100
@@ -953,11 +1056,13 @@ typedef union _printf_arg
 } printf_arg;
 typedef printf_arg (*args_clbk)(void*, int, int, __ms_va_list*);
 int pf_printf_a(puts_clbk_a, void*, const char*, MSVCRT__locale_t,
-        BOOL, BOOL, args_clbk, void*, __ms_va_list*);
+        BOOL, BOOL, args_clbk, void*, __ms_va_list*) DECLSPEC_HIDDEN;
 int pf_printf_w(puts_clbk_w, void*, const MSVCRT_wchar_t*, MSVCRT__locale_t,
-        BOOL, BOOL, args_clbk, void*, __ms_va_list*);
-printf_arg arg_clbk_valist(void*, int, int, __ms_va_list*);
+        BOOL, BOOL, args_clbk, void*, __ms_va_list*) DECLSPEC_HIDDEN;
+printf_arg arg_clbk_valist(void*, int, int, __ms_va_list*) DECLSPEC_HIDDEN;
 
+#define MSVCRT_FLT_MIN 1.175494351e-38F
+#define MSVCRT_DBL_MIN 2.2250738585072014e-308
 #define MSVCRT__OVERFLOW  3
 #define MSVCRT__UNDERFLOW 4
 
@@ -965,5 +1070,32 @@ typedef struct
 {
     float f;
 } MSVCRT__CRT_FLOAT;
+
+typedef struct
+{
+    double x;
+} MSVCRT__CRT_DOUBLE;
+
+extern char* __cdecl __unDName(char *,const char*,int,malloc_func_t,free_func_t,unsigned short int);
+
+/* __unDName/__unDNameEx flags */
+#define UNDNAME_COMPLETE                 (0x0000)
+#define UNDNAME_NO_LEADING_UNDERSCORES   (0x0001) /* Don't show __ in calling convention */
+#define UNDNAME_NO_MS_KEYWORDS           (0x0002) /* Don't show calling convention at all */
+#define UNDNAME_NO_FUNCTION_RETURNS      (0x0004) /* Don't show function/method return value */
+#define UNDNAME_NO_ALLOCATION_MODEL      (0x0008)
+#define UNDNAME_NO_ALLOCATION_LANGUAGE   (0x0010)
+#define UNDNAME_NO_MS_THISTYPE           (0x0020)
+#define UNDNAME_NO_CV_THISTYPE           (0x0040)
+#define UNDNAME_NO_THISTYPE              (0x0060)
+#define UNDNAME_NO_ACCESS_SPECIFIERS     (0x0080) /* Don't show access specifier (public/protected/private) */
+#define UNDNAME_NO_THROW_SIGNATURES      (0x0100)
+#define UNDNAME_NO_MEMBER_TYPE           (0x0200) /* Don't show static/virtual specifier */
+#define UNDNAME_NO_RETURN_UDT_MODEL      (0x0400)
+#define UNDNAME_32_BIT_DECODE            (0x0800)
+#define UNDNAME_NAME_ONLY                (0x1000) /* Only report the variable/method name */
+#define UNDNAME_NO_ARGUMENTS             (0x2000) /* Don't show method arguments */
+#define UNDNAME_NO_SPECIAL_SYMS          (0x4000)
+#define UNDNAME_NO_COMPLEX_TYPE          (0x8000)
 
 #endif /* __WINE_MSVCRT_H */

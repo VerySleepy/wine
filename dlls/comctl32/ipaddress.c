@@ -79,8 +79,8 @@ IPADDRESS_SubclassProc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
 static void IPADDRESS_UpdateText (const IPADDRESS_INFO *infoPtr)
 {
-    static const WCHAR zero[2] = {'0', 0};
-    static const WCHAR dot[2]  = {'.', 0};
+    static const WCHAR zero[] = {'0', 0};
+    static const WCHAR dot[]  = {'.', 0};
     WCHAR field[4];
     WCHAR ip[16];
     INT i;
@@ -339,7 +339,7 @@ static BOOL IPADDRESS_SetRange (IPADDRESS_INFO *infoPtr, int index, WORD range)
 
 static void IPADDRESS_ClearAddress (const IPADDRESS_INFO *infoPtr)
 {
-    WCHAR nil[1] = { 0 };
+    static const WCHAR nil[] = { 0 };
     int i;
 
     TRACE("\n");

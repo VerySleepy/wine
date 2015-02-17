@@ -401,6 +401,7 @@ BOOL WINAPI SetThreadDesktop( HDESK handle )
         struct user_thread_info *thread_info = get_user_thread_info();
         thread_info->top_window = 0;
         thread_info->msg_window = 0;
+        thread_info->key_state_time = 0;
     }
     return ret;
 }
@@ -461,9 +462,23 @@ BOOL WINAPI EnumDesktopsW( HWINSTA winsta, DESKTOPENUMPROCW func, LPARAM lparam 
  */
 HDESK WINAPI OpenInputDesktop( DWORD flags, BOOL inherit, ACCESS_MASK access )
 {
-    FIXME( "(%x,%i,%x): stub\n", flags, inherit, access );
-    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
-    return 0;
+    HANDLE ret = 0;
+
+    TRACE( "(%x,%i,%x)\n", flags, inherit, access );
+
+    if (flags)
+        FIXME( "partial stub flags %08x\n", flags );
+
+    SERVER_START_REQ( open_input_desktop )
+    {
+        req->flags      = flags;
+        req->access     = access;
+        req->attributes = inherit ? OBJ_INHERIT : 0;
+        if (!wine_server_call_err( req )) ret = wine_server_ptr_handle( reply->handle );
+    }
+    SERVER_END_REQ;
+
+    return ret;
 }
 
 
@@ -476,14 +491,18 @@ BOOL WINAPI GetUserObjectInformationA( HANDLE handle, INT index, LPVOID info, DW
     if (index == UOI_TYPE || index == UOI_NAME)
     {
         WCHAR buffer[MAX_PATH];
-        DWORD lenA;
+        DWORD lenA, lenW;
 
-        if (!GetUserObjectInformationW( handle, index, buffer, sizeof(buffer), NULL )) return FALSE;
+        if (!GetUserObjectInformationW( handle, index, buffer, sizeof(buffer), &lenW )) return FALSE;
         lenA = WideCharToMultiByte( CP_ACP, 0, buffer, -1, NULL, 0, NULL, NULL );
         if (needed) *needed = lenA;
         if (lenA > len)
         {
-            SetLastError( ERROR_MORE_DATA );
+            /* If the buffer length supplied by the caller is insufficient, Windows returns a
+               'needed' length based upon the Unicode byte length, so we should do similarly. */
+            if (needed) *needed = lenW;
+
+            SetLastError( ERROR_INSUFFICIENT_BUFFER );
             return FALSE;
         }
         if (info) WideCharToMultiByte( CP_ACP, 0, buffer, -1, info, len, NULL, NULL );
@@ -540,7 +559,7 @@ BOOL WINAPI GetUserObjectInformationW( HANDLE handle, INT index, LPVOID info, DW
                 if (needed) *needed = size;
                 if (len < size)
                 {
-                    SetLastError( ERROR_MORE_DATA );
+                    SetLastError( ERROR_INSUFFICIENT_BUFFER );
                     ret = FALSE;
                 }
                 else memcpy( info, reply->is_desktop ? desktopW : winstationW, size );
@@ -566,7 +585,7 @@ BOOL WINAPI GetUserObjectInformationW( HANDLE handle, INT index, LPVOID info, DW
                     if (needed) *needed = size;
                     if (len < size)
                     {
-                        SetLastError( ERROR_MORE_DATA );
+                        SetLastError( ERROR_INSUFFICIENT_BUFFER );
                         ret = FALSE;
                     }
                     else memcpy( info, buffer, size );

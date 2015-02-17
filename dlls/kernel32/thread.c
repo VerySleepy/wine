@@ -150,7 +150,6 @@ HANDLE WINAPI OpenThread( DWORD dwDesiredAccess, BOOL bInheritHandle, DWORD dwTh
  */
 void WINAPI ExitThread( DWORD code ) /* [in] Exit code for this thread */
 {
-    RtlFreeThreadActivationContextStack();
     RtlExitUserThread( code );
 }
 
@@ -357,20 +356,27 @@ BOOL WINAPI GetThreadPriorityBoost(
 /**********************************************************************
  * SetThreadPriorityBoost [KERNEL32.@]  Sets priority boost for thread.
  *
- * Priority boost is not implemented. This function always returns
- * FALSE and sets last error to ERROR_CALL_NOT_IMPLEMENTED
- *
- * RETURNS
- *    Always returns FALSE to indicate a failure
+ * Priority boost is not implemented, but we return TRUE
+ * anyway because some games crash otherwise.
  */
 BOOL WINAPI SetThreadPriorityBoost(
     HANDLE hthread, /* [in] Handle to thread */
     BOOL disable)   /* [in] TRUE to disable priority boost */
 {
-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-    return FALSE;
+    return TRUE;
 }
 
+
+/**********************************************************************
+ *           SetThreadStackGuarantee   (KERNEL32.@)
+ */
+BOOL WINAPI SetThreadStackGuarantee(PULONG stacksize)
+{
+    static int once;
+    if (once++ == 0)
+        FIXME("(%p): stub\n", stacksize);
+    return TRUE;
+}
 
 /**********************************************************************
  *           SetThreadAffinityMask   (KERNEL32.@)
@@ -601,7 +607,7 @@ __ASM_STDCALL_FUNC( GetCurrentThreadId, 0, ".byte 0x64\n\tmovl 0x24,%eax\n\tret"
 /* HANDLE WINAPI GetProcessHeap(void) */
 __ASM_STDCALL_FUNC( GetProcessHeap, 0, ".byte 0x64\n\tmovl 0x30,%eax\n\tmovl 0x18(%eax),%eax\n\tret");
 
-#elif defined(__x86_64__)
+#elif defined(__x86_64__) && !defined(__APPLE__)
 
 /***********************************************************************
  *		SetLastError (KERNEL32.@)
@@ -824,44 +830,4 @@ BOOL WINAPI GetThreadPreferredUILanguages( DWORD flags, PULONG count, PCZZWSTR b
     *count = 0;
     *buffersize = 0;
     return TRUE;
-}
-
-/***********************************************************************
- *              InitializeSRWLock (KERNEL32.@)
- */
-VOID WINAPI InitializeSRWLock( PSRWLOCK srwlock )
-{
-    FIXME( "(%p): stub\n", srwlock );
-}
-
-/***********************************************************************
- *              AcquireSRWLockExclusive (KERNEL32.@)
- */
-VOID WINAPI AcquireSRWLockExclusive( PSRWLOCK srwlock )
-{
-    FIXME( "(%p): stub\n", srwlock );
-}
-
-/***********************************************************************
- *              ReleaseSRWLockExclusive (KERNEL32.@)
- */
-VOID WINAPI ReleaseSRWLockExclusive( PSRWLOCK srwlock )
-{
-    FIXME( "(%p): stub\n", srwlock );
-}
-
-/***********************************************************************
- *              AcquireSRWLockShared (KERNEL32.@)
- */
-VOID WINAPI AcquireSRWLockShared( PSRWLOCK srwlock )
-{
-    FIXME( "(%p): stub\n", srwlock );
-}
-
-/***********************************************************************
- *              ReleaseSRWLockShared (KERNEL32.@)
- */
-VOID WINAPI ReleaseSRWLockShared( PSRWLOCK srwlock )
-{
-    FIXME( "(%p): stub\n", srwlock );
 }

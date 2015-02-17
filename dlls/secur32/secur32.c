@@ -83,6 +83,13 @@ static void SECUR32_freeProviders(void);
  */
 
 static CRITICAL_SECTION cs;
+static CRITICAL_SECTION_DEBUG cs_debug =
+{
+    0, 0, &cs,
+    { &cs_debug.ProcessLocksList, &cs_debug.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": cs") }
+};
+static CRITICAL_SECTION cs = { &cs_debug, -1, 0, 0, 0, 0 };
 static SecurePackageTable *packageTable = NULL;
 static SecureProviderTable *providerTable = NULL;
 
@@ -423,7 +430,7 @@ SecureProvider *SECUR32_addProvider(const SecurityFunctionTableA *fnTableA,
         ret->moduleName = moduleName ? SECUR32_strdupW(moduleName) : NULL;
         _makeFnTableA(&ret->fnTableA, fnTableA, fnTableW);
         _makeFnTableW(&ret->fnTableW, fnTableA, fnTableW);
-        ret->loaded = moduleName ? FALSE : TRUE;
+        ret->loaded = !moduleName;
     }
     else
     {
@@ -553,8 +560,6 @@ static void SECUR32_initializeProviders(void)
     LSTATUS apiRet;
 
     TRACE("\n");
-    InitializeCriticalSection(&cs);
-    cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": cs");
     /* First load built-in providers */
     SECUR32_initSchannelSP();
     SECUR32_initNTLMSP();
@@ -703,7 +708,6 @@ static void SECUR32_freeProviders(void)
     }
 
     LeaveCriticalSection(&cs);
-    cs.DebugInfo->Spare[0] = 0;
     DeleteCriticalSection(&cs);
 }
 
@@ -1092,16 +1096,16 @@ BOOLEAN WINAPI GetUserNameExA(
 BOOLEAN WINAPI GetUserNameExW(
   EXTENDED_NAME_FORMAT NameFormat, LPWSTR lpNameBuffer, PULONG nSize)
 {
-    BOOLEAN status;
-    WCHAR samname[UNLEN + 1 + MAX_COMPUTERNAME_LENGTH + 1];
-    LPWSTR out;
-    DWORD len;
     TRACE("(%d %p %p)\n", NameFormat, lpNameBuffer, nSize);
 
     switch (NameFormat)
     {
     case NameSamCompatible:
         {
+            WCHAR samname[UNLEN + 1 + MAX_COMPUTERNAME_LENGTH + 1];
+            LPWSTR out;
+            DWORD len;
+
             /* This assumes the current user is always a local account */
             len = MAX_COMPUTERNAME_LENGTH + 1;
             if (GetComputerNameW(samname, &len))
@@ -1111,25 +1115,20 @@ BOOLEAN WINAPI GetUserNameExW(
                 len = UNLEN + 1;
                 if (GetUserNameW(out, &len))
                 {
-                    status = (lstrlenW(samname) < *nSize);
-                    if (status)
+                    if (lstrlenW(samname) < *nSize)
                     {
                         lstrcpyW(lpNameBuffer, samname);
                         *nSize = lstrlenW(samname);
+                        return TRUE;
                     }
-                    else
-                    {
-                        SetLastError(ERROR_MORE_DATA);
-                        *nSize = lstrlenW(samname) + 1;
-                    }
+
+                    SetLastError(ERROR_MORE_DATA);
+                    *nSize = lstrlenW(samname) + 1;
                 }
-                else
-                    status = FALSE;
             }
-            else
-                status = FALSE;
+            return FALSE;
         }
-        break;
+
     case NameUnknown:
     case NameFullyQualifiedDN:
     case NameDisplay:
@@ -1140,14 +1139,12 @@ BOOLEAN WINAPI GetUserNameExW(
     case NameServicePrincipal:
     case NameDnsDomain:
         SetLastError(ERROR_NONE_MAPPED);
-        status = FALSE;
-        break;
+        return FALSE;
+
     default:
         SetLastError(ERROR_INVALID_PARAMETER);
-        status = FALSE;
+        return FALSE;
     }
-
-    return status;
 }
 
 BOOLEAN WINAPI TranslateNameA(
@@ -1173,15 +1170,16 @@ BOOLEAN WINAPI TranslateNameW(
 /***********************************************************************
  *		DllMain (SECUR32.0)
  */
-BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
+BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD reason, LPVOID reserved)
 {
-    if (fdwReason == DLL_PROCESS_ATTACH)
+    switch (reason)
     {
+    case DLL_PROCESS_ATTACH:
         DisableThreadLibraryCalls(hinstDLL);
         SECUR32_initializeProviders();
-    }
-    else if (fdwReason == DLL_PROCESS_DETACH)
-    {
+        break;
+    case DLL_PROCESS_DETACH:
+        if (reserved) break;
         SECUR32_freeProviders();
     }
 

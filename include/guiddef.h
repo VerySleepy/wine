@@ -18,6 +18,16 @@
 
 #ifndef GUID_DEFINED
 #define GUID_DEFINED
+
+#ifdef __WIDL__
+typedef struct
+{
+    unsigned long  Data1;
+    unsigned short Data2;
+    unsigned short Data3;
+    byte           Data4[ 8 ];
+} GUID;
+#else
 typedef struct _GUID
 {
 #ifdef _MSC_VER
@@ -29,6 +39,7 @@ typedef struct _GUID
     unsigned short Data3;
     unsigned char  Data4[ 8 ];
 } GUID;
+#endif
 
 /* Macros for __uuidof emulation */
 #if defined(__cplusplus) && !defined(_MSC_VER)
@@ -40,7 +51,8 @@ extern "C++" {
 #define __CRT_UUID_DECL(type,l,w1,w2,b1,b2,b3,b4,b5,b6,b7,b8)           \
     extern "C++" {                                                      \
     template<> inline const GUID &__wine_uuidof<type>() {               \
-        return (const IID){l,w1,w2, {b1,b2,b3,b4,b5,b6,b7,b8}};         \
+        static const IID __uuid_inst = {l,w1,w2, {b1,b2,b3,b4,b5,b6,b7,b8}}; \
+        return __uuid_inst;                                             \
     }                                                                   \
     template<> inline const GUID &__wine_uuidof<type*>() {              \
         return __wine_uuidof<type>();                                   \
@@ -113,7 +125,7 @@ typedef GUID FMTID,*LPFMTID;
 
 #endif /* ndef __IID_DEFINED__ */
 
-#if defined(__cplusplus) && !defined(CINTERFACE)
+#ifdef __cplusplus
 #define REFGUID             const GUID &
 #define REFCLSID            const CLSID &
 #define REFIID              const IID &

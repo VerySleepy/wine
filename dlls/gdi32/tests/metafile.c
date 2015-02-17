@@ -60,6 +60,20 @@ static void init_function_pointers(void)
     GDI_GET_PROC(SetDCPenColor);
 }
 
+static DWORD rgn_rect_count(HRGN hrgn)
+{
+    DWORD size;
+    RGNDATA *data;
+
+    if (!hrgn) return 0;
+    if (!(size = GetRegionData(hrgn, 0, NULL))) return 0;
+    if (!(data = HeapAlloc(GetProcessHeap(), 0, size))) return 0;
+    GetRegionData(hrgn, size, data);
+    size = data->rdh.nCount;
+    HeapFree(GetProcessHeap(), 0, data);
+    return size;
+}
+
 static int CALLBACK eto_emf_enum_proc(HDC hdc, HANDLETABLE *handle_table,
     const ENHMETARECORD *emr, int n_objs, LPARAM param)
 {
@@ -69,9 +83,6 @@ static int CALLBACK eto_emf_enum_proc(HDC hdc, HANDLETABLE *handle_table,
     INT *orig_dx = (INT *)param;
     LOGFONTA device_lf;
     INT ret;
-
-    trace("hdc %p, emr->iType %d, emr->nSize %d, param %p\n",
-           hdc, emr->iType, emr->nSize, (void *)param);
 
     if(!hdc) return 1;
 
@@ -285,10 +296,6 @@ static int CALLBACK eto_scale_enum_proc(HDC hdc, HANDLETABLE *handle_table,
     if (emr->iType == EMR_EXTTEXTOUTW)
     {
         const EMREXTTEXTOUTW *pExtTextOutW = (const EMREXTTEXTOUTW *)emr;
-        trace("gm %d, mm %d, scale %f, %f, expected %f, %f\n",
-              test->graphics_mode, test->map_mode,
-              pExtTextOutW->exScale, pExtTextOutW->eyScale,
-              test->ex_scale, test->ey_scale);
         ok(fabs(test->ex_scale - pExtTextOutW->exScale) < 0.001,
            "Got exScale %f, expected %f\n", pExtTextOutW->exScale, test->ex_scale);
         ok(fabs(test->ey_scale - pExtTextOutW->eyScale) < 0.001,
@@ -474,7 +481,6 @@ static int CALLBACK savedc_emf_enum_proc(HDC hdc, HANDLETABLE *handle_table,
     trace("hdc %p, emr->iType %d, emr->nSize %d, param %p\n",
            hdc, emr->iType, emr->nSize, (void *)param);
 
-    trace("BEFORE:\n");
     SetLastError(0xdeadbeef);
     ret = GetWorldTransform(hdc, &xform);
     if (!ret && GetLastError() == ERROR_CALL_NOT_IMPLEMENTED)
@@ -596,7 +602,6 @@ static int CALLBACK savedc_emf_enum_proc(HDC hdc, HANDLETABLE *handle_table,
         break;
     }
 
-    trace("AFTER:\n");
     SetLastError(0xdeadbeef);
     ret = GetWorldTransform(hdc, &xform);
     if (!ret && GetLastError() == ERROR_CALL_NOT_IMPLEMENTED)
@@ -1321,6 +1326,51 @@ static const unsigned char EMF_DCBRUSH_BITS[] =
     0x14, 0x00, 0x00, 0x00
 };
 
+static const unsigned char EMF_BEZIER_BITS[] =
+{
+    0x01, 0x00, 0x00, 0x00, 0x6c, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x01, 0x80, 0x00, 0x00, 0x01, 0x80, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x1a, 0x2a, 0x0d, 0x00, 0x1a, 0x2f, 0x0d, 0x00,
+    0x20, 0x45, 0x4d, 0x46, 0x00, 0x00, 0x01, 0x00,
+    0x44, 0x01, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00,
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x05, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00,
+    0x51, 0x01, 0x00, 0x00, 0x0e, 0x01, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x68, 0x24, 0x05, 0x00,
+    0xb0, 0x1e, 0x04, 0x00, 0x58, 0x00, 0x00, 0x00,
+    0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00,
+    0x14, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00,
+    0x0a, 0x00, 0x0a, 0x00, 0x14, 0x00, 0x14, 0x00,
+    0x0f, 0x00, 0x0f, 0x00, 0x55, 0x00, 0x00, 0x00,
+    0x2c, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00,
+    0x0a, 0x00, 0x00, 0x00, 0x19, 0x00, 0x00, 0x00,
+    0x19, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00,
+    0x0a, 0x00, 0x0a, 0x00, 0x14, 0x00, 0x14, 0x00,
+    0x0f, 0x00, 0x0f, 0x00, 0x19, 0x00, 0x19, 0x00,
+    0x02, 0x00, 0x00, 0x00, 0x3c, 0x00, 0x00, 0x00,
+    0x0f, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00,
+    0x01, 0x80, 0x00, 0x00, 0x01, 0x80, 0x00, 0x00,
+    0x04, 0x00, 0x00, 0x00, 0x01, 0x80, 0x00, 0x00,
+    0x01, 0x80, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00,
+    0x14, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00,
+    0x0f, 0x00, 0x00, 0x00, 0x19, 0x00, 0x00, 0x00,
+    0x19, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00,
+    0x34, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00,
+    0x0f, 0x00, 0x00, 0x00, 0x01, 0x80, 0x00, 0x00,
+    0x01, 0x80, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00,
+    0x01, 0x80, 0x00, 0x00, 0x01, 0x80, 0x00, 0x00,
+    0x14, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00,
+    0x0f, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x00,
+    0x0e, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00,
+    0x14, 0x00, 0x00, 0x00
+};
+
 /* For debugging or dumping the raw metafiles produced by
  * new test functions.
  */
@@ -1588,6 +1638,28 @@ static BOOL match_emf_record(const ENHMETARECORD *emr1, const ENHMETARECORD *emr
             HeapFree(GetProcessHeap(), 0, emr_nt4);
         }
     }
+    else if (emr1->iType == EMR_POLYBEZIERTO16 || emr1->iType == EMR_POLYBEZIER16)
+    {
+        EMRPOLYBEZIER16 *eto1, *eto2;
+
+        eto1 = (EMRPOLYBEZIER16*)emr1;
+        eto2 = (EMRPOLYBEZIER16*)emr2;
+
+        diff = eto1->cpts != eto2->cpts;
+        if(!diff)
+            diff = memcmp(eto1->apts, eto2->apts, eto1->cpts * sizeof(POINTS));
+    }
+    else if (emr1->iType == EMR_POLYBEZIERTO || emr1->iType == EMR_POLYBEZIER)
+    {
+        EMRPOLYBEZIER *eto1, *eto2;
+
+        eto1 = (EMRPOLYBEZIER*)emr1;
+        eto2 = (EMRPOLYBEZIER*)emr2;
+
+        diff = eto1->cptl != eto2->cptl;
+        if(!diff)
+            diff = memcmp(eto1->aptl, eto2->aptl, eto1->cptl * sizeof(POINTL));
+    }
     else
         diff = memcmp(emr1, emr2, emr1->nSize);
 
@@ -1658,17 +1730,17 @@ static int compare_emf_bits(const HENHMETAFILE mf, const unsigned char *bits,
     offset2 = emh2->nSize; /* Needed for Win9x/WinME/NT4 */
     while (offset1 < emh1->nBytes)
     {
-	const ENHMETARECORD *emr1 = (const ENHMETARECORD *)(bits + offset1);
-	const ENHMETARECORD *emr2 = (const ENHMETARECORD *)(buf + offset2);
+        const ENHMETARECORD *emr1 = (const ENHMETARECORD *)(bits + offset1);
+        const ENHMETARECORD *emr2 = (const ENHMETARECORD *)(buf + offset2);
 
-	trace("%s: EMF record %u, size %u/record %u, size %u\n",
+        trace("%s: EMF record %u, size %u/record %u, size %u\n",
               desc, emr1->iType, emr1->nSize, emr2->iType, emr2->nSize);
 
         if (!match_emf_record(emr1, emr2, desc, ignore_scaling)) return -1;
 
         /* We have already bailed out if iType or nSize don't match */
-	offset1 += emr1->nSize;
-	offset2 += emr2->nSize;
+        offset1 += emr1->nSize;
+        offset2 += emr2->nSize;
     }
     return 0;
 }
@@ -2250,7 +2322,7 @@ static int CALLBACK clip_emf_enum_proc(HDC hdc, HANDLETABLE *handle_table,
 {
     if (emr->iType == EMR_EXTSELECTCLIPRGN)
     {
-	const EMREXTSELECTCLIPRGN *clip = (const EMREXTSELECTCLIPRGN *)emr;
+        const EMREXTSELECTCLIPRGN *clip = (const EMREXTSELECTCLIPRGN *)emr;
         union _rgn
         {
             RGNDATA data;
@@ -2410,19 +2482,183 @@ static void test_emf_clipping(void)
     SetRect(&rc_sclip, 100, 100, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
     hrgn = CreateRectRgn(rc_sclip.left, rc_sclip.top, rc_sclip.right, rc_sclip.bottom);
     SelectClipRgn(hdc, hrgn);
+    SetRect(&rc_res, -1, -1, -1, -1);
     ret = GetClipBox(hdc, &rc_res);
-todo_wine
     ok(ret == SIMPLEREGION, "got %d\n", ret);
-    if(ret == SIMPLEREGION)
-        ok(EqualRect(&rc_res, &rc_sclip),
-                 "expected rc_res (%d, %d) - (%d, %d), got (%d, %d) - (%d, %d)\n",
-                 rc_sclip.left, rc_sclip.top, rc_sclip.right, rc_sclip.bottom,
-                 rc_res.left, rc_res.top, rc_res.right, rc_res.bottom);
+    ok(EqualRect(&rc_res, &rc_sclip),
+       "expected (%d,%d)-(%d,%d), got (%d,%d)-(%d,%d)\n",
+       rc_sclip.left, rc_sclip.top, rc_sclip.right, rc_sclip.bottom,
+       rc_res.left, rc_res.top, rc_res.right, rc_res.bottom);
+
+    OffsetRect(&rc_sclip, -100, -100);
+    ret = OffsetClipRgn(hdc, -100, -100);
+    ok(ret == SIMPLEREGION, "got %d\n", ret);
+    SetRect(&rc_res, -1, -1, -1, -1);
+    ret = GetClipBox(hdc, &rc_res);
+    ok(ret == SIMPLEREGION, "got %d\n", ret);
+    ok(EqualRect(&rc_res, &rc_sclip),
+       "expected (%d,%d)-(%d,%d), got (%d,%d)-(%d,%d)\n",
+       rc_sclip.left, rc_sclip.top, rc_sclip.right, rc_sclip.bottom,
+       rc_res.left, rc_res.top, rc_res.right, rc_res.bottom);
+
+    ret = IntersectClipRect(hdc, 0, 0, 100, 100);
+    ok(ret == SIMPLEREGION || broken(ret == COMPLEXREGION) /* XP */, "got %d\n", ret);
+    if (ret == COMPLEXREGION)
+    {
+        /* XP returns COMPLEXREGION although region contains only 1 rect */
+        ret = GetClipRgn(hdc, hrgn);
+        ok(ret == 1, "expected 1, got %d\n", ret);
+        ret = rgn_rect_count(hrgn);
+        ok(ret == 1, "expected 1, got %d\n", ret);
+    }
+    SetRect(&rc_res, -1, -1, -1, -1);
+    ret = GetClipBox(hdc, &rc_res);
+    ok(ret == SIMPLEREGION, "got %d\n", ret);
+    ok(EqualRect(&rc_res, &rc),
+       "expected (%d,%d)-(%d,%d), got (%d,%d)-(%d,%d)\n",
+       rc.left, rc.top, rc.right, rc.bottom,
+       rc_res.left, rc_res.top, rc_res.right, rc_res.bottom);
+
+    SetRect(&rc_sclip, 0, 0, 100, 50);
+    ret = ExcludeClipRect(hdc, 0, 50, 100, 100);
+    ok(ret == SIMPLEREGION || broken(ret == COMPLEXREGION) /* XP */, "got %d\n", ret);
+    if (ret == COMPLEXREGION)
+    {
+        /* XP returns COMPLEXREGION although region contains only 1 rect */
+        ret = GetClipRgn(hdc, hrgn);
+        ok(ret == 1, "expected 1, got %d\n", ret);
+        ret = rgn_rect_count(hrgn);
+        ok(ret == 1, "expected 1, got %d\n", ret);
+    }
+    SetRect(&rc_res, -1, -1, -1, -1);
+    ret = GetClipBox(hdc, &rc_res);
+    ok(ret == SIMPLEREGION, "got %d\n", ret);
+    ok(EqualRect(&rc_res, &rc_sclip),
+       "expected (%d,%d)-(%d,%d), got (%d,%d)-(%d,%d)\n",
+       rc_sclip.left, rc_sclip.top, rc_sclip.right, rc_sclip.bottom,
+       rc_res.left, rc_res.top, rc_res.right, rc_res.bottom);
 
     hemf = CloseEnhMetaFile(hdc);
     DeleteEnhMetaFile(hemf);
     DeleteObject(hrgn);
-    DeleteDC(hdc);
+}
+
+static const unsigned char MF_CLIP_BITS[] = {
+    /* METAHEADER */
+    0x01, 0x00,             /* mtType */
+    0x09, 0x00,             /* mtHeaderSize */
+    0x00, 0x03,             /* mtVersion */
+    0x32, 0x00, 0x00, 0x00, /* mtSize */
+    0x01, 0x00,             /* mtNoObjects */
+    0x14, 0x00, 0x00, 0x00, /* mtMaxRecord (size in words of longest record) */
+    0x00, 0x00,             /* reserved */
+
+    /* METARECORD for CreateRectRgn(0x11, 0x22, 0x33, 0x44) */
+    0x14, 0x00, 0x00, 0x00, /* rdSize in words */
+    0xff, 0x06,             /* META_CREATEREGION */
+    0x00, 0x00, 0x06, 0x00, 0xf6, 0x02, 0x00, 0x00,
+    0x24, 0x00, 0x01, 0x00, 0x02, 0x00, 0x11, 0x00,
+    0x22, 0x00, 0x33, 0x00, 0x44, 0x00, 0x02, 0x00,
+    0x22, 0x00, 0x44, 0x00, 0x11, 0x00, 0x33, 0x00,
+    0x02, 0x00,
+
+    /* METARECORD for SelectObject */
+    0x04, 0x00, 0x00, 0x00,
+    0x2d, 0x01,             /* META_SELECTOBJECT (not META_SELECTCLIPREGION?!) */
+    0x00, 0x00,
+
+    /* METARECORD */
+    0x04, 0x00, 0x00, 0x00,
+    0xf0, 0x01,             /* META_DELETEOBJECT */
+    0x00, 0x00,
+
+    /* METARECORD for MoveTo(1,0x30) */
+    0x05, 0x00, 0x00, 0x00, /* rdSize in words */
+    0x14, 0x02,             /* META_MOVETO */
+    0x30, 0x00,             /* y */
+    0x01, 0x00,             /* x */
+
+    /* METARECORD for LineTo(0x20, 0x30) */
+    0x05, 0x00, 0x00, 0x00, /* rdSize in words */
+    0x13, 0x02,             /* META_LINETO */
+    0x30, 0x00,             /* y */
+    0x20, 0x00,             /* x */
+
+    /* EOF */
+    0x03, 0x00, 0x00, 0x00,
+    0x00, 0x00
+};
+
+static int clip_mf_enum_proc_seen_selectclipregion;
+static int clip_mf_enum_proc_seen_selectobject;
+
+static int CALLBACK clip_mf_enum_proc(HDC hdc, HANDLETABLE *handle_table,
+                                       METARECORD *mr, int n_objs, LPARAM param)
+{
+    switch (mr->rdFunction) {
+    case META_SELECTCLIPREGION:
+        clip_mf_enum_proc_seen_selectclipregion++;
+        break;
+    case META_SELECTOBJECT:
+        clip_mf_enum_proc_seen_selectobject++;
+        break;
+    }
+    return 1;
+}
+
+static void test_mf_clipping(void)
+{
+                          /* left top right bottom */
+    static RECT rc_clip = { 0x11, 0x22, 0x33, 0x44 };
+    HWND hwnd;
+    HDC hdc;
+    HMETAFILE hmf;
+    HRGN hrgn;
+    INT ret;
+
+    SetLastError(0xdeadbeef);
+    hdc = CreateMetaFileA(NULL);
+    ok(hdc != 0, "CreateMetaFileA error %d\n", GetLastError());
+
+    hrgn = CreateRectRgn(rc_clip.left, rc_clip.top, rc_clip.right, rc_clip.bottom);
+    ret = SelectClipRgn(hdc, hrgn);
+    /* Seems like it should be SIMPLEREGION, but windows returns NULLREGION? */
+    ok(ret == NULLREGION, "expected NULLREGION, got %d\n", ret);
+
+    /* Draw a line that starts off left of the clip region and ends inside it */
+    MoveToEx(hdc, 0x1, 0x30, NULL);
+    LineTo(hdc,  0x20, 0x30);
+
+    SetLastError(0xdeadbeef);
+    hmf = CloseMetaFile(hdc);
+    ok(hmf != 0, "CloseMetaFile error %d\n", GetLastError());
+
+    if (compare_mf_bits(hmf, MF_CLIP_BITS, sizeof(MF_CLIP_BITS),
+        "mf_clipping") != 0)
+    {
+        dump_mf_bits(hmf, "mf_clipping");
+    }
+
+    DeleteObject(hrgn);
+
+    hwnd = CreateWindowExA(0, "static", NULL, WS_POPUP | WS_VISIBLE,
+                           0, 0, 200, 200, 0, 0, 0, NULL);
+    ok(hwnd != 0, "CreateWindowExA error %d\n", GetLastError());
+
+    hdc = GetDC(hwnd);
+
+    ret = EnumMetaFile(hdc, hmf, clip_mf_enum_proc, (LPARAM)&rc_clip);
+    ok(ret, "EnumMetaFile error %d\n", GetLastError());
+
+    /* Oddly, windows doesn't seem to use META_SELECTCLIPREGION */
+    ok(clip_mf_enum_proc_seen_selectclipregion == 0,
+       "expected 0 selectclipregion, saw %d\n", clip_mf_enum_proc_seen_selectclipregion);
+    ok(clip_mf_enum_proc_seen_selectobject == 1,
+       "expected 1 selectobject, saw %d\n", clip_mf_enum_proc_seen_selectobject);
+
+    DeleteMetaFile(hmf);
+    ReleaseDC(hwnd, hdc);
+    DestroyWindow(hwnd);
 }
 
 static INT CALLBACK EmfEnumProc(HDC hdc, HANDLETABLE *lpHTable, const ENHMETARECORD *lpEMFR, INT nObj, LPARAM lpData)
@@ -2473,7 +2709,7 @@ static HENHMETAFILE create_converted_emf(const METAFILEPICT *mfp)
     UINT size;
     LPBYTE pBits;
 
-    hdcMf = CreateMetaFile(NULL);
+    hdcMf = CreateMetaFileA(NULL);
     ok(hdcMf != NULL, "CreateMetaFile failed with error %d\n", GetLastError());
     ret = LineTo(hdcMf, (INT)LINE_X, (INT)LINE_Y);
     ok(ret, "LineTo failed with error %d\n", GetLastError());
@@ -2653,7 +2889,7 @@ static void test_SetWinMetaFileBits(void)
   HDC dc;
   LONG diffx, diffy;
 
-  wmfDC = CreateMetaFile(NULL);
+  wmfDC = CreateMetaFileA(NULL);
   ok(wmfDC != NULL, "CreateMetaFile failed\n");
   if (!wmfDC) return;
 
@@ -2977,11 +3213,8 @@ static void test_GetWinMetaFileBits(void)
     for(mode = MM_MIN; mode <= MM_MAX; mode++)
     {
         RECT *rc;
-        trace("mode %d\n", mode);
-
         for(rc = frames; rc->right - rc->left > 0; rc++)
         {
-            trace("frame %d,%d - %d,%d\n", rc->left, rc->top, rc->right, rc->bottom);
             getwinmetafilebits(mode, 1, rc);
             getwinmetafilebits(mode, 2, rc);
         }
@@ -3000,7 +3233,7 @@ static void test_gdiis(void)
     HMODULE hgdi32;
 
     /* resolve all the functions */
-    hgdi32 = GetModuleHandle("gdi32");
+    hgdi32 = GetModuleHandleA("gdi32.dll");
     pGdiIsMetaPrintDC = (void*) GetProcAddress(hgdi32, "GdiIsMetaPrintDC");
     pGdiIsMetaFileDC = (void*) GetProcAddress(hgdi32, "GdiIsMetaFileDC");
     pGdiIsPlayMetafileDC = (void*) GetProcAddress(hgdi32, "GdiIsPlayMetafileDC");
@@ -3017,7 +3250,7 @@ static void test_gdiis(void)
     ok(!pGdiIsPlayMetafileDC(NULL), "isplaymetafile with NULL parameter\n");
 
     /* try with a metafile */
-    hmfDC = CreateMetaFile(NULL);
+    hmfDC = CreateMetaFileA(NULL);
     ok(!pGdiIsMetaPrintDC(hmfDC), "ismetaprint on metafile\n");
     ok(pGdiIsMetaFileDC(hmfDC), "ismetafile on metafile\n");
     ok(!pGdiIsPlayMetafileDC(hmfDC), "isplaymetafile on metafile\n");
@@ -3089,6 +3322,45 @@ static void test_SetEnhMetaFileBits(void)
     DeleteEnhMetaFile(hemf);
 }
 
+static void test_emf_polybezier(void)
+{
+    HDC hdcMetafile;
+    HENHMETAFILE hemf;
+    POINT pts[4];
+    BOOL ret;
+
+    SetLastError(0xdeadbeef);
+    hdcMetafile = CreateEnhMetaFileA(GetDC(0), NULL, NULL, NULL);
+    ok(hdcMetafile != 0, "CreateEnhMetaFileA error %d\n", GetLastError());
+
+    pts[0].x = pts[0].y = 10;
+    pts[1].x = pts[1].y = 20;
+    pts[2].x = pts[2].y = 15;
+    pts[3].x = pts[3].y = 25;
+    ret = PolyBezierTo(hdcMetafile, pts, 3);  /* EMR_POLYBEZIERTO16 */
+    ok( ret, "PolyBezierTo failed\n" );
+    ret = PolyBezier(hdcMetafile, pts, 4);    /* EMR_POLYBEZIER16   */
+    ok( ret, "PolyBezier failed\n" );
+
+    pts[0].x = pts[0].y = 32769;
+    ret = PolyBezier(hdcMetafile, pts, 4);    /* EMR_POLYBEZIER   */
+    ok( ret, "PolyBezier failed\n" );
+    ret = PolyBezierTo(hdcMetafile, pts, 3);  /* EMR_POLYBEZIERTO */
+    ok( ret, "PolyBezierTo failed\n" );
+
+    hemf = CloseEnhMetaFile(hdcMetafile);
+    ok(hemf != 0, "CloseEnhMetaFile error %d\n", GetLastError());
+
+    if(compare_emf_bits(hemf, EMF_BEZIER_BITS, sizeof(EMF_BEZIER_BITS),
+        "emf_Bezier", FALSE) != 0)
+    {
+        dump_emf_bits(hemf, "emf_Bezier");
+        dump_emf_records(hemf, "emf_Bezier");
+    }
+
+    DeleteEnhMetaFile(hemf);
+}
+
 START_TEST(metafile)
 {
     init_function_pointers();
@@ -3099,6 +3371,9 @@ START_TEST(metafile)
     test_SaveDC();
     test_emf_BitBlt();
     test_emf_DCBrush();
+    test_emf_ExtTextOut_on_path();
+    test_emf_clipping();
+    test_emf_polybezier();
 
     /* For win-format metafiles (mfdrv) */
     test_mf_SaveDC();
@@ -3109,8 +3384,7 @@ START_TEST(metafile)
     test_CopyMetaFile();
     test_SetMetaFileBits();
     test_mf_ExtTextOut_on_path();
-    test_emf_ExtTextOut_on_path();
-    test_emf_clipping();
+    test_mf_clipping();
 
     /* For metafile conversions */
     test_mf_conversions();

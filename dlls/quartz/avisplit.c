@@ -30,7 +30,6 @@
  */
 
 #include "quartz_private.h"
-#include "control_private.h"
 #include "pin.h"
 
 #include "uuids.h"
@@ -65,7 +64,7 @@ typedef struct StreamData
     DWORD entries;
     AVISTDINDEX **stdindex;
     DWORD frames;
-    DWORD seek;
+    BOOL seek;
 
     /* Position, in index units */
     DWORD pos, pos_next, index, index_next;
@@ -103,7 +102,7 @@ struct thread_args {
 
 static inline AVISplitterImpl *impl_from_IMediaSeeking( IMediaSeeking *iface )
 {
-    return (AVISplitterImpl *)((char*)iface - FIELD_OFFSET(AVISplitterImpl, Parser.sourceSeeking.lpVtbl));
+    return CONTAINING_RECORD(iface, AVISplitterImpl, Parser.sourceSeeking.IMediaSeeking_iface);
 }
 
 /* The threading stuff cries for an explanation
@@ -152,6 +151,7 @@ static HRESULT AVISplitter_next_request(AVISplitterImpl *This, DWORD streamnumbe
     PullPin *pin = This->Parser.pInputPin;
     IMediaSample *sample = NULL;
     HRESULT hr;
+    ULONG ref;
 
     TRACE("(%p, %u)->()\n", This, streamnumber);
 
@@ -260,12 +260,14 @@ static HRESULT AVISplitter_next_request(AVISplitterImpl *This, DWORD streamnumbe
 
         if (rtSampleStart != rtSampleStop)
         {
-            hr = IMediaSample_SetTime(sample, &rtSampleStart, &rtSampleStop);
-
+            IMediaSample_SetTime(sample, &rtSampleStart, &rtSampleStop);
             hr = IAsyncReader_Request(pin->pReader, sample, streamnumber);
 
             if (FAILED(hr))
-                assert(IMediaSample_Release(sample) == 0);
+            {
+                ref = IMediaSample_Release(sample);
+                assert(ref == 0);
+            }
         }
         else
         {
@@ -279,7 +281,8 @@ static HRESULT AVISplitter_next_request(AVISplitterImpl *This, DWORD streamnumbe
         if (sample)
         {
             ERR("There should be no sample!\n");
-            assert(IMediaSample_Release(sample) == 0);
+            ref = IMediaSample_Release(sample);
+            assert(ref == 0);
         }
     }
     TRACE("--> %08x\n", hr);
@@ -289,7 +292,7 @@ static HRESULT AVISplitter_next_request(AVISplitterImpl *This, DWORD streamnumbe
 
 static HRESULT AVISplitter_Receive(AVISplitterImpl *This, IMediaSample *sample, DWORD streamnumber)
 {
-    Parser_OutputPin *pin = (Parser_OutputPin *)This->Parser.ppPins[1+streamnumber];
+    Parser_OutputPin *pin = unsafe_impl_Parser_OutputPin_from_IPin(This->Parser.ppPins[1+streamnumber]);
     HRESULT hr;
     LONGLONG start, stop, rtstart, rtstop;
     StreamData *stream = &This->streams[streamnumber];
@@ -319,7 +322,7 @@ static HRESULT AVISplitter_Receive(AVISplitterImpl *This, IMediaSample *sample, 
         EnterCriticalSection(&This->Parser.filter.csFilter);
         pin->pin.pin.tStart = start;
         pin->pin.pin.dRate = This->Parser.sourceSeeking.dRate;
-        hr = IPin_ConnectedTo((IPin *)pin, &victim);
+        hr = IPin_ConnectedTo(&pin->pin.pin.IPin_iface, &victim);
         if (hr == S_OK)
         {
             hr = IPin_NewSegment(victim, start, This->Parser.sourceSeeking.llStop,
@@ -334,11 +337,11 @@ static HRESULT AVISplitter_Receive(AVISplitterImpl *This, IMediaSample *sample, 
     }
     rtstart = (double)(start - pin->pin.pin.tStart) / pin->pin.pin.dRate;
     rtstop = (double)(stop - pin->pin.pin.tStart) / pin->pin.pin.dRate;
-    hr = IMediaSample_SetMediaTime(sample, &start, &stop);
+    IMediaSample_SetMediaTime(sample, &start, &stop);
     IMediaSample_SetTime(sample, &rtstart, &rtstop);
     IMediaSample_SetMediaTime(sample, &start, &stop);
 
-    hr = BaseOutputPinImpl_Deliver((BaseOutputPin*)&pin->pin, sample);
+    hr = BaseOutputPinImpl_Deliver(&pin->pin, sample);
 
 /* Uncomment this if you want to debug the time differences between the
  * different streams, it is useful for that
@@ -400,7 +403,7 @@ static HRESULT AVISplitter_Sample(LPVOID iface, IMediaSample * pSample, DWORD_PT
         return S_OK;
     }
 
-    /* Send the sample to whatever thread is appropiate
+    /* Send the sample to whatever thread is appropriate
      * That thread should also not have a sample queued at the moment
      */
     /* Debugging */
@@ -449,7 +452,7 @@ static HRESULT AVISplitter_first_request(LPVOID iface)
         stream->index_next = stream->index;
 
         /* This was sent after stopped->paused or stopped->playing, so set seek */
-        stream->seek = 1;
+        stream->seek = TRUE;
 
         /* There should be a packet queued from AVISplitter_next_request last time
          * It needs to be done now because this is the only way to ensure that every
@@ -511,8 +514,8 @@ static HRESULT AVISplitter_first_request(LPVOID iface)
 static HRESULT AVISplitter_done_process(LPVOID iface)
 {
     AVISplitterImpl *This = iface;
-
     DWORD x;
+    ULONG ref;
 
     for (x = 0; x < This->Parser.cStreams; ++x)
     {
@@ -526,7 +529,10 @@ static HRESULT AVISplitter_done_process(LPVOID iface)
         stream->thread = NULL;
 
         if (stream->sample)
-            assert(IMediaSample_Release(stream->sample) == 0);
+        {
+            ref = IMediaSample_Release(stream->sample);
+            assert(ref == 0);
+        }
         stream->sample = NULL;
 
         ResetEvent(stream->packet_queued);
@@ -560,7 +566,7 @@ static HRESULT AVISplitter_ProcessIndex(AVISplitterImpl *This, AVISTDINDEX **ind
     if (!pIndex)
         return E_OUTOFMEMORY;
 
-    IAsyncReader_SyncRead(((PullPin *)This->Parser.ppPins[0])->pReader, qwOffset, cb, (BYTE *)pIndex);
+    IAsyncReader_SyncRead((impl_PullPin_from_IPin(This->Parser.ppPins[0]))->pReader, qwOffset, cb, (BYTE *)pIndex);
     rest = cb - sizeof(AVISUPERINDEX) + sizeof(RIFFCHUNK) + sizeof(pIndex->aIndex);
 
     TRACE("FOURCC: %s\n", debugstr_an((char *)&pIndex->fcc, 4));
@@ -821,7 +827,7 @@ static HRESULT AVISplitter_ProcessStreamList(AVISplitterImpl * This, const BYTE 
             TRACE("dwChunkId: %.4s\n", (const char *)&pIndex->dwChunkId);
             if (pIndex->dwReserved[0])
                 TRACE("dwReserved[0]: %u\n", pIndex->dwReserved[0]);
-            if (pIndex->dwReserved[2])
+            if (pIndex->dwReserved[1])
                 TRACE("dwReserved[1]: %u\n", pIndex->dwReserved[1]);
             if (pIndex->dwReserved[2])
                 TRACE("dwReserved[2]: %u\n", pIndex->dwReserved[2]);
@@ -974,7 +980,7 @@ static HRESULT AVISplitter_InitializeStreams(AVISplitterImpl *This)
         DWORD y;
         DWORD64 frames = 0;
 
-        stream->seek = 1;
+        stream->seek = TRUE;
 
         if (stream->stdindex)
         {
@@ -1020,7 +1026,7 @@ static HRESULT AVISplitter_Disconnect(LPVOID iface);
 /* FIXME: fix leaks on failure here */
 static HRESULT AVISplitter_InputPin_PreConnect(IPin * iface, IPin * pConnectPin, ALLOCATOR_PROPERTIES *props)
 {
-    PullPin *This = (PullPin *)iface;
+    PullPin *This = impl_PullPin_from_IPin(iface);
     HRESULT hr;
     RIFFLIST list;
     LONGLONG pos = 0; /* in bytes */
@@ -1192,7 +1198,7 @@ static HRESULT AVISplitter_InputPin_PreConnect(IPin * iface, IPin * pConnectPin,
             indexes = 0;
         }
     }
-    else if (!indexes && pAviSplit->oldindex)
+    else if (pAviSplit->oldindex)
         indexes = pAviSplit->Parser.cStreams;
 
     if (!indexes && pAviSplit->AviHeader.dwFlags & AVIF_MUSTUSEINDEX)
@@ -1220,6 +1226,7 @@ static HRESULT AVISplitter_Flush(LPVOID iface)
 {
     AVISplitterImpl *This = iface;
     DWORD x;
+    ULONG ref;
 
     TRACE("(%p)->()\n", This);
 
@@ -1228,7 +1235,10 @@ static HRESULT AVISplitter_Flush(LPVOID iface)
         StreamData *stream = This->streams + x;
 
         if (stream->sample)
-            assert(IMediaSample_Release(stream->sample) == 0);
+        {
+            ref = IMediaSample_Release(stream->sample);
+            assert(ref == 0);
+        }
         stream->sample = NULL;
 
         ResetEvent(stream->packet_queued);
@@ -1302,13 +1312,13 @@ static HRESULT WINAPI AVISplitter_seek(IMediaSeeking *iface)
 
     EnterCriticalSection(&pPin->thread_lock);
     /* Send a flush to all output pins */
-    IPin_BeginFlush((IPin *)pPin);
+    IPin_BeginFlush(&pPin->pin.IPin_iface);
 
     /* Make sure this is done while stopped, BeginFlush takes care of this */
     EnterCriticalSection(&This->Parser.filter.csFilter);
     for (x = 0; x < This->Parser.cStreams; ++x)
     {
-        Parser_OutputPin *pin = (Parser_OutputPin *)This->Parser.ppPins[1+x];
+        Parser_OutputPin *pin = unsafe_impl_Parser_OutputPin_from_IPin(This->Parser.ppPins[1+x]);
         StreamData *stream = This->streams + x;
         LONGLONG wanted_frames;
         DWORD last_keyframe = 0, last_keyframeidx = 0, preroll = 0;
@@ -1321,7 +1331,7 @@ static HRESULT WINAPI AVISplitter_seek(IMediaSeeking *iface)
         pin->dwSamplesProcessed = 0;
         stream->index = 0;
         stream->pos = 0;
-        stream->seek = 1;
+        stream->seek = TRUE;
         if (stream->stdindex)
         {
             DWORD y, z = 0;
@@ -1397,12 +1407,12 @@ static HRESULT WINAPI AVISplitter_seek(IMediaSeeking *iface)
             stream->index = 0;
         }
         stream->preroll = preroll;
-        stream->seek = 1;
+        stream->seek = TRUE;
     }
     LeaveCriticalSection(&This->Parser.filter.csFilter);
 
     TRACE("Done flushing\n");
-    IPin_EndFlush((IPin *)pPin);
+    IPin_EndFlush(&pPin->pin.IPin_iface);
     LeaveCriticalSection(&pPin->thread_lock);
 
     return S_OK;

@@ -126,7 +126,7 @@ static int KeyboardCallback( LPDIRECTINPUTDEVICE8A iface, WPARAM wparam, LPARAM 
 
     EnterCriticalSection(&This->base.crit);
     queue_event(iface, DIDFT_MAKEINSTANCE(dik_code) | DIDFT_PSHBUTTON,
-                new_diks, hook->time, This->base.dinput->evsequence++);
+                new_diks, GetCurrentTime(), This->base.dinput->evsequence++);
     LeaveCriticalSection(&This->base.crit);
 
     return ret;
@@ -184,10 +184,10 @@ static void fill_keyboard_dideviceinstanceW(LPDIDEVICEINSTANCEW lpddi, DWORD ver
     memcpy(lpddi, &ddi, (dwSize < sizeof(ddi) ? dwSize : sizeof(ddi)));
 }
  
-static BOOL keyboarddev_enum_deviceA(DWORD dwDevType, DWORD dwFlags, LPDIDEVICEINSTANCEA lpddi, DWORD version, int id)
+static HRESULT keyboarddev_enum_deviceA(DWORD dwDevType, DWORD dwFlags, LPDIDEVICEINSTANCEA lpddi, DWORD version, int id)
 {
   if (id != 0)
-    return FALSE;
+    return E_FAIL;
 
   if ((dwDevType == 0) ||
       ((dwDevType == DIDEVTYPE_KEYBOARD) && (version < 0x0800)) ||
@@ -196,16 +196,16 @@ static BOOL keyboarddev_enum_deviceA(DWORD dwDevType, DWORD dwFlags, LPDIDEVICEI
  
     fill_keyboard_dideviceinstanceA(lpddi, version);
     
-    return TRUE;
+    return S_OK;
   }
 
-  return FALSE;
+  return S_FALSE;
 }
 
-static BOOL keyboarddev_enum_deviceW(DWORD dwDevType, DWORD dwFlags, LPDIDEVICEINSTANCEW lpddi, DWORD version, int id)
+static HRESULT keyboarddev_enum_deviceW(DWORD dwDevType, DWORD dwFlags, LPDIDEVICEINSTANCEW lpddi, DWORD version, int id)
 {
   if (id != 0)
-    return FALSE;
+    return E_FAIL;
 
   if ((dwDevType == 0) ||
       ((dwDevType == DIDEVTYPE_KEYBOARD) && (version < 0x0800)) ||
@@ -214,10 +214,10 @@ static BOOL keyboarddev_enum_deviceW(DWORD dwDevType, DWORD dwFlags, LPDIDEVICEI
 
     fill_keyboard_dideviceinstanceW(lpddi, version);
     
-    return TRUE;
+    return S_OK;
   }
 
-  return FALSE;
+  return S_FALSE;
 }
 
 static SysKeyboardImpl *alloc_device(REFGUID rguid, IDirectInputImpl *dinput)
@@ -375,9 +375,9 @@ static HRESULT WINAPI SysKeyboardWImpl_GetCapabilities(LPDIRECTINPUTDEVICE8W ifa
     devcaps.dwSize = lpDIDevCaps->dwSize;
     devcaps.dwFlags = DIDC_ATTACHED | DIDC_EMULATED;
     if (This->base.dinput->dwVersion >= 0x0800)
-	devcaps.dwDevType = DI8DEVTYPE_KEYBOARD | (DI8DEVTYPEKEYBOARD_UNKNOWN << 8);
+        devcaps.dwDevType = DI8DEVTYPE_KEYBOARD | (DI8DEVTYPEKEYBOARD_PCENH << 8);
     else
-	devcaps.dwDevType = DIDEVTYPE_KEYBOARD | (DIDEVTYPEKEYBOARD_UNKNOWN << 8);
+        devcaps.dwDevType = DIDEVTYPE_KEYBOARD | (DIDEVTYPEKEYBOARD_PCENH << 8);
     devcaps.dwAxes = 0;
     devcaps.dwButtons = This->base.data_format.wine_df->dwNumObjs;
     devcaps.dwPOVs = 0;
@@ -410,12 +410,14 @@ SysKeyboardAImpl_GetObjectInfo(
 	DWORD dwHow)
 {
     HRESULT res;
+    LONG scan;
 
     res = IDirectInputDevice2AImpl_GetObjectInfo(iface, pdidoi, dwObj, dwHow);
     if (res != DI_OK) return res;
 
-    if (!GetKeyNameTextA((DIDFT_GETINSTANCE(pdidoi->dwType) & 0x80) << 17 |
-                         (DIDFT_GETINSTANCE(pdidoi->dwType) & 0x7f) << 16,
+    scan = DIDFT_GETINSTANCE(pdidoi->dwType);
+    if (scan == DIK_PAUSE || scan == DIK_NUMLOCK) scan ^= 0x80;
+    if (!GetKeyNameTextA((scan & 0x80) << 17 | (scan & 0x7f) << 16,
                          pdidoi->tszName, sizeof(pdidoi->tszName)))
         return DIERR_OBJECTNOTFOUND;
 
@@ -429,14 +431,15 @@ static HRESULT WINAPI SysKeyboardWImpl_GetObjectInfo(LPDIRECTINPUTDEVICE8W iface
 						     DWORD dwHow)
 {
     HRESULT res;
+    LONG scan;
 
     res = IDirectInputDevice2WImpl_GetObjectInfo(iface, pdidoi, dwObj, dwHow);
     if (res != DI_OK) return res;
 
-    if (!GetKeyNameTextW((DIDFT_GETINSTANCE(pdidoi->dwType) & 0x80) << 17 |
-                         (DIDFT_GETINSTANCE(pdidoi->dwType) & 0x7f) << 16,
-                         pdidoi->tszName,
-                         sizeof(pdidoi->tszName)/sizeof(pdidoi->tszName[0])))
+    scan = DIDFT_GETINSTANCE(pdidoi->dwType);
+    if (scan == DIK_PAUSE || scan == DIK_NUMLOCK) scan ^= 0x80;
+    if (!GetKeyNameTextW((scan & 0x80) << 17 | (scan & 0x7f) << 16,
+                         pdidoi->tszName, sizeof(pdidoi->tszName)/sizeof(pdidoi->tszName[0])))
         return DIERR_OBJECTNOTFOUND;
 
     _dump_OBJECTINSTANCEW(pdidoi);

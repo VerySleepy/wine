@@ -22,6 +22,7 @@
 #include <initguid.h>
 #include <windows.h>
 #include <dinput.h>
+#include <dinputd.h>
 
 #include "wine/test.h"
 
@@ -86,11 +87,11 @@ static void test_preinitialization(void)
         {0, NULL, 0, DIERR_INVALIDPARAM},
         {0, NULL, ~0u, DIERR_INVALIDPARAM},
         {0, dummy_callback, 0, DIERR_NOTINITIALIZED},
-        {0, dummy_callback, ~0u, DIERR_INVALIDPARAM, 1},
+        {0, dummy_callback, ~0u, DIERR_INVALIDPARAM},
         {0xdeadbeef, NULL, 0, DIERR_INVALIDPARAM},
         {0xdeadbeef, NULL, ~0u, DIERR_INVALIDPARAM},
-        {0xdeadbeef, dummy_callback, 0, DIERR_INVALIDPARAM, 1},
-        {0xdeadbeef, dummy_callback, ~0u, DIERR_INVALIDPARAM, 1},
+        {0xdeadbeef, dummy_callback, 0, DIERR_INVALIDPARAM},
+        {0xdeadbeef, dummy_callback, ~0u, DIERR_INVALIDPARAM},
     };
 
     IDirectInputA *pDI;
@@ -132,7 +133,6 @@ static void test_preinitialization(void)
     }
 
     hr = IDirectInput_GetDeviceStatus(pDI, NULL);
-    todo_wine
     ok(hr == E_POINTER, "IDirectInput_GetDeviceStatus returned 0x%08x\n", hr);
 
     hr = IDirectInput_GetDeviceStatus(pDI, &GUID_Unknown);
@@ -434,11 +434,9 @@ static void test_EnumDevices(void)
     ok(hr == DIERR_INVALIDPARAM, "IDirectInput_EnumDevices returned 0x%08x\n", hr);
 
     hr = IDirectInput_EnumDevices(pDI, 0xdeadbeef, enum_devices_callback, NULL, 0);
-    todo_wine
     ok(hr == DIERR_INVALIDPARAM, "IDirectInput_EnumDevices returned 0x%08x\n", hr);
 
     hr = IDirectInput_EnumDevices(pDI, 0xdeadbeef, enum_devices_callback, NULL, ~0u);
-    todo_wine
     ok(hr == DIERR_INVALIDPARAM, "IDirectInput_EnumDevices returned 0x%08x\n", hr);
 
     enum_test.device_count = 0;
@@ -477,7 +475,6 @@ static void test_GetDeviceStatus(void)
     }
 
     hr = IDirectInput_GetDeviceStatus(pDI, NULL);
-    todo_wine
     ok(hr == E_POINTER, "IDirectInput_GetDeviceStatus returned 0x%08x\n", hr);
 
     hr = IDirectInput_GetDeviceStatus(pDI, &GUID_Unknown);
@@ -566,6 +563,49 @@ static void test_RunControlPanel(void)
     IDirectInput_Release(pDI);
 }
 
+static void test_DirectInputJoyConfig8(void)
+{
+    IDirectInputA *pDI;
+    IDirectInputDeviceA *pDID;
+    IDirectInputJoyConfig8 *pDIJC;
+    DIJOYCONFIG info;
+    HRESULT hr;
+    int i;
+
+    hr = DirectInputCreateA(hInstance, DIRECTINPUT_VERSION, &pDI, NULL);
+    if (FAILED(hr))
+    {
+        win_skip("Failed to instantiate a IDirectInputA instance: 0x%08x\n", hr);
+        return;
+    }
+
+    hr = IDirectInput_QueryInterface(pDI, &IID_IDirectInputJoyConfig8, (void **)&pDIJC);
+    if (FAILED(hr))
+    {
+        win_skip("Failed to instantiate a IDirectInputJoyConfig8 instance: 0x%08x\n", hr);
+        return;
+    }
+
+    info.dwSize = sizeof(info);
+    hr = DI_OK;
+    i = 0;
+
+    /* Enumerate all connected joystick GUIDs and try to create the respective devices */
+    for (i = 0; SUCCEEDED(hr); i++)
+    {
+        hr = IDirectInputJoyConfig8_GetConfig(pDIJC, i, &info, DIJC_GUIDINSTANCE);
+
+        ok (hr == DI_OK || hr == DIERR_NOMOREITEMS,
+           "IDirectInputJoyConfig8_GetConfig returned 0x%08x\n", hr);
+
+        if (SUCCEEDED(hr))
+            ok (SUCCEEDED(IDirectInput_CreateDevice(pDI, &info.guidInstance, &pDID, NULL)),
+               "IDirectInput_CreateDevice failed with guid from GetConfig hr = 0x%08x\n", hr);
+    }
+
+    IDirectInput_Release(pDI);
+}
+
 START_TEST(dinput)
 {
     HMODULE dinput_mod = GetModuleHandleA("dinput.dll");
@@ -583,5 +623,6 @@ START_TEST(dinput)
     test_GetDeviceStatus();
     test_Initialize();
     test_RunControlPanel();
+    test_DirectInputJoyConfig8();
     CoUninitialize();
 }

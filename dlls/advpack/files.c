@@ -501,8 +501,8 @@ HRESULT WINAPI DelNodeRunDLL32W(HWND hWnd, HINSTANCE hInst, LPWSTR cmdline, INT 
     lstrcpyW(cmdline_copy, cmdline);
 
     /* get the parameters at indexes 0 and 1 respectively */
-    szFilename = get_parameter(&cmdline_ptr, ',');
-    szFlags = get_parameter(&cmdline_ptr, ',');
+    szFilename = get_parameter(&cmdline_ptr, ',', TRUE);
+    szFlags = get_parameter(&cmdline_ptr, ',', TRUE);
 
     if (szFlags)
         dwFlags = atolW(szFlags);
@@ -567,7 +567,7 @@ static LPSTR convert_file_list(LPCSTR FileList, DWORD *dwNumFiles)
     szConvertedList[dwLen - 1] = '\0';
 
     /* empty list */
-    if (!lstrlenA(szConvertedList))
+    if (!szConvertedList[0])
     {
         HeapFree(GetProcessHeap(), 0, szConvertedList);
         return NULL;
@@ -708,6 +708,8 @@ HRESULT WINAPI ExtractFilesA(LPCSTR CabName, LPCSTR ExpandDir, DWORD Flags,
     if (!hCabinet)
         return E_FAIL;
 
+    ZeroMemory(&session, sizeof(SESSION));
+
     pExtract = (void *)GetProcAddress(hCabinet, "Extract");
     if (!pExtract)
     {
@@ -715,7 +717,6 @@ HRESULT WINAPI ExtractFilesA(LPCSTR CabName, LPCSTR ExpandDir, DWORD Flags,
         goto done;
     }
 
-    ZeroMemory(&session, sizeof(SESSION));
     lstrcpyA(session.Destination, ExpandDir);
 
     if (FileList)
@@ -779,11 +780,39 @@ done:
 HRESULT WINAPI ExtractFilesW(LPCWSTR CabName, LPCWSTR ExpandDir, DWORD Flags,
                              LPCWSTR FileList, LPVOID LReserved, DWORD Reserved)
 {
+    char *cab_name = NULL, *expand_dir = NULL, *file_list = NULL;
+    HRESULT hres = S_OK;
 
-    FIXME("(%s, %s, %d, %s, %p, %d) stub!\n", debugstr_w(CabName), debugstr_w(ExpandDir),
+    TRACE("(%s, %s, %d, %s, %p, %d)\n", debugstr_w(CabName), debugstr_w(ExpandDir),
           Flags, debugstr_w(FileList), LReserved, Reserved);
 
-    return E_FAIL;
+    if(CabName) {
+        cab_name = heap_strdupWtoA(CabName);
+        if(!cab_name)
+            return E_OUTOFMEMORY;
+    }
+
+    if(ExpandDir) {
+        expand_dir = heap_strdupWtoA(ExpandDir);
+        if(!expand_dir)
+            hres = E_OUTOFMEMORY;
+    }
+
+    if(SUCCEEDED(hres) && FileList) {
+        file_list = heap_strdupWtoA(FileList);
+        if(!file_list)
+            hres = E_OUTOFMEMORY;
+    }
+
+    /* cabinet.dll, which does the real job of extracting files, doesn't have UNICODE API,
+       so we need W->A conversion at some point anyway. */
+    if(SUCCEEDED(hres))
+        hres = ExtractFilesA(cab_name, expand_dir, Flags, file_list, LReserved, Reserved);
+
+    heap_free(cab_name);
+    heap_free(expand_dir);
+    heap_free(file_list);
+    return hres;
 }
 
 /***********************************************************************

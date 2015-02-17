@@ -12,9 +12,12 @@ C_SRCS = \
 	reflection.c \
 	utils.c
 
-LEX_SRCS = asmshader.l
-BISON_SRCS = asmshader.y
+LEX_SRCS = \
+	asmshader.l \
+	hlsl.l
+
+BISON_SRCS = \
+	asmshader.y \
+	hlsl.y
 
 RC_SRCS = version.rc
-
-@MAKE_DLL_RULES@

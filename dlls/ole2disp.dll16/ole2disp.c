@@ -136,22 +136,22 @@ INT16 WINAPI SysReAllocString16(LPBSTR16 pbstr,LPCOLESTR16 oleStr)
  */
 BSTR16 WINAPI SysAllocStringLen16(const char *oleStr, int len)
 {
-	BSTR16 out=BSTR_AllocBytes(len+1);
+    BSTR16 out=BSTR_AllocBytes(len+1);
 
-	if (!out)
-		return 0;
+    if (!out)
+        return 0;
 
     /*
-     * Copy the information in the buffer.
-     * Since it is valid to pass a NULL pointer here, we'll initialize the
-     * buffer to nul if it is the case.
-     */
+    * Copy the information in the buffer.
+    * Since it is valid to pass a NULL pointer here, we'll initialize the
+    * buffer to nul if it is the case.
+    */
     if (oleStr != 0)
-	strcpy(BSTR_GetAddr(out),oleStr);
+        strcpy(BSTR_GetAddr(out),oleStr);
     else
-      memset(BSTR_GetAddr(out), 0, len+1);
+        memset(BSTR_GetAddr(out), 0, len+1);
 
-	return out;
+    return out;
 }
 
 /******************************************************************************
@@ -214,6 +214,16 @@ int WINAPI SysStringLen16(BSTR16 str)
 }
 
 /******************************************************************************
+ * VariantChangeType [OLE2DISP.12]
+ */
+HRESULT WINAPI VariantChangeType16(VARIANTARG *vargDest, VARIANTARG *varSrc, unsigned short flags, VARTYPE vt)
+{
+    FIXME("stub: (%p, %p, %d, %d)\n", vargDest, varSrc, flags, vt);
+    return E_NOTIMPL;
+}
+
+
+/******************************************************************************
  * CreateDispTypeInfo [OLE2DISP.31]
  */
 HRESULT WINAPI CreateDispTypeInfo16(
@@ -247,6 +257,15 @@ HRESULT WINAPI RegisterActiveObject16(
 ) {
 	FIXME("(%p,%s,0x%08x,%p):stub\n",punk,debugstr_guid(rclsid),dwFlags,pdwRegister);
 	return E_NOTIMPL;
+}
+
+/******************************************************************************
+ * VariantChangeTypeEx [OLE2DISP.108]
+ */
+HRESULT WINAPI VariantChangeTypeEx16(VARIANTARG *dest, const VARIANTARG *src, LCID lcid, USHORT flags, VARTYPE vt)
+{
+        FIXME("stub: %p %p %d %d %d\n", dest, src, lcid, flags, vt);
+        return E_INVALIDARG;
 }
 
 /******************************************************************************

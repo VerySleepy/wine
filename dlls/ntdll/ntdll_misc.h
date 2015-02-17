@@ -33,6 +33,12 @@
 
 #define MAX_DOS_DRIVES 26
 
+#if defined(__i386__) || defined(__x86_64__)
+static const UINT_PTR page_size = 0x1000;
+#else
+extern UINT_PTR page_size DECLSPEC_HIDDEN;
+#endif
+
 struct drive_info
 {
     dev_t dev;
@@ -40,6 +46,7 @@ struct drive_info
 };
 
 extern NTSTATUS close_handle( HANDLE ) DECLSPEC_HIDDEN;
+extern ULONG_PTR get_system_affinity_mask(void) DECLSPEC_HIDDEN;
 
 /* exceptions */
 extern void wait_suspend( CONTEXT *context ) DECLSPEC_HIDDEN;
@@ -55,10 +62,6 @@ extern void call_thread_entry_point( LPTHREAD_START_ROUTINE entry, void *arg ) D
 /* debug helpers */
 extern LPCSTR debugstr_us( const UNICODE_STRING *str ) DECLSPEC_HIDDEN;
 extern LPCSTR debugstr_ObjectAttributes(const OBJECT_ATTRIBUTES *oa) DECLSPEC_HIDDEN;
-
-extern NTSTATUS NTDLL_queue_process_apc( HANDLE process, const apc_call_t *call, apc_result_t *result ) DECLSPEC_HIDDEN;
-extern NTSTATUS NTDLL_wait_for_multiple_objects( UINT count, const HANDLE *handles, UINT flags,
-                                                 const LARGE_INTEGER *timeout, HANDLE signal_object ) DECLSPEC_HIDDEN;
 
 /* init routines */
 extern NTSTATUS signal_alloc_thread( TEB **teb ) DECLSPEC_HIDDEN;
@@ -77,18 +80,19 @@ extern void heap_set_debug_flags( HANDLE handle ) DECLSPEC_HIDDEN;
 /* server support */
 extern timeout_t server_start_time DECLSPEC_HIDDEN;
 extern unsigned int server_cpus DECLSPEC_HIDDEN;
-extern int is_wow64 DECLSPEC_HIDDEN;
+extern BOOL is_wow64 DECLSPEC_HIDDEN;
 extern void server_init_process(void) DECLSPEC_HIDDEN;
 extern NTSTATUS server_init_process_done(void) DECLSPEC_HIDDEN;
 extern size_t server_init_thread( void *entry_point ) DECLSPEC_HIDDEN;
-extern void DECLSPEC_NORETURN server_protocol_error( const char *err, ... ) DECLSPEC_HIDDEN;
-extern void DECLSPEC_NORETURN server_protocol_perror( const char *err ) DECLSPEC_HIDDEN;
 extern void DECLSPEC_NORETURN abort_thread( int status ) DECLSPEC_HIDDEN;
 extern void DECLSPEC_NORETURN terminate_thread( int status ) DECLSPEC_HIDDEN;
 extern void DECLSPEC_NORETURN exit_thread( int status ) DECLSPEC_HIDDEN;
 extern sigset_t server_block_set DECLSPEC_HIDDEN;
 extern void server_enter_uninterrupted_section( RTL_CRITICAL_SECTION *cs, sigset_t *sigset ) DECLSPEC_HIDDEN;
 extern void server_leave_uninterrupted_section( RTL_CRITICAL_SECTION *cs, sigset_t *sigset ) DECLSPEC_HIDDEN;
+extern unsigned int server_select( const select_op_t *select_op, data_size_t size,
+                                   UINT flags, const LARGE_INTEGER *timeout ) DECLSPEC_HIDDEN;
+extern unsigned int server_queue_process_apc( HANDLE process, const apc_call_t *call, apc_result_t *result ) DECLSPEC_HIDDEN;
 extern int server_remove_fd_from_cache( HANDLE handle ) DECLSPEC_HIDDEN;
 extern int server_get_unix_fd( HANDLE handle, unsigned int access, int *unix_fd,
                                int *needs_close, enum server_fd_type *type, unsigned int *options ) DECLSPEC_HIDDEN;
@@ -100,6 +104,7 @@ NTSTATUS NTDLL_create_struct_sd(PSECURITY_DESCRIPTOR nt_sd, struct security_desc
 void NTDLL_free_struct_sd(struct security_descriptor *server_sd) DECLSPEC_HIDDEN;
 
 /* module handling */
+extern LIST_ENTRY tls_links DECLSPEC_HIDDEN;
 extern NTSTATUS MODULE_DllThreadAttach( LPVOID lpReserved ) DECLSPEC_HIDDEN;
 extern FARPROC RELAY_GetProcAddress( HMODULE module, const IMAGE_EXPORT_DIRECTORY *exports,
                                      DWORD exp_size, FARPROC proc, DWORD ordinal, const WCHAR *user ) DECLSPEC_HIDDEN;
@@ -139,11 +144,14 @@ extern NTSTATUS TAPE_DeviceIoControl(HANDLE hDevice,
                                      ULONG IoControlCode,
                                      LPVOID lpInBuffer, DWORD nInBufferSize,
                                      LPVOID lpOutBuffer, DWORD nOutBufferSize) DECLSPEC_HIDDEN;
+extern NTSTATUS COMM_FlushBuffersFile( int fd ) DECLSPEC_HIDDEN;
 
 /* file I/O */
 struct stat;
 extern NTSTATUS FILE_GetNtStatus(void) DECLSPEC_HIDDEN;
-extern NTSTATUS fill_stat_info( const struct stat *st, void *ptr, FILE_INFORMATION_CLASS class ) DECLSPEC_HIDDEN;
+extern int get_file_info( const char *path, struct stat *st, ULONG *attr ) DECLSPEC_HIDDEN;
+extern NTSTATUS fill_file_info( const struct stat *st, ULONG attr, void *ptr,
+                                FILE_INFORMATION_CLASS class ) DECLSPEC_HIDDEN;
 extern NTSTATUS server_get_unix_name( HANDLE handle, ANSI_STRING *unix_name ) DECLSPEC_HIDDEN;
 extern void DIR_init_windows_dir( const WCHAR *windir, const WCHAR *sysdir ) DECLSPEC_HIDDEN;
 extern BOOL DIR_is_hidden_file( const UNICODE_STRING *name ) DECLSPEC_HIDDEN;
@@ -160,11 +168,15 @@ extern NTSTATUS virtual_create_builtin_view( void *base ) DECLSPEC_HIDDEN;
 extern NTSTATUS virtual_alloc_thread_stack( TEB *teb, SIZE_T reserve_size, SIZE_T commit_size ) DECLSPEC_HIDDEN;
 extern void virtual_clear_thread_stack(void) DECLSPEC_HIDDEN;
 extern BOOL virtual_handle_stack_fault( void *addr ) DECLSPEC_HIDDEN;
+extern BOOL virtual_is_valid_code_address( const void *addr, SIZE_T size ) DECLSPEC_HIDDEN;
 extern NTSTATUS virtual_handle_fault( LPCVOID addr, DWORD err ) DECLSPEC_HIDDEN;
 extern BOOL virtual_check_buffer_for_read( const void *ptr, SIZE_T size ) DECLSPEC_HIDDEN;
 extern BOOL virtual_check_buffer_for_write( void *ptr, SIZE_T size ) DECLSPEC_HIDDEN;
+extern SIZE_T virtual_uninterrupted_read_memory( const void *addr, void *buffer, SIZE_T size ) DECLSPEC_HIDDEN;
+extern SIZE_T virtual_uninterrupted_write_memory( void *addr, const void *buffer, SIZE_T size ) DECLSPEC_HIDDEN;
 extern void VIRTUAL_SetForceExec( BOOL enable ) DECLSPEC_HIDDEN;
-extern void virtual_release_address_space( BOOL free_high_mem ) DECLSPEC_HIDDEN;
+extern void virtual_release_address_space(void) DECLSPEC_HIDDEN;
+extern void virtual_set_large_address_space(void) DECLSPEC_HIDDEN;
 extern struct _KUSER_SHARED_DATA *user_shared_data DECLSPEC_HIDDEN;
 
 /* completion */
@@ -236,6 +248,7 @@ static inline struct ntdll_thread_data *ntdll_get_thread_data(void)
 }
 
 extern mode_t FILE_umask DECLSPEC_HIDDEN;
+extern HANDLE keyed_event DECLSPEC_HIDDEN;
 
 /* Register functions */
 
@@ -248,5 +261,11 @@ extern mode_t FILE_umask DECLSPEC_HIDDEN;
                        "call " __ASM_NAME("__wine_call_from_regs") "\n\t" \
                        "ret $(4*" #args ")" ) /* fake ret to make copy protections happy */
 #endif
+
+#define HASH_STRING_ALGORITHM_DEFAULT  0
+#define HASH_STRING_ALGORITHM_X65599   1
+#define HASH_STRING_ALGORITHM_INVALID  0xffffffff
+
+NTSTATUS WINAPI RtlHashUnicodeString(PCUNICODE_STRING,BOOLEAN,ULONG,ULONG*);
 
 #endif

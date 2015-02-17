@@ -1,9 +1,9 @@
-.\" -*- nroff -*-
 .TH WINESERVER 1 "October 2005" "@PACKAGE_STRING@" "Windows on Unix"
 .SH NAME
 wineserver \- the Wine server
 .SH SYNOPSIS
-.BI wineserver\  [options]
+.B wineserver
+.RI [ options ]
 .SH DESCRIPTION
 .B wineserver
 is a daemon process that provides to Wine roughly the same services
@@ -16,16 +16,16 @@ useful to start \fBwineserver\fR explicitly with different options, as
 explained below.
 .SH OPTIONS
 .TP
-\fB\-d\fI[n]\fR, \fB--debug\fI[=n]
+\fB\-d\fR[\fIn\fR], \fB--debug\fR[\fB=\fIn\fR]
 Set the debug level to
 .IR n .
 0 means no debugging information, 1 is the normal level, and 2 is for
 extra verbose debugging. If
 .I n
 is not specified, the default is 1. The debug output will be sent to
-stderr. \fBwine\fR(1) will automatically set the debug level when
-starting \fBwineserver\fR if the +server option is set in the
-WINEDEBUG variable.
+stderr. \fBwine\fR(1) will automatically enable normal level debugging
+when starting \fBwineserver\fR if the +server option is set in the
+\fBWINEDEBUG\fR variable.
 .TP
 .BR \-f ", " --foreground
 Make the server remain in the foreground for easier debugging, for
@@ -34,15 +34,15 @@ instance when running it under a debugger.
 .BR \-h ", " --help
 Display a help message.
 .TP
-\fB\-k\fI[n]\fR, \fB--kill\fI[=n]
+\fB\-k\fR[\fIn\fR], \fB--kill\fR[\fB=\fIn\fR]
 Kill the currently running
 .BR wineserver ,
 optionally by sending signal \fIn\fR. If no signal is specified, sends
-a SIGINT first and then a SIGKILL.  The instance of \fBwineserver\fR
-that is killed is selected based on the WINEPREFIX environment
+a \fBSIGINT\fR first and then a \fBSIGKILL\fR.  The instance of \fBwineserver\fR
+that is killed is selected based on the \fBWINEPREFIX\fR environment
 variable.
 .TP
-\fB\-p\fI[n]\fR, \fB--persistent\fI[=n]
+\fB\-p\fR[\fIn\fR], \fB--persistent\fR[\fB=\fIn\fR]
 Specify the \fBwineserver\fR persistence delay, i.e. the amount of
 time that the server will keep running when all client processes have
 terminated. This avoids the cost of shutting down and starting again
@@ -57,9 +57,9 @@ Display version information and exit.
 Wait until the currently running
 .B wineserver
 terminates.
-.SH ENVIRONMENT VARIABLES
+.SH ENVIRONMENT
 .TP
-.I WINEPREFIX
+.B WINEPREFIX
 If set, the content of this variable is taken as the name of the directory where
 .B wineserver
 stores its data (the default is \fI$HOME/.wine\fR). All
@@ -69,11 +69,11 @@ processes using the same
 (i.e.: same user) share certain things like registry, shared memory
 and kernel objects.
 By setting
-.I WINEPREFIX
+.B WINEPREFIX
 to different values for different Wine processes, it is possible to
 run a number of truly independent Wine sessions.
 .TP
-.I WINESERVER
+.B WINESERVER
 Specifies the path and name of the
 .B wineserver
 binary that will be launched automatically by \fBwine\fR. If not set,
@@ -88,26 +88,29 @@ Directory containing user specific data managed by
 .BR wine .
 .TP
 .BI /tmp/.wine- uid
-The directory containing the server Unix socket and the lock
+Directory containing the server Unix socket and the lock
 file. These files are created in a subdirectory generated from the
-WINEPREFIX directory device and inode numbers.
+\fBWINEPREFIX\fR directory device and inode numbers.
 .SH AUTHORS
 The original author of
 .B wineserver
 is Alexandre Julliard. Many other people have contributed new features
-and bug fixes. Please check the file Changelog in the Wine
-distribution for the complete details.
+and bug fixes. For a complete list, see the git commit logs.
 .SH BUGS
-If you find a bug, please submit a bug report at
+Bugs can be reported on the
 .UR http://bugs.winehq.org
-.BR http://bugs.winehq.org .
-.UE
+.B Wine bug tracker
+.UE .
 .SH AVAILABILITY
 .B wineserver
 is part of the Wine distribution, which is available through WineHQ,
-the Wine development headquarters, at
+the
 .UR http://www.winehq.org/
-.BR http://www.winehq.org/ .
-.UE
+.B Wine development headquarters
+.UE .
 .SH "SEE ALSO"
-.BR wine (1).
+.BR wine (1),
+.br
+.UR http://www.winehq.org/help
+.B Wine documentation and support
+.UE .

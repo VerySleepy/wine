@@ -126,8 +126,9 @@ LONG CoreAudio_MIDIInit(void)
     if (MIDIIn_NumDevs > 0)
     {
         InitializeCriticalSection(&midiInLock);
+        midiInLock.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": midiInLock");
         MIDIInThreadPortName = CFStringCreateWithFormat(kCFAllocatorDefault, NULL, CFSTR("MIDIInThreadPortName.%u"), getpid());
-        CreateThread(NULL, 0, MIDIIn_MessageThread, NULL, 0, NULL);
+        CloseHandle( CreateThread(NULL, 0, MIDIIn_MessageThread, NULL, 0, NULL));
 
         name = CFStringCreateWithFormat(kCFAllocatorDefault, NULL, CFSTR("WineInputPort.%u"), getpid());
         MIDIInputPortCreate(wineMIDIClient, name, MIDIIn_ReadProc, NULL, &MIDIInPort);
@@ -207,6 +208,7 @@ LONG CoreAudio_MIDIRelease(void)
         CFMessagePortSendRequest(messagePort, 1, NULL, 0.0, 0.0, NULL, NULL);
         CFRelease(messagePort);
 
+        midiInLock.DebugInfo->Spare[0] = 0;
         DeleteCriticalSection(&midiInLock);
     }
 
@@ -223,10 +225,10 @@ LONG CoreAudio_MIDIRelease(void)
  */
 static void MIDI_NotifyClient(UINT wDevID, WORD wMsg, DWORD_PTR dwParam1, DWORD_PTR dwParam2)
 {
-    DWORD 		dwCallBack;
+    DWORD_PTR 		dwCallBack;
     UINT 		uFlags;
     HANDLE		hDev;
-    DWORD 		dwInstance;
+    DWORD_PTR 		dwInstance;
 
     TRACE("wDevID=%d wMsg=%d dwParm1=%04lX dwParam2=%04lX\n", wDevID, wMsg, dwParam1, dwParam2);
 
@@ -406,10 +408,10 @@ static DWORD MIDIOut_LongData(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
     /* FIXME: MS doc is not 100% clear. Will lpData only contain system exclusive
      * data, or can it also contain raw MIDI data, to be split up and sent to
      * modShortData() ?
-     * If the latest is true, then the following WARNing will fire up
+     * If the latter is true, then the following WARNing will fire up
      */
     if (lpData[0] != 0xF0 || lpData[lpMidiHdr->dwBufferLength - 1] != 0xF7) {
-	WARN("Alledged system exclusive buffer is not correct\n\tPlease report with MIDI file\n");
+	WARN("The allegedly system exclusive buffer is not correct\n\tPlease report with MIDI file\n");
     }
 
     TRACE("dwBufferLength=%u !\n", lpMidiHdr->dwBufferLength);
@@ -453,25 +455,14 @@ static DWORD MIDIOut_Prepare(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
 {
     TRACE("wDevID=%d lpMidiHdr=%p dwSize=%d\n", wDevID, lpMidiHdr, dwSize);
 
-    if (wDevID >= MIDIOut_NumDevs) {
-        WARN("bad device ID : %d\n", wDevID);
-	return MMSYSERR_BADDEVICEID;
-    }
-
-    /* MS doc says that dwFlags must be set to zero, but (kinda funny) MS mciseq drivers
-     * asks to prepare MIDIHDR which dwFlags != 0.
-     * So at least check for the inqueue flag
-     */
-    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 ||
-	lpMidiHdr->lpData == 0 || (lpMidiHdr->dwFlags & MHDR_INQUEUE) != 0) {
-	WARN("%p %p %08x %lu/%d\n", lpMidiHdr, lpMidiHdr->lpData,
-	           lpMidiHdr->dwFlags, offsetof(MIDIHDR,dwOffset), dwSize);
+    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 || lpMidiHdr->lpData == 0)
 	return MMSYSERR_INVALPARAM;
-    }
+    if (lpMidiHdr->dwFlags & MHDR_PREPARED)
+	return MMSYSERR_NOERROR;
 
     lpMidiHdr->lpNext = 0;
     lpMidiHdr->dwFlags |= MHDR_PREPARED;
-    lpMidiHdr->dwFlags &= ~MHDR_DONE;
+    lpMidiHdr->dwFlags &= ~(MHDR_DONE|MHDR_INQUEUE); /* flags cleared since w2k */
     return MMSYSERR_NOERROR;
 }
 
@@ -482,17 +473,14 @@ static DWORD MIDIOut_Unprepare(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
 {
     TRACE("wDevID=%d lpMidiHdr=%p dwSize=%d\n", wDevID, lpMidiHdr, dwSize);
 
-    if (wDevID >= MIDIOut_NumDevs) {
-        WARN("bad device ID : %d\n", wDevID);
-	return MMSYSERR_BADDEVICEID;
-    }
-    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0)
+    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 || lpMidiHdr->lpData == 0)
 	return MMSYSERR_INVALPARAM;
+    if (!(lpMidiHdr->dwFlags & MHDR_PREPARED))
+	return MMSYSERR_NOERROR;
     if (lpMidiHdr->dwFlags & MHDR_INQUEUE)
 	return MIDIERR_STILLPLAYING;
 
     lpMidiHdr->dwFlags &= ~MHDR_PREPARED;
-
     return MMSYSERR_NOERROR;
 }
 
@@ -705,42 +693,27 @@ static DWORD MIDIIn_Prepare(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
 {
     TRACE("wDevID=%d lpMidiHdr=%p dwSize=%d\n", wDevID, lpMidiHdr, dwSize);
 
-    if (wDevID >= MIDIIn_NumDevs) {
-        WARN("bad device ID : %d\n", wDevID);
-	return MMSYSERR_BADDEVICEID;
-    }
-    /* MS doc says that dwFlags must be set to zero, but (kinda funny) MS mciseq drivers
-     * asks to prepare MIDIHDR which dwFlags != 0.
-     * So at least check for the inqueue flag
-     */
-    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 ||
-	lpMidiHdr->lpData == 0 || (lpMidiHdr->dwFlags & MHDR_INQUEUE) != 0) {
-	WARN("Invalid parameter %p %p %08x %d\n", lpMidiHdr, lpMidiHdr->lpData,
-	           lpMidiHdr->dwFlags, dwSize);
+    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 || lpMidiHdr->lpData == 0)
 	return MMSYSERR_INVALPARAM;
-    }
+    if (lpMidiHdr->dwFlags & MHDR_PREPARED)
+	return MMSYSERR_NOERROR;
 
     lpMidiHdr->lpNext = 0;
     lpMidiHdr->dwFlags |= MHDR_PREPARED;
-    lpMidiHdr->dwFlags &= ~MHDR_DONE;
+    lpMidiHdr->dwFlags &= ~(MHDR_DONE|MHDR_INQUEUE); /* flags cleared since w2k */
     return MMSYSERR_NOERROR;
 }
 
 static DWORD MIDIIn_Unprepare(WORD wDevID, LPMIDIHDR lpMidiHdr, DWORD dwSize)
 {
     TRACE("wDevID=%d lpMidiHdr=%p dwSize=%d\n", wDevID, lpMidiHdr, dwSize);
-    if (wDevID >= MIDIIn_NumDevs) {
-        WARN("bad device ID : %d\n", wDevID);
-	return MMSYSERR_BADDEVICEID;
-    }
-    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0) {
-	WARN("Invalid Parameter\n");
+
+    if (dwSize < offsetof(MIDIHDR,dwOffset) || lpMidiHdr == 0 || lpMidiHdr->lpData == 0)
 	return MMSYSERR_INVALPARAM;
-    }
-    if (lpMidiHdr->dwFlags & MHDR_INQUEUE) {
-	WARN("Still playing\n");
+    if (!(lpMidiHdr->dwFlags & MHDR_PREPARED))
+	return MMSYSERR_NOERROR;
+    if (lpMidiHdr->dwFlags & MHDR_INQUEUE)
 	return MIDIERR_STILLPLAYING;
-    }
 
     lpMidiHdr->dwFlags &= ~MHDR_PREPARED;
     return MMSYSERR_NOERROR;
@@ -837,8 +810,8 @@ void MIDIIn_SendMessage(MIDIMessage msg)
     {
         CFMessagePortSendRequest(messagePort, 0, data, 0.0, 0.0, NULL, NULL);
         CFRelease(data);
-        CFRelease(messagePort);
     }
+    CFRelease(messagePort);
 }
 
 static CFDataRef MIDIIn_MessageHandler(CFMessagePortRef local, SInt32 msgid, CFDataRef data, void *info)

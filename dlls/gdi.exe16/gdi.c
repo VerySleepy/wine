@@ -788,7 +788,7 @@ BOOL16 WINAPI StretchBlt16( HDC16 hdcDst, INT16 xDst, INT16 yDst,
  */
 BOOL16 WINAPI Polygon16( HDC16 hdc, const POINT16* pt, INT16 count )
 {
-    register int i;
+    int i;
     BOOL ret;
     LPPOINT pt32 = HeapAlloc( GetProcessHeap(), 0, count*sizeof(POINT) );
 
@@ -809,7 +809,7 @@ BOOL16 WINAPI Polygon16( HDC16 hdc, const POINT16* pt, INT16 count )
  */
 BOOL16 WINAPI Polyline16( HDC16 hdc, const POINT16* pt, INT16 count )
 {
-    register int i;
+    int i;
     BOOL16 ret;
     LPPOINT pt32 = HeapAlloc( GetProcessHeap(), 0, count*sizeof(POINT) );
 
@@ -1982,7 +1982,7 @@ void WINAPI SetRectRgn16( HRGN16 hrgn, INT16 left, INT16 top, INT16 right, INT16
  */
 void WINAPI PlayMetaFileRecord16( HDC16 hdc, HANDLETABLE16 *ht, METARECORD *mr, UINT16 handles )
 {
-    HANDLETABLE *ht32 = HeapAlloc( GetProcessHeap(), 0, handles * sizeof(*ht32) );
+    HANDLETABLE *ht32 = HeapAlloc( GetProcessHeap(), 0, FIELD_OFFSET(HANDLETABLE, objectHandle[handles] ));
     unsigned int i;
 
     for (i = 0; i < handles; i++) ht32->objectHandle[i] = HGDIOBJ_32(ht->objectHandle[i]);
@@ -2017,7 +2017,8 @@ DWORD WINAPI GetDCHook16( HDC16 hdc16, FARPROC16 *phookProc )
  */
 WORD WINAPI SetHookFlags16( HDC16 hdc, WORD flags )
 {
-    return SetHookFlags( HDC_32(hdc), flags );
+    FIXME( "%04x %x: not supported\n", hdc, flags );
+    return 0;
 }
 
 
@@ -2360,7 +2361,7 @@ BOOL16 WINAPI GetCharWidth16( HDC16 hdc, UINT16 firstChar, UINT16 lastChar, LPIN
         if( buf32 )
         {
             LPINT obuf32 = buf32;
-            int i;
+            UINT i;
 
             retVal = GetCharWidth32A( HDC_32(hdc), firstChar, lastChar, buf32);
             if (retVal)
@@ -2906,7 +2907,7 @@ BOOL16 WINAPI IsGDIObject16( HGDIOBJ16 handle16 )
 
     UINT type = GetObjectType( HGDIOBJ_32( handle16 ));
 
-    if (type >= sizeof(type_map)/sizeof(type_map[0])) return 0;
+    if (type >= sizeof(type_map)/sizeof(type_map[0])) return FALSE;
     return type_map[type];
 }
 

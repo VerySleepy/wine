@@ -2,6 +2,5 @@ TESTDLL   = browseui.dll
 IMPORTS   = ole32
 
 C_SRCS = \
-	autocomplete.c
-
-@MAKE_TEST_RULES@
+	autocomplete.c \
+	progressdlg.c

@@ -5,8 +5,6 @@ C_SRCS = \
 	factory.c \
 	objsel.c
 
-IDL_R_SRCS = objsel_classes.idl
+IDL_SRCS = objsel_classes.idl
 
 RC_SRCS = objsel.rc
-
-@MAKE_DLL_RULES@

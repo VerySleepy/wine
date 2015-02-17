@@ -1,5 +1,5 @@
 MODULE    = winemine.exe
-APPMODE   = -mwindows
+APPMODE   = -mwindows -municode
 IMPORTS   = user32 gdi32 advapi32
 DELAYIMPORTS = shell32
 
@@ -8,10 +8,7 @@ C_SRCS = \
 	main.c
 
 RC_SRCS = winemine.rc
-PO_SRCS = winemine.rc
 
-MANPAGE = winemine.man
+MANPAGES = winemine.man.in
 
 SVG_SRCS = winemine.svg
-
-@MAKE_PROG_RULES@

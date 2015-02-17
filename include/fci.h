@@ -25,7 +25,9 @@
 extern "C" {
 #endif /* defined(__cplusplus) */
 
+#ifndef _WIN64
 #include <pshpack4.h>
+#endif
 
 #ifndef INCLUDED_TYPES_FCI_FDI
 #define INCLUDED_TYPES_FCI_FDI 1
@@ -50,7 +52,7 @@ typedef struct {
 /**********************************************************************/
 
 #define CB_MAX_CHUNK         32768U
-#define CB_MAX_DISK          0x7fffffffL
+#define CB_MAX_DISK          __MSABI_LONG(0x7fffffff)
 #define CB_MAX_FILENAME      256
 #define CB_MAX_CABINET_NAME  256
 #define CB_MAX_CAB_PATH      256
@@ -250,7 +252,9 @@ BOOL __cdecl FCIDestroy(HFCI hfci);
 
 /**********************************************************************/
 
+#ifndef _WIN64
 #include <poppack.h>
+#endif
 
 #ifdef __cplusplus
 } /* extern "C" */

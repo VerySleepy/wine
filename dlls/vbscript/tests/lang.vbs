@@ -19,6 +19,7 @@
 Option Explicit
 
 dim x, y, z
+Dim obj
 
 call ok(true, "true is not true?")
 ok true, "true is not true?"
@@ -39,6 +40,12 @@ Call ok(010 = 10, "010 <> 10")
 Call ok(10. = 10, "10. <> 10")
 Call ok(&hffFFffFF& = -1, "&hffFFffFF& <> -1")
 Call ok(&hffFFffFF& = -1, "&hffFFffFF& <> -1")
+Call ok(34e5 = 3400000, "34e5 <> 3400000")
+Call ok(56.789e5 = 5678900, "56.789e5 = 5678900")
+Call ok(56.789e-2 = 0.56789, "56.789e-2 <> 0.56789")
+Call ok(1e-94938484 = 0, "1e-... <> 0")
+Call ok(34e0 = 34, "34e0 <> 34")
+Call ok(34E1 = 340, "34E0 <> 340")
 Call ok(--1 = 1, "--1 = " & --1)
 Call ok(-empty = 0, "-empty = " & (-empty))
 Call ok(true = -1, "! true = -1")
@@ -77,6 +84,9 @@ Call ok(getVT(&h10&) = "VT_I2", "getVT(&h10&) is not VT_I2")
 Call ok(getVT(&h10000&) = "VT_I4", "getVT(&h10000&) is not VT_I4")
 Call ok(getVT(&H10000&) = "VT_I4", "getVT(&H10000&) is not VT_I4")
 Call ok(getVT(&hffFFffFF&) = "VT_I2", "getVT(&hffFFffFF&) is not VT_I2")
+Call ok(getVT(1e2) = "VT_R8", "getVT(1e2) is not VT_R8")
+Call ok(getVT(1e0) = "VT_R8", "getVT(1e0) is not VT_R8")
+Call ok(getVT(0.1e2) = "VT_R8", "getVT(0.1e2) is not VT_R8")
 Call ok(getVT(1 & 100000) = "VT_BSTR", "getVT(1 & 100000) is not VT_BSTR")
 Call ok(getVT(-empty) = "VT_I2", "getVT(-empty) = " & getVT(-empty))
 Call ok(getVT(-null) = "VT_NULL", "getVT(-null) = " & getVT(-null))
@@ -144,6 +154,19 @@ Call ok(1 = 1 < 0, "! 1 = 1 < 0")
 Call ok(1 <= 2, "! 1 <= 2")
 Call ok(2 <= 2, "! 2 <= 2")
 
+Call ok(isNull(0 = null), "'(0 = null)' is not null")
+Call ok(isNull(null = 1), "'(null = 1)' is not null")
+Call ok(isNull(0 > null), "'(0 > null)' is not null")
+Call ok(isNull(null > 1), "'(null > 1)' is not null")
+Call ok(isNull(0 < null), "'(0 < null)' is not null")
+Call ok(isNull(null < 1), "'(null < 1)' is not null")
+Call ok(isNull(0 <> null), "'(0 <> null)' is not null")
+Call ok(isNull(null <> 1), "'(null <> 1)' is not null")
+Call ok(isNull(0 >= null), "'(0 >= null)' is not null")
+Call ok(isNull(null >= 1), "'(null >= 1)' is not null")
+Call ok(isNull(0 <= null), "'(0 <= null)' is not null")
+Call ok(isNull(null <= 1), "'(null <= 1)' is not null")
+
 x = 3
 Call ok(2+2 = 4, "2+2 = " & (2+2))
 Call ok(false + 6 + true = 5, "false + 6 + true <> 5")
@@ -173,6 +196,7 @@ Call ok(2*3 = 6, "2*3 = " & (2*3))
 Call ok(3/2 = 1.5, "3/2 = " & (3/2))
 Call ok(5\4/2 = 2, "5\4/2 = " & (5\2/1))
 Call ok(12/3\2 = 2, "12/3\2 = " & (12/3\2))
+Call ok(5/1000000 = 0.000005, "5/1000000 = " & (5/1000000))
 
 Call ok(2^3 = 8, "2^3 = " & (2^3))
 Call ok(2^3^2 = 64, "2^3^2 = " & (2^3^2))
@@ -208,6 +232,13 @@ if true then x = y else y = x : Call ok(false, "in else?")
 if false then :
 
 if false then x = y : if true then call ok(false, "embedded if called")
+
+if false then x=1 else x=2 end if
+if true then x=1 end if
+
+x = false
+if false then x = true : x = true
+Call ok(x = false, "x <> false")
 
 if false then
     ok false, "if false called"
@@ -258,6 +289,14 @@ End If
 Call ok(x, "elseif not called?")
 
 x = false
+if 1 then x = true
+Call ok(x, "if 1 not run?")
+
+x = false
+if &h10000& then x = true
+Call ok(x, "if &h10000& not run?")
+
+x = false
 y = false
 while not (x and y)
     if x then
@@ -266,6 +305,22 @@ while not (x and y)
     x = true
 wend
 call ok((x and y), "x or y is false after while")
+
+if false then
+' empty body
+end if
+
+if false then
+    x = false
+elseif true then
+' empty body
+end if
+
+if false then
+    x = false
+else
+' empty body
+end if
 
 while false
 wend
@@ -305,6 +360,13 @@ do until false
     exit do
     ok false, "exit do didn't work"
 loop
+
+x = false
+do
+    if x then exit do
+    x = true
+loop
+call ok(x, "x is false after do..loop?")
 
 x = false
 y = false
@@ -405,6 +467,120 @@ for x = 1 to 100
     Call ok(false, "exit for not escaped the loop?")
 next
 
+do while true
+    for x = 1 to 100
+        exit do
+    next
+loop
+
+if null then call ok(false, "if null evaluated")
+
+while null
+    call ok(false, "while null evaluated")
+wend
+
+Call collectionObj.reset()
+y = 0
+x = 10
+for each x in collectionObj
+    y = y+1
+    Call ok(x = y, "x <> y")
+next
+Call ok(y = 3, "y = " & y)
+Call ok(getVT(x) = "VT_EMPTY*", "getVT(x) = " & getVT(x))
+
+Call collectionObj.reset()
+y = false
+for each x in collectionObj
+    if x = 2 then exit for
+    y = 1
+next
+Call ok(y = 1, "y = " & y)
+Call ok(x = 2, "x = " & x)
+
+Set obj = collectionObj
+Call obj.reset()
+y = 0
+x = 10
+for each x in obj
+    y = y+1
+    Call ok(x = y, "x <> y")
+next
+Call ok(y = 3, "y = " & y)
+Call ok(getVT(x) = "VT_EMPTY*", "getVT(x) = " & getVT(x))
+
+x = false
+select case 3
+    case 2
+        Call ok(false, "unexpected case")
+    case 2
+        Call ok(false, "unexpected case")
+    case 4
+        Call ok(false, "unexpected case")
+    case "test"
+    case "another case"
+        Call ok(false, "unexpected case")
+    case 0, false, 2+1, 10
+        x = true
+    case ok(false, "unexpected case")
+        Call ok(false, "unexpected case")
+    case else
+        Call ok(false, "unexpected case")
+end select
+Call ok(x, "wrong case")
+
+x = false
+select case 3
+    case 3
+        x = true
+end select
+Call ok(x, "wrong case")
+
+x = false
+select case 2+2
+    case 3
+        Call ok(false, "unexpected case")
+    case else
+        x = true
+end select
+Call ok(x, "wrong case")
+
+y = "3"
+x = false
+select case y
+    case "3"
+        x = true
+    case 3
+        Call ok(false, "unexpected case")
+end select
+Call ok(x, "wrong case")
+
+select case 0
+    case 1
+        Call ok(false, "unexpected case")
+    case "2"
+        Call ok(false, "unexpected case")
+end select
+
+select case 0
+end select
+
+x = false
+select case 2
+    case 3,1,2,4: x = true
+    case 5,6,7
+        Call ok(false, "unexpected case")
+end select
+Call ok(x, "wrong case")
+
+x = false
+select case 2: case 5,6,7: Call ok(false, "unexpected case")
+    case 2,1,2,4
+        x = true
+    case else: Call ok(false, "unexpected case else")
+end select
+Call ok(x, "wrong case")
+
 if false then
 Sub testsub
     x = true
@@ -462,6 +638,13 @@ Sub TestSubExit(ByRef a)
 End Sub
 
 Call TestSubExit(true)
+
+Sub TestSubExit2
+    for x = 1 to 100
+        Exit Sub
+    next
+End Sub
+Call TestSubExit2
 
 TestSubMultiArgs 1, 2, 3, 4, 5
 Call TestSubMultiArgs(1, 2, 3, 4, 5)
@@ -558,6 +741,17 @@ End Function
 
 Call TestFuncExit(true)
 
+Function TestFuncExit2(ByRef a)
+    For x = 1 to 100
+        For y = 1 to 100
+            Exit Function
+        Next
+    Next
+    Call ok(false, "Exit Function not called?")
+End Function
+
+Call TestFuncExit2(true)
+
 Sub SubParseTest
 End Sub : x = false
 Call SubParseTest
@@ -596,7 +790,6 @@ Stop
 set x = testObj
 Call ok(getVT(x) = "VT_DISPATCH*", "getVT(x=testObj) = " & getVT(x))
 
-Dim obj
 Set obj = New EmptyClass
 Call ok(getVT(obj) = "VT_DISPATCH*", "getVT(obj) = " & getVT(obj))
 
@@ -663,7 +856,14 @@ Class TestClass
     Public Sub Class_Initialize
         publicProp2 = 2
         privateProp = true
+        Call ok(getVT(privateProp) = "VT_BOOL*", "getVT(privateProp) = " & getVT(privateProp))
+        Call ok(getVT(publicProp2) = "VT_I2*", "getVT(publicProp2) = " & getVT(publicProp2))
+        Call ok(getVT(Me.publicProp2) = "VT_I2", "getVT(Me.publicProp2) = " & getVT(Me.publicProp2))
     End Sub
+
+    Property Get gsGetProp(x)
+        gsGetProp = x
+    End Property
 End Class
 
 Call testDisp(new testClass)
@@ -679,6 +879,7 @@ Call obj.publicFunction()
 
 Call ok(getVT(obj.publicProp) = "VT_EMPTY", "getVT(obj.publicProp) = " & getVT(obj.publicProp))
 obj.publicProp = 3
+Call ok(getVT(obj.publicProp) = "VT_I2", "getVT(obj.publicProp) = " & getVT(obj.publicProp))
 Call ok(obj.publicProp = 3, "obj.publicProp = " & obj.publicProp)
 obj.publicProp() = 3
 
@@ -730,6 +931,29 @@ Call ok(funcCalled = "terminate", "funcCalled = " & funcCalled)
 Call (New testclass).publicSub()
 Call (New testclass).publicSub
 
+class PropTest
+    property get prop0()
+        prop0 = 1
+    end property
+
+    property get prop1(x)
+        prop1 = x+1
+    end property
+
+    property get prop2(x, y)
+        prop2 = x+y
+    end property
+end class
+
+set obj = new PropTest
+
+call ok(obj.prop0 = 1, "obj.prop0 = " & obj.prop0)
+call ok(obj.prop1(3) = 4, "obj.prop1(3) = " & obj.prop1(3))
+call ok(obj.prop2(3,4) = 7, "obj.prop2(3,4) = " & obj.prop2(3,4))
+call obj.prop0()
+call obj.prop1(2)
+call obj.prop2(3,4)
+
 x = "following ':' is correct syntax" :
 x = "following ':' is correct syntax" :: :
 :: x = "also correct syntax"
@@ -761,9 +985,19 @@ Call obj.test(obj)
 Call ok(getVT(test) = "VT_DISPATCH", "getVT(test) = " & getVT(test))
 Call ok(Me is Test, "Me is not Test")
 
-Const c1 = 1, c2 = 2
+Const c1 = 1, c2 = 2, c3 = -3
 Call ok(c1 = 1, "c1 = " & c1)
 Call ok(getVT(c1) = "VT_I2", "getVT(c1) = " & getVT(c1))
+Call ok(c3 = -3, "c3 = " & c3)
+Call ok(getVT(c3) = "VT_I2", "getVT(c3) = " & getVT(c3))
+
+Const cb = True, cs = "test", cnull = null
+Call ok(cb, "cb = " & cb)
+Call ok(getVT(cb) = "VT_BOOL", "getVT(cb) = " & getVT(cb))
+Call ok(cs = "test", "cs = " & cs)
+Call ok(getVT(cs) = "VT_BSTR", "getVT(cs) = " & getVT(cs))
+Call ok(isNull(cnull), "cnull = " & cnull)
+Call ok(getVT(cnull) = "VT_NULL", "getVT(cnull) = " & getVT(cnull))
 
 if false then Const conststr = "str"
 Call ok(conststr = "str", "conststr = " & conststr)
@@ -778,5 +1012,174 @@ End Sub
 
 Call ConstTestSub
 Dim funcconst
+
+' Property may be used as an identifier (although it's a keyword)
+Sub TestProperty
+    Dim Property
+    PROPERTY = true
+    Call ok(property, "property = " & property)
+
+    for property = 1 to 2
+    next
+End Sub
+
+Call TestProperty
+
+Class Property
+    Public Sub Property()
+    End Sub
+
+    Sub Test(byref property)
+    End Sub
+End Class
+
+Class Property2
+    Function Property()
+    End Function
+
+    Sub Test(property)
+    End Sub
+
+    Sub Test2(byval property)
+    End Sub
+End Class
+
+' Array tests
+
+Call ok(getVT(arr) = "VT_EMPTY*", "getVT(arr) = " & getVT(arr))
+
+Dim arr(3)
+Dim arr2(4,3), arr3(5,4,3), arr0(0), noarr()
+
+Call ok(getVT(arr) = "VT_ARRAY|VT_BYREF|VT_VARIANT*", "getVT(arr) = " & getVT(arr))
+Call ok(getVT(arr2) = "VT_ARRAY|VT_BYREF|VT_VARIANT*", "getVT(arr2) = " & getVT(arr2))
+Call ok(getVT(arr0) = "VT_ARRAY|VT_BYREF|VT_VARIANT*", "getVT(arr0) = " & getVT(arr0))
+Call ok(getVT(noarr) = "VT_ARRAY|VT_BYREF|VT_VARIANT*", "getVT(noarr) = " & getVT(noarr))
+
+Call testArray(1, arr)
+Call testArray(2, arr2)
+Call testArray(3, arr3)
+Call testArray(0, arr0)
+Call testArray(-1, noarr)
+
+Call ok(getVT(arr(1)) = "VT_EMPTY*", "getVT(arr(1)) = " & getVT(arr(1)))
+Call ok(getVT(arr2(1,2)) = "VT_EMPTY*", "getVT(arr2(1,2)) = " & getVT(arr2(1,2)))
+Call ok(getVT(arr3(1,2,2)) = "VT_EMPTY*", "getVT(arr3(1,2,3)) = " & getVT(arr3(1,2,2)))
+Call ok(getVT(arr(0)) = "VT_EMPTY*", "getVT(arr(0)) = " & getVT(arr(0)))
+Call ok(getVT(arr(3)) = "VT_EMPTY*", "getVT(arr(3)) = " & getVT(arr(3)))
+Call ok(getVT(arr0(0)) = "VT_EMPTY*", "getVT(arr0(0)) = " & getVT(arr0(0)))
+
+arr(2) = 3
+Call ok(arr(2) = 3, "arr(2) = " & arr(2))
+Call ok(getVT(arr(2)) = "VT_I2*", "getVT(arr(2)) = " & getVT(arr(2)))
+
+arr3(3,2,1) = 1
+arr3(1,2,3) = 2
+Call ok(arr3(3,2,1) = 1, "arr3(3,2,1) = " & arr3(3,2,1))
+Call ok(arr3(1,2,3) = 2, "arr3(1,2,3) = " & arr3(1,2,3))
+
+x = arr3
+Call ok(x(3,2,1) = 1, "x(3,2,1) = " & x(3,2,1))
+
+Function getarr()
+    Dim arr(3)
+    arr(2) = 2
+    getarr = arr
+    arr(3) = 3
+End Function
+
+x = getarr()
+Call ok(getVT(x) = "VT_ARRAY|VT_VARIANT*", "getVT(x) = " & getVT(x))
+Call ok(x(2) = 2, "x(2) = " & x(2))
+Call ok(getVT(x(3)) = "VT_EMPTY*", "getVT(x(3)) = " & getVT(x(3)))
+
+x(1) = 1
+Call ok(x(1) = 1, "x(1) = " & x(1))
+x = getarr()
+Call ok(getVT(x(1)) = "VT_EMPTY*", "getVT(x(1)) = " & getVT(x(1)))
+Call ok(x(2) = 2, "x(2) = " & x(2))
+
+x(1) = 1
+y = x
+x(1) = 2
+Call ok(y(1) = 1, "y(1) = " & y(1))
+
+for x=1 to 1
+    Dim forarr(3)
+    if x=1 then
+        Call ok(getVT(forarr(1)) = "VT_EMPTY*", "getVT(forarr(1)) = " & getVT(forarr(1)))
+    else
+        Call ok(forarr(1) = x, "forarr(1) = " & forarr(1))
+    end if
+    forarr(1) = x+1
+next
+
+x=1
+Call ok(forarr(x) = 2, "forarr(x) = " & forarr(x))
+
+Class ArrClass
+    Dim classarr(3)
+    Dim classnoarr()
+    Dim var
+
+    Private Sub Class_Initialize
+        Call ok(getVT(classarr) = "VT_ARRAY|VT_BYREF|VT_VARIANT*", "getVT(classarr) = " & getVT(classarr))
+        Call testArray(-1, classnoarr)
+        classarr(0) = 1
+        classarr(1) = 2
+        classarr(2) = 3
+        classarr(3) = 4
+    End Sub
+
+    Public Sub testVarVT
+        Call ok(getVT(var) = "VT_ARRAY|VT_VARIANT*", "getVT(var) = " & getVT(var))
+    End Sub
+End Class
+
+Set obj = new ArrClass
+Call ok(getVT(obj.classarr) = "VT_ARRAY|VT_VARIANT", "getVT(obj.classarr) = " & getVT(obj.classarr))
+'todo_wine Call ok(obj.classarr(1) = 2, "obj.classarr(1) = " & obj.classarr(1))
+
+obj.var = arr
+Call ok(getVT(obj.var) = "VT_ARRAY|VT_VARIANT", "getVT(obj.var) = " & getVT(obj.var))
+Call obj.testVarVT
+
+Sub arrarg(byref refarr, byval valarr, byref refarr2, byval valarr2)
+    Call ok(getVT(refarr) = "VT_ARRAY|VT_BYREF|VT_VARIANT*", "getVT(refarr) = " & getVT(refarr))
+    Call ok(getVT(valarr) = "VT_ARRAY|VT_VARIANT*", "getVT(valarr) = " & getVT(valarr))
+    Call ok(getVT(refarr2) = "VT_ARRAY|VT_VARIANT*", "getVT(refarr2) = " & getVT(refarr2))
+    Call ok(getVT(valarr2) = "VT_ARRAY|VT_VARIANT*", "getVT(valarr2) = " & getVT(valarr2))
+End Sub
+
+Call arrarg(arr, arr, obj.classarr, obj.classarr)
+
+Sub arrarg2(byref refarr(), byval valarr(), byref refarr2(), byval valarr2())
+    Call ok(getVT(refarr) = "VT_ARRAY|VT_BYREF|VT_VARIANT*", "getVT(refarr) = " & getVT(refarr))
+    Call ok(getVT(valarr) = "VT_ARRAY|VT_VARIANT*", "getVT(valarr) = " & getVT(valarr))
+    Call ok(getVT(refarr2) = "VT_ARRAY|VT_VARIANT*", "getVT(refarr2) = " & getVT(refarr2))
+    Call ok(getVT(valarr2) = "VT_ARRAY|VT_VARIANT*", "getVT(valarr2) = " & getVT(valarr2))
+End Sub
+
+Call arrarg2(arr, arr, obj.classarr, obj.classarr)
+
+Sub testarrarg(arg(), vt)
+    Call ok(getVT(arg) = vt, "getVT() = " & getVT(arg) & " expected " & vt)
+End Sub
+
+Call testarrarg(1, "VT_I2*")
+Call testarrarg(false, "VT_BOOL*")
+Call testarrarg(Empty, "VT_EMPTY*")
+
+' It's allowed to declare non-builtin RegExp class...
+class RegExp
+     public property get Global()
+         Call ok(false, "Global called")
+         Global = "fail"
+     end property
+end class
+
+' ...but there is no way to use it because builtin instance is always created
+set x = new RegExp
+Call ok(x.Global = false, "x.Global = " & x.Global)
 
 reportSuccess()

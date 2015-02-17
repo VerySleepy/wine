@@ -27,8 +27,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(psdrv);
 /***********************************************************************
  *           SelectBrush   (WINEPS.@)
  */
-HBRUSH PSDRV_SelectBrush( PHYSDEV dev, HBRUSH hbrush, HBITMAP bitmap,
-                          const BITMAPINFO *info, void *bits, UINT usage )
+HBRUSH PSDRV_SelectBrush( PHYSDEV dev, HBRUSH hbrush, const struct brush_pattern *pattern )
 {
     PSDRV_PDEVICE *physDev = get_psdrv_dev( dev );
     LOGBRUSH logbrush;
@@ -55,6 +54,7 @@ HBRUSH PSDRV_SelectBrush( PHYSDEV dev, HBRUSH hbrush, HBITMAP bitmap,
 
     case BS_PATTERN:
     case BS_DIBPATTERN:
+        physDev->brush.pattern = *pattern;
 	break;
 
     default:
@@ -232,43 +232,16 @@ BOOL PSDRV_Brush(PHYSDEV dev, BOOL EO)
 	break;
 
     case BS_PATTERN:
-        {
-	    BITMAP bm;
-	    BYTE *bits;
-	    GetObjectA( (HBITMAP)logbrush.lbHatch, sizeof(BITMAP), &bm);
-	    TRACE("BS_PATTERN %dx%d %d bpp\n", bm.bmWidth, bm.bmHeight,
-		  bm.bmBitsPixel);
-	    bits = HeapAlloc(PSDRV_Heap, 0, bm.bmWidthBytes * bm.bmHeight);
-	    GetBitmapBits( (HBITMAP)logbrush.lbHatch, bm.bmWidthBytes * bm.bmHeight, bits);
-
-	    if(physDev->pi->ppd->LanguageLevel > 1) {
-	        PSDRV_WriteGSave(dev);
-	        PSDRV_WritePatternDict(dev, &bm, bits);
-		PSDRV_Fill(dev, EO);
-		PSDRV_WriteGRestore(dev);
-	    } else {
-	        FIXME("Trying to set a pattern brush on a level 1 printer\n");
-		ret = FALSE;
-	    }
-	    HeapFree(PSDRV_Heap, 0, bits);
-	}
-	break;
-
     case BS_DIBPATTERN:
-        {
-	    BITMAPINFO *bmi = (BITMAPINFO *)logbrush.lbHatch;
-	    UINT usage = logbrush.lbColor;
-	    TRACE("size %dx%dx%d\n", bmi->bmiHeader.biWidth,
-		  bmi->bmiHeader.biHeight, bmi->bmiHeader.biBitCount);
-	    if(physDev->pi->ppd->LanguageLevel > 1) {
-	        PSDRV_WriteGSave(dev);
-		ret = PSDRV_WriteDIBPatternDict(dev, bmi, usage);
-		PSDRV_Fill(dev, EO);
-		PSDRV_WriteGRestore(dev);
-	    } else {
-	        FIXME("Trying to set a pattern brush on a level 1 printer\n");
-		ret = FALSE;
-	    }
+        if(physDev->pi->ppd->LanguageLevel > 1) {
+            PSDRV_WriteGSave(dev);
+            ret = PSDRV_WriteDIBPatternDict(dev, physDev->brush.pattern.info,
+                                            physDev->brush.pattern.bits.ptr, physDev->brush.pattern.usage );
+            PSDRV_Fill(dev, EO);
+            PSDRV_WriteGRestore(dev);
+        } else {
+            FIXME("Trying to set a pattern brush on a level 1 printer\n");
+            ret = FALSE;
 	}
 	break;
 

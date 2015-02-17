@@ -94,6 +94,8 @@ static inline BmpDecoder *impl_from_IWICBitmapFrameDecode(IWICBitmapFrameDecode 
 static HRESULT WINAPI BmpFrameDecode_QueryInterface(IWICBitmapFrameDecode *iface, REFIID iid,
     void **ppv)
 {
+    BmpDecoder *This = impl_from_IWICBitmapFrameDecode(iface);
+
     TRACE("(%p,%s,%p)\n", iface, debugstr_guid(iid), ppv);
 
     if (!ppv) return E_INVALIDARG;
@@ -102,7 +104,7 @@ static HRESULT WINAPI BmpFrameDecode_QueryInterface(IWICBitmapFrameDecode *iface
         IsEqualIID(&IID_IWICBitmapSource, iid) ||
         IsEqualIID(&IID_IWICBitmapFrameDecode, iid))
     {
-        *ppv = iface;
+        *ppv = &This->IWICBitmapFrameDecode_iface;
     }
     else
     {
@@ -161,22 +163,35 @@ static HRESULT WINAPI BmpFrameDecode_GetPixelFormat(IWICBitmapFrameDecode *iface
 
 static HRESULT BmpHeader_GetResolution(BITMAPV5HEADER *bih, double *pDpiX, double *pDpiY)
 {
+    LONG resx = 0, resy = 0;
+
     switch (bih->bV5Size)
     {
+    default:
     case sizeof(BITMAPCOREHEADER):
-        *pDpiX = 96.0;
-        *pDpiY = 96.0;
-        return S_OK;
+        break;
+
     case sizeof(BITMAPCOREHEADER2):
     case sizeof(BITMAPINFOHEADER):
     case sizeof(BITMAPV4HEADER):
     case sizeof(BITMAPV5HEADER):
-        *pDpiX = bih->bV5XPelsPerMeter * 0.0254;
-        *pDpiY = bih->bV5YPelsPerMeter * 0.0254;
-        return S_OK;
-    default:
-        return E_FAIL;
+        resx = bih->bV5XPelsPerMeter;
+        resy = bih->bV5YPelsPerMeter;
+        break;
     }
+
+    if (!resx || !resy)
+    {
+        *pDpiX = 96.0;
+        *pDpiY = 96.0;
+    }
+    else
+    {
+        *pDpiX = resx * 0.0254;
+        *pDpiY = resy * 0.0254;
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI BmpFrameDecode_GetResolution(IWICBitmapFrameDecode *iface,
@@ -964,9 +979,10 @@ static HRESULT WINAPI BmpDecoder_QueryInterface(IWICBitmapDecoder *iface, REFIID
 
     if (!ppv) return E_INVALIDARG;
 
-    if (IsEqualIID(&IID_IUnknown, iid) || IsEqualIID(&IID_IWICBitmapDecoder, iid))
+    if (IsEqualIID(&IID_IUnknown, iid) ||
+        IsEqualIID(&IID_IWICBitmapDecoder, iid))
     {
-        *ppv = This;
+        *ppv = &This->IWICBitmapDecoder_iface;
     }
     else
     {
@@ -1007,22 +1023,20 @@ static ULONG WINAPI BmpDecoder_Release(IWICBitmapDecoder *iface)
     return ref;
 }
 
-static HRESULT WINAPI BmpDecoder_QueryCapability(IWICBitmapDecoder *iface, IStream *pIStream,
-    DWORD *pdwCapability)
+static HRESULT WINAPI BmpDecoder_QueryCapability(IWICBitmapDecoder *iface, IStream *stream,
+    DWORD *capability)
 {
     HRESULT hr;
     BmpDecoder *This = impl_from_IWICBitmapDecoder(iface);
 
-    EnterCriticalSection(&This->lock);
-    hr = BmpDecoder_ReadHeaders(This, pIStream);
-    LeaveCriticalSection(&This->lock);
-    if (FAILED(hr)) return hr;
+    TRACE("(%p,%p,%p)\n", iface, stream, capability);
 
-    if (This->read_data_func == BmpFrameDecode_ReadUnsupported)
-        *pdwCapability = 0;
-    else
-        *pdwCapability = WICBitmapDecoderCapabilityCanDecodeAllImages;
+    if (!stream || !capability) return E_INVALIDARG;
 
+    hr = IWICBitmapDecoder_Initialize(iface, stream, WICDecodeMetadataCacheOnDemand);
+    if (hr != S_OK) return hr;
+
+    *capability = This->read_data_func == BmpFrameDecode_ReadUnsupported ? 0 : WICBitmapDecoderCapabilityCanDecodeAllImages;
     return S_OK;
 }
 
@@ -1110,6 +1124,8 @@ static HRESULT WINAPI BmpDecoder_GetThumbnail(IWICBitmapDecoder *iface,
 static HRESULT WINAPI BmpDecoder_GetFrameCount(IWICBitmapDecoder *iface,
     UINT *pCount)
 {
+    if (!pCount) return E_INVALIDARG;
+
     *pCount = 1;
     return S_OK;
 }
@@ -1121,7 +1137,7 @@ static HRESULT WINAPI BmpDecoder_GetFrame(IWICBitmapDecoder *iface,
 
     if (index != 0) return E_INVALIDARG;
 
-    if (!This->stream) return WINCODEC_ERR_WRONGSTATE;
+    if (!This->stream) return WINCODEC_ERR_FRAMEMISSING;
 
     *ppIBitmapFrame = &This->IWICBitmapFrameDecode_iface;
     IWICBitmapDecoder_AddRef(iface);
@@ -1169,16 +1185,14 @@ static HRESULT BmpDecoder_Create(int packed, int icoframe, BmpDecoder **ppDecode
     return S_OK;
 }
 
-static HRESULT BmpDecoder_Construct(int packed, int icoframe, IUnknown *pUnkOuter, REFIID iid, void** ppv)
+static HRESULT BmpDecoder_Construct(int packed, int icoframe, REFIID iid, void** ppv)
 {
     BmpDecoder *This;
     HRESULT ret;
 
-    TRACE("(%p,%s,%p)\n", pUnkOuter, debugstr_guid(iid), ppv);
+    TRACE("(%s,%p)\n", debugstr_guid(iid), ppv);
 
     *ppv = NULL;
-
-    if (pUnkOuter) return CLASS_E_NOAGGREGATION;
 
     ret = BmpDecoder_Create(packed, icoframe, &This);
     if (FAILED(ret)) return ret;
@@ -1189,14 +1203,14 @@ static HRESULT BmpDecoder_Construct(int packed, int icoframe, IUnknown *pUnkOute
     return ret;
 }
 
-HRESULT BmpDecoder_CreateInstance(IUnknown *pUnkOuter, REFIID iid, void** ppv)
+HRESULT BmpDecoder_CreateInstance(REFIID iid, void** ppv)
 {
-    return BmpDecoder_Construct(FALSE, FALSE, pUnkOuter, iid, ppv);
+    return BmpDecoder_Construct(FALSE, FALSE, iid, ppv);
 }
 
-HRESULT DibDecoder_CreateInstance(IUnknown *pUnkOuter, REFIID iid, void** ppv)
+HRESULT DibDecoder_CreateInstance(REFIID iid, void** ppv)
 {
-    return BmpDecoder_Construct(TRUE, FALSE, pUnkOuter, iid, ppv);
+    return BmpDecoder_Construct(TRUE, FALSE, iid, ppv);
 }
 
 HRESULT IcoDibDecoder_CreateInstance(BmpDecoder **ppDecoder)

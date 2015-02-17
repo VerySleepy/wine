@@ -50,10 +50,11 @@ static CRITICAL_SECTION report_table_cs = { &report_table_cs_debug, -1, 0, 0, 0,
 
 static struct list report_table = LIST_INIT(report_table);
 
-static WCHAR regpath_exclude[] = {'S','o','f','t','w','a','r','e','\\',
-                                  'M','i','c','r','o','s','o','f','t','\\',
-                                  'W','i','n','d','o','w','s',' ','E','r','r','o','r',' ','R','e','p','o','r','t','i','n','g','\\',
-                                  'E','x','c','l','u','d','e','d','A','p','p','l','i','c','a','t','i','o','n','s',0};
+static const WCHAR regpath_exclude[] =
+    {'S','o','f','t','w','a','r','e','\\',
+     'M','i','c','r','o','s','o','f','t','\\',
+     'W','i','n','d','o','w','s',' ','E','r','r','o','r',' ','R','e','p','o','r','t','i','n','g','\\',
+     'E','x','c','l','u','d','e','d','A','p','p','l','i','c','a','t','i','o','n','s',0};
 
 /***********************************************************************
  * Memory allocation helper
@@ -79,8 +80,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
             return FALSE;    /* prefer native version */
         case DLL_PROCESS_ATTACH:
             DisableThreadLibraryCalls(hinstDLL);
-            break;
-        case DLL_PROCESS_DETACH:
             break;
     }
 
@@ -199,6 +198,29 @@ HRESULT WINAPI WerReportAddDump(HREPORT hReportHandle, HANDLE hProcess, HANDLE h
 }
 
 /***********************************************************************
+ * WerReportAddFile (wer.@)
+ *
+ * Add a file to an error report handle.
+ *
+ * PARAMS
+ *  hreport [i] error reporting handle to add the file
+ *  path    [i] path to the file to add
+ *  type    [i] type of the file to add
+ *  flags   [i] flags for the file
+ *
+ * RETURNS
+ *  Success: S_OK
+ *  Failure: A HRESULT error code
+ *
+ */
+HRESULT WINAPI WerReportAddFile(HREPORT hreport, PCWSTR path, WER_FILE_TYPE type, DWORD flags)
+{
+    FIXME("(%p, %s, %d, 0x%x) :stub\n", hreport, debugstr_w(path), type, flags);
+
+    return S_OK;
+}
+
+/***********************************************************************
  * WerReportCloseHandle (wer.@)
  *
  * Close an error reporting handle and free associated resources
@@ -261,7 +283,6 @@ HRESULT WINAPI WerReportCloseHandle(HREPORT hreport)
 HRESULT WINAPI WerReportCreate(PCWSTR eventtype, WER_REPORT_TYPE reporttype, PWER_REPORT_INFORMATION reportinfo, HREPORT *phandle)
 {
     report_t *report;
-    DWORD len;
 
     TRACE("(%s, %d, %p, %p)\n", debugstr_w(eventtype), reporttype, reportinfo, phandle);
     if (reportinfo) {
@@ -274,9 +295,7 @@ HRESULT WINAPI WerReportCreate(PCWSTR eventtype, WER_REPORT_TYPE reporttype, PWE
         return E_INVALIDARG;
     }
 
-    len = lstrlenW(eventtype) + 1;
-
-    report = heap_alloc_zero(len * sizeof(WCHAR) + sizeof(report_t));
+    report = heap_alloc_zero(FIELD_OFFSET(report_t, eventtype[lstrlenW(eventtype) + 1]));
     if (!report)
         return __HRESULT_FROM_WIN32(ERROR_OUTOFMEMORY);
 
@@ -318,7 +337,7 @@ HRESULT WINAPI WerReportSetParameter(HREPORT hreport, DWORD id, PCWSTR name, PCW
 {
     FIXME("(%p, %d, %s, %s) :stub\n", hreport, id, debugstr_w(name), debugstr_w(value));
 
-    return E_NOTIMPL;
+    return S_OK;
 }
 
 /***********************************************************************
@@ -346,5 +365,14 @@ HRESULT WINAPI WerReportSubmit(HREPORT hreport, WER_CONSENT consent, DWORD flags
         return E_INVALIDARG;
 
     *presult = WerDisabled;
+    return S_OK;
+}
+
+/***********************************************************************
+ * WerReportSetUIOption (wer.@)
+ */
+HRESULT WINAPI WerReportSetUIOption(HREPORT hreport, WER_REPORT_UI uitype, PCWSTR value)
+{
+    FIXME("(%p, %d, %s) :stub\n", hreport, uitype, debugstr_w(value));
     return E_NOTIMPL;
 }

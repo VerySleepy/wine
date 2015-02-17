@@ -27,6 +27,7 @@
 #include "config.h"
 #include "wine/port.h"
 
+#include <limits.h>
 #include <time.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -109,33 +110,38 @@ static inline PWSTR CRYPT_GetTypeKeyName(DWORD dwType, BOOL user)
 	return keyname;
 }
 
-/* CRYPT_UnicodeTOANSI
+/* CRYPT_UnicodeToANSI
  * wstr - unicode string
- * str - pointer to ANSI string
- * strsize - size of buffer pointed to by str or -1 if we have to do the allocation
+ * str - pointer to ANSI string or pointer to null pointer if we have to do the allocation
+ * strsize - size of buffer pointed to by str
  *
  * returns TRUE if unsuccessful, FALSE otherwise.
  * if wstr is NULL, returns TRUE and sets str to NULL! Value of str should be checked after call
  */
 static inline BOOL CRYPT_UnicodeToANSI(LPCWSTR wstr, LPSTR* str, int strsize)
 {
-	int count;
-
 	if (!wstr)
 	{
 		*str = NULL;
 		return TRUE;
 	}
-	count = WideCharToMultiByte(CP_ACP, 0, wstr, -1, NULL, 0, NULL, NULL);
-	if (strsize == -1)
-		*str = CRYPT_Alloc(count * sizeof(CHAR));
-	else
-		count = min( count, strsize );
+
+	if (!*str)
+	{
+		strsize = WideCharToMultiByte(CP_ACP, 0, wstr, -1, NULL, 0, NULL, NULL);
+		*str = CRYPT_Alloc(strsize * sizeof(CHAR));
+	}
+	else if (strsize < 0)
+	{
+		strsize = INT_MAX; /* windows will pretend that the buffer is infinitely long */
+	}
+
 	if (*str)
 	{
-		WideCharToMultiByte(CP_ACP, 0, wstr, -1, *str, count, NULL, NULL);
+		WideCharToMultiByte(CP_ACP, 0, wstr, -1, *str, strsize, NULL, NULL);
 		return TRUE;
 	}
+
 	SetLastError(ERROR_NOT_ENOUGH_MEMORY);
 	return FALSE;
 }
@@ -313,6 +319,23 @@ static void CRYPT_CreateMachineGuid(void)
 	}
 }
 
+
+/******************************************************************************
+ * CloseEncryptedFileRaw   (ADVAPI32.@)
+ *
+ * Close encrypted files
+ *
+ * PARAMS
+ *  context    [I] pointer to the context
+ * RETURNS
+ *  Success: ERROR_SUCCESS
+ *  Failure: NTSTATUS error code
+ */
+void WINAPI CloseEncryptedFileRaw(PVOID context)
+{
+    FIXME("(%p): stub\n", context);
+}
+
 /******************************************************************************
  * CryptAcquireContextW (ADVAPI32.@)
  *
@@ -481,13 +504,13 @@ BOOL WINAPI CryptAcquireContextW (HCRYPTPROV *phProv, LPCWSTR pszContainer,
 		goto error;
 	}
 	pProv->pVTable->dwProvType = dwProvType;
-	if(!CRYPT_UnicodeToANSI(provname, &provnameA, -1))
+	if(!CRYPT_UnicodeToANSI(provname, &provnameA, 0))
 	{
 		/* CRYPT_UnicodeToANSI calls SetLastError */
 		goto error;
 	}
 	pProv->pVTable->pszProvName = provnameA;
-	if(!CRYPT_UnicodeToANSI(pszContainer, &pszContainerA, -1))
+	if(!CRYPT_UnicodeToANSI(pszContainer, &pszContainerA, 0))
 	{
 		/* CRYPT_UnicodeToANSI calls SetLastError */
 		goto error;
@@ -720,12 +743,7 @@ BOOL WINAPI CryptCreateHash (HCRYPTPROV hProv, ALG_ID Algid, HCRYPTKEY hKey,
 
 	TRACE("(0x%lx, 0x%x, 0x%lx, %08x, %p)\n", hProv, Algid, hKey, dwFlags, phHash);
 
-	if (!prov)
-	{
-		SetLastError(ERROR_INVALID_HANDLE);
-		return FALSE;
-	}
-	if (!phHash || prov->dwMagic != MAGIC_CRYPTPROV ||
+	if (!prov || !phHash || prov->dwMagic != MAGIC_CRYPTPROV ||
 		(key && key->dwMagic != MAGIC_CRYPTKEY))
 	{
 		SetLastError(ERROR_INVALID_PARAMETER);
@@ -1826,7 +1844,7 @@ BOOL WINAPI CryptHashSessionKey (HCRYPTHASH hHash, HCRYPTKEY hKey, DWORD dwFlags
  *  Success: TRUE
  *  Failure: FALSE
  */
-BOOL WINAPI CryptImportKey (HCRYPTPROV hProv, CONST BYTE *pbData, DWORD dwDataLen,
+BOOL WINAPI CryptImportKey (HCRYPTPROV hProv, const BYTE *pbData, DWORD dwDataLen,
 		HCRYPTKEY hPubKey, DWORD dwFlags, HCRYPTKEY *phKey)
 {
 	PCRYPTPROV prov = (PCRYPTPROV)hProv;
@@ -1946,7 +1964,7 @@ BOOL WINAPI CryptSignHashA (HCRYPTHASH hHash, DWORD dwKeySpec, LPCSTR sDescripti
  *  Success: TRUE
  *  Failure: FALSE
  */
-BOOL WINAPI CryptSetHashParam (HCRYPTHASH hHash, DWORD dwParam, CONST BYTE *pbData, DWORD dwFlags)
+BOOL WINAPI CryptSetHashParam (HCRYPTHASH hHash, DWORD dwParam, const BYTE *pbData, DWORD dwFlags)
 {
 	PCRYPTPROV prov;
 	PCRYPTHASH hash = (PCRYPTHASH)hHash;
@@ -1980,7 +1998,7 @@ BOOL WINAPI CryptSetHashParam (HCRYPTHASH hHash, DWORD dwParam, CONST BYTE *pbDa
  *  Success: TRUE
  *  Failure: FALSE
  */
-BOOL WINAPI CryptSetKeyParam (HCRYPTKEY hKey, DWORD dwParam, CONST BYTE *pbData, DWORD dwFlags)
+BOOL WINAPI CryptSetKeyParam (HCRYPTKEY hKey, DWORD dwParam, const BYTE *pbData, DWORD dwFlags)
 {
 	PCRYPTPROV prov;
 	PCRYPTKEY key = (PCRYPTKEY)hKey;
@@ -2155,7 +2173,7 @@ BOOL WINAPI CryptSetProviderExA (LPCSTR pszProvName, DWORD dwProvType, DWORD *pd
  *  Success: TRUE
  *  Failure: FALSE
  */
-BOOL WINAPI CryptSetProvParam (HCRYPTPROV hProv, DWORD dwParam, CONST BYTE *pbData, DWORD dwFlags)
+BOOL WINAPI CryptSetProvParam (HCRYPTPROV hProv, DWORD dwParam, const BYTE *pbData, DWORD dwFlags)
 {
 	PCRYPTPROV prov = (PCRYPTPROV)hProv;
 
@@ -2171,7 +2189,7 @@ BOOL WINAPI CryptSetProvParam (HCRYPTPROV hProv, DWORD dwParam, CONST BYTE *pbDa
 		SetLastError(ERROR_INVALID_PARAMETER);
 		return FALSE;
 	}
-	if (dwFlags & PP_USE_HARDWARE_RNG)
+	if (dwParam == PP_USE_HARDWARE_RNG)
 	{
 		FIXME("PP_USE_HARDWARE_RNG: What do I do with this?\n");
 		FIXME("\tLetting the CSP decide.\n");
@@ -2214,7 +2232,7 @@ BOOL WINAPI CryptSetProvParam (HCRYPTPROV hProv, DWORD dwParam, CONST BYTE *pbDa
  *  NULL. It is supported only for compatibility with Microsoft's Cryptographic
  *  Providers.
  */
-BOOL WINAPI CryptVerifySignatureW (HCRYPTHASH hHash, CONST BYTE *pbSignature, DWORD dwSigLen,
+BOOL WINAPI CryptVerifySignatureW (HCRYPTHASH hHash, const BYTE *pbSignature, DWORD dwSigLen,
 		HCRYPTKEY hPubKey, LPCWSTR sDescription, DWORD dwFlags)
 {
 	PCRYPTHASH hash = (PCRYPTHASH)hHash;
@@ -2242,7 +2260,7 @@ BOOL WINAPI CryptVerifySignatureW (HCRYPTHASH hHash, CONST BYTE *pbSignature, DW
  *
  * See CryptVerifySignatureW.
  */
-BOOL WINAPI CryptVerifySignatureA (HCRYPTHASH hHash, CONST BYTE *pbSignature, DWORD dwSigLen,
+BOOL WINAPI CryptVerifySignatureA (HCRYPTHASH hHash, const BYTE *pbSignature, DWORD dwSigLen,
 		HCRYPTKEY hPubKey, LPCSTR sDescription, DWORD dwFlags)
 {
 	LPWSTR wsDescription;
@@ -2256,6 +2274,55 @@ BOOL WINAPI CryptVerifySignatureA (HCRYPTHASH hHash, CONST BYTE *pbSignature, DW
 	CRYPT_Free(wsDescription);
 
 	return result;
+}
+
+/******************************************************************************
+ * OpenEncryptedFileRawA   (ADVAPI32.@)
+ *
+ * See OpenEncryptedFileRawW
+ */
+DWORD WINAPI OpenEncryptedFileRawA(LPCSTR filename, ULONG flags, PVOID *context)
+{
+    FIXME("(%s, %x, %p): stub\n", debugstr_a(filename), flags, context);
+    return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
+/******************************************************************************
+ * OpenEncryptedFileRawW   (ADVAPI32.@)
+ *
+ * Opens an EFS encrypted file for backup/restore
+ *
+ * PARAMS
+ *  filename   [I] Filename to operate on
+ *  flags     [I] Operation to perform
+ *  context    [I] Handle to the context (out)
+ * RETURNS
+ *  Success: ERROR_SUCCESS
+ *  Failure: NTSTATUS error code
+ */
+DWORD WINAPI OpenEncryptedFileRawW(LPCWSTR filename, ULONG flags, PVOID *context)
+{
+    FIXME("(%s, %x, %p): stub\n", debugstr_w(filename), flags, context);
+    return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
+/******************************************************************************
+ * ReadEncryptedFileRaw   (ADVAPI32.@)
+ *
+ * Export encrypted files
+ *
+ * PARAMS
+ *  export   [I] pointer to the export callback function
+ *  callback     [I] pointer to the application defined context
+ *  context    [I] pointer to the system context
+ * RETURNS
+ *  Success: ERROR_SUCCESS
+ *  Failure: NTSTATUS error code
+ */
+DWORD WINAPI ReadEncryptedFileRaw(PFE_EXPORT_FUNC export, PVOID callback, PVOID context)
+{
+    FIXME("(%p, %p, %p): stub\n", export, callback, context);
+    return ERROR_CALL_NOT_IMPLEMENTED;
 }
 
 /******************************************************************************
@@ -2383,4 +2450,23 @@ NTSTATUS WINAPI SystemFunction041(PVOID memory, ULONG length, ULONG flags)
 {
 	FIXME("(%p, %x, %x): stub [RtlDecryptMemory]\n", memory, length, flags);
 	return STATUS_SUCCESS;
+}
+
+/******************************************************************************
+ * WriteEncryptedFileRaw   (ADVAPI32.@)
+ *
+ * Import encrypted files
+ *
+ * PARAMS
+ *  import   [I] pointer to the import callback function
+ *  callback     [I] pointer to the application defined context
+ *  context    [I] pointer to the system context
+ * RETURNS
+ *  Success: ERROR_SUCCESS
+ *  Failure: NTSTATUS error code
+ */
+DWORD WINAPI WriteEncryptedFileRaw(PFE_IMPORT_FUNC import, PVOID callback, PVOID context)
+{
+    FIXME("(%p, %p, %p): stub\n", import, callback, context);
+    return ERROR_CALL_NOT_IMPLEMENTED;
 }

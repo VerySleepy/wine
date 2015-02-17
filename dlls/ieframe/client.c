@@ -81,7 +81,7 @@ static HRESULT WINAPI ClientSite_QueryInterface(IOleClientSite *iface, REFIID ri
         return E_NOINTERFACE;
     }
 
-    IOleClientSite_AddRef((IUnknown*)*ppv);
+    IUnknown_AddRef((IUnknown*)*ppv);
     return S_OK;
 }
 
@@ -297,7 +297,7 @@ static HRESULT WINAPI InPlaceSite_OnInPlaceActivateEx(IOleInPlaceSiteEx *iface,
     TRACE("(%p)->(%p, %x)\n", This, pfNoRedraw, dwFlags);
 
     /* FIXME: Avoid redraw, when possible */
-    pfNoRedraw = FALSE;
+    *pfNoRedraw = FALSE;
 
     if (dwFlags) {
         FIXME("dwFlags not supported (%x)\n", dwFlags);
@@ -471,7 +471,7 @@ static HRESULT WINAPI ControlSite_TranslateAccelerator(IOleControlSite *iface, M
 
     TRACE("(%p)->(%p, %08x)\n", This, pMsg, grfModifiers);
 
-    hr = IDispatch_QueryInterface(This->disp, &IID_IOleObject, (void**)&wb_obj);
+    hr = IWebBrowser2_QueryInterface(This->wb, &IID_IOleObject, (void**)&wb_obj);
     if(SUCCEEDED(hr)) {
         hr = IOleObject_GetClientSite(wb_obj, &clientsite);
         if(SUCCEEDED(hr)) {
@@ -663,27 +663,31 @@ static HRESULT WINAPI ClServiceProvider_QueryService(IServiceProvider *iface, RE
 
     if(IsEqualGUID(&IID_IHlinkFrame, guidService)) {
         TRACE("(%p)->(IID_IHlinkFrame %s %p)\n", This, debugstr_guid(riid), ppv);
-        return IDispatch_QueryInterface(This->disp, riid, ppv);
+        return IWebBrowser2_QueryInterface(This->wb, riid, ppv);
     }
 
     if(IsEqualGUID(&IID_IWebBrowserApp, guidService)) {
         TRACE("IWebBrowserApp service\n");
-        return IDispatch_QueryInterface(This->disp, riid, ppv);
+        return IWebBrowser2_QueryInterface(This->wb, riid, ppv);
     }
 
     if(IsEqualGUID(&IID_IShellBrowser, guidService)) {
-        IShellBrowser *sb;
-        HRESULT hres;
-
         TRACE("(%p)->(IID_IShellBrowser %s %p)\n", This, debugstr_guid(riid), ppv);
 
-        hres = ShellBrowser_Create(&sb);
-        if(FAILED(hres))
-            return hres;
+        if(!This->browser_service) {
+            HRESULT hres;
 
-        hres = IShellBrowser_QueryInterface(sb, riid, ppv);
-        IShellBrowser_Release(sb);
-        return hres;
+            hres = create_browser_service(This, &This->browser_service);
+            if(FAILED(hres))
+                return hres;
+        }
+
+        return IShellBrowser_QueryInterface(&This->browser_service->IShellBrowser_iface, riid, ppv);
+    }
+
+    if(IsEqualGUID(&SID_SNewWindowManager, guidService)) {
+        TRACE("SID_SNewWindowManager service\n");
+        return INewWindowManager_QueryInterface(&This->nwm.INewWindowManager_iface, riid, ppv);
     }
 
     FIXME("(%p)->(%s %s %p)\n", This, debugstr_guid(guidService), debugstr_guid(riid), ppv);
@@ -710,6 +714,8 @@ void DocHost_ClientSite_Init(DocHost *This)
 
 void DocHost_ClientSite_Release(DocHost *This)
 {
+    if(This->browser_service)
+        detach_browser_service(This->browser_service);
     if(This->view)
         IOleDocumentView_Release(This->view);
 }

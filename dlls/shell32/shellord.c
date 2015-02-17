@@ -60,7 +60,7 @@ typedef struct tagCREATEMRULIST
     DWORD  dwFlags;       /* see below */
     HKEY   hKey;          /* root reg. key under which list is saved */
     LPCSTR lpszSubKey;    /* reg. subkey */
-    PROC   lpfnCompare;   /* item compare proc */
+    int (CALLBACK *lpfnCompare)(LPCVOID, LPCVOID, DWORD); /* item compare proc */
 } CREATEMRULISTA, *LPCREATEMRULISTA;
 
 /* dwFlags */
@@ -596,12 +596,8 @@ HRESULT WINAPI SHDoDragDrop(
  * ArrangeWindows				[SHELL32.184]
  *
  */
-WORD WINAPI ArrangeWindows(
-	HWND hwndParent,
-	DWORD dwReserved,
-	LPCRECT lpRect,
-	WORD cKids,
-	CONST HWND * lpKids)
+WORD WINAPI ArrangeWindows(HWND hwndParent, DWORD dwReserved, const RECT *lpRect,
+        WORD cKids, const HWND *lpKids)
 {
     FIXME("(%p 0x%08x %p 0x%04x %p):stub.\n",
 	   hwndParent, dwReserved, lpRect, cKids, lpKids);
@@ -614,12 +610,12 @@ WORD WINAPI ArrangeWindows(
  * NOTES
  *     exported by ordinal
  */
-DWORD WINAPI
-SignalFileOpen (DWORD dwParam1)
+BOOL WINAPI
+SignalFileOpen (PCIDLIST_ABSOLUTE pidl)
 {
-    FIXME("(0x%08x):stub.\n", dwParam1);
+    FIXME("(%p):stub.\n", pidl);
 
-    return 0;
+    return FALSE;
 }
 
 /*************************************************************************
@@ -927,7 +923,7 @@ void WINAPI SHAddToRecentDocs (UINT uFlags,LPCVOID pv)
 	mymru.dwFlags = MRUF_BINARY_LIST | MRUF_DELAYED_SAVE;
 	mymru.hKey = HCUbasekey;
 	mymru.lpszSubKey = "RecentDocs";
-	mymru.lpfnCompare = (PROC)SHADD_compare_mru;
+        mymru.lpfnCompare = SHADD_compare_mru;
 	mruhandle = CreateMRUListA(&mymru);
 	if (!mruhandle) {
 	    /* MRU failed */
@@ -951,7 +947,7 @@ void WINAPI SHAddToRecentDocs (UINT uFlags,LPCVOID pv)
 		/* buffer size looks good */
 		ptr += 12; /* get to string */
 		len = bufused - (ptr-buffer);  /* get length of buf remaining */
-		if ((lstrlenA(ptr) > 0) && (lstrlenA(ptr) <= len-1)) {
+                if (ptr[0] && (lstrlenA(ptr) <= len-1)) {
 		    /* appears to be good string */
 		    lstrcpyA(old_lnk_name, link_dir);
 		    PathAppendA(old_lnk_name, ptr);
@@ -1108,12 +1104,12 @@ HRESULT WINAPI SHCreateShellFolderViewEx(
 	  psvcbi->pshf, psvcbi->pidl, psvcbi->pfnCallback,
 	  psvcbi->fvm, psvcbi->psvOuter);
 
+	*ppv = NULL;
 	psf = IShellView_Constructor(psvcbi->pshf);
 
 	if (!psf)
 	  return E_OUTOFMEMORY;
 
-	IShellView_AddRef(psf);
 	hRes = IShellView_QueryInterface(psf, &IID_IShellView, (LPVOID *)ppv);
 	IShellView_Release(psf);
 
@@ -1131,9 +1127,10 @@ HRESULT WINAPI SHWinHelp (DWORD v, DWORD w, DWORD x, DWORD z)
  *  SHRunControlPanel [SHELL32.161]
  *
  */
-HRESULT WINAPI SHRunControlPanel (DWORD x, DWORD z)
-{	FIXME("0x%08x 0x%08x stub\n",x,z);
-	return 0;
+BOOL WINAPI SHRunControlPanel (LPCWSTR commandLine, HWND parent)
+{
+	FIXME("(%s, %p): stub\n", debugstr_w(commandLine), parent);
+	return FALSE;
 }
 
 static LPUNKNOWN SHELL32_IExplorerInterface=0;
@@ -1162,7 +1159,7 @@ HRESULT WINAPI SHGetInstanceExplorer (IUnknown **lpUnknown)
 	  return E_FAIL;
 
 	IUnknown_AddRef(SHELL32_IExplorerInterface);
-	return NOERROR;
+	return S_OK;
 }
 /*************************************************************************
  * SHFreeUnusedLibraries			[SHELL32.123]
@@ -1189,7 +1186,7 @@ void WINAPI SHFreeUnusedLibraries (void)
 BOOL WINAPI DAD_AutoScroll(HWND hwnd, AUTO_SCROLL_DATA *samples, LPPOINT pt)
 {
     FIXME("hwnd = %p %p %p\n",hwnd,samples,pt);
-    return 0;
+    return FALSE;
 }
 /*************************************************************************
  * DAD_DragEnter				[SHELL32.130]
@@ -1237,8 +1234,8 @@ BOOL WINAPI DAD_SetDragImage(
 	HIMAGELIST himlTrack,
 	LPPOINT lppt)
 {
-	FIXME("%p %p stub\n",himlTrack, lppt);
-  return 0;
+    FIXME("%p %p stub\n",himlTrack, lppt);
+    return FALSE;
 }
 /*************************************************************************
  * DAD_ShowDragImage				[SHELL32.137]
@@ -1248,8 +1245,8 @@ BOOL WINAPI DAD_SetDragImage(
  */
 BOOL WINAPI DAD_ShowDragImage(BOOL bShow)
 {
-	FIXME("0x%08x stub\n",bShow);
-	return 0;
+    FIXME("0x%08x stub\n",bShow);
+    return FALSE;
 }
 
 static const WCHAR szwCabLocation[] = {
@@ -1343,7 +1340,7 @@ BOOL WINAPI WriteCabinetState(CABINETSTATE *cs)
  */
 BOOL WINAPI FileIconInit(BOOL bFullInit)
 {	FIXME("(%s)\n", bFullInit ? "true" : "false");
-	return 0;
+	return FALSE;
 }
 
 /*************************************************************************
@@ -1499,7 +1496,7 @@ HRESULT WINAPI SHLoadOLE(LPARAM lParam)
  * DriveType					[SHELL32.64]
  *
  */
-HRESULT WINAPI DriveType(DWORD u)
+int WINAPI DriveType(int u)
 {	FIXME("0x%04x stub\n",u);
 	return 0;
 }
@@ -1550,7 +1547,7 @@ BOOL WINAPI SHWaitForFileToOpen(
 	DWORD dwTimeout)
 {
 	FIXME("%p 0x%08x 0x%08x stub\n", pidl, dwFlags, dwTimeout);
-	return 0;
+	return FALSE;
 }
 
 /************************************************************************
@@ -1582,18 +1579,47 @@ DWORD WINAPI RLBuildListOfPaths (void)
  *	SHValidateUNC				[SHELL32.173]
  *
  */
-HRESULT WINAPI SHValidateUNC (DWORD x, DWORD y, DWORD z)
+BOOL WINAPI SHValidateUNC (HWND hwndOwner, PWSTR pszFile, UINT fConnect)
 {
-	FIXME("0x%08x 0x%08x 0x%08x stub\n",x,y,z);
-	return 0;
+	FIXME("(%p, %s, 0x%08x): stub\n", hwndOwner, debugstr_w(pszFile), fConnect);
+	return FALSE;
 }
 
 /************************************************************************
- *	DoEnvironmentSubstA			[SHELL32.@]
+ * DoEnvironmentSubstA [SHELL32.@]
  *
- * Replace %KEYWORD% in the str with the value of variable KEYWORD
- * from environment. If it is not found the %KEYWORD% is left
- * intact. If the buffer is too small, str is not modified.
+ * See DoEnvironmentSubstW.
+ */
+DWORD WINAPI DoEnvironmentSubstA(LPSTR pszString, UINT cchString)
+{
+    LPSTR dst;
+    BOOL res = FALSE;
+    DWORD len = cchString;
+
+    TRACE("(%s, %d)\n", debugstr_a(pszString), cchString);
+
+    if ((dst = HeapAlloc(GetProcessHeap(), 0, cchString * sizeof(CHAR))))
+    {
+        len = ExpandEnvironmentStringsA(pszString, dst, cchString);
+        /* len includes the terminating 0 */
+        if (len && len < cchString)
+        {
+            res = TRUE;
+            memcpy(pszString, dst, len);
+        }
+        else
+            len = cchString;
+
+        HeapFree(GetProcessHeap(), 0, dst);
+    }
+    return MAKELONG(len, res);
+}
+
+/************************************************************************
+ * DoEnvironmentSubstW [SHELL32.@]
+ *
+ * Replace all %KEYWORD% in the string with the value of the named
+ * environment variable. If the buffer is too small, the string is not modified.
  *
  * PARAMS
  *  pszString  [I] '\0' terminated string with %keyword%.
@@ -1601,38 +1627,36 @@ HRESULT WINAPI SHValidateUNC (DWORD x, DWORD y, DWORD z)
  *  cchString  [I] size of str.
  *
  * RETURNS
- *     cchString length in the HIWORD;
- *     TRUE in LOWORD if subst was successful and FALSE in other case
- */
-DWORD WINAPI DoEnvironmentSubstA(LPSTR pszString, UINT cchString)
-{
-    LPSTR dst;
-    BOOL res = FALSE;
-    FIXME("(%s, %d) stub\n", debugstr_a(pszString), cchString);
-    if (pszString == NULL) /* Really return 0? */
-        return 0;
-    if ((dst = HeapAlloc(GetProcessHeap(), 0, cchString * sizeof(CHAR))))
-    {
-        DWORD num = ExpandEnvironmentStringsA(pszString, dst, cchString);
-        if (num && num < cchString) /* dest buffer is too small */
-        {
-            res = TRUE;
-            memcpy(pszString, dst, num);
-        }
-        HeapFree(GetProcessHeap(), 0, dst);
-    }
-    return MAKELONG(res,cchString); /* Always cchString? */
-}
-
-/************************************************************************
- *	DoEnvironmentSubstW			[SHELL32.@]
- *
- * See DoEnvironmentSubstA.  
+ *  Success:  The string in the buffer is updated
+ *            HIWORD: TRUE
+ *            LOWORD: characters used in the buffer, including space for the terminating 0
+ *  Failure:  buffer too small. The string is not modified.
+ *            HIWORD: FALSE
+ *            LOWORD: provided size of the buffer in characters
  */
 DWORD WINAPI DoEnvironmentSubstW(LPWSTR pszString, UINT cchString)
 {
-	FIXME("(%s, %d): stub\n", debugstr_w(pszString), cchString);
-	return MAKELONG(FALSE,cchString);
+    LPWSTR dst;
+    BOOL res = FALSE;
+    DWORD len = cchString;
+
+    TRACE("(%s, %d)\n", debugstr_w(pszString), cchString);
+
+    if ((cchString < MAXLONG) && (dst = HeapAlloc(GetProcessHeap(), 0, cchString * sizeof(WCHAR))))
+    {
+        len = ExpandEnvironmentStringsW(pszString, dst, cchString);
+        /* len includes the terminating 0 */
+        if (len && len <= cchString)
+        {
+            res = TRUE;
+            memcpy(pszString, dst, len * sizeof(WCHAR));
+        }
+        else
+            len = cchString;
+
+        HeapFree(GetProcessHeap(), 0, dst);
+    }
+    return MAKELONG(len, res);
 }
 
 /************************************************************************
@@ -2200,6 +2224,10 @@ HRESULT WINAPI SHCreateShellFolderView(const SFV_CREATE *pcsfv,
 	IShellView * psf;
 	HRESULT hRes;
 
+	*ppsv = NULL;
+	if (!pcsfv || pcsfv->cbSize != sizeof(*pcsfv))
+	  return E_INVALIDARG;
+
 	TRACE("sf=%p outer=%p callback=%p\n",
 	  pcsfv->pshf, pcsfv->psvOuter, pcsfv->psfvcb);
 
@@ -2208,7 +2236,6 @@ HRESULT WINAPI SHCreateShellFolderView(const SFV_CREATE *pcsfv,
 	if (!psf)
 	  return E_OUTOFMEMORY;
 
-	IShellView_AddRef(psf);
 	hRes = IShellView_QueryInterface(psf, &IID_IShellView, (LPVOID *)ppsv);
 	IShellView_Release(psf);
 

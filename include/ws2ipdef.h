@@ -129,6 +129,12 @@ typedef struct WS(sockaddr_in6)
    ULONG    sin6_scope_id;
 } SOCKADDR_IN6,*PSOCKADDR_IN6, *LPSOCKADDR_IN6;
 
+typedef struct WS(sockaddr_in6_pair)
+{
+    PSOCKADDR_IN6 SourceAddress;
+    PSOCKADDR_IN6 DestinationAddress;
+} SOCKADDR_IN6_PAIR, *PSOCKADDR_IN6_PAIR;
+
 /*
  * Multicast group information
  */
@@ -261,6 +267,10 @@ typedef struct WS(in_pktinfo) {
 #define WS_IN6ADDR_LOOPBACK_INIT { 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1 }
 #endif /* USE_WS_PREFIX */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 static inline BOOL WS(IN6_IS_ADDR_LOOPBACK) ( const IN6_ADDR *a )
 {
     return (BOOL)((a->s6_words[0] == 0) &&
@@ -272,5 +282,9 @@ static inline BOOL WS(IN6_IS_ADDR_LOOPBACK) ( const IN6_ADDR *a )
                   (a->s6_words[6] == 0) &&
                   (a->s6_words[7] == 0x0100));
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* __WS2IPDEF__ */

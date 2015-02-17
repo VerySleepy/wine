@@ -32,7 +32,7 @@
 # @ stub DbgSetDebugFilterState
 @ stub DbgUiConnectToDbg
 @ stub DbgUiContinue
-# @ stub DbgUiConvertStateChangeStructure
+@ stub DbgUiConvertStateChangeStructure
 # @ stub DbgUiDebugActiveProcess
 # @ stub DbgUiGetThreadDebugObject
 # @ stub DbgUiIssueRemoteBreakin
@@ -44,7 +44,7 @@
 # @ stub KiFastSystemCall
 # @ stub KiFastSystemCallRet
 # @ stub KiIntSystemCall
-# @ stub KiRaiseUserExceptionDispatcher
+@ stub KiRaiseUserExceptionDispatcher
 @ stub KiUserApcDispatcher
 @ stub KiUserCallbackDispatcher
 @ stub KiUserExceptionDispatcher
@@ -75,6 +75,7 @@
 @ stdcall LdrProcessRelocationBlock(ptr long ptr long)
 @ stdcall LdrQueryImageFileExecutionOptions(ptr wstr long ptr long ptr)
 @ stdcall LdrQueryProcessModuleInformation(ptr long ptr)
+@ stdcall LdrResolveDelayLoadedAPI(ptr ptr ptr ptr ptr long)
 @ stub LdrSetAppCompatDllRedirectionCallback
 @ stub LdrSetDllManifestProber
 @ stdcall LdrShutdownProcess()
@@ -129,7 +130,7 @@
 @ stdcall NtCreateJobObject(ptr long ptr)
 # @ stub NtCreateJobSet
 @ stdcall NtCreateKey(ptr long ptr long ptr long long)
-# @ stub NtCreateKeyedEvent
+@ stdcall NtCreateKeyedEvent(ptr long ptr long)
 @ stdcall NtCreateMailslotFile(long long long long long long long long)
 @ stdcall NtCreateMutant(ptr long ptr long)
 @ stdcall NtCreateNamedPipeFile(ptr long ptr ptr long long long long long long long long long ptr)
@@ -145,7 +146,7 @@
 @ stdcall NtCreateTimer(ptr long ptr long)
 @ stub NtCreateToken
 # @ stub NtCreateWaitablePort
-@ stdcall -arch=win32 NtCurrentTeb()
+@ stdcall NtCurrentTeb()
 # @ stub NtDebugActiveProcess
 # @ stub NtDebugContinue
 @ stdcall NtDelayExecution(long ptr)
@@ -176,6 +177,7 @@
 @ stdcall NtFreeVirtualMemory(long ptr ptr long)
 @ stdcall NtFsControlFile(long long long long long long long long long long)
 @ stdcall NtGetContextThread(long ptr)
+@ stdcall NtGetCurrentProcessorNumber()
 # @ stub NtGetDevicePowerState
 @ stub NtGetPlugPlayEvent
 @ stdcall NtGetTickCount()
@@ -211,7 +213,7 @@
 @ stdcall NtOpenIoCompletion(ptr long ptr)
 @ stdcall NtOpenJobObject(ptr long ptr)
 @ stdcall NtOpenKey(ptr long ptr)
-# @ stub NtOpenKeyedEvent
+@ stdcall NtOpenKeyedEvent(ptr long ptr)
 @ stdcall NtOpenMutant(ptr long ptr)
 @ stub NtOpenObjectAuditAlarm
 @ stdcall NtOpenProcess(ptr long ptr ptr)
@@ -265,7 +267,7 @@
 @ stdcall NtQuerySemaphore (long long ptr long ptr)
 @ stdcall NtQuerySymbolicLinkObject(long ptr ptr)
 @ stdcall NtQuerySystemEnvironmentValue(ptr ptr long ptr)
-# @ stub NtQuerySystemEnvironmentValueEx
+@ stdcall NtQuerySystemEnvironmentValueEx(ptr ptr ptr ptr ptr)
 @ stdcall NtQuerySystemInformation(long long long long)
 @ stdcall NtQuerySystemTime(ptr)
 @ stdcall NtQueryTimer(ptr long ptr long ptr)
@@ -282,7 +284,7 @@
 @ stdcall NtReadVirtualMemory(long ptr ptr long ptr)
 @ stub NtRegisterNewDevice
 @ stdcall NtRegisterThreadTerminatePort(ptr)
-# @ stub NtReleaseKeyedEvent
+@ stdcall NtReleaseKeyedEvent(long ptr long ptr)
 @ stdcall NtReleaseMutant(long ptr)
 @ stub NtReleaseProcessMutant
 @ stdcall NtReleaseSemaphore(long long ptr)
@@ -310,7 +312,7 @@
 # @ stub NtSetBootEntryOrder
 # @ stub NtSetBootOptions
 @ stdcall NtSetContextThread(long ptr)
-# @ stub NtSetDebugFilterState
+@ stub NtSetDebugFilterState
 @ stub NtSetDefaultHardErrorPort
 @ stdcall NtSetDefaultLocale(long long)
 @ stdcall NtSetDefaultUILanguage(long)
@@ -369,7 +371,7 @@
 @ stub NtVdmControl
 @ stub NtW32Call
 # @ stub NtWaitForDebugEvent
-# @ stub NtWaitForKeyedEvent
+@ stdcall NtWaitForKeyedEvent(long ptr long ptr)
 @ stdcall NtWaitForMultipleObjects(long ptr long long ptr)
 @ stub NtWaitForProcessMutant
 @ stdcall NtWaitForSingleObject(long long long)
@@ -390,6 +392,8 @@
 @ stdcall RtlAcquirePebLock()
 @ stdcall RtlAcquireResourceExclusive(ptr long)
 @ stdcall RtlAcquireResourceShared(ptr long)
+@ stdcall RtlAcquireSRWLockExclusive(ptr)
+@ stdcall RtlAcquireSRWLockShared(ptr)
 @ stdcall RtlActivateActivationContext(long ptr ptr)
 @ stub RtlActivateActivationContextEx
 @ stub RtlActivateActivationContextUnsafeFast
@@ -408,9 +412,10 @@
 # @ stub RtlAddAuditAccessObjectAce
 # @ stub RtlAddCompoundAce
 # @ stub RtlAddRange
-@ cdecl -arch=x86_64 RtlAddFunctionTable(ptr long long)
+@ cdecl -arch=arm,x86_64 RtlAddFunctionTable(ptr long long)
 @ stdcall RtlAddRefActivationContext(ptr)
 # @ stub RtlAddRefMemoryStream
+@ stdcall RtlAddVectoredContinueHandler(long ptr)
 @ stdcall RtlAddVectoredExceptionHandler(long ptr)
 # @ stub RtlAddressInSectionTable
 @ stdcall RtlAdjustPrivilege(long long long ptr)
@@ -462,7 +467,7 @@
 # @ stub RtlConvertPropertyToVariant
 @ stub RtlConvertSharedToExclusive
 @ stdcall RtlConvertSidToUnicodeString(ptr ptr long)
-# @ stub RtlConvertToAutoInheritSecurityObject
+@ stdcall RtlConvertToAutoInheritSecurityObject(ptr ptr ptr ptr long ptr)
 @ stub RtlConvertUiListToApiList
 @ stdcall -arch=win32 -ret64 RtlConvertUlongToLargeInteger(long)
 # @ stub RtlConvertVariantToProperty
@@ -514,7 +519,7 @@
 @ stdcall RtlDeleteCriticalSection(ptr)
 @ stub RtlDeleteElementGenericTable
 @ stub RtlDeleteElementGenericTableAvl
-@ cdecl -arch=x86_64 RtlDeleteFunctionTable(ptr)
+@ cdecl -arch=arm,x86_64 RtlDeleteFunctionTable(ptr)
 @ stub RtlDeleteNoSplay
 @ stub RtlDeleteOwnersRanges
 @ stub RtlDeleteRange
@@ -567,6 +572,7 @@
 @ stdcall RtlEqualString(ptr ptr long)
 @ stdcall RtlEqualUnicodeString(ptr ptr long)
 @ stdcall RtlEraseUnicodeString(ptr)
+@ stdcall RtlExitUserProcess(long)
 @ stdcall RtlExitUserThread(long)
 @ stdcall RtlExpandEnvironmentStrings_U(ptr ptr ptr ptr)
 @ stub RtlExtendHeap
@@ -576,7 +582,7 @@
 @ stdcall RtlFillMemory(ptr long long)
 @ stdcall RtlFillMemoryUlong(ptr long long)
 @ stub RtlFinalReleaseOutOfProcessMemoryStream
-@ stub RtlFindActivationContextSectionGuid
+@ stdcall RtlFindActivationContextSectionGuid(long ptr long ptr ptr)
 @ stdcall RtlFindActivationContextSectionString(long ptr long ptr ptr)
 @ stdcall RtlFindCharInUnicodeString(long ptr ptr ptr)
 @ stdcall RtlFindClearBits(ptr long long)
@@ -603,7 +609,7 @@
 @ stdcall RtlFormatMessage(ptr long long long long ptr ptr long)
 @ stdcall RtlFreeAnsiString(long)
 @ stdcall RtlFreeHandle(ptr ptr)
-@ stdcall RtlFreeHeap(long long long)
+@ stdcall RtlFreeHeap(long long ptr)
 @ stdcall RtlFreeOemString(ptr)
 # @ stub RtlFreeRangeList
 @ stdcall RtlFreeSid (long)
@@ -649,7 +655,7 @@
 @ stub RtlGetUserInfoHeap
 @ stdcall RtlGetVersion(ptr)
 @ stub RtlGuidToPropertySetName
-# @ stub RtlHashUnicodeString
+@ stdcall RtlHashUnicodeString(ptr long long ptr)
 @ stdcall RtlIdentifierAuthoritySid(ptr)
 @ stdcall RtlImageDirectoryEntryToData(long long long ptr)
 @ stdcall RtlImageNtHeader(long)
@@ -667,6 +673,7 @@
 @ stdcall RtlInitUnicodeStringEx(ptr wstr)
 # @ stub RtlInitializeAtomPackage
 @ stdcall RtlInitializeBitMap(ptr long long)
+@ stdcall RtlInitializeConditionVariable(ptr)
 @ stub RtlInitializeContext
 @ stdcall RtlInitializeCriticalSection(ptr)
 @ stdcall RtlInitializeCriticalSectionAndSpinCount(ptr long)
@@ -678,10 +685,12 @@
 # @ stub RtlInitializeRangeList
 @ stdcall RtlInitializeResource(ptr)
 @ stdcall RtlInitializeSListHead(ptr)
+@ stdcall RtlInitializeSRWLock(ptr)
 @ stdcall RtlInitializeSid(ptr ptr long)
 # @ stub RtlInitializeStackTraceDataBase
 @ stub RtlInsertElementGenericTable
 # @ stub RtlInsertElementGenericTableAvl
+@ cdecl -arch=x86_64 RtlInstallFunctionTableCallback(long long long ptr ptr wstr)
 @ stdcall RtlInt64ToUnicodeString(int64 long ptr)
 @ stdcall RtlIntegerToChar(long long long ptr)
 @ stdcall RtlIntegerToUnicodeString(long long ptr)
@@ -737,7 +746,7 @@
 @ stdcall RtlLookupAtomInAtomTable(ptr wstr ptr)
 @ stub RtlLookupElementGenericTable
 # @ stub RtlLookupElementGenericTableAvl
-@ stdcall -arch=x86_64 RtlLookupFunctionEntry(long ptr ptr)
+@ stdcall -arch=arm,x86_64 RtlLookupFunctionEntry(long ptr ptr)
 @ stdcall RtlMakeSelfRelativeSD(ptr ptr ptr)
 @ stdcall RtlMapGenericMask(long ptr)
 # @ stub RtlMapSecurityErrorToNtStatus
@@ -790,6 +799,7 @@
 @ stub RtlQuerySecurityObject
 @ stub RtlQueryTagHeap
 @ stdcall RtlQueryTimeZoneInformation(ptr)
+@ stdcall RtlQueryUnbiasedInterruptTime(ptr)
 @ stub RtlQueueApcWow64Thread
 @ stdcall RtlQueueWorkItem(ptr ptr long)
 @ stdcall -register RtlRaiseException(ptr)
@@ -807,13 +817,20 @@
 @ stub RtlReleaseMemoryStream
 @ stdcall RtlReleasePebLock()
 @ stdcall RtlReleaseResource(ptr)
+@ stdcall RtlReleaseSRWLockExclusive(ptr)
+@ stdcall RtlReleaseSRWLockShared(ptr)
 @ stub RtlRemoteCall
+@ stdcall RtlRemoveVectoredContinueHandler(ptr)
 @ stdcall RtlRemoveVectoredExceptionHandler(ptr)
 @ stub RtlResetRtlTranslations
 @ stdcall RtlRestoreLastWin32Error(long) RtlSetLastWin32Error
 @ stub RtlRevertMemoryStream
 @ stub RtlRunDecodeUnicodeString
 @ stub RtlRunEncodeUnicodeString
+@ stdcall RtlRunOnceBeginInitialize(ptr long ptr)
+@ stdcall RtlRunOnceComplete(ptr long ptr)
+@ stdcall RtlRunOnceExecuteOnce(ptr ptr ptr ptr)
+@ stdcall RtlRunOnceInitialize(ptr)
 @ stdcall RtlSecondsSince1970ToTime(long ptr)
 @ stdcall RtlSecondsSince1980ToTime(long ptr)
 # @ stub RtlSeekMemoryStream
@@ -830,7 +847,7 @@
 @ stdcall RtlSetDaclSecurityDescriptor(ptr long ptr long)
 @ stdcall RtlSetEnvironmentVariable(ptr ptr ptr)
 @ stdcall RtlSetGroupSecurityDescriptor(ptr ptr long)
-# @ stub RtlSetHeapInformation
+@ stdcall RtlSetHeapInformation(long long ptr long)
 @ stub RtlSetInformationAcl
 @ stdcall RtlSetIoCompletionCallback(long ptr long)
 @ stdcall RtlSetLastWin32Error(long)
@@ -855,6 +872,8 @@
 @ stub RtlSetUserFlagsHeap
 @ stub RtlSetUserValueHeap
 @ stdcall RtlSizeHeap(long long ptr)
+@ stdcall RtlSleepConditionVariableCS(ptr ptr ptr)
+@ stdcall RtlSleepConditionVariableSRW(ptr ptr ptr long)
 @ stub RtlSplay
 @ stub RtlStartRXact
 # @ stub RtlStatMemoryStream
@@ -877,6 +896,8 @@
 # @ stub RtlTraceDatabaseLock
 # @ stub RtlTraceDatabaseUnlock
 # @ stub RtlTraceDatabaseValidate
+@ stdcall RtlTryAcquireSRWLockExclusive(ptr)
+@ stdcall RtlTryAcquireSRWLockShared(ptr)
 @ stdcall RtlTryEnterCriticalSection(ptr)
 @ cdecl -i386 -norelay RtlUlongByteSwap() NTDLL_RtlUlongByteSwap
 @ cdecl -ret64 RtlUlonglongByteSwap(int64)
@@ -920,6 +941,8 @@
 # @ stub RtlValidateUnicodeString
 @ stdcall RtlVerifyVersionInfo(ptr long int64)
 @ stdcall -arch=x86_64 RtlVirtualUnwind(long long long ptr ptr ptr ptr ptr)
+@ stdcall RtlWakeAllConditionVariable(ptr)
+@ stdcall RtlWakeConditionVariable(ptr)
 @ stub RtlWalkFrameChain
 @ stdcall RtlWalkHeap(long ptr)
 @ stdcall RtlWow64EnableFsRedirection(long)
@@ -928,7 +951,7 @@
 @ stdcall RtlWriteRegistryValue(long ptr ptr long ptr long)
 @ stub RtlZeroHeap
 @ stdcall RtlZeroMemory(ptr long)
-# @ stub RtlZombifyActivationContext
+@ stdcall RtlZombifyActivationContext(ptr)
 # @ stub RtlpApplyLengthFunction
 # @ stub RtlpEnsureBufferSize
 # @ stub RtlpNotOwnerCriticalSection
@@ -936,7 +959,7 @@
 @ stdcall RtlpNtEnumerateSubKey(ptr ptr long)
 @ stdcall RtlpNtMakeTemporaryKey(ptr)
 @ stdcall RtlpNtOpenKey(ptr long ptr)
-@ stdcall RtlpNtQueryValueKey(long ptr ptr ptr)
+@ stdcall RtlpNtQueryValueKey(long ptr ptr ptr ptr)
 @ stdcall RtlpNtSetValueKey(ptr long ptr long)
 @ stdcall RtlpUnWaitCriticalSection(ptr)
 @ stdcall RtlpWaitForCriticalSection(ptr)
@@ -988,7 +1011,7 @@
 @ stdcall ZwCreateJobObject(ptr long ptr) NtCreateJobObject
 # @ stub ZwCreateJobSet
 @ stdcall ZwCreateKey(ptr long ptr long ptr long long) NtCreateKey
-# @ stub ZwCreateKeyedEvent
+@ stdcall ZwCreateKeyedEvent(ptr long ptr long) NtCreateKeyedEvent
 @ stdcall ZwCreateMailslotFile(long long long long long long long long) NtCreateMailslotFile
 @ stdcall ZwCreateMutant(ptr long ptr long) NtCreateMutant
 @ stdcall ZwCreateNamedPipeFile(ptr long ptr ptr long long long long long long long long long ptr) NtCreateNamedPipeFile
@@ -1069,7 +1092,7 @@
 @ stdcall ZwOpenIoCompletion(ptr long ptr) NtOpenIoCompletion
 @ stdcall ZwOpenJobObject(ptr long ptr) NtOpenJobObject
 @ stdcall ZwOpenKey(ptr long ptr) NtOpenKey
-# @ stub ZwOpenKeyedEvent
+@ stdcall ZwOpenKeyedEvent(ptr long ptr) NtOpenKeyedEvent
 @ stdcall ZwOpenMutant(ptr long ptr) NtOpenMutant
 @ stub ZwOpenObjectAuditAlarm
 @ stdcall ZwOpenProcess(ptr long ptr ptr) NtOpenProcess
@@ -1140,7 +1163,7 @@
 @ stdcall ZwReadVirtualMemory(long ptr ptr long ptr) NtReadVirtualMemory
 @ stub ZwRegisterNewDevice
 @ stdcall ZwRegisterThreadTerminatePort(ptr) NtRegisterThreadTerminatePort
-# @ stub ZwReleaseKeyedEvent
+@ stdcall ZwReleaseKeyedEvent(long ptr long ptr) NtReleaseKeyedEvent
 @ stdcall ZwReleaseMutant(long ptr) NtReleaseMutant
 @ stub ZwReleaseProcessMutant
 @ stdcall ZwReleaseSemaphore(long long ptr) NtReleaseSemaphore
@@ -1227,7 +1250,7 @@
 @ stub ZwVdmControl
 @ stub ZwW32Call
 # @ stub ZwWaitForDebugEvent
-# @ stub ZwWaitForKeyedEvent
+@ stdcall ZwWaitForKeyedEvent(long ptr long ptr) NtWaitForKeyedEvent
 @ stdcall ZwWaitForMultipleObjects(long ptr long long ptr) NtWaitForMultipleObjects
 @ stub ZwWaitForProcessMutant
 @ stdcall ZwWaitForSingleObject(long long long) NtWaitForSingleObject
@@ -1238,16 +1261,17 @@
 @ stub ZwWriteRequestData
 @ stdcall ZwWriteVirtualMemory(long ptr ptr long ptr) NtWriteVirtualMemory
 @ stdcall ZwYieldExecution() NtYieldExecution
-# @ stub _CIcos
-# @ stub _CIlog
+@ cdecl -private -arch=i386 _CIcos() NTDLL__CIcos
+@ cdecl -private -arch=i386 _CIlog() NTDLL__CIlog
 @ cdecl -private -arch=i386 _CIpow() NTDLL__CIpow
-# @ stub _CIsin
-# @ stub _CIsqrt
+@ cdecl -private -arch=i386 _CIsin() NTDLL__CIsin
+@ cdecl -private -arch=i386 _CIsqrt() NTDLL__CIsqrt
 @ stdcall -arch=x86_64 __C_specific_handler(ptr long ptr ptr)
-# @ stub __isascii
-# @ stub __iscsym
-# @ stub __iscsymf
-# @ stub __toascii
+@ stdcall -private -arch=x86_64 -norelay __chkstk()
+@ cdecl -private __isascii(long) NTDLL___isascii
+@ cdecl -private __iscsym(long) NTDLL___iscsym
+@ cdecl -private __iscsymf(long) NTDLL___iscsymf
+@ cdecl -private __toascii(long) NTDLL___toascii
 @ stdcall -private -arch=i386 -ret64 _alldiv(int64 int64)
 # @ stub _alldvrm
 @ stdcall -private -arch=i386 -ret64 _allmul(int64 int64)
@@ -1268,6 +1292,7 @@
 @ cdecl -private _itoa(long ptr long)
 @ cdecl -private _itow(long ptr long)
 @ cdecl -private _lfind(ptr ptr ptr long ptr)
+@ stdcall -arch=x86_64 _local_unwind(ptr ptr)
 @ cdecl -private _ltoa(long ptr long)
 @ cdecl -private _ltow(long ptr long)
 @ cdecl -private _memccpy(ptr ptr long long)
@@ -1280,8 +1305,8 @@
 @ cdecl -private _strlwr(str)
 @ cdecl -private _strnicmp(str str long)
 @ cdecl -private _strupr(str)
-# @ stub -private _tolower
-# @ stub -private _toupper
+@ cdecl -private _tolower(long) NTDLL__tolower
+@ cdecl -private _toupper(long) NTDLL__toupper
 @ cdecl -private _ui64toa(int64 ptr long)
 @ cdecl -private _ui64tow(int64 ptr long)
 @ cdecl -private _ultoa(long ptr long)

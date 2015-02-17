@@ -36,7 +36,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(psdrv);
 /***********************************************************************
  *           SelectFont   (WINEPS.@)
  */
-HFONT PSDRV_SelectFont( PHYSDEV dev, HFONT hfont )
+HFONT PSDRV_SelectFont( PHYSDEV dev, HFONT hfont, UINT *aa_flags )
 {
     PSDRV_PDEVICE *physDev = get_psdrv_dev( dev );
     PHYSDEV next = GET_NEXT_PHYSDEV( dev, pSelectFont );
@@ -46,6 +46,8 @@ HFONT PSDRV_SelectFont( PHYSDEV dev, HFONT hfont )
     char FaceName[LF_FACESIZE];
 
     if (!GetObjectW( hfont, sizeof(lf), &lf )) return 0;
+
+    *aa_flags = GGO_BITMAP; /* no anti-aliasing on printer devices */
 
     TRACE("FaceName = %s Height = %d Italic = %d Weight = %d\n",
 	  debugstr_w(lf.lfFaceName), lf.lfHeight, lf.lfItalic,
@@ -112,41 +114,45 @@ HFONT PSDRV_SelectFont( PHYSDEV dev, HFONT hfont )
     }
 
     physDev->font.escapement = lf.lfEscapement;
-    physDev->font.set = FALSE;
+    physDev->font.set = UNSET;
 
-    if (!subst && ((ret = next->funcs->pSelectFont( next, hfont ))))
+    if (!subst && ((ret = next->funcs->pSelectFont( next, hfont, aa_flags ))))
     {
         PSDRV_SelectDownloadFont(dev);
         return ret;
     }
 
     PSDRV_SelectBuiltinFont(dev, hfont, &lf, FaceName);
-    next->funcs->pSelectFont( next, 0 );  /* tell next driver that we selected a device font */
+    next->funcs->pSelectFont( next, 0, aa_flags );  /* tell next driver that we selected a device font */
     return hfont;
 }
 
 /***********************************************************************
  *           PSDRV_SetFont
  */
-BOOL PSDRV_SetFont( PHYSDEV dev )
+BOOL PSDRV_SetFont( PHYSDEV dev, BOOL vertical )
 {
     PSDRV_PDEVICE *physDev = get_psdrv_dev( dev );
 
     PSDRV_WriteSetColor(dev, &physDev->font.color);
-    if(physDev->font.set) return TRUE;
+    if (vertical && (physDev->font.set == VERTICAL_SET)) return TRUE;
+    if (!vertical && (physDev->font.set == HORIZONTAL_SET)) return TRUE;
 
     switch(physDev->font.fontloc) {
     case Builtin:
         PSDRV_WriteSetBuiltinFont(dev);
 	break;
     case Download:
-        PSDRV_WriteSetDownloadFont(dev);
+        PSDRV_WriteSetDownloadFont(dev, vertical);
 	break;
     default:
         ERR("fontloc = %d\n", physDev->font.fontloc);
         assert(1);
 	break;
     }
-    physDev->font.set = TRUE;
+    if (vertical)
+        physDev->font.set = VERTICAL_SET;
+    else
+        physDev->font.set = HORIZONTAL_SET;
     return TRUE;
 }

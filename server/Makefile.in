@@ -1,5 +1,4 @@
-DEFS      = -D__WINESRC__
-EXTRALIBS = @LIBPOLL@
+EXTRALIBS = $(POLL_LIBS) $(RT_LIBS)
 
 C_SRCS = \
 	async.c \
@@ -48,33 +47,23 @@ C_SRCS = \
 
 PROGRAMS = wineserver wineserver-installed
 
-MANPAGE = wineserver.man
-EXTRA_MANPAGES = wineserver.de.man wineserver.fr.man
+MANPAGES = \
+	wineserver.de.UTF-8.man.in \
+	wineserver.fr.UTF-8.man.in \
+	wineserver.man.in
 
-INSTALLDIRS = \
-	$(DESTDIR)$(bindir) \
-	$(DESTDIR)$(mandir)/man$(prog_manext) \
-	$(DESTDIR)$(mandir)/de.UTF-8/man$(prog_manext) \
-	$(DESTDIR)$(mandir)/fr.UTF-8/man$(prog_manext)
-
-all: $(PROGRAMS)
-
-@MAKE_RULES@
+OBJS = $(C_SRCS:.c=.o)
 
 wineserver: $(OBJS)
-	$(CC) -o $@ $(OBJS) $(LIBWINE) $(LIBPORT) $(LDFLAGS) $(LIBS) $(LDRPATH_LOCAL)
+	$(CC) -o $@ $(OBJS) $(LIBWINE) $(LIBPORT) $(LDFLAGS) $(EXTRALIBS) $(LIBS) $(LDRPATH_LOCAL)
 
 wineserver-installed: $(OBJS)
-	$(CC) -o $@ $(OBJS) $(LIBWINE) $(LIBPORT) $(LDFLAGS) $(LIBS) $(LDRPATH_INSTALL)
+	$(CC) -o $@ $(OBJS) $(LIBWINE) $(LIBPORT) $(LDFLAGS) $(EXTRALIBS) $(LIBS) $(LDRPATH_INSTALL)
 
-install install-lib:: wineserver-installed $(DESTDIR)$(bindir) install-man-pages
+.PHONY: install install-lib uninstall
+
+install install-lib:: wineserver-installed install-man-pages
 	$(INSTALL_PROGRAM) wineserver-installed $(DESTDIR)$(bindir)/wineserver
-
-install-man-pages:: $(EXTRA_MANPAGES) $(INSTALLDIRS)
-	$(INSTALL_DATA) wineserver.de.man $(DESTDIR)$(mandir)/de.UTF-8/man$(prog_manext)/wineserver.$(prog_manext)
-	$(INSTALL_DATA) wineserver.fr.man $(DESTDIR)$(mandir)/fr.UTF-8/man$(prog_manext)/wineserver.$(prog_manext)
 
 uninstall::
 	$(RM) $(DESTDIR)$(bindir)/wineserver
-	$(RM) $(DESTDIR)$(mandir)/de.UTF-8/man$(prog_manext)/wineserver.$(prog_manext)
-	$(RM) $(DESTDIR)$(mandir)/fr.UTF-8/man$(prog_manext)/wineserver.$(prog_manext)

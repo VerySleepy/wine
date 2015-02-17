@@ -76,20 +76,20 @@ DWORD RPCRT4_GetHeaderSize(const RpcPktHdr *Header)
   return ret;
 }
 
-static int packet_has_body(const RpcPktHdr *Header)
+static BOOL packet_has_body(const RpcPktHdr *Header)
 {
     return (Header->common.ptype == PKT_FAULT) ||
            (Header->common.ptype == PKT_REQUEST) ||
            (Header->common.ptype == PKT_RESPONSE);
 }
 
-static int packet_has_auth_verifier(const RpcPktHdr *Header)
+static BOOL packet_has_auth_verifier(const RpcPktHdr *Header)
 {
     return !(Header->common.ptype == PKT_BIND_NACK) &&
            !(Header->common.ptype == PKT_SHUTDOWN);
 }
 
-static int packet_does_auth_negotiation(const RpcPktHdr *Header)
+static BOOL packet_does_auth_negotiation(const RpcPktHdr *Header)
 {
     switch (Header->common.ptype)
     {
@@ -340,7 +340,7 @@ RpcPktHdr *RPCRT4_BuildHttpHeader(ULONG DataRepresentation,
         (payload) += sizeof(UUID); \
     } while (0)
 
-RpcPktHdr *RPCRT4_BuildHttpConnectHeader(unsigned short flags, int out_pipe,
+RpcPktHdr *RPCRT4_BuildHttpConnectHeader(int out_pipe,
                                          const UUID *connection_uuid,
                                          const UUID *pipe_uuid,
                                          const UUID *association_uuid)
@@ -353,7 +353,7 @@ RpcPktHdr *RPCRT4_BuildHttpConnectHeader(unsigned short flags, int out_pipe,
   if (!out_pipe)
     size += 8 + 4 + sizeof(UUID);
 
-  header = RPCRT4_BuildHttpHeader(NDR_LOCAL_DATA_REPRESENTATION, flags,
+  header = RPCRT4_BuildHttpHeader(NDR_LOCAL_DATA_REPRESENTATION, 0,
                                   out_pipe ? 4 : 6, size);
   if (!header) return NULL;
   payload = (char *)(&header->http+1);
@@ -1875,7 +1875,7 @@ RPC_STATUS WINAPI I_RpcReceive(PRPC_MESSAGE pMsg)
 
 fail:
   RPCRT4_FreeHeader(hdr);
-  RPCRT4_DestroyConnection(conn);
+  RPCRT4_ReleaseConnection(conn);
   pMsg->ReservedForRuntime = NULL;
   return status;
 }

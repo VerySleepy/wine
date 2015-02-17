@@ -28,8 +28,8 @@
 #include <math.h>
 
 #include "wine/test.h"
+#include "mmsystem.h"
 #include "dsound.h"
-#include "mmreg.h"
 #include "ks.h"
 #include "ksmedia.h"
 #include "dsound_test.h"
@@ -104,7 +104,7 @@ static int buffer_silence8(play_state_t* state, DWORD size)
     return size;
 }
 
-static int buffer_service8(play_state_t* state)
+static BOOL buffer_service8(play_state_t* state)
 {
     DWORD last_play_pos,play_pos,buf_free;
     HRESULT rc;
@@ -143,7 +143,7 @@ static int buffer_service8(play_state_t* state)
         trace("offset=%d free=%d written=%d / %d\n",
               state->offset,buf_free,state->written,state->wave_len);
     if (buf_free==0)
-        return 1;
+        return TRUE;
 
     if (state->written<state->wave_len)
     {
@@ -163,14 +163,14 @@ static int buffer_service8(play_state_t* state)
         if (buffer_silence8(state,buf_free)==-1)
             goto STOP;
     }
-    return 1;
+    return TRUE;
 
 STOP:
     if (winetest_debug > 1)
         trace("stopping playback\n");
     rc=IDirectSoundBuffer_Stop(state->dsbo);
     ok(rc==DS_OK,"IDirectSoundBuffer_Stop() failed: %08x\n", rc);
-    return 0;
+    return FALSE;
 }
 
 void test_buffer8(LPDIRECTSOUND8 dso, LPDIRECTSOUNDBUFFER * dsbo,
@@ -223,7 +223,9 @@ void test_buffer8(LPDIRECTSOUND8 dso, LPDIRECTSOUNDBUFFER * dsbo,
         rc=IDirectSoundBuffer_GetFormat(*dsbo,(WAVEFORMATEX*)&wfxe,size,NULL);
         wfx = wfxe.Format;
         ieee = IsEqualGUID(&wfxe.SubFormat, &KSDATAFORMAT_SUBTYPE_IEEE_FLOAT);
-    }
+    } else
+        return;
+
     ok(rc==DS_OK,"IDirectSoundBuffer_GetFormat() failed: %08x\n", rc);
     if (rc==DS_OK && winetest_debug > 1) {
         trace("    Format: %s tag=0x%04x %dx%dx%d avg.B/s=%d align=%d\n",
@@ -539,10 +541,10 @@ void test_buffer8(LPDIRECTSOUND8 dso, LPDIRECTSOUNDBUFFER * dsbo,
     }
 }
 
-static HRESULT test_secondary8(LPGUID lpGuid, int play,
-                               int has_3d, int has_3dbuffer,
-                               int has_listener, int has_duplicate,
-                               int move_listener, int move_sound)
+static HRESULT test_secondary8(LPGUID lpGuid, BOOL play,
+                               BOOL has_3d, BOOL has_3dbuffer,
+                               BOOL has_listener, BOOL has_duplicate,
+                               BOOL move_listener, BOOL move_sound)
 {
     HRESULT rc;
     LPDIRECTSOUND8 dso=NULL;
@@ -707,7 +709,7 @@ static HRESULT test_secondary8(LPGUID lpGuid, int play,
                 rc=IDirectSoundBuffer_SetPan(secondary,-1000);
                 ok(rc==DS_OK,"IDirectSoundBuffer_SetPan(secondary) failed: %08x\n",rc);
                 rc=IDirectSoundBuffer_GetPan(secondary,&pan);
-                ok(rc==DS_OK,"IDirectSoundBuffer_SetPan(secondary) failed: %08x\n",rc);
+                ok(rc==DS_OK,"IDirectSoundBuffer_GetPan(secondary) failed: %08x\n",rc);
                 ok(pan==-1000,"secondary: wrong pan %d instead of -1000\n",
                    pan);
 
@@ -764,7 +766,7 @@ static HRESULT test_secondary8(LPGUID lpGuid, int play,
             if (rc==DS_OK && secondary!=NULL) {
                 double duration;
                 duration=(move_listener || move_sound?4.0:1.0);
-                test_buffer8(dso,&secondary,0,FALSE,0,FALSE,0,
+                test_buffer8(dso,&secondary,FALSE,FALSE,0,FALSE,0,
                              winetest_interactive,duration,has_3dbuffer,
                              listener,move_listener,move_sound);
                 ref=IDirectSoundBuffer_Release(secondary);
@@ -873,25 +875,25 @@ static HRESULT test_primary8(LPGUID lpGuid)
     if (rc == DSERR_CONTROLUNAVAIL)
         trace("  No Primary\n");
     else if (rc==DS_OK && primary!=NULL) {
-        test_buffer8(dso,&primary,1,TRUE,0,TRUE,0,winetest_interactive &&
-                     !(dscaps.dwFlags & DSCAPS_EMULDRIVER),1.0,0,NULL,0,0);
+        test_buffer8(dso,&primary,TRUE,TRUE,0,TRUE,0,
+                     winetest_interactive && !(dscaps.dwFlags & DSCAPS_EMULDRIVER),
+                     1.0,FALSE,NULL,FALSE,FALSE);
         if (winetest_interactive) {
             LONG volume,pan;
 
             volume = DSBVOLUME_MAX;
             for (i = 0; i < 6; i++) {
-                test_buffer8(dso,&primary,1,TRUE,volume,TRUE,0,
-                             winetest_interactive &&
-                             !(dscaps.dwFlags & DSCAPS_EMULDRIVER),
-                             1.0,0,NULL,0,0);
+                test_buffer8(dso,&primary,TRUE,TRUE,volume,TRUE,0,
+                             winetest_interactive && !(dscaps.dwFlags & DSCAPS_EMULDRIVER),
+                             1.0,FALSE,NULL,FALSE,FALSE);
                 volume -= ((DSBVOLUME_MAX-DSBVOLUME_MIN) / 40);
             }
 
             pan = DSBPAN_LEFT;
             for (i = 0; i < 7; i++) {
-                test_buffer8(dso,&primary,1,TRUE,0,TRUE,pan,
-                             winetest_interactive &&
-                             !(dscaps.dwFlags & DSCAPS_EMULDRIVER),1.0,0,0,0,0);
+                test_buffer8(dso,&primary,TRUE,TRUE,0,TRUE,pan,
+                             winetest_interactive && !(dscaps.dwFlags & DSCAPS_EMULDRIVER),
+                             1.0,FALSE,NULL,FALSE,FALSE);
                 pan += ((DSBPAN_RIGHT-DSBPAN_LEFT) / 6);
             }
         }
@@ -963,9 +965,9 @@ static HRESULT test_primary_3d8(LPGUID lpGuid)
         ok(rc==DS_OK && primary!=NULL,"IDirectSound8_CreateSoundBuffer() "
            "failed to create a 3D primary buffer: %08x\n",rc);
         if (rc==DS_OK && primary!=NULL) {
-            test_buffer8(dso,&primary,1,FALSE,0,FALSE,0,
-                         winetest_interactive &&
-                         !(dscaps.dwFlags & DSCAPS_EMULDRIVER),1.0,0,0,0,0);
+            test_buffer8(dso,&primary,TRUE,FALSE,0,FALSE,0,
+                         winetest_interactive && !(dscaps.dwFlags & DSCAPS_EMULDRIVER),
+                         1.0,FALSE,NULL,FALSE,FALSE);
             ref=IDirectSoundBuffer_Release(primary);
             ok(ref==0,"IDirectSoundBuffer_Release() primary has %d references, "
                "should have 0\n",ref);
@@ -1054,10 +1056,9 @@ static HRESULT test_primary_3d_with_listener8(LPGUID lpGuid)
                    "should have 1\n",ref);
 
                 /* Testing the buffer */
-                test_buffer8(dso,&primary,1,FALSE,0,FALSE,0,
-                             winetest_interactive &&
-                             !(dscaps.dwFlags & DSCAPS_EMULDRIVER),
-                             1.0,0,listener,0,0);
+                test_buffer8(dso,&primary,TRUE,FALSE,0,FALSE,0,
+                             winetest_interactive && !(dscaps.dwFlags & DSCAPS_EMULDRIVER),
+                             1.0,FALSE,listener,FALSE,FALSE);
             }
 
             /* Testing the reference counting */
@@ -1081,22 +1082,25 @@ return DSERR_GENERIC;
     return rc;
 }
 
+static unsigned driver_count = 0;
+
 static BOOL WINAPI dsenum_callback(LPGUID lpGuid, LPCSTR lpcstrDescription,
                                    LPCSTR lpcstrModule, LPVOID lpContext)
 {
     HRESULT rc;
     trace("*** Testing %s - %s ***\n",lpcstrDescription,lpcstrModule);
+    driver_count++;
 
     rc = test_for_driver8(lpGuid);
     if (rc == DSERR_NODRIVER) {
         trace("  No Driver\n");
-        return 1;
+        return TRUE;
     } else if (rc == DSERR_ALLOCATED) {
         trace("  Already In Use\n");
-        return 1;
+        return TRUE;
     } else if (rc == E_FAIL) {
         trace("  No Device\n");
-        return 1;
+        return TRUE;
     }
 
     trace("  Testing the primary buffer\n");
@@ -1109,22 +1113,22 @@ static BOOL WINAPI dsenum_callback(LPGUID lpGuid, LPCSTR lpcstrDescription,
     test_primary_3d_with_listener8(lpGuid);
 
     /* Testing secondary buffers */
-    test_secondary8(lpGuid,winetest_interactive,0,0,0,0,0,0);
-    test_secondary8(lpGuid,winetest_interactive,0,0,0,1,0,0);
+    test_secondary8(lpGuid,winetest_interactive,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE);
+    test_secondary8(lpGuid,winetest_interactive,FALSE,FALSE,FALSE,TRUE, FALSE,FALSE);
 
     /* Testing 3D secondary buffers */
-    test_secondary8(lpGuid,winetest_interactive,1,0,0,0,0,0);
-    test_secondary8(lpGuid,winetest_interactive,1,1,0,0,0,0);
-    test_secondary8(lpGuid,winetest_interactive,1,1,0,1,0,0);
-    test_secondary8(lpGuid,winetest_interactive,1,0,1,0,0,0);
-    test_secondary8(lpGuid,winetest_interactive,1,0,1,1,0,0);
-    test_secondary8(lpGuid,winetest_interactive,1,1,1,0,0,0);
-    test_secondary8(lpGuid,winetest_interactive,1,1,1,1,0,0);
-    test_secondary8(lpGuid,winetest_interactive,1,1,1,0,1,0);
-    test_secondary8(lpGuid,winetest_interactive,1,1,1,0,0,1);
-    test_secondary8(lpGuid,winetest_interactive,1,1,1,0,1,1);
+    test_secondary8(lpGuid,winetest_interactive,TRUE, FALSE,FALSE,FALSE,FALSE,FALSE);
+    test_secondary8(lpGuid,winetest_interactive,TRUE, TRUE, FALSE,FALSE,FALSE,FALSE);
+    test_secondary8(lpGuid,winetest_interactive,TRUE, TRUE, FALSE,TRUE, FALSE,FALSE);
+    test_secondary8(lpGuid,winetest_interactive,TRUE, FALSE,TRUE, FALSE,FALSE,FALSE);
+    test_secondary8(lpGuid,winetest_interactive,TRUE, FALSE,TRUE, TRUE, FALSE,FALSE);
+    test_secondary8(lpGuid,winetest_interactive,TRUE, TRUE, TRUE, FALSE,FALSE,FALSE);
+    test_secondary8(lpGuid,winetest_interactive,TRUE, TRUE, TRUE, TRUE, FALSE,FALSE);
+    test_secondary8(lpGuid,winetest_interactive,TRUE, TRUE, TRUE, FALSE,TRUE, FALSE);
+    test_secondary8(lpGuid,winetest_interactive,TRUE, TRUE, TRUE, FALSE,FALSE,TRUE );
+    test_secondary8(lpGuid,winetest_interactive,TRUE, TRUE, TRUE, FALSE,TRUE, TRUE );
 
-    return 1;
+    return TRUE;
 }
 
 static void ds3d8_tests(void)
@@ -1132,6 +1136,7 @@ static void ds3d8_tests(void)
     HRESULT rc;
     rc=pDirectSoundEnumerateA(&dsenum_callback,NULL);
     ok(rc==DS_OK,"DirectSoundEnumerateA() failed: %08x\n",rc);
+    trace("tested %u DirectSound drivers\n", driver_count);
 }
 
 START_TEST(ds3d8)
@@ -1140,7 +1145,7 @@ START_TEST(ds3d8)
 
     CoInitialize(NULL);
 
-    hDsound = LoadLibrary("dsound.dll");
+    hDsound = LoadLibraryA("dsound.dll");
     if (hDsound)
     {
 
@@ -1151,12 +1156,12 @@ START_TEST(ds3d8)
         if (pDirectSoundCreate8)
             ds3d8_tests();
         else
-            skip("ds3d8 test skipped\n");
+            skip("DirectSoundCreate8 missing - skipping all tests\n");
 
         FreeLibrary(hDsound);
     }
     else
-        skip("dsound.dll not found!\n");
+        skip("dsound.dll not found - skipping all tests\n");
 
     CoUninitialize();
 }

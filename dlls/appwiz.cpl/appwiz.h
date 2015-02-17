@@ -16,7 +16,14 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-BOOL install_wine_gecko(void) DECLSPEC_HIDDEN;
+#include "wine/unicode.h"
+
+typedef enum {
+    ADDON_GECKO,
+    ADDON_MONO
+} addon_t;
+
+BOOL install_addon(addon_t) DECLSPEC_HIDDEN;
 
 extern HINSTANCE hInst DECLSPEC_HIDDEN;
 
@@ -33,4 +40,36 @@ static inline void *heap_realloc(void *mem, size_t len)
 static inline BOOL heap_free(void *mem)
 {
     return HeapFree(GetProcessHeap(), 0, mem);
+}
+
+static inline WCHAR *heap_strdupW(const WCHAR *str)
+{
+    WCHAR *ret;
+
+    if(str) {
+        size_t size = strlenW(str)+1;
+        ret = heap_alloc(size*sizeof(WCHAR));
+        if(ret)
+            memcpy(ret, str, size*sizeof(WCHAR));
+    }else {
+        ret = NULL;
+    }
+
+    return ret;
+}
+
+static inline WCHAR *heap_strdupAtoW(const char *str)
+{
+    WCHAR *ret = NULL;
+
+    if(str) {
+        size_t len;
+
+        len = MultiByteToWideChar(CP_ACP, 0, str, -1, NULL, 0);
+        ret = heap_alloc(len*sizeof(WCHAR));
+        if(ret)
+            MultiByteToWideChar(CP_ACP, 0, str, -1, ret, len);
+    }
+
+    return ret;
 }

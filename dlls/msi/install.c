@@ -105,7 +105,7 @@ UINT WINAPI MsiDoActionW( MSIHANDLE hInstall, LPCWSTR szAction )
         return ERROR_SUCCESS;
     }
  
-    ret = ACTION_PerformUIAction( package, szAction, -1 );
+    ret = ACTION_PerformUIAction( package, szAction, SCRIPT_NONE );
     msiobj_release( &package->hdr );
 
     return ret;
@@ -178,32 +178,28 @@ UINT WINAPI MsiSequenceW( MSIHANDLE hInstall, LPCWSTR szTable, INT iSequenceMode
     return ret;
 }
 
-UINT msi_strcpy_to_awstring( LPCWSTR str, awstring *awbuf, DWORD *sz )
+UINT msi_strcpy_to_awstring( const WCHAR *str, int len, awstring *awbuf, DWORD *sz )
 {
-    UINT len, r = ERROR_SUCCESS;
+    UINT r = ERROR_SUCCESS;
 
-    if (awbuf->str.w && !sz )
+    if (awbuf->str.w && !sz)
         return ERROR_INVALID_PARAMETER;
-
     if (!sz)
-        return r;
+        return ERROR_SUCCESS;
+
+    if (len < 0) len = strlenW( str );
  
-    if (awbuf->unicode)
-    {
-        len = lstrlenW( str );
-        if (awbuf->str.w) 
-            lstrcpynW( awbuf->str.w, str, *sz );
-    }
+    if (awbuf->unicode && awbuf->str.w)
+        memcpy( awbuf->str.w, str, min(len + 1, *sz) * sizeof(WCHAR) );
     else
     {
-        len = WideCharToMultiByte( CP_ACP, 0, str, -1, NULL, 0, NULL, NULL );
-        if (len)
-            len--;
-        WideCharToMultiByte( CP_ACP, 0, str, -1, awbuf->str.a, *sz, NULL, NULL );
-        if ( awbuf->str.a && *sz && (len >= *sz) )
+        int lenA = WideCharToMultiByte( CP_ACP, 0, str, len + 1, NULL, 0, NULL, NULL );
+        if (lenA) lenA--;
+        WideCharToMultiByte( CP_ACP, 0, str, len + 1, awbuf->str.a, *sz, NULL, NULL );
+        if (awbuf->str.a && *sz && lenA >= *sz)
             awbuf->str.a[*sz - 1] = 0;
+        len = lenA;
     }
-
     if (awbuf->str.w && len >= *sz)
         r = ERROR_MORE_DATA;
     *sz = len;
@@ -213,8 +209,18 @@ UINT msi_strcpy_to_awstring( LPCWSTR str, awstring *awbuf, DWORD *sz )
 const WCHAR *msi_get_target_folder( MSIPACKAGE *package, const WCHAR *name )
 {
     MSIFOLDER *folder = msi_get_loaded_folder( package, name );
-    if (folder) return folder->ResolvedTarget;
-    return NULL;
+
+    if (!folder) return NULL;
+    if (!folder->ResolvedTarget)
+    {
+        MSIFOLDER *parent = folder;
+        while (parent->Parent && strcmpW( parent->Parent, parent->Directory ))
+        {
+            parent = msi_get_loaded_folder( package, parent->Parent );
+        }
+        msi_resolve_target_folder( package, parent->Directory, TRUE );
+    }
+    return folder->ResolvedTarget;
 }
 
 /***********************************************************************
@@ -267,7 +273,7 @@ static UINT MSI_GetTargetPath( MSIHANDLE hInstall, LPCWSTR szFolder,
         if (FAILED(hr))
             goto done;
 
-        r = msi_strcpy_to_awstring( value, szPathBuf, pcchPathBuf );
+        r = msi_strcpy_to_awstring( value, len, szPathBuf, pcchPathBuf );
 
 done:
         IWineMsiRemotePackage_Release( remote_package );
@@ -291,8 +297,7 @@ done:
     if (!path)
         return ERROR_DIRECTORY;
 
-    r = msi_strcpy_to_awstring( path, szPathBuf, pcchPathBuf );
-    return r;
+    return msi_strcpy_to_awstring( path, -1, szPathBuf, pcchPathBuf );
 }
 
 /***********************************************************************
@@ -337,16 +342,10 @@ UINT WINAPI MsiGetTargetPathW( MSIHANDLE hInstall, LPCWSTR szFolder,
     return MSI_GetTargetPath( hInstall, szFolder, &path, pcchPathBuf );
 }
 
-static WCHAR *get_source_root( MSIDATABASE *db )
+static WCHAR *get_source_root( MSIPACKAGE *package )
 {
-    WCHAR *path, *p;
-
-    if ((path = msi_dup_property( db, szSourceDir ))) return path;
-    if ((path = msi_dup_property( db, szDatabase )))
-    {
-        if ((p = strrchrW( path, '\\' ))) p[1] = 0;
-    }
-    return path;
+    msi_set_sourcedir_props( package, FALSE );
+    return msi_dup_property( package->db, szSourceDir );
 }
 
 WCHAR *msi_resolve_source_folder( MSIPACKAGE *package, const WCHAR *name, MSIFOLDER **folder )
@@ -362,7 +361,7 @@ WCHAR *msi_resolve_source_folder( MSIPACKAGE *package, const WCHAR *name, MSIFOL
     /* special resolving for root dir */
     if (!strcmpW( name, szTargetDir ) && !f->ResolvedSource)
     {
-        f->ResolvedSource = get_source_root( package->db );
+        f->ResolvedSource = get_source_root( package );
     }
     if (folder) *folder = f;
     if (f->ResolvedSource)
@@ -378,7 +377,7 @@ WCHAR *msi_resolve_source_folder( MSIPACKAGE *package, const WCHAR *name, MSIFOL
     p = msi_resolve_source_folder( package, parent, NULL );
 
     if (package->WordCount & msidbSumInfoSourceTypeCompressed)
-        path = get_source_root( package->db );
+        path = get_source_root( package );
     else if (package->WordCount & msidbSumInfoSourceTypeSFN)
         path = msi_build_directory_name( 3, p, f->SourceShortPath, NULL );
     else
@@ -443,7 +442,7 @@ static UINT MSI_GetSourcePath( MSIHANDLE hInstall, LPCWSTR szFolder,
         if (FAILED(hr))
             goto done;
 
-        r = msi_strcpy_to_awstring( value, szPathBuf, pcchPathBuf );
+        r = msi_strcpy_to_awstring( value, len, szPathBuf, pcchPathBuf );
 
 done:
         IWineMsiRemotePackage_Release( remote_package );
@@ -474,7 +473,7 @@ done:
     if (!path)
         return ERROR_DIRECTORY;
 
-    r = msi_strcpy_to_awstring( path, szPathBuf, pcchPathBuf );
+    r = msi_strcpy_to_awstring( path, -1, szPathBuf, pcchPathBuf );
     msi_free( path );
     return r;
 }
@@ -549,13 +548,12 @@ static void set_target_path( MSIPACKAGE *package, MSIFOLDER *folder, const WCHAR
     MSIFOLDER *child;
     WCHAR *target_path;
 
-    if (!(target_path = strdupW( path ))) return;
-    msi_clean_path( target_path );
+    if (!(target_path = msi_normalize_path( path ))) return;
     if (strcmpW( target_path, folder->ResolvedTarget ))
     {
         msi_free( folder->ResolvedTarget );
         folder->ResolvedTarget = target_path;
-        msi_set_property( package->db, folder->Directory, folder->ResolvedTarget );
+        msi_set_property( package->db, folder->Directory, folder->ResolvedTarget, -1 );
 
         LIST_FOR_EACH_ENTRY( fl, &folder->children, FolderList, entry )
         {
@@ -568,7 +566,7 @@ static void set_target_path( MSIPACKAGE *package, MSIFOLDER *folder, const WCHAR
 
 UINT MSI_SetTargetPathW( MSIPACKAGE *package, LPCWSTR szFolder, LPCWSTR szFolderPath )
 {
-    DWORD attrib, len;
+    DWORD attrib;
     MSIFOLDER *folder;
     MSIFILE *file;
 
@@ -583,17 +581,7 @@ UINT MSI_SetTargetPathW( MSIPACKAGE *package, LPCWSTR szFolder, LPCWSTR szFolder
     }
     if (!(folder = msi_get_loaded_folder( package, szFolder ))) return ERROR_DIRECTORY;
 
-    len = strlenW( szFolderPath );
-    if (len && szFolderPath[len - 1] != '\\')
-    {
-        WCHAR *path = msi_alloc( (len + 2) * sizeof(WCHAR) );
-        memcpy( path, szFolderPath, len * sizeof(WCHAR) );
-        path[len] = '\\';
-        path[len + 1] = 0;
-        set_target_path( package, folder, path );
-        msi_free( path );
-    }
-    else set_target_path( package, folder, szFolderPath );
+    set_target_path( package, folder, szFolderPath );
 
     LIST_FOR_EACH_ENTRY( file, &package->files, MSIFILE, entry )
     {
@@ -768,7 +756,11 @@ BOOL WINAPI MsiGetMode(MSIHANDLE hInstall, MSIRUNMODE iRunMode)
         break;
 
     case MSIRUNMODE_REBOOTATEND:
-        r = package->need_reboot;
+        r = package->need_reboot_at_end;
+        break;
+
+    case MSIRUNMODE_REBOOTNOW:
+        r = package->need_reboot_now;
         break;
 
     case MSIRUNMODE_LOGENABLED:
@@ -821,13 +813,13 @@ UINT WINAPI MsiSetMode(MSIHANDLE hInstall, MSIRUNMODE iRunMode, BOOL fState)
     switch (iRunMode)
     {
     case MSIRUNMODE_REBOOTATEND:
-        package->need_reboot = 1;
+        package->need_reboot_at_end = (fState != 0);
         r = ERROR_SUCCESS;
         break;
 
     case MSIRUNMODE_REBOOTNOW:
-        FIXME("unimplemented run mode: %d\n", iRunMode);
-        r = ERROR_FUNCTION_FAILED;
+        package->need_reboot_now = (fState != 0);
+        r = ERROR_SUCCESS;
         break;
 
     default:
@@ -1653,6 +1645,7 @@ UINT MSI_SetInstallLevel( MSIPACKAGE *package, int iInstallLevel )
 {
     static const WCHAR fmt[] = { '%','d',0 };
     WCHAR level[6];
+    int len;
     UINT r;
 
     TRACE("%p %i\n", package, iInstallLevel);
@@ -1663,8 +1656,8 @@ UINT MSI_SetInstallLevel( MSIPACKAGE *package, int iInstallLevel )
     if (iInstallLevel < 1)
         return MSI_SetFeatureStates( package );
 
-    sprintfW( level, fmt, iInstallLevel );
-    r = msi_set_property( package->db, szInstallLevel, level );
+    len = sprintfW( level, fmt, iInstallLevel );
+    r = msi_set_property( package->db, szInstallLevel, level, len );
     if ( r == ERROR_SUCCESS )
         r = MSI_SetFeatureStates( package );
 

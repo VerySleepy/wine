@@ -46,7 +46,6 @@
  *   - RB_SETTOOLTIPS
  *   - WM_CHARTOITEM
  *   - WM_LBUTTONDBLCLK
- *   - WM_MEASUREITEM
  *   - WM_PALETTECHANGED
  *   - WM_QUERYNEWPALETTE
  *   - WM_RBUTTONDOWN
@@ -137,6 +136,9 @@ typedef struct
     LPWSTR    lpText;
     HWND    hwndPrevParent;
 } REBAR_BAND;
+
+/* has a value of: 0, CCS_TOP, CCS_NOMOVEY, CCS_BOTTOM */
+#define CCS_LAYOUT_MASK 0x3
 
 /* fStatus flags */
 #define HAS_GRIPPER    0x00000001
@@ -1050,14 +1052,6 @@ REBAR_MoveChildWindows (const REBAR_INFO *infoPtr, UINT start, UINT endplus)
 		lpBand->rcChild = rbcz.rcChild;  /* *** ??? */
             }
 
-	    /* native (IE4 in "Favorites" frame **1) does:
-	     *   SetRect (&rc, -1, -1, -1, -1)
-	     *   EqualRect (&rc,band->rc???)
-	     *   if ret==0
-	     *     CopyRect (band->rc????, &rc)
-	     *     set flag outside of loop
-	     */
-
 	    GetClassNameW (lpBand->hwndChild, szClassName, sizeof(szClassName)/sizeof(szClassName[0]));
 	    if (!lstrcmpW (szClassName, strComboBox) ||
 		!lstrcmpW (szClassName, WC_COMBOBOXEXW)) {
@@ -1109,22 +1103,13 @@ REBAR_MoveChildWindows (const REBAR_INFO *infoPtr, UINT start, UINT endplus)
 
     if (infoPtr->DoRedraw)
 	UpdateWindow (infoPtr->hwndSelf);
-
-    /* native (from **1 above) does:
-     *      UpdateWindow(rebar)
-     *      REBAR_ForceResize
-     *      RBN_HEIGHTCHANGE if necessary
-     *      if ret from any EqualRect was 0
-     *         Goto "BeginDeferWindowPos"
-     */
-
 }
 
 /* Returns the next visible band (the first visible band in [i+1; infoPtr->uNumBands) )
  * or infoPtr->uNumBands if none */
 static int next_visible(const REBAR_INFO *infoPtr, int i)
 {
-    int n;
+    unsigned int n;
     for (n = i + 1; n < infoPtr->uNumBands; n++)
         if (!HIDDENBAND(REBAR_GetBand(infoPtr, n)))
             break;
@@ -1411,7 +1396,7 @@ REBAR_Layout(REBAR_INFO *infoPtr)
     adjcx = get_rect_cx(infoPtr, &rcAdj);
 
     if (infoPtr->uNumBands == 0) {
-        TRACE("No bands - setting size to (0,%d), vert: %lx\n", adjcx, infoPtr->dwStyle & CCS_VERT);
+        TRACE("No bands - setting size to (0,%d), vert: %x\n", adjcx, infoPtr->dwStyle & CCS_VERT);
         infoPtr->calcSize.cx = adjcx;
         /* the calcSize.cy won't change for a 0 band rebar */
         infoPtr->uNumRows = 0;
@@ -2136,8 +2121,10 @@ REBAR_HandleUDDrag (REBAR_INFO *infoPtr, const POINT *ptsmove)
     if(yOff < 0)
     {
         /* Place the band above the current top row */
+        if(iHitBand==0 && (infoPtr->uNumBands==1 || REBAR_GetBand(infoPtr, 1)->fStyle&RBBS_BREAK))
+            return;
         DPA_DeletePtr(infoPtr->bands, iHitBand);
-        hitBand->fStyle &= RBBS_BREAK;
+        hitBand->fStyle &= ~RBBS_BREAK;
         REBAR_GetBand(infoPtr, 0)->fStyle |= RBBS_BREAK;
         infoPtr->iGrabbedBand = DPA_InsertPtr(
             infoPtr->bands, 0, hitBand);
@@ -2145,6 +2132,8 @@ REBAR_HandleUDDrag (REBAR_INFO *infoPtr, const POINT *ptsmove)
     else if(yOff > REBAR_GetBand(infoPtr, infoPtr->uNumBands - 1)->rcBand.bottom)
     {
         /* Place the band below the current bottom row */
+        if(iHitBand == infoPtr->uNumBands-1 && hitBand->fStyle&RBBS_BREAK)
+            return;
         DPA_DeletePtr(infoPtr->bands, iHitBand);
         hitBand->fStyle |= RBBS_BREAK;
         infoPtr->iGrabbedBand = DPA_InsertPtr(
@@ -3308,29 +3297,6 @@ REBAR_NCCreate (HWND hwnd, const CREATESTRUCTW *cs)
         infoPtr->hFont = infoPtr->hDefaultFont = tfont;
     }
 
-/* native does:
-	    GetSysColor (numerous);
-	    GetSysColorBrush (numerous) (see WM_SYSCOLORCHANGE);
-	   *GetStockObject (SYSTEM_FONT);
-	   *SetWindowLong (hwnd, 0, info ptr);
-	   *WM_NOTIFYFORMAT;
-	   *SetWindowLong (hwnd, GWL_STYLE, style+0x10000001);
-                                    WS_VISIBLE = 0x10000000;
-                                    CCS_TOP    = 0x00000001;
-	   *SystemParametersInfo (SPI_GETNONCLIENTMETRICS...);
-	   *CreateFontIndirect (lfCaptionFont from above);
-	    GetDC ();
-	    SelectObject (hdc, fontabove);
-	    GetTextMetrics (hdc, );    guessing is tmHeight
-	    SelectObject (hdc, oldfont);
-	    ReleaseDC ();
-	    GetWindowRect ();
-	    MapWindowPoints (0, parent, rectabove, 2);
-	    GetWindowRect ();
-	    GetClientRect ();
-	    ClientToScreen (clientrect);
-	    SetWindowPos (hwnd, 0, 0, 0, 0, 0, SWP_NOZORDER);
- */
     return TRUE;
 }
 
@@ -3419,7 +3385,7 @@ REBAR_NotifyFormat (REBAR_INFO *infoPtr, LPARAM cmd)
 	    ERR("wrong response to WM_NOTIFYFORMAT (%d), assuming ANSI\n", i);
 	    i = NFR_ANSI;
 	}
-        infoPtr->bUnicode = (i == NFR_UNICODE) ? 1 : 0;
+        infoPtr->bUnicode = (i == NFR_UNICODE);
 	return (LRESULT)i;
     }
     return (LRESULT)((infoPtr->bUnicode) ? NFR_UNICODE : NFR_ANSI);
@@ -3716,6 +3682,7 @@ REBAR_WindowProc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	case WM_COMMAND:
 	case WM_DRAWITEM:
 	case WM_NOTIFY:
+        case WM_MEASUREITEM:
             return SendMessageW(REBAR_GetNotifyParent (infoPtr), uMsg, wParam, lParam);
 
 
@@ -3740,8 +3707,6 @@ REBAR_WindowProc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
 	case WM_LBUTTONUP:
 	    return REBAR_LButtonUp (infoPtr);
-
-/*      case WM_MEASUREITEM:    supported according to ControlSpy */
 
 	case WM_MOUSEMOVE:
 	    return REBAR_MouseMove (infoPtr, lParam);

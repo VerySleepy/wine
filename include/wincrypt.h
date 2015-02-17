@@ -526,7 +526,7 @@ typedef struct _CRL_DIST_POINTS_INFO {
 #define GET_CRL_DIST_POINT_ERR_INDEX(x) \
  (((x) >> CRL_DIST_POINT_ERR_INDEX_SHIFT) & CRL_DIST_POINT_ERR_INDEX_MASK)
 
-#define CRL_DIST_POINT_ERR_CRL_ISSUER_BIT 0x80000000L
+#define CRL_DIST_POINT_ERR_CRL_ISSUER_BIT __MSABI_LONG(0x80000000)
 #define IS_CRL_DIST_POINT_ERR_CRL_ISSUER(x) \
  ((x) & CRL_DIST_POINT_ERR_CRL_ISSUER_BIT)
 
@@ -569,7 +569,7 @@ typedef struct _CERT_NAME_CONSTRAINTS_INFO {
     PCERT_GENERAL_SUBTREE rgExcludedSubtree;
 } CERT_NAME_CONSTRAINTS_INFO, *PCERT_NAME_CONSTRAINTS_INFO;
 
-#define CERT_EXCLUDED_SUBTREE_BIT 0x80000000L
+#define CERT_EXCLUDED_SUBTREE_BIT __MSABI_LONG(0x80000000)
 #define IS_CERT_EXCLUDED_SUBTREE(x) ((x) & CERT_EXCLUDED_SUBTREE_BIT)
 
 typedef struct _CRYPT_ATTRIBUTE {
@@ -1578,6 +1578,7 @@ typedef const CERT_CRL_CONTEXT_PAIR *PCCERT_CRL_CONTEXT_PAIR;
 #define ALG_SID_DH_EPHEM                2
 #define ALG_SID_AGREED_KEY_ANY          3
 #define ALG_SID_KEA                     4
+#define ALG_SID_ECDH                    5
 /* RC2 SIDs */
 #define ALG_SID_RC4                     1
 #define ALG_SID_RC2                     2
@@ -1627,6 +1628,7 @@ typedef const CERT_CRL_CONTEXT_PAIR *PCCERT_CRL_CONTEXT_PAIR;
 #define CALG_NO_SIGN              (ALG_CLASS_SIGNATURE    | ALG_TYPE_ANY           | ALG_SID_ANY)
 #define CALG_DH_SF                (ALG_CLASS_KEY_EXCHANGE | ALG_TYPE_DH            | ALG_SID_DH_SANDF)
 #define CALG_DH_EPHEM             (ALG_CLASS_KEY_EXCHANGE | ALG_TYPE_DH            | ALG_SID_DH_EPHEM)
+#define CALG_ECDH                 (ALG_CLASS_KEY_EXCHANGE | ALG_TYPE_DH            | ALG_SID_ECDH)
 #define CALG_RSA_KEYX             (ALG_CLASS_KEY_EXCHANGE | ALG_TYPE_RSA           | ALG_SID_RSA_ANY)
 #define CALG_DES                  (ALG_CLASS_DATA_ENCRYPT | ALG_TYPE_BLOCK         | ALG_SID_DES)
 #define CALG_RC2                  (ALG_CLASS_DATA_ENCRYPT | ALG_TYPE_BLOCK         | ALG_SID_RC2)
@@ -1814,6 +1816,22 @@ static const WCHAR MS_ENH_RSA_AES_PROV_W[] =           { 'M','i','c','r','o','s'
 	'C','r','y','p','t','o','g','r','a','p','h','i','c',' ','P','r','o','v','i','d','e','r',0 };
 #endif
 #define MS_ENH_RSA_AES_PROV                            WINELIB_NAME_AW(MS_ENH_RSA_AES_PROV_)
+
+#define MS_ENH_RSA_AES_PROV_XP_A    "Microsoft Enhanced RSA and AES Cryptographic Provider (Prototype)"
+#if defined(__GNUC__)
+# define MS_ENH_RSA_AES_PROV_XP_W (const WCHAR []){ 'M','i','c','r','o','s','o','f','t',' ', \
+        'E','n','h','a','n','c','e','d',' ','R','S','A',' ','a','n','d',' ','A','E','S',' ',\
+        'C','r','y','p','t','o','g','r','a','p','h','i','c',' ','P','r','o','v','i','d','e','r',' ',\
+        '(','P','r','o','t','o','t','y','p','e',')',0 }
+#elif defined(_MSC_VER)
+# define MS_ENH_RSA_AES_PROV_XP_W   L"Microsoft Enhanced RSA and AES Cryptographic Provider (Prototype)"
+#else
+static const WCHAR MS_ENH_RSA_AES_PROV_XP_W[] = { 'M','i','c','r','o','s','o','f','t',' ',
+        'E','n','h','a','n','c','e','d',' ','R','S','A',' ','a','n','d',' ','A','E','S',' ',
+        'C','r','y','p','t','o','g','r','a','p','h','i','c',' ','P','r','o','v','i','d','e','r',' ',
+        '(','P','r','o','t','o','t','y','p','e',')',0 };
+#endif
+#define MS_ENH_RSA_AES_PROV_XP                   WINELIB_NAME_AW(MS_ENH_RSA_AES_PROV_XP_)
 
 /* Key Specs*/
 #define AT_KEYEXCHANGE          1
@@ -3432,6 +3450,7 @@ typedef struct _CERT_ID
 #define CERT_ID_KEY_IDENTIFIER       2
 #define CERT_ID_SHA1_HASH            3
 
+#ifndef USE_WC_PREFIX
 #undef CMSG_DATA /* may be defined by sys/socket.h */
 #define CMSG_DATA                 1
 #define CMSG_SIGNED               2
@@ -3446,6 +3465,21 @@ typedef struct _CERT_ID
 #define CMSG_ENVELOPED_FLAG            (1 << CMSG_ENVELOPED)
 #define CMSG_SIGNED_AND_ENVELOPED_FLAG (1 << CMSG_SIGNED_AND_ENVELOPED)
 #define CMSG_ENCRYPTED_FLAG            (1 << CMSG_ENCRYPTED)
+#else
+#define WC_CMSG_DATA                 1
+#define WC_CMSG_SIGNED               2
+#define WC_CMSG_ENVELOPED            3
+#define WC_CMSG_SIGNED_AND_ENVELOPED 4
+#define WC_CMSG_HASHED               5
+#define WC_CMSG_ENCRYPTED            6
+
+#define WC_CMSG_ALL_FLAGS                 ~0U
+#define WC_CMSG_DATA_FLAG                 (1 << WC_CMSG_DATA)
+#define WC_CMSG_SIGNED_FLAG               (1 << WC_CMSG_SIGNED)
+#define WC_CMSG_ENVELOPED_FLAG            (1 << WC_CMSG_ENVELOPED)
+#define WC_CMSG_SIGNED_AND_ENVELOPED_FLAG (1 << WC_CMSG_SIGNED_AND_ENVELOPED)
+#define WC_CMSG_ENCRYPTED_FLAG            (1 << WC_CMSG_ENCRYPTED)
+#endif
 
 typedef struct _CMSG_SIGNER_ENCODE_INFO
 {
@@ -3856,6 +3890,8 @@ typedef BOOL (WINAPI *PFN_CMSG_IMPORT_KEY_TRANS)(
 #define EXPORT_PRIVATE_KEYS                   0x00000004
 #define PKCS12_EXPORT_RESERVED_MASK           0xffff0000
 
+#define CRYPT_USERDATA    0x00000001
+
 /* function declarations */
 /* advapi32.dll */
 WINADVAPI BOOL WINAPI CryptAcquireContextA(HCRYPTPROV *, LPCSTR, LPCSTR, DWORD, DWORD);
@@ -3886,24 +3922,24 @@ WINADVAPI BOOL WINAPI CryptGetDefaultProviderA (DWORD, DWORD *, DWORD, LPSTR, DW
 WINADVAPI BOOL WINAPI CryptGetDefaultProviderW (DWORD, DWORD *, DWORD, LPWSTR, DWORD *);
 #define               CryptGetDefaultProvider WINELIB_NAME_AW(CryptGetDefaultProvider)
 WINADVAPI BOOL WINAPI CryptGetUserKey (HCRYPTPROV, DWORD, HCRYPTKEY *);
-WINADVAPI BOOL WINAPI CryptHashData (HCRYPTHASH, CONST BYTE *, DWORD, DWORD);
+WINADVAPI BOOL WINAPI CryptHashData (HCRYPTHASH, const BYTE *, DWORD, DWORD);
 WINADVAPI BOOL WINAPI CryptHashSessionKey (HCRYPTHASH, HCRYPTKEY, DWORD);
-WINADVAPI BOOL WINAPI CryptImportKey (HCRYPTPROV, CONST BYTE *, DWORD, HCRYPTKEY, DWORD, HCRYPTKEY *);
+WINADVAPI BOOL WINAPI CryptImportKey (HCRYPTPROV, const BYTE *, DWORD, HCRYPTKEY, DWORD, HCRYPTKEY *);
 WINADVAPI BOOL WINAPI CryptReleaseContext (HCRYPTPROV, ULONG_PTR);
-WINADVAPI BOOL WINAPI CryptSetHashParam (HCRYPTHASH, DWORD, CONST BYTE *, DWORD);
-WINADVAPI BOOL WINAPI CryptSetKeyParam (HCRYPTKEY, DWORD, CONST BYTE *, DWORD);
+WINADVAPI BOOL WINAPI CryptSetHashParam (HCRYPTHASH, DWORD, const BYTE *, DWORD);
+WINADVAPI BOOL WINAPI CryptSetKeyParam (HCRYPTKEY, DWORD, const BYTE *, DWORD);
 WINADVAPI BOOL WINAPI CryptSetProviderA (LPCSTR, DWORD);
 WINADVAPI BOOL WINAPI CryptSetProviderW (LPCWSTR, DWORD);
 #define               CryptSetProvider WINELIB_NAME_AW(CryptSetProvider)
 WINADVAPI BOOL WINAPI CryptSetProviderExA (LPCSTR, DWORD, DWORD *, DWORD);
 WINADVAPI BOOL WINAPI CryptSetProviderExW (LPCWSTR, DWORD, DWORD *, DWORD);
 #define               CryptSetProviderEx WINELIB_NAME_AW(CryptSetProviderEx)
-WINADVAPI BOOL WINAPI CryptSetProvParam (HCRYPTPROV, DWORD, CONST BYTE *, DWORD);
+WINADVAPI BOOL WINAPI CryptSetProvParam (HCRYPTPROV, DWORD, const BYTE *, DWORD);
 WINADVAPI BOOL WINAPI CryptSignHashA (HCRYPTHASH, DWORD, LPCSTR, DWORD, BYTE *, DWORD *);
 WINADVAPI BOOL WINAPI CryptSignHashW (HCRYPTHASH, DWORD, LPCWSTR, DWORD, BYTE *, DWORD *);
 #define               CryptSignHash WINELIB_NAME_AW(CryptSignHash)
-WINADVAPI BOOL WINAPI CryptVerifySignatureA (HCRYPTHASH, CONST BYTE *, DWORD, HCRYPTKEY, LPCSTR, DWORD);
-WINADVAPI BOOL WINAPI CryptVerifySignatureW (HCRYPTHASH, CONST BYTE *, DWORD, HCRYPTKEY, LPCWSTR, DWORD);
+WINADVAPI BOOL WINAPI CryptVerifySignatureA (HCRYPTHASH, const BYTE *, DWORD, HCRYPTKEY, LPCSTR, DWORD);
+WINADVAPI BOOL WINAPI CryptVerifySignatureW (HCRYPTHASH, const BYTE *, DWORD, HCRYPTKEY, LPCWSTR, DWORD);
 #define               CryptVerifySignature WINELIB_NAME_AW(CryptVerifySignature)
 
 /* crypt32.dll functions */

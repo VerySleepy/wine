@@ -43,52 +43,11 @@
 #include "dmusics.h"
 
 /*****************************************************************************
- * Interfaces
- */
-typedef struct IDirectMusicScriptImpl IDirectMusicScriptImpl;
-
-typedef struct IDirectMusicScriptTrack IDirectMusicScriptTrack;
-
-/*****************************************************************************
  * ClassFactory
  */
 extern HRESULT WINAPI DMUSIC_CreateDirectMusicScriptImpl (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
 
 extern HRESULT WINAPI DMUSIC_CreateDirectMusicScriptTrack (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
-
-/*****************************************************************************
- * IDirectMusicScriptImpl implementation structure
- */
-struct IDirectMusicScriptImpl {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicScriptVtbl *ScriptVtbl;
-  const IDirectMusicObjectVtbl *ObjectVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicScriptImpl fields */
-  IDirectMusicPerformance* pPerformance;
-  LPDMUS_OBJECTDESC pDesc;
-  DMUS_IO_SCRIPT_HEADER* pHeader;
-  DMUS_IO_VERSION* pVersion;
-  WCHAR* pwzLanguage;
-  WCHAR* pwzSource;
-};
-
-/*****************************************************************************
- * IDirectMusicScriptTrack implementation structure
- */
-struct IDirectMusicScriptTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicScriptTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-};
 
 /**********************************************************************
  * Dll lifetime tracking declaration for dmscript.dll

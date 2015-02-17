@@ -31,14 +31,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(winemapi);
 
-/***********************************************************************
- *              DllMain (MAPI32.init)
- */
-BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID fImpLoad)
-{
-    TRACE("(%p,%d,%p)\n", hinstDLL, fdwReason, fImpLoad);
-    return TRUE;
-}
 
 ULONG WINAPI MAPIAddress(LHANDLE session, ULONG_PTR uiparam, LPSTR caption,
     ULONG editfields, LPSTR labels, ULONG nRecips, lpMapiRecipDesc lpRecips,
@@ -108,7 +100,7 @@ ULONG WINAPI MAPIResolveName(LHANDLE session, ULONG_PTR uiparam, LPSTR name,
     TRACE("(0x%08lx 0x%08lx %s 0x%08x 0x%08x %p)\n", session, uiparam,
           debugstr_a(name), flags, reserved, recip);
 
-    if (!name || !strlen(name))
+    if (!name || !name[0])
         return MAPI_E_FAILURE;
 
     scode = MAPIAllocateBuffer(sizeof(**recip) + sizeof(smtp) + strlen(name),

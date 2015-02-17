@@ -36,8 +36,8 @@ WINE_DEFAULT_DEBUG_CHANNEL(gdi);
   /* GDI logical pen object */
 typedef struct
 {
-    GDIOBJHDR header;
-    EXTLOGPEN logpen;
+    struct brush_pattern pattern;
+    EXTLOGPEN            logpen;
 } PENOBJ;
 
 
@@ -87,28 +87,32 @@ HPEN WINAPI CreatePenIndirect( const LOGPEN * pen )
         if (hpen) return hpen;
     }
 
-    if (!(penPtr = HeapAlloc( GetProcessHeap(), 0, sizeof(*penPtr) ))) return 0;
+    if (!(penPtr = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*penPtr) ))) return 0;
 
-    if (pen->lopnStyle == PS_USERSTYLE || pen->lopnStyle == PS_ALTERNATE)
-        penPtr->logpen.elpPenStyle = PS_SOLID;
-    else
-        penPtr->logpen.elpPenStyle = pen->lopnStyle;
-    if (pen->lopnStyle == PS_NULL)
-    {
-        penPtr->logpen.elpWidth = 1;
-        penPtr->logpen.elpColor = RGB(0, 0, 0);
-    }
-    else
-    {
-        penPtr->logpen.elpWidth = abs(pen->lopnWidth.x);
-        penPtr->logpen.elpColor = pen->lopnColor;
-    }
+    penPtr->logpen.elpPenStyle = pen->lopnStyle;
+    penPtr->logpen.elpWidth = abs(pen->lopnWidth.x);
+    penPtr->logpen.elpColor = pen->lopnColor;
     penPtr->logpen.elpBrushStyle = BS_SOLID;
-    penPtr->logpen.elpHatch = 0;
-    penPtr->logpen.elpNumEntries = 0;
-    penPtr->logpen.elpStyleEntry[0] = 0;
 
-    if (!(hpen = alloc_gdi_handle( &penPtr->header, OBJ_PEN, &pen_funcs )))
+    switch (pen->lopnStyle)
+    {
+    case PS_SOLID:
+    case PS_DASH:
+    case PS_DOT:
+    case PS_DASHDOT:
+    case PS_DASHDOTDOT:
+    case PS_INSIDEFRAME:
+        break;
+    case PS_NULL:
+        penPtr->logpen.elpWidth = 1;
+        penPtr->logpen.elpColor = 0;
+        break;
+    default:
+        penPtr->logpen.elpPenStyle = PS_SOLID;
+        break;
+    }
+
+    if (!(hpen = alloc_gdi_handle( penPtr, OBJ_PEN, &pen_funcs )))
         HeapFree( GetProcessHeap(), 0, penPtr );
     return hpen;
 }
@@ -121,19 +125,29 @@ HPEN WINAPI ExtCreatePen( DWORD style, DWORD width,
                               const LOGBRUSH * brush, DWORD style_count,
                               const DWORD *style_bits )
 {
-    PENOBJ * penPtr;
+    PENOBJ *penPtr = NULL;
     HPEN hpen;
+    LOGBRUSH logbrush;
 
-    if ((style & PS_STYLE_MASK) == PS_USERSTYLE)
+    if ((style_count || style_bits) && (style & PS_STYLE_MASK) != PS_USERSTYLE)
+        goto invalid;
+
+    switch (style & PS_STYLE_MASK)
     {
-        if(((INT)style_count) <= 0)
-            return 0;
+    case PS_NULL:
+        return CreatePen( PS_NULL, 0, brush->lbColor );
 
-        if ((style_count > 16) || !style_bits)
-        {
-            SetLastError(ERROR_INVALID_PARAMETER);
-            return 0;
-        }
+    case PS_SOLID:
+    case PS_DASH:
+    case PS_DOT:
+    case PS_DASHDOT:
+    case PS_DASHDOTDOT:
+        break;
+
+    case PS_USERSTYLE:
+        if (((INT)style_count) <= 0) return 0;
+
+        if ((style_count > 16) || !style_bits) goto invalid;
 
         if ((style & PS_TYPE_MASK) == PS_GEOMETRIC)
         {
@@ -146,64 +160,59 @@ HPEN WINAPI ExtCreatePen( DWORD style, DWORD width,
                 all_zero = all_zero && (style_bits[i] == 0);
             }
 
-            if(all_zero || has_neg)
-            {
-                SetLastError(ERROR_INVALID_PARAMETER);
-                return 0;
-            }
+            if (all_zero || has_neg) goto invalid;
         }
-    }
-    else
-    {
-        if (style_count || style_bits)
-        {
-            SetLastError(ERROR_INVALID_PARAMETER);
-            return 0;
-        }
-    }
+        break;
 
-    if ((style & PS_STYLE_MASK) == PS_NULL)
-        return CreatePen( PS_NULL, 0, brush->lbColor );
+    case PS_INSIDEFRAME:  /* applicable only for geometric pens */
+        if ((style & PS_TYPE_MASK) != PS_GEOMETRIC) goto invalid;
+        break;
+
+    case PS_ALTERNATE:  /* applicable only for cosmetic pens */
+        if ((style & PS_TYPE_MASK) == PS_GEOMETRIC) goto invalid;
+        break;
+
+    default:
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
 
     if ((style & PS_TYPE_MASK) == PS_GEOMETRIC)
     {
-        /* PS_ALTERNATE is applicable only for cosmetic pens */
-        if ((style & PS_STYLE_MASK) == PS_ALTERNATE)
-        {
-            SetLastError(ERROR_INVALID_PARAMETER);
-            return 0;
-        }
-
-        if (brush->lbHatch && ((brush->lbStyle != BS_SOLID) && (brush->lbStyle != BS_HOLLOW)))
-        {
-            static int fixme_hatches_shown;
-            if (!fixme_hatches_shown++) FIXME("Hatches not implemented\n");
-        }
+        if (brush->lbStyle == BS_NULL) return CreatePen( PS_NULL, 0, 0 );
     }
     else
     {
-        /* PS_INSIDEFRAME is applicable only for geometric pens */
-        if ((style & PS_STYLE_MASK) == PS_INSIDEFRAME || width != 1)
-        {
-            SetLastError(ERROR_INVALID_PARAMETER);
-            return 0;
-        }
+        if (width != 1) goto invalid;
+        if (brush->lbStyle != BS_SOLID) goto invalid;
     }
 
     if (!(penPtr = HeapAlloc(GetProcessHeap(), 0, FIELD_OFFSET(PENOBJ,logpen.elpStyleEntry[style_count]))))
         return 0;
 
+    logbrush = *brush;
+    if (!store_brush_pattern( &logbrush, &penPtr->pattern )) goto invalid;
+    if (logbrush.lbStyle == BS_DIBPATTERN) logbrush.lbStyle = BS_DIBPATTERNPT;
+
     penPtr->logpen.elpPenStyle = style;
     penPtr->logpen.elpWidth = abs(width);
-    penPtr->logpen.elpBrushStyle = brush->lbStyle;
-    penPtr->logpen.elpColor = brush->lbColor;
+    penPtr->logpen.elpBrushStyle = logbrush.lbStyle;
+    penPtr->logpen.elpColor = logbrush.lbColor;
     penPtr->logpen.elpHatch = brush->lbHatch;
     penPtr->logpen.elpNumEntries = style_count;
     memcpy(penPtr->logpen.elpStyleEntry, style_bits, style_count * sizeof(DWORD));
 
-    if (!(hpen = alloc_gdi_handle( &penPtr->header, OBJ_EXTPEN, &pen_funcs )))
+    if (!(hpen = alloc_gdi_handle( penPtr, OBJ_EXTPEN, &pen_funcs )))
+    {
+        free_brush_pattern( &penPtr->pattern );
         HeapFree( GetProcessHeap(), 0, penPtr );
+    }
     return hpen;
+
+invalid:
+    HeapFree( GetProcessHeap(), 0, penPtr );
+    SetLastError( ERROR_INVALID_PARAMETER );
+    return 0;
 }
 
 /***********************************************************************
@@ -211,7 +220,7 @@ HPEN WINAPI ExtCreatePen( DWORD style, DWORD width,
  */
 static HGDIOBJ PEN_SelectObject( HGDIOBJ handle, HDC hdc )
 {
-    PHYSDEV physdev;
+    PENOBJ *pen;
     HGDIOBJ ret = 0;
     DC *dc = get_dc_ptr( hdc );
 
@@ -221,22 +230,39 @@ static HGDIOBJ PEN_SelectObject( HGDIOBJ handle, HDC hdc )
         return 0;
     }
 
-    if (!GDI_inc_ref_count( handle ))
+    if ((pen = GDI_GetObjPtr( handle, 0 )))
     {
-        release_dc_ptr( dc );
-        return 0;
-    }
+        struct brush_pattern *pattern;
+        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pSelectPen );
 
-    physdev = GET_DC_PHYSDEV( dc, pSelectPen );
-    if (!physdev->funcs->pSelectPen( physdev, handle ))
-    {
-        GDI_dec_ref_count( handle );
-    }
-    else
-    {
-        ret = dc->hPen;
-        dc->hPen = handle;
-        GDI_dec_ref_count( ret );
+        switch (GetObjectType( handle ))
+        {
+        case OBJ_PEN:
+            pattern = NULL;
+            break;
+        case OBJ_EXTPEN:
+            pattern = &pen->pattern;
+            if (!pattern->info) pattern = NULL;
+            break;
+        default:
+            GDI_ReleaseObj( handle );
+            release_dc_ptr( dc );
+            return 0;
+        }
+
+        GDI_inc_ref_count( handle );
+        GDI_ReleaseObj( handle );
+
+        if (!physdev->funcs->pSelectPen( physdev, handle, pattern ))
+        {
+            GDI_dec_ref_count( handle );
+        }
+        else
+        {
+            ret = dc->hPen;
+            dc->hPen = handle;
+            GDI_dec_ref_count( ret );
+        }
     }
     release_dc_ptr( dc );
     return ret;
@@ -251,6 +277,7 @@ static BOOL PEN_DeleteObject( HGDIOBJ handle )
     PENOBJ *pen = free_gdi_handle( handle );
 
     if (!pen) return FALSE;
+    free_brush_pattern( &pen->pattern );
     return HeapFree( GetProcessHeap(), 0, pen );
 }
 
@@ -265,7 +292,7 @@ static INT PEN_GetObject( HGDIOBJ handle, INT count, LPVOID buffer )
 
     if (!pen) return 0;
 
-    switch (pen->header.type)
+    switch (GetObjectType( handle ))
     {
     case OBJ_PEN:
     {

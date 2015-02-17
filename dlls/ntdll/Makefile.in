@@ -2,7 +2,7 @@ EXTRADEFS = -D_NTSYSTEM_
 MODULE    = ntdll.dll
 IMPORTLIB = ntdll
 IMPORTS   = winecrt0
-EXTRALIBS = @IOKITLIB@ @LIBPTHREAD@
+EXTRALIBS = $(IOKIT_LIBS) $(RT_LIBS) $(PTHREAD_LIBS)
 EXTRADLLFLAGS = -nodefaultlibs -Wl,--image-base,0x7bc00000
 
 C_SRCS = \
@@ -38,9 +38,9 @@ C_SRCS = \
 	serial.c \
 	server.c \
 	signal_arm.c \
+	signal_arm64.c \
 	signal_i386.c \
 	signal_powerpc.c \
-	signal_sparc.c \
 	signal_x86_64.c \
 	string.c \
 	sync.c \
@@ -53,5 +53,3 @@ C_SRCS = \
 	wcstring.c
 
 RC_SRCS = version.rc
-
-@MAKE_DLL_RULES@

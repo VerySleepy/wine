@@ -21,6 +21,7 @@
 
 #include "corerror.h"
 #include "mscoree.h"
+#include "metahost.h"
 #include "shlwapi.h"
 #include "wine/test.h"
 
@@ -31,6 +32,9 @@ static HRESULT (WINAPI *pGetCORSystemDirectory)(LPWSTR, DWORD, DWORD*);
 static HRESULT (WINAPI *pGetRequestedRuntimeInfo)(LPCWSTR, LPCWSTR, LPCWSTR, DWORD, DWORD, LPWSTR, DWORD, DWORD*, LPWSTR, DWORD, DWORD*);
 static HRESULT (WINAPI *pLoadLibraryShim)(LPCWSTR, LPCWSTR, LPVOID, HMODULE*);
 static HRESULT (WINAPI *pCreateConfigStream)(LPCWSTR, IStream**);
+static HRESULT (WINAPI *pCreateInterface)(REFCLSID, REFIID, VOID**);
+
+static BOOL no_legacy_runtimes;
 
 static BOOL init_functionpointers(void)
 {
@@ -47,8 +51,10 @@ static BOOL init_functionpointers(void)
     pGetRequestedRuntimeInfo = (void *)GetProcAddress(hmscoree, "GetRequestedRuntimeInfo");
     pLoadLibraryShim = (void *)GetProcAddress(hmscoree, "LoadLibraryShim");
     pCreateConfigStream = (void *)GetProcAddress(hmscoree, "CreateConfigStream");
+    pCreateInterface =  (void *)GetProcAddress(hmscoree, "CreateInterface");
 
-    if (!pGetCORVersion || !pGetCORSystemDirectory || !pGetRequestedRuntimeInfo || !pLoadLibraryShim)
+    if (!pGetCORVersion || !pGetCORSystemDirectory || !pGetRequestedRuntimeInfo || !pLoadLibraryShim ||
+        !pCreateInterface)
     {
         win_skip("functions not available\n");
         FreeLibrary(hmscoree);
@@ -60,8 +66,12 @@ static BOOL init_functionpointers(void)
 
 static void test_versioninfo(void)
 {
+    const WCHAR v9_0[] = {'v','9','.','0','.','3','0','3','1','9',0};
+    const WCHAR v2_0cap[] = {'V','2','.','0','.','5','0','7','2','7',0};
     const WCHAR v2_0[] = {'v','2','.','0','.','5','0','7','2','7',0};
+    const WCHAR v2_0_0[] = {'v','2','.','0','.','0',0};
     const WCHAR v1_1[] = {'v','1','.','1','.','4','3','2','2',0};
+    const WCHAR v1_1_0[] = {'v','1','.','1','.','0',0};
 
     WCHAR version[MAX_PATH];
     WCHAR path[MAX_PATH];
@@ -77,13 +87,12 @@ static void test_versioninfo(void)
     hr =  pGetCORVersion(version, 1, &size);
     if (hr == CLR_E_SHIM_RUNTIME)
     {
-        /* FIXME: Get Mono packaged properly so we can fail here. */
-        todo_wine ok(hr == HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER),"GetCORVersion returned %08x\n", hr);
-        skip("No .NET runtimes are installed\n");
+        no_legacy_runtimes = TRUE;
+        win_skip("No legacy .NET runtimes are installed\n");
         return;
     }
 
-    ok(hr == HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER),"GetCORVersion returned %08x\n", hr);
+    ok(hr == E_NOT_SUFFICIENT_BUFFER, "GetCORVersion returned %08x\n", hr);
 
     hr =  pGetCORVersion(version, MAX_PATH, &size);
     ok(hr == S_OK,"GetCORVersion returned %08x\n", hr);
@@ -98,12 +107,12 @@ static void test_versioninfo(void)
     path_len = size;
 
     hr = pGetCORSystemDirectory(path, path_len-1 , &size);
-    ok(hr == HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER), "GetCORSystemDirectory returned %08x\n", hr);
+    ok(hr == E_NOT_SUFFICIENT_BUFFER, "GetCORSystemDirectory returned %08x\n", hr);
 
     if (0)  /* crashes on <= w2k3 */
     {
         hr = pGetCORSystemDirectory(NULL, MAX_PATH , &size);
-        ok(hr == HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER), "GetCORSystemDirectory returned %08x\n", hr);
+        ok(hr == E_NOT_SUFFICIENT_BUFFER, "GetCORSystemDirectory returned %08x\n", hr);
     }
 
     hr = pGetCORSystemDirectory(path, MAX_PATH , NULL);
@@ -131,7 +140,7 @@ static void test_versioninfo(void)
     ok(hr == S_OK, "GetRequestedRuntimeInfo returned %08x\n", hr);
 
     hr = pGetRequestedRuntimeInfo( NULL, v2_0, NULL, 0, 0, path, 1, &path_len, version, MAX_PATH, &size);
-    ok(hr == HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER), "GetRequestedRuntimeInfo returned %08x\n", hr);
+    ok(hr == E_NOT_SUFFICIENT_BUFFER, "GetRequestedRuntimeInfo returned %08x\n", hr);
 
     /* if one of the buffers is NULL, the other one is still happily filled */
     memset(version, 0, sizeof(version));
@@ -141,6 +150,45 @@ static void test_versioninfo(void)
     /* With NULL-pointer for bufferlength, the buffer itself still gets filled with correct string */
     memset(version, 0, sizeof(version));
     hr = pGetRequestedRuntimeInfo( NULL, v2_0, NULL, 0, 0, path, MAX_PATH, &path_len, version, MAX_PATH, NULL);
+    ok(hr == S_OK, "GetRequestedRuntimeInfo returned %08x\n", hr);
+    ok(!winetest_strcmpW(version, v2_0), "version is %s , expected %s\n", wine_dbgstr_w(version), wine_dbgstr_w(v2_0));
+
+    memset(version, 0, sizeof(version));
+    hr = pGetRequestedRuntimeInfo( NULL, v2_0cap, NULL, 0, 0, path, MAX_PATH, &path_len, version, MAX_PATH, NULL);
+    ok(hr == S_OK, "GetRequestedRuntimeInfo returned %08x\n", hr);
+    ok(!winetest_strcmpW(version, v2_0cap), "version is %s , expected %s\n", wine_dbgstr_w(version), wine_dbgstr_w(v2_0cap));
+
+    /* Invalid Version and RUNTIME_INFO_UPGRADE_VERSION flag*/
+    memset(version, 0, sizeof(version));
+    hr = pGetRequestedRuntimeInfo( NULL, v1_1, NULL, 0, RUNTIME_INFO_UPGRADE_VERSION, path, MAX_PATH, &path_len, version, MAX_PATH, NULL);
+    ok(hr == S_OK  || hr == CLR_E_SHIM_RUNTIME , "GetRequestedRuntimeInfo returned %08x\n", hr);
+    if(hr == S_OK)
+    {
+        /* .NET 1.1 may not be installed. */
+        ok(!winetest_strcmpW(version, v1_1) || !winetest_strcmpW(version, v2_0),
+           "version is %s , expected %s or %s\n", wine_dbgstr_w(version), wine_dbgstr_w(v1_1), wine_dbgstr_w(v2_0));
+
+    }
+
+    memset(version, 0, sizeof(version));
+    hr = pGetRequestedRuntimeInfo( NULL, v9_0, NULL, 0, RUNTIME_INFO_UPGRADE_VERSION, path, MAX_PATH, &path_len, version, MAX_PATH, NULL);
+    ok(hr == CLR_E_SHIM_RUNTIME, "GetRequestedRuntimeInfo returned %08x\n", hr);
+
+    memset(version, 0, sizeof(version));
+    hr = pGetRequestedRuntimeInfo( NULL, v1_1_0, NULL, 0, 0, path, MAX_PATH, &path_len, version, MAX_PATH, NULL);
+    ok(hr == CLR_E_SHIM_RUNTIME, "GetRequestedRuntimeInfo returned %08x\n", hr);
+
+    memset(version, 0, sizeof(version));
+    hr = pGetRequestedRuntimeInfo( NULL, v1_1_0, NULL, 0, RUNTIME_INFO_UPGRADE_VERSION, path, MAX_PATH, &path_len, version, MAX_PATH, NULL);
+    ok(hr == S_OK, "GetRequestedRuntimeInfo returned %08x\n", hr);
+    ok(!winetest_strcmpW(version, v2_0), "version is %s , expected %s\n", wine_dbgstr_w(version), wine_dbgstr_w(v2_0));
+
+    memset(version, 0, sizeof(version));
+    hr = pGetRequestedRuntimeInfo( NULL, v2_0_0, NULL, 0, 0, path, MAX_PATH, &path_len, version, MAX_PATH, NULL);
+    ok(hr == CLR_E_SHIM_RUNTIME, "GetRequestedRuntimeInfo returned %08x\n", hr);
+
+    memset(version, 0, sizeof(version));
+    hr = pGetRequestedRuntimeInfo( NULL, v2_0_0, NULL, 0, RUNTIME_INFO_UPGRADE_VERSION, path, MAX_PATH, &path_len, version, MAX_PATH, NULL);
     ok(hr == S_OK, "GetRequestedRuntimeInfo returned %08x\n", hr);
     ok(!winetest_strcmpW(version, v2_0), "version is %s , expected %s\n", wine_dbgstr_w(version), wine_dbgstr_w(v2_0));
 }
@@ -160,6 +208,12 @@ static void test_loadlibraryshim(void)
     CHAR latestA[MAX_PATH];
     HMODULE hdll;
     CHAR dllpath[MAX_PATH];
+
+    if (no_legacy_runtimes)
+    {
+        win_skip("No legacy .NET runtimes are installed\n");
+        return;
+    }
 
     hr = pLoadLibraryShim(fusion, v1_1, NULL, &hdll);
     ok(hr == S_OK || hr == E_HANDLE, "LoadLibraryShim failed, hr=%x\n", hr);
@@ -343,6 +397,34 @@ static void test_createconfigstream(void)
     DeleteFileW(file);
 }
 
+static void test_createinstance(void)
+{
+    HRESULT hr;
+    ICLRMetaHost *host;
+
+    if (no_legacy_runtimes)
+    {
+        /* If we don't have 1.x or 2.0 runtimes, we should at least have .NET 4. */
+        ok(pCreateInterface != NULL, "no legacy runtimes or .NET 4 interfaces available\n");
+    }
+
+    if(!pCreateInterface)
+    {
+        win_skip("Function CreateInterface not found.\n");
+        return;
+    }
+
+    hr = pCreateInterface(&CLSID_CLRMetaHost, &IID_ICLRMetaHost, (void**)&host);
+    if(SUCCEEDED(hr))
+    {
+        ICLRMetaHost_Release(host);
+    }
+    else
+    {
+        win_skip(".NET 4 not installed.\n");
+    }
+}
+
 START_TEST(mscoree)
 {
     if (!init_functionpointers())
@@ -351,6 +433,7 @@ START_TEST(mscoree)
     test_versioninfo();
     test_loadlibraryshim();
     test_createconfigstream();
+    test_createinstance();
 
     FreeLibrary(hmscoree);
 }

@@ -32,7 +32,6 @@
 #ifdef HAVE_UNISTD_H
 # include <unistd.h>
 #endif
-
 #ifdef HAVE_SYS_PARAM_H
 # include <sys/param.h>
 #endif
@@ -46,7 +45,12 @@
 #ifdef HAVE_SYS_SIGNAL_H
 # include <sys/signal.h>
 #endif
+#ifdef HAVE_SYS_UCONTEXT_H
+# include <sys/ucontext.h>
+#endif
 
+#define NONAMELESSUNION
+#define NONAMELESSSTRUCT
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "windef.h"
@@ -66,7 +70,17 @@ static pthread_key_t teb_key;
  */
 #ifdef linux
 
-typedef ucontext_t SIGCONTEXT;
+#if defined(__ANDROID__) && !defined(HAVE_SYS_UCONTEXT_H)
+typedef struct ucontext
+{
+    unsigned long uc_flags;
+    struct ucontext *uc_link;
+    stack_t uc_stack;
+    struct sigcontext uc_mcontext;
+    sigset_t uc_sigmask;
+    unsigned long uc_regspace[128] __attribute__((__aligned__(8)));
+} ucontext_t;
+#endif
 
 /* All Registers access - only for local access */
 # define REG_sig(reg_name, context) ((context)->uc_mcontext.reg_name)
@@ -99,6 +113,15 @@ typedef void (WINAPI *raise_func)( EXCEPTION_RECORD *rec, CONTEXT *context );
 typedef int (*wine_signal_handler)(unsigned int sig);
 
 static wine_signal_handler handlers[256];
+
+
+struct UNWIND_INFO
+{
+    WORD function_length;
+    WORD unknown1 : 7;
+    WORD count : 5;
+    WORD unknown2 : 4;
+};
 
 /***********************************************************************
  *           dispatch_signal
@@ -210,7 +233,7 @@ __ASM_STDCALL_FUNC( RtlCaptureContext, 4,
                     "str IP, [r0, #0x34]\n\t"  /* context->Ip */
                     "str SP, [r0, #0x38]\n\t"  /* context->Sp */
                     "str LR, [r0, #0x3c]\n\t"  /* context->Lr */
-                    "str LR, [r0, #0x40]\n\t"  /* context->Pc */
+                    "str PC, [r0, #0x40]\n\t"  /* context->Pc */
                     "mrs r1, CPSR\n\t"
                     "str r1, [r0, #0x44]\n\t"  /* context->Cpsr */
                     "mov PC, LR\n"
@@ -356,20 +379,33 @@ NTSTATUS context_from_server( CONTEXT *to, const context_t *from )
     return STATUS_SUCCESS;
 }
 
+extern void raise_func_trampoline_thumb( EXCEPTION_RECORD *rec, CONTEXT *context, raise_func func );
+__ASM_GLOBAL_FUNC( raise_func_trampoline_thumb,
+                   ".thumb\n\t"
+                   "blx r2\n\t"
+                   "bkpt")
+
+extern void raise_func_trampoline_arm( EXCEPTION_RECORD *rec, CONTEXT *context, raise_func func );
+__ASM_GLOBAL_FUNC( raise_func_trampoline_arm,
+                   ".arm\n\t"
+                   "blx r2\n\t"
+                   "bkpt")
+
 /***********************************************************************
  *           setup_exception_record
  *
  * Setup the exception record and context on the thread stack.
  */
-static EXCEPTION_RECORD *setup_exception_record( SIGCONTEXT *sigcontext, void *stack_ptr, raise_func func )
+static EXCEPTION_RECORD *setup_exception( ucontext_t *sigcontext, raise_func func )
 {
     struct stack_layout
     {
         CONTEXT           context;
         EXCEPTION_RECORD  rec;
-    } *stack = stack_ptr;
+    } *stack;
     DWORD exception_code = 0;
 
+    stack = (struct stack_layout *)(SP_sig(sigcontext) & ~3);
     stack--;  /* push the stack_layout structure */
 
     stack->rec.ExceptionRecord  = NULL;
@@ -382,9 +418,13 @@ static EXCEPTION_RECORD *setup_exception_record( SIGCONTEXT *sigcontext, void *s
 
     /* now modify the sigcontext to return to the raise function */
     SP_sig(sigcontext) = (DWORD)stack;
-    PC_sig(sigcontext) = (DWORD)func;
+    if (CPSR_sig(sigcontext) & 0x20)
+        PC_sig(sigcontext) = (DWORD)raise_func_trampoline_thumb;
+    else
+        PC_sig(sigcontext) = (DWORD)raise_func_trampoline_arm;
     REGn_sig(0, sigcontext) = (DWORD)&stack->rec;  /* first arg for raise_func */
     REGn_sig(1, sigcontext) = (DWORD)&stack->context; /* second arg for raise_func */
+    REGn_sig(2, sigcontext) = (DWORD)func; /* the raise_func as third arg for the trampoline */
 
 
     return &stack->rec;
@@ -481,6 +521,9 @@ static NTSTATUS raise_exception( EXCEPTION_RECORD *rec, CONTEXT *context, BOOL f
     {
         DWORD c;
 
+        TRACE( "code=%x flags=%x addr=%p pc=%08x tid=%04x\n",
+               rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress,
+               context->Pc, GetCurrentThreadId() );
         for (c = 0; c < rec->NumberParameters; c++)
             TRACE( " info[%d]=%08lx\n", c, rec->ExceptionInformation[c] );
         if (rec->ExceptionCode == EXCEPTION_WINE_STUB)
@@ -496,12 +539,12 @@ static NTSTATUS raise_exception( EXCEPTION_RECORD *rec, CONTEXT *context, BOOL f
         }
         else
         {
-            TRACE(" Pc:%04x Sp:%04x Lr:%04x Cpsr:%04x r0:%04x r1:%04x r2:%04x r3:%04x\n",
-                  context->Pc, context->Sp, context->Lr, context->Cpsr,
-                  context->R0, context->R1, context->R2, context->R3);
-            TRACE(" r4:%04x r5:%04x  r6:%04x  r7:%04x r8:%04x r9:%04x r10:%04x Fp:%04x Ip:%04x\n",
-                  context->R4, context->R5, context->R6, context->R7, context->R8,
-                  context->R9, context->R10, context->Fp, context->Ip );
+            TRACE( " r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x\n",
+                   context->R0, context->R1, context->R2, context->R3, context->R4, context->R5 );
+            TRACE( " r6=%08x r7=%08x r8=%08x r9=%08x r10=%08x fp=%08x\n",
+                   context->R6, context->R7, context->R8, context->R9, context->R10, context->Fp );
+            TRACE( " ip=%08x sp=%08x lr=%08x pc=%08x cpsr=%08x\n",
+                   context->Ip, context->Sp, context->Lr, context->Pc, context->Cpsr );
         }
 
         status = send_debug_event( rec, TRUE, context );
@@ -541,8 +584,7 @@ static NTSTATUS raise_exception( EXCEPTION_RECORD *rec, CONTEXT *context, BOOL f
 static void segv_handler( int signal, siginfo_t *info, void *ucontext )
 {
     EXCEPTION_RECORD *rec;
-    SIGCONTEXT *context = ucontext;
-    void *stack = (void *) (SP_sig(context) & ~3);
+    ucontext_t *context = ucontext;
 
     /* check for page fault inside the thread stack */
     if (TRAP_sig(context) == TRAP_ARM_PAGEFLT &&
@@ -553,13 +595,13 @@ static void segv_handler( int signal, siginfo_t *info, void *ucontext )
         /* check if this was the last guard page */
         if ((char *)info->si_addr < (char *)NtCurrentTeb()->DeallocationStack + 2*4096)
         {
-            rec = setup_exception_record( context, stack, raise_segv_exception );
+            rec = setup_exception( context, raise_segv_exception );
             rec->ExceptionCode = EXCEPTION_STACK_OVERFLOW;
         }
         return;
     }
 
-    rec = setup_exception_record( context, stack, raise_segv_exception );
+    rec = setup_exception( context, raise_segv_exception );
     if (rec->ExceptionCode == EXCEPTION_STACK_OVERFLOW) return;
 
     switch(TRAP_sig(context))
@@ -577,7 +619,7 @@ static void segv_handler( int signal, siginfo_t *info, void *ucontext )
         rec->ExceptionCode = EXCEPTION_DATATYPE_MISALIGNMENT;
         break;
     default:
-        WINE_ERR( "Got unexpected trap %ld\n", TRAP_sig(context) );
+        ERR("Got unexpected trap %ld\n", TRAP_sig(context));
         rec->ExceptionCode = EXCEPTION_ILLEGAL_INSTRUCTION;
         break;
     }
@@ -782,7 +824,7 @@ NTSTATUS signal_alloc_thread( TEB **teb )
 
     if (!sigstack_zero_bits)
     {
-        size_t min_size = getpagesize();  /* this is just for the TEB, we don't use a signal stack yet */
+        size_t min_size = page_size;
         /* find the first power of two not smaller than min_size */
         while ((1u << sigstack_zero_bits) < min_size) sigstack_zero_bits++;
         assert( sizeof(TEB) <= min_size );
@@ -816,19 +858,35 @@ void signal_free_thread( TEB *teb )
     NtFreeVirtualMemory( NtCurrentProcess(), (void **)&teb, &size, MEM_RELEASE );
 }
 
+/**********************************************************************
+ *      set_tpidrurw
+ *
+ * Win32/ARM applications expect the TEB pointer to be in the TPIDRURW register.
+ */
+#ifdef __ARM_ARCH_7A__
+extern void set_tpidrurw( TEB *teb );
+__ASM_GLOBAL_FUNC( set_tpidrurw,
+                   "mcr p15, 0, r0, c13, c0, 2\n\t" /* TEB -> TPIDRURW */
+                   "blx lr" )
+#else
+void set_tpidrurw( TEB *teb )
+{
+}
+#endif
 
 /**********************************************************************
  *		signal_init_thread
  */
 void signal_init_thread( TEB *teb )
 {
-    static int init_done;
+    static BOOL init_done;
 
     if (!init_done)
     {
         pthread_key_create( &teb_key, NULL );
-        init_done = 1;
+        init_done = TRUE;
     }
+    set_tpidrurw( teb );
     pthread_setspecific( teb_key, teb );
 }
 
@@ -881,12 +939,140 @@ void __wine_enter_vm86( CONTEXT *context )
     MESSAGE("vm86 mode not supported on this platform\n");
 }
 
+
+/**********************************************************************
+ *              RtlAddFunctionTable   (NTDLL.@)
+ */
+BOOLEAN CDECL RtlAddFunctionTable( RUNTIME_FUNCTION *table, DWORD count, DWORD addr )
+{
+    FIXME( "%p %u %x: stub\n", table, count, addr );
+    return TRUE;
+}
+
+
+/**********************************************************************
+ *              RtlDeleteFunctionTable   (NTDLL.@)
+ */
+BOOLEAN CDECL RtlDeleteFunctionTable( RUNTIME_FUNCTION *table )
+{
+    FIXME( "%p: stub\n", table );
+    return TRUE;
+}
+
+/**********************************************************************
+ *              find_function_info
+ */
+static RUNTIME_FUNCTION *find_function_info( ULONG_PTR pc, HMODULE module,
+                                             RUNTIME_FUNCTION *func, ULONG size )
+{
+    int min = 0;
+    int max = size/sizeof(*func) - 1;
+
+    while (min <= max)
+    {
+        int pos = (min + max) / 2;
+        DWORD begin = (func[pos].BeginAddress & ~1), end;
+        if (func[pos].u.s.Flag)
+            end = begin + func[pos].u.s.FunctionLength * 2;
+        else
+        {
+            struct UNWIND_INFO *info;
+            info = (struct UNWIND_INFO *)((char *)module + func[pos].u.UnwindData);
+            end = begin + info->function_length * 2;
+        }
+
+        if ((char *)pc < (char *)module + begin) max = pos - 1;
+        else if ((char *)pc >= (char *)module + end) min = pos + 1;
+        else return func + pos;
+    }
+    return NULL;
+}
+
+/**********************************************************************
+ *              RtlLookupFunctionEntry   (NTDLL.@)
+ */
+PRUNTIME_FUNCTION WINAPI RtlLookupFunctionEntry( ULONG_PTR pc, DWORD *base,
+                                                 UNWIND_HISTORY_TABLE *table )
+{
+    LDR_MODULE *module;
+    RUNTIME_FUNCTION *func;
+    ULONG size;
+
+    /* FIXME: should use the history table to make things faster */
+
+    if (LdrFindEntryForAddress( (void *)pc, &module ))
+    {
+        WARN( "module not found for %lx\n", pc );
+        return NULL;
+    }
+    if (!(func = RtlImageDirectoryEntryToData( module->BaseAddress, TRUE,
+                                               IMAGE_DIRECTORY_ENTRY_EXCEPTION, &size )))
+    {
+        WARN( "no exception table found in module %p pc %lx\n", module->BaseAddress, pc );
+        return NULL;
+    }
+    func = find_function_info( pc, module->BaseAddress, func, size );
+    if (func) *base = (DWORD)module->BaseAddress;
+    return func;
+}
+
 /***********************************************************************
  *            RtlUnwind  (NTDLL.@)
  */
-void WINAPI RtlUnwind( PVOID pEndFrame, PVOID targetIp, PEXCEPTION_RECORD pRecord, PVOID retval )
+void WINAPI RtlUnwind( void *endframe, void *target_ip, EXCEPTION_RECORD *rec, void *retval )
 {
-    FIXME( "Not implemented on ARM\n" );
+    CONTEXT context;
+    EXCEPTION_RECORD record;
+    EXCEPTION_REGISTRATION_RECORD *frame, *dispatch;
+    DWORD res;
+
+    RtlCaptureContext( &context );
+    context.R0 = (DWORD)retval;
+
+    /* build an exception record, if we do not have one */
+    if (!rec)
+    {
+        record.ExceptionCode    = STATUS_UNWIND;
+        record.ExceptionFlags   = 0;
+        record.ExceptionRecord  = NULL;
+        record.ExceptionAddress = (void *)context.Pc;
+        record.NumberParameters = 0;
+        rec = &record;
+    }
+
+    rec->ExceptionFlags |= EH_UNWINDING | (endframe ? 0 : EH_EXIT_UNWIND);
+
+    TRACE( "code=%x flags=%x\n", rec->ExceptionCode, rec->ExceptionFlags );
+
+    /* get chain of exception frames */
+    frame = NtCurrentTeb()->Tib.ExceptionList;
+    while ((frame != (EXCEPTION_REGISTRATION_RECORD*)~0UL) && (frame != endframe))
+    {
+        /* Check frame address */
+        if (endframe && ((void*)frame > endframe))
+            raise_status( STATUS_INVALID_UNWIND_TARGET, rec );
+
+        if (!is_valid_frame( frame )) raise_status( STATUS_BAD_STACK, rec );
+
+        /* Call handler */
+        TRACE( "calling handler at %p code=%x flags=%x\n",
+               frame->Handler, rec->ExceptionCode, rec->ExceptionFlags );
+        res = frame->Handler(rec, frame, &context, &dispatch);
+        TRACE( "handler at %p returned %x\n", frame->Handler, res );
+
+        switch(res)
+        {
+        case ExceptionContinueSearch:
+            break;
+        case ExceptionCollidedUnwind:
+            frame = dispatch;
+            break;
+        default:
+            raise_status( STATUS_INVALID_DISPOSITION, rec );
+            break;
+        }
+        frame = __wine_pop_frame( frame );
+    }
 }
 
 /*******************************************************************

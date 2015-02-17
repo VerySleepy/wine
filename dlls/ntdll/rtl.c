@@ -34,6 +34,7 @@
 #include <netinet/in.h>
 #endif
 #include "ntstatus.h"
+#define NONAMELESSUNION
 #define NONAMELESSSTRUCT
 #define WIN32_NO_STATUS
 #define USE_WS_PREFIX
@@ -140,7 +141,7 @@ void WINAPI RtlDeleteResource(LPRTL_RWLOCK rwl)
     {
 	RtlEnterCriticalSection( &rwl->rtlCS );
 	if( rwl->iNumberActive || rwl->uExclusiveWaiters || rwl->uSharedWaiters )
-	    MESSAGE("Deleting active MRSW lock (%p), expect failure\n", rwl );
+	    ERR("Deleting active MRSW lock (%p), expect failure\n", rwl );
 	rwl->hOwningThreadId = 0;
 	rwl->uExclusiveWaiters = rwl->uSharedWaiters = 0;
 	rwl->iNumberActive = 0;
@@ -405,37 +406,6 @@ RtlDeleteSecurityObject( PSECURITY_DESCRIPTOR *ObjectDescriptor )
     return STATUS_NOT_IMPLEMENTED;
 }
 
-/**************************************************************************
- *                 _chkstk				[NTDLL.@]
- *
- * Glorified "enter xxxx".
- */
-#ifdef __i386__
-__ASM_STDCALL_FUNC( _chkstk, 0,
-                   "negl %eax\n\t"
-                   "addl %esp,%eax\n\t"
-                   "xchgl %esp,%eax\n\t"
-                   "movl 0(%eax),%eax\n\t"  /* copy return address from old location */
-                   "movl %eax,0(%esp)\n\t"
-                   "ret" )
-#endif
-
-/**************************************************************************
- *                 _alloca_probe		        [NTDLL.@]
- *
- * Glorified "enter xxxx".
- */
-#ifdef __i386__
-__ASM_STDCALL_FUNC( _alloca_probe, 0,
-                   "negl %eax\n\t"
-                   "addl %esp,%eax\n\t"
-                   "xchgl %esp,%eax\n\t"
-                   "movl 0(%eax),%eax\n\t"  /* copy return address from old location */
-                   "movl %eax,0(%esp)\n\t"
-                   "ret" )
-#endif
-
-
 /******************************************************************************
  *  RtlInitializeGenericTable           [NTDLL.@]
  */
@@ -480,7 +450,7 @@ ULONG RtlNumberGenericTableElements(PVOID pTable)
  *  Nothing.
  */
 #undef RtlMoveMemory
-VOID WINAPI RtlMoveMemory( VOID *Destination, CONST VOID *Source, SIZE_T Length )
+VOID WINAPI RtlMoveMemory( void *Destination, const void *Source, SIZE_T Length )
 {
     memmove(Destination, Source, Length);
 }
@@ -1110,7 +1080,7 @@ PSLIST_ENTRY WINAPI RtlInterlockedFlushSList(PSLIST_HEADER list)
     SLIST_HEADER old, new;
 
 #ifdef _WIN64
-    if (!list->Header16.Depth) return NULL;
+    if (!list->Header16.NextEntry) return NULL;
     new.s.Alignment = new.s.Region = 0;
     new.Header16.HeaderType = 1;  /* we use the 16-byte header */
     do
@@ -1120,7 +1090,7 @@ PSLIST_ENTRY WINAPI RtlInterlockedFlushSList(PSLIST_HEADER list)
     } while (!interlocked_cmpxchg128((__int64 *)list, new.s.Region, new.s.Alignment, (__int64 *)&old));
     return (SLIST_ENTRY *)((ULONG_PTR)old.Header16.NextEntry << 4);
 #else
-    if (!list->s.Depth) return NULL;
+    if (!list->s.Next.Next) return NULL;
     new.Alignment = 0;
     do
     {

@@ -59,6 +59,7 @@ static LPWSTR   (WINAPIV *p_wcsrchr)(LPCWSTR, WCHAR);
 
 static void     (__cdecl *p_qsort)(void *,size_t,size_t, int(__cdecl *compar)(const void *, const void *) );
 static void*    (__cdecl *p_bsearch)(void *,void*,size_t,size_t, int(__cdecl *compar)(const void *, const void *) );
+static int      (__cdecl *p__snprintf)(char *, size_t, const char *, ...);
 
 
 static void InitFunctionPtrs(void)
@@ -96,6 +97,8 @@ static void InitFunctionPtrs(void)
 	p_wcsrchr= (void *)GetProcAddress(hntdll, "wcsrchr");
 	p_qsort= (void *)GetProcAddress(hntdll, "qsort");
 	p_bsearch= (void *)GetProcAddress(hntdll, "bsearch");
+
+        p__snprintf = (void *)GetProcAddress(hntdll, "_snprintf");
     } /* if */
 }
 
@@ -1080,8 +1083,8 @@ static void test_atoi64(void)
 	result = p_atoi64(str2longlong[test_num].str);
         if (str2longlong[test_num].overflow)
             ok(result == str2longlong[test_num].value ||
-               (result == (str2longlong[test_num].overflow == -1) ?
-                ULL(0x80000000,0x00000000) : ULL(0x7fffffff,0xffffffff)),
+               (result == ((str2longlong[test_num].overflow == -1) ?
+                ULL(0x80000000,0x00000000) : ULL(0x7fffffff,0xffffffff))),
                "(test %d): call failed: _atoi64(\"%s\") has result 0x%x%08x, expected: 0x%x%08x\n",
                test_num, str2longlong[test_num].str, (DWORD)(result >> 32), (DWORD)result,
                (DWORD)(str2longlong[test_num].value >> 32), (DWORD)str2longlong[test_num].value);
@@ -1105,8 +1108,8 @@ static void test_wtoi64(void)
 	result = p_wtoi64(uni.Buffer);
         if (str2longlong[test_num].overflow)
             ok(result == str2longlong[test_num].value ||
-               (result == (str2longlong[test_num].overflow == -1) ?
-                ULL(0x80000000,0x00000000) : ULL(0x7fffffff,0xffffffff)),
+               (result == ((str2longlong[test_num].overflow == -1) ?
+                ULL(0x80000000,0x00000000) : ULL(0x7fffffff,0xffffffff))),
                "(test %d): call failed: _atoi64(\"%s\") has result 0x%x%08x, expected: 0x%x%08x\n",
                test_num, str2longlong[test_num].str, (DWORD)(result >> 32), (DWORD)result,
                (DWORD)(str2longlong[test_num].value >> 32), (DWORD)str2longlong[test_num].value);
@@ -1146,8 +1149,8 @@ static void test_wcsrchr(void)
 static void test_wcslwrupr(void)
 {
     static WCHAR teststringW[] = {'a','b','r','a','c','a','d','a','b','r','a',0};
-    static WCHAR emptyW[1] = {0};
-    static const WCHAR constemptyW[1] = {0};
+    static WCHAR emptyW[] = {0};
+    static const WCHAR constemptyW[] = {0};
 
     if (0) /* crashes on native */
     {
@@ -1255,9 +1258,9 @@ static void test_qsort(void)
 static void test_bsearch(void)
 {
     int arr[7] = { 1, 3, 4, 8, 16, 23, 42 };
-    int *x, l, i,j ;
+    int *x, l, i, j;
 
-    /* just try all all sizes */
+    /* just try all array sizes */
     for (j=1;j<sizeof(arr)/sizeof(arr[0]);j++) {
         for (i=0;i<j;i++) {
             l = arr[i];
@@ -1268,6 +1271,37 @@ static void test_bsearch(void)
         x = p_bsearch (&l, arr, j, sizeof(arr[0]), intcomparefunc);
         ok (x == NULL, "bsearch did find 4242 entry in loopsize %d.\n", j);
     }
+}
+
+static void test__snprintf(void)
+{
+    const char *origstring = "XXXXXXXXXXXX";
+    const char *teststring = "hello world";
+    char buffer[32];
+    int res;
+
+    res = p__snprintf(NULL, 0, teststring);
+    ok(res == lstrlenA(teststring) || broken(res == -1) /* <= w2k */,
+       "_snprintf returned %d, expected %d.\n", res, lstrlenA(teststring));
+
+    if (res != -1)
+    {
+        res = p__snprintf(NULL, 1, teststring);
+        ok(res == lstrlenA(teststring) /* WinXP */ || res < 0 /* Vista and greater */,
+           "_snprintf returned %d, expected %d or < 0.\n", res, lstrlenA(teststring));
+    }
+    res = p__snprintf(buffer, strlen(teststring) - 1, teststring);
+    ok(res < 0, "_snprintf returned %d, expected < 0.\n", res);
+
+    strcpy(buffer,  origstring);
+    res = p__snprintf(buffer, strlen(teststring), teststring);
+    ok(res == lstrlenA(teststring), "_snprintf returned %d, expected %d.\n", res, lstrlenA(teststring));
+    ok(!strcmp(buffer, "hello worldX"), "_snprintf returned buffer '%s', expected 'hello worldX'.\n", buffer);
+
+    strcpy(buffer, origstring);
+    res = p__snprintf(buffer, strlen(teststring) + 1, teststring);
+    ok(res == lstrlenA(teststring), "_snprintf returned %d, expected %d.\n", res, lstrlenA(teststring));
+    ok(!strcmp(buffer, teststring), "_snprintf returned buffer '%s', expected '%s'.\n", buffer, teststring);
 }
 
 START_TEST(string)
@@ -1304,4 +1338,6 @@ START_TEST(string)
         test_qsort();
     if (p_bsearch)
         test_bsearch();
+    if (p__snprintf)
+        test__snprintf();
 }

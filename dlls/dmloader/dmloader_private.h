@@ -56,7 +56,6 @@ typedef struct IDirectMusicLoaderCF             IDirectMusicLoaderCF;
 typedef struct IDirectMusicContainerCF          IDirectMusicContainerCF;
 
 typedef struct IDirectMusicLoaderImpl           IDirectMusicLoaderImpl;
-typedef struct IDirectMusicContainerImpl        IDirectMusicContainerImpl;
 
 typedef struct IDirectMusicLoaderFileStream     IDirectMusicLoaderFileStream;
 typedef struct IDirectMusicLoaderResourceStream IDirectMusicLoaderResourceStream;
@@ -65,8 +64,8 @@ typedef struct IDirectMusicLoaderGenericStream  IDirectMusicLoaderGenericStream;
 /*****************************************************************************
  * Creation helpers
  */
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicLoaderImpl (LPCGUID lpcGUID, LPVOID *ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicContainerImpl (LPCGUID lpcGUID, LPVOID *ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmloader(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI create_dmcontainer(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
 extern HRESULT WINAPI DMUSIC_CreateDirectMusicLoaderFileStream (LPVOID *ppobj) DECLSPEC_HIDDEN;
 extern HRESULT WINAPI DMUSIC_CreateDirectMusicLoaderResourceStream (LPVOID *ppobj) DECLSPEC_HIDDEN;
 extern HRESULT WINAPI DMUSIC_CreateDirectMusicLoaderGenericStream (LPVOID *ppobj) DECLSPEC_HIDDEN;
@@ -91,16 +90,12 @@ typedef struct _WINE_LOADER_OPTION {
  * IDirectMusicLoaderImpl implementation structure
  */
 struct IDirectMusicLoaderImpl {
-	/* VTABLEs */
-	const IDirectMusicLoader8Vtbl *LoaderVtbl;
-	/* reference counter */
-	LONG dwRef;	
-	/* simple cache (linked list) */
-	struct list *pObjects;
-	/* settings for certain object classes */
-	struct list *pClassSettings;
-	/* critical section */
-	CRITICAL_SECTION CritSect;
+    IDirectMusicLoader8 IDirectMusicLoader8_iface;
+    LONG ref;
+    /* simple cache (linked list) */
+    struct list *pObjects;
+    /* settings for certain object classes */
+    struct list *pClassSettings;
 };
 
 /* contained object entry */
@@ -112,26 +107,6 @@ typedef struct _WINE_CONTAINER_ENTRY {
 	WCHAR* wszAlias;
 	LPDIRECTMUSICOBJECT pObject; /* needed when releasing from loader's cache on container release */
 } WINE_CONTAINER_ENTRY, *LPWINE_CONTAINER_ENTRY;
-
-/*****************************************************************************
- * IDirectMusicContainerImpl implementation structure
- */
-struct IDirectMusicContainerImpl {
-	/* VTABLEs */
-	const IDirectMusicContainerVtbl *ContainerVtbl;
-	const IDirectMusicObjectVtbl *ObjectVtbl;
-	const IPersistStreamVtbl *PersistStreamVtbl;
-	/* reference counter */
-	LONG dwRef;
-	/* stream */
-	LPSTREAM pStream;
-	/* header */
-	DMUS_IO_CONTAINER_HEADER Header;
-	/* data */
-	struct list *pContainedObjects;	
-	/* descriptor */
-	DMUS_OBJECTDESC Desc;
-};
 
 /*****************************************************************************
  * IDirectMusicLoaderFileStream implementation structure

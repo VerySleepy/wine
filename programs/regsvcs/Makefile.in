@@ -1,8 +1,5 @@
-EXTRADEFS = -DWINE_NO_UNICODE_MACROS
 MODULE    = regsvcs.exe
 APPMODE   = -mconsole -municode
 
 C_SRCS = \
 	main.c
-
-@MAKE_PROG_RULES@

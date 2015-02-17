@@ -19,7 +19,7 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-%option noinput nounput interactive 8bit prefix="dbg_"
+%option noinput nounput always-interactive 8bit prefix="dbg_"
 
 %{
 #include "config.h"
@@ -27,10 +27,7 @@
 #include <string.h>
 #include <stdarg.h>
 
-#ifndef HAVE_UNISTD_H
 #define YY_NO_UNISTD_H
-#endif
-
 #include "debugger.h"
 #include "dbg.tab.h"
 
@@ -64,7 +61,7 @@ void lexeme_flush(void)
     next_lexeme = 0;
 }
 
-static int read_input(const char* pfx, char* buf, int size)
+static size_t read_input(const char* pfx, char* buf, int size)
 {
     int len;
     static char*  last_line = NULL;
@@ -110,12 +107,12 @@ static int read_input(const char* pfx, char* buf, int size)
 }
 
 #define YY_INPUT(buf,result,max_size) \
-	if ((result = read_input("Wine-dbg>", buf, max_size)) < 0) \
-	    YY_FATAL_ERROR("read_input in flex scanner failed");
+        (result = read_input("Wine-dbg>", buf, max_size))
 
 static int syntax_error;
 %}
 
+OCTDIGIT   [0-7]
 DIGIT	   [0-9]
 HEXDIGIT   [0-9a-fA-F]
 FORMAT     [ubcdgiswxa]
@@ -160,6 +157,11 @@ STRING     \"[^\n"]+\"
 
 "0x"{HEXDIGIT}+      			{ sscanf(yytext, "%lx", &dbg_lval.integer); return tNUM; }
 {DIGIT}+             			{ sscanf(yytext, "%ld", &dbg_lval.integer); return tNUM; }
+"'\\''"                                 { dbg_lval.integer = '\''; return tNUM;}
+"'\\0"{OCTDIGIT}*"'"                    { sscanf(yytext + 3, "%lo", &dbg_lval.integer); return tNUM;}
+"'\\x"{HEXDIGIT}+"'"                    { sscanf(yytext + 3, "%lx", &dbg_lval.integer); return tNUM;}
+"'\\"[a-z]"'"                           { dbg_lval.integer = yytext[2] - 'a'; return tNUM;}
+"'"."'"                                 { dbg_lval.integer = yytext[1]; return tNUM;}
 
 <FORMAT_EXPECTED>"/"{DIGIT}+{FORMAT}	{ char* last;
                                           dbg_lval.integer = strtol(yytext+1, &last, 0) << 8;

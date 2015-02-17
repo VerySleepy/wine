@@ -60,7 +60,7 @@ NTSTATUS WINAPI NtTerminateProcess( HANDLE handle, LONG exit_code )
         self = !ret && reply->self;
     }
     SERVER_END_REQ;
-    if (self) exit( exit_code );
+    if (self && handle) exit( exit_code );
     return ret;
 }
 
@@ -97,6 +97,13 @@ static UINT process_error_mode;
         FIXME("(process=%p) Unimplemented information class: " #c "\n", ProcessHandle); \
         ret = STATUS_INVALID_INFO_CLASS; \
         break
+
+ULONG_PTR get_system_affinity_mask(void)
+{
+    ULONG num_cpus = NtCurrentTeb()->Peb->NumberOfProcessors;
+    if (num_cpus >= sizeof(ULONG_PTR) * 8) return ~(ULONG_PTR)0;
+    return ((ULONG_PTR)1 << num_cpus) - 1;
+}
 
 /******************************************************************************
 *  NtQueryInformationProcess		[NTDLL.@]
@@ -145,7 +152,7 @@ NTSTATUS WINAPI NtQueryInformationProcess(
     case ProcessBasicInformation:
         {
             PROCESS_BASIC_INFORMATION pbi;
-            const ULONG_PTR affinity_mask = ((ULONG_PTR)1 << NtCurrentTeb()->Peb->NumberOfProcessors) - 1;
+            const ULONG_PTR affinity_mask = get_system_affinity_mask();
 
             if (ProcessInformationLength >= sizeof(PROCESS_BASIC_INFORMATION))
             {
@@ -389,7 +396,7 @@ NTSTATUS WINAPI NtQueryInformationProcess(
         len = sizeof(ULONG_PTR);
         if (ProcessInformationLength == len)
         {
-            const ULONG_PTR system_mask = ((ULONG_PTR)1 << NtCurrentTeb()->Peb->NumberOfProcessors) - 1;
+            const ULONG_PTR system_mask = get_system_affinity_mask();
 
             SERVER_START_REQ(get_process_info)
             {
@@ -403,10 +410,13 @@ NTSTATUS WINAPI NtQueryInformationProcess(
         break;
 
     case ProcessWow64Information:
-        len = sizeof(DWORD);
-        if (ProcessInformationLength == len)
+        len = sizeof(ULONG_PTR);
+        if (ProcessInformationLength != len) ret = STATUS_INFO_LENGTH_MISMATCH;
+        else if (!ProcessInformation) ret = STATUS_ACCESS_VIOLATION;
+        else if(!ProcessHandle) ret = STATUS_INVALID_HANDLE;
+        else
         {
-            DWORD val = 0;
+            ULONG_PTR val = 0;
 
             if (ProcessHandle == GetCurrentProcess()) val = is_wow64;
             else if (server_cpus & (1 << CPU_x86_64))
@@ -418,9 +428,8 @@ NTSTATUS WINAPI NtQueryInformationProcess(
                 }
                 SERVER_END_REQ;
             }
-            *(DWORD *)ProcessInformation = val;
+            *(ULONG_PTR *)ProcessInformation = val;
         }
-        else ret = STATUS_INFO_LENGTH_MISMATCH;
         break;
     case ProcessImageFileName:
         /* FIXME: this will return a DOS path. Windows returns an NT path. Changing this would require also changing kernel32.QueryFullProcessImageName.
@@ -485,8 +494,11 @@ NTSTATUS WINAPI NtSetInformationProcess(
         process_error_mode = *(UINT *)ProcessInformation;
         break;
     case ProcessAffinityMask:
+    {
+        const ULONG_PTR system_mask = get_system_affinity_mask();
+
         if (ProcessInformationLength != sizeof(DWORD_PTR)) return STATUS_INVALID_PARAMETER;
-        if (*(PDWORD_PTR)ProcessInformation & ~(((DWORD_PTR)1 << NtCurrentTeb()->Peb->NumberOfProcessors) - 1))
+        if (*(PDWORD_PTR)ProcessInformation & ~system_mask)
             return STATUS_INVALID_PARAMETER;
         if (!*(PDWORD_PTR)ProcessInformation)
             return STATUS_INVALID_PARAMETER;
@@ -499,6 +511,7 @@ NTSTATUS WINAPI NtSetInformationProcess(
         }
         SERVER_END_REQ;
         break;
+    }
     case ProcessPriorityClass:
         if (ProcessInformationLength != sizeof(PROCESS_PRIORITY_CLASS))
             return STATUS_INVALID_PARAMETER;
@@ -561,11 +574,15 @@ NTSTATUS WINAPI NtFlushInstructionCache(
         IN LPCVOID BaseAddress,
         IN SIZE_T Size)
 {
-#ifdef __i386__
-    TRACE("%p %p %ld - no-op on x86\n", ProcessHandle, BaseAddress, Size );
+    static int once;
+    if (!once++)
+    {
+#if defined(__x86_64__) || defined(__i386__)
+        TRACE("%p %p %ld - no-op on x86 and x86_64\n", ProcessHandle, BaseAddress, Size );
 #else
-    FIXME("%p %p %ld\n", ProcessHandle, BaseAddress, Size );
+        FIXME("%p %p %ld\n", ProcessHandle, BaseAddress, Size );
 #endif
+    }
     return STATUS_SUCCESS;
 }
 

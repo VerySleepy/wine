@@ -16,27 +16,14 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-
-#include <stdarg.h>
-
 #define COBJMACROS
 
-#include "windef.h"
-#include "winbase.h"
-#include "winuser.h"
-#include "winreg.h"
-#include "objbase.h"
-#include "oaidl.h"
-#include "rpcproxy.h"
-#include "atliface.h"
 #include "atlbase.h"
 
 #include "wine/debug.h"
 #include "wine/unicode.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(atl);
-
-static LONG dll_count;
 
 /**************************************************************
  * ATLRegistrar implementation
@@ -197,19 +184,19 @@ static HRESULT do_preprocess(const Registrar *This, LPCOLESTR data, strbuf *buf)
 
 static HRESULT do_process_key(LPCOLESTR *pstr, HKEY parent_key, strbuf *buf, BOOL do_register)
 {
-    LPCOLESTR iter = *pstr;
+    LPCOLESTR iter;
     HRESULT hres;
     LONG lres;
     HKEY hkey = 0;
     strbuf name;
-    
+
     enum {
         NORMAL,
         NO_REMOVE,
         IS_VAL,
         FORCE_REMOVE,
         DO_DELETE
-    } key_type = NORMAL; 
+    } key_type = NORMAL;
 
     static const WCHAR wstrNoRemove[] = {'N','o','R','e','m','o','v','e',0};
     static const WCHAR wstrForceRemove[] = {'F','o','r','c','e','R','e','m','o','v','e',0};
@@ -239,7 +226,7 @@ static HRESULT do_process_key(LPCOLESTR *pstr, HKEY parent_key, strbuf *buf, BOO
                 break;
         }
         TRACE("name = %s\n", debugstr_w(buf->str));
-    
+
         if(do_register) {
             if(key_type == IS_VAL) {
                 hkey = parent_key;
@@ -376,7 +363,7 @@ static HRESULT do_process_key(LPCOLESTR *pstr, HKEY parent_key, strbuf *buf, BOO
             RegCloseKey(hkey);
         hkey = 0;
         name.len = 0;
-        
+
         hres = get_word(&iter, buf);
         if(FAILED(hres))
             break;
@@ -393,7 +380,7 @@ static HRESULT do_process_root_key(LPCOLESTR data, BOOL do_register)
 {
     LPCOLESTR iter = data;
     strbuf buf;
-    HRESULT hres = S_OK;
+    HRESULT hres;
     unsigned int i;
 
     strbuf_init(&buf);
@@ -508,31 +495,29 @@ static HRESULT file_register(Registrar *This, LPCOLESTR fileName, BOOL do_regist
     DWORD filelen, len;
     LPWSTR regstrw;
     LPSTR regstra;
-    LRESULT lres;
     HRESULT hres;
 
-    file = CreateFileW(fileName, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_READONLY, NULL);
+    file = CreateFileW(fileName, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
     if(file != INVALID_HANDLE_VALUE) {
         filelen = GetFileSize(file, NULL);
         regstra = HeapAlloc(GetProcessHeap(), 0, filelen);
-        lres = ReadFile(file, regstra, filelen, NULL, NULL);
-        if(lres == ERROR_SUCCESS) {
+        if(ReadFile(file, regstra, filelen, NULL, NULL)) {
             len = MultiByteToWideChar(CP_ACP, 0, regstra, filelen, NULL, 0)+1;
             regstrw = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, len*sizeof(WCHAR));
             MultiByteToWideChar(CP_ACP, 0, regstra, filelen, regstrw, len);
             regstrw[len-1] = '\0';
-            
+
             hres = string_register(This, regstrw, do_register);
 
             HeapFree(GetProcessHeap(), 0, regstrw);
         }else {
-            WARN("Failed to read faile\n");
-            hres = HRESULT_FROM_WIN32(lres);
+            WARN("Failed to read file %s\n", debugstr_w(fileName));
+            hres = HRESULT_FROM_WIN32(GetLastError());
         }
         HeapFree(GetProcessHeap(), 0, regstra);
         CloseHandle(file);
     }else {
-        WARN("Could not open file\n");
+        WARN("Could not open file %s\n", debugstr_w(fileName));
         hres = HRESULT_FROM_WIN32(GetLastError());
     }
 
@@ -543,7 +528,9 @@ static HRESULT WINAPI Registrar_QueryInterface(IRegistrar *iface, REFIID riid, v
 {
     TRACE("(%p)->(%s %p\n", iface, debugstr_guid(riid), ppvObject);
 
-    if(IsEqualGUID(&IID_IUnknown, riid) || IsEqualGUID(&IID_IRegistrar, riid)) {
+    if(IsEqualGUID(&IID_IUnknown, riid)
+       || IsEqualGUID(&IID_IRegistrar, riid)
+       || IsEqualGUID(&IID_IRegistrarBase, riid)) {
         IRegistrar_AddRef(iface);
         *ppvObject = iface;
         return S_OK;
@@ -568,7 +555,6 @@ static ULONG WINAPI Registrar_Release(IRegistrar *iface)
     if(!ref) {
         IRegistrar_ClearReplacements(iface);
         HeapFree(GetProcessHeap(), 0, This);
-        InterlockedDecrement(&dll_count);
     }
     return ref;
 }
@@ -593,7 +579,7 @@ static HRESULT WINAPI Registrar_AddReplacement(IRegistrar *iface, LPCOLESTR Key,
 
     new_rep->next = This->rep;
     This->rep = new_rep;
-    
+
     return S_OK;
 }
 
@@ -696,177 +682,66 @@ static const IRegistrarVtbl RegistrarVtbl = {
     Registrar_ResourceUnregister,
 };
 
-static HRESULT Registrar_create(const IUnknown *pUnkOuter, REFIID riid, void **ppvObject)
-{
-    Registrar *ret;
-
-    if(!IsEqualGUID(&IID_IUnknown, riid) && !IsEqualGUID(&IID_IRegistrar, riid))
-        return E_NOINTERFACE;
-
-    ret = HeapAlloc(GetProcessHeap(), 0, sizeof(Registrar));
-    ret->IRegistrar_iface.lpVtbl = &RegistrarVtbl;
-    ret->ref = 1;
-    ret->rep = NULL;
-    *ppvObject = ret;
-
-    InterlockedIncrement(&dll_count);
-
-    return S_OK;
-}
-
-/**************************************************************
- * ClassFactory implementation
+/***********************************************************************
+ *           AtlCreateRegistrar              [atl100.@]
  */
-
-static HRESULT WINAPI RegistrarCF_QueryInterface(IClassFactory *iface, REFIID riid, void **ppvObject)
+HRESULT WINAPI AtlCreateRegistrar(IRegistrar **ret)
 {
-    TRACE("(%p)->(%s %p)\n", iface, debugstr_guid(riid), ppvObject);
+    Registrar *registrar;
 
-    if(IsEqualGUID(&IID_IUnknown, riid) || IsEqualGUID(&IID_IClassFactory, riid)) {
-        *ppvObject = iface;
-        IClassFactory_AddRef( iface );
-        return S_OK;
-    }
+    registrar = HeapAlloc(GetProcessHeap(), 0, sizeof(*registrar));
+    if(!registrar)
+        return E_OUTOFMEMORY;
 
-    return E_NOINTERFACE;
-}
+    registrar->IRegistrar_iface.lpVtbl = &RegistrarVtbl;
+    registrar->ref = 1;
+    registrar->rep = NULL;
 
-static ULONG WINAPI RegistrarCF_AddRef(IClassFactory *iface)
-{
-    InterlockedIncrement(&dll_count);
-    return 2;
-}
-
-static ULONG WINAPI RegistrarCF_Release(IClassFactory *iface)
-{
-    InterlockedDecrement(&dll_count);
-    return 1;
-}
-
-static HRESULT WINAPI RegistrarCF_CreateInstance(IClassFactory *iface, LPUNKNOWN pUnkOuter,
-                                                REFIID riid, void **ppvObject)
-{
-    TRACE("(%p)->(%s %p)\n", iface, debugstr_guid(riid), ppvObject);
-    return Registrar_create(pUnkOuter, riid, ppvObject);
-}
-
-static HRESULT WINAPI RegistrarCF_LockServer(IClassFactory *iface, BOOL lock)
-{
-    TRACE("(%p)->(%x)\n", iface, lock);
-
-    if(lock)
-        InterlockedIncrement(&dll_count);
-    else
-        InterlockedDecrement(&dll_count);
-
+    *ret = &registrar->IRegistrar_iface;
     return S_OK;
-}
-
-static const IClassFactoryVtbl IRegistrarCFVtbl = {
-    RegistrarCF_QueryInterface,
-    RegistrarCF_AddRef,
-    RegistrarCF_Release,
-    RegistrarCF_CreateInstance,
-    RegistrarCF_LockServer
-};
-
-static IClassFactory RegistrarCF = { &IRegistrarCFVtbl };
-
-/**************************************************************
- * DllGetClassObject (ATL.2)
- */
-HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID riid, LPVOID *ppvObject)
-{
-    TRACE("(%s %s %p)\n", debugstr_guid(clsid), debugstr_guid(riid), ppvObject);
-
-    if(IsEqualGUID(&CLSID_Registrar, clsid))
-        return IClassFactory_QueryInterface( &RegistrarCF, riid, ppvObject );
-
-    FIXME("Not supported class %s\n", debugstr_guid(clsid));
-    return CLASS_E_CLASSNOTAVAILABLE;
-}
-
-extern HINSTANCE hInst;
-
-static HRESULT do_register_dll_server(IRegistrar *pRegistrar, LPCOLESTR wszDll,
-                                      LPCOLESTR wszId, BOOL do_register,
-                                      const struct _ATL_REGMAP_ENTRY* pMapEntries)
-{
-    IRegistrar *registrar;
-    HRESULT hres;
-    const struct _ATL_REGMAP_ENTRY *pMapEntry;
-
-    static const WCHAR wszModule[] = {'M','O','D','U','L','E',0};
-    static const WCHAR wszRegistry[] = {'R','E','G','I','S','T','R','Y',0};
-
-    if (pRegistrar)
-        registrar = pRegistrar;
-    else
-        Registrar_create(NULL, &IID_IRegistrar, (void**)&registrar);
-
-    IRegistrar_AddReplacement(registrar, wszModule, wszDll);
-
-    for (pMapEntry = pMapEntries; pMapEntry && pMapEntry->szKey; pMapEntry++)
-        IRegistrar_AddReplacement(registrar, pMapEntry->szKey, pMapEntry->szData);
-
-    if(do_register)
-        hres = IRegistrar_ResourceRegisterSz(registrar, wszDll, wszId, wszRegistry);
-    else
-        hres = IRegistrar_ResourceUnregisterSz(registrar, wszDll, wszId, wszRegistry);
-
-    if(registrar != pRegistrar)
-        IRegistrar_Release(registrar);
-    return hres;
 }
 
 /***********************************************************************
- *           AtlModuleUpdateRegistryFromResourceD         [ATL.@]
- *
+ *           AtlUpdateRegistryFromResourceD         [atl100.@]
  */
-HRESULT WINAPI AtlModuleUpdateRegistryFromResourceD(_ATL_MODULEW* pM, LPCOLESTR lpszRes,
-		BOOL bRegister, struct _ATL_REGMAP_ENTRY* pMapEntries, IRegistrar* pReg)
+HRESULT WINAPI AtlUpdateRegistryFromResourceD(HINSTANCE inst, LPCOLESTR res,
+        BOOL bRegister, struct _ATL_REGMAP_ENTRY *pMapEntries, IRegistrar *pReg)
 {
-    HINSTANCE lhInst = pM->m_hInst;
-    /* everything inside this function below this point
-     * should go into atl71.AtlUpdateRegistryFromResourceD
-     */
+    const struct _ATL_REGMAP_ENTRY *iter;
     WCHAR module_name[MAX_PATH];
+    IRegistrar *registrar;
+    HRESULT hres;
 
-    if(!GetModuleFileNameW(lhInst, module_name, MAX_PATH)) {
-        FIXME("hinst %p: did not get module name\n",
-        lhInst);
+    static const WCHAR moduleW[] = {'M','O','D','U','L','E',0};
+    static const WCHAR registryW[] = {'R','E','G','I','S','T','R','Y',0};
+
+    if(!GetModuleFileNameW(inst, module_name, MAX_PATH)) {
+        FIXME("hinst %p: did not get module name\n", inst);
         return E_FAIL;
     }
 
-    TRACE("%p (%s), %s, %d, %p, %p\n", hInst, debugstr_w(module_name),
-	debugstr_w(lpszRes), bRegister, pMapEntries, pReg);
+    TRACE("%p (%s), %s, %d, %p, %p\n", inst, debugstr_w(module_name),
+	debugstr_w(res), bRegister, pMapEntries, pReg);
 
-    return do_register_dll_server(pReg, module_name, lpszRes, bRegister, pMapEntries);
-}
+    if(pReg) {
+        registrar = pReg;
+    }else {
+        hres = AtlCreateRegistrar(&registrar);
+        if(FAILED(hres))
+            return hres;
+    }
 
-static const WCHAR regtypeW[] = {'W','I','N','E','_','R','E','G','I','S','T','R','Y',0};
+    IRegistrar_AddReplacement(registrar, moduleW, module_name);
 
-/***********************************************************************
- *              DllRegisterServer (ATL.@)
- */
-HRESULT WINAPI DllRegisterServer(void)
-{
-    return __wine_register_resources( hInst );
-}
+    for (iter = pMapEntries; iter && iter->szKey; iter++)
+        IRegistrar_AddReplacement(registrar, iter->szKey, iter->szData);
 
-/***********************************************************************
- *              DllUnRegisterServer (ATL.@)
- */
-HRESULT WINAPI DllUnregisterServer(void)
-{
-    return __wine_unregister_resources( hInst );
-}
+    if(bRegister)
+        hres = IRegistrar_ResourceRegisterSz(registrar, module_name, res, registryW);
+    else
+        hres = IRegistrar_ResourceUnregisterSz(registrar, module_name, res, registryW);
 
-/***********************************************************************
- *              DllCanUnloadNow (ATL.@)
- */
-HRESULT WINAPI DllCanUnloadNow(void)
-{
-    TRACE("dll_count = %u\n", dll_count);
-    return dll_count ? S_FALSE : S_OK;
+    if(registrar != pReg)
+        IRegistrar_Release(registrar);
+    return hres;
 }

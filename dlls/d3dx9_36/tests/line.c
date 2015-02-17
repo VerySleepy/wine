@@ -58,8 +58,8 @@ do { \
 static void test_create_line(IDirect3DDevice9* device)
 {
     HRESULT hr;
-    LPD3DXLINE line = NULL;
-    LPDIRECT3DDEVICE9 return_device;
+    ID3DXLine *line = NULL;
+    struct IDirect3DDevice9 *return_device;
     D3DXMATRIX world, identity, result;
     FLOAT r11, r12, r13, r14;
     ULONG ref;
@@ -109,8 +109,7 @@ static void test_create_line(IDirect3DDevice9* device)
     ok(hr == D3D_OK, "Got result %x, expected %x (D3D_OK)\n", hr, D3D_OK);
     expect_mat(&world, &result);
 
-    ref = IDirect3DDevice9_Release(return_device);
-    ok(ref == 2, "Got %x references to device %p, expected 2\n", ref, return_device);
+    IDirect3DDevice9_Release(return_device);
 
     ref = ID3DXLine_Release(line);
     ok(ref == 0, "Got %x references to line %p, expected 0\n", ref, line);
@@ -124,13 +123,14 @@ START_TEST(line)
     D3DPRESENT_PARAMETERS d3dpp;
     HRESULT hr;
 
-    wnd = CreateWindow("static", "d3dx9_test", 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
-    d3d = Direct3DCreate9(D3D_SDK_VERSION);
-    if (!wnd) {
+    if (!(wnd = CreateWindowA("static", "d3dx9_test", WS_OVERLAPPEDWINDOW, 0, 0,
+            640, 480, NULL, NULL, NULL, NULL)))
+    {
         skip("Couldn't create application window\n");
         return;
     }
-    if (!d3d) {
+    if (!(d3d = Direct3DCreate9(D3D_SDK_VERSION)))
+    {
         skip("Couldn't create IDirect3D9 object\n");
         DestroyWindow(wnd);
         return;
@@ -139,7 +139,7 @@ START_TEST(line)
     ZeroMemory(&d3dpp, sizeof(d3dpp));
     d3dpp.Windowed = TRUE;
     d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd, D3DCREATE_MIXED_VERTEXPROCESSING, &d3dpp, &device);
+    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &device);
     if (FAILED(hr)) {
         skip("Failed to create IDirect3DDevice9 object %#x\n", hr);
         IDirect3D9_Release(d3d);

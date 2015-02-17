@@ -235,7 +235,7 @@ static ULONG WINAPI IDirectMusicSegTriggerTrack_IPersistStream_Release (LPPERSIS
 }
 
 static HRESULT WINAPI IDirectMusicSegTriggerTrack_IPersistStream_GetClassID (LPPERSISTSTREAM iface, CLSID* pClassID) {
-  ICOM_THIS_MULTI(IDirectMusicSegment8Impl, PersistStreamVtbl, iface);
+  ICOM_THIS_MULTI(IDirectMusicSegTriggerTrack, PersistStreamVtbl, iface);
   TRACE("(%p, %p)\n", This, pClassID);
   *pClassID = CLSID_DirectMusicSegTriggerTrack;
   return S_OK;
@@ -274,10 +274,9 @@ static HRESULT IDirectMusicSegTriggerTrack_IPersistStream_ParseSegment (LPPERSIS
       TRACE_(dmfile)(": segment item chunk\n"); 
       /** alloc new item entry */
       pNewItem = HeapAlloc (GetProcessHeap (), HEAP_ZERO_MEMORY, sizeof(DMUS_PRIVATE_SEGMENT_ITEM));
-      if (!pNewItem) {
-	ERR(": no more memory\n");
-	return  E_OUTOFMEMORY;
-      }
+      if (!pNewItem)
+        return  E_OUTOFMEMORY;
+
       IStream_Read (pStm, &pNewItem->header, sizeof(DMUS_IO_SEGMENT_ITEM_HEADER), NULL);
       TRACE_(dmfile)(" - lTimePhysical: %u\n", pNewItem->header.lTimeLogical);
       TRACE_(dmfile)(" - lTimePhysical: %u\n", pNewItem->header.lTimePhysical);
@@ -461,7 +460,6 @@ static HRESULT WINAPI IDirectMusicSegTriggerTrack_IPersistStream_Load (LPPERSIST
 
   TRACE("(%p, %p): Loading\n", This, pStm);
   
-#if 1
   IStream_Read (pStm, &Chunk, sizeof(FOURCC)+sizeof(DWORD), NULL);
   TRACE_(dmfile)(": %s chunk (size = %d)", debugstr_fourcc (Chunk.fccID), Chunk.dwSize);
   switch (Chunk.fccID) {	
@@ -492,7 +490,6 @@ static HRESULT WINAPI IDirectMusicSegTriggerTrack_IPersistStream_Load (LPPERSIST
     return E_FAIL;
   }
   }  
-#endif
 
   return S_OK;
 }
@@ -521,7 +518,8 @@ static const IPersistStreamVtbl DirectMusicSegTriggerTrack_PersistStream_Vtbl = 
 };
 
 /* for ClassFactory */
-HRESULT WINAPI DMUSIC_CreateDirectMusicSegTriggerTrack (LPCGUID lpcGUID, LPVOID *ppobj, LPUNKNOWN pUnkOuter) {
+HRESULT WINAPI create_dmsegtriggertrack(REFIID lpcGUID, void **ppobj)
+{
   IDirectMusicSegTriggerTrack* track;
 	
   track = HeapAlloc (GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectMusicSegTriggerTrack));

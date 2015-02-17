@@ -34,6 +34,7 @@ const char *debug_d3d10_driver_type(D3D10_DRIVER_TYPE driver_type)
         WINE_D3D10_TO_STR(D3D10_DRIVER_TYPE_REFERENCE);
         WINE_D3D10_TO_STR(D3D10_DRIVER_TYPE_NULL);
         WINE_D3D10_TO_STR(D3D10_DRIVER_TYPE_SOFTWARE);
+        WINE_D3D10_TO_STR(D3D10_DRIVER_TYPE_WARP);
         default:
             FIXME("Unrecognized D3D10_DRIVER_TYPE %#x\n", driver_type);
             return "unrecognized";
@@ -95,6 +96,40 @@ const char *debug_d3d10_shader_variable_type(D3D10_SHADER_VARIABLE_TYPE t)
     }
 }
 
+const char *debug_d3d10_device_state_types(D3D10_DEVICE_STATE_TYPES t)
+{
+    switch (t)
+    {
+        WINE_D3D10_TO_STR(D3D10_DST_SO_BUFFERS);
+        WINE_D3D10_TO_STR(D3D10_DST_OM_RENDER_TARGETS);
+        WINE_D3D10_TO_STR(D3D10_DST_DEPTH_STENCIL_STATE);
+        WINE_D3D10_TO_STR(D3D10_DST_BLEND_STATE);
+        WINE_D3D10_TO_STR(D3D10_DST_VS);
+        WINE_D3D10_TO_STR(D3D10_DST_VS_SAMPLERS);
+        WINE_D3D10_TO_STR(D3D10_DST_VS_SHADER_RESOURCES);
+        WINE_D3D10_TO_STR(D3D10_DST_VS_CONSTANT_BUFFERS);
+        WINE_D3D10_TO_STR(D3D10_DST_GS);
+        WINE_D3D10_TO_STR(D3D10_DST_GS_SAMPLERS);
+        WINE_D3D10_TO_STR(D3D10_DST_GS_SHADER_RESOURCES);
+        WINE_D3D10_TO_STR(D3D10_DST_GS_CONSTANT_BUFFERS);
+        WINE_D3D10_TO_STR(D3D10_DST_PS);
+        WINE_D3D10_TO_STR(D3D10_DST_PS_SAMPLERS);
+        WINE_D3D10_TO_STR(D3D10_DST_PS_SHADER_RESOURCES);
+        WINE_D3D10_TO_STR(D3D10_DST_PS_CONSTANT_BUFFERS);
+        WINE_D3D10_TO_STR(D3D10_DST_IA_VERTEX_BUFFERS);
+        WINE_D3D10_TO_STR(D3D10_DST_IA_INDEX_BUFFER);
+        WINE_D3D10_TO_STR(D3D10_DST_IA_INPUT_LAYOUT);
+        WINE_D3D10_TO_STR(D3D10_DST_IA_PRIMITIVE_TOPOLOGY);
+        WINE_D3D10_TO_STR(D3D10_DST_RS_VIEWPORTS);
+        WINE_D3D10_TO_STR(D3D10_DST_RS_SCISSOR_RECTS);
+        WINE_D3D10_TO_STR(D3D10_DST_RS_RASTERIZER_STATE);
+        WINE_D3D10_TO_STR(D3D10_DST_PREDICATION);
+        default:
+            FIXME("Unrecognized D3D10_DEVICE_STATE_TYPES %#x.\n", t);
+            return "unrecognized";
+    }
+}
+
 #undef WINE_D3D10_TO_STR
 
 void *d3d10_rb_alloc(size_t size)
@@ -112,12 +147,12 @@ void d3d10_rb_free(void *ptr)
     HeapFree(GetProcessHeap(), 0, ptr);
 }
 
-void skip_dword_unknown(const char **ptr, unsigned int count)
+void skip_dword_unknown(const char *location, const char **ptr, unsigned int count)
 {
     unsigned int i;
     DWORD d;
 
-    FIXME("Skipping %u unknown DWORDs:\n", count);
+    FIXME("Skipping %u unknown DWORDs (%s):\n", count, location);
     for (i = 0; i < count; ++i)
     {
         read_dword(ptr, &d);
@@ -157,9 +192,9 @@ HRESULT parse_dxbc(const char *data, SIZE_T data_size,
     }
 
     /* checksum? */
-    skip_dword_unknown(&ptr, 4);
+    skip_dword_unknown("DXBC header", &ptr, 4);
 
-    skip_dword_unknown(&ptr, 1);
+    skip_dword_unknown("DXBC header", &ptr, 1);
 
     read_dword(&ptr, &total_size);
     TRACE("total size: %#x\n", total_size);

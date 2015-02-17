@@ -1,25 +1,18 @@
 #!/usr/bin/perl -w
 use strict;
+use XML::Simple;
 
 # This script is called thus :
 #
 #   make_opengl [opengl_version]
 #
-#     - It needs the gl.spec and gl.tm files in the current directory.
-#       These files are hosted in the OpenGL extension registry at
-#       opengl.org:
+#     - It needs files from the OpenGL extension registry:
 #
-#       http://www.opengl.org/registry/api/gl.spec
-#       http://www.opengl.org/registry/api/gl.tm
+#       https://cvs.khronos.org/svn/repos/ogl/trunk/doc/registry/public/api/gl.xml
+#       https://cvs.khronos.org/svn/repos/ogl/trunk/doc/registry/public/api/wgl.xml
 #
 #       If they are not found in the current directory the script will
 #       attempt to download them from there.
-#
-#       The files used to be hosted and maintained by SGI. You can still find
-#       find them in the sample implementation CVS tree which is located at
-#       CVS_ROOT/projects/ogl-sample/main/doc/registry/specs.
-#       You can also find them on the web at the following URL :
-#         http://oss.sgi.com/cgi-bin/cvsweb.cgi/projects/ogl-sample/main/doc/registry/specs/
 #
 #     - opengl_version is the OpenGL version emulated by the library
 #       (can be 1.0 to 1.5). The default is 1.1.
@@ -44,7 +37,11 @@ use strict;
 #       OpenGL work (as they are resolved at run-time using
 #       glXGetProcAddressARB).
 #
+#     - include/wine/wgl_driver.h: definitions for the tables of OpenGL functions.
+#
+#
 # Copyright 2000 Lionel Ulmer
+# Copyright 2012 Alexandre Julliard
 #
 # This library is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public
@@ -67,9 +64,11 @@ use strict;
 my $spec_file = "opengl32.spec";
 my $norm_file = "opengl_norm.c";
 my $ext_file  = "opengl_ext.c";
+my $wgl_driver_file = "../../include/wine/wgl_driver.h";
+my $wgl_file = "../../include/wine/wgl.h";
 
 # Set to 0 for removing the ENTER / LEAVE GL calls
-my $gen_thread_safe = 1;
+my $gen_thread_safe = 0;
 # Prefix used for the local variables
 my $ext_prefix = "func_";
 # If set to 1, generate TRACEs for each OpenGL function
@@ -78,34 +77,12 @@ my $gen_traces = 1;
 #
 # List of categories to put in the 'opengl_norm.c' file
 #
-my %cat_1_0 = ( "display-list" => 1,
-	     "drawing" => 1,
-	     "drawing-control" => 1,
-	     "feedback" => 1,
-	     "framebuf" => 1,
-	     "misc" => 1,
-	     "modeling" => 1,
-	     "pixel-op" => 1,
-	     "pixel-rw" => 1,
-	     "state-req" => 1,
-	     "xform" => 1,
-	     "VERSION_1_0" => 1,
-	     "VERSION_1_0_DEPRECATED" => 1 );
-my %cat_1_1 = ( %cat_1_0,
-	     "VERSION_1_1" => 1,
-             "VERSION_1_1_DEPRECATED" => 1 );
-my %cat_1_2 = ( %cat_1_1,
-	     "VERSION_1_2" => 1,
-             "VERSION_1_2_DEPRECATED" => 1 );
-my %cat_1_3 = ( %cat_1_2,
-	     "VERSION_1_3" => 1,
-             "VERSION_1_3_DEPRECATED" => 1 );
-my %cat_1_4 = ( %cat_1_3,
-	     "VERSION_1_4" => 1,
-             "VERSION_1_4_DEPRECATED" => 1 );
-my %cat_1_5 = ( %cat_1_4,
-	     "VERSION_1_5" => 1,
-             "VERSION_1_5_DEPRECATED" => 1 );
+my %cat_1_0 = ( "GL_VERSION_1_0" => 1 );
+my %cat_1_1 = ( %cat_1_0, "GL_VERSION_1_1" => 1 );
+my %cat_1_2 = ( %cat_1_1, "GL_VERSION_1_2" => 1 );
+my %cat_1_3 = ( %cat_1_2, "GL_VERSION_1_3" => 1 );
+my %cat_1_4 = ( %cat_1_3, "GL_VERSION_1_4" => 1 );
+my %cat_1_5 = ( %cat_1_4, "GL_VERSION_1_5" => 1 );
 
 my %norm_categories = ();
 
@@ -119,13 +96,16 @@ my %debug_conv =
      "GLbyte" => "%d",
      "GLclampd" => "%f",
      "GLclampf" => "%f",
+     "GLclampx" => "%d",
      "GLdouble" => "%f",
      "GLenum" => "%d",
      "GLfloat" => "%f",
+     "GLfixed" => "%d",
      "GLint" => "%d",
      "GLshort" => "%d",
      "GLsizei" => "%d",
      "GLstring" => "%s",
+     "GLsync" => "%p",
      "GLubyte" => "%d",
      "GLuint" => "%d",
      "GLushort" => "%d",
@@ -136,43 +116,68 @@ my %debug_conv =
      "GLsizeiptr" => "%ld",
      "GLhandleARB" => "%d",
      "GLcharARB" => "%c",
+     "GLuint64" => "%s,wine_dbgstr_longlong(%s)",
+     "GLuint64EXT" => "%s,wine_dbgstr_longlong(%s)",
+     "GLint64EXT" => "%s,wine_dbgstr_longlong(%s)",
      "GLvoid" => "(void)",
      "_GLfuncptr" => "%p",
+     "GLDEBUGPROC" => "%p",
      "GLDEBUGPROCARB" => "%p",
      "GLDEBUGPROCAMD" => "%p",
+     "GLDEBUGPROCKHR" => "%p",
      "GLvdpauSurfaceNV" => "%ld",
+     "int" => "%d",
+     "unsigned int" => "%u",
+     "UINT" => "%u",
+     "DWORD" => "%u",
+     "BOOL" => "%u",
      "INT64" => "%s,wine_dbgstr_longlong(%s)",
-     "UINT64" => "%s,wine_dbgstr_longlong(%s)"
+     "UINT64" => "%s,wine_dbgstr_longlong(%s)",
+     "LPVOID" => "%p",
+     "HANDLE" => "%p",
+     "HDC" => "%p",
+     "HGLRC" => "%p",
+     "HPBUFFERARB" => "%p",
+     "HPBUFFEREXT" => "%p",
     );
 
 #
 # This hash table gives the conversion between OpenGL types and what
-# is used in the .spec file
+# is used in the .spec and header files.
 #
 my %arg_conv =
-    ("GLbitfield" => [ "long", 4 ],
-     "GLboolean" => [ "long", 4 ],
-     "GLbyte" => [ "long", 4 ],
-     "GLclampd" => [ "double", 8 ],
-     "GLclampf" => [ "float", 4 ],
-     "GLdouble" => [ "double", 8 ],
-     "GLenum" => [ "long", 4 ],
-     "GLfloat" => [ "float", 4 ],
-     "GLint" => [ "long", 4 ],
-     "GLshort" => [ "long", 4 ],
-     "GLsizei" => [ "long", 4 ],
-     "GLstring" => [ "str", 4 ],
-     "GLubyte" => [ "long", 4 ],
-     "GLuint" => [ "long", 4 ],
-     "GLushort" => [ "long", 4 ],
-     "GLhalfNV" => [ "long", 4 ],
-     "GLintptrARB" => [ "long", 4 ],
-     "GLsizeiptrARB" => [ "long", 4 ],
-     "GLhandleARB" => [ "long", 4 ],
-     "GLcharARB" => [ "long", 4 ],
-     "GLintptr" => [ "long", 4 ],
-     "GLsizeiptr" => [ "long", 4 ],
-     "_GLfuncptr" => [ "ptr", 4 ]);
+    ("GLbitfield" =>       [ "long", "unsigned int" ],
+     "GLboolean" =>        [ "long", "unsigned char" ],
+     "GLbyte" =>           [ "long", "signed char" ],
+     "GLchar" =>           [ "long", "char" ],
+     "GLclampd" =>         [ "double", "double" ],
+     "GLclampf" =>         [ "float", "float" ],
+     "GLclampx" =>         [ "long", "int" ],
+     "GLdouble" =>         [ "double", "double" ],
+     "GLenum" =>           [ "long", "unsigned int" ],
+     "GLfloat" =>          [ "float", "float" ],
+     "GLfixed" =>          [ "long", "int" ],
+     "GLint" =>            [ "long", "int" ],
+     "GLint64" =>          [ "int64", "INT64" ],
+     "GLint64EXT" =>       [ "int64", "INT64" ],
+     "GLintptr" =>         [ "long", "INT_PTR" ],
+     "GLshort" =>          [ "long", "short" ],
+     "GLsizei" =>          [ "long", "int" ],
+     "GLsizeiptr" =>       [ "long", "INT_PTR" ],
+     "GLstring" =>         [ "str", "const unsigned char *" ],
+     "GLsync" =>           [ "ptr", "struct __GLsync *" ],
+     "GLubyte" =>          [ "long", "unsigned char" ],
+     "GLuint" =>           [ "long", "unsigned int" ],
+     "GLuint64" =>         [ "int64", "UINT64" ],
+     "GLuint64EXT" =>      [ "int64", "UINT64" ],
+     "GLushort" =>         [ "long", "unsigned short" ],
+     "GLvoid" =>           [ "void", "void" ],
+     "GLcharARB" =>        [ "long", "char" ],
+     "GLhandleARB" =>      [ "long", "unsigned int" ],
+     "GLintptrARB" =>      [ "long", "INT_PTR" ],
+     "GLsizeiptrARB" =>    [ "long", "INT_PTR" ],
+     "GLhalfNV" =>         [ "long", "unsigned short" ],
+     "GLvdpauSurfaceNV" => [ "long", "INT_PTR" ]);
 
 #
 # Used to convert some types
@@ -181,26 +186,22 @@ sub ConvertType($)
 {
     my ($type) = @_;
 
-    my %hash = ( "GLstring" => "const GLubyte *",
-	      "GLintptrARB" => "INT_PTR",
-	      "GLsizeiptrARB" => "INT_PTR",
-	      "GLintptr" => "INT_PTR",
-	      "GLsizeiptr" => "INT_PTR",
-	      "GLhandleARB" => "unsigned int",
-	      "GLcharARB" => "char",
-	      "GLchar" => "char",
-	      "GLhalfNV" => "unsigned short",
-              "GLvdpauSurfaceNV" => "INT_PTR",
+    my %hash = (
               "struct _cl_context" => "void",
               "struct _cl_event" => "void",
+              "HGLRC" => "struct wgl_context *",
+              "GLDEBUGPROC" => "void *",
               "GLDEBUGPROCARB" => "void *",
-              "GLDEBUGPROCAMD" => "void *" );
+              "GLDEBUGPROCAMD" => "void *",
+              "GLDEBUGPROCKHR" => "void *",
+              "HPBUFFERARB" => "struct wgl_pbuffer *",
+              "HPBUFFEREXT" => "struct wgl_pbuffer *",
+        );
 
     foreach my $org (reverse sort keys %hash) {
-	if ($type =~ /$org/) {
-	    my ($before, $after) = ($type =~ /^(.*)$org(.*)$/);
-	    return "$before$hash{$org}$after";
-	}
+        if ($type =~ /^(.*)$org(.*)$/) {
+            return "$1$hash{$org}$2";
+        }
     }
     return $type;
 }
@@ -216,10 +217,9 @@ sub ConvertVarName($)
                  "far"  => "farParam" );
 
     foreach my $org (keys %hash) {
-	if ($type =~ /$org/) {
-	    my ($before, $after) = ($type =~ /^(.*)$org(.*)$/);
-	    return "$before$hash{$org}$after";
-	}
+        if ($type =~ /^(.*)$org(.*)$/) {
+            return "$1$hash{$org}$2";
+        }
     }
     return $type;
 }
@@ -227,91 +227,151 @@ sub ConvertVarName($)
 #
 # This functions generates the thunk for a given function.
 #
-sub GenerateThunk($$$$$)
+sub GenerateThunk($$$$)
 {
-    my ($func_ref, $comment, $prefix, $thread_safe, $local_var) = @_;
+    my ($name, $func_ref, $comment, $prefix) = @_;
     my $ret = "";
     my $call_arg = "";
     my $trace_call_arg = "";
     my $trace_arg = "";
 
-    return "" if $func_ref->[0] eq "glGetString";
-    return "" if $func_ref->[0] eq "glGetIntegerv";
-    return "" if $func_ref->[0] eq "glFinish";
-    return "" if $func_ref->[0] eq "glFlush";
+    return "" if $name eq "glDebugEntry";
+    return "" if $name eq "glGetIntegerv";
+    return "" if $name eq "glGetString";
+    return "" if $func_ref->[2] && $func_ref->[2]->[0] =~ /WGL_/;
 
     # If for opengl_norm.c, generate a nice heading otherwise Patrik won't be happy :-)
     # Patrik says: Well I would be even happier if a (OPENGL32.@) was added as well. Done. :-)
     if ($comment eq 1) {
-	$ret = "$ret/***********************************************************************\n";
-	$ret = "$ret *              $func_ref->[0] (OPENGL32.\@)\n";
-	$ret = "$ret */\n";
+        $ret .= "/***********************************************************************\n";
+        $ret .= " *              $name (OPENGL32.\@)\n";
+        $ret .= " */\n";
     }
-    $ret = $ret . ConvertType($func_ref->[1]) . " WINAPI wine_$func_ref->[0]( ";
-    for (my $i = 0; $i < @{$func_ref->[2]}; $i++) {
-	## Quick debug code :-)
-	## print $func_ref->[2]->[$i]->[1] . "\n";
-	my $type = $func_ref->[2]->[$i]->[0];
-	my $name = ConvertVarName($func_ref->[2]->[$i]->[1]);
-	$ret .= ConvertType($type) . " $name";
-	$call_arg .= $name;
-	if ($type =~ /\*/) {
-	    $trace_arg .= "%p";
+    $ret .= ConvertType($func_ref->[0]) . " WINAPI $name( ";
+    for (my $i = 0; $i < @{$func_ref->[1]}; $i++) {
+        my $type = $func_ref->[1]->[$i]->[0];
+        my $name = ConvertVarName($func_ref->[1]->[$i]->[1]);
+        my ($base_type, $type_specifier, $name_specifier) = ($type, $type, $name);
+        if ($type =~ /(.*) (.*)/) {
+            $base_type = $2;
+        } elsif ($type =~ /(.*)(\[.*)/) {
+            $base_type = $1;
+            $type_specifier = $1;
+            $name_specifier = $name . $2
+        }
+        $ret .= ConvertType($type_specifier) . " $name_specifier";
+        $call_arg .= $name;
+        if ($type =~ /\*/ || $type =~ /\[/) {
+            $trace_arg .= "%p";
             $trace_call_arg .= $name;
-	} elsif (defined $debug_conv{$type}) {
-            if ($debug_conv{$type} =~ /(.*),(.*)/)
-            {
+        } elsif (defined $debug_conv{$base_type}) {
+            if ($debug_conv{$base_type} =~ /(.*),(.*)/) {
                 $trace_arg .= $1;
                 $trace_call_arg .= sprintf $2, $name;
-            }
-            else
-            {
-                $trace_arg .= $debug_conv{$type};
+            } else {
+                $trace_arg .= $debug_conv{$base_type};
                 $trace_call_arg .= $name;
             }
-	}
-	else { printf "Unknown type %s\n", $type; }
-	if ($i+1 < @{$func_ref->[2]}) {
-	    $ret .= ", ";
-	    $call_arg .= ", ";
-	    $trace_call_arg .= ", ";
-	    $trace_arg .= ", ";
-	} else {
-	    $ret .= " ";
-	    $call_arg .= " ";
-	    $trace_call_arg .= " ";
-	}
+        }
+        else { printf "Unknown type %s\n", $type; }
+        if ($i+1 < @{$func_ref->[1]}) {
+            $ret .= ", ";
+            $call_arg .= ", ";
+            $trace_call_arg .= ", ";
+            $trace_arg .= ", ";
+        } else {
+            $ret .= " ";
+            $call_arg .= " ";
+            $trace_call_arg .= " ";
+        }
     }
-    $ret .= 'void ' if (!@{$func_ref->[2]});
-    $ret = "$ret) {\n";
-    if ($func_ref->[1] ne "void") {
-	$ret = "$ret  " . ConvertType($func_ref->[1]) . " ret_value;\n";
+    $ret .= 'void ' if (!@{$func_ref->[1]});
+    return "$ret) DECLSPEC_HIDDEN;\n" if $name eq "glGetStringi";
+    $ret .= ") {\n";
+    $ret .= "  const struct opengl_funcs *funcs = NtCurrentTeb()->glTable;\n";
+    if ($func_ref->[0] ne "void" && $gen_thread_safe) {
+        $ret .= "  " . ConvertType($func_ref->[0]) . " ret_value;\n";
     }
-    $ret .= $local_var;
     if ($gen_traces) {
-	$ret = "$ret  TRACE(\"($trace_arg)\\n\"";
-	if ($trace_arg ne "") {
-	    $ret .= ", $trace_call_arg";
-	}
-	$ret = "$ret);\n";
+        $ret .= "  TRACE(\"($trace_arg)\\n\"";
+        if ($trace_arg ne "") {
+            $ret .= ", $trace_call_arg";
+        }
+        $ret .= ");\n";
     }
-    if ($thread_safe) {
-	$ret = "$ret  ENTER_GL();\n";
+    if ($gen_thread_safe) {
+        $ret .= "  ENTER_GL();\n";
+        $ret .= "  ";
+        if ($func_ref->[0] ne "void") {
+            $ret .= "ret_value = ";
+        }
+        $ret .= "funcs->$prefix.p_$name( $call_arg);\n";
+        $ret .= "  LEAVE_GL();\n";
+        if ($func_ref->[0] ne "void") {
+            $ret .= "  return ret_value;\n"
+        }
     }
-    $ret = "$ret  ";
-    if ($func_ref->[1] ne "void") {
-	$ret = $ret . "ret_value = ";
+    else {
+        $ret .= "  ";
+        if ($func_ref->[0] ne "void") {
+            $ret .= "return ";
+        }
+        $ret .= "funcs->$prefix.p_$name( $call_arg);\n";
     }
-    $ret = "$ret$prefix$func_ref->[0]( $call_arg);\n";
-    if ($thread_safe) {
-	$ret = "$ret  LEAVE_GL();\n";
-    }
-    if ($func_ref->[1] ne "void") {
-	$ret = "$ret  return ret_value;\n"
-    }
-    $ret = "$ret}\n";
+    $ret .= "}\n";
 
     # Return this string....
+    return $ret;
+}
+
+sub generate_null_func($$)
+{
+    my ($name, $func_ref) = @_;
+    my $ret;
+
+    return "" if $name eq "glDebugEntry";
+
+    $ret = "static " . ConvertType($func_ref->[0]) . " null_$name( ";
+    for (my $i = 0; $i < @{$func_ref->[1]}; $i++) {
+        my $type = $func_ref->[1]->[$i]->[0];
+        my $name = ConvertVarName($func_ref->[1]->[$i]->[1]);
+        my $base_type;
+        if ($type =~ /(.*)(\[.*)/) {
+            $base_type = $1;
+            $name .= $2;
+        } else {
+            $base_type = $type;
+        }
+        $ret .= ConvertType($base_type) . " $name";
+        $ret .= "," if ($i+1 < @{$func_ref->[1]});
+        $ret .= " ";
+    }
+    $ret .= 'void ' if (!@{$func_ref->[1]});
+    $ret .= ") {";
+    if ($name eq "glGetError")
+    {
+        $ret .= " return GL_INVALID_OPERATION;";
+    }
+    elsif ($func_ref->[0] ne "void")
+    {
+        $ret .= " return 0;";
+    }
+    $ret .= " }\n";
+    return $ret;
+}
+
+sub get_func_proto($$$)
+{
+    my ($format, $name, $func) = @_;
+    my $ret = sprintf "%-10s", ConvertType($func->[0]);
+    $ret .= " " . sprintf($format,$name) . "(";
+    for (my $i = 0; $i < @{$func->[1]}; $i++)
+    {
+        $ret .= ConvertType($func->[1]->[$i]->[0]);
+        $ret .= "," if ($i+1 < @{$func->[1]});
+    }
+    $ret .= "void" unless @{$func->[1]};
+    $ret .= ")";
     return $ret;
 }
 
@@ -343,37 +403,13 @@ if ($version eq "1.0") {
 #
 # Fetch the registry files
 #
--f "gl.spec" || system "wget http://www.opengl.org/registry/api/gl.spec" || die "cannot download gl.spec";
--f "gl.tm" || system "wget http://www.opengl.org/registry/api/gl.tm" || die "cannot download gl.tm";
+-f "gl.xml" || system "wget --no-check-certificate https://cvs.khronos.org/svn/repos/ogl/trunk/doc/registry/public/api/gl.xml" || die "cannot download gl.xml";
+-f "wgl.xml" || system "wget --no-check-certificate https://cvs.khronos.org/svn/repos/ogl/trunk/doc/registry/public/api/wgl.xml" || die "cannot download wgl.xml";
+
 
 #
-# Open the registry files
-#
-open(TYPES,    "gl.tm")   || die "Could not open gl.tm";
-open(REGISTRY, "gl.spec") || die "Could not open gl.spec";
-
-#
-# First, create a mapping between the pseudo types used in the spec file
-# and OpenGL types using the 'gl.tm' file.
-#
-my %pseudo_to_opengl = ();
-while (my $line = <TYPES>) {
-    if ($line !~ /\w*\#/) {
-	my ($pseudo, $opengl) = ($line =~ /(\w*),\*,\*,\s*(.*),\*,\*/);
-	$pseudo_to_opengl{$pseudo} = $opengl;
-    }
-}
-# This is to override the 'void' -> '*' bogus conversion
-$pseudo_to_opengl{"void"} = "void";
-$pseudo_to_opengl{"sync"} = "GLvoid*";
-$pseudo_to_opengl{"Int64"} = "INT64";
-$pseudo_to_opengl{"UInt64"} = "UINT64";
-$pseudo_to_opengl{"Int64EXT"} = "INT64";
-$pseudo_to_opengl{"UInt64EXT"} = "UINT64";
-
-#
-# Then, create the list of all OpenGL functions using the 'gl.spec'
-# file. This will create two hash-tables, one with all the function
+# Then, create the list of all OpenGL functions using the registry
+# files. This will create two hash-tables, one with all the function
 # whose category matches the one listed in '@norm_categories', the other
 # with all other functions.
 #
@@ -409,7 +445,8 @@ $pseudo_to_opengl{"UInt64EXT"} = "UINT64";
 #     [ "GLfloat", "ymove" ],
 #     [ "GLubyte *", "bitmap"] ] ];
 #
-my %norm_functions = ();
+my %norm_functions = ( "glDebugEntry" => [ "GLint", [[ "GLint", "unknown1" ],
+                                                     [ "GLint", "unknown2" ]] ] );
 
 #
 # This stores various extensions NOT part of the GL extension registry but still
@@ -417,272 +454,431 @@ my %norm_functions = ();
 #
 
 my %ext_functions  =
-    ( "glDeleteBufferRegion" => [ "glDeleteBufferRegion", "void", [ [ "GLenum", "region" ] ], "glDeleteBufferRegion", "GL_KTX_buffer_region" ],
-      "glReadBufferRegion" => [ "glReadBufferRegion", "void", [ [ "GLenum", "region" ],
-								[ "GLint", "x" ],
-								[ "GLint", "y" ],
-								[ "GLsizei", "width" ],
-								[ "GLsizei", "height" ] ], "glReadBufferRegion", "GL_KTX_buffer_region" ],
-      "glDrawBufferRegion" => [ "glDrawBufferRegion", "void", [ [ "GLenum", "region" ],
-								[ "GLint", "x" ],
-								[ "GLint", "y" ],
-								[ "GLsizei", "width" ],
-								[ "GLsizei", "height" ],
-								[ "GLint", "xDest" ],
-								[ "GLint", "yDest" ] ], "glDrawBufferRegion", "GL_KTX_buffer_region" ],
-      "glBufferRegionEnabled" => [ "glBufferRegionEnabled", "GLuint", [ ], "glBufferRegionEnabled",  "GL_KTX_buffer_region" ],
-      "glNewBufferRegion" => [ "glNewBufferRegion", "GLuint", [ [ "GLenum", "type" ] ], "glNewBufferRegion", "GL_KTX_buffer_region" ],
-      "glMTexCoord2fSGIS" => [ "glMTexCoord2fSGIS", "void", [ [ "GLenum", "target" ],
-							      [ "GLfloat", "s" ],
-							      [ "GLfloat", "t" ] ], "glMTexCoord2fSGIS", "GL_SGIS_multitexture" ],
-      "glMTexCoord2fvSGIS" => [ "glMTexCoord2fvSGIS", "void", [ [ "GLenum", "target" ],
-								[ "GLfloat *", "v" ] ], "glMTexCoord2fvSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord1dSGIS" => [ "glMultiTexCoord1dSGIS", "void", [ [ "GLenum", "target" ],
-								      [ "GLdouble", "s" ] ],  "glMultiTexCoord1dSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord1dvSGIS" => [ "glMultiTexCoord1dvSGIS", "void", [ [ "GLenum", "target" ],
-									[ "GLdouble *", "v" ] ], "glMultiTexCoord1dvSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord1fSGIS" => [ "glMultiTexCoord1fSGIS", "void", [ [ "GLenum", "target" ],
-								      [ "GLfloat", "s" ] ], "glMultiTexCoord1fSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord1fvSGIS" => [ "glMultiTexCoord1fvSGIS", "void", [ [ "GLenum", "target" ],
-									[ "const GLfloat *", "v" ] ], "glMultiTexCoord1fvSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord1iSGIS" => [ "glMultiTexCoord1iSGIS", "void", [ [ "GLenum", "target" ],
-								      [ "GLint", "s" ] ], "glMultiTexCoord1iSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord1ivSGIS" => [ "glMultiTexCoord1ivSGIS", "void", [ [ "GLenum", "target" ],
-									[ "GLint *", "v" ] ], "glMultiTexCoord1ivSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord1sSGIS" => [ "glMultiTexCoord1sSGIS", "void", [ [ "GLenum", "target" ],
-								      [ "GLshort", "s" ] ], "glMultiTexCoord1sSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord1svSGIS" => [ "glMultiTexCoord1svSGIS", "void", [ [ "GLenum", "target" ],
-									[ "GLshort *", "v" ] ], "glMultiTexCoord1svSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord2dSGIS" => [ "glMultiTexCoord2dSGIS", "void", [ [ "GLenum", "target" ],
-								      [ "GLdouble", "s"],
-								      [ "GLdouble", "t" ] ], "glMultiTexCoord2dSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord2dvSGIS" => [ "glMultiTexCoord2dvSGIS", "void", [ [ "GLenum", "target" ],
-									[ "GLdouble *", "v" ] ], "glMultiTexCoord2dvSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord2fSGIS" => [ "glMultiTexCoord2fSGIS", "void", [ [ "GLenum", "target" ],
-								      [ "GLfloat", "s" ],
-								      [ "GLfloat", "t" ] ], "glMultiTexCoord2fSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord2fvSGIS" => [ "glMultiTexCoord2fvSGIS", "void", [ [ "GLenum", "target" ],
-									[ "GLfloat *", "v" ] ], "glMultiTexCoord2fvSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord2iSGIS" => [ "glMultiTexCoord2iSGIS", "void", [ [ "GLenum", "target" ],
-								      [ "GLint", "s" ],
-								      [ "GLint", "t" ] ], "glMultiTexCoord2iSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord2ivSGIS" => [ "glMultiTexCoord2ivSGIS", "void", [ [ "GLenum", "target" ],
-									[ "GLint *", "v" ] ], "glMultiTexCoord2ivSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord2sSGIS" => [ "glMultiTexCoord2sSGIS", "void", [ [ "GLenum", "target" ],
-								      [ "GLshort", "s" ],
-								      [ "GLshort", "t" ] ], "glMultiTexCoord2sSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord2svSGIS" => [ "glMultiTexCoord2svSGIS", "void", [ [ "GLenum", "target" ],
-									[ "GLshort *", "v" ] ], "glMultiTexCoord2svSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord3dSGIS" => [ "glMultiTexCoord3dSGIS", "void", [ [ "GLenum", "target" ],
-								      [ "GLdouble", "s" ],
-								      [ "GLdouble", "t" ],
-								      [ "GLdouble", "r" ] ], "glMultiTexCoord3dSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord3dvSGIS" => [ "glMultiTexCoord3dvSGIS", "void", [ [ "GLenum", "target" ],
-									[ "GLdouble *", "v" ] ], "glMultiTexCoord3dvSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord3fSGIS" => [ "glMultiTexCoord3fSGIS", "void", [ [ "GLenum", "target" ],
-								      [ "GLfloat", "s" ],
-								      [ "GLfloat", "t" ],
-								      [ "GLfloat", "r" ] ], "glMultiTexCoord3fSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord3fvSGIS" => [ "glMultiTexCoord3fvSGIS", "void", [ [ "GLenum", "target" ],
-									[ "GLfloat *", "v" ] ], "glMultiTexCoord3fvSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord3iSGIS" => [ "glMultiTexCoord3iSGIS", "void", [ [ "GLenum", "target" ],
-								      [ "GLint", "s" ],
-								      [ "GLint", "t" ],
-								      [ "GLint", "r" ] ], "glMultiTexCoord3iSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord3ivSGIS" => [ "glMultiTexCoord3ivSGIS", "void", [ [ "GLenum", "target" ],
-									[ "GLint *", "v" ] ], "glMultiTexCoord3ivSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord3sSGIS" => [ "glMultiTexCoord3sSGIS", "void", [ [ "GLenum", "target" ],
-								      [ "GLshort", "s" ],
-								      [ "GLshort", "t" ],
-								      [ "GLshort", "r" ] ], "glMultiTexCoord3sSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord3svSGIS" => [ "glMultiTexCoord3svSGIS", "void", [ [ "GLenum", "target" ],
-									[ "GLshort *", "v" ] ], "glMultiTexCoord3svSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord4dSGIS" => [ "glMultiTexCoord4dSGIS", "void", [ [ "GLenum", "target" ],
-								      [ "GLdouble", "s" ],
-								      [ "GLdouble", "t" ],
-								      [ "GLdouble", "r" ],
-								      [ "GLdouble", "q" ] ], "glMultiTexCoord4dSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord4dvSGIS" => [ "glMultiTexCoord4dvSGIS", "void", [ [ "GLenum", "target" ],
-									[ "GLdouble *", "v" ] ], "glMultiTexCoord4dvSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord4fSGIS" => [ "glMultiTexCoord4fSGIS", "void", [ [ "GLenum", "target" ],
-								      [ "GLfloat", "s" ],
-								      [ "GLfloat", "t" ],
-								      [ "GLfloat", "r" ],
-								      [ "GLfloat", "q" ] ], "glMultiTexCoord4fSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord4fvSGIS" => [ "glMultiTexCoord4fvSGIS", "void", [ [ "GLenum", "target" ],
-									[ "GLfloat *", "v" ] ], "glMultiTexCoord4fvSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord4iSGIS" => [ "glMultiTexCoord4iSGIS", "void", [ [ "GLenum", "target" ],
-								      [ "GLint", "s" ],
-								      [ "GLint", "t" ],
-								      [ "GLint", "r" ],
-								      [ "GLint", "q" ] ], "glMultiTexCoord4iSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord4ivSGIS" => [ "glMultiTexCoord4ivSGIS", "void", [ [ "GLenum", "target" ],
-									[ "GLint *", "v" ] ], "glMultiTexCoord4ivSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord4sSGIS" => [ "glMultiTexCoord4sSGIS", "void", [ [ "GLenum", "target" ],
-								      [ "GLshort", "s" ],
-								      [ "GLshort", "t" ],
-								      [ "GLshort", "r" ],
-								      [ "GLshort", "q" ] ], "glMultiTexCoord4sSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoord4svSGIS" => [ "glMultiTexCoord4svSGIS", "void", [ [ "GLenum", "target" ],
-									[ "GLshort *", "v" ] ], "glMultiTexCoord4svSGIS", "GL_SGIS_multitexture" ],
-      "glMultiTexCoordPointerSGIS" => [ "glMultiTexCoordPointerSGIS", "void", [ [ "GLenum", "target" ],
-										[ "GLint", "size" ],
-										[ "GLenum", "type" ],
-										[ "GLsizei", "stride" ],
-										[ "GLvoid *", "pointer" ] ], "glMultiTexCoordPointerSGIS", "GL_SGIS_multitexture" ],
-      "glSelectTextureSGIS" => [ "glSelectTextureSGIS", "void", [ [ "GLenum", "target" ] ], "glSelectTextureSGIS", "GL_SGIS_multitexture" ],
-      "glSelectTextureCoordSetSGIS" => [ "glSelectTextureCoordSetSGIS", "void", [ [ "GLenum", "target" ] ], "glSelectTextureCoordSetSGIS", "GL_SGIS_multitexture" ],
-      "glDeleteObjectBufferATI" => [ "glDeleteObjectBufferATI", "void", [ [ "GLuint", "buffer" ] ], "glDeleteObjectBufferATI", "GL_ATI_vertex_array_object" ]
-      );
+   (
+    "glDeleteBufferRegion" => [ "void", [ [ "GLenum", "region" ] ], [ "GL_KTX_buffer_region" ] ],
+    "glReadBufferRegion" => [ "void", [ [ "GLenum", "region" ],
+                                        [ "GLint", "x" ],
+                                        [ "GLint", "y" ],
+                                        [ "GLsizei", "width" ],
+                                        [ "GLsizei", "height" ] ], [ "GL_KTX_buffer_region" ] ],
+    "glDrawBufferRegion" => [ "void", [ [ "GLenum", "region" ],
+                                        [ "GLint", "x" ],
+                                        [ "GLint", "y" ],
+                                        [ "GLsizei", "width" ],
+                                        [ "GLsizei", "height" ],
+                                        [ "GLint", "xDest" ],
+                                        [ "GLint", "yDest" ] ], [ "GL_KTX_buffer_region" ] ],
+    "glBufferRegionEnabled" => [ "GLuint", [ ], [ "GL_KTX_buffer_region" ] ],
+    "glNewBufferRegion" => [ "GLuint", [ [ "GLenum", "type" ] ], [ "GL_KTX_buffer_region" ] ],
+    "glMTexCoord2fSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                       [ "GLfloat", "s" ],
+                                       [ "GLfloat", "t" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMTexCoord2fvSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                        [ "GLfloat *", "v" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord1dSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                           [ "GLdouble", "s" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord1dvSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                            [ "GLdouble *", "v" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord1fSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                           [ "GLfloat", "s" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord1fvSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                            [ "const GLfloat *", "v" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord1iSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                           [ "GLint", "s" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord1ivSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                            [ "GLint *", "v" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord1sSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                           [ "GLshort", "s" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord1svSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                            [ "GLshort *", "v" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord2dSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                           [ "GLdouble", "s"],
+                                           [ "GLdouble", "t" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord2dvSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                            [ "GLdouble *", "v" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord2fSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                           [ "GLfloat", "s" ],
+                                           [ "GLfloat", "t" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord2fvSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                            [ "GLfloat *", "v" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord2iSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                           [ "GLint", "s" ],
+                                           [ "GLint", "t" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord2ivSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                            [ "GLint *", "v" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord2sSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                           [ "GLshort", "s" ],
+                                           [ "GLshort", "t" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord2svSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                            [ "GLshort *", "v" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord3dSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                           [ "GLdouble", "s" ],
+                                           [ "GLdouble", "t" ],
+                                           [ "GLdouble", "r" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord3dvSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                            [ "GLdouble *", "v" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord3fSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                           [ "GLfloat", "s" ],
+                                           [ "GLfloat", "t" ],
+                                           [ "GLfloat", "r" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord3fvSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                            [ "GLfloat *", "v" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord3iSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                           [ "GLint", "s" ],
+                                           [ "GLint", "t" ],
+                                           [ "GLint", "r" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord3ivSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                            [ "GLint *", "v" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord3sSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                           [ "GLshort", "s" ],
+                                           [ "GLshort", "t" ],
+                                           [ "GLshort", "r" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord3svSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                            [ "GLshort *", "v" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord4dSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                           [ "GLdouble", "s" ],
+                                           [ "GLdouble", "t" ],
+                                           [ "GLdouble", "r" ],
+                                           [ "GLdouble", "q" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord4dvSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                            [ "GLdouble *", "v" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord4fSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                           [ "GLfloat", "s" ],
+                                           [ "GLfloat", "t" ],
+                                           [ "GLfloat", "r" ],
+                                           [ "GLfloat", "q" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord4fvSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                            [ "GLfloat *", "v" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord4iSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                           [ "GLint", "s" ],
+                                           [ "GLint", "t" ],
+                                           [ "GLint", "r" ],
+                                           [ "GLint", "q" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord4ivSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                            [ "GLint *", "v" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord4sSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                           [ "GLshort", "s" ],
+                                           [ "GLshort", "t" ],
+                                           [ "GLshort", "r" ],
+                                           [ "GLshort", "q" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoord4svSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                            [ "GLshort *", "v" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glMultiTexCoordPointerSGIS" => [ "void", [ [ "GLenum", "target" ],
+                                                [ "GLint", "size" ],
+                                                [ "GLenum", "type" ],
+                                                [ "GLsizei", "stride" ],
+                                                [ "GLvoid *", "pointer" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glSelectTextureSGIS" => [ "void", [ [ "GLenum", "target" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glSelectTextureCoordSetSGIS" => [ "void", [ [ "GLenum", "target" ] ], [ "GL_SGIS_multitexture" ] ],
+    "glDeleteObjectBufferATI" => [ "void", [ [ "GLuint", "buffer" ] ], [ "GL_ATI_vertex_array_object" ] ],
+    "wglSetPixelFormatWINE" => [ "BOOL", [ [ "HDC", "hdc" ],
+                                           [ "int", "format" ] ], [ "WGL_WINE_pixel_format_passthrough" ] ],
+   );
 
-my @arg_names;
-my %arg_types;
-while (my $line = <REGISTRY>) {
-    if ($line =~ /^\w*\(.*\)/) {
-	# Get the function name (NOTE: the 'gl' prefix needs to be added later)
-	my ($funcname, $args) = ($line =~ /^(\w*)\((.*)\)/);
-	# and the argument names
-	@arg_names = split /\s*,\s*/, $args;
 
-	# After get :
-	#  - the return type
-	#  - category (the extension the function is part of)
-	#  - the argument types
-	#  - the category the function belongs
-	%arg_types = ();
-	my $category = "";
-	my $ret_type = "";
-	while (1) {
-	    $line = <REGISTRY>;
-	    unless (defined($line)) {
-		last;
-	    } elsif ($line =~ /^\s*$/) {
-		if (($category eq "") || ($ret_type eq "")) {
-		    die "Missing 'category' line in function $funcname.\n";
-		}
-		last;
-	    } elsif ($line =~ /\t*return\t*(\w*)/) {
-		($ret_type) = ($line =~ /\t*return\s*(\w*)/);
-		$ret_type = $pseudo_to_opengl{$ret_type};
-		unless (defined($ret_type)) {
-		    die "Unsupported return type in function $funcname\n";
-		}
-	    } elsif ($line =~ /^\t*category/) {
-		($category) = ($line =~ /^\t*category\s*([\w-]*)/);
-	    } elsif ($line =~ /^\t*param/) {
-		my ($name, $base_type, $ext) = ($line =~ /\t*param\s*(\w*)\s*(\w*) (.*)/);
-		my $ptr = 0;
-		unless (defined($name)) {
-		    chomp $line;
-		    die "Broken spec file line $line in function $funcname\n";
-		}
+my %wgl_functions =
+   (
+    "wglCopyContext" => [ "BOOL", [ [ "struct wgl_context *", "src" ],
+                                    [ "struct wgl_context *", "dst" ],
+                                    [ "UINT", "mask" ] ] ],
+    "wglCreateContext" => [ "struct wgl_context *", [ [ "HDC", "hdc" ] ] ],
+    "wglDeleteContext" => [ "void", [ [ "struct wgl_context *", "context" ] ] ],
+    "wglDescribePixelFormat" => [ "INT", [ [ "HDC", "hdc" ],
+                                           [ "INT", "format" ],
+                                           [ "UINT", "size" ],
+                                           [ "PIXELFORMATDESCRIPTOR *", "descr" ] ] ],
+    "wglGetPixelFormat" => [ "INT", [ [ "HDC", "hdc" ] ] ],
+    "wglGetProcAddress" => [ "PROC", [ [ "LPCSTR", "name" ] ] ],
+    "wglMakeCurrent" => [ "BOOL", [ [ "HDC", "hdc" ],
+                                    [ "struct wgl_context *", "context" ] ] ],
+    "wglSetPixelFormat" => [ "BOOL", [ [ "HDC", "hdc" ],
+                                       [ "INT", "format" ],
+                                       [ "const PIXELFORMATDESCRIPTOR *", "descr" ] ] ],
+    "wglShareLists" => [ "BOOL", [ [ "struct wgl_context *", "org" ],
+                                   [ "struct wgl_context *", "dst" ] ] ],
+    "wglSwapBuffers" => [ "BOOL", [ [ "HDC", "hdc" ] ] ],
+   );
 
-		if ($ext =~ /array/) {
-		    # This is a pointer
-		    $ptr = 1;
-		} elsif ($ext =~ /reference/) {
-		    # This is a pointer
-		    $ptr = 1;
-		} elsif ($ext =~ /value/) {
-		    # And this a 'normal' value
-		    $ptr = 0;
-		} else {
-		    chomp $line;
-		    die "Unsupported type : $line in function $funcname\n";
-		}
-		# Get the 'real' type and append a '*' in case of a pointer
-		my $type = $pseudo_to_opengl{$base_type};
-		unless (defined($type)) {
-		    chomp $line;
-		    die "Unsupported return type in function $funcname for type $base_type (line $line)\n";
-		}
-		if ($ptr) {
-		    $type = "$type*";
-		}
+my %supported_wgl_extensions =
+   (
+    "WGL_ARB_create_context" => 1,
+    "WGL_ARB_extensions_string" => 1,
+    "WGL_ARB_make_current_read" => 1,
+    "WGL_ARB_pbuffer" => 1,
+    "WGL_ARB_pixel_format" => 1,
+    "WGL_ARB_render_texture" => 1,
+    "WGL_EXT_extensions_string" => 1,
+    "WGL_EXT_swap_control" => 1,
+    "WGL_NV_vertex_array_range" => 1,
+    "WGL_WINE_pixel_format_passthrough" => 1,
+   );
 
-		$arg_types{$name} = $type;
-	    }
-	}
+my %enums = ();
 
-	# Now, build the argument reference
-	my $arg_ref = [ ];
-	for (my $i = 0; $i < @arg_names; $i++) {
-	    unless (defined($arg_types{$arg_names[$i]})) {
-		print "@arg_names\n";
-		foreach (sort keys %arg_types) {
-		    print "$_ => $arg_types{$_}\n";
-		}
-		die "Undefined type for $arg_names[$i] in function $funcname\n";
-	    }
+sub parse_variable($)
+{
+    my $p = shift;
+    my $ptype = '';
+    my $pname = '';
+    my $pnamebefore = '';
+    my $pnameafter = '';
 
-	    push @$arg_ref, [ $arg_types{$arg_names[$i]}, $arg_names[$i] ];
-	}
-	my $func_ref = [ "gl$funcname",
-                         $ret_type,
-                         $arg_ref,
-                         "gl$funcname",
-                         "GL_$category" ];
+    while (my ($k, $v) = each(%$p)){
+        if ($k eq 'ptype') {
+            $ptype = ${$v}[0];
+        } elsif ($k eq 'name') {
+            $pname = ${$v}[0];
+        } elsif ($k eq 'content') {
+            if (ref($v) eq 'ARRAY') {
+                my @n = @{$v};
+                $pnamebefore = $n[0];
+                $pnameafter = $n[1] if (@n > 0);
+            } elsif ($v eq 'const ') {
+                $pnamebefore = $v;
+            } else {
+                $pnameafter = $v;
+            }
+        }
+    }
+    $ptype = $pnamebefore . $ptype . $pnameafter;
+    $ptype =~ s/ \*/\*/g;
+    $ptype =~ s/ $//g;
+    return [ $ptype, $pname ];
+}
 
-	# Now, put in one or the other hash table
-	if ($norm_categories{$category}) {
-	    $norm_functions{"gl$funcname"} = $func_ref;
-	} else {
-	    $ext_functions{"gl$funcname"} = $func_ref;
-	}
+sub parse_file($$)
+{
+    my ($file, $generate_enums) = @_;
+    my $xml = new XML::Simple;
+    my $data = $xml->XMLin($file, ForceArray => 1);
+    my %functions;
+
+    # save all functions
+    for my $command ( @{${$data->{commands}}[0]->{'command'}} ) {
+        my $name = '';
+        my $ret = '';
+        my $params = [];
+        my @alias = '';
+        while (my ($k, $v) = each(%$command)){
+            if ($k eq 'param') {
+                push(@$params, parse_variable($_)) for (@{$v});
+            } elsif ($k eq 'proto') {
+                ($ret, $name) = @{parse_variable(${$v}[0])};
+            }
+        }
+        $functions{$name} = [ $ret, $params ];
+    }
+
+    # save all enums (only GL)
+    if ($generate_enums) {
+        for my $enum ( @{$data->{'enums'}} ) {
+            if (ref($enum->{'enum'}) eq "HASH") {
+                while (my ($k, $v) = each(%{$enum->{'enum'}})){
+                    $enums{$k} = $v->{'value'};
+                }
+            }
+        }
+    }
+
+    # generate norm functions
+    while (my ($k, $v) = each(%{$data->{feature}})) {
+        if ($norm_categories{$k}) {
+            for my $req (@{$v->{require}}) {
+                for(keys %{$req->{command}}) {
+                    $norm_functions{$_} = $functions{$_};
+                }
+            }
+        }
+    }
+
+    # generate extension functions from norm functions, if they are newer than the category
+    while (my ($k, $v) = each(%{$data->{feature}})) {
+        if (!$norm_categories{$k} && $v->{api} =~ /^gl(\||$)/)
+        {
+            for my $req (@{$v->{require}}) {
+                for (keys %{$req->{command}}) {
+                    if (!$norm_functions{$_}) {
+                        $ext_functions{$_} = [ $functions{$_}[0], $functions{$_}[1], [ $k ] ];
+                    }
+                }
+            }
+        }
+    }
+
+    # generate extension functions
+    while (my ($k, $v) = each(%{${$data->{extensions}}[0]->{extension}})) {
+        if ($v->{supported} =~ /^gl(\||$)/) {
+            for my $req (@{$v->{require}}) {
+                if (!defined $req->{api} || $req->{api} =~ /^gl(\||$)/) {
+                    for (keys %{$req->{command}}) {
+                        if (!$ext_functions{$_} && !$norm_functions{$_}) {
+                            $ext_functions{$_} = [$functions{$_}[0], $functions{$_}[1], [ $k ]];
+                        }
+                        elsif ($ext_functions{$_}) {
+                            push @{$ext_functions{$_}->[2]}, $k;
+                        }
+                    }
+                }
+            }
+        }
+        elsif ($v->{supported} =~ /^wgl$/) {
+            for (keys %{${$v->{require}}[0]->{command}}) {
+                if (defined $supported_wgl_extensions{$k}) {
+                    $ext_functions{$_} = [ $functions{$_}[0], $functions{$_}[1], [ $k ] ];
+                }
+            }
+        }
     }
 }
 
+parse_file( "gl.xml", 1 );
+parse_file( "wgl.xml", 0 );
+
 #
-# Clean up the input files
+# Get the current wgl_driver.h version
 #
-close(TYPES);
-close(REGISTRY);
+my $wgl_version = 0;
+open HEADER, "<$wgl_driver_file" or die "cannot open $wgl_driver_file";
+while (<HEADER>)
+{
+    next unless /^#define WINE_WGL_DRIVER_VERSION (\d+)/;
+    $wgl_version = $1;
+    last;
+}
+close HEADER;
+
+#
+# Generate the wgl_driver.h file
+#
+open HEADER, ">$wgl_driver_file" or die "cannot create $wgl_driver_file";
+print HEADER "/* Automatically generated from http://www.opengl.org/registry files; DO NOT EDIT! */\n\n";
+print HEADER "#ifndef __WINE_WGL_DRIVER_H\n";
+print HEADER "#define __WINE_WGL_DRIVER_H\n\n";
+print HEADER "#ifndef WINE_GLAPI\n";
+print HEADER "#define WINE_GLAPI\n";
+print HEADER "#endif\n\n";
+
+printf HEADER "#define WINE_WGL_DRIVER_VERSION %u\n\n", $wgl_version + 1;
+
+print HEADER "struct wgl_context;\n";
+print HEADER "struct wgl_pbuffer;\n\n";
+
+print HEADER "struct opengl_funcs\n{\n";
+print HEADER "    struct\n    {\n";
+foreach (sort keys %wgl_functions)
+{
+    printf HEADER "        %s;\n", get_func_proto("(WINE_GLAPI *p_%s)", $_, $wgl_functions{$_});
+}
+print HEADER "    } wgl;\n\n";
+
+print HEADER "    struct\n    {\n";
+foreach (sort keys %norm_functions)
+{
+    next if $_ eq "glDebugEntry";
+    printf HEADER "        %s;\n", get_func_proto("(WINE_GLAPI *p_%s)", $_, $norm_functions{$_});
+}
+print HEADER "    } gl;\n\n";
+
+print HEADER "    struct\n    {\n";
+foreach (sort keys %ext_functions)
+{
+    printf HEADER "        %s;\n", get_func_proto("(WINE_GLAPI *p_%s)", $_, $ext_functions{$_});
+}
+print HEADER "    } ext;\n";
+print HEADER "};\n\n";
+
+print HEADER "#define ALL_WGL_FUNCS";
+foreach (sort keys %norm_functions)
+{
+    next if $_ eq "glDebugEntry";
+    printf HEADER " \\\n    USE_GL_FUNC(\%s)", $_;
+}
+print HEADER "\n\n";
+
+print HEADER "extern struct opengl_funcs * CDECL __wine_get_wgl_driver( HDC hdc, UINT version );\n";
+print HEADER "extern BOOL CDECL __wine_set_pixel_format( HWND hwnd, int format );\n\n";
+print HEADER "#endif /* __WINE_WGL_DRIVER_H */\n";
+close HEADER;
+
+#
+# Generate the wgl.h file
+#
+open HEADER, ">$wgl_file" or die "cannot create $wgl_file";
+print HEADER "/* Automatically generated from http://www.opengl.org/registry files; DO NOT EDIT! */\n\n";
+print HEADER "#ifndef __WINE_WGL_H\n";
+print HEADER "#define __WINE_WGL_H\n\n";
+
+print HEADER "#ifndef GLAPIENTRY\n";
+print HEADER "#define GLAPIENTRY __stdcall\n";
+print HEADER "#endif\n\n";
+
+foreach (sort keys %arg_conv)
+{
+    printf HEADER "typedef %-22s %s;\n", $arg_conv{$_}[1], $_;
+}
+print HEADER "\n";
+
+my $maxlen = 1;
+foreach (keys %enums) { $maxlen = length($_) if length($_) > $maxlen; }
+foreach (sort keys %enums)
+{
+    printf HEADER "#define %-*s %s\n", $maxlen, $_, $enums{$_};
+}
+print HEADER "\n";
+
+foreach (sort keys %norm_functions)
+{
+    printf HEADER "%s;\n", get_func_proto("GLAPIENTRY %s", $_, $norm_functions{$_});
+}
+
+print HEADER "\n#endif /* __WINE_WGL_H */\n";
+close HEADER;
 
 #
 # Now, generate the output files. First, the spec file.
 #
-open(SPEC, ">$spec_file");
+open(SPEC, ">$spec_file") or die "cannot create $spec_file";
 
 foreach (sort keys %norm_functions) {
-    my $func_name = $norm_functions{$_}->[0];
-    print SPEC "@  stdcall $func_name( ";
-    for (my $i = 0; $i < @{$norm_functions{$_}->[2]}; $i++) {
-	my $type = $norm_functions{$_}->[2]->[$i]->[0];
-	if ($type =~ /\*/) {
-	    print SPEC "ptr ";
-	} elsif (defined($arg_conv{$type})) {
-	    print SPEC "$@$arg_conv{$type}[0] ";
-	} else {
-	    die "No conversion for GL type $type...\n";
-	}
+    my $args=" ";
+    for (my $i = 0; $i < @{$norm_functions{$_}->[1]}; $i++) {
+        my $type = $norm_functions{$_}->[1]->[$i]->[0];
+        if ($type =~ /\*/) {
+            $args .= "ptr ";
+        } elsif (defined($arg_conv{$type})) {
+            $args .= "$@$arg_conv{$type}[0] ";
+        } else {
+            die "No conversion for GL type $type...\n";
+        }
     }
-    print SPEC ") wine_$func_name\n";
+    $args = substr($args,1,-1);
+    print SPEC "@ stdcall $_($args)\n";
 }
 
-print SPEC "@  stdcall wglChoosePixelFormat(long ptr) gdi32.ChoosePixelFormat
-@  stdcall wglCopyContext(long long long) gdi32.wglCopyContext
-@  stdcall wglCreateContext(long) gdi32.wglCreateContext
-@  stdcall wglCreateLayerContext(long long)
-@  stdcall wglDeleteContext(long) gdi32.wglDeleteContext
-@  stdcall wglDescribeLayerPlane(long long long long ptr)
-@  stdcall wglDescribePixelFormat(long long long ptr) gdi32.DescribePixelFormat
-@  stdcall wglGetCurrentContext() gdi32.wglGetCurrentContext
-@  stdcall wglGetCurrentDC() gdi32.wglGetCurrentDC
-@  stub    wglGetDefaultProcAddress
-@  stdcall wglGetLayerPaletteEntries(long long long long ptr)
-@  stdcall wglGetPixelFormat(long) gdi32.GetPixelFormat
-@  stdcall wglGetProcAddress(str)
-@  stdcall wglMakeCurrent(long long) gdi32.wglMakeCurrent
-@  stdcall wglRealizeLayerPalette(long long long)
-@  stdcall wglSetLayerPaletteEntries(long long long long ptr)
-@  stdcall wglSetPixelFormat(long long ptr) gdi32.SetPixelFormat
-@  stdcall wglShareLists(long long) gdi32.wglShareLists
-@  stdcall wglSwapBuffers(long)
-@  stdcall wglSwapLayerBuffers(long long)
-@  stdcall wglUseFontBitmapsA(long long long long) gdi32.wglUseFontBitmapsA
-@  stdcall wglUseFontBitmapsW(long long long long) gdi32.wglUseFontBitmapsW
-@  stdcall wglUseFontOutlinesA(long long long long long long long ptr)
-@  stdcall wglUseFontOutlinesW(long long long long long long long ptr)
+print SPEC "@ stdcall wglChoosePixelFormat(long ptr)
+@ stdcall wglCopyContext(long long long)
+@ stdcall wglCreateContext(long)
+@ stdcall wglCreateLayerContext(long long)
+@ stdcall wglDeleteContext(long)
+@ stdcall wglDescribeLayerPlane(long long long long ptr)
+@ stdcall wglDescribePixelFormat(long long long ptr)
+@ stdcall wglGetCurrentContext()
+@ stdcall wglGetCurrentDC()
+@ stub    wglGetDefaultProcAddress
+@ stdcall wglGetLayerPaletteEntries(long long long long ptr)
+@ stdcall wglGetPixelFormat(long)
+@ stdcall wglGetProcAddress(str)
+@ stdcall wglMakeCurrent(long long)
+@ stdcall wglRealizeLayerPalette(long long long)
+@ stdcall wglSetLayerPaletteEntries(long long long long ptr)
+@ stdcall wglSetPixelFormat(long long ptr)
+@ stdcall wglShareLists(long long)
+@ stdcall wglSwapBuffers(long)
+@ stdcall wglSwapLayerBuffers(long long)
+@ stdcall wglUseFontBitmapsA(long long long long)
+@ stdcall wglUseFontBitmapsW(long long long long)
+@ stdcall wglUseFontOutlinesA(long long long long long long long ptr)
+@ stdcall wglUseFontOutlinesW(long long long long long long long ptr)
 ";
 
 close(SPEC);
@@ -690,32 +886,62 @@ close(SPEC);
 #
 # After the spec file, the opengl_norm.c file
 #
-open(NORM, ">$norm_file");
+open(NORM, ">$norm_file") or die "cannot create $norm_file";
 print NORM "
 /* Auto-generated file... Do not edit ! */
 
 #include \"config.h\"
-#include \"opengl_ext.h\"
+#include <stdarg.h>
+#include \"winternl.h\"
+#include \"wingdi.h\"
+#include \"wine/wgl.h\"
+#include \"wine/wgl_driver.h\"
 #include \"wine/debug.h\"
 
 WINE_DEFAULT_DEBUG_CHANNEL(opengl);
 ";
-foreach (sort keys %norm_functions) {
-    my $string = GenerateThunk($norm_functions{$_}, 1, "", $gen_thread_safe, "");
 
+foreach (sort keys %norm_functions) {
+    my $string = GenerateThunk($_, $norm_functions{$_}, 1, "gl");
     print NORM "\n$string" if $string;
 }
+
+foreach (sort keys %wgl_functions) {
+    print NORM generate_null_func($_, $wgl_functions{$_});
+}
+foreach (sort keys %norm_functions) {
+    print NORM generate_null_func($_, $norm_functions{$_});
+}
+foreach (sort keys %ext_functions) {
+    print NORM generate_null_func($_, $ext_functions{$_});
+}
+
+print NORM "\nstruct opengl_funcs null_opengl_funcs =\n{\n    {\n";
+foreach (sort keys %wgl_functions) { print NORM "        null_$_,\n"; }
+print NORM "    },\n    {\n";
+foreach (sort keys %norm_functions) { print NORM "        null_$_,\n" unless $_ eq "glDebugEntry"; }
+print NORM "    },\n    {\n";
+foreach (sort keys %ext_functions) { print NORM "        null_$_,\n"; }
+print NORM "    }\n};\n";
+
 close(NORM);
 
 #
 # Finally, more complex, the opengl_ext.c file
 #
-open(EXT, ">$ext_file");
+open(EXT, ">$ext_file") or die "cannot create $ext_file";
 print EXT "
 /* Auto-generated file... Do not edit ! */
 
 #include \"config.h\"
+#include <stdarg.h>
 #include \"opengl_ext.h\"
+#include \"winternl.h\"
+#include \"wingdi.h\"
+#include \"wine/wgl.h\"
+#define WGL_WGLEXT_PROTOTYPES
+#include \"wine/wglext.h\"
+#include \"wine/wgl_driver.h\"
 #include \"wine/debug.h\"
 
 WINE_DEFAULT_DEBUG_CHANNEL(opengl);
@@ -724,44 +950,24 @@ WINE_DEFAULT_DEBUG_CHANNEL(opengl);
 
 # The thunks themselves....
 my $count = keys %ext_functions;
-print EXT "enum extensions\n{\n";
+print EXT "const int extension_registry_size = $count;\n";
 foreach (sort keys %ext_functions) {
-    my $func_ref = $ext_functions{$_};
-    print EXT "    EXT_$func_ref->[0],\n";
-}
-print EXT "    NB_EXTENSIONS\n};\n\n";
-print EXT "const int extension_registry_size = NB_EXTENSIONS;\n";
-print EXT "void *extension_funcs[NB_EXTENSIONS];\n";
-print EXT "\n/* The thunks themselves....*/";
-foreach (sort keys %ext_functions) {
-    my $func_ref = $ext_functions{$_};
-    my $local_var = "  " . ConvertType($func_ref->[1]) . " (*$ext_prefix$func_ref->[0])( ";
-    for (my $i = 0; $i < @{$func_ref->[2]}; $i++) {
-	my $type = ConvertType($func_ref->[2]->[$i]->[0]);
-	$local_var .= "$type";
-	if ($i+1 < @{$func_ref->[2]}) {
-	    $local_var .= ", ";
-	} else {
-	    $local_var .= " ";
-	}
+    my $string = GenerateThunk($_, $ext_functions{$_}, 0, "ext");
+    if ($string =~ /DECLSPEC_HIDDEN/) {
+        print EXT "\n$string";
+    } else {
+        print EXT "\nstatic $string" if $string;
     }
-    $local_var .= 'void ' if (!@{$func_ref->[2]});
-    $local_var .= ") = extension_funcs[EXT_$func_ref->[0]];\n";
-    print EXT "\nstatic ", GenerateThunk($ext_functions{$_}, 0, $ext_prefix, $gen_thread_safe, $local_var);
 }
 
 # Then the table giving the string <-> function correspondence */
-print EXT "\n\n/* The table giving the correspondence between names and functions */\n";
-print EXT "const OpenGL_extension extension_registry[NB_EXTENSIONS] = {\n";
+print EXT "\nconst OpenGL_extension extension_registry[$count] = {\n";
 my $i = 0;
 foreach (sort keys %ext_functions) {
     my $func_ref = $ext_functions{$_};
-    if ($func_ref->[0] eq $func_ref->[3])
-    {
-        print EXT "  { \"$func_ref->[0]\", \"$func_ref->[4]\", wine_$func_ref->[0] }";
-    }
+    printf EXT "  { \"%s\", \"%s\", %s }", $_, join(" ", sort @{$func_ref->[2]}), $_;
     if ($i != $count-1) {
-	print EXT ",";
+        print EXT ",";
     }
     $i++;
     print EXT "\n";

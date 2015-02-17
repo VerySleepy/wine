@@ -172,7 +172,7 @@ EMFDRV_ArcChordPie( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
         if(bounds.left > xCentre) bounds.left = xCentre;
 	else if(bounds.right < xCentre) bounds.right = xCentre;
 	if(bounds.top > yCentre) bounds.top = yCentre;
-	else if(bounds.bottom < yCentre) bounds.right = yCentre;
+	else if(bounds.bottom < yCentre) bounds.bottom = yCentre;
     }
     if(!EMFDRV_WriteRecord( dev, &emr.emr ))
         return FALSE;
@@ -449,6 +449,26 @@ BOOL EMFDRV_Polygon( PHYSDEV dev, const POINT* pt, INT count )
     if( EMFDRV_Polylinegon16( dev, pt, count, EMR_POLYGON16 ) )
         return TRUE;
     return EMFDRV_Polylinegon( dev, pt, count, EMR_POLYGON );
+}
+
+/**********************************************************************
+ *          EMFDRV_PolyBezier
+ */
+BOOL EMFDRV_PolyBezier( PHYSDEV dev, const POINT *pts, DWORD count )
+{
+    if(EMFDRV_Polylinegon16( dev, pts, count, EMR_POLYBEZIER16 ))
+        return TRUE;
+    return EMFDRV_Polylinegon( dev, pts, count, EMR_POLYBEZIER );
+}
+
+/**********************************************************************
+ *          EMFDRV_PolyBezierTo
+ */
+BOOL EMFDRV_PolyBezierTo( PHYSDEV dev, const POINT *pts, DWORD count )
+{
+    if(EMFDRV_Polylinegon16( dev, pts, count, EMR_POLYBEZIERTO16 ))
+        return TRUE;
+    return EMFDRV_Polylinegon( dev, pts, count, EMR_POLYBEZIERTO );
 }
 
 

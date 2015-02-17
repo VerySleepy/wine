@@ -75,16 +75,17 @@ static inline int pf_output_stringW( pf_output *out, LPCWSTR str, int len )
     if( out->unicode )
     {
         LPWSTR p = out->buf.W + out->used;
+        out->used += len;
 
+        if (!out->buf.W)
+            return len;
         if( space >= len )
         {
             memcpy( p, str, len*sizeof(WCHAR) );
-            out->used += len;
             return len;
         }
         if( space > 0 )
             memcpy( p, str, space*sizeof(WCHAR) );
-        out->used += len;
     }
     else
     {
@@ -92,14 +93,16 @@ static inline int pf_output_stringW( pf_output *out, LPCWSTR str, int len )
         ULONG n;
 
         RtlUnicodeToMultiByteSize( &n, str, len * sizeof(WCHAR) );
+        out->used += n;
+
+        if (!out->buf.A)
+            return len;
         if( space >= n )
         {
             RtlUnicodeToMultiByteN( p, n, NULL, str, len * sizeof(WCHAR) );
-            out->used += n;
             return len;
         }
         if (space > 0) RtlUnicodeToMultiByteN( p, space, NULL, str, len * sizeof(WCHAR) );
-        out->used += n;
     }
     return -1;
 }
@@ -113,16 +116,17 @@ static inline int pf_output_stringA( pf_output *out, LPCSTR str, int len )
     if( !out->unicode )
     {
         LPSTR p = out->buf.A + out->used;
+        out->used += len;
 
+        if (!out->buf.A)
+            return len;
         if( space >= len )
         {
             memcpy( p, str, len );
-            out->used += len;
             return len;
         }
         if( space > 0 )
             memcpy( p, str, space );
-        out->used += len;
     }
     else
     {
@@ -130,14 +134,16 @@ static inline int pf_output_stringA( pf_output *out, LPCSTR str, int len )
         ULONG n;
 
         RtlMultiByteToUnicodeSize( &n, str, len );
+        out->used += n / sizeof(WCHAR);
+
+        if (!out->buf.W)
+            return len;
         if (space >= n / sizeof(WCHAR))
         {
             RtlMultiByteToUnicodeN( p, n, NULL, str, len );
-            out->used += n / sizeof(WCHAR);
             return len;
         }
         if (space > 0) RtlMultiByteToUnicodeN( p, space * sizeof(WCHAR), NULL, str, len );
-        out->used += n;
     }
     return -1;
 }
@@ -169,7 +175,7 @@ static inline int pf_fill( pf_output *out, int len, pf_flags *flags, char left )
         }
     }
 
-    if( left && flags->Sign && !flags->PadZero )
+    if (left && flags->Sign && !flags->PadZero && r >= 0)
         r = pf_output_stringA( out, &flags->Sign, 1 );
 
     return r;
@@ -244,7 +250,7 @@ static inline BOOL pf_is_integer_format( char fmt )
     static const char float_fmts[] = "diouxX";
     if (!fmt)
         return FALSE;
-    return strchr( float_fmts, fmt ) ? TRUE : FALSE;
+    return strchr( float_fmts, fmt ) != 0;
 }
 
 static inline BOOL pf_is_double_format( char fmt )
@@ -252,7 +258,7 @@ static inline BOOL pf_is_double_format( char fmt )
     static const char float_fmts[] = "aeEfgG";
     if (!fmt)
         return FALSE;
-    return strchr( float_fmts, fmt ) ? TRUE : FALSE;
+    return strchr( float_fmts, fmt ) != 0;
 }
 
 static inline BOOL pf_is_valid_format( char fmt )
@@ -260,7 +266,7 @@ static inline BOOL pf_is_valid_format( char fmt )
     static const char float_fmts[] = "acCdeEfgGinouxX";
     if (!fmt)
         return FALSE;
-    return strchr( float_fmts, fmt ) ? TRUE : FALSE;
+    return strchr( float_fmts, fmt ) != 0;
 }
 
 static void pf_rebuild_format_string( char *p, pf_flags *flags )
@@ -300,7 +306,13 @@ static void pf_integer_conv( char *buf, int buf_len, pf_flags *flags,
     char number[40], *tmp = number;
 
     if( buf_len > sizeof number )
-        tmp = RtlAllocateHeap( GetProcessHeap(), 0, buf_len );
+    {
+        if (!(tmp = RtlAllocateHeap( GetProcessHeap(), 0, buf_len )))
+        {
+            buf[0] = '\0';
+            return;
+        }
+    }
 
     base = 10;
     if( flags->Format == 'o' )
@@ -414,7 +426,7 @@ static int pf_vsnprintf( pf_output *out, const WCHAR *format, __ms_va_list valis
     {
         q = strchrW( p, '%' );
 
-        /* there's no % characters left, output the rest of the string */
+        /* there are no % characters left: output the rest of the string */
         if( !q )
         {
             r = pf_output_stringW(out, p, -1);
@@ -424,7 +436,7 @@ static int pf_vsnprintf( pf_output *out, const WCHAR *format, __ms_va_list valis
             continue;
         }
 
-        /* there's characters before the %, output them */
+        /* there are characters before the %: output them */
         if( q != p )
         {
             r = pf_output_stringW(out, p, q - p);
@@ -588,7 +600,8 @@ static int pf_vsnprintf( pf_output *out, const WCHAR *format, __ms_va_list valis
                         flags.FieldLength : flags.Precision) + 10;
 
             if( x_len >= sizeof number)
-                x = RtlAllocateHeap( GetProcessHeap(), 0, x_len );
+                if (!(x = RtlAllocateHeap( GetProcessHeap(), 0, x_len )))
+                    return -1;
 
             pf_integer_conv( x, x_len, &flags, va_arg(valist, LONGLONG) );
 
@@ -611,7 +624,8 @@ static int pf_vsnprintf( pf_output *out, const WCHAR *format, __ms_va_list valis
                         flags.FieldLength : flags.Precision) + 10;
 
             if( x_len >= sizeof number)
-                x = RtlAllocateHeap( GetProcessHeap(), 0, x_len );
+                if (!(x = RtlAllocateHeap( GetProcessHeap(), 0, x_len )))
+                    return -1;
 
             pf_rebuild_format_string( fmt, &flags );
 

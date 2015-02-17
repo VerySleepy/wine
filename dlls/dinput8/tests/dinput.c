@@ -22,6 +22,7 @@
 #include <initguid.h>
 #include <windows.h>
 #include <dinput.h>
+#include <dinputd.h>
 
 #include "wine/test.h"
 
@@ -62,11 +63,11 @@ static void test_preinitialization(void)
         {0, NULL, 0, DIERR_INVALIDPARAM},
         {0, NULL, ~0u, DIERR_INVALIDPARAM},
         {0, dummy_callback, 0, DIERR_NOTINITIALIZED},
-        {0, dummy_callback, ~0u, DIERR_INVALIDPARAM, 1},
+        {0, dummy_callback, ~0u, DIERR_INVALIDPARAM},
         {0xdeadbeef, NULL, 0, DIERR_INVALIDPARAM},
         {0xdeadbeef, NULL, ~0u, DIERR_INVALIDPARAM},
-        {0xdeadbeef, dummy_callback, 0, DIERR_INVALIDPARAM, 1},
-        {0xdeadbeef, dummy_callback, ~0u, DIERR_INVALIDPARAM, 1},
+        {0xdeadbeef, dummy_callback, 0, DIERR_INVALIDPARAM},
+        {0xdeadbeef, dummy_callback, ~0u, DIERR_INVALIDPARAM},
     };
 
     IDirectInput8A *pDI;
@@ -108,7 +109,6 @@ static void test_preinitialization(void)
     }
 
     hr = IDirectInput8_GetDeviceStatus(pDI, NULL);
-    todo_wine
     ok(hr == E_POINTER, "IDirectInput8_GetDeviceStatus returned 0x%08x\n", hr);
 
     hr = IDirectInput8_GetDeviceStatus(pDI, &GUID_Unknown);
@@ -225,7 +225,7 @@ static void test_DirectInput8Create(void)
 
 static void test_QueryInterface(void)
 {
-    static REFIID iid_list[] = {&IID_IUnknown, &IID_IDirectInput8A, &IID_IDirectInput8W};
+    static REFIID iid_list[] = {&IID_IUnknown, &IID_IDirectInput8A, &IID_IDirectInput8W, &IID_IDirectInputJoyConfig8};
 
     static const struct
     {
@@ -279,7 +279,19 @@ static void test_QueryInterface(void)
         hr = IDirectInput8_QueryInterface(pDI, iid_list[i], (void **)&pUnk);
         ok(hr == S_OK, "[%d] IDirectInput8_QueryInterface returned 0x%08x\n", i, hr);
         ok(pUnk != NULL, "[%d] Output interface pointer is NULL\n", i);
-        if (pUnk) IUnknown_Release(pUnk);
+        if (pUnk)
+        {
+            int j;
+            for (j = 0; j < sizeof(iid_list)/sizeof(iid_list[0]); j++)
+            {
+                IUnknown *pUnk1 = NULL;
+                hr = IDirectInput8_QueryInterface(pUnk, iid_list[j], (void **)&pUnk1);
+                ok(hr == S_OK, "[%d] IDirectInput8_QueryInterface(pUnk) returned 0x%08x\n", j, hr);
+                ok(pUnk1 != NULL, "[%d] Output interface pointer is NULL\n", i);
+                if (pUnk1) IUnknown_Release(pUnk1);
+            }
+            IUnknown_Release(pUnk);
+        }
     }
 
     for (i = 0; i < sizeof(no_interface_list)/sizeof(no_interface_list[0]); i++)
@@ -391,11 +403,9 @@ static void test_EnumDevices(void)
     ok(hr == DIERR_INVALIDPARAM, "IDirectInput8_EnumDevices returned 0x%08x\n", hr);
 
     hr = IDirectInput8_EnumDevices(pDI, 0xdeadbeef, enum_devices_callback, NULL, 0);
-    todo_wine
     ok(hr == DIERR_INVALIDPARAM, "IDirectInput8_EnumDevices returned 0x%08x\n", hr);
 
     hr = IDirectInput8_EnumDevices(pDI, 0xdeadbeef, enum_devices_callback, NULL, ~0u);
-    todo_wine
     ok(hr == DIERR_INVALIDPARAM, "IDirectInput8_EnumDevices returned 0x%08x\n", hr);
 
     enum_test.device_count = 0;
@@ -426,11 +436,11 @@ struct enum_semantics_test
     unsigned int device_count;
     BOOL mouse;
     BOOL keyboard;
-    LPDIACTIONFORMAT lpdiaf;
+    DIACTIONFORMATA *lpdiaf;
     const char* username;
 };
 
-static DIACTION actionMapping[]=
+static DIACTIONA actionMapping[]=
 {
   /* axis */
   { 0, 0x01008A01 /* DIAXIS_DRIVINGR_STEER */,      0, { "Steer" }   },
@@ -444,7 +454,7 @@ static DIACTION actionMapping[]=
   { 4, DIMOUSE_YAXIS,                               0, { "Y Axis" }  }
 };
 
-static BOOL CALLBACK enum_semantics_callback(LPCDIDEVICEINSTANCE lpddi, IDirectInputDevice8A *lpdid, DWORD dwFlags, DWORD dwRemaining, void *context)
+static BOOL CALLBACK enum_semantics_callback(const DIDEVICEINSTANCEA *lpddi, IDirectInputDevice8A *lpdid, DWORD dwFlags, DWORD dwRemaining, void *context)
 {
     struct enum_semantics_test *data = context;
 
@@ -459,7 +469,7 @@ static BOOL CALLBACK enum_semantics_callback(LPCDIDEVICEINSTANCE lpddi, IDirectI
     return DIENUM_CONTINUE;
 }
 
-static BOOL CALLBACK set_action_map_callback(LPCDIDEVICEINSTANCE lpddi, IDirectInputDevice8A *lpdid, DWORD dwFlags, DWORD dwRemaining, void *context)
+static BOOL CALLBACK set_action_map_callback(const DIDEVICEINSTANCEA *lpddi, IDirectInputDevice8A *lpdid, DWORD dwFlags, DWORD dwRemaining, void *context)
 {
     HRESULT hr;
     struct enum_semantics_test *data = context;
@@ -493,7 +503,7 @@ static void test_EnumDevicesBySemantics(void)
 
     memset (&diaf, 0, sizeof(diaf));
     diaf.dwSize = sizeof(diaf);
-    diaf.dwActionSize = sizeof(DIACTION);
+    diaf.dwActionSize = sizeof(DIACTIONA);
     diaf.dwNumActions = sizeof(actionMapping) / sizeof(actionMapping[0]);
     diaf.dwDataSize = 4 * diaf.dwNumActions;
     diaf.rgoAction = actionMapping;
@@ -588,7 +598,6 @@ static void test_GetDeviceStatus(void)
     }
 
     hr = IDirectInput8_GetDeviceStatus(pDI, NULL);
-    todo_wine
     ok(hr == E_POINTER, "IDirectInput8_GetDeviceStatus returned 0x%08x\n", hr);
 
     hr = IDirectInput8_GetDeviceStatus(pDI, &GUID_Unknown);

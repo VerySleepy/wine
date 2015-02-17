@@ -18,11 +18,81 @@
 
 var tmp, i;
 
+var bigInt = Math.pow(2,40);
+
 ok(ScriptEngine() === "JScript", "ScriptEngine() = " + ScriptEngine());
 ok(ScriptEngine(3) === "JScript", "ScriptEngine(3) = " + ScriptEngine(3));
 ok(ScriptEngineMajorVersion() === ScriptEngineMajorVersion(2), "ScriptEngineMajorVersion() !== ScriptEngineMajorVersion(2)");
 ok(ScriptEngineMinorVersion() === ScriptEngineMinorVersion(2), "ScriptEngineMinorVersion() !== ScriptEngineMinorVersion(2)");
 ok(ScriptEngineBuildVersion() === ScriptEngineBuildVersion(2), "ScriptEngineBuildVersion() !== ScriptEngineBuildVersion(2)");
+
+function testNoEnumerables(expr) {
+    for(var iter in obj)
+        ok(false, expr + " has property " + iter);
+}
+
+testNoEnumerables("Object");
+testNoEnumerables("Object.prototype");
+testNoEnumerables("new Object()");
+testNoEnumerables("Math");
+testNoEnumerables("String");
+testNoEnumerables("String.prototype");
+testNoEnumerables("new String()");
+testNoEnumerables("Number");
+testNoEnumerables("Number.prototype");
+testNoEnumerables("new Number(1)");
+testNoEnumerables("ActiveXObject");
+testNoEnumerables("Array");
+testNoEnumerables("Array.prototype");
+testNoEnumerables("new Array()");
+testNoEnumerables("Boolean");
+testNoEnumerables("Boolean.prototype");
+testNoEnumerables("new Boolean()");
+testNoEnumerables("Date");
+testNoEnumerables("Date.prototype");
+testNoEnumerables("new Date()");
+testNoEnumerables("TypeError");
+testNoEnumerables("TypeError.prototype");
+testNoEnumerables("new TypeError()");
+testNoEnumerables("Function");
+testNoEnumerables("Function.prototype");
+testNoEnumerables("testNoEnumerates");
+testNoEnumerables("VBArray");
+
+ok(Object.propertyIsEnumerable("prototype") === false, "Object.prototype is enumerable");
+ok(Math.propertyIsEnumerable("E") === false, "Math.E is enumerable");
+ok(Math.propertyIsEnumerable("SQRT2") === false, "Math.SQRT2 is enumerable");
+ok(Math.propertyIsEnumerable("PI") === false, "Math.PI is enumerable");
+ok("test".propertyIsEnumerable("length") === false, "'test'.length is enumerable");
+ok([1].propertyIsEnumerable("length") === false, "[1].length is enumerable");
+ok((new TypeError()).propertyIsEnumerable("message") === true, "(new TypeError()).message is not enumerable");
+ok((new TypeError()).propertyIsEnumerable("description") === false, "(new TypeError()).description is enumerable");
+ok((new TypeError()).propertyIsEnumerable("name") === false, "(new TypeError()).name is enumerable");
+ok((new TypeError()).propertyIsEnumerable("number") === false, "(new TypeError()).number is enumerable");
+ok(Object.propertyIsEnumerable.propertyIsEnumerable("length") === false, "Object.propertyIsEnumerable.length is enumerable");
+
+tmp = new Object();
+tmp.test = "1";
+ok(tmp.propertyIsEnumerable("test"), "tmp.test is not enumerable");
+
+tmp = { test: 1 };
+ok(tmp.propertyIsEnumerable("test"), "tmp.test is not enumerable");
+
+ok([1].concat([2]).propertyIsEnumerable("1"), "[1].concat([2]).1 is not enumerable");
+ok("t.e.s.t".split(".").propertyIsEnumerable("0"), "'test'.split().0 is not enumerable");
+
+(function() {
+    ok(arguments.propertyIsEnumerable("0") === false, "arguments.0 is enumerable");
+    ok(arguments.propertyIsEnumerable("length") === false, "arguments.length is enumerable");
+    ok(arguments.propertyIsEnumerable("calee") === false, "arguments.calee is enumerable");
+})();
+
+tmp = [1];
+tmp.push("");
+ok(tmp.propertyIsEnumerable("1"), "[1].push() ... 1 is not enumerable");
+
+ok([1,2].reverse().propertyIsEnumerable("1"), "[1,2].rverse().1 is not enumerable");
+ok([1,2].propertyIsEnumerable("0"), "[1,2].0 is not enumerable");
 
 i = parseInt("0");
 ok(i === 0, "parseInt('0') = " + i);
@@ -196,6 +266,54 @@ tmp = "aA1~`!@#$%^&*()_+=-][{}';:/.,<>?\|";
 ok(escape(tmp) === "aA1%7E%60%21@%23%24%25%5E%26*%28%29_+%3D-%5D%5B%7B%7D%27%3B%3A/.%2C%3C%3E%3F%7C", "escape('" + tmp + "') = " + escape(tmp));
 ok(unescape(escape(tmp)) === tmp, "unescape(escape('" + tmp + "')) = " + unescape(escape(tmp)));
 
+ok(Object.prototype.hasOwnProperty('toString'), "Object.prototype.hasOwnProperty('toString') is false");
+ok(Object.prototype.hasOwnProperty('isPrototypeOf'), "Object.prototype.hasOwnProperty('isPrototypeOf') is false");
+ok(Function.prototype.hasOwnProperty('call'), "Function.prototype.hasOwnProperty('call') is false");
+
+obj = new Object();
+
+ok(!obj.hasOwnProperty('toString'), "obj.hasOwnProperty('toString') is true");
+ok(!obj.hasOwnProperty('isPrototypeOf'), "obj.hasOwnProperty('isPrototypeOf') is true");
+ok(!Object.hasOwnProperty('toString'), "Object.hasOwnProperty('toString') is true");
+ok(!Object.hasOwnProperty('isPrototypeOf'), "Object.hasOwnProperty('isPrototypeOf') is true");
+ok(!parseFloat.hasOwnProperty('call'), "parseFloat.hasOwnProperty('call') is true");
+ok(!Function.hasOwnProperty('call'), "Function.hasOwnProperty('call') is true");
+
+obj = new Array();
+ok(Array.prototype.hasOwnProperty('sort'), "Array.prototype.hasOwnProperty('sort') is false");
+ok(Array.prototype.hasOwnProperty('length'), "Array.prototype.hasOwnProperty('length') is false");
+ok(!obj.hasOwnProperty('sort'), "obj.hasOwnProperty('sort') is true");
+ok(obj.hasOwnProperty('length'), "obj.hasOwnProperty('length') is true");
+
+obj = new Boolean(false);
+ok(!obj.hasOwnProperty('toString'), "obj.hasOwnProperty('toString') is true");
+ok(!Boolean.hasOwnProperty('toString'), "Boolean.hasOwnProperty('toString') is true");
+ok(Boolean.prototype.hasOwnProperty('toString'), "Boolean.prototype.hasOwnProperty('toString') is false");
+
+obj = new Date();
+ok(!obj.hasOwnProperty('getTime'), "obj.hasOwnProperty('getTime') is true");
+ok(!Date.hasOwnProperty('getTime'), "Date.hasOwnProperty('getTime') is true");
+ok(Date.prototype.hasOwnProperty('getTime'), "Date.prototype.hasOwnProperty('getTime') is false");
+
+obj = new Number();
+ok(!obj.hasOwnProperty('toFixed'), "obj.hasOwnProperty('toFixed') is true");
+ok(!Number.hasOwnProperty('toFixed'), "Number.hasOwnProperty('toFixed') is true");
+ok(Number.prototype.hasOwnProperty('toFixed'), "Number.prototype.hasOwnProperty('toFixed') is false");
+
+obj = /x/;
+ok(!obj.hasOwnProperty('exec'), "obj.hasOwnProperty('exec') is true");
+ok(obj.hasOwnProperty('source'), "obj.hasOwnProperty('source') is false");
+ok(!RegExp.hasOwnProperty('exec'), "RegExp.hasOwnProperty('exec') is true");
+ok(!RegExp.hasOwnProperty('source'), "RegExp.hasOwnProperty('source') is true");
+ok(RegExp.prototype.hasOwnProperty('source'), "RegExp.prototype.hasOwnProperty('source') is false");
+
+obj = new String();
+ok(!obj.hasOwnProperty('charAt'), "obj.hasOwnProperty('charAt') is true");
+ok(obj.hasOwnProperty('length'), "obj.hasOwnProperty('length') is false");
+ok(!String.hasOwnProperty('charAt'), "String.hasOwnProperty('charAt') is true");
+ok(String.prototype.hasOwnProperty('charAt'), "String.prototype.hasOwnProperty('charAt') is false");
+ok(String.prototype.hasOwnProperty('length'), "String.prototype.hasOwnProperty('length') is false");
+
 tmp = "" + new Object();
 ok(tmp === "[object Object]", "'' + new Object() = " + tmp);
 (tmp = new Array).f = Object.prototype.toString;
@@ -222,6 +340,11 @@ ok(tmp === "[object Object]", "toString.call(this) = " + tmp);
 ok(tmp === "[object Object]", "toString.call(arguments) = " + tmp);
 tmp = Object.prototype.toString.call(new VBArray(createArray()));
 ok(tmp === "[object Object]", "toString.call(new VBArray()) = " + tmp);
+
+function TSTestConstr() {}
+TSTestConstr.prototype = { toString: function() { return "test"; } };
+obj = new TSTestConstr();
+ok(obj.toString() === "test", "obj.toString() = " + obj.toString());
 
 ok(Object(1) instanceof Number, "Object(1) is not instance of Number");
 ok(Object("") instanceof String, "Object('') is not instance of String");
@@ -306,6 +429,8 @@ tmp = "abc".charAt(0,2);
 ok(tmp === "a", "'abc',charAt(0.2) = " + tmp);
 tmp = "abc".charAt(NaN);
 ok(tmp === "a", "'abc',charAt(NaN) = " + tmp);
+tmp = "abc".charAt(bigInt);
+ok(tmp === "", "'abc',charAt(bigInt) = " + tmp);
 
 tmp = "abc".charCodeAt(0);
 ok(tmp === 0x61, "'abc'.charCodeAt(0) = " + tmp);
@@ -325,6 +450,8 @@ tmp = "\052".charCodeAt(0);
 ok(tmp === 0x2A, "'\052'.charCodeAt(0) = " + tmp);
 tmp = "\xa2".charCodeAt(0);
 ok(tmp === 0xA2, "'\xa2'.charCodeAt(0) = " + tmp);
+tmp = "abc".charCodeAt(bigInt);
+ok(isNaN(tmp), "'abc'.charCodeAt(bigInt) = " + tmp);
 
 tmp = "abcd".substring(1,3);
 ok(tmp === "bc", "'abcd'.substring(1,3) = " + tmp);
@@ -389,7 +516,7 @@ ok(tmp === "2,ad", "arr.concat = " + tmp);
 m = "a+bcabc".match("a+");
 ok(typeof(m) === "object", "typeof m is not object");
 ok(m.length === 1, "m.length is not 1");
-ok(m["0"] === "a", "m[0] is not \"ab\"");
+ok(m["0"] === "a", "m[0] is not \"a\"");
 
 r = "- [test] -".replace("[test]", "success");
 ok(r === "- success -", "r = " + r + " expected '- success -'");
@@ -402,7 +529,7 @@ ok(r === "test", "r = " + r + " expected 'test'");
 
 function replaceFunc3(m, off, str) {
     ok(arguments.length === 3, "arguments.length = " + arguments.length);
-    ok(m === "[test]", "m = " + m + " expected [test1]");
+    ok(m === "[test]", "m = " + m + " expected [test]");
     ok(off === 1, "off = " + off + " expected 0");
     ok(str === "-[test]-", "str = " + arguments[3]);
     return "ret";
@@ -414,13 +541,21 @@ ok(r === "-ret-", "r = " + r + " expected '-ret-'");
 r = "-[test]-".replace("[test]", replaceFunc3, "test");
 ok(r === "-ret-", "r = " + r + " expected '-ret-'");
 
+r = "x,x,x".replace("x", "y");
+ok(r === "y,x,x", "r = " + r + " expected 'y,x,x'");
+
+r = "x,x,x".replace("", "y");
+ok(r === "yx,x,x", "r = " + r + " expected 'yx,x,x'");
+
+r = "x,x,x".replace("", "");
+ok(r === "x,x,x", "r = " + r + " expected 'x,x,x'");
+
 r = "1,2,3".split(",");
 ok(typeof(r) === "object", "typeof(r) = " + typeof(r));
 ok(r.length === 3, "r.length = " + r.length);
 ok(r[0] === "1", "r[0] = " + r[0]);
 ok(r[1] === "2", "r[1] = " + r[1]);
 ok(r[2] === "3", "r[2] = " + r[2]);
-
 
 r = "1,2,3".split(",*");
 ok(r.length === 1, "r.length = " + r.length);
@@ -444,6 +579,23 @@ ok(r[0] === "1", "r[0] = " + r[0]);
 ok(r[1] === "2", "r[1] = " + r[1]);
 ok(r[2] === "", "r[2] = " + r[2]);
 
+r = "1,2,3".split(",", 2);
+ok(typeof(r) === "object", "typeof(r) = " + typeof(r));
+ok(r.length === 2, "r.length = " + r.length);
+ok(r[0] === "1", "r[0] = " + r[0]);
+ok(r[1] === "2", "r[1] = " + r[1]);
+
+r = "1,2,3".split(",", 0);
+ok(typeof(r) === "object", "typeof(r) = " + typeof(r));
+ok(r.length === 0, "r.length = " + r.length);
+
+r = "1,2,3".split(",", -1);
+ok(typeof(r) === "object", "typeof(r) = " + typeof(r));
+ok(r.length === 3, "r.length = " + r.length);
+ok(r[0] === "1", "r[0] = " + r[0]);
+ok(r[1] === "2", "r[1] = " + r[1]);
+ok(r[2] === "3", "r[1] = " + r[1]);
+
 tmp = "abcd".indexOf("bc",0);
 ok(tmp === 1, "indexOf = " + tmp);
 tmp = "abcd".indexOf("bc",1);
@@ -459,6 +611,8 @@ ok(tmp === 0, "indexOf = " + tmp);
 tmp = "abcd".indexOf("bc",0,"test");
 ok(tmp === 1, "indexOf = " + tmp);
 tmp = "abcd".indexOf();
+ok(tmp == -1, "indexOf = " + tmp);
+tmp = "abcd".indexOf("b", bigInt);
 ok(tmp == -1, "indexOf = " + tmp);
 
 tmp = "abcd".lastIndexOf("bc",1);
@@ -479,6 +633,8 @@ tmp = "aaaa".lastIndexOf("a",2);
 ok(tmp == 2, "lastIndexOf = " + tmp);
 tmp = strObj.lastIndexOf("b");
 ok(tmp === 1, "lastIndexOf = " + tmp);
+tmp = "bbb".lastIndexOf("b", bigInt);
+ok(tmp === 2, "lastIndexOf = " + tmp);
 
 tmp = "".toLowerCase();
 ok(tmp === "", "''.toLowerCase() = " + tmp);
@@ -721,6 +877,14 @@ arr = [,,,,,];
 tmp = arr.pop();
 ok(arr.length === 5, "arr.length = " + arr.length);
 ok(tmp === undefined, "tmp = " + tmp);
+
+function PseudoArray() {
+    this[0] = 0;
+}
+PseudoArray.prototype = {length: 1};
+arr = new PseudoArray();
+Array.prototype.push.call(arr, 2);
+ok(arr.propertyIsEnumerable("length"), "arr.length is not enumerable");
 
 arr = [1,2,null,false,undefined,,"a"];
 
@@ -987,6 +1151,28 @@ tmp = arr.splice();
 ok(tmp.toString() == "", "arr.splice(2,-1) returned " + tmp.toString());
 ok(arr.toString() == "1,2,3,4,5", "arr.splice(2,-1) is " + arr.toString());
 
+arr = [1,2,3,4,5];
+tmp = arr.splice(bigInt);
+ok(tmp.toString() == "", "arr.splice(bigInt) returned " + tmp.toString());
+ok(arr.toString() == "1,2,3,4,5", "arr.splice(bigInt) is " + arr.toString());
+
+arr = [1,2,3,4,5];
+tmp = arr.splice(-bigInt);
+ok(tmp.toString() == "", "arr.splice(-bigInt) returned " + tmp.toString());
+ok(arr.toString() == "1,2,3,4,5", "arr.splice(-bigInt) is " + arr.toString());
+
+if(invokeVersion >= 2) {
+    arr = [1,2,3,4,5];
+    tmp = arr.splice(2, bigInt);
+    ok(tmp.toString() == "3,4,5", "arr.splice(2, bigInt) returned " + tmp.toString());
+    ok(arr.toString() == "1,2", "arr.splice(2, bigInt) is " + arr.toString());
+}
+
+arr = [1,2,3,4,5];
+tmp = arr.splice(2, -bigInt);
+ok(tmp.toString() == "", "arr.splice(2, -bigInt) returned " + tmp.toString());
+ok(arr.toString() == "1,2,3,4,5", "arr.splice(2, -bigInt) is " + arr.toString());
+
 obj = new Object();
 obj.length = 3;
 obj[0] = 1;
@@ -1009,10 +1195,71 @@ tmp = Array.prototype.slice.call(obj, 1, 2);
 ok(tmp.length === 1, "tmp.length = " + tmp.length);
 ok(tmp[0] === 2, "tmp[0] = " + tmp[0]);
 
-var num = new Number(2);
-ok(num.toString() === "2", "num(2).toString !== 2");
-var num = new Number();
-ok(num.toString() === "0", "num().toString !== 0");
+tmp = (new Number(2)).toString();
+ok(tmp === "2", "num(2).toString = " + tmp);
+tmp = (new Number()).toString();
+ok(tmp === "0", "num().toString = " + tmp);
+tmp = (new Number(5.5)).toString(2);
+ok(tmp === "101.1", "num(5.5).toString(2) = " + tmp);
+
+tmp = (new Number(3)).toFixed(3);
+ok(tmp === "3.000", "num(3).toFixed(3) = " + tmp);
+tmp = (new Number(3)).toFixed();
+ok(tmp === "3", "Number(3).toFixed() = " + tmp);
+tmp = (new Number(0)).toFixed();
+ok(tmp === "0", "Number(0).toFixed() = " + tmp);
+tmp = (new Number(0)).toFixed(1);
+ok(tmp === "0.0", "Number(0).toFixed(1) = " + tmp);
+tmp = (new Number(0)).toFixed(2);
+ok(tmp === "0.00", "Number(0).toFixed(2) = " + tmp);
+tmp = (new Number(1.76)).toFixed(1);
+ok(tmp === "1.8", "num(1.76).toFixed(1) = " + tmp);
+tmp = (new Number(7.92)).toFixed(5);
+ok(tmp === "7.92000", "num(7.92).toFixed(5) = " + tmp);
+tmp = (new Number(2.88)).toFixed();
+ok(tmp === "3", "num(2.88).toFixed = " + tmp);
+tmp = (new Number(-2.5)).toFixed();
+ok(tmp === "-3", "num(-2.5).toFixed = " + tmp);
+tmp = (new Number(1000000000000000128)).toFixed(0);
+//todo_wine ok(tmp === "1000000000000000100", "num(1000000000000000128) = " + tmp);
+tmp = (new Number(3.14).toFixed(NaN));
+ok(tmp === "3", "num(3.14).toFixed = " + tmp);
+tmp = (new Number(0.95).toFixed(1));
+ok(tmp === "1.0", "num(0.95).toFixed(1) = " + tmp);
+tmp = (new Number(1e900)).toFixed(0);
+ok(tmp === "Infinity", "num(1000000000000000128) = " + tmp);
+tmp = (new Number(0.12345678901234567890123)).toFixed(20);
+ok(tmp === "0.12345678901234568000", "num(0.12345678901234567890123) = " + tmp);
+
+tmp = (new Number(2)).toExponential(3);
+ok(tmp === "2.000e+0", "num(2).toExponential(3) = " + tmp);
+tmp = (new Number(1.17e-32)).toExponential(20);
+ok(tmp === "1.17000000000000000000e-32", "num(1.17e-32).toExponential(20) = " + tmp);
+tmp = (new Number(0)).toExponential(7);
+ok(tmp === "0.0000000e+0", "num(0).toExponential(7) = " + tmp);
+tmp = (new Number(0)).toExponential(0);
+ok(tmp === "0e+0", "num(0).toExponential() = " + tmp);
+tmp = (new Number(-13.7567)).toExponential();
+ok(tmp === "-1.37567e+1", "num(-13.7567).toExponential() = " + tmp);
+tmp = (new Number(-32.1)).toExponential();
+ok(tmp === "-3.21e+1", "num(-32.1).toExponential() = " + tmp);
+tmp = (new Number(4723.4235)).toExponential();
+ok(tmp === "4.7234235e+3", "num(4723.4235).toExponential() = " + tmp);
+
+tmp = (new Number(5)).toPrecision(12);
+ok(tmp == "5.00000000000", "num(5).toPrecision(12) = " + tmp);
+tmp = (new Number(7.73)).toPrecision(7);
+ok(tmp == "7.730000", "num(7.73).toPrecision(7) = " + tmp);
+tmp = (new Number(-127547.47472)).toPrecision(17);
+ok(tmp == "-127547.47472000000", "num(-127547.47472).toPrecision(17) = " + tmp);
+tmp = (new Number(0)).toPrecision(3);
+ok(tmp == "0.00", "num(0).toPrecision(3) = " + tmp);
+tmp = (new Number(42345.52342465464562334)).toPrecision(15);
+ok(tmp == "42345.5234246546", "num(42345.52342465464562334).toPrecision(15) = " + tmp);
+tmp = (new Number(1.182e30)).toPrecision(5);
+ok(tmp == "1.1820e+30", "num(1.182e30)).toPrecision(5) = " + tmp);
+tmp = (new Number(1.123)).toPrecision();
+ok(tmp == "1.123", "num(1.123).toPrecision() = " + tmp);
 
 ok(Number() === 0, "Number() = " + Number());
 ok(Number(false) === 0, "Number(false) = " + Number(false));
@@ -1546,13 +1793,18 @@ function callTest(argc) {
     ok(arguments.length === argc+1, "arguments.length = " + arguments.length + " expected " + (argc+1));
     for(var i=1; i <= argc; i++)
         ok(arguments[i] === i, "arguments[i] = " + arguments[i]);
+    var a = arguments;
+    for(var i=1; i <= argc; i++)
+        ok(a[i] === i, "a[i] = " + a[i]);
 }
 
 callTest.call(tmp, 1, 1);
 callTest.call(tmp, 2, 1, 2);
+callTest.call(tmp, 3, 1, 2, 3);
 
 callTest.apply(tmp, [1, 1]);
 callTest.apply(tmp, [2, 1, 2]);
+callTest.apply(tmp, [3, 1, 2, 3]);
 (function () { callTest.apply(tmp, arguments); })(2,1,2);
 
 function callTest2() {
@@ -1832,6 +2084,7 @@ ok(err.valueOf === Object.prototype.valueOf, "err.valueOf !== Object.prototype.v
 ok(Error.prototype.name === "Error", "Error.prototype.name = " + Error.prototype.name);
 ok(err.name === "Error", "err.name = " + err.name);
 EvalError.prototype.message = "test";
+ok(EvalError.prototype.message === "test", "EvalError.prototype.message = " + EvalError.prototype.message);
 ok(err.toString !== Object.prototype.toString, "err.toString === Object.prototype.toString");
 ok(err.toString() === (invokeVersion < 2 ? "[object Error]" : "Error"), "err.toString() = " + err.toString());
 err = new EvalError();
@@ -1964,8 +2217,10 @@ var exception_array = {
     E_INVALID_CALL_ARG:    { type: "TypeError",   number: -2146828283 },
     E_NOT_FUNC:            { type: "TypeError",   number: -2146823286 },
     E_OBJECT_EXPECTED:     { type: "TypeError", number: -2146823281 },
+    E_OBJECT_REQUIRED:     { type: "TypeError", number: -2146827864 },
     E_UNSUPPORTED_ACTION:  { type: "TypeError", number: -2146827843 },
     E_NOT_VBARRAY:         { type: "TypeError", number: -2146823275 },
+    E_INVALID_DELETE:      { type: "TypeError", number: -2146823276 },
     E_UNDEFINED:           { type: "TypeError", number: -2146823279 },
     E_JSCRIPT_EXPECTED:    { type: "TypeError", number: -2146823274 },
     E_NOT_ARRAY:           { type: "TypeError", number: -2146823257 },
@@ -1976,10 +2231,17 @@ var exception_array = {
     E_SEMICOLON:         { type: "SyntaxError",  number: -2146827284 },
     E_UNTERMINATED_STR:  { type: "SyntaxError",  number: -2146827273 },
     E_DISABLED_CC:       { type: "SyntaxError",  number: -2146827258 },
+    E_INVALID_BREAK:     { type: "SyntaxError",  number: -2146827269 },
+    E_INVALID_CONTINUE:  { type: "SyntaxError",  number: -2146827268 },
+    E_LABEL_NOT_FOUND:   { type: "SyntaxError",  number: -2146827262 },
+    E_LABEL_REDEFINED:   { type: "SyntaxError",  number: -2146827263 },
+    E_MISPLACED_RETURN:  { type: "SyntaxError",  number: -2146827270 },
 
     E_ILLEGAL_ASSIGN:  { type: "ReferenceError", number: -2146823280 },
 
-    E_SUBSCRIPT_OUT_OF_RANGE:  {type: "RangeError", number: -2146828279 },
+    E_PRECISION_OUT_OF_RANGE:        {type: "RangeError", number: -2146823261 },
+    E_FRACTION_DIGITS_OUT_OF_RANGE:  {type: "RangeError", number: -2146823262 },
+    E_SUBSCRIPT_OUT_OF_RANGE:        {type: "RangeError", number: -2146828279 },
 
     E_REGEXP_SYNTAX_ERROR:  { type: "RegExpError", number: -2146823271 },
 
@@ -2012,8 +2274,11 @@ testException(function() {createArray().getItem(3);}, "E_SUBSCRIPT_OUT_OF_RANGE"
 testException(function() {date.setTime();}, "E_ARG_NOT_OPT");
 testException(function() {date.setYear();}, "E_ARG_NOT_OPT");
 testException(function() {arr.test();}, "E_NO_PROPERTY");
-testException(function() {arr.toString = Number.prototype.toString; arr.toString();}, "E_NOT_NUM");
+testException(function() {Number.prototype.toString.call(arr);}, "E_NOT_NUM");
+testException(function() {Number.prototype.toFixed.call(arr);}, "E_NOT_NUM");
 testException(function() {(new Number(3)).toString(1);}, "E_INVALID_CALL_ARG");
+testException(function() {(new Number(3)).toFixed(21);}, "E_FRACTION_DIGITS_OUT_OF_RANGE");
+testException(function() {(new Number(1)).toPrecision(0);}, "E_PRECISION_OUT_OF_RANGE");
 testException(function() {not_existing_variable.something();}, "E_UNDEFINED");
 testException(function() {date();}, "E_NOT_FUNC");
 testException(function() {arr();}, "E_NOT_FUNC");
@@ -2031,6 +2296,22 @@ testException(function() {new nullDisp;}, "E_NO_PROPERTY");
 testException(function() {new VBArray();}, "E_NOT_VBARRAY");
 testException(function() {new VBArray(new VBArray(createArray()));}, "E_NOT_VBARRAY");
 testException(function() {VBArray.prototype.lbound.call(new Object());}, "E_NOT_VBARRAY");
+testException(function() {+nullDisp.prop;}, "E_OBJECT_REQUIRED");
+testException(function() {+nullDisp["prop"];}, "E_OBJECT_REQUIRED");
+testException(function() {delete (new Object());}, "E_INVALID_DELETE");
+testException(function() {delete false;}, "E_INVALID_DELETE");
+testException(function() {undefined.toString();}, "E_OBJECT_EXPECTED");
+testException(function() {null.toString();}, "E_OBJECT_EXPECTED");
+
+obj = new Object();
+obj.prop = 1;
+tmp = false;
+testException(function() {delete ((tmp = true) ? obj.prop : obj.prop);}, "E_INVALID_DELETE");
+ok(tmp, "delete (..) expression not evaluated");
+
+//FIXME: testException(function() {nonexistent++;}, "E_OBJECT_EXPECTED");
+//FIXME: testException(function() {undefined.nonexistent++;}, "E_OBJECT_EXPECTED");
+
 
 // SyntaxError tests
 function testSyntaxError(code, id) {
@@ -2068,9 +2349,44 @@ testSyntaxError("*", "E_SYNTAX_ERROR");
 testSyntaxError("@_jscript_version", "E_DISABLED_CC");
 testSyntaxError("@a", "E_DISABLED_CC");
 testSyntaxError("/* @cc_on @*/ @_jscript_version", "E_DISABLED_CC");
+testSyntaxError("ok(false, 'unexpected execution'); break;", "E_INVALID_BREAK");
+testSyntaxError("ok(false, 'unexpected execution'); continue;", "E_INVALID_CONTINUE");
+testSyntaxError("ok(false, 'unexpected execution'); while(true) break unknown_label;", "E_LABEL_NOT_FOUND");
+testSyntaxError("ok(false, 'unexpected execution'); some_label: continue some_label;", "E_INVALID_CONTINUE");
+testSyntaxError("ok(false, 'unexpected execution'); while(true) continue some_label;", "E_LABEL_NOT_FOUND");
+testSyntaxError("ok(false, 'unexpected execution'); some_label: { while(true) continue some_label; }", "E_INVALID_CONTINUE");
+testSyntaxError("ok(false, 'unexpected execution'); some_label: { some_label: while(true); }", "E_LABEL_REDEFINED");
+testSyntaxError("return;", "E_MISPLACED_RETURN");
+testSyntaxError("001.5;", "E_SEMICOLON");
+testSyntaxError("001.5", "E_SEMICOLON");
+testSyntaxError("0a", "E_SEMICOLON");
+testSyntaxError("01a", "E_SEMICOLON");
+testSyntaxError("0x1r", "E_SEMICOLON");
+testSyntaxError("1a", "E_SEMICOLON");
+testSyntaxError("1_", "E_SEMICOLON");
 
 // ReferenceError tests
 testException(function() {test = function() {}}, "E_ILLEGAL_ASSIGN");
+
+tmp = false;
+testException(function() {test = (tmp = true);}, "E_ILLEGAL_ASSIGN");
+ok(tmp, "expr value on invalid assign not evaluated");
+
+tmp = false;
+testException(function() {(tmp = true) = false;}, "E_ILLEGAL_ASSIGN");
+ok(tmp, "expr assign not evaluated");
+
+tmp = false;
+testException(function() {true = (tmp = true);}, "E_ILLEGAL_ASSIGN");
+ok(tmp, "expr value assign not evaluated");
+
+tmp = "";
+testException(function() {(tmp = tmp+"1") = (tmp = tmp+"2");}, "E_ILLEGAL_ASSIGN");
+ok(tmp === "12", "assign evaluated in unexpected order");
+
+tmp = false;
+testException(function() { ((tmp = true) && false)++; }, "E_ILLEGAL_ASSIGN")
+ok(tmp, "incremented expression not evaluated");
 
 // RegExpError tests
 testException(function() {RegExp(/a/, "g");}, "E_REGEXP_SYNTAX_ERROR");
@@ -2222,6 +2538,8 @@ function testFunctions(obj, arr) {
     for(var i=0; i<arr.length; i++) {
         l = obj[arr[i][0]].length;
         ok(l === arr[i][1], arr[i][0] + ".length = " + l);
+
+        ok(obj.propertyIsEnumerable(arr[i][0]) === false, arr[i][0] + " is enumerable");
     }
 }
 
@@ -2397,6 +2715,7 @@ ok(Date.length == 7, "Date.length = " + Date.length);
 ok(Enumerator.length == 7, "Enumerator.length = " + Enumerator.length);
 ok(Error.length == 1, "Error.length = " + Error.length);
 ok(EvalError.length == 1, "EvalError.length = " + EvalError.length);
+ok(RegExpError.length == 1, "RegExpError.length = " + RegExpError.length);
 ok(Function.length == 1, "Function.length = " + Function.length);
 ok(GetObject.length == 2, "GetObject.length = " + GetObject.length);
 ok(Number.length == 1, "Number.length = " + Number.length);

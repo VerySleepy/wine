@@ -33,7 +33,7 @@
  *			  both single and double slash is recognized as
  *			  MS/Borland does.
  *			- Fixed a bug in 'yywf' case that prevented
- *			  double quoted names to be scanned propperly.
+ *			  double quoted names to be scanned properly.
  *
  * 19-May-1998 BS	- Started to build a preprocessor.
  *			- Changed keyword processing completely to
@@ -112,7 +112,6 @@ cident	[a-zA-Z_][0-9a-zA-Z_]*
 #define YY_NO_UNISTD_H
 #endif
 
-#include "wine/unicode.h"
 #include "wrc.h"
 #include "utils.h"
 #include "parser.h"
@@ -404,14 +403,7 @@ static unsigned long xstrtoul(const char *nptr, char **endptr, int base)
 0[oO][0-7]+[lL]?	{ parser_lval.num = xstrtoul(yytext+2, 0, 8);
                           return (yytext[yyleng-1] == 'L' || yytext[yyleng-1] == 'l') ? tLNUMBER : tNUMBER; }
 
-	/*
-	 * The next two rules scan identifiers and filenames.
-	 * This is achieved by using the priority ruling
-	 * of the scanner where a '.' is valid in a filename
-	 * and *only* in a filename. In this case, the second
-	 * rule will be reduced because it is longer.
-	 */
-[A-Za-z_0-9.]+		{
+[A-Za-z_0-9./\\]+	{
 				struct keyword *tok = iskeyword(yytext);
 
 				if(tok)
@@ -430,7 +422,6 @@ static unsigned long xstrtoul(const char *nptr, char **endptr, int base)
 					return tIDENT;
 				}
 			}
-[A-Za-z_0-9./\\]+		parser_lval.str = make_string(yytext); return tFILENAME;
 
 	/*
 	 * Wide string scanning

@@ -1,14 +1,12 @@
-EXTRADEFS = -DCOM_NO_WINDOWS_H
 MODULE    = explorerframe.dll
-IMPORTS   = uuid ole32 shell32 user32
+IMPORTS   = uuid ole32 comctl32 shell32 user32
 
 C_SRCS = \
 	explorerframe_main.c \
-	nstc.c
+	nstc.c \
+	taskbarlist.c
 
-IDL_R_SRCS = explorerframe.idl
+IDL_SRCS = explorerframe.idl
 
 RC_SRCS = \
 	version.rc
-
-@MAKE_DLL_RULES@

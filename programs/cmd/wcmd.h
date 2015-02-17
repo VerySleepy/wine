@@ -30,6 +30,9 @@
 #include <ctype.h>
 #include <wine/unicode.h>
 
+/* msdn specified max for Win XP */
+#define MAXSTRING 8192
+
 /* Data structure to hold commands delimitors/separators */
 
 typedef enum _CMDdelimiters {
@@ -51,13 +54,13 @@ typedef struct _CMD_LIST {
 } CMD_LIST;
 
 void WCMD_assoc (const WCHAR *, BOOL);
-void WCMD_batch (WCHAR *, WCHAR *, int, WCHAR *, HANDLE);
+void WCMD_batch (WCHAR *, WCHAR *, BOOL, WCHAR *, HANDLE);
 void WCMD_call (WCHAR *command);
 void WCMD_change_tty (void);
 void WCMD_choice (const WCHAR *);
 void WCMD_clear_screen (void);
 void WCMD_color (void);
-void WCMD_copy (void);
+void WCMD_copy (WCHAR *);
 void WCMD_create_dir (WCHAR *);
 BOOL WCMD_delete (WCHAR *);
 void WCMD_directory (WCHAR *);
@@ -66,61 +69,89 @@ void WCMD_endlocal (void);
 void WCMD_enter_paged_mode(const WCHAR *);
 void WCMD_exit (CMD_LIST **cmdList);
 void WCMD_for (WCHAR *, CMD_LIST **cmdList);
-void WCMD_give_help (const WCHAR *command);
+void WCMD_give_help (const WCHAR *args);
 void WCMD_goto (CMD_LIST **cmdList);
 void WCMD_if (WCHAR *, CMD_LIST **cmdList);
 void WCMD_leave_paged_mode(void);
 void WCMD_more (WCHAR *);
 void WCMD_move (void);
-void WCMD_output (const WCHAR *format, ...);
-void WCMD_output_stderr (const WCHAR *format, ...);
+WCHAR* CDECL WCMD_format_string (const WCHAR *format, ...);
+void CDECL WCMD_output (const WCHAR *format, ...);
+void CDECL WCMD_output_stderr (const WCHAR *format, ...);
 void WCMD_output_asis (const WCHAR *message);
 void WCMD_output_asis_stderr (const WCHAR *message);
 void WCMD_pause (void);
 void WCMD_popd (void);
 void WCMD_print_error (void);
-void WCMD_pushd (const WCHAR *command);
+void WCMD_pushd (const WCHAR *args);
 void WCMD_remove_dir (WCHAR *command);
 void WCMD_rename (void);
-void WCMD_run_program (WCHAR *command, int called);
-void WCMD_setlocal (const WCHAR *command);
+void WCMD_run_program (WCHAR *command, BOOL called);
+void WCMD_setlocal (const WCHAR *args);
 void WCMD_setshow_date (void);
-void WCMD_setshow_default (const WCHAR *command);
+void WCMD_setshow_default (const WCHAR *args);
 void WCMD_setshow_env (WCHAR *command);
-void WCMD_setshow_path (const WCHAR *command);
+void WCMD_setshow_path (const WCHAR *args);
 void WCMD_setshow_prompt (void);
 void WCMD_setshow_time (void);
-void WCMD_shift (const WCHAR *command);
+void WCMD_shift (const WCHAR *args);
+void WCMD_start (const WCHAR *args);
 void WCMD_title (const WCHAR *);
 void WCMD_type (WCHAR *);
-void WCMD_verify (const WCHAR *command);
+void WCMD_verify (const WCHAR *args);
 void WCMD_version (void);
-int  WCMD_volume (BOOL set_label, const WCHAR *command);
+int  WCMD_volume (BOOL set_label, const WCHAR *args);
 
 static inline BOOL WCMD_is_console_handle(HANDLE h)
 {
     return (((DWORD_PTR)h) & 3) == 3;
 }
-WCHAR *WCMD_fgets (WCHAR *buf, int n, HANDLE stream);
-WCHAR *WCMD_parameter (WCHAR *s, int n, WCHAR **start, WCHAR **end);
+WCHAR *WCMD_fgets (WCHAR *buf, DWORD n, HANDLE stream);
+WCHAR *WCMD_parameter (WCHAR *s, int n, WCHAR **start, BOOL raw, BOOL wholecmdline);
+WCHAR *WCMD_parameter_with_delims (WCHAR *s, int n, WCHAR **start, BOOL raw,
+                                   BOOL wholecmdline, const WCHAR *delims);
 WCHAR *WCMD_skip_leading_spaces (WCHAR *string);
 BOOL WCMD_keyword_ws_found(const WCHAR *keyword, int len, const WCHAR *ptr);
-void WCMD_HandleTildaModifiers(WCHAR **start, const WCHAR *forVariable, const WCHAR *forValue, BOOL justFors);
+void WCMD_HandleTildaModifiers(WCHAR **start, BOOL atExecute);
 
 void WCMD_splitpath(const WCHAR* path, WCHAR* drv, WCHAR* dir, WCHAR* name, WCHAR* ext);
-void WCMD_strip_quotes(WCHAR *cmd);
+WCHAR *WCMD_strip_quotes(WCHAR *cmd);
 WCHAR *WCMD_LoadMessage(UINT id);
-WCHAR *WCMD_strdupW(const WCHAR *input);
 void WCMD_strsubstW(WCHAR *start, const WCHAR* next, const WCHAR* insert, int len);
 BOOL WCMD_ReadFile(const HANDLE hIn, WCHAR *intoBuf, const DWORD maxChars, LPDWORD charsRead);
 
 WCHAR    *WCMD_ReadAndParseLine(const WCHAR *initialcmd, CMD_LIST **output, HANDLE readFrom);
-CMD_LIST *WCMD_process_commands(CMD_LIST *thisCmd, BOOL oneBracket,
-                                const WCHAR *var, const WCHAR *val);
+CMD_LIST *WCMD_process_commands(CMD_LIST *thisCmd, BOOL oneBracket, BOOL retrycall);
 void      WCMD_free_commands(CMD_LIST *cmds);
 void      WCMD_execute (const WCHAR *orig_command, const WCHAR *redirects,
-                        const WCHAR *parameter, const WCHAR *substitution,
-                        CMD_LIST **cmdList);
+                        CMD_LIST **cmdList, BOOL retrycall);
+
+void *heap_alloc(size_t);
+
+static inline BOOL heap_free(void *mem)
+{
+    return HeapFree(GetProcessHeap(), 0, mem);
+}
+
+static inline WCHAR *heap_strdupW(const WCHAR *str)
+{
+    WCHAR *ret = NULL;
+
+    if(str) {
+        size_t size;
+
+        size = (strlenW(str)+1)*sizeof(WCHAR);
+        ret = heap_alloc(size);
+        memcpy(ret, str, size);
+    }
+
+    return ret;
+}
+
+static inline BOOL ends_with_backslash( const WCHAR *path )
+{
+    return path[0] && path[strlenW(path) - 1] == '\\';
+}
 
 /* Data structure to hold context when executing batch files */
 
@@ -141,9 +172,11 @@ struct env_stack
   struct env_stack *next;
   union {
     int    stackdepth;       /* Only used for pushd and popd */
-    WCHAR   cwd;              /* Only used for set/endlocal   */
+    WCHAR   cwd;             /* Only used for set/endlocal   */
   } u;
   WCHAR *strings;
+  HANDLE batchhandle;        /* Used to ensure set/endlocals stay in scope */
+  BOOL delayedsubst;         /* Is delayed substitution in effect */
 };
 
 /* Data structure to save setlocal and pushd information */
@@ -154,6 +187,27 @@ typedef struct _DIRECTORY_STACK
   WCHAR  *dirName;
   WCHAR  *fileName;
 } DIRECTORY_STACK;
+
+/* Data structure to for loop variables during for body execution, bearing
+   in mind that for loops can be nested                                    */
+#define MAX_FOR_VARIABLES 52
+#define FOR_VAR_IDX(c) (((c)>='a'&&(c)<='z')?((c)-'a'):\
+                        ((c)>='A'&&(c)<='Z')?(26+(c)-'A'):-1)
+
+typedef struct _FOR_CONTEXT {
+  WCHAR *variable[MAX_FOR_VARIABLES];	/* a-z then A-Z */
+} FOR_CONTEXT;
+
+/*
+ * Global variables quals, param1, param2 contain the current qualifiers
+ * (uppercased and concatenated) and parameters entered, with environment
+ * variables and batch parameters substitution already done.
+ */
+extern WCHAR quals[MAX_PATH], param1[MAXSTRING], param2[MAXSTRING];
+extern DWORD errorlevel;
+extern BATCH_CONTEXT *context;
+extern FOR_CONTEXT forloopcontext;
+extern BOOL delayedsubst;
 
 #endif /* !RC_INVOKED */
 
@@ -195,31 +249,36 @@ typedef struct _DIRECTORY_STACK
 #define WCMD_RMDIR    26
 #define WCMD_SET      27
 #define WCMD_SHIFT    28
-#define WCMD_TIME     29
-#define WCMD_TITLE    30
-#define WCMD_TYPE     31
-#define WCMD_VERIFY   32
-#define WCMD_VER      33
-#define WCMD_VOL      34
+#define WCMD_START    29
+#define WCMD_TIME     30
+#define WCMD_TITLE    31
+#define WCMD_TYPE     32
+#define WCMD_VERIFY   33
+#define WCMD_VER      34
+#define WCMD_VOL      35
 
-#define WCMD_ENDLOCAL 35
-#define WCMD_SETLOCAL 36
-#define WCMD_PUSHD    37
-#define WCMD_POPD     38
-#define WCMD_ASSOC    39
-#define WCMD_COLOR    40
-#define WCMD_FTYPE    41
-#define WCMD_MORE     42
-#define WCMD_CHOICE   43
+#define WCMD_ENDLOCAL 36
+#define WCMD_SETLOCAL 37
+#define WCMD_PUSHD    38
+#define WCMD_POPD     39
+#define WCMD_ASSOC    40
+#define WCMD_COLOR    41
+#define WCMD_FTYPE    42
+#define WCMD_MORE     43
+#define WCMD_CHOICE   44
 
 /* Must be last in list */
-#define WCMD_EXIT     44
-
-#define NUM_EXTERNALS 2
-extern const WCHAR externals[NUM_EXTERNALS][10];
+#define WCMD_EXIT     45
 
 /* Some standard messages */
-extern const WCHAR newline[];
+extern const WCHAR newlineW[];
+extern const WCHAR spaceW[];
+extern const WCHAR nullW[];
+extern const WCHAR dotW[];
+extern const WCHAR dotdotW[];
+extern const WCHAR starW[];
+extern const WCHAR slashW[];
+extern const WCHAR equalW[];
 extern WCHAR anykey[];
 extern WCHAR version_string[];
 
@@ -252,7 +311,7 @@ extern WCHAR version_string[];
 #define WCMD_VERIFYPROMPT     1025
 #define WCMD_VERIFYERR        1026
 #define WCMD_ARGERR           1027
-#define WCMD_VOLUMEDETAIL     1028
+#define WCMD_VOLUMESERIALNO   1028
 #define WCMD_VOLUMEPROMPT     1029
 #define WCMD_NOPATH           1030
 #define WCMD_ANYKEY           1031
@@ -260,6 +319,13 @@ extern WCHAR version_string[];
 #define WCMD_VERSION          1033
 #define WCMD_MOREPROMPT       1034
 #define WCMD_LINETOOLONG      1035
-
-/* msdn specified max for Win XP */
-#define MAXSTRING 8192
+#define WCMD_VOLUMELABEL      1036
+#define WCMD_VOLUMENOLABEL    1037
+#define WCMD_YESNO            1038
+#define WCMD_YESNOALL         1039
+#define WCMD_NO_COMMAND_FOUND 1040
+#define WCMD_DIVIDEBYZERO     1041
+#define WCMD_NOOPERAND        1042
+#define WCMD_NOOPERATOR       1043
+#define WCMD_BADPAREN         1044
+#define WCMD_BADHEXOCT        1045

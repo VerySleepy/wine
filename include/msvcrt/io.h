@@ -47,6 +47,16 @@ struct _finddatai64_t
   __int64 DECLSPEC_ALIGN(8) size;
   char           name[260];
 };
+
+struct _finddata64_t
+{
+  unsigned attrib;
+  __time64_t time_create;
+  __time64_t time_access;
+  __time64_t time_write;
+  __int64 DECLSPEC_ALIGN(8) size;
+  char           name[260];
+};
 #endif /* _FINDDATA_T_DEFINED */
 
 #ifndef _WFINDDATA_T_DEFINED
@@ -77,6 +87,7 @@ extern "C" {
 int         __cdecl _access(const char*,int);
 int         __cdecl _chmod(const char*,int);
 int         __cdecl _chsize(int,__msvcrt_ulong);
+int         __cdecl _chsize_s(int,__int64);
 int         __cdecl _close(int);
 int         __cdecl _commit(int);
 int         __cdecl _creat(const char*,int);
@@ -88,14 +99,17 @@ __msvcrt_long __cdecl _filelength(int);
 int         __cdecl _findclose(intptr_t);
 intptr_t    __cdecl _findfirst(const char*,struct _finddata_t*);
 intptr_t    __cdecl _findfirsti64(const char*, struct _finddatai64_t*);
+intptr_t    __cdecl _findfirst64(const char*, struct _finddata64_t*);
 int         __cdecl _findnext(intptr_t,struct _finddata_t*);
 int         __cdecl _findnexti64(intptr_t, struct _finddatai64_t*);
+int         __cdecl _findnext64(intptr_t, struct _finddata64_t*);
 intptr_t    __cdecl _get_osfhandle(int);
 int         __cdecl _isatty(int);
 int         __cdecl _locking(int,int,__msvcrt_long);
 __msvcrt_long __cdecl _lseek(int,__msvcrt_long,int);
 __int64     __cdecl _lseeki64(int,__int64,int);
 char*       __cdecl _mktemp(char*);
+int         __cdecl _mktemp_s(char*,size_t);
 int         __cdecl _open(const char*,int,...);
 int         __cdecl _open_osfhandle(intptr_t,int);
 int         __cdecl _pipe(int*,unsigned int,int);

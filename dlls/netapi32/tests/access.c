@@ -66,7 +66,7 @@ static NET_API_STATUS (WINAPI *pNetUserDel)(LPCWSTR,LPCWSTR)=NULL;
 static NET_API_STATUS (WINAPI *pNetLocalGroupGetInfo)(LPCWSTR,LPCWSTR,DWORD,LPBYTE*)=NULL;
 static NET_API_STATUS (WINAPI *pNetLocalGroupGetMembers)(LPCWSTR,LPCWSTR,DWORD,LPBYTE*,DWORD,LPDWORD,LPDWORD,PDWORD_PTR)=NULL;
 
-static int init_access_tests(void)
+static BOOL init_access_tests(void)
 {
     DWORD dwSize;
     BOOL rc;
@@ -77,14 +77,14 @@ static int init_access_tests(void)
     if (rc==FALSE && GetLastError()==ERROR_CALL_NOT_IMPLEMENTED)
     {
         win_skip("GetUserNameW is not available.\n");
-        return 0;
+        return FALSE;
     }
     ok(rc, "User Name Retrieved\n");
 
     computer_name[0] = 0;
     dwSize = sizeof(computer_name)/sizeof(WCHAR);
     ok(GetComputerNameW(computer_name, &dwSize), "Computer Name Retrieved\n");
-    return 1;
+    return TRUE;
 }
 
 static NET_API_STATUS create_test_user(void)
@@ -160,6 +160,7 @@ static void run_usergetinfo_tests(void)
         ok(rc == ERROR_BAD_NETPATH ||
            rc == ERROR_NETWORK_UNREACHABLE ||
            rc == RPC_S_SERVER_UNAVAILABLE ||
+           rc == NERR_WkstaNotStarted || /* workstation service not running */
            rc == RPC_S_INVALID_NET_ADDR, /* Some Win7 */
            "Bad Network Path: rc=%d\n",rc);
     }

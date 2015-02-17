@@ -29,11 +29,14 @@
 #include <msidefs.h>
 #include <msi.h>
 #include <fci.h>
+#include <oaidl.h>
 
 #include "wine/test.h"
 
 static BOOL is_wow64;
 
+static BOOL (WINAPI *pCheckTokenMembership)(HANDLE,PSID,PBOOL);
+static BOOL (WINAPI *pOpenProcessToken)(HANDLE, DWORD, PHANDLE);
 static LONG (WINAPI *pRegDeleteKeyExA)(HKEY, LPCSTR, REGSAM, DWORD);
 static BOOL (WINAPI *pIsWow64Process)(HANDLE, PBOOL);
 
@@ -199,7 +202,7 @@ typedef struct _msi_summary_info
 static const msi_summary_info summary_info[] =
 {
     ADD_INFO_LPSTR(PID_TEMPLATE, ";1033"),
-    ADD_INFO_LPSTR(PID_REVNUMBER, "{004757CA-5092-49c2-AD20-28E1CE0DF5F2}"),
+    ADD_INFO_LPSTR(PID_REVNUMBER, "{004757CA-5092-49C2-AD20-28E1CE0DF5F2}"),
     ADD_INFO_I4(PID_PAGECOUNT, 100),
     ADD_INFO_I4(PID_WORDCOUNT, 0),
     ADD_INFO_FILETIME(PID_CREATE_DTM, &systemtime),
@@ -216,10 +219,50 @@ static void init_functionpointers(void)
     if(!p ## func) \
       trace("GetProcAddress(%s) failed\n", #func);
 
+    GET_PROC(hadvapi32, CheckTokenMembership);
+    GET_PROC(hadvapi32, OpenProcessToken);
     GET_PROC(hadvapi32, RegDeleteKeyExA)
     GET_PROC(hkernel32, IsWow64Process)
 
 #undef GET_PROC
+}
+
+static BOOL is_process_limited(void)
+{
+    SID_IDENTIFIER_AUTHORITY NtAuthority = {SECURITY_NT_AUTHORITY};
+    PSID Group = NULL;
+    BOOL IsInGroup;
+    HANDLE token;
+
+    if (!pCheckTokenMembership || !pOpenProcessToken) return FALSE;
+
+    if (!AllocateAndInitializeSid(&NtAuthority, 2, SECURITY_BUILTIN_DOMAIN_RID,
+                                  DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &Group) ||
+        !pCheckTokenMembership(NULL, Group, &IsInGroup))
+    {
+        trace("Could not check if the current user is an administrator\n");
+        FreeSid(Group);
+        return FALSE;
+    }
+    FreeSid(Group);
+
+    if (!IsInGroup)
+    {
+        /* Only administrators have enough privileges for these tests */
+        return TRUE;
+    }
+
+    if (pOpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+    {
+        BOOL ret;
+        TOKEN_ELEVATION_TYPE type = TokenElevationTypeDefault;
+        DWORD size;
+
+        ret = GetTokenInformation(token, TokenElevationType, &type, sizeof(type), &size);
+        CloseHandle(token);
+        return (ret && type == TokenElevationTypeLimited);
+    }
+    return FALSE;
 }
 
 static LONG delete_key_portable( HKEY key, LPCSTR subkey, REGSAM access )
@@ -237,9 +280,8 @@ static void write_file(const CHAR *filename, const char *data, int data_size)
 {
     DWORD size;
 
-    HANDLE hf = CreateFile(filename, GENERIC_WRITE, 0, NULL,
-                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-
+    HANDLE hf = CreateFileA(filename, GENERIC_WRITE, 0, NULL,
+                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     WriteFile(hf, data, data_size, &size, NULL);
     CloseHandle(hf);
 }
@@ -275,9 +317,14 @@ static void create_database(const CHAR *name, const msi_table *tables, int num_t
 {
     MSIHANDLE db;
     UINT r;
-    int j;
+    WCHAR *nameW;
+    int j, len;
 
-    r = MsiOpenDatabaseA(name, MSIDBOPEN_CREATE, &db);
+    len = MultiByteToWideChar( CP_ACP, 0, name, -1, NULL, 0 );
+    if (!(nameW = HeapAlloc( GetProcessHeap(), 0, len * sizeof(WCHAR) ))) return;
+    MultiByteToWideChar( CP_ACP, 0, name, -1, nameW, len );
+
+    r = MsiOpenDatabaseW(nameW, MSIDBOPEN_CREATE, &db);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
 
     /* import the tables into the database */
@@ -299,6 +346,7 @@ static void create_database(const CHAR *name, const msi_table *tables, int num_t
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
 
     MsiCloseHandle(db);
+    HeapFree( GetProcessHeap(), 0, nameW );
 }
 
 static BOOL create_package(LPWSTR path)
@@ -333,13 +381,12 @@ static BOOL get_program_files_dir(LPSTR buf)
     HKEY hkey;
     DWORD type = REG_EXPAND_SZ, size;
 
-    if (RegOpenKey(HKEY_LOCAL_MACHINE,
-                   "Software\\Microsoft\\Windows\\CurrentVersion", &hkey))
+    if (RegOpenKeyA(HKEY_LOCAL_MACHINE, "Software\\Microsoft\\Windows\\CurrentVersion", &hkey))
         return FALSE;
 
     size = MAX_PATH;
-    if (RegQueryValueEx(hkey, "ProgramFilesDir (x86)", 0, &type, (LPBYTE)buf, &size) &&
-        RegQueryValueEx(hkey, "ProgramFilesDir", 0, &type, (LPBYTE)buf, &size))
+    if (RegQueryValueExA(hkey, "ProgramFilesDir (x86)", 0, &type, (LPBYTE)buf, &size) &&
+        RegQueryValueExA(hkey, "ProgramFilesDir", 0, &type, (LPBYTE)buf, &size))
         return FALSE;
 
     RegCloseKey(hkey);
@@ -356,7 +403,7 @@ static void create_file(const CHAR *name, DWORD size)
     WriteFile(file, name, strlen(name), &written, NULL);
     WriteFile(file, "\n", strlen("\n"), &written, NULL);
 
-    left = size - lstrlen(name) - 1;
+    left = size - lstrlenA(name) - 1;
 
     SetFilePointer(file, left, NULL, FILE_CURRENT);
     SetEndOfFile(file);
@@ -447,7 +494,7 @@ static CHAR string1[MAX_PATH], string2[MAX_PATH];
         ok(0, format, extra, string1, aString);  \
 
 /* exception checker */
-static WCHAR szSource[] = {'M','s','i',' ','A','P','I',' ','E','r','r','o','r',0};
+static const WCHAR szSource[] = {'M','s','i',' ','A','P','I',' ','E','r','r','o','r',0};
 
 #define ok_exception(hr, szDescription)           \
     if (hr == DISP_E_EXCEPTION) \
@@ -489,113 +536,79 @@ static DISPID get_dispid( IDispatch *disp, const char *name )
     return id;
 }
 
+typedef struct {
+    DISPID did;
+    const char *name;
+    BOOL todo;
+} get_did_t;
+
+static const get_did_t get_did_data[] = {
+    { 1,  "CreateRecord" },
+    { 2,  "OpenPackage" },
+    { 3,  "OpenProduct" },
+    { 4,  "OpenDatabase" },
+    { 5,  "SummaryInformation" },
+    { 6,  "UILevel" },
+    { 7,  "EnableLog" },
+    { 8,  "InstallProduct" },
+    { 9,  "Version" },
+    { 10, "LastErrorRecord" },
+    { 11, "RegistryValue" },
+    { 12, "Environment" },
+    { 13, "FileAttributes" },
+    { 15, "FileSize" },
+    { 16, "FileVersion" },
+    { 17, "ProductState" },
+    { 18, "ProductInfo" },
+    { 19, "ConfigureProduct", TRUE },
+    { 20, "ReinstallProduct", TRUE },
+    { 21, "CollectUserInfo", TRUE },
+    { 22, "ApplyPatch", TRUE },
+    { 23, "FeatureParent", TRUE },
+    { 24, "FeatureState", TRUE },
+    { 25, "UseFeature", TRUE },
+    { 26, "FeatureUsageCount", TRUE },
+    { 27, "FeatureUsageDate", TRUE },
+    { 28, "ConfigureFeature", TRUE },
+    { 29, "ReinstallFeature", TRUE },
+    { 30, "ProvideComponent", TRUE },
+    { 31, "ComponentPath", TRUE },
+    { 32, "ProvideQualifiedComponent", TRUE },
+    { 33, "QualifierDescription", TRUE },
+    { 34, "ComponentQualifiers", TRUE },
+    { 35, "Products" },
+    { 36, "Features", TRUE },
+    { 37, "Components", TRUE },
+    { 38, "ComponentClients", TRUE },
+    { 39, "Patches", TRUE },
+    { 40, "RelatedProducts" },
+    { 41, "PatchInfo", TRUE },
+    { 42, "PatchTransforms", TRUE },
+    { 43, "AddSource", TRUE },
+    { 44, "ClearSourceList", TRUE },
+    { 45, "ForceSourceListResolution", TRUE },
+    { 46, "ShortcutTarget", TRUE },
+    { 47, "FileHash", TRUE },
+    { 48, "FileSignatureInfo", TRUE },
+    { 0 }
+};
+
 static void test_dispid(void)
 {
+    const get_did_t *ptr = get_did_data;
     DISPID dispid;
 
-    dispid = get_dispid(pInstaller, "CreateRecord");
-    ok(dispid  == 1, "Expected 1, got %d\n", dispid);
-    dispid = get_dispid(pInstaller, "OpenPackage");
-    ok(dispid  == 2, "Expected 2, got %d\n", dispid);
-    dispid = get_dispid(pInstaller, "OpenProduct");
-    ok(dispid  == 3, "Expected 3, got %d\n", dispid);
-    dispid = get_dispid(pInstaller, "OpenDatabase");
-    ok(dispid == 4, "Expected 4, got %d\n", dispid);
-    dispid = get_dispid(pInstaller, "SummaryInformation");
-    ok(dispid == 5, "Expected 5, got %d\n", dispid);
-    dispid = get_dispid( pInstaller, "UILevel" );
-    ok(dispid == 6, "Expected 6, got %d\n", dispid);
-    dispid = get_dispid(pInstaller, "EnableLog");
-    ok(dispid == 7, "Expected 7, got %d\n", dispid);
-    dispid = get_dispid(pInstaller, "InstallProduct");
-    ok(dispid == 8, "Expected 8, got %d\n", dispid);
-    dispid = get_dispid(pInstaller, "Version");
-    ok(dispid == 9, "Expected 9, got %d\n", dispid);
-    dispid = get_dispid(pInstaller, "LastErrorRecord");
-    ok(dispid == 10, "Expected 10, got %d\n", dispid);
-    dispid = get_dispid(pInstaller, "RegistryValue");
-    ok(dispid == 11, "Expected 11, got %d\n", dispid);
-    dispid = get_dispid(pInstaller, "Environment");
-    ok(dispid == 12, "Expected 12, got %d\n", dispid);
-    dispid = get_dispid(pInstaller, "FileAttributes");
-    ok(dispid == 13, "Expected 13, got %d\n", dispid);
-    dispid = get_dispid(pInstaller, "FileSize");
-    ok(dispid == 15, "Expected 15, got %d\n", dispid);
-    dispid = get_dispid(pInstaller, "FileVersion");
-    ok(dispid == 16, "Expected 16, got %d\n", dispid);
-    dispid = get_dispid(pInstaller, "ProductState");
-    ok(dispid == 17, "Expected 17, got %d\n", dispid);
-    dispid = get_dispid(pInstaller, "ProductInfo");
-    ok(dispid == 18, "Expected 18, got %d\n", dispid);
-    todo_wine
+    while (ptr->name)
     {
-        dispid = get_dispid(pInstaller, "ConfigureProduct");
-        ok(dispid == 19, "Expected 19, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "ReinstallProduct");
-        ok(dispid == 20 , "Expected 20, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "CollectUserInfo");
-        ok(dispid == 21, "Expected 21, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "ApplyPatch");
-        ok(dispid == 22, "Expected 22, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "FeatureParent");
-        ok(dispid == 23, "Expected 23, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "FeatureState");
-        ok(dispid == 24, "Expected 24, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "UseFeature");
-        ok(dispid == 25, "Expected 25, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "FeatureUsageCount");
-        ok(dispid == 26, "Expected 26, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "FeatureUsageDate");
-        ok(dispid == 27, "Expected 27, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "ConfigureFeature");
-        ok(dispid == 28, "Expected 28, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "ReinstallFeature");
-        ok(dispid == 29, "Expected 29, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "ProvideComponent");
-        ok(dispid == 30, "Expected 30, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "ComponentPath");
-        ok(dispid == 31, "Expected 31, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "ProvideQualifiedComponent");
-        ok(dispid == 32, "Expected 32, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "QualifierDescription");
-        ok(dispid == 33, "Expected 33, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "ComponentQualifiers");
-        ok(dispid == 34, "Expected 34, got %d\n", dispid);
+        dispid = get_dispid(pInstaller, ptr->name);
+        if (ptr->todo)
+        todo_wine
+            ok(dispid == ptr->did, "%s: expected %d, got %d\n", ptr->name, ptr->did, dispid);
+        else
+            ok(dispid == ptr->did, "%s: expected %d, got %d\n", ptr->name, ptr->did, dispid);
+        ptr++;
     }
-    dispid = get_dispid(pInstaller, "Products");
-    ok(dispid == 35, "Expected 35, got %d\n", dispid);
-    todo_wine
-    {
-        dispid = get_dispid(pInstaller, "Features");
-        ok(dispid == 36, "Expected 36, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "Components");
-        ok(dispid == 37, "Expected 37, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "ComponentClients");
-        ok(dispid == 38, "Expected 38, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "Patches");
-        ok(dispid == 39, "Expected 39, got %d\n", dispid);
-    }
-    dispid = get_dispid(pInstaller, "RelatedProducts");
-    ok(dispid == 40, "Expected 40, got %d\n", dispid);
-    todo_wine
-    {
-        dispid = get_dispid(pInstaller, "PatchInfo");
-        ok(dispid == 41, "Expected 41, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "PatchTransforms");
-        ok(dispid == 42, "Expected 42, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "AddSource");
-        ok(dispid == 43, "Expected 43, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "ClearSourceList");
-        ok(dispid == 44, "Expected 44, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "ForceSourceListResolution");
-        ok(dispid == 45, "Expected 45, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "ShortcutTarget");
-        ok(dispid == 46, "Expected 46, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "FileHash");
-        ok(dispid == 47, "Expected 47, got %d\n", dispid);
-        dispid = get_dispid(pInstaller, "FileSignatureInfo");
-        ok(dispid == 48, "Expected 48, got %d\n", dispid);
-    }
+
     dispid = get_dispid(pInstaller, "RemovePatches");
     ok(dispid == 49 || dispid == -1, "Expected 49 or -1, got %d\n", dispid);
     dispid = get_dispid(pInstaller, "ApplyMultiplePatches");
@@ -624,7 +637,7 @@ static void test_dispid(void)
 static void test_dispatch(void)
 {
     static WCHAR szOpenPackage[] = { 'O','p','e','n','P','a','c','k','a','g','e',0 };
-    static WCHAR szOpenPackageException[] = {'O','p','e','n','P','a','c','k','a','g','e',',','P','a','c','k','a','g','e','P','a','t','h',',','O','p','t','i','o','n','s',0};
+    static const WCHAR szOpenPackageException[] = {'O','p','e','n','P','a','c','k','a','g','e',',','P','a','c','k','a','g','e','P','a','t','h',',','O','p','t','i','o','n','s',0};
     static WCHAR szProductState[] = { 'P','r','o','d','u','c','t','S','t','a','t','e',0 };
     HRESULT hr;
     DISPID dispid;
@@ -1717,11 +1730,11 @@ static void test_SummaryInfo(IDispatch *pSummaryInfo, const msi_summary_info *in
 
 static void test_Database(IDispatch *pDatabase, BOOL readonly)
 {
-    static WCHAR szSql[] = { 'S','E','L','E','C','T',' ','`','F','e','a','t','u','r','e','`',' ','F','R','O','M',' ','`','F','e','a','t','u','r','e','`',' ','W','H','E','R','E',' ','`','F','e','a','t','u','r','e','_','P','a','r','e','n','t','`','=','\'','O','n','e','\'',0 };
-    static WCHAR szThree[] = { 'T','h','r','e','e',0 };
-    static WCHAR szTwo[] = { 'T','w','o',0 };
-    static WCHAR szStringDataField[] = { 'S','t','r','i','n','g','D','a','t','a',',','F','i','e','l','d',0 };
-    static WCHAR szModifyModeRecord[] = { 'M','o','d','i','f','y',',','M','o','d','e',',','R','e','c','o','r','d',0 };
+    static const WCHAR szSql[] = { 'S','E','L','E','C','T',' ','`','F','e','a','t','u','r','e','`',' ','F','R','O','M',' ','`','F','e','a','t','u','r','e','`',' ','W','H','E','R','E',' ','`','F','e','a','t','u','r','e','_','P','a','r','e','n','t','`','=','\'','O','n','e','\'',0 };
+    static const WCHAR szThree[] = { 'T','h','r','e','e',0 };
+    static const WCHAR szTwo[] = { 'T','w','o',0 };
+    static const WCHAR szStringDataField[] = { 'S','t','r','i','n','g','D','a','t','a',',','F','i','e','l','d',0 };
+    static const WCHAR szModifyModeRecord[] = { 'M','o','d','i','f','y',',','M','o','d','e',',','R','e','c','o','r','d',0 };
     IDispatch *pView = NULL, *pSummaryInfo = NULL;
     HRESULT hr;
 
@@ -1830,17 +1843,17 @@ static void test_Database(IDispatch *pDatabase, BOOL readonly)
 
 static void test_Session(IDispatch *pSession)
 {
-    static WCHAR szProductName[] = { 'P','r','o','d','u','c','t','N','a','m','e',0 };
-    static WCHAR szOne[] = { 'O','n','e',0 };
-    static WCHAR szOneStateFalse[] = { '!','O','n','e','>','0',0 };
-    static WCHAR szOneStateTrue[] = { '!','O','n','e','=','-','1',0 };
-    static WCHAR szOneActionFalse[] = { '$','O','n','e','=','-','1',0 };
-    static WCHAR szOneActionTrue[] = { '$','O','n','e','>','0',0 };
-    static WCHAR szCostInitialize[] = { 'C','o','s','t','I','n','i','t','i','a','l','i','z','e',0 };
-    static WCHAR szEmpty[] = { 0 };
-    static WCHAR szEquals[] = { '=',0 };
-    static WCHAR szPropertyName[] = { 'P','r','o','p','e','r','t','y',',','N','a','m','e',0 };
-    static WCHAR szModeFlag[] = { 'M','o','d','e',',','F','l','a','g',0 };
+    static const WCHAR szProductName[] = { 'P','r','o','d','u','c','t','N','a','m','e',0 };
+    static const WCHAR szOne[] = { 'O','n','e',0 };
+    static const WCHAR szOneStateFalse[] = { '!','O','n','e','>','0',0 };
+    static const WCHAR szOneStateTrue[] = { '!','O','n','e','=','-','1',0 };
+    static const WCHAR szOneActionFalse[] = { '$','O','n','e','=','-','1',0 };
+    static const WCHAR szOneActionTrue[] = { '$','O','n','e','>','0',0 };
+    static const WCHAR szCostInitialize[] = { 'C','o','s','t','I','n','i','t','i','a','l','i','z','e',0 };
+    static const WCHAR szEmpty[] = { 0 };
+    static const WCHAR szEquals[] = { '=',0 };
+    static const WCHAR szPropertyName[] = { 'P','r','o','p','e','r','t','y',',','N','a','m','e',0 };
+    static const WCHAR szModeFlag[] = { 'M','o','d','e',',','F','l','a','g',0 };
     WCHAR stringw[MAX_PATH];
     CHAR string[MAX_PATH];
     UINT len;
@@ -1921,16 +1934,16 @@ static void test_Session(IDispatch *pSession)
     ok(hr == S_OK, "Session_ModePut failed, hresult 0x%08x\n", hr);
 
     hr = Session_ModePut(pSession, MSIRUNMODE_REBOOTNOW, TRUE);
-    todo_wine ok(hr == S_OK, "Session_ModePut failed, hresult 0x%08x\n", hr);
-    if (hr == DISP_E_EXCEPTION) ok_exception(hr, szModeFlag);
+    ok(hr == S_OK, "Session_ModePut failed, hresult 0x%08x\n", hr);
+    ok_exception(hr, szModeFlag);
 
     hr = Session_ModeGet(pSession, MSIRUNMODE_REBOOTNOW, &bool);
     ok(hr == S_OK, "Session_ModeGet failed, hresult 0x%08x\n", hr);
     ok(bool, "Reboot now mode is %d, expected 1\n", bool);
 
     hr = Session_ModePut(pSession, MSIRUNMODE_REBOOTNOW, FALSE);  /* set it again so we don't reboot */
-    todo_wine ok(hr == S_OK, "Session_ModePut failed, hresult 0x%08x\n", hr);
-    if (hr == DISP_E_EXCEPTION) ok_exception(hr, szModeFlag);
+    ok(hr == S_OK, "Session_ModePut failed, hresult 0x%08x\n", hr);
+    ok_exception(hr, szModeFlag);
 
     hr = Session_ModePut(pSession, MSIRUNMODE_MAINTENANCE, TRUE);
     ok(hr == DISP_E_EXCEPTION, "Session_ModePut failed, hresult 0x%08x\n", hr);
@@ -2040,6 +2053,7 @@ static void test_Installer_RegistryValue(void)
     static const WCHAR szFiveHi[] = { 'F','i','v','e','\n','H','i',0 };
     static const WCHAR szSix[] = { 'S','i','x',0 };
     static const WCHAR szREG_[] = { '(','R','E','G','_',']',0 };
+    static const WCHAR szREG_2[] = { '(','R','E','G','_','?','?',')',0 };
     static const WCHAR szSeven[] = { 'S','e','v','e','n',0 };
     static const WCHAR szEight[] = { 'E','i','g','h','t',0 };
     static const WCHAR szBlank[] = { 0 };
@@ -2151,7 +2165,8 @@ static void test_Installer_RegistryValue(void)
     memset(szString, 0, sizeof(szString));
     hr = Installer_RegistryValueW(curr_user, szKey, szSix, szString);
     ok(hr == S_OK, "Installer_RegistryValueW failed, hresult 0x%08x\n", hr);
-    ok_w2("Registry value \"%s\" does not match expected \"%s\"\n", szString, szREG_);
+    ok(!lstrcmpW(szString, szREG_2) || broken(!lstrcmpW(szString, szREG_)),
+       "Registry value does not match\n");
 
     VariantInit(&vararg);
     V_VT(&vararg) = VT_BSTR;
@@ -2353,7 +2368,7 @@ static UINT delete_registry_key(HKEY hkeyParent, LPCSTR subkey, REGSAM access)
     HKEY hkey;
     DWORD dwSize;
 
-    ret = RegOpenKeyEx(hkeyParent, subkey, 0, access, &hkey);
+    ret = RegOpenKeyExA(hkeyParent, subkey, 0, access, &hkey);
     if (ret != ERROR_SUCCESS) return ret;
     ret = RegQueryInfoKeyA(hkey, NULL, NULL, NULL, NULL, &dwSize, NULL, NULL, NULL, NULL, NULL, NULL);
     if (ret != ERROR_SUCCESS) return ret;
@@ -2380,7 +2395,7 @@ static UINT find_registry_key(HKEY hkeyParent, LPCSTR subkey, LPCSTR findkey, RE
 
     *phkey = 0;
 
-    ret = RegOpenKeyEx(hkeyParent, subkey, 0, access, &hkey);
+    ret = RegOpenKeyExA(hkeyParent, subkey, 0, access, &hkey);
     if (ret != ERROR_SUCCESS) return ret;
     ret = RegQueryInfoKeyA(hkey, NULL, NULL, NULL, NULL, &dwSize, NULL, NULL, NULL, NULL, NULL, NULL);
     if (ret != ERROR_SUCCESS) return ret;
@@ -2413,6 +2428,15 @@ static void test_Installer_InstallProduct(void)
     int iValue, iCount;
     IDispatch *pStringList = NULL;
     REGSAM access = KEY_ALL_ACCESS;
+
+    if (is_process_limited())
+    {
+        /* In fact InstallProduct would succeed but then Windows XP
+         * would not allow us to clean up the registry!
+         */
+        skip("Installer_InstallProduct (insufficient privileges)\n");
+        return;
+    }
 
     if (is_wow64)
         access |= KEY_WOW64_64KEY;
@@ -2557,7 +2581,7 @@ static void test_Installer_InstallProduct(void)
     ok(res == ERROR_FILE_NOT_FOUND, "Expected ERROR_FILE_NOT_FOUND, got %d\n", res);
 
     /* Remove registry keys written by PublishProduct standard action */
-    res = RegOpenKey(HKEY_CURRENT_USER, "SOFTWARE\\Microsoft\\Installer", &hkey);
+    res = RegOpenKeyA(HKEY_CURRENT_USER, "SOFTWARE\\Microsoft\\Installer", &hkey);
     ok(res == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", res);
 
     res = delete_registry_key(hkey, "Products\\af054738b93a8cb43b12803b397f483b", KEY_ALL_ACCESS);
@@ -2574,8 +2598,8 @@ static void test_Installer_InstallProduct(void)
 
 static void test_Installer(void)
 {
-    static WCHAR szCreateRecordException[] = { 'C','r','e','a','t','e','R','e','c','o','r','d',',','C','o','u','n','t',0 };
-    static WCHAR szIntegerDataException[] = { 'I','n','t','e','g','e','r','D','a','t','a',',','F','i','e','l','d',0 };
+    static const WCHAR szCreateRecordException[] = { 'C','r','e','a','t','e','R','e','c','o','r','d',',','C','o','u','n','t',0 };
+    static const WCHAR szIntegerDataException[] = { 'I','n','t','e','g','e','r','D','a','t','a',',','F','i','e','l','d',0 };
     WCHAR szPath[MAX_PATH];
     HRESULT hr;
     IDispatch *pSession = NULL, *pDatabase = NULL, *pRecord = NULL, *pStringList = NULL;
@@ -2717,7 +2741,7 @@ START_TEST(automation)
     GetSystemTimeAsFileTime(&systemtime);
 
     GetCurrentDirectoryA(MAX_PATH, prev_path);
-    GetTempPath(MAX_PATH, temp_path);
+    GetTempPathA(MAX_PATH, temp_path);
     SetCurrentDirectoryA(temp_path);
 
     lstrcpyA(CURR_DIR, temp_path);

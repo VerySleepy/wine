@@ -32,8 +32,8 @@
 #include <limits.h>
 #include <dirent.h>
 #include <errno.h>
-#ifdef HAVE_SYS_ERRNO_H
-#include <sys/errno.h>
+#ifdef HAVE_POLL_H
+# include <poll.h>
 #endif
 
 #include "ntstatus.h"

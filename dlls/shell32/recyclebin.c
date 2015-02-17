@@ -154,7 +154,7 @@ static ULONG WINAPI RecycleBinMenu_Release(IContextMenu2 *iface)
     {
         TRACE("Destroying object\n");
         _ILFreeaPidl(This->apidl,This->cidl);
-        IShellFolder_Release(This->folder);
+        IShellFolder2_Release(This->folder);
         SHFree(This);
     }
     return result;
@@ -358,7 +358,7 @@ static HRESULT WINAPI RecycleBin_QueryInterface(IShellFolder2 *iface, REFIID rii
     *ppvObject = NULL;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IShellFolder)
             || IsEqualGUID(riid, &IID_IShellFolder2))
-        *ppvObject = This;
+        *ppvObject = &This->IShellFolder2_iface;
 
     if (IsEqualGUID(riid, &IID_IPersist) || IsEqualGUID(riid, &IID_IPersistFolder)
             || IsEqualGUID(riid, &IID_IPersistFolder2))
@@ -411,7 +411,7 @@ static HRESULT WINAPI RecycleBin_EnumObjects(IShellFolder2 *iface, HWND hwnd, SH
     IEnumIDListImpl *list;
     LPITEMIDLIST *pidls;
     HRESULT ret = E_OUTOFMEMORY;
-    int pidls_count;
+    int pidls_count = 0;
     int i=0;
 
     TRACE("(%p, %p, %x, %p)\n", This, hwnd, grfFlags, ppenumIDList);
@@ -423,7 +423,7 @@ static HRESULT WINAPI RecycleBin_EnumObjects(IShellFolder2 *iface, HWND hwnd, SH
 
     if (grfFlags & SHCONTF_NONFOLDERS)
     {
-        if (FAILED(ret = TRASH_EnumItems(&pidls, &pidls_count)))
+        if (FAILED(ret = TRASH_EnumItems(NULL, &pidls, &pidls_count)))
             goto failed;
         for (i=0; i<pidls_count; i++)
             if (!AddToEnumList(list, pidls[i]))
@@ -457,12 +457,19 @@ static HRESULT WINAPI RecycleBin_BindToStorage(IShellFolder2 *This, LPCITEMIDLIS
 static HRESULT WINAPI RecycleBin_CompareIDs(IShellFolder2 *iface, LPARAM lParam, LPCITEMIDLIST pidl1, LPCITEMIDLIST pidl2)
 {
     RecycleBin *This = impl_from_IShellFolder2(iface);
+    int ret;
 
     /* TODO */
     TRACE("(%p, %p, %p, %p)\n", This, (void *)lParam, pidl1, pidl2);
     if (pidl1->mkid.cb != pidl2->mkid.cb)
         return MAKE_HRESULT(SEVERITY_SUCCESS, 0, pidl1->mkid.cb - pidl2->mkid.cb);
-    return MAKE_HRESULT(SEVERITY_SUCCESS, 0, (unsigned short)memcmp(pidl1->mkid.abID, pidl2->mkid.abID, pidl1->mkid.cb));
+    /* Looks too complicated, but in optimized memcpy we might get
+     * a 32bit wide difference and would truncate it to 16 bit, so
+     * erroneously returning equality. */
+    ret = memcmp(pidl1->mkid.abID, pidl2->mkid.abID, pidl1->mkid.cb);
+    if (ret < 0) ret = -1;
+    if (ret > 0) ret =  1;
+    return MAKE_HRESULT(SEVERITY_SUCCESS, 0, (unsigned short)ret);
 }
 
 static HRESULT WINAPI RecycleBin_CreateViewObject(IShellFolder2 *iface, HWND hwndOwner, REFIID riid, void **ppv)
@@ -696,21 +703,21 @@ static HRESULT WINAPI RecycleBin_IPersistFolder2_QueryInterface(IPersistFolder2 
 {
     RecycleBin *This = impl_from_IPersistFolder2(iface);
 
-    return RecycleBin_QueryInterface(&This->IShellFolder2_iface, riid, ppvObject);
+    return IShellFolder2_QueryInterface(&This->IShellFolder2_iface, riid, ppvObject);
 }
 
 static ULONG WINAPI RecycleBin_IPersistFolder2_AddRef(IPersistFolder2 *iface)
 {
     RecycleBin *This = impl_from_IPersistFolder2(iface);
 
-    return RecycleBin_AddRef(&This->IShellFolder2_iface);
+    return IShellFolder2_AddRef(&This->IShellFolder2_iface);
 }
 
 static ULONG WINAPI RecycleBin_IPersistFolder2_Release(IPersistFolder2 *iface)
 {
     RecycleBin *This = impl_from_IPersistFolder2(iface);
 
-    return RecycleBin_Release(&This->IShellFolder2_iface);
+    return IShellFolder2_Release(&This->IShellFolder2_iface);
 }
 
 static const IPersistFolder2Vtbl recycleBinPersistVtbl =
@@ -733,21 +740,21 @@ static HRESULT WINAPI RecycleBin_ISFHelper_QueryInterface(ISFHelper *iface, REFI
 {
     RecycleBin *This = impl_from_ISFHelper(iface);
 
-    return RecycleBin_QueryInterface(&This->IShellFolder2_iface, riid, ppvObject);
+    return IShellFolder2_QueryInterface(&This->IShellFolder2_iface, riid, ppvObject);
 }
 
 static ULONG WINAPI RecycleBin_ISFHelper_AddRef(ISFHelper *iface)
 {
     RecycleBin *This = impl_from_ISFHelper(iface);
 
-    return RecycleBin_AddRef(&This->IShellFolder2_iface);
+    return IShellFolder2_AddRef(&This->IShellFolder2_iface);
 }
 
 static ULONG WINAPI RecycleBin_ISFHelper_Release(ISFHelper *iface)
 {
     RecycleBin *This = impl_from_ISFHelper(iface);
 
-    return RecycleBin_Release(&This->IShellFolder2_iface);
+    return IShellFolder2_Release(&This->IShellFolder2_iface);
 }
 
 static HRESULT WINAPI RecycleBin_GetUniqueName(ISFHelper *iface,LPWSTR lpName,
@@ -853,10 +860,13 @@ HRESULT WINAPI SHQueryRecycleBinW(LPCWSTR pszRootPath, LPSHQUERYRBINFO pSHQueryR
     LPITEMIDLIST *apidl;
     INT cidl;
     INT i=0;
-    TRACE("(%s, %p)\n", debugstr_w(pszRootPath), pSHQueryRBInfo);
-    FIXME("Ignoring pszRootPath=%s\n",debugstr_w(pszRootPath));
+    HRESULT hr;
 
-    TRASH_EnumItems(&apidl,&cidl);
+    TRACE("(%s, %p)\n", debugstr_w(pszRootPath), pSHQueryRBInfo);
+
+    hr = TRASH_EnumItems(pszRootPath, &apidl, &cidl);
+    if (FAILED(hr))
+        return hr;
     pSHQueryRBInfo->i64NumItems = cidl;
     pSHQueryRBInfo->i64Size = 0;
     for (; i<cidl; i++)
@@ -887,9 +897,13 @@ HRESULT WINAPI SHEmptyRecycleBinW(HWND hwnd, LPCWSTR pszRootPath, DWORD dwFlags)
     INT cidl;
     INT i=0;
     HRESULT ret;
+
     TRACE("(%p, %s, 0x%08x)\n", hwnd, debugstr_w(pszRootPath) , dwFlags);
-    FIXME("Ignoring pszRootPath=%s\n",debugstr_w(pszRootPath));
-    TRASH_EnumItems(&apidl,&cidl);
+
+    ret = TRASH_EnumItems(pszRootPath, &apidl, &cidl);
+    if (FAILED(ret))
+        return ret;
+
     ret = erase_items(hwnd,(const LPCITEMIDLIST*)apidl,cidl,!(dwFlags & SHERB_NOCONFIRMATION));
     for (;i<cidl;i++)
         ILFree(apidl[i]);

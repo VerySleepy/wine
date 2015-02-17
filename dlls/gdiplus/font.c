@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2007 Google (Evan Stade)
+ * Copyright (C) 2012 Dmitry Timoshkov
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -33,43 +34,91 @@ WINE_DEFAULT_DEBUG_CHANNEL (gdiplus);
 #include "gdiplus.h"
 #include "gdiplus_private.h"
 
-static const REAL mm_per_inch = 25.4;
-static const REAL inch_per_point = 1.0/72.0;
+/* PANOSE is 10 bytes in size, need to pack the structure properly */
+#include "pshpack2.h"
+typedef struct
+{
+    USHORT version;
+    SHORT xAvgCharWidth;
+    USHORT usWeightClass;
+    USHORT usWidthClass;
+    SHORT fsType;
+    SHORT ySubscriptXSize;
+    SHORT ySubscriptYSize;
+    SHORT ySubscriptXOffset;
+    SHORT ySubscriptYOffset;
+    SHORT ySuperscriptXSize;
+    SHORT ySuperscriptYSize;
+    SHORT ySuperscriptXOffset;
+    SHORT ySuperscriptYOffset;
+    SHORT yStrikeoutSize;
+    SHORT yStrikeoutPosition;
+    SHORT sFamilyClass;
+    PANOSE panose;
+    ULONG ulUnicodeRange1;
+    ULONG ulUnicodeRange2;
+    ULONG ulUnicodeRange3;
+    ULONG ulUnicodeRange4;
+    CHAR achVendID[4];
+    USHORT fsSelection;
+    USHORT usFirstCharIndex;
+    USHORT usLastCharIndex;
+    /* According to the Apple spec, original version didn't have the below fields,
+     * version numbers were taken from the OpenType spec.
+     */
+    /* version 0 (TrueType 1.5) */
+    USHORT sTypoAscender;
+    USHORT sTypoDescender;
+    USHORT sTypoLineGap;
+    USHORT usWinAscent;
+    USHORT usWinDescent;
+    /* version 1 (TrueType 1.66) */
+    ULONG ulCodePageRange1;
+    ULONG ulCodePageRange2;
+    /* version 2 (OpenType 1.2) */
+    SHORT sxHeight;
+    SHORT sCapHeight;
+    USHORT usDefaultChar;
+    USHORT usBreakChar;
+    USHORT usMaxContext;
+} TT_OS2_V2;
+
+typedef struct
+{
+    ULONG Version;
+    SHORT Ascender;
+    SHORT Descender;
+    SHORT LineGap;
+    USHORT advanceWidthMax;
+    SHORT minLeftSideBearing;
+    SHORT minRightSideBearing;
+    SHORT xMaxExtent;
+    SHORT caretSlopeRise;
+    SHORT caretSlopeRun;
+    SHORT caretOffset;
+    SHORT reserved[4];
+    SHORT metricDataFormat;
+    USHORT numberOfHMetrics;
+} TT_HHEA;
+#include "poppack.h"
+
+#ifdef WORDS_BIGENDIAN
+#define GET_BE_WORD(x) (x)
+#define GET_BE_DWORD(x) (x)
+#else
+#define GET_BE_WORD(x) MAKEWORD(HIBYTE(x), LOBYTE(x))
+#define GET_BE_DWORD(x) MAKELONG(GET_BE_WORD(HIWORD(x)), GET_BE_WORD(LOWORD(x)));
+#endif
+
+#define MS_MAKE_TAG(ch0, ch1, ch2, ch3) \
+                    ((DWORD)(BYTE)(ch0) | ((DWORD)(BYTE)(ch1) << 8) | \
+                    ((DWORD)(BYTE)(ch2) << 16) | ((DWORD)(BYTE)(ch3) << 24))
+#define MS_OS2_TAG MS_MAKE_TAG('O','S','/','2')
+#define MS_HHEA_TAG MS_MAKE_TAG('h','h','e','a')
+
+static GpStatus clone_font_family(const GpFontFamily *, GpFontFamily **);
 
 static GpFontCollection installedFontCollection = {0};
-
-static inline REAL get_dpi (void)
-{
-    REAL dpi;
-    GpGraphics *graphics;
-    HDC hdc = GetDC(0);
-    GdipCreateFromHDC (hdc, &graphics);
-    GdipGetDpiX(graphics, &dpi);
-    GdipDeleteGraphics(graphics);
-    ReleaseDC (0, hdc);
-
-    return dpi;
-}
-
-static inline REAL point_to_pixel (REAL point)
-{
-    return point * get_dpi() * inch_per_point;
-}
-
-static inline REAL inch_to_pixel (REAL inch)
-{
-    return inch * get_dpi();
-}
-
-static inline REAL document_to_pixel (REAL doc)
-{
-    return doc * (get_dpi() / 300.0); /* Per MSDN */
-}
-
-static inline REAL mm_to_pixel (REAL mm)
-{
-    return mm * (get_dpi() / mm_per_inch);
-}
 
 /*******************************************************************************
  * GdipCreateFont [GDIPLUS.@]
@@ -95,68 +144,53 @@ static inline REAL mm_to_pixel (REAL mm)
 GpStatus WINGDIPAPI GdipCreateFont(GDIPCONST GpFontFamily *fontFamily,
                         REAL emSize, INT style, Unit unit, GpFont **font)
 {
-    WCHAR facename[LF_FACESIZE];
-    LOGFONTW* lfw;
-    const NEWTEXTMETRICW* tmw;
+    HFONT hfont;
+    OUTLINETEXTMETRICW otm;
+    LOGFONTW lfw;
+    HDC hdc;
     GpStatus stat;
+    int ret;
 
-    if (!fontFamily || !font)
+    if (!fontFamily || !font || emSize < 0.0)
         return InvalidParameter;
 
     TRACE("%p (%s), %f, %d, %d, %p\n", fontFamily,
             debugstr_w(fontFamily->FamilyName), emSize, style, unit, font);
 
-    stat = GdipGetFamilyName (fontFamily, facename, 0);
+    memset(&lfw, 0, sizeof(lfw));
+
+    stat = GdipGetFamilyName(fontFamily, lfw.lfFaceName, LANG_NEUTRAL);
     if (stat != Ok) return stat;
+
+    lfw.lfHeight = -units_to_pixels(emSize, unit, fontFamily->dpi);
+    lfw.lfWeight = style & FontStyleBold ? FW_BOLD : FW_REGULAR;
+    lfw.lfItalic = style & FontStyleItalic;
+    lfw.lfUnderline = style & FontStyleUnderline;
+    lfw.lfStrikeOut = style & FontStyleStrikeout;
+
+    hfont = CreateFontIndirectW(&lfw);
+    hdc = CreateCompatibleDC(0);
+    SelectObject(hdc, hfont);
+    otm.otmSize = sizeof(otm);
+    ret = GetOutlineTextMetricsW(hdc, otm.otmSize, &otm);
+    DeleteDC(hdc);
+    DeleteObject(hfont);
+
+    if (!ret) return NotTrueTypeFont;
+
     *font = GdipAlloc(sizeof(GpFont));
-
-    tmw = &fontFamily->tmw;
-    lfw = &((*font)->lfw);
-    ZeroMemory(&(*lfw), sizeof(*lfw));
-
-    lfw->lfWeight = tmw->tmWeight;
-    lfw->lfItalic = tmw->tmItalic;
-    lfw->lfUnderline = tmw->tmUnderlined;
-    lfw->lfStrikeOut = tmw->tmStruckOut;
-    lfw->lfCharSet = tmw->tmCharSet;
-    lfw->lfPitchAndFamily = tmw->tmPitchAndFamily;
-    lstrcpynW(lfw->lfFaceName, facename, LF_FACESIZE);
-
-    switch (unit)
-    {
-        case UnitWorld:
-            /* FIXME: Figure out when World != Pixel */
-            (*font)->pixel_size = emSize; break;
-        case UnitDisplay:
-            FIXME("Unknown behavior for UnitDisplay! Please report!\n");
-            /* FIXME: Figure out how this works...
-             * MSDN says that if "DISPLAY" is a monitor, then pixel should be
-             * used. That's not what I got. Tests on Windows revealed no output,
-             * and the tests in tests/font crash windows */
-            (*font)->pixel_size = 0; break;
-        case UnitPixel:
-            (*font)->pixel_size = emSize; break;
-        case UnitPoint:
-            (*font)->pixel_size = point_to_pixel(emSize); break;
-        case UnitInch:
-            (*font)->pixel_size = inch_to_pixel(emSize); break;
-        case UnitDocument:
-            (*font)->pixel_size = document_to_pixel(emSize); break;
-        case UnitMillimeter:
-            (*font)->pixel_size = mm_to_pixel(emSize); break;
-    }
-
-    lfw->lfHeight = (*font)->pixel_size * -1;
-
-    lfw->lfWeight = style & FontStyleBold ? 700 : 400;
-    lfw->lfItalic = style & FontStyleItalic;
-    lfw->lfUnderline = style & FontStyleUnderline;
-    lfw->lfStrikeOut = style & FontStyleStrikeout;
+    if (!*font) return OutOfMemory;
 
     (*font)->unit = unit;
     (*font)->emSize = emSize;
-    (*font)->height = tmw->ntmSizeEM;
-    (*font)->line_spacing = tmw->tmAscent + tmw->tmDescent + tmw->tmExternalLeading;
+    (*font)->otm = otm;
+
+    stat = clone_font_family(fontFamily, &(*font)->family);
+    if (stat != Ok)
+    {
+        GdipFree(*font);
+        return stat;
+    }
 
     TRACE("<-- %p\n", *font);
 
@@ -170,42 +204,39 @@ GpStatus WINGDIPAPI GdipCreateFontFromLogfontW(HDC hdc,
     GDIPCONST LOGFONTW *logfont, GpFont **font)
 {
     HFONT hfont, oldfont;
-    TEXTMETRICW textmet;
+    OUTLINETEXTMETRICW otm;
+    WCHAR facename[LF_FACESIZE];
+    GpStatus stat;
+    int ret;
 
     TRACE("(%p, %p, %p)\n", hdc, logfont, font);
 
-    if(!logfont || !font)
+    if (!hdc || !logfont || !font)
         return InvalidParameter;
 
-    if (logfont->lfFaceName[0] == 0)
-        return NotTrueTypeFont;
-
-    *font = GdipAlloc(sizeof(GpFont));
-    if(!*font)  return OutOfMemory;
-
-    memcpy((*font)->lfw.lfFaceName, logfont->lfFaceName, LF_FACESIZE *
-           sizeof(WCHAR));
-    (*font)->lfw.lfHeight = logfont->lfHeight;
-    (*font)->lfw.lfItalic = logfont->lfItalic;
-    (*font)->lfw.lfUnderline = logfont->lfUnderline;
-    (*font)->lfw.lfStrikeOut = logfont->lfStrikeOut;
-
-    (*font)->pixel_size = (*font)->emSize = logfont->lfHeight;
-    (*font)->unit = UnitPixel;
-
-    hfont = CreateFontIndirectW(&(*font)->lfw);
+    hfont = CreateFontIndirectW(logfont);
     oldfont = SelectObject(hdc, hfont);
-    GetTextMetricsW(hdc, &textmet);
-
-    (*font)->lfw.lfHeight = -(textmet.tmHeight-textmet.tmInternalLeading);
-    (*font)->lfw.lfWeight = textmet.tmWeight;
-    (*font)->lfw.lfCharSet = textmet.tmCharSet;
-
-    (*font)->height = 1; /* FIXME: need NEWTEXTMETRIC.ntmSizeEM here */
-    (*font)->line_spacing = textmet.tmAscent + textmet.tmDescent + textmet.tmExternalLeading;
-
+    otm.otmSize = sizeof(otm);
+    ret = GetOutlineTextMetricsW(hdc, otm.otmSize, &otm);
+    GetTextFaceW(hdc, LF_FACESIZE, facename);
     SelectObject(hdc, oldfont);
     DeleteObject(hfont);
+
+    if (!ret) return NotTrueTypeFont;
+
+    *font = GdipAlloc(sizeof(GpFont));
+    if (!*font) return OutOfMemory;
+
+    (*font)->unit = UnitWorld;
+    (*font)->emSize = otm.otmTextMetrics.tmAscent;
+    (*font)->otm = otm;
+
+    stat = GdipCreateFontFamilyFromName(facename, NULL, &(*font)->family);
+    if (stat != Ok)
+    {
+        GdipFree(*font);
+        return NotTrueTypeFont;
+    }
 
     TRACE("<-- %p\n", *font);
 
@@ -243,6 +274,7 @@ GpStatus WINGDIPAPI GdipDeleteFont(GpFont* font)
     if(!font)
         return InvalidParameter;
 
+    GdipDeleteFontFamily(font->family);
     GdipFree(font);
 
     return Ok;
@@ -291,7 +323,12 @@ GpStatus WINGDIPAPI GdipGetFamily(GpFont *font, GpFontFamily **family)
     if (!(font && family))
         return InvalidParameter;
 
-    return GdipCreateFontFamilyFromName(font->lfw.lfFaceName, NULL, family);
+    return GdipCloneFontFamily(font->family, family);
+}
+
+static REAL get_font_size(const GpFont *font)
+{
+    return font->emSize;
 }
 
 /******************************************************************************
@@ -316,9 +353,28 @@ GpStatus WINGDIPAPI GdipGetFontSize(GpFont *font, REAL *size)
 
     if (!(font && size)) return InvalidParameter;
 
-    *size = font->emSize;
+    *size = get_font_size(font);
+    TRACE("%s,%d => %f\n", debugstr_w(font->family->FamilyName), font->otm.otmTextMetrics.tmHeight, *size);
 
     return Ok;
+}
+
+static INT get_font_style(const GpFont *font)
+{
+    INT style;
+
+    if (font->otm.otmTextMetrics.tmWeight > FW_REGULAR)
+        style = FontStyleBold;
+    else
+        style = FontStyleRegular;
+    if (font->otm.otmTextMetrics.tmItalic)
+        style |= FontStyleItalic;
+    if (font->otm.otmTextMetrics.tmUnderlined)
+        style |= FontStyleUnderline;
+    if (font->otm.otmTextMetrics.tmStruckOut)
+        style |= FontStyleStrikeout;
+
+    return style;
 }
 
 /*******************************************************************************
@@ -341,16 +397,8 @@ GpStatus WINGDIPAPI GdipGetFontStyle(GpFont *font, INT *style)
     if (!(font && style))
         return InvalidParameter;
 
-    if (font->lfw.lfWeight > 400)
-        *style = FontStyleBold;
-    else
-        *style = 0;
-    if (font->lfw.lfItalic)
-        *style |= FontStyleItalic;
-    if (font->lfw.lfUnderline)
-        *style |= FontStyleUnderline;
-    if (font->lfw.lfStrikeOut)
-        *style |= FontStyleStrikeout;
+    *style = get_font_style(font);
+    TRACE("%s,%d => %d\n", debugstr_w(font->family->FamilyName), font->otm.otmTextMetrics.tmHeight, *style);
 
     return Ok;
 }
@@ -373,6 +421,7 @@ GpStatus WINGDIPAPI GdipGetFontUnit(GpFont *font, Unit *unit)
     if (!(font && unit)) return InvalidParameter;
 
     *unit = font->unit;
+    TRACE("%s,%d => %d\n", debugstr_w(font->family->FamilyName), font->otm.otmTextMetrics.tmHeight, *unit);
 
     return Ok;
 }
@@ -403,16 +452,64 @@ GpStatus WINGDIPAPI GdipGetLogFontA(GpFont *font, GpGraphics *graphics,
 /*******************************************************************************
  * GdipGetLogFontW [GDIPLUS.@]
  */
-GpStatus WINGDIPAPI GdipGetLogFontW(GpFont *font, GpGraphics *graphics,
-    LOGFONTW *lfw)
+GpStatus WINGDIPAPI GdipGetLogFontW(GpFont *font, GpGraphics *graphics, LOGFONTW *lf)
 {
-    TRACE("(%p, %p, %p)\n", font, graphics, lfw);
+    REAL angle, rel_height, height;
+    GpMatrix matrix;
+    GpPointF pt[3];
 
-    /* FIXME: use graphics */
-    if(!font || !graphics || !lfw)
+    TRACE("(%p, %p, %p)\n", font, graphics, lf);
+
+    if (!font || !graphics || !lf)
         return InvalidParameter;
 
-    *lfw = font->lfw;
+    matrix = graphics->worldtrans;
+
+    if (font->unit == UnitPixel)
+    {
+        height = units_to_pixels(font->emSize, graphics->unit, graphics->yres);
+        if (graphics->unit != UnitDisplay)
+            GdipScaleMatrix(&matrix, graphics->scale, graphics->scale, MatrixOrderAppend);
+    }
+    else
+    {
+        if (graphics->unit == UnitDisplay || graphics->unit == UnitPixel)
+            height = units_to_pixels(font->emSize, font->unit, graphics->xres);
+        else
+            height = units_to_pixels(font->emSize, font->unit, graphics->yres);
+    }
+
+    pt[0].X = 0.0;
+    pt[0].Y = 0.0;
+    pt[1].X = 1.0;
+    pt[1].Y = 0.0;
+    pt[2].X = 0.0;
+    pt[2].Y = 1.0;
+    GdipTransformMatrixPoints(&matrix, pt, 3);
+    angle = -gdiplus_atan2((pt[1].Y - pt[0].Y), (pt[1].X - pt[0].X));
+    rel_height = sqrt((pt[2].Y - pt[0].Y) * (pt[2].Y - pt[0].Y)+
+                      (pt[2].X - pt[0].X) * (pt[2].X - pt[0].X));
+
+    lf->lfHeight = -gdip_round(height * rel_height);
+    lf->lfWidth = 0;
+    lf->lfEscapement = lf->lfOrientation = gdip_round((angle / M_PI) * 1800.0);
+    if (lf->lfEscapement < 0)
+    {
+        lf->lfEscapement += 3600;
+        lf->lfOrientation += 3600;
+    }
+    lf->lfWeight = font->otm.otmTextMetrics.tmWeight;
+    lf->lfItalic = font->otm.otmTextMetrics.tmItalic ? 1 : 0;
+    lf->lfUnderline = font->otm.otmTextMetrics.tmUnderlined ? 1 : 0;
+    lf->lfStrikeOut = font->otm.otmTextMetrics.tmStruckOut ? 1 : 0;
+    lf->lfCharSet = font->otm.otmTextMetrics.tmCharSet;
+    lf->lfOutPrecision = OUT_DEFAULT_PRECIS;
+    lf->lfClipPrecision = CLIP_DEFAULT_PRECIS;
+    lf->lfQuality = DEFAULT_QUALITY;
+    lf->lfPitchAndFamily = 0;
+    strcpyW(lf->lfFaceName, font->family->FamilyName);
+
+    TRACE("=> %s,%d\n", debugstr_w(lf->lfFaceName), lf->lfHeight);
 
     return Ok;
 }
@@ -422,6 +519,8 @@ GpStatus WINGDIPAPI GdipGetLogFontW(GpFont *font, GpGraphics *graphics,
  */
 GpStatus WINGDIPAPI GdipCloneFont(GpFont *font, GpFont **cloneFont)
 {
+    GpStatus stat;
+
     TRACE("(%p, %p)\n", font, cloneFont);
 
     if(!font || !cloneFont)
@@ -431,8 +530,10 @@ GpStatus WINGDIPAPI GdipCloneFont(GpFont *font, GpFont **cloneFont)
     if(!*cloneFont)    return OutOfMemory;
 
     **cloneFont = *font;
+    stat = GdipCloneFontFamily(font->family, &(*cloneFont)->family);
+    if (stat != Ok) GdipFree(*cloneFont);
 
-    return Ok;
+    return stat;
 }
 
 /*******************************************************************************
@@ -453,15 +554,29 @@ GpStatus WINGDIPAPI GdipGetFontHeight(GDIPCONST GpFont *font,
 {
     REAL dpi;
     GpStatus stat;
+    REAL font_height;
 
     TRACE("%p %p %p\n", font, graphics, height);
 
-    stat = GdipGetDpiY((GpGraphics*)graphics, &dpi);
+    stat = GdipGetFontHeightGivenDPI(font, font->family->dpi, &font_height);
+    if (stat != Ok) return stat;
 
-    if (stat == Ok)
-        stat = GdipGetFontHeightGivenDPI(font, dpi, height);
+    if (!graphics)
+    {
+        *height = font_height;
+        TRACE("%s,%d => %f\n",
+              debugstr_w(font->family->FamilyName), font->otm.otmTextMetrics.tmHeight, *height);
+        return Ok;
+    }
 
-    return stat;
+    stat = GdipGetDpiY((GpGraphics *)graphics, &dpi);
+    if (stat != Ok) return stat;
+
+    *height = pixels_to_units(font_height, graphics->unit, dpi);
+
+    TRACE("%s,%d(unit %d) => %f\n",
+          debugstr_w(font->family->FamilyName), font->otm.otmTextMetrics.tmHeight, graphics->unit, *height);
+    return Ok;
 }
 
 /*******************************************************************************
@@ -481,37 +596,27 @@ GpStatus WINGDIPAPI GdipGetFontHeight(GDIPCONST GpFont *font,
  */
 GpStatus WINGDIPAPI GdipGetFontHeightGivenDPI(GDIPCONST GpFont *font, REAL dpi, REAL *height)
 {
-    REAL font_height;
+    GpStatus stat;
+    INT style;
+    UINT16 line_spacing, em_height;
+    REAL font_size;
+
+    if (!font || !height) return InvalidParameter;
 
     TRACE("%p (%s), %f, %p\n", font,
-            debugstr_w(font->lfw.lfFaceName), dpi, height);
+            debugstr_w(font->family->FamilyName), dpi, height);
 
-    if (!(font && height)) return InvalidParameter;
+    font_size = units_to_pixels(get_font_size(font), font->unit, dpi);
+    style = get_font_style(font);
+    stat = GdipGetLineSpacing(font->family, style, &line_spacing);
+    if (stat != Ok) return stat;
+    stat = GdipGetEmHeight(font->family, style, &em_height);
+    if (stat != Ok) return stat;
 
-    font_height = font->line_spacing * (font->emSize / font->height);
+    *height = (REAL)line_spacing * font_size / (REAL)em_height;
 
-    switch (font->unit)
-    {
-        case UnitPixel:
-        case UnitWorld:
-            *height = font_height;
-            break;
-        case UnitPoint:
-            *height = font_height * dpi * inch_per_point;
-            break;
-        case UnitInch:
-            *height = font_height * dpi;
-            break;
-        case UnitDocument:
-            *height = font_height * (dpi / 300.0);
-            break;
-        case UnitMillimeter:
-            *height = font_height * (dpi / mm_per_inch);
-            break;
-        default:
-            FIXME("Unhandled unit type: %d\n", font->unit);
-            return NotImplemented;
-    }
+    TRACE("%s,%d => %f\n",
+          debugstr_w(font->family->FamilyName), font->otm.otmTextMetrics.tmHeight, *height);
 
     return Ok;
 }
@@ -525,25 +630,90 @@ GpStatus WINGDIPAPI GdipGetFontHeightGivenDPI(GDIPCONST GpFont *font, REAL dpi, 
 static INT CALLBACK is_font_installed_proc(const LOGFONTW *elf,
                             const TEXTMETRICW *ntm, DWORD type, LPARAM lParam)
 {
-    if (!ntm || type == RASTER_FONTTYPE)
-    {
+    if (type & RASTER_FONTTYPE)
         return 1;
-    }
 
-    *(NEWTEXTMETRICW*)lParam = *(const NEWTEXTMETRICW*)ntm;
+    *(LOGFONTW *)lParam = *elf;
 
     return 0;
 }
 
-static BOOL find_installed_font(const WCHAR *name, NEWTEXTMETRICW *ntm)
+struct font_metrics
 {
-    HDC hdc = GetDC(0);
-    BOOL ret = FALSE;
+    WCHAR facename[LF_FACESIZE];
+    UINT16 em_height, ascent, descent, line_spacing; /* in font units */
+    int dpi;
+};
 
-    if(!EnumFontFamiliesW(hdc, name, is_font_installed_proc, (LPARAM)ntm))
-        ret = TRUE;
+static BOOL get_font_metrics(HDC hdc, struct font_metrics *fm)
+{
+    OUTLINETEXTMETRICW otm;
+    TT_OS2_V2 tt_os2;
+    TT_HHEA tt_hori;
+    LONG size;
+    UINT16 line_gap;
 
-    ReleaseDC(0, hdc);
+    otm.otmSize = sizeof(otm);
+    if (!GetOutlineTextMetricsW(hdc, otm.otmSize, &otm)) return FALSE;
+
+    GetTextFaceW(hdc, LF_FACESIZE, fm->facename);
+
+    fm->em_height = otm.otmEMSquare;
+    fm->dpi = GetDeviceCaps(hdc, LOGPIXELSY);
+
+    memset(&tt_hori, 0, sizeof(tt_hori));
+    if (GetFontData(hdc, MS_HHEA_TAG, 0, &tt_hori, sizeof(tt_hori)) != GDI_ERROR)
+    {
+        fm->ascent = GET_BE_WORD(tt_hori.Ascender);
+        fm->descent = -GET_BE_WORD(tt_hori.Descender);
+        TRACE("hhea: ascent %d, descent %d\n", fm->ascent, fm->descent);
+        line_gap = GET_BE_WORD(tt_hori.LineGap);
+        fm->line_spacing = fm->ascent + fm->descent + line_gap;
+        TRACE("line_gap %u, line_spacing %u\n", line_gap, fm->line_spacing);
+        if (fm->ascent + fm->descent != 0) return TRUE;
+    }
+
+    size = GetFontData(hdc, MS_OS2_TAG, 0, NULL, 0);
+    if (size == GDI_ERROR) return FALSE;
+
+    if (size > sizeof(tt_os2)) size = sizeof(tt_os2);
+
+    memset(&tt_os2, 0, sizeof(tt_os2));
+    if (GetFontData(hdc, MS_OS2_TAG, 0, &tt_os2, size) != size) return FALSE;
+
+    fm->ascent = GET_BE_WORD(tt_os2.usWinAscent);
+    fm->descent = GET_BE_WORD(tt_os2.usWinDescent);
+    TRACE("usWinAscent %u, usWinDescent %u\n", fm->ascent, fm->descent);
+    if (fm->ascent + fm->descent == 0)
+    {
+        fm->ascent = GET_BE_WORD(tt_os2.sTypoAscender);
+        fm->descent = GET_BE_WORD(tt_os2.sTypoDescender);
+        TRACE("sTypoAscender %u, sTypoDescender %u\n", fm->ascent, fm->descent);
+    }
+    line_gap = GET_BE_WORD(tt_os2.sTypoLineGap);
+    fm->line_spacing = fm->ascent + fm->descent + line_gap;
+    TRACE("line_gap %u, line_spacing %u\n", line_gap, fm->line_spacing);
+    return TRUE;
+}
+
+static GpStatus find_installed_font(const WCHAR *name, struct font_metrics *fm)
+{
+    LOGFONTW lf;
+    HDC hdc = CreateCompatibleDC(0);
+    GpStatus ret = FontFamilyNotFound;
+
+    if(!EnumFontFamiliesW(hdc, name, is_font_installed_proc, (LPARAM)&lf))
+    {
+        HFONT hfont, old_font;
+
+        hfont = CreateFontIndirectW(&lf);
+        old_font = SelectObject(hdc, hfont);
+        ret = get_font_metrics(hdc, fm) ? Ok : NotTrueTypeFont;
+        SelectObject(hdc, old_font);
+        DeleteObject(hfont);
+    }
+
+    DeleteDC(hdc);
     return ret;
 }
 
@@ -571,8 +741,9 @@ GpStatus WINGDIPAPI GdipCreateFontFamilyFromName(GDIPCONST WCHAR *name,
                                         GpFontCollection *fontCollection,
                                         GpFontFamily **FontFamily)
 {
+    GpStatus stat;
     GpFontFamily* ffamily;
-    NEWTEXTMETRICW ntm;
+    struct font_metrics fm;
 
     TRACE("%s, %p %p\n", debugstr_w(name), fontCollection, FontFamily);
 
@@ -581,18 +752,32 @@ GpStatus WINGDIPAPI GdipCreateFontFamilyFromName(GDIPCONST WCHAR *name,
     if (fontCollection)
         FIXME("No support for FontCollections yet!\n");
 
-    if (!find_installed_font(name, &ntm))
-        return FontFamilyNotFound;
+    stat = find_installed_font(name, &fm);
+    if (stat != Ok) return stat;
 
     ffamily = GdipAlloc(sizeof (GpFontFamily));
     if (!ffamily) return OutOfMemory;
 
-    ffamily->tmw = ntm;
-    lstrcpynW(ffamily->FamilyName, name, LF_FACESIZE);
+    lstrcpyW(ffamily->FamilyName, fm.facename);
+    ffamily->em_height = fm.em_height;
+    ffamily->ascent = fm.ascent;
+    ffamily->descent = fm.descent;
+    ffamily->line_spacing = fm.line_spacing;
+    ffamily->dpi = fm.dpi;
 
     *FontFamily = ffamily;
 
     TRACE("<-- %p\n", ffamily);
+
+    return Ok;
+}
+
+static GpStatus clone_font_family(const GpFontFamily *family, GpFontFamily **clone)
+{
+    *clone = GdipAlloc(sizeof(GpFontFamily));
+    if (!*clone) return OutOfMemory;
+
+    **clone = *family;
 
     return Ok;
 }
@@ -611,16 +796,15 @@ GpStatus WINGDIPAPI GdipCreateFontFamilyFromName(GDIPCONST WCHAR *name,
  */
 GpStatus WINGDIPAPI GdipCloneFontFamily(GpFontFamily* FontFamily, GpFontFamily** clonedFontFamily)
 {
+    GpStatus status;
+
     if (!(FontFamily && clonedFontFamily)) return InvalidParameter;
 
-    TRACE("stub: %p (%s), %p\n", FontFamily,
+    TRACE("%p (%s), %p\n", FontFamily,
             debugstr_w(FontFamily->FamilyName), clonedFontFamily);
 
-    *clonedFontFamily = GdipAlloc(sizeof(GpFontFamily));
-    if (!*clonedFontFamily) return OutOfMemory;
-
-    (*clonedFontFamily)->tmw = FontFamily->tmw;
-    lstrcpyW((*clonedFontFamily)->FamilyName, FontFamily->FamilyName);
+    status = clone_font_family(FontFamily, clonedFontFamily);
+    if (status != Ok) return status;
 
     TRACE("<-- %p\n", *clonedFontFamily);
 
@@ -692,7 +876,8 @@ GpStatus WINGDIPAPI GdipGetCellAscent(GDIPCONST GpFontFamily *family,
 {
     if (!(family && CellAscent)) return InvalidParameter;
 
-    *CellAscent = family->tmw.tmAscent;
+    *CellAscent = family->ascent;
+    TRACE("%s => %u\n", debugstr_w(family->FamilyName), *CellAscent);
 
     return Ok;
 }
@@ -704,7 +889,8 @@ GpStatus WINGDIPAPI GdipGetCellDescent(GDIPCONST GpFontFamily *family,
 
     if (!(family && CellDescent)) return InvalidParameter;
 
-    *CellDescent = family->tmw.tmDescent;
+    *CellDescent = family->descent;
+    TRACE("%s => %u\n", debugstr_w(family->FamilyName), *CellDescent);
 
     return Ok;
 }
@@ -729,7 +915,8 @@ GpStatus WINGDIPAPI GdipGetEmHeight(GDIPCONST GpFontFamily *family, INT style, U
 
     TRACE("%p (%s), %d, %p\n", family, debugstr_w(family->FamilyName), style, EmHeight);
 
-    *EmHeight = family->tmw.ntmSizeEM;
+    *EmHeight = family->em_height;
+    TRACE("%s => %u\n", debugstr_w(family->FamilyName), *EmHeight);
 
     return Ok;
 }
@@ -759,7 +946,8 @@ GpStatus WINGDIPAPI GdipGetLineSpacing(GDIPCONST GpFontFamily *family,
 
     if (style) FIXME("ignoring style\n");
 
-    *LineSpacing = family->tmw.tmAscent + family->tmw.tmDescent + family->tmw.tmExternalLeading;
+    *LineSpacing = family->line_spacing;
+    TRACE("%s => %u\n", debugstr_w(family->FamilyName), *LineSpacing);
 
     return Ok;
 }
@@ -767,7 +955,7 @@ GpStatus WINGDIPAPI GdipGetLineSpacing(GDIPCONST GpFontFamily *family,
 static INT CALLBACK font_has_style_proc(const LOGFONTW *elf,
                             const TEXTMETRICW *ntm, DWORD type, LPARAM lParam)
 {
-    INT fontstyle=0;
+    INT fontstyle = FontStyleRegular;
 
     if (!ntm) return 1;
 
@@ -791,12 +979,12 @@ GpStatus WINGDIPAPI GdipIsStyleAvailable(GDIPCONST GpFontFamily* family,
 
     *IsStyleAvailable = FALSE;
 
-    hdc = GetDC(0);
+    hdc = CreateCompatibleDC(0);
 
     if(!EnumFontFamiliesW(hdc, family->FamilyName, font_has_style_proc, (LPARAM)style))
         *IsStyleAvailable = TRUE;
 
-    ReleaseDC(0, hdc);
+    DeleteDC(hdc);
 
     return Ok;
 }
@@ -939,121 +1127,358 @@ GpStatus WINGDIPAPI GdipDeletePrivateFontCollection(GpFontCollection **fontColle
 /*****************************************************************************
  * GdipPrivateAddFontFile [GDIPLUS.@]
  */
-GpStatus WINGDIPAPI GdipPrivateAddFontFile(GpFontCollection* fontCollection,
-        GDIPCONST WCHAR* filename)
+GpStatus WINGDIPAPI GdipPrivateAddFontFile(GpFontCollection *collection, GDIPCONST WCHAR *name)
 {
-    FIXME("stub: %p, %s\n", fontCollection, debugstr_w(filename));
+    HANDLE file, mapping;
+    LARGE_INTEGER size;
+    void *mem;
+    GpStatus status;
 
-    if (!(fontCollection && filename))
+    TRACE("%p, %s\n", collection, debugstr_w(name));
+
+    if (!collection || !name) return InvalidParameter;
+
+    file = CreateFileW(name, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
+    if (file == INVALID_HANDLE_VALUE) return InvalidParameter;
+
+    if (!GetFileSizeEx(file, &size) || size.u.HighPart)
+    {
+        CloseHandle(file);
         return InvalidParameter;
+    }
 
-    return NotImplemented;
+    mapping = CreateFileMappingW(file, NULL, PAGE_READONLY, 0, 0, NULL);
+    CloseHandle(file);
+    if (!mapping) return InvalidParameter;
+
+    mem = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+    CloseHandle(mapping);
+    if (!mem) return InvalidParameter;
+
+    /* GdipPrivateAddMemoryFont creates a copy of the memory block */
+    status = GdipPrivateAddMemoryFont(collection, mem, size.u.LowPart);
+    UnmapViewOfFile(mem);
+
+    return status;
 }
 
-/* Copied from msi/font.c */
+#define TT_PLATFORM_APPLE_UNICODE   0
+#define TT_PLATFORM_MACINTOSH       1
+#define TT_PLATFORM_MICROSOFT       3
 
-typedef struct _tagTT_OFFSET_TABLE {
-    USHORT uMajorVersion;
-    USHORT uMinorVersion;
-    USHORT uNumOfTables;
-    USHORT uSearchRange;
-    USHORT uEntrySelector;
-    USHORT uRangeShift;
-} TT_OFFSET_TABLE;
+#define TT_APPLE_ID_DEFAULT     0
+#define TT_APPLE_ID_ISO_10646   2
+#define TT_APPLE_ID_UNICODE_2_0 3
 
-typedef struct _tagTT_TABLE_DIRECTORY {
-    char szTag[4]; /* table name */
-    ULONG uCheckSum; /* Check sum */
-    ULONG uOffset; /* Offset from beginning of file */
-    ULONG uLength; /* length of the table in bytes */
-} TT_TABLE_DIRECTORY;
+#define TT_MS_ID_SYMBOL_CS  0
+#define TT_MS_ID_UNICODE_CS 1
 
-typedef struct _tagTT_NAME_TABLE_HEADER {
-    USHORT uFSelector; /* format selector. Always 0 */
-    USHORT uNRCount; /* Name Records count */
-    USHORT uStorageOffset; /* Offset for strings storage,
-                            * from start of the table */
-} TT_NAME_TABLE_HEADER;
+#define TT_MAC_ID_SIMPLIFIED_CHINESE    25
 
 #define NAME_ID_FULL_FONT_NAME  4
-#define NAME_ID_VERSION         5
 
-typedef struct _tagTT_NAME_RECORD {
-    USHORT uPlatformID;
-    USHORT uEncodingID;
-    USHORT uLanguageID;
-    USHORT uNameID;
-    USHORT uStringLength;
-    USHORT uStringOffset; /* from start of storage area */
-} TT_NAME_RECORD;
+typedef struct {
+    USHORT major_version;
+    USHORT minor_version;
+    USHORT tables_no;
+    USHORT search_range;
+    USHORT entry_selector;
+    USHORT range_shift;
+} tt_header;
 
-#define SWAPWORD(x) MAKEWORD(HIBYTE(x), LOBYTE(x))
-#define SWAPLONG(x) MAKELONG(SWAPWORD(HIWORD(x)), SWAPWORD(LOWORD(x)))
+typedef struct {
+    char tag[4];        /* table name */
+    ULONG check_sum;    /* Check sum */
+    ULONG offset;       /* Offset from beginning of file */
+    ULONG length;       /* length of the table in bytes */
+} tt_table_directory;
 
-/*
- * Code based off of code located here
- * http://www.codeproject.com/gdi/fontnamefromfile.asp
- */
-static WCHAR *load_ttf_name_id( const char *mem, DWORD_PTR size, DWORD id, WCHAR *ret, DWORD len )
+typedef struct {
+    USHORT format;          /* format selector. Always 0 */
+    USHORT count;           /* Name Records count */
+    USHORT string_offset;   /* Offset for strings storage, * from start of the table */
+} tt_name_table;
+
+typedef struct {
+    USHORT platform_id;
+    USHORT encoding_id;
+    USHORT language_id;
+    USHORT name_id;
+    USHORT length;
+    USHORT offset;      /* from start of storage area */
+} tt_name_record;
+
+/* Copied from gdi32/freetype.c */
+
+static const LANGID mac_langid_table[] =
 {
-    const TT_TABLE_DIRECTORY *tblDir;
-    TT_OFFSET_TABLE ttOffsetTable;
-    TT_NAME_TABLE_HEADER ttNTHeader;
-    TT_NAME_RECORD ttRecord;
-    DWORD ofs, pos;
-    int i;
+    MAKELANGID(LANG_ENGLISH,SUBLANG_DEFAULT),                /* TT_MAC_LANGID_ENGLISH */
+    MAKELANGID(LANG_FRENCH,SUBLANG_DEFAULT),                 /* TT_MAC_LANGID_FRENCH */
+    MAKELANGID(LANG_GERMAN,SUBLANG_DEFAULT),                 /* TT_MAC_LANGID_GERMAN */
+    MAKELANGID(LANG_ITALIAN,SUBLANG_DEFAULT),                /* TT_MAC_LANGID_ITALIAN */
+    MAKELANGID(LANG_DUTCH,SUBLANG_DEFAULT),                  /* TT_MAC_LANGID_DUTCH */
+    MAKELANGID(LANG_SWEDISH,SUBLANG_DEFAULT),                /* TT_MAC_LANGID_SWEDISH */
+    MAKELANGID(LANG_SPANISH,SUBLANG_DEFAULT),                /* TT_MAC_LANGID_SPANISH */
+    MAKELANGID(LANG_DANISH,SUBLANG_DEFAULT),                 /* TT_MAC_LANGID_DANISH */
+    MAKELANGID(LANG_PORTUGUESE,SUBLANG_DEFAULT),             /* TT_MAC_LANGID_PORTUGUESE */
+    MAKELANGID(LANG_NORWEGIAN,SUBLANG_DEFAULT),              /* TT_MAC_LANGID_NORWEGIAN */
+    MAKELANGID(LANG_HEBREW,SUBLANG_DEFAULT),                 /* TT_MAC_LANGID_HEBREW */
+    MAKELANGID(LANG_JAPANESE,SUBLANG_DEFAULT),               /* TT_MAC_LANGID_JAPANESE */
+    MAKELANGID(LANG_ARABIC,SUBLANG_DEFAULT),                 /* TT_MAC_LANGID_ARABIC */
+    MAKELANGID(LANG_FINNISH,SUBLANG_DEFAULT),                /* TT_MAC_LANGID_FINNISH */
+    MAKELANGID(LANG_GREEK,SUBLANG_DEFAULT),                  /* TT_MAC_LANGID_GREEK */
+    MAKELANGID(LANG_ICELANDIC,SUBLANG_DEFAULT),              /* TT_MAC_LANGID_ICELANDIC */
+    MAKELANGID(LANG_MALTESE,SUBLANG_DEFAULT),                /* TT_MAC_LANGID_MALTESE */
+    MAKELANGID(LANG_TURKISH,SUBLANG_DEFAULT),                /* TT_MAC_LANGID_TURKISH */
+    MAKELANGID(LANG_CROATIAN,SUBLANG_DEFAULT),               /* TT_MAC_LANGID_CROATIAN */
+    MAKELANGID(LANG_CHINESE_TRADITIONAL,SUBLANG_DEFAULT),    /* TT_MAC_LANGID_CHINESE_TRADITIONAL */
+    MAKELANGID(LANG_URDU,SUBLANG_DEFAULT),                   /* TT_MAC_LANGID_URDU */
+    MAKELANGID(LANG_HINDI,SUBLANG_DEFAULT),                  /* TT_MAC_LANGID_HINDI */
+    MAKELANGID(LANG_THAI,SUBLANG_DEFAULT),                   /* TT_MAC_LANGID_THAI */
+    MAKELANGID(LANG_KOREAN,SUBLANG_DEFAULT),                 /* TT_MAC_LANGID_KOREAN */
+    MAKELANGID(LANG_LITHUANIAN,SUBLANG_DEFAULT),             /* TT_MAC_LANGID_LITHUANIAN */
+    MAKELANGID(LANG_POLISH,SUBLANG_DEFAULT),                 /* TT_MAC_LANGID_POLISH */
+    MAKELANGID(LANG_HUNGARIAN,SUBLANG_DEFAULT),              /* TT_MAC_LANGID_HUNGARIAN */
+    MAKELANGID(LANG_ESTONIAN,SUBLANG_DEFAULT),               /* TT_MAC_LANGID_ESTONIAN */
+    MAKELANGID(LANG_LATVIAN,SUBLANG_DEFAULT),                /* TT_MAC_LANGID_LETTISH */
+    MAKELANGID(LANG_SAMI,SUBLANG_DEFAULT),                   /* TT_MAC_LANGID_SAAMISK */
+    MAKELANGID(LANG_FAEROESE,SUBLANG_DEFAULT),               /* TT_MAC_LANGID_FAEROESE */
+    MAKELANGID(LANG_FARSI,SUBLANG_DEFAULT),                  /* TT_MAC_LANGID_FARSI */
+    MAKELANGID(LANG_RUSSIAN,SUBLANG_DEFAULT),                /* TT_MAC_LANGID_RUSSIAN */
+    MAKELANGID(LANG_CHINESE_SIMPLIFIED,SUBLANG_DEFAULT),     /* TT_MAC_LANGID_CHINESE_SIMPLIFIED */
+    MAKELANGID(LANG_DUTCH,SUBLANG_DUTCH_BELGIAN),            /* TT_MAC_LANGID_FLEMISH */
+    MAKELANGID(LANG_IRISH,SUBLANG_DEFAULT),                  /* TT_MAC_LANGID_IRISH */
+    MAKELANGID(LANG_ALBANIAN,SUBLANG_DEFAULT),               /* TT_MAC_LANGID_ALBANIAN */
+    MAKELANGID(LANG_ROMANIAN,SUBLANG_DEFAULT),               /* TT_MAC_LANGID_ROMANIAN */
+    MAKELANGID(LANG_CZECH,SUBLANG_DEFAULT),                  /* TT_MAC_LANGID_CZECH */
+    MAKELANGID(LANG_SLOVAK,SUBLANG_DEFAULT),                 /* TT_MAC_LANGID_SLOVAK */
+    MAKELANGID(LANG_SLOVENIAN,SUBLANG_DEFAULT),              /* TT_MAC_LANGID_SLOVENIAN */
+    0,                                                       /* TT_MAC_LANGID_YIDDISH */
+    MAKELANGID(LANG_SERBIAN,SUBLANG_DEFAULT),                /* TT_MAC_LANGID_SERBIAN */
+    MAKELANGID(LANG_MACEDONIAN,SUBLANG_DEFAULT),             /* TT_MAC_LANGID_MACEDONIAN */
+    MAKELANGID(LANG_BULGARIAN,SUBLANG_DEFAULT),              /* TT_MAC_LANGID_BULGARIAN */
+    MAKELANGID(LANG_UKRAINIAN,SUBLANG_DEFAULT),              /* TT_MAC_LANGID_UKRAINIAN */
+    MAKELANGID(LANG_BELARUSIAN,SUBLANG_DEFAULT),             /* TT_MAC_LANGID_BYELORUSSIAN */
+    MAKELANGID(LANG_UZBEK,SUBLANG_DEFAULT),                  /* TT_MAC_LANGID_UZBEK */
+    MAKELANGID(LANG_KAZAK,SUBLANG_DEFAULT),                  /* TT_MAC_LANGID_KAZAKH */
+    MAKELANGID(LANG_AZERI,SUBLANG_AZERI_CYRILLIC),           /* TT_MAC_LANGID_AZERBAIJANI */
+    0,                                                       /* TT_MAC_LANGID_AZERBAIJANI_ARABIC_SCRIPT */
+    MAKELANGID(LANG_ARMENIAN,SUBLANG_DEFAULT),               /* TT_MAC_LANGID_ARMENIAN */
+    MAKELANGID(LANG_GEORGIAN,SUBLANG_DEFAULT),               /* TT_MAC_LANGID_GEORGIAN */
+    0,                                                       /* TT_MAC_LANGID_MOLDAVIAN */
+    MAKELANGID(LANG_KYRGYZ,SUBLANG_DEFAULT),                 /* TT_MAC_LANGID_KIRGHIZ */
+    MAKELANGID(LANG_TAJIK,SUBLANG_DEFAULT),                  /* TT_MAC_LANGID_TAJIKI */
+    MAKELANGID(LANG_TURKMEN,SUBLANG_DEFAULT),                /* TT_MAC_LANGID_TURKMEN */
+    MAKELANGID(LANG_MONGOLIAN,SUBLANG_DEFAULT),              /* TT_MAC_LANGID_MONGOLIAN */
+    MAKELANGID(LANG_MONGOLIAN,SUBLANG_MONGOLIAN_CYRILLIC_MONGOLIA), /* TT_MAC_LANGID_MONGOLIAN_CYRILLIC_SCRIPT */
+    MAKELANGID(LANG_PASHTO,SUBLANG_DEFAULT),                 /* TT_MAC_LANGID_PASHTO */
+    0,                                                       /* TT_MAC_LANGID_KURDISH */
+    MAKELANGID(LANG_KASHMIRI,SUBLANG_DEFAULT),               /* TT_MAC_LANGID_KASHMIRI */
+    MAKELANGID(LANG_SINDHI,SUBLANG_DEFAULT),                 /* TT_MAC_LANGID_SINDHI */
+    MAKELANGID(LANG_TIBETAN,SUBLANG_DEFAULT),                /* TT_MAC_LANGID_TIBETAN */
+    MAKELANGID(LANG_NEPALI,SUBLANG_DEFAULT),                 /* TT_MAC_LANGID_NEPALI */
+    MAKELANGID(LANG_SANSKRIT,SUBLANG_DEFAULT),               /* TT_MAC_LANGID_SANSKRIT */
+    MAKELANGID(LANG_MARATHI,SUBLANG_DEFAULT),                /* TT_MAC_LANGID_MARATHI */
+    MAKELANGID(LANG_BENGALI,SUBLANG_DEFAULT),                /* TT_MAC_LANGID_BENGALI */
+    MAKELANGID(LANG_ASSAMESE,SUBLANG_DEFAULT),               /* TT_MAC_LANGID_ASSAMESE */
+    MAKELANGID(LANG_GUJARATI,SUBLANG_DEFAULT),               /* TT_MAC_LANGID_GUJARATI */
+    MAKELANGID(LANG_PUNJABI,SUBLANG_DEFAULT),                /* TT_MAC_LANGID_PUNJABI */
+    MAKELANGID(LANG_ORIYA,SUBLANG_DEFAULT),                  /* TT_MAC_LANGID_ORIYA */
+    MAKELANGID(LANG_MALAYALAM,SUBLANG_DEFAULT),              /* TT_MAC_LANGID_MALAYALAM */
+    MAKELANGID(LANG_KANNADA,SUBLANG_DEFAULT),                /* TT_MAC_LANGID_KANNADA */
+    MAKELANGID(LANG_TAMIL,SUBLANG_DEFAULT),                  /* TT_MAC_LANGID_TAMIL */
+    MAKELANGID(LANG_TELUGU,SUBLANG_DEFAULT),                 /* TT_MAC_LANGID_TELUGU */
+    MAKELANGID(LANG_SINHALESE,SUBLANG_DEFAULT),              /* TT_MAC_LANGID_SINHALESE */
+    0,                                                       /* TT_MAC_LANGID_BURMESE */
+    MAKELANGID(LANG_KHMER,SUBLANG_DEFAULT),                  /* TT_MAC_LANGID_KHMER */
+    MAKELANGID(LANG_LAO,SUBLANG_DEFAULT),                    /* TT_MAC_LANGID_LAO */
+    MAKELANGID(LANG_VIETNAMESE,SUBLANG_DEFAULT),             /* TT_MAC_LANGID_VIETNAMESE */
+    MAKELANGID(LANG_INDONESIAN,SUBLANG_DEFAULT),             /* TT_MAC_LANGID_INDONESIAN */
+    0,                                                       /* TT_MAC_LANGID_TAGALOG */
+    MAKELANGID(LANG_MALAY,SUBLANG_DEFAULT),                  /* TT_MAC_LANGID_MALAY_ROMAN_SCRIPT */
+    0,                                                       /* TT_MAC_LANGID_MALAY_ARABIC_SCRIPT */
+    MAKELANGID(LANG_AMHARIC,SUBLANG_DEFAULT),                /* TT_MAC_LANGID_AMHARIC */
+    MAKELANGID(LANG_TIGRIGNA,SUBLANG_DEFAULT),               /* TT_MAC_LANGID_TIGRINYA */
+    0,                                                       /* TT_MAC_LANGID_GALLA */
+    0,                                                       /* TT_MAC_LANGID_SOMALI */
+    MAKELANGID(LANG_SWAHILI,SUBLANG_DEFAULT),                /* TT_MAC_LANGID_SWAHILI */
+    0,                                                       /* TT_MAC_LANGID_RUANDA */
+    0,                                                       /* TT_MAC_LANGID_RUNDI */
+    0,                                                       /* TT_MAC_LANGID_CHEWA */
+    MAKELANGID(LANG_MALAGASY,SUBLANG_DEFAULT),               /* TT_MAC_LANGID_MALAGASY */
+    MAKELANGID(LANG_ESPERANTO,SUBLANG_DEFAULT),              /* TT_MAC_LANGID_ESPERANTO */
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,       /* 95-111 */
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,          /* 112-127 */
+    MAKELANGID(LANG_WELSH,SUBLANG_DEFAULT),                  /* TT_MAC_LANGID_WELSH */
+    MAKELANGID(LANG_BASQUE,SUBLANG_DEFAULT),                 /* TT_MAC_LANGID_BASQUE */
+    MAKELANGID(LANG_CATALAN,SUBLANG_DEFAULT),                /* TT_MAC_LANGID_CATALAN */
+    0,                                                       /* TT_MAC_LANGID_LATIN */
+    MAKELANGID(LANG_QUECHUA,SUBLANG_DEFAULT),                /* TT_MAC_LANGID_QUECHUA */
+    0,                                                       /* TT_MAC_LANGID_GUARANI */
+    0,                                                       /* TT_MAC_LANGID_AYMARA */
+    MAKELANGID(LANG_TATAR,SUBLANG_DEFAULT),                  /* TT_MAC_LANGID_TATAR */
+    MAKELANGID(LANG_UIGHUR,SUBLANG_DEFAULT),                 /* TT_MAC_LANGID_UIGHUR */
+    0,                                                       /* TT_MAC_LANGID_DZONGKHA */
+    0,                                                       /* TT_MAC_LANGID_JAVANESE */
+    0,                                                       /* TT_MAC_LANGID_SUNDANESE */
+    MAKELANGID(LANG_GALICIAN,SUBLANG_DEFAULT),               /* TT_MAC_LANGID_GALICIAN */
+    MAKELANGID(LANG_AFRIKAANS,SUBLANG_DEFAULT),              /* TT_MAC_LANGID_AFRIKAANS */
+    MAKELANGID(LANG_BRETON,SUBLANG_DEFAULT),                 /* TT_MAC_LANGID_BRETON */
+    MAKELANGID(LANG_INUKTITUT,SUBLANG_DEFAULT),              /* TT_MAC_LANGID_INUKTITUT */
+    MAKELANGID(LANG_SCOTTISH_GAELIC,SUBLANG_DEFAULT),        /* TT_MAC_LANGID_SCOTTISH_GAELIC */
+    MAKELANGID(LANG_MANX_GAELIC,SUBLANG_DEFAULT),            /* TT_MAC_LANGID_MANX_GAELIC */
+    MAKELANGID(LANG_IRISH,SUBLANG_IRISH_IRELAND),            /* TT_MAC_LANGID_IRISH_GAELIC */
+    0,                                                       /* TT_MAC_LANGID_TONGAN */
+    0,                                                       /* TT_MAC_LANGID_GREEK_POLYTONIC */
+    MAKELANGID(LANG_GREENLANDIC,SUBLANG_DEFAULT),            /* TT_MAC_LANGID_GREELANDIC */
+    MAKELANGID(LANG_AZERI,SUBLANG_AZERI_LATIN),              /* TT_MAC_LANGID_AZERBAIJANI_ROMAN_SCRIPT */
+};
 
-    if (sizeof(TT_OFFSET_TABLE) > size)
-        return NULL;
-    ttOffsetTable = *(TT_OFFSET_TABLE*)mem;
-    ttOffsetTable.uNumOfTables = SWAPWORD(ttOffsetTable.uNumOfTables);
-    ttOffsetTable.uMajorVersion = SWAPWORD(ttOffsetTable.uMajorVersion);
-    ttOffsetTable.uMinorVersion = SWAPWORD(ttOffsetTable.uMinorVersion);
+static inline WORD get_mac_code_page( const tt_name_record *name )
+{
+    WORD encoding_id = GET_BE_WORD(name->encoding_id);
+    if (encoding_id == TT_MAC_ID_SIMPLIFIED_CHINESE) return 10008;  /* special case */
+    return 10000 + encoding_id;
+}
 
-    if (ttOffsetTable.uMajorVersion != 1 || ttOffsetTable.uMinorVersion != 0)
-        return NULL;
+static int match_name_table_language( const tt_name_record *name, LANGID lang )
+{
+    LANGID name_lang;
 
-    pos = sizeof(ttOffsetTable);
-    for (i = 0; i < ttOffsetTable.uNumOfTables; i++)
+    switch (GET_BE_WORD(name->platform_id))
     {
-        tblDir = (const TT_TABLE_DIRECTORY*)&mem[pos];
-        pos += sizeof(*tblDir);
-        if (memcmp(tblDir->szTag,"name",4)==0)
+    case TT_PLATFORM_MICROSOFT:
+        switch (GET_BE_WORD(name->encoding_id))
         {
-            ofs = SWAPLONG(tblDir->uOffset);
+        case TT_MS_ID_UNICODE_CS:
+        case TT_MS_ID_SYMBOL_CS:
+            name_lang = GET_BE_WORD(name->language_id);
+            break;
+        default:
+            return 0;
+        }
+        break;
+    case TT_PLATFORM_MACINTOSH:
+        if (!IsValidCodePage( get_mac_code_page( name ))) return 0;
+        name_lang = GET_BE_WORD(name->language_id);
+        if (name_lang >= sizeof(mac_langid_table)/sizeof(mac_langid_table[0])) return 0;
+        name_lang = mac_langid_table[name_lang];
+        break;
+    case TT_PLATFORM_APPLE_UNICODE:
+        switch (GET_BE_WORD(name->encoding_id))
+        {
+        case TT_APPLE_ID_DEFAULT:
+        case TT_APPLE_ID_ISO_10646:
+        case TT_APPLE_ID_UNICODE_2_0:
+            name_lang = GET_BE_WORD(name->language_id);
+            if (name_lang >= sizeof(mac_langid_table)/sizeof(mac_langid_table[0])) return 0;
+            name_lang = mac_langid_table[name_lang];
+            break;
+        default:
+            return 0;
+        }
+        break;
+    default:
+        return 0;
+    }
+    if (name_lang == lang) return 3;
+    if (PRIMARYLANGID( name_lang ) == PRIMARYLANGID( lang )) return 2;
+    if (name_lang == MAKELANGID( LANG_ENGLISH, SUBLANG_DEFAULT )) return 1;
+    return 0;
+}
+
+static WCHAR *copy_name_table_string( const tt_name_record *name, const BYTE *data, WCHAR *ret, DWORD len )
+{
+    WORD name_len = GET_BE_WORD(name->length);
+    WORD codepage;
+
+    switch (GET_BE_WORD(name->platform_id))
+    {
+    case TT_PLATFORM_APPLE_UNICODE:
+    case TT_PLATFORM_MICROSOFT:
+        if (name_len >= len*sizeof(WCHAR))
+            return NULL;
+        for (len = 0; len < name_len / 2; len++)
+            ret[len] = (data[len * 2] << 8) | data[len * 2 + 1];
+        ret[len] = 0;
+        return ret;
+    case TT_PLATFORM_MACINTOSH:
+        codepage = get_mac_code_page( name );
+        len = MultiByteToWideChar( codepage, 0, (char *)data, name_len, ret, len-1 );
+        if (!len)
+            return NULL;
+        ret[len] = 0;
+        return ret;
+    }
+    return NULL;
+}
+
+static WCHAR *load_ttf_name_id( const BYTE *mem, DWORD_PTR size, DWORD id, WCHAR *ret, DWORD len )
+{
+    LANGID lang = GetSystemDefaultLangID();
+    const tt_header *header;
+    const tt_name_table *name_table;
+    const tt_name_record *name_record;
+    DWORD pos, ofs, count;
+    int i, res, best_lang = 0, best_index = -1;
+
+    if (sizeof(tt_header) > size)
+        return NULL;
+    header = (const tt_header*)mem;
+    count = GET_BE_WORD(header->tables_no);
+
+    if (GET_BE_WORD(header->major_version) != 1 || GET_BE_WORD(header->minor_version) != 0)
+        return NULL;
+
+    pos = sizeof(*header);
+    for (i = 0; i < count; i++)
+    {
+        const tt_table_directory *table_directory = (const tt_table_directory*)&mem[pos];
+        pos += sizeof(*table_directory);
+        if (memcmp(table_directory->tag, "name", 4) == 0)
+        {
+            ofs = GET_BE_DWORD(table_directory->offset);
             break;
         }
     }
-    if (i >= ttOffsetTable.uNumOfTables)
+    if (i >= count)
         return NULL;
 
-    pos = ofs + sizeof(ttNTHeader);
+    if (ofs >= size)
+        return NULL;
+    pos = ofs + sizeof(*name_table);
     if (pos > size)
         return NULL;
-    ttNTHeader = *(TT_NAME_TABLE_HEADER*)&mem[ofs];
-    ttNTHeader.uNRCount = SWAPWORD(ttNTHeader.uNRCount);
-    ttNTHeader.uStorageOffset = SWAPWORD(ttNTHeader.uStorageOffset);
-    for(i=0; i<ttNTHeader.uNRCount; i++)
+    name_table = (const tt_name_table*)&mem[ofs];
+    count =  GET_BE_WORD(name_table->count);
+    if (GET_BE_WORD(name_table->string_offset) >= size - ofs) return NULL;
+    ofs += GET_BE_WORD(name_table->string_offset);
+    for (i=0; i<count; i++)
     {
-        ttRecord = *(TT_NAME_RECORD*)&mem[pos];
-        pos += sizeof(ttRecord);
+        name_record = (const tt_name_record*)&mem[pos];
+        pos += sizeof(*name_record);
         if (pos > size)
             return NULL;
 
-        ttRecord.uNameID = SWAPWORD(ttRecord.uNameID);
-        if (ttRecord.uNameID == id)
-        {
-            const char *buf;
+        if (GET_BE_WORD(name_record->name_id) != id) continue;
+        if (GET_BE_WORD(name_record->offset) >= size - ofs) return NULL;
+        if (GET_BE_WORD(name_record->length) > size - ofs - GET_BE_WORD(name_record->offset)) return NULL;
 
-            ttRecord.uStringLength = SWAPWORD(ttRecord.uStringLength);
-            ttRecord.uStringOffset = SWAPWORD(ttRecord.uStringOffset);
-            if (ofs + ttRecord.uStringOffset + ttNTHeader.uStorageOffset + ttRecord.uStringLength > size)
-                return NULL;
-            buf = mem + ofs + ttRecord.uStringOffset + ttNTHeader.uStorageOffset;
-            len = MultiByteToWideChar(CP_ACP, 0, buf, ttRecord.uStringLength, ret, len-1);
-            ret[len] = 0;
-            return ret;
+        res = match_name_table_language( name_record, lang );
+        if (res > best_lang)
+        {
+            best_lang = res;
+            best_index = i;
         }
+    }
+
+    if (best_lang)
+    {
+        name_record = (const tt_name_record*)(name_table + 1) + best_index;
+        ret = copy_name_table_string( name_record, mem+ofs+GET_BE_WORD(name_record->offset), ret, len );
+        TRACE( "name %u found platform %u lang %04x %s\n", GET_BE_WORD(name_record->name_id),
+                GET_BE_WORD(name_record->platform_id), GET_BE_WORD(name_record->language_id), debugstr_w( ret ));
+        return ret;
     }
     return NULL;
 }
@@ -1088,7 +1513,7 @@ GpStatus WINGDIPAPI GdipPrivateAddMemoryFont(GpFontCollection* fontCollection,
         HDC hdc;
         LOGFONTW lfw;
 
-        hdc = GetDC(0);
+        hdc = CreateCompatibleDC(0);
 
         lfw.lfCharSet = DEFAULT_CHARSET;
         lstrcpyW(lfw.lfFaceName, name);
@@ -1096,11 +1521,11 @@ GpStatus WINGDIPAPI GdipPrivateAddMemoryFont(GpFontCollection* fontCollection,
 
         if (!EnumFontFamiliesExW(hdc, &lfw, add_font_proc, (LPARAM)fontCollection, 0))
         {
-            ReleaseDC(0, hdc);
+            DeleteDC(hdc);
             return OutOfMemory;
         }
 
-        ReleaseDC(0, hdc);
+        DeleteDC(hdc);
     }
     return Ok;
 }
@@ -1215,7 +1640,7 @@ GpStatus WINGDIPAPI GdipNewInstalledFontCollection(
         HDC hdc;
         LOGFONTW lfw;
 
-        hdc = GetDC(0);
+        hdc = CreateCompatibleDC(0);
 
         lfw.lfCharSet = DEFAULT_CHARSET;
         lfw.lfFaceName[0] = 0;
@@ -1224,11 +1649,11 @@ GpStatus WINGDIPAPI GdipNewInstalledFontCollection(
         if (!EnumFontFamiliesExW(hdc, &lfw, add_font_proc, (LPARAM)&installedFontCollection, 0))
         {
             free_installed_fonts();
-            ReleaseDC(0, hdc);
+            DeleteDC(hdc);
             return OutOfMemory;
         }
 
-        ReleaseDC(0, hdc);
+        DeleteDC(hdc);
     }
 
     *fontCollection = &installedFontCollection;

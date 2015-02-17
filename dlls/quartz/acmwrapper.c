@@ -42,7 +42,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(quartz);
 typedef struct ACMWrapperImpl
 {
     TransformFilter tf;
-    IUnknown *seekthru_unk;
 
     HACMSTREAM has;
     LPWAVEFORMATEX pWfIn;
@@ -54,9 +53,14 @@ typedef struct ACMWrapperImpl
 
 static const IBaseFilterVtbl ACMWrapper_Vtbl;
 
+static inline ACMWrapperImpl *impl_from_TransformFilter( TransformFilter *iface )
+{
+    return CONTAINING_RECORD(iface, ACMWrapperImpl, tf.filter);
+}
+
 static HRESULT WINAPI ACMWrapper_Receive(TransformFilter *tf, IMediaSample *pSample)
 {
-    ACMWrapperImpl* This = (ACMWrapperImpl*)tf;
+    ACMWrapperImpl* This = impl_from_TransformFilter(tf);
     AM_MEDIA_TYPE amt;
     IMediaSample* pOutSample = NULL;
     DWORD cbDstStream, cbSrcStream;
@@ -69,12 +73,12 @@ static HRESULT WINAPI ACMWrapper_Receive(TransformFilter *tf, IMediaSample *pSam
     LONGLONG tStart = -1, tStop = -1, tMed;
     LONGLONG mtStart = -1, mtStop = -1, mtMed;
 
-    EnterCriticalSection(&This->tf.filter.csFilter);
+    EnterCriticalSection(&This->tf.csReceive);
     hr = IMediaSample_GetPointer(pSample, &pbSrcStream);
     if (FAILED(hr))
     {
         ERR("Cannot get pointer to sample data (%x)\n", hr);
-        LeaveCriticalSection(&This->tf.filter.csFilter);
+        LeaveCriticalSection(&This->tf.csReceive);
         return hr;
     }
 
@@ -105,7 +109,7 @@ static HRESULT WINAPI ACMWrapper_Receive(TransformFilter *tf, IMediaSample *pSam
     if (FAILED(hr))
     {
         ERR("Unable to retrieve media type\n");
-        LeaveCriticalSection(&This->tf.filter.csFilter);
+        LeaveCriticalSection(&This->tf.csReceive);
         return hr;
     }
 
@@ -118,7 +122,7 @@ static HRESULT WINAPI ACMWrapper_Receive(TransformFilter *tf, IMediaSample *pSam
         if (FAILED(hr))
         {
             ERR("Unable to get delivery buffer (%x)\n", hr);
-            LeaveCriticalSection(&This->tf.filter.csFilter);
+            LeaveCriticalSection(&This->tf.csReceive);
             return hr;
         }
         IMediaSample_SetPreroll(pOutSample, preroll);
@@ -170,7 +174,7 @@ static HRESULT WINAPI ACMWrapper_Receive(TransformFilter *tf, IMediaSample *pSam
         hr = IMediaSample_SetActualDataLength(pOutSample, ash.cbDstLengthUsed);
         assert(hr == S_OK);
 
-        /* Bug in acm codecs? It apparantly uses the input, but doesn't necessarily output immediately kl*/
+        /* Bug in acm codecs? It apparently uses the input, but doesn't necessarily output immediately */
         if (!ash.cbSrcLengthUsed)
         {
             WARN("Sample was skipped? Outputted: %u\n", ash.cbDstLengthUsed);
@@ -213,9 +217,9 @@ static HRESULT WINAPI ACMWrapper_Receive(TransformFilter *tf, IMediaSample *pSam
 
         TRACE("Sample stop time: %u.%03u\n", (DWORD)(tStart/10000000), (DWORD)((tStart/10000)%1000));
 
-        LeaveCriticalSection(&This->tf.filter.csFilter);
+        LeaveCriticalSection(&This->tf.csReceive);
         hr = BaseOutputPinImpl_Deliver((BaseOutputPin*)This->tf.ppPins[1], pOutSample);
-        EnterCriticalSection(&This->tf.filter.csFilter);
+        EnterCriticalSection(&This->tf.csReceive);
 
         if (hr != S_OK && hr != VFW_E_NOT_CONNECTED) {
             if (FAILED(hr))
@@ -238,13 +242,13 @@ error:
     This->lasttime_real = tStop;
     This->lasttime_sent = tMed;
 
-    LeaveCriticalSection(&This->tf.filter.csFilter);
+    LeaveCriticalSection(&This->tf.csReceive);
     return hr;
 }
 
 static HRESULT WINAPI ACMWrapper_SetMediaType(TransformFilter *tf, PIN_DIRECTION dir, const AM_MEDIA_TYPE * pmt)
 {
-    ACMWrapperImpl* This = (ACMWrapperImpl *)tf;
+    ACMWrapperImpl* This = impl_from_TransformFilter(tf);
     MMRESULT res;
 
     TRACE("(%p)->(%i %p)\n", This, dir, pmt);
@@ -301,7 +305,7 @@ static HRESULT WINAPI ACMWrapper_SetMediaType(TransformFilter *tf, PIN_DIRECTION
 
 static HRESULT WINAPI ACMWrapper_CompleteConnect(TransformFilter *tf, PIN_DIRECTION dir, IPin *pin)
 {
-    ACMWrapperImpl* This = (ACMWrapperImpl *)tf;
+    ACMWrapperImpl* This = impl_from_TransformFilter(tf);
     MMRESULT res;
     HACMSTREAM drv;
 
@@ -325,7 +329,7 @@ static HRESULT WINAPI ACMWrapper_CompleteConnect(TransformFilter *tf, PIN_DIRECT
 
 static HRESULT WINAPI ACMWrapper_BreakConnect(TransformFilter *tf, PIN_DIRECTION dir)
 {
-    ACMWrapperImpl *This = (ACMWrapperImpl *)tf;
+    ACMWrapperImpl *This = impl_from_TransformFilter(tf);
 
     TRACE("(%p)->(%i)\n", This,dir);
 
@@ -343,7 +347,7 @@ static HRESULT WINAPI ACMWrapper_BreakConnect(TransformFilter *tf, PIN_DIRECTION
 
 static HRESULT WINAPI ACMWrapper_DecideBufferSize(TransformFilter *tf, IMemAllocator *pAlloc, ALLOCATOR_PROPERTIES *ppropInputRequest)
 {
-    ACMWrapperImpl *pACM = (ACMWrapperImpl*)tf;
+    ACMWrapperImpl *pACM = impl_from_TransformFilter(tf);
     ALLOCATOR_PROPERTIES actual;
 
     if (!ppropInputRequest->cbAlign)
@@ -389,14 +393,6 @@ HRESULT ACMWrapper_create(IUnknown * pUnkOuter, LPVOID * ppv)
 
     if (FAILED(hr))
         return hr;
-    else
-    {
-        ISeekingPassThru *passthru;
-        hr = CoCreateInstance(&CLSID_SeekingPassThru, (IUnknown*)This, CLSCTX_INPROC_SERVER, &IID_IUnknown, (void**)&This->seekthru_unk);
-        IUnknown_QueryInterface(This->seekthru_unk, &IID_ISeekingPassThru, (void**)&passthru);
-        ISeekingPassThru_Init(passthru, FALSE, (IPin*)This->tf.ppPins[0]);
-        ISeekingPassThru_Release(passthru);
-    }
 
     *ppv = This;
     This->lasttime_real = This->lasttime_sent = -1;
@@ -404,24 +400,9 @@ HRESULT ACMWrapper_create(IUnknown * pUnkOuter, LPVOID * ppv)
     return hr;
 }
 
-static HRESULT WINAPI ACMWrapper_QueryInterface(IBaseFilter * iface, REFIID riid, LPVOID * ppv)
-{
-    HRESULT hr;
-    ACMWrapperImpl *This = (ACMWrapperImpl *)iface;
-    TRACE("(%p/%p)->(%s, %p)\n", This, iface, qzdebugstr_guid(riid), ppv);
-
-    if (IsEqualIID(riid, &IID_IMediaSeeking))
-        return IUnknown_QueryInterface(This->seekthru_unk, riid, ppv);
-
-    hr = TransformFilterImpl_QueryInterface(iface, riid, ppv);
-
-    return hr;
-}
-
-
 static const IBaseFilterVtbl ACMWrapper_Vtbl =
 {
-    ACMWrapper_QueryInterface,
+    TransformFilterImpl_QueryInterface,
     BaseFilterImpl_AddRef,
     TransformFilterImpl_Release,
     BaseFilterImpl_GetClassID,

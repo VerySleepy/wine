@@ -40,7 +40,9 @@
 #include "winternl.h"
 #include "winioctl.h"
 #include "wincon.h"
+#include "ddk/ntddk.h"
 #include "kernel_private.h"
+#include "fileapi.h"
 
 #include "wine/exception.h"
 #include "wine/unicode.h"
@@ -55,15 +57,19 @@ typedef struct
     HANDLE            handle;      /* handle to directory */
     CRITICAL_SECTION  cs;          /* crit section protecting this structure */
     FINDEX_SEARCH_OPS search_op;   /* Flags passed to FindFirst.  */
+    FINDEX_INFO_LEVELS level;      /* Level passed to FindFirst */
     UNICODE_STRING    mask;        /* file mask */
     UNICODE_STRING    path;        /* NT path used to open the directory */
     BOOL              is_root;     /* is directory the root of the drive? */
     UINT              data_pos;    /* current position in dir data */
     UINT              data_len;    /* length of dir data */
-    BYTE              data[8192];  /* directory data */
+    UINT              data_size;   /* size of data buffer, or 0 when everything has been read */
+    BYTE             *data;        /* directory data */
 } FIND_FIRST_INFO;
 
 #define FIND_FIRST_MAGIC  0xc0ffee11
+
+static const UINT max_entry_size = offsetof( FILE_BOTH_DIRECTORY_INFORMATION, FileName[256] );
 
 static BOOL oem_file_apis;
 
@@ -352,7 +358,7 @@ BOOL WINAPI ReadFileEx(HANDLE hFile, LPVOID buffer, DWORD bytesToRead,
     status = NtReadFile(hFile, NULL, FILE_ReadWriteApc, lpCompletionRoutine,
                         io_status, buffer, bytesToRead, &offset, NULL);
 
-    if (status)
+    if (status && status != STATUS_PENDING)
     {
         SetLastError( RtlNtStatusToDosError(status) );
         return FALSE;
@@ -369,17 +375,20 @@ BOOL WINAPI ReadFileScatter( HANDLE file, FILE_SEGMENT_ELEMENT *segments, DWORD 
 {
     PIO_STATUS_BLOCK io_status;
     LARGE_INTEGER offset;
+    void *cvalue = NULL;
     NTSTATUS status;
 
     TRACE( "(%p %p %u %p)\n", file, segments, count, overlapped );
 
     offset.u.LowPart = overlapped->u.s.Offset;
     offset.u.HighPart = overlapped->u.s.OffsetHigh;
+    if (!((ULONG_PTR)overlapped->hEvent & 1)) cvalue = overlapped;
     io_status = (PIO_STATUS_BLOCK)overlapped;
     io_status->u.Status = STATUS_PENDING;
     io_status->Information = 0;
 
-    status = NtReadFileScatter( file, NULL, NULL, NULL, io_status, segments, count, &offset, NULL );
+    status = NtReadFileScatter( file, overlapped->hEvent, NULL, cvalue, io_status,
+                                segments, count, &offset, NULL );
     if (status) SetLastError( RtlNtStatusToDosError(status) );
     return !status;
 }
@@ -403,7 +412,6 @@ BOOL WINAPI ReadFile( HANDLE hFile, LPVOID buffer, DWORD bytesToRead,
           bytesRead, overlapped );
 
     if (bytesRead) *bytesRead = 0;  /* Do this before anything else */
-    if (!bytesToRead) return TRUE;
 
     if (is_console_handle(hFile))
     {
@@ -447,7 +455,15 @@ BOOL WINAPI ReadFile( HANDLE hFile, LPVOID buffer, DWORD bytesToRead,
     if (status != STATUS_PENDING && bytesRead)
         *bytesRead = io_status->Information;
 
-    if (status && status != STATUS_END_OF_FILE && status != STATUS_TIMEOUT)
+    if (status == STATUS_END_OF_FILE)
+    {
+        if (overlapped != NULL)
+        {
+            SetLastError( RtlNtStatusToDosError(status) );
+            return FALSE;
+        }
+    }
+    else if (status && status != STATUS_TIMEOUT)
     {
         SetLastError( RtlNtStatusToDosError(status) );
         return FALSE;
@@ -484,8 +500,12 @@ BOOL WINAPI WriteFileEx(HANDLE hFile, LPCVOID buffer, DWORD bytesToWrite,
     status = NtWriteFile(hFile, NULL, FILE_ReadWriteApc, lpCompletionRoutine,
                          io_status, buffer, bytesToWrite, &offset, NULL);
 
-    if (status) SetLastError( RtlNtStatusToDosError(status) );
-    return !status;
+    if (status && status != STATUS_PENDING)
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        return FALSE;
+    }
+    return TRUE;
 }
 
 
@@ -497,17 +517,20 @@ BOOL WINAPI WriteFileGather( HANDLE file, FILE_SEGMENT_ELEMENT *segments, DWORD 
 {
     PIO_STATUS_BLOCK io_status;
     LARGE_INTEGER offset;
+    void *cvalue = NULL;
     NTSTATUS status;
 
     TRACE( "%p %p %u %p\n", file, segments, count, overlapped );
 
     offset.u.LowPart = overlapped->u.s.Offset;
     offset.u.HighPart = overlapped->u.s.OffsetHigh;
+    if (!((ULONG_PTR)overlapped->hEvent & 1)) cvalue = overlapped;
     io_status = (PIO_STATUS_BLOCK)overlapped;
     io_status->u.Status = STATUS_PENDING;
     io_status->Information = 0;
 
-    status = NtWriteFileGather( file, NULL, NULL, NULL, io_status, segments, count, &offset, NULL );
+    status = NtWriteFileGather( file, overlapped->hEvent, NULL, cvalue, io_status,
+                                segments, count, &offset, NULL );
     if (status) SetLastError( RtlNtStatusToDosError(status) );
     return !status;
 }
@@ -801,6 +824,10 @@ DWORD WINAPI GetFileType( HANDLE hFile )
     IO_STATUS_BLOCK io;
     NTSTATUS status;
 
+    if (hFile == (HANDLE)STD_INPUT_HANDLE || hFile == (HANDLE)STD_OUTPUT_HANDLE
+            || hFile == (HANDLE)STD_ERROR_HANDLE)
+        hFile = GetStdHandle((DWORD_PTR)hFile);
+
     if (is_console_handle( hFile )) return FILE_TYPE_CHAR;
 
     status = NtQueryVolumeInformationFile( hFile, &io, &info, sizeof(info), FileFsDeviceInformation );
@@ -860,6 +887,67 @@ BOOL WINAPI GetFileInformationByHandle( HANDLE hFile, BY_HANDLE_FILE_INFORMATION
 
 
 /***********************************************************************
+*             GetFileInformationByHandleEx (KERNEL32.@)
+*/
+BOOL WINAPI GetFileInformationByHandleEx( HANDLE handle, FILE_INFO_BY_HANDLE_CLASS class,
+                                          LPVOID info, DWORD size )
+{
+    NTSTATUS status;
+    IO_STATUS_BLOCK io;
+
+    switch (class)
+    {
+    case FileBasicInfo:
+    case FileStandardInfo:
+    case FileRenameInfo:
+    case FileDispositionInfo:
+    case FileAllocationInfo:
+    case FileEndOfFileInfo:
+    case FileStreamInfo:
+    case FileCompressionInfo:
+    case FileAttributeTagInfo:
+    case FileIoPriorityHintInfo:
+    case FileRemoteProtocolInfo:
+    case FileFullDirectoryInfo:
+    case FileFullDirectoryRestartInfo:
+    case FileStorageInfo:
+    case FileAlignmentInfo:
+    case FileIdInfo:
+    case FileIdExtdDirectoryInfo:
+    case FileIdExtdDirectoryRestartInfo:
+        FIXME( "%p, %u, %p, %u\n", handle, class, info, size );
+        SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
+        return FALSE;
+
+    case FileNameInfo:
+        status = NtQueryInformationFile( handle, &io, info, size, FileNameInformation );
+        if (status != STATUS_SUCCESS)
+        {
+            SetLastError( RtlNtStatusToDosError( status ) );
+            return FALSE;
+        }
+        return TRUE;
+
+    case FileIdBothDirectoryRestartInfo:
+    case FileIdBothDirectoryInfo:
+        status = NtQueryDirectoryFile( handle, NULL, NULL, NULL, &io, info, size,
+                                       FileIdBothDirectoryInformation, FALSE, NULL,
+                                       (class == FileIdBothDirectoryRestartInfo) );
+        if (status != STATUS_SUCCESS)
+        {
+            SetLastError( RtlNtStatusToDosError( status ) );
+            return FALSE;
+        }
+        return TRUE;
+
+    default:
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+}
+
+
+/***********************************************************************
  *           GetFileSize   (KERNEL32.@)
  *
  * Retrieve the size of a file.
@@ -902,6 +990,12 @@ BOOL WINAPI GetFileSizeEx( HANDLE hFile, PLARGE_INTEGER lpFileSize )
     IO_STATUS_BLOCK io;
     NTSTATUS status;
 
+    if (is_console_handle( hFile ))
+    {
+        SetLastError( ERROR_INVALID_HANDLE );
+        return FALSE;
+    }
+
     status = NtQueryInformationFile( hFile, &io, &info, sizeof(info), FileStandardInformation );
     if (status == STATUS_SUCCESS)
     {
@@ -943,11 +1037,16 @@ BOOL WINAPI SetEndOfFile( HANDLE hFile )
     return FALSE;
 }
 
+BOOL WINAPI SetFileInformationByHandle( HANDLE file, FILE_INFO_BY_HANDLE_CLASS class, VOID *info, DWORD size )
+{
+    FIXME("%p %u %p %u - stub\n", file, class, info, size);
+    return FALSE;
+}
 
 /***********************************************************************
  *           SetFilePointer   (KERNEL32.@)
  */
-DWORD WINAPI SetFilePointer( HANDLE hFile, LONG distance, LONG *highword, DWORD method )
+DWORD WINAPI DECLSPEC_HOTPATCH SetFilePointer( HANDLE hFile, LONG distance, LONG *highword, DWORD method )
 {
     LARGE_INTEGER dist, newpos;
 
@@ -1021,8 +1120,15 @@ error:
  */
 BOOL WINAPI SetFileValidData( HANDLE hFile, LONGLONG ValidDataLength )
 {
-    FIXME("stub: %p, %s\n", hFile, wine_dbgstr_longlong(ValidDataLength));
-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    FILE_VALID_DATA_LENGTH_INFORMATION info;
+    IO_STATUS_BLOCK io;
+    NTSTATUS status;
+
+    info.ValidDataLength.QuadPart = ValidDataLength;
+    status = NtSetInformationFile( hFile, &io, &info, sizeof(info), FileValidDataLengthInformation );
+
+    if (status == STATUS_SUCCESS) return TRUE;
+    SetLastError( RtlNtStatusToDosError(status) );
     return FALSE;
 }
 
@@ -1286,7 +1392,9 @@ HANDLE WINAPI CreateFileW( LPCWSTR filename, DWORD access, DWORD sharing,
 
     if (!strcmpiW(filename, coninW) || !strcmpiW(filename, conoutW))
     {
-        ret = OpenConsoleW(filename, access, (sa && sa->bInheritHandle), creation);
+        ret = OpenConsoleW(filename, access, (sa && sa->bInheritHandle),
+                           creation ? OPEN_EXISTING : 0);
+        if (ret == INVALID_HANDLE_VALUE) SetLastError(ERROR_INVALID_PARAMETER);
         goto done;
     }
 
@@ -1308,6 +1416,7 @@ HANDLE WINAPI CreateFileW( LPCWSTR filename, DWORD access, DWORD sharing,
         else if (GetVersion() & 0x80000000)
         {
             vxd_name = filename + 4;
+            if (!creation) creation = OPEN_EXISTING;
         }
     }
     else dosdev = RtlIsDosDeviceName_U( filename );
@@ -1376,7 +1485,7 @@ HANDLE WINAPI CreateFileW( LPCWSTR filename, DWORD access, DWORD sharing,
         qos.Length = sizeof(qos);
         qos.ImpersonationLevel = (attributes >> 16) & 0x3;
         qos.ContextTrackingMode = attributes & SECURITY_CONTEXT_TRACKING ? SECURITY_DYNAMIC_TRACKING : SECURITY_STATIC_TRACKING;
-        qos.EffectiveOnly = attributes & SECURITY_EFFECTIVE_ONLY ? TRUE : FALSE;
+        qos.EffectiveOnly = (attributes & SECURITY_EFFECTIVE_ONLY) != 0;
         attr.SecurityQualityOfService = &qos;
     }
     else
@@ -1443,6 +1552,20 @@ HANDLE WINAPI CreateFileA( LPCSTR filename, DWORD access, DWORD sharing,
     return CreateFileW( nameW, access, sharing, sa, creation, attributes, template );
 }
 
+/*************************************************************************
+ *              CreateFile2              (KERNEL32.@)
+ */
+HANDLE WINAPI CreateFile2( LPCWSTR filename, DWORD access, DWORD sharing, DWORD creation,
+                           CREATEFILE2_EXTENDED_PARAMETERS *exparams )
+{
+    LPSECURITY_ATTRIBUTES sa = exparams ? exparams->lpSecurityAttributes : NULL;
+    DWORD attributes = exparams ? exparams->dwFileAttributes : 0;
+    HANDLE template = exparams ? exparams->hTemplateFile : NULL;
+
+    FIXME("(%s %x %x %x %p), partial stub\n", debugstr_w(filename), access, sharing, creation, exparams);
+
+    return CreateFileW( filename, access, sharing, sa, creation, attributes, template );
+}
 
 /***********************************************************************
  *           DeleteFileW   (KERNEL32.@)
@@ -1743,15 +1866,20 @@ HANDLE WINAPI FindFirstFileExW( LPCWSTR filename, FINDEX_INFO_LEVELS level,
 
     TRACE("%s %d %p %d %p %x\n", debugstr_w(filename), level, data, search_op, filter, flags);
 
-    if ((search_op != FindExSearchNameMatch && search_op != FindExSearchLimitToDirectories)
-	|| flags != 0)
+    if (flags != 0)
     {
-        FIXME("options not implemented 0x%08x 0x%08x\n", search_op, flags );
+        FIXME("flags not implemented 0x%08x\n", flags );
+    }
+    if (search_op != FindExSearchNameMatch && search_op != FindExSearchLimitToDirectories)
+    {
+        FIXME("search_op not implemented 0x%08x\n", search_op);
+        SetLastError( ERROR_INVALID_PARAMETER );
         return INVALID_HANDLE_VALUE;
     }
-    if (level != FindExInfoStandard)
+    if (level != FindExInfoStandard && level != FindExInfoBasic)
     {
         FIXME("info level %d not implemented\n", level );
+        SetLastError( ERROR_INVALID_PARAMETER );
         return INVALID_HANDLE_VALUE;
     }
 
@@ -1849,7 +1977,10 @@ HANDLE WINAPI FindFirstFileExW( LPCWSTR filename, FINDEX_INFO_LEVELS level,
     info->magic    = FIND_FIRST_MAGIC;
     info->data_pos = 0;
     info->data_len = 0;
+    info->data_size = 0;
+    info->data      = NULL;
     info->search_op = search_op;
+    info->level     = level;
 
     if (device)
     {
@@ -1864,16 +1995,44 @@ HANDLE WINAPI FindFirstFileExW( LPCWSTR filename, FINDEX_INFO_LEVELS level,
     else
     {
         IO_STATUS_BLOCK io;
+        BOOL has_wildcard = strpbrkW( info->mask.Buffer, wildcardsW ) != NULL;
 
-        NtQueryDirectoryFile( info->handle, 0, NULL, NULL, &io, info->data, sizeof(info->data),
-                              FileBothDirectoryInformation, FALSE, &info->mask, TRUE );
-        if (io.u.Status)
+        info->data_size = has_wildcard ? 8192 : max_entry_size * 2;
+
+        while (info->data_size)
         {
-            FindClose( info );
-            SetLastError( RtlNtStatusToDosError( io.u.Status ) );
-            return INVALID_HANDLE_VALUE;
+            if (!(info->data = HeapAlloc( GetProcessHeap(), 0, info->data_size )))
+            {
+                FindClose( info );
+                SetLastError( ERROR_NOT_ENOUGH_MEMORY );
+                return INVALID_HANDLE_VALUE;
+            }
+
+            NtQueryDirectoryFile( info->handle, 0, NULL, NULL, &io, info->data, info->data_size,
+                                  FileBothDirectoryInformation, FALSE, &info->mask, TRUE );
+            if (io.u.Status)
+            {
+                FindClose( info );
+                SetLastError( RtlNtStatusToDosError( io.u.Status ) );
+                return INVALID_HANDLE_VALUE;
+            }
+
+            if (io.Information < info->data_size - max_entry_size)
+            {
+                info->data_size = 0;  /* we read everything */
+            }
+            else if (info->data_size < 1024 * 1024)
+            {
+                HeapFree( GetProcessHeap(), 0, info->data );
+                info->data_size *= 2;
+            }
+            else break;
         }
+
         info->data_len = io.Information;
+        if (!info->data_size && has_wildcard)  /* release unused buffer space */
+            HeapReAlloc( GetProcessHeap(), HEAP_REALLOC_IN_PLACE_ONLY, info->data, info->data_len );
+
         if (!FindNextFileW( info, data ))
         {
             TRACE( "%s not found\n", debugstr_w(filename) );
@@ -1881,11 +2040,12 @@ HANDLE WINAPI FindFirstFileExW( LPCWSTR filename, FINDEX_INFO_LEVELS level,
             SetLastError( ERROR_FILE_NOT_FOUND );
             return INVALID_HANDLE_VALUE;
         }
-        if (!strpbrkW( info->mask.Buffer, wildcardsW ))
+        if (!has_wildcard)  /* we can't find two files with the same name */
         {
-            /* we can't find two files with the same name */
             CloseHandle( info->handle );
+            HeapFree( GetProcessHeap(), 0, info->data );
             info->handle = 0;
+            info->data = NULL;
         }
     }
     return info;
@@ -1929,15 +2089,21 @@ BOOL WINAPI FindNextFileW( HANDLE handle, WIN32_FIND_DATAW *data )
         {
             IO_STATUS_BLOCK io;
 
-            NtQueryDirectoryFile( info->handle, 0, NULL, NULL, &io, info->data, sizeof(info->data),
-                                  FileBothDirectoryInformation, FALSE, &info->mask, FALSE );
+            if (info->data_size)
+                NtQueryDirectoryFile( info->handle, 0, NULL, NULL, &io, info->data, info->data_size,
+                                      FileBothDirectoryInformation, FALSE, &info->mask, FALSE );
+            else
+                io.u.Status = STATUS_NO_MORE_FILES;
+
             if (io.u.Status)
             {
                 SetLastError( RtlNtStatusToDosError( io.u.Status ) );
                 if (io.u.Status == STATUS_NO_MORE_FILES)
                 {
                     CloseHandle( info->handle );
+                    HeapFree( GetProcessHeap(), 0, info->data );
                     info->handle = 0;
+                    info->data = NULL;
                 }
                 break;
             }
@@ -1977,8 +2143,14 @@ BOOL WINAPI FindNextFileW( HANDLE handle, WIN32_FIND_DATAW *data )
 
         memcpy( data->cFileName, dir_info->FileName, dir_info->FileNameLength );
         data->cFileName[dir_info->FileNameLength/sizeof(WCHAR)] = 0;
-        memcpy( data->cAlternateFileName, dir_info->ShortName, dir_info->ShortNameLength );
-        data->cAlternateFileName[dir_info->ShortNameLength/sizeof(WCHAR)] = 0;
+
+        if (info->level != FindExInfoBasic)
+        {
+            memcpy( data->cAlternateFileName, dir_info->ShortName, dir_info->ShortNameLength );
+            data->cAlternateFileName[dir_info->ShortNameLength/sizeof(WCHAR)] = 0;
+        }
+        else
+            data->cAlternateFileName[0] = 0;
 
         TRACE("returning %s (%s)\n",
               debugstr_w(data->cFileName), debugstr_w(data->cAlternateFileName) );
@@ -2020,6 +2192,7 @@ BOOL WINAPI FindClose( HANDLE handle )
                 RtlFreeUnicodeString( &info->path );
                 info->data_pos = 0;
                 info->data_len = 0;
+                HeapFree( GetProcessHeap(), 0, info->data );
                 RtlLeaveCriticalSection( &info->cs );
                 info->cs.DebugInfo->Spare[0] = 0;
                 RtlDeleteCriticalSection( &info->cs );
@@ -2540,6 +2713,57 @@ error:  /* We get here if there was an error opening the file */
     WARN("(%s): return = HFILE_ERROR error= %d\n", name,ofs->nErrCode );
     return HFILE_ERROR;
 }
+
+
+/***********************************************************************
+ *             OpenFileById (KERNEL32.@)
+ */
+HANDLE WINAPI OpenFileById( HANDLE handle, LPFILE_ID_DESCRIPTOR id, DWORD access,
+                            DWORD share, LPSECURITY_ATTRIBUTES sec_attr, DWORD flags )
+{
+    UINT options;
+    HANDLE result;
+    OBJECT_ATTRIBUTES attr;
+    NTSTATUS status;
+    IO_STATUS_BLOCK io;
+    UNICODE_STRING objectName;
+
+    if (!id)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return INVALID_HANDLE_VALUE;
+    }
+
+    options = FILE_OPEN_BY_FILE_ID;
+    if (flags & FILE_FLAG_BACKUP_SEMANTICS)
+        options |= FILE_OPEN_FOR_BACKUP_INTENT;
+    else
+        options |= FILE_NON_DIRECTORY_FILE;
+    if (flags & FILE_FLAG_NO_BUFFERING) options |= FILE_NO_INTERMEDIATE_BUFFERING;
+    if (!(flags & FILE_FLAG_OVERLAPPED)) options |= FILE_SYNCHRONOUS_IO_NONALERT;
+    if (flags & FILE_FLAG_RANDOM_ACCESS) options |= FILE_RANDOM_ACCESS;
+    flags &= FILE_ATTRIBUTE_VALID_FLAGS;
+
+    objectName.Length             = sizeof(ULONGLONG);
+    objectName.Buffer             = (WCHAR *)&id->u.FileId;
+    attr.Length                   = sizeof(attr);
+    attr.RootDirectory            = handle;
+    attr.Attributes               = 0;
+    attr.ObjectName               = &objectName;
+    attr.SecurityDescriptor       = sec_attr ? sec_attr->lpSecurityDescriptor : NULL;
+    attr.SecurityQualityOfService = NULL;
+    if (sec_attr && sec_attr->bInheritHandle) attr.Attributes |= OBJ_INHERIT;
+
+    status = NtCreateFile( &result, access, &attr, &io, NULL, flags,
+                           share, OPEN_EXISTING, options, NULL, 0 );
+    if (status != STATUS_SUCCESS)
+    {
+        SetLastError( RtlNtStatusToDosError( status ) );
+        return INVALID_HANDLE_VALUE;
+    }
+    return result;
+}
+
 
 /***********************************************************************
  *           K32EnumDeviceDrivers (KERNEL32.@)

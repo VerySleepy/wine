@@ -24,9 +24,13 @@
 #include "windows.h"
 #include "ole2.h"
 #include "msxml2.h"
+#include "msxml2did.h"
 #include "ocidl.h"
 
 #include "wine/test.h"
+
+#define EXPECT_HR(hr,hr_exp) \
+    ok(hr == hr_exp, "got 0x%08x, expected 0x%08x\n", hr, hr_exp)
 
 /* Deprecated Error Code */
 #define XML_E_INVALIDATROOTLEVEL    0xc00ce556
@@ -34,8 +38,8 @@
 static void create_xml_file(LPCSTR filename)
 {
     DWORD dwNumberOfBytesWritten;
-    HANDLE hf = CreateFile(filename, GENERIC_WRITE, 0, NULL,
-                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE hf = CreateFileA(filename, GENERIC_WRITE, 0, NULL,
+                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 
     static const char data[] =
         "<?xml version=\"1.0\" ?>\n"
@@ -49,25 +53,6 @@ static void create_xml_file(LPCSTR filename)
     CloseHandle(hf);
 }
 
-/*
-static void create_xml_file(LPCSTR filename)
-{
-    DWORD dwNumberOfBytesWritten;
-    HANDLE hf = CreateFile(filename, GENERIC_WRITE, 0, NULL,
-                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-
-    static const char data[] =
-        "<?xml version=\"1.0\" ?>\n"
-        "<BankAccount>\n"
-        "  <Number>1234</Number>\n"
-        "  <Name>Captain Ahab</Name>\n"
-        "</BankAccount>\n";
-
-    WriteFile(hf, data, sizeof(data) - 1, &dwNumberOfBytesWritten, NULL);
-    CloseHandle(hf);
-}
-*/
-
 static void create_stream_on_file(IStream **stream, LPCSTR path)
 {
     HANDLE hfile;
@@ -76,8 +61,8 @@ static void create_stream_on_file(IStream **stream, LPCSTR path)
     HRESULT hr;
     DWORD file_size, read;
 
-    hfile = CreateFile(path, GENERIC_READ, FILE_SHARE_READ, NULL,
-                       OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    hfile = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL,
+                        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     ok(hfile != INVALID_HANDLE_VALUE, "Expected a valid file handle\n");
     file_size = GetFileSize(hfile, NULL);
 
@@ -97,16 +82,18 @@ static void create_stream_on_file(IStream **stream, LPCSTR path)
 
 static void test_xmldoc(void)
 {
-    HRESULT hr;
-    IXMLDocument *doc = NULL;
     IXMLElement *element = NULL, *child = NULL, *value = NULL;
     IXMLElementCollection *collection = NULL, *inner = NULL;
     IPersistStreamInit *psi = NULL;
+    IXMLDocument *doc = NULL;
     IStream *stream = NULL;
-    CHAR path[MAX_PATH];
-    LONG type, num_child;
     VARIANT vIndex, vName;
-    BSTR name = NULL;
+    LONG type, num_child;
+    CHAR path[MAX_PATH];
+    IDispatch *disp;
+    ITypeInfo *ti;
+    HRESULT hr;
+    BSTR name;
 
     static const WCHAR szBankAccount[] = {'B','A','N','K','A','C','C','O','U','N','T',0};
     static const WCHAR szNumber[] = {'N','U','M','B','E','R',0};
@@ -114,16 +101,36 @@ static void test_xmldoc(void)
     static const WCHAR szName[] = {'N','A','M','E',0};
     static const WCHAR szNameVal[] = {'C','a','p','t','a','i','n',' ','A','h','a','b',0};
     static const WCHAR szVersion[] = {'1','.','0',0};
+    static const WCHAR rootW[] = {'r','o','o','t',0};
 
     hr = CoCreateInstance(&CLSID_XMLDocument, NULL, CLSCTX_INPROC_SERVER,
-                          &IID_IXMLDocument, (LPVOID*)&doc);
-    ok(hr == S_OK, "Expected S_OK, got %08x\n", hr);
+                          &IID_IXMLDocument, (void**)&doc);
+    EXPECT_HR(hr, S_OK);
+
+    /* IDispatch */
+    hr = IXMLDocument_QueryInterface(doc, &IID_IDispatch, (void**)&disp);
+    EXPECT_HR(hr, S_OK);
+
+    /* just to make sure we're on right type data */
+    hr = IDispatch_GetTypeInfo(disp, 0, 0, &ti);
+    EXPECT_HR(hr, S_OK);
+    name = NULL;
+    hr = ITypeInfo_GetDocumentation(ti, DISPID_XMLDOCUMENT_ROOT, &name, NULL, NULL, NULL);
+    EXPECT_HR(hr, S_OK);
+    ok(!lstrcmpW(name, rootW), "got name %s\n", wine_dbgstr_w(name));
+    SysFreeString(name);
+
+    ITypeInfo_Release(ti);
+    IDispatch_Release(disp);
+
+    hr = IXMLDocument_QueryInterface(doc, &IID_IXMLDOMDocument, (void**)&disp);
+    EXPECT_HR(hr, E_NOINTERFACE);
 
     create_xml_file("bank.xml");
     GetFullPathNameA("bank.xml", MAX_PATH, path, NULL);
     create_stream_on_file(&stream, path);
 
-    hr = IXMLDocument_QueryInterface(doc, &IID_IPersistStreamInit, (LPVOID *)&psi);
+    hr = IXMLDocument_QueryInterface(doc, &IID_IPersistStreamInit, (void**)&psi);
     ok(hr == S_OK, "Expected S_OK, got %08x\n", hr);
     ok(psi != NULL, "Expected non-NULL psi\n");
 
@@ -142,6 +149,7 @@ static void test_xmldoc(void)
     hr = IXMLDocument_get_version(doc, NULL);
     ok(hr == E_INVALIDARG, "Expected E_INVALIDARG, got %08x\n", hr);
 
+    name = NULL;
     hr = IXMLDocument_get_version(doc, &name);
     ok(hr == S_OK, "Expected S_OK, got %08x\n", hr);
     ok(!lstrcmpW(name, szVersion), "Expected 1.0, got %s\n", wine_dbgstr_w(name));
@@ -648,7 +656,7 @@ static void test_xmlelem_collection(void)
     WCHAR path[MAX_PATH];
     LONG length, type;
     ULONG num_vars;
-    VARIANT var, vIndex, vName;
+    VARIANT var, dummy, vIndex, vName;
     BSTR url, str;
     static const CHAR szBankXML[] = "bank.xml";
     static const WCHAR szNumber[] = {'N','U','M','B','E','R',0};
@@ -719,6 +727,11 @@ static void test_xmlelem_collection(void)
     ok(hr == S_OK, "Expected S_OK, got %08x\n", hr);
     ok(unk != NULL, "Expected non-NULL unk\n");
 
+    enumVar = (void *)0xdeadbeef;
+    hr = IUnknown_QueryInterface(unk, &IID_IXMLElementCollection, (LPVOID *)&enumVar);
+    ok(hr == E_NOINTERFACE, "Expected E_NOINTERFACE, got %08x\n", hr);
+    ok(enumVar == NULL || broken(enumVar == (void *)0xdeadbeef) /* XP */, "Expected NULL, got %p\n", enumVar);
+
     hr = IUnknown_QueryInterface(unk, &IID_IEnumVARIANT, (LPVOID *)&enumVar);
     ok(hr == S_OK, "Expected S_OK, got %08x\n", hr);
     ok(enumVar != NULL, "Expected non-NULL enumVar\n");
@@ -730,7 +743,7 @@ static void test_xmlelem_collection(void)
     ok(V_VT(&var) == VT_DISPATCH, "Expected VT_DISPATCH, got %d\n", V_VT(&var));
     ok(num_vars == 1, "Expected 1, got %d\n", num_vars);
 
-    hr = IUnknown_QueryInterface(V_DISPATCH(&var), &IID_IXMLElement, (LPVOID *)&child);
+    hr = IDispatch_QueryInterface(V_DISPATCH(&var), &IID_IXMLElement, (LPVOID *)&child);
     ok(hr == S_OK, "Expected S_OK, got %08x\n", hr);
     ok(child != NULL, "Expected non-NULL child\n");
 
@@ -753,16 +766,18 @@ static void test_xmlelem_collection(void)
     ok(num_vars == 1, "Expected 1, got %d\n", num_vars);
 
     /* try advance further, no children left */
-    hr = IEnumVARIANT_Next(enumVar, 1, &var, &num_vars);
+    V_VT(&dummy) = VT_I4;
+    hr = IEnumVARIANT_Next(enumVar, 1, &dummy, &num_vars);
     ok(hr == S_FALSE, "Expected S_FALSE, got %08x\n", hr);
-    ok(V_VT(&var) == 0, "Expected 0, got %d\n", V_VT(&var));
+    ok(V_VT(&dummy) == VT_EMPTY, "Expected 0, got %d\n", V_VT(&dummy));
     ok(num_vars == 0, "Expected 0, got %d\n", num_vars);
 
-    hr = IEnumVARIANT_Next(enumVar, 1, &var, NULL);
+    V_VT(&dummy) = VT_I4;
+    hr = IEnumVARIANT_Next(enumVar, 1, &dummy, NULL);
     ok(hr == S_FALSE, "Expected S_FALSE, got %08x\n", hr);
-    ok(V_VT(&var) == 0, "Expected 0, got %d\n", V_VT(&var));
+    ok(V_VT(&dummy) == VT_EMPTY, "Expected 0, got %d\n", V_VT(&dummy));
 
-    hr = IUnknown_QueryInterface(V_DISPATCH(&var), &IID_IXMLElement, (LPVOID *)&child);
+    hr = IDispatch_QueryInterface(V_DISPATCH(&var), &IID_IXMLElement, (LPVOID *)&child);
     ok(hr == S_OK, "Expected S_OK, got %08x\n", hr);
     ok(child != NULL, "Expected non-NULL child\n");
 
@@ -844,8 +859,10 @@ static void test_xmlelem(void)
     IXMLElementCollection *children;
     VARIANT vType, vName;
     VARIANT vIndex, vValue;
-    BSTR str, val;
+    BSTR str, val, name;
     LONG type, num_child;
+    IDispatch *disp;
+    ITypeInfo *ti;
 
     static const WCHAR propName[] = {'p','r','o','p',0};
     static const WCHAR propVal[] = {'v','a','l',0};
@@ -856,18 +873,34 @@ static void test_xmlelem(void)
 
     hr = CoCreateInstance(&CLSID_XMLDocument, NULL, CLSCTX_INPROC_SERVER,
                           &IID_IXMLDocument, (LPVOID*)&doc);
-    ok(hr == S_OK, "Expected S_OK, got 0x%08x\n", hr);
+    EXPECT_HR(hr, S_OK);
 
     V_VT(&vType) = VT_I4;
     V_I4(&vType) = XMLELEMTYPE_ELEMENT;
     V_VT(&vName) = VT_NULL;
     hr = IXMLDocument_createElement(doc, vType, vName, &element);
-    ok(hr == S_OK, "Expected S_OK, got %08x\n", hr);
+    EXPECT_HR(hr, S_OK);
     ok(element != NULL, "Expected non-NULL element\n");
 
+    /* test for IDispatch */
+    disp = NULL;
+    hr = IXMLElement_QueryInterface(element, &IID_IDispatch, (void**)&disp);
+    EXPECT_HR(hr, S_OK);
+
+    hr = IDispatch_GetTypeInfo(disp, 0, 0, &ti);
+    EXPECT_HR(hr, S_OK);
+
+    name = NULL;
+    hr = ITypeInfo_GetDocumentation(ti, DISPID_XMLELEMENT_TAGNAME, &name, NULL, NULL, NULL);
+    EXPECT_HR(hr, S_OK);
+    SysFreeString(name);
+
+    ITypeInfo_Release(ti);
+    IDispatch_Release(disp);
+
     hr = IXMLElement_get_tagName(element, &str);
-    ok(hr == S_OK, "Expected S_OK, got %08x\n", hr);
-    ok(lstrlenW(str) == 0, "Expected empty tag name\n");
+    EXPECT_HR(hr, S_OK);
+    ok(!str, "Expected empty tag name, got %s\n", wine_dbgstr_w(str));
     SysFreeString(str);
 
     parent = (IXMLElement *)0xdeadbeef;

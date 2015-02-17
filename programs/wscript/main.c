@@ -24,6 +24,7 @@
 #include <winbase.h>
 #include <winreg.h>
 #include <ole2.h>
+#include <shellapi.h>
 #include <activscp.h>
 #include <initguid.h>
 
@@ -31,6 +32,20 @@
 
 #include <wine/debug.h>
 #include <wine/unicode.h>
+
+#ifdef _WIN64
+
+#define IActiveScriptParse_Release IActiveScriptParse64_Release
+#define IActiveScriptParse_InitNew IActiveScriptParse64_InitNew
+#define IActiveScriptParse_ParseScriptText IActiveScriptParse64_ParseScriptText
+
+#else
+
+#define IActiveScriptParse_Release IActiveScriptParse32_Release
+#define IActiveScriptParse_InitNew IActiveScriptParse32_InitNew
+#define IActiveScriptParse_ParseScriptText IActiveScriptParse32_ParseScriptText
+
+#endif
 
 WINE_DEFAULT_DEBUG_CHANNEL(wscript);
 
@@ -41,23 +56,12 @@ WCHAR scriptFullName[MAX_PATH];
 ITypeInfo *host_ti;
 ITypeInfo *arguments_ti;
 
+static HRESULT query_interface(REFIID,void**);
+
 static HRESULT WINAPI ActiveScriptSite_QueryInterface(IActiveScriptSite *iface,
                                                       REFIID riid, void **ppv)
 {
-    if(IsEqualGUID(riid, &IID_IUnknown)) {
-        WINE_TRACE("(IID_IUnknown %p)\n", ppv);
-        *ppv = iface;
-    }else if(IsEqualGUID(riid, &IID_IActiveScriptSite)) {
-        WINE_TRACE("(IID_IActiveScriptSite %p)\n", ppv);
-        *ppv = iface;
-    }else {
-        *ppv = NULL;
-        WINE_TRACE("(%s %p)\n", wine_dbgstr_guid(riid), ppv);
-        return E_NOINTERFACE;
-    }
-
-    IUnknown_AddRef((IUnknown*)*ppv);
-    return S_OK;
+    return query_interface(riid, ppv);
 }
 
 static ULONG WINAPI ActiveScriptSite_AddRef(IActiveScriptSite *iface)
@@ -153,7 +157,67 @@ static IActiveScriptSiteVtbl ActiveScriptSiteVtbl = {
     ActiveScriptSite_OnLeaveScript
 };
 
-IActiveScriptSite script_site = { &ActiveScriptSiteVtbl };
+static IActiveScriptSite script_site = { &ActiveScriptSiteVtbl };
+
+static HRESULT WINAPI ActiveScriptSiteWindow_QueryInterface(IActiveScriptSiteWindow *iface, REFIID riid, void **ppv)
+{
+    return query_interface(riid, ppv);
+}
+
+static ULONG WINAPI ActiveScriptSiteWindow_AddRef(IActiveScriptSiteWindow *iface)
+{
+    return 2;
+}
+
+static ULONG WINAPI ActiveScriptSiteWindow_Release(IActiveScriptSiteWindow *iface)
+{
+    return 1;
+}
+
+static HRESULT WINAPI ActiveScriptSiteWindow_GetWindow(IActiveScriptSiteWindow *iface, HWND *phwnd)
+{
+    TRACE("(%p)\n", phwnd);
+
+    *phwnd = NULL;
+    return S_OK;
+}
+
+static HRESULT WINAPI ActiveScriptSiteWindow_EnableModeless(IActiveScriptSiteWindow *iface, BOOL fEnable)
+{
+    TRACE("(%x)\n", fEnable);
+    return S_OK;
+}
+
+static const IActiveScriptSiteWindowVtbl ActiveScriptSiteWindowVtbl = {
+    ActiveScriptSiteWindow_QueryInterface,
+    ActiveScriptSiteWindow_AddRef,
+    ActiveScriptSiteWindow_Release,
+    ActiveScriptSiteWindow_GetWindow,
+    ActiveScriptSiteWindow_EnableModeless
+};
+
+static IActiveScriptSiteWindow script_site_window = { &ActiveScriptSiteWindowVtbl };
+
+static HRESULT query_interface(REFIID riid, void **ppv)
+{
+    if(IsEqualGUID(riid, &IID_IUnknown)) {
+        TRACE("(IID_IUnknown %p)\n", ppv);
+        *ppv = &script_site;
+    }else if(IsEqualGUID(riid, &IID_IActiveScriptSite)) {
+        TRACE("(IID_IActiveScriptSite %p)\n", ppv);
+        *ppv = &script_site;
+    }else if(IsEqualGUID(riid, &IID_IActiveScriptSiteWindow)) {
+        TRACE("(IID_IActiveScriptSiteWindow %p)\n", ppv);
+        *ppv = &script_site_window;
+    }else {
+        *ppv = NULL;
+        TRACE("(%s %p)\n", wine_dbgstr_guid(riid), ppv);
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown*)*ppv);
+    return S_OK;
+}
 
 static BOOL load_typelib(void)
 {
@@ -214,7 +278,7 @@ static BOOL get_engine_clsid(const WCHAR *ext, CLSID *clsid)
     return SUCCEEDED(hres);
 }
 
-static HRESULT create_engine(CLSID *clsid, IActiveScript **script_ret,
+static BOOL create_engine(CLSID *clsid, IActiveScript **script_ret,
         IActiveScriptParse **parser)
 {
     IActiveScript *script;
@@ -241,7 +305,7 @@ static HRESULT create_engine(CLSID *clsid, IActiveScript **script_ret,
     return TRUE;
 }
 
-static HRESULT init_engine(IActiveScript *script, IActiveScriptParse *parser)
+static BOOL init_engine(IActiveScript *script, IActiveScriptParse *parser)
 {
     HRESULT hres;
 
@@ -252,7 +316,7 @@ static HRESULT init_engine(IActiveScript *script, IActiveScriptParse *parser)
     if(FAILED(hres))
         return FALSE;
 
-    hres = IActiveScriptParse64_InitNew(parser);
+    hres = IActiveScriptParse_InitNew(parser);
     if(FAILED(hres))
         return FALSE;
 
@@ -309,7 +373,7 @@ static void run_script(const WCHAR *filename, IActiveScript *script, IActiveScri
         return;
     }
 
-    hres = IActiveScriptParse64_ParseScriptText(parser, text, NULL, NULL, NULL, 1, 1,
+    hres = IActiveScriptParse_ParseScriptText(parser, text, NULL, NULL, NULL, 1, 1,
             SCRIPTTEXT_HOSTMANAGESSOURCE|SCRIPTITEM_ISVISIBLE, NULL, NULL);
     SysFreeString(text);
     if(FAILED(hres)) {
@@ -324,6 +388,7 @@ static void run_script(const WCHAR *filename, IActiveScript *script, IActiveScri
 
 static BOOL set_host_properties(const WCHAR *prop)
 {
+    static const WCHAR nologoW[] = {'n','o','l','o','g','o',0};
     static const WCHAR iactive[] = {'i',0};
     static const WCHAR batch[] = {'b',0};
 
@@ -339,14 +404,19 @@ static BOOL set_host_properties(const WCHAR *prop)
         wshInteractive = VARIANT_TRUE;
     else if(strcmpiW(prop, batch) == 0)
         wshInteractive = VARIANT_FALSE;
+    else if(strcmpiW(prop, nologoW) == 0)
+        WINE_FIXME("ignored %s switch\n", debugstr_w(nologoW));
     else
+    {
+        WINE_FIXME("unsupported switch %s\n", debugstr_w(prop));
         return FALSE;
+    }
     return TRUE;
 }
 
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPWSTR cmdline, int cmdshow)
 {
-    const WCHAR *ext, *filename = NULL;
+    WCHAR *ext, *filepart, *filename = NULL;
     IActiveScriptParse *parser;
     IActiveScript *script;
     WCHAR **argv;
@@ -376,14 +446,12 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPWSTR cmdline, int cm
         WINE_FIXME("No file name specified\n");
         return 1;
     }
-    res = GetFullPathNameW(filename, sizeof(scriptFullName)/sizeof(WCHAR), scriptFullName, NULL);
+    res = GetFullPathNameW(filename, sizeof(scriptFullName)/sizeof(WCHAR), scriptFullName, &filepart);
     if(!res || res > sizeof(scriptFullName)/sizeof(WCHAR))
         return 1;
 
-    ext = strchrW(filename, '.');
-    if(!ext)
-        ext = filename;
-    if(!get_engine_clsid(ext, &clsid)) {
+    ext = strrchrW(filepart, '.');
+    if(!ext || !get_engine_clsid(ext, &clsid)) {
         WINE_FIXME("Could not find engine for %s\n", wine_dbgstr_w(ext));
         return 1;
     }
@@ -405,7 +473,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPWSTR cmdline, int cm
     }
 
     IActiveScript_Release(script);
-    IUnknown_Release(parser);
+    IActiveScriptParse_Release(parser);
 
     CoUninitialize();
 

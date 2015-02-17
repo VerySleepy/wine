@@ -277,6 +277,12 @@ static const BYTE bits_24bppBGR[] = {
 static const struct bitmap_data testdata_24bppBGR = {
     &GUID_WICPixelFormat24bppBGR, 24, bits_24bppBGR, 4, 2, 96.0, 96.0};
 
+static const BYTE bits_24bppRGB[] = {
+    0,0,255, 0,255,0, 255,0,0, 0,0,0,
+    255,255,0, 255,0,255, 0,255,255, 255,255,255};
+static const struct bitmap_data testdata_24bppRGB = {
+    &GUID_WICPixelFormat24bppRGB, 24, bits_24bppRGB, 4, 2, 96.0, 96.0};
+
 static const BYTE bits_32bppBGR[] = {
     255,0,0,80, 0,255,0,80, 0,0,255,80, 0,0,0,80,
     0,255,255,80, 255,0,255,80, 255,255,0,80, 255,255,255,80};
@@ -332,7 +338,7 @@ static void test_default_converter(void)
 {
     BitmapTestSrc *src_obj;
     IWICFormatConverter *converter;
-    BOOL can_convert=1;
+    BOOL can_convert = TRUE;
     HRESULT hr;
 
     CreateTestBitmap(&testdata_32bppBGRA, &src_obj);
@@ -361,8 +367,158 @@ static void test_default_converter(void)
     DeleteTestBitmap(src_obj);
 }
 
+typedef struct property_opt_test_data
+{
+    LPCOLESTR name;
+    VARTYPE var_type;
+    VARTYPE initial_var_type;
+    int i_init_val;
+    float f_init_val;
+} property_opt_test_data;
+
+static const WCHAR wszTiffCompressionMethod[] = {'T','i','f','f','C','o','m','p','r','e','s','s','i','o','n','M','e','t','h','o','d',0};
+static const WCHAR wszCompressionQuality[] = {'C','o','m','p','r','e','s','s','i','o','n','Q','u','a','l','i','t','y',0};
+static const WCHAR wszInterlaceOption[] = {'I','n','t','e','r','l','a','c','e','O','p','t','i','o','n',0};
+
+static const struct property_opt_test_data testdata_tiff_props[] = {
+    { wszTiffCompressionMethod, VT_UI1,         VT_UI1,  WICTiffCompressionDontCare },
+    { wszCompressionQuality,    VT_R4,          VT_EMPTY },
+    { NULL }
+};
+
+static int find_property_index(const WCHAR* name, PROPBAG2* all_props, int all_prop_cnt)
+{
+    int i;
+    for (i=0; i < all_prop_cnt; i++)
+    {
+        if (lstrcmpW(name, all_props[i].pstrName) == 0)
+            return i;
+    }
+    return -1;
+}
+
+static void test_specific_encoder_properties(IPropertyBag2 *options, const property_opt_test_data* data, PROPBAG2* all_props, int all_prop_cnt)
+{
+    HRESULT hr;
+    int i = 0;
+    VARIANT pvarValue;
+    HRESULT phrError = S_OK;
+
+    while (data[i].name)
+    {
+        int idx = find_property_index(data[i].name, all_props, all_prop_cnt);
+        PROPBAG2 pb = {0};
+        pb.pstrName = (LPOLESTR)data[i].name;
+
+        hr = IPropertyBag2_Read(options, 1, &pb, NULL, &pvarValue, &phrError);
+
+        ok(idx >= 0, "Property %s not in output of GetPropertyInfo\n",
+           wine_dbgstr_w(data[i].name));
+        if (idx >= 0)
+        {
+            ok(all_props[idx].vt == data[i].var_type, "Property %s has unexpected vt type, vt=%i\n",
+               wine_dbgstr_w(data[i].name), all_props[idx].vt);
+            ok(all_props[idx].dwType == PROPBAG2_TYPE_DATA, "Property %s has unexpected dw type, vt=%i\n",
+               wine_dbgstr_w(data[i].name), all_props[idx].dwType);
+            ok(all_props[idx].cfType == 0, "Property %s has unexpected cf type, vt=%i\n",
+               wine_dbgstr_w(data[i].name), all_props[idx].cfType);
+        }
+
+        ok(SUCCEEDED(hr), "Reading property %s from bag failed, hr=%x\n",
+           wine_dbgstr_w(data[i].name), hr);
+
+        if (SUCCEEDED(hr))
+        {
+            /* On XP the initial type is always VT_EMPTY */
+            ok(V_VT(&pvarValue) == data[i].initial_var_type || V_VT(&pvarValue) == VT_EMPTY,
+               "Property %s has unexpected initial type, V_VT=%i\n",
+               wine_dbgstr_w(data[i].name), V_VT(&pvarValue));
+
+            if(V_VT(&pvarValue) == data[i].initial_var_type)
+            {
+                switch (data[i].initial_var_type)
+                {
+                    case VT_BOOL:
+                    case VT_UI1:
+                        ok(V_UNION(&pvarValue, bVal) == data[i].i_init_val, "Property %s has an unexpected initial value, pvarValue=%i\n",
+                           wine_dbgstr_w(data[i].name), V_UNION(&pvarValue, bVal));
+                        break;
+                    case VT_R4:
+                        ok(V_UNION(&pvarValue, fltVal) == data[i].f_init_val, "Property %s has an unexpected initial value, pvarValue=%f\n",
+                           wine_dbgstr_w(data[i].name), V_UNION(&pvarValue, fltVal));
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+            VariantClear(&pvarValue);
+        }
+
+        i++;
+    }
+}
+
+static void test_encoder_properties(const CLSID* clsid_encoder, IPropertyBag2 *options)
+{
+    HRESULT hr;
+    ULONG cProperties = 0;
+    ULONG cProperties2 = 0;
+    PROPBAG2 all_props[64] = {{0}}; /* Should be enough for every encoder out there */
+    int i;
+
+    /* CountProperties */
+    {
+        hr = IPropertyBag2_CountProperties(options, &cProperties);
+        ok(SUCCEEDED(hr), "Reading property count, hr=%x\n", hr);
+    }
+
+    /* GetPropertyInfo */
+    {
+        hr = IPropertyBag2_GetPropertyInfo(options, cProperties, 1, all_props, &cProperties2);
+        ok(hr == WINCODEC_ERR_VALUEOUTOFRANGE, "IPropertyBag2::GetPropertyInfo - iProperty out of bounce handled wrong, hr=%x\n", hr);
+
+        hr = IPropertyBag2_GetPropertyInfo(options, 0, cProperties+1, all_props, &cProperties2);
+        ok(hr == WINCODEC_ERR_VALUEOUTOFRANGE, "IPropertyBag2::GetPropertyInfo - cProperty out of bounce handled wrong, hr=%x\n", hr);
+
+        if (cProperties == 0) /* GetPropertyInfo can be called for zero items on Windows 8 but not on Windows 7 (wine behaves like Win8) */
+        {
+            cProperties2 = cProperties;
+            hr = S_OK;
+        }
+        else
+        {
+            hr = IPropertyBag2_GetPropertyInfo(options, 0, min(64, cProperties), all_props, &cProperties2);
+            ok(SUCCEEDED(hr), "Reading infos from property bag failed, hr=%x\n", hr);
+        }
+
+        if (FAILED(hr))
+            return;
+
+        ok(cProperties == cProperties2, "Missmatch of property count (IPropertyBag2::CountProperties=%i, IPropertyBag2::GetPropertyInfo=%i)\n",
+           (int)cProperties, (int)cProperties2);
+    }
+
+    if (clsid_encoder == &CLSID_WICTiffEncoder)
+        test_specific_encoder_properties(options, testdata_tiff_props, all_props, cProperties2);
+
+    for (i=0; i < cProperties2; i++)
+    {
+        ok(all_props[i].pstrName != NULL, "Unset property name in output of IPropertyBag2::GetPropertyInfo\n");
+        CoTaskMemFree(all_props[i].pstrName);
+    }
+}
+
+struct setting {
+    const WCHAR *name;
+    PROPBAG2_TYPE type;
+    VARTYPE vt;
+    void *value;
+};
+
 static void test_multi_encoder(const struct bitmap_data **srcs, const CLSID* clsid_encoder,
-    const struct bitmap_data **dsts, const CLSID *clsid_decoder, const char *name)
+    const struct bitmap_data **dsts, const CLSID *clsid_decoder, WICRect *rc,
+    const struct setting *settings, const char *name)
 {
     HRESULT hr;
     IWICBitmapEncoder *encoder;
@@ -403,6 +559,30 @@ static void test_multi_encoder(const struct bitmap_data **srcs, const CLSID* cls
                 ok(SUCCEEDED(hr), "CreateFrame failed, hr=%x\n", hr);
                 if (SUCCEEDED(hr))
                 {
+                    ok(options != NULL, "Encoder initialization has not created an property bag\n");
+                    if(options)
+                        test_encoder_properties(clsid_encoder, options);
+
+                    if (settings)
+                    {
+                        int j;
+                        for (j=0; settings[j].name; j++)
+                        {
+                            PROPBAG2 propbag;
+                            VARIANT var;
+
+                            memset(&propbag, 0, sizeof(propbag));
+                            memset(&var, 0, sizeof(var));
+                            propbag.pstrName = (LPOLESTR)settings[j].name;
+                            propbag.dwType = settings[j].type;
+                            V_VT(&var) = settings[j].vt;
+                            V_UNKNOWN(&var) = settings[j].value;
+
+                            hr = IPropertyBag2_Write(options, 1, &propbag, &var);
+                            ok(SUCCEEDED(hr), "Writing property %s failed, hr=%x\n", wine_dbgstr_w(settings[j].name), hr);
+                        }
+                    }
+
                     hr = IWICBitmapFrameEncode_Initialize(frameencode, options);
                     ok(SUCCEEDED(hr), "Initialize failed, hr=%x\n", hr);
 
@@ -414,8 +594,14 @@ static void test_multi_encoder(const struct bitmap_data **srcs, const CLSID* cls
                     hr = IWICBitmapFrameEncode_SetSize(frameencode, srcs[i]->width, srcs[i]->height);
                     ok(SUCCEEDED(hr), "SetSize failed, hr=%x\n", hr);
 
-                    hr = IWICBitmapFrameEncode_WriteSource(frameencode, &src_obj->IWICBitmapSource_iface, NULL);
-                    ok(SUCCEEDED(hr), "WriteSource failed, hr=%x\n", hr);
+                    hr = IWICBitmapFrameEncode_WriteSource(frameencode, &src_obj->IWICBitmapSource_iface, rc);
+                    if (rc && (rc->Width <= 0 || rc->Height <= 0))
+                    {
+                        /* WriteSource fails but WriteSource_Proxy succeeds. */
+                        ok(hr == E_INVALIDARG, "WriteSource failed, hr=%x (%s)\n", hr, name);
+                        hr = IWICBitmapFrameEncode_WriteSource_Proxy(frameencode, &src_obj->IWICBitmapSource_iface, rc);
+                    }
+                    ok(SUCCEEDED(hr), "WriteSource failed, hr=%x (%s)\n", hr, name);
 
                     hr = IWICBitmapFrameEncode_Commit(frameencode);
                     ok(SUCCEEDED(hr), "Commit failed, hr=%x\n", hr);
@@ -484,7 +670,39 @@ static void test_encoder(const struct bitmap_data *src, const CLSID* clsid_encod
     dsts[0] = dst;
     dsts[1] = NULL;
 
-    test_multi_encoder(srcs, clsid_encoder, dsts, clsid_decoder, name);
+    test_multi_encoder(srcs, clsid_encoder, dsts, clsid_decoder, NULL, NULL, name);
+}
+
+static void test_encoder_rects(void)
+{
+    const struct bitmap_data *srcs[2];
+    const struct bitmap_data *dsts[2];
+    WICRect rc;
+
+    srcs[0] = &testdata_24bppBGR;
+    srcs[1] = NULL;
+    dsts[0] = &testdata_24bppBGR;
+    dsts[1] = NULL;
+
+    rc.X = 0;
+    rc.Y = 0;
+    rc.Width = 4;
+    rc.Height = 2;
+
+    test_multi_encoder(srcs, &CLSID_WICTiffEncoder, dsts, &CLSID_WICTiffDecoder, &rc, NULL, "test_encoder_rects full");
+
+    rc.Width = 0;
+    test_multi_encoder(srcs, &CLSID_WICTiffEncoder, dsts, &CLSID_WICTiffDecoder, &rc, NULL, "test_encoder_rects width=0");
+
+    rc.Width = -1;
+    test_multi_encoder(srcs, &CLSID_WICTiffEncoder, dsts, &CLSID_WICTiffDecoder, &rc, NULL, "test_encoder_rects width=-1");
+
+    rc.Width = 4;
+    rc.Height = 0;
+    test_multi_encoder(srcs, &CLSID_WICTiffEncoder, dsts, &CLSID_WICTiffDecoder, &rc, NULL, "test_encoder_rects height=0");
+
+    rc.Height = -1;
+    test_multi_encoder(srcs, &CLSID_WICTiffEncoder, dsts, &CLSID_WICTiffDecoder, &rc, NULL, "test_encoder_rects height=-1");
 }
 
 static const struct bitmap_data *multiple_frames[3] = {
@@ -492,13 +710,32 @@ static const struct bitmap_data *multiple_frames[3] = {
     &testdata_24bppBGR,
     NULL};
 
+static const struct bitmap_data *single_frame[2] = {
+    &testdata_24bppBGR,
+    NULL};
+
+static const struct setting png_interlace_settings[] = {
+    {wszInterlaceOption, PROPBAG2_TYPE_DATA, VT_BOOL, (void*)VARIANT_TRUE},
+    {NULL}
+};
+
 START_TEST(converter)
 {
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
 
-    test_conversion(&testdata_32bppBGRA, &testdata_32bppBGR, "BGRA -> BGR", 0);
-    test_conversion(&testdata_32bppBGR, &testdata_32bppBGRA, "BGR -> BGRA", 0);
-    test_conversion(&testdata_32bppBGRA, &testdata_32bppBGRA, "BGRA -> BGRA", 0);
+    test_conversion(&testdata_32bppBGRA, &testdata_32bppBGR, "BGRA -> BGR", FALSE);
+    test_conversion(&testdata_32bppBGR, &testdata_32bppBGRA, "BGR -> BGRA", FALSE);
+    test_conversion(&testdata_32bppBGRA, &testdata_32bppBGRA, "BGRA -> BGRA", FALSE);
+
+    test_conversion(&testdata_24bppBGR, &testdata_24bppBGR, "24bppBGR -> 24bppBGR", FALSE);
+    test_conversion(&testdata_24bppBGR, &testdata_24bppRGB, "24bppBGR -> 24bppRGB", FALSE);
+
+    test_conversion(&testdata_24bppRGB, &testdata_24bppRGB, "24bppRGB -> 24bppRGB", FALSE);
+    test_conversion(&testdata_24bppRGB, &testdata_24bppBGR, "24bppRGB -> 24bppBGR", FALSE);
+
+    test_conversion(&testdata_32bppBGR, &testdata_24bppRGB, "32bppBGR -> 24bppRGB", FALSE);
+    test_conversion(&testdata_24bppRGB, &testdata_32bppBGR, "24bppRGB -> 32bppBGR", FALSE);
+
     test_invalid_conversion();
     test_default_converter();
 
@@ -512,7 +749,12 @@ START_TEST(converter)
                  &testdata_24bppBGR, &CLSID_WICTiffDecoder, "TIFF encoder 24bppBGR");
 
     test_multi_encoder(multiple_frames, &CLSID_WICTiffEncoder,
-                       multiple_frames, &CLSID_WICTiffDecoder, "TIFF encoder multi-frame");
+                       multiple_frames, &CLSID_WICTiffDecoder, NULL, NULL, "TIFF encoder multi-frame");
+
+    test_encoder_rects();
+
+    test_multi_encoder(single_frame, &CLSID_WICPngEncoder,
+                       single_frame, &CLSID_WICPngDecoder, NULL, png_interlace_settings, "PNG encoder interlaced");
 
     CoUninitialize();
 }

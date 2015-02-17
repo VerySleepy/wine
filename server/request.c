@@ -51,6 +51,9 @@
 #ifdef HAVE_POLL_H
 #include <poll.h>
 #endif
+#ifdef __APPLE__
+# include <mach/mach_time.h>
+#endif
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -139,20 +142,6 @@ void fatal_protocol_error( struct thread *thread, const char *err, ... )
     kill_thread( thread, 1 );
 }
 
-/* complain about a protocol error and terminate the client connection */
-void fatal_protocol_perror( struct thread *thread, const char *err, ... )
-{
-    va_list args;
-
-    va_start( args, err );
-    fprintf( stderr, "Protocol error:%04x: ", thread->id );
-    vfprintf( stderr, err, args );
-    perror( " " );
-    va_end( args );
-    thread->exit_code = 1;
-    kill_thread( thread, 1 );
-}
-
 /* die on a fatal error */
 void fatal_error( const char *err, ... )
 {
@@ -161,19 +150,6 @@ void fatal_error( const char *err, ... )
     va_start( args, err );
     fprintf( stderr, "wineserver: " );
     vfprintf( stderr, err, args );
-    va_end( args );
-    exit(1);
-}
-
-/* die on a fatal error */
-void fatal_perror( const char *err, ... )
-{
-    va_list args;
-
-    va_start( args, err );
-    fprintf( stderr, "wineserver: " );
-    vfprintf( stderr, err, args );
-    perror( " " );
     va_end( args );
     exit(1);
 }
@@ -209,7 +185,7 @@ void write_reply( struct thread *thread )
     if (errno == EPIPE)
         kill_thread( thread, 0 );  /* normal death */
     else if (errno != EWOULDBLOCK && errno != EAGAIN)
-        fatal_protocol_perror( thread, "reply write" );
+        fatal_protocol_error( thread, "reply write: %s\n", strerror( errno ));
 }
 
 /* send a reply to the current thread */
@@ -251,7 +227,7 @@ static void send_reply( union generic_reply *reply )
     else if (errno == EPIPE)
         kill_thread( current, 0 );  /* normal death */
     else
-        fatal_protocol_perror( current, "reply write" );
+        fatal_protocol_error( current, "reply write: %s\n", strerror( errno ));
 }
 
 /* call a request handler */
@@ -336,7 +312,7 @@ error:
     else if (ret > 0)
         fatal_protocol_error( thread, "partial read %d\n", ret );
     else if (errno != EWOULDBLOCK && errno != EAGAIN)
-        fatal_protocol_perror( thread, "read" );
+        fatal_protocol_error( thread, "read: %s\n", strerror( errno ));
 }
 
 /* receive a file descriptor on the process socket */
@@ -486,6 +462,20 @@ int send_client_fd( struct process *process, int fd, obj_handle_t handle )
 /* get current tick count to return to client */
 unsigned int get_tick_count(void)
 {
+#ifdef HAVE_CLOCK_GETTIME
+    struct timespec ts;
+#ifdef CLOCK_MONOTONIC_RAW
+    if (!clock_gettime( CLOCK_MONOTONIC_RAW, &ts ))
+        return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+#endif
+    if (!clock_gettime( CLOCK_MONOTONIC, &ts ))
+        return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+#elif defined(__APPLE__)
+    static mach_timebase_info_data_t timebase;
+
+    if (!timebase.denom) mach_timebase_info( &timebase );
+    return mach_absolute_time() * timebase.numer / timebase.denom / 1000000;
+#endif
     return (current_time - server_start_time) / 10000;
 }
 
@@ -520,7 +510,7 @@ static void master_socket_poll_event( struct fd *fd, int event )
     else if (event & POLLIN)
     {
         struct sockaddr_un dummy;
-        unsigned int len = sizeof(dummy);
+        socklen_t len = sizeof(dummy);
         int client = accept( get_unix_fd( master_socket->fd ), (struct sockaddr *) &dummy, &len );
         if (client == -1) return;
         fcntl( client, F_SETFL, O_NONBLOCK );
@@ -540,9 +530,12 @@ static void create_dir( const char *name, struct stat *st )
 {
     if (lstat( name, st ) == -1)
     {
-        if (errno != ENOENT) fatal_perror( "lstat %s", name );
-        if (mkdir( name, 0700 ) == -1 && errno != EEXIST) fatal_perror( "mkdir %s", name );
-        if (lstat( name, st ) == -1) fatal_perror( "lstat %s", name );
+        if (errno != ENOENT)
+            fatal_error( "lstat %s: %s", name, strerror( errno ));
+        if (mkdir( name, 0700 ) == -1 && errno != EEXIST)
+            fatal_error( "mkdir %s: %s\n", name, strerror( errno ));
+        if (lstat( name, st ) == -1)
+            fatal_error( "lstat %s: %s\n", name, strerror( errno ));
     }
     if (!S_ISDIR(st->st_mode)) fatal_error( "%s is not a directory\n", name );
     if (st->st_uid != getuid()) fatal_error( "%s is not owned by you\n", name );
@@ -568,9 +561,12 @@ static void create_server_dir( const char *dir )
     *p = '/';
     create_dir( server_dir, &st );
 
-    if (chdir( server_dir ) == -1) fatal_perror( "chdir %s", server_dir );
-    if ((server_dir_fd = open( ".", O_RDONLY )) == -1) fatal_perror( "open %s", server_dir );
-    if (fstat( server_dir_fd, &st2 ) == -1) fatal_perror( "stat %s", server_dir );
+    if (chdir( server_dir ) == -1)
+        fatal_error( "chdir %s: %s\n", server_dir, strerror( errno ));
+    if ((server_dir_fd = open( ".", O_RDONLY )) == -1)
+        fatal_error( "open %s: %s\n", server_dir, strerror( errno ));
+    if (fstat( server_dir_fd, &st2 ) == -1)
+        fatal_error( "stat %s: %s\n", server_dir, strerror( errno ));
     if (st.st_dev != st2.st_dev || st.st_ino != st2.st_ino)
         fatal_error( "chdir did not end up in %s\n", server_dir );
 
@@ -586,7 +582,7 @@ static int create_server_lock(void)
     if (lstat( server_lock_name, &st ) == -1)
     {
         if (errno != ENOENT)
-            fatal_perror( "lstat %s/%s", wine_get_server_dir(), server_lock_name );
+            fatal_error( "lstat %s/%s: %s", wine_get_server_dir(), server_lock_name, strerror( errno ));
     }
     else
     {
@@ -595,7 +591,7 @@ static int create_server_lock(void)
     }
 
     if ((fd = open( server_lock_name, O_CREAT|O_TRUNC|O_WRONLY, 0600 )) == -1)
-        fatal_perror( "error creating %s/%s", wine_get_server_dir(), server_lock_name );
+        fatal_error( "error creating %s/%s: %s", wine_get_server_dir(), server_lock_name, strerror( errno ));
     return fd;
 }
 
@@ -712,13 +708,13 @@ static void acquire_lock(void)
         case EAGAIN:
             exit(2); /* we didn't get the lock, exit with special status */
         default:
-            fatal_perror( "fcntl %s/%s", wine_get_server_dir(), server_lock_name );
+            fatal_error( "fcntl %s/%s: %s", wine_get_server_dir(), server_lock_name, strerror( errno ));
         }
         /* it seems we can't use locks on this fs, so we will use the socket existence as lock */
         close( fd );
     }
 
-    if ((fd = socket( AF_UNIX, SOCK_STREAM, 0 )) == -1) fatal_perror( "socket" );
+    if ((fd = socket( AF_UNIX, SOCK_STREAM, 0 )) == -1) fatal_error( "socket: %s\n", strerror( errno ));
     addr.sun_family = AF_UNIX;
     strcpy( addr.sun_path, server_socket_name );
     slen = sizeof(addr) - sizeof(addr.sun_path) + strlen(addr.sun_path) + 1;
@@ -733,11 +729,11 @@ static void acquire_lock(void)
                 fatal_error( "couldn't bind to the socket even though we hold the lock\n" );
             exit(2); /* we didn't get the lock, exit with special status */
         }
-        fatal_perror( "bind" );
+        fatal_error( "bind: %s\n", strerror( errno ));
     }
     atexit( socket_cleanup );
     chmod( server_socket_name, 0600 );  /* make sure no other user can connect */
-    if (listen( fd, 5 ) == -1) fatal_perror( "listen" );
+    if (listen( fd, 5 ) == -1) fatal_error( "listen: %s\n", strerror( errno ));
 
     if (!(master_socket = alloc_object( &master_socket_ops )) ||
         !(master_socket->fd = create_anonymous_fd( &master_socket_fd_ops, fd, &master_socket->obj, 0 )))
@@ -758,15 +754,22 @@ void open_master_socket(void)
     assert( sizeof(union generic_request) == sizeof(struct request_max_size) );
     assert( sizeof(union generic_reply) == sizeof(struct request_max_size) );
 
-    if (!server_dir) fatal_error( "directory %s cannot be accessed\n", config_dir );
-    if (chdir( config_dir ) == -1) fatal_perror( "chdir to %s", config_dir );
-    if ((config_dir_fd = open( ".", O_RDONLY )) == -1) fatal_perror( "open %s", config_dir );
+    /* make sure the stdio fds are open */
+    fd = open( "/dev/null", O_RDWR );
+    while (fd >= 0 && fd <= 2) fd = dup( fd );
+
+    if (!server_dir)
+        fatal_error( "directory %s cannot be accessed\n", config_dir );
+    if (chdir( config_dir ) == -1)
+        fatal_error( "chdir to %s: %s\n", config_dir, strerror( errno ));
+    if ((config_dir_fd = open( ".", O_RDONLY )) == -1)
+        fatal_error( "open %s: %s\n", config_dir, strerror( errno ));
 
     create_server_dir( server_dir );
 
     if (!foreground)
     {
-        if (pipe( sync_pipe ) == -1) fatal_perror( "pipe" );
+        if (pipe( sync_pipe ) == -1) fatal_error( "pipe: %s\n", strerror( errno ));
         pid = fork();
         switch( pid )
         {
@@ -777,12 +780,8 @@ void open_master_socket(void)
             acquire_lock();
 
             /* close stdin and stdout */
-            if ((fd = open( "/dev/null", O_RDWR )) != -1)
-            {
-                dup2( fd, 0 );
-                dup2( fd, 1 );
-                close( fd );
-            }
+            dup2( fd, 0 );
+            dup2( fd, 1 );
 
             /* signal parent */
             dummy = 0;
@@ -791,7 +790,7 @@ void open_master_socket(void)
             break;
 
         case -1:
-            fatal_perror( "fork" );
+            fatal_error( "fork: %s\n", strerror( errno ));
             break;
 
         default:  /* parent */
@@ -801,7 +800,7 @@ void open_master_socket(void)
             if (read( sync_pipe[0], &dummy, 1 ) == 1) _exit(0);
 
             /* child terminated, propagate exit status */
-            wait4( pid, &status, 0, NULL );
+            waitpid( pid, &status, 0 );
             if (WIFEXITED(status)) _exit( WEXITSTATUS(status) );
             _exit(1);
         }
@@ -813,6 +812,7 @@ void open_master_socket(void)
 
     /* init the process tracing mechanism */
     init_tracing_mechanism();
+    close( fd );
 }
 
 /* master socket timer expiration handler */

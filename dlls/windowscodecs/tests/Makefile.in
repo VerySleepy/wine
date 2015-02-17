@@ -1,12 +1,16 @@
 TESTDLL   = windowscodecs.dll
-IMPORTS   = ole32 windowscodecs
+IMPORTS   = windowscodecs oleaut32 ole32 user32 gdi32
 
 C_SRCS = \
+	bitmap.c \
 	bmpformat.c \
 	converter.c \
+	gifformat.c \
 	icoformat.c \
 	info.c \
+	metadata.c \
 	palette.c \
-	stream.c
-
-@MAKE_TEST_RULES@
+	pngformat.c \
+	propertybag.c \
+	stream.c \
+	tiffformat.c

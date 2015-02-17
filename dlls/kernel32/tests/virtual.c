@@ -25,19 +25,28 @@
 #define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
+#include "winnt.h"
 #include "winternl.h"
 #include "winerror.h"
+#include "winuser.h"
+#include "excpt.h"
 #include "wine/test.h"
 
 #define NUM_THREADS 4
 #define MAPPING_SIZE 0x100000
 
-static HINSTANCE hkernel32;
+static HINSTANCE hkernel32, hntdll;
 static LPVOID (WINAPI *pVirtualAllocEx)(HANDLE, LPVOID, SIZE_T, DWORD, DWORD);
 static BOOL   (WINAPI *pVirtualFreeEx)(HANDLE, LPVOID, SIZE_T, DWORD);
 static UINT   (WINAPI *pGetWriteWatch)(DWORD,LPVOID,SIZE_T,LPVOID*,ULONG_PTR*,ULONG*);
 static UINT   (WINAPI *pResetWriteWatch)(LPVOID,SIZE_T);
 static NTSTATUS (WINAPI *pNtAreMappedFilesTheSame)(PVOID,PVOID);
+static NTSTATUS (WINAPI *pNtMapViewOfSection)(HANDLE, HANDLE, PVOID *, ULONG, SIZE_T, const LARGE_INTEGER *, SIZE_T *, ULONG, ULONG, ULONG);
+static DWORD (WINAPI *pNtUnmapViewOfSection)(HANDLE, PVOID);
+static struct _TEB * (WINAPI *pNtCurrentTeb)(void);
+static PVOID  (WINAPI *pRtlAddVectoredExceptionHandler)(ULONG, PVECTORED_EXCEPTION_HANDLER);
+static ULONG  (WINAPI *pRtlRemoveVectoredExceptionHandler)(PVOID);
+static BOOL   (WINAPI *pGetProcessDEPPolicy)(HANDLE, LPDWORD, PBOOL);
 
 /* ############################### */
 
@@ -47,12 +56,12 @@ static HANDLE create_target_process(const char *arg)
     char cmdline[MAX_PATH];
     PROCESS_INFORMATION pi;
     BOOL ret;
-    STARTUPINFO si = { 0 };
+    STARTUPINFOA si = { 0 };
     si.cb = sizeof(si);
 
     winetest_get_mainargs( &argv );
     sprintf(cmdline, "%s %s %s", argv[0], argv[1], arg);
-    ret = CreateProcess(NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+    ret = CreateProcessA(NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
     ok(ret, "error: %u\n", GetLastError());
     ret = CloseHandle(pi.hThread);
     ok(ret, "error %u\n", GetLastError());
@@ -417,6 +426,7 @@ static void test_MapViewOfFile(void)
     ret = DuplicateHandle( GetCurrentProcess(), mapping, GetCurrentProcess(), &map2,
                            FILE_MAP_READ, FALSE, 0 );
     ok( ret, "DuplicateHandle failed error %u\n", GetLastError());
+    SetLastError(0xdeadbeef);
     ptr = MapViewOfFile( map2, FILE_MAP_WRITE, 0, 0, 4096 );
     if (!ptr)
     {
@@ -424,6 +434,7 @@ static void test_MapViewOfFile(void)
         CloseHandle( map2 );
         ret = DuplicateHandle( GetCurrentProcess(), mapping, GetCurrentProcess(), &map2, 0, FALSE, 0 );
         ok( ret, "DuplicateHandle failed error %u\n", GetLastError());
+        SetLastError(0xdeadbeef);
         ptr = MapViewOfFile( map2, 0, 0, 0, 4096 );
         ok( !ptr, "MapViewOfFile succeeded\n" );
         ok( GetLastError() == ERROR_ACCESS_DENIED, "Wrong error %d\n", GetLastError() );
@@ -582,17 +593,17 @@ static void test_MapViewOfFile(void)
 
     SetLastError(0xdeadbeef);
     name = "Local\\Foo";
-    file = CreateFileMapping( INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 4096, name );
+    file = CreateFileMappingA( INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 4096, name );
     /* nt4 doesn't have Local\\ */
     if (!file && GetLastError() == ERROR_PATH_NOT_FOUND)
     {
         name = "Foo";
-        file = CreateFileMapping( INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 4096, name );
+        file = CreateFileMappingA( INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 4096, name );
     }
     ok( file != 0, "CreateFileMapping PAGE_READWRITE error %u\n", GetLastError() );
 
     SetLastError(0xdeadbeef);
-    mapping = OpenFileMapping( FILE_MAP_READ, FALSE, name );
+    mapping = OpenFileMappingA( FILE_MAP_READ, FALSE, name );
     ok( mapping != 0, "OpenFileMapping FILE_MAP_READ error %u\n", GetLastError() );
     SetLastError(0xdeadbeef);
     ptr = MapViewOfFile( mapping, FILE_MAP_WRITE, 0, 0, 0 );
@@ -619,7 +630,7 @@ static void test_MapViewOfFile(void)
     CloseHandle( mapping );
 
     SetLastError(0xdeadbeef);
-    mapping = OpenFileMapping( FILE_MAP_WRITE, FALSE, name );
+    mapping = OpenFileMappingA( FILE_MAP_WRITE, FALSE, name );
     ok( mapping != 0, "OpenFileMapping FILE_MAP_WRITE error %u\n", GetLastError() );
     SetLastError(0xdeadbeef);
     ptr = MapViewOfFile( mapping, FILE_MAP_READ, 0, 0, 0 );
@@ -663,7 +674,7 @@ static void test_MapViewOfFile(void)
     ok(ret, "VirtualQuery failed with error %d\n", GetLastError());
     ok(info.BaseAddress == ptr, "BaseAddress should have been %p but was %p instead\n", ptr, info.BaseAddress);
     ok(info.AllocationBase == ptr, "AllocationBase should have been %p but was %p instead\n", ptr, info.AllocationBase);
-    ok(info.RegionSize == MAPPING_SIZE, "RegionSize should have been 0x%x but was 0x%x\n", MAPPING_SIZE, (unsigned int)info.RegionSize);
+    ok(info.RegionSize == MAPPING_SIZE, "RegionSize should have been 0x%x but was 0x%lx\n", MAPPING_SIZE, info.RegionSize);
     ok(info.State == MEM_RESERVE, "State should have been MEM_RESERVE instead of 0x%x\n", info.State);
     if (info.Type == MEM_PRIVATE)  /* win9x is different for uncommitted mappings */
     {
@@ -691,7 +702,7 @@ static void test_MapViewOfFile(void)
         ok(info.AllocationProtect == PAGE_READWRITE,
            "AllocationProtect should have been PAGE_READWRITE but was 0x%x\n", info.AllocationProtect);
         ok(info.RegionSize == MAPPING_SIZE,
-           "RegionSize should have been 0x%x but was 0x%x\n", MAPPING_SIZE, (unsigned int)info.RegionSize);
+           "RegionSize should have been 0x%x but was 0x%lx\n", MAPPING_SIZE, info.RegionSize);
         ok(info.State == MEM_RESERVE,
            "State should have been MEM_RESERVE instead of 0x%x\n", info.State);
         ok(info.Protect == 0,
@@ -707,9 +718,9 @@ static void test_MapViewOfFile(void)
     ok(ret, "VirtualQuery failed with error %d\n", GetLastError());
     ok(info.BaseAddress == ptr, "BaseAddress should have been %p but was %p instead\n", ptr, info.BaseAddress);
     ok(info.AllocationBase == ptr, "AllocationBase should have been %p but was %p instead\n", ptr, info.AllocationBase);
-    ok(info.RegionSize == 0x10000, "RegionSize should have been 0x10000 but was 0x%x\n", (unsigned int)info.RegionSize);
-    ok(info.State == MEM_COMMIT, "State should have been MEM_RESERVE instead of 0x%x\n", info.State);
-    ok(info.Protect == PAGE_READONLY, "Protect should have been 0 instead of 0x%x\n", info.Protect);
+    ok(info.RegionSize == 0x10000, "RegionSize should have been 0x10000 but was 0x%lx\n", info.RegionSize);
+    ok(info.State == MEM_COMMIT, "State should have been MEM_COMMIT instead of 0x%x\n", info.State);
+    ok(info.Protect == PAGE_READONLY, "Protect should have been PAGE_READONLY instead of 0x%x\n", info.Protect);
     if (info.Type == MEM_PRIVATE)  /* win9x is different for uncommitted mappings */
     {
         ok(info.AllocationProtect == PAGE_NOACCESS,
@@ -736,11 +747,11 @@ static void test_MapViewOfFile(void)
         ok(info.AllocationProtect == PAGE_READWRITE,
            "AllocationProtect should have been PAGE_READWRITE but was 0x%x\n", info.AllocationProtect);
         ok(info.RegionSize == 0x10000,
-           "RegionSize should have been 0x10000 but was 0x%x\n", (unsigned int)info.RegionSize);
+           "RegionSize should have been 0x10000 but was 0x%lx\n", info.RegionSize);
         ok(info.State == MEM_COMMIT,
-           "State should have been MEM_RESERVE instead of 0x%x\n", info.State);
+           "State should have been MEM_COMMIT instead of 0x%x\n", info.State);
         ok(info.Protect == PAGE_READWRITE,
-           "Protect should have been 0 instead of 0x%x\n", info.Protect);
+           "Protect should have been PAGE_READWRITE instead of 0x%x\n", info.Protect);
         ok(info.Type == MEM_MAPPED, "Type should have been MEM_MAPPED instead of 0x%x\n", info.Type);
     }
 
@@ -776,13 +787,166 @@ static void test_MapViewOfFile(void)
        "got %u, expected ERROR_INVALID_ADDRESS\n", GetLastError());
 
     ok( VirtualFree(addr, 0, MEM_RELEASE), "VirtualFree failed\n" );
-}
 
-static DWORD (WINAPI *pNtMapViewOfSection)( HANDLE handle, HANDLE process, PVOID *addr_ptr,
-                                            ULONG zero_bits, SIZE_T commit_size,
-                                            const LARGE_INTEGER *offset_ptr, SIZE_T *size_ptr,
-                                            ULONG inherit, ULONG alloc_type, ULONG protect );
-static DWORD (WINAPI *pNtUnmapViewOfSection)( HANDLE process, PVOID addr );
+    /* close named mapping handle without unmapping */
+    name = "Foo";
+    SetLastError(0xdeadbeef);
+    mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, MAPPING_SIZE, name);
+    ok( mapping != 0, "CreateFileMappingA failed with error %d\n", GetLastError() );
+    SetLastError(0xdeadbeef);
+    ptr = MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, 0);
+    ok( ptr != NULL, "MapViewOfFile failed with error %d\n", GetLastError() );
+    SetLastError(0xdeadbeef);
+    map2 = OpenFileMappingA(FILE_MAP_READ, FALSE, name);
+    ok( map2 != 0, "OpenFileMappingA failed with error %d\n", GetLastError() );
+    SetLastError(0xdeadbeef);
+    ret = CloseHandle(map2);
+    ok(ret, "CloseHandle error %d\n", GetLastError());
+    SetLastError(0xdeadbeef);
+    ret = CloseHandle(mapping);
+    ok(ret, "CloseHandle error %d\n", GetLastError());
+
+    ret = IsBadReadPtr(ptr, MAPPING_SIZE);
+    ok( !ret, "memory is not accessible\n" );
+
+    ret = VirtualQuery(ptr, &info, sizeof(info));
+    ok(ret, "VirtualQuery error %d\n", GetLastError());
+    ok(info.BaseAddress == ptr, "got %p != expected %p\n", info.BaseAddress, ptr);
+    ok(info.RegionSize == MAPPING_SIZE, "got %#lx != expected %#x\n", info.RegionSize, MAPPING_SIZE);
+    ok(info.Protect == PAGE_READWRITE, "got %#x != expected PAGE_READWRITE\n", info.Protect);
+    ok(info.AllocationBase == ptr, "%p != %p\n", info.AllocationBase, ptr);
+    ok(info.AllocationProtect == PAGE_READWRITE, "%#x != PAGE_READWRITE\n", info.AllocationProtect);
+    ok(info.State == MEM_COMMIT, "%#x != MEM_COMMIT\n", info.State);
+    ok(info.Type == MEM_MAPPED, "%#x != MEM_MAPPED\n", info.Type);
+
+    SetLastError(0xdeadbeef);
+    map2 = OpenFileMappingA(FILE_MAP_READ, FALSE, name);
+    todo_wine
+    ok( map2 == 0, "OpenFileMappingA succeeded\n" );
+    todo_wine
+    ok( GetLastError() == ERROR_FILE_NOT_FOUND, "OpenFileMappingA set error %d\n", GetLastError() );
+    if (map2) CloseHandle(map2); /* FIXME: remove once Wine is fixed */
+    SetLastError(0xdeadbeef);
+    mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, MAPPING_SIZE, name);
+    ok( mapping != 0, "CreateFileMappingA failed\n" );
+    todo_wine
+    ok( GetLastError() == ERROR_SUCCESS, "CreateFileMappingA set error %d\n", GetLastError() );
+    SetLastError(0xdeadbeef);
+    ret = CloseHandle(mapping);
+    ok(ret, "CloseHandle error %d\n", GetLastError());
+
+    ret = IsBadReadPtr(ptr, MAPPING_SIZE);
+    ok( !ret, "memory is not accessible\n" );
+
+    ret = VirtualQuery(ptr, &info, sizeof(info));
+    ok(ret, "VirtualQuery error %d\n", GetLastError());
+    ok(info.BaseAddress == ptr, "got %p != expected %p\n", info.BaseAddress, ptr);
+    ok(info.RegionSize == MAPPING_SIZE, "got %#lx != expected %#x\n", info.RegionSize, MAPPING_SIZE);
+    ok(info.Protect == PAGE_READWRITE, "got %#x != expected PAGE_READWRITE\n", info.Protect);
+    ok(info.AllocationBase == ptr, "%p != %p\n", info.AllocationBase, ptr);
+    ok(info.AllocationProtect == PAGE_READWRITE, "%#x != PAGE_READWRITE\n", info.AllocationProtect);
+    ok(info.State == MEM_COMMIT, "%#x != MEM_COMMIT\n", info.State);
+    ok(info.Type == MEM_MAPPED, "%#x != MEM_MAPPED\n", info.Type);
+
+    SetLastError(0xdeadbeef);
+    ret = UnmapViewOfFile(ptr);
+    ok( ret, "UnmapViewOfFile failed with error %d\n", GetLastError() );
+
+    ret = IsBadReadPtr(ptr, MAPPING_SIZE);
+    ok( ret, "memory is accessible\n" );
+
+    ret = VirtualQuery(ptr, &info, sizeof(info));
+    ok(ret, "VirtualQuery error %d\n", GetLastError());
+    ok(info.BaseAddress == ptr, "got %p != expected %p\n", info.BaseAddress, ptr);
+    ok(info.Protect == PAGE_NOACCESS, "got %#x != expected PAGE_NOACCESS\n", info.Protect);
+    ok(info.AllocationBase == NULL, "%p != NULL\n", info.AllocationBase);
+    ok(info.AllocationProtect == 0, "%#x != 0\n", info.AllocationProtect);
+    ok(info.State == MEM_FREE, "%#x != MEM_FREE\n", info.State);
+    ok(info.Type == 0, "%#x != 0\n", info.Type);
+
+    SetLastError(0xdeadbeef);
+    file = CreateFileA(testfile, GENERIC_READ|GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, 0);
+    ok( file != INVALID_HANDLE_VALUE, "CreateFile error %u\n", GetLastError() );
+    SetFilePointer(file, 4096, NULL, FILE_BEGIN);
+    SetEndOfFile(file);
+
+    SetLastError(0xdeadbeef);
+    mapping = CreateFileMappingA(file, NULL, PAGE_READWRITE, 0, MAPPING_SIZE, name);
+    ok( mapping != 0, "CreateFileMappingA failed with error %d\n", GetLastError() );
+    SetLastError(0xdeadbeef);
+    ptr = MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, 0);
+    ok( ptr != NULL, "MapViewOfFile failed with error %d\n", GetLastError() );
+    SetLastError(0xdeadbeef);
+    map2 = OpenFileMappingA(FILE_MAP_READ, FALSE, name);
+    ok( map2 != 0, "OpenFileMappingA failed with error %d\n", GetLastError() );
+    SetLastError(0xdeadbeef);
+    ret = CloseHandle(map2);
+    ok(ret, "CloseHandle error %d\n", GetLastError());
+    SetLastError(0xdeadbeef);
+    ret = CloseHandle(mapping);
+    ok(ret, "CloseHandle error %d\n", GetLastError());
+
+    ret = IsBadReadPtr(ptr, MAPPING_SIZE);
+    ok( !ret, "memory is not accessible\n" );
+
+    ret = VirtualQuery(ptr, &info, sizeof(info));
+    ok(ret, "VirtualQuery error %d\n", GetLastError());
+    ok(info.BaseAddress == ptr, "got %p != expected %p\n", info.BaseAddress, ptr);
+    ok(info.RegionSize == MAPPING_SIZE, "got %#lx != expected %#x\n", info.RegionSize, MAPPING_SIZE);
+    ok(info.Protect == PAGE_READWRITE, "got %#x != expected PAGE_READWRITE\n", info.Protect);
+    ok(info.AllocationBase == ptr, "%p != %p\n", info.AllocationBase, ptr);
+    ok(info.AllocationProtect == PAGE_READWRITE, "%#x != PAGE_READWRITE\n", info.AllocationProtect);
+    ok(info.State == MEM_COMMIT, "%#x != MEM_COMMIT\n", info.State);
+    ok(info.Type == MEM_MAPPED, "%#x != MEM_MAPPED\n", info.Type);
+
+    SetLastError(0xdeadbeef);
+    map2 = OpenFileMappingA(FILE_MAP_READ, FALSE, name);
+    todo_wine
+    ok( map2 == 0, "OpenFileMappingA succeeded\n" );
+    todo_wine
+    ok( GetLastError() == ERROR_FILE_NOT_FOUND, "OpenFileMappingA set error %d\n", GetLastError() );
+    CloseHandle(map2);
+    SetLastError(0xdeadbeef);
+    mapping = CreateFileMappingA(file, NULL, PAGE_READWRITE, 0, MAPPING_SIZE, name);
+    ok( mapping != 0, "CreateFileMappingA failed\n" );
+    todo_wine
+    ok( GetLastError() == ERROR_SUCCESS, "CreateFileMappingA set error %d\n", GetLastError() );
+    SetLastError(0xdeadbeef);
+    ret = CloseHandle(mapping);
+    ok(ret, "CloseHandle error %d\n", GetLastError());
+
+    ret = IsBadReadPtr(ptr, MAPPING_SIZE);
+    ok( !ret, "memory is not accessible\n" );
+
+    ret = VirtualQuery(ptr, &info, sizeof(info));
+    ok(ret, "VirtualQuery error %d\n", GetLastError());
+    ok(info.BaseAddress == ptr, "got %p != expected %p\n", info.BaseAddress, ptr);
+    ok(info.RegionSize == MAPPING_SIZE, "got %#lx != expected %#x\n", info.RegionSize, MAPPING_SIZE);
+    ok(info.Protect == PAGE_READWRITE, "got %#x != expected PAGE_READWRITE\n", info.Protect);
+    ok(info.AllocationBase == ptr, "%p != %p\n", info.AllocationBase, ptr);
+    ok(info.AllocationProtect == PAGE_READWRITE, "%#x != PAGE_READWRITE\n", info.AllocationProtect);
+    ok(info.State == MEM_COMMIT, "%#x != MEM_COMMIT\n", info.State);
+    ok(info.Type == MEM_MAPPED, "%#x != MEM_MAPPED\n", info.Type);
+
+    SetLastError(0xdeadbeef);
+    ret = UnmapViewOfFile(ptr);
+    ok( ret, "UnmapViewOfFile failed with error %d\n", GetLastError() );
+
+    ret = IsBadReadPtr(ptr, MAPPING_SIZE);
+    ok( ret, "memory is accessible\n" );
+
+    ret = VirtualQuery(ptr, &info, sizeof(info));
+    ok(ret, "VirtualQuery error %d\n", GetLastError());
+    ok(info.BaseAddress == ptr, "got %p != expected %p\n", info.BaseAddress, ptr);
+    ok(info.Protect == PAGE_NOACCESS, "got %#x != expected PAGE_NOACCESS\n", info.Protect);
+    ok(info.AllocationBase == NULL, "%p != NULL\n", info.AllocationBase);
+    ok(info.AllocationProtect == 0, "%#x != 0\n", info.AllocationProtect);
+    ok(info.State == MEM_FREE, "%#x != MEM_FREE\n", info.State);
+    ok(info.Type == 0, "%#x != 0\n", info.Type);
+
+    CloseHandle(file);
+    DeleteFileA(testfile);
+}
 
 static void test_NtMapViewOfSection(void)
 {
@@ -798,8 +962,6 @@ static void test_NtMapViewOfSection(void)
     SIZE_T size, result;
     LARGE_INTEGER offset;
 
-    pNtMapViewOfSection = (void *)GetProcAddress( GetModuleHandle("ntdll.dll"), "NtMapViewOfSection" );
-    pNtUnmapViewOfSection = (void *)GetProcAddress( GetModuleHandle("ntdll.dll"), "NtUnmapViewOfSection" );
     if (!pNtMapViewOfSection || !pNtUnmapViewOfSection)
     {
         win_skip( "NtMapViewOfSection not available\n" );
@@ -898,10 +1060,12 @@ static void test_NtAreMappedFilesTheSame(void)
     CloseHandle( file2 );
 
     status = pNtAreMappedFilesTheSame( ptr, ptr );
-    ok( status == STATUS_NOT_SAME_DEVICE, "NtAreMappedFilesTheSame returned %x\n", status );
+    ok( status == STATUS_SUCCESS || broken(status == STATUS_NOT_SAME_DEVICE),
+        "NtAreMappedFilesTheSame returned %x\n", status );
 
     status = pNtAreMappedFilesTheSame( ptr, (char *)ptr + 30 );
-    ok( status == STATUS_NOT_SAME_DEVICE, "NtAreMappedFilesTheSame returned %x\n", status );
+    ok( status == STATUS_SUCCESS || broken(status == STATUS_NOT_SAME_DEVICE),
+        "NtAreMappedFilesTheSame returned %x\n", status );
 
     status = pNtAreMappedFilesTheSame( ptr, GetModuleHandleA("kernel32.dll") );
     ok( status == STATUS_NOT_SAME_DEVICE, "NtAreMappedFilesTheSame returned %x\n", status );
@@ -1128,7 +1292,7 @@ static void test_write_watch(void)
         "wrong error %u\n", GetLastError() );
 
     SetLastError( 0xdeadbeef );
-    ret = pGetWriteWatch( 0, GetModuleHandle(0), size, results, &count, &pagesize );
+    ret = pGetWriteWatch( 0, GetModuleHandleW(NULL), size, results, &count, &pagesize );
     if (ret)
     {
         ok( ret == ~0u, "GetWriteWatch succeeded %u\n", ret );
@@ -1304,7 +1468,7 @@ static void test_write_watch(void)
         ok( GetLastError() == ERROR_INVALID_PARAMETER, "wrong error %u\n", GetLastError() );
 
         SetLastError( 0xdeadbeef );
-        ret = pResetWriteWatch( GetModuleHandle(0), size );
+        ret = pResetWriteWatch( GetModuleHandleW(NULL), size );
         ok( ret == ~0u, "ResetWriteWatch succeeded %u\n", ret );
         ok( GetLastError() == ERROR_INVALID_PARAMETER, "wrong error %u\n", GetLastError() );
     }
@@ -1331,7 +1495,7 @@ static void test_write_watch(void)
         ret = pResetWriteWatch( base, 0 );
         ok( !ret, "ResetWriteWatch failed %u\n", ret );
 
-        ret = pResetWriteWatch( GetModuleHandle(0), size );
+        ret = pResetWriteWatch( GetModuleHandleW(NULL), size );
         ok( !ret, "ResetWriteWatch failed %u\n", ret );
     }
 
@@ -1386,6 +1550,890 @@ static void test_write_watch(void)
     VirtualFree( base, 0, MEM_FREE );
 }
 
+#ifdef __i386__
+
+static DWORD num_guard_page_calls;
+
+static DWORD guard_page_handler( EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_RECORD *frame,
+                                 CONTEXT *context, EXCEPTION_REGISTRATION_RECORD **dispatcher )
+{
+    trace( "exception: %08x flags:%x addr:%p\n",
+           rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress );
+
+    ok( rec->NumberParameters == 2, "NumberParameters is %d instead of 2\n", rec->NumberParameters );
+    ok( rec->ExceptionCode == STATUS_GUARD_PAGE_VIOLATION, "ExceptionCode is %08x instead of %08x\n",
+        rec->ExceptionCode, STATUS_GUARD_PAGE_VIOLATION );
+
+    num_guard_page_calls++;
+    *(int *)rec->ExceptionInformation[1] += 0x100;
+
+    return ExceptionContinueExecution;
+}
+
+static void test_guard_page(void)
+{
+    EXCEPTION_REGISTRATION_RECORD frame;
+    MEMORY_BASIC_INFORMATION info;
+    DWORD ret, size, old_prot;
+    int *value, old_value;
+    void *results[64];
+    ULONG_PTR count;
+    ULONG pagesize;
+    BOOL success;
+    char *base;
+
+    if (!pNtCurrentTeb)
+    {
+        win_skip( "NtCurrentTeb not supported\n" );
+        return;
+    }
+
+    size = 0x1000;
+    base = VirtualAlloc( 0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE | PAGE_GUARD );
+    ok( base != NULL, "VirtualAlloc failed %u\n", GetLastError() );
+    value = (int *)base;
+
+    /* verify info structure */
+    ret = VirtualQuery( base, &info, sizeof(info) );
+    ok( ret, "VirtualQuery failed %u\n", GetLastError());
+    ok( info.BaseAddress == base, "BaseAddress %p instead of %p\n", info.BaseAddress, base );
+    ok( info.AllocationProtect == (PAGE_READWRITE | PAGE_GUARD), "wrong AllocationProtect %x\n", info.AllocationProtect );
+    ok( info.RegionSize == size, "wrong RegionSize 0x%lx\n", info.RegionSize );
+    ok( info.State == MEM_COMMIT, "wrong State 0x%x\n", info.State );
+    ok( info.Protect == (PAGE_READWRITE | PAGE_GUARD), "wrong Protect 0x%x\n", info.Protect );
+    ok( info.Type == MEM_PRIVATE, "wrong Type 0x%x\n", info.Type );
+
+    /* put some initial value into the memory */
+    success = VirtualProtect( base, size, PAGE_READWRITE, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+    ok( old_prot == (PAGE_READWRITE | PAGE_GUARD), "wrong old prot %x\n", old_prot );
+
+    *value       = 1;
+    *(value + 1) = 2;
+
+    success = VirtualProtect( base, size, PAGE_READWRITE | PAGE_GUARD, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+    ok( old_prot == PAGE_READWRITE, "wrong old prot %x\n", old_prot );
+
+    /* test behaviour of VirtualLock - first attempt should fail */
+    SetLastError( 0xdeadbeef );
+    success = VirtualLock( base, size );
+    ok( !success, "VirtualLock unexpectedly succeeded\n" );
+    todo_wine
+    ok( GetLastError() == STATUS_GUARD_PAGE_VIOLATION, "wrong error %u\n", GetLastError() );
+
+    success = VirtualLock( base, size );
+    todo_wine
+    ok( success, "VirtualLock failed %u\n", GetLastError() );
+    if (success)
+    {
+        ok( *value == 1, "memory block contains wrong value, expected 1, got 0x%x\n", *value );
+        success = VirtualUnlock( base, size );
+        ok( success, "VirtualUnlock failed %u\n", GetLastError() );
+    }
+
+    /* check info structure again, PAGE_GUARD should be removed now */
+    ret = VirtualQuery( base, &info, sizeof(info) );
+    ok( ret, "VirtualQuery failed %u\n", GetLastError());
+    ok( info.BaseAddress == base, "BaseAddress %p instead of %p\n", info.BaseAddress, base );
+    ok( info.AllocationProtect == (PAGE_READWRITE | PAGE_GUARD), "wrong AllocationProtect %x\n", info.AllocationProtect );
+    ok( info.RegionSize == size, "wrong RegionSize 0x%lx\n", info.RegionSize );
+    ok( info.State == MEM_COMMIT, "wrong State 0x%x\n", info.State );
+    todo_wine
+    ok( info.Protect == PAGE_READWRITE, "wrong Protect 0x%x\n", info.Protect );
+    ok( info.Type == MEM_PRIVATE, "wrong Type 0x%x\n", info.Type );
+
+    success = VirtualProtect( base, size, PAGE_READWRITE | PAGE_GUARD, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+    todo_wine
+    ok( old_prot == PAGE_READWRITE, "wrong old prot %x\n", old_prot );
+
+    /* test directly accessing the memory - we need to setup an exception handler first */
+    frame.Handler = guard_page_handler;
+    frame.Prev = pNtCurrentTeb()->Tib.ExceptionList;
+    pNtCurrentTeb()->Tib.ExceptionList = &frame;
+
+    num_guard_page_calls = 0;
+    old_value = *value; /* exception handler increments value by 0x100 */
+    *value = 2;
+    ok( old_value == 0x101, "memory block contains wrong value, expected 0x101, got 0x%x\n", old_value );
+    ok( num_guard_page_calls == 1, "expected one callback of guard page handler, got %d calls\n", num_guard_page_calls );
+
+    pNtCurrentTeb()->Tib.ExceptionList = frame.Prev;
+
+    /* check info structure again, PAGE_GUARD should be removed now */
+    ret = VirtualQuery( base, &info, sizeof(info) );
+    ok( ret, "VirtualQuery failed %u\n", GetLastError());
+    ok( info.Protect == PAGE_READWRITE, "wrong Protect 0x%x\n", info.Protect );
+
+    success = VirtualProtect( base, size, PAGE_READWRITE | PAGE_GUARD, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+    ok( old_prot == PAGE_READWRITE, "wrong old prot %x\n", old_prot );
+
+    /* test accessing second integer in memory */
+    frame.Handler = guard_page_handler;
+    frame.Prev = pNtCurrentTeb()->Tib.ExceptionList;
+    pNtCurrentTeb()->Tib.ExceptionList = &frame;
+
+    num_guard_page_calls = 0;
+    old_value = *(value + 1);
+    ok( old_value == 0x102, "memory block contains wrong value, expected 0x102, got 0x%x\n", old_value );
+    ok( *value == 2, "memory block contains wrong value, expected 2, got 0x%x\n", *value );
+    ok( num_guard_page_calls == 1, "expected one callback of guard page handler, got %d calls\n", num_guard_page_calls );
+
+    pNtCurrentTeb()->Tib.ExceptionList = frame.Prev;
+
+    success = VirtualLock( base, size );
+    ok( success, "VirtualLock failed %u\n", GetLastError() );
+    if (success)
+    {
+        ok( *value == 2, "memory block contains wrong value, expected 2, got 0x%x\n", *value );
+        success = VirtualUnlock( base, size );
+        ok( success, "VirtualUnlock failed %u\n", GetLastError() );
+    }
+
+    VirtualFree( base, 0, MEM_FREE );
+
+    /* combined guard page / write watch tests */
+    if (!pGetWriteWatch || !pResetWriteWatch)
+    {
+        win_skip( "GetWriteWatch not supported, skipping combined guard page / write watch tests\n" );
+        return;
+    }
+
+    base = VirtualAlloc( 0, size, MEM_RESERVE | MEM_COMMIT | MEM_WRITE_WATCH, PAGE_READWRITE | PAGE_GUARD  );
+    if (!base && (GetLastError() == ERROR_INVALID_PARAMETER || GetLastError() == ERROR_NOT_SUPPORTED))
+    {
+        win_skip( "MEM_WRITE_WATCH not supported\n" );
+        return;
+    }
+    ok( base != NULL, "VirtualAlloc failed %u\n", GetLastError() );
+    value = (int *)base;
+
+    ret = VirtualQuery( base, &info, sizeof(info) );
+    ok( ret, "VirtualQuery failed %u\n", GetLastError() );
+    ok( info.BaseAddress == base, "BaseAddress %p instead of %p\n", info.BaseAddress, base );
+    ok( info.AllocationProtect == (PAGE_READWRITE | PAGE_GUARD), "wrong AllocationProtect %x\n", info.AllocationProtect );
+    ok( info.RegionSize == size, "wrong RegionSize 0x%lx\n", info.RegionSize );
+    ok( info.State == MEM_COMMIT, "wrong State 0x%x\n", info.State );
+    ok( info.Protect == (PAGE_READWRITE | PAGE_GUARD), "wrong Protect 0x%x\n", info.Protect );
+    ok( info.Type == MEM_PRIVATE, "wrong Type 0x%x\n", info.Type );
+
+    count = 64;
+    ret = pGetWriteWatch( 0, base, size, results, &count, &pagesize );
+    ok( !ret, "GetWriteWatch failed %u\n", GetLastError() );
+    ok( count == 0, "wrong count %lu\n", count );
+
+    /* writing to a page should trigger should trigger guard page, even if write watch is set */
+    frame.Handler = guard_page_handler;
+    frame.Prev = pNtCurrentTeb()->Tib.ExceptionList;
+    pNtCurrentTeb()->Tib.ExceptionList = &frame;
+
+    num_guard_page_calls = 0;
+    *value       = 1;
+    *(value + 1) = 2;
+    ok( num_guard_page_calls == 1, "expected one callback of guard page handler, got %d calls\n", num_guard_page_calls );
+
+    pNtCurrentTeb()->Tib.ExceptionList = frame.Prev;
+
+    count = 64;
+    ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
+    ok( !ret, "GetWriteWatch failed %u\n", GetLastError() );
+    ok( count == 1, "wrong count %lu\n", count );
+    ok( results[0] == base, "wrong result %p\n", results[0] );
+
+    success = VirtualProtect( base, size, PAGE_READWRITE | PAGE_GUARD, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+    /* write watch is triggered from inside of the guard page handler */
+    frame.Handler = guard_page_handler;
+    frame.Prev = pNtCurrentTeb()->Tib.ExceptionList;
+    pNtCurrentTeb()->Tib.ExceptionList = &frame;
+
+    num_guard_page_calls = 0;
+    old_value = *(value + 1); /* doesn't trigger write watch */
+    ok( old_value == 0x102, "memory block contains wrong value, expected 0x102, got 0x%x\n", old_value );
+    ok( *value == 1, "memory block contains wrong value, expected 1, got 0x%x\n", *value );
+    ok( num_guard_page_calls == 1, "expected one callback of guard page handler, got %d calls\n", num_guard_page_calls );
+
+    pNtCurrentTeb()->Tib.ExceptionList = frame.Prev;
+
+    count = 64;
+    ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
+    ok( !ret, "GetWriteWatch failed %u\n", GetLastError() );
+    ok( count == 1, "wrong count %lu\n", count );
+    ok( results[0] == base, "wrong result %p\n", results[0] );
+
+    success = VirtualProtect( base, size, PAGE_READWRITE | PAGE_GUARD, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+    /* test behaviour of VirtualLock - first attempt should fail without triggering write watches */
+    SetLastError( 0xdeadbeef );
+    success = VirtualLock( base, size );
+    ok( !success, "VirtualLock unexpectedly succeeded\n" );
+    todo_wine
+    ok( GetLastError() == STATUS_GUARD_PAGE_VIOLATION, "wrong error %u\n", GetLastError() );
+
+    count = 64;
+    ret = pGetWriteWatch( 0, base, size, results, &count, &pagesize );
+    ok( !ret, "GetWriteWatch failed %u\n", GetLastError() );
+    ok( count == 0, "wrong count %lu\n", count );
+
+    success = VirtualLock( base, size );
+    todo_wine
+    ok( success, "VirtualLock failed %u\n", GetLastError() );
+    if (success)
+    {
+        ok( *value == 1, "memory block contains wrong value, expected 1, got 0x%x\n", *value );
+        success = VirtualUnlock( base, size );
+        ok( success, "VirtualUnlock failed %u\n", GetLastError() );
+    }
+
+    count = 64;
+    results[0] = (void *)0xdeadbeef;
+    ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
+    ok( !ret, "GetWriteWatch failed %u\n", GetLastError() );
+    todo_wine
+    ok( count == 1 || broken(count == 0) /* Windows 8 */, "wrong count %lu\n", count );
+    todo_wine
+    ok( results[0] == base || broken(results[0] == (void *)0xdeadbeef) /* Windows 8 */, "wrong result %p\n", results[0] );
+
+    VirtualFree( base, 0, MEM_FREE );
+}
+
+DWORD num_execute_fault_calls;
+
+static DWORD execute_fault_seh_handler( EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_RECORD *frame,
+                                        CONTEXT *context, EXCEPTION_REGISTRATION_RECORD **dispatcher )
+{
+    ULONG flags = MEM_EXECUTE_OPTION_ENABLE;
+    DWORD err;
+
+    trace( "exception: %08x flags:%x addr:%p info[0]:%ld info[1]:%p\n",
+           rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress,
+           rec->ExceptionInformation[0], (void *)rec->ExceptionInformation[1] );
+
+    ok( rec->NumberParameters == 2, "NumberParameters is %d instead of 2\n", rec->NumberParameters );
+    ok( rec->ExceptionCode == STATUS_ACCESS_VIOLATION || rec->ExceptionCode == STATUS_GUARD_PAGE_VIOLATION,
+        "ExceptionCode is %08x instead of STATUS_ACCESS_VIOLATION or STATUS_GUARD_PAGE_VIOLATION\n", rec->ExceptionCode );
+
+    NtQueryInformationProcess( GetCurrentProcess(), ProcessExecuteFlags, &flags, sizeof(flags), NULL );
+
+    if (rec->ExceptionCode == STATUS_GUARD_PAGE_VIOLATION)
+    {
+
+        err = IsProcessorFeaturePresent( PF_NX_ENABLED ) ? EXCEPTION_EXECUTE_FAULT : EXCEPTION_READ_FAULT;
+        ok( rec->ExceptionInformation[0] == err, "ExceptionInformation[0] is %d instead of %d\n",
+            (DWORD)rec->ExceptionInformation[0], err );
+
+        num_guard_page_calls++;
+    }
+    else if (rec->ExceptionCode == STATUS_ACCESS_VIOLATION)
+    {
+        DWORD old_prot;
+        BOOL success;
+
+        err = (flags & MEM_EXECUTE_OPTION_DISABLE) ? EXCEPTION_EXECUTE_FAULT : EXCEPTION_READ_FAULT;
+        ok( rec->ExceptionInformation[0] == err, "ExceptionInformation[0] is %d instead of %d\n",
+            (DWORD)rec->ExceptionInformation[0], err );
+
+        success = VirtualProtect( (void *)rec->ExceptionInformation[1], 16, PAGE_EXECUTE_READWRITE, &old_prot );
+        ok( success, "VirtualProtect failed %u\n", GetLastError() );
+        ok( old_prot == PAGE_READWRITE, "wrong old prot %x\n", old_prot );
+
+        num_execute_fault_calls++;
+    }
+
+    return ExceptionContinueExecution;
+}
+
+static LONG CALLBACK execute_fault_vec_handler( EXCEPTION_POINTERS *ExceptionInfo )
+{
+    PEXCEPTION_RECORD rec = ExceptionInfo->ExceptionRecord;
+    DWORD old_prot;
+    BOOL success;
+
+    trace( "exception: %08x flags:%x addr:%p info[0]:%ld info[1]:%p\n",
+           rec->ExceptionCode, rec->ExceptionFlags, rec->ExceptionAddress,
+           rec->ExceptionInformation[0], (void *)rec->ExceptionInformation[1] );
+
+    ok( rec->NumberParameters == 2, "NumberParameters is %d instead of 2\n", rec->NumberParameters );
+    ok( rec->ExceptionCode == STATUS_ACCESS_VIOLATION,
+        "ExceptionCode is %08x instead of STATUS_ACCESS_VIOLATION\n", rec->ExceptionCode );
+
+    if (rec->ExceptionCode == STATUS_ACCESS_VIOLATION)
+        num_execute_fault_calls++;
+
+    if (rec->ExceptionInformation[0] == EXCEPTION_READ_FAULT)
+        return EXCEPTION_CONTINUE_SEARCH;
+
+    success = VirtualProtect( (void *)rec->ExceptionInformation[1], 16, PAGE_EXECUTE_READWRITE, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+    ok( old_prot == PAGE_NOACCESS, "wrong old prot %x\n", old_prot );
+
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+static inline DWORD send_message_excpt( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
+{
+    EXCEPTION_REGISTRATION_RECORD frame;
+    DWORD ret;
+
+    frame.Handler = execute_fault_seh_handler;
+    frame.Prev = pNtCurrentTeb()->Tib.ExceptionList;
+    pNtCurrentTeb()->Tib.ExceptionList = &frame;
+
+    num_guard_page_calls = num_execute_fault_calls = 0;
+    ret = SendMessageA( hWnd, uMsg, wParam, lParam );
+
+    pNtCurrentTeb()->Tib.ExceptionList = frame.Prev;
+
+    return ret;
+}
+
+static inline DWORD call_proc_excpt( DWORD (CALLBACK *code)(void *), void *arg )
+{
+    EXCEPTION_REGISTRATION_RECORD frame;
+    DWORD ret;
+
+    frame.Handler = execute_fault_seh_handler;
+    frame.Prev = pNtCurrentTeb()->Tib.ExceptionList;
+    pNtCurrentTeb()->Tib.ExceptionList = &frame;
+
+    num_guard_page_calls = num_execute_fault_calls = 0;
+    ret = code( arg );
+
+    pNtCurrentTeb()->Tib.ExceptionList = frame.Prev;
+
+    return ret;
+}
+
+static LRESULT CALLBACK jmp_test_func( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
+{
+    if (uMsg == WM_USER)
+        return 42;
+
+    return DefWindowProcA( hWnd, uMsg, wParam, lParam );
+}
+
+static LRESULT CALLBACK atl_test_func( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
+{
+    DWORD arg = (DWORD)hWnd;
+    if (uMsg == WM_USER)
+        ok( arg == 0x11223344, "arg is 0x%08x instead of 0x11223344\n", arg );
+    else
+        ok( arg != 0x11223344, "arg is unexpectedly 0x11223344\n" );
+    return 43;
+}
+
+static DWORD CALLBACK atl5_test_func( void )
+{
+    return 44;
+}
+
+static void test_atl_thunk_emulation( ULONG dep_flags )
+{
+    static const char code_jmp[] = {0xE9, 0x00, 0x00, 0x00, 0x00};
+    static const char code_atl1[] = {0xC7, 0x44, 0x24, 0x04, 0x44, 0x33, 0x22, 0x11, 0xE9, 0x00, 0x00, 0x00, 0x00};
+    static const char code_atl2[] = {0xB9, 0x44, 0x33, 0x22, 0x11, 0xE9, 0x00, 0x00, 0x00, 0x00};
+    static const char code_atl3[] = {0xBA, 0x44, 0x33, 0x22, 0x11, 0xB9, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xE1};
+    static const char code_atl4[] = {0xB9, 0x44, 0x33, 0x22, 0x11, 0xB8, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xE0};
+    static const char code_atl5[] = {0x59, 0x58, 0x51, 0xFF, 0x60, 0x04};
+    static const char cls_name[] = "atl_thunk_class";
+    DWORD ret, size, old_prot;
+    ULONG old_flags = MEM_EXECUTE_OPTION_ENABLE;
+    BOOL success, restore_flags = FALSE;
+    void *results[64];
+    ULONG_PTR count;
+    ULONG pagesize;
+    WNDCLASSEXA wc;
+    char *base;
+    HWND hWnd;
+
+    if (!pNtCurrentTeb)
+    {
+        win_skip( "NtCurrentTeb not supported\n" );
+        return;
+    }
+
+    trace( "Running DEP tests with ProcessExecuteFlags = %d\n", dep_flags );
+
+    NtQueryInformationProcess( GetCurrentProcess(), ProcessExecuteFlags, &old_flags, sizeof(old_flags), NULL );
+    if (old_flags != dep_flags)
+    {
+        ret = NtSetInformationProcess( GetCurrentProcess(), ProcessExecuteFlags, &dep_flags, sizeof(dep_flags) );
+        if (ret == STATUS_INVALID_INFO_CLASS) /* Windows 2000 */
+        {
+            win_skip( "Skipping DEP tests with ProcessExecuteFlags = %d\n", dep_flags );
+            return;
+        }
+        ok( !ret, "NtSetInformationProcess failed with status %08x\n", ret );
+        restore_flags = TRUE;
+    }
+
+    size = 0x1000;
+    base = VirtualAlloc( 0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE );
+    ok( base != NULL, "VirtualAlloc failed %u\n", GetLastError() );
+
+    /* Check result of GetProcessDEPPolicy */
+    if (!pGetProcessDEPPolicy)
+        win_skip( "GetProcessDEPPolicy not supported\n" );
+    else
+    {
+        BOOL (WINAPI *get_dep_policy)(HANDLE, LPDWORD, PBOOL) = (void *)base;
+        BOOL policy_permanent = 0xdeadbeef;
+        DWORD policy_flags = 0xdeadbeef;
+
+        /* GetProcessDEPPolicy crashes on Windows when a NULL pointer is passed.
+         * Moreover this function has a bug on Windows 8, which has the effect that
+         * policy_permanent is set to the content of the CL register instead of 0,
+         * when the policy is not permanent. To detect that we use an assembler
+         * wrapper to call the function. */
+
+        memcpy( base, code_atl2, sizeof(code_atl2) );
+        *(DWORD *)(base + 6) = (DWORD_PTR)pGetProcessDEPPolicy - (DWORD_PTR)(base + 10);
+
+        success = VirtualProtect( base, size, PAGE_EXECUTE_READWRITE, &old_prot );
+        ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+        success = get_dep_policy( GetCurrentProcess(), &policy_flags, &policy_permanent );
+        ok( success, "GetProcessDEPPolicy failed %u\n", GetLastError() );
+
+        ret = 0;
+        if (dep_flags & MEM_EXECUTE_OPTION_DISABLE)
+            ret |= PROCESS_DEP_ENABLE;
+        if (dep_flags & MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION)
+            ret |= PROCESS_DEP_DISABLE_ATL_THUNK_EMULATION;
+
+        ok( policy_flags == ret, "expected policy flags %d, got %d\n", ret, policy_flags );
+        ok( !policy_permanent || broken(policy_permanent == 0x44),
+            "expected policy permanent FALSE, got %d\n", policy_permanent );
+    }
+
+    memcpy( base, code_jmp, sizeof(code_jmp) );
+    *(DWORD *)(base + 1) = (DWORD_PTR)jmp_test_func - (DWORD_PTR)(base + 5);
+
+    /* On Windows, the ATL Thunk emulation is only enabled while running WndProc functions,
+     * whereas in Wine such a limitation doesn't exist yet. We want to test in a scenario
+     * where it is active, so that application which depend on that still work properly.
+     * We have no exception handler enabled yet, so give proper EXECUTE permissions to
+     * prevent crashes while creating the window. */
+
+    success = VirtualProtect( base, size, PAGE_EXECUTE_READWRITE, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+    memset( &wc, 0, sizeof(wc) );
+    wc.cbSize        = sizeof(wc);
+    wc.style         = CS_VREDRAW | CS_HREDRAW;
+    wc.hInstance     = GetModuleHandleA( 0 );
+    wc.hCursor       = LoadCursorA( NULL, (LPCSTR)IDC_ARROW );
+    wc.hbrBackground = NULL;
+    wc.lpszClassName = cls_name;
+    wc.lpfnWndProc   = (WNDPROC)base;
+    success = RegisterClassExA(&wc) != 0;
+    ok( success, "RegisterClassExA failed %u\n", GetLastError() );
+
+    hWnd = CreateWindowExA(0, cls_name, "Test", WS_TILEDWINDOW, 0, 0, 640, 480, 0, 0, 0, 0);
+    ok( hWnd != 0, "CreateWindowExA failed %u\n", GetLastError() );
+
+    ret = SendMessageA(hWnd, WM_USER, 0, 0);
+    ok( ret == 42, "SendMessage returned unexpected result %d\n", ret );
+
+    /* At first try with an instruction which is not recognized as proper ATL thunk
+     * by the Windows ATL Thunk Emulator. Removing execute permissions will lead to
+     * STATUS_ACCESS_VIOLATION exceptions when DEP is enabled. */
+
+    success = VirtualProtect( base, size, PAGE_READWRITE, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+    ret = send_message_excpt( hWnd, WM_USER, 0, 0 );
+    ok( ret == 42, "call returned wrong result, expected 42, got %d\n", ret );
+    ok( num_guard_page_calls == 0, "expected no STATUS_GUARD_PAGE_VIOLATION exception, got %d exceptions\n", num_guard_page_calls );
+    if ((dep_flags & MEM_EXECUTE_OPTION_DISABLE) && !IsProcessorFeaturePresent( PF_NX_ENABLED ))
+    {
+        trace( "DEP hardware support is not available\n" );
+        ok( num_execute_fault_calls == 0, "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+        dep_flags = MEM_EXECUTE_OPTION_ENABLE;
+    }
+    else if (dep_flags & MEM_EXECUTE_OPTION_DISABLE)
+    {
+        trace( "DEP hardware support is available\n" );
+        ok( num_execute_fault_calls == 1, "expected one STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+    }
+    else
+        ok( num_execute_fault_calls == 0, "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+
+    /* Now a bit more complicated, the page containing the code is protected with
+     * PAGE_GUARD memory protection. */
+
+    success = VirtualProtect( base, size, PAGE_READWRITE | PAGE_GUARD, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+    ret = send_message_excpt( hWnd, WM_USER, 0, 0 );
+    ok( ret == 42, "call returned wrong result, expected 42, got %d\n", ret );
+    ok( num_guard_page_calls == 1, "expected one STATUS_GUARD_PAGE_VIOLATION exception, got %d exceptions\n", num_guard_page_calls );
+    if (dep_flags & MEM_EXECUTE_OPTION_DISABLE)
+        ok( num_execute_fault_calls == 1, "expected one STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+    else
+        ok( num_execute_fault_calls == 0, "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+
+    ret = send_message_excpt( hWnd, WM_USER, 0, 0 );
+    ok( ret == 42, "call returned wrong result, expected 42, got %d\n", ret );
+    ok( num_guard_page_calls == 0, "expected no STATUS_GUARD_PAGE_VIOLATION exception, got %d exceptions\n", num_guard_page_calls );
+    ok( num_execute_fault_calls == 0, "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+
+    /* Now test with a proper ATL thunk instruction. */
+
+    memcpy( base, code_atl1, sizeof(code_atl1) );
+    *(DWORD *)(base + 9) = (DWORD_PTR)atl_test_func - (DWORD_PTR)(base + 13);
+
+    success = VirtualProtect( base, size, PAGE_EXECUTE_READWRITE, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+    ret = SendMessageA(hWnd, WM_USER, 0, 0);
+    ok( ret == 43, "SendMessage returned unexpected result %d\n", ret );
+
+    /* Try executing with PAGE_READWRITE protection. */
+
+    success = VirtualProtect( base, size, PAGE_READWRITE, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+    ret = send_message_excpt( hWnd, WM_USER, 0, 0 );
+    ok( ret == 43, "call returned wrong result, expected 43, got %d\n", ret );
+    ok( num_guard_page_calls == 0, "expected no STATUS_GUARD_PAGE_VIOLATION exception, got %d exceptions\n", num_guard_page_calls );
+    if ((dep_flags & MEM_EXECUTE_OPTION_DISABLE) && (dep_flags & MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION))
+        ok( num_execute_fault_calls == 1, "expected one STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+    else
+        ok( num_execute_fault_calls == 0, "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+
+    /* Now a bit more complicated, the page containing the code is protected with
+     * PAGE_GUARD memory protection. */
+
+    success = VirtualProtect( base, size, PAGE_READWRITE | PAGE_GUARD, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+    /* the same, but with PAGE_GUARD set */
+    ret = send_message_excpt( hWnd, WM_USER, 0, 0 );
+    ok( ret == 43, "call returned wrong result, expected 43, got %d\n", ret );
+    ok( num_guard_page_calls == 1, "expected one STATUS_GUARD_PAGE_VIOLATION exception, got %d exceptions\n", num_guard_page_calls );
+    if ((dep_flags & MEM_EXECUTE_OPTION_DISABLE) && (dep_flags & MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION))
+        ok( num_execute_fault_calls == 1, "expected one STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+    else
+        ok( num_execute_fault_calls == 0, "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+
+    ret = send_message_excpt( hWnd, WM_USER, 0, 0 );
+    ok( ret == 43, "call returned wrong result, expected 43, got %d\n", ret );
+    ok( num_guard_page_calls == 0, "expected no STATUS_GUARD_PAGE_VIOLATION exception, got %d exceptions\n", num_guard_page_calls );
+    ok( num_execute_fault_calls == 0, "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+
+    /* The following test shows that on Windows, even a vectored exception handler
+     * cannot intercept internal exceptions thrown by the ATL thunk emulation layer. */
+
+    if ((dep_flags & MEM_EXECUTE_OPTION_DISABLE) && !(dep_flags & MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION))
+    {
+        if (pRtlAddVectoredExceptionHandler && pRtlRemoveVectoredExceptionHandler)
+        {
+            PVOID vectored_handler;
+
+            success = VirtualProtect( base, size, PAGE_NOACCESS, &old_prot );
+            ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+            vectored_handler = pRtlAddVectoredExceptionHandler( TRUE, &execute_fault_vec_handler );
+            ok( vectored_handler != 0, "RtlAddVectoredExceptionHandler failed\n" );
+
+            ret = send_message_excpt( hWnd, WM_USER, 0, 0 );
+
+            pRtlRemoveVectoredExceptionHandler( vectored_handler );
+
+            ok( ret == 43, "call returned wrong result, expected 43, got %d\n", ret );
+            ok( num_execute_fault_calls == 1, "expected one STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+        }
+        else
+            win_skip( "RtlAddVectoredExceptionHandler or RtlRemoveVectoredExceptionHandler not found\n" );
+    }
+
+    /* Test alternative ATL thunk instructions. */
+
+    memcpy( base, code_atl2, sizeof(code_atl2) );
+    *(DWORD *)(base + 6) = (DWORD_PTR)atl_test_func - (DWORD_PTR)(base + 10);
+
+    success = VirtualProtect( base, size, PAGE_READWRITE, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+    ret = send_message_excpt( hWnd, WM_USER + 1, 0, 0 );
+    /* FIXME: we don't check the content of the register ECX yet */
+    ok( ret == 43, "call returned wrong result, expected 43, got %d\n", ret );
+    ok( num_guard_page_calls == 0, "expected no STATUS_GUARD_PAGE_VIOLATION exception, got %d exceptions\n", num_guard_page_calls );
+    if ((dep_flags & MEM_EXECUTE_OPTION_DISABLE) && (dep_flags & MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION))
+        ok( num_execute_fault_calls == 1, "expected one STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+    else
+        ok( num_execute_fault_calls == 0, "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+
+    memcpy( base, code_atl3, sizeof(code_atl3) );
+    *(DWORD *)(base + 6) = (DWORD_PTR)atl_test_func;
+
+    success = VirtualProtect( base, size, PAGE_READWRITE, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+    ret = send_message_excpt( hWnd, WM_USER + 1, 0, 0 );
+    /* FIXME: we don't check the content of the registers ECX/EDX yet */
+    ok( ret == 43, "call returned wrong result, expected 43, got %d\n", ret );
+    ok( num_guard_page_calls == 0, "expected no STATUS_GUARD_PAGE_VIOLATION exception, got %d exceptions\n", num_guard_page_calls );
+    if ((dep_flags & MEM_EXECUTE_OPTION_DISABLE) && (dep_flags & MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION))
+        ok( num_execute_fault_calls == 1, "expected one STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+    else
+        ok( num_execute_fault_calls == 0, "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+
+    memcpy( base, code_atl4, sizeof(code_atl4) );
+    *(DWORD *)(base + 6) = (DWORD_PTR)atl_test_func;
+
+    success = VirtualProtect( base, size, PAGE_READWRITE, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+    ret = send_message_excpt( hWnd, WM_USER + 1, 0, 0 );
+    /* FIXME: We don't check the content of the registers EAX/ECX yet */
+    ok( ret == 43, "call returned wrong result, expected 43, got %d\n", ret );
+    ok( num_guard_page_calls == 0, "expected no STATUS_GUARD_PAGE_VIOLATION exception, got %d exceptions\n", num_guard_page_calls );
+    if ((dep_flags & MEM_EXECUTE_OPTION_DISABLE) && (dep_flags & MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION))
+        ok( num_execute_fault_calls == 1, "expected one STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+    else if (dep_flags & MEM_EXECUTE_OPTION_DISABLE)
+        ok( num_execute_fault_calls == 0 || broken(num_execute_fault_calls == 1) /* Windows XP */,
+            "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+    else
+        ok( num_execute_fault_calls == 0, "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+
+    memcpy( base, code_atl5, sizeof(code_atl5) );
+
+    success = VirtualProtect( base, size, PAGE_READWRITE, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+    ret = (DWORD_PTR)atl5_test_func;
+    ret = call_proc_excpt( (void *)base, &ret - 1 );
+    /* FIXME: We don't check the content of the registers EAX/ECX yet */
+    ok( ret == 44, "call returned wrong result, expected 44, got %d\n", ret );
+    ok( num_guard_page_calls == 0, "expected no STATUS_GUARD_PAGE_VIOLATION exception, got %d exceptions\n", num_guard_page_calls );
+    if ((dep_flags & MEM_EXECUTE_OPTION_DISABLE) && (dep_flags & MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION))
+        ok( num_execute_fault_calls == 1, "expected one STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+    else if (dep_flags & MEM_EXECUTE_OPTION_DISABLE)
+        ok( num_execute_fault_calls == 0 || broken(num_execute_fault_calls == 1) /* Windows XP */,
+            "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+    else
+        ok( num_execute_fault_calls == 0, "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+
+    /* Restore the JMP instruction, set to executable, and then destroy the Window */
+
+    memcpy( base, code_jmp, sizeof(code_jmp) );
+    *(DWORD *)(base + 1) = (DWORD_PTR)jmp_test_func - (DWORD_PTR)(base + 5);
+
+    success = VirtualProtect( base, size, PAGE_EXECUTE_READWRITE, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+    DestroyWindow( hWnd );
+
+    success = UnregisterClassA( cls_name, GetModuleHandleA(0) );
+    ok( success, "UnregisterClass failed %u\n", GetLastError() );
+
+    VirtualFree( base, 0, MEM_FREE );
+
+    /* Repeat the tests from above with MEM_WRITE_WATCH protected memory. */
+
+    base = VirtualAlloc( 0, size, MEM_RESERVE | MEM_COMMIT | MEM_WRITE_WATCH, PAGE_READWRITE  );
+    if (!base && (GetLastError() == ERROR_INVALID_PARAMETER || GetLastError() == ERROR_NOT_SUPPORTED))
+    {
+        win_skip( "MEM_WRITE_WATCH not supported\n" );
+        goto out;
+    }
+    ok( base != NULL, "VirtualAlloc failed %u\n", GetLastError() );
+
+    count = 64;
+    ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
+    ok( !ret, "GetWriteWatch failed %u\n", GetLastError() );
+    ok( count == 0, "wrong count %lu\n", count );
+
+    memcpy( base, code_jmp, sizeof(code_jmp) );
+    *(DWORD *)(base + 1) = (DWORD_PTR)jmp_test_func - (DWORD_PTR)(base + 5);
+
+    count = 64;
+    ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
+    ok( !ret, "GetWriteWatch failed %u\n", GetLastError() );
+    ok( count == 1, "wrong count %lu\n", count );
+    ok( results[0] == base, "wrong result %p\n", results[0] );
+
+    /* Create a new window class and associcated Window (see above) */
+
+    success = VirtualProtect( base, size, PAGE_EXECUTE_READWRITE, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+    memset( &wc, 0, sizeof(wc) );
+    wc.cbSize        = sizeof(wc);
+    wc.style         = CS_VREDRAW | CS_HREDRAW;
+    wc.hInstance     = GetModuleHandleA( 0 );
+    wc.hCursor       = LoadCursorA( NULL, (LPCSTR)IDC_ARROW );
+    wc.hbrBackground = NULL;
+    wc.lpszClassName = cls_name;
+    wc.lpfnWndProc   = (WNDPROC)base;
+    success = RegisterClassExA(&wc) != 0;
+    ok( success, "RegisterClassExA failed %u\n", GetLastError() );
+
+    hWnd = CreateWindowExA(0, cls_name, "Test", WS_TILEDWINDOW, 0, 0, 640, 480, 0, 0, 0, 0);
+    ok( hWnd != 0, "CreateWindowExA failed %u\n", GetLastError() );
+
+    ret = SendMessageA(hWnd, WM_USER, 0, 0);
+    ok( ret == 42, "SendMessage returned unexpected result %d\n", ret );
+
+    count = 64;
+    ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
+    ok( !ret, "GetWriteWatch failed %u\n", GetLastError() );
+    ok( count == 0, "wrong count %lu\n", count );
+
+    /* At first try with an instruction which is not recognized as proper ATL thunk
+     * by the Windows ATL Thunk Emulator. Removing execute permissions will lead to
+     * STATUS_ACCESS_VIOLATION exceptions when DEP is enabled. */
+
+    success = VirtualProtect( base, size, PAGE_READWRITE, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+    ret = send_message_excpt( hWnd, WM_USER, 0, 0 );
+    ok( ret == 42, "call returned wrong result, expected 42, got %d\n", ret );
+    ok( num_guard_page_calls == 0, "expected no STATUS_GUARD_PAGE_VIOLATION exception, got %d exceptions\n", num_guard_page_calls );
+    if (dep_flags & MEM_EXECUTE_OPTION_DISABLE)
+        ok( num_execute_fault_calls == 1, "expected one STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+    else
+        ok( num_execute_fault_calls == 0, "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+
+    count = 64;
+    ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
+    ok( !ret, "GetWriteWatch failed %u\n", GetLastError() );
+    ok( count == 0, "wrong count %lu\n", count );
+
+    ret = send_message_excpt( hWnd, WM_USER, 0, 0 );
+    ok( ret == 42, "call returned wrong result, expected 42, got %d\n", ret );
+    ok( num_guard_page_calls == 0, "expected no STATUS_GUARD_PAGE_VIOLATION exception, got %d exceptions\n", num_guard_page_calls );
+    ok( num_execute_fault_calls == 0, "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+
+    /* Now a bit more complicated, the page containing the code is protected with
+     * PAGE_GUARD memory protection. */
+
+    success = VirtualProtect( base, size, PAGE_READWRITE | PAGE_GUARD, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+    ret = send_message_excpt( hWnd, WM_USER, 0, 0 );
+    ok( ret == 42, "call returned wrong result, expected 42, got %d\n", ret );
+    ok( num_guard_page_calls == 1, "expected one STATUS_GUARD_PAGE_VIOLATION exception, got %d exceptions\n", num_guard_page_calls );
+    if (dep_flags & MEM_EXECUTE_OPTION_DISABLE)
+        ok( num_execute_fault_calls == 1, "expected one STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+    else
+        ok( num_execute_fault_calls == 0, "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+
+    ret = send_message_excpt( hWnd, WM_USER, 0, 0 );
+    ok( ret == 42, "call returned wrong result, expected 42, got %d\n", ret );
+    ok( num_guard_page_calls == 0, "expected no STATUS_GUARD_PAGE_VIOLATION exception, got %d exceptions\n", num_guard_page_calls );
+    ok( num_execute_fault_calls == 0, "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+
+    count = 64;
+    ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
+    ok( !ret, "GetWriteWatch failed %u\n", GetLastError() );
+    ok( count == 0 || broken(count == 1) /* Windows 8 */, "wrong count %lu\n", count );
+
+    /* Now test with a proper ATL thunk instruction. */
+
+    memcpy( base, code_atl1, sizeof(code_atl1) );
+    *(DWORD *)(base + 9) = (DWORD_PTR)atl_test_func - (DWORD_PTR)(base + 13);
+
+    count = 64;
+    ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
+    ok( !ret, "GetWriteWatch failed %u\n", GetLastError() );
+    ok( count == 1, "wrong count %lu\n", count );
+    ok( results[0] == base, "wrong result %p\n", results[0] );
+
+    success = VirtualProtect( base, size, PAGE_EXECUTE_READWRITE, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+    ret = SendMessageA(hWnd, WM_USER, 0, 0);
+    ok( ret == 43, "SendMessage returned unexpected result %d\n", ret );
+
+    /* Try executing with PAGE_READWRITE protection. */
+
+    success = VirtualProtect( base, size, PAGE_READWRITE, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+    ret = send_message_excpt( hWnd, WM_USER, 0, 0 );
+    ok( ret == 43, "call returned wrong result, expected 43, got %d\n", ret );
+    ok( num_guard_page_calls == 0, "expected no STATUS_GUARD_PAGE_VIOLATION exception, got %d exceptions\n", num_guard_page_calls );
+    if ((dep_flags & MEM_EXECUTE_OPTION_DISABLE) && (dep_flags & MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION))
+        ok( num_execute_fault_calls == 1, "expected one STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+    else
+        ok( num_execute_fault_calls == 0, "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+
+    count = 64;
+    ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
+    ok( !ret, "GetWriteWatch failed %u\n", GetLastError() );
+    ok( count == 0, "wrong count %lu\n", count );
+
+    ret = send_message_excpt( hWnd, WM_USER, 0, 0 );
+    ok( ret == 43, "call returned wrong result, expected 43, got %d\n", ret );
+    ok( num_guard_page_calls == 0, "expected no STATUS_GUARD_PAGE_VIOLATION exception, got %d exceptions\n", num_guard_page_calls );
+    if ((dep_flags & MEM_EXECUTE_OPTION_DISABLE) && (dep_flags & MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION))
+        ok( num_execute_fault_calls == 0, "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+    else
+        ok( num_execute_fault_calls == 0, "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+
+    /* Now a bit more complicated, the page containing the code is protected with
+     * PAGE_GUARD memory protection. */
+
+    success = VirtualProtect( base, size, PAGE_READWRITE | PAGE_GUARD, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+    /* the same, but with PAGE_GUARD set */
+    ret = send_message_excpt( hWnd, WM_USER, 0, 0 );
+    ok( ret == 43, "call returned wrong result, expected 43, got %d\n", ret );
+    ok( num_guard_page_calls == 1, "expected one STATUS_GUARD_PAGE_VIOLATION exception, got %d exceptions\n", num_guard_page_calls );
+    if ((dep_flags & MEM_EXECUTE_OPTION_DISABLE) && (dep_flags & MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION))
+        ok( num_execute_fault_calls == 1, "expected one STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+    else
+        ok( num_execute_fault_calls == 0, "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+
+    ret = send_message_excpt( hWnd, WM_USER, 0, 0 );
+    ok( ret == 43, "call returned wrong result, expected 43, got %d\n", ret );
+    ok( num_guard_page_calls == 0, "expected no STATUS_GUARD_PAGE_VIOLATION exception, got %d exceptions\n", num_guard_page_calls );
+    ok( num_execute_fault_calls == 0, "expected no STATUS_ACCESS_VIOLATION exception, got %d exceptions\n", num_execute_fault_calls );
+
+    count = 64;
+    ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
+    ok( !ret, "GetWriteWatch failed %u\n", GetLastError() );
+    ok( count == 0 || broken(count == 1) /* Windows 8 */, "wrong count %lu\n", count );
+
+    /* Restore the JMP instruction, set to executable, and then destroy the Window */
+
+    memcpy( base, code_jmp, sizeof(code_jmp) );
+    *(DWORD *)(base + 1) = (DWORD_PTR)jmp_test_func - (DWORD_PTR)(base + 5);
+
+    count = 64;
+    ret = pGetWriteWatch( WRITE_WATCH_FLAG_RESET, base, size, results, &count, &pagesize );
+    ok( !ret, "GetWriteWatch failed %u\n", GetLastError() );
+    ok( count == 1, "wrong count %lu\n", count );
+    ok( results[0] == base, "wrong result %p\n", results[0] );
+
+    success = VirtualProtect( base, size, PAGE_EXECUTE_READWRITE, &old_prot );
+    ok( success, "VirtualProtect failed %u\n", GetLastError() );
+
+    DestroyWindow( hWnd );
+
+    success = UnregisterClassA( cls_name, GetModuleHandleA(0) );
+    ok( success, "UnregisterClass failed %u\n", GetLastError() );
+
+    VirtualFree( base, 0, MEM_FREE );
+
+out:
+    if (restore_flags)
+    {
+        ret = NtSetInformationProcess( GetCurrentProcess(), ProcessExecuteFlags, &old_flags, sizeof(old_flags) );
+        ok( !ret, "NtSetInformationProcess failed with status %08x\n", ret );
+    }
+}
+
+#endif  /* __i386__ */
+
 static void test_VirtualProtect(void)
 {
     static const struct test_data
@@ -1426,7 +2474,7 @@ static void test_VirtualProtect(void)
         { PAGE_EXECUTE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_READ, 0 }, /* 0xe0 */
         { PAGE_EXECUTE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE, 0 } /* 0xf0 */
     };
-    char *base;
+    char *base, *ptr;
     DWORD ret, old_prot, rw_prot, exec_prot, i, j;
     MEMORY_BASIC_INFORMATION info;
     SYSTEM_INFO si;
@@ -1497,6 +2545,27 @@ static void test_VirtualProtect(void)
             DWORD prot = exec_prot | rw_prot;
 
             SetLastError(0xdeadbeef);
+            ptr = VirtualAlloc(base, si.dwPageSize, MEM_COMMIT, prot);
+            if ((rw_prot && exec_prot) || (!rw_prot && !exec_prot))
+            {
+                ok(!ptr, "VirtualAlloc(%02x) should fail\n", prot);
+                ok(GetLastError() == ERROR_INVALID_PARAMETER, "expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+            }
+            else
+            {
+                if (prot & (PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY))
+                {
+                    ok(!ptr, "VirtualAlloc(%02x) should fail\n", prot);
+                    ok(GetLastError() == ERROR_INVALID_PARAMETER, "expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+                }
+                else
+                {
+                    ok(ptr != NULL, "VirtualAlloc(%02x) error %d\n", prot, GetLastError());
+                    ok(ptr == base, "expected %p, got %p\n", base, ptr);
+                }
+            }
+
+            SetLastError(0xdeadbeef);
             ret = VirtualProtect(base, si.dwPageSize, prot, &old_prot);
             if ((rw_prot && exec_prot) || (!rw_prot && !exec_prot))
             {
@@ -1523,6 +2592,839 @@ static void test_VirtualProtect(void)
     VirtualFree(base, 0, MEM_FREE);
 }
 
+static BOOL is_mem_writable(DWORD prot)
+{
+    switch (prot & 0xff)
+    {
+        case PAGE_READWRITE:
+        case PAGE_WRITECOPY:
+        case PAGE_EXECUTE_READWRITE:
+        case PAGE_EXECUTE_WRITECOPY:
+            return TRUE;
+
+        default:
+            return FALSE;
+    }
+}
+
+static void test_VirtualAlloc_protection(void)
+{
+    static const struct test_data
+    {
+        DWORD prot;
+        BOOL success;
+    } td[] =
+    {
+        { 0, FALSE }, /* 0x00 */
+        { PAGE_NOACCESS, TRUE }, /* 0x01 */
+        { PAGE_READONLY, TRUE }, /* 0x02 */
+        { PAGE_READONLY | PAGE_NOACCESS, FALSE }, /* 0x03 */
+        { PAGE_READWRITE, TRUE }, /* 0x04 */
+        { PAGE_READWRITE | PAGE_NOACCESS, FALSE }, /* 0x05 */
+        { PAGE_READWRITE | PAGE_READONLY, FALSE }, /* 0x06 */
+        { PAGE_READWRITE | PAGE_READONLY | PAGE_NOACCESS, FALSE }, /* 0x07 */
+        { PAGE_WRITECOPY, FALSE }, /* 0x08 */
+        { PAGE_WRITECOPY | PAGE_NOACCESS, FALSE }, /* 0x09 */
+        { PAGE_WRITECOPY | PAGE_READONLY, FALSE }, /* 0x0a */
+        { PAGE_WRITECOPY | PAGE_NOACCESS | PAGE_READONLY, FALSE }, /* 0x0b */
+        { PAGE_WRITECOPY | PAGE_READWRITE, FALSE }, /* 0x0c */
+        { PAGE_WRITECOPY | PAGE_READWRITE | PAGE_NOACCESS, FALSE }, /* 0x0d */
+        { PAGE_WRITECOPY | PAGE_READWRITE | PAGE_READONLY, FALSE }, /* 0x0e */
+        { PAGE_WRITECOPY | PAGE_READWRITE | PAGE_READONLY | PAGE_NOACCESS, FALSE }, /* 0x0f */
+
+        { PAGE_EXECUTE, TRUE }, /* 0x10 */
+        { PAGE_EXECUTE_READ, TRUE }, /* 0x20 */
+        { PAGE_EXECUTE_READ | PAGE_EXECUTE, FALSE }, /* 0x30 */
+        { PAGE_EXECUTE_READWRITE, TRUE }, /* 0x40 */
+        { PAGE_EXECUTE_READWRITE | PAGE_EXECUTE, FALSE }, /* 0x50 */
+        { PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_READ, FALSE }, /* 0x60 */
+        { PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE, FALSE }, /* 0x70 */
+        { PAGE_EXECUTE_WRITECOPY, FALSE }, /* 0x80 */
+        { PAGE_EXECUTE_WRITECOPY | PAGE_EXECUTE, FALSE }, /* 0x90 */
+        { PAGE_EXECUTE_WRITECOPY | PAGE_EXECUTE_READ, FALSE }, /* 0xa0 */
+        { PAGE_EXECUTE_WRITECOPY | PAGE_EXECUTE_READ | PAGE_EXECUTE, FALSE }, /* 0xb0 */
+        { PAGE_EXECUTE_WRITECOPY | PAGE_EXECUTE_READWRITE, FALSE }, /* 0xc0 */
+        { PAGE_EXECUTE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE, FALSE }, /* 0xd0 */
+        { PAGE_EXECUTE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_READ, FALSE }, /* 0xe0 */
+        { PAGE_EXECUTE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE, FALSE } /* 0xf0 */
+    };
+    char *base, *ptr;
+    DWORD ret, i;
+    MEMORY_BASIC_INFORMATION info;
+    SYSTEM_INFO si;
+
+    GetSystemInfo(&si);
+    trace("system page size %#x\n", si.dwPageSize);
+
+    for (i = 0; i < sizeof(td)/sizeof(td[0]); i++)
+    {
+        SetLastError(0xdeadbeef);
+        base = VirtualAlloc(0, si.dwPageSize, MEM_COMMIT, td[i].prot);
+
+        if (td[i].success)
+        {
+            ok(base != NULL, "%d: VirtualAlloc failed %d\n", i, GetLastError());
+
+            SetLastError(0xdeadbeef);
+            ret = VirtualQuery(base, &info, sizeof(info));
+            ok(ret, "VirtualQuery failed %d\n", GetLastError());
+            ok(info.BaseAddress == base, "%d: got %p != expected %p\n", i, info.BaseAddress, base);
+            ok(info.RegionSize == si.dwPageSize, "%d: got %#lx != expected %#x\n", i, info.RegionSize, si.dwPageSize);
+            ok(info.Protect == td[i].prot, "%d: got %#x != expected %#x\n", i, info.Protect, td[i].prot);
+            ok(info.AllocationBase == base, "%d: %p != %p\n", i, info.AllocationBase, base);
+            ok(info.AllocationProtect == td[i].prot, "%d: %#x != %#x\n", i, info.AllocationProtect, td[i].prot);
+            ok(info.State == MEM_COMMIT, "%d: %#x != MEM_COMMIT\n", i, info.State);
+            ok(info.Type == MEM_PRIVATE, "%d: %#x != MEM_PRIVATE\n", i, info.Type);
+
+            if (is_mem_writable(info.Protect))
+            {
+                base[0] = 0xfe;
+
+                SetLastError(0xdeadbeef);
+                ret = VirtualQuery(base, &info, sizeof(info));
+                ok(ret, "VirtualQuery failed %d\n", GetLastError());
+                ok(info.Protect == td[i].prot, "%d: got %#x != expected %#x\n", i, info.Protect, td[i].prot);
+            }
+
+            SetLastError(0xdeadbeef);
+            ptr = VirtualAlloc(base, si.dwPageSize, MEM_COMMIT, td[i].prot);
+            ok(ptr == base, "%d: VirtualAlloc failed %d\n", i, GetLastError());
+
+            VirtualFree(base, 0, MEM_FREE);
+        }
+        else
+        {
+            ok(!base, "%d: VirtualAlloc should fail\n", i);
+            ok(GetLastError() == ERROR_INVALID_PARAMETER, "%d: expected ERROR_INVALID_PARAMETER, got %d\n", i, GetLastError());
+        }
+    }
+}
+
+static void test_CreateFileMapping_protection(void)
+{
+    static const struct test_data
+    {
+        DWORD prot;
+        BOOL success;
+        DWORD prot_after_write;
+    } td[] =
+    {
+        { 0, FALSE, 0 }, /* 0x00 */
+        { PAGE_NOACCESS, FALSE, PAGE_NOACCESS }, /* 0x01 */
+        { PAGE_READONLY, TRUE, PAGE_READONLY }, /* 0x02 */
+        { PAGE_READONLY | PAGE_NOACCESS, FALSE, PAGE_NOACCESS }, /* 0x03 */
+        { PAGE_READWRITE, TRUE, PAGE_READWRITE }, /* 0x04 */
+        { PAGE_READWRITE | PAGE_NOACCESS, FALSE, PAGE_NOACCESS }, /* 0x05 */
+        { PAGE_READWRITE | PAGE_READONLY, FALSE, PAGE_NOACCESS }, /* 0x06 */
+        { PAGE_READWRITE | PAGE_READONLY | PAGE_NOACCESS, FALSE, PAGE_NOACCESS }, /* 0x07 */
+        { PAGE_WRITECOPY, TRUE, PAGE_READWRITE }, /* 0x08 */
+        { PAGE_WRITECOPY | PAGE_NOACCESS, FALSE, PAGE_NOACCESS }, /* 0x09 */
+        { PAGE_WRITECOPY | PAGE_READONLY, FALSE, PAGE_NOACCESS }, /* 0x0a */
+        { PAGE_WRITECOPY | PAGE_NOACCESS | PAGE_READONLY, FALSE, PAGE_NOACCESS }, /* 0x0b */
+        { PAGE_WRITECOPY | PAGE_READWRITE, FALSE, PAGE_NOACCESS }, /* 0x0c */
+        { PAGE_WRITECOPY | PAGE_READWRITE | PAGE_NOACCESS, FALSE, PAGE_NOACCESS }, /* 0x0d */
+        { PAGE_WRITECOPY | PAGE_READWRITE | PAGE_READONLY, FALSE, PAGE_NOACCESS }, /* 0x0e */
+        { PAGE_WRITECOPY | PAGE_READWRITE | PAGE_READONLY | PAGE_NOACCESS, FALSE, PAGE_NOACCESS }, /* 0x0f */
+
+        { PAGE_EXECUTE, FALSE, PAGE_EXECUTE }, /* 0x10 */
+        { PAGE_EXECUTE_READ, TRUE, PAGE_EXECUTE_READ }, /* 0x20 */
+        { PAGE_EXECUTE_READ | PAGE_EXECUTE, FALSE, PAGE_EXECUTE_READ }, /* 0x30 */
+        { PAGE_EXECUTE_READWRITE, TRUE, PAGE_EXECUTE_READWRITE }, /* 0x40 */
+        { PAGE_EXECUTE_READWRITE | PAGE_EXECUTE, FALSE, PAGE_NOACCESS }, /* 0x50 */
+        { PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_READ, FALSE, PAGE_NOACCESS }, /* 0x60 */
+        { PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE, FALSE, PAGE_NOACCESS }, /* 0x70 */
+        { PAGE_EXECUTE_WRITECOPY, TRUE, PAGE_EXECUTE_READWRITE }, /* 0x80 */
+        { PAGE_EXECUTE_WRITECOPY | PAGE_EXECUTE, FALSE, PAGE_NOACCESS }, /* 0x90 */
+        { PAGE_EXECUTE_WRITECOPY | PAGE_EXECUTE_READ, FALSE, PAGE_NOACCESS }, /* 0xa0 */
+        { PAGE_EXECUTE_WRITECOPY | PAGE_EXECUTE_READ | PAGE_EXECUTE, FALSE, PAGE_NOACCESS }, /* 0xb0 */
+        { PAGE_EXECUTE_WRITECOPY | PAGE_EXECUTE_READWRITE, FALSE, PAGE_NOACCESS }, /* 0xc0 */
+        { PAGE_EXECUTE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE, FALSE, PAGE_NOACCESS }, /* 0xd0 */
+        { PAGE_EXECUTE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_READ, FALSE, PAGE_NOACCESS }, /* 0xe0 */
+        { PAGE_EXECUTE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE, FALSE, PAGE_NOACCESS } /* 0xf0 */
+    };
+    char *base, *ptr;
+    DWORD ret, i, alloc_prot, prot, old_prot;
+    MEMORY_BASIC_INFORMATION info;
+    SYSTEM_INFO si;
+    char temp_path[MAX_PATH];
+    char file_name[MAX_PATH];
+    HANDLE hfile, hmap;
+    BOOL page_exec_supported = TRUE;
+
+    GetSystemInfo(&si);
+    trace("system page size %#x\n", si.dwPageSize);
+
+    GetTempPathA(MAX_PATH, temp_path);
+    GetTempFileNameA(temp_path, "map", 0, file_name);
+
+    SetLastError(0xdeadbeef);
+    hfile = CreateFileA(file_name, GENERIC_READ|GENERIC_WRITE|GENERIC_EXECUTE, 0, NULL, CREATE_ALWAYS, 0, 0);
+    ok(hfile != INVALID_HANDLE_VALUE, "CreateFile(%s) error %d\n", file_name, GetLastError());
+    SetFilePointer(hfile, si.dwPageSize, NULL, FILE_BEGIN);
+    SetEndOfFile(hfile);
+
+    for (i = 0; i < sizeof(td)/sizeof(td[0]); i++)
+    {
+        SetLastError(0xdeadbeef);
+        hmap = CreateFileMappingW(hfile, NULL, td[i].prot | SEC_COMMIT, 0, si.dwPageSize, NULL);
+
+        if (td[i].success)
+        {
+            if (!hmap)
+            {
+                trace("%d: CreateFileMapping(%04x) failed: %d\n", i, td[i].prot, GetLastError());
+                /* NT4 and win2k don't support EXEC on file mappings */
+                if (td[i].prot == PAGE_EXECUTE_READ || td[i].prot == PAGE_EXECUTE_READWRITE)
+                {
+                    page_exec_supported = FALSE;
+                    ok(broken(!hmap), "%d: CreateFileMapping doesn't support PAGE_EXECUTE\n", i);
+                    continue;
+                }
+                /* Vista+ supports PAGE_EXECUTE_WRITECOPY, earlier versions don't */
+                if (td[i].prot == PAGE_EXECUTE_WRITECOPY)
+                {
+                    page_exec_supported = FALSE;
+                    ok(broken(!hmap), "%d: CreateFileMapping doesn't support PAGE_EXECUTE_WRITECOPY\n", i);
+                    continue;
+                }
+            }
+            ok(hmap != 0, "%d: CreateFileMapping(%04x) error %d\n", i, td[i].prot, GetLastError());
+
+            base = MapViewOfFile(hmap, FILE_MAP_READ, 0, 0, 0);
+            ok(base != NULL, "%d: MapViewOfFile failed %d\n", i, GetLastError());
+
+            SetLastError(0xdeadbeef);
+            ret = VirtualQuery(base, &info, sizeof(info));
+            ok(ret, "VirtualQuery failed %d\n", GetLastError());
+            ok(info.BaseAddress == base, "%d: got %p != expected %p\n", i, info.BaseAddress, base);
+            ok(info.RegionSize == si.dwPageSize, "%d: got %#lx != expected %#x\n", i, info.RegionSize, si.dwPageSize);
+            ok(info.Protect == PAGE_READONLY, "%d: got %#x != expected PAGE_READONLY\n", i, info.Protect);
+            ok(info.AllocationBase == base, "%d: %p != %p\n", i, info.AllocationBase, base);
+            ok(info.AllocationProtect == PAGE_READONLY, "%d: %#x != PAGE_READONLY\n", i, info.AllocationProtect);
+            ok(info.State == MEM_COMMIT, "%d: %#x != MEM_COMMIT\n", i, info.State);
+            ok(info.Type == MEM_MAPPED, "%d: %#x != MEM_MAPPED\n", i, info.Type);
+
+            if (is_mem_writable(info.Protect))
+            {
+                base[0] = 0xfe;
+
+                SetLastError(0xdeadbeef);
+                ret = VirtualQuery(base, &info, sizeof(info));
+                ok(ret, "VirtualQuery failed %d\n", GetLastError());
+                ok(info.Protect == td[i].prot, "%d: got %#x != expected %#x\n", i, info.Protect, td[i].prot);
+            }
+
+            SetLastError(0xdeadbeef);
+            ptr = VirtualAlloc(base, si.dwPageSize, MEM_COMMIT, td[i].prot);
+            ok(!ptr, "%d: VirtualAlloc(%02x) should fail\n", i, td[i].prot);
+            /* FIXME: remove once Wine is fixed */
+            if (td[i].prot == PAGE_WRITECOPY || td[i].prot == PAGE_EXECUTE_WRITECOPY)
+todo_wine
+            ok(GetLastError() == ERROR_ACCESS_DENIED, "%d: expected ERROR_ACCESS_DENIED, got %d\n", i, GetLastError());
+            else
+            ok(GetLastError() == ERROR_ACCESS_DENIED, "%d: expected ERROR_ACCESS_DENIED, got %d\n", i, GetLastError());
+
+            SetLastError(0xdeadbeef);
+            ret = VirtualProtect(base, si.dwPageSize, td[i].prot, &old_prot);
+            if (td[i].prot == PAGE_READONLY || td[i].prot == PAGE_WRITECOPY)
+                ok(ret, "%d: VirtualProtect(%02x) error %d\n", i, td[i].prot, GetLastError());
+            else
+            {
+                ok(!ret, "%d: VirtualProtect(%02x) should fail\n", i, td[i].prot);
+                ok(GetLastError() == ERROR_INVALID_PARAMETER, "%d: expected ERROR_INVALID_PARAMETER, got %d\n", i, GetLastError());
+            }
+
+            UnmapViewOfFile(base);
+            CloseHandle(hmap);
+        }
+        else
+        {
+            ok(!hmap, "%d: CreateFileMapping should fail\n", i);
+            ok(GetLastError() == ERROR_INVALID_PARAMETER, "%d: expected ERROR_INVALID_PARAMETER, got %d\n", i, GetLastError());
+        }
+    }
+
+    if (page_exec_supported) alloc_prot = PAGE_EXECUTE_READWRITE;
+    else alloc_prot = PAGE_READWRITE;
+    SetLastError(0xdeadbeef);
+    hmap = CreateFileMappingW(hfile, NULL, alloc_prot, 0, si.dwPageSize, NULL);
+    ok(hmap != 0, "%d: CreateFileMapping error %d\n", i, GetLastError());
+
+    SetLastError(0xdeadbeef);
+    base = MapViewOfFile(hmap, FILE_MAP_READ | FILE_MAP_WRITE | (page_exec_supported ? FILE_MAP_EXECUTE : 0), 0, 0, 0);
+    ok(base != NULL, "MapViewOfFile failed %d\n", GetLastError());
+
+    old_prot = 0xdeadbeef;
+    SetLastError(0xdeadbeef);
+    ret = VirtualProtect(base, si.dwPageSize, PAGE_NOACCESS, &old_prot);
+    ok(ret, "VirtualProtect error %d\n", GetLastError());
+    ok(old_prot == alloc_prot, "got %#x != expected %#x\n", old_prot, alloc_prot);
+
+    for (i = 0; i < sizeof(td)/sizeof(td[0]); i++)
+    {
+        SetLastError(0xdeadbeef);
+        ret = VirtualQuery(base, &info, sizeof(info));
+        ok(ret, "VirtualQuery failed %d\n", GetLastError());
+        ok(info.BaseAddress == base, "%d: got %p != expected %p\n", i, info.BaseAddress, base);
+        ok(info.RegionSize == si.dwPageSize, "%d: got %#lx != expected %#x\n", i, info.RegionSize, si.dwPageSize);
+        ok(info.Protect == PAGE_NOACCESS, "%d: got %#x != expected PAGE_NOACCESS\n", i, info.Protect);
+        ok(info.AllocationBase == base, "%d: %p != %p\n", i, info.AllocationBase, base);
+        ok(info.AllocationProtect == alloc_prot, "%d: %#x != %#x\n", i, info.AllocationProtect, alloc_prot);
+        ok(info.State == MEM_COMMIT, "%d: %#x != MEM_COMMIT\n", i, info.State);
+        ok(info.Type == MEM_MAPPED, "%d: %#x != MEM_MAPPED\n", i, info.Type);
+
+        old_prot = 0xdeadbeef;
+        SetLastError(0xdeadbeef);
+        ret = VirtualProtect(base, si.dwPageSize, td[i].prot, &old_prot);
+        if (td[i].success || td[i].prot == PAGE_NOACCESS || td[i].prot == PAGE_EXECUTE)
+        {
+            if (!ret)
+            {
+                /* win2k and XP don't support EXEC on file mappings */
+                if (td[i].prot == PAGE_EXECUTE)
+                {
+                    ok(broken(!ret), "%d: VirtualProtect doesn't support PAGE_EXECUTE\n", i);
+                    continue;
+                }
+                /* NT4 and win2k don't support EXEC on file mappings */
+                if (td[i].prot == PAGE_EXECUTE_READ || td[i].prot == PAGE_EXECUTE_READWRITE)
+                {
+                    ok(broken(!ret), "%d: VirtualProtect doesn't support PAGE_EXECUTE\n", i);
+                    continue;
+                }
+                /* Vista+ supports PAGE_EXECUTE_WRITECOPY, earlier versions don't */
+                if (td[i].prot == PAGE_EXECUTE_WRITECOPY)
+                {
+                    ok(broken(!ret), "%d: VirtualProtect doesn't support PAGE_EXECUTE_WRITECOPY\n", i);
+                    continue;
+                }
+            }
+
+            ok(ret, "%d: VirtualProtect error %d\n", i, GetLastError());
+            ok(old_prot == PAGE_NOACCESS, "%d: got %#x != expected PAGE_NOACCESS\n", i, old_prot);
+
+            prot = td[i].prot;
+            /* looks strange but Windows doesn't do this for PAGE_WRITECOPY */
+            if (prot == PAGE_EXECUTE_WRITECOPY) prot = PAGE_EXECUTE_READWRITE;
+
+            SetLastError(0xdeadbeef);
+            ret = VirtualQuery(base, &info, sizeof(info));
+            ok(ret, "VirtualQuery failed %d\n", GetLastError());
+            ok(info.BaseAddress == base, "%d: got %p != expected %p\n", i, info.BaseAddress, base);
+            ok(info.RegionSize == si.dwPageSize, "%d: got %#lx != expected %#x\n", i, info.RegionSize, si.dwPageSize);
+            /* FIXME: remove the condition below once Wine is fixed */
+            if (td[i].prot == PAGE_EXECUTE_WRITECOPY)
+                todo_wine ok(info.Protect == prot, "%d: got %#x != expected %#x\n", i, info.Protect, prot);
+            else
+                ok(info.Protect == prot, "%d: got %#x != expected %#x\n", i, info.Protect, prot);
+            ok(info.AllocationBase == base, "%d: %p != %p\n", i, info.AllocationBase, base);
+            ok(info.AllocationProtect == alloc_prot, "%d: %#x != %#x\n", i, info.AllocationProtect, alloc_prot);
+            ok(info.State == MEM_COMMIT, "%d: %#x != MEM_COMMIT\n", i, info.State);
+            ok(info.Type == MEM_MAPPED, "%d: %#x != MEM_MAPPED\n", i, info.Type);
+
+            if (is_mem_writable(info.Protect))
+            {
+                base[0] = 0xfe;
+
+                SetLastError(0xdeadbeef);
+                ret = VirtualQuery(base, &info, sizeof(info));
+                ok(ret, "VirtualQuery failed %d\n", GetLastError());
+                /* FIXME: remove the condition below once Wine is fixed */
+                if (td[i].prot == PAGE_WRITECOPY || td[i].prot == PAGE_EXECUTE_WRITECOPY)
+                    todo_wine ok(info.Protect == td[i].prot_after_write, "%d: got %#x != expected %#x\n", i, info.Protect, td[i].prot_after_write);
+                else
+                    ok(info.Protect == td[i].prot_after_write, "%d: got %#x != expected %#x\n", i, info.Protect, td[i].prot_after_write);
+            }
+        }
+        else
+        {
+            ok(!ret, "%d: VirtualProtect should fail\n", i);
+            ok(GetLastError() == ERROR_INVALID_PARAMETER, "%d: expected ERROR_INVALID_PARAMETER, got %d\n", i, GetLastError());
+            continue;
+        }
+
+        old_prot = 0xdeadbeef;
+        SetLastError(0xdeadbeef);
+        ret = VirtualProtect(base, si.dwPageSize, PAGE_NOACCESS, &old_prot);
+        ok(ret, "%d: VirtualProtect error %d\n", i, GetLastError());
+        /* FIXME: remove the condition below once Wine is fixed */
+        if (td[i].prot == PAGE_WRITECOPY || td[i].prot == PAGE_EXECUTE_WRITECOPY)
+            todo_wine ok(old_prot == td[i].prot_after_write, "%d: got %#x != expected %#x\n", i, old_prot, td[i].prot_after_write);
+        else
+            ok(old_prot == td[i].prot_after_write, "%d: got %#x != expected %#x\n", i, old_prot, td[i].prot_after_write);
+    }
+
+    UnmapViewOfFile(base);
+    CloseHandle(hmap);
+
+    CloseHandle(hfile);
+    DeleteFileA(file_name);
+}
+
+#define ACCESS_READ      0x01
+#define ACCESS_WRITE     0x02
+#define ACCESS_EXECUTE   0x04
+#define ACCESS_WRITECOPY 0x08
+
+static DWORD page_prot_to_access(DWORD prot)
+{
+    switch (prot)
+    {
+    case PAGE_READWRITE:
+        return ACCESS_READ | ACCESS_WRITE;
+
+    case PAGE_EXECUTE:
+    case PAGE_EXECUTE_READ:
+        return ACCESS_READ | ACCESS_EXECUTE;
+
+    case PAGE_EXECUTE_READWRITE:
+        return ACCESS_READ | ACCESS_WRITE | ACCESS_WRITECOPY | ACCESS_EXECUTE;
+
+    case PAGE_EXECUTE_WRITECOPY:
+        return ACCESS_READ | ACCESS_WRITECOPY | ACCESS_EXECUTE;
+
+    case PAGE_READONLY:
+        return ACCESS_READ;
+
+    case PAGE_WRITECOPY:
+        return ACCESS_READ;
+
+    default:
+        return 0;
+    }
+}
+
+static BOOL is_compatible_protection(DWORD map_prot, DWORD view_prot, DWORD prot)
+{
+    DWORD map_access, view_access, prot_access;
+
+    map_access = page_prot_to_access(map_prot);
+    view_access = page_prot_to_access(view_prot);
+    prot_access = page_prot_to_access(prot);
+
+    if (view_access == prot_access) return TRUE;
+    if (!view_access) return FALSE;
+
+    if ((view_access & prot_access) != prot_access) return FALSE;
+    if ((map_access & prot_access) == prot_access) return TRUE;
+
+    return FALSE;
+}
+
+static DWORD map_prot_to_access(DWORD prot)
+{
+    switch (prot)
+    {
+    case PAGE_READWRITE:
+    case PAGE_EXECUTE_READWRITE:
+        return SECTION_MAP_READ | SECTION_MAP_WRITE | SECTION_MAP_EXECUTE | SECTION_MAP_EXECUTE_EXPLICIT | SECTION_QUERY;
+    case PAGE_READONLY:
+    case PAGE_WRITECOPY:
+    case PAGE_EXECUTE:
+    case PAGE_EXECUTE_READ:
+    case PAGE_EXECUTE_WRITECOPY:
+        return SECTION_MAP_READ | SECTION_MAP_EXECUTE | SECTION_MAP_EXECUTE_EXPLICIT | SECTION_QUERY;
+    default:
+        return 0;
+    }
+}
+
+static BOOL is_compatible_access(DWORD map_prot, DWORD view_prot)
+{
+    DWORD access = map_prot_to_access(map_prot);
+    if (!view_prot) view_prot = SECTION_MAP_READ;
+    return (view_prot & access) == view_prot;
+}
+
+static void *map_view_of_file(HANDLE handle, DWORD access)
+{
+    NTSTATUS status;
+    LARGE_INTEGER offset;
+    SIZE_T count;
+    ULONG protect;
+    BOOL exec;
+    void *addr;
+
+    if (!pNtMapViewOfSection) return NULL;
+
+    count = 0;
+    offset.u.LowPart  = 0;
+    offset.u.HighPart = 0;
+
+    exec = access & FILE_MAP_EXECUTE;
+    access &= ~FILE_MAP_EXECUTE;
+
+    if (access == FILE_MAP_COPY)
+    {
+        if (exec)
+            protect = PAGE_EXECUTE_WRITECOPY;
+        else
+            protect = PAGE_WRITECOPY;
+    }
+    else if (access & FILE_MAP_WRITE)
+    {
+        if (exec)
+            protect = PAGE_EXECUTE_READWRITE;
+        else
+            protect = PAGE_READWRITE;
+    }
+    else if (access & FILE_MAP_READ)
+    {
+        if (exec)
+            protect = PAGE_EXECUTE_READ;
+        else
+            protect = PAGE_READONLY;
+    }
+    else protect = PAGE_NOACCESS;
+
+    addr = NULL;
+    status = pNtMapViewOfSection(handle, GetCurrentProcess(), &addr, 0, 0, &offset,
+                                 &count, 1 /* ViewShare */, 0, protect);
+    if (status)
+    {
+        /* for simplicity */
+        SetLastError(ERROR_ACCESS_DENIED);
+        addr = NULL;
+    }
+    return addr;
+}
+
+static void test_mapping(void)
+{
+    static const DWORD page_prot[] =
+    {
+        PAGE_NOACCESS, PAGE_READONLY, PAGE_READWRITE, PAGE_WRITECOPY,
+        PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY
+    };
+    static const struct
+    {
+        DWORD access, prot;
+    } view[] =
+    {
+        { 0, PAGE_NOACCESS }, /* 0x00 */
+        { FILE_MAP_COPY, PAGE_WRITECOPY }, /* 0x01 */
+        { FILE_MAP_WRITE, PAGE_READWRITE }, /* 0x02 */
+        { FILE_MAP_WRITE | FILE_MAP_COPY, PAGE_READWRITE }, /* 0x03 */
+        { FILE_MAP_READ, PAGE_READONLY }, /* 0x04 */
+        { FILE_MAP_READ | FILE_MAP_COPY, PAGE_READONLY }, /* 0x05 */
+        { FILE_MAP_READ | FILE_MAP_WRITE, PAGE_READWRITE }, /* 0x06 */
+        { FILE_MAP_READ | FILE_MAP_WRITE | FILE_MAP_COPY, PAGE_READWRITE }, /* 0x07 */
+        { SECTION_MAP_EXECUTE, PAGE_NOACCESS }, /* 0x08 */
+        { SECTION_MAP_EXECUTE | FILE_MAP_COPY, PAGE_NOACCESS }, /* 0x09 */
+        { SECTION_MAP_EXECUTE | FILE_MAP_WRITE, PAGE_READWRITE }, /* 0x0a */
+        { SECTION_MAP_EXECUTE | FILE_MAP_WRITE | FILE_MAP_COPY, PAGE_READWRITE }, /* 0x0b */
+        { SECTION_MAP_EXECUTE | FILE_MAP_READ, PAGE_READONLY }, /* 0x0c */
+        { SECTION_MAP_EXECUTE | FILE_MAP_READ | FILE_MAP_COPY, PAGE_READONLY }, /* 0x0d */
+        { SECTION_MAP_EXECUTE | FILE_MAP_READ | FILE_MAP_WRITE, PAGE_READWRITE }, /* 0x0e */
+        { SECTION_MAP_EXECUTE | FILE_MAP_READ | FILE_MAP_WRITE | FILE_MAP_COPY, PAGE_READWRITE }, /* 0x0f */
+        { FILE_MAP_EXECUTE, PAGE_NOACCESS }, /* 0x20 */
+        { FILE_MAP_EXECUTE | FILE_MAP_COPY, PAGE_EXECUTE_WRITECOPY }, /* 0x21 */
+        { FILE_MAP_EXECUTE | FILE_MAP_WRITE, PAGE_EXECUTE_READWRITE }, /* 0x22 */
+        { FILE_MAP_EXECUTE | FILE_MAP_WRITE | FILE_MAP_COPY, PAGE_EXECUTE_READWRITE }, /* 0x23 */
+        { FILE_MAP_EXECUTE | FILE_MAP_READ, PAGE_EXECUTE_READ }, /* 0x24 */
+        { FILE_MAP_EXECUTE | FILE_MAP_READ | FILE_MAP_COPY, PAGE_EXECUTE_READ }, /* 0x25 */
+        { FILE_MAP_EXECUTE | FILE_MAP_READ | FILE_MAP_WRITE, PAGE_EXECUTE_READWRITE }, /* 0x26 */
+        { FILE_MAP_EXECUTE | FILE_MAP_READ | FILE_MAP_WRITE | FILE_MAP_COPY, PAGE_EXECUTE_READWRITE }, /* 0x27 */
+        { FILE_MAP_EXECUTE | SECTION_MAP_EXECUTE, PAGE_NOACCESS }, /* 0x28 */
+        { FILE_MAP_EXECUTE | SECTION_MAP_EXECUTE | FILE_MAP_COPY, PAGE_NOACCESS }, /* 0x29 */
+        { FILE_MAP_EXECUTE | SECTION_MAP_EXECUTE | FILE_MAP_WRITE, PAGE_EXECUTE_READWRITE }, /* 0x2a */
+        { FILE_MAP_EXECUTE | SECTION_MAP_EXECUTE | FILE_MAP_WRITE | FILE_MAP_COPY, PAGE_EXECUTE_READWRITE }, /* 0x2b */
+        { FILE_MAP_EXECUTE | SECTION_MAP_EXECUTE | FILE_MAP_READ, PAGE_EXECUTE_READ }, /* 0x2c */
+        { FILE_MAP_EXECUTE | SECTION_MAP_EXECUTE | FILE_MAP_READ | FILE_MAP_COPY, PAGE_EXECUTE_READ }, /* 0x2d */
+        { FILE_MAP_EXECUTE | SECTION_MAP_EXECUTE | FILE_MAP_READ | FILE_MAP_WRITE, PAGE_EXECUTE_READWRITE }, /* 0x2e */
+        { FILE_MAP_EXECUTE | SECTION_MAP_EXECUTE | FILE_MAP_READ | FILE_MAP_WRITE | FILE_MAP_COPY, PAGE_EXECUTE_READWRITE } /* 0x2f */
+    };
+    void *base, *nt_base, *ptr;
+    DWORD i, j, k, ret, old_prot, prev_prot;
+    SYSTEM_INFO si;
+    char temp_path[MAX_PATH];
+    char file_name[MAX_PATH];
+    HANDLE hfile, hmap;
+    MEMORY_BASIC_INFORMATION info, nt_info;
+
+    GetSystemInfo(&si);
+    trace("system page size %#x\n", si.dwPageSize);
+
+    GetTempPathA(MAX_PATH, temp_path);
+    GetTempFileNameA(temp_path, "map", 0, file_name);
+
+    SetLastError(0xdeadbeef);
+    hfile = CreateFileA(file_name, GENERIC_READ|GENERIC_WRITE|GENERIC_EXECUTE, 0, NULL, CREATE_ALWAYS, 0, 0);
+    ok(hfile != INVALID_HANDLE_VALUE, "CreateFile(%s) error %d\n", file_name, GetLastError());
+    SetFilePointer(hfile, si.dwPageSize, NULL, FILE_BEGIN);
+    SetEndOfFile(hfile);
+
+    for (i = 0; i < sizeof(page_prot)/sizeof(page_prot[0]); i++)
+    {
+        SetLastError(0xdeadbeef);
+        hmap = CreateFileMappingW(hfile, NULL, page_prot[i] | SEC_COMMIT, 0, si.dwPageSize, NULL);
+
+        if (page_prot[i] == PAGE_NOACCESS)
+        {
+            HANDLE hmap2;
+
+            ok(!hmap, "CreateFileMapping(PAGE_NOACCESS) should fail\n");
+            ok(GetLastError() == ERROR_INVALID_PARAMETER, "expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+
+            /* A trick to create a not accessible mapping */
+            SetLastError(0xdeadbeef);
+            hmap = CreateFileMappingW(hfile, NULL, PAGE_READWRITE | SEC_COMMIT, 0, si.dwPageSize, NULL);
+            ok(hmap != 0, "CreateFileMapping(PAGE_READWRITE) error %d\n", GetLastError());
+            SetLastError(0xdeadbeef);
+            ret = DuplicateHandle(GetCurrentProcess(), hmap, GetCurrentProcess(), &hmap2, 0, FALSE, 0);
+            ok(ret, "DuplicateHandle error %d\n", GetLastError());
+            CloseHandle(hmap);
+            hmap = hmap2;
+        }
+
+        if (!hmap)
+        {
+            trace("%d: CreateFileMapping(%04x) failed: %d\n", i, page_prot[i], GetLastError());
+
+            /* NT4 and win2k don't support EXEC on file mappings */
+            if (page_prot[i] == PAGE_EXECUTE_READ || page_prot[i] == PAGE_EXECUTE_READWRITE)
+            {
+                ok(broken(!hmap), "%d: CreateFileMapping doesn't support PAGE_EXECUTE\n", i);
+                continue;
+            }
+            /* Vista+ supports PAGE_EXECUTE_WRITECOPY, earlier versions don't */
+            if (page_prot[i] == PAGE_EXECUTE_WRITECOPY)
+            {
+                ok(broken(!hmap), "%d: CreateFileMapping doesn't support PAGE_EXECUTE_WRITECOPY\n", i);
+                continue;
+            }
+        }
+
+        ok(hmap != 0, "%d: CreateFileMapping(%04x) error %d\n", i, page_prot[i], GetLastError());
+
+        for (j = 0; j < sizeof(view)/sizeof(view[0]); j++)
+        {
+            nt_base = map_view_of_file(hmap, view[j].access);
+            if (nt_base)
+            {
+                SetLastError(0xdeadbeef);
+                ret = VirtualQuery(nt_base, &nt_info, sizeof(nt_info));
+                ok(ret, "%d: VirtualQuery failed %d\n", j, GetLastError());
+                UnmapViewOfFile(nt_base);
+            }
+
+            SetLastError(0xdeadbeef);
+            base = MapViewOfFile(hmap, view[j].access, 0, 0, 0);
+
+            /* Vista+ supports FILE_MAP_EXECUTE properly, earlier versions don't */
+            ok(!nt_base == !base ||
+               broken((view[j].access & FILE_MAP_EXECUTE) && !nt_base != !base),
+               "%d: (%04x/%04x) NT %p kernel %p\n", j, page_prot[i], view[j].access, nt_base, base);
+
+            if (!is_compatible_access(page_prot[i], view[j].access))
+            {
+                ok(!base, "%d: MapViewOfFile(%04x/%04x) should fail\n", j, page_prot[i], view[j].access);
+                ok(GetLastError() == ERROR_ACCESS_DENIED, "wrong error %d\n", GetLastError());
+                continue;
+            }
+
+            /* Vista+ properly supports FILE_MAP_EXECUTE, earlier versions don't */
+            if (!base && (view[j].access & FILE_MAP_EXECUTE))
+            {
+                ok(broken(!base), "%d: MapViewOfFile(%04x/%04x) failed %d\n", j, page_prot[i], view[j].access, GetLastError());
+                continue;
+            }
+
+            ok(base != NULL, "%d: MapViewOfFile(%04x/%04x) failed %d\n", j, page_prot[i], view[j].access, GetLastError());
+
+            SetLastError(0xdeadbeef);
+            ret = VirtualQuery(base, &info, sizeof(info));
+            ok(ret, "%d: VirtualQuery failed %d\n", j, GetLastError());
+            ok(info.BaseAddress == base, "%d: (%04x) got %p, expected %p\n", j, view[j].access, info.BaseAddress, base);
+            ok(info.RegionSize == si.dwPageSize, "%d: (%04x) got %#lx != expected %#x\n", j, view[j].access, info.RegionSize, si.dwPageSize);
+            ok(info.Protect == view[j].prot ||
+               broken(view[j].prot == PAGE_EXECUTE_READ && info.Protect == PAGE_READONLY) || /* win2k */
+               broken(view[j].prot == PAGE_EXECUTE_READWRITE && info.Protect == PAGE_READWRITE) || /* win2k */
+               broken(view[j].prot == PAGE_EXECUTE_WRITECOPY && info.Protect == PAGE_NOACCESS), /* XP */
+               "%d: (%04x) got %#x, expected %#x\n", j, view[j].access, info.Protect, view[j].prot);
+            ok(info.AllocationBase == base, "%d: (%04x) got %p, expected %p\n", j, view[j].access, info.AllocationBase, base);
+            ok(info.AllocationProtect == info.Protect, "%d: (%04x) got %#x, expected %#x\n", j, view[j].access, info.AllocationProtect, info.Protect);
+            ok(info.State == MEM_COMMIT, "%d: (%04x) got %#x, expected MEM_COMMIT\n", j, view[j].access, info.State);
+            ok(info.Type == MEM_MAPPED, "%d: (%04x) got %#x, expected MEM_MAPPED\n", j, view[j].access, info.Type);
+
+            if (nt_base && base)
+            {
+                ok(nt_info.RegionSize == info.RegionSize, "%d: (%04x) got %#lx != expected %#lx\n", j, view[j].access, nt_info.RegionSize, info.RegionSize);
+                ok(nt_info.Protect == info.Protect /* Vista+ */ ||
+                   broken(nt_info.AllocationProtect == PAGE_EXECUTE_WRITECOPY && info.Protect == PAGE_NOACCESS), /* XP */
+                   "%d: (%04x) got %#x, expected %#x\n", j, view[j].access, nt_info.Protect, info.Protect);
+                ok(nt_info.AllocationProtect == info.AllocationProtect /* Vista+ */ ||
+                   broken(nt_info.AllocationProtect == PAGE_EXECUTE_WRITECOPY && info.Protect == PAGE_NOACCESS), /* XP */
+                   "%d: (%04x) got %#x, expected %#x\n", j, view[j].access, nt_info.AllocationProtect, info.AllocationProtect);
+                ok(nt_info.State == info.State, "%d: (%04x) got %#x, expected %#x\n", j, view[j].access, nt_info.State, info.State);
+                ok(nt_info.Type == info.Type, "%d: (%04x) got %#x, expected %#x\n", j, view[j].access, nt_info.Type, info.Type);
+            }
+
+            prev_prot = info.Protect;
+
+            for (k = 0; k < sizeof(page_prot)/sizeof(page_prot[0]); k++)
+            {
+                /*trace("map %#x, view %#x, requested prot %#x\n", page_prot[i], view[j].prot, page_prot[k]);*/
+                SetLastError(0xdeadbeef);
+                old_prot = 0xdeadbeef;
+                ret = VirtualProtect(base, si.dwPageSize, page_prot[k], &old_prot);
+                if (is_compatible_protection(page_prot[i], view[j].prot, page_prot[k]))
+                {
+                    /* win2k and XP don't support EXEC on file mappings */
+                    if (!ret && page_prot[k] == PAGE_EXECUTE)
+                    {
+                        ok(broken(!ret), "VirtualProtect doesn't support PAGE_EXECUTE\n");
+                        continue;
+                    }
+                    /* NT4 and win2k don't support EXEC on file mappings */
+                    if (!ret && (page_prot[k] == PAGE_EXECUTE_READ || page_prot[k] == PAGE_EXECUTE_READWRITE))
+                    {
+                        ok(broken(!ret), "VirtualProtect doesn't support PAGE_EXECUTE\n");
+                        continue;
+                    }
+                    /* Vista+ supports PAGE_EXECUTE_WRITECOPY, earlier versions don't */
+                    if (!ret && page_prot[k] == PAGE_EXECUTE_WRITECOPY)
+                    {
+                        ok(broken(!ret), "VirtualProtect doesn't support PAGE_EXECUTE_WRITECOPY\n");
+                        continue;
+                    }
+                    /* win2k and XP don't support PAGE_EXECUTE_WRITECOPY views properly  */
+                    if (!ret && view[j].prot == PAGE_EXECUTE_WRITECOPY)
+                    {
+                        ok(broken(!ret), "VirtualProtect doesn't support PAGE_EXECUTE_WRITECOPY view properly\n");
+                        continue;
+                    }
+
+                    ok(ret, "VirtualProtect error %d, map %#x, view %#x, requested prot %#x\n", GetLastError(), page_prot[i], view[j].prot, page_prot[k]);
+                    ok(old_prot == prev_prot, "got %#x, expected %#x\n", old_prot, prev_prot);
+                    prev_prot = page_prot[k];
+                }
+                else
+                {
+                    /* NT4 doesn't fail on incompatible map and view */
+                    if (ret)
+                    {
+                        ok(broken(ret), "VirtualProtect should fail, map %#x, view %#x, requested prot %#x\n", page_prot[i], view[j].prot, page_prot[k]);
+                        skip("Incompatible map and view are not properly handled on this platform\n");
+                        break; /* NT4 won't pass remaining tests */
+                    }
+
+                    ok(!ret, "VirtualProtect should fail, map %#x, view %#x, requested prot %#x\n", page_prot[i], view[j].prot, page_prot[k]);
+                    ok(GetLastError() == ERROR_INVALID_PARAMETER, "expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+                }
+            }
+
+            for (k = 0; k < sizeof(page_prot)/sizeof(page_prot[0]); k++)
+            {
+                /*trace("map %#x, view %#x, requested prot %#x\n", page_prot[i], view[j].prot, page_prot[k]);*/
+                SetLastError(0xdeadbeef);
+                ptr = VirtualAlloc(base, si.dwPageSize, MEM_COMMIT, page_prot[k]);
+                ok(!ptr, "VirtualAlloc(%02x) should fail\n", page_prot[k]);
+                /* FIXME: remove once Wine is fixed */
+                if (page_prot[k] == PAGE_WRITECOPY || page_prot[k] == PAGE_EXECUTE_WRITECOPY)
+todo_wine
+                ok(GetLastError() == ERROR_ACCESS_DENIED, "expected ERROR_ACCESS_DENIED, got %d\n", GetLastError());
+                else
+                ok(GetLastError() == ERROR_ACCESS_DENIED, "expected ERROR_ACCESS_DENIED, got %d\n", GetLastError());
+            }
+
+            UnmapViewOfFile(base);
+        }
+
+        CloseHandle(hmap);
+    }
+
+    CloseHandle(hfile);
+    DeleteFileA(file_name);
+}
+
+static void test_shared_memory(BOOL is_child)
+{
+    HANDLE mapping;
+    LONG *p;
+
+    SetLastError(0xdeadbef);
+    mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 4096, "winetest_virtual.c");
+    ok(mapping != 0, "CreateFileMapping error %d\n", GetLastError());
+    if (is_child)
+        ok(GetLastError() == ERROR_ALREADY_EXISTS, "expected ERROR_ALREADY_EXISTS, got %d\n", GetLastError());
+
+    SetLastError(0xdeadbef);
+    p = MapViewOfFile(mapping, FILE_MAP_READ|FILE_MAP_WRITE, 0, 0, 4096);
+    ok(p != NULL, "MapViewOfFile error %d\n", GetLastError());
+
+    if (is_child)
+    {
+        ok(*p == 0x1a2b3c4d, "expected 0x1a2b3c4d in child, got %#x\n", *p);
+    }
+    else
+    {
+        char **argv;
+        char cmdline[MAX_PATH];
+        PROCESS_INFORMATION pi;
+        STARTUPINFOA si = { sizeof(si) };
+        DWORD ret;
+
+        *p = 0x1a2b3c4d;
+
+        winetest_get_mainargs(&argv);
+        sprintf(cmdline, "\"%s\" virtual sharedmem", argv[0]);
+        ret = CreateProcessA(argv[0], cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+        ok(ret, "CreateProcess(%s) error %d\n", cmdline, GetLastError());
+        winetest_wait_child_process(pi.hProcess);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+
+    UnmapViewOfFile(p);
+    CloseHandle(mapping);
+}
+
+static void test_shared_memory_ro(BOOL is_child, DWORD child_access)
+{
+    HANDLE mapping;
+    LONG *p;
+
+    SetLastError(0xdeadbef);
+    mapping = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 4096, "winetest_virtual.c_ro");
+    ok(mapping != 0, "CreateFileMapping error %d\n", GetLastError());
+    if (is_child)
+        ok(GetLastError() == ERROR_ALREADY_EXISTS, "expected ERROR_ALREADY_EXISTS, got %d\n", GetLastError());
+
+    SetLastError(0xdeadbef);
+    p = MapViewOfFile(mapping, is_child ? child_access : FILE_MAP_READ, 0, 0, 4096);
+    ok(p != NULL, "MapViewOfFile error %d\n", GetLastError());
+
+    if (is_child)
+    {
+        *p = 0xdeadbeef;
+    }
+    else
+    {
+        char **argv;
+        char cmdline[MAX_PATH];
+        PROCESS_INFORMATION pi;
+        STARTUPINFOA si = { sizeof(si) };
+        DWORD ret;
+
+        winetest_get_mainargs(&argv);
+        sprintf(cmdline, "\"%s\" virtual sharedmemro %x", argv[0], child_access);
+        ret = CreateProcessA(argv[0], cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+        ok(ret, "CreateProcess(%s) error %d\n", cmdline, GetLastError());
+        winetest_wait_child_process(pi.hProcess);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+
+        if(child_access & FILE_MAP_WRITE)
+            ok(*p == 0xdeadbeef, "*p = %x, expected 0xdeadbeef\n", *p);
+        else
+            ok(!*p, "*p = %x, expected 0\n", *p);
+    }
+
+    UnmapViewOfFile(p);
+    CloseHandle(mapping);
+}
+
 START_TEST(virtual)
 {
     int argc;
@@ -1534,6 +3436,16 @@ START_TEST(virtual)
         if (!strcmp(argv[2], "sleep"))
         {
             Sleep(5000); /* spawned process runs for at most 5 seconds */
+            return;
+        }
+        if (!strcmp(argv[2], "sharedmem"))
+        {
+            test_shared_memory(TRUE);
+            return;
+        }
+        if (!strcmp(argv[2], "sharedmemro"))
+        {
+            test_shared_memory_ro(TRUE, strtol(argv[3], NULL, 16));
             return;
         }
         while (1)
@@ -1552,12 +3464,27 @@ START_TEST(virtual)
     }
 
     hkernel32 = GetModuleHandleA("kernel32.dll");
+    hntdll    = GetModuleHandleA("ntdll.dll");
+
     pVirtualAllocEx = (void *) GetProcAddress(hkernel32, "VirtualAllocEx");
     pVirtualFreeEx = (void *) GetProcAddress(hkernel32, "VirtualFreeEx");
     pGetWriteWatch = (void *) GetProcAddress(hkernel32, "GetWriteWatch");
     pResetWriteWatch = (void *) GetProcAddress(hkernel32, "ResetWriteWatch");
-    pNtAreMappedFilesTheSame = (void *)GetProcAddress( GetModuleHandle("ntdll.dll"),
-                                                       "NtAreMappedFilesTheSame" );
+    pGetProcessDEPPolicy = (void *)GetProcAddress( hkernel32, "GetProcessDEPPolicy" );
+    pNtAreMappedFilesTheSame = (void *)GetProcAddress( hntdll, "NtAreMappedFilesTheSame" );
+    pNtMapViewOfSection = (void *)GetProcAddress( hntdll, "NtMapViewOfSection" );
+    pNtUnmapViewOfSection = (void *)GetProcAddress( hntdll, "NtUnmapViewOfSection" );
+    pNtCurrentTeb = (void *)GetProcAddress( hntdll, "NtCurrentTeb" );
+    pRtlAddVectoredExceptionHandler = (void *)GetProcAddress( hntdll, "RtlAddVectoredExceptionHandler" );
+    pRtlRemoveVectoredExceptionHandler = (void *)GetProcAddress( hntdll, "RtlRemoveVectoredExceptionHandler" );
+
+    test_shared_memory(FALSE);
+    test_shared_memory_ro(FALSE, FILE_MAP_READ|FILE_MAP_WRITE);
+    test_shared_memory_ro(FALSE, FILE_MAP_COPY);
+    test_shared_memory_ro(FALSE, FILE_MAP_COPY|FILE_MAP_WRITE);
+    test_mapping();
+    test_CreateFileMapping_protection();
+    test_VirtualAlloc_protection();
     test_VirtualProtect();
     test_VirtualAllocEx();
     test_VirtualAlloc();
@@ -1569,4 +3496,12 @@ START_TEST(virtual)
     test_IsBadWritePtr();
     test_IsBadCodePtr();
     test_write_watch();
+#ifdef __i386__
+    test_guard_page();
+    /* The following tests should be executed as a last step, and in exactly this
+     * order, since ATL thunk emulation cannot be enabled anymore on Windows. */
+    test_atl_thunk_emulation( MEM_EXECUTE_OPTION_ENABLE );
+    test_atl_thunk_emulation( MEM_EXECUTE_OPTION_DISABLE );
+    test_atl_thunk_emulation( MEM_EXECUTE_OPTION_DISABLE | MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION );
+#endif
 }

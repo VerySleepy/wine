@@ -91,6 +91,7 @@ static const WCHAR Name[]            = {'N','a','m','e',0};
 static const WCHAR CmdLine[]         = {'C','m','d','L','i','n','e',0};
 static const WCHAR SubDir[]          = {'S','u','b','D','i','r',0};
 static const WCHAR WineFakeDlls[]    = {'W','i','n','e','F','a','k','e','D','l','l','s',0};
+static const WCHAR WinePreInstall[]  = {'W','i','n','e','P','r','e','I','n','s','t','a','l','l',0};
 static const WCHAR DisplayName[]     = {'D','i','s','p','l','a','y','N','a','m','e',0};
 static const WCHAR Description[]     = {'D','e','s','c','r','i','p','t','i','o','n',0};
 static const WCHAR ServiceBinary[]   = {'S','e','r','v','i','c','e','B','i','n','a','r','y',0};
@@ -241,7 +242,7 @@ static void append_multi_sz_value( HKEY hkey, const WCHAR *value, const WCHAR *s
         {
             memcpy( p, strings, len * sizeof(WCHAR) );
             p[len] = 0;
-            total += len;
+            total += len * sizeof(WCHAR);
         }
         strings += len;
     }
@@ -549,7 +550,7 @@ static BOOL do_register_dll( struct register_dll_info *info, const WCHAR *path,
         memset( &startup, 0, sizeof(startup) );
         startup.cb = sizeof(startup);
         TRACE( "executing %s\n", debugstr_w(cmd_line) );
-        res = CreateProcessW( NULL, cmd_line, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &process_info );
+        res = CreateProcessW( path, cmd_line, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &process_info );
         HeapFree( GetProcessHeap(), 0, cmd_line );
         if (!res)
         {
@@ -701,7 +702,6 @@ static BOOL register_dlls_callback( HINF hinf, PCWSTR field, void *arg )
 static BOOL fake_dlls_callback( HINF hinf, PCWSTR field, void *arg )
 {
     INFCONTEXT context;
-    BOOL ret = TRUE;
     BOOL ok = SetupFindFirstLineW( hinf, field, NULL, &context );
 
     for (; ok; ok = SetupFindNextLine( &context, &context ))
@@ -730,9 +730,8 @@ static BOOL fake_dlls_callback( HINF hinf, PCWSTR field, void *arg )
 
     done:
         HeapFree( GetProcessHeap(), 0, path );
-        if (!ret) break;
     }
-    return ret;
+    return TRUE;
 }
 
 /***********************************************************************
@@ -1069,6 +1068,15 @@ BOOL WINAPI SetupInstallFromInfSectionW( HWND owner, HINF hinf, PCWSTR section, 
     BOOL ret;
     int i;
 
+    if (flags & SPINST_REGISTRY)
+    {
+        struct registry_callback_info info;
+
+        info.default_root = key_root;
+        info.delete = FALSE;
+        if (!iterate_section_fields( hinf, section, WinePreInstall, registry_callback, &info ))
+            return FALSE;
+    }
     if (flags & SPINST_FILES)
     {
         struct files_callback_info info;
@@ -1248,6 +1256,7 @@ void WINAPI InstallHinfSectionW( HWND hwnd, HINSTANCE handle, LPCWSTR cmdline, I
     /* FIXME: should check the mode and maybe reboot */
     /* there isn't much point in doing that since we */
     /* don't yet handle deferred file copies anyway. */
+    if (mode & 7) TRACE( "should consider reboot, mode %u\n", mode );
 }
 
 
@@ -1438,12 +1447,16 @@ BOOL WINAPI SetupInstallServicesFromInfSectionW( HINF hinf, PCWSTR section, DWOR
     SC_HANDLE scm;
     INFCONTEXT context;
     INT section_flags;
-    BOOL ok, ret = FALSE;
+    BOOL ok, ret = TRUE;
 
+    if (!(ok = SetupFindFirstLineW( hinf, section, NULL, &context )))
+    {
+        SetLastError( ERROR_SECTION_NOT_FOUND );
+        return FALSE;
+    }
     if (!(scm = OpenSCManagerW( NULL, NULL, SC_MANAGER_ALL_ACCESS ))) return FALSE;
 
-    if (!(ok = SetupFindFirstLineW( hinf, section, AddService, &context )))
-        SetLastError( ERROR_SECTION_NOT_FOUND );
+    ok = SetupFindFirstLineW( hinf, section, AddService, &context );
     while (ok)
     {
         if (!SetupGetStringFieldW( &context, 1, service_name, MAX_INF_STRING_LENGTH, NULL ))
@@ -1456,8 +1469,7 @@ BOOL WINAPI SetupInstallServicesFromInfSectionW( HINF hinf, PCWSTR section, DWOR
         ok = SetupFindNextMatchLineW( &context, AddService, &context );
     }
 
-    if (!(ok = SetupFindFirstLineW( hinf, section, DelService, &context )))
-        SetLastError( ERROR_SECTION_NOT_FOUND );
+    ok = SetupFindFirstLineW( hinf, section, DelService, &context );
     while (ok)
     {
         if (!SetupGetStringFieldW( &context, 1, service_name, MAX_INF_STRING_LENGTH, NULL ))
@@ -1533,7 +1545,7 @@ BOOL WINAPI SetupGetInfFileListA(PCSTR dir, DWORD style, PSTR buffer,
 BOOL WINAPI SetupGetInfFileListW(PCWSTR dir, DWORD style, PWSTR buffer,
                                  DWORD insize, PDWORD outsize)
 {
-    static WCHAR inf[] = {'\\','*','.','i','n','f',0 };
+    static const WCHAR inf[] = {'\\','*','.','i','n','f',0 };
     WCHAR *filter, *fullname = NULL, *ptr = buffer;
     DWORD dir_len, name_len = 20, size ;
     WIN32_FIND_DATAW finddata;
@@ -1628,6 +1640,7 @@ BOOL WINAPI SetupGetInfFileListW(PCWSTR dir, DWORD style, PWSTR buffer,
                                   ( 2 + dir_len + name_len) * sizeof( WCHAR ));
             if( !fullname )
             {
+                FindClose( hdl );
                 HeapFree( GetProcessHeap(), 0, filter );
                 SetLastError( ERROR_NOT_ENOUGH_MEMORY );
                 return FALSE;

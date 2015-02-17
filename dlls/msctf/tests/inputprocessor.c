@@ -203,7 +203,7 @@ static HRESULT WINAPI TextStoreACP_QueryInterface(ITextStoreACP *iface, REFIID i
 
     if (*ppvOut)
     {
-        IUnknown_AddRef(iface);
+        ITextStoreACP_AddRef(iface);
         return S_OK;
     }
 
@@ -492,7 +492,7 @@ static HRESULT WINAPI ThreadMgrEventSink_QueryInterface(ITfThreadMgrEventSink *i
 
     if (*ppvOut)
     {
-        IUnknown_AddRef(iface);
+        ITfThreadMgrEventSink_AddRef(iface);
         return S_OK;
     }
 
@@ -752,7 +752,7 @@ static HRESULT WINAPI TextService_QueryInterface(ITfTextInputProcessor *iface, R
 
     if (*ppvOut)
     {
-        IUnknown_AddRef(iface);
+        ITfTextInputProcessor_AddRef(iface);
         return S_OK;
     }
 
@@ -938,7 +938,8 @@ static void test_EnumLanguageProfiles(void)
             {
                 found = TRUE;
                 ok(profile.langid == gLangid, "LangId Incorrect\n");
-                ok(IsEqualGUID(&profile.catid,&GUID_TFCAT_TIP_KEYBOARD), "CatId Incorrect\n");
+                ok(IsEqualGUID(&profile.catid,&GUID_TFCAT_TIP_KEYBOARD) ||
+                   broken(IsEqualGUID(&profile.catid,&GUID_NULL) /* Win8 */), "CatId Incorrect\n");
                 ok(IsEqualGUID(&profile.guidProfile,&CLSID_FakeService), "guidProfile Incorrect\n");
             }
         }
@@ -1079,7 +1080,7 @@ static HRESULT WINAPI KeyEventSink_QueryInterface(ITfKeyEventSink *iface, REFIID
 
     if (*ppvOut)
     {
-        IUnknown_AddRef(iface);
+        ITfKeyEventSink_AddRef(iface);
         return S_OK;
     }
 
@@ -1305,8 +1306,8 @@ static void test_EnumDocumentMgr(ITfThreadMgr *tm, ITfDocumentMgr *search, ITfDo
 
 static inline int check_context_refcount(ITfContext *iface)
 {
-    IUnknown_AddRef(iface);
-    return IUnknown_Release(iface);
+    ITfContext_AddRef(iface);
+    return ITfContext_Release(iface);
 }
 
 
@@ -1341,7 +1342,7 @@ static HRESULT WINAPI TextEditSink_QueryInterface(ITfTextEditSink *iface, REFIID
 
     if (*ppvOut)
     {
-        IUnknown_AddRef(iface);
+        ITfTextEditSink_AddRef(iface);
         return S_OK;
     }
 
@@ -1697,7 +1698,7 @@ static HRESULT WINAPI EditSession_QueryInterface(ITfEditSession *iface, REFIID i
 
     if (*ppvOut)
     {
-        IUnknown_AddRef(iface);
+        ITfEditSession_AddRef(iface);
         return S_OK;
     }
 
@@ -1901,10 +1902,9 @@ static void test_TStoApplicationText(void)
     {
         hr = ITfSource_UnadviseSink(source, editSinkCookie);
         ok(SUCCEEDED(hr),"Failed to unadvise Sink\n");
-        ITfTextEditSink_Release(sink);
         ITfSource_Release(source);
     }
-
+    ITfTextEditSink_Release(sink);
     ITfContext_Release(cxt);
     ITfDocumentMgr_Release(dm);
     ITfEditSession_Release(es);
@@ -2001,10 +2001,10 @@ static void processPendingMessages(void)
     {
         if (MsgWaitForMultipleObjects(0, NULL, FALSE, min_timeout, QS_ALLINPUT) == WAIT_TIMEOUT)
             break;
-        while (PeekMessage(&msg, 0, 0, 0, PM_REMOVE))
+        while (PeekMessageW(&msg, 0, 0, 0, PM_REMOVE))
         {
             TranslateMessage(&msg);
-            DispatchMessage(&msg);
+            DispatchMessageW(&msg);
         }
         diff = time - GetTickCount();
     }
@@ -2033,11 +2033,11 @@ static void test_AssociateFocus(void)
     hr = ITfThreadMgr_CreateDocumentMgr(g_tm,&dm2);
     ok(SUCCEEDED(hr),"CreateDocumentMgr failed\n");
 
-    wnd1 = CreateWindow("edit",NULL,WS_POPUP,0,0,200,60,NULL,NULL,NULL,NULL);
+    wnd1 = CreateWindowA("edit",NULL,WS_POPUP,0,0,200,60,NULL,NULL,NULL,NULL);
     ok(wnd1!=NULL,"Unable to create window 1\n");
-    wnd2 = CreateWindow("edit",NULL,WS_POPUP,0,65,200,60,NULL,NULL,NULL,NULL);
+    wnd2 = CreateWindowA("edit",NULL,WS_POPUP,0,65,200,60,NULL,NULL,NULL,NULL);
     ok(wnd2!=NULL,"Unable to create window 2\n");
-    wnd3 = CreateWindow("edit",NULL,WS_POPUP,0,130,200,60,NULL,NULL,NULL,NULL);
+    wnd3 = CreateWindowA("edit",NULL,WS_POPUP,0,130,200,60,NULL,NULL,NULL,NULL);
     ok(wnd3!=NULL,"Unable to create window 3\n");
 
     processPendingMessages();
@@ -2076,20 +2076,15 @@ static void test_AssociateFocus(void)
     processPendingMessages();
 
     ITfThreadMgr_GetFocus(g_tm, &dmcheck);
-    if (dmcheck != NULL)
-    {
-        ok(dmcheck == dm1, "Expected DocumentMgr not focused\n");
-        ITfDocumentMgr_Release(dmcheck);
-    }
-    else
-    {
-        /* Sometimes we need to explicitly set focus on Win7 */
-        test_CurrentFocus = dm1;
-        test_PrevFocus = FOCUS_IGNORE;
-        test_OnSetFocus = SINK_EXPECTED;
-        ITfThreadMgr_SetFocus(g_tm, dm1);
-        sink_check_ok(&test_OnSetFocus,"OnSetFocus");
-    }
+    ok(dmcheck == dm1 || broken(dmcheck == dmorig /* Win7+ */), "Expected DocumentMgr not focused\n");
+    ITfDocumentMgr_Release(dmcheck);
+
+    /* We need to explicitly set focus on Win7+ */
+    test_CurrentFocus = dm1;
+    test_PrevFocus = FOCUS_IGNORE;
+    test_OnSetFocus = SINK_OPTIONAL; /* Doesn't always fire on Win7+ */
+    ITfThreadMgr_SetFocus(g_tm, dm1);
+    sink_check_ok(&test_OnSetFocus, "OnSetFocus");
 
     hr = ITfThreadMgr_AssociateFocus(g_tm,wnd2,dm2,&olddm);
     ok(SUCCEEDED(hr),"AssociateFocus failed\n");
@@ -2134,7 +2129,7 @@ static void test_AssociateFocus(void)
 
     test_CurrentFocus = dmorig;
     test_PrevFocus = dm1;
-    test_OnSetFocus  = SINK_EXPECTED;
+    test_OnSetFocus  = SINK_OPTIONAL; /* Doesn't always fire on Win7+ */
     test_ACP_GetStatus = SINK_IGNORE;
     ITfThreadMgr_SetFocus(g_tm,dmorig);
     sink_check_ok(&test_OnSetFocus,"OnSetFocus");
@@ -2191,6 +2186,28 @@ static void test_AssociateFocus(void)
     sink_check_ok(&test_OnPopContext,"OnPopContext");
 }
 
+static void test_profile_mgr(void)
+{
+    IEnumTfInputProcessorProfiles *enum_profiles;
+    ITfInputProcessorProfileMgr *ipp_mgr;
+    HRESULT hres;
+
+    hres = ITfInputProcessorProfiles_QueryInterface(g_ipp, &IID_ITfInputProcessorProfileMgr, (void**)&ipp_mgr);
+    if (hres != S_OK)
+    {
+        win_skip("ITfInputProcessorProfileMgr is not supported.\n");
+        return;
+    }
+    ok(hres == S_OK, "Could not get ITfInputProcessorProfileMgr iface: %08x\n", hres);
+
+    hres = ITfInputProcessorProfileMgr_EnumProfiles(ipp_mgr, 0, &enum_profiles);
+    ok(hres == S_OK, "EnumProfiles failed: %08x\n", hres);
+
+    IEnumTfInputProcessorProfiles_Release(enum_profiles);
+
+    ITfInputProcessorProfileMgr_Release(ipp_mgr);
+}
+
 START_TEST(inputprocessor)
 {
     if (SUCCEEDED(initialize()))
@@ -2217,6 +2234,7 @@ START_TEST(inputprocessor)
         test_ThreadMgrUnadviseSinks();
         test_UnregisterCategory();
         test_Unregister();
+        test_profile_mgr();
     }
     else
         skip("Unable to create InputProcessor\n");

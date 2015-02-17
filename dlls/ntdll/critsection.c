@@ -66,12 +66,12 @@ static int wake_op = 129; /*FUTEX_WAKE|FUTEX_PRIVATE_FLAG*/
 
 static inline int futex_wait( int *addr, int val, struct timespec *timeout )
 {
-    return syscall( SYS_futex, addr, wait_op, val, timeout, 0, 0 );
+    return syscall( __NR_futex, addr, wait_op, val, timeout, 0, 0 );
 }
 
 static inline int futex_wake( int *addr, int val )
 {
-    return syscall( SYS_futex, addr, wake_op, val, NULL, 0, 0 );
+    return syscall( __NR_futex, addr, wake_op, val, NULL, 0, 0 );
 }
 
 static inline int use_futexes(void)
@@ -230,9 +230,12 @@ static inline NTSTATUS wait_semaphore( RTL_CRITICAL_SECTION *crit, int timeout )
     {
         HANDLE sem = get_semaphore( crit );
         LARGE_INTEGER time;
+        select_op_t select_op;
 
         time.QuadPart = timeout * (LONGLONG)-10000000;
-        ret = NTDLL_wait_for_multiple_objects( 1, &sem, 0, &time, 0 );
+        select_op.wait.op = SELECT_WAIT;
+        select_op.wait.handles[0] = wine_server_obj_handle( sem );
+        ret = server_select( &select_op, offsetof( select_op_t, wait.handles[1] ), 0, &time );
     }
     return ret;
 }
@@ -432,10 +435,12 @@ NTSTATUS WINAPI RtlDeleteCriticalSection( RTL_CRITICAL_SECTION *crit )
  */
 NTSTATUS WINAPI RtlpWaitForCriticalSection( RTL_CRITICAL_SECTION *crit )
 {
+    LONGLONG timeout = NtCurrentTeb()->Peb->CriticalSectionTimeout.QuadPart / -10000000;
     for (;;)
     {
         EXCEPTION_RECORD rec;
         NTSTATUS status = wait_semaphore( crit, 5 );
+        timeout -= 5;
 
         if ( status == STATUS_TIMEOUT )
         {
@@ -445,17 +450,23 @@ NTSTATUS WINAPI RtlpWaitForCriticalSection( RTL_CRITICAL_SECTION *crit )
             ERR( "section %p %s wait timed out in thread %04x, blocked by %04x, retrying (60 sec)\n",
                  crit, debugstr_a(name), GetCurrentThreadId(), HandleToULong(crit->OwningThread) );
             status = wait_semaphore( crit, 60 );
+            timeout -= 60;
+
             if ( status == STATUS_TIMEOUT && TRACE_ON(relay) )
             {
                 ERR( "section %p %s wait timed out in thread %04x, blocked by %04x, retrying (5 min)\n",
                      crit, debugstr_a(name), GetCurrentThreadId(), HandleToULong(crit->OwningThread) );
                 status = wait_semaphore( crit, 300 );
+                timeout -= 300;
             }
         }
         if (status == STATUS_WAIT_0) break;
 
         /* Throw exception only for Wine internal locks */
         if ((!crit->DebugInfo) || (!crit->DebugInfo->Spare[0])) continue;
+
+        /* only throw deadlock exception if configured timeout is reached */
+        if (timeout > 0) continue;
 
         rec.ExceptionCode    = STATUS_POSSIBLE_DEADLOCK;
         rec.ExceptionFlags   = 0;

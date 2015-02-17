@@ -77,7 +77,7 @@ static HRESULT WINAPI URLMoniker_QueryInterface(IMoniker *iface, REFIID riid, vo
         return E_NOINTERFACE;
     }
 
-    IMoniker_AddRef((IUnknown*)*ppv);
+    IUnknown_AddRef((IUnknown*)*ppv);
     return S_OK;
 }
 
@@ -229,11 +229,26 @@ static HRESULT WINAPI URLMoniker_BindToObject(IMoniker *iface, IBindCtx* pbc, IM
     IRunningObjectTable *obj_tbl;
     HRESULT hres;
 
-    TRACE("(%p)->(%p,%p,%s,%p): stub\n", This, pbc, pmkToLeft, debugstr_guid(riid), ppv);
+    TRACE("(%p)->(%p,%p,%s,%p)\n", This, pbc, pmkToLeft, debugstr_guid(riid), ppv);
 
     hres = IBindCtx_GetRunningObjectTable(pbc, &obj_tbl);
     if(SUCCEEDED(hres)) {
-        FIXME("use running object table\n");
+        hres = IRunningObjectTable_IsRunning(obj_tbl, &This->IMoniker_iface);
+        if(hres == S_OK) {
+            IUnknown *unk = NULL;
+
+            TRACE("Found in running object table\n");
+
+            hres = IRunningObjectTable_GetObject(obj_tbl, &This->IMoniker_iface, &unk);
+            if(SUCCEEDED(hres)) {
+                hres = IUnknown_QueryInterface(unk, riid, ppv);
+                IUnknown_Release(unk);
+            }
+
+            IRunningObjectTable_Release(obj_tbl);
+            return hres;
+        }
+
         IRunningObjectTable_Release(obj_tbl);
     }
 
@@ -331,7 +346,7 @@ static HRESULT WINAPI URLMoniker_IsEqual(IMoniker *iface, IMoniker *pmkOtherMoni
         if(result == 0)
             res = S_OK;
     }
-    IUnknown_Release(bind);
+    IBindCtx_Release(bind);
     return res;
 }
 
@@ -949,15 +964,4 @@ HRESULT WINAPI GetSoftwareUpdateInfo( LPCWSTR szDistUnit, LPSOFTDISTINFO psdi )
 {
     FIXME("%s %p\n", debugstr_w(szDistUnit), psdi );
     return E_FAIL;
-}
-
-/***********************************************************************
- *           AsyncInstallDistributionUnit (URLMON.@)
- */
-HRESULT WINAPI AsyncInstallDistributionUnit( LPCWSTR szDistUnit, LPCWSTR szTYPE,
-                            LPCWSTR szExt, DWORD dwFileVersionMS, DWORD dwFileVersionLS,
-                            LPCWSTR szURL, IBindCtx *pbc, LPVOID pvReserved, DWORD flags )
-{
-    FIXME(": stub\n");
-    return E_NOTIMPL;
 }

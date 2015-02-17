@@ -35,6 +35,9 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(gdiplus);
 
+static const REAL mm_per_inch = 25.4;
+static const REAL point_per_inch = 72.0;
+
 static Status WINAPI NotificationHook(ULONG_PTR *token)
 {
     TRACE("%p\n", token);
@@ -63,6 +66,7 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved)
         break;
 
     case DLL_PROCESS_DETACH:
+        if (reserved) break;
         free_installed_fonts();
         break;
     }
@@ -207,7 +211,7 @@ static void unstretch_angle(REAL * angle, REAL rad_x, REAL rad_y)
         return;
 
     stretched = gdiplus_atan2(sin(*angle) / fabs(rad_y), cos(*angle) / fabs(rad_x));
-    revs_off = roundr(*angle / (2.0 * M_PI)) - roundr(stretched / (2.0 * M_PI));
+    revs_off = gdip_round(*angle / (2.0 * M_PI)) - gdip_round(stretched / (2.0 * M_PI));
     stretched += ((REAL)revs_off) * M_PI * 2.0;
     *angle = stretched;
 }
@@ -265,15 +269,12 @@ COLORREF ARGB2COLORREF(ARGB color)
 
 HBITMAP ARGB2BMP(ARGB color)
 {
-    HDC hdc;
     BITMAPINFO bi;
     HBITMAP result;
     RGBQUAD *bits;
     int alpha;
 
     if ((color & 0xff000000) == 0xff000000) return 0;
-
-    hdc = CreateCompatibleDC(NULL);
 
     bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
     bi.bmiHeader.biWidth = 1;
@@ -287,14 +288,12 @@ HBITMAP ARGB2BMP(ARGB color)
     bi.bmiHeader.biClrUsed = 0;
     bi.bmiHeader.biClrImportant = 0;
 
-    result = CreateDIBSection(hdc, &bi, DIB_RGB_COLORS, (void*)&bits, NULL, 0);
+    result = CreateDIBSection(0, &bi, DIB_RGB_COLORS, (void*)&bits, NULL, 0);
 
     bits[0].rgbReserved = alpha = (color>>24)&0xff;
     bits[0].rgbRed = ((color>>16)&0xff)*alpha/255;
     bits[0].rgbGreen = ((color>>8)&0xff)*alpha/255;
     bits[0].rgbBlue = (color&0xff)*alpha/255;
-
-    DeleteDC(hdc);
 
     return result;
 }
@@ -323,30 +322,59 @@ GpStatus hresult_to_status(HRESULT res)
 }
 
 /* converts a given unit to its value in pixels */
-REAL convert_unit(REAL logpixels, GpUnit unit)
+REAL units_to_pixels(REAL units, GpUnit unit, REAL dpi)
 {
-    switch(unit)
+    switch (unit)
     {
-        case UnitInch:
-            return logpixels;
-        case UnitPoint:
-            return logpixels / 72.0;
-        case UnitDocument:
-            return logpixels / 300.0;
-        case UnitMillimeter:
-            return logpixels / 25.4;
-        case UnitWorld:
-            ERR("cannot convert UnitWorld\n");
-            return 0.0;
-        case UnitPixel:
-        case UnitDisplay:
-        default:
-            return 1.0;
+    case UnitPixel:
+    case UnitWorld:
+    case UnitDisplay:
+        return units;
+    case UnitPoint:
+        return units * dpi / point_per_inch;
+    case UnitInch:
+        return units * dpi;
+    case UnitDocument:
+        return units * dpi / 300.0; /* Per MSDN */
+    case UnitMillimeter:
+        return units * dpi / mm_per_inch;
+    default:
+        FIXME("Unhandled unit type: %d\n", unit);
+        return 0;
     }
 }
 
+/* converts value in pixels to a given unit */
+REAL pixels_to_units(REAL pixels, GpUnit unit, REAL dpi)
+{
+    switch (unit)
+    {
+    case UnitPixel:
+    case UnitWorld:
+    case UnitDisplay:
+        return pixels;
+    case UnitPoint:
+        return pixels * point_per_inch / dpi;
+    case UnitInch:
+        return pixels / dpi;
+    case UnitDocument:
+        return pixels * 300.0 / dpi;
+    case UnitMillimeter:
+        return pixels * mm_per_inch / dpi;
+    default:
+        FIXME("Unhandled unit type: %d\n", unit);
+        return 0;
+    }
+}
+
+REAL units_scale(GpUnit from, GpUnit to, REAL dpi)
+{
+    REAL pixels = units_to_pixels(1.0, from, dpi);
+    return pixels_to_units(pixels, to, dpi);
+}
+
 /* Calculates Bezier points from cardinal spline points. */
-void calc_curve_bezier(CONST GpPointF *pts, REAL tension, REAL *x1,
+void calc_curve_bezier(const GpPointF *pts, REAL tension, REAL *x1,
     REAL *y1, REAL *x2, REAL *y2)
 {
     REAL xdiff, ydiff;
@@ -367,8 +395,8 @@ void calc_curve_bezier_endp(REAL xend, REAL yend, REAL xadj, REAL yadj,
     REAL tension, REAL *x, REAL *y)
 {
     /* tangent at endpoints is the line from the endpoint to the adjacent point */
-    *x = roundr(tension * (xadj - xend) + xend);
-    *y = roundr(tension * (yadj - yend) + yend);
+    *x = gdip_round(tension * (xadj - xend) + xend);
+    *y = gdip_round(tension * (yadj - yend) + yend);
 }
 
 /* make sure path has enough space for len more points */
@@ -415,9 +443,9 @@ void convert_32bppARGB_to_32bppPARGB(UINT width, UINT height,
         for (x=0; x<width; x++)
         {
             BYTE alpha=src[3];
-            *dst++ = *src++ * alpha / 255;
-            *dst++ = *src++ * alpha / 255;
-            *dst++ = *src++ * alpha / 255;
+            *dst++ = (*src++ * alpha + 127) / 255;
+            *dst++ = (*src++ * alpha + 127) / 255;
+            *dst++ = (*src++ * alpha + 127) / 255;
             *dst++ = *src++;
         }
     }
@@ -431,7 +459,7 @@ void delete_element(region_element* element)
         case RegionDataRect:
             break;
         case RegionDataPath:
-            GdipDeletePath(element->elementdata.pathdata.path);
+            GdipDeletePath(element->elementdata.path);
             break;
         case RegionDataEmptyRect:
         case RegionDataInfiniteRect:
@@ -445,13 +473,13 @@ void delete_element(region_element* element)
     }
 }
 
-const char *debugstr_rectf(CONST RectF* rc)
+const char *debugstr_rectf(const RectF* rc)
 {
     if (!rc) return "(null)";
     return wine_dbg_sprintf("(%0.2f,%0.2f,%0.2f,%0.2f)", rc->X, rc->Y, rc->Width, rc->Height);
 }
 
-const char *debugstr_pointf(CONST PointF* pt)
+const char *debugstr_pointf(const PointF* pt)
 {
     if (!pt) return "(null)";
     return wine_dbg_sprintf("(%0.2f,%0.2f)", pt->X, pt->Y);

@@ -58,10 +58,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
             hInstance = hinstDLL;
             DisableThreadLibraryCalls(hinstDLL);
             break;
-        case DLL_PROCESS_DETACH:
-            break;
-        default:
-            break;
     }
     return TRUE;
 }
@@ -295,7 +291,7 @@ static CERT_ENHKEY_USAGE *convert_usages_str_to_usage(LPSTR usageStr)
         {
             if (comma)
                 *comma = 0;
-            add_oid_to_usage(usage, ptr);
+            usage = add_oid_to_usage(usage, ptr);
         }
     }
     return usage;
@@ -323,7 +319,7 @@ static CERT_ENHKEY_USAGE *create_advanced_filter(void)
                 {
                     PCCRYPT_OID_INFO *ptr;
 
-                    for (ptr = usages; *ptr; ptr++)
+                    for (ptr = usages; advancedUsage && *ptr; ptr++)
                     {
                         DWORD i;
                         BOOL disabled = FALSE;
@@ -334,7 +330,7 @@ static CERT_ENHKEY_USAGE *create_advanced_filter(void)
                              (*ptr)->pszOID))
                                 disabled = TRUE;
                         if (!disabled)
-                            add_oid_to_usage(advancedUsage,
+                            advancedUsage = add_oid_to_usage(advancedUsage,
                              (LPSTR)(*ptr)->pszOID);
                     }
                     /* The individual strings are pointers to disabledUsagesStr,
@@ -1804,7 +1800,6 @@ static void add_icon_to_control(HWND hwnd, int id)
     DWORD conn;
     LPDATAOBJECT dataObject = NULL;
     HBITMAP bitmap = NULL;
-    RECT rect;
     STGMEDIUM stgm;
     LPOLECLIENTSITE clientSite = NULL;
     REOBJECT reObject;
@@ -1843,9 +1838,6 @@ static void add_icon_to_control(HWND hwnd, int id)
      LR_DEFAULTSIZE | LR_LOADTRANSPARENT);
     if (!bitmap)
         goto end;
-    rect.left = rect.top = 0;
-    rect.right = GetSystemMetrics(SM_CXICON);
-    rect.bottom = GetSystemMetrics(SM_CYICON);
     stgm.tymed = TYMED_GDI;
     stgm.u.hBitmap = bitmap;
     stgm.pUnkForRelease = NULL;
@@ -2704,6 +2696,8 @@ static WCHAR *field_format_public_key(PCCERT_CONTEXT cert)
         if (LoadStringW(hInstance, IDS_FIELD_PUBLIC_KEY_FORMAT, fmt,
          sizeof(fmt) / sizeof(fmt[0])))
         {
+            DWORD len;
+
             /* Allocate the output buffer.  Use the number of bytes in the
              * public key as a conservative (high) estimate for the number of
              * digits in its output.
@@ -2713,14 +2707,18 @@ static WCHAR *field_format_public_key(PCCERT_CONTEXT cert)
              * good idea, but as this isn't a sentence fragment, it shouldn't
              * be word-order dependent.
              */
-            buf = HeapAlloc(GetProcessHeap(), 0,
-             (strlenW(fmt) + strlenW(oidInfo->pwszName) +
-             cert->pCertInfo->SubjectPublicKeyInfo.PublicKey.cbData * 8)
-             * sizeof(WCHAR));
+            len = strlenW(fmt) + strlenW(oidInfo->pwszName) +
+                cert->pCertInfo->SubjectPublicKeyInfo.PublicKey.cbData * 8;
+            buf = HeapAlloc(GetProcessHeap(), 0, len * sizeof(*buf));
             if (buf)
-                sprintfW(buf, fmt, oidInfo->pwszName,
-                 CertGetPublicKeyLength(X509_ASN_ENCODING,
-                  &cert->pCertInfo->SubjectPublicKeyInfo));
+            {
+                DWORD_PTR args[2];
+                args[0] = (DWORD_PTR)oidInfo->pwszName;
+                args[1] = CertGetPublicKeyLength(X509_ASN_ENCODING,
+                              &cert->pCertInfo->SubjectPublicKeyInfo);
+                FormatMessageW(FORMAT_MESSAGE_FROM_STRING|FORMAT_MESSAGE_ARGUMENT_ARRAY,
+                               fmt, 0, 0, buf, len, (__ms_va_list*)args);
+            }
         }
     }
     return buf;
@@ -2834,7 +2832,7 @@ static const struct v1_field v1_fields[] = {
 
 static void add_v1_fields(HWND hwnd, struct detail_data *data)
 {
-    int i;
+    unsigned int i;
     PCCERT_CONTEXT cert = data->pCertViewInfo->pCertContext;
 
     /* The last item in v1_fields is the public key, which is not in the loop
@@ -3766,7 +3764,7 @@ static void show_edit_cert_properties_dialog(HWND parent,
 
 static void free_detail_fields(struct detail_data *data)
 {
-    DWORD i;
+    int i;
 
     for (i = 0; i < data->cFields; i++)
         HeapFree(GetProcessHeap(), 0, data->fields[i].detailed_value);
@@ -7049,5 +7047,13 @@ PCCERT_CONTEXT WINAPI CryptUIDlgSelectCertificateW(PCCRYPTUI_SELECTCERTIFICATE_S
 PCCERT_CONTEXT WINAPI CryptUIDlgSelectCertificateA(PCCRYPTUI_SELECTCERTIFICATE_STRUCTA pcsc)
 {
     FIXME("%p: stub\n", pcsc);
+    return NULL;
+}
+
+PCCERT_CONTEXT WINAPI CryptUIDlgSelectCertificateFromStore(HCERTSTORE hCertStore, HWND hwnd, LPCWSTR pwszTitle,
+                                                           LPCWSTR pwszDisplayString, DWORD dwDontUseColumn,
+                                                           DWORD dwFlags, void *pvReserved)
+{
+    FIXME("%p %p %s %s %d %d %p: stub\n", hCertStore, hwnd, debugstr_w(pwszTitle), debugstr_w(pwszDisplayString), dwDontUseColumn, dwFlags, pvReserved);
     return NULL;
 }

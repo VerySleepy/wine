@@ -52,6 +52,8 @@ WINE_DEFAULT_DEBUG_CHANNEL( mscoree );
 
 static HINSTANCE MSCOREE_hInstance;
 
+typedef HRESULT (*fnCreateInstance)(REFIID riid, LPVOID *ppObj);
+
 char *WtoA(LPCWSTR wstr)
 {
     int length;
@@ -88,6 +90,105 @@ static BOOL get_install_root(LPWSTR install_dir)
 
     return TRUE;
 }
+
+typedef struct mscorecf
+{
+    IClassFactory    IClassFactory_iface;
+    LONG ref;
+
+    fnCreateInstance pfnCreateInstance;
+
+    CLSID clsid;
+} mscorecf;
+
+static inline mscorecf *impl_from_IClassFactory( IClassFactory *iface )
+{
+    return CONTAINING_RECORD(iface, mscorecf, IClassFactory_iface);
+}
+
+static HRESULT WINAPI mscorecf_QueryInterface(IClassFactory *iface, REFIID riid, LPVOID *ppobj )
+{
+    TRACE("%s %p\n", debugstr_guid(riid), ppobj);
+
+    if (IsEqualGUID(riid, &IID_IUnknown) ||
+        IsEqualGUID(riid, &IID_IClassFactory))
+    {
+        IClassFactory_AddRef( iface );
+        *ppobj = iface;
+        return S_OK;
+    }
+
+    ERR("interface %s not implemented\n", debugstr_guid(riid));
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI mscorecf_AddRef(IClassFactory *iface )
+{
+    mscorecf *This = impl_from_IClassFactory(iface);
+    ULONG ref = InterlockedIncrement(&This->ref);
+
+    TRACE("%p ref=%u\n", This, ref);
+
+    return ref;
+}
+
+static ULONG WINAPI mscorecf_Release(IClassFactory *iface )
+{
+    mscorecf *This = impl_from_IClassFactory(iface);
+    ULONG ref = InterlockedDecrement(&This->ref);
+
+    TRACE("%p ref=%u\n", This, ref);
+
+    if (ref == 0)
+    {
+        HeapFree(GetProcessHeap(), 0, This);
+    }
+
+    return ref;
+}
+
+static HRESULT WINAPI mscorecf_CreateInstance(IClassFactory *iface,LPUNKNOWN pOuter,
+                            REFIID riid, LPVOID *ppobj )
+{
+    mscorecf *This = impl_from_IClassFactory( iface );
+    HRESULT hr;
+    IUnknown *punk;
+
+    TRACE("%p %s %p\n", pOuter, debugstr_guid(riid), ppobj );
+
+    *ppobj = NULL;
+
+    if (pOuter)
+        return CLASS_E_NOAGGREGATION;
+
+    hr = This->pfnCreateInstance( &This->clsid, (LPVOID*) &punk );
+    if (SUCCEEDED(hr))
+    {
+        hr = IUnknown_QueryInterface( punk, riid, ppobj );
+
+        IUnknown_Release( punk );
+    }
+    else
+    {
+        WARN("Cannot create an instance object. 0x%08x\n", hr);
+    }
+    return hr;
+}
+
+static HRESULT WINAPI mscorecf_LockServer(IClassFactory *iface, BOOL dolock)
+{
+    FIXME("(%p)->(%d),stub!\n",iface,dolock);
+    return S_OK;
+}
+
+static const struct IClassFactoryVtbl mscorecf_vtbl =
+{
+    mscorecf_QueryInterface,
+    mscorecf_AddRef,
+    mscorecf_Release,
+    mscorecf_CreateInstance,
+    mscorecf_LockServer
+};
 
 HRESULT WINAPI CorBindToRuntimeHost(LPCWSTR pwszVersion, LPCWSTR pwszBuildFlavor,
                                     LPCWSTR pwszHostConfigFile, VOID *pReserved,
@@ -126,25 +227,13 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
     case DLL_WINE_PREATTACH:
         return FALSE;  /* prefer native version */
     case DLL_PROCESS_ATTACH:
+        runtimehost_init();
         DisableThreadLibraryCalls(hinstDLL);
         break;
     case DLL_PROCESS_DETACH:
         expect_no_runtimes();
-        break;
-    }
-    return TRUE;
-}
-
-BOOL WINAPI _CorDllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
-{
-    FIXME("(%p, %d, %p): stub\n", hinstDLL, fdwReason, lpvReserved);
-
-    switch (fdwReason)
-    {
-    case DLL_PROCESS_ATTACH:
-        DisableThreadLibraryCalls(hinstDLL);
-        break;
-    case DLL_PROCESS_DETACH:
+        if (lpvReserved) break; /* process is terminating */
+        runtimehost_uninit();
         break;
     }
     return TRUE;
@@ -160,8 +249,7 @@ __int32 WINAPI _CorExeMain2(PBYTE ptrMemory, DWORD cntMemory, LPWSTR imageName, 
 void WINAPI CorExitProcess(int exitCode)
 {
     TRACE("(%x)\n", exitCode);
-    unload_all_runtimes();
-    ExitProcess(exitCode);
+    CLRMetaHost_ExitProcess(0, exitCode);
 }
 
 VOID WINAPI _CorImageUnloading(PVOID imageBase)
@@ -246,6 +334,9 @@ HRESULT WINAPI GetRequestedRuntimeInfo(LPCWSTR pExe, LPCWSTR pwszVersion, LPCWST
 
         if (SUCCEEDED(ret))
         {
+            if(pwszVersion)
+                pVersion[0] = pwszVersion[0];
+
             *dwDirectoryLength = dwDirectory;
             ret = ICLRRuntimeInfo_GetRuntimeDirectory(info, pDirectory, dwDirectoryLength);
         }
@@ -258,7 +349,7 @@ HRESULT WINAPI GetRequestedRuntimeInfo(LPCWSTR pExe, LPCWSTR pwszVersion, LPCWST
 
 HRESULT WINAPI GetRequestedRuntimeVersion(LPWSTR pExe, LPWSTR pVersion, DWORD cchBuffer, DWORD *dwlength)
 {
-    TRACE("(%s, %p, %d, %p)\n", debugstr_w(pExe), debugstr_w(pExe), cchBuffer, dwlength);
+    TRACE("(%s, %p, %d, %p)\n", debugstr_w(pExe), pVersion, cchBuffer, dwlength);
 
     if(!dwlength)
         return E_POINTER;
@@ -394,8 +485,23 @@ HRESULT WINAPI CorBindToRuntimeEx(LPWSTR szVersion, LPWSTR szBuildFlavor, DWORD 
 
 HRESULT WINAPI CorBindToCurrentRuntime(LPCWSTR filename, REFCLSID rclsid, REFIID riid, LPVOID *ppv)
 {
-    FIXME("(%s, %s, %s, %p): stub\n", debugstr_w(filename), debugstr_guid(rclsid), debugstr_guid(riid), ppv);
-    return E_NOTIMPL;
+    HRESULT ret;
+    ICLRRuntimeInfo *info;
+
+    TRACE("(%s, %s, %s, %p)\n", debugstr_w(filename), debugstr_guid(rclsid), debugstr_guid(riid), ppv);
+
+    *ppv = NULL;
+
+    ret = get_runtime_info(NULL, NULL, filename, 0, RUNTIME_INFO_UPGRADE_VERSION, TRUE, &info);
+
+    if (SUCCEEDED(ret))
+    {
+        ret = ICLRRuntimeInfo_GetInterface(info, rclsid, riid, ppv);
+
+        ICLRRuntimeInfo_Release(info);
+    }
+
+    return ret;
 }
 
 STDAPI ClrCreateManagedInstance(LPCWSTR pTypeName, REFIID riid, void **ppObject)
@@ -496,23 +602,166 @@ HRESULT WINAPI CLRCreateInstance(REFCLSID clsid, REFIID riid, LPVOID *ppInterfac
 
     if (IsEqualGUID(clsid, &CLSID_CLRMetaHost))
         return CLRMetaHost_CreateInstance(riid, ppInterface);
+    if (IsEqualGUID(clsid, &CLSID_CLRMetaHostPolicy))
+        return CLRMetaHostPolicy_CreateInstance(riid, ppInterface);
 
     FIXME("not implemented for class %s\n", debugstr_guid(clsid));
 
     return CLASS_E_CLASSNOTAVAILABLE;
 }
 
+HRESULT WINAPI CreateInterface(REFCLSID clsid, REFIID riid, LPVOID *ppInterface)
+{
+    TRACE("(%s,%s,%p)\n", debugstr_guid(clsid), debugstr_guid(riid), ppInterface);
+
+    return CLRCreateInstance(clsid, riid, ppInterface);
+}
+
 HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID* ppv)
 {
-    FIXME("(%s, %s, %p): stub\n", debugstr_guid(rclsid), debugstr_guid(riid), ppv);
+    mscorecf *This;
+    HRESULT hr;
+
+    TRACE("(%s, %s, %p): stub\n", debugstr_guid(rclsid), debugstr_guid(riid), ppv);
+
     if(!ppv)
         return E_INVALIDARG;
 
-    return E_NOTIMPL;
+    This = HeapAlloc(GetProcessHeap(), 0, sizeof(mscorecf));
+
+    This->IClassFactory_iface.lpVtbl = &mscorecf_vtbl;
+    This->pfnCreateInstance = create_monodata;
+    This->ref = 1;
+    This->clsid = *rclsid;
+
+    hr = IClassFactory_QueryInterface( &This->IClassFactory_iface, riid, ppv );
+    IClassFactory_Release(&This->IClassFactory_iface);
+
+    return hr;
+}
+
+static void parse_msi_version_string(const char *version, int *parts)
+{
+    const char *minor_start, *build_start;
+
+    parts[0] = atoi(version);
+
+    parts[1] = parts[2] = 0;
+
+    minor_start = strchr(version, '.');
+    if (minor_start)
+    {
+        minor_start++;
+        parts[1] = atoi(minor_start);
+
+        build_start = strchr(minor_start, '.');
+        if (build_start)
+            parts[2] = atoi(build_start+1);
+    }
+}
+
+static BOOL install_wine_mono(void)
+{
+    BOOL is_wow64 = FALSE;
+    HMODULE hmsi;
+    UINT (WINAPI *pMsiGetProductInfoA)(LPCSTR,LPCSTR,LPSTR,DWORD*);
+    char versionstringbuf[15];
+    UINT res;
+    DWORD buffer_size;
+    PROCESS_INFORMATION pi;
+    STARTUPINFOW si;
+    WCHAR app[MAX_PATH];
+    WCHAR *args;
+    LONG len;
+    BOOL ret;
+
+    static const char* mono_version = "4.5.4";
+    static const char* mono_product_code = "{E45D8920-A758-4088-B6C6-31DBB276992E}";
+
+    static const WCHAR controlW[] = {'\\','c','o','n','t','r','o','l','.','e','x','e',0};
+    static const WCHAR argsW[] =
+        {' ','a','p','p','w','i','z','.','c','p','l',' ','i','n','s','t','a','l','l','_','m','o','n','o',0};
+
+    IsWow64Process(GetCurrentProcess(), &is_wow64);
+
+    if (is_wow64)
+    {
+        TRACE("not installing mono in wow64 process\n");
+        return TRUE;
+    }
+
+    hmsi = LoadLibraryA("msi");
+
+    if (!hmsi)
+    {
+        ERR("couldn't load msi.dll\n");
+        return FALSE;
+    }
+
+    pMsiGetProductInfoA = (void*)GetProcAddress(hmsi, "MsiGetProductInfoA");
+
+    buffer_size = sizeof(versionstringbuf);
+
+    res = pMsiGetProductInfoA(mono_product_code, "VersionString", versionstringbuf, &buffer_size);
+
+    FreeLibrary(hmsi);
+
+    if (res == ERROR_SUCCESS)
+    {
+        int current_version[3], wanted_version[3], i;
+
+        TRACE("found installed version %s\n", versionstringbuf);
+
+        parse_msi_version_string(versionstringbuf, current_version);
+        parse_msi_version_string(mono_version, wanted_version);
+
+        for (i=0; i<3; i++)
+        {
+            if (current_version[i] < wanted_version[i])
+                break;
+            else if (current_version[i] > wanted_version[i])
+            {
+                TRACE("installed version is newer than %s, quitting\n", mono_version);
+                return TRUE;
+            }
+        }
+
+        if (i == 3)
+        {
+            TRACE("version %s is already installed, quitting\n", mono_version);
+            return TRUE;
+        }
+    }
+
+    len = GetSystemDirectoryW(app, MAX_PATH-sizeof(controlW)/sizeof(WCHAR));
+    memcpy(app+len, controlW, sizeof(controlW));
+
+    args = HeapAlloc(GetProcessHeap(), 0, (len*sizeof(WCHAR) + sizeof(controlW) + sizeof(argsW)));
+    if(!args)
+        return FALSE;
+
+    memcpy(args, app, len*sizeof(WCHAR) + sizeof(controlW));
+    memcpy(args + len + sizeof(controlW)/sizeof(WCHAR)-1, argsW, sizeof(argsW));
+
+    TRACE("starting %s\n", debugstr_w(args));
+
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    ret = CreateProcessW(app, args, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+    HeapFree(GetProcessHeap(), 0, args);
+    if (ret) {
+        CloseHandle(pi.hThread);
+        WaitForSingleObject(pi.hProcess, INFINITE);
+        CloseHandle(pi.hProcess);
+    }
+
+    return ret;
 }
 
 HRESULT WINAPI DllRegisterServer(void)
 {
+    install_wine_mono();
+
     return __wine_register_resources( MSCOREE_hInstance );
 }
 
@@ -524,6 +773,11 @@ HRESULT WINAPI DllUnregisterServer(void)
 HRESULT WINAPI DllCanUnloadNow(VOID)
 {
     return S_FALSE;
+}
+
+void WINAPI CoEEShutDownCOM(void)
+{
+    FIXME("stub.\n");
 }
 
 INT WINAPI ND_RU1( const void *ptr, INT offset )

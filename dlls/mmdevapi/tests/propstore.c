@@ -64,6 +64,51 @@ static void test_propertystore(IPropertyStore *store)
     ok(pv.vt == VT_EMPTY, "Key should not be found\n");
 }
 
+static void test_deviceinterface(IPropertyStore *store)
+{
+    HRESULT hr;
+    PROPVARIANT pv;
+
+    static const PROPERTYKEY deviceinterface_key = {
+        {0x233164c8, 0x1b2c, 0x4c7d, {0xbc, 0x68, 0xb6, 0x71, 0x68, 0x7a, 0x25, 0x67}}, 1
+    };
+
+    pv.vt = VT_EMPTY;
+    hr = IPropertyStore_GetValue(store, &deviceinterface_key, &pv);
+    ok(hr == S_OK, "GetValue failed: %08x\n", hr);
+    ok(pv.vt == VT_LPWSTR, "Got wrong variant type: 0x%x\n", pv.vt);
+    trace("device interface: %s\n", wine_dbgstr_w(pv.u.pwszVal));
+    CoTaskMemFree(pv.u.pwszVal);
+}
+
+static void test_getat(IPropertyStore *store)
+{
+    HRESULT hr;
+    DWORD propcount;
+    DWORD prop;
+    PROPERTYKEY pkey;
+    BOOL found_name = FALSE;
+    BOOL found_desc = FALSE;
+    char temp[128];
+    temp[sizeof(temp)-1] = 0;
+
+    hr = IPropertyStore_GetCount(store, &propcount);
+
+    ok(hr == S_OK, "Failed with %08x\n", hr);
+    ok(propcount > 0, "Propcount %d should be greather than zero\n", propcount);
+
+    for (prop = 0; prop < propcount; prop++) {
+	hr = IPropertyStore_GetAt(store, prop, &pkey);
+	ok(hr == S_OK, "Failed with %08x\n", hr);
+	if (IsEqualPropertyKey(pkey, DEVPKEY_Device_FriendlyName))
+	    found_name = TRUE;
+	if (IsEqualPropertyKey(pkey, DEVPKEY_Device_DeviceDesc))
+	    found_desc = TRUE;
+    }
+    ok(found_name || broken(!found_name), "DEVPKEY_Device_FriendlyName not found\n");
+    ok(found_desc == TRUE, "DEVPKEY_Device_DeviceDesc not found\n");
+}
+
 START_TEST(propstore)
 {
     HRESULT hr;
@@ -109,11 +154,13 @@ START_TEST(propstore)
     if (store)
     {
         test_propertystore(store);
+        test_deviceinterface(store);
+        test_getat(store);
         IPropertyStore_Release(store);
     }
     IMMDevice_Release(dev);
 cleanup:
     if (mme)
-        IUnknown_Release(mme);
+        IMMDeviceEnumerator_Release(mme);
     CoUninitialize();
 }

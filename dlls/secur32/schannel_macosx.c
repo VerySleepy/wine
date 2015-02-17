@@ -41,9 +41,107 @@
 #include "wine/debug.h"
 #include "wine/library.h"
 
+#ifdef HAVE_SECURITY_SECURITY_H
+
 WINE_DEFAULT_DEBUG_CHANNEL(secur32);
 
-#ifdef HAVE_SECURITY_SECURITY_H
+#if MAC_OS_X_VERSION_MAX_ALLOWED < 1060
+/* Defined in <Security/CipherSuite.h> in the 10.6 SDK or later. */
+enum {
+    TLS_ECDH_ECDSA_WITH_NULL_SHA           =	0xC001,
+    TLS_ECDH_ECDSA_WITH_RC4_128_SHA        =	0xC002,
+    TLS_ECDH_ECDSA_WITH_3DES_EDE_CBC_SHA   =	0xC003,
+    TLS_ECDH_ECDSA_WITH_AES_128_CBC_SHA    =	0xC004,
+    TLS_ECDH_ECDSA_WITH_AES_256_CBC_SHA    =	0xC005,
+    TLS_ECDHE_ECDSA_WITH_NULL_SHA          =	0xC006,
+    TLS_ECDHE_ECDSA_WITH_RC4_128_SHA       =	0xC007,
+    TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA  =	0xC008,
+    TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA   =	0xC009,
+    TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA   =	0xC00A,
+    TLS_ECDH_RSA_WITH_NULL_SHA             =	0xC00B,
+    TLS_ECDH_RSA_WITH_RC4_128_SHA          =	0xC00C,
+    TLS_ECDH_RSA_WITH_3DES_EDE_CBC_SHA     =	0xC00D,
+    TLS_ECDH_RSA_WITH_AES_128_CBC_SHA      =	0xC00E,
+    TLS_ECDH_RSA_WITH_AES_256_CBC_SHA      =	0xC00F,
+    TLS_ECDHE_RSA_WITH_NULL_SHA            =	0xC010,
+    TLS_ECDHE_RSA_WITH_RC4_128_SHA         =	0xC011,
+    TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA    =	0xC012,
+    TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA     =	0xC013,
+    TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA     =	0xC014,
+    TLS_ECDH_anon_WITH_NULL_SHA            =	0xC015,
+    TLS_ECDH_anon_WITH_RC4_128_SHA         =	0xC016,
+    TLS_ECDH_anon_WITH_3DES_EDE_CBC_SHA    =	0xC017,
+    TLS_ECDH_anon_WITH_AES_128_CBC_SHA     =	0xC018,
+    TLS_ECDH_anon_WITH_AES_256_CBC_SHA     =	0xC019,
+};
+#endif
+
+#if MAC_OS_X_VERSION_MAX_ALLOWED < 1080
+/* Defined in <Security/CipherSuite.h> in the 10.8 SDK or later. */
+enum {
+    TLS_NULL_WITH_NULL_NULL                   = 0x0000,
+    TLS_RSA_WITH_NULL_MD5                     = 0x0001,
+    TLS_RSA_WITH_NULL_SHA                     = 0x0002,
+    TLS_RSA_WITH_RC4_128_MD5                  = 0x0004,
+    TLS_RSA_WITH_RC4_128_SHA                  = 0x0005,
+    TLS_RSA_WITH_3DES_EDE_CBC_SHA             = 0x000A,
+    TLS_RSA_WITH_NULL_SHA256                  = 0x003B,
+    TLS_RSA_WITH_AES_128_CBC_SHA256           = 0x003C,
+    TLS_RSA_WITH_AES_256_CBC_SHA256           = 0x003D,
+    TLS_DH_DSS_WITH_3DES_EDE_CBC_SHA          = 0x000D,
+    TLS_DH_RSA_WITH_3DES_EDE_CBC_SHA          = 0x0010,
+    TLS_DHE_DSS_WITH_3DES_EDE_CBC_SHA         = 0x0013,
+    TLS_DHE_RSA_WITH_3DES_EDE_CBC_SHA         = 0x0016,
+    TLS_DH_DSS_WITH_AES_128_CBC_SHA256        = 0x003E,
+    TLS_DH_RSA_WITH_AES_128_CBC_SHA256        = 0x003F,
+    TLS_DHE_DSS_WITH_AES_128_CBC_SHA256       = 0x0040,
+    TLS_DHE_RSA_WITH_AES_128_CBC_SHA256       = 0x0067,
+    TLS_DH_DSS_WITH_AES_256_CBC_SHA256        = 0x0068,
+    TLS_DH_RSA_WITH_AES_256_CBC_SHA256        = 0x0069,
+    TLS_DHE_DSS_WITH_AES_256_CBC_SHA256       = 0x006A,
+    TLS_DHE_RSA_WITH_AES_256_CBC_SHA256       = 0x006B,
+    TLS_DH_anon_WITH_RC4_128_MD5              = 0x0018,
+    TLS_DH_anon_WITH_3DES_EDE_CBC_SHA         = 0x001B,
+    TLS_DH_anon_WITH_AES_128_CBC_SHA256       = 0x006C,
+    TLS_DH_anon_WITH_AES_256_CBC_SHA256       = 0x006D,
+    TLS_RSA_WITH_AES_128_GCM_SHA256           = 0x009C,
+    TLS_RSA_WITH_AES_256_GCM_SHA384           = 0x009D,
+    TLS_DHE_RSA_WITH_AES_128_GCM_SHA256       = 0x009E,
+    TLS_DHE_RSA_WITH_AES_256_GCM_SHA384       = 0x009F,
+    TLS_DH_RSA_WITH_AES_128_GCM_SHA256        = 0x00A0,
+    TLS_DH_RSA_WITH_AES_256_GCM_SHA384        = 0x00A1,
+    TLS_DHE_DSS_WITH_AES_128_GCM_SHA256       = 0x00A2,
+    TLS_DHE_DSS_WITH_AES_256_GCM_SHA384       = 0x00A3,
+    TLS_DH_DSS_WITH_AES_128_GCM_SHA256        = 0x00A4,
+    TLS_DH_DSS_WITH_AES_256_GCM_SHA384        = 0x00A5,
+    TLS_DH_anon_WITH_AES_128_GCM_SHA256       = 0x00A6,
+    TLS_DH_anon_WITH_AES_256_GCM_SHA384       = 0x00A7,
+    TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256   = 0xC023,
+    TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384   = 0xC024,
+    TLS_ECDH_ECDSA_WITH_AES_128_CBC_SHA256    = 0xC025,
+    TLS_ECDH_ECDSA_WITH_AES_256_CBC_SHA384    = 0xC026,
+    TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256     = 0xC027,
+    TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384     = 0xC028,
+    TLS_ECDH_RSA_WITH_AES_128_CBC_SHA256      = 0xC029,
+    TLS_ECDH_RSA_WITH_AES_256_CBC_SHA384      = 0xC02A,
+    TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256   = 0xC02B,
+    TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384   = 0xC02C,
+    TLS_ECDH_ECDSA_WITH_AES_128_GCM_SHA256    = 0xC02D,
+    TLS_ECDH_ECDSA_WITH_AES_256_GCM_SHA384    = 0xC02E,
+    TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256     = 0xC02F,
+    TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384     = 0xC030,
+    TLS_ECDH_RSA_WITH_AES_128_GCM_SHA256      = 0xC031,
+    TLS_ECDH_RSA_WITH_AES_256_GCM_SHA384      = 0xC032,
+    TLS_EMPTY_RENEGOTIATION_INFO_SCSV         = 0x00FF,
+};
+
+/* Defined in <Security/SecureTransport.h> in the 10.8 SDK or later. */
+enum {
+    kTLSProtocol11      = 7,    /* TLS 1.1 */
+    kTLSProtocol12      = 8,    /* TLS 1.2 */
+};
+#endif
+
 
 struct mac_session {
     SSLContextRef context;
@@ -81,7 +179,9 @@ enum {
 enum {
     schan_enc_3DES_EDE_CBC,
     schan_enc_AES_128_CBC,
+    schan_enc_AES_128_GCM,
     schan_enc_AES_256_CBC,
+    schan_enc_AES_256_GCM,
     schan_enc_DES_CBC,
     schan_enc_DES40_CBC,
     schan_enc_FORTEZZA_CBC,
@@ -97,6 +197,8 @@ enum {
     schan_mac_MD5,
     schan_mac_NULL,
     schan_mac_SHA,
+    schan_mac_SHA256,
+    schan_mac_SHA384,
 };
 
 
@@ -156,7 +258,6 @@ static const struct cipher_suite cipher_suites[] = {
     CIPHER_SUITE(TLS, DHE_RSA, AES_256_CBC, SHA),
     CIPHER_SUITE(TLS, DH_anon, AES_256_CBC, SHA),
 
-#if MAC_OS_X_VERSION_MAX_ALLOWED >= 1060
     CIPHER_SUITE(TLS, ECDH_ECDSA, NULL, SHA),
     CIPHER_SUITE(TLS, ECDH_ECDSA, RC4_128, SHA),
     CIPHER_SUITE(TLS, ECDH_ECDSA, 3DES_EDE_CBC, SHA),
@@ -182,7 +283,60 @@ static const struct cipher_suite cipher_suites[] = {
     CIPHER_SUITE(TLS, ECDH_anon, 3DES_EDE_CBC, SHA),
     CIPHER_SUITE(TLS, ECDH_anon, AES_128_CBC, SHA),
     CIPHER_SUITE(TLS, ECDH_anon, AES_256_CBC, SHA),
-#endif
+
+    CIPHER_SUITE(TLS, NULL, NULL, NULL),
+    CIPHER_SUITE(TLS, RSA, NULL, MD5),
+    CIPHER_SUITE(TLS, RSA, NULL, SHA),
+    CIPHER_SUITE(TLS, RSA, RC4_128, MD5),
+    CIPHER_SUITE(TLS, RSA, RC4_128, SHA),
+    CIPHER_SUITE(TLS, RSA, 3DES_EDE_CBC, SHA),
+    CIPHER_SUITE(TLS, RSA, NULL, SHA256),
+    CIPHER_SUITE(TLS, RSA, AES_128_CBC, SHA256),
+    CIPHER_SUITE(TLS, RSA, AES_256_CBC, SHA256),
+    CIPHER_SUITE(TLS, DH_DSS, 3DES_EDE_CBC, SHA),
+    CIPHER_SUITE(TLS, DH_RSA, 3DES_EDE_CBC, SHA),
+    CIPHER_SUITE(TLS, DHE_DSS, 3DES_EDE_CBC, SHA),
+    CIPHER_SUITE(TLS, DHE_RSA, 3DES_EDE_CBC, SHA),
+    CIPHER_SUITE(TLS, DH_DSS, AES_128_CBC, SHA256),
+    CIPHER_SUITE(TLS, DH_RSA, AES_128_CBC, SHA256),
+    CIPHER_SUITE(TLS, DHE_DSS, AES_128_CBC, SHA256),
+    CIPHER_SUITE(TLS, DHE_RSA, AES_128_CBC, SHA256),
+    CIPHER_SUITE(TLS, DH_DSS, AES_256_CBC, SHA256),
+    CIPHER_SUITE(TLS, DH_RSA, AES_256_CBC, SHA256),
+    CIPHER_SUITE(TLS, DHE_DSS, AES_256_CBC, SHA256),
+    CIPHER_SUITE(TLS, DHE_RSA, AES_256_CBC, SHA256),
+    CIPHER_SUITE(TLS, DH_anon, RC4_128, MD5),
+    CIPHER_SUITE(TLS, DH_anon, 3DES_EDE_CBC, SHA),
+    CIPHER_SUITE(TLS, DH_anon, AES_128_CBC, SHA256),
+    CIPHER_SUITE(TLS, DH_anon, AES_256_CBC, SHA256),
+    CIPHER_SUITE(TLS, RSA, AES_128_GCM, SHA256),
+    CIPHER_SUITE(TLS, RSA, AES_256_GCM, SHA384),
+    CIPHER_SUITE(TLS, DHE_RSA, AES_128_GCM, SHA256),
+    CIPHER_SUITE(TLS, DHE_RSA, AES_256_GCM, SHA384),
+    CIPHER_SUITE(TLS, DH_RSA, AES_128_GCM, SHA256),
+    CIPHER_SUITE(TLS, DH_RSA, AES_256_GCM, SHA384),
+    CIPHER_SUITE(TLS, DHE_DSS, AES_128_GCM, SHA256),
+    CIPHER_SUITE(TLS, DHE_DSS, AES_256_GCM, SHA384),
+    CIPHER_SUITE(TLS, DH_DSS, AES_128_GCM, SHA256),
+    CIPHER_SUITE(TLS, DH_DSS, AES_256_GCM, SHA384),
+    CIPHER_SUITE(TLS, DH_anon, AES_128_GCM, SHA256),
+    CIPHER_SUITE(TLS, DH_anon, AES_256_GCM, SHA384),
+    CIPHER_SUITE(TLS, ECDHE_ECDSA, AES_128_CBC, SHA256),
+    CIPHER_SUITE(TLS, ECDHE_ECDSA, AES_256_CBC, SHA384),
+    CIPHER_SUITE(TLS, ECDH_ECDSA, AES_128_CBC, SHA256),
+    CIPHER_SUITE(TLS, ECDH_ECDSA, AES_256_CBC, SHA384),
+    CIPHER_SUITE(TLS, ECDHE_RSA, AES_128_CBC, SHA256),
+    CIPHER_SUITE(TLS, ECDHE_RSA, AES_256_CBC, SHA384),
+    CIPHER_SUITE(TLS, ECDH_RSA, AES_128_CBC, SHA256),
+    CIPHER_SUITE(TLS, ECDH_RSA, AES_256_CBC, SHA384),
+    CIPHER_SUITE(TLS, ECDHE_ECDSA, AES_128_GCM, SHA256),
+    CIPHER_SUITE(TLS, ECDHE_ECDSA, AES_256_GCM, SHA384),
+    CIPHER_SUITE(TLS, ECDH_ECDSA, AES_128_GCM, SHA256),
+    CIPHER_SUITE(TLS, ECDH_ECDSA, AES_256_GCM, SHA384),
+    CIPHER_SUITE(TLS, ECDHE_RSA, AES_128_GCM, SHA256),
+    CIPHER_SUITE(TLS, ECDHE_RSA, AES_256_GCM, SHA384),
+    CIPHER_SUITE(TLS, ECDH_RSA, AES_128_GCM, SHA256),
+    CIPHER_SUITE(TLS, ECDH_RSA, AES_256_GCM, SHA384),
 
     CIPHER_SUITE(SSL, RSA, RC2_CBC, MD5),
     CIPHER_SUITE(SSL, RSA, IDEA_CBC, MD5),
@@ -223,9 +377,11 @@ static DWORD schan_get_session_protocol(struct mac_session* s)
 
     switch (protocol)
     {
-    case kSSLProtocol2: return SP_PROT_SSL2_CLIENT;
-    case kSSLProtocol3: return SP_PROT_SSL3_CLIENT;
-    case kTLSProtocol1: return SP_PROT_TLS1_CLIENT;
+    case kSSLProtocol2:     return SP_PROT_SSL2_CLIENT;
+    case kSSLProtocol3:     return SP_PROT_SSL3_CLIENT;
+    case kTLSProtocol1:     return SP_PROT_TLS1_CLIENT;
+    case kTLSProtocol11:    return SP_PROT_TLS1_1_CLIENT;
+    case kTLSProtocol12:    return SP_PROT_TLS1_2_CLIENT;
     default:
         FIXME("unknown protocol %d\n", protocol);
         return 0;
@@ -249,6 +405,8 @@ static ALG_ID schan_get_cipher_algid(const struct cipher_suite* c)
     case schan_enc_RC4_128:         return CALG_RC4;
     case schan_enc_RC4_40:          return CALG_RC4;
 
+    case schan_enc_AES_128_GCM:
+    case schan_enc_AES_256_GCM:
     case schan_enc_FORTEZZA_CBC:
     case schan_enc_IDEA_CBC:
         FIXME("Don't know CALG for encryption algorithm %d, returning 0\n", c->enc_alg);
@@ -268,7 +426,9 @@ static unsigned int schan_get_cipher_key_size(const struct cipher_suite* c)
     {
     case schan_enc_3DES_EDE_CBC:    return 168;
     case schan_enc_AES_128_CBC:     return 128;
+    case schan_enc_AES_128_GCM:     return 128;
     case schan_enc_AES_256_CBC:     return 256;
+    case schan_enc_AES_256_GCM:     return 256;
     case schan_enc_DES_CBC:         return 56;
     case schan_enc_DES40_CBC:       return 40;
     case schan_enc_NULL:            return 0;
@@ -297,6 +457,8 @@ static ALG_ID schan_get_mac_algid(const struct cipher_suite* c)
     case schan_mac_MD5:     return CALG_MD5;
     case schan_mac_NULL:    return 0;
     case schan_mac_SHA:     return CALG_SHA;
+    case schan_mac_SHA256:  return CALG_SHA_256;
+    case schan_mac_SHA384:  return CALG_SHA_384;
 
     default:
         FIXME("Unknown hashing algorithm %d for cipher suite %#x, returning 0\n", c->mac_alg, (unsigned)c->suite);
@@ -313,6 +475,8 @@ static unsigned int schan_get_mac_key_size(const struct cipher_suite* c)
     case schan_mac_MD5:     return 128;
     case schan_mac_NULL:    return 0;
     case schan_mac_SHA:     return 160;
+    case schan_mac_SHA256:  return 256;
+    case schan_mac_SHA384:  return 384;
 
     default:
         FIXME("Unknown hashing algorithm %d for cipher suite %#x, returning 0\n", c->mac_alg, (unsigned)c->suite);
@@ -330,6 +494,11 @@ static ALG_ID schan_get_kx_algid(const struct cipher_suite* c)
     case schan_kx_DHE_DSS:
     case schan_kx_DHE_RSA_EXPORT:
     case schan_kx_DHE_RSA:          return CALG_DH_EPHEM;
+    case schan_kx_ECDH_anon:
+    case schan_kx_ECDH_ECDSA:
+    case schan_kx_ECDH_RSA:
+    case schan_kx_ECDHE_ECDSA:
+    case schan_kx_ECDHE_RSA:        return CALG_ECDH;
     case schan_kx_NULL:             return 0;
     case schan_kx_RSA:              return CALG_RSA_KEYX;
 
@@ -339,11 +508,6 @@ static ALG_ID schan_get_kx_algid(const struct cipher_suite* c)
     case schan_kx_DH_DSS:
     case schan_kx_DH_RSA_EXPORT:
     case schan_kx_DH_RSA:
-    case schan_kx_ECDH_anon:
-    case schan_kx_ECDH_ECDSA:
-    case schan_kx_ECDH_RSA:
-    case schan_kx_ECDHE_ECDSA:
-    case schan_kx_ECDHE_RSA:
     case schan_kx_FORTEZZA_DMS:
     case schan_kx_RSA_EXPORT:
         FIXME("Don't know CALG for key exchange algorithm %d for cipher suite %#x, returning 0\n", c->kx_alg, (unsigned)c->suite);
@@ -466,20 +630,37 @@ static OSStatus schan_push_adapter(SSLConnectionRef transport, const void *buff,
     return ret;
 }
 
+static const struct {
+    DWORD enable_flag;
+    SSLProtocol mac_version;
+} protocol_priority_flags[] = {
+    {SP_PROT_TLS1_2_CLIENT, kTLSProtocol12},
+    {SP_PROT_TLS1_1_CLIENT, kTLSProtocol11},
+    {SP_PROT_TLS1_0_CLIENT, kTLSProtocol1},
+    {SP_PROT_SSL3_CLIENT,   kSSLProtocol3},
+    {SP_PROT_SSL2_CLIENT,   kSSLProtocol2}
+};
 
-BOOL schan_imp_create_session(schan_imp_session *session, BOOL is_server,
-                              schan_imp_certificate_credentials cred)
+static DWORD supported_protocols;
+
+DWORD schan_imp_enabled_protocols(void)
+{
+    return supported_protocols;
+}
+
+BOOL schan_imp_create_session(schan_imp_session *session, schan_credentials *cred)
 {
     struct mac_session *s;
+    unsigned i;
     OSStatus status;
 
-    TRACE("(%p, %d)\n", session, is_server);
+    TRACE("(%p)\n", session);
 
     s = HeapAlloc(GetProcessHeap(), 0, sizeof(*s));
     if (!s)
         return FALSE;
 
-    status = SSLNewContext(is_server, &s->context);
+    status = SSLNewContext(cred->credential_use == SECPKG_CRED_INBOUND, &s->context);
     if (status != noErr)
     {
         ERR("Failed to create session context: %ld\n", (long)status);
@@ -500,11 +681,17 @@ BOOL schan_imp_create_session(schan_imp_session *session, BOOL is_server,
         goto fail;
     }
 
-    status = SSLSetProtocolVersionEnabled(s->context, kSSLProtocol2, FALSE);
-    if (status != noErr)
-    {
-        ERR("Failed to disable SSL version 2: %ld\n", (long)status);
-        goto fail;
+    for(i=0; i < sizeof(protocol_priority_flags)/sizeof(*protocol_priority_flags); i++) {
+        if(!(protocol_priority_flags[i].enable_flag & supported_protocols))
+           continue;
+
+        status = SSLSetProtocolVersionEnabled(s->context, protocol_priority_flags[i].mac_version,
+                (cred->enabled_protocols & protocol_priority_flags[i].enable_flag) != 0);
+        if (status != noErr)
+        {
+            ERR("Failed to set SSL version %d: %ld\n", protocol_priority_flags[i].mac_version, (long)status);
+            goto fail;
+        }
     }
 
     status = SSLSetIOFuncs(s->context, schan_pull_adapter, schan_push_adapter);
@@ -545,6 +732,15 @@ void schan_imp_set_session_transport(schan_imp_session session,
     TRACE("(%p/%p, %p)\n", s, s->context, t);
 
     s->transport = t;
+}
+
+void schan_imp_set_session_target(schan_imp_session session, const char *target)
+{
+    struct mac_session *s = (struct mac_session*)session;
+
+    TRACE("(%p/%p, %s)\n", s, s->context, debugstr_a(target));
+
+    SSLSetPeerDomainName( s->context, target, strlen(target) );
 }
 
 SECURITY_STATUS schan_imp_handshake(schan_imp_session session)
@@ -608,7 +804,9 @@ unsigned int schan_imp_get_session_cipher_block_size(schan_imp_session session)
     {
     case schan_enc_3DES_EDE_CBC:    return 64;
     case schan_enc_AES_128_CBC:     return 128;
+    case schan_enc_AES_128_GCM:     return 128;
     case schan_enc_AES_256_CBC:     return 128;
+    case schan_enc_AES_256_GCM:     return 128;
     case schan_enc_DES_CBC:         return 64;
     case schan_enc_DES40_CBC:       return 64;
     case schan_enc_NULL:            return 0;
@@ -677,53 +875,67 @@ static void schan_imp_cf_release(const void *arg, void *ctx)
 }
 #endif
 
-SECURITY_STATUS schan_imp_get_session_peer_certificate(schan_imp_session session,
-                                                       PCCERT_CONTEXT *cert)
+SECURITY_STATUS schan_imp_get_session_peer_certificate(schan_imp_session session, HCERTSTORE store,
+                                                       PCCERT_CONTEXT *ret_cert)
 {
     struct mac_session* s = (struct mac_session*)session;
-    SECURITY_STATUS ret = SEC_E_INTERNAL_ERROR;
-    CFArrayRef certs;
+    SECURITY_STATUS ret = SEC_E_OK;
+    PCCERT_CONTEXT cert = NULL;
+    SecCertificateRef mac_cert;
+    CFArrayRef cert_array;
     OSStatus status;
+    CFIndex cnt, i;
+    CFDataRef data;
+    BOOL res;
 
     TRACE("(%p/%p, %p)\n", s, s->context, cert);
 
 #ifdef HAVE_SSLCOPYPEERCERTIFICATES
-    status = SSLCopyPeerCertificates(s->context, &certs);
+    status = SSLCopyPeerCertificates(s->context, &cert_array);
 #else
-    status = SSLGetPeerCertificates(s->context, &certs);
+    status = SSLGetPeerCertificates(s->context, &cert_array);
 #endif
-    if (status == noErr && certs)
+    if (status != noErr || !cert_array)
     {
-        SecCertificateRef mac_cert;
-        CFDataRef data;
-        if (CFArrayGetCount(certs) &&
-            (mac_cert = (SecCertificateRef)CFArrayGetValueAtIndex(certs, 0)) &&
-            (SecKeychainItemExport(mac_cert, kSecFormatX509Cert, 0, NULL, &data) == noErr))
-        {
-            *cert = CertCreateCertificateContext(X509_ASN_ENCODING,
-                    CFDataGetBytePtr(data), CFDataGetLength(data));
-            if (*cert)
-                ret = SEC_E_OK;
-            else
-            {
-                ret = GetLastError();
-                WARN("CertCreateCertificateContext failed: %x\n", ret);
-            }
-            CFRelease(data);
-        }
-        else
-            WARN("Couldn't extract certificate data\n");
-#ifndef HAVE_SSLCOPYPEERCERTIFICATES
-        /* This is why SSLGetPeerCertificates was deprecated */
-        CFArrayApplyFunction(certs, CFRangeMake(0, CFArrayGetCount(certs)),
-                             schan_imp_cf_release, NULL);
-#endif
-        CFRelease(certs);
-    }
-    else
         WARN("SSLCopyPeerCertificates failed: %ld\n", (long)status);
+        return SEC_E_INTERNAL_ERROR;
+    }
 
-    return ret;
+    cnt = CFArrayGetCount(cert_array);
+    for (i=0; i < cnt; i++) {
+        if (!(mac_cert = (SecCertificateRef)CFArrayGetValueAtIndex(cert_array, i)) ||
+            (SecKeychainItemExport(mac_cert, kSecFormatX509Cert, 0, NULL, &data) != noErr))
+        {
+            WARN("Couldn't extract certificate data\n");
+            ret = SEC_E_INTERNAL_ERROR;
+            break;
+        }
+
+        res = CertAddEncodedCertificateToStore(store, X509_ASN_ENCODING, CFDataGetBytePtr(data), CFDataGetLength(data),
+                                               CERT_STORE_ADD_REPLACE_EXISTING, i ? NULL : &cert);
+        CFRelease(data);
+        if (!res)
+        {
+            ret = GetLastError();
+            WARN("CertAddEncodedCertificateToStore failed: %x\n", ret);
+            break;
+        }
+    }
+
+#ifndef HAVE_SSLCOPYPEERCERTIFICATES
+    /* This is why SSLGetPeerCertificates was deprecated */
+    CFArrayApplyFunction(cert_array, CFRangeMake(0, CFArrayGetCount(cert_array)),
+                         schan_imp_cf_release, NULL);
+#endif
+    CFRelease(cert_array);
+    if (ret != SEC_E_OK) {
+        if(cert)
+            CertFreeCertificateContext(cert);
+        return ret;
+    }
+
+    *ret_cert = cert;
+    return SEC_E_OK;
 }
 
 SECURITY_STATUS schan_imp_send(schan_imp_session session, const void *buffer,
@@ -765,7 +977,7 @@ SECURITY_STATUS schan_imp_recv(schan_imp_session session, void *buffer,
     TRACE("(%p/%p, %p, %p/%lu)\n", s, s->context, buffer, length, *length);
 
     status = SSLRead(s->context, buffer, *length, length);
-    if (status == noErr)
+    if (status == noErr || status == errSSLClosedGraceful)
         TRACE("Read %lu bytes\n", *length);
     else if (status == errSSLWouldBlock)
     {
@@ -786,20 +998,45 @@ SECURITY_STATUS schan_imp_recv(schan_imp_session session, void *buffer,
     return SEC_E_OK;
 }
 
-BOOL schan_imp_allocate_certificate_credentials(schan_imp_certificate_credentials *c)
+BOOL schan_imp_allocate_certificate_credentials(schan_credentials *c)
 {
     /* The certificate is never really used for anything. */
-    *c = NULL;
+    c->credentials = NULL;
     return TRUE;
 }
 
-void schan_imp_free_certificate_credentials(schan_imp_certificate_credentials c)
+void schan_imp_free_certificate_credentials(schan_credentials *c)
 {
 }
 
 BOOL schan_imp_init(void)
 {
     TRACE("()\n");
+
+    supported_protocols = SP_PROT_SSL2_CLIENT | SP_PROT_SSL3_CLIENT | SP_PROT_TLS1_0_CLIENT;
+
+#if MAC_OS_X_VERSION_MAX_ALLOWED >= 1080
+    if(SSLGetProtocolVersionMax != NULL) {
+        SSLProtocol max_protocol;
+        SSLContextRef ctx;
+        OSStatus status;
+
+        status = SSLNewContext(FALSE, &ctx);
+        if(status == noErr) {
+            status = SSLGetProtocolVersionMax(ctx, &max_protocol);
+            if(status == noErr) {
+                if(max_protocol >= kTLSProtocol11)
+                    supported_protocols |= SP_PROT_TLS1_1_CLIENT;
+                if(max_protocol >= kTLSProtocol12)
+                    supported_protocols |= SP_PROT_TLS1_2_CLIENT;
+            }
+            SSLDisposeContext(ctx);
+        }else {
+            WARN("SSLNewContext failed\n");
+        }
+    }
+#endif
+
     return TRUE;
 }
 

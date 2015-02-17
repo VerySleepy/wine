@@ -28,29 +28,6 @@
 WINE_DEFAULT_DEBUG_CHANNEL(dpnhpast);
 
 /******************************************************************
- *		DllMain
- *
- *
- */
-BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
-{
-	TRACE("(%p, %d, %p)\n",hinstDLL,fdwReason,lpvReserved);
-
-	if (fdwReason == DLL_PROCESS_ATTACH)
-	{
-            DisableThreadLibraryCalls(hinstDLL);
-		/* FIXME: Initialisation */
-	}
-	else if (fdwReason == DLL_PROCESS_DETACH)
-	{
-		/* FIXME: Cleanup */
-	}
-
-	return TRUE;
-}
-
-
-/******************************************************************
  *		DirectPlayNATHelpCreate (DPNHPAST.1)
  *
  *
@@ -81,7 +58,7 @@ HRESULT WINAPI DllRegisterServer(void)
  */
 HRESULT WINAPI DllCanUnloadNow(void)
 {
-	return S_OK;
+    return S_FALSE;
 }
 
 

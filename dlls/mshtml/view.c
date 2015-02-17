@@ -63,23 +63,6 @@ static void paint_document(HTMLDocumentObj *This)
     if(!(This->hostinfo.dwFlags & (DOCHOSTUIFLAG_NO3DOUTERBORDER|DOCHOSTUIFLAG_NO3DBORDER)))
         DrawEdge(hdc, &rect, EDGE_SUNKEN, BF_RECT|BF_ADJUST);
 
-    if(!This->nscontainer) {
-        WCHAR wszHTMLDisabled[100];
-        HFONT font;
-
-        LoadStringW(hInst, IDS_HTMLDISABLED, wszHTMLDisabled, sizeof(wszHTMLDisabled)/sizeof(WCHAR));
-
-        font = CreateFontA(25,0,0,0,400,0,0,0,ANSI_CHARSET,0,0,DEFAULT_QUALITY,DEFAULT_PITCH,NULL);
-
-        SelectObject(hdc, font);
-        SelectObject(hdc, GetSysColorBrush(COLOR_WINDOW));
-
-        Rectangle(hdc, rect.left, rect.top, rect.right, rect.bottom);
-        DrawTextW(hdc, wszHTMLDisabled,-1, &rect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-
-        DeleteObject(font);
-    }
-
     EndPaint(This->hwnd, &ps);
 }
 
@@ -439,7 +422,7 @@ HRESULT call_set_active_object(IOleInPlaceUIWindow *window, IOleInPlaceActiveObj
                     sizeof(html_documentW)/sizeof(WCHAR));
     }
 
-    return IOleInPlaceFrame_SetActiveObject(window, act_obj, act_obj ? html_documentW : NULL);
+    return IOleInPlaceUIWindow_SetActiveObject(window, act_obj, act_obj ? html_documentW : NULL);
 }
 
 /**********************************************************
@@ -620,7 +603,7 @@ static HRESULT WINAPI OleDocumentView_UIActivate(IOleDocumentView *iface, BOOL f
             }
         }
 
-        IOleClientSite_AddRef(This->doc_obj->ipsite);
+        IOleInPlaceSite_AddRef(This->doc_obj->ipsite);
         This->doc_obj->request_uiactivate = FALSE;
         HTMLDocument_LockContainer(This->doc_obj, TRUE);
     }
@@ -911,4 +894,63 @@ void HTMLDocument_View_Init(HTMLDocument *This)
 {
     This->IOleDocumentView_iface.lpVtbl = &OleDocumentViewVtbl;
     This->IViewObjectEx_iface.lpVtbl = &ViewObjectVtbl;
+}
+
+static inline HTMLDocumentObj *impl_from_IWindowForBindingUI(IWindowForBindingUI *iface)
+{
+    return CONTAINING_RECORD(iface, HTMLDocumentObj, IWindowForBindingUI_iface);
+}
+
+static HRESULT WINAPI WindowForBindingUI_QueryInterface(IWindowForBindingUI *iface, REFIID riid, void **ppv)
+{
+    HTMLDocumentObj *This = impl_from_IWindowForBindingUI(iface);
+
+    if(IsEqualGUID(&IID_IUnknown, riid)) {
+        TRACE("(%p)->(IID_IUnknown %p)\n", This, ppv);
+        *ppv = &This->IWindowForBindingUI_iface;
+    }else if(IsEqualGUID(&IID_IWindowForBindingUI, riid)) {
+        TRACE("(%p)->(IID_IWindowForBindingUI %p)\n", This, ppv);
+        *ppv = &This->IWindowForBindingUI_iface;
+    }else {
+        WARN("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppv);
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown*)*ppv);
+    return S_OK;
+}
+
+static ULONG WINAPI WindowForBindingUI_AddRef(IWindowForBindingUI *iface)
+{
+    HTMLDocumentObj *This = impl_from_IWindowForBindingUI(iface);
+    return htmldoc_addref(&This->basedoc);
+}
+
+static ULONG WINAPI WindowForBindingUI_Release(IWindowForBindingUI *iface)
+{
+    HTMLDocumentObj *This = impl_from_IWindowForBindingUI(iface);
+    return htmldoc_release(&This->basedoc);
+}
+
+static HRESULT WINAPI WindowForBindingUI_GetWindow(IWindowForBindingUI *iface, REFGUID rguidReason, HWND *phwnd)
+{
+    HTMLDocumentObj *This = impl_from_IWindowForBindingUI(iface);
+
+    TRACE("(%p)->(%s %p)\n", This, debugstr_guid(rguidReason), phwnd);
+
+    *phwnd = This->hwnd;
+    return S_OK;
+}
+
+static const IWindowForBindingUIVtbl WindowForBindingUIVtbl = {
+    WindowForBindingUI_QueryInterface,
+    WindowForBindingUI_AddRef,
+    WindowForBindingUI_Release,
+    WindowForBindingUI_GetWindow
+};
+
+void init_binding_ui(HTMLDocumentObj *doc)
+{
+    doc->IWindowForBindingUI_iface.lpVtbl = &WindowForBindingUIVtbl;
 }

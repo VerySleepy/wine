@@ -42,84 +42,86 @@ WINE_DEFAULT_DEBUG_CHANNEL(shell);
 
 /************************* STRRET functions ****************************/
 
+static const char *debugstr_strret(STRRET *s)
+{
+    switch (s->uType)
+    {
+        case STRRET_WSTR:
+            return "STRRET_WSTR";
+        case STRRET_CSTR:
+            return "STRRET_CSTR";
+        case STRRET_OFFSET:
+            return "STRRET_OFFSET";
+        default:
+            return "STRRET_???";
+    }
+}
+
 BOOL WINAPI StrRetToStrNA(LPSTR dest, DWORD len, LPSTRRET src, const ITEMIDLIST *pidl)
 {
-	TRACE("dest=%p len=0x%x strret=%p(%s) pidl=%p\n",
-	    dest,len,src,
-	    (src->uType == STRRET_WSTR) ? "STRRET_WSTR" :
-	    (src->uType == STRRET_CSTR) ? "STRRET_CSTR" :
-	    (src->uType == STRRET_OFFSET) ? "STRRET_OFFSET" : "STRRET_???",
-	    pidl);
+    TRACE("dest=%p len=0x%x strret=%p(%s) pidl=%p\n", dest, len, src, debugstr_strret(src), pidl);
 
     if (!dest)
         return FALSE;
 
-	switch (src->uType)
-	{
-	  case STRRET_WSTR:
-	    WideCharToMultiByte(CP_ACP, 0, src->u.pOleStr, -1, dest, len, NULL, NULL);
-	    CoTaskMemFree(src->u.pOleStr);
-	    break;
-
-	  case STRRET_CSTR:
-	    lstrcpynA(dest, src->u.cStr, len);
-	    break;
-
-	  case STRRET_OFFSET:
-	    lstrcpynA(dest, ((LPCSTR)&pidl->mkid)+src->u.uOffset, len);
-	    break;
-
-	  default:
-	    FIXME("unknown type!\n");
-	    if (len) *dest = '\0';
-	    return FALSE;
-	}
-	TRACE("-- %s\n", debugstr_a(dest) );
-	return TRUE;
+    switch (src->uType)
+    {
+        case STRRET_WSTR:
+            WideCharToMultiByte(CP_ACP, 0, src->u.pOleStr, -1, dest, len, NULL, NULL);
+            CoTaskMemFree(src->u.pOleStr);
+            break;
+        case STRRET_CSTR:
+            lstrcpynA(dest, src->u.cStr, len);
+            break;
+        case STRRET_OFFSET:
+            lstrcpynA(dest, ((LPCSTR)&pidl->mkid)+src->u.uOffset, len);
+            break;
+        default:
+            FIXME("unknown type %u!\n", src->uType);
+            if (len)
+                *dest = '\0';
+            return FALSE;
+    }
+    TRACE("-- %s\n", debugstr_a(dest) );
+    return TRUE;
 }
 
 /************************************************************************/
 
 BOOL WINAPI StrRetToStrNW(LPWSTR dest, DWORD len, LPSTRRET src, const ITEMIDLIST *pidl)
 {
-	TRACE("dest=%p len=0x%x strret=%p(%s) pidl=%p\n",
-	    dest,len,src,
-	    (src->uType == STRRET_WSTR) ? "STRRET_WSTR" :
-	    (src->uType == STRRET_CSTR) ? "STRRET_CSTR" :
-	    (src->uType == STRRET_OFFSET) ? "STRRET_OFFSET" : "STRRET_???",
-	    pidl);
+    TRACE("dest=%p len=0x%x strret=%p(%s) pidl=%p\n", dest, len, src, debugstr_strret(src), pidl);
 
     if (!dest)
         return FALSE;
 
-	switch (src->uType)
-	{
-	  case STRRET_WSTR:
-	    lstrcpynW(dest, src->u.pOleStr, len);
-	    CoTaskMemFree(src->u.pOleStr);
-	    break;
-
-	  case STRRET_CSTR:
-            if (!MultiByteToWideChar( CP_ACP, 0, src->u.cStr, -1, dest, len ) && len)
-                  dest[len-1] = 0;
-	    break;
-
-	  case STRRET_OFFSET:
-            if (!MultiByteToWideChar( CP_ACP, 0, ((LPCSTR)&pidl->mkid)+src->u.uOffset, -1, dest, len ) && len)
-                  dest[len-1] = 0;
-	    break;
-
-	  default:
-	    FIXME("unknown type!\n");
-	    if (len) *dest = '\0';
-	    return FALSE;
-	}
-	return TRUE;
+    switch (src->uType)
+    {
+        case STRRET_WSTR:
+            lstrcpynW(dest, src->u.pOleStr, len);
+            CoTaskMemFree(src->u.pOleStr);
+            break;
+        case STRRET_CSTR:
+            if (!MultiByteToWideChar(CP_ACP, 0, src->u.cStr, -1, dest, len) && len)
+                dest[len-1] = 0;
+            break;
+        case STRRET_OFFSET:
+            if (!MultiByteToWideChar(CP_ACP, 0, ((LPCSTR)&pidl->mkid)+src->u.uOffset, -1, dest, len)
+                    && len)
+                dest[len-1] = 0;
+            break;
+        default:
+            FIXME("unknown type %u!\n", src->uType);
+            if (len)
+                *dest = '\0';
+            return FALSE;
+    }
+    return TRUE;
 }
 
 
 /*************************************************************************
- * StrRetToStrN				[SHELL32.96]
+ * StrRetToStrN    [SHELL32.96]
  *
  * converts a STRRET to a normal string
  *
@@ -128,7 +130,7 @@ BOOL WINAPI StrRetToStrNW(LPWSTR dest, DWORD len, LPSTRRET src, const ITEMIDLIST
  */
 BOOL WINAPI StrRetToStrNAW(LPVOID dest, DWORD len, LPSTRRET src, const ITEMIDLIST *pidl)
 {
-	if(SHELL_OsIsUnicode())
+    if(SHELL_OsIsUnicode())
         return StrRetToStrNW(dest, len, src, pidl);
     else
         return StrRetToStrNA(dest, len, src, pidl);
@@ -145,7 +147,7 @@ static int StrToOleStrA (LPWSTR lpWideCharStr, LPCSTR lpMultiByteString)
 	TRACE("(%p, %p %s)\n",
 	lpWideCharStr, lpMultiByteString, debugstr_a(lpMultiByteString));
 
-	return MultiByteToWideChar(0, 0, lpMultiByteString, -1, lpWideCharStr, MAX_PATH);
+	return MultiByteToWideChar(CP_ACP, 0, lpMultiByteString, -1, lpWideCharStr, MAX_PATH);
 
 }
 static int StrToOleStrW (LPWSTR lpWideCharStr, LPCWSTR lpWString)
@@ -172,7 +174,7 @@ BOOL WINAPI StrToOleStrAW (LPWSTR lpWideCharStr, LPCVOID lpString)
 static BOOL StrToOleStrNA (LPWSTR lpWide, INT nWide, LPCSTR lpStrA, INT nStr)
 {
 	TRACE("(%p, %x, %s, %x)\n", lpWide, nWide, debugstr_an(lpStrA,nStr), nStr);
-	return MultiByteToWideChar (0, 0, lpStrA, nStr, lpWide, nWide);
+	return MultiByteToWideChar (CP_ACP, 0, lpStrA, nStr, lpWide, nWide);
 }
 static BOOL StrToOleStrNW (LPWSTR lpWide, INT nWide, LPCWSTR lpStrW, INT nStr)
 {
@@ -181,7 +183,7 @@ static BOOL StrToOleStrNW (LPWSTR lpWide, INT nWide, LPCWSTR lpStrW, INT nStr)
 	if (lstrcpynW (lpWide, lpStrW, nWide))
 	{ return lstrlenW (lpWide);
 	}
-	return 0;
+	return FALSE;
 }
 
 BOOL WINAPI StrToOleStrNAW (LPWSTR lpWide, INT nWide, LPCVOID lpStr, INT nStr)
@@ -197,7 +199,7 @@ BOOL WINAPI StrToOleStrNAW (LPWSTR lpWide, INT nWide, LPCVOID lpStr, INT nStr)
 static BOOL OleStrToStrNA (LPSTR lpStr, INT nStr, LPCWSTR lpOle, INT nOle)
 {
 	TRACE("(%p, %x, %s, %x)\n", lpStr, nStr, debugstr_wn(lpOle,nOle), nOle);
-	return WideCharToMultiByte (0, 0, lpOle, nOle, lpStr, nStr, NULL, NULL);
+	return WideCharToMultiByte (CP_ACP, 0, lpOle, nOle, lpStr, nStr, NULL, NULL);
 }
 
 static BOOL OleStrToStrNW (LPWSTR lpwStr, INT nwStr, LPCWSTR lpOle, INT nOle)
@@ -207,7 +209,7 @@ static BOOL OleStrToStrNW (LPWSTR lpwStr, INT nwStr, LPCWSTR lpOle, INT nOle)
 	if (lstrcpynW ( lpwStr, lpOle, nwStr))
 	{ return lstrlenW (lpwStr);
 	}
-	return 0;
+        return FALSE;
 }
 
 BOOL WINAPI OleStrToStrNAW (LPVOID lpOut, INT nOut, LPCVOID lpIn, INT nIn)

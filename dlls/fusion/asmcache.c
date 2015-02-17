@@ -41,6 +41,22 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(fusion);
 
+typedef struct {
+    IAssemblyCache IAssemblyCache_iface;
+
+    LONG ref;
+    HANDLE lock;
+} IAssemblyCacheImpl;
+
+typedef struct {
+    IAssemblyCacheItem IAssemblyCacheItem_iface;
+
+    LONG ref;
+} IAssemblyCacheItemImpl;
+
+static const WCHAR cache_mutex_nameW[] =
+    {'_','_','W','I','N','E','_','F','U','S','I','O','N','_','C','A','C','H','E','_','M','U','T','E','X','_','_',0};
+
 static BOOL create_full_path(LPCWSTR path)
 {
     LPWSTR new_path;
@@ -91,42 +107,52 @@ static BOOL create_full_path(LPCWSTR path)
     return ret;
 }
 
-static BOOL get_assembly_directory(LPWSTR dir, DWORD size, BYTE architecture)
+static BOOL get_assembly_directory(LPWSTR dir, DWORD size, const char *version, PEKIND architecture)
 {
+    static const WCHAR dotnet[] = {'\\','M','i','c','r','o','s','o','f','t','.','N','E','T','\\',0};
     static const WCHAR gac[] = {'\\','a','s','s','e','m','b','l','y','\\','G','A','C',0};
-
     static const WCHAR msil[] = {'_','M','S','I','L',0};
     static const WCHAR x86[] = {'_','3','2',0};
     static const WCHAR amd64[] = {'_','6','4',0};
+    DWORD len = GetWindowsDirectoryW(dir, size);
 
-    GetWindowsDirectoryW(dir, size);
-    strcatW(dir, gac);
-
+    if (!strcmp(version, "v4.0.30319"))
+    {
+        strcpyW(dir + len, dotnet);
+        len += sizeof(dotnet)/sizeof(WCHAR) -1;
+        strcpyW(dir + len, gac + 1);
+        len += sizeof(gac)/sizeof(WCHAR) - 2;
+    }
+    else
+    {
+        strcpyW(dir + len, gac);
+        len += sizeof(gac)/sizeof(WCHAR) - 1;
+    }
     switch (architecture)
     {
+        case peNone:
+            break;
+
         case peMSIL:
-            strcatW(dir, msil);
+            strcpyW(dir + len, msil);
             break;
 
         case peI386:
-            strcatW(dir, x86);
+            strcpyW(dir + len, x86);
             break;
 
         case peAMD64:
-            strcatW(dir, amd64);
+            strcpyW(dir + len, amd64);
             break;
-    }
 
+        default:
+            WARN("unhandled architecture %u\n", architecture);
+            return FALSE;
+    }
     return TRUE;
 }
 
 /* IAssemblyCache */
-
-typedef struct {
-    IAssemblyCache IAssemblyCache_iface;
-
-    LONG ref;
-} IAssemblyCacheImpl;
 
 static inline IAssemblyCacheImpl *impl_from_IAssemblyCache(IAssemblyCache *iface)
 {
@@ -145,7 +171,7 @@ static HRESULT WINAPI IAssemblyCacheImpl_QueryInterface(IAssemblyCache *iface,
     if (IsEqualIID(riid, &IID_IUnknown) ||
         IsEqualIID(riid, &IID_IAssemblyCache))
     {
-        IUnknown_AddRef(iface);
+        IAssemblyCache_AddRef(iface);
         *ppobj = This;
         return S_OK;
     }
@@ -166,15 +192,27 @@ static ULONG WINAPI IAssemblyCacheImpl_AddRef(IAssemblyCache *iface)
 
 static ULONG WINAPI IAssemblyCacheImpl_Release(IAssemblyCache *iface)
 {
-    IAssemblyCacheImpl *This = impl_from_IAssemblyCache(iface);
-    ULONG refCount = InterlockedDecrement(&This->ref);
+    IAssemblyCacheImpl *cache = impl_from_IAssemblyCache(iface);
+    ULONG refCount = InterlockedDecrement( &cache->ref );
 
-    TRACE("(%p)->(ref before = %u)\n", This, refCount + 1);
+    TRACE("(%p)->(ref before = %u)\n", cache, refCount + 1);
 
     if (!refCount)
-        HeapFree(GetProcessHeap(), 0, This);
-
+    {
+        CloseHandle( cache->lock );
+        HeapFree( GetProcessHeap(), 0, cache );
+    }
     return refCount;
+}
+
+static void cache_lock( IAssemblyCacheImpl *cache )
+{
+    WaitForSingleObject( cache->lock, INFINITE );
+}
+
+static void cache_unlock( IAssemblyCacheImpl *cache )
+{
+    ReleaseMutex( cache->lock );
 }
 
 static HRESULT WINAPI IAssemblyCacheImpl_UninstallAssembly(IAssemblyCache *iface,
@@ -183,10 +221,81 @@ static HRESULT WINAPI IAssemblyCacheImpl_UninstallAssembly(IAssemblyCache *iface
                                                            LPCFUSION_INSTALL_REFERENCE pRefData,
                                                            ULONG *pulDisposition)
 {
-    FIXME("(%p, %d, %s, %p, %p) stub!\n", iface, dwFlags,
+    HRESULT hr;
+    IAssemblyCacheImpl *cache = impl_from_IAssemblyCache(iface);
+    IAssemblyName *asmname, *next = NULL;
+    IAssemblyEnum *asmenum = NULL;
+    WCHAR *p, *path = NULL;
+    ULONG disp;
+    DWORD len;
+
+    TRACE("(%p, 0%08x, %s, %p, %p)\n", iface, dwFlags,
           debugstr_w(pszAssemblyName), pRefData, pulDisposition);
 
-    return E_NOTIMPL;
+    if (pRefData)
+    {
+        FIXME("application reference not supported\n");
+        return E_NOTIMPL;
+    }
+    hr = CreateAssemblyNameObject( &asmname, pszAssemblyName, CANOF_PARSE_DISPLAY_NAME, NULL );
+    if (FAILED( hr ))
+        return hr;
+
+    cache_lock( cache );
+
+    hr = CreateAssemblyEnum( &asmenum, NULL, asmname, ASM_CACHE_GAC, NULL );
+    if (FAILED( hr ))
+        goto done;
+
+    hr = IAssemblyEnum_GetNextAssembly( asmenum, NULL, &next, 0 );
+    if (hr == S_FALSE)
+    {
+        if (pulDisposition)
+            *pulDisposition = IASSEMBLYCACHE_UNINSTALL_DISPOSITION_ALREADY_UNINSTALLED;
+        goto done;
+    }
+    hr = IAssemblyName_GetPath( next, NULL, &len );
+    if (hr != HRESULT_FROM_WIN32( ERROR_INSUFFICIENT_BUFFER ))
+        goto done;
+
+    if (!(path = HeapAlloc( GetProcessHeap(), 0, len * sizeof(WCHAR) )))
+    {
+        hr = E_OUTOFMEMORY;
+        goto done;
+    }
+    hr = IAssemblyName_GetPath( next, path, &len );
+    if (FAILED( hr ))
+        goto done;
+
+    if (DeleteFileW( path ))
+    {
+        if ((p = strrchrW( path, '\\' )))
+        {
+            *p = 0;
+            RemoveDirectoryW( path );
+            if ((p = strrchrW( path, '\\' )))
+            {
+                *p = 0;
+                RemoveDirectoryW( path );
+            }
+        }
+        disp = IASSEMBLYCACHE_UNINSTALL_DISPOSITION_UNINSTALLED;
+        hr = S_OK;
+    }
+    else
+    {
+        disp = IASSEMBLYCACHE_UNINSTALL_DISPOSITION_ALREADY_UNINSTALLED;
+        hr = S_FALSE;
+    }
+    if (pulDisposition) *pulDisposition = disp;
+
+done:
+    IAssemblyName_Release( asmname );
+    if (next) IAssemblyName_Release( next );
+    if (asmenum) IAssemblyEnum_Release( asmenum );
+    HeapFree( GetProcessHeap(), 0, path );
+    cache_unlock( cache );
+    return hr;
 }
 
 static HRESULT WINAPI IAssemblyCacheImpl_QueryAssemblyInfo(IAssemblyCache *iface,
@@ -194,6 +303,7 @@ static HRESULT WINAPI IAssemblyCacheImpl_QueryAssemblyInfo(IAssemblyCache *iface
                                                            LPCWSTR pszAssemblyName,
                                                            ASSEMBLY_INFO *pAsmInfo)
 {
+    IAssemblyCacheImpl *cache = impl_from_IAssemblyCache(iface);
     IAssemblyName *asmname, *next = NULL;
     IAssemblyEnum *asmenum = NULL;
     HRESULT hr;
@@ -214,15 +324,22 @@ static HRESULT WINAPI IAssemblyCacheImpl_QueryAssemblyInfo(IAssemblyCache *iface
     if (FAILED(hr))
         return hr;
 
+    cache_lock( cache );
+
     hr = CreateAssemblyEnum(&asmenum, NULL, asmname, ASM_CACHE_GAC, NULL);
     if (FAILED(hr))
         goto done;
 
-    hr = IAssemblyEnum_GetNextAssembly(asmenum, NULL, &next, 0);
-    if (hr == S_FALSE)
+    for (;;)
     {
-        hr = HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
-        goto done;
+        hr = IAssemblyEnum_GetNextAssembly(asmenum, NULL, &next, 0);
+        if (hr != S_OK)
+        {
+            hr = HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+            goto done;
+        }
+        hr = IAssemblyName_IsEqual(asmname, next, ASM_CMPF_IL_ALL);
+        if (hr == S_OK) break;
     }
 
     if (!pAsmInfo)
@@ -236,9 +353,11 @@ done:
     IAssemblyName_Release(asmname);
     if (next) IAssemblyName_Release(next);
     if (asmenum) IAssemblyEnum_Release(asmenum);
-
+    cache_unlock( cache );
     return hr;
 }
+
+static const IAssemblyCacheItemVtbl AssemblyCacheItemVtbl;
 
 static HRESULT WINAPI IAssemblyCacheImpl_CreateAssemblyCacheItem(IAssemblyCache *iface,
                                                                  DWORD dwFlags,
@@ -246,10 +365,25 @@ static HRESULT WINAPI IAssemblyCacheImpl_CreateAssemblyCacheItem(IAssemblyCache 
                                                                  IAssemblyCacheItem **ppAsmItem,
                                                                  LPCWSTR pszAssemblyName)
 {
-    FIXME("(%p, %d, %p, %p, %s) stub!\n", iface, dwFlags, pvReserved,
+    IAssemblyCacheItemImpl *item;
+
+    FIXME("(%p, %d, %p, %p, %s) semi-stub!\n", iface, dwFlags, pvReserved,
           ppAsmItem, debugstr_w(pszAssemblyName));
 
-    return E_NOTIMPL;
+    if (!ppAsmItem)
+        return E_INVALIDARG;
+
+    *ppAsmItem = NULL;
+
+    item = HeapAlloc(GetProcessHeap(), 0, sizeof(IAssemblyCacheItemImpl));
+    if (!item)
+        return E_OUTOFMEMORY;
+
+    item->IAssemblyCacheItem_iface.lpVtbl = &AssemblyCacheItemVtbl;
+    item->ref = 1;
+
+    *ppAsmItem = &item->IAssemblyCacheItem_iface;
+    return S_OK;
 }
 
 static HRESULT WINAPI IAssemblyCacheImpl_CreateAssemblyScavenger(IAssemblyCache *iface,
@@ -259,6 +393,32 @@ static HRESULT WINAPI IAssemblyCacheImpl_CreateAssemblyScavenger(IAssemblyCache 
     return E_NOTIMPL;
 }
 
+static HRESULT copy_file( const WCHAR *src_dir, DWORD src_len, const WCHAR *dst_dir, DWORD dst_len,
+                          const WCHAR *filename )
+{
+    WCHAR *src_file, *dst_file;
+    DWORD len = strlenW( filename );
+    HRESULT hr = S_OK;
+
+    if (!(src_file = HeapAlloc( GetProcessHeap(), 0, (src_len + len + 1) * sizeof(WCHAR) )))
+        return E_OUTOFMEMORY;
+    memcpy( src_file, src_dir, src_len * sizeof(WCHAR) );
+    strcpyW( src_file + src_len, filename );
+
+    if (!(dst_file = HeapAlloc( GetProcessHeap(), 0, (dst_len + len + 1) * sizeof(WCHAR) )))
+    {
+        HeapFree( GetProcessHeap(), 0, src_file );
+        return E_OUTOFMEMORY;
+    }
+    memcpy( dst_file, dst_dir, dst_len * sizeof(WCHAR) );
+    strcpyW( dst_file + dst_len, filename );
+
+    if (!CopyFileW( src_file, dst_file, FALSE )) hr = HRESULT_FROM_WIN32( GetLastError() );
+    HeapFree( GetProcessHeap(), 0, src_file );
+    HeapFree( GetProcessHeap(), 0, dst_file );
+    return hr;
+}
+
 static HRESULT WINAPI IAssemblyCacheImpl_InstallAssembly(IAssemblyCache *iface,
                                                          DWORD dwFlags,
                                                          LPCWSTR pszManifestFilePath,
@@ -266,20 +426,19 @@ static HRESULT WINAPI IAssemblyCacheImpl_InstallAssembly(IAssemblyCache *iface,
 {
     static const WCHAR format[] =
         {'%','s','\\','%','s','\\','%','s','_','_','%','s','\\',0};
-
-    ASSEMBLY *assembly;
-    LPWSTR filename;
-    LPWSTR name = NULL;
-    LPWSTR token = NULL;
-    LPWSTR version = NULL;
-    LPWSTR asmpath = NULL;
-    WCHAR path[MAX_PATH];
-    WCHAR asmdir[MAX_PATH];
-    LPWSTR ext;
-    HRESULT hr;
-
+    static const WCHAR format_v40[] =
+        {'%','s','\\','%','s','\\','v','4','.','0','_','%','s','_','_','%','s','\\',0};
     static const WCHAR ext_exe[] = {'.','e','x','e',0};
     static const WCHAR ext_dll[] = {'.','d','l','l',0};
+    IAssemblyCacheImpl *cache = impl_from_IAssemblyCache(iface);
+    ASSEMBLY *assembly;
+    const WCHAR *extension, *filename, *src_dir;
+    WCHAR *name = NULL, *token = NULL, *version = NULL, *asmpath = NULL;
+    WCHAR asmdir[MAX_PATH], *p, **external_files = NULL, *dst_dir = NULL;
+    PEKIND architecture;
+    char *clr_version;
+    DWORD i, count = 0, src_len, dst_len = sizeof(format_v40)/sizeof(format_v40[0]);
+    HRESULT hr;
 
     TRACE("(%p, %d, %s, %p)\n", iface, dwFlags,
           debugstr_w(pszManifestFilePath), pRefData);
@@ -287,10 +446,10 @@ static HRESULT WINAPI IAssemblyCacheImpl_InstallAssembly(IAssemblyCache *iface,
     if (!pszManifestFilePath || !*pszManifestFilePath)
         return E_INVALIDARG;
 
-    if (!(ext = strrchrW(pszManifestFilePath, '.')))
+    if (!(extension = strrchrW(pszManifestFilePath, '.')))
         return HRESULT_FROM_WIN32(ERROR_INVALID_NAME);
 
-    if (lstrcmpiW(ext, ext_exe) && lstrcmpiW(ext, ext_dll))
+    if (lstrcmpiW(extension, ext_exe) && lstrcmpiW(extension, ext_dll))
         return HRESULT_FROM_WIN32(ERROR_INVALID_NAME);
 
     if (GetFileAttributesW(pszManifestFilePath) == INVALID_FILE_ATTRIBUTES)
@@ -315,28 +474,69 @@ static HRESULT WINAPI IAssemblyCacheImpl_InstallAssembly(IAssemblyCache *iface,
     if (FAILED(hr))
         goto done;
 
-    get_assembly_directory(asmdir, MAX_PATH, assembly_get_architecture(assembly));
+    hr = assembly_get_runtime_version(assembly, &clr_version);
+    if (FAILED(hr))
+        goto done;
 
-    sprintfW(path, format, asmdir, name, version, token);
+    hr = assembly_get_external_files(assembly, &external_files, &count);
+    if (FAILED(hr))
+        goto done;
 
-    create_full_path(path);
+    cache_lock( cache );
+
+    architecture = assembly_get_architecture(assembly);
+    get_assembly_directory(asmdir, MAX_PATH, clr_version, architecture);
+
+    dst_len += strlenW(asmdir) + strlenW(name) + strlenW(version) + strlenW(token);
+    if (!(dst_dir = HeapAlloc(GetProcessHeap(), 0, dst_len * sizeof(WCHAR))))
+    {
+        hr = E_OUTOFMEMORY;
+        goto done;
+    }
+    if (!strcmp(clr_version, "v4.0.30319"))
+        dst_len = sprintfW(dst_dir, format_v40, asmdir, name, version, token);
+    else
+        dst_len = sprintfW(dst_dir, format, asmdir, name, version, token);
+
+    create_full_path(dst_dir);
 
     hr = assembly_get_path(assembly, &asmpath);
     if (FAILED(hr))
         goto done;
 
-    filename = PathFindFileNameW(asmpath);
+    if ((p = strrchrW(asmpath, '\\')))
+    {
+        filename = p + 1;
+        src_dir  = asmpath;
+        src_len  = filename - asmpath;
+    }
+    else
+    {
+        filename = asmpath;
+        src_dir  = NULL;
+        src_len  = 0;
+    }
+    hr = copy_file(src_dir, src_len, dst_dir, dst_len, filename);
+    if (FAILED(hr))
+        goto done;
 
-    strcatW(path, filename);
-    if (!CopyFileW(asmpath, path, FALSE))
-        hr = HRESULT_FROM_WIN32(GetLastError());
+    for (i = 0; i < count; i++)
+    {
+        hr = copy_file(src_dir, src_len, dst_dir, dst_len, external_files[i]);
+        if (FAILED(hr))
+            break;
+    }
 
 done:
     HeapFree(GetProcessHeap(), 0, name);
     HeapFree(GetProcessHeap(), 0, token);
     HeapFree(GetProcessHeap(), 0, version);
     HeapFree(GetProcessHeap(), 0, asmpath);
+    HeapFree(GetProcessHeap(), 0, dst_dir);
+    for (i = 0; i < count; i++) HeapFree(GetProcessHeap(), 0, external_files[i]);
+    HeapFree(GetProcessHeap(), 0, external_files);
     assembly_release(assembly);
+    cache_unlock( cache );
     return hr;
 }
 
@@ -371,19 +571,17 @@ HRESULT WINAPI CreateAssemblyCache(IAssemblyCache **ppAsmCache, DWORD dwReserved
 
     cache->IAssemblyCache_iface.lpVtbl = &AssemblyCacheVtbl;
     cache->ref = 1;
-
+    cache->lock = CreateMutexW( NULL, FALSE, cache_mutex_nameW );
+    if (!cache->lock)
+    {
+        HeapFree( GetProcessHeap(), 0, cache );
+        return HRESULT_FROM_WIN32( GetLastError() );
+    }
     *ppAsmCache = &cache->IAssemblyCache_iface;
-
     return S_OK;
 }
 
 /* IAssemblyCacheItem */
-
-typedef struct {
-    IAssemblyCacheItem IAssemblyCacheItem_iface;
-
-    LONG ref;
-} IAssemblyCacheItemImpl;
 
 static inline IAssemblyCacheItemImpl *impl_from_IAssemblyCacheItem(IAssemblyCacheItem *iface)
 {
@@ -402,7 +600,7 @@ static HRESULT WINAPI IAssemblyCacheItemImpl_QueryInterface(IAssemblyCacheItem *
     if (IsEqualIID(riid, &IID_IUnknown) ||
         IsEqualIID(riid, &IID_IAssemblyCacheItem))
     {
-        IUnknown_AddRef(iface);
+        IAssemblyCacheItem_AddRef(iface);
         *ppobj = This;
         return S_OK;
     }

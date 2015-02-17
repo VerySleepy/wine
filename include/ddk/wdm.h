@@ -139,6 +139,7 @@ typedef struct _EPROCESS *PEPROCESS;
 typedef struct _ERESOURCE *PERESOURCE;
 typedef struct _IO_WORKITEM *PIO_WORKITEM;
 typedef struct _NPAGED_LOOKASIDE_LIST *PNPAGED_LOOKASIDE_LIST;
+typedef struct _PAGED_LOOKASIDE_LIST *PPAGED_LOOKASIDE_LIST;
 typedef struct _OBJECT_TYPE *POBJECT_TYPE;
 typedef struct _OBJECT_HANDLE_INFORMATION *POBJECT_HANDLE_INFORMATION;
 typedef struct _ZONE_HEADER *PZONE_HEADER;
@@ -170,7 +171,7 @@ typedef enum _POOL_TYPE {
   NonPagedPool,
   PagedPool,
   NonPagedPoolMustSucceed,
-  UnkownType,
+  DontUseThisType,
   NonPagedPoolCacheAligned,
   PagedPoolCacheAligned,
   NonPagedPoolCacheAlignedMustS,
@@ -266,6 +267,7 @@ typedef struct _WAIT_CONTEXT_BLOCK {
 #define IRP_MN_QUERY_BUS_INFORMATION        0x15
 #define IRP_MN_DEVICE_USAGE_NOTIFICATION    0x16
 #define IRP_MN_SURPRISE_REMOVAL             0x17
+#define IRP_MN_QUERY_LEGACY_BUS_INFORMATION 0x18
 
 #define IRP_QUOTA_CHARGED               0x01
 #define IRP_ALLOCATED_MUST_SUCCEED      0x02
@@ -317,6 +319,12 @@ typedef struct _DEVICE_OBJECT {
   PVOID  Reserved;
 } DEVICE_OBJECT;
 typedef struct _DEVICE_OBJECT *PDEVICE_OBJECT;
+
+typedef struct _DEVICE_RELATIONS {
+  ULONG Count;
+  PDEVICE_OBJECT Objects[1];
+} DEVICE_RELATIONS;
+typedef struct _DEVICE_RELATIONS *PDEVICE_RELATIONS;
 
 typedef struct _DRIVER_EXTENSION {
   struct _DRIVER_OBJECT  *DriverObject;
@@ -441,8 +449,6 @@ typedef struct _IRP {
 } IRP;
 typedef struct _IRP *PIRP;
 #include <poppack.h>
-
-/* MDL definitions */
 
 typedef VOID (WINAPI *PINTERFACE_REFERENCE)(
   PVOID  Context);
@@ -585,6 +591,14 @@ typedef struct _DEVICE_CAPABILITIES {
   ULONG  D2Latency;
   ULONG  D3Latency;
 } DEVICE_CAPABILITIES, *PDEVICE_CAPABILITIES;
+
+typedef struct _DEVICE_INTERFACE_CHANGE_NOTIFICATION {
+  USHORT Version;
+  USHORT Size;
+  GUID Event;
+  GUID InterfaceClassGuid;
+  PUNICODE_STRING SymbolicLinkName;
+} DEVICE_INTERFACE_CHANGE_NOTIFICATION, *PDEVICE_INTERFACE_CHANGE_NOTIFICATION;
 
 typedef enum _INTERFACE_TYPE {
   InterfaceTypeUndefined = -1,
@@ -885,7 +899,7 @@ typedef struct _IO_STACK_LOCATION {
       DEVICE_RELATION_TYPE  Type;
     } QueryDeviceRelations;
     struct {
-      CONST GUID  *InterfaceType;
+      const GUID  *InterfaceType;
       USHORT  Size;
       USHORT  Version;
       PINTERFACE  Interface;
@@ -954,6 +968,33 @@ typedef struct _IO_STACK_LOCATION {
 } IO_STACK_LOCATION, *PIO_STACK_LOCATION;
 #include <poppack.h>
 
+/* MDL definitions */
+
+#define MDL_MAPPED_TO_SYSTEM_VA     0x0001
+#define MDL_PAGES_LOCKED            0x0002
+#define MDL_SOURCE_IS_NONPAGED_POOL 0x0004
+#define MDL_ALLOCATED_FIXED_SIZE    0x0008
+#define MDL_PARTIAL                 0x0010
+#define MDL_PARTIAL_HAS_BEEN_MAPPED 0x0020
+#define MDL_IO_PAGE_READ            0x0040
+#define MDL_WRITE_OPERATION         0x0080
+#define MDL_PARENT_MAPPED_SYSTEM_VA 0x0100
+#define MDL_FREE_EXTRA_PTES         0x0200
+#define MDL_DESCRIBES_AWE           0x0400
+#define MDL_IO_SPACE                0x0800
+#define MDL_NETWORK_HEADER          0x1000
+#define MDL_MAPPING_CAN_FAIL        0x2000
+#define MDL_ALLOCATED_MUST_SUCCEED  0x4000
+#define MDL_INTERNAL                0x8000
+
+#define MDL_MAPPING_FLAGS (MDL_MAPPED_TO_SYSTEM_VA     | \
+                           MDL_PAGES_LOCKED            | \
+                           MDL_SOURCE_IS_NONPAGED_POOL | \
+                           MDL_PARTIAL_HAS_BEEN_MAPPED | \
+                           MDL_PARENT_MAPPED_SYSTEM_VA | \
+                           MDL_SYSTEM_VA               | \
+                           MDL_IO_SPACE )
+
 typedef struct _MDL {
   struct _MDL  *Next;
   CSHORT  Size;
@@ -964,6 +1005,8 @@ typedef struct _MDL {
   ULONG  ByteCount;
   ULONG  ByteOffset;
 } MDL, *PMDL;
+
+typedef MDL *PMDLX;
 
 typedef struct _KTIMER {
     DISPATCHER_HEADER Header;
@@ -1048,14 +1091,20 @@ typedef struct _KUSER_SHARED_DATA {
 } KSHARED_USER_DATA, *PKSHARED_USER_DATA;
 
 typedef enum _MEMORY_CACHING_TYPE {
-  MmNonCached = 0,
-  MmCached = 1,
-  MmWriteCombined = 2,
-  MmHardwareCoherentCached = 3,
-  MmNonCachedUnordered = 4,
-  MmUSWCCached = 5,
-  MmMaximumCacheType = 6
+    MmNonCached = 0,
+    MmCached = 1,
+    MmWriteCombined = 2,
+    MmHardwareCoherentCached = 3,
+    MmNonCachedUnordered = 4,
+    MmUSWCCached = 5,
+    MmMaximumCacheType = 6
 } MEMORY_CACHING_TYPE;
+
+typedef enum _MM_PAGE_PRIORITY {
+    LowPagePriority,
+    NormalPagePriority = 16,
+    HighPagePriority = 32
+} MM_PAGE_PRIORITY;
 
 typedef enum _MM_SYSTEM_SIZE
 {
@@ -1063,6 +1112,48 @@ typedef enum _MM_SYSTEM_SIZE
     MmMediumSystem,
     MmLargeSystem
 } MM_SYSTEMSIZE;
+
+typedef struct _IO_REMOVE_LOCK_COMMON_BLOCK {
+    BOOLEAN Removed;
+    BOOLEAN Reserved[3];
+    LONG IoCount;
+    KEVENT RemoveEvent;
+} IO_REMOVE_LOCK_COMMON_BLOCK;
+
+typedef struct _IO_REMOVE_LOCK_TRACKING_BLOCK *PIO_REMOVE_LOCK_TRACKING_BLOCK;
+
+typedef struct _IO_REMOVE_LOCK_DBG_BLOCK {
+    LONG Signature;
+    LONG HighWatermark;
+    LONGLONG MaxLockedTicks;
+    LONG AllocateTag;
+    LIST_ENTRY LockList;
+    KSPIN_LOCK Spin;
+    LONG LowMemoryCount;
+    ULONG Reserved1[4];
+    PVOID Reserved2;
+    PIO_REMOVE_LOCK_TRACKING_BLOCK Blocks;
+} IO_REMOVE_LOCK_DBG_BLOCK;
+
+typedef struct _IO_REMOVE_LOCK {
+    IO_REMOVE_LOCK_COMMON_BLOCK Common;
+    IO_REMOVE_LOCK_DBG_BLOCK Dbg;
+} IO_REMOVE_LOCK, *PIO_REMOVE_LOCK;
+
+typedef enum  {
+    IoReadAccess,
+    IoWriteAccess,
+    IoModifyAccess
+} LOCK_OPERATION;
+
+typedef struct _CALLBACK_OBJECT
+{
+    ULONG Signature;
+    KSPIN_LOCK Lock;
+    LIST_ENTRY RegisteredCallbacks;
+    BOOLEAN AllowMultipleCallbacks;
+    UCHAR reserved[3];
+} CALLBACK_OBJECT, *PCALLBACK_OBJECT;
 
 NTSTATUS WINAPI ObCloseHandle(IN HANDLE handle);
 
@@ -1118,12 +1209,13 @@ void      WINAPI IoDeleteDriver(DRIVER_OBJECT*);
 NTSTATUS  WINAPI IoDeleteSymbolicLink(UNICODE_STRING*);
 void      WINAPI IoFreeIrp(IRP*);
 PEPROCESS WINAPI IoGetCurrentProcess(void);
-NTSTATUS  WINAPI IoGetDeviceInterfaces(CONST GUID*,PDEVICE_OBJECT,ULONG,PWSTR*);
+NTSTATUS  WINAPI IoGetDeviceInterfaces(const GUID*,PDEVICE_OBJECT,ULONG,PWSTR*);
 NTSTATUS  WINAPI IoGetDeviceObjectPointer(UNICODE_STRING*,ACCESS_MASK,PFILE_OBJECT*,PDEVICE_OBJECT*);
 NTSTATUS  WINAPI IoGetDeviceProperty(PDEVICE_OBJECT,DEVICE_REGISTRY_PROPERTY,ULONG,PVOID,PULONG);
 PVOID     WINAPI IoGetDriverObjectExtension(PDRIVER_OBJECT,PVOID);
 PDEVICE_OBJECT WINAPI IoGetRelatedDeviceObject(PFILE_OBJECT);
 void      WINAPI IoInitializeIrp(IRP*,USHORT,CCHAR);
+VOID      WINAPI IoInitializeRemoveLockEx(PIO_REMOVE_LOCK,ULONG,ULONG,ULONG,ULONG);
 NTSTATUS  WINAPI IoWMIRegistrationControl(PDEVICE_OBJECT,ULONG);
 
 PKTHREAD  WINAPI KeGetCurrentThread(void);
@@ -1134,6 +1226,7 @@ LONG      WINAPI KeReleaseSemaphore(PRKSEMAPHORE,KPRIORITY,LONG,BOOLEAN);
 LONG      WINAPI KeResetEvent(PRKEVENT);
 LONG      WINAPI KeSetEvent(PRKEVENT,KPRIORITY,BOOLEAN);
 KPRIORITY WINAPI KeSetPriorityThread(PKTHREAD,KPRIORITY);
+void      WINAPI KeSetSystemAffinityThread(KAFFINITY);
 
 PVOID     WINAPI MmAllocateContiguousMemory(SIZE_T,PHYSICAL_ADDRESS);
 PVOID     WINAPI MmAllocateNonCachedMemory(SIZE_T);

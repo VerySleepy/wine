@@ -1,4 +1,3 @@
-EXTRADEFS = -DWINE_NO_UNICODE_MACROS
 MODULE    = winver.exe
 APPMODE   = -mwindows
 IMPORTS   = shell32
@@ -6,5 +5,3 @@ IMPORTS   = shell32
 C_SRCS = winver.c
 
 RC_SRCS = version.rc
-
-@MAKE_PROG_RULES@

@@ -23,6 +23,7 @@
 #include <windows.h>
 
 #include "wine/test.h"
+#include "mmsystem.h"
 #include "dsound.h"
 #include "dsconf.h"
 
@@ -74,12 +75,7 @@ static BOOL CALLBACK callback(PDSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_DATA dat
           data->DataFlow == DIRECTSOUNDDEVICE_DATAFLOW_RENDER ? "Render" :
           data->DataFlow == DIRECTSOUNDDEVICE_DATAFLOW_CAPTURE ?
           "Capture" : "Unknown");
-    trace("    DeviceId: {%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}\n",
-          data->DeviceId.Data1,data->DeviceId.Data2,data->DeviceId.Data3,
-          data->DeviceId.Data4[0],data->DeviceId.Data4[1],
-          data->DeviceId.Data4[2],data->DeviceId.Data4[3],
-          data->DeviceId.Data4[4],data->DeviceId.Data4[5],
-          data->DeviceId.Data4[6],data->DeviceId.Data4[7]);
+    trace("    DeviceId: %s\n", wine_dbgstr_guid(&data->DeviceId));
     trace("    Description: %s\n", data->Description);
     trace("    Module: %s\n", data->Module);
     trace("    Interface: %s\n", data->Interface);
@@ -103,12 +99,7 @@ static BOOL CALLBACK callback1(PDSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_1_DATA 
           data->DataFlow == DIRECTSOUNDDEVICE_DATAFLOW_RENDER ? "Render" :
           data->DataFlow == DIRECTSOUNDDEVICE_DATAFLOW_CAPTURE ?
           "Capture" : "Unknown");
-    trace("    DeviceId: {%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}\n",
-          data->DeviceId.Data1,data->DeviceId.Data2,data->DeviceId.Data3,
-          data->DeviceId.Data4[0],data->DeviceId.Data4[1],
-          data->DeviceId.Data4[2],data->DeviceId.Data4[3],
-          data->DeviceId.Data4[4],data->DeviceId.Data4[5],
-          data->DeviceId.Data4[6],data->DeviceId.Data4[7]);
+    trace("    DeviceId: %s\n", wine_dbgstr_guid(&data->DeviceId));
     trace("    DescriptionA: %s\n", data->DescriptionA);
     WideCharToMultiByte(CP_ACP, 0, data->DescriptionW, -1, descriptionA, sizeof(descriptionA), NULL, NULL);
     trace("    DescriptionW: %s\n", descriptionA);
@@ -132,12 +123,7 @@ static BOOL CALLBACK callbackA(PDSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_A_DATA 
           data->DataFlow == DIRECTSOUNDDEVICE_DATAFLOW_RENDER ? "Render" :
           data->DataFlow == DIRECTSOUNDDEVICE_DATAFLOW_CAPTURE ?
           "Capture" : "Unknown");
-    trace("    DeviceId: {%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}\n",
-          data->DeviceId.Data1,data->DeviceId.Data2,data->DeviceId.Data3,
-          data->DeviceId.Data4[0],data->DeviceId.Data4[1],
-          data->DeviceId.Data4[2],data->DeviceId.Data4[3],
-          data->DeviceId.Data4[4],data->DeviceId.Data4[5],
-          data->DeviceId.Data4[6],data->DeviceId.Data4[7]);
+    trace("    DeviceId: %s\n", wine_dbgstr_guid(&data->DeviceId));
     trace("    Description: %s\n", data->Description);
     trace("    Module: %s\n", data->Module);
     trace("    Interface: %s\n", data->Interface);
@@ -162,12 +148,7 @@ static BOOL CALLBACK callbackW(PDSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_W_DATA 
           data->DataFlow == DIRECTSOUNDDEVICE_DATAFLOW_RENDER ? "Render" :
           data->DataFlow == DIRECTSOUNDDEVICE_DATAFLOW_CAPTURE ?
           "Capture" : "Unknown");
-    trace("\tDeviceId: {%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}\n",
-          data->DeviceId.Data1,data->DeviceId.Data2,data->DeviceId.Data3,
-          data->DeviceId.Data4[0],data->DeviceId.Data4[1],
-          data->DeviceId.Data4[2],data->DeviceId.Data4[3],
-          data->DeviceId.Data4[4],data->DeviceId.Data4[5],
-          data->DeviceId.Data4[6],data->DeviceId.Data4[7]);
+    trace("\tDeviceId: %s\n", wine_dbgstr_guid(&data->DeviceId));
     WideCharToMultiByte(CP_ACP, 0, data->Description, -1, descriptionA, sizeof(descriptionA), NULL, NULL);
     WideCharToMultiByte(CP_ACP, 0, data->Module, -1, moduleA, sizeof(moduleA), NULL, NULL);
     WideCharToMultiByte(CP_ACP, 0, data->Interface, -1, interfaceA, sizeof(interfaceA), NULL, NULL);
@@ -553,6 +534,8 @@ static void propset_private_tests(void)
     IKsPropertySet_Release(pps);
 }
 
+static unsigned driver_count = 0;
+
 static BOOL WINAPI dsenum_callback(LPGUID lpGuid, LPCSTR lpcstrDescription,
                                    LPCSTR lpcstrModule, LPVOID lpContext)
 {
@@ -564,6 +547,7 @@ static BOOL WINAPI dsenum_callback(LPGUID lpGuid, LPCSTR lpcstrDescription,
     int ref;
 
     trace("*** Testing %s - %s ***\n",lpcstrDescription,lpcstrModule);
+    driver_count++;
 
     rc=pDirectSoundCreate(lpGuid,&dso,NULL);
     ok(rc==DS_OK||rc==DSERR_NODRIVER||rc==DSERR_ALLOCATED||rc==E_FAIL,
@@ -702,7 +686,7 @@ EXIT:
         ok(ref==0,"IDirectSound_Release() has %d references, should have 0\n",
            ref);
     }
-    return 1;
+    return TRUE;
 }
 
 static void propset_buffer_tests(void)
@@ -710,6 +694,7 @@ static void propset_buffer_tests(void)
     HRESULT rc;
     rc=pDirectSoundEnumerateA(&dsenum_callback,NULL);
     ok(rc==DS_OK,"DirectSoundEnumerateA() failed: %08x\n",rc);
+    trace("tested %u DirectSound drivers\n", driver_count);
 }
 
 START_TEST(propset)
@@ -718,7 +703,7 @@ START_TEST(propset)
 
     CoInitialize(NULL);
 
-    hDsound = LoadLibrary("dsound.dll");
+    hDsound = LoadLibraryA("dsound.dll");
     if (hDsound)
     {
 
@@ -743,7 +728,7 @@ START_TEST(propset)
         FreeLibrary(hDsound);
     }
     else
-        skip("dsound.dll not found!\n");
+        skip("dsound.dll not found - skipping all tests\n");
 
     CoUninitialize();
 }

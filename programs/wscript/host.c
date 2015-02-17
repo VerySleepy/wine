@@ -30,13 +30,73 @@
 #include <wine/debug.h>
 #include <wine/unicode.h>
 
+WINE_DEFAULT_DEBUG_CHANNEL(wscript);
+
 #define BUILDVERSION 16535
 
 static const WCHAR wshNameW[] = {'W','i','n','d','o','w','s',' ','S','c','r','i','p','t',' ','H','o','s','t',0};
 static const WCHAR wshVersionW[] = {'5','.','8'};
-VARIANT_BOOL wshInteractive = VARIANT_TRUE;
 
-WINE_DEFAULT_DEBUG_CHANNEL(wscript);
+VARIANT_BOOL wshInteractive =
+#ifndef CSCRIPT_BUILD
+    VARIANT_TRUE;
+#else
+    VARIANT_FALSE;
+#endif
+
+static HRESULT to_string(VARIANT *src, BSTR *dst)
+{
+    VARIANT v;
+    HRESULT hres;
+
+    static const WCHAR nullW[] = {'n','u','l','l',0};
+
+    if(V_VT(src) == VT_NULL) {
+        *dst = SysAllocString(nullW);
+        return *dst ? S_OK : E_OUTOFMEMORY;
+    }
+
+    V_VT(&v) = VT_EMPTY;
+    hres = VariantChangeType(&v, src, 0, VT_BSTR);
+    if(FAILED(hres)) {
+        WARN("Could not convert argument %s to string\n", debugstr_variant(src));
+        return hres;
+    }
+
+    *dst = V_BSTR(&v);
+    return S_OK;
+}
+
+static void print_string(const WCHAR *string)
+{
+    DWORD count, ret, len, lena;
+    char *buf;
+
+    if(wshInteractive) {
+        static const WCHAR windows_script_hostW[] =
+            {'W','i','n','d','o','w','s',' ','S','c','r','i','p','t',' ','H','o','s','t',0};
+        MessageBoxW(NULL, string, windows_script_hostW, MB_OK);
+        return;
+    }
+
+    len = strlenW(string);
+    ret = WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), string, len, &count, NULL);
+    if(ret) {
+        static const WCHAR crnlW[] = {'\r','\n'};
+        WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), crnlW, sizeof(crnlW)/sizeof(*crnlW), &count, NULL);
+        return;
+    }
+
+    lena = WideCharToMultiByte(GetConsoleOutputCP(), 0, string, len, NULL, 0, NULL, NULL);
+    buf = heap_alloc(len);
+    if(!buf)
+        return;
+
+    WideCharToMultiByte(GetConsoleOutputCP(), 0, string, len, buf, lena, NULL, NULL);
+    WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), buf, lena, &count, FALSE);
+    heap_free(buf);
+    WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), "\r\n", 2, &count, FALSE);
+}
 
 static HRESULT WINAPI Host_QueryInterface(IHost *iface, REFIID riid, void **ppv)
 {
@@ -230,14 +290,99 @@ static HRESULT WINAPI Host_put_Timeout(IHost *iface, LONG v)
 static HRESULT WINAPI Host_CreateObject(IHost *iface, BSTR ProgID, BSTR Prefix,
         IDispatch **out_Dispatch)
 {
-    WINE_FIXME("(%s %s %p)\n", wine_dbgstr_w(ProgID), wine_dbgstr_w(Prefix), out_Dispatch);
-    return E_NOTIMPL;
+    IUnknown *unk;
+    GUID guid;
+    HRESULT hres;
+
+    TRACE("(%s %s %p)\n", wine_dbgstr_w(ProgID), wine_dbgstr_w(Prefix), out_Dispatch);
+
+    if(Prefix && *Prefix) {
+        FIXME("Prefix %s not supported\n", debugstr_w(Prefix));
+        return E_NOTIMPL;
+    }
+
+    hres = CLSIDFromProgID(ProgID, &guid);
+    if(FAILED(hres))
+        return hres;
+
+    hres = CoCreateInstance(&guid, NULL, CLSCTX_INPROC_SERVER|CLSCTX_LOCAL_SERVER|CLSCTX_REMOTE_SERVER,
+            &IID_IUnknown, (void**)&unk);
+    if(FAILED(hres))
+        return hres;
+
+    hres = IUnknown_QueryInterface(unk, &IID_IDispatch, (void**)out_Dispatch);
+    IUnknown_Release(unk);
+    return hres;
 }
 
 static HRESULT WINAPI Host_Echo(IHost *iface, SAFEARRAY *args)
 {
-    WINE_FIXME("(%p)\n", args);
-    return E_NOTIMPL;
+    WCHAR *output = NULL, *ptr;
+    unsigned argc, i, len;
+    int ubound, lbound;
+    VARIANT *argv;
+    BSTR *strs;
+    HRESULT hres;
+
+    TRACE("(%p)\n", args);
+
+    if(SafeArrayGetDim(args) != 1) {
+        FIXME("Unsupported args dim %d\n", SafeArrayGetDim(args));
+        return E_NOTIMPL;
+    }
+
+    SafeArrayGetLBound(args, 1, &lbound);
+    SafeArrayGetUBound(args, 1, &ubound);
+
+    hres = SafeArrayAccessData(args, (void**)&argv);
+    if(FAILED(hres))
+        return hres;
+
+    argc = ubound-lbound+1;
+    strs = heap_alloc_zero(argc*sizeof(*strs));
+    if(!strs) {
+        SafeArrayUnaccessData(args);
+        return E_OUTOFMEMORY;
+    }
+
+    /* Len of spaces between arguments. */
+    len = argc-1;
+
+    for(i=0; i < argc; i++) {
+        hres = to_string(argv+i, strs+i);
+        if(FAILED(hres))
+            break;
+
+        len += SysStringLen(strs[i]);
+    }
+
+    SafeArrayUnaccessData(args);
+    if(SUCCEEDED(hres)) {
+        ptr = output = heap_alloc((len+1)*sizeof(WCHAR));
+        if(output) {
+            for(i=0; i < argc; i++) {
+                if(i)
+                    *ptr++ = ' ';
+                len = SysStringLen(strs[i]);
+                memcpy(ptr, strs[i], len*sizeof(WCHAR));
+                ptr += len;
+            }
+            *ptr = 0;
+        }else {
+            hres = E_OUTOFMEMORY;
+        }
+    }
+
+    for(i=0; i < argc; i++)
+        SysFreeString(strs[i]);
+    heap_free(strs);
+    if(FAILED(hres))
+        return hres;
+
+    print_string(output);
+
+    heap_free(output);
+    return S_OK;
 }
 
 static HRESULT WINAPI Host_GetObject(IHost *iface, BSTR Pathname, BSTR ProgID,

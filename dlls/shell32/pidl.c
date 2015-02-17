@@ -1140,7 +1140,7 @@ HRESULT WINAPI SHGetDataFromIDListA(LPSHELLFOLDER psf, LPCITEMIDLIST pidl,
             lstrcpynA(pfd->cAlternateFileName, shortname, sizeof(pfd->cAlternateFileName));
         else
             pfd->cAlternateFileName[0] = '\0';
-        return NOERROR;
+        return S_OK;
 
     case SHGDFIL_NETRESOURCE:
     case SHGDFIL_DESCRIPTIONID:
@@ -1182,7 +1182,7 @@ HRESULT WINAPI SHGetDataFromIDListW(LPSHELLFOLDER psf, LPCITEMIDLIST pidl,
         if (len < sizeof(WIN32_FIND_DATAW))
             return E_INVALIDARG;
 
-        ZeroMemory(pfd, sizeof (WIN32_FIND_DATAA));
+        ZeroMemory(pfd, sizeof (WIN32_FIND_DATAW));
         _ILGetFileDateTime( pidl, &(pfd->ftLastWriteTime));
         pfd->dwFileAttributes = _ILGetFileAttributes(pidl, NULL, 0);
         pfd->nFileSizeLow = _ILGetFileSize ( pidl, NULL, 0);
@@ -1199,7 +1199,7 @@ HRESULT WINAPI SHGetDataFromIDListW(LPSHELLFOLDER psf, LPCITEMIDLIST pidl,
             pfd->cAlternateFileName[0] = '\0';
         else if (!MultiByteToWideChar(CP_ACP, 0, shortname, -1, pfd->cAlternateFileName, 14))
             pfd->cAlternateFileName[13] = 0;
-        return NOERROR;
+        return S_OK;
 
     case SHGDFIL_NETRESOURCE:
     case SHGDFIL_DESCRIPTIONID:
@@ -1814,7 +1814,7 @@ BOOL _ILIsDesktop(LPCITEMIDLIST pidl)
 {
     TRACE("(%p)\n",pidl);
 
-    return pidl && pidl->mkid.cb  ? FALSE : TRUE;
+    return !pidl || !pidl->mkid.cb;
 }
 
 BOOL _ILIsMyComputer(LPCITEMIDLIST pidl)
@@ -2479,7 +2479,7 @@ DWORD _ILGetFileAttributes(LPCITEMIDLIST pidl, LPSTR pOut, UINT uOutSize)
 /*************************************************************************
  * ILFreeaPidl
  *
- * free a aPidl struct
+ * frees an aPidl struct
  */
 void _ILFreeaPidl(LPITEMIDLIST * apidl, UINT cidl)
 {
@@ -2503,9 +2503,10 @@ LPITEMIDLIST* _ILCopyaPidl(const LPCITEMIDLIST * apidlsrc, UINT cidl)
     UINT i;
     LPITEMIDLIST *apidldest;
 
-    apidldest = SHAlloc(cidl * sizeof(LPITEMIDLIST));
     if (!apidlsrc)
         return NULL;
+
+    apidldest = SHAlloc(cidl * sizeof(LPITEMIDLIST));
 
     for (i = 0; i < cidl; i++)
         apidldest[i] = ILClone(apidlsrc[i]);

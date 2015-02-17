@@ -73,12 +73,12 @@ static CRITICAL_SECTION_DEBUG critsect_debug =
 static CRITICAL_SECTION IMalloc32_SpyCS = { &critsect_debug, -1, 0, 0, 0, 0 };
 
 /* resize the old table */
-static int SetSpyedBlockTableLength ( DWORD NewLength )
+static BOOL SetSpyedBlockTableLength ( DWORD NewLength )
 {
 	LPVOID *NewSpyedBlocks;
 
 	if (!Malloc32.SpyedBlocks) NewSpyedBlocks = LocalAlloc(LMEM_ZEROINIT, NewLength * sizeof(PVOID));
-	else NewSpyedBlocks = LocalReAlloc(Malloc32.SpyedBlocks, NewLength * sizeof(PVOID), LMEM_ZEROINIT);
+	else NewSpyedBlocks = LocalReAlloc(Malloc32.SpyedBlocks, NewLength * sizeof(PVOID), LMEM_ZEROINIT | LMEM_MOVEABLE);
 	if (NewSpyedBlocks) {
 		Malloc32.SpyedBlocks = NewSpyedBlocks;
 		Malloc32.SpyedBlockTableLength = NewLength;
@@ -88,14 +88,13 @@ static int SetSpyedBlockTableLength ( DWORD NewLength )
 }
 
 /* add a location to the table */
-static int AddMemoryLocation(LPVOID * pMem)
+static BOOL AddMemoryLocation(LPVOID * pMem)
 {
         LPVOID * Current;
 
 	/* allocate the table if not already allocated */
-	if (!Malloc32.SpyedBlockTableLength) {
-            if (!SetSpyedBlockTableLength(0x1000)) return 0;
-	}
+        if (!Malloc32.SpyedBlockTableLength && !SetSpyedBlockTableLength(0x1000))
+            return FALSE;
 
 	/* find a free location */
 	Current = Malloc32.SpyedBlocks;
@@ -104,7 +103,8 @@ static int AddMemoryLocation(LPVOID * pMem)
 	    if (Current >= Malloc32.SpyedBlocks + Malloc32.SpyedBlockTableLength) {
 	        /* no more space in table, grow it */
                 DWORD old_length = Malloc32.SpyedBlockTableLength;
-	        if (!SetSpyedBlockTableLength( Malloc32.SpyedBlockTableLength + 0x1000 )) return 0;
+                if (!SetSpyedBlockTableLength( Malloc32.SpyedBlockTableLength + 0x1000))
+                    return FALSE;
                 Current = Malloc32.SpyedBlocks + old_length;
 	    }
 	};
@@ -113,31 +113,31 @@ static int AddMemoryLocation(LPVOID * pMem)
 	*Current = pMem;
         Malloc32.SpyedAllocationsLeft++;
 	/*TRACE("%lu\n",Malloc32.SpyedAllocationsLeft);*/
-        return 1;
+        return TRUE;
 }
 
-static int RemoveMemoryLocation(LPCVOID pMem)
+static BOOL RemoveMemoryLocation(LPCVOID pMem)
 {
         LPVOID * Current;
 
 	/* allocate the table if not already allocated */
-	if (!Malloc32.SpyedBlockTableLength) {
-            if (!SetSpyedBlockTableLength(0x1000)) return 0;
-	}
+        if (!Malloc32.SpyedBlockTableLength && !SetSpyedBlockTableLength(0x1000))
+            return FALSE;
 
 	Current = Malloc32.SpyedBlocks;
 
 	/* find the location */
 	while (*Current != pMem) {
             Current++;
-	    if (Current >= Malloc32.SpyedBlocks + Malloc32.SpyedBlockTableLength)  return 0;      /* not found  */
+            if (Current >= Malloc32.SpyedBlocks + Malloc32.SpyedBlockTableLength)
+                return FALSE; /* not found  */
 	}
 
 	/* location found */
         Malloc32.SpyedAllocationsLeft--;
 	/*TRACE("%lu\n",Malloc32.SpyedAllocationsLeft);*/
 	*Current = NULL;
-	return 1;
+        return TRUE;
 }
 
 /******************************************************************************
@@ -217,13 +217,16 @@ static LPVOID WINAPI IMalloc_fnRealloc(LPMALLOC iface,LPVOID pv,DWORD cb) {
 	        IMallocSpy_Release(Malloc32.pSpy);
 		Malloc32.SpyReleasePending = FALSE;
 		Malloc32.pSpy = NULL;
+		LeaveCriticalSection(&IMalloc32_SpyCS);
 	    }
 
 	    if (0==cb) {
-	        /* PreRealloc can force Realloc to fail */
-                LeaveCriticalSection(&IMalloc32_SpyCS);
+		/* PreRealloc can force Realloc to fail */
+		if (Malloc32.pSpy)
+		    LeaveCriticalSection(&IMalloc32_SpyCS);
 		return NULL;
 	    }
+
 	    pv = pRealMemory;
 	}
 
@@ -249,7 +252,7 @@ static LPVOID WINAPI IMalloc_fnRealloc(LPMALLOC iface,LPVOID pv,DWORD cb) {
  */
 static VOID WINAPI IMalloc_fnFree(LPMALLOC iface,LPVOID pv) {
 
-	BOOL fSpyed = 0;
+        BOOL fSpyed = FALSE;
 
 	TRACE("(%p)\n",pv);
 
@@ -286,7 +289,7 @@ static VOID WINAPI IMalloc_fnFree(LPMALLOC iface,LPVOID pv) {
 static DWORD WINAPI IMalloc_fnGetSize(LPMALLOC iface,LPVOID pv) {
 
 	DWORD cb;
-	BOOL fSpyed = 0;
+        BOOL fSpyed = FALSE;
 
 	TRACE("(%p)\n",pv);
 
@@ -310,7 +313,7 @@ static DWORD WINAPI IMalloc_fnGetSize(LPMALLOC iface,LPVOID pv) {
  */
 static INT WINAPI IMalloc_fnDidAlloc(LPMALLOC iface,LPVOID pv) {
 
-	BOOL fSpyed = 0;
+        BOOL fSpyed = FALSE;
 	int didAlloc;
 
 	TRACE("(%p)\n",pv);
@@ -457,7 +460,7 @@ HRESULT WINAPI CoRegisterMallocSpy(LPMALLOCSPY pMallocSpy)
 
         EnterCriticalSection(&IMalloc32_SpyCS);
 
-	if (SUCCEEDED(IUnknown_QueryInterface(pMallocSpy, &IID_IMallocSpy, (LPVOID*)&pSpy))) {
+	if (SUCCEEDED(IMallocSpy_QueryInterface(pMallocSpy, &IID_IMallocSpy, (void**)&pSpy))) {
 	    Malloc32.pSpy = pSpy;
 	    hres = S_OK;
 	}

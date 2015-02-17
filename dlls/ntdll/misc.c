@@ -31,12 +31,6 @@
 #include "wine/debug.h"
 #include "ntdll_misc.h"
 
-WINE_DEFAULT_DEBUG_CHANNEL(ntdll);
-
-#if defined(__GNUC__) && defined(__i386__)
-#define DO_FPU(x,y) __asm__ __volatile__( x " %0;fwait" : "=m" (y) : )
-#define POP_FPU(x) DO_FPU("fstpl",x)
-#endif
 
 LPCSTR debugstr_ObjectAttributes(const OBJECT_ATTRIBUTES *oa)
 {
@@ -51,72 +45,6 @@ LPCSTR debugstr_us( const UNICODE_STRING *us )
     if (!us) return "<null>";
     return debugstr_wn(us->Buffer, us->Length / sizeof(WCHAR));
 }
-
-/*********************************************************************
- *                  _ftol   (NTDLL.@)
- *
- * VERSION
- *	[GNUC && i386]
- */
-#if defined(__GNUC__) && defined(__i386__)
-LONGLONG CDECL NTDLL__ftol(void)
-{
-	/* don't just do DO_FPU("fistp",retval), because the rounding
-	 * mode must also be set to "round towards zero"... */
-	double fl;
-	POP_FPU(fl);
-	return (LONGLONG)fl;
-}
-#endif /* defined(__GNUC__) && defined(__i386__) */
-
-/*********************************************************************
- *                  _ftol   (NTDLL.@)
- *
- * FIXME
- *	Should be register function
- * VERSION
- *	[!GNUC && i386]
- */
-#if !defined(__GNUC__) && defined(__i386__)
-LONGLONG CDECL NTDLL__ftol(double fl)
-{
-	FIXME("should be register function\n");
-	return (LONGLONG)fl;
-}
-#endif /* !defined(__GNUC__) && defined(__i386__) */
-
-/*********************************************************************
- *                  _CIpow   (NTDLL.@)
- * VERSION
- *	[GNUC && i386]
- */
-#if defined(__GNUC__) && defined(__i386__)
-double CDECL NTDLL__CIpow(void)
-{
-	double x,y;
-	POP_FPU(y);
-	POP_FPU(x);
-	return pow(x,y);
-}
-#endif /* defined(__GNUC__) && defined(__i386__) */
-
-
-/*********************************************************************
- *                  _CIpow   (NTDLL.@)
- *
- * FIXME
- *	Should be register function
- *
- * VERSION
- *	[!GNUC && i386]
- */
-#if !defined(__GNUC__) && defined(__i386__)
-double CDECL NTDLL__CIpow(double x,double y)
-{
-	FIXME("should be register function\n");
-	return pow(x,y);
-}
-#endif /* !defined(__GNUC__) && defined(__i386__) */
 
 /*********************************************************************
  *                  wine_get_version   (NTDLL.@)
@@ -141,12 +69,12 @@ void CDECL NTDLL_wine_get_host_version( const char **sysname, const char **relea
 {
 #ifdef HAVE_SYS_UTSNAME_H
     static struct utsname buf;
-    static int init_done;
+    static BOOL init_done;
 
     if (!init_done)
     {
         uname( &buf );
-        init_done = 1;
+        init_done = TRUE;
     }
     if (sysname) *sysname = buf.sysname;
     if (release) *release = buf.release;
@@ -252,6 +180,69 @@ double CDECL NTDLL_tan( double d )
     return tan( d );
 }
 
+#if defined(__GNUC__) && defined(__i386__)
+
+#define FPU_DOUBLE(var) double var; \
+    __asm__ __volatile__( "fstpl %0;fwait" : "=m" (var) : )
+#define FPU_DOUBLES(var1,var2) double var1,var2; \
+    __asm__ __volatile__( "fstpl %0;fwait" : "=m" (var2) : ); \
+    __asm__ __volatile__( "fstpl %0;fwait" : "=m" (var1) : )
+
+/*********************************************************************
+ *		_CIcos (NTDLL.@)
+ */
+double CDECL NTDLL__CIcos(void)
+{
+    FPU_DOUBLE(x);
+    return NTDLL_cos(x);
+}
+
+/*********************************************************************
+ *		_CIlog (NTDLL.@)
+ */
+double CDECL NTDLL__CIlog(void)
+{
+    FPU_DOUBLE(x);
+    return NTDLL_log(x);
+}
+
+/*********************************************************************
+ *		_CIpow (NTDLL.@)
+ */
+double CDECL NTDLL__CIpow(void)
+{
+    FPU_DOUBLES(x,y);
+    return NTDLL_pow(x,y);
+}
+
+/*********************************************************************
+ *		_CIsin (NTDLL.@)
+ */
+double CDECL NTDLL__CIsin(void)
+{
+    FPU_DOUBLE(x);
+    return NTDLL_sin(x);
+}
+
+/*********************************************************************
+ *		_CIsqrt (NTDLL.@)
+ */
+double CDECL NTDLL__CIsqrt(void)
+{
+    FPU_DOUBLE(x);
+    return NTDLL_sqrt(x);
+}
+
+/*********************************************************************
+ *                  _ftol   (NTDLL.@)
+ */
+LONGLONG CDECL NTDLL__ftol(void)
+{
+    FPU_DOUBLE(x);
+    return (LONGLONG)x;
+}
+
+#endif /* defined(__GNUC__) && defined(__i386__) */
 
 static void
 NTDLL_mergesort( void *arr, void *barr, size_t elemsize, int(__cdecl *compar)(const void *, const void *),
@@ -308,7 +299,7 @@ NTDLL_bsearch( const void *key, const void *base, size_t nmemb,
 
     while (min <= max)
     {
-        ssize_t cursor = (min + max) / 2;
+        ssize_t cursor = min + (max - min) / 2;
         int ret = compar(key,(const char *)base+(cursor*size));
         if (!ret)
             return (char*)base+(cursor*size);

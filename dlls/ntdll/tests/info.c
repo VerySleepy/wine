@@ -23,6 +23,7 @@
 #include <stdio.h>
 
 static NTSTATUS (WINAPI * pNtQuerySystemInformation)(SYSTEM_INFORMATION_CLASS, PVOID, ULONG, PULONG);
+static NTSTATUS (WINAPI * pNtPowerInformation)(POWER_INFORMATION_LEVEL, PVOID, ULONG, PVOID, ULONG);
 static NTSTATUS (WINAPI * pNtQueryInformationProcess)(HANDLE, PROCESSINFOCLASS, PVOID, ULONG, PULONG);
 static NTSTATUS (WINAPI * pNtQueryInformationThread)(HANDLE, THREADINFOCLASS, PVOID, ULONG, PULONG);
 static NTSTATUS (WINAPI * pNtSetInformationProcess)(HANDLE, PROCESSINFOCLASS, PVOID, ULONG);
@@ -33,7 +34,8 @@ static NTSTATUS (WINAPI * pNtCreateSection)(HANDLE*,ACCESS_MASK,const OBJECT_ATT
 static NTSTATUS (WINAPI * pNtMapViewOfSection)(HANDLE,HANDLE,PVOID*,ULONG,SIZE_T,const LARGE_INTEGER*,SIZE_T*,SECTION_INHERIT,ULONG,ULONG);
 static NTSTATUS (WINAPI * pNtUnmapViewOfSection)(HANDLE,PVOID);
 static NTSTATUS (WINAPI * pNtClose)(HANDLE);
-static BOOL     (WINAPI *pIsWow64Process)(HANDLE, PBOOL);
+static ULONG    (WINAPI * pNtGetCurrentProcessorNumber)(void);
+static BOOL     (WINAPI * pIsWow64Process)(HANDLE, PBOOL);
 
 static BOOL is_wow64;
 
@@ -53,7 +55,7 @@ static DWORD one_before_last_pid = 0;
 static BOOL InitFunctionPtrs(void)
 {
     /* All needed functions are NT based, so using GetModuleHandle is a good check */
-    HMODULE hntdll = GetModuleHandle("ntdll");
+    HMODULE hntdll = GetModuleHandleA("ntdll");
     if (!hntdll)
     {
         win_skip("Not running on NT\n");
@@ -61,6 +63,7 @@ static BOOL InitFunctionPtrs(void)
     }
 
     NTDLL_GET_PROC(NtQuerySystemInformation);
+    NTDLL_GET_PROC(NtPowerInformation);
     NTDLL_GET_PROC(NtQueryInformationProcess);
     NTDLL_GET_PROC(NtQueryInformationThread);
     NTDLL_GET_PROC(NtSetInformationProcess);
@@ -72,7 +75,10 @@ static BOOL InitFunctionPtrs(void)
     NTDLL_GET_PROC(NtMapViewOfSection);
     NTDLL_GET_PROC(NtUnmapViewOfSection);
 
-    pIsWow64Process = (void *)GetProcAddress(GetModuleHandle("kernel32.dll"), "IsWow64Process");
+    /* not present before XP */
+    pNtGetCurrentProcessorNumber = (void *) GetProcAddress(hntdll, "NtGetCurrentProcessorNumber");
+
+    pIsWow64Process = (void *)GetProcAddress(GetModuleHandleA("kernel32.dll"), "IsWow64Process");
     if (!pIsWow64Process || !pIsWow64Process( GetCurrentProcess(), &is_wow64 )) is_wow64 = FALSE;
     return TRUE;
 }
@@ -104,7 +110,7 @@ static void test_query_basic(void)
     ok( status == STATUS_ACCESS_VIOLATION || status == STATUS_INVALID_PARAMETER /* vista */,
         "Expected STATUS_ACCESS_VIOLATION or STATUS_INVALID_PARAMETER, got %08x\n", status);
 
-    /* Use a existing class, correct length, a pointer to a buffer but no ReturnLength pointer */
+    /* Use an existing class, correct length, a pointer to a buffer but no ReturnLength pointer */
     trace("Check no ReturnLength pointer\n");
     status = pNtQuerySystemInformation(SystemBasicInformation, &sbi, sizeof(sbi), NULL);
     ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08x\n", status);
@@ -180,7 +186,7 @@ static void test_query_timeofday(void)
         LARGE_INTEGER liExpTimeZoneBias;
         ULONG uCurrentTimeZoneId;
         DWORD dwUnknown1[5];
-    } SYSTEM_TIMEOFDAY_INFORMATION_PRIVATE, *PSYSTEM_TIMEOFDAY_INFORMATION_PRIVATE;
+    } SYSTEM_TIMEOFDAY_INFORMATION_PRIVATE;
 
     SYSTEM_TIMEOFDAY_INFORMATION_PRIVATE sti;
   
@@ -253,7 +259,7 @@ static void test_query_process(void)
     DWORD last_pid;
     ULONG ReturnLength;
     int i = 0, k = 0;
-    int is_nt = 0;
+    BOOL is_nt = FALSE;
     SYSTEM_BASIC_INFORMATION sbi;
 
     /* Copy of our winternl.h structure turned into a private one */
@@ -274,13 +280,19 @@ static void test_query_process(void)
         VM_COUNTERS vmCounters;
         IO_COUNTERS ioCounters;
         SYSTEM_THREAD_INFORMATION ti[1];
-    } SYSTEM_PROCESS_INFORMATION_PRIVATE, *PSYSTEM_PROCESS_INFORMATION_PRIVATE;
+    } SYSTEM_PROCESS_INFORMATION_PRIVATE;
 
     ULONG SystemInformationLength = sizeof(SYSTEM_PROCESS_INFORMATION_PRIVATE);
     SYSTEM_PROCESS_INFORMATION_PRIVATE *spi, *spi_buf = HeapAlloc(GetProcessHeap(), 0, SystemInformationLength);
 
-    /* Only W2K3 returns the needed length, the rest returns 0, so we have to loop */
+    /* test ReturnLength */
+    ReturnLength = 0;
+    status = pNtQuerySystemInformation(SystemProcessInformation, NULL, 0, &ReturnLength);
+    ok( status == STATUS_INFO_LENGTH_MISMATCH, "Expected STATUS_LENGTH_MISMATCH got %08x\n", status);
+    ok( ReturnLength > 0 || broken(ReturnLength == 0) /* NT4, Win2K */,
+        "Expected a ReturnLength to show the needed length\n");
 
+    /* W2K3 and later returns the needed length, the rest returns 0, so we have to loop */
     for (;;)
     {
         status = pNtQuerySystemInformation(SystemProcessInformation, spi_buf, SystemInformationLength, &ReturnLength);
@@ -493,18 +505,51 @@ static void test_query_cache(void)
 {
     NTSTATUS status;
     ULONG ReturnLength;
-    SYSTEM_CACHE_INFORMATION sci;
+    BYTE buffer[128];
+    SYSTEM_CACHE_INFORMATION *sci = (SYSTEM_CACHE_INFORMATION *) buffer;
+    ULONG expected;
+    INT i;
 
-    status = pNtQuerySystemInformation(SystemCacheInformation, &sci, 0, &ReturnLength);
-    ok( status == STATUS_INFO_LENGTH_MISMATCH, "Expected STATUS_INFO_LENGTH_MISMATCH, got %08x\n", status);
+    /* the large SYSTEM_CACHE_INFORMATION on WIN64 is not documented */
+    expected = sizeof(SYSTEM_CACHE_INFORMATION);
+    for (i = sizeof(buffer); i>= expected; i--)
+    {
+        ReturnLength = 0xdeadbeef;
+        status = pNtQuerySystemInformation(SystemCacheInformation, sci, i, &ReturnLength);
+        ok(!status && (ReturnLength == expected),
+            "%d: got 0x%x and %u (expected STATUS_SUCCESS and %u)\n", i, status, ReturnLength, expected);
+    }
 
-    status = pNtQuerySystemInformation(SystemCacheInformation, &sci, sizeof(sci), &ReturnLength);
-    ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08x\n", status);
-    ok( sizeof(sci) == ReturnLength, "Inconsistent length %d\n", ReturnLength);
+    /* buffer too small for the full result.
+       Up to win7, the function succeeds with a partial result. */
+    status = pNtQuerySystemInformation(SystemCacheInformation, sci, i, &ReturnLength);
+    if (!status)
+    {
+        expected = offsetof(SYSTEM_CACHE_INFORMATION, MinimumWorkingSet);
+        for (; i>= expected; i--)
+        {
+            ReturnLength = 0xdeadbeef;
+            status = pNtQuerySystemInformation(SystemCacheInformation, sci, i, &ReturnLength);
+            ok(!status && (ReturnLength == expected),
+                "%d: got 0x%x and %u (expected STATUS_SUCCESS and %u)\n", i, status, ReturnLength, expected);
+        }
+    }
 
-    status = pNtQuerySystemInformation(SystemCacheInformation, &sci, sizeof(sci) + 2, &ReturnLength);
-    ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08x\n", status);
-    ok( sizeof(sci) == ReturnLength, "Inconsistent length %d\n", ReturnLength);
+    /* buffer too small for the result, this call will always fail */
+    ReturnLength = 0xdeadbeef;
+    status = pNtQuerySystemInformation(SystemCacheInformation, sci, i, &ReturnLength);
+    ok( status == STATUS_INFO_LENGTH_MISMATCH &&
+        ((ReturnLength == expected) || broken(!ReturnLength) || broken(ReturnLength == 0xfffffff0)),
+        "%d: got 0x%x and %u (expected STATUS_INFO_LENGTH_MISMATCH and %u)\n", i, status, ReturnLength, expected);
+
+    if (0) {
+        /* this crashes on some vista / win7 machines */
+        ReturnLength = 0xdeadbeef;
+        status = pNtQuerySystemInformation(SystemCacheInformation, sci, 0, &ReturnLength);
+        ok( status == STATUS_INFO_LENGTH_MISMATCH &&
+            ((ReturnLength == expected) || broken(!ReturnLength) || broken(ReturnLength == 0xfffffff0)),
+            "0: got 0x%x and %u (expected STATUS_INFO_LENGTH_MISMATCH and %u)\n", status, ReturnLength, expected);
+    }
 }
 
 static void test_query_interrupt(void)
@@ -572,6 +617,204 @@ static void test_query_regquota(void)
     ok( sizeof(srqi) == ReturnLength, "Inconsistent length %d\n", ReturnLength);
 }
 
+static void test_query_logicalproc(void)
+{
+    NTSTATUS status;
+    ULONG len, i, proc_no;
+    SYSTEM_LOGICAL_PROCESSOR_INFORMATION *slpi;
+    SYSTEM_INFO si;
+
+    GetSystemInfo(&si);
+
+    status = pNtQuerySystemInformation(SystemLogicalProcessorInformation, NULL, 0, &len);
+    if(status == STATUS_INVALID_INFO_CLASS)
+    {
+        win_skip("SystemLogicalProcessorInformation is not supported\n");
+        return;
+    }
+    if(status == STATUS_NOT_IMPLEMENTED)
+    {
+        todo_wine ok(0, "SystemLogicalProcessorInformation is not implemented\n");
+        return;
+    }
+    ok(status == STATUS_INFO_LENGTH_MISMATCH, "Expected STATUS_INFO_LENGTH_MISMATCH, got %08x\n", status);
+    ok(len%sizeof(*slpi) == 0, "Incorrect length %d\n", len);
+
+    slpi = HeapAlloc(GetProcessHeap(), 0, len);
+    status = pNtQuerySystemInformation(SystemLogicalProcessorInformation, slpi, len, &len);
+    ok(status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08x\n", status);
+
+    proc_no = 0;
+    for(i=0; i<len/sizeof(*slpi); i++) {
+        switch(slpi[i].Relationship) {
+        case RelationProcessorCore:
+            /* Get number of logical processors */
+            for(; slpi[i].ProcessorMask; slpi[i].ProcessorMask /= 2)
+                proc_no += slpi[i].ProcessorMask%2;
+            break;
+        default:
+            break;
+        }
+    }
+    ok(proc_no > 0, "No processors were found\n");
+    if(si.dwNumberOfProcessors <= 32)
+        ok(proc_no == si.dwNumberOfProcessors, "Incorrect number of logical processors: %d, expected %d\n",
+                proc_no, si.dwNumberOfProcessors);
+
+    HeapFree(GetProcessHeap(), 0, slpi);
+}
+
+static void test_query_processor_power_info(void)
+{
+    NTSTATUS status;
+    PROCESSOR_POWER_INFORMATION* ppi;
+    ULONG size;
+    SYSTEM_INFO si;
+    int i;
+
+    GetSystemInfo(&si);
+    size = si.dwNumberOfProcessors * sizeof(PROCESSOR_POWER_INFORMATION);
+    ppi = HeapAlloc(GetProcessHeap(), 0, size);
+
+    /* If size < (sizeof(PROCESSOR_POWER_INFORMATION) * NumberOfProcessors), Win7 returns
+     * STATUS_BUFFER_TOO_SMALL. WinXP returns STATUS_SUCCESS for any value of size.  It copies as
+     * many whole PROCESSOR_POWER_INFORMATION structures that there is room for.  Even if there is
+     * not enough room for one structure, WinXP still returns STATUS_SUCCESS having done nothing.
+     *
+     * If ppi == NULL, Win7 returns STATUS_INVALID_PARAMETER while WinXP returns STATUS_SUCCESS
+     * and does nothing.
+     *
+     * The same behavior is seen with CallNtPowerInformation (in powrprof.dll).
+     */
+
+    if (si.dwNumberOfProcessors > 1)
+    {
+        for(i = 0; i < si.dwNumberOfProcessors; i++)
+            ppi[i].Number = 0xDEADBEEF;
+
+        /* Call with a buffer size that is large enough to hold at least one but not large
+         * enough to hold them all.  This will be STATUS_SUCCESS on WinXP but not on Win7 */
+        status = pNtPowerInformation(ProcessorInformation, 0, 0, ppi, size - sizeof(PROCESSOR_POWER_INFORMATION));
+        if (status == STATUS_SUCCESS)
+        {
+            /* lax version found on older Windows like WinXP */
+            ok( (ppi[si.dwNumberOfProcessors - 2].Number != 0xDEADBEEF) &&
+                (ppi[si.dwNumberOfProcessors - 1].Number == 0xDEADBEEF),
+                "Expected all but the last record to be overwritten.\n");
+
+            status = pNtPowerInformation(ProcessorInformation, 0, 0, 0, size);
+            ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08x\n", status);
+
+            for(i = 0; i < si.dwNumberOfProcessors; i++)
+                ppi[i].Number = 0xDEADBEEF;
+            status = pNtPowerInformation(ProcessorInformation, 0, 0, ppi, sizeof(PROCESSOR_POWER_INFORMATION) - 1);
+            ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08x\n", status);
+            for(i = 0; i < si.dwNumberOfProcessors; i++)
+                if (ppi[i].Number != 0xDEADBEEF) break;
+            ok( i == si.dwNumberOfProcessors, "Expected untouched buffer\n");
+        }
+        else
+        {
+            /* picky version found on newer Windows like Win7 */
+            ok( ppi[1].Number == 0xDEADBEEF, "Expected untouched buffer.\n");
+            ok( status == STATUS_BUFFER_TOO_SMALL, "Expected STATUS_BUFFER_TOO_SMALL, got %08x\n", status);
+
+            status = pNtPowerInformation(ProcessorInformation, 0, 0, 0, size);
+            ok( status == STATUS_SUCCESS || status == STATUS_INVALID_PARAMETER, "Got %08x\n", status);
+
+            status = pNtPowerInformation(ProcessorInformation, 0, 0, ppi, 0);
+            ok( status == STATUS_BUFFER_TOO_SMALL || status == STATUS_INVALID_PARAMETER, "Got %08x\n", status);
+        }
+    }
+    else
+    {
+        skip("Test needs more than one processor.\n");
+    }
+
+    status = pNtPowerInformation(ProcessorInformation, 0, 0, ppi, size);
+    ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08x\n", status);
+
+    HeapFree(GetProcessHeap(), 0, ppi);
+}
+
+static void test_query_process_wow64(void)
+{
+    NTSTATUS status;
+    ULONG ReturnLength;
+    ULONG_PTR pbi[2], dummy;
+
+    memset(&dummy, 0xcc, sizeof(dummy));
+
+    /* Do not give a handle and buffer */
+    status = pNtQueryInformationProcess(NULL, ProcessWow64Information, NULL, 0, NULL);
+    ok( status == STATUS_INFO_LENGTH_MISMATCH, "Expected STATUS_INFO_LENGTH_MISMATCH, got %08x\n", status);
+
+    /* Use a correct info class and buffer size, but still no handle and buffer */
+    status = pNtQueryInformationProcess(NULL, ProcessWow64Information, NULL, sizeof(ULONG_PTR), NULL);
+    ok( status == STATUS_ACCESS_VIOLATION || status == STATUS_INVALID_HANDLE,
+        "Expected STATUS_ACCESS_VIOLATION or STATUS_INVALID_HANDLE, got %08x\n", status);
+
+    /* Use a correct info class, buffer size and handle, but no buffer */
+    status = pNtQueryInformationProcess(GetCurrentProcess(), ProcessWow64Information, NULL, sizeof(ULONG_PTR), NULL);
+    ok( status == STATUS_ACCESS_VIOLATION , "Expected STATUS_ACCESS_VIOLATION, got %08x\n", status);
+
+    /* Use a correct info class, buffer and buffer size, but no handle */
+    pbi[0] = pbi[1] = dummy;
+    status = pNtQueryInformationProcess(NULL, ProcessWow64Information, pbi, sizeof(ULONG_PTR), NULL);
+    ok( status == STATUS_INVALID_HANDLE, "Expected STATUS_INVALID_HANDLE, got %08x\n", status);
+    ok( pbi[0] == dummy, "pbi[0] changed to %lx\n", pbi[0]);
+    ok( pbi[1] == dummy, "pbi[1] changed to %lx\n", pbi[1]);
+
+    /* Use a greater buffer size */
+    pbi[0] = pbi[1] = dummy;
+    status = pNtQueryInformationProcess(NULL, ProcessWow64Information, pbi, sizeof(ULONG_PTR) + 1, NULL);
+    ok( status == STATUS_INFO_LENGTH_MISMATCH, "Expected STATUS_INFO_LENGTH_MISMATCH, got %08x\n", status);
+    ok( pbi[0] == dummy, "pbi[0] changed to %lx\n", pbi[0]);
+    ok( pbi[1] == dummy, "pbi[1] changed to %lx\n", pbi[1]);
+
+    /* Use no ReturnLength */
+    pbi[0] = pbi[1] = dummy;
+    status = pNtQueryInformationProcess(GetCurrentProcess(), ProcessWow64Information, pbi, sizeof(ULONG_PTR), NULL);
+    ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08x\n", status);
+    trace( "Platform is_wow64 %d, ProcessInformation of ProcessWow64Information %lx\n", is_wow64, pbi[0]);
+    ok( is_wow64 == (pbi[0] != 0), "is_wow64 %x, pbi[0] %lx\n", is_wow64, pbi[0]);
+    ok( pbi[0] != dummy, "pbi[0] %lx\n", pbi[0]);
+    ok( pbi[1] == dummy, "pbi[1] changed to %lx\n", pbi[1]);
+    /* Test written size on 64 bit by checking high 32 bit buffer */
+    if (sizeof(ULONG_PTR) > sizeof(DWORD))
+    {
+        DWORD *ptr = (DWORD *)pbi;
+        ok( ptr[1] != (DWORD)dummy, "ptr[1] unchanged!\n");
+    }
+
+    /* Finally some correct calls */
+    pbi[0] = pbi[1] = dummy;
+    ReturnLength = 0xdeadbeef;
+    status = pNtQueryInformationProcess(GetCurrentProcess(), ProcessWow64Information, pbi, sizeof(ULONG_PTR), &ReturnLength);
+    ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08x\n", status);
+    ok( is_wow64 == (pbi[0] != 0), "is_wow64 %x, pbi[0] %lx\n", is_wow64, pbi[0]);
+    ok( pbi[1] == dummy, "pbi[1] changed to %lx\n", pbi[1]);
+    ok( ReturnLength == sizeof(ULONG_PTR), "Inconsistent length %d\n", ReturnLength);
+
+    /* Everything is correct except a too small buffer size */
+    pbi[0] = pbi[1] = dummy;
+    ReturnLength = 0xdeadbeef;
+    status = pNtQueryInformationProcess(GetCurrentProcess(), ProcessWow64Information, pbi, sizeof(ULONG_PTR) - 1, &ReturnLength);
+    ok( status == STATUS_INFO_LENGTH_MISMATCH, "Expected STATUS_INFO_LENGTH_MISMATCH, got %08x\n", status);
+    ok( pbi[0] == dummy, "pbi[0] changed to %lx\n", pbi[0]);
+    ok( pbi[1] == dummy, "pbi[1] changed to %lx\n", pbi[1]);
+    todo_wine ok( ReturnLength == 0xdeadbeef, "Expected 0xdeadbeef, got %d\n", ReturnLength);
+
+    /* Everything is correct except a too large buffer size */
+    pbi[0] = pbi[1] = dummy;
+    ReturnLength = 0xdeadbeef;
+    status = pNtQueryInformationProcess(GetCurrentProcess(), ProcessWow64Information, pbi, sizeof(ULONG_PTR) + 1, &ReturnLength);
+    ok( status == STATUS_INFO_LENGTH_MISMATCH, "Expected STATUS_INFO_LENGTH_MISMATCH, got %08x\n", status);
+    ok( pbi[0] == dummy, "pbi[0] changed to %lx\n", pbi[0]);
+    ok( pbi[1] == dummy, "pbi[1] changed to %lx\n", pbi[1]);
+    todo_wine ok( ReturnLength == 0xdeadbeef, "Expected 0xdeadbeef, got %d\n", ReturnLength);
+}
+
 static void test_query_process_basic(void)
 {
     NTSTATUS status;
@@ -584,7 +827,7 @@ static void test_query_process_basic(void)
         DWORD_PTR BasePriority;
         ULONG_PTR UniqueProcessId;
         ULONG_PTR InheritedFromUniqueProcessId;
-    } PROCESS_BASIC_INFORMATION_PRIVATE, *PPROCESS_BASIC_INFORMATION_PRIVATE;
+    } PROCESS_BASIC_INFORMATION_PRIVATE;
 
     PROCESS_BASIC_INFORMATION_PRIVATE pbi;
 
@@ -781,14 +1024,14 @@ static void test_query_process_debug_port(int argc, char **argv)
     DWORD_PTR debug_port = 0xdeadbeef;
     char cmdline[MAX_PATH];
     PROCESS_INFORMATION pi;
-    STARTUPINFO si = { 0 };
+    STARTUPINFOA si = { 0 };
     NTSTATUS status;
     BOOL ret;
 
     sprintf(cmdline, "%s %s %s", argv[0], argv[1], "debuggee");
 
     si.cb = sizeof(si);
-    ret = CreateProcess(NULL, cmdline, NULL, NULL, FALSE, DEBUG_PROCESS, NULL, NULL, &si, &pi);
+    ret = CreateProcessA(NULL, cmdline, NULL, NULL, FALSE, DEBUG_PROCESS, NULL, NULL, &si, &pi);
     ok(ret, "CreateProcess failed, last error %#x.\n", GetLastError());
     if (!ret) return;
 
@@ -934,7 +1177,7 @@ static void test_query_process_image_file_name(void)
 static void test_query_process_debug_object_handle(int argc, char **argv)
 {
     char cmdline[MAX_PATH];
-    STARTUPINFO si = {0};
+    STARTUPINFOA si = {0};
     PROCESS_INFORMATION pi;
     BOOL ret;
     HANDLE debug_object;
@@ -943,7 +1186,7 @@ static void test_query_process_debug_object_handle(int argc, char **argv)
     sprintf(cmdline, "%s %s %s", argv[0], argv[1], "debuggee");
 
     si.cb = sizeof(si);
-    ret = CreateProcess(NULL, cmdline, NULL, NULL, FALSE, DEBUG_PROCESS, NULL,
+    ret = CreateProcessA(NULL, cmdline, NULL, NULL, FALSE, DEBUG_PROCESS, NULL,
                         NULL, &si, &pi);
     ok(ret, "CreateProcess failed with last error %u\n", GetLastError());
     if (!ret) return;
@@ -1033,14 +1276,14 @@ static void test_query_process_debug_flags(int argc, char **argv)
     DWORD debug_flags = 0xdeadbeef;
     char cmdline[MAX_PATH];
     PROCESS_INFORMATION pi;
-    STARTUPINFO si = { 0 };
+    STARTUPINFOA si = { 0 };
     NTSTATUS status;
     BOOL ret;
 
     sprintf(cmdline, "%s %s %s", argv[0], argv[1], "debuggee");
 
     si.cb = sizeof(si);
-    ret = CreateProcess(NULL, cmdline, NULL, NULL, FALSE, DEBUG_PROCESS | DEBUG_ONLY_THIS_PROCESS, NULL, NULL, &si, &pi);
+    ret = CreateProcessA(NULL, cmdline, NULL, NULL, FALSE, DEBUG_PROCESS | DEBUG_ONLY_THIS_PROCESS, NULL, NULL, &si, &pi);
     ok(ret, "CreateProcess failed, last error %#x.\n", GetLastError());
     if (!ret) return;
 
@@ -1194,17 +1437,22 @@ static void test_mapprotection(void)
     addr = NULL;
     status = pNtMapViewOfSection ( h, GetCurrentProcess(), &addr, 0, 0, &offset, &count, ViewShare, 0, PAGE_READWRITE);
     ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08x\n", status);
+
 #if defined(__x86_64__) || defined(__i386__)
-    memset (addr, 0xc3, 1); /* lret ... in both i386 and x86_64 */
+    *(unsigned char*)addr = 0xc3;       /* lret ... in both i386 and x86_64 */
+#elif defined(__arm__)
+    *(unsigned long*)addr = 0xe12fff1e; /* bx lr */
+#else
+    ok(0, "Add a return opcode for your architecture or expect a crash in this test\n");
+#endif
     trace("trying to execute code in the readwrite only mapped anon file...\n");
     f = addr;f();
     trace("...done.\n");
-#endif
 
     status = pNtQueryVirtualMemory( GetCurrentProcess(), addr, MemoryBasicInformation, &info, sizeof(info), &retlen );
     ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08x\n", status);
     ok( retlen == sizeof(info), "Expected STATUS_SUCCESS, got %08x\n", status);
-    ok(info.Protect == PAGE_READWRITE, "addr.Protect is not PAGE_READWRITE, but 0x%x\n", info.Protect);
+    ok((info.Protect & ~PAGE_NOCACHE) == PAGE_READWRITE, "addr.Protect is not PAGE_READWRITE, but 0x%x\n", info.Protect);
 
     status = pNtUnmapViewOfSection (GetCurrentProcess(), addr);
     ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08x\n", status);
@@ -1225,7 +1473,7 @@ static void test_queryvirtualmemory(void)
     char stackbuf[42];
     HMODULE module;
 
-    module = GetModuleHandle( "ntdll.dll" );
+    module = GetModuleHandleA( "ntdll.dll" );
     trace("Check flags of the PE header of NTDLL.DLL at %p\n", module);
     status = pNtQueryVirtualMemory(NtCurrentProcess(), module, MemoryBasicInformation, &mbi, sizeof(MEMORY_BASIC_INFORMATION), &readcount);
     ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08x\n", status);
@@ -1237,7 +1485,7 @@ static void test_queryvirtualmemory(void)
     ok (mbi.Type == MEM_IMAGE, "mbi.Type is 0x%x, expected 0x%x\n", mbi.Type, MEM_IMAGE);
 
     trace("Check flags of a function entry in NTDLL.DLL at %p\n", pNtQueryVirtualMemory);
-    module = GetModuleHandle( "ntdll.dll" );
+    module = GetModuleHandleA( "ntdll.dll" );
     status = pNtQueryVirtualMemory(NtCurrentProcess(), pNtQueryVirtualMemory, MemoryBasicInformation, &mbi, sizeof(MEMORY_BASIC_INFORMATION), &readcount);
     ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08x\n", status);
     ok( readcount == sizeof(MEMORY_BASIC_INFORMATION), "Expected to read %d bytes, got %ld\n",(int)sizeof(MEMORY_BASIC_INFORMATION),readcount);
@@ -1265,7 +1513,7 @@ static void test_queryvirtualmemory(void)
     ok (mbi.Protect == PAGE_READWRITE, "mbi.Protect is 0x%x, expected 0x%x\n", mbi.Protect, PAGE_READWRITE);
 
     trace("Check flags of read-only data at %p\n", teststring);
-    module = GetModuleHandle( NULL );
+    module = GetModuleHandleA( NULL );
     status = pNtQueryVirtualMemory(NtCurrentProcess(), teststring, MemoryBasicInformation, &mbi, sizeof(MEMORY_BASIC_INFORMATION), &readcount);
     ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08x\n", status);
     ok( readcount == sizeof(MEMORY_BASIC_INFORMATION), "Expected to read %d bytes, got %ld\n",(int)sizeof(MEMORY_BASIC_INFORMATION),readcount);
@@ -1293,7 +1541,8 @@ static void test_queryvirtualmemory(void)
     {
         ok (mbi.AllocationProtect == PAGE_EXECUTE_WRITECOPY, "mbi.AllocationProtect is 0x%x, expected 0x%x\n", mbi.AllocationProtect, PAGE_EXECUTE_WRITECOPY);
         ok (mbi.State == MEM_COMMIT, "mbi.State is 0x%x, expected 0x%X\n", mbi.State, MEM_COMMIT);
-        ok (mbi.Protect == PAGE_READWRITE, "mbi.Protect is 0x%x, expected 0x%X\n", mbi.Protect, PAGE_READWRITE);
+        ok (mbi.Protect == PAGE_READWRITE || mbi.Protect == PAGE_WRITECOPY,
+            "mbi.Protect is 0x%x\n", mbi.Protect);
     }
     else skip( "bss is outside of module\n" );  /* this can happen on Mac OS */
 }
@@ -1309,7 +1558,7 @@ static void test_affinity(void)
     GetSystemInfo(&si);
     status = pNtQueryInformationProcess( GetCurrentProcess(), ProcessBasicInformation, &pbi, sizeof(pbi), NULL );
     ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08x\n", status);
-    proc_affinity = (DWORD_PTR)pbi.Reserved2[0];
+    proc_affinity = pbi.AffinityMask;
     ok( proc_affinity == (1 << si.dwNumberOfProcessors) - 1, "Unexpected process affinity\n" );
     proc_affinity = 1 << si.dwNumberOfProcessors;
     status = pNtSetInformationProcess( GetCurrentProcess(), ProcessAffinityMask, &proc_affinity, sizeof(proc_affinity) );
@@ -1368,7 +1617,7 @@ static void test_affinity(void)
     ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08x\n", status);
     status = pNtQueryInformationProcess( GetCurrentProcess(), ProcessBasicInformation, &pbi, sizeof(pbi), NULL );
     ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08x\n", status);
-    proc_affinity = (DWORD_PTR)pbi.Reserved2[0];
+    proc_affinity = pbi.AffinityMask;
     ok( proc_affinity == 2, "Unexpected process affinity\n" );
     /* Setting the process affinity changes the thread affinity to match */
     status = pNtQueryInformationThread( GetCurrentThread(), ThreadBasicInformation, &tbi, sizeof(tbi), NULL );
@@ -1388,6 +1637,62 @@ static void test_affinity(void)
     ok( status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08x\n", status);
     ok( tbi.AffinityMask == (1 << si.dwNumberOfProcessors) - 1,
         "Unexpected thread affinity\n" );
+}
+
+static void test_NtGetCurrentProcessorNumber(void)
+{
+    NTSTATUS status;
+    SYSTEM_INFO si;
+    PROCESS_BASIC_INFORMATION pbi;
+    THREAD_BASIC_INFORMATION tbi;
+    DWORD_PTR old_process_mask;
+    DWORD_PTR old_thread_mask;
+    DWORD_PTR new_mask;
+    ULONG current_cpu;
+    ULONG i;
+
+    if (!pNtGetCurrentProcessorNumber) {
+        win_skip("NtGetCurrentProcessorNumber not available\n");
+        return;
+    }
+
+    GetSystemInfo(&si);
+    current_cpu = pNtGetCurrentProcessorNumber();
+    trace("dwNumberOfProcessors: %d, current processor: %d\n", si.dwNumberOfProcessors, current_cpu);
+
+    status = pNtQueryInformationProcess(GetCurrentProcess(), ProcessBasicInformation, &pbi, sizeof(pbi), NULL);
+    old_process_mask = pbi.AffinityMask;
+    ok(status == STATUS_SUCCESS, "got 0x%x (expected STATUS_SUCCESS)\n", status);
+
+    status = pNtQueryInformationThread(GetCurrentThread(), ThreadBasicInformation, &tbi, sizeof(tbi), NULL);
+    old_thread_mask = tbi.AffinityMask;
+    ok(status == STATUS_SUCCESS, "got 0x%x (expected STATUS_SUCCESS)\n", status);
+
+    /* allow the test to run on all processors */
+    new_mask = (1 << si.dwNumberOfProcessors) - 1;
+    status = pNtSetInformationProcess(GetCurrentProcess(), ProcessAffinityMask, &new_mask, sizeof(new_mask));
+    ok(status == STATUS_SUCCESS, "got 0x%x (expected STATUS_SUCCESS)\n", status);
+
+    for (i = 0; i < si.dwNumberOfProcessors; i++)
+    {
+        new_mask = 1 << i;
+        status = pNtSetInformationThread(GetCurrentThread(), ThreadAffinityMask, &new_mask, sizeof(new_mask));
+        ok(status == STATUS_SUCCESS, "%d: got 0x%x (expected STATUS_SUCCESS)\n", i, status);
+
+        status = pNtQueryInformationThread(GetCurrentThread(), ThreadBasicInformation, &tbi, sizeof(tbi), NULL);
+        ok(status == STATUS_SUCCESS, "%d: got 0x%x (expected STATUS_SUCCESS)\n", i, status);
+
+        current_cpu = pNtGetCurrentProcessorNumber();
+        ok((current_cpu == i), "%d (new_mask 0x%lx): running on processor %d (AffinityMask: 0x%lx)\n",
+                                i, new_mask, current_cpu, tbi.AffinityMask);
+    }
+
+    /* restore old values */
+    status = pNtSetInformationProcess(GetCurrentProcess(), ProcessAffinityMask, &old_process_mask, sizeof(old_process_mask));
+    ok(status == STATUS_SUCCESS, "got 0x%x (expected STATUS_SUCCESS)\n", status);
+
+    status = pNtSetInformationThread(GetCurrentThread(), ThreadAffinityMask, &old_thread_mask, sizeof(old_thread_mask));
+    ok(status == STATUS_SUCCESS, "got 0x%x (expected STATUS_SUCCESS)\n", status);
 }
 
 START_TEST(info)
@@ -1451,6 +1756,16 @@ START_TEST(info)
     trace("Starting test_query_regquota()\n");
     test_query_regquota();
 
+    /* 0x49 SystemLogicalProcessorInformation */
+    trace("Starting test_query_logicalproc()\n");
+    test_query_logicalproc();
+
+    /* NtPowerInformation */
+
+    /* 0xb ProcessorInformation */
+    trace("Starting test_query_processor_power_info()\n");
+    test_query_processor_power_info();
+
     /* NtQueryInformationProcess */
 
     /* 0x0 ProcessBasicInformation */
@@ -1477,6 +1792,10 @@ START_TEST(info)
     trace("Starting test_query_process_handlecount()\n");
     test_query_process_handlecount();
 
+    /* 0x1A ProcessWow64Information */
+    trace("Starting test_query_process_wow64()\n");
+    test_query_process_wow64();
+
     /* 0x1B ProcessImageFileName */
     trace("Starting test_query_process_image_file_name()\n");
     test_query_process_image_file_name();
@@ -1489,7 +1808,7 @@ START_TEST(info)
     trace("Starting test_process_debug_flags()\n");
     test_query_process_debug_flags(argc, argv);
 
-    /* belongs into it's own file */
+    /* belongs to its own file */
     trace("Starting test_readvirtualmemory()\n");
     test_readvirtualmemory();
 
@@ -1501,4 +1820,5 @@ START_TEST(info)
 
     trace("Starting test_affinity()\n");
     test_affinity();
+    test_NtGetCurrentProcessorNumber();
 }

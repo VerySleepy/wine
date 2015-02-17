@@ -208,7 +208,7 @@ HRESULT NS_SendSessionRequestBroadcast( LPCGUID lpcGuid,
   data.lpMessage = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY,
                               data.dwMessageSize );
   data.lpISP = lpSpData->lpISP;
-  data.bReturnStatus = (dwFlags & DPENUMSESSIONS_RETURNSTATUS) ? TRUE : FALSE;
+  data.bReturnStatus = (dwFlags & DPENUMSESSIONS_RETURNSTATUS) != 0;
 
 
   lpMsg = (LPDPMSG_ENUMSESSIONSREQUEST)(((BYTE*)data.lpMessage)+lpSpData->dwSPHeaderSize);
@@ -353,10 +353,8 @@ void NS_PruneSessionCache( LPVOID lpNSInfo )
 }
 
 /* NAME SERVER Message stuff */
-void NS_ReplyToEnumSessionsRequest( LPCVOID lpcMsg,
-                                    LPVOID* lplpReplyData,
-                                    LPDWORD lpdwReplySize,
-                                    IDirectPlay2Impl* lpDP )
+void NS_ReplyToEnumSessionsRequest( const void *lpcMsg, void **lplpReplyData, DWORD *lpdwReplySize,
+        IDirectPlayImpl *lpDP )
 {
   LPDPMSG_ENUMSESSIONSREPLY rmsg;
   DWORD dwVariableSize;

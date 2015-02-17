@@ -31,64 +31,19 @@
 #include "msvcrt.h"
 #include "cppexcept.h"
 #include "mtdll.h"
+#include "cxx.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(msvcrt);
+
+struct __type_info_node
+{
+    void *memPtr;
+    struct __type_info_node* next;
+};
 
 typedef exception bad_cast;
 typedef exception bad_typeid;
 typedef exception __non_rtti_object;
-
-typedef struct _rtti_base_descriptor
-{
-  const type_info *type_descriptor;
-  int num_base_classes;
-  this_ptr_offsets offsets;    /* offsets for computing the this pointer */
-  unsigned int attributes;
-} rtti_base_descriptor;
-
-typedef struct _rtti_base_array
-{
-  const rtti_base_descriptor *bases[3]; /* First element is the class itself */
-} rtti_base_array;
-
-typedef struct _rtti_object_hierarchy
-{
-  unsigned int signature;
-  unsigned int attributes;
-  int array_len; /* Size of the array pointed to by 'base_classes' */
-  const rtti_base_array *base_classes;
-} rtti_object_hierarchy;
-
-typedef struct _rtti_object_locator
-{
-  unsigned int signature;
-  int base_class_offset;
-  unsigned int flags;
-  const type_info *type_descriptor;
-  const rtti_object_hierarchy *type_hierarchy;
-} rtti_object_locator;
-
-
-#ifdef __i386__  /* thiscall functions are i386-specific */
-
-#define THISCALL(func) __thiscall_ ## func
-#define THISCALL_NAME(func) __ASM_NAME("__thiscall_" #func)
-#define __thiscall __stdcall
-#define DEFINE_THISCALL_WRAPPER(func,args) \
-    extern void THISCALL(func)(void); \
-    __ASM_GLOBAL_FUNC(__thiscall_ ## func, \
-                      "popl %eax\n\t" \
-                      "pushl %ecx\n\t" \
-                      "pushl %eax\n\t" \
-                      "jmp " __ASM_NAME(#func) __ASM_STDCALL(args) )
-#else /* __i386__ */
-
-#define THISCALL(func) func
-#define THISCALL_NAME(func) __ASM_NAME(#func)
-#define __thiscall __cdecl
-#define DEFINE_THISCALL_WRAPPER(func,args) /* nothing */
-
-#endif /* __i386__ */
 
 extern const vtable_ptr MSVCRT_exception_vtable;
 extern const vtable_ptr MSVCRT_bad_typeid_vtable;
@@ -108,6 +63,7 @@ static inline const rtti_object_locator *get_obj_locator( void *cppobj )
     return (const rtti_object_locator *)vtable[-1];
 }
 
+#ifndef __x86_64__
 static void dump_obj_locator( const rtti_object_locator *ptr )
 {
     int i;
@@ -131,6 +87,38 @@ static void dump_obj_locator( const rtti_object_locator *ptr )
                dbgstr_type_info(h->base_classes->bases[i]->type_descriptor) );
     }
 }
+
+#else
+
+static void dump_obj_locator( const rtti_object_locator *ptr )
+{
+    int i;
+    char *base = ptr->signature == 0 ? RtlPcToFileHeader((void*)ptr, (void**)&base) : (char*)ptr - ptr->object_locator;
+    const rtti_object_hierarchy *h = (const rtti_object_hierarchy*)(base + ptr->type_hierarchy);
+    const type_info *type_descriptor = (const type_info*)(base + ptr->type_descriptor);
+
+    TRACE( "%p: sig=%08x base_offset=%08x flags=%08x type=%p %s hierarchy=%p\n",
+            ptr, ptr->signature, ptr->base_class_offset, ptr->flags,
+            type_descriptor, dbgstr_type_info(type_descriptor), h );
+    TRACE( "  hierarchy: sig=%08x attr=%08x len=%d base classes=%p\n",
+            h->signature, h->attributes, h->array_len, base + h->base_classes );
+    for (i = 0; i < h->array_len; i++)
+    {
+        const rtti_base_descriptor *bases = (rtti_base_descriptor*)(base +
+                ((const rtti_base_array*)(base + h->base_classes))->bases[i]);
+
+        TRACE( "    base class %p: num %d off %d,%d,%d attr %08x type %p %s\n",
+                bases,
+                bases->num_base_classes,
+                bases->offsets.this_offset,
+                bases->offsets.vbase_descr,
+                bases->offsets.vbase_offset,
+                bases->attributes,
+                base + bases->type_descriptor,
+                dbgstr_type_info((const type_info*)(base + bases->type_descriptor)) );
+    }
+}
+#endif
 
 /* Internal common ctor for exception */
 static void EXCEPTION_ctor(exception *_this, const char** name)
@@ -244,7 +232,7 @@ void * __thiscall MSVCRT_exception_vector_dtor(exception * _this, unsigned int f
     if (flags & 2)
     {
         /* we have an array, with the number of elements stored before the first object */
-        int i, *ptr = (int *)_this - 1;
+        INT_PTR i, *ptr = (INT_PTR *)_this - 1;
 
         for (i = *ptr - 1; i >= 0; i--) MSVCRT_exception_dtor(_this + i);
         MSVCRT_operator_delete(ptr);
@@ -343,7 +331,7 @@ void * __thiscall MSVCRT_bad_typeid_vector_dtor(bad_typeid * _this, unsigned int
     if (flags & 2)
     {
         /* we have an array, with the number of elements stored before the first object */
-        int i, *ptr = (int *)_this - 1;
+        INT_PTR i, *ptr = (INT_PTR *)_this - 1;
 
         for (i = *ptr - 1; i >= 0; i--) MSVCRT_bad_typeid_dtor(_this + i);
         MSVCRT_operator_delete(ptr);
@@ -426,7 +414,7 @@ void * __thiscall MSVCRT___non_rtti_object_vector_dtor(__non_rtti_object * _this
     if (flags & 2)
     {
         /* we have an array, with the number of elements stored before the first object */
-        int i, *ptr = (int *)_this - 1;
+        INT_PTR i, *ptr = (INT_PTR *)_this - 1;
 
         for (i = *ptr - 1; i >= 0; i--) MSVCRT___non_rtti_object_dtor(_this + i);
         MSVCRT_operator_delete(ptr);
@@ -528,7 +516,7 @@ void * __thiscall MSVCRT_bad_cast_vector_dtor(bad_cast * _this, unsigned int fla
     if (flags & 2)
     {
         /* we have an array, with the number of elements stored before the first object */
-        int i, *ptr = (int *)_this - 1;
+        INT_PTR i, *ptr = (INT_PTR *)_this - 1;
 
         for (i = *ptr - 1; i >= 0; i--) MSVCRT_bad_cast_dtor(_this + i);
         MSVCRT_operator_delete(ptr);
@@ -610,7 +598,7 @@ const char * __thiscall MSVCRT_type_info_name(type_info * _this)
      * Is this '.' really part of the mangled name, or has it some other meaning ?
      */
     char* name = __unDName(0, _this->mangled + 1, 0,
-                           MSVCRT_malloc, MSVCRT_free, 0x2800);
+                           MSVCRT_malloc, MSVCRT_free, UNDNAME_NO_ARGUMENTS | UNDNAME_32_BIT_DECODE);
     if (name)
     {
       unsigned int len = strlen(name);
@@ -648,7 +636,7 @@ void * __thiscall MSVCRT_type_info_vector_dtor(type_info * _this, unsigned int f
     if (flags & 2)
     {
         /* we have an array, with the number of elements stored before the first object */
-        int i, *ptr = (int *)_this - 1;
+        INT_PTR i, *ptr = (INT_PTR *)_this - 1;
 
         for (i = *ptr - 1; i >= 0; i--) MSVCRT_type_info_dtor(_this + i);
         MSVCRT_operator_delete(ptr);
@@ -661,341 +649,116 @@ void * __thiscall MSVCRT_type_info_vector_dtor(type_info * _this, unsigned int f
     return _this;
 }
 
-/* vtables */
-
-#ifdef _WIN64
-
-#define __ASM_VTABLE(name,funcs) \
-    __asm__(".data\n" \
-            "\t.align 8\n" \
-            "\t.quad " __ASM_NAME(#name "_rtti") "\n" \
-            "\t.globl " __ASM_NAME("MSVCRT_" #name "_vtable") "\n" \
-            __ASM_NAME("MSVCRT_" #name "_vtable") ":\n" \
-            "\t.quad " THISCALL_NAME(MSVCRT_ ## name ## _vector_dtor) "\n" \
-            funcs "\n\t.text");
-
-#define __ASM_EXCEPTION_VTABLE(name) \
-    __ASM_VTABLE(name, "\t.quad " THISCALL_NAME(MSVCRT_what_exception) )
-
-#else
-
-#define __ASM_VTABLE(name,funcs) \
-    __asm__(".data\n" \
-            "\t.align 4\n" \
-            "\t.long " __ASM_NAME(#name "_rtti") "\n" \
-            "\t.globl " __ASM_NAME("MSVCRT_" #name "_vtable") "\n" \
-            __ASM_NAME("MSVCRT_" #name "_vtable") ":\n" \
-            "\t.long " THISCALL_NAME(MSVCRT_ ## name ## _vector_dtor) "\n" \
-            funcs "\n\t.text");
-
-#define __ASM_EXCEPTION_VTABLE(name) \
-    __ASM_VTABLE(name, "\t.long " THISCALL_NAME(MSVCRT_what_exception) )
-
-#endif /* _WIN64 */
-
 #ifndef __GNUC__
 void __asm_dummy_vtables(void) {
 #endif
 
-__ASM_VTABLE(type_info,"")
-__ASM_EXCEPTION_VTABLE(exception)
-__ASM_EXCEPTION_VTABLE(bad_typeid)
-__ASM_EXCEPTION_VTABLE(bad_cast)
-__ASM_EXCEPTION_VTABLE(__non_rtti_object)
+__ASM_VTABLE(type_info,
+        VTABLE_ADD_FUNC(MSVCRT_type_info_vector_dtor));
+__ASM_VTABLE(exception,
+        VTABLE_ADD_FUNC(MSVCRT_exception_vector_dtor)
+        VTABLE_ADD_FUNC(MSVCRT_what_exception));
+#if _MSVCR_VER >= 80
+__ASM_VTABLE(exception_old,
+        VTABLE_ADD_FUNC(MSVCRT_exception_vector_dtor)
+        VTABLE_ADD_FUNC(MSVCRT_what_exception));
+#endif
+__ASM_VTABLE(bad_typeid,
+        VTABLE_ADD_FUNC(MSVCRT_bad_typeid_vector_dtor)
+        VTABLE_ADD_FUNC(MSVCRT_what_exception));
+__ASM_VTABLE(bad_cast,
+        VTABLE_ADD_FUNC(MSVCRT_bad_cast_vector_dtor)
+        VTABLE_ADD_FUNC(MSVCRT_what_exception));
+__ASM_VTABLE(__non_rtti_object,
+        VTABLE_ADD_FUNC(MSVCRT___non_rtti_object_vector_dtor)
+        VTABLE_ADD_FUNC(MSVCRT_what_exception));
 
 #ifndef __GNUC__
 }
 #endif
 
-/* Static RTTI for exported objects */
+DEFINE_RTTI_DATA0( type_info, 0, ".?AVtype_info@@" )
+#if _MSVCR_VER >= 80
+DEFINE_RTTI_DATA0( exception, 0, ".?AVexception@std@@" )
+DEFINE_RTTI_DATA0( exception_old, 0, ".?AVexception@@" )
+DEFINE_RTTI_DATA1( bad_typeid, 0, &exception_rtti_base_descriptor, ".?AVbad_typeid@std@@" )
+DEFINE_RTTI_DATA1( bad_cast, 0, &exception_rtti_base_descriptor, ".?AVbad_cast@std@@" )
+DEFINE_RTTI_DATA2( __non_rtti_object, 0, &bad_typeid_rtti_base_descriptor, &exception_rtti_base_descriptor, ".?AV__non_rtti_object@std@@" )
+#else
+DEFINE_RTTI_DATA0( exception, 0, ".?AVexception@@" )
+DEFINE_RTTI_DATA1( bad_typeid, 0, &exception_rtti_base_descriptor, ".?AVbad_typeid@@" )
+DEFINE_RTTI_DATA1( bad_cast, 0, &exception_rtti_base_descriptor, ".?AVbad_cast@@" )
+DEFINE_RTTI_DATA2( __non_rtti_object, 0, &bad_typeid_rtti_base_descriptor, &exception_rtti_base_descriptor, ".?AV__non_rtti_object@@" )
+#endif
 
-static const type_info exception_type_info =
-{
-  &MSVCRT_type_info_vtable,
-  NULL,
-  ".?AVexception@@"
-};
+DEFINE_EXCEPTION_TYPE_INFO( exception, 0, NULL, NULL )
+DEFINE_EXCEPTION_TYPE_INFO( bad_typeid, 1, &exception_cxx_type_info, NULL )
+DEFINE_EXCEPTION_TYPE_INFO( bad_cast, 1, &exception_cxx_type_info, NULL )
+DEFINE_EXCEPTION_TYPE_INFO( __non_rtti_object, 2, &bad_typeid_cxx_type_info, &exception_cxx_type_info )
 
-static const rtti_base_descriptor exception_rtti_base_descriptor =
-{
-  &exception_type_info,
-  0,
-  { 0, -1, 0 },
-  0
-};
+#if _MSVCR_VER >= 80
+typedef exception bad_alloc;
+extern const vtable_ptr MSVCRT_bad_alloc_vtable;
 
-static const rtti_base_array exception_rtti_base_array =
+static void bad_alloc_ctor(bad_alloc *this, const char **name)
 {
-  {
-    &exception_rtti_base_descriptor,
-    NULL,
-    NULL
-  }
-};
+    MSVCRT_exception_ctor(this, name);
+    this->vtable = &MSVCRT_bad_alloc_vtable;
+}
 
-static const rtti_object_hierarchy exception_type_hierarchy =
+/* bad_alloc class implementation */
+DEFINE_THISCALL_WRAPPER(MSVCRT_bad_alloc_copy_ctor,8)
+bad_alloc * __thiscall MSVCRT_bad_alloc_copy_ctor(bad_alloc * _this, const bad_alloc * rhs)
 {
-  0,
-  0,
-  1,
-  &exception_rtti_base_array
-};
+    TRACE("(%p %p)\n", _this, rhs);
+    MSVCRT_exception_copy_ctor(_this, rhs);
+    _this->vtable = &MSVCRT_bad_alloc_vtable;
+    return _this;
+}
 
-const rtti_object_locator exception_rtti =
+DEFINE_THISCALL_WRAPPER(MSVCRT_bad_alloc_dtor,4)
+void __thiscall MSVCRT_bad_alloc_dtor(bad_alloc * _this)
 {
-  0,
-  0,
-  0,
-  &exception_type_info,
-  &exception_type_hierarchy
-};
+    TRACE("(%p)\n", _this);
+    MSVCRT_exception_dtor(_this);
+}
 
-static const cxx_type_info exception_cxx_type_info =
-{
-  0,
-  &exception_type_info,
-  { 0, -1, 0 },
-  sizeof(exception),
-  (cxx_copy_ctor)THISCALL(MSVCRT_exception_copy_ctor)
-};
+__ASM_VTABLE(bad_alloc,
+        VTABLE_ADD_FUNC(MSVCRT_exception_vector_dtor)
+        VTABLE_ADD_FUNC(MSVCRT_what_exception));
+DEFINE_RTTI_DATA1( bad_alloc, 0, &exception_rtti_base_descriptor, ".?AVbad_alloc@std@@" )
+DEFINE_EXCEPTION_TYPE_INFO( bad_alloc, 1, &exception_cxx_type_info, NULL )
 
-static const type_info bad_typeid_type_info =
+void throw_bad_alloc(const char *str)
 {
-  &MSVCRT_type_info_vtable,
-  NULL,
-  ".?AVbad_typeid@@"
-};
+    bad_alloc e;
+    bad_alloc_ctor(&e, &str);
+    _CxxThrowException(&e, &bad_alloc_exception_type);
+}
+#endif
 
-static const rtti_base_descriptor bad_typeid_rtti_base_descriptor =
+void msvcrt_init_exception(void *base)
 {
-  &bad_typeid_type_info,
-  1,
-  { 0, -1, 0 },
-  0
-};
+#ifdef __x86_64__
+    init_type_info_rtti(base);
+    init_exception_rtti(base);
+#if _MSVCR_VER >= 80
+    init_exception_old_rtti(base);
+    init_bad_alloc_rtti(base);
+#endif
+    init_bad_typeid_rtti(base);
+    init_bad_cast_rtti(base);
+    init___non_rtti_object_rtti(base);
 
-static const rtti_base_array bad_typeid_rtti_base_array =
-{
-  {
-    &bad_typeid_rtti_base_descriptor,
-    &exception_rtti_base_descriptor,
-    NULL
-  }
-};
-
-static const rtti_object_hierarchy bad_typeid_type_hierarchy =
-{
-  0,
-  0,
-  2,
-  &bad_typeid_rtti_base_array
-};
-
-const rtti_object_locator bad_typeid_rtti =
-{
-  0,
-  0,
-  0,
-  &bad_typeid_type_info,
-  &bad_typeid_type_hierarchy
-};
-
-static const cxx_type_info bad_typeid_cxx_type_info =
-{
-  0,
-  &bad_typeid_type_info,
-  { 0, -1, 0 },
-  sizeof(exception),
-  (cxx_copy_ctor)THISCALL(MSVCRT_bad_typeid_copy_ctor)
-};
-
-static const type_info bad_cast_type_info =
-{
-  &MSVCRT_type_info_vtable,
-  NULL,
-  ".?AVbad_cast@@"
-};
-
-static const rtti_base_descriptor bad_cast_rtti_base_descriptor =
-{
-  &bad_cast_type_info,
-  1,
-  { 0, -1, 0 },
-  0
-};
-
-static const rtti_base_array bad_cast_rtti_base_array =
-{
-  {
-    &bad_cast_rtti_base_descriptor,
-    &exception_rtti_base_descriptor,
-    NULL
-  }
-};
-
-static const rtti_object_hierarchy bad_cast_type_hierarchy =
-{
-  0,
-  0,
-  2,
-  &bad_cast_rtti_base_array
-};
-
-const rtti_object_locator bad_cast_rtti =
-{
-  0,
-  0,
-  0,
-  &bad_cast_type_info,
-  &bad_cast_type_hierarchy
-};
-
-static const cxx_type_info bad_cast_cxx_type_info =
-{
-  0,
-  &bad_cast_type_info,
-  { 0, -1, 0 },
-  sizeof(exception),
-  (cxx_copy_ctor)THISCALL(MSVCRT_bad_cast_copy_ctor)
-};
-
-static const type_info __non_rtti_object_type_info =
-{
-  &MSVCRT_type_info_vtable,
-  NULL,
-  ".?AV__non_rtti_object@@"
-};
-
-static const rtti_base_descriptor __non_rtti_object_rtti_base_descriptor =
-{
-  &__non_rtti_object_type_info,
-  2,
-  { 0, -1, 0 },
-  0
-};
-
-static const rtti_base_array __non_rtti_object_rtti_base_array =
-{
-  {
-    &__non_rtti_object_rtti_base_descriptor,
-    &bad_typeid_rtti_base_descriptor,
-    &exception_rtti_base_descriptor
-  }
-};
-
-static const rtti_object_hierarchy __non_rtti_object_type_hierarchy =
-{
-  0,
-  0,
-  3,
-  &__non_rtti_object_rtti_base_array
-};
-
-const rtti_object_locator __non_rtti_object_rtti =
-{
-  0,
-  0,
-  0,
-  &__non_rtti_object_type_info,
-  &__non_rtti_object_type_hierarchy
-};
-
-static const cxx_type_info __non_rtti_object_cxx_type_info =
-{
-  0,
-  &__non_rtti_object_type_info,
-  { 0, -1, 0 },
-  sizeof(exception),
-  (cxx_copy_ctor)THISCALL(MSVCRT___non_rtti_object_copy_ctor)
-};
-
-static const type_info type_info_type_info =
-{
-  &MSVCRT_type_info_vtable,
-  NULL,
-  ".?AVtype_info@@"
-};
-
-static const rtti_base_descriptor type_info_rtti_base_descriptor =
-{
-  &type_info_type_info,
-  0,
-  { 0, -1, 0 },
-  0
-};
-
-static const rtti_base_array type_info_rtti_base_array =
-{
-  {
-    &type_info_rtti_base_descriptor,
-    NULL,
-    NULL
-  }
-};
-
-static const rtti_object_hierarchy type_info_type_hierarchy =
-{
-  0,
-  0,
-  1,
-  &type_info_rtti_base_array
-};
-
-const rtti_object_locator type_info_rtti =
-{
-  0,
-  0,
-  0,
-  &type_info_type_info,
-  &type_info_type_hierarchy
-};
-
-/*
- * Exception RTTI for cpp objects
- */
-static const cxx_type_info_table bad_cast_type_info_table =
-{
-  3,
-  {
-   &__non_rtti_object_cxx_type_info,
-   &bad_typeid_cxx_type_info,
-   &exception_cxx_type_info
-  }
-};
-
-static const cxx_exception_type bad_cast_exception_type =
-{
-  0,
-  (void*)THISCALL(MSVCRT_bad_cast_dtor),
-  NULL,
-  &bad_cast_type_info_table
-};
-
-static const cxx_type_info_table bad_typeid_type_info_table =
-{
-  2,
-  {
-   &bad_cast_cxx_type_info,
-   &exception_cxx_type_info,
-   NULL
-  }
-};
-
-static const cxx_exception_type bad_typeid_exception_type =
-{
-  0,
-  (void*)THISCALL(MSVCRT_bad_typeid_dtor),
-  NULL,
-  &bad_cast_type_info_table
-};
-
-static const cxx_exception_type __non_rtti_object_exception_type =
-{
-  0,
-  (void*)THISCALL(MSVCRT___non_rtti_object_dtor),
-  NULL,
-  &bad_typeid_type_info_table
-};
+    init_exception_cxx(base);
+    init_bad_typeid_cxx(base);
+    init_bad_cast_cxx(base);
+    init___non_rtti_object_cxx(base);
+#if _MSVCR_VER >= 80
+    init_bad_alloc_cxx(base);
+#endif
+#endif
+}
 
 
 /******************************************************************
@@ -1119,6 +882,7 @@ void CDECL MSVCRT_unexpected(void)
  *  This function is usually called by compiler generated code as a result
  *  of using one of the C++ dynamic cast statements.
  */
+#ifndef __x86_64__
 const type_info* CDECL MSVCRT___RTtypeid(void *cppobj)
 {
     const type_info *ret;
@@ -1147,6 +911,44 @@ const type_info* CDECL MSVCRT___RTtypeid(void *cppobj)
     return ret;
 }
 
+#else
+
+const type_info* CDECL MSVCRT___RTtypeid(void *cppobj)
+{
+    const type_info *ret;
+
+    if (!cppobj)
+    {
+        bad_typeid e;
+        MSVCRT_bad_typeid_ctor( &e, "Attempted a typeid of NULL pointer!" );
+        _CxxThrowException( &e, &bad_typeid_exception_type );
+        return NULL;
+    }
+
+    __TRY
+    {
+        const rtti_object_locator *obj_locator = get_obj_locator( cppobj );
+        char *base;
+
+        if(obj_locator->signature == 0)
+            base = RtlPcToFileHeader((void*)obj_locator, (void**)&base);
+        else
+            base = (char*)obj_locator - obj_locator->object_locator;
+
+        ret = (type_info*)(base + obj_locator->type_descriptor);
+    }
+    __EXCEPT_PAGE_FAULT
+    {
+        __non_rtti_object e;
+        MSVCRT___non_rtti_object_ctor( &e, "Bad read pointer - no RTTI data!" );
+        _CxxThrowException( &e, &bad_typeid_exception_type );
+        return NULL;
+    }
+    __ENDTRY
+    return ret;
+}
+#endif
+
 /******************************************************************
  *		__RTDynamicCast (MSVCRT.@)
  *
@@ -1169,6 +971,7 @@ const type_info* CDECL MSVCRT___RTtypeid(void *cppobj)
  *  This function is usually called by compiler generated code as a result
  *  of using one of the C++ dynamic cast statements.
  */
+#ifndef __x86_64__
 void* CDECL MSVCRT___RTDynamicCast(void *cppobj, int unknown,
                                    type_info *src, type_info *dst,
                                    int do_throw)
@@ -1232,6 +1035,70 @@ void* CDECL MSVCRT___RTDynamicCast(void *cppobj, int unknown,
     return ret;
 }
 
+#else
+
+void* CDECL MSVCRT___RTDynamicCast(void *cppobj, int unknown,
+        type_info *src, type_info *dst,
+        int do_throw)
+{
+    void *ret;
+
+    if (!cppobj) return NULL;
+
+    TRACE("obj: %p unknown: %d src: %p %s dst: %p %s do_throw: %d)\n",
+            cppobj, unknown, src, dbgstr_type_info(src), dst, dbgstr_type_info(dst), do_throw);
+
+    __TRY
+    {
+        int i;
+        const rtti_object_locator *obj_locator = get_obj_locator( cppobj );
+        const rtti_object_hierarchy *obj_bases;
+        const rtti_base_array *base_array;
+        char *base;
+
+        if (TRACE_ON(msvcrt)) dump_obj_locator(obj_locator);
+
+        if(obj_locator->signature == 0)
+            base = RtlPcToFileHeader((void*)obj_locator, (void**)&base);
+        else
+            base = (char*)obj_locator - obj_locator->object_locator;
+
+        obj_bases = (const rtti_object_hierarchy*)(base + obj_locator->type_hierarchy);
+        base_array = (const rtti_base_array*)(base + obj_bases->base_classes);
+
+        ret = NULL;
+        for (i = 0; i < obj_bases->array_len; i++)
+        {
+            const rtti_base_descriptor *base_desc = (const rtti_base_descriptor*)(base + base_array->bases[i]);
+            const type_info *typ = (const type_info*)(base + base_desc->type_descriptor);
+
+            if (!strcmp(typ->mangled, dst->mangled))
+            {
+                void *this_ptr = (char *)cppobj - obj_locator->base_class_offset;
+                ret = get_this_pointer( &base_desc->offsets, this_ptr );
+                break;
+            }
+        }
+        if (!ret && do_throw)
+        {
+            const char *msg = "Bad dynamic_cast!";
+            bad_cast e;
+            MSVCRT_bad_cast_ctor( &e, &msg );
+            _CxxThrowException( &e, &bad_cast_exception_type );
+        }
+    }
+    __EXCEPT_PAGE_FAULT
+    {
+        __non_rtti_object e;
+        MSVCRT___non_rtti_object_ctor( &e, "Access violation - no RTTI data!" );
+        _CxxThrowException( &e, &bad_typeid_exception_type );
+        return NULL;
+    }
+    __ENDTRY
+    return ret;
+}
+#endif
+
 
 /******************************************************************
  *		__RTCastToVoid (MSVCRT.@)
@@ -1269,4 +1136,348 @@ void* CDECL MSVCRT___RTCastToVoid(void *cppobj)
     }
     __ENDTRY
     return ret;
+}
+
+
+/*********************************************************************
+ *		_CxxThrowException (MSVCRT.@)
+ */
+void WINAPI _CxxThrowException( exception *object, const cxx_exception_type *type )
+{
+    ULONG_PTR args[3];
+
+    args[0] = CXX_FRAME_MAGIC_VC6;
+    args[1] = (ULONG_PTR)object;
+    args[2] = (ULONG_PTR)type;
+    RaiseException( CXX_EXCEPTION, EH_NONCONTINUABLE, 3, args );
+}
+
+/*********************************************************************
+ * ?_is_exception_typeof@@YAHABVtype_info@@PAU_EXCEPTION_POINTERS@@@Z
+ * ?_is_exception_typeof@@YAHAEBVtype_info@@PEAU_EXCEPTION_POINTERS@@@Z
+ */
+#ifndef __x86_64__
+int __cdecl _is_exception_typeof(const type_info *ti, EXCEPTION_POINTERS *ep)
+{
+    int ret = -1;
+
+    TRACE("(%p %p)\n", ti, ep);
+
+    __TRY
+    {
+        EXCEPTION_RECORD *rec = ep->ExceptionRecord;
+
+        if (rec->ExceptionCode==CXX_EXCEPTION && rec->NumberParameters==3 &&
+                (rec->ExceptionInformation[0]==CXX_FRAME_MAGIC_VC6 ||
+                 rec->ExceptionInformation[0]==CXX_FRAME_MAGIC_VC7 ||
+                 rec->ExceptionInformation[0]==CXX_FRAME_MAGIC_VC8))
+        {
+            const cxx_type_info_table *tit = ((cxx_exception_type*)rec->ExceptionInformation[2])->type_info_table;
+            int i;
+
+            for (i=0; i<tit->count; i++) {
+                if (ti==tit->info[i]->type_info || !strcmp(ti->mangled, tit->info[i]->type_info->mangled))
+                {
+                    ret = 1;
+                    break;
+                }
+            }
+
+            if (i == tit->count)
+                ret = 0;
+        }
+    }
+    __EXCEPT_PAGE_FAULT
+    __ENDTRY
+
+    if(ret == -1)
+        MSVCRT_terminate();
+    return ret;
+}
+#else
+int __cdecl _is_exception_typeof(const type_info *ti, EXCEPTION_POINTERS *ep)
+{
+    int ret = -1;
+
+    TRACE("(%p %p)\n", ti, ep);
+
+    __TRY
+    {
+        EXCEPTION_RECORD *rec = ep->ExceptionRecord;
+
+        if (rec->ExceptionCode==CXX_EXCEPTION && rec->NumberParameters==4 &&
+                (rec->ExceptionInformation[0]==CXX_FRAME_MAGIC_VC6 ||
+                 rec->ExceptionInformation[0]==CXX_FRAME_MAGIC_VC7 ||
+                 rec->ExceptionInformation[0]==CXX_FRAME_MAGIC_VC8))
+        {
+            const cxx_exception_type *et = (cxx_exception_type*)rec->ExceptionInformation[2];
+            const cxx_type_info_table *tit = (const cxx_type_info_table*)(rec->ExceptionInformation[3]+et->type_info_table);
+            int i;
+
+            for (i=0; i<tit->count; i++) {
+                const cxx_type_info *cti = (const cxx_type_info*)(rec->ExceptionInformation[3]+tit->info[i]);
+                const type_info *except_ti = (const type_info*)(rec->ExceptionInformation[3]+cti->type_info);
+                if (ti==except_ti || !strcmp(ti->mangled, except_ti->mangled))
+                {
+                    ret = 1;
+                    break;
+                }
+            }
+
+            if (i == tit->count)
+                ret = 0;
+        }
+    }
+    __EXCEPT_PAGE_FAULT
+    __ENDTRY
+
+    if(ret == -1)
+        MSVCRT_terminate();
+    return ret;
+}
+#endif
+
+/*********************************************************************
+ * __clean_type_info_names_internal (MSVCR100.@)
+ */
+void CDECL __clean_type_info_names_internal(void *p)
+{
+    FIXME("(%p) stub\n", p);
+}
+
+/*********************************************************************
+ * ?_name_internal_method@type_info@@QBEPBDPAU__type_info_node@@@Z (MSVCR100.@)
+ */
+DEFINE_THISCALL_WRAPPER(type_info_name_internal_method,8)
+const char * __thiscall type_info_name_internal_method(type_info * _this, struct __type_info_node *node)
+{
+    static int once;
+    if (node && !once++) FIXME("type_info_node parameter ignored\n");
+
+    return MSVCRT_type_info_name(_this);
+}
+
+/* std::exception_ptr class helpers */
+typedef struct
+{
+    EXCEPTION_RECORD *rec;
+    int *ref; /* not binary compatible with native msvcr100 */
+} exception_ptr;
+
+/*********************************************************************
+ * ?__ExceptionPtrCreate@@YAXPAX@Z
+ * ?__ExceptionPtrCreate@@YAXPEAX@Z
+ */
+void __cdecl __ExceptionPtrCreate(exception_ptr *ep)
+{
+    TRACE("(%p)\n", ep);
+
+    ep->rec = NULL;
+    ep->ref = NULL;
+}
+
+#ifdef __i386__
+static inline void call_dtor(const cxx_exception_type *type, void *func, void *object)
+{
+    __asm__ __volatile__("call *%0" : : "m" (func), "c" (object) : "eax", "edx", "memory");
+}
+#elif __x86_64__
+static inline void call_dtor(const cxx_exception_type *type, unsigned int dtor, void *object)
+{
+    char *base = RtlPcToFileHeader((void*)type, (void**)&base);
+    void (__cdecl *func)(void*) = (void*)(base + dtor);
+    func(object);
+}
+#else
+#define call_dtor(type, func, object) ((void (__cdecl*)(void*))(func))(object)
+#endif
+
+/*********************************************************************
+ * ?__ExceptionPtrDestroy@@YAXPAX@Z
+ * ?__ExceptionPtrDestroy@@YAXPEAX@Z
+ */
+void __cdecl __ExceptionPtrDestroy(exception_ptr *ep)
+{
+    TRACE("(%p)\n", ep);
+
+    if (!ep->rec)
+        return;
+
+    if (!InterlockedDecrement(ep->ref))
+    {
+        if (ep->rec->ExceptionCode == CXX_EXCEPTION)
+        {
+            const cxx_exception_type *type = (void*)ep->rec->ExceptionInformation[2];
+            void *obj = (void*)ep->rec->ExceptionInformation[1];
+
+            if (type && type->destructor) call_dtor(type, type->destructor, obj);
+            HeapFree(GetProcessHeap(), 0, obj);
+        }
+
+        HeapFree(GetProcessHeap(), 0, ep->rec);
+        HeapFree(GetProcessHeap(), 0, ep->ref);
+    }
+}
+
+/*********************************************************************
+ * ?__ExceptionPtrCopy@@YAXPAXPBX@Z
+ * ?__ExceptionPtrCopy@@YAXPEAXPEBX@Z
+ */
+void __cdecl __ExceptionPtrCopy(exception_ptr *ep, const exception_ptr *copy)
+{
+    TRACE("(%p %p)\n", ep, copy);
+
+    /* don't destroy object stored in ep */
+    *ep = *copy;
+    if (ep->ref)
+        InterlockedIncrement(copy->ref);
+}
+
+/*********************************************************************
+ * ?__ExceptionPtrRethrow@@YAXPBX@Z
+ * ?__ExceptionPtrRethrow@@YAXPEBX@Z
+ */
+void __cdecl __ExceptionPtrRethrow(const exception_ptr *ep)
+{
+    TRACE("(%p)\n", ep);
+
+    if (!ep->rec)
+    {
+        static const char *exception_msg = "bad exception";
+        exception e;
+
+        MSVCRT_exception_ctor(&e, &exception_msg);
+        _CxxThrowException(&e, &exception_exception_type);
+        return;
+    }
+
+    RaiseException(ep->rec->ExceptionCode, ep->rec->ExceptionFlags & (~EH_UNWINDING),
+            ep->rec->NumberParameters, ep->rec->ExceptionInformation);
+}
+
+#ifdef __i386__
+static inline void call_copy_ctor( void *func, void *this, void *src, int has_vbase )
+{
+    TRACE( "calling copy ctor %p object %p src %p\n", func, this, src );
+    if (has_vbase)
+        /* in that case copy ctor takes an extra bool indicating whether to copy the base class */
+        __asm__ __volatile__("pushl $1; pushl %2; call *%0"
+                             : : "m" (func), "c" (this), "m" (src) : "eax", "edx", "memory" );
+    else
+        __asm__ __volatile__("pushl %2; call *%0"
+                             : : "m" (func), "c" (this), "m" (src) : "eax", "edx", "memory" );
+}
+#else
+static inline void call_copy_ctor( void *func, void *this, void *src, int has_vbase )
+{
+    TRACE( "calling copy ctor %p object %p src %p\n", func, this, src );
+    if (has_vbase)
+        ((void (__cdecl*)(void*, void*, BOOL))func)(this, src, 1);
+    else
+        ((void (__cdecl*)(void*, void*))func)(this, src);
+}
+#endif
+
+/*********************************************************************
+ * ?__ExceptionPtrCurrentException@@YAXPAX@Z
+ * ?__ExceptionPtrCurrentException@@YAXPEAX@Z
+ */
+#ifndef __x86_64__
+void __cdecl __ExceptionPtrCurrentException(exception_ptr *ep)
+{
+    EXCEPTION_RECORD *rec = msvcrt_get_thread_data()->exc_record;
+
+    TRACE("(%p)\n", ep);
+
+    if (!rec)
+    {
+        ep->rec = NULL;
+        ep->ref = NULL;
+        return;
+    }
+
+    ep->rec = HeapAlloc(GetProcessHeap(), 0, sizeof(EXCEPTION_RECORD));
+    ep->ref = HeapAlloc(GetProcessHeap(), 0, sizeof(int));
+
+    *ep->rec = *rec;
+    *ep->ref = 1;
+
+    if (ep->rec->ExceptionCode == CXX_EXCEPTION)
+    {
+        const cxx_exception_type *et = (void*)ep->rec->ExceptionInformation[2];
+        const cxx_type_info *ti;
+        void **data, *obj;
+
+        ti = et->type_info_table->info[0];
+        data = HeapAlloc(GetProcessHeap(), 0, ti->size);
+
+        obj = (void*)ep->rec->ExceptionInformation[1];
+        if (ti->flags & CLASS_IS_SIMPLE_TYPE)
+        {
+            memcpy(data, obj, ti->size);
+            if (ti->size == sizeof(void *)) *data = get_this_pointer(&ti->offsets, *data);
+        }
+        else if (ti->copy_ctor)
+        {
+            call_copy_ctor(ti->copy_ctor, data, get_this_pointer(&ti->offsets, obj),
+                    ti->flags & CLASS_HAS_VIRTUAL_BASE_CLASS);
+        }
+        else
+            memcpy(data, get_this_pointer(&ti->offsets, obj), ti->size);
+        ep->rec->ExceptionInformation[1] = (ULONG_PTR)data;
+    }
+    return;
+}
+#else
+void __cdecl __ExceptionPtrCurrentException(exception_ptr *ep)
+{
+    EXCEPTION_RECORD *rec = msvcrt_get_thread_data()->exc_record;
+
+    TRACE("(%p)\n", ep);
+
+    if (!rec)
+    {
+        ep->rec = NULL;
+        ep->ref = NULL;
+        return;
+    }
+
+    ep->rec = HeapAlloc(GetProcessHeap(), 0, sizeof(EXCEPTION_RECORD));
+    ep->ref = HeapAlloc(GetProcessHeap(), 0, sizeof(int));
+
+    *ep->rec = *rec;
+    *ep->ref = 1;
+
+    if (ep->rec->ExceptionCode == CXX_EXCEPTION)
+    {
+        const cxx_exception_type *et = (void*)ep->rec->ExceptionInformation[2];
+        const cxx_type_info *ti;
+        void **data, *obj;
+        char *base = RtlPcToFileHeader((void*)et, (void**)&base);
+
+        ti = (const cxx_type_info*)(base + ((const cxx_type_info_table*)(base + et->type_info_table))->info[0]);
+        data = HeapAlloc(GetProcessHeap(), 0, ti->size);
+
+        obj = (void*)ep->rec->ExceptionInformation[1];
+        if (ti->flags & CLASS_IS_SIMPLE_TYPE)
+        {
+            memcpy(data, obj, ti->size);
+            if (ti->size == sizeof(void *)) *data = get_this_pointer(&ti->offsets, *data);
+        }
+        else if (ti->copy_ctor)
+        {
+            call_copy_ctor(base + ti->copy_ctor, data, get_this_pointer(&ti->offsets, obj),
+                    ti->flags & CLASS_HAS_VIRTUAL_BASE_CLASS);
+        }
+        else
+            memcpy(data, get_this_pointer(&ti->offsets, obj), ti->size);
+        ep->rec->ExceptionInformation[1] = (ULONG_PTR)data;
+    }
+    return;
+}
+#endif
+
+void* __cdecl __AdjustPointer(void *obj, const this_ptr_offsets *off)
+{
+    return get_this_pointer(off, obj);
 }

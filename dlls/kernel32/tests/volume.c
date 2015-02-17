@@ -22,6 +22,27 @@
 #include "winbase.h"
 #include "winioctl.h"
 #include <stdio.h>
+#include "ddk/ntddcdvd.h"
+
+#include <pshpack1.h>
+struct COMPLETE_DVD_LAYER_DESCRIPTOR
+{
+    DVD_DESCRIPTOR_HEADER Header;
+    DVD_LAYER_DESCRIPTOR Descriptor;
+    UCHAR Padding;
+};
+#include <poppack.h>
+C_ASSERT(sizeof(struct COMPLETE_DVD_LAYER_DESCRIPTOR) == 22);
+
+#include <pshpack1.h>
+struct COMPLETE_DVD_MANUFACTURER_DESCRIPTOR
+{
+    DVD_DESCRIPTOR_HEADER Header;
+    DVD_MANUFACTURER_DESCRIPTOR Descriptor;
+    UCHAR Padding;
+};
+#include <poppack.h>
+C_ASSERT(sizeof(struct COMPLETE_DVD_MANUFACTURER_DESCRIPTOR) == 2053);
 
 static HINSTANCE hdll;
 static BOOL (WINAPI * pGetVolumeNameForVolumeMountPointA)(LPCSTR, LPSTR, DWORD);
@@ -32,6 +53,7 @@ static BOOL (WINAPI *pFindVolumeClose)(HANDLE);
 static UINT (WINAPI *pGetLogicalDriveStringsA)(UINT,LPSTR);
 static UINT (WINAPI *pGetLogicalDriveStringsW)(UINT,LPWSTR);
 static BOOL (WINAPI *pGetVolumeInformationA)(LPCSTR, LPSTR, DWORD, LPDWORD, LPDWORD, LPDWORD, LPSTR, DWORD);
+static BOOL (WINAPI *pGetVolumePathNameA)(LPCSTR, LPSTR, DWORD);
 static BOOL (WINAPI *pGetVolumePathNamesForVolumeNameA)(LPCSTR, LPSTR, DWORD, LPDWORD);
 static BOOL (WINAPI *pGetVolumePathNamesForVolumeNameW)(LPCWSTR, LPWSTR, DWORD, LPDWORD);
 
@@ -100,7 +122,7 @@ static void test_define_dos_deviceA(void)
     }
 
     /* Map it to point to the current directory */
-    ret = GetCurrentDirectory(sizeof(buf), buf);
+    ret = GetCurrentDirectoryA(sizeof(buf), buf);
     ok(ret, "GetCurrentDir\n");
 
     ret = DefineDosDeviceA(0, drivestr, buf);
@@ -192,7 +214,7 @@ static void test_GetVolumeNameForVolumeMountPointA(void)
             "GetVolumeNameForVolumeMountPointA failed, wrong error returned, was %d, should be ERROR_FILENAME_EXCED_RANGE\n",
              GetLastError());
 
-    /* Try on a arbitrary directory */
+    /* Try on an arbitrary directory */
     /* On FAT filesystems it seems that GetLastError() is set to
        ERROR_INVALID_FUNCTION. */
     ret = pGetVolumeNameForVolumeMountPointA(temp_path, volume, len);
@@ -346,26 +368,26 @@ static void test_GetVolumeInformationA(void)
     }
 
     /* get windows drive letter and update strings for testing */
-    result = GetWindowsDirectory(windowsdir, sizeof(windowsdir));
+    result = GetWindowsDirectoryA(windowsdir, sizeof(windowsdir));
     ok(result < sizeof(windowsdir), "windowsdir is abnormally long!\n");
     ok(result != 0, "GetWindowsDirectory: error %d\n", GetLastError());
     Root_Colon[0] = windowsdir[0];
     Root_Slash[0] = windowsdir[0];
     Root_UNC[4] = windowsdir[0];
 
-    result = GetCurrentDirectory(MAX_PATH, currentdir);
+    result = GetCurrentDirectoryA(MAX_PATH, currentdir);
     ok(result, "GetCurrentDirectory: error %d\n", GetLastError());
     /* Note that GetCurrentDir yields no trailing slash for subdirs */
 
     /* check for NO error on no trailing \ when current dir is root dir */
-    ret = SetCurrentDirectory(Root_Slash);
+    ret = SetCurrentDirectoryA(Root_Slash);
     ok(ret, "SetCurrentDirectory: error %d\n", GetLastError());
     ret = pGetVolumeInformationA(Root_Colon, vol_name_buf, vol_name_size, NULL,
             NULL, NULL, fs_name_buf, fs_name_len);
     ok(ret, "GetVolumeInformationA root failed, last error %u\n", GetLastError());
 
     /* check for error on no trailing \ when current dir is subdir (windows) of queried drive */
-    ret = SetCurrentDirectory(windowsdir);
+    ret = SetCurrentDirectoryA(windowsdir);
     ok(ret, "SetCurrentDirectory: error %d\n", GetLastError());
     SetLastError(0xdeadbeef);
     ret = pGetVolumeInformationA(Root_Colon, vol_name_buf, vol_name_size, NULL,
@@ -374,7 +396,7 @@ static void test_GetVolumeInformationA(void)
         "GetVolumeInformationA did%s fail, last error %u\n", ret ? " not":"", GetLastError());
 
     /* reset current directory */
-    ret = SetCurrentDirectory(currentdir);
+    ret = SetCurrentDirectoryA(currentdir);
     ok(ret, "SetCurrentDirectory: error %d\n", GetLastError());
 
     if (toupper(currentdir[0]) == toupper(windowsdir[0])) {
@@ -386,12 +408,12 @@ static void test_GetVolumeInformationA(void)
 
         /* C:\windows becomes the current directory on drive C: */
         /* Note that paths to subdirs are stored without trailing slash, like what GetCurrentDir yields. */
-        ret = SetEnvironmentVariable(Root_Env, windowsdir);
+        ret = SetEnvironmentVariableA(Root_Env, windowsdir);
         ok(ret, "SetEnvironmentVariable %s failed\n", Root_Env);
 
-        ret = SetCurrentDirectory(windowsdir);
+        ret = SetCurrentDirectoryA(windowsdir);
         ok(ret, "SetCurrentDirectory: error %d\n", GetLastError());
-        ret = SetCurrentDirectory(currentdir);
+        ret = SetCurrentDirectoryA(currentdir);
         ok(ret, "SetCurrentDirectory: error %d\n", GetLastError());
 
         /* windows dir is current on the root drive, call fails */
@@ -406,9 +428,9 @@ static void test_GetVolumeInformationA(void)
                 NULL, NULL, fs_name_buf, fs_name_len);
         ok(ret, "GetVolumeInformationA with \\ failed, last error %u\n", GetLastError());
 
-        ret = SetCurrentDirectory(Root_Slash);
+        ret = SetCurrentDirectoryA(Root_Slash);
         ok(ret, "SetCurrentDirectory: error %d\n", GetLastError());
-        ret = SetCurrentDirectory(currentdir);
+        ret = SetCurrentDirectoryA(currentdir);
         ok(ret, "SetCurrentDirectory: error %d\n", GetLastError());
 
         /* windows dir is STILL CURRENT on root drive; the call fails as before,   */
@@ -420,7 +442,7 @@ static void test_GetVolumeInformationA(void)
            "GetVolumeInformationA did%s fail, last error %u\n", ret ? " not":"", GetLastError());
 
         /* Now C:\ becomes the current directory on drive C: */
-        ret = SetEnvironmentVariable(Root_Env, Root_Slash); /* set =C:=C:\ */
+        ret = SetEnvironmentVariableA(Root_Env, Root_Slash); /* set =C:=C:\ */
         ok(ret, "SetEnvironmentVariable %s failed\n", Root_Env);
 
         /* \ is current on root drive, call succeeds */
@@ -429,9 +451,9 @@ static void test_GetVolumeInformationA(void)
         ok(ret, "GetVolumeInformationA failed, last error %u\n", GetLastError());
 
         /* again, SetCurrentDirectory on another drive does not matter */
-        ret = SetCurrentDirectory(Root_Slash);
+        ret = SetCurrentDirectoryA(Root_Slash);
         ok(ret, "SetCurrentDirectory: error %d\n", GetLastError());
-        ret = SetCurrentDirectory(currentdir);
+        ret = SetCurrentDirectoryA(currentdir);
         ok(ret, "SetCurrentDirectory: error %d\n", GetLastError());
 
         /* \ is current on root drive, call succeeds */
@@ -511,7 +533,7 @@ static void test_enum_vols(void)
     }
 
     /*get windows drive letter and update strings for testing  */
-    ret = GetWindowsDirectory( windowsdir, sizeof(windowsdir) );
+    ret = GetWindowsDirectoryA( windowsdir, sizeof(windowsdir) );
     ok(ret < sizeof(windowsdir), "windowsdir is abnormally long!\n");
     ok(ret != 0, "GetWindowsDirecory: error %d\n", GetLastError());
     path[0] = windowsdir[0];
@@ -565,6 +587,86 @@ static void test_disk_extents(void)
     ok(ret, "DeviceIoControl failed %u\n", GetLastError());
     ok(size == 32, "expected 32, got %u\n", size);
     CloseHandle( handle );
+}
+
+static void test_GetVolumePathNameA(void)
+{
+    BOOL ret;
+    char volume[MAX_PATH];
+    char expected[] = "C:\\", pathC1[] = "C:\\", pathC2[] = "C::";
+    DWORD error;
+
+    if (!pGetVolumePathNameA)
+    {
+        win_skip("required functions not found\n");
+        return;
+    }
+
+    SetLastError( 0xdeadbeef );
+    ret = pGetVolumePathNameA(NULL, NULL, 0);
+    error = GetLastError();
+    ok(!ret, "expected failure\n");
+    ok(error == ERROR_INVALID_PARAMETER
+       || broken( error == 0xdeadbeef) /* <=XP */,
+       "expected ERROR_INVALID_PARAMETER got %u\n", error);
+
+    SetLastError( 0xdeadbeef );
+    ret = pGetVolumePathNameA("", NULL, 0);
+    error = GetLastError();
+    ok(!ret, "expected failure\n");
+    ok(error == ERROR_INVALID_PARAMETER
+       || broken( error == 0xdeadbeef) /* <=XP */,
+       "expected ERROR_INVALID_PARAMETER got %u\n", error);
+
+    SetLastError( 0xdeadbeef );
+    ret = pGetVolumePathNameA(pathC1, NULL, 0);
+    error = GetLastError();
+    ok(!ret, "expected failure\n");
+    ok(error == ERROR_INVALID_PARAMETER
+       || broken(error == ERROR_FILENAME_EXCED_RANGE) /* <=XP */,
+       "expected ERROR_INVALID_PARAMETER got %u\n", error);
+
+    SetLastError( 0xdeadbeef );
+    ret = pGetVolumePathNameA(pathC1, volume, 0);
+    error = GetLastError();
+    ok(!ret, "expected failure\n");
+    ok(error == ERROR_INVALID_PARAMETER
+       || broken(error == ERROR_FILENAME_EXCED_RANGE ) /* <=XP */,
+       "expected ERROR_INVALID_PARAMETER got %u\n", error);
+
+    SetLastError( 0xdeadbeef );
+    ret = pGetVolumePathNameA(pathC1, volume, 1);
+    error = GetLastError();
+    ok(!ret, "expected failure\n");
+    ok(error == ERROR_FILENAME_EXCED_RANGE, "expected ERROR_FILENAME_EXCED_RANGE got %u\n", error);
+
+    volume[0] = '\0';
+    ret = pGetVolumePathNameA(pathC1, volume, sizeof(volume));
+    ok(ret, "expected success\n");
+    ok(!strcmp(expected, volume), "expected name '%s', returned '%s'\n", pathC1, volume);
+
+    pathC1[0] = tolower(pathC1[0]);
+    volume[0] = '\0';
+    ret = pGetVolumePathNameA(pathC1, volume, sizeof(volume));
+    ok(ret, "expected success\n");
+todo_wine
+    ok(!strcmp(expected, volume) || broken(!strcasecmp(expected, volume)) /* <=XP */,
+       "expected name '%s', returned '%s'\n", expected, volume);
+
+    volume[0] = '\0';
+    ret = pGetVolumePathNameA(pathC2, volume, sizeof(volume));
+todo_wine
+    ok(ret, "expected success\n");
+todo_wine
+    ok(!strcmp(expected, volume), "expected name '%s', returned '%s'\n", expected, volume);
+
+    /* test an invalid path */
+    SetLastError( 0xdeadbeef );
+    ret = pGetVolumePathNameA("\\\\$$$", volume, 1);
+    error = GetLastError();
+    ok(!ret, "expected failure\n");
+    ok(error == ERROR_INVALID_NAME || broken(ERROR_FILENAME_EXCED_RANGE) /* <=2000 */,
+       "expected ERROR_INVALID_NAME got %u\n", error);
 }
 
 static void test_GetVolumePathNamesForVolumeNameA(void)
@@ -730,6 +832,170 @@ static void test_GetVolumePathNamesForVolumeNameW(void)
     ok(error == ERROR_FILE_NOT_FOUND, "expected ERROR_FILE_NOT_FOUND got %u\n", error);
 }
 
+static void test_dvd_read_structure(HANDLE handle)
+{
+    int i;
+    DWORD nbBytes;
+    BOOL ret;
+    DVD_READ_STRUCTURE dvdReadStructure;
+    DVD_LAYER_DESCRIPTOR dvdLayerDescriptor;
+    struct COMPLETE_DVD_LAYER_DESCRIPTOR completeDvdLayerDescriptor;
+    DVD_COPYRIGHT_DESCRIPTOR dvdCopyrightDescriptor;
+    struct COMPLETE_DVD_MANUFACTURER_DESCRIPTOR completeDvdManufacturerDescriptor;
+
+    dvdReadStructure.BlockByteOffset.QuadPart = 0;
+    dvdReadStructure.SessionId = 0;
+    dvdReadStructure.LayerNumber = 0;
+
+
+    /* DvdPhysicalDescriptor */
+    dvdReadStructure.Format = 0;
+
+    SetLastError(0xdeadbeef);
+
+    /* Test whether this ioctl is supported */
+    ret = DeviceIoControl(handle, IOCTL_DVD_READ_STRUCTURE, &dvdReadStructure, sizeof(DVD_READ_STRUCTURE),
+        &completeDvdLayerDescriptor, sizeof(struct COMPLETE_DVD_LAYER_DESCRIPTOR), &nbBytes, NULL);
+
+    if(!ret)
+    {
+        skip("IOCTL_DVD_READ_STRUCTURE not supported: %u\n", GetLastError());
+        return;
+    }
+
+    /* Confirm there is always a header before the actual data */
+    ok( completeDvdLayerDescriptor.Header.Length == 0x0802, "Length is 0x%04x instead of 0x0802\n", completeDvdLayerDescriptor.Header.Length);
+    ok( completeDvdLayerDescriptor.Header.Reserved[0] == 0, "Reserved[0] is %x instead of 0\n", completeDvdLayerDescriptor.Header.Reserved[0]);
+    ok( completeDvdLayerDescriptor.Header.Reserved[1] == 0, "Reserved[1] is %x instead of 0\n", completeDvdLayerDescriptor.Header.Reserved[1]);
+
+    /* TODO: Also check completeDvdLayerDescriptor.Descriptor content (via IOCTL_SCSI_PASS_THROUGH_DIRECT ?) */
+
+    /* Insufficient output buffer */
+    for(i=0; i<sizeof(DVD_DESCRIPTOR_HEADER); i++)
+    {
+        SetLastError(0xdeadbeef);
+
+        ret = DeviceIoControl(handle, IOCTL_DVD_READ_STRUCTURE, &dvdReadStructure, sizeof(DVD_READ_STRUCTURE),
+            &completeDvdLayerDescriptor, i, &nbBytes, NULL);
+        ok(!ret && GetLastError() == ERROR_INSUFFICIENT_BUFFER,"IOCTL_DVD_READ_STRUCTURE should fail with small buffer\n");
+    }
+
+    SetLastError(0xdeadbeef);
+
+    /* On newer version, an output buffer of sizeof(DVD_READ_STRUCTURE) size fails.
+        I think this is to force developers to realize that there is a header before the actual content */
+    ret = DeviceIoControl(handle, IOCTL_DVD_READ_STRUCTURE, &dvdReadStructure, sizeof(DVD_READ_STRUCTURE),
+        &dvdLayerDescriptor, sizeof(DVD_LAYER_DESCRIPTOR), &nbBytes, NULL);
+    ok( (!ret && GetLastError() == ERROR_INVALID_PARAMETER) || broken(ret) /* < Win7 */,
+        "IOCTL_DVD_READ_STRUCTURE should have failed\n");
+
+    SetLastError(0xdeadbeef);
+
+    ret = DeviceIoControl(handle, IOCTL_DVD_READ_STRUCTURE, NULL, sizeof(DVD_READ_STRUCTURE),
+        &completeDvdLayerDescriptor, sizeof(struct COMPLETE_DVD_LAYER_DESCRIPTOR), &nbBytes, NULL);
+    ok( (!ret && GetLastError() == ERROR_INVALID_PARAMETER),
+        "IOCTL_DVD_READ_STRUCTURE should have failed\n");
+
+    /* Test wrong input parameters */
+    for(i=0; i<sizeof(DVD_READ_STRUCTURE); i++)
+    {
+        SetLastError(0xdeadbeef);
+
+        ret = DeviceIoControl(handle, IOCTL_DVD_READ_STRUCTURE, &dvdReadStructure, i,
+        &completeDvdLayerDescriptor, sizeof(struct COMPLETE_DVD_LAYER_DESCRIPTOR), &nbBytes, NULL);
+        ok( (!ret && GetLastError() == ERROR_INVALID_PARAMETER),
+            "IOCTL_DVD_READ_STRUCTURE should have failed\n");
+    }
+
+
+    /* DvdCopyrightDescriptor */
+    dvdReadStructure.Format = 1;
+
+    SetLastError(0xdeadbeef);
+
+    /* Strangely, with NULL lpOutBuffer, last error is insufficient buffer, not invalid parameter as we could expect */
+    ret = DeviceIoControl(handle, IOCTL_DVD_READ_STRUCTURE, &dvdReadStructure, sizeof(DVD_READ_STRUCTURE),
+        NULL, sizeof(DVD_COPYRIGHT_DESCRIPTOR), &nbBytes, NULL);
+    ok(!ret && GetLastError() == ERROR_INSUFFICIENT_BUFFER, "IOCTL_DVD_READ_STRUCTURE should have failed %d %u\n", ret, GetLastError());
+
+    for(i=0; i<sizeof(DVD_COPYRIGHT_DESCRIPTOR); i++)
+    {
+        SetLastError(0xdeadbeef);
+
+        ret = DeviceIoControl(handle, IOCTL_DVD_READ_STRUCTURE, &dvdReadStructure, sizeof(DVD_READ_STRUCTURE),
+            &dvdCopyrightDescriptor, i, &nbBytes, NULL);
+        ok(!ret && GetLastError() == ERROR_INSUFFICIENT_BUFFER, "IOCTL_DVD_READ_STRUCTURE should have failed %d %u\n", ret, GetLastError());
+    }
+
+
+    /* DvdManufacturerDescriptor */
+    dvdReadStructure.Format = 4;
+
+    SetLastError(0xdeadbeef);
+
+    ret = DeviceIoControl(handle, IOCTL_DVD_READ_STRUCTURE, &dvdReadStructure, sizeof(DVD_READ_STRUCTURE),
+        &completeDvdManufacturerDescriptor, sizeof(DVD_MANUFACTURER_DESCRIPTOR), &nbBytes, NULL);
+    ok(ret || broken(GetLastError() == ERROR_NOT_READY),
+        "IOCTL_DVD_READ_STRUCTURE (DvdManufacturerDescriptor) failed, last error = %u\n", GetLastError());
+    if(!ret)
+        return;
+
+    /* Confirm there is always a header before the actual data */
+    ok( completeDvdManufacturerDescriptor.Header.Length == 0x0802, "Length is 0x%04x instead of 0x0802\n", completeDvdManufacturerDescriptor.Header.Length);
+    ok( completeDvdManufacturerDescriptor.Header.Reserved[0] == 0, "Reserved[0] is %x instead of 0\n", completeDvdManufacturerDescriptor.Header.Reserved[0]);
+    ok( completeDvdManufacturerDescriptor.Header.Reserved[1] == 0, "Reserved[1] is %x instead of 0\n", completeDvdManufacturerDescriptor.Header.Reserved[1]);
+
+    SetLastError(0xdeadbeef);
+
+    /* Basic parameter check */
+    ret = DeviceIoControl(handle, IOCTL_DVD_READ_STRUCTURE, &dvdReadStructure, sizeof(DVD_READ_STRUCTURE),
+        NULL, sizeof(DVD_MANUFACTURER_DESCRIPTOR), &nbBytes, NULL);
+    ok(!ret && GetLastError() == ERROR_INSUFFICIENT_BUFFER, "IOCTL_DVD_READ_STRUCTURE should have failed %d %u\n", ret, GetLastError());
+}
+
+static void test_cdrom_ioctl(void)
+{
+    char drive_letter, drive_path[] = "A:\\", drive_full_path[] = "\\\\.\\A:";
+    DWORD bitmask;
+    HANDLE handle;
+
+    bitmask = GetLogicalDrives();
+    if(!bitmask)
+    {
+        trace("GetLogicalDrives failed : %u\n", GetLastError());
+        return;
+    }
+
+    for(drive_letter='A'; drive_letter<='Z'; drive_letter++)
+    {
+        if(!(bitmask & (1 << (drive_letter-'A') )))
+            continue;
+
+        drive_path[0] = drive_letter;
+        if(GetDriveTypeA(drive_path) != DRIVE_CDROM)
+        {
+            trace("Skipping %c:, not a CDROM drive.\n", drive_letter);
+            continue;
+        }
+
+        trace("Testing with %c:\n", drive_letter);
+
+        drive_full_path[4] = drive_letter;
+        handle = CreateFileA(drive_full_path, GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, 0);
+        if(handle == INVALID_HANDLE_VALUE)
+        {
+            trace("Failed to open the device : %u\n", GetLastError());
+            continue;
+        }
+
+        /* Add your tests here */
+        test_dvd_read_structure(handle);
+
+        CloseHandle(handle);
+    }
+
+}
+
 START_TEST(volume)
 {
     hdll = GetModuleHandleA("kernel32.dll");
@@ -741,12 +1007,14 @@ START_TEST(volume)
     pGetLogicalDriveStringsA = (void *) GetProcAddress(hdll, "GetLogicalDriveStringsA");
     pGetLogicalDriveStringsW = (void *) GetProcAddress(hdll, "GetLogicalDriveStringsW");
     pGetVolumeInformationA = (void *) GetProcAddress(hdll, "GetVolumeInformationA");
+    pGetVolumePathNameA = (void *) GetProcAddress(hdll, "GetVolumePathNameA");
     pGetVolumePathNamesForVolumeNameA = (void *) GetProcAddress(hdll, "GetVolumePathNamesForVolumeNameA");
     pGetVolumePathNamesForVolumeNameW = (void *) GetProcAddress(hdll, "GetVolumePathNamesForVolumeNameW");
 
     test_query_dos_deviceA();
     test_define_dos_deviceA();
     test_FindFirstVolume();
+    test_GetVolumePathNameA();
     test_GetVolumeNameForVolumeMountPointA();
     test_GetVolumeNameForVolumeMountPointW();
     test_GetLogicalDriveStringsA();
@@ -756,4 +1024,5 @@ START_TEST(volume)
     test_disk_extents();
     test_GetVolumePathNamesForVolumeNameA();
     test_GetVolumePathNamesForVolumeNameW();
+    test_cdrom_ioctl();
 }

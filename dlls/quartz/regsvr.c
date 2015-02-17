@@ -124,43 +124,43 @@ static HRESULT unregister_filters(struct regsvr_filter const *list);
 /***********************************************************************
  *		static string constants
  */
-static WCHAR const interface_keyname[10] = {
+static const WCHAR interface_keyname[] = {
     'I', 'n', 't', 'e', 'r', 'f', 'a', 'c', 'e', 0 };
-static WCHAR const base_ifa_keyname[14] = {
+static const WCHAR base_ifa_keyname[] = {
     'B', 'a', 's', 'e', 'I', 'n', 't', 'e', 'r', 'f', 'a', 'c',
     'e', 0 };
-static WCHAR const num_methods_keyname[11] = {
+static const WCHAR num_methods_keyname[] = {
     'N', 'u', 'm', 'M', 'e', 't', 'h', 'o', 'd', 's', 0 };
-static WCHAR const ps_clsid_keyname[15] = {
+static const WCHAR ps_clsid_keyname[] = {
     'P', 'r', 'o', 'x', 'y', 'S', 't', 'u', 'b', 'C', 'l', 's',
     'i', 'd', 0 };
-static WCHAR const ps_clsid32_keyname[17] = {
+static const WCHAR ps_clsid32_keyname[] = {
     'P', 'r', 'o', 'x', 'y', 'S', 't', 'u', 'b', 'C', 'l', 's',
     'i', 'd', '3', '2', 0 };
-static WCHAR const clsid_keyname[6] = {
+static const WCHAR clsid_keyname[] = {
     'C', 'L', 'S', 'I', 'D', 0 };
-static WCHAR const curver_keyname[7] = {
+static const WCHAR curver_keyname[] = {
     'C', 'u', 'r', 'V', 'e', 'r', 0 };
-static WCHAR const ips_keyname[13] = {
+static const WCHAR ips_keyname[] = {
     'I', 'n', 'P', 'r', 'o', 'c', 'S', 'e', 'r', 'v', 'e', 'r',
     0 };
-static WCHAR const ips32_keyname[15] = {
+static const WCHAR ips32_keyname[] = {
     'I', 'n', 'P', 'r', 'o', 'c', 'S', 'e', 'r', 'v', 'e', 'r',
     '3', '2', 0 };
-static WCHAR const progid_keyname[7] = {
+static const WCHAR progid_keyname[] = {
     'P', 'r', 'o', 'g', 'I', 'D', 0 };
-static WCHAR const viprogid_keyname[25] = {
+static const WCHAR viprogid_keyname[] = {
     'V', 'e', 'r', 's', 'i', 'o', 'n', 'I', 'n', 'd', 'e', 'p',
     'e', 'n', 'd', 'e', 'n', 't', 'P', 'r', 'o', 'g', 'I', 'D',
     0 };
-static char const tmodel_valuename[] = "ThreadingModel";
-static WCHAR const mediatype_name[11] = {
+static const char tmodel_valuename[] = "ThreadingModel";
+static const WCHAR mediatype_name[] = {
     'M', 'e', 'd', 'i', 'a', ' ', 'T', 'y', 'p', 'e', 0 };
-static WCHAR const subtype_valuename[8] = {
+static const WCHAR subtype_valuename[] = {
     'S', 'u', 'b', 't', 'y', 'p', 'e', 0 };
-static WCHAR const sourcefilter_valuename[14] = {
+static const WCHAR sourcefilter_valuename[] = {
     'S', 'o', 'u', 'r', 'c', 'e', ' ', 'F', 'i', 'l', 't', 'e', 'r', 0 };
-static WCHAR const extensions_keyname[11] = {
+static const WCHAR extensions_keyname[] = {
     'E', 'x', 't', 'e', 'n', 's', 'i', 'o', 'n', 's', 0 };
 
 /***********************************************************************
@@ -197,8 +197,7 @@ static HRESULT register_interfaces(struct regsvr_interface const *list)
 	if (res != ERROR_SUCCESS) goto error_close_interface_key;
 
 	if (list->name) {
-	    res = RegSetValueExA(iid_key, NULL, 0, REG_SZ,
-				 (CONST BYTE*)(list->name),
+            res = RegSetValueExA(iid_key, NULL, 0, REG_SZ, (const BYTE*)list->name,
 				 strlen(list->name) + 1);
 	    if (res != ERROR_SUCCESS) goto error_close_iid_key;
 	}
@@ -209,7 +208,7 @@ static HRESULT register_interfaces(struct regsvr_interface const *list)
 	}
 
 	if (0 <= list->num_methods) {
-	    static WCHAR const fmt[3] = { '%', 'd', 0 };
+	    static const WCHAR fmt[] = { '%', 'd', 0 };
 	    HKEY key;
 
 	    res = RegCreateKeyExW(iid_key, num_methods_keyname, 0, NULL, 0,
@@ -217,8 +216,7 @@ static HRESULT register_interfaces(struct regsvr_interface const *list)
 	    if (res != ERROR_SUCCESS) goto error_close_iid_key;
 
 	    sprintfW(buf, fmt, list->num_methods);
-	    res = RegSetValueExW(key, NULL, 0, REG_SZ,
-				 (CONST BYTE*)buf,
+            res = RegSetValueExW(key, NULL, 0, REG_SZ, (const BYTE*)buf,
 				 (lstrlenW(buf) + 1) * sizeof(WCHAR));
 	    RegCloseKey(key);
 
@@ -293,8 +291,7 @@ static HRESULT register_coclasses(struct regsvr_coclass const *list)
 	if (res != ERROR_SUCCESS) goto error_close_coclass_key;
 
 	if (list->name) {
-	    res = RegSetValueExA(clsid_key, NULL, 0, REG_SZ,
-				 (CONST BYTE*)(list->name),
+            res = RegSetValueExA(clsid_key, NULL, 0, REG_SZ, (const BYTE*)list->name,
 				 strlen(list->name) + 1);
 	    if (res != ERROR_SUCCESS) goto error_close_clsid_key;
 	}
@@ -312,12 +309,11 @@ static HRESULT register_coclasses(struct regsvr_coclass const *list)
 				  &ips32_key, NULL);
 	    if (res != ERROR_SUCCESS) goto error_close_clsid_key;
 
-	    res = RegSetValueExA(ips32_key, NULL, 0, REG_SZ,
-				 (CONST BYTE*)list->ips32,
+            res = RegSetValueExA(ips32_key, NULL, 0, REG_SZ, (const BYTE*)list->ips32,
 				 lstrlenA(list->ips32) + 1);
 	    if (res == ERROR_SUCCESS && list->ips32_tmodel)
 		res = RegSetValueExA(ips32_key, tmodel_valuename, 0, REG_SZ,
-				     (CONST BYTE*)list->ips32_tmodel,
+                                     (const BYTE*)list->ips32_tmodel,
 				     strlen(list->ips32_tmodel) + 1);
 	    RegCloseKey(ips32_key);
 	    if (res != ERROR_SUCCESS) goto error_close_clsid_key;
@@ -422,14 +418,14 @@ static HRESULT register_mediatypes_parsing(struct regsvr_mediatype_parsing const
 	if (res != ERROR_SUCCESS) goto error_close_keys;
 
 	StringFromGUID2(&CLSID_AsyncReader, buf, 39);
-	res = RegSetValueExW(subtype_key, sourcefilter_valuename, 0, REG_SZ, (CONST BYTE*)buf,
+        res = RegSetValueExW(subtype_key, sourcefilter_valuename, 0, REG_SZ, (const BYTE*)buf,
 			     (lstrlenW(buf) + 1) * sizeof(WCHAR));
 	if (res != ERROR_SUCCESS) goto error_close_keys;
 
 	for(i = 0; list->line[i]; i++) {
 	    char buffer[3];
 	    wsprintfA(buffer, "%d", i);
-	    res = RegSetValueExA(subtype_key, buffer, 0, REG_SZ, (CONST BYTE*)list->line[i],
+            res = RegSetValueExA(subtype_key, buffer, 0, REG_SZ, (const BYTE*)list->line[i],
 				 lstrlenA(list->line[i]));
 	    if (res != ERROR_SUCCESS) goto error_close_keys;
 	}
@@ -472,17 +468,17 @@ static HRESULT register_mediatypes_extension(struct regsvr_mediatype_extension c
 	if (res != ERROR_SUCCESS) break;
 
 	StringFromGUID2(list->majortype, buf, 39);
-	res = RegSetValueExW(extension_key, mediatype_name, 0, REG_SZ, (CONST BYTE*)buf,
+        res = RegSetValueExW(extension_key, mediatype_name, 0, REG_SZ, (const BYTE*)buf,
 			     (lstrlenW(buf) + 1) * sizeof(WCHAR));
 	if (res != ERROR_SUCCESS) goto error_close_key;
 
 	StringFromGUID2(list->subtype, buf, 39);
-	res = RegSetValueExW(extension_key, subtype_valuename, 0, REG_SZ, (CONST BYTE*)buf,
+        res = RegSetValueExW(extension_key, subtype_valuename, 0, REG_SZ, (const BYTE*)buf,
 			     (lstrlenW(buf) + 1) * sizeof(WCHAR));
 	if (res != ERROR_SUCCESS) goto error_close_key;
 
 	StringFromGUID2(&CLSID_AsyncReader, buf, 39);
-	res = RegSetValueExW(extension_key, sourcefilter_valuename, 0, REG_SZ, (CONST BYTE*)buf,
+        res = RegSetValueExW(extension_key, sourcefilter_valuename, 0, REG_SZ, (const BYTE*)buf,
 			     (lstrlenW(buf) + 1) * sizeof(WCHAR));
 	if (res != ERROR_SUCCESS) goto error_close_key;
 
@@ -590,8 +586,8 @@ static HRESULT register_filters(struct regsvr_filter const *list)
 	    for (i = 0; list->pins[i].flags != 0xFFFFFFFF; i++) ;
 	    rf2.dwVersion = 2;
 	    rf2.dwMerit = list->merit;
-	    rf2.u.s1.cPins2 = i;
-	    rf2.u.s1.rgPins2 = prfp2 = CoTaskMemAlloc(i*sizeof(REGFILTERPINS2));
+	    rf2.u.s2.cPins2 = i;
+	    rf2.u.s2.rgPins2 = prfp2 = CoTaskMemAlloc(i*sizeof(REGFILTERPINS2));
 	    if (!prfp2) {
 		hr = E_OUTOFMEMORY;
 		break;
@@ -616,7 +612,7 @@ static HRESULT register_filters(struct regsvr_filter const *list)
 		    if (list->pins[i].mediatypes[j].subtype)
 			memcpy(lpClsid + j*2 + 1, list->pins[i].mediatypes[j].subtype, sizeof(CLSID));
 		    else {
-			/* Subtype are often a combination of major type + fourcc/tag */
+                        /* Subtypes are often a combination of major type + fourcc/tag */
 			memcpy(lpClsid + j*2 + 1, list->pins[i].mediatypes[j].majortype, sizeof(CLSID));
 			*(DWORD*)(lpClsid + j*2 + 1) = list->pins[i].mediatypes[j].fourcc;
 		    }
@@ -702,7 +698,7 @@ static LONG register_key_defvalueW(
     res = RegCreateKeyExW(base, name, 0, NULL, 0,
 			  KEY_READ | KEY_WRITE, NULL, &key, NULL);
     if (res != ERROR_SUCCESS) return res;
-    res = RegSetValueExW(key, NULL, 0, REG_SZ, (CONST BYTE*)value,
+    res = RegSetValueExW(key, NULL, 0, REG_SZ, (const BYTE*)value,
 			 (lstrlenW(value) + 1) * sizeof(WCHAR));
     RegCloseKey(key);
     return res;
@@ -722,8 +718,7 @@ static LONG register_key_defvalueA(
     res = RegCreateKeyExW(base, name, 0, NULL, 0,
 			  KEY_READ | KEY_WRITE, NULL, &key, NULL);
     if (res != ERROR_SUCCESS) return res;
-    res = RegSetValueExA(key, NULL, 0, REG_SZ, (CONST BYTE*)value,
-			 lstrlenA(value) + 1);
+    res = RegSetValueExA(key, NULL, 0, REG_SZ, (const BYTE*)value, lstrlenA(value) + 1);
     RegCloseKey(key);
     return res;
 }
@@ -747,8 +742,7 @@ static LONG register_progid(
     if (res != ERROR_SUCCESS) return res;
 
     if (name) {
-	res = RegSetValueExA(progid_key, NULL, 0, REG_SZ,
-			     (CONST BYTE*)name, strlen(name) + 1);
+        res = RegSetValueExA(progid_key, NULL, 0, REG_SZ, (const BYTE*)name, strlen(name) + 1);
 	if (res != ERROR_SUCCESS) goto error_close_progid_key;
     }
 
@@ -881,7 +875,7 @@ static struct regsvr_filter const filter_list[] = {
     {   &CLSID_AviSplitter,
 	&CLSID_LegacyAmFilterCategory,
 	{'A','V','I',' ','S','p','l','i','t','t','e','r',0},
-	0x600000,
+	0x5ffff0,
 	{   {   0,
 		{   { &MEDIATYPE_Stream, &MEDIASUBTYPE_Avi },
 		    { NULL }
@@ -898,7 +892,7 @@ static struct regsvr_filter const filter_list[] = {
     {   &CLSID_MPEG1Splitter,
         &CLSID_LegacyAmFilterCategory,
         {'M','P','E','G','-','I',' ','S','t','r','e','a','m',' ','S','p','l','i','t','t','e','r',0},
-        0x600000,
+        0x5ffff0,
         {   {   0,
                 {   { &MEDIATYPE_Stream, &MEDIASUBTYPE_MPEG1Audio },
                     { &MEDIATYPE_Stream, &MEDIASUBTYPE_MPEG1Video },
@@ -958,6 +952,30 @@ static struct regsvr_filter const filter_list[] = {
             { 0xFFFFFFFF },
         }
     },
+    {   &CLSID_VideoMixingRenderer,
+        &CLSID_LegacyAmFilterCategory,
+        {'V','i','d','e','o',' ','M','i','x','i','n','g',' ','R','e','n','d','e','r','e','r',0},
+        0x200000,
+        {   {   REG_PINFLAG_B_RENDERER,
+                {   { &MEDIATYPE_Video, &GUID_NULL },
+                    { NULL }
+                },
+            },
+            { 0xFFFFFFFF },
+        }
+    },
+    {   &CLSID_VideoMixingRenderer9,
+        &CLSID_LegacyAmFilterCategory,
+        {'V','i','d','e','o',' ','M','i','x','i','n','g',' ','R','e','n','d','e','r','e','r',' ','9',0},
+        0x200000,
+        {   {   REG_PINFLAG_B_RENDERER,
+                {   { &MEDIATYPE_Video, &GUID_NULL },
+                    { NULL }
+                },
+            },
+            { 0xFFFFFFFF },
+        }
+    },
     {   &CLSID_DSoundRender,
         &CLSID_LegacyAmFilterCategory,
         {'A','u','d','i','o',' ','R','e','n','d','e','r','e','r',0},
@@ -987,7 +1005,7 @@ static struct regsvr_filter const filter_list[] = {
     {   &CLSID_AVIDec,
 	&CLSID_LegacyAmFilterCategory,
 	{'A','V','I',' ','D','e','c','o','m','p','r','e','s','s','o','r',0},
-	0x600000,
+	0x5ffff0,
 	{   {   0,
 		{   { &MEDIATYPE_Video, &GUID_NULL },
 		    { NULL }
@@ -1016,7 +1034,7 @@ static struct regsvr_filter const filter_list[] = {
     {   &CLSID_ACMWrapper,
 	&CLSID_LegacyAmFilterCategory,
 	{'A','C','M',' ','W','r','a','p','p','e','r',0},
-	0x600000,
+	0x5ffff0,
 	{   {   0,
 		{   { &MEDIATYPE_Audio, &GUID_NULL },
 		    { NULL }

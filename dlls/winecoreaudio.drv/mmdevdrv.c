@@ -20,7 +20,36 @@
 #define COBJMACROS
 #include "config.h"
 
+#define LoadResource __carbon_LoadResource
+#define CompareString __carbon_CompareString
+#define GetCurrentThread __carbon_GetCurrentThread
+#define GetCurrentProcess __carbon_GetCurrentProcess
+
 #include <stdarg.h>
+
+#include <errno.h>
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/ioctl.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+#include <libkern/OSAtomic.h>
+#include <CoreAudio/CoreAudio.h>
+#include <AudioToolbox/AudioFormat.h>
+#include <AudioToolbox/AudioConverter.h>
+#include <AudioUnit/AudioUnit.h>
+
+#undef LoadResource
+#undef CompareString
+#undef GetCurrentThread
+#undef GetCurrentProcess
+#undef _CDECL
+#undef DPRINTF
 
 #include "windef.h"
 #include "winbase.h"
@@ -41,34 +70,34 @@
 #include "audioclient.h"
 #include "audiopolicy.h"
 
-#include <errno.h>
-#include <limits.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/ioctl.h>
-#include <fcntl.h>
-#include <unistd.h>
-
-#include <libkern/OSAtomic.h>
-#include <CoreAudio/CoreAudio.h>
-#include <AudioToolbox/AudioQueue.h>
-
 WINE_DEFAULT_DEBUG_CHANNEL(coreaudio);
+
+#ifndef HAVE_AUDIOUNIT_AUDIOCOMPONENT_H
+/* Define new AudioComponent Manager functions for OSX 10.5 */
+typedef Component AudioComponent;
+typedef ComponentDescription AudioComponentDescription;
+typedef ComponentInstance AudioComponentInstance;
+
+static inline AudioComponent AudioComponentFindNext(AudioComponent ac, AudioComponentDescription *desc)
+{
+    return FindNextComponent(ac, desc);
+}
+
+static inline OSStatus AudioComponentInstanceNew(AudioComponent ac, AudioComponentInstance *aci)
+{
+    return OpenAComponent(ac, aci);
+}
+
+static inline OSStatus AudioComponentInstanceDispose(AudioComponentInstance aci)
+{
+    return CloseComponent(aci);
+}
+#endif
 
 #define NULL_PTR_ERR MAKE_HRESULT(SEVERITY_ERROR, FACILITY_WIN32, RPC_X_NULL_REF_POINTER)
 
-#define CAPTURE_BUFFERS 5
-
-static const REFERENCE_TIME DefaultPeriod = 200000;
-static const REFERENCE_TIME MinimumPeriod = 100000;
-
-typedef struct _AQBuffer {
-    AudioQueueBufferRef buf;
-    struct list entry;
-} AQBuffer;
+static const REFERENCE_TIME DefaultPeriod = 100000;
+static const REFERENCE_TIME MinimumPeriod = 50000;
 
 struct ACImpl;
 typedef struct ACImpl ACImpl;
@@ -111,6 +140,7 @@ struct ACImpl {
     LONG ref;
 
     IMMDevice *parent;
+    IUnknown *pUnkFTMarshal;
 
     WAVEFORMATEX *fmt;
 
@@ -120,34 +150,27 @@ struct ACImpl {
     HANDLE event;
     float *vols;
 
+    BOOL initted;
     AudioDeviceID adevid;
-    AudioQueueRef aqueue;
     AudioObjectPropertyScope scope;
+    AudioConverterRef converter;
+    AudioComponentInstance unit;
+    AudioStreamBasicDescription dev_desc; /* audio unit format, not necessarily the same as fmt */
     HANDLE timer;
-    UINT32 period_ms, bufsize_frames, inbuf_frames;
-    UINT64 last_time, written_frames;
-    AudioQueueBufferRef public_buffer;
-    UINT32 getbuf_last;
-    int playing;
+    UINT32 period_ms, bufsize_frames, period_frames;
+    UINT64 written_frames;
+    UINT32 lcl_offs_frames, wri_offs_frames, held_frames, tmp_buffer_frames;
+    UINT32 cap_bufsize_frames, cap_offs_frames, cap_held_frames, wrap_bufsize_frames, resamp_bufsize_frames;
+    INT32 getbuf_last;
+    BOOL playing;
+    BYTE *cap_buffer, *wrap_buffer, *resamp_buffer, *local_buffer, *tmp_buffer;
 
     AudioSession *session;
     AudioSessionWrapper *session_wrapper;
 
     struct list entry;
 
-    struct list avail_buffers;
-
-    /* We can't use debug printing or {Enter,Leave}CriticalSection from
-     * OSX callback threads, so we use OSX's OSSpinLock for synchronization
-     * instead. OSSpinLock is not a recursive lock, so don't call
-     * synchronized functions while holding the lock. */
     OSSpinLock lock;
-};
-
-enum PlayingStates {
-    StateStopped = 0,
-    StatePlaying,
-    StateInTransition
 };
 
 static const IAudioClientVtbl AudioClient_Vtbl;
@@ -169,13 +192,26 @@ typedef struct _SessionMgr {
     IMMDevice *device;
 } SessionMgr;
 
+static const WCHAR drv_keyW[] = {'S','o','f','t','w','a','r','e','\\',
+    'W','i','n','e','\\','D','r','i','v','e','r','s','\\',
+    'w','i','n','e','c','o','r','e','a','u','d','i','o','.','d','r','v',0};
+static const WCHAR drv_key_devicesW[] = {'S','o','f','t','w','a','r','e','\\',
+    'W','i','n','e','\\','D','r','i','v','e','r','s','\\',
+    'w','i','n','e','c','o','r','e','a','u','d','i','o','.','d','r','v','\\','d','e','v','i','c','e','s',0};
+static const WCHAR guidW[] = {'g','u','i','d',0};
+
 static HANDLE g_timer_q;
 
 static CRITICAL_SECTION g_sessions_lock;
+static CRITICAL_SECTION_DEBUG g_sessions_lock_debug =
+{
+    0, 0, &g_sessions_lock,
+    { &g_sessions_lock_debug.ProcessLocksList, &g_sessions_lock_debug.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": g_sessions_lock") }
+};
+static CRITICAL_SECTION g_sessions_lock = { &g_sessions_lock_debug, -1, 0, 0, 0, 0 };
 static struct list g_sessions = LIST_INIT(g_sessions);
 
-static HRESULT AudioClock_GetPosition_nolock(ACImpl *This, UINT64 *pos,
-        UINT64 *qpctime, BOOL raw);
 static AudioSessionWrapper *AudioSessionWrapper_Create(ACImpl *client);
 static HRESULT ca_setvol(ACImpl *This, UINT32 index);
 
@@ -231,14 +267,19 @@ static inline SessionMgr *impl_from_IAudioSessionManager2(IAudioSessionManager2 
 
 BOOL WINAPI DllMain(HINSTANCE dll, DWORD reason, void *reserved)
 {
-    if(reason == DLL_PROCESS_ATTACH){
+    switch (reason)
+    {
+    case DLL_PROCESS_ATTACH:
         g_timer_q = CreateTimerQueue();
         if(!g_timer_q)
             return FALSE;
+        break;
 
-        InitializeCriticalSection(&g_sessions_lock);
+    case DLL_PROCESS_DETACH:
+        if (reserved) break;
+        DeleteCriticalSection(&g_sessions_lock);
+        break;
     }
-
     return TRUE;
 }
 
@@ -255,8 +296,96 @@ int WINAPI AUDDRV_GetPriority(void)
     return Priority_Neutral;
 }
 
+static HRESULT osstatus_to_hresult(OSStatus sc)
+{
+    switch(sc){
+    case kAudioFormatUnsupportedDataFormatError:
+    case kAudioFormatUnknownFormatError:
+    case kAudioDeviceUnsupportedFormatError:
+        return AUDCLNT_E_UNSUPPORTED_FORMAT;
+    case kAudioHardwareBadDeviceError:
+        return AUDCLNT_E_DEVICE_INVALIDATED;
+    }
+    return E_FAIL;
+}
+
+static void set_device_guid(EDataFlow flow, HKEY drv_key, const WCHAR *key_name,
+        GUID *guid)
+{
+    HKEY key;
+    BOOL opened = FALSE;
+    LONG lr;
+
+    if(!drv_key){
+        lr = RegCreateKeyExW(HKEY_CURRENT_USER, drv_key_devicesW, 0, NULL, 0, KEY_WRITE,
+                    NULL, &drv_key, NULL);
+        if(lr != ERROR_SUCCESS){
+            ERR("RegCreateKeyEx(drv_key) failed: %u\n", lr);
+            return;
+        }
+        opened = TRUE;
+    }
+
+    lr = RegCreateKeyExW(drv_key, key_name, 0, NULL, 0, KEY_WRITE,
+                NULL, &key, NULL);
+    if(lr != ERROR_SUCCESS){
+        ERR("RegCreateKeyEx(%s) failed: %u\n", wine_dbgstr_w(key_name), lr);
+        goto exit;
+    }
+
+    lr = RegSetValueExW(key, guidW, 0, REG_BINARY, (BYTE*)guid,
+                sizeof(GUID));
+    if(lr != ERROR_SUCCESS)
+        ERR("RegSetValueEx(%s\\guid) failed: %u\n", wine_dbgstr_w(key_name), lr);
+
+    RegCloseKey(key);
+exit:
+    if(opened)
+        RegCloseKey(drv_key);
+}
+
+static void get_device_guid(EDataFlow flow, AudioDeviceID device, GUID *guid)
+{
+    HKEY key = NULL, dev_key;
+    DWORD type, size = sizeof(*guid);
+    WCHAR key_name[256];
+
+    static const WCHAR key_fmt[] = {'%','u',0};
+
+    if(flow == eCapture)
+        key_name[0] = '1';
+    else
+        key_name[0] = '0';
+    key_name[1] = ',';
+
+    sprintfW(key_name + 2, key_fmt, device);
+
+    if(RegOpenKeyExW(HKEY_CURRENT_USER, drv_key_devicesW, 0, KEY_WRITE|KEY_READ, &key) == ERROR_SUCCESS){
+        if(RegOpenKeyExW(key, key_name, 0, KEY_READ, &dev_key) == ERROR_SUCCESS){
+            if(RegQueryValueExW(dev_key, guidW, 0, &type,
+                        (BYTE*)guid, &size) == ERROR_SUCCESS){
+                if(type == REG_BINARY){
+                    RegCloseKey(dev_key);
+                    RegCloseKey(key);
+                    return;
+                }
+                ERR("Invalid type for device %s GUID: %u; ignoring and overwriting\n",
+                        wine_dbgstr_w(key_name), type);
+            }
+            RegCloseKey(dev_key);
+        }
+    }
+
+    CoCreateGuid(guid);
+
+    set_device_guid(flow, key, key_name, guid);
+
+    if(key)
+        RegCloseKey(key);
+}
+
 HRESULT WINAPI AUDDRV_GetEndpointIDs(EDataFlow flow, WCHAR ***ids,
-        AudioDeviceID ***keys, UINT *num, UINT *def_index)
+        GUID **guids, UINT *num, UINT *def_index)
 {
     UInt32 devsize, size;
     AudioDeviceID *devices;
@@ -289,7 +418,7 @@ HRESULT WINAPI AUDDRV_GetEndpointIDs(EDataFlow flow, WCHAR ***ids,
             NULL, &devsize);
     if(sc != noErr){
         WARN("Getting _Devices property size failed: %lx\n", sc);
-        return E_FAIL;
+        return osstatus_to_hresult(sc);
     }
 
     devices = HeapAlloc(GetProcessHeap(), 0, devsize);
@@ -301,7 +430,7 @@ HRESULT WINAPI AUDDRV_GetEndpointIDs(EDataFlow flow, WCHAR ***ids,
     if(sc != noErr){
         WARN("Getting _Devices property failed: %lx\n", sc);
         HeapFree(GetProcessHeap(), 0, devices);
-        return E_FAIL;
+        return osstatus_to_hresult(sc);
     }
 
     ndevices = devsize / sizeof(AudioDeviceID);
@@ -312,8 +441,8 @@ HRESULT WINAPI AUDDRV_GetEndpointIDs(EDataFlow flow, WCHAR ***ids,
         return E_OUTOFMEMORY;
     }
 
-    *keys = HeapAlloc(GetProcessHeap(), 0, ndevices * sizeof(AudioDeviceID *));
-    if(!*ids){
+    *guids = HeapAlloc(GetProcessHeap(), 0, ndevices * sizeof(GUID));
+    if(!*guids){
         HeapFree(GetProcessHeap(), 0, *ids);
         HeapFree(GetProcessHeap(), 0, devices);
         return E_OUTOFMEMORY;
@@ -343,11 +472,9 @@ HRESULT WINAPI AUDDRV_GetEndpointIDs(EDataFlow flow, WCHAR ***ids,
         buffers = HeapAlloc(GetProcessHeap(), 0, size);
         if(!buffers){
             HeapFree(GetProcessHeap(), 0, devices);
-            for(j = 0; j < *num; ++j){
+            for(j = 0; j < *num; ++j)
                 HeapFree(GetProcessHeap(), 0, (*ids)[j]);
-                HeapFree(GetProcessHeap(), 0, (*keys)[j]);
-            }
-            HeapFree(GetProcessHeap(), 0, *keys);
+            HeapFree(GetProcessHeap(), 0, *guids);
             HeapFree(GetProcessHeap(), 0, *ids);
             return E_OUTOFMEMORY;
         }
@@ -388,37 +515,23 @@ HRESULT WINAPI AUDDRV_GetEndpointIDs(EDataFlow flow, WCHAR ***ids,
         if(!(*ids)[*num]){
             CFRelease(name);
             HeapFree(GetProcessHeap(), 0, devices);
-            for(j = 0; j < *num; ++j){
+            for(j = 0; j < *num; ++j)
                 HeapFree(GetProcessHeap(), 0, (*ids)[j]);
-                HeapFree(GetProcessHeap(), 0, (*keys)[j]);
-            }
             HeapFree(GetProcessHeap(), 0, *ids);
-            HeapFree(GetProcessHeap(), 0, *keys);
+            HeapFree(GetProcessHeap(), 0, *guids);
             return E_OUTOFMEMORY;
         }
         CFStringGetCharacters(name, CFRangeMake(0, len - 1), (UniChar*)(*ids)[*num]);
         ((*ids)[*num])[len - 1] = 0;
         CFRelease(name);
 
-        (*keys)[*num] = HeapAlloc(GetProcessHeap(), 0, sizeof(AudioDeviceID));
-        if(!(*keys)[*num]){
-            HeapFree(GetProcessHeap(), 0, devices);
-            HeapFree(GetProcessHeap(), 0, (*ids)[*num]);
-            for(j = 0; j < *num; ++j){
-                HeapFree(GetProcessHeap(), 0, (*ids)[j]);
-                HeapFree(GetProcessHeap(), 0, (*keys)[j]);
-            }
-            HeapFree(GetProcessHeap(), 0, *ids);
-            HeapFree(GetProcessHeap(), 0, *keys);
-            return E_OUTOFMEMORY;
-        }
-        *(*keys)[*num] = devices[i];
+        get_device_guid(flow, devices[i], &(*guids)[*num]);
 
         if(*def_index == (UINT)-1 && devices[i] == default_id)
             *def_index = *num;
 
         TRACE("device %u: id %s key %u%s\n", *num, debugstr_w((*ids)[*num]),
-              (unsigned int)*(*keys)[*num], (*def_index == *num) ? " (default)" : "");
+              (unsigned int)devices[i], (*def_index == *num) ? " (default)" : "");
 
         (*num)++;
     }
@@ -431,12 +544,134 @@ HRESULT WINAPI AUDDRV_GetEndpointIDs(EDataFlow flow, WCHAR ***ids,
     return S_OK;
 }
 
-HRESULT WINAPI AUDDRV_GetAudioEndpoint(AudioDeviceID *adevid, IMMDevice *dev,
-        EDataFlow dataflow, IAudioClient **out)
+static BOOL get_deviceid_by_guid(GUID *guid, AudioDeviceID *id, EDataFlow *flow)
+{
+    HKEY devices_key;
+    UINT i = 0;
+    WCHAR key_name[256];
+    DWORD key_name_size;
+
+    if(RegOpenKeyExW(HKEY_CURRENT_USER, drv_key_devicesW, 0, KEY_READ, &devices_key) != ERROR_SUCCESS){
+        ERR("No devices in registry?\n");
+        return FALSE;
+    }
+
+    while(1){
+        HKEY key;
+        DWORD size, type;
+        GUID reg_guid;
+
+        key_name_size = sizeof(key_name);
+        if(RegEnumKeyExW(devices_key, i++, key_name, &key_name_size, NULL,
+                NULL, NULL, NULL) != ERROR_SUCCESS)
+            break;
+
+        if(RegOpenKeyExW(devices_key, key_name, 0, KEY_READ, &key) != ERROR_SUCCESS){
+            WARN("Couldn't open key: %s\n", wine_dbgstr_w(key_name));
+            continue;
+        }
+
+        size = sizeof(reg_guid);
+        if(RegQueryValueExW(key, guidW, 0, &type,
+                    (BYTE*)&reg_guid, &size) == ERROR_SUCCESS){
+            if(IsEqualGUID(&reg_guid, guid)){
+                RegCloseKey(key);
+                RegCloseKey(devices_key);
+
+                TRACE("Found matching device key: %s\n", wine_dbgstr_w(key_name));
+
+                if(key_name[0] == '0')
+                    *flow = eRender;
+                else if(key_name[0] == '1')
+                    *flow = eCapture;
+                else{
+                    ERR("Unknown device type: %c\n", key_name[0]);
+                    return FALSE;
+                }
+
+                *id = strtoulW(key_name + 2, NULL, 10);
+
+                return TRUE;
+            }
+        }
+
+        RegCloseKey(key);
+    }
+
+    RegCloseKey(devices_key);
+
+    WARN("No matching device in registry for GUID %s\n", debugstr_guid(guid));
+
+    return FALSE;
+}
+
+static AudioComponentInstance get_audiounit(EDataFlow dataflow, AudioDeviceID adevid)
+{
+    AudioComponentInstance unit;
+    AudioComponent comp;
+    AudioComponentDescription desc;
+    OSStatus sc;
+
+    memset(&desc, 0, sizeof(desc));
+    desc.componentType = kAudioUnitType_Output;
+    desc.componentSubType = kAudioUnitSubType_HALOutput;
+    desc.componentManufacturer = kAudioUnitManufacturer_Apple;
+
+    if(!(comp = AudioComponentFindNext(NULL, &desc))){
+        WARN("AudioComponentFindNext failed\n");
+        return NULL;
+    }
+
+    sc = AudioComponentInstanceNew(comp, &unit);
+    if(sc != noErr){
+        WARN("AudioComponentInstanceNew failed: %lx\n", sc);
+        return NULL;
+    }
+
+    if(dataflow == eCapture){
+        UInt32 enableio;
+
+        enableio = 1;
+        sc = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO,
+                kAudioUnitScope_Input, 1, &enableio, sizeof(enableio));
+        if(sc != noErr){
+            WARN("Couldn't enable I/O on input element: %lx\n", sc);
+            AudioComponentInstanceDispose(unit);
+            return NULL;
+        }
+
+        enableio = 0;
+        sc = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO,
+                kAudioUnitScope_Output, 0, &enableio, sizeof(enableio));
+        if(sc != noErr){
+            WARN("Couldn't disable I/O on output element: %lx\n", sc);
+            AudioComponentInstanceDispose(unit);
+            return NULL;
+        }
+    }
+
+    sc = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global, 0, &adevid, sizeof(adevid));
+    if(sc != noErr){
+        WARN("Couldn't set audio unit device\n");
+        AudioComponentInstanceDispose(unit);
+        return NULL;
+    }
+
+    return unit;
+}
+
+HRESULT WINAPI AUDDRV_GetAudioEndpoint(GUID *guid, IMMDevice *dev, IAudioClient **out)
 {
     ACImpl *This;
+    AudioDeviceID adevid;
+    EDataFlow dataflow;
+    HRESULT hr;
 
-    TRACE("%u %p %d %p\n", (unsigned int)*adevid, dev, dataflow, out);
+    TRACE("%s %p %p\n", debugstr_guid(guid), dev, out);
+
+    if(!get_deviceid_by_guid(guid, &adevid, &dataflow))
+        return AUDCLNT_E_DEVICE_INVALIDATED;
 
     This = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(ACImpl));
     if(!This)
@@ -462,12 +697,22 @@ HRESULT WINAPI AUDDRV_GetAudioEndpoint(AudioDeviceID *adevid, IMMDevice *dev,
 
     This->lock = 0;
 
+    hr = CoCreateFreeThreadedMarshaler((IUnknown *)&This->IAudioClient_iface,
+        (IUnknown **)&This->pUnkFTMarshal);
+    if (FAILED(hr)) {
+        HeapFree(GetProcessHeap(), 0, This);
+        return hr;
+    }
+
     This->parent = dev;
     IMMDevice_AddRef(This->parent);
 
-    list_init(&This->avail_buffers);
+    This->adevid = adevid;
 
-    This->adevid = *adevid;
+    if(!(This->unit = get_audiounit(This->dataflow, This->adevid))){
+        HeapFree(GetProcessHeap(), 0, This);
+        return AUDCLNT_E_DEVICE_INVALIDATED;
+    }
 
     *out = &This->IAudioClient_iface;
     IAudioClient_AddRef(&This->IAudioClient_iface);
@@ -478,6 +723,7 @@ HRESULT WINAPI AUDDRV_GetAudioEndpoint(AudioDeviceID *adevid, IMMDevice *dev,
 static HRESULT WINAPI AudioClient_QueryInterface(IAudioClient *iface,
         REFIID riid, void **ppv)
 {
+    ACImpl *This = impl_from_IAudioClient(iface);
     TRACE("(%p)->(%s, %p)\n", iface, debugstr_guid(riid), ppv);
 
     if(!ppv)
@@ -485,6 +731,9 @@ static HRESULT WINAPI AudioClient_QueryInterface(IAudioClient *iface,
     *ppv = NULL;
     if(IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IAudioClient))
         *ppv = iface;
+    else if(IsEqualIID(riid, &IID_IMarshal))
+        return IUnknown_QueryInterface(This->pUnkFTMarshal, riid, ppv);
+
     if(*ppv){
         IUnknown_AddRef((IUnknown*)*ppv);
         return S_OK;
@@ -509,29 +758,34 @@ static ULONG WINAPI AudioClient_Release(IAudioClient *iface)
     ref = InterlockedDecrement(&This->ref);
     TRACE("(%p) Refcount now %u\n", This, ref);
     if(!ref){
-        if(This->aqueue){
-            AQBuffer *buf, *next;
-            if(This->public_buffer){
-                buf = This->public_buffer->mUserData;
-                list_add_tail(&This->avail_buffers, &buf->entry);
-            }
-            IAudioClient_Stop(iface);
-            AudioQueueStop(This->aqueue, 1);
-            /* Stopped synchronously, all buffers returned. */
-            LIST_FOR_EACH_ENTRY_SAFE(buf, next, &This->avail_buffers, AQBuffer, entry){
-                AudioQueueFreeBuffer(This->aqueue, buf->buf);
-                HeapFree(GetProcessHeap(), 0, buf);
-            }
-            AudioQueueDispose(This->aqueue, 1);
+        if(This->timer){
+            HANDLE event;
+            BOOL wait;
+            event = CreateEventW(NULL, TRUE, FALSE, NULL);
+            wait = !DeleteTimerQueueTimer(g_timer_q, This->timer, event);
+            wait = wait && GetLastError() == ERROR_IO_PENDING;
+            if(event && wait)
+                WaitForSingleObject(event, INFINITE);
+            CloseHandle(event);
         }
+        AudioOutputUnitStop(This->unit);
+        AudioComponentInstanceDispose(This->unit);
+        if(This->converter)
+            AudioConverterDispose(This->converter);
         if(This->session){
             EnterCriticalSection(&g_sessions_lock);
             list_remove(&This->entry);
             LeaveCriticalSection(&g_sessions_lock);
         }
         HeapFree(GetProcessHeap(), 0, This->vols);
+        HeapFree(GetProcessHeap(), 0, This->tmp_buffer);
+        HeapFree(GetProcessHeap(), 0, This->cap_buffer);
+        HeapFree(GetProcessHeap(), 0, This->local_buffer);
+        free(This->wrap_buffer);
+        HeapFree(GetProcessHeap(), 0, This->resamp_buffer);
         CoTaskMemFree(This->fmt);
         IMMDevice_Release(This->parent);
+        IUnknown_Release(This->pUnkFTMarshal);
         HeapFree(GetProcessHeap(), 0, This);
     }
     return ref;
@@ -591,7 +845,7 @@ static DWORD get_channel_mask(unsigned int channels)
     case 7:
         return KSAUDIO_SPEAKER_5POINT1 | SPEAKER_BACK_CENTER;
     case 8:
-        return KSAUDIO_SPEAKER_7POINT1; /* not 7POINT1_SURROUND */
+        return KSAUDIO_SPEAKER_7POINT1_SURROUND; /* Vista deprecates 7POINT1 */
     }
     FIXME("Unknown speaker configuration: %u\n", channels);
     return 0;
@@ -658,86 +912,6 @@ static HRESULT ca_get_audiodesc(AudioStreamBasicDescription *desc,
     return S_OK;
 }
 
-static void ca_out_buffer_cb(void *user, AudioQueueRef aqueue,
-        AudioQueueBufferRef buffer)
-{
-    ACImpl *This = user;
-    AQBuffer *buf = buffer->mUserData;
-
-    OSSpinLockLock(&This->lock);
-    list_add_tail(&This->avail_buffers, &buf->entry);
-    This->inbuf_frames -= buffer->mAudioDataByteSize / This->fmt->nBlockAlign;
-    OSSpinLockUnlock(&This->lock);
-}
-
-static void ca_in_buffer_cb(void *user, AudioQueueRef aqueue,
-        AudioQueueBufferRef buffer, const AudioTimeStamp *start,
-        UInt32 ndesc, const AudioStreamPacketDescription *descs)
-{
-    ACImpl *This = user;
-    AQBuffer *buf = buffer->mUserData;
-
-    OSSpinLockLock(&This->lock);
-    list_add_tail(&This->avail_buffers, &buf->entry);
-    This->inbuf_frames += buffer->mAudioDataByteSize / This->fmt->nBlockAlign;
-    OSSpinLockUnlock(&This->lock);
-}
-
-static HRESULT ca_setup_aqueue(AudioDeviceID did, EDataFlow flow,
-        const WAVEFORMATEX *fmt, void *user, AudioQueueRef *aqueue)
-{
-    AudioStreamBasicDescription desc;
-    AudioObjectPropertyAddress addr;
-    CFStringRef uid;
-    OSStatus sc;
-    HRESULT hr;
-    UInt32 size;
-
-    addr.mScope = kAudioObjectPropertyScopeGlobal;
-    addr.mElement = 0;
-    addr.mSelector = kAudioDevicePropertyDeviceUID;
-
-    size = sizeof(uid);
-    sc = AudioObjectGetPropertyData(did, &addr, 0, NULL, &size, &uid);
-    if(sc != noErr){
-        WARN("Unable to get _DeviceUID property: %lx\n", sc);
-        return E_FAIL;
-    }
-
-    hr = ca_get_audiodesc(&desc, fmt);
-    if(FAILED(hr)){
-        CFRelease(uid);
-        return hr;
-    }
-
-    if(flow == eRender)
-        sc = AudioQueueNewOutput(&desc, ca_out_buffer_cb, user, NULL, NULL, 0,
-                aqueue);
-    else if(flow == eCapture)
-        sc = AudioQueueNewInput(&desc, ca_in_buffer_cb, user, NULL, NULL, 0,
-                aqueue);
-    else{
-        CFRelease(uid);
-        return E_UNEXPECTED;
-    }
-    if(sc != noErr){
-        WARN("Unable to create AudioQueue: %lx\n", sc);
-        CFRelease(uid);
-        return E_FAIL;
-    }
-
-    sc = AudioQueueSetProperty(*aqueue, kAudioQueueProperty_CurrentDevice,
-            &uid, sizeof(uid));
-    if(sc != noErr){
-        CFRelease(uid);
-        return E_FAIL;
-    }
-
-    CFRelease(uid);
-
-    return S_OK;
-}
-
 static void session_init_vols(AudioSession *session, UINT channels)
 {
     if(session->channel_count < channels){
@@ -777,6 +951,7 @@ static AudioSession *create_session(const GUID *guid, IMMDevice *device,
     list_add_head(&g_sessions, &ret->entry);
 
     InitializeCriticalSection(&ret->lock);
+    ret->lock.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": AudioSession.lock");
 
     session_init_vols(ret, num_channels);
 
@@ -819,6 +994,299 @@ static HRESULT get_audio_session(const GUID *sessionguid,
     return S_OK;
 }
 
+static void ca_wrap_buffer(BYTE *dst, UINT32 dst_offs, UINT32 dst_bytes,
+        BYTE *src, UINT32 src_bytes)
+{
+    UINT32 chunk_bytes = dst_bytes - dst_offs;
+
+    if(chunk_bytes < src_bytes){
+        memcpy(dst + dst_offs, src, chunk_bytes);
+        memcpy(dst, src + chunk_bytes, src_bytes - chunk_bytes);
+    }else
+        memcpy(dst + dst_offs, src, src_bytes);
+}
+
+static void silence_buffer(ACImpl *This, BYTE *buffer, UINT32 frames)
+{
+    WAVEFORMATEXTENSIBLE *fmtex = (WAVEFORMATEXTENSIBLE*)This->fmt;
+    if((This->fmt->wFormatTag == WAVE_FORMAT_PCM ||
+            (This->fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+             IsEqualGUID(&fmtex->SubFormat, &KSDATAFORMAT_SUBTYPE_PCM))) &&
+            This->fmt->wBitsPerSample == 8)
+        memset(buffer, 128, frames * This->fmt->nBlockAlign);
+    else
+        memset(buffer, 0, frames * This->fmt->nBlockAlign);
+}
+
+/* CA is pulling data from us */
+static OSStatus ca_render_cb(void *user, AudioUnitRenderActionFlags *flags,
+        const AudioTimeStamp *ts, UInt32 bus, UInt32 nframes,
+        AudioBufferList *data)
+{
+    ACImpl *This = user;
+    UINT32 to_copy_bytes, to_copy_frames, chunk_bytes, lcl_offs_bytes;
+
+    OSSpinLockLock(&This->lock);
+
+    if(This->playing){
+        lcl_offs_bytes = This->lcl_offs_frames * This->fmt->nBlockAlign;
+        to_copy_frames = min(nframes, This->held_frames);
+        to_copy_bytes = to_copy_frames * This->fmt->nBlockAlign;
+
+        chunk_bytes = (This->bufsize_frames - This->lcl_offs_frames) * This->fmt->nBlockAlign;
+
+        if(to_copy_bytes > chunk_bytes){
+            memcpy(data->mBuffers[0].mData, This->local_buffer + lcl_offs_bytes, chunk_bytes);
+            memcpy(((BYTE *)data->mBuffers[0].mData) + chunk_bytes, This->local_buffer, to_copy_bytes - chunk_bytes);
+        }else
+            memcpy(data->mBuffers[0].mData, This->local_buffer + lcl_offs_bytes, to_copy_bytes);
+
+        This->lcl_offs_frames += to_copy_frames;
+        This->lcl_offs_frames %= This->bufsize_frames;
+        This->held_frames -= to_copy_frames;
+    }else
+        to_copy_bytes = to_copy_frames = 0;
+
+    if(nframes > to_copy_frames)
+        silence_buffer(This, ((BYTE *)data->mBuffers[0].mData) + to_copy_bytes, nframes - to_copy_frames);
+
+    OSSpinLockUnlock(&This->lock);
+
+    return noErr;
+}
+
+static UINT buf_ptr_diff(UINT left, UINT right, UINT bufsize)
+{
+    if(left <= right)
+        return right - left;
+    return bufsize - (left - right);
+}
+
+/* place data from cap_buffer into provided AudioBufferList */
+static OSStatus feed_cb(AudioConverterRef converter, UInt32 *nframes, AudioBufferList *data,
+        AudioStreamPacketDescription **packets, void *user)
+{
+    ACImpl *This = user;
+
+    *nframes = min(*nframes, This->cap_held_frames);
+    if(!*nframes){
+        data->mBuffers[0].mData = NULL;
+        data->mBuffers[0].mDataByteSize = 0;
+        data->mBuffers[0].mNumberChannels = This->fmt->nChannels;
+        return noErr;
+    }
+
+    data->mBuffers[0].mDataByteSize = *nframes * This->fmt->nBlockAlign;
+    data->mBuffers[0].mNumberChannels = This->fmt->nChannels;
+
+    if(This->cap_offs_frames + *nframes > This->cap_bufsize_frames){
+        UINT32 chunk_frames = This->cap_bufsize_frames - This->cap_offs_frames;
+
+        if(This->wrap_bufsize_frames < *nframes){
+            free(This->wrap_buffer);
+            This->wrap_buffer = malloc(data->mBuffers[0].mDataByteSize);
+            This->wrap_bufsize_frames = *nframes;
+        }
+
+        memcpy(This->wrap_buffer, This->cap_buffer + This->cap_offs_frames * This->fmt->nBlockAlign,
+                chunk_frames * This->fmt->nBlockAlign);
+        memcpy(This->wrap_buffer + chunk_frames * This->fmt->nBlockAlign, This->cap_buffer,
+                (*nframes - chunk_frames) * This->fmt->nBlockAlign);
+
+        data->mBuffers[0].mData = This->wrap_buffer;
+    }else
+        data->mBuffers[0].mData = This->cap_buffer + This->cap_offs_frames * This->fmt->nBlockAlign;
+
+    This->cap_offs_frames += *nframes;
+    This->cap_offs_frames %= This->cap_bufsize_frames;
+    This->cap_held_frames -= *nframes;
+
+    if(packets)
+        *packets = NULL;
+
+    return noErr;
+}
+
+static void capture_resample(ACImpl *This)
+{
+    UINT32 resamp_period_frames = MulDiv(This->period_frames, This->dev_desc.mSampleRate, This->fmt->nSamplesPerSec);
+    OSStatus sc;
+
+    /* the resampling process often needs more source frames than we'd
+     * guess from a straight conversion using the sample rate ratio. so
+     * only convert if we have extra source data. */
+    while(This->cap_held_frames > resamp_period_frames * 2){
+        AudioBufferList converted_list;
+        UInt32 wanted_frames = This->period_frames;
+
+        converted_list.mNumberBuffers = 1;
+        converted_list.mBuffers[0].mNumberChannels = This->fmt->nChannels;
+        converted_list.mBuffers[0].mDataByteSize = wanted_frames * This->fmt->nBlockAlign;
+
+        if(This->resamp_bufsize_frames < wanted_frames){
+            HeapFree(GetProcessHeap(), 0, This->resamp_buffer);
+            This->resamp_buffer = HeapAlloc(GetProcessHeap(), 0, converted_list.mBuffers[0].mDataByteSize);
+            This->resamp_bufsize_frames = wanted_frames;
+        }
+
+        converted_list.mBuffers[0].mData = This->resamp_buffer;
+
+        sc = AudioConverterFillComplexBuffer(This->converter, feed_cb,
+                This, &wanted_frames, &converted_list, NULL);
+        if(sc != noErr){
+            WARN("AudioConverterFillComplexBuffer failed: %lx\n", sc);
+            break;
+        }
+
+        ca_wrap_buffer(This->local_buffer,
+                This->wri_offs_frames * This->fmt->nBlockAlign,
+                This->bufsize_frames * This->fmt->nBlockAlign,
+                This->resamp_buffer, wanted_frames * This->fmt->nBlockAlign);
+
+        This->wri_offs_frames += wanted_frames;
+        This->wri_offs_frames %= This->bufsize_frames;
+        if(This->held_frames + wanted_frames > This->bufsize_frames){
+            This->lcl_offs_frames += buf_ptr_diff(This->lcl_offs_frames,
+                    This->wri_offs_frames, This->bufsize_frames);
+            This->held_frames = This->bufsize_frames;
+        }else
+            This->held_frames += wanted_frames;
+    }
+}
+
+/* we need to trigger CA to pull data from the device and give it to us
+ *
+ * raw data from CA is stored in cap_buffer, possibly via wrap_buffer
+ *
+ * raw data is resampled from cap_buffer into resamp_buffer in period-size
+ * chunks and copied to local_buffer
+ */
+static OSStatus ca_capture_cb(void *user, AudioUnitRenderActionFlags *flags,
+        const AudioTimeStamp *ts, UInt32 bus, UInt32 nframes,
+        AudioBufferList *data)
+{
+    ACImpl *This = user;
+    AudioBufferList list;
+    OSStatus sc;
+    UINT32 cap_wri_offs_frames;
+
+    OSSpinLockLock(&This->lock);
+
+    cap_wri_offs_frames = (This->cap_offs_frames + This->cap_held_frames) % This->cap_bufsize_frames;
+
+    list.mNumberBuffers = 1;
+    list.mBuffers[0].mNumberChannels = This->fmt->nChannels;
+    list.mBuffers[0].mDataByteSize = nframes * This->fmt->nBlockAlign;
+
+    if(!This->playing || cap_wri_offs_frames + nframes > This->cap_bufsize_frames){
+        if(This->wrap_bufsize_frames < nframes){
+            free(This->wrap_buffer);
+            This->wrap_buffer = malloc(list.mBuffers[0].mDataByteSize);
+            This->wrap_bufsize_frames = nframes;
+        }
+
+        list.mBuffers[0].mData = This->wrap_buffer;
+    }else
+        list.mBuffers[0].mData = This->cap_buffer + cap_wri_offs_frames * This->fmt->nBlockAlign;
+
+    sc = AudioUnitRender(This->unit, flags, ts, bus, nframes, &list);
+    if(sc != noErr){
+        OSSpinLockUnlock(&This->lock);
+        return sc;
+    }
+
+    if(This->playing){
+        if(list.mBuffers[0].mData == This->wrap_buffer){
+            ca_wrap_buffer(This->cap_buffer,
+                    cap_wri_offs_frames * This->fmt->nBlockAlign,
+                    This->cap_bufsize_frames * This->fmt->nBlockAlign,
+                    This->wrap_buffer, list.mBuffers[0].mDataByteSize);
+        }
+
+        This->cap_held_frames += list.mBuffers[0].mDataByteSize / This->fmt->nBlockAlign;
+        if(This->cap_held_frames > This->cap_bufsize_frames){
+            This->cap_offs_frames += This->cap_held_frames % This->cap_bufsize_frames;
+            This->cap_offs_frames %= This->cap_bufsize_frames;
+            This->cap_held_frames = This->cap_bufsize_frames;
+        }
+    }
+
+    OSSpinLockUnlock(&This->lock);
+    return noErr;
+}
+
+static void dump_adesc(const char *aux, AudioStreamBasicDescription *desc)
+{
+    TRACE("%s: mSampleRate: %f\n", aux, desc->mSampleRate);
+    TRACE("%s: mBytesPerPacket: %ld\n", aux, desc->mBytesPerPacket);
+    TRACE("%s: mFramesPerPacket: %ld\n", aux, desc->mFramesPerPacket);
+    TRACE("%s: mBytesPerFrame: %ld\n", aux, desc->mBytesPerFrame);
+    TRACE("%s: mChannelsPerFrame: %ld\n", aux, desc->mChannelsPerFrame);
+    TRACE("%s: mBitsPerChannel: %ld\n", aux, desc->mBitsPerChannel);
+}
+
+static HRESULT ca_setup_audiounit(EDataFlow dataflow, AudioComponentInstance unit,
+        const WAVEFORMATEX *fmt, AudioStreamBasicDescription *dev_desc,
+        AudioConverterRef *converter)
+{
+    OSStatus sc;
+    HRESULT hr;
+
+    if(dataflow == eCapture){
+        AudioStreamBasicDescription desc;
+        UInt32 size;
+        Float64 rate;
+
+        hr = ca_get_audiodesc(&desc, fmt);
+        if(FAILED(hr))
+            return hr;
+        dump_adesc("requested", &desc);
+
+        /* input-only units can't perform sample rate conversion, so we have to
+         * set up our own AudioConverter to support arbitrary sample rates. */
+        size = sizeof(*dev_desc);
+        sc = AudioUnitGetProperty(unit, kAudioUnitProperty_StreamFormat,
+                kAudioUnitScope_Input, 1, dev_desc, &size);
+        if(sc != noErr){
+            WARN("Couldn't get unit format: %lx\n", sc);
+            return osstatus_to_hresult(sc);
+        }
+        dump_adesc("hardware", dev_desc);
+
+        rate = dev_desc->mSampleRate;
+        *dev_desc = desc;
+        dev_desc->mSampleRate = rate;
+
+        dump_adesc("final", dev_desc);
+        sc = AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat,
+                kAudioUnitScope_Output, 1, dev_desc, sizeof(*dev_desc));
+        if(sc != noErr){
+            WARN("Couldn't set unit format: %lx\n", sc);
+            return osstatus_to_hresult(sc);
+        }
+
+        sc = AudioConverterNew(dev_desc, &desc, converter);
+        if(sc != noErr){
+            WARN("Couldn't create audio converter: %lx\n", sc);
+            return osstatus_to_hresult(sc);
+        }
+    }else{
+        hr = ca_get_audiodesc(dev_desc, fmt);
+        if(FAILED(hr))
+            return hr;
+
+        dump_adesc("final", dev_desc);
+        sc = AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat,
+                kAudioUnitScope_Input, 0, dev_desc, sizeof(*dev_desc));
+        if(sc != noErr){
+            WARN("Couldn't set format: %lx\n", sc);
+            return osstatus_to_hresult(sc);
+        }
+    }
+
+    return S_OK;
+}
+
 static HRESULT WINAPI AudioClient_Initialize(IAudioClient *iface,
         AUDCLNT_SHAREMODE mode, DWORD flags, REFERENCE_TIME duration,
         REFERENCE_TIME period, const WAVEFORMATEX *fmt,
@@ -852,80 +1320,136 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient *iface,
         return E_INVALIDARG;
     }
 
+    if(mode == AUDCLNT_SHAREMODE_SHARED){
+        period = DefaultPeriod;
+        if( duration < 3 * period)
+            duration = 3 * period;
+    }else{
+        if(fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE){
+            if(((WAVEFORMATEXTENSIBLE*)fmt)->dwChannelMask == 0 ||
+                    ((WAVEFORMATEXTENSIBLE*)fmt)->dwChannelMask & SPEAKER_RESERVED)
+                return AUDCLNT_E_UNSUPPORTED_FORMAT;
+        }
+
+        if(!period)
+            period = DefaultPeriod; /* not minimum */
+        if(period < MinimumPeriod || period > 5000000)
+            return AUDCLNT_E_INVALID_DEVICE_PERIOD;
+        if(duration > 20000000) /* the smaller the period, the lower this limit */
+            return AUDCLNT_E_BUFFER_SIZE_ERROR;
+        if(flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK){
+            if(duration != period)
+                return AUDCLNT_E_BUFDURATION_PERIOD_NOT_EQUAL;
+            FIXME("EXCLUSIVE mode with EVENTCALLBACK\n");
+            return AUDCLNT_E_DEVICE_IN_USE;
+        }else{
+            if( duration < 8 * period)
+                duration = 8 * period; /* may grow above 2s */
+        }
+    }
+
     OSSpinLockLock(&This->lock);
 
-    if(This->aqueue){
+    if(This->initted){
         OSSpinLockUnlock(&This->lock);
         return AUDCLNT_E_ALREADY_INITIALIZED;
     }
 
-    hr = ca_setup_aqueue(This->adevid, This->dataflow, fmt, This, &This->aqueue);
-    if(FAILED(hr)){
-        OSSpinLockUnlock(&This->lock);
-        return hr;
-    }
-
     This->fmt = clone_format(fmt);
     if(!This->fmt){
-        AudioQueueDispose(This->aqueue, 1);
-        This->aqueue = NULL;
         OSSpinLockUnlock(&This->lock);
         return E_OUTOFMEMORY;
     }
 
-    if(period){
-        This->period_ms = period / 10000;
-        if(This->period_ms == 0)
-            This->period_ms = 1;
-    }else
-        This->period_ms = MinimumPeriod / 10000;
+    This->period_ms = period / 10000;
+    This->period_frames = MulDiv(period, This->fmt->nSamplesPerSec, 10000000);
 
-    if(!duration)
-        duration = 300000; /* 0.03s */
-    This->bufsize_frames = ceil(fmt->nSamplesPerSec * (duration / 10000000.));
+    This->bufsize_frames = MulDiv(duration, fmt->nSamplesPerSec, 10000000);
+    if(mode == AUDCLNT_SHAREMODE_EXCLUSIVE)
+        This->bufsize_frames -= This->bufsize_frames % This->period_frames;
+
+    hr = ca_setup_audiounit(This->dataflow, This->unit, This->fmt, &This->dev_desc, &This->converter);
+    if(FAILED(hr)){
+        CoTaskMemFree(This->fmt);
+        This->fmt = NULL;
+        OSSpinLockUnlock(&This->lock);
+        return hr;
+    }
 
     if(This->dataflow == eCapture){
-        int i;
-        UInt32 bsize = ceil((This->bufsize_frames / (double)CAPTURE_BUFFERS) *
-                This->fmt->nBlockAlign);
-        for(i = 0; i < CAPTURE_BUFFERS; ++i){
-            AQBuffer *buf;
+        AURenderCallbackStruct input;
 
-            buf = HeapAlloc(GetProcessHeap(), 0, sizeof(AQBuffer));
-            if(!buf){
-                AudioQueueDispose(This->aqueue, 1);
-                This->aqueue = NULL;
-                CoTaskMemFree(This->fmt);
-                This->fmt = NULL;
-                OSSpinLockUnlock(&This->lock);
-                return E_OUTOFMEMORY;
-            }
+        memset(&input, 0, sizeof(input));
+        input.inputProc = &ca_capture_cb;
+        input.inputProcRefCon = This;
 
-            sc = AudioQueueAllocateBuffer(This->aqueue, bsize, &buf->buf);
-            if(sc != noErr){
-                AudioQueueDispose(This->aqueue, 1);
-                This->aqueue = NULL;
-                CoTaskMemFree(This->fmt);
-                This->fmt = NULL;
-                OSSpinLockUnlock(&This->lock);
-                WARN("Couldn't allocate buffer: %lx\n", sc);
-                return E_FAIL;
-            }
-
-            buf->buf->mUserData = buf;
-
-            sc = AudioQueueEnqueueBuffer(This->aqueue, buf->buf, 0, NULL);
-            if(sc != noErr){
-                ERR("Couldn't enqueue buffer: %lx\n", sc);
-                break;
-            }
+        sc = AudioUnitSetProperty(This->unit, kAudioOutputUnitProperty_SetInputCallback,
+                kAudioUnitScope_Output, 1, &input, sizeof(input));
+        if(sc != noErr){
+            WARN("Couldn't set callback: %lx\n", sc);
+            AudioConverterDispose(This->converter);
+            This->converter = NULL;
+            CoTaskMemFree(This->fmt);
+            This->fmt = NULL;
+            OSSpinLockUnlock(&This->lock);
+            return osstatus_to_hresult(sc);
         }
+    }else{
+        AURenderCallbackStruct input;
+
+        memset(&input, 0, sizeof(input));
+        input.inputProc = &ca_render_cb;
+        input.inputProcRefCon = This;
+
+        sc = AudioUnitSetProperty(This->unit, kAudioUnitProperty_SetRenderCallback,
+                kAudioUnitScope_Input, 0, &input, sizeof(input));
+        if(sc != noErr){
+            WARN("Couldn't set callback: %lx\n", sc);
+            CoTaskMemFree(This->fmt);
+            This->fmt = NULL;
+            OSSpinLockUnlock(&This->lock);
+            return osstatus_to_hresult(sc);
+        }
+    }
+
+    sc = AudioUnitInitialize(This->unit);
+    if(sc != noErr){
+        WARN("Couldn't initialize: %lx\n", sc);
+        if(This->converter){
+            AudioConverterDispose(This->converter);
+            This->converter = NULL;
+        }
+        CoTaskMemFree(This->fmt);
+        This->fmt = NULL;
+        OSSpinLockUnlock(&This->lock);
+        return osstatus_to_hresult(sc);
+    }
+
+    /* we play audio continuously because AudioOutputUnitStart sometimes takes
+     * a while to return */
+    sc = AudioOutputUnitStart(This->unit);
+    if(sc != noErr){
+        WARN("Unit failed to start: %lx\n", sc);
+        if(This->converter){
+            AudioConverterDispose(This->converter);
+            This->converter = NULL;
+        }
+        CoTaskMemFree(This->fmt);
+        This->fmt = NULL;
+        OSSpinLockUnlock(&This->lock);
+        return osstatus_to_hresult(sc);
+    }
+
+    This->local_buffer = HeapAlloc(GetProcessHeap(), 0, This->bufsize_frames * fmt->nBlockAlign);
+    silence_buffer(This, This->local_buffer, This->bufsize_frames);
+
+    if(This->dataflow == eCapture){
+        This->cap_bufsize_frames = MulDiv(duration, This->dev_desc.mSampleRate, 10000000);
+        This->cap_buffer = HeapAlloc(GetProcessHeap(), 0, This->cap_bufsize_frames * This->fmt->nBlockAlign);
     }
 
     This->vols = HeapAlloc(GetProcessHeap(), 0, fmt->nChannels * sizeof(float));
     if(!This->vols){
-        AudioQueueDispose(This->aqueue, 1);
-        This->aqueue = NULL;
         CoTaskMemFree(This->fmt);
         This->fmt = NULL;
         OSSpinLockUnlock(&This->lock);
@@ -944,8 +1468,6 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient *iface,
             &This->session);
     if(FAILED(hr)){
         LeaveCriticalSection(&g_sessions_lock);
-        AudioQueueDispose(This->aqueue, 1);
-        This->aqueue = NULL;
         CoTaskMemFree(This->fmt);
         This->fmt = NULL;
         HeapFree(GetProcessHeap(), 0, This->vols);
@@ -959,6 +1481,8 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient *iface,
     LeaveCriticalSection(&g_sessions_lock);
 
     ca_setvol(This, -1);
+
+    This->initted = TRUE;
 
     OSSpinLockUnlock(&This->lock);
 
@@ -977,7 +1501,7 @@ static HRESULT WINAPI AudioClient_GetBufferSize(IAudioClient *iface,
 
     OSSpinLockLock(&This->lock);
 
-    if(!This->aqueue){
+    if(!This->initted){
         OSSpinLockUnlock(&This->lock);
         return AUDCLNT_E_NOT_INITIALIZED;
     }
@@ -1005,7 +1529,7 @@ static HRESULT ca_get_max_stream_latency(ACImpl *This, UInt32 *max)
             &size);
     if(sc != noErr){
         WARN("Unable to get size for _Streams property: %lx\n", sc);
-        return E_FAIL;
+        return osstatus_to_hresult(sc);
     }
 
     ids = HeapAlloc(GetProcessHeap(), 0, size);
@@ -1016,7 +1540,7 @@ static HRESULT ca_get_max_stream_latency(ACImpl *This, UInt32 *max)
     if(sc != noErr){
         WARN("Unable to get _Streams property: %lx\n", sc);
         HeapFree(GetProcessHeap(), 0, ids);
-        return E_FAIL;
+        return osstatus_to_hresult(sc);
     }
 
     nstreams = size / sizeof(AudioStreamID);
@@ -1059,7 +1583,7 @@ static HRESULT WINAPI AudioClient_GetStreamLatency(IAudioClient *iface,
 
     OSSpinLockLock(&This->lock);
 
-    if(!This->aqueue){
+    if(!This->initted){
         OSSpinLockUnlock(&This->lock);
         return AUDCLNT_E_NOT_INITIALIZED;
     }
@@ -1074,7 +1598,7 @@ static HRESULT WINAPI AudioClient_GetStreamLatency(IAudioClient *iface,
     if(sc != noErr){
         WARN("Couldn't get _Latency property: %lx\n", sc);
         OSSpinLockUnlock(&This->lock);
-        return E_FAIL;
+        return osstatus_to_hresult(sc);
     }
 
     hr = ca_get_max_stream_latency(This, &stream_latency);
@@ -1084,7 +1608,10 @@ static HRESULT WINAPI AudioClient_GetStreamLatency(IAudioClient *iface,
     }
 
     latency += stream_latency;
-    *out = (latency / (double)This->fmt->nSamplesPerSec) * 10000000;
+    /* pretend we process audio in Period chunks, so max latency includes
+     * the period time */
+    *out = MulDiv(latency, 10000000, This->fmt->nSamplesPerSec)
+         + This->period_ms * 10000;
 
     OSSpinLockUnlock(&This->lock);
 
@@ -1094,10 +1621,13 @@ static HRESULT WINAPI AudioClient_GetStreamLatency(IAudioClient *iface,
 static HRESULT AudioClient_GetCurrentPadding_nolock(ACImpl *This,
         UINT32 *numpad)
 {
-    if(!This->aqueue)
+    if(!This->initted)
         return AUDCLNT_E_NOT_INITIALIZED;
 
-    *numpad = This->inbuf_frames;
+    if(This->dataflow == eCapture)
+        capture_resample(This);
+
+    *numpad = This->held_frames;
 
     return S_OK;
 }
@@ -1127,8 +1657,10 @@ static HRESULT WINAPI AudioClient_IsFormatSupported(IAudioClient *iface,
         WAVEFORMATEX **outpwfx)
 {
     ACImpl *This = impl_from_IAudioClient(iface);
+    AudioStreamBasicDescription dev_desc;
+    AudioConverterRef converter;
+    AudioComponentInstance unit;
     WAVEFORMATEXTENSIBLE *fmtex = (WAVEFORMATEXTENSIBLE*)pwfx;
-    AudioQueueRef aqueue;
     HRESULT hr;
 
     TRACE("(%p)->(%x, %p, %p)\n", This, mode, pwfx, outpwfx);
@@ -1145,27 +1677,54 @@ static HRESULT WINAPI AudioClient_IsFormatSupported(IAudioClient *iface,
 
     dump_fmt(pwfx);
 
-    if(outpwfx)
+    if(outpwfx){
         *outpwfx = NULL;
-
-    if(pwfx->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
-            fmtex->dwChannelMask != 0 &&
-            fmtex->dwChannelMask != get_channel_mask(pwfx->nChannels))
-        return AUDCLNT_E_UNSUPPORTED_FORMAT;
-
-    OSSpinLockLock(&This->lock);
-
-    hr = ca_setup_aqueue(This->adevid, This->dataflow, pwfx, NULL, &aqueue);
-    if(SUCCEEDED(hr)){
-        AudioQueueDispose(aqueue, 1);
-        OSSpinLockUnlock(&This->lock);
-        TRACE("returning %08x\n", S_OK);
-        return S_OK;
+        if(mode != AUDCLNT_SHAREMODE_SHARED)
+            outpwfx = NULL;
     }
 
-    OSSpinLockUnlock(&This->lock);
+    if(pwfx->wFormatTag == WAVE_FORMAT_EXTENSIBLE){
+        if(pwfx->nAvgBytesPerSec == 0 ||
+                pwfx->nBlockAlign == 0 ||
+                fmtex->Samples.wValidBitsPerSample > pwfx->wBitsPerSample)
+            return E_INVALIDARG;
+        if(fmtex->Samples.wValidBitsPerSample < pwfx->wBitsPerSample)
+            goto unsupported;
+        if(mode == AUDCLNT_SHAREMODE_EXCLUSIVE){
+            if(fmtex->dwChannelMask == 0 ||
+                    fmtex->dwChannelMask & SPEAKER_RESERVED)
+                goto unsupported;
+        }
+    }
 
-    TRACE("returning %08x\n", AUDCLNT_E_UNSUPPORTED_FORMAT);
+    if(pwfx->nBlockAlign != pwfx->nChannels * pwfx->wBitsPerSample / 8 ||
+            pwfx->nAvgBytesPerSec != pwfx->nBlockAlign * pwfx->nSamplesPerSec)
+        goto unsupported;
+
+    if(pwfx->nChannels == 0)
+        return AUDCLNT_E_UNSUPPORTED_FORMAT;
+
+    unit = get_audiounit(This->dataflow, This->adevid);
+
+    converter = NULL;
+    hr = ca_setup_audiounit(This->dataflow, unit, pwfx, &dev_desc, &converter);
+    AudioComponentInstanceDispose(unit);
+    if(FAILED(hr))
+        goto unsupported;
+
+    if(converter)
+        AudioConverterDispose(converter);
+
+    return S_OK;
+
+unsupported:
+    if(outpwfx){
+        hr = IAudioClient_GetMixFormat(&This->IAudioClient_iface, outpwfx);
+        if(FAILED(hr))
+            return hr;
+        return S_FALSE;
+    }
+
     return AUDCLNT_E_UNSUPPORTED_FORMAT;
 }
 
@@ -1201,7 +1760,7 @@ static HRESULT WINAPI AudioClient_GetMixFormat(IAudioClient *iface,
     if(sc != noErr){
         CoTaskMemFree(fmt);
         WARN("Unable to get size for _StreamConfiguration property: %lx\n", sc);
-        return E_FAIL;
+        return osstatus_to_hresult(sc);
     }
 
     buffers = HeapAlloc(GetProcessHeap(), 0, size);
@@ -1216,7 +1775,7 @@ static HRESULT WINAPI AudioClient_GetMixFormat(IAudioClient *iface,
         CoTaskMemFree(fmt);
         HeapFree(GetProcessHeap(), 0, buffers);
         WARN("Unable to get _StreamConfiguration property: %lx\n", sc);
-        return E_FAIL;
+        return osstatus_to_hresult(sc);
     }
 
     fmt->Format.nChannels = 0;
@@ -1233,7 +1792,7 @@ static HRESULT WINAPI AudioClient_GetMixFormat(IAudioClient *iface,
     if(sc != noErr){
         CoTaskMemFree(fmt);
         WARN("Unable to get _NominalSampleRate property: %lx\n", sc);
-        return E_FAIL;
+        return osstatus_to_hresult(sc);
     }
     fmt->Format.nSamplesPerSec = rate;
 
@@ -1264,21 +1823,10 @@ static HRESULT WINAPI AudioClient_GetDevicePeriod(IAudioClient *iface,
     if(!defperiod && !minperiod)
         return E_POINTER;
 
-    OSSpinLockLock(&This->lock);
-
-    if(This->period_ms){
-        if(defperiod)
-            *defperiod = This->period_ms * 10000;
-        if(minperiod)
-            *minperiod = This->period_ms * 10000;
-    }else{
-        if(defperiod)
-            *defperiod = DefaultPeriod;
-        if(minperiod)
-            *minperiod = MinimumPeriod;
-    }
-
-    OSSpinLockUnlock(&This->lock);
+    if(defperiod)
+        *defperiod = DefaultPeriod;
+    if(minperiod)
+        *minperiod = MinimumPeriod;
 
     return S_OK;
 }
@@ -1287,27 +1835,24 @@ void CALLBACK ca_period_cb(void *user, BOOLEAN timer)
 {
     ACImpl *This = user;
 
-    OSSpinLockLock(&This->lock);
     if(This->event)
         SetEvent(This->event);
-    OSSpinLockUnlock(&This->lock);
 }
 
 static HRESULT WINAPI AudioClient_Start(IAudioClient *iface)
 {
     ACImpl *This = impl_from_IAudioClient(iface);
-    OSStatus sc;
 
     TRACE("(%p)\n", This);
 
     OSSpinLockLock(&This->lock);
 
-    if(!This->aqueue){
+    if(!This->initted){
         OSSpinLockUnlock(&This->lock);
         return AUDCLNT_E_NOT_INITIALIZED;
     }
 
-    if(This->playing != StateStopped){
+    if(This->playing){
         OSSpinLockUnlock(&This->lock);
         return AUDCLNT_E_NOT_STOPPED;
     }
@@ -1317,24 +1862,16 @@ static HRESULT WINAPI AudioClient_Start(IAudioClient *iface)
         return AUDCLNT_E_EVENTHANDLE_NOT_SET;
     }
 
-    if(This->event)
-        if(!CreateTimerQueueTimer(&This->timer, g_timer_q,
-                    ca_period_cb, This, 0, This->period_ms, 0))
-            ERR("Unable to create timer: %u\n", GetLastError());
+    if(This->event && !This->timer)
+        if(!CreateTimerQueueTimer(&This->timer, g_timer_q, ca_period_cb,
+                This, 0, This->period_ms, WT_EXECUTEINTIMERTHREAD)){
+            This->timer = NULL;
+            OSSpinLockUnlock(&This->lock);
+            WARN("Unable to create timer: %u\n", GetLastError());
+            return E_OUTOFMEMORY;
+        }
 
-    This->playing = StateInTransition;
-
-    OSSpinLockUnlock(&This->lock);
-
-    sc = AudioQueueStart(This->aqueue, NULL);
-    if(sc != noErr){
-        WARN("Unable to start audio queue: %lx\n", sc);
-        return E_FAIL;
-    }
-
-    OSSpinLockLock(&This->lock);
-
-    This->playing = StatePlaying;
+    This->playing = TRUE;
 
     OSSpinLockUnlock(&This->lock);
 
@@ -1344,49 +1881,22 @@ static HRESULT WINAPI AudioClient_Start(IAudioClient *iface)
 static HRESULT WINAPI AudioClient_Stop(IAudioClient *iface)
 {
     ACImpl *This = impl_from_IAudioClient(iface);
-    OSStatus sc;
 
     TRACE("(%p)\n", This);
 
     OSSpinLockLock(&This->lock);
 
-    if(!This->aqueue){
+    if(!This->initted){
         OSSpinLockUnlock(&This->lock);
         return AUDCLNT_E_NOT_INITIALIZED;
     }
 
-    if(This->playing == StateStopped){
+    if(!This->playing){
         OSSpinLockUnlock(&This->lock);
         return S_FALSE;
     }
 
-    if(This->playing == StateInTransition){
-        OSSpinLockUnlock(&This->lock);
-        return S_OK;
-    }
-
-    if(This->timer && This->timer != INVALID_HANDLE_VALUE){
-        DeleteTimerQueueTimer(g_timer_q, This->timer, INVALID_HANDLE_VALUE);
-        This->timer = NULL;
-    }
-
-    This->playing = StateInTransition;
-
-    OSSpinLockUnlock(&This->lock);
-
-    sc = AudioQueueFlush(This->aqueue);
-    if(sc != noErr)
-        WARN("Unable to flush audio queue: %lx\n", sc);
-
-    sc = AudioQueuePause(This->aqueue);
-    if(sc != noErr){
-        WARN("Unable to pause audio queue: %lx\n", sc);
-        return E_FAIL;
-    }
-
-    OSSpinLockLock(&This->lock);
-
-    This->playing = StateStopped;
+    This->playing = FALSE;
 
     OSSpinLockUnlock(&This->lock);
 
@@ -1396,19 +1906,17 @@ static HRESULT WINAPI AudioClient_Stop(IAudioClient *iface)
 static HRESULT WINAPI AudioClient_Reset(IAudioClient *iface)
 {
     ACImpl *This = impl_from_IAudioClient(iface);
-    HRESULT hr;
-    OSStatus sc;
 
     TRACE("(%p)\n", This);
 
     OSSpinLockLock(&This->lock);
 
-    if(!This->aqueue){
+    if(!This->initted){
         OSSpinLockUnlock(&This->lock);
         return AUDCLNT_E_NOT_INITIALIZED;
     }
 
-    if(This->playing != StateStopped){
+    if(This->playing){
         OSSpinLockUnlock(&This->lock);
         return AUDCLNT_E_NOT_STOPPED;
     }
@@ -1418,21 +1926,19 @@ static HRESULT WINAPI AudioClient_Reset(IAudioClient *iface)
         return AUDCLNT_E_BUFFER_OPERATION_PENDING;
     }
 
-    This->written_frames = 0;
-
-    hr = AudioClock_GetPosition_nolock(This, &This->last_time, NULL, TRUE);
-    if(FAILED(hr)){
-        OSSpinLockUnlock(&This->lock);
-        return hr;
+    if(This->dataflow == eRender){
+        This->written_frames = 0;
+    }else{
+        This->written_frames += This->held_frames;
     }
+
+    This->held_frames = 0;
+    This->lcl_offs_frames = 0;
+    This->wri_offs_frames = 0;
+    This->cap_offs_frames = 0;
+    This->cap_held_frames = 0;
 
     OSSpinLockUnlock(&This->lock);
-
-    sc = AudioQueueReset(This->aqueue);
-    if(sc != noErr){
-        WARN("Unable to reset audio queue: %lx\n", sc);
-        return E_FAIL;
-    }
 
     return S_OK;
 }
@@ -1449,7 +1955,7 @@ static HRESULT WINAPI AudioClient_SetEventHandle(IAudioClient *iface,
 
     OSSpinLockLock(&This->lock);
 
-    if(!This->aqueue){
+    if(!This->initted){
         OSSpinLockUnlock(&This->lock);
         return AUDCLNT_E_NOT_INITIALIZED;
     }
@@ -1457,6 +1963,12 @@ static HRESULT WINAPI AudioClient_SetEventHandle(IAudioClient *iface,
     if(!(This->flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK)){
         OSSpinLockUnlock(&This->lock);
         return AUDCLNT_E_EVENTHANDLE_NOT_EXPECTED;
+    }
+
+    if (This->event){
+        OSSpinLockUnlock(&This->lock);
+        FIXME("called twice\n");
+        return HRESULT_FROM_WIN32(ERROR_INVALID_NAME);
     }
 
     This->event = event;
@@ -1479,7 +1991,7 @@ static HRESULT WINAPI AudioClient_GetService(IAudioClient *iface, REFIID riid,
 
     OSSpinLockLock(&This->lock);
 
-    if(!This->aqueue){
+    if(!This->initted){
         OSSpinLockUnlock(&This->lock);
         return AUDCLNT_E_NOT_INITIALIZED;
     }
@@ -1572,6 +2084,7 @@ static const IAudioClientVtbl AudioClient_Vtbl =
 static HRESULT WINAPI AudioRenderClient_QueryInterface(
         IAudioRenderClient *iface, REFIID riid, void **ppv)
 {
+    ACImpl *This = impl_from_IAudioRenderClient(iface);
     TRACE("(%p)->(%s, %p)\n", iface, debugstr_guid(riid), ppv);
 
     if(!ppv)
@@ -1581,6 +2094,9 @@ static HRESULT WINAPI AudioRenderClient_QueryInterface(
     if(IsEqualIID(riid, &IID_IUnknown) ||
             IsEqualIID(riid, &IID_IAudioRenderClient))
         *ppv = iface;
+    else if(IsEqualIID(riid, &IID_IMarshal))
+        return IUnknown_QueryInterface(This->pUnkFTMarshal, riid, ppv);
+
     if(*ppv){
         IUnknown_AddRef((IUnknown*)*ppv);
         return S_OK;
@@ -1606,10 +2122,8 @@ static HRESULT WINAPI AudioRenderClient_GetBuffer(IAudioRenderClient *iface,
         UINT32 frames, BYTE **data)
 {
     ACImpl *This = impl_from_IAudioRenderClient(iface);
-    AQBuffer *buf;
-    UINT32 pad, bytes = frames * This->fmt->nBlockAlign;
+    UINT32 pad;
     HRESULT hr;
-    OSStatus sc;
 
     TRACE("(%p)->(%u, %p)\n", This, frames, data);
 
@@ -1640,36 +2154,24 @@ static HRESULT WINAPI AudioRenderClient_GetBuffer(IAudioRenderClient *iface,
         return AUDCLNT_E_BUFFER_TOO_LARGE;
     }
 
-    LIST_FOR_EACH_ENTRY(buf, &This->avail_buffers, AQBuffer, entry){
-        if(buf->buf->mAudioDataBytesCapacity >= bytes){
-            This->public_buffer = buf->buf;
-            list_remove(&buf->entry);
-            break;
+    if(This->wri_offs_frames + frames > This->bufsize_frames){
+        if(This->tmp_buffer_frames < frames){
+            HeapFree(GetProcessHeap(), 0, This->tmp_buffer);
+            This->tmp_buffer = HeapAlloc(GetProcessHeap(), 0, frames * This->fmt->nBlockAlign);
+            if(!This->tmp_buffer){
+                OSSpinLockUnlock(&This->lock);
+                return E_OUTOFMEMORY;
+            }
+            This->tmp_buffer_frames = frames;
         }
+        *data = This->tmp_buffer;
+        This->getbuf_last = -frames;
+    }else{
+        *data = This->local_buffer + This->wri_offs_frames * This->fmt->nBlockAlign;
+        This->getbuf_last = frames;
     }
 
-    if(&buf->entry == &This->avail_buffers){
-        sc = AudioQueueAllocateBuffer(This->aqueue, bytes,
-                &This->public_buffer);
-        if(sc != noErr){
-            OSSpinLockUnlock(&This->lock);
-            WARN("Unable to allocate buffer: %lx\n", sc);
-            return E_FAIL;
-        }
-        buf = HeapAlloc(GetProcessHeap(), 0, sizeof(AQBuffer));
-        if(!buf){
-            AudioQueueFreeBuffer(This->aqueue, This->public_buffer);
-            This->public_buffer = NULL;
-            OSSpinLockUnlock(&This->lock);
-            return E_OUTOFMEMORY;
-        }
-        buf->buf = This->public_buffer;
-        This->public_buffer->mUserData = buf;
-    }
-
-    *data = This->public_buffer->mAudioData;
-
-    This->getbuf_last = frames;
+    silence_buffer(This, *data, frames);
 
     OSSpinLockUnlock(&This->lock);
 
@@ -1680,7 +2182,7 @@ static HRESULT WINAPI AudioRenderClient_ReleaseBuffer(
         IAudioRenderClient *iface, UINT32 frames, DWORD flags)
 {
     ACImpl *This = impl_from_IAudioRenderClient(iface);
-    OSStatus sc;
+    BYTE *buffer;
 
     TRACE("(%p)->(%u, %x)\n", This, frames, flags);
 
@@ -1688,11 +2190,6 @@ static HRESULT WINAPI AudioRenderClient_ReleaseBuffer(
 
     if(!frames){
         This->getbuf_last = 0;
-        if(This->public_buffer){
-            AQBuffer *buf = This->public_buffer->mUserData;
-            list_add_tail(&This->avail_buffers, &buf->entry);
-            This->public_buffer = NULL;
-        }
         OSSpinLockUnlock(&This->lock);
         return S_OK;
     }
@@ -1702,40 +2199,31 @@ static HRESULT WINAPI AudioRenderClient_ReleaseBuffer(
         return AUDCLNT_E_OUT_OF_ORDER;
     }
 
-    if(frames > This->getbuf_last){
+    if(frames > (This->getbuf_last >= 0 ? This->getbuf_last : -This->getbuf_last)){
         OSSpinLockUnlock(&This->lock);
         return AUDCLNT_E_INVALID_SIZE;
     }
 
-    if(flags & AUDCLNT_BUFFERFLAGS_SILENT){
-        WAVEFORMATEXTENSIBLE *fmtex = (WAVEFORMATEXTENSIBLE*)This->fmt;
-        if((This->fmt->wFormatTag == WAVE_FORMAT_PCM ||
-                (This->fmt->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
-                 IsEqualGUID(&fmtex->SubFormat, &KSDATAFORMAT_SUBTYPE_PCM))) &&
-                This->fmt->wBitsPerSample == 8)
-            memset(This->public_buffer->mAudioData, 128,
-                    frames * This->fmt->nBlockAlign);
-        else
-            memset(This->public_buffer->mAudioData, 0,
-                    frames * This->fmt->nBlockAlign);
-    }
+    if(This->getbuf_last >= 0)
+        buffer = This->local_buffer + This->wri_offs_frames * This->fmt->nBlockAlign;
+    else
+        buffer = This->tmp_buffer;
 
-    This->public_buffer->mAudioDataByteSize = frames * This->fmt->nBlockAlign;
+    if(flags & AUDCLNT_BUFFERFLAGS_SILENT)
+        silence_buffer(This, buffer, frames);
 
-    sc = AudioQueueEnqueueBuffer(This->aqueue, This->public_buffer, 0, NULL);
-    if(sc != noErr){
-        OSSpinLockUnlock(&This->lock);
-        WARN("Unable to enqueue buffer: %lx\n", sc);
-        return E_FAIL;
-    }
+    if(This->getbuf_last < 0)
+        ca_wrap_buffer(This->local_buffer,
+                This->wri_offs_frames * This->fmt->nBlockAlign,
+                This->bufsize_frames * This->fmt->nBlockAlign,
+                buffer, frames * This->fmt->nBlockAlign);
 
-    if(This->playing == StateStopped)
-        AudioQueuePrime(This->aqueue, 0, NULL);
 
-    This->public_buffer = NULL;
-    This->getbuf_last = 0;
+    This->wri_offs_frames += frames;
+    This->wri_offs_frames %= This->bufsize_frames;
+    This->held_frames += frames;
     This->written_frames += frames;
-    This->inbuf_frames += frames;
+    This->getbuf_last = 0;
 
     OSSpinLockUnlock(&This->lock);
 
@@ -1753,6 +2241,7 @@ static const IAudioRenderClientVtbl AudioRenderClient_Vtbl = {
 static HRESULT WINAPI AudioCaptureClient_QueryInterface(
         IAudioCaptureClient *iface, REFIID riid, void **ppv)
 {
+    ACImpl *This = impl_from_IAudioCaptureClient(iface);
     TRACE("(%p)->(%s, %p)\n", iface, debugstr_guid(riid), ppv);
 
     if(!ppv)
@@ -1762,6 +2251,9 @@ static HRESULT WINAPI AudioCaptureClient_QueryInterface(
     if(IsEqualIID(riid, &IID_IUnknown) ||
             IsEqualIID(riid, &IID_IAudioCaptureClient))
         *ppv = iface;
+    else if(IsEqualIID(riid, &IID_IMarshal))
+        return IUnknown_QueryInterface(This->pUnkFTMarshal, riid, ppv);
+
     if(*ppv){
         IUnknown_AddRef((IUnknown*)*ppv);
         return S_OK;
@@ -1788,6 +2280,7 @@ static HRESULT WINAPI AudioCaptureClient_GetBuffer(IAudioCaptureClient *iface,
         UINT64 *qpcpos)
 {
     ACImpl *This = impl_from_IAudioCaptureClient(iface);
+    UINT32 chunk_bytes, chunk_frames;
 
     TRACE("(%p)->(%p, %p, %p, %p, %p)\n", This, data, frames, flags,
             devpos, qpcpos);
@@ -1802,68 +2295,72 @@ static HRESULT WINAPI AudioCaptureClient_GetBuffer(IAudioCaptureClient *iface,
         return AUDCLNT_E_OUT_OF_ORDER;
     }
 
-    if(This->public_buffer){
-        *data = This->public_buffer->mAudioData;
-        *frames =
-            This->public_buffer->mAudioDataByteSize / This->fmt->nBlockAlign;
-    }else{
-        struct list *head = list_head(&This->avail_buffers);
-        if(!head){
-            *data = NULL;
-            *frames = 0;
-        }else{
-            AQBuffer *buf = LIST_ENTRY(head, AQBuffer, entry);
-            This->public_buffer = buf->buf;
-            *data = This->public_buffer->mAudioData;
-            *frames =
-                This->public_buffer->mAudioDataByteSize / This->fmt->nBlockAlign;
-            list_remove(&buf->entry);
-        }
+    capture_resample(This);
+
+    if(This->held_frames < This->period_frames){
+        *frames = 0;
+        OSSpinLockUnlock(&This->lock);
+        return AUDCLNT_S_BUFFER_EMPTY;
     }
 
     *flags = 0;
-    This->written_frames += *frames;
-    This->inbuf_frames -= *frames;
-    This->getbuf_last = 1;
 
-    if(devpos || qpcpos)
-        AudioClock_GetPosition_nolock(This, devpos, qpcpos, FALSE);
+    chunk_frames = This->bufsize_frames - This->lcl_offs_frames;
+    if(chunk_frames < This->period_frames){
+        chunk_bytes = chunk_frames * This->fmt->nBlockAlign;
+        if(!This->tmp_buffer)
+            This->tmp_buffer = HeapAlloc(GetProcessHeap(), 0, This->period_frames * This->fmt->nBlockAlign);
+        *data = This->tmp_buffer;
+        memcpy(*data, This->local_buffer + This->lcl_offs_frames * This->fmt->nBlockAlign, chunk_bytes);
+        memcpy((*data) + chunk_bytes, This->local_buffer, This->period_frames * This->fmt->nBlockAlign - chunk_bytes);
+    }else
+        *data = This->local_buffer + This->lcl_offs_frames * This->fmt->nBlockAlign;
+
+    This->getbuf_last = *frames = This->period_frames;
+
+    if(devpos)
+        *devpos = This->written_frames;
+    if(qpcpos){ /* fixme: qpc of recording time */
+        LARGE_INTEGER stamp, freq;
+        QueryPerformanceCounter(&stamp);
+        QueryPerformanceFrequency(&freq);
+        *qpcpos = (stamp.QuadPart * (INT64)10000000) / freq.QuadPart;
+    }
 
     OSSpinLockUnlock(&This->lock);
 
-    return *frames ? S_OK : AUDCLNT_S_BUFFER_EMPTY;
+    return S_OK;
 }
 
 static HRESULT WINAPI AudioCaptureClient_ReleaseBuffer(
         IAudioCaptureClient *iface, UINT32 done)
 {
     ACImpl *This = impl_from_IAudioCaptureClient(iface);
-    UINT32 pbuf_frames;
-    OSStatus sc;
 
     TRACE("(%p)->(%u)\n", This, done);
 
     OSSpinLockLock(&This->lock);
+
+    if(!done){
+        This->getbuf_last = 0;
+        OSSpinLockUnlock(&This->lock);
+        return S_OK;
+    }
 
     if(!This->getbuf_last){
         OSSpinLockUnlock(&This->lock);
         return AUDCLNT_E_OUT_OF_ORDER;
     }
 
-    pbuf_frames = This->public_buffer->mAudioDataByteSize / This->fmt->nBlockAlign;
-    if(done != 0 && done != pbuf_frames){
+    if(This->getbuf_last != done){
         OSSpinLockUnlock(&This->lock);
         return AUDCLNT_E_INVALID_SIZE;
     }
 
-    if(done){
-        sc = AudioQueueEnqueueBuffer(This->aqueue, This->public_buffer,
-                0, NULL);
-        if(sc != noErr)
-            WARN("Unable to enqueue buffer: %lx\n", sc);
-        This->public_buffer = NULL;
-    }
-
+    This->written_frames += done;
+    This->held_frames -= done;
+    This->lcl_offs_frames += done;
+    This->lcl_offs_frames %= This->bufsize_frames;
     This->getbuf_last = 0;
 
     OSSpinLockUnlock(&This->lock);
@@ -1875,8 +2372,6 @@ static HRESULT WINAPI AudioCaptureClient_GetNextPacketSize(
         IAudioCaptureClient *iface, UINT32 *frames)
 {
     ACImpl *This = impl_from_IAudioCaptureClient(iface);
-    struct list *head;
-    AQBuffer *buf;
 
     TRACE("(%p)->(%p)\n", This, frames);
 
@@ -1885,16 +2380,12 @@ static HRESULT WINAPI AudioCaptureClient_GetNextPacketSize(
 
     OSSpinLockLock(&This->lock);
 
-    head = list_head(&This->avail_buffers);
+    capture_resample(This);
 
-    if(!head){
-        *frames = This->bufsize_frames / CAPTURE_BUFFERS;
-        OSSpinLockUnlock(&This->lock);
-        return S_OK;
-    }
-
-    buf = LIST_ENTRY(head, AQBuffer, entry);
-    *frames = buf->buf->mAudioDataByteSize / This->fmt->nBlockAlign;
+    if(This->held_frames >= This->period_frames)
+        *frames = This->period_frames;
+    else
+        *frames = 0;
 
     OSSpinLockUnlock(&This->lock);
 
@@ -1953,34 +2444,21 @@ static HRESULT WINAPI AudioClock_GetFrequency(IAudioClock *iface, UINT64 *freq)
 
     TRACE("(%p)->(%p)\n", This, freq);
 
-    *freq = This->fmt->nSamplesPerSec;
+    if(This->share == AUDCLNT_SHAREMODE_SHARED)
+        *freq = (UINT64)This->fmt->nSamplesPerSec * This->fmt->nBlockAlign;
+    else
+        *freq = This->fmt->nSamplesPerSec;
 
     return S_OK;
 }
 
 static HRESULT AudioClock_GetPosition_nolock(ACImpl *This,
-        UINT64 *pos, UINT64 *qpctime, BOOL raw)
+        UINT64 *pos, UINT64 *qpctime)
 {
-    AudioTimeStamp time;
-    OSStatus sc;
+    *pos = This->written_frames - This->held_frames;
 
-    sc = AudioQueueGetCurrentTime(This->aqueue, NULL, &time, NULL);
-    if(sc == kAudioQueueErr_InvalidRunState){
-        *pos = 0;
-    }else if(sc == noErr){
-        if(!(time.mFlags & kAudioTimeStampSampleTimeValid)){
-            FIXME("Sample time not valid, should calculate from something else\n");
-            return E_FAIL;
-        }
-
-        if(raw)
-            *pos = time.mSampleTime;
-        else
-            *pos = time.mSampleTime - This->last_time;
-    }else{
-        WARN("Unable to get current time: %lx\n", sc);
-        return E_FAIL;
-    }
+    if(This->share == AUDCLNT_SHAREMODE_SHARED)
+        *pos *= This->fmt->nBlockAlign;
 
     if(qpctime){
         LARGE_INTEGER stamp, freq;
@@ -2005,7 +2483,7 @@ static HRESULT WINAPI AudioClock_GetPosition(IAudioClock *iface, UINT64 *pos,
 
     OSSpinLockLock(&This->lock);
 
-    hr = AudioClock_GetPosition_nolock(This, pos, qpctime, FALSE);
+    hr = AudioClock_GetPosition_nolock(This, pos, qpctime);
 
     OSSpinLockUnlock(&This->lock);
 
@@ -2168,8 +2646,7 @@ static HRESULT WINAPI AudioSessionControl_GetState(IAudioSessionControl2 *iface,
 
     LIST_FOR_EACH_ENTRY(client, &This->session->clients, ACImpl, entry){
         OSSpinLockLock(&client->lock);
-        if(client->playing == StatePlaying ||
-                client->playing == StateInTransition){
+        if(client->playing){
             *state = AudioSessionStateActive;
             OSSpinLockUnlock(&client->lock);
             LeaveCriticalSection(&g_sessions_lock);
@@ -2345,30 +2822,30 @@ static const IAudioSessionControl2Vtbl AudioSessionControl2_Vtbl =
 /* index == -1 means set all channels, otherwise sets only the given channel */
 static HRESULT ca_setvol(ACImpl *This, UINT32 index)
 {
-    float level;
+    Float32 level;
     OSStatus sc;
 
-    if(index == (UINT32)-1){
-        HRESULT ret = S_OK;
-        UINT32 i;
-        for(i = 0; i < This->fmt->nChannels; ++i){
-            HRESULT hr;
-            hr = ca_setvol(This, i);
-            if(FAILED(hr))
-                ret = hr;
-        }
-        return ret;
+    if(This->session->mute)
+        level = 0.;
+    else{
+        if(index == (UINT32)-1){
+            UINT32 i;
+            level = 1.;
+            for(i = 0; i < This->fmt->nChannels; ++i){
+                Float32 tmp;
+                tmp = This->session->master_vol *
+                    This->session->channel_vols[i] * This->vols[i];
+                level = tmp < level ? tmp : level;
+            }
+        }else
+            level = This->session->master_vol *
+                This->session->channel_vols[index] * This->vols[index];
     }
 
-    if(This->session->mute)
-        level = 0;
-    else
-        level = This->session->master_vol *
-            This->session->channel_vols[index] * This->vols[index];
-
-    sc = AudioQueueSetParameter(This->aqueue, kAudioQueueParam_Volume, level);
+    sc = AudioUnitSetParameter(This->unit, kHALOutputParam_Volume,
+            kAudioUnitScope_Global, 0, level, 0);
     if(sc != noErr)
-        WARN("Setting _Volume property failed: %lx\n", sc);
+        WARN("Couldn't set volume: %lx\n", sc);
 
     return S_OK;
 }
@@ -2578,7 +3055,7 @@ static HRESULT WINAPI AudioStreamVolume_SetChannelVolume(
 
     This->vols[index] = level;
 
-    WARN("AudioQueue doesn't support per-channel volume control\n");
+    WARN("CoreAudio doesn't support per-channel volume control\n");
     ret = ca_setvol(This, index);
 
     OSSpinLockUnlock(&This->lock);
@@ -2740,7 +3217,7 @@ static HRESULT WINAPI ChannelAudioVolume_SetChannelVolume(
 
     session->channel_vols[index] = level;
 
-    WARN("AudioQueue doesn't support per-channel volume control\n");
+    WARN("CoreAudio doesn't support per-channel volume control\n");
     ret = ca_session_setvol(session, index);
 
     LeaveCriticalSection(&session->lock);

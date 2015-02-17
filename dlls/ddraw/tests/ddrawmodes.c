@@ -29,24 +29,24 @@
 #include "wine/test.h"
 #include "ddraw.h"
 
-static LPDIRECTDRAW lpDD = NULL;
-static LPDIRECTDRAWSURFACE lpDDSPrimary = NULL;
-static LPDIRECTDRAWSURFACE lpDDSBack = NULL;
-static WNDCLASS wc;
+static IDirectDrawSurface *lpDDSPrimary;
+static IDirectDrawSurface *lpDDSBack;
+static IDirectDraw *lpDD;
+static WNDCLASSA wc;
 static HWND hwnd, hwnd2;
 static int modes_cnt;
 static int modes_size;
-static LPDDSURFACEDESC modes;
+static DDSURFACEDESC *modes;
 static RECT rect_before_create;
 static RECT rect_after_delete;
 static int modes16bpp_cnt;
 static int refresh_rate;
 static int refresh_rate_cnt;
 
-static HRESULT (WINAPI *pDirectDrawEnumerateA)(LPDDENUMCALLBACKA,LPVOID);
-static HRESULT (WINAPI *pDirectDrawEnumerateW)(LPDDENUMCALLBACKW,LPVOID);
-static HRESULT (WINAPI *pDirectDrawEnumerateExA)(LPDDENUMCALLBACKEXA,LPVOID,DWORD);
-static HRESULT (WINAPI *pDirectDrawEnumerateExW)(LPDDENUMCALLBACKEXW,LPVOID,DWORD);
+static HRESULT (WINAPI *pDirectDrawEnumerateA)(LPDDENUMCALLBACKA cb, void *ctx);
+static HRESULT (WINAPI *pDirectDrawEnumerateW)(LPDDENUMCALLBACKW cb, void *ctx);
+static HRESULT (WINAPI *pDirectDrawEnumerateExA)(LPDDENUMCALLBACKEXA cb, void *ctx, DWORD flags);
+static HRESULT (WINAPI *pDirectDrawEnumerateExW)(LPDDENUMCALLBACKEXW cb, void *ctx, DWORD flags);
 
 static void init_function_pointers(void)
 {
@@ -104,8 +104,8 @@ static void releasedirectdraw(void)
     }
 }
 
-static BOOL WINAPI test_nullcontext_callbackA(GUID *lpGUID, LPSTR lpDriverDescription,
-                                              LPSTR lpDriverName, LPVOID lpContext)
+static BOOL WINAPI test_nullcontext_callbackA(GUID *lpGUID,
+        char *lpDriverDescription, char *lpDriverName, void *lpContext)
 {
     trace("test_nullcontext_callbackA: %p %s %s %p\n",
           lpGUID, lpDriverDescription, lpDriverName, lpContext);
@@ -115,13 +115,13 @@ static BOOL WINAPI test_nullcontext_callbackA(GUID *lpGUID, LPSTR lpDriverDescri
     return TRUE;
 }
 
-static BOOL WINAPI test_context_callbackA(GUID *lpGUID, LPSTR lpDriverDescription,
-                                          LPSTR lpDriverName, LPVOID lpContext)
+static BOOL WINAPI test_context_callbackA(GUID *lpGUID,
+        char *lpDriverDescription, char *lpDriverName, void *lpContext)
 {
     trace("test_context_callbackA: %p %s %s %p\n",
           lpGUID, lpDriverDescription, lpDriverName, lpContext);
 
-    ok(lpContext == (LPVOID)0xdeadbeef, "Expected non-NULL lpContext\n");
+    ok(lpContext == (void *)0xdeadbeef, "Expected non-NULL lpContext\n");
 
     return TRUE;
 }
@@ -147,12 +147,12 @@ static void test_DirectDrawEnumerateA(void)
 
     /* Test with valid callback parameter and valid context parameter. */
     trace("Calling DirectDrawEnumerateA with test_context_callbackA callback and non-NULL context.\n");
-    ret = pDirectDrawEnumerateA(test_context_callbackA, (LPVOID)0xdeadbeef);
+    ret = pDirectDrawEnumerateA(test_context_callbackA, (void *)0xdeadbeef);
     ok(ret == DD_OK, "Expected DD_OK, got %d\n", ret);
 }
 
-static BOOL WINAPI test_callbackW(GUID *lpGUID, LPWSTR lpDriverDescription,
-                                  LPWSTR lpDriverName, LPVOID lpContext)
+static BOOL WINAPI test_callbackW(GUID *lpGUID, WCHAR *lpDriverDescription,
+        WCHAR *lpDriverName, void *lpContext)
 {
     ok(0, "The callback should not be invoked by DirectDrawEnumerateW\n");
     return TRUE;
@@ -187,9 +187,8 @@ static void test_DirectDrawEnumerateW(void)
     ok(ret == DDERR_UNSUPPORTED, "Expected DDERR_UNSUPPORTED, got %d\n", ret);
 }
 
-static BOOL WINAPI test_nullcontext_callbackExA(GUID *lpGUID, LPSTR lpDriverDescription,
-                                                LPSTR lpDriverName, LPVOID lpContext,
-                                                HMONITOR hm)
+static BOOL WINAPI test_nullcontext_callbackExA(GUID *lpGUID, char *lpDriverDescription,
+        char *lpDriverName, void *lpContext, HMONITOR hm)
 {
     trace("test_nullcontext_callbackExA: %p %s %s %p %p\n", lpGUID,
           lpDriverDescription, lpDriverName, lpContext, hm);
@@ -199,20 +198,33 @@ static BOOL WINAPI test_nullcontext_callbackExA(GUID *lpGUID, LPSTR lpDriverDesc
     return TRUE;
 }
 
-static BOOL WINAPI test_context_callbackExA(GUID *lpGUID, LPSTR lpDriverDescription,
-                                            LPSTR lpDriverName, LPVOID lpContext,
-                                            HMONITOR hm)
+static BOOL WINAPI test_context_callbackExA(GUID *lpGUID, char *lpDriverDescription,
+        char *lpDriverName, void *lpContext, HMONITOR hm)
 {
     trace("test_context_callbackExA: %p %s %s %p %p\n", lpGUID,
           lpDriverDescription, lpDriverName, lpContext, hm);
 
-    ok(lpContext == (LPVOID)0xdeadbeef, "Expected non-NULL lpContext\n");
+    ok(lpContext == (void *)0xdeadbeef, "Expected non-NULL lpContext\n");
+
+    return TRUE;
+}
+
+static BOOL WINAPI test_count_callbackExA(GUID *lpGUID, char *lpDriverDescription,
+        char *lpDriverName, void *lpContext, HMONITOR hm)
+{
+    DWORD *count = (DWORD *)lpContext;
+
+    trace("test_count_callbackExA: %p %s %s %p %p\n", lpGUID,
+          lpDriverDescription, lpDriverName, lpContext, hm);
+
+    (*count)++;
 
     return TRUE;
 }
 
 static void test_DirectDrawEnumerateExA(void)
 {
+    DWORD callbackCount;
     HRESULT ret;
 
     if (!pDirectDrawEnumerateExA)
@@ -236,8 +248,23 @@ static void test_DirectDrawEnumerateExA(void)
 
     /* Test with valid callback parameter and non-NULL context parameter. */
     trace("Calling DirectDrawEnumerateExA with empty flags and non-NULL context.\n");
-    ret = pDirectDrawEnumerateExA(test_context_callbackExA, (LPVOID)0xdeadbeef, 0);
+    ret = pDirectDrawEnumerateExA(test_context_callbackExA, (void *)0xdeadbeef, 0);
     ok(ret == DD_OK, "Expected DD_OK, got %d\n", ret);
+
+    /* Test with valid callback parameter and count the number of primary devices */
+    callbackCount = 0;
+    ret = pDirectDrawEnumerateExA(test_count_callbackExA, &callbackCount, 0);
+    ok(ret == DD_OK, "Expected DD_OK, got %d\n", ret);
+    ok(callbackCount == 1, "Expected 1 primary device, got %d\n", callbackCount);
+
+    /* Test with valid callback parameter and count the number of secondary devices */
+    callbackCount = 0;
+    ret = pDirectDrawEnumerateExA(test_count_callbackExA, &callbackCount,
+                                  DDENUM_ATTACHEDSECONDARYDEVICES);
+    ok(ret == DD_OK, "Expected DD_OK, got %d\n", ret);
+    /* Note: this list includes the primary devices as well and some systems (such as the TestBot)
+       do not include any secondary devices */
+    ok(callbackCount >= 1, "Expected at least one device, got %d\n", callbackCount);
 
     /* Test with valid callback parameter, NULL context parameter, and all flags set. */
     trace("Calling DirectDrawEnumerateExA with all flags set and NULL context.\n");
@@ -248,9 +275,8 @@ static void test_DirectDrawEnumerateExA(void)
     ok(ret == DD_OK, "Expected DD_OK, got %d\n", ret);
 }
 
-static BOOL WINAPI test_callbackExW(GUID *lpGUID, LPWSTR lpDriverDescription,
-                                    LPWSTR lpDriverName, LPVOID lpContext,
-                                    HMONITOR hm)
+static BOOL WINAPI test_callbackExW(GUID *lpGUID, WCHAR *lpDriverDescription,
+        WCHAR *lpDriverName, void *lpContext, HMONITOR hm)
 {
     ok(0, "The callback should not be invoked by DirectDrawEnumerateExW.\n");
     return TRUE;
@@ -292,7 +318,7 @@ static void test_DirectDrawEnumerateExW(void)
     ok(ret == DDERR_UNSUPPORTED, "Expected DDERR_UNSUPPORTED, got %d\n", ret);
 }
 
-static void adddisplaymode(LPDDSURFACEDESC lpddsd)
+static void adddisplaymode(DDSURFACEDESC *lpddsd)
 {
     if (!modes)
         modes = HeapAlloc(GetProcessHeap(), 0, (modes_size = 2) * sizeof(DDSURFACEDESC));
@@ -309,7 +335,7 @@ static void flushdisplaymodes(void)
     modes_cnt = modes_size = 0;
 }
 
-static HRESULT WINAPI enummodescallback(LPDDSURFACEDESC lpddsd, LPVOID lpContext)
+static HRESULT WINAPI enummodescallback(DDSURFACEDESC *lpddsd, void *lpContext)
 {
     trace("Width = %i, Height = %i, bpp = %i, Refresh Rate = %i, Pitch = %i, flags =%02X\n",
         lpddsd->dwWidth, lpddsd->dwHeight, U1(lpddsd->ddpfPixelFormat).dwRGBBitCount,
@@ -338,7 +364,7 @@ static HRESULT WINAPI enummodescallback(LPDDSURFACEDESC lpddsd, LPVOID lpContext
     return DDENUMRET_OK;
 }
 
-static HRESULT WINAPI enummodescallback_16bit(LPDDSURFACEDESC lpddsd, LPVOID lpContext)
+static HRESULT WINAPI enummodescallback_16bit(DDSURFACEDESC *lpddsd, void *lpContext)
 {
     trace("Width = %i, Height = %i, bpp = %i, Refresh Rate = %i, Pitch = %i, flags =%02X\n",
         lpddsd->dwWidth, lpddsd->dwHeight, U1(lpddsd->ddpfPixelFormat).dwRGBBitCount,
@@ -376,7 +402,7 @@ static HRESULT WINAPI enummodescallback_16bit(LPDDSURFACEDESC lpddsd, LPVOID lpC
     return DDENUMRET_OK;
 }
 
-static HRESULT WINAPI enummodescallback_count(LPDDSURFACEDESC lpddsd, LPVOID lpContext)
+static HRESULT WINAPI enummodescallback_count(DDSURFACEDESC *lpddsd, void *lpContext)
 {
     ok(lpddsd->dwFlags == (DDSD_HEIGHT|DDSD_WIDTH|DDSD_PIXELFORMAT|DDSD_PITCH|DDSD_REFRESHRATE),
             "Wrong surface description flags %02X\n", lpddsd->dwFlags);
@@ -473,7 +499,10 @@ static void enumdisplaymodes(void)
 
     modes16bpp_cnt = 0;
     ddsd.dwFlags = DDSD_PIXELFORMAT | DDSD_REFRESHRATE;
-    U2(ddsd).dwRefreshRate = 1;
+    /* Ask for a refresh rate that could not possibly be used. But note that
+     * the Windows 'Standard VGA' driver claims to run the display at 1Hz!
+     */
+    U2(ddsd).dwRefreshRate = 2;
 
     rc = IDirectDraw_EnumDisplayModes(lpDD, 0, &ddsd, 0, enummodescallback_16bit);
     ok(rc==DD_OK,"EnumDisplayModes returned: %x\n",rc);
@@ -623,8 +652,8 @@ static void testsurface(void)
     ok(rc==DD_OK, "IDirectDrawSurface_GetDC returned: %x\n",rc);
     SetBkColor(hdc, RGB(0, 0, 255));
     SetTextColor(hdc, RGB(255, 255, 0));
-    TextOut(hdc, 0, 0, testMsg, lstrlen(testMsg));
-    IDirectDrawSurface_ReleaseDC(lpDDSBack, hdc);
+    TextOutA(hdc, 0, 0, testMsg, strlen(testMsg));
+    rc = IDirectDrawSurface_ReleaseDC(lpDDSBack, hdc);
     ok(rc==DD_OK, "IDirectDrawSurface_ReleaseDC returned: %x\n",rc);
 
     while (1)
@@ -959,6 +988,26 @@ static void testddraw7(void)
 
          if (hr==DD_OK)
          {
+             /* szDriver contains the name of the driver DLL */
+             ok(strstr(pdddi2->szDriver, ".dll")!=NULL, "szDriver does not contain DLL name\n");
+             /* check how strings are copied into the structure */
+             ok(pdddi2->szDriver[MAX_DDDEVICEID_STRING - 1]==0, "szDriver not cleared\n");
+             ok(pdddi2->szDescription[MAX_DDDEVICEID_STRING - 1]==0, "szDescription not cleared\n");
+             /* verify that 8 byte structure size alignment will not overwrite memory */
+             ok(pend[0]==0xdeadbeef || broken(pend[0] != 0xdeadbeef), /* win2k */
+                "memory beyond DDDEVICEIDENTIFIER2 overwritten\n");
+             ok(pend[1]==0xdeadbeef, "memory beyond DDDEVICEIDENTIFIER2 overwritten\n");
+         }
+
+         /* recheck with the DDGDI_GETHOSTIDENTIFIER flag */
+         pend[0] = 0xdeadbeef;
+         pend[1] = 0xdeadbeef;
+         hr = IDirectDraw7_GetDeviceIdentifier(dd7, pdddi2, DDGDI_GETHOSTIDENTIFIER);
+         ok(hr==DD_OK, "get device identifier failed with %08x\n", hr);
+         if (hr==DD_OK)
+         {
+             /* szDriver contains the name of the driver DLL */
+             ok(strstr(pdddi2->szDriver, ".dll")!=NULL, "szDriver does not contain DLL name\n");
              /* check how strings are copied into the structure */
              ok(pdddi2->szDriver[MAX_DDDEVICEID_STRING - 1]==0, "szDriver not cleared\n");
              ok(pdddi2->szDescription[MAX_DDDEVICEID_STRING - 1]==0, "szDescription not cleared\n");
@@ -979,13 +1028,8 @@ START_TEST(ddrawmodes)
 
     wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = DefWindowProcA;
-    wc.cbClsExtra = 0;
-    wc.cbWndExtra = 0;
     wc.hInstance = GetModuleHandleA(0);
-    wc.hIcon = LoadIconA(wc.hInstance, IDI_APPLICATION);
-    wc.hCursor = LoadCursorA(NULL, IDC_ARROW);
     wc.hbrBackground = GetStockObject(BLACK_BRUSH);
-    wc.lpszMenuName = NULL;
     wc.lpszClassName = "TestWindowClass";
     if (!RegisterClassA(&wc))
     {

@@ -145,13 +145,13 @@ void _dump_DIPROPHEADER(LPCDIPROPHEADER diph) {
 }
 
 void _dump_OBJECTINSTANCEA(const DIDEVICEOBJECTINSTANCEA *ddoi) {
-    TRACE("    - enumerating : %s ('%s') - %2d - 0x%08x - %s\n",
-        debugstr_guid(&ddoi->guidType), _dump_dinput_GUID(&ddoi->guidType), ddoi->dwOfs, ddoi->dwType, ddoi->tszName);
+    TRACE("    - enumerating : %s ('%s') - %2d - 0x%08x - %s - 0x%x\n",
+        debugstr_guid(&ddoi->guidType), _dump_dinput_GUID(&ddoi->guidType), ddoi->dwOfs, ddoi->dwType, ddoi->tszName, ddoi->dwFlags);
 }
 
 void _dump_OBJECTINSTANCEW(const DIDEVICEOBJECTINSTANCEW *ddoi) {
-    TRACE("    - enumerating : %s ('%s'), - %2d - 0x%08x - %s\n",
-        debugstr_guid(&ddoi->guidType), _dump_dinput_GUID(&ddoi->guidType), ddoi->dwOfs, ddoi->dwType, debugstr_w(ddoi->tszName));
+    TRACE("    - enumerating : %s ('%s'), - %2d - 0x%08x - %s - 0x%x\n",
+        debugstr_guid(&ddoi->guidType), _dump_dinput_GUID(&ddoi->guidType), ddoi->dwOfs, ddoi->dwType, debugstr_w(ddoi->tszName), ddoi->dwFlags);
 }
 
 /* This function is a helper to convert a GUID into any possible DInput GUID out there */
@@ -575,7 +575,7 @@ static DWORD semantic_to_obj_id(IDirectInputDeviceImpl* This, DWORD dwSemantic)
     DWORD type = (0x0000ff00 & dwSemantic) >> 8;
     DWORD offset = 0x000000ff & dwSemantic;
     DWORD obj_instance = 0;
-    DWORD found = 0;
+    BOOL found = FALSE;
     int i;
 
     for (i = 0; i < This->data_format.wine_df->dwNumObjs; i++)
@@ -585,7 +585,7 @@ static DWORD semantic_to_obj_id(IDirectInputDeviceImpl* This, DWORD dwSemantic)
         if (odf->dwOfs == offset)
         {
             obj_instance = DIDFT_GETINSTANCE(odf->dwType);
-            found = 1;
+            found = TRUE;
             break;
         }
     }
@@ -598,14 +598,147 @@ static DWORD semantic_to_obj_id(IDirectInputDeviceImpl* This, DWORD dwSemantic)
     return type | (0x0000ff00 & (obj_instance << 8));
 }
 
+/*
+ * get_mapping_key
+ * Retrieves an open registry key to save the mapping, parametrized for an username,
+ * specific device and specific action mapping guid.
+ */
+static HKEY get_mapping_key(const WCHAR *device, const WCHAR *username, const WCHAR *guid)
+{
+    static const WCHAR subkey[] = {
+        'S','o','f','t','w','a','r','e','\\',
+        'W','i','n','e','\\',
+        'D','i','r','e','c','t','I','n','p','u','t','\\',
+        'M','a','p','p','i','n','g','s','\\','%','s','\\','%','s','\\','%','s','\0'};
+    HKEY hkey;
+    WCHAR *keyname;
+
+    keyname = HeapAlloc(GetProcessHeap(), 0,
+        sizeof(WCHAR) * (lstrlenW(subkey) + strlenW(username) + strlenW(device) + strlenW(guid)));
+    sprintfW(keyname, subkey, username, device, guid);
+
+    /* The key used is HKCU\Software\Wine\DirectInput\Mappings\[username]\[device]\[mapping_guid] */
+    if (RegCreateKeyW(HKEY_CURRENT_USER, keyname, &hkey))
+        hkey = 0;
+
+    HeapFree(GetProcessHeap(), 0, keyname);
+
+    return hkey;
+}
+
+static HRESULT save_mapping_settings(IDirectInputDevice8W *iface, LPDIACTIONFORMATW lpdiaf, LPCWSTR lpszUsername)
+{
+    WCHAR *guid_str = NULL;
+    DIDEVICEINSTANCEW didev;
+    HKEY hkey;
+    int i;
+
+    didev.dwSize = sizeof(didev);
+    IDirectInputDevice8_GetDeviceInfo(iface, &didev);
+
+    if (StringFromCLSID(&lpdiaf->guidActionMap, &guid_str) != S_OK)
+        return DI_SETTINGSNOTSAVED;
+
+    hkey = get_mapping_key(didev.tszInstanceName, lpszUsername, guid_str);
+
+    if (!hkey)
+    {
+        CoTaskMemFree(guid_str);
+        return DI_SETTINGSNOTSAVED;
+    }
+
+    /* Write each of the actions mapped for this device.
+       Format is "dwSemantic"="dwObjID" and key is of type REG_DWORD
+    */
+    for (i = 0; i < lpdiaf->dwNumActions; i++)
+    {
+        static const WCHAR format[] = {'%','x','\0'};
+        WCHAR label[9];
+
+        if (IsEqualGUID(&didev.guidInstance, &lpdiaf->rgoAction[i].guidInstance) &&
+            lpdiaf->rgoAction[i].dwHow != DIAH_UNMAPPED)
+        {
+             sprintfW(label, format, lpdiaf->rgoAction[i].dwSemantic);
+             RegSetValueExW(hkey, label, 0, REG_DWORD, (const BYTE*) &lpdiaf->rgoAction[i].dwObjID, sizeof(DWORD));
+        }
+    }
+
+    RegCloseKey(hkey);
+    CoTaskMemFree(guid_str);
+
+    return DI_OK;
+}
+
+static BOOL load_mapping_settings(IDirectInputDeviceImpl *This, LPDIACTIONFORMATW lpdiaf, const WCHAR *username)
+{
+    HKEY hkey;
+    WCHAR *guid_str;
+    DIDEVICEINSTANCEW didev;
+    int i, mapped = 0;
+
+    didev.dwSize = sizeof(didev);
+    IDirectInputDevice8_GetDeviceInfo(&This->IDirectInputDevice8W_iface, &didev);
+
+    if (StringFromCLSID(&lpdiaf->guidActionMap, &guid_str) != S_OK)
+        return FALSE;
+
+    hkey = get_mapping_key(didev.tszInstanceName, username, guid_str);
+
+    if (!hkey)
+    {
+        CoTaskMemFree(guid_str);
+        return FALSE;
+    }
+
+    /* Try to read each action in the DIACTIONFORMAT from registry */
+    for (i = 0; i < lpdiaf->dwNumActions; i++)
+    {
+        static const WCHAR format[] = {'%','x','\0'};
+        DWORD id, size = sizeof(DWORD);
+        WCHAR label[9];
+
+        sprintfW(label, format, lpdiaf->rgoAction[i].dwSemantic);
+
+        if (!RegQueryValueExW(hkey, label, 0, NULL, (LPBYTE) &id, &size))
+        {
+            lpdiaf->rgoAction[i].dwObjID = id;
+            lpdiaf->rgoAction[i].guidInstance = didev.guidInstance;
+            lpdiaf->rgoAction[i].dwHow = DIAH_DEFAULT;
+            mapped += 1;
+        }
+    }
+
+    RegCloseKey(hkey);
+    CoTaskMemFree(guid_str);
+
+    return mapped > 0;
+}
+
 HRESULT _build_action_map(LPDIRECTINPUTDEVICE8W iface, LPDIACTIONFORMATW lpdiaf, LPCWSTR lpszUserName, DWORD dwFlags, DWORD devMask, LPCDIDATAFORMAT df)
 {
     IDirectInputDeviceImpl *This = impl_from_IDirectInputDevice8W(iface);
-    int i, has_actions = 0;
+    WCHAR username[MAX_PATH];
+    DWORD username_size = MAX_PATH;
+    int i;
+    BOOL load_success = FALSE, has_actions = FALSE;
+
+    /* Unless asked the contrary by these flags, try to load a previous mapping */
+    if (!(dwFlags & DIDBAM_HWDEFAULTS))
+    {
+        /* Retrieve logged user name if necessary */
+        if (lpszUserName == NULL)
+            GetUserNameW(username, &username_size);
+        else
+            lstrcpynW(username, lpszUserName, MAX_PATH);
+
+        load_success = load_mapping_settings(This, lpdiaf, username);
+    }
+
+    if (load_success) return DI_OK;
 
     for (i=0; i < lpdiaf->dwNumActions; i++)
     {
-        /* Don't touch an user configured action */
+        /* Don't touch a user configured action */
         if (lpdiaf->rgoAction[i].dwHow == DIAH_USERCONFIG) continue;
 
         if ((lpdiaf->rgoAction[i].dwSemantic & devMask) == devMask)
@@ -619,7 +752,7 @@ HRESULT _build_action_map(LPDIRECTINPUTDEVICE8W iface, LPDIACTIONFORMATW lpdiaf,
             if (type == DIDFT_PSHBUTTON) type = DIDFT_BUTTON;
             if (type == DIDFT_RELAXIS) type = DIDFT_AXIS;
 
-            /* Assure that the object exists */
+            /* Make sure the object exists */
             odf = dataformat_to_odf_by_type(df, inst, type);
 
             if (odf != NULL)
@@ -627,12 +760,12 @@ HRESULT _build_action_map(LPDIRECTINPUTDEVICE8W iface, LPDIACTIONFORMATW lpdiaf,
                 lpdiaf->rgoAction[i].dwObjID = obj_id;
                 lpdiaf->rgoAction[i].guidInstance = This->guid;
                 lpdiaf->rgoAction[i].dwHow = DIAH_DEFAULT;
-                has_actions = 1;
+                has_actions = TRUE;
             }
         }
         else if (!(dwFlags & DIDBAM_PRESERVE))
         {
-            /* we must clear action data belonging to other devices */
+            /* We must clear action data belonging to other devices */
             memset(&lpdiaf->rgoAction[i].guidInstance, 0, sizeof(GUID));
             lpdiaf->rgoAction[i].dwHow = DIAH_UNMAPPED;
         }
@@ -650,6 +783,8 @@ HRESULT _set_action_map(LPDIRECTINPUTDEVICE8W iface, LPDIACTIONFORMATW lpdiaf, L
     DIOBJECTDATAFORMAT *obj_df = NULL;
     DIPROPDWORD dp;
     DIPROPRANGE dpr;
+    WCHAR username[MAX_PATH];
+    DWORD username_size = MAX_PATH;
     int i, action = 0, num_actions = 0;
     unsigned int offset = 0;
 
@@ -721,6 +856,15 @@ HRESULT _set_action_map(LPDIRECTINPUTDEVICE8W iface, LPDIACTIONFORMATW lpdiaf, L
         dp.diph.dwHow = DIPH_DEVICE;
         IDirectInputDevice8_SetProperty(iface, DIPROP_BUFFERSIZE, &dp.diph);
     }
+
+    /* Retrieve logged user name if necessary */
+    if (lpszUserName == NULL)
+        GetUserNameW(username, &username_size);
+    else
+        lstrcpynW(username, lpszUserName, MAX_PATH);
+
+    /* Save the settings to disk */
+    save_mapping_settings(iface, lpdiaf, username);
 
     return IDirectInputDevice8WImpl_SetActionMap(iface, lpdiaf, lpszUserName, dwFlags);
 }

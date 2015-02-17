@@ -18,14 +18,11 @@
 
 #define NONAMELESSUNION
 
-#include "wine/debug.h"
 #include "wine/unicode.h"
 #include "objbase.h"
 #include "dinput_private.h"
 #include "device_private.h"
 #include "resource.h"
-
-WINE_DEFAULT_DEBUG_CHANNEL(dinput);
 
 typedef struct {
     int nobjects;
@@ -334,7 +331,7 @@ static void assign_action(HWND dialog)
 
 static void copy_actions(LPDIACTIONFORMATW to, LPDIACTIONFORMATW from)
 {
-    int i;
+    DWORD i;
     for (i=0; i < from->dwNumActions; i++)
     {
         to->rgoAction[i].guidInstance = from->rgoAction[i].guidInstance;

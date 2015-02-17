@@ -33,7 +33,7 @@
 #include "wine/test.h"
 
 static const CHAR spooler[] = "Spooler"; /* Should be available on all platforms */
-static const CHAR* selfname;
+static CHAR selfname[MAX_PATH];
 
 static BOOL (WINAPI *pChangeServiceConfig2A)(SC_HANDLE,DWORD,LPVOID);
 static BOOL (WINAPI *pEnumServicesStatusExA)(SC_HANDLE, SC_ENUM_TYPE, DWORD,
@@ -48,6 +48,8 @@ static BOOL (WINAPI *pQueryServiceConfig2A)(SC_HANDLE,DWORD,LPBYTE,DWORD,LPDWORD
 static BOOL (WINAPI *pQueryServiceConfig2W)(SC_HANDLE,DWORD,LPBYTE,DWORD,LPDWORD);
 static BOOL (WINAPI *pQueryServiceStatusEx)(SC_HANDLE, SC_STATUS_TYPE, LPBYTE,
                                             DWORD, LPDWORD);
+static BOOL (WINAPI *pQueryServiceObjectSecurity)(SC_HANDLE, SECURITY_INFORMATION,
+                                                  PSECURITY_DESCRIPTOR, DWORD, LPDWORD);
 
 static void init_function_pointers(void)
 {
@@ -60,6 +62,7 @@ static void init_function_pointers(void)
     pQueryServiceConfig2A= (void*)GetProcAddress(hadvapi32, "QueryServiceConfig2A");
     pQueryServiceConfig2W= (void*)GetProcAddress(hadvapi32, "QueryServiceConfig2W");
     pQueryServiceStatusEx= (void*)GetProcAddress(hadvapi32, "QueryServiceStatusEx");
+    pQueryServiceObjectSecurity = (void*)GetProcAddress(hadvapi32, "QueryServiceObjectSecurity");
 }
 
 static void test_open_scm(void)
@@ -98,7 +101,6 @@ static void test_open_scm(void)
     CloseServiceHandle(scm_handle); /* Just in case */
 
     /* Proper call with an empty hostname */
-    SetLastError(0xdeadbeef);
     scm_handle = OpenSCManagerA("", SERVICES_ACTIVE_DATABASEA, SC_MANAGER_CONNECT);
     ok(scm_handle != NULL, "Expected success, got error %u\n", GetLastError());
     CloseServiceHandle(scm_handle);
@@ -106,6 +108,8 @@ static void test_open_scm(void)
     /* Again a correct one */
     SetLastError(0xdeadbeef);
     scm_handle = OpenSCManagerA(NULL, NULL, SC_MANAGER_CONNECT);
+    ok(GetLastError() == ERROR_SUCCESS || broken(GetLastError() == ERROR_IO_PENDING) /* win2k */,
+       "Expected ERROR_SUCCESS, got %u\n", GetLastError());
     ok(scm_handle != NULL, "Expected success, got error %u\n", GetLastError());
     CloseServiceHandle(scm_handle);
 }
@@ -132,6 +136,7 @@ static void test_open_svc(void)
     ok(GetLastError() == ERROR_INVALID_ADDRESS   /* W2K, XP, W2K3, Vista */ ||
        GetLastError() == ERROR_INVALID_PARAMETER /* NT4 */,
        "Expected ERROR_INVALID_ADDRESS or ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+    CloseServiceHandle(scm_handle);
 
     /* Nonexistent service */
     scm_handle = OpenSCManagerA(NULL, NULL, SC_MANAGER_CONNECT);
@@ -144,7 +149,7 @@ static void test_open_svc(void)
     /* Proper SCM handle but different access rights */
     scm_handle = OpenSCManagerA(NULL, NULL, SC_MANAGER_CONNECT);
     SetLastError(0xdeadbeef);
-    svc_handle = OpenServiceA(scm_handle, "Spooler", GENERIC_WRITE);
+    svc_handle = OpenServiceA(scm_handle, spooler, GENERIC_WRITE);
     if (!svc_handle && (GetLastError() == ERROR_ACCESS_DENIED))
         skip("Not enough rights to get a handle to the service\n");
     else
@@ -163,7 +168,7 @@ static void test_open_svc(void)
     /* Try to open the service with this displayname, unless the displayname equals
      * the servicename as that would defeat the purpose of this test.
      */
-    if (!lstrcmpi(spooler, displayname))
+    if (!lstrcmpiA(spooler, displayname))
     {
         skip("displayname equals servicename\n");
         CloseServiceHandle(scm_handle);
@@ -182,7 +187,7 @@ static void test_open_svc(void)
 
 static void test_create_delete_svc(void)
 {
-    SC_HANDLE scm_handle, svc_handle1;
+    SC_HANDLE scm_handle, svc_handle1, svc_handle2;
     CHAR username[UNLEN + 1], domain[MAX_PATH];
     DWORD user_size = UNLEN + 1;
     CHAR account[UNLEN + 3];
@@ -407,12 +412,17 @@ static void test_create_delete_svc(void)
     ret = DeleteService(svc_handle1);
     ok(ret, "Expected success, got error %u\n", GetLastError());
 
+    /* Service is marked for delete, but handle is still open. Try to open service again. */
+    svc_handle2 = OpenServiceA(scm_handle, servicename, GENERIC_READ);
+    ok(svc_handle2 != NULL, "got %p, error %u\n", svc_handle2, GetLastError());
+    CloseServiceHandle(svc_handle2);
+
     CloseServiceHandle(svc_handle1);
     CloseServiceHandle(scm_handle);
 
     /* Wait a while. One of the following tests also does a CreateService for the
      * same servicename and this would result in an ERROR_SERVICE_MARKED_FOR_DELETE
-     * error if we do this to quick. Vista seems more picky then the others.
+     * error if we do this too quickly. Vista seems more picky than the others.
      */
     Sleep(1000);
 
@@ -698,7 +708,7 @@ static void test_get_displayname(void)
     SetLastError(0xdeadbeef);
     ret = GetServiceDisplayNameA(scm_handle, servicename, displayname, &displaysize);
     ok(ret, "Expected success, got error %u\n", GetLastError());
-    ok(!lstrcmpi(displayname, servicename),
+    ok(!lstrcmpiA(displayname, servicename),
        "Expected displayname to be %s, got %s\n", servicename, displayname);
 
     /* Delete the service */
@@ -866,7 +876,7 @@ static void test_get_servicekeyname(void)
     {
         ok(strlen(servicename) == tempsize/2,
            "Expected the buffer to be twice the length of the string\n") ;
-        ok(!lstrcmpi(servicename, spooler), "Expected %s, got %s\n", spooler, servicename);
+        ok(!lstrcmpiA(servicename, spooler), "Expected %s, got %s\n", spooler, servicename);
         ok(servicesize == (tempsize * 2),
            "Expected servicesize not to change if buffer not insufficient\n") ;
     }
@@ -1054,9 +1064,9 @@ static void test_enum_svc(void)
     DWORD neededW, returnedW;
     DWORD tempneeded, tempreturned, missing;
     DWORD servicecountactive, servicecountinactive;
-    ENUM_SERVICE_STATUS *services;
+    ENUM_SERVICE_STATUSA *services;
     ENUM_SERVICE_STATUSW *servicesW;
-    ENUM_SERVICE_STATUS_PROCESS *exservices;
+    ENUM_SERVICE_STATUS_PROCESSA *exservices;
     UINT i;
 
     /* All NULL or wrong  */
@@ -1286,7 +1296,7 @@ static void test_enum_svc(void)
 
     /* Allocate less than the needed bytes and don't specify a resume handle */
     services = HeapAlloc(GetProcessHeap(), 0, tempneeded);
-    bufsize = (tempreturned - 1) * sizeof(ENUM_SERVICE_STATUS);
+    bufsize = (tempreturned - 1) * sizeof(ENUM_SERVICE_STATUSA);
     needed = 0xdeadbeef;
     returned = 0xdeadbeef;
     SetLastError(0xdeadbeef);
@@ -1299,7 +1309,7 @@ static void test_enum_svc(void)
        "Expected ERROR_MORE_DATA, got %d\n", GetLastError());
 
     /* Allocate less than the needed bytes, this time with a correct resume handle */
-    bufsize = (tempreturned - 1) * sizeof(ENUM_SERVICE_STATUS);
+    bufsize = (tempreturned - 1) * sizeof(ENUM_SERVICE_STATUSA);
     needed = 0xdeadbeef;
     returned = 0xdeadbeef;
     resume = 0;
@@ -1388,8 +1398,8 @@ static void test_enum_svc(void)
         SERVICE_STATUS status = services[i].ServiceStatus;
 
         /* lpServiceName and lpDisplayName should always be filled */
-        ok(lstrlenA(services[i].lpServiceName) > 0, "Expected a service name\n");
-        ok(lstrlenA(services[i].lpDisplayName) > 0, "Expected a display name\n");
+        ok(services[i].lpServiceName[0], "Expected a service name\n");
+        ok(services[i].lpDisplayName[0], "Expected a display name\n");
 
         /* Decrement the counters to see if the functions calls return the same
          * numbers as the contents of these structures.
@@ -1601,7 +1611,7 @@ static void test_enum_svc(void)
 
     /* Allocate less than the needed bytes and don't specify a resume handle */
     exservices = HeapAlloc(GetProcessHeap(), 0, tempneeded);
-    bufsize = (tempreturned - 1) * sizeof(ENUM_SERVICE_STATUS);
+    bufsize = (tempreturned - 1) * sizeof(ENUM_SERVICE_STATUSA);
     needed = 0xdeadbeef;
     returned = 0xdeadbeef;
     SetLastError(0xdeadbeef);
@@ -1614,7 +1624,7 @@ static void test_enum_svc(void)
        "Expected ERROR_MORE_DATA, got %d\n", GetLastError());
 
     /* Allocate less than the needed bytes, this time with a correct resume handle */
-    bufsize = (tempreturned - 1) * sizeof(ENUM_SERVICE_STATUS);
+    bufsize = (tempreturned - 1) * sizeof(ENUM_SERVICE_STATUSA);
     needed = 0xdeadbeef;
     returned = 0xdeadbeef;
     resume = 0;
@@ -1691,8 +1701,8 @@ static void test_enum_svc(void)
         SERVICE_STATUS_PROCESS status = exservices[i].ServiceStatusProcess;
 
         /* lpServiceName and lpDisplayName should always be filled */
-        ok(lstrlenA(exservices[i].lpServiceName) > 0, "Expected a service name\n");
-        ok(lstrlenA(exservices[i].lpDisplayName) > 0, "Expected a display name\n");
+        ok(exservices[i].lpServiceName[0], "Expected a service name\n");
+        ok(exservices[i].lpDisplayName[0], "Expected a display name\n");
 
         /* Decrement the counters to see if the functions calls return the
          * same numbers as the contents of these structures.
@@ -1756,7 +1766,7 @@ static void test_close(void)
 static void test_sequence(void)
 {
     SC_HANDLE scm_handle, svc_handle;
-    BOOL ret;
+    BOOL ret, is_nt4;
     QUERY_SERVICE_CONFIGA *config;
     DWORD given, needed;
     static const CHAR servicename [] = "Winetest";
@@ -1780,6 +1790,9 @@ static void test_sequence(void)
         ok(scm_handle != NULL, "Could not get a handle to the manager: %d\n", GetLastError());
 
     if (!scm_handle) return;
+    svc_handle = OpenServiceA(scm_handle, NULL, GENERIC_READ);
+    is_nt4=(svc_handle == NULL && GetLastError() == ERROR_INVALID_PARAMETER);
+    CloseServiceHandle(svc_handle);
 
     /* Create a dummy service */
     SetLastError(0xdeadbeef);
@@ -1817,12 +1830,55 @@ static void test_sequence(void)
             PSID sidOwner, sidGroup;
             PACL dacl, sacl;
             PSECURITY_DESCRIPTOR pSD;
-            HRESULT retval = pGetSecurityInfo(svc_handle,SE_SERVICE,DACL_SECURITY_INFORMATION,&sidOwner,&sidGroup,&dacl,&sacl,&pSD);
-            todo_wine ok(ERROR_SUCCESS == retval, "Expected GetSecurityInfo to succeed: result %d\n",retval);
+            DWORD error, n1, n2;
+            HRESULT retval;
+            BOOL bret;
+
+            /* Test using GetSecurityInfo to obtain security information */
+            retval = pGetSecurityInfo(svc_handle, SE_SERVICE, DACL_SECURITY_INFORMATION, &sidOwner,
+                                      &sidGroup, &dacl, &sacl, &pSD);
+            LocalFree(pSD);
+            ok(retval == ERROR_SUCCESS, "Expected GetSecurityInfo to succeed: result %d\n", retval);
+            retval = pGetSecurityInfo(svc_handle, SE_SERVICE, DACL_SECURITY_INFORMATION, NULL,
+                                      NULL, NULL, NULL, &pSD);
+            LocalFree(pSD);
+            ok(retval == ERROR_SUCCESS, "Expected GetSecurityInfo to succeed: result %d\n", retval);
+            if (!is_nt4)
+            {
+                retval = pGetSecurityInfo(svc_handle, SE_SERVICE, DACL_SECURITY_INFORMATION, NULL,
+                                          NULL, &dacl, NULL, &pSD);
+                ok(retval == ERROR_SUCCESS, "Expected GetSecurityInfo to succeed: result %d\n", retval);
+                LocalFree(pSD);
+                SetLastError(0xdeadbeef);
+                retval = pGetSecurityInfo(svc_handle, SE_SERVICE, DACL_SECURITY_INFORMATION, NULL,
+                                          NULL, NULL, NULL, NULL);
+                error = GetLastError();
+                ok(retval == ERROR_INVALID_PARAMETER, "Expected GetSecurityInfo to fail: result %d\n", retval);
+                ok(error == 0xdeadbeef, "Unexpected last error %d\n", error);
+            }
+            else
+                win_skip("A NULL security descriptor in GetSecurityInfo results in an exception on NT4.\n");
+
+            /* Test using QueryServiceObjectSecurity to obtain security information */
+            SetLastError(0xdeadbeef);
+            bret = pQueryServiceObjectSecurity(svc_handle, DACL_SECURITY_INFORMATION, NULL, 0, &n1);
+            error = GetLastError();
+            ok(!bret, "Expected QueryServiceObjectSecurity to fail: result %d\n", bret);
+            ok(error == ERROR_INSUFFICIENT_BUFFER ||
+               broken(error == ERROR_INVALID_ADDRESS) || broken(error == ERROR_INVALID_PARAMETER),
+               "Expected ERROR_INSUFFICIENT_BUFFER, got %d\n", error);
+            if (error != ERROR_INSUFFICIENT_BUFFER) n1 = 1024;
+            pSD = LocalAlloc(0, n1);
+            bret = pQueryServiceObjectSecurity(svc_handle, DACL_SECURITY_INFORMATION, pSD, n1, &n2);
+            ok(bret, "Expected QueryServiceObjectSecurity to succeed: result %d\n", bret);
+            LocalFree(pSD);
         }
     }
 
-    if (!svc_handle) return;
+    if (!svc_handle) {
+        CloseServiceHandle(scm_handle);
+        return;
+    }
 
     /* TODO:
      * Before we do a QueryServiceConfig we should check the registry. This will make sure
@@ -1896,6 +1952,7 @@ static void test_queryconfig2(void)
     DWORD expected, needed;
     BYTE buffer[MAX_PATH];
     LPSERVICE_DESCRIPTIONA pConfig = (LPSERVICE_DESCRIPTIONA)buffer;
+    SERVICE_PRESHUTDOWN_INFO preshutdown_info;
     static const CHAR servicename [] = "Winetest";
     static const CHAR displayname [] = "Winetest dummy service";
     static const CHAR pathname    [] = "we_dont_care.exe";
@@ -2061,6 +2118,33 @@ static void test_queryconfig2(void)
     SetLastError(0xdeadbeef);
     ret = pQueryServiceConfig2W(svc_handle, SERVICE_CONFIG_DESCRIPTION,buffer, needed,&needed);
     ok(ret, "expected QueryServiceConfig2W to succeed\n");
+
+    SetLastError(0xdeadbeef);
+    ret = pQueryServiceConfig2W(svc_handle, SERVICE_CONFIG_PRESHUTDOWN_INFO,
+            (LPBYTE)&preshutdown_info, sizeof(preshutdown_info), &needed);
+    if(!ret && GetLastError()==ERROR_INVALID_LEVEL)
+    {
+        /* Win2k3 and older */
+        win_skip("SERVICE_CONFIG_PRESHUTDOWN_INFO not supported\n");
+        goto cleanup;
+    }
+    ok(ret, "expected QueryServiceConfig2W to succeed (%d)\n", GetLastError());
+    ok(needed == sizeof(preshutdown_info), "needed = %d\n", needed);
+    ok(preshutdown_info.dwPreshutdownTimeout == 180000, "Default PreshutdownTimeout = %d\n",
+            preshutdown_info.dwPreshutdownTimeout);
+
+    SetLastError(0xdeadbeef);
+    preshutdown_info.dwPreshutdownTimeout = -1;
+    ret = pChangeServiceConfig2A(svc_handle, SERVICE_CONFIG_PRESHUTDOWN_INFO,
+            (LPVOID)&preshutdown_info);
+    ok(ret, "expected ChangeServiceConfig2A to succeed (%d)\n", GetLastError());
+
+    ret = pQueryServiceConfig2W(svc_handle, SERVICE_CONFIG_PRESHUTDOWN_INFO,
+            (LPBYTE)&preshutdown_info, sizeof(preshutdown_info), &needed);
+    ok(ret, "expected QueryServiceConfig2W to succeed (%d)\n", GetLastError());
+    ok(needed == sizeof(preshutdown_info), "needed = %d\n", needed);
+    ok(preshutdown_info.dwPreshutdownTimeout == -1, "New PreshutdownTimeout = %d\n",
+            preshutdown_info.dwPreshutdownTimeout);
 
 cleanup:
     DeleteService(svc_handle);
@@ -2262,19 +2346,9 @@ static void test_refcount(void)
     svc_handle5 = CreateServiceA(scm_handle, servicename, NULL, GENERIC_ALL,
                                  SERVICE_WIN32_OWN_PROCESS | SERVICE_INTERACTIVE_PROCESS,
                                  SERVICE_DISABLED, 0, pathname, NULL, NULL, NULL, NULL, NULL);
-    todo_wine
-    {
     ok(!svc_handle5, "Expected failure\n");
     ok(GetLastError() == ERROR_SERVICE_MARKED_FOR_DELETE,
        "Expected ERROR_SERVICE_MARKED_FOR_DELETE, got %d\n", GetLastError());
-    }
-
-    /* FIXME: Remove this when Wine is fixed */
-    if (svc_handle5)
-    {
-        DeleteService(svc_handle5);
-        CloseServiceHandle(svc_handle5);
-    }
 
     /* Close all the handles to the service and try again */
     ret = CloseServiceHandle(svc_handle4);
@@ -2315,7 +2389,7 @@ START_TEST(service)
     char** myARGV;
 
     myARGC = winetest_get_mainargs(&myARGV);
-    selfname = myARGV[0];
+    GetFullPathNameA(myARGV[0], sizeof(selfname), selfname, NULL);
     if (myARGC >= 3)
     {
         if (strcmp(myARGV[2], "sleep") == 0)

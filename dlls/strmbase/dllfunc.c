@@ -53,14 +53,10 @@ static LONG server_locks = 0;
  */
 #define MAX_KEY_LEN  260
 
-static WCHAR const clsid_keyname[6] =
-{'C','L','S','I','D',0 };
-static WCHAR const ips32_keyname[15] =
-{'I','n','P','r','o','c','S','e','r','v','e','r','3','2',0};
-static WCHAR const tmodel_keyname[15] =
-{'T','h','r','e','a','d','i','n','g','M','o','d','e','l',0};
-static WCHAR const tmodel_both[] =
-{'B','o','t','h',0};
+static const WCHAR clsid_keyname[] = {'C','L','S','I','D',0 };
+static const WCHAR ips32_keyname[] = {'I','n','P','r','o','c','S','e','r','v','e','r','3','2',0};
+static const WCHAR tmodel_keyname[] = {'T','h','r','e','a','d','i','n','g','M','o','d','e','l',0};
+static const WCHAR tmodel_both[] = {'B','o','t','h',0};
 
 /*
  * SetupRegisterClass()
@@ -147,8 +143,8 @@ HRESULT WINAPI AMovieSetupRegisterFilter2(const AMOVIESETUP_FILTER *pFilter, IFi
             REGFILTER2 rf2;
             rf2.dwVersion = 1;
             rf2.dwMerit = pFilter->merit;
-            rf2.u.s.cPins = pFilter->pins;
-            rf2.u.s.rgPins = pFilter->pPin;
+            rf2.u.s1.cPins = pFilter->pins;
+            rf2.u.s1.rgPins = pFilter->pPin;
 
             return IFilterMapper2_RegisterFilter(pIFM2, pFilter->clsid, pFilter->name, NULL, &CLSID_LegacyAmFilterCategory, NULL, &rf2);
         }
@@ -173,7 +169,7 @@ HRESULT WINAPI AMovieDllRegisterServer2(BOOL bRegister)
     if (bRegister)
         hr = SetupRegisterAllClasses(g_Templates, g_cTemplates, szFileName, TRUE );
 
-    hr = CoInitialize(NULL);
+    CoInitialize(NULL);
 
     TRACE("Getting IFilterMapper2\r\n");
     hr = CoCreateInstance(&CLSID_FilterMapper2, NULL, CLSCTX_INPROC_SERVER,
@@ -239,39 +235,40 @@ BOOL WINAPI STRMBASE_DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpv)
  * DLL ClassFactory
  */
 typedef struct {
-    IClassFactory ITF_IClassFactory;
-
+    IClassFactory IClassFactory_iface;
     LONG ref;
     LPFNNewCOMObject pfnCreateInstance;
 } IClassFactoryImpl;
 
-static HRESULT WINAPI
-DSCF_QueryInterface(LPCLASSFACTORY iface,REFIID riid,LPVOID *ppobj)
+static inline IClassFactoryImpl *impl_from_IClassFactory(IClassFactory *iface)
 {
-    IClassFactoryImpl *This = (IClassFactoryImpl *)iface;
+    return CONTAINING_RECORD(iface, IClassFactoryImpl, IClassFactory_iface);
+}
 
+static HRESULT WINAPI DSCF_QueryInterface(IClassFactory *iface, REFIID riid, void **ppobj)
+{
     if (IsEqualGUID(riid, &IID_IUnknown) ||
         IsEqualGUID(riid, &IID_IClassFactory))
     {
         IClassFactory_AddRef(iface);
-        *ppobj = This;
+        *ppobj = iface;
         return S_OK;
     }
 
-    WARN("(%p)->(%s,%p), not found\n", This, debugstr_guid(riid), ppobj);
+    *ppobj = NULL;
+    WARN("(%p)->(%s,%p), not found\n", iface, debugstr_guid(riid), ppobj);
     return E_NOINTERFACE;
 }
 
-static ULONG WINAPI DSCF_AddRef(LPCLASSFACTORY iface)
+static ULONG WINAPI DSCF_AddRef(IClassFactory *iface)
 {
-    IClassFactoryImpl *This = (IClassFactoryImpl *)iface;
+    IClassFactoryImpl *This = impl_from_IClassFactory(iface);
     return InterlockedIncrement(&This->ref);
 }
 
-static ULONG WINAPI DSCF_Release(LPCLASSFACTORY iface)
+static ULONG WINAPI DSCF_Release(IClassFactory *iface)
 {
-    IClassFactoryImpl *This = (IClassFactoryImpl *)iface;
-
+    IClassFactoryImpl *This = impl_from_IClassFactory(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
 
     if (ref == 0)
@@ -280,10 +277,10 @@ static ULONG WINAPI DSCF_Release(LPCLASSFACTORY iface)
     return ref;
 }
 
-static HRESULT WINAPI DSCF_CreateInstance(LPCLASSFACTORY iface, LPUNKNOWN pOuter,
-                                          REFIID riid, LPVOID *ppobj)
+static HRESULT WINAPI DSCF_CreateInstance(IClassFactory *iface, IUnknown *pOuter,
+                                          REFIID riid, void **ppobj)
 {
-    IClassFactoryImpl *This = (IClassFactoryImpl *)iface;
+    IClassFactoryImpl *This = impl_from_IClassFactory(iface);
     HRESULT hres = ERROR_SUCCESS;
     LPUNKNOWN punk;
 
@@ -317,9 +314,9 @@ static HRESULT WINAPI DSCF_CreateInstance(LPCLASSFACTORY iface, LPUNKNOWN pOuter
     return hres;
 }
 
-static HRESULT WINAPI DSCF_LockServer(LPCLASSFACTORY iface, BOOL dolock)
+static HRESULT WINAPI DSCF_LockServer(IClassFactory *iface, BOOL dolock)
 {
-    IClassFactoryImpl *This = (IClassFactoryImpl *)iface;
+    IClassFactoryImpl *This = impl_from_IClassFactory(iface);
     TRACE("(%p)->(%d)\n",This, dolock);
 
     if (dolock)
@@ -366,7 +363,15 @@ HRESULT WINAPI STRMBASE_DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID *
 
     if (i == g_cTemplates)
     {
-        FIXME("%s: no class found.\n", debugstr_guid(rclsid));
+        char dllname[MAX_PATH];
+        if (!GetModuleFileNameA(g_hInst, dllname, sizeof(dllname)))
+            strcpy(dllname, "???");
+        ERR("%s: no class found in %s.\n", debugstr_guid(rclsid), dllname);
+        return CLASS_E_CLASSNOTAVAILABLE;
+    }
+    else if (!pList->m_lpfnNew)
+    {
+        FIXME("%s: class not implemented yet.\n", debugstr_guid(rclsid));
         return CLASS_E_CLASSNOTAVAILABLE;
     }
 
@@ -374,12 +379,12 @@ HRESULT WINAPI STRMBASE_DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID *
     if (!factory)
         return E_OUTOFMEMORY;
 
-    factory->ITF_IClassFactory.lpVtbl = &DSCF_Vtbl;
+    factory->IClassFactory_iface.lpVtbl = &DSCF_Vtbl;
     factory->ref = 1;
 
     factory->pfnCreateInstance = pList->m_lpfnNew;
 
-    *ppv = &(factory->ITF_IClassFactory);
+    *ppv = &factory->IClassFactory_iface;
     return S_OK;
 }
 

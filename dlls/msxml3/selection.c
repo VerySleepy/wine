@@ -37,6 +37,7 @@
 #include "winuser.h"
 #include "ole2.h"
 #include "msxml6.h"
+#include "msxml2did.h"
 
 #include "msxml_private.h"
 
@@ -58,18 +59,20 @@ WINE_DEFAULT_DEBUG_CHANNEL(msxml);
 int registerNamespaces(xmlXPathContextPtr ctxt);
 xmlChar* XSLPattern_to_XPath(xmlXPathContextPtr ctxt, xmlChar const* xslpat_str);
 
-typedef struct _enumvariant
+typedef struct
 {
     IEnumVARIANT IEnumVARIANT_iface;
     LONG ref;
 
-    IXMLDOMSelection *selection;
+    IUnknown *outer;
     BOOL own;
 
     LONG pos;
+
+    const struct enumvariant_funcs *funcs;
 } enumvariant;
 
-typedef struct _domselection
+typedef struct
 {
     DispatchEx dispex;
     IXMLDOMSelection IXMLDOMSelection_iface;
@@ -80,6 +83,25 @@ typedef struct _domselection
     IEnumVARIANT *enumvariant;
 } domselection;
 
+static HRESULT selection_get_item(IUnknown *iface, LONG index, VARIANT* item)
+{
+    V_VT(item) = VT_DISPATCH;
+    return IXMLDOMSelection_get_item((IXMLDOMSelection*)iface, index, (IXMLDOMNode**)&V_DISPATCH(item));
+}
+
+static HRESULT selection_next(IUnknown *iface)
+{
+    IXMLDOMNode *node;
+    HRESULT hr = IXMLDOMSelection_nextNode((IXMLDOMSelection*)iface, &node);
+    if (hr == S_OK) IXMLDOMNode_Release(node);
+    return hr;
+}
+
+static const struct enumvariant_funcs selection_enumvariant = {
+    selection_get_item,
+    selection_next
+};
+
 static inline domselection *impl_from_IXMLDOMSelection( IXMLDOMSelection *iface )
 {
     return CONTAINING_RECORD(iface, domselection, IXMLDOMSelection_iface);
@@ -89,8 +111,6 @@ static inline enumvariant *impl_from_IEnumVARIANT( IEnumVARIANT *iface )
 {
     return CONTAINING_RECORD(iface, enumvariant, IEnumVARIANT_iface);
 }
-
-static HRESULT create_enumvariant(IXMLDOMSelection*, BOOL, IUnknown**);
 
 static HRESULT WINAPI domselection_QueryInterface(
     IXMLDOMSelection *iface,
@@ -114,7 +134,7 @@ static HRESULT WINAPI domselection_QueryInterface(
     {
         if (!This->enumvariant)
         {
-            HRESULT hr = create_enumvariant(iface, FALSE, (IUnknown**)&This->enumvariant);
+            HRESULT hr = create_enumvariant((IUnknown*)iface, FALSE, &selection_enumvariant, &This->enumvariant);
             if (FAILED(hr)) return hr;
         }
 
@@ -157,7 +177,6 @@ static ULONG WINAPI domselection_Release(
         xmlXPathFreeObject(This->result);
         xmldoc_release(This->node->doc);
         if (This->enumvariant) IEnumVARIANT_Release(This->enumvariant);
-        release_dispex(&This->dispex);
         heap_free(This);
     }
 
@@ -169,12 +188,7 @@ static HRESULT WINAPI domselection_GetTypeInfoCount(
     UINT* pctinfo )
 {
     domselection *This = impl_from_IXMLDOMSelection( iface );
-
-    TRACE("(%p)->(%p)\n", This, pctinfo);
-
-    *pctinfo = 1;
-
-    return S_OK;
+    return IDispatchEx_GetTypeInfoCount(&This->dispex.IDispatchEx_iface, pctinfo);
 }
 
 static HRESULT WINAPI domselection_GetTypeInfo(
@@ -184,13 +198,8 @@ static HRESULT WINAPI domselection_GetTypeInfo(
     ITypeInfo** ppTInfo )
 {
     domselection *This = impl_from_IXMLDOMSelection( iface );
-    HRESULT hr;
-
-    TRACE("(%p)->(%u %u %p)\n", This, iTInfo, lcid, ppTInfo);
-
-    hr = get_typeinfo(IXMLDOMSelection_tid, ppTInfo);
-
-    return hr;
+    return IDispatchEx_GetTypeInfo(&This->dispex.IDispatchEx_iface,
+        iTInfo, lcid, ppTInfo);
 }
 
 static HRESULT WINAPI domselection_GetIDsOfNames(
@@ -202,23 +211,8 @@ static HRESULT WINAPI domselection_GetIDsOfNames(
     DISPID* rgDispId )
 {
     domselection *This = impl_from_IXMLDOMSelection( iface );
-    ITypeInfo *typeinfo;
-    HRESULT hr;
-
-    TRACE("(%p)->(%s %p %u %u %p)\n", This, debugstr_guid(riid), rgszNames, cNames,
-          lcid, rgDispId);
-
-    if(!rgszNames || cNames == 0 || !rgDispId)
-        return E_INVALIDARG;
-
-    hr = get_typeinfo(IXMLDOMSelection_tid, &typeinfo);
-    if(SUCCEEDED(hr))
-    {
-        hr = ITypeInfo_GetIDsOfNames(typeinfo, rgszNames, cNames, rgDispId);
-        ITypeInfo_Release(typeinfo);
-    }
-
-    return hr;
+    return IDispatchEx_GetIDsOfNames(&This->dispex.IDispatchEx_iface,
+        riid, rgszNames, cNames, lcid, rgDispId);
 }
 
 static HRESULT WINAPI domselection_Invoke(
@@ -233,21 +227,8 @@ static HRESULT WINAPI domselection_Invoke(
     UINT* puArgErr )
 {
     domselection *This = impl_from_IXMLDOMSelection( iface );
-    ITypeInfo *typeinfo;
-    HRESULT hr;
-
-    TRACE("(%p)->(%d %s %d %d %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid),
-          lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
-
-    hr = get_typeinfo(IXMLDOMSelection_tid, &typeinfo);
-    if(SUCCEEDED(hr))
-    {
-        hr = ITypeInfo_Invoke(typeinfo, &This->IXMLDOMSelection_iface, dispIdMember, wFlags, pDispParams,
-                pVarResult, pExcepInfo, puArgErr);
-        ITypeInfo_Release(typeinfo);
-    }
-
-    return hr;
+    return IDispatchEx_Invoke(&This->dispex.IDispatchEx_iface,
+        dispIdMember, riid, lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
 }
 
 static HRESULT WINAPI domselection_get_item(
@@ -321,13 +302,13 @@ static HRESULT WINAPI domselection_reset(
 
 static HRESULT WINAPI domselection_get__newEnum(
         IXMLDOMSelection* iface,
-        IUnknown** ppUnk)
+        IUnknown** enumv)
 {
     domselection *This = impl_from_IXMLDOMSelection( iface );
 
-    TRACE("(%p)->(%p)\n", This, ppUnk);
+    TRACE("(%p)->(%p)\n", This, enumv);
 
-    return create_enumvariant(iface, TRUE, ppUnk);
+    return create_enumvariant((IUnknown*)iface, TRUE, &selection_enumvariant, (IEnumVARIANT**)enumv);
 }
 
 static HRESULT WINAPI domselection_get_expr(
@@ -470,13 +451,19 @@ static HRESULT WINAPI enumvariant_QueryInterface(
 
     *ppvObject = NULL;
 
-    if ( IsEqualGUID( riid, &IID_IUnknown ) ||
-         IsEqualGUID( riid, &IID_IEnumVARIANT ))
+    if (IsEqualGUID( riid, &IID_IUnknown ))
+    {
+        if (This->own)
+            *ppvObject = &This->IEnumVARIANT_iface;
+        else
+            return IUnknown_QueryInterface(This->outer, riid, ppvObject);
+    }
+    else if (IsEqualGUID( riid, &IID_IEnumVARIANT ))
     {
         *ppvObject = &This->IEnumVARIANT_iface;
     }
     else
-        return IXMLDOMSelection_QueryInterface(This->selection, riid, ppvObject);
+        return IUnknown_QueryInterface(This->outer, riid, ppvObject);
 
     IEnumVARIANT_AddRef( iface );
 
@@ -499,7 +486,7 @@ static ULONG WINAPI enumvariant_Release(IEnumVARIANT *iface )
     TRACE("(%p)->(%d)\n", This, ref);
     if ( ref == 0 )
     {
-        if (This->own) IXMLDOMSelection_Release(This->selection);
+        if (This->own) IUnknown_Release(This->outer);
         heap_free(This);
     }
 
@@ -513,7 +500,6 @@ static HRESULT WINAPI enumvariant_Next(
     ULONG *fetched)
 {
     enumvariant *This = impl_from_IEnumVARIANT( iface );
-    IXMLDOMNode *node;
     ULONG ret_count = 0;
 
     TRACE("(%p)->(%u %p %p)\n", This, celt, var, fetched);
@@ -524,19 +510,12 @@ static HRESULT WINAPI enumvariant_Next(
 
     for (; celt > 0; celt--, var++, This->pos++)
     {
-        IDispatch *disp = NULL;
-        HRESULT hr;
-
-        node = NULL;
-        hr = IXMLDOMSelection_get_item(This->selection, This->pos, &node);
-        if (hr != S_OK) break;
-
-        IXMLDOMNode_QueryInterface(node, &IID_IDispatch, (void**)&disp);
-        IXMLDOMNode_Release(node);
-
-        V_VT(var) = VT_DISPATCH;
-        V_DISPATCH(var) = disp;
-
+        HRESULT hr = This->funcs->get_item(This->outer, This->pos, var);
+        if (hr != S_OK)
+        {
+            V_VT(var) = VT_EMPTY;
+            break;
+        }
         ret_count++;
     }
 
@@ -544,7 +523,10 @@ static HRESULT WINAPI enumvariant_Next(
 
     /* we need to advance one step more for some reason */
     if (ret_count)
-        IXMLDOMSelection_nextNode(This->selection, &node);
+    {
+        if (This->funcs->next)
+            This->funcs->next(This->outer);
+    }
 
     return celt == 0 ? S_OK : S_FALSE;
 }
@@ -584,7 +566,7 @@ static const struct IEnumVARIANTVtbl EnumVARIANTVtbl =
     enumvariant_Clone
 };
 
-static HRESULT create_enumvariant(IXMLDOMSelection *selection, BOOL own, IUnknown **penum)
+HRESULT create_enumvariant(IUnknown *outer, BOOL own, const struct enumvariant_funcs *funcs, IEnumVARIANT **penum)
 {
     enumvariant *This;
 
@@ -593,19 +575,21 @@ static HRESULT create_enumvariant(IXMLDOMSelection *selection, BOOL own, IUnknow
 
     This->IEnumVARIANT_iface.lpVtbl = &EnumVARIANTVtbl;
     This->ref = 0;
-    This->selection = selection;
+    This->outer = outer;
     This->own = own;
     This->pos = 0;
+    This->funcs = funcs;
 
     if (This->own)
-        IXMLDOMSelection_AddRef(selection);
+        IUnknown_AddRef(This->outer);
 
-    return IEnumVARIANT_QueryInterface(&This->IEnumVARIANT_iface, &IID_IUnknown, (void**)penum);
+    *penum = &This->IEnumVARIANT_iface;
+    IEnumVARIANT_AddRef(*penum);
+    return S_OK;
 }
 
 static HRESULT domselection_get_dispid(IUnknown *iface, BSTR name, DWORD flags, DISPID *dispid)
 {
-    domselection *This = impl_from_IXMLDOMSelection( (IXMLDOMSelection*)iface );
     WCHAR *ptr;
     int idx = 0;
 
@@ -614,10 +598,7 @@ static HRESULT domselection_get_dispid(IUnknown *iface, BSTR name, DWORD flags, 
     if(*ptr)
         return DISP_E_UNKNOWNNAME;
 
-    if(idx >= xmlXPathNodeSetGetLength(This->result->nodesetval))
-        return DISP_E_UNKNOWNNAME;
-
-    *dispid = MSXML_DISPID_CUSTOM_MIN + idx;
+    *dispid = DISPID_DOM_COLLECTION_BASE + idx;
     TRACE("ret %x\n", *dispid);
     return S_OK;
 }
@@ -632,13 +613,16 @@ static HRESULT domselection_invoke(IUnknown *iface, DISPID id, LCID lcid, WORD f
     V_VT(res) = VT_DISPATCH;
     V_DISPATCH(res) = NULL;
 
+    if (id < DISPID_DOM_COLLECTION_BASE || id > DISPID_DOM_COLLECTION_MAX)
+        return DISP_E_UNKNOWNNAME;
+
     switch(flags)
     {
         case INVOKE_PROPERTYGET:
         {
             IXMLDOMNode *disp = NULL;
 
-            domselection_get_item(&This->IXMLDOMSelection_iface, id - MSXML_DISPID_CUSTOM_MIN, &disp);
+            IXMLDOMSelection_get_item(&This->IXMLDOMSelection_iface, id - DISPID_DOM_COLLECTION_BASE, &disp);
             V_DISPATCH(res) = (IDispatch*)disp;
             break;
         }
@@ -787,7 +771,7 @@ HRESULT create_selection(xmlNodePtr node, xmlChar* query, IXMLDOMNodeList **out)
     xmlXPathContextPtr ctxt = xmlXPathNewContext(node->doc);
     HRESULT hr;
 
-    TRACE("(%p, %s, %p)\n", node, wine_dbgstr_a((char const*)query), out);
+    TRACE("(%p, %s, %p)\n", node, debugstr_a((char const*)query), out);
 
     *out = NULL;
     if (!This || !ctxt || !query)

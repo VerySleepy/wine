@@ -35,6 +35,9 @@
 
 #include "wine/test.h"
 
+/* PROCESS_ALL_ACCESS in Vista+ PSDKs is incompatible with older Windows versions */
+#define PROCESS_ALL_ACCESS_NT4 (PROCESS_ALL_ACCESS & ~0xf000)
+
 #define expect_eq_d(expected, actual) \
     do { \
       int value = (actual); \
@@ -183,12 +186,12 @@ static WCHAR*   decodeW(const char* str)
  *      exename:        executable without the path
  * function-pointers, which are not implemented in all windows versions
  */
-static int     init(void)
+static BOOL init(void)
 {
     char *p;
 
     myARGC = winetest_get_mainargs( &myARGV );
-    if (!GetCurrentDirectoryA(sizeof(base), base)) return 0;
+    if (!GetCurrentDirectoryA(sizeof(base), base)) return FALSE;
     strcpy(selfname, myARGV[0]);
 
     /* Strip the path of selfname */
@@ -206,7 +209,7 @@ static int     init(void)
     pQueryFullProcessImageNameA = (void *) GetProcAddress(hkernel32, "QueryFullProcessImageNameA");
     pQueryFullProcessImageNameW = (void *) GetProcAddress(hkernel32, "QueryFullProcessImageNameW");
     pK32GetProcessImageFileNameA = (void *) GetProcAddress(hkernel32, "K32GetProcessImageFileNameA");
-    return 1;
+    return TRUE;
 }
 
 /******************************************************************
@@ -298,18 +301,6 @@ static void     doChild(const char* file, const char* option)
         childPrintf(hFile, "argvA%d=%s\n", i, encodeA(myARGV[i]));
     }
     childPrintf(hFile, "CommandLineA=%s\n", encodeA(GetCommandLineA()));
-
-#if 0
-    int                 argcW;
-    WCHAR**             argvW;
-
-    /* this is part of shell32... and should be tested there */
-    argvW = CommandLineToArgvW(GetCommandLineW(), &argcW);
-    for (i = 0; i < argcW; i++)
-    {
-        childPrintf(hFile, "argvW%d=%s\n", i, encodeW(argvW[i]));
-    }
-#endif
     childPrintf(hFile, "CommandLineW=%s\n\n", encodeW(GetCommandLineW()));
 
     /* output of environment (Ansi) */
@@ -1534,7 +1525,7 @@ static void test_OpenProcess(void)
     }
 
     /* without PROCESS_VM_OPERATION */
-    hproc = OpenProcess(PROCESS_ALL_ACCESS & ~PROCESS_VM_OPERATION, FALSE, GetCurrentProcessId());
+    hproc = OpenProcess(PROCESS_ALL_ACCESS_NT4 & ~PROCESS_VM_OPERATION, FALSE, GetCurrentProcessId());
     ok(hproc != NULL, "OpenProcess error %d\n", GetLastError());
 
     SetLastError(0xdeadbeef);
@@ -1624,8 +1615,8 @@ static void test_GetProcessVersion(void)
     si.cb = sizeof(si);
     si.dwFlags = STARTF_USESHOWWINDOW;
     si.wShowWindow = SW_HIDE;
-    ret = CreateProcessA(NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
     SetLastError(0xdeadbeef);
+    ret = CreateProcessA(NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
     ok(ret, "CreateProcess error %u\n", GetLastError());
 
     SetLastError(0xdeadbeef);
@@ -1677,7 +1668,7 @@ static void test_GetProcessImageFileNameA(void)
         length = sizeof(image);
         expect_eq_d(TRUE, pQueryFullProcessImageNameA(GetCurrentProcess(), PROCESS_NAME_NATIVE, image, &length));
         expect_eq_d(length, lstrlenA(image));
-        ok(lstrcmpi(process, image) == 0, "expected '%s' to be equal to '%s'\n", process, image);
+        ok(lstrcmpiA(process, image) == 0, "expected '%s' to be equal to '%s'\n", process, image);
     }
 }
 
@@ -1703,7 +1694,7 @@ static void test_QueryFullProcessImageNameA(void)
     expect_eq_d(TRUE, pQueryFullProcessImageNameA(GetCurrentProcess(), 0, buf, &length));
     expect_eq_d(length, lstrlenA(buf));
     ok((buf[0] == '\\' && buf[1] == '\\') ||
-       lstrcmpi(buf, module) == 0, "expected %s to match %s\n", buf, module);
+       lstrcmpiA(buf, module) == 0, "expected %s to match %s\n", buf, module);
 
     /*  when the buffer is too small
      *  - function fail with error ERROR_INSUFFICIENT_BUFFER
@@ -1727,8 +1718,8 @@ static void test_QueryFullProcessImageNameA(void)
     expect_eq_s(INIT_STR, buf);
 
     /* this is a difference between the ascii and the unicode version
-     * the unicode version crashes when the size is big enough to hold the result
-     * ascii version through an error
+     * the unicode version crashes when the size is big enough to hold
+     * the result while the ascii version throws an error
      */
     size = 1024;
     expect_eq_d(FALSE, pQueryFullProcessImageNameA(GetCurrentProcess(), 0, NULL, &size));
@@ -1872,6 +1863,62 @@ static void test_Handles(void)
     SetStdHandle( STD_ERROR_HANDLE, handle );
 }
 
+static void test_IsWow64Process(void)
+{
+    PROCESS_INFORMATION pi;
+    STARTUPINFOA si;
+    DWORD ret;
+    BOOL is_wow64;
+    static char cmdline[] = "C:\\Program Files\\Internet Explorer\\iexplore.exe";
+    static char cmdline_wow64[] = "C:\\Program Files (x86)\\Internet Explorer\\iexplore.exe";
+
+    if (!pIsWow64Process)
+    {
+        skip("IsWow64Process is not available\n");
+        return;
+    }
+
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    ret = CreateProcessA(NULL, cmdline_wow64, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+    if (ret)
+    {
+        trace("Created process %s\n", cmdline_wow64);
+        is_wow64 = FALSE;
+        ret = pIsWow64Process(pi.hProcess, &is_wow64);
+        ok(ret, "IsWow64Process failed.\n");
+        ok(is_wow64, "is_wow64 returned FALSE.\n");
+
+        ret = TerminateProcess(pi.hProcess, 0);
+        ok(ret, "TerminateProcess error\n");
+
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+    }
+
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    ret = CreateProcessA(NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+    if (ret)
+    {
+        trace("Created process %s\n", cmdline);
+        is_wow64 = TRUE;
+        ret = pIsWow64Process(pi.hProcess, &is_wow64);
+        ok(ret, "IsWow64Process failed.\n");
+        ok(!is_wow64, "is_wow64 returned TRUE.\n");
+
+        ret = TerminateProcess(pi.hProcess, 0);
+        ok(ret, "TerminateProcess error\n");
+
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+    }
+}
+
 static void test_SystemInfo(void)
 {
     SYSTEM_INFO si, nsi;
@@ -1938,9 +1985,143 @@ static void test_RegistryQuota(void)
        "Expected GetSystemRegistryQuota to return TRUE, got %d\n", ret);
 }
 
+static void test_TerminateProcess(void)
+{
+    static char cmdline[] = "winver.exe";
+    PROCESS_INFORMATION pi;
+    STARTUPINFOA si;
+    DWORD ret;
+    HANDLE dummy, thread;
+
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    SetLastError(0xdeadbeef);
+    ret = CreateProcessA(NULL, cmdline, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &si, &pi);
+    ok(ret, "CreateProcess error %u\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    thread = CreateRemoteThread(pi.hProcess, NULL, 0, (void *)0xdeadbeef, NULL, CREATE_SUSPENDED, &ret);
+    ok(thread != 0, "CreateRemoteThread error %d\n", GetLastError());
+
+    /* create a not closed thread handle duplicate in the target process */
+    SetLastError(0xdeadbeef);
+    ret = DuplicateHandle(GetCurrentProcess(), thread, pi.hProcess, &dummy,
+                          0, FALSE, DUPLICATE_SAME_ACCESS);
+    ok(ret, "DuplicateHandle error %u\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = TerminateThread(thread, 0);
+    ok(ret, "TerminateThread error %u\n", GetLastError());
+    CloseHandle(thread);
+
+    SetLastError(0xdeadbeef);
+    ret = TerminateProcess(pi.hProcess, 0);
+    ok(ret, "TerminateProcess error %u\n", GetLastError());
+
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+}
+
+static void test_DuplicateHandle(void)
+{
+    char path[MAX_PATH], file_name[MAX_PATH];
+    HANDLE f, fmin, out;
+    DWORD info;
+    BOOL r;
+
+    r = DuplicateHandle(GetCurrentProcess(), GetCurrentProcess(),
+            GetCurrentProcess(), &out, 0, FALSE,
+            DUPLICATE_SAME_ACCESS | DUPLICATE_CLOSE_SOURCE);
+    ok(r, "DuplicateHandle error %u\n", GetLastError());
+    r = GetHandleInformation(out, &info);
+    ok(r, "GetHandleInformation error %u\n", GetLastError());
+    ok(info == 0, "info = %x\n", info);
+    ok(out != GetCurrentProcess(), "out = GetCurrentProcess()\n");
+    CloseHandle(out);
+
+    r = DuplicateHandle(GetCurrentProcess(), GetCurrentProcess(),
+            GetCurrentProcess(), &out, 0, TRUE,
+            DUPLICATE_SAME_ACCESS | DUPLICATE_CLOSE_SOURCE);
+    ok(r, "DuplicateHandle error %u\n", GetLastError());
+    r = GetHandleInformation(out, &info);
+    ok(r, "GetHandleInformation error %u\n", GetLastError());
+    ok(info == HANDLE_FLAG_INHERIT, "info = %x\n", info);
+    ok(out != GetCurrentProcess(), "out = GetCurrentProcess()\n");
+    CloseHandle(out);
+
+    GetTempPathA(MAX_PATH, path);
+    GetTempFileNameA(path, "wt", 0, file_name);
+    f = CreateFileA(file_name, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, 0);
+    if (f == INVALID_HANDLE_VALUE)
+    {
+        ok(0, "could not create %s\n", file_name);
+        return;
+    }
+
+    r = DuplicateHandle(GetCurrentProcess(), f, GetCurrentProcess(), &out,
+            0, FALSE, DUPLICATE_SAME_ACCESS | DUPLICATE_CLOSE_SOURCE);
+    ok(r, "DuplicateHandle error %u\n", GetLastError());
+    ok(f == out, "f != out\n");
+    r = GetHandleInformation(out, &info);
+    ok(r, "GetHandleInformation error %u\n", GetLastError());
+    ok(info == 0, "info = %x\n", info);
+
+    r = DuplicateHandle(GetCurrentProcess(), f, GetCurrentProcess(), &out,
+            0, TRUE, DUPLICATE_SAME_ACCESS | DUPLICATE_CLOSE_SOURCE);
+    ok(r, "DuplicateHandle error %u\n", GetLastError());
+    ok(f == out, "f != out\n");
+    r = GetHandleInformation(out, &info);
+    ok(r, "GetHandleInformation error %u\n", GetLastError());
+    ok(info == HANDLE_FLAG_INHERIT, "info = %x\n", info);
+
+    r = SetHandleInformation(f, HANDLE_FLAG_PROTECT_FROM_CLOSE, HANDLE_FLAG_PROTECT_FROM_CLOSE);
+    ok(r, "SetHandleInformation error %u\n", GetLastError());
+    r = DuplicateHandle(GetCurrentProcess(), f, GetCurrentProcess(), &out,
+                0, TRUE, DUPLICATE_SAME_ACCESS | DUPLICATE_CLOSE_SOURCE);
+    ok(r, "DuplicateHandle error %u\n", GetLastError());
+    ok(f != out, "f == out\n");
+    r = GetHandleInformation(out, &info);
+    ok(r, "GetHandleInformation error %u\n", GetLastError());
+    ok(info == HANDLE_FLAG_INHERIT, "info = %x\n", info);
+    r = SetHandleInformation(f, HANDLE_FLAG_PROTECT_FROM_CLOSE, 0);
+    ok(r, "SetHandleInformation error %u\n", GetLastError());
+
+    /* Test if DuplicateHandle allocates first free handle */
+    if (f > out)
+    {
+        fmin = out;
+    }
+    else
+    {
+        fmin = f;
+        f = out;
+    }
+    CloseHandle(fmin);
+    r = DuplicateHandle(GetCurrentProcess(), f, GetCurrentProcess(), &out,
+            0, TRUE, DUPLICATE_SAME_ACCESS | DUPLICATE_CLOSE_SOURCE);
+    ok(r, "DuplicateHandle error %u\n", GetLastError());
+    ok(f == out, "f != out\n");
+    CloseHandle(out);
+    DeleteFileA(file_name);
+
+    f = CreateFileA("CONIN$", GENERIC_READ|GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, 0);
+    if (!is_console(f))
+    {
+        skip("DuplicateHandle on console handle\n");
+        CloseHandle(f);
+        return;
+    }
+
+    r = DuplicateHandle(GetCurrentProcess(), f, GetCurrentProcess(), &out,
+            0, FALSE, DUPLICATE_SAME_ACCESS | DUPLICATE_CLOSE_SOURCE);
+    ok(r, "DuplicateHandle error %u\n", GetLastError());
+    todo_wine ok(f != out, "f == out\n");
+    CloseHandle(out);
+}
+
 START_TEST(process)
 {
-    int b = init();
+    BOOL b = init();
     ok(b, "Basic init of CreateProcess test\n");
     if (!b) return;
 
@@ -1949,6 +2130,7 @@ START_TEST(process)
         doChild(myARGV[2], (myARGC == 3) ? NULL : myARGV[3]);
         return;
     }
+    test_TerminateProcess();
     test_Startup();
     test_CommandLine();
     test_Directory();
@@ -1963,8 +2145,10 @@ START_TEST(process)
     test_QueryFullProcessImageNameA();
     test_QueryFullProcessImageNameW();
     test_Handles();
+    test_IsWow64Process();
     test_SystemInfo();
     test_RegistryQuota();
+    test_DuplicateHandle();
     /* things that can be tested:
      *  lookup:         check the way program to be executed is searched
      *  handles:        check the handle inheritance stuff (+sec options)

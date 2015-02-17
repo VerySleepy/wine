@@ -68,14 +68,227 @@ static HRESULT PROPVAR_ConvertFILETIME(PROPVARIANT *ppropvarDest,
     return E_FAIL;
 }
 
+static HRESULT PROPVAR_ConvertNumber(REFPROPVARIANT pv, int dest_bits,
+                                     BOOL dest_signed, LONGLONG *res)
+{
+    BOOL src_signed;
+
+    switch (pv->vt)
+    {
+    case VT_I1:
+        src_signed = TRUE;
+        *res = pv->u.cVal;
+        break;
+    case VT_UI1:
+        src_signed = FALSE;
+        *res = pv->u.bVal;
+        break;
+    case VT_I2:
+        src_signed = TRUE;
+        *res = pv->u.iVal;
+        break;
+    case VT_UI2:
+        src_signed = FALSE;
+        *res = pv->u.uiVal;
+        break;
+    case VT_I4:
+        src_signed = TRUE;
+        *res = pv->u.lVal;
+        break;
+    case VT_UI4:
+        src_signed = FALSE;
+        *res = pv->u.ulVal;
+        break;
+    case VT_I8:
+        src_signed = TRUE;
+        *res = pv->u.hVal.QuadPart;
+        break;
+    case VT_UI8:
+        src_signed = FALSE;
+        *res = pv->u.uhVal.QuadPart;
+        break;
+    case VT_EMPTY:
+        src_signed = FALSE;
+        *res = 0;
+        break;
+    default:
+        FIXME("unhandled vt %d\n", pv->vt);
+        return E_NOTIMPL;
+    }
+
+    if (*res < 0 && src_signed != dest_signed)
+        return HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW);
+
+    if (dest_bits < 64)
+    {
+        if (dest_signed)
+        {
+            if (*res >= ((LONGLONG)1 << (dest_bits-1)) ||
+                *res < ((LONGLONG)-1 << (dest_bits-1)))
+                return HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW);
+        }
+        else
+        {
+            if ((ULONGLONG)(*res) >= ((ULONGLONG)1 << dest_bits))
+                return HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW);
+        }
+    }
+
+    return S_OK;
+}
+
+HRESULT WINAPI PropVariantToInt16(REFPROPVARIANT propvarIn, SHORT *ret)
+{
+    LONGLONG res;
+    HRESULT hr;
+
+    TRACE("%p,%p\n", propvarIn, ret);
+
+    hr = PROPVAR_ConvertNumber(propvarIn, 16, TRUE, &res);
+    if (SUCCEEDED(hr)) *ret = (SHORT)res;
+    return hr;
+}
+
+HRESULT WINAPI PropVariantToInt32(REFPROPVARIANT propvarIn, LONG *ret)
+{
+    LONGLONG res;
+    HRESULT hr;
+
+    TRACE("%p,%p\n", propvarIn, ret);
+
+    hr = PROPVAR_ConvertNumber(propvarIn, 32, TRUE, &res);
+    if (SUCCEEDED(hr)) *ret = (LONG)res;
+    return hr;
+}
+
+HRESULT WINAPI PropVariantToInt64(REFPROPVARIANT propvarIn, LONGLONG *ret)
+{
+    LONGLONG res;
+    HRESULT hr;
+
+    TRACE("%p,%p\n", propvarIn, ret);
+
+    hr = PROPVAR_ConvertNumber(propvarIn, 64, TRUE, &res);
+    if (SUCCEEDED(hr)) *ret = (LONGLONG)res;
+    return hr;
+}
+
+HRESULT WINAPI PropVariantToUInt16(REFPROPVARIANT propvarIn, USHORT *ret)
+{
+    LONGLONG res;
+    HRESULT hr;
+
+    TRACE("%p,%p\n", propvarIn, ret);
+
+    hr = PROPVAR_ConvertNumber(propvarIn, 16, FALSE, &res);
+    if (SUCCEEDED(hr)) *ret = (USHORT)res;
+    return hr;
+}
+
+HRESULT WINAPI PropVariantToUInt32(REFPROPVARIANT propvarIn, ULONG *ret)
+{
+    LONGLONG res;
+    HRESULT hr;
+
+    TRACE("%p,%p\n", propvarIn, ret);
+
+    hr = PROPVAR_ConvertNumber(propvarIn, 32, FALSE, &res);
+    if (SUCCEEDED(hr)) *ret = (ULONG)res;
+    return hr;
+}
+
+HRESULT WINAPI PropVariantToUInt64(REFPROPVARIANT propvarIn, ULONGLONG *ret)
+{
+    LONGLONG res;
+    HRESULT hr;
+
+    TRACE("%p,%p\n", propvarIn, ret);
+
+    hr = PROPVAR_ConvertNumber(propvarIn, 64, FALSE, &res);
+    if (SUCCEEDED(hr)) *ret = (ULONGLONG)res;
+    return hr;
+}
+
 /******************************************************************
  *  PropVariantChangeType   (PROPSYS.@)
  */
 HRESULT WINAPI PropVariantChangeType(PROPVARIANT *ppropvarDest, REFPROPVARIANT propvarSrc,
                                      PROPVAR_CHANGE_FLAGS flags, VARTYPE vt)
 {
+    HRESULT hr;
+
     FIXME("(%p, %p, %d, %d, %d): semi-stub!\n", ppropvarDest, propvarSrc,
           propvarSrc->vt, flags, vt);
+
+    switch (vt)
+    {
+    case VT_I2:
+    {
+        SHORT res;
+        hr = PropVariantToInt16(propvarSrc, &res);
+        if (SUCCEEDED(hr))
+        {
+            ppropvarDest->vt = VT_I2;
+            ppropvarDest->u.iVal = res;
+        }
+        return hr;
+    }
+    case VT_UI2:
+    {
+        USHORT res;
+        hr = PropVariantToUInt16(propvarSrc, &res);
+        if (SUCCEEDED(hr))
+        {
+            ppropvarDest->vt = VT_UI2;
+            ppropvarDest->u.uiVal = res;
+        }
+        return hr;
+    }
+    case VT_I4:
+    {
+        LONG res;
+        hr = PropVariantToInt32(propvarSrc, &res);
+        if (SUCCEEDED(hr))
+        {
+            ppropvarDest->vt = VT_I4;
+            ppropvarDest->u.lVal = res;
+        }
+        return hr;
+    }
+    case VT_UI4:
+    {
+        ULONG res;
+        hr = PropVariantToUInt32(propvarSrc, &res);
+        if (SUCCEEDED(hr))
+        {
+            ppropvarDest->vt = VT_UI4;
+            ppropvarDest->u.ulVal = res;
+        }
+        return hr;
+    }
+    case VT_I8:
+    {
+        LONGLONG res;
+        hr = PropVariantToInt64(propvarSrc, &res);
+        if (SUCCEEDED(hr))
+        {
+            ppropvarDest->vt = VT_I8;
+            ppropvarDest->u.hVal.QuadPart = res;
+        }
+        return hr;
+    }
+    case VT_UI8:
+    {
+        ULONGLONG res;
+        hr = PropVariantToUInt64(propvarSrc, &res);
+        if (SUCCEEDED(hr))
+        {
+            ppropvarDest->vt = VT_UI8;
+            ppropvarDest->u.uhVal.QuadPart = res;
+        }
+        return hr;
+    }
+    }
 
     switch (propvarSrc->vt)
     {
@@ -282,4 +495,105 @@ HRESULT WINAPI VariantToGUID(const VARIANT *pvar, GUID *guid)
         FIXME("unsupported vt: %d\n", V_VT(pvar));
         return E_NOTIMPL;
     }
+}
+
+static BOOL isemptyornull(const PROPVARIANT *propvar)
+{
+    if (propvar->vt == VT_EMPTY || propvar->vt == VT_NULL)
+        return TRUE;
+    if ((propvar->vt & VT_ARRAY) == VT_ARRAY)
+    {
+        int i;
+        for (i=0; i<propvar->u.parray->cDims; i++)
+        {
+            if (propvar->u.parray->rgsabound[i].cElements != 0)
+                break;
+        }
+        return i == propvar->u.parray->cDims;
+    }
+    /* FIXME: vectors, byrefs, errors? */
+    return FALSE;
+}
+
+INT WINAPI PropVariantCompareEx(REFPROPVARIANT propvar1, REFPROPVARIANT propvar2,
+    PROPVAR_COMPARE_UNIT unit, PROPVAR_COMPARE_FLAGS flags)
+{
+    const PROPVARIANT *propvar2_converted;
+    PROPVARIANT propvar2_static;
+    HRESULT hr;
+    INT res=-1;
+
+    TRACE("%p,%p,%x,%x\n", propvar1, propvar2, unit, flags);
+
+    if (isemptyornull(propvar1))
+    {
+        if (isemptyornull(propvar2))
+            return 0;
+        return (flags & PVCF_TREATEMPTYASGREATERTHAN) ? 1 : -1;
+    }
+
+    if (isemptyornull(propvar2))
+        return (flags & PVCF_TREATEMPTYASGREATERTHAN) ? -1 : 1;
+
+    if (propvar1->vt != propvar2->vt)
+    {
+        hr = PropVariantChangeType(&propvar2_static, propvar2, 0, propvar1->vt);
+
+        if (FAILED(hr))
+            return -1;
+
+        propvar2_converted = &propvar2_static;
+    }
+    else
+        propvar2_converted = propvar2;
+
+#define CMP_INT_VALUE(var) do { \
+    if (propvar1->u.var > propvar2_converted->u.var) \
+        res = 1; \
+    else if (propvar1->u.var < propvar2_converted->u.var) \
+        res = -1; \
+    else \
+        res = 0; \
+    } while (0)
+
+    switch (propvar1->vt)
+    {
+    case VT_I1:
+        CMP_INT_VALUE(cVal);
+        break;
+    case VT_UI1:
+        CMP_INT_VALUE(bVal);
+        break;
+    case VT_I2:
+        CMP_INT_VALUE(iVal);
+        break;
+    case VT_UI2:
+        CMP_INT_VALUE(uiVal);
+        break;
+    case VT_I4:
+        CMP_INT_VALUE(lVal);
+        break;
+    case VT_UI4:
+        CMP_INT_VALUE(uiVal);
+        break;
+    case VT_I8:
+        CMP_INT_VALUE(hVal.QuadPart);
+        break;
+    case VT_UI8:
+        CMP_INT_VALUE(uhVal.QuadPart);
+        break;
+    case VT_BSTR:
+        /* FIXME: Use string flags. */
+        res = lstrcmpW(propvar1->u.bstrVal, propvar2->u.bstrVal);
+        break;
+    default:
+        FIXME("vartype %d not handled\n", propvar1->vt);
+        res = -1;
+        break;
+    }
+
+    if (propvar2_converted == &propvar2_static)
+        PropVariantClear(&propvar2_static);
+
+    return res;
 }

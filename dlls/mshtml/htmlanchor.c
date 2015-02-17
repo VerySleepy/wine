@@ -18,6 +18,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <assert.h>
 
 #define COBJMACROS
 
@@ -28,6 +29,7 @@
 
 #include "mshtml_private.h"
 #include "htmlevent.h"
+#include "binding.h"
 
 #include "wine/debug.h"
 
@@ -41,25 +43,109 @@ typedef struct {
     nsIDOMHTMLAnchorElement *nsanchor;
 } HTMLAnchorElement;
 
+static HRESULT navigate_anchor_window(HTMLAnchorElement *This, const WCHAR *target)
+{
+    nsAString href_str;
+    IUri *uri;
+    nsresult nsres;
+    HRESULT hres;
+
+    nsAString_Init(&href_str, NULL);
+    nsres = nsIDOMHTMLAnchorElement_GetHref(This->nsanchor, &href_str);
+    if(NS_SUCCEEDED(nsres)) {
+        const PRUnichar *href;
+
+        nsAString_GetData(&href_str, &href);
+        hres = create_relative_uri(This->element.node.doc->basedoc.window, href, &uri);
+    }else {
+        ERR("Could not get anchor href: %08x\n", nsres);
+        hres = E_FAIL;
+    }
+    nsAString_Finish(&href_str);
+    if(FAILED(hres))
+        return hres;
+
+    hres = navigate_new_window(This->element.node.doc->basedoc.window, uri, target, NULL, NULL);
+    IUri_Release(uri);
+    return hres;
+}
+
+HTMLOuterWindow *get_target_window(HTMLOuterWindow *window, nsAString *target_str, BOOL *use_new_window)
+{
+    HTMLOuterWindow *top_window, *ret_window;
+    const PRUnichar *target;
+    HRESULT hres;
+
+    static const WCHAR _parentW[] = {'_','p','a','r','e','n','t',0};
+    static const WCHAR _selfW[] = {'_','s','e','l','f',0};
+    static const WCHAR _topW[] = {'_','t','o','p',0};
+
+    *use_new_window = FALSE;
+
+    nsAString_GetData(target_str, &target);
+    TRACE("%s\n", debugstr_w(target));
+
+    if(!*target || !strcmpiW(target, _selfW)) {
+        IHTMLWindow2_AddRef(&window->base.IHTMLWindow2_iface);
+        return window;
+    }
+
+    if(!strcmpiW(target, _topW)) {
+        get_top_window(window, &top_window);
+        IHTMLWindow2_AddRef(&top_window->base.IHTMLWindow2_iface);
+        return top_window;
+    }
+
+    if(!strcmpiW(target, _parentW)) {
+        if(!window->parent) {
+            WARN("Window has no parent, treat as self\n");
+            IHTMLWindow2_AddRef(&window->base.IHTMLWindow2_iface);
+            return window;
+        }
+
+        IHTMLWindow2_AddRef(&window->parent->base.IHTMLWindow2_iface);
+        return window->parent;
+    }
+
+    get_top_window(window, &top_window);
+
+    hres = get_frame_by_name(top_window, target, TRUE, &ret_window);
+    if(FAILED(hres) || !ret_window) {
+        *use_new_window = TRUE;
+        return NULL;
+    }
+
+    IHTMLWindow2_AddRef(&ret_window->base.IHTMLWindow2_iface);
+    return ret_window;
+}
+
 static HRESULT navigate_anchor(HTMLAnchorElement *This)
 {
     nsAString href_str, target_str;
+    HTMLOuterWindow *window;
+    BOOL use_new_window;
     nsresult nsres;
     HRESULT hres = E_FAIL;
 
+
     nsAString_Init(&target_str, NULL);
     nsres = nsIDOMHTMLAnchorElement_GetTarget(This->nsanchor, &target_str);
-    if(NS_SUCCEEDED(nsres)) {
+    if(NS_FAILED(nsres))
+        return E_FAIL;
+
+    window = get_target_window(This->element.node.doc->basedoc.window, &target_str, &use_new_window);
+    if(!window && use_new_window) {
         const PRUnichar *target;
 
         nsAString_GetData(&target_str, &target);
-        if(*target) {
-            FIXME("Navigating to target %s is not implemented\n", debugstr_w(target));
-            nsAString_Finish(&target_str);
-            return S_OK;
-        }
+        hres = navigate_anchor_window(This, target);
+        nsAString_Finish(&target_str);
+        return hres;
     }
+
     nsAString_Finish(&target_str);
+    if(!window)
+        return S_OK;
 
     nsAString_Init(&href_str, NULL);
     nsres = nsIDOMHTMLAnchorElement_GetHref(This->nsanchor, &href_str);
@@ -68,14 +154,14 @@ static HRESULT navigate_anchor(HTMLAnchorElement *This)
 
         nsAString_GetData(&href_str, &href);
         if(*href) {
-            HTMLWindow *window = This->element.node.doc->basedoc.window;
-            hres = navigate_url(window, href, window->url);
+            hres = navigate_url(window, href, window->uri_nofrag, BINDING_NAVIGATED);
         }else {
             TRACE("empty href\n");
             hres = S_OK;
         }
     }
     nsAString_Finish(&href_str);
+    IHTMLWindow2_Release(&window->base.IHTMLWindow2_iface);
     return hres;
 }
 
@@ -214,15 +300,31 @@ static HRESULT WINAPI HTMLAnchorElement_get_target(IHTMLAnchorElement *iface, BS
 static HRESULT WINAPI HTMLAnchorElement_put_rel(IHTMLAnchorElement *iface, BSTR v)
 {
     HTMLAnchorElement *This = impl_from_IHTMLAnchorElement(iface);
-    FIXME("(%p)->(%s)\n", This, debugstr_w(v));
-    return E_NOTIMPL;
+    nsAString nsstr;
+    nsresult nsres;
+
+    TRACE("(%p)->(%s)\n", This, debugstr_w(v));
+
+    nsAString_InitDepend(&nsstr, v);
+    nsres = nsIDOMHTMLAnchorElement_SetRel(This->nsanchor, &nsstr);
+    nsAString_Finish(&nsstr);
+    if(NS_FAILED(nsres))
+        return E_FAIL;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLAnchorElement_get_rel(IHTMLAnchorElement *iface, BSTR *p)
 {
     HTMLAnchorElement *This = impl_from_IHTMLAnchorElement(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    nsAString nsstr;
+    nsresult nsres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    nsAString_Init(&nsstr, NULL);
+    nsres = nsIDOMHTMLAnchorElement_GetRel(This->nsanchor, &nsstr);
+    return return_nsstr(nsres, &nsstr, p);
 }
 
 static HRESULT WINAPI HTMLAnchorElement_put_rev(IHTMLAnchorElement *iface, BSTR v)
@@ -270,15 +372,32 @@ static HRESULT WINAPI HTMLAnchorElement_get_Methods(IHTMLAnchorElement *iface, B
 static HRESULT WINAPI HTMLAnchorElement_put_name(IHTMLAnchorElement *iface, BSTR v)
 {
     HTMLAnchorElement *This = impl_from_IHTMLAnchorElement(iface);
-    FIXME("(%p)->(%s)\n", This, debugstr_w(v));
-    return E_NOTIMPL;
+    nsAString nsstr;
+    nsresult nsres;
+
+    TRACE("(%p)->(%s)\n", This, debugstr_w(v));
+
+    nsAString_InitDepend(&nsstr, v);
+    nsres = nsIDOMHTMLAnchorElement_SetName(This->nsanchor, &nsstr);
+    nsAString_Finish(&nsstr);
+    if(NS_FAILED(nsres))
+        return E_FAIL;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLAnchorElement_get_name(IHTMLAnchorElement *iface, BSTR *p)
 {
     HTMLAnchorElement *This = impl_from_IHTMLAnchorElement(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    nsAString name_str;
+    nsresult nsres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    nsAString_Init(&name_str, NULL);
+    nsres = nsIDOMHTMLAnchorElement_GetName(This->nsanchor, &name_str);
+
+    return return_nsstr(nsres, &name_str, p);
 }
 
 static HRESULT WINAPI HTMLAnchorElement_put_host(IHTMLAnchorElement *iface, BSTR v)
@@ -305,8 +424,14 @@ static HRESULT WINAPI HTMLAnchorElement_put_hostname(IHTMLAnchorElement *iface, 
 static HRESULT WINAPI HTMLAnchorElement_get_hostname(IHTMLAnchorElement *iface, BSTR *p)
 {
     HTMLAnchorElement *This = impl_from_IHTMLAnchorElement(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    nsAString hostname_str;
+    nsresult nsres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    nsAString_Init(&hostname_str, NULL);
+    nsres = nsIDOMHTMLAnchorElement_GetHostname(This->nsanchor, &hostname_str);
+    return return_nsstr(nsres, &hostname_str, p);
 }
 
 static HRESULT WINAPI HTMLAnchorElement_put_pathname(IHTMLAnchorElement *iface, BSTR v)
@@ -354,15 +479,31 @@ static HRESULT WINAPI HTMLAnchorElement_get_protocol(IHTMLAnchorElement *iface, 
 static HRESULT WINAPI HTMLAnchorElement_put_search(IHTMLAnchorElement *iface, BSTR v)
 {
     HTMLAnchorElement *This = impl_from_IHTMLAnchorElement(iface);
-    FIXME("(%p)->(%p)\n", This, debugstr_w(v));
-    return E_NOTIMPL;
+    nsAString nsstr;
+    nsresult nsres;
+
+    TRACE("(%p)->(%s)\n", This, debugstr_w(v));
+
+    nsAString_InitDepend(&nsstr, v);
+    nsres = nsIDOMHTMLAnchorElement_SetSearch(This->nsanchor, &nsstr);
+    nsAString_Finish(&nsstr);
+    if(NS_FAILED(nsres))
+        return E_FAIL;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLAnchorElement_get_search(IHTMLAnchorElement *iface, BSTR *p)
 {
     HTMLAnchorElement *This = impl_from_IHTMLAnchorElement(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    nsAString search_str;
+    nsresult nsres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    nsAString_Init(&search_str, NULL);
+    nsres = nsIDOMHTMLAnchorElement_GetSearch(This->nsanchor, &search_str);
+    return return_nsstr(nsres, &search_str, p);
 }
 
 static HRESULT WINAPI HTMLAnchorElement_put_hash(IHTMLAnchorElement *iface, BSTR v)
@@ -375,8 +516,14 @@ static HRESULT WINAPI HTMLAnchorElement_put_hash(IHTMLAnchorElement *iface, BSTR
 static HRESULT WINAPI HTMLAnchorElement_get_hash(IHTMLAnchorElement *iface, BSTR *p)
 {
     HTMLAnchorElement *This = impl_from_IHTMLAnchorElement(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    nsAString hash_str;
+    nsresult nsres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    nsAString_Init(&hash_str, NULL);
+    nsres = nsIDOMHTMLAnchorElement_GetHash(This->nsanchor, &hash_str);
+    return return_nsstr(nsres, &hash_str, p);
 }
 
 static HRESULT WINAPI HTMLAnchorElement_put_onblur(IHTMLAnchorElement *iface, VARIANT v)
@@ -571,43 +718,84 @@ static HRESULT HTMLAnchorElement_QI(HTMLDOMNode *iface, REFIID riid, void **ppv)
     return HTMLElement_QI(&This->element.node, riid, ppv);
 }
 
-static void HTMLAnchorElement_destructor(HTMLDOMNode *iface)
-{
-    HTMLAnchorElement *This = impl_from_HTMLDOMNode(iface);
-
-    if(This->nsanchor)
-        nsIDOMHTMLAnchorElement_Release(This->nsanchor);
-
-    HTMLElement_destructor(&This->element.node);
-}
-
-static HRESULT HTMLAnchorElement_handle_event(HTMLDOMNode *iface, eventid_t eid, BOOL *prevent_default)
+static HRESULT HTMLAnchorElement_handle_event(HTMLDOMNode *iface, eventid_t eid, nsIDOMEvent *event, BOOL *prevent_default)
 {
     HTMLAnchorElement *This = impl_from_HTMLDOMNode(iface);
 
     if(eid == EVENTID_CLICK) {
+        nsIDOMMouseEvent *mouse_event;
+        INT16 button;
+        nsresult nsres;
+
         TRACE("CLICK\n");
-        *prevent_default = TRUE;
-        return navigate_anchor(This);
+
+        nsres = nsIDOMEvent_QueryInterface(event, &IID_nsIDOMMouseEvent, (void**)&mouse_event);
+        assert(nsres == NS_OK);
+
+        nsres = nsIDOMMouseEvent_GetButton(mouse_event, &button);
+        assert(nsres == NS_OK);
+
+        nsIDOMMouseEvent_Release(mouse_event);
+
+        switch(button) {
+        case 0:
+            *prevent_default = TRUE;
+            return navigate_anchor(This);
+        case 1:
+            *prevent_default = TRUE;
+            return navigate_anchor_window(This, NULL);
+        default:
+            *prevent_default = FALSE;
+            return S_OK;
+        }
     }
 
-    return S_OK;
+    return HTMLElement_handle_event(&This->element.node, eid, event, prevent_default);
+}
+
+static void HTMLAnchorElement_traverse(HTMLDOMNode *iface, nsCycleCollectionTraversalCallback *cb)
+{
+    HTMLAnchorElement *This = impl_from_HTMLDOMNode(iface);
+
+    if(This->nsanchor)
+        note_cc_edge((nsISupports*)This->nsanchor, "This->nsanchor", cb);
+}
+
+static void HTMLAnchorElement_unlink(HTMLDOMNode *iface)
+{
+    HTMLAnchorElement *This = impl_from_HTMLDOMNode(iface);
+
+    if(This->nsanchor) {
+        nsIDOMHTMLAnchorElement *nsanchor = This->nsanchor;
+
+        This->nsanchor = NULL;
+        nsIDOMHTMLAnchorElement_Release(nsanchor);
+    }
 }
 
 static const NodeImplVtbl HTMLAnchorElementImplVtbl = {
     HTMLAnchorElement_QI,
-    HTMLAnchorElement_destructor,
+    HTMLElement_destructor,
+    HTMLElement_cpc,
     HTMLElement_clone,
+    HTMLAnchorElement_handle_event,
     HTMLElement_get_attr_col,
     NULL,
     NULL,
-    HTMLAnchorElement_handle_event
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    HTMLAnchorElement_traverse,
+    HTMLAnchorElement_unlink
 };
 
 static const tid_t HTMLAnchorElement_iface_tids[] = {
     IHTMLAnchorElement_tid,
     HTMLELEMENT_TIDS,
-    IHTMLTextContainer_tid,
     IHTMLUniqueName_tid,
     0
 };
@@ -631,14 +819,10 @@ HRESULT HTMLAnchorElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nsele
     ret->IHTMLAnchorElement_iface.lpVtbl = &HTMLAnchorElementVtbl;
     ret->element.node.vtbl = &HTMLAnchorElementImplVtbl;
 
-    nsres = nsIDOMHTMLElement_QueryInterface(nselem, &IID_nsIDOMHTMLAnchorElement, (void**)&ret->nsanchor);
-    if(NS_FAILED(nsres)) {
-        ERR("Could not get nsIDOMHTMLAnchorElement iface: %08x\n", nsres);
-        heap_free(ret);
-        return E_FAIL;
-    }
-
     HTMLElement_Init(&ret->element, doc, nselem, &HTMLAnchorElement_dispex);
+
+    nsres = nsIDOMHTMLElement_QueryInterface(nselem, &IID_nsIDOMHTMLAnchorElement, (void**)&ret->nsanchor);
+    assert(nsres == NS_OK);
 
     *elem = &ret->element;
     return S_OK;

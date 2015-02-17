@@ -603,20 +603,20 @@ typedef struct _CMSG_SIGNER_ENCODE_INFO_WITH_CMS
     CERT_ID                    SignerId;
     CRYPT_ALGORITHM_IDENTIFIER HashEncryptionAlgorithm;
     void                      *pvHashEncryptionAuxInfo;
-} CMSG_SIGNER_ENCODE_INFO_WITH_CMS, *PCMSG_SIGNER_ENCODE_INFO_WITH_CMS;
+} CMSG_SIGNER_ENCODE_INFO_WITH_CMS;
 
 typedef struct _CMSG_SIGNED_ENCODE_INFO_WITH_CMS
 {
     DWORD                             cbSize;
     DWORD                             cSigners;
-    PCMSG_SIGNER_ENCODE_INFO_WITH_CMS rgSigners;
+    CMSG_SIGNER_ENCODE_INFO_WITH_CMS *rgSigners;
     DWORD                             cCertEncoded;
     PCERT_BLOB                        rgCertEncoded;
     DWORD                             cCrlEncoded;
     PCRL_BLOB                         rgCrlEncoded;
     DWORD                             cAttrCertEncoded;
     PCERT_BLOB                        rgAttrCertEncoded;
-} CMSG_SIGNED_ENCODE_INFO_WITH_CMS, *PCMSG_SIGNED_ENCODE_INFO_WITH_CMS;
+} CMSG_SIGNED_ENCODE_INFO_WITH_CMS;
 
 static BOOL CRYPT_IsValidSigner(const CMSG_SIGNER_ENCODE_INFO_WITH_CMS *signer)
 {
@@ -1450,6 +1450,7 @@ static HCRYPTMSG CSignedEncodeMsg_Open(DWORD dwFlags,
         if (!ret)
         {
             CSignedEncodeMsg_Close(msg);
+            CryptMemFree(msg);
             msg = NULL;
         }
     }
@@ -1473,7 +1474,7 @@ typedef struct _CMSG_ENVELOPED_ENCODE_INFO_WITH_CMS
     PCERT_BLOB                  rgAttrCertEncoded;
     DWORD                       cUnprotectedAttr;
     PCRYPT_ATTRIBUTE            rgUnprotectedAttr;
-} CMSG_ENVELOPED_ENCODE_INFO_WITH_CMS, *PCMSG_ENVELOPED_ENCODE_INFO_WITH_CMS;
+} CMSG_ENVELOPED_ENCODE_INFO_WITH_CMS;
 
 typedef struct _CEnvelopedEncodeMsg
 {
@@ -1809,7 +1810,12 @@ static BOOL CEnvelopedEncodeMsg_GetParam(HCRYPTMSG hCryptMsg, DWORD dwParamType,
             char oid_rsa_data[] = szOID_RSA_data;
             CRYPT_ENVELOPED_DATA envelopedData = {
              CMSG_ENVELOPED_DATA_PKCS_1_5_VERSION, msg->cRecipientInfo,
-             msg->recipientInfo, { oid_rsa_data, msg->algo, msg->data }
+             msg->recipientInfo, { oid_rsa_data, {
+               msg->algo.pszObjId,
+               { msg->algo.Parameters.cbData, msg->algo.Parameters.pbData }
+              },
+              { msg->data.cbData, msg->data.pbData }
+             }
             };
 
             ret = CRYPT_AsnEncodePKCSEnvelopedData(&envelopedData, pvData,
@@ -2065,7 +2071,7 @@ typedef struct _CDecodeMsg
     } u;
     CRYPT_DATA_BLOB        msg_data;
     CRYPT_DATA_BLOB        detached_data;
-    PCONTEXT_PROPERTY_LIST properties;
+    CONTEXT_PROPERTY_LIST *properties;
 } CDecodeMsg;
 
 static void CDecodeMsg_Close(HCRYPTMSG hCryptMsg)
@@ -2392,16 +2398,16 @@ static BOOL CDecodeMsg_FinalizeSignedContent(CDecodeMsg *msg,
              !strcmp(msg->u.signed_data.info->content.pszObjId,
              szOID_RSA_data))
             {
-                CRYPT_DATA_BLOB *blob;
+                CRYPT_DATA_BLOB *rsa_blob;
 
                 ret = CryptDecodeObjectEx(X509_ASN_ENCODING,
                  X509_OCTET_STRING, content->pbData, content->cbData,
-                 CRYPT_DECODE_ALLOC_FLAG, NULL, &blob, &size);
+                 CRYPT_DECODE_ALLOC_FLAG, NULL, &rsa_blob, &size);
                 if (ret)
                 {
                     ret = CSignedMsgData_Update(&msg->u.signed_data,
-                     blob->pbData, blob->cbData, TRUE, Verify);
-                    LocalFree(blob);
+                     rsa_blob->pbData, rsa_blob->cbData, TRUE, Verify);
+                    LocalFree(rsa_blob);
                 }
             }
             else

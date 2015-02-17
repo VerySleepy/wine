@@ -78,6 +78,19 @@ static HRESULT __GetMoniker(HlinkImpl* This, IMoniker** moniker,
     if (ref_type == HLINKGETREF_DEFAULT)
         ref_type = HLINKGETREF_RELATIVE;
 
+    if (This->Moniker)
+    {
+        DWORD mktype = MKSYS_NONE;
+
+        hres = IMoniker_IsSystemMoniker(This->Moniker, &mktype);
+        if (hres == S_OK && mktype != MKSYS_NONE)
+        {
+            *moniker = This->Moniker;
+            IMoniker_AddRef(*moniker);
+            return S_OK;
+        }
+    }
+
     if (ref_type == HLINKGETREF_ABSOLUTE && This->Site)
     {
         IMoniker *hls_moniker;
@@ -217,9 +230,12 @@ static HRESULT WINAPI IHlink_fnSetMonikerReference( IHlink* iface,
         This->Moniker = pmkTarget;
         if (This->Moniker)
         {
+            IBindCtx *pbc;
             LPOLESTR display_name;
             IMoniker_AddRef(This->Moniker);
-            IMoniker_GetDisplayName(This->Moniker, NULL, NULL, &display_name);
+            CreateBindCtx( 0, &pbc);
+            IMoniker_GetDisplayName(This->Moniker, pbc, NULL, &display_name);
+            IBindCtx_Release(pbc);
             This->absolute = display_name && strchrW(display_name, ':');
             CoTaskMemFree(display_name);
         }
@@ -471,19 +487,23 @@ static HRESULT WINAPI IHlink_fnNavigate(IHlink* iface, DWORD grfHLNF, LPBC pbc,
     if (SUCCEEDED(r))
     {
         IBindCtx *bcxt;
-        IHlinkTarget *target = NULL;
+        IUnknown *unk = NULL;
+        IHlinkTarget *target;
 
         CreateBindCtx(0, &bcxt);
 
         RegisterBindStatusCallback(bcxt, pbsc, NULL, 0);
 
-        r = IMoniker_BindToObject(mon, bcxt, NULL, &IID_IHlinkTarget,
-                (LPVOID*)&target);
-        TRACE("IHlinkTarget returned 0x%x\n", r);
+        r = IMoniker_BindToObject(mon, bcxt, NULL, &IID_IUnknown, (void**)&unk);
+        if (r == S_OK)
+        {
+            r = IUnknown_QueryInterface(unk, &IID_IHlinkTarget, (void**)&target);
+            IUnknown_Release(unk);
+        }
         if (r == S_OK)
         {
             IHlinkTarget_SetBrowseContext(target, phbc);
-            IHlinkTarget_Navigate(target, grfHLNF, This->Location);
+            r = IHlinkTarget_Navigate(target, grfHLNF, This->Location);
             IHlinkTarget_Release(target);
         }
         else
@@ -512,7 +532,7 @@ static HRESULT WINAPI IHlink_fnNavigate(IHlink* iface, DWORD grfHLNF, LPBC pbc,
     return r;
 }
 
-static HRESULT WINAPI IHlink_fnSetAdditonalParams(IHlink* iface,
+static HRESULT WINAPI IHlink_fnSetAdditionalParams(IHlink* iface,
         LPCWSTR pwzAdditionalParams)
 {
     TRACE("Not implemented in native IHlink\n");
@@ -543,7 +563,7 @@ static const IHlinkVtbl hlvt =
     IHlink_fnGetTargetFrameName,
     IHlink_fnGetMiscStatus,
     IHlink_fnNavigate,
-    IHlink_fnSetAdditonalParams,
+    IHlink_fnSetAdditionalParams,
     IHlink_fnGetAdditionalParams
 };
 
@@ -781,7 +801,7 @@ static HRESULT WINAPI IPersistStream_fnLoad(IPersistStream* iface,
         r = OleLoadFromStream(pStm, &IID_IMoniker, (LPVOID*)&(This->Moniker));
         if (FAILED(r))
             goto end;
-        This->absolute = hdr[1] & HLINK_SAVE_MONIKER_IS_ABSOLUTE ? TRUE : FALSE;
+        This->absolute = (hdr[1] & HLINK_SAVE_MONIKER_IS_ABSOLUTE) != 0;
     }
 
     if (hdr[1] & HLINK_SAVE_LOCATION_PRESENT)

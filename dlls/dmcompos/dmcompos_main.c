@@ -20,6 +20,20 @@
 #include "config.h"
 #include "wine/port.h"
 
+#include <stdarg.h>
+
+#define COBJMACROS
+
+#include "windef.h"
+#include "winbase.h"
+#include "winnt.h"
+#include "wingdi.h"
+#include "winuser.h"
+#include "winreg.h"
+#include "objbase.h"
+#include "initguid.h"
+#include "dmusici.h"
+
 #include "dmcompos_private.h"
 #include "rpcproxy.h"
 
@@ -30,14 +44,14 @@ LONG DMCOMPOS_refCount = 0;
 
 typedef struct {
         IClassFactory IClassFactory_iface;
-        HRESULT WINAPI (*fnCreateInstance)(REFIID riid, void **ppv, IUnknown *pUnkOuter);
+        HRESULT WINAPI (*fnCreateInstance)(REFIID riid, void **ret_iface);
 } IClassFactoryImpl;
 
-static HRESULT WINAPI create_direct_music_template(REFIID riid, void **ppv, IUnknown *pUnkOuter)
+static HRESULT WINAPI create_direct_music_template(REFIID riid, void **ret_iface)
 {
-        FIXME("(%p, %s, %p) stub\n", pUnkOuter, debugstr_dmguid(riid), ppv);
+        FIXME("(%s, %p) stub\n", debugstr_dmguid(riid), ret_iface);
 
-        return E_NOINTERFACE;
+        return CLASS_E_CLASSNOTAVAILABLE;
 }
 
 /******************************************************************
@@ -89,7 +103,12 @@ static HRESULT WINAPI ClassFactory_CreateInstance(IClassFactory *iface, IUnknown
 
         TRACE ("(%p, %s, %p)\n", pUnkOuter, debugstr_dmguid(riid), ppv);
 
-        return This->fnCreateInstance(riid, ppv, pUnkOuter);
+        if (pUnkOuter) {
+            *ppv = NULL;
+            return CLASS_E_NOAGGREGATION;
+        }
+
+        return This->fnCreateInstance(riid, ppv);
 }
 
 static HRESULT WINAPI ClassFactory_LockServer(IClassFactory *iface, BOOL dolock)
@@ -112,13 +131,11 @@ static const IClassFactoryVtbl classfactory_vtbl = {
         ClassFactory_LockServer
 };
 
-static IClassFactoryImpl ChordMap_CF = {{&classfactory_vtbl}, DMUSIC_CreateDirectMusicChordMapImpl};
-static IClassFactoryImpl Composer_CF = {{&classfactory_vtbl}, DMUSIC_CreateDirectMusicComposerImpl};
-static IClassFactoryImpl ChordMapTrack_CF = {{&classfactory_vtbl},
-                                             DMUSIC_CreateDirectMusicChordMapTrack};
+static IClassFactoryImpl ChordMap_CF = {{&classfactory_vtbl}, create_dmchordmap};
+static IClassFactoryImpl Composer_CF = {{&classfactory_vtbl}, create_dmcomposer};
+static IClassFactoryImpl ChordMapTrack_CF = {{&classfactory_vtbl}, create_dmchordmaptrack};
 static IClassFactoryImpl Template_CF = {{&classfactory_vtbl}, create_direct_music_template};
-static IClassFactoryImpl SignPostTrack_CF = {{&classfactory_vtbl},
-                                             DMUSIC_CreateDirectMusicSignPostTrack};
+static IClassFactoryImpl SignPostTrack_CF = {{&classfactory_vtbl}, create_dmsignposttrack};
 
 /******************************************************************
  *		DllMain
@@ -129,12 +146,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
 	if (fdwReason == DLL_PROCESS_ATTACH) 	{
             instance = hinstDLL;
             DisableThreadLibraryCalls(hinstDLL);
-		/* FIXME: Initialisation */
 	}
-	else if (fdwReason == DLL_PROCESS_DETACH) 	{
-		/* FIXME: Cleanup */
-	}
-
 	return TRUE;
 }
 
@@ -225,7 +237,6 @@ const char *debugstr_dmguid (const GUID *id) {
 		/* CLSIDs */
 		GE(CLSID_AudioVBScript),
 		GE(CLSID_DirectMusic),
-		GE(CLSID_DirectMusicAudioPath),
 		GE(CLSID_DirectMusicAudioPathConfig),
 		GE(CLSID_DirectMusicAuditionTrack),
 		GE(CLSID_DirectMusicBand),

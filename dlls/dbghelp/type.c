@@ -102,6 +102,19 @@ const char* symt_get_name(const struct symt* sym)
     }
 }
 
+WCHAR* symt_get_nameW(const struct symt* sym)
+{
+    const char* name = symt_get_name(sym);
+    WCHAR* nameW;
+    DWORD sz;
+
+    if (!name) return NULL;
+    sz = MultiByteToWideChar(CP_ACP, 0, name, -1, NULL, 0);
+    if ((nameW = HeapAlloc(GetProcessHeap(), 0, sz * sizeof(WCHAR))))
+        MultiByteToWideChar(CP_ACP, 0, name, -1, nameW, sz);
+    return nameW;
+}
+
 BOOL symt_get_address(const struct symt* type, ULONG64* addr)
 {
     switch (type->tag)
@@ -680,7 +693,7 @@ BOOL symt_get_info(struct module* module, const struct symt* type,
                   symt_get_tag_str(type->tag));
             /* fall through */
         case SymTagFunctionType:
-            return 0;
+            return FALSE;
         }
         break;
 

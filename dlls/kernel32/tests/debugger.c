@@ -113,9 +113,9 @@ static void get_events(const char* name, HANDLE *start_event, HANDLE *done_event
     event_name=HeapAlloc(GetProcessHeap(), 0, 6+strlen(basename)+1);
 
     sprintf(event_name, "start_%s", basename);
-    *start_event=CreateEvent(NULL, 0,0, event_name);
+    *start_event=CreateEventA(NULL, 0,0, event_name);
     sprintf(event_name, "done_%s", basename);
-    *done_event=CreateEvent(NULL, 0,0, event_name);
+    *done_event=CreateEventA(NULL, 0,0, event_name);
     HeapFree(GetProcessHeap(), 0, event_name);
 }
 
@@ -287,6 +287,13 @@ static void crash_and_debug(HKEY hkey, const char* argv0, const char* dbgtasks)
     }
 
     ret=RegSetValueExA(hkey, "auto", 0, REG_SZ, (BYTE*)"1", 2);
+    if (ret == ERROR_ACCESS_DENIED)
+    {
+        skip_crash_and_debug = TRUE;
+        skip("No write access to change the debugger\n");
+        return;
+    }
+
     ok(ret == ERROR_SUCCESS, "unable to set AeDebug/auto: ret=%d\n", ret);
 
     get_file_name(dbglog);
@@ -422,8 +429,8 @@ static void test_ExitCode(void)
     reg_save_value auto_value;
     reg_save_value debugger_value;
 
-    GetModuleFileNameA(GetModuleHandle(NULL), test_exe, sizeof(test_exe));
-    if (GetFileAttributes(test_exe) == INVALID_FILE_ATTRIBUTES)
+    GetModuleFileNameA(GetModuleHandleA(NULL), test_exe, sizeof(test_exe));
+    if (GetFileAttributesA(test_exe) == INVALID_FILE_ATTRIBUTES)
         strcat(test_exe, ".so");
     if (GetFileAttributesA(test_exe) == INVALID_FILE_ATTRIBUTES)
     {
@@ -659,16 +666,162 @@ static void test_debug_loop(int argc, char **argv)
     ok(ret, "DeleteFileA failed, last error %#x.\n", GetLastError());
 }
 
+static void doChildren(int argc, char **argv)
+{
+    const char *arguments = "debugger children last";
+    struct child_blackbox blackbox;
+    const char *blackbox_file, *p;
+    char event_name[MAX_PATH];
+    PROCESS_INFORMATION pi;
+    STARTUPINFOA si;
+    HANDLE event;
+    char *cmd;
+    BOOL ret;
+
+    if (!strcmp(argv[3], "last")) return;
+
+    blackbox_file = argv[3];
+
+    p = strrchr(blackbox_file, '\\');
+    p = p ? p+1 : blackbox_file;
+    strcpy(event_name, p);
+    strcat(event_name, "_init");
+    event = OpenEventA(EVENT_ALL_ACCESS, FALSE, event_name);
+    child_ok(event != NULL, "OpenEvent failed, last error %d.\n", GetLastError());
+    SetEvent(event);
+    CloseHandle(event);
+
+    p = strrchr(blackbox_file, '\\');
+    p = p ? p+1 : blackbox_file;
+    strcpy(event_name, p);
+    strcat(event_name, "_attach");
+    event = OpenEventA(EVENT_ALL_ACCESS, FALSE, event_name);
+    child_ok(event != NULL, "OpenEvent failed, last error %d.\n", GetLastError());
+    WaitForSingleObject(event, INFINITE);
+    CloseHandle(event);
+
+    cmd = HeapAlloc(GetProcessHeap(), 0, strlen(argv[0]) + strlen(arguments) + 2);
+    sprintf(cmd, "%s %s", argv[0], arguments);
+
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    ret = CreateProcessA(NULL, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+    child_ok(ret, "CreateProcess failed, last error %d.\n", GetLastError());
+
+    child_ok(WaitForSingleObject(pi.hProcess, 10000) == WAIT_OBJECT_0,
+            "Timed out waiting for the child to exit\n");
+
+    ret = CloseHandle(pi.hThread);
+    child_ok(ret, "CloseHandle failed, last error %d.\n", GetLastError());
+    ret = CloseHandle(pi.hProcess);
+    child_ok(ret, "CloseHandle failed, last error %d.\n", GetLastError());
+
+    blackbox.failures = child_failures;
+    save_blackbox(blackbox_file, &blackbox, sizeof(blackbox));
+
+    HeapFree(GetProcessHeap(), 0, cmd);
+}
+
+static void test_debug_children(char *name, DWORD flag, BOOL debug_child)
+{
+    const char *arguments = "debugger children";
+    struct child_blackbox blackbox;
+    char blackbox_file[MAX_PATH], *p;
+    char event_name[MAX_PATH];
+    PROCESS_INFORMATION pi;
+    STARTUPINFOA si;
+    HANDLE event_init, event_attach;
+    char *cmd;
+    BOOL debug, ret;
+    BOOL got_child_event = FALSE;
+
+    if (!pDebugActiveProcessStop || !pCheckRemoteDebuggerPresent)
+    {
+        win_skip("DebugActiveProcessStop or CheckRemoteDebuggerPresent not available, skipping test.\n");
+        return;
+    }
+
+    get_file_name(blackbox_file);
+    cmd = HeapAlloc(GetProcessHeap(), 0, strlen(name) + strlen(arguments) + strlen(blackbox_file) + 5);
+    sprintf(cmd, "%s %s \"%s\"", name, arguments, blackbox_file);
+
+    p = strrchr(blackbox_file, '\\');
+    p = p ? p+1 : blackbox_file;
+    strcpy(event_name, p);
+    strcat(event_name, "_init");
+    event_init = CreateEventA(NULL, FALSE, FALSE, event_name);
+    ok(event_init != NULL, "OpenEvent failed, last error %d.\n", GetLastError());
+
+    p = strrchr(blackbox_file, '\\');
+    p = p ? p+1 : blackbox_file;
+    strcpy(event_name, p);
+    strcat(event_name, "_attach");
+    event_attach = CreateEventA(NULL, FALSE, flag!=0, event_name);
+    ok(event_attach != NULL, "CreateEvent failed, last error %d.\n", GetLastError());
+
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+
+    ret = CreateProcessA(NULL, cmd, NULL, NULL, FALSE, flag, NULL, NULL, &si, &pi);
+    ok(ret, "CreateProcess failed, last error %d.\n", GetLastError());
+    HeapFree(GetProcessHeap(), 0, cmd);
+    if (!flag)
+    {
+        WaitForSingleObject(event_init, INFINITE);
+        ret = DebugActiveProcess(pi.dwProcessId);
+        ok(ret, "DebugActiveProcess failed, last error %d.\n", GetLastError());
+        ret = SetEvent(event_attach);
+        ok(ret, "SetEvent failed, last error %d.\n", GetLastError());
+    }
+
+    ret = pCheckRemoteDebuggerPresent(pi.hProcess, &debug);
+    ok(ret, "CheckRemoteDebuggerPresent failed, last error %d.\n", GetLastError());
+    ok(debug, "Expected debug != 0, got %x.\n", debug);
+
+    for (;;)
+    {
+        DEBUG_EVENT ev;
+
+        ret = WaitForDebugEvent(&ev, INFINITE);
+        ok(ret, "WaitForDebugEvent failed, last error %d.\n", GetLastError());
+        if (!ret) break;
+
+        if (ev.dwDebugEventCode==EXIT_PROCESS_DEBUG_EVENT && ev.dwProcessId==pi.dwProcessId) break;
+        else if (ev.dwProcessId != pi.dwProcessId) got_child_event = TRUE;
+
+        ret = ContinueDebugEvent(ev.dwProcessId, ev.dwThreadId, DBG_CONTINUE);
+        ok(ret, "ContinueDebugEvent failed, last error %d.\n", GetLastError());
+        if (!ret) break;
+    }
+    if(debug_child)
+        ok(got_child_event, "didn't get any child events (flag: %x).\n", flag);
+    else
+        ok(!got_child_event, "got child event (flag: %x).\n", flag);
+    CloseHandle(event_init);
+    CloseHandle(event_attach);
+
+    ret = CloseHandle(pi.hThread);
+    ok(ret, "CloseHandle failed, last error %d.\n", GetLastError());
+    ret = CloseHandle(pi.hProcess);
+    ok(ret, "CloseHandle failed, last error %d.\n", GetLastError());
+
+    load_blackbox(blackbox_file, &blackbox, sizeof(blackbox));
+    ok(!blackbox.failures, "Got %d failures from child process.\n", blackbox.failures);
+
+    ret = DeleteFileA(blackbox_file);
+    ok(ret, "DeleteFileA failed, last error %d.\n", GetLastError());
+}
+
 START_TEST(debugger)
 {
     HMODULE hdll;
 
-    hdll=GetModuleHandle("kernel32.dll");
+    hdll=GetModuleHandleA("kernel32.dll");
     pCheckRemoteDebuggerPresent=(void*)GetProcAddress(hdll, "CheckRemoteDebuggerPresent");
     pDebugActiveProcessStop=(void*)GetProcAddress(hdll, "DebugActiveProcessStop");
     pDebugSetProcessKillOnExit=(void*)GetProcAddress(hdll, "DebugSetProcessKillOnExit");
     pIsDebuggerPresent=(void*)GetProcAddress(hdll, "IsDebuggerPresent");
-    hdll=GetModuleHandle("ntdll.dll");
+    hdll=GetModuleHandleA("ntdll.dll");
     if (hdll) pNtCurrentTeb = (void*)GetProcAddress(hdll, "NtCurrentTeb");
 
     myARGC=winetest_get_mainargs(&myARGV);
@@ -684,10 +837,18 @@ START_TEST(debugger)
     {
         doChild(myARGC, myARGV);
     }
+    else if (myARGC >= 4 && !strcmp(myARGV[2], "children"))
+    {
+        doChildren(myARGC, myARGV);
+    }
     else
     {
         test_ExitCode();
         test_RemoteDebugger();
         test_debug_loop(myARGC, myARGV);
+        test_debug_children(myARGV[0], DEBUG_PROCESS, TRUE);
+        test_debug_children(myARGV[0], DEBUG_ONLY_THIS_PROCESS, FALSE);
+        test_debug_children(myARGV[0], DEBUG_PROCESS|DEBUG_ONLY_THIS_PROCESS, FALSE);
+        test_debug_children(myARGV[0], 0, FALSE);
     }
 }

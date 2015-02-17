@@ -1,20 +1,14 @@
-EXTRADEFS = -D__WINE__ -DWINE_NO_UNICODE_MACROS
+EXTRADEFS = -D__WINE__
 MODULE    = winefile.exe
-APPMODE   = -mwindows
+APPMODE   = -mwindows -municode
 IMPORTS   = uuid shell32 comdlg32 comctl32 ole32 mpr version user32 gdi32 advapi32
 
 C_SRCS = \
 	splitpath.c \
 	winefile.c
 
-RC_SRCS = \
-	En.rc \
-	winefile.rc
+RC_SRCS = winefile.rc
 
-PO_SRCS = winefile.rc
-
-MANPAGE = winefile.man
+MANPAGES = winefile.man.in
 
 SVG_SRCS = winefile.svg
-
-@MAKE_PROG_RULES@

@@ -49,6 +49,12 @@ typedef struct _domcomment
     LONG ref;
 } domcomment;
 
+static const tid_t domcomment_se_tids[] = {
+    IXMLDOMNode_tid,
+    IXMLDOMComment_tid,
+    NULL_tid
+};
+
 static inline domcomment *impl_from_IXMLDOMComment( IXMLDOMComment *iface )
 {
     return CONTAINING_RECORD(iface, domcomment, IXMLDOMComment_iface);
@@ -74,6 +80,10 @@ static HRESULT WINAPI domcomment_QueryInterface(
     {
         return *ppvObject ? S_OK : E_NOINTERFACE;
     }
+    else if(IsEqualGUID( riid, &IID_ISupportErrorInfo ))
+    {
+        return node_create_supporterrorinfo(domcomment_se_tids, ppvObject);
+    }
     else
     {
         TRACE("Unsupported interface %s\n", debugstr_guid(riid));
@@ -81,7 +91,7 @@ static HRESULT WINAPI domcomment_QueryInterface(
         return E_NOINTERFACE;
     }
 
-    IXMLDOMText_AddRef((IUnknown*)*ppvObject);
+    IXMLDOMComment_AddRef(iface);
     return S_OK;
 }
 
@@ -115,12 +125,7 @@ static HRESULT WINAPI domcomment_GetTypeInfoCount(
     UINT* pctinfo )
 {
     domcomment *This = impl_from_IXMLDOMComment( iface );
-
-    TRACE("(%p)->(%p)\n", This, pctinfo);
-
-    *pctinfo = 1;
-
-    return S_OK;
+    return IDispatchEx_GetTypeInfoCount(&This->node.dispex.IDispatchEx_iface, pctinfo);
 }
 
 static HRESULT WINAPI domcomment_GetTypeInfo(
@@ -129,13 +134,8 @@ static HRESULT WINAPI domcomment_GetTypeInfo(
     ITypeInfo** ppTInfo )
 {
     domcomment *This = impl_from_IXMLDOMComment( iface );
-    HRESULT hr;
-
-    TRACE("(%p)->(%u %u %p)\n", This, iTInfo, lcid, ppTInfo);
-
-    hr = get_typeinfo(IXMLDOMComment_tid, ppTInfo);
-
-    return hr;
+    return IDispatchEx_GetTypeInfo(&This->node.dispex.IDispatchEx_iface,
+        iTInfo, lcid, ppTInfo);
 }
 
 static HRESULT WINAPI domcomment_GetIDsOfNames(
@@ -144,23 +144,8 @@ static HRESULT WINAPI domcomment_GetIDsOfNames(
     UINT cNames, LCID lcid, DISPID* rgDispId )
 {
     domcomment *This = impl_from_IXMLDOMComment( iface );
-    ITypeInfo *typeinfo;
-    HRESULT hr;
-
-    TRACE("(%p)->(%s %p %u %u %p)\n", This, debugstr_guid(riid), rgszNames, cNames,
-          lcid, rgDispId);
-
-    if(!rgszNames || cNames == 0 || !rgDispId)
-        return E_INVALIDARG;
-
-    hr = get_typeinfo(IXMLDOMComment_tid, &typeinfo);
-    if(SUCCEEDED(hr))
-    {
-        hr = ITypeInfo_GetIDsOfNames(typeinfo, rgszNames, cNames, rgDispId);
-        ITypeInfo_Release(typeinfo);
-    }
-
-    return hr;
+    return IDispatchEx_GetIDsOfNames(&This->node.dispex.IDispatchEx_iface,
+        riid, rgszNames, cNames, lcid, rgDispId);
 }
 
 static HRESULT WINAPI domcomment_Invoke(
@@ -170,21 +155,8 @@ static HRESULT WINAPI domcomment_Invoke(
     EXCEPINFO* pExcepInfo, UINT* puArgErr )
 {
     domcomment *This = impl_from_IXMLDOMComment( iface );
-    ITypeInfo *typeinfo;
-    HRESULT hr;
-
-    TRACE("(%p)->(%d %s %d %d %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid),
-          lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
-
-    hr = get_typeinfo(IXMLDOMComment_tid, &typeinfo);
-    if(SUCCEEDED(hr))
-    {
-        hr = ITypeInfo_Invoke(typeinfo, &This->IXMLDOMComment_iface, dispIdMember, wFlags,
-                pDispParams, pVarResult, pExcepInfo, puArgErr);
-        ITypeInfo_Release(typeinfo);
-    }
-
-    return hr;
+    return IDispatchEx_Invoke(&This->node.dispex.IDispatchEx_iface,
+        dispIdMember, riid, lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
 }
 
 static HRESULT WINAPI domcomment_get_nodeName(
@@ -360,7 +332,7 @@ static HRESULT WINAPI domcomment_hasChildNodes(
 {
     domcomment *This = impl_from_IXMLDOMComment( iface );
     TRACE("(%p)->(%p)\n", This, ret);
-    return node_has_childnodes(&This->node, ret);
+    return return_var_false(ret);
 }
 
 static HRESULT WINAPI domcomment_get_ownerDocument(
@@ -463,7 +435,7 @@ static HRESULT WINAPI domcomment_put_dataType(
 {
     domcomment *This = impl_from_IXMLDOMComment( iface );
 
-    FIXME("(%p)->(%s)\n", This, debugstr_w(p));
+    TRACE("(%p)->(%s)\n", This, debugstr_w(p));
 
     if(!p)
         return E_INVALIDARG;
@@ -479,7 +451,7 @@ static HRESULT WINAPI domcomment_get_xml(
 
     TRACE("(%p)->(%p)\n", This, p);
 
-    return node_get_xml(&This->node, FALSE, FALSE, p);
+    return node_get_xml(&This->node, FALSE, p);
 }
 
 static HRESULT WINAPI domcomment_transformNode(
@@ -582,13 +554,8 @@ static HRESULT WINAPI domcomment_put_data(
     BSTR data)
 {
     domcomment *This = impl_from_IXMLDOMComment( iface );
-    VARIANT val;
-
-    TRACE("(%p)->(%s)\n", This, debugstr_w(data) );
-
-    V_VT(&val) = VT_BSTR;
-    V_BSTR(&val) = data;
-    return node_put_value(&This->node, &val);
+    TRACE("(%p)->(%s)\n", This, debugstr_w(data));
+    return node_set_content(&This->node, data);
 }
 
 static HRESULT WINAPI domcomment_get_length(

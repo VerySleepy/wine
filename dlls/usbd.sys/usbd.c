@@ -105,7 +105,7 @@ PURB WINAPI USBD_CreateConfigurationRequestEx(
         interfaceInfo = &urb->u.UrbSelectConfiguration.Interface;
         for (interfaceEntry = InterfaceList; interfaceEntry->InterfaceDescriptor; interfaceEntry++)
         {
-            int i;
+            ULONG i;
             USB_INTERFACE_DESCRIPTOR *currentInterface;
             USB_ENDPOINT_DESCRIPTOR *endpointDescriptor;
             interfaceInfo->InterfaceNumber = interfaceEntry->InterfaceDescriptor->bInterfaceNumber;
@@ -198,6 +198,15 @@ PUSB_INTERFACE_DESCRIPTOR WINAPI USBD_ParseConfigurationDescriptorEx(
     return NULL;
 }
 
+PUSB_INTERFACE_DESCRIPTOR WINAPI USBD_ParseConfigurationDescriptor(
+        PUSB_CONFIGURATION_DESCRIPTOR ConfigurationDescriptor, UCHAR InterfaceNumber,
+        UCHAR AlternateSetting )
+{
+    TRACE( "(%p, %u, %u)\n", ConfigurationDescriptor, InterfaceNumber, AlternateSetting );
+    return USBD_ParseConfigurationDescriptorEx( ConfigurationDescriptor, ConfigurationDescriptor,
+                                                InterfaceNumber, AlternateSetting, -1, -1, -1 );
+}
+
 PUSB_COMMON_DESCRIPTOR WINAPI USBD_ParseDescriptors(
         PVOID DescriptorBuffer,
         ULONG TotalLength,
@@ -216,6 +225,26 @@ PUSB_COMMON_DESCRIPTOR WINAPI USBD_ParseDescriptors(
             return common;
     }
     return NULL;
+}
+
+USBD_STATUS WINAPI USBD_ValidateConfigurationDescriptor(
+        PUSB_CONFIGURATION_DESCRIPTOR descr,
+        ULONG length,
+        USHORT level,
+        PUCHAR *offset,
+        ULONG tag )
+{
+    FIXME( "(%p, %u, %u, %p, %u) partial stub!\n", descr, length, level, offset, tag );
+
+    if (offset) *offset = 0;
+
+    if (!descr ||
+        length < sizeof(USB_CONFIGURATION_DESCRIPTOR) ||
+        descr->bLength < sizeof(USB_CONFIGURATION_DESCRIPTOR) ||
+        descr->wTotalLength < descr->bNumInterfaces * sizeof(USB_CONFIGURATION_DESCRIPTOR)
+       ) return USBD_STATUS_ERROR;
+
+    return USBD_STATUS_SUCCESS;
 }
 
 ULONG WINAPI USBD_GetInterfaceLength(

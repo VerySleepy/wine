@@ -24,7 +24,7 @@
   25 stdcall -ordinal ILCombine(ptr ptr)
   26 stdcall -noname ILLoadFromStream(ptr ptr)
   27 stdcall -ordinal ILSaveToStream(ptr ptr)
-  28 stdcall -noname SHILCreateFromPath(ptr ptr ptr) SHILCreateFromPathAW
+  28 stdcall SHILCreateFromPath(ptr ptr ptr) SHILCreateFromPathAW
   29 stdcall -noname PathIsRoot(ptr) PathIsRootAW
   30 stdcall -noname PathBuildRoot(ptr long) PathBuildRootAW
   31 stdcall -noname PathFindExtension(ptr) PathFindExtensionAW
@@ -95,7 +95,7 @@
  100 stdcall -ordinal SHRestricted(long)
 
  102 stdcall -ordinal SHCoCreateInstance(wstr ptr long ptr ptr)
- 103 stdcall -ordinal SignalFileOpen(long)
+ 103 stdcall -ordinal SignalFileOpen(ptr)
  104 stdcall -noname FileMenu_DeleteAllItems(long)
  105 stdcall -noname FileMenu_DrawItem(long ptr)
  106 stdcall -noname FileMenu_FindSubMenuByPidl(long ptr)
@@ -114,7 +114,7 @@
  119 stdcall -ordinal IsLFNDrive(ptr) IsLFNDriveAW
  120 stdcall -noname FileMenu_AbortInitMenu()
  121 stdcall -noname SHFlushClipboard()
- 122 stdcall -private @(long long long str long) shell.dll16.RunDLL_CallEntry16
+ 122 stdcall -private @(long long ptr str long) shell.dll16.RunDLL_CallEntry16
  123 stdcall -noname SHFreeUnusedLibraries()
  124 stdcall -noname FileMenu_AppendFilesForPidl(long ptr long)
  125 stdcall -noname FileMenu_AddFilesForPidl(long long long ptr long long ptr)
@@ -150,7 +150,7 @@
  158 stdcall -noname PathGetExtension(str long long) PathGetExtensionAW
  159 stdcall -noname PathIsDirectory(ptr) PathIsDirectoryAW
  160 stub SHNetConnectionDialog
- 161 stdcall -noname SHRunControlPanel(long long)
+ 161 stdcall -noname SHRunControlPanel(wstr long)
  162 stdcall -ordinal SHSimpleIDListFromPath(ptr) SHSimpleIDListFromPathAW
  163 stdcall -noname StrToOleStr(wstr str) StrToOleStrAW
  164 stdcall -ordinal Win32DeleteFile(str) Win32DeleteFileAW
@@ -162,7 +162,7 @@
  170 stdcall -ordinal SHReplaceFromPropSheetExtArray(long long long long)
  171 stdcall -ordinal PathCleanupSpec(ptr ptr)
  172 stdcall -noname SHCreateLinks(long str ptr long ptr)
- 173 stdcall -ordinal SHValidateUNC(long long long)
+ 173 stdcall -ordinal SHValidateUNC(long wstr long)
  174 stdcall -ordinal SHCreateShellFolderViewEx(ptr ptr)
  175 stdcall -noname SHGetSpecialFolderPath(long long long long) SHGetSpecialFolderPathAW
  176 stdcall -ordinal SHSetInstanceExplorer(long)
@@ -259,7 +259,7 @@
 
  701 stdcall CDefFolderMenu_Create2(ptr ptr long ptr ptr ptr long ptr ptr)
  704 stdcall -noname GUIDFromStringW(wstr ptr)
-
+ 709 stdcall SHGetSetFolderCustomSettings(ptr str long)
  714 stdcall @(ptr) SHELL32_714 # PathIsTemporaryW
  727 stdcall SHGetImageList(long ptr ptr)
  730 stdcall -noname RestartDialogEx(long wstr long long)
@@ -324,16 +324,18 @@
 @ stub RealShellExecuteExA
 @ stub RealShellExecuteExW
 @ stub RealShellExecuteW
-@ stub RegenerateUserEnvironment
+@ stdcall RegenerateUserEnvironment(ptr long)
 @ stdcall SetCurrentProcessExplicitAppUserModelID(wstr)
 @ stdcall SHAddToRecentDocs (long ptr)
 @ stdcall SHAppBarMessage(long ptr)
+@ stdcall SHAssocEnumHandlers(wstr long ptr)
 @ stdcall SHBindToParent(ptr ptr ptr ptr)
 @ stdcall SHBrowseForFolder(ptr) SHBrowseForFolderA
 @ stdcall SHBrowseForFolderA(ptr)
 @ stdcall SHBrowseForFolderW(ptr)
 @ stdcall SHChangeNotify (long long ptr ptr)
 @ stub SHChangeNotifySuspendResume
+@ stdcall SHCreateQueryCancelAutoPlayMoniker(ptr)
 @ stdcall SHCreateDefaultContextMenu(ptr ptr ptr)
 @ stdcall SHCreateDirectoryExA(long str ptr)
 @ stdcall SHCreateDirectoryExW(long wstr ptr)
@@ -344,9 +346,11 @@
 @ stdcall SHCreateShellItemArray(ptr ptr long ptr ptr)
 @ stdcall SHCreateShellItemArrayFromDataObject(ptr ptr ptr)
 @ stdcall SHCreateShellItemArrayFromShellItem(ptr ptr ptr)
+@ stdcall SHCreateShellItemArrayFromIDLists(long ptr ptr)
 @ stdcall SHEmptyRecycleBinA(long str long)
 @ stdcall SHEmptyRecycleBinW(long wstr long)
-@ stub SHExtractIconsW
+@ stdcall SHEnumerateUnreadMailAccountsW(ptr long ptr long)
+@ stdcall SHExtractIconsW(wstr long long long ptr ptr long long) user32.PrivateExtractIconsW
 @ stdcall SHFileOperation(ptr) SHFileOperationA
 @ stdcall SHFileOperationA(ptr)
 @ stdcall SHFileOperationW(ptr)
@@ -374,6 +378,7 @@
 @ stdcall SHGetInstanceExplorer(long)
 @ stdcall SHGetItemFromDataObject(ptr long ptr ptr)
 @ stdcall SHGetItemFromObject(ptr ptr ptr)
+@ stdcall SHGetKnownFolderIDList(ptr long ptr ptr)
 @ stdcall SHGetKnownFolderPath(ptr long ptr ptr)
 @ stdcall SHGetLocalizedName(wstr ptr long ptr)
 @ stdcall SHGetMalloc(ptr)
@@ -387,6 +392,7 @@
 @ stdcall SHGetSpecialFolderLocation(long long ptr)
 @ stdcall SHGetSpecialFolderPathA(long ptr long long)
 @ stdcall SHGetSpecialFolderPathW(long ptr long long)
+@ stdcall SHGetStockIconInfo(long long ptr)
 @ stdcall SHHelpShortcuts_RunDLL(long long long long) SHHelpShortcuts_RunDLLA
 @ stdcall SHHelpShortcuts_RunDLLA(long long long long)
 @ stdcall SHHelpShortcuts_RunDLLW(long long long long)
@@ -402,6 +408,7 @@
 @ stdcall SHQueryRecycleBinA(str ptr)
 @ stdcall SHQueryRecycleBinW(wstr ptr)
 @ stdcall SHSetLocalizedName(wstr wstr long)
+@ stdcall SHSetUnreadMailCountW(wstr long wstr)
 @ stdcall SHUpdateRecycleBinIcon()
 @ stdcall SheChangeDirA(str)
 @ stub SheChangeDirExA
@@ -443,13 +450,13 @@
 @ stdcall StrCmpNIW(wstr wstr long) shlwapi.StrCmpNIW
 @ stdcall StrCmpNW(wstr wstr long) shlwapi.StrCmpNW
 @ stdcall StrCpyNA (ptr str long) kernel32.lstrcpynA
-@ stdcall StrCpyNW(wstr wstr long) shlwapi.StrCpyNW
+@ stdcall StrCpyNW(ptr wstr long) shlwapi.StrCpyNW
 @ stdcall StrNCmpA(str str long) shlwapi.StrCmpNA
 @ stdcall StrNCmpIA(str str long) shlwapi.StrCmpNIA
 @ stdcall StrNCmpIW(wstr wstr long) shlwapi.StrCmpNIW
 @ stdcall StrNCmpW(wstr wstr long) shlwapi.StrCmpNW
 @ stdcall StrNCpyA (ptr str long) kernel32.lstrcpynA
-@ stdcall StrNCpyW(wstr wstr long) shlwapi.StrCpyNW
+@ stdcall StrNCpyW(ptr wstr long) shlwapi.StrCpyNW
 @ stdcall StrRChrA(str str long) shlwapi.StrRChrA
 @ stdcall StrRChrIA(str str long) shlwapi.StrRChrIA
 @ stdcall StrRChrIW(wstr wstr long) shlwapi.StrRChrIW

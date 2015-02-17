@@ -29,6 +29,7 @@
 #include "ocidl.h"
 #include "initguid.h"
 #include "wincodec.h"
+#include "wincodecsdk.h"
 
 #include "wincodecs_private.h"
 
@@ -40,11 +41,11 @@ extern HRESULT WINAPI WIC_DllGetClassObject(REFCLSID, REFIID, LPVOID *) DECLSPEC
 
 typedef struct {
     REFCLSID classid;
-    HRESULT (*constructor)(IUnknown*,REFIID,void**);
+    HRESULT (*constructor)(REFIID,void**);
 } classinfo;
 
-static classinfo wic_classes[] = {
-    {&CLSID_WICImagingFactory, ImagingFactory_CreateInstance},
+static const classinfo wic_classes[] = {
+    {&CLSID_WICImagingFactory, ComponentFactory_CreateInstance},
     {&CLSID_WICBmpDecoder, BmpDecoder_CreateInstance},
     {&CLSID_WICPngDecoder, PngDecoder_CreateInstance},
     {&CLSID_WICPngEncoder, PngEncoder_CreateInstance},
@@ -52,17 +53,26 @@ static classinfo wic_classes[] = {
     {&CLSID_WICGifDecoder, GifDecoder_CreateInstance},
     {&CLSID_WICIcoDecoder, IcoDecoder_CreateInstance},
     {&CLSID_WICJpegDecoder, JpegDecoder_CreateInstance},
+    {&CLSID_WICJpegEncoder, JpegEncoder_CreateInstance},
     {&CLSID_WICTiffDecoder, TiffDecoder_CreateInstance},
     {&CLSID_WICTiffEncoder, TiffEncoder_CreateInstance},
     {&CLSID_WICIcnsEncoder, IcnsEncoder_CreateInstance},
     {&CLSID_WICDefaultFormatConverter, FormatConverter_CreateInstance},
     {&CLSID_WineTgaDecoder, TgaDecoder_CreateInstance},
+    {&CLSID_WICUnknownMetadataReader, UnknownMetadataReader_CreateInstance},
+    {&CLSID_WICIfdMetadataReader, IfdMetadataReader_CreateInstance},
+    {&CLSID_WICPngTextMetadataReader, PngTextReader_CreateInstance},
+    {&CLSID_WICLSDMetadataReader, LSDReader_CreateInstance},
+    {&CLSID_WICIMDMetadataReader, IMDReader_CreateInstance},
+    {&CLSID_WICGCEMetadataReader, GCEReader_CreateInstance},
+    {&CLSID_WICAPEMetadataReader, APEReader_CreateInstance},
+    {&CLSID_WICGifCommentMetadataReader, GifCommentReader_CreateInstance},
     {0}};
 
 typedef struct {
     IClassFactory           IClassFactory_iface;
     LONG                    ref;
-    classinfo               *info;
+    const classinfo         *info;
 } ClassFactoryImpl;
 
 static inline ClassFactoryImpl *impl_from_IClassFactory(IClassFactory *iface)
@@ -78,9 +88,10 @@ static HRESULT WINAPI ClassFactoryImpl_QueryInterface(IClassFactory *iface,
 
     if (!ppv) return E_INVALIDARG;
 
-    if (IsEqualIID(&IID_IUnknown, iid) || IsEqualIID(&IID_IClassFactory, iid))
+    if (IsEqualIID(&IID_IUnknown, iid) ||
+        IsEqualIID(&IID_IClassFactory, iid))
     {
-        *ppv = This;
+        *ppv = &This->IClassFactory_iface;
     }
     else
     {
@@ -120,7 +131,11 @@ static HRESULT WINAPI ClassFactoryImpl_CreateInstance(IClassFactory *iface,
 {
     ClassFactoryImpl *This = impl_from_IClassFactory(iface);
 
-    return This->info->constructor(pUnkOuter, riid, ppv);
+    *ppv = NULL;
+
+    if (pUnkOuter) return CLASS_E_NOAGGREGATION;
+
+    return This->info->constructor(riid, ppv);
 }
 
 static HRESULT WINAPI ClassFactoryImpl_LockServer(IClassFactory *iface, BOOL lock)
@@ -137,7 +152,7 @@ static const IClassFactoryVtbl ClassFactoryImpl_Vtbl = {
     ClassFactoryImpl_LockServer
 };
 
-static HRESULT ClassFactoryImpl_Constructor(classinfo *info, REFIID riid, LPVOID *ppv)
+static HRESULT ClassFactoryImpl_Constructor(const classinfo *info, REFIID riid, LPVOID *ppv)
 {
     ClassFactoryImpl *This;
     HRESULT ret;
@@ -151,8 +166,8 @@ static HRESULT ClassFactoryImpl_Constructor(classinfo *info, REFIID riid, LPVOID
     This->ref = 1;
     This->info = info;
 
-    ret = IClassFactory_QueryInterface((IClassFactory*)This, riid, ppv);
-    IClassFactory_Release((IClassFactory*)This);
+    ret = IClassFactory_QueryInterface(&This->IClassFactory_iface, riid, ppv);
+    IClassFactory_Release(&This->IClassFactory_iface);
 
     return ret;
 }
@@ -160,7 +175,7 @@ static HRESULT ClassFactoryImpl_Constructor(classinfo *info, REFIID riid, LPVOID
 HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID iid, LPVOID *ppv)
 {
     HRESULT ret;
-    classinfo *info=NULL;
+    const classinfo *info=NULL;
     int i;
 
     TRACE("(%s,%s,%p)\n", debugstr_guid(rclsid), debugstr_guid(iid), ppv);

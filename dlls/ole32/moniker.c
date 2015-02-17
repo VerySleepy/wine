@@ -146,7 +146,7 @@ static BOOL start_rpcss(void)
     strcatW( cmd, rpcss );
 
     Wow64DisableWow64FsRedirection( &redir );
-    rslt = CreateProcessW( cmd, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi );
+    rslt = CreateProcessW( cmd, cmd, NULL, NULL, FALSE, DETACHED_PROCESS, NULL, NULL, &si, &pi );
     Wow64RevertWow64FsRedirection( redir );
 
     if (rslt)
@@ -192,7 +192,7 @@ static void rot_entry_delete(struct rot_entry *rot_entry)
             if (hr == S_OK)
             {
                 CoReleaseMarshalData(stream);
-                IUnknown_Release(stream);
+                IStream_Release(stream);
             }
         }
         MIDL_user_free(moniker);
@@ -205,7 +205,7 @@ static void rot_entry_delete(struct rot_entry *rot_entry)
         if (hr == S_OK)
         {
             CoReleaseMarshalData(stream);
-            IUnknown_Release(stream);
+            IStream_Release(stream);
         }
     }
     HeapFree(GetProcessHeap(), 0, rot_entry->object);
@@ -389,7 +389,7 @@ RunningObjectTableImpl_Release(IRunningObjectTable* iface)
 
     ref = InterlockedDecrement(&This->ref);
 
-    /* uninitialize ROT structure if there's no more references to it */
+    /* uninitialize ROT structure if there are no more references to it */
     if (ref == 0)
     {
         struct list *cursor, *cursor2;
@@ -1248,8 +1248,10 @@ HRESULT WINAPI GetClassFile(LPCOLESTR filePathName,CLSID *pclsid)
     absFile=pathDec[nbElm-1];
 
     /* failed if the path represents a directory and not an absolute file name*/
-    if (!lstrcmpW(absFile, bkslashW))
+    if (!lstrcmpW(absFile, bkslashW)) {
+        CoTaskMemFree(pathDec);
         return MK_E_INVALIDEXTENSION;
+    }
 
     /* get the extension of the file */
     extension = NULL;
@@ -1257,8 +1259,10 @@ HRESULT WINAPI GetClassFile(LPCOLESTR filePathName,CLSID *pclsid)
     for(i = length-1; (i >= 0) && *(extension = &absFile[i]) != '.'; i--)
         /* nothing */;
 
-    if (!extension || !lstrcmpW(extension, dotW))
+    if (!extension || !lstrcmpW(extension, dotW)) {
+        CoTaskMemFree(pathDec);
         return MK_E_INVALIDEXTENSION;
+    }
 
     res=RegQueryValueW(HKEY_CLASSES_ROOT, extension, NULL, &sizeProgId);
 
@@ -1335,7 +1339,7 @@ static ULONG   WINAPI EnumMonikerImpl_Release(IEnumMoniker* iface)
 
     ref = InterlockedDecrement(&This->ref);
 
-    /* uninitialize rot structure if there's no more reference to it*/
+    /* uninitialize ROT structure if there are no more references to it */
     if (ref == 0)
     {
         ULONG i;

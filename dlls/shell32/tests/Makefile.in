@@ -3,6 +3,7 @@ IMPORTS   = shell32 ole32 oleaut32 user32 advapi32
 
 C_SRCS = \
 	appbar.c \
+	assoc.c \
 	autocomplete.c \
 	brsfolder.c \
 	ebrowser.c \
@@ -22,5 +23,3 @@ C_SRCS = \
 	systray.c
 
 RC_SRCS = rsrc.rc
-
-@MAKE_TEST_RULES@

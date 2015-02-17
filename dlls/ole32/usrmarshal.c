@@ -74,9 +74,9 @@ static const char* debugstr_user_flags(ULONG *pFlags)
     }
 
     if (HIWORD(*pFlags) == NDR_LOCAL_DATA_REPRESENTATION)
-        return wine_dbg_sprintf("MAKELONG(NDR_LOCAL_REPRESENTATION, %s)", loword);
+        return wine_dbg_sprintf("MAKELONG(%s, NDR_LOCAL_DATA_REPRESENTATION)", loword);
     else
-        return wine_dbg_sprintf("MAKELONG(0x%04x, %s)", HIWORD(*pFlags), loword);
+        return wine_dbg_sprintf("MAKELONG(%s, 0x%04x)", loword, HIWORD(*pFlags));
 }
 
 /******************************************************************************
@@ -1641,7 +1641,7 @@ unsigned char * WINAPI WdtpInterfacePointer_UserMarshal(ULONG *pFlags, ULONG Rea
     if(CoMarshalInterface(stm, riid, punk, LOWORD(RealFlags), NULL, MSHLFLAGS_NORMAL) != S_OK)
     {
         IStream_Release(stm);
-        return NULL;
+        return pBuffer;
     }
 
     ALIGN_POINTER(pBuffer, 3);
@@ -2357,8 +2357,8 @@ HRESULT CALLBACK IMoniker_BindToStorage_Proxy(
     REFIID riid,
     void **ppvObj)
 {
-    FIXME(":stub\n");
-    return E_NOTIMPL;
+    TRACE("(%p)->(%p %p %s %p)\n", This, pbc, pmkToLeft, debugstr_guid(riid), ppvObj);
+    return IMoniker_RemoteBindToStorage_Proxy(This, pbc, pmkToLeft, riid, (IUnknown**)ppvObj);
 }
 
 HRESULT __RPC_STUB IMoniker_BindToStorage_Stub(
@@ -2368,8 +2368,8 @@ HRESULT __RPC_STUB IMoniker_BindToStorage_Stub(
     REFIID riid,
     IUnknown **ppvObj)
 {
-    FIXME(":stub\n");
-    return E_NOTIMPL;
+    TRACE("(%p)->(%p %p %s %p)\n", This, pbc, pmkToLeft, debugstr_guid(riid), ppvObj);
+    return IMoniker_BindToStorage(This, pbc, pmkToLeft, riid, (void**)ppvObj);
 }
 
 HRESULT CALLBACK IEnumString_Next_Proxy(

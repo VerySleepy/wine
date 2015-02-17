@@ -158,6 +158,14 @@ struct wld_link_map {
     ElfW(Addr) l_interp;
 };
 
+struct wld_auxv
+{
+    ElfW(Addr) a_type;
+    union
+    {
+        ElfW(Addr) a_val;
+    } a_un;
+};
 
 /*
  * The __bb_init_func is an empty function only called when file is
@@ -236,14 +244,14 @@ static inline __attribute__((noreturn)) void wld_exit( int code )
 {
     for (;;)  /* avoid warning */
         __asm__ __volatile__( "pushl %%ebx; movl %1,%%ebx; int $0x80; popl %%ebx"
-                              : : "a" (SYS_exit), "r" (code) );
+                              : : "a" (1 /* SYS_exit */), "r" (code) );
 }
 
 static inline int wld_open( const char *name, int flags )
 {
     int ret;
     __asm__ __volatile__( "pushl %%ebx; movl %2,%%ebx; int $0x80; popl %%ebx"
-                          : "=a" (ret) : "0" (SYS_open), "r" (name), "c" (flags) );
+                          : "=a" (ret) : "0" (5 /* SYS_open */), "r" (name), "c" (flags) );
     return SYSCALL_RET(ret);
 }
 
@@ -251,7 +259,7 @@ static inline int wld_close( int fd )
 {
     int ret;
     __asm__ __volatile__( "pushl %%ebx; movl %2,%%ebx; int $0x80; popl %%ebx"
-                          : "=a" (ret) : "0" (SYS_close), "r" (fd) );
+                          : "=a" (ret) : "0" (6 /* SYS_close */), "r" (fd) );
     return SYSCALL_RET(ret);
 }
 
@@ -260,7 +268,7 @@ static inline ssize_t wld_read( int fd, void *buffer, size_t len )
     int ret;
     __asm__ __volatile__( "pushl %%ebx; movl %2,%%ebx; int $0x80; popl %%ebx"
                           : "=a" (ret)
-                          : "0" (SYS_read), "r" (fd), "c" (buffer), "d" (len)
+                          : "0" (3 /* SYS_read */), "r" (fd), "c" (buffer), "d" (len)
                           : "memory" );
     return SYSCALL_RET(ret);
 }
@@ -269,7 +277,7 @@ static inline ssize_t wld_write( int fd, const void *buffer, size_t len )
 {
     int ret;
     __asm__ __volatile__( "pushl %%ebx; movl %2,%%ebx; int $0x80; popl %%ebx"
-                          : "=a" (ret) : "0" (SYS_write), "r" (fd), "c" (buffer), "d" (len) );
+                          : "=a" (ret) : "0" (4 /* SYS_write */), "r" (fd), "c" (buffer), "d" (len) );
     return SYSCALL_RET(ret);
 }
 
@@ -277,7 +285,7 @@ static inline int wld_mprotect( const void *addr, size_t len, int prot )
 {
     int ret;
     __asm__ __volatile__( "pushl %%ebx; movl %2,%%ebx; int $0x80; popl %%ebx"
-                          : "=a" (ret) : "0" (SYS_mprotect), "r" (addr), "c" (len), "d" (prot) );
+                          : "=a" (ret) : "0" (125 /* SYS_mprotect */), "r" (addr), "c" (len), "d" (prot) );
     return SYSCALL_RET(ret);
 }
 
@@ -302,35 +310,35 @@ static void *wld_mmap( void *start, size_t len, int prot, int flags, int fd, off
     args.fd     = fd;
     args.offset = offset;
     __asm__ __volatile__( "pushl %%ebx; movl %2,%%ebx; int $0x80; popl %%ebx"
-                          : "=a" (ret) : "0" (SYS_mmap), "q" (&args) : "memory" );
+                          : "=a" (ret) : "0" (90 /* SYS_mmap */), "q" (&args) : "memory" );
     return (void *)SYSCALL_RET(ret);
 }
 
 static inline uid_t wld_getuid(void)
 {
     uid_t ret;
-    __asm__( "int $0x80" : "=a" (ret) : "0" (SYS_getuid) );
+    __asm__( "int $0x80" : "=a" (ret) : "0" (24 /* SYS_getuid */) );
     return ret;
 }
 
 static inline uid_t wld_geteuid(void)
 {
     uid_t ret;
-    __asm__( "int $0x80" : "=a" (ret) : "0" (SYS_geteuid) );
+    __asm__( "int $0x80" : "=a" (ret) : "0" (49 /* SYS_geteuid */) );
     return ret;
 }
 
 static inline gid_t wld_getgid(void)
 {
     gid_t ret;
-    __asm__( "int $0x80" : "=a" (ret) : "0" (SYS_getgid) );
+    __asm__( "int $0x80" : "=a" (ret) : "0" (47 /* SYS_getgid */) );
     return ret;
 }
 
 static inline gid_t wld_getegid(void)
 {
     gid_t ret;
-    __asm__( "int $0x80" : "=a" (ret) : "0" (SYS_getegid) );
+    __asm__( "int $0x80" : "=a" (ret) : "0" (50 /* SYS_getegid */) );
     return ret;
 }
 
@@ -338,7 +346,7 @@ static inline int wld_prctl( int code, long arg )
 {
     int ret;
     __asm__ __volatile__( "pushl %%ebx; movl %2,%%ebx; int $0x80; popl %%ebx"
-                          : "=a" (ret) : "0" (SYS_prctl), "r" (code), "c" (arg) );
+                          : "=a" (ret) : "0" (172 /* SYS_prctl */), "r" (code), "c" (arg) );
     return SYSCALL_RET(ret);
 }
 
@@ -540,7 +548,7 @@ static __attribute__((noreturn,format(printf,1,2))) void fatal_error(const char 
  *  Dump interesting bits of the ELF auxv_t structure that is passed
  *   as the 4th parameter to the _start function
  */
-static void dump_auxiliary( ElfW(auxv_t) *av )
+static void dump_auxiliary( struct wld_auxv *av )
 {
 #define NAME(at) { at, #at }
     static const struct { int val; const char *name; } names[] =
@@ -581,8 +589,8 @@ static void dump_auxiliary( ElfW(auxv_t) *av )
  *
  * Set the new auxiliary values
  */
-static void set_auxiliary_values( ElfW(auxv_t) *av, const ElfW(auxv_t) *new_av,
-                                  const ElfW(auxv_t) *delete_av, void **stack )
+static void set_auxiliary_values( struct wld_auxv *av, const struct wld_auxv *new_av,
+                                  const struct wld_auxv *delete_av, void **stack )
 {
     int i, j, av_count = 0, new_count = 0, delete_count = 0;
     char *src, *dst;
@@ -624,7 +632,7 @@ static void set_auxiliary_values( ElfW(auxv_t) *av, const ElfW(auxv_t) *new_av,
         for (i = len - 1; i >= 0; i--) dst[i] = src[i];
     }
     *stack = dst;
-    av = (ElfW(auxv_t) *)((char *)av + (dst - src));
+    av = (struct wld_auxv *)((char *)av + (dst - src));
 
     /* now set the values */
     for (j = 0; new_av[j].a_type != AT_NULL; j++)
@@ -650,7 +658,7 @@ static void set_auxiliary_values( ElfW(auxv_t) *av, const ElfW(auxv_t) *new_av,
  *
  * Get a field of the auxiliary structure
  */
-static int get_auxiliary( ElfW(auxv_t) *av, int type, int def_val )
+static int get_auxiliary( struct wld_auxv *av, int type, int def_val )
 {
   for ( ; av->a_type != AT_NULL; av++)
       if( av->a_type == type ) return av->a_un.a_val;
@@ -904,7 +912,7 @@ static void map_so_lib( const char *name, struct wld_link_map *l)
 }
 
 
-static unsigned int elf_hash( const char *name )
+static unsigned int wld_elf_hash( const char *name )
 {
     unsigned int hi, hash = 0;
     while (*name)
@@ -932,10 +940,10 @@ static void *find_symbol( const ElfW(Phdr) *phdr, int num, const char *var, int 
     const ElfW(Dyn) *dyn = NULL;
     const ElfW(Phdr) *ph;
     const ElfW(Sym) *symtab = NULL;
-    const Elf_Symndx *hashtab = NULL;
+    const Elf32_Word *hashtab = NULL;
     const Elf32_Word *gnu_hashtab = NULL;
     const char *strings = NULL;
-    Elf_Symndx idx;
+    Elf32_Word idx;
 
     /* check the values */
 #ifdef DUMP_SYMS
@@ -966,7 +974,7 @@ static void *find_symbol( const ElfW(Phdr) *phdr, int num, const char *var, int 
         if( dyn->d_tag == DT_SYMTAB )
             symtab = (const ElfW(Sym) *)dyn->d_un.d_ptr;
         if( dyn->d_tag == DT_HASH )
-            hashtab = (const Elf_Symndx *)dyn->d_un.d_ptr;
+            hashtab = (const Elf32_Word *)dyn->d_un.d_ptr;
         if( dyn->d_tag == DT_GNU_HASH )
             gnu_hashtab = (const Elf32_Word *)dyn->d_un.d_ptr;
 #ifdef DUMP_SYMS
@@ -991,21 +999,23 @@ static void *find_symbol( const ElfW(Phdr) *phdr, int num, const char *var, int 
         do
         {
             if ((chains[idx] & ~1u) == (hash & ~1u) &&
-                symtab[idx].st_info == ELF32_ST_INFO( STB_GLOBAL, type ) &&
+                ELF32_ST_BIND(symtab[idx].st_info) == STB_GLOBAL &&
+                ELF32_ST_TYPE(symtab[idx].st_info) == type &&
                 !wld_strcmp( strings + symtab[idx].st_name, var ))
                 goto found;
         } while (!(chains[idx++] & 1u));
     }
     else if (hashtab)  /* old style hash table */
     {
-        const unsigned int hash   = elf_hash(var);
-        const Elf_Symndx nbuckets = hashtab[0];
-        const Elf_Symndx *buckets = hashtab + 2;
-        const Elf_Symndx *chains  = buckets + nbuckets;
+        const unsigned int hash   = wld_elf_hash(var);
+        const Elf32_Word nbuckets = hashtab[0];
+        const Elf32_Word *buckets = hashtab + 2;
+        const Elf32_Word *chains  = buckets + nbuckets;
 
-        for (idx = buckets[hash % nbuckets]; idx != STN_UNDEF; idx = chains[idx])
+        for (idx = buckets[hash % nbuckets]; idx; idx = chains[idx])
         {
-            if (symtab[idx].st_info == ELF32_ST_INFO( STB_GLOBAL, type ) &&
+            if (ELF32_ST_BIND(symtab[idx].st_info) == STB_GLOBAL &&
+                ELF32_ST_TYPE(symtab[idx].st_info) == type &&
                 !wld_strcmp( strings + symtab[idx].st_name, var ))
                 goto found;
         }
@@ -1110,7 +1120,7 @@ static void remove_preload_range( int i )
  *
  * Check if address of the given aux value is in one of the reserved ranges
  */
-static int is_in_preload_range( const ElfW(auxv_t) *av, int type )
+static int is_in_preload_range( const struct wld_auxv *av, int type )
 {
     while (av->a_type != AT_NULL)
     {
@@ -1153,7 +1163,7 @@ void* wld_start( void **stack )
     long i, *pargc;
     char **argv, **p;
     char *interp, *reserve = NULL;
-    ElfW(auxv_t) new_av[12], delete_av[3], *av;
+    struct wld_auxv new_av[12], delete_av[3], *av;
     struct wld_link_map main_binary_map, ld_so_map;
     struct wine_preload_info **wine_main_preload_info;
 
@@ -1172,7 +1182,7 @@ void* wld_start( void **stack )
         p++;
     }
 
-    av = (ElfW(auxv_t)*) (p+1);
+    av = (struct wld_auxv *)(p+1);
     page_size = get_auxiliary( av, AT_PAGESZ, 4096 );
     page_mask = page_size - 1;
 

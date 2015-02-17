@@ -56,8 +56,8 @@ static CHAR version_dll[]       = "version.dll";
 static CHAR winetest[]          = "winetest";
 static CHAR xcv_localport[]     = ",XcvMonitor Local Port";
 
-static WCHAR cmd_MonitorUIW[] = {'M','o','n','i','t','o','r','U','I',0};
-static WCHAR cmd_PortIsValidW[] = {'P','o','r','t','I','s','V','a','l','i','d',0};
+static const WCHAR cmd_MonitorUIW[] = {'M','o','n','i','t','o','r','U','I',0};
+static const WCHAR cmd_PortIsValidW[] = {'P','o','r','t','I','s','V','a','l','i','d',0};
 static WCHAR emptyW[] = {0};
 
 static WCHAR portname_com1W[] = {'C','O','M','1',':',0};
@@ -92,31 +92,35 @@ static LPSTR tempfileA = NULL;
 static LPWSTR tempdirW = NULL;
 static LPWSTR tempfileW = NULL;
 
-/* ################################ */
-/* report common behavior only once */
-static DWORD deactivated_spooler_reported = 0;
-#define RETURN_ON_DEACTIVATED_SPOOLER(res) \
-    if ((res == 0) && (GetLastError() == RPC_S_SERVER_UNAVAILABLE)) \
-    { \
-        if (!deactivated_spooler_reported) { \
-            deactivated_spooler_reported++; \
-            skip("The Service 'Spooler' is required for many test\n"); \
-        } \
-        return; \
+static BOOL is_spooler_deactivated(DWORD res, DWORD lasterror)
+{
+    if (!res && lasterror == RPC_S_SERVER_UNAVAILABLE)
+    {
+        static int deactivated_spooler_reported = 0;
+        if (!deactivated_spooler_reported)
+        {
+            deactivated_spooler_reported = 1;
+            skip("The service 'Spooler' is required for many tests\n");
+        }
+        return TRUE;
     }
+    return FALSE;
+}
 
-static DWORD access_denied_reported = 0;
-#define RETURN_ON_ACCESS_DENIED(res) \
-    if ((res == 0) && (GetLastError() == ERROR_ACCESS_DENIED)) \
-    { \
-        if (!access_denied_reported) { \
-            access_denied_reported++; \
-            skip("More Access-Rights are required for many test\n"); \
-        } \
-        return; \
+static BOOL is_access_denied(DWORD res, DWORD lasterror)
+{
+    if (!res && lasterror == ERROR_ACCESS_DENIED)
+    {
+        static int access_denied_reported = 0;
+        if (!access_denied_reported)
+        {
+            access_denied_reported = 1;
+            skip("More access rights are required for many tests\n");
+        }
+        return TRUE;
     }
-
-/* ################################ */
+    return FALSE;
+}
 
 static BOOL on_win9x = FALSE;
 
@@ -154,14 +158,12 @@ static void find_default_printer(VOID)
         HKEY hwindows;
         DWORD   type;
         /* NT 3.x and above */
-        if (RegOpenKeyEx(HKEY_CURRENT_USER, 
-                        "Software\\Microsoft\\Windows NT\\CurrentVersion\\Windows",
-                        0, KEY_QUERY_VALUE, &hwindows) == NO_ERROR) {
+        if (RegOpenKeyExA(HKEY_CURRENT_USER,
+                          "Software\\Microsoft\\Windows NT\\CurrentVersion\\Windows",
+                          0, KEY_QUERY_VALUE, &hwindows) == NO_ERROR) {
 
             needed = sizeof(buffer);
-            if (RegQueryValueEx(hwindows, "device", NULL, 
-                                &type, (LPBYTE)buffer, &needed) == NO_ERROR) {
-
+            if (RegQueryValueExA(hwindows, "device", NULL, &type, (LPBYTE)buffer, &needed) == NO_ERROR) {
                 ptr = strchr(buffer, ',');
                 if (ptr) {
                     ptr[0] = '\0';
@@ -335,7 +337,7 @@ static void test_AddMonitor(void)
 
     if (0)
     {
-    /* This test crash with win9x on vmware (works with win9x on qemu 0.8.1) */
+    /* This test crashes win9x on vmware (works with win9x on qemu 0.8.1) */
     SetLastError(MAGIC_DEAD);
     res = AddMonitorA(NULL, 2, NULL);
     /* NT: unchanged,  9x: ERROR_PRIVILEGE_NOT_HELD */
@@ -349,8 +351,8 @@ static void test_AddMonitor(void)
     ZeroMemory(&mi2a, sizeof(MONITOR_INFO_2A));
     SetLastError(MAGIC_DEAD);
     res = AddMonitorA(NULL, 2, (LPBYTE) &mi2a);
-    RETURN_ON_DEACTIVATED_SPOOLER(res)
-    RETURN_ON_ACCESS_DENIED(res)
+    if (is_spooler_deactivated(res, GetLastError())) return;
+    if (is_access_denied(res, GetLastError())) return;
 
     /* NT: ERROR_INVALID_PARAMETER,  9x: ERROR_INVALID_ENVIRONMENT */
     ok(!res && ((GetLastError() == ERROR_INVALID_PARAMETER) ||
@@ -365,7 +367,7 @@ static void test_AddMonitor(void)
 
     if (0)
     {
-    /* The Test is deactivated, because when mi2a.pName is NULL, the subkey
+    /* The test is deactivated, because when mi2a.pName is NULL, the subkey
        HKLM\System\CurrentControlSet\Control\Print\Monitors\C:\WINDOWS\SYSTEM
        or HKLM\System\CurrentControlSet\Control\Print\Monitors\ì
        is created on win9x and we do not want to hit this bug here. */
@@ -463,7 +465,7 @@ static void test_AddPort(void)
 
     SetLastError(0xdeadbeef);
     res = AddPortA(NULL, 0, NULL);
-    RETURN_ON_DEACTIVATED_SPOOLER(res)
+    if (is_spooler_deactivated(res, GetLastError())) return;
     /* NT: RPC_X_NULL_REF_POINTER, 9x: ERROR_INVALID_PARAMETER */
     ok( !res && ((GetLastError() == RPC_X_NULL_REF_POINTER) || 
                  (GetLastError() == ERROR_INVALID_PARAMETER)),
@@ -474,7 +476,7 @@ static void test_AddPort(void)
     SetLastError(0xdeadbeef);
     res = AddPortA(NULL, 0, empty);
     /* Allowed only for (Printer-)Administrators */
-    RETURN_ON_ACCESS_DENIED(res)
+    if (is_access_denied(res, GetLastError())) return;
 
     /* XP: ERROR_NOT_SUPPORTED, NT351 and 9x: ERROR_INVALID_PARAMETER */
     ok( !res && ((GetLastError() == ERROR_NOT_SUPPORTED) || 
@@ -512,7 +514,7 @@ static void test_AddPortEx(void)
     pi.pPortName = tempfileA;
     SetLastError(0xdeadbeef);
     res = pAddPortExA(NULL, 1, (LPBYTE) &pi, LocalPortA);
-    RETURN_ON_DEACTIVATED_SPOOLER(res)
+    if (is_spooler_deactivated(res, GetLastError())) return;
 
     /* Allowed only for (Printer-)Administrators.
        W2K+XP: ERROR_INVALID_PARAMETER  */
@@ -522,7 +524,7 @@ static void test_AddPortEx(void)
     }
     ok( res, "got %u with %u (expected '!= 0')\n", res, GetLastError());
 
-    /* Add a port, that already exist */
+    /* add a port that already exists */
     SetLastError(0xdeadbeef);
     res = pAddPortExA(NULL, 1, (LPBYTE) &pi, LocalPortA);
     ok( !res && (GetLastError() == ERROR_INVALID_PARAMETER),
@@ -615,7 +617,7 @@ static void test_ConfigurePort(void)
 
     SetLastError(0xdeadbeef);
     res = ConfigurePortA(NULL, 0, NULL);
-    RETURN_ON_DEACTIVATED_SPOOLER(res)
+    if (is_spooler_deactivated(res, GetLastError())) return;
     /* NT: RPC_X_NULL_REF_POINTER, 9x: ERROR_INVALID_PARAMETER */
     ok( !res && ((GetLastError() == RPC_X_NULL_REF_POINTER) || 
                  (GetLastError() == ERROR_INVALID_PARAMETER)),
@@ -625,7 +627,7 @@ static void test_ConfigurePort(void)
     SetLastError(0xdeadbeef);
     res = ConfigurePortA(NULL, 0, empty);
     /* Allowed only for (Printer-)Administrators */
-    RETURN_ON_ACCESS_DENIED(res)
+    if (is_access_denied(res, GetLastError())) return;
 
     /* XP: ERROR_NOT_SUPPORTED, NT351 and 9x: ERROR_INVALID_PARAMETER */
     ok( !res && ((GetLastError() == ERROR_NOT_SUPPORTED) || 
@@ -761,12 +763,12 @@ static void test_DeletePort(void)
 
     SetLastError(0xdeadbeef);
     res = DeletePortA(NULL, 0, NULL);
-    RETURN_ON_DEACTIVATED_SPOOLER(res)
+    if (is_spooler_deactivated(res, GetLastError())) return;
 
     SetLastError(0xdeadbeef);
     res = DeletePortA(NULL, 0, empty);
     /* Allowed only for (Printer-)Administrators */
-    RETURN_ON_ACCESS_DENIED(res)
+    if (is_access_denied(res, GetLastError())) return;
 
     /* XP: ERROR_NOT_SUPPORTED, NT351 and 9x: ERROR_INVALID_PARAMETER */
     ok( !res && ((GetLastError() == ERROR_NOT_SUPPORTED) || 
@@ -803,11 +805,11 @@ static void test_EnumForms(LPSTR pName)
     PFORM_INFO_1A pFI_1a;
     PFORM_INFO_2A pFI_2a;
 
-    res = OpenPrinter(pName, &hprinter, NULL);
-    RETURN_ON_DEACTIVATED_SPOOLER(res)
+    res = OpenPrinterA(pName, &hprinter, NULL);
+    if (is_spooler_deactivated(res, GetLastError())) return;
     if (!res || !hprinter)
     {
-        /* Open the local Printserver is not supported on win9x */
+        /* opening the local Printserver is not supported on win9x */
         if (pName) skip("Failed to open '%s' (not supported on win9x)\n", pName);
         return;
     }
@@ -819,16 +821,16 @@ static void test_EnumForms(LPSTR pName)
         SetLastError(0xdeadbeef);
         res = EnumFormsA(hprinter, level, NULL, 0, &cbBuf, &pcReturned);
 
-        /* EnumForms is not implemented in win9x */
+        /* EnumForms is not implemented on win9x */
         if (!res && (GetLastError() == ERROR_CALL_NOT_IMPLEMENTED)) continue;
 
-        /* EnumForms for the Server not implemented on all NT-Versions */
+        /* EnumForms for the server is not implemented on all NT-versions */
         if (!res && (GetLastError() == ERROR_INVALID_HANDLE) && !pName) continue;
 
         /* Level 2 for EnumForms is not supported on all systems */
         if (!res && (GetLastError() == ERROR_INVALID_LEVEL) && (level == 2)) continue;
 
-        /* use only a short test, when we test with an invalid level */
+        /* use only a short test when testing an invalid level */
         if(!level || (level > 2)) {
             ok( (!res && (GetLastError() == ERROR_INVALID_LEVEL)) ||
                 (res && (pcReturned == 0)),
@@ -935,14 +937,12 @@ static void test_EnumMonitors(void)
         pcReturned = MAGIC_DEAD;
         SetLastError(MAGIC_DEAD);
         res = EnumMonitorsA(NULL, level, NULL, 0, &cbBuf, &pcReturned);
-
-        RETURN_ON_DEACTIVATED_SPOOLER(res)
-
+        if (is_spooler_deactivated(res, GetLastError())) return;
         /* not implemented yet in wine */
         if (!res && (GetLastError() == ERROR_CALL_NOT_IMPLEMENTED)) continue;
 
 
-        /* use only a short test, when we test with an invalid level */
+        /* use only a short test when testing an invalid level */
         if(!level || (level > 2)) {
             ok( (!res && (GetLastError() == ERROR_INVALID_LEVEL)) ||
                 (res && (pcReturned == 0)),
@@ -1046,9 +1046,9 @@ static void test_EnumPorts(void)
         pcReturned = 0xdeadbeef;
         SetLastError(0xdeadbeef);
         res = EnumPortsA(NULL, level, NULL, 0, &cbBuf, &pcReturned);
-        RETURN_ON_DEACTIVATED_SPOOLER(res)
+        if (is_spooler_deactivated(res, GetLastError())) return;
 
-        /* use only a short test, when we test with an invalid level */
+        /* use only a short test when testing an invalid level */
         if(!level || (level > 2)) {
             /* NT: ERROR_INVALID_LEVEL, 9x: success */
             ok( (!res && (GetLastError() == ERROR_INVALID_LEVEL)) ||
@@ -1104,7 +1104,7 @@ static void test_EnumPorts(void)
          */
 
         SetLastError(0xdeadbeef);
-        res = EnumPorts(NULL, level, buffer, cbBuf, NULL, &pcReturned);
+        res = EnumPortsA(NULL, level, buffer, cbBuf, NULL, &pcReturned);
         /* NT: RPC_X_NULL_REF_POINTER (1780),  9x: success */
         ok( (!res && (GetLastError() == RPC_X_NULL_REF_POINTER) ) ||
             ( res && (GetLastError() == ERROR_SUCCESS) ),
@@ -1114,7 +1114,7 @@ static void test_EnumPorts(void)
 
 
         SetLastError(0xdeadbeef);
-        res = EnumPorts(NULL, level, buffer, cbBuf, &pcbNeeded, NULL);
+        res = EnumPortsA(NULL, level, buffer, cbBuf, &pcbNeeded, NULL);
         /* NT: RPC_X_NULL_REF_POINTER (1780),  9x: success */
         ok( (!res && (GetLastError() == RPC_X_NULL_REF_POINTER) ) ||
             ( res && (GetLastError() == ERROR_SUCCESS) ),
@@ -1145,9 +1145,9 @@ static void test_EnumPrinterDrivers(void)
         pcReturned = 0xdeadbeef;
         SetLastError(0xdeadbeef);
         res = EnumPrinterDriversA(NULL, NULL, level, NULL, 0, &cbBuf, &pcReturned);
-        RETURN_ON_DEACTIVATED_SPOOLER(res)
+        if (is_spooler_deactivated(res, GetLastError())) return;
 
-        /* use only a short test, when we test with an invalid level */
+        /* use only a short test when testing an invalid level */
         if(!level || (level == 7) || (level > 8)) {
 
             ok( (!res && (GetLastError() == ERROR_INVALID_LEVEL)) ||
@@ -1158,7 +1158,7 @@ static void test_EnumPrinterDrivers(void)
             continue;
         }
 
-        /* some level are not supported in all windows versions */
+        /* some levels are not supported on all windows versions */
         if (!res && (GetLastError() == ERROR_INVALID_LEVEL)) {
             skip("Level %d not supported\n", level);
             continue;
@@ -1193,7 +1193,7 @@ static void test_EnumPrinterDrivers(void)
         ok(res, "(%u) got %u with %u (expected '!=0')\n", level, res, GetLastError());
         ok(pcbNeeded == cbBuf, "(%d) returned %d (expected %d)\n", level, pcbNeeded, cbBuf);
 
-        /* validate the returned Data here */
+        /* validate the returned data here */
         if (level > 1) {
             LPDRIVER_INFO_2A di = (LPDRIVER_INFO_2A) buffer;
 
@@ -1266,7 +1266,7 @@ static void test_EnumPrinterDrivers(void)
     ok(res, "EnumPrinterDriversA failed %u\n", GetLastError());
     if (res && pcReturned > 0)
     {
-        DRIVER_INFO_1 *di_1 = (DRIVER_INFO_1 *)buffer;
+        DRIVER_INFO_1A *di_1 = (DRIVER_INFO_1A *)buffer;
         ok((LPBYTE) di_1->pName == NULL || (LPBYTE) di_1->pName < buffer ||
             (LPBYTE) di_1->pName >= (LPBYTE)(di_1 + pcReturned),
             "Driver Information not in sequence; pName %p, top of data %p\n",
@@ -1291,7 +1291,7 @@ static void test_EnumPrintProcessors(void)
     pcReturned = 0xdeadbeef;
     SetLastError(0xdeadbeef);
     res = EnumPrintProcessorsA(NULL, NULL, 1, NULL, 0, &cbBuf, &pcReturned);
-    RETURN_ON_DEACTIVATED_SPOOLER(res)
+    if (is_spooler_deactivated(res, GetLastError())) return;
 
     if (res && !cbBuf) {
         skip("No Printprocessor installed\n");
@@ -1310,7 +1310,7 @@ static void test_EnumPrintProcessors(void)
     pcbNeeded = 0xdeadbeef;
     res = EnumPrintProcessorsA(NULL, NULL, 1, buffer, cbBuf, &pcbNeeded, &pcReturned);
     ok(res, "got %u with %u (expected '!=0')\n", res, GetLastError());
-    /* validate the returned Data here. */
+    /* validate the returned data here. */
 
 
     SetLastError(0xdeadbeef);
@@ -1365,7 +1365,7 @@ static void test_EnumPrintProcessors(void)
 
     /* failure-Codes for NULL */
     if (0) {
-        /* this test crash on win98se */
+        /* this test crashes on win98se */
         SetLastError(0xdeadbeef);
         pcbNeeded = 0xdeadbeef;
         pcReturned = 0xdeadbeef;
@@ -1485,10 +1485,11 @@ static void test_GetPrinterDriverDirectory(void)
 
     SetLastError(MAGIC_DEAD);
     res = GetPrinterDriverDirectoryA( NULL, NULL, 1, NULL, 0, &cbBuf);
-    trace("first call returned 0x%04x, with %d: buffer size 0x%08x\n",
-    res, GetLastError(), cbBuf);
+    if (is_spooler_deactivated(res, GetLastError())) return;
 
-    RETURN_ON_DEACTIVATED_SPOOLER(res)
+    trace("first call returned 0x%04x, with %d: buffer size 0x%08x\n",
+          res, GetLastError(), cbBuf);
+
     ok((res == 0) && (GetLastError() == ERROR_INSUFFICIENT_BUFFER),
         "returned %d with lasterror=%d (expected '0' with "
         "ERROR_INSUFFICIENT_BUFFER)\n", res, GetLastError());
@@ -1534,18 +1535,22 @@ static void test_GetPrinterDriverDirectory(void)
 
     SetLastError(MAGIC_DEAD);
     res = GetPrinterDriverDirectoryA( NULL, NULL, 1, buffer, cbBuf, NULL);
-    ok( (!res && RPC_X_NULL_REF_POINTER == GetLastError()) || res,
-         "expected either result == 0 and "
-         "last error == RPC_X_NULL_REF_POINTER or result != 0 "
-         "got result %d and last error == %d\n", res, GetLastError());
+    /* w7 with deactivated spooler: ERROR_INVALID_PARAMETER,
+       NT: RPC_X_NULL_REF_POINTER  */
+    ok( res || (GetLastError() == RPC_X_NULL_REF_POINTER) ||
+               (GetLastError() == ERROR_INVALID_PARAMETER),
+        "returned %d with %d (expected '!=0' or '0' with RPC_X_NULL_REF_POINTER "
+        "or '0' with ERROR_INVALID_PARAMETER)\n", res, GetLastError());
 
     SetLastError(MAGIC_DEAD);
     res = GetPrinterDriverDirectoryA( NULL, NULL, 1, NULL, cbBuf, NULL);
-    ok(res || (GetLastError() == RPC_X_NULL_REF_POINTER),
-        "returned %d with %d (expected '!=0' or '0' with "
-        "RPC_X_NULL_REF_POINTER)\n", res, GetLastError());
- 
- 
+    /* w7 with deactivated spooler: ERROR_INVALID_PARAMETER,
+       NT: RPC_X_NULL_REF_POINTER  */
+    ok( res || (GetLastError() == RPC_X_NULL_REF_POINTER) ||
+               (GetLastError() == ERROR_INVALID_PARAMETER),
+        "returned %d with %d (expected '!=0' or '0' with RPC_X_NULL_REF_POINTER "
+        "or '0' with ERROR_INVALID_PARAMETER)\n", res, GetLastError());
+
     /* with a valid buffer, but level is too large */
     buffer[0] = '\0';
     SetLastError(MAGIC_DEAD);
@@ -1635,8 +1640,8 @@ static void test_GetPrintProcessorDirectory(void)
 
     SetLastError(0xdeadbeef);
     res = GetPrintProcessorDirectoryA(NULL, NULL, 1, NULL, 0, &cbBuf);
-    /* The deactivated Spooler is caught here on NT3.51 */
-    RETURN_ON_DEACTIVATED_SPOOLER(res)
+    if (is_spooler_deactivated(res, GetLastError())) return;
+
     ok( !res && (GetLastError() == ERROR_INSUFFICIENT_BUFFER),
         "returned %d with %d (expected '0' with ERROR_INSUFFICIENT_BUFFER)\n",
         res, GetLastError());
@@ -1654,7 +1659,7 @@ static void test_GetPrintProcessorDirectory(void)
     res = GetPrintProcessorDirectoryA(NULL, NULL, 1, buffer, cbBuf*2, &pcbNeeded);
     ok(res, "returned %d with %d (expected '!= 0')\n", res, GetLastError());
  
-    /* Buffer to small */
+    /* Buffer too small */
     buffer[0] = '\0';
     SetLastError(0xdeadbeef);
     res = GetPrintProcessorDirectoryA( NULL, NULL, 1, buffer, cbBuf-1, &pcbNeeded);
@@ -1679,20 +1684,22 @@ static void test_GetPrintProcessorDirectory(void)
     buffer[0] = '\0';
     SetLastError(0xdeadbeef);
     res = GetPrintProcessorDirectoryA( NULL, NULL, 1, buffer, cbBuf, NULL);
-    /* NT: RPC_X_NULL_REF_POINTER, 9x: res != 0  */
-    ok( (!res && (GetLastError() == RPC_X_NULL_REF_POINTER)) ||
-        broken(res),
-        "returned %d with %d (expected '0' with RPC_X_NULL_REF_POINTER)\n",
-        res, GetLastError());
+    /* w7 with deactivated spooler: ERROR_INVALID_PARAMETER,
+       NT: RPC_X_NULL_REF_POINTER, 9x: res != 0  */
+    ok( !res && ((GetLastError() == RPC_X_NULL_REF_POINTER) ||
+                 (GetLastError() == ERROR_INVALID_PARAMETER)),
+        "returned %d with %d (expected '0' with RPC_X_NULL_REF_POINTER "
+        "or with ERROR_INVALID_PARAMETER)\n", res, GetLastError());
 
     buffer[0] = '\0';
     SetLastError(0xdeadbeef);
     res = GetPrintProcessorDirectoryA( NULL, NULL, 1, NULL, cbBuf, NULL);
-    /* NT: RPC_X_NULL_REF_POINTER, 9x: res != 0  */
-    ok( (!res && (GetLastError() == RPC_X_NULL_REF_POINTER)) ||
-        broken(res),
-        "returned %d with %d (expected '0' with RPC_X_NULL_REF_POINTER)\n",
-        res, GetLastError());
+    /* w7 with deactivated spooler: ERROR_INVALID_PARAMETER,
+       NT: RPC_X_NULL_REF_POINTER, 9x: res != 0  */
+    ok( !res && ((GetLastError() == RPC_X_NULL_REF_POINTER) ||
+                 (GetLastError() == ERROR_INVALID_PARAMETER)),
+        "returned %d with %d (expected '0' with RPC_X_NULL_REF_POINTER "
+        "or with ERROR_INVALID_PARAMETER)\n", res, GetLastError());
 
     /* with a valid buffer, but level is invalid */
     buffer[0] = '\0';
@@ -1707,7 +1714,7 @@ static void test_GetPrintProcessorDirectory(void)
     buffer[0] = '\0';
     SetLastError(0xdeadbeef);
     res = GetPrintProcessorDirectoryA(NULL, NULL, 2, buffer, cbBuf, &pcbNeeded);
-    /* Level is ignored in win9x*/
+    /* Level is ignored on win9x*/
     ok( (!res && (GetLastError() == ERROR_INVALID_LEVEL)) ||
         broken(res && buffer[0]),
         "returned %d with %d (expected '0' with ERROR_INVALID_LEVEL)\n",
@@ -1734,7 +1741,7 @@ static void test_GetPrintProcessorDirectory(void)
         "returned %d with %d (expected '!= 0' or '0' with "
         "ERROR_INVALID_ENVIRONMENT)\n", res, GetLastError());
 
-    /* invalid on all Systems */
+    /* invalid on all systems */
     buffer[0] = '\0';
     SetLastError(0xdeadbeef);
     res = GetPrintProcessorDirectoryA(NULL, invalid_env, 1, buffer, cbBuf*2, &pcbNeeded);
@@ -1748,7 +1755,7 @@ static void test_GetPrintProcessorDirectory(void)
     res = GetPrintProcessorDirectoryA(empty, NULL, 1, buffer, cbBuf*2, &pcbNeeded);
     ok(res, "returned %d with %d (expected '!= 0')\n", res, GetLastError());
 
-    /* invalid on all Systems */
+    /* invalid on all systems */
     buffer[0] = '\0';
     SetLastError(0xdeadbeef);
     res = GetPrintProcessorDirectoryA(server_does_not_exist, NULL, 1, buffer, cbBuf*2, &pcbNeeded);
@@ -1770,9 +1777,9 @@ static void test_OpenPrinter(void)
     DWORD               res;
 
     SetLastError(MAGIC_DEAD);
-    res = OpenPrinter(NULL, NULL, NULL);    
-    /* The deactivated Spooler is caught here on NT3.51 */
-    RETURN_ON_DEACTIVATED_SPOOLER(res)
+    res = OpenPrinterA(NULL, NULL, NULL);
+    if (is_spooler_deactivated(res, GetLastError())) return;
+
     ok(!res && (GetLastError() == ERROR_INVALID_PARAMETER),
         "returned %d with %d (expected '0' with ERROR_INVALID_PARAMETER)\n",
         res, GetLastError());
@@ -1781,9 +1788,8 @@ static void test_OpenPrinter(void)
     /* Get Handle for the local Printserver (NT only)*/
     hprinter = (HANDLE) MAGIC_DEAD;
     SetLastError(MAGIC_DEAD);
-    res = OpenPrinter(NULL, &hprinter, NULL);
-    /* The deactivated Spooler is caught here on XPsp2 */
-    RETURN_ON_DEACTIVATED_SPOOLER(res)
+    res = OpenPrinterA(NULL, &hprinter, NULL);
+    if (is_spooler_deactivated(res, GetLastError())) return;
     ok(res || (!res && GetLastError() == ERROR_INVALID_PARAMETER),
         "returned %d with %d (expected '!=0' or '0' with ERROR_INVALID_PARAMETER)\n",
         res, GetLastError());
@@ -1796,14 +1802,14 @@ static void test_OpenPrinter(void)
         defaults.DesiredAccess=0;
         hprinter = (HANDLE) MAGIC_DEAD;
         SetLastError(MAGIC_DEAD);
-        res = OpenPrinter(NULL, &hprinter, &defaults);
+        res = OpenPrinterA(NULL, &hprinter, &defaults);
         ok(res, "returned %d with %d (expected '!=0')\n", res, GetLastError());
         if (res) ClosePrinter(hprinter);
 
         defaults.DesiredAccess=-1;
         hprinter = (HANDLE) MAGIC_DEAD;
         SetLastError(MAGIC_DEAD);
-        res = OpenPrinter(NULL, &hprinter, &defaults);
+        res = OpenPrinterA(NULL, &hprinter, &defaults);
         todo_wine {
         ok(!res && GetLastError() == ERROR_ACCESS_DENIED,
             "returned %d with %d (expected '0' with ERROR_ACCESS_DENIED)\n", 
@@ -1817,7 +1823,7 @@ static void test_OpenPrinter(void)
     if (local_server != NULL) {
         hprinter = (HANDLE) 0xdeadbeef;
         SetLastError(0xdeadbeef);
-        res = OpenPrinter(local_server, &hprinter, NULL);
+        res = OpenPrinterA(local_server, &hprinter, NULL);
         ok(res || (!res && GetLastError() == ERROR_INVALID_PARAMETER),
             "returned %d with %d (expected '!=0' or '0' with ERROR_INVALID_PARAMETER)\n",
             res, GetLastError());
@@ -1827,7 +1833,7 @@ static void test_OpenPrinter(void)
     /* Invalid Printername */
     hprinter = (HANDLE) MAGIC_DEAD;
     SetLastError(MAGIC_DEAD);
-    res = OpenPrinter(illegal_name, &hprinter, NULL);
+    res = OpenPrinterA(illegal_name, &hprinter, NULL);
     ok(!res && ((GetLastError() == ERROR_INVALID_PRINTER_NAME) || 
                 (GetLastError() == ERROR_INVALID_PARAMETER) ),
        "returned %d with %d (expected '0' with: ERROR_INVALID_PARAMETER or"
@@ -1836,7 +1842,7 @@ static void test_OpenPrinter(void)
 
     hprinter = (HANDLE) MAGIC_DEAD;
     SetLastError(MAGIC_DEAD);
-    res = OpenPrinter(empty, &hprinter, NULL);
+    res = OpenPrinterA(empty, &hprinter, NULL);
     /* NT: ERROR_INVALID_PRINTER_NAME,  9x: ERROR_INVALID_PARAMETER */
     ok( !res &&
         ((GetLastError() == ERROR_INVALID_PRINTER_NAME) || 
@@ -1846,22 +1852,22 @@ static void test_OpenPrinter(void)
     if(res) ClosePrinter(hprinter);
 
 
-    /* Get Handle for the default Printer */
+    /* get handle for the default printer */
     if (default_printer)
     {
         hprinter = (HANDLE) MAGIC_DEAD;
         SetLastError(MAGIC_DEAD);
-        res = OpenPrinter(default_printer, &hprinter, NULL);
+        res = OpenPrinterA(default_printer, &hprinter, NULL);
         if((!res) && (GetLastError() == RPC_S_SERVER_UNAVAILABLE))
         {
-            trace("The Service 'Spooler' is required for '%s'\n", default_printer);
+            trace("The service 'Spooler' is required for '%s'\n", default_printer);
             return;
         }
         ok(res, "returned %d with %d (expected '!=0')\n", res, GetLastError());
         if(res) ClosePrinter(hprinter);
 
         SetLastError(MAGIC_DEAD);
-        res = OpenPrinter(default_printer, NULL, NULL);
+        res = OpenPrinterA(default_printer, NULL, NULL);
         /* NT: FALSE with ERROR_INVALID_PARAMETER, 9x: TRUE */
         ok(res || (GetLastError() == ERROR_INVALID_PARAMETER),
             "returned %d with %d (expected '!=0' or '0' with "
@@ -1873,7 +1879,7 @@ static void test_OpenPrinter(void)
 
         hprinter = (HANDLE) MAGIC_DEAD;
         SetLastError(MAGIC_DEAD);
-        res = OpenPrinter(default_printer, &hprinter, &defaults);
+        res = OpenPrinterA(default_printer, &hprinter, &defaults);
         ok(res || GetLastError() == ERROR_ACCESS_DENIED,
             "returned %d with %d (expected '!=0' or '0' with "
             "ERROR_ACCESS_DENIED)\n", res, GetLastError());
@@ -1883,9 +1889,9 @@ static void test_OpenPrinter(void)
 
         hprinter = (HANDLE) MAGIC_DEAD;
         SetLastError(MAGIC_DEAD);
-        res = OpenPrinter(default_printer, &hprinter, &defaults);
+        res = OpenPrinterA(default_printer, &hprinter, &defaults);
         /* stop here, when a remote Printserver has no RPC-Service running */
-        RETURN_ON_DEACTIVATED_SPOOLER(res)
+        if (is_spooler_deactivated(res, GetLastError())) return;
         ok(res || ((GetLastError() == ERROR_INVALID_DATATYPE) ||
                    (GetLastError() == ERROR_ACCESS_DENIED)),
             "returned %d with %d (expected '!=0' or '0' with: "
@@ -1899,7 +1905,7 @@ static void test_OpenPrinter(void)
 
         hprinter = (HANDLE) MAGIC_DEAD;
         SetLastError(MAGIC_DEAD);
-        res = OpenPrinter(default_printer, &hprinter, &defaults);
+        res = OpenPrinterA(default_printer, &hprinter, &defaults);
         ok(res || GetLastError() == ERROR_ACCESS_DENIED,
             "returned %d with %d (expected '!=0' or '0' with "
             "ERROR_ACCESS_DENIED)\n", res, GetLastError());
@@ -1909,7 +1915,7 @@ static void test_OpenPrinter(void)
         defaults.DesiredAccess=PRINTER_ALL_ACCESS;
         hprinter = (HANDLE) MAGIC_DEAD;
         SetLastError(MAGIC_DEAD);
-        res = OpenPrinter(default_printer, &hprinter, &defaults);
+        res = OpenPrinterA(default_printer, &hprinter, &defaults);
         ok(res || GetLastError() == ERROR_ACCESS_DENIED,
             "returned %d with %d (expected '!=0' or '0' with "
             "ERROR_ACCESS_DENIED)\n", res, GetLastError());
@@ -1944,9 +1950,7 @@ static void test_SetDefaultPrinter(void)
     /* first part: with the default Printer */
     SetLastError(MAGIC_DEAD);
     res = pSetDefaultPrinterA("no_printer_with_this_name");
-
-    RETURN_ON_DEACTIVATED_SPOOLER(res)
-    /* spooler is running or we have no spooler here*/
+    if (is_spooler_deactivated(res, GetLastError())) return;
 
     /* Not implemented in wine */
     if (!res && (GetLastError() == ERROR_CALL_NOT_IMPLEMENTED)) {
@@ -1992,6 +1996,9 @@ static void test_SetDefaultPrinter(void)
     WriteProfileStringA("windows", "device", NULL);    
     SetLastError(MAGIC_DEAD);
     res = pSetDefaultPrinterA("");
+    if (is_spooler_deactivated(res, GetLastError()))
+        goto restore_old_printer;
+
     /* we get ERROR_INVALID_PRINTER_NAME when no printer is installed */
     ok(res || (!res && (GetLastError() == ERROR_INVALID_PRINTER_NAME)),
          "returned %d with %d (expected '!=0' or '0' with "
@@ -2013,6 +2020,7 @@ static void test_SetDefaultPrinter(void)
         "ERROR_INVALID_PRINTER_NAME)\n", res, GetLastError());
 
     /* restore the original value */
+restore_old_printer:
     res = pSetDefaultPrinterA(default_printer);          /* the nice way */
     ok(res, "SetDefaultPrinter error %d\n", GetLastError());
     WriteProfileStringA("windows", "device", org_value); /* the old way */
@@ -2046,9 +2054,9 @@ static void test_XcvDataW_MonitorUI(void)
 
     hXcv = NULL;
     SetLastError(0xdeadbeef);
-    res = OpenPrinter(xcv_localport, &hXcv, &pd);
-    RETURN_ON_DEACTIVATED_SPOOLER(res)
-    RETURN_ON_ACCESS_DENIED(res)
+    res = OpenPrinterA(xcv_localport, &hXcv, &pd);
+    if (is_spooler_deactivated(res, GetLastError())) return;
+    if (is_access_denied(res, GetLastError())) return;
 
     ok(res, "returned %d with %u and handle %p (expected '!= 0')\n", res, GetLastError(), hXcv);
     if (!res) return;
@@ -2164,10 +2172,9 @@ static void test_XcvDataW_PortIsValid(void)
 
     hXcv = NULL;
     SetLastError(0xdeadbeef);
-    res = OpenPrinter(xcv_localport, &hXcv, &pd);
-
-    RETURN_ON_DEACTIVATED_SPOOLER(res)
-    RETURN_ON_ACCESS_DENIED(res)
+    res = OpenPrinterA(xcv_localport, &hXcv, &pd);
+    if (is_spooler_deactivated(res, GetLastError())) return;
+    if (is_access_denied(res, GetLastError())) return;
 
     ok(res, "returned %d with %u and handle %p (expected '!= 0')\n", res, GetLastError(), hXcv);
     if (!res) return;
@@ -2203,7 +2210,7 @@ static void test_XcvDataW_PortIsValid(void)
         "ERROR_PATH_NOT_FOUND or ERROR_ACCESS_DENIED)\n",
         res, GetLastError(), needed, status);
 
-    /* more valid well known Ports */
+    /* more valid well known ports */
     needed = (DWORD) 0xdeadbeef;
     status = (DWORD) 0xdeadbeef;
     SetLastError(0xdeadbeef);
@@ -2274,7 +2281,7 @@ static void test_GetPrinter(void)
     }
 
     hprn = 0;
-    ret = OpenPrinter(default_printer, &hprn, NULL);
+    ret = OpenPrinterA(default_printer, &hprn, NULL);
     if (!ret)
     {
         skip("Unable to open the default printer (%s)\n", default_printer);
@@ -2286,7 +2293,7 @@ static void test_GetPrinter(void)
     {
         SetLastError(0xdeadbeef);
         needed = (DWORD)-1;
-        ret = GetPrinter(hprn, level, NULL, 0, &needed);
+        ret = GetPrinterA(hprn, level, NULL, 0, &needed);
         if (ret)
         {
             win_skip("Level %d is not supported on Win9x/WinMe\n", level);
@@ -2318,13 +2325,13 @@ static void test_GetPrinter(void)
 
         SetLastError(0xdeadbeef);
         filled = -1;
-        ret = GetPrinter(hprn, level, buf, needed, &filled);
+        ret = GetPrinterA(hprn, level, buf, needed, &filled);
         ok(ret, "level %d: GetPrinter error %d\n", level, GetLastError());
         ok(needed == filled, "needed %d != filled %d\n", needed, filled);
 
         if (level == 2)
         {
-            PRINTER_INFO_2 *pi_2 = (PRINTER_INFO_2 *)buf;
+            PRINTER_INFO_2A *pi_2 = (PRINTER_INFO_2A *)buf;
 
             ok(pi_2->pPrinterName!= NULL, "not expected NULL ptr\n");
             ok(pi_2->pDriverName!= NULL, "not expected NULL ptr\n");
@@ -2355,7 +2362,7 @@ static void test_GetPrinterData(void)
     /* ToDo: test parameter validation, test with the default printer */
 
     SetLastError(0xdeadbeef);
-    res = OpenPrinter(NULL, &hprn, NULL);
+    res = OpenPrinterA(NULL, &hprn, NULL);
     if (!res)
     {
         /* printserver not available on win9x */
@@ -2410,7 +2417,7 @@ static void test_GetPrinterDataEx(void)
     /* ToDo: test parameter validation, test with the default printer */
 
     SetLastError(0xdeadbeef);
-    res = OpenPrinter(NULL, &hprn, NULL);
+    res = OpenPrinterA(NULL, &hprn, NULL);
     if (!res)
     {
         win_skip("Unable to open the printserver: %d\n", GetLastError());
@@ -2508,7 +2515,7 @@ static void test_GetPrinterDriver(void)
     }
 
     hprn = 0;
-    ret = OpenPrinter(default_printer, &hprn, NULL);
+    ret = OpenPrinterA(default_printer, &hprn, NULL);
     if (!ret)
     {
         skip("Unable to open the default printer (%s)\n", default_printer);
@@ -2520,7 +2527,7 @@ static void test_GetPrinterDriver(void)
     {
         SetLastError(0xdeadbeef);
         needed = (DWORD)-1;
-        ret = GetPrinterDriver(hprn, NULL, level, NULL, 0, &needed);
+        ret = GetPrinterDriverA(hprn, NULL, level, NULL, 0, &needed);
         ok(!ret, "level %d: GetPrinterDriver should fail\n", level);
         if (level >= 1 && level <= 6)
         {
@@ -2555,19 +2562,19 @@ static void test_GetPrinterDriver(void)
 
         SetLastError(0xdeadbeef);
         filled = -1;
-        ret = GetPrinterDriver(hprn, NULL, level, buf, needed, &filled);
+        ret = GetPrinterDriverA(hprn, NULL, level, buf, needed, &filled);
         ok(ret, "level %d: GetPrinterDriver error %d\n", level, GetLastError());
         ok(needed == filled, "needed %d != filled %d\n", needed, filled);
 
         if (level == 2)
         {
-            DRIVER_INFO_2 *di_2 = (DRIVER_INFO_2 *)buf;
+            DRIVER_INFO_2A *di_2 = (DRIVER_INFO_2A *)buf;
             DWORD calculated = sizeof(*di_2);
             HANDLE hf;
 
             /* MSDN is wrong: The Drivers on the win9x-CD's have cVersion=0x0400
-               NT351: 1, NT4.0+w2k(Kernelmode): 2, w2k and above(Usermode): 3  */
-            ok( (di_2->cVersion <= 3) ||
+               NT351: 1, NT4.0+w2k(Kernelmode): 2, w2k-win7(Usermode): 3, win8 and above(Usermode): 4 */
+            ok( (di_2->cVersion <= 4) ||
                 (di_2->cVersion == 0x0400), "di_2->cVersion = %d\n", di_2->cVersion);
             ok(di_2->pName != NULL, "not expected NULL ptr\n");
             ok(di_2->pEnvironment != NULL, "not expected NULL ptr\n");
@@ -2596,7 +2603,6 @@ static void test_GetPrinterDriver(void)
             hf = CreateFileA(di_2->pDataFile, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
             if(hf != INVALID_HANDLE_VALUE)
                 CloseHandle(hf);
-            todo_wine
             ok(hf != INVALID_HANDLE_VALUE, "Could not open %s\n", di_2->pDataFile);
 
             hf = CreateFileA(di_2->pConfigFile, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -2609,7 +2615,7 @@ static void test_GetPrinterDriver(void)
             ok(filled >= calculated,"calculated %d != filled %d\n", calculated, filled);
 
             /* Obscure test - demonstrate that Windows zero fills the buffer, even on failure */
-            ret = GetPrinterDriver(hprn, NULL, level, buf, needed - 2, &filled);
+            ret = GetPrinterDriverA(hprn, NULL, level, buf, needed - 2, &filled);
             ok(!ret, "level %d: GetPrinterDriver succeeded with less buffer than it should\n", level);
             ok(di_2->pDataFile == NULL ||
                broken(di_2->pDataFile != NULL), /* Win9x/WinMe */
@@ -2624,9 +2630,9 @@ static void test_GetPrinterDriver(void)
     ok(ret, "ClosePrinter error %d\n", GetLastError());
 }
 
-static void test_DEVMODE(const DEVMODE *dm, LONG dmSize, LPCSTR exp_prn_name)
+static void test_DEVMODEA(const DEVMODEA *dm, LONG dmSize, LPCSTR exp_prn_name)
 {
-    /* On NT3.51, some fields in DEVMODE are empty/zero
+    /* On NT3.51, some fields in DEVMODEA are empty/zero
       (dmDeviceName, dmSpecVersion, dmDriverVersion and dmDriverExtra)
        We skip the Tests on this Platform */
     if (dm->dmSpecVersion || dm->dmDriverVersion || dm->dmDriverExtra) {
@@ -2644,7 +2650,8 @@ static void test_DocumentProperties(void)
 {
     HANDLE hprn;
     LONG dm_size, ret;
-    DEVMODE *dm;
+    DEVMODEA *dm;
+    char empty_str[] = "";
 
     if (!default_printer)
     {
@@ -2653,7 +2660,7 @@ static void test_DocumentProperties(void)
     }
 
     hprn = 0;
-    ret = OpenPrinter(default_printer, &hprn, NULL);
+    ret = OpenPrinterA(default_printer, &hprn, NULL);
     if (!ret)
     {
         skip("Unable to open the default printer (%s)\n", default_printer);
@@ -2661,16 +2668,19 @@ static void test_DocumentProperties(void)
     }
     ok(hprn != 0, "wrong hprn %p\n", hprn);
 
-    dm_size = DocumentProperties(0, hprn, NULL, NULL, NULL, 0);
-    trace("DEVMODE required size %d\n", dm_size);
-    ok(dm_size >= sizeof(DEVMODE), "unexpected DocumentProperties ret value %d\n", dm_size);
+    dm_size = DocumentPropertiesA(0, hprn, NULL, NULL, NULL, 0);
+    trace("DEVMODEA required size %d\n", dm_size);
+    ok(dm_size >= sizeof(DEVMODEA), "unexpected DocumentPropertiesA ret value %d\n", dm_size);
 
     dm = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, dm_size);
 
-    ret = DocumentProperties(0, hprn, NULL, dm, dm, DM_OUT_BUFFER);
-    ok(ret == IDOK, "DocumentProperties ret value %d != expected IDOK\n", ret);
+    ret = DocumentPropertiesA(0, hprn, NULL, dm, dm, DM_OUT_BUFFER);
+    ok(ret == IDOK, "DocumentPropertiesA ret value %d != expected IDOK\n", ret);
 
-    test_DEVMODE(dm, dm_size, default_printer);
+    ret = DocumentPropertiesA(0, hprn, empty_str, dm, dm, DM_OUT_BUFFER);
+    ok(ret == IDOK, "DocumentPropertiesA ret value %d != expected IDOK\n", ret);
+
+    test_DEVMODEA(dm, dm_size, default_printer);
 
     HeapFree(GetProcessHeap(), 0, dm);
 
@@ -2687,7 +2697,7 @@ static void test_EnumPrinters(void)
     SetLastError(0xdeadbeef);
     neededA = -1;
     ret = EnumPrintersA(PRINTER_ENUM_LOCAL, NULL, 2, NULL, 0, &neededA, &num);
-    RETURN_ON_DEACTIVATED_SPOOLER(ret)
+    if (is_spooler_deactivated(ret, GetLastError())) return;
     if (!ret)
     {
         /* We have 1 or more printers */
@@ -2736,7 +2746,7 @@ static void test_DeviceCapabilities(void)
     HANDLE hComdlg32;
     BOOL (WINAPI *pPrintDlgA)(PRINTDLGA *);
     PRINTDLGA prn_dlg;
-    DEVMODE *dm;
+    DEVMODEA *dm;
     DEVNAMES *dn;
     const char *driver, *device, *port;
     WORD *papers;
@@ -2749,7 +2759,7 @@ static void test_DeviceCapabilities(void)
     INT n_papers, n_paper_size, n_paper_names, n_copies, ret;
     DWORD fields;
 
-    hComdlg32 = LoadLibrary("comdlg32.dll");
+    hComdlg32 = LoadLibraryA("comdlg32.dll");
     assert(hComdlg32);
     pPrintDlgA = (void *)GetProcAddress(hComdlg32, "PrintDlgA");
     assert(pPrintDlgA);
@@ -2782,12 +2792,12 @@ static void test_DeviceCapabilities(void)
     port = (const char *)dn + dn->wOutputOffset;
     trace("driver \"%s\" device \"%s\" port \"%s\"\n", driver, device, port);
 
-    test_DEVMODE(dm, dm->dmSize + dm->dmDriverExtra, device);
+    test_DEVMODEA(dm, dm->dmSize + dm->dmDriverExtra, device);
 
-    n_papers = DeviceCapabilities(device, port, DC_PAPERS, NULL, NULL);
-    ok(n_papers > 0, "DeviceCapabilities DC_PAPERS failed\n");
+    n_papers = DeviceCapabilitiesA(device, port, DC_PAPERS, NULL, NULL);
+    ok(n_papers > 0, "DeviceCapabilitiesA DC_PAPERS failed\n");
     papers = HeapAlloc(GetProcessHeap(), 0, sizeof(*papers) * n_papers);
-    ret = DeviceCapabilities(device, port, DC_PAPERS, (LPSTR)papers, NULL);
+    ret = DeviceCapabilitiesA(device, port, DC_PAPERS, (LPSTR)papers, NULL);
     ok(ret == n_papers, "expected %d, got %d\n", n_papers, ret);
 #ifdef VERBOSE
     for (ret = 0; ret < n_papers; ret++)
@@ -2795,11 +2805,11 @@ static void test_DeviceCapabilities(void)
 #endif
     HeapFree(GetProcessHeap(), 0, papers);
 
-    n_paper_size = DeviceCapabilities(device, port, DC_PAPERSIZE, NULL, NULL);
-    ok(n_paper_size > 0, "DeviceCapabilities DC_PAPERSIZE failed\n");
+    n_paper_size = DeviceCapabilitiesA(device, port, DC_PAPERSIZE, NULL, NULL);
+    ok(n_paper_size > 0, "DeviceCapabilitiesA DC_PAPERSIZE failed\n");
     ok(n_paper_size == n_papers, "n_paper_size %d != n_papers %d\n", n_paper_size, n_papers);
     paper_size = HeapAlloc(GetProcessHeap(), 0, sizeof(*paper_size) * n_paper_size);
-    ret = DeviceCapabilities(device, port, DC_PAPERSIZE, (LPSTR)paper_size, NULL);
+    ret = DeviceCapabilitiesA(device, port, DC_PAPERSIZE, (LPSTR)paper_size, NULL);
     ok(ret == n_paper_size, "expected %d, got %d\n", n_paper_size, ret);
 #ifdef VERBOSE
     for (ret = 0; ret < n_paper_size; ret++)
@@ -2807,11 +2817,11 @@ static void test_DeviceCapabilities(void)
 #endif
     HeapFree(GetProcessHeap(), 0, paper_size);
 
-    n_paper_names = DeviceCapabilities(device, port, DC_PAPERNAMES, NULL, NULL);
-    ok(n_paper_names > 0, "DeviceCapabilities DC_PAPERNAMES failed\n");
+    n_paper_names = DeviceCapabilitiesA(device, port, DC_PAPERNAMES, NULL, NULL);
+    ok(n_paper_names > 0, "DeviceCapabilitiesA DC_PAPERNAMES failed\n");
     ok(n_paper_names == n_papers, "n_paper_names %d != n_papers %d\n", n_paper_names, n_papers);
     paper_name = HeapAlloc(GetProcessHeap(), 0, sizeof(*paper_name) * n_paper_names);
-    ret = DeviceCapabilities(device, port, DC_PAPERNAMES, (LPSTR)paper_name, NULL);
+    ret = DeviceCapabilitiesA(device, port, DC_PAPERNAMES, (LPSTR)paper_name, NULL);
     ok(ret == n_paper_names, "expected %d, got %d\n", n_paper_names, ret);
 #ifdef VERBOSE
     for (ret = 0; ret < n_paper_names; ret++)
@@ -2819,27 +2829,26 @@ static void test_DeviceCapabilities(void)
 #endif
     HeapFree(GetProcessHeap(), 0, paper_name);
 
-    n_copies = DeviceCapabilities(device, port, DC_COPIES, NULL, dm);
-    ok(n_copies > 0, "DeviceCapabilities DC_COPIES failed\n");
+    n_copies = DeviceCapabilitiesA(device, port, DC_COPIES, NULL, dm);
+    ok(n_copies > 0, "DeviceCapabilitiesA DC_COPIES failed\n");
     trace("n_copies = %d\n", n_copies);
 
-    /* these capabilities not available on all printer drivers */
+    /* these capabilities are not available on all printer drivers */
     if (0)
     {
-        ret = DeviceCapabilities(device, port, DC_MAXEXTENT, NULL, NULL);
-        ok(ret != -1, "DeviceCapabilities DC_MAXEXTENT failed\n");
+        ret = DeviceCapabilitiesA(device, port, DC_MAXEXTENT, NULL, NULL);
+        ok(ret != -1, "DeviceCapabilitiesA DC_MAXEXTENT failed\n");
         ext = MAKEPOINTS(ret);
         trace("max ext = %d x %d\n", ext.x, ext.y);
 
-        ret = DeviceCapabilities(device, port, DC_MINEXTENT, NULL, NULL);
-        ok(ret != -1, "DeviceCapabilities DC_MINEXTENT failed\n");
+        ret = DeviceCapabilitiesA(device, port, DC_MINEXTENT, NULL, NULL);
+        ok(ret != -1, "DeviceCapabilitiesA DC_MINEXTENT failed\n");
         ext = MAKEPOINTS(ret);
         trace("min ext = %d x %d\n", ext.x, ext.y);
     }
 
-    fields = DeviceCapabilities(device, port, DC_FIELDS, NULL, NULL);
-    ok(fields != (DWORD)-1, "DeviceCapabilities DC_FIELDS failed\n");
-    todo_wine
+    fields = DeviceCapabilitiesA(device, port, DC_FIELDS, NULL, NULL);
+    ok(fields != (DWORD)-1, "DeviceCapabilitiesA DC_FIELDS failed\n");
     ok(fields == (dm->dmFields | DM_FORMNAME) ||
        fields == ((dm->dmFields | DM_FORMNAME | DM_PAPERSIZE) & ~(DM_PAPERLENGTH|DM_PAPERWIDTH)) ||
         broken(fields == dm->dmFields), /* Win9x/WinMe */
@@ -2871,9 +2880,128 @@ static void test_IsValidDevmodeW(void)
     ok(br == FALSE, "Got %d\n", br);
 }
 
+static void test_OpenPrinter_defaults(void)
+{
+    HANDLE printer;
+    BOOL ret;
+    DWORD needed;
+    short default_size;
+    ADDJOB_INFO_1A *add_job;
+    JOB_INFO_2A *job_info;
+    DEVMODEA my_dm;
+    PRINTER_DEFAULTSA prn_def;
+    PRINTER_INFO_2A *pi;
+
+    if (!default_printer)
+    {
+        skip("There is no default printer installed\n");
+        return;
+    }
+
+    /* Printer opened with NULL defaults.  Retrieve default paper size
+       and confirm that jobs have this size. */
+
+    ret = OpenPrinterA( default_printer, &printer, NULL );
+    if (!ret)
+    {
+        skip("Unable to open the default printer (%s)\n", default_printer);
+        return;
+    }
+
+    ret = GetPrinterA( printer, 2, NULL, 0, &needed );
+    ok( !ret, "got %d\n", ret );
+    pi = HeapAlloc( GetProcessHeap(), 0, needed );
+    ret = GetPrinterA( printer, 2, (BYTE *)pi, needed, &needed );
+    ok( ret, "GetPrinterA() failed le=%d\n", GetLastError() );
+    default_size = pi->pDevMode->u1.s1.dmPaperSize;
+    HeapFree( GetProcessHeap(), 0, pi );
+
+    needed = 0;
+    SetLastError( 0xdeadbeef );
+    ret = AddJobA( printer, 1, NULL, 0, &needed );
+    ok( !ret, "got %d\n", ret );
+    if (GetLastError() == ERROR_NOT_SUPPORTED) /* win8 */
+    {
+        win_skip( "AddJob is not supported on this platform\n" );
+        ClosePrinter( printer );
+        return;
+    }
+    ok( GetLastError() == ERROR_INSUFFICIENT_BUFFER, "expected ERROR_INSUFFICIENT_BUFFER, got %d\n", GetLastError() );
+    ok( needed > sizeof(ADDJOB_INFO_1A), "AddJob needs %u bytes\n", needed);
+    add_job = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, needed );
+    ret = AddJobA( printer, 1, (BYTE *)add_job, needed, &needed );
+    ok( ret, "AddJobA() failed le=%d\n", GetLastError() );
+
+    ret = GetJobA( printer, add_job->JobId, 2, NULL, 0, &needed );
+    ok( !ret, "got %d\n", ret );
+    job_info = HeapAlloc( GetProcessHeap(), 0, needed );
+    ret = GetJobA( printer, add_job->JobId, 2, (BYTE *)job_info, needed, &needed );
+    ok( ret, "GetJobA() failed le=%d\n", GetLastError() );
+
+todo_wine
+    ok( job_info->pDevMode != NULL, "got NULL DEVMODEA\n");
+    if (job_info->pDevMode)
+        ok( job_info->pDevMode->u1.s1.dmPaperSize == default_size, "got %d default %d\n",
+            job_info->pDevMode->u1.s1.dmPaperSize, default_size );
+
+    HeapFree( GetProcessHeap(), 0, job_info );
+    ScheduleJob( printer, add_job->JobId ); /* remove the empty job */
+    HeapFree( GetProcessHeap(), 0, add_job );
+    ClosePrinter( printer );
+
+    /* Printer opened with something other than the default paper size. */
+
+    memset( &my_dm, 0, sizeof(my_dm) );
+    my_dm.dmSize = sizeof(my_dm);
+    my_dm.dmFields = DM_PAPERSIZE;
+    my_dm.u1.s1.dmPaperSize = (default_size == DMPAPER_A4) ? DMPAPER_LETTER : DMPAPER_A4;
+
+    prn_def.pDatatype = NULL;
+    prn_def.pDevMode = &my_dm;
+    prn_def.DesiredAccess = PRINTER_ACCESS_USE;
+
+    ret = OpenPrinterA( default_printer, &printer, &prn_def );
+    ok( ret, "OpenPrinterA() failed le=%d\n", GetLastError() );
+
+    /* GetPrinter stills returns default size */
+    ret = GetPrinterA( printer, 2, NULL, 0, &needed );
+    ok( !ret, "got %d\n", ret );
+    pi = HeapAlloc( GetProcessHeap(), 0, needed );
+    ret = GetPrinterA( printer, 2, (BYTE *)pi, needed, &needed );
+    ok( ret, "GetPrinterA() failed le=%d\n", GetLastError() );
+    ok( pi->pDevMode->u1.s1.dmPaperSize == default_size, "got %d default %d\n",
+        pi->pDevMode->u1.s1.dmPaperSize, default_size );
+
+    HeapFree( GetProcessHeap(), 0, pi );
+
+    /* However the GetJobA has the new size */
+    ret = AddJobA( printer, 1, NULL, 0, &needed );
+    ok( !ret, "got %d\n", ret );
+    add_job = HeapAlloc( GetProcessHeap(), 0, needed );
+    ret = AddJobA( printer, 1, (BYTE *)add_job, needed, &needed );
+    ok( ret, "AddJobA() failed le=%d\n", GetLastError() );
+
+    ret = GetJobA( printer, add_job->JobId, 2, NULL, 0, &needed );
+    ok( !ret, "got %d\n", ret );
+    job_info = HeapAlloc( GetProcessHeap(), 0, needed );
+    ret = GetJobA( printer, add_job->JobId, 2, (BYTE *)job_info, needed, &needed );
+    ok( ret, "GetJobA() failed le=%d\n", GetLastError() );
+
+    ok( job_info->pDevMode->dmFields == DM_PAPERSIZE, "got %08x\n",
+        job_info->pDevMode->dmFields );
+    ok( job_info->pDevMode->u1.s1.dmPaperSize == my_dm.u1.s1.dmPaperSize,
+        "got %d new size %d\n",
+        job_info->pDevMode->u1.s1.dmPaperSize, my_dm.u1.s1.dmPaperSize );
+
+    HeapFree( GetProcessHeap(), 0, job_info );
+    ScheduleJob( printer, add_job->JobId ); /* remove the empty job */
+    HeapFree( GetProcessHeap(), 0, add_job );
+    ClosePrinter( printer );
+}
+
 START_TEST(info)
 {
-    hwinspool = GetModuleHandleA("winspool.drv");
+    hwinspool = LoadLibraryA("winspool.drv");
     pAddPortExA = (void *) GetProcAddress(hwinspool, "AddPortExA");
     pEnumPrinterDriversW = (void *) GetProcAddress(hwinspool, "EnumPrinterDriversW");
     pGetDefaultPrinterA = (void *) GetProcAddress(hwinspool, "GetDefaultPrinterA");
@@ -2919,6 +3047,7 @@ START_TEST(info)
     test_XcvDataW_MonitorUI();
     test_XcvDataW_PortIsValid();
     test_IsValidDevmodeW();
+    test_OpenPrinter_defaults();
 
     /* Cleanup our temporary file */
     DeleteFileA(tempfileA);

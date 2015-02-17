@@ -218,6 +218,7 @@ static HRESULT WINAPI AboutProtocol_Start(IInternetProtocol *iface, LPCWSTR szUr
     LPCWSTR text = NULL;
     DWORD data_len;
     BYTE *data;
+    HRESULT hres;
 
     static const WCHAR html_begin[] = {0xfeff,'<','H','T','M','L','>',0};
     static const WCHAR html_end[] = {'<','/','H','T','M','L','>',0};
@@ -237,7 +238,9 @@ static HRESULT WINAPI AboutProtocol_Start(IInternetProtocol *iface, LPCWSTR szUr
 
     memset(&bindinfo, 0, sizeof(bindinfo));
     bindinfo.cbSize = sizeof(BINDINFO);
-    IInternetBindInfo_GetBindInfo(pOIBindInfo, &grfBINDF, &bindinfo);
+    hres = IInternetBindInfo_GetBindInfo(pOIBindInfo, &grfBINDF, &bindinfo);
+    if(FAILED(hres))
+        return hres;
     ReleaseBindInfo(&bindinfo);
 
     TRACE("bindf %x\n", grfBINDF);
@@ -591,9 +594,9 @@ static HRESULT WINAPI ResProtocol_Start(IInternetProtocol *iface, LPCWSTR szUrl,
         DWORD grfPI, HANDLE_PTR dwReserved)
 {
     ResProtocol *This = ResProtocol_from_IInternetProtocol(iface);
+    WCHAR *url_dll, *url_file, *url, *mime, *res_type = (LPWSTR)RT_HTML, *ptr;
     DWORD grfBINDF = 0, len;
     BINDINFO bindinfo;
-    LPWSTR url_dll, url_file, url, mime, res_type = (LPWSTR)RT_HTML;
     HMODULE hdll;
     HRSRC src;
     HRESULT hres;
@@ -605,7 +608,9 @@ static HRESULT WINAPI ResProtocol_Start(IInternetProtocol *iface, LPCWSTR szUrl,
 
     memset(&bindinfo, 0, sizeof(bindinfo));
     bindinfo.cbSize = sizeof(BINDINFO);
-    IInternetBindInfo_GetBindInfo(pOIBindInfo, &grfBINDF, &bindinfo);
+    hres = IInternetBindInfo_GetBindInfo(pOIBindInfo, &grfBINDF, &bindinfo);
+    if(FAILED(hres))
+        return hres;
     ReleaseBindInfo(&bindinfo);
 
     len = strlenW(szUrl)+16;
@@ -626,31 +631,33 @@ static HRESULT WINAPI ResProtocol_Start(IInternetProtocol *iface, LPCWSTR szUrl,
     }
 
     url_dll = url + sizeof(wszRes)/sizeof(wszRes[0]);
-    if(!(url_file = strrchrW(url_dll, '/'))) {
+    if(!(res_type = strchrW(url_dll, '/'))) {
         WARN("wrong url: %s\n", debugstr_w(url));
         IInternetProtocolSink_ReportResult(pOIProtSink, MK_E_SYNTAX, 0, NULL);
         heap_free(url);
         return MK_E_SYNTAX;
     }
 
-    *url_file++ = 0;
+    *res_type++ = 0;
+    if ((url_file = strchrW(res_type, '/'))) {
+        *url_file++ = 0;
+    }else {
+        url_file = res_type;
+        res_type = MAKEINTRESOURCEW(RT_HTML);
+    }
+
+    /* Ignore query and hash parts. */
+    if((ptr = strchrW(url_file, '?')))
+        *ptr = 0;
+    if(*url_file && (ptr = strchrW(url_file+1, '#')))
+        *ptr = 0;
+
     hdll = LoadLibraryExW(url_dll, NULL, LOAD_LIBRARY_AS_DATAFILE);
     if(!hdll) {
-        if (!(res_type = strrchrW(url_dll, '/'))) {
-            WARN("Could not open dll: %s\n", debugstr_w(url_dll));
-            IInternetProtocolSink_ReportResult(pOIProtSink, HRESULT_FROM_WIN32(GetLastError()), 0, NULL);
-            heap_free(url);
-            return HRESULT_FROM_WIN32(GetLastError());
-        }
-        *res_type++ = 0;
-
-        hdll = LoadLibraryExW(url_dll, NULL, LOAD_LIBRARY_AS_DATAFILE);
-        if(!hdll) {
-            WARN("Could not open dll: %s\n", debugstr_w(url_dll));
-            IInternetProtocolSink_ReportResult(pOIProtSink, HRESULT_FROM_WIN32(GetLastError()), 0, NULL);
-            heap_free(url);
-            return HRESULT_FROM_WIN32(GetLastError());
-        }
+        WARN("Could not open dll: %s\n", debugstr_w(url_dll));
+        IInternetProtocolSink_ReportResult(pOIProtSink, HRESULT_FROM_WIN32(GetLastError()), 0, NULL);
+        heap_free(url);
+        return HRESULT_FROM_WIN32(GetLastError());
     }
 
     TRACE("trying to find resource type %s, name %s\n", debugstr_w(res_type), debugstr_w(url_file));
@@ -660,7 +667,7 @@ static HRESULT WINAPI ResProtocol_Start(IInternetProtocol *iface, LPCWSTR szUrl,
         LPWSTR endpoint = NULL;
         DWORD file_id = strtolW(url_file, &endpoint, 10);
         if(endpoint == url_file+strlenW(url_file))
-            src = FindResourceW(hdll, MAKEINTRESOURCEW(file_id), MAKEINTRESOURCEW(RT_HTML));
+            src = FindResourceW(hdll, MAKEINTRESOURCEW(file_id), res_type);
 
         if(!src) {
             WARN("Could not find resource\n");

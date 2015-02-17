@@ -1,9 +1,10 @@
 #!/usr/bin/perl -w
+use utf8;
 use strict;
 
-# Copyright 2000-2004 Francois Gouget for CodeWeavers
+# Copyright 2000-2004 François Gouget for CodeWeavers
 # Copyright 2004 Dimitrie O. Paun
-# Copyright 2009-2011 André Hentschel
+# Copyright 2009-2012 André Hentschel
 #
 # This library is free software; you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public
@@ -20,7 +21,7 @@ use strict;
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
 #
 
-my $version="0.7.6";
+my $version="0.8.4";
 
 use Cwd;
 use File::Basename;
@@ -209,20 +210,24 @@ my $T_INCLUDE_PATH=11;
 my $T_LDFLAGS=12;
 
 ##
+# Flags for the archiver
+my $T_ARFLAGS=13;
+
+##
 # Same as T_INCLUDE_PATH but for the dll search path
-my $T_DLL_PATH=13;
+my $T_DLL_PATH=14;
 
 ##
 # The list of Windows dlls to import
-my $T_DLLS=14;
+my $T_DLLS=15;
 
 ##
 # Same as T_INCLUDE_PATH but for the library search path
-my $T_LIBRARY_PATH=15;
+my $T_LIBRARY_PATH=16;
 
 ##
 # The list of Unix libraries to link with
-my $T_LIBRARIES=16;
+my $T_LIBRARIES=17;
 
 
 # The following constants define the recognized types of target
@@ -245,6 +250,10 @@ my $TT_CUIEXE=2;
 ##
 # For dynamically linked libraries
 my $TT_DLL=3;
+
+##
+# For static libraries
+my $TT_LIB=4;
 
 
 # The following constants further refine how the target should be handled
@@ -270,6 +279,10 @@ my $TF_NOMSVCRT=32;
 my $TF_HASDEF=64;
 
 ##
+# This target has C++ files named *.cxx (instead of *.cpp)
+my $TF_HASCXX=128;
+
+##
 # Initialize a target:
 # - set the target type to TT_SETTINGS, i.e. no real target will
 #   be generated.
@@ -289,6 +302,7 @@ sub target_init($)
   @$target[$T_DEFINES]=[];
   @$target[$T_INCLUDE_PATH]=[];
   @$target[$T_LDFLAGS]=[];
+  @$target[$T_ARFLAGS]=[];
   @$target[$T_DLL_PATH]=[];
   @$target[$T_DLLS]=[];
   @$target[$T_LIBRARY_PATH]=[];
@@ -309,7 +323,7 @@ sub target_init($)
 
 ##
 # This is the path in which this project is located. In other
-# words, this is the path to  the Makefile.
+# words, this is the path to the Makefile.
 my $P_PATH=0;
 
 ##
@@ -549,15 +563,7 @@ sub source_scan_project_file($$$)
         $path.="/";
     }
 
-    if (defined $opt_single_target or $is_sub_project == 0) {
-        # Either there is a single target and thus a single project,
-        # or we are a single project-file for which a project
-        # already exists
-        $project=$parent_project;
-    } else {
-        $project=[];
-        project_init($project, $path, \@global_settings);
-    }
+    $project=$parent_project;
     my $project_settings=@$project[$P_SETTINGS];
 
     if ($filename =~ /.dsp$/i) {
@@ -589,22 +595,23 @@ sub source_scan_project_file($$$)
                 #print $prj_name;
                 next;
             } elsif (/^# TARGTYPE/) {
-                if (/[[:space:]]0x0101$/) {
+                if (/[[:space:]]0+x0*101$/) {
                     # Application
                     $prj_target_type=$TT_GUIEXE;
-                }elsif (/[[:space:]]0x0102$/) {
+                }elsif (/[[:space:]]0+x0*102$/) {
                     # Dynamic-Link Library
                     $prj_target_type=$TT_DLL;
-                }elsif (/[[:space:]]0x0103$/) {
+                }elsif (/[[:space:]]0+x0*103$/) {
                     # Console Application
                     $prj_target_type=$TT_CUIEXE;
-                }elsif (/[[:space:]]0x0104$/) {
+                }elsif (/[[:space:]]0+x0*104$/) {
                     # Static Library
+                    $prj_target_type=$TT_LIB;
                 }
                 next;
             } elsif (/^# ADD CPP(.*)/ && $found_cfg==1) {
                 $prj_target_cflags=$1;
-                @prj_target_options=split(" /", $prj_target_cflags);
+                @prj_target_options=split(/\s+\//, $prj_target_cflags);
                 $prj_target_cflags="";
                 foreach ( @prj_target_options ) {
                     if ($_ eq "") {
@@ -676,6 +683,11 @@ sub source_scan_project_file($$$)
                         # Additional Include Directories
                         $sfilet=$1;
                         $sfilet=~s/\\/\//g;
+                        my @compinc=split /\/+/, $sfilet;
+                        my $realinc=search_from($path, \@compinc);
+                        if (defined $realinc) {
+                            $sfilet=$realinc;
+                        }
                         if ($sfilet=~/^\w:/) {
                             print STDERR "warning: Can't fix path $sfilet\n"
                         } else {
@@ -736,7 +748,7 @@ sub source_scan_project_file($$$)
                 next;
             } elsif (/^# ADD LINK32(.*)/ && $found_cfg==1) {
                 $prj_target_ldflags=$1;
-                @prj_target_options=split(" /", $prj_target_ldflags);
+                @prj_target_options=split(/\s+\//, $prj_target_ldflags);
                 $prj_target_ldflags="";
                 $prj_target_libs=$prj_target_options[0];
                 $prj_target_libs=~s/\\/\//g;
@@ -795,13 +807,16 @@ sub source_scan_project_file($$$)
                 if (!defined $sfilet) { next; }
                 if ($sfilet =~ /\.c$/i and $sfilet !~ /\.(dbg|spec)\.c$/) {
                     push @sources_c,$sfilet;
-                } elsif ($sfilet =~ /\.(cpp|cxx)$/i) {
+                } elsif ($sfilet =~ /\.cpp$/i) {
                     if ($sfilet =~ /^stdafx.cpp$/i && !(@$project_settings[$T_FLAGS] & $TF_NOMFC)) {
                         push @sources_misc,$sfilet;
                         @$project_settings[$T_FLAGS]|=$TF_MFC;
                     } else {
                         push @sources_cxx,$sfilet;
                     }
+                } elsif ($sfilet =~ /\.cxx$/i) {
+                    @$project_settings[$T_FLAGS]|=$TF_HASCXX;
+                    push @sources_cxx,$sfilet;
                 } elsif ($sfilet =~ /\.rc$/i) {
                     push @sources_rc,$sfilet;
                 } elsif ($sfilet =~ /\.def$/i) {
@@ -858,8 +873,12 @@ sub source_scan_project_file($$$)
         push @{@$project_settings[$T_DEFINES]},$prj_target_defines;
         push @{@$project_settings[$T_LDFLAGS]},$prj_target_ldflags;
     } elsif ($filename =~ /.vcproj$/i) {
-        # Import XML::LibXML, you need the libxml package (deb: libxml-libxml-perl, rpm: perl-libxml-perl)
-        require XML::LibXML;
+        eval {
+            require XML::LibXML;
+        };
+        if ($@) {
+            die "Error: You need the libxml package (deb: libxml-libxml-perl, rpm: perl-libxml-perl)";
+        }
 
         my $xmlparser = XML::LibXML->new();
         my $project_xml = $xmlparser->parse_file($filename);
@@ -884,15 +903,23 @@ sub source_scan_project_file($$$)
                         $sfilet=~s/\\\\/\\/g; #remove double backslash
                         $sfilet=~s/^\.\\//; #remove starting 'this directory'
                         $sfilet=~s/\\/\//g; #make slashes out of backslashes
+                        my @compsrc=split(/\/+/, $sfilet);
+                        my $realsrc=search_from($path, \@compsrc);
+                        if (defined $realsrc) {
+                            $sfilet=$realsrc;
+                        }
                         if ($sfilet =~ /\.c$/i and $sfilet !~ /\.(dbg|spec)\.c$/) {
                             push @sources_c,$sfilet;
-                        } elsif ($sfilet =~ /\.(cpp|cxx)$/i) {
+                        } elsif ($sfilet =~ /\.cpp$/i) {
                             if ($sfilet =~ /^stdafx.cpp$/i && !(@$project_settings[$T_FLAGS] & $TF_NOMFC)) {
                                 push @sources_misc,$sfilet;
                                 @$project_settings[$T_FLAGS]|=$TF_MFC;
                             } else {
                                 push @sources_cxx,$sfilet;
                             }
+                        } elsif ($sfilet =~ /\.cxx$/i) {
+                            @$project_settings[$T_FLAGS]|=$TF_HASCXX;
+                            push @sources_cxx,$sfilet;
                         } elsif ($sfilet =~ /\.rc$/i) {
                             push @sources_rc,$sfilet;
                         } elsif ($sfilet =~ /\.def$/i) {
@@ -916,6 +943,8 @@ sub source_scan_project_file($$$)
                     $prj_target_type=$TT_GUIEXE; # Application
                 } elsif ($vc_configuration_attr->getValue==2) {
                     $prj_target_type=$TT_DLL; # Dynamic-Link Library
+                } elsif ($vc_configuration_attr->getValue==4) {
+                    $prj_target_type=$TT_LIB; # Static Library
                 }
             }
         }
@@ -944,8 +973,15 @@ sub source_scan_project_file($$$)
                     if ($vc_compiler_tool->getName eq "AdditionalIncludeDirectories") {
                         $configt=$vc_compiler_tool->getValue;
                         $configt=~s/\\/\//g;
-                        $configt=~s/;/ -I/g;
-                        push @{@$project_settings[$T_INCLUDE_PATH]},"-I".$configt;
+                        my @addincl = split(/\s*;\s*/, $configt);
+                        foreach $configt (@addincl) {
+                            my @compinc=split(/\/+/, $configt);
+                            my $realinc=search_from($path, \@compinc);
+                            if (defined $realinc) {
+                                $configt=$realinc;
+                            }
+                            push @{@$project_settings[$T_INCLUDE_PATH]},"-I".$configt;
+                        }
                     }
                 }
             }
@@ -965,6 +1001,9 @@ sub source_scan_project_file($$$)
         push @{@$project_settings[$T_CEXTRA]},$prj_target_cflags;
         push @{@$project_settings[$T_CXXEXTRA]},$prj_target_cflags;
         push @{@$project_settings[$T_DEFINES]},$prj_target_defines;
+    } else {
+        print STDERR "File format not supported for file: $filename\n";
+        return;
     }
 
     # Add this project to the project list, except for
@@ -1001,24 +1040,21 @@ sub source_scan_project_file($$$)
         }
     }
 
-    my @local_dlls=();
-    my @local_depends=();
-    my @exe_list=();
-
     # Create the target...
     my $target=[];
     target_init($target);
 
-    if ($prj_target_type!=$TT_DLL) {
+    if ($prj_target_type==$TT_GUIEXE or $prj_target_type==$TT_CUIEXE) {
         $prj_name=lc($prj_name.".exe");
         @$target[$T_TYPE]=$opt_target_type;
-        push @exe_list,$target;
         push @{@$target[$T_LDFLAGS]},(@$target[$T_TYPE] == $TT_CUIEXE ? "-mconsole" : "-mwindows");
+    } elsif ($prj_target_type==$TT_LIB) {
+        $prj_name=lc("lib".$prj_name.".a");
+        @$target[$T_TYPE]=$TT_LIB;
+        push @{@$target[$T_ARFLAGS]},("rc");
     } else {
         $prj_name=lc($prj_name.".dll");
         @$target[$T_TYPE]=$TT_DLL;
-        push @local_depends,"$prj_name.so";
-        push @local_dlls,$prj_name;
         my $canon=canonize($prj_name);
         if (@$project_settings[$T_FLAGS] & $TF_HASDEF) {
             push @{@$target[$T_LDFLAGS]},("-shared","\$(${canon}_MODULE:.dll=.def)");
@@ -1106,7 +1142,6 @@ sub source_scan_project_file($$$)
 
     if ((@$project_settings[$T_FLAGS] & $TF_NOMSVCRT) == 0) {
         push @{@$project_settings[$T_CEXTRA]},"-mno-cygwin";
-        push @{@$project_settings[$T_CXXEXTRA]},"-mno-cygwin";
         if ($opt_arch != $OPT_ARCH_DEFAULT) {
             push @{@$project_settings[$T_CEXTRA]},"-m$opt_arch";
             push @{@$project_settings[$T_CXXEXTRA]},"-m$opt_arch";
@@ -1279,10 +1314,18 @@ sub source_scan_directory($$$$)
       if ($dentry =~ /^(Release|Debug)/i) {
 	# These directories are often used to store the object files and the
 	# resulting executable/library. They should not contain anything else.
-	my @candidates=grep /\.(exe|dll)$/i, @{get_directory_contents("$fullentry")};
-	foreach my $candidate (@candidates) {
-	  $targets{$candidate}=1;
-	}
+        my @candidates=grep /\.(exe|dll|lib)$/i, @{get_directory_contents("$fullentry")};
+        foreach my $candidate (sort @candidates) {
+            my $dlldup = $candidate;
+            $dlldup =~ s/\.lib$/.dll/;
+            if ($candidate =~ /\.lib$/ and $targets{$dlldup})
+            {
+                # Often lib files are created together with dll files, even if the dll file is the
+                # real target.
+                next;
+            }
+            $targets{$candidate}=1;
+        }
       } elsif ($dentry =~ /^include/i) {
         # This directory must contain headers we're going to need
         push @{@$project_settings[$T_INCLUDE_PATH]},"-I$dentry";
@@ -1294,17 +1337,20 @@ sub source_scan_directory($$$$)
 	source_scan_directory($project,"$fullentry/","$dentry/",$no_target);
       }
     } elsif (-f "$fullentry") {
-      if ($dentry =~ /\.(exe|dll)$/i) {
+      if ($dentry =~ /\.(exe|dll|lib)$/i) {
 	$targets{$dentry}=1;
       } elsif ($dentry =~ /\.c$/i and $dentry !~ /\.(dbg|spec)\.c$/) {
 	push @sources_c,"$dentry";
-      } elsif ($dentry =~ /\.(cpp|cxx)$/i) {
+      } elsif ($dentry =~ /\.cpp$/i) {
 	if ($dentry =~ /^stdafx.cpp$/i && !(@$project_settings[$T_FLAGS] & $TF_NOMFC)) {
 	  push @sources_misc,"$dentry";
 	  @$project_settings[$T_FLAGS]|=$TF_MFC;
 	} else {
 	  push @sources_cxx,"$dentry";
 	}
+      } elsif ($dentry =~ /\.cxx$/i) {
+          @$project_settings[$T_FLAGS]|=$TF_HASCXX;
+          push @sources_cxx,"$dentry";
       } elsif ($dentry =~ /\.rc$/i) {
 	push @sources_rc,"$dentry";
       } elsif ($dentry =~ /\.def$/i) {
@@ -1416,6 +1462,8 @@ sub source_scan_directory($$$$)
 	$name =~ s+(/|\.[^.]*)$++;
 	if ($opt_target_type == $TT_DLL) {
 	  $name = canonize($name).".dll";
+	} elsif ($opt_target_type == $TT_LIB) {
+	  $name = "lib".canonize($name).".a";
 	} else {
 	  $name = canonize($name).".exe";
 	}
@@ -1508,6 +1556,7 @@ sub source_scan_directory($$$$)
   # - Match each target with source files (sort in reverse
   #   alphabetical order to get the longest matches first)
   my @local_dlls=();
+  my @local_libs=();
   my @local_depends=();
   my @exe_list=();
   foreach my $target_name (map (lc, (sort { $b cmp $a } keys %targets))) {
@@ -1526,6 +1575,19 @@ sub source_scan_directory($$$$)
       } else {
           push @{@$target[$T_LDFLAGS]},("-shared","\$(${canon}_MODULE:.dll=.spec)");
       }
+    } elsif ($target_name =~ /\.lib$/) {
+      $target_name =~ s/(.*)\.lib/lib$1.a/;
+      @$target[$T_NAME]=$target_name;
+      @$target[$T_TYPE]=$TT_LIB;
+      push @local_depends,"$target_name";
+      push @local_libs,$target_name;
+      push @{@$target[$T_ARFLAGS]},("rc");
+    } elsif ($target_name =~ /\.a$/) {
+      @$target[$T_NAME]=$target_name;
+      @$target[$T_TYPE]=$TT_LIB;
+      push @local_depends,"$target_name";
+      push @local_libs,$target_name;
+      push @{@$target[$T_ARFLAGS]},("rc");
     } else {
       @$target[$T_TYPE]=$opt_target_type;
       push @exe_list,$target;
@@ -1639,7 +1701,6 @@ sub source_scan_directory($$$$)
 
   if ((@$project_settings[$T_FLAGS] & $TF_NOMSVCRT) == 0) {
     push @{@$project_settings[$T_CEXTRA]},"-mno-cygwin";
-    push @{@$project_settings[$T_CXXEXTRA]},"-mno-cygwin";
       if ($opt_arch != $OPT_ARCH_DEFAULT) {
         push @{@$project_settings[$T_CEXTRA]},"-m$opt_arch";
         push @{@$project_settings[$T_CXXEXTRA]},"-m$opt_arch";
@@ -1683,6 +1744,12 @@ sub source_scan_directory($$$$)
     foreach my $target (@exe_list) {
       push @{@$target[$T_DLL_PATH]},"-L.";
       push @{@$target[$T_DLLS]},@local_dlls;
+    }
+  }
+  if (@local_libs > 0 and @exe_list > 0) {
+    foreach my $target (@exe_list) {
+      push @{@$target[$T_LIBRARY_PATH]},"-L.";
+      push @{@$target[$T_LIBRARIES]},@local_libs;
     }
   }
 }
@@ -1816,7 +1883,6 @@ sub search_from($$)
   my $path=$_[1];
   my $real_path="";
 
-  $dirname =~ s/(\.\/)+//;
   if ($dirname eq "" or $dirname eq "." or $dirname eq "./") {
     $dirname=cwd;
   } elsif ($dirname !~ m+^/+) {
@@ -2054,6 +2120,11 @@ sub fix_file($$$)
       print FILEO "$1$2$real_include_name$4$'";
       $modified|=($real_include_name ne $3);
 
+    } elsif (/^(\s*)\#\s*pragma\s+comment\s*\(\s*lib\s*,\s*\"(\w+)\.lib\"\s*\)/) {
+      my $pragma_indent=$1;
+      my $pragma_lib=$2;
+      push @{@$target[$T_LIBRARIES]},$pragma_lib;
+      print FILEO "$pragma_indent/* winemaker: Added -l$pragma_lib to the libraries */\n";
     } elsif (s/^(\s*)(\#\s*pragma\s+pack\s*\(\s*)//) {
       # Pragma pack handling
       #
@@ -2312,18 +2383,22 @@ sub generate_project_files($)
   my $project=$_[0];
   my $project_settings=@$project[$P_SETTINGS];
   my @dll_list=();
+  my @lib_list=();
   my @exe_list=();
 
   # Then sort the targets and separate the libraries from the programs
   foreach my $target (sort { @$a[$T_NAME] cmp @$b[$T_NAME] } @{@$project[$P_TARGETS]}) {
     if (@$target[$T_TYPE] == $TT_DLL) {
       push @dll_list,$target;
+    } elsif (@$target[$T_TYPE] == $TT_LIB) {
+      push @lib_list,$target;
     } else {
       push @exe_list,$target;
     }
   }
   @$project[$P_TARGETS]=[];
   push @{@$project[$P_TARGETS]}, @dll_list;
+  push @{@$project[$P_TARGETS]}, @lib_list;
   push @{@$project[$P_TARGETS]}, @exe_list;
 
   if (!open(FILEO,">@$project[$P_PATH]Makefile")) {
@@ -2331,9 +2406,23 @@ sub generate_project_files($)
     print STDERR "       $!\n";
     return;
   }
+  binmode( FILEO, ':utf8' );
+
+  my $cpp_to_object;
+  if (@$project_settings[$T_FLAGS] & $TF_HASCXX) {
+    $cpp_to_object=".cxx=.o";
+  } else {
+    $cpp_to_object=".cpp=.o";
+  }
 
   print FILEO "### Generated by Winemaker $version\n";
-  print FILEO "\n\n";
+  print FILEO "###\n";
+  print FILEO "### Invocation command line was\n";
+  print FILEO "### $0";
+  foreach(@ARGV) {
+    print FILEO " $_";
+  }
+  print FILEO "\n\n\n";
 
   generate_list("SRCDIR",1,[ "." ]);
   if (@$project[$P_PATH] eq "") {
@@ -2351,6 +2440,10 @@ sub generate_project_files($)
   }
   if (@{@$project[$P_TARGETS]} > 0) {
     generate_list("DLLS",1,\@dll_list,sub
+		  {
+		    return @{$_[0]}[$T_NAME];
+		  });
+    generate_list("LIBS",1,\@lib_list,sub
 		  {
 		    return @{$_[0]}[$T_NAME];
 		  });
@@ -2383,7 +2476,7 @@ sub generate_project_files($)
       generate_list("EXTRA_CXX_SRCS",1,@$project_settings[$T_SOURCES_CXX]);
       generate_list("EXTRA_RC_SRCS",1,@$project_settings[$T_SOURCES_RC]);
       print FILEO "\n";
-      generate_list("EXTRA_OBJS",1,["\$(EXTRA_C_SRCS:.c=.o)","\$(EXTRA_CXX_SRCS:.cpp=.o)"]);
+      generate_list("EXTRA_OBJS",1,["\$(EXTRA_C_SRCS:.c=.o)","\$(EXTRA_CXX_SRCS:$cpp_to_object)"]);
       print FILEO "\n\n\n";
     }
 
@@ -2398,12 +2491,13 @@ sub generate_project_files($)
       generate_list("${canon}_CXX_SRCS",1,@$target[$T_SOURCES_CXX]);
       generate_list("${canon}_RC_SRCS",1,@$target[$T_SOURCES_RC]);
       generate_list("${canon}_LDFLAGS",1,@$target[$T_LDFLAGS]);
+      generate_list("${canon}_ARFLAGS",1,@$target[$T_ARFLAGS]);
       generate_list("${canon}_DLL_PATH",1,@$target[$T_DLL_PATH]);
       generate_list("${canon}_DLLS",1,@$target[$T_DLLS]);
       generate_list("${canon}_LIBRARY_PATH",1,@$target[$T_LIBRARY_PATH]);
       generate_list("${canon}_LIBRARIES",1,@$target[$T_LIBRARIES]);
       print FILEO "\n";
-      generate_list("${canon}_OBJS",1,["\$(${canon}_C_SRCS:.c=.o)","\$(${canon}_CXX_SRCS:.cpp=.o)","\$(${canon}_RC_SRCS:.rc=.res)"]);
+      generate_list("${canon}_OBJS",1,["\$(${canon}_C_SRCS:.c=.o)","\$(${canon}_CXX_SRCS:$cpp_to_object)","\$(${canon}_RC_SRCS:.rc=.res)"]);
       print FILEO "\n\n\n";
     }
     print FILEO "### Global source lists\n\n";
@@ -2440,6 +2534,7 @@ sub generate_project_files($)
   print FILEO "CC = winegcc\n";
   print FILEO "CXX = wineg++\n";
   print FILEO "RC = wrc\n";
+  print FILEO "AR = ar\n";
   print FILEO "\n\n";
 
   print FILEO "### Generic targets\n\n";
@@ -2448,7 +2543,7 @@ sub generate_project_files($)
     print FILEO " \$(SUBDIRS)";
   }
   if (@{@$project[$P_TARGETS]} > 0) {
-    print FILEO " \$(DLLS:%=%.so) \$(EXES)";
+    print FILEO " \$(DLLS:%=%.so) \$(LIBS) \$(EXES)";
   }
   print FILEO "\n\n";
   print FILEO "### Build rules\n";
@@ -2460,7 +2555,7 @@ sub generate_project_files($)
   print FILEO "\n";
   print FILEO "# Implicit rules\n";
   print FILEO "\n";
-  print FILEO ".SUFFIXES: .cpp .rc .res\n";
+  print FILEO ".SUFFIXES: .cpp .cxx .rc .res\n";
   print FILEO "DEFINCL = \$(INCLUDE_PATH) \$(DEFINES) \$(OPTIONS)\n";
   print FILEO "\n";
   print FILEO ".c.o:\n";
@@ -2481,8 +2576,8 @@ sub generate_project_files($)
   print FILEO "                  \\\\\\#*\\\\\\# *~ *% .\\\\\\#*\n";
   print FILEO "\n";
   print FILEO "clean:: \$(SUBDIRS:%=%/__clean__) \$(EXTRASUBDIRS:%=%/__clean__)\n";
-  print FILEO "\t\$(RM) \$(CLEAN_FILES) \$(RC_SRCS:.rc=.res) \$(C_SRCS:.c=.o) \$(CXX_SRCS:.cpp=.o)\n";
-  print FILEO "\t\$(RM) \$(DLLS:%=%.so) \$(EXES) \$(EXES:%=%.so)\n";
+  print FILEO "\t\$(RM) \$(CLEAN_FILES) \$(RC_SRCS:.rc=.res) \$(C_SRCS:.c=.o) \$(CXX_SRCS:$cpp_to_object)\n";
+  print FILEO "\t\$(RM) \$(DLLS:%=%.so) \$(LIBS) \$(EXES) \$(EXES:%=%.so)\n";
   print FILEO "\n";
   print FILEO "\$(SUBDIRS:%=%/__clean__): dummy\n";
   print FILEO "\tcd `dirname \$\@` && \$(MAKE) clean\n";
@@ -2505,12 +2600,17 @@ sub generate_project_files($)
       } else {
         print FILEO "\$(${canon}_MODULE): \$(${canon}_OBJS)\n";
       }
-      if (@{@$target[$T_SOURCES_CXX]} > 0 or @{@$project_settings[$T_SOURCES_CXX]} > 0) {
-        print FILEO "\t\$(CXX)";
+
+      if (@$target[$T_TYPE] == $TT_LIB) {
+        print FILEO "\t\$(AR) \$(${canon}_ARFLAGS) \$\@ \$(${canon}_OBJS)\n";
       } else {
-        print FILEO "\t\$(CC)";
+        if (@{@$target[$T_SOURCES_CXX]} > 0 or @{@$project_settings[$T_SOURCES_CXX]} > 0) {
+          print FILEO "\t\$(CXX)";
+        } else {
+          print FILEO "\t\$(CC)";
+        }
+        print FILEO " \$(${canon}_LDFLAGS) -o \$\@ \$(${canon}_OBJS) \$(${canon}_LIBRARY_PATH) \$(${canon}_DLL_PATH) \$(DEFLIB) \$(${canon}_DLLS:%=-l%) \$(${canon}_LIBRARIES:%=-l%)\n";
       }
-      print FILEO " \$(${canon}_LDFLAGS) -o \$\@ \$(${canon}_OBJS) \$(${canon}_LIBRARY_PATH) \$(DEFLIB) \$(${canon}_DLLS:%=-l%) \$(${canon}_LIBRARIES:%=-l%)\n";
       print FILEO "\n\n";
     }
   }
@@ -2573,9 +2673,9 @@ $opt_no_banner=0;
 sub print_banner()
 {
   print "Winemaker $version\n";
-  print "Copyright 2000-2004 Francois Gouget <fgouget\@codeweavers.com> for CodeWeavers\n";
+  print "Copyright 2000-2004 François Gouget <fgouget\@codeweavers.com> for CodeWeavers\n";
   print "Copyright 2004 Dimitrie O. Paun\n";
-  print "Copyright 2009-2011 André Hentschel\n";
+  print "Copyright 2009-2012 André Hentschel\n";
 }
 
 sub usage()
@@ -2584,7 +2684,7 @@ sub usage()
   print STDERR "Usage: winemaker [--nobanner] [--backup|--nobackup] [--nosource-fix]\n";
   print STDERR "                 [--lower-none|--lower-all|--lower-uppercase]\n";
   print STDERR "                 [--lower-include|--nolower-include] [--mfc|--nomfc]\n";
-  print STDERR "                 [--guiexe|--windows|--cuiexe|--console|--dll]\n";
+  print STDERR "                 [--guiexe|--windows|--cuiexe|--console|--dll|--lib]\n";
   print STDERR "                 [-Dmacro[=defn]] [-Idir] [-Pdir] [-idll] [-Ldir] [-llibrary]\n";
   print STDERR "                 [--nodlls] [--nomsvcrt] [--interactive] [--single-target name]\n";
   print STDERR "                 [--generated-files|--nogenerated-files]\n";
@@ -2597,10 +2697,12 @@ sub usage()
   exit (2);
 }
 
+binmode(STDOUT, ":utf8");
+
 target_init(\@global_settings);
 
-while (@ARGV>0) {
-  my $arg=shift @ARGV;
+foreach(@ARGV) {
+  my $arg=$_;
   # General options
   if ($arg eq "--nobanner") {
     $opt_no_banner=1;
@@ -2644,6 +2746,8 @@ while (@ARGV>0) {
   # 'Source'-based method options
   } elsif ($arg eq "--dll") {
     $opt_target_type=$TT_DLL;
+  } elsif ($arg eq "--lib") {
+    $opt_target_type=$TT_LIB;
   } elsif ($arg eq "--guiexe" or $arg eq "--windows") {
     $opt_target_type=$TT_GUIEXE;
   } elsif ($arg eq "--cuiexe" or $arg eq "--console") {

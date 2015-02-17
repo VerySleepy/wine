@@ -26,7 +26,7 @@
 #ifdef WIDE_SCANF
 #define _CHAR_ MSVCRT_wchar_t
 #define _EOF_ MSVCRT_WEOF
-#define _EOF_RET MSVCRT_WEOF
+#define _EOF_RET (short)MSVCRT_WEOF
 #define _ISSPACE_(c) MSVCRT_iswspace(c)
 #define _ISDIGIT_(c) MSVCRT_iswdigit(c)
 #define _WIDE2SUPPORTED_(c) c /* No conversion needed (wide to wide) */
@@ -198,8 +198,14 @@ _FUNCTION_ {
 	    /* read prefix (if any) */
 	    while (!prefix_finished) {
 		switch(*format) {
-		case 'h': h_prefix = 1; break;
-		case 'l': l_prefix = 1; break;
+		case 'h': h_prefix++; break;
+		case 'l':
+                    if(*(format+1) == 'l') {
+                        I64_prefix = 1;
+                        format++;
+                    }
+                    l_prefix = 1;
+                    break;
 		case 'w': w_prefix = 1; break;
 		case 'L': L_prefix = 1; break;
 		case 'I':
@@ -294,89 +300,133 @@ _FUNCTION_ {
 #define _SET_NUMBER_(type) *va_arg(ap, type*) = negative ? -cur : cur
 			if (I64_prefix) _SET_NUMBER_(LONGLONG);
 			else if (l_prefix) _SET_NUMBER_(LONG);
-			else if (h_prefix) _SET_NUMBER_(short int);
+			else if (h_prefix == 1) _SET_NUMBER_(short int);
 			else _SET_NUMBER_(int);
 		    }
                 }
                 break;
-	    case 'e':
-	    case 'E':
-	    case 'f':
-	    case 'g':
+            case 'e':
+            case 'E':
+            case 'f':
+            case 'g':
             case 'G': { /* read a float */
-                    long double cur = 0;
-		    int negative = 0;
+                    long double cur = 1, expcnt = 10;
+                    ULONGLONG d, hlp;
+                    int exp = 0, negative = 0;
+                    unsigned fpcontrol;
+                    BOOL negexp;
+
                     /* skip initial whitespace */
                     while ((nch!=_EOF_) && _ISSPACE_(nch))
                         nch = _GETC_(file);
-		    /* get sign. */
+
+                    /* get sign. */
                     if (nch == '-' || nch == '+') {
-			negative = (nch=='-');
-			if (width>0) width--;
-			if (width==0) break;
+                        negative = (nch=='-');
+                        if (width>0) width--;
+                        if (width==0) break;
                         nch = _GETC_(file);
                     }
-		    /* get first digit. */
-		    if (*locinfo->lconv->decimal_point != nch) {
-		      if (!_ISDIGIT_(nch)) break;
-		      cur = (nch - '0');
-		      nch = _GETC_(file);
-		      if (width>0) width--;
-		      /* read until no more digits */
-		      while (width!=0 && (nch!=_EOF_) && _ISDIGIT_(nch)) {
-                        cur = cur*10 + (nch - '0');
+
+                    /* get first digit. */
+                    if (*locinfo->lconv->decimal_point != nch) {
+                        if (!_ISDIGIT_(nch)) break;
+                        d = nch - '0';
                         nch = _GETC_(file);
-			if (width>0) width--;
-		      }
-		    } else {
-		      cur = 0; /* Fix: .8 -> 0.8 */
-		    }
-		    /* handle decimals */
-                    if (width!=0 && nch == *locinfo->lconv->decimal_point) {
-                        long double dec = 1;
-                        nch = _GETC_(file);
-			if (width>0) width--;
+                        if (width>0) width--;
+                        /* read until no more digits */
                         while (width!=0 && (nch!=_EOF_) && _ISDIGIT_(nch)) {
-                            dec /= 10;
-                            cur += dec * (nch - '0');
+                            hlp = d*10 + nch - '0';
                             nch = _GETC_(file);
-			    if (width>0) width--;
+                            if (width>0) width--;
+                            if(d > (ULONGLONG)-1/10 || hlp<d) {
+                                exp++;
+                                break;
+                            }
+                            else
+                                d = hlp;
+                        }
+                        while (width!=0 && (nch!=_EOF_) && _ISDIGIT_(nch)) {
+                            exp++;
+                            nch = _GETC_(file);
+                            if (width>0) width--;
+                        }
+                    } else {
+                        d = 0; /* Fix: .8 -> 0.8 */
+                    }
+
+                    /* handle decimals */
+                    if (width!=0 && nch == *locinfo->lconv->decimal_point) {
+                        nch = _GETC_(file);
+                        if (width>0) width--;
+
+                        while (width!=0 && (nch!=_EOF_) && _ISDIGIT_(nch)) {
+                            hlp = d*10 + nch - '0';
+                            nch = _GETC_(file);
+                            if (width>0) width--;
+                            if(d > (ULONGLONG)-1/10 || hlp<d)
+                                break;
+
+                            d = hlp;
+                            exp--;
+                        }
+                        while (width!=0 && (nch!=_EOF_) && _ISDIGIT_(nch)) {
+                            nch = _GETC_(file);
+                            if (width>0) width--;
                         }
                     }
-		    /* handle exponent */
-		    if (width!=0 && (nch == 'e' || nch == 'E')) {
-			int exponent = 0, negexp = 0;
-			float expcnt;
+
+                    /* handle exponent */
+                    if (width!=0 && (nch == 'e' || nch == 'E')) {
+                        int sign = 1, e = 0;
+
                         nch = _GETC_(file);
-			if (width>0) width--;
-			/* possible sign on the exponent */
-			if (width!=0 && (nch=='+' || nch=='-')) {
-			    negexp = (nch=='-');
+                        if (width>0) width--;
+                        if (width!=0 && (nch=='+' || nch=='-')) {
+                            if(nch == '-')
+                                sign = -1;
                             nch = _GETC_(file);
-			    if (width>0) width--;
-			}
-			/* exponent digits */
-			while (width!=0 && (nch!=_EOF_) && _ISDIGIT_(nch)) {
-			    exponent *= 10;
-			    exponent += (nch - '0');
-                            nch = _GETC_(file);
-			    if (width>0) width--;
+                            if (width>0) width--;
                         }
-			/* update 'cur' with this exponent. */
-			expcnt =  negexp ? .1 : 10;
-			while (exponent!=0) {
-			    if (exponent&1)
-				cur*=expcnt;
-			    exponent/=2;
-			    expcnt=expcnt*expcnt;
-			}
-		    }
+
+                        /* exponent digits */
+                        while (width!=0 && (nch!=_EOF_) && _ISDIGIT_(nch)) {
+                            if(e > INT_MAX/10 || (e = e*10 + nch - '0')<0)
+                                e = INT_MAX;
+                            nch = _GETC_(file);
+                            if (width>0) width--;
+                        }
+                        e *= sign;
+
+                        if(exp<0 && e<0 && e+exp>0) exp = INT_MIN;
+                        else if(exp>0 && e>0 && e+exp<0) exp = INT_MAX;
+                        else exp += e;
+                    }
+
+                    fpcontrol = _control87(0, 0);
+                    _control87(MSVCRT__EM_DENORMAL|MSVCRT__EM_INVALID|MSVCRT__EM_ZERODIVIDE
+                            |MSVCRT__EM_OVERFLOW|MSVCRT__EM_UNDERFLOW|MSVCRT__EM_INEXACT, 0xffffffff);
+
+                    negexp = (exp < 0);
+                    if(negexp)
+                        exp = -exp;
+                    /* update 'cur' with this exponent. */
+                    while(exp) {
+                        if(exp & 1)
+                            cur *= expcnt;
+                        exp /= 2;
+                        expcnt = expcnt*expcnt;
+                    }
+                    cur = (negexp ? d/cur : d*cur);
+
+                    _control87(fpcontrol, 0xffffffff);
+
                     st = 1;
                     if (!suppress) {
-			if (L_prefix) _SET_NUMBER_(long double);
-			else if (l_prefix) _SET_NUMBER_(double);
-			else _SET_NUMBER_(float);
-		    }
+                        if (L_prefix) _SET_NUMBER_(double);
+                        else if (l_prefix) _SET_NUMBER_(double);
+                        else _SET_NUMBER_(float);
+                    }
                 }
                 break;
 		/* According to msdn,
@@ -428,7 +478,7 @@ _FUNCTION_ {
 			if (width>0) width--;
                     }
                     /* terminate */
-                    if (!suppress) *sptr = 0;
+                    if (st && !suppress) *sptr = 0;
                 }
                 break;
 	    widecharstring: { /* read a word into a wchar_t* */
@@ -458,7 +508,7 @@ _FUNCTION_ {
 			if (width>0) width--;
                     }
                     /* terminate */
-                    if (!suppress) *sptr = 0;
+                    if (st && !suppress) *sptr = 0;
                 }
                 break;
             /* 'c' and 'C work analogously to 's' and 'S' as described

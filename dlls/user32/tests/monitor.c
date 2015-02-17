@@ -30,7 +30,9 @@ static LONG (WINAPI *pChangeDisplaySettingsExW)(LPCWSTR, LPDEVMODEW, HWND, DWORD
 static BOOL (WINAPI *pEnumDisplayDevicesA)(LPCSTR,DWORD,LPDISPLAY_DEVICEA,DWORD);
 static BOOL (WINAPI *pEnumDisplayMonitors)(HDC,LPRECT,MONITORENUMPROC,LPARAM);
 static BOOL (WINAPI *pGetMonitorInfoA)(HMONITOR,LPMONITORINFO);
+static BOOL (WINAPI *pGetMonitorInfoW)(HMONITOR,LPMONITORINFO);
 static HMONITOR (WINAPI *pMonitorFromPoint)(POINT,DWORD);
+static HMONITOR (WINAPI *pMonitorFromRect)(LPCRECT,DWORD);
 static HMONITOR (WINAPI *pMonitorFromWindow)(HWND,DWORD);
 
 static void init_function_pointers(void)
@@ -47,7 +49,9 @@ static void init_function_pointers(void)
     GET_PROC(EnumDisplayDevicesA)
     GET_PROC(EnumDisplayMonitors)
     GET_PROC(GetMonitorInfoA)
+    GET_PROC(GetMonitorInfoW)
     GET_PROC(MonitorFromPoint)
+    GET_PROC(MonitorFromRect)
     GET_PROC(MonitorFromWindow)
 
 #undef GET_PROC
@@ -161,7 +165,7 @@ static void test_ChangeDisplaySettingsEx(void)
     }
 
     SetLastError(0xdeadbeef);
-    res = EnumDisplaySettings(NULL, ENUM_CURRENT_SETTINGS, &dm);
+    res = EnumDisplaySettingsA(NULL, ENUM_CURRENT_SETTINGS, &dm);
     ok(res, "EnumDisplaySettings error %u\n", GetLastError());
 
     width = dm.dmPelsWidth;
@@ -177,7 +181,7 @@ static void test_ChangeDisplaySettingsEx(void)
     dm.dmDriverExtra = 1;
     res = pChangeDisplaySettingsExA(NULL, &dm, NULL, CDS_TEST, NULL);
     ok(res == DISP_CHANGE_SUCCESSFUL,
-       "ChangeDisplaySettingsExW returned %d, expected DISP_CHANGE_BADMODE\n", res);
+       "ChangeDisplaySettingsExW returned %d, expected DISP_CHANGE_SUCCESSFUL\n", res);
     ok(dm.dmDriverExtra == 1, "ChangeDisplaySettingsExA shouldn't reset dmDriverExtra to 0\n");
 
     memset(&dmW, 0, sizeof(dmW));
@@ -201,7 +205,7 @@ static void test_ChangeDisplaySettingsEx(void)
     if (GetLastError() != ERROR_CALL_NOT_IMPLEMENTED)
     {
         ok(res == DISP_CHANGE_SUCCESSFUL,
-           "ChangeDisplaySettingsExW returned %d, expected DISP_CHANGE_BADMODE\n", res);
+           "ChangeDisplaySettingsExW returned %d, expected DISP_CHANGE_SUCCESSFUL\n", res);
         ok(dmW.dmDriverExtra == 1, "ChangeDisplaySettingsExW shouldn't reset dmDriverExtra to 0\n");
     }
 
@@ -291,12 +295,47 @@ static void test_ChangeDisplaySettingsEx(void)
 
 static void test_monitors(void)
 {
-    HMONITOR monitor, primary;
+    HMONITOR monitor, primary, nearest;
     POINT pt;
+    RECT rc;
+    MONITORINFO mi;
+    MONITORINFOEXA miexa;
+    MONITORINFOEXW miexw;
+    BOOL ret;
+    DWORD i;
 
-    if (!pMonitorFromPoint || !pMonitorFromWindow)
+    static const struct
     {
-        win_skip("MonitorFromPoint or MonitorFromWindow are not available\n");
+        DWORD cbSize;
+        BOOL ret;
+    } testdatami[] = {
+        {0, FALSE},
+        {sizeof(MONITORINFO)+1, FALSE},
+        {sizeof(MONITORINFO)-1, FALSE},
+        {sizeof(MONITORINFO), TRUE},
+        {-1, FALSE},
+        {0xdeadbeef, FALSE},
+    },
+    testdatamiexa[] = {
+        {0, FALSE},
+        {sizeof(MONITORINFOEXA)+1, FALSE},
+        {sizeof(MONITORINFOEXA)-1, FALSE},
+        {sizeof(MONITORINFOEXA), TRUE},
+        {-1, FALSE},
+        {0xdeadbeef, FALSE},
+    },
+    testdatamiexw[] = {
+        {0, FALSE},
+        {sizeof(MONITORINFOEXW)+1, FALSE},
+        {sizeof(MONITORINFOEXW)-1, FALSE},
+        {sizeof(MONITORINFOEXW), TRUE},
+        {-1, FALSE},
+        {0xdeadbeef, FALSE},
+    };
+
+    if (!pMonitorFromPoint || !pMonitorFromWindow || !pMonitorFromRect)
+    {
+        win_skip("MonitorFromPoint, MonitorFromWindow, or MonitorFromRect is not available\n");
         return;
     }
 
@@ -310,6 +349,112 @@ static void test_monitors(void)
     ok( monitor == primary, "got %p, should get primary %p for MONITOR_DEFAULTTOPRIMARY\n", monitor, primary );
     monitor = pMonitorFromWindow( 0, MONITOR_DEFAULTTONEAREST );
     ok( monitor == primary, "got %p, should get primary %p for MONITOR_DEFAULTTONEAREST\n", monitor, primary );
+
+    SetRect( &rc, 0, 0, 1, 1 );
+    monitor = pMonitorFromRect( &rc, MONITOR_DEFAULTTONULL );
+    ok( monitor == primary, "got %p, should get primary %p\n", monitor, primary );
+
+    monitor = pMonitorFromRect( &rc, MONITOR_DEFAULTTOPRIMARY );
+    ok( monitor == primary, "got %p, should get primary %p\n", monitor, primary );
+
+    monitor = pMonitorFromRect( &rc, MONITOR_DEFAULTTONEAREST );
+    ok( monitor == primary, "got %p, should get primary %p\n", monitor, primary );
+
+    /* Empty rect at 0,0 is considered inside the primary monitor */
+    SetRect( &rc, 0, 0, -1, -1 );
+    monitor = pMonitorFromRect( &rc, MONITOR_DEFAULTTONULL );
+    ok( monitor == primary, "got %p, should get primary %p\n", monitor, primary );
+
+    /* Even if there is a monitor left of the primary, the primary will have the most overlapping area */
+    SetRect( &rc, -1, 0, 2, 1 );
+    monitor = pMonitorFromRect( &rc, MONITOR_DEFAULTTONULL );
+    ok( monitor == primary, "got %p, should get primary %p\n", monitor, primary );
+
+    /* But the width of the rect doesn't matter if it's empty. */
+    SetRect( &rc, -1, 0, 2, -1 );
+    monitor = pMonitorFromRect( &rc, MONITOR_DEFAULTTONULL );
+    ok( monitor != primary, "got primary %p\n", monitor );
+
+    if (!pGetMonitorInfoA)
+    {
+        win_skip("GetMonitorInfoA is not available\n");
+        return;
+    }
+
+    /* Search for a monitor that has no others equally near to (left, top-1) */
+    SetRect( &rc, -1, -2, 2, 0 );
+    monitor = pMonitorFromRect( &rc, MONITOR_DEFAULTTONULL );
+    nearest = primary;
+    while (monitor != NULL)
+    {
+        ok( monitor != primary, "got primary %p\n", monitor );
+        nearest = monitor;
+        mi.cbSize = sizeof(mi);
+        ret = pGetMonitorInfoA( monitor, &mi );
+        ok( ret, "GetMonitorInfo failed\n" );
+        SetRect( &rc, mi.rcMonitor.left-1, mi.rcMonitor.top-2, mi.rcMonitor.left+2, mi.rcMonitor.top );
+        monitor = pMonitorFromRect( &rc, MONITOR_DEFAULTTONULL );
+    }
+
+    /* tests for cbSize in MONITORINFO */
+    monitor = pMonitorFromWindow( 0, MONITOR_DEFAULTTOPRIMARY );
+    for (i = 0; i < (sizeof(testdatami) / sizeof(testdatami[0])); i++)
+    {
+        memset( &mi, 0, sizeof(mi) );
+        mi.cbSize = testdatami[i].cbSize;
+        ret = pGetMonitorInfoA( monitor, &mi );
+        ok( ret == testdatami[i].ret, "GetMonitorInfo returned wrong value\n" );
+        if (ret)
+            ok( (mi.dwFlags & MONITORINFOF_PRIMARY), "MONITORINFOF_PRIMARY flag isn't set\n" );
+        else
+            ok( !(mi.dwFlags & MONITORINFOF_PRIMARY), "MONITORINFOF_PRIMARY flag is set\n" );
+
+        memset( &miexw, 0, sizeof(miexw) );
+        miexw.cbSize = testdatamiexw[i].cbSize;
+        ret = pGetMonitorInfoW( monitor, (LPMONITORINFO)&miexw );
+        ok( ret == testdatamiexw[i].ret, "GetMonitorInfo returned wrong value\n" );
+        if (ret)
+            ok( (miexw.dwFlags & MONITORINFOF_PRIMARY), "MONITORINFOF_PRIMARY flag isn't set\n" );
+        else
+            ok( !(miexw.dwFlags & MONITORINFOF_PRIMARY), "MONITORINFOF_PRIMARY flag is set\n" );
+    }
+
+    /* tests for cbSize in MONITORINFOEXA */
+    for (i = 0; i < (sizeof(testdatamiexa) / sizeof(testdatamiexa[0])); i++)
+    {
+        memset( &miexa, 0, sizeof(miexa) );
+        miexa.cbSize = testdatamiexa[i].cbSize;
+        ret = pGetMonitorInfoA( monitor, (LPMONITORINFO)&miexa );
+        ok( ret == testdatamiexa[i].ret, "GetMonitorInfo returned wrong value\n" );
+        if (ret)
+            ok( (miexa.dwFlags & MONITORINFOF_PRIMARY), "MONITORINFOF_PRIMARY flag isn't set\n" );
+        else
+            ok( !(miexa.dwFlags & MONITORINFOF_PRIMARY), "MONITORINFOF_PRIMARY flag is set\n" );
+    }
+
+    /* tests for cbSize in MONITORINFOEXW */
+    for (i = 0; i < (sizeof(testdatamiexw) / sizeof(testdatamiexw[0])); i++)
+    {
+        memset( &miexw, 0, sizeof(miexw) );
+        miexw.cbSize = testdatamiexw[i].cbSize;
+        ret = pGetMonitorInfoW( monitor, (LPMONITORINFO)&miexw );
+        ok( ret == testdatamiexw[i].ret, "GetMonitorInfo returned wrong value\n" );
+        if (ret)
+            ok( (miexw.dwFlags & MONITORINFOF_PRIMARY), "MONITORINFOF_PRIMARY flag isn't set\n" );
+        else
+            ok( !(miexw.dwFlags & MONITORINFOF_PRIMARY), "MONITORINFOF_PRIMARY flag is set\n" );
+    }
+
+    SetRect( &rc, rc.left+1, rc.top+1, rc.left+2, rc.top+2 );
+
+    monitor = pMonitorFromRect( &rc, MONITOR_DEFAULTTONULL );
+    ok( monitor == NULL, "got %p\n", monitor );
+
+    monitor = pMonitorFromRect( &rc, MONITOR_DEFAULTTOPRIMARY );
+    ok( monitor == primary, "got %p, should get primary %p\n", monitor, primary );
+
+    monitor = pMonitorFromRect( &rc, MONITOR_DEFAULTTONEAREST );
+    ok( monitor == nearest, "got %p, should get nearest %p\n", monitor, nearest );
 }
 
 static BOOL CALLBACK find_primary_mon(HMONITOR hmon, HDC hdc, LPRECT rc, LPARAM lp)
@@ -356,12 +501,12 @@ static void test_work_area(void)
         mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right, mi.rcMonitor.bottom);
 
     SetLastError(0xdeadbeef);
-    ret = SystemParametersInfo(SPI_GETWORKAREA, 0, &rc_work, 0);
+    ret = SystemParametersInfoA(SPI_GETWORKAREA, 0, &rc_work, 0);
     ok(ret, "SystemParametersInfo error %u\n", GetLastError());
     trace("work area (%d,%d-%d,%d)\n", rc_work.left, rc_work.top, rc_work.right, rc_work.bottom);
     ok(EqualRect(&rc_work, &mi.rcWork), "work area is different\n");
 
-    hwnd = CreateWindowEx(0, "static", NULL, WS_OVERLAPPEDWINDOW|WS_VISIBLE,100,100,10,10,0,0,0,NULL);
+    hwnd = CreateWindowExA(0, "static", NULL, WS_OVERLAPPEDWINDOW|WS_VISIBLE,100,100,10,10,0,0,0,NULL);
     ok(hwnd != 0, "CreateWindowEx failed\n");
 
     ret = GetWindowRect(hwnd, &rc_normal);
@@ -383,7 +528,7 @@ static void test_work_area(void)
     else
         ok(EqualRect(&rc_normal, &wp.rcNormalPosition), "normal pos is different\n");
 
-    SetWindowLong(hwnd, GWL_EXSTYLE, WS_EX_TOOLWINDOW);
+    SetWindowLongA(hwnd, GWL_EXSTYLE, WS_EX_TOOLWINDOW);
 
     wp.length = sizeof(wp);
     ret = GetWindowPlacement(hwnd, &wp);

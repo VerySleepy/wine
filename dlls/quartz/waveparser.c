@@ -19,7 +19,6 @@
  */
 
 #include "quartz_private.h"
-#include "control_private.h"
 #include "pin.h"
 
 #include "uuids.h"
@@ -51,7 +50,12 @@ typedef struct WAVEParserImpl
 
 static inline WAVEParserImpl *impl_from_IMediaSeeking( IMediaSeeking *iface )
 {
-    return (WAVEParserImpl*)((char*)iface - FIELD_OFFSET(WAVEParserImpl, Parser.sourceSeeking.lpVtbl));
+    return CONTAINING_RECORD(iface, WAVEParserImpl, Parser.sourceSeeking.IMediaSeeking_iface);
+}
+
+static inline WAVEParserImpl *impl_from_IBaseFilter( IBaseFilter *iface )
+{
+    return CONTAINING_RECORD(iface, WAVEParserImpl, Parser.filter.IBaseFilter_iface);
 }
 
 static LONGLONG bytepos_to_duration(WAVEParserImpl *This, LONGLONG bytepos)
@@ -99,7 +103,7 @@ static HRESULT WAVEParser_Sample(LPVOID iface, IMediaSample * pSample, DWORD_PTR
         return S_OK;
     }
 
-    pOutputPin = (Parser_OutputPin *)This->Parser.ppPins[1];
+    pOutputPin = unsafe_impl_Parser_OutputPin_from_IPin(This->Parser.ppPins[1]);
 
     if (SUCCEEDED(hr))
         hr = IMemAllocator_GetBuffer(pin->pAlloc, &newsample, NULL, NULL, 0);
@@ -113,7 +117,7 @@ static HRESULT WAVEParser_Sample(LPVOID iface, IMediaSample * pSample, DWORD_PTR
         if (rtSampleStop > pin->rtStop)
             rtSampleStop = MEDIATIME_FROM_BYTES(ALIGNUP(BYTES_FROM_MEDIATIME(pin->rtStop), pin->cbAlign));
 
-        hr = IMediaSample_SetTime(newsample, &rtSampleStart, &rtSampleStop);
+        IMediaSample_SetTime(newsample, &rtSampleStart, &rtSampleStop);
 
         pin->rtCurrent = pin->rtNext;
         pin->rtNext = rtSampleStop;
@@ -216,7 +220,7 @@ static HRESULT WINAPI WAVEParserImpl_seek(IMediaSeeking *iface)
     TRACE("Moving sound to %08u bytes!\n", (DWORD)BYTES_FROM_MEDIATIME(bytepos));
 
     EnterCriticalSection(&pPin->thread_lock);
-    IPin_BeginFlush((IPin *)pPin);
+    IPin_BeginFlush(&pPin->pin.IPin_iface);
 
     /* Make sure this is done while stopped, BeginFlush takes care of this */
     EnterCriticalSection(&This->Parser.filter.csFilter);
@@ -228,11 +232,11 @@ static HRESULT WINAPI WAVEParserImpl_seek(IMediaSeeking *iface)
     }
 
     pPin->rtStart = pPin->rtCurrent = bytepos;
-    ((Parser_OutputPin *)This->Parser.ppPins[1])->dwSamplesProcessed = 0;
+    unsafe_impl_Parser_OutputPin_from_IPin(This->Parser.ppPins[1])->dwSamplesProcessed = 0;
     LeaveCriticalSection(&This->Parser.filter.csFilter);
 
     TRACE("Done flushing\n");
-    IPin_EndFlush((IPin *)pPin);
+    IPin_EndFlush(&pPin->pin.IPin_iface);
     LeaveCriticalSection(&pPin->thread_lock);
 
     return S_OK;
@@ -240,18 +244,18 @@ static HRESULT WINAPI WAVEParserImpl_seek(IMediaSeeking *iface)
 
 static HRESULT WAVEParser_InputPin_PreConnect(IPin * iface, IPin * pConnectPin, ALLOCATOR_PROPERTIES *props)
 {
-    PullPin *This = (PullPin *)iface;
+    PullPin *This = impl_PullPin_from_IPin(iface);
     HRESULT hr;
     RIFFLIST list;
     RIFFCHUNK chunk;
     LONGLONG pos = 0; /* in bytes */
     PIN_INFO piOutput;
     AM_MEDIA_TYPE amt;
-    WAVEParserImpl * pWAVEParser = (WAVEParserImpl *)This->pin.pinInfo.pFilter;
+    WAVEParserImpl * pWAVEParser = impl_from_IBaseFilter(This->pin.pinInfo.pFilter);
     LONGLONG length, avail;
 
     piOutput.dir = PINDIR_OUTPUT;
-    piOutput.pFilter = (IBaseFilter *)This;
+    piOutput.pFilter = &pWAVEParser->Parser.filter.IBaseFilter_iface;
     lstrcpynW(piOutput.achName, wcsOutputPinName, sizeof(piOutput.achName) / sizeof(piOutput.achName[0]));
     
     hr = IAsyncReader_SyncRead(This->pReader, pos, sizeof(list), (BYTE *)&list);
@@ -286,7 +290,7 @@ static HRESULT WAVEParser_InputPin_PreConnect(IPin * iface, IPin * pConnectPin, 
     amt.cbFormat = chunk.cb;
     amt.pbFormat = CoTaskMemAlloc(amt.cbFormat);
     amt.pUnk = NULL;
-    hr = IAsyncReader_SyncRead(This->pReader, pos, amt.cbFormat, amt.pbFormat);
+    IAsyncReader_SyncRead(This->pReader, pos, amt.cbFormat, amt.pbFormat);
     amt.subtype = MEDIATYPE_Audio;
     amt.subtype.Data1 = ((WAVEFORMATEX*)amt.pbFormat)->wFormatTag;
 
@@ -367,12 +371,12 @@ static HRESULT WAVEParser_first_request(LPVOID iface)
         LONGLONG rtSampleStart = pin->rtNext;
         /* Add 4 for the next header, which should hopefully work */
         LONGLONG rtSampleStop = rtSampleStart + MEDIATIME_FROM_BYTES(IMediaSample_GetSize(sample));
-        Parser_OutputPin *outpin = (Parser_OutputPin *)This->Parser.ppPins[1];
+        Parser_OutputPin *outpin = unsafe_impl_Parser_OutputPin_from_IPin(This->Parser.ppPins[1]);
 
         if (rtSampleStop > pin->rtStop)
             rtSampleStop = MEDIATIME_FROM_BYTES(ALIGNUP(BYTES_FROM_MEDIATIME(pin->rtStop), pin->cbAlign));
 
-        hr = IMediaSample_SetTime(sample, &rtSampleStart, &rtSampleStop);
+        IMediaSample_SetTime(sample, &rtSampleStart, &rtSampleStop);
 
         pin->rtCurrent = pin->rtNext;
         pin->rtNext = rtSampleStop;

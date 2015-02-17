@@ -24,6 +24,7 @@
 #include "dispex.h"
 
 #include "wine/unicode.h"
+#include "wine/list.h"
 
 #ifndef __WINE_CONFIG_H
 # error You must include config.h to use this header
@@ -31,9 +32,11 @@
 
 typedef enum {
     MSXML_DEFAULT = 0,
-    MSXML3 = 30,
-    MSXML4 = 40,
-    MSXML6 = 60
+    MSXML2        = 20,
+    MSXML26       = 26,
+    MSXML3        = 30,
+    MSXML4        = 40,
+    MSXML6        = 60
 } MSXML_VERSION;
 
 /* typelibs */
@@ -44,6 +47,7 @@ typedef enum tid_t {
     IXMLDOMComment_tid,
     IXMLDOMDocument_tid,
     IXMLDOMDocument2_tid,
+    IXMLDOMDocument3_tid,
     IXMLDOMDocumentFragment_tid,
     IXMLDOMDocumentType_tid,
     IXMLDOMElement_tid,
@@ -52,9 +56,10 @@ typedef enum tid_t {
     IXMLDOMNamedNodeMap_tid,
     IXMLDOMNode_tid,
     IXMLDOMNodeList_tid,
-    IXMLDOMParseError_tid,
+    IXMLDOMParseError2_tid,
     IXMLDOMProcessingInstruction_tid,
     IXMLDOMSchemaCollection_tid,
+    IXMLDOMSchemaCollection2_tid,
     IXMLDOMSelection_tid,
     IXMLDOMText_tid,
     IXMLElement_tid,
@@ -76,6 +81,7 @@ typedef enum tid_t {
     IMXReaderControl_tid,
     IMXWriter_tid,
     IVBMXNamespaceManager_tid,
+    IServerXMLHTTPRequest_tid,
     LAST_tid
 } tid_t;
 
@@ -120,18 +126,14 @@ typedef enum _XDR_DT {
     DT_UI4,
     DT_UI8,
     DT_URI,
-    DT_UUID
+    DT_UUID,
+    LAST_DT
 } XDR_DT;
-#define DT__N_TYPES  (DT_UUID+1)
 
 extern HRESULT get_typeinfo(tid_t tid, ITypeInfo **typeinfo) DECLSPEC_HIDDEN;
 extern void release_typelib(void) DECLSPEC_HIDDEN;
 
 typedef struct dispex_data_t dispex_data_t;
-typedef struct dispex_dynamic_data_t dispex_dynamic_data_t;
-
-#define MSXML_DISPID_CUSTOM_MIN 0x60000000
-#define MSXML_DISPID_CUSTOM_MAX 0x6fffffff
 
 typedef struct {
     HRESULT (*get_dispid)(IUnknown*,BSTR,DWORD,DISPID*);
@@ -151,7 +153,6 @@ typedef struct {
     IUnknown *outer;
 
     dispex_static_data_t *data;
-    dispex_dynamic_data_t *dynamic_data;
 } DispatchEx;
 
 extern HINSTANCE MSXML_hInstance DECLSPEC_HIDDEN;
@@ -159,6 +160,7 @@ extern HINSTANCE MSXML_hInstance DECLSPEC_HIDDEN;
 void init_dispex(DispatchEx*,IUnknown*,dispex_static_data_t*) DECLSPEC_HIDDEN;
 void release_dispex(DispatchEx*) DECLSPEC_HIDDEN;
 BOOL dispex_query_interface(DispatchEx*,REFIID,void**) DECLSPEC_HIDDEN;
+const IID *get_riid_from_tid(enum tid_t tid) DECLSPEC_HIDDEN;
 
 /* memory allocation functions */
 
@@ -177,6 +179,11 @@ static inline void *heap_realloc(void *mem, size_t len)
     return HeapReAlloc(GetProcessHeap(), 0, mem, len);
 }
 
+static inline void *heap_realloc_zero(void *mem, size_t len)
+{
+    return HeapReAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, mem, len);
+}
+
 static inline BOOL heap_free(void *mem)
 {
     return HeapFree(GetProcessHeap(), 0, mem);
@@ -191,27 +198,26 @@ static inline LPWSTR heap_strdupW(LPCWSTR str)
 
         size = (strlenW(str)+1)*sizeof(WCHAR);
         ret = heap_alloc(size);
-        memcpy(ret, str, size);
+        if(ret)
+            memcpy(ret, str, size);
     }
 
     return ret;
 }
 
-static inline LPSTR heap_strdupWtoA(LPCWSTR str)
+/* XSLProcessor parameter list */
+struct xslprocessor_par
 {
-    LPSTR ret = NULL;
+    struct list entry;
+    BSTR name;
+    BSTR value;
+};
 
-    if(str) {
-        DWORD len = WideCharToMultiByte(CP_ACP, 0, str, -1, NULL, 0, NULL, NULL);
-        ret = heap_alloc(len+1);
-        if(!ret)
-            return NULL;
-
-        WideCharToMultiByte(CP_ACP, 0, str, -1, ret, len+1, NULL, NULL);
-    }
-
-    return ret;
-}
+struct xslprocessor_params
+{
+    struct list  list;
+    unsigned int count;
+};
 
 #ifdef HAVE_LIBXML2
 
@@ -231,6 +237,35 @@ static inline xmlNodePtr wine_xmlFirstElementChild(xmlNodePtr parent)
 #define xmlFirstElementChild wine_xmlFirstElementChild
 #endif
 
+/* IXMLDOMNode Internal Structure */
+typedef struct _xmlnode
+{
+    DispatchEx   dispex;
+    IXMLDOMNode *iface;
+    IXMLDOMNode *parent;
+    xmlNodePtr   node;
+} xmlnode;
+
+/* IXMLDOMNamedNodeMap custom function table */
+struct nodemap_funcs
+{
+    HRESULT (*get_named_item)(const xmlNodePtr,BSTR,IXMLDOMNode**);
+    HRESULT (*set_named_item)(xmlNodePtr,IXMLDOMNode*,IXMLDOMNode**);
+    HRESULT (*remove_named_item)(xmlNodePtr,BSTR,IXMLDOMNode**);
+    HRESULT (*get_item)(xmlNodePtr,LONG,IXMLDOMNode**);
+    HRESULT (*get_length)(xmlNodePtr,LONG*);
+    HRESULT (*get_qualified_item)(const xmlNodePtr,BSTR,BSTR,IXMLDOMNode**);
+    HRESULT (*remove_qualified_item)(xmlNodePtr,BSTR,BSTR,IXMLDOMNode**);
+    HRESULT (*next_node)(const xmlNodePtr,LONG*,IXMLDOMNode**);
+};
+
+/* used by IEnumVARIANT to access outer object items */
+struct enumvariant_funcs
+{
+    HRESULT (*get_item)(IUnknown*, LONG, VARIANT*);
+    HRESULT (*next)(IUnknown*);
+};
+
 /* constructors */
 extern IUnknown         *create_domdoc( xmlNodePtr ) DECLSPEC_HIDDEN;
 extern IUnknown         *create_xmldoc( void ) DECLSPEC_HIDDEN;
@@ -242,12 +277,13 @@ extern IUnknown         *create_pi( xmlNodePtr ) DECLSPEC_HIDDEN;
 extern IUnknown         *create_comment( xmlNodePtr ) DECLSPEC_HIDDEN;
 extern IUnknown         *create_cdata( xmlNodePtr ) DECLSPEC_HIDDEN;
 extern IXMLDOMNodeList  *create_children_nodelist( xmlNodePtr ) DECLSPEC_HIDDEN;
-extern IXMLDOMNamedNodeMap *create_nodemap( const xmlNodePtr ) DECLSPEC_HIDDEN;
+extern IXMLDOMNamedNodeMap *create_nodemap( xmlNodePtr, const struct nodemap_funcs* ) DECLSPEC_HIDDEN;
 extern IUnknown         *create_doc_Implementation(void) DECLSPEC_HIDDEN;
 extern IUnknown         *create_doc_fragment( xmlNodePtr ) DECLSPEC_HIDDEN;
 extern IUnknown         *create_doc_entity_ref( xmlNodePtr ) DECLSPEC_HIDDEN;
 extern IUnknown         *create_doc_type( xmlNodePtr ) DECLSPEC_HIDDEN;
 extern HRESULT           create_selection( xmlNodePtr, xmlChar*, IXMLDOMNodeList** ) DECLSPEC_HIDDEN;
+extern HRESULT           create_enumvariant( IUnknown*, BOOL, const struct enumvariant_funcs*, IEnumVARIANT**) DECLSPEC_HIDDEN;
 
 /* data accessors */
 xmlNodePtr xmlNodePtr_from_domnode( IXMLDOMNode *iface, xmlElementType type ) DECLSPEC_HIDDEN;
@@ -258,12 +294,15 @@ extern xmlChar *xmlChar_from_wchar( LPCWSTR str ) DECLSPEC_HIDDEN;
 extern void xmldoc_init( xmlDocPtr doc, MSXML_VERSION version ) DECLSPEC_HIDDEN;
 extern LONG xmldoc_add_ref( xmlDocPtr doc ) DECLSPEC_HIDDEN;
 extern LONG xmldoc_release( xmlDocPtr doc ) DECLSPEC_HIDDEN;
+extern LONG xmldoc_add_refs( xmlDocPtr doc, LONG refs ) DECLSPEC_HIDDEN;
+extern LONG xmldoc_release_refs ( xmlDocPtr doc, LONG refs ) DECLSPEC_HIDDEN;
+extern int xmlnode_get_inst_cnt( xmlnode *node ) DECLSPEC_HIDDEN;
 extern HRESULT xmldoc_add_orphan( xmlDocPtr doc, xmlNodePtr node ) DECLSPEC_HIDDEN;
 extern HRESULT xmldoc_remove_orphan( xmlDocPtr doc, xmlNodePtr node ) DECLSPEC_HIDDEN;
 extern void xmldoc_link_xmldecl(xmlDocPtr doc, xmlNodePtr node) DECLSPEC_HIDDEN;
 extern xmlNodePtr xmldoc_unlink_xmldecl(xmlDocPtr doc) DECLSPEC_HIDDEN;
 
-extern HRESULT XMLElement_create( IUnknown *pUnkOuter, xmlNodePtr node, LPVOID *ppObj, BOOL own ) DECLSPEC_HIDDEN;
+extern HRESULT XMLElement_create( xmlNodePtr node, LPVOID *ppObj, BOOL own ) DECLSPEC_HIDDEN;
 
 extern void wineXmlCallbackLog(char const* caller, xmlErrorLevel lvl, char const* msg, va_list ap) DECLSPEC_HIDDEN;
 extern void wineXmlCallbackError(char const* caller, xmlErrorPtr err) DECLSPEC_HIDDEN;
@@ -285,15 +324,6 @@ extern BOOL is_preserving_whitespace(xmlNodePtr node) DECLSPEC_HIDDEN;
 extern BOOL is_xpathmode(const xmlDocPtr doc) DECLSPEC_HIDDEN;
 extern void set_xpathmode(xmlDocPtr doc, BOOL xpath) DECLSPEC_HIDDEN;
 
-/* IXMLDOMNode Internal Structure */
-typedef struct _xmlnode
-{
-    DispatchEx   dispex;
-    IXMLDOMNode *iface;
-    IXMLDOMNode *parent;
-    xmlNodePtr   node;
-} xmlnode;
-
 extern void init_xmlnode(xmlnode*,xmlNodePtr,IXMLDOMNode*,dispex_static_data_t*) DECLSPEC_HIDDEN;
 extern void destroy_xmlnode(xmlnode*) DECLSPEC_HIDDEN;
 extern BOOL node_query_interface(xmlnode*,REFIID,void**) DECLSPEC_HIDDEN;
@@ -314,7 +344,7 @@ extern HRESULT node_get_next_sibling(xmlnode*,IXMLDOMNode**) DECLSPEC_HIDDEN;
 extern HRESULT node_insert_before(xmlnode*,IXMLDOMNode*,const VARIANT*,IXMLDOMNode**) DECLSPEC_HIDDEN;
 extern HRESULT node_replace_child(xmlnode*,IXMLDOMNode*,IXMLDOMNode*,IXMLDOMNode**) DECLSPEC_HIDDEN;
 extern HRESULT node_put_text(xmlnode*,BSTR) DECLSPEC_HIDDEN;
-extern HRESULT node_get_xml(xmlnode*,BOOL,BOOL,BSTR*) DECLSPEC_HIDDEN;
+extern HRESULT node_get_xml(xmlnode*,BOOL,BSTR*) DECLSPEC_HIDDEN;
 extern HRESULT node_clone(xmlnode*,VARIANT_BOOL,IXMLDOMNode**) DECLSPEC_HIDDEN;
 extern HRESULT node_get_prefix(xmlnode*,BSTR*) DECLSPEC_HIDDEN;
 extern HRESULT node_get_base_name(xmlnode*,BSTR*) DECLSPEC_HIDDEN;
@@ -326,11 +356,14 @@ extern HRESULT node_get_text(const xmlnode*,BSTR*) DECLSPEC_HIDDEN;
 extern HRESULT node_select_nodes(const xmlnode*,BSTR,IXMLDOMNodeList**) DECLSPEC_HIDDEN;
 extern HRESULT node_select_singlenode(const xmlnode*,BSTR,IXMLDOMNode**) DECLSPEC_HIDDEN;
 extern HRESULT node_transform_node(const xmlnode*,IXMLDOMNode*,BSTR*) DECLSPEC_HIDDEN;
+extern HRESULT node_transform_node_params(const xmlnode*,IXMLDOMNode*,BSTR*,IStream*,const struct xslprocessor_params*) DECLSPEC_HIDDEN;
+extern HRESULT node_create_supporterrorinfo(const tid_t*,void**) DECLSPEC_HIDDEN;
 
 extern HRESULT get_domdoc_from_xmldoc(xmlDocPtr xmldoc, IXMLDOMDocument3 **document) DECLSPEC_HIDDEN;
 
-extern HRESULT SchemaCache_validate_tree(IXMLDOMSchemaCollection2* iface, xmlNodePtr tree) DECLSPEC_HIDDEN;
-extern XDR_DT  SchemaCache_get_node_dt(IXMLDOMSchemaCollection2* iface, xmlNodePtr node) DECLSPEC_HIDDEN;
+extern HRESULT SchemaCache_validate_tree(IXMLDOMSchemaCollection2*, xmlNodePtr) DECLSPEC_HIDDEN;
+extern XDR_DT  SchemaCache_get_node_dt(IXMLDOMSchemaCollection2*, xmlNodePtr) DECLSPEC_HIDDEN;
+extern HRESULT cache_from_doc_ns(IXMLDOMSchemaCollection2*, xmlnode*) DECLSPEC_HIDDEN;
 
 extern XDR_DT str_to_dt(xmlChar const* str, int len /* calculated if -1 */) DECLSPEC_HIDDEN;
 extern XDR_DT bstr_to_dt(OLECHAR const* bstr, int len /* calculated if -1 */) DECLSPEC_HIDDEN;
@@ -359,6 +392,42 @@ static inline BSTR bstr_from_xmlChar(const xmlChar *str)
     return ret;
 }
 
+static inline xmlChar *xmlchar_from_wcharn(const WCHAR *str, int nchars)
+{
+    xmlChar *xmlstr;
+    DWORD len = WideCharToMultiByte( CP_UTF8, 0, str, nchars, NULL, 0, NULL, NULL );
+
+    xmlstr = heap_alloc( len+1 );
+    if ( xmlstr )
+    {
+        WideCharToMultiByte( CP_UTF8, 0, str, nchars, (LPSTR) xmlstr, len+1, NULL, NULL );
+        xmlstr[len] = 0;
+    }
+    return xmlstr;
+}
+
+static inline xmlChar *xmlchar_from_wchar( const WCHAR *str )
+{
+    return xmlchar_from_wcharn(str, -1);
+}
+
+static inline xmlChar *heap_strdupxmlChar(const xmlChar *str)
+{
+    xmlChar *ret = NULL;
+
+    if(str) {
+        DWORD size;
+
+        size = (xmlStrlen(str)+1)*sizeof(xmlChar);
+        ret = heap_alloc(size);
+        memcpy(ret, str, size);
+    }
+
+    return ret;
+}
+
+#endif
+
 static inline HRESULT return_bstr(const WCHAR *value, BSTR *p)
 {
     if(!p)
@@ -371,6 +440,18 @@ static inline HRESULT return_bstr(const WCHAR *value, BSTR *p)
     }else {
         *p = NULL;
     }
+
+    return S_OK;
+}
+
+static inline HRESULT return_bstrn(const WCHAR *value, int len, BSTR *p)
+{
+    if(value) {
+        *p = SysAllocStringLen(value, len);
+        if(!*p)
+            return E_OUTOFMEMORY;
+    }else
+        *p = NULL;
 
     return S_OK;
 }
@@ -409,38 +490,29 @@ static inline HRESULT return_null_bstr(BSTR *p)
     return S_FALSE;
 }
 
-static inline xmlChar *xmlchar_from_wcharn(const WCHAR *str, int nchars)
+static inline HRESULT return_var_false(VARIANT_BOOL *p)
 {
-    xmlChar *xmlstr;
-    DWORD len = WideCharToMultiByte( CP_UTF8, 0, str, nchars, NULL, 0, NULL, NULL );
+    if(!p)
+        return E_INVALIDARG;
 
-    xmlstr = heap_alloc( len+1 );
-    if ( xmlstr )
-    {
-        WideCharToMultiByte( CP_UTF8, 0, str, nchars, (LPSTR) xmlstr, len+1, NULL, NULL );
-        xmlstr[len] = 0;
-    }
-    return xmlstr;
+    *p = VARIANT_FALSE;
+    return S_FALSE;
 }
-
-static inline xmlChar *xmlchar_from_wchar( const WCHAR *str )
-{
-    return xmlchar_from_wcharn(str, -1);
-}
-
-#endif
 
 extern IXMLDOMParseError *create_parseError( LONG code, BSTR url, BSTR reason, BSTR srcText,
                                              LONG line, LONG linepos, LONG filepos ) DECLSPEC_HIDDEN;
-extern HRESULT DOMDocument_create(MSXML_VERSION, IUnknown*, void**) DECLSPEC_HIDDEN;
-extern HRESULT SchemaCache_create(MSXML_VERSION, IUnknown*, void**) DECLSPEC_HIDDEN;
-extern HRESULT XMLDocument_create(IUnknown*, void**) DECLSPEC_HIDDEN;
-extern HRESULT SAXXMLReader_create(MSXML_VERSION, IUnknown*, void**) DECLSPEC_HIDDEN;
-extern HRESULT XMLHTTPRequest_create(IUnknown*, void **) DECLSPEC_HIDDEN;
-extern HRESULT XSLTemplate_create(IUnknown*, void**) DECLSPEC_HIDDEN;
-extern HRESULT MXWriter_create(MSXML_VERSION, IUnknown*, void**) DECLSPEC_HIDDEN;
-extern HRESULT MXNamespaceManager_create(IUnknown*,void**) DECLSPEC_HIDDEN;
-extern HRESULT XMLParser_create(IUnknown*,void**) DECLSPEC_HIDDEN;
+extern HRESULT DOMDocument_create(MSXML_VERSION, void**) DECLSPEC_HIDDEN;
+extern HRESULT SchemaCache_create(MSXML_VERSION, void**) DECLSPEC_HIDDEN;
+extern HRESULT XMLDocument_create(void**) DECLSPEC_HIDDEN;
+extern HRESULT SAXXMLReader_create(MSXML_VERSION, void**) DECLSPEC_HIDDEN;
+extern HRESULT SAXAttributes_create(MSXML_VERSION, void**) DECLSPEC_HIDDEN;
+extern HRESULT XMLHTTPRequest_create(void **) DECLSPEC_HIDDEN;
+extern HRESULT ServerXMLHTTP_create(void **) DECLSPEC_HIDDEN;
+extern HRESULT XSLTemplate_create(void**) DECLSPEC_HIDDEN;
+extern HRESULT MXWriter_create(MSXML_VERSION, void**) DECLSPEC_HIDDEN;
+extern HRESULT MXNamespaceManager_create(void**) DECLSPEC_HIDDEN;
+extern HRESULT XMLParser_create(void**) DECLSPEC_HIDDEN;
+extern HRESULT XMLView_create(void**) DECLSPEC_HIDDEN;
 
 static inline const CLSID* DOMDocument_version(MSXML_VERSION v)
 {
@@ -468,10 +540,9 @@ static inline const CLSID* SchemaCache_version(MSXML_VERSION v)
 
 typedef struct bsc_t bsc_t;
 
-HRESULT bind_url(LPCWSTR, HRESULT (*onDataAvailable)(void*,char*,DWORD), void*, bsc_t**) DECLSPEC_HIDDEN;
+HRESULT create_moniker_from_url(LPCWSTR, IMoniker**) DECLSPEC_HIDDEN;
+HRESULT bind_url(IMoniker*, HRESULT (*onDataAvailable)(void*,char*,DWORD), void*, bsc_t**) DECLSPEC_HIDDEN;
 HRESULT detach_bsc(bsc_t*) DECLSPEC_HIDDEN;
-
-const char *debugstr_variant(const VARIANT*) DECLSPEC_HIDDEN;
 
 /* Error Codes - not defined anywhere in the public headers */
 #define E_XML_ELEMENT_UNDECLARED            0xC00CE00D

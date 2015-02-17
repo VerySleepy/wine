@@ -62,11 +62,6 @@
 WINE_DEFAULT_DEBUG_CHANNEL(menu);
 WINE_DECLARE_DEBUG_CHANNEL(accel);
 
-/* internal popup menu window messages */
-
-#define MM_SETMENUHANDLE	(WM_USER + 0)
-#define MM_GETMENUHANDLE	(WM_USER + 1)
-
 /* Menu item structure */
 typedef struct {
     /* ----------- MENUITEMINFO Stuff ----------- */
@@ -126,8 +121,6 @@ typedef struct
     HWND	hOwnerWnd;    /* where notifications are sent */
     POINT	pt;
 } MTRACKER;
-
-#define MENU_MAGIC   0x554d  /* 'MU' */
 
 #define ITEM_PREV		-1
 #define ITEM_NEXT		 1
@@ -773,15 +766,18 @@ static UINT MENU_FindItemByKey( HWND hwndOwner, HMENU hmenu,
 	if( !forceMenuChar )
 	{
 	     UINT i;
+	     BOOL cjk = GetSystemMetrics( SM_DBCSENABLED );
 
 	     for (i = 0; i < menu->nItems; i++, item++)
 	     {
 		if( item->text)
 		{
-		    WCHAR *p = item->text - 2;
+		    const WCHAR *p = item->text - 2;
 		    do
 		    {
-		    	p = strchrW (p + 2, '&');
+			const WCHAR *q = p + 2;
+			p = strchrW (q, '&');
+			if (!p && cjk) p = strchrW (q, '\036'); /* Japanese Win16 */
 		    }
 		    while (p != NULL && p [1] == '&');
 		    if (p && (toupperW(p[1]) == toupperW(key))) return i;
@@ -1039,7 +1035,7 @@ static void MENU_CalcItemSize( HDC hdc, MENUITEM *lpitem, HWND hwndOwner,
         mis.itemHeight = ODitemheight;
         mis.itemWidth  = 0;
         SendMessageW( hwndOwner, WM_MEASUREITEM, 0, (LPARAM)&mis );
-        /* Tests reveal that Windows ( Win95 thru WinXP) adds twice the average
+        /* Tests reveal that Windows ( Win95 through WinXP) adds twice the average
          * width of a menufont character to the width of an owner-drawn menu. 
          */
         lpitem->rect.right += mis.itemWidth + 2 * menucharsize.cx;
@@ -1169,7 +1165,7 @@ static void MENU_PopupMenuCalcSize( LPPOPUPMENU lppop )
     MENUITEM *lpitem;
     HDC hdc;
     UINT start, i;
-    int textandbmp = FALSE;
+    BOOL textandbmp = FALSE;
     int orgX, orgY, maxX, maxTab, maxTabWidth, maxHeight;
 
     lppop->Width = lppop->Height = 0;
@@ -1588,7 +1584,7 @@ static void MENU_DrawMenuItem( HWND hwnd, HMENU hmenu, HWND hwndOwner, HDC hdc, 
         HBITMAP bm;
         INT y = rect.top + rect.bottom;
         RECT rc = rect;
-        int checked = FALSE;
+        BOOL checked = FALSE;
         UINT check_bitmap_width = GetSystemMetrics( SM_CXMENUCHECK );
         UINT check_bitmap_height = GetSystemMetrics( SM_CYMENUCHECK );
         /* Draw the check mark
@@ -1659,7 +1655,7 @@ static void MENU_DrawMenuItem( HWND hwnd, HMENU hmenu, HWND hwndOwner, HDC hdc, 
     /* process text if present */
     if (lpitem->text)
     {
-	register int i;
+	int i;
 	HFONT hfontOld = 0;
 
 	UINT uFormat = (menuBar) ?
@@ -1741,15 +1737,17 @@ static void MENU_DrawMenuItem( HWND hwnd, HMENU hmenu, HWND hwndOwner, HDC hdc, 
  */
 static void MENU_DrawPopupMenu( HWND hwnd, HDC hdc, HMENU hmenu )
 {
-    HBRUSH hPrevBrush = 0;
+    HBRUSH hPrevBrush = 0, brush = GetSysColorBrush( COLOR_MENU );
     RECT rect;
+    POPUPMENU *menu = MENU_GetMenu( hmenu );
 
     TRACE("wnd=%p dc=%p menu=%p\n", hwnd, hdc, hmenu);
 
     GetClientRect( hwnd, &rect );
 
-    if((hPrevBrush = SelectObject( hdc, GetSysColorBrush(COLOR_MENU) ))
-        && (SelectObject( hdc, get_menu_font(FALSE))))
+    if (menu && menu->hbrBack) brush = menu->hbrBack;
+    if ((hPrevBrush = SelectObject( hdc, brush ))
+        && SelectObject( hdc, get_menu_font(FALSE) ))
     {
 	HPEN hPrevPen;
 
@@ -1758,7 +1756,6 @@ static void MENU_DrawPopupMenu( HWND hwnd, HDC hdc, HMENU hmenu )
 	hPrevPen = SelectObject( hdc, GetStockObject( NULL_PEN ) );
 	if( hPrevPen )
 	{
-	    POPUPMENU *menu;
 	    BOOL flat_menu = FALSE;
 
 	    SystemParametersInfoW (SPI_GETFLATMENU, 0, &flat_menu, 0);
@@ -1767,7 +1764,7 @@ static void MENU_DrawPopupMenu( HWND hwnd, HDC hdc, HMENU hmenu )
 	    else
 		DrawEdge (hdc, &rect, EDGE_RAISED, BF_RECT);
 
-            if( (menu = MENU_GetMenu( hmenu )))
+            if (menu)
             {
                 TRACE("hmenu %p Style %08x\n", hmenu, menu->dwStyle);
                 /* draw menu items */
@@ -1798,11 +1795,9 @@ static void MENU_DrawPopupMenu( HWND hwnd, HDC hdc, HMENU hmenu )
  * Paint a menu bar. Returns the height of the menu bar.
  * called from [windows/nonclient.c]
  */
-UINT MENU_DrawMenuBar( HDC hDC, LPRECT lprect, HWND hwnd,
-                         BOOL suppress_draw)
+UINT MENU_DrawMenuBar( HDC hDC, LPRECT lprect, HWND hwnd )
 {
     LPPOPUPMENU lppop;
-    HFONT hfontOld = 0;
     HMENU hMenu = GetMenu(hwnd);
 
     lppop = MENU_GetMenu( hMenu );
@@ -1811,20 +1806,42 @@ UINT MENU_DrawMenuBar( HDC hDC, LPRECT lprect, HWND hwnd,
         return GetSystemMetrics(SM_CYMENU);
     }
 
-    if (suppress_draw)
+    return DrawMenuBarTemp(hwnd, hDC, lprect, hMenu, NULL);
+}
+
+
+/***********************************************************************
+ *           MENU_InitPopup
+ *
+ * Popup menu initialization before WM_ENTERMENULOOP.
+ */
+static BOOL MENU_InitPopup( HWND hwndOwner, HMENU hmenu, UINT flags )
+{
+    POPUPMENU *menu;
+    DWORD ex_style = 0;
+
+    TRACE("owner=%p hmenu=%p\n", hwndOwner, hmenu);
+
+    if (!(menu = MENU_GetMenu( hmenu ))) return FALSE;
+
+    /* store the owner for DrawItem */
+    if (!IsWindow( hwndOwner ))
     {
-	hfontOld = SelectObject( hDC, get_menu_font(FALSE));
-
-	if (lppop->Height == 0)
-		MENU_MenuBarCalcSize(hDC, lprect, lppop, hwnd);
-
-	lprect->bottom = lprect->top + lppop->Height;
-
-        if (hfontOld) SelectObject( hDC, hfontOld);
-	return lppop->Height;
+        SetLastError( ERROR_INVALID_WINDOW_HANDLE );
+        return FALSE;
     }
-    else
-        return DrawMenuBarTemp(hwnd, hDC, lprect, hMenu, NULL);
+    menu->hwndOwner = hwndOwner;
+
+    if (flags & TPM_LAYOUTRTL)
+        ex_style = WS_EX_LAYOUTRTL;
+
+    /* NOTE: In Windows, top menu popup is not owned. */
+    menu->hWnd = CreateWindowExW( ex_style, (LPCWSTR)POPUPMENU_CLASS_ATOM, NULL,
+                                WS_POPUP, 0, 0, 0, 0,
+                                hwndOwner, 0, (HINSTANCE)GetWindowLongPtrW(hwndOwner, GWLP_HINSTANCE),
+                                (LPVOID)hmenu );
+    if( !menu->hWnd ) return FALSE;
+    return TRUE;
 }
 
 
@@ -1841,7 +1858,6 @@ static BOOL MENU_ShowPopup( HWND hwndOwner, HMENU hmenu, UINT id, UINT flags,
     POINT pt;
     HMONITOR monitor;
     MONITORINFO info;
-    DWORD ex_style = 0;
 
     TRACE("owner=%p hmenu=%p id=0x%04x x=0x%04x y=0x%04x xa=0x%04x ya=0x%04x\n",
           hwndOwner, hmenu, id, x, y, xanchor, yanchor);
@@ -1852,14 +1868,6 @@ static BOOL MENU_ShowPopup( HWND hwndOwner, HMENU hmenu, UINT id, UINT flags,
 	menu->items[menu->FocusedItem].fState &= ~(MF_HILITE|MF_MOUSESELECT);
 	menu->FocusedItem = NO_SELECTED_ITEM;
     }
-
-    /* store the owner for DrawItem */
-    if (!IsWindow( hwndOwner ))
-    {
-        SetLastError( ERROR_INVALID_WINDOW_HANDLE );
-        return FALSE;
-    }
-    menu->hwndOwner = hwndOwner;
 
     menu->nScrollPos = 0;
     MENU_PopupMenuCalcSize( menu );
@@ -1877,10 +1885,7 @@ static BOOL MENU_ShowPopup( HWND hwndOwner, HMENU hmenu, UINT id, UINT flags,
     GetMonitorInfoW( monitor, &info );
 
     if (flags & TPM_LAYOUTRTL)
-    {
-        ex_style = WS_EX_LAYOUTRTL;
         flags ^= TPM_RIGHTALIGN;
-    }
 
     if( flags & TPM_RIGHTALIGN ) x -= width;
     if( flags & TPM_CENTERALIGN ) x -= width / 2;
@@ -1908,20 +1913,14 @@ static BOOL MENU_ShowPopup( HWND hwndOwner, HMENU hmenu, UINT id, UINT flags,
     }
     if( y < info.rcWork.top ) y = info.rcWork.top;
 
-    /* NOTE: In Windows, top menu popup is not owned. */
-    menu->hWnd = CreateWindowExW( ex_style, (LPCWSTR)POPUPMENU_CLASS_ATOM, NULL,
-                                WS_POPUP, x, y, width, height,
-                                hwndOwner, 0, (HINSTANCE)GetWindowLongPtrW(hwndOwner, GWLP_HINSTANCE),
-                                (LPVOID)hmenu );
-    if( !menu->hWnd ) return FALSE;
     if (!top_popup) {
         top_popup = menu->hWnd;
         top_popup_hmenu = hmenu;
     }
     /* Display the window */
 
-    SetWindowPos( menu->hWnd, HWND_TOPMOST, 0, 0, 0, 0,
-                  SWP_SHOWWINDOW | SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE );
+    SetWindowPos( menu->hWnd, HWND_TOPMOST, x, y, width, height,
+                  SWP_SHOWWINDOW | SWP_NOACTIVATE );
     UpdateWindow( menu->hWnd );
     return TRUE;
 }
@@ -2111,7 +2110,7 @@ static MENUITEM *MENU_InsertItem( HMENU hMenu, UINT pos, UINT flags )
            (INT_PTR)menu->items[pos - 1].hbmpItem <= (INT_PTR)HBMMENU_MBAR_CLOSE_D)
         pos--;
 
-    TRACE("inserting at %u by pos %u\n", pos, flags & MF_BYPOSITION);
+    TRACE("inserting at %u flags %x\n", pos, flags);
 
     /* Create new items array */
 
@@ -2395,6 +2394,11 @@ static HMENU MENU_ShowSubPopup( HWND hwndOwner, HMENU hmenu,
 	}
     }
 
+    /* use default alignment for submenus */
+    wFlags &= ~(TPM_CENTERALIGN | TPM_RIGHTALIGN | TPM_VCENTERALIGN | TPM_BOTTOMALIGN);
+
+    MENU_InitPopup( hwndOwner, item->hSubMenu, wFlags );
+
     MENU_ShowPopup( hwndOwner, item->hSubMenu, menu->FocusedItem, wFlags,
 		    rect.left, rect.top, rect.right, rect.bottom );
     if (selectFirst)
@@ -2423,7 +2427,7 @@ void MENU_EndMenu( HWND hwnd )
 {
     POPUPMENU *menu;
     menu = top_popup_hmenu ? MENU_GetMenu( top_popup_hmenu ) : NULL;
-    if (menu && hwnd == menu->hwndOwner) EndMenu();
+    if (menu && (hwnd == menu->hWnd || hwnd == menu->hwndOwner)) EndMenu();
 }
 
 /***********************************************************************
@@ -2614,13 +2618,14 @@ static INT MENU_ButtonUp( MTRACKER* pmt, HMENU hPtMenu, UINT wFlags)
                 return executedMenuId;
 	    }
 
-	    /* If we are dealing with the top-level menu            */
+	    /* If we are dealing with the menu bar                  */
 	    /* and this is a click on an already "popped" item:     */
 	    /* Stop the menu tracking and close the opened submenus */
 	    if((pmt->hTopMenu == hPtMenu) && ptmenu->bTimeToHide)
 		return 0;
 	}
-	ptmenu->bTimeToHide = TRUE;
+	if( GetMenu(ptmenu->hWnd) == hPtMenu )
+	    ptmenu->bTimeToHide = TRUE;
     }
     return -1;
 }
@@ -3005,7 +3010,6 @@ static BOOL MENU_TrackMenu( HMENU hmenu, UINT wFlags, INT x, INT y,
     TRACE("hmenu=%p flags=0x%08x (%d,%d) hwnd=%p %s\n",
           hmenu, wFlags, x, y, hwnd, wine_dbgstr_rect( lprect));
 
-    fEndMenu = FALSE;
     if (!(menu = MENU_GetMenu( hmenu )))
     {
         WARN("Invalid menu handle %p\n", hmenu);
@@ -3122,7 +3126,7 @@ static BOOL MENU_TrackMenu( HMENU hmenu, UINT wFlags, INT x, INT y,
                     /* if the function was called by TrackPopupMenu, continue
                        with the menu tracking. If not, stop it */
                     else
-                        fEndMenu = ((wFlags & TPM_POPUPMENU) ? FALSE : TRUE);
+                        fEndMenu = !(wFlags & TPM_POPUPMENU);
 
 		    break;
 
@@ -3296,11 +3300,20 @@ static BOOL MENU_InitTracking(HWND hWnd, HMENU hMenu, BOOL bPopup, UINT wFlags)
 
     HideCaret(0);
 
+    if (!(menu = MENU_GetMenu( hMenu ))) return FALSE;
+
     /* This makes the menus of applications built with Delphi work.
      * It also enables menus to be displayed in more than one window,
      * but there are some bugs left that need to be fixed in this case.
      */
-    if ((menu = MENU_GetMenu( hMenu ))) menu->hWnd = hWnd;
+    if (!bPopup) menu->hWnd = hWnd;
+    if (!top_popup)
+    {
+        top_popup = menu->hWnd;
+        top_popup_hmenu = hMenu;
+    }
+
+    fEndMenu = FALSE;
 
     /* Send WM_ENTERMENULOOP and WM_INITMENU message only if TPM_NONOTIFY flag is not specified */
     if (!(wFlags & TPM_NONOTIFY))
@@ -3349,6 +3362,9 @@ void MENU_TrackMouseMenuBar( HWND hWnd, INT ht, POINT pt )
     if (IsMenu(hMenu))
     {
 	MENU_InitTracking( hWnd, hMenu, FALSE, wFlags );
+
+        /* fetch the window menu again, it may have changed */
+        hMenu = (ht == HTSYSMENU) ? get_win_sys_menu( hWnd ) : GetMenu( hWnd );
 	MENU_TrackMenu( hMenu, wFlags, pt.x, pt.y, hWnd, NULL );
 	MENU_ExitTracking(hWnd, FALSE);
     }
@@ -3388,6 +3404,9 @@ void MENU_TrackKbdMenuBar( HWND hwnd, UINT wParam, WCHAR wChar)
     if (!IsMenu( hTrackMenu )) return;
 
     MENU_InitTracking( hwnd, hTrackMenu, FALSE, wFlags );
+
+    /* fetch the window menu again, it may have changed */
+    hTrackMenu = (wParam & HTSYSMENU) ? get_win_sys_menu( hwnd ) : GetMenu( hwnd );
 
     if( wChar && wChar != ' ' )
     {
@@ -3444,16 +3463,29 @@ BOOL WINAPI TrackPopupMenuEx( HMENU hMenu, UINT wFlags, INT x, INT y,
         return FALSE;
     }
 
-    MENU_InitTracking(hWnd, hMenu, TRUE, wFlags);
+    if (MENU_InitPopup( hWnd, hMenu, wFlags ))
+    {
+        MENU_InitTracking(hWnd, hMenu, TRUE, wFlags);
 
-    /* Send WM_INITMENUPOPUP message only if TPM_NONOTIFY flag is not specified */
-    if (!(wFlags & TPM_NONOTIFY))
-        SendMessageW( hWnd, WM_INITMENUPOPUP, (WPARAM)hMenu, 0);
+        /* Send WM_INITMENUPOPUP message only if TPM_NONOTIFY flag is not specified */
+        if (!(wFlags & TPM_NONOTIFY))
+            SendMessageW( hWnd, WM_INITMENUPOPUP, (WPARAM)hMenu, 0);
 
-    if (MENU_ShowPopup( hWnd, hMenu, 0, wFlags, x, y, 0, 0 ))
-        ret = MENU_TrackMenu( hMenu, wFlags | TPM_POPUPMENU, 0, 0, hWnd,
-                              lpTpm ? &lpTpm->rcExclude : NULL );
-    MENU_ExitTracking(hWnd, TRUE);
+        if (MENU_ShowPopup( hWnd, hMenu, 0, wFlags, x, y, 0, 0 ))
+            ret = MENU_TrackMenu( hMenu, wFlags | TPM_POPUPMENU, 0, 0, hWnd,
+                                  lpTpm ? &lpTpm->rcExclude : NULL );
+        MENU_ExitTracking(hWnd, TRUE);
+
+        if (menu->hWnd)
+        {
+            DestroyWindow( menu->hWnd );
+            menu->hWnd = 0;
+
+            if (!(wFlags & TPM_NONOTIFY))
+               SendMessageW( hWnd, WM_UNINITMENUPOPUP, (WPARAM)hMenu,
+                             MAKELPARAM(0, IS_SYSTEM_MENU(menu)) );
+        }
+    }
 
     return ret;
 }
@@ -3530,11 +3562,6 @@ LRESULT WINAPI PopupMenuWndProc( HWND hwnd, UINT message, WPARAM wParam, LPARAM 
             SetWindowLongPtrW( hwnd, 0, 0 );
 	break;
 
-    case MM_SETMENUHANDLE:
-        SetWindowLongPtrW( hwnd, 0, wParam );
-        break;
-
-    case MM_GETMENUHANDLE:
     case MN_GETHMENU:
         return GetWindowLongPtrW( hwnd, 0 );
 
@@ -3689,7 +3716,7 @@ INT WINAPI GetMenuStringA(
         return 0;
     }
     if (!item->text) return 0;
-    if (!str || !nMaxSiz) return strlenW(item->text);
+    if (!str || !nMaxSiz) return WideCharToMultiByte( CP_ACP, 0, item->text, -1, NULL, 0, NULL, NULL );
     if (!WideCharToMultiByte( CP_ACP, 0, item->text, -1, str, nMaxSiz, NULL, NULL ))
         str[nMaxSiz-1] = 0;
     TRACE("returning %s\n", debugstr_a(str));
@@ -3822,7 +3849,7 @@ static void MENU_mnu2mnuii( UINT flags, UINT_PTR id, LPCWSTR str,
         pmii->fMask |= MIIM_DATA;
         pmii->dwItemData = (ULONG_PTR) str;
     }
-    if( flags & MF_POPUP) {
+    if( flags & MF_POPUP && MENU_GetMenu((HMENU)id)) {
         pmii->fMask |= MIIM_SUBMENU;
         pmii->hSubMenu = (HMENU)id;
     }
@@ -4179,8 +4206,86 @@ HMENU WINAPI GetMenu( HWND hWnd )
  */
 BOOL WINAPI GetMenuBarInfo( HWND hwnd, LONG idObject, LONG idItem, PMENUBARINFO pmbi )
 {
-    FIXME( "(%p,0x%08x,0x%08x,%p)\n", hwnd, idObject, idItem, pmbi );
-    return FALSE;
+    POPUPMENU *menu;
+    HMENU hmenu = NULL;
+    ATOM class_atom;
+
+    TRACE( "(%p,0x%08x,0x%08x,%p)\n", hwnd, idObject, idItem, pmbi );
+
+    switch (idObject)
+    {
+    case OBJID_CLIENT:
+        class_atom = GetClassLongW(hwnd, GCW_ATOM);
+        if (!class_atom)
+            return FALSE;
+        if (class_atom != POPUPMENU_CLASS_ATOM)
+        {
+            WARN("called on invalid window: %d\n", class_atom);
+            SetLastError(ERROR_INVALID_MENU_HANDLE);
+            return FALSE;
+        }
+
+        hmenu = (HMENU)GetWindowLongPtrW(hwnd, 0);
+        break;
+    case OBJID_MENU:
+        hmenu = GetMenu(hwnd);
+        break;
+    case OBJID_SYSMENU:
+        hmenu = GetSystemMenu(hwnd, FALSE);
+        break;
+    default:
+        return FALSE;
+    }
+
+    if (!hmenu)
+        return FALSE;
+
+    if (pmbi->cbSize != sizeof(MENUBARINFO))
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    menu = MENU_GetMenu(hmenu);
+    if (!menu)
+        return FALSE;
+    if (idItem < 0 || idItem > menu->nItems)
+        return FALSE;
+
+    if (!menu->Height)
+    {
+        SetRectEmpty(&pmbi->rcBar);
+    }
+    else if (idItem == 0)
+    {
+        GetMenuItemRect(hwnd, hmenu, 0, &pmbi->rcBar);
+        pmbi->rcBar.right = pmbi->rcBar.left + menu->Width;
+        pmbi->rcBar.bottom = pmbi->rcBar.top + menu->Height;
+    }
+    else
+    {
+        GetMenuItemRect(hwnd, hmenu, idItem - 1, &pmbi->rcBar);
+    }
+
+    pmbi->hMenu = hmenu;
+    pmbi->hwndMenu = NULL;
+    pmbi->fBarFocused = top_popup_hmenu == hmenu;
+    if (idItem)
+    {
+        pmbi->fFocused = menu->FocusedItem == idItem - 1;
+        if (pmbi->fFocused && (menu->items[idItem - 1].fType & MF_POPUP))
+        {
+            menu = MENU_GetMenu(menu->items[idItem - 1].hSubMenu);
+            if (menu)
+                pmbi->hwndMenu = menu->hWnd;
+        }
+    }
+    else
+    {
+        pmbi->fFocused = pmbi->fBarFocused;
+    }
+
+    return TRUE;
 }
 
 /**********************************************************************
@@ -4252,17 +4357,20 @@ HMENU WINAPI GetSubMenu( HMENU hMenu, INT nPos )
 BOOL WINAPI DrawMenuBar( HWND hWnd )
 {
     LPPOPUPMENU lppop;
-    HMENU hMenu = GetMenu(hWnd);
+    HMENU hMenu;
 
-    if (!WIN_ALLOWED_MENU(GetWindowLongW( hWnd, GWL_STYLE )))
+    if (!IsWindow( hWnd ))
         return FALSE;
-    if (!hMenu || !(lppop = MENU_GetMenu( hMenu ))) return FALSE;
+    if (!WIN_ALLOWED_MENU(GetWindowLongW( hWnd, GWL_STYLE )))
+        return TRUE;
 
-    lppop->Height = 0; /* Make sure we call MENU_MenuBarCalcSize */
-    lppop->hwndOwner = hWnd;
-    SetWindowPos( hWnd, 0, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE |
-                  SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED );
-    return TRUE;
+    if ((hMenu = GetMenu( hWnd )) && (lppop = MENU_GetMenu( hMenu ))) {
+        lppop->Height = 0; /* Make sure we call MENU_MenuBarCalcSize */
+        lppop->hwndOwner = hWnd;
+    }
+
+    return SetWindowPos( hWnd, 0, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE |
+                         SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED );
 }
 
 /***********************************************************************
@@ -4478,12 +4586,12 @@ static BOOL GetMenuItemInfo_common ( HMENU hmenu, UINT item, BOOL bypos,
     if ((lpmii->fMask & (MIIM_TYPE|MIIM_STRING))) {
          if( !menu->text ) {
                 if(lpmii->dwTypeData && lpmii->cch) {
-                    lpmii->cch = 0;
                     if( unicode)
                         *((WCHAR *)lpmii->dwTypeData) = 0;
                     else
                         *((CHAR *)lpmii->dwTypeData) = 0;
                 }
+                lpmii->cch = 0;
          } else {
             int len;
             if (unicode)
@@ -4616,7 +4724,7 @@ static inline void set_menu_item_text( MENUITEM *menu, LPCWSTR text, BOOL unicod
  */
 static int MENU_depth( POPUPMENU *pmenu, int depth)
 {
-    int i;
+    UINT i;
     MENUITEM *item;
     int subdepth;
 
@@ -4719,8 +4827,8 @@ static BOOL MENU_NormalizeMenuItemInfoStruct( const MENUITEMINFOW *pmii_in,
                                               MENUITEMINFOW *pmii_out )
 {
     /* do we recognize the size? */
-    if( pmii_in->cbSize != sizeof( MENUITEMINFOW) &&
-            pmii_in->cbSize != sizeof( MENUITEMINFOW) - sizeof( pmii_in->hbmpItem)) {
+    if( !pmii_in || (pmii_in->cbSize != sizeof( MENUITEMINFOW) &&
+            pmii_in->cbSize != sizeof( MENUITEMINFOW) - sizeof( pmii_in->hbmpItem)) ) {
         SetLastError( ERROR_INVALID_PARAMETER);
         return FALSE;
     }

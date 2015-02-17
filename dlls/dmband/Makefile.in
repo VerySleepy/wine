@@ -7,8 +7,6 @@ C_SRCS = \
 	dmband_main.c \
 	dmutils.c
 
-IDL_R_SRCS = dmband.idl
+IDL_SRCS = dmband.idl
 
 RC_SRCS = version.rc
-
-@MAKE_DLL_RULES@

@@ -20,15 +20,14 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
-    
-#define WIN32_LEAN_AND_MEAN    /* Exclude rarely-used stuff from Windows headers */
+
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <windows.h>
 #include <commctrl.h>
-#include <stdlib.h>
-#include <memory.h>
 #include <winnt.h>
-#include <stdio.h>
-    
+
 #include "wine/unicode.h"
 #include "taskmgr.h"
 #include "perfdata.h"
@@ -287,7 +286,7 @@ AffinityDialogWndProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
              * Make sure they are giving the process affinity
              * with at least one processor. I'd hate to see a
              * process that is not in a wait state get deprived
-             * of it's cpu time.
+             * of its cpu time.
              */
             if (!dwProcessAffinityMask) {
                 WCHAR wszErrorMsg[255];

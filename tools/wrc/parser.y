@@ -135,37 +135,11 @@
 #include "newstruc.h"
 #include "dumpres.h"
 #include "wine/wpp.h"
-#include "wine/unicode.h"
 #include "parser.h"
 #include "windef.h"
 #include "winbase.h"
 #include "wingdi.h"
 #include "winuser.h"
-
-#if defined(YYBYACC)
-	/* Berkeley yacc (byacc) doesn't seem to know about these */
-	/* Some *BSD supplied versions do define these though */
-# ifndef YYEMPTY
-#  define YYEMPTY	(-1)	/* Empty lookahead value of yychar */
-# endif
-# ifndef YYLEX
-#  define YYLEX		yylex()
-# endif
-
-#elif defined(YYBISON)
-	/* Bison was used for original development */
-	/* #define YYEMPTY -2 */
-	/* #define YYLEX   yylex() */
-
-#else
-	/* No yacc we know yet */
-# if !defined(YYEMPTY) || !defined(YYLEX)
-#  error Yacc version/type unknown. This version needs to be verified for settings of YYEMPTY and YYLEX.
-# elif defined(__GNUC__)	/* gcc defines the #warning directive */
-#  warning Yacc version/type unknown. It defines YYEMPTY and YYLEX, but is not tested
-  /* #else we just take a chance that it works... */
-# endif
-#endif
 
 int want_nl = 0;	/* Signal flex that we need the next newline */
 int want_id = 0;	/* Signal flex that we need the next identifier */
@@ -268,7 +242,7 @@ static int rsrcid_to_token(int lookahead);
 
 %token tNL
 %token <num> tNUMBER tLNUMBER
-%token <str> tSTRING tIDENT tFILENAME
+%token <str> tSTRING tIDENT
 %token <raw> tRAWDATA
 %token tACCELERATORS tBITMAP tCURSOR tDIALOG tDIALOGEX tMENU tMENUEX tMESSAGETABLE
 %token tRCDATA tVERSIONINFO tSTRINGTABLE tFONT tFONTDIR tICON tHTML
@@ -647,8 +621,7 @@ resource_definition
 	;
 
 
-filename: tFILENAME	{ $$ = make_filename($1); }
-	| tIDENT	{ $$ = make_filename($1); }
+filename: tIDENT	{ $$ = make_filename($1); }
 	| tSTRING	{ $$ = make_filename($1); }
 	;
 
@@ -1813,8 +1786,8 @@ file_raw: filename	{ $$ = load_file($1,dup_language(currentlanguage)); }
 	;
 
 /* ------------------------------ Win32 expressions ------------------------------ */
-/* All win16 numbers are also handled here. This is inconsistent with MS'
- * resource compiler, but what the heck, its just handy to have.
+/* All win16 numbers are also handled here. This is inconsistent with MS
+ * resource compiler, but what the heck, it's just handy to have.
  */
 e_expr	: /* Empty */	{ $$ = 0; }
 	| expr		{ $$ = new_int($1); }
@@ -2175,51 +2148,9 @@ static event_t *add_event(int key, int id, int flags, event_t *prev)
 
 static event_t *add_string_event(string_t *key, int id, int flags, event_t *prev)
 {
-    int keycode = 0;
     event_t *ev = new_event();
 
-    if(key->type == str_char)
-    {
-	if((flags & WRC_AF_VIRTKEY) &&
-           !((key->str.cstr[0] >= 'A' && key->str.cstr[0] <= 'Z') ||
-             (key->str.cstr[0] >= '0' && key->str.cstr[0] <= '9')))
-		yyerror("VIRTKEY code is not equal to ascii value");
-
-	if(key->str.cstr[0] == '^' && (flags & WRC_AF_CONTROL) != 0)
-	{
-		yyerror("Cannot use both '^' and CONTROL modifier");
-	}
-	else if(key->str.cstr[0] == '^')
-	{
-		keycode = toupper((unsigned char)key->str.cstr[1]) - '@';
-		if(keycode >= ' ')
-			yyerror("Control-code out of range");
-	}
-	else
-		keycode = key->str.cstr[0];
-    }
-    else
-    {
-	if((flags & WRC_AF_VIRTKEY) &&
-           !((key->str.wstr[0] >= 'A' && key->str.wstr[0] <= 'Z') ||
-             (key->str.wstr[0] >= '0' && key->str.wstr[0] <= '9')))
-		yyerror("VIRTKEY code is not equal to ascii value");
-
-	if(key->str.wstr[0] == '^' && (flags & WRC_AF_CONTROL) != 0)
-	{
-		yyerror("Cannot use both '^' and CONTROL modifier");
-	}
-	else if(key->str.wstr[0] == '^')
-	{
-		keycode = toupperW(key->str.wstr[1]) - '@';
-		if(keycode >= ' ')
-			yyerror("Control-code out of range");
-	}
-	else
-		keycode = key->str.wstr[0];
-    }
-
-    ev->key = keycode;
+    ev->str = key;
     ev->id = id;
     ev->flags = flags & ~WRC_AF_ASCII;
     ev->prev = prev;
@@ -2880,7 +2811,7 @@ static int rsrcid_to_token(int lookahead)
 
 	/* Get a token if we don't have one yet */
 	if(lookahead == YYEMPTY)
-		lookahead = YYLEX;
+		lookahead = yylex();
 
 	/* Only numbers are possibly interesting */
 	switch(lookahead)

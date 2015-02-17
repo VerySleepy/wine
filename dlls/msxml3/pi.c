@@ -49,6 +49,14 @@ typedef struct _dom_pi
     LONG ref;
 } dom_pi;
 
+static const struct nodemap_funcs dom_pi_attr_map;
+
+static const tid_t dompi_se_tids[] = {
+    IXMLDOMNode_tid,
+    IXMLDOMProcessingInstruction_tid,
+    NULL_tid
+};
+
 static inline dom_pi *impl_from_IXMLDOMProcessingInstruction( IXMLDOMProcessingInstruction *iface )
 {
     return CONTAINING_RECORD(iface, dom_pi, IXMLDOMProcessingInstruction_iface);
@@ -72,6 +80,10 @@ static HRESULT WINAPI dom_pi_QueryInterface(
     else if(node_query_interface(&This->node, riid, ppvObject))
     {
         return *ppvObject ? S_OK : E_NOINTERFACE;
+    }
+    else if(IsEqualGUID( riid, &IID_ISupportErrorInfo ))
+    {
+        return node_create_supporterrorinfo(dompi_se_tids, ppvObject);
     }
     else
     {
@@ -114,12 +126,7 @@ static HRESULT WINAPI dom_pi_GetTypeInfoCount(
     UINT* pctinfo )
 {
     dom_pi *This = impl_from_IXMLDOMProcessingInstruction( iface );
-
-    TRACE("(%p)->(%p)\n", This, pctinfo);
-
-    *pctinfo = 1;
-
-    return S_OK;
+    return IDispatchEx_GetTypeInfoCount(&This->node.dispex.IDispatchEx_iface, pctinfo);
 }
 
 static HRESULT WINAPI dom_pi_GetTypeInfo(
@@ -128,13 +135,8 @@ static HRESULT WINAPI dom_pi_GetTypeInfo(
     ITypeInfo** ppTInfo )
 {
     dom_pi *This = impl_from_IXMLDOMProcessingInstruction( iface );
-    HRESULT hr;
-
-    TRACE("(%p)->(%u %u %p)\n", This, iTInfo, lcid, ppTInfo);
-
-    hr = get_typeinfo(IXMLDOMProcessingInstruction_tid, ppTInfo);
-
-    return hr;
+    return IDispatchEx_GetTypeInfo(&This->node.dispex.IDispatchEx_iface,
+        iTInfo, lcid, ppTInfo);
 }
 
 static HRESULT WINAPI dom_pi_GetIDsOfNames(
@@ -143,23 +145,8 @@ static HRESULT WINAPI dom_pi_GetIDsOfNames(
     UINT cNames, LCID lcid, DISPID* rgDispId )
 {
     dom_pi *This = impl_from_IXMLDOMProcessingInstruction( iface );
-    ITypeInfo *typeinfo;
-    HRESULT hr;
-
-    TRACE("(%p)->(%s %p %u %u %p)\n", This, debugstr_guid(riid), rgszNames, cNames,
-          lcid, rgDispId);
-
-    if(!rgszNames || cNames == 0 || !rgDispId)
-        return E_INVALIDARG;
-
-    hr = get_typeinfo(IXMLDOMProcessingInstruction_tid, &typeinfo);
-    if(SUCCEEDED(hr))
-    {
-        hr = ITypeInfo_GetIDsOfNames(typeinfo, rgszNames, cNames, rgDispId);
-        ITypeInfo_Release(typeinfo);
-    }
-
-    return hr;
+    return IDispatchEx_GetIDsOfNames(&This->node.dispex.IDispatchEx_iface,
+        riid, rgszNames, cNames, lcid, rgDispId);
 }
 
 static HRESULT WINAPI dom_pi_Invoke(
@@ -169,21 +156,8 @@ static HRESULT WINAPI dom_pi_Invoke(
     EXCEPINFO* pExcepInfo, UINT* puArgErr )
 {
     dom_pi *This = impl_from_IXMLDOMProcessingInstruction( iface );
-    ITypeInfo *typeinfo;
-    HRESULT hr;
-
-    TRACE("(%p)->(%d %s %d %d %p %p %p %p)\n", This, dispIdMember, debugstr_guid(riid),
-          lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
-
-    hr = get_typeinfo(IXMLDOMProcessingInstruction_tid, &typeinfo);
-    if(SUCCEEDED(hr))
-    {
-       hr = ITypeInfo_Invoke(typeinfo, &This->IXMLDOMProcessingInstruction_iface, dispIdMember,
-                wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
-        ITypeInfo_Release(typeinfo);
-    }
-
-    return hr;
+    return IDispatchEx_Invoke(&This->node.dispex.IDispatchEx_iface,
+        dispIdMember, riid, lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
 }
 
 static HRESULT WINAPI dom_pi_get_nodeName(
@@ -213,23 +187,23 @@ static HRESULT WINAPI dom_pi_put_nodeValue(
     VARIANT value)
 {
     dom_pi *This = impl_from_IXMLDOMProcessingInstruction( iface );
-    BSTR sTarget;
+    BSTR target;
     HRESULT hr;
 
     TRACE("(%p)->(%s)\n", This, debugstr_variant(&value));
 
     /* Cannot set data to a PI node whose target is 'xml' */
-    hr = dom_pi_get_nodeName(iface, &sTarget);
+    hr = IXMLDOMProcessingInstruction_get_nodeName(iface, &target);
     if(hr == S_OK)
     {
         static const WCHAR xmlW[] = {'x','m','l',0};
-        if(lstrcmpW( sTarget, xmlW) == 0)
+        if(!strcmpW(target, xmlW))
         {
-            SysFreeString(sTarget);
+            SysFreeString(target);
             return E_FAIL;
         }
 
-        SysFreeString(sTarget);
+        SysFreeString(target);
     }
 
     return node_put_value(&This->node, &value);
@@ -334,7 +308,7 @@ static HRESULT WINAPI dom_pi_get_attributes(
     if (!strcmpW(name, xmlW))
     {
         FIXME("created dummy map for <?xml ?>\n");
-        *map = create_nodemap(This->node.node);
+        *map = create_nodemap(This->node.node, &dom_pi_attr_map);
         SysFreeString(name);
         return S_OK;
     }
@@ -497,7 +471,7 @@ static HRESULT WINAPI dom_pi_put_dataType(
 {
     dom_pi *This = impl_from_IXMLDOMProcessingInstruction( iface );
 
-    FIXME("(%p)->(%s)\n", This, debugstr_w(p));
+    TRACE("(%p)->(%s)\n", This, debugstr_w(p));
 
     if(!p)
         return E_INVALIDARG;
@@ -513,7 +487,7 @@ static HRESULT WINAPI dom_pi_get_xml(
 
     TRACE("(%p)->(%p)\n", This, p);
 
-    return node_get_xml(&This->node, FALSE, FALSE, p);
+    return node_get_xml(&This->node, FALSE, p);
 }
 
 static HRESULT WINAPI dom_pi_transformNode(
@@ -628,30 +602,26 @@ static HRESULT WINAPI dom_pi_put_data(
     BSTR data)
 {
     dom_pi *This = impl_from_IXMLDOMProcessingInstruction( iface );
+    BSTR target;
     HRESULT hr;
-    VARIANT val;
-    BSTR sTarget;
 
     TRACE("(%p)->(%s)\n", This, debugstr_w(data) );
 
-    /* Cannot set data to a PI node whose target is 'xml' */
-    hr = dom_pi_get_nodeName(iface, &sTarget);
+    /* cannot set data to a PI node whose target is 'xml' */
+    hr = IXMLDOMProcessingInstruction_get_nodeName(iface, &target);
     if(hr == S_OK)
     {
         static const WCHAR xmlW[] = {'x','m','l',0};
-        if(lstrcmpW( sTarget, xmlW) == 0)
+        if(!strcmpW(target, xmlW))
         {
-            SysFreeString(sTarget);
+            SysFreeString(target);
             return E_FAIL;
         }
 
-        SysFreeString(sTarget);
+        SysFreeString(target);
     }
 
-    V_VT(&val) = VT_BSTR;
-    V_BSTR(&val) = data;
-
-    return IXMLDOMProcessingInstruction_put_nodeValue( iface, val );
+    return node_set_content(&This->node, data);
 }
 
 static const struct IXMLDOMProcessingInstructionVtbl dom_pi_vtbl =
@@ -703,6 +673,70 @@ static const struct IXMLDOMProcessingInstructionVtbl dom_pi_vtbl =
     dom_pi_get_target,
     dom_pi_get_data,
     dom_pi_put_data
+};
+
+static HRESULT dom_pi_get_qualified_item(const xmlNodePtr node, BSTR name, BSTR uri,
+    IXMLDOMNode **item)
+{
+    FIXME("(%p)->(%s %s %p): stub\n", node, debugstr_w(name), debugstr_w(uri), item);
+    return E_NOTIMPL;
+}
+
+static HRESULT dom_pi_get_named_item(const xmlNodePtr node, BSTR name, IXMLDOMNode **item)
+{
+    FIXME("(%p)->(%s %p): stub\n", node, debugstr_w(name), item );
+    if (item)
+        *item = NULL;
+    return S_FALSE;
+}
+
+static HRESULT dom_pi_set_named_item(xmlNodePtr node, IXMLDOMNode *newItem, IXMLDOMNode **namedItem)
+{
+    FIXME("(%p)->(%p %p): stub\n", node, newItem, namedItem );
+    return E_NOTIMPL;
+}
+
+static HRESULT dom_pi_remove_qualified_item(xmlNodePtr node, BSTR name, BSTR uri, IXMLDOMNode **item)
+{
+    FIXME("(%p)->(%s %s %p): stub\n", node, debugstr_w(name), debugstr_w(uri), item);
+    return E_NOTIMPL;
+}
+
+static HRESULT dom_pi_remove_named_item(xmlNodePtr node, BSTR name, IXMLDOMNode **item)
+{
+    FIXME("(%p)->(%s %p): stub\n", node, debugstr_w(name), item);
+    return E_NOTIMPL;
+}
+
+static HRESULT dom_pi_get_item(const xmlNodePtr node, LONG index, IXMLDOMNode **item)
+{
+    FIXME("(%p)->(%d %p): stub\n", node, index, item);
+    return E_NOTIMPL;
+}
+
+static HRESULT dom_pi_get_length(const xmlNodePtr node, LONG *length)
+{
+    FIXME("(%p)->(%p): stub\n", node, length);
+
+    *length = 0;
+    return S_OK;
+}
+
+static HRESULT dom_pi_next_node(const xmlNodePtr node, LONG *iter, IXMLDOMNode **nextNode)
+{
+    FIXME("(%p)->(%d %p): stub\n", node, *iter, nextNode);
+    return E_NOTIMPL;
+}
+
+static const struct nodemap_funcs dom_pi_attr_map = {
+    dom_pi_get_named_item,
+    dom_pi_set_named_item,
+    dom_pi_remove_named_item,
+    dom_pi_get_item,
+    dom_pi_get_length,
+    dom_pi_get_qualified_item,
+    dom_pi_remove_qualified_item,
+    dom_pi_next_node
 };
 
 static const tid_t dompi_iface_tids[] = {

@@ -1,6 +1,6 @@
 @ stub GetDtcLocaleResourceHandle
-@ stub DtcGetTransactionManager
+@ cdecl DtcGetTransactionManager(str str ptr long long ptr ptr)
 @ stub DtcGetTransactionManagerEx
 @ stub DtcGetTransactionManagerC
-@ stub DtcGetTransactionManagerExA
-@ stub DtcGetTransactionManagerExW
+@ cdecl DtcGetTransactionManagerExA(str str ptr long ptr ptr)
+@ cdecl DtcGetTransactionManagerExW(wstr wstr ptr long ptr ptr)

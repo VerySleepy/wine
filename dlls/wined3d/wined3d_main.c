@@ -23,6 +23,7 @@
  */
 
 #include "config.h"
+#include "wine/port.h"
 
 #include "initguid.h"
 #include "wined3d_private.h"
@@ -46,10 +47,6 @@ struct wined3d_wndproc_table
 };
 
 static struct wined3d_wndproc_table wndproc_table;
-
-int num_lock = 0;
-void (CDECL *wine_tsx11_lock_ptr)(void) = NULL;
-void (CDECL *wine_tsx11_unlock_ptr)(void) = NULL;
 
 static CRITICAL_SECTION wined3d_cs;
 static CRITICAL_SECTION_DEBUG wined3d_cs_debug =
@@ -75,34 +72,37 @@ static CRITICAL_SECTION wined3d_wndproc_cs = {&wined3d_wndproc_cs_debug, -1, 0, 
  * where appropriate. */
 struct wined3d_settings wined3d_settings =
 {
-    VS_HW,          /* Hardware by default */
-    PS_HW,          /* Hardware by default */
     TRUE,           /* Use of GLSL enabled by default */
     ORM_FBO,        /* Use FBOs to do offscreen rendering */
-    RTL_READTEX,    /* Default render target locking method */
     PCI_VENDOR_NONE,/* PCI Vendor ID */
     PCI_DEVICE_NONE,/* PCI Device ID */
     0,              /* The default of memory is set in init_driver_info */
     NULL,           /* No wine logo by default */
     TRUE,           /* Multisampling enabled by default. */
     FALSE,          /* No strict draw ordering. */
-    FALSE,          /* Try to render onscreen by default. */
+    TRUE,           /* Don't try to render onscreen by default. */
+    ~0U,            /* No VS shader model limit by default. */
+    ~0U,            /* No GS shader model limit by default. */
+    ~0U,            /* No PS shader model limit by default. */
+    FALSE,          /* 3D support enabled by default. */
 };
 
-/* Do not call while under the GL lock. */
-struct wined3d * CDECL wined3d_create(UINT version, DWORD flags, void *parent)
+struct wined3d * CDECL wined3d_create(DWORD flags)
 {
     struct wined3d *object;
     HRESULT hr;
 
-    object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object));
+    object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, FIELD_OFFSET(struct wined3d, adapters[1]));
     if (!object)
     {
         ERR("Failed to allocate wined3d object memory.\n");
         return NULL;
     }
 
-    hr = wined3d_init(object, version, flags, parent);
+    if (wined3d_settings.no_3d)
+        flags |= WINED3D_NO3D;
+
+    hr = wined3d_init(object, flags);
     if (FAILED(hr))
     {
         WARN("Failed to initialize wined3d object, hr %#x.\n", hr);
@@ -110,7 +110,7 @@ struct wined3d * CDECL wined3d_create(UINT version, DWORD flags, void *parent)
         return NULL;
     }
 
-    TRACE("Created wined3d object %p for d3d%d support.\n", object, version);
+    TRACE("Created wined3d object %p.\n", object);
 
     return object;
 }
@@ -131,14 +131,9 @@ static DWORD get_config_key_dword(HKEY defkey, HKEY appkey, const char *name, DW
     return ERROR_FILE_NOT_FOUND;
 }
 
-static void CDECL wined3d_do_nothing(void)
-{
-}
-
 static BOOL wined3d_dll_init(HINSTANCE hInstDLL)
 {
     DWORD wined3d_context_tls_idx;
-    HMODULE mod;
     char buffer[MAX_PATH+10];
     DWORD size = sizeof(buffer);
     HKEY hkey = 0;
@@ -163,8 +158,8 @@ static BOOL wined3d_dll_init(HINSTANCE hInstDLL)
     wc.cbClsExtra           = 0;
     wc.cbWndExtra           = 0;
     wc.hInstance            = hInstDLL;
-    wc.hIcon                = LoadIconA(NULL, (LPCSTR)IDI_WINLOGO);
-    wc.hCursor              = LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
+    wc.hIcon                = LoadIconA(NULL, (const char *)IDI_WINLOGO);
+    wc.hCursor              = LoadCursorA(NULL, (const char *)IDC_ARROW);
     wc.hbrBackground        = NULL;
     wc.lpszMenuName         = NULL;
     wc.lpszClassName        = WINED3D_OPENGL_WINDOW_CLASS_NAME;
@@ -182,17 +177,6 @@ static BOOL wined3d_dll_init(HINSTANCE hInstDLL)
 
     DisableThreadLibraryCalls(hInstDLL);
 
-    mod = GetModuleHandleA( "winex11.drv" );
-    if (mod)
-    {
-        wine_tsx11_lock_ptr   = (void *)GetProcAddress( mod, "wine_tsx11_lock" );
-        wine_tsx11_unlock_ptr = (void *)GetProcAddress( mod, "wine_tsx11_unlock" );
-    }
-    else /* We are most likely on Windows */
-    {
-        wine_tsx11_lock_ptr   = wined3d_do_nothing;
-        wine_tsx11_unlock_ptr = wined3d_do_nothing;
-    }
     /* @@ Wine registry key: HKCU\Software\Wine\Direct3D */
     if ( RegOpenKeyA( HKEY_CURRENT_USER, "Software\\Wine\\Direct3D", &hkey ) ) hkey = 0;
 
@@ -215,27 +199,6 @@ static BOOL wined3d_dll_init(HINSTANCE hInstDLL)
 
     if (hkey || appkey)
     {
-        if ( !get_config_key( hkey, appkey, "VertexShaderMode", buffer, size) )
-        {
-            if (!strcmp(buffer,"none"))
-            {
-                TRACE("Disable vertex shaders\n");
-                wined3d_settings.vs_mode = VS_NONE;
-            }
-        }
-        if ( !get_config_key( hkey, appkey, "PixelShaderMode", buffer, size) )
-        {
-            if (!strcmp(buffer,"enabled"))
-            {
-                TRACE("Allow pixel shaders\n");
-                wined3d_settings.ps_mode = PS_HW;
-            }
-            if (!strcmp(buffer,"disabled"))
-            {
-                TRACE("Disable pixel shaders\n");
-                wined3d_settings.ps_mode = PS_NONE;
-            }
-        }
         if ( !get_config_key( hkey, appkey, "UseGLSL", buffer, size) )
         {
             if (!strcmp(buffer,"disabled"))
@@ -256,24 +219,6 @@ static BOOL wined3d_dll_init(HINSTANCE hInstDLL)
             {
                 TRACE("Using FBOs for offscreen rendering\n");
                 wined3d_settings.offscreen_rendering_mode = ORM_FBO;
-            }
-        }
-        if ( !get_config_key( hkey, appkey, "RenderTargetLockMode", buffer, size) )
-        {
-            if (!strcmp(buffer,"disabled"))
-            {
-                TRACE("Disabling render target locking\n");
-                wined3d_settings.rendertargetlock_mode = RTL_DISABLE;
-            }
-            else if (!strcmp(buffer,"readdraw"))
-            {
-                TRACE("Using glReadPixels for render target reading and glDrawPixels for writing\n");
-                wined3d_settings.rendertargetlock_mode = RTL_READDRAW;
-            }
-            else if (!strcmp(buffer,"readtex"))
-            {
-                TRACE("Using glReadPixels for render target reading and textures for writing\n");
-                wined3d_settings.rendertargetlock_mode = RTL_READTEX;
             }
         }
         if ( !get_config_key_dword( hkey, appkey, "VideoPciDeviceID", &tmpvalue) )
@@ -311,10 +256,10 @@ static BOOL wined3d_dll_init(HINSTANCE hInstDLL)
             int TmpVideoMemorySize = atoi(buffer);
             if(TmpVideoMemorySize > 0)
             {
-                wined3d_settings.emulated_textureram = TmpVideoMemorySize *1024*1024;
-                TRACE("Use %iMB = %d byte for emulated_textureram\n",
+                wined3d_settings.emulated_textureram = (UINT64)TmpVideoMemorySize *1024*1024;
+                TRACE("Use %iMiB = 0x%s bytes for emulated_textureram\n",
                         TmpVideoMemorySize,
-                        wined3d_settings.emulated_textureram);
+                        wine_dbgstr_longlong(wined3d_settings.emulated_textureram));
             }
             else
                 ERR("VideoMemorySize is %i but must be >0\n", TmpVideoMemorySize);
@@ -342,18 +287,24 @@ static BOOL wined3d_dll_init(HINSTANCE hInstDLL)
             wined3d_settings.strict_draw_ordering = TRUE;
         }
         if (!get_config_key(hkey, appkey, "AlwaysOffscreen", buffer, size)
-                && !strcmp(buffer,"enabled"))
+                && !strcmp(buffer,"disabled"))
         {
-            TRACE("Always rendering backbuffers offscreen.\n");
-            wined3d_settings.always_offscreen = TRUE;
+            TRACE("Not always rendering backbuffers offscreen.\n");
+            wined3d_settings.always_offscreen = FALSE;
+        }
+        if (!get_config_key_dword(hkey, appkey, "MaxShaderModelVS", &wined3d_settings.max_sm_vs))
+            TRACE("Limiting VS shader model to %u.\n", wined3d_settings.max_sm_vs);
+        if (!get_config_key_dword(hkey, appkey, "MaxShaderModelGS", &wined3d_settings.max_sm_gs))
+            TRACE("Limiting GS shader model to %u.\n", wined3d_settings.max_sm_gs);
+        if (!get_config_key_dword(hkey, appkey, "MaxShaderModelPS", &wined3d_settings.max_sm_ps))
+            TRACE("Limiting PS shader model to %u.\n", wined3d_settings.max_sm_ps);
+        if (!get_config_key(hkey, appkey, "DirectDrawRenderer", buffer, size)
+                && !strcmp(buffer, "gdi"))
+        {
+            TRACE("Disabling 3D support.\n");
+            wined3d_settings.no_3d = TRUE;
         }
     }
-    if (wined3d_settings.vs_mode == VS_HW)
-        TRACE("Allow HW vertex shaders\n");
-    if (wined3d_settings.ps_mode == PS_NONE)
-        TRACE("Disable pixel shaders\n");
-    if (wined3d_settings.glslRequested)
-        TRACE("If supported by your system, GL Shading Language will be used\n");
 
     if (appkey) RegCloseKey( appkey );
     if (hkey) RegCloseKey( hkey );
@@ -387,6 +338,8 @@ static BOOL wined3d_dll_destroy(HINSTANCE hInstDLL)
     HeapFree(GetProcessHeap(), 0, wined3d_settings.logo);
     UnregisterClassA(WINED3D_OPENGL_WINDOW_CLASS_NAME, hInstDLL);
 
+    DeleteCriticalSection(&wined3d_wndproc_cs);
+    DeleteCriticalSection(&wined3d_cs);
     return TRUE;
 }
 
@@ -447,7 +400,11 @@ static LRESULT CALLBACK wined3d_wndproc(HWND window, UINT message, WPARAM wparam
     proc = entry->proc;
     wined3d_wndproc_mutex_unlock();
 
-    return device_process_message(device, window, unicode, message, wparam, lparam, proc);
+    if (device)
+        return device_process_message(device, window, unicode, message, wparam, lparam, proc);
+    if (unicode)
+        return CallWindowProcW(proc, window, message, wparam, lparam);
+    return CallWindowProcA(proc, window, message, wparam, lparam);
 }
 
 BOOL wined3d_register_window(HWND window, struct wined3d_device *device)
@@ -518,6 +475,7 @@ void wined3d_unregister_window(HWND window)
         proc = GetWindowLongPtrW(window, GWLP_WNDPROC);
         if (proc != (LONG_PTR)wined3d_wndproc)
         {
+            entry->device = NULL;
             wined3d_wndproc_mutex_unlock();
             WARN("Not unregistering window %p, window proc %#lx doesn't match wined3d window proc %p.\n",
                     window, proc, wined3d_wndproc);
@@ -531,6 +489,7 @@ void wined3d_unregister_window(HWND window)
         proc = GetWindowLongPtrA(window, GWLP_WNDPROC);
         if (proc != (LONG_PTR)wined3d_wndproc)
         {
+            entry->device = NULL;
             wined3d_wndproc_mutex_unlock();
             WARN("Not unregistering window %p, window proc %#lx doesn't match wined3d window proc %p.\n",
                     window, proc, wined3d_wndproc);
@@ -547,28 +506,24 @@ void wined3d_unregister_window(HWND window)
 }
 
 /* At process attach */
-BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpv)
+BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, void *reserved)
 {
-    TRACE("WineD3D DLLMain Reason=%u\n", fdwReason);
-
-    switch (fdwReason)
+    switch (reason)
     {
         case DLL_PROCESS_ATTACH:
-            return wined3d_dll_init(hInstDLL);
+            return wined3d_dll_init(inst);
 
         case DLL_PROCESS_DETACH:
-            return wined3d_dll_destroy(hInstDLL);
+            if (!reserved)
+                return wined3d_dll_destroy(inst);
+            break;
 
         case DLL_THREAD_DETACH:
-        {
             if (!context_set_current(NULL))
             {
                 ERR("Failed to clear current context.\n");
             }
             return TRUE;
-        }
-
-        default:
-            return TRUE;
     }
+    return TRUE;
 }

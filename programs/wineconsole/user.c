@@ -34,8 +34,8 @@ UINT g_uiDefaultCharset;
 const COLORREF WCUSER_ColorMap[16] =
 {
     RGB(0x00, 0x00, 0x00), RGB(0x00, 0x00, 0x80), RGB(0x00, 0x80, 0x00), RGB(0x00, 0x80, 0x80),
-    RGB(0x80, 0x00, 0x00), RGB(0x80, 0x00, 0x80), RGB(0x80, 0x80, 0x00), RGB(0x80, 0x80, 0x80),
-    RGB(0xC0, 0xC0, 0xC0), RGB(0x00, 0x00, 0xFF), RGB(0x00, 0xFF, 0x00), RGB(0x00, 0xFF, 0xFF),
+    RGB(0x80, 0x00, 0x00), RGB(0x80, 0x00, 0x80), RGB(0x80, 0x80, 0x00), RGB(0xC0, 0xC0, 0xC0),
+    RGB(0x80, 0x80, 0x80), RGB(0x00, 0x00, 0xFF), RGB(0x00, 0xFF, 0x00), RGB(0x00, 0xFF, 0xFF),
     RGB(0xFF, 0x00, 0x00), RGB(0xFF, 0x00, 0xFF), RGB(0xFF, 0xFF, 0x00), RGB(0xFF, 0xFF, 0xFF),
 };
 
@@ -191,7 +191,7 @@ static void	WCUSER_ShapeCursor(struct inner_data* data, int size, int vis, BOOL 
 	data->curcfg.cursor_visible = -1;
     }
 
-    vis = (vis) ? TRUE : FALSE;
+    vis = vis != 0;
     if (force || vis != data->curcfg.cursor_visible)
     {
 	data->curcfg.cursor_visible = vis;
@@ -357,6 +357,7 @@ BOOL WCUSER_ValidateFont(const struct inner_data* data, const LOGFONTW* lf)
 {
     return (lf->lfPitchAndFamily & 3) == FIXED_PITCH &&
         /* (lf->lfPitchAndFamily & 0xF0) == FF_MODERN && */
+        lf->lfFaceName[0] != '@' &&
         (lf->lfCharSet == DEFAULT_CHARSET || lf->lfCharSet == g_uiDefaultCharset);
 }
 
@@ -1045,7 +1046,7 @@ static void    WCUSER_GenerateKeyInputRecord(struct inner_data* data, BOOL down,
         {
         case 2:
             /* FIXME... should generate two events... */
-            /* fall thru */
+            /* fall through */
         case 1:
             last = buf[0];
             break;

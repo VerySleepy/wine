@@ -43,7 +43,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(msxml);
 
 #ifdef HAVE_LIBXML2
 
-static HRESULT XMLElementCollection_create( IUnknown *pUnkOuter, xmlNodePtr node, LPVOID *ppObj );
+static HRESULT XMLElementCollection_create( xmlNodePtr node, LPVOID *ppObj );
 
 /**********************************************************************
  * IXMLElement
@@ -67,7 +67,8 @@ static HRESULT WINAPI xmlelem_QueryInterface(IXMLElement *iface, REFIID riid, vo
 
     TRACE("(%p)->(%s %p)\n", This, debugstr_guid(riid), ppvObject);
 
-    if (IsEqualGUID(riid, &IID_IUnknown) ||
+    if (IsEqualGUID(riid, &IID_IUnknown)  ||
+        IsEqualGUID(riid, &IID_IDispatch) ||
         IsEqualGUID(riid, &IID_IXMLElement))
     {
         *ppvObject = iface;
@@ -188,8 +189,12 @@ static HRESULT WINAPI xmlelem_get_tagName(IXMLElement *iface, BSTR *p)
     if (!p)
         return E_INVALIDARG;
 
-    *p = bstr_from_xmlChar(This->node->name);
-    CharUpperBuffW(*p, SysStringLen(*p));
+    if (*This->node->name) {
+        *p = bstr_from_xmlChar(This->node->name);
+        CharUpperBuffW(*p, SysStringLen(*p));
+    }else {
+        *p = NULL;
+    }
 
     TRACE("returning %s\n", debugstr_w(*p));
 
@@ -222,7 +227,7 @@ static HRESULT WINAPI xmlelem_get_parent(IXMLElement *iface, IXMLElement **paren
     if (!This->node->parent)
         return S_FALSE;
 
-    return XMLElement_create((IUnknown *)iface, This->node->parent, (LPVOID *)parent, FALSE);
+    return XMLElement_create(This->node->parent, (LPVOID *)parent, FALSE);
 }
 
 static HRESULT WINAPI xmlelem_setAttribute(IXMLElement *iface, BSTR strPropertyName,
@@ -345,7 +350,7 @@ static HRESULT WINAPI xmlelem_get_children(IXMLElement *iface, IXMLElementCollec
     if (!p)
         return E_INVALIDARG;
 
-    return XMLElementCollection_create((IUnknown *)iface, This->node, (LPVOID *)p);
+    return XMLElementCollection_create(This->node, (LPVOID *)p);
 }
 
 static LONG type_libxml_to_msxml(xmlElementType type)
@@ -486,11 +491,11 @@ static const struct IXMLElementVtbl xmlelem_vtbl =
     xmlelem_removeChild
 };
 
-HRESULT XMLElement_create(IUnknown *pUnkOuter, xmlNodePtr node, LPVOID *ppObj, BOOL own)
+HRESULT XMLElement_create(xmlNodePtr node, LPVOID *ppObj, BOOL own)
 {
     xmlelem *elem;
 
-    TRACE("(%p,%p)\n", pUnkOuter, ppObj);
+    TRACE("(%p)\n", ppObj);
 
     if (!ppObj)
         return E_INVALIDARG;
@@ -568,6 +573,7 @@ static HRESULT WINAPI xmlelem_collection_QueryInterface(IXMLElementCollection *i
     else
     {
         FIXME("interface %s not implemented\n", debugstr_guid(riid));
+        *ppvObject = NULL;
         return E_NOINTERFACE;
     }
 
@@ -658,8 +664,8 @@ static HRESULT WINAPI xmlelem_collection_get__newEnum(IXMLElementCollection *ifa
     if (!ppUnk)
         return E_INVALIDARG;
 
-    *ppUnk = (IUnknown *)This;
-    IUnknown_AddRef(*ppUnk);
+    IXMLElementCollection_AddRef(iface);
+    *ppUnk = (IUnknown *)&This->IEnumVARIANT_iface;
     return S_OK;
 }
 
@@ -688,7 +694,7 @@ static HRESULT WINAPI xmlelem_collection_item(IXMLElementCollection *iface, VARI
     for (i = 0; i < index; i++)
         ptr = ptr->next;
 
-    return XMLElement_create((IUnknown *)iface, ptr, (LPVOID *)ppDisp, FALSE);
+    return XMLElement_create(ptr, (LPVOID *)ppDisp, FALSE);
 }
 
 static const struct IXMLElementCollectionVtbl xmlelem_collection_vtbl =
@@ -713,21 +719,34 @@ static HRESULT WINAPI xmlelem_collection_IEnumVARIANT_QueryInterface(
     IEnumVARIANT *iface, REFIID riid, LPVOID *ppvObj)
 {
     xmlelem_collection *this = impl_from_IEnumVARIANT(iface);
-    return IXMLDocument_QueryInterface((IXMLDocument *)this, riid, ppvObj);
+
+    TRACE("(%p)->(%s %p)\n", this, debugstr_guid(riid), ppvObj);
+
+    if (IsEqualGUID(riid, &IID_IUnknown) ||
+        IsEqualGUID(riid, &IID_IEnumVARIANT))
+    {
+        *ppvObj = iface;
+        IEnumVARIANT_AddRef(iface);
+        return S_OK;
+    }
+
+    FIXME("interface %s not implemented\n", debugstr_guid(riid));
+    *ppvObj = NULL;
+    return E_NOINTERFACE;
 }
 
 static ULONG WINAPI xmlelem_collection_IEnumVARIANT_AddRef(
     IEnumVARIANT *iface)
 {
     xmlelem_collection *this = impl_from_IEnumVARIANT(iface);
-    return IXMLDocument_AddRef((IXMLDocument *)this);
+    return IXMLElementCollection_AddRef(&this->IXMLElementCollection_iface);
 }
 
 static ULONG WINAPI xmlelem_collection_IEnumVARIANT_Release(
     IEnumVARIANT *iface)
 {
     xmlelem_collection *this = impl_from_IEnumVARIANT(iface);
-    return IXMLDocument_Release((IXMLDocument *)this);
+    return IXMLElementCollection_Release(&this->IXMLElementCollection_iface);
 }
 
 static HRESULT WINAPI xmlelem_collection_IEnumVARIANT_Next(
@@ -755,7 +774,7 @@ static HRESULT WINAPI xmlelem_collection_IEnumVARIANT_Next(
     }
 
     V_VT(rgVar) = VT_DISPATCH;
-    return XMLElement_create((IUnknown *)iface, ptr, (LPVOID *)&V_DISPATCH(rgVar), FALSE);
+    return XMLElement_create(ptr, (LPVOID *)&V_DISPATCH(rgVar), FALSE);
 }
 
 static HRESULT WINAPI xmlelem_collection_IEnumVARIANT_Skip(
@@ -794,11 +813,11 @@ static const struct IEnumVARIANTVtbl xmlelem_collection_IEnumVARIANTvtbl =
     xmlelem_collection_IEnumVARIANT_Clone
 };
 
-static HRESULT XMLElementCollection_create(IUnknown *pUnkOuter, xmlNodePtr node, LPVOID *ppObj)
+static HRESULT XMLElementCollection_create(xmlNodePtr node, LPVOID *ppObj)
 {
     xmlelem_collection *collection;
 
-    TRACE("(%p,%p)\n", pUnkOuter, ppObj);
+    TRACE("(%p)\n", ppObj);
 
     *ppObj = NULL;
 

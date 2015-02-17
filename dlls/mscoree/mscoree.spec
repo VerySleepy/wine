@@ -9,7 +9,7 @@
 @ stub CloseCtrs
 @ stdcall CLRCreateInstance(ptr ptr ptr)
 @ stdcall ClrCreateManagedInstance(wstr ptr ptr)
-@ stub CoEEShutDownCOM
+@ stdcall CoEEShutDownCOM()
 @ stdcall CoInitializeCor(long)
 @ stub CoInitializeEE
 @ stub CoUninitializeCor
@@ -30,6 +30,7 @@
 @ stub CorTickleSvc
 @ stdcall CreateConfigStream(wstr ptr)
 @ stdcall CreateDebuggingInterfaceFromVersion(long wstr ptr)
+@ stdcall CreateInterface(ptr ptr ptr)
 @ stdcall -private DllCanUnloadNow()
 @ stdcall -private DllGetClassObject(ptr ptr ptr)
 @ stdcall -private DllRegisterServer()

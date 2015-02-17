@@ -108,10 +108,10 @@ static char *get_wine_inf_path(void)
     }
     else if ((build_dir = wine_get_build_dir()))
     {
-        if (!(name = HeapAlloc( GetProcessHeap(), 0, strlen(build_dir) + sizeof("/tools/wine.inf") )))
+        if (!(name = HeapAlloc( GetProcessHeap(), 0, strlen(build_dir) + sizeof("/loader/wine.inf") )))
             return NULL;
         strcpy( name, build_dir );
-        strcat( name, "/tools/wine.inf" );
+        strcat( name, "/loader/wine.inf" );
     }
     return name;
 }
@@ -177,6 +177,7 @@ static void create_hardware_registry_keys(void)
     static const WCHAR IdentifierW[] = {'I','d','e','n','t','i','f','i','e','r',0};
     static const WCHAR ProcessorNameStringW[] = {'P','r','o','c','e','s','s','o','r','N','a','m','e','S','t','r','i','n','g',0};
     static const WCHAR SysidW[] = {'A','T',' ','c','o','m','p','a','t','i','b','l','e',0};
+    static const WCHAR ARMSysidW[] = {'A','R','M',' ','p','r','o','c','e','s','s','o','r',' ','f','a','m','i','l','y',0};
     static const WCHAR mhzKeyW[] = {'~','M','H','z',0};
     static const WCHAR VendorIdentifierW[] = {'V','e','n','d','o','r','I','d','e','n','t','i','f','i','e','r',0};
     static const WCHAR VenidIntelW[] = {'G','e','n','u','i','n','e','I','n','t','e','l',0};
@@ -184,28 +185,57 @@ static void create_hardware_registry_keys(void)
     static const WCHAR PercentDW[] = {'%','d',0};
     static const WCHAR IntelCpuDescrW[] = {'x','8','6',' ','F','a','m','i','l','y',' ','%','d',' ','M','o','d','e','l',' ','%','d',
                                            ' ','S','t','e','p','p','i','n','g',' ','%','d',0};
+    static const WCHAR ARMCpuDescrW[]  = {'A','R','M',' ','F','a','m','i','l','y',' ','7',' ','M','o','d','e','l',' ','%','X',
+                                            ' ','R','e','v','i','s','i','o','n',' ','%','d',0};
     static const WCHAR IntelCpuStringW[] = {'I','n','t','e','l','(','R',')',' ','P','e','n','t','i','u','m','(','R',')',' ','4',' ',
                                             'C','P','U',' ','2','.','4','0','G','H','z',0};
     unsigned int i;
     HKEY hkey, system_key, cpu_key, fpu_key;
     SYSTEM_CPU_INFORMATION sci;
-    PROCESSOR_POWER_INFORMATION power_info;
+    PROCESSOR_POWER_INFORMATION* power_info;
+    ULONG sizeof_power_info = sizeof(PROCESSOR_POWER_INFORMATION) * NtCurrentTeb()->Peb->NumberOfProcessors;
     WCHAR idW[60];
 
     NtQuerySystemInformation( SystemCpuInformation, &sci, sizeof(sci), NULL );
-    if (NtPowerInformation(ProcessorInformation, NULL, 0, &power_info, sizeof(power_info)))
-        power_info.MaxMhz = 0;
+
+    power_info = HeapAlloc( GetProcessHeap(), 0, sizeof_power_info );
+    if (power_info == NULL)
+        return;
+    if (NtPowerInformation( ProcessorInformation, NULL, 0, power_info, sizeof_power_info ))
+        memset( power_info, 0, sizeof_power_info );
 
     /*TODO: report 64bit processors properly*/
-    sprintfW( idW, IntelCpuDescrW, sci.Level, HIBYTE(sci.Revision), LOBYTE(sci.Revision) );
+    switch(sci.Architecture)
+    {
+    case PROCESSOR_ARCHITECTURE_ARM:
+        sprintfW( idW, ARMCpuDescrW, sci.Level, sci.Revision );
+        break;
+    default:
+    case PROCESSOR_ARCHITECTURE_INTEL:
+        sprintfW( idW, IntelCpuDescrW, sci.Level, HIBYTE(sci.Revision), LOBYTE(sci.Revision) );
+        break;
+    }
 
     if (RegCreateKeyExW( HKEY_LOCAL_MACHINE, SystemW, 0, NULL, REG_OPTION_VOLATILE,
                          KEY_ALL_ACCESS, NULL, &system_key, NULL ))
+    {
+        HeapFree( GetProcessHeap(), 0, power_info );
         return;
+    }
 
-    set_reg_value( system_key, IdentifierW, SysidW );
+    switch(sci.Architecture)
+    {
+    case PROCESSOR_ARCHITECTURE_ARM:
+        set_reg_value( system_key, IdentifierW, ARMSysidW );
+        break;
+    default:
+    case PROCESSOR_ARCHITECTURE_INTEL:
+        set_reg_value( system_key, IdentifierW, SysidW );
+        break;
+    }
 
-    if (RegCreateKeyExW( system_key, fpuW, 0, NULL, REG_OPTION_VOLATILE,
+    if (sci.Architecture == PROCESSOR_ARCHITECTURE_ARM ||
+        RegCreateKeyExW( system_key, fpuW, 0, NULL, REG_OPTION_VOLATILE,
                          KEY_ALL_ACCESS, NULL, &fpu_key, NULL ))
         fpu_key = 0;
     if (RegCreateKeyExW( system_key, cpuW, 0, NULL, REG_OPTION_VOLATILE,
@@ -222,13 +252,14 @@ static void create_hardware_registry_keys(void)
         {
             RegSetValueExW( hkey, FeatureSetW, 0, REG_DWORD, (BYTE *)&sci.FeatureSet, sizeof(DWORD) );
             set_reg_value( hkey, IdentifierW, idW );
-            /*TODO; report amd's properly*/
+            /*TODO; report ARM and AMD properly*/
             set_reg_value( hkey, ProcessorNameStringW, IntelCpuStringW );
             set_reg_value( hkey, VendorIdentifierW, VenidIntelW );
-            RegSetValueExW( hkey, mhzKeyW, 0, REG_DWORD, (BYTE *)&power_info.MaxMhz, sizeof(DWORD) );
+            RegSetValueExW( hkey, mhzKeyW, 0, REG_DWORD, (BYTE *)&power_info[i].MaxMhz, sizeof(DWORD) );
             RegCloseKey( hkey );
         }
-        if (!RegCreateKeyExW( fpu_key, numW, 0, NULL, REG_OPTION_VOLATILE,
+        if (sci.Architecture != PROCESSOR_ARCHITECTURE_ARM &&
+            !RegCreateKeyExW( fpu_key, numW, 0, NULL, REG_OPTION_VOLATILE,
                               KEY_ALL_ACCESS, NULL, &hkey, NULL ))
         {
             set_reg_value( hkey, IdentifierW, idW );
@@ -238,6 +269,7 @@ static void create_hardware_registry_keys(void)
     RegCloseKey( fpu_key );
     RegCloseKey( cpu_key );
     RegCloseKey( system_key );
+    HeapFree( GetProcessHeap(), 0, power_info );
 }
 
 
@@ -267,7 +299,7 @@ static void create_environment_registry_keys( void )
     static const WCHAR NumProcW[]  = {'N','U','M','B','E','R','_','O','F','_','P','R','O','C','E','S','S','O','R','S',0};
     static const WCHAR ProcArchW[] = {'P','R','O','C','E','S','S','O','R','_','A','R','C','H','I','T','E','C','T','U','R','E',0};
     static const WCHAR x86W[]      = {'x','8','6',0};
-    static const WCHAR IA64W[]     = {'I','A','6','4',0};
+    static const WCHAR armW[]      = {'A','R','M',0};
     static const WCHAR AMD64W[]    = {'A','M','D','6','4',0};
     static const WCHAR ProcIdW[]   = {'P','R','O','C','E','S','S','O','R','_','I','D','E','N','T','I','F','I','E','R',0};
     static const WCHAR ProcLvlW[]  = {'P','R','O','C','E','S','S','O','R','_','L','E','V','E','L',0};
@@ -276,6 +308,8 @@ static void create_environment_registry_keys( void )
     static const WCHAR Percent04XW[] = {'%','0','4','x',0};
     static const WCHAR IntelCpuDescrW[]  = {'%','s',' ','F','a','m','i','l','y',' ','%','d',' ','M','o','d','e','l',' ','%','d',
                                             ' ','S','t','e','p','p','i','n','g',' ','%','d',',',' ','G','e','n','u','i','n','e','I','n','t','e','l',0};
+    static const WCHAR ARMCpuDescrW[]  = {'A','R','M',' ','F','a','m','i','l','y',' ','7',' ','M','o','d','e','l',' ','%','X',
+                                            ' ','R','e','v','i','s','i','o','n',' ','%','d',0};
 
     HKEY env_key;
     SYSTEM_CPU_INFORMATION sci;
@@ -292,14 +326,22 @@ static void create_environment_registry_keys( void )
     switch(sci.Architecture)
     {
     case PROCESSOR_ARCHITECTURE_AMD64: arch = AMD64W; break;
-    case PROCESSOR_ARCHITECTURE_IA64:  arch = IA64W; break;
+    case PROCESSOR_ARCHITECTURE_ARM:   arch = armW; break;
     default:
     case PROCESSOR_ARCHITECTURE_INTEL: arch = x86W; break;
     }
     set_reg_value( env_key, ProcArchW, arch );
 
-    /* TODO: currently hardcoded Intel, add different processors */
-    sprintfW( buffer, IntelCpuDescrW, arch, sci.Level, HIBYTE(sci.Revision), LOBYTE(sci.Revision) );
+    switch(sci.Architecture)
+    {
+    case PROCESSOR_ARCHITECTURE_ARM:
+        sprintfW( buffer, ARMCpuDescrW, sci.Level, sci.Revision );
+        break;
+    default:
+    case PROCESSOR_ARCHITECTURE_INTEL:
+        sprintfW( buffer, IntelCpuDescrW, arch, sci.Level, HIBYTE(sci.Revision), LOBYTE(sci.Revision) );
+        break;
+    }
     set_reg_value( env_key, ProcIdW, buffer );
 
     sprintfW( buffer, PercentDW, sci.Level );
@@ -536,21 +578,7 @@ static BOOL pendingRename(void)
         } else
         {
             /* Delete the file or directory */
-            if( (res=GetFileAttributesW(src))!=INVALID_FILE_ATTRIBUTES )
-            {
-                if( (res&FILE_ATTRIBUTE_DIRECTORY)==0 )
-                {
-                    /* It's a file */
-                    DeleteFileW(src);
-                } else
-                {
-                    /* It's a directory */
-                    RemoveDirectoryW(src);
-                }
-            } else
-            {
-                WINE_ERR("couldn't get file attributes (%d)\n", GetLastError() );
-            }
+            if (!RemoveDirectoryW( src ) && GetLastError() == ERROR_DIRECTORY) DeleteFileW( src );
         }
     }
 
@@ -569,18 +597,6 @@ end:
 
     return res;
 }
-
-enum runkeys {
-    RUNKEY_RUN, RUNKEY_RUNONCE, RUNKEY_RUNSERVICES, RUNKEY_RUNSERVICESONCE
-};
-
-const WCHAR runkeys_names[][30]=
-{
-    {'R','u','n',0},
-    {'R','u','n','O','n','c','e',0},
-    {'R','u','n','S','e','r','v','i','c','e','s',0},
-    {'R','u','n','S','e','r','v','i','c','e','s','O','n','c','e',0}
-};
 
 #define INVALID_RUNCMD_RETURN -1
 /*
@@ -854,7 +870,7 @@ static BOOL start_services_process(void)
     strcatW(path, services);
     ZeroMemory(&si, sizeof(si));
     si.cb = sizeof(si);
-    if (!CreateProcessW(path, path, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi))
+    if (!CreateProcessW(path, path, NULL, NULL, TRUE, DETACHED_PROCESS, NULL, NULL, &si, &pi))
     {
         WINE_ERR("Couldn't start services.exe: error %u\n", GetLastError());
         return FALSE;
@@ -965,7 +981,7 @@ static HANDLE start_rundll32( const char *inf_path, BOOL wow64 )
 }
 
 /* execute rundll32 on the wine.inf file if necessary */
-static void update_wineprefix( int force )
+static void update_wineprefix( BOOL force )
 {
     const char *config_dir = wine_get_config_dir();
     char *inf_path = get_wine_inf_path();
@@ -1132,15 +1148,20 @@ static const struct option long_options[] =
 int main( int argc, char *argv[] )
 {
     extern HANDLE CDECL __wine_make_process_system(void);
+    static const WCHAR RunW[] = {'R','u','n',0};
+    static const WCHAR RunOnceW[] = {'R','u','n','O','n','c','e',0};
+    static const WCHAR RunServicesW[] = {'R','u','n','S','e','r','v','i','c','e','s',0};
+    static const WCHAR RunServicesOnceW[] = {'R','u','n','S','e','r','v','i','c','e','s','O','n','c','e',0};
     static const WCHAR wineboot_eventW[] = {'_','_','w','i','n','e','b','o','o','t','_','e','v','e','n','t',0};
 
     /* First, set the current directory to SystemRoot */
     int optc;
-    int end_session = 0, force = 0, init = 0, kill = 0, restart = 0, shutdown = 0, update = 0;
+    BOOL end_session, force, init, kill, restart, shutdown, update;
     HANDLE event;
     SECURITY_ATTRIBUTES sa;
     BOOL is_wow64;
 
+    end_session = force = init = kill = restart = shutdown = update = FALSE;
     GetWindowsDirectoryW( windowsdir, MAX_PATH );
     if( !SetCurrentDirectoryW( windowsdir ) )
         WINE_ERR("Cannot set the dir to %s (%d)\n", wine_dbgstr_w(windowsdir), GetLastError() );
@@ -1173,13 +1194,13 @@ int main( int argc, char *argv[] )
     {
         switch(optc)
         {
-        case 'e': end_session = 1; break;
-        case 'f': force = 1; break;
-        case 'i': init = 1; break;
-        case 'k': kill = 1; break;
-        case 'r': restart = 1; break;
-        case 's': shutdown = 1; break;
-        case 'u': update = 1; break;
+        case 'e': end_session = TRUE; break;
+        case 'f': force = TRUE; break;
+        case 'i': init = TRUE; break;
+        case 'k': kill = TRUE; break;
+        case 'r': restart = TRUE; break;
+        case 's': shutdown = TRUE; break;
+        case 'u': update = TRUE; break;
         case 'h': usage(); return 0;
         case '?': usage(); return 1;
         }
@@ -1212,23 +1233,23 @@ int main( int argc, char *argv[] )
     pendingRename();
 
     ProcessWindowsFileProtection();
-    ProcessRunKeys( HKEY_LOCAL_MACHINE, runkeys_names[RUNKEY_RUNSERVICESONCE], TRUE, FALSE );
+    ProcessRunKeys( HKEY_LOCAL_MACHINE, RunServicesOnceW, TRUE, FALSE );
 
     if (init || (kill && !restart))
     {
-        ProcessRunKeys( HKEY_LOCAL_MACHINE, runkeys_names[RUNKEY_RUNSERVICES], FALSE, FALSE );
+        ProcessRunKeys( HKEY_LOCAL_MACHINE, RunServicesW, FALSE, FALSE );
         start_services_process();
     }
     if (init || update) update_wineprefix( update );
 
     create_volatile_environment_registry_key();
 
-    ProcessRunKeys( HKEY_LOCAL_MACHINE, runkeys_names[RUNKEY_RUNONCE], TRUE, TRUE );
+    ProcessRunKeys( HKEY_LOCAL_MACHINE, RunOnceW, TRUE, TRUE );
 
     if (!init && !restart)
     {
-        ProcessRunKeys( HKEY_LOCAL_MACHINE, runkeys_names[RUNKEY_RUN], FALSE, FALSE );
-        ProcessRunKeys( HKEY_CURRENT_USER, runkeys_names[RUNKEY_RUN], FALSE, FALSE );
+        ProcessRunKeys( HKEY_LOCAL_MACHINE, RunW, FALSE, FALSE );
+        ProcessRunKeys( HKEY_CURRENT_USER, RunW, FALSE, FALSE );
         ProcessStartupItems();
     }
 

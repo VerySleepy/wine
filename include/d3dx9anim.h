@@ -84,27 +84,27 @@ typedef struct _D3DXMESHDATA
 
     union
     {
-        LPD3DXMESH pMesh;
-        LPD3DXPMESH pPMesh;
-        LPD3DXPATCHMESH pPatchMesh;
+        ID3DXMesh *pMesh;
+        ID3DXPMesh *pPMesh;
+        ID3DXPatchMesh *pPatchMesh;
     } DUMMYUNIONNAME;
 } D3DXMESHDATA, *LPD3DXMESHDATA;
 
 typedef struct _D3DXMESHCONTAINER
 {
-    LPSTR Name;
+    char *Name;
     D3DXMESHDATA MeshData;
     LPD3DXMATERIAL pMaterials;
     LPD3DXEFFECTINSTANCE pEffects;
     DWORD NumMaterials;
     DWORD *pAdjacency;
-    LPD3DXSKININFO pSkinInfo;
+    ID3DXSkinInfo *pSkinInfo;
     struct _D3DXMESHCONTAINER *pNextMeshContainer;
 } D3DXMESHCONTAINER, *LPD3DXMESHCONTAINER;
 
 typedef struct _D3DXFRAME
 {
-    LPSTR Name;
+    char *Name;
     D3DXMATRIX TransformationMatrix;
     LPD3DXMESHCONTAINER pMeshContainer;
     struct _D3DXFRAME *pFrameSibling;
@@ -125,8 +125,8 @@ typedef struct _D3DXKEY_QUATERNION
 
 typedef struct _D3DXKEY_CALLBACK
 {
-    FLOAT Time;
-    LPVOID pCallbackData;
+    float Time;
+    void *pCallbackData;
 } D3DXKEY_CALLBACK, *LPD3DXKEY_CALLBACK;
 
 typedef struct _D3DXTRACK_DESC
@@ -170,11 +170,11 @@ typedef interface ID3DXAnimationController *LPD3DXANIMATIONCONTROLLER;
 #define INTERFACE ID3DXAllocateHierarchy
 DECLARE_INTERFACE(ID3DXAllocateHierarchy)
 {
-    STDMETHOD(CreateFrame)(THIS_ LPCSTR Name, LPD3DXFRAME *new_frame) PURE;
-    STDMETHOD(CreateMeshContainer)(THIS_ LPCSTR Name, CONST D3DXMESHDATA *mesh_data,
-            CONST D3DXMATERIAL *materials, CONST D3DXEFFECTINSTANCE *effect_instances,
-            DWORD num_materials, CONST DWORD *adjacency, LPD3DXSKININFO skin_info,
-            LPD3DXMESHCONTAINER *new_mesh_container) PURE;
+    STDMETHOD(CreateFrame)(THIS_ const char *name, D3DXFRAME **new_frame) PURE;
+    STDMETHOD(CreateMeshContainer)(THIS_ const char *name, const D3DXMESHDATA *mesh_data,
+            const D3DXMATERIAL *materials, const D3DXEFFECTINSTANCE *effect_instances,
+            DWORD num_materials, const DWORD *adjacency, ID3DXSkinInfo *skin_info,
+            D3DXMESHCONTAINER **new_mesh_container) PURE;
     STDMETHOD(DestroyFrame)(THIS_ LPD3DXFRAME frame) PURE;
     STDMETHOD(DestroyMeshContainer)(THIS_ LPD3DXMESHCONTAINER mesh_container) PURE;
 };
@@ -183,23 +183,23 @@ DECLARE_INTERFACE(ID3DXAllocateHierarchy)
 #define INTERFACE ID3DXLoadUserData
 DECLARE_INTERFACE(ID3DXLoadUserData)
 {
-    STDMETHOD(LoadTopLevelData)(LPD3DXFILEDATA child_data) PURE;
-    STDMETHOD(LoadFrameChildData)(LPD3DXFRAME frame, LPD3DXFILEDATA child_data) PURE;
-    STDMETHOD(LoadMeshChildData)(LPD3DXMESHCONTAINER mesh_container, LPD3DXFILEDATA child_data) PURE;
+    STDMETHOD(LoadTopLevelData)(ID3DXFileData *child_data) PURE;
+    STDMETHOD(LoadFrameChildData)(D3DXFRAME *frame, ID3DXFileData *child_data) PURE;
+    STDMETHOD(LoadMeshChildData)(D3DXMESHCONTAINER *mesh_container, ID3DXFileData *child_data) PURE;
 };
 #undef INTERFACE
 
 #define INTERFACE ID3DXSaveUserData
 DECLARE_INTERFACE(ID3DXSaveUserData)
 {
-    STDMETHOD(AddFrameChildData)(CONST LPD3DXFRAME *frame, LPD3DXFILESAVEOBJECT save_obj,
-            LPD3DXFILESAVEDATA frame_data) PURE;
-    STDMETHOD(AddMeshChildData)(CONST LPD3DXMESHCONTAINER *mesh_container,
-            LPD3DXFILESAVEOBJECT save_obj, LPD3DXFILESAVEDATA mesh_data) PURE;
-    STDMETHOD(AddTopLevelDataObjectsPre)(LPD3DXFILESAVEOBJECT save_obj) PURE;
-    STDMETHOD(AddTopLevelDataObjectsPost)(LPD3DXFILESAVEOBJECT save_obj) PURE;
-    STDMETHOD(RegisterTemplates)(LPD3DXFILE xfile) PURE;
-    STDMETHOD(SaveTemplates)(LPD3DXFILESAVEOBJECT save_obj) PURE;
+    STDMETHOD(AddFrameChildData)(const D3DXFRAME *frame,
+            ID3DXFileSaveObject *save_obj, ID3DXFileSaveData *frame_data) PURE;
+    STDMETHOD(AddMeshChildData)(const D3DXMESHCONTAINER *mesh_container,
+            ID3DXFileSaveObject *save_obj, ID3DXFileSaveData *mesh_data) PURE;
+    STDMETHOD(AddTopLevelDataObjectsPre)(ID3DXFileSaveObject *save_obj) PURE;
+    STDMETHOD(AddTopLevelDataObjectsPost)(ID3DXFileSaveObject *save_obj) PURE;
+    STDMETHOD(RegisterTemplates)(ID3DXFile *file) PURE;
+    STDMETHOD(SaveTemplates)(ID3DXFileSaveObject *save_obj) PURE;
 };
 #undef INTERFACE
 
@@ -207,20 +207,20 @@ DECLARE_INTERFACE(ID3DXSaveUserData)
 DECLARE_INTERFACE_(ID3DXAnimationSet, IUnknown)
 {
     /*** IUnknown methods ***/
-    STDMETHOD(QueryInterface)(THIS_ REFIID riid, LPVOID* object) PURE;
+    STDMETHOD(QueryInterface)(THIS_ REFIID riid, void **out) PURE;
     STDMETHOD_(ULONG, AddRef)(THIS) PURE;
     STDMETHOD_(ULONG, Release)(THIS) PURE;
     /*** ID3DXAnimationSet methods ***/
-    STDMETHOD_(LPCSTR, GetName)(THIS) PURE;
+    STDMETHOD_(const char *, GetName)(THIS) PURE;
     STDMETHOD_(DOUBLE, GetPeriod)(THIS) PURE;
     STDMETHOD_(DOUBLE, GetPeriodicPosition)(THIS_ DOUBLE position) PURE;
     STDMETHOD_(UINT, GetNumAnimations)(THIS) PURE;
-    STDMETHOD(GetAnimationNameByIndex)(THIS_ UINT index, LPCSTR *name) PURE;
-    STDMETHOD(GetAnimationIndexByName)(THIS_ LPCSTR name, UINT *index) PURE;
+    STDMETHOD(GetAnimationNameByIndex)(THIS_ UINT index, const char **name) PURE;
+    STDMETHOD(GetAnimationIndexByName)(THIS_ const char *name, UINT *index) PURE;
     STDMETHOD(GetSRT)(THIS_ DOUBLE periodic_position, UINT animation, D3DXVECTOR3 *scale,
             D3DXQUATERNION *rotation, D3DXVECTOR3 *translation) PURE;
-    STDMETHOD(GetCallback)(THIS_ DOUBLE position, DWORD flags, DOUBLE *callback_position,
-            LPVOID *callback_data) PURE;
+    STDMETHOD(GetCallback)(THIS_ double position, DWORD flags, double *callback_position,
+            void **callback_data) PURE;
 };
 #undef INTERFACE
 
@@ -228,20 +228,20 @@ DECLARE_INTERFACE_(ID3DXAnimationSet, IUnknown)
 DECLARE_INTERFACE_(ID3DXKeyframedAnimationSet, ID3DXAnimationSet)
 {
     /*** IUnknown methods ***/
-    STDMETHOD(QueryInterface)(THIS_ REFIID riid, LPVOID* object) PURE;
+    STDMETHOD(QueryInterface)(THIS_ REFIID riid, void **out) PURE;
     STDMETHOD_(ULONG, AddRef)(THIS) PURE;
     STDMETHOD_(ULONG, Release)(THIS) PURE;
     /*** ID3DXAnimationSet methods ***/
-    STDMETHOD_(LPCSTR, GetName)(THIS) PURE;
+    STDMETHOD_(const char *, GetName)(THIS) PURE;
     STDMETHOD_(DOUBLE, GetPeriod)(THIS) PURE;
     STDMETHOD_(DOUBLE, GetPeriodicPosition)(THIS_ DOUBLE position) PURE;
     STDMETHOD_(UINT, GetNumAnimations)(THIS) PURE;
-    STDMETHOD(GetAnimationNameByIndex)(THIS_ UINT index, LPCSTR *name) PURE;
-    STDMETHOD(GetAnimationIndexByName)(THIS_ LPCSTR name, UINT *index) PURE;
+    STDMETHOD(GetAnimationNameByIndex)(THIS_ UINT index, const char **name) PURE;
+    STDMETHOD(GetAnimationIndexByName)(THIS_ const char *name, UINT *index) PURE;
     STDMETHOD(GetSRT)(THIS_ DOUBLE periodic_position, UINT animation, D3DXVECTOR3 *scale,
             D3DXQUATERNION *rotation, D3DXVECTOR3 *translation) PURE;
-    STDMETHOD(GetCallback)(THIS_ DOUBLE position, DWORD flags, DOUBLE *callback_position,
-            LPVOID *callback_data) PURE;
+    STDMETHOD(GetCallback)(THIS_ double position, DWORD flags, double *callback_position,
+            void **callback_data) PURE;
     /*** ID3DXKeyframedAnimationSet methods ***/
     STDMETHOD_(D3DXPLAYBACK_TYPE, GetPlaybackType)(THIS) PURE;
     STDMETHOD_(DOUBLE, GetSourceTicksPerSecond)(THIS) PURE;
@@ -264,12 +264,12 @@ DECLARE_INTERFACE_(ID3DXKeyframedAnimationSet, ID3DXAnimationSet)
     STDMETHOD(UnregisterScaleKey)(THIS_ UINT animation, UINT key) PURE;
     STDMETHOD(UnregisterRotationKey)(THIS_ UINT animation, UINT key) PURE;
     STDMETHOD(UnregisterTranslationKey)(THIS_ UINT animation, UINT key) PURE;
-    STDMETHOD(RegisterAnimationSRTKeys)(THIS_ LPCSTR name, UINT num_scale_keys,
-            UINT num_rotation_keys, UINT num_translation_keys, CONST D3DXKEY_VECTOR3 *scale_keys,
-            CONST D3DXKEY_QUATERNION *rotation_keys, CONST D3DXKEY_VECTOR3 *translation_keys,
+    STDMETHOD(RegisterAnimationSRTKeys)(THIS_ const char *name, UINT num_scale_keys,
+            UINT num_rotation_keys, UINT num_translation_keys, const D3DXKEY_VECTOR3 *scale_keys,
+            const D3DXKEY_QUATERNION *rotation_keys, const D3DXKEY_VECTOR3 *translation_keys,
             DWORD *animation_index) PURE;
-    STDMETHOD(Compress)(THIS_ DWORD flags, FLOAT lossiness, LPD3DXFRAME hierarchy,
-            LPD3DXBUFFER *compressed_data) PURE;
+    STDMETHOD(Compress)(THIS_ DWORD flags, float lossiness, D3DXFRAME *hierarchy,
+            ID3DXBuffer **compressed_data) PURE;
     STDMETHOD(UnregisterAnimation)(THIS_ UINT index) PURE;
 };
 #undef INTERFACE
@@ -278,24 +278,24 @@ DECLARE_INTERFACE_(ID3DXKeyframedAnimationSet, ID3DXAnimationSet)
 DECLARE_INTERFACE_(ID3DXCompressedAnimationSet, ID3DXAnimationSet)
 {
     /*** IUnknown methods ***/
-    STDMETHOD(QueryInterface)(THIS_ REFIID riid, LPVOID* object) PURE;
+    STDMETHOD(QueryInterface)(THIS_ REFIID riid, void **out) PURE;
     STDMETHOD_(ULONG, AddRef)(THIS) PURE;
     STDMETHOD_(ULONG, Release)(THIS) PURE;
     /*** ID3DXAnimationSet methods ***/
-    STDMETHOD_(LPCSTR, GetName)(THIS) PURE;
+    STDMETHOD_(const char *, GetName)(THIS) PURE;
     STDMETHOD_(DOUBLE, GetPeriod)(THIS) PURE;
     STDMETHOD_(DOUBLE, GetPeriodicPosition)(THIS_ DOUBLE position) PURE;
     STDMETHOD_(UINT, GetNumAnimations)(THIS) PURE;
-    STDMETHOD(GetAnimationNameByIndex)(THIS_ UINT index, LPCSTR *name) PURE;
-    STDMETHOD(GetAnimationIndexByName)(THIS_ LPCSTR name, UINT *index) PURE;
+    STDMETHOD(GetAnimationNameByIndex)(THIS_ UINT index, const char **name) PURE;
+    STDMETHOD(GetAnimationIndexByName)(THIS_ const char *name, UINT *index) PURE;
     STDMETHOD(GetSRT)(THIS_ DOUBLE periodic_position, UINT animation, D3DXVECTOR3 *scale,
             D3DXQUATERNION *rotation, D3DXVECTOR3 *translation) PURE;
-    STDMETHOD(GetCallback)(THIS_ DOUBLE position, DWORD flags, DOUBLE *callback_position,
-            LPVOID *callback_data) PURE;
+    STDMETHOD(GetCallback)(THIS_ double position, DWORD flags, double *callback_position,
+            void **callback_data) PURE;
     /*** ID3DXCompressedAnimationSet methods ***/
     STDMETHOD_(D3DXPLAYBACK_TYPE, GetPlaybackType)(THIS) PURE;
     STDMETHOD_(DOUBLE, GetSourceTicksPerSecond)(THIS) PURE;
-    STDMETHOD(GetCompressedData)(THIS_ LPD3DXBUFFER *compressed_data) PURE;
+    STDMETHOD(GetCompressedData)(THIS_ ID3DXBuffer **compressed_data) PURE;
     STDMETHOD_(UINT, GetNumCallbackKeys)(THIS) PURE;
     STDMETHOD(GetCallbackKeys)(THIS_ LPD3DXKEY_CALLBACK callback_keys) PURE;
 };
@@ -304,7 +304,7 @@ DECLARE_INTERFACE_(ID3DXCompressedAnimationSet, ID3DXAnimationSet)
 #define INTERFACE ID3DXAnimationCallbackHandler
 DECLARE_INTERFACE(ID3DXAnimationCallbackHandler)
 {
-    STDMETHOD(HandleCallback)(THIS_ UINT track, LPVOID callback_data) PURE;
+    STDMETHOD(HandleCallback)(THIS_ UINT track, void *callback_data) PURE;
 };
 #undef INTERFACE
 
@@ -312,7 +312,7 @@ DECLARE_INTERFACE(ID3DXAnimationCallbackHandler)
 DECLARE_INTERFACE_(ID3DXAnimationController, IUnknown)
 {
     /*** IUnknown methods ***/
-    STDMETHOD(QueryInterface)(THIS_ REFIID riid, LPVOID* object) PURE;
+    STDMETHOD(QueryInterface)(THIS_ REFIID riid, void **out) PURE;
     STDMETHOD_(ULONG, AddRef)(THIS) PURE;
     STDMETHOD_(ULONG, Release)(THIS) PURE;
     /*** ID3DXAnimationController methods ***/
@@ -320,18 +320,18 @@ DECLARE_INTERFACE_(ID3DXAnimationController, IUnknown)
     STDMETHOD_(UINT, GetMaxNumAnimationSets)(THIS) PURE;
     STDMETHOD_(UINT, GetMaxNumTracks)(THIS) PURE;
     STDMETHOD_(UINT, GetMaxNumEvents)(THIS) PURE;
-    STDMETHOD(RegisterAnimationOutput)(THIS_ LPCSTR name, D3DXMATRIX *matrix,
+    STDMETHOD(RegisterAnimationOutput)(THIS_ const char *name, D3DXMATRIX *matrix,
             D3DXVECTOR3 *scale, D3DXQUATERNION *rotation, D3DXVECTOR3 *translation) PURE;
-    STDMETHOD(RegisterAnimationSet)(THIS_ LPD3DXANIMATIONSET anim_set) PURE;
-    STDMETHOD(UnregisterAnimationSet)(THIS_ LPD3DXANIMATIONSET anim_set) PURE;
+    STDMETHOD(RegisterAnimationSet)(THIS_ ID3DXAnimationSet *anim_set) PURE;
+    STDMETHOD(UnregisterAnimationSet)(THIS_ ID3DXAnimationSet *anim_set) PURE;
     STDMETHOD_(UINT, GetNumAnimationSets)(THIS) PURE;
-    STDMETHOD(GetAnimationSet)(THIS_ UINT index, LPD3DXANIMATIONSET *anim_set) PURE;
-    STDMETHOD(GetAnimationSetByName)(THIS_ LPCSTR name, LPD3DXANIMATIONSET *anim_set) PURE;
-    STDMETHOD(AdvanceTime)(THIS_ DOUBLE time_delta, LPD3DXANIMATIONCALLBACKHANDLER *callback_handler) PURE;
+    STDMETHOD(GetAnimationSet)(THIS_ UINT index, ID3DXAnimationSet **anim_set) PURE;
+    STDMETHOD(GetAnimationSetByName)(THIS_ const char *name, ID3DXAnimationSet **anim_set) PURE;
+    STDMETHOD(AdvanceTime)(THIS_ double time_delta, ID3DXAnimationCallbackHandler **callback_handler) PURE;
     STDMETHOD(ResetTime)(THIS) PURE;
     STDMETHOD_(DOUBLE, GetTime)(THIS) PURE;
-    STDMETHOD(SetTrackAnimationSet)(THIS_ UINT track, LPD3DXANIMATIONSET anim_set) PURE;
-    STDMETHOD(GetTrackAnimationSet)(THIS_ UINT track, LPD3DXANIMATIONSET *anim_set) PURE;
+    STDMETHOD(SetTrackAnimationSet)(THIS_ UINT track, ID3DXAnimationSet *anim_set) PURE;
+    STDMETHOD(GetTrackAnimationSet)(THIS_ UINT track, ID3DXAnimationSet **anim_set) PURE;
     STDMETHOD(GetTrackPriority)(THIS_ UINT track, D3DXPRIORITY_TYPE *priority) PURE;
     STDMETHOD(SetTrackSpeed)(THIS_ UINT track, FLOAT speed) PURE;
     STDMETHOD(SetTrackWeight)(THIS_ UINT track, FLOAT weight) PURE;
@@ -359,7 +359,7 @@ DECLARE_INTERFACE_(ID3DXAnimationController, IUnknown)
     STDMETHOD(ValidateEvent)(THIS_ D3DXEVENTHANDLE event) PURE;
     STDMETHOD(GetEventDesc)(THIS_ D3DXEVENTHANDLE event, LPD3DXEVENT_DESC desc) PURE;
     STDMETHOD(CloneAnimationController)(THIS_ UINT max_num_anim_outputs, UINT max_num_anim_sets,
-            UINT max_num_tracks, UINT max_num_events, LPD3DXANIMATIONCONTROLLER *anim_controller) PURE;
+            UINT max_num_tracks, UINT max_num_events, ID3DXAnimationController **anim_controller) PURE;
 };
 #undef INTERFACE
 
@@ -367,22 +367,39 @@ DECLARE_INTERFACE_(ID3DXAnimationController, IUnknown)
 extern "C" {
 #endif
 
-HRESULT WINAPI D3DXLoadMeshHierarchyFromXA(LPCSTR, DWORD, LPDIRECT3DDEVICE9, LPD3DXALLOCATEHIERARCHY, LPD3DXLOADUSERDATA, LPD3DXFRAME*, LPD3DXANIMATIONCONTROLLER*);
-HRESULT WINAPI D3DXLoadMeshHierarchyFromXW(LPCWSTR, DWORD, LPDIRECT3DDEVICE9, LPD3DXALLOCATEHIERARCHY, LPD3DXLOADUSERDATA, LPD3DXFRAME*, LPD3DXANIMATIONCONTROLLER*);
+HRESULT WINAPI D3DXLoadMeshHierarchyFromXA(const char *filename, DWORD flags, struct IDirect3DDevice9 *device,
+        struct ID3DXAllocateHierarchy *alloc, struct ID3DXLoadUserData *user_data_loader,
+        D3DXFRAME **frame_hierarchy, struct ID3DXAnimationController **animation_controller);
+HRESULT WINAPI D3DXLoadMeshHierarchyFromXW(const WCHAR *filename, DWORD flags, struct IDirect3DDevice9 *device,
+        struct ID3DXAllocateHierarchy *alloc, struct ID3DXLoadUserData *user_data_loader,
+        D3DXFRAME **frame_hierarchy, struct ID3DXAnimationController **animation_controller);
 #define D3DXLoadMeshHierarchyFromX WINELIB_NAME_AW(D3DXLoadMeshHierarchyFromX)
-HRESULT WINAPI D3DXLoadMeshHierarchyFromXInMemory(LPCVOID, DWORD, DWORD, LPDIRECT3DDEVICE9, LPD3DXALLOCATEHIERARCHY, LPD3DXLOADUSERDATA, LPD3DXFRAME*, LPD3DXANIMATIONCONTROLLER*);
-HRESULT WINAPI D3DXSaveMeshHierarchyToFileA(LPCSTR, DWORD, CONST D3DXFRAME*, LPD3DXANIMATIONCONTROLLER, LPD3DXSAVEUSERDATA);
-HRESULT WINAPI D3DXSaveMeshHierarchyToFileW(LPCWSTR, DWORD, CONST D3DXFRAME*, LPD3DXANIMATIONCONTROLLER, LPD3DXSAVEUSERDATA);
+HRESULT WINAPI D3DXLoadMeshHierarchyFromXInMemory(const void *data, DWORD data_size, DWORD flags,
+        struct IDirect3DDevice9 *device, struct ID3DXAllocateHierarchy *alloc,
+        struct ID3DXLoadUserData *user_data_loader, D3DXFRAME **frame_hierarchy,
+        struct ID3DXAnimationController **animation_controller);
+HRESULT WINAPI D3DXSaveMeshHierarchyToFileA(const char *filename, DWORD format,
+        const D3DXFRAME *frame_root, ID3DXAnimationController *animation_controller,
+        ID3DXSaveUserData *user_data_saver);
+HRESULT WINAPI D3DXSaveMeshHierarchyToFileW(const WCHAR *filename, DWORD format,
+        const D3DXFRAME *frame_root, ID3DXAnimationController *animation_controller,
+        ID3DXSaveUserData *user_data_saver);
 #define D3DXSaveMeshHierarchyToFile WINELIB_NAME_AW(D3DXSaveMeshHierarchyToFile)
-HRESULT WINAPI D3DXFrameDestroy(LPD3DXFRAME, LPD3DXALLOCATEHIERARCHY);
-HRESULT WINAPI D3DXFrameAppendChild(LPD3DXFRAME, CONST D3DXFRAME*);
-LPD3DXFRAME WINAPI D3DXFrameFind(CONST D3DXFRAME*, LPCSTR);
-HRESULT WINAPI D3DXFrameRegisterNamedMatrices(LPD3DXFRAME, LPD3DXANIMATIONCONTROLLER);
-UINT WINAPI D3DXFrameNumNamedMatrices(CONST D3DXFRAME *frame_root);
-HRESULT WINAPI D3DXFrameCalculateBoundingSphere(CONST D3DXFRAME*, LPD3DXVECTOR3, FLOAT*);
-HRESULT WINAPI D3DXCreateKeyframedAnimationSet(LPCSTR, DOUBLE, D3DXPLAYBACK_TYPE, UINT, UINT, CONST D3DXKEY_CALLBACK*, LPD3DXKEYFRAMEDANIMATIONSET*);
-HRESULT WINAPI D3DXCreateCompressedAnimationSet(LPCSTR, DOUBLE, D3DXPLAYBACK_TYPE, LPD3DXBUFFER, UINT, CONST D3DXKEY_CALLBACK*, LPD3DXCOMPRESSEDANIMATIONSET*);
-HRESULT WINAPI D3DXCreateAnimationController(UINT, UINT, UINT, UINT, LPD3DXANIMATIONCONTROLLER*);
+HRESULT WINAPI D3DXFrameDestroy(D3DXFRAME *frame_root, ID3DXAllocateHierarchy *alloc);
+HRESULT WINAPI D3DXFrameAppendChild(D3DXFRAME *parent, const D3DXFRAME *child);
+D3DXFRAME * WINAPI D3DXFrameFind(const D3DXFRAME *root, const char *name);
+HRESULT WINAPI D3DXFrameRegisterNamedMatrices(D3DXFRAME *frame_root, ID3DXAnimationController *animation_controller);
+UINT WINAPI D3DXFrameNumNamedMatrices(const D3DXFRAME *frame_root);
+HRESULT WINAPI D3DXFrameCalculateBoundingSphere(const D3DXFRAME *frame_root, D3DXVECTOR3 *center,
+        FLOAT *radius);
+HRESULT WINAPI D3DXCreateKeyframedAnimationSet(const char *name, double ticks_per_second,
+        D3DXPLAYBACK_TYPE playback_type, UINT animation_count, UINT callback_key_count,
+        const D3DXKEY_CALLBACK *callback_keys, ID3DXKeyframedAnimationSet **animation_set);
+HRESULT WINAPI D3DXCreateCompressedAnimationSet(const char *name, double ticks_per_second,
+        D3DXPLAYBACK_TYPE playback_type, ID3DXBuffer *compressed_data, UINT callback_key_count,
+        const D3DXKEY_CALLBACK *callback_keys, ID3DXCompressedAnimationSet **animation_set);
+HRESULT WINAPI D3DXCreateAnimationController(UINT max_animation_output_count, UINT max_animation_set_count,
+        UINT max_track_count, UINT max_event_count, ID3DXAnimationController **animation_controller);
 
 #ifdef __cplusplus
 }

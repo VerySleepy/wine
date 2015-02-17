@@ -187,6 +187,7 @@ static DWORD get_mountmgr_drive_type( LPCWSTR root )
 {
     HANDLE mgr;
     struct mountmgr_unix_drive data;
+    DWORD br;
 
     memset( &data, 0, sizeof(data) );
     if (root) data.letter = root[0];
@@ -203,7 +204,7 @@ static DWORD get_mountmgr_drive_type( LPCWSTR root )
     if (mgr == INVALID_HANDLE_VALUE) return DRIVE_UNKNOWN;
 
     if (!DeviceIoControl( mgr, IOCTL_MOUNTMGR_QUERY_UNIX_DRIVE, &data, sizeof(data), &data,
-                          sizeof(data), NULL, NULL ) && GetLastError() != ERROR_MORE_DATA)
+                          sizeof(data), &br, NULL ) && GetLastError() != ERROR_MORE_DATA)
         data.type = DRIVE_UNKNOWN;
 
     CloseHandle( mgr );
@@ -445,7 +446,7 @@ static enum fs_type VOLUME_ReadCDSuperblock( HANDLE handle, BYTE *buff )
  */
 static BOOL UDF_Find_PVD( HANDLE handle, BYTE pvd[] )
 {
-    int i;
+    unsigned int i;
     DWORD offset;
     INT locations[] = { 256, -1, -257, 512 };
 
@@ -548,7 +549,7 @@ static void VOLUME_GetSuperblockLabel( const UNICODE_STRING *device, HANDLE hand
             }
             else
             {
-                int i;
+                unsigned int i;
 
                 label_len = 1 + pvd[24+32-1];
                 for(i=0; i<label_len && i<len; i+=2)
@@ -567,11 +568,72 @@ static void VOLUME_GetSuperblockLabel( const UNICODE_STRING *device, HANDLE hand
 
 
 /**************************************************************************
+ *                              UDF_Find_FSD_Sector
+ * Find the File Set Descriptor used to compute the serial of a UDF volume
+ */
+static int UDF_Find_FSD_Sector( HANDLE handle, BYTE block[] )
+{
+    int i, PVD_sector, PD_sector, PD_length;
+
+    if(!UDF_Find_PVD(handle,block))
+        goto default_sector;
+
+    /* Retrieve the tag location of the PVD -- [E] 3/7.2 */
+    PVD_sector  = block[12 + 0];
+    PVD_sector |= block[12 + 1] << 8;
+    PVD_sector |= block[12 + 2] << 16;
+    PVD_sector |= block[12 + 3] << 24;
+
+    /* Find the Partition Descriptor */
+    for(i=PVD_sector+1; ; i++)
+    {
+        if(!VOLUME_ReadCDBlock(handle, block, i*BLOCK_SIZE))
+            goto default_sector;
+
+        /* Partition Descriptor Tag Id -- [E] 3/10.5.1 */
+        if(block[0]==5 && block[1]==0)
+            break;
+
+        /* Terminating Descriptor Tag Id -- [E] 3/10.9.1 */
+        if(block[0]==8 && block[1]==0)
+            goto default_sector;
+    }
+
+    /* Find the partition starting location -- [E] 3/10.5.8 */
+    PD_sector  = block[188 + 0];
+    PD_sector |= block[188 + 1] << 8;
+    PD_sector |= block[188 + 2] << 16;
+    PD_sector |= block[188 + 3] << 24;
+
+    /* Find the partition length -- [E] 3/10.5.9 */
+    PD_length  = block[192 + 0];
+    PD_length |= block[192 + 1] << 8;
+    PD_length |= block[192 + 2] << 16;
+    PD_length |= block[192 + 3] << 24;
+
+    for(i=PD_sector; i<PD_sector+PD_length; i++)
+    {
+        if(!VOLUME_ReadCDBlock(handle, block, i*BLOCK_SIZE))
+            goto default_sector;
+
+        /* File Set Descriptor Tag Id -- [E] 3/14.1.1 */
+        if(block[0]==0 && block[1]==1)
+            return i;
+    }
+
+default_sector:
+    WARN("FSD sector not found, serial may be incorrect\n");
+    return 257;
+}
+
+
+/**************************************************************************
  *                              VOLUME_GetSuperblockSerial
  */
 static DWORD VOLUME_GetSuperblockSerial( const UNICODE_STRING *device, HANDLE handle,
                                          enum fs_type type, const BYTE *superblock )
 {
+    int FSD_sector;
     BYTE block[BLOCK_SIZE];
 
     switch(type)
@@ -585,12 +647,11 @@ static DWORD VOLUME_GetSuperblockSerial( const UNICODE_STRING *device, HANDLE ha
     case FS_FAT32:
         return GETLONG( superblock, 0x33 );
     case FS_UDF:
-        {
-            if (!VOLUME_ReadCDBlock(handle, block, 257*BLOCK_SIZE))
-                break;
-            superblock = block;
-            /* fallthrough */
-        }
+        FSD_sector = UDF_Find_FSD_Sector(handle, block);
+        if (!VOLUME_ReadCDBlock(handle, block, FSD_sector*BLOCK_SIZE))
+            break;
+        superblock = block;
+        /* fallthrough */
     case FS_ISO9660:
         {
             BYTE sum[4];
@@ -793,7 +854,7 @@ fill_fs_info:  /* now fill in the information that depends on the file system ty
     default:
         if (fsname) lstrcpynW( fsname, ntfsW, fsname_len );
         if (filename_len) *filename_len = 255;
-        if (flags) *flags = FILE_CASE_PRESERVED_NAMES;
+        if (flags) *flags = FILE_CASE_PRESERVED_NAMES | FILE_PERSISTENT_ACLS;
         break;
     }
     ret = TRUE;
@@ -971,7 +1032,7 @@ BOOL WINAPI GetVolumeNameForVolumeMountPointA( LPCSTR path, LPSTR volume, DWORD 
 BOOL WINAPI GetVolumeNameForVolumeMountPointW( LPCWSTR path, LPWSTR volume, DWORD size )
 {
     static const WCHAR prefixW[] = {'\\','D','o','s','D','e','v','i','c','e','s','\\',0};
-    static const WCHAR volumeW[] = {'\\','?','?','\\','V','o','l','u','m','e','{',0};
+    static const WCHAR volumeW[] = {'\\','?','?','\\','V','o','l','u','m','e','{'};
     static const WCHAR trailingW[] = {'\\',0};
 
     MOUNTMGR_MOUNT_POINT *input = NULL, *o1;
@@ -984,6 +1045,7 @@ BOOL WINAPI GetVolumeNameForVolumeMountPointW( LPCWSTR path, LPWSTR volume, DWOR
     NTSTATUS status;
     HANDLE mgr = INVALID_HANDLE_VALUE;
     BOOL ret = FALSE;
+    DWORD br;
 
     TRACE("(%s, %p, %x)\n", debugstr_w(path), volume, size);
     if (path[lstrlenW(path)-1] != '\\')
@@ -1050,7 +1112,7 @@ BOOL WINAPI GetVolumeNameForVolumeMountPointW( LPCWSTR path, LPWSTR volume, DWOR
 
     /* now get the true volume name from the mountmgr   */
     if (!DeviceIoControl( mgr, IOCTL_MOUNTMGR_QUERY_POINTS, input, i_size,
-                        output, o_size, NULL, NULL ))
+                        output, o_size, &br, NULL ))
         goto err_ret;
 
     /* Verify and return the data, note string is not null terminated  */
@@ -1073,7 +1135,7 @@ BOOL WINAPI GetVolumeNameForVolumeMountPointW( LPCWSTR path, LPWSTR volume, DWOR
             debugstr_wn((WCHAR*)((char *)output + o1->DeviceNameOffset),
                             o1->DeviceNameLength/sizeof(WCHAR)));
 
-        if (!strncmpW( p, volumeW, (sizeof(volumeW)-1)/sizeof(WCHAR) ))
+        if (!strncmpW( p, volumeW, sizeof(volumeW)/sizeof(WCHAR) ))
         {
             /* is there space in the return variable ?? */
             if ((o1->SymbolicLinkNameLength/sizeof(WCHAR))+2 > size)
@@ -1437,28 +1499,36 @@ DWORD WINAPI QueryDosDeviceA( LPCSTR devname, LPSTR target, DWORD bufsize )
  */
 DWORD WINAPI GetLogicalDrives(void)
 {
-    const char *config_dir = wine_get_config_dir();
-    struct stat st;
-    char *buffer, *dev;
-    DWORD ret = 0;
-    int i;
+    static const WCHAR dosdevW[] = {'\\','D','o','s','D','e','v','i','c','e','s','\\',0};
+    OBJECT_ATTRIBUTES attr;
+    UNICODE_STRING nt_name;
+    DWORD bitmask = 0;
+    NTSTATUS status;
+    HANDLE handle;
 
-    if (!(buffer = HeapAlloc( GetProcessHeap(), 0, strlen(config_dir) + sizeof("/dosdevices/a:") )))
+    RtlInitUnicodeString( &nt_name, dosdevW );
+    nt_name.Length -= sizeof(WCHAR);  /* without trailing slash */
+    attr.Length = sizeof(attr);
+    attr.RootDirectory = 0;
+    attr.ObjectName = &nt_name;
+    attr.Attributes = OBJ_CASE_INSENSITIVE;
+    attr.SecurityDescriptor = NULL;
+    attr.SecurityQualityOfService = NULL;
+    status = NtOpenDirectoryObject( &handle, FILE_LIST_DIRECTORY, &attr );
+    if (!status)
     {
-        SetLastError( ERROR_NOT_ENOUGH_MEMORY );
-        return 0;
-    }
-    strcpy( buffer, config_dir );
-    strcat( buffer, "/dosdevices/a:" );
-    dev = buffer + strlen(buffer) - 2;
+        char data[1024];
+        DIRECTORY_BASIC_INFORMATION *info = (DIRECTORY_BASIC_INFORMATION *)data;
+        ULONG ctx = 0, len;
 
-    for (i = 0; i < 26; i++)
-    {
-        *dev = 'a' + i;
-        if (!stat( buffer, &st )) ret |= (1 << i);
+        while (!NtQueryDirectoryObject( handle, info, sizeof(data), 1, 0, &ctx, &len ))
+            if(info->ObjectName.Length == 2*sizeof(WCHAR) && info->ObjectName.Buffer[1] == ':')
+                bitmask |= 1 << (info->ObjectName.Buffer[0] - 'A');
+
+        NtClose( handle );
     }
-    HeapFree( GetProcessHeap(), 0, buffer );
-    return ret;
+
+    return bitmask;
 }
 
 
@@ -1689,6 +1759,8 @@ BOOL WINAPI GetDiskFreeSpaceW( LPCWSTR root, LPDWORD cluster_sectors,
     if (sector_bytes) *sector_bytes = info.BytesPerSector;
     if (free_clusters) *free_clusters = info.AvailableAllocationUnits.u.LowPart;
     if (total_clusters) *total_clusters = info.TotalAllocationUnits.u.LowPart;
+    TRACE("%#08x, %#08x, %#08x, %#08x\n", info.SectorsPerAllocationUnit, info.BytesPerSector,
+          info.AvailableAllocationUnits.u.LowPart, info.TotalAllocationUnits.u.LowPart);
     return TRUE;
 }
 
@@ -1712,12 +1784,14 @@ BOOL WINAPI GetDiskFreeSpaceA( LPCSTR root, LPDWORD cluster_sectors,
 BOOL WINAPI GetVolumePathNameA(LPCSTR filename, LPSTR volumepathname, DWORD buflen)
 {
     BOOL ret;
-    WCHAR *filenameW = NULL, *volumeW;
+    WCHAR *filenameW = NULL, *volumeW = NULL;
 
     FIXME("(%s, %p, %d), stub!\n", debugstr_a(filename), volumepathname, buflen);
 
-    if (filename && !(filenameW = FILE_name_AtoW( filename, FALSE ))) return FALSE;
-    if (!(volumeW = HeapAlloc( GetProcessHeap(), 0, buflen * sizeof(WCHAR) ))) return FALSE;
+    if (filename && !(filenameW = FILE_name_AtoW( filename, FALSE )))
+        return FALSE;
+    if (volumepathname && !(volumeW = HeapAlloc( GetProcessHeap(), 0, buflen * sizeof(WCHAR) )))
+        return FALSE;
 
     if ((ret = GetVolumePathNameW( filenameW, volumeW, buflen )))
         FILE_name_WtoA( volumeW, -1, volumepathname, buflen );
@@ -1735,14 +1809,27 @@ BOOL WINAPI GetVolumePathNameW(LPCWSTR filename, LPWSTR volumepathname, DWORD bu
 
     FIXME("(%s, %p, %d), stub!\n", debugstr_w(filename), volumepathname, buflen);
 
-    if (p && tolowerW(p[0]) >= 'a' && tolowerW(p[0]) <= 'z' && p[1] ==':' && p[2] == '\\' && buflen >= 4)
+    if (!filename || !volumepathname || !buflen)
     {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    if (p && tolowerW(p[0]) >= 'a' && tolowerW(p[0]) <= 'z' && p[1] ==':' && p[2] == '\\')
+    {
+        if (buflen < 4)
+        {
+            SetLastError(ERROR_FILENAME_EXCED_RANGE);
+            return FALSE;
+        }
         volumepathname[0] = p[0];
         volumepathname[1] = ':';
         volumepathname[2] = '\\';
         volumepathname[3] = 0;
         return TRUE;
     }
+
+    SetLastError(ERROR_INVALID_NAME);
     return FALSE;
 }
 
@@ -1784,6 +1871,7 @@ static MOUNTMGR_MOUNT_POINTS *query_mount_points( HANDLE mgr, MOUNTMGR_MOUNT_POI
 {
     MOUNTMGR_MOUNT_POINTS *output;
     DWORD outsize = 1024;
+    DWORD br;
 
     for (;;)
     {
@@ -1792,7 +1880,7 @@ static MOUNTMGR_MOUNT_POINTS *query_mount_points( HANDLE mgr, MOUNTMGR_MOUNT_POI
             SetLastError( ERROR_NOT_ENOUGH_MEMORY );
             return NULL;
         }
-        if (DeviceIoControl( mgr, IOCTL_MOUNTMGR_QUERY_POINTS, input, insize, output, outsize, NULL, NULL )) break;
+        if (DeviceIoControl( mgr, IOCTL_MOUNTMGR_QUERY_POINTS, input, insize, output, outsize, &br, NULL )) break;
         outsize = output->Size;
         HeapFree( GetProcessHeap(), 0, output );
         if (GetLastError() != ERROR_MORE_DATA) return NULL;
@@ -1939,6 +2027,7 @@ HANDLE WINAPI FindFirstVolumeA(LPSTR volume, DWORD len)
 HANDLE WINAPI FindFirstVolumeW( LPWSTR volume, DWORD len )
 {
     DWORD size = 1024;
+    DWORD br;
     HANDLE mgr = CreateFileW( MOUNTMGR_DOS_DEVICE_NAME, 0, FILE_SHARE_READ|FILE_SHARE_WRITE,
                               NULL, OPEN_EXISTING, 0, 0 );
     if (mgr == INVALID_HANDLE_VALUE) return INVALID_HANDLE_VALUE;
@@ -1956,7 +2045,7 @@ HANDLE WINAPI FindFirstVolumeW( LPWSTR volume, DWORD len )
         memset( &input, 0, sizeof(input) );
 
         if (!DeviceIoControl( mgr, IOCTL_MOUNTMGR_QUERY_POINTS, &input, sizeof(input),
-                              output, size, NULL, NULL ))
+                              output, size, &br, NULL ))
         {
             if (GetLastError() != ERROR_MORE_DATA) break;
             size = output->Size;
@@ -2058,5 +2147,43 @@ HANDLE WINAPI FindFirstVolumeMountPointW(LPCWSTR root, LPWSTR mount_point, DWORD
 BOOL WINAPI FindVolumeMountPointClose(HANDLE h)
 {
     FIXME("(%p), stub!\n", h);
+    return FALSE;
+}
+
+/***********************************************************************
+ *           DeleteVolumeMountPointA   (KERNEL32.@)
+ */
+BOOL WINAPI DeleteVolumeMountPointA(LPCSTR mountpoint)
+{
+    FIXME("(%s), stub!\n", debugstr_a(mountpoint));
+    return FALSE;
+}
+
+/***********************************************************************
+ *           DeleteVolumeMountPointW (KERNEL32.@)
+ */
+BOOL WINAPI DeleteVolumeMountPointW(LPCWSTR mountpoint)
+{
+    FIXME("(%s), stub!\n", debugstr_w(mountpoint));
+    return FALSE;
+}
+
+/***********************************************************************
+ *           SetVolumeMountPointA (KERNEL32.@)
+ */
+BOOL WINAPI SetVolumeMountPointA(LPCSTR path, LPCSTR volume)
+{
+    FIXME("(%s, %s), stub!\n", debugstr_a(path), debugstr_a(volume));
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+/***********************************************************************
+ *           SetVolumeMountPointW (KERNEL32.@)
+ */
+BOOL WINAPI SetVolumeMountPointW(LPCWSTR path, LPCWSTR volume)
+{
+    FIXME("(%s, %s), stub!\n", debugstr_w(path), debugstr_w(volume));
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
 }

@@ -1,13 +1,11 @@
 MODULE    = quartz.dll
 IMPORTLIB = quartz
-IMPORTS   = strmiids strmbase uuid dsound msacm32 msvfw32 ole32 oleaut32 shlwapi rpcrt4 user32 gdi32 advapi32
-EXTRADEFS = -DENTRY_PREFIX=QUARTZ_ -DPROXY_DELEGATION -DWINE_REGISTER_DLL
+IMPORTS   = strmiids dxguid strmbase uuid dsound msacm32 msvfw32 ole32 oleaut32 shlwapi rpcrt4 user32 gdi32 advapi32
 
 C_SRCS = \
 	acmwrapper.c \
 	avidec.c \
 	avisplit.c \
-	control.c \
 	dsoundrender.c \
 	enumfilters.c \
 	enummedia.c \
@@ -25,14 +23,14 @@ C_SRCS = \
 	regsvr.c \
 	systemclock.c \
 	videorenderer.c \
+	vmr9.c \
 	waveparser.c
 
 RC_SRCS = version.rc
 
-IDL_H_SRCS = fil_data.idl
-IDL_P_SRCS = quartz_strmif.idl
-IDL_R_SRCS = quartz_strmif.idl
+IDL_SRCS = \
+	control_tlb.idl \
+	fil_data.idl \
+	quartz_strmif.idl
 
-EXTRA_OBJS = dlldata.o
-
-@MAKE_DLL_RULES@
+dlldata_EXTRADEFS = -DENTRY_PREFIX=QUARTZ_ -DPROXY_DELEGATION -DWINE_REGISTER_DLL

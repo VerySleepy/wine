@@ -28,6 +28,7 @@
 #include "wingdi.h"
 #include "winspool.h"
 
+#include "wine/unicode.h"
 #include "wine/gdi_driver.h"
 #include "wine/list.h"
 
@@ -98,7 +99,7 @@ typedef struct _tagAFM {
     const AFMMETRICS	*Metrics;
 } AFM;
 
-/* Note no 'next' in AFM. Use AFMLISTENTRY as a container. This allow more than
+/* Note no 'next' in AFM. Use AFMLISTENTRY as a container. This allows more than
    one list to exist without having to reallocate the entire AFM structure. We
    keep a global list of all afms (PSDRV_AFMFontList) plus a list of available
    fonts for each DC (dc->physDev->Fonts) */
@@ -117,9 +118,10 @@ typedef struct _tagFONTFAMILY {
 extern FONTFAMILY   *PSDRV_AFMFontList DECLSPEC_HIDDEN;
 extern const AFM    *const PSDRV_BuiltinAFMs[] DECLSPEC_HIDDEN;     /* last element is NULL */
 
-typedef struct _tagFONTNAME {
+typedef struct
+{
+    struct list          entry;
     char		*Name;
-    struct _tagFONTNAME *next;
 } FONTNAME;
 
 typedef struct {
@@ -151,47 +153,42 @@ typedef struct _BANDINFOSTRUCT
     RECT GraphicsRect;
 } BANDINFOSTRUCT, *PBANDINFOSTRUCT;
 
-typedef struct _tagOPTIONENTRY {
-    char			*Name;		/* eg "True" */
-    char			*FullName;	/* eg "Installed" */
-    char			*InvocationString; /* Often NULL */
-    struct _tagOPTIONENTRY	*next;
-} OPTIONENTRY;
-
-typedef struct _tagOPTION { /* Treat bool as a special case of pickone */
-    char			*OptionName;	/* eg "*Option1" */
-    char			*FullName;	/* eg "Envelope Feeder" */
-    char			*DefaultOption; /* eg "False" */
-    OPTIONENTRY			*Options;
-    struct _tagOPTION		*next;
-} OPTION;
-
-typedef struct _tagCONSTRAINT {
+typedef struct
+{
+    struct list                 entry;
     char			*Feature1;
     char			*Value1;
     char			*Feature2;
     char			*Value2;
-    struct _tagCONSTRAINT	*next;
 } CONSTRAINT;
 
-typedef struct _tagINPUTSLOT {
+typedef struct
+{
+    struct list                 entry;
     const char			*Name;
     const char			*FullName;
     char			*InvocationString;
     WORD			WinBin; /* eg DMBIN_LOWER */
-    struct _tagINPUTSLOT	*next;
 } INPUTSLOT;
 
 typedef enum _RASTERIZEROPTION
   {RO_None, RO_Accept68K, RO_Type42, RO_TrueImage} RASTERIZEROPTION;
 
-typedef struct _tagDUPLEX {
+typedef struct
+{
+    struct list                 entry;
     char                        *Name;
     char                        *FullName;
     char                        *InvocationString;
     WORD                        WinDuplex; /* eg DMDUP_SIMPLEX */
-    struct _tagDUPLEX           *next;
 } DUPLEX;
+
+typedef struct
+{
+    struct list entry;
+    int    resx, resy;
+    char   *InvocationString;
+} RESOLUTION;
 
 /* Many Mac OS X based ppd files don't include a *ColorDevice line, so
    we use a tristate here rather than a boolean.  Code that
@@ -206,25 +203,25 @@ typedef struct {
     char		*NickName;
     int			LanguageLevel;
     COLORDEVICE	        ColorDevice;
+    struct list         Resolutions;
     int			DefaultResolution;
     signed int		LandscapeOrientation;
     char		*JCLBegin;
     char		*JCLToPSInterpreter;
     char		*JCLEnd;
     char		*DefaultFont;
-    FONTNAME		*InstalledFonts; /* ptr to a list of FontNames */
+    struct list         InstalledFonts;
     struct list         PageSizes;
     PAGESIZE            *DefaultPageSize;
-    OPTION		*InstalledOptions;
-    CONSTRAINT		*Constraints;
-    INPUTSLOT		*InputSlots;
+    struct list         Constraints;
+    struct list         InputSlots;
     RASTERIZEROPTION    TTRasterizer;
-    DUPLEX              *Duplexes;
+    struct list         Duplexes;
     DUPLEX              *DefaultDuplex;
 } PPD;
 
 typedef struct {
-    DEVMODEA			dmPublic;
+    DEVMODEW			dmPublic;
     struct _tagdocprivate {
       int dummy;
     }				dmDocPrivate;
@@ -238,16 +235,17 @@ numInstalledOptions of OPTIONs
 
 */
 
-} PSDRV_DEVMODEA;
+} PSDRV_DEVMODE;
 
-typedef struct _tagPI {
-    char		    *FriendlyName;
+typedef struct
+{
+    struct list             entry;
+    WCHAR                   *friendly_name;
     PPD			    *ppd;
-    PSDRV_DEVMODEA	    *Devmode;
+    PSDRV_DEVMODE	    *Devmode;
     FONTFAMILY		    *Fonts;
     PPRINTER_ENUM_VALUESA   FontSubTable;
     DWORD		    FontSubTableSize;
-    struct _tagPI	    *next;
 } PRINTERINFO;
 
 typedef struct {
@@ -304,6 +302,8 @@ typedef struct
     INT xx, xy, yx, yy;
 } matrix;
 
+enum fontset { UNSET = 0, HORIZONTAL_SET, VERTICAL_SET };
+
 typedef struct {
     enum fontloc        fontloc;
     union {
@@ -313,7 +313,7 @@ typedef struct {
 
     matrix              size;
     PSCOLOR             color;
-    BOOL                set;		/* Have we done a setfont yet */
+    enum fontset        set;    /* Have we done a setfont yet */
 
   /* These are needed by PSDRV_ExtTextOut */
     int                 escapement;
@@ -325,8 +325,9 @@ typedef struct {
 } PSFONT;
 
 typedef struct {
-    PSCOLOR		color;
-    BOOL		set;
+    PSCOLOR              color;
+    BOOL                 set;
+    struct brush_pattern pattern;
 } PSBRUSH;
 
 #define MAX_DASHLEN 16
@@ -345,8 +346,8 @@ typedef struct {
 typedef struct {
     DWORD		id;             /* Job id */
     HANDLE              hprinter;       /* Printer handle */
-    LPSTR		output;		/* Output file/port */
-    LPSTR               DocName;        /* Document Name */
+    LPWSTR              output;	        /* Output file/port */
+    LPWSTR              doc_name;       /* Document Name */
     BOOL		banding;        /* Have we received a NEXTBAND */
     BOOL		OutOfPage;      /* Page header not sent yet */
     INT			PageNo;
@@ -365,7 +366,7 @@ typedef struct
     PSCOLOR		bkColor;
     PSCOLOR		inkColor;	/* Last colour set */
     JOB			job;
-    PSDRV_DEVMODEA	*Devmode;
+    PSDRV_DEVMODE	*Devmode;
     PRINTERINFO		*pi;
     SIZE                PageSize;      /* Physical page size in device units */
     RECT                ImageableArea; /* Imageable area in device units */
@@ -382,11 +383,6 @@ typedef struct
 
     int                 pathdepth;
 } PSDRV_PDEVICE;
-
-typedef struct {
-    PRINTERINFO *pi;
-    PSDRV_DEVMODEA *dlgdm;
-} PSDRV_DLGINFO;
 
 static inline PSDRV_PDEVICE *get_psdrv_dev( PHYSDEV dev )
 {
@@ -415,6 +411,10 @@ extern HINSTANCE PSDRV_hInstance DECLSPEC_HIDDEN;
 extern HANDLE PSDRV_Heap DECLSPEC_HIDDEN;
 extern char *PSDRV_ANSIVector[256] DECLSPEC_HIDDEN;
 
+extern INPUTSLOT *find_slot( PPD *ppd, const PSDRV_DEVMODE *dm );
+extern PAGESIZE *find_pagesize( PPD *ppd, const PSDRV_DEVMODE *dm );
+extern DUPLEX *find_duplex( PPD *ppd, const PSDRV_DEVMODE *dm );
+
 /* GDI driver functions */
 extern BOOL PSDRV_Arc( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
                        INT xstart, INT ystart, INT xend, INT yend ) DECLSPEC_HIDDEN;
@@ -435,8 +435,7 @@ extern BOOL PSDRV_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags,
                               const RECT *lprect, LPCWSTR str, UINT count, const INT *lpDx ) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_FillPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_GetCharWidth(PHYSDEV dev, UINT firstChar, UINT lastChar, LPINT buffer) DECLSPEC_HIDDEN;
-extern BOOL PSDRV_GetTextExtentExPoint(PHYSDEV dev, LPCWSTR str, INT count,
-                                       INT maxExt, LPINT lpnFit, LPINT alpDx, LPSIZE size) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_GetTextExtentExPoint(PHYSDEV dev, LPCWSTR str, INT count, LPINT alpDx) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_GetTextMetrics(PHYSDEV dev, TEXTMETRICW *metrics) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_LineTo(PHYSDEV dev, INT x, INT y) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_PaintRgn( PHYSDEV dev, HRGN hrgn ) DECLSPEC_HIDDEN;
@@ -447,18 +446,15 @@ extern BOOL PSDRV_PolyBezier( PHYSDEV dev, const POINT *pts, DWORD count ) DECLS
 extern BOOL PSDRV_PolyBezierTo( PHYSDEV dev, const POINT *pts, DWORD count ) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_PolyPolygon( PHYSDEV dev, const POINT* pts, const INT* counts, UINT polygons ) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_PolyPolyline( PHYSDEV dev, const POINT* pts, const DWORD* counts, DWORD polylines ) DECLSPEC_HIDDEN;
-extern BOOL PSDRV_Polygon( PHYSDEV dev, const POINT* pt, INT count ) DECLSPEC_HIDDEN;
-extern BOOL PSDRV_Polyline( PHYSDEV dev, const POINT* pt, INT count ) DECLSPEC_HIDDEN;
-extern DWORD PSDRV_PutImage( PHYSDEV dev, HBITMAP hbitmap, HRGN clip, BITMAPINFO *info,
+extern DWORD PSDRV_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info,
                              const struct gdi_image_bits *bits, struct bitblt_coords *src,
                              struct bitblt_coords *dst, DWORD rop ) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_Rectangle( PHYSDEV dev, INT left, INT top, INT right, INT bottom ) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_RoundRect( PHYSDEV dev, INT left, INT top, INT right,
                              INT bottom, INT ell_width, INT ell_height ) DECLSPEC_HIDDEN;
-extern HBRUSH PSDRV_SelectBrush( PHYSDEV dev, HBRUSH hbrush, HBITMAP bitmap,
-                                  const BITMAPINFO *info, void *bits, UINT usage ) DECLSPEC_HIDDEN;
-extern HFONT PSDRV_SelectFont( PHYSDEV dev, HFONT hfont ) DECLSPEC_HIDDEN;
-extern HPEN PSDRV_SelectPen( PHYSDEV dev, HPEN hpen ) DECLSPEC_HIDDEN;
+extern HBRUSH PSDRV_SelectBrush( PHYSDEV dev, HBRUSH hbrush, const struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
+extern HFONT PSDRV_SelectFont( PHYSDEV dev, HFONT hfont, UINT *aa_flags ) DECLSPEC_HIDDEN;
+extern HPEN PSDRV_SelectPen( PHYSDEV dev, HPEN hpen, const struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
 extern COLORREF PSDRV_SetBkColor( PHYSDEV dev, COLORREF color ) DECLSPEC_HIDDEN;
 extern COLORREF PSDRV_SetDCBrushColor( PHYSDEV dev, COLORREF color ) DECLSPEC_HIDDEN;
 extern COLORREF PSDRV_SetDCPenColor( PHYSDEV dev, COLORREF color ) DECLSPEC_HIDDEN;
@@ -468,11 +464,11 @@ extern INT PSDRV_StartDoc( PHYSDEV dev, const DOCINFOW *doc ) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_StrokeAndFillPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_StrokePath( PHYSDEV dev ) DECLSPEC_HIDDEN;
 
-extern void PSDRV_MergeDevmodes(PSDRV_DEVMODEA *dm1, PSDRV_DEVMODEA *dm2,
+extern void PSDRV_MergeDevmodes(PSDRV_DEVMODE *dm1, const PSDRV_DEVMODE *dm2,
 			 PRINTERINFO *pi) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_GetFontMetrics(void) DECLSPEC_HIDDEN;
-extern PPD *PSDRV_ParsePPD(char *fname) DECLSPEC_HIDDEN;
-extern PRINTERINFO *PSDRV_FindPrinterInfo(LPCSTR name) DECLSPEC_HIDDEN;
+extern PPD *PSDRV_ParsePPD(const WCHAR *fname, HANDLE printer) DECLSPEC_HIDDEN;
+extern PRINTERINFO *PSDRV_FindPrinterInfo(LPCWSTR name) DECLSPEC_HIDDEN;
 extern const AFM *PSDRV_FindAFMinList(FONTFAMILY *head, LPCSTR name) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_AddAFMtoList(FONTFAMILY **head, const AFM *afm,
 	BOOL *p_added) DECLSPEC_HIDDEN;
@@ -481,7 +477,7 @@ extern void PSDRV_FreeAFMList( FONTFAMILY *head ) DECLSPEC_HIDDEN;
 extern INT PSDRV_XWStoDS( PHYSDEV dev, INT width ) DECLSPEC_HIDDEN;
 
 extern BOOL PSDRV_Brush(PHYSDEV dev, BOOL EO) DECLSPEC_HIDDEN;
-extern BOOL PSDRV_SetFont( PHYSDEV dev ) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_SetFont( PHYSDEV dev, BOOL vertical ) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_SetPen( PHYSDEV dev ) DECLSPEC_HIDDEN;
 
 extern void PSDRV_AddClip( PHYSDEV dev, HRGN hrgn ) DECLSPEC_HIDDEN;
@@ -491,9 +487,10 @@ extern void PSDRV_ResetClip( PHYSDEV dev ) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_CopyColor(PSCOLOR *col1, PSCOLOR *col2) DECLSPEC_HIDDEN;
 extern void PSDRV_CreateColor( PHYSDEV dev, PSCOLOR *pscolor,
 		     COLORREF wincolor ) DECLSPEC_HIDDEN;
+extern PSRGB rgb_to_grayscale_scale( void ) DECLSPEC_HIDDEN;
 extern char PSDRV_UnicodeToANSI(int u) DECLSPEC_HIDDEN;
 
-extern INT PSDRV_WriteHeader( PHYSDEV dev, LPCSTR title ) DECLSPEC_HIDDEN;
+extern INT PSDRV_WriteHeader( PHYSDEV dev, LPCWSTR title ) DECLSPEC_HIDDEN;
 extern INT PSDRV_WriteFooter( PHYSDEV dev ) DECLSPEC_HIDDEN;
 extern INT PSDRV_WriteNewPage( PHYSDEV dev ) DECLSPEC_HIDDEN;
 extern INT PSDRV_WriteEndPage( PHYSDEV dev ) DECLSPEC_HIDDEN;
@@ -502,7 +499,8 @@ extern BOOL PSDRV_WriteLineTo(PHYSDEV dev, INT x, INT y) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_WriteStroke(PHYSDEV dev) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_WriteRectangle(PHYSDEV dev, INT x, INT y, INT width, INT height) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_WriteRRectangle(PHYSDEV dev, INT x, INT y, INT width, INT height) DECLSPEC_HIDDEN;
-extern BOOL PSDRV_WriteSetFont(PHYSDEV dev, const char *name, matrix size, INT escapement) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_WriteSetFont(PHYSDEV dev, const char *name, matrix size, INT escapement,
+                               BOOL fake_italic) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_WriteGlyphShow(PHYSDEV dev, LPCSTR g_name) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_WriteSetPen(PHYSDEV dev) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_WriteArc(PHYSDEV dev, INT x, INT y, INT w, INT h,
@@ -525,14 +523,13 @@ extern BOOL PSDRV_WriteRotate(PHYSDEV dev, float ang) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_WriteIndexColorSpaceBegin(PHYSDEV dev, int size) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_WriteIndexColorSpaceEnd(PHYSDEV dev) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_WriteRGBQUAD(PHYSDEV dev, const RGBQUAD *rgb, int number) DECLSPEC_HIDDEN;
-extern BOOL PSDRV_WriteImage(PHYSDEV dev, WORD depth, INT xDst, INT yDst,
+extern BOOL PSDRV_WriteImage(PHYSDEV dev, WORD depth, BOOL grayscale, INT xDst, INT yDst,
 			     INT widthDst, INT heightDst, INT widthSrc,
 			     INT heightSrc, BOOL mask, BOOL top_down) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_WriteBytes(PHYSDEV dev, const BYTE *bytes, DWORD number) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_WriteData(PHYSDEV dev, const BYTE *byte, DWORD number) DECLSPEC_HIDDEN;
 extern DWORD PSDRV_WriteSpool(PHYSDEV dev, LPCSTR lpData, DWORD cch) DECLSPEC_HIDDEN;
-extern BOOL PSDRV_WritePatternDict(PHYSDEV dev, BITMAP *bm, BYTE *bits) DECLSPEC_HIDDEN;
-extern BOOL PSDRV_WriteDIBPatternDict(PHYSDEV dev, BITMAPINFO *bmi, UINT usage) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_WriteDIBPatternDict(PHYSDEV dev, const BITMAPINFO *bmi, BYTE *bits, UINT usage) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_WriteArrayPut(PHYSDEV dev, CHAR *pszArrayName, INT nIndex, LONG lCoord) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_WriteArrayDef(PHYSDEV dev, CHAR *pszArrayName, INT nSize) DECLSPEC_HIDDEN;
 
@@ -551,8 +548,8 @@ extern BOOL PSDRV_WriteSetBuiltinFont(PHYSDEV dev) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_WriteBuiltinGlyphShow(PHYSDEV dev, LPCWSTR str, INT count) DECLSPEC_HIDDEN;
 
 extern BOOL PSDRV_SelectDownloadFont(PHYSDEV dev) DECLSPEC_HIDDEN;
-extern BOOL PSDRV_WriteSetDownloadFont(PHYSDEV dev) DECLSPEC_HIDDEN;
-extern BOOL PSDRV_WriteDownloadGlyphShow(PHYSDEV dev, WORD *glpyhs, UINT count) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_WriteSetDownloadFont(PHYSDEV dev, BOOL vertical) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_WriteDownloadGlyphShow(PHYSDEV dev, const WORD *glpyhs, UINT count) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_EmptyDownloadList(PHYSDEV dev, BOOL write_undef) DECLSPEC_HIDDEN;
 
 extern DWORD write_spool( PHYSDEV dev, const void *data, DWORD num ) DECLSPEC_HIDDEN;
@@ -583,5 +580,16 @@ extern DWORD ASCII85_encode(BYTE *in_buf, DWORD len, BYTE *out_buf) DECLSPEC_HID
 	setlocale(LC_NUMERIC,tmplocale);			\
 } while (0)
 
+static inline WCHAR *strdupW( const WCHAR *str )
+{
+    int size;
+    WCHAR *ret;
+
+    if (!str) return NULL;
+    size = (strlenW( str ) + 1) * sizeof(WCHAR);
+    ret = HeapAlloc( GetProcessHeap(), 0, size );
+    if (ret) memcpy( ret, str, size );
+    return ret;
+}
 
 #endif

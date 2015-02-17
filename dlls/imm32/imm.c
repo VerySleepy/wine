@@ -33,14 +33,12 @@
 #include "winnls.h"
 #include "winreg.h"
 #include "wine/list.h"
+#include "wine/unicode.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(imm);
 
-typedef struct tagIMCCInternal
-{
-    DWORD dwLock;
-    DWORD dwSize;
-} IMCCInternal;
+#define IMM_INIT_MAGIC 0x19650412
+BOOL WINAPI User32InitializeImmEntryTable(DWORD);
 
 #define MAKE_FUNCPTR(f) typeof(f) * p##f
 typedef struct _tagImmHkl{
@@ -50,6 +48,7 @@ typedef struct _tagImmHkl{
     IMEINFO     imeInfo;
     WCHAR       imeClassName[17]; /* 16 character max */
     ULONG       uSelected;
+    HWND        UIWnd;
 
     /* Function Pointers */
     MAKE_FUNCPTR(ImeInquire);
@@ -77,9 +76,11 @@ typedef struct tagInputContextData
         INPUTCONTEXT    IMC;
 
         ImmHkl          *immKbd;
-        HWND            imeWnd;
         UINT            lastVK;
+        DWORD           magic;
 } InputContextData;
+
+#define WINE_IMC_VALID_MAGIC 0x56434D49
 
 typedef struct _tagTRANSMSG {
     UINT message;
@@ -95,21 +96,13 @@ typedef struct _tagIMMThreadData {
 static DWORD tlsIndex = 0;
 static struct list ImmHklList = LIST_INIT(ImmHklList);
 
-/* MSIME messages */
-static UINT WM_MSIME_SERVICE;
-static UINT WM_MSIME_RECONVERTOPTIONS;
-static UINT WM_MSIME_MOUSE;
-static UINT WM_MSIME_RECONVERTREQUEST;
-static UINT WM_MSIME_RECONVERT;
-static UINT WM_MSIME_QUERYPOSITION;
-static UINT WM_MSIME_DOCUMENTFEED;
-
 static const WCHAR szwWineIMCProperty[] = {'W','i','n','e','I','m','m','H','I','M','C','P','r','o','p','e','r','t','y',0};
 
 static const WCHAR szImeFileW[] = {'I','m','e',' ','F','i','l','e',0};
 static const WCHAR szLayoutTextW[] = {'L','a','y','o','u','t',' ','T','e','x','t',0};
 static const WCHAR szImeRegFmt[] = {'S','y','s','t','e','m','\\','C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t','\\','C','o','n','t','r','o','l','\\','K','e','y','b','o','a','r','d',' ','L','a','y','o','u','t','s','\\','%','0','8','l','x',0};
 
+static const WCHAR szwIME[] = {'I','M','E',0};
 
 #define is_himc_ime_unicode(p)  (p->immKbd->imeInfo.fdwProperty & IME_PROP_UNICODE)
 #define is_kbd_ime_unicode(p)  (p->imeInfo.fdwProperty & IME_PROP_UNICODE)
@@ -243,35 +236,36 @@ static void IMM_FreeThreadData(void)
     }
 }
 
-static HMODULE LoadDefaultWineIME(void)
+static HMODULE load_graphics_driver(void)
 {
-    char buffer[MAX_PATH], libname[32], *name, *next;
-    HMODULE module = 0;
+    static const WCHAR display_device_guid_propW[] = {
+        '_','_','w','i','n','e','_','d','i','s','p','l','a','y','_',
+        'd','e','v','i','c','e','_','g','u','i','d',0 };
+    static const WCHAR key_pathW[] = {
+        'S','y','s','t','e','m','\\',
+        'C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t','\\',
+        'C','o','n','t','r','o','l','\\',
+        'V','i','d','e','o','\\','{',0};
+    static const WCHAR displayW[] = {'}','\\','0','0','0','0',0};
+    static const WCHAR driverW[] = {'G','r','a','p','h','i','c','s','D','r','i','v','e','r',0};
+
+    HMODULE ret = 0;
     HKEY hkey;
+    DWORD size;
+    WCHAR path[MAX_PATH];
+    WCHAR key[(sizeof(key_pathW) + sizeof(displayW)) / sizeof(WCHAR) + 40];
+    UINT guid_atom = HandleToULong( GetPropW( GetDesktopWindow(), display_device_guid_propW ));
 
-    TRACE("Attempting to fall back to wine default IME\n");
-
-    strcpy( buffer, "x11" );  /* default value */
-    /* @@ Wine registry key: HKCU\Software\Wine\Drivers */
-    if (!RegOpenKeyA( HKEY_CURRENT_USER, "Software\\Wine\\Drivers", &hkey ))
-    {
-        DWORD type, count = sizeof(buffer);
-        RegQueryValueExA( hkey, "Ime", 0, &type, (LPBYTE) buffer, &count );
-        RegCloseKey( hkey );
-    }
-
-    name = buffer;
-    while (name)
-    {
-        next = strchr( name, ',' );
-        if (next) *next++ = 0;
-
-        snprintf( libname, sizeof(libname), "wine%s.drv", name );
-        if ((module = LoadLibraryA( libname )) != 0) break;
-        name = next;
-    }
-
-    return module;
+    if (!guid_atom) return 0;
+    memcpy( key, key_pathW, sizeof(key_pathW) );
+    if (!GlobalGetAtomNameW( guid_atom, key + strlenW(key), 40 )) return 0;
+    strcatW( key, displayW );
+    if (RegOpenKeyW( HKEY_LOCAL_MACHINE, key, &hkey )) return 0;
+    size = sizeof(path);
+    if (!RegQueryValueExW( hkey, driverW, NULL, NULL, (BYTE *)path, &size )) ret = LoadLibraryW( path );
+    RegCloseKey( hkey );
+    TRACE( "%s %p\n", debugstr_w(path), ret );
+    return ret;
 }
 
 /* ImmHkl loading and freeing */
@@ -294,8 +288,7 @@ static ImmHkl *IMM_GetImmHkl(HKL hkl)
 
     ptr->hkl = hkl;
     if (ImmGetIMEFileNameW(hkl, filename, MAX_PATH)) ptr->hIME = LoadLibraryW(filename);
-    if (!ptr->hIME)
-        ptr->hIME = LoadDefaultWineIME();
+    if (!ptr->hIME) ptr->hIME = load_graphics_driver();
     if (ptr->hIME)
     {
         LOAD_FUNCPTR(ImeInquire);
@@ -345,6 +338,12 @@ static ImmHkl *IMM_GetImmHkl(HKL hkl)
 }
 #undef LOAD_FUNCPTR
 
+HWND WINAPI __wine_get_ui_window(HKL hkl)
+{
+    ImmHkl *immHkl = IMM_GetImmHkl(hkl);
+    return immHkl->UIWnd;
+}
+
 static void IMM_FreeAllImmHkl(void)
 {
     ImmHkl *ptr,*cursor2;
@@ -357,19 +356,10 @@ static void IMM_FreeAllImmHkl(void)
             ptr->pImeDestroy(1);
             FreeLibrary(ptr->hIME);
         }
+        if (ptr->UIWnd)
+            DestroyWindow(ptr->UIWnd);
         HeapFree(GetProcessHeap(),0,ptr);
     }
-}
-
-static void IMM_RegisterMessages(void)
-{
-    WM_MSIME_SERVICE = RegisterWindowMessageA("MSIMEService");
-    WM_MSIME_RECONVERTOPTIONS = RegisterWindowMessageA("MSIMEReconvertOptions");
-    WM_MSIME_MOUSE = RegisterWindowMessageA("MSIMEMouseOperation");
-    WM_MSIME_RECONVERTREQUEST = RegisterWindowMessageA("MSIMEReconvertRequest");
-    WM_MSIME_RECONVERT = RegisterWindowMessageA("MSIMEReconvert");
-    WM_MSIME_QUERYPOSITION = RegisterWindowMessageA("MSIMEQueryPosition");
-    WM_MSIME_DOCUMENTFEED = RegisterWindowMessageA("MSIMEDocumentFeed");
 }
 
 BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpReserved)
@@ -378,10 +368,14 @@ BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpReserved)
     switch (fdwReason)
     {
         case DLL_PROCESS_ATTACH:
-            IMM_RegisterMessages();
             tlsIndex = TlsAlloc();
             if (tlsIndex == TLS_OUT_OF_INDEXES)
                 return FALSE;
+            if (!User32InitializeImmEntryTable(IMM_INIT_MAGIC))
+            {
+                TlsFree(tlsIndex);
+                return FALSE;
+            }
             break;
         case DLL_THREAD_ATTACH:
             break;
@@ -389,6 +383,7 @@ BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID lpReserved)
             IMM_FreeThreadData();
             break;
         case DLL_PROCESS_DETACH:
+            if (lpReserved) break;
             IMM_FreeThreadData();
             IMM_FreeAllImmHkl();
             TlsFree(tlsIndex);
@@ -432,15 +427,33 @@ static HIMCC ImmCreateBlankCompStr(void)
     return rc;
 }
 
+static InputContextData* get_imc_data(HIMC hIMC)
+{
+    InputContextData *data = hIMC;
+
+    if (hIMC == NULL)
+        return NULL;
+
+    if(IsBadReadPtr(data, sizeof(InputContextData)) || data->magic != WINE_IMC_VALID_MAGIC)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return NULL;
+    }
+    return data;
+}
+
 /***********************************************************************
  *		ImmAssociateContext (IMM32.@)
  */
 HIMC WINAPI ImmAssociateContext(HWND hWnd, HIMC hIMC)
 {
     HIMC old = NULL;
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
 
     TRACE("(%p, %p):\n", hWnd, hIMC);
+
+    if(hIMC && !data)
+        return NULL;
 
     if (!IMM_GetThreadData()->defaultContext)
         IMM_GetThreadData()->defaultContext = ImmCreateContext();
@@ -622,6 +635,7 @@ HIMC WINAPI ImmCreateContext(void)
     InputContextData *new_context;
     LPGUIDELINE gl;
     LPCANDIDATEINFO ci;
+    int i;
 
     new_context = HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,sizeof(InputContextData));
 
@@ -649,8 +663,14 @@ HIMC WINAPI ImmCreateContext(void)
     gl->dwSize = sizeof(GUIDELINE);
     ImmUnlockIMCC(new_context->IMC.hGuideLine);
 
+    for (i = 0; i < sizeof(new_context->IMC.cfCandForm) / sizeof(CANDIDATEFORM); i++)
+        new_context->IMC.cfCandForm[i].dwIndex = ~0u;
+
     /* Initialize the IME Private */
     new_context->IMC.hPrivate = ImmCreateIMCC(new_context->immKbd->imeInfo.dwPrivateDataSize);
+
+    new_context->IMC.fdwConversion = new_context->immKbd->imeInfo.fdwConversionCaps;
+    new_context->IMC.fdwSentence = new_context->immKbd->imeInfo.fdwSentenceCaps;
 
     if (!new_context->immKbd->pImeSelect(new_context, TRUE))
     {
@@ -663,33 +683,32 @@ HIMC WINAPI ImmCreateContext(void)
     new_context->immKbd->uSelected++;
     TRACE("Created context %p\n",new_context);
 
+    new_context->magic = WINE_IMC_VALID_MAGIC;
     return new_context;
 }
 
 static BOOL IMM_DestroyContext(HIMC hIMC)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
 
     TRACE("Destroying %p\n",hIMC);
 
-    if (hIMC)
-    {
-        data->immKbd->uSelected --;
-        data->immKbd->pImeSelect(hIMC, FALSE);
-        SendMessageW(data->IMC.hWnd, WM_IME_SELECT, FALSE, (LPARAM)GetKeyboardLayout(0));
+    if (!data)
+        return FALSE;
 
-        if (IMM_GetThreadData()->hwndDefault == data->imeWnd)
-            IMM_GetThreadData()->hwndDefault = NULL;
-        DestroyWindow(data->imeWnd);
+    data->immKbd->uSelected --;
+    data->immKbd->pImeSelect(hIMC, FALSE);
+    SendMessageW(data->IMC.hWnd, WM_IME_SELECT, FALSE, (LPARAM)GetKeyboardLayout(0));
 
-        ImmDestroyIMCC(data->IMC.hCompStr);
-        ImmDestroyIMCC(data->IMC.hCandInfo);
-        ImmDestroyIMCC(data->IMC.hGuideLine);
-        ImmDestroyIMCC(data->IMC.hPrivate);
-        ImmDestroyIMCC(data->IMC.hMsgBuf);
+    ImmDestroyIMCC(data->IMC.hCompStr);
+    ImmDestroyIMCC(data->IMC.hCandInfo);
+    ImmDestroyIMCC(data->IMC.hGuideLine);
+    ImmDestroyIMCC(data->IMC.hPrivate);
+    ImmDestroyIMCC(data->IMC.hMsgBuf);
 
-        HeapFree(GetProcessHeap(),0,data);
-    }
+    data->magic = 0;
+    HeapFree(GetProcessHeap(),0,data);
+
     return TRUE;
 }
 
@@ -869,7 +888,7 @@ DWORD WINAPI ImmGetCandidateListA(
   HIMC hIMC, DWORD dwIndex,
   LPCANDIDATELIST lpCandList, DWORD dwBufLen)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
     LPCANDIDATEINFO candinfo;
     LPCANDIDATELIST candlist;
     DWORD ret = 0;
@@ -908,7 +927,7 @@ done:
 DWORD WINAPI ImmGetCandidateListCountA(
   HIMC hIMC, LPDWORD lpdwListCount)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
     LPCANDIDATEINFO candinfo;
     DWORD ret, count;
 
@@ -940,7 +959,7 @@ DWORD WINAPI ImmGetCandidateListCountA(
 DWORD WINAPI ImmGetCandidateListCountW(
   HIMC hIMC, LPDWORD lpdwListCount)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
     LPCANDIDATEINFO candinfo;
     DWORD ret, count;
 
@@ -973,7 +992,7 @@ DWORD WINAPI ImmGetCandidateListW(
   HIMC hIMC, DWORD dwIndex,
   LPCANDIDATELIST lpCandList, DWORD dwBufLen)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
     LPCANDIDATEINFO candinfo;
     LPCANDIDATELIST candlist;
     DWORD ret = 0;
@@ -1012,7 +1031,7 @@ done:
 BOOL WINAPI ImmGetCandidateWindow(
   HIMC hIMC, DWORD dwIndex, LPCANDIDATEFORM lpCandidate)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
 
     TRACE("%p, %d, %p\n", hIMC, dwIndex, lpCandidate);
 
@@ -1020,6 +1039,9 @@ BOOL WINAPI ImmGetCandidateWindow(
         return FALSE;
 
     if ( dwIndex >= (sizeof(data->IMC.cfCandForm) / sizeof(CANDIDATEFORM)) )
+        return FALSE;
+
+    if (data->IMC.cfCandForm[dwIndex].dwIndex != dwIndex)
         return FALSE;
 
     *lpCandidate = data->IMC.cfCandForm[dwIndex];
@@ -1052,7 +1074,7 @@ BOOL WINAPI ImmGetCompositionFontA(HIMC hIMC, LPLOGFONTA lplf)
  */
 BOOL WINAPI ImmGetCompositionFontW(HIMC hIMC, LPLOGFONTW lplf)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
 
     TRACE("(%p, %p):\n", hIMC, lplf);
 
@@ -1231,7 +1253,7 @@ static LONG ImmGetCompositionStringT( HIMC hIMC, DWORD dwIndex, LPVOID lpBuf,
                                       DWORD dwBufLen, BOOL unicode)
 {
     LONG rc = 0;
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
     LPCOMPOSITIONSTRING compstr;
     LPBYTE compdata;
 
@@ -1343,7 +1365,7 @@ LONG WINAPI ImmGetCompositionStringW(
  */
 BOOL WINAPI ImmGetCompositionWindow(HIMC hIMC, LPCOMPOSITIONFORM lpCompForm)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
 
     TRACE("(%p, %p)\n", hIMC, lpCompForm);
 
@@ -1351,7 +1373,7 @@ BOOL WINAPI ImmGetCompositionWindow(HIMC hIMC, LPCOMPOSITIONFORM lpCompForm)
         return FALSE;
 
     *lpCompForm = data->IMC.cfCompForm;
-    return 1;
+    return TRUE;
 }
 
 /***********************************************************************
@@ -1360,9 +1382,15 @@ BOOL WINAPI ImmGetCompositionWindow(HIMC hIMC, LPCOMPOSITIONFORM lpCompForm)
  */
 HIMC WINAPI ImmGetContext(HWND hWnd)
 {
-    HIMC rc = NULL;
+    HIMC rc;
 
     TRACE("%p\n", hWnd);
+
+    if (!IsWindow(hWnd))
+    {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return NULL;
+    }
     if (!IMM_GetThreadData()->defaultContext)
         IMM_GetThreadData()->defaultContext = ImmCreateContext();
 
@@ -1464,7 +1492,7 @@ DWORD WINAPI ImmGetConversionListW(
 BOOL WINAPI ImmGetConversionStatus(
   HIMC hIMC, LPDWORD lpfdwConversion, LPDWORD lpfdwSentence)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
 
     TRACE("%p %p %p\n", hIMC, lpfdwConversion, lpfdwSentence);
 
@@ -1484,6 +1512,9 @@ BOOL WINAPI ImmGetConversionStatus(
  */
 HWND WINAPI ImmGetDefaultIMEWnd(HWND hWnd)
 {
+    if (IMM_GetThreadData()->hwndDefault == NULL)
+        IMM_GetThreadData()->hwndDefault = CreateWindowExW( WS_EX_TOOLWINDOW,
+                    szwIME, NULL, WS_POPUP, 0, 0, 1, 1, 0, 0, 0, 0);
     TRACE("Default is %p\n",IMM_GetThreadData()->hwndDefault);
     return IMM_GetThreadData()->hwndDefault;
 }
@@ -1501,6 +1532,8 @@ UINT WINAPI ImmGetDescriptionA(
 
   /* find out how many characters in the unicode buffer */
   len = ImmGetDescriptionW( hKL, NULL, 0 );
+  if (!len)
+    return 0;
 
   /* allocate a buffer of that size */
   buf = HeapAlloc( GetProcessHeap(), 0, (len + 1) * sizeof (WCHAR) );
@@ -1516,7 +1549,10 @@ UINT WINAPI ImmGetDescriptionA(
 
   HeapFree( GetProcessHeap(), 0, buf );
 
-  return len;
+  if (len == 0)
+    return 0;
+
+  return len - 1;
 }
 
 /***********************************************************************
@@ -1528,6 +1564,7 @@ UINT WINAPI ImmGetDescriptionW(HKL hKL, LPWSTR lpszDescription, UINT uBufLen)
 
   FIXME("(%p, %p, %d): semi stub\n", hKL, lpszDescription, uBufLen);
 
+  if (!hKL) return 0;
   if (!uBufLen) return lstrlenW( name );
   lstrcpynW( lpszDescription, name, uBufLen );
   return lstrlenW( lpszDescription );
@@ -1642,7 +1679,7 @@ UINT WINAPI ImmGetIMEFileNameW(HKL hKL, LPWSTR lpszFileName, UINT uBufLen)
  */
 BOOL WINAPI ImmGetOpenStatus(HIMC hIMC)
 {
-  InputContextData *data = hIMC;
+  InputContextData *data = get_imc_data(hIMC);
   static int i;
 
     if (!data)
@@ -1745,7 +1782,7 @@ UINT WINAPI ImmGetRegisterWordStyleW(
  */
 BOOL WINAPI ImmGetStatusWindowPos(HIMC hIMC, LPPOINT lpptPos)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
 
     TRACE("(%p, %p)\n", hIMC, lpptPos);
 
@@ -1881,28 +1918,20 @@ BOOL WINAPI ImmIsIME(HKL hKL)
 BOOL WINAPI ImmIsUIMessageA(
   HWND hWndIME, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-    BOOL rc = FALSE;
-
     TRACE("(%p, %x, %ld, %ld)\n", hWndIME, msg, wParam, lParam);
     if ((msg >= WM_IME_STARTCOMPOSITION && msg <= WM_IME_KEYLAST) ||
             (msg == WM_IME_SETCONTEXT) ||
             (msg == WM_IME_NOTIFY) ||
             (msg == WM_IME_COMPOSITIONFULL) ||
             (msg == WM_IME_SELECT) ||
-            (msg == 0x287 /* FIXME: WM_IME_SYSTEM */) ||
-            (msg == WM_MSIME_RECONVERTOPTIONS) ||
-            (msg == WM_MSIME_MOUSE) ||
-            (msg == WM_MSIME_RECONVERTREQUEST) ||
-            (msg == WM_MSIME_RECONVERT) ||
-            (msg == WM_MSIME_QUERYPOSITION) ||
-            (msg == WM_MSIME_DOCUMENTFEED))
+            (msg == 0x287 /* FIXME: WM_IME_SYSTEM */))
     {
         if (hWndIME)
             SendMessageA(hWndIME, msg, wParam, lParam);
 
-        rc = TRUE;
+        return TRUE;
     }
-    return rc;
+    return FALSE;
 }
 
 /***********************************************************************
@@ -1911,28 +1940,20 @@ BOOL WINAPI ImmIsUIMessageA(
 BOOL WINAPI ImmIsUIMessageW(
   HWND hWndIME, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-    BOOL rc = FALSE;
-
     TRACE("(%p, %x, %ld, %ld)\n", hWndIME, msg, wParam, lParam);
     if ((msg >= WM_IME_STARTCOMPOSITION && msg <= WM_IME_KEYLAST) ||
             (msg == WM_IME_SETCONTEXT) ||
             (msg == WM_IME_NOTIFY) ||
             (msg == WM_IME_COMPOSITIONFULL) ||
             (msg == WM_IME_SELECT) ||
-            (msg == 0x287 /* FIXME: WM_IME_SYSTEM */) ||
-            (msg == WM_MSIME_RECONVERTOPTIONS) ||
-            (msg == WM_MSIME_MOUSE) ||
-            (msg == WM_MSIME_RECONVERTREQUEST) ||
-            (msg == WM_MSIME_RECONVERT) ||
-            (msg == WM_MSIME_QUERYPOSITION) ||
-            (msg == WM_MSIME_DOCUMENTFEED))
+            (msg == 0x287 /* FIXME: WM_IME_SYSTEM */))
     {
         if (hWndIME)
             SendMessageW(hWndIME, msg, wParam, lParam);
 
-        rc = TRUE;
+        return TRUE;
     }
-    return rc;
+    return FALSE;
 }
 
 /***********************************************************************
@@ -1941,13 +1962,21 @@ BOOL WINAPI ImmIsUIMessageW(
 BOOL WINAPI ImmNotifyIME(
   HIMC hIMC, DWORD dwAction, DWORD dwIndex, DWORD dwValue)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
 
     TRACE("(%p, %d, %d, %d)\n",
         hIMC, dwAction, dwIndex, dwValue);
 
-    if (!data || ! data->immKbd->pNotifyIME)
+    if (hIMC == NULL)
+    {
+        SetLastError(ERROR_SUCCESS);
         return FALSE;
+    }
+
+    if (!data || ! data->immKbd->pNotifyIME)
+    {
+        return FALSE;
+    }
 
     return data->immKbd->pNotifyIME(hIMC,dwAction,dwIndex,dwValue);
 }
@@ -2017,11 +2046,11 @@ BOOL WINAPI ImmRegisterWordW(
  */
 BOOL WINAPI ImmReleaseContext(HWND hWnd, HIMC hIMC)
 {
-  static int shown = 0;
+  static BOOL shown = FALSE;
 
   if (!shown) {
      FIXME("(%p, %p): stub\n", hWnd, hIMC);
-     shown = 1;
+     shown = TRUE;
   }
   return TRUE;
 }
@@ -2031,9 +2060,11 @@ BOOL WINAPI ImmReleaseContext(HWND hWnd, HIMC hIMC)
 */
 LRESULT WINAPI ImmRequestMessageA(HIMC hIMC, WPARAM wParam, LPARAM lParam)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
 
     TRACE("%p %ld %ld\n", hIMC, wParam, wParam);
+    if (!data)
+        SetLastError(ERROR_INVALID_HANDLE);
 
     if (data && IsWindow(data->IMC.hWnd))
         return SendMessageA(data->IMC.hWnd, WM_IME_REQUEST, wParam, lParam);
@@ -2046,9 +2077,12 @@ LRESULT WINAPI ImmRequestMessageA(HIMC hIMC, WPARAM wParam, LPARAM lParam)
 */
 LRESULT WINAPI ImmRequestMessageW(HIMC hIMC, WPARAM wParam, LPARAM lParam)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
 
     TRACE("%p %ld %ld\n", hIMC, wParam, wParam);
+
+    if (!data)
+        SetLastError(ERROR_INVALID_HANDLE);
 
     if (data && IsWindow(data->IMC.hWnd))
         return SendMessageW(data->IMC.hWnd, WM_IME_REQUEST, wParam, lParam);
@@ -2062,7 +2096,7 @@ LRESULT WINAPI ImmRequestMessageW(HIMC hIMC, WPARAM wParam, LPARAM lParam)
 BOOL WINAPI ImmSetCandidateWindow(
   HIMC hIMC, LPCANDIDATEFORM lpCandidate)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
 
     TRACE("(%p, %p)\n", hIMC, lpCandidate);
 
@@ -2090,11 +2124,14 @@ BOOL WINAPI ImmSetCandidateWindow(
  */
 BOOL WINAPI ImmSetCompositionFontA(HIMC hIMC, LPLOGFONTA lplf)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
     TRACE("(%p, %p)\n", hIMC, lplf);
 
     if (!data || !lplf)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
         return FALSE;
+    }
 
     memcpy(&data->IMC.lfFont.W,lplf,sizeof(LOGFONTA));
     MultiByteToWideChar(CP_ACP, 0, lplf->lfFaceName, -1, data->IMC.lfFont.W.lfFaceName,
@@ -2110,11 +2147,14 @@ BOOL WINAPI ImmSetCompositionFontA(HIMC hIMC, LPLOGFONTA lplf)
  */
 BOOL WINAPI ImmSetCompositionFontW(HIMC hIMC, LPLOGFONTW lplf)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
     TRACE("(%p, %p)\n", hIMC, lplf);
 
     if (!data || !lplf)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
         return FALSE;
+    }
 
     data->IMC.lfFont.W = *lplf;
     ImmNotifyIME(hIMC, NI_CONTEXTUPDATED, 0, IMC_SETCOMPOSITIONFONT);
@@ -2136,7 +2176,7 @@ BOOL WINAPI ImmSetCompositionStringA(
     WCHAR *CompBuffer = NULL;
     WCHAR *ReadBuffer = NULL;
     BOOL rc;
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
 
     TRACE("(%p, %d, %p, %d, %p, %d):\n",
             hIMC, dwIndex, lpComp, dwCompLen, lpRead, dwReadLen);
@@ -2191,7 +2231,7 @@ BOOL WINAPI ImmSetCompositionStringW(
     CHAR *CompBuffer = NULL;
     CHAR *ReadBuffer = NULL;
     BOOL rc;
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
 
     TRACE("(%p, %d, %p, %d, %p, %d):\n",
             hIMC, dwIndex, lpComp, dwCompLen, lpRead, dwReadLen);
@@ -2244,7 +2284,7 @@ BOOL WINAPI ImmSetCompositionWindow(
   HIMC hIMC, LPCOMPOSITIONFORM lpCompForm)
 {
     BOOL reshow = FALSE;
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
 
     TRACE("(%p, %p)\n", hIMC, lpCompForm);
     TRACE("\t%x, (%i,%i), (%i,%i - %i,%i)\n",lpCompForm->dwStyle,
@@ -2252,20 +2292,23 @@ BOOL WINAPI ImmSetCompositionWindow(
           lpCompForm->rcArea.left, lpCompForm->rcArea.bottom, lpCompForm->rcArea.right);
 
     if (!data)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
         return FALSE;
+    }
 
     data->IMC.cfCompForm = *lpCompForm;
 
-    if (IsWindowVisible(IMM_GetThreadData()->hwndDefault))
+    if (IsWindowVisible(data->immKbd->UIWnd))
     {
         reshow = TRUE;
-        ShowWindow(IMM_GetThreadData()->hwndDefault,SW_HIDE);
+        ShowWindow(data->immKbd->UIWnd,SW_HIDE);
     }
 
     /* FIXME: this is a partial stub */
 
     if (reshow)
-        ShowWindow(IMM_GetThreadData()->hwndDefault,SW_SHOWNOACTIVATE);
+        ShowWindow(data->immKbd->UIWnd,SW_SHOWNOACTIVATE);
 
     ImmInternalSendIMENotify(data, IMN_SETCOMPOSITIONWINDOW, 0);
     return TRUE;
@@ -2278,12 +2321,15 @@ BOOL WINAPI ImmSetConversionStatus(
   HIMC hIMC, DWORD fdwConversion, DWORD fdwSentence)
 {
     DWORD oldConversion, oldSentence;
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
 
     TRACE("%p %d %d\n", hIMC, fdwConversion, fdwSentence);
 
     if (!data)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
         return FALSE;
+    }
 
     if ( fdwConversion != data->IMC.fdwConversion )
     {
@@ -2308,22 +2354,26 @@ BOOL WINAPI ImmSetConversionStatus(
  */
 BOOL WINAPI ImmSetOpenStatus(HIMC hIMC, BOOL fOpen)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
 
     TRACE("%p %d\n", hIMC, fOpen);
 
     if (!data)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
         return FALSE;
+    }
 
-    if (data->imeWnd == NULL)
+    if (data->immKbd->UIWnd == NULL)
     {
         /* create the ime window */
-        data->imeWnd = CreateWindowExW( WS_EX_TOOLWINDOW,
+        data->immKbd->UIWnd = CreateWindowExW( WS_EX_TOOLWINDOW,
                     data->immKbd->imeClassName, NULL, WS_POPUP, 0, 0, 1, 1, 0,
                     0, data->immKbd->hIME, 0);
-        SetWindowLongPtrW(data->imeWnd, IMMGWL_IMC, (LONG_PTR)data);
-        IMM_GetThreadData()->hwndDefault = data->imeWnd;
+        SetWindowLongPtrW(data->immKbd->UIWnd, IMMGWL_IMC, (LONG_PTR)data);
     }
+    else if (fOpen)
+        SetWindowLongPtrW(data->immKbd->UIWnd, IMMGWL_IMC, (LONG_PTR)data);
 
     if (!fOpen != !data->IMC.fOpen)
     {
@@ -2340,12 +2390,15 @@ BOOL WINAPI ImmSetOpenStatus(HIMC hIMC, BOOL fOpen)
  */
 BOOL WINAPI ImmSetStatusWindowPos(HIMC hIMC, LPPOINT lpptPos)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
 
     TRACE("(%p, %p)\n", hIMC, lpptPos);
 
     if (!data || !lpptPos)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
         return FALSE;
+    }
 
     TRACE("\t(%i,%i)\n", lpptPos->x, lpptPos->y);
 
@@ -2463,9 +2516,16 @@ DWORD WINAPI ImmGetImeMenuItemsA( HIMC hIMC, DWORD dwFlags, DWORD dwType,
    LPIMEMENUITEMINFOA lpImeParentMenu, LPIMEMENUITEMINFOA lpImeMenu,
     DWORD dwSize)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
     TRACE("(%p, %i, %i, %p, %p, %i):\n", hIMC, dwFlags, dwType,
         lpImeParentMenu, lpImeMenu, dwSize);
+
+    if (!data)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return 0;
+    }
+
     if (data->immKbd->hIME && data->immKbd->pImeGetImeMenuItems)
     {
         if (!is_himc_ime_unicode(data) || (!lpImeParentMenu && !lpImeMenu))
@@ -2527,9 +2587,16 @@ DWORD WINAPI ImmGetImeMenuItemsW( HIMC hIMC, DWORD dwFlags, DWORD dwType,
    LPIMEMENUITEMINFOW lpImeParentMenu, LPIMEMENUITEMINFOW lpImeMenu,
    DWORD dwSize)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
     TRACE("(%p, %i, %i, %p, %p, %i):\n", hIMC, dwFlags, dwType,
         lpImeParentMenu, lpImeMenu, dwSize);
+
+    if (!data)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return 0;
+    }
+
     if (data->immKbd->hIME && data->immKbd->pImeGetImeMenuItems)
     {
         if (is_himc_ime_unicode(data) || (!lpImeParentMenu && !lpImeMenu))
@@ -2587,7 +2654,7 @@ DWORD WINAPI ImmGetImeMenuItemsW( HIMC hIMC, DWORD dwFlags, DWORD dwType,
 */
 LPINPUTCONTEXT WINAPI ImmLockIMC(HIMC hIMC)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
 
     if (!data)
         return NULL;
@@ -2600,9 +2667,13 @@ LPINPUTCONTEXT WINAPI ImmLockIMC(HIMC hIMC)
 */
 BOOL WINAPI ImmUnlockIMC(HIMC hIMC)
 {
-    InputContextData *data = hIMC;
-    data->dwLock--;
-    return (data->dwLock!=0);
+    InputContextData *data = get_imc_data(hIMC);
+
+    if (!data)
+        return FALSE;
+    if (data->dwLock)
+        data->dwLock--;
+    return TRUE;
 }
 
 /***********************************************************************
@@ -2610,7 +2681,9 @@ BOOL WINAPI ImmUnlockIMC(HIMC hIMC)
 */
 DWORD WINAPI ImmGetIMCLockCount(HIMC hIMC)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
+    if (!data)
+        return 0;
     return data->dwLock;
 }
 
@@ -2619,15 +2692,7 @@ DWORD WINAPI ImmGetIMCLockCount(HIMC hIMC)
 */
 HIMCC  WINAPI ImmCreateIMCC(DWORD size)
 {
-    IMCCInternal *internal;
-    int real_size = size + sizeof(IMCCInternal);
-
-    internal = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, real_size);
-    if (internal == NULL)
-        return NULL;
-
-    internal->dwSize = size;
-    return  internal;
+    return GlobalAlloc(GMEM_ZEROINIT | GMEM_MOVEABLE, size);
 }
 
 /***********************************************************************
@@ -2635,8 +2700,7 @@ HIMCC  WINAPI ImmCreateIMCC(DWORD size)
 */
 HIMCC WINAPI ImmDestroyIMCC(HIMCC block)
 {
-    HeapFree(GetProcessHeap(),0,block);
-    return NULL;
+    return GlobalFree(block);
 }
 
 /***********************************************************************
@@ -2644,11 +2708,7 @@ HIMCC WINAPI ImmDestroyIMCC(HIMCC block)
 */
 LPVOID WINAPI ImmLockIMCC(HIMCC imcc)
 {
-    IMCCInternal *internal;
-    internal = imcc;
-
-    internal->dwLock ++;
-    return internal + 1;
+    return GlobalLock(imcc);
 }
 
 /***********************************************************************
@@ -2656,11 +2716,7 @@ LPVOID WINAPI ImmLockIMCC(HIMCC imcc)
 */
 BOOL WINAPI ImmUnlockIMCC(HIMCC imcc)
 {
-    IMCCInternal *internal;
-    internal = imcc;
-
-    internal->dwLock --;
-    return (internal->dwLock!=0);
+    return GlobalUnlock(imcc);
 }
 
 /***********************************************************************
@@ -2668,10 +2724,7 @@ BOOL WINAPI ImmUnlockIMCC(HIMCC imcc)
 */
 DWORD WINAPI ImmGetIMCCLockCount(HIMCC imcc)
 {
-    IMCCInternal *internal;
-    internal = imcc;
-
-    return internal->dwLock;
+    return GlobalFlags(imcc) & GMEM_LOCKCOUNT;
 }
 
 /***********************************************************************
@@ -2679,15 +2732,7 @@ DWORD WINAPI ImmGetIMCCLockCount(HIMCC imcc)
 */
 HIMCC  WINAPI ImmReSizeIMCC(HIMCC imcc, DWORD size)
 {
-    IMCCInternal *internal,*newone;
-    int real_size = size + sizeof(IMCCInternal);
-
-    internal = imcc;
-
-    newone = HeapReAlloc(GetProcessHeap(), 0, internal, real_size);
-    newone->dwSize = size;
-
-    return newone;
+    return GlobalReAlloc(imcc, size, GMEM_ZEROINIT | GMEM_MOVEABLE);
 }
 
 /***********************************************************************
@@ -2695,10 +2740,7 @@ HIMCC  WINAPI ImmReSizeIMCC(HIMCC imcc, DWORD size)
 */
 DWORD WINAPI ImmGetIMCCSize(HIMCC imcc)
 {
-    IMCCInternal *internal;
-    internal = imcc;
-
-    return internal->dwSize;
+    return GlobalSize(imcc);
 }
 
 /***********************************************************************
@@ -2706,7 +2748,13 @@ DWORD WINAPI ImmGetIMCCSize(HIMCC imcc)
 */
 BOOL WINAPI ImmGenerateMessage(HIMC hIMC)
 {
-    InputContextData *data = hIMC;
+    InputContextData *data = get_imc_data(hIMC);
+
+    if (!data)
+    {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
 
     TRACE("%i messages queued\n",data->IMC.dwNumMsgBuf);
     if (data->IMC.dwNumMsgBuf > 0)
@@ -2807,6 +2855,22 @@ BOOL WINAPI ImmProcessKey(HWND hwnd, HKL hKL, UINT vKey, LPARAM lKeyData, DWORD 
     else
         return FALSE;
 
+    /* Make sure we are inputting to the correct keyboard */
+    if (data->immKbd->hkl != hKL)
+    {
+        ImmHkl *new_hkl = IMM_GetImmHkl(hKL);
+        if (new_hkl)
+        {
+            data->immKbd->pImeSelect(imc, FALSE);
+            data->immKbd->uSelected--;
+            data->immKbd = new_hkl;
+            data->immKbd->pImeSelect(imc, TRUE);
+            data->immKbd->uSelected++;
+        }
+        else
+            return FALSE;
+    }
+
     if (!data->immKbd->hIME || !data->immKbd->pImeProcessKey)
         return FALSE;
 
@@ -2837,5 +2901,15 @@ BOOL WINAPI ImmDisableTextFrameService(DWORD idThread)
 BOOL WINAPI ImmEnumInputContext(DWORD idThread, IMCENUMPROC lpfn, LPARAM lParam)
 {
     FIXME("Stub\n");
+    return FALSE;
+}
+
+/***********************************************************************
+ *              ImmGetHotKey(IMM32.@)
+ */
+
+BOOL WINAPI ImmGetHotKey(DWORD hotkey, UINT *modifiers, UINT *key, HKL hkl)
+{
+    FIXME("%x, %p, %p, %p: stub\n", hotkey, modifiers, key, hkl);
     return FALSE;
 }

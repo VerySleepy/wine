@@ -36,7 +36,7 @@ typedef struct WS(addrinfo)
     int                ai_family;
     int                ai_socktype;
     int                ai_protocol;
-    size_t             ai_addrlen;
+    SIZE_T             ai_addrlen;
     char *             ai_canonname;
     struct WS(sockaddr)*   ai_addr;
     struct WS(addrinfo)*   ai_next;
@@ -48,7 +48,7 @@ typedef struct WS(addrinfoW)
     int                ai_family;
     int                ai_socktype;
     int                ai_protocol;
-    size_t             ai_addrlen;
+    SIZE_T             ai_addrlen;
     PWSTR              ai_canonname;
     struct WS(sockaddr)*   ai_addr;
     struct WS(addrinfoW)*   ai_next;
@@ -63,7 +63,9 @@ typedef ADDRINFOA ADDRINFO, *LPADDRINFO;
 # define AI_PASSIVE                0x00000001
 # define AI_CANONNAME              0x00000002
 # define AI_NUMERICHOST            0x00000004
+# define AI_NUMERICSERV            0x00000008
 # define AI_ADDRCONFIG             0x00000400
+# define AI_V4MAPPED               0x00000800
 # define AI_NON_AUTHORITATIVE      0x00004000
 # define AI_SECURE                 0x00008000
 # define AI_RETURN_PREFERRED_NAMES 0x00010000
@@ -81,7 +83,9 @@ typedef ADDRINFOA ADDRINFO, *LPADDRINFO;
 # define WS_AI_PASSIVE                0x00000001
 # define WS_AI_CANONNAME              0x00000002
 # define WS_AI_NUMERICHOST            0x00000004
+# define WS_AI_NUMERICSERV            0x00000008
 # define WS_AI_ADDRCONFIG             0x00000400
+# define WS_AI_V4MAPPED               0x00000800
 # define WS_AI_NON_AUTHORITATIVE      0x00004000
 # define WS_AI_SECURE                 0x00008000
 # define WS_AI_RETURN_PREFERRED_NAMES 0x00010000

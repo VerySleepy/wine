@@ -29,6 +29,7 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(msvcrt);
 
+static unsigned int output_format;
 
 /*********************************************************************
  *		_beep (MSVCRT.@)
@@ -124,6 +125,47 @@ void* CDECL _lsearch(const void* match, void* start,
 }
 
 /*********************************************************************
+ *                  bsearch_s (msvcrt.@)
+ */
+void* CDECL MSVCRT_bsearch_s(const void *key, const void *base,
+                             MSVCRT_size_t nmemb, MSVCRT_size_t size,
+                             int (__cdecl *compare)(void *, const void *, const void *), void *ctx)
+{
+    ssize_t min = 0;
+    ssize_t max = nmemb - 1;
+
+    if (!MSVCRT_CHECK_PMT(size != 0)) return NULL;
+    if (!MSVCRT_CHECK_PMT(compare != NULL)) return NULL;
+
+    while (min <= max)
+    {
+        ssize_t cursor = min + (max - min) / 2;
+        int ret = compare(ctx, key,(const char *)base+(cursor*size));
+        if (!ret)
+            return (char*)base+(cursor*size);
+        if (ret < 0)
+            max = cursor - 1;
+        else
+            min = cursor + 1;
+    }
+    return NULL;
+}
+
+static int CDECL compare_wrapper(void *ctx, const void *e1, const void *e2)
+{
+    int (__cdecl *compare)(const void *, const void *) = ctx;
+    return compare(e1, e2);
+}
+
+/*********************************************************************
+ *                  bsearch (msvcrt.@)
+ */
+void* CDECL MSVCRT_bsearch(const void *key, const void *base, MSVCRT_size_t nmemb,
+        MSVCRT_size_t size, int (__cdecl *compar)(const void *, const void *))
+{
+    return MSVCRT_bsearch_s(key, base, nmemb, size, compare_wrapper, compar);
+}
+/*********************************************************************
  *		_chkesp (MSVCRT.@)
  *
  * Trap to a debugger if the value of the stack pointer has changed.
@@ -187,41 +229,109 @@ void CDECL _chkesp(void)
 
 #endif  /* __i386__ */
 
-/*********************************************************************
- * Helper function for MSVCRT_qsort_s.
- *
- * Based on NTDLL_qsort in dlls/ntdll/misc.c
- */
-static void MSVCRT_mergesort( void *arr, void *barr, size_t elemsize,
-        int (CDECL *compar)(void *, const void *, const void *),
-        size_t left, size_t right, void *context )
+static inline void swap(char *l, char *r, MSVCRT_size_t size)
 {
-    if (right>left) {
-        size_t i, j, k, m;
-        m=left+(right-left)/2;
-        MSVCRT_mergesort(arr, barr, elemsize, compar, left, m, context);
-        MSVCRT_mergesort(arr, barr, elemsize, compar, m+1, right, context);
+    char tmp;
 
-#define X(a,i) ((char*)a+elemsize*(i))
-        for (i=m+1; i>left; i--)
-            memcpy (X(barr,(i-1)),X(arr,(i-1)),elemsize);
-        for (j=m; j<right; j++)
-            memcpy (X(barr,(right+m-j)),X(arr,(j+1)),elemsize);
+    while(size--) {
+        tmp = *l;
+        *l++ = *r;
+        *r++ = tmp;
+    }
+}
 
-        /* i=left; j=right; */
-        for (k=left; i<=m && j>m; k++) {
-            if (i==j || compar(context, X(barr,i),X(barr,j))<=0) {
-                memcpy(X(arr,k),X(barr,i),elemsize);
-                i++;
-            } else {
-                memcpy(X(arr,k),X(barr,j),elemsize);
-                j--;
-            }
+static void small_sort(void *base, MSVCRT_size_t nmemb, MSVCRT_size_t size,
+        int (CDECL *compar)(void *, const void *, const void *), void *context)
+{
+    MSVCRT_size_t e, i;
+    char *max, *p;
+
+    for(e=nmemb; e>1; e--) {
+        max = base;
+        for(i=1; i<e; i++) {
+            p = (char*)base + i*size;
+            if(compar(context, p, max) > 0)
+                max = p;
         }
-        for (; i<=m; i++, k++)
-            memcpy(X(arr,k),X(barr,i),elemsize);
-        for (; j>m; j--, k++)
-            memcpy(X(arr,k),X(barr,j),elemsize);
+
+        if(p != max)
+            swap(p, max, size);
+    }
+}
+
+static void quick_sort(void *base, MSVCRT_size_t nmemb, MSVCRT_size_t size,
+        int (CDECL *compar)(void *, const void *, const void *), void *context)
+{
+    MSVCRT_size_t stack_lo[8*sizeof(MSVCRT_size_t)], stack_hi[8*sizeof(MSVCRT_size_t)];
+    MSVCRT_size_t beg, end, lo, hi, med;
+    int stack_pos;
+
+    stack_pos = 0;
+    stack_lo[stack_pos] = 0;
+    stack_hi[stack_pos] = nmemb-1;
+
+#define X(i) ((char*)base+size*(i))
+    while(stack_pos >= 0) {
+        beg = stack_lo[stack_pos];
+        end = stack_hi[stack_pos--];
+
+        if(end-beg < 8) {
+            small_sort(X(beg), end-beg+1, size, compar, context);
+            continue;
+        }
+
+        lo = beg;
+        hi = end;
+        med = lo + (hi-lo+1)/2;
+        if(compar(context, X(lo), X(med)) > 0)
+            swap(X(lo), X(med), size);
+        if(compar(context, X(lo), X(hi)) > 0)
+            swap(X(lo), X(hi), size);
+        if(compar(context, X(med), X(hi)) > 0)
+            swap(X(med), X(hi), size);
+
+        lo++;
+        hi--;
+        while(1) {
+            while(lo <= hi) {
+                if(lo!=med && compar(context, X(lo), X(med))>0)
+                    break;
+                lo++;
+            }
+
+            while(med != hi) {
+                if(compar(context, X(hi), X(med)) <= 0)
+                    break;
+                hi--;
+            }
+
+            if(hi < lo)
+                break;
+
+            swap(X(lo), X(hi), size);
+            if(hi == med)
+                med = lo;
+            lo++;
+            hi--;
+        }
+
+        while(hi > beg) {
+            if(hi!=med && compar(context, X(hi), X(med))!=0)
+                break;
+            hi--;
+        }
+
+        if(hi-beg >= end-lo) {
+            stack_lo[++stack_pos] = beg;
+            stack_hi[stack_pos] = hi;
+            stack_lo[++stack_pos] = lo;
+            stack_hi[stack_pos] = end;
+        }else {
+            stack_lo[++stack_pos] = lo;
+            stack_hi[stack_pos] = end;
+            stack_lo[++stack_pos] = beg;
+            stack_hi[stack_pos] = hi;
+        }
     }
 #undef X
 }
@@ -229,37 +339,53 @@ static void MSVCRT_mergesort( void *arr, void *barr, size_t elemsize,
 /*********************************************************************
  * qsort_s (MSVCRT.@)
  *
- * Based on NTDLL_qsort in dlls/ntdll/misc.c
+ * This function is trying to sort data doing identical comparisons
+ * as native does. There are still cases where it behaves differently.
  */
 void CDECL MSVCRT_qsort_s(void *base, MSVCRT_size_t nmemb, MSVCRT_size_t size,
     int (CDECL *compar)(void *, const void *, const void *), void *context)
 {
-    void *secondarr;
-    const size_t total_size = nmemb*size;
+    const MSVCRT_size_t total_size = nmemb*size;
 
-    if (!MSVCRT_CHECK_PMT(base != NULL || (base == NULL && nmemb == 0)) ||
-            !MSVCRT_CHECK_PMT(size > 0) || !MSVCRT_CHECK_PMT(compar != NULL) ||
-            total_size / size != nmemb)
-    {
-        *MSVCRT__errno() = MSVCRT_EINVAL;
-        return;
-    }
+    if (!MSVCRT_CHECK_PMT(base != NULL || (base == NULL && nmemb == 0))) return;
+    if (!MSVCRT_CHECK_PMT(size > 0)) return;
+    if (!MSVCRT_CHECK_PMT(compar != NULL)) return;
+    if (total_size / size != nmemb) return;
 
     if (nmemb < 2) return;
 
-    secondarr = MSVCRT_malloc(total_size);
-    if (!secondarr)
-        return;
-    MSVCRT_mergesort(base, secondarr, size, compar, 0, nmemb-1, context);
-    MSVCRT_free(secondarr);
+    quick_sort(base, nmemb, size, compar, context);
+}
+
+/*********************************************************************
+ * qsort (MSVCRT.@)
+ */
+void CDECL MSVCRT_qsort(void *base, MSVCRT_size_t nmemb, MSVCRT_size_t size,
+        int (CDECL *compar)(const void*, const void*))
+{
+    MSVCRT_qsort_s(base, nmemb, size, compare_wrapper, compar);
 }
 
 /*********************************************************************
  * _get_output_format (MSVCRT.@)
  */
-unsigned int CDECL _get_output_format(void)
+unsigned int CDECL MSVCRT__get_output_format(void)
 {
-   return 0;
+   return output_format;
+}
+
+/*********************************************************************
+ * _set_output_format (MSVCRT.@)
+ */
+unsigned int CDECL MSVCRT__set_output_format(unsigned int new_output_format)
+{
+    unsigned int ret = output_format;
+
+    if(!MSVCRT_CHECK_PMT(new_output_format==0 || new_output_format==MSVCRT__TWO_DIGIT_EXPONENT))
+        return ret;
+
+    output_format = new_output_format;
+    return ret;
 }
 
 /*********************************************************************
@@ -268,7 +394,107 @@ unsigned int CDECL _get_output_format(void)
 int CDECL MSVCRT__resetstkoflw(void)
 {
     int stack_addr;
+    DWORD oldprot;
 
     /* causes stack fault that updates NtCurrentTeb()->Tib.StackLimit */
-    return VirtualProtect( &stack_addr, 1, PAGE_GUARD|PAGE_READWRITE, NULL );
+    return VirtualProtect(&stack_addr, 1, PAGE_GUARD|PAGE_READWRITE, &oldprot);
+}
+
+/*********************************************************************
+ *  _decode_pointer (MSVCR90.@)
+ */
+void * CDECL MSVCRT_decode_pointer(void * ptr)
+{
+    return DecodePointer(ptr);
+}
+
+/*********************************************************************
+ *  _encode_pointer (MSVCR90.@)
+ */
+void * CDECL MSVCRT_encode_pointer(void * ptr)
+{
+    return EncodePointer(ptr);
+}
+
+/*********************************************************************
+ *  _encoded_null (MSVCR100.@)
+ */
+void * CDECL _encoded_null(void)
+{
+    TRACE("\n");
+
+    return EncodePointer(NULL);
+}
+
+/*********************************************************************
+ * _CRT_RTC_INIT (MSVCR100.@)
+ */
+void* CDECL _CRT_RTC_INIT(void *unk1, void *unk2, int unk3, int unk4, int unk5)
+{
+    TRACE("%p %p %x %x %x\n", unk1, unk2, unk3, unk4, unk5);
+    return NULL;
+}
+
+/*********************************************************************
+ * _CRT_RTC_INITW (MSVCR100.@)
+ */
+void* CDECL _CRT_RTC_INITW(void *unk1, void *unk2, int unk3, int unk4, int unk5)
+{
+    TRACE("%p %p %x %x %x\n", unk1, unk2, unk3, unk4, unk5);
+    return NULL;
+}
+
+/*********************************************************************
+ * _byteswap_ushort (MSVCR100.@)
+ */
+unsigned short CDECL _byteswap_ushort(unsigned short s)
+{
+    return (s<<8) + (s>>8);
+}
+
+/*********************************************************************
+ * _byteswap_ulong (MSVCR100.@)
+ */
+ULONG CDECL MSVCRT__byteswap_ulong(ULONG l)
+{
+    return (l<<24) + ((l<<8)&0xFF0000) + ((l>>8)&0xFF00) + (l>>24);
+}
+
+/*********************************************************************
+ * _byteswap_uint64 (MSVCR100.@)
+ */
+unsigned __int64 CDECL _byteswap_uint64(unsigned __int64 i)
+{
+    return (i<<56) + ((i&0xFF00)<<40) + ((i&0xFF0000)<<24) + ((i&0xFF000000)<<8) +
+        ((i>>8)&0xFF000000) + ((i>>24)&0xFF0000) + ((i>>40)&0xFF00) + (i>>56);
+}
+
+/*********************************************************************
+ *  __crtGetShowWindowMode (MSVCR110.@)
+ */
+int CDECL MSVCR110__crtGetShowWindowMode(void)
+{
+    STARTUPINFOW si;
+
+    GetStartupInfoW(&si);
+    TRACE("window=%d\n", si.wShowWindow);
+    return si.wShowWindow;
+}
+
+/*********************************************************************
+ *  __crtInitializeCriticalSectionEx (MSVCR110.@)
+ */
+BOOL CDECL MSVCR110__crtInitializeCriticalSectionEx(
+        CRITICAL_SECTION *cs, DWORD spin_count, DWORD flags)
+{
+    TRACE("(%p %x %x)\n", cs, spin_count, flags);
+    return InitializeCriticalSectionEx(cs, spin_count, flags);
+}
+
+/*********************************************************************
+ * _vacopy (MSVCR120.@)
+ */
+void CDECL MSVCR120__vacopy(__ms_va_list *dest, __ms_va_list src)
+{
+    __ms_va_copy(*dest, src);
 }

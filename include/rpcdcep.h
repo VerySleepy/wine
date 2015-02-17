@@ -124,6 +124,14 @@ typedef struct _RPC_CLIENT_INTERFACE
     unsigned int Flags;
 } RPC_CLIENT_INTERFACE, *PRPC_CLIENT_INTERFACE;
 
+#define RPC_C_OPT_COOKIE_AUTH 7
+
+typedef struct _RPC_C_OPT_COOKIE_AUTH_DESCRIPTOR
+{
+    ULONG BufferSize;
+    char *Buffer;
+} RPC_C_OPT_COOKIE_AUTH_DESCRIPTOR;
+
 #define TRANSPORT_TYPE_CN   0x01
 #define TRANSPORT_TYPE_DG   0x02
 #define TRANSPORT_TYPE_LPC  0x04
@@ -211,6 +219,9 @@ RPCRTAPI UINT RPC_ENTRY
   I_RpcWindowProc( void* hWnd, unsigned int Message, unsigned int wParam, ULONG lParam );
 
 #endif
+
+RPCRTAPI RPC_STATUS RPC_ENTRY
+  I_RpcBindingInqLocalClientPID (RPC_BINDING_HANDLE Binding, ULONG *Pid );
 
 RPCRTAPI RPC_STATUS RPC_ENTRY
   I_RpcBindingInqTransportType( RPC_BINDING_HANDLE Binding, unsigned int* Type );

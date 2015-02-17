@@ -56,9 +56,27 @@ HKCR
     {
         OLEScript
     }
-    ForceRemove '.vbs' = s 'VBSFile'
     ForceRemove VBSFile = s 'VBScript Script File'
     {
         ScriptEngine = s 'VBScript'
+        Shell = s 'Open'
+        {
+            Edit
+            {
+                Command = s '"%%SystemRoot%%\system32\notepad.exe" %%1'
+            }
+            Open
+            {
+                Command = s '"%%SystemRoot%%\system32\wscript.exe" "%%1" %%*'
+            }
+            Open2
+            {
+                Command = s '"%%SystemRoot%%\system32\cscript.exe" "%%1" %%*'
+            }
+            Print
+            {
+                Command = s '"%%SystemRoot%%\system32\notepad.exe" /p %%1'
+            }
+        }
     }
 }

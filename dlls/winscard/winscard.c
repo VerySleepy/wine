@@ -26,7 +26,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(winscard);
 
-static HMODULE WINSCARD_hModule;
 static HANDLE g_startedEvent = NULL;
 
 const SCARD_IO_REQUEST g_rgSCardT0Pci = { SCARD_PROTOCOL_T0, 8 };
@@ -41,18 +40,14 @@ BOOL WINAPI DllMain (HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
     switch (fdwReason)
     {
         case DLL_PROCESS_ATTACH:
-        {
             DisableThreadLibraryCalls(hinstDLL);
-            WINSCARD_hModule = hinstDLL;
             /* FIXME: for now, we act as if the pcsc daemon is always started */
             g_startedEvent = CreateEventA(NULL,TRUE,TRUE,NULL);
             break;
-        }
         case DLL_PROCESS_DETACH:
-        {
+            if (lpvReserved) break;
             CloseHandle(g_startedEvent);
             break;
-        }
     }
 
     return TRUE;
@@ -110,6 +105,20 @@ LONG WINAPI SCardListCardsA(SCARDCONTEXT hContext, LPCBYTE pbAtr, LPCGUID rgguid
 }
 
 LONG WINAPI SCardReleaseContext(SCARDCONTEXT context)
+{
+    FIXME("(%lx) stub\n", context);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return SCARD_F_INTERNAL_ERROR;
+}
+
+LONG WINAPI SCardStatusA(SCARDHANDLE context, LPSTR szReaderName, LPDWORD pcchReaderLen, LPDWORD pdwState, LPDWORD pdwProtocol, LPBYTE pbAtr, LPDWORD pcbAtrLen)
+{
+    FIXME("(%lx) stub\n", context);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return SCARD_F_INTERNAL_ERROR;
+}
+
+LONG WINAPI SCardStatusW(SCARDHANDLE context, LPWSTR szReaderName, LPDWORD pcchReaderLen, LPDWORD pdwState,LPDWORD pdwProtocol,LPBYTE pbAtr,LPDWORD pcbArtLen)
 {
     FIXME("(%lx) stub\n", context);
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);

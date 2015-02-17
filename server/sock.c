@@ -30,8 +30,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
-#ifdef HAVE_SYS_ERRNO_H
-# include <sys/errno.h>
+#ifdef HAVE_POLL_H
+# include <poll.h>
 #endif
 #include <sys/time.h>
 #include <sys/types.h>
@@ -46,12 +46,18 @@
 #endif
 #include <time.h>
 #include <unistd.h>
+#include <limits.h>
+#ifdef HAVE_LINUX_RTNETLINK_H
+# include <linux/rtnetlink.h>
+#endif
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "windef.h"
 #include "winternl.h"
 #include "winerror.h"
+#define USE_WS_PREFIX
+#include "winsock2.h"
 
 #include "process.h"
 #include "file.h"
@@ -86,9 +92,6 @@
 #define FD_WINE_RAW                0x80000000
 #define FD_WINE_INTERNAL           0xFFFF0000
 
-/* Constants for WSAIoctl() */
-#define WSA_FLAG_OVERLAPPED        0x01
-
 struct sock
 {
     struct object       obj;         /* object header */
@@ -99,6 +102,7 @@ struct sock
     unsigned int        pmask;       /* pending events */
     unsigned int        flags;       /* socket flags */
     int                 polling;     /* is socket being polled? */
+    unsigned short      proto;       /* socket protocol */
     unsigned short      type;        /* socket type */
     unsigned short      family;      /* socket family */
     struct event       *event;       /* event object */
@@ -106,19 +110,28 @@ struct sock
     unsigned int        message;     /* message to send */
     obj_handle_t        wparam;      /* message wparam (socket handle) */
     int                 errors[FD_MAX_EVENTS]; /* event errors */
+    timeout_t           connect_time;/* time the socket was connected */
     struct sock        *deferred;    /* socket that waits for a deferred accept */
     struct async_queue *read_q;      /* queue for asynchronous reads */
     struct async_queue *write_q;     /* queue for asynchronous writes */
+    struct async_queue *ifchange_q;  /* queue for interface change notifications */
+    struct object      *ifchange_obj; /* the interface change notification object */
+    struct list         ifchange_entry; /* entry in ifchange notification list */
 };
 
 static void sock_dump( struct object *obj, int verbose );
-static int sock_signaled( struct object *obj, struct thread *thread );
+static int sock_add_ifchange( struct sock *sock, const async_data_t *async_data );
+static int sock_signaled( struct object *obj, struct wait_queue_entry *entry );
 static struct fd *sock_get_fd( struct object *obj );
 static void sock_destroy( struct object *obj );
+static struct async_queue *sock_get_ifchange_q( struct sock *sock );
+static void sock_destroy_ifchange_q( struct sock *sock );
 
 static int sock_get_poll_events( struct fd *fd );
 static void sock_poll_event( struct fd *fd, int event );
 static enum server_fd_type sock_get_fd_type( struct fd *fd );
+static obj_handle_t sock_ioctl( struct fd *fd, ioctl_code_t code, const async_data_t *async,
+                                int blocking, const void *data, data_size_t size );
 static void sock_queue_async( struct fd *fd, const async_data_t *data, int type, int count );
 static void sock_reselect_async( struct fd *fd, struct async_queue *queue );
 static void sock_cancel_async( struct fd *fd, struct process *process, struct thread *thread, client_ptr_t iosb );
@@ -153,7 +166,7 @@ static const struct fd_ops sock_fd_ops =
     sock_poll_event,              /* poll_event */
     no_flush,                     /* flush */
     sock_get_fd_type,             /* get_fd_type */
-    default_fd_ioctl,             /* ioctl */
+    sock_ioctl,                   /* ioctl */
     sock_queue_async,             /* queue_async */
     sock_reselect_async,          /* reselect_async */
     sock_cancel_async             /* cancel_async */
@@ -196,7 +209,7 @@ static sock_shutdown_t sock_check_pollhup(void)
     struct pollfd pfd;
     char dummy;
 
-    if ( socketpair( AF_UNIX, SOCK_STREAM, 0, fd ) ) goto out;
+    if ( socketpair( AF_UNIX, SOCK_STREAM, 0, fd ) ) return ret;
     if ( shutdown( fd[0], 1 ) ) goto out;
 
     pfd.fd = fd[1];
@@ -288,9 +301,9 @@ static void sock_wake_up( struct sock *sock )
 
 static inline int sock_error( struct fd *fd )
 {
-    unsigned int optval = 0, optlen;
+    unsigned int optval = 0;
+    socklen_t optlen = sizeof(optval);
 
-    optlen = sizeof(optval);
     getsockopt( get_unix_fd(fd), SOL_SOCKET, SO_ERROR, (void *) &optval, &optlen);
     return optval;
 }
@@ -400,6 +413,7 @@ static void sock_poll_event( struct fd *fd, int event )
             /* we got connected */
             sock->state |= FD_WINE_CONNECTED|FD_READ|FD_WRITE;
             sock->state &= ~FD_CONNECT;
+            sock->connect_time = current_time;
         }
     }
     else if (sock->state & FD_WINE_LISTENING)
@@ -468,12 +482,12 @@ static void sock_dump( struct object *obj, int verbose )
 {
     struct sock *sock = (struct sock *)obj;
     assert( obj->ops == &sock_ops );
-    printf( "Socket fd=%p, state=%x, mask=%x, pending=%x, held=%x\n",
+    fprintf( stderr, "Socket fd=%p, state=%x, mask=%x, pending=%x, held=%x\n",
             sock->fd, sock->state,
             sock->mask, sock->pmask, sock->hmask );
 }
 
-static int sock_signaled( struct object *obj, struct thread *thread )
+static int sock_signaled( struct object *obj, struct wait_queue_entry *entry )
 {
     struct sock *sock = (struct sock *)obj;
     assert( obj->ops == &sock_ops );
@@ -518,6 +532,37 @@ static int sock_get_poll_events( struct fd *fd )
 static enum server_fd_type sock_get_fd_type( struct fd *fd )
 {
     return FD_TYPE_SOCKET;
+}
+
+obj_handle_t sock_ioctl( struct fd *fd, ioctl_code_t code, const async_data_t *async_data,
+                         int blocking, const void *data, data_size_t size )
+{
+    struct sock *sock = get_fd_user( fd );
+    obj_handle_t wait_handle = 0;
+    async_data_t new_data;
+
+    assert( sock->obj.ops == &sock_ops );
+
+    switch(code)
+    {
+    case WS_SIO_ADDRESS_LIST_CHANGE:
+        if (blocking)
+        {
+            if (!(wait_handle = alloc_wait_event( current->process ))) return 0;
+            new_data = *async_data;
+            new_data.event = wait_handle;
+            async_data = &new_data;
+        }
+        if (!sock_add_ifchange( sock, async_data ) && wait_handle)
+        {
+            close_handle( current->process, wait_handle );
+            return 0;
+        }
+        return wait_handle;
+    default:
+        set_error( STATUS_NOT_SUPPORTED );
+        return 0;
+    }
 }
 
 static void sock_queue_async( struct fd *fd, const async_data_t *data, int type, int count )
@@ -594,6 +639,7 @@ static void sock_destroy( struct object *obj )
 
     free_async_queue( sock->read_q );
     free_async_queue( sock->write_q );
+    sock_destroy_ifchange_q( sock );
     if (sock->event) release_object( sock->event );
     if (sock->fd)
     {
@@ -617,9 +663,12 @@ static void init_sock(struct sock *sock)
     sock->window  = 0;
     sock->message = 0;
     sock->wparam  = 0;
+    sock->connect_time = 0;
     sock->deferred = NULL;
     sock->read_q  = NULL;
     sock->write_q = NULL;
+    sock->ifchange_q = NULL;
+    sock->ifchange_obj = NULL;
     memset( sock->errors, 0, sizeof(sock->errors) );
 }
 
@@ -646,6 +695,7 @@ static struct object *create_socket( int family, int type, int protocol, unsigne
     init_sock( sock );
     sock->state  = (type != SOCK_STREAM) ? (FD_READ|FD_WRITE) : 0;
     sock->flags  = flags;
+    sock->proto  = protocol;
     sock->type   = type;
     sock->family = family;
 
@@ -670,7 +720,7 @@ static int accept_new_fd( struct sock *sock )
      */
     int acceptfd;
     struct sockaddr saddr;
-    unsigned int slen = sizeof(saddr);
+    socklen_t slen = sizeof(saddr);
     acceptfd = accept( get_unix_fd(sock->fd), &saddr, &slen);
     if (acceptfd == -1)
     {
@@ -718,10 +768,12 @@ static struct sock *accept_socket( obj_handle_t handle )
         if (sock->state & FD_WINE_NONBLOCKING)
             acceptsock->state |= FD_WINE_NONBLOCKING;
         acceptsock->mask    = sock->mask;
+        acceptsock->proto   = sock->proto;
         acceptsock->type    = sock->type;
         acceptsock->family  = sock->family;
         acceptsock->window  = sock->window;
         acceptsock->message = sock->message;
+        acceptsock->connect_time = current_time;
         if (sock->event) acceptsock->event = (struct event *)grab_object( sock->event );
         acceptsock->flags = sock->flags;
         if (!(acceptsock->fd = create_anonymous_fd( &sock_fd_ops, acceptfd, &acceptsock->obj,
@@ -763,20 +815,19 @@ static int accept_into_socket( struct sock *sock, struct sock *acceptsock )
 
         if (!(newfd = create_anonymous_fd( &sock_fd_ops, acceptfd, &acceptsock->obj,
                                             get_fd_options( acceptsock->fd ) )))
-        {
-            close( acceptfd );
             return FALSE;
-        }
     }
 
     acceptsock->state  |= FD_WINE_CONNECTED|FD_READ|FD_WRITE;
     acceptsock->hmask   = 0;
     acceptsock->pmask   = 0;
     acceptsock->polling = 0;
+    acceptsock->proto   = sock->proto;
     acceptsock->type    = sock->type;
     acceptsock->family  = sock->family;
     acceptsock->wparam  = 0;
     acceptsock->deferred = NULL;
+    acceptsock->connect_time = current_time;
     release_object( acceptsock->fd );
     acceptsock->fd = newfd;
 
@@ -788,7 +839,7 @@ static int accept_into_socket( struct sock *sock, struct sock *acceptsock )
     return TRUE;
 }
 
-/* set the last error depending on errno */
+/* return an errno value mapped to a WSA error */
 static int sock_get_error( int err )
 {
     switch (err)
@@ -909,6 +960,274 @@ static void sock_set_error(void)
     set_error( sock_get_ntstatus( errno ) );
 }
 
+/* add interface change notification to a socket */
+static int sock_add_ifchange( struct sock *sock, const async_data_t *async_data )
+{
+    struct async_queue *ifchange_q;
+    struct async *async;
+
+    if (!(ifchange_q = sock_get_ifchange_q( sock )))
+        return 0;
+
+    if (!(async = create_async( current, ifchange_q, async_data )))
+    {
+        if (!async_queued( ifchange_q ))
+            sock_destroy_ifchange_q( sock );
+
+        set_error( STATUS_NO_MEMORY );
+        return 0;
+    }
+
+    release_object( async );
+    set_error( STATUS_PENDING );
+    return 1;
+}
+
+#ifdef HAVE_LINUX_RTNETLINK_H
+
+/* only keep one ifchange object around, all sockets waiting for wakeups will look to it */
+static struct object *ifchange_object;
+
+static void ifchange_dump( struct object *obj, int verbose );
+static struct fd *ifchange_get_fd( struct object *obj );
+static void ifchange_destroy( struct object *obj );
+
+static int ifchange_get_poll_events( struct fd *fd );
+static void ifchange_poll_event( struct fd *fd, int event );
+static void ifchange_reselect_async( struct fd *fd, struct async_queue *queue );
+
+struct ifchange
+{
+    struct object       obj;     /* object header */
+    struct fd          *fd;      /* interface change file descriptor */
+    struct list         sockets; /* list of sockets to send interface change notifications */
+};
+
+static const struct object_ops ifchange_ops =
+{
+    sizeof(struct ifchange), /* size */
+    ifchange_dump,           /* dump */
+    no_get_type,             /* get_type */
+    add_queue,               /* add_queue */
+    NULL,                    /* remove_queue */
+    NULL,                    /* signaled */
+    no_satisfied,            /* satisfied */
+    no_signal,               /* signal */
+    ifchange_get_fd,         /* get_fd */
+    default_fd_map_access,   /* map_access */
+    default_get_sd,          /* get_sd */
+    default_set_sd,          /* set_sd */
+    no_lookup_name,          /* lookup_name */
+    no_open_file,            /* open_file */
+    no_close_handle,         /* close_handle */
+    ifchange_destroy         /* destroy */
+};
+
+static const struct fd_ops ifchange_fd_ops =
+{
+    ifchange_get_poll_events, /* get_poll_events */
+    ifchange_poll_event,      /* poll_event */
+    NULL,                     /* flush */
+    NULL,                     /* get_fd_type */
+    NULL,                     /* ioctl */
+    NULL,                     /* queue_async */
+    ifchange_reselect_async,  /* reselect_async */
+    NULL                      /* cancel_async */
+};
+
+static void ifchange_dump( struct object *obj, int verbose )
+{
+    assert( obj->ops == &ifchange_ops );
+    fprintf( stderr, "Interface change\n" );
+}
+
+static struct fd *ifchange_get_fd( struct object *obj )
+{
+    struct ifchange *ifchange = (struct ifchange *)obj;
+    return (struct fd *)grab_object( ifchange->fd );
+}
+
+static void ifchange_destroy( struct object *obj )
+{
+    struct ifchange *ifchange = (struct ifchange *)obj;
+    assert( obj->ops == &ifchange_ops );
+
+    release_object( ifchange->fd );
+
+    /* reset the global ifchange object so that it will be recreated if it is needed again */
+    assert( obj == ifchange_object );
+    ifchange_object = NULL;
+}
+
+static int ifchange_get_poll_events( struct fd *fd )
+{
+    return POLLIN;
+}
+
+/* wake up all the sockets waiting for a change notification event */
+static void ifchange_wake_up( struct object *obj, unsigned int status )
+{
+    struct ifchange *ifchange = (struct ifchange *)obj;
+    struct list *ptr, *next;
+    assert( obj->ops == &ifchange_ops );
+    assert( obj == ifchange_object );
+
+    LIST_FOR_EACH_SAFE( ptr, next, &ifchange->sockets )
+    {
+        struct sock *sock = LIST_ENTRY( ptr, struct sock, ifchange_entry );
+
+        assert( sock->ifchange_q );
+        async_wake_up( sock->ifchange_q, status ); /* issue ifchange notification for the socket */
+        sock_destroy_ifchange_q( sock ); /* remove socket from list and decrement ifchange refcount */
+    }
+}
+
+static void ifchange_poll_event( struct fd *fd, int event )
+{
+    struct object *ifchange = get_fd_user( fd );
+    unsigned int status = STATUS_PENDING;
+    char buffer[PIPE_BUF];
+    int r;
+
+    r = recv( get_unix_fd(fd), buffer, sizeof(buffer), MSG_DONTWAIT );
+    if (r < 0)
+    {
+        if (errno == EWOULDBLOCK || errno == EAGAIN)
+            return; /* retry when poll() says the socket is ready */
+        status = sock_get_ntstatus( errno );
+    }
+    else if (r > 0)
+    {
+        struct nlmsghdr *nlh;
+
+        for (nlh = (struct nlmsghdr *)buffer; NLMSG_OK(nlh, r); nlh = NLMSG_NEXT(nlh, r))
+        {
+            if (nlh->nlmsg_type == NLMSG_DONE)
+                break;
+            if (nlh->nlmsg_type == RTM_NEWADDR || nlh->nlmsg_type == RTM_DELADDR)
+                status = STATUS_SUCCESS;
+        }
+    }
+    else status = STATUS_CANCELLED;
+
+    if (status != STATUS_PENDING) ifchange_wake_up( ifchange, status );
+}
+
+static void ifchange_reselect_async( struct fd *fd, struct async_queue *queue )
+{
+    /* do nothing, this object is about to disappear */
+}
+
+#endif
+
+/* we only need one of these interface notification objects, all of the sockets dependent upon
+ * it will wake up when a notification event occurs */
+ static struct object *get_ifchange( void )
+ {
+#ifdef HAVE_LINUX_RTNETLINK_H
+    struct ifchange *ifchange;
+    struct sockaddr_nl addr;
+    int unix_fd;
+
+    if (ifchange_object)
+    {
+        /* increment the refcount for each socket that uses the ifchange object */
+        return grab_object( ifchange_object );
+    }
+
+    /* create the socket we need for processing interface change notifications */
+    unix_fd = socket( PF_NETLINK, SOCK_RAW, NETLINK_ROUTE );
+    if (unix_fd == -1)
+    {
+        sock_set_error();
+        return NULL;
+    }
+    fcntl( unix_fd, F_SETFL, O_NONBLOCK ); /* make socket nonblocking */
+    memset( &addr, 0, sizeof(addr) );
+    addr.nl_family = AF_NETLINK;
+    addr.nl_groups = RTMGRP_IPV4_IFADDR;
+    /* bind the socket to the special netlink kernel interface */
+    if (bind( unix_fd, (struct sockaddr *)&addr, sizeof(addr) ) == -1)
+    {
+        close( unix_fd );
+        sock_set_error();
+        return NULL;
+    }
+    if (!(ifchange = alloc_object( &ifchange_ops )))
+    {
+        close( unix_fd );
+        set_error( STATUS_NO_MEMORY );
+        return NULL;
+    }
+    list_init( &ifchange->sockets );
+    if (!(ifchange->fd = create_anonymous_fd( &ifchange_fd_ops, unix_fd, &ifchange->obj, 0 )))
+    {
+        release_object( ifchange );
+        set_error( STATUS_NO_MEMORY );
+        return NULL;
+    }
+    set_fd_events( ifchange->fd, POLLIN ); /* enable read wakeup on the file descriptor */
+
+    /* the ifchange object is now successfully configured */
+    ifchange_object = &ifchange->obj;
+    return &ifchange->obj;
+#else
+    set_error( STATUS_NOT_SUPPORTED );
+    return NULL;
+#endif
+}
+
+/* add the socket to the interface change notification list */
+static void ifchange_add_sock( struct object *obj, struct sock *sock )
+{
+#ifdef HAVE_LINUX_RTNETLINK_H
+    struct ifchange *ifchange = (struct ifchange *)obj;
+
+    list_add_tail( &ifchange->sockets, &sock->ifchange_entry );
+#endif
+}
+
+/* create a new ifchange queue for a specific socket or, if one already exists, reuse the existing one */
+static struct async_queue *sock_get_ifchange_q( struct sock *sock )
+{
+    struct object *ifchange;
+    struct fd *fd;
+
+    if (sock->ifchange_q) /* reuse existing ifchange_q for this socket */
+        return sock->ifchange_q;
+
+    if (!(ifchange = get_ifchange()))
+        return NULL;
+
+    /* create the ifchange notification queue */
+    fd = ifchange->ops->get_fd( ifchange );
+    sock->ifchange_q = create_async_queue( fd );
+    release_object( fd );
+    if (!sock->ifchange_q)
+    {
+        release_object( ifchange );
+        set_error( STATUS_NO_MEMORY );
+        return NULL;
+    }
+
+    /* add the socket to the ifchange notification list */
+    ifchange_add_sock( ifchange, sock );
+    sock->ifchange_obj = ifchange;
+    return sock->ifchange_q;
+}
+
+/* destroy an existing ifchange queue for a specific socket */
+static void sock_destroy_ifchange_q( struct sock *sock )
+{
+    if (sock->ifchange_q)
+    {
+        list_remove( &sock->ifchange_entry );
+        free_async_queue( sock->ifchange_q );
+        sock->ifchange_q = NULL;
+        release_object( sock->ifchange_obj );
+    }
+}
+
 /* create a socket */
 DECL_HANDLER(create_socket)
 {
@@ -984,8 +1303,7 @@ DECL_HANDLER(set_socket_event)
 
     sock_reselect( sock );
 
-    if (sock->mask)
-        sock->state |= FD_WINE_NONBLOCKING;
+    sock->state |= FD_WINE_NONBLOCKING;
 
     /* if a network event is pending, signal the event object
        it is possible that FD_CONNECT or FD_ACCEPT network events has happened
@@ -1076,4 +1394,18 @@ DECL_HANDLER(set_socket_deferred)
     }
     sock->deferred = acceptsock;
     release_object( sock );
+}
+
+DECL_HANDLER(get_socket_info)
+{
+    struct sock *sock;
+
+    sock = (struct sock *)get_handle_obj( current->process, req->handle, FILE_READ_ATTRIBUTES, &sock_ops );
+    if (!sock) return;
+
+    reply->family   = sock->family;
+    reply->type     = sock->type;
+    reply->protocol = sock->proto;
+
+    release_object( &sock->obj );
 }

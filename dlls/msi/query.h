@@ -96,6 +96,19 @@ struct expr
     } u;
 };
 
+typedef struct
+{
+    MSIDATABASE *db;
+    LPCWSTR command;
+    DWORD n, len;
+    UINT r;
+    MSIVIEW **view;  /* View structure for the resulting query.  This value
+                      * tracks the view currently being created so we can free
+                      * this view on syntax error.
+                      */
+    struct list *mem;
+} SQL_input;
+
 UINT MSI_ParseSQL( MSIDATABASE *db, LPCWSTR command, MSIVIEW **phview,
                    struct list *mem ) DECLSPEC_HIDDEN;
 
@@ -131,7 +144,7 @@ UINT STORAGES_CreateView( MSIDATABASE *db, MSIVIEW **view ) DECLSPEC_HIDDEN;
 
 UINT DROP_CreateView( MSIDATABASE *db, MSIVIEW **view, LPCWSTR name ) DECLSPEC_HIDDEN;
 
-int sqliteGetToken(const WCHAR *z, int *tokenType) DECLSPEC_HIDDEN;
+int sqliteGetToken(const WCHAR *z, int *tokenType, int *skip) DECLSPEC_HIDDEN;
 
 MSIRECORD *msi_query_merge_record( UINT fields, const column_info *vl, MSIRECORD *rec ) DECLSPEC_HIDDEN;
 

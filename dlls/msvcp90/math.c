@@ -21,6 +21,7 @@
 #include <stdarg.h>
 #include <limits.h>
 #include <float.h>
+#define _USE_MATH_DEFINES
 #include <math.h>
 
 #include "msvcp90.h"
@@ -412,8 +413,8 @@ const BOOLEAN std_Num_float_base_traps = TRUE;
 /* ??4_Num_float_base@std@@QEAAAEAU01@AEBU01@@Z -> public: struct std::_Num_float_base & __ptr64 __cdecl std::_Num_float_base::operator=(struct std::_Num_float_base const & __ptr64) __ptr64 */
 /* ??4_Num_int_base@std@@QAEAAU01@ABU01@@Z -> public: struct std::_Num_int_base & __thiscall std::_Num_int_base::operator=(struct std::_Num_int_base const &) */
 /* ??4_Num_int_base@std@@QEAAAEAU01@AEBU01@@Z -> public: struct std::_Num_int_base & __ptr64 __cdecl std::_Num_int_base::operator=(struct std::_Num_int_base const & __ptr64) __ptr64 */
-DEFINE_THISCALL_WRAPPER( std_Num_base_op_assign, 4 )
-std_Num_base * __thiscall std_Num_base_op_assign( std_Num_base *this )
+DEFINE_THISCALL_WRAPPER( std_Num_base_op_assign, 8 )
+std_Num_base * __thiscall std_Num_base_op_assign( std_Num_base *this, std_Num_base *right )
 {
     return this;
 }
@@ -461,7 +462,7 @@ __int64 __cdecl std_numeric_limits_int64_denorm_min(void) { return 0; }
 unsigned __int64 __cdecl std_numeric_limits_unsigned_int64_denorm_min(void) { return 0; }
 
 /* ?denorm_min@?$numeric_limits@_N@std@@SA_NXZ -> public: static bool __cdecl std::numeric_limits<bool>::denorm_min(void) */
-BOOLEAN __cdecl std_numeric_limits_bool_denorm_min(void) { return 0; }
+BOOLEAN __cdecl std_numeric_limits_bool_denorm_min(void) { return FALSE; }
 
 /* ?denorm_min@?$numeric_limits@_W@std@@SA_WXZ -> public: static wchar_t __cdecl std::numeric_limits<wchar_t>::denorm_min(void) */
 WCHAR __cdecl std_numeric_limits_wchar_t_denorm_min(void) { return 0; }
@@ -509,7 +510,7 @@ __int64 __cdecl std_numeric_limits_int64_epsilon(void) { return 0; }
 unsigned __int64 __cdecl std_numeric_limits_unsigned_int64_epsilon(void) { return 0; }
 
 /* ?epsilon@?$numeric_limits@_N@std@@SA_NXZ -> public: static bool __cdecl std::numeric_limits<bool>::epsilon(void) */
-BOOLEAN __cdecl std_numeric_limits_bool_epsilon(void) { return 0; }
+BOOLEAN __cdecl std_numeric_limits_bool_epsilon(void) { return FALSE; }
 
 /* ?epsilon@?$numeric_limits@_W@std@@SA_WXZ -> public: static wchar_t __cdecl std::numeric_limits<wchar_t>::epsilon(void) */
 WCHAR __cdecl std_numeric_limits_wchar_t_epsilon(void) { return 0; }
@@ -557,7 +558,7 @@ __int64 __cdecl std_numeric_limits_int64_infinity(void) { return 0; }
 unsigned __int64 __cdecl std_numeric_limits_unsigned_int64_infinity(void) { return 0; }
 
 /* ?infinity@?$numeric_limits@_N@std@@SA_NXZ -> public: static bool __cdecl std::numeric_limits<bool>::infinity(void) */
-BOOLEAN __cdecl std_numeric_limits_bool_infinity(void) { return 0; }
+BOOLEAN __cdecl std_numeric_limits_bool_infinity(void) { return FALSE; }
 
 /* ?infinity@?$numeric_limits@_W@std@@SA_WXZ -> public: static wchar_t __cdecl std::numeric_limits<wchar_t>::infinity(void) */
 WCHAR __cdecl std_numeric_limits_wchar_t_infinity(void) { return 0; }
@@ -605,7 +606,7 @@ __int64 __cdecl std_numeric_limits_int64_max(void) { return I64_MAX; }
 unsigned __int64 __cdecl std_numeric_limits_unsigned_int64_max(void) { return UI64_MAX; }
 
 /* ?max@?$numeric_limits@_N@std@@SA_NXZ -> public: static bool __cdecl std::numeric_limits<bool>::max(void) */
-BOOLEAN __cdecl std_numeric_limits_bool_max(void) { return 1; }
+BOOLEAN __cdecl std_numeric_limits_bool_max(void) { return TRUE; }
 
 /* ?max@?$numeric_limits@_W@std@@SA_WXZ -> public: static wchar_t __cdecl std::numeric_limits<wchar_t>::max(void) */
 WCHAR __cdecl std_numeric_limits_wchar_t_max(void) { return USHRT_MAX; }
@@ -653,7 +654,7 @@ __int64 __cdecl std_numeric_limits_int64_min(void) { return I64_MIN; }
 unsigned __int64 __cdecl std_numeric_limits_unsigned_int64_min(void) { return 0; }
 
 /* ?min@?$numeric_limits@_N@std@@SA_NXZ -> public: static bool __cdecl std::numeric_limits<bool>::min(void) */
-BOOLEAN __cdecl std_numeric_limits_bool_min(void) { return 0; }
+BOOLEAN __cdecl std_numeric_limits_bool_min(void) { return FALSE; }
 
 /* ?min@?$numeric_limits@_W@std@@SA_WXZ -> public: static wchar_t __cdecl std::numeric_limits<wchar_t>::min(void) */
 WCHAR __cdecl std_numeric_limits_wchar_t_min(void) { return 0; }
@@ -701,7 +702,7 @@ __int64 __cdecl std_numeric_limits_int64_quiet_NaN(void) { return 0; }
 unsigned __int64 __cdecl std_numeric_limits_unsigned_int64_quiet_NaN(void) { return 0; }
 
 /* ?quiet_NaN@?$numeric_limits@_N@std@@SA_NXZ -> public: static bool __cdecl std::numeric_limits<bool>::quiet_NaN(void) */
-BOOLEAN __cdecl std_numeric_limits_bool_quiet_NaN(void) { return 0; }
+BOOLEAN __cdecl std_numeric_limits_bool_quiet_NaN(void) { return FALSE; }
 
 /* ?quiet_NaN@?$numeric_limits@_W@std@@SA_WXZ -> public: static wchar_t __cdecl std::numeric_limits<wchar_t>::quiet_NaN(void) */
 WCHAR __cdecl std_numeric_limits_wchar_t_quiet_NaN(void) { return 0; }
@@ -749,7 +750,7 @@ __int64 __cdecl std_numeric_limits_int64_round_error(void) { return 0; }
 unsigned __int64 __cdecl std_numeric_limits_unsigned_int64_round_error(void) { return 0; }
 
 /* ?round_error@?$numeric_limits@_N@std@@SA_NXZ -> public: static bool __cdecl std::numeric_limits<bool>::round_error(void) */
-BOOLEAN __cdecl std_numeric_limits_bool_round_error(void) { return 0; }
+BOOLEAN __cdecl std_numeric_limits_bool_round_error(void) { return FALSE; }
 
 /* ?round_error@?$numeric_limits@_W@std@@SA_WXZ -> public: static wchar_t __cdecl std::numeric_limits<wchar_t>::round_error(void) */
 WCHAR __cdecl std_numeric_limits_wchar_t_round_error(void) { return 0; }
@@ -797,7 +798,7 @@ __int64 __cdecl std_numeric_limits_int64_signaling_NaN(void) { return 0; }
 unsigned __int64 __cdecl std_numeric_limits_unsigned_int64_signaling_NaN(void) { return 0; }
 
 /* ?signaling_NaN@?$numeric_limits@_N@std@@SA_NXZ -> public: static bool __cdecl std::numeric_limits<bool>::signaling_NaN(void) */
-BOOLEAN __cdecl std_numeric_limits_bool_signaling_NaN(void) { return 0; }
+BOOLEAN __cdecl std_numeric_limits_bool_signaling_NaN(void) { return FALSE; }
 
 /* ?signaling_NaN@?$numeric_limits@_W@std@@SA_WXZ -> public: static wchar_t __cdecl std::numeric_limits<wchar_t>::signaling_NaN(void) */
 WCHAR __cdecl std_numeric_limits_wchar_t_signaling_NaN(void) { return 0; }
@@ -808,11 +809,20 @@ WCHAR __cdecl std_numeric_limits_wchar_t_signaling_NaN(void) { return 0; }
 /* ??4?$_Ctraits@N@std@@QEAAAEAV01@AEBV01@@Z -> public: class std::_Ctraits<double> & __ptr64 __cdecl std::_Ctraits<double>::operator=(class std::_Ctraits<double> const & __ptr64) __ptr64 */
 /* ??4?$_Ctraits@O@std@@QAEAAV01@ABV01@@Z -> public: class std::_Ctraits<long double> & __thiscall std::_Ctraits<long double>::operator=(class std::_Ctraits<long double> const &) */
 /* ??4?$_Ctraits@O@std@@QEAAAEAV01@AEBV01@@Z -> public: class std::_Ctraits<long double> & __ptr64 __cdecl std::_Ctraits<long double>::operator=(class std::_Ctraits<long double> const & __ptr64) __ptr64 */
-DEFINE_THISCALL_WRAPPER( std_Ctraits_op_assign, 4 )
-std_Ctraits * __thiscall std_Ctraits_op_assign( std_Ctraits *this )
+DEFINE_THISCALL_WRAPPER( std_Ctraits_op_assign, 8 )
+std_Ctraits * __thiscall std_Ctraits_op_assign( std_Ctraits *this, std_Ctraits *right )
 {
     return this;
 }
+
+/* ?_Isnan@?$_Ctraits@M@std@@SA_NM@Z -> public: static bool __cdecl std::_Ctraits<float>::_Isnan(float) */
+BOOLEAN __cdecl std_Ctraits_float__Isnan( float x ) { return _isnan(x); }
+
+/* ?_Isnan@?$_Ctraits@N@std@@SA_NN@Z -> public: static bool __cdecl std::_Ctraits<double>::_Isnan(double) */
+BOOLEAN __cdecl std_Ctraits_double__Isnan( double x ) { return _isnan(x); }
+
+/* ?_Isnan@?$_Ctraits@O@std@@SA_NO@Z -> public: static bool __cdecl std::_Ctraits<long double>::_Isnan(long double) */
+BOOLEAN __cdecl std_Ctraits_long_double__Isnan( LDOUBLE x ) { return _isnan(x); }
 
 /* ?atan2@?$_Ctraits@M@std@@SAMMM@Z -> public: static float __cdecl std::_Ctraits<float>::atan2(float,float) */
 float __cdecl std_Ctraits_float_atan2( float y, float x ) { return atan2f( y, x ); }
@@ -894,3 +904,1325 @@ double __cdecl std_Ctraits_double_tan( double x ) { return tan( x ); }
 
 /* ?tan@?$_Ctraits@O@std@@SAOO@Z -> public: static long double __cdecl std::_Ctraits<long double>::tan(long double) */
 LDOUBLE __cdecl std_Ctraits_long_double_tan( LDOUBLE x ) { return tan( x ); }
+
+/* ??0?$_Complex_base@MU_C_float_complex@@@std@@QAE@ABM0@Z */
+/* ??0?$_Complex_base@MU_C_float_complex@@@std@@QEAA@AEBM0@Z */
+/* ??0?$complex@M@std@@QAE@ABM0@Z */
+/* ??0?$complex@M@std@@QEAA@AEBM0@Z */
+DEFINE_THISCALL_WRAPPER(complex_float_ctor, 12)
+complex_float* __thiscall complex_float_ctor(complex_float *this, const float *real, const float *imag)
+{
+    this->real = *real;
+    this->imag = *imag;
+    return this;
+}
+
+/* ??0?$complex@M@std@@QAE@ABU_C_float_complex@@@Z */
+/* ??0?$complex@M@std@@QEAA@AEBU_C_float_complex@@@Z */
+DEFINE_THISCALL_WRAPPER(complex_float_ctor_float, 8)
+complex_float* __thiscall complex_float_ctor_float(complex_float *this, const complex_float *c)
+{
+    this->real = c->real;
+    this->imag = c->imag;
+    return this;
+}
+
+/* ??0?$complex@M@std@@QAE@ABU_C_double_complex@@@Z */
+/* ??0?$complex@M@std@@QEAA@AEBU_C_double_complex@@@Z */
+/* ??0?$complex@M@std@@QAE@ABU_C_ldouble_complex@@@Z */
+/* ??0?$complex@M@std@@QEAA@AEBU_C_ldouble_complex@@@Z */
+/* ??0?$complex@M@std@@QAE@ABV?$complex@N@1@@Z */
+/* ??0?$complex@M@std@@QEAA@AEBV?$complex@N@1@@Z */
+/* ??0?$complex@M@std@@QAE@ABV?$complex@O@1@@Z */
+/* ??0?$complex@M@std@@QEAA@AEBV?$complex@O@1@@Z */
+DEFINE_THISCALL_WRAPPER(complex_float_ctor_double, 8)
+complex_float* __thiscall complex_float_ctor_double(complex_float *this, const complex_double *c)
+{
+    this->real = c->real;
+    this->imag = c->imag;
+    return this;
+}
+
+/* ??_F?$complex@M@std@@QAEXXZ */
+/* ??_F?$complex@M@std@@QEAAXXZ */
+DEFINE_THISCALL_WRAPPER(complex_float_ctor_def, 4)
+complex_float* __thiscall complex_float_ctor_def(complex_float *this)
+{
+    this->real = this->imag = 0;
+    return this;
+}
+
+/* ??$?8M@std@@YA_NABMABV?$complex@M@0@@Z */
+/* ??$?8M@std@@YA_NAEBMAEBV?$complex@M@0@@Z */
+MSVCP_bool __cdecl complex_float_equal_fc(const float *l, const complex_float *r)
+{
+    return *l==r->real && r->imag==0;
+}
+
+/* ??$?8M@std@@YA_NABV?$complex@M@0@0@Z */
+/* ??$?8M@std@@YA_NAEBV?$complex@M@0@0@Z */
+MSVCP_bool __cdecl complex_float_equal(const complex_float *l, const complex_float *r)
+{
+    return l->real==r->real && l->imag==r->imag;
+}
+
+/* ??$?8M@std@@YA_NABV?$complex@M@0@ABM@Z */
+/* ??$?8M@std@@YA_NAEBV?$complex@M@0@AEBM@Z */
+MSVCP_bool __cdecl complex_float_equal_cf(const complex_float *l, const float *r)
+{
+    return l->real==*r && l->imag==0;
+}
+
+/* ??$?9M@std@@YA_NABMABV?$complex@M@0@@Z */
+/* ??$?9M@std@@YA_NAEBMAEBV?$complex@M@0@@Z */
+MSVCP_bool __cdecl complex_float_not_equal_fc(const float *l, const complex_float *r)
+{
+    return !complex_float_equal_fc(l, r);
+}
+
+/* ??$?9M@std@@YA_NABV?$complex@M@0@0@Z */
+/* ??$?9M@std@@YA_NAEBV?$complex@M@0@0@Z */
+MSVCP_bool __cdecl complex_float_not_equal(const complex_float *l, const complex_float *r)
+{
+    return !complex_float_equal(l, r);
+}
+
+/* ??$?9M@std@@YA_NABV?$complex@M@0@ABM@Z */
+/* ??$?9M@std@@YA_NAEBV?$complex@M@0@AEBM@Z */
+MSVCP_bool __cdecl complex_float_not_equal_cf(const complex_float *l, const float *r)
+{
+    return !complex_float_equal_cf(l, r);
+}
+
+/* ??$?DM@std@@YA?AV?$complex@M@0@ABMABV10@@Z */
+/* ??$?DM@std@@YA?AV?$complex@M@0@AEBMAEBV10@@Z */
+complex_float* __cdecl complex_float_mult_fc(complex_float *ret, const float *l, const complex_float *r)
+{
+    ret->real = *l * r->real;
+    ret->imag = *l * r->imag;
+    return ret;
+}
+
+/* ??$?DM@std@@YA?AV?$complex@M@0@ABV10@0@Z */
+/* ??$?DM@std@@YA?AV?$complex@M@0@AEBV10@0@Z */
+complex_float* __cdecl complex_float_mult(complex_float *ret, const complex_float *l, const complex_float *r)
+{
+    ret->real = l->real*r->real - l->imag*r->imag;
+    ret->imag = l->imag*r->real + l->real*r->imag;
+    return ret;
+}
+
+/* ??$?DM@std@@YA?AV?$complex@M@0@ABV10@ABM@Z */
+/* ??$?DM@std@@YA?AV?$complex@M@0@AEBV10@AEBM@Z */
+complex_float* __cdecl complex_float_mult_cf(complex_float *ret, const complex_float *l, const float *r)
+{
+    ret->real = l->real * *r;
+    ret->imag = l->imag * *r;
+    return ret;
+}
+
+/* ??$?GM@std@@YA?AV?$complex@M@0@ABMABV10@@Z */
+/* ??$?GM@std@@YA?AV?$complex@M@0@AEBMAEBV10@@Z */
+complex_float* __cdecl complex_float_sub_fc(complex_float *ret, const float *l, const complex_float *r)
+{
+    ret->real = *l - r->real;
+    ret->imag = -r->imag;
+    return ret;
+}
+
+/* ??$?GM@std@@YA?AV?$complex@M@0@ABV10@0@Z */
+/* ??$?GM@std@@YA?AV?$complex@M@0@AEBV10@0@Z */
+complex_float* __cdecl complex_float_sub(complex_float *ret, const complex_float *l, const complex_float *r)
+{
+    ret->real = l->real - r->real;
+    ret->imag = l->imag - r->imag;
+    return ret;
+}
+
+/* ??$?GM@std@@YA?AV?$complex@M@0@ABV10@@Z */
+/* ??$?GM@std@@YA?AV?$complex@M@0@AEBV10@@Z */
+complex_float* __cdecl complex_float_neg(complex_float *ret, const complex_float *c)
+{
+    ret->real = -c->real;
+    ret->imag = -c->imag;
+    return ret;
+}
+
+/* ??$?GM@std@@YA?AV?$complex@M@0@ABV10@ABM@Z */
+/* ??$?GM@std@@YA?AV?$complex@M@0@AEBV10@AEBM@Z */
+complex_float* __cdecl complex_float_sub_cf(complex_float *ret, const complex_float *l, const float *r)
+{
+    ret->real = l->real - *r;
+    ret->imag = l->imag;
+    return ret;
+}
+
+/* ??$?HM@std@@YA?AV?$complex@M@0@ABMABV10@@Z */
+/* ??$?HM@std@@YA?AV?$complex@M@0@AEBMAEBV10@@Z */
+complex_float* __cdecl complex_float_add_fc(complex_float *ret, const float *l, const complex_float *r)
+{
+    ret->real = *l + r->real;
+    ret->imag = r->imag;
+    return ret;
+}
+
+/* ??$?HM@std@@YA?AV?$complex@M@0@ABV10@0@Z */
+/* ??$?HM@std@@YA?AV?$complex@M@0@AEBV10@0@Z */
+complex_float* __cdecl complex_float_add(complex_float *ret, const complex_float *l, const complex_float *r)
+{
+    ret->real = l->real + r->real;
+    ret->imag = l->imag + r->imag;
+    return ret;
+}
+
+/* ??$?HM@std@@YA?AV?$complex@M@0@ABV10@@Z */
+/* ??$?HM@std@@YA?AV?$complex@M@0@AEBV10@@Z */
+complex_float* __cdecl complex_float_plus(complex_float *ret, const complex_float *c)
+{
+    *ret = *c;
+    return ret;
+}
+
+/* ??$?HM@std@@YA?AV?$complex@M@0@ABV10@ABM@Z */
+/* ??$?HM@std@@YA?AV?$complex@M@0@AEBV10@AEBM@Z */
+complex_float* __cdecl complex_float_add_cf(complex_float *ret, const complex_float *l, const float *r)
+{
+    ret->real = l->real + *r;
+    ret->imag = l->imag;
+    return ret;
+}
+
+/* ??$?KM@std@@YA?AV?$complex@M@0@ABV10@0@Z */
+/* ??$?KM@std@@YA?AV?$complex@M@0@AEBV10@0@Z */
+complex_float* __cdecl complex_float_div(complex_float *ret, const complex_float *l, const complex_float *r)
+{
+    float tmp, den;
+    if((!r->real && !r->imag) || _isnan(l->real) || _isnan(l->imag)
+            || _isnan(r->real) || _isnan(r->imag)) {
+        ret->real = std_numeric_limits_float_quiet_NaN();
+        ret->imag = ret->real;
+        return ret;
+    }
+
+    if (fabsf(r->real) >= fabsf(r->imag)) {
+        tmp = r->imag / r->real;
+        den = r->real + r->imag*tmp;
+        ret->real = (l->real + l->imag*tmp) / den;
+        ret->imag = (l->imag - l->real*tmp) / den;
+    } else {
+        tmp = r->real / r->imag;
+        den = r->real*tmp + r->imag;
+        ret->real = (l->real*tmp + l->imag) / den;
+        ret->imag = (l->imag*tmp - l->real) / den;
+    }
+    return ret;
+}
+
+/* ??$?KM@std@@YA?AV?$complex@M@0@ABMABV10@@Z */
+/* ??$?KM@std@@YA?AV?$complex@M@0@AEBMAEBV10@@Z */
+complex_float* __cdecl complex_float_div_fc(complex_float *ret, const float *l, const complex_float *r)
+{
+    complex_float c = {*l, 0};
+    return complex_float_div(ret, &c, r);
+}
+
+/* ??$?KM@std@@YA?AV?$complex@M@0@ABV10@ABM@Z */
+/* ??$?KM@std@@YA?AV?$complex@M@0@AEBV10@AEBM@Z */
+complex_float* __cdecl complex_float_div_cf(complex_float *ret, const complex_float *l, const float *r)
+{
+    ret->real = l->real / *r;
+    ret->imag = l->imag / *r;
+    return ret;
+}
+
+/* ??4?$_Complex_base@MU_C_float_complex@@@std@@QAEAAV01@ABV01@@Z */
+/* ??4?$_Complex_base@MU_C_float_complex@@@std@@QEAAAEAV01@AEBV01@@Z */
+/* ??4?$complex@M@std@@QAEAAV01@ABV01@@Z */
+/* ??4?$complex@M@std@@QEAAAEAV01@AEBV01@@Z */
+DEFINE_THISCALL_WRAPPER(complex_float_assign, 8)
+complex_float* __thiscall complex_float_assign(complex_float *this, const complex_float *r)
+{
+    *this = *r;
+    return this;
+}
+
+/* ??4?$complex@M@std@@QAEAAV01@ABM@Z */
+/* ??4?$complex@M@std@@QEAAAEAV01@AEBM@Z */
+DEFINE_THISCALL_WRAPPER(complex_float_assign_float, 8)
+complex_float* __thiscall complex_float_assign_float(complex_float *this, const float *r)
+{
+    this->real = *r;
+    this->imag = 0;
+    return this;
+}
+
+/* ??X?$complex@M@std@@QAEAAV01@ABM@Z */
+/* ??X?$complex@M@std@@QEAAAEAV01@AEBM@Z */
+DEFINE_THISCALL_WRAPPER(complex_float_mult_assign_float, 8)
+complex_float* __thiscall complex_float_mult_assign_float(complex_float *this, const float *r)
+{
+    this->real *= *r;
+    this->imag *= *r;
+    return this;
+}
+
+/* ??X?$complex@M@std@@QAEAAV01@ABV01@@Z */
+/* ??X?$complex@M@std@@QEAAAEAV01@AEBV01@@Z */
+DEFINE_THISCALL_WRAPPER(complex_float_mult_assign, 8)
+complex_float* __thiscall complex_float_mult_assign(complex_float *this, const complex_float *r)
+{
+    complex_float tmp;
+
+    tmp.real = this->real*r->real - this->imag*r->imag;
+    tmp.imag = this->real*r->imag + this->imag*r->real;
+    *this = tmp;
+    return this;
+}
+
+/* ??Y?$complex@M@std@@QAEAAV01@ABM@Z */
+/* ??Y?$complex@M@std@@QEAAAEAV01@AEBM@Z */
+DEFINE_THISCALL_WRAPPER(complex_float_add_assign_float, 8)
+complex_float* __thiscall complex_float_add_assign_float(complex_float *this, const float *r)
+{
+    this->real += *r;
+    return this;
+}
+
+/* ??Y?$complex@M@std@@QAEAAV01@ABV01@@Z */
+/* ??Y?$complex@M@std@@QEAAAEAV01@AEBV01@@Z */
+DEFINE_THISCALL_WRAPPER(complex_float_add_assign, 8)
+complex_float* __thiscall complex_float_add_assign(complex_float *this, const complex_float *r)
+{
+    this->real += r->real;
+    this->imag += r->imag;
+    return this;
+}
+
+/* ??Z?$complex@M@std@@QAEAAV01@ABM@Z */
+/* ??Z?$complex@M@std@@QEAAAEAV01@AEBM@Z */
+DEFINE_THISCALL_WRAPPER(complex_float_sub_assign_float, 8)
+complex_float* __thiscall complex_float_sub_assign_float(complex_float *this, const float *r)
+{
+    this->real -= *r;
+    return this;
+}
+
+/* ??Z?$complex@M@std@@QAEAAV01@ABV01@@Z */
+/* ??Z?$complex@M@std@@QEAAAEAV01@AEBV01@@Z */
+DEFINE_THISCALL_WRAPPER(complex_float_sub_assign, 8)
+complex_float* __thiscall complex_float_sub_assign(complex_float *this, const complex_float *r)
+{
+    this->real -= r->real;
+    this->imag -= r->imag;
+    return this;
+}
+
+/* ??_0?$complex@M@std@@QAEAAV01@ABM@Z */
+/* ??_0?$complex@M@std@@QEAAAEAV01@AEBM@Z */
+DEFINE_THISCALL_WRAPPER(complex_float_div_assign_float, 8)
+complex_float* __thiscall complex_float_div_assign_float(complex_float *this, const float *r)
+{
+    this->real /= *r;
+    this->imag /= *r;
+    return this;
+}
+
+/* ??_0?$complex@M@std@@QAEAAV01@ABV01@@Z */
+/* ??_0?$complex@M@std@@QEAAAEAV01@AEBV01@@Z */
+DEFINE_THISCALL_WRAPPER(complex_float_div_assign, 8)
+complex_float* __thiscall complex_float_div_assign(complex_float *this, const complex_float *r)
+{
+    complex_float tmp = *this;
+    return complex_float_div(this, &tmp, r);
+}
+
+/* ??$arg@M@std@@YAMABV?$complex@M@0@@Z */
+/* ??$arg@M@std@@YAMAEBV?$complex@M@0@@Z */
+float __cdecl complex_float_arg(const complex_float *c)
+{
+    return atan2(c->imag, c->real);
+}
+
+/* ??$imag@M@std@@YAMABV?$complex@M@0@@Z */
+/* ??$imag@M@std@@YAMAEBV?$complex@M@0@@Z */
+float __cdecl complex_float_imag(const complex_float *c)
+{
+    return c->imag;
+}
+
+/* ?imag@?$_Complex_base@MU_C_float_complex@@@std@@QAEMABM@Z */
+/* ?imag@?$_Complex_base@MU_C_float_complex@@@std@@QEAAMAEBM@Z */
+DEFINE_THISCALL_WRAPPER(complex_float_imag_set, 8)
+float __thiscall complex_float_imag_set(complex_float *this, const float *f)
+{
+    return (this->imag = *f);
+}
+
+/* ?imag@?$_Complex_base@MU_C_float_complex@@@std@@QBEMXZ */
+/* ?imag@?$_Complex_base@MU_C_float_complex@@@std@@QEBAMXZ */
+DEFINE_THISCALL_WRAPPER(complex_float_imag_get, 4)
+float __thiscall complex_float_imag_get(const complex_float *this)
+{
+    return this->imag;
+}
+
+/* ??$real@M@std@@YAMABV?$complex@M@0@@Z */
+/* ??$real@M@std@@YAMAEBV?$complex@M@0@@Z */
+float __cdecl complex_float_real(const complex_float *c)
+{
+    return c->real;
+}
+
+/* ?real@?$_Complex_base@MU_C_float_complex@@@std@@QAEMABM@Z */
+/* ?real@?$_Complex_base@MU_C_float_complex@@@std@@QEAAMAEBM@Z */
+DEFINE_THISCALL_WRAPPER(complex_float_real_set, 8)
+float __thiscall complex_float_real_set(complex_float *this, const float *f)
+{
+    return (this->real = *f);
+}
+
+/* ?real@?$_Complex_base@MU_C_float_complex@@@std@@QBEMXZ */
+/* ?real@?$_Complex_base@MU_C_float_complex@@@std@@QEBAMXZ */
+DEFINE_THISCALL_WRAPPER(complex_float_real_get, 4)
+float __thiscall complex_float_real_get(const complex_float *this)
+{
+    return this->real;
+}
+
+/* ??$_Fabs@M@std@@YAMABV?$complex@M@0@PAH@Z */
+/* ??$_Fabs@M@std@@YAMAEBV?$complex@M@0@PEAH@Z */
+float __cdecl complex_float__Fabs(const complex_float *c, int *scale)
+{
+    float ret;
+
+    ret = hypotf(c->real, c->imag);
+    if(_isnan(ret) || ret==0) {
+        *scale = 0;
+    }else if(ret >= 1) {
+        *scale = 2;
+        ret /= 4;
+    }else {
+        *scale = -2;
+        ret *= 4;
+    }
+
+    return ret;
+}
+
+/* ??$abs@M@std@@YAMABV?$complex@M@0@@Z */
+/* ??$abs@M@std@@YAMAEBV?$complex@M@0@@Z */
+float __cdecl complex_float_abs(const complex_float *c)
+{
+    return hypotf(c->real, c->imag);
+}
+
+/* ??$conj@M@std@@YA?AV?$complex@M@0@ABV10@@Z */
+/* ??$conj@M@std@@YA?AV?$complex@M@0@AEBV10@@Z */
+complex_float* __cdecl complex_float_conj(complex_float *ret, const complex_float *c)
+{
+    ret->real = c->real;
+    ret->imag = -c->imag;
+    return ret;
+}
+
+/* ??$cos@M@std@@YA?AV?$complex@M@0@ABV10@@Z */
+/* ??$cos@M@std@@YA?AV?$complex@M@0@AEBV10@@Z */
+complex_float* __cdecl complex_float_cos(complex_float *ret, const complex_float *c)
+{
+    ret->real = cos(c->real)*cosh(c->imag);
+    ret->imag = -sin(c->real)*sinh(c->imag);
+    return ret;
+}
+
+/* ??$sin@M@std@@YA?AV?$complex@M@0@ABV10@@Z */
+/* ??$sin@M@std@@YA?AV?$complex@M@0@AEBV10@@Z */
+complex_float* __cdecl complex_float_sin(complex_float *ret, const complex_float *c)
+{
+    ret->real = sin(c->real)*cosh(c->imag);
+    ret->imag = cos(c->real)*sinh(c->imag);
+    return ret;
+}
+
+/* ??$tan@M@std@@YA?AV?$complex@M@0@ABV10@@Z */
+/* ??$tan@M@std@@YA?AV?$complex@M@0@AEBV10@@Z */
+complex_float* __cdecl complex_float_tan(complex_float *ret, const complex_float *c)
+{
+    double denom = cos(2*c->real) + cosh(2*c->imag);
+    ret->real = sin(2*c->real) / denom;
+    ret->imag = sinh(2*c->imag) / denom;
+    return ret;
+}
+
+/* ??$cosh@M@std@@YA?AV?$complex@M@0@ABV10@@Z */
+/* ??$cosh@M@std@@YA?AV?$complex@M@0@AEBV10@@Z */
+complex_float* __cdecl complex_float_cosh(complex_float *ret, const complex_float *c)
+{
+    ret->real = cosh(c->real)*cos(c->imag);
+    ret->imag = sinh(c->real)*sin(c->imag);
+    return ret;
+}
+
+/* ??$sinh@M@std@@YA?AV?$complex@M@0@ABV10@@Z */
+/* ??$sinh@M@std@@YA?AV?$complex@M@0@AEBV10@@Z */
+complex_float* __cdecl complex_float_sinh(complex_float *ret, const complex_float *c)
+{
+    ret->real = sinh(c->real)*cos(c->imag);
+    ret->imag = cosh(c->real)*sin(c->imag);
+    return ret;
+}
+
+/* ??$tanh@M@std@@YA?AV?$complex@M@0@ABV10@@Z */
+/* ??$tanh@M@std@@YA?AV?$complex@M@0@AEBV10@@Z */
+complex_float* __cdecl complex_float_tanh(complex_float *ret, const complex_float *c)
+{
+    complex_float tmp;
+
+    ret->real = -c->imag;
+    ret->imag = c->real;
+    complex_float_tan(&tmp, ret);
+    ret->real = tmp.imag;
+    ret->imag = -tmp.real;
+    return ret;
+}
+
+/* ??$exp@M@std@@YA?AV?$complex@M@0@ABV10@@Z */
+/* ??$exp@M@std@@YA?AV?$complex@M@0@AEBV10@@Z */
+complex_float* __cdecl complex_float_exp(complex_float *ret, const complex_float *c)
+{
+    ret->real = ret->imag = exp(c->real);
+    ret->real *= cos(c->imag);
+    ret->imag *= sin(c->imag);
+    return ret;
+}
+
+/* ??$log@M@std@@YA?AV?$complex@M@0@ABV10@@Z */
+/* ??$log@M@std@@YA?AV?$complex@M@0@AEBV10@@Z */
+complex_float* __cdecl complex_float_log(complex_float *ret, const complex_float *c)
+{
+    ret->real = log(complex_float_abs(c));
+    ret->imag = complex_float_arg(c);
+    return ret;
+}
+
+/* ??$log10@M@std@@YA?AV?$complex@M@0@ABV10@@Z */
+/* ??$log10@M@std@@YA?AV?$complex@M@0@AEBV10@@Z */
+complex_float* __cdecl complex_float_log10(complex_float *ret, const complex_float *c)
+{
+    complex_float_log(ret, c);
+    ret->real *= M_LOG10E;
+    ret->imag *= M_LOG10E;
+    return ret;
+}
+
+/* ??$norm@M@std@@YAMABV?$complex@M@0@@Z */
+/* ??$norm@M@std@@YAMAEBV?$complex@M@0@@Z */
+float __cdecl complex_float_norm(const complex_float *c)
+{
+    return c->real*c->real + c->imag*c->imag;
+}
+
+/* ??$polar@M@std@@YA?AV?$complex@M@0@ABM0@Z */
+/* ??$polar@M@std@@YA?AV?$complex@M@0@AEBM0@Z */
+complex_float* __cdecl complex_float_polar_theta(complex_float *ret, const float *mod, const float *theta)
+{
+    ret->real = *mod * cos(*theta);
+    ret->imag = *mod * sin(*theta);
+    return ret;
+}
+
+/* ??$polar@M@std@@YA?AV?$complex@M@0@ABM@Z */
+/* ??$polar@M@std@@YA?AV?$complex@M@0@AEBM@Z */
+complex_float* __cdecl complex_float_polar(complex_float *ret, const float *mod)
+{
+    ret->real = *mod;
+    ret->imag = 0;
+    return ret;
+}
+
+/* ??$pow@M@std@@YA?AV?$complex@M@0@ABV10@0@Z */
+/* ??$pow@M@std@@YA?AV?$complex@M@0@AEBV10@0@Z */
+complex_float* __cdecl complex_float_pow(complex_float *ret, const complex_float *l, const complex_float *r)
+{
+    float abs = complex_float_abs(l), arg = complex_float_arg(l);
+    float rad = pow(abs, r->real), theta = r->real*arg;
+
+    if(r->imag) {
+        rad *= exp(-r->imag * arg);
+        theta += r->imag * log(abs);
+    }
+
+    ret->real = rad * cos(theta);
+    ret->imag = rad * sin(theta);
+    return ret;
+}
+
+/* ??$pow@M@std@@YA?AV?$complex@M@0@ABMABV10@@Z */
+/* ??$pow@M@std@@YA?AV?$complex@M@0@AEBMAEBV10@@Z */
+complex_float* __cdecl complex_float_pow_fc(complex_float *ret, const float *l, const complex_float *r)
+{
+    complex_float c = { *l, 0 };
+    return complex_float_pow(ret, &c, r);
+}
+
+/* ??$pow@M@std@@YA?AV?$complex@M@0@ABV10@ABM@Z */
+/* ??$pow@M@std@@YA?AV?$complex@M@0@AEBV10@AEBM@Z */
+complex_float* __cdecl complex_float_pow_cf(complex_float *ret, const complex_float *l, const float *r)
+{
+    complex_float c = { *r, 0 };
+    return complex_float_pow(ret, l, &c);
+}
+
+/*  ??$pow@M@std@@YA?AV?$complex@M@0@ABV10@H@Z  */
+/*  ??$pow@M@std@@YA?AV?$complex@M@0@AEBV10@H@Z */
+complex_float* __cdecl complex_float_pow_ci(complex_float *ret, const complex_float *l, int r)
+{
+    complex_float c = *l;
+    complex_float unit_value = { 1.0, 0 };
+    complex_float_assign(ret, &unit_value);
+
+    if(r < 0) {
+        r = -r;
+        complex_float_div(&c, &unit_value, l);
+    }
+
+    for(; r>0; r>>=1) {
+        if(r & 1)
+            complex_float_mult_assign(ret, &c);
+        if(r != 1)
+            complex_float_mult_assign(&c, &c);
+    }
+
+    return ret;
+}
+
+/* ??$sqrt@M@std@@YA?AV?$complex@M@0@ABV10@@Z */
+/* ??$sqrt@M@std@@YA?AV?$complex@M@0@AEBV10@@Z */
+complex_float* __cdecl complex_float_sqrt(complex_float *ret, const complex_float *l)
+{
+    complex_float c = { 0.5, 0 };
+    return complex_float_pow(ret, l, &c);
+}
+
+/* ??0?$_Complex_base@NU_C_double_complex@@@std@@QAE@ABN0@Z */
+/* ??0?$_Complex_base@NU_C_double_complex@@@std@@QEAA@AEBN0@Z */
+/* ??0?$_Complex_base@OU_C_ldouble_complex@@@std@@QAE@ABO0@Z */
+/* ??0?$_Complex_base@OU_C_ldouble_complex@@@std@@QEAA@AEBO0@Z */
+/* ??0?$complex@N@std@@QAE@ABN0@Z */
+/* ??0?$complex@N@std@@QEAA@AEBN0@Z */
+/* ??0?$complex@O@std@@QAE@ABO0@Z */
+/* ??0?$complex@O@std@@QEAA@AEBO0@Z */
+DEFINE_THISCALL_WRAPPER(complex_double_ctor, 12)
+complex_double* __thiscall complex_double_ctor(complex_double *this, const double *real, const double *imag)
+{
+    this->real = *real;
+    this->imag = *imag;
+    return this;
+}
+
+/* ??0?$complex@N@std@@QAE@ABU_C_double_complex@@@Z */
+/* ??0?$complex@N@std@@QEAA@AEBU_C_double_complex@@@Z */
+/* ??0?$complex@N@std@@QAE@ABU_C_ldouble_complex@@@Z */
+/* ??0?$complex@N@std@@QEAA@AEBU_C_ldouble_complex@@@Z */
+/* ??0?$complex@N@std@@QAE@ABV?$complex@O@1@@Z */
+/* ??0?$complex@N@std@@QEAA@AEBV?$complex@O@1@@Z */
+/* ??0?$complex@O@std@@QAE@ABU_C_ldouble_complex@@@Z */
+/* ??0?$complex@O@std@@QEAA@AEBU_C_ldouble_complex@@@Z */
+/* ??0?$complex@O@std@@QAE@ABV?$complex@N@1@@Z */
+/* ??0?$complex@O@std@@QEAA@AEBV?$complex@N@1@@Z */
+DEFINE_THISCALL_WRAPPER(complex_double_ctor_double, 8)
+complex_double* __thiscall complex_double_ctor_double(complex_double *this, const complex_double *c)
+{
+    this->real = c->real;
+    this->imag = c->imag;
+    return this;
+}
+
+/* ??0?$complex@N@std@@QAE@ABV?$complex@M@1@@Z */
+/* ??0?$complex@N@std@@QEAA@AEBV?$complex@M@1@@Z */
+/* ??0?$complex@O@std@@QAE@ABV?$complex@M@1@@Z */
+/* ??0?$complex@O@std@@QEAA@AEBV?$complex@M@1@@Z */
+DEFINE_THISCALL_WRAPPER(complex_double_ctor_float, 8)
+complex_double* __thiscall complex_double_ctor_float(complex_double *this, const complex_float *c)
+{
+    this->real = c->real;
+    this->imag = c->imag;
+    return this;
+}
+
+/* ??_F?$complex@N@std@@QAEXXZ */
+/* ??_F?$complex@N@std@@QEAAXXZ */
+/* ??_F?$complex@O@std@@QAEXXZ */
+/* ??_F?$complex@O@std@@QEAAXXZ */
+DEFINE_THISCALL_WRAPPER(complex_double_ctor_def, 4)
+complex_double* __thiscall complex_double_ctor_def(complex_double *this)
+{
+    this->real = this->imag = 0;
+    return this;
+}
+
+/* ??$?8N@std@@YA_NABNABV?$complex@N@0@@Z */
+/* ??$?8N@std@@YA_NAEBNAEBV?$complex@N@0@@Z */
+/* ??$?8O@std@@YA_NABOABV?$complex@O@0@@Z */
+/* ??$?8O@std@@YA_NAEBOAEBV?$complex@O@0@@Z */
+MSVCP_bool __cdecl complex_double_equal_dc(const double *l, const complex_double *r)
+{
+    return *l==r->real && r->imag==0;
+}
+
+/* ??$?8N@std@@YA_NABV?$complex@N@0@0@Z */
+/* ??$?8N@std@@YA_NAEBV?$complex@N@0@0@Z */
+/* ??$?8O@std@@YA_NABV?$complex@O@0@0@Z */
+/* ??$?8O@std@@YA_NAEBV?$complex@O@0@0@Z */
+MSVCP_bool __cdecl complex_double_equal(const complex_double *l, const complex_double *r)
+{
+    return l->real==r->real && l->imag==r->imag;
+}
+
+/* ??$?8N@std@@YA_NABV?$complex@N@0@ABN@Z */
+/* ??$?8N@std@@YA_NAEBV?$complex@N@0@AEBN@Z */
+/* ??$?8O@std@@YA_NABV?$complex@O@0@ABO@Z */
+/* ??$?8O@std@@YA_NAEBV?$complex@O@0@AEBO@Z */
+MSVCP_bool __cdecl complex_double_equal_cd(const complex_double *l, double *r)
+{
+    return l->real==*r && l->imag==0;
+}
+
+/* ??$?9N@std@@YA_NABNABV?$complex@N@0@@Z */
+/* ??$?9N@std@@YA_NAEBNAEBV?$complex@N@0@@Z */
+/* ??$?9O@std@@YA_NABOABV?$complex@O@0@@Z */
+/* ??$?9O@std@@YA_NAEBOAEBV?$complex@O@0@@Z */
+MSVCP_bool __cdecl complex_double_not_equal_dc(const double *l, const complex_double *r)
+{
+    return !complex_double_equal_dc(l, r);
+}
+
+/* ??$?9N@std@@YA_NABV?$complex@N@0@0@Z */
+/* ??$?9N@std@@YA_NAEBV?$complex@N@0@0@Z */
+/* ??$?9O@std@@YA_NABV?$complex@O@0@0@Z */
+/* ??$?9O@std@@YA_NAEBV?$complex@O@0@0@Z */
+MSVCP_bool __cdecl complex_double_not_equal(const complex_double *l, const complex_double *r)
+{
+    return !complex_double_equal(l, r);
+}
+
+/* ??$?9N@std@@YA_NABV?$complex@N@0@ABN@Z */
+/* ??$?9N@std@@YA_NAEBV?$complex@N@0@AEBN@Z */
+/* ??$?9O@std@@YA_NABV?$complex@O@0@ABO@Z */
+/* ??$?9O@std@@YA_NAEBV?$complex@O@0@AEBO@Z */
+MSVCP_bool __cdecl complex_double_not_equal_cd(const complex_double *l, double *r)
+{
+    return !complex_double_equal_cd(l, r);
+}
+
+/* ??$?DN@std@@YA?AV?$complex@N@0@ABNABV10@@Z */
+/* ??$?DN@std@@YA?AV?$complex@N@0@AEBNAEBV10@@Z */
+/* ??$?DO@std@@YA?AV?$complex@O@0@ABOABV10@@Z */
+/* ??$?DO@std@@YA?AV?$complex@O@0@AEBOAEBV10@@Z */
+complex_double* __cdecl complex_double_mult_dc(complex_double *ret, const double *l, const complex_double *r)
+{
+    ret->real = *l * r->real;
+    ret->imag = *l * r->imag;
+    return ret;
+}
+
+/* ??$?DN@std@@YA?AV?$complex@N@0@ABV10@0@Z */
+/* ??$?DN@std@@YA?AV?$complex@N@0@AEBV10@0@Z */
+/* ??$?DO@std@@YA?AV?$complex@O@0@ABV10@0@Z */
+/* ??$?DO@std@@YA?AV?$complex@O@0@AEBV10@0@Z */
+complex_double* __cdecl complex_double_mult(complex_double *ret, const complex_double *l, const complex_double *r)
+{
+    ret->real = l->real*r->real - l->imag*r->imag;
+    ret->imag = l->imag*r->real + l->real*r->imag;
+    return ret;
+}
+
+/* ??$?DN@std@@YA?AV?$complex@N@0@ABV10@ABN@Z */
+/* ??$?DN@std@@YA?AV?$complex@N@0@AEBV10@AEBN@Z */
+/* ??$?DO@std@@YA?AV?$complex@O@0@ABV10@ABO@Z */
+/* ??$?DO@std@@YA?AV?$complex@O@0@AEBV10@AEBO@Z */
+complex_double* __cdecl complex_double_mult_cd(complex_double *ret, const complex_double *l, double *r)
+{
+    ret->real = l->real * *r;
+    ret->imag = l->imag * *r;
+    return ret;
+}
+
+/* ??$?GN@std@@YA?AV?$complex@N@0@ABNABV10@@Z */
+/* ??$?GN@std@@YA?AV?$complex@N@0@AEBNAEBV10@@Z */
+/* ??$?GO@std@@YA?AV?$complex@O@0@ABOABV10@@Z */
+/* ??$?GO@std@@YA?AV?$complex@O@0@AEBOAEBV10@@Z */
+complex_double* __cdecl complex_double_sub_dc(complex_double *ret, const double *l, const complex_double *r)
+{
+    ret->real = *l - r->real;
+    ret->imag = -r->imag;
+    return ret;
+}
+
+/* ??$?GN@std@@YA?AV?$complex@N@0@ABV10@0@Z */
+/* ??$?GN@std@@YA?AV?$complex@N@0@AEBV10@0@Z */
+/* ??$?GO@std@@YA?AV?$complex@O@0@ABV10@0@Z */
+/* ??$?GO@std@@YA?AV?$complex@O@0@AEBV10@0@Z */
+complex_double* __cdecl complex_double_sub(complex_double *ret, const complex_double *l, const complex_double *r)
+{
+    ret->real = l->real - r->real;
+    ret->imag = l->imag - r->imag;
+    return ret;
+}
+
+/* ??$?GN@std@@YA?AV?$complex@N@0@ABV10@@Z */
+/* ??$?GN@std@@YA?AV?$complex@N@0@AEBV10@@Z */
+/* ??$?GO@std@@YA?AV?$complex@O@0@ABV10@@Z */
+/* ??$?GO@std@@YA?AV?$complex@O@0@AEBV10@@Z */
+complex_double* __cdecl complex_double_neg(complex_double *ret, const complex_double *c)
+{
+    ret->real = -c->real;
+    ret->imag = -c->imag;
+    return ret;
+}
+
+/* ??$?GN@std@@YA?AV?$complex@N@0@ABV10@ABN@Z */
+/* ??$?GN@std@@YA?AV?$complex@N@0@AEBV10@AEBN@Z */
+/* ??$?GO@std@@YA?AV?$complex@O@0@ABV10@ABO@Z */
+/* ??$?GO@std@@YA?AV?$complex@O@0@AEBV10@AEBO@Z */
+complex_double* __cdecl complex_double_sub_cd(complex_double *ret, const complex_double *l, double *r)
+{
+    ret->real = l->real - *r;
+    ret->imag = l->imag;
+    return ret;
+}
+
+/* ??$?HN@std@@YA?AV?$complex@N@0@ABNABV10@@Z */
+/* ??$?HN@std@@YA?AV?$complex@N@0@AEBNAEBV10@@Z */
+/* ??$?HO@std@@YA?AV?$complex@O@0@ABOABV10@@Z */
+/* ??$?HO@std@@YA?AV?$complex@O@0@AEBOAEBV10@@Z */
+complex_double* __cdecl complex_double_add_dc(complex_double *ret, const double *l, const complex_double *r)
+{
+    ret->real = *l + r->real;
+    ret->imag = r->imag;
+    return ret;
+}
+
+/* ??$?HN@std@@YA?AV?$complex@N@0@ABV10@0@Z */
+/* ??$?HN@std@@YA?AV?$complex@N@0@AEBV10@0@Z */
+/* ??$?HO@std@@YA?AV?$complex@O@0@ABV10@0@Z */
+/* ??$?HO@std@@YA?AV?$complex@O@0@AEBV10@0@Z */
+complex_double* __cdecl complex_double_add(complex_double *ret, const complex_double *l, const complex_double *r)
+{
+    ret->real = l->real + r->real;
+    ret->imag = l->imag + r->imag;
+    return ret;
+}
+
+/* ??$?HN@std@@YA?AV?$complex@N@0@ABV10@@Z */
+/* ??$?HN@std@@YA?AV?$complex@N@0@AEBV10@@Z */
+/* ??$?HO@std@@YA?AV?$complex@O@0@ABV10@@Z */
+/* ??$?HO@std@@YA?AV?$complex@O@0@AEBV10@@Z */
+complex_double* __cdecl complex_double_plus(complex_double *ret, const complex_double *c)
+{
+    *ret = *c;
+    return ret;
+}
+
+/* ??$?HN@std@@YA?AV?$complex@N@0@ABV10@ABN@Z */
+/* ??$?HN@std@@YA?AV?$complex@N@0@AEBV10@AEBN@Z */
+/* ??$?HO@std@@YA?AV?$complex@O@0@ABV10@ABO@Z */
+/* ??$?HO@std@@YA?AV?$complex@O@0@AEBV10@AEBO@Z */
+complex_double* __cdecl complex_double_add_cd(complex_double *ret, const complex_double *l, double *r)
+{
+    ret->real = l->real + *r;
+    ret->imag = l->imag;
+    return ret;
+}
+
+/* ??$?KN@std@@YA?AV?$complex@N@0@ABV10@0@Z */
+/* ??$?KN@std@@YA?AV?$complex@N@0@AEBV10@0@Z */
+/* ??$?KO@std@@YA?AV?$complex@O@0@ABV10@0@Z */
+/* ??$?KO@std@@YA?AV?$complex@O@0@AEBV10@0@Z */
+complex_double* __cdecl complex_double_div(complex_double *ret, const complex_double *l, const complex_double *r)
+{
+    double tmp, den;
+    if((!r->real && !r->imag) || _isnan(l->real) || _isnan(l->imag)
+            || _isnan(r->real) || _isnan(r->imag)) {
+        ret->real = std_numeric_limits_double_quiet_NaN();
+        ret->imag = ret->real;
+        return ret;
+    }
+
+    if (fabs(r->real) >= fabs(r->imag)) {
+        tmp = r->imag / r->real;
+        den = r->real + r->imag*tmp;
+        ret->real = (l->real + l->imag*tmp) / den;
+        ret->imag = (l->imag - l->real*tmp) / den;
+    } else {
+        tmp = r->real / r->imag;
+        den = r->real*tmp + r->imag;
+        ret->real = (l->real*tmp + l->imag) / den;
+        ret->imag = (l->imag*tmp - l->real) / den;
+    }
+    return ret;
+}
+
+/* ??$?KN@std@@YA?AV?$complex@N@0@ABNABV10@@Z */
+/* ??$?KN@std@@YA?AV?$complex@N@0@AEBNAEBV10@@Z */
+/* ??$?KO@std@@YA?AV?$complex@O@0@ABOABV10@@Z */
+/* ??$?KO@std@@YA?AV?$complex@O@0@AEBOAEBV10@@Z */
+complex_double* __cdecl complex_double_div_dc(complex_double *ret, const double *l, const complex_double *r)
+{
+    complex_double c = {*l, 0};
+    return complex_double_div(ret, &c, r);
+}
+
+/* ??$?KN@std@@YA?AV?$complex@N@0@ABV10@ABN@Z */
+/* ??$?KN@std@@YA?AV?$complex@N@0@AEBV10@AEBN@Z */
+/* ??$?KO@std@@YA?AV?$complex@O@0@ABV10@ABO@Z */
+/* ??$?KO@std@@YA?AV?$complex@O@0@AEBV10@AEBO@Z */
+complex_double* __cdecl complex_double_div_cd(complex_double *ret, const complex_double *l, double *r)
+{
+    ret->real = l->real / *r;
+    ret->imag = l->imag / *r;
+    return ret;
+}
+
+/* ??4?$_Complex_base@NU_C_double_complex@@@std@@QAEAAV01@ABV01@@Z */
+/* ??4?$_Complex_base@NU_C_double_complex@@@std@@QEAAAEAV01@AEBV01@@Z */
+/* ??4?$_Complex_base@OU_C_ldouble_complex@@@std@@QAEAAV01@ABV01@@Z */
+/* ??4?$_Complex_base@OU_C_ldouble_complex@@@std@@QEAAAEAV01@AEBV01@@Z */
+/* ??4?$complex@N@std@@QAEAAV01@ABV01@@Z */
+/* ??4?$complex@N@std@@QEAAAEAV01@AEBV01@@Z */
+/* ??4?$complex@O@std@@QAEAAV01@ABV01@@Z */
+/* ??4?$complex@O@std@@QEAAAEAV01@AEBV01@@Z */
+DEFINE_THISCALL_WRAPPER(complex_double_assign, 8)
+complex_double* __thiscall complex_double_assign(complex_double *this, const complex_double *r)
+{
+    *this = *r;
+    return this;
+}
+
+/* ??4?$complex@N@std@@QAEAAV01@ABN@Z */
+/* ??4?$complex@N@std@@QEAAAEAV01@AEBN@Z */
+/* ??4?$complex@O@std@@QAEAAV01@ABO@Z */
+/* ??4?$complex@O@std@@QEAAAEAV01@AEBO@Z */
+DEFINE_THISCALL_WRAPPER(complex_double_assign_double, 8)
+complex_double* __thiscall complex_double_assign_double(complex_double *this, double *r)
+{
+    this->real = *r;
+    this->imag = 0;
+    return this;
+}
+
+/* ??X?$complex@N@std@@QAEAAV01@ABN@Z */
+/* ??X?$complex@N@std@@QEAAAEAV01@AEBN@Z */
+/* ??X?$complex@O@std@@QAEAAV01@ABO@Z */
+/* ??X?$complex@O@std@@QEAAAEAV01@AEBO@Z */
+DEFINE_THISCALL_WRAPPER(complex_double_mult_assign_double, 8)
+complex_double* __thiscall complex_double_mult_assign_double(complex_double *this, const double *r)
+{
+    this->real *= *r;
+    this->imag *= *r;
+    return this;
+}
+
+/* ??X?$complex@N@std@@QAEAAV01@ABV01@@Z */
+/* ??X?$complex@N@std@@QEAAAEAV01@AEBV01@@Z */
+/* ??X?$complex@O@std@@QAEAAV01@ABV01@@Z */
+/* ??X?$complex@O@std@@QEAAAEAV01@AEBV01@@Z */
+DEFINE_THISCALL_WRAPPER(complex_double_mult_assign, 8)
+complex_double* __thiscall complex_double_mult_assign(complex_double *this, const complex_double *r)
+{
+    complex_double tmp;
+
+    tmp.real = this->real*r->real - this->imag*r->imag;
+    tmp.imag = this->real*r->imag + this->imag*r->real;
+    *this = tmp;
+    return this;
+}
+
+/* ??Y?$complex@N@std@@QAEAAV01@ABN@Z */
+/* ??Y?$complex@N@std@@QEAAAEAV01@AEBN@Z */
+/* ??Y?$complex@O@std@@QAEAAV01@ABO@Z */
+/* ??Y?$complex@O@std@@QEAAAEAV01@AEBO@Z */
+DEFINE_THISCALL_WRAPPER(complex_double_add_assign_double, 8)
+complex_double* __thiscall complex_double_add_assign_double(complex_double *this, const double *r)
+{
+    this->real += *r;
+    return this;
+}
+
+/* ??Y?$complex@N@std@@QAEAAV01@ABV01@@Z */
+/* ??Y?$complex@N@std@@QEAAAEAV01@AEBV01@@Z */
+/* ??Y?$complex@O@std@@QAEAAV01@ABV01@@Z */
+/* ??Y?$complex@O@std@@QEAAAEAV01@AEBV01@@Z */
+DEFINE_THISCALL_WRAPPER(complex_double_add_assign, 8)
+complex_double* __thiscall complex_double_add_assign(complex_double *this, const complex_double *r)
+{
+    this->real += r->real;
+    this->imag += r->imag;
+    return this;
+}
+
+/* ??Z?$complex@N@std@@QAEAAV01@ABN@Z */
+/* ??Z?$complex@N@std@@QEAAAEAV01@AEBN@Z */
+/* ??Z?$complex@O@std@@QAEAAV01@ABO@Z */
+/* ??Z?$complex@O@std@@QEAAAEAV01@AEBO@Z */
+DEFINE_THISCALL_WRAPPER(complex_double_sub_assign_double, 8)
+complex_double* __thiscall complex_double_sub_assign_double(complex_double *this, const double *r)
+{
+    this->real -= *r;
+    return this;
+}
+
+/* ??Z?$complex@N@std@@QAEAAV01@ABV01@@Z */
+/* ??Z?$complex@N@std@@QEAAAEAV01@AEBV01@@Z */
+/* ??Z?$complex@O@std@@QAEAAV01@ABV01@@Z */
+/* ??Z?$complex@O@std@@QEAAAEAV01@AEBV01@@Z */
+DEFINE_THISCALL_WRAPPER(complex_double_sub_assign, 8)
+complex_double* __thiscall complex_double_sub_assign(complex_double *this, const complex_double *r)
+{
+    this->real -= r->real;
+    this->imag -= r->imag;
+    return this;
+}
+
+/* ??_0?$complex@N@std@@QAEAAV01@ABN@Z */
+/* ??_0?$complex@N@std@@QEAAAEAV01@AEBN@Z */
+/* ??_0?$complex@O@std@@QAEAAV01@ABO@Z */
+/* ??_0?$complex@O@std@@QEAAAEAV01@AEBO@Z */
+DEFINE_THISCALL_WRAPPER(complex_double_div_assign_double, 8)
+complex_double* __thiscall complex_double_div_assign_double(complex_double *this, const double *r)
+{
+    this->real /= *r;
+    this->imag /= *r;
+    return this;
+}
+
+/* ??_0?$complex@N@std@@QAEAAV01@ABV01@@Z */
+/* ??_0?$complex@N@std@@QEAAAEAV01@AEBV01@@Z */
+/* ??_0?$complex@O@std@@QAEAAV01@ABV01@@Z */
+/* ??_0?$complex@O@std@@QEAAAEAV01@AEBV01@@Z */
+DEFINE_THISCALL_WRAPPER(complex_double_div_assign, 8)
+complex_double* __thiscall complex_double_div_assign(complex_double *this, const complex_double *r)
+{
+    complex_double tmp = *this;
+    return complex_double_div(this, &tmp, r);
+}
+
+/* ??$arg@N@std@@YANABV?$complex@N@0@@Z */
+/* ??$arg@N@std@@YANAEBV?$complex@N@0@@Z */
+/* ??$arg@O@std@@YAOABV?$complex@O@0@@Z */
+/* ??$arg@O@std@@YAOAEBV?$complex@O@0@@Z */
+double __cdecl complex_double_arg(const complex_double *c)
+{
+    return atan2(c->imag, c->real);
+}
+
+/* ??$imag@N@std@@YANABV?$complex@N@0@@Z */
+/* ??$imag@N@std@@YANAEBV?$complex@N@0@@Z */
+/* ??$imag@O@std@@YAOABV?$complex@O@0@@Z */
+/* ??$imag@O@std@@YAOAEBV?$complex@O@0@@Z */
+double __cdecl complex_double_imag(const complex_double *c)
+{
+    return c->imag;
+}
+
+/* ?imag@?$_Complex_base@NU_C_double_complex@@@std@@QAENABN@Z */
+/* ?imag@?$_Complex_base@NU_C_double_complex@@@std@@QEAANAEBN@Z */
+/* ?imag@?$_Complex_base@OU_C_ldouble_complex@@@std@@QAEOABO@Z */
+/* ?imag@?$_Complex_base@OU_C_ldouble_complex@@@std@@QEAAOAEBO@Z */
+DEFINE_THISCALL_WRAPPER(complex_double_imag_set, 8)
+double __thiscall complex_double_imag_set(complex_double *this, const double *d)
+{
+    return (this->imag = *d);
+}
+
+/* ?imag@?$_Complex_base@NU_C_double_complex@@@std@@QBENXZ */
+/* ?imag@?$_Complex_base@NU_C_double_complex@@@std@@QEBANXZ */
+/* ?imag@?$_Complex_base@OU_C_ldouble_complex@@@std@@QBEOXZ */
+/* ?imag@?$_Complex_base@OU_C_ldouble_complex@@@std@@QEBAOXZ */
+DEFINE_THISCALL_WRAPPER(complex_double_imag_get, 4)
+double __thiscall complex_double_imag_get(const complex_double *this)
+{
+    return this->imag;
+}
+
+/* ??$real@N@std@@YANABV?$complex@N@0@@Z */
+/* ??$real@N@std@@YANAEBV?$complex@N@0@@Z */
+/* ??$real@O@std@@YAOABV?$complex@O@0@@Z */
+/* ??$real@O@std@@YAOAEBV?$complex@O@0@@Z */
+double __cdecl complex_double_real(const complex_double *c)
+{
+    return c->real;
+}
+
+/* ?real@?$_Complex_base@NU_C_double_complex@@@std@@QAENABN@Z */
+/* ?real@?$_Complex_base@NU_C_double_complex@@@std@@QEAANAEBN@Z */
+/* ?real@?$_Complex_base@OU_C_ldouble_complex@@@std@@QAEOABO@Z */
+/* ?real@?$_Complex_base@OU_C_ldouble_complex@@@std@@QEAAOAEBO@Z */
+DEFINE_THISCALL_WRAPPER(complex_double_real_set, 8)
+double __thiscall complex_double_real_set(complex_double *this, const double *d)
+{
+    return (this->real = *d);
+}
+
+/* ?real@?$_Complex_base@NU_C_double_complex@@@std@@QBENXZ */
+/* ?real@?$_Complex_base@NU_C_double_complex@@@std@@QEBANXZ */
+/* ?real@?$_Complex_base@OU_C_ldouble_complex@@@std@@QBEOXZ */
+/* ?real@?$_Complex_base@OU_C_ldouble_complex@@@std@@QEBAOXZ */
+DEFINE_THISCALL_WRAPPER(complex_double_real_get, 4)
+double __thiscall complex_double_real_get(const complex_double *this)
+{
+    return this->real;
+}
+
+/* ??$_Fabs@N@std@@YANABV?$complex@N@0@PAH@Z */
+/* ??$_Fabs@N@std@@YANAEBV?$complex@N@0@PEAH@Z */
+/* ??$_Fabs@O@std@@YAOABV?$complex@O@0@PAH@Z */
+/* ??$_Fabs@O@std@@YAOAEBV?$complex@O@0@PEAH@Z */
+double __cdecl complex_double__Fabs(const complex_double *c, int *scale)
+{
+    double ret;
+
+    ret = hypot(c->real, c->imag);
+    if(_isnan(ret) || ret==0) {
+        *scale = 0;
+    }else if(ret >= 1) {
+        *scale = 2;
+        ret /= 4;
+    }else {
+        *scale = -2;
+        ret *= 4;
+    }
+
+    return ret;
+}
+
+/* ??$abs@N@std@@YANABV?$complex@N@0@@Z */
+/* ??$abs@N@std@@YANAEBV?$complex@N@0@@Z */
+/* ??$abs@O@std@@YAOABV?$complex@O@0@@Z */
+/* ??$abs@O@std@@YAOAEBV?$complex@O@0@@Z */
+double __cdecl complex_double_abs(const complex_double *c)
+{
+    return hypot(c->real, c->imag);
+}
+
+/* ??$conj@N@std@@YA?AV?$complex@N@0@ABV10@@Z */
+/* ??$conj@N@std@@YA?AV?$complex@N@0@AEBV10@@Z */
+/* ??$conj@O@std@@YA?AV?$complex@O@0@ABV10@@Z */
+/* ??$conj@O@std@@YA?AV?$complex@O@0@AEBV10@@Z */
+complex_double* __cdecl complex_double_conj(complex_double *ret, const complex_double *c)
+{
+    ret->real = c->real;
+    ret->imag = -c->imag;
+    return ret;
+}
+
+/* ??$cos@N@std@@YA?AV?$complex@N@0@ABV10@@Z */
+/* ??$cos@N@std@@YA?AV?$complex@N@0@AEBV10@@Z */
+/* ??$cos@O@std@@YA?AV?$complex@O@0@ABV10@@Z */
+/* ??$cos@O@std@@YA?AV?$complex@O@0@AEBV10@@Z */
+complex_double* __cdecl complex_double_cos(complex_double *ret, const complex_double *c)
+{
+    ret->real = cos(c->real)*cosh(c->imag);
+    ret->imag = -sin(c->real)*sinh(c->imag);
+    return ret;
+}
+
+/* ??$sin@N@std@@YA?AV?$complex@N@0@ABV10@@Z */
+/* ??$sin@N@std@@YA?AV?$complex@N@0@AEBV10@@Z */
+/* ??$sin@O@std@@YA?AV?$complex@O@0@ABV10@@Z */
+/* ??$sin@O@std@@YA?AV?$complex@O@0@AEBV10@@Z */
+complex_double* __cdecl complex_double_sin(complex_double *ret, const complex_double *c)
+{
+    ret->real = sin(c->real)*cosh(c->imag);
+    ret->imag = cos(c->real)*sinh(c->imag);
+    return ret;
+}
+
+/* ??$tan@N@std@@YA?AV?$complex@N@0@ABV10@@Z */
+/* ??$tan@N@std@@YA?AV?$complex@N@0@AEBV10@@Z */
+/* ??$tan@O@std@@YA?AV?$complex@O@0@ABV10@@Z */
+/* ??$tan@O@std@@YA?AV?$complex@O@0@AEBV10@@Z */
+complex_double* __cdecl complex_double_tan(complex_double *ret, const complex_double *c)
+{
+    double denom = cos(2*c->real) + cosh(2*c->imag);
+    ret->real = sin(2*c->real) / denom;
+    ret->imag = sinh(2*c->imag) / denom;
+    return ret;
+}
+
+/* ??$cosh@N@std@@YA?AV?$complex@N@0@ABV10@@Z */
+/* ??$cosh@N@std@@YA?AV?$complex@N@0@AEBV10@@Z */
+/* ??$cosh@O@std@@YA?AV?$complex@O@0@ABV10@@Z */
+/* ??$cosh@O@std@@YA?AV?$complex@O@0@AEBV10@@Z */
+complex_double* __cdecl complex_double_cosh(complex_double *ret, const complex_double *c)
+{
+    ret->real = cosh(c->real)*cos(c->imag);
+    ret->imag = sinh(c->real)*sin(c->imag);
+    return ret;
+}
+
+/* ??$sinh@N@std@@YA?AV?$complex@N@0@ABV10@@Z */
+/* ??$sinh@N@std@@YA?AV?$complex@N@0@AEBV10@@Z */
+/* ??$sinh@O@std@@YA?AV?$complex@O@0@ABV10@@Z */
+/* ??$sinh@O@std@@YA?AV?$complex@O@0@AEBV10@@Z */
+complex_double* __cdecl complex_double_sinh(complex_double *ret, const complex_double *c)
+{
+    ret->real = sinh(c->real)*cos(c->imag);
+    ret->imag = cosh(c->real)*sin(c->imag);
+    return ret;
+}
+
+/* ??$tanh@N@std@@YA?AV?$complex@N@0@ABV10@@Z */
+/* ??$tanh@N@std@@YA?AV?$complex@N@0@AEBV10@@Z */
+/* ??$tanh@O@std@@YA?AV?$complex@O@0@ABV10@@Z */
+/* ??$tanh@O@std@@YA?AV?$complex@O@0@AEBV10@@Z */
+complex_double* __cdecl complex_double_tanh(complex_double *ret, const complex_double *c)
+{
+    complex_double tmp;
+
+    ret->real = -c->imag;
+    ret->imag = c->real;
+    complex_double_tan(&tmp, ret);
+    ret->real = tmp.imag;
+    ret->imag = -tmp.real;
+    return ret;
+}
+
+/* ??$exp@N@std@@YA?AV?$complex@N@0@ABV10@@Z */
+/* ??$exp@N@std@@YA?AV?$complex@N@0@AEBV10@@Z */
+/* ??$exp@O@std@@YA?AV?$complex@O@0@ABV10@@Z */
+/* ??$exp@O@std@@YA?AV?$complex@O@0@AEBV10@@Z */
+complex_double* __cdecl complex_double_exp(complex_double *ret, const complex_double *c)
+{
+    ret->real = ret->imag = exp(c->real);
+    ret->real *= cos(c->imag);
+    ret->imag *= sin(c->imag);
+    return ret;
+}
+
+/* ??$log@N@std@@YA?AV?$complex@N@0@ABV10@@Z */
+/* ??$log@N@std@@YA?AV?$complex@N@0@AEBV10@@Z */
+/* ??$log@O@std@@YA?AV?$complex@O@0@ABV10@@Z */
+/* ??$log@O@std@@YA?AV?$complex@O@0@AEBV10@@Z */
+complex_double* __cdecl complex_double_log(complex_double *ret, const complex_double *c)
+{
+    ret->real = log(complex_double_abs(c));
+    ret->imag = complex_double_arg(c);
+    return ret;
+}
+
+/* ??$log10@N@std@@YA?AV?$complex@N@0@ABV10@@Z */
+/* ??$log10@N@std@@YA?AV?$complex@N@0@AEBV10@@Z */
+/* ??$log10@O@std@@YA?AV?$complex@O@0@ABV10@@Z */
+/* ??$log10@O@std@@YA?AV?$complex@O@0@AEBV10@@Z */
+complex_double* __cdecl complex_double_log10(complex_double *ret, const complex_double *c)
+{
+    complex_double_log(ret, c);
+    ret->real *= M_LOG10E;
+    ret->imag *= M_LOG10E;
+    return ret;
+}
+
+/* ??$norm@N@std@@YANABV?$complex@N@0@@Z */
+/* ??$norm@N@std@@YANAEBV?$complex@N@0@@Z */
+/* ??$norm@O@std@@YAOABV?$complex@O@0@@Z */
+/* ??$norm@O@std@@YAOAEBV?$complex@O@0@@Z */
+double __cdecl complex_double_norm(const complex_double *c)
+{
+    return c->real*c->real + c->imag*c->imag;
+}
+
+/* ??$polar@N@std@@YA?AV?$complex@N@0@ABN0@Z */
+/* ??$polar@N@std@@YA?AV?$complex@N@0@AEBN0@Z */
+/* ??$polar@O@std@@YA?AV?$complex@O@0@ABO0@Z */
+/* ??$polar@O@std@@YA?AV?$complex@O@0@AEBO0@Z */
+complex_double* __cdecl complex_double_polar_theta(complex_double *ret, const double *mod, const double *theta)
+{
+    ret->real = *mod * cos(*theta);
+    ret->imag = *mod * sin(*theta);
+    return ret;
+}
+
+/* ??$polar@N@std@@YA?AV?$complex@N@0@ABN@Z */
+/* ??$polar@N@std@@YA?AV?$complex@N@0@AEBN@Z */
+/* ??$polar@O@std@@YA?AV?$complex@O@0@ABO@Z */
+/* ??$polar@O@std@@YA?AV?$complex@O@0@AEBO@Z */
+complex_double* __cdecl complex_double_polar(complex_double *ret, const double *mod)
+{
+    ret->real = *mod;
+    ret->imag = 0;
+    return ret;
+}
+
+/* ??$pow@N@std@@YA?AV?$complex@N@0@ABV10@0@Z */
+/* ??$pow@N@std@@YA?AV?$complex@N@0@AEBV10@0@Z */
+/* ??$pow@O@std@@YA?AV?$complex@O@0@ABV10@0@Z */
+/* ??$pow@O@std@@YA?AV?$complex@O@0@AEBV10@0@Z */
+complex_double* __cdecl complex_double_pow(complex_double *ret, const complex_double *l, const complex_double *r)
+{
+    double abs = complex_double_abs(l), arg = complex_double_arg(l);
+    double rad = pow(abs, r->real), theta = r->real*arg;
+
+    if(r->imag) {
+        rad *= exp(-r->imag * arg);
+        theta += r->imag * log(abs);
+    }
+
+    ret->real = rad * cos(theta);
+    ret->imag = rad * sin(theta);
+    return ret;
+}
+
+/* ??$pow@N@std@@YA?AV?$complex@N@0@ABNABV10@@Z */
+/* ??$pow@N@std@@YA?AV?$complex@N@0@AEBNAEBV10@@Z */
+/* ??$pow@O@std@@YA?AV?$complex@O@0@ABOABV10@@Z */
+/* ??$pow@O@std@@YA?AV?$complex@O@0@AEBOAEBV10@@Z */
+complex_double* __cdecl complex_double_pow_dc(complex_double *ret, const double *l, const complex_double *r)
+{
+    complex_double c = { *l, 0 };
+    return complex_double_pow(ret, &c, r);
+}
+
+/* ??$pow@N@std@@YA?AV?$complex@N@0@ABV10@ABN@Z */
+/* ??$pow@N@std@@YA?AV?$complex@N@0@AEBV10@AEBN@Z */
+/* ??$pow@O@std@@YA?AV?$complex@O@0@ABV10@ABO@Z */
+/* ??$pow@O@std@@YA?AV?$complex@O@0@AEBV10@AEBO@Z */
+complex_double* __cdecl complex_double_pow_cd(complex_double *ret, const complex_double *l, const double *r)
+{
+    complex_double c = { *r, 0 };
+    return complex_double_pow(ret, l, &c);
+}
+
+/*  ??$pow@N@std@@YA?AV?$complex@N@0@ABV10@H@Z  */
+/*  ??$pow@N@std@@YA?AV?$complex@N@0@AEBV10@H@Z */
+/*  ??$pow@O@std@@YA?AV?$complex@O@0@ABV10@H@Z  */
+/*  ??$pow@O@std@@YA?AV?$complex@O@0@AEBV10@H@Z */
+complex_double* __cdecl complex_double_pow_ci(complex_double *ret, const complex_double *l, int r)
+{
+    complex_double c = *l;
+    complex_double unit_value = { 1.0, 0 };
+    complex_double_assign(ret, &unit_value);
+
+    if(r < 0) {
+        r = -r;
+        complex_double_div(&c, &unit_value, l);
+    }
+
+    for(; r>0; r>>=1) {
+        if(r & 1)
+            complex_double_mult_assign(ret, &c);
+        if(r != 1)
+            complex_double_mult_assign(&c, &c);
+    }
+
+    return ret;
+}
+
+/* ??$sqrt@N@std@@YA?AV?$complex@N@0@ABV10@@Z */
+/* ??$sqrt@N@std@@YA?AV?$complex@N@0@AEBV10@@Z */
+/* ??$sqrt@O@std@@YA?AV?$complex@O@0@ABV10@@Z */
+/* ??$sqrt@O@std@@YA?AV?$complex@O@0@AEBV10@@Z */
+complex_double* __cdecl complex_double_sqrt(complex_double *ret, const complex_double *l)
+{
+    complex_double c = { 0.5, 0 };
+    return complex_double_pow(ret, l, &c);
+}

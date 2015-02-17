@@ -547,7 +547,7 @@ BOOL16 WINAPI GlobalUnlock16(
     GLOBALARENA *pArena = GET_ARENA_PTR(handle);
     if (!VALID_HANDLE(handle)) {
 	WARN("Invalid handle 0x%04x passed to GlobalUnlock16!\n",handle);
-	return 0;
+        return FALSE;
     }
     TRACE("%04x\n", handle );
     if (pArena->lockCount) pArena->lockCount--;
@@ -963,9 +963,12 @@ WORD WINAPI GlobalHandleToSel16( HGLOBAL16 handle )
  */
 DWORD WINAPI GetFreeMemInfo16(void)
 {
+    SYSTEM_BASIC_INFORMATION info;
     MEMORYSTATUS status;
+
+    NtQuerySystemInformation( SystemBasicInformation, &info, sizeof(info), NULL );
     GlobalMemoryStatus( &status );
-    return MAKELONG( status.dwTotalVirtual/getpagesize(), status.dwAvailVirtual/getpagesize() );
+    return MAKELONG( status.dwTotalVirtual / info.PageSize, status.dwAvailVirtual / info.PageSize );
 }
 
 /***********************************************************************

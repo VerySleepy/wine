@@ -26,13 +26,12 @@
 
 /* avoid conflict with field names in included win32 headers */
 #undef Status
-#include "ddrawi.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(x11drv);
 
 /* data for resolution changing */
-static LPDDHALMODEINFO dd_modes;
+static struct x11drv_mode_info *dd_modes;
 static unsigned int dd_mode_count;
 
 static unsigned int max_width;
@@ -48,7 +47,11 @@ static const unsigned int heights[] = {200, 300, 384, 480, 600,  768,  864, 1024
 /* create the mode structures */
 static void make_modes(void)
 {
+    RECT primary_rect = get_primary_monitor_rect();
     unsigned int i;
+    unsigned int screen_width = primary_rect.right - primary_rect.left;
+    unsigned int screen_height = primary_rect.bottom - primary_rect.top;
+
     /* original specified desktop size */
     X11DRV_Settings_AddOneMode(screen_width, screen_height, 0, 60);
     for (i=0; i<NUM_DESKTOP_MODES; i++)
@@ -74,11 +77,13 @@ static int X11DRV_desktop_GetCurrentMode(void)
 {
     unsigned int i;
     DWORD dwBpp = screen_bpp;
+    RECT primary_rect = get_primary_monitor_rect();
+
     for (i=0; i<dd_mode_count; i++)
     {
-        if ( (screen_width == dd_modes[i].dwWidth) &&
-             (screen_height == dd_modes[i].dwHeight) && 
-             (dwBpp == dd_modes[i].dwBPP))
+        if ( (primary_rect.right - primary_rect.left == dd_modes[i].width) &&
+             (primary_rect.bottom - primary_rect.top == dd_modes[i].height) &&
+             (dwBpp == dd_modes[i].bpp))
             return i;
     }
     ERR("In unknown mode, returning default\n");
@@ -88,17 +93,17 @@ static int X11DRV_desktop_GetCurrentMode(void)
 static LONG X11DRV_desktop_SetCurrentMode(int mode)
 {
     DWORD dwBpp = screen_bpp;
-    if (dwBpp != dd_modes[mode].dwBPP)
+    if (dwBpp != dd_modes[mode].bpp)
     {
-        FIXME("Cannot change screen BPP from %d to %d\n", dwBpp, dd_modes[mode].dwBPP);
+        FIXME("Cannot change screen BPP from %d to %d\n", dwBpp, dd_modes[mode].bpp);
         /* Ignore the depth mismatch
          *
          * Some (older) applications require a specific bit depth, this will allow them
          * to run. X11drv performs a color depth conversion if needed.
          */
     }
-    TRACE("Resizing Wine desktop window to %dx%d\n", dd_modes[mode].dwWidth, dd_modes[mode].dwHeight);
-    X11DRV_resize_desktop(dd_modes[mode].dwWidth, dd_modes[mode].dwHeight);
+    TRACE("Resizing Wine desktop window to %dx%d\n", dd_modes[mode].width, dd_modes[mode].height);
+    X11DRV_resize_desktop(dd_modes[mode].width, dd_modes[mode].height);
     return DISP_CHANGE_SUCCESSFUL;
 }
 
@@ -109,10 +114,12 @@ static LONG X11DRV_desktop_SetCurrentMode(int mode)
  */
 void X11DRV_init_desktop( Window win, unsigned int width, unsigned int height )
 {
+    RECT primary_rect = get_primary_monitor_rect();
+
     root_window = win;
-    managed_mode = 0;  /* no managed windows in desktop mode */
-    max_width = screen_width;
-    max_height = screen_height;
+    managed_mode = FALSE;  /* no managed windows in desktop mode */
+    max_width = primary_rect.right - primary_rect.left;
+    max_height = primary_rect.bottom - primary_rect.top;
     xinerama_init( width, height );
 
     /* initialize the available resolutions */
@@ -131,41 +138,43 @@ void X11DRV_init_desktop( Window win, unsigned int width, unsigned int height )
  *
  * Create the X11 desktop window for the desktop mode.
  */
-Window CDECL X11DRV_create_desktop( UINT width, UINT height )
+BOOL CDECL X11DRV_create_desktop( UINT width, UINT height )
 {
     XSetWindowAttributes win_attr;
     Window win;
     Display *display = thread_init_display();
+    RECT rect;
 
     TRACE( "%u x %u\n", width, height );
-
-    wine_tsx11_lock();
 
     /* Create window */
     win_attr.event_mask = ExposureMask | KeyPressMask | KeyReleaseMask | EnterWindowMask |
                           PointerMotionMask | ButtonPressMask | ButtonReleaseMask | FocusChangeMask;
     win_attr.cursor = XCreateFontCursor( display, XC_top_left_arrow );
 
-    if (visual != DefaultVisual( display, DefaultScreen(display) ))
+    if (default_visual.visual != DefaultVisual( display, DefaultScreen(display) ))
         win_attr.colormap = XCreateColormap( display, DefaultRootWindow(display),
-                                             visual, AllocNone );
+                                             default_visual.visual, AllocNone );
     else
         win_attr.colormap = None;
 
     win = XCreateWindow( display, DefaultRootWindow(display),
-                         0, 0, width, height, 0, screen_depth, InputOutput, visual,
+                         0, 0, width, height, 0, default_visual.depth, InputOutput, default_visual.visual,
                          CWEventMask | CWCursor | CWColormap, &win_attr );
-    if (win != None && width == screen_width && height == screen_height)
+    if (!win) return FALSE;
+
+    SetRect( &rect, 0, 0, width, height );
+    if (is_window_rect_fullscreen( &rect ))
     {
         TRACE("setting desktop to fullscreen\n");
         XChangeProperty( display, win, x11drv_atom(_NET_WM_STATE), XA_ATOM, 32,
             PropModeReplace, (unsigned char*)&x11drv_atom(_NET_WM_STATE_FULLSCREEN),
             1);
     }
+    if (!create_desktop_win_data( win )) return FALSE;
     XFlush( display );
-    wine_tsx11_unlock();
-    if (win != None) X11DRV_init_desktop( win, width, height );
-    return win;
+    X11DRV_init_desktop( win, width, height );
+    return TRUE;
 }
 
 
@@ -173,35 +182,40 @@ struct desktop_resize_data
 {
     RECT  old_screen_rect;
     RECT  old_virtual_rect;
+    RECT  new_virtual_rect;
 };
 
 static BOOL CALLBACK update_windows_on_desktop_resize( HWND hwnd, LPARAM lparam )
 {
     struct x11drv_win_data *data;
-    Display *display = thread_display();
     struct desktop_resize_data *resize_data = (struct desktop_resize_data *)lparam;
     int mask = 0;
 
-    if (!(data = X11DRV_get_win_data( hwnd ))) return TRUE;
+    if (!(data = get_win_data( hwnd ))) return TRUE;
 
     /* update the full screen state */
-    update_net_wm_states( display, data );
+    update_net_wm_states( data );
 
-    if (resize_data->old_virtual_rect.left != virtual_screen_rect.left) mask |= CWX;
-    if (resize_data->old_virtual_rect.top != virtual_screen_rect.top) mask |= CWY;
+    if (resize_data->old_virtual_rect.left != resize_data->new_virtual_rect.left) mask |= CWX;
+    if (resize_data->old_virtual_rect.top != resize_data->new_virtual_rect.top) mask |= CWY;
     if (mask && data->whole_window)
     {
+        POINT pos = virtual_screen_to_root( data->whole_rect.left, data->whole_rect.top );
         XWindowChanges changes;
-
-        wine_tsx11_lock();
-        changes.x = data->whole_rect.left - virtual_screen_rect.left;
-        changes.y = data->whole_rect.top - virtual_screen_rect.top;
-        XReconfigureWMWindow( display, data->whole_window,
-                              DefaultScreen(display), mask, &changes );
-        wine_tsx11_unlock();
+        changes.x = pos.x;
+        changes.y = pos.y;
+        XReconfigureWMWindow( data->display, data->whole_window, data->vis.screen, mask, &changes );
     }
+    release_win_data( data );
     if (hwnd == GetForegroundWindow()) clip_fullscreen_window( hwnd, TRUE );
     return TRUE;
+}
+
+BOOL is_desktop_fullscreen(void)
+{
+    RECT primary_rect = get_primary_monitor_rect();
+    return (primary_rect.right - primary_rect.left == max_width &&
+            primary_rect.bottom - primary_rect.top == max_height);
 }
 
 static void update_desktop_fullscreen( unsigned int width, unsigned int height)
@@ -209,7 +223,7 @@ static void update_desktop_fullscreen( unsigned int width, unsigned int height)
     Display *display = thread_display();
     XEvent xev;
 
-    if (!display || root_window != DefaultRootWindow( display )) return;
+    if (!display || root_window == DefaultRootWindow( display )) return;
 
     xev.xclient.type = ClientMessage;
     xev.xclient.window = root_window;
@@ -228,10 +242,13 @@ static void update_desktop_fullscreen( unsigned int width, unsigned int height)
 
     TRACE("action=%li\n", xev.xclient.data.l[0]);
 
-    wine_tsx11_lock();
     XSendEvent( display, DefaultRootWindow(display), False,
                 SubstructureRedirectMask | SubstructureNotifyMask, &xev );
-    wine_tsx11_unlock();
+
+    xev.xclient.data.l[1] = x11drv_atom(_NET_WM_STATE_MAXIMIZED_VERT);
+    xev.xclient.data.l[2] = x11drv_atom(_NET_WM_STATE_MAXIMIZED_HORZ);
+    XSendEvent( display, DefaultRootWindow(display), False,
+                SubstructureRedirectMask | SubstructureNotifyMask, &xev );
 }
 
 /***********************************************************************
@@ -242,10 +259,11 @@ void X11DRV_resize_desktop( unsigned int width, unsigned int height )
     HWND hwnd = GetDesktopWindow();
     struct desktop_resize_data resize_data;
 
-    SetRect( &resize_data.old_screen_rect, 0, 0, screen_width, screen_height );
-    resize_data.old_virtual_rect = virtual_screen_rect;
+    resize_data.old_screen_rect = get_primary_monitor_rect();
+    resize_data.old_virtual_rect = get_virtual_screen_rect();
 
     xinerama_init( width, height );
+    resize_data.new_virtual_rect = get_virtual_screen_rect();
 
     if (GetWindowThreadProcessId( hwnd, NULL ) != GetCurrentThreadId())
     {
@@ -255,9 +273,9 @@ void X11DRV_resize_desktop( unsigned int width, unsigned int height )
     {
         TRACE( "desktop %p change to (%dx%d)\n", hwnd, width, height );
         update_desktop_fullscreen( width, height );
-        SetWindowPos( hwnd, 0, virtual_screen_rect.left, virtual_screen_rect.top,
-                      virtual_screen_rect.right - virtual_screen_rect.left,
-                      virtual_screen_rect.bottom - virtual_screen_rect.top,
+        SetWindowPos( hwnd, 0, resize_data.new_virtual_rect.left, resize_data.new_virtual_rect.top,
+                      resize_data.new_virtual_rect.right - resize_data.new_virtual_rect.left,
+                      resize_data.new_virtual_rect.bottom - resize_data.new_virtual_rect.top,
                       SWP_NOZORDER | SWP_NOACTIVATE | SWP_DEFERERASE );
         ungrab_clipping_window();
         SendMessageTimeoutW( HWND_BROADCAST, WM_DISPLAYCHANGE, screen_bpp,

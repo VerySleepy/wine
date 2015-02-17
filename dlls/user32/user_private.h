@@ -35,6 +35,11 @@
 #define WM_SYSTIMER	    0x0118
 #define WM_POPUPSYSTEMMENU  0x0313
 
+#define WINE_MOUSE_HANDLE       ((HANDLE)1)
+#define WINE_KEYBOARD_HANDLE    ((HANDLE)2)
+
+struct window_surface;
+
 /* internal messages codes */
 enum wine_internal_message
 {
@@ -59,6 +64,7 @@ typedef struct tagUSER_DRIVER {
     SHORT  (CDECL *pGetAsyncKeyState)(INT);
     INT    (CDECL *pGetKeyNameText)(LONG, LPWSTR, INT);
     HKL    (CDECL *pGetKeyboardLayout)(DWORD);
+    UINT   (CDECL *pGetKeyboardLayoutList)(INT, HKL *);
     BOOL   (CDECL *pGetKeyboardLayoutName)(LPWSTR);
     HKL    (CDECL *pLoadKeyboardLayout)(LPCWSTR, UINT);
     UINT   (CDECL *pMapVirtualKeyEx)(UINT, UINT, HKL);
@@ -68,15 +74,11 @@ typedef struct tagUSER_DRIVER {
     void   (CDECL *pUnregisterHotKey)(HWND, UINT, UINT);
     SHORT  (CDECL *pVkKeyScanEx)(WCHAR, HKL);
     /* cursor/icon functions */
-    void   (CDECL *pCreateCursorIcon)(HCURSOR);
     void   (CDECL *pDestroyCursorIcon)(HCURSOR);
     void   (CDECL *pSetCursor)(HCURSOR);
     BOOL   (CDECL *pGetCursorPos)(LPPOINT);
     BOOL   (CDECL *pSetCursorPos)(INT,INT);
     BOOL   (CDECL *pClipCursor)(LPCRECT);
-    /* screen saver functions */
-    BOOL   (CDECL *pGetScreenSaveActive)(void);
-    void   (CDECL *pSetScreenSaveActive)(BOOL);
     /* clipboard functions */
     INT    (CDECL *pAcquireClipboard)(HWND);                     /* Acquire selection */
     BOOL   (CDECL *pCountClipboardFormats)(void);                /* Count available clipboard formats */
@@ -98,20 +100,23 @@ typedef struct tagUSER_DRIVER {
     void   (CDECL *pGetDC)(HDC,HWND,HWND,const RECT *,const RECT *,DWORD);
     DWORD  (CDECL *pMsgWaitForMultipleObjectsEx)(DWORD,const HANDLE*,DWORD,DWORD,DWORD);
     void   (CDECL *pReleaseDC)(HWND,HDC);
-    BOOL   (CDECL *pScrollDC)(HDC, INT, INT, const RECT *, const RECT *, HRGN, LPRECT);
+    BOOL   (CDECL *pScrollDC)(HDC,INT,INT,HRGN);
     void   (CDECL *pSetCapture)(HWND,UINT);
     void   (CDECL *pSetFocus)(HWND);
     void   (CDECL *pSetLayeredWindowAttributes)(HWND,COLORREF,BYTE,DWORD);
     void   (CDECL *pSetParent)(HWND,HWND,HWND);
-    int    (CDECL *pSetWindowRgn)(HWND,HRGN,BOOL);
+    void   (CDECL *pSetWindowRgn)(HWND,HRGN,BOOL);
     void   (CDECL *pSetWindowIcon)(HWND,UINT,HICON);
     void   (CDECL *pSetWindowStyle)(HWND,INT,STYLESTRUCT*);
     void   (CDECL *pSetWindowText)(HWND,LPCWSTR);
     UINT   (CDECL *pShowWindow)(HWND,INT,RECT*,UINT);
     LRESULT (CDECL *pSysCommand)(HWND,WPARAM,LPARAM);
+    BOOL    (CDECL *pUpdateLayeredWindow)(HWND,const UPDATELAYEREDWINDOWINFO *,const RECT *);
     LRESULT (CDECL *pWindowMessage)(HWND,UINT,WPARAM,LPARAM);
-    void   (CDECL *pWindowPosChanging)(HWND,HWND,UINT,const RECT *,const RECT *,RECT *);
-    void   (CDECL *pWindowPosChanged)(HWND,HWND,UINT,const RECT *,const RECT *,const RECT *,const RECT *);
+    void   (CDECL *pWindowPosChanging)(HWND,HWND,UINT,const RECT *,const RECT *,RECT *,struct window_surface**);
+    void   (CDECL *pWindowPosChanged)(HWND,HWND,UINT,const RECT *,const RECT *,const RECT *,const RECT *,struct window_surface*);
+    /* system parameters */
+    BOOL   (CDECL *pSystemParametersInfo)(UINT,UINT,void*,UINT);
 } USER_DRIVER;
 
 extern const USER_DRIVER *USER_Driver DECLSPEC_HIDDEN;
@@ -167,7 +172,10 @@ struct wm_char_mapping_data
 struct user_thread_info
 {
     HANDLE                        server_queue;           /* Handle to server-side queue */
-    DWORD                         recursion_count;        /* SendMessage recursion counter */
+    DWORD                         wake_mask;              /* Current queue wake mask */
+    DWORD                         changed_mask;           /* Current queue changed mask */
+    WORD                          recursion_count;        /* SendMessage recursion counter */
+    WORD                          message_count;          /* Get/PeekMessage loop counter */
     BOOL                          hook_unicode;           /* Is current hook unicode? */
     HHOOK                         hook;                   /* Current hook */
     struct received_message_info *receive_info;           /* Message being currently received */
@@ -176,10 +184,13 @@ struct user_thread_info
     DWORD                         GetMessagePosVal;       /* Value for GetMessagePos */
     ULONG_PTR                     GetMessageExtraInfoVal; /* Value for GetMessageExtraInfo */
     UINT                          active_hooks;           /* Bitmap of active hooks */
+    UINT                          key_state_time;         /* Time of last key state refresh */
+    BYTE                         *key_state;              /* Cache of global key state */
     HWND                          top_window;             /* Desktop window */
     HWND                          msg_window;             /* HWND_MESSAGE parent window */
+    RAWINPUT                     *rawinput;
 
-    ULONG                         pad[11];                /* Available for more data */
+    ULONG                         pad[6];                 /* Available for more data */
 };
 
 struct hook_extra_info
@@ -200,24 +211,31 @@ static inline BOOL is_broadcast( HWND hwnd )
 }
 
 extern HMODULE user32_module DECLSPEC_HIDDEN;
-extern HBRUSH SYSCOLOR_55AABrush DECLSPEC_HIDDEN;
 
 struct dce;
+struct tagWND;
 
 extern BOOL CLIPBOARD_ReleaseOwner(void) DECLSPEC_HIDDEN;
 extern BOOL FOCUS_MouseActivate( HWND hwnd ) DECLSPEC_HIDDEN;
 extern BOOL set_capture_window( HWND hwnd, UINT gui_flags, HWND *prev_ret ) DECLSPEC_HIDDEN;
 extern void free_dce( struct dce *dce, HWND hwnd ) DECLSPEC_HIDDEN;
-extern void invalidate_dce( HWND hwnd, const RECT *rect ) DECLSPEC_HIDDEN;
+extern void invalidate_dce( struct tagWND *win, const RECT *rect ) DECLSPEC_HIDDEN;
 extern void erase_now( HWND hwnd, UINT rdw_flags ) DECLSPEC_HIDDEN;
-extern void *get_hook_proc( void *proc, const WCHAR *module ) DECLSPEC_HIDDEN;
+extern void move_window_bits( HWND hwnd, struct window_surface *old_surface,
+                              struct window_surface *new_surface,
+                              const RECT *visible_rect, const RECT *old_visible_rect,
+                              const RECT *client_rect, const RECT *valid_rects ) DECLSPEC_HIDDEN;
+extern void *get_hook_proc( void *proc, const WCHAR *module, HMODULE *free_module ) DECLSPEC_HIDDEN;
+extern RECT get_virtual_screen_rect(void) DECLSPEC_HIDDEN;
 extern LRESULT call_current_hook( HHOOK hhook, INT code, WPARAM wparam, LPARAM lparam ) DECLSPEC_HIDDEN;
+extern DWORD get_input_codepage( void ) DECLSPEC_HIDDEN;
 extern BOOL map_wparam_AtoW( UINT message, WPARAM *wparam, enum wm_char_mapping mapping ) DECLSPEC_HIDDEN;
 extern NTSTATUS send_hardware_message( HWND hwnd, const INPUT *input, UINT flags ) DECLSPEC_HIDDEN;
 extern LRESULT MSG_SendInternalMessageTimeout( DWORD dest_pid, DWORD dest_tid,
                                                UINT msg, WPARAM wparam, LPARAM lparam,
                                                UINT flags, UINT timeout, PDWORD_PTR res_ptr ) DECLSPEC_HIDDEN;
 extern HPEN SYSCOLOR_GetPen( INT index ) DECLSPEC_HIDDEN;
+extern HBRUSH SYSCOLOR_Get55AABrush(void) DECLSPEC_HIDDEN;
 extern void SYSPARAMS_Init(void) DECLSPEC_HIDDEN;
 extern void USER_CheckNotLock(void) DECLSPEC_HIDDEN;
 extern BOOL USER_IsExitingThread( DWORD tid ) DECLSPEC_HIDDEN;
@@ -255,7 +273,6 @@ extern const char *SPY_GetVKeyName(WPARAM wParam) DECLSPEC_HIDDEN;
 extern void SPY_EnterMessage( INT iFlag, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam ) DECLSPEC_HIDDEN;
 extern void SPY_ExitMessage( INT iFlag, HWND hwnd, UINT msg,
                              LRESULT lReturn, WPARAM wParam, LPARAM lParam ) DECLSPEC_HIDDEN;
-extern int SPY_Init(void) DECLSPEC_HIDDEN;
 
 #include "pshpack1.h"
 

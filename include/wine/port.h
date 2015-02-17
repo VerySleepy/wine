@@ -29,7 +29,9 @@
 # error You must include port.h before all other headers
 #endif
 
-#define _GNU_SOURCE  /* for pread/pwrite */
+#ifndef _GNU_SOURCE
+# define _GNU_SOURCE  /* for pread/pwrite, isfinite */
+#endif
 #include <fcntl.h>
 #include <math.h>
 #include <sys/types.h>
@@ -44,6 +46,7 @@
 # include <process.h>
 #endif
 #include <string.h>
+#include <stdlib.h>
 #ifdef HAVE_UNISTD_H
 # include <unistd.h>
 #endif
@@ -54,7 +57,7 @@
  */
 
 #if !defined(_MSC_VER) && !defined(__int64)
-#  if defined(__x86_64__) || defined(_WIN64)
+#  if defined(__x86_64__) || defined(__aarch64__) || defined(_WIN64)
 #    define __int64 long
 #  else
 #    define __int64 long long
@@ -199,6 +202,24 @@ struct statvfs
 #define M_PI_2 1.570796326794896619
 #endif
 
+#ifndef INFINITY
+static inline float __port_infinity(void)
+{
+    static const unsigned __inf_bytes = 0x7f800000;
+    return *(const float *)&__inf_bytes;
+}
+#define INFINITY __port_infinity()
+#endif
+
+#ifndef NAN
+static inline float __port_nan(void)
+{
+    static const unsigned __nan_bytes = 0x7fc00000;
+    return *(const float *)&__nan_bytes;
+}
+#define NAN __port_nan()
+#endif
+
 
 /****************************************************************
  * Function definitions (only when using libwine_port)
@@ -210,7 +231,7 @@ struct statvfs
 int fstatvfs( int fd, struct statvfs *buf );
 #endif
 
-#ifndef HAVE_GETOPT_LONG
+#ifndef HAVE_GETOPT_LONG_ONLY
 extern char *optarg;
 extern int optind;
 extern int opterr;
@@ -233,20 +254,15 @@ extern int getopt_long (int ___argc, char *const *___argv,
 extern int getopt_long_only (int ___argc, char *const *___argv,
                              const char *__shortopts,
                              const struct option *__longopts, int *__longind);
-#endif  /* HAVE_GETOPT_LONG */
+#endif  /* HAVE_GETOPT_LONG_ONLY */
 
 #ifndef HAVE_FFS
 int ffs( int x );
 #endif
 
-#ifndef HAVE_FUTIMES
-struct timeval;
-int futimes(int fd, const struct timeval *tv);
+#ifndef HAVE_ISFINITE
+int isfinite(double x);
 #endif
-
-#ifndef HAVE_GETPAGESIZE
-size_t getpagesize(void);
-#endif  /* HAVE_GETPAGESIZE */
 
 #ifndef HAVE_ISINF
 int isinf(double x);
@@ -343,8 +359,8 @@ extern int mkstemps(char *template, int suffix_len);
 # define _P_NOWAITO 3
 # define _P_DETACH  4
 #endif
-#ifndef HAVE_SPAWNVP
-extern int spawnvp(int mode, const char *cmdname, const char * const argv[]);
+#ifndef HAVE__SPAWNVP
+extern int _spawnvp(int mode, const char *cmdname, const char * const argv[]);
 #endif
 
 /* Interlocked functions */
@@ -425,7 +441,7 @@ extern __int64 interlocked_cmpxchg64( __int64 *dest, __int64 xchg, __int64 compa
 extern int interlocked_xchg( int *dest, int val );
 extern void *interlocked_xchg_ptr( void **dest, void *val );
 extern int interlocked_xchg_add( int *dest, int incr );
-#ifdef _WIN64
+#if defined(__x86_64__) || defined(__aarch64__) || defined(_WIN64)
 extern unsigned char interlocked_cmpxchg128( __int64 *dest, __int64 xchg_high,
                                              __int64 xchg_low, __int64 *compare );
 #endif
@@ -438,10 +454,8 @@ extern unsigned char interlocked_cmpxchg128( __int64 *dest, __int64 xchg_high,
 
 #define ffs                     __WINE_NOT_PORTABLE(ffs)
 #define fstatvfs                __WINE_NOT_PORTABLE(fstatvfs)
-#define futimes                 __WINE_NOT_PORTABLE(futimes)
 #define getopt_long             __WINE_NOT_PORTABLE(getopt_long)
 #define getopt_long_only        __WINE_NOT_PORTABLE(getopt_long_only)
-#define getpagesize             __WINE_NOT_PORTABLE(getpagesize)
 #define interlocked_cmpxchg     __WINE_NOT_PORTABLE(interlocked_cmpxchg)
 #define interlocked_cmpxchg_ptr __WINE_NOT_PORTABLE(interlocked_cmpxchg_ptr)
 #define interlocked_xchg        __WINE_NOT_PORTABLE(interlocked_xchg)

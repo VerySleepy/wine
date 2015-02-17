@@ -1,5 +1,11 @@
-MODULE = msvcp60.dll
+MODULE    = msvcp60.dll
+IMPORTS   = msvcrt
 
-C_SRCS = msvcp60.c
-
-@MAKE_DLL_RULES@
+C_SRCS = \
+	exception.c \
+	ios.c \
+	locale.c \
+	main.c \
+	memory.c \
+	misc.c \
+	string.c

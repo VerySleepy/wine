@@ -24,11 +24,13 @@
 #define _WIN32_IE 0x500
 #include <windows.h>
 #include <commctrl.h>
+#include <shellapi.h>
 
 #include <wine/debug.h>
 #include <wine/list.h>
 
 #include "explorer_private.h"
+#include "resource.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(systray);
 
@@ -84,11 +86,13 @@ static unsigned int alloc_displayed;
 static unsigned int nb_displayed;
 static struct icon **displayed;  /* array of currently displayed icons */
 
-static BOOL hide_systray;
+static BOOL hide_systray, enable_shell;
 static int icon_cx, icon_cy, tray_width;
 
 static struct icon *balloon_icon;
 static HWND balloon_window;
+
+static HWND start_button;
 
 #define MIN_DISPLAYED 8
 #define ICON_BORDER  2
@@ -134,7 +138,7 @@ static void init_common_controls(void)
         INITCOMMONCONTROLSEX init_tooltip;
 
         init_tooltip.dwSize = sizeof(INITCOMMONCONTROLSEX);
-        init_tooltip.dwICC = ICC_TAB_CLASSES;
+        init_tooltip.dwICC = ICC_TAB_CLASSES|ICC_STANDARD_CLASSES;
 
         InitCommonControlsEx(&init_tooltip);
         initialized = TRUE;
@@ -348,7 +352,7 @@ static BOOL hide_icon(struct icon *icon)
     invalidate_icons( icon->display, nb_displayed );
     icon->display = -1;
 
-    if (!nb_displayed) ShowWindow( tray_window, SW_HIDE );
+    if (!nb_displayed && !enable_shell) ShowWindow( tray_window, SW_HIDE );
 
     update_balloon( icon );
     update_tooltip_position( icon );
@@ -621,25 +625,46 @@ static LRESULT WINAPI tray_wndproc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
         ShowWindow( hwnd, SW_HIDE );
         return 0;
 
+    case WM_COMMAND:
+        if ((HWND)lparam == start_button && HIWORD(wparam) == BN_CLICKED)
+            do_startmenu(hwnd);
+        break;
+
+    case WM_INITMENUPOPUP:
+    case WM_MENUCOMMAND:
+        return menu_wndproc(hwnd, msg, wparam, lparam);
+
     default:
         return DefWindowProcW( hwnd, msg, wparam, lparam );
     }
     return 0;
 }
 
-/* this function creates the listener window */
-void initialize_systray( BOOL using_root )
+static void get_system_text_size( const WCHAR *text, SIZE *size )
 {
-    HMODULE x11drv;
+    /* FIXME: Implement BCM_GETIDEALSIZE and use that instead. */
+    HDC hdc = GetDC( 0 );
+
+    GetTextExtentPointW(hdc, text, lstrlenW(text), size);
+
+    ReleaseDC( 0, hdc );
+}
+
+/* this function creates the listener window */
+void initialize_systray( HMODULE graphics_driver, BOOL using_root, BOOL arg_enable_shell )
+{
     WNDCLASSEXW class;
     static const WCHAR classname[] = {'S','h','e','l','l','_','T','r','a','y','W','n','d',0};
+    static const WCHAR button_class[] = {'B','u','t','t','o','n',0};
+    WCHAR start_label[50];
+    SIZE start_text_size;
 
-    if ((x11drv = GetModuleHandleA( "winex11.drv" )))
-        wine_notify_icon = (void *)GetProcAddress( x11drv, "wine_notify_icon" );
+    wine_notify_icon = (void *)GetProcAddress( graphics_driver, "wine_notify_icon" );
 
     icon_cx = GetSystemMetrics( SM_CXSMICON ) + 2*ICON_BORDER;
     icon_cy = GetSystemMetrics( SM_CYSMICON ) + 2*ICON_BORDER;
     hide_systray = using_root;
+    enable_shell = arg_enable_shell;
 
     /* register the systray listener window class */
     ZeroMemory(&class, sizeof(class));
@@ -650,7 +675,7 @@ void initialize_systray( BOOL using_root )
     class.hIcon         = LoadIconW(0, (LPCWSTR)IDI_WINLOGO);
     class.hCursor       = LoadCursorW(0, (LPCWSTR)IDC_ARROW);
     class.hbrBackground = (HBRUSH) COLOR_WINDOW;
-    class.lpszClassName = (WCHAR *) &classname;
+    class.lpszClassName = classname;
 
     if (!RegisterClassExW(&class))
     {
@@ -667,6 +692,15 @@ void initialize_systray( BOOL using_root )
         WINE_ERR("Could not create tray window\n");
         return;
     }
+
+    LoadStringW( NULL, IDS_START_LABEL, start_label, sizeof(start_label)/sizeof(WCHAR) );
+
+    get_system_text_size( start_label, &start_text_size );
+
+    start_button = CreateWindowW( button_class, start_label, WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
+        0, 0, start_text_size.cx + 8, icon_cy, tray_window, 0, 0, 0 );
+
+    if (enable_shell && !hide_systray) ShowWindow( tray_window, SW_SHOWNA );
 
     if (hide_systray) do_hide_systray();
 }

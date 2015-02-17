@@ -41,6 +41,9 @@
 # include <sys/prctl.h>
 #endif
 #include <sys/types.h>
+#ifdef HAVE_SYS_WAIT_H
+# include <sys/wait.h>
+#endif
 #ifdef HAVE_UNISTD_H
 # include <unistd.h>
 #endif
@@ -81,9 +84,10 @@ typedef struct
 static DWORD shutdown_flags = 0;
 static DWORD shutdown_priority = 0x280;
 static BOOL is_wow64;
-static const int is_win64 = (sizeof(void *) > sizeof(int));
+static const BOOL is_win64 = (sizeof(void *) > sizeof(int));
 
 HMODULE kernel32_handle = 0;
+SYSTEM_BASIC_INFORMATION system_info = { 0 };
 
 const WCHAR *DIR_Windows = NULL;
 const WCHAR *DIR_System = NULL;
@@ -112,7 +116,7 @@ extern void SHELL_LoadRegistry(void);
 /***********************************************************************
  *           contains_path
  */
-static inline int contains_path( LPCWSTR name )
+static inline BOOL contains_path( LPCWSTR name )
 {
     return ((*name && (name[1] == ':')) || strchrW(name, '/') || strchrW(name, '\\'));
 }
@@ -124,7 +128,7 @@ static inline int contains_path( LPCWSTR name )
  * Check if an environment variable needs to be handled specially when
  * passed through the Unix environment (i.e. prefixed with "WINE").
  */
-static inline int is_special_env_var( const char *var )
+static inline BOOL is_special_env_var( const char *var )
 {
     return (!strncmp( var, "PATH=", sizeof("PATH=")-1 ) ||
             !strncmp( var, "PWD=", sizeof("PWD=")-1 ) ||
@@ -204,6 +208,18 @@ static BOOL get_builtin_path( const WCHAR *libname, const WCHAR *ext, WCHAR *fil
     binary_info->flags = flags;
     binary_info->res_start = NULL;
     binary_info->res_end = NULL;
+    /* assume current arch */
+#if defined(__i386__) || defined(__x86_64__)
+    binary_info->arch = (flags & BINARY_FLAG_64BIT) ? IMAGE_FILE_MACHINE_AMD64 : IMAGE_FILE_MACHINE_I386;
+#elif defined(__powerpc__)
+    binary_info->arch = IMAGE_FILE_MACHINE_POWERPC;
+#elif defined(__arm__) && !defined(__ARMEB__)
+    binary_info->arch = IMAGE_FILE_MACHINE_ARMNT;
+#elif defined(__aarch64__)
+    binary_info->arch = IMAGE_FILE_MACHINE_ARM64;
+#else
+    binary_info->arch = IMAGE_FILE_MACHINE_UNKNOWN;
+#endif
     return TRUE;
 }
 
@@ -239,24 +255,15 @@ static HANDLE open_exe_file( const WCHAR *name, struct binary_info *binary_info 
  *
  * Open an exe file, and return the full name and file handle.
  * Returns FALSE if file could not be found.
- * If file exists but cannot be opened, returns TRUE and set handle to INVALID_HANDLE_VALUE.
- * If file is a builtin exe, returns TRUE and sets handle to 0.
  */
 static BOOL find_exe_file( const WCHAR *name, WCHAR *buffer, int buflen,
                            HANDLE *handle, struct binary_info *binary_info )
 {
     TRACE("looking for %s\n", debugstr_w(name) );
 
-    if (!SearchPathW( NULL, name, exeW, buflen, buffer, NULL ))
-    {
-        if (contains_path( name ) && get_builtin_path( name, exeW, buffer, buflen, binary_info ))
-        {
-            *handle = 0;
-            return TRUE;
-        }
+    if (!SearchPathW( NULL, name, exeW, buflen, buffer, NULL ) &&
         /* no builtin found, try native without extension in case it is a Unix app */
-        if (!SearchPathW( NULL, name, NULL, buflen, buffer, NULL )) return FALSE;
-    }
+        !SearchPathW( NULL, name, NULL, buflen, buffer, NULL )) return FALSE;
 
     TRACE( "Trying native exe %s\n", debugstr_w(buffer) );
     if ((*handle = CreateFileW( buffer, GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_DELETE,
@@ -505,12 +512,19 @@ static void set_additional_environment(void)
                                          'P','r','o','f','i','l','e','L','i','s','t',0};
     static const WCHAR profiles_valueW[] = {'P','r','o','f','i','l','e','s','D','i','r','e','c','t','o','r','y',0};
     static const WCHAR all_users_valueW[] = {'A','l','l','U','s','e','r','s','P','r','o','f','i','l','e','\0'};
+    static const WCHAR computernameW[] = {'C','O','M','P','U','T','E','R','N','A','M','E',0};
     static const WCHAR allusersW[] = {'A','L','L','U','S','E','R','S','P','R','O','F','I','L','E',0};
     OBJECT_ATTRIBUTES attr;
     UNICODE_STRING nameW;
     WCHAR *profile_dir = NULL, *all_users_dir = NULL;
+    WCHAR buf[MAX_COMPUTERNAME_LENGTH];
     HANDLE hkey;
     DWORD len;
+
+    /* ComputerName */
+    len = sizeof(buf) / sizeof(WCHAR);
+    if (GetComputerNameW( buf, &len ))
+        SetEnvironmentVariableW( computernameW, buf );
 
     /* set the ALLUSERSPROFILE variables */
 
@@ -743,19 +757,20 @@ static BOOL build_command_line( WCHAR **argv )
     len = 0;
     for (arg = argv; *arg; arg++)
     {
-        int has_space,bcount;
+        BOOL has_space;
+        int bcount;
         WCHAR* a;
 
-        has_space=0;
+        has_space=FALSE;
         bcount=0;
         a=*arg;
-        if( !*a ) has_space=1;
+        if( !*a ) has_space=TRUE;
         while (*a!='\0') {
             if (*a=='\\') {
                 bcount++;
             } else {
                 if (*a==' ' || *a=='\t') {
-                    has_space=1;
+                    has_space=TRUE;
                 } else if (*a=='"') {
                     /* doubling of '\' preceding a '"',
                      * plus escaping of said '"'
@@ -779,20 +794,20 @@ static BOOL build_command_line( WCHAR **argv )
     rupp->CommandLine.MaximumLength = len * sizeof(WCHAR);
     for (arg = argv; *arg; arg++)
     {
-        int has_space,has_quote;
+        BOOL has_space,has_quote;
         WCHAR* a;
 
         /* Check for quotes and spaces in this argument */
-        has_space=has_quote=0;
+        has_space=has_quote=FALSE;
         a=*arg;
-        if( !*a ) has_space=1;
+        if( !*a ) has_space=TRUE;
         while (*a!='\0') {
             if (*a==' ' || *a=='\t') {
-                has_space=1;
+                has_space=TRUE;
                 if (has_quote)
                     break;
             } else if (*a=='"') {
-                has_quote=1;
+                has_quote=TRUE;
                 if (has_space)
                     break;
             }
@@ -910,7 +925,6 @@ static void init_current_directory( CURDIR *cur_dir )
     HeapFree( GetProcessHeap(), 0, cwd );
 
 done:
-    if (!cur_dir->Handle) chdir("/"); /* change to root directory so as not to lock cdroms */
     TRACE( "starting in %s %p\n", debugstr_w( cur_dir->DosPath.Buffer ), cur_dir->Handle );
 }
 
@@ -1257,6 +1271,8 @@ void CDECL __wine_kernel_init(void)
         ExitProcess( error );
     }
 
+    if (!params->CurrentDirectory.Handle) chdir("/"); /* avoid locking removable devices */
+
     LdrInitializeThunk( start_process, 0, 0, 0 );
 
  error:
@@ -1505,11 +1521,11 @@ static int fork_and_exec( const char *filename, const WCHAR *cmdline, const WCHA
 
     if (!(pid = fork()))  /* child */
     {
-        close( fd[0] );
-
-        if (flags & (CREATE_NEW_PROCESS_GROUP | CREATE_NEW_CONSOLE | DETACHED_PROCESS))
+        if (!(pid = fork()))  /* grandchild */
         {
-            if (!(pid = fork()))
+            close( fd[0] );
+
+            if (flags & (CREATE_NEW_PROCESS_GROUP | CREATE_NEW_CONSOLE | DETACHED_PROCESS))
             {
                 int nullfd = open( "/dev/null", O_RDWR );
                 setsid();
@@ -1521,37 +1537,41 @@ static int fork_and_exec( const char *filename, const WCHAR *cmdline, const WCHA
                     close( nullfd );
                 }
             }
-            else if (pid != -1) _exit(0);  /* parent */
+            else
+            {
+                if (stdin_fd != -1)
+                {
+                    dup2( stdin_fd, 0 );
+                    close( stdin_fd );
+                }
+                if (stdout_fd != -1)
+                {
+                    dup2( stdout_fd, 1 );
+                    close( stdout_fd );
+                }
+                if (stderr_fd != -1)
+                {
+                    dup2( stderr_fd, 2 );
+                    close( stderr_fd );
+                }
+            }
+
+            /* Reset signals that we previously set to SIG_IGN */
+            signal( SIGPIPE, SIG_DFL );
+
+            if (newdir) chdir(newdir);
+
+            if (argv && envp) execve( filename, argv, envp );
         }
-        else
+
+        if (pid <= 0)  /* grandchild if exec failed or child if fork failed */
         {
-            if (stdin_fd != -1)
-            {
-                dup2( stdin_fd, 0 );
-                close( stdin_fd );
-            }
-            if (stdout_fd != -1)
-            {
-                dup2( stdout_fd, 1 );
-                close( stdout_fd );
-            }
-            if (stderr_fd != -1)
-            {
-                dup2( stderr_fd, 2 );
-                close( stderr_fd );
-            }
+            err = errno;
+            write( fd[1], &err, sizeof(err) );
+            _exit(1);
         }
 
-        /* Reset signals that we previously set to SIG_IGN */
-        signal( SIGPIPE, SIG_DFL );
-        signal( SIGCHLD, SIG_DFL );
-
-        if (newdir) chdir(newdir);
-
-        if (argv && envp) execve( filename, argv, envp );
-        err = errno;
-        write( fd[1], &err, sizeof(err) );
-        _exit(1);
+        _exit(0); /* child if fork succeeded */
     }
     HeapFree( GetProcessHeap(), 0, argv );
     HeapFree( GetProcessHeap(), 0, envp );
@@ -1559,10 +1579,18 @@ static int fork_and_exec( const char *filename, const WCHAR *cmdline, const WCHA
     if (stdout_fd != -1) close( stdout_fd );
     if (stderr_fd != -1) close( stderr_fd );
     close( fd[1] );
-    if ((pid != -1) && (read( fd[0], &err, sizeof(err) ) > 0))  /* exec failed */
+    if (pid != -1)
     {
-        errno = err;
-        pid = -1;
+        /* reap child */
+        do {
+            err = waitpid(pid, NULL, 0);
+        } while (err < 0 && errno == EINTR);
+
+        if (read( fd[0], &err, sizeof(err) ) > 0)  /* exec or second fork failed */
+        {
+            errno = err;
+            pid = -1;
+        }
     }
     if (pid == -1) FILE_SetDosError();
     close( fd[0] );
@@ -1788,6 +1816,25 @@ static BOOL terminate_main_thread(void)
 #endif
 
 /***********************************************************************
+ *           get_process_cpu
+ */
+static int get_process_cpu( const WCHAR *filename, const struct binary_info *binary_info )
+{
+    switch (binary_info->arch)
+    {
+    case IMAGE_FILE_MACHINE_I386:    return CPU_x86;
+    case IMAGE_FILE_MACHINE_AMD64:   return CPU_x86_64;
+    case IMAGE_FILE_MACHINE_POWERPC: return CPU_POWERPC;
+    case IMAGE_FILE_MACHINE_ARM:
+    case IMAGE_FILE_MACHINE_THUMB:
+    case IMAGE_FILE_MACHINE_ARMNT:   return CPU_ARM;
+    case IMAGE_FILE_MACHINE_ARM64:   return CPU_ARM64;
+    }
+    ERR( "%s uses unsupported architecture (%04x)\n", debugstr_w(filename), binary_info->arch );
+    return -1;
+}
+
+/***********************************************************************
  *           exec_loader
  */
 static pid_t exec_loader( LPCWSTR cmd_line, unsigned int flags, int socketfd,
@@ -1806,11 +1853,11 @@ static pid_t exec_loader( LPCWSTR cmd_line, unsigned int flags, int socketfd,
 
     if (exec_only || !(pid = fork()))  /* child */
     {
-        char preloader_reserve[64], socket_env[64];
-
-        if (flags & (CREATE_NEW_PROCESS_GROUP | CREATE_NEW_CONSOLE | DETACHED_PROCESS))
+        if (exec_only || !(pid = fork()))  /* grandchild */
         {
-            if (!(pid = fork()))
+            char preloader_reserve[64], socket_env[64];
+
+            if (flags & (CREATE_NEW_PROCESS_GROUP | CREATE_NEW_CONSOLE | DETACHED_PROCESS))
             {
                 int fd = open( "/dev/null", O_RDWR );
                 setsid();
@@ -1822,45 +1869,55 @@ static pid_t exec_loader( LPCWSTR cmd_line, unsigned int flags, int socketfd,
                     close( fd );
                 }
             }
-            else if (pid != -1) _exit(0);  /* parent */
-        }
-        else
-        {
-            if (stdin_fd != -1) dup2( stdin_fd, 0 );
-            if (stdout_fd != -1) dup2( stdout_fd, 1 );
-        }
-
-        if (stdin_fd != -1) close( stdin_fd );
-        if (stdout_fd != -1) close( stdout_fd );
-
-        /* Reset signals that we previously set to SIG_IGN */
-        signal( SIGPIPE, SIG_DFL );
-        signal( SIGCHLD, SIG_DFL );
-
-        sprintf( socket_env, "WINESERVERSOCKET=%u", socketfd );
-        sprintf( preloader_reserve, "WINEPRELOADRESERVE=%lx-%lx",
-                 (unsigned long)binary_info->res_start, (unsigned long)binary_info->res_end );
-
-        putenv( preloader_reserve );
-        putenv( socket_env );
-        if (winedebug) putenv( winedebug );
-        if (wineloader) putenv( wineloader );
-        if (unixdir) chdir(unixdir);
-
-        if (argv)
-        {
-            do
+            else
             {
-                wine_exec_wine_binary( loader, argv, getenv("WINELOADER") );
+                if (stdin_fd != -1) dup2( stdin_fd, 0 );
+                if (stdout_fd != -1) dup2( stdout_fd, 1 );
             }
+
+            if (stdin_fd != -1) close( stdin_fd );
+            if (stdout_fd != -1) close( stdout_fd );
+
+            /* Reset signals that we previously set to SIG_IGN */
+            signal( SIGPIPE, SIG_DFL );
+
+            sprintf( socket_env, "WINESERVERSOCKET=%u", socketfd );
+            sprintf( preloader_reserve, "WINEPRELOADRESERVE=%lx-%lx",
+                     (unsigned long)binary_info->res_start, (unsigned long)binary_info->res_end );
+
+            putenv( preloader_reserve );
+            putenv( socket_env );
+            if (winedebug) putenv( winedebug );
+            if (wineloader) putenv( wineloader );
+            if (unixdir) chdir(unixdir);
+
+            if (argv)
+            {
+                do
+                {
+                    wine_exec_wine_binary( loader, argv, getenv("WINELOADER") );
+                }
 #ifdef __APPLE__
-            while (errno == ENOTSUP && exec_only && terminate_main_thread());
+                while (errno == ENOTSUP && exec_only && terminate_main_thread());
 #else
-            while (0);
+                while (0);
 #endif
+            }
+            _exit(1);
         }
-        _exit(1);
+
+        _exit(pid == -1);
     }
+
+    if (pid != -1)
+    {
+        /* reap child */
+        pid_t wret;
+        do {
+            wret = waitpid(pid, NULL, 0);
+        } while (wret < 0 && errno == EINTR);
+    }
+
     HeapFree( GetProcessHeap(), 0, wineloader );
     HeapFree( GetProcessHeap(), 0, argv );
     return pid;
@@ -1878,7 +1935,9 @@ static BOOL create_process( HANDLE hFile, LPCWSTR filename, LPWSTR cmd_line, LPW
                             LPPROCESS_INFORMATION info, LPCSTR unixdir,
                             const struct binary_info *binary_info, int exec_only )
 {
-    BOOL ret, success = FALSE;
+    static const char *cpu_names[] = { "x86", "x86_64", "PowerPC", "ARM", "ARM64" };
+    NTSTATUS status;
+    BOOL success = FALSE;
     HANDLE process_info;
     WCHAR *env_end;
     char *winedebug = NULL;
@@ -1886,11 +1945,10 @@ static BOOL create_process( HANDLE hFile, LPCWSTR filename, LPWSTR cmd_line, LPW
     DWORD startup_info_size;
     int socketfd[2], stdin_fd = -1, stdout_fd = -1;
     pid_t pid;
-    int err;
+    int err, cpu;
 
-    if (!is_win64 && !is_wow64 && (binary_info->flags & BINARY_FLAG_64BIT))
+    if ((cpu = get_process_cpu( filename, binary_info )) == -1)
     {
-        ERR( "starting 64-bit process %s not supported in 32-bit wineprefix\n", debugstr_w(filename) );
         SetLastError( ERROR_BAD_EXE_FORMAT );
         return FALSE;
     }
@@ -1902,6 +1960,13 @@ static BOOL create_process( HANDLE hFile, LPCWSTR filename, LPWSTR cmd_line, LPW
         SetLastError( ERROR_TOO_MANY_OPEN_FILES );
         return FALSE;
     }
+#ifdef SO_PASSCRED
+    else
+    {
+        int enable = 1;
+        setsockopt( socketfd[0], SOL_SOCKET, SO_PASSCRED, &enable, sizeof(enable) );
+    }
+#endif
 
     if (exec_only)  /* things are much simpler in this case */
     {
@@ -1912,14 +1977,26 @@ static BOOL create_process( HANDLE hFile, LPCWSTR filename, LPWSTR cmd_line, LPW
             req->create_flags   = flags;
             req->socket_fd      = socketfd[1];
             req->exe_file       = wine_server_obj_handle( hFile );
-            ret = !wine_server_call_err( req );
+            req->cpu            = cpu;
+            status = wine_server_call( req );
         }
         SERVER_END_REQ;
 
-        if (ret) exec_loader( cmd_line, flags, socketfd[0], stdin_fd, stdout_fd, unixdir,
-                              winedebug, binary_info, TRUE );
-
+        switch (status)
+        {
+        case STATUS_INVALID_IMAGE_WIN_64:
+            ERR( "64-bit application %s not supported in 32-bit prefix\n", debugstr_w(filename) );
+            break;
+        case STATUS_INVALID_IMAGE_FORMAT:
+            ERR( "%s not supported on this installation (%s binary)\n",
+                 debugstr_w(filename), cpu_names[cpu] );
+            break;
+        case STATUS_SUCCESS:
+            exec_loader( cmd_line, flags, socketfd[0], stdin_fd, stdout_fd, unixdir,
+                         winedebug, binary_info, TRUE );
+        }
         close( socketfd[0] );
+        SetLastError( RtlNtStatusToDosError( status ));
         return FALSE;
     }
 
@@ -1963,11 +2040,12 @@ static BOOL create_process( HANDLE hFile, LPCWSTR filename, LPWSTR cmd_line, LPW
         req->process_attr   = (psa && (psa->nLength >= sizeof(*psa)) && psa->bInheritHandle) ? OBJ_INHERIT : 0;
         req->thread_access  = THREAD_ALL_ACCESS;
         req->thread_attr    = (tsa && (tsa->nLength >= sizeof(*tsa)) && tsa->bInheritHandle) ? OBJ_INHERIT : 0;
+        req->cpu            = cpu;
         req->info_size      = startup_info_size;
 
         wine_server_add_data( req, startup_info, startup_info_size );
         wine_server_add_data( req, env, (env_end - env) * sizeof(WCHAR) );
-        if ((ret = !wine_server_call_err( req )))
+        if (!(status = wine_server_call( req )))
         {
             info->dwProcessId = (DWORD)reply->pid;
             info->dwThreadId  = (DWORD)reply->tid;
@@ -1979,11 +2057,22 @@ static BOOL create_process( HANDLE hFile, LPCWSTR filename, LPWSTR cmd_line, LPW
     SERVER_END_REQ;
 
     RtlReleasePebLock();
-    if (!ret)
+    if (status)
     {
+        switch (status)
+        {
+        case STATUS_INVALID_IMAGE_WIN_64:
+            ERR( "64-bit application %s not supported in 32-bit prefix\n", debugstr_w(filename) );
+            break;
+        case STATUS_INVALID_IMAGE_FORMAT:
+            ERR( "%s not supported on this installation (%s binary)\n",
+                 debugstr_w(filename), cpu_names[cpu] );
+            break;
+        }
         close( socketfd[0] );
         HeapFree( GetProcessHeap(), 0, startup_info );
         HeapFree( GetProcessHeap(), 0, winedebug );
+        SetLastError( RtlNtStatusToDosError( status ));
         return FALSE;
     }
 
@@ -2148,11 +2237,7 @@ static LPWSTR get_file_name( LPCWSTR appname, LPWSTR cmdline, LPWSTR buffer,
         memcpy( name, cmdline + 1, len * sizeof(WCHAR) );
         name[len] = 0;
 
-        if (!find_exe_file( name, buffer, buflen, handle, binary_info ))
-        {
-            if (!get_builtin_path( name, exeW, buffer, buflen, binary_info )) goto done;
-            *handle = 0;
-        }
+        if (!find_exe_file( name, buffer, buflen, handle, binary_info )) goto done;
         ret = cmdline;  /* no change necessary */
         goto done;
     }
@@ -2180,13 +2265,7 @@ static LPWSTR get_file_name( LPCWSTR appname, LPWSTR cmdline, LPWSTR buffer,
 
     if (!ret)
     {
-        if (first_space) *first_space = 0;  /* try only the first word as a builtin */
-        if (get_builtin_path( name, exeW, buffer, buflen, binary_info ))
-        {
-            *handle = 0;
-            ret = cmdline;
-        }
-        else SetLastError( ERROR_FILE_NOT_FOUND );
+        SetLastError( ERROR_FILE_NOT_FOUND );
     }
     else if (first_space)  /* build a new command-line with quotes */
     {
@@ -2270,9 +2349,10 @@ static BOOL create_process_impl( LPCWSTR app_name, LPWSTR cmd_line, LPSECURITY_A
     else switch (binary_info.type)
     {
     case BINARY_PE:
-        TRACE( "starting %s as Win%d binary (%p-%p)\n",
+        TRACE( "starting %s as Win%d binary (%p-%p, arch %04x%s)\n",
                debugstr_w(name), (binary_info.flags & BINARY_FLAG_64BIT) ? 64 : 32,
-               binary_info.res_start, binary_info.res_end );
+               binary_info.res_start, binary_info.res_end, binary_info.arch,
+               (binary_info.flags & BINARY_FLAG_FAKEDLL) ? ", fakedll" : "" );
         retv = create_process( hFile, name, tidy_cmdline, envW, cur_dir, process_attr, thread_attr,
                                inherit, flags, startup_info, info, unixdir, &binary_info, FALSE );
         break;
@@ -2296,6 +2376,8 @@ static BOOL create_process_impl( LPCWSTR app_name, LPWSTR cmd_line, LPSECURITY_A
             if (!strcmpiW( p, comW ) || !strcmpiW( p, pifW ))
             {
                 TRACE( "starting %s as DOS binary\n", debugstr_w(name) );
+                binary_info.type = BINARY_DOS;
+                binary_info.arch = IMAGE_FILE_MACHINE_I386;
                 retv = create_vdm_process( name, tidy_cmdline, envW, cur_dir, process_attr, thread_attr,
                                            inherit, flags, startup_info, info, unixdir,
                                            &binary_info, FALSE );
@@ -2415,9 +2497,9 @@ static void exec_process( LPCWSTR name )
     switch (binary_info.type)
     {
     case BINARY_PE:
-        TRACE( "starting %s as Win%d binary (%p-%p)\n",
+        TRACE( "starting %s as Win%d binary (%p-%p, arch %04x)\n",
                debugstr_w(name), (binary_info.flags & BINARY_FLAG_64BIT) ? 64 : 32,
-               binary_info.res_start, binary_info.res_end );
+               binary_info.res_start, binary_info.res_end, binary_info.arch );
         create_process( hFile, name, GetCommandLineW(), NULL, NULL, NULL, NULL,
                         FALSE, 0, &startup_info, &info, NULL, &binary_info, TRUE );
         break;
@@ -2430,6 +2512,8 @@ static void exec_process( LPCWSTR name )
         /* check for .com or .pif extension */
         if (!(p = strrchrW( name, '.' ))) break;
         if (strcmpiW( p, comW ) && strcmpiW( p, pifW )) break;
+        binary_info.type = BINARY_DOS;
+        binary_info.arch = IMAGE_FILE_MACHINE_I386;
         /* fall through */
     case BINARY_OS216:
     case BINARY_WIN16:
@@ -2578,7 +2662,15 @@ DWORD WINAPI LoadModule( LPCSTR name, LPVOID paramBlock )
  */
 BOOL WINAPI TerminateProcess( HANDLE handle, DWORD exit_code )
 {
-    NTSTATUS status = NtTerminateProcess( handle, exit_code );
+    NTSTATUS status;
+
+    if (!handle)
+    {
+        SetLastError( ERROR_INVALID_HANDLE );
+        return FALSE;
+    }
+
+    status = NtTerminateProcess( handle, exit_code );
     if (status) SetLastError( RtlNtStatusToDosError(status) );
     return !status;
 }
@@ -2601,24 +2693,14 @@ __ASM_STDCALL_FUNC( ExitProcess, 4, /* Shrinker depend on this particular ExitPr
                    ".byte 0x6A, 0x00\n\t" /* pushl $0 */
                    ".byte 0x68, 0x00, 0x00, 0x00, 0x00\n\t" /* pushl $0 - 4 bytes immediate */
                    "pushl 8(%ebp)\n\t"
-                   "call " __ASM_NAME("process_ExitProcess") __ASM_STDCALL(4) "\n\t"
+                   "call " __ASM_NAME("RtlExitUserProcess") __ASM_STDCALL(4) "\n\t"
                    "leave\n\t"
                    "ret $4" )
-
-void WINAPI process_ExitProcess( DWORD status )
-{
-    LdrShutdownProcess();
-    NtTerminateProcess(GetCurrentProcess(), status);
-    exit(status);
-}
-
 #else
 
 void WINAPI ExitProcess( DWORD status )
 {
-    LdrShutdownProcess();
-    NtTerminateProcess(GetCurrentProcess(), status);
-    exit(status);
+    RtlExitUserProcess( status );
 }
 
 #endif
@@ -2694,7 +2776,7 @@ DWORD WINAPI TlsAlloc( void )
     PEB * const peb = NtCurrentTeb()->Peb;
 
     RtlAcquirePebLock();
-    index = RtlFindClearBitsAndSet( peb->TlsBitmap, 1, 0 );
+    index = RtlFindClearBitsAndSet( peb->TlsBitmap, 1, 1 );
     if (index != ~0U) NtCurrentTeb()->TlsSlots[index] = 0; /* clear the value */
     else
     {
@@ -3177,12 +3259,20 @@ BOOL WINAPI GetProcessAffinityMask( HANDLE hProcess, PDWORD_PTR process_mask, PD
 {
     NTSTATUS status = STATUS_SUCCESS;
 
-    if (system_mask) *system_mask = (1 << NtCurrentTeb()->Peb->NumberOfProcessors) - 1;
     if (process_mask)
     {
         if ((status = NtQueryInformationProcess( hProcess, ProcessAffinityMask,
                                                  process_mask, sizeof(*process_mask), NULL )))
             SetLastError( RtlNtStatusToDosError(status) );
+    }
+    if (system_mask && status == STATUS_SUCCESS)
+    {
+        SYSTEM_BASIC_INFORMATION info;
+
+        if ((status = NtQuerySystemInformation( SystemBasicInformation, &info, sizeof(info), NULL )))
+            SetLastError( RtlNtStatusToDosError(status) );
+        else
+            *system_mask = info.ActiveProcessorsAffinityMask;
     }
     return !status;
 }
@@ -3474,7 +3564,7 @@ BOOL WINAPI QueryFullProcessImageNameW(HANDLE hProcess, DWORD dwFlags, LPWSTR lp
         if (ntlen + 1 > *pdwSize)
         {
             SetLastError(ERROR_INSUFFICIENT_BUFFER);
-            return 0;
+            return FALSE;
         }
         *pdwSize = ntlen;
 
@@ -3673,7 +3763,7 @@ DWORD WINAPI RegisterServiceProcess(DWORD dwProcessId, DWORD dwType)
  */
 BOOL WINAPI IsWow64Process(HANDLE hProcess, PBOOL Wow64Process)
 {
-    ULONG pbi;
+    ULONG_PTR pbi;
     NTSTATUS status;
 
     status = NtQueryInformationProcess( hProcess, ProcessWow64Information, &pbi, sizeof(pbi), NULL );
@@ -3710,9 +3800,29 @@ HANDLE WINAPI GetCurrentProcess(void)
  */
 BOOL WINAPI GetLogicalProcessorInformation(PSYSTEM_LOGICAL_PROCESSOR_INFORMATION buffer, PDWORD pBufLen)
 {
-    FIXME("(%p,%p): stub\n", buffer, pBufLen);
-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-    return FALSE;
+    NTSTATUS status;
+
+    TRACE("(%p,%p)\n", buffer, pBufLen);
+
+    if(!pBufLen)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    status = NtQuerySystemInformation( SystemLogicalProcessorInformation, buffer, *pBufLen, pBufLen);
+
+    if (status == STATUS_INFO_LENGTH_MISMATCH)
+    {
+        SetLastError( ERROR_INSUFFICIENT_BUFFER );
+        return FALSE;
+    }
+    if (status != STATUS_SUCCESS)
+    {
+        SetLastError( RtlNtStatusToDosError( status ) );
+        return FALSE;
+    }
+    return TRUE;
 }
 
 /***********************************************************************
@@ -3759,7 +3869,8 @@ HRESULT WINAPI RegisterApplicationRestart(PCWSTR pwzCommandLine, DWORD dwFlags)
  */
 DWORD WINAPI WTSGetActiveConsoleSessionId(void)
 {
-    FIXME("stub\n");
+    static int once;
+    if (!once++) FIXME("stub\n");
     return 0;
 }
 
@@ -3816,9 +3927,9 @@ HRESULT WINAPI RegisterApplicationRecoveryCallback(APPLICATION_RECOVERY_CALLBACK
  */
 BOOL WINAPI GetNumaHighestNodeNumber(PULONG highestnode)
 {
-    FIXME("(%p): stub\n", highestnode);
-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-    return FALSE;
+    *highestnode = 0;
+    FIXME("(%p): semi-stub\n", highestnode);
+    return TRUE;
 }
 
 /**********************************************************************
@@ -3846,8 +3957,60 @@ BOOL WINAPI GetNumaAvailableMemoryNode(UCHAR node, PULONGLONG available_bytes)
  */
 BOOL WINAPI GetProcessDEPPolicy(HANDLE process, LPDWORD flags, PBOOL permanent)
 {
-    FIXME("(%p %p %p): stub\n", process, flags, permanent);
-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-    return FALSE;
+    NTSTATUS status;
+    ULONG dep_flags;
 
+    TRACE("(%p %p %p)\n", process, flags, permanent);
+
+    status = NtQueryInformationProcess( GetCurrentProcess(), ProcessExecuteFlags,
+                                        &dep_flags, sizeof(dep_flags), NULL );
+    if (!status)
+    {
+
+        if (flags)
+        {
+            *flags = 0;
+            if (dep_flags & MEM_EXECUTE_OPTION_DISABLE)
+                *flags |= PROCESS_DEP_ENABLE;
+            if (dep_flags & MEM_EXECUTE_OPTION_DISABLE_THUNK_EMULATION)
+                *flags |= PROCESS_DEP_DISABLE_ATL_THUNK_EMULATION;
+        }
+
+        if (permanent)
+            *permanent = (dep_flags & MEM_EXECUTE_OPTION_PERMANENT) != 0;
+
+    }
+    if (status) SetLastError( RtlNtStatusToDosError(status) );
+    return !status;
+}
+
+/**********************************************************************
+ *           FlushProcessWriteBuffers     (KERNEL32.@)
+ */
+VOID WINAPI FlushProcessWriteBuffers(void)
+{
+    static int once = 0;
+
+    if (!once++)
+        FIXME(": stub\n");
+}
+
+/***********************************************************************
+ *           UnregisterApplicationRestart       (KERNEL32.@)
+ */
+HRESULT WINAPI UnregisterApplicationRestart(void)
+{
+    FIXME(": stub\n");
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return S_OK;
+}
+
+/***********************************************************************
+ *           GetSystemFirmwareTable       (KERNEL32.@)
+ */
+UINT WINAPI GetSystemFirmwareTable(DWORD provider, DWORD id, PVOID buffer, DWORD size)
+{
+    FIXME("(%d %d %p %d):stub\n", provider, id, buffer, size);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return 0;
 }

@@ -23,7 +23,6 @@
 extern HRESULT MMDevEnum_Create(REFIID riid, void **ppv) DECLSPEC_HIDDEN;
 extern void MMDevEnum_Free(void) DECLSPEC_HIDDEN;
 
-extern HRESULT MMDevice_GetPropValue(const GUID *devguid, DWORD flow, REFPROPERTYKEY key, PROPVARIANT *pv) DECLSPEC_HIDDEN;
 
 /* Changes to this enum must be synced in drivers. */
 enum _DriverPriority {
@@ -42,19 +41,21 @@ typedef struct _DriverFuncs {
      * If multiple drivers think they are valid, they will return a
      * priority value reflecting the likelihood that they are actually
      * valid. See enum _DriverPriority. */
-    int WINAPI (*pGetPriority)(void);
+    int (WINAPI *pGetPriority)(void);
 
     /* ids gets an array of human-friendly endpoint names
      * keys gets an array of driver-specific stuff that is used
      *   in GetAudioEndpoint to identify the endpoint
      * it is the caller's responsibility to free both arrays, and
      *   all of the elements in both arrays with HeapFree() */
-    HRESULT WINAPI (*pGetEndpointIDs)(EDataFlow flow, WCHAR ***ids,
-            void ***keys, UINT *num, UINT *default_index);
-    HRESULT WINAPI (*pGetAudioEndpoint)(void *key, IMMDevice *dev,
-            EDataFlow dataflow, IAudioClient **out);
-    HRESULT WINAPI (*pGetAudioSessionManager)(IMMDevice *device,
+    HRESULT (WINAPI *pGetEndpointIDs)(EDataFlow flow, WCHAR ***ids,
+            GUID **guids, UINT *num, UINT *default_index);
+    HRESULT (WINAPI *pGetAudioEndpoint)(void *key, IMMDevice *dev,
+            IAudioClient **out);
+    HRESULT (WINAPI *pGetAudioSessionManager)(IMMDevice *device,
             IAudioSessionManager2 **out);
+    HRESULT (WINAPI *pGetPropValue)(GUID *guid,
+            const PROPERTYKEY *prop, PROPVARIANT *out);
 } DriverFuncs;
 
 extern DriverFuncs drvs DECLSPEC_HIDDEN;
@@ -70,7 +71,6 @@ typedef struct MMDevice {
     DWORD state;
     GUID devguid;
     WCHAR *drv_id;
-    void *key;
 } MMDevice;
 
 extern HRESULT AudioClient_Create(MMDevice *parent, IAudioClient **ppv) DECLSPEC_HIDDEN;

@@ -285,7 +285,6 @@ STATUSBAR_RefreshPart (const STATUS_INFO *infoPtr, HDC hdc, const STATUSWINDOWPA
 static LRESULT
 STATUSBAR_Refresh (STATUS_INFO *infoPtr, HDC hdc)
 {
-    int      i;
     RECT   rect;
     HBRUSH hbrBk;
     HFONT  hOldFont;
@@ -319,6 +318,8 @@ STATUSBAR_Refresh (STATUS_INFO *infoPtr, HDC hdc)
     if (infoPtr->simple) {
 	STATUSBAR_RefreshPart (infoPtr, hdc, &infoPtr->part0, 0);
     } else {
+        unsigned int i;
+
 	for (i = 0; i < infoPtr->numParts; i++) {
 	    STATUSBAR_RefreshPart (infoPtr, hdc, &infoPtr->parts[i], i);
 	}
@@ -336,7 +337,8 @@ STATUSBAR_Refresh (STATUS_INFO *infoPtr, HDC hdc)
 static int
 STATUSBAR_InternalHitTest(const STATUS_INFO *infoPtr, const POINT *pt)
 {
-    int i;
+    unsigned int i;
+
     if (infoPtr->simple)
         return 255;
 
@@ -352,7 +354,7 @@ STATUSBAR_SetPartBounds (STATUS_INFO *infoPtr)
 {
     STATUSWINDOWPART *part;
     RECT rect, *r;
-    int	i;
+    UINT i;
 
     /* get our window size */
     GetClientRect (infoPtr->Self, &rect);
@@ -698,10 +700,12 @@ STATUSBAR_SetParts (STATUS_INFO *infoPtr, INT count, LPINT parts)
     if (infoPtr->hwndToolTip) {
 	INT nTipCount;
 	TTTOOLINFOW ti;
+	WCHAR wEmpty = 0;
 
 	ZeroMemory (&ti, sizeof(TTTOOLINFOW));
 	ti.cbSize = sizeof(TTTOOLINFOW);
 	ti.hwnd = infoPtr->Self;
+	ti.lpszText = &wEmpty;
 
 	nTipCount = SendMessageW (infoPtr->hwndToolTip, TTM_GETTOOLCOUNT, 0, 0);
 	if (nTipCount < infoPtr->numParts) {
@@ -883,7 +887,7 @@ STATUSBAR_Simple (STATUS_INFO *infoPtr, BOOL simple)
 static LRESULT
 STATUSBAR_WMDestroy (STATUS_INFO *infoPtr)
 {
-    int	i;
+    unsigned int i;
 
     TRACE("\n");
     for (i = 0; i < infoPtr->numParts; i++) {
@@ -1284,7 +1288,7 @@ StatusWindowProc (HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return STATUSBAR_WMGetText (infoPtr, (INT)wParam, (LPWSTR)lParam);
 
 	case WM_GETTEXTLENGTH:
-	    return STATUSBAR_GetTextLength (infoPtr, 0);
+	    return LOWORD(STATUSBAR_GetTextLength (infoPtr, 0));
 
 	case WM_LBUTTONDBLCLK:
             return STATUSBAR_SendMouseNotify(infoPtr, NM_DBLCLK, msg, wParam, lParam);

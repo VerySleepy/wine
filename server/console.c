@@ -91,7 +91,7 @@ static const struct object_ops console_input_ops =
 
 static void console_input_events_dump( struct object *obj, int verbose );
 static void console_input_events_destroy( struct object *obj );
-static int  console_input_events_signaled( struct object *obj, struct thread *thread );
+static int console_input_events_signaled( struct object *obj, struct wait_queue_entry *entry );
 
 struct console_input_events
 {
@@ -222,7 +222,7 @@ static void console_input_events_destroy( struct object *obj )
 }
 
 /* the renderer events list is signaled when it's not empty */
-static int console_input_events_signaled( struct object *obj, struct thread *thread )
+static int console_input_events_signaled( struct object *obj, struct wait_queue_entry *entry )
 {
     struct console_input_events *evts = (struct console_input_events *)obj;
     assert( obj->ops == &console_input_events_ops );
@@ -299,7 +299,11 @@ static struct object *create_console_input( struct thread* renderer, int fd )
 {
     struct console_input *console_input;
 
-    if (!(console_input = alloc_object( &console_input_ops ))) return NULL;
+    if (!(console_input = alloc_object( &console_input_ops )))
+    {
+        if (fd != -1) close( fd );
+        return NULL;
+    }
     console_input->renderer      = renderer;
     console_input->mode          = ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT |
                                    ENABLE_ECHO_INPUT | ENABLE_MOUSE_INPUT | ENABLE_INSERT_MODE |
@@ -323,8 +327,9 @@ static struct object *create_console_input( struct thread* renderer, int fd )
 
     if (!console_input->history || (renderer && !console_input->evt) || !console_input->event)
     {
-	release_object( console_input );
-	return NULL;
+        if (fd != -1) close( fd );
+        release_object( console_input );
+        return NULL;
     }
     if (fd != -1) /* bare console */
     {
@@ -1034,7 +1039,7 @@ static void console_input_append_hist( struct console_input* console, const WCHA
     ptr[len] = 0;
 
     if (console->history_mode && console->history_index &&
-	strncmpW( console->history[console->history_index - 1], ptr, len * sizeof(WCHAR) ) == 0)
+	strncmpW( console->history[console->history_index - 1], ptr, len ) == 0)
     {
 	/* ok, mode ask us to not use twice the same string...
 	 * so just free mem and returns
@@ -1387,6 +1392,16 @@ DECL_HANDLER(alloc_console)
     int fd;
     int attach = 0;
 
+    if (req->input_fd != -1)
+    {
+        if ((fd = thread_get_inflight_fd( current, req->input_fd )) == -1)
+        {
+            set_error( STATUS_INVALID_PARAMETER );
+            return;
+        }
+    }
+    else fd = -1;
+
     switch (req->pid)
     {
     case 0:
@@ -1394,6 +1409,7 @@ DECL_HANDLER(alloc_console)
         renderer = current;
         if (!(process = current->process->parent))
         {
+            if (fd != -1) close( fd );
             set_error( STATUS_ACCESS_DENIED );
             return;
         }
@@ -1410,23 +1426,19 @@ DECL_HANDLER(alloc_console)
     default:
         /* renderer is current, console to be attached to req->pid */
         renderer = current;
-        if (!(process = get_process_from_id( req->pid ))) return;
+        if (!(process = get_process_from_id( req->pid )))
+        {
+            if (fd != -1) close( fd );
+            return;
+        }
     }
 
     if (attach && process->console)
     {
+        if (fd != -1) close( fd );
         set_error( STATUS_ACCESS_DENIED );
         goto the_end;
     }
-    if (req->input_fd != -1)
-    {
-        if ((fd = thread_get_inflight_fd( current, req->input_fd )) == -1)
-        {
-            set_error( STATUS_INVALID_PARAMETER );
-            goto the_end;
-        }
-    }
-    else fd = -1;
 
     if ((console = (struct console_input*)create_console_input( renderer, fd )))
     {
@@ -1604,12 +1616,12 @@ DECL_HANDLER(create_console_output)
     else fd = -1;
     if (!(console = console_input_get( req->handle_in, FILE_WRITE_PROPERTIES )))
     {
-        close(fd);
+        if (fd != -1) close( fd );
         return;
     }
     if (console_input_is_bare( console ) ^ (fd != -1))
     {
-        close( fd );
+        if (fd != -1) close( fd );
         release_object( console );
         set_error( STATUS_INVALID_HANDLE );
         return;

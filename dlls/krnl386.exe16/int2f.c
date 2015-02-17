@@ -278,7 +278,7 @@ void WINAPI DOSVM_Int2fHandler( CONTEXT *context )
            if(BX_reg(context) == 0x5145 && CX_reg(context) == 0x4D4D
              && DX_reg(context) == 0x3432)
                TRACE("Check for QEMM v5.0+ (not installed)\n");
-               break;
+           break;
        default:
            INT_BARF( context, 0x2f );
            break;
@@ -302,7 +302,7 @@ void WINAPI DOSVM_Int2fHandler( CONTEXT *context )
            if(BX_reg(context) == 0x4450 && CX_reg(context) == 0x4d49
              && DX_reg(context) == 0x8f4f)
                TRACE("Check for QDPMI.SYS (not installed)\n");
-               break;
+           break;
        default:
            INT_BARF( context, 0x2f );
            break;
@@ -480,7 +480,7 @@ static void    MSCDEX_StoreMSF(DWORD frame, BYTE* val)
     val[0] = frame % CDFRAMES_PERSEC; /* frames */
 }
 
-static int is_cdrom( int drive)
+static BOOL is_cdrom(int drive)
 {
     char root[] = "A:\\";
     root[0] += drive;
@@ -549,7 +549,7 @@ static void MSCDEX_Request(BYTE *driver_request, BOOL dorealmode)
     CDROM_SUB_Q_DATA_FORMAT     fmt;
     SUB_Q_CHANNEL_DATA          data;
     DWORD                       br;
-    DWORD                       present = TRUE;
+    BOOL                        present = TRUE;
 
     /* FIXME
      * the following tests are wrong because lots of functions don't require the

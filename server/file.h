@@ -21,6 +21,8 @@
 #ifndef __WINE_SERVER_FILE_H
 #define __WINE_SERVER_FILE_H
 
+#include <sys/types.h>
+
 #include "object.h"
 
 struct fd;
@@ -77,7 +79,7 @@ extern void allow_fd_caching( struct fd *fd );
 extern void set_fd_signaled( struct fd *fd, int signaled );
 extern int is_fd_signaled( struct fd *fd );
 
-extern int default_fd_signaled( struct object *obj, struct thread *thread );
+extern int default_fd_signaled( struct object *obj, struct wait_queue_entry *entry );
 extern unsigned int default_fd_map_access( struct object *obj, unsigned int access );
 extern int default_fd_get_poll_events( struct fd *fd );
 extern void default_poll_event( struct fd *fd, int event );
@@ -143,7 +145,7 @@ extern struct dir *get_dir_obj( struct process *process, obj_handle_t handle, un
 
 extern struct completion *get_completion_obj( struct process *process, obj_handle_t handle, unsigned int access );
 extern void add_completion( struct completion *completion, apc_param_t ckey, apc_param_t cvalue,
-                            unsigned int status, unsigned int information );
+                            unsigned int status, apc_param_t information );
 
 /* serial port functions */
 
@@ -157,7 +159,7 @@ extern struct async *create_async( struct thread *thread, struct async_queue *qu
                                    const async_data_t *data );
 extern void async_set_timeout( struct async *async, timeout_t timeout, unsigned int status );
 extern void async_set_result( struct object *obj, unsigned int status,
-                              unsigned int total, client_ptr_t apc );
+                              apc_param_t total, client_ptr_t apc );
 extern int async_queued( struct async_queue *queue );
 extern int async_waiting( struct async_queue *queue );
 extern void async_terminate( struct async *async, unsigned int status );
@@ -171,7 +173,7 @@ extern void fd_copy_completion( struct fd *src, struct fd *dst );
 #define FILE_UNIX_READ_ACCESS (FILE_READ_DATA|FILE_READ_ATTRIBUTES|FILE_READ_EA)
 
 /* access rights that require Unix write permission */
-#define FILE_UNIX_WRITE_ACCESS (FILE_WRITE_DATA|FILE_WRITE_ATTRIBUTES|FILE_WRITE_EA)
+#define FILE_UNIX_WRITE_ACCESS (FILE_WRITE_DATA|FILE_APPEND_DATA|FILE_WRITE_ATTRIBUTES|FILE_WRITE_EA)
 
 /* magic file access rights for mappings */
 #define FILE_MAPPING_IMAGE  0x80000000  /* set for SEC_IMAGE mappings */

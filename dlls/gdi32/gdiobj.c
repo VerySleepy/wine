@@ -38,9 +38,51 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(gdi);
 
-#define HGDIOBJ_32(h16)   ((HGDIOBJ)(ULONG_PTR)(h16))
+#define FIRST_GDI_HANDLE 16
+#define MAX_GDI_HANDLES  16384
 
-#define GDI_HEAP_SIZE 0xffe0
+struct hdc_list
+{
+    HDC hdc;
+    struct hdc_list *next;
+};
+
+struct gdi_handle_entry
+{
+    void                       *obj;         /* pointer to the object-specific data */
+    const struct gdi_obj_funcs *funcs;       /* type-specific functions */
+    struct hdc_list            *hdcs;        /* list of HDCs interested in this object */
+    WORD                        generation;  /* generation count for reusing handle values */
+    WORD                        type;        /* object type (one of the OBJ_* constants) */
+    WORD                        selcount;    /* number of times the object is selected in a DC */
+    WORD                        system : 1;  /* system object flag */
+    WORD                        deleted : 1; /* whether DeleteObject has been called on this object */
+};
+
+static struct gdi_handle_entry gdi_handles[MAX_GDI_HANDLES];
+static struct gdi_handle_entry *next_free;
+static struct gdi_handle_entry *next_unused = gdi_handles;
+static LONG debug_count;
+HMODULE gdi32_module = 0;
+
+static inline HGDIOBJ entry_to_handle( struct gdi_handle_entry *entry )
+{
+    unsigned int idx = entry - gdi_handles + FIRST_GDI_HANDLE;
+    return LongToHandle( idx | (entry->generation << 16) );
+}
+
+static inline struct gdi_handle_entry *handle_entry( HGDIOBJ handle )
+{
+    unsigned int idx = LOWORD(handle) - FIRST_GDI_HANDLE;
+
+    if (idx < MAX_GDI_HANDLES && gdi_handles[idx].type)
+    {
+        if (!HIWORD( handle ) || HIWORD( handle ) == gdi_handles[idx].generation)
+            return &gdi_handles[idx];
+    }
+    if (handle) WARN( "invalid handle %p\n", handle );
+    return NULL;
+}
 
 /***********************************************************************
  *          GDI stock objects
@@ -121,315 +163,315 @@ struct DefaultFontInfo
         LOGFONTW        SystemFont;
         LOGFONTW        DeviceDefaultFont;
         LOGFONTW        SystemFixedFont;
-        LOGFONTW        DefaultGuiFont; /* Note for this font the lfHeight member should be the point size */
+        LOGFONTW        DefaultGuiFont;
 };
 
 static const struct DefaultFontInfo default_fonts[] =
 {
     {   ANSI_CHARSET,
         { /* System */
-          16, 7, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ANSI_CHARSET,
+          16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, ANSI_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'S','y','s','t','e','m','\0'}
         },
         { /* Device Default */
-          16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ANSI_CHARSET,
+          16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, ANSI_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
-           {'\0'}
+           {'S','y','s','t','e','m','\0'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ANSI_CHARSET,
            0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
-           {'\0'}
+           {'C','o','u','r','i','e','r','\0'}
         },
         { /* DefaultGuiFont */
-           8, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ANSI_CHARSET,
+          -11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ANSI_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'M','S',' ','S','h','e','l','l',' ','D','l','g','\0'}
         },
     },
     {   EASTEUROPE_CHARSET,
         { /* System */
-          16, 7, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, EASTEUROPE_CHARSET,
+          16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, EASTEUROPE_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'S','y','s','t','e','m','\0'}
         },
         { /* Device Default */
-          16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, EASTEUROPE_CHARSET,
+          16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, EASTEUROPE_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
-           {'\0'}
+           {'S','y','s','t','e','m','\0'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, EASTEUROPE_CHARSET,
            0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
-           {'\0'}
+           {'C','o','u','r','i','e','r','\0'}
         },
         { /* DefaultGuiFont */
-           8, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, EASTEUROPE_CHARSET,
+          -11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, EASTEUROPE_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'M','S',' ','S','h','e','l','l',' ','D','l','g','\0'}
         },
     },
     {   RUSSIAN_CHARSET,
         { /* System */
-          16, 7, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, RUSSIAN_CHARSET,
+          16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, RUSSIAN_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'S','y','s','t','e','m','\0'}
         },
         { /* Device Default */
-          16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, RUSSIAN_CHARSET,
+          16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, RUSSIAN_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
-           {'\0'}
+           {'S','y','s','t','e','m','\0'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, RUSSIAN_CHARSET,
            0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
-           {'\0'}
+           {'C','o','u','r','i','e','r','\0'}
         },
         { /* DefaultGuiFont */
-           8, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, RUSSIAN_CHARSET,
+          -11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, RUSSIAN_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'M','S',' ','S','h','e','l','l',' ','D','l','g','\0'}
         },
     },
     {   GREEK_CHARSET,
         { /* System */
-          16, 7, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, GREEK_CHARSET,
+          16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, GREEK_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'S','y','s','t','e','m','\0'}
         },
         { /* Device Default */
-          16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, GREEK_CHARSET,
+          16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, GREEK_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
-           {'\0'}
+           {'S','y','s','t','e','m','\0'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, GREEK_CHARSET,
            0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
-           {'\0'}
+           {'C','o','u','r','i','e','r','\0'}
         },
         { /* DefaultGuiFont */
-           8, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, GREEK_CHARSET,
+          -11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, GREEK_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'M','S',' ','S','h','e','l','l',' ','D','l','g','\0'}
         },
     },
     {   TURKISH_CHARSET,
         { /* System */
-          16, 7, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, TURKISH_CHARSET,
+          16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, TURKISH_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'S','y','s','t','e','m','\0'}
         },
         { /* Device Default */
-          16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, TURKISH_CHARSET,
+          16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, TURKISH_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
-           {'\0'}
+           {'S','y','s','t','e','m','\0'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, TURKISH_CHARSET,
            0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
-           {'\0'}
+           {'C','o','u','r','i','e','r','\0'}
         },
         { /* DefaultGuiFont */
-           8, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, TURKISH_CHARSET,
+          -11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, TURKISH_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'M','S',' ','S','h','e','l','l',' ','D','l','g','\0'}
         },
     },
     {   HEBREW_CHARSET,
         { /* System */
-          16, 7, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, HEBREW_CHARSET,
+          16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, HEBREW_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'S','y','s','t','e','m','\0'}
         },
         { /* Device Default */
-          16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, HEBREW_CHARSET,
+          16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, HEBREW_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
-           {'\0'}
+           {'S','y','s','t','e','m','\0'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, HEBREW_CHARSET,
            0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
-           {'\0'}
+           {'C','o','u','r','i','e','r','\0'}
         },
         { /* DefaultGuiFont */
-           8, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, HEBREW_CHARSET,
+          -11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, HEBREW_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'M','S',' ','S','h','e','l','l',' ','D','l','g','\0'}
         },
     },
     {   ARABIC_CHARSET,
         { /* System */
-          16, 7, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ARABIC_CHARSET,
+          16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, ARABIC_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'S','y','s','t','e','m','\0'}
         },
         { /* Device Default */
-          16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ARABIC_CHARSET,
+          16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, ARABIC_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
-           {'\0'}
+           {'S','y','s','t','e','m','\0'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ARABIC_CHARSET,
            0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
-           {'\0'}
+           {'C','o','u','r','i','e','r','\0'}
         },
         { /* DefaultGuiFont */
-           8, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ARABIC_CHARSET,
+          -11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ARABIC_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'M','S',' ','S','h','e','l','l',' ','D','l','g','\0'}
         },
     },
     {   BALTIC_CHARSET,
         { /* System */
-          16, 7, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, BALTIC_CHARSET,
+          16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, BALTIC_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'S','y','s','t','e','m','\0'}
         },
         { /* Device Default */
-          16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, BALTIC_CHARSET,
+          16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, BALTIC_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
-           {'\0'}
+           {'S','y','s','t','e','m','\0'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, BALTIC_CHARSET,
            0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
-           {'\0'}
+           {'C','o','u','r','i','e','r','\0'}
         },
         { /* DefaultGuiFont */
-           8, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, BALTIC_CHARSET,
+          -11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, BALTIC_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'M','S',' ','S','h','e','l','l',' ','D','l','g','\0'}
         },
     },
     {   THAI_CHARSET,
         { /* System */
-          16, 7, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, THAI_CHARSET,
+          16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, THAI_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'S','y','s','t','e','m','\0'}
         },
         { /* Device Default */
-          16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, THAI_CHARSET,
+          16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, THAI_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
-           {'\0'}
+           {'S','y','s','t','e','m','\0'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, THAI_CHARSET,
            0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
-           {'\0'}
+           {'C','o','u','r','i','e','r','\0'}
         },
         { /* DefaultGuiFont */
-           8, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, THAI_CHARSET,
+          -11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, THAI_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'M','S',' ','S','h','e','l','l',' ','D','l','g','\0'}
         },
     },
     {   SHIFTJIS_CHARSET,
         { /* System */
-          16, 7, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, SHIFTJIS_CHARSET,
+          18, 8, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, SHIFTJIS_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'S','y','s','t','e','m','\0'}
         },
         { /* Device Default */
-          16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, SHIFTJIS_CHARSET,
+          18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, SHIFTJIS_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
-           {'\0'}
+           {'S','y','s','t','e','m','\0'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, SHIFTJIS_CHARSET,
            0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
-           {'\0'}
+           {'C','o','u','r','i','e','r','\0'}
         },
         { /* DefaultGuiFont */
-           9, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, SHIFTJIS_CHARSET,
+          -12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, SHIFTJIS_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'M','S',' ','S','h','e','l','l',' ','D','l','g','\0'}
         },
     },
     {   GB2312_CHARSET,
         { /* System */
-          16, 7, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, GB2312_CHARSET,
+          16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, GB2312_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'S','y','s','t','e','m','\0'}
         },
         { /* Device Default */
-          16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, GB2312_CHARSET,
+          16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, GB2312_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
-           {'\0'}
+           {'S','y','s','t','e','m','\0'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, GB2312_CHARSET,
            0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
-           {'\0'}
+           {'C','o','u','r','i','e','r','\0'}
         },
         { /* DefaultGuiFont */
-           9, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, GB2312_CHARSET,
+          -12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, GB2312_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'M','S',' ','S','h','e','l','l',' ','D','l','g','\0'}
         },
     },
     {   HANGEUL_CHARSET,
         { /* System */
-          16, 7, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, HANGEUL_CHARSET,
+          16, 8, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, HANGEUL_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'S','y','s','t','e','m','\0'}
         },
         { /* Device Default */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, HANGEUL_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
-           {'\0'}
+           {'S','y','s','t','e','m','\0'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, HANGEUL_CHARSET,
            0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
-           {'\0'}
+           {'C','o','u','r','i','e','r','\0'}
         },
         { /* DefaultGuiFont */
-           9, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, HANGEUL_CHARSET,
+          -12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, HANGEUL_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'M','S',' ','S','h','e','l','l',' ','D','l','g','\0'}
         },
     },
     {   CHINESEBIG5_CHARSET,
         { /* System */
-          16, 7, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, CHINESEBIG5_CHARSET,
+          16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, CHINESEBIG5_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'S','y','s','t','e','m','\0'}
         },
         { /* Device Default */
-          16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, CHINESEBIG5_CHARSET,
+          16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, CHINESEBIG5_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
-           {'\0'}
+           {'S','y','s','t','e','m','\0'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, CHINESEBIG5_CHARSET,
            0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
-           {'\0'}
+           {'C','o','u','r','i','e','r','\0'}
         },
         { /* DefaultGuiFont */
-           9, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, CHINESEBIG5_CHARSET,
+          -12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, CHINESEBIG5_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'M','S',' ','S','h','e','l','l',' ','D','l','g','\0'}
         },
     },
     {   JOHAB_CHARSET,
         { /* System */
-          16, 7, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, JOHAB_CHARSET,
+          16, 7, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, JOHAB_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'S','y','s','t','e','m','\0'}
         },
         { /* Device Default */
-          16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, JOHAB_CHARSET,
+          16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, JOHAB_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
-           {'\0'}
+           {'S','y','s','t','e','m','\0'}
         },
         { /* System Fixed */
           16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, JOHAB_CHARSET,
            0, 0, DEFAULT_QUALITY, FIXED_PITCH | FF_MODERN,
-           {'\0'}
+           {'C','o','u','r','i','e','r','\0'}
         },
         { /* DefaultGuiFont */
-           8, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, JOHAB_CHARSET,
+          -12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, JOHAB_CHARSET,
            0, 0, DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS,
            {'M','S',' ','S','h','e','l','l',' ','D','l','g','\0'}
         },
@@ -446,9 +488,11 @@ static const struct DefaultFontInfo default_fonts[] =
  */
 void CDECL __wine_make_gdi_object_system( HGDIOBJ handle, BOOL set)
 {
-    GDIOBJHDR *ptr = GDI_GetObjPtr( handle, 0 );
-    ptr->system = !!set;
-    GDI_ReleaseObj( handle );
+    struct gdi_handle_entry *entry;
+
+    EnterCriticalSection( &gdi_section );
+    if ((entry = handle_entry( handle ))) entry->system = !!set;
+    LeaveCriticalSection( &gdi_section );
 }
 
 /******************************************************************************
@@ -490,32 +534,22 @@ static UINT get_default_charset( void )
     return csi.ciCharset;
 }
 
-static const WCHAR dpi_key_name[] = {'S','o','f','t','w','a','r','e','\\','F','o','n','t','s','\0'};
-static const WCHAR dpi_value_name[] = {'L','o','g','P','i','x','e','l','s','\0'};
 
-/******************************************************************************
- *      get_dpi   (internal)
+/***********************************************************************
+ *           GDI_get_ref_count
  *
- * get the dpi from the registry
+ * Retrieve the reference count of a GDI object.
+ * Note: the object must be locked otherwise the count is meaningless.
  */
-static DWORD get_dpi( void )
+UINT GDI_get_ref_count( HGDIOBJ handle )
 {
-    DWORD dpi = 96;
-    HKEY hkey;
+    struct gdi_handle_entry *entry;
+    UINT ret = 0;
 
-    if (RegOpenKeyW(HKEY_CURRENT_CONFIG, dpi_key_name, &hkey) == ERROR_SUCCESS)
-    {
-        DWORD type, size, new_dpi;
-
-        size = sizeof(new_dpi);
-        if(RegQueryValueExW(hkey, dpi_value_name, NULL, &type, (void *)&new_dpi, &size) == ERROR_SUCCESS)
-        {
-            if(type == REG_DWORD && new_dpi != 0)
-                dpi = new_dpi;
-        }
-        RegCloseKey(hkey);
-    }
-    return dpi;
+    EnterCriticalSection( &gdi_section );
+    if ((entry = handle_entry( handle ))) ret = entry->selcount;
+    LeaveCriticalSection( &gdi_section );
+    return ret;
 }
 
 
@@ -526,15 +560,12 @@ static DWORD get_dpi( void )
  */
 HGDIOBJ GDI_inc_ref_count( HGDIOBJ handle )
 {
-    GDIOBJHDR *header;
+    struct gdi_handle_entry *entry;
 
-    if ((header = GDI_GetObjPtr( handle, 0 )))
-    {
-        header->selcount++;
-        GDI_ReleaseObj( handle );
-    }
+    EnterCriticalSection( &gdi_section );
+    if ((entry = handle_entry( handle ))) entry->selcount++;
     else handle = 0;
-
+    LeaveCriticalSection( &gdi_section );
     return handle;
 }
 
@@ -546,24 +577,69 @@ HGDIOBJ GDI_inc_ref_count( HGDIOBJ handle )
  */
 BOOL GDI_dec_ref_count( HGDIOBJ handle )
 {
-    GDIOBJHDR *header;
+    struct gdi_handle_entry *entry;
 
-    if ((header = GDI_GetObjPtr( handle, 0 )))
+    EnterCriticalSection( &gdi_section );
+    if ((entry = handle_entry( handle )))
     {
-        assert( header->selcount );
-        if (!--header->selcount && header->deleted)
+        assert( entry->selcount );
+        if (!--entry->selcount && entry->deleted)
         {
             /* handle delayed DeleteObject*/
-            header->deleted = 0;
-            GDI_ReleaseObj( handle );
+            entry->deleted = 0;
+            LeaveCriticalSection( &gdi_section );
             TRACE( "executing delayed DeleteObject for %p\n", handle );
             DeleteObject( handle );
+            return TRUE;
         }
-        else GDI_ReleaseObj( handle );
     }
-    return header != NULL;
+    LeaveCriticalSection( &gdi_section );
+    return entry != NULL;
 }
 
+/******************************************************************************
+ *      get_dpi   (internal)
+ *
+ * get the dpi from the registry
+ */
+static int get_dpi( void )
+{
+    static const WCHAR dpi_key_name[] = {'S','o','f','t','w','a','r','e','\\','F','o','n','t','s','\0'};
+    static const WCHAR dpi_value_name[] = {'L','o','g','P','i','x','e','l','s','\0'};
+    static int dpi = -1;
+    HKEY hkey;
+
+    if (dpi != -1) return dpi;
+
+    if (RegOpenKeyW(HKEY_CURRENT_CONFIG, dpi_key_name, &hkey) == ERROR_SUCCESS)
+    {
+        DWORD type, size;
+        int new_dpi;
+
+        size = sizeof(new_dpi);
+        if (RegQueryValueExW(hkey, dpi_value_name, NULL, &type, (void *)&new_dpi, &size) == ERROR_SUCCESS)
+        {
+            if (type == REG_DWORD && new_dpi != 0)
+                dpi = new_dpi;
+        }
+        RegCloseKey(hkey);
+    }
+    if (dpi <= 0) dpi = 96;
+    return dpi;
+}
+
+
+static HFONT create_scaled_font( const LOGFONTW *deffont )
+{
+    LOGFONTW lf;
+    LONG height;
+
+    lf = *deffont;
+    height = abs(lf.lfHeight) * get_dpi() / 96;
+    lf.lfHeight = deffont->lfHeight < 0 ? -height : height;
+
+    return CreateFontIndirectW( &lf );
+}
 
 /***********************************************************************
  *           DllMain
@@ -572,12 +648,12 @@ BOOL GDI_dec_ref_count( HGDIOBJ handle )
  */
 BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
 {
-    LOGFONTW default_gui_font;
     const struct DefaultFontInfo* deffonts;
     int i;
 
     if (reason != DLL_PROCESS_ATTACH) return TRUE;
 
+    gdi32_module = inst;
     DisableThreadLibraryCalls( inst );
     WineEngInit();
 
@@ -603,15 +679,10 @@ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
 
     /* language-dependent stock fonts */
     deffonts = get_default_fonts(get_default_charset());
-    stock_objects[SYSTEM_FONT]         = CreateFontIndirectW( &deffonts->SystemFont );
-    stock_objects[DEVICE_DEFAULT_FONT] = CreateFontIndirectW( &deffonts->DeviceDefaultFont );
+    stock_objects[SYSTEM_FONT]         = create_scaled_font( &deffonts->SystemFont );
+    stock_objects[DEVICE_DEFAULT_FONT] = create_scaled_font( &deffonts->DeviceDefaultFont );
     stock_objects[SYSTEM_FIXED_FONT]   = CreateFontIndirectW( &deffonts->SystemFixedFont );
-
-    /* For the default gui font, we use the lfHeight member in deffonts as a place-holder
-       for the point size so we must convert this into a true height */
-    default_gui_font = deffonts->DefaultGuiFont;
-    default_gui_font.lfHeight = -MulDiv(default_gui_font.lfHeight, get_dpi(), 72);
-    stock_objects[DEFAULT_GUI_FONT]    = CreateFontIndirectW( &default_gui_font );
+    stock_objects[DEFAULT_GUI_FONT]    = create_scaled_font( &deffonts->DefaultGuiFont );
 
     stock_objects[DC_BRUSH]     = CreateBrushIndirect( &DCBrush );
     stock_objects[DC_PEN]       = CreatePenIndirect( &DCPen );
@@ -630,12 +701,6 @@ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
 
     return TRUE;
 }
-
-#define FIRST_LARGE_HANDLE 16
-#define MAX_LARGE_HANDLES ((GDI_HEAP_SIZE >> 2) - FIRST_LARGE_HANDLE)
-static GDIOBJHDR *large_handles[MAX_LARGE_HANDLES];
-static int next_large_handle;
-static LONG debug_count;
 
 static const char *gdi_obj_type( unsigned type )
 {
@@ -661,22 +726,19 @@ static const char *gdi_obj_type( unsigned type )
 
 static void dump_gdi_objects( void )
 {
-    int i;
+    struct gdi_handle_entry *entry;
 
-    TRACE( "%u objects:\n", MAX_LARGE_HANDLES );
+    TRACE( "%u objects:\n", MAX_GDI_HANDLES );
 
     EnterCriticalSection( &gdi_section );
-    for (i = 0; i < MAX_LARGE_HANDLES; i++)
+    for (entry = gdi_handles; entry < next_unused; entry++)
     {
-        if (!large_handles[i])
-        {
-            TRACE( "index %d handle %p FREE\n", i, (HGDIOBJ)(ULONG_PTR)((i + FIRST_LARGE_HANDLE) << 2) );
-            continue;
-        }
-        TRACE( "handle %p obj %p type %s selcount %u deleted %u\n",
-               (HGDIOBJ)(ULONG_PTR)((i + FIRST_LARGE_HANDLE) << 2),
-               large_handles[i], gdi_obj_type( large_handles[i]->type ),
-               large_handles[i]->selcount, large_handles[i]->deleted );
+        if (!entry->type)
+            TRACE( "handle %p FREE\n", entry_to_handle( entry ));
+        else
+            TRACE( "handle %p obj %p type %s selcount %u deleted %u\n",
+                   entry_to_handle( entry ), entry->obj, gdi_obj_type( entry->type ),
+                   entry->selcount, entry->deleted );
     }
     LeaveCriticalSection( &gdi_section );
 }
@@ -686,37 +748,40 @@ static void dump_gdi_objects( void )
  *
  * Allocate a GDI handle for an object, which must have been allocated on the process heap.
  */
-HGDIOBJ alloc_gdi_handle( GDIOBJHDR *obj, WORD type, const struct gdi_obj_funcs *funcs )
+HGDIOBJ alloc_gdi_handle( void *obj, WORD type, const struct gdi_obj_funcs *funcs )
 {
-    int i;
+    struct gdi_handle_entry *entry;
+    HGDIOBJ ret;
 
-    /* initialize the object header */
-    obj->type     = type;
-    obj->system   = 0;
-    obj->deleted  = 0;
-    obj->selcount = 0;
-    obj->funcs    = funcs;
-    obj->hdcs     = NULL;
+    assert( type );  /* type 0 is reserved to mark free entries */
 
     EnterCriticalSection( &gdi_section );
-    for (i = next_large_handle + 1; i < MAX_LARGE_HANDLES; i++)
-        if (!large_handles[i]) goto found;
-    for (i = 0; i <= next_large_handle; i++)
-        if (!large_handles[i]) goto found;
-    LeaveCriticalSection( &gdi_section );
 
-    ERR( "out of GDI object handles, expect a crash\n" );
-    if (TRACE_ON(gdi)) dump_gdi_objects();
-    return 0;
-
- found:
-    large_handles[i] = obj;
-    next_large_handle = i;
+    entry = next_free;
+    if (entry)
+        next_free = entry->obj;
+    else if (next_unused < gdi_handles + MAX_GDI_HANDLES)
+        entry = next_unused++;
+    else
+    {
+        LeaveCriticalSection( &gdi_section );
+        ERR( "out of GDI object handles, expect a crash\n" );
+        if (TRACE_ON(gdi)) dump_gdi_objects();
+        return 0;
+    }
+    entry->obj      = obj;
+    entry->funcs    = funcs;
+    entry->hdcs     = NULL;
+    entry->type     = type;
+    entry->selcount = 0;
+    entry->system   = 0;
+    entry->deleted  = 0;
+    if (++entry->generation == 0xffff) entry->generation = 1;
+    ret = entry_to_handle( entry );
     LeaveCriticalSection( &gdi_section );
-    TRACE( "allocated %s %p %u/%u\n",
-           gdi_obj_type(type), (HGDIOBJ)(ULONG_PTR)((i + FIRST_LARGE_HANDLE) << 2),
-           InterlockedIncrement( &debug_count ), MAX_LARGE_HANDLES );
-    return (HGDIOBJ)(ULONG_PTR)((i + FIRST_LARGE_HANDLE) << 2);
+    TRACE( "allocated %s %p %u/%u\n", gdi_obj_type(type), ret,
+           InterlockedIncrement( &debug_count ), MAX_GDI_HANDLES );
+    return ret;
 }
 
 
@@ -727,27 +792,41 @@ HGDIOBJ alloc_gdi_handle( GDIOBJHDR *obj, WORD type, const struct gdi_obj_funcs 
  */
 void *free_gdi_handle( HGDIOBJ handle )
 {
-    GDIOBJHDR *object = NULL;
-    int i;
+    void *object = NULL;
+    struct gdi_handle_entry *entry;
 
-    i = ((ULONG_PTR)handle >> 2) - FIRST_LARGE_HANDLE;
-    if (i >= 0 && i < MAX_LARGE_HANDLES)
+    EnterCriticalSection( &gdi_section );
+    if ((entry = handle_entry( handle )))
     {
-        EnterCriticalSection( &gdi_section );
-        object = large_handles[i];
-        large_handles[i] = NULL;
-        LeaveCriticalSection( &gdi_section );
+        TRACE( "freed %s %p %u/%u\n", gdi_obj_type( entry->type ), handle,
+               InterlockedDecrement( &debug_count ) + 1, MAX_GDI_HANDLES );
+        object = entry->obj;
+        entry->type = 0;
+        entry->obj = next_free;
+        next_free = entry;
     }
-    if (object)
-    {
-        TRACE( "freed %s %p %u/%u\n", gdi_obj_type( object->type ), handle,
-               InterlockedDecrement( &debug_count ) + 1, MAX_LARGE_HANDLES );
-        object->type  = 0;  /* mark it as invalid */
-        object->funcs = NULL;
-    }
+    LeaveCriticalSection( &gdi_section );
     return object;
 }
 
+
+/***********************************************************************
+ *           get_full_gdi_handle
+ *
+ * Return the full GDI handle from a possibly truncated value.
+ */
+HGDIOBJ get_full_gdi_handle( HGDIOBJ handle )
+{
+    struct gdi_handle_entry *entry;
+
+    if (!HIWORD( handle ))
+    {
+        EnterCriticalSection( &gdi_section );
+        if ((entry = handle_entry( handle ))) handle = entry_to_handle( entry );
+        LeaveCriticalSection( &gdi_section );
+    }
+    return handle;
+}
 
 /***********************************************************************
  *           GDI_GetObjPtr
@@ -758,24 +837,17 @@ void *free_gdi_handle( HGDIOBJ handle )
  */
 void *GDI_GetObjPtr( HGDIOBJ handle, WORD type )
 {
-    GDIOBJHDR *ptr = NULL;
-    int i;
+    void *ptr = NULL;
+    struct gdi_handle_entry *entry;
 
     EnterCriticalSection( &gdi_section );
 
-    i = ((UINT_PTR)handle >> 2) - FIRST_LARGE_HANDLE;
-    if (i >= 0 && i < MAX_LARGE_HANDLES)
+    if ((entry = handle_entry( handle )))
     {
-        ptr = large_handles[i];
-        if (ptr && type && ptr->type != type) ptr = NULL;
+        if (!type || entry->type == type) ptr = entry->obj;
     }
 
-    if (!ptr)
-    {
-        LeaveCriticalSection( &gdi_section );
-        WARN( "Invalid handle %p\n", handle );
-    }
-
+    if (!ptr) LeaveCriticalSection( &gdi_section );
     return ptr;
 }
 
@@ -819,60 +891,58 @@ void GDI_CheckNotLock(void)
  */
 BOOL WINAPI DeleteObject( HGDIOBJ obj )
 {
-      /* Check if object is valid */
-
+    struct gdi_handle_entry *entry;
     struct hdc_list *hdcs_head;
-    const struct gdi_obj_funcs *funcs;
-    GDIOBJHDR * header;
+    const struct gdi_obj_funcs *funcs = NULL;
 
-    if (HIWORD(obj)) return FALSE;
+    EnterCriticalSection( &gdi_section );
+    if (!(entry = handle_entry( obj )))
+    {
+        LeaveCriticalSection( &gdi_section );
+        return FALSE;
+    }
 
-    if (!(header = GDI_GetObjPtr( obj, 0 ))) return FALSE;
-
-    if (header->system)
+    if (entry->system)
     {
 	TRACE("Preserving system object %p\n", obj);
-        GDI_ReleaseObj( obj );
+        LeaveCriticalSection( &gdi_section );
 	return TRUE;
     }
 
-    while ((hdcs_head = header->hdcs) != NULL)
+    obj = entry_to_handle( entry );  /* make it a full handle */
+
+    hdcs_head = entry->hdcs;
+    entry->hdcs = NULL;
+
+    if (entry->selcount)
     {
+        TRACE("delayed for %p because object in use, count %u\n", obj, entry->selcount );
+        entry->deleted = 1;  /* mark for delete */
+    }
+    else funcs = entry->funcs;
+
+    LeaveCriticalSection( &gdi_section );
+
+    while (hdcs_head)
+    {
+        struct hdc_list *next = hdcs_head->next;
         DC *dc = get_dc_ptr(hdcs_head->hdc);
 
-        header->hdcs = hdcs_head->next;
         TRACE("hdc %p has interest in %p\n", hdcs_head->hdc, obj);
-
         if(dc)
         {
             PHYSDEV physdev = GET_DC_PHYSDEV( dc, pDeleteObject );
-            GDI_ReleaseObj( obj );  /* release the GDI lock */
             physdev->funcs->pDeleteObject( physdev, obj );
-            header = GDI_GetObjPtr( obj, 0 );  /* and grab it again */
             release_dc_ptr( dc );
         }
         HeapFree(GetProcessHeap(), 0, hdcs_head);
-        if (!header) return FALSE;
-    }
-
-    if (header->selcount)
-    {
-        TRACE("delayed for %p because object in use, count %u\n", obj, header->selcount );
-        header->deleted = 1;  /* mark for delete */
-        GDI_ReleaseObj( obj );
-        return TRUE;
+        hdcs_head = next;
     }
 
     TRACE("%p\n", obj );
 
-      /* Delete object */
-
-    funcs = header->funcs;
-    GDI_ReleaseObj( obj );
-    if (funcs && funcs->pDeleteObject)
-        return funcs->pDeleteObject( obj );
-    else
-        return FALSE;
+    if (funcs && funcs->pDeleteObject) return funcs->pDeleteObject( obj );
+    return TRUE;
 }
 
 /***********************************************************************
@@ -880,70 +950,54 @@ BOOL WINAPI DeleteObject( HGDIOBJ obj )
  *
  * Call this if the dc requires DeleteObject notification
  */
-BOOL GDI_hdc_using_object(HGDIOBJ obj, HDC hdc)
+void GDI_hdc_using_object(HGDIOBJ obj, HDC hdc)
 {
-    GDIOBJHDR * header;
-    struct hdc_list **pphdc;
+    struct gdi_handle_entry *entry;
+    struct hdc_list *phdc;
 
     TRACE("obj %p hdc %p\n", obj, hdc);
 
-    if (!(header = GDI_GetObjPtr( obj, 0 ))) return FALSE;
-
-    if (header->system)
+    EnterCriticalSection( &gdi_section );
+    if ((entry = handle_entry( obj )) && !entry->system)
     {
-        GDI_ReleaseObj(obj);
-        return FALSE;
+        for (phdc = entry->hdcs; phdc; phdc = phdc->next)
+            if (phdc->hdc == hdc) break;
+
+        if (!phdc)
+        {
+            phdc = HeapAlloc(GetProcessHeap(), 0, sizeof(*phdc));
+            phdc->hdc = hdc;
+            phdc->next = entry->hdcs;
+            entry->hdcs = phdc;
+        }
     }
-
-    for(pphdc = &header->hdcs; *pphdc; pphdc = &(*pphdc)->next)
-        if((*pphdc)->hdc == hdc)
-            break;
-
-    if(!*pphdc) {
-        *pphdc = HeapAlloc(GetProcessHeap(), 0, sizeof(**pphdc));
-        (*pphdc)->hdc = hdc;
-        (*pphdc)->next = NULL;
-    }
-
-    GDI_ReleaseObj(obj);
-    return TRUE;
+    LeaveCriticalSection( &gdi_section );
 }
 
 /***********************************************************************
  *           GDI_hdc_not_using_object
  *
  */
-BOOL GDI_hdc_not_using_object(HGDIOBJ obj, HDC hdc)
+void GDI_hdc_not_using_object(HGDIOBJ obj, HDC hdc)
 {
-    GDIOBJHDR * header;
-    struct hdc_list *phdc, **prev;
+    struct gdi_handle_entry *entry;
+    struct hdc_list **pphdc;
 
     TRACE("obj %p hdc %p\n", obj, hdc);
 
-    if (!(header = GDI_GetObjPtr( obj, 0 ))) return FALSE;
-
-    if (header->system)
+    EnterCriticalSection( &gdi_section );
+    if ((entry = handle_entry( obj )) && !entry->system)
     {
-        GDI_ReleaseObj(obj);
-        return FALSE;
+        for (pphdc = &entry->hdcs; *pphdc; pphdc = &(*pphdc)->next)
+            if ((*pphdc)->hdc == hdc)
+            {
+                struct hdc_list *phdc = *pphdc;
+                *pphdc = phdc->next;
+                HeapFree(GetProcessHeap(), 0, phdc);
+                break;
+            }
     }
-
-    phdc = header->hdcs;
-    prev = &header->hdcs;
-
-    while(phdc) {
-        if(phdc->hdc == hdc) {
-            *prev = phdc->next;
-            HeapFree(GetProcessHeap(), 0, phdc);
-            phdc = *prev;
-        } else {
-            prev = &phdc->next;
-            phdc = phdc->next;
-        }
-    }
-
-    GDI_ReleaseObj(obj);
-    return TRUE;
+    LeaveCriticalSection( &gdi_section );
 }
 
 /***********************************************************************
@@ -964,26 +1018,29 @@ HGDIOBJ WINAPI GetStockObject( INT obj )
  */
 INT WINAPI GetObjectA( HGDIOBJ handle, INT count, LPVOID buffer )
 {
-    const struct gdi_obj_funcs *funcs;
-    GDIOBJHDR * ptr;
+    struct gdi_handle_entry *entry;
+    const struct gdi_obj_funcs *funcs = NULL;
     INT result = 0;
 
     TRACE("%p %d %p\n", handle, count, buffer );
 
-    if (!(ptr = GDI_GetObjPtr( handle, 0 ))) return 0;
-    funcs = ptr->funcs;
-    GDI_ReleaseObj( handle );
-
-    if (funcs && funcs->pGetObjectA)
+    EnterCriticalSection( &gdi_section );
+    if ((entry = handle_entry( handle )))
     {
-        if (buffer && ((ULONG_PTR)buffer >> 16) == 0) /* catch apps getting argument order wrong */
+        funcs = entry->funcs;
+        handle = entry_to_handle( entry );  /* make it a full handle */
+    }
+    LeaveCriticalSection( &gdi_section );
+
+    if (funcs)
+    {
+        if (!funcs->pGetObjectA)
+            SetLastError( ERROR_INVALID_HANDLE );
+        else if (buffer && ((ULONG_PTR)buffer >> 16) == 0) /* catch apps getting argument order wrong */
             SetLastError( ERROR_NOACCESS );
         else
             result = funcs->pGetObjectA( handle, count, buffer );
     }
-    else
-        SetLastError( ERROR_INVALID_HANDLE );
-
     return result;
 }
 
@@ -992,25 +1049,29 @@ INT WINAPI GetObjectA( HGDIOBJ handle, INT count, LPVOID buffer )
  */
 INT WINAPI GetObjectW( HGDIOBJ handle, INT count, LPVOID buffer )
 {
-    const struct gdi_obj_funcs *funcs;
-    GDIOBJHDR * ptr;
+    struct gdi_handle_entry *entry;
+    const struct gdi_obj_funcs *funcs = NULL;
     INT result = 0;
+
     TRACE("%p %d %p\n", handle, count, buffer );
 
-    if (!(ptr = GDI_GetObjPtr( handle, 0 ))) return 0;
-    funcs = ptr->funcs;
-    GDI_ReleaseObj( handle );
-
-    if (funcs && funcs->pGetObjectW)
+    EnterCriticalSection( &gdi_section );
+    if ((entry = handle_entry( handle )))
     {
-        if (buffer && ((ULONG_PTR)buffer >> 16) == 0) /* catch apps getting argument order wrong */
+        funcs = entry->funcs;
+        handle = entry_to_handle( entry );  /* make it a full handle */
+    }
+    LeaveCriticalSection( &gdi_section );
+
+    if (funcs)
+    {
+        if (!funcs->pGetObjectW)
+            SetLastError( ERROR_INVALID_HANDLE );
+        else if (buffer && ((ULONG_PTR)buffer >> 16) == 0) /* catch apps getting argument order wrong */
             SetLastError( ERROR_NOACCESS );
         else
             result = funcs->pGetObjectW( handle, count, buffer );
     }
-    else
-        SetLastError( ERROR_INVALID_HANDLE );
-
     return result;
 }
 
@@ -1019,17 +1080,15 @@ INT WINAPI GetObjectW( HGDIOBJ handle, INT count, LPVOID buffer )
  */
 DWORD WINAPI GetObjectType( HGDIOBJ handle )
 {
-    GDIOBJHDR * ptr;
-    DWORD result;
+    struct gdi_handle_entry *entry;
+    DWORD result = 0;
 
-    if (!(ptr = GDI_GetObjPtr( handle, 0 )))
-    {
-        SetLastError( ERROR_INVALID_HANDLE );
-        return 0;
-    }
-    result = ptr->type;
-    GDI_ReleaseObj( handle );
+    EnterCriticalSection( &gdi_section );
+    if ((entry = handle_entry( handle ))) result = entry->type;
+    LeaveCriticalSection( &gdi_section );
+
     TRACE("%p -> %u\n", handle, result );
+    if (!result) SetLastError( ERROR_INVALID_HANDLE );
     return result;
 }
 
@@ -1099,19 +1158,21 @@ HGDIOBJ WINAPI GetCurrentObject(HDC hdc,UINT type)
  */
 HGDIOBJ WINAPI SelectObject( HDC hdc, HGDIOBJ hObj )
 {
-    HGDIOBJ ret = 0;
-    GDIOBJHDR *header;
+    struct gdi_handle_entry *entry;
+    const struct gdi_obj_funcs *funcs = NULL;
 
     TRACE( "(%p,%p)\n", hdc, hObj );
 
-    header = GDI_GetObjPtr( hObj, 0 );
-    if (header)
+    EnterCriticalSection( &gdi_section );
+    if ((entry = handle_entry( hObj )))
     {
-        const struct gdi_obj_funcs *funcs = header->funcs;
-        GDI_ReleaseObj( hObj );
-        if (funcs && funcs->pSelectObject) ret = funcs->pSelectObject( hObj, hdc );
+        funcs = entry->funcs;
+        hObj = entry_to_handle( entry );  /* make it a full handle */
     }
-    return ret;
+    LeaveCriticalSection( &gdi_section );
+
+    if (funcs && funcs->pSelectObject) return funcs->pSelectObject( hObj, hdc );
+    return 0;
 }
 
 
@@ -1120,20 +1181,19 @@ HGDIOBJ WINAPI SelectObject( HDC hdc, HGDIOBJ hObj )
  */
 BOOL WINAPI UnrealizeObject( HGDIOBJ obj )
 {
-    BOOL result = FALSE;
-    GDIOBJHDR * header = GDI_GetObjPtr( obj, 0 );
+    const struct gdi_obj_funcs *funcs = NULL;
+    struct gdi_handle_entry *entry;
 
-    if (header)
+    EnterCriticalSection( &gdi_section );
+    if ((entry = handle_entry( obj )))
     {
-        const struct gdi_obj_funcs *funcs = header->funcs;
-
-        GDI_ReleaseObj( obj );
-        if (funcs && funcs->pUnrealizeObject)
-            result = header->funcs->pUnrealizeObject( obj );
-        else
-            result = TRUE;
+        funcs = entry->funcs;
+        obj = entry_to_handle( entry );  /* make it a full handle */
     }
-    return result;
+    LeaveCriticalSection( &gdi_section );
+
+    if (funcs && funcs->pUnrealizeObject) return funcs->pUnrealizeObject( obj );
+    return funcs != NULL;
 }
 
 
@@ -1265,8 +1325,8 @@ DWORD WINAPI GdiSetBatchLimit( DWORD limit )
  */
 BOOL WINAPI GetColorAdjustment(HDC hdc, LPCOLORADJUSTMENT lpca)
 {
-        FIXME("stub\n");
-        return 0;
+    FIXME("stub\n");
+    return FALSE;
 }
 
 /*******************************************************************
@@ -1295,6 +1355,6 @@ BOOL WINAPI GdiComment(HDC hdc, UINT cbSize, const BYTE *lpData)
  */
 BOOL WINAPI SetColorAdjustment(HDC hdc, const COLORADJUSTMENT* lpca)
 {
-        FIXME("stub\n");
-        return 0;
+    FIXME("stub\n");
+    return FALSE;
 }

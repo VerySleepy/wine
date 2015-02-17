@@ -32,6 +32,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <windows.h>
+#include <winternl.h>
 #include <mshtml.h>
 
 #include "winetest.h"
@@ -46,7 +47,6 @@
 struct wine_test
 {
     char *name;
-    int resource;
     int subtest_count;
     char **subtests;
     char *exename;
@@ -122,7 +122,7 @@ static char * get_file_version(char * file_name)
         char * data = heap_alloc(size);
         if (data) {
             if (GetFileVersionInfoA(file_name, handle, size, data)) {
-                static char backslash[] = "\\";
+                static const char backslash[] = "\\";
                 VS_FIXEDFILEINFO *pFixedVersionInfo;
                 UINT len;
                 if (VerQueryValueA(data, backslash, (LPVOID *)&pFixedVersionInfo, &len)) {
@@ -144,15 +144,15 @@ static char * get_file_version(char * file_name)
     return version;
 }
 
-static int running_under_wine (void)
+static BOOL running_under_wine (void)
 {
     HMODULE module = GetModuleHandleA("ntdll.dll");
 
-    if (!module) return 0;
+    if (!module) return FALSE;
     return (GetProcAddress(module, "wine_server_call") != NULL);
 }
 
-static int check_mount_mgr(void)
+static BOOL check_mount_mgr(void)
 {
     HANDLE handle = CreateFileA( "\\\\.\\MountPointManager", GENERIC_READ,
                                  FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, 0 );
@@ -161,7 +161,7 @@ static int check_mount_mgr(void)
     return TRUE;
 }
 
-static int check_wow64_registry(void)
+static BOOL check_wow64_registry(void)
 {
     char buffer[MAX_PATH];
     DWORD type, size = MAX_PATH;
@@ -176,7 +176,7 @@ static int check_wow64_registry(void)
     return ret;
 }
 
-static int check_display_driver(void)
+static BOOL check_display_driver(void)
 {
     HWND hwnd = CreateWindowA( "STATIC", "", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, 0, CW_USEDEFAULT, 0,
                                0, 0, GetModuleHandleA(0), 0 );
@@ -185,10 +185,10 @@ static int check_display_driver(void)
     return TRUE;
 }
 
-static int running_on_visible_desktop (void)
+static BOOL running_on_visible_desktop (void)
 {
     HWND desktop;
-    HMODULE huser32 = GetModuleHandle("user32.dll");
+    HMODULE huser32 = GetModuleHandleA("user32.dll");
     HWINSTA (WINAPI *pGetProcessWindowStation)(void);
     BOOL (WINAPI *pGetUserObjectInformationA)(HANDLE,INT,LPVOID,DWORD,LPDWORD);
 
@@ -308,35 +308,88 @@ static BOOL is_native_dll( HMODULE module )
     return TRUE;
 }
 
+/*
+ * Windows 8 has a concept of stub DLLs.  When DLLMain is called the user is prompted
+ *  to install that component.  To bypass this check we need to look at the version resource.
+ */
+static BOOL is_stub_dll(const char *filename)
+{
+    DWORD size, ver;
+    BOOL isstub = FALSE;
+    char *p, *data;
+
+    size = GetFileVersionInfoSizeA(filename, &ver);
+    if (!size) return FALSE;
+
+    data = HeapAlloc(GetProcessHeap(), 0, size);
+    if (!data) return FALSE;
+
+    if (GetFileVersionInfoA(filename, ver, size, data))
+    {
+        char buf[256];
+
+        sprintf(buf, "\\StringFileInfo\\%04x%04x\\OriginalFilename", MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), 1200);
+        if (VerQueryValueA(data, buf, (void**)&p, &size))
+            isstub = !lstrcmpiA("wcodstub.dll", p);
+    }
+    HeapFree(GetProcessHeap(), 0, data);
+
+    return isstub;
+}
+
 static void print_version (void)
 {
 #ifdef __i386__
     static const char platform[] = "i386";
 #elif defined(__x86_64__)
     static const char platform[] = "x86_64";
-#elif defined(__sparc__)
-    static const char platform[] = "sparc";
 #elif defined(__powerpc__)
     static const char platform[] = "powerpc";
 #elif defined(__arm__)
     static const char platform[] = "arm";
+#elif defined(__aarch64__)
+    static const char platform[] = "arm64";
 #else
 # error CPU unknown
 #endif
-    OSVERSIONINFOEX ver;
+    OSVERSIONINFOEXA ver;
+    RTL_OSVERSIONINFOEXW rtlver;
     BOOL ext;
     int is_win2k3_r2, is_admin, is_elevated;
     const char *(CDECL *wine_get_build_id)(void);
+    HMODULE hntdll = GetModuleHandleA("ntdll.dll");
     void (CDECL *wine_get_host_version)( const char **sysname, const char **release );
     BOOL (WINAPI *pGetProductInfo)(DWORD, DWORD, DWORD, DWORD, DWORD *);
+    NTSTATUS (WINAPI *pRtlGetVersion)(RTL_OSVERSIONINFOEXW *);
 
-    ver.dwOSVersionInfoSize = sizeof(OSVERSIONINFOEX);
-    if (!(ext = GetVersionEx ((OSVERSIONINFO *) &ver)))
+    ver.dwOSVersionInfoSize = sizeof(ver);
+    if (!(ext = GetVersionExA ((OSVERSIONINFOA *) &ver)))
     {
-	ver.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
-	if (!GetVersionEx ((OSVERSIONINFO *) &ver))
+	ver.dwOSVersionInfoSize = sizeof(OSVERSIONINFOA);
+	if (!GetVersionExA ((OSVERSIONINFOA *) &ver))
 	    report (R_FATAL, "Can't get OS version.");
     }
+
+    /* try to get non-faked values */
+    if (ver.dwMajorVersion == 6 && ver.dwMinorVersion == 2)
+    {
+        rtlver.dwOSVersionInfoSize = sizeof(RTL_OSVERSIONINFOEXW);
+
+        pRtlGetVersion = (void *)GetProcAddress(hntdll, "RtlGetVersion");
+        pRtlGetVersion(&rtlver);
+
+        ver.dwMajorVersion = rtlver.dwMajorVersion;
+        ver.dwMinorVersion = rtlver.dwMinorVersion;
+        ver.dwBuildNumber = rtlver.dwBuildNumber;
+        ver.dwPlatformId = rtlver.dwPlatformId;
+        ver.wServicePackMajor = rtlver.wServicePackMajor;
+        ver.wServicePackMinor = rtlver.wServicePackMinor;
+        ver.wSuiteMask = rtlver.wSuiteMask;
+        ver.wProductType = rtlver.wProductType;
+
+        WideCharToMultiByte(CP_ACP, 0, rtlver.szCSDVersion, -1, ver.szCSDVersion, sizeof(ver.szCSDVersion), NULL, NULL);
+    }
+
     xprintf ("    Platform=%s%s\n", platform, is_wow64 ? " (WOW64)" : "");
     xprintf ("    bRunningUnderWine=%d\n", running_under_wine ());
     xprintf ("    bRunningOnVisibleDesktop=%d\n", running_on_visible_desktop ());
@@ -359,8 +412,8 @@ static void print_version (void)
              ver.dwMajorVersion, ver.dwMinorVersion, ver.dwBuildNumber,
              ver.dwPlatformId, ver.szCSDVersion);
 
-    wine_get_build_id = (void *)GetProcAddress(GetModuleHandleA("ntdll.dll"), "wine_get_build_id");
-    wine_get_host_version = (void *)GetProcAddress(GetModuleHandleA("ntdll.dll"), "wine_get_host_version");
+    wine_get_build_id = (void *)GetProcAddress(hntdll, "wine_get_build_id");
+    wine_get_host_version = (void *)GetProcAddress(hntdll, "wine_get_host_version");
     if (wine_get_build_id) xprintf( "    WineBuild=%s\n", wine_get_build_id() );
     if (wine_get_host_version)
     {
@@ -408,7 +461,7 @@ static void print_language(void)
         xprintf ("    ThreadUILanguage=%x\n", pGetThreadUILanguage());
 }
 
-static inline int is_dot_dir(const char* x)
+static inline BOOL is_dot_dir(const char* x)
 {
     return ((x[0] == '.') && ((x[1] == 0) || ((x[1] == '.') && (x[2] == 0))));
 }
@@ -416,14 +469,14 @@ static inline int is_dot_dir(const char* x)
 static void remove_dir (const char *dir)
 {
     HANDLE  hFind;
-    WIN32_FIND_DATA wfd;
+    WIN32_FIND_DATAA wfd;
     char path[MAX_PATH];
     size_t dirlen = strlen (dir);
 
     /* Make sure the directory exists before going further */
     memcpy (path, dir, dirlen);
     strcpy (path + dirlen++, "\\*");
-    hFind = FindFirstFile (path, &wfd);
+    hFind = FindFirstFileA (path, &wfd);
     if (hFind == INVALID_HANDLE_VALUE) return;
 
     do {
@@ -434,12 +487,12 @@ static void remove_dir (const char *dir)
         strcpy (path + dirlen, lp);
         if (FILE_ATTRIBUTE_DIRECTORY & wfd.dwFileAttributes)
             remove_dir(path);
-        else if (!DeleteFile (path))
+        else if (!DeleteFileA(path))
             report (R_WARNING, "Can't delete file %s: error %d",
                     path, GetLastError ());
-    } while (FindNextFile (hFind, &wfd));
+    } while (FindNextFileA(hFind, &wfd));
     FindClose (hFind);
-    if (!RemoveDirectory (dir))
+    if (!RemoveDirectoryA(dir))
         report (R_WARNING, "Can't remove directory %s: error %d",
                 dir, GetLastError ());
 }
@@ -471,13 +524,13 @@ static const char* get_test_source_file(const char* test, const char* subtest)
     return buffer;
 }
 
-static void* extract_rcdata (LPCTSTR name, LPCTSTR type, DWORD* size)
+static void* extract_rcdata (LPCSTR name, LPCSTR type, DWORD* size)
 {
     HRSRC rsrc;
     HGLOBAL hdl;
     LPVOID addr;
     
-    if (!(rsrc = FindResource (NULL, name, type)) ||
+    if (!(rsrc = FindResourceA(NULL, name, type)) ||
         !(*size = SizeofResource (0, rsrc)) ||
         !(hdl = LoadResource (0, rsrc)) ||
         !(addr = LockResource (hdl)))
@@ -487,7 +540,7 @@ static void* extract_rcdata (LPCTSTR name, LPCTSTR type, DWORD* size)
 
 /* Fills in the name and exename fields */
 static void
-extract_test (struct wine_test *test, const char *dir, LPTSTR res_name)
+extract_test (struct wine_test *test, const char *dir, LPSTR res_name)
 {
     BYTE* code;
     DWORD size;
@@ -526,7 +579,7 @@ static DWORD wait_process( HANDLE process, DWORD timeout )
     {
         wait = MsgWaitForMultipleObjects( 1, &process, FALSE, timeout - diff, QS_ALLINPUT );
         if (wait != WAIT_OBJECT_0 + 1) return wait;
-        while (PeekMessageA( &msg, 0, 0, 0, PM_REMOVE )) DispatchMessage( &msg );
+        while (PeekMessageA( &msg, 0, 0, 0, PM_REMOVE )) DispatchMessageA( &msg );
         diff = GetTickCount() - start;
     }
     return WAIT_TIMEOUT;
@@ -554,11 +607,11 @@ static void append_path( const char *path)
 static int
 run_ex (char *cmd, HANDLE out_file, const char *tempdir, DWORD ms)
 {
-    STARTUPINFO si;
+    STARTUPINFOA si;
     PROCESS_INFORMATION pi;
     DWORD wait, status;
 
-    GetStartupInfo (&si);
+    GetStartupInfoA (&si);
     si.dwFlags    = STARTF_USESTDHANDLES;
     si.hStdInput  = GetStdHandle( STD_INPUT_HANDLE );
     si.hStdOutput = out_file ? out_file : GetStdHandle( STD_OUTPUT_HANDLE );
@@ -607,7 +660,7 @@ run_ex (char *cmd, HANDLE out_file, const char *tempdir, DWORD ms)
 }
 
 static DWORD
-get_subtests (const char *tempdir, struct wine_test *test, LPTSTR res_name)
+get_subtests (const char *tempdir, struct wine_test *test, LPSTR res_name)
 {
     char *cmd;
     HANDLE subfile;
@@ -663,6 +716,7 @@ get_subtests (const char *tempdir, struct wine_test *test, LPTSTR res_name)
     if (status == -2)
     {
         report (R_ERROR, "Cannot run %s error %u", test->exename, err);
+        CloseHandle( subfile );
         goto quit;
     }
 
@@ -722,19 +776,21 @@ run_test (struct wine_test* test, const char* subtest, HANDLE out_file, const ch
     else
     {
         int status;
+        DWORD start = GetTickCount();
         char *cmd = strmake (NULL, "%s %s", test->exename, subtest);
         report (R_STEP, "Running: %s:%s", test->name, subtest);
         xprintf ("%s:%s start %s -\n", test->name, subtest, file);
         status = run_ex (cmd, out_file, tempdir, 120000);
         heap_free (cmd);
-        xprintf ("%s:%s done (%d)\n", test->name, subtest, status);
+        xprintf ("%s:%s done (%d) in %ds\n", test->name, subtest, status, (GetTickCount()-start)/1000);
         if (status) failures++;
     }
+    if (failures) report (R_STATUS, "Running tests - %u failures", failures);
 }
 
 static BOOL CALLBACK
-EnumTestFileProc (HMODULE hModule, LPCTSTR lpszType,
-                  LPTSTR lpszName, LONG_PTR lParam)
+EnumTestFileProc (HMODULE hModule, LPCSTR lpszType,
+                  LPSTR lpszName, LONG_PTR lParam)
 {
     if (!test_filtered_out( lpszName, NULL )) (*(int*)lParam)++;
     return TRUE;
@@ -812,8 +868,7 @@ static void get_dll_path(HMODULE dll, char **path, char *filename)
 }
 
 static BOOL CALLBACK
-extract_test_proc (HMODULE hModule, LPCTSTR lpszType,
-                   LPTSTR lpszName, LONG_PTR lParam)
+extract_test_proc (HMODULE hModule, LPCSTR lpszType, LPSTR lpszName, LONG_PTR lParam)
 {
     const char *tempdir = (const char *)lParam;
     char dllname[MAX_PATH];
@@ -847,7 +902,7 @@ extract_test_proc (HMODULE hModule, LPCTSTR lpszType,
         actctxinfo.cbSize = sizeof(ACTCTXA);
         actctxinfo.dwFlags = ACTCTX_FLAG_RESOURCE_NAME_VALID;
         actctxinfo.lpSource = wine_tests[nr_of_files].exename;
-        actctxinfo.lpResourceName = CREATEPROCESS_MANIFEST_RESOURCE_ID;
+        actctxinfo.lpResourceName = (LPSTR)CREATEPROCESS_MANIFEST_RESOURCE_ID;
         actctx = pCreateActCtxA(&actctxinfo);
         if (actctx != INVALID_HANDLE_VALUE &&
             ! pActivateActCtx(actctx, &cookie))
@@ -878,6 +933,17 @@ extract_test_proc (HMODULE hModule, LPCTSTR lpszType,
     if (!dll)
     {
         xprintf ("    %s=dll is missing\n", dllname);
+        if (actctx != INVALID_HANDLE_VALUE)
+        {
+            pDeactivateActCtx(0, cookie);
+            pReleaseActCtx(actctx);
+        }
+        return TRUE;
+    }
+    if(is_stub_dll(dllname))
+    {
+        FreeLibrary(dll);
+        xprintf ("    %s=dll is a stub\n", dllname);
         if (actctx != INVALID_HANDLE_VALUE)
         {
             pDeactivateActCtx(0, cookie);
@@ -1010,7 +1076,7 @@ run_tests (char *logname, char *outdir)
     xprintf ("Dll info:\n" );
 
     report (R_STATUS, "Counting tests");
-    if (!EnumResourceNames (NULL, "TESTRES", EnumTestFileProc, (LPARAM)&nr_of_files))
+    if (!EnumResourceNamesA (NULL, "TESTRES", EnumTestFileProc, (LPARAM)&nr_of_files))
         report (R_FATAL, "Can't enumerate test files: %d",
                 GetLastError ());
     wine_tests = heap_alloc (nr_of_files * sizeof wine_tests[0]);
@@ -1031,7 +1097,7 @@ run_tests (char *logname, char *outdir)
     nr_of_files = 0;
     nr_of_tests = 0;
     nr_of_skips = 0;
-    if (!EnumResourceNames (NULL, "TESTRES", extract_test_proc, (LPARAM)tempdir))
+    if (!EnumResourceNamesA (NULL, "TESTRES", extract_test_proc, (LPARAM)tempdir))
         report (R_FATAL, "Can't enumerate test files: %d",
                 GetLastError ());
 
@@ -1071,7 +1137,7 @@ run_tests (char *logname, char *outdir)
     }
     report (R_DELTA, 0, "Running: Done");
 
-    report (R_STATUS, "Cleaning up");
+    report (R_STATUS, "Cleaning up - %u failures", failures);
     CloseHandle( logfile );
     logfile = 0;
     if (!outdir)
@@ -1094,7 +1160,7 @@ static BOOL WINAPI ctrl_handler(DWORD ctrl_type)
 
 
 static BOOL CALLBACK
-extract_only_proc (HMODULE hModule, LPCTSTR lpszType, LPTSTR lpszName, LONG_PTR lParam)
+extract_only_proc (HMODULE hModule, LPCSTR lpszType, LPSTR lpszName, LONG_PTR lParam)
 {
     const char *target_dir = (const char *)lParam;
     char filename[MAX_PATH];
@@ -1120,7 +1186,7 @@ static void extract_only (const char *target_dir)
 
     nr_of_files = 0;
     report (R_STATUS, "Counting tests");
-    if (!EnumResourceNames (NULL, "TESTRES", EnumTestFileProc, (LPARAM)&nr_of_files))
+    if (!EnumResourceNamesA(NULL, "TESTRES", EnumTestFileProc, (LPARAM)&nr_of_files))
         report (R_FATAL, "Can't enumerate test files: %d", GetLastError ());
 
     wine_tests = heap_alloc (nr_of_files * sizeof wine_tests[0] );
@@ -1128,7 +1194,7 @@ static void extract_only (const char *target_dir)
     report (R_STATUS, "Extracting tests");
     report (R_PROGRESS, 0, nr_of_files);
     nr_of_files = 0;
-    if (!EnumResourceNames (NULL, "TESTRES", extract_only_proc, (LPARAM)target_dir))
+    if (!EnumResourceNamesA(NULL, "TESTRES", extract_only_proc, (LPARAM)target_dir))
         report (R_FATAL, "Can't enumerate test files: %d", GetLastError ());
 
     report (R_DELTA, 0, "Extracting: Done");
@@ -1352,7 +1418,7 @@ int main( int argc, char *argv[] )
                 if (!send_file (logname) && !DeleteFileA(logname))
                     report (R_WARNING, "Can't remove logfile: %u", GetLastError());
         } else run_tests (logname, outdir);
-        report (R_STATUS, "Finished");
+        report (R_STATUS, "Finished - %u failures", failures);
     }
     if (poweroff)
     {
@@ -1362,7 +1428,7 @@ int main( int argc, char *argv[] )
         /* enable the shutdown privilege for the current process */
         if (OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES, &hToken))
         {
-            LookupPrivilegeValueA(0, SE_SHUTDOWN_NAME, &npr.Privileges[0].Luid);
+            LookupPrivilegeValueA(0, "SeShutdownPrivilege", &npr.Privileges[0].Luid);
             npr.PrivilegeCount = 1;
             npr.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
             AdjustTokenPrivileges(hToken, FALSE, &npr, 0, 0, 0);

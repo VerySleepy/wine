@@ -85,6 +85,8 @@ static const unsigned short IsSimpleRef = 0x0100;
 static unsigned int field_memsize(const type_t *type, unsigned int *offset);
 static unsigned int fields_memsize(const var_list_t *fields, unsigned int *align);
 static unsigned int type_memsize_and_alignment(const type_t *t, unsigned int *align);
+static unsigned int write_array_tfs(FILE *file, const attr_list_t *attrs, type_t *type,
+                                    const char *name, unsigned int *typestring_offset);
 static unsigned int write_struct_tfs(FILE *file, type_t *type, const char *name, unsigned int *tfsoff);
 static int write_embedded_types(FILE *file, const attr_list_t *attrs, type_t *type,
                                 const char *name, int write_ptr, unsigned int *tfsoff);
@@ -860,7 +862,7 @@ static const char *get_context_handle_type_name(const type_t *type)
     do { \
         if (file) \
             fprintf(file, "/* %2u */\n", typestring_offset); \
-        print_file((file), 2, "0x%02x,    /* " #fctype " */\n", RPC_##fctype); \
+        print_file((file), 2, "0x%02x,\t/* " #fctype " */\n", RPC_##fctype); \
     } \
     while (0)
 
@@ -1158,7 +1160,7 @@ static unsigned int write_new_procformatstring_type(FILE *file, int indent, cons
     if (flags >> 13) sprintf( buffer + strlen(buffer), " srv size=%u,", (flags >> 13) * 8 );
     strcpy( buffer + strlen( buffer ) - 1, " */" );
     print_file( file, indent, "NdrFcShort(0x%hx),\t%s\n", flags, buffer );
-    print_file( file, indent, "NdrFcShort(0x%hx),	/* stack offset = %hu */\n",
+    print_file( file, indent, "NdrFcShort(0x%x),	/* stack offset = %u */\n",
                 *stack_offset, *stack_offset );
     if (flags & IsBasetype)
     {
@@ -1332,7 +1334,7 @@ static void write_proc_func_header( FILE *file, int indent, const type_t *iface,
     print_file( file, indent, "0x%02x,\n", oi_flags );
     print_file( file, indent, "NdrFcLong(0x%x),\n", rpc_flags );
     print_file( file, indent, "NdrFcShort(0x%hx),\t/* method %hu */\n", num_proc, num_proc );
-    print_file( file, indent, "NdrFcShort(0x%hx),\t/* stack size = %hu */\n", stack_size, stack_size );
+    print_file( file, indent, "NdrFcShort(0x%x),\t/* stack size = %u */\n", stack_size, stack_size );
     *offset += 10;
 
     if (!implicit_fc)
@@ -1380,9 +1382,9 @@ static void write_proc_func_header( FILE *file, int indent, const type_t *iface,
         if (is_attr( func->attrs, ATTR_NOTIFYFLAG )) ext_flags |= 0x10;  /* HasNotify2 */
 
         size = get_function_buffer_size( func, PASS_IN );
-        print_file( file, indent, "NdrFcShort(0x%x),\t/* client buffer = %hu */\n", size, size );
+        print_file( file, indent, "NdrFcShort(0x%x),\t/* client buffer = %u */\n", size, size );
         size = get_function_buffer_size( func, PASS_OUT );
-        print_file( file, indent, "NdrFcShort(0x%x),\t/* server buffer = %hu */\n", size, size );
+        print_file( file, indent, "NdrFcShort(0x%x),\t/* server buffer = %u */\n", size, size );
         print_file( file, indent, "0x%02x,\n", oi2_flags );
         print_file( file, indent, "0x%02x,\t/* %u params */\n", nb_args, nb_args );
         print_file( file, indent, "0x%02x,\n", pointer_size == 8 ? 10 : 8 );
@@ -1447,8 +1449,8 @@ static void write_procformatstring_func( FILE *file, int indent, const type_t *i
         if (!is_new_style)
         {
             print_file(file, 0, "/* %u (void) */\n", *offset);
-            print_file(file, indent, "0x5b,    /* FC_END */\n");
-            print_file(file, indent, "0x5c,    /* FC_PAD */\n");
+            print_file(file, indent, "0x5b,\t/* FC_END */\n");
+            print_file(file, indent, "0x5c,\t/* FC_PAD */\n");
             *offset += 2;
         }
     }
@@ -2316,7 +2318,7 @@ static void write_member_type(FILE *file, const type_t *cont,
         error("Unsupported member type %d\n", type_get_type(type));
 }
 
-static void write_array_element_type(FILE *file, const type_t *type,
+static void write_array_element_type(FILE *file, const attr_list_t *attrs, const type_t *type,
                                      int cont_is_complex, unsigned int *tfsoff)
 {
     type_t *elem = type_array_get_element(type);
@@ -2331,7 +2333,7 @@ static void write_array_element_type(FILE *file, const type_t *type,
                                     ref->typestring_offset, tfsoff);
             return;
         }
-        if (cont_is_complex && is_string_type(NULL, elem))
+        if (cont_is_complex && is_string_type(attrs, elem))
         {
             write_string_tfs(file, NULL, elem, TYPE_CONTEXT_CONTAINER, NULL, tfsoff);
             return;
@@ -2343,17 +2345,17 @@ static void write_array_element_type(FILE *file, const type_t *type,
             return;
         }
     }
-    return write_member_type(file, type, cont_is_complex, NULL, elem, NULL, tfsoff);
+    write_member_type(file, type, cont_is_complex, NULL, elem, NULL, tfsoff);
 }
 
 static void write_end(FILE *file, unsigned int *tfsoff)
 {
     if (*tfsoff % 2 == 0)
     {
-        print_file(file, 2, "0x%x,\t\t/* FC_PAD */\n", RPC_FC_PAD);
+        print_file(file, 2, "0x%x,\t/* FC_PAD */\n", RPC_FC_PAD);
         *tfsoff += 1;
     }
-    print_file(file, 2, "0x%x,\t\t/* FC_END */\n", RPC_FC_END);
+    print_file(file, 2, "0x%x,\t/* FC_END */\n", RPC_FC_END);
     *tfsoff += 1;
 }
 
@@ -2379,8 +2381,8 @@ static void write_descriptors(FILE *file, type_t *type, unsigned int *tfsoff)
             print_file(file, 2, "0x%x,\t/* FIXME: always FC_LONG */\n", RPC_FC_LONG);
             write_conf_or_var_desc(file, current_structure, offset, ft,
                                    get_attrp(f->attrs, ATTR_SWITCHIS));
-            print_file(file, 2, "NdrFcShort(%hd),\t/* Offset= %hd (%u) */\n",
-                       reloff, reloff, absoff);
+            print_file(file, 2, "NdrFcShort(0x%hx),\t/* Offset= %hd (%u) */\n",
+                       (unsigned short)reloff, reloff, absoff);
             *tfsoff += 8;
         }
         offset += size;
@@ -2728,7 +2730,7 @@ static int write_varying_array_pointer_descriptions(
     return pointer_count;
 }
 
-static void write_pointer_description(FILE *file, type_t *type,
+static void write_pointer_description(FILE *file, const attr_list_t *attrs, type_t *type,
                                       unsigned int *typestring_offset)
 {
     unsigned int offset_in_buffer;
@@ -2757,7 +2759,7 @@ static void write_pointer_description(FILE *file, type_t *type,
     if (is_conformant_array(type) &&
         (type_array_is_decl_as_ptr(type) || !current_structure))
         write_conformant_array_pointer_descriptions(
-            file, NULL, type, 0, typestring_offset);
+            file, attrs, type, 0, typestring_offset);
     else if (type_get_type(type) == TYPE_STRUCT &&
              get_struct_fc(type) == RPC_FC_CPSTRUCT)
     {
@@ -2772,11 +2774,6 @@ static void write_pointer_description(FILE *file, type_t *type,
     write_varying_array_pointer_descriptions(
             file, NULL, type,
             &offset_in_memory, &offset_in_buffer, typestring_offset);
-}
-
-int is_declptr(const type_t *t)
-{
-  return is_ptr(t) || (type_get_type(t) == TYPE_ARRAY && type_array_is_decl_as_ptr(t));
 }
 
 static unsigned int write_string_tfs(FILE *file, const attr_list_t *attrs,
@@ -2814,6 +2811,9 @@ static unsigned int write_string_tfs(FILE *file, const attr_list_t *attrs,
     else
         elem_type = type_pointer_get_ref(type);
 
+    if (type_get_type(elem_type) == TYPE_POINTER && is_array(type))
+        return write_array_tfs(file, attrs, type, name, typestring_offset);
+
     if (type_get_type(elem_type) != TYPE_BASIC)
     {
         error("write_string_tfs: Unimplemented for non-basic type %s\n", name);
@@ -2842,7 +2842,7 @@ static unsigned int write_string_tfs(FILE *file, const attr_list_t *attrs,
             WRITE_FCTYPE(file, FC_WSTRING, *typestring_offset);
         else
             WRITE_FCTYPE(file, FC_CSTRING, *typestring_offset);
-        print_file(file, 2, "0x%x, /* FC_PAD */\n", RPC_FC_PAD);
+        print_file(file, 2, "0x%x,\t/* FC_PAD */\n", RPC_FC_PAD);
         *typestring_offset += 2;
 
         print_file(file, 2, "NdrFcShort(0x%hx),\t/* %d */\n", (unsigned short)dim, dim);
@@ -2857,7 +2857,7 @@ static unsigned int write_string_tfs(FILE *file, const attr_list_t *attrs,
             WRITE_FCTYPE(file, FC_C_WSTRING, *typestring_offset);
         else
             WRITE_FCTYPE(file, FC_C_CSTRING, *typestring_offset);
-        print_file(file, 2, "0x%x, /* FC_STRING_SIZED */\n", RPC_FC_STRING_SIZED);
+        print_file(file, 2, "0x%x,\t/* FC_STRING_SIZED */\n", RPC_FC_STRING_SIZED);
         *typestring_offset += 2;
 
         *typestring_offset += write_conf_or_var_desc(
@@ -2878,7 +2878,7 @@ static unsigned int write_string_tfs(FILE *file, const attr_list_t *attrs,
             WRITE_FCTYPE(file, FC_C_WSTRING, *typestring_offset);
         else
             WRITE_FCTYPE(file, FC_C_CSTRING, *typestring_offset);
-        print_file(file, 2, "0x%x, /* FC_PAD */\n", RPC_FC_PAD);
+        print_file(file, 2, "0x%x,\t/* FC_PAD */\n", RPC_FC_PAD);
         *typestring_offset += 2;
 
         update_tfsoff(type, start_offset, file);
@@ -2904,7 +2904,8 @@ static unsigned int write_array_tfs(FILE *file, const attr_list_t *attrs, type_t
     if (!pointer_type)
         pointer_type = RPC_FC_RP;
 
-    write_embedded_types(file, attrs, type_array_get_element(type), name, FALSE, typestring_offset);
+    if (!is_string_type(attrs, type_array_get_element(type)))
+        write_embedded_types(file, attrs, type_array_get_element(type), name, FALSE, typestring_offset);
 
     size = type_memsize(is_conformant_array(type) ? type_array_get_element(type) : type);
     align = type_buffer_alignment(is_conformant_array(type) ? type_array_get_element(type) : type);
@@ -2964,15 +2965,15 @@ static unsigned int write_array_tfs(FILE *file, const attr_list_t *attrs, type_t
         if (type_has_pointers(type_array_get_element(type)) &&
             (type_array_is_decl_as_ptr(type) || !current_structure))
         {
-            print_file(file, 2, "0x%x, /* FC_PP */\n", RPC_FC_PP);
-            print_file(file, 2, "0x%x, /* FC_PAD */\n", RPC_FC_PAD);
+            print_file(file, 2, "0x%x,\t/* FC_PP */\n", RPC_FC_PP);
+            print_file(file, 2, "0x%x,\t/* FC_PAD */\n", RPC_FC_PAD);
             *typestring_offset += 2;
-            write_pointer_description(file, type, typestring_offset);
-            print_file(file, 2, "0x%x, /* FC_END */\n", RPC_FC_END);
+            write_pointer_description(file, is_string_type(attrs, type) ? attrs : NULL, type, typestring_offset);
+            print_file(file, 2, "0x%x,\t/* FC_END */\n", RPC_FC_END);
             *typestring_offset += 1;
         }
 
-        write_array_element_type(file, type, FALSE, typestring_offset);
+        write_array_element_type(file, is_string_type(attrs, type) ? attrs : NULL, type, FALSE, typestring_offset);
         write_end(file, typestring_offset);
     }
     else
@@ -2987,7 +2988,7 @@ static unsigned int write_array_tfs(FILE *file, const attr_list_t *attrs, type_t
             += write_conf_or_var_desc(file, current_structure, baseoff,
                                       type, length_is);
 
-        write_array_element_type(file, type, TRUE, typestring_offset);
+        write_array_element_type(file, is_string_type(attrs, type) ? attrs : NULL, type, TRUE, typestring_offset);
         write_end(file, typestring_offset);
     }
 
@@ -3151,11 +3152,11 @@ static unsigned int write_struct_tfs(FILE *file, type_t *type,
              (fc == RPC_FC_CPSTRUCT) ||
              (fc == RPC_FC_CVSTRUCT && type_has_pointers(type)))
     {
-        print_file(file, 2, "0x%x, /* FC_PP */\n", RPC_FC_PP);
-        print_file(file, 2, "0x%x, /* FC_PAD */\n", RPC_FC_PAD);
+        print_file(file, 2, "0x%x,\t/* FC_PP */\n", RPC_FC_PP);
+        print_file(file, 2, "0x%x,\t/* FC_PAD */\n", RPC_FC_PAD);
         *tfsoff += 2;
-        write_pointer_description(file, type, tfsoff);
-        print_file(file, 2, "0x%x, /* FC_END */\n", RPC_FC_END);
+        write_pointer_description(file, NULL, type, tfsoff);
+        print_file(file, 2, "0x%x,\t/* FC_END */\n", RPC_FC_END);
         *tfsoff += 1;
     }
 
@@ -3586,12 +3587,26 @@ static unsigned int write_type_tfs(FILE *file, int indent,
     case TGT_POINTER:
     {
         enum type_context ref_context;
+        type_t *ref = type_pointer_get_ref(type);
+
         if (context == TYPE_CONTEXT_TOPLEVELPARAM)
             ref_context = TYPE_CONTEXT_PARAM;
         else if (context == TYPE_CONTEXT_CONTAINER_NO_POINTERS)
             ref_context = TYPE_CONTEXT_CONTAINER;
         else
             ref_context = context;
+
+        if (is_string_type(attrs, ref))
+        {
+            if (context != TYPE_CONTEXT_CONTAINER_NO_POINTERS)
+                write_pointer_tfs(file, attrs, type, *typeformat_offset + 4, context, typeformat_offset);
+
+            offset = write_type_tfs(file, indent, attrs, ref, name, ref_context, typeformat_offset);
+            if (context == TYPE_CONTEXT_CONTAINER_NO_POINTERS)
+                return 0;
+            return offset;
+        }
+
         offset = write_type_tfs( file, indent, attrs, type_pointer_get_ref(type), name,
                                  ref_context, typeformat_offset);
         if (context == TYPE_CONTEXT_CONTAINER_NO_POINTERS)
@@ -4146,10 +4161,11 @@ static void write_remoting_arg(FILE *file, int indent, const var_t *func, const 
                 /* if the context_handle attribute appears in the chain of types
                  * without pointers being followed, then the context handle must
                  * be direct, otherwise it is a pointer */
-                int is_ch_ptr = is_aliaschain_attr(type, ATTR_CONTEXTHANDLE) ? FALSE : TRUE;
+                const char *ch_ptr = is_aliaschain_attr(type, ATTR_CONTEXTHANDLE) ? "" : "*";
                 print_file(file, indent, "NdrClientContextMarshall(\n");
                 print_file(file, indent + 1, "&__frame->_StubMsg,\n");
-                print_file(file, indent + 1, "(NDR_CCONTEXT)%s%s%s,\n", is_ch_ptr ? "*" : "", local_var_prefix, var->name);
+                print_file(file, indent + 1, "(NDR_CCONTEXT)%s%s%s,\n", ch_ptr, local_var_prefix,
+                           var->name);
                 print_file(file, indent + 1, "%s);\n", in_attr && out_attr ? "1" : "0");
             }
             else
@@ -4588,6 +4604,7 @@ void assign_stub_out_args( FILE *file, int indent, const var_t *func, const char
     int in_attr, out_attr;
     int i = 0, sep = 0;
     const var_t *var;
+    type_t *ref;
 
     if (!type_get_function_args(func->type))
         return;
@@ -4646,7 +4663,8 @@ void assign_stub_out_args( FILE *file, int indent, const var_t *func, const char
                 break;
             case TGT_POINTER:
                 fprintf(file, " = &%s_W%u;\n", local_var_prefix, i);
-                switch (typegen_detect_type(type_pointer_get_ref(var->type), var->attrs, TDT_IGNORE_STRINGS))
+                ref = type_pointer_get_ref(var->type);
+                switch (typegen_detect_type(ref, var->attrs, TDT_IGNORE_STRINGS))
                 {
                 case TGT_BASIC:
                 case TGT_ENUM:
@@ -4659,9 +4677,20 @@ void assign_stub_out_args( FILE *file, int indent, const var_t *func, const char
                     print_file(file, indent, "memset(&%s_W%u, 0, sizeof(%s_W%u));\n",
                                local_var_prefix, i, local_var_prefix, i);
                     break;
+                case TGT_ARRAY:
+                    if (type_array_is_decl_as_ptr(ref))
+                    {
+                        print_file(file, indent, "%s_W%u = 0;\n", local_var_prefix, i);
+                        break;
+                    }
+                    ref = type_array_get_element(ref);
+                    /* fall through */
                 case TGT_STRUCT:
                 case TGT_UNION:
-                case TGT_ARRAY:
+                    if (type_has_pointers(ref))
+                        print_file(file, indent, "memset(&%s_W%u, 0, sizeof(%s_W%u));\n",
+                                   local_var_prefix, i, local_var_prefix, i);
+                    break;
                 case TGT_CTXT_HANDLE:
                 case TGT_CTXT_HANDLE_POINTER:
                 case TGT_INVALID:

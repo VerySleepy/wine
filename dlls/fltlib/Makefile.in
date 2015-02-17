@@ -3,4 +3,4 @@ MODULE    = fltlib.dll
 C_SRCS = \
 	fltlib.c
 
-@MAKE_DLL_RULES@
+RC_SRCS = rsrc.rc

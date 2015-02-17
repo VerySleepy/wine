@@ -232,7 +232,7 @@ extern "C" {
 	((UINT)SendMessage((hwndCtl), BM_SETSTATE, (WPARAM)(int)(state), 0L))
 
 #define Button_SetStyle(hwndCtl, style, fRedraw) \
-	((void)SendMessage((hwndCtl), BM_SETSTYLE, (WPARAM)LOWORD(style), MAKELPARAM(((fRedraw) ? TRUE : FALSE), 0)))
+	((void)SendMessage((hwndCtl), BM_SETSTYLE, (WPARAM)LOWORD(style), MAKELPARAM((fRedraw) != 0, 0)))
 
 #define Button_SetText(hwndCtl, lpsz) \
 	SetWindowText((hwndCtl), (lpsz))
@@ -1321,7 +1321,7 @@ extern "C" {
 
 /* void Cls_OnDisplayChange(HWND hwnd, UINT bitsPerPixel, UINT cxScreen, UINT cyScreen) */
 #define HANDLE_WM_DISPLAYCHANGE(hwnd, wParam, lParam, fn) \
-    ((fn)((hwnd), (UINT)(wParam), (UINT)LOWORD(lParam), (UINT)HIWORD(wParam)), 0L)
+    ((fn)((hwnd), (UINT)(wParam), (UINT)LOWORD(lParam), (UINT)HIWORD(lParam)), 0L)
 #define FORWARD_WM_DISPLAYCHANGE(hwnd, bitsPerPixel, cxScreen, cyScreen, fn) \
     (void)(fn)((hwnd), WM_DISPLAYCHANGE, (WPARAM)(UINT)(bitsPerPixel), (LPARAM)MAKELPARAM((UINT)(cxScreen), (UINT)(cyScreen)))
 

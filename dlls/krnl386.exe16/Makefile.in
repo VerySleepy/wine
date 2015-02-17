@@ -2,9 +2,7 @@ MODULE    = krnl386.exe16
 IMPORTLIB = kernel
 IMPORTS   = winecrt0 kernel32 ntdll
 DELAYIMPORTS = ddraw dsound user32
-EXTRAIMPLIBFLAGS = -m16
 EXTRADLLFLAGS = -m16 -nodefaultlibs -Wb,--dll-name,kernel
-EXTRARCFLAGS  = -m16
 
 C_SRCS = \
 	atom.c \
@@ -53,5 +51,3 @@ C_SRCS = \
 	wowthunk.c
 
 RC_SRCS = version.rc
-
-@MAKE_DLL_RULES@

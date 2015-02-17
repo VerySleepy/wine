@@ -1,5 +1,6 @@
 MODULE    = devenum.dll
 IMPORTS   = strmiids uuid ole32 oleaut32 avicap32 winmm user32 advapi32
+DELAYIMPORTS = msvfw32
 
 C_SRCS = \
 	createdevenum.c \
@@ -8,9 +9,6 @@ C_SRCS = \
 	mediacatenum.c \
 	parsedisplayname.c
 
-IDL_R_SRCS = devenum_classes.idl
+IDL_SRCS = devenum_classes.idl
 
 RC_SRCS = devenum.rc
-PO_SRCS = devenum.rc
-
-@MAKE_DLL_RULES@

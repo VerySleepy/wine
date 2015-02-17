@@ -34,6 +34,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <limits.h>
 #ifdef HAVE_UNISTD_H
 # include <unistd.h>
 #endif
@@ -160,7 +161,8 @@ static int  get_console_bare_fd(HANDLE hin)
 {
     int         fd;
 
-    if (wine_server_handle_to_fd(wine_server_ptr_handle(console_handle_unmap(hin)),
+    if (is_console_handle(hin) &&
+        wine_server_handle_to_fd(wine_server_ptr_handle(console_handle_unmap(hin)),
                                  0, &fd, NULL) == STATUS_SUCCESS)
         return fd;
     return -1;
@@ -381,17 +383,9 @@ HANDLE WINAPI OpenConsoleW(LPCWSTR name, DWORD access, BOOL inherit, DWORD creat
             output = (HANDLE) TRUE;
     }
 
-    if (output == INVALID_HANDLE_VALUE)
+    if (output == INVALID_HANDLE_VALUE || creation != OPEN_EXISTING)
     {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return INVALID_HANDLE_VALUE;
-    }
-    else if (creation != OPEN_EXISTING)
-    {
-        if (!creation || creation == CREATE_NEW || creation == CREATE_ALWAYS)
-            SetLastError(ERROR_SHARING_VIOLATION);
-        else
-            SetLastError(ERROR_INVALID_PARAMETER);
         return INVALID_HANDLE_VALUE;
     }
 
@@ -689,7 +683,7 @@ BOOL WINAPI WriteConsoleOutputCharacterA( HANDLE hConsoleOutput, LPCSTR str, DWO
  *    Failure: FALSE
  *
  */
-BOOL WINAPI WriteConsoleOutputAttribute( HANDLE hConsoleOutput, CONST WORD *attr, DWORD length,
+BOOL WINAPI WriteConsoleOutputAttribute( HANDLE hConsoleOutput, const WORD *attr, DWORD length,
                                          COORD coord, LPDWORD lpNumAttrsWritten )
 {
     BOOL ret;
@@ -1273,7 +1267,9 @@ BOOL WINAPI GetConsoleKeyboardLayoutNameA(LPSTR layoutName)
  */
 BOOL WINAPI GetConsoleKeyboardLayoutNameW(LPWSTR layoutName)
 {
-    FIXME( "stub %p\n", layoutName);
+    static int once;
+    if (!once++)
+        FIXME( "stub %p\n", layoutName);
     return TRUE;
 }
 
@@ -1612,10 +1608,17 @@ BOOL WINAPI ReadConsoleA(HANDLE hConsoleInput, LPVOID lpBuffer, DWORD nNumberOfC
     DWORD	ncr = 0;
     BOOL	ret;
 
-    if ((ret = ReadConsoleW(hConsoleInput, ptr, nNumberOfCharsToRead, &ncr, NULL)))
-        ncr = WideCharToMultiByte(GetConsoleCP(), 0, ptr, ncr, lpBuffer, nNumberOfCharsToRead, NULL, NULL);
+    if (!ptr)
+    {
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
 
-    if (lpNumberOfCharsRead) *lpNumberOfCharsRead = ncr;
+    if ((ret = ReadConsoleW(hConsoleInput, ptr, nNumberOfCharsToRead, &ncr, NULL)))
+    {
+        ncr = WideCharToMultiByte(GetConsoleCP(), 0, ptr, ncr, lpBuffer, nNumberOfCharsToRead, NULL, NULL);
+        if (lpNumberOfCharsRead) *lpNumberOfCharsRead = ncr;
+    }
     HeapFree(GetProcessHeap(), 0, ptr);
 
     return ret;
@@ -1635,6 +1638,12 @@ BOOL WINAPI ReadConsoleW(HANDLE hConsoleInput, LPVOID lpBuffer,
 
     TRACE("(%p,%p,%d,%p,%p)\n",
 	  hConsoleInput, lpBuffer, nNumberOfCharsToRead, lpNumberOfCharsRead, lpReserved);
+
+    if (nNumberOfCharsToRead > INT_MAX)
+    {
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
 
     if (!GetConsoleMode(hConsoleInput, &mode))
         return FALSE;
@@ -1998,6 +2007,8 @@ static DWORD WINAPI CONSOLE_SendEventThread(void* pmt)
  */
 int     CONSOLE_HandleCtrlC(unsigned sig)
 {
+    HANDLE thread;
+
     /* FIXME: better test whether a console is attached to this process ??? */
     extern    unsigned CONSOLE_GetNumHistoryEntries(void);
     if (CONSOLE_GetNumHistoryEntries() == (unsigned)-1) return 0;
@@ -2014,7 +2025,11 @@ int     CONSOLE_HandleCtrlC(unsigned sig)
          *    console critical section, we need another execution environment where
          *    we can wait on this critical section 
          */
-        CreateThread(NULL, 0, CONSOLE_SendEventThread, (void*)CTRL_C_EVENT, 0, NULL);
+        thread = CreateThread(NULL, 0, CONSOLE_SendEventThread, (void*)CTRL_C_EVENT, 0, NULL);
+        if (thread == NULL)
+            return 0;
+
+        CloseHandle(thread);
     }
     return 1;
 }
@@ -2263,7 +2278,7 @@ static int CONSOLE_WriteChars(HANDLE hCon, LPCWSTR lpBuffer, int nc, COORD* pos)
  * WriteConsoleOutput helper: handles passing to next line (+scrolling if necessary)
  *
  */
-static int	next_line(HANDLE hCon, CONSOLE_SCREEN_BUFFER_INFO* csbi)
+static BOOL next_line(HANDLE hCon, CONSOLE_SCREEN_BUFFER_INFO* csbi)
 {
     SMALL_RECT	src;
     CHAR_INFO	ci;
@@ -2272,7 +2287,7 @@ static int	next_line(HANDLE hCon, CONSOLE_SCREEN_BUFFER_INFO* csbi)
     csbi->dwCursorPosition.X = 0;
     csbi->dwCursorPosition.Y++;
 
-    if (csbi->dwCursorPosition.Y < csbi->dwSize.Y) return 1;
+    if (csbi->dwCursorPosition.Y < csbi->dwSize.Y) return TRUE;
 
     src.Top    = 1;
     src.Bottom = csbi->dwSize.Y - 1;
@@ -2287,8 +2302,8 @@ static int	next_line(HANDLE hCon, CONSOLE_SCREEN_BUFFER_INFO* csbi)
 
     csbi->dwCursorPosition.Y--;
     if (!ScrollConsoleScreenBufferW(hCon, &src, NULL, dst, &ci))
-	return 0;
-    return 1;
+        return FALSE;
+    return TRUE;
 }
 
 /******************************************************************
@@ -2299,13 +2314,13 @@ static int	next_line(HANDLE hCon, CONSOLE_SCREEN_BUFFER_INFO* csbi)
  * handled
  *
  */
-static int     	write_block(HANDLE hCon, CONSOLE_SCREEN_BUFFER_INFO* csbi,
-			    DWORD mode, LPCWSTR ptr, int len)
+static BOOL write_block(HANDLE hCon, CONSOLE_SCREEN_BUFFER_INFO* csbi,
+                        DWORD mode, LPCWSTR ptr, int len)
 {
     int	blk;	/* number of chars to write on current line */
     int done;   /* number of chars already written */
 
-    if (len <= 0) return 1;
+    if (len <= 0) return TRUE;
 
     if (mode & ENABLE_WRAP_AT_EOL_OUTPUT) /* writes remaining on next line */
     {
@@ -2314,9 +2329,9 @@ static int     	write_block(HANDLE hCon, CONSOLE_SCREEN_BUFFER_INFO* csbi,
             blk = min(len - done, csbi->dwSize.X - csbi->dwCursorPosition.X);
 
             if (CONSOLE_WriteChars(hCon, ptr + done, blk, &csbi->dwCursorPosition) != blk)
-                return 0;
+                return FALSE;
             if (csbi->dwCursorPosition.X == csbi->dwSize.X && !next_line(hCon, csbi))
-                return 0;
+                return FALSE;
         }
     }
     else
@@ -2333,11 +2348,11 @@ static int     	write_block(HANDLE hCon, CONSOLE_SCREEN_BUFFER_INFO* csbi,
 
             csbi->dwCursorPosition.X = pos;
             if (CONSOLE_WriteChars(hCon, ptr + done, blk, &csbi->dwCursorPosition) != blk)
-                return 0;
+                return FALSE;
         }
     }
 
-    return 1;
+    return TRUE;
 }
 
 /***********************************************************************
@@ -2430,8 +2445,7 @@ BOOL WINAPI WriteConsoleW(HANDLE hConsoleOutput, LPCVOID lpBuffer, DWORD nNumber
 		break;
 	    case '\t':
 	        {
-		    WCHAR tmp[8] = {' ',' ',' ',' ',' ',' ',' ',' '};
-
+		    static const WCHAR tmp[] = {' ',' ',' ',' ',' ',' ',' ',' '};
 		    if (!write_block(hConsoleOutput, &csbi, mode, tmp,
 				     ((csbi.dwCursorPosition.X + 8) & ~7) - csbi.dwCursorPosition.X))
 			goto the_end;
@@ -2483,7 +2497,7 @@ BOOL WINAPI WriteConsoleA(HANDLE hConsoleOutput, LPCVOID lpBuffer, DWORD nNumber
 
     if (lpNumberOfCharsWritten) *lpNumberOfCharsWritten = 0;
     xstring = HeapAlloc(GetProcessHeap(), 0, n * sizeof(WCHAR));
-    if (!xstring) return 0;
+    if (!xstring) return FALSE;
 
     MultiByteToWideChar(GetConsoleOutputCP(), 0, lpBuffer, nNumberOfCharsToWrite, xstring, n);
 
@@ -2929,8 +2943,6 @@ BOOL WINAPI SetConsoleDisplayMode(HANDLE hConsoleOutput, DWORD dwFlags,
 /* some missing functions...
  * FIXME: those are likely to be defined as undocumented function in kernel32 (or part of them)
  * should get the right API and implement them
- *	GetConsoleCommandHistory[AW] (dword dword dword)
- *	GetConsoleCommandHistoryLength[AW]
  *	SetConsoleCommandHistoryMode
  *	SetConsoleNumberOfCommands[AW]
  */
@@ -3003,7 +3015,7 @@ unsigned CONSOLE_GetNumHistoryEntries(void)
  */
 BOOL CONSOLE_GetEditionMode(HANDLE hConIn, int* mode)
 {
-    unsigned ret = FALSE;
+    unsigned ret = 0;
     SERVER_START_REQ(get_console_input_info)
     {
         req->handle = console_handle_unmap(hConIn);
@@ -3136,3 +3148,124 @@ BOOL CONSOLE_Exit(void)
     /* the console is in raw mode, put it back in cooked mode */
     return restore_console_mode(GetStdHandle(STD_INPUT_HANDLE));
 }
+
+/* Undocumented, called by native doskey.exe */
+/* FIXME: Should use CONSOLE_GetHistory() above for full implementation */
+DWORD WINAPI GetConsoleCommandHistoryA(DWORD unknown1, DWORD unknown2, DWORD unknown3)
+{
+    FIXME(": (0x%x, 0x%x, 0x%x) stub!\n", unknown1, unknown2, unknown3);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return 0;
+}
+
+/* Undocumented, called by native doskey.exe */
+/* FIXME: Should use CONSOLE_GetHistory() above for full implementation */
+DWORD WINAPI GetConsoleCommandHistoryW(DWORD unknown1, DWORD unknown2, DWORD unknown3)
+{
+    FIXME(": (0x%x, 0x%x, 0x%x) stub!\n", unknown1, unknown2, unknown3);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return 0;
+}
+
+/* Undocumented, called by native doskey.exe */
+/* FIXME: Should use CONSOLE_GetHistory() above for full implementation */
+DWORD WINAPI GetConsoleCommandHistoryLengthA(LPCSTR unknown)
+{
+    FIXME(": (%s) stub!\n", debugstr_a(unknown));
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return 0;
+}
+
+/* Undocumented, called by native doskey.exe */
+/* FIXME: Should use CONSOLE_GetHistory() above for full implementation */
+DWORD WINAPI GetConsoleCommandHistoryLengthW(LPCWSTR unknown)
+{
+    FIXME(": (%s) stub!\n", debugstr_w(unknown));
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return 0;
+}
+
+DWORD WINAPI GetConsoleAliasesLengthA(LPSTR unknown)
+{
+    FIXME(": (%s) stub!\n", debugstr_a(unknown));
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return 0;
+}
+
+DWORD WINAPI GetConsoleAliasesLengthW(LPWSTR unknown)
+{
+    FIXME(": (%s) stub!\n", debugstr_w(unknown));
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return 0;
+}
+
+VOID WINAPI ExpungeConsoleCommandHistoryA(LPCSTR unknown)
+{
+    FIXME(": (%s) stub!\n", debugstr_a(unknown));
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+}
+
+VOID WINAPI ExpungeConsoleCommandHistoryW(LPCWSTR unknown)
+{
+    FIXME(": (%s) stub!\n", debugstr_w(unknown));
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+}
+
+BOOL WINAPI AddConsoleAliasA(LPSTR source, LPSTR target, LPSTR exename)
+{
+    FIXME(": (%s, %s, %s) stub!\n", debugstr_a(source), debugstr_a(target), debugstr_a(exename));
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+BOOL WINAPI AddConsoleAliasW(LPWSTR source, LPWSTR target, LPWSTR exename)
+{
+    FIXME(": (%s, %s, %s) stub!\n", debugstr_w(source), debugstr_w(target), debugstr_w(exename));
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+
+BOOL WINAPI SetConsoleIcon(HICON icon)
+{
+    FIXME(": (%p) stub!\n", icon);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+BOOL WINAPI GetCurrentConsoleFont(HANDLE hConsole, BOOL maxwindow, LPCONSOLE_FONT_INFO fontinfo)
+{
+    FIXME(": (%p, %d, %p) stub!\n", hConsole, maxwindow, fontinfo);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+#ifdef __i386__
+#undef GetConsoleFontSize
+DWORD WINAPI GetConsoleFontSize(HANDLE hConsole, DWORD font)
+{
+    union {
+        COORD c;
+        DWORD w;
+    } x;
+
+    FIXME(": (%p, %d) stub!\n", hConsole, font);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+
+    x.c.X = 0;
+    x.c.Y = 0;
+    return x.w;
+}
+#endif /* defined(__i386__) */
+
+
+#ifndef __i386__
+COORD WINAPI GetConsoleFontSize(HANDLE hConsole, DWORD font)
+{
+    COORD c;
+    c.X = 80;
+    c.Y = 24;
+     FIXME(": (%p, %d) stub!\n", hConsole, font);
+    return c;
+}
+#endif /* defined(__i386__) */

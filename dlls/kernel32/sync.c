@@ -50,7 +50,7 @@
 WINE_DEFAULT_DEBUG_CHANNEL(sync);
 
 /* check if current version is NT or Win95 */
-static inline int is_version_nt(void)
+static inline BOOL is_version_nt(void)
 {
     return !(GetVersion() & 0x80000000);
 }
@@ -92,7 +92,7 @@ static inline PLARGE_INTEGER get_nt_timeout( PLARGE_INTEGER pTime, DWORD timeout
 /***********************************************************************
  *              Sleep  (KERNEL32.@)
  */
-VOID WINAPI Sleep( DWORD timeout )
+VOID WINAPI DECLSPEC_HOTPATCH Sleep( DWORD timeout )
 {
     SleepEx( timeout, FALSE );
 }
@@ -185,7 +185,7 @@ DWORD WINAPI WaitForMultipleObjectsEx( DWORD count, const HANDLE *handles,
         }
     }
 
-    status = NtWaitForMultipleObjects( count, hloc, wait_all, alertable,
+    status = NtWaitForMultipleObjects( count, hloc, !wait_all, alertable,
                                        get_nt_timeout( &time, timeout ) );
 
     if (HIWORD(status))  /* is it an error code? */
@@ -275,8 +275,8 @@ BOOL WINAPI UnregisterWaitEx( HANDLE WaitHandle, HANDLE CompletionEvent )
 /***********************************************************************
  *           SignalObjectAndWait  (KERNEL32.@)
  *
- * Allows to atomically signal any of the synchro objects (semaphore,
- * mutex, event) and wait on another.
+ * Makes it possible to atomically signal any of the synchronization
+ * objects (semaphore, mutex, event) and wait on another.
  */
 DWORD WINAPI SignalObjectAndWait( HANDLE hObjectToSignal, HANDLE hObjectToWaitOn,
                                   DWORD dwMilliseconds, BOOL bAlertable )
@@ -410,8 +410,8 @@ void WINAPI UninitializeCriticalSection( CRITICAL_SECTION *crit )
 /***********************************************************************
  *           CreateEventA    (KERNEL32.@)
  */
-HANDLE WINAPI CreateEventA( SECURITY_ATTRIBUTES *sa, BOOL manual_reset,
-                            BOOL initial_state, LPCSTR name )
+HANDLE WINAPI DECLSPEC_HOTPATCH CreateEventA( SECURITY_ATTRIBUTES *sa, BOOL manual_reset,
+                                              BOOL initial_state, LPCSTR name )
 {
     DWORD flags = 0;
 
@@ -424,8 +424,8 @@ HANDLE WINAPI CreateEventA( SECURITY_ATTRIBUTES *sa, BOOL manual_reset,
 /***********************************************************************
  *           CreateEventW    (KERNEL32.@)
  */
-HANDLE WINAPI CreateEventW( SECURITY_ATTRIBUTES *sa, BOOL manual_reset,
-                            BOOL initial_state, LPCWSTR name )
+HANDLE WINAPI DECLSPEC_HOTPATCH CreateEventW( SECURITY_ATTRIBUTES *sa, BOOL manual_reset,
+                                              BOOL initial_state, LPCWSTR name )
 {
     DWORD flags = 0;
 
@@ -438,7 +438,7 @@ HANDLE WINAPI CreateEventW( SECURITY_ATTRIBUTES *sa, BOOL manual_reset,
 /***********************************************************************
  *           CreateEventExA    (KERNEL32.@)
  */
-HANDLE WINAPI CreateEventExA( SECURITY_ATTRIBUTES *sa, LPCSTR name, DWORD flags, DWORD access )
+HANDLE WINAPI DECLSPEC_HOTPATCH CreateEventExA( SECURITY_ATTRIBUTES *sa, LPCSTR name, DWORD flags, DWORD access )
 {
     WCHAR buffer[MAX_PATH];
 
@@ -456,9 +456,9 @@ HANDLE WINAPI CreateEventExA( SECURITY_ATTRIBUTES *sa, LPCSTR name, DWORD flags,
 /***********************************************************************
  *           CreateEventExW    (KERNEL32.@)
  */
-HANDLE WINAPI CreateEventExW( SECURITY_ATTRIBUTES *sa, LPCWSTR name, DWORD flags, DWORD access )
+HANDLE WINAPI DECLSPEC_HOTPATCH CreateEventExW( SECURITY_ATTRIBUTES *sa, LPCWSTR name, DWORD flags, DWORD access )
 {
-    HANDLE ret;
+    HANDLE ret = 0;
     UNICODE_STRING nameW;
     OBJECT_ATTRIBUTES attr;
     NTSTATUS status;
@@ -500,7 +500,7 @@ HANDLE WINAPI CreateEventExW( SECURITY_ATTRIBUTES *sa, LPCWSTR name, DWORD flags
 /***********************************************************************
  *           OpenEventA    (KERNEL32.@)
  */
-HANDLE WINAPI OpenEventA( DWORD access, BOOL inherit, LPCSTR name )
+HANDLE WINAPI DECLSPEC_HOTPATCH OpenEventA( DWORD access, BOOL inherit, LPCSTR name )
 {
     WCHAR buffer[MAX_PATH];
 
@@ -518,7 +518,7 @@ HANDLE WINAPI OpenEventA( DWORD access, BOOL inherit, LPCSTR name )
 /***********************************************************************
  *           OpenEventW    (KERNEL32.@)
  */
-HANDLE WINAPI OpenEventW( DWORD access, BOOL inherit, LPCWSTR name )
+HANDLE WINAPI DECLSPEC_HOTPATCH OpenEventW( DWORD access, BOOL inherit, LPCWSTR name )
 {
     HANDLE ret;
     UNICODE_STRING nameW;
@@ -552,7 +552,7 @@ HANDLE WINAPI OpenEventW( DWORD access, BOOL inherit, LPCWSTR name )
 /***********************************************************************
  *           PulseEvent    (KERNEL32.@)
  */
-BOOL WINAPI PulseEvent( HANDLE handle )
+BOOL WINAPI DECLSPEC_HOTPATCH PulseEvent( HANDLE handle )
 {
     NTSTATUS status;
 
@@ -565,7 +565,7 @@ BOOL WINAPI PulseEvent( HANDLE handle )
 /***********************************************************************
  *           SetEvent    (KERNEL32.@)
  */
-BOOL WINAPI SetEvent( HANDLE handle )
+BOOL WINAPI DECLSPEC_HOTPATCH SetEvent( HANDLE handle )
 {
     NTSTATUS status;
 
@@ -578,7 +578,7 @@ BOOL WINAPI SetEvent( HANDLE handle )
 /***********************************************************************
  *           ResetEvent    (KERNEL32.@)
  */
-BOOL WINAPI ResetEvent( HANDLE handle )
+BOOL WINAPI DECLSPEC_HOTPATCH ResetEvent( HANDLE handle )
 {
     NTSTATUS status;
 
@@ -591,7 +591,7 @@ BOOL WINAPI ResetEvent( HANDLE handle )
 /***********************************************************************
  *           CreateMutexA   (KERNEL32.@)
  */
-HANDLE WINAPI CreateMutexA( SECURITY_ATTRIBUTES *sa, BOOL owner, LPCSTR name )
+HANDLE WINAPI DECLSPEC_HOTPATCH CreateMutexA( SECURITY_ATTRIBUTES *sa, BOOL owner, LPCSTR name )
 {
     return CreateMutexExA( sa, name, owner ? CREATE_MUTEX_INITIAL_OWNER : 0, MUTEX_ALL_ACCESS );
 }
@@ -600,7 +600,7 @@ HANDLE WINAPI CreateMutexA( SECURITY_ATTRIBUTES *sa, BOOL owner, LPCSTR name )
 /***********************************************************************
  *           CreateMutexW   (KERNEL32.@)
  */
-HANDLE WINAPI CreateMutexW( SECURITY_ATTRIBUTES *sa, BOOL owner, LPCWSTR name )
+HANDLE WINAPI DECLSPEC_HOTPATCH CreateMutexW( SECURITY_ATTRIBUTES *sa, BOOL owner, LPCWSTR name )
 {
     return CreateMutexExW( sa, name, owner ? CREATE_MUTEX_INITIAL_OWNER : 0, MUTEX_ALL_ACCESS );
 }
@@ -609,7 +609,7 @@ HANDLE WINAPI CreateMutexW( SECURITY_ATTRIBUTES *sa, BOOL owner, LPCWSTR name )
 /***********************************************************************
  *           CreateMutexExA   (KERNEL32.@)
  */
-HANDLE WINAPI CreateMutexExA( SECURITY_ATTRIBUTES *sa, LPCSTR name, DWORD flags, DWORD access )
+HANDLE WINAPI DECLSPEC_HOTPATCH CreateMutexExA( SECURITY_ATTRIBUTES *sa, LPCSTR name, DWORD flags, DWORD access )
 {
     ANSI_STRING nameA;
     NTSTATUS status;
@@ -630,9 +630,9 @@ HANDLE WINAPI CreateMutexExA( SECURITY_ATTRIBUTES *sa, LPCSTR name, DWORD flags,
 /***********************************************************************
  *           CreateMutexExW   (KERNEL32.@)
  */
-HANDLE WINAPI CreateMutexExW( SECURITY_ATTRIBUTES *sa, LPCWSTR name, DWORD flags, DWORD access )
+HANDLE WINAPI DECLSPEC_HOTPATCH CreateMutexExW( SECURITY_ATTRIBUTES *sa, LPCWSTR name, DWORD flags, DWORD access )
 {
-    HANDLE ret;
+    HANDLE ret = 0;
     UNICODE_STRING nameW;
     OBJECT_ATTRIBUTES attr;
     NTSTATUS status;
@@ -662,7 +662,7 @@ HANDLE WINAPI CreateMutexExW( SECURITY_ATTRIBUTES *sa, LPCWSTR name, DWORD flags
 /***********************************************************************
  *           OpenMutexA   (KERNEL32.@)
  */
-HANDLE WINAPI OpenMutexA( DWORD access, BOOL inherit, LPCSTR name )
+HANDLE WINAPI DECLSPEC_HOTPATCH OpenMutexA( DWORD access, BOOL inherit, LPCSTR name )
 {
     WCHAR buffer[MAX_PATH];
 
@@ -680,7 +680,7 @@ HANDLE WINAPI OpenMutexA( DWORD access, BOOL inherit, LPCSTR name )
 /***********************************************************************
  *           OpenMutexW   (KERNEL32.@)
  */
-HANDLE WINAPI OpenMutexW( DWORD access, BOOL inherit, LPCWSTR name )
+HANDLE WINAPI DECLSPEC_HOTPATCH OpenMutexW( DWORD access, BOOL inherit, LPCWSTR name )
 {
     HANDLE ret;
     UNICODE_STRING nameW;
@@ -715,7 +715,7 @@ HANDLE WINAPI OpenMutexW( DWORD access, BOOL inherit, LPCWSTR name )
 /***********************************************************************
  *           ReleaseMutex   (KERNEL32.@)
  */
-BOOL WINAPI ReleaseMutex( HANDLE handle )
+BOOL WINAPI DECLSPEC_HOTPATCH ReleaseMutex( HANDLE handle )
 {
     NTSTATUS    status;
 
@@ -737,7 +737,7 @@ BOOL WINAPI ReleaseMutex( HANDLE handle )
 /***********************************************************************
  *           CreateSemaphoreA   (KERNEL32.@)
  */
-HANDLE WINAPI CreateSemaphoreA( SECURITY_ATTRIBUTES *sa, LONG initial, LONG max, LPCSTR name )
+HANDLE WINAPI DECLSPEC_HOTPATCH CreateSemaphoreA( SECURITY_ATTRIBUTES *sa, LONG initial, LONG max, LPCSTR name )
 {
     return CreateSemaphoreExA( sa, initial, max, name, 0, SEMAPHORE_ALL_ACCESS );
 }
@@ -746,8 +746,7 @@ HANDLE WINAPI CreateSemaphoreA( SECURITY_ATTRIBUTES *sa, LONG initial, LONG max,
 /***********************************************************************
  *           CreateSemaphoreW   (KERNEL32.@)
  */
-HANDLE WINAPI CreateSemaphoreW( SECURITY_ATTRIBUTES *sa, LONG initial,
-                                LONG max, LPCWSTR name )
+HANDLE WINAPI DECLSPEC_HOTPATCH CreateSemaphoreW( SECURITY_ATTRIBUTES *sa, LONG initial, LONG max, LPCWSTR name )
 {
     return CreateSemaphoreExW( sa, initial, max, name, 0, SEMAPHORE_ALL_ACCESS );
 }
@@ -756,8 +755,8 @@ HANDLE WINAPI CreateSemaphoreW( SECURITY_ATTRIBUTES *sa, LONG initial,
 /***********************************************************************
  *           CreateSemaphoreExA   (KERNEL32.@)
  */
-HANDLE WINAPI CreateSemaphoreExA( SECURITY_ATTRIBUTES *sa, LONG initial, LONG max, LPCSTR name,
-                                  DWORD flags, DWORD access )
+HANDLE WINAPI DECLSPEC_HOTPATCH CreateSemaphoreExA( SECURITY_ATTRIBUTES *sa, LONG initial, LONG max,
+                                                    LPCSTR name, DWORD flags, DWORD access )
 {
     WCHAR buffer[MAX_PATH];
 
@@ -775,10 +774,10 @@ HANDLE WINAPI CreateSemaphoreExA( SECURITY_ATTRIBUTES *sa, LONG initial, LONG ma
 /***********************************************************************
  *           CreateSemaphoreExW   (KERNEL32.@)
  */
-HANDLE WINAPI CreateSemaphoreExW( SECURITY_ATTRIBUTES *sa, LONG initial, LONG max, LPCWSTR name,
-                                  DWORD flags, DWORD access )
+HANDLE WINAPI DECLSPEC_HOTPATCH CreateSemaphoreExW( SECURITY_ATTRIBUTES *sa, LONG initial, LONG max,
+                                                    LPCWSTR name, DWORD flags, DWORD access )
 {
-    HANDLE ret;
+    HANDLE ret = 0;
     UNICODE_STRING nameW;
     OBJECT_ATTRIBUTES attr;
     NTSTATUS status;
@@ -808,7 +807,7 @@ HANDLE WINAPI CreateSemaphoreExW( SECURITY_ATTRIBUTES *sa, LONG initial, LONG ma
 /***********************************************************************
  *           OpenSemaphoreA   (KERNEL32.@)
  */
-HANDLE WINAPI OpenSemaphoreA( DWORD access, BOOL inherit, LPCSTR name )
+HANDLE WINAPI DECLSPEC_HOTPATCH OpenSemaphoreA( DWORD access, BOOL inherit, LPCSTR name )
 {
     WCHAR buffer[MAX_PATH];
 
@@ -826,7 +825,7 @@ HANDLE WINAPI OpenSemaphoreA( DWORD access, BOOL inherit, LPCSTR name )
 /***********************************************************************
  *           OpenSemaphoreW   (KERNEL32.@)
  */
-HANDLE WINAPI OpenSemaphoreW( DWORD access, BOOL inherit, LPCWSTR name )
+HANDLE WINAPI DECLSPEC_HOTPATCH OpenSemaphoreW( DWORD access, BOOL inherit, LPCWSTR name )
 {
     HANDLE ret;
     UNICODE_STRING nameW;
@@ -861,7 +860,7 @@ HANDLE WINAPI OpenSemaphoreW( DWORD access, BOOL inherit, LPCWSTR name )
 /***********************************************************************
  *           ReleaseSemaphore   (KERNEL32.@)
  */
-BOOL WINAPI ReleaseSemaphore( HANDLE handle, LONG count, LONG *previous )
+BOOL WINAPI DECLSPEC_HOTPATCH ReleaseSemaphore( HANDLE handle, LONG count, LONG *previous )
 {
     NTSTATUS status = NtReleaseSemaphore( handle, count, (PULONG)previous );
     if (status) SetLastError( RtlNtStatusToDosError(status) );
@@ -1016,7 +1015,7 @@ BOOL WINAPI AssignProcessToJobObject( HANDLE job, HANDLE process )
  */
 BOOL WINAPI IsProcessInJob( HANDLE process, HANDLE job, PBOOL result )
 {
-    NTSTATUS status = NtIsProcessInJob( job, process );
+    NTSTATUS status = NtIsProcessInJob( process, job );
     switch(status)
     {
     case STATUS_PROCESS_IN_JOB:
@@ -1178,6 +1177,20 @@ BOOL WINAPI SetWaitableTimer( HANDLE handle, const LARGE_INTEGER *when, LONG per
     return TRUE;
 }
 
+/***********************************************************************
+ *           SetWaitableTimerEx    (KERNEL32.@)
+ */
+BOOL WINAPI SetWaitableTimerEx( HANDLE handle, const LARGE_INTEGER *when, LONG period,
+                              PTIMERAPCROUTINE callback, LPVOID arg, REASON_CONTEXT *context, ULONG tolerabledelay )
+{
+    static int once;
+    if (!once++)
+    {
+        FIXME("(%p, %p, %d, %p, %p, %p, %d) semi-stub\n",
+              handle, when, period, callback, arg, context, tolerabledelay);
+    }
+    return SetWaitableTimer(handle, when, period, callback, arg, FALSE);
+}
 
 /***********************************************************************
  *           CancelWaitableTimer    (KERNEL32.@)
@@ -1284,6 +1297,15 @@ BOOL WINAPI ChangeTimerQueueTimer( HANDLE TimerQueue, HANDLE Timer,
     }
 
     return TRUE;
+}
+
+/***********************************************************************
+ *           CancelTimerQueueTimer    (KERNEL32.@)
+ */
+BOOL WINAPI CancelTimerQueueTimer(HANDLE queue, HANDLE timer)
+{
+    FIXME("stub: %p %p\n", queue, timer);
+    return FALSE;
 }
 
 /***********************************************************************
@@ -1396,11 +1418,14 @@ HANDLE WINAPI CreateNamedPipeW( LPCWSTR name, DWORD dwOpenMode,
     }
     access |= SYNCHRONIZE;
     options = 0;
+    if (dwOpenMode & WRITE_DAC) access |= WRITE_DAC;
+    if (dwOpenMode & WRITE_OWNER) access |= WRITE_OWNER;
+    if (dwOpenMode & ACCESS_SYSTEM_SECURITY) access |= ACCESS_SYSTEM_SECURITY;
     if (dwOpenMode & FILE_FLAG_WRITE_THROUGH) options |= FILE_WRITE_THROUGH;
     if (!(dwOpenMode & FILE_FLAG_OVERLAPPED)) options |= FILE_SYNCHRONOUS_IO_NONALERT;
-    pipe_type = (dwPipeMode & PIPE_TYPE_MESSAGE) ? TRUE : FALSE;
-    read_mode = (dwPipeMode & PIPE_READMODE_MESSAGE) ? TRUE : FALSE;
-    non_block = (dwPipeMode & PIPE_NOWAIT) ? TRUE : FALSE;
+    pipe_type = (dwPipeMode & PIPE_TYPE_MESSAGE) != 0;
+    read_mode = (dwPipeMode & PIPE_READMODE_MESSAGE) != 0;
+    non_block = (dwPipeMode & PIPE_NOWAIT) != 0;
     if (nMaxInstances >= PIPE_UNLIMITED_INSTANCES) nMaxInstances = ~0U;
 
     timeout.QuadPart = (ULONGLONG)nDefaultTimeOut * -10000;
@@ -1468,7 +1493,7 @@ BOOL WINAPI WaitNamedPipeA (LPCSTR name, DWORD nTimeOut)
     if (!MultiByteToWideChar( CP_ACP, 0, name, -1, buffer, MAX_PATH ))
     {
         SetLastError( ERROR_FILENAME_EXCED_RANGE );
-        return 0;
+        return FALSE;
     }
     return WaitNamedPipeW( buffer, nTimeOut );
 }
@@ -1529,6 +1554,8 @@ BOOL WINAPI WaitNamedPipeW (LPCWSTR name, DWORD nTimeOut)
                          FILE_SYNCHRONOUS_IO_NONALERT);
     if (status != ERROR_SUCCESS)
     {
+        HeapFree( GetProcessHeap(), 0, pipe_wait);
+        RtlFreeUnicodeString( &nt_name );
         SetLastError( ERROR_PATH_NOT_FOUND );
         return FALSE;
     }
@@ -1694,12 +1721,16 @@ BOOL WINAPI GetNamedPipeHandleStateA(
     LPDWORD lpMaxCollectionCount, LPDWORD lpCollectDataTimeout,
     LPSTR lpUsername, DWORD nUsernameMaxSize)
 {
-    FIXME("%p %p %p %p %p %p %d\n",
-          hNamedPipe, lpState, lpCurInstances,
-          lpMaxCollectionCount, lpCollectDataTimeout,
-          lpUsername, nUsernameMaxSize);
+    WARN("%p %p %p %p %p %p %d: semi-stub\n",
+         hNamedPipe, lpState, lpCurInstances,
+         lpMaxCollectionCount, lpCollectDataTimeout,
+         lpUsername, nUsernameMaxSize);
 
-    return FALSE;
+    if (lpUsername && nUsernameMaxSize)
+        *lpUsername = 0;
+
+    return GetNamedPipeHandleStateW(hNamedPipe, lpState, lpCurInstances,
+                                    lpMaxCollectionCount, lpCollectDataTimeout, NULL, 0);
 }
 
 /***********************************************************************
@@ -1710,12 +1741,53 @@ BOOL WINAPI GetNamedPipeHandleStateW(
     LPDWORD lpMaxCollectionCount, LPDWORD lpCollectDataTimeout,
     LPWSTR lpUsername, DWORD nUsernameMaxSize)
 {
-    FIXME("%p %p %p %p %p %p %d\n",
+    IO_STATUS_BLOCK iosb;
+    NTSTATUS status;
+
+    FIXME("%p %p %p %p %p %p %d: semi-stub\n",
           hNamedPipe, lpState, lpCurInstances,
           lpMaxCollectionCount, lpCollectDataTimeout,
           lpUsername, nUsernameMaxSize);
 
-    return FALSE;
+    if (lpMaxCollectionCount)
+        *lpMaxCollectionCount = 0;
+
+    if (lpCollectDataTimeout)
+        *lpCollectDataTimeout = 0;
+
+    if (lpUsername && nUsernameMaxSize)
+        *lpUsername = 0;
+
+    if (lpState)
+    {
+        FILE_PIPE_INFORMATION fpi;
+        status = NtQueryInformationFile(hNamedPipe, &iosb, &fpi, sizeof(fpi),
+                                        FilePipeInformation);
+        if (status)
+        {
+            SetLastError( RtlNtStatusToDosError(status) );
+            return FALSE;
+        }
+
+        *lpState = (fpi.ReadMode ? PIPE_READMODE_MESSAGE : PIPE_READMODE_BYTE) |
+                   (fpi.CompletionMode ? PIPE_NOWAIT : PIPE_WAIT);
+    }
+
+    if (lpCurInstances)
+    {
+        FILE_PIPE_LOCAL_INFORMATION fpli;
+        status = NtQueryInformationFile(hNamedPipe, &iosb, &fpli, sizeof(fpli),
+                                        FilePipeLocalInformation);
+        if (status)
+        {
+            SetLastError( RtlNtStatusToDosError(status) );
+            return FALSE;
+        }
+
+        *lpCurInstances = fpli.CurrentInstances;
+    }
+
+    return TRUE;
 }
 
 /***********************************************************************
@@ -1727,9 +1799,34 @@ BOOL WINAPI SetNamedPipeHandleState(
 {
     /* should be a fixme, but this function is called a lot by the RPC
      * runtime, and it slows down InstallShield a fair bit. */
-    WARN("stub: %p %p/%d %p %p\n",
+    WARN("semi-stub: %p %p/%d %p %p\n",
           hNamedPipe, lpMode, lpMode ? *lpMode : 0, lpMaxCollectionCount, lpCollectDataTimeout);
-    return FALSE;
+
+    if (lpMode)
+    {
+        FILE_PIPE_INFORMATION fpi;
+        IO_STATUS_BLOCK iosb;
+        NTSTATUS status;
+
+        if (*lpMode & ~(PIPE_READMODE_MESSAGE | PIPE_NOWAIT))
+            status = STATUS_INVALID_PARAMETER;
+        else
+        {
+            fpi.CompletionMode = (*lpMode & PIPE_NOWAIT) ?
+                FILE_PIPE_COMPLETE_OPERATION : FILE_PIPE_QUEUE_OPERATION;
+            fpi.ReadMode = (*lpMode & PIPE_READMODE_MESSAGE) ?
+                FILE_PIPE_MESSAGE_MODE : FILE_PIPE_BYTE_STREAM_MODE;
+            status = NtSetInformationFile(hNamedPipe, &iosb, &fpi, sizeof(fpi), FilePipeInformation);
+        }
+
+        if (status)
+        {
+            SetLastError( RtlNtStatusToDosError(status) );
+            return FALSE;
+        }
+    }
+
+    return TRUE;
 }
 
 /***********************************************************************
@@ -1791,15 +1888,11 @@ BOOL WINAPI CallNamedPipeW(
 
     mode = PIPE_READMODE_MESSAGE;
     ret = SetNamedPipeHandleState(pipe, &mode, NULL, NULL);
-
-    /* Currently SetNamedPipeHandleState() is a stub returning FALSE */
-    if (ret) FIXME("Now that SetNamedPipeHandleState() is more than a stub, please update CallNamedPipeW\n");
-    /*
     if (!ret)
     {
         CloseHandle(pipe);
         return FALSE;
-    }*/
+    }
 
     ret = TransactNamedPipe(pipe, lpInput, lpInputSize, lpOutput, lpOutputSize, lpBytesRead, NULL);
     CloseHandle(pipe);
@@ -2177,21 +2270,92 @@ BOOL WINAPI BindIoCompletionCallback( HANDLE FileHandle, LPOVERLAPPED_COMPLETION
 /***********************************************************************
  *           CreateMemoryResourceNotification   (KERNEL32.@)
  */
-HANDLE WINAPI CreateMemoryResourceNotification(MEMORY_RESOURCE_NOTIFICATION_TYPE nt)
+HANDLE WINAPI CreateMemoryResourceNotification(MEMORY_RESOURCE_NOTIFICATION_TYPE type)
 {
-    FIXME("(%d) stub\n", nt);
-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-    return NULL;
+    static const WCHAR lowmemW[] =
+        {'\\','K','e','r','n','e','l','O','b','j','e','c','t','s',
+         '\\','L','o','w','M','e','m','o','r','y','C','o','n','d','i','t','i','o','n',0};
+    static const WCHAR highmemW[] =
+        {'\\','K','e','r','n','e','l','O','b','j','e','c','t','s',
+         '\\','H','i','g','h','M','e','m','o','r','y','C','o','n','d','i','t','i','o','n',0};
+    HANDLE ret;
+    UNICODE_STRING nameW;
+    OBJECT_ATTRIBUTES attr;
+    NTSTATUS status;
+
+    switch (type)
+    {
+    case LowMemoryResourceNotification:
+        RtlInitUnicodeString( &nameW, lowmemW );
+        break;
+    case HighMemoryResourceNotification:
+        RtlInitUnicodeString( &nameW, highmemW );
+        break;
+    default:
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return 0;
+    }
+
+    attr.Length                   = sizeof(attr);
+    attr.RootDirectory            = 0;
+    attr.ObjectName               = &nameW;
+    attr.Attributes               = 0;
+    attr.SecurityDescriptor       = NULL;
+    attr.SecurityQualityOfService = NULL;
+    status = NtOpenEvent( &ret, EVENT_ALL_ACCESS, &attr );
+    if (status != STATUS_SUCCESS)
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        return 0;
+    }
+    return ret;
 }
 
 /***********************************************************************
  *          QueryMemoryResourceNotification   (KERNEL32.@)
  */
-BOOL WINAPI QueryMemoryResourceNotification(HANDLE rnh, PBOOL rs)
+BOOL WINAPI QueryMemoryResourceNotification(HANDLE handle, PBOOL state)
 {
-    FIXME("(%p, %p) stub\n", rnh, rs);
-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-    return 0;
+    switch (WaitForSingleObject( handle, 0 ))
+    {
+    case WAIT_OBJECT_0:
+        *state = TRUE;
+        return TRUE;
+    case WAIT_TIMEOUT:
+        *state = FALSE;
+        return TRUE;
+    }
+    SetLastError( ERROR_INVALID_PARAMETER );
+    return FALSE;
+}
+
+/***********************************************************************
+ *           InitOnceBeginInitialize    (KERNEL32.@)
+ */
+BOOL WINAPI InitOnceBeginInitialize( INIT_ONCE *once, DWORD flags, BOOL *pending, void **context )
+{
+    NTSTATUS status = RtlRunOnceBeginInitialize( once, flags, context );
+    if (status >= 0) *pending = (status == STATUS_PENDING);
+    else SetLastError( RtlNtStatusToDosError(status) );
+    return status >= 0;
+}
+
+/***********************************************************************
+ *           InitOnceComplete    (KERNEL32.@)
+ */
+BOOL WINAPI InitOnceComplete( INIT_ONCE *once, DWORD flags, void *context )
+{
+    NTSTATUS status = RtlRunOnceComplete( once, flags, context );
+    if (status != STATUS_SUCCESS) SetLastError( RtlNtStatusToDosError(status) );
+    return !status;
+}
+
+/***********************************************************************
+ *           InitOnceExecuteOnce    (KERNEL32.@)
+ */
+BOOL WINAPI InitOnceExecuteOnce( INIT_ONCE *once, PINIT_ONCE_FN func, void *param, void **context )
+{
+    return !RtlRunOnceExecuteOnce( once, (PRTL_RUN_ONCE_INIT_FN)func, param, context );
 }
 
 #ifdef __i386__
@@ -2249,3 +2413,39 @@ __ASM_STDCALL_FUNC(InterlockedDecrement, 4,
                   "ret $4")
 
 #endif  /* __i386__ */
+
+/***********************************************************************
+ *           SleepConditionVariableCS   (KERNEL32.@)
+ */
+BOOL WINAPI SleepConditionVariableCS( CONDITION_VARIABLE *variable, CRITICAL_SECTION *crit, DWORD timeout )
+{
+    NTSTATUS status;
+    LARGE_INTEGER time;
+
+    status = RtlSleepConditionVariableCS( variable, crit, get_nt_timeout( &time, timeout ) );
+
+    if (status != STATUS_SUCCESS)
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/***********************************************************************
+ *           SleepConditionVariableSRW   (KERNEL32.@)
+ */
+BOOL WINAPI SleepConditionVariableSRW( RTL_CONDITION_VARIABLE *variable, RTL_SRWLOCK *lock, DWORD timeout, ULONG flags )
+{
+    NTSTATUS status;
+    LARGE_INTEGER time;
+
+    status = RtlSleepConditionVariableSRW( variable, lock, get_nt_timeout( &time, timeout ), flags );
+
+    if (status != STATUS_SUCCESS)
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        return FALSE;
+    }
+    return TRUE;
+}

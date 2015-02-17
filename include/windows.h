@@ -19,10 +19,6 @@
 #ifndef __WINE_WINDOWS_H
 #define __WINE_WINDOWS_H
 
-#ifdef __WINESRC__
-#error Wine should not include windows.h internally
-#endif
-
 #if defined(_MSC_VER) && (_MSC_VER >= 800) && !defined(__cplusplus)
 /* TYPE_ALIGNMENT generates this - move it outside the warning push/pop scope. */
 # pragma warning(disable:4116)
@@ -49,6 +45,8 @@
 #include <winnetwk.h>
 
 /* Not so essential ones */
+#ifndef __WINESRC__
+
 #ifndef WIN32_LEAN_AND_MEAN
 
 #include <cderr.h>
@@ -60,7 +58,7 @@
 #include <nb30.h>
 #include <rpc.h>
 #include <shellapi.h>
-/* #include <winperf.h> */
+#include <winperf.h>
 
 #ifndef WINE_NOWINSOCK
 #include <winsock.h>
@@ -69,7 +67,7 @@
 #ifndef NOCRYPT
 #include <wincrypt.h>
 /* #include <winefs.h> */
-/* #include <winscard.h> */
+#include <winscard.h>
 #endif /* !NOCRYPT */
 
 #ifndef NOGDI
@@ -101,6 +99,8 @@
 #ifndef NOIMM
 #include <imm.h>
 #endif /* !NOIMM */
+
+#endif  /* __WINESRC__ */
 
 #endif  /* RC_INVOKED && !NOWINRES */
 #endif /* _INC_WINDOWS */

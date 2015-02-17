@@ -35,7 +35,7 @@
 @ stub WinStationFreeGAPMemory
 @ stub WinStationFreeMemory
 @ stub WinStationGenerateLicense
-@ stub WinStationGetAllProcesses
+@ stdcall WinStationGetAllProcesses(ptr long ptr ptr)
 @ stub WinStationGetLanAdapterNameA
 @ stub WinStationGetLanAdapterNameW
 @ stub WinStationGetMachinePolicy
@@ -53,7 +53,7 @@
 @ stub WinStationQueryLicense
 @ stub WinStationQueryLogonCredentialsW
 @ stub WinStationQueryUpdateRequired
-@ stub WinStationRegisterConsoleNotification
+@ stdcall WinStationRegisterConsoleNotification(ptr ptr long)
 @ stub WinStationRemoveLicense
 @ stub WinStationRenameA
 @ stub WinStationRenameW
@@ -70,7 +70,7 @@
 @ stub WinStationShutdownSystem
 @ stub WinStationTerminateProcess
 @ stub WinStationUnRegisterConsoleNotification
-@ stub WinStationVirtualOpen
+@ stdcall WinStationVirtualOpen(ptr ptr ptr)
 @ stub WinStationWaitSystemEvent
 @ stub _NWLogonQueryAdmin
 @ stub _NWLogonSetAdmin

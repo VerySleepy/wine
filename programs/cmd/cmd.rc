@@ -23,6 +23,8 @@
 /* @makedep: wcmd.ico */
 IDI_ICON1 ICON wcmd.ico
 
+#pragma makedep po
+
 LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 
 STRINGTABLE
@@ -36,9 +38,9 @@ called procedure.\n\
 Changes to default directory, environment variables etc made within a\n\
 called procedure are inherited by the caller.\n"
 
-  WCMD_CD,     "CD <dir> is the short version of CHDIR. It changes the current\n\
+  WCMD_CD,     "CD <directory> is the short version of CHDIR. It changes the current\n\
 default directory.\n"
-  WCMD_CHDIR,  "CHDIR <dir> changes the current default directory.\n"
+  WCMD_CHDIR,  "CHDIR <directory> changes the current default directory.\n"
 
   WCMD_CLS,    "CLS clears the console screen.\n"
 
@@ -63,10 +65,9 @@ preceding it with an @ sign.\n"
   WCMD_FOR,
 "The FOR command is used to execute a command for each of a set of files.\n\
 \n\
-Syntax: FOR %variable IN (set) DO command\n\
+Usage: FOR %variable IN (set) DO command\n\
 \n\
-The requirement to double the % sign when using FOR in a batch file does\n\
-not exist in wine's cmd.\n"
+The % sign must be doubled when using FOR in a batch file.\n"
 
   WCMD_GOTO,
 "The GOTO command transfers execution to another statement within a\n\
@@ -149,15 +150,41 @@ The prompt can also be changed by altering the PROMPT environment variable,\n\
 so the command 'SET PROMPT=text' has the same effect as 'PROMPT text'.\n"
 
   WCMD_REM,
-"A command line beginning REM (followed by a space) performs no\n\
+"A command line beginning with REM (followed by a space) performs no\n\
 action, and can therefore be used as a comment in a batch file.\n"
 
   WCMD_REN,
 "REN <filename> is the short version of RENAME. It renames a file.\n"
   WCMD_RENAME, "RENAME <filename> renames a file.\n"
   WCMD_RD,
-"RD <dir> is the short version of RMDIR. It deletes a subdirectory.\n"
-  WCMD_RMDIR,  "RMDIR <dir> deletes a subdirectory.\n"
+"RD <directory> is the short version of RMDIR. It deletes a directory.\n"
+  WCMD_RMDIR,  "RMDIR <directory> deletes a directory.\n"
+
+  WCMD_START,
+"Start a program, or open a document in the program normally used for files with that suffix.\n\
+Usage:\n\
+start [options] program_filename [...]\n\
+start [options] document_filename\n\
+\n\
+Options:\n\
+\"title\"      Specifies the title of the child windows.\n\
+/d directory Start the program in the specified directory.\n\
+/b           Don't create a new console for the program.\n\
+/i           Start the program with fresh environment variables.\n\
+/min         Start the program minimized.\n\
+/max         Start the program maximized.\n\
+/low         Start the program in the idle priority class.\n\
+/normal      Start the program in the normal priority class.\n\
+/high        Start the program in the high priority class.\n\
+/realtime    Start the program in the realtime priority class.\n\
+/abovenormal Start the program in the abovenormal priority class.\n\
+/belownormal Start the program in the belownormal priority class.\n\
+/node n      Start the program on the specified NUMA node.\n\
+/affinity mask Start the program with the specified affinity mask.\n\
+/wait        Wait for the started program to finish, then exit with its exit code.\n\
+/unix        Use a Unix filename and start the file like windows explorer.\n\
+/ProgIDOpen  Open a document using the specified progID.\n\
+/?           Display this help and exit.\n"
 
   WCMD_SET,
 "SET displays or changes the cmd environment variables.\n\
@@ -169,7 +196,7 @@ To create or modify an environment variable the syntax is:\n\
       SET <variable>=<value>\n\
 \n\
 where <variable> and <value> are character strings. There must be no\n\
-spaces before the equals sign, nor can the variable name\n\
+space before the equals sign, nor can the variable name\n\
 have embedded spaces.\n\
 \n\
 Under Wine, the environment of the underlying operating system is\n\
@@ -184,7 +211,7 @@ if called from the command line.\n"
 
   WCMD_TIME,   "TIME sets or shows the current system time.\n"
 
-  WCMD_TITLE,  "Sets the window title for the cmd window, syntax TITLE [string]\n"
+  WCMD_TITLE,  "TITLE <string> sets the window title for the cmd window.\n"
 
   WCMD_TYPE,
 "TYPE <filename> copies <filename> to the console device (or elsewhere\n\
@@ -193,8 +220,8 @@ if redirected). No check is made that the file is readable text.\n"
   WCMD_VERIFY,
 "VERIFY is used to set, clear or test the verify flag. Valid forms are:\n\
 \n\
-VERIFY ON\tSet the flag\n\
-VERIFY OFF\tClear the flag\n\
+VERIFY ON\tSet the flag.\n\
+VERIFY OFF\tClear the flag.\n\
 VERIFY\t\tDisplays ON or OFF as appropriate.\n\
 \n\
 The verify flag has no function in Wine.\n"
@@ -216,13 +243,12 @@ are preserved until the next ENDLOCAL is encountered (or at the end of the\n\
 file, whichever comes first), at which point the previous environment\n\
 settings are restored.\n"
 
-  WCMD_PUSHD,  "PUSHD <directoryname> saves the current directory onto a\n\
+  WCMD_PUSHD,  "PUSHD <directory> saves the current directory onto a\n\
 stack, and then changes the current directory to the supplied one.\n"
 
-  WCMD_POPD,   "POPD changes current directory to the last one saved with\n\
-PUSHD.\n"
+  WCMD_POPD,   "POPD changes current directory to the last one saved with PUSHD.\n"
 
-  WCMD_ASSOC,   "ASSOC shows or modifies file extension associations\n\
+  WCMD_ASSOC,   "ASSOC shows or modifies file extension associations.\n\
 \n\
 Syntax: ASSOC [.ext[=[fileType]]]\n\
 \n\
@@ -230,7 +256,7 @@ ASSOC without parameters displays current file associations.\n\
 If used with only a file extension, displays the current association.\n\
 Specifying no file type after the equal sign removes the current association, if any.\n"
 
-  WCMD_FTYPE,   "FTYPE shows or modifies open commands associated with file types\n\
+  WCMD_FTYPE,   "FTYPE shows or modifies open commands associated with file types.\n\
 \n\
 Syntax: FTYPE [fileType[=[openCommand]]]\n\
 \n\
@@ -279,6 +305,7 @@ REN (RENAME)\tRename a file\n\
 RD (RMDIR)\tDelete a subdirectory\n\
 SET\t\tSet or show environment variables\n\
 SETLOCAL\tStart localization of environment changes in a batch file\n\
+START\t\tStart a program, or open a document in the associated program\n\
 TIME\t\tSet or show the current system time\n\
 TITLE\t\tSet the window title for the CMD session\n\
 TYPE\t\tType the contents of a text file\n\
@@ -288,39 +315,49 @@ XCOPY\t\tCopy source files or directory trees to a destination\n\
 EXIT\t\tClose down CMD\n\n\
 Enter HELP <command> for further information on any of the above commands.\n"
 
-  WCMD_CONFIRM, "Are you sure"
+  WCMD_CONFIRM, "Are you sure?"
   WCMD_YES, "#msgctxt#Yes key#Y"
   WCMD_NO, "#msgctxt#No key#N"
-  WCMD_NOASSOC, "File association missing for extension %s\n"
-  WCMD_NOFTYPE, "No open command associated with file type '%s'\n"
-  WCMD_OVERWRITE, "Overwrite %s"
+  WCMD_NOASSOC, "File association missing for extension %1\n"
+  WCMD_NOFTYPE, "No open command associated with file type '%1'\n"
+  WCMD_OVERWRITE, "Overwrite %1?"
   WCMD_MORESTR, "More..."
   WCMD_TRUNCATEDLINE, "Line in Batch processing possibly truncated. Using:\n"
   WCMD_NYI, "Not Yet Implemented\n\n"
   WCMD_NOARG, "Argument missing\n"
   WCMD_SYNTAXERR, "Syntax error\n"
-  WCMD_FILENOTFOUND, "%s: File Not Found\n"
-  WCMD_NOCMDHELP, "No help available for %s\n"
+  WCMD_FILENOTFOUND, "%1: File Not Found\n"
+  WCMD_NOCMDHELP, "No help available for %1\n"
   WCMD_NOTARGET, "Target to GOTO not found\n"
-  WCMD_CURRENTDATE, "Current Date is %s\n"
-  WCMD_CURRENTTIME, "Current Time is %s\n"
+  WCMD_CURRENTDATE, "Current Date is %1\n"
+  WCMD_CURRENTTIME, "Current Time is %1\n"
   WCMD_NEWDATE, "Enter new date: "
   WCMD_NEWTIME, "Enter new time: "
-  WCMD_MISSINGENV, "Environment variable %s not defined\n"
-  WCMD_READFAIL, "Failed to open '%s'\n"
+  WCMD_MISSINGENV, "Environment variable %1 not defined\n"
+  WCMD_READFAIL, "Failed to open '%1'\n"
   WCMD_CALLINSCRIPT, "Cannot call batch label outside of a batch script\n"
   WCMD_ALL, "#msgctxt#All key#A"
-  WCMD_DELPROMPT, "%s, Delete"
-  WCMD_ECHOPROMPT, "Echo is %s\n"
-  WCMD_VERIFYPROMPT, "Verify is %s\n"
+  WCMD_DELPROMPT, "Delete %1?"
+  WCMD_ECHOPROMPT, "Echo is %1\n"
+  WCMD_VERIFYPROMPT, "Verify is %1\n"
   WCMD_VERIFYERR, "Verify must be ON or OFF\n"
   WCMD_ARGERR, "Parameter error\n"
-  WCMD_VOLUMEDETAIL, "Volume in drive %c is %s\nVolume Serial Number is %04x-%04x\n\n"
-  WCMD_VOLUMEPROMPT, "Volume label (11 characters, ENTER for none)?"
+  WCMD_VOLUMESERIALNO, "Volume Serial Number is %1!04x!-%2!04x!\n\n"
+  WCMD_VOLUMEPROMPT, "Volume label (11 characters, <Enter> for none)?"
   WCMD_NOPATH, "PATH not found\n"
   WCMD_ANYKEY,"Press any key to continue... "
   WCMD_CONSTITLE,"Wine Command Prompt"
-  WCMD_VERSION,"CMD Version %s\n"
+  WCMD_VERSION,"Microsoft Windows %1!S!\n"
   WCMD_MOREPROMPT, "More? "
   WCMD_LINETOOLONG, "The input line is too long.\n"
+  WCMD_VOLUMELABEL, "Volume in drive %1!c! is %2\n"
+  WCMD_VOLUMENOLABEL, "Volume in drive %1!c! has no label.\n"
+  WCMD_YESNO, " (Yes|No)"
+  WCMD_YESNOALL, " (Yes|No|All)"
+  WCMD_NO_COMMAND_FOUND, "Can't recognize '%1' as an internal or external command, or batch script.\n"
+  WCMD_DIVIDEBYZERO, "Division by zero error.\n"
+  WCMD_NOOPERAND, "Expected an operand.\n"
+  WCMD_NOOPERATOR, "Expected an operator.\n"
+  WCMD_BADPAREN, "Mismatch in parentheses.\n"
+  WCMD_BADHEXOCT, "Badly formed number - must be one of decimal (12),\n hexadecimal (0x34) or octal (056).\n"
 }

@@ -560,11 +560,11 @@ BOOL16 WINAPI ClipCursor16( const RECT16 *rect )
 BOOL16 WINAPI GetCursorPos16( POINT16 *pt )
 {
     POINT pos;
-    if (!pt) return 0;
+    if (!pt) return FALSE;
     GetCursorPos(&pos);
     pt->x = pos.x;
     pt->y = pos.y;
-    return 1;
+    return TRUE;
 }
 
 
@@ -1320,7 +1320,8 @@ BOOL16 WINAPI GrayString16( HDC16 hdc, HBRUSH16 hbr, GRAYSTRINGPROC16 gsprc,
         struct gray_string_info *info;
 
         if (!cch) cch = strlen(str16);
-        if (!(info = HeapAlloc( GetProcessHeap(), 0, sizeof(*info) + cch ))) return FALSE;
+        info = HeapAlloc( GetProcessHeap(), 0, FIELD_OFFSET( struct gray_string_info, str[cch] ));
+        if (!info) return FALSE;
         info->proc  = gsprc;
         info->param = lParam;
         memcpy( info->str, str16, cch );
@@ -2093,6 +2094,7 @@ HANDLE16 WINAPI LoadImage16(HINSTANCE16 hinst, LPCSTR name, UINT16 type, INT16 c
 {
     HGLOBAL16 handle;
     HRSRC16 hRsrc, hGroupRsrc;
+    DWORD size;
 
     if (!hinst || (flags & LR_LOADFROMFILE))
     {
@@ -2128,7 +2130,6 @@ HANDLE16 WINAPI LoadImage16(HINSTANCE16 hinst, LPCSTR name, UINT16 type, INT16 c
         BITMAPFILEHEADER header;
         WCHAR path[MAX_PATH], filename[MAX_PATH];
         HANDLE file;
-        DWORD size;
 
         filename[0] = 0;
         if (!(hRsrc = FindResource16( hinst, name, (LPCSTR)RT_BITMAP ))) return 0;
@@ -2185,7 +2186,8 @@ HANDLE16 WINAPI LoadImage16(HINSTANCE16 hinst, LPCSTR name, UINT16 type, INT16 c
 
         if (!(handle = LoadResource16( hinst, hRsrc ))) return 0;
         bits = LockResource16( handle );
-        hIcon = CreateIconFromResourceEx16( bits, 0, type == IMAGE_ICON, 0x00030000, cx, cy, flags );
+        size = SizeofResource16( hinst, hRsrc );
+        hIcon = CreateIconFromResourceEx16( bits, size, type == IMAGE_ICON, 0x00030000, cx, cy, flags );
         FreeResource16( handle );
 
         if (hIcon && (flags & LR_SHARED)) add_shared_icon( hinst, hRsrc, hGroupRsrc, hIcon );
@@ -2557,7 +2559,14 @@ INT16 WINAPIV wsprintf16( LPSTR buffer, LPCSTR spec, VA_LIST16 valist )
  */
 INT16 WINAPI lstrcmp16( LPCSTR str1, LPCSTR str2 )
 {
-    return strcmp( str1, str2 );
+    int ret;
+    /* Looks too complicated, but in optimized strcpy we might get
+    * a 32bit wide difference and would truncate it to 16 bit, so
+     * erroneously returning equality. */
+    ret = strcmp( str1, str2 );
+    if (ret < 0) return -1;
+    if (ret > 0) return  1;
+    return 0;
 }
 
 
@@ -2726,7 +2735,7 @@ WORD WINAPI GetIconID16( HGLOBAL16 hResource, DWORD resType )
  */
 HICON16 WINAPI LoadIconHandler16( HGLOBAL16 hResource, BOOL16 bNew )
 {
-    return CreateIconFromResourceEx16( LockResource16( hResource ), 0, TRUE,
+    return CreateIconFromResourceEx16( LockResource16( hResource ), 0xffff, TRUE,
                                        bNew ? 0x00030000 : 0x00020000, 0, 0, LR_DEFAULTCOLOR );
 }
 
@@ -2783,7 +2792,7 @@ DWORD WINAPI DumpIcon16( SEGPTR pInfo, WORD *lpLen,
  */
 static BOOL DRAG_QueryUpdate16( HWND hQueryWnd, SEGPTR spDragInfo )
 {
-    BOOL bResult = 0;
+    BOOL bResult;
     WPARAM wParam;
     POINT pt, old_pt;
     LPDRAGINFO16 ptrDragInfo = MapSL(spDragInfo);

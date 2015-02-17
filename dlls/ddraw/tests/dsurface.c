@@ -4,7 +4,7 @@
  * Copyright (C) 2005 Antoine Chavasse (a.chavasse@gmail.com)
  * Copyright (C) 2005 Christian Costa
  * Copyright 2005 Ivan Leo Puoti
- * Copyright (C) 2007 Stefan Dösinger
+ * Copyright (C) 2007-2009, 2011 Stefan Dösinger for CodeWeavers
  * Copyright (C) 2008 Alexander Dorofeyev
  *
  * This library is free software; you can redistribute it and/or
@@ -29,7 +29,9 @@
 #include "d3d.h"
 #include "unknwn.h"
 
-static LPDIRECTDRAW lpDD = NULL;
+static HRESULT (WINAPI *pDirectDrawCreateEx)(GUID *, void **, REFIID, IUnknown *);
+
+static IDirectDraw *lpDD;
 static DDCAPS ddcaps;
 
 static BOOL CreateDirectDraw(void)
@@ -61,7 +63,7 @@ static void ReleaseDirectDraw(void)
 
 static void MipMapCreationTest(void)
 {
-    LPDIRECTDRAWSURFACE lpDDSMipMapTest;
+    IDirectDrawSurface *lpDDSMipMapTest;
     DDSURFACEDESC ddsd;
     HRESULT rc;
 
@@ -213,9 +215,9 @@ static void MipMapCreationTest(void)
 
 static void SrcColorKey32BlitTest(void)
 {
-    LPDIRECTDRAWSURFACE lpSrc;
-    LPDIRECTDRAWSURFACE lpDst;
-    DDSURFACEDESC ddsd, ddsd2, ddsd3;
+    IDirectDrawSurface *lpSrc;
+    IDirectDrawSurface *lpDst;
+    DDSURFACEDESC ddsd, ddsd2;
     DDCOLORKEY DDColorKey;
     LPDWORD lpData;
     HRESULT rc;
@@ -262,22 +264,8 @@ static void SrcColorKey32BlitTest(void)
     lpData[2] = 0xCCCCCCCC;
     lpData[3] = 0xCCCCCCCC;
 
-    memset(&ddsd3, 0, sizeof(ddsd3));
-    ddsd3.dwSize = sizeof(ddsd3);
-    ddsd3.ddpfPixelFormat.dwSize = sizeof(ddsd3.ddpfPixelFormat);
-    rc = IDirectDrawSurface_GetSurfaceDesc(lpDst, &ddsd3);
-    ok(rc == DD_OK, "IDirectDrawSurface_GetSurfaceDesc between a lock/unlock pair returned %08x\n", rc);
-    ok(ddsd3.lpSurface == ddsd3.lpSurface, "lpSurface from GetSurfaceDesc(%p) differs from the one returned by Lock(%p)\n", ddsd3.lpSurface, ddsd2.lpSurface);
-
     rc = IDirectDrawSurface_Unlock(lpDst, NULL);
     ok(rc==DD_OK,"Unlock returned: %x\n",rc);
-
-    memset(&ddsd3, 0, sizeof(ddsd3));
-    ddsd3.dwSize = sizeof(ddsd3);
-    ddsd3.ddpfPixelFormat.dwSize = sizeof(ddsd3.ddpfPixelFormat);
-    rc = IDirectDrawSurface_GetSurfaceDesc(lpDst, &ddsd3);
-    ok(rc == DD_OK, "IDirectDrawSurface_GetSurfaceDesc between a lock/unlock pair returned %08x\n", rc);
-    ok(ddsd3.lpSurface == NULL, "lpSurface from GetSurfaceDesc(%p) is not NULL after unlock\n", ddsd3.lpSurface);
 
     rc = IDirectDrawSurface_Lock(lpSrc, NULL, &ddsd2, DDLOCK_WAIT, NULL);
     ok(rc==DD_OK,"Lock returned: %x\n",rc);
@@ -736,9 +724,9 @@ static void SrcColorKey32BlitTest(void)
 
 static void QueryInterface(void)
 {
-    LPDIRECTDRAWSURFACE dsurface;
+    IDirectDrawSurface *dsurface;
     DDSURFACEDESC surface;
-    LPVOID object;
+    void *object;
     HRESULT ret;
 
     /* Create a surface */
@@ -774,8 +762,8 @@ static ULONG getref(IUnknown *iface)
 
 static void GetDDInterface_1(void)
 {
-    LPDIRECTDRAWSURFACE dsurface;
-    LPDIRECTDRAWSURFACE2 dsurface2;
+    IDirectDrawSurface2 *dsurface2;
+    IDirectDrawSurface *dsurface;
     DDSURFACEDESC surface;
     HRESULT ret;
     IDirectDraw2 *dd2;
@@ -838,8 +826,8 @@ static void GetDDInterface_1(void)
 
 static void GetDDInterface_2(void)
 {
-    LPDIRECTDRAWSURFACE dsurface;
-    LPDIRECTDRAWSURFACE2 dsurface2;
+    IDirectDrawSurface2 *dsurface2;
+    IDirectDrawSurface *dsurface;
     DDSURFACEDESC surface;
     HRESULT ret;
     IDirectDraw2 *dd2;
@@ -899,8 +887,8 @@ static void GetDDInterface_2(void)
 
 static void GetDDInterface_4(void)
 {
-    LPDIRECTDRAWSURFACE2 dsurface2;
-    LPDIRECTDRAWSURFACE4 dsurface4;
+    IDirectDrawSurface4 *dsurface4;
+    IDirectDrawSurface2 *dsurface2;
     DDSURFACEDESC2 surface;
     HRESULT ret;
     IDirectDraw2 *dd2;
@@ -970,8 +958,8 @@ static void GetDDInterface_4(void)
 
 static void GetDDInterface_7(void)
 {
-    LPDIRECTDRAWSURFACE4 dsurface4;
-    LPDIRECTDRAWSURFACE7 dsurface7;
+    IDirectDrawSurface7 *dsurface7;
+    IDirectDrawSurface4 *dsurface4;
     DDSURFACEDESC2 surface;
     HRESULT ret;
     IDirectDraw2 *dd2;
@@ -1045,123 +1033,6 @@ static ULONG getRefcount(IUnknown *iface)
     return IUnknown_Release(iface);
 }
 
-static void IFaceRefCount(void)
-{
-    LPDIRECTDRAWSURFACE surf;
-    DDSURFACEDESC surface;
-    HRESULT ret;
-    IDirectDrawSurface2 *surf2;
-    IDirectDrawSurface2 *surf2a;
-    IDirectDrawSurface3 *surf3;
-    IDirectDrawSurface4 *surf4;
-    IDirectDrawSurface7 *surf7a;
-    IDirectDrawSurface7 *surf7b;
-    IDirect3DTexture* tex;
-    IDirect3DTexture2* tex2;
-    IDirectDrawGammaControl* gamma;
-    ULONG ref;
-
-    /* Create a surface */
-    ZeroMemory(&surface, sizeof(surface));
-    surface.dwSize = sizeof(surface);
-    surface.dwFlags = DDSD_CAPS;
-    surface.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE;
-    ret = IDirectDraw_CreateSurface(lpDD, &surface, &surf, NULL);
-
-    if (ret != DD_OK)
-    {
-        ok(FALSE, "Could not create surface, skipping test\n");
-        return;
-    }
-
-    ref = getRefcount((IUnknown *) surf);
-    ok(ref == 1, "Refcount is %u, expected 1\n", ref); /* Check the ref count is one */
-
-    IDirectDrawSurface_QueryInterface(surf, &IID_IDirectDrawSurface2, (void **) &surf2);
-    ref = getRefcount((IUnknown *) surf);
-    ok(ref == 1, "Refcount is %u, expected 1\n", ref); /* Check the ref count is one */
-    ref = getRefcount((IUnknown *) surf2);
-    ok(ref == 1, "Refcount is %u, expected 1\n", ref); /* This should also be one */
-
-    IDirectDrawSurface_QueryInterface(surf, &IID_IDirectDrawSurface2, (void **) &surf2a);
-    ref = getRefcount((IUnknown *) surf2);
-    ok(ref == 2, "Refcount is %u, expected 2\n", ref);   /* Surf2's refcount should be 2 now, but surf should be 1 */
-    ref = getRefcount((IUnknown *) surf);
-    ok(ref == 1, "Refcount is %u, expected 1\n", ref);
-
-    IDirectDrawSurface_QueryInterface(surf, &IID_IDirectDrawSurface3, (void **) &surf3);
-    ref = getRefcount((IUnknown *) surf3);
-    ok(ref == 1, "Refcount is %u, expected 1\n", ref);
-
-    IDirectDrawSurface_QueryInterface(surf, &IID_IDirectDrawSurface4, (void **) &surf4);
-    ref = getRefcount((IUnknown *) surf4);
-    ok(ref == 1, "Refcount is %u, expected 1\n", ref);
-
-    IDirectDrawSurface_QueryInterface(surf, &IID_IDirectDrawSurface7, (void **) &surf7a);
-    ref = getRefcount((IUnknown *) surf7a);
-    ok(ref == 1, "Refcount is %u, expected 1\n", ref);
-
-    IDirectDrawSurface_QueryInterface(surf, &IID_IDirectDrawSurface7, (void **) &surf7b);
-    ref = getRefcount((IUnknown *) surf7b);
-    ok(ref == 2, "Refcount is %u, expected 2\n", ref);
-
-    /* IDirect3DTexture interface (unlike the others) alters the original IDirectDrawSurface ref count */
-    ret = IDirectDrawSurface_QueryInterface(surf, &IID_IDirect3DTexture, (void **) &tex);
-    if (SUCCEEDED(ret))
-    {
-        ref = getRefcount((IUnknown *) tex);
-        ok(ref == 2, "Refcount is %u, expected 2\n", ref);
-        ref = getRefcount((IUnknown *) surf);
-        ok(ref == 2, "Refcount is %u, expected 2\n", ref);
-
-        IDirectDrawSurface_QueryInterface(surf, &IID_IDirect3DTexture2, (void **) &tex2);
-        ref = getRefcount((IUnknown *) tex);
-        ok(ref == 3, "Refcount is %u, expected 3\n", ref);
-        ref = getRefcount((IUnknown *) tex2);
-        ok(ref == 3, "Refcount is %u, expected 3\n", ref);
-        ref = getRefcount((IUnknown *) surf);
-        ok(ref == 3, "Refcount is %u, expected 3\n", ref);
-
-        IDirectDrawSurface_QueryInterface(surf, &IID_IDirectDrawGammaControl, (void **) &gamma);
-        ref = getRefcount((IUnknown *) gamma);
-        ok(ref == 1, "Refcount is %u, expected 1\n", ref);
-
-        ref = IDirect3DTexture2_Release(tex2); /* Release the texture */
-        ok(ref == 2, "Refcount is %u, expected 2\n", ref);
-        ref = getRefcount((IUnknown *) surf);
-        ok(ref == 2, "Refcount is %u, expected 2\n", ref);
-
-        ref = IDirect3DTexture_Release(tex); /* Release the texture */
-        ok(ref == 1, "Refcount is %u, expected 1\n", ref);
-        ref = getRefcount((IUnknown *) surf);
-        ok(ref == 1, "Refcount is %u, expected 1\n", ref);
-
-        ref = IDirectDrawGammaControl_Release(gamma); /* Release the gamma control */
-        ok(ref == 0, "Refcount is %u, expected 0\n", ref);
-    }
-
-    ref = IDirectDrawSurface2_Release(surf2); /* Release one of the 2 surf2 interfaces */
-    ok(ref == 1, "Refcount is %u, expected 1\n", ref);
-
-    ref = IDirectDrawSurface2_Release(surf2a); /* Release the other */
-    ok(ref == 0, "Refcount is %u, expected 0\n", ref);
-
-    ref = IDirectDrawSurface3_Release(surf3);
-    ok(ref == 0, "Refcount is %u, expected 0\n", ref);
-
-    ref = IDirectDrawSurface4_Release(surf4);
-    ok(ref == 0, "Refcount is %u, expected 0\n", ref);
-
-    ref = IDirectDrawSurface7_Release(surf7a);
-    ok(ref == 1, "Refcount is %u, expected 1\n", ref);
-
-    ref = IDirectDrawSurface7_Release(surf7b);
-    ok(ref == 0, "Refcount is %u, expected 0\n", ref);
-
-    ref = IDirectDrawSurface_Release(surf);
-    ok(ref == 0, "Refcount is %u, expected 0\n", ref);
-}
-
 #define MAXEXPECTED 8  /* Can match up to 8 expected surfaces */
 struct enumstruct
 {
@@ -1224,606 +1095,6 @@ static void EnumTest(void)
     IDirectDrawSurface_Release(ctx.expected[2]);
     IDirectDrawSurface_Release(ctx.expected[1]);
     IDirectDrawSurface_Release(surface);
-}
-
-static HRESULT WINAPI SurfaceCounter(IDirectDrawSurface7 *surface, DDSURFACEDESC2 *desc, void *context)
-{
-    UINT *num = context;
-    (*num)++;
-    IDirectDrawSurface_Release(surface);
-    return DDENUMRET_OK;
-}
-
-static void AttachmentTest7(void)
-{
-    HRESULT hr;
-    IDirectDraw7 *dd7;
-    IDirectDrawSurface7 *surface1, *surface2, *surface3, *surface4;
-    IDirectDrawSurface *surface1v1, *surface2v1;
-    DDSURFACEDESC2 ddsd, ddsd2;
-    DWORD ref;
-    UINT num;
-    DDSCAPS2 caps = {DDSCAPS_TEXTURE, 0, 0, 0}, caps2 = {DDSCAPS_BACKBUFFER,0,0,0};
-    HWND window = CreateWindow( "static", "ddraw_test", WS_OVERLAPPEDWINDOW, 100, 100, 160, 160, NULL, NULL, NULL, NULL );
-
-    hr = IDirectDraw_QueryInterface(lpDD, &IID_IDirectDraw7, (void **) &dd7);
-    ok(hr == DD_OK, "IDirectDraw_QueryInterface returned %08x\n", hr);
-
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT | DDSD_MIPMAPCOUNT;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_TEXTURE | DDSCAPS_COMPLEX | DDSCAPS_MIPMAP;
-    U2(ddsd).dwMipMapCount = 3; /* Will create 128x128, 64x64, 32x32 */
-    ddsd.dwWidth = 128;
-    ddsd.dwHeight = 128;
-    hr = IDirectDraw7_CreateSurface(dd7, &ddsd, &surface1, NULL);
-    ok(hr==DD_OK,"CreateSurface returned: %x\n",hr);
-
-    /* ROOT */
-    num = 0;
-    IDirectDrawSurface7_EnumAttachedSurfaces(surface1, &num, SurfaceCounter);
-    ok(num == 1, "Mipmap root has %d surfaces attached, expected 1\n", num);
-    /* DONE ROOT */
-
-    /* LEVEL 1 */
-    hr = IDirectDrawSurface7_GetAttachedSurface(surface1, &caps, &surface2);
-    ok(hr == DD_OK, "GetAttachedSurface returned %08x\n", hr);
-    num = 0;
-    IDirectDrawSurface7_EnumAttachedSurfaces(surface2, &num, SurfaceCounter);
-    ok(num == 1, "First mip level has %d surfaces attached, expected 1\n", num);
-    /* DONE LEVEL 1 */
-
-    /* LEVEL 2 */
-    hr = IDirectDrawSurface7_GetAttachedSurface(surface2, &caps, &surface3);
-    ok(hr == DD_OK, "GetAttachedSurface returned %08x\n", hr);
-    IDirectDrawSurface7_Release(surface2);
-    num = 0;
-    IDirectDrawSurface7_EnumAttachedSurfaces(surface3, &num, SurfaceCounter);
-    ok(num == 0, "Second mip level has %d surfaces attached, expected 1\n", num);
-    /* Done level 2 */
-    /* Mip level 3 is still needed */
-    hr = IDirectDrawSurface7_GetAttachedSurface(surface3, &caps, &surface4);
-    ok(hr == DDERR_NOTFOUND, "GetAttachedSurface returned %08x\n", hr);
-    ok(!surface4, "expected NULL pointer\n");
-
-    /* Try to attach a 16x16 miplevel - Should not work as far I can see */
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_TEXTURE;
-    ddsd.dwWidth = 16;
-    ddsd.dwHeight = 16;
-    hr = IDirectDraw7_CreateSurface(dd7, &ddsd, &surface2, NULL);
-    ok(hr==DD_OK,"CreateSurface returned: %x\n",hr);
-
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface1, surface2);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a 16x16 surface to a 128x128 texture root returned %08x\n", hr);
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface2, surface1);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a 128x128 texture root to a 16x16 texture returned %08x\n", hr);
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface3, surface2);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a 16x16 surface to a 32x32 texture mip level returned %08x\n", hr);
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface2, surface3);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a 32x32 texture mip level to a 16x16 surface returned %08x\n", hr);
-
-    IDirectDrawSurface7_Release(surface2);
-
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_SYSTEMMEMORY | DDSCAPS_OFFSCREENPLAIN;
-    ddsd.dwWidth = 16;
-    ddsd.dwHeight = 16;
-    hr = IDirectDraw7_CreateSurface(dd7, &ddsd, &surface2, NULL);
-    ok(hr==DD_OK,"CreateSurface returned: %x\n",hr);
-
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface1, surface2);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a 16x16 offscreen plain surface to a 128x128 texture root returned %08x\n", hr);
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface2, surface1);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a 128x128 texture root to a 16x16 offscreen plain surface returned %08x\n", hr);
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface3, surface2);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a 16x16 offscreen plain surface to a 32x32 texture mip level returned %08x\n", hr);
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface2, surface3);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a 32x32 texture mip level to a 16x16 offscreen plain surface returned %08x\n", hr);
-
-    IDirectDrawSurface7_Release(surface3);
-    IDirectDrawSurface7_Release(surface2);
-    IDirectDrawSurface7_Release(surface1);
-
-    hr = IDirectDraw7_SetCooperativeLevel(dd7, window, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN);
-    ok(hr == DD_OK, "SetCooperativeLevel returned %08x\n", hr);
-
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_BACKBUFFERCOUNT | DDSD_CAPS;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE | DDSCAPS_COMPLEX | DDSCAPS_FLIP;
-    ddsd.dwBackBufferCount = 2;
-    hr = IDirectDraw7_CreateSurface(dd7, &ddsd, &surface1, NULL);
-    ok(hr==DD_OK,"CreateSurface returned: %x\n",hr);
-
-    /* backbuffer surfaces must not have dwBackBufferCount set */
-    ddsd2.dwSize = sizeof(ddsd2);
-    hr = IDirectDrawSurface7_GetAttachedSurface(surface1, &caps2, &surface2);
-    ok(hr==DD_OK,"GetAttachedSurface returned: %x\n", hr);
-    hr = IDirectDrawSurface7_GetSurfaceDesc(surface2, &ddsd2);
-    ok(hr==DD_OK,"GetSurfaceDesc returned: %x\n", hr);
-    ok(ddsd2.dwBackBufferCount==0,"backbuffer surface has dwBackBufferCount==%u\n", ddsd2.dwBackBufferCount);
-
-    num = 0;
-    IDirectDrawSurface7_EnumAttachedSurfaces(surface1, &num, SurfaceCounter);
-    ok(num == 1, "Primary surface has %d surfaces attached, expected 1\n", num);
-    IDirectDrawSurface7_Release(surface1);
-
-    /* Those are some invalid descriptions, no need to test attachments with them */
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE | DDSCAPS_FRONTBUFFER;
-    hr = IDirectDraw7_CreateSurface(dd7, &ddsd, &surface1, NULL);
-    ok(hr==DDERR_INVALIDCAPS,"CreateSurface returned: %x\n",hr);
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE | DDSCAPS_BACKBUFFER;
-    hr = IDirectDraw7_CreateSurface(dd7, &ddsd, &surface2, NULL);
-    ok(hr==DDERR_INVALIDCAPS,"CreateSurface returned: %x\n",hr);
-
-    /* Try a single primary and two offscreen plain surfaces */
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE;
-    hr = IDirectDraw7_CreateSurface(dd7, &ddsd, &surface1, NULL);
-    ok(hr==DD_OK,"CreateSurface returned: %x\n",hr);
-
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN;
-    ddsd.dwWidth = GetSystemMetrics(SM_CXSCREEN);
-    ddsd.dwHeight = GetSystemMetrics(SM_CYSCREEN);
-    hr = IDirectDraw7_CreateSurface(dd7, &ddsd, &surface2, NULL);
-    ok(hr==DD_OK,"CreateSurface returned: %x\n",hr);
-
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN;
-    ddsd.dwWidth = GetSystemMetrics(SM_CXSCREEN);
-    ddsd.dwHeight = GetSystemMetrics(SM_CYSCREEN);
-    hr = IDirectDraw7_CreateSurface(dd7, &ddsd, &surface3, NULL);
-    ok(hr==DD_OK,"CreateSurface returned: %x\n",hr);
-
-    /* This one has a different size */
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN;
-    ddsd.dwWidth = 128;
-    ddsd.dwHeight = 128;
-    hr = IDirectDraw7_CreateSurface(dd7, &ddsd, &surface4, NULL);
-    ok(hr==DD_OK,"CreateSurface returned: %x\n",hr);
-
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface1, surface2);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching an offscreen plain surface to a front buffer returned %08x\n", hr);
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface2, surface1);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a front buffer to an offscreen plain surface returned %08x\n", hr);
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface2, surface3);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching an offscreen plain surface to another offscreen plain surface returned %08x\n", hr);
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface1, surface4);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching an offscreen plain surface to a front buffer of different size returned %08x\n", hr);
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface4, surface1);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a front buffer to an offscreen plain surface of different size returned %08x\n", hr);
-
-    IDirectDrawSurface7_Release(surface4);
-    IDirectDrawSurface7_Release(surface3);
-    IDirectDrawSurface7_Release(surface2);
-    IDirectDrawSurface7_Release(surface1);
-
-    /* Test DeleteAttachedSurface and automatic detachment of attached surfaces on release */
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT | DDSD_PIXELFORMAT;
-    ddsd.dwWidth = 64;
-    ddsd.dwHeight = 64;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_3DDEVICE;
-    U4(ddsd).ddpfPixelFormat.dwSize = sizeof(U4(ddsd).ddpfPixelFormat);
-    U4(ddsd).ddpfPixelFormat.dwFlags = DDPF_RGB; /* D3DFMT_R5G6B5 */
-    U1(U4(ddsd).ddpfPixelFormat).dwRGBBitCount = 16;
-    U2(U4(ddsd).ddpfPixelFormat).dwRBitMask = 0xF800;
-    U3(U4(ddsd).ddpfPixelFormat).dwGBitMask = 0x07E0;
-    U4(U4(ddsd).ddpfPixelFormat).dwBBitMask = 0x001F;
-
-    memset(&ddsd2, 0, sizeof(ddsd2));
-    ddsd2.dwSize = sizeof(ddsd2);
-    ddsd2.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT | DDSD_PIXELFORMAT;
-    ddsd2.dwWidth = ddsd.dwWidth;
-    ddsd2.dwHeight = ddsd.dwHeight;
-    ddsd2.ddsCaps.dwCaps = DDSCAPS_ZBUFFER;
-    U4(ddsd2).ddpfPixelFormat.dwSize = sizeof(U4(ddsd2).ddpfPixelFormat);
-    U4(ddsd2).ddpfPixelFormat.dwFlags = DDPF_ZBUFFER;
-    U1(U4(ddsd2).ddpfPixelFormat).dwZBufferBitDepth = 16;
-    U3(U4(ddsd2).ddpfPixelFormat).dwZBitMask = 0x0000FFFF;
-
-    hr = IDirectDraw7_CreateSurface(dd7, &ddsd, &surface1, NULL);
-    ok(hr == DD_OK, "CreateSurface returned %08x\n", hr);
-    if (SUCCEEDED(hr))
-    {
-        hr = IDirectDraw7_CreateSurface(dd7, &ddsd2, &surface2, NULL);
-        ok(hr == DD_OK, "CreateSurface returned %08x\n", hr);
-        if (SUCCEEDED(hr))
-        {
-            hr = IDirectDrawSurface7_QueryInterface(surface1, &IID_IDirectDrawSurface, (void **)&surface1v1);
-            ok(hr == DD_OK, "IDirectDrawSurface7_QueryInterface returned %08x\n", hr);
-            hr = IDirectDrawSurface7_QueryInterface(surface2, &IID_IDirectDrawSurface, (void **)&surface2v1);
-            ok(hr == DD_OK, "IDirectDrawSurface7_QueryInterface returned %08x\n", hr);
-
-            /* DeleteAttachedSurface when attaching via IDirectDrawSurface7 */
-            hr = IDirectDrawSurface7_AddAttachedSurface(surface1, surface2);
-            ok(hr == DD_OK, "AddAttachedSurface returned %08x\n", hr);
-            if (SUCCEEDED(hr))
-            {
-                ref = getRefcount((IUnknown *)surface2);
-                ok(ref == 2, "Got refcount %d, expected 2\n", ref);
-                ref = getRefcount((IUnknown *)surface2v1);
-                ok(ref == 1, "Got refcount %d, expected 1\n", ref);
-
-                /* Try reattach */
-                hr = IDirectDrawSurface7_AddAttachedSurface(surface1, surface2);
-                ok(hr == DDERR_SURFACEALREADYATTACHED, "AddAttachedSurface returned %08x\n", hr);
-
-                /* Attachment / detachment on another interface */
-                hr = IDirectDrawSurface_AddAttachedSurface(surface1v1, surface2v1);
-                todo_wine ok(hr == DDERR_CANNOTATTACHSURFACE, "AddAttachedSurface returned %08x\n", hr);
-                hr = IDirectDrawSurface_DeleteAttachedSurface(surface1v1, 0, surface2v1);
-                ok(hr == DDERR_SURFACENOTATTACHED, "DeleteAttachedSurface returned %08x\n", hr);
-
-                /* Attaching while already attached to other surface */
-                hr = IDirectDraw7_CreateSurface(dd7, &ddsd, &surface3, NULL);
-                ok(hr == DD_OK, "CreateSurface returned %08x\n", hr);
-                if (SUCCEEDED(hr))
-                {
-                    hr = IDirectDrawSurface7_AddAttachedSurface(surface3, surface2);
-                    todo_wine ok(hr == DD_OK, "AddAttachedSurface returned %08x\n", hr);
-                    if (SUCCEEDED(hr))
-                    {
-                        hr = IDirectDrawSurface7_DeleteAttachedSurface(surface3, 0, surface2);
-                        ok(hr == DD_OK, "DeleteAttachedSurface returned %08x\n", hr);
-                    }
-                    IDirectDrawSurface7_Release(surface3);
-                }
-
-                hr = IDirectDrawSurface7_DeleteAttachedSurface(surface1, 0, surface2);
-                ok(hr == DD_OK, "DeleteAttachedSurface returned %08x\n", hr);
-                ref = getRefcount((IUnknown *)surface2);
-                ok(ref == 1, "Got refcount %d, expected 1\n", ref);
-                ref = getRefcount((IUnknown *)surface2v1);
-                ok(ref == 1, "Got refcount %d, expected 1\n", ref);
-            }
-
-            /* DeleteAttachedSurface when attaching via IDirectDrawSurface */
-            hr = IDirectDrawSurface_AddAttachedSurface(surface1v1, surface2v1);
-            ok(hr == DD_OK, "AddAttachedSurface returned %08x\n", hr);
-            if (SUCCEEDED(hr))
-            {
-                hr = IDirectDrawSurface7_DeleteAttachedSurface(surface1, 0, surface2);
-                ok(hr == DDERR_SURFACENOTATTACHED, "DeleteAttachedSurface returned %08x\n", hr);
-                hr = IDirectDrawSurface_DeleteAttachedSurface(surface1v1, 0, surface2v1);
-                ok(hr == DD_OK, "DeleteAttachedSurface returned %08x\n", hr);
-            }
-            ref = IDirectDrawSurface7_Release(surface2);
-            ok(!ref, "Got refcount %d, expected 0\n", ref);
-            ref = IDirectDrawSurface7_Release(surface1);
-            ok(!ref, "Got refcount %d, expected 0\n", ref);
-
-            /* Automatic detachment on release */
-            hr = IDirectDrawSurface_AddAttachedSurface(surface1v1, surface2v1);
-            ok(hr == DD_OK, "AddAttachedSurface returned %08x\n", hr);
-            ref = getRefcount((IUnknown *)surface2v1);
-            ok(ref == 2, "Got refcount %d, expected 2\n", ref);
-            ref = IDirectDrawSurface_Release(surface1v1);
-            ok(!ref, "Got refcount %d, expected 0\n", ref);
-            ref = getRefcount((IUnknown *)surface2v1);
-            ok(ref == 1, "Got refcount %d, expected 1\n", ref);
-            ref = IDirectDrawSurface_Release(surface2v1);
-            ok(!ref, "Got refcount %d, expected 0\n", ref);
-        }
-        else
-            IDirectDrawSurface7_Release(surface1);
-    }
-
-    hr =IDirectDraw7_SetCooperativeLevel(dd7, NULL, DDSCL_NORMAL);
-    ok(hr == DD_OK, "SetCooperativeLevel returned %08x\n", hr);
-    IDirectDraw7_Release(dd7);
-}
-
-static void AttachmentTest(void)
-{
-    HRESULT hr;
-    IDirectDrawSurface *surface1, *surface2, *surface3, *surface4;
-    DDSURFACEDESC ddsd, ddsd2;
-    DWORD ref;
-    DDSCAPS caps = {DDSCAPS_TEXTURE};
-    BOOL refrast = FALSE;
-    HWND window = CreateWindow( "static", "ddraw_test", WS_OVERLAPPEDWINDOW, 100, 100, 160, 160, NULL, NULL, NULL, NULL );
-
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT | DDSD_MIPMAPCOUNT;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_TEXTURE | DDSCAPS_COMPLEX | DDSCAPS_MIPMAP;
-    U2(ddsd).dwMipMapCount = 3; /* Will create 128x128, 64x64, 32x32 */
-    ddsd.dwWidth = 128;
-    ddsd.dwHeight = 128;
-    hr = IDirectDraw7_CreateSurface(lpDD, &ddsd, &surface1, NULL);
-    ok(hr==DD_OK,"CreateSurface returned: %x\n",hr);
-
-    hr = IDirectDrawSurface7_GetAttachedSurface(surface1, &caps, &surface2);
-    ok(hr == DD_OK, "GetAttachedSurface returned %08x\n", hr);
-    hr = IDirectDrawSurface7_GetAttachedSurface(surface2, &caps, &surface3);
-    ok(hr == DD_OK, "GetAttachedSurface returned %08x\n", hr);
-
-    /* Try to attach a 16x16 miplevel - Should not work as far I can see */
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_TEXTURE;
-    ddsd.dwWidth = 16;
-    ddsd.dwHeight = 16;
-    hr = IDirectDraw_CreateSurface(lpDD, &ddsd, &surface4, NULL);
-    ok(hr==DD_OK,"CreateSurface returned: %x\n",hr);
-
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface1, surface4);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a 16x16 surface to a 128x128 texture root returned %08x\n", hr);
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface4, surface1);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a 128x128 texture root to a 16x16 texture returned %08x\n", hr);
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface3, surface4);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a 16x16 surface to a 32x32 texture mip level returned %08x\n", hr);
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface4, surface3);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a 32x32 texture mip level to a 16x16 surface returned %08x\n", hr);
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface2, surface4);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a 16x16 surface to a 64x64 texture sublevel returned %08x\n", hr);
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface4, surface2);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a 64x64 texture sublevel to a 16x16 texture returned %08x\n", hr);
-
-    IDirectDrawSurface7_Release(surface4);
-
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_SYSTEMMEMORY | DDSCAPS_OFFSCREENPLAIN;
-    ddsd.dwWidth = 16;
-    ddsd.dwHeight = 16;
-    hr = IDirectDraw7_CreateSurface(lpDD, &ddsd, &surface4, NULL);
-    ok(hr==DD_OK,"CreateSurface returned: %x\n",hr);
-
-    if (SUCCEEDED(IDirectDrawSurface7_AddAttachedSurface(surface1, surface4)))
-    {
-        IDirectDrawSurface7_DeleteAttachedSurface(surface1, 0, surface4);
-        refrast = TRUE;
-    }
-
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface1, surface4); /* Succeeds on refrast */
-    if (refrast)
-        ok(hr == S_OK, "Attaching a 16x16 offscreen plain surface to a 128x128 texture root returned %08x\n", hr);
-    else
-        ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a 16x16 offscreen plain surface to a 128x128 texture root returned %08x\n", hr);
-    if(SUCCEEDED(hr)) IDirectDrawSurface7_DeleteAttachedSurface(surface1, 0, surface4);
-
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface4, surface1);  /* Succeeds on refrast */
-    if (refrast)
-        ok(hr == S_OK, "Attaching a 128x128 texture root to a 16x16 offscreen plain surface returned %08x\n", hr);
-    else
-        ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a 128x128 texture root to a 16x16 offscreen plain surface returned %08x\n", hr);
-    if(SUCCEEDED(hr)) IDirectDrawSurface7_DeleteAttachedSurface(surface1, 0, surface1);
-
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface3, surface4);  /* Succeeds on refrast */
-    if (refrast)
-        ok(hr == S_OK, "Attaching a 16x16 offscreen plain surface to a 32x32 texture mip level returned %08x\n", hr);
-    else
-        ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a 16x16 offscreen plain surface to a 32x32 texture mip level returned %08x\n", hr);
-    if(SUCCEEDED(hr)) IDirectDrawSurface7_DeleteAttachedSurface(surface3, 0, surface4);
-
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface4, surface3);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a 32x32 texture mip level to a 16x16 offscreen plain surface returned %08x\n", hr);
-    if(SUCCEEDED(hr)) IDirectDrawSurface7_DeleteAttachedSurface(surface4, 0, surface3);
-
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface2, surface4);  /* Succeeds on refrast */
-    if (refrast)
-        ok(hr == S_OK, "Attaching a 16x16 offscreen plain surface to a 64x64 texture sublevel returned %08x\n", hr);
-    else
-        ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a 16x16 offscreen plain surface to a 64x64 texture sublevel returned %08x\n", hr);
-    if(SUCCEEDED(hr)) IDirectDrawSurface7_DeleteAttachedSurface(surface2, 0, surface4);
-
-    hr = IDirectDrawSurface7_AddAttachedSurface(surface4, surface2);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a 64x64 texture sublevel to a 16x16 offscreen plain surface returned %08x\n", hr);
-    if(SUCCEEDED(hr)) IDirectDrawSurface7_DeleteAttachedSurface(surface4, 0, surface2);
-
-    IDirectDrawSurface7_Release(surface4);
-    IDirectDrawSurface7_Release(surface3);
-    IDirectDrawSurface7_Release(surface2);
-    IDirectDrawSurface7_Release(surface1);
-
-    hr = IDirectDraw_SetCooperativeLevel(lpDD, window, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN);
-    ok(hr == DD_OK, "SetCooperativeLevel returned %08x\n", hr);
-
-    /* Creating a back buffer as-is, is not allowed. No need to perform attachment tests */
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE | DDSCAPS_BACKBUFFER;
-    hr = IDirectDraw_CreateSurface(lpDD, &ddsd, &surface2, NULL);
-    ok(hr==DDERR_INVALIDCAPS,"CreateSurface returned: %x\n",hr);
-    /* This old ddraw version happily creates explicit front buffers */
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE | DDSCAPS_FRONTBUFFER;
-    hr = IDirectDraw_CreateSurface(lpDD, &ddsd, &surface1, NULL);
-    ok(hr==DD_OK,"CreateSurface returned: %x\n",hr);
-    IDirectDrawSurface_Release(surface1);
-
-    /* Try a single primary and two offscreen plain surfaces */
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE;
-    hr = IDirectDraw_CreateSurface(lpDD, &ddsd, &surface1, NULL);
-    ok(hr==DD_OK,"CreateSurface returned: %x\n",hr);
-
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN;
-    ddsd.dwWidth = GetSystemMetrics(SM_CXSCREEN);
-    ddsd.dwHeight = GetSystemMetrics(SM_CYSCREEN);
-    hr = IDirectDraw_CreateSurface(lpDD, &ddsd, &surface2, NULL);
-    ok(hr==DD_OK,"CreateSurface returned: %x\n",hr);
-
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN;
-    ddsd.dwWidth = GetSystemMetrics(SM_CXSCREEN);
-    ddsd.dwHeight = GetSystemMetrics(SM_CYSCREEN);
-    hr = IDirectDraw_CreateSurface(lpDD, &ddsd, &surface3, NULL);
-    ok(hr==DD_OK,"CreateSurface returned: %x\n",hr);
-
-    /* This one has a different size */
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN;
-    ddsd.dwWidth = 128;
-    ddsd.dwHeight = 128;
-    hr = IDirectDraw_CreateSurface(lpDD, &ddsd, &surface4, NULL);
-    ok(hr==DD_OK,"CreateSurface returned: %x\n",hr);
-
-    hr = IDirectDrawSurface_AddAttachedSurface(surface1, surface2);
-    ok(hr == DD_OK || broken(hr == DDERR_CANNOTATTACHSURFACE),
-       "Attaching an offscreen plain surface to a front buffer returned %08x\n", hr);
-    if(SUCCEEDED(hr))
-    {
-        /* Try the reverse without detaching first */
-        hr = IDirectDrawSurface_AddAttachedSurface(surface2, surface1);
-        ok(hr == DDERR_SURFACEALREADYATTACHED, "Attaching an attached surface to its attachee returned %08x\n", hr);
-        hr = IDirectDrawSurface_DeleteAttachedSurface(surface1, 0, surface2);
-        ok(hr == DD_OK, "DeleteAttachedSurface failed with %08x\n", hr);
-    }
-    hr = IDirectDrawSurface_AddAttachedSurface(surface2, surface1);
-    ok(hr == DD_OK || broken(hr == DDERR_CANNOTATTACHSURFACE),
-       "Attaching a front buffer to an offscreen plain surface returned %08x\n", hr);
-    if(SUCCEEDED(hr))
-    {
-        /* Try to detach reversed */
-        hr = IDirectDrawSurface_DeleteAttachedSurface(surface1, 0, surface2);
-        ok(hr == DDERR_CANNOTDETACHSURFACE, "DeleteAttachedSurface returned %08x\n", hr);
-        /* Now the proper detach */
-        hr = IDirectDrawSurface_DeleteAttachedSurface(surface2, 0, surface1);
-        ok(hr == DD_OK, "DeleteAttachedSurface failed with %08x\n", hr);
-    }
-    hr = IDirectDrawSurface_AddAttachedSurface(surface2, surface3); /* Fails on refrast */
-    ok(hr == DD_OK || broken(hr == DDERR_CANNOTATTACHSURFACE),
-       "Attaching an offscreen plain surface to another offscreen plain surface returned %08x\n", hr);
-    if(SUCCEEDED(hr))
-    {
-        hr = IDirectDrawSurface_DeleteAttachedSurface(surface2, 0, surface3);
-        ok(hr == DD_OK, "DeleteAttachedSurface failed with %08x\n", hr);
-    }
-    hr = IDirectDrawSurface_AddAttachedSurface(surface1, surface4);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching an offscreen plain surface to a front buffer of different size returned %08x\n", hr);
-    hr = IDirectDrawSurface_AddAttachedSurface(surface4, surface1);
-    ok(hr == DDERR_CANNOTATTACHSURFACE, "Attaching a front buffer to an offscreen plain surface of different size returned %08x\n", hr);
-
-    IDirectDrawSurface_Release(surface4);
-    IDirectDrawSurface_Release(surface3);
-    IDirectDrawSurface_Release(surface2);
-    IDirectDrawSurface_Release(surface1);
-
-    /* Test DeleteAttachedSurface and automatic detachment of attached surfaces on release */
-    memset(&ddsd, 0, sizeof(ddsd));
-    ddsd.dwSize = sizeof(ddsd);
-    ddsd.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT | DDSD_PIXELFORMAT;
-    ddsd.dwWidth = 64;
-    ddsd.dwHeight = 64;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_3DDEVICE;
-    U4(ddsd).ddpfPixelFormat.dwSize = sizeof(U4(ddsd).ddpfPixelFormat);
-    U4(ddsd).ddpfPixelFormat.dwFlags = DDPF_RGB; /* D3DFMT_R5G6B5 */
-    U1(U4(ddsd).ddpfPixelFormat).dwRGBBitCount = 16;
-    U2(U4(ddsd).ddpfPixelFormat).dwRBitMask = 0xF800;
-    U3(U4(ddsd).ddpfPixelFormat).dwGBitMask = 0x07E0;
-    U4(U4(ddsd).ddpfPixelFormat).dwBBitMask = 0x001F;
-
-    memset(&ddsd2, 0, sizeof(ddsd2));
-    ddsd2.dwSize = sizeof(ddsd2);
-    ddsd2.dwFlags = DDSD_CAPS | DDSD_WIDTH | DDSD_HEIGHT | DDSD_PIXELFORMAT;
-    ddsd2.dwWidth = ddsd.dwWidth;
-    ddsd2.dwHeight = ddsd.dwHeight;
-    ddsd2.ddsCaps.dwCaps = DDSCAPS_ZBUFFER;
-    U4(ddsd2).ddpfPixelFormat.dwSize = sizeof(U4(ddsd2).ddpfPixelFormat);
-    U4(ddsd2).ddpfPixelFormat.dwFlags = DDPF_ZBUFFER;
-    U1(U4(ddsd2).ddpfPixelFormat).dwZBufferBitDepth = 16;
-    U3(U4(ddsd2).ddpfPixelFormat).dwZBitMask = 0x0000FFFF;
-
-    hr = IDirectDraw_CreateSurface(lpDD, (DDSURFACEDESC *)&ddsd, &surface1, NULL);
-    ok(hr == DD_OK, "CreateSurface returned %08x\n", hr);
-    if (SUCCEEDED(hr))
-    {
-        hr = IDirectDraw_CreateSurface(lpDD, (DDSURFACEDESC *)&ddsd2, &surface2, NULL);
-        ok(hr == DD_OK, "CreateSurface returned %08x\n", hr);
-        if (SUCCEEDED(hr))
-        {
-            /* DeleteAttachedSurface */
-            hr = IDirectDrawSurface_AddAttachedSurface(surface1, surface2);
-            ok(hr == DD_OK, "AddAttachedSurface returned %08x\n", hr);
-            if (SUCCEEDED(hr))
-            {
-                ref = getRefcount((IUnknown *)surface2);
-                ok(ref == 2, "Got refcount %d, expected 2\n", ref);
-
-                /* Try reattach */
-                hr = IDirectDrawSurface_AddAttachedSurface(surface1, surface2);
-                ok(hr == DDERR_SURFACEALREADYATTACHED, "AddAttachedSurface returned %08x\n", hr);
-
-                /* Attaching while already attached to other surface */
-                hr = IDirectDraw_CreateSurface(lpDD, &ddsd, &surface3, NULL);
-                ok(hr == DD_OK, "CreateSurface returned %08x\n", hr);
-                if (SUCCEEDED(hr))
-                {
-                    hr = IDirectDrawSurface_AddAttachedSurface(surface3, surface2);
-                    todo_wine ok(hr == DD_OK, "AddAttachedSurface returned %08x\n", hr);
-                    if (SUCCEEDED(hr))
-                    {
-                        hr = IDirectDrawSurface_DeleteAttachedSurface(surface3, 0, surface2);
-                        ok(hr == DD_OK, "DeleteAttachedSurface returned %08x\n", hr);
-                    }
-                    IDirectDrawSurface_Release(surface3);
-                }
-
-                hr = IDirectDrawSurface_DeleteAttachedSurface(surface1, 0, surface2);
-                ok(hr == DD_OK, "DeleteAttachedSurface returned %08x\n", hr);
-                ref = getRefcount((IUnknown *)surface2);
-                ok(ref == 1, "Got refcount %d, expected 2\n", ref);
-            }
-
-            /* Automatic detachment on release */
-            hr = IDirectDrawSurface_AddAttachedSurface(surface1, surface2);
-            ok(hr == DD_OK, "AddAttachedSurface returned %08x\n", hr);
-            ref = getRefcount((IUnknown *)surface2);
-            ok(ref == 2, "Got refcount %d, expected 2\n", ref);
-            ref = IDirectDrawSurface_Release(surface1);
-            ok(!ref, "Got refcount %d, expected 0\n", ref);
-            ref = getRefcount((IUnknown *)surface2);
-            ok(ref == 1, "Got refcount %d, expected 1\n", ref);
-            ref = IDirectDrawSurface_Release(surface2);
-            ok(!ref, "Got refcount %d, expected 0\n", ref);
-        }
-        else
-            IDirectDrawSurface_Release(surface1);
-    }
-
-    hr =IDirectDraw_SetCooperativeLevel(lpDD, NULL, DDSCL_NORMAL);
-    ok(hr == DD_OK, "SetCooperativeLevel returned %08x\n", hr);
-
-    DestroyWindow(window);
 }
 
 struct compare
@@ -2073,7 +1344,7 @@ static void CubeMapTest(void)
     IDirectDrawSurface7_Release(cubemap);
 
     ref = getRefcount((IUnknown *) palette);
-    todo_wine ok(ref == 1, "Refcount is %u, expected 1\n", ref);
+    ok(ref == 1, "Refcount is %u, expected 1\n", ref);
 
     IDirectDrawPalette_Release(palette);
 
@@ -2619,10 +1890,11 @@ static void CompressedTest(void)
 
 static void SizeTest(void)
 {
-    LPDIRECTDRAWSURFACE dsurface = NULL;
+    IDirectDrawSurface *dsurface = NULL;
     DDSURFACEDESC desc;
     HRESULT ret;
-    HWND window = CreateWindow( "static", "ddraw_test", WS_OVERLAPPEDWINDOW, 100, 100, 160, 160, NULL, NULL, NULL, NULL );
+    HWND window = CreateWindowA("static", "ddraw_test", WS_OVERLAPPEDWINDOW,
+            100, 100, 160, 160, NULL, NULL, NULL, NULL);
 
     /* Create an offscreen surface surface without a size */
     ZeroMemory(&desc, sizeof(desc));
@@ -2734,78 +2006,6 @@ static void SizeTest(void)
     ok(ret == DD_OK, "SetCooperativeLevel failed with %08x\n", ret);
 }
 
-static void PrivateDataTest(void)
-{
-    HRESULT hr;
-    IDirectDrawSurface7 *surface7 = NULL;
-    IDirectDrawSurface *surface = NULL;
-    DDSURFACEDESC desc;
-    ULONG ref, ref2;
-    IUnknown *ptr;
-    DWORD size = sizeof(IUnknown *);
-
-    ZeroMemory(&desc, sizeof(desc));
-    desc.dwSize = sizeof(desc);
-    desc.dwFlags = DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH;
-    desc.ddsCaps.dwCaps |= DDSCAPS_OFFSCREENPLAIN;
-    desc.dwHeight = 128;
-    desc.dwWidth = 128;
-    hr = IDirectDraw_CreateSurface(lpDD, &desc, &surface, NULL);
-    ok(hr == DD_OK, "Creating an offscreen plain surface failed with %08x\n", hr);
-    if(!surface)
-    {
-        return;
-    }
-    hr = IDirectDrawSurface_QueryInterface(surface, &IID_IDirectDrawSurface7, (void **) &surface7);
-    ok(hr == DD_OK, "IDirectDrawSurface_QueryInterface failed with %08x\n", hr);
-    if(!surface7)
-    {
-        IDirectDrawSurface_Release(surface);
-        return;
-    }
-
-    /* This fails */
-    hr = IDirectDrawSurface7_SetPrivateData(surface7, &IID_IDirectDrawSurface7 /* Abuse this tag */, lpDD, 0, DDSPD_IUNKNOWNPOINTER);
-    ok(hr == DDERR_INVALIDPARAMS, "IDirectDrawSurface7_SetPrivateData failed with %08x\n", hr);
-    hr = IDirectDrawSurface7_SetPrivateData(surface7, &IID_IDirectDrawSurface7 /* Abuse this tag */, lpDD, 5, DDSPD_IUNKNOWNPOINTER);
-    ok(hr == DDERR_INVALIDPARAMS, "IDirectDrawSurface7_SetPrivateData failed with %08x\n", hr);
-    hr = IDirectDrawSurface7_SetPrivateData(surface7, &IID_IDirectDrawSurface7 /* Abuse this tag */, lpDD, sizeof(IUnknown *) * 2, DDSPD_IUNKNOWNPOINTER);
-    ok(hr == DDERR_INVALIDPARAMS, "IDirectDrawSurface7_SetPrivateData failed with %08x\n", hr);
-
-    ref = getref((IUnknown *) lpDD);
-    hr = IDirectDrawSurface7_SetPrivateData(surface7, &IID_IDirectDrawSurface7 /* Abuse this tag */, lpDD, sizeof(IUnknown *), DDSPD_IUNKNOWNPOINTER);
-    ok(hr == DD_OK, "IDirectDrawSurface7_SetPrivateData failed with %08x\n", hr);
-    ref2 = getref((IUnknown *) lpDD);
-    ok(ref2 == ref + 1, "Object reference is %d, expected %d\n", ref2, ref + 1);
-    hr = IDirectDrawSurface7_FreePrivateData(surface7, &IID_IDirectDrawSurface7);
-    ok(SUCCEEDED(hr), "IDirectDrawSurface7_FreePrivateData returned %#x.\n", hr);
-    ref2 = getref((IUnknown *) lpDD);
-    ok(ref2 == ref, "Object reference is %d, expected %d\n", ref2, ref);
-
-    hr = IDirectDrawSurface7_SetPrivateData(surface7, &IID_IDirectDrawSurface7, lpDD, sizeof(IUnknown *), DDSPD_IUNKNOWNPOINTER);
-    ok(hr == DD_OK, "IDirectDrawSurface7_SetPrivateData failed with %08x\n", hr);
-    hr = IDirectDrawSurface7_SetPrivateData(surface7, &IID_IDirectDrawSurface7, surface7, sizeof(IUnknown *), DDSPD_IUNKNOWNPOINTER);
-    ok(hr == DD_OK, "IDirectDrawSurface7_SetPrivateData failed with %08x\n", hr);
-    ref2 = getref((IUnknown *) lpDD);
-    ok(ref2 == ref, "Object reference is %d, expected %d\n", ref2, ref);
-
-    hr = IDirectDrawSurface7_SetPrivateData(surface7, &IID_IDirectDrawSurface7, lpDD, sizeof(IUnknown *), DDSPD_IUNKNOWNPOINTER);
-    ok(hr == DD_OK, "IDirectDrawSurface7_SetPrivateData failed with %08x\n", hr);
-    hr = IDirectDrawSurface7_GetPrivateData(surface7, &IID_IDirectDrawSurface7, &ptr, &size);
-    ok(hr == DD_OK, "IDirectDrawSurface7_GetPrivateData failed with %08x\n", hr);
-    ref2 = getref((IUnknown *) lpDD);
-    /* Object is NOT being addrefed */
-    ok(ptr == (IUnknown *) lpDD, "Returned interface pointer is %p, expected %p\n", ptr, lpDD);
-    ok(ref2 == ref + 1, "Object reference is %d, expected %d. ptr at %p, orig at %p\n", ref2, ref + 1, ptr, lpDD);
-
-    IDirectDrawSurface_Release(surface);
-    IDirectDrawSurface7_Release(surface7);
-
-    /* Destroying the surface frees the held reference */
-    ref2 = getref((IUnknown *) lpDD);
-    ok(ref2 == ref, "Object reference is %d, expected %d\n", ref2, ref);
-}
-
 static void BltParamTest(void)
 {
     IDirectDrawSurface *surface1 = NULL, *surface2 = NULL;
@@ -2875,7 +2075,7 @@ static void BltParamTest(void)
     hr = IDirectDrawSurface_Blt(surface1, &valid, NULL, NULL, DDBLT_COLORFILL, &BltFx);
     ok(hr == DD_OK, "IDirectDrawSurface_Blt with a valid rectangle for color fill returned %08x\n", hr);
     hr = IDirectDrawSurface_Blt(surface1, &valid, NULL, &invalid3, DDBLT_COLORFILL, &BltFx);
-    ok(hr == DD_OK, "IDirectDrawSurface_Blt with a invalid, unused rectangle returned %08x\n", hr);
+    ok(hr == DD_OK, "IDirectDrawSurface_Blt with an invalid, unused rectangle returned %08x\n", hr);
     hr = IDirectDrawSurface_Blt(surface2, &invalid1, NULL, NULL, DDBLT_COLORFILL, &BltFx);
     ok(hr == DDERR_INVALIDRECT, "IDirectDrawSurface_Blt with a with invalid rectangle 1 returned %08x\n", hr);
     hr = IDirectDrawSurface_Blt(surface2, &invalid2, NULL, NULL, DDBLT_COLORFILL, &BltFx);
@@ -2922,7 +2122,7 @@ static void BltParamTest(void)
 static void PaletteTest(void)
 {
     HRESULT hr;
-    LPDIRECTDRAWSURFACE lpSurf = NULL;
+    IDirectDrawSurface *lpSurf = NULL;
     IDirectDrawSurface *backbuffer = NULL;
     DDSCAPS ddscaps;
     DDSURFACEDESC ddsd;
@@ -2945,7 +2145,7 @@ static void PaletteTest(void)
     if (FAILED(hr)) goto err;
     /* Read back the palette and verify the entries. Without DDPCAPS_ALLOW256 set
     /  entry 0 and 255 should have been overwritten with black and white */
-    IDirectDrawPalette_GetEntries(palette , 0, 0, 256, &palEntries[0]);
+    hr = IDirectDrawPalette_GetEntries(palette , 0, 0, 256, &palEntries[0]);
     ok(hr == DD_OK, "GetEntries failed with %08x\n", hr);
     if(hr == DD_OK)
     {
@@ -2959,15 +2159,15 @@ static void PaletteTest(void)
         /* Entry 1-254 should contain red */
         for(i=1; i<255; i++)
             ok((palEntries[i].peRed == 255) && (palEntries[i].peGreen == 0) && (palEntries[i].peBlue == 0),
-               "Palette entry %d should have contained (255,0,0) but was set to %d,%d,%d)\n",
+               "Palette entry %d should have contained (255,0,0) but was set to (%d,%d,%d)\n",
                i, palEntries[i].peRed, palEntries[i].peGreen, palEntries[i].peBlue);
     }
 
     /* CreatePalette without DDPCAPS_ALLOW256 ignores entry 0 and 255,
     /  now check we are able to update the entries afterwards. */
-    IDirectDrawPalette_SetEntries(palette , 0, 0, 256, &Table[0]);
+    hr = IDirectDrawPalette_SetEntries(palette , 0, 0, 256, &Table[0]);
     ok(hr == DD_OK, "SetEntries failed with %08x\n", hr);
-    IDirectDrawPalette_GetEntries(palette , 0, 0, 256, &palEntries[0]);
+    hr = IDirectDrawPalette_GetEntries(palette , 0, 0, 256, &palEntries[0]);
     ok(hr == DD_OK, "GetEntries failed with %08x\n", hr);
     if(hr == DD_OK)
     {
@@ -2985,14 +2185,14 @@ static void PaletteTest(void)
     ok(hr == DD_OK, "CreatePalette failed with %08x\n", hr);
     if (FAILED(hr)) goto err;
 
-    IDirectDrawPalette_GetEntries(palette , 0, 0, 256, &palEntries[0]);
+    hr = IDirectDrawPalette_GetEntries(palette , 0, 0, 256, &palEntries[0]);
     ok(hr == DD_OK, "GetEntries failed with %08x\n", hr);
     if(hr == DD_OK)
     {
         /* All entries should contain red */
         for(i=0; i<256; i++)
             ok((palEntries[i].peRed == 255) && (palEntries[i].peGreen == 0) && (palEntries[i].peBlue == 0),
-               "Palette entry %d should have contained (255,0,0) but was set to %d,%d,%d)\n",
+               "Palette entry %d should have contained (255,0,0) but was set to (%d,%d,%d)\n",
                i, palEntries[i].peRed, palEntries[i].peGreen, palEntries[i].peBlue);
     }
 
@@ -3209,11 +2409,9 @@ static void SurfaceCapsTest(void)
     };
     UINT i;
 
-    /* Tests various surface flags, what changes do they undergo during surface creation. Forsaken
-     * engine expects texture surfaces without memory flag to get a video memory flag right after
-     * creation. Currently, Wine adds DDSCAPS_FRONTBUFFER to primary surface, but native doesn't do this
-     * for single buffered primaries. Because of this primary surface creation tests are todo_wine. No real
-     * app is known so far to care about this. */
+    /* Tests various surface flags, what changes do they undergo during
+     * surface creation. Forsaken engine expects texture surfaces without
+     * memory flag to get a video memory flag right after creation. */
 
     if (!(ddcaps.ddsCaps.dwCaps & DDSCAPS_VIDEOMEMORY))
     {
@@ -3254,14 +2452,9 @@ static void SurfaceCapsTest(void)
             hr = IDirectDrawSurface_GetSurfaceDesc(surface1, &desc);
             ok(hr == DD_OK, "IDirectDrawSurface_GetSurfaceDesc failed with %08x\n", hr);
 
-            if (!(create_caps[i] & DDSCAPS_PRIMARYSURFACE))
-                ok(desc.ddsCaps.dwCaps == expected_caps[i],
-                    "GetSurfaceDesc test %d returned caps %x, expected %x\n", i,
-                    desc.ddsCaps.dwCaps, expected_caps[i]);
-            else
-                todo_wine ok(desc.ddsCaps.dwCaps == expected_caps[i],
-                                "GetSurfaceDesc test %d returned caps %x, expected %x\n", i,
-                                desc.ddsCaps.dwCaps, expected_caps[i]);
+            ok(desc.ddsCaps.dwCaps == expected_caps[i],
+                    "GetSurfaceDesc test %d returned caps %x, expected %x\n",
+                    i, desc.ddsCaps.dwCaps, expected_caps[i]);
 
             IDirectDrawSurface_Release(surface1);
         }
@@ -3309,14 +2502,9 @@ static void SurfaceCapsTest(void)
                 hr = IDirectDrawSurface7_GetSurfaceDesc(surface7, &desc2);
                 ok(hr == DD_OK, "IDirectDrawSurface_GetSurfaceDesc failed with %08x\n", hr);
 
-                if (!(create_caps[i] & DDSCAPS_PRIMARYSURFACE))
-                    ok(desc2.ddsCaps.dwCaps == expected_caps[i],
-                        "GetSurfaceDesc test %d returned caps %x, expected %x\n", i,
-                        desc2.ddsCaps.dwCaps, expected_caps[i]);
-                else
-                    todo_wine ok(desc2.ddsCaps.dwCaps == expected_caps[i],
-                                    "GetSurfaceDesc test %d returned caps %x, expected %x\n", i,
-                                    desc2.ddsCaps.dwCaps, expected_caps[i]);
+                ok(desc2.ddsCaps.dwCaps == expected_caps[i],
+                        "GetSurfaceDesc test %d returned caps %x, expected %x\n",
+                        i, desc2.ddsCaps.dwCaps, expected_caps[i]);
 
                 IDirectDrawSurface7_Release(surface7);
             }
@@ -3750,7 +2938,7 @@ static void GetDCFormatTest(void)
 
         if(SUCCEEDED(hr))
         {
-            IDirectDrawSurface7_ReleaseDC(surface, dc);
+            hr = IDirectDrawSurface7_ReleaseDC(surface, dc);
             ok(hr == DD_OK, "IDirectDrawSurface7_ReleaseDC failed, hr = 0x%08x\n", hr);
             dc = 0;
         }
@@ -3847,7 +3035,8 @@ static void BackBufferAttachmentFlipTest(void)
     HRESULT hr;
     IDirectDrawSurface *surface1, *surface2, *surface3, *surface4;
     DDSURFACEDESC ddsd;
-    HWND window = CreateWindow( "static", "ddraw_test", WS_OVERLAPPEDWINDOW, 100, 100, 160, 160, NULL, NULL, NULL, NULL );
+    HWND window = CreateWindowA("static", "ddraw_test", WS_OVERLAPPEDWINDOW,
+            100, 100, 160, 160, NULL, NULL, NULL, NULL);
 
     hr = IDirectDraw_SetCooperativeLevel(lpDD, window, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN);
     ok(hr == DD_OK, "SetCooperativeLevel returned %08x\n", hr);
@@ -3987,13 +3176,13 @@ static void CreateSurfaceBadCapsSizeTest(void)
     ddsd_ok.dwWidth = 64;
     ddsd_ok.dwHeight = 64;
     ddsd_ok.ddsCaps.dwCaps = caps;
-    memcpy(&ddsd_bad1, &ddsd_ok, sizeof(ddsd_bad1));
+    ddsd_bad1 = ddsd_ok;
     ddsd_bad1.dwSize--;
-    memcpy(&ddsd_bad2, &ddsd_ok, sizeof(ddsd_bad2));
+    ddsd_bad2 = ddsd_ok;
     ddsd_bad2.dwSize++;
-    memcpy(&ddsd_bad3, &ddsd_ok, sizeof(ddsd_bad3));
+    ddsd_bad3 = ddsd_ok;
     ddsd_bad3.dwSize = 0;
-    memcpy(&ddsd_bad4, &ddsd_ok, sizeof(ddsd_bad4));
+    ddsd_bad4 = ddsd_ok;
     ddsd_bad4.dwSize = sizeof(DDSURFACEDESC2);
 
     memset(&ddsd2_ok, 0, sizeof(ddsd2_ok));
@@ -4002,13 +3191,13 @@ static void CreateSurfaceBadCapsSizeTest(void)
     ddsd2_ok.dwWidth = 64;
     ddsd2_ok.dwHeight = 64;
     ddsd2_ok.ddsCaps.dwCaps = caps;
-    memcpy(&ddsd2_bad1, &ddsd2_ok, sizeof(ddsd2_bad1));
+    ddsd2_bad1 = ddsd2_ok;
     ddsd2_bad1.dwSize--;
-    memcpy(&ddsd2_bad2, &ddsd2_ok, sizeof(ddsd2_bad2));
+    ddsd2_bad2 = ddsd2_ok;
     ddsd2_bad2.dwSize++;
-    memcpy(&ddsd2_bad3, &ddsd2_ok, sizeof(ddsd2_bad3));
+    ddsd2_bad3 = ddsd2_ok;
     ddsd2_bad3.dwSize = 0;
-    memcpy(&ddsd2_bad4, &ddsd2_ok, sizeof(ddsd2_bad4));
+    ddsd2_bad4 = ddsd2_ok;
     ddsd2_bad4.dwSize = sizeof(DDSURFACEDESC);
 
     hr = IDirectDraw_CreateSurface(lpDD, &ddsd_ok, &surf, NULL);
@@ -4476,62 +3665,245 @@ static void pixelformat_flag_test(void)
     test_ddsd(&ddsd, FALSE, TRUE, "Z buffer", 16);
 }
 
-static void set_surface_desc_test(void)
+static BOOL fourcc_supported(DWORD fourcc, DWORD caps)
+{
+    DDSURFACEDESC ddsd;
+    HRESULT hr;
+    IDirectDrawSurface *surface;
+
+    reset_ddsd(&ddsd);
+    ddsd.ddpfPixelFormat.dwSize = sizeof(ddsd.ddpfPixelFormat);
+    ddsd.dwFlags = DDSD_WIDTH | DDSD_HEIGHT | DDSD_PIXELFORMAT | DDSD_CAPS;
+    ddsd.dwWidth = 4;
+    ddsd.dwHeight = 4;
+    ddsd.ddsCaps.dwCaps = caps;
+    ddsd.ddpfPixelFormat.dwFlags = DDPF_FOURCC;
+    ddsd.ddpfPixelFormat.dwFourCC = fourcc;
+    hr = IDirectDraw_CreateSurface(lpDD, &ddsd, &surface, NULL);
+    if (FAILED(hr))
+    {
+        return FALSE;
+    }
+    IDirectDrawSurface_Release(surface);
+    return TRUE;
+}
+
+static void partial_block_lock_test(void)
+{
+    IDirectDrawSurface7 *surface;
+    HRESULT hr;
+    DDSURFACEDESC2 ddsd;
+    IDirectDraw7 *dd7;
+    const struct
+    {
+        DWORD caps, caps2;
+        const char *name;
+        BOOL success;
+    }
+    pools[] =
+    {
+        {
+            DDSCAPS_VIDEOMEMORY, 0,
+            "D3DPOOL_DEFAULT", FALSE
+        },
+        {
+            DDSCAPS_SYSTEMMEMORY, 0,
+            "D3DPOOL_SYSTEMMEM", TRUE
+        },
+        {
+            0, DDSCAPS2_TEXTUREMANAGE,
+            "D3DPOOL_MANAGED", TRUE
+        }
+    };
+    const struct
+    {
+        DWORD fourcc;
+        DWORD caps;
+        const char *name;
+        unsigned int block_width;
+        unsigned int block_height;
+    }
+    formats[] =
+    {
+        {MAKEFOURCC('D','X','T','1'), DDSCAPS_TEXTURE, "D3DFMT_DXT1", 4, 4},
+        {MAKEFOURCC('D','X','T','2'), DDSCAPS_TEXTURE, "D3DFMT_DXT2", 4, 4},
+        {MAKEFOURCC('D','X','T','3'), DDSCAPS_TEXTURE, "D3DFMT_DXT3", 4, 4},
+        {MAKEFOURCC('D','X','T','4'), DDSCAPS_TEXTURE, "D3DFMT_DXT4", 4, 4},
+        {MAKEFOURCC('D','X','T','5'), DDSCAPS_TEXTURE, "D3DFMT_DXT5", 4, 4},
+        /* ATI2N surfaces aren't available in ddraw */
+        {MAKEFOURCC('U','Y','V','Y'), DDSCAPS_OVERLAY, "D3DFMT_UYVY", 2, 1},
+        {MAKEFOURCC('Y','U','Y','2'), DDSCAPS_OVERLAY, "D3DFMT_YUY2", 2, 1},
+    };
+    unsigned int i, j;
+    RECT rect;
+
+    hr = IDirectDraw_QueryInterface(lpDD, &IID_IDirectDraw7, (void **) &dd7);
+    ok(SUCCEEDED(hr), "QueryInterface failed, hr %#x.\n", hr);
+
+    for (i = 0; i < sizeof(formats) / sizeof(formats[0]); i++)
+    {
+        if (!fourcc_supported(formats[i].fourcc, formats[i].caps | DDSCAPS_VIDEOMEMORY))
+        {
+            skip("%s surfaces not supported, skipping partial block lock test\n", formats[i].name);
+            continue;
+        }
+
+        for (j = 0; j < (sizeof(pools) / sizeof(*pools)); j++)
+        {
+            if (formats[i].caps & DDSCAPS_OVERLAY && !(pools[j].caps & DDSCAPS_VIDEOMEMORY))
+                continue;
+
+            memset(&ddsd, 0, sizeof(ddsd));
+            ddsd.dwSize = sizeof(ddsd);
+            ddsd.dwFlags = DDSD_WIDTH | DDSD_HEIGHT | DDSD_PIXELFORMAT | DDSD_CAPS;
+            ddsd.dwWidth = 128;
+            ddsd.dwHeight = 128;
+            ddsd.ddsCaps.dwCaps = pools[j].caps | formats[i].caps;
+            ddsd.ddsCaps.dwCaps2 = pools[j].caps2;
+            U4(ddsd).ddpfPixelFormat.dwFlags = DDPF_FOURCC;
+            U4(ddsd).ddpfPixelFormat.dwFourCC = formats[i].fourcc;
+            hr = IDirectDraw7_CreateSurface(dd7, &ddsd, &surface, NULL);
+            ok(SUCCEEDED(hr), "CreateSurface failed, hr %#x, format %s, pool %s\n",
+                hr, formats[i].name, pools[j].name);
+
+            /* All Windows versions allow partial block locks with DDSCAPS_SYSTEMMEMORY and
+             * DDSCAPS2_TEXTUREMANAGE, just like in d3d8 and d3d9. Windows XP also allows those locks
+             * with DDSCAPS_VIDEOMEMORY. Windows Vista and Windows 7 disallow partial locks of vidmem
+             * surfaces, making the ddraw behavior consistent with d3d8 and 9.
+             *
+             * Mark the Windows XP behavior as broken until we find an application that needs it */
+            if (formats[i].block_width > 1)
+            {
+                SetRect(&rect, formats[i].block_width >> 1, 0, formats[i].block_width, formats[i].block_height);
+                hr = IDirectDrawSurface7_Lock(surface, &rect, &ddsd, 0, NULL);
+                ok(SUCCEEDED(hr) == pools[j].success || broken(SUCCEEDED(hr)),
+                        "Partial block lock %s, expected %s, format %s, pool %s\n",
+                        SUCCEEDED(hr) ? "succeeded" : "failed", pools[j].success ? "success" : "failure",
+                        formats[i].name, pools[j].name);
+                if (SUCCEEDED(hr))
+                {
+                    hr = IDirectDrawSurface7_Unlock(surface, NULL);
+                    ok(SUCCEEDED(hr), "Unlock failed, hr %#x.\n", hr);
+                }
+
+                SetRect(&rect, 0, 0, formats[i].block_width >> 1, formats[i].block_height);
+                hr = IDirectDrawSurface7_Lock(surface, &rect, &ddsd, 0, NULL);
+                ok(SUCCEEDED(hr) == pools[j].success || broken(SUCCEEDED(hr)),
+                        "Partial block lock %s, expected %s, format %s, pool %s\n",
+                        SUCCEEDED(hr) ? "succeeded" : "failed", pools[j].success ? "success" : "failure",
+                        formats[i].name, pools[j].name);
+                if (SUCCEEDED(hr))
+                {
+                    hr = IDirectDrawSurface7_Unlock(surface, NULL);
+                    ok(SUCCEEDED(hr), "Unlock failed, hr %#x.\n", hr);
+                }
+            }
+
+            if (formats[i].block_height > 1)
+            {
+                SetRect(&rect, 0, formats[i].block_height >> 1, formats[i].block_width, formats[i].block_height);
+                hr = IDirectDrawSurface7_Lock(surface, &rect, &ddsd, 0, NULL);
+                ok(SUCCEEDED(hr) == pools[j].success || broken(SUCCEEDED(hr)),
+                        "Partial block lock %s, expected %s, format %s, pool %s\n",
+                        SUCCEEDED(hr) ? "succeeded" : "failed", pools[j].success ? "success" : "failure",
+                        formats[i].name, pools[j].name);
+                if (SUCCEEDED(hr))
+                {
+                    hr = IDirectDrawSurface7_Unlock(surface, NULL);
+                    ok(SUCCEEDED(hr), "Unlock failed, hr %#x.\n", hr);
+                }
+
+                SetRect(&rect, 0, 0, formats[i].block_width, formats[i].block_height >> 1);
+                hr = IDirectDrawSurface7_Lock(surface, &rect, &ddsd, 0, NULL);
+                ok(SUCCEEDED(hr) == pools[j].success || broken(SUCCEEDED(hr)),
+                        "Partial block lock %s, expected %s, format %s, pool %s\n",
+                        SUCCEEDED(hr) ? "succeeded" : "failed", pools[j].success ? "success" : "failure",
+                        formats[i].name, pools[j].name);
+                if (SUCCEEDED(hr))
+                {
+                    hr = IDirectDrawSurface7_Unlock(surface, NULL);
+                    ok(SUCCEEDED(hr), "Unlock failed, hr %#x.\n", hr);
+                }
+            }
+
+            SetRect(&rect, 0, 0, formats[i].block_width, formats[i].block_height);
+            hr = IDirectDrawSurface7_Lock(surface, &rect, &ddsd, 0, NULL);
+            ok(SUCCEEDED(hr), "Full block lock returned %08x, expected %08x, format %s, pool %s\n",
+                    hr, DD_OK, formats[i].name, pools[j].name);
+            if (SUCCEEDED(hr))
+            {
+                hr = IDirectDrawSurface7_Unlock(surface, NULL);
+                ok(SUCCEEDED(hr), "Unlock failed, hr %#x.\n", hr);
+            }
+
+            IDirectDrawSurface7_Release(surface);
+        }
+    }
+
+    IDirectDraw7_Release(dd7);
+}
+
+static void create_surface_test(void)
 {
     HRESULT hr;
-    DDSURFACEDESC ddsd;
+    IDirectDraw2 *ddraw2;
+    IDirectDraw4 *ddraw4;
+    IDirectDraw7 *ddraw7;
     IDirectDrawSurface *surface;
-    IDirectDrawSurface3 *surface3;
-    BYTE data[8*8*4];
+    IDirectDrawSurface4 *surface4;
+    IDirectDrawSurface7 *surface7;
 
     hr = IDirectDraw_CreateSurface(lpDD, NULL, &surface, NULL);
-    ok(hr == DDERR_INVALIDPARAMS, "CreateSurface with a NULL DDSD returned %#x,"
-            " expected DDERR_INVALIDPARAMS(%#x)\n", hr, DDERR_INVALIDPARAMS);
+    ok(hr == DDERR_INVALIDPARAMS, "CreateSurface(ddsd=NULL) returned %#x,"
+            " expected %#x.\n", hr, DDERR_INVALIDPARAMS);
 
-    reset_ddsd(&ddsd);
-    ddsd.dwFlags = DDSD_WIDTH | DDSD_HEIGHT | DDSD_CAPS | DDSD_PIXELFORMAT;
-    ddsd.dwWidth = 8;
-    ddsd.dwHeight = 8;
-    ddsd.ddpfPixelFormat.dwSize = sizeof(ddsd.ddpfPixelFormat);
-    ddsd.ddpfPixelFormat.dwFlags = DDPF_RGB;
-    U1(ddsd.ddpfPixelFormat).dwRGBBitCount = 32;
-    U2(ddsd.ddpfPixelFormat).dwRBitMask = 0x00ff0000;
-    U3(ddsd.ddpfPixelFormat).dwGBitMask = 0x0000ff00;
-    U4(ddsd.ddpfPixelFormat).dwBBitMask = 0x000000ff;
-    ddsd.ddsCaps.dwCaps = DDSCAPS_SYSTEMMEMORY;
+    hr = IDirectDraw_QueryInterface(lpDD, &IID_IDirectDraw2, (void **) &ddraw2);
+    ok(SUCCEEDED(hr), "QueryInterface failed, hr %#x.\n", hr);
 
-    hr = IDirectDraw_CreateSurface(lpDD, &ddsd, &surface, NULL);
-    ok(SUCCEEDED(hr), "IDirectDraw_CreateSurface failed, hr %#x.\n", hr);
+    hr = IDirectDraw2_CreateSurface(ddraw2, NULL, &surface, NULL);
+    ok(hr == DDERR_INVALIDPARAMS, "CreateSurface(ddsd=NULL) returned %#x,"
+            " expected %#x.\n", hr, DDERR_INVALIDPARAMS);
 
-    hr = IDirectDrawSurface_QueryInterface(surface, &IID_IDirectDrawSurface3, (void **) &surface3);
-    ok(SUCCEEDED(hr), "IDirectDrawSurface_QueryInterface failed, hr %#x.\n", hr);
-    IDirectDrawSurface_Release(surface);
+    IDirectDraw2_Release(ddraw2);
 
-    reset_ddsd(&ddsd);
-    ddsd.dwFlags = DDSD_LPSURFACE;
-    ddsd.lpSurface = data;
-    hr = IDirectDrawSurface3_SetSurfaceDesc(surface3, &ddsd, 0);
-    ok(SUCCEEDED(hr), "IDirectDrawSurface3_SetSurfaceDesc failed, hr %#x.\n", hr);
+    hr = IDirectDraw_QueryInterface(lpDD, &IID_IDirectDraw4, (void **) &ddraw4);
+    ok(SUCCEEDED(hr), "QueryInterface failed, hr %#x.\n", hr);
 
-    /* Redundantly setting the same lpSurface is not an error */
-    hr = IDirectDrawSurface3_SetSurfaceDesc(surface3, &ddsd, 0);
-    ok(SUCCEEDED(hr), "IDirectDrawSurface3_SetSurfaceDesc failed, hr %#x.\n", hr);
+    hr = IDirectDraw4_CreateSurface(ddraw4, NULL, &surface4, NULL);
+    ok(hr == DDERR_INVALIDPARAMS, "CreateSurface(ddsd=NULL) returned %#x,"
+            " expected %#x.\n", hr, DDERR_INVALIDPARAMS);
 
-    hr = IDirectDrawSurface3_SetSurfaceDesc(surface3, &ddsd, 1);
-    ok(hr == DDERR_INVALIDPARAMS, "IDirectDrawSurface3_SetSurfaceDesc returned %#x, expected"
-            " DDERR_INVALIDPARAMS(%#x)\n", hr, DDERR_INVALIDPARAMS);
+    IDirectDraw4_Release(ddraw4);
 
-    hr = IDirectDrawSurface3_SetSurfaceDesc(surface3, NULL, 0);
-    ok(hr == DDERR_INVALIDPARAMS, "IDirectDrawSurface3_SetSurfaceDesc returned %#x, expected"
-            " DDERR_INVALIDPARAMS(%#x)\n", hr, DDERR_INVALIDPARAMS);
+    if (!pDirectDrawCreateEx)
+    {
+        skip("DirectDrawCreateEx not available, skipping IDirectDraw7 tests.\n");
+        return;
+    }
+    hr = pDirectDrawCreateEx(NULL, (void **) &ddraw7, &IID_IDirectDraw7, NULL);
+    ok(SUCCEEDED(hr), "DirectDrawCreateEx failed, hr %#x.\n", hr);
 
-    IDirectDrawSurface_Release(surface3);
+    hr = IDirectDraw7_CreateSurface(ddraw7, NULL, &surface7, NULL);
+    ok(hr == DDERR_NOCOOPERATIVELEVELSET, "CreateSurface(ddsd=NULL, pre-SCL) returned %#x,"
+            " expected %#x.\n", hr, DDERR_NOCOOPERATIVELEVELSET);
+
+    hr = IDirectDraw7_SetCooperativeLevel(ddraw7, NULL, DDSCL_NORMAL);
+    ok(hr == DD_OK, "SetCooperativeLevel failed, hr %#x.\n", hr);
+
+    hr = IDirectDraw7_CreateSurface(ddraw7, NULL, &surface7, NULL);
+    ok(hr == DDERR_INVALIDPARAMS, "CreateSurface(ddsd=NULL) returned %#x,"
+            " expected %#x.\n", hr, DDERR_INVALIDPARAMS);
+
+    IDirectDraw7_Release(ddraw7);
 }
 
 START_TEST(dsurface)
 {
     HRESULT ret;
     IDirectDraw4 *dd4;
+
+    HMODULE ddraw_mod = GetModuleHandleA("ddraw.dll");
+    pDirectDrawCreateEx = (void *) GetProcAddress(ddraw_mod, "DirectDrawCreateEx");
 
     if (!CreateDirectDraw())
         return;
@@ -4566,15 +3938,11 @@ START_TEST(dsurface)
     GetDDInterface_2();
     GetDDInterface_4();
     GetDDInterface_7();
-    IFaceRefCount();
     EnumTest();
-    AttachmentTest();
-    AttachmentTest7();
     CubeMapTest();
     test_lockrect_invalid();
     CompressedTest();
     SizeTest();
-    PrivateDataTest();
     BltParamTest();
     StructSizeTest();
     PaletteTest();
@@ -4587,6 +3955,7 @@ START_TEST(dsurface)
     no_ddsd_caps_test();
     zbufferbitdepth_test();
     pixelformat_flag_test();
-    set_surface_desc_test();
+    partial_block_lock_test();
+    create_surface_test();
     ReleaseDirectDraw();
 }

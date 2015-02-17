@@ -1,13 +1,14 @@
 MODULE    = vbscript.dll
-IMPORTS   = oleaut32 ole32
+IMPORTS   = oleaut32 ole32 user32
 
 C_SRCS = \
 	compile.c \
-	error.c \
 	global.c \
 	interp.c \
 	lex.c \
+	regexp.c \
 	vbdisp.c \
+	vbregexp.c \
 	vbscript.c \
 	vbscript_main.c
 
@@ -16,12 +17,8 @@ BISON_SRCS = \
 
 RC_SRCS = vbscript.rc
 
-IDL_H_SRCS = \
+IDL_SRCS = \
 	vbscript_classes.idl \
-	vbsglobal.idl
-
-IDL_TLB_SRCS = vbsglobal.idl
-
-IDL_R_SRCS = vbscript_classes.idl
-
-@MAKE_DLL_RULES@
+	vbsglobal.idl \
+	vbsregexp10.idl \
+	vbsregexp55.idl

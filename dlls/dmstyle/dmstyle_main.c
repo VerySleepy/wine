@@ -17,8 +17,22 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "dmstyle_private.h"
+#include <stdarg.h>
+
+#define COBJMACROS
+
+#include "windef.h"
+#include "winbase.h"
+#include "winnt.h"
+#include "wingdi.h"
+#include "winuser.h"
+#include "winreg.h"
+#include "objbase.h"
 #include "rpcproxy.h"
+#include "initguid.h"
+#include "dmusici.h"
+
+#include "dmstyle_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dmstyle);
 
@@ -27,14 +41,14 @@ LONG DMSTYLE_refCount = 0;
 
 typedef struct {
         IClassFactory IClassFactory_iface;
-        HRESULT WINAPI (*fnCreateInstance)(REFIID riid, void **ppv, IUnknown *pUnkOuter);
+        HRESULT WINAPI (*fnCreateInstance)(REFIID riid, void **ret_iface);
 } IClassFactoryImpl;
 
-static HRESULT WINAPI create_direct_music_section(REFIID riid, void **ppv, IUnknown *pUnkOuter)
+static HRESULT WINAPI create_direct_music_section(REFIID riid, void **ret_iface)
 {
-        FIXME("(%p, %s, %p) stub\n", pUnkOuter, debugstr_dmguid(riid), ppv);
+        FIXME("(%s, %p) stub\n", debugstr_dmguid(riid), ret_iface);
 
-        return E_NOINTERFACE;
+        return CLASS_E_CLASSNOTAVAILABLE;
 }
 
 /******************************************************************
@@ -86,7 +100,12 @@ static HRESULT WINAPI ClassFactory_CreateInstance(IClassFactory *iface, IUnknown
 
         TRACE ("(%p, %s, %p)\n", pUnkOuter, debugstr_dmguid(riid), ppv);
 
-        return This->fnCreateInstance(riid, ppv, pUnkOuter);
+        if (pUnkOuter) {
+            *ppv = NULL;
+            return CLASS_E_NOAGGREGATION;
+        }
+
+        return This->fnCreateInstance(riid, ppv);
 }
 
 static HRESULT WINAPI ClassFactory_LockServer(IClassFactory *iface, BOOL dolock)
@@ -110,15 +129,13 @@ static const IClassFactoryVtbl classfactory_vtbl = {
 };
 
 static IClassFactoryImpl Section_CF = {{&classfactory_vtbl}, create_direct_music_section};
-static IClassFactoryImpl Style_CF = {{&classfactory_vtbl}, DMUSIC_CreateDirectMusicStyleImpl};
-static IClassFactoryImpl ChordTrack_CF = {{&classfactory_vtbl}, DMUSIC_CreateDirectMusicChordTrack};
-static IClassFactoryImpl CommandTrack_CF = {{&classfactory_vtbl},
-                                            DMUSIC_CreateDirectMusicCommandTrack};
-static IClassFactoryImpl StyleTrack_CF = {{&classfactory_vtbl}, DMUSIC_CreateDirectMusicStyleTrack};
-static IClassFactoryImpl MotifTrack_CF = {{&classfactory_vtbl}, DMUSIC_CreateDirectMusicMotifTrack};
-static IClassFactoryImpl AuditionTrack_CF = {{&classfactory_vtbl},
-                                             DMUSIC_CreateDirectMusicAuditionTrack};
-static IClassFactoryImpl MuteTrack_CF = {{&classfactory_vtbl}, DMUSIC_CreateDirectMusicMuteTrack};
+static IClassFactoryImpl Style_CF = {{&classfactory_vtbl}, create_dmstyle};
+static IClassFactoryImpl ChordTrack_CF = {{&classfactory_vtbl}, create_dmchordtrack};
+static IClassFactoryImpl CommandTrack_CF = {{&classfactory_vtbl}, create_dmcommandtrack};
+static IClassFactoryImpl StyleTrack_CF = {{&classfactory_vtbl}, create_dmstyletrack};
+static IClassFactoryImpl MotifTrack_CF = {{&classfactory_vtbl}, create_dmmotiftrack};
+static IClassFactoryImpl AuditionTrack_CF = {{&classfactory_vtbl}, create_dmauditiontrack};
+static IClassFactoryImpl MuteTrack_CF = {{&classfactory_vtbl}, create_dmmutetrack};
 
 /******************************************************************
  *		DllMain
@@ -129,9 +146,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
 	if (fdwReason == DLL_PROCESS_ATTACH) {
             instance = hinstDLL;
             DisableThreadLibraryCalls(hinstDLL);
-		/* FIXME: Initialisation */
-	} else if (fdwReason == DLL_PROCESS_DETACH) {
-		/* FIXME: Cleanup */
 	}
 
 	return TRUE;

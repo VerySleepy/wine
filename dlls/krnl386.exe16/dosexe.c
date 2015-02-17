@@ -61,7 +61,7 @@ static BOOL DOSVM_isdosexe;
  */
 BOOL DOSVM_IsWin16(void)
 {
-  return DOSVM_isdosexe ? FALSE : TRUE;
+  return !DOSVM_isdosexe;
 }
 
 /**********************************************************************
@@ -238,7 +238,7 @@ static BOOL MZ_DoLoadImage( HANDLE hFile, LPCSTR filename, OverlayBlock *oblk, W
  if (   !ReadFile(hFile,&mz_header,sizeof(mz_header),&len,NULL)
      || len != sizeof(mz_header)
      || mz_header.e_magic != IMAGE_DOS_SIGNATURE) {
-  char *p = strrchr( filename, '.' );
+  const char *p = strrchr( filename, '.' );
   if (!p || strcasecmp( p, ".com" ))  /* check for .COM extension */
   {
       SetLastError(ERROR_BAD_FORMAT);
@@ -432,6 +432,8 @@ void __wine_load_dos_exe( LPCSTR filename, LPCSTR cmdline )
             dos_length = 127;
         }
     }
+
+    AllocConsole();
 
     if (MZ_DoLoadImage( hFile, filename, NULL, 0 ))
     {

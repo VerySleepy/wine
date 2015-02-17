@@ -34,12 +34,8 @@ WINE_DEFAULT_DEBUG_CHANNEL(gdi);
 /* GDI logical brush object */
 typedef struct
 {
-    GDIOBJHDR             header;
     LOGBRUSH              logbrush;
-    HBITMAP               bitmap;   /* bitmap handle for DDB pattern brushes */
-    BITMAPINFO           *info;     /* DIB info for pattern brushes */
-    struct gdi_image_bits bits;     /* DIB bits for pattern brushes */
-    UINT                  usage;    /* color usage for DIB info */
+    struct brush_pattern  pattern;
 } BRUSHOBJ;
 
 #define NB_HATCH_STYLES  6
@@ -58,37 +54,122 @@ static const struct gdi_obj_funcs brush_funcs =
 };
 
 
-/* fetch the contents of the brush bitmap and cache them in the brush object */
-static BOOL store_bitmap_bits( BRUSHOBJ *brush, BITMAPOBJ *bmp )
+static BOOL copy_bitmap( struct brush_pattern *brush, HBITMAP bitmap )
 {
-    const struct gdi_dc_funcs *funcs = get_bitmap_funcs( bmp );
+    char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256])];
+    BITMAPINFO *info = (BITMAPINFO *)buffer;
     struct gdi_image_bits bits;
     struct bitblt_coords src;
-    BITMAPINFO *info;
+    BITMAPOBJ *bmp = GDI_GetObjPtr( bitmap, OBJ_BITMAP );
 
-    if (!(info = HeapAlloc( GetProcessHeap(), 0, FIELD_OFFSET( BITMAPINFO, bmiColors[256] ))))
-        return FALSE;
+    if (!bmp) return FALSE;
 
     src.visrect.left   = src.x = 0;
     src.visrect.top    = src.y = 0;
-    src.visrect.right  = src.width = bmp->bitmap.bmWidth;
-    src.visrect.bottom = src.height = bmp->bitmap.bmHeight;
-    if (funcs->pGetImage( NULL, brush->bitmap, info, &bits, &src ))
+    src.visrect.right  = src.width = bmp->dib.dsBm.bmWidth;
+    src.visrect.bottom = src.height = bmp->dib.dsBm.bmHeight;
+    if (get_image_from_bitmap( bmp, info, &bits, &src )) goto done;
+
+    brush->bits = bits;
+    if (!bits.free)
     {
-        HeapFree( GetProcessHeap(), 0, info );
-        return FALSE;
+        if (!(brush->bits.ptr = HeapAlloc( GetProcessHeap(), 0, info->bmiHeader.biSizeImage ))) goto done;
+        memcpy( brush->bits.ptr, bits.ptr, info->bmiHeader.biSizeImage );
+        brush->bits.free = free_heap_bits;
     }
 
-    if (info->bmiHeader.biBitCount <= 8 && !info->bmiHeader.biClrUsed) fill_default_color_table( info );
-
-    /* release the unneeded space */
-    HeapReAlloc( GetProcessHeap(), HEAP_REALLOC_IN_PLACE_ONLY, info,
-                 bitmap_info_size( info, DIB_RGB_COLORS ));
-    brush->info  = info;
-    brush->bits  = bits;
+    if (!(brush->info = HeapAlloc( GetProcessHeap(), 0, get_dib_info_size( info, DIB_RGB_COLORS ))))
+    {
+        if (brush->bits.free) brush->bits.free( &brush->bits );
+        goto done;
+    }
+    memcpy( brush->info, info, get_dib_info_size( info, DIB_RGB_COLORS ));
+    brush->bits.is_copy = FALSE;  /* the bits can't be modified */
     brush->usage = DIB_RGB_COLORS;
-    return TRUE;
+
+done:
+    GDI_ReleaseObj( bitmap );
+    return brush->info != NULL;
 }
+
+BOOL store_brush_pattern( LOGBRUSH *brush, struct brush_pattern *pattern )
+{
+    HGLOBAL hmem = 0;
+
+    pattern->info = NULL;
+    pattern->bits.free = NULL;
+
+    switch (brush->lbStyle)
+    {
+    case BS_SOLID:
+    case BS_HOLLOW:
+        return TRUE;
+
+    case BS_HATCHED:
+        if (brush->lbHatch > HS_DIAGCROSS)
+        {
+            if (brush->lbHatch >= HS_API_MAX) return FALSE;
+            brush->lbStyle = BS_SOLID;
+            brush->lbHatch = 0;
+        }
+        return TRUE;
+
+    case BS_PATTERN8X8:
+        brush->lbStyle = BS_PATTERN;
+        /* fall through */
+    case BS_PATTERN:
+        brush->lbColor = 0;
+        return copy_bitmap( pattern, (HBITMAP)brush->lbHatch );
+
+    case BS_DIBPATTERN:
+        hmem = (HGLOBAL)brush->lbHatch;
+        if (!(brush->lbHatch = (ULONG_PTR)GlobalLock( hmem ))) return FALSE;
+        /* fall through */
+    case BS_DIBPATTERNPT:
+        pattern->usage = brush->lbColor;
+        pattern->info = copy_packed_dib( (BITMAPINFO *)brush->lbHatch, pattern->usage );
+        if (hmem) GlobalUnlock( hmem );
+        if (!pattern->info) return FALSE;
+        pattern->bits.ptr = (char *)pattern->info + get_dib_info_size( pattern->info, pattern->usage );
+        brush->lbStyle = BS_DIBPATTERN;
+        brush->lbColor = 0;
+        return TRUE;
+
+    case BS_DIBPATTERN8X8:
+    case BS_MONOPATTERN:
+    case BS_INDEXED:
+    default:
+        WARN( "invalid brush style %u\n", brush->lbStyle );
+        return FALSE;
+    }
+}
+
+void free_brush_pattern( struct brush_pattern *pattern )
+{
+    if (pattern->bits.free) pattern->bits.free( &pattern->bits );
+    HeapFree( GetProcessHeap(), 0, pattern->info );
+}
+
+BOOL get_brush_bitmap_info( HBRUSH handle, BITMAPINFO *info, void **bits, UINT *usage )
+{
+    BRUSHOBJ *brush;
+    BOOL ret = FALSE;
+
+    if (!(brush = GDI_GetObjPtr( handle, OBJ_BRUSH ))) return FALSE;
+
+    if (brush->pattern.info)
+    {
+        memcpy( info, brush->pattern.info, get_dib_info_size( brush->pattern.info, brush->pattern.usage ));
+        if (info->bmiHeader.biBitCount <= 8 && !info->bmiHeader.biClrUsed)
+            fill_default_color_table( info );
+        *bits = brush->pattern.bits.ptr;
+        *usage = brush->pattern.usage;
+        ret = TRUE;
+    }
+    GDI_ReleaseObj( handle );
+    return ret;
+}
+
 
 /***********************************************************************
  *           CreateBrushIndirect    (GDI32.@)
@@ -113,60 +194,19 @@ HBRUSH WINAPI CreateBrushIndirect( const LOGBRUSH * brush )
 {
     BRUSHOBJ * ptr;
     HBRUSH hbrush;
-    HGLOBAL hmem = 0;
 
-    if (!(ptr = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*ptr) ))) return 0;
+    if (!(ptr = HeapAlloc( GetProcessHeap(), 0, sizeof(*ptr) ))) return 0;
 
     ptr->logbrush = *brush;
 
-    switch (ptr->logbrush.lbStyle)
-    {
-    case BS_SOLID:
-    case BS_HOLLOW:
-    case BS_HATCHED:
-        break;
-
-    case BS_PATTERN8X8:
-        ptr->logbrush.lbStyle = BS_PATTERN;
-        /* fall through */
-    case BS_PATTERN:
-        ptr->bitmap = BITMAP_CopyBitmap( (HBITMAP)ptr->logbrush.lbHatch );
-        if (!ptr->bitmap) goto error;
-        ptr->logbrush.lbHatch = (ULONG_PTR)ptr->bitmap;
-        ptr->logbrush.lbColor = 0;
-        break;
-
-    case BS_DIBPATTERN:
-        hmem = (HGLOBAL)ptr->logbrush.lbHatch;
-        if (!(ptr->logbrush.lbHatch = (ULONG_PTR)GlobalLock( hmem ))) goto error;
-        /* fall through */
-    case BS_DIBPATTERNPT:
-        ptr->usage = ptr->logbrush.lbColor;
-        ptr->info = copy_packed_dib( (BITMAPINFO *)ptr->logbrush.lbHatch, ptr->usage );
-        if (hmem) GlobalUnlock( hmem );
-        if (!ptr->info) goto error;
-        ptr->bits.ptr = (char *)ptr->info + bitmap_info_size( ptr->info, ptr->usage );
-        ptr->logbrush.lbStyle = BS_DIBPATTERN;
-        ptr->logbrush.lbHatch = (ULONG_PTR)ptr->info;
-        break;
-
-    case BS_DIBPATTERN8X8:
-    case BS_MONOPATTERN:
-    case BS_INDEXED:
-    default:
-        WARN( "invalid brush style %u\n", ptr->logbrush.lbStyle );
-        goto error;
-    }
-
-    if ((hbrush = alloc_gdi_handle( &ptr->header, OBJ_BRUSH, &brush_funcs )))
+    if (store_brush_pattern( &ptr->logbrush, &ptr->pattern ) &&
+        (hbrush = alloc_gdi_handle( ptr, OBJ_BRUSH, &brush_funcs )))
     {
         TRACE("%p\n", hbrush);
         return hbrush;
     }
 
- error:
-    if (ptr->bitmap) DeleteObject( ptr->bitmap );
-    HeapFree( GetProcessHeap(), 0, ptr->info );
+    free_brush_pattern( &ptr->pattern );
     HeapFree( GetProcessHeap(), 0, ptr );
     return 0;
 }
@@ -397,36 +437,14 @@ static HGDIOBJ BRUSH_SelectObject( HGDIOBJ handle, HDC hdc )
     if ((brush = GDI_GetObjPtr( handle, OBJ_BRUSH )))
     {
         PHYSDEV physdev = GET_DC_PHYSDEV( dc, pSelectBrush );
-        HBITMAP bitmap = brush->bitmap;
-        BITMAPINFO *info;
-        void *bits;
-        UINT usage;
+        struct brush_pattern *pattern = &brush->pattern;
 
-        if (bitmap && !brush->info)
-        {
-            BITMAPOBJ *bmp = GDI_GetObjPtr( bitmap, OBJ_BITMAP );
-            /* fetch the bitmap bits if we are selecting into a different type of DC */
-            if (bmp && bmp->funcs != physdev->funcs) store_bitmap_bits( brush, bmp );
-            GDI_ReleaseObj( bitmap );
-        }
-        if (brush->logbrush.lbStyle == BS_PATTERN)
-        {
-            PHYSDEV pattern_dev = physdev;
-            /* FIXME: This will go away once the dib driver implements
-               pattern brushes */
-            if(pattern_dev == dc->dibdrv)
-                pattern_dev = GET_NEXT_PHYSDEV( physdev, pSelectBrush );
+        if (!pattern->info) pattern = NULL;
 
-            BITMAP_SetOwnerDC( (HBITMAP)brush->logbrush.lbHatch, pattern_dev );
-        }
-
-        info   = brush->info;
-        bits   = brush->bits.ptr;
-        usage  = brush->usage;
         GDI_inc_ref_count( handle );
         GDI_ReleaseObj( handle );
 
-        if (!physdev->funcs->pSelectBrush( physdev, handle, bitmap, info, bits, usage ))
+        if (!physdev->funcs->pSelectBrush( physdev, handle, pattern ))
         {
             GDI_dec_ref_count( handle );
         }
@@ -450,9 +468,7 @@ static BOOL BRUSH_DeleteObject( HGDIOBJ handle )
     BRUSHOBJ *brush = free_gdi_handle( handle );
 
     if (!brush) return FALSE;
-    if (brush->bits.free) brush->bits.free( &brush->bits );
-    if (brush->bitmap) DeleteObject( brush->bitmap );
-    HeapFree( GetProcessHeap(), 0, brush->info );
+    free_brush_pattern( &brush->pattern );
     return HeapFree( GetProcessHeap(), 0, brush );
 }
 

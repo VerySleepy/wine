@@ -36,6 +36,7 @@
  */
 
 #define WIN32_LEAN_AND_MEAN
+#define COBJMACROS
 
 #include "config.h"
 #include "wine/port.h"
@@ -44,6 +45,7 @@
 
 #include <windows.h>
 #include <shlwapi.h>
+#include <urlmon.h>
 #include <ddeml.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -64,15 +66,6 @@ static char *strdup_unixcp( const WCHAR *str )
     if ((ret = HeapAlloc( GetProcessHeap(), 0, len )))
         WideCharToMultiByte( CP_UNIXCP, 0, str, -1, ret, len, NULL, NULL );
     return ret;
-}
-
-static WCHAR *strdupW( const WCHAR *src )
-{
-    WCHAR *dst;
-    if (!src) return NULL;
-    if ((dst = HeapAlloc( GetProcessHeap(), 0, (strlenW( src ) + 1) * sizeof(WCHAR) )))
-        strcpyW( dst, src );
-    return dst;
 }
 
 /* try to launch a unix app from a comma separated string of app names */
@@ -97,7 +90,7 @@ static int launch_app( WCHAR *candidates, const WCHAR *argv1 )
         argv_new[1] = cmdline;
         argv_new[2] = NULL;
 
-        spawnvp( _P_OVERLAY, app, argv_new );  /* only returns on error */
+        _spawnvp( _P_OVERLAY, app, argv_new );  /* only returns on error */
         app = strtok( NULL, "," );  /* grab the next app */
     }
     WINE_ERR( "could not find a suitable app to run\n" );
@@ -316,6 +309,100 @@ done:
     return ret;
 }
 
+static WCHAR *encode_unix_path(const char *src)
+{
+    const char *tmp_src;
+    WCHAR *dst, *tmp_dst;
+    const char safe_chars[] = "/-_.~@&=+$,:";
+    const char hex_digits[] = "0123456789ABCDEF";
+    const WCHAR schema[] = {'f','i','l','e',':','/','/',0};
+    int len = sizeof(schema)/sizeof(schema[0]);
+
+    tmp_src = src;
+
+    while (*tmp_src != 0)
+    {
+        if ((*tmp_src >= 'a' && *tmp_src <= 'z') ||
+            (*tmp_src >= 'A' && *tmp_src <= 'Z') ||
+            (*tmp_src >= '0' && *tmp_src <= '9') ||
+            strchr(safe_chars, *tmp_src))
+            len += 1;
+        else
+            len += 3;
+        tmp_src++;
+    }
+
+    dst = HeapAlloc(GetProcessHeap(), 0, len*sizeof(WCHAR));
+
+    if (!dst)
+        return NULL;
+
+    strcpyW(dst, schema);
+
+    tmp_src = src;
+    tmp_dst = dst + strlenW(dst);
+
+    while (*tmp_src != 0)
+    {
+        if ((*tmp_src >= 'a' && *tmp_src <= 'z') ||
+            (*tmp_src >= 'A' && *tmp_src <= 'Z') ||
+            (*tmp_src >= '0' && *tmp_src <= '9') ||
+            strchr(safe_chars, *tmp_src))
+        {
+            *tmp_dst++ = *tmp_src;
+        }
+        else
+        {
+            *tmp_dst++ = '%';
+            *tmp_dst++ = hex_digits[*(unsigned char*)(tmp_src) / 16];
+            *tmp_dst++ = hex_digits[*tmp_src & 0xf];
+        }
+        tmp_src++;
+    }
+
+    *tmp_dst = 0;
+
+    return dst;
+}
+
+static WCHAR *convert_file_uri(IUri *uri)
+{
+    wine_get_unix_file_name_t wine_get_unix_file_name_ptr;
+    struct stat dummy;
+    WCHAR *new_path;
+    char *unixpath;
+    BSTR filename;
+    HRESULT hres;
+
+    /* check if the argument is a local file */
+    wine_get_unix_file_name_ptr = (wine_get_unix_file_name_t)
+           GetProcAddress( GetModuleHandleA( "KERNEL32" ), "wine_get_unix_file_name" );
+    if(!wine_get_unix_file_name_ptr)
+        return NULL;
+
+    hres = IUri_GetPath(uri, &filename);
+    if(FAILED(hres))
+        return NULL;
+
+    WINE_TRACE("Windows path: %s\n", wine_dbgstr_w(filename));
+
+    unixpath = wine_get_unix_file_name_ptr(filename);
+    SysFreeString(filename);
+    if(unixpath && stat(unixpath, &dummy) >= 0) {
+        WINE_TRACE("Unix path: %s\n", wine_dbgstr_a(unixpath));
+        new_path = encode_unix_path(unixpath);
+        HeapFree(GetProcessHeap(), 0, unixpath);
+    }else {
+        WINE_WARN("File %s does not exist\n", wine_dbgstr_a(unixpath));
+        HeapFree(GetProcessHeap(), 0, unixpath);
+        new_path = NULL;
+    }
+
+    WINE_TRACE("New path: %s\n", wine_dbgstr_w(new_path));
+
+    return new_path;
+}
+
 /*****************************************************************************
  * Main entry point. This is a console application so we have a wmain() not a
  * winmain().
@@ -323,11 +410,12 @@ done:
 int wmain(int argc, WCHAR *argv[])
 {
     static const WCHAR nohomeW[] = {'-','n','o','h','o','m','e',0};
-    static const WCHAR mailtoW[] = {'m','a','i','l','t','o',':',0};
-    static const WCHAR fileW[] = {'f','i','l','e',':',0};
 
-    WCHAR *p, *filenameW = NULL, *fileurlW = NULL, *url = argv[1];
-    wine_get_unix_file_name_t wine_get_unix_file_name_ptr;
+    WCHAR *url = argv[1];
+    BSTR display_uri = NULL;
+    DWORD scheme;
+    IUri *uri;
+    HRESULT hres;
     int ret = 1;
 
     /* DDE used only if -nohome is specified; avoids delay in printing usage info
@@ -335,103 +423,43 @@ int wmain(int argc, WCHAR *argv[])
     if (url && !strcmpiW( url, nohomeW ))
         url = argc > 2 ? argv[2] : get_url_from_dde();
 
-    if (!url)
-    {
+    if (!url) {
         WINE_ERR( "Usage: winebrowser URL\n" );
-        goto done;
+        return -1;
     }
 
-    /* handle an RFC1738 file URL */
-    if (!strncmpiW( url, fileW, 5 ))
-    {
-        DWORD len = strlenW( url ) + 1;
+    hres = CreateUri(url, Uri_CREATE_ALLOW_IMPLICIT_FILE_SCHEME|Uri_CREATE_FILE_USE_DOS_PATH, 0, &uri);
+    if(FAILED(hres)) {
+        WINE_ERR("Failed to parse URL\n");
+        ret = open_http_url(url);
+        HeapFree(GetProcessHeap(), 0, ddeString);
+        return ret;
+    }
 
-        if (UrlUnescapeW( url, NULL, &len, URL_UNESCAPE_INPLACE ) != S_OK)
-        {
-            WINE_ERR( "unescaping URL failed: %s\n", wine_dbgstr_w(url) );
-            goto done;
-        }
+    HeapFree(GetProcessHeap(), 0, ddeString);
+    IUri_GetScheme(uri, &scheme);
 
-        /* look for a Windows path after 'file:' */
-        p = url + 5;
-        while (*p)
-        {
-            if (isalphaW( p[0] ) && (p[1] == ':' || p[1] == '|')) break;
-            p++;
-        }
-        if (!*p)
-        {
-            WINE_ERR( "no valid Windows path in: %s\n", wine_dbgstr_w(url) );
-            goto done;
-        }
-
-        if (p[1] == '|') p[1] = ':';
-        url = p;
- 
-        while (*p)
-        {
-            if (*p == '/') *p = '\\';
-            p++;
+    if(scheme == URL_SCHEME_FILE) {
+        display_uri = convert_file_uri(uri);
+        if(!display_uri) {
+            WINE_ERR("Failed to convert file URL to unix path\n");
         }
     }
 
-    /* check if the argument is a local file */
-    wine_get_unix_file_name_ptr = (wine_get_unix_file_name_t)
-        GetProcAddress( GetModuleHandleA( "KERNEL32" ), "wine_get_unix_file_name" );
+    if (!display_uri)
+        hres = IUri_GetDisplayUri(uri, &display_uri);
+    IUri_Release(uri);
+    if(FAILED(hres))
+        return -1;
 
-    if (wine_get_unix_file_name_ptr == NULL)
-    {
-        WINE_ERR( "cannot get the address of 'wine_get_unix_file_name'\n" );
-    }
-    else
-    {
-        char *unixpath;
-        WCHAR c = 0;
+    WINE_TRACE("opening %s\n", wine_dbgstr_w(display_uri));
 
-        if (!(filenameW = strdupW( url ))) goto done;
-        if ((p = strchrW( filenameW, '?' )) || (p = strchrW( filenameW, '#' )))
-        {
-            c = *p;
-            *p = 0;
-        }
-
-        if ((unixpath = wine_get_unix_file_name_ptr( filenameW )))
-        {
-            struct stat dummy;
-            if (stat( unixpath, &dummy ) >= 0)
-            {
-                static const WCHAR schemeW[] = {'f','i','l','e',':','/','/',0};
-                int len, len_scheme;
-
-                len = len_scheme = strlenW( schemeW );
-                len += MultiByteToWideChar( CP_UNIXCP, 0, unixpath, -1, NULL, 0 );
-                if (p)
-                {
-                    *p = c;
-                    len += strlenW( p );
-                }
-
-                if (!(fileurlW = HeapAlloc( GetProcessHeap(), 0, len * sizeof(WCHAR) ))) goto done;
-
-                strcpyW( fileurlW, schemeW );
-                MultiByteToWideChar( CP_UNIXCP, 0, unixpath, -1, fileurlW + len_scheme, len - len_scheme );
-                if (p) strcatW( fileurlW, p );
-
-                ret = open_http_url( fileurlW );
-                goto done;
-            }
-        }
-    }
-
-    if (!strncmpiW( url, mailtoW, 7 ))
-        ret = open_mailto_url( url );
+    if(scheme == URL_SCHEME_MAILTO)
+        ret = open_mailto_url(display_uri);
     else
         /* let the browser decide how to handle the given url */
-        ret = open_http_url( url );
+        ret = open_http_url(display_uri);
 
-done:
-    HeapFree(GetProcessHeap(), 0, ddeString);
-    HeapFree( GetProcessHeap(), 0, filenameW );
-    HeapFree( GetProcessHeap(), 0, fileurlW );
+    SysFreeString(display_uri);
     return ret;
 }

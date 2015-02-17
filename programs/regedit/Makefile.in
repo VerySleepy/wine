@@ -2,9 +2,6 @@ MODULE    = regedit.exe
 APPMODE   = -mwindows -mno-cygwin
 IMPORTS   = advapi32
 DELAYIMPORTS = shlwapi shell32 comdlg32 comctl32 user32 gdi32
-EXTRAINCL = -I$(top_srcdir)/include/msvcrt
-EXTRADEFS = -DNO_LIBWINE_PORT -DWINE_NO_UNICODE_MACROS
-MODCFLAGS = @BUILTINFLAG@
 
 C_SRCS = \
 	about.c \
@@ -18,37 +15,8 @@ C_SRCS = \
 	regproc.c \
 	treeview.c
 
-RC_SRCS = \
-	Bg.rc \
-	Cs.rc \
-	Da.rc \
-	De.rc \
-	En.rc \
-	Es.rc \
-	Fr.rc \
-	He.rc \
-	Hu.rc \
-	It.rc \
-	Ja.rc \
-	Ko.rc \
-	Lt.rc \
-	Nl.rc \
-	No.rc \
-	Pl.rc \
-	Pt.rc \
-	Ro.rc \
-	Ru.rc \
-	Si.rc \
-	Sv.rc \
-	Tr.rc \
-	Uk.rc \
-	Zh.rc \
-	regedit.rc
+RC_SRCS = regedit.rc
 
-PO_SRCS = regedit.rc
-
-MANPAGE = regedit.man
+MANPAGES = regedit.man.in
 
 SVG_SRCS = regedit.svg
-
-@MAKE_PROG_RULES@

@@ -22,7 +22,6 @@
 
 #include <stdlib.h>
 
-#include "wine/winbase16.h"
 #include "x11drv.h"
 #include "wine/debug.h"
 
@@ -110,19 +109,23 @@ static Pixmap BRUSH_DitherColor( COLORREF color, int depth)
     static COLORREF prevColor = 0xffffffff;
     unsigned int x, y;
     Pixmap pixmap;
-    GC gc = get_bitmap_gc(depth);
+    GC gc;
 
+    XLockDisplay( gdi_display );
     if (!ditherImage)
     {
-        ditherImage = X11DRV_DIB_CreateXImage( MATRIX_SIZE, MATRIX_SIZE, depth );
-        if (!ditherImage) 
+        ditherImage = XCreateImage( gdi_display, default_visual.visual, depth, ZPixmap, 0,
+                                    NULL, MATRIX_SIZE, MATRIX_SIZE, 32, 0 );
+        if (!ditherImage)
         {
             ERR("Could not create dither image\n");
+            XUnlockDisplay( gdi_display );
             return 0;
         }
+        ditherImage->data = HeapAlloc( GetProcessHeap(), 0,
+                                       ditherImage->height * ditherImage->bytes_per_line );
     }
 
-    wine_tsx11_lock();
     if (color != prevColor)
     {
 	int r = GetRValue( color ) * DITHER_LEVELS;
@@ -145,9 +148,10 @@ static Pixmap BRUSH_DitherColor( COLORREF color, int depth)
     }
 
     pixmap = XCreatePixmap( gdi_display, root_window, MATRIX_SIZE, MATRIX_SIZE, depth );
-    XPutImage( gdi_display, pixmap, gc, ditherImage, 0, 0,
-    	       0, 0, MATRIX_SIZE, MATRIX_SIZE );
-    wine_tsx11_unlock();
+    gc = XCreateGC( gdi_display, pixmap, 0, NULL );
+    XPutImage( gdi_display, pixmap, gc, ditherImage, 0, 0, 0, 0, MATRIX_SIZE, MATRIX_SIZE );
+    XFreeGC( gdi_display, gc );
+    XUnlockDisplay( gdi_display );
 
     return pixmap;
 }
@@ -166,16 +170,9 @@ static Pixmap BRUSH_DitherMono( COLORREF color )
     };                                      
     int gray = (30 * GetRValue(color) + 59 * GetGValue(color) + 11 * GetBValue(color)) / 100;
     int idx = gray * (sizeof gray_dither/sizeof gray_dither[0] + 1)/256 - 1;
-    Pixmap pixmap;
 
     TRACE("color=%06x -> gray=%x\n", color, gray);
-
-    wine_tsx11_lock();
-    pixmap = XCreateBitmapFromData( gdi_display, root_window, 
-                                    gray_dither[idx],
-                                    2, 2 );
-    wine_tsx11_unlock();
-    return pixmap;
+    return XCreateBitmapFromData( gdi_display, root_window, gray_dither[idx], 2, 2 );
 }
 
 /***********************************************************************
@@ -184,7 +181,7 @@ static Pixmap BRUSH_DitherMono( COLORREF color )
 static void BRUSH_SelectSolidBrush( X11DRV_PDEVICE *physDev, COLORREF color )
 {
     COLORREF colorRGB = X11DRV_PALETTE_GetColor( physDev, color );
-    if ((physDev->depth > 1) && (screen_depth <= 8) && !X11DRV_IsSolidColor( color ))
+    if ((physDev->depth > 1) && (default_visual.depth <= 8) && !X11DRV_IsSolidColor( color ))
     {
 	  /* Dithered brush */
 	physDev->brush.pixmap = BRUSH_DitherColor( colorRGB, physDev->depth );
@@ -206,85 +203,48 @@ static void BRUSH_SelectSolidBrush( X11DRV_PDEVICE *physDev, COLORREF color )
 }
 
 
-/***********************************************************************
- *           BRUSH_SelectPatternBrush
- */
-static BOOL BRUSH_SelectPatternBrush( X11DRV_PDEVICE *physDev, HBITMAP hbitmap )
+static BOOL select_pattern_brush( X11DRV_PDEVICE *physdev, const struct brush_pattern *pattern )
 {
-    BITMAP bitmap;
-    X_PHYSBITMAP *physBitmap = X11DRV_get_phys_bitmap( hbitmap );
+    XVisualInfo vis = default_visual;
+    Pixmap pixmap;
+    const BITMAPINFO *info = pattern->info;
 
-    if (!physBitmap || !GetObjectW( hbitmap, sizeof(bitmap), &bitmap )) return FALSE;
+    if (physdev->depth == 1 || info->bmiHeader.biBitCount == 1) vis.depth = 1;
 
-    X11DRV_DIB_Lock( physBitmap, DIB_Status_GdiMod );
+    pixmap = create_pixmap_from_image( physdev->dev.hdc, &vis, info, &pattern->bits, pattern->usage );
+    if (!pixmap) return FALSE;
 
-    if ((physDev->depth == 1) && (physBitmap->depth != 1))
+    if (physdev->brush.pixmap) XFreePixmap( gdi_display, physdev->brush.pixmap );
+    physdev->brush.pixmap = pixmap;
+
+    if (vis.depth == 1)
     {
-        wine_tsx11_lock();
-        /* Special case: a color pattern on a monochrome DC */
-        physDev->brush.pixmap = XCreatePixmap( gdi_display, root_window,
-                                               bitmap.bmWidth, bitmap.bmHeight, 1);
-        /* FIXME: should probably convert to monochrome instead */
-        XCopyPlane( gdi_display, physBitmap->pixmap, physDev->brush.pixmap,
-                    get_bitmap_gc(1), 0, 0, bitmap.bmWidth, bitmap.bmHeight, 0, 0, 1 );
-        wine_tsx11_unlock();
+	physdev->brush.fillStyle = FillOpaqueStippled;
+	physdev->brush.pixel = -1;  /* Special case (see DC_SetupGCForBrush) */
     }
     else
     {
-        /* XRender is needed because of possible depth conversion */
-        X11DRV_XRender_CopyBrush(physDev, physBitmap, bitmap.bmWidth, bitmap.bmHeight);
-    }
-
-    X11DRV_DIB_Unlock( physBitmap, TRUE );
-
-    if (physBitmap->depth > 1)
-    {
-	physDev->brush.fillStyle = FillTiled;
-	physDev->brush.pixel = 0;  /* Ignored */
-    }
-    else
-    {
-	physDev->brush.fillStyle = FillOpaqueStippled;
-	physDev->brush.pixel = -1;  /* Special case (see DC_SetupGCForBrush) */
+	physdev->brush.fillStyle = FillTiled;
+	physdev->brush.pixel = 0;  /* Ignored */
     }
     return TRUE;
 }
 
-
-/***********************************************************************
- *           BRUSH_SelectDIBPatternBrush
- */
-static BOOL BRUSH_SelectDIBPatternBrush( X11DRV_PDEVICE *physDev, const BITMAPINFO *info )
-{
-    BOOL ret;
-    HDC memdc;
-    HBITMAP bitmap = CreateDIBitmap( physDev->dev.hdc, &info->bmiHeader, CBM_INIT,
-                                     (LPBYTE)info + bitmap_info_size( info, DIB_RGB_COLORS ),
-                                     info, DIB_RGB_COLORS );
-
-    /* make sure it's owned by x11drv */
-    memdc = CreateCompatibleDC( physDev->dev.hdc );
-    SelectObject( memdc, bitmap );
-    DeleteDC( memdc );
-
-    if ((ret = BRUSH_SelectPatternBrush( physDev, bitmap )))
-    {
-        X_PHYSBITMAP *physBitmap = X11DRV_get_phys_bitmap( bitmap );
-        physBitmap->pixmap = 0;  /* so it doesn't get freed */
-    }
-    DeleteObject( bitmap );
-    return ret;
-}
-
-
 /***********************************************************************
  *           SelectBrush   (X11DRV.@)
  */
-HBRUSH X11DRV_SelectBrush( PHYSDEV dev, HBRUSH hbrush, HBITMAP bitmap,
-                           const BITMAPINFO *info, void *bits, UINT usage )
+HBRUSH X11DRV_SelectBrush( PHYSDEV dev, HBRUSH hbrush, const struct brush_pattern *pattern )
 {
     X11DRV_PDEVICE *physDev = get_x11drv_dev( dev );
     LOGBRUSH logbrush;
+
+    if (pattern)  /* pattern brush */
+    {
+        if (!select_pattern_brush( physDev, pattern )) return 0;
+        TRACE("BS_PATTERN\n");
+        physDev->brush.style = BS_PATTERN;
+        return hbrush;
+    }
 
     if (!GetObjectA( hbrush, sizeof(logbrush), &logbrush )) return 0;
 
@@ -292,9 +252,7 @@ HBRUSH X11DRV_SelectBrush( PHYSDEV dev, HBRUSH hbrush, HBITMAP bitmap,
 
     if (physDev->brush.pixmap)
     {
-        wine_tsx11_lock();
         XFreePixmap( gdi_display, physDev->brush.pixmap );
-        wine_tsx11_unlock();
         physDev->brush.pixmap = 0;
     }
     physDev->brush.style = logbrush.lbStyle;
@@ -315,21 +273,9 @@ HBRUSH X11DRV_SelectBrush( PHYSDEV dev, HBRUSH hbrush, HBITMAP bitmap,
       case BS_HATCHED:
 	TRACE("BS_HATCHED\n" );
 	physDev->brush.pixel = X11DRV_PALETTE_ToPhysical( physDev, logbrush.lbColor );
-        wine_tsx11_lock();
         physDev->brush.pixmap = XCreateBitmapFromData( gdi_display, root_window,
                                                        HatchBrushes[logbrush.lbHatch], 8, 8 );
-        wine_tsx11_unlock();
 	physDev->brush.fillStyle = FillStippled;
-	break;
-
-      case BS_PATTERN:
-	TRACE("BS_PATTERN\n");
-	if (!BRUSH_SelectPatternBrush( physDev, (HBITMAP)logbrush.lbHatch )) return 0;
-	break;
-
-      case BS_DIBPATTERN:
-	TRACE("BS_DIBPATTERN\n");
-	if (!BRUSH_SelectDIBPatternBrush( physDev, (BITMAPINFO *)logbrush.lbHatch )) return 0;
 	break;
     }
     return hbrush;

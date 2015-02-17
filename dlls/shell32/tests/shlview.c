@@ -170,7 +170,7 @@ static HRESULT WINAPI IDataObjectImpl_QueryInterface(IDataObject *iface, REFIID 
 
     if(*ppvObj)
     {
-        IUnknown_AddRef(iface);
+        IDataObject_AddRef(iface);
         return S_OK;
     }
 
@@ -302,7 +302,7 @@ static HRESULT WINAPI IShellBrowserImpl_QueryInterface(IShellBrowser *iface,
 
     if(*ppvObj)
     {
-        IUnknown_AddRef(iface);
+        IShellBrowser_AddRef(iface);
         return S_OK;
     }
 
@@ -482,11 +482,6 @@ static const struct message folderview_getselectionmarked_seq[] = {
 
 static const struct message folderview_getfocused_seq[] = {
     { LVM_GETNEXTITEM, sent|wparam|lparam|optional, -1, LVNI_FOCUSED },
-    { 0 }
-};
-
-static const struct message folderview_itemcount_seq[] = {
-    { LVM_GETITEMCOUNT, sent },
     { 0 }
 };
 

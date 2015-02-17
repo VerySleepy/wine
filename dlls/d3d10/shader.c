@@ -93,9 +93,9 @@ static struct ID3D10ShaderReflectionConstantBuffer * STDMETHODCALLTYPE d3d10_sha
 }
 
 static struct ID3D10ShaderReflectionConstantBuffer * STDMETHODCALLTYPE d3d10_shader_reflection_GetConstantBufferByName(
-        ID3D10ShaderReflection *iface, LPCSTR name)
+        ID3D10ShaderReflection *iface, const char *name)
 {
-    FIXME("iface %p, name \"%s\" stub!\n", iface, name);
+    FIXME("iface %p, name %s stub!\n", iface, debugstr_a(name));
 
     return NULL;
 }
@@ -130,7 +130,7 @@ const struct ID3D10ShaderReflectionVtbl d3d10_shader_reflection_vtbl =
     d3d10_shader_reflection_QueryInterface,
     d3d10_shader_reflection_AddRef,
     d3d10_shader_reflection_Release,
-    /* ID3D10Effect methods */
+    /* ID3D10ShaderReflection methods */
     d3d10_shader_reflection_GetDesc,
     d3d10_shader_reflection_GetConstantBufferByIndex,
     d3d10_shader_reflection_GetConstantBufferByName,
@@ -146,4 +146,13 @@ HRESULT WINAPI D3D10CompileShader(const char *data, SIZE_T data_size, const char
     /* Forward to d3dcompiler */
     return D3DCompile(data, data_size, filename, defines, include,
             entrypoint, profile, flags, 0, shader, error_messages);
+}
+
+HRESULT WINAPI D3D10DisassembleShader(const void *data, SIZE_T data_size,
+        BOOL color_code, const char *comments, ID3D10Blob **disassembly)
+{
+    TRACE("data %p, data_size %#lx, color_code %#x, comments %p, disassembly %p.\n",
+            data, data_size, color_code, comments, disassembly);
+
+    return D3DDisassemble(data, data_size, color_code ? D3D_DISASM_ENABLE_COLOR_CODE : 0, comments, disassembly);
 }

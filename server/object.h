@@ -68,9 +68,9 @@ struct object_ops
     /* remove a thread from the object wait queue */
     void (*remove_queue)(struct object *,struct wait_queue_entry *);
     /* is object signaled? */
-    int  (*signaled)(struct object *,struct thread *);
-    /* wait satisfied; return 1 if abandoned */
-    int  (*satisfied)(struct object *,struct thread *);
+    int  (*signaled)(struct object *,struct wait_queue_entry *);
+    /* wait satisfied */
+    void (*satisfied)(struct object *,struct wait_queue_entry *);
     /* signal an object */
     int  (*signal)(struct object *, unsigned int);
     /* return an fd object that can be used to read/write from the object */
@@ -106,9 +106,9 @@ struct object
 
 struct wait_queue_entry
 {
-    struct list     entry;
-    struct object  *obj;
-    struct thread  *thread;
+    struct list         entry;
+    struct object      *obj;
+    struct thread_wait *wait;
 };
 
 extern void *mem_alloc( size_t size );  /* malloc wrapper */
@@ -133,12 +133,14 @@ extern struct object *find_object( const struct namespace *namespace, const stru
 extern struct object *find_object_index( const struct namespace *namespace, unsigned int index );
 extern struct object_type *no_get_type( struct object *obj );
 extern int no_add_queue( struct object *obj, struct wait_queue_entry *entry );
-extern int no_satisfied( struct object *obj, struct thread *thread );
+extern void no_satisfied( struct object *obj, struct wait_queue_entry *entry );
 extern int no_signal( struct object *obj, unsigned int access );
 extern struct fd *no_get_fd( struct object *obj );
 extern unsigned int no_map_access( struct object *obj, unsigned int access );
 extern struct security_descriptor *default_get_sd( struct object *obj );
 extern int default_set_sd( struct object *obj, const struct security_descriptor *sd, unsigned int set_info );
+extern int set_sd_defaults_from_token( struct object *obj, const struct security_descriptor *sd,
+                                       unsigned int set_info, struct token *token );
 extern struct object *no_lookup_name( struct object *obj, struct unicode_str *name, unsigned int attributes );
 extern struct object *no_open_file( struct object *obj, unsigned int access, unsigned int sharing,
                                     unsigned int options );
@@ -152,11 +154,16 @@ extern void close_objects(void);
 /* event functions */
 
 struct event;
+struct keyed_event;
 
 extern struct event *create_event( struct directory *root, const struct unicode_str *name,
                                    unsigned int attr, int manual_reset, int initial_state,
                                    const struct security_descriptor *sd );
+extern struct keyed_event *create_keyed_event( struct directory *root, const struct unicode_str *name,
+                                               unsigned int attr, const struct security_descriptor *sd );
+extern obj_handle_t alloc_wait_event( struct process *process );
 extern struct event *get_event_obj( struct process *process, obj_handle_t handle, unsigned int access );
+extern struct keyed_event *get_keyed_event_obj( struct process *process, obj_handle_t handle, unsigned int access );
 extern void pulse_event( struct event *event );
 extern void set_event( struct event *event );
 extern void reset_event( struct event *event );
@@ -231,5 +238,9 @@ extern const char *server_argv0;
 
   /* server start time used for GetTickCount() */
 extern timeout_t server_start_time;
+
+#define KEYEDEVENT_WAIT       0x0001
+#define KEYEDEVENT_WAKE       0x0002
+#define KEYEDEVENT_ALL_ACCESS (STANDARD_RIGHTS_REQUIRED | 0x0003)
 
 #endif  /* __WINE_SERVER_OBJECT_H */

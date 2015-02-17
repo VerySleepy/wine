@@ -61,7 +61,13 @@ typedef PRTL_CRITICAL_SECTION_DEBUG LPCRITICAL_SECTION_DEBUG;
 typedef RTL_SRWLOCK SRWLOCK;
 typedef PRTL_SRWLOCK PSRWLOCK;
 
+#define SRWLOCK_INIT RTL_SRWLOCK_INIT
+
 typedef WAITORTIMERCALLBACKFUNC WAITORTIMERCALLBACK;
+
+#define CONDITION_VARIABLE_INIT RTL_CONDITION_VARIABLE_INIT
+#define CONDITION_VARIABLE_LOCKMODE_SHARED RTL_CONDITION_VARIABLE_LOCKMODE_SHARED
+typedef RTL_CONDITION_VARIABLE CONDITION_VARIABLE, *PCONDITION_VARIABLE;
 
 #define EXCEPTION_DEBUG_EVENT       1
 #define CREATE_THREAD_DEBUG_EVENT   2
@@ -279,8 +285,12 @@ DECL_WINELIB_TYPE_AW(LPWIN32_FIND_DATA)
 typedef enum _FINDEX_INFO_LEVELS
 {
 	FindExInfoStandard,
+	FindExInfoBasic,
 	FindExInfoMaxInfoLevel
 } FINDEX_INFO_LEVELS;
+
+#define FIND_FIRST_EX_CASE_SENSITIVE 1
+#define FIND_FIRST_EX_LARGE_FETCH    2
 
 typedef enum _FINDEX_SEARCH_OPS
 {
@@ -668,6 +678,7 @@ typedef struct _TIME_ZONE_INFORMATION{
 #define CREATE_SEPARATE_WOW_VDM     0x00000800
 #define CREATE_SHARED_WOW_VDM       0x00001000
 #define STACK_SIZE_PARAM_IS_A_RESERVATION 0x00010000
+#define CREATE_BREAKAWAY_FROM_JOB   0x01000000
 #define CREATE_DEFAULT_ERROR_MODE   0x04000000
 #define CREATE_NO_WINDOW            0x08000000
 #define PROFILE_USER                0x10000000
@@ -696,17 +707,28 @@ typedef struct _TIME_ZONE_INFORMATION{
 #define FILE_READ_ONLY           8
 #define FILE_DIR_DISALOWED       9
 
+typedef DWORD (WINAPI *PFE_EXPORT_FUNC)(PBYTE,PVOID,ULONG);
+typedef DWORD (WINAPI *PFE_IMPORT_FUNC)(PBYTE,PVOID,ULONG);
+
+#define CREATE_FOR_IMPORT  (1)
+#define CREATE_FOR_DIR     (2)
+#define OVERWRITE_HIDDEN   (4)
+#define EFSRPC_SECURE_ONLY (8)
+
 /* File creation flags
  */
-#define FILE_FLAG_WRITE_THROUGH    0x80000000UL
-#define FILE_FLAG_OVERLAPPED 	   0x40000000L
-#define FILE_FLAG_NO_BUFFERING     0x20000000L
-#define FILE_FLAG_RANDOM_ACCESS    0x10000000L
-#define FILE_FLAG_SEQUENTIAL_SCAN  0x08000000L
-#define FILE_FLAG_DELETE_ON_CLOSE  0x04000000L
-#define FILE_FLAG_BACKUP_SEMANTICS 0x02000000L
-#define FILE_FLAG_POSIX_SEMANTICS  0x01000000L
-#define FILE_FLAG_OPEN_REPARSE_POINT 0x00200000L
+#define FILE_FLAG_WRITE_THROUGH         0x80000000
+#define FILE_FLAG_OVERLAPPED            0x40000000
+#define FILE_FLAG_NO_BUFFERING          0x20000000
+#define FILE_FLAG_RANDOM_ACCESS         0x10000000
+#define FILE_FLAG_SEQUENTIAL_SCAN       0x08000000
+#define FILE_FLAG_DELETE_ON_CLOSE       0x04000000
+#define FILE_FLAG_BACKUP_SEMANTICS      0x02000000
+#define FILE_FLAG_POSIX_SEMANTICS       0x01000000
+#define FILE_FLAG_OPEN_REPARSE_POINT    0x00200000
+#define FILE_FLAG_OPEN_NO_RECALL        0x00100000
+#define FILE_FLAG_FIRST_PIPE_INSTANCE   0x00080000
+
 #define CREATE_NEW              1
 #define CREATE_ALWAYS           2
 #define OPEN_EXISTING           3
@@ -732,6 +754,65 @@ typedef struct _BY_HANDLE_FILE_INFORMATION
   DWORD nFileIndexHigh;
   DWORD nFileIndexLow;
 } BY_HANDLE_FILE_INFORMATION, *PBY_HANDLE_FILE_INFORMATION, *LPBY_HANDLE_FILE_INFORMATION ;
+
+typedef enum _FILE_ID_TYPE {
+    FileIdType,
+    ObjectIdType,
+    ExtendedFileIdType,
+    MaximumFileIdType
+} FILE_ID_TYPE, *PFILE_ID_TYPE;
+
+typedef struct _FILE_ID_DESCRIPTOR {
+    DWORD        dwSize;
+    FILE_ID_TYPE Type;
+    union {
+        LARGE_INTEGER FileId;
+        GUID          ObjectId;
+    } DUMMYUNIONNAME;
+} FILE_ID_DESCRIPTOR, *LPFILE_ID_DESCRIPTOR;
+
+typedef enum _FILE_INFO_BY_HANDLE_CLASS {
+    FileBasicInfo,
+    FileStandardInfo,
+    FileNameInfo,
+    FileRenameInfo,
+    FileDispositionInfo,
+    FileAllocationInfo,
+    FileEndOfFileInfo,
+    FileStreamInfo,
+    FileCompressionInfo,
+    FileAttributeTagInfo,
+    FileIdBothDirectoryInfo,
+    FileIdBothDirectoryRestartInfo,
+    FileIoPriorityHintInfo,
+    FileRemoteProtocolInfo,
+    FileFullDirectoryInfo,
+    FileFullDirectoryRestartInfo,
+    FileStorageInfo,
+    FileAlignmentInfo,
+    FileIdInfo,
+    FileIdExtdDirectoryInfo,
+    FileIdExtdDirectoryRestartInfo,
+    MaximumFileInfoByHandlesClass
+} FILE_INFO_BY_HANDLE_CLASS, *PFILE_INFO_BY_HANDLE_CLASS;
+
+typedef struct _FILE_ID_BOTH_DIR_INFO {
+    DWORD         NextEntryOffset;
+    DWORD         FileIndex;
+    LARGE_INTEGER CreationTime;
+    LARGE_INTEGER LastAccessTime;
+    LARGE_INTEGER LastWriteTime;
+    LARGE_INTEGER ChangeTime;
+    LARGE_INTEGER EndOfFile;
+    LARGE_INTEGER AllocationSize;
+    DWORD         FileAttributes;
+    DWORD         FileNameLength;
+    DWORD         EaSize;
+    CCHAR         ShortNameLength;
+    WCHAR         ShortName[12];
+    LARGE_INTEGER FileId;
+    WCHAR         FileName[1];
+} FILE_ID_BOTH_DIR_INFO, *PFILE_ID_BOTH_DIR_INFO;
 
 #define PIPE_ACCESS_INBOUND  1
 #define PIPE_ACCESS_OUTBOUND 2
@@ -815,6 +896,11 @@ DECL_WINELIB_TYPE_AW(ENUMRESLANGPROC)
 #define LOAD_LIBRARY_AS_IMAGE_RESOURCE      0x00000020
 #define LOAD_LIBRARY_AS_DATAFILE_EXCLUSIVE  0x00000040
 #define LOAD_LIBRARY_REQUIRE_SIGNED_TARGET  0x00000080
+#define LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR    0x00000100
+#define LOAD_LIBRARY_SEARCH_APPLICATION_DIR 0x00000200
+#define LOAD_LIBRARY_SEARCH_USER_DIRS       0x00000400
+#define LOAD_LIBRARY_SEARCH_SYSTEM32        0x00000800
+#define LOAD_LIBRARY_SEARCH_DEFAULT_DIRS    0x00001000
 
 #define GET_MODULE_HANDLE_EX_FLAG_PIN                 1
 #define GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT  2
@@ -845,6 +931,119 @@ typedef DWORD (CALLBACK *LPPROGRESS_ROUTINE)(LARGE_INTEGER, LARGE_INTEGER, LARGE
 
 typedef DWORD (WINAPI *APPLICATION_RECOVERY_CALLBACK)(PVOID);
 
+typedef enum _COPYFILE2_MESSAGE_TYPE
+{
+    COPYFILE2_CALLBACK_NONE = 0,
+    COPYFILE2_CALLBACK_CHUNK_STARTED,
+    COPYFILE2_CALLBACK_CHUNK_FINISHED,
+    COPYFILE2_CALLBACK_STREAM_STARTED,
+    COPYFILE2_CALLBACK_STREAM_FINISHED,
+    COPYFILE2_CALLBACK_POLL_CONTINUE,
+    COPYFILE2_CALLBACK_ERROR,
+    COPYFILE2_CALLBACK_MAX,
+} COPYFILE2_MESSAGE_TYPE;
+
+typedef enum _COPYFILE2_MESSAGE_ACTION
+{
+    COPYFILE2_PROGRESS_CONTINUE = 0,
+    COPYFILE2_PROGRESS_CANCEL,
+    COPYFILE2_PROGRESS_STOP,
+    COPYFILE2_PROGRESS_QUIET,
+    COPYFILE2_PROGRESS_PAUSE,
+} COPYFILE2_MESSAGE_ACTION;
+
+typedef enum _COPYFILE2_COPY_PHASE
+{
+    COPYFILE2_PHASE_NONE = 0,
+    COPYFILE2_PHASE_PREPARE_SOURCE,
+    COPYFILE2_PHASE_PREPARE_DEST,
+    COPYFILE2_PHASE_READ_SOURCE,
+    COPYFILE2_PHASE_WRITE_DESTINATION,
+    COPYFILE2_PHASE_SERVER_COPY,
+    COPYFILE2_PHASE_NAMEGRAFT_COPY,
+    COPYFILE2_PHASE_MAX,
+} COPYFILE2_COPY_PHASE;
+
+typedef struct COPYFILE2_MESSAGE
+{
+    COPYFILE2_MESSAGE_TYPE Type;
+    DWORD                  dwPadding;
+    union
+    {
+        struct
+        {
+            DWORD          dwStreamNumber;
+            DWORD          dwReserved;
+            HANDLE         hSourceFile;
+            HANDLE         hDestinationFile;
+            ULARGE_INTEGER uliChunkNumber;
+            ULARGE_INTEGER uliChunkSize;
+            ULARGE_INTEGER uliStreamSize;
+            ULARGE_INTEGER uliTotalFileSize;
+        } ChunkStarted;
+        struct
+        {
+            DWORD          dwStreamNumber;
+            DWORD          dwFlags;
+            HANDLE         hSourceFile;
+            HANDLE         hDestinationFile;
+            ULARGE_INTEGER uliChunkNumber;
+            ULARGE_INTEGER uliChunkSize;
+            ULARGE_INTEGER uliStreamSize;
+            ULARGE_INTEGER uliStreamBytesTransferred;
+            ULARGE_INTEGER uliTotalFileSize;
+            ULARGE_INTEGER uliTotalBytesTransferred;
+        } ChunkFinished;
+        struct
+        {
+            DWORD          dwStreamNumber;
+            DWORD          dwReserved;
+            HANDLE         hSourceFile;
+            HANDLE         hDestinationFile;
+            ULARGE_INTEGER uliStreamSize;
+            ULARGE_INTEGER uliTotalFileSize;
+        } StreamStarted;
+        struct
+        {
+            DWORD          dwStreamNumber;
+            DWORD          dwReserved;
+            HANDLE         hSourceFile;
+            HANDLE         hDestinationFile;
+            ULARGE_INTEGER uliStreamSize;
+            ULARGE_INTEGER uliStreamBytesTransferred;
+            ULARGE_INTEGER uliTotalFileSize;
+            ULARGE_INTEGER uliTotalBytesTransferred;
+        } StreamFinished;
+        struct
+        {
+            DWORD dwReserved;
+        } PollContinue;
+        struct
+        {
+            COPYFILE2_COPY_PHASE CopyPhase;
+            DWORD                dwStreamNumber;
+            HRESULT              hrFailure;
+            DWORD                dwReserved;
+            ULARGE_INTEGER       uliChunkNumber;
+            ULARGE_INTEGER       uliStreamSize;
+            ULARGE_INTEGER       uliStreamBytesTransferred;
+            ULARGE_INTEGER       uliTotalFileSize;
+            ULARGE_INTEGER       uliTotalBytesTransferred;
+        } Error;
+    } Info;
+} COPYFILE2_MESSAGE;
+
+typedef COPYFILE2_MESSAGE_ACTION (CALLBACK *PCOPYFILE2_PROGRESS_ROUTINE)(const COPYFILE2_MESSAGE*,PVOID);
+
+typedef struct COPYFILE2_EXTENDED_PARAMETERS
+{
+    DWORD                        dwSize;
+    DWORD                        dwCopyFlags;
+    BOOL                        *pfCancel;
+    PCOPYFILE2_PROGRESS_ROUTINE  pProgressRoutine;
+    PVOID                        pvCallbackContext;
+} COPYFILE2_EXTENDED_PARAMETERS;
+
 #define CREATE_EVENT_MANUAL_RESET 1
 #define CREATE_EVENT_INITIAL_SET  2
 
@@ -857,7 +1056,6 @@ typedef DWORD (WINAPI *APPLICATION_RECOVERY_CALLBACK)(PVOID);
 #define WAIT_ABANDONED		STATUS_ABANDONED_WAIT_0
 #define WAIT_ABANDONED_0	STATUS_ABANDONED_WAIT_0
 #define WAIT_IO_COMPLETION	STATUS_USER_APC
-#define WAIT_TIMEOUT		STATUS_TIMEOUT
 #define STILL_ACTIVE            STATUS_PENDING
 
 #define FILE_BEGIN              0
@@ -884,6 +1082,9 @@ typedef DWORD (WINAPI *APPLICATION_RECOVERY_CALLBACK)(PVOID);
 #define FS_PERSISTENT_ACLS              FILE_PERSISTENT_ACLS
 #define FS_VOL_IS_COMPRESSED            FILE_VOLUME_IS_COMPRESSED
 #define FS_FILE_COMPRESSION             FILE_FILE_COMPRESSION
+
+#define MUTEX_MODIFY_STATE              MUTANT_QUERY_STATE
+#define MUTEX_ALL_ACCESS                MUTANT_ALL_ACCESS
 
 #define EXCEPTION_ACCESS_VIOLATION          STATUS_ACCESS_VIOLATION
 #define EXCEPTION_DATATYPE_MISALIGNMENT     STATUS_DATATYPE_MISALIGNMENT
@@ -1248,6 +1449,9 @@ typedef enum _DEP_SYSTEM_POLICY_TYPE {
     OptOut = 3
 } DEP_SYSTEM_POLICY_TYPE;
 
+#define PROCESS_DEP_ENABLE 1
+#define PROCESS_DEP_DISABLE_ATL_THUNK_EMULATION 2
+
 /* Event Logging */
 
 #define EVENTLOG_FULL_INFO          0
@@ -1310,6 +1514,39 @@ typedef struct _WIN32_STREAM_ID {
 #define LOGON_NETCREDENTIALS_ONLY   0x00000002
 #define LOGON_ZERO_PASSWORD_BUFFER  0x80000000
 
+/* one-time initialisation API */
+typedef RTL_RUN_ONCE  INIT_ONCE;
+typedef PRTL_RUN_ONCE PINIT_ONCE;
+typedef PRTL_RUN_ONCE LPINIT_ONCE;
+#define INIT_ONCE_STATIC_INIT       RTL_RUN_ONCE_INIT
+#define INIT_ONCE_CHECK_ONLY        RTL_RUN_ONCE_CHECK_ONLY
+#define INIT_ONCE_ASYNC             RTL_RUN_ONCE_ASYNC
+#define INIT_ONCE_INIT_FAILED       RTL_RUN_ONCE_INIT_FAILED
+/* initialization callback prototype */
+typedef BOOL (WINAPI *PINIT_ONCE_FN)(PINIT_ONCE,PVOID,PVOID*);
+
+typedef struct _REASON_CONTEXT
+{
+    ULONG Version;
+    DWORD Flags;
+    union
+    {
+        struct
+        {
+            HMODULE LocalizedReasonModule;
+            ULONG LocalizedReasonId;
+            ULONG ReasonStringCount;
+            LPWSTR *ReasonStrings;
+        } Detailed;
+        LPWSTR SimpleReasonString;
+    } Reason;
+} REASON_CONTEXT, *PREASON_CONTEXT;
+
+#define RESOURCE_ENUM_LN          0x0001
+#define RESOURCE_ENUM_MUI         0x0002
+#define RESOURCE_ENUM_MUI_SYSTEM  0x0004
+#define RESOURCE_ENUM_VALIDATE    0x0008
+
 WINBASEAPI BOOL        WINAPI ActivateActCtx(HANDLE,ULONG_PTR *);
 WINADVAPI  BOOL        WINAPI AddAccessAllowedAce(PACL,DWORD,DWORD,PSID);
 WINADVAPI  BOOL        WINAPI AddAccessAllowedAceEx(PACL,DWORD,DWORD,DWORD,PSID);
@@ -1360,16 +1597,20 @@ WINBASEAPI BOOL        WINAPI CallNamedPipeW(LPCWSTR,LPVOID,DWORD,LPVOID,DWORD,L
 #define                       CallNamedPipe WINELIB_NAME_AW(CallNamedPipe)
 WINBASEAPI BOOL        WINAPI CancelIo(HANDLE);
 WINBASEAPI BOOL        WINAPI CancelIoEx(HANDLE,LPOVERLAPPED);
+WINBASEAPI BOOL        WINAPI CancelTimerQueueTimer(HANDLE,HANDLE);
 WINBASEAPI BOOL        WINAPI CancelWaitableTimer(HANDLE);
 WINBASEAPI BOOL        WINAPI ChangeTimerQueueTimer(HANDLE,HANDLE,ULONG,ULONG);
 WINADVAPI  BOOL        WINAPI CheckTokenMembership(HANDLE,PSID,PBOOL);
 WINBASEAPI BOOL        WINAPI ClearCommBreak(HANDLE);
 WINBASEAPI BOOL        WINAPI ClearCommError(HANDLE,LPDWORD,LPCOMSTAT);
+WINADVAPI  VOID        WINAPI CloseEncryptedFileRaw(PVOID);
 WINADVAPI  BOOL        WINAPI ClearEventLogA(HANDLE,LPCSTR);
 WINADVAPI  BOOL        WINAPI ClearEventLogW(HANDLE,LPCWSTR);
 #define                       ClearEventLog WINELIB_NAME_AW(ClearEventLog)
 WINADVAPI  BOOL        WINAPI CloseEventLog(HANDLE);
 WINBASEAPI BOOL        WINAPI CloseHandle(HANDLE);
+WINBASEAPI VOID        WINAPI CloseThreadpool(PTP_POOL);
+WINBASEAPI VOID        WINAPI CloseThreadpoolWork(PTP_WORK);
 WINBASEAPI BOOL        WINAPI CommConfigDialogA(LPCSTR,HWND,LPCOMMCONFIG);
 WINBASEAPI BOOL        WINAPI CommConfigDialogW(LPCWSTR,HWND,LPCOMMCONFIG);
 #define                       CommConfigDialog WINELIB_NAME_AW(CommConfigDialog)
@@ -1379,6 +1620,7 @@ WINBASEAPI HANDLE      WINAPI ConvertToGlobalHandle(HANDLE hSrc);
 WINBASEAPI BOOL        WINAPI CopyFileA(LPCSTR,LPCSTR,BOOL);
 WINBASEAPI BOOL        WINAPI CopyFileW(LPCWSTR,LPCWSTR,BOOL);
 #define                       CopyFile WINELIB_NAME_AW(CopyFile)
+WINBASEAPI HRESULT     WINAPI CopyFile2(PCWSTR,PCWSTR,COPYFILE2_EXTENDED_PARAMETERS*);
 WINBASEAPI BOOL        WINAPI CopyFileExA(LPCSTR, LPCSTR, LPPROGRESS_ROUTINE, LPVOID, LPBOOL, DWORD);
 WINBASEAPI BOOL        WINAPI CopyFileExW(LPCWSTR, LPCWSTR, LPPROGRESS_ROUTINE, LPVOID, LPBOOL, DWORD);
 #define                       CopyFileEx WINELIB_NAME_AW(CopyFileEx)
@@ -1430,6 +1672,8 @@ WINBASEAPI HANDLE      WINAPI CreateNamedPipeW(LPCWSTR,DWORD,DWORD,DWORD,DWORD,D
 #define                       CreateNamedPipe WINELIB_NAME_AW(CreateNamedPipe)
 WINBASEAPI BOOL        WINAPI CreatePipe(PHANDLE,PHANDLE,LPSECURITY_ATTRIBUTES,DWORD);
 WINADVAPI  BOOL        WINAPI CreatePrivateObjectSecurity(PSECURITY_DESCRIPTOR,PSECURITY_DESCRIPTOR,PSECURITY_DESCRIPTOR*,BOOL,HANDLE,PGENERIC_MAPPING);
+WINBASEAPI PTP_POOL    WINAPI CreateThreadpool(PVOID);
+WINBASEAPI PTP_WORK    WINAPI CreateThreadpoolWork(PTP_WORK_CALLBACK,PVOID,PTP_CALLBACK_ENVIRON);
 WINBASEAPI BOOL        WINAPI CreateProcessA(LPCSTR,LPSTR,LPSECURITY_ATTRIBUTES,LPSECURITY_ATTRIBUTES,BOOL,DWORD,LPVOID,LPCSTR,LPSTARTUPINFOA,LPPROCESS_INFORMATION);
 WINBASEAPI BOOL        WINAPI CreateProcessW(LPCWSTR,LPWSTR,LPSECURITY_ATTRIBUTES,LPSECURITY_ATTRIBUTES,BOOL,DWORD,LPVOID,LPCWSTR,LPSTARTUPINFOW,LPPROCESS_INFORMATION);
 #define                       CreateProcess WINELIB_NAME_AW(CreateProcess)
@@ -1445,6 +1689,9 @@ WINBASEAPI HANDLE      WINAPI CreateSemaphoreW(LPSECURITY_ATTRIBUTES,LONG,LONG,L
 WINBASEAPI HANDLE      WINAPI CreateSemaphoreExA(SECURITY_ATTRIBUTES*,LONG,LONG,LPCSTR,DWORD,DWORD);
 WINBASEAPI HANDLE      WINAPI CreateSemaphoreExW(SECURITY_ATTRIBUTES*,LONG,LONG,LPCWSTR,DWORD,DWORD);
 #define                       CreateSemaphoreEx WINELIB_NAME_AW(CreateSemaphoreEx)
+WINBASEAPI BOOL        WINAPI CreateSymbolicLinkA(LPCSTR,LPCSTR,DWORD);
+WINBASEAPI BOOL        WINAPI CreateSymbolicLinkW(LPCWSTR,LPCWSTR,DWORD);
+#define                       CreateSymbolicLink WINELIB_NAME_AW(CreateSymbolicLink)
 WINBASEAPI DWORD       WINAPI CreateTapePartition(HANDLE,DWORD,DWORD,DWORD);
 WINBASEAPI HANDLE      WINAPI CreateThread(LPSECURITY_ATTRIBUTES,SIZE_T,LPTHREAD_START_ROUTINE,LPVOID,DWORD,LPDWORD);
 WINBASEAPI HANDLE      WINAPI CreateTimerQueue(void);
@@ -1477,6 +1724,7 @@ WINBASEAPI void        WINAPI DeleteFiber(LPVOID);
 WINBASEAPI BOOL        WINAPI DeleteFileA(LPCSTR);
 WINBASEAPI BOOL        WINAPI DeleteFileW(LPCWSTR);
 #define                       DeleteFile WINELIB_NAME_AW(DeleteFile)
+WINBASEAPI BOOL        WINAPI DeleteTimerQueue(HANDLE);
 WINBASEAPI BOOL        WINAPI DeleteTimerQueueEx(HANDLE,HANDLE);
 WINBASEAPI BOOL        WINAPI DeleteTimerQueueTimer(HANDLE,HANDLE,HANDLE);
 WINBASEAPI BOOL        WINAPI DeleteVolumeMountPointA(LPCSTR);
@@ -1506,6 +1754,9 @@ WINBASEAPI void        WINAPI EnterCriticalSection(CRITICAL_SECTION *lpCrit);
 WINBASEAPI BOOL        WINAPI EnumResourceLanguagesA(HMODULE,LPCSTR,LPCSTR,ENUMRESLANGPROCA,LONG_PTR);
 WINBASEAPI BOOL        WINAPI EnumResourceLanguagesW(HMODULE,LPCWSTR,LPCWSTR,ENUMRESLANGPROCW,LONG_PTR);
 #define                       EnumResourceLanguages WINELIB_NAME_AW(EnumResourceLanguages)
+WINBASEAPI BOOL        WINAPI EnumResourceLanguagesExA(HMODULE,LPCSTR,LPCSTR,ENUMRESLANGPROCA,LONG_PTR,DWORD,LANGID);
+WINBASEAPI BOOL        WINAPI EnumResourceLanguagesExW(HMODULE,LPCWSTR,LPCWSTR,ENUMRESLANGPROCW,LONG_PTR,DWORD,LANGID);
+#define                       EnumResourceLanguagesEx WINELIB_NAME_AW(EnumResourceLanguagesEx)
 WINBASEAPI BOOL        WINAPI EnumResourceNamesA(HMODULE,LPCSTR,ENUMRESNAMEPROCA,LONG_PTR);
 WINBASEAPI BOOL        WINAPI EnumResourceNamesW(HMODULE,LPCWSTR,ENUMRESNAMEPROCW,LONG_PTR);
 #define                       EnumResourceNames WINELIB_NAME_AW(EnumResourceNames)
@@ -1626,6 +1877,8 @@ WINADVAPI  BOOL        WINAPI GetCurrentHwProfileA(LPHW_PROFILE_INFOA);
 WINADVAPI  BOOL        WINAPI GetCurrentHwProfileW(LPHW_PROFILE_INFOW);
 #define                       GetCurrentHwProfile WINELIB_NAME_AW(GetCurrentHwProfile)
 WINBASEAPI HANDLE      WINAPI GetCurrentProcess(void);
+WINBASEAPI DWORD       WINAPI GetCurrentProcessorNumber(void);
+WINBASEAPI VOID        WINAPI GetCurrentProcessorNumberEx(PPROCESSOR_NUMBER);
 WINBASEAPI HANDLE      WINAPI GetCurrentThread(void);
 #define                       GetCurrentTime() GetTickCount()
 WINBASEAPI BOOL        WINAPI GetDefaultCommConfigA(LPCSTR,LPCOMMCONFIG,LPDWORD);
@@ -1662,6 +1915,7 @@ WINBASEAPI BOOL        WINAPI GetFileAttributesExA(LPCSTR,GET_FILEEX_INFO_LEVELS
 WINBASEAPI BOOL        WINAPI GetFileAttributesExW(LPCWSTR,GET_FILEEX_INFO_LEVELS,LPVOID);
 #define                       GetFileAttributesEx WINELIB_NAME_AW(GetFileAttributesEx)
 WINBASEAPI BOOL        WINAPI GetFileInformationByHandle(HANDLE,BY_HANDLE_FILE_INFORMATION*);
+WINBASEAPI BOOL        WINAPI GetFileInformationByHandleEx(HANDLE,FILE_INFO_BY_HANDLE_CLASS,LPVOID,DWORD);
 WINADVAPI  BOOL        WINAPI GetFileSecurityA(LPCSTR,SECURITY_INFORMATION,PSECURITY_DESCRIPTOR,DWORD,LPDWORD);
 WINADVAPI  BOOL        WINAPI GetFileSecurityW(LPCWSTR,SECURITY_INFORMATION,PSECURITY_DESCRIPTOR,DWORD,LPDWORD);
 #define                       GetFileSecurity WINELIB_NAME_AW(GetFileSecurity)
@@ -1669,7 +1923,7 @@ WINBASEAPI DWORD       WINAPI GetFileSize(HANDLE,LPDWORD);
 WINBASEAPI BOOL        WINAPI GetFileSizeEx(HANDLE,PLARGE_INTEGER);
 WINBASEAPI BOOL        WINAPI GetFileTime(HANDLE,LPFILETIME,LPFILETIME,LPFILETIME);
 WINBASEAPI DWORD       WINAPI GetFileType(HANDLE);
-#define                       GetFreeSpace(w) (0x100000L)
+#define                       GetFreeSpace(w) (__MSABI_LONG(0x100000))
 WINBASEAPI DWORD       WINAPI GetFullPathNameA(LPCSTR,DWORD,LPSTR,LPSTR*);
 WINBASEAPI DWORD       WINAPI GetFullPathNameW(LPCWSTR,DWORD,LPWSTR,LPWSTR*);
 #define                       GetFullPathName WINELIB_NAME_AW(GetFullPathName)
@@ -1762,6 +2016,7 @@ WINBASEAPI HANDLE      WINAPI GetStdHandle(DWORD);
 WINBASEAPI UINT        WINAPI GetSystemDirectoryA(LPSTR,UINT);
 WINBASEAPI UINT        WINAPI GetSystemDirectoryW(LPWSTR,UINT);
 #define                       GetSystemDirectory WINELIB_NAME_AW(GetSystemDirectory)
+WINBASEAPI UINT        WINAPI GetSystemFirmwareTable(DWORD,DWORD,PVOID,DWORD);
 WINBASEAPI VOID        WINAPI GetSystemInfo(LPSYSTEM_INFO);
 WINBASEAPI BOOL        WINAPI GetSystemPowerStatus(LPSYSTEM_POWER_STATUS);
 WINBASEAPI BOOL        WINAPI GetSystemRegistryQuota(PDWORD,PDWORD);
@@ -1843,7 +2098,7 @@ WINBASEAPI VOID        WINAPI GlobalUnfix(HGLOBAL);
 WINBASEAPI BOOL        WINAPI GlobalUnlock(HGLOBAL);
 WINBASEAPI BOOL        WINAPI GlobalUnWire(HGLOBAL);
 WINBASEAPI LPVOID      WINAPI GlobalWire(HGLOBAL);
-#define                       HasOverlappedCompleted(lpOverlapped) ((lpOverlapped)->Internal != STATUS_PENDING)
+#define                       HasOverlappedIoCompleted(lpOverlapped) ((lpOverlapped)->Internal != STATUS_PENDING)
 WINBASEAPI LPVOID      WINAPI HeapAlloc(HANDLE,DWORD,SIZE_T) __WINE_ALLOC_SIZE(3);
 WINBASEAPI SIZE_T      WINAPI HeapCompact(HANDLE,DWORD);
 WINBASEAPI HANDLE      WINAPI HeapCreate(DWORD,SIZE_T,SIZE_T);
@@ -1859,6 +2114,7 @@ WINBASEAPI BOOL        WINAPI HeapValidate(HANDLE,DWORD,LPCVOID);
 WINBASEAPI BOOL        WINAPI HeapWalk(HANDLE,LPPROCESS_HEAP_ENTRY);
 WINBASEAPI BOOL        WINAPI InitAtomTable(DWORD);
 WINADVAPI  BOOL        WINAPI InitializeAcl(PACL,DWORD,DWORD);
+WINBASEAPI VOID        WINAPI InitializeConditionVariable(PCONDITION_VARIABLE);
 WINBASEAPI void        WINAPI InitializeCriticalSection(CRITICAL_SECTION *lpCrit);
 WINBASEAPI BOOL        WINAPI InitializeCriticalSectionAndSpinCount(CRITICAL_SECTION *,DWORD);
 WINBASEAPI BOOL        WINAPI InitializeCriticalSectionEx(CRITICAL_SECTION *,DWORD,DWORD);
@@ -1866,6 +2122,10 @@ WINADVAPI  BOOL        WINAPI InitializeSecurityDescriptor(PSECURITY_DESCRIPTOR,
 WINADVAPI  BOOL        WINAPI InitializeSid(PSID,PSID_IDENTIFIER_AUTHORITY,BYTE);
 WINBASEAPI VOID        WINAPI InitializeSListHead(PSLIST_HEADER);
 WINBASEAPI VOID        WINAPI InitializeSRWLock(PSRWLOCK);
+WINBASEAPI BOOL        WINAPI InitOnceBeginInitialize(PINIT_ONCE, DWORD, PBOOL, PVOID*);
+WINBASEAPI BOOL        WINAPI InitOnceComplete(PINIT_ONCE, DWORD, PVOID);
+WINBASEAPI BOOL        WINAPI InitOnceExecuteOnce(PINIT_ONCE,PINIT_ONCE_FN,PVOID,PVOID*);
+WINBASEAPI VOID        WINAPI InitOnceInitialize(PINIT_ONCE);
 WINBASEAPI PSLIST_ENTRY WINAPI InterlockedFlushSList(PSLIST_HEADER);
 WINBASEAPI PSLIST_ENTRY WINAPI InterlockedPopEntrySList(PSLIST_HEADER);
 WINBASEAPI PSLIST_ENTRY WINAPI InterlockedPushEntrySList(PSLIST_HEADER, PSLIST_ENTRY);
@@ -1971,6 +2231,9 @@ WINADVAPI  BOOL        WINAPI ObjectPrivilegeAuditAlarmW(LPCWSTR,LPVOID,HANDLE,D
 WINADVAPI  HANDLE      WINAPI OpenBackupEventLogA(LPCSTR,LPCSTR);
 WINADVAPI  HANDLE      WINAPI OpenBackupEventLogW(LPCWSTR,LPCWSTR);
 #define                       OpenBackupEventLog WINELIB_NAME_AW(OpenBackupEventLog)
+WINADVAPI  DWORD       WINAPI OpenEncryptedFileRawA(LPCSTR,ULONG,PVOID*);
+WINADVAPI  DWORD       WINAPI OpenEncryptedFileRawW(LPCWSTR,ULONG,PVOID*);
+#define                       OpenEncryptedFileRaw WINELIB_NAME_AW(OpenEncryptedFileRaw)
 WINBASEAPI HANDLE      WINAPI OpenEventA(DWORD,BOOL,LPCSTR);
 WINBASEAPI HANDLE      WINAPI OpenEventW(DWORD,BOOL,LPCWSTR);
 #define                       OpenEvent WINELIB_NAME_AW(OpenEvent)
@@ -2019,6 +2282,7 @@ WINBASEAPI BOOL        WINAPI QueryFullProcessImageNameA(HANDLE,DWORD,LPSTR,PDWO
 WINBASEAPI BOOL        WINAPI QueryFullProcessImageNameW(HANDLE,DWORD,LPWSTR,PDWORD);
 #define                       QueryFullProcessImageName WINELIB_NAME_AW(QueryFullProcessImageName)
 WINBASEAPI BOOL        WINAPI QueryInformationJobObject(HANDLE,JOBOBJECTINFOCLASS,LPVOID,DWORD,DWORD*);
+WINBASEAPI BOOL        WINAPI QueryMemoryResourceNotification(HANDLE,PBOOL);
 WINBASEAPI BOOL        WINAPI QueryPerformanceCounter(LARGE_INTEGER*);
 WINBASEAPI BOOL        WINAPI QueryPerformanceFrequency(LARGE_INTEGER*);
 WINBASEAPI DWORD       WINAPI QueueUserAPC(PAPCFUNC,HANDLE,ULONG_PTR);
@@ -2028,6 +2292,7 @@ WINADVAPI  BOOL        WINAPI ReadEventLogA(HANDLE,DWORD,DWORD,LPVOID,DWORD,DWOR
 WINADVAPI  BOOL        WINAPI ReadEventLogW(HANDLE,DWORD,DWORD,LPVOID,DWORD,DWORD *,DWORD *);
 #define                       ReadEventLog WINELIB_NAME_AW(ReadEventLog)
 WINBASEAPI BOOL        WINAPI ReadDirectoryChangesW(HANDLE,LPVOID,DWORD,BOOL,DWORD,LPDWORD,LPOVERLAPPED,LPOVERLAPPED_COMPLETION_ROUTINE);
+WINADVAPI  DWORD       WINAPI ReadEncryptedFileRaw(PFE_EXPORT_FUNC,PVOID,PVOID);
 WINBASEAPI BOOL        WINAPI ReadFile(HANDLE,LPVOID,DWORD,LPDWORD,LPOVERLAPPED);
 WINBASEAPI BOOL        WINAPI ReadFileEx(HANDLE,LPVOID,DWORD,LPOVERLAPPED,LPOVERLAPPED_COMPLETION_ROUTINE);
 WINBASEAPI BOOL        WINAPI ReadFileScatter(HANDLE,FILE_SEGMENT_ELEMENT*,DWORD,LPDWORD,LPOVERLAPPED);
@@ -2082,7 +2347,7 @@ WINBASEAPI BOOL        WINAPI SetDefaultCommConfigW(LPCWSTR,LPCOMMCONFIG,DWORD);
 WINBASEAPI BOOL        WINAPI SetDllDirectoryA(LPCSTR);
 WINBASEAPI BOOL        WINAPI SetDllDirectoryW(LPCWSTR);
 #define                       SetDllDirectory WINELIB_NAME_AW(SetDllDirectory)
-WINBASEAPI BOOL        WINAPI SetDynamicTimeZoneInformation(CONST DYNAMIC_TIME_ZONE_INFORMATION*);
+WINBASEAPI BOOL        WINAPI SetDynamicTimeZoneInformation(const DYNAMIC_TIME_ZONE_INFORMATION*);
 WINBASEAPI BOOL        WINAPI SetEndOfFile(HANDLE);
 WINBASEAPI BOOL        WINAPI SetEnvironmentVariableA(LPCSTR,LPCSTR);
 WINBASEAPI BOOL        WINAPI SetEnvironmentVariableW(LPCWSTR,LPCWSTR);
@@ -2100,6 +2365,7 @@ WINADVAPI  BOOL        WINAPI SetFileSecurityA(LPCSTR,SECURITY_INFORMATION,PSECU
 WINADVAPI  BOOL        WINAPI SetFileSecurityW(LPCWSTR,SECURITY_INFORMATION,PSECURITY_DESCRIPTOR);
 #define                       SetFileSecurity WINELIB_NAME_AW(SetFileSecurity)
 WINBASEAPI BOOL        WINAPI SetFileTime(HANDLE,const FILETIME*,const FILETIME*,const FILETIME*);
+WINBASEAPI BOOL        WINAPI SetFileValidData(HANDLE,LONGLONG);
 WINBASEAPI UINT        WINAPI SetHandleCount(UINT);
 WINBASEAPI BOOL        WINAPI SetHandleInformation(HANDLE,DWORD,DWORD);
 WINBASEAPI BOOL        WINAPI SetInformationJobObject(HANDLE,JOBOBJECTINFOCLASS,LPVOID,DWORD);
@@ -2133,6 +2399,7 @@ WINBASEAPI DWORD       WINAPI SetThreadIdealProcessor(HANDLE,DWORD);
 WINBASEAPI BOOL        WINAPI SetThreadPriority(HANDLE,INT);
 WINBASEAPI BOOL        WINAPI SetThreadPriorityBoost(HANDLE,BOOL);
 WINADVAPI  BOOL        WINAPI SetThreadToken(PHANDLE,HANDLE);
+WINBASEAPI HANDLE      WINAPI SetTimerQueueTimer(HANDLE,WAITORTIMERCALLBACK,PVOID,DWORD,DWORD,BOOL);
 WINBASEAPI BOOL        WINAPI SetTimeZoneInformation(const TIME_ZONE_INFORMATION *);
 WINADVAPI  BOOL        WINAPI SetTokenInformation(HANDLE,TOKEN_INFORMATION_CLASS,LPVOID,DWORD);
 WINBASEAPI LPTOP_LEVEL_EXCEPTION_FILTER WINAPI SetUnhandledExceptionFilter(LPTOP_LEVEL_EXCEPTION_FILTER);
@@ -2140,14 +2407,18 @@ WINBASEAPI BOOL        WINAPI SetVolumeLabelA(LPCSTR,LPCSTR);
 WINBASEAPI BOOL        WINAPI SetVolumeLabelW(LPCWSTR,LPCWSTR);
 #define                       SetVolumeLabel WINELIB_NAME_AW(SetVolumeLabel)
 WINBASEAPI BOOL        WINAPI SetVolumeMountPointA(LPCSTR,LPCSTR);
-WINBASEAPI BOOL        WINAPI SetVolumeMountPointW(LPCSTR,LPCSTR);
+WINBASEAPI BOOL        WINAPI SetVolumeMountPointW(LPCWSTR,LPCWSTR);
 #define                       SetVolumeMountPoint WINELIB_NAME_AW(SetVolumeMountPoint)
 WINBASEAPI BOOL        WINAPI SetWaitableTimer(HANDLE,const LARGE_INTEGER*,LONG,PTIMERAPCROUTINE,LPVOID,BOOL);
+WINBASEAPI BOOL        WINAPI SetWaitableTimerEx(HANDLE,const LARGE_INTEGER*,LONG,PTIMERAPCROUTINE,LPVOID,REASON_CONTEXT*,ULONG);
 WINBASEAPI BOOL        WINAPI SetupComm(HANDLE,DWORD,DWORD);
 WINBASEAPI DWORD       WINAPI SignalObjectAndWait(HANDLE,HANDLE,DWORD,BOOL);
 WINBASEAPI DWORD       WINAPI SizeofResource(HMODULE,HRSRC);
 WINBASEAPI VOID        WINAPI Sleep(DWORD);
+WINBASEAPI BOOL        WINAPI SleepConditionVariableCS(PCONDITION_VARIABLE,PCRITICAL_SECTION,DWORD);
+WINBASEAPI BOOL        WINAPI SleepConditionVariableSRW(PCONDITION_VARIABLE,PSRWLOCK,DWORD,ULONG);
 WINBASEAPI DWORD       WINAPI SleepEx(DWORD,BOOL);
+WINBASEAPI VOID        WINAPI SubmitThreadpoolWork(PTP_WORK);
 WINBASEAPI DWORD       WINAPI SuspendThread(HANDLE);
 WINBASEAPI void        WINAPI SwitchToFiber(LPVOID);
 WINBASEAPI BOOL        WINAPI SwitchToThread(void);
@@ -2171,6 +2442,7 @@ WINBASEAPI BOOL        WINAPI UnlockFile(HANDLE,DWORD,DWORD,DWORD,DWORD);
 WINBASEAPI BOOL        WINAPI UnlockFileEx(HANDLE,DWORD,DWORD,DWORD,LPOVERLAPPED);
 #define                       UnlockSegment(handle) GlobalUnfix((HANDLE)(handle))
 WINBASEAPI BOOL        WINAPI UnmapViewOfFile(LPCVOID);
+WINBASEAPI HRESULT     WINAPI UnregisterApplicationRestart(void);
 WINBASEAPI BOOL        WINAPI UnregisterWait(HANDLE);
 WINBASEAPI BOOL        WINAPI UnregisterWaitEx(HANDLE,HANDLE);
 WINBASEAPI BOOL        WINAPI UpdateResourceA(HANDLE,LPCSTR,LPCSTR,WORD,LPVOID,DWORD);
@@ -2199,10 +2471,13 @@ WINBASEAPI DWORD       WINAPI WaitForSingleObjectEx(HANDLE,DWORD,BOOL);
 WINBASEAPI BOOL        WINAPI WaitNamedPipeA(LPCSTR,DWORD);
 WINBASEAPI BOOL        WINAPI WaitNamedPipeW(LPCWSTR,DWORD);
 #define                       WaitNamedPipe WINELIB_NAME_AW(WaitNamedPipe)
+WINBASEAPI VOID        WINAPI WakeAllConditionVariable(PCONDITION_VARIABLE);
+WINBASEAPI VOID        WINAPI WakeConditionVariable(PCONDITION_VARIABLE);
 WINBASEAPI UINT        WINAPI WinExec(LPCSTR,UINT);
 WINBASEAPI BOOL        WINAPI Wow64DisableWow64FsRedirection(PVOID*);
 WINBASEAPI BOOLEAN     WINAPI Wow64EnableWow64FsRedirection(BOOLEAN);
 WINBASEAPI BOOL        WINAPI Wow64RevertWow64FsRedirection(PVOID);
+WINADVAPI  DWORD       WINAPI WriteEncryptedFileRaw(PFE_IMPORT_FUNC,PVOID,PVOID);
 WINBASEAPI BOOL        WINAPI WriteFile(HANDLE,LPCVOID,DWORD,LPDWORD,LPOVERLAPPED);
 WINBASEAPI BOOL        WINAPI WriteFileEx(HANDLE,LPCVOID,DWORD,LPOVERLAPPED,LPOVERLAPPED_COMPLETION_ROUTINE);
 WINBASEAPI BOOL        WINAPI WriteFileGather(HANDLE,FILE_SEGMENT_ELEMENT*,DWORD,LPDWORD,LPOVERLAPPED);
@@ -2408,101 +2683,116 @@ static FORCEINLINE PVOID WINAPI InterlockedExchangePointer( PVOID volatile *dest
 
 WINBASEAPI LONGLONG WINAPI InterlockedCompareExchange64(LONGLONG volatile*,LONGLONG,LONGLONG);
 
-#else  /* __i386__ */
+#elif defined(_MSC_VER)
+
+#pragma intrinsic(_InterlockedCompareExchange)
+#pragma intrinsic(_InterlockedCompareExchangePointer)
+#pragma intrinsic(_InterlockedCompareExchange64)
+#pragma intrinsic(_InterlockedExchange)
+#pragma intrinsic(_InterlockedExchangePointer)
+#pragma intrinsic(_InterlockedExchangeAdd)
+#pragma intrinsic(_InterlockedIncrement)
+#pragma intrinsic(_InterlockedDecrement)
 
 static FORCEINLINE LONG WINAPI InterlockedCompareExchange( LONG volatile *dest, LONG xchg, LONG compare )
 {
-#if defined(__x86_64__) && defined(__GNUC__)
-    LONG ret;
-    __asm__ __volatile__( "lock; cmpxchgl %2,(%1)"
-                          : "=a" (ret) : "r" (dest), "r" (xchg), "0" (compare) : "memory" );
-    return ret;
-#else
-    extern int interlocked_cmpxchg( int *dest, int xchg, int compare );
-    return interlocked_cmpxchg( (int *)dest, xchg, compare );
-#endif
+    return _InterlockedCompareExchange( dest, xchg, compare );
 }
 
 static FORCEINLINE PVOID WINAPI InterlockedCompareExchangePointer( PVOID volatile *dest, PVOID xchg, PVOID compare )
 {
-#if defined(__x86_64__) && defined(__GNUC__)
-    PVOID ret;
-    __asm__ __volatile__( "lock; cmpxchgq %2,(%1)"
-                          : "=a" (ret) : "r" (dest), "r" (xchg), "0" (compare) : "memory" );
-    return ret;
-#else
-    extern void *interlocked_cmpxchg_ptr( void **dest, void *xchg, void *compare );
-    return interlocked_cmpxchg_ptr( (void **)dest, xchg, compare );
-#endif
+    return _InterlockedCompareExchangePointer( dest, xchg, compare );
 }
 
 static FORCEINLINE LONGLONG WINAPI InterlockedCompareExchange64( LONGLONG volatile *dest, LONGLONG xchg, LONGLONG compare )
 {
-#if defined(__x86_64__) && defined(__GNUC__)
-    LONGLONG ret;
-    __asm__ __volatile__( "lock; cmpxchgq %2,(%1)"
-                          : "=a" (ret) : "r" (dest), "r" (xchg), "0" (compare) : "memory" );
-    return ret;
-#else
-    extern __int64 interlocked_cmpxchg64( __int64 *dest, __int64 xchg, __int64 compare );
-    return interlocked_cmpxchg64( (__int64 *)dest, xchg, compare );
-#endif
+    return _InterlockedCompareExchange64( dest, xchg, compare );
 }
 
 static FORCEINLINE LONG WINAPI InterlockedExchange( LONG volatile *dest, LONG val )
 {
-#if defined(__x86_64__) && defined(__GNUC__)
-    LONG ret;
-    __asm__ __volatile__( "lock; xchgl %0,(%1)"
-                          : "=r" (ret) :"r" (dest), "0" (val) : "memory" );
-    return ret;
-#else
-    extern int interlocked_xchg( int *dest, int val );
-    return interlocked_xchg( (int *)dest, val );
-#endif
+    return _InterlockedExchange( dest, val );
 }
 
 static FORCEINLINE PVOID WINAPI InterlockedExchangePointer( PVOID volatile *dest, PVOID val )
 {
-#if defined(__x86_64__) && defined(__GNUC__)
-    PVOID ret;
-    __asm__ __volatile__( "lock; xchgq %0,(%1)"
-                          : "=r" (ret) :"r" (dest), "0" (val) : "memory" );
-    return ret;
-#else
-    extern void *interlocked_xchg_ptr( void **dest, void *val );
-    return interlocked_xchg_ptr( (void **)dest, val );
-#endif
+    return _InterlockedExchangePointer( dest, val );
 }
 
 static FORCEINLINE LONG WINAPI InterlockedExchangeAdd( LONG volatile *dest, LONG incr )
 {
-#if defined(__x86_64__) && defined(__GNUC__)
-    LONG ret;
-    __asm__ __volatile__( "lock; xaddl %0,(%1)"
-                          : "=r" (ret) : "r" (dest), "0" (incr) : "memory" );
-    return ret;
-#else
-    extern int interlocked_xchg_add( int *dest, int incr );
-    return interlocked_xchg_add( (int *)dest, incr );
-#endif
+    return _InterlockedExchangeAdd( dest, incr );
 }
 
 static FORCEINLINE LONG WINAPI InterlockedIncrement( LONG volatile *dest )
 {
-    return InterlockedExchangeAdd( dest, 1 ) + 1;
+    return _InterlockedIncrement( dest );
 }
 
 static FORCEINLINE LONG WINAPI InterlockedDecrement( LONG volatile *dest )
 {
-    return InterlockedExchangeAdd( dest, -1 ) - 1;
+    return _InterlockedDecrement( dest );
+}
+
+#elif defined(__GNUC__)
+
+static FORCEINLINE LONG WINAPI InterlockedCompareExchange( LONG volatile *dest, LONG xchg, LONG compare )
+{
+    return __sync_val_compare_and_swap( dest, compare, xchg );
+}
+
+static FORCEINLINE PVOID WINAPI InterlockedCompareExchangePointer( PVOID volatile *dest, PVOID xchg, PVOID compare )
+{
+    return __sync_val_compare_and_swap( dest, compare, xchg );
+}
+
+static FORCEINLINE LONGLONG WINAPI InterlockedCompareExchange64( LONGLONG volatile *dest, LONGLONG xchg, LONGLONG compare )
+{
+    return __sync_val_compare_and_swap( dest, compare, xchg );
+}
+
+static FORCEINLINE LONG WINAPI InterlockedExchange( LONG volatile *dest, LONG val )
+{
+    LONG ret;
+#ifdef __x86_64__
+    __asm__ __volatile__( "lock; xchgl %0,(%1)" : "=r" (ret) :"r" (dest), "0" (val) : "memory" );
+#else
+    do ret = *dest; while (!__sync_bool_compare_and_swap( dest, ret, val ));
+#endif
+    return ret;
+}
+
+static FORCEINLINE PVOID WINAPI InterlockedExchangePointer( PVOID volatile *dest, PVOID val )
+{
+    PVOID ret;
+#ifdef __x86_64__
+    __asm__ __volatile__( "lock; xchgq %0,(%1)" : "=r" (ret) :"r" (dest), "0" (val) : "memory" );
+#else
+    do ret = *dest; while (!__sync_bool_compare_and_swap( dest, ret, val ));
+#endif
+    return ret;
+}
+
+static FORCEINLINE LONG WINAPI InterlockedExchangeAdd( LONG volatile *dest, LONG incr )
+{
+    return __sync_fetch_and_add( dest, incr );
+}
+
+static FORCEINLINE LONG WINAPI InterlockedIncrement( LONG volatile *dest )
+{
+    return __sync_add_and_fetch( dest, 1 );
+}
+
+static FORCEINLINE LONG WINAPI InterlockedDecrement( LONG volatile *dest )
+{
+    return __sync_add_and_fetch( dest, -1 );
 }
 
 #endif  /* __i386__ */
 
 /* A few optimizations for gcc */
 
-#if defined(__GNUC__) && !defined(__MINGW32__) && (defined(__i386__) || defined(__x86_64__)) && ((__GNUC__ > 3) || ((__GNUC__ == 3) && (__GNUC_MINOR__ >= 2)))
+#if defined(__GNUC__) && !defined(__MINGW32__) && (defined(__i386__) || (defined(__x86_64__) && !defined(__APPLE__))) && ((__GNUC__ > 3) || ((__GNUC__ == 3) && (__GNUC_MINOR__ >= 2)))
 
 static FORCEINLINE DWORD WINAPI GetLastError(void)
 {

@@ -36,6 +36,17 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(dpnet);
 
+typedef struct IDirectPlay8LobbyClientImpl
+{
+    IDirectPlay8LobbyClient IDirectPlay8LobbyClient_iface;
+    LONG ref;
+} IDirectPlay8LobbyClientImpl;
+
+static inline IDirectPlay8LobbyClientImpl *impl_from_IDirectPlay8LobbyClient(IDirectPlay8LobbyClient *iface)
+{
+    return CONTAINING_RECORD(iface, IDirectPlay8LobbyClientImpl, IDirectPlay8LobbyClient_iface);
+}
+
 static inline IDirectPlay8ClientImpl *impl_from_IDirectPlay8Client(IDirectPlay8Client *iface)
 {
     return CONTAINING_RECORD(iface, IDirectPlay8ClientImpl, IDirectPlay8Client_iface);
@@ -61,24 +72,24 @@ static HRESULT WINAPI IDirectPlay8ClientImpl_QueryInterface(IDirectPlay8Client *
 static ULONG WINAPI IDirectPlay8ClientImpl_AddRef(IDirectPlay8Client *iface)
 {
     IDirectPlay8ClientImpl *This = impl_from_IDirectPlay8Client(iface);
-    ULONG refCount = InterlockedIncrement(&This->ref);
+    ULONG ref = InterlockedIncrement(&This->ref);
 
-    TRACE("(%p)->(ref before=%u)\n", This, refCount - 1);
+    TRACE("(%p) ref=%u\n", This, ref);
 
-    return refCount;
+    return ref;
 }
 
 static ULONG WINAPI IDirectPlay8ClientImpl_Release(IDirectPlay8Client *iface)
 {
     IDirectPlay8ClientImpl *This = impl_from_IDirectPlay8Client(iface);
-    ULONG refCount = InterlockedDecrement(&This->ref);
+    ULONG ref = InterlockedDecrement(&This->ref);
 
-    TRACE("(%p)->(ref before=%u)\n", This, refCount + 1);
+    TRACE("(%p) ref=%u\n", This, ref);
 
-    if (!refCount) {
+    if (!ref) {
         HeapFree(GetProcessHeap(), 0, This);
     }
-    return refCount;
+    return ref;
 }
 
 /* IDirectPlay8Client Interface follow: */
@@ -86,9 +97,18 @@ static ULONG WINAPI IDirectPlay8ClientImpl_Release(IDirectPlay8Client *iface)
 static HRESULT WINAPI IDirectPlay8ClientImpl_Initialize(IDirectPlay8Client *iface,
         void * const pvUserContext, const PFNDPNMESSAGEHANDLER pfn, const DWORD dwFlags)
 {
-  IDirectPlay8ClientImpl *This = impl_from_IDirectPlay8Client(iface);
-  FIXME("(%p):(%p,%p,%x): Stub\n", This, pvUserContext, pfn, dwFlags);
-  return DPN_OK; 
+    IDirectPlay8ClientImpl *This = impl_from_IDirectPlay8Client(iface);
+
+    TRACE("(%p):(%p,%p,%x)\n", This, pvUserContext, pfn, dwFlags);
+
+    if(!pfn)
+        return DPNERR_INVALIDPARAM;
+
+    This->usercontext = pvUserContext;
+    This->msghandler = pfn;
+    This->flags = dwFlags;
+
+    return DPN_OK;
 }
 
 static HRESULT WINAPI IDirectPlay8ClientImpl_EnumServiceProviders(IDirectPlay8Client *iface,
@@ -225,9 +245,21 @@ static HRESULT WINAPI IDirectPlay8ClientImpl_SetSPCaps(IDirectPlay8Client *iface
 static HRESULT WINAPI IDirectPlay8ClientImpl_GetSPCaps(IDirectPlay8Client *iface,
         const GUID * const pguidSP, DPN_SP_CAPS * const pdpspCaps, const DWORD dwFlags)
 {
-  IDirectPlay8ClientImpl *This = impl_from_IDirectPlay8Client(iface);
-  FIXME("(%p):(%x): Stub\n", This, dwFlags);
-  return DPN_OK; 
+    IDirectPlay8ClientImpl *This = impl_from_IDirectPlay8Client(iface);
+
+    TRACE("(%p)->(%p,%p,%x)\n", This, pguidSP, pdpspCaps, dwFlags);
+
+    if(!This->msghandler)
+        return DPNERR_UNINITIALIZED;
+
+    if(pdpspCaps->dwSize != sizeof(DPN_SP_CAPS))
+    {
+        return DPNERR_INVALIDPARAM;
+    }
+
+    *pdpspCaps = This->spcaps;
+
+    return DPN_OK;
 }
 
 static HRESULT WINAPI IDirectPlay8ClientImpl_GetConnectionInfo(IDirectPlay8Client *iface,
@@ -273,17 +305,189 @@ static const IDirectPlay8ClientVtbl DirectPlay8Client_Vtbl =
     IDirectPlay8ClientImpl_RegisterLobby
 };
 
-HRESULT DPNET_CreateDirectPlay8Client(LPCLASSFACTORY iface, LPUNKNOWN punkOuter, REFIID riid, LPVOID *ppobj) {
-  IDirectPlay8ClientImpl* client;
+HRESULT DPNET_CreateDirectPlay8Client(IClassFactory *iface, IUnknown *pUnkOuter, REFIID riid, void **ppv)
+{
+    IDirectPlay8ClientImpl* client;
+    HRESULT hr;
 
-  TRACE("(%p, %s, %p)\n", punkOuter, debugstr_guid(riid), ppobj);
-  
-  client = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectPlay8ClientImpl));
-  if (NULL == client) {
-    *ppobj = NULL;
-    return E_OUTOFMEMORY;
-  }
-  client->IDirectPlay8Client_iface.lpVtbl = &DirectPlay8Client_Vtbl;
-  client->ref = 0; /* will be inited with QueryInterface */
-  return IDirectPlay8ClientImpl_QueryInterface(&client->IDirectPlay8Client_iface, riid, ppobj);
+    TRACE("(%p, %s, %p)\n", pUnkOuter, debugstr_guid(riid), ppv);
+
+    *ppv = NULL;
+
+    if(pUnkOuter)
+        return CLASS_E_NOAGGREGATION;
+
+    client = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectPlay8ClientImpl));
+    if (!client)
+        return E_OUTOFMEMORY;
+
+    client->IDirectPlay8Client_iface.lpVtbl = &DirectPlay8Client_Vtbl;
+    client->ref = 1;
+
+    init_dpn_sp_caps(&client->spcaps);
+
+    hr = IDirectPlay8ClientImpl_QueryInterface(&client->IDirectPlay8Client_iface, riid, ppv);
+    IDirectPlay8ClientImpl_Release(&client->IDirectPlay8Client_iface);
+
+    return hr;
+}
+
+static HRESULT WINAPI lobbyclient_QueryInterface(IDirectPlay8LobbyClient *iface, REFIID riid, void **obj)
+{
+    IDirectPlay8LobbyClientImpl *This = impl_from_IDirectPlay8LobbyClient(iface);
+
+    TRACE("(%p)->(%s %p)\n", This, debugstr_guid(riid), obj);
+
+    *obj = NULL;
+
+    if (IsEqualGUID(riid, &IID_IUnknown) ||
+        IsEqualGUID(riid, &IID_IDirectPlay8LobbyClient))
+    {
+        *obj = &This->IDirectPlay8LobbyClient_iface;
+        IUnknown_AddRef( (IUnknown*)*obj);
+
+        return DPN_OK;
+    }
+
+    WARN("(%p)->(%s,%p),not found\n",This,debugstr_guid(riid),obj);
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI lobbyclient_AddRef(IDirectPlay8LobbyClient *iface)
+{
+    IDirectPlay8LobbyClientImpl *This = impl_from_IDirectPlay8LobbyClient(iface);
+    ULONG ref = InterlockedIncrement(&This->ref);
+
+    TRACE("(%p) ref=%u\n", This, ref);
+
+    return ref;
+}
+
+static ULONG WINAPI lobbyclient_Release(IDirectPlay8LobbyClient *iface)
+{
+    IDirectPlay8LobbyClientImpl *This = impl_from_IDirectPlay8LobbyClient(iface);
+    ULONG ref = InterlockedDecrement(&This->ref);
+
+    TRACE("(%p) ref=%u\n", This, ref);
+
+    if (!ref)
+    {
+        HeapFree(GetProcessHeap(), 0, This);
+    }
+
+    return ref;
+}
+
+static HRESULT WINAPI lobbyclient_Initialize(IDirectPlay8LobbyClient *iface, void *context,
+                                             PFNDPNMESSAGEHANDLER msghandler, DWORD flags)
+{
+    IDirectPlay8LobbyClientImpl *This = impl_from_IDirectPlay8LobbyClient(iface);
+
+    FIXME("(%p)->(%p %p 0x%08x)\n", This, context, msghandler, flags);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI lobbyclient_EnumLocalPrograms(IDirectPlay8LobbyClient *iface, GUID* guidapplication,
+                                                    BYTE *enumdata, DWORD *enumDataSize, DWORD *items, DWORD flags)
+{
+    IDirectPlay8LobbyClientImpl *This = impl_from_IDirectPlay8LobbyClient(iface);
+
+    FIXME("(%p)->(%p %p %p %p 0x%08x)\n", This, guidapplication, enumdata, enumDataSize, items, flags);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI lobbyclient_ConnectApplication(IDirectPlay8LobbyClient *iface, DPL_CONNECT_INFO *connectioninfo,
+                                                     void *connectioncontext, DPNHANDLE *application, DWORD timeout,
+                                                     DWORD flags)
+{
+    IDirectPlay8LobbyClientImpl *This = impl_from_IDirectPlay8LobbyClient(iface);
+
+    FIXME("(%p)->(%p %p %p %u 0x%08x)\n", This, connectioninfo, connectioncontext, application, timeout, flags);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI lobbyclient_Send(IDirectPlay8LobbyClient *iface, DPNHANDLE connection, BYTE *buffer, DWORD buffersize, DWORD flags)
+{
+    IDirectPlay8LobbyClientImpl *This = impl_from_IDirectPlay8LobbyClient(iface);
+
+    FIXME("(%p)->(%u %p %u 0x%08x)\n", This, connection, buffer, buffersize, flags);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI lobbyclient_ReleaseApplication(IDirectPlay8LobbyClient *iface, DPNHANDLE connection, DWORD flags)
+{
+    IDirectPlay8LobbyClientImpl *This = impl_from_IDirectPlay8LobbyClient(iface);
+
+    FIXME("(%p)->(%u 0x%08x)\n", This, connection, flags);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI lobbyclient_Close(IDirectPlay8LobbyClient *iface, DWORD flags)
+{
+    IDirectPlay8LobbyClientImpl *This = impl_from_IDirectPlay8LobbyClient(iface);
+
+    FIXME("(%p)->(0x%08x)\n", This, flags);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI lobbyclient_GetConnectionSettings(IDirectPlay8LobbyClient *iface, DPNHANDLE connection, DPL_CONNECTION_SETTINGS *sessioninfo, DWORD *infosize, DWORD flags)
+{
+    IDirectPlay8LobbyClientImpl *This = impl_from_IDirectPlay8LobbyClient(iface);
+
+    FIXME("(%p)->(%u %p %p 0x%08x)\n", This, connection, sessioninfo, infosize, flags);
+
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI lobbyclient_SetConnectionSettings(IDirectPlay8LobbyClient *iface, DPNHANDLE connection, const DPL_CONNECTION_SETTINGS *sessioninfo, DWORD flags)
+{
+    IDirectPlay8LobbyClientImpl *This = impl_from_IDirectPlay8LobbyClient(iface);
+
+    FIXME("(%p)->(%u %p 0x%08x)\n", This, connection, sessioninfo, flags);
+
+    return E_NOTIMPL;
+}
+
+static const IDirectPlay8LobbyClientVtbl DirectPlay8LobbiedClient_Vtbl =
+{
+    lobbyclient_QueryInterface,
+    lobbyclient_AddRef,
+    lobbyclient_Release,
+    lobbyclient_Initialize,
+    lobbyclient_EnumLocalPrograms,
+    lobbyclient_ConnectApplication,
+    lobbyclient_Send,
+    lobbyclient_ReleaseApplication,
+    lobbyclient_Close,
+    lobbyclient_GetConnectionSettings,
+    lobbyclient_SetConnectionSettings
+};
+
+HRESULT DPNET_CreateDirectPlay8LobbyClient(IClassFactory *iface, IUnknown *outer, REFIID riid, void **obj)
+{
+    IDirectPlay8LobbyClientImpl *client;
+    HRESULT ret;
+
+    TRACE("%p (%p, %s, %p)\n", iface, outer, debugstr_guid(riid), obj);
+
+    client = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*client));
+    if (!client)
+    {
+        *obj = NULL;
+        return E_OUTOFMEMORY;
+    }
+
+    client->IDirectPlay8LobbyClient_iface.lpVtbl = &DirectPlay8LobbiedClient_Vtbl;
+    client->ref = 1;
+
+    ret = lobbyclient_QueryInterface(&client->IDirectPlay8LobbyClient_iface, riid, obj);
+    lobbyclient_Release(&client->IDirectPlay8LobbyClient_iface);
+
+    return ret;
 }

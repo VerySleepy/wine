@@ -1,7 +1,10 @@
 MODULE    = qcap.dll
-IMPORTS   = strmiids strmbase uuid ole32 gdi32 advapi32
+IMPORTS   = strmiids strmbase uuid ole32 oleaut32 gdi32 advapi32
+DELAYIMPORTS = msvfw32
 
 C_SRCS = \
+	avico.c \
+	avimux.c \
 	capturegraph.c \
 	enummedia.c \
 	qcap_main.c \
@@ -10,5 +13,3 @@ C_SRCS = \
 	yuv.c
 
 RC_SRCS = version.rc
-
-@MAKE_DLL_RULES@

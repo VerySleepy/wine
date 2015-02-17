@@ -1,12 +1,8 @@
 MODULE    = infosoft.dll
 IMPORTS   = uuid advapi32
-EXTRADEFS = -DCOM_NO_WINDOWS_H
 
 C_SRCS = \
 	infosoft_main.c \
 	wordbreaker.c
 
-IDL_H_SRCS = infosoft.idl
-IDL_R_SRCS = infosoft.idl
-
-@MAKE_DLL_RULES@
+IDL_SRCS = infosoft.idl

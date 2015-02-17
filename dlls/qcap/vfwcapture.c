@@ -139,7 +139,7 @@ IUnknown * WINAPI QCAP_createVFWCaptureFilter(IUnknown *pUnkOuter, HRESULT *phr)
     pVfwCapture->IPersistPropertyBag_iface.lpVtbl = &IPersistPropertyBag_VTable;
     pVfwCapture->init = FALSE;
 
-    hr = VfwPin_Construct((IBaseFilter *)&pVfwCapture->filter.lpVtbl,
+    hr = VfwPin_Construct(&pVfwCapture->filter.IBaseFilter_iface,
                    &pVfwCapture->filter.csFilter, &pVfwCapture->pOutputPin);
     if (FAILED(hr))
     {
@@ -203,7 +203,7 @@ static HRESULT WINAPI VfwCapture_QueryInterface(IBaseFilter * iface, REFIID riid
 static ULONG WINAPI VfwCapture_Release(IBaseFilter * iface)
 {
     VfwCapture *This = (VfwCapture *)iface;
-    ULONG refCount = BaseFilterImpl_Release(iface);
+    ULONG refCount = InterlockedDecrement(&This->filter.refCount);
 
     TRACE("%p->() New refcount: %d\n", This, refCount);
 
@@ -225,6 +225,7 @@ static ULONG WINAPI VfwCapture_Release(IBaseFilter * iface)
             IPin_Disconnect(This->pOutputPin);
         }
         IPin_Release(This->pOutputPin);
+        BaseFilter_Destroy(&This->filter);
         CoTaskMemFree(This);
         ObjectRefCount(FALSE);
     }
@@ -678,9 +679,10 @@ static HRESULT WINAPI VfwPin_GetMediaType(BasePin *iface, int iPosition, AM_MEDI
         return VFW_S_NO_MORE_ITEMS;
 
     hr = qcap_driver_get_format(This->driver_info, &vfw_pmt);
-    CopyMediaType(pmt, vfw_pmt);
-    DeleteMediaType(vfw_pmt);
-
+    if (SUCCEEDED(hr)) {
+        CopyMediaType(pmt, vfw_pmt);
+        DeleteMediaType(vfw_pmt);
+    }
     return hr;
 }
 
@@ -705,14 +707,13 @@ static HRESULT WINAPI VfwPin_DecideBufferSize(BaseOutputPin *iface, IMemAllocato
     return IMemAllocator_SetProperties(pAlloc, ppropInputRequest, &actual);
 }
 
-static const  BasePinFuncTable output_BaseFuncTable = {
-    NULL,
-    BaseOutputPinImpl_AttemptConnection,
-    VfwPin_GetMediaTypeVersion,
-    VfwPin_GetMediaType
-};
-
 static const BaseOutputPinFuncTable output_BaseOutputFuncTable = {
+    {
+        NULL,
+        BaseOutputPinImpl_AttemptConnection,
+        VfwPin_GetMediaTypeVersion,
+        VfwPin_GetMediaType
+    },
     VfwPin_DecideBufferSize,
     BaseOutputPinImpl_DecideAllocator,
     BaseOutputPinImpl_BreakConnect
@@ -731,14 +732,14 @@ VfwPin_Construct( IBaseFilter * pBaseFilter, LPCRITICAL_SECTION pCritSec,
     piOutput.dir = PINDIR_OUTPUT;
     piOutput.pFilter = pBaseFilter;
     lstrcpyW(piOutput.achName, wszOutputPinName);
-    ObjectRefCount(TRUE);
 
-    hr = BaseOutputPin_Construct(&VfwPin_Vtbl, sizeof(VfwPinImpl), &piOutput, &output_BaseFuncTable, &output_BaseOutputFuncTable, pCritSec, ppPin);
+    hr = BaseOutputPin_Construct(&VfwPin_Vtbl, sizeof(VfwPinImpl), &piOutput, &output_BaseOutputFuncTable, pCritSec, ppPin);
 
     if (SUCCEEDED(hr))
     {
         VfwPinImpl *pPinImpl = (VfwPinImpl*)*ppPin;
         pPinImpl->KSP_VT = &KSP_VTable;
+        ObjectRefCount(TRUE);
     }
 
     return hr;
@@ -778,7 +779,7 @@ VfwPin_Release(IPin * iface)
 
    if (!refCount)
    {
-      CoTaskMemFree(This);
+      BaseOutputPin_Destroy(&This->pin);
       ObjectRefCount(FALSE);
    }
    return refCount;
@@ -792,11 +793,11 @@ VfwPin_EnumMediaTypes(IPin * iface, IEnumMediaTypes ** ppEnum)
 
     VfwPinImpl *This = (VfwPinImpl *)iface;
     hr = qcap_driver_get_format(This->driver_info, &pmt);
-    if (SUCCEEDED(hr))
+    if (SUCCEEDED(hr)) {
         hr = BasePinImpl_EnumMediaTypes(iface, ppEnum);
+        DeleteMediaType(pmt);
+    }
     TRACE("%p -- %x\n", This, hr);
-    DeleteMediaType(pmt);
-
     return hr;
 }
 

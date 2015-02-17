@@ -28,15 +28,18 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(strmbase);
 
-HRESULT WINAPI CopyMediaType(AM_MEDIA_TYPE * pDest, const AM_MEDIA_TYPE *pSrc)
+HRESULT WINAPI CopyMediaType(AM_MEDIA_TYPE *dest, const AM_MEDIA_TYPE *src)
 {
-    *pDest = *pSrc;
-    if (!pSrc->pbFormat) return S_OK;
-    if (!(pDest->pbFormat = CoTaskMemAlloc(pSrc->cbFormat)))
-        return E_OUTOFMEMORY;
-    memcpy(pDest->pbFormat, pSrc->pbFormat, pSrc->cbFormat);
-    if (pDest->pUnk)
-        IUnknown_AddRef(pDest->pUnk);
+    *dest = *src;
+    if (src->pbFormat)
+    {
+        dest->pbFormat = CoTaskMemAlloc(src->cbFormat);
+        if (!dest->pbFormat)
+            return E_OUTOFMEMORY;
+        memcpy(dest->pbFormat, src->pbFormat, src->cbFormat);
+    }
+    if (dest->pUnk)
+        IUnknown_AddRef(dest->pUnk);
     return S_OK;
 }
 
@@ -118,11 +121,11 @@ HRESULT WINAPI EnumMediaTypes_Construct(BasePin *basePin, BasePin_GetMediaType e
     pEnumMediaTypes->uIndex = 0;
     pEnumMediaTypes->enumMediaFunction = enumFunc;
     pEnumMediaTypes->mediaVersionFunction = versionFunc;
-    IPin_AddRef((IPin*)basePin);
+    IPin_AddRef(&basePin->IPin_iface);
     pEnumMediaTypes->basePin = basePin;
 
     i = 0;
-    while (enumFunc(basePin,i,&amt) == S_OK) i++;
+    while (enumFunc(basePin, i, &amt) == S_OK) i++;
 
     pEnumMediaTypes->enumMediaDetails.cMediaTypes = i;
     pEnumMediaTypes->enumMediaDetails.pMediaTypes = CoTaskMemAlloc(sizeof(AM_MEDIA_TYPE) * i);
@@ -131,10 +134,10 @@ HRESULT WINAPI EnumMediaTypes_Construct(BasePin *basePin, BasePin_GetMediaType e
         enumFunc(basePin,i,&amt);
         if (FAILED(CopyMediaType(&pEnumMediaTypes->enumMediaDetails.pMediaTypes[i], &amt)))
         {
-           while (i--)
-              CoTaskMemFree(pEnumMediaTypes->enumMediaDetails.pMediaTypes[i].pbFormat);
-           CoTaskMemFree(pEnumMediaTypes->enumMediaDetails.pMediaTypes);
-           return E_OUTOFMEMORY;
+            while (i--)
+                FreeMediaType(&pEnumMediaTypes->enumMediaDetails.pMediaTypes[i]);
+            CoTaskMemFree(pEnumMediaTypes->enumMediaDetails.pMediaTypes);
+            return E_OUTOFMEMORY;
         }
     }
     *ppEnum = &pEnumMediaTypes->IEnumMediaTypes_iface;
@@ -142,24 +145,21 @@ HRESULT WINAPI EnumMediaTypes_Construct(BasePin *basePin, BasePin_GetMediaType e
     return S_OK;
 }
 
-static HRESULT WINAPI IEnumMediaTypesImpl_QueryInterface(IEnumMediaTypes * iface, REFIID riid, LPVOID * ppv)
+static HRESULT WINAPI IEnumMediaTypesImpl_QueryInterface(IEnumMediaTypes * iface, REFIID riid, void ** ret_iface)
 {
-    TRACE("(%s, %p)\n", debugstr_guid(riid), ppv);
+    TRACE("(%p)->(%s, %p)\n", iface, debugstr_guid(riid), ret_iface);
 
-    *ppv = NULL;
-
-    if (IsEqualIID(riid, &IID_IUnknown))
-        *ppv = iface;
-    else if (IsEqualIID(riid, &IID_IEnumMediaTypes))
-        *ppv = iface;
-
-    if (*ppv)
+    if (IsEqualIID(riid, &IID_IUnknown) ||
+        IsEqualIID(riid, &IID_IEnumMediaTypes))
     {
-        IUnknown_AddRef((IUnknown *)(*ppv));
+        IEnumMediaTypes_AddRef(iface);
+        *ret_iface = iface;
         return S_OK;
     }
 
-    FIXME("No interface for %s!\n", debugstr_guid(riid));
+    *ret_iface = NULL;
+
+    WARN("No interface for %s\n", debugstr_guid(riid));
 
     return E_NOINTERFACE;
 }
@@ -167,31 +167,30 @@ static HRESULT WINAPI IEnumMediaTypesImpl_QueryInterface(IEnumMediaTypes * iface
 static ULONG WINAPI IEnumMediaTypesImpl_AddRef(IEnumMediaTypes * iface)
 {
     IEnumMediaTypesImpl *This = impl_from_IEnumMediaTypes(iface);
-    ULONG refCount = InterlockedIncrement(&This->refCount);
+    ULONG ref = InterlockedIncrement(&This->refCount);
 
-    TRACE("(%p)->() AddRef from %d\n", iface, refCount - 1);
+    TRACE("(%p)->(): new ref = %u\n", iface, ref);
 
-    return refCount;
+    return ref;
 }
 
 static ULONG WINAPI IEnumMediaTypesImpl_Release(IEnumMediaTypes * iface)
 {
     IEnumMediaTypesImpl *This = impl_from_IEnumMediaTypes(iface);
-    ULONG refCount = InterlockedDecrement(&This->refCount);
+    ULONG ref = InterlockedDecrement(&This->refCount);
 
-    TRACE("(%p)->() Release from %d\n", iface, refCount + 1);
+    TRACE("(%p)->(): new ref = %u\n", iface, ref);
 
-    if (!refCount)
+    if (!ref)
     {
         ULONG i;
         for (i = 0; i < This->enumMediaDetails.cMediaTypes; i++)
-            if (This->enumMediaDetails.pMediaTypes[i].pbFormat)
-                CoTaskMemFree(This->enumMediaDetails.pMediaTypes[i].pbFormat);
+            FreeMediaType(&This->enumMediaDetails.pMediaTypes[i]);
         CoTaskMemFree(This->enumMediaDetails.pMediaTypes);
-        IPin_Release((IPin*)This->basePin);
+        IPin_Release(&This->basePin->IPin_iface);
         CoTaskMemFree(This);
     }
-    return refCount;
+    return ref;
 }
 
 static HRESULT WINAPI IEnumMediaTypesImpl_Next(IEnumMediaTypes * iface, ULONG cMediaTypes, AM_MEDIA_TYPE ** ppMediaTypes, ULONG * pcFetched)
@@ -199,12 +198,13 @@ static HRESULT WINAPI IEnumMediaTypesImpl_Next(IEnumMediaTypes * iface, ULONG cM
     ULONG cFetched;
     IEnumMediaTypesImpl *This = impl_from_IEnumMediaTypes(iface);
 
+    TRACE("(%p)->(%u, %p, %p)\n", iface, cMediaTypes, ppMediaTypes, pcFetched);
+
     cFetched = min(This->enumMediaDetails.cMediaTypes, This->uIndex + cMediaTypes) - This->uIndex;
 
     if (This->currentVersion != This->mediaVersionFunction(This->basePin))
         return VFW_E_ENUM_OUT_OF_SYNC;
 
-    TRACE("(%u, %p, %p)\n", cMediaTypes, ppMediaTypes, pcFetched);
     TRACE("Next uIndex: %u, cFetched: %u\n", This->uIndex, cFetched);
 
     if (cFetched > 0)
@@ -234,7 +234,8 @@ static HRESULT WINAPI IEnumMediaTypesImpl_Skip(IEnumMediaTypes * iface, ULONG cM
 {
     IEnumMediaTypesImpl *This = impl_from_IEnumMediaTypes(iface);
 
-    TRACE("(%u)\n", cMediaTypes);
+    TRACE("(%p)->(%u)\n", iface, cMediaTypes);
+
     if (This->currentVersion != This->mediaVersionFunction(This->basePin))
         return VFW_E_ENUM_OUT_OF_SYNC;
 
@@ -252,15 +253,14 @@ static HRESULT WINAPI IEnumMediaTypesImpl_Reset(IEnumMediaTypes * iface)
     AM_MEDIA_TYPE amt;
     IEnumMediaTypesImpl *This = impl_from_IEnumMediaTypes(iface);
 
-    TRACE("()\n");
+    TRACE("(%p)->()\n", iface);
 
     for (i = 0; i < This->enumMediaDetails.cMediaTypes; i++)
-        if (This->enumMediaDetails.pMediaTypes[i].pbFormat)
-            CoTaskMemFree(This->enumMediaDetails.pMediaTypes[i].pbFormat);
+        FreeMediaType(&This->enumMediaDetails.pMediaTypes[i]);
     CoTaskMemFree(This->enumMediaDetails.pMediaTypes);
 
     i = 0;
-    while (This->enumMediaFunction(This->basePin, i,&amt) == S_OK) i++;
+    while (This->enumMediaFunction(This->basePin, i, &amt) == S_OK) i++;
 
     This->enumMediaDetails.cMediaTypes = i;
     This->enumMediaDetails.pMediaTypes = CoTaskMemAlloc(sizeof(AM_MEDIA_TYPE) * i);
@@ -269,10 +269,10 @@ static HRESULT WINAPI IEnumMediaTypesImpl_Reset(IEnumMediaTypes * iface)
         This->enumMediaFunction(This->basePin, i,&amt);
         if (FAILED(CopyMediaType(&This->enumMediaDetails.pMediaTypes[i], &amt)))
         {
-           while (i--)
-              CoTaskMemFree(This->enumMediaDetails.pMediaTypes[i].pbFormat);
-           CoTaskMemFree(This->enumMediaDetails.pMediaTypes);
-           return E_OUTOFMEMORY;
+            while (i--)
+                FreeMediaType(&This->enumMediaDetails.pMediaTypes[i]);
+            CoTaskMemFree(This->enumMediaDetails.pMediaTypes);
+            return E_OUTOFMEMORY;
         }
     }
 
@@ -287,7 +287,7 @@ static HRESULT WINAPI IEnumMediaTypesImpl_Clone(IEnumMediaTypes * iface, IEnumMe
     HRESULT hr;
     IEnumMediaTypesImpl *This = impl_from_IEnumMediaTypes(iface);
 
-    TRACE("(%p)\n", ppEnum);
+    TRACE("(%p)->(%p)\n", iface, ppEnum);
 
     hr = EnumMediaTypes_Construct(This->basePin, This->enumMediaFunction, This->mediaVersionFunction, ppEnum);
     if (FAILED(hr))

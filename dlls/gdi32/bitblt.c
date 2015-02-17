@@ -21,7 +21,7 @@
 #include "config.h"
 
 #include <stdarg.h>
-
+#include <limits.h>
 #include <math.h>
 #ifdef HAVE_FLOAT_H
 #include <float.h>
@@ -56,7 +56,7 @@ BOOL intersect_vis_rectangles( struct bitblt_coords *dst, struct bitblt_coords *
     if ((src->width == dst->width) && (src->height == dst->height)) /* no stretching */
     {
         offset_rect( &src->visrect, dst->x - src->x, dst->y - src->y );
-        intersect_rect( &rect, &src->visrect, &dst->visrect );
+        if (!intersect_rect( &rect, &src->visrect, &dst->visrect )) return FALSE;
         src->visrect = dst->visrect = rect;
         offset_rect( &src->visrect, src->x - dst->x, src->y - dst->y );
     }
@@ -104,7 +104,7 @@ BOOL intersect_vis_rectangles( struct bitblt_coords *dst, struct bitblt_coords *
 static BOOL get_vis_rectangles( DC *dc_dst, struct bitblt_coords *dst,
                                 DC *dc_src, struct bitblt_coords *src )
 {
-    RECT rect, clip;
+    RECT rect;
 
     /* get the destination visible rectangle */
 
@@ -124,10 +124,7 @@ static BOOL get_vis_rectangles( DC *dc_dst, struct bitblt_coords *dst,
     }
     get_bounding_rect( &rect, dst->x, dst->y, dst->width, dst->height );
 
-    if (get_clip_box( dc_dst, &clip ))
-        intersect_rect( &dst->visrect, &rect, &clip );
-    else
-        dst->visrect = rect;
+    clip_visrect( dc_dst, &dst->visrect, &rect );
 
     /* get the source visible rectangle */
 
@@ -149,13 +146,7 @@ static BOOL get_vis_rectangles( DC *dc_dst, struct bitblt_coords *dst,
     }
     get_bounding_rect( &rect, src->x, src->y, src->width, src->height );
 
-    /* source is not clipped */
-    if (dc_src->header.type == OBJ_MEMDC)
-        intersect_rect( &src->visrect, &rect, &dc_src->vis_rect );
-    else
-        src->visrect = rect;  /* FIXME: clip to device size */
-
-    if (is_rect_empty( &src->visrect )) return FALSE;
+    if (!clip_device_rect( dc_src, &src->visrect, &rect )) return FALSE;
     if (is_rect_empty( &dst->visrect )) return FALSE;
 
     return intersect_vis_rectangles( dst, src );
@@ -167,16 +158,21 @@ void free_heap_bits( struct gdi_image_bits *bits )
 }
 
 DWORD convert_bits( const BITMAPINFO *src_info, struct bitblt_coords *src,
-                    BITMAPINFO *dst_info, struct gdi_image_bits *bits, BOOL add_alpha )
+                    BITMAPINFO *dst_info, struct gdi_image_bits *bits )
 {
     void *ptr;
     DWORD err;
+    BOOL top_down = dst_info->bmiHeader.biHeight < 0;
 
     dst_info->bmiHeader.biWidth = src->visrect.right - src->visrect.left;
-    if (!(ptr = HeapAlloc( GetProcessHeap(), 0, get_dib_image_size( dst_info ))))
+    dst_info->bmiHeader.biHeight = src->visrect.bottom - src->visrect.top;
+    dst_info->bmiHeader.biSizeImage = get_dib_image_size( dst_info );
+    if (top_down) dst_info->bmiHeader.biHeight = -dst_info->bmiHeader.biHeight;
+
+    if (!(ptr = HeapAlloc( GetProcessHeap(), 0, dst_info->bmiHeader.biSizeImage )))
         return ERROR_OUTOFMEMORY;
 
-    err = convert_bitmapinfo( src_info, bits->ptr, src, dst_info, ptr, add_alpha );
+    err = convert_bitmapinfo( src_info, bits->ptr, src, dst_info, ptr );
     if (bits->free) bits->free( bits );
     bits->ptr = ptr;
     bits->is_copy = TRUE;
@@ -193,8 +189,10 @@ DWORD stretch_bits( const BITMAPINFO *src_info, struct bitblt_coords *src,
 
     dst_info->bmiHeader.biWidth = dst->visrect.right - dst->visrect.left;
     dst_info->bmiHeader.biHeight = dst->visrect.bottom - dst->visrect.top;
+    dst_info->bmiHeader.biSizeImage = get_dib_image_size( dst_info );
+
     if (src_info->bmiHeader.biHeight < 0) dst_info->bmiHeader.biHeight = -dst_info->bmiHeader.biHeight;
-    if (!(ptr = HeapAlloc( GetProcessHeap(), 0, get_dib_image_size( dst_info ))))
+    if (!(ptr = HeapAlloc( GetProcessHeap(), 0, dst_info->bmiHeader.biSizeImage )))
         return ERROR_OUTOFMEMORY;
 
     err = stretch_bitmapinfo( src_info, bits->ptr, src, dst_info, ptr, dst, mode );
@@ -211,7 +209,7 @@ static DWORD blend_bits( const BITMAPINFO *src_info, const struct gdi_image_bits
 {
     if (!dst_bits->is_copy)
     {
-        int size = get_dib_image_size( dst_info );
+        int size = dst_info->bmiHeader.biSizeImage;
         void *ptr = HeapAlloc( GetProcessHeap(), 0, size );
         if (!ptr) return ERROR_OUTOFMEMORY;
         memcpy( ptr, dst_bits->ptr, size );
@@ -221,6 +219,27 @@ static DWORD blend_bits( const BITMAPINFO *src_info, const struct gdi_image_bits
         dst_bits->free = free_heap_bits;
     }
     return blend_bitmapinfo( src_info, src_bits->ptr, src, dst_info, dst_bits->ptr, dst, blend );
+}
+
+/* helper to retrieve either both colors or only the background color for monochrome blits */
+static void get_mono_dc_colors( HDC hdc, BITMAPINFO *info, int count )
+{
+    COLORREF color = GetBkColor( hdc );
+
+    info->bmiColors[count - 1].rgbRed      = GetRValue( color );
+    info->bmiColors[count - 1].rgbGreen    = GetGValue( color );
+    info->bmiColors[count - 1].rgbBlue     = GetBValue( color );
+    info->bmiColors[count - 1].rgbReserved = 0;
+
+    if (count > 1)
+    {
+        color = GetTextColor( hdc );
+        info->bmiColors[0].rgbRed      = GetRValue( color );
+        info->bmiColors[0].rgbGreen    = GetGValue( color );
+        info->bmiColors[0].rgbBlue     = GetBValue( color );
+        info->bmiColors[0].rgbReserved = 0;
+    }
+    info->bmiHeader.biClrUsed = count;
 }
 
 /***********************************************************************
@@ -240,48 +259,39 @@ BOOL nulldrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
 
     if (!(dc_src = get_dc_ptr( src_dev->hdc ))) return FALSE;
     src_dev = GET_DC_PHYSDEV( dc_src, pGetImage );
-    err = src_dev->funcs->pGetImage( src_dev, 0, src_info, &bits, src );
-    release_dc_ptr( dc_src );
-    if (err) return FALSE;
-
-    /* 1-bpp source without a color table uses the destination DC colors */
-    if (src_info->bmiHeader.biBitCount == 1 && !src_info->bmiHeader.biClrUsed)
+    if (src_dev->funcs->pGetImage( src_dev, src_info, &bits, src ))
     {
-        COLORREF color = GetTextColor( dst_dev->hdc );
-        src_info->bmiColors[0].rgbRed      = GetRValue( color );
-        src_info->bmiColors[0].rgbGreen    = GetGValue( color );
-        src_info->bmiColors[0].rgbBlue     = GetBValue( color );
-        src_info->bmiColors[0].rgbReserved = 0;
-        color = GetBkColor( dst_dev->hdc );
-        src_info->bmiColors[1].rgbRed      = GetRValue( color );
-        src_info->bmiColors[1].rgbGreen    = GetGValue( color );
-        src_info->bmiColors[1].rgbBlue     = GetBValue( color );
-        src_info->bmiColors[1].rgbReserved = 0;
-        src_info->bmiHeader.biClrUsed = 2;
+        release_dc_ptr( dc_src );
+        return FALSE;
     }
 
     dst_dev = GET_DC_PHYSDEV( dc_dst, pPutImage );
     copy_bitmapinfo( dst_info, src_info );
-    err = dst_dev->funcs->pPutImage( dst_dev, 0, 0, dst_info, &bits, src, dst, rop );
+    err = dst_dev->funcs->pPutImage( dst_dev, 0, dst_info, &bits, src, dst, rop );
     if (err == ERROR_BAD_FORMAT)
     {
-        /* 1-bpp destination without a color table requires a fake 1-entry table
-         * that contains only the background color */
-        if (dst_info->bmiHeader.biBitCount == 1 && !dst_info->bmiHeader.biClrUsed)
+        DWORD dst_colors = dst_info->bmiHeader.biClrUsed;
+
+        /* 1-bpp source without a color table uses the destination DC colors */
+        if (src_info->bmiHeader.biBitCount == 1 && !src_info->bmiHeader.biClrUsed)
+            get_mono_dc_colors( dst_dev->hdc, src_info, 2 );
+
+        if (dst_info->bmiHeader.biBitCount == 1 && !dst_colors)
         {
-            COLORREF color = GetBkColor( src_dev->hdc );
-            dst_info->bmiColors[0].rgbRed      = GetRValue( color );
-            dst_info->bmiColors[0].rgbGreen    = GetGValue( color );
-            dst_info->bmiColors[0].rgbBlue     = GetBValue( color );
-            dst_info->bmiColors[0].rgbReserved = 0;
-            dst_info->bmiHeader.biClrUsed = 1;
+            /* 1-bpp destination without a color table requires a fake 1-entry table
+             * that contains only the background color; except with a 1-bpp source,
+             * in which case it uses the source colors */
+            if (src_info->bmiHeader.biBitCount > 1)
+                get_mono_dc_colors( src_dev->hdc, dst_info, 1 );
+            else
+                get_mono_dc_colors( src_dev->hdc, dst_info, 2 );
         }
 
-        if (!(err = convert_bits( src_info, src, dst_info, &bits, FALSE )))
+        if (!(err = convert_bits( src_info, src, dst_info, &bits )))
         {
-            /* get rid of the fake 1-bpp table */
-            if (dst_info->bmiHeader.biClrUsed == 1) dst_info->bmiHeader.biClrUsed = 0;
-            err = dst_dev->funcs->pPutImage( dst_dev, 0, 0, dst_info, &bits, src, dst, rop );
+            /* get rid of the fake destination table */
+            dst_info->bmiHeader.biClrUsed = dst_colors;
+            err = dst_dev->funcs->pPutImage( dst_dev, 0, dst_info, &bits, src, dst, rop );
         }
     }
 
@@ -290,10 +300,11 @@ BOOL nulldrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
     {
         copy_bitmapinfo( src_info, dst_info );
         err = stretch_bits( src_info, src, dst_info, dst, &bits, GetStretchBltMode( dst_dev->hdc ));
-        if (!err) err = dst_dev->funcs->pPutImage( dst_dev, 0, 0, dst_info, &bits, src, dst, rop );
+        if (!err) err = dst_dev->funcs->pPutImage( dst_dev, 0, dst_info, &bits, src, dst, rop );
     }
 
     if (bits.free) bits.free( &bits );
+    release_dc_ptr( dc_src );
     return !err;
 }
 
@@ -311,8 +322,7 @@ BOOL nulldrv_AlphaBlend( PHYSDEV dst_dev, struct bitblt_coords *dst,
 
     if (!(dc_src = get_dc_ptr( src_dev->hdc ))) return FALSE;
     src_dev = GET_DC_PHYSDEV( dc_src, pGetImage );
-    err = src_dev->funcs->pGetImage( src_dev, 0, src_info, &bits, src );
-    release_dc_ptr( dc_src );
+    err = src_dev->funcs->pGetImage( src_dev, src_info, &bits, src );
     if (err) goto done;
 
     dst_dev = GET_DC_PHYSDEV( dc_dst, pBlendImage );
@@ -320,21 +330,7 @@ BOOL nulldrv_AlphaBlend( PHYSDEV dst_dev, struct bitblt_coords *dst,
     err = dst_dev->funcs->pBlendImage( dst_dev, dst_info, &bits, src, dst, func );
     if (err == ERROR_BAD_FORMAT)
     {
-        /* 1-bpp source without a color table uses black & white */
-        if (src_info->bmiHeader.biBitCount == 1 && !src_info->bmiHeader.biClrUsed)
-        {
-            src_info->bmiColors[0].rgbRed      = 0;
-            src_info->bmiColors[0].rgbGreen    = 0;
-            src_info->bmiColors[0].rgbBlue     = 0;
-            src_info->bmiColors[0].rgbReserved = 0;
-            src_info->bmiColors[1].rgbRed      = 0xff;
-            src_info->bmiColors[1].rgbGreen    = 0xff;
-            src_info->bmiColors[1].rgbBlue     = 0xff;
-            src_info->bmiColors[1].rgbReserved = 0;
-            src_info->bmiHeader.biClrUsed = 2;
-        }
-
-        err = convert_bits( src_info, src, dst_info, &bits, TRUE );
+        err = convert_bits( src_info, src, dst_info, &bits );
         if (!err) err = dst_dev->funcs->pBlendImage( dst_dev, dst_info, &bits, src, dst, func );
     }
 
@@ -348,6 +344,7 @@ BOOL nulldrv_AlphaBlend( PHYSDEV dst_dev, struct bitblt_coords *dst,
 
     if (bits.free) bits.free( &bits );
 done:
+    release_dc_ptr( dc_src );
     if (err) SetLastError( err );
     return !err;
 }
@@ -360,6 +357,7 @@ DWORD nulldrv_BlendImage( PHYSDEV dev, BITMAPINFO *info, const struct gdi_image_
     BITMAPINFO *dst_info = (BITMAPINFO *)buffer;
     struct gdi_image_bits dst_bits;
     struct bitblt_coords orig_dst;
+    DWORD *masks = (DWORD *)info->bmiColors;
     DC *dc = get_nulldrv_dc( dev );
     DWORD err;
 
@@ -367,7 +365,7 @@ DWORD nulldrv_BlendImage( PHYSDEV dev, BITMAPINFO *info, const struct gdi_image_
     if (info->bmiHeader.biBitCount != 32) goto update_format;
     if (info->bmiHeader.biCompression == BI_BITFIELDS)
     {
-        DWORD *masks = (DWORD *)info->bmiColors;
+        if (blend.AlphaFormat & AC_SRC_ALPHA) return ERROR_INVALID_PARAMETER;
         if (masks[0] != 0xff0000 || masks[1] != 0x00ff00 || masks[2] != 0x0000ff)
             goto update_format;
     }
@@ -377,12 +375,12 @@ DWORD nulldrv_BlendImage( PHYSDEV dev, BITMAPINFO *info, const struct gdi_image_
 
     dev = GET_DC_PHYSDEV( dc, pGetImage );
     orig_dst = *dst;
-    err = dev->funcs->pGetImage( dev, 0, dst_info, &dst_bits, dst );
+    err = dev->funcs->pGetImage( dev, dst_info, &dst_bits, dst );
     if (err) return err;
 
     dev = GET_DC_PHYSDEV( dc, pPutImage );
     err = blend_bits( info, bits, src, dst_info, &dst_bits, dst, blend );
-    if (!err) err = dev->funcs->pPutImage( dev, 0, 0, dst_info, &dst_bits, dst, &orig_dst, SRCCOPY );
+    if (!err) err = dev->funcs->pPutImage( dev, 0, dst_info, &dst_bits, dst, &orig_dst, SRCCOPY );
 
     if (dst_bits.free) dst_bits.free( &dst_bits );
     return err;
@@ -393,10 +391,127 @@ update_format:
 
     info->bmiHeader.biPlanes      = 1;
     info->bmiHeader.biBitCount    = 32;
-    info->bmiHeader.biCompression = BI_RGB;
+    info->bmiHeader.biCompression = BI_BITFIELDS;
     info->bmiHeader.biClrUsed     = 0;
+    masks[0] = 0xff0000;
+    masks[1] = 0x00ff00;
+    masks[2] = 0x0000ff;
     return ERROR_BAD_FORMAT;
 }
+
+BOOL nulldrv_GradientFill( PHYSDEV dev, TRIVERTEX *vert_array, ULONG nvert,
+                           void * grad_array, ULONG ngrad, ULONG mode )
+{
+    DC *dc = get_nulldrv_dc( dev );
+    char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
+    BITMAPINFO *info = (BITMAPINFO *)buffer;
+    struct bitblt_coords src, dst;
+    struct gdi_image_bits bits;
+    unsigned int i;
+    POINT *pts;
+    BOOL ret = FALSE;
+    DWORD err;
+    HRGN rgn;
+
+    if (!(pts = HeapAlloc( GetProcessHeap(), 0, nvert * sizeof(*pts) ))) return FALSE;
+    for (i = 0; i < nvert; i++)
+    {
+        pts[i].x = vert_array[i].x;
+        pts[i].y = vert_array[i].y;
+    }
+    LPtoDP( dev->hdc, pts, nvert );
+
+    /* compute bounding rect of all the rectangles/triangles */
+    reset_bounds( &dst.visrect );
+    for (i = 0; i < ngrad * (mode == GRADIENT_FILL_TRIANGLE ? 3 : 2); i++)
+    {
+        ULONG v = ((ULONG *)grad_array)[i];
+        dst.visrect.left   = min( dst.visrect.left,   pts[v].x );
+        dst.visrect.top    = min( dst.visrect.top,    pts[v].y );
+        dst.visrect.right  = max( dst.visrect.right,  pts[v].x );
+        dst.visrect.bottom = max( dst.visrect.bottom, pts[v].y );
+    }
+
+    dst.x = dst.visrect.left;
+    dst.y = dst.visrect.top;
+    dst.width = dst.visrect.right - dst.visrect.left;
+    dst.height = dst.visrect.bottom - dst.visrect.top;
+    if (!clip_visrect( dc, &dst.visrect, &dst.visrect )) goto done;
+
+    /* query the bitmap format */
+    info->bmiHeader.biSize          = sizeof(info->bmiHeader);
+    info->bmiHeader.biPlanes        = 1;
+    info->bmiHeader.biBitCount      = 0;
+    info->bmiHeader.biCompression   = BI_RGB;
+    info->bmiHeader.biXPelsPerMeter = 0;
+    info->bmiHeader.biYPelsPerMeter = 0;
+    info->bmiHeader.biClrUsed       = 0;
+    info->bmiHeader.biClrImportant  = 0;
+    info->bmiHeader.biWidth         = dst.visrect.right - dst.visrect.left;
+    info->bmiHeader.biHeight        = dst.visrect.bottom - dst.visrect.top;
+    info->bmiHeader.biSizeImage     = 0;
+    dev = GET_DC_PHYSDEV( dc, pPutImage );
+    err = dev->funcs->pPutImage( dev, 0, info, NULL, NULL, NULL, 0 );
+    if (err && err != ERROR_BAD_FORMAT) goto done;
+
+    info->bmiHeader.biSizeImage = get_dib_image_size( info );
+    if (!(bits.ptr = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, info->bmiHeader.biSizeImage )))
+        goto done;
+    bits.is_copy = TRUE;
+    bits.free = free_heap_bits;
+
+    /* make src and points relative to the bitmap */
+    src = dst;
+    src.x -= dst.visrect.left;
+    src.y -= dst.visrect.top;
+    offset_rect( &src.visrect, -dst.visrect.left, -dst.visrect.top );
+    for (i = 0; i < nvert; i++)
+    {
+        pts[i].x -= dst.visrect.left;
+        pts[i].y -= dst.visrect.top;
+    }
+
+    rgn = CreateRectRgn( 0, 0, 0, 0 );
+    gradient_bitmapinfo( info, bits.ptr, vert_array, nvert, grad_array, ngrad, mode, pts, rgn );
+    OffsetRgn( rgn, dst.visrect.left, dst.visrect.top );
+    ret = !dev->funcs->pPutImage( dev, rgn, info, &bits, &src, &dst, SRCCOPY );
+
+    if (bits.free) bits.free( &bits );
+    DeleteObject( rgn );
+
+done:
+    HeapFree( GetProcessHeap(), 0, pts );
+    return ret;
+}
+
+COLORREF nulldrv_GetPixel( PHYSDEV dev, INT x, INT y )
+{
+    DC *dc = get_nulldrv_dc( dev );
+    char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
+    BITMAPINFO *info = (BITMAPINFO *)buffer;
+    struct bitblt_coords src;
+    struct gdi_image_bits bits;
+    COLORREF ret;
+
+    src.visrect.left = x;
+    src.visrect.top  = y;
+    LPtoDP( dev->hdc, (POINT *)&src.visrect, 1 );
+    src.visrect.right  = src.visrect.left + 1;
+    src.visrect.bottom = src.visrect.top + 1;
+    src.x = src.visrect.left;
+    src.y = src.visrect.top;
+    src.width = src.height = 1;
+
+    if (!clip_visrect( dc, &src.visrect, &src.visrect )) return CLR_INVALID;
+
+    dev = GET_DC_PHYSDEV( dc, pGetImage );
+    if (dev->funcs->pGetImage( dev, info, &bits, &src )) return CLR_INVALID;
+
+    ret = get_pixel_bitmapinfo( info, bits.ptr, &src );
+    if (bits.free) bits.free( &bits );
+    return ret;
+}
+
 
 /***********************************************************************
  *           PatBlt    (GDI32.@)
@@ -410,7 +525,6 @@ BOOL WINAPI PatBlt( HDC hdc, INT left, INT top, INT width, INT height, DWORD rop
     if ((dc = get_dc_ptr( hdc )))
     {
         struct bitblt_coords dst;
-        PHYSDEV physdev = GET_DC_PHYSDEV( dc, pPatBlt );
 
         update_dc( dc );
 
@@ -430,8 +544,11 @@ BOOL WINAPI PatBlt( HDC hdc, INT left, INT top, INT width, INT height, DWORD rop
               hdc, dst.log_x, dst.log_y, dst.log_width, dst.log_height,
               dst.x, dst.y, dst.width, dst.height, wine_dbgstr_rect(&dst.visrect), rop );
 
-        if (!ret) ret = physdev->funcs->pPatBlt( physdev, &dst, rop );
-
+        if (!ret)
+        {
+            PHYSDEV physdev = GET_DC_PHYSDEV( dc, pPatBlt );
+            ret = physdev->funcs->pPatBlt( physdev, &dst, rop );
+        }
         release_dc_ptr( dc );
     }
     return ret;
@@ -466,8 +583,6 @@ BOOL WINAPI StretchBlt( HDC hdcDst, INT xDst, INT yDst, INT widthDst, INT height
     if ((dcSrc = get_dc_ptr( hdcSrc )))
     {
         struct bitblt_coords src, dst;
-        PHYSDEV src_dev = GET_DC_PHYSDEV( dcSrc, pStretchBlt );
-        PHYSDEV dst_dev = GET_DC_PHYSDEV( dcDst, pStretchBlt );
 
         update_dc( dcSrc );
         update_dc( dcDst );
@@ -496,7 +611,12 @@ BOOL WINAPI StretchBlt( HDC hdcDst, INT xDst, INT yDst, INT widthDst, INT height
               hdcDst, dst.log_x, dst.log_y, dst.log_width, dst.log_height,
               dst.x, dst.y, dst.width, dst.height, wine_dbgstr_rect(&dst.visrect), rop );
 
-        if (!ret) ret = dst_dev->funcs->pStretchBlt( dst_dev, &dst, src_dev, &src, rop );
+        if (!ret)
+        {
+            PHYSDEV src_dev = GET_DC_PHYSDEV( dcSrc, pStretchBlt );
+            PHYSDEV dst_dev = GET_DC_PHYSDEV( dcDst, pStretchBlt );
+            ret = dst_dev->funcs->pStretchBlt( dst_dev, &dst, src_dev, &src, rop );
+        }
         release_dc_ptr( dcSrc );
     }
     release_dc_ptr( dcDst );
@@ -803,8 +923,6 @@ BOOL WINAPI GdiAlphaBlend(HDC hdcDst, int xDst, int yDst, int widthDst, int heig
     if ((dcDst = get_dc_ptr( hdcDst )))
     {
         struct bitblt_coords src, dst;
-        PHYSDEV src_dev = GET_DC_PHYSDEV( dcSrc, pAlphaBlend );
-        PHYSDEV dst_dev = GET_DC_PHYSDEV( dcDst, pAlphaBlend );
 
         update_dc( dcSrc );
         update_dc( dcDst );
@@ -813,12 +931,12 @@ BOOL WINAPI GdiAlphaBlend(HDC hdcDst, int xDst, int yDst, int widthDst, int heig
         src.log_y      = ySrc;
         src.log_width  = widthSrc;
         src.log_height = heightSrc;
-        src.layout     = GetLayout( src_dev->hdc );
+        src.layout     = GetLayout( hdcSrc );
         dst.log_x      = xDst;
         dst.log_y      = yDst;
         dst.log_width  = widthDst;
         dst.log_height = heightDst;
-        dst.layout     = GetLayout( dst_dev->hdc );
+        dst.layout     = GetLayout( hdcDst );
         ret = !get_vis_rectangles( dcDst, &dst, dcSrc, &src );
 
         TRACE("src %p log=%d,%d %dx%d phys=%d,%d %dx%d vis=%s  dst %p log=%d,%d %dx%d phys=%d,%d %dx%d vis=%s  blend=%02x/%02x/%02x/%02x\n",
@@ -830,17 +948,19 @@ BOOL WINAPI GdiAlphaBlend(HDC hdcDst, int xDst, int yDst, int widthDst, int heig
               blendFunction.SourceConstantAlpha, blendFunction.AlphaFormat );
 
         if (src.x < 0 || src.y < 0 || src.width < 0 || src.height < 0 ||
-            (dcSrc->header.type == OBJ_MEMDC &&
-             (src.width > dcSrc->vis_rect.right - dcSrc->vis_rect.left - src.x ||
-              src.height > dcSrc->vis_rect.bottom - dcSrc->vis_rect.top - src.y)))
+            src.log_width < 0 || src.log_height < 0 ||
+            (!is_rect_empty( &dcSrc->device_rect ) &&
+             (src.width > dcSrc->device_rect.right - dcSrc->vis_rect.left - src.x ||
+              src.height > dcSrc->device_rect.bottom - dcSrc->vis_rect.top - src.y)))
         {
             WARN( "Invalid src coords: (%d,%d), size %dx%d\n", src.x, src.y, src.width, src.height );
             SetLastError( ERROR_INVALID_PARAMETER );
             ret = FALSE;
         }
-        else if (dst.width < 0 || dst.height < 0)
+        else if (dst.log_width < 0 || dst.log_height < 0)
         {
-            WARN( "Invalid dst coords: (%d,%d), size %dx%d\n", dst.x, dst.y, dst.width, dst.height );
+            WARN( "Invalid dst coords: (%d,%d), size %dx%d\n",
+                  dst.log_x, dst.log_y, dst.log_width, dst.log_height );
             SetLastError( ERROR_INVALID_PARAMETER );
             ret = FALSE;
         }
@@ -852,8 +972,12 @@ BOOL WINAPI GdiAlphaBlend(HDC hdcDst, int xDst, int yDst, int widthDst, int heig
             SetLastError( ERROR_INVALID_PARAMETER );
             ret = FALSE;
         }
-        else if (!ret) ret = dst_dev->funcs->pAlphaBlend( dst_dev, &dst, src_dev, &src, blendFunction );
-
+        else if (!ret)
+        {
+            PHYSDEV src_dev = GET_DC_PHYSDEV( dcSrc, pAlphaBlend );
+            PHYSDEV dst_dev = GET_DC_PHYSDEV( dcDst, pAlphaBlend );
+            ret = dst_dev->funcs->pAlphaBlend( dst_dev, &dst, src_dev, &src, blendFunction );
+        }
         release_dc_ptr( dcDst );
     }
     release_dc_ptr( dcSrc );
@@ -913,7 +1037,7 @@ BOOL WINAPI PlgBlt( HDC hdcDest, const POINT *lpPoint,
 
     /* Y components */
     xf.eM12 = (plg[1].y*(rect[2].y - rect[0].y) - plg[2].y*(rect[1].y - rect[0].y) - plg[0].y*(rect[2].y - rect[1].y)) / det;
-    xf.eM22 = (plg[1].x*(rect[2].y - rect[0].y) - plg[2].x*(rect[1].y - rect[0].y) - plg[0].x*(rect[2].y - rect[1].y)) / det;
+    xf.eM22 = (rect[1].x*(plg[2].y - plg[0].y) - rect[2].x*(plg[1].y - plg[0].y) - rect[0].x*(plg[2].y - plg[1].y)) / det;
     xf.eDy  = (rect[0].x*(rect[1].y*plg[2].y - rect[2].y*plg[1].y) -
                rect[1].x*(rect[0].y*plg[2].y - rect[2].y*plg[0].y) +
                rect[2].x*(rect[0].y*plg[1].y - rect[1].y*plg[0].y)

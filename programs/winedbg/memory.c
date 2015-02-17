@@ -39,8 +39,8 @@ void* be_cpu_linearize(HANDLE hThread, const ADDRESS64* addr)
     return (void*)(DWORD_PTR)addr->Offset;
 }
 
-unsigned be_cpu_build_addr(HANDLE hThread, const CONTEXT* ctx, ADDRESS64* addr, 
-                           unsigned seg, unsigned long offset)
+BOOL be_cpu_build_addr(HANDLE hThread, const CONTEXT* ctx, ADDRESS64* addr,
+                       unsigned seg, unsigned long offset)
 {
     addr->Mode    = AddrModeFlat;
     addr->Segment = 0; /* don't need segment */
@@ -73,7 +73,7 @@ static void	memory_report_invalid_addr(const void* addr)
 
     address.Mode    = AddrModeFlat;
     address.Segment = 0;
-    address.Offset  = (unsigned long)addr;
+    address.Offset  = (ULONG_PTR)addr;
     dbg_printf("*** Invalid address ");
     print_address(&address, FALSE);
     dbg_printf(" ***\n");
@@ -367,6 +367,7 @@ static void print_typed_basic(const struct dbg_lvalue* lvalue)
         {
             WINE_ERR("Couldn't get information\n");
             RaiseException(DEBUG_STATUS_INTERNAL_ERROR, 0, 0, NULL);
+            return;
         }
         size = (DWORD)size64;
         switch (bt)
@@ -524,7 +525,7 @@ void print_basic(const struct dbg_lvalue* lvalue, char format)
     if (format != 0)
     {
         unsigned size;
-        LONGLONG res = types_extract_as_longlong(lvalue, &size);
+        LONGLONG res = types_extract_as_longlong(lvalue, &size, NULL);
         WCHAR wch;
 
         switch (format)
@@ -557,7 +558,7 @@ void print_basic(const struct dbg_lvalue* lvalue, char format)
     }
     if (lvalue->type.id == dbg_itype_segptr)
     {
-        dbg_print_longlong(types_extract_as_longlong(lvalue, NULL), TRUE);
+        dbg_print_longlong(types_extract_as_longlong(lvalue, NULL, NULL), TRUE);
     }
     else print_typed_basic(lvalue);
 }

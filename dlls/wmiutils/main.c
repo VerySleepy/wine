@@ -24,8 +24,10 @@
 #include "windef.h"
 #include "winbase.h"
 #include "winuser.h"
+#include "initguid.h"
 #include "objbase.h"
 #include "wbemcli.h"
+#include "wmiutils.h"
 #include "rpcproxy.h"
 
 #include "wine/debug.h"
@@ -35,7 +37,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(wmiutils);
 
 static HINSTANCE instance;
 
-typedef HRESULT (*fnCreateInstance)( IUnknown *pUnkOuter, LPVOID *ppObj );
+typedef HRESULT (*fnCreateInstance)( LPVOID *ppObj );
 
 typedef struct
 {
@@ -85,14 +87,11 @@ static HRESULT WINAPI wmiutils_cf_CreateInstance( IClassFactory *iface, LPUNKNOW
     if (pOuter)
         return CLASS_E_NOAGGREGATION;
 
-    r = This->pfnCreateInstance( pOuter, (LPVOID *)&punk );
+    r = This->pfnCreateInstance( (LPVOID *)&punk );
     if (FAILED(r))
         return r;
 
     r = IUnknown_QueryInterface( punk, riid, ppobj );
-    if (FAILED(r))
-        return r;
-
     IUnknown_Release( punk );
     return r;
 }
@@ -113,6 +112,7 @@ static const struct IClassFactoryVtbl wmiutils_cf_vtbl =
 };
 
 static wmiutils_cf status_code_cf = { { &wmiutils_cf_vtbl }, WbemStatusCodeText_create };
+static wmiutils_cf path_cf = { { &wmiutils_cf_vtbl }, WbemPath_create };
 
 BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID lpv )
 {
@@ -123,8 +123,6 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID lpv )
     case DLL_PROCESS_ATTACH:
         instance = hinst;
         DisableThreadLibraryCalls( hinst );
-        break;
-    case DLL_PROCESS_DETACH:
         break;
     }
     return TRUE;
@@ -139,6 +137,10 @@ HRESULT WINAPI DllGetClassObject( REFCLSID rclsid, REFIID iid, LPVOID *ppv )
     if (IsEqualGUID( rclsid, &CLSID_WbemStatusCode ))
     {
        cf = &status_code_cf.IClassFactory_iface;
+    }
+    else if (IsEqualGUID( rclsid, &CLSID_WbemDefPath ))
+    {
+        cf = &path_cf.IClassFactory_iface;
     }
     if (!cf) return CLASS_E_CLASSNOTAVAILABLE;
     return IClassFactory_QueryInterface( cf, iid, ppv );

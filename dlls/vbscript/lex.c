@@ -16,7 +16,11 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include "config.h"
+#include "wine/port.h"
+
 #include <assert.h>
+#include <limits.h>
 
 #include "vbscript.h"
 #include "parse.h"
@@ -30,11 +34,13 @@ static const WCHAR andW[] = {'a','n','d',0};
 static const WCHAR byrefW[] = {'b','y','r','e','f',0};
 static const WCHAR byvalW[] = {'b','y','v','a','l',0};
 static const WCHAR callW[] = {'c','a','l','l',0};
+static const WCHAR caseW[] = {'c','a','s','e',0};
 static const WCHAR classW[] = {'c','l','a','s','s',0};
 static const WCHAR constW[] = {'c','o','n','s','t',0};
 static const WCHAR defaultW[] = {'d','e','f','a','u','l','t',0};
 static const WCHAR dimW[] = {'d','i','m',0};
 static const WCHAR doW[] = {'d','o',0};
+static const WCHAR eachW[] = {'e','a','c','h',0};
 static const WCHAR elseW[] = {'e','l','s','e',0};
 static const WCHAR elseifW[] = {'e','l','s','e','i','f',0};
 static const WCHAR emptyW[] = {'e','m','p','t','y',0};
@@ -50,6 +56,7 @@ static const WCHAR getW[] = {'g','e','t',0};
 static const WCHAR gotoW[] = {'g','o','t','o',0};
 static const WCHAR ifW[] = {'i','f',0};
 static const WCHAR impW[] = {'i','m','p',0};
+static const WCHAR inW[] = {'i','n',0};
 static const WCHAR isW[] = {'i','s',0};
 static const WCHAR letW[] = {'l','e','t',0};
 static const WCHAR loopW[] = {'l','o','o','p',0};
@@ -68,6 +75,7 @@ static const WCHAR propertyW[] = {'p','r','o','p','e','r','t','y',0};
 static const WCHAR publicW[] = {'p','u','b','l','i','c',0};
 static const WCHAR remW[] = {'r','e','m',0};
 static const WCHAR resumeW[] = {'r','e','s','u','m','e',0};
+static const WCHAR selectW[] = {'s','e','l','e','c','t',0};
 static const WCHAR setW[] = {'s','e','t',0};
 static const WCHAR stepW[] = {'s','t','e','p',0};
 static const WCHAR stopW[] = {'s','t','o','p',0};
@@ -88,11 +96,13 @@ static const struct {
     {byrefW,     tBYREF},
     {byvalW,     tBYVAL},
     {callW,      tCALL},
+    {caseW,      tCASE},
     {classW,     tCLASS},
     {constW,     tCONST},
     {defaultW,   tDEFAULT},
     {dimW,       tDIM},
     {doW,        tDO},
+    {eachW,      tEACH},
     {elseW,      tELSE},
     {elseifW,    tELSEIF},
     {emptyW,     tEMPTY},
@@ -108,6 +118,7 @@ static const struct {
     {gotoW,      tGOTO},
     {ifW,        tIF},
     {impW,       tIMP},
+    {inW,        tIN},
     {isW,        tIS},
     {letW,       tLET},
     {loopW,      tLOOP},
@@ -126,6 +137,7 @@ static const struct {
     {publicW,    tPUBLIC},
     {remW,       tREM},
     {resumeW,    tRESUME},
+    {selectW,    tSELECT},
     {setW,       tSET},
     {stepW,      tSTEP},
     {stopW,      tSTOP},
@@ -250,28 +262,91 @@ static int parse_string_literal(parser_ctx_t *ctx, const WCHAR **ret)
 
 static int parse_numeric_literal(parser_ctx_t *ctx, void **ret)
 {
-    double n = 0;
+    BOOL use_int = TRUE;
+    LONGLONG d = 0, hlp;
+    int exp = 0;
+    double r;
 
     if(*ctx->ptr == '0' && !('0' <= ctx->ptr[1] && ctx->ptr[1] <= '9') && ctx->ptr[1] != '.')
         return *ctx->ptr++;
 
-    do {
-        n = n*10 + *ctx->ptr++ - '0';
-    }while('0' <= *ctx->ptr && *ctx->ptr <= '9');
-
-    if(*ctx->ptr != '.') {
-        if((LONG)n == n) {
-            LONG l = n;
-            *(LONG*)ret = l;
-            return (short)l == l ? tShort : tLong;
+    while(ctx->ptr < ctx->end && isdigitW(*ctx->ptr)) {
+        hlp = d*10 + *(ctx->ptr++) - '0';
+        if(d>MAXLONGLONG/10 || hlp<0) {
+            exp++;
+            break;
         }
-    }else {
-        double e = 1.0;
-        while('0' <= *++ctx->ptr && *ctx->ptr <= '9')
-            n += (e /= 10.0)*(*ctx->ptr-'0');
+        else
+            d = hlp;
+    }
+    while(ctx->ptr < ctx->end && isdigitW(*ctx->ptr)) {
+        exp++;
+        ctx->ptr++;
     }
 
-    *(double*)ret = n;
+    if(*ctx->ptr == '.') {
+        use_int = FALSE;
+        ctx->ptr++;
+
+        while(ctx->ptr < ctx->end && isdigitW(*ctx->ptr)) {
+            hlp = d*10 + *(ctx->ptr++) - '0';
+            if(d>MAXLONGLONG/10 || hlp<0)
+                break;
+
+            d = hlp;
+            exp--;
+        }
+        while(ctx->ptr < ctx->end && isdigitW(*ctx->ptr))
+            ctx->ptr++;
+    }
+
+    if(*ctx->ptr == 'e' || *ctx->ptr == 'E') {
+        int e = 0, sign = 1;
+
+        if(*++ctx->ptr == '-') {
+            ctx->ptr++;
+            sign = -1;
+        }
+
+        if(!isdigitW(*ctx->ptr)) {
+            FIXME("Invalid numeric literal\n");
+            return 0;
+        }
+
+        use_int = FALSE;
+
+        do {
+            e = e*10 + *(ctx->ptr++) - '0';
+            if(sign == -1 && -e+exp < -(INT_MAX/100)) {
+                /* The literal will be rounded to 0 anyway. */
+                while(isdigitW(*ctx->ptr))
+                    ctx->ptr++;
+                *(double*)ret = 0;
+                return tDouble;
+            }
+
+            if(sign*e + exp > INT_MAX/100) {
+                FIXME("Invalid numeric literal\n");
+                return 0;
+            }
+        } while(isdigitW(*ctx->ptr));
+
+        exp += sign*e;
+    }
+
+    if(use_int && (LONG)d == d) {
+        LONG l = d;
+        *(LONG*)ret = l;
+        return (short)l == l ? tShort : tLong;
+    }
+
+    r = exp>=0 ? d*pow(10, exp) : d/pow(10, -exp);
+    if(isinf(r)) {
+        FIXME("Invalid numeric literal\n");
+        return 0;
+    }
+
+    *(double*)ret = r;
     return tDouble;
 }
 
@@ -312,6 +387,16 @@ static void skip_spaces(parser_ctx_t *ctx)
         ctx->ptr++;
 }
 
+static int comment_line(parser_ctx_t *ctx)
+{
+    ctx->ptr = strchrW(ctx->ptr, '\n');
+    if(ctx->ptr)
+        ctx->ptr++;
+    else
+        ctx->ptr = ctx->end;
+    return tNL;
+}
+
 static int parse_next_token(void *lval, parser_ctx_t *ctx)
 {
     WCHAR c;
@@ -339,18 +424,12 @@ static int parse_next_token(void *lval, parser_ctx_t *ctx)
         ctx->ptr++;
         return tNL;
     case '\'':
-        ctx->ptr = strchrW(ctx->ptr, '\n');
-        if(ctx->ptr)
-            ctx->ptr++;
-        else
-            ctx->ptr = ctx->end;
-        return tNL;
+        return comment_line(ctx);
     case ':':
     case ')':
     case ',':
     case '=':
     case '+':
-    case '-':
     case '*':
     case '/':
     case '^':
@@ -358,6 +437,11 @@ static int parse_next_token(void *lval, parser_ctx_t *ctx)
     case '.':
     case '_':
         return *ctx->ptr++;
+    case '-':
+        if(ctx->is_html && ctx->ptr[1] == '-' && ctx->ptr[2] == '>')
+            return comment_line(ctx);
+        ctx->ptr++;
+        return '-';
     case '(':
         /* NOTE:
          * We resolve empty brackets in lexer instead of parser to avoid complex conflicts
@@ -384,6 +468,9 @@ static int parse_next_token(void *lval, parser_ctx_t *ctx)
         case '=':
             ctx->ptr++;
             return tLTEQ;
+        case '!':
+            if(ctx->is_html && ctx->ptr[1] == '-' && ctx->ptr[2] == '-')
+                return comment_line(ctx);
         }
         return '<';
     case '>':
