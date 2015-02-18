@@ -2839,6 +2839,7 @@ static BOOL pdb_process_file(const struct process* pcs,
     modfmt->remove      = pdb_module_remove;
     modfmt->loc_compute = NULL;
     modfmt->u.pdb_info  = pdb_module_info;
+    modfmt->u.pdb_info->used_subfiles = 0;
 
     memset(cv_zmodules, 0, sizeof(cv_zmodules));
     codeview_init_basic_types(msc_dbg->module);
