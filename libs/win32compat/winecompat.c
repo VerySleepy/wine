@@ -15,21 +15,29 @@ void WINAPI SymSetDbgPrint( void (*fn)(const char *str) )
 	wineDbgPrint = fn;
 }
 
-int wine_dbg_printf( const char *format, ... ) __WINE_PRINTF_ATTR(1,2)
+int wine_dbg_vprintf(const char *format, va_list args)
 {
-	char buffer[1024];
-	va_list args;
-	va_start(args, format);
-	vsprintf(buffer,format, args);
+    char buffer[1024];
+	vsnprintf(buffer, 1024, format, args);
 
-	if (wineDbgPrint)
+    if (wineDbgPrint)
 		wineDbgPrint(buffer);
-	
-	va_end(args);
+
 	return 0;
 }
 
-const char *wine_dbg_sprintf( const char *format, ... ) __WINE_PRINTF_ATTR(1,2)
+int wine_dbg_printf(const char *format, ...) __WINE_PRINTF_ATTR(1, 2)
+{
+    int ret;
+    va_list valist;
+
+    va_start(valist, format);
+    ret = wine_dbg_vprintf(format, valist);
+    va_end(valist);
+    return ret;
+}
+
+const char *wine_dbg_sprintf(const char *format, ...) __WINE_PRINTF_ATTR(1, 2)
 {
 	static char buffer[2048];
 	va_list args;
@@ -145,17 +153,42 @@ const char *wine_dbgstr_wn( const WCHAR *str, int n )
     *dst++ = 0;
     return res;}
 
-int wine_dbg_log( enum __wine_debug_class cls, struct __wine_debug_channel *ch, const char *func,
-                         const char *format, ... ) __WINE_PRINTF_ATTR(4,5)
+static const char * const debug_classes[] = { "fixme", "err", "warn", "info", "trace" };
+
+static int wine_dbg_vlog(enum __wine_debug_class cls, struct __wine_debug_channel *channel,
+    const char *func, const char *format, va_list args)
 {
-	if (cls == __WINE_DBCL_TRACE || cls == __WINE_DBCL_ERR)
-		return 0;
-	return -1;
+    int ret = 0;
+
+    if (cls < sizeof(debug_classes) / sizeof(debug_classes[0]))
+        ret += wine_dbg_printf("%s:%s:%s ", debug_classes[cls], channel->name, func);
+    if (format)
+        ret += wine_dbg_vprintf(format, args);
+    return ret;
+}
+
+int wine_dbg_log(enum __wine_debug_class cls, struct __wine_debug_channel *channel,
+    const char *func, const char *format, ...)
+{
+    int ret;
+    va_list valist;
+
+#ifndef _DEBUG
+    if (cls != __WINE_DBCL_TRACE)
+        return 0;
+#endif
+
+    if (!(__wine_dbg_get_channel_flags(channel) & (1 << cls))) return -1;
+
+    va_start(valist, format);
+    ret = wine_dbg_vlog(cls, channel, func, format, valist);
+    va_end(valist);
+    return ret;
 }
 
 unsigned char __wine_dbg_get_channel_flags( struct __wine_debug_channel *channel )
 {
-	return 0;
+	return -1;
 }
 
 int strcmpiW( const WCHAR *str1, const WCHAR *str2 )
