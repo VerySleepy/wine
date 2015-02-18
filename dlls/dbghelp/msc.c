@@ -277,13 +277,13 @@ static int leaf_as_variant(VARIANT* v, const unsigned short int* leaf)
         case LF_QUADWORD:
             length += 8;
             v->n1.n2.vt = VT_I8;
-            v->n1.n2.n3.llVal = *(const long long int*)leaf;
+            v->n1.n2.n3.llVal = *(const long int*)leaf;
             break;
 
         case LF_UQUADWORD:
             length += 8;
             v->n1.n2.vt = VT_UI8;
-            v->n1.n2.n3.ullVal = *(const long long unsigned int*)leaf;
+            v->n1.n2.n3.ullVal = *(const long unsigned int*)leaf;
             break;
 
         case LF_REAL32:

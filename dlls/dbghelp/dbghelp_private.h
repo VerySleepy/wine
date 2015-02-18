@@ -37,6 +37,8 @@
 
 /* #define USE_STATS */
 
+#define long long long // MSVC
+
 struct pool /* poor's man */
 {
     struct list arena_list;
