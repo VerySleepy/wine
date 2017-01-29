@@ -22,6 +22,9 @@
     <Filter Include="Spec Files">
       <UniqueIdentifier>{b86a94ab-4b82-458b-89dc-4bd270e49805}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Library Definitions">
+      <UniqueIdentifier>{3aeaf78f-00c3-452b-b286-8feea471acfb}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\dbghelp_private.h">
@@ -146,5 +149,10 @@
     <CustomBuild Include="..\dbghelp.spec">
       <Filter>Spec Files</Filter>
     </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="ntdll.def">
+      <Filter>Library Definitions</Filter>
+    </None>
   </ItemGroup>
 </Project>

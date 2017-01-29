@@ -124,6 +124,34 @@
       <Message>Creating linker definition file</Message>
     </CustomBuild>
   </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="ntdll.def">
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(IntDir)%(Filename).lib</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release - Wow64|Win32'">$(IntDir)%(Filename).lib</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">$(IntDir)%(Filename).lib</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug - Wow64|Win32'">$(IntDir)%(Filename).lib</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)%(Filename).lib</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release - Wow64|x64'">$(IntDir)%(Filename).lib</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)%(Filename).lib</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug - Wow64|x64'">$(IntDir)%(Filename).lib</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">lib "/def:%(Identity)" "/out:%(Outputs)" "/machine:$(PlatformTarget)"</Command>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Creating import library %(Filename)</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release - Wow64|Win32'">lib "/def:%(Identity)" "/out:%(Outputs)" "/machine:$(PlatformTarget)"</Command>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release - Wow64|Win32'">Creating import library %(Filename)</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">lib "/def:%(Identity)" "/out:%(Outputs)" "/machine:$(PlatformTarget)"</Command>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Creating import library %(Filename)</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug - Wow64|Win32'">lib "/def:%(Identity)" "/out:%(Outputs)" "/machine:$(PlatformTarget)"</Command>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug - Wow64|Win32'">Creating import library %(Filename)</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">lib "/def:%(Identity)" "/out:%(Outputs)" "/machine:$(PlatformTarget)"</Command>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Creating import library %(Filename)</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release - Wow64|x64'">lib "/def:%(Identity)" "/out:%(Outputs)" "/machine:$(PlatformTarget)"</Command>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release - Wow64|x64'">Creating import library %(Filename)</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">lib "/def:%(Identity)" "/out:%(Outputs)" "/machine:$(PlatformTarget)"</Command>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Creating import library %(Filename)</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug - Wow64|x64'">lib "/def:%(Identity)" "/out:%(Outputs)" "/machine:$(PlatformTarget)"</Command>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug - Wow64|x64'">Creating import library %(Filename)</Message>
+    </CustomBuild>
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{B6D6F4DD-4C26-4B0B-8B1E-419850F1041F}</ProjectGuid>
     <RootNamespace>dbghelpw</RootNamespace>
@@ -266,6 +294,7 @@
       <SubSystem>Windows</SubSystem>
       <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
       <TargetMachine>MachineX86</TargetMachine>
+      <AdditionalLibraryDirectories>$(IntDir)</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
       <AdditionalIncludeDirectories>../../../include</AdditionalIncludeDirectories>
@@ -299,6 +328,7 @@
       <SubSystem>Windows</SubSystem>
       <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
       <TargetMachine>MachineX64</TargetMachine>
+      <AdditionalLibraryDirectories>$(IntDir)</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
       <AdditionalIncludeDirectories>../../../include</AdditionalIncludeDirectories>
@@ -330,6 +360,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
       <TargetMachine>MachineX86</TargetMachine>
+      <AdditionalLibraryDirectories>$(IntDir)</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
       <AdditionalIncludeDirectories>../../../include</AdditionalIncludeDirectories>
@@ -364,6 +395,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
       <TargetMachine>MachineX64</TargetMachine>
+      <AdditionalLibraryDirectories>$(IntDir)</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
       <AdditionalIncludeDirectories>../../../include</AdditionalIncludeDirectories>
@@ -394,6 +426,7 @@
       <SubSystem>Windows</SubSystem>
       <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
       <TargetMachine>MachineX86</TargetMachine>
+      <AdditionalLibraryDirectories>$(IntDir)</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
       <AdditionalIncludeDirectories>../../../include</AdditionalIncludeDirectories>
@@ -427,6 +460,7 @@
       <SubSystem>Windows</SubSystem>
       <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
       <TargetMachine>MachineX64</TargetMachine>
+      <AdditionalLibraryDirectories>$(IntDir)</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
       <AdditionalIncludeDirectories>../../../include</AdditionalIncludeDirectories>
@@ -459,6 +493,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
       <TargetMachine>MachineX86</TargetMachine>
+      <AdditionalLibraryDirectories>$(IntDir)</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
       <AdditionalIncludeDirectories>../../../include</AdditionalIncludeDirectories>
@@ -495,6 +530,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
       <TargetMachine>MachineX64</TargetMachine>
+      <AdditionalLibraryDirectories>$(IntDir)</AdditionalLibraryDirectories>
     </Link>
     <ResourceCompile>
       <AdditionalIncludeDirectories>../../../include</AdditionalIncludeDirectories>
