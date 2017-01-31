@@ -1,18 +1,6 @@
-LIBRARY "ntdll.dll"
-
 EXPORTS
-
-RtlImageNtHeader = RtlImageNtHeader@4
-RtlImageNtHeader@4
-
-NtQuerySystemInformation = NtQuerySystemInformation@16
-NtQuerySystemInformation@16
-
-NtQueryInformationThread = NtQueryInformationThread@20
-NtQueryInformationThread@20
-
-RtlImageRvaToVa = RtlImageRvaToVa@16
-RtlImageRvaToVa@16
-
-RtlImageDirectoryEntryToData = RtlImageDirectoryEntryToData@16
-RtlImageDirectoryEntryToData@16
+RtlImageNtHeader
+NtQuerySystemInformation
+NtQueryInformationThread
+RtlImageRvaToVa
+RtlImageDirectoryEntryToData

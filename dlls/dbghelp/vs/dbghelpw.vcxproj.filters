@@ -22,7 +22,7 @@
     <Filter Include="Spec Files">
       <UniqueIdentifier>{b86a94ab-4b82-458b-89dc-4bd270e49805}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Library Definitions">
+    <Filter Include="NTDLL Interface">
       <UniqueIdentifier>{3aeaf78f-00c3-452b-b286-8feea471acfb}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
@@ -149,10 +149,13 @@
     <CustomBuild Include="..\dbghelp.spec">
       <Filter>Spec Files</Filter>
     </CustomBuild>
+    <CustomBuild Include="ntdll.c">
+      <Filter>NTDLL Interface</Filter>
+    </CustomBuild>
   </ItemGroup>
   <ItemGroup>
     <None Include="ntdll.def">
-      <Filter>Library Definitions</Filter>
+      <Filter>NTDLL Interface</Filter>
     </None>
   </ItemGroup>
 </Project>

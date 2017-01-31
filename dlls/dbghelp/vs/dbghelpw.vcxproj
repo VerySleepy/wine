@@ -114,6 +114,32 @@
     <ClCompile Include="..\storage.c" />
     <ClCompile Include="..\symbol.c" />
     <ClCompile Include="..\type.c" />
+    <CustomBuild Include="ntdll.c">
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Creating %(Filename) import library</Message>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release - Wow64|Win32'">Creating %(Filename) import library</Message>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Creating %(Filename) import library</Message>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug - Wow64|Win32'">Creating %(Filename) import library</Message>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Creating %(Filename) import library</Message>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release - Wow64|x64'">Creating %(Filename) import library</Message>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Creating %(Filename) import library</Message>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug - Wow64|x64'">Creating %(Filename) import library</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">cl /c /Ob0 "%(Identity)" "/Fo$(IntDir)%(Filename).obj" &amp;&amp; lib "/def:%(Filename).def" "$(IntDir)%(Filename).obj" "/out:$(IntDir)%(Filename).lib"</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release - Wow64|Win32'">cl /c /Ob0 "%(Identity)" "/Fo$(IntDir)%(Filename).obj" &amp;&amp; lib "/def:%(Filename).def" "$(IntDir)%(Filename).obj" "/out:$(IntDir)%(Filename).lib"</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">cl /c /Ob0 "%(Identity)" "/Fo$(IntDir)%(Filename).obj" &amp;&amp; lib "/def:%(Filename).def" "$(IntDir)%(Filename).obj" "/out:$(IntDir)%(Filename).lib"</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug - Wow64|Win32'">cl /c /Ob0 "%(Identity)" "/Fo$(IntDir)%(Filename).obj" &amp;&amp; lib "/def:%(Filename).def" "$(IntDir)%(Filename).obj" "/out:$(IntDir)%(Filename).lib"</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">cl /c /Ob0 "%(Identity)" "/Fo$(IntDir)%(Filename).obj" &amp;&amp; lib "/def:%(Filename).def" "$(IntDir)%(Filename).obj" "/out:$(IntDir)%(Filename).lib"</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release - Wow64|x64'">cl /c /Ob0 "%(Identity)" "/Fo$(IntDir)%(Filename).obj" &amp;&amp; lib "/def:%(Filename).def" "$(IntDir)%(Filename).obj" "/out:$(IntDir)%(Filename).lib"</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">cl /c /Ob0 "%(Identity)" "/Fo$(IntDir)%(Filename).obj" &amp;&amp; lib "/def:%(Filename).def" "$(IntDir)%(Filename).obj" "/out:$(IntDir)%(Filename).lib"</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug - Wow64|x64'">cl /c /Ob0 "%(Identity)" "/Fo$(IntDir)%(Filename).obj" &amp;&amp; lib "/def:%(Filename).def" "$(IntDir)%(Filename).obj" "/out:$(IntDir)%(Filename).lib"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(IntDir)%(Filename).lib</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release - Wow64|Win32'">$(IntDir)%(Filename).lib</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">$(IntDir)%(Filename).lib</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug - Wow64|Win32'">$(IntDir)%(Filename).lib</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)%(Filename).lib</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release - Wow64|x64'">$(IntDir)%(Filename).lib</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)%(Filename).lib</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug - Wow64|x64'">$(IntDir)%(Filename).lib</Outputs>
+    </CustomBuild>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="..\dbghelp.spec">
@@ -125,32 +151,7 @@
     </CustomBuild>
   </ItemGroup>
   <ItemGroup>
-    <CustomBuild Include="ntdll.def">
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(IntDir)%(Filename).lib</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release - Wow64|Win32'">$(IntDir)%(Filename).lib</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">$(IntDir)%(Filename).lib</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug - Wow64|Win32'">$(IntDir)%(Filename).lib</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(IntDir)%(Filename).lib</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release - Wow64|x64'">$(IntDir)%(Filename).lib</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(IntDir)%(Filename).lib</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug - Wow64|x64'">$(IntDir)%(Filename).lib</Outputs>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">lib "/def:%(Identity)" "/out:%(Outputs)" "/machine:$(PlatformTarget)"</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Creating import library %(Filename)</Message>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Release - Wow64|Win32'">lib "/def:%(Identity)" "/out:%(Outputs)" "/machine:$(PlatformTarget)"</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='Release - Wow64|Win32'">Creating import library %(Filename)</Message>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">lib "/def:%(Identity)" "/out:%(Outputs)" "/machine:$(PlatformTarget)"</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Creating import library %(Filename)</Message>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Debug - Wow64|Win32'">lib "/def:%(Identity)" "/out:%(Outputs)" "/machine:$(PlatformTarget)"</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='Debug - Wow64|Win32'">Creating import library %(Filename)</Message>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">lib "/def:%(Identity)" "/out:%(Outputs)" "/machine:$(PlatformTarget)"</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Creating import library %(Filename)</Message>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Release - Wow64|x64'">lib "/def:%(Identity)" "/out:%(Outputs)" "/machine:$(PlatformTarget)"</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='Release - Wow64|x64'">Creating import library %(Filename)</Message>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">lib "/def:%(Identity)" "/out:%(Outputs)" "/machine:$(PlatformTarget)"</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Creating import library %(Filename)</Message>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Debug - Wow64|x64'">lib "/def:%(Identity)" "/out:%(Outputs)" "/machine:$(PlatformTarget)"</Command>
-      <Message Condition="'$(Configuration)|$(Platform)'=='Debug - Wow64|x64'">Creating import library %(Filename)</Message>
-    </CustomBuild>
+    <None Include="ntdll.def" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{B6D6F4DD-4C26-4B0B-8B1E-419850F1041F}</ProjectGuid>
