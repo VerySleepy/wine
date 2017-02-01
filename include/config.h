@@ -36,5 +36,8 @@ typedef unsigned __int64 size_t;
 #endif
 
 //#include <direct.h>
+#if _MSC_VER < 1900
 #define snprintf _snprintf
+#endif
+
 #define strtoull _strtoui64
