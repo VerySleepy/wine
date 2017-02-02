@@ -37,7 +37,9 @@
 
 /* #define USE_STATS */
 
+#if defined(_MSC_VER) && _WIN64
 #define long long long // MSVC
+#endif
 
 struct pool /* poor's man */
 {
