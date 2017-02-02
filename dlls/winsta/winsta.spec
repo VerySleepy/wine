@@ -29,7 +29,7 @@
 @ stub WinStationEnumerateA
 @ stub WinStationEnumerateLicenses
 @ stub WinStationEnumerateProcesses
-@ stub WinStationEnumerateW
+@ stdcall WinStationEnumerateW(ptr ptr ptr)
 @ stub WinStationEnumerate_IndexedA
 @ stub WinStationEnumerate_IndexedW
 @ stub WinStationFreeGAPMemory
@@ -39,7 +39,7 @@
 @ stub WinStationGetLanAdapterNameA
 @ stub WinStationGetLanAdapterNameW
 @ stub WinStationGetMachinePolicy
-@ stdcall WinStationGetProcessSid(ptr ptr long ptr ptr ptr)
+@ stdcall WinStationGetProcessSid(ptr long ptr ptr ptr)
 @ stub WinStationGetTermSrvCountersValue
 @ stub WinStationInstallLicense
 @ stub WinStationIsHelpAssistantSession

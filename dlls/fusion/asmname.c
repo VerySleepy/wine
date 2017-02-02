@@ -85,7 +85,7 @@ static HRESULT WINAPI IAssemblyNameImpl_QueryInterface(IAssemblyName *iface,
         IsEqualIID(riid, &IID_IAssemblyName))
     {
         IAssemblyName_AddRef(iface);
-        *ppobj = This;
+        *ppobj = &This->IAssemblyName_iface;
         return S_OK;
     }
 
@@ -228,12 +228,10 @@ static HRESULT WINAPI IAssemblyNameImpl_GetDisplayName(IAssemblyName *iface,
                                                        LPDWORD pccDisplayName,
                                                        DWORD dwDisplayFlags)
 {
-    IAssemblyNameImpl *name = impl_from_IAssemblyName(iface);
-    WCHAR verstr[30];
-    DWORD size;
-    LPWSTR cultureval = 0;
-
     static const WCHAR equals[] = {'=',0};
+    IAssemblyNameImpl *name = impl_from_IAssemblyName(iface);
+    WCHAR verstr[30], *cultureval = NULL;
+    DWORD size;
 
     TRACE("(%p, %p, %p, %d)\n", iface, szDisplayName,
           pccDisplayName, dwDisplayFlags);
@@ -243,9 +241,15 @@ static HRESULT WINAPI IAssemblyNameImpl_GetDisplayName(IAssemblyName *iface,
         if (!name->displayname || !*name->displayname)
             return FUSION_E_INVALID_NAME;
 
-        size = min(*pccDisplayName, lstrlenW(name->displayname) + 1);
+        size = strlenW(name->displayname) + 1;
 
-        lstrcpynW(szDisplayName, name->displayname, size);
+        if (*pccDisplayName < size)
+        {
+            *pccDisplayName = size;
+            return E_NOT_SUFFICIENT_BUFFER;
+        }
+
+        if (szDisplayName) strcpyW(szDisplayName, name->displayname);
         *pccDisplayName = size;
 
         return S_OK;
@@ -369,19 +373,24 @@ static HRESULT WINAPI IAssemblyNameImpl_GetName(IAssemblyName *iface,
                                                 WCHAR *pwzName)
 {
     IAssemblyNameImpl *name = impl_from_IAssemblyName(iface);
+    DWORD len;
 
     TRACE("(%p, %p, %p)\n", iface, lpcwBuffer, pwzName);
 
-    if (!name->name)
+    if (name->name)
+        len = strlenW(name->name) + 1;
+    else
+        len = 0;
+
+    if (*lpcwBuffer < len)
     {
-        *pwzName = '\0';
-        *lpcwBuffer = 0;
-        return S_OK;
+        *lpcwBuffer = len;
+        return E_NOT_SUFFICIENT_BUFFER;
     }
+    if (!name->name) lpcwBuffer[0] = 0;
+    else strcpyW(pwzName, name->name);
 
-    lstrcpyW(pwzName, name->name);
-    *lpcwBuffer = lstrlenW(pwzName) + 1;
-
+    *lpcwBuffer = len;
     return S_OK;
 }
 
@@ -718,7 +727,7 @@ done:
 /******************************************************************
  *  CreateAssemblyNameObject   (FUSION.@)
  */
-HRESULT WINAPI CreateAssemblyNameObject(LPASSEMBLYNAME *ppAssemblyNameObj,
+HRESULT WINAPI CreateAssemblyNameObject(IAssemblyName **ppAssemblyNameObj,
                                         LPCWSTR szAssemblyName, DWORD dwFlags,
                                         LPVOID pvReserved)
 {

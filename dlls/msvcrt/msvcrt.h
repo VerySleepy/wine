@@ -132,9 +132,27 @@ typedef struct {
             char *time;
         } names;
     } str;
+#if _MSVCR_VER < 110
     LCID lcid;
+#endif
     int  unk[2];
-    MSVCRT_wchar_t *wstr[43];
+    union {
+        MSVCRT_wchar_t *wstr[43];
+        struct {
+            MSVCRT_wchar_t *short_wday[7];
+            MSVCRT_wchar_t *wday[7];
+            MSVCRT_wchar_t *short_mon[12];
+            MSVCRT_wchar_t *mon[12];
+            MSVCRT_wchar_t *am;
+            MSVCRT_wchar_t *pm;
+            MSVCRT_wchar_t *short_date;
+            MSVCRT_wchar_t *date;
+            MSVCRT_wchar_t *time;
+        } names;
+    } wstr;
+#if _MSVCR_VER >= 110
+    MSVCRT_wchar_t *locname;
+#endif
     char data[1];
 } MSVCRT___lc_time_data;
 
@@ -146,7 +164,7 @@ typedef struct MSVCRT_threadlocaleinfostruct {
     MSVCRT_LC_ID lc_id[6];
     struct {
         char *locale;
-        wchar_t *wlocale;
+        MSVCRT_wchar_t *wlocale;
         int *refcount;
         int *wrefcount;
     } lc_category[6];
@@ -162,6 +180,9 @@ typedef struct MSVCRT_threadlocaleinfostruct {
     unsigned char *pclmap;
     unsigned char *pcumap;
     MSVCRT___lc_time_data *lc_time_curr;
+#if _MSVCR_VER >= 110
+    MSVCRT_wchar_t *lc_name[6];
+#endif
 } MSVCRT_threadlocinfo;
 
 typedef struct MSVCRT_threadmbcinfostruct {
@@ -183,6 +204,23 @@ typedef struct MSVCRT_localeinfo_struct
     MSVCRT_pthreadmbcinfo mbcinfo;
 } MSVCRT__locale_tstruct, *MSVCRT__locale_t;
 
+typedef struct _frame_info
+{
+    void *object;
+    struct _frame_info *next;
+} frame_info;
+
+typedef struct
+{
+    frame_info frame_info;
+    EXCEPTION_RECORD *rec;
+    void *unk;
+} cxx_frame_info;
+
+frame_info* __cdecl _CreateFrameInfo(frame_info *fi, void *obj);
+BOOL __cdecl __CxxRegisterExceptionObject(EXCEPTION_RECORD**, cxx_frame_info*);
+void __cdecl __CxxUnregisterExceptionObject(cxx_frame_info*, BOOL);
+void CDECL __DestructExceptionObject(EXCEPTION_RECORD*);
 
 /* TLS data */
 extern DWORD msvcrt_tls_index DECLSPEC_HIDDEN;
@@ -221,7 +259,16 @@ struct __thread_data {
     void                           *unk6[3];
     int                             unk7;
     EXCEPTION_RECORD               *exc_record;
-    void                           *unk8[100];
+    frame_info                     *frame_info_head;
+    void                           *unk8[6];
+    LCID                            cached_lcid;
+    int                             unk9[3];
+    DWORD                           cached_cp;
+    char                            cached_locale[131];
+    void                           *unk10[100];
+#if _MSVCR_VER >= 140
+    MSVCRT_invalid_parameter_handler invalid_parameter_handler;
+#endif
 };
 
 typedef struct __thread_data thread_data_t;
@@ -366,7 +413,7 @@ struct MSVCRT_lconv {
     char n_sep_by_space;
     char p_sign_posn;
     char n_sign_posn;
-#if _MSVCR_VER >= 120
+#if _MSVCR_VER >= 100
     MSVCRT_wchar_t* _W_decimal_point;
     MSVCRT_wchar_t* _W_thousands_sep;
     MSVCRT_wchar_t* _W_int_curr_symbol;
@@ -642,8 +689,13 @@ struct MSVCRT__stat64 {
 #define MSVCRT_WEOF (MSVCRT_wint_t)(0xFFFF)
 #define MSVCRT_EOF       (-1)
 #define MSVCRT_TMP_MAX   0x7fff
+#define MSVCRT_TMP_MAX_S 0x7fffffff
 #define MSVCRT_RAND_MAX  0x7fff
 #define MSVCRT_BUFSIZ    512
+
+#define MSVCRT_SEEK_SET  0
+#define MSVCRT_SEEK_CUR  1
+#define MSVCRT_SEEK_END  2
 
 #define MSVCRT_STDIN_FILENO  0
 #define MSVCRT_STDOUT_FILENO 1
@@ -858,6 +910,12 @@ struct MSVCRT__stat64 {
 #define MSVCRT__DN_SAVE_OPERANDS_FLUSH_RESULTS 0x03000000
 #define MSVCRT__EM_AMBIGUOUS  0x80000000
 
+typedef struct
+{
+    unsigned int control;
+    unsigned int status;
+} MSVCRT_fenv_t;
+
 #define MSVCRT_CLOCKS_PER_SEC 1000
 
 /* signals */
@@ -988,11 +1046,14 @@ int _setmbcp_l(int, LCID, MSVCRT_pthreadmbcinfo) DECLSPEC_HIDDEN;
 int            __cdecl MSVCRT__write(int,const void*,unsigned int);
 int            __cdecl _getch(void);
 int            __cdecl _ismbblead(unsigned int);
+int            __cdecl _ismbblead_l(unsigned int, MSVCRT__locale_t);
 int            __cdecl _ismbclegal(unsigned int c);
 int            __cdecl _ismbstrail(const unsigned char* start, const unsigned char* str);
 int            __cdecl MSVCRT_mbtowc(MSVCRT_wchar_t*,const char*,MSVCRT_size_t);
 MSVCRT_size_t  __cdecl MSVCRT_mbstowcs(MSVCRT_wchar_t*,const char*,MSVCRT_size_t);
+MSVCRT_size_t  __cdecl MSVCRT__mbstowcs_l(MSVCRT_wchar_t*, const char*, MSVCRT_size_t, MSVCRT__locale_t);
 MSVCRT_size_t  __cdecl MSVCRT_wcstombs(char*,const MSVCRT_wchar_t*,MSVCRT_size_t);
+MSVCRT_size_t  __cdecl MSVCRT__wcstombs_l(char*, const MSVCRT_wchar_t*, MSVCRT_size_t, MSVCRT__locale_t);
 MSVCRT_intptr_t __cdecl MSVCRT__spawnve(int,const char*,const char* const *,const char* const *);
 MSVCRT_intptr_t __cdecl MSVRT__spawnvpe(int,const char*,const char* const *,const char* const *);
 MSVCRT_intptr_t __cdecl MSVCRT__wspawnve(int,const MSVCRT_wchar_t*,const MSVCRT_wchar_t* const *,const MSVCRT_wchar_t* const *);
@@ -1056,9 +1117,9 @@ typedef union _printf_arg
 } printf_arg;
 typedef printf_arg (*args_clbk)(void*, int, int, __ms_va_list*);
 int pf_printf_a(puts_clbk_a, void*, const char*, MSVCRT__locale_t,
-        BOOL, BOOL, args_clbk, void*, __ms_va_list*) DECLSPEC_HIDDEN;
+        DWORD, args_clbk, void*, __ms_va_list*) DECLSPEC_HIDDEN;
 int pf_printf_w(puts_clbk_w, void*, const MSVCRT_wchar_t*, MSVCRT__locale_t,
-        BOOL, BOOL, args_clbk, void*, __ms_va_list*) DECLSPEC_HIDDEN;
+        DWORD, args_clbk, void*, __ms_va_list*) DECLSPEC_HIDDEN;
 printf_arg arg_clbk_valist(void*, int, int, __ms_va_list*) DECLSPEC_HIDDEN;
 
 #define MSVCRT_FLT_MIN 1.175494351e-38F
@@ -1097,5 +1158,219 @@ extern char* __cdecl __unDName(char *,const char*,int,malloc_func_t,free_func_t,
 #define UNDNAME_NO_ARGUMENTS             (0x2000) /* Don't show method arguments */
 #define UNDNAME_NO_SPECIAL_SYMS          (0x4000)
 #define UNDNAME_NO_COMPLEX_TYPE          (0x8000)
+
+#define UCRTBASE_PRINTF_LEGACY_VSPRINTF_NULL_TERMINATION (0x0001)
+#define UCRTBASE_PRINTF_STANDARD_SNPRINTF_BEHAVIOUR      (0x0002)
+#define UCRTBASE_PRINTF_LEGACY_WIDE_SPECIFIERS           (0x0004)
+#define UCRTBASE_PRINTF_LEGACY_MSVCRT_COMPATIBILITY      (0x0008)
+#define UCRTBASE_PRINTF_LEGACY_THREE_DIGIT_EXPONENTS     (0x0010)
+
+#define UCRTBASE_PRINTF_MASK                             (0x001F)
+
+#define MSVCRT_PRINTF_POSITIONAL_PARAMS                  (0x0100)
+#define MSVCRT_PRINTF_INVOKE_INVALID_PARAM_HANDLER       (0x0200)
+
+#define UCRTBASE_SCANF_SECURECRT                         (0x0001)
+#define UCRTBASE_SCANF_LEGACY_WIDE_SPECIFIERS            (0x0002)
+#define UCRTBASE_SCANF_LEGACY_MSVCRT_COMPATIBILITY       (0x0004)
+
+#define UCRTBASE_SCANF_MASK                              (0x0007)
+
+typedef enum {
+    _FpCodeUnspecified,
+    _FpCodeAdd,
+    _FpCodeSubtract,
+    _FpCodeMultiply,
+    _FpCodeDivide,
+    _FpCodeSquareRoot,
+    _FpCodeRemainder,
+    _FpCodeCompare,
+    _FpCodeConvert,
+    _FpCodeRound,
+    _FpCodeTruncate,
+    _FpCodeFloor,
+    _FpCodeCeil,
+    _FpCodeAcos,
+    _FpCodeAsin,
+    _FpCodeAtan,
+    _FpCodeAtan2,
+    _FpCodeCabs,
+    _FpCodeCos,
+    _FpCodeCosh,
+    _FpCodeExp,
+    _FpCodeFabs,
+    _FpCodeFmod,
+    _FpCodeFrexp,
+    _FpCodeHypot,
+    _FpCodeLdexp,
+    _FpCodeLog,
+    _FpCodeLog10,
+    _FpCodeModf,
+    _FpCodePow,
+    _FpCodeSin,
+    _FpCodeSinh,
+    _FpCodeTan,
+    _FpCodeTanh,
+    _FpCodeY0,
+    _FpCodeY1,
+    _FpCodeYn,
+    _FpCodeLogb,
+    _FpCodeNextafter,
+    _FpCodeNegate,
+    _FpCodeFmin,
+    _FpCodeFmax,
+    _FpCodeConvertTrunc,
+    _XMMIAddps,
+    _XMMIAddss,
+    _XMMISubps,
+    _XMMISubss,
+    _XMMIMulps,
+    _XMMIMulss,
+    _XMMIDivps,
+    _XMMIDivss,
+    _XMMISqrtps,
+    _XMMISqrtss,
+    _XMMIMaxps,
+    _XMMIMaxss,
+    _XMMIMinps,
+    _XMMIMinss,
+    _XMMICmpps,
+    _XMMICmpss,
+    _XMMIComiss,
+    _XMMIUComiss,
+    _XMMICvtpi2ps,
+    _XMMICvtsi2ss,
+    _XMMICvtps2pi,
+    _XMMICvtss2si,
+    _XMMICvttps2pi,
+    _XMMICvttss2si,
+    _XMMIAddsubps,
+    _XMMIHaddps,
+    _XMMIHsubps,
+    _XMMI2Addpd,
+    _XMMI2Addsd,
+    _XMMI2Subpd,
+    _XMMI2Subsd,
+    _XMMI2Mulpd,
+    _XMMI2Mulsd,
+    _XMMI2Divpd,
+    _XMMI2Divsd,
+    _XMMI2Sqrtpd,
+    _XMMI2Sqrtsd,
+    _XMMI2Maxpd,
+    _XMMI2Maxsd,
+    _XMMI2Minpd,
+    _XMMI2Minsd,
+    _XMMI2Cmppd,
+    _XMMI2Cmpsd,
+    _XMMI2Comisd,
+    _XMMI2UComisd,
+    _XMMI2Cvtpd2pi,
+    _XMMI2Cvtsd2si,
+    _XMMI2Cvttpd2pi,
+    _XMMI2Cvttsd2si,
+    _XMMI2Cvtps2pd,
+    _XMMI2Cvtss2sd,
+    _XMMI2Cvtpd2ps,
+    _XMMI2Cvtsd2ss,
+    _XMMI2Cvtdq2ps,
+    _XMMI2Cvttps2dq,
+    _XMMI2Cvtps2dq,
+    _XMMI2Cvttpd2dq,
+    _XMMI2Cvtpd2dq,
+    _XMMI2Addsubpd,
+    _XMMI2Haddpd,
+    _XMMI2Hsubpd,
+} _FP_OPERATION_CODE;
+
+typedef enum {
+    _FpFormatFp32,
+    _FpFormatFp64,
+    _FpFormatFp80,
+    _FpFormatFp128,
+    _FpFormatI16,
+    _FpFormatI32,
+    _FpFormatI64,
+    _FpFormatU16,
+    _FpFormatU32,
+    _FpFormatU64,
+    _FpFormatBcd80,
+    _FpFormatCompare,
+    _FpFormatString,
+} _FPIEEE_FORMAT;
+
+typedef float _FP32;
+typedef double _FP64;
+typedef short _I16;
+typedef int _I32;
+typedef unsigned short _U16;
+typedef unsigned int _U32;
+typedef __int64 _Q64;
+
+typedef struct {
+    unsigned short W[5];
+} _FP80;
+
+typedef struct DECLSPEC_ALIGN(16) {
+    MSVCRT_ulong W[4];
+} _FP128;
+
+typedef struct DECLSPEC_ALIGN(8) {
+    MSVCRT_ulong W[2];
+} _I64;
+
+typedef struct DECLSPEC_ALIGN(8) {
+    MSVCRT_ulong W[2];
+} _U64;
+
+typedef struct {
+    unsigned short W[5];
+} _BCD80;
+
+typedef struct DECLSPEC_ALIGN(16) {
+    _Q64 W[2];
+} _FPQ64;
+
+typedef struct {
+    union {
+        _FP32 Fp32Value;
+        _FP64 Fp64Value;
+        _FP80 Fp80Value;
+        _FP128 Fp128Value;
+        _I16 I16Value;
+        _I32 I32Value;
+        _I64 I64Value;
+        _U16 U16Value;
+        _U32 U32Value;
+        _U64 U64Value;
+        _BCD80 Bcd80Value;
+        char *StringValue;
+        int CompareValue;
+        _Q64 Q64Value;
+        _FPQ64 Fpq64Value;
+    } Value;
+    unsigned int OperandValid : 1;
+    unsigned int Format : 4;
+} _FPIEEE_VALUE;
+
+typedef struct {
+    unsigned int Inexact : 1;
+    unsigned int Underflow : 1;
+    unsigned int Overflow : 1;
+    unsigned int ZeroDivide : 1;
+    unsigned int InvalidOperation : 1;
+} _FPIEEE_EXCEPTION_FLAGS;
+
+typedef struct {
+    unsigned int RoundingMode : 2;
+    unsigned int Precision : 3;
+    unsigned int Operation :12;
+    _FPIEEE_EXCEPTION_FLAGS Cause;
+    _FPIEEE_EXCEPTION_FLAGS Enable;
+    _FPIEEE_EXCEPTION_FLAGS Status;
+    _FPIEEE_VALUE Operand1;
+    _FPIEEE_VALUE Operand2;
+    _FPIEEE_VALUE Result;
+} _FPIEEE_RECORD, *_PFPIEEE_RECORD;
 
 #endif /* __WINE_MSVCRT_H */

@@ -47,7 +47,7 @@ Build a .def file from a spec file. The .spec file is specified via the
 \fB-E\fR option. This is used when building dlls with a PE (Win32) compiler.
 .TP
 .BI \--implib
-Build a PE import library from a spec file. The .spec file is
+Build a .a import library from a spec file. The .spec file is
 specified via the \fB-E\fR option.
 .TP
 .B \--resources
@@ -156,7 +156,7 @@ option.
 .B \-m16, -m32, -m64
 Generate respectively 16-bit, 32-bit or 64-bit code.
 .TP
-.BI \-marm,\ \-mthumb,\ \-mcpu= option
+.BI \-marm,\ \-mthumb,\ \-march= option ,\ \-mcpu= option
 Set code generation options for the assembler.
 .TP
 .BI \-M,\ --main-module= module

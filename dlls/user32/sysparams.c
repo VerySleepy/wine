@@ -536,7 +536,7 @@ static BOOL get_base_keys( enum parameter_key index, HKEY *base_key, HKEY *volat
 /* load a value to a registry entry */
 static DWORD load_entry( struct sysparam_entry *entry, void *data, DWORD size )
 {
-    DWORD type, count = 0;
+    DWORD type, count;
     HKEY base_key, volatile_key;
 
     if (!get_base_keys( entry->regval[0], &base_key, &volatile_key )) return FALSE;
@@ -621,6 +621,20 @@ static inline int get_display_dpi(void)
     return display_dpi;
 }
 
+static INT CALLBACK real_fontname_proc(const LOGFONTW *lf, const TEXTMETRICW *ntm, DWORD type, LPARAM lparam)
+{
+    const ENUMLOGFONTW *elf = (const ENUMLOGFONTW *)lf;
+    LOGFONTW *lfW = (LOGFONTW *)lparam;
+
+    lstrcpynW(lfW->lfFaceName, elf->elfFullName, LF_FACESIZE);
+    return 0;
+}
+
+static void get_real_fontname(LOGFONTW *lf)
+{
+    EnumFontFamiliesExW(get_display_dc(), lf, real_fontname_proc, (LPARAM)lf, 0);
+}
+
 /* adjust some of the raw values found in the registry */
 static void normalize_nonclientmetrics( NONCLIENTMETRICSW *pncm)
 {
@@ -633,10 +647,16 @@ static void normalize_nonclientmetrics( NONCLIENTMETRICSW *pncm)
     /* adjust some heights to the corresponding font */
     get_text_metr_size( get_display_dc(), &pncm->lfMenuFont, &tm, NULL);
     pncm->iMenuHeight = max( pncm->iMenuHeight, 2 + tm.tmHeight + tm.tmExternalLeading );
+    get_real_fontname( &pncm->lfMenuFont );
     get_text_metr_size( get_display_dc(), &pncm->lfCaptionFont, &tm, NULL);
     pncm->iCaptionHeight = max( pncm->iCaptionHeight, 2 + tm.tmHeight);
+    get_real_fontname( &pncm->lfCaptionFont );
     get_text_metr_size( get_display_dc(), &pncm->lfSmCaptionFont, &tm, NULL);
     pncm->iSmCaptionHeight = max( pncm->iSmCaptionHeight, 2 + tm.tmHeight);
+    get_real_fontname( &pncm->lfSmCaptionFont );
+
+    get_real_fontname( &pncm->lfStatusFont );
+    get_real_fontname( &pncm->lfMessageFont );
 }
 
 static BOOL CALLBACK enum_monitors( HMONITOR monitor, HDC hdc, LPRECT rect, LPARAM lp )
@@ -722,7 +742,7 @@ static BOOL get_twips_entry( union sysparam_all_entry *entry, UINT int_param, vo
         if (load_entry( &entry->hdr, buf, sizeof(buf) ))
         {
             int val = atoiW( buf );
-            /* Dimension are quoted as being "twips" values if negative and pixels if positive.
+            /* Dimensions are quoted as being "twips" values if negative and pixels if positive.
              * One inch is 1440 twips.
              * See for example
              *       Technical Reference to the Windows 2000 Registry ->
@@ -1663,7 +1683,7 @@ BOOL WINAPI SystemParametersInfoW( UINT uiAction, UINT uiParam,
         if (!pvParam) return FALSE;
 
         spi_idx = SPI_SETWORKAREA_IDX;
-        CopyRect( &work_area, pvParam );
+        work_area = *(RECT*)pvParam;
         spi_loaded[spi_idx] = TRUE;
         ret = TRUE;
         break;
@@ -1682,7 +1702,7 @@ BOOL WINAPI SystemParametersInfoW( UINT uiAction, UINT uiParam,
             EnumDisplayMonitors( 0, NULL, enum_monitors, (LPARAM)&work_area );
             spi_loaded[spi_idx] = TRUE;
         }
-        CopyRect( pvParam, &work_area );
+        *(RECT*)pvParam = work_area;
         ret = TRUE;
         TRACE("work area %s\n", wine_dbgstr_rect( &work_area ));
         break;
@@ -2797,6 +2817,15 @@ LONG WINAPI ChangeDisplaySettingsExW( LPCWSTR devname, LPDEVMODEW devmode, HWND 
 
 
 /***********************************************************************
+ *              DisplayConfigGetDeviceInfo (USER32.@)
+ */
+LONG WINAPI DisplayConfigGetDeviceInfo(DISPLAYCONFIG_DEVICE_INFO_HEADER *packet)
+{
+    FIXME("stub: %p\n", packet);
+    return ERROR_NOT_SUPPORTED;
+}
+
+/***********************************************************************
  *		EnumDisplaySettingsW (USER32.@)
  *
  * RETURNS
@@ -2874,4 +2903,13 @@ BOOL WINAPI SetProcessDPIAware( VOID )
     FIXME( "stub!\n");
 
     return TRUE;
+}
+
+/***********************************************************************
+ *              IsProcessDPIAware   (USER32.@)
+ */
+BOOL WINAPI IsProcessDPIAware(void)
+{
+    FIXME( "stub!\n");
+    return FALSE;
 }

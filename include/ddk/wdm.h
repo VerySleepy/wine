@@ -28,9 +28,22 @@
 #define POINTER_ALIGNMENT
 #endif
 
+/* FIXME: We suppose that page size is 4096 */
+#undef PAGE_SIZE
+#define PAGE_SIZE   0x1000
+#define PAGE_SHIFT  12
+
+#define BYTE_OFFSET(va) ((ULONG)((ULONG_PTR)(va) & (PAGE_SIZE - 1)))
+#define PAGE_ALIGN(va)  ((PVOID)((ULONG_PTR)(va) & ~(PAGE_SIZE - 1)))
+#define ADDRESS_AND_SIZE_TO_SPAN_PAGES(va, length) \
+    ((BYTE_OFFSET(va) + ((SIZE_T)(length)) + (PAGE_SIZE - 1)) >> PAGE_SHIFT)
+
 typedef LONG KPRIORITY;
 
 typedef ULONG_PTR KSPIN_LOCK, *PKSPIN_LOCK;
+
+typedef ULONG_PTR ERESOURCE_THREAD;
+typedef ERESOURCE_THREAD *PERESOURCE_THREAD;
 
 struct _KDPC;
 struct _KAPC;
@@ -45,6 +58,7 @@ typedef NTSTATUS (WINAPI *PDRIVER_INITIALIZE)(struct _DRIVER_OBJECT *, PUNICODE_
 typedef NTSTATUS (WINAPI *PDRIVER_DISPATCH)(struct _DEVICE_OBJECT *, struct _IRP *);
 typedef void (WINAPI *PDRIVER_STARTIO)(struct _DEVICE_OBJECT *, struct _IRP *);
 typedef void (WINAPI *PDRIVER_UNLOAD)(struct _DRIVER_OBJECT *);
+typedef NTSTATUS (WINAPI *PDRIVER_ADD_DEVICE)(struct _DRIVER_OBJECT *, struct _DEVICE_OBJECT *);
 
 typedef struct _DISPATCHER_HEADER {
   UCHAR  Type;
@@ -269,6 +283,11 @@ typedef struct _WAIT_CONTEXT_BLOCK {
 #define IRP_MN_SURPRISE_REMOVAL             0x17
 #define IRP_MN_QUERY_LEGACY_BUS_INFORMATION 0x18
 
+#define IRP_MN_WAIT_WAKE                    0x00
+#define IRP_MN_POWER_SEQUENCE               0x01
+#define IRP_MN_SET_POWER                    0x02
+#define IRP_MN_QUERY_POWER                  0x03
+
 #define IRP_QUOTA_CHARGED               0x01
 #define IRP_ALLOCATED_MUST_SUCCEED      0x02
 #define IRP_ALLOCATED_FIXED_SIZE        0x04
@@ -328,7 +347,7 @@ typedef struct _DEVICE_RELATIONS *PDEVICE_RELATIONS;
 
 typedef struct _DRIVER_EXTENSION {
   struct _DRIVER_OBJECT  *DriverObject;
-  PVOID  AddDevice;
+  PDRIVER_ADD_DEVICE AddDevice;
   ULONG  Count;
   UNICODE_STRING  ServiceKeyName;
 } DRIVER_EXTENSION, *PDRIVER_EXTENSION;
@@ -392,7 +411,6 @@ typedef struct _KAPC {
   BOOLEAN  Inserted;
 } KAPC, *PKAPC, *RESTRICTED_POINTER PRKAPC;
 
-#include <pshpack1.h>
 typedef struct _IRP {
   CSHORT  Type;
   USHORT  Size;
@@ -448,7 +466,23 @@ typedef struct _IRP {
   } Tail;
 } IRP;
 typedef struct _IRP *PIRP;
-#include <poppack.h>
+
+#define IRP_NOCACHE               0x0001
+#define IRP_PAGING_IO             0x0002
+#define IRP_MOUNT_COMPLETION      0x0002
+#define IRP_SYNCHRONOUS_API       0x0004
+#define IRP_ASSOCIATED_IRP        0x0008
+#define IRP_BUFFERED_IO           0x0010
+#define IRP_DEALLOCATE_BUFFER     0x0020
+#define IRP_INPUT_OPERATION       0x0040
+#define IRP_SYNCHRONOUS_PAGING_IO 0x0040
+#define IRP_CREATE_OPERATION      0x0080
+#define IRP_READ_OPERATION        0x0100
+#define IRP_WRITE_OPERATION       0x0200
+#define IRP_CLOSE_OPERATION       0x0400
+#define IRP_DEFER_IO_COMPLETION   0x0800
+#define IRP_OB_QUERY_NAME         0x1000
+#define IRP_HOLD_DEVICE_QUEUE     0x2000
 
 typedef VOID (WINAPI *PINTERFACE_REFERENCE)(
   PVOID  Context);
@@ -825,7 +859,9 @@ typedef NTSTATUS (WINAPI *PIO_COMPLETION_ROUTINE)(
 #define SL_INVOKE_ON_SUCCESS            0x40
 #define SL_INVOKE_ON_ERROR              0x80
 
-#include <pshpack1.h>
+#if !defined(_WIN64)
+#include <pshpack4.h>
+#endif
 typedef struct _IO_STACK_LOCATION {
   UCHAR  MajorFunction;
   UCHAR  MinorFunction;
@@ -966,7 +1002,9 @@ typedef struct _IO_STACK_LOCATION {
   PIO_COMPLETION_ROUTINE  CompletionRoutine;
   PVOID  Context;
 } IO_STACK_LOCATION, *PIO_STACK_LOCATION;
+#if !defined(_WIN64)
 #include <poppack.h>
+#endif
 
 /* MDL definitions */
 
@@ -1007,6 +1045,17 @@ typedef struct _MDL {
 } MDL, *PMDL;
 
 typedef MDL *PMDLX;
+typedef ULONG PFN_NUMBER, *PPFN_NUMBER;
+
+static inline void MmInitializeMdl(MDL *mdl, void *va, SIZE_T length)
+{
+    mdl->Next       = NULL;
+    mdl->Size       = sizeof(MDL) + sizeof(PFN_NUMBER) * ADDRESS_AND_SIZE_TO_SPAN_PAGES(va, length);
+    mdl->MdlFlags   = 0;
+    mdl->StartVa    = (void *)PAGE_ALIGN(va);
+    mdl->ByteOffset = BYTE_OFFSET(va);
+    mdl->ByteCount  = length;
+}
 
 typedef struct _KTIMER {
     DISPATCHER_HEADER Header;
@@ -1155,25 +1204,44 @@ typedef struct _CALLBACK_OBJECT
     UCHAR reserved[3];
 } CALLBACK_OBJECT, *PCALLBACK_OBJECT;
 
+typedef NTSTATUS (NTAPI EX_CALLBACK_FUNCTION)(void *CallbackContext, void *Argument1, void *Argument2);
+typedef EX_CALLBACK_FUNCTION *PEX_CALLBACK_FUNCTION;
+
 NTSTATUS WINAPI ObCloseHandle(IN HANDLE handle);
 
 #ifdef NONAMELESSUNION
 # ifdef NONAMELESSSTRUCT
 #  define IoGetCurrentIrpStackLocation(_Irp) ((_Irp)->Tail.Overlay.s.u2.CurrentStackLocation)
 #  define IoGetNextIrpStackLocation(_Irp) ((_Irp)->Tail.Overlay.s.u2.CurrentStackLocation - 1)
+   static inline void IoSkipCurrentIrpStackLocation(IRP *irp) {irp->Tail.Overlay.s.u2.CurrentStackLocation++; irp->CurrentLocation++;}
 # else
 #  define IoGetCurrentIrpStackLocation(_Irp) ((_Irp)->Tail.Overlay.u2.CurrentStackLocation)
 #  define IoGetNextIrpStackLocation(_Irp) ((_Irp)->Tail.Overlay.u2.CurrentStackLocation - 1)
+   static inline void IoSkipCurrentIrpStackLocation(IRP *irp) {irp->Tail.Overlay.u2.CurrentStackLocation++; irp->CurrentLocation++;}
 # endif
 #else
 # ifdef NONAMELESSSTRUCT
 #  define IoGetCurrentIrpStackLocation(_Irp) ((_Irp)->Tail.Overlay.s.CurrentStackLocation)
 #  define IoGetNextIrpStackLocation(_Irp) ((_Irp)->Tail.Overlay.s.CurrentStackLocation - 1)
+    static inline void IoSkipCurrentIrpStackLocation(IRP *irp) {irp->Tail.Overlay.s.CurrentStackLocation++; irp->CurrentLocation++;}
 # else
 #  define IoGetCurrentIrpStackLocation(_Irp) ((_Irp)->Tail.Overlay.CurrentStackLocation)
 #  define IoGetNextIrpStackLocation(_Irp) ((_Irp)->Tail.Overlay.CurrentStackLocation - 1)
+    static inline void IoSkipCurrentIrpStackLocation(IRP *irp) {irp->Tail.Overlay.CurrentStackLocation++; irp->CurrentLocation++;}
 # endif
 #endif
+
+static inline void IoSetCompletionRoutine(IRP *irp, PIO_COMPLETION_ROUTINE routine, void *context,
+                                          BOOLEAN on_success, BOOLEAN on_error, BOOLEAN on_cancel)
+{
+    IO_STACK_LOCATION *irpsp = IoGetNextIrpStackLocation(irp);
+    irpsp->CompletionRoutine = routine;
+    irpsp->Context = context;
+    irpsp->Control = 0;
+    if (on_success) irpsp->Control |= SL_INVOKE_ON_SUCCESS;
+    if (on_error)   irpsp->Control |= SL_INVOKE_ON_ERROR;
+    if (on_cancel)  irpsp->Control |= SL_INVOKE_ON_CANCEL;
+}
 
 #define KernelMode 0
 #define UserMode   1
@@ -1199,6 +1267,10 @@ void      WINAPI ExFreePoolWithTag(PVOID,ULONG);
 NTSTATUS  WINAPI IoAllocateDriverObjectExtension(PDRIVER_OBJECT,PVOID,ULONG,PVOID*);
 PVOID     WINAPI IoAllocateErrorLogEntry(PVOID,UCHAR);
 PIRP      WINAPI IoAllocateIrp(CCHAR,BOOLEAN);
+PMDL      WINAPI IoAllocateMdl(PVOID,ULONG,BOOLEAN,BOOLEAN,IRP*);
+PDEVICE_OBJECT WINAPI IoAttachDeviceToDeviceStack(PDEVICE_OBJECT,PDEVICE_OBJECT);
+PIRP      WINAPI IoBuildDeviceIoControlRequest(ULONG,DEVICE_OBJECT*,PVOID,ULONG,PVOID,ULONG,BOOLEAN,PKEVENT,IO_STATUS_BLOCK*);
+PIRP      WINAPI IoBuildSynchronousFsdRequest(ULONG,DEVICE_OBJECT*,PVOID,ULONG,PLARGE_INTEGER,PKEVENT,IO_STATUS_BLOCK*);
 NTSTATUS  WINAPI IoCallDriver(DEVICE_OBJECT*,IRP*);
 VOID      WINAPI IoCompleteRequest(IRP*,UCHAR);
 NTSTATUS  WINAPI IoCreateDevice(DRIVER_OBJECT*,ULONG,UNICODE_STRING*,DEVICE_TYPE,ULONG,BOOLEAN,DEVICE_OBJECT**);
@@ -1208,6 +1280,7 @@ void      WINAPI IoDeleteDevice(DEVICE_OBJECT*);
 void      WINAPI IoDeleteDriver(DRIVER_OBJECT*);
 NTSTATUS  WINAPI IoDeleteSymbolicLink(UNICODE_STRING*);
 void      WINAPI IoFreeIrp(IRP*);
+void      WINAPI IoFreeMdl(MDL*);
 PEPROCESS WINAPI IoGetCurrentProcess(void);
 NTSTATUS  WINAPI IoGetDeviceInterfaces(const GUID*,PDEVICE_OBJECT,ULONG,PWSTR*);
 NTSTATUS  WINAPI IoGetDeviceObjectPointer(UNICODE_STRING*,ACCESS_MASK,PFILE_OBJECT*,PDEVICE_OBJECT*);
@@ -1216,6 +1289,7 @@ PVOID     WINAPI IoGetDriverObjectExtension(PDRIVER_OBJECT,PVOID);
 PDEVICE_OBJECT WINAPI IoGetRelatedDeviceObject(PFILE_OBJECT);
 void      WINAPI IoInitializeIrp(IRP*,USHORT,CCHAR);
 VOID      WINAPI IoInitializeRemoveLockEx(PIO_REMOVE_LOCK,ULONG,ULONG,ULONG,ULONG);
+void      WINAPI IoInvalidateDeviceRelations(PDEVICE_OBJECT,DEVICE_RELATION_TYPE);
 NTSTATUS  WINAPI IoWMIRegistrationControl(PDEVICE_OBJECT,ULONG);
 
 PKTHREAD  WINAPI KeGetCurrentThread(void);
@@ -1232,9 +1306,20 @@ PVOID     WINAPI MmAllocateContiguousMemory(SIZE_T,PHYSICAL_ADDRESS);
 PVOID     WINAPI MmAllocateNonCachedMemory(SIZE_T);
 PMDL      WINAPI MmAllocatePagesForMdl(PHYSICAL_ADDRESS,PHYSICAL_ADDRESS,PHYSICAL_ADDRESS,SIZE_T);
 void      WINAPI MmFreeNonCachedMemory(PVOID,SIZE_T);
+PVOID     WINAPI MmMapLockedPagesSpecifyCache(PMDL,KPROCESSOR_MODE,MEMORY_CACHING_TYPE,PVOID,ULONG,ULONG);
 MM_SYSTEMSIZE WINAPI MmQuerySystemSize(void);
 
+static inline void *MmGetSystemAddressForMdlSafe(MDL *mdl, ULONG priority)
+{
+    if (mdl->MdlFlags & (MDL_MAPPED_TO_SYSTEM_VA | MDL_SOURCE_IS_NONPAGED_POOL))
+        return mdl->MappedSystemVa;
+    else
+        return MmMapLockedPagesSpecifyCache(mdl, KernelMode, MmCached, NULL, FALSE, priority);
+}
+
+void      WINAPI ObDereferenceObject(void*);
 NTSTATUS  WINAPI ObReferenceObjectByHandle(HANDLE,ACCESS_MASK,POBJECT_TYPE,KPROCESSOR_MODE,PVOID*,POBJECT_HANDLE_INFORMATION);
+NTSTATUS  WINAPI ObReferenceObjectByName(UNICODE_STRING*,ULONG,ACCESS_STATE*,ACCESS_MASK,POBJECT_TYPE,KPROCESSOR_MODE,void*,void**);
 
 POWER_STATE WINAPI PoSetPowerState(PDEVICE_OBJECT,POWER_STATE_TYPE,POWER_STATE);
 NTSTATUS  WINAPI PsCreateSystemThread(PHANDLE,ULONG,POBJECT_ATTRIBUTES,HANDLE,PCLIENT_ID,PKSTART_ROUTINE,PVOID);
@@ -1334,6 +1419,7 @@ NTSTATUS  WINAPI ZwSetInformationObject(HANDLE, OBJECT_INFORMATION_CLASS, PVOID,
 NTSTATUS  WINAPI ZwSetInformationProcess(HANDLE,PROCESS_INFORMATION_CLASS,PVOID,ULONG);
 NTSTATUS  WINAPI ZwSetInformationThread(HANDLE,THREADINFOCLASS,LPCVOID,ULONG);
 NTSTATUS  WINAPI ZwSetIoCompletion(HANDLE,ULONG,ULONG,NTSTATUS,ULONG);
+NTSTATUS  WINAPI ZwSetLdtEntries(ULONG,ULONG,ULONG,ULONG,ULONG,ULONG);
 NTSTATUS  WINAPI ZwSetSecurityObject(HANDLE,SECURITY_INFORMATION,PSECURITY_DESCRIPTOR);
 NTSTATUS  WINAPI ZwSetSystemInformation(SYSTEM_INFORMATION_CLASS,PVOID,ULONG);
 NTSTATUS  WINAPI ZwSetSystemTime(const LARGE_INTEGER*,LARGE_INTEGER*);

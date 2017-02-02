@@ -43,46 +43,12 @@
 #include "dmusics.h"
 
 /*****************************************************************************
- * Interfaces
- */
-typedef struct IDirectMusicChordMapTrack IDirectMusicChordMapTrack;
-typedef struct IDirectMusicSignPostTrack IDirectMusicSignPostTrack;
-	
-/*****************************************************************************
  * ClassFactory
  */
 extern HRESULT WINAPI create_dmchordmap(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
 extern HRESULT WINAPI create_dmcomposer(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
 extern HRESULT WINAPI create_dmchordmaptrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
 extern HRESULT WINAPI create_dmsignposttrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
-
-/*****************************************************************************
- * IDirectMusicChordMapTrack implementation structure
- */
-struct IDirectMusicChordMapTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicChordMapTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-};
-
-/*****************************************************************************
- * IDirectMusicSignPostTrack implementation structure
- */
-struct IDirectMusicSignPostTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicSignPostTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-};
 
 /**********************************************************************
  * Dll lifetime tracking declaration for dmcompos.dll
@@ -112,16 +78,8 @@ typedef struct {
 } guid_info;
 
 /* used for initialising structs (primarily for DMUS_OBJECTDESC) */
-#define DM_STRUCT_INIT(x) 				\
-	do {								\
-		memset((x), 0, sizeof(*(x)));	\
-		(x)->dwSize = sizeof(*x);		\
-	} while (0)
-
 #define FE(x) { x, #x }	
 #define GE(x) { &x, #x }
-
-#define ICOM_THIS_MULTI(impl,field,iface) impl* const This=(impl*)((char*)(iface) - offsetof(impl,field))
 
 /* FOURCC to string conversion for debug messages */
 extern const char *debugstr_fourcc (DWORD fourcc) DECLSPEC_HIDDEN;

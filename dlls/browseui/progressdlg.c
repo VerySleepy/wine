@@ -93,7 +93,7 @@ static void set_buffer(LPWSTR *buffer, LPCWSTR string)
 
     if (string == NULL)
         string = empty_string;
-    CoGetMalloc(1, &malloc);
+    CoGetMalloc(MEMCTX_TASK, &malloc);
 
     cb = (strlenW(string) + 1)*sizeof(WCHAR);
     if (*buffer == NULL || cb > IMalloc_GetSize(malloc, *buffer))
@@ -235,6 +235,7 @@ static DWORD WINAPI dialog_thread(LPVOID lpParameter)
     /* Note: until we set the hEvent in WM_INITDIALOG, the ProgressDialog object
      * is protected by the critical section held by StartProgress */
     struct create_params *params = lpParameter;
+    ProgressDialog *This = params->This;
     HWND hwnd;
     MSG msg;
 
@@ -252,6 +253,7 @@ static DWORD WINAPI dialog_thread(LPVOID lpParameter)
         }
     }
 
+    IProgressDialog_Release(&This->IProgressDialog_iface);
     return 0;
 }
 
@@ -268,7 +270,7 @@ static void ProgressDialog_Destructor(ProgressDialog *This)
     This->cs.DebugInfo->Spare[0] = 0;
     DeleteCriticalSection(&This->cs);
     heap_free(This);
-    BROWSEUI_refCount--;
+    InterlockedDecrement(&BROWSEUI_refCount);
 }
 
 static HRESULT WINAPI ProgressDialog_QueryInterface(IProgressDialog *iface, REFIID iid, LPVOID *ppvOut)
@@ -341,9 +343,13 @@ static HRESULT WINAPI ProgressDialog_StartProgressDialog(IProgressDialog *iface,
         return S_OK;  /* as on XP */
     }
     This->dwFlags = dwFlags;
+
     params.This = This;
     params.hwndParent = hwndParent;
     params.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+
+    /* thread holds one reference to ensure clean shutdown */
+    IProgressDialog_AddRef(&This->IProgressDialog_iface);
 
     hThread = CreateThread(NULL, 0, dialog_thread, &params, 0, NULL);
     WaitForSingleObject(params.hEvent, INFINITE);
@@ -573,7 +579,7 @@ HRESULT ProgressDialog_Constructor(IUnknown *pUnkOuter, IUnknown **ppOut)
     This->cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": ProgressDialog.cs");
 
     TRACE("returning %p\n", This);
-    *ppOut = (IUnknown *)This;
-    BROWSEUI_refCount++;
+    *ppOut = (IUnknown *)&This->IProgressDialog_iface;
+    InterlockedIncrement(&BROWSEUI_refCount);
     return S_OK;
 }

@@ -41,6 +41,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(relay);
 #if defined(__i386__) || defined(__x86_64__) || defined(__arm__)
 
 WINE_DECLARE_DEBUG_CHANNEL(timestamp);
+WINE_DECLARE_DEBUG_CHANNEL(pid);
 
 struct relay_descr  /* descriptor for a module */
 {
@@ -340,6 +341,9 @@ void * WINAPI relay_trace_entry( struct relay_descr *descr, unsigned int idx, co
     {
         if (TRACE_ON(timestamp)) print_timestamp();
 
+        if (TRACE_ON(pid))
+            DPRINTF( "%04x:", GetCurrentProcessId() );
+
         if (entry_point->name)
             DPRINTF( "%04x:Call %s.%s(", GetCurrentThreadId(), data->dllname, entry_point->name );
         else
@@ -364,6 +368,9 @@ void WINAPI relay_trace_exit( struct relay_descr *descr, unsigned int idx,
     if (!TRACE_ON(relay)) return;
 
     if (TRACE_ON(timestamp)) print_timestamp();
+
+    if (TRACE_ON(pid))
+        DPRINTF( "%04x:", GetCurrentProcessId() );
 
     if (entry_point->name)
         DPRINTF( "%04x:Ret  %s.%s()", GetCurrentThreadId(), data->dllname, entry_point->name );
@@ -624,10 +631,10 @@ __ASM_GLOBAL_FUNC( relay_call,
                    "movq 8(%rsp),%rdx\n\t"
                    "movq 16(%rsp),%r8\n\t"
                    "movq 24(%rsp),%r9\n\t"
-                   "movq %rcx,%xmm0\n\t"
-                   "movq %rdx,%xmm1\n\t"
-                   "movq %r8,%xmm2\n\t"
-                   "movq %r9,%xmm3\n\t"
+                   "movq 0(%rsp),%xmm0\n\t"
+                   "movq 8(%rsp),%xmm1\n\t"
+                   "movq 16(%rsp),%xmm2\n\t"
+                   "movq 24(%rsp),%xmm3\n\t"
                    "callq *%rax\n\t"
                    /* trace the return value */
                    "leaq -0x30(%rbp),%rsp\n\t"
@@ -1078,6 +1085,8 @@ void WINAPI __regs_SNOOP_Entry( CONTEXT *context )
 
 	context->Eip = (DWORD)fun->origfun;
 
+        if (!TRACE_ON(snoop)) return;
+
 	if (TRACE_ON(timestamp))
 		print_timestamp();
 	if (fun->name) DPRINTF("%04x:CALL %s.%s(",GetCurrentThreadId(),dll->name,fun->name);
@@ -1114,6 +1123,12 @@ void WINAPI __regs_SNOOP_Return( CONTEXT *context )
 	if (ret->dll->funs[ret->ordinal].nrofargs<0)
 		ret->dll->funs[ret->ordinal].nrofargs=(context->Esp - ret->origESP-4)/4;
 	context->Eip = (DWORD)ret->origreturn;
+
+        if (!TRACE_ON(snoop)) {
+            ret->origreturn = NULL; /* mark as empty */
+            return;
+        }
+
 	if (TRACE_ON(timestamp))
 		print_timestamp();
 	if (ret->args) {

@@ -67,14 +67,14 @@ static ULONG WINAPI HTMLCommentElement_Release(IHTMLCommentElement *iface)
 static HRESULT WINAPI HTMLCommentElement_GetTypeInfoCount(IHTMLCommentElement *iface, UINT *pctinfo)
 {
     HTMLCommentElement *This = impl_from_IHTMLCommentElement(iface);
-    return IDispatchEx_GetTypeInfoCount(&This->element.node.dispex.IDispatchEx_iface, pctinfo);
+    return IDispatchEx_GetTypeInfoCount(&This->element.node.event_target.dispex.IDispatchEx_iface, pctinfo);
 }
 
 static HRESULT WINAPI HTMLCommentElement_GetTypeInfo(IHTMLCommentElement *iface, UINT iTInfo,
         LCID lcid, ITypeInfo **ppTInfo)
 {
     HTMLCommentElement *This = impl_from_IHTMLCommentElement(iface);
-    return IDispatchEx_GetTypeInfo(&This->element.node.dispex.IDispatchEx_iface, iTInfo, lcid,
+    return IDispatchEx_GetTypeInfo(&This->element.node.event_target.dispex.IDispatchEx_iface, iTInfo, lcid,
             ppTInfo);
 }
 
@@ -83,7 +83,7 @@ static HRESULT WINAPI HTMLCommentElement_GetIDsOfNames(IHTMLCommentElement *ifac
                                                 LCID lcid, DISPID *rgDispId)
 {
     HTMLCommentElement *This = impl_from_IHTMLCommentElement(iface);
-    return IDispatchEx_GetIDsOfNames(&This->element.node.dispex.IDispatchEx_iface, riid, rgszNames,
+    return IDispatchEx_GetIDsOfNames(&This->element.node.event_target.dispex.IDispatchEx_iface, riid, rgszNames,
             cNames, lcid, rgDispId);
 }
 
@@ -92,7 +92,7 @@ static HRESULT WINAPI HTMLCommentElement_Invoke(IHTMLCommentElement *iface, DISP
                             VARIANT *pVarResult, EXCEPINFO *pExcepInfo, UINT *puArgErr)
 {
     HTMLCommentElement *This = impl_from_IHTMLCommentElement(iface);
-    return IDispatchEx_Invoke(&This->element.node.dispex.IDispatchEx_iface, dispIdMember, riid,
+    return IDispatchEx_Invoke(&This->element.node.event_target.dispex.IDispatchEx_iface, dispIdMember, riid,
             lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
 }
 
@@ -169,11 +169,25 @@ static void HTMLCommentElement_destructor(HTMLDOMNode *iface)
     HTMLElement_destructor(&This->element.node);
 }
 
+static HRESULT HTMLCommentElement_clone(HTMLDOMNode *iface, nsIDOMNode *nsnode, HTMLDOMNode **ret)
+{
+    HTMLCommentElement *This = impl_from_HTMLDOMNode(iface);
+    HTMLElement *new_elem;
+    HRESULT hres;
+
+    hres = HTMLCommentElement_Create(This->element.node.doc, nsnode, &new_elem);
+    if(FAILED(hres))
+        return hres;
+
+    *ret = &new_elem->node;
+    return S_OK;
+}
+
 static const NodeImplVtbl HTMLCommentElementImplVtbl = {
     HTMLCommentElement_QI,
     HTMLCommentElement_destructor,
     HTMLElement_cpc,
-    HTMLElement_clone,
+    HTMLCommentElement_clone,
     HTMLElement_handle_event,
     HTMLElement_get_attr_col
 };
@@ -186,8 +200,8 @@ static const tid_t HTMLCommentElement_iface_tids[] = {
 static dispex_static_data_t HTMLCommentElement_dispex = {
     NULL,
     DispHTMLCommentElement_tid,
-    NULL,
-    HTMLCommentElement_iface_tids
+    HTMLCommentElement_iface_tids,
+    HTMLElement_init_dispex_info
 };
 
 HRESULT HTMLCommentElement_Create(HTMLDocumentNode *doc, nsIDOMNode *nsnode, HTMLElement **elem)

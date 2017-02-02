@@ -25,10 +25,9 @@
 #define _WIN32_WINNT 0x500 /* For NTSTATUS */
 #endif
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
+#define NONAMELESSUNION
 #include "windef.h"
 #include "winbase.h"
 #include "winnt.h"
@@ -39,7 +38,6 @@
 
 static void *code_mem;
 
-static struct _TEB * (WINAPI *pNtCurrentTeb)(void);
 static NTSTATUS  (WINAPI *pNtGetContextThread)(HANDLE,CONTEXT*);
 static NTSTATUS  (WINAPI *pNtSetContextThread)(HANDLE,CONTEXT*);
 static NTSTATUS  (WINAPI *pRtlRaiseException)(EXCEPTION_RECORD *rec);
@@ -55,10 +53,72 @@ static NTSTATUS  (WINAPI *pNtSetInformationProcess)(HANDLE, PROCESSINFOCLASS, PV
 static BOOL      (WINAPI *pIsWow64Process)(HANDLE, PBOOL);
 
 #if defined(__x86_64__)
+typedef struct
+{
+    ULONG Count;
+    struct
+    {
+        ULONG BeginAddress;
+        ULONG EndAddress;
+        ULONG HandlerAddress;
+        ULONG JumpTarget;
+    } ScopeRecord[1];
+} SCOPE_TABLE;
+
+typedef struct
+{
+    ULONG64               ControlPc;
+    ULONG64               ImageBase;
+    PRUNTIME_FUNCTION     FunctionEntry;
+    ULONG64               EstablisherFrame;
+    ULONG64               TargetIp;
+    PCONTEXT              ContextRecord;
+    void* /*PEXCEPTION_ROUTINE*/ LanguageHandler;
+    PVOID                 HandlerData;
+    PUNWIND_HISTORY_TABLE HistoryTable;
+    ULONG                 ScopeIndex;
+} DISPATCHER_CONTEXT;
+
+typedef struct _SETJMP_FLOAT128
+{
+    unsigned __int64 DECLSPEC_ALIGN(16) Part[2];
+} SETJMP_FLOAT128;
+
+typedef struct _JUMP_BUFFER
+{
+    unsigned __int64 Frame;
+    unsigned __int64 Rbx;
+    unsigned __int64 Rsp;
+    unsigned __int64 Rbp;
+    unsigned __int64 Rsi;
+    unsigned __int64 Rdi;
+    unsigned __int64 R12;
+    unsigned __int64 R13;
+    unsigned __int64 R14;
+    unsigned __int64 R15;
+    unsigned __int64 Rip;
+    unsigned __int64 Spare;
+    SETJMP_FLOAT128  Xmm6;
+    SETJMP_FLOAT128  Xmm7;
+    SETJMP_FLOAT128  Xmm8;
+    SETJMP_FLOAT128  Xmm9;
+    SETJMP_FLOAT128  Xmm10;
+    SETJMP_FLOAT128  Xmm11;
+    SETJMP_FLOAT128  Xmm12;
+    SETJMP_FLOAT128  Xmm13;
+    SETJMP_FLOAT128  Xmm14;
+    SETJMP_FLOAT128  Xmm15;
+} _JUMP_BUFFER;
+
 static BOOLEAN   (CDECL *pRtlAddFunctionTable)(RUNTIME_FUNCTION*, DWORD, DWORD64);
 static BOOLEAN   (CDECL *pRtlDeleteFunctionTable)(RUNTIME_FUNCTION*);
 static BOOLEAN   (CDECL *pRtlInstallFunctionTableCallback)(DWORD64, DWORD64, DWORD, PGET_RUNTIME_FUNCTION_CALLBACK, PVOID, PCWSTR);
 static PRUNTIME_FUNCTION (WINAPI *pRtlLookupFunctionEntry)(ULONG64, ULONG64*, UNWIND_HISTORY_TABLE*);
+static EXCEPTION_DISPOSITION (WINAPI *p__C_specific_handler)(EXCEPTION_RECORD*, ULONG64, CONTEXT*, DISPATCHER_CONTEXT*);
+static VOID      (WINAPI *pRtlCaptureContext)(CONTEXT*);
+static VOID      (CDECL *pRtlRestoreContext)(CONTEXT*, EXCEPTION_RECORD*);
+static VOID      (CDECL *pRtlUnwindEx)(VOID*, VOID*, EXCEPTION_RECORD*, VOID*, CONTEXT*, UNWIND_HISTORY_TABLE*);
+static int       (CDECL *p_setjmp)(_JUMP_BUFFER*);
 #endif
 
 #ifdef __i386__
@@ -220,6 +280,11 @@ static const struct exception
 
     { { 0xf1, 0x90, 0xc3 },  /* icebp; nop; ret */
       1, 1, FALSE, STATUS_SINGLE_STEP, 0 },
+    { { 0xb8, 0xb8, 0xb8, 0xb8, 0xb8,          /* mov $0xb8b8b8b8, %eax */
+        0xb9, 0xb9, 0xb9, 0xb9, 0xb9,          /* mov $0xb9b9b9b9, %ecx */
+        0xba, 0xba, 0xba, 0xba, 0xba,          /* mov $0xbabababa, %edx */
+        0xcd, 0x2d, 0xc3 },                    /* int $0x2d; ret */
+      17, 0, FALSE, STATUS_BREAKPOINT, 3, { 0xb8b8b8b8, 0xb9b9b9b9, 0xbabababa } },
 };
 
 static int got_exception;
@@ -237,16 +302,16 @@ static void run_exception_test(void *handler, const void* context,
     DWORD oldaccess, oldaccess2;
 
     exc_frame.frame.Handler = handler;
-    exc_frame.frame.Prev = pNtCurrentTeb()->Tib.ExceptionList;
+    exc_frame.frame.Prev = NtCurrentTeb()->Tib.ExceptionList;
     exc_frame.context = context;
 
     memcpy(code_mem, code, code_size);
     if(access)
         VirtualProtect(code_mem, code_size, access, &oldaccess);
 
-    pNtCurrentTeb()->Tib.ExceptionList = &exc_frame.frame;
+    NtCurrentTeb()->Tib.ExceptionList = &exc_frame.frame;
     func();
-    pNtCurrentTeb()->Tib.ExceptionList = exc_frame.frame.Prev;
+    NtCurrentTeb()->Tib.ExceptionList = exc_frame.frame.Prev;
 
     if(access)
         VirtualProtect(code_mem, code_size, oldaccess, &oldaccess2);
@@ -262,7 +327,7 @@ static LONG CALLBACK rtlraiseexception_vectored_handler(EXCEPTION_POINTERS *Exce
     ok(rec->ExceptionAddress == (char *)code_mem + 0xb, "ExceptionAddress at %p instead of %p\n",
        rec->ExceptionAddress, (char *)code_mem + 0xb);
 
-    if (pNtCurrentTeb()->Peb->BeingDebugged)
+    if (NtCurrentTeb()->Peb->BeingDebugged)
         ok((void *)context->Eax == pRtlRaiseException ||
            broken( is_wow64 && context->Eax == 0xf00f00f1 ), /* broken on vista */
            "debugger managed to modify Eax to %x should be %p\n",
@@ -359,11 +424,11 @@ static void run_rtlraiseexception_test(DWORD exceptioncode)
     record.NumberParameters = 0;
 
     frame.Handler = rtlraiseexception_handler;
-    frame.Prev = pNtCurrentTeb()->Tib.ExceptionList;
+    frame.Prev = NtCurrentTeb()->Tib.ExceptionList;
 
     memcpy(code_mem, call_one_arg_code, sizeof(call_one_arg_code));
 
-    pNtCurrentTeb()->Tib.ExceptionList = &frame;
+    NtCurrentTeb()->Tib.ExceptionList = &frame;
     if (have_vectored_api)
     {
         vectored_handler = pRtlAddVectoredExceptionHandler(TRUE, &rtlraiseexception_vectored_handler);
@@ -376,7 +441,7 @@ static void run_rtlraiseexception_test(DWORD exceptioncode)
 
     if (have_vectored_api)
         pRtlRemoveVectoredExceptionHandler(vectored_handler);
-    pNtCurrentTeb()->Tib.ExceptionList = frame.Prev;
+    NtCurrentTeb()->Tib.ExceptionList = frame.Prev;
 }
 
 static void test_rtlraiseexception(void)
@@ -444,37 +509,37 @@ static void test_unwind(void)
 
     /* add first unwind handler */
     frame1->Handler = unwind_handler;
-    frame1->Prev = pNtCurrentTeb()->Tib.ExceptionList;
-    pNtCurrentTeb()->Tib.ExceptionList = frame1;
+    frame1->Prev = NtCurrentTeb()->Tib.ExceptionList;
+    NtCurrentTeb()->Tib.ExceptionList = frame1;
 
     /* add second unwind handler */
     frame2->Handler = unwind_handler;
-    frame2->Prev = pNtCurrentTeb()->Tib.ExceptionList;
-    pNtCurrentTeb()->Tib.ExceptionList = frame2;
+    frame2->Prev = NtCurrentTeb()->Tib.ExceptionList;
+    NtCurrentTeb()->Tib.ExceptionList = frame2;
 
     /* test unwind to current frame */
     unwind_expected_eax = 0xDEAD0000;
     retval = func(pRtlUnwind, frame2, NULL, 0xDEAD0000);
     ok(retval == 0xDEAD0000, "RtlUnwind returned eax %08x instead of %08x\n", retval, 0xDEAD0000);
-    ok(pNtCurrentTeb()->Tib.ExceptionList == frame2, "Exception record points to %p instead of %p\n",
-       pNtCurrentTeb()->Tib.ExceptionList, frame2);
+    ok(NtCurrentTeb()->Tib.ExceptionList == frame2, "Exception record points to %p instead of %p\n",
+       NtCurrentTeb()->Tib.ExceptionList, frame2);
 
     /* unwind to frame1 */
     unwind_expected_eax = 0xDEAD0000;
     retval = func(pRtlUnwind, frame1, NULL, 0xDEAD0000);
     ok(retval == 0xDEAD0001, "RtlUnwind returned eax %08x instead of %08x\n", retval, 0xDEAD0001);
-    ok(pNtCurrentTeb()->Tib.ExceptionList == frame1, "Exception record points to %p instead of %p\n",
-       pNtCurrentTeb()->Tib.ExceptionList, frame1);
+    ok(NtCurrentTeb()->Tib.ExceptionList == frame1, "Exception record points to %p instead of %p\n",
+       NtCurrentTeb()->Tib.ExceptionList, frame1);
 
     /* restore original handler */
-    pNtCurrentTeb()->Tib.ExceptionList = frame1->Prev;
+    NtCurrentTeb()->Tib.ExceptionList = frame1->Prev;
 }
 
 static DWORD handler( EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_RECORD *frame,
                       CONTEXT *context, EXCEPTION_REGISTRATION_RECORD **dispatcher )
 {
     const struct exception *except = *(const struct exception **)(frame + 1);
-    unsigned int i, entry = except - exceptions;
+    unsigned int i, parameter_count, entry = except - exceptions;
 
     got_exception++;
     trace( "exception %u: %x flags:%x addr:%p\n",
@@ -483,20 +548,23 @@ static DWORD handler( EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_RECORD *fram
     ok( rec->ExceptionCode == except->status ||
         (except->alt_status != 0 && rec->ExceptionCode == except->alt_status),
         "%u: Wrong exception code %x/%x\n", entry, rec->ExceptionCode, except->status );
-    ok( rec->ExceptionAddress == (char*)code_mem + except->offset,
-        "%u: Wrong exception address %p/%p\n", entry,
-        rec->ExceptionAddress, (char*)code_mem + except->offset );
+    ok( context->Eip == (DWORD_PTR)code_mem + except->offset,
+        "%u: Unexpected eip %#x/%#lx\n", entry,
+        context->Eip, (DWORD_PTR)code_mem + except->offset );
+    ok( rec->ExceptionAddress == (char*)context->Eip ||
+        (rec->ExceptionCode == STATUS_BREAKPOINT && rec->ExceptionAddress == (char*)context->Eip + 1),
+        "%u: Unexpected exception address %p/%p\n", entry,
+        rec->ExceptionAddress, (char*)context->Eip );
 
-    if (except->alt_status == 0 || rec->ExceptionCode != except->alt_status)
-    {
-        ok( rec->NumberParameters == except->nb_params,
-            "%u: Wrong number of parameters %u/%u\n", entry, rec->NumberParameters, except->nb_params );
-    }
+    if (except->status == STATUS_BREAKPOINT && is_wow64)
+        parameter_count = 1;
+    else if (except->alt_status == 0 || rec->ExceptionCode != except->alt_status)
+        parameter_count = except->nb_params;
     else
-    {
-        ok( rec->NumberParameters == except->alt_nb_params,
-            "%u: Wrong number of parameters %u/%u\n", entry, rec->NumberParameters, except->nb_params );
-    }
+        parameter_count = except->alt_nb_params;
+
+    ok( rec->NumberParameters == parameter_count,
+        "%u: Unexpected parameter count %u/%u\n", entry, rec->NumberParameters, parameter_count );
 
     /* Most CPUs (except Intel Core apparently) report a segment limit violation */
     /* instead of page faults for accesses beyond 0xffffffff */
@@ -531,7 +599,7 @@ static DWORD handler( EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_RECORD *fram
 
 skip_params:
     /* don't handle exception if it's not the address we expected */
-    if (rec->ExceptionAddress != (char*)code_mem + except->offset) return ExceptionContinueSearch;
+    if (context->Eip != (DWORD_PTR)code_mem + except->offset) return ExceptionContinueSearch;
 
     context->Eip += except->length;
     return ExceptionContinueExecution;
@@ -854,7 +922,7 @@ static void test_debugger(void)
 
         if (de.dwDebugEventCode == CREATE_PROCESS_DEBUG_EVENT)
         {
-            if(de.u.CreateProcessInfo.lpBaseOfImage != pNtCurrentTeb()->Peb->ImageBaseAddress)
+            if(de.u.CreateProcessInfo.lpBaseOfImage != NtCurrentTeb()->Peb->ImageBaseAddress)
             {
                 skip("child process loaded at different address, terminating it\n");
                 pNtTerminateProcess(pi.hProcess, 0);
@@ -938,6 +1006,24 @@ static void test_debugger(void)
                         /* here we handle exception */
                     }
                 }
+                else if (stage == 7 || stage == 8)
+                {
+                    ok(de.u.Exception.ExceptionRecord.ExceptionCode == EXCEPTION_BREAKPOINT,
+                       "expected EXCEPTION_BREAKPOINT, got %08x\n", de.u.Exception.ExceptionRecord.ExceptionCode);
+                    ok((char *)ctx.Eip == (char *)code_mem_address + 0x1d,
+                       "expected Eip = %p, got 0x%x\n", (char *)code_mem_address + 0x1d, ctx.Eip);
+
+                    if (stage == 8) continuestatus = DBG_EXCEPTION_NOT_HANDLED;
+                }
+                else if (stage == 9 || stage == 10)
+                {
+                    ok(de.u.Exception.ExceptionRecord.ExceptionCode == EXCEPTION_BREAKPOINT,
+                       "expected EXCEPTION_BREAKPOINT, got %08x\n", de.u.Exception.ExceptionRecord.ExceptionCode);
+                    ok((char *)ctx.Eip == (char *)code_mem_address + 2,
+                       "expected Eip = %p, got 0x%x\n", (char *)code_mem_address + 2, ctx.Eip);
+
+                    if (stage == 10) continuestatus = DBG_EXCEPTION_NOT_HANDLED;
+                }
                 else
                     ok(FALSE, "unexpected stage %x\n", stage);
 
@@ -954,7 +1040,7 @@ static void test_debugger(void)
                                           sizeof(stage), &size_read);
             ok(!status,"NtReadVirtualMemory failed with 0x%x\n", status);
 
-            ok(!de.u.DebugString.fUnicode, "unepxected unicode debug string event\n");
+            ok(!de.u.DebugString.fUnicode, "unexpected unicode debug string event\n");
             ok(de.u.DebugString.nDebugStringLength < sizeof(buffer) - 1, "buffer not large enough to hold %d bytes\n",
                de.u.DebugString.nDebugStringLength);
 
@@ -1016,22 +1102,25 @@ static DWORD simd_fault_handler( EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_R
         context->Eip += 3; /* skip addps */
         return ExceptionContinueExecution;
     }
-
-    /* stage 2 - divide by zero fault */
-    if( rec->ExceptionCode == EXCEPTION_ILLEGAL_INSTRUCTION)
-        skip("system doesn't support SIMD exceptions\n");
-    else {
-        ok( rec->ExceptionCode ==  STATUS_FLOAT_MULTIPLE_TRAPS,
-            "exception code: %#x, should be %#x\n",
-            rec->ExceptionCode,  STATUS_FLOAT_MULTIPLE_TRAPS);
-        ok( rec->NumberParameters == 1 || broken(is_wow64 && rec->NumberParameters == 2),
-            "# of params: %i, should be 1\n",
-            rec->NumberParameters);
-        if( rec->NumberParameters == 1 )
-            ok( rec->ExceptionInformation[0] == 0, "param #1: %lx, should be 0\n", rec->ExceptionInformation[0]);
+    else if ( *stage == 2 || *stage == 3 ) {
+        /* stage 2 - divide by zero fault */
+        /* stage 3 - invalid operation fault */
+        if( rec->ExceptionCode == EXCEPTION_ILLEGAL_INSTRUCTION)
+            skip("system doesn't support SIMD exceptions\n");
+        else {
+            ok( rec->ExceptionCode ==  STATUS_FLOAT_MULTIPLE_TRAPS,
+                "exception code: %#x, should be %#x\n",
+                rec->ExceptionCode,  STATUS_FLOAT_MULTIPLE_TRAPS);
+            ok( rec->NumberParameters == 1 || broken(is_wow64 && rec->NumberParameters == 2),
+                "# of params: %i, should be 1\n",
+                rec->NumberParameters);
+            if( rec->NumberParameters == 1 )
+                ok( rec->ExceptionInformation[0] == 0, "param #1: %lx, should be 0\n", rec->ExceptionInformation[0]);
+        }
+        context->Eip += 3; /* skip divps */
     }
-
-    context->Eip += 3; /* skip divps */
+    else
+        ok(FALSE, "unexpected stage %x\n", *stage);
 
     return ExceptionContinueExecution;
 }
@@ -1039,6 +1128,7 @@ static DWORD simd_fault_handler( EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_R
 static const BYTE simd_exception_test[] = {
     0x83, 0xec, 0x4,                     /* sub $0x4, %esp       */
     0x0f, 0xae, 0x1c, 0x24,              /* stmxcsr (%esp)       */
+    0x8b, 0x04, 0x24,                    /* mov    (%esp),%eax   * store mxcsr */
     0x66, 0x81, 0x24, 0x24, 0xff, 0xfd,  /* andw $0xfdff,(%esp)  * enable divide by */
     0x0f, 0xae, 0x14, 0x24,              /* ldmxcsr (%esp)       * zero exceptions  */
     0x6a, 0x01,                          /* push   $0x1          */
@@ -1049,7 +1139,22 @@ static const BYTE simd_exception_test[] = {
     0x0f, 0x57, 0xc0,                    /* xorps  %xmm0,%xmm0   * clear divisor  */
     0x0f, 0x5e, 0xc8,                    /* divps  %xmm0,%xmm1   * generate fault */
     0x83, 0xc4, 0x10,                    /* add    $0x10,%esp    */
-    0x66, 0x81, 0x0c, 0x24, 0x00, 0x02,  /* orw    $0x200,(%esp) * disable exceptions */
+    0x89, 0x04, 0x24,                    /* mov    %eax,(%esp)   * restore to old mxcsr */
+    0x0f, 0xae, 0x14, 0x24,              /* ldmxcsr (%esp)       */
+    0x83, 0xc4, 0x04,                    /* add    $0x4,%esp     */
+    0xc3,                                /* ret */
+};
+
+static const BYTE simd_exception_test2[] = {
+    0x83, 0xec, 0x4,                     /* sub $0x4, %esp       */
+    0x0f, 0xae, 0x1c, 0x24,              /* stmxcsr (%esp)       */
+    0x8b, 0x04, 0x24,                    /* mov    (%esp),%eax   * store mxcsr */
+    0x66, 0x81, 0x24, 0x24, 0x7f, 0xff,  /* andw $0xff7f,(%esp)  * enable invalid       */
+    0x0f, 0xae, 0x14, 0x24,              /* ldmxcsr (%esp)       * operation exceptions */
+    0x0f, 0x57, 0xc9,                    /* xorps  %xmm1,%xmm1   * clear dividend */
+    0x0f, 0x57, 0xc0,                    /* xorps  %xmm0,%xmm0   * clear divisor  */
+    0x0f, 0x5e, 0xc8,                    /* divps  %xmm0,%xmm1   * generate fault */
+    0x89, 0x04, 0x24,                    /* mov    %eax,(%esp)   * restore to old mxcsr */
     0x0f, 0xae, 0x14, 0x24,              /* ldmxcsr (%esp)       */
     0x83, 0xc4, 0x04,                    /* add    $0x4,%esp     */
     0xc3,                                /* ret */
@@ -1078,7 +1183,14 @@ static void test_simd_exceptions(void)
     got_exception = 0;
     run_exception_test(simd_fault_handler, &stage, simd_exception_test,
                        sizeof(simd_exception_test), 0);
-    ok( got_exception == 1, "got exception: %i, should be 1\n", got_exception);
+    ok(got_exception == 1, "got exception: %i, should be 1\n", got_exception);
+
+    /* generate a SIMD exception, test FPE_FLTINV */
+    stage = 3;
+    got_exception = 0;
+    run_exception_test(simd_fault_handler, &stage, simd_exception_test2,
+                       sizeof(simd_exception_test2), 0);
+    ok(got_exception == 1, "got exception: %i, should be 1\n", got_exception);
 }
 
 struct fpu_exception_info
@@ -1147,7 +1259,7 @@ static void test_fpu_exceptions(void)
     ok(info.exception_code == EXCEPTION_FLT_STACK_CHECK,
             "Got exception code %#x, expected EXCEPTION_FLT_STACK_CHECK\n", info.exception_code);
     ok(info.exception_offset == 0x19 ||
-       broken( is_wow64 && info.exception_offset == info.eip_offset ),
+       broken( info.exception_offset == info.eip_offset ),
        "Got exception offset %#x, expected 0x19\n", info.exception_offset);
     ok(info.eip_offset == 0x1b, "Got EIP offset %#x, expected 0x1b\n", info.eip_offset);
 
@@ -1156,7 +1268,7 @@ static void test_fpu_exceptions(void)
     ok(info.exception_code == EXCEPTION_FLT_DIVIDE_BY_ZERO,
             "Got exception code %#x, expected EXCEPTION_FLT_DIVIDE_BY_ZERO\n", info.exception_code);
     ok(info.exception_offset == 0x17 ||
-       broken( is_wow64 && info.exception_offset == info.eip_offset ),
+       broken( info.exception_offset == info.eip_offset ),
        "Got exception offset %#x, expected 0x17\n", info.exception_offset);
     ok(info.eip_offset == 0x19, "Got EIP offset %#x, expected 0x19\n", info.eip_offset);
 }
@@ -1305,6 +1417,8 @@ static void test_dpe_exceptions(void)
 }
 
 #elif defined(__x86_64__)
+
+#define is_wow64 0
 
 #define UNW_FLAG_NHANDLER  0
 #define UNW_FLAG_EHANDLER  1
@@ -1579,6 +1693,131 @@ static void test_virtual_unwind(void)
         call_virtual_unwind( i, &tests[i] );
 }
 
+static int consolidate_dummy_called;
+static PVOID CALLBACK test_consolidate_dummy(EXCEPTION_RECORD *rec)
+{
+    CONTEXT *ctx = (CONTEXT *)rec->ExceptionInformation[1];
+    consolidate_dummy_called = 1;
+    ok(ctx->Rip == 0xdeadbeef, "test_consolidate_dummy failed for Rip, expected: 0xdeadbeef, got: %lx\n", ctx->Rip);
+    return (PVOID)rec->ExceptionInformation[2];
+}
+
+static void test_restore_context(void)
+{
+    SETJMP_FLOAT128 *fltsave;
+    EXCEPTION_RECORD rec;
+    _JUMP_BUFFER buf;
+    CONTEXT ctx;
+    int i, pass;
+
+    if (!pRtlUnwindEx || !pRtlRestoreContext || !pRtlCaptureContext || !p_setjmp)
+    {
+        skip("RtlUnwindEx/RtlCaptureContext/RtlRestoreContext/_setjmp not found\n");
+        return;
+    }
+
+    /* RtlRestoreContext(NULL, NULL); crashes on Windows */
+
+    /* test simple case of capture and restore context */
+    pass = 0;
+    InterlockedIncrement(&pass); /* interlocked to prevent compiler from moving after capture */
+    pRtlCaptureContext(&ctx);
+    if (InterlockedIncrement(&pass) == 2) /* interlocked to prevent compiler from moving before capture */
+    {
+        pRtlRestoreContext(&ctx, NULL);
+        ok(0, "shouldn't be reached\n");
+    }
+    else
+        ok(pass < 4, "unexpected pass %d\n", pass);
+
+    /* test with jmp using RltRestoreContext */
+    pass = 0;
+    InterlockedIncrement(&pass);
+    RtlCaptureContext(&ctx);
+    InterlockedIncrement(&pass); /* only called once */
+    p_setjmp(&buf);
+    InterlockedIncrement(&pass);
+    if (pass == 3)
+    {
+        rec.ExceptionCode = STATUS_LONGJUMP;
+        rec.NumberParameters = 1;
+        rec.ExceptionInformation[0] = (DWORD64)&buf;
+
+        /* uses buf.Rip instead of ctx.Rip */
+        pRtlRestoreContext(&ctx, &rec);
+        ok(0, "shouldn't be reached\n");
+    }
+    else if (pass == 4)
+    {
+        ok(buf.Rbx == ctx.Rbx, "longjmp failed for Rbx, expected: %lx, got: %lx\n", buf.Rbx, ctx.Rbx);
+        ok(buf.Rsp == ctx.Rsp, "longjmp failed for Rsp, expected: %lx, got: %lx\n", buf.Rsp, ctx.Rsp);
+        ok(buf.Rbp == ctx.Rbp, "longjmp failed for Rbp, expected: %lx, got: %lx\n", buf.Rbp, ctx.Rbp);
+        ok(buf.Rsi == ctx.Rsi, "longjmp failed for Rsi, expected: %lx, got: %lx\n", buf.Rsi, ctx.Rsi);
+        ok(buf.Rdi == ctx.Rdi, "longjmp failed for Rdi, expected: %lx, got: %lx\n", buf.Rdi, ctx.Rdi);
+        ok(buf.R12 == ctx.R12, "longjmp failed for R12, expected: %lx, got: %lx\n", buf.R12, ctx.R12);
+        ok(buf.R13 == ctx.R13, "longjmp failed for R13, expected: %lx, got: %lx\n", buf.R13, ctx.R13);
+        ok(buf.R14 == ctx.R14, "longjmp failed for R14, expected: %lx, got: %lx\n", buf.R14, ctx.R14);
+        ok(buf.R15 == ctx.R15, "longjmp failed for R15, expected: %lx, got: %lx\n", buf.R15, ctx.R15);
+
+        fltsave = &buf.Xmm6;
+        for (i = 0; i < 10; i++)
+        {
+            ok(fltsave[i].Part[0] == ctx.u.FltSave.XmmRegisters[i + 6].Low,
+                "longjmp failed for Xmm%d, expected %lx, got %lx\n", i + 6,
+                fltsave[i].Part[0], ctx.u.FltSave.XmmRegisters[i + 6].Low);
+
+            ok(fltsave[i].Part[1] == ctx.u.FltSave.XmmRegisters[i + 6].High,
+                "longjmp failed for Xmm%d, expected %lx, got %lx\n", i + 6,
+                fltsave[i].Part[1], ctx.u.FltSave.XmmRegisters[i + 6].High);
+        }
+    }
+    else
+        ok(0, "unexpected pass %d\n", pass);
+
+    /* test with jmp through RtlUnwindEx */
+    pass = 0;
+    InterlockedIncrement(&pass);
+    pRtlCaptureContext(&ctx);
+    InterlockedIncrement(&pass); /* only called once */
+    p_setjmp(&buf);
+    InterlockedIncrement(&pass);
+    if (pass == 3)
+    {
+        rec.ExceptionCode = STATUS_LONGJUMP;
+        rec.NumberParameters = 1;
+        rec.ExceptionInformation[0] = (DWORD64)&buf;
+
+        /* uses buf.Rip instead of bogus 0xdeadbeef */
+        pRtlUnwindEx((void*)buf.Rsp, (void*)0xdeadbeef, &rec, NULL, &ctx, NULL);
+        ok(0, "shouldn't be reached\n");
+    }
+    else
+        ok(pass == 4, "unexpected pass %d\n", pass);
+
+
+    /* test with consolidate */
+    pass = 0;
+    InterlockedIncrement(&pass);
+    RtlCaptureContext(&ctx);
+    InterlockedIncrement(&pass);
+    if (pass == 2)
+    {
+        rec.ExceptionCode = STATUS_UNWIND_CONSOLIDATE;
+        rec.NumberParameters = 3;
+        rec.ExceptionInformation[0] = (DWORD64)test_consolidate_dummy;
+        rec.ExceptionInformation[1] = (DWORD64)&ctx;
+        rec.ExceptionInformation[2] = ctx.Rip;
+        ctx.Rip = 0xdeadbeef;
+
+        pRtlRestoreContext(&ctx, &rec);
+        ok(0, "shouldn't be reached\n");
+    }
+    else if (pass == 3)
+        ok(consolidate_dummy_called, "test_consolidate_dummy not called\n");
+    else
+        ok(0, "unexpected pass %d\n", pass);
+}
+
 static RUNTIME_FUNCTION* CALLBACK dynamic_unwind_callback( DWORD64 pc, PVOID context )
 {
     static const int code_offset = 1024;
@@ -1695,9 +1934,106 @@ static void test_dynamic_unwind(void)
 
 }
 
+static int termination_handler_called;
+static void WINAPI termination_handler(ULONG flags, ULONG64 frame)
+{
+    termination_handler_called++;
+
+    ok(flags == 1 || broken(flags == 0x401), "flags = %x\n", flags);
+    ok(frame == 0x1234, "frame = %p\n", (void*)frame);
+}
+
+static void test___C_specific_handler(void)
+{
+    DISPATCHER_CONTEXT dispatch;
+    EXCEPTION_RECORD rec;
+    CONTEXT context;
+    ULONG64 frame;
+    EXCEPTION_DISPOSITION ret;
+    SCOPE_TABLE scope_table;
+
+    if (!p__C_specific_handler)
+    {
+        win_skip("__C_specific_handler not available\n");
+        return;
+    }
+
+    memset(&rec, 0, sizeof(rec));
+    rec.ExceptionFlags = 2; /* EH_UNWINDING */
+    frame = 0x1234;
+    memset(&dispatch, 0, sizeof(dispatch));
+    dispatch.ImageBase = (ULONG_PTR)GetModuleHandleA(NULL);
+    dispatch.ControlPc = dispatch.ImageBase + 0x200;
+    dispatch.HandlerData = &scope_table;
+    dispatch.ContextRecord = &context;
+    scope_table.Count = 1;
+    scope_table.ScopeRecord[0].BeginAddress = 0x200;
+    scope_table.ScopeRecord[0].EndAddress = 0x400;
+    scope_table.ScopeRecord[0].HandlerAddress = (ULONG_PTR)termination_handler-dispatch.ImageBase;
+    scope_table.ScopeRecord[0].JumpTarget = 0;
+    memset(&context, 0, sizeof(context));
+
+    termination_handler_called = 0;
+    ret = p__C_specific_handler(&rec, frame, &context, &dispatch);
+    ok(ret == ExceptionContinueSearch, "__C_specific_handler returned %x\n", ret);
+    ok(termination_handler_called == 1, "termination_handler_called = %d\n",
+            termination_handler_called);
+    ok(dispatch.ScopeIndex == 1, "dispatch.ScopeIndex = %d\n", dispatch.ScopeIndex);
+
+    ret = p__C_specific_handler(&rec, frame, &context, &dispatch);
+    ok(ret == ExceptionContinueSearch, "__C_specific_handler returned %x\n", ret);
+    ok(termination_handler_called == 1, "termination_handler_called = %d\n",
+            termination_handler_called);
+    ok(dispatch.ScopeIndex == 1, "dispatch.ScopeIndex = %d\n", dispatch.ScopeIndex);
+}
+
 #endif  /* __x86_64__ */
 
 #if defined(__i386__) || defined(__x86_64__)
+
+static void test_debug_registers(void)
+{
+    static const struct
+    {
+        ULONG_PTR dr0, dr1, dr2, dr3, dr6, dr7;
+    }
+    tests[] =
+    {
+        { 0x42424240, 0, 0x126bb070, 0x0badbad0, 0, 0xffff0115 },
+        { 0x42424242, 0, 0x100f0fe7, 0x0abebabe, 0, 0x115 },
+    };
+    NTSTATUS status;
+    CONTEXT ctx;
+    int i;
+
+    for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++)
+    {
+        memset(&ctx, 0, sizeof(ctx));
+        ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+        ctx.Dr0 = tests[i].dr0;
+        ctx.Dr1 = tests[i].dr1;
+        ctx.Dr2 = tests[i].dr2;
+        ctx.Dr3 = tests[i].dr3;
+        ctx.Dr6 = tests[i].dr6;
+        ctx.Dr7 = tests[i].dr7;
+
+        status = pNtSetContextThread(GetCurrentThread(), &ctx);
+        ok(status == STATUS_SUCCESS, "NtGetContextThread failed with %08x\n", status);
+
+        memset(&ctx, 0, sizeof(ctx));
+        ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+
+        status = pNtGetContextThread(GetCurrentThread(), &ctx);
+        ok(status == STATUS_SUCCESS, "NtGetContextThread failed with %08x\n", status);
+        ok(ctx.Dr0 == tests[i].dr0, "test %d: expected %lx, got %lx\n", i, tests[i].dr0, (DWORD_PTR)ctx.Dr0);
+        ok(ctx.Dr1 == tests[i].dr1, "test %d: expected %lx, got %lx\n", i, tests[i].dr1, (DWORD_PTR)ctx.Dr1);
+        ok(ctx.Dr2 == tests[i].dr2, "test %d: expected %lx, got %lx\n", i, tests[i].dr2, (DWORD_PTR)ctx.Dr2);
+        ok(ctx.Dr3 == tests[i].dr3, "test %d: expected %lx, got %lx\n", i, tests[i].dr3, (DWORD_PTR)ctx.Dr3);
+        ok((ctx.Dr6 &  0xf00f) == tests[i].dr6, "test %d: expected %lx, got %lx\n", i, tests[i].dr6, (DWORD_PTR)ctx.Dr6);
+        ok((ctx.Dr7 & ~0xdc00) == tests[i].dr7, "test %d: expected %lx, got %lx\n", i, tests[i].dr7, (DWORD_PTR)ctx.Dr7);
+    }
+}
+
 static DWORD outputdebugstring_exceptions;
 
 static LONG CALLBACK outputdebugstring_vectored_handler(EXCEPTION_POINTERS *ExceptionInfo)
@@ -1731,13 +2067,10 @@ static void test_outputdebugstring(DWORD numexc, BOOL todo)
 
     outputdebugstring_exceptions = 0;
     OutputDebugStringA("Hello World");
-    if (todo)
-        todo_wine
-        ok(outputdebugstring_exceptions == numexc, "OutputDebugStringA generated %d exceptions, expected %d\n",
-           outputdebugstring_exceptions, numexc);
-    else
-        ok(outputdebugstring_exceptions == numexc, "OutputDebugStringA generated %d exceptions, expected %d\n",
-           outputdebugstring_exceptions, numexc);
+
+    todo_wine_if(todo)
+    ok(outputdebugstring_exceptions == numexc, "OutputDebugStringA generated %d exceptions, expected %d\n",
+       outputdebugstring_exceptions, numexc);
 
     pRtlRemoveVectoredExceptionHandler(vectored_handler);
 }
@@ -1791,6 +2124,236 @@ static void test_ripevent(DWORD numexc)
     pRtlRemoveVectoredExceptionHandler(vectored_handler);
 }
 
+static DWORD debug_service_exceptions;
+
+static LONG CALLBACK debug_service_handler(EXCEPTION_POINTERS *ExceptionInfo)
+{
+    EXCEPTION_RECORD *rec = ExceptionInfo->ExceptionRecord;
+    trace("vect. handler %08x addr:%p\n", rec->ExceptionCode, rec->ExceptionAddress);
+
+    ok(rec->ExceptionCode == EXCEPTION_BREAKPOINT, "ExceptionCode is %08x instead of %08x\n",
+       rec->ExceptionCode, EXCEPTION_BREAKPOINT);
+
+#ifdef __i386__
+    ok(ExceptionInfo->ContextRecord->Eip == (DWORD)code_mem + 0x1c,
+       "expected Eip = %x, got %x\n", (DWORD)code_mem + 0x1c, ExceptionInfo->ContextRecord->Eip);
+    ok(rec->NumberParameters == (is_wow64 ? 1 : 3),
+       "ExceptionParameters is %d instead of %d\n", rec->NumberParameters, is_wow64 ? 1 : 3);
+    ok(rec->ExceptionInformation[0] == ExceptionInfo->ContextRecord->Eax,
+       "expected ExceptionInformation[0] = %x, got %lx\n",
+       ExceptionInfo->ContextRecord->Eax, rec->ExceptionInformation[0]);
+    if (!is_wow64)
+    {
+        ok(rec->ExceptionInformation[1] == 0x11111111,
+           "got ExceptionInformation[1] = %lx\n", rec->ExceptionInformation[1]);
+        ok(rec->ExceptionInformation[2] == 0x22222222,
+           "got ExceptionInformation[2] = %lx\n", rec->ExceptionInformation[2]);
+    }
+#else
+    ok(ExceptionInfo->ContextRecord->Rip == (DWORD_PTR)code_mem + 0x2f,
+       "expected Rip = %lx, got %lx\n", (DWORD_PTR)code_mem + 0x2f, ExceptionInfo->ContextRecord->Rip);
+    ok(rec->NumberParameters == 1,
+       "ExceptionParameters is %d instead of 1\n", rec->NumberParameters);
+    ok(rec->ExceptionInformation[0] == ExceptionInfo->ContextRecord->Rax,
+       "expected ExceptionInformation[0] = %lx, got %lx\n",
+       ExceptionInfo->ContextRecord->Rax, rec->ExceptionInformation[0]);
+#endif
+
+    debug_service_exceptions++;
+    return (rec->ExceptionCode == EXCEPTION_BREAKPOINT) ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_CONTINUE_SEARCH;
+}
+
+#ifdef __i386__
+
+static const BYTE call_debug_service_code[] = {
+    0x53,                         /* pushl %ebx */
+    0x57,                         /* pushl %edi */
+    0x8b, 0x44, 0x24, 0x0c,       /* movl 12(%esp),%eax */
+    0xb9, 0x11, 0x11, 0x11, 0x11, /* movl $0x11111111,%ecx */
+    0xba, 0x22, 0x22, 0x22, 0x22, /* movl $0x22222222,%edx */
+    0xbb, 0x33, 0x33, 0x33, 0x33, /* movl $0x33333333,%ebx */
+    0xbf, 0x44, 0x44, 0x44, 0x44, /* movl $0x44444444,%edi */
+    0xcd, 0x2d,                   /* int $0x2d */
+    0xeb,                         /* jmp $+17 */
+    0x0f, 0x1f, 0x00,             /* nop */
+    0x31, 0xc0,                   /* xorl %eax,%eax */
+    0xeb, 0x0c,                   /* jmp $+14 */
+    0x90, 0x90, 0x90, 0x90,       /* nop */
+    0x90, 0x90, 0x90, 0x90,
+    0x90,
+    0x31, 0xc0,                   /* xorl %eax,%eax */
+    0x40,                         /* incl %eax */
+    0x5f,                         /* popl %edi */
+    0x5b,                         /* popl %ebx */
+    0xc3,                         /* ret */
+};
+
+#else
+
+static const BYTE call_debug_service_code[] = {
+    0x53,                         /* push %rbx */
+    0x57,                         /* push %rdi */
+    0x48, 0x89, 0xc8,             /* movl %rcx,%rax */
+    0x48, 0xb9, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, /* movabs $0x1111111111111111,%rcx */
+    0x48, 0xba, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, /* movabs $0x2222222222222222,%rdx */
+    0x48, 0xbb, 0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x33, /* movabs $0x3333333333333333,%rbx */
+    0x48, 0xbf, 0x44, 0x44, 0x44, 0x44, 0x44, 0x44, 0x44, 0x44, /* movabs $0x4444444444444444,%rdi */
+    0xcd, 0x2d,                   /* int $0x2d */
+    0xeb,                         /* jmp $+17 */
+    0x0f, 0x1f, 0x00,             /* nop */
+    0x48, 0x31, 0xc0,             /* xor %rax,%rax */
+    0xeb, 0x0e,                   /* jmp $+16 */
+    0x90, 0x90, 0x90, 0x90,       /* nop */
+    0x90, 0x90, 0x90, 0x90,
+    0x48, 0x31, 0xc0,             /* xor %rax,%rax */
+    0x48, 0xff, 0xc0,             /* inc %rax */
+    0x5f,                         /* pop %rdi */
+    0x5b,                         /* pop %rbx */
+    0xc3,                         /* ret */
+};
+
+#endif
+
+static void test_debug_service(DWORD numexc)
+{
+    DWORD (CDECL *func)(DWORD_PTR) = code_mem;
+    DWORD expected_exc, expected_ret;
+    void *vectored_handler;
+    DWORD ret;
+
+    /* code will return 0 if execution resumes immediately after "int $0x2d", otherwise 1 */
+    memcpy(code_mem, call_debug_service_code, sizeof(call_debug_service_code));
+
+    vectored_handler = pRtlAddVectoredExceptionHandler(TRUE, &debug_service_handler);
+    ok(vectored_handler != 0, "RtlAddVectoredExceptionHandler failed\n");
+
+    expected_exc = numexc;
+    expected_ret = (numexc != 0);
+
+    /* BREAKPOINT_BREAK */
+    debug_service_exceptions = 0;
+    ret = func(0);
+    ok(debug_service_exceptions == expected_exc,
+       "BREAKPOINT_BREAK generated %u exceptions, expected %u\n",
+       debug_service_exceptions, expected_exc);
+    ok(ret == expected_ret,
+       "BREAKPOINT_BREAK returned %u, expected %u\n", ret, expected_ret);
+
+    /* BREAKPOINT_PROMPT */
+    debug_service_exceptions = 0;
+    ret = func(2);
+    ok(debug_service_exceptions == expected_exc,
+       "BREAKPOINT_PROMPT generated %u exceptions, expected %u\n",
+       debug_service_exceptions, expected_exc);
+    ok(ret == expected_ret,
+       "BREAKPOINT_PROMPT returned %u, expected %u\n", ret, expected_ret);
+
+    /* invalid debug service */
+    debug_service_exceptions = 0;
+    ret = func(6);
+    ok(debug_service_exceptions == expected_exc,
+       "invalid debug service generated %u exceptions, expected %u\n",
+       debug_service_exceptions, expected_exc);
+    ok(ret == expected_ret,
+      "invalid debug service returned %u, expected %u\n", ret, expected_ret);
+
+    expected_exc = (is_wow64 ? numexc : 0);
+    expected_ret = (is_wow64 && numexc);
+
+    /* BREAKPOINT_PRINT */
+    debug_service_exceptions = 0;
+    ret = func(1);
+    ok(debug_service_exceptions == expected_exc,
+       "BREAKPOINT_PRINT generated %u exceptions, expected %u\n",
+       debug_service_exceptions, expected_exc);
+    ok(ret == expected_ret,
+       "BREAKPOINT_PRINT returned %u, expected %u\n", ret, expected_ret);
+
+    /* BREAKPOINT_LOAD_SYMBOLS */
+    debug_service_exceptions = 0;
+    ret = func(3);
+    ok(debug_service_exceptions == expected_exc,
+       "BREAKPOINT_LOAD_SYMBOLS generated %u exceptions, expected %u\n",
+       debug_service_exceptions, expected_exc);
+    ok(ret == expected_ret,
+       "BREAKPOINT_LOAD_SYMBOLS returned %u, expected %u\n", ret, expected_ret);
+
+    /* BREAKPOINT_UNLOAD_SYMBOLS */
+    debug_service_exceptions = 0;
+    ret = func(4);
+    ok(debug_service_exceptions == expected_exc,
+       "BREAKPOINT_UNLOAD_SYMBOLS generated %u exceptions, expected %u\n",
+       debug_service_exceptions, expected_exc);
+    ok(ret == expected_ret,
+       "BREAKPOINT_UNLOAD_SYMBOLS returned %u, expected %u\n", ret, expected_ret);
+
+    /* BREAKPOINT_COMMAND_STRING */
+    debug_service_exceptions = 0;
+    ret = func(5);
+    ok(debug_service_exceptions == expected_exc || broken(debug_service_exceptions == numexc),
+       "BREAKPOINT_COMMAND_STRING generated %u exceptions, expected %u\n",
+       debug_service_exceptions, expected_exc);
+    ok(ret == expected_ret || broken(ret == (numexc != 0)),
+       "BREAKPOINT_COMMAND_STRING returned %u, expected %u\n", ret, expected_ret);
+
+    pRtlRemoveVectoredExceptionHandler(vectored_handler);
+}
+
+static DWORD breakpoint_exceptions;
+
+static LONG CALLBACK breakpoint_handler(EXCEPTION_POINTERS *ExceptionInfo)
+{
+    EXCEPTION_RECORD *rec = ExceptionInfo->ExceptionRecord;
+    trace("vect. handler %08x addr:%p\n", rec->ExceptionCode, rec->ExceptionAddress);
+
+    ok(rec->ExceptionCode == EXCEPTION_BREAKPOINT, "ExceptionCode is %08x instead of %08x\n",
+       rec->ExceptionCode, EXCEPTION_BREAKPOINT);
+
+#ifdef __i386__
+    ok(ExceptionInfo->ContextRecord->Eip == (DWORD)code_mem + 1,
+       "expected Eip = %x, got %x\n", (DWORD)code_mem + 1, ExceptionInfo->ContextRecord->Eip);
+    ok(rec->NumberParameters == (is_wow64 ? 1 : 3),
+       "ExceptionParameters is %d instead of %d\n", rec->NumberParameters, is_wow64 ? 1 : 3);
+    ok(rec->ExceptionInformation[0] == 0,
+       "got ExceptionInformation[0] = %lx\n", rec->ExceptionInformation[0]);
+    ExceptionInfo->ContextRecord->Eip = (DWORD)code_mem + 2;
+#else
+    ok(ExceptionInfo->ContextRecord->Rip == (DWORD_PTR)code_mem + 1,
+       "expected Rip = %lx, got %lx\n", (DWORD_PTR)code_mem + 1, ExceptionInfo->ContextRecord->Rip);
+    ok(rec->NumberParameters == 1,
+       "ExceptionParameters is %d instead of 1\n", rec->NumberParameters);
+    ok(rec->ExceptionInformation[0] == 0,
+       "got ExceptionInformation[0] = %lx\n", rec->ExceptionInformation[0]);
+    ExceptionInfo->ContextRecord->Rip = (DWORD_PTR)code_mem + 2;
+#endif
+
+    breakpoint_exceptions++;
+    return (rec->ExceptionCode == EXCEPTION_BREAKPOINT) ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_CONTINUE_SEARCH;
+}
+
+static const BYTE breakpoint_code[] = {
+    0xcd, 0x03,                   /* int $0x3 */
+    0xc3,                         /* ret */
+};
+
+static void test_breakpoint(DWORD numexc)
+{
+    DWORD (CDECL *func)(void) = code_mem;
+    void *vectored_handler;
+
+    memcpy(code_mem, breakpoint_code, sizeof(breakpoint_code));
+
+    vectored_handler = pRtlAddVectoredExceptionHandler(TRUE, &breakpoint_handler);
+    ok(vectored_handler != 0, "RtlAddVectoredExceptionHandler failed\n");
+
+    breakpoint_exceptions = 0;
+    func();
+    ok(breakpoint_exceptions == numexc, "int $0x3 generated %u exceptions, expected %u\n",
+       breakpoint_exceptions, numexc);
+
+    pRtlRemoveVectoredExceptionHandler(vectored_handler);
+}
+
 static void test_vectored_continue_handler(void)
 {
     PVOID handler1, handler2;
@@ -1832,6 +2395,9 @@ static void test_vectored_continue_handler(void)
 START_TEST(exception)
 {
     HMODULE hntdll = GetModuleHandleA("ntdll.dll");
+#if defined(__x86_64__)
+    HMODULE hmsvcrt = LoadLibraryA("msvcrt.dll");
+#endif
 
     code_mem = VirtualAlloc(NULL, 65536, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
     if(!code_mem) {
@@ -1839,7 +2405,6 @@ START_TEST(exception)
         return;
     }
 
-    pNtCurrentTeb        = (void *)GetProcAddress( hntdll, "NtCurrentTeb" );
     pNtGetContextThread  = (void *)GetProcAddress( hntdll, "NtGetContextThread" );
     pNtSetContextThread  = (void *)GetProcAddress( hntdll, "NtSetContextThread" );
     pNtReadVirtualMemory = (void *)GetProcAddress( hntdll, "NtReadVirtualMemory" );
@@ -1861,11 +2426,6 @@ START_TEST(exception)
     pIsWow64Process = (void *)GetProcAddress(GetModuleHandleA("kernel32.dll"), "IsWow64Process");
 
 #ifdef __i386__
-    if (!pNtCurrentTeb)
-    {
-        skip( "NtCurrentTeb not found\n" );
-        return;
-    }
     if (!pIsWow64Process || !pIsWow64Process( GetCurrentProcess(), &is_wow64 )) is_wow64 = FALSE;
 
     if (pRtlAddVectoredExceptionHandler && pRtlRemoveVectoredExceptionHandler)
@@ -1886,7 +2446,7 @@ START_TEST(exception)
         }
 
         /* child must be run under a debugger */
-        if (!pNtCurrentTeb()->Peb->BeingDebugged)
+        if (!NtCurrentTeb()->Peb->BeingDebugged)
         {
             ok(FALSE, "child process not being debugged?\n");
             return;
@@ -1910,6 +2470,14 @@ START_TEST(exception)
             test_ripevent(0);
             test_stage = 6;
             test_ripevent(1);
+            test_stage = 7;
+            test_debug_service(0);
+            test_stage = 8;
+            test_debug_service(1);
+            test_stage = 9;
+            test_breakpoint(0);
+            test_stage = 10;
+            test_breakpoint(1);
         }
         else
             skip( "RtlRaiseException not found\n" );
@@ -1921,8 +2489,11 @@ START_TEST(exception)
     test_unwind();
     test_exceptions();
     test_rtlraiseexception();
+    test_debug_registers();
     test_outputdebugstring(1, FALSE);
     test_ripevent(1);
+    test_debug_service(1);
+    test_breakpoint(1);
     test_vectored_continue_handler();
     test_debugger();
     test_simd_exceptions();
@@ -1939,11 +2510,26 @@ START_TEST(exception)
                                                                  "RtlInstallFunctionTableCallback" );
     pRtlLookupFunctionEntry            = (void *)GetProcAddress( hntdll,
                                                                  "RtlLookupFunctionEntry" );
+    p__C_specific_handler              = (void *)GetProcAddress( hntdll,
+                                                                 "__C_specific_handler" );
+    pRtlCaptureContext                 = (void *)GetProcAddress( hntdll,
+                                                                 "RtlCaptureContext" );
+    pRtlRestoreContext                 = (void *)GetProcAddress( hntdll,
+                                                                 "RtlRestoreContext" );
+    pRtlUnwindEx                       = (void *)GetProcAddress( hntdll,
+                                                                 "RtlUnwindEx" );
+    p_setjmp                           = (void *)GetProcAddress( hmsvcrt,
+                                                                 "_setjmp" );
 
+    test_debug_registers();
     test_outputdebugstring(1, FALSE);
     test_ripevent(1);
+    test_debug_service(1);
+    test_breakpoint(1);
     test_vectored_continue_handler();
     test_virtual_unwind();
+    test___C_specific_handler();
+    test_restore_context();
 
     if (pRtlAddFunctionTable && pRtlDeleteFunctionTable && pRtlInstallFunctionTableCallback && pRtlLookupFunctionEntry)
       test_dynamic_unwind();
@@ -1952,5 +2538,5 @@ START_TEST(exception)
 
 #endif
 
-    VirtualFree(code_mem, 0, MEM_FREE);
+    VirtualFree(code_mem, 0, MEM_RELEASE);
 }

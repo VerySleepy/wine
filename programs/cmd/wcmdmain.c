@@ -375,7 +375,7 @@ static void WCMD_show_prompt (void) {
 	  *q++ = '(';
 	  break;
 	case 'D':
-	  GetDateFormatW(LOCALE_USER_DEFAULT, DATE_SHORTDATE, NULL, NULL, q, MAX_PATH);
+	  GetDateFormatW(LOCALE_USER_DEFAULT, DATE_SHORTDATE, NULL, NULL, q, MAX_PATH - (q - out_string));
 	  while (*q) q++;
 	  break;
 	case 'E':
@@ -879,7 +879,7 @@ static void handleExpansion(WCHAR *cmd, BOOL atExecute, BOOL delayed) {
       if (startchar == '%' && forvaridx != -1 && forloopcontext.variable[forvaridx]) {
         /* Replace the 2 characters, % and for variable character */
         WCMD_strsubstW(p, p + 2, forloopcontext.variable[forvaridx], -1);
-      } else if (!atExecute || (atExecute && startchar == '!')) {
+      } else if (!atExecute || startchar == '!') {
         p = WCMD_expand_envvar(p, startchar);
 
       /* In a FOR loop, see if this is the variable to replace */
@@ -1046,7 +1046,6 @@ void WCMD_run_program (WCHAR *command, BOOL called)
   WCHAR  pathext[MAXSTRING];
   WCHAR *firstParam;
   BOOL  extensionsupplied = FALSE;
-  BOOL  launched = FALSE;
   BOOL  status;
   DWORD len;
   static const WCHAR envPath[] = {'P','A','T','H','\0'};
@@ -1098,8 +1097,7 @@ void WCMD_run_program (WCHAR *command, BOOL called)
   pathposn = pathtosearch;
   WINE_TRACE("Searching in '%s' for '%s'\n", wine_dbgstr_w(pathtosearch),
              wine_dbgstr_w(stemofsearch));
-  while (!launched && pathposn) {
-
+  while (pathposn) {
     WCHAR  thisDir[MAX_PATH] = {'\0'};
     WCHAR *pos               = NULL;
     BOOL  found             = FALSE;
@@ -1332,7 +1330,7 @@ void WCMD_execute (const WCHAR *command, const WCHAR *redirects,
  *	Changing default drive has to be handled as a special case.
  */
 
-    if ((cmd[1] == ':') && IsCharAlphaW(cmd[0]) && (strlenW(cmd) == 2)) {
+    if ((strlenW(cmd) == 2) && (cmd[1] == ':') && IsCharAlphaW(cmd[0])) {
       WCHAR envvar[5];
       WCHAR dir[MAX_PATH];
 
@@ -1366,7 +1364,7 @@ void WCMD_execute (const WCHAR *command, const WCHAR *redirects,
     if (cmdList && (*cmdList)->pipeFile[0] != 0x00) {
         WINE_TRACE("Input coming from %s\n", wine_dbgstr_w((*cmdList)->pipeFile));
         h = CreateFileW((*cmdList)->pipeFile, GENERIC_READ,
-                  FILE_SHARE_READ, &sa, OPEN_EXISTING,
+                  FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING,
                   FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE, NULL);
         if (h == INVALID_HANDLE_VALUE) {
           WCMD_print_error ();
@@ -1427,8 +1425,8 @@ void WCMD_execute (const WCHAR *command, const WCHAR *redirects,
 
       } else {
         WCHAR *param = WCMD_parameter(p, 0, NULL, FALSE, FALSE);
-        h = CreateFileW(param, GENERIC_WRITE, 0, &sa, creationDisposition,
-                        FILE_ATTRIBUTE_NORMAL, NULL);
+        h = CreateFileW(param, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_DELETE,
+                        &sa, creationDisposition, FILE_ATTRIBUTE_NORMAL, NULL);
         if (h == INVALID_HANDLE_VALUE) {
           WCMD_print_error ();
           heap_free(cmd);
@@ -1855,17 +1853,20 @@ WCHAR *WCMD_ReadAndParseLine(const WCHAR *optionalcmd, CMD_LIST **output, HANDLE
     if (context && echo_mode && *curPos && (*curPos != '@')) {
       static const WCHAR echoDot[] = {'e','c','h','o','.'};
       static const WCHAR echoCol[] = {'e','c','h','o',':'};
+      static const WCHAR echoSlash[] = {'e','c','h','o','/'};
       const DWORD len = sizeof(echoDot)/sizeof(echoDot[0]);
       DWORD curr_size = strlenW(curPos);
       DWORD min_len = (curr_size < len ? curr_size : len);
       WCMD_show_prompt();
       WCMD_output_asis(curPos);
       /* I don't know why Windows puts a space here but it does */
-      /* Except for lines starting with 'echo.' or 'echo:'. Ask MS why */
+      /* Except for lines starting with 'echo.', 'echo:' or 'echo/'. Ask MS why */
       if (CompareStringW(LOCALE_SYSTEM_DEFAULT, NORM_IGNORECASE,
                          curPos, min_len, echoDot, len) != CSTR_EQUAL
           && CompareStringW(LOCALE_SYSTEM_DEFAULT, NORM_IGNORECASE,
-                         curPos, min_len, echoCol, len) != CSTR_EQUAL)
+                         curPos, min_len, echoCol, len) != CSTR_EQUAL
+          && CompareStringW(LOCALE_SYSTEM_DEFAULT, NORM_IGNORECASE,
+                         curPos, min_len, echoSlash, len) != CSTR_EQUAL)
       {
           WCMD_output_asis(spaceW);
       }
@@ -2421,6 +2422,8 @@ int wmain (int argc, WCHAR *argvW[])
   /* Until we start to read from the keyboard, stay as non-interactive */
   interactive = FALSE;
 
+  SetEnvironmentVariableW(promptW, defaultpromptW);
+
   if (opt_c || opt_k) {
       int     len;
       WCHAR   *q1 = NULL,*q2 = NULL,*p;
@@ -2595,8 +2598,6 @@ int wmain (int argc, WCHAR *argvW[])
       return errorlevel;
   }
 
-  SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), ENABLE_LINE_INPUT |
-                 ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT);
   SetConsoleTitleW(WCMD_LoadMessage(WCMD_CONSTITLE));
 
   /* Note: cmd.exe /c dir does not get a new color, /k dir does */
@@ -2684,7 +2685,6 @@ int wmain (int argc, WCHAR *argvW[])
  *	Loop forever getting commands and executing them.
  */
 
-  SetEnvironmentVariableW(promptW, defaultpromptW);
   interactive = TRUE;
   if (!opt_k) WCMD_version ();
   while (TRUE) {

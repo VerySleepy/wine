@@ -26,7 +26,6 @@
 #include "windef.h"
 #include "winbase.h"
 #include "objbase.h"
-#include "wincodec.h"
 
 #include "wincodecs_private.h"
 
@@ -292,7 +291,7 @@ static HRESULT WINAPI TgaDecoder_Initialize(IWICBitmapDecoder *iface, IStream *p
     This->image_offset = This->colormap_offset + This->colormap_length;
 
     /* Read footer if there is one */
-    seek.QuadPart = -sizeof(tga_footer);
+    seek.QuadPart = -(LONGLONG)sizeof(tga_footer);
     hr = IStream_Seek(pIStream, seek, STREAM_SEEK_END, NULL);
 
     if (SUCCEEDED(hr)) {

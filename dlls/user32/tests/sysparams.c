@@ -1552,10 +1552,10 @@ static void test_SPI_SETNONCLIENTMETRICS( void )               /*     44 */
     ok( Ncmcur.iSmCaptionHeight == expect,
         "SmCaptionHeight: %d expected %d\n", Ncmcur.iSmCaptionHeight, expect);
 
-    ok( Ncmcur.iCaptionWidth == 8 ||
-        Ncmcur.iCaptionWidth == 12 || /* Vista, W7b */
+    /* iCaptionWidth depends on a version, could be 8, 12 (Vista, Win7), 13 */
+    ok( (Ncmcur.iCaptionWidth >= 8 && Ncmcur.iCaptionWidth <= 13) ||
         Ncmcur.iCaptionWidth == Ncmstart.iCaptionWidth, /* with windows XP theme,  the value never changes */
-        "CaptionWidth: %d expected 8, 12 or %d\n", Ncmcur.iCaptionWidth, Ncmstart.iCaptionWidth);
+        "CaptionWidth: %d expected from [8, 13] or %d\n", Ncmcur.iCaptionWidth, Ncmstart.iCaptionWidth);
     ok( Ncmcur.iScrollWidth == 8,
         "ScrollWidth: %d expected 8\n", Ncmcur.iScrollWidth);
     ok( Ncmcur.iScrollHeight == 8,
@@ -1835,10 +1835,7 @@ static void test_SPI_SETWORKAREA( void )               /*     47 */
      * Changing the work area by just one pixel should make this occurrence
      * reasonably unlikely.
      */
-    curr_val.left = old_area.left;
-    curr_val.top = old_area.top;
-    curr_val.right = old_area.right-1;
-    curr_val.bottom = old_area.bottom-1;
+    SetRect(&curr_val, old_area.left, old_area.top, old_area.right - 1, old_area.bottom - 1);
     rc=SystemParametersInfoA( SPI_SETWORKAREA, 0, &curr_val,
                               SPIF_UPDATEINIFILE | SPIF_SENDCHANGE );
     if (!test_error_msg(rc,"SPI_SETWORKAREA")) return;
@@ -2495,9 +2492,7 @@ static void test_WM_DISPLAYCHANGE(void)
             continue;
         }
 
-        if(start_bpp != test_bpps[i]) {
-            todo_wine ok(last_bpp == test_bpps[i], "Set bpp %d, but WM_DISPLAYCHANGE reported bpp %d\n", test_bpps[i], last_bpp);
-        } else {
+        todo_wine_if(start_bpp != test_bpps[i]) {
             ok(last_bpp == test_bpps[i], "Set bpp %d, but WM_DISPLAYCHANGE reported bpp %d\n", test_bpps[i], last_bpp);
         }
         last_set_bpp = test_bpps[i];
@@ -2650,6 +2645,23 @@ static int gsm_error_ctr;
     ok( !( exp1 != act && exp2 != act && exp3 != act),"GetSystemMetrics(%s): expected %d or %d or %d actual %d\n", #i, exp1, exp2, exp3, act);\
 }
 
+static INT CALLBACK enum_all_fonts_proc(const LOGFONTA *elf, const TEXTMETRICA *ntm, DWORD type, LPARAM lparam)
+{
+    return lstrcmpiA(elf->lfFaceName, (const char *)lparam);
+}
+
+static BOOL is_font_enumerated(const char *name)
+{
+    HDC hdc = CreateCompatibleDC(0);
+    BOOL ret = FALSE;
+
+    if (!EnumFontFamiliesA(hdc, NULL, enum_all_fonts_proc, (LPARAM)name))
+        ret = TRUE;
+
+    DeleteDC(hdc);
+    return ret;
+}
+
 static void test_GetSystemMetrics( void)
 {
     TEXTMETRICA tmMenuFont;
@@ -2691,6 +2703,13 @@ static void test_GetSystemMetrics( void)
         win_skip("SPI_GETNONCLIENTMETRICS is not available\n");
         return;
     }
+
+    ok(is_font_enumerated(ncm.lfCaptionFont.lfFaceName), "font %s should be enumerated\n", ncm.lfCaptionFont.lfFaceName);
+    ok(is_font_enumerated(ncm.lfSmCaptionFont.lfFaceName), "font %s should be enumerated\n", ncm.lfSmCaptionFont.lfFaceName);
+    ok(is_font_enumerated(ncm.lfMenuFont.lfFaceName), "font %s should be enumerated\n", ncm.lfMenuFont.lfFaceName);
+    ok(is_font_enumerated(ncm.lfStatusFont.lfFaceName), "font %s should be enumerated\n", ncm.lfStatusFont.lfFaceName);
+    ok(is_font_enumerated(ncm.lfMessageFont.lfFaceName), "font %s should be enumerated\n", ncm.lfMessageFont.lfFaceName);
+
     /* CaptionWidth from the registry may have different value of iCaptionWidth
      * from the non client metrics (observed on WinXP) */
     CaptionWidthfromreg = metricfromreg(

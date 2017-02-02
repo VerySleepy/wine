@@ -23,10 +23,10 @@ use strict;
 
 # base URLs for www.unicode.org files
 my $MAPPINGS = "http://www.unicode.org/Public/MAPPINGS";
-my $UNIDATA = "http://www.unicode.org/Public/7.0.0/ucd";
+my $UNIDATA = "http://www.unicode.org/Public/9.0.0/ucd";
 my $REPORTS = "http://www.unicode.org/reports";
 my $RFCS = "http://www.rfc-editor.org/rfc";
-my $VERTICALDATA = "http://www.unicode.org/Public/vertical/revision-11";
+my $VERTICALDATA = "http://www.unicode.org/Public/vertical/revision-15";
 
 # Sort keys file
 my $SORTKEYS = "tr10/allkeys.txt";
@@ -169,7 +169,11 @@ my %indic_types =
     "Joiner" => 0x001b,
     "Number_Joiner" => 0x001c,
     "Number" => 0x001d,
-    "Brahmi_Joining_Number" => 0x001e
+    "Brahmi_Joining_Number" => 0x001e,
+    "Consonant_With_Stacker" => 0x001f,
+    "Consonant_Prefixed" => 0x0020,
+    "Syllable_Modifier" => 0x0021,
+    "Consonant_Killer" => 0x0022
 );
 
 my %matra_types =
@@ -240,6 +244,9 @@ my %break_types =
     "HL"  => 0x0026,
     "CJ"  => 0x0027,
     "RI"  => 0x0028,
+    "EB"  => 0x0029,
+    "EM"  => 0x002a,
+    "ZWJ" => 0x002b,
 );
 
 my %vertical_types =
@@ -347,8 +354,8 @@ my @tolower_table = ();
 my @toupper_table = ();
 my @digitmap_table = ();
 my @compatmap_table = ();
-my @category_table = (0) x 65536;
-my @joining_table = (0) x 65536;
+my @category_table = ();
+my @joining_table = ();
 my @direction_table = ();
 my @decomp_table = ();
 my @compose_table = ();
@@ -683,8 +690,7 @@ sub READ_JIS0208_FILE($)
     # lead bytes
     foreach my $i (0x8e, 0x8f, 0xa1 .. 0xfe)
     {
-        push @lead_bytes,$i;
-        $cp2uni[$i] = 0;
+        add_lead_byte($i);
     }
 
     # undefined chars
@@ -1058,7 +1064,7 @@ sub dump_sbcs_table($$$$$)
 
     # output the code page descriptor
 
-    printf OUTPUT "const struct sbcs_table cptable_%03d =\n{\n", $codepage;
+    printf OUTPUT "const struct sbcs_table DECLSPEC_HIDDEN cptable_%03d =\n{\n", $codepage;
     printf OUTPUT "    { %d, 1, 0x%04x, 0x%04x, \"%s\" },\n",
                   $codepage, $def, $defw, $name;
     printf OUTPUT "    cp2uni,\n";
@@ -1080,6 +1086,7 @@ sub dump_dbcs_table($$$$@)
     my @lblist = ();
     LBLOOP: for (my $y = 0; $y <= $#lead_bytes; $y++)
     {
+        $cp2uni[$lead_bytes[$y]] = $defw;
         my $base = $lead_bytes[$y] << 8;
         for (my $x = 0; $x < 256; $x++)
         {
@@ -1131,7 +1138,7 @@ sub dump_dbcs_table($$$$@)
 
     # output the code page descriptor
 
-    printf OUTPUT "const struct dbcs_table cptable_%03d =\n{\n", $codepage;
+    printf OUTPUT "const struct dbcs_table DECLSPEC_HIDDEN cptable_%03d =\n{\n", $codepage;
     printf OUTPUT "    { %d, 2, 0x%04x, 0x%04x, \"%s\" },\n",
                   $codepage, $def, $defw, $name;
     printf OUTPUT "    cp2uni,\n";
@@ -1172,7 +1179,7 @@ sub get_lb_ranges()
 sub dump_indic($)
 {
     my $filename = shift;
-    my @indic_table = ($indic_types{'Other'}) x 65536;
+    my @indic_table;
 
     my $INPUT = open_data_file( $UNIDATA, "IndicSyllabicCategory.txt" );
     while (<$INPUT>)
@@ -1194,7 +1201,7 @@ sub dump_indic($)
         {
             my $type = $3;
             die "unknown indic $type" unless defined $indic_types{$type};
-            if (hex $1 < 65536 and hex $2 < 6536)
+            if (hex $1 < 65536 and hex $2 < 65536)
             {
                 foreach my $i (hex $1 .. hex $2)
                 {
@@ -1207,7 +1214,7 @@ sub dump_indic($)
     }
     close $INPUT;
 
-    $INPUT = open_data_file( $UNIDATA, "IndicMatraCategory.txt" );
+    $INPUT = open_data_file( $UNIDATA, "IndicPositionalCategory.txt" );
     while (<$INPUT>)
     {
         next if /^\#/;  # skip comments
@@ -1238,10 +1245,11 @@ sub dump_indic($)
     print "Building $filename\n";
     print OUTPUT "/* Unicode Indic Syllabic Category */\n";
     print OUTPUT "/* generated from $UNIDATA/IndicSyllabicCategory.txt */\n";
-    print OUTPUT "/*       and from $UNIDATA/IndicMatraCategory.txt */\n";
+    print OUTPUT "/*       and from $UNIDATA/IndicPositionalCategory.txt */\n";
     print OUTPUT "/* DO NOT EDIT!! */\n\n";
+    print OUTPUT "#include \"wine/unicode.h\"\n\n";
 
-    dump_two_level_mapping( "indic_syllabic_table", @indic_table);
+    dump_two_level_mapping( "indic_syllabic_table", $indic_types{'Other'}, @indic_table );
 
     close OUTPUT;
     save_file($filename);
@@ -1252,7 +1260,7 @@ sub dump_indic($)
 sub dump_linebreak($)
 {
     my $filename = shift;
-    my @break_table = ($break_types{'XX'}) x 65536;
+    my @break_table;
     my $next_group = 0;
 
     my $INPUT = open_data_file( $UNIDATA, "LineBreak.txt" );
@@ -1261,7 +1269,24 @@ sub dump_linebreak($)
         next if /^\#/;  # skip comments
         next if /^\s*$/;  # skip empty lines
         next if /\x1a/;  # skip ^Z
-        if (/^\s*([0-9a-fA-F]+)\s*;\s*([0-9A-Z][0-9A-Z])+\s*/)
+        if (/^\s*([0-9a-fA-F]+)\s*;\s*([0-9A-Z][0-9A-Z][0-9A-Z])+\s*/)
+        {
+            my $type = $2;
+            die "unknown breaktype $type" unless defined $break_types{$type};
+            $break_table[hex $1] = $break_types{$type};
+            next;
+        }
+        elsif (/^\s*([0-9a-fA-F]+)..\s*([0-9a-fA-F]+)\s*;\s*([0-9A-Z][0-9A-Z][0-9A-Z])+\s*/)
+        {
+            my $type = $3;
+            die "unknown breaktype $type" unless defined $break_types{$type};
+            foreach my $i (hex $1 .. hex $2)
+            {
+                $break_table[$i] = $break_types{$type};
+            }
+            next;
+        }
+        elsif (/^\s*([0-9a-fA-F]+)\s*;\s*([0-9A-Z][0-9A-Z])+\s*/)
         {
             my $type = $2;
             die "unknown breaktype $type" unless defined $break_types{$type};
@@ -1287,12 +1312,158 @@ sub dump_linebreak($)
     print OUTPUT "/* Unicode Line Break Properties */\n";
     print OUTPUT "/* generated from $UNIDATA/LineBreak.txt */\n";
     print OUTPUT "/* DO NOT EDIT!! */\n\n";
+    print OUTPUT "#include \"wine/unicode.h\"\n\n";
 
-    dump_two_level_mapping( "wine_linebreak_table", @break_table);
+    dump_two_level_mapping( "wine_linebreak_table", $break_types{'XX'}, @break_table );
 
     close OUTPUT;
     save_file($filename);
 }
+
+my %scripts =
+(
+    "Unknown"                => 0,
+    "Common"                 => 1,
+    "Inherited"              => 2,
+    "Arabic"                 => 3,
+    "Armenian"               => 4,
+    "Avestan"                => 5,
+    "Balinese"               => 6,
+    "Bamum"                  => 7,
+    "Batak"                  => 8,
+    "Bengali"                => 9,
+    "Bopomofo"               => 10,
+    "Brahmi"                 => 11,
+    "Braille"                => 12,
+    "Buginese"               => 13,
+    "Buhid"                  => 14,
+    "Canadian_Aboriginal"    => 15,
+    "Carian"                 => 16,
+    "Cham"                   => 17,
+    "Cherokee"               => 18,
+    "Coptic"                 => 19,
+    "Cuneiform"              => 20,
+    "Cypriot"                => 21,
+    "Cyrillic"               => 22,
+    "Deseret"                => 23,
+    "Devanagari"             => 24,
+    "Egyptian_Hieroglyphs"   => 25,
+    "Ethiopic"               => 26,
+    "Georgian"               => 27,
+    "Glagolitic"             => 28,
+    "Gothic"                 => 29,
+    "Greek"                  => 30,
+    "Gujarati"               => 31,
+    "Gurmukhi"               => 32,
+    "Han"                    => 33,
+    "Hangul"                 => 34,
+    "Hanunoo"                => 35,
+    "Hebrew"                 => 36,
+    "Hiragana"               => 37,
+    "Imperial_Aramaic"       => 38,
+    "Inscriptional_Pahlavi"  => 39,
+    "Inscriptional_Parthian" => 40,
+    "Javanese"               => 41,
+    "Kaithi"                 => 42,
+    "Kannada"                => 43,
+    "Katakana"               => 44,
+    "Kayah_Li"               => 45,
+    "Kharoshthi"             => 46,
+    "Khmer"                  => 47,
+    "Lao"                    => 48,
+    "Latin"                  => 49,
+    "Lepcha"                 => 50,
+    "Limbu"                  => 51,
+    "Linear_B"               => 52,
+    "Lisu"                   => 53,
+    "Lycian"                 => 54,
+    "Lydian"                 => 55,
+    "Malayalam"              => 56,
+    "Mandaic"                => 57,
+    "Meetei_Mayek"           => 58,
+    "Mongolian"              => 59,
+    "Myanmar"                => 60,
+    "New_Tai_Lue"            => 61,
+    "Nko"                    => 62,
+    "Ogham"                  => 63,
+    "Ol_Chiki"               => 64,
+    "Old_Italic"             => 65,
+    "Old_Persian"            => 66,
+    "Old_South_Arabian"      => 67,
+    "Old_Turkic"             => 68,
+    "Oriya"                  => 69,
+    "Osmanya"                => 70,
+    "Phags_Pa"               => 71,
+    "Phoenician"             => 72,
+    "Rejang"                 => 73,
+    "Runic"                  => 74,
+    "Samaritan"              => 75,
+    "Saurashtra"             => 76,
+    "Shavian"                => 77,
+    "Sinhala"                => 78,
+    "Sundanese"              => 79,
+    "Syloti_Nagri"           => 80,
+    "Syriac"                 => 81,
+    "Tagalog"                => 82,
+    "Tagbanwa"               => 83,
+    "Tai_Le"                 => 84,
+    "Tai_Tham"               => 85,
+    "Tai_Viet"               => 86,
+    "Tamil"                  => 87,
+    "Telugu"                 => 88,
+    "Thaana"                 => 89,
+    "Thai"                   => 90,
+    "Tibetan"                => 91,
+    "Tifinagh"               => 92,
+    "Ugaritic"               => 93,
+    "Vai"                    => 94,
+    "Yi"                     => 95,
+    # Win8/Win8.1
+    "Chakma"                 => 96,
+    "Meroitic_Cursive"       => 97,
+    "Meroitic_Hieroglyphs"   => 98,
+    "Miao"                   => 99,
+    "Sharada"                => 100,
+    "Sora_Sompeng"           => 101,
+    "Takri"                  => 102,
+    # Win10
+    "Bassa_Vah"              => 103,
+    "Caucasian_Albanian"     => 104,
+    "Duployan"               => 105,
+    "Elbasan"                => 106,
+    "Grantha"                => 107,
+    "Khojki"                 => 108,
+    "Khudawadi"              => 109,
+    "Linear_A"               => 110,
+    "Mahajani"               => 111,
+    "Manichaean"             => 112,
+    "Mende_Kikakui"          => 113,
+    "Modi"                   => 114,
+    "Mro"                    => 115,
+    "Nabataean"              => 116,
+    "Old_North_Arabian"      => 117,
+    "Old_Permic"             => 118,
+    "Pahawh_Hmong"           => 119,
+    "Palmyrene"              => 120,
+    "Pau_Cin_Hau"            => 121,
+    "Psalter_Pahlavi"        => 122,
+    "Siddham"                => 123,
+    "Tirhuta"                => 124,
+    "Warang_Citi"            => 125,
+    # Win10 RS1
+    "Adlam"                  => 126,
+    "Ahom"                   => 127,
+    "Anatolian_Hieroglyphs"  => 128,
+    "Bhaiksuki"              => 129,
+    "Hatran"                 => 130,
+    "Marchen"                => 131,
+    "Multani"                => 132,
+    "Newa"                   => 133,
+    "Old_Hungarian"          => 134,
+    "Osage"                  => 135,
+    "SignWriting"            => 136,
+    "Tangut"                 => 137
+);
 
 ################################################################
 # dump Script IDs table
@@ -1300,12 +1471,13 @@ sub dump_scripts($)
 {
     my $filename = shift;
     my $header = $filename;
-    my @scripts_table = (0) x 65536; # 0 means unknown script
+    my @scripts_table;
     my $script_index;
-    my %scripts;
     my $i;
 
     my $INPUT = open_data_file( $UNIDATA, "Scripts.txt" );
+    # Fill the table
+    # Unknown script id is always 0, so undefined scripts are automatically treated as such
     while (<$INPUT>)
     {
         my $type = "";
@@ -1313,43 +1485,7 @@ sub dump_scripts($)
         next if /^\#/;  # skip comments
         next if /^\s*$/;  # skip empty lines
         next if /\x1a/;  # skip ^Z
-        if (/^\s*([0-9a-fA-F]+)\s*;\s*([_a-zA-Z]+)\s*/)
-        {
-            $type = $2;
-        }
-        elsif (/^\s*([0-9a-fA-F]+)..\s*([0-9a-fA-F]+)\s*;\s*([_a-zA-Z]+)\s*/)
-        {
-            $type = $3;
-        }
-        else
-        {
-            die "malformed line $_";
-        }
-
-        # ignore some scripts
-        if ($type eq "" || $type eq "Common" || $type eq "Inherited")
-        {
-            next;
-        }
-
-        $scripts{$type} = -1;
-    }
-
-    $script_index = 1;
-    foreach my $script (sort keys %scripts) {
-        $scripts{$script} = ++$script_index;
-    }
-
-    # now fill a table
-    seek $INPUT, 0, 0;
-    while (<$INPUT>)
-    {
-        my $type = "";
-
-        next if /^\#/;  # skip comments
-        next if /^\s*$/;  # skip empty lines
-        next if /\x1a/;  # skip ^Z
-        if (/^\s*([0-9a-fA-F]+)\s*;\s*([a-zA-Z]+)\s*/)
+        if (/^\s*([0-9a-fA-F]+)\s*;\s*([a-zA-Z_]+)\s*/)
         {
             $type = $2;
             if (defined $scripts{$type})
@@ -1358,7 +1494,7 @@ sub dump_scripts($)
             }
             next;
         }
-        elsif (/^\s*([0-9a-fA-F]+)..\s*([0-9a-fA-F]+)\s*;\s*([a-zA-Z]+)\s*/)
+        elsif (/^\s*([0-9a-fA-F]+)..\s*([0-9a-fA-F]+)\s*;\s*([a-zA-Z_]+)\s*/)
         {
             $type = $3;
             if (defined $scripts{$type})
@@ -1381,15 +1517,12 @@ sub dump_scripts($)
     print OUTPUT "/* generated from $UNIDATA/Scripts.txt */\n";
     print OUTPUT "/* DO NOT EDIT!! */\n\n";
 
-    # reserve Unknown and Common ids
     print OUTPUT "enum unicode_script_id {\n";
-    print OUTPUT "    Script_Unknown = 0,\n";
-    print OUTPUT "    Script_Common = 1,\n";
-    foreach my $script (sort keys %scripts)
+    foreach my $script (sort { $scripts{$a} <=> $scripts{$b} } keys %scripts)
     {
         print OUTPUT "    Script_$script = $scripts{$script},\n";
     }
-    print OUTPUT "    Script_LastId = $script_index\n";
+    print OUTPUT "    Script_LastId = ", (scalar keys %scripts) - 1, "\n";
     print OUTPUT "};\n";
 
     close OUTPUT;
@@ -1401,8 +1534,9 @@ sub dump_scripts($)
     print OUTPUT "/* Unicode Script IDs */\n";
     print OUTPUT "/* generated from $UNIDATA/Scripts.txt */\n";
     print OUTPUT "/* DO NOT EDIT!! */\n\n";
+    print OUTPUT "#include \"wine/unicode.h\"\n\n";
 
-    dump_two_level_mapping( "wine_scripts_table", @scripts_table);
+    dump_two_level_mapping( "wine_scripts_table", 0, @scripts_table );
     close OUTPUT;
     save_file($filename);
 }
@@ -1435,7 +1569,7 @@ sub dump_mirroring($)
     print OUTPUT "/* generated from $UNIDATA/BidiMirroring.txt */\n";
     print OUTPUT "/* DO NOT EDIT!! */\n\n";
     print OUTPUT "#include \"wine/unicode.h\"\n\n";
-    DUMP_CASE_TABLE( "wine_mirror_map", @mirror_table );
+    DUMP_CASE_TABLE( "DECLSPEC_HIDDEN wine_mirror_map", @mirror_table );
     close OUTPUT;
     save_file($filename);
 }
@@ -1445,7 +1579,7 @@ sub dump_mirroring($)
 sub dump_bracket($)
 {
     my $filename = shift;
-    my @bracket_table = (0) x 65536;
+    my @bracket_table;
 
     my $INPUT = open_data_file( $UNIDATA, "BidiBrackets.txt" );
     while (<$INPUT>)
@@ -1471,8 +1605,9 @@ sub dump_bracket($)
     print OUTPUT "/* Unicode Bidirectional Bracket table */\n";
     print OUTPUT "/* generated from $UNIDATA/BidiBrackets.txt */\n";
     print OUTPUT "/* DO NOT EDIT!! */\n\n";
+    print OUTPUT "#include \"wine/unicode.h\"\n\n";
 
-    dump_two_level_mapping( "bidi_bracket_table", @bracket_table);
+    dump_two_level_mapping( "bidi_bracket_table", 0, @bracket_table );
 
     close OUTPUT;
     save_file($filename);
@@ -1511,10 +1646,11 @@ sub dump_shaping($)
     print OUTPUT "/* Unicode Arabic shaping */\n";
     print OUTPUT "/* generated from $UNIDATA/ArabicShaping.txt */\n";
     print OUTPUT "/* DO NOT EDIT!! */\n\n";
+    print OUTPUT "#include \"wine/unicode.h\"\n\n";
 
-    dump_two_level_mapping( "wine_shaping_table", @joining_table );
+    dump_two_level_mapping( "wine_shaping_table", 0, @joining_table );
 
-    print OUTPUT "\nconst unsigned short wine_shaping_forms[256][4] =\n{\n";
+    print OUTPUT "\nconst unsigned short DECLSPEC_HIDDEN wine_shaping_forms[256][4] =\n{\n";
     for (my $i = 0x600; $i <= 0x6ff; $i++)
     {
         printf OUTPUT "    { 0x%04x, 0x%04x, 0x%04x, 0x%04x },\n",
@@ -1534,9 +1670,9 @@ sub dump_shaping($)
 sub dump_vertical($)
 {
     my $filename = shift;
-    my @vertical_table = ($vertical_types{'R'}) x 65536;
+    my @vertical_table;
 
-    my $INPUT = open_data_file( $VERTICALDATA, "VerticalOrientation-11.txt" );
+    my $INPUT = open_data_file( $VERTICALDATA, "VerticalOrientation-15.txt" );
     while (<$INPUT>)
     {
         next if /^\#/;  # skip comments
@@ -1569,14 +1705,35 @@ sub dump_vertical($)
     open OUTPUT,">$filename.new" or die "Cannot create $filename";
     print "Building $filename\n";
     print OUTPUT "/* Unicode Vertical Orientation */\n";
-    print OUTPUT "/* generated from $VERTICALDATA/VerticalOrientation-11.txt */\n";
+    print OUTPUT "/* generated from $VERTICALDATA/VerticalOrientation-15.txt */\n";
     print OUTPUT "/* DO NOT EDIT!! */\n\n";
+    print OUTPUT "#include \"wine/unicode.h\"\n\n";
 
-    dump_two_level_mapping( "vertical_orientation_table", @vertical_table);
+    dump_two_level_mapping( "vertical_orientation_table", $vertical_types{'R'}, @vertical_table );
 
     close OUTPUT;
     save_file($filename);
 }
+
+################################################################
+# dump the digit folding tables
+sub dump_digit_folding($)
+{
+    my $filename = shift;
+    open OUTPUT,">$filename.new" or die "Cannot create $filename";
+    print "Building $filename\n";
+    print OUTPUT "/* Unicode digit folding mappings */\n";
+    print OUTPUT "/* generated from $UNIDATA/UnicodeData.txt */\n";
+    print OUTPUT "/* DO NOT EDIT!! */\n\n";
+    print OUTPUT "#include \"wine/unicode.h\"\n\n";
+
+    DUMP_CASE_TABLE( "DECLSPEC_HIDDEN wine_digitmap",  @digitmap_table );
+    print OUTPUT "\n";
+    DUMP_CASE_TABLE( "DECLSPEC_HIDDEN wine_compatmap", @compatmap_table );
+    close OUTPUT;
+    save_file($filename);
+}
+
 
 ################################################################
 # dump the case mapping tables
@@ -1584,15 +1741,15 @@ sub DUMP_CASE_MAPPINGS($)
 {
     my $filename = shift;
     open OUTPUT,">$filename.new" or die "Cannot create $filename";
-    printf "Building $filename\n";
-    printf OUTPUT "/* Unicode case mappings */\n";
-    printf OUTPUT "/* Automatically generated; DO NOT EDIT!! */\n\n";
-    printf OUTPUT "#include \"wine/unicode.h\"\n\n";
+    print "Building $filename\n";
+    print OUTPUT "/* Unicode case mappings */\n";
+    print OUTPUT "/* generated from $UNIDATA/UnicodeData.txt */\n";
+    print OUTPUT "/* DO NOT EDIT!! */\n\n";
+    print OUTPUT "#include \"wine/unicode.h\"\n\n";
 
     DUMP_CASE_TABLE( "wine_casemap_lower", @tolower_table );
+    print OUTPUT "\n";
     DUMP_CASE_TABLE( "wine_casemap_upper", @toupper_table );
-    DUMP_CASE_TABLE( "wine_digitmap",  @digitmap_table );
-    DUMP_CASE_TABLE( "wine_compatmap", @compatmap_table );
     close OUTPUT;
     save_file($filename);
 }
@@ -1668,9 +1825,10 @@ sub DUMP_CASE_TABLE($@)
 
 ################################################################
 # compress a mapping table by removing identical rows
-sub compress_array($@)
+sub compress_array($$@)
 {
     my $rows = shift;
+    my $def = shift;
     my @table = @_;
     my $len = @table / $rows;
     my @array = (0) x $rows;
@@ -1679,7 +1837,8 @@ sub compress_array($@)
     # try to merge table rows
     for (my $row = 0; $row < $rows; $row++)
     {
-        my $rowtxt = pack "S*", @table[($row * $len)..($row * $len + $len - 1)];
+        my @table_row = map { defined($_) ? $_ : $def; } @table[($row * $len)..($row * $len + $len - 1)];
+        my $rowtxt = pack "S*", @table_row;
         if (defined($sequences{$rowtxt}))
         {
             # reuse an existing row
@@ -1689,7 +1848,7 @@ sub compress_array($@)
         {
             # create a new row
             $sequences{$rowtxt} = $array[$row] = $#array + 1;
-            push @array, @table[$row * $len..$row * $len + $len - 1];
+            push @array, @table_row;
         }
     }
     return @array;
@@ -1697,10 +1856,11 @@ sub compress_array($@)
 
 ################################################################
 # dump a simple char -> 16-bit value mapping table
-sub dump_simple_mapping($@)
+sub dump_simple_mapping($$@)
 {
     my $name = shift;
-    my @array = compress_array( 256, @_[0..65535] );
+    my $def = shift;
+    my @array = compress_array( 256, $def, @_[0..65535] );
 
     printf OUTPUT "const unsigned short %s[%d] =\n{\n", $name, $#array+1;
     printf OUTPUT "    /* offsets */\n%s,\n", DUMP_ARRAY( "0x%04x", 0, @array[0..255] );
@@ -1709,15 +1869,16 @@ sub dump_simple_mapping($@)
 
 ################################################################
 # dump a char -> 16-bit value mapping table using two-level tables
-sub dump_two_level_mapping($@)
+sub dump_two_level_mapping($$@)
 {
     my $name = shift;
-    my @row_array = compress_array( 4096, @_[0..65535] );
-    my @array = compress_array( 256, @row_array[0..4095] );
+    my $def = shift;
+    my @row_array = compress_array( 4096, $def, @_[0..65535] );
+    my @array = compress_array( 256, 0, @row_array[0..4095] );
 
     for (my $i = 256; $i < @array; $i++) { $array[$i] += @array - 4096; }
 
-    printf OUTPUT "const unsigned short %s[%d] =\n{\n", $name, @array + @row_array - 4096;
+    printf OUTPUT "const unsigned short DECLSPEC_HIDDEN %s[%d] =\n{\n", $name, @array + @row_array - 4096;
     printf OUTPUT "    /* level 1 offsets */\n%s,\n", DUMP_ARRAY( "0x%04x", 0, @array[0..255] );
     printf OUTPUT "    /* level 2 offsets */\n%s,\n", DUMP_ARRAY( "0x%04x", 0, @array[256..$#array] );
     printf OUTPUT "    /* values */\n%s\n};\n", DUMP_ARRAY( "0x%04x", 0, @row_array[4096..$#row_array] );
@@ -1876,7 +2037,7 @@ sub dump_nameprep($)
 {
     my $filename = shift;
     my @mapping_table = ();
-    my @flags_table = (0) x 65536;
+    my @flags_table;
 
     my $INPUT = open_data_file( $RFCS, $STRINGPREP );
     while (<$INPUT>)
@@ -1906,8 +2067,9 @@ sub dump_nameprep($)
     print OUTPUT "/* Nameprep algorithm related data */\n";
     print OUTPUT "/* generated from $RFCS/$STRINGPREP */\n";
     print OUTPUT "/* DO NOT EDIT!! */\n\n";
+    print OUTPUT "#include \"wine/unicode.h\"\n\n";
 
-    dump_two_level_mapping( "nameprep_char_type", @flags_table );
+    dump_two_level_mapping( "nameprep_char_type", 0, @flags_table );
 
     ######### mapping table
     # first determine all the 16-char subsets that contain something
@@ -1943,7 +2105,7 @@ sub dump_nameprep($)
     }
 
     # dump the main index
-    printf OUTPUT "const unsigned short nameprep_mapping[%d] =\n", $total;
+    printf OUTPUT "const unsigned short DECLSPEC_HIDDEN nameprep_mapping[%d] =\n", $total;
     printf OUTPUT "{\n    /* index */\n";
     printf OUTPUT "%s", DUMP_ARRAY( "0x%04x", 0, @filled_idx );
     printf OUTPUT ",\n    /* null sub-index */\n%s", DUMP_ARRAY( "0x%04x", 0, ($null_offset) x 16 );
@@ -2002,7 +2164,7 @@ sub DUMP_CTYPE_TABLES($)
         $category_table[$i] |= $direction_table[$i] << 12 if defined $direction_table[$i];
     }
 
-    dump_simple_mapping( "wine_wctype_table", @category_table );
+    dump_simple_mapping( "wine_wctype_table", 0, @category_table );
 
     close OUTPUT;
     save_file($filename);
@@ -2010,18 +2172,17 @@ sub DUMP_CTYPE_TABLES($)
 
 
 ################################################################
-# dump the char composition tables
-sub DUMP_COMPOSE_TABLES($)
+# dump the char composition table
+sub dump_compose_table($)
 {
     my $filename = shift;
 
     open OUTPUT,">$filename.new" or die "Cannot create $filename";
-    printf "Building $filename\n";
-    printf OUTPUT "/* Unicode char composition */\n";
-    printf OUTPUT "/* Automatically generated; DO NOT EDIT!! */\n\n";
-    printf OUTPUT "#include \"wine/unicode.h\"\n\n";
-
-    ######### composition table
+    print "Building $filename\n";
+    print OUTPUT "/* Unicode char composition */\n";
+    print OUTPUT "/* generated from $UNIDATA/UnicodeData.txt */\n";
+    print OUTPUT "/* DO NOT EDIT!! */\n\n";
+    print OUTPUT "#include \"wine/unicode.h\"\n\n";
 
     my @filled = ();
     foreach my $i (@compose_table)
@@ -2051,7 +2212,7 @@ sub DUMP_COMPOSE_TABLES($)
     }
     # terminator with last position
     push @table, 0, $pos;
-    printf OUTPUT "const WCHAR unicode_compose_table[0x%x] =\n{\n", 2*$pos;
+    printf OUTPUT "static const WCHAR table[0x%x] =\n{\n", 2*$pos;
     printf OUTPUT "    /* second chars + offsets */\n%s", DUMP_ARRAY( "0x%04x", 0, @table );
 
     # build the table of first chars and mappings
@@ -2067,14 +2228,53 @@ sub DUMP_COMPOSE_TABLES($)
         }
         printf OUTPUT ",\n    /* 0x%04x */\n%s", $i, DUMP_ARRAY( "0x%04x", 0, @table );
     }
-    printf OUTPUT "\n};\n\nconst unsigned int unicode_compose_table_size = %d;\n\n", $count;
+    print OUTPUT "\n};\n\n";
+    print OUTPUT <<"EOF";
+static inline int binary_search( WCHAR ch, int low, int high )
+{
+    while (low <= high)
+    {
+        int pos = (low + high) / 2;
+        if (table[2 * pos] < ch) low = pos + 1;
+        else if (table[2 * pos] > ch) high = pos - 1;
+        else return pos;
+    }
+    return -1;
+}
 
-    ######### decomposition table
+WCHAR DECLSPEC_HIDDEN wine_compose( const WCHAR *str )
+{
+    int pos, idx = 1, start = 0, count = $count;
+    for (;;)
+    {
+        if ((pos = binary_search( str[idx], start, count - 1 )) == -1) return 0;
+        if (!idx--) return table[2 * pos + 1];
+        start = table[2 * pos + 1];
+        count = table[2 * pos + 3];
+    }
+}
+EOF
+    close OUTPUT;
+    save_file($filename);
+}
+
+################################################################
+# dump the char decomposition table
+sub dump_decompose_table($)
+{
+    my $filename = shift;
+
+    open OUTPUT,">$filename.new" or die "Cannot create $filename";
+    print "Building $filename\n";
+    print OUTPUT "/* Unicode char composition */\n";
+    print OUTPUT "/* generated from $UNIDATA/UnicodeData.txt */\n";
+    print OUTPUT "/* DO NOT EDIT!! */\n\n";
+    print OUTPUT "#include \"wine/unicode.h\"\n\n";
 
     # first determine all the 16-char subsets that contain something
 
-    @filled = (0) x 4096;
-    $pos = 16*2;  # for the null subset
+    my @filled = (0) x 4096;
+    my $pos = 16*2;  # for the null subset
     for (my $i = 0; $i < 65536; $i++)
     {
         next unless defined $decomp_table[$i];
@@ -2108,7 +2308,7 @@ sub DUMP_COMPOSE_TABLES($)
 
     # dump the main index
 
-    printf OUTPUT "const WCHAR unicode_decompose_table[%d] =\n", $total;
+    printf OUTPUT "static const WCHAR table[%d] =\n", $total;
     printf OUTPUT "{\n    /* index */\n";
     printf OUTPUT "%s", DUMP_ARRAY( "0x%04x", 0, @filled_idx );
     printf OUTPUT ",\n    /* null sub-index */\n%s", DUMP_ARRAY( "0x%04x", 0, ($null_offset) x 16 );
@@ -2145,7 +2345,21 @@ sub DUMP_COMPOSE_TABLES($)
         printf OUTPUT "%s", DUMP_ARRAY( "0x%04x", 0, @table );
     }
 
-    printf OUTPUT "\n};\n";
+    printf OUTPUT "\n};\n\n";
+    print OUTPUT <<"EOF";
+unsigned int DECLSPEC_HIDDEN wine_decompose( WCHAR ch, WCHAR *dst, unsigned int dstlen )
+{
+    const WCHAR *ptr = table + table[table[ch >> 8] + ((ch >> 4) & 0x0f)] + 2 * (ch & 0xf);
+    unsigned int res;
+
+    *dst = ch;
+    if (!*ptr) return 1;
+    if (dstlen <= 1) return 0;
+    /* apply the decomposition recursively to the first char */
+    if ((res = wine_decompose( *ptr, dst, dstlen-1 ))) dst[res++] = ptr[1];
+    return res;
+}
+EOF
     close OUTPUT;
     save_file($filename);
 }
@@ -2156,7 +2370,7 @@ sub output_codepage_file($$$$)
 {
     my ($codepage, $filename, $comment, $has_glyphs) = @_;
 
-    my $output = sprintf "libs/wine/c_%03d.c", $codepage;
+    my $output = sprintf "libs/port/c_%03d.c", $codepage;
     open OUTPUT,">$output.new" or die "Cannot create $output";
 
     printf "Building %s from %s (%s)\n", $output, $filename || "hardcoded data", $comment;
@@ -2380,8 +2594,10 @@ chdir ".." if -f "./make_unicode";
 READ_DEFAULTS( $DEFAULTS );
 DUMP_CASE_MAPPINGS( "libs/wine/casemap.c" );
 DUMP_SORTKEYS( "libs/wine/collation.c", READ_SORTKEYS_FILE() );
-DUMP_COMPOSE_TABLES( "libs/wine/compose.c" );
+dump_compose_table( "libs/port/compose.c" );
+dump_decompose_table( "libs/port/decompose.c" );
 DUMP_CTYPE_TABLES( "libs/wine/wctype.c" );
+dump_digit_folding( "libs/port/digitmap.c" );
 dump_mirroring( "dlls/usp10/mirror.c" );
 dump_mirroring( "dlls/dwrite/mirror.c" );
 dump_bracket( "dlls/usp10/bracket.c" );
@@ -2398,7 +2614,7 @@ dump_nameprep( "dlls/kernel32/nameprep.c" );
 
 foreach my $file (@allfiles) { HANDLE_FILE( @{$file} ); }
 
-output_cptable("libs/wine/cptable.c");
+output_cptable("libs/port/cptable.c");
 
 exit 0;
 

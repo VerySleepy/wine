@@ -184,6 +184,11 @@ static void test_SetTargetComputer(void)
 
     /* the two backslashes are optional */
     hres = ITaskScheduler_SetTargetComputer(test_task_scheduler, oldname + 2);
+    if (hres == E_ACCESSDENIED)
+    {
+        skip("SetTargetComputer failed with E_ACCESSDENIED (needs admin rights)\n");
+        goto done;
+    }
     ok(hres == S_OK, "got 0x%x (expected S_OK)\n", hres);
 
     /* the case is ignored */
@@ -198,11 +203,33 @@ static void test_SetTargetComputer(void)
     hres = ITaskScheduler_SetTargetComputer(test_task_scheduler, oldname);
     ok(hres == S_OK, "got 0x%x (expected S_OK)\n", hres);
 
+done:
     CoTaskMemFree(oldname);
     ITaskScheduler_Release(test_task_scheduler);
     return;
 }
 
+static void test_Enum(void)
+{
+    ITaskScheduler *scheduler;
+    IEnumWorkItems *tasks;
+    HRESULT hr;
+
+    hr = CoCreateInstance(&CLSID_CTaskScheduler, NULL, CLSCTX_INPROC_SERVER,
+            &IID_ITaskScheduler, (void **)&scheduler);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+if (0) { /* crashes on win2k */
+    hr = ITaskScheduler_Enum(scheduler, NULL);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+}
+
+    hr = ITaskScheduler_Enum(scheduler, &tasks);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    IEnumWorkItems_Release(tasks);
+
+    ITaskScheduler_Release(scheduler);
+}
 
 START_TEST(task_scheduler)
 {
@@ -211,5 +238,6 @@ START_TEST(task_scheduler)
     test_Activate();
     test_GetTargetComputer();
     test_SetTargetComputer();
+    test_Enum();
     CoUninitialize();
 }

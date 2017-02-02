@@ -35,6 +35,9 @@
 
 static IFileSystem3 *fs3;
 
+/* w2k and 2k3 error code. */
+#define E_VAR_NOT_SET 0x800a005b
+
 static inline ULONG get_refcount(IUnknown *iface)
 {
     IUnknown_AddRef(iface);
@@ -54,6 +57,78 @@ static inline void get_temp_path(const WCHAR *prefix, WCHAR *path)
     GetTempPathW(MAX_PATH, buffW);
     GetTempFileNameW(buffW, prefix, 0, path);
     DeleteFileW(path);
+}
+
+static IDrive *get_fixed_drive(void)
+{
+    IDriveCollection *drives;
+    IEnumVARIANT *iter;
+    IDrive *drive;
+    HRESULT hr;
+
+    hr = IFileSystem3_get_Drives(fs3, &drives);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = IDriveCollection_get__NewEnum(drives, (IUnknown**)&iter);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    IDriveCollection_Release(drives);
+
+    while (1) {
+        DriveTypeConst type;
+        VARIANT var;
+
+        hr = IEnumVARIANT_Next(iter, 1, &var, NULL);
+        if (hr == S_FALSE) {
+            drive = NULL;
+            break;
+        }
+        ok(hr == S_OK, "got 0x%08x\n", hr);
+
+        hr = IDispatch_QueryInterface(V_DISPATCH(&var), &IID_IDrive, (void**)&drive);
+        ok(hr == S_OK, "got 0x%08x\n", hr);
+        VariantClear(&var);
+
+        hr = IDrive_get_DriveType(drive, &type);
+        ok(hr == S_OK, "got 0x%08x\n", hr);
+        if (type == Fixed)
+            break;
+
+        IDrive_Release(drive);
+    }
+
+    IEnumVARIANT_Release(iter);
+    return drive;
+}
+
+#define test_provideclassinfo(a, b) _test_provideclassinfo((IDispatch*)a, b, __LINE__)
+static void _test_provideclassinfo(IDispatch *disp, const GUID *guid, int line)
+{
+    IProvideClassInfo *classinfo;
+    TYPEATTR *attr;
+    ITypeInfo *ti;
+    IUnknown *unk;
+    HRESULT hr;
+
+    hr = IDispatch_QueryInterface(disp, &IID_IProvideClassInfo, (void **)&classinfo);
+    ok_(__FILE__,line) (hr == S_OK, "Failed to get IProvideClassInfo, %#x.\n", hr);
+
+    hr = IProvideClassInfo_GetClassInfo(classinfo, &ti);
+    ok_(__FILE__,line) (hr == S_OK, "GetClassInfo() failed, %#x.\n", hr);
+
+    hr = ITypeInfo_GetTypeAttr(ti, &attr);
+    ok_(__FILE__,line) (hr == S_OK, "GetTypeAttr() failed, %#x.\n", hr);
+
+    ok_(__FILE__,line) (IsEqualGUID(&attr->guid, guid), "Unexpected typeinfo %s, expected %s\n", wine_dbgstr_guid(&attr->guid),
+        wine_dbgstr_guid(guid));
+
+    hr = IProvideClassInfo_QueryInterface(classinfo, &IID_IUnknown, (void **)&unk);
+    ok(hr == S_OK, "Failed to QI for IUnknown.\n");
+    ok(unk == (IUnknown *)disp, "Got unk %p, original %p.\n", unk, disp);
+    IUnknown_Release(unk);
+
+    IProvideClassInfo_Release(classinfo);
+    ITypeInfo_ReleaseTypeAttr(ti, attr);
+    ITypeInfo_Release(ti);
 }
 
 static void test_interfaces(void)
@@ -77,6 +152,8 @@ static void test_interfaces(void)
     GetSystemDirectoryW(windows_path, MAX_PATH);
     lstrcpyW(file_path, windows_path);
     lstrcatW(file_path, file_kernel32W);
+
+    test_provideclassinfo(disp, &CLSID_FileSystemObject);
 
     hr = IDispatch_QueryInterface(disp, &IID_IObjectWithSite, (void**)&site);
     ok(hr == E_NOINTERFACE, "got 0x%08x, expected 0x%08x\n", hr, E_NOINTERFACE);
@@ -538,11 +615,11 @@ static void test_GetAbsolutePathName(void)
 static void test_GetFile(void)
 {
     static const WCHAR slW[] = {'\\',0};
-    BSTR path;
+    BSTR path, str;
     WCHAR pathW[MAX_PATH];
     FileAttribute fa;
     VARIANT size;
-    DWORD gfa;
+    DWORD gfa, new_gfa;
     IFile *file;
     HRESULT hr;
     HANDLE hf;
@@ -572,10 +649,38 @@ static void test_GetFile(void)
     hr = IFileSystem3_GetFile(fs3, path, &file);
     ok(hr == S_OK, "GetFile returned %x, expected S_OK\n", hr);
 
+    hr = IFile_get_Path(file, NULL);
+    ok(hr == E_POINTER, "got 0x%08x\n", hr);
+
+    hr = IFile_get_Path(file, &str);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(!lstrcmpiW(str, pathW), "got %s\n", wine_dbgstr_w(str));
+    SysFreeString(str);
+
+#define FILE_ATTR_MASK (FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN | \
+        FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_ARCHIVE | \
+        FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_COMPRESSED)
+
     hr = IFile_get_Attributes(file, &fa);
-    gfa = GetFileAttributesW(pathW) & (FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN |
-            FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_ARCHIVE |
-            FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_COMPRESSED);
+    gfa = GetFileAttributesW(pathW) & FILE_ATTR_MASK;
+    ok(hr == S_OK, "get_Attributes returned %x, expected S_OK\n", hr);
+    ok(fa == gfa, "fa = %x, expected %x\n", fa, gfa);
+
+    hr = IFile_put_Attributes(file, gfa | FILE_ATTRIBUTE_READONLY);
+    ok(hr == S_OK, "put_Attributes failed: %08x\n", hr);
+    new_gfa = GetFileAttributesW(pathW) & FILE_ATTR_MASK;
+    ok(new_gfa == (gfa|FILE_ATTRIBUTE_READONLY), "new_gfa = %x, expected %x\n", new_gfa, gfa|FILE_ATTRIBUTE_READONLY);
+
+    hr = IFile_get_Attributes(file, &fa);
+    ok(hr == S_OK, "get_Attributes returned %x, expected S_OK\n", hr);
+    ok(fa == new_gfa, "fa = %x, expected %x\n", fa, new_gfa);
+
+    hr = IFile_put_Attributes(file, gfa);
+    ok(hr == S_OK, "put_Attributes failed: %08x\n", hr);
+    new_gfa = GetFileAttributesW(pathW) & FILE_ATTR_MASK;
+    ok(new_gfa == gfa, "new_gfa = %x, expected %x\n", new_gfa, gfa);
+
+    hr = IFile_get_Attributes(file, &fa);
     ok(hr == S_OK, "get_Attributes returned %x, expected S_OK\n", hr);
     ok(fa == gfa, "fa = %x, expected %x\n", fa, gfa);
 
@@ -855,6 +960,7 @@ static void test_GetFolder(void)
     hr = IFileSystem3_GetFolder(fs3, str, &folder);
     ok(hr == S_OK, "got 0x%08x\n", hr);
     SysFreeString(str);
+    test_provideclassinfo(folder, &CLSID_Folder);
     IFolder_Release(folder);
 }
 
@@ -906,6 +1012,7 @@ static void test_FolderCollection(void)
 
     hr = IFolder_get_SubFolders(folder, &folders);
     ok(hr == S_OK, "got 0x%08x\n", hr);
+    test_provideclassinfo(folders, &CLSID_Folders);
     IFolder_Release(folder);
 
     count = 0;
@@ -1081,6 +1188,7 @@ static void test_FileCollection(void)
 
     hr = IFolder_get_Files(folder, &files);
     ok(hr == S_OK, "got 0x%08x\n", hr);
+    test_provideclassinfo(files, &CLSID_Files);
     IFolder_Release(folder);
 
     count = 0;
@@ -1148,6 +1256,7 @@ static void test_FileCollection(void)
 
         hr = IDispatch_QueryInterface(V_DISPATCH(&var), &IID_IFile, (void **)&file);
         ok(hr == S_OK, "got 0x%08x\n", hr);
+        test_provideclassinfo(file, &CLSID_File);
 
         str = NULL;
         hr = IFile_get_Name(file, &str);
@@ -1219,6 +1328,8 @@ static void test_DriveCollection(void)
 
     hr = IFileSystem3_get_Drives(fs3, &drives);
     ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    test_provideclassinfo(drives, &CLSID_Drives);
 
     hr = IDriveCollection_get__NewEnum(drives, (IUnknown**)&enumvar);
     ok(hr == S_OK, "got 0x%08x\n", hr);
@@ -1347,8 +1458,19 @@ static void test_CreateTextFile(void)
     hr = IFileSystem3_CreateTextFile(fs3, nameW, VARIANT_FALSE, VARIANT_FALSE, &stream);
     ok(hr == S_OK, "got 0x%08x\n", hr);
 
+    test_provideclassinfo(stream, &CLSID_TextStream);
+
     hr = ITextStream_Read(stream, 1, &str);
     ok(hr == CTL_E_BADFILEMODE, "got 0x%08x\n", hr);
+
+    hr = ITextStream_Close(stream);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = ITextStream_Read(stream, 1, &str);
+    ok(hr == CTL_E_BADFILEMODE || hr == E_VAR_NOT_SET, "got 0x%08x\n", hr);
+
+    hr = ITextStream_Close(stream);
+    ok(hr == S_FALSE || hr == E_VAR_NOT_SET, "got 0x%08x\n", hr);
 
     ITextStream_Release(stream);
 
@@ -1750,6 +1872,83 @@ todo_wine
     SysFreeString(nameW);
 }
 
+struct driveexists_test {
+    const WCHAR drivespec[10];
+    const INT drivetype;
+    const VARIANT_BOOL expected_ret;
+};
+
+/* If 'drivetype' != -1, the first character of 'drivespec' will be replaced
+ * with the drive letter of a drive of this type. If such a drive does not exist,
+ * the test will be skipped. */
+static const struct driveexists_test driveexiststestdata[] = {
+    { {'N',':','\\',0}, DRIVE_NO_ROOT_DIR, VARIANT_FALSE },
+    { {'R',':','\\',0}, DRIVE_REMOVABLE, VARIANT_TRUE },
+    { {'F',':','\\',0}, DRIVE_FIXED, VARIANT_TRUE },
+    { {'F',':',0}, DRIVE_FIXED, VARIANT_TRUE },
+    { {'F','?',0}, DRIVE_FIXED, VARIANT_FALSE },
+    { {'F',0}, DRIVE_FIXED, VARIANT_TRUE },
+    { {'?',0}, -1, VARIANT_FALSE },
+    { { 0 } }
+};
+
+static void test_DriveExists(void)
+{
+    const struct driveexists_test *ptr = driveexiststestdata;
+    HRESULT hr;
+    VARIANT_BOOL ret;
+    BSTR drivespec;
+    WCHAR root[] = {'?',':','\\',0};
+
+    hr = IFileSystem3_DriveExists(fs3, NULL, NULL);
+    ok(hr == E_POINTER, "got 0x%08x\n", hr);
+
+    ret = VARIANT_TRUE;
+    hr = IFileSystem3_DriveExists(fs3, NULL, &ret);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(ret == VARIANT_FALSE, "got %x\n", ret);
+
+    drivespec = SysAllocString(root);
+    hr = IFileSystem3_DriveExists(fs3, drivespec, NULL);
+    ok(hr == E_POINTER, "got 0x%08x\n", hr);
+    SysFreeString(drivespec);
+
+    for (; *ptr->drivespec; ptr++) {
+        drivespec = SysAllocString(ptr->drivespec);
+        if (ptr->drivetype != -1) {
+            for (root[0] = 'A'; root[0] <= 'Z'; root[0]++)
+                if (GetDriveTypeW(root) == ptr->drivetype)
+                    break;
+            if (root[0] > 'Z') {
+                skip("No drive with type 0x%x found, skipping test %s.\n",
+                        ptr->drivetype, wine_dbgstr_w(ptr->drivespec));
+                SysFreeString(drivespec);
+                continue;
+            }
+
+            /* Test both upper and lower case drive letters. */
+            drivespec[0] = root[0];
+            ret = ptr->expected_ret == VARIANT_TRUE ? VARIANT_FALSE : VARIANT_TRUE;
+            hr = IFileSystem3_DriveExists(fs3, drivespec, &ret);
+            ok(hr == S_OK, "got 0x%08x for drive spec %s (%s)\n",
+                    hr, wine_dbgstr_w(drivespec), wine_dbgstr_w(ptr->drivespec));
+            ok(ret == ptr->expected_ret, "got %d, expected %d for drive spec %s (%s)\n",
+                    ret, ptr->expected_ret, wine_dbgstr_w(drivespec), wine_dbgstr_w(ptr->drivespec));
+
+            drivespec[0] = tolower(root[0]);
+        }
+
+        ret = ptr->expected_ret == VARIANT_TRUE ? VARIANT_FALSE : VARIANT_TRUE;
+        hr = IFileSystem3_DriveExists(fs3, drivespec, &ret);
+        ok(hr == S_OK, "got 0x%08x for drive spec %s (%s)\n",
+                hr, wine_dbgstr_w(drivespec), wine_dbgstr_w(ptr->drivespec));
+        ok(ret == ptr->expected_ret, "got %d, expected %d for drive spec %s (%s)\n",
+                ret, ptr->expected_ret, wine_dbgstr_w(drivespec), wine_dbgstr_w(ptr->drivespec));
+
+        SysFreeString(drivespec);
+    }
+}
+
 struct getdrivename_test {
     const WCHAR path[10];
     const WCHAR drive[5];
@@ -1795,44 +1994,106 @@ static void test_GetDriveName(void)
     }
 }
 
+struct getdrive_test {
+    const WCHAR drivespec[12];
+    HRESULT res;
+    const WCHAR driveletter[2];
+};
+
+static void test_GetDrive(void)
+{
+    HRESULT hr;
+    IDrive *drive_fixed, *drive;
+    BSTR dl_fixed, drivespec;
+    WCHAR root[] = {'?',':','\\',0};
+
+    drive = (void*)0xdeadbeef;
+    hr = IFileSystem3_GetDrive(fs3, NULL, NULL);
+    ok(hr == E_POINTER, "got 0x%08x\n", hr);
+    ok(drive == (void*)0xdeadbeef, "got %p\n", drive);
+
+    for (root[0] = 'A'; root[0] <= 'Z'; root[0]++)
+        if (GetDriveTypeW(root) == DRIVE_NO_ROOT_DIR)
+            break;
+
+    if (root[0] > 'Z')
+        skip("All drive letters are occupied, skipping test for nonexisting drive.\n");
+    else {
+        drivespec = SysAllocString(root);
+        drive = (void*)0xdeadbeef;
+        hr = IFileSystem3_GetDrive(fs3, drivespec, &drive);
+        ok(hr == CTL_E_DEVICEUNAVAILABLE, "got 0x%08x\n", hr);
+        ok(drive == NULL, "got %p\n", drive);
+        SysFreeString(drivespec);
+    }
+
+    drive_fixed = get_fixed_drive();
+    if (!drive_fixed) {
+        skip("No fixed drive found, skipping test.\n");
+        return;
+    }
+
+    hr = IDrive_get_DriveLetter(drive_fixed, &dl_fixed);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    if (FAILED(hr))
+        skip("Could not retrieve drive letter of fixed drive, skipping test.\n");
+    else {
+        WCHAR dl_upper = toupper(dl_fixed[0]);
+        WCHAR dl_lower = tolower(dl_fixed[0]);
+        struct getdrive_test testdata[] = {
+            { {dl_upper,0}, S_OK, {dl_upper,0} },
+            { {dl_upper,':',0}, S_OK, {dl_upper,0} },
+            { {dl_upper,':','\\',0}, S_OK, {dl_upper,0} },
+            { {dl_lower,':','\\',0}, S_OK, {dl_upper,0} },
+            { {dl_upper,'\\',0}, E_INVALIDARG, { 0 } },
+            { {dl_lower,'\\',0}, E_INVALIDARG, { 0 } },
+            { {'$',':','\\',0}, E_INVALIDARG, { 0 } },
+            { {'\\','h','o','s','t','\\','s','h','a','r','e',0}, E_INVALIDARG, { 0 } },
+            { {'h','o','s','t','\\','s','h','a','r','e',0}, E_INVALIDARG, { 0 } },
+            { { 0 } },
+        };
+        struct getdrive_test *ptr = &testdata[0];
+
+        for (; *ptr->drivespec; ptr++) {
+            drivespec = SysAllocString(ptr->drivespec);
+            drive = (void*)0xdeadbeef;
+            hr = IFileSystem3_GetDrive(fs3, drivespec, &drive);
+            ok(hr == ptr->res, "got 0x%08x, expected 0x%08x for drive spec %s\n",
+                    hr, ptr->res, wine_dbgstr_w(ptr->drivespec));
+            ok(!lstrcmpW(ptr->drivespec, drivespec), "GetDrive modified its DriveSpec argument\n");
+            SysFreeString(drivespec);
+
+            if (*ptr->driveletter) {
+                BSTR driveletter;
+                hr = IDrive_get_DriveLetter(drive, &driveletter);
+                ok(hr == S_OK, "got 0x%08x for drive spec %s\n", hr, wine_dbgstr_w(ptr->drivespec));
+                if (SUCCEEDED(hr)) {
+                    ok(!lstrcmpW(ptr->driveletter, driveletter), "got %s, expected %s for drive spec %s\n",
+                            wine_dbgstr_w(driveletter), wine_dbgstr_w(ptr->driveletter),
+                            wine_dbgstr_w(ptr->drivespec));
+                    SysFreeString(driveletter);
+                }
+                test_provideclassinfo(drive, &CLSID_Drive);
+                IDrive_Release(drive);
+            } else
+                ok(drive == NULL, "got %p for drive spec %s\n", drive, wine_dbgstr_w(ptr->drivespec));
+        }
+        SysFreeString(dl_fixed);
+    }
+}
+
 static void test_SerialNumber(void)
 {
-    IDriveCollection *drives;
-    IEnumVARIANT *iter;
     IDrive *drive;
     LONG serial;
     HRESULT hr;
     BSTR name;
 
-    hr = IFileSystem3_get_Drives(fs3, &drives);
-    ok(hr == S_OK, "got 0x%08x\n", hr);
-
-    hr = IDriveCollection_get__NewEnum(drives, (IUnknown**)&iter);
-    ok(hr == S_OK, "got 0x%08x\n", hr);
-    IDriveCollection_Release(drives);
-
-    while (1) {
-        DriveTypeConst type;
-        VARIANT var;
-
-        hr = IEnumVARIANT_Next(iter, 1, &var, NULL);
-        if (hr == S_FALSE) {
-            skip("No fixed drive found, skipping test.\n");
-            IEnumVARIANT_Release(iter);
-            return;
-        }
-        ok(hr == S_OK, "got 0x%08x\n", hr);
-
-        hr = IDispatch_QueryInterface(V_DISPATCH(&var), &IID_IDrive, (void**)&drive);
-        ok(hr == S_OK, "got 0x%08x\n", hr);
-        VariantClear(&var);
-
-        hr = IDrive_get_DriveType(drive, &type);
-        ok(hr == S_OK, "got 0x%08x\n", hr);
-        if (type == Fixed)
-            break;
-
-        IDrive_Release(drive);
+    drive = get_fixed_drive();
+    if (!drive) {
+        skip("No fixed drive found, skipping test.\n");
+        return;
     }
 
     hr = IDrive_get_SerialNumber(drive, NULL);
@@ -1862,7 +2123,88 @@ static void test_SerialNumber(void)
     SysFreeString(name);
 
     IDrive_Release(drive);
-    IEnumVARIANT_Release(iter);
+}
+
+static const struct extension_test {
+    WCHAR path[20];
+    WCHAR ext[10];
+} extension_tests[] = {
+    { {'n','o','e','x','t',0}, {0} },
+    { {'n','.','o','.','e','x','t',0}, {'e','x','t',0} },
+    { {'n','.','o','.','e','X','t',0}, {'e','X','t',0} },
+    { { 0 } }
+};
+
+static void test_GetExtensionName(void)
+{
+    BSTR path, ext;
+    HRESULT hr;
+    int i;
+
+    for (i = 0; i < sizeof(extension_tests)/sizeof(extension_tests[0]); i++) {
+
+       path = SysAllocString(extension_tests[i].path);
+       ext = NULL;
+       hr = IFileSystem3_GetExtensionName(fs3, path, &ext);
+       ok(hr == S_OK, "got 0x%08x\n", hr);
+       if (*extension_tests[i].ext)
+           ok(!lstrcmpW(ext, extension_tests[i].ext), "%d: path %s, got %s, expected %s\n", i,
+               wine_dbgstr_w(path), wine_dbgstr_w(ext), wine_dbgstr_w(extension_tests[i].ext));
+       else
+           ok(ext == NULL, "%d: path %s, got %s, expected %s\n", i,
+               wine_dbgstr_w(path), wine_dbgstr_w(ext), wine_dbgstr_w(extension_tests[i].ext));
+
+       SysFreeString(path);
+       SysFreeString(ext);
+    }
+}
+
+static void test_GetSpecialFolder(void)
+{
+    WCHAR pathW[MAX_PATH];
+    IFolder *folder;
+    HRESULT hr;
+    DWORD ret;
+    BSTR path;
+
+    hr = IFileSystem3_GetSpecialFolder(fs3, WindowsFolder, NULL);
+    ok(hr == E_POINTER, "got 0x%08x\n", hr);
+
+    hr = IFileSystem3_GetSpecialFolder(fs3, TemporaryFolder+1, NULL);
+    ok(hr == E_POINTER, "got 0x%08x\n", hr);
+
+    hr = IFileSystem3_GetSpecialFolder(fs3, TemporaryFolder+1, &folder);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+
+    hr = IFileSystem3_GetSpecialFolder(fs3, WindowsFolder, &folder);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    hr = IFolder_get_Path(folder, &path);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    GetWindowsDirectoryW(pathW, sizeof(pathW)/sizeof(WCHAR));
+    ok(!lstrcmpiW(pathW, path), "got %s, expected %s\n", wine_dbgstr_w(path), wine_dbgstr_w(pathW));
+    SysFreeString(path);
+    IFolder_Release(folder);
+
+    hr = IFileSystem3_GetSpecialFolder(fs3, SystemFolder, &folder);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    hr = IFolder_get_Path(folder, &path);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    GetSystemDirectoryW(pathW, sizeof(pathW)/sizeof(WCHAR));
+    ok(!lstrcmpiW(pathW, path), "got %s, expected %s\n", wine_dbgstr_w(path), wine_dbgstr_w(pathW));
+    SysFreeString(path);
+    IFolder_Release(folder);
+
+    hr = IFileSystem3_GetSpecialFolder(fs3, TemporaryFolder, &folder);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    hr = IFolder_get_Path(folder, &path);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ret = GetTempPathW(sizeof(pathW)/sizeof(WCHAR), pathW);
+    if (ret && pathW[ret-1] == '\\')
+        pathW[ret-1] = 0;
+
+    ok(!lstrcmpiW(pathW, path), "got %s, expected %s\n", wine_dbgstr_w(path), wine_dbgstr_w(pathW));
+    SysFreeString(path);
+    IFolder_Release(folder);
 }
 
 START_TEST(filesystem)
@@ -1897,8 +2239,12 @@ START_TEST(filesystem)
     test_WriteLine();
     test_ReadAll();
     test_Read();
+    test_DriveExists();
     test_GetDriveName();
+    test_GetDrive();
     test_SerialNumber();
+    test_GetExtensionName();
+    test_GetSpecialFolder();
 
     IFileSystem3_Release(fs3);
 

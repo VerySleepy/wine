@@ -40,16 +40,6 @@
 #include "wine/test.h"
 #include "v6util.h"
 
-#undef VISIBLE
-
-#ifdef VISIBLE
-#define WAIT Sleep (1000)
-#define REDRAW(hwnd) RedrawWindow (hwnd, NULL, 0, RDW_UPDATENOW)
-#else
-#define WAIT
-#define REDRAW(hwnd)
-#endif
-
 #define IMAGELIST_MAGIC (('L' << 8) | 'I')
 
 #include "pshpack2.h"
@@ -78,6 +68,16 @@ static HRESULT (WINAPI *pImageList_CoCreateInstance)(REFCLSID,const IUnknown *,
 static HRESULT (WINAPI *pHIMAGELIST_QueryInterface)(HIMAGELIST,REFIID,void **);
 
 static HINSTANCE hinst;
+
+/* only used in interactive mode */
+static void force_redraw(HWND hwnd)
+{
+    if (!winetest_interactive)
+        return;
+
+    RedrawWindow(hwnd, NULL, 0, RDW_UPDATENOW);
+    Sleep(1000);
+}
 
 /* These macros build cursor/bitmap data in 4x4 pixel blocks */
 #define B(x,y) ((x?0xf0:0)|(y?0xf:0))
@@ -161,11 +161,11 @@ static HWND create_a_window(void)
        CW_USEDEFAULT, CW_USEDEFAULT, 300, 300, 0,
        0, hinst, 0);
 
-#ifdef VISIBLE
-    ShowWindow (hWnd, SW_SHOW);
-#endif
-    REDRAW(hWnd);
-    WAIT;
+    if (winetest_interactive)
+    {
+        ShowWindow (hWnd, SW_SHOW);
+        force_redraw (hWnd);
+    }
 
     return hWnd;
 }
@@ -173,16 +173,15 @@ static HWND create_a_window(void)
 static HDC show_image(HWND hwnd, HIMAGELIST himl, int idx, int size,
                       LPCSTR loc, BOOL clear)
 {
-    HDC hdc = NULL;
-#ifdef VISIBLE
-    if (!himl) return NULL;
+    HDC hdc;
 
-    SetWindowText(hwnd, loc);
+    if (!winetest_interactive || !himl) return NULL;
+
+    SetWindowTextA(hwnd, loc);
     hdc = GetDC(hwnd);
     ImageList_Draw(himl, idx, hdc, 0, 0, ILD_TRANSPARENT);
 
-    REDRAW(hwnd);
-    WAIT;
+    force_redraw(hwnd);
 
     if (clear)
     {
@@ -190,12 +189,11 @@ static HDC show_image(HWND hwnd, HIMAGELIST himl, int idx, int size,
         ReleaseDC(hwnd, hdc);
         hdc = NULL;
     }
-#endif /* VISIBLE */
+
     return hdc;
 }
 
 /* Useful for checking differences */
-#if 0
 static void dump_bits(const BYTE *p, const BYTE *q, int size)
 {
   int i, j;
@@ -216,18 +214,16 @@ static void dump_bits(const BYTE *p, const BYTE *q, int size)
   }
   printf("\n");
 }
-#endif
 
 static void check_bits(HWND hwnd, HIMAGELIST himl, int idx, int size,
                        const BYTE *checkbits, LPCSTR loc)
 {
-#ifdef VISIBLE
     BYTE bits[100*100/8];
     COLORREF c;
     HDC hdc;
     int x, y, i = -1;
 
-    if (!himl) return;
+    if (!winetest_interactive || !himl) return;
 
     memset(bits, 0, sizeof(bits));
     hdc = show_image(hwnd, himl, idx, size, loc, FALSE);
@@ -250,7 +246,6 @@ static void check_bits(HWND hwnd, HIMAGELIST himl, int idx, int size,
         "%s: bits different\n", loc);
     if (memcmp(bits, checkbits, (size * size)/8))
         dump_bits(bits, checkbits, size);
-#endif /* VISIBLE */
 }
 
 static void test_begindrag(void)
@@ -503,8 +498,7 @@ static void test_DrawIndirect(void)
     ok(!pImageList_DrawIndirect(&imldp),"bad himl succeeded!\n");
     imldp.himl = himl;
 
-    REDRAW(hwndfortest);
-    WAIT;
+    force_redraw(hwndfortest);
 
     imldp.fStyle = SRCCOPY;
     imldp.rgbBk = CLR_DEFAULT;
@@ -1254,7 +1248,7 @@ static void test_imagelist_storage(void)
 
 static void test_shell_imagelist(void)
 {
-    BOOL (WINAPI *pSHGetImageList)(INT, REFIID, void**);
+    HRESULT (WINAPI *pSHGetImageList)(INT, REFIID, void**);
     IImageList *iml = NULL;
     HMODULE hShell32;
     HRESULT hr;
@@ -1274,8 +1268,7 @@ static void test_shell_imagelist(void)
     }
 
     /* Get system image list */
-    hr = (pSHGetImageList)(SHIL_SYSSMALL, &IID_IImageList, (void**)&iml);
-
+    hr = pSHGetImageList(SHIL_SYSSMALL, &IID_IImageList, (void**)&iml);
     ok(SUCCEEDED(hr), "SHGetImageList failed, hr=%x\n", hr);
 
     if (hr != S_OK) {
@@ -1822,8 +1815,7 @@ if (0)
     imldp.hdcDst = hdc;
     imldp.himl = himl;
 
-    REDRAW(hwndfortest);
-    WAIT;
+    force_redraw(hwndfortest);
 
     imldp.fStyle = SRCCOPY;
     imldp.rgbBk = CLR_DEFAULT;
@@ -1972,7 +1964,11 @@ static void test_iconsize(void)
 static void test_create_destroy(void)
 {
     HIMAGELIST himl;
+    IImageList *imgl;
+    INT cx, cy;
     BOOL rc;
+    HRESULT hr;
+    INT ret;
 
     /* list with zero or negative image dimensions */
     himl = ImageList_Create(0, 0, ILC_COLOR16, 0, 3);
@@ -1992,6 +1988,46 @@ static void test_create_destroy(void)
 
     rc = ImageList_Destroy((HIMAGELIST)0xdeadbeef);
     ok(rc == FALSE, "ImageList_Destroy(0xdeadbeef) should fail and not crash\n");
+
+    /* DDB image lists */
+    himl = ImageList_Create(0, 14, ILC_COLORDDB, 4, 4);
+    ok(himl != NULL, "got %p\n", himl);
+    imgl = (IImageList*)himl;
+    IImageList_GetIconSize(imgl, &cx, &cy);
+    ok (cx == 0, "Wrong cx (%i)\n", cx);
+    ok (cy == 14, "Wrong cy (%i)\n", cy);
+    ImageList_Destroy(himl);
+
+    himl = ImageList_Create(0, 0, ILC_COLORDDB, 4, 4);
+    ok(himl != NULL, "got %p\n", himl);
+    imgl = (IImageList*)himl;
+    IImageList_GetIconSize(imgl, &cx, &cy);
+    ok (cx == 0, "Wrong cx (%i)\n", cx);
+    ok (cy == 0, "Wrong cy (%i)\n", cy);
+    ImageList_Destroy(himl);
+
+    himl = ImageList_Create(0, 0, ILC_COLORDDB, 0, 4);
+    ok(himl != NULL, "got %p\n", himl);
+    imgl = (IImageList*)himl;
+    IImageList_GetIconSize(imgl, &cx, &cy);
+    ok (cx == 0, "Wrong cx (%i)\n", cx);
+    ok (cy == 0, "Wrong cy (%i)\n", cy);
+
+    hr = IImageList_SetImageCount(imgl, 3);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    hr = IImageList_GetImageCount(imgl, &ret);
+    ok(hr == S_OK && ret == 3, "invalid image count after increase\n");
+
+    /* Trying to actually add an image causes a crash on Windows */
+    ImageList_Destroy(himl);
+
+    /* Negative values fail */
+    himl = ImageList_Create(-1, -1, ILC_COLORDDB, 4, 4);
+    ok(himl == NULL, "got %p\n", himl);
+    himl = ImageList_Create(-1, 1, ILC_COLORDDB, 4, 4);
+    ok(himl == NULL, "got %p\n", himl);
+    himl = ImageList_Create(1, -1, ILC_COLORDDB, 4, 4);
+    ok(himl == NULL, "got %p\n", himl);
 }
 
 static void test_IImageList_Clone(void)

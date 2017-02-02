@@ -625,7 +625,7 @@ static ULONG get_full_path_helper(LPCWSTR name, LPWSTR buffer, ULONG size)
 
     case ABSOLUTE_DRIVE_PATH:   /* c:\foo  */
         reqsize = sizeof(WCHAR);
-        tmp[0] = toupperW(name[0]);
+        tmp[0] = name[0];
         ins_str = tmp;
         dep = 1;
         mark = 3;
@@ -869,7 +869,7 @@ BOOLEAN WINAPI RtlIsNameLegalDOS8Dot3( const UNICODE_STRING *unicode,
     if (oem->Length > 12) return FALSE;
 
     /* a starting . is invalid, except for . and .. */
-    if (oem->Buffer[0] == '.')
+    if (oem->Length > 0 && oem->Buffer[0] == '.')
     {
         if (oem->Length != 1 && (oem->Length != 2 || oem->Buffer[1] != '.')) return FALSE;
         if (spaces) *spaces = FALSE;
@@ -984,7 +984,8 @@ NTSTATUS WINAPI RtlSetCurrentDirectory_U(const UNICODE_STRING* dir)
     attr.SecurityDescriptor = NULL;
     attr.SecurityQualityOfService = NULL;
 
-    nts = NtOpenFile( &handle, 0, &attr, &io, 0, FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT );
+    nts = NtOpenFile( &handle, FILE_TRAVERSE | SYNCHRONIZE, &attr, &io, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                      FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT );
     if (nts != STATUS_SUCCESS) goto out;
 
     /* don't keep the directory handle open on removable media */

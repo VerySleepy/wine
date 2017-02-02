@@ -23,7 +23,6 @@
 #include "config.h"
 #include "wine/port.h"
 
-#define NONAMELESSUNION
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <commdlg.h>
@@ -107,7 +106,7 @@ static enum dllmode string_to_mode(char *in)
     enum dllmode res;
 
     len = strlen(in);
-    out = HeapAlloc(GetProcessHeap(), 0, len);
+    out = HeapAlloc(GetProcessHeap(), 0, len + 1);
 
     /* remove the spaces */
     for (i = j = 0; i <= len; ++i) {
@@ -421,9 +420,15 @@ static void on_add_combo_change(HWND dialog)
     len=SendDlgItemMessageW(dialog, IDC_DLLCOMBO, CB_GETLBTEXTLEN, sel, 0);
 
     if (buffer[0] || len>0)
+    {
         enable(IDC_DLLS_ADDDLL)
+        SendMessageW(GetParent(dialog), DM_SETDEFID, IDC_DLLS_ADDDLL, 0);
+    }
     else
+    {
         disable(IDC_DLLS_ADDDLL);
+        SendMessageW(GetParent(dialog), DM_SETDEFID, IDOK, 0);
+    }
 }
 
 static void set_dllmode(HWND dialog, DWORD id)
@@ -492,7 +497,8 @@ static void on_add_click(HWND dialog)
 
     SendDlgItemMessageW(dialog, IDC_DLLCOMBO, WM_SETTEXT, 0, (LPARAM)emptyW);
     disable(IDC_DLLS_ADDDLL);
-    
+    SendMessageW(GetParent(dialog), DM_SETDEFID, IDOK, 0);
+
     WINE_TRACE("Adding %s as native, builtin\n", buffer);
 
     SendMessageW(GetParent(dialog), PSM_CHANGED, 0, 0);
@@ -605,18 +611,18 @@ LibrariesDlgProc (HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		break;
 	case WM_COMMAND:
 		switch(HIWORD(wParam)) {
-
-                    /* FIXME: when the user hits enter in the DLL combo box we should invoke the add
-                     * add button, rather than the propsheet OK button. But I don't know how to do that!
-                     */
-                    
                 case CBN_EDITCHANGE:
-                        if(LOWORD(wParam) == IDC_DLLCOMBO)
-                        {
-                            on_add_combo_change(hDlg);
-                            break;
-                        }
-
+                    if (LOWORD(wParam) == IDC_DLLCOMBO)
+                        on_add_combo_change(hDlg);
+                    break;
+                case CBN_SETFOCUS:
+                    if (LOWORD(wParam) == IDC_DLLCOMBO)
+                        on_add_combo_change(hDlg);
+                    break;
+                case CBN_KILLFOCUS:
+                    if (LOWORD(wParam) == IDC_DLLCOMBO)
+                        SendMessageW(GetParent(hDlg), DM_SETDEFID, IDOK, 0);
+                    break;
 		case BN_CLICKED:
 			switch(LOWORD(wParam)) {
 			case IDC_DLLS_ADDDLL:

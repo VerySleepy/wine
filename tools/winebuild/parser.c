@@ -403,9 +403,9 @@ static int parse_spec_stub( ORDDEF *odp, DLLSPEC *spec )
     odp->link_name = xstrdup("");
     /* don't bother generating stubs for Winelib */
     if (odp->flags & FLAG_CPU_MASK)
-        odp->flags &= FLAG_CPU(CPU_x86) | FLAG_CPU(CPU_x86_64) | FLAG_CPU(CPU_ARM);
+        odp->flags &= FLAG_CPU(CPU_x86) | FLAG_CPU(CPU_x86_64) | FLAG_CPU(CPU_ARM) | FLAG_CPU(CPU_ARM64);
     else
-        odp->flags |= FLAG_CPU(CPU_x86) | FLAG_CPU(CPU_x86_64) | FLAG_CPU(CPU_ARM);
+        odp->flags |= FLAG_CPU(CPU_x86) | FLAG_CPU(CPU_x86_64) | FLAG_CPU(CPU_ARM) | FLAG_CPU(CPU_ARM64);
 
     return parse_spec_arguments( odp, spec, 1 );
 }
@@ -473,7 +473,7 @@ static const char *parse_spec_flags( DLLSPEC *spec, ORDDEF *odp )
                     odp->flags |= FLAG_CPU_WIN64;
                 else
                 {
-                    enum target_cpu cpu = get_cpu_from_name( cpu_name );
+                    int cpu = get_cpu_from_name( cpu_name );
                     if (cpu == -1)
                     {
                         error( "Unknown architecture '%s'\n", cpu_name );
@@ -603,6 +603,7 @@ static int parse_spec_ordinal( int ordinal, DLLSPEC *spec )
     {
         if (!strcmp( odp->name, "DllRegisterServer" ) ||
             !strcmp( odp->name, "DllUnregisterServer" ) ||
+            !strcmp( odp->name, "DllMain" ) ||
             !strcmp( odp->name, "DllGetClassObject" ) ||
             !strcmp( odp->name, "DllGetVersion" ) ||
             !strcmp( odp->name, "DllInstall" ) ||

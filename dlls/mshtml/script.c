@@ -92,6 +92,8 @@ struct ScriptHost {
     struct list entry;
 };
 
+static ScriptHost *get_elem_script_host(HTMLInnerWindow*,HTMLScriptElement*);
+
 static void set_script_prop(ScriptHost *script_host, DWORD property, VARIANT *val)
 {
     IActiveScriptProperty *script_prop;
@@ -110,6 +112,26 @@ static void set_script_prop(ScriptHost *script_host, DWORD property, VARIANT *va
         WARN("SetProperty(%x) failed: %08x\n", property, hres);
 }
 
+static BOOL is_quirks_mode(HTMLDocumentNode *doc)
+{
+    const WCHAR *compat_mode;
+    nsAString nsstr;
+    nsresult nsres;
+    BOOL ret = FALSE;
+
+    static const WCHAR BackCompatW[] = {'B','a','c','k','C','o','m','p','a','t',0};
+
+    nsAString_Init(&nsstr, NULL);
+    nsres = nsIDOMHTMLDocument_GetCompatMode(doc->nsdoc, &nsstr);
+    if(NS_SUCCEEDED(nsres)) {
+        nsAString_GetData(&nsstr, &compat_mode);
+        if(!strcmpW(compat_mode, BackCompatW))
+            ret = TRUE;
+    }
+    nsAString_Finish(&nsstr);
+    return ret;
+}
+
 static BOOL init_script_engine(ScriptHost *script_host)
 {
     IObjectSafety *safety;
@@ -120,7 +142,7 @@ static BOOL init_script_engine(ScriptHost *script_host)
 
     hres = IActiveScript_QueryInterface(script_host->script, &IID_IActiveScriptParse, (void**)&script_host->parse);
     if(FAILED(hres)) {
-        WARN("Could not get IActiveScriptHost: %08x\n", hres);
+        WARN("Could not get IActiveScriptParse: %08x\n", hres);
         return FALSE;
     }
 
@@ -148,7 +170,7 @@ static BOOL init_script_engine(ScriptHost *script_host)
         return FALSE;
 
     V_VT(&var) = VT_I4;
-    V_I4(&var) = 1;
+    V_I4(&var) = is_quirks_mode(script_host->window->doc) ? 1 : 2;
     set_script_prop(script_host, SCRIPTPROP_INVOKEVERSIONING, &var);
 
     V_VT(&var) = VT_BOOL;
@@ -715,7 +737,7 @@ static void fire_readystatechange_proc(task_t *_task)
         return;
 
     task->elem->pending_readystatechange_event = FALSE;
-    fire_event(task->elem->element.node.doc, EVENTID_READYSTATECHANGE, FALSE, task->elem->element.node.nsnode, NULL, NULL);
+    fire_event(task->elem->element.node.doc, EVENTID_READYSTATECHANGE, FALSE, &task->elem->element.node, NULL, NULL);
 }
 
 static void fire_readystatechange_task_destr(task_t *_task)
@@ -751,7 +773,7 @@ static void set_script_elem_readystate(HTMLScriptElement *script_elem, READYSTAT
         }else {
             script_elem->pending_readystatechange_event = FALSE;
             fire_event(script_elem->element.node.doc, EVENTID_READYSTATECHANGE, FALSE,
-                    script_elem->element.node.nsnode, NULL, NULL);
+                    &script_elem->element.node, NULL, NULL);
         }
     }
 }
@@ -764,8 +786,6 @@ static void parse_elem_text(ScriptHost *script_host, HTMLScriptElement *script_e
 
     TRACE("%s\n", debugstr_w(text));
 
-    set_script_elem_readystate(script_elem, READYSTATE_INTERACTIVE);
-
     VariantInit(&var);
     memset(&excepinfo, 0, sizeof(excepinfo));
     TRACE(">>>\n");
@@ -776,7 +796,6 @@ static void parse_elem_text(ScriptHost *script_host, HTMLScriptElement *script_e
         TRACE("<<<\n");
     else
         WARN("<<< %08x\n", hres);
-
 }
 
 typedef struct {
@@ -787,8 +806,110 @@ typedef struct {
 
     DWORD size;
     char *buf;
-    HRESULT hres;
 } ScriptBSC;
+
+static HRESULT get_binding_text(ScriptBSC *bsc, WCHAR **ret)
+{
+    UINT cp = CP_UTF8;
+    WCHAR *text;
+
+    if(!bsc->bsc.readed) {
+        text = heap_alloc(sizeof(WCHAR));
+        if(!text)
+            return E_OUTOFMEMORY;
+        *text = 0;
+        *ret = text;
+        return S_OK;
+    }
+
+    switch(bsc->bsc.bom) {
+    case BOM_UTF16:
+        if(bsc->bsc.readed % sizeof(WCHAR)) {
+            FIXME("The buffer is not a valid utf16 string\n");
+            return E_FAIL;
+        }
+
+        text = heap_alloc(bsc->bsc.readed+sizeof(WCHAR));
+        if(!text)
+            return E_OUTOFMEMORY;
+
+        memcpy(text, bsc->buf, bsc->bsc.readed);
+        text[bsc->bsc.readed/sizeof(WCHAR)] = 0;
+        break;
+
+    default:
+        /* FIXME: Try to use charset from HTTP headers first */
+        cp = get_document_charset(bsc->script_elem->element.node.doc);
+        /* fall through */
+    case BOM_UTF8: {
+        DWORD len;
+
+        len = MultiByteToWideChar(cp, 0, bsc->buf, bsc->bsc.readed, NULL, 0);
+        text = heap_alloc((len+1)*sizeof(WCHAR));
+        if(!text)
+            return E_OUTOFMEMORY;
+
+        MultiByteToWideChar(cp, 0, bsc->buf, bsc->bsc.readed, text, len);
+        text[len] = 0;
+    }
+    }
+
+    *ret = text;
+    return S_OK;
+}
+
+static void script_file_available(ScriptBSC *bsc)
+{
+    HTMLScriptElement *script_elem = bsc->script_elem;
+    HTMLInnerWindow *window = bsc->bsc.window;
+    ScriptHost *script_host;
+    nsIDOMNode *parent;
+    nsresult nsres;
+    HRESULT hres;
+
+    assert(window != NULL);
+
+    hres = get_binding_text(bsc, &script_elem->src_text);
+    if(FAILED(hres))
+        return;
+
+    script_host = get_elem_script_host(window, script_elem);
+    if(!script_host)
+        return;
+
+    if(window->parser_callback_cnt) {
+        script_queue_entry_t *queue;
+
+        TRACE("Adding to queue\n");
+
+        queue = heap_alloc(sizeof(*queue));
+        if(!queue)
+            return;
+
+        IHTMLScriptElement_AddRef(&script_elem->IHTMLScriptElement_iface);
+        queue->script = script_elem;
+
+        list_add_tail(&window->script_queue, &queue->entry);
+        return;
+    }
+
+    nsres = nsIDOMHTMLElement_GetParentNode(script_elem->element.nselem, &parent);
+    if(NS_FAILED(nsres) || !parent) {
+        TRACE("No parent, not executing\n");
+        script_elem->parse_on_bind = TRUE;
+        return;
+    }
+
+    nsIDOMNode_Release(parent);
+
+    script_host = get_elem_script_host(window, script_elem);
+    if(!script_host)
+        return;
+
+    script_elem->parsed = TRUE;
+    if(script_host->parse)
+        parse_elem_text(script_host, script_elem, script_elem->src_text);
+}
 
 static inline ScriptBSC *impl_from_BSCallback(BSCallback *iface)
 {
@@ -817,6 +938,8 @@ static HRESULT ScriptBSC_start_binding(BSCallback *bsc)
 {
     ScriptBSC *This = impl_from_BSCallback(bsc);
 
+    This->script_elem->binding = &This->bsc;
+
     /* FIXME: We should find a better to decide if 'loading' state is supposed to be used by the protocol. */
     if(This->scheme == URL_SCHEME_HTTPS || This->scheme == URL_SCHEME_HTTP)
         set_script_elem_readystate(This->script_elem, READYSTATE_LOADING);
@@ -828,11 +951,17 @@ static HRESULT ScriptBSC_stop_binding(BSCallback *bsc, HRESULT result)
 {
     ScriptBSC *This = impl_from_BSCallback(bsc);
 
-    This->hres = result;
+    if(SUCCEEDED(result) && !This->script_elem)
+        result = E_UNEXPECTED;
+
+    assert(FAILED(result) || This->script_elem->binding == &This->bsc);
+    This->script_elem->binding = NULL;
+
+    if(This->script_elem->readystate == READYSTATE_LOADING)
+        set_script_elem_readystate(This->script_elem, READYSTATE_LOADED);
 
     if(SUCCEEDED(result)) {
-        if(This->script_elem->readystate == READYSTATE_LOADING)
-            set_script_elem_readystate(This->script_elem, READYSTATE_LOADED);
+        script_file_available(This);
     }else {
         FIXME("binding failed %08x\n", result);
         heap_free(This->buf);
@@ -860,10 +989,10 @@ static HRESULT ScriptBSC_read_data(BSCallback *bsc, IStream *stream)
 
     do {
         if(This->bsc.readed >= This->size) {
-	  void *new_buf;
-	  new_buf = heap_realloc(This->buf, This->size << 1);
-	  if(!new_buf)
-	    return E_OUTOFMEMORY;
+            void *new_buf;
+            new_buf = heap_realloc(This->buf, This->size << 1);
+            if(!new_buf)
+                return E_OUTOFMEMORY;
             This->size <<= 1;
             This->buf = new_buf;
         }
@@ -902,96 +1031,11 @@ static const BSCallbackVtbl ScriptBSCVtbl = {
 };
 
 
-static HRESULT bind_script_to_text(HTMLInnerWindow *window, IUri *uri, HTMLScriptElement *script_elem, WCHAR **ret)
+HRESULT load_script(HTMLScriptElement *script_elem, const WCHAR *src, BOOL async)
 {
-    UINT cp = CP_UTF8;
+    HTMLInnerWindow *window;
     ScriptBSC *bsc;
     IMoniker *mon;
-    WCHAR *text;
-    HRESULT hres;
-
-    hres = CreateURLMonikerEx2(NULL, uri, &mon, URL_MK_UNIFORM);
-    if(FAILED(hres))
-        return hres;
-
-    bsc = heap_alloc_zero(sizeof(*bsc));
-    if(!bsc) {
-        IMoniker_Release(mon);
-        return E_OUTOFMEMORY;
-    }
-
-    init_bscallback(&bsc->bsc, &ScriptBSCVtbl, mon, 0);
-    IMoniker_Release(mon);
-    bsc->hres = E_FAIL;
-
-    hres = IUri_GetScheme(uri, &bsc->scheme);
-    if(FAILED(hres))
-        bsc->scheme = URL_SCHEME_UNKNOWN;
-
-    IHTMLScriptElement_AddRef(&script_elem->IHTMLScriptElement_iface);
-    bsc->script_elem = script_elem;
-
-    hres = start_binding(window, &bsc->bsc, NULL);
-    if(SUCCEEDED(hres))
-        hres = bsc->hres;
-    if(FAILED(hres)) {
-        IBindStatusCallback_Release(&bsc->bsc.IBindStatusCallback_iface);
-        return hres;
-    }
-
-    if(!bsc->bsc.readed) {
-        *ret = NULL;
-        return S_OK;
-    }
-
-    switch(bsc->bsc.bom) {
-    case BOM_UTF16:
-        if(bsc->bsc.readed % sizeof(WCHAR)) {
-            FIXME("The buffer is not a valid utf16 string\n");
-            hres = E_FAIL;
-            break;
-        }
-
-        text = heap_alloc(bsc->bsc.readed+sizeof(WCHAR));
-        if(!text) {
-            hres = E_OUTOFMEMORY;
-            break;
-        }
-
-        memcpy(text, bsc->buf, bsc->bsc.readed);
-        text[bsc->bsc.readed/sizeof(WCHAR)] = 0;
-        break;
-
-    default:
-        /* FIXME: Try to use charset from HTTP headers first */
-        cp = get_document_charset(window->doc);
-        /* fall through */
-    case BOM_UTF8: {
-        DWORD len;
-
-        len = MultiByteToWideChar(cp, 0, bsc->buf, bsc->bsc.readed, NULL, 0);
-        text = heap_alloc((len+1)*sizeof(WCHAR));
-        if(!text) {
-            hres = E_OUTOFMEMORY;
-            break;
-        }
-
-        MultiByteToWideChar(cp, 0, bsc->buf, bsc->bsc.readed, text, len);
-        text[len] = 0;
-    }
-    }
-
-    IBindStatusCallback_Release(&bsc->bsc.IBindStatusCallback_iface);
-    if(FAILED(hres))
-        return hres;
-
-    *ret = text;
-    return S_OK;
-}
-
-static void parse_extern_script(ScriptHost *script_host, HTMLScriptElement *script_elem, LPCWSTR src)
-{
-    WCHAR *text;
     IUri *uri;
     HRESULT hres;
 
@@ -1000,18 +1044,45 @@ static void parse_extern_script(ScriptHost *script_host, HTMLScriptElement *scri
     if(strlenW(src) > sizeof(wine_schemaW)/sizeof(WCHAR) && !memcmp(src, wine_schemaW, sizeof(wine_schemaW)))
         src += sizeof(wine_schemaW)/sizeof(WCHAR);
 
+    TRACE("(%p %s %x)\n", script_elem, debugstr_w(src), async);
+
+    if(!script_elem->element.node.doc || !(window = script_elem->element.node.doc->window)) {
+        ERR("no window\n");
+        return E_UNEXPECTED;
+    }
+
     hres = create_uri(src, 0, &uri);
     if(FAILED(hres))
-        return;
+        return hres;
 
-    hres = bind_script_to_text(script_host->window, uri, script_elem, &text);
+    hres = CreateURLMonikerEx2(NULL, uri, &mon, URL_MK_UNIFORM);
+    if(FAILED(hres)) {
+        IUri_Release(uri);
+        return hres;
+    }
+
+    bsc = heap_alloc_zero(sizeof(*bsc));
+    if(!bsc) {
+        IMoniker_Release(mon);
+        IUri_Release(uri);
+        return E_OUTOFMEMORY;
+    }
+
+    init_bscallback(&bsc->bsc, &ScriptBSCVtbl, mon, async ? BINDF_ASYNCHRONOUS | BINDF_ASYNCSTORAGE | BINDF_PULLDATA : 0);
+    IMoniker_Release(mon);
+
+    hres = IUri_GetScheme(uri, &bsc->scheme);
     IUri_Release(uri);
-    if(FAILED(hres) || !text)
-        return;
+    if(FAILED(hres))
+        bsc->scheme = URL_SCHEME_UNKNOWN;
 
-    parse_elem_text(script_host, script_elem, text);
+    IHTMLScriptElement_AddRef(&script_elem->IHTMLScriptElement_iface);
+    bsc->script_elem = script_elem;
 
-    heap_free(text);
+    hres = start_binding(window, &bsc->bsc, NULL);
+
+    IBindStatusCallback_Release(&bsc->bsc.IBindStatusCallback_iface);
+    return hres;
 }
 
 static void parse_inline_script(ScriptHost *script_host, HTMLScriptElement *script_elem)
@@ -1024,6 +1095,8 @@ static void parse_inline_script(ScriptHost *script_host, HTMLScriptElement *scri
     nsres = nsIDOMHTMLScriptElement_GetText(script_elem->nsscript, &text_str);
     nsAString_GetData(&text_str, &text);
 
+    set_script_elem_readystate(script_elem, READYSTATE_INTERACTIVE);
+
     if(NS_FAILED(nsres)) {
         ERR("GetText failed: %08x\n", nsres);
     }else if(*text) {
@@ -1033,9 +1106,10 @@ static void parse_inline_script(ScriptHost *script_host, HTMLScriptElement *scri
     nsAString_Finish(&text_str);
 }
 
-static void parse_script_elem(ScriptHost *script_host, HTMLScriptElement *script_elem)
+static BOOL parse_script_elem(ScriptHost *script_host, HTMLScriptElement *script_elem)
 {
     nsAString src_str, event_str;
+    BOOL is_complete = FALSE;
     const PRUnichar *src;
     nsresult nsres;
 
@@ -1048,7 +1122,7 @@ static void parse_script_elem(ScriptHost *script_host, HTMLScriptElement *script
         if(*event) {
             TRACE("deferring event %s script evaluation\n", debugstr_w(event));
             nsAString_Finish(&event_str);
-            return;
+            return FALSE;
         }
     }else {
         ERR("GetEvent failed: %08x\n", nsres);
@@ -1062,15 +1136,16 @@ static void parse_script_elem(ScriptHost *script_host, HTMLScriptElement *script
     if(NS_FAILED(nsres)) {
         ERR("GetSrc failed: %08x\n", nsres);
     }else if(*src) {
-        script_elem->parsed = TRUE;
-        parse_extern_script(script_host, script_elem, src);
+        load_script(script_elem, src, FALSE);
+        is_complete = script_elem->parsed;
     }else {
         parse_inline_script(script_host, script_elem);
+        is_complete = TRUE;
     }
 
     nsAString_Finish(&src_str);
 
-    set_script_elem_readystate(script_elem, READYSTATE_COMPLETE);
+    return is_complete;
 }
 
 static GUID get_default_script_guid(HTMLInnerWindow *window)
@@ -1190,16 +1265,29 @@ static ScriptHost *get_elem_script_host(HTMLInnerWindow *window, HTMLScriptEleme
     return get_script_host(window, &guid);
 }
 
-void doc_insert_script(HTMLInnerWindow *window, HTMLScriptElement *script_elem)
+void doc_insert_script(HTMLInnerWindow *window, HTMLScriptElement *script_elem, BOOL from_parser)
 {
     ScriptHost *script_host;
+    BOOL is_complete = FALSE;
 
     script_host = get_elem_script_host(window, script_elem);
     if(!script_host)
         return;
 
-    if(script_host->parse)
-        parse_script_elem(script_host, script_elem);
+    if(script_host->parse) {
+        if(script_elem->src_text) {
+            if(from_parser)
+                set_script_elem_readystate(script_elem, READYSTATE_INTERACTIVE);
+            script_elem->parsed = TRUE;
+            parse_elem_text(script_host, script_elem, script_elem->src_text);
+            is_complete = TRUE;
+        }else if(!script_elem->binding) {
+            is_complete = parse_script_elem(script_host, script_elem);
+        }
+    }
+
+    if(is_complete)
+        set_script_elem_readystate(script_elem, READYSTATE_COMPLETE);
 }
 
 IDispatch *script_parse_event(HTMLInnerWindow *window, LPCWSTR text)
@@ -1314,10 +1402,9 @@ IDispatch *get_script_disp(ScriptHost *script_host)
     return disp;
 }
 
-static event_target_t **find_event_target(HTMLDocumentNode *doc, HTMLScriptElement *script_elem, HTMLDOMNode **ret_target_node)
+static EventTarget *find_event_target(HTMLDocumentNode *doc, HTMLScriptElement *script_elem)
 {
-    HTMLDOMNode *target_node = NULL;
-    event_target_t **target = NULL;
+    EventTarget *event_target = NULL;
     const PRUnichar *target_id;
     nsAString target_id_str;
     nsresult nsres;
@@ -1335,24 +1422,24 @@ static event_target_t **find_event_target(HTMLDocumentNode *doc, HTMLScriptEleme
     if(!*target_id) {
         FIXME("Empty for attribute\n");
     }else if(!strcmpW(target_id, documentW)) {
-        target = &doc->node.event_target;
-        target_node = &doc->node;
-        IHTMLDOMNode_AddRef(&target_node->IHTMLDOMNode_iface);
+        event_target = &doc->node.event_target;
+        htmldoc_addref(&doc->basedoc);
     }else if(!strcmpW(target_id, windowW)) {
-        target = &doc->body_event_target;
+        if(doc->window) {
+            event_target = &doc->window->event_target;
+            IDispatchEx_AddRef(&event_target->dispex.IDispatchEx_iface);
+        }
     }else {
         HTMLElement *target_elem;
 
         hres = get_doc_elem_by_id(doc, target_id, &target_elem);
         if(SUCCEEDED(hres) && target_elem) {
-            target_node = &target_elem->node;
-            target = &target_elem->node.event_target;
+            event_target = &target_elem->node.event_target;
         }
     }
-    nsAString_Finish(&target_id_str);
 
-    *ret_target_node = target_node;
-    return target;
+    nsAString_Finish(&target_id_str);
+    return event_target;
 }
 
 static BOOL parse_event_str(WCHAR *event, const WCHAR **args)
@@ -1447,9 +1534,8 @@ void bind_event_scripts(HTMLDocumentNode *doc)
     HTMLPluginContainer *plugin_container;
     nsIDOMHTMLScriptElement *nsscript;
     HTMLScriptElement *script_elem;
-    event_target_t **event_target;
+    EventTarget *event_target;
     nsIDOMNodeList *node_list;
-    HTMLDOMNode *target_node;
     nsIDOMNode *script_node;
     nsAString selector_str;
     IDispatch *event_disp;
@@ -1496,21 +1582,18 @@ void bind_event_scripts(HTMLDocumentNode *doc)
 
         event_disp = parse_event_elem(doc, script_elem, &event);
         if(event_disp) {
-            event_target = find_event_target(doc, script_elem, &target_node);
+            event_target = find_event_target(doc, script_elem);
             if(event_target) {
-                if(target_node)
-                    hres = IHTMLDOMNode_QueryInterface(&target_node->IHTMLDOMNode_iface, &IID_HTMLPluginContainer,
-                            (void**)&plugin_container);
-                else
-                    hres = E_NOINTERFACE;
-
+                hres = IDispatchEx_QueryInterface(&event_target->dispex.IDispatchEx_iface, &IID_HTMLPluginContainer,
+                        (void**)&plugin_container);
                 if(SUCCEEDED(hres))
                     bind_activex_event(doc, plugin_container, event, event_disp);
                 else
-                    bind_node_event(doc, event_target, target_node, event, event_disp);
+                    bind_target_event(doc, event_target, event, event_disp);
 
-                if(target_node)
-                    IHTMLDOMNode_Release(&target_node->IHTMLDOMNode_iface);
+                IDispatchEx_Release(&event_target->dispex.IDispatchEx_iface);
+                if(plugin_container)
+                    node_release(&plugin_container->element.node);
             }
 
             heap_free(event);

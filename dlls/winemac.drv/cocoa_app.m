@@ -32,6 +32,18 @@ static NSString* const WineAppWaitQueryResponseMode = @"WineAppWaitQueryResponse
 int macdrv_err_on;
 
 
+/***********************************************************************
+ *              WineLocalizedString
+ *
+ * Look up a localized string by its ID in the dictionary.
+ */
+static NSString* WineLocalizedString(unsigned int stringID)
+{
+    NSNumber* key = [NSNumber numberWithUnsignedInt:stringID];
+    return [(NSDictionary*)localized_strings objectForKey:key];
+}
+
+
 @implementation WineApplication
 
 @synthesize wineController;
@@ -215,46 +227,58 @@ int macdrv_err_on;
             mainMenu = [[[NSMenu alloc] init] autorelease];
 
             // Application menu
-            submenu = [[[NSMenu alloc] initWithTitle:@"Wine"] autorelease];
+            submenu = [[[NSMenu alloc] initWithTitle:WineLocalizedString(STRING_MENU_WINE)] autorelease];
             bundleName = [[NSBundle mainBundle] objectForInfoDictionaryKey:(NSString*)kCFBundleNameKey];
 
             if ([bundleName length])
-                title = [NSString stringWithFormat:@"Hide %@", bundleName];
+                title = [NSString stringWithFormat:WineLocalizedString(STRING_MENU_ITEM_HIDE_APPNAME), bundleName];
             else
-                title = @"Hide";
+                title = WineLocalizedString(STRING_MENU_ITEM_HIDE);
             item = [submenu addItemWithTitle:title action:@selector(hide:) keyEquivalent:@""];
 
-            item = [submenu addItemWithTitle:@"Hide Others" action:@selector(hideOtherApplications:) keyEquivalent:@"h"];
+            item = [submenu addItemWithTitle:WineLocalizedString(STRING_MENU_ITEM_HIDE_OTHERS)
+                                      action:@selector(hideOtherApplications:)
+                               keyEquivalent:@"h"];
             [item setKeyEquivalentModifierMask:NSCommandKeyMask | NSAlternateKeyMask];
 
-            item = [submenu addItemWithTitle:@"Show All" action:@selector(unhideAllApplications:) keyEquivalent:@""];
+            item = [submenu addItemWithTitle:WineLocalizedString(STRING_MENU_ITEM_SHOW_ALL)
+                                      action:@selector(unhideAllApplications:)
+                               keyEquivalent:@""];
 
             [submenu addItem:[NSMenuItem separatorItem]];
 
             if ([bundleName length])
-                title = [NSString stringWithFormat:@"Quit %@", bundleName];
+                title = [NSString stringWithFormat:WineLocalizedString(STRING_MENU_ITEM_QUIT_APPNAME), bundleName];
             else
-                title = @"Quit";
+                title = WineLocalizedString(STRING_MENU_ITEM_QUIT);
             item = [submenu addItemWithTitle:title action:@selector(terminate:) keyEquivalent:@"q"];
             [item setKeyEquivalentModifierMask:NSCommandKeyMask | NSAlternateKeyMask];
             item = [[[NSMenuItem alloc] init] autorelease];
-            [item setTitle:@"Wine"];
+            [item setTitle:WineLocalizedString(STRING_MENU_WINE)];
             [item setSubmenu:submenu];
             [mainMenu addItem:item];
 
             // Window menu
-            submenu = [[[NSMenu alloc] initWithTitle:@"Window"] autorelease];
-            [submenu addItemWithTitle:@"Minimize" action:@selector(performMiniaturize:) keyEquivalent:@""];
-            [submenu addItemWithTitle:@"Zoom" action:@selector(performZoom:) keyEquivalent:@""];
+            submenu = [[[NSMenu alloc] initWithTitle:WineLocalizedString(STRING_MENU_WINDOW)] autorelease];
+            [submenu addItemWithTitle:WineLocalizedString(STRING_MENU_ITEM_MINIMIZE)
+                               action:@selector(performMiniaturize:)
+                        keyEquivalent:@""];
+            [submenu addItemWithTitle:WineLocalizedString(STRING_MENU_ITEM_ZOOM)
+                               action:@selector(performZoom:)
+                        keyEquivalent:@""];
             if ([NSWindow instancesRespondToSelector:@selector(toggleFullScreen:)])
             {
-                item = [submenu addItemWithTitle:@"Enter Full Screen" action:@selector(toggleFullScreen:) keyEquivalent:@"f"];
+                item = [submenu addItemWithTitle:WineLocalizedString(STRING_MENU_ITEM_ENTER_FULL_SCREEN)
+                                          action:@selector(toggleFullScreen:)
+                                   keyEquivalent:@"f"];
                 [item setKeyEquivalentModifierMask:NSCommandKeyMask | NSAlternateKeyMask | NSControlKeyMask];
             }
             [submenu addItem:[NSMenuItem separatorItem]];
-            [submenu addItemWithTitle:@"Bring All to Front" action:@selector(arrangeInFront:) keyEquivalent:@""];
+            [submenu addItemWithTitle:WineLocalizedString(STRING_MENU_ITEM_BRING_ALL_TO_FRONT)
+                               action:@selector(arrangeInFront:)
+                        keyEquivalent:@""];
             item = [[[NSMenuItem alloc] init] autorelease];
-            [item setTitle:@"Window"];
+            [item setTitle:WineLocalizedString(STRING_MENU_WINDOW)];
             [item setSubmenu:submenu];
             [mainMenu addItem:item];
 
@@ -496,6 +520,7 @@ int macdrv_err_on;
         NSUInteger nextFloatingIndex = 0;
         __block NSInteger maxLevel = NSIntegerMin;
         __block NSInteger maxNonfloatingLevel = NSNormalWindowLevel;
+        __block NSInteger minFloatingLevel = NSFloatingWindowLevel;
         __block WineWindow* prev = nil;
         WineWindow* window;
 
@@ -531,6 +556,14 @@ int macdrv_err_on;
             WineWindow* window = (WineWindow*)obj;
             NSInteger origLevel = [window level];
             NSInteger newLevel = [window minimumLevelForActive:active];
+
+            if (window.floating)
+            {
+                if (minFloatingLevel <= maxNonfloatingLevel)
+                    minFloatingLevel = maxNonfloatingLevel + 1;
+                if (newLevel < minFloatingLevel)
+                    newLevel = minFloatingLevel;
+            }
 
             if (newLevel < maxLevel)
                 newLevel = maxLevel;
@@ -699,9 +732,9 @@ int macdrv_err_on;
         return TRUE;
     }
 
-    - (CGDisplayModeRef)modeMatchingMode:(CGDisplayModeRef)mode forDisplay:(CGDirectDisplayID)displayID
+    - (NSArray*)modesMatchingMode:(CGDisplayModeRef)mode forDisplay:(CGDirectDisplayID)displayID
     {
-        CGDisplayModeRef ret = NULL;
+        NSMutableArray* ret = [NSMutableArray array];
         NSDictionary* options = nil;
 
 #if defined(MAC_OS_X_VERSION_10_8) && MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_8
@@ -715,10 +748,7 @@ int macdrv_err_on;
         {
             CGDisplayModeRef candidateMode = (CGDisplayModeRef)candidateModeObject;
             if ([self mode:candidateMode matchesMode:mode])
-            {
-                ret = candidateMode;
-                break;
-            }
+                [ret addObject:candidateModeObject];
         }
         return ret;
     }
@@ -743,11 +773,15 @@ int macdrv_err_on;
             }
             else // ... otherwise, try to restore just the one display
             {
-                mode = [self modeMatchingMode:mode forDisplay:displayID];
-                if (mode && CGDisplaySetDisplayMode(displayID, mode, NULL) == CGDisplayNoErr)
+                for (id modeObject in [self modesMatchingMode:mode forDisplay:displayID])
                 {
-                    [originalDisplayModes removeObjectForKey:displayIDKey];
-                    ret = TRUE;
+                    mode = (CGDisplayModeRef)modeObject;
+                    if (CGDisplaySetDisplayMode(displayID, mode, NULL) == CGDisplayNoErr)
+                    {
+                        [originalDisplayModes removeObjectForKey:displayIDKey];
+                        ret = TRUE;
+                        break;
+                    }
                 }
             }
         }
@@ -755,6 +789,7 @@ int macdrv_err_on;
         {
             BOOL active = [NSApp isActive];
             CGDisplayModeRef currentMode;
+            NSArray* modes;
 
             currentMode = CGDisplayModeRetain((CGDisplayModeRef)[latentDisplayModes objectForKey:displayIDKey]);
             if (!currentMode)
@@ -771,8 +806,8 @@ int macdrv_err_on;
             CGDisplayModeRelease(currentMode);
             currentMode = NULL;
 
-            mode = [self modeMatchingMode:mode forDisplay:displayID];
-            if (!mode)
+            modes = [self modesMatchingMode:mode forDisplay:displayID];
+            if (!modes.count)
                 return FALSE;
 
             if ([originalDisplayModes count] || displaysCapturedForFullscreen ||
@@ -789,7 +824,17 @@ int macdrv_err_on;
                         originalMode = currentMode = CGDisplayCopyDisplayMode(displayID);
 
                     if (originalMode)
-                        ret = (CGDisplaySetDisplayMode(displayID, mode, NULL) == CGDisplayNoErr);
+                    {
+                        for (id modeObject in modes)
+                        {
+                            mode = (CGDisplayModeRef)modeObject;
+                            if (CGDisplaySetDisplayMode(displayID, mode, NULL) == CGDisplayNoErr)
+                            {
+                                ret = TRUE;
+                                break;
+                            }
+                        }
+                    }
                     if (ret && !(currentMode && [self mode:mode matchesMode:currentMode]))
                         [originalDisplayModes setObject:(id)originalMode forKey:displayIDKey];
                     else if (![originalDisplayModes count])
@@ -1307,20 +1352,27 @@ int macdrv_err_on;
         }
         else
         {
+            // Annoyingly, CGWarpMouseCursorPosition() effectively disassociates
+            // the mouse from the cursor position for 0.25 seconds.  This means
+            // that mouse movement during that interval doesn't move the cursor
+            // and events carry a constant location (the warped-to position)
+            // even though they have delta values.  For apps which warp the
+            // cursor frequently (like after every mouse move), this makes
+            // cursor movement horribly laggy and jerky, as only a fraction of
+            // mouse move events have any effect.
+            //
+            // On some versions of OS X, it's sufficient to forcibly reassociate
+            // the mouse and cursor position.  On others, it's necessary to set
+            // the local events suppression interval to 0 for the warp.  That's
+            // deprecated, but I'm not aware of any other way.  For good
+            // measure, we do both.
+            CGSetLocalEventsSuppressionInterval(0);
             ret = (CGWarpMouseCursorPosition(pos) == kCGErrorSuccess);
+            CGSetLocalEventsSuppressionInterval(0.25);
             if (ret)
             {
                 lastSetCursorPositionTime = [[NSProcessInfo processInfo] systemUptime];
 
-                // Annoyingly, CGWarpMouseCursorPosition() effectively disassociates
-                // the mouse from the cursor position for 0.25 seconds.  This means
-                // that mouse movement during that interval doesn't move the cursor
-                // and events carry a constant location (the warped-to position)
-                // even though they have delta values.  This screws us up because
-                // the accumulated deltas we send to Wine don't match any eventual
-                // absolute position we send (like with a button press).  We can
-                // work around this by simply forcibly reassociating the mouse and
-                // cursor position.
                 CGAssociateMouseAndMouseCursorPosition(true);
             }
         }
@@ -1436,6 +1488,15 @@ int macdrv_err_on;
             pressedKeyCodes[index] &= ~mask;
     }
 
+    - (void) window:(WineWindow*)window isBeingDragged:(BOOL)dragged
+    {
+        if (dragged)
+            [windowsBeingDragged addObject:window];
+        else
+            [windowsBeingDragged removeObject:window];
+        [self updateCursorClippingState];
+    }
+
     - (void) handleMouseMove:(NSEvent*)anEvent
     {
         WineWindow* targetWindow;
@@ -1538,28 +1599,31 @@ int macdrv_err_on;
             {
                 if (clippingCursor)
                     [self clipCursorLocation:&point];
+                point = cgpoint_win_from_mac(point);
 
                 event = macdrv_create_event(MOUSE_MOVED_ABSOLUTE, targetWindow);
-                event->mouse_moved.x = point.x;
-                event->mouse_moved.y = point.y;
+                event->mouse_moved.x = floor(point.x);
+                event->mouse_moved.y = floor(point.y);
 
                 mouseMoveDeltaX = 0;
                 mouseMoveDeltaY = 0;
             }
             else
             {
+                double scale = retina_on ? 2 : 1;
+
                 /* Add event delta to accumulated delta error */
                 /* deltaY is already flipped */
                 mouseMoveDeltaX += [anEvent deltaX];
                 mouseMoveDeltaY += [anEvent deltaY];
 
                 event = macdrv_create_event(MOUSE_MOVED, targetWindow);
-                event->mouse_moved.x = mouseMoveDeltaX;
-                event->mouse_moved.y = mouseMoveDeltaY;
+                event->mouse_moved.x = mouseMoveDeltaX * scale;
+                event->mouse_moved.y = mouseMoveDeltaY * scale;
 
                 /* Keep the remainder after integer truncation. */
-                mouseMoveDeltaX -= event->mouse_moved.x;
-                mouseMoveDeltaY -= event->mouse_moved.y;
+                mouseMoveDeltaX -= event->mouse_moved.x / scale;
+                mouseMoveDeltaY -= event->mouse_moved.y / scale;
             }
 
             if (event->type == MOUSE_MOVED_ABSOLUTE || event->mouse_moved.x || event->mouse_moved.y)
@@ -1678,11 +1742,13 @@ int macdrv_err_on;
             {
                 macdrv_event* event;
 
+                pt = cgpoint_win_from_mac(pt);
+
                 event = macdrv_create_event(MOUSE_BUTTON, window);
                 event->mouse_button.button = [theEvent buttonNumber];
                 event->mouse_button.pressed = pressed;
-                event->mouse_button.x = pt.x;
-                event->mouse_button.y = pt.y;
+                event->mouse_button.x = floor(pt.x);
+                event->mouse_button.y = floor(pt.y);
                 event->mouse_button.time_ms = [self ticksForEventTime:[theEvent timestamp]];
 
                 [window.queue postEvent:event];
@@ -1691,10 +1757,26 @@ int macdrv_err_on;
             }
         }
 
-        if (!process && windowBroughtForward)
+        if (windowBroughtForward)
         {
-            [[windowBroughtForward ancestorWineWindow] postBroughtForwardEvent];
-            if (![windowBroughtForward isKeyWindow] && !windowBroughtForward.disabled && !windowBroughtForward.noActivate)
+            WineWindow* ancestor = [windowBroughtForward ancestorWineWindow];
+            NSInteger ancestorNumber = [ancestor windowNumber];
+            NSInteger ancestorLevel = [ancestor level];
+
+            for (NSNumber* windowNumberObject in [NSWindow windowNumbersWithOptions:0])
+            {
+                NSInteger windowNumber = [windowNumberObject integerValue];
+                if (windowNumber == ancestorNumber)
+                    break;
+                WineWindow* otherWindow = (WineWindow*)[NSApp windowWithWindowNumber:windowNumber];
+                if ([otherWindow isKindOfClass:[WineWindow class]] && [otherWindow screen] &&
+                    [otherWindow level] <= ancestorLevel && otherWindow == [otherWindow ancestorWineWindow])
+                {
+                    [ancestor postBroughtForwardEvent];
+                    break;
+                }
+            }
+            if (!process && ![windowBroughtForward isKeyWindow] && !windowBroughtForward.disabled && !windowBroughtForward.noActivate)
                 [self windowGotFocus:windowBroughtForward];
         }
 
@@ -1743,9 +1825,11 @@ int macdrv_err_on;
                 double x, y;
                 BOOL continuous = FALSE;
 
+                pt = cgpoint_win_from_mac(pt);
+
                 event = macdrv_create_event(MOUSE_SCROLL, window);
-                event->mouse_scroll.x = pt.x;
-                event->mouse_scroll.y = pt.y;
+                event->mouse_scroll.x = floor(pt.x);
+                event->mouse_scroll.y = floor(pt.y);
                 event->mouse_scroll.time_ms = [self ticksForEventTime:[theEvent timestamp]];
 
                 if (CGEventGetIntegerValueField(cgevent, kCGScrollWheelEventIsContinuous))
@@ -2078,6 +2162,26 @@ int macdrv_err_on;
         }
     }
 
+    - (void) setRetinaMode:(int)mode
+    {
+        retina_on = mode;
+
+        if (clippingCursor)
+        {
+            double scale = mode ? 0.5 : 2.0;
+            cursorClipRect.origin.x *= scale;
+            cursorClipRect.origin.y *= scale;
+            cursorClipRect.size.width *= scale;
+            cursorClipRect.size.height *= scale;
+        }
+
+        for (WineWindow* window in [NSApp windows])
+        {
+            if ([window isKindOfClass:[WineWindow class]])
+                [window setRetinaMode:mode];
+        }
+    }
+
 
     /*
      * ---------- NSApplicationDelegate methods ----------
@@ -2210,6 +2314,19 @@ int macdrv_err_on;
         return ret;
     }
 
+    - (void)applicationWillBecomeActive:(NSNotification *)notification
+    {
+        macdrv_event* event = macdrv_create_event(APP_ACTIVATED, nil);
+        event->deliver = 1;
+
+        [eventQueuesLock lock];
+        for (WineEventQueue* queue in eventQueues)
+            [queue postEvent:event];
+        [eventQueuesLock unlock];
+
+        macdrv_release_event(event);
+    }
+
     - (void)applicationWillResignActive:(NSNotification *)notification
     {
         [self adjustWindowLevels:NO];
@@ -2223,6 +2340,7 @@ int macdrv_err_on;
  */
 static void PerformRequest(void *info)
 {
+    NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
     WineApplicationController* controller = [WineApplicationController sharedController];
 
     for (;;)
@@ -2244,7 +2362,12 @@ static void PerformRequest(void *info)
 
         block();
         [block release];
+
+        [pool release];
+        pool = [[NSAutoreleasePool alloc] init];
     }
+
+    [pool release];
 }
 
 /***********************************************************************
@@ -2325,7 +2448,8 @@ void macdrv_get_input_source_info(CFDataRef* uchr, CGEventSourceKeyboardType* ke
 
             *keyboard_type = [WineApplicationController sharedController].keyboardType;
             *is_iso = (KBGetLayoutType(*keyboard_type) == kKeyboardISO);
-            *input_source = TISCopyCurrentKeyboardInputSource();
+            if (input_source)
+                *input_source = TISCopyCurrentKeyboardInputSource();
         }
     });
 }
@@ -2423,7 +2547,7 @@ int macdrv_get_cursor_position(CGPoint *pos)
     OnMainThread(^{
         NSPoint location = [NSEvent mouseLocation];
         location = [[WineApplicationController sharedController] flippedMouseLocation:location];
-        *pos = NSPointToCGPoint(location);
+        *pos = cgpoint_win_from_mac(NSPointToCGPoint(location));
     });
 
     return TRUE;
@@ -2440,7 +2564,7 @@ int macdrv_set_cursor_position(CGPoint pos)
     __block int ret;
 
     OnMainThread(^{
-        ret = [[WineApplicationController sharedController] setCursorPosition:pos];
+        ret = [[WineApplicationController sharedController] setCursorPosition:cgpoint_mac_from_win(pos)];
     });
 
     return ret;
@@ -2453,13 +2577,17 @@ int macdrv_set_cursor_position(CGPoint pos)
  * to or larger than the whole desktop region, the cursor is unclipped.
  * Returns zero on failure, non-zero on success.
  */
-int macdrv_clip_cursor(CGRect rect)
+int macdrv_clip_cursor(CGRect r)
 {
     __block int ret;
 
     OnMainThread(^{
         WineApplicationController* controller = [WineApplicationController sharedController];
         BOOL clipping = FALSE;
+        CGRect rect = r;
+
+        if (!CGRectIsInfinite(rect))
+            rect = cgrect_mac_from_win(rect);
 
         if (!CGRectIsInfinite(rect))
         {
@@ -2602,4 +2730,11 @@ int macdrv_select_input_source(TISInputSourceRef input_source)
     });
 
     return ret;
+}
+
+void macdrv_set_cocoa_retina_mode(int new_mode)
+{
+    OnMainThread(^{
+        [[WineApplicationController sharedController] setRetinaMode:new_mode];
+    });
 }

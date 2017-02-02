@@ -891,6 +891,9 @@ static DWORD MCI_SendCommandFrom32(MCIDEVICEID wDevID, UINT16 wMsg, DWORD_PTR dw
     LPWINE_MCIDRIVER	wmd = MCI_GetDriver(wDevID);
 
     if (wmd) {
+        if(wmd->CreatorThread != GetCurrentThreadId())
+            return MCIERR_INVALID_DEVICE_NAME;
+
         dwRet = SendDriverMessage(wmd->hDriver, wMsg, dwParam1, dwParam2);
     }
     return dwRet;
@@ -1731,7 +1734,7 @@ static	DWORD MCI_Open(DWORD dwParam, LPMCI_OPEN_PARMSW lpParms)
                          MCI_OPEN_ALIAS|MCI_OPEN_TYPE|MCI_OPEN_TYPE_ID| \
                          MCI_NOTIFY|MCI_WAIT)
     if ((dwParam & ~WINE_MCIDRIVER_SUPP) != 0)
-        FIXME("Unsupported yet dwFlags=%08X\n", dwParam & ~WINE_MCIDRIVER_SUPP);
+        FIXME("Unsupported yet dwFlags=%08X\n", dwParam);
 #undef WINE_MCIDRIVER_SUPP
 
     strDevTyp[0] = 0;
@@ -1871,6 +1874,9 @@ static	DWORD MCI_Close(UINT wDevID, DWORD dwParam, LPMCI_GENERIC_PARMS lpParms)
     if (!(wmd = MCI_GetDriver(wDevID))) {
 	return MCIERR_INVALID_DEVICE_ID;
     }
+
+    if(wmd->CreatorThread != GetCurrentThreadId())
+        return MCIERR_INVALID_DEVICE_NAME;
 
     dwRet = MCI_SendCommandFrom32(wDevID, MCI_CLOSE_DRIVER, dwParam, (DWORD_PTR)lpParms);
 

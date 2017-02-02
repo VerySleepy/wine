@@ -32,7 +32,7 @@ static inline struct d3d9_query *impl_from_IDirect3DQuery9(IDirect3DQuery9 *ifac
 
 static HRESULT WINAPI d3d9_query_QueryInterface(IDirect3DQuery9 *iface, REFIID riid, void **out)
 {
-    TRACE("iface %p, riid %s, object %p.\n", iface, debugstr_guid(riid), out);
+    TRACE("iface %p, riid %s, out %p.\n", iface, debugstr_guid(riid), out);
 
     if (IsEqualGUID(riid, &IID_IDirect3DQuery9)
             || IsEqualGUID(riid, &IID_IUnknown))
@@ -115,7 +115,9 @@ static DWORD WINAPI d3d9_query_GetDataSize(IDirect3DQuery9 *iface)
 
     wined3d_mutex_lock();
     type = wined3d_query_get_type(query->wined3d_query);
-    if (type == WINED3D_QUERY_TYPE_TIMESTAMP_DISJOINT)
+    if (type == WINED3D_QUERY_TYPE_OCCLUSION)
+        ret = sizeof(DWORD);
+    else if (type == WINED3D_QUERY_TYPE_TIMESTAMP_DISJOINT)
         ret = sizeof(BOOL);
     else
         ret = wined3d_query_get_data_size(query->wined3d_query);

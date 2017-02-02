@@ -75,6 +75,7 @@ static NTSTATUS (WINAPI *pNtCreateNamedPipeFile) (PHANDLE handle, ULONG access,
 static NTSTATUS (WINAPI *pNtQueryInformationFile) (IN HANDLE FileHandle, OUT PIO_STATUS_BLOCK IoStatusBlock, OUT PVOID FileInformation, IN ULONG Length, IN FILE_INFORMATION_CLASS FileInformationClass);
 static NTSTATUS (WINAPI *pNtSetInformationFile) (HANDLE handle, PIO_STATUS_BLOCK io, PVOID ptr, ULONG len, FILE_INFORMATION_CLASS class);
 static NTSTATUS (WINAPI *pNtCancelIoFile) (HANDLE hFile, PIO_STATUS_BLOCK io_status);
+static NTSTATUS (WINAPI *pNtCancelIoFileEx) (HANDLE hFile, IO_STATUS_BLOCK *iosb, IO_STATUS_BLOCK *io_status);
 static void (WINAPI *pRtlInitUnicodeString) (PUNICODE_STRING target, PCWSTR source);
 
 static HANDLE (WINAPI *pOpenThread)(DWORD dwDesiredAccess, BOOL bInheritHandle, DWORD dwThreadId);
@@ -95,6 +96,7 @@ static BOOL init_func_ptrs(void)
     loadfunc(NtQueryInformationFile)
     loadfunc(NtSetInformationFile)
     loadfunc(NtCancelIoFile)
+    loadfunc(NtCancelIoFileEx)
     loadfunc(RtlInitUnicodeString)
 
     /* not fatal */
@@ -126,11 +128,26 @@ static NTSTATUS create_pipe(PHANDLE handle, ULONG sharing, ULONG options)
     attr.SecurityDescriptor       = NULL;
     attr.SecurityQualityOfService = NULL;
 
-    timeout.QuadPart = -100000000000ll;
+    timeout.QuadPart = -100000000;
 
     res = pNtCreateNamedPipeFile(handle, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &attr, &iosb, sharing,  2 /*FILE_CREATE*/,
                                  options, 1, 0, 0, 0xFFFFFFFF, 500, 500, &timeout);
     return res;
+}
+
+static BOOL ioapc_called;
+static void CALLBACK ioapc(void *arg, PIO_STATUS_BLOCK io, ULONG reserved)
+{
+    ioapc_called = TRUE;
+}
+
+static NTSTATUS listen_pipe(HANDLE hPipe, HANDLE hEvent, PIO_STATUS_BLOCK iosb, BOOL use_apc)
+{
+    int dummy;
+
+    ioapc_called = FALSE;
+
+    return pNtFsControlFile(hPipe, hEvent, use_apc ? &ioapc: NULL, use_apc ? &dummy: NULL, iosb, FSCTL_PIPE_LISTEN, 0, 0, 0, 0);
 }
 
 static void test_create_invalid(void)
@@ -152,7 +169,7 @@ static void test_create_invalid(void)
     attr.SecurityDescriptor       = NULL;
     attr.SecurityQualityOfService = NULL;
 
-    timeout.QuadPart = -100000000000ll;
+    timeout.QuadPart = -100000000;
 
 /* create a pipe with FILE_OVERWRITE */
     res = pNtCreateNamedPipeFile(&handle, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &attr, &iosb, FILE_SHARE_READ, 4 /*FILE_OVERWRITE*/,
@@ -200,6 +217,7 @@ static void test_create(void)
     int j, k;
     FILE_PIPE_LOCAL_INFORMATION info;
     IO_STATUS_BLOCK iosb;
+    HANDLE hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
 
     static const DWORD access[] = { 0, GENERIC_READ, GENERIC_WRITE, GENERIC_READ | GENERIC_WRITE};
     static const DWORD sharing[] =    { FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE };
@@ -210,11 +228,14 @@ static void test_create(void)
             HANDLE hclient;
             BOOL should_succeed = TRUE;
 
-            res  = create_pipe(&hserver, sharing[j], FILE_SYNCHRONOUS_IO_NONALERT);
+            res  = create_pipe(&hserver, sharing[j], 0);
             if (res) {
                 ok(0, "NtCreateNamedPipeFile returned %x, sharing: %x\n", res, sharing[j]);
                 continue;
             }
+
+            res = listen_pipe(hserver, hEvent, &iosb, FALSE);
+            ok(res == STATUS_PENDING, "NtFsControlFile returned %x\n", res);
 
             res = pNtQueryInformationFile(hserver, &iosb, &info, sizeof(info), (FILE_INFORMATION_CLASS)24);
             ok(!res, "NtQueryInformationFile for server returned %x, sharing: %x\n", res, sharing[j]);
@@ -245,21 +266,7 @@ static void test_create(void)
             CloseHandle(hserver);
         }
     }
-}
-
-static BOOL ioapc_called;
-static void CALLBACK ioapc(void *arg, PIO_STATUS_BLOCK io, ULONG reserved)
-{
-    ioapc_called = TRUE;
-}
-
-static NTSTATUS listen_pipe(HANDLE hPipe, HANDLE hEvent, PIO_STATUS_BLOCK iosb, BOOL use_apc)
-{
-    int dummy;
-
-    ioapc_called = FALSE;
-
-    return pNtFsControlFile(hPipe, hEvent, use_apc ? &ioapc: NULL, use_apc ? &dummy: NULL, iosb, FSCTL_PIPE_LISTEN, 0, 0, 0, 0);
+    CloseHandle(hEvent);
 }
 
 static void test_overlapped(void)
@@ -277,10 +284,9 @@ static void test_overlapped(void)
     ok(!res, "NtCreateNamedPipeFile returned %x\n", res);
 
     memset(&iosb, 0x55, sizeof(iosb));
-
-/* try with event and apc */
     res = listen_pipe(hPipe, hEvent, &iosb, TRUE);
     ok(res == STATUS_PENDING, "NtFsControlFile returned %x\n", res);
+    ok(U(iosb).Status == 0x55555555, "iosb.Status got changed to %x\n", U(iosb).Status);
 
     hClient = CreateFileW(testpipe, GENERIC_READ | GENERIC_WRITE, 0, 0, OPEN_EXISTING, 0, 0);
     ok(hClient != INVALID_HANDLE_VALUE, "can't open pipe, GetLastError: %x\n", GetLastError());
@@ -294,9 +300,28 @@ static void test_overlapped(void)
 
     ok(ioapc_called, "IOAPC didn't run\n");
 
-    CloseHandle(hEvent);
     CloseHandle(hPipe);
     CloseHandle(hClient);
+
+    res = create_pipe(&hPipe, FILE_SHARE_READ | FILE_SHARE_WRITE, 0 /* OVERLAPPED */);
+    ok(!res, "NtCreateNamedPipeFile returned %x\n", res);
+
+    hClient = CreateFileW(testpipe, GENERIC_READ | GENERIC_WRITE, 0, 0, OPEN_EXISTING, 0, 0);
+    ok(hClient != INVALID_HANDLE_VALUE || broken(GetLastError() == ERROR_PIPE_BUSY) /* > Win 8 */,
+       "can't open pipe, GetLastError: %x\n", GetLastError());
+
+    if (hClient != INVALID_HANDLE_VALUE)
+    {
+        memset(&iosb, 0x55, sizeof(iosb));
+        res = listen_pipe(hPipe, hEvent, &iosb, TRUE);
+        ok(res == STATUS_PIPE_CONNECTED, "NtFsControlFile returned %x\n", res);
+        ok(U(iosb).Status == 0x55555555, "iosb.Status got changed to %x\n", U(iosb).Status);
+
+        CloseHandle(hClient);
+    }
+
+    CloseHandle(hPipe);
+    CloseHandle(hEvent);
 }
 
 static BOOL userapc_called;
@@ -374,7 +399,7 @@ static void test_alertable(void)
     todo_wine ok(res == STATUS_CANCELLED, "NtFsControlFile returned %x\n", res);
 
     ok(userapc_called, "user apc didn't run\n");
-    todo_wine ok(U(iosb).Status == 0x55555555, "iosb.Status got changed to %x\n", U(iosb).Status);
+    ok(U(iosb).Status == 0x55555555, "iosb.Status got changed to %x\n", U(iosb).Status);
     ok(WaitForSingleObjectEx(hEvent, 0, TRUE) == WAIT_TIMEOUT, "hEvent signaled\n");
     ok(!ioapc_called, "IOAPC ran\n");
 
@@ -469,18 +494,31 @@ static void test_cancelio(void)
     ok(res == STATUS_PENDING, "NtFsControlFile returned %x\n", res);
 
     res = pNtCancelIoFile(hPipe, &cancel_sb);
-    todo_wine ok(!res, "NtCancelIoFile returned %x\n", res);
+    ok(!res, "NtCancelIoFile returned %x\n", res);
 
-    todo_wine {
-        ok(U(iosb).Status == STATUS_CANCELLED, "Wrong iostatus %x\n", U(iosb).Status);
-        ok(WaitForSingleObject(hEvent, 0) == 0, "hEvent not signaled\n");
-    }
+    ok(U(iosb).Status == STATUS_CANCELLED, "Wrong iostatus %x\n", U(iosb).Status);
+    ok(WaitForSingleObject(hEvent, 0) == 0, "hEvent not signaled\n");
 
     ok(!ioapc_called, "IOAPC ran too early\n");
 
     SleepEx(0, TRUE); /* alertable wait state */
 
     ok(ioapc_called, "IOAPC didn't run\n");
+
+    CloseHandle(hPipe);
+
+    res = create_pipe(&hPipe, FILE_SHARE_READ | FILE_SHARE_WRITE, 0 /* OVERLAPPED */);
+    ok(!res, "NtCreateNamedPipeFile returned %x\n", res);
+
+    memset(&iosb, 0x55, sizeof(iosb));
+    res = listen_pipe(hPipe, hEvent, &iosb, FALSE);
+    ok(res == STATUS_PENDING, "NtFsControlFile returned %x\n", res);
+
+    res = pNtCancelIoFileEx(hPipe, &iosb, &cancel_sb);
+    ok(!res, "NtCancelIoFileEx returned %x\n", res);
+
+    ok(U(iosb).Status == STATUS_CANCELLED, "Wrong iostatus %x\n", U(iosb).Status);
+    ok(WaitForSingleObject(hEvent, 0) == 0, "hEvent not signaled\n");
 
     CloseHandle(hEvent);
     CloseHandle(hPipe);
@@ -523,7 +561,7 @@ static void test_filepipeinfo(void)
     attr.SecurityDescriptor       = NULL;
     attr.SecurityQualityOfService = NULL;
 
-    timeout.QuadPart = -100000000000ll;
+    timeout.QuadPart = -100000000;
 
     /* test with INVALID_HANDLE_VALUE */
     res = pNtQueryInformationFile(INVALID_HANDLE_VALUE, &iosb, &fpi, sizeof(fpi), (FILE_INFORMATION_CLASS)23);
@@ -543,7 +581,8 @@ static void test_filepipeinfo(void)
     check_pipe_handle_state(hServer, 0, 1);
 
     hClient = CreateFileW(testpipe, GENERIC_READ | GENERIC_WRITE, 0, 0, OPEN_EXISTING, 0, 0);
-    ok(hClient != INVALID_HANDLE_VALUE, "can't open pipe, GetLastError: %x\n", GetLastError());
+    ok(hClient != INVALID_HANDLE_VALUE || broken(GetLastError() == ERROR_PIPE_BUSY) /* > Win 8 */,
+       "can't open pipe, GetLastError: %x\n", GetLastError());
 
     check_pipe_handle_state(hServer, 0, 1);
     check_pipe_handle_state(hClient, 0, 0);
@@ -619,7 +658,8 @@ static void test_filepipeinfo(void)
     check_pipe_handle_state(hServer, 1, 0);
 
     hClient = CreateFileW(testpipe, GENERIC_READ | GENERIC_WRITE, 0, 0, OPEN_EXISTING, 0, 0);
-    ok(hClient != INVALID_HANDLE_VALUE, "can't open pipe, GetLastError: %x\n", GetLastError());
+    ok(hClient != INVALID_HANDLE_VALUE || broken(GetLastError() == ERROR_PIPE_BUSY) /* > Win 8 */,
+       "can't open pipe, GetLastError: %x\n", GetLastError());
 
     check_pipe_handle_state(hServer, 1, 0);
     check_pipe_handle_state(hClient, 0, 0);

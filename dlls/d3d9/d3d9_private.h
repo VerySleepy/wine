@@ -39,8 +39,11 @@
 #include "d3d9.h"
 #include "wine/wined3d.h"
 
+#define D3DPRESENTFLAGS_MASK 0x00000fffu
+
 extern HRESULT vdecl_convert_fvf(DWORD FVF, D3DVERTEXELEMENT9 **ppVertexElements) DECLSPEC_HIDDEN;
 D3DFORMAT d3dformat_from_wined3dformat(enum wined3d_format_id format) DECLSPEC_HIDDEN;
+BOOL is_gdi_compat_format(D3DFORMAT format) DECLSPEC_HIDDEN;
 enum wined3d_format_id wined3dformat_from_d3dformat(D3DFORMAT format) DECLSPEC_HIDDEN;
 void present_parameters_from_wined3d_swapchain_desc(D3DPRESENT_PARAMETERS *present_parameters,
         const struct wined3d_swapchain_desc *swapchain_desc) DECLSPEC_HIDDEN;
@@ -167,6 +170,10 @@ struct d3d9_device
     LONG device_state;
     BOOL in_destruction;
     BOOL in_scene;
+    BOOL has_vertex_declaration;
+
+    UINT implicit_swapchain_count;
+    struct d3d9_swapchain **implicit_swapchains;
 };
 
 HRESULT device_init(struct d3d9_device *device, struct d3d9 *parent, struct wined3d *wined3d,
@@ -191,12 +198,13 @@ struct d3d9_volume
 {
     IDirect3DVolume9 IDirect3DVolume9_iface;
     struct d3d9_resource resource;
-    struct wined3d_volume *wined3d_volume;
+    struct wined3d_texture *wined3d_texture;
+    unsigned int sub_resource_idx;
     struct d3d9_texture *texture;
 };
 
-void volume_init(struct d3d9_volume *volume, struct d3d9_texture *texture,
-        struct wined3d_volume *wined3d_volume, const struct wined3d_parent_ops **parent_ops) DECLSPEC_HIDDEN;
+void volume_init(struct d3d9_volume *volume, struct wined3d_texture *wined3d_texture,
+        unsigned int sub_resource_idx, const struct wined3d_parent_ops **parent_ops) DECLSPEC_HIDDEN;
 
 struct d3d9_swapchain
 {
@@ -213,18 +221,21 @@ struct d3d9_surface
 {
     IDirect3DSurface9 IDirect3DSurface9_iface;
     struct d3d9_resource resource;
-    struct wined3d_surface *wined3d_surface;
+    struct wined3d_texture *wined3d_texture;
+    unsigned int sub_resource_idx;
     struct list rtv_entry;
     struct wined3d_rendertarget_view *wined3d_rtv;
     IDirect3DDevice9Ex *parent_device;
     IUnknown *container;
     struct d3d9_texture *texture;
-    BOOL getdc_supported;
 };
 
-struct wined3d_rendertarget_view *d3d9_surface_get_rendertarget_view(struct d3d9_surface *surface) DECLSPEC_HIDDEN;
-void surface_init(struct d3d9_surface *surface, IUnknown *container_parent,
-        struct wined3d_surface *wined3d_surface, const struct wined3d_parent_ops **parent_ops) DECLSPEC_HIDDEN;
+struct wined3d_rendertarget_view *d3d9_surface_acquire_rendertarget_view(struct d3d9_surface *surface) DECLSPEC_HIDDEN;
+struct d3d9_device *d3d9_surface_get_device(const struct d3d9_surface *surface) DECLSPEC_HIDDEN;
+void d3d9_surface_release_rendertarget_view(struct d3d9_surface *surface,
+        struct wined3d_rendertarget_view *rtv) DECLSPEC_HIDDEN;
+void surface_init(struct d3d9_surface *surface, struct wined3d_texture *wined3d_texture,
+        unsigned int sub_resource_idx, const struct wined3d_parent_ops **parent_ops) DECLSPEC_HIDDEN;
 struct d3d9_surface *unsafe_impl_from_IDirect3DSurface9(IDirect3DSurface9 *iface) DECLSPEC_HIDDEN;
 
 struct d3d9_vertexbuffer

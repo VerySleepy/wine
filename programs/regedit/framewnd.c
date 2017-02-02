@@ -334,10 +334,10 @@ static BOOL InitOpenFileName(HWND hWnd, OPENFILENAMEW *pofn)
 
 static BOOL import_registry_filename(LPWSTR filename)
 {
-    static const WCHAR mode_r[] = {'r',0};
+    static const WCHAR rb_mode[] = {'r','b',0};
 
     BOOL Success;
-    FILE* reg_file = _wfopen(filename, mode_r);
+    FILE* reg_file = _wfopen(filename, rb_mode);
 
     if(!reg_file)
         return FALSE;
@@ -475,7 +475,7 @@ static BOOL CopyKeyName(HWND hWnd, LPCWSTR keyName)
             LPVOID pLoc = GlobalLock(hClipData);
             lstrcpyW(pLoc, keyName);
             GlobalUnlock(hClipData);
-            hClipData = SetClipboardData(CF_UNICODETEXT, hClipData);
+            SetClipboardData(CF_UNICODETEXT, hClipData);
 
         } else {
             /* error emptying clipboard*/
@@ -730,6 +730,7 @@ static BOOL _CmdWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         break;
     }
     case ID_EDIT_MODIFY:
+    case ID_EDIT_MODIFY_BIN:
     {
         LPCWSTR valueName = GetValueName(g_pChildWnd->hListWnd);
         WCHAR* keyPath = GetItemPath(g_pChildWnd->hTreeWnd, 0, &hKeyRoot);

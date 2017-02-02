@@ -30,8 +30,6 @@
 #include <stdio.h>
 #include <assert.h>
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "winerror.h"
 #include "windef.h"
 #include "winbase.h"
@@ -55,21 +53,26 @@ static HANDLE dos_handles[DOS_TABLE_SIZE];
  */
 static void FILE_InitProcessDosHandles( void )
 {
+    HANDLE hStdInput, hStdOutput, hStdError, hNull;
     static BOOL init_done /* = FALSE */;
     HANDLE cp = GetCurrentProcess();
 
     if (init_done) return;
     init_done = TRUE;
-    DuplicateHandle(cp, GetStdHandle(STD_INPUT_HANDLE), cp, &dos_handles[0],
-                    0, TRUE, DUPLICATE_SAME_ACCESS);
-    DuplicateHandle(cp, GetStdHandle(STD_OUTPUT_HANDLE), cp, &dos_handles[1],
-                    0, TRUE, DUPLICATE_SAME_ACCESS);
-    DuplicateHandle(cp, GetStdHandle(STD_ERROR_HANDLE), cp, &dos_handles[2],
-                    0, TRUE, DUPLICATE_SAME_ACCESS);
-    DuplicateHandle(cp, GetStdHandle(STD_ERROR_HANDLE), cp, &dos_handles[3],
-                    0, TRUE, DUPLICATE_SAME_ACCESS);
-    DuplicateHandle(cp, GetStdHandle(STD_ERROR_HANDLE), cp, &dos_handles[4],
-                    0, TRUE, DUPLICATE_SAME_ACCESS);
+    hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+    hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    hNull = CreateFileA("NUL", GENERIC_READ|GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, 0);
+    /* Invalid console handles need to translate to real DOS handles in a new process */
+    if (!hStdInput) hStdInput = hNull;
+    if (!hStdOutput) hStdOutput = hNull;
+    if (!hStdError) hStdError = hNull;
+    DuplicateHandle(cp, hStdInput, cp, &dos_handles[0], 0, TRUE, DUPLICATE_SAME_ACCESS);
+    DuplicateHandle(cp, hStdOutput, cp, &dos_handles[1], 0, TRUE, DUPLICATE_SAME_ACCESS);
+    DuplicateHandle(cp, hStdError, cp, &dos_handles[2], 0, TRUE, DUPLICATE_SAME_ACCESS);
+    DuplicateHandle(cp, hStdError, cp, &dos_handles[3], 0, TRUE, DUPLICATE_SAME_ACCESS);
+    DuplicateHandle(cp, hStdError, cp, &dos_handles[4], 0, TRUE, DUPLICATE_SAME_ACCESS);
+    CloseHandle(hNull);
 }
 
 /***********************************************************************
@@ -110,8 +113,7 @@ HFILE WINAPI Win32HandleToDosFileHandle( HANDLE handle )
     if (!handle || (handle == INVALID_HANDLE_VALUE))
         return HFILE_ERROR;
 
-    FILE_InitProcessDosHandles();
-    for (i = 0; i < DOS_TABLE_SIZE; i++)
+    for (i = 5; i < DOS_TABLE_SIZE; i++)
         if (!dos_handles[i])
         {
             dos_handles[i] = handle;
@@ -396,7 +398,7 @@ HFILE16 WINAPI _lopen16( LPCSTR path, INT16 mode )
 
 
 /***********************************************************************
- *           _lread16   (KERNEL.82)
+ *           _lread16 (internal)
  */
 UINT16 WINAPI _lread16( HFILE16 hFile, LPVOID buffer, UINT16 count )
 {
@@ -458,10 +460,10 @@ LONG WINAPI _hwrite16( HFILE16 hFile, LPCSTR buffer, LONG count )
  */
 UINT WINAPI GetTempDrive( BYTE ignored )
 {
-    WCHAR buffer[8];
+    WCHAR buffer[MAX_PATH];
     BYTE ret;
 
-    if (GetTempPathW( 8, buffer )) ret = (BYTE)toupperW(buffer[0]);
+    if (GetTempPathW( MAX_PATH, buffer )) ret = (BYTE)toupperW(buffer[0]);
     else ret = 'C';
     return MAKELONG( ret | (':' << 8), 1 );
 }
@@ -536,6 +538,9 @@ INT16 WINAPI GetPrivateProfileString16( LPCSTR section, LPCSTR entry,
                                         LPCSTR def_val, LPSTR buffer,
                                         UINT16 len, LPCSTR filename )
 {
+    TRACE("(%s, %s, %s, %p, %u, %s)\n", debugstr_a(section), debugstr_a(entry),
+          debugstr_a(def_val), buffer, len, debugstr_a(filename));
+
     if (!section)
     {
         if (buffer && len) buffer[0] = 0;
@@ -569,7 +574,12 @@ INT16 WINAPI GetPrivateProfileString16( LPCSTR section, LPCSTR entry,
         {
             char *p = strchr( src, '=' );
 
-            if (!p) p = src + strlen(src);
+            /* A valid entry is formed by name = value */
+            if (!p)
+            {
+                src += strlen(src) + 1;
+                continue;
+            }
             if (p - src < len)
             {
                 memcpy( buffer, src, p - src );

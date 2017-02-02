@@ -19,7 +19,6 @@
  */
 
 #define COBJMACROS
-#define NONAMELESSSTRUCT
 #define NONAMELESSUNION
 
 #include <stdarg.h>
@@ -711,7 +710,7 @@ UINT WINAPI OleUIPasteSpecialW(LPOLEUIPASTESPECIALW ps)
         HRSRC hrsrc;
 
         if(name == NULL) return OLEUI_ERR_LPSZTEMPLATEINVALID;
-        hrsrc = FindResourceW(hInst, name, MAKEINTRESOURCEW(RT_DIALOG));
+        hrsrc = FindResourceW(hInst, name, (LPWSTR)RT_DIALOG);
         if(!hrsrc) return OLEUI_ERR_FINDTEMPLATEFAILURE;
         dlg_templ = LoadResource(hInst, hrsrc);
         if(!dlg_templ) return OLEUI_ERR_LOADTEMPLATEFAILURE;

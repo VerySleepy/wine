@@ -17,13 +17,20 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include <stdio.h>
+
 #define COBJMACROS
 
 #include "corerror.h"
 #include "mscoree.h"
 #include "metahost.h"
 #include "shlwapi.h"
+#include "initguid.h"
 #include "wine/test.h"
+
+DEFINE_GUID(IID__AppDomain, 0x05f696dc,0x2b29,0x3663,0xad,0x8b,0xc4,0x38,0x9c,0xf2,0xa7,0x13);
+
+static const WCHAR v4_0[] = {'v','4','.','0','.','3','0','3','1','9',0};
 
 static HMODULE hmscoree;
 
@@ -33,6 +40,7 @@ static HRESULT (WINAPI *pGetRequestedRuntimeInfo)(LPCWSTR, LPCWSTR, LPCWSTR, DWO
 static HRESULT (WINAPI *pLoadLibraryShim)(LPCWSTR, LPCWSTR, LPVOID, HMODULE*);
 static HRESULT (WINAPI *pCreateConfigStream)(LPCWSTR, IStream**);
 static HRESULT (WINAPI *pCreateInterface)(REFCLSID, REFIID, VOID**);
+static HRESULT (WINAPI *pCLRCreateInstance)(REFCLSID, REFIID, VOID**);
 
 static BOOL no_legacy_runtimes;
 
@@ -52,12 +60,102 @@ static BOOL init_functionpointers(void)
     pLoadLibraryShim = (void *)GetProcAddress(hmscoree, "LoadLibraryShim");
     pCreateConfigStream = (void *)GetProcAddress(hmscoree, "CreateConfigStream");
     pCreateInterface =  (void *)GetProcAddress(hmscoree, "CreateInterface");
+    pCLRCreateInstance = (void *)GetProcAddress(hmscoree, "CLRCreateInstance");
 
     if (!pGetCORVersion || !pGetCORSystemDirectory || !pGetRequestedRuntimeInfo || !pLoadLibraryShim ||
-        !pCreateInterface)
+        !pCreateInterface || !pCLRCreateInstance
+        )
     {
         win_skip("functions not available\n");
         FreeLibrary(hmscoree);
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+static int check_runtime(void)
+{
+    ICLRMetaHost *metahost;
+    ICLRRuntimeInfo *runtimeinfo;
+    ICorRuntimeHost *runtimehost;
+    HRESULT hr;
+
+    if (!pCLRCreateInstance)
+    {
+        win_skip("Function CLRCreateInstance not found.\n");
+        return 1;
+    }
+
+    hr = pCLRCreateInstance(&CLSID_CLRMetaHost, &IID_ICLRMetaHost, (void **)&metahost);
+    if (hr == E_NOTIMPL)
+    {
+        win_skip("CLRCreateInstance not implemented\n");
+        return 1;
+    }
+    ok(SUCCEEDED(hr), "CLRCreateInstance failed, hr=%#.8x\n", hr);
+    if (FAILED(hr))
+        return 1;
+
+    hr = ICLRMetaHost_GetRuntime(metahost, v4_0, &IID_ICLRRuntimeInfo, (void **)&runtimeinfo);
+    ok(SUCCEEDED(hr), "ICLRMetaHost::GetRuntime failed, hr=%#.8x\n", hr);
+    if (FAILED(hr))
+        return 1;
+
+    hr = ICLRRuntimeInfo_GetInterface(runtimeinfo, &CLSID_CorRuntimeHost, &IID_ICorRuntimeHost,
+        (void **)&runtimehost);
+    ok(SUCCEEDED(hr), "ICLRRuntimeInfo::GetInterface failed, hr=%#.8x\n", hr);
+    if (FAILED(hr))
+        return 1;
+
+    hr = ICorRuntimeHost_Start(runtimehost);
+    ok(SUCCEEDED(hr), "ICorRuntimeHost::Start failed, hr=%#.8x\n", hr);
+    if (FAILED(hr))
+        return 1;
+
+    ICorRuntimeHost_Release(runtimehost);
+
+    ICLRRuntimeInfo_Release(runtimeinfo);
+
+    ICLRMetaHost_ExitProcess(metahost, 0);
+
+    ok(0, "ICLRMetaHost_ExitProcess is not supposed to return\n");
+    return 1;
+}
+
+static BOOL runtime_is_usable(void)
+{
+    static const char cmdline_format[] = "\"%s\" mscoree check_runtime";
+    char** argv;
+    char cmdline[MAX_PATH + sizeof(cmdline_format)];
+    STARTUPINFOA si = {0};
+    PROCESS_INFORMATION pi;
+    BOOL ret;
+    DWORD exitcode;
+
+    winetest_get_mainargs(&argv);
+
+    sprintf(cmdline, cmdline_format, argv[0]);
+
+    si.cb = sizeof(si);
+
+    ret = CreateProcessA(NULL, cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+    ok(ret, "CreateProcessA failed\n");
+    if (!ret)
+        return FALSE;
+
+    CloseHandle(pi.hThread);
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+
+    ret = GetExitCodeProcess(pi.hProcess, &exitcode);
+    CloseHandle(pi.hProcess);
+
+    ok(ret, "GetExitCodeProcess failed\n");
+
+    if (!ret || exitcode != 0)
+    {
+        win_skip(".NET 4.0 runtime is not usable\n");
         return FALSE;
     }
 
@@ -195,7 +293,6 @@ static void test_versioninfo(void)
 
 static void test_loadlibraryshim(void)
 {
-    const WCHAR v4_0[] = {'v','4','.','0','.','3','0','3','1','9',0};
     const WCHAR v2_0[] = {'v','2','.','0','.','5','0','7','2','7',0};
     const WCHAR v1_1[] = {'v','1','.','1','.','4','3','2','2',0};
     const WCHAR vbogus[] = {'v','b','o','g','u','s',0};
@@ -425,15 +522,117 @@ static void test_createinstance(void)
     }
 }
 
+static void test_createdomain(void)
+{
+    static const WCHAR test_name[] = {'t','e','s','t',0};
+    static const WCHAR test2_name[] = {'t','e','s','t','2',0};
+    ICLRMetaHost *metahost;
+    ICLRRuntimeInfo *runtimeinfo;
+    ICorRuntimeHost *runtimehost;
+    IUnknown *domain, *defaultdomain_unk, *defaultdomain, *newdomain_unk, *newdomain, *domainsetup,
+        *newdomain2_unk, *newdomain2;
+    HRESULT hr;
+
+    if (!pCLRCreateInstance)
+    {
+        win_skip("Function CLRCreateInstance not found.\n");
+        return;
+    }
+
+    hr = pCLRCreateInstance(&CLSID_CLRMetaHost, &IID_ICLRMetaHost, (void **)&metahost);
+    ok(SUCCEEDED(hr), "CLRCreateInstance failed, hr=%#.8x\n", hr);
+
+    hr = ICLRMetaHost_GetRuntime(metahost, v4_0, &IID_ICLRRuntimeInfo, (void **)&runtimeinfo);
+    ok(SUCCEEDED(hr), "ICLRMetaHost::GetRuntime failed, hr=%#.8x\n", hr);
+
+    hr = ICLRRuntimeInfo_GetInterface(runtimeinfo, &CLSID_CorRuntimeHost, &IID_ICorRuntimeHost,
+        (void **)&runtimehost);
+    ok(SUCCEEDED(hr), "ICLRRuntimeInfo::GetInterface failed, hr=%#.8x\n", hr);
+
+    hr = ICorRuntimeHost_Start(runtimehost);
+    ok(SUCCEEDED(hr), "ICorRuntimeHost::Start failed, hr=%#.8x\n", hr);
+
+    hr = ICorRuntimeHost_GetDefaultDomain(runtimehost, &domain);
+    ok(SUCCEEDED(hr), "ICorRuntimeHost::GetDefaultDomain failed, hr=%#.8x\n", hr);
+
+    hr = IUnknown_QueryInterface(domain, &IID_IUnknown, (void **)&defaultdomain_unk);
+    ok(SUCCEEDED(hr), "COM object doesn't support IUnknown?!\n");
+
+    hr = IUnknown_QueryInterface(domain, &IID__AppDomain, (void **)&defaultdomain);
+    ok(SUCCEEDED(hr), "AppDomain object doesn't support _AppDomain interface\n");
+
+    IUnknown_Release(domain);
+
+    hr = ICorRuntimeHost_CreateDomain(runtimehost, test_name, NULL, &domain);
+    ok(SUCCEEDED(hr), "ICorRuntimeHost::CreateDomain failed, hr=%#.8x\n", hr);
+
+    hr = IUnknown_QueryInterface(domain, &IID_IUnknown, (void **)&newdomain_unk);
+    ok(SUCCEEDED(hr), "COM object doesn't support IUnknown?!\n");
+
+    hr = IUnknown_QueryInterface(domain, &IID__AppDomain, (void **)&newdomain);
+    ok(SUCCEEDED(hr), "AppDomain object doesn't support _AppDomain interface\n");
+
+    IUnknown_Release(domain);
+
+    ok(defaultdomain_unk != newdomain_unk, "New and default domain objects are the same\n");
+
+    hr = ICorRuntimeHost_CreateDomainSetup(runtimehost, &domainsetup);
+    ok(SUCCEEDED(hr), "ICorRuntimeHost::CreateDomainSetup failed, hr=%#.8x\n", hr);
+
+    hr = ICorRuntimeHost_CreateDomainEx(runtimehost, test2_name, domainsetup, NULL, &domain);
+    ok(SUCCEEDED(hr), "ICorRuntimeHost::CreateDomainEx failed, hr=%#.8x\n", hr);
+
+    hr = IUnknown_QueryInterface(domain, &IID_IUnknown, (void **)&newdomain2_unk);
+    ok(SUCCEEDED(hr), "COM object doesn't support IUnknown?!\n");
+
+    hr = IUnknown_QueryInterface(domain, &IID__AppDomain, (void **)&newdomain2);
+    ok(SUCCEEDED(hr), "AppDomain object doesn't support _AppDomain interface\n");
+
+    IUnknown_Release(domain);
+
+    ok(defaultdomain_unk != newdomain2_unk, "New and default domain objects are the same\n");
+    ok(newdomain_unk != newdomain2_unk, "Both new domain objects are the same\n");
+
+    IUnknown_Release(newdomain2);
+    IUnknown_Release(newdomain2_unk);
+    IUnknown_Release(domainsetup);
+    IUnknown_Release(newdomain);
+    IUnknown_Release(newdomain_unk);
+    IUnknown_Release(defaultdomain);
+    IUnknown_Release(defaultdomain_unk);
+
+    ICorRuntimeHost_Release(runtimehost);
+
+    ICLRRuntimeInfo_Release(runtimeinfo);
+
+    ICLRMetaHost_Release(metahost);
+}
+
 START_TEST(mscoree)
 {
+    int argc;
+    char** argv;
+
     if (!init_functionpointers())
         return;
+
+    argc = winetest_get_mainargs(&argv);
+    if (argc >= 3 && !strcmp(argv[2], "check_runtime"))
+    {
+        int result = check_runtime();
+        FreeLibrary(hmscoree);
+        exit(result);
+    }
 
     test_versioninfo();
     test_loadlibraryshim();
     test_createconfigstream();
     test_createinstance();
+
+    if (runtime_is_usable())
+    {
+        test_createdomain();
+    }
 
     FreeLibrary(hmscoree);
 }

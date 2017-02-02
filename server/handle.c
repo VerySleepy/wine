@@ -97,6 +97,20 @@ static inline obj_handle_t handle_global_to_local( obj_handle_t handle )
     return handle ^ HANDLE_OBFUSCATOR;
 }
 
+/* grab an object and increment its handle count */
+static struct object *grab_object_for_handle( struct object *obj )
+{
+    obj->handle_count++;
+    return grab_object( obj );
+}
+
+/* release an object and decrement its handle count */
+static void release_object_from_handle( struct object *obj )
+{
+    assert( obj->handle_count );
+    obj->handle_count--;
+    release_object( obj );
+}
 
 static void handle_table_dump( struct object *obj, int verbose );
 static void handle_table_destroy( struct object *obj );
@@ -116,6 +130,8 @@ static const struct object_ops handle_table_ops =
     default_get_sd,                  /* get_sd */
     default_set_sd,                  /* set_sd */
     no_lookup_name,                  /* lookup_name */
+    no_link_name,                    /* link_name */
+    NULL,                            /* unlink_name */
     no_open_file,                    /* open_file */
     no_close_handle,                 /* close_handle */
     handle_table_destroy             /* destroy */
@@ -139,6 +155,7 @@ static void handle_table_dump( struct object *obj, int verbose )
         if (!entry->ptr) continue;
         fprintf( stderr, "    %04x: %p %08x ",
                  index_to_handle(i), entry->ptr, entry->access );
+        dump_object_name( entry->ptr );
         entry->ptr->ops->dump( entry->ptr, 0 );
     }
 }
@@ -166,7 +183,7 @@ static void handle_table_destroy( struct object *obj )
     {
         struct object *obj = entry->ptr;
         entry->ptr = NULL;
-        if (obj) release_object( obj );
+        if (obj) release_object_from_handle( obj );
     }
     free( table->entries );
 }
@@ -229,7 +246,7 @@ static obj_handle_t alloc_entry( struct handle_table *table, void *obj, unsigned
     table->last = i;
  found:
     table->free = i + 1;
-    entry->ptr    = grab_object( obj );
+    entry->ptr    = grab_object_for_handle( obj );
     entry->access = access;
     return index_to_handle(i);
 }
@@ -355,7 +372,7 @@ struct handle_table *copy_handle_table( struct process *process, struct process 
         for (i = 0; i <= table->last; i++, ptr++)
         {
             if (!ptr->ptr) continue;
-            if (ptr->access & RESERVED_INHERIT) grab_object( ptr->ptr );
+            if (ptr->access & RESERVED_INHERIT) grab_object_for_handle( ptr->ptr );
             else ptr->ptr = NULL; /* don't inherit this entry */
         }
     }
@@ -379,7 +396,7 @@ unsigned int close_handle( struct process *process, obj_handle_t handle )
     table = handle_is_global(handle) ? global_table : process->handles;
     if (entry < table->entries + table->free) table->free = entry - table->entries;
     if (entry == table->entries + table->last) shrink_handle_table( table );
-    release_object( obj );
+    release_object_from_handle( obj );
     return STATUS_SUCCESS;
 }
 
@@ -388,6 +405,12 @@ static inline struct object *get_magic_handle( obj_handle_t handle )
 {
     switch(handle)
     {
+        case 0xfffffffa:  /* current thread impersonation token pseudo-handle */
+            return (struct object *)thread_get_impersonation_token( current );
+        case 0xfffffffb:  /* current thread token pseudo-handle */
+            return (struct object *)current->token;
+        case 0xfffffffc:  /* current process token pseudo-handle */
+            return (struct object *)current->process->token;
         case 0xfffffffe:  /* current thread pseudo-handle */
             return &current->obj;
         case 0x7fffffff:  /* current process pseudo-handle */
@@ -556,21 +579,34 @@ obj_handle_t duplicate_handle( struct process *src, obj_handle_t src_handle, str
 }
 
 /* open a new handle to an existing object */
-obj_handle_t open_object( const struct namespace *namespace, const struct unicode_str *name,
-                          const struct object_ops *ops, unsigned int access, unsigned int attr )
+obj_handle_t open_object( struct process *process, obj_handle_t parent, unsigned int access,
+                          const struct object_ops *ops, const struct unicode_str *name,
+                          unsigned int attributes )
 {
     obj_handle_t handle = 0;
-    struct object *obj = find_object( namespace, name, attr );
-    if (obj)
+    struct object *obj, *root = NULL;
+
+    if (name->len >= 65534)
     {
-        if (ops && obj->ops != ops)
-            set_error( STATUS_OBJECT_TYPE_MISMATCH );
-        else
-            handle = alloc_handle( current->process, obj, access, attr );
+        set_error( STATUS_OBJECT_NAME_INVALID );
+        return 0;
+    }
+
+    if (parent)
+    {
+        if (name->len)
+            root = get_directory_obj( process, parent );
+        else  /* opening the object itself can work for non-directories too */
+            root = get_handle_obj( process, parent, 0, NULL );
+        if (!root) return 0;
+    }
+
+    if ((obj = open_named_object( root, ops, name, attributes )))
+    {
+        handle = alloc_handle( process, obj, access, attributes );
         release_object( obj );
     }
-    else
-        set_error( STATUS_OBJECT_NAME_NOT_FOUND );
+    if (root) release_object( root );
     return handle;
 }
 
@@ -630,6 +666,7 @@ DECL_HANDLER(get_object_info)
 
     reply->access = get_handle_access( current->process, req->handle );
     reply->ref_count = obj->refcount;
+    reply->handle_count = obj->handle_count;
     if ((name = get_object_full_name( obj, &reply->total )))
         set_reply_data_ptr( name, min( reply->total, get_reply_max_size() ));
     release_object( obj );
@@ -729,4 +766,60 @@ DECL_HANDLER(get_security_object)
     }
 
     release_object( obj );
+}
+
+struct enum_handle_info
+{
+    unsigned int count;
+    struct handle_info *handle;
+};
+
+static int enum_handles( struct process *process, void *user )
+{
+    struct enum_handle_info *info = user;
+    struct handle_table *table = process->handles;
+    struct handle_entry *entry;
+    struct handle_info *handle;
+    unsigned int i;
+
+    if (!table)
+        return 0;
+
+    for (i = 0, entry = table->entries; i <= table->last; i++, entry++)
+    {
+        if (!entry->ptr) continue;
+        if (!info->handle)
+        {
+            info->count++;
+            continue;
+        }
+        assert( info->count );
+        handle = info->handle++;
+        handle->owner  = process->id;
+        handle->handle = index_to_handle(i);
+        handle->access = entry->access & ~RESERVED_ALL;
+        info->count--;
+    }
+
+    return 0;
+}
+
+DECL_HANDLER(get_system_handles)
+{
+    struct enum_handle_info info;
+    struct handle_info *handle;
+    data_size_t max_handles = get_reply_max_size() / sizeof(*handle);
+
+    info.handle = NULL;
+    info.count  = 0;
+    enum_processes( enum_handles, &info );
+    reply->count = info.count;
+
+    if (max_handles < info.count)
+        set_error( STATUS_BUFFER_TOO_SMALL );
+    else if ((handle = set_reply_data_size( info.count * sizeof(*handle) )))
+    {
+        info.handle = handle;
+        enum_processes( enum_handles, &info );
+    }
 }

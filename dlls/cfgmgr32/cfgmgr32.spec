@@ -60,8 +60,8 @@
 @ stdcall CM_Get_DevNode_Registry_PropertyW(long long ptr ptr long long) setupapi.CM_Get_DevNode_Registry_PropertyW
 @ stdcall CM_Get_DevNode_Registry_Property_ExA(long long ptr ptr ptr long ptr) setupapi.CM_Get_DevNode_Registry_Property_ExA
 @ stdcall CM_Get_DevNode_Registry_Property_ExW(long long ptr ptr ptr long ptr) setupapi.CM_Get_DevNode_Registry_Property_ExW
-@ stub CM_Get_DevNode_Status
-@ stub CM_Get_DevNode_Status_Ex
+@ stdcall CM_Get_DevNode_Status(ptr ptr long long) setupapi.CM_Get_DevNode_Status
+@ stdcall CM_Get_DevNode_Status_Ex(ptr ptr long long ptr) setupapi.CM_Get_DevNode_Status_Ex
 @ stdcall CM_Get_Device_IDA(ptr ptr long long) setupapi.CM_Get_Device_IDA
 @ stdcall CM_Get_Device_IDW(ptr ptr long long) setupapi.CM_Get_Device_IDW
 @ stdcall CM_Get_Device_ID_ExA(ptr ptr long long ptr) setupapi.CM_Get_Device_ID_ExA
@@ -114,7 +114,7 @@
 @ stub CM_Get_Res_Des_Data_Size_Ex
 @ stub CM_Get_Sibling
 @ stub CM_Get_Sibling_Ex
-@ stub CM_Get_Version
+@ stdcall CM_Get_Version() setupapi.CM_Get_Version
 @ stub CM_Get_Version_Ex
 @ stub CM_Intersect_Range_List
 @ stub CM_Invert_Range_List

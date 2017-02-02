@@ -65,7 +65,6 @@
 
 #define COBJMACROS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "windef.h"
 #include "winbase.h"
@@ -82,8 +81,6 @@
 #include "compobj_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(ole);
-
-#define HANDLE_ERROR(err) do { hr = err; TRACE("(HRESULT=%x)\n", (HRESULT)err); goto CLEANUP; } while (0)
 
 /* Structure of 'Ole Private Data' clipboard format */
 typedef struct
@@ -176,6 +173,15 @@ typedef struct PresentationDataHeader
  * The one and only ole_clipbrd object which is created by OLEClipbrd_Initialize()
  */
 static ole_clipbrd* theOleClipboard;
+
+static CRITICAL_SECTION latest_snapshot_cs;
+static CRITICAL_SECTION_DEBUG latest_snapshot_cs_debug =
+{
+        0, 0, &latest_snapshot_cs,
+        { &latest_snapshot_cs_debug.ProcessLocksList, &latest_snapshot_cs_debug.ProcessLocksList },
+        0, 0, { (DWORD_PTR)(__FILE__ ": clipboard last snapshot") }
+};
+static CRITICAL_SECTION latest_snapshot_cs = { &latest_snapshot_cs_debug, -1, 0, 0, 0, 0 };
 
 static inline HRESULT get_ole_clipbrd(ole_clipbrd **clipbrd)
 {
@@ -579,6 +585,12 @@ static HRESULT render_embed_source_hack(IDataObject *data, LPFORMATETC fmt)
     hStorage = GlobalAlloc(GMEM_SHARE|GMEM_MOVEABLE, 0);
     if (hStorage == NULL) return E_OUTOFMEMORY;
     hr = CreateILockBytesOnHGlobal(hStorage, FALSE, &ptrILockBytes);
+    if (FAILED(hr))
+    {
+        GlobalFree(hStorage);
+        return hr;
+    }
+
     hr = StgCreateDocfileOnILockBytes(ptrILockBytes, STGM_SHARE_EXCLUSIVE|STGM_READWRITE, 0, &std.u.pstg);
     ILockBytes_Release(ptrILockBytes);
 
@@ -1039,13 +1051,17 @@ static ULONG WINAPI snapshot_Release(IDataObject *iface)
 
     if (ref == 0)
     {
-        ole_clipbrd *clipbrd;
-        HRESULT hr = get_ole_clipbrd(&clipbrd);
+        EnterCriticalSection(&latest_snapshot_cs);
+        if (This->ref)
+        {
+            LeaveCriticalSection(&latest_snapshot_cs);
+            return ref;
+        }
+        if (theOleClipboard->latest_snapshot == This)
+            theOleClipboard->latest_snapshot = NULL;
+        LeaveCriticalSection(&latest_snapshot_cs);
 
         if(This->data) IDataObject_Release(This->data);
-
-        if(SUCCEEDED(hr) && clipbrd->latest_snapshot == This)
-            clipbrd->latest_snapshot = NULL;
         HeapFree(GetProcessHeap(), 0, This);
     }
 
@@ -1802,7 +1818,7 @@ void OLEClipbrd_UnInitialize(void)
  *
  * Enumerate all formats supported by the source and make
  * those formats available using delayed rendering using SetClipboardData.
- * Cache the enumeration list and make that list visibile as the
+ * Cache the enumeration list and make that list visible as the
  * 'Ole Private Data' format on the clipboard.
  *
  */
@@ -2024,10 +2040,12 @@ static LRESULT CALLBACK clipbrd_wndproc(HWND hwnd, UINT message, WPARAM wparam, 
     case WM_RENDERALLFORMATS:
     {
         DWORD i;
-        ole_priv_data_entry *entries = clipbrd->cached_enum->entries;
+        ole_priv_data_entry *entries;
 
         TRACE("(): WM_RENDERALLFORMATS\n");
 
+        if (!clipbrd || !clipbrd->cached_enum) break;
+        entries = clipbrd->cached_enum->entries;
         for(i = 0; i < clipbrd->cached_enum->count; i++)
         {
             if(entries[i].first_use)
@@ -2185,21 +2203,28 @@ HRESULT WINAPI OleGetClipboard(IDataObject **obj)
     TRACE("(%p)\n", obj);
 
     if(!obj) return E_INVALIDARG;
+    *obj = NULL;
 
     if(FAILED(hr = get_ole_clipbrd(&clipbrd))) return hr;
 
     seq_no = GetClipboardSequenceNumber();
+    EnterCriticalSection(&latest_snapshot_cs);
     if(clipbrd->latest_snapshot && clipbrd->latest_snapshot->seq_no != seq_no)
         clipbrd->latest_snapshot = NULL;
 
     if(!clipbrd->latest_snapshot)
     {
         clipbrd->latest_snapshot = snapshot_construct(seq_no);
-        if(!clipbrd->latest_snapshot) return E_OUTOFMEMORY;
+        if(!clipbrd->latest_snapshot)
+        {
+            LeaveCriticalSection(&latest_snapshot_cs);
+            return E_OUTOFMEMORY;
+        }
     }
 
     *obj = &clipbrd->latest_snapshot->IDataObject_iface;
     IDataObject_AddRef(*obj);
+    LeaveCriticalSection(&latest_snapshot_cs);
 
     return S_OK;
 }

@@ -40,8 +40,6 @@
 #include <stdarg.h>
 #include <math.h>	/* Insomnia - pow() function */
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "windef.h"
 #include "winbase.h"
 #include "winuser.h"
@@ -114,7 +112,6 @@ static inline D3DVALUE AngleBetweenVectorsRad (const D3DVECTOR *a, const D3DVECT
 
 	cos = product/(la*lb);
 	angle = acos(cos);
-	if (cos < 0.0f) { angle -= M_PI; }
 	TRACE("angle between (%f,%f,%f) and (%f,%f,%f) = %f radians (%f degrees)\n",  a->x, a->y, a->z, b->x,
 	      b->y, b->z, angle, RadToDeg(angle));
 	return angle;	
@@ -173,11 +170,6 @@ void DSOUND_Calc3DBuffer(IDirectSoundBufferImpl *dsb)
 	
 	switch (dsb->ds3db_ds3db.dwMode)
 	{
-		case DS3DMODE_DISABLE:
-			TRACE("3D processing disabled\n");
-			/* this one is here only to eliminate annoying warning message */
-			DSOUND_RecalcVolPan (&dsb->volpan);
-			break;
 		case DS3DMODE_NORMAL:
 			TRACE("Normal 3D processing mode\n");
 			/* we need to calculate distance between buffer and listener*/
@@ -190,6 +182,12 @@ void DSOUND_Calc3DBuffer(IDirectSoundBufferImpl *dsb)
 			vDistance = dsb->ds3db_ds3db.vPosition;
 			flDistance = VectorMagnitude (&vDistance);
 			break;
+		default:
+			TRACE("3D processing disabled\n");
+			/* this one is here only to eliminate annoying warning message */
+			dsb->volpan.lVolume = dsb->ds3db_lVolume;
+			DSOUND_RecalcVolPan (&dsb->volpan);
+			return;
 	}
 	
 	if (flDistance > dsb->ds3db_ds3db.flMaxDistance)
@@ -208,6 +206,8 @@ void DSOUND_Calc3DBuffer(IDirectSoundBufferImpl *dsb)
 
 	if (flDistance < dsb->ds3db_ds3db.flMinDistance)
 		flDistance = dsb->ds3db_ds3db.flMinDistance;
+
+	flDistance = dsb->ds3db_ds3db.flMinDistance + (flDistance - dsb->ds3db_ds3db.flMinDistance) * dsb->device->ds3dl.flRolloffFactor;
 	
 	/* attenuation proportional to the distance squared, converted to millibels as in lVolume*/
 	lVolume -= log10(flDistance/dsb->ds3db_ds3db.flMinDistance * flDistance/dsb->ds3db_ds3db.flMinDistance)*1000;
@@ -245,7 +245,7 @@ void DSOUND_Calc3DBuffer(IDirectSoundBufferImpl *dsb)
 			if (flAngle > dwOutsideConeAngle)
 				flAngle = dwOutsideConeAngle;
 			/* this probably isn't the right thing, but it's ok for the time being */
-			lVolume += ((dsb->ds3db_ds3db.lConeOutsideVolume)/((dwOutsideConeAngle) - (dwInsideConeAngle))) * flAngle;
+			lVolume += ((flAngle - dwInsideConeAngle)/(dwOutsideConeAngle - dwInsideConeAngle)) * dsb->ds3db_ds3db.lConeOutsideVolume;
 		}
 		TRACE("conning: Angle = %f deg; InsideConeAngle(/2) = %d deg; OutsideConeAngle(/2) = %d deg; ConeOutsideVolume = %d => adjusting volume to %f\n",
 		       flAngle, dsb->ds3db_ds3db.dwInsideConeAngle/2, dsb->ds3db_ds3db.dwOutsideConeAngle/2, dsb->ds3db_ds3db.lConeOutsideVolume, lVolume);
@@ -266,16 +266,20 @@ void DSOUND_Calc3DBuffer(IDirectSoundBufferImpl *dsb)
 	else
 	{
 		vLeft = VectorProduct(&dsb->device->ds3dl.vOrientFront, &dsb->device->ds3dl.vOrientTop);
-		flAngle = AngleBetweenVectorsRad(&dsb->device->ds3dl.vOrientFront, &vDistance);
-		flAngle2 = AngleBetweenVectorsRad(&vLeft, &vDistance);
-
-		/* AngleBetweenVectorsRad performs a dot product, which gives us the cosine of the angle
-		 * between two vectors. Unfortunately, because cos(theta) = cos(-theta), we've no idea from
-		 * this whether the sound is to our left or to our right. We have to perform another dot
-		 * product, with a vector at right angles to the initial one, to get the correct angle.
-		 * The angle should be between -180 degrees and 180 degrees. */
-		if (flAngle < 0.0f) { flAngle += M_PI; }
-		if (flAngle2 > 0.0f) { flAngle = -flAngle; }
+		/* To calculate angle to sound source we need to:
+		 * 1) Get angle between vDistance and a plane on which angle to sound source should be 0.
+		 *    Such a plane is given by vectors vOrientFront and vOrientTop, and angle between vector
+		 *    and a plane equals to M_PI_2 - angle between vector and normal to this plane (vLeft in this case).
+		 * 2) Determine if the source is behind or in front of us by calculating angle between vDistance
+		 *    and vOrientFront.
+		 */
+		flAngle = AngleBetweenVectorsRad(&vLeft, &vDistance);
+		flAngle2 = AngleBetweenVectorsRad(&dsb->device->ds3dl.vOrientFront, &vDistance);
+		if (flAngle2 > M_PI_2)
+			flAngle = -flAngle;
+		flAngle -= M_PI_2;
+		if (flAngle < -M_PI)
+			flAngle += 2*M_PI;
 	}
 	TRACE("panning: Angle = %f rad, lPan = %d\n", flAngle, dsb->volpan.lPan);
 
@@ -293,12 +297,12 @@ if(0)
 	           dsb->ds3db_ds3db.vVelocity.z == dsb->device->ds3dl.vVelocity.z))
 	{
 		/* calculate length of ds3db_ds3db.vVelocity component which causes Doppler Effect
-		   NOTE: if buffer moves TOWARDS the listener, it's velocity component is NEGATIVE
-		         if buffer moves AWAY from listener, it's velocity component is POSITIVE */
+		   NOTE: if buffer moves TOWARDS the listener, its velocity component is NEGATIVE
+		         if buffer moves AWAY from listener, its velocity component is POSITIVE */
 		flBufferVel = ProjectVector(&dsb->ds3db_ds3db.vVelocity, &vDistance);
 		/* calculate length of ds3dl.vVelocity component which causes Doppler Effect
-		   NOTE: if listener moves TOWARDS the buffer, it's velocity component is POSITIVE
-		         if listener moves AWAY from buffer, it's velocity component is NEGATIVE */
+		   NOTE: if listener moves TOWARDS the buffer, its velocity component is POSITIVE
+		         if listener moves AWAY from buffer, its velocity component is NEGATIVE */
 		flListenerVel = ProjectVector(&dsb->device->ds3dl.vVelocity, &vDistance);
 		/* formula taken from Gianicoli D.: Physics, 4th edition: */
 		/* FIXME: replace dsb->freq with appropriate frequency ! */

@@ -21,8 +21,6 @@
 #include "config.h"
 #include "wine/port.h"
 
-#define NONAMELESSSTRUCT
-#define NONAMELESSUNION
 #define COBJMACROS
 
 #include "editor.h"
@@ -57,7 +55,7 @@ ITextHost *ME_CreateTextHost(HWND hwnd, CREATESTRUCTW *cs, BOOL bEmulateVersion1
         texthost->hWnd = hwnd;
         texthost->bEmulateVersion10 = bEmulateVersion10;
 
-        editor = ME_MakeEditor(&texthost->ITextHost_iface, bEmulateVersion10);
+        editor = ME_MakeEditor(&texthost->ITextHost_iface, bEmulateVersion10, cs->style);
         editor->exStyleFlags = GetWindowLongW(hwnd, GWL_EXSTYLE);
         editor->styleFlags |= GetWindowLongW(hwnd, GWL_STYLE) & ES_WANTRETURN;
         editor->hWnd = hwnd; /* FIXME: Remove editor's dependence on hWnd */

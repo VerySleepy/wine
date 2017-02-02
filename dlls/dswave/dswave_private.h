@@ -41,31 +41,9 @@
 #include "dmusics.h"
 
 /*****************************************************************************
- * Interfaces
- */
-typedef struct IDirectMusicWaveImpl IDirectMusicWaveImpl;
-
-/*****************************************************************************
  * ClassFactory
  */
 extern HRESULT WINAPI create_dswave(REFIID lpcGUID, void **ret_iface) DECLSPEC_HIDDEN;
-
-
-/*****************************************************************************
- * IDirectMusicWaveImpl implementation structure
- */
-struct IDirectMusicWaveImpl {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicSegment8Vtbl *SegmentVtbl;
-  const IDirectMusicObjectVtbl *ObjectVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG          ref;
-
-  /* IDirectMusicWaveImpl fields */
-  LPDMUS_OBJECTDESC pDesc;
-
-};
 
 /**********************************************************************
  * Dll lifetime tracking declaration for dswave.dll
@@ -94,17 +72,8 @@ typedef struct {
     const char* name;
 } guid_info;
 
-/* used for initialising structs (primarily for DMUS_OBJECTDESC) */
-#define DM_STRUCT_INIT(x) 				\
-	do {								\
-		memset((x), 0, sizeof(*(x)));	\
-		(x)->dwSize = sizeof(*x);		\
-	} while (0)
-
 #define FE(x) { x, #x }	
 #define GE(x) { &x, #x }
-
-#define ICOM_THIS_MULTI(impl,field,iface) impl* const This=(impl*)((char*)(iface) - offsetof(impl,field))
 
 /* FOURCC to string conversion for debug messages */
 extern const char *debugstr_fourcc (DWORD fourcc) DECLSPEC_HIDDEN;

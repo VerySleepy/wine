@@ -28,6 +28,9 @@
 
 #include "wine/test.h"
 
+#undef __fastcall
+#define __fastcall __stdcall
+
 static BOOL   (WINAPI *pChangeTimerQueueTimer)(HANDLE, HANDLE, ULONG, ULONG);
 static HANDLE (WINAPI *pCreateTimerQueue)(void);
 static BOOL   (WINAPI *pCreateTimerQueueTimer)(PHANDLE, HANDLE, WAITORTIMERCALLBACK,
@@ -56,7 +59,53 @@ static VOID   (WINAPI *pReleaseSRWLockExclusive)(PSRWLOCK);
 static VOID   (WINAPI *pReleaseSRWLockShared)(PSRWLOCK);
 static BOOLEAN (WINAPI *pTryAcquireSRWLockExclusive)(PSRWLOCK);
 static BOOLEAN (WINAPI *pTryAcquireSRWLockShared)(PSRWLOCK);
+
+static NTSTATUS (WINAPI *pNtAllocateVirtualMemory)(HANDLE, PVOID *, ULONG, SIZE_T *, ULONG, ULONG);
+static NTSTATUS (WINAPI *pNtFreeVirtualMemory)(HANDLE, PVOID *, SIZE_T *, ULONG);
+static NTSTATUS (WINAPI *pNtWaitForSingleObject)(HANDLE, BOOLEAN, const LARGE_INTEGER *);
 static NTSTATUS (WINAPI *pNtWaitForMultipleObjects)(ULONG,const HANDLE*,BOOLEAN,BOOLEAN,const LARGE_INTEGER*);
+static PSLIST_ENTRY (__fastcall *pRtlInterlockedPushListSList)(PSLIST_HEADER list, PSLIST_ENTRY first,
+                                                               PSLIST_ENTRY last, ULONG count);
+static PSLIST_ENTRY (WINAPI *pRtlInterlockedPushListSListEx)(PSLIST_HEADER list, PSLIST_ENTRY first,
+                                                             PSLIST_ENTRY last, ULONG count);
+
+#ifdef __i386__
+
+#include "pshpack1.h"
+struct fastcall_thunk
+{
+    BYTE pop_edx;   /* popl %edx            (ret addr) */
+    BYTE pop_eax;   /* popl %eax            (func) */
+    BYTE pop_ecx;   /* popl %ecx            (param 1) */
+    BYTE xchg[3];   /* xchgl (%esp),%edx    (param 2) */
+    WORD jmp_eax;   /* jmp  *%eax */
+};
+#include "poppack.h"
+
+static void * (WINAPI *call_fastcall_func4)(void *func, const void *a, const void *b, const void *c, const void *d);
+
+static void init_fastcall_thunk(void)
+{
+    struct fastcall_thunk *thunk = VirtualAlloc(NULL, sizeof(*thunk), MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+    thunk->pop_edx = 0x5a;      /* popl  %edx */
+    thunk->pop_eax = 0x58;      /* popl  %eax */
+    thunk->pop_ecx = 0x59;      /* popl  %ecx */
+    thunk->xchg[0] = 0x87;      /* xchgl (%esp),%edx */
+    thunk->xchg[1] = 0x14;
+    thunk->xchg[2] = 0x24;
+    thunk->jmp_eax = 0xe0ff;    /* jmp *%eax */
+    call_fastcall_func4 = (void *)thunk;
+}
+
+#define call_func4(func, a, b, c, d) call_fastcall_func4(func, (const void *)(a), \
+        (const void *)(b), (const void *)(c), (const void *)(d))
+
+#else  /* __i386__ */
+
+#define init_fastcall_thunk() do { } while(0)
+#define call_func4(func, a, b, c, d) func(a, b, c, d)
+
+#endif /* __i386__ */
 
 static void test_signalandwait(void)
 {
@@ -64,6 +113,7 @@ static void test_signalandwait(void)
     HMODULE kernel32;
     DWORD r;
     HANDLE event[2], semaphore[2], file;
+    int i;
 
     kernel32 = GetModuleHandleA("kernel32.dll");
     pSignalObjectAndWait = (void*) GetProcAddress(kernel32, "SignalObjectAndWait");
@@ -96,9 +146,13 @@ static void test_signalandwait(void)
     r = pSignalObjectAndWait(event[0], event[1], 0, FALSE);
     ok( r == WAIT_OBJECT_0, "should succeed\n");
 
-    /* event[0] is now signalled */
-    r = pSignalObjectAndWait(event[0], event[0], 0, FALSE);
-    ok( r == WAIT_OBJECT_0, "should succeed\n");
+    /* event[0] is now signalled - we repeat this test multiple times
+     * to ensure that the wineserver handles this situation properly. */
+    for (i = 0; i < 10000; i++)
+    {
+        r = pSignalObjectAndWait(event[0], event[0], 0, FALSE);
+        ok(r == WAIT_OBJECT_0, "should succeed\n");
+    }
 
     /* event[0] is not signalled */
     r = WaitForSingleObject(event[0], 0);
@@ -252,104 +306,169 @@ static void test_slist(void)
     {
         SLIST_ENTRY entry;
         int value;
-    } item1, item2, item3, *pitem;
-
+    } item1, item2, item3, *item;
     SLIST_HEADER slist_header;
-    PSLIST_ENTRY entry, next;
+    SLIST_ENTRY *entry;
     USHORT size;
     int i;
 
-    VOID (WINAPI *pInitializeSListHead)(PSLIST_HEADER);
-    USHORT (WINAPI *pQueryDepthSList)(PSLIST_HEADER);
-    PSLIST_ENTRY (WINAPI *pInterlockedFlushSList)(PSLIST_HEADER);
-    PSLIST_ENTRY (WINAPI *pInterlockedPopEntrySList)(PSLIST_HEADER);
-    PSLIST_ENTRY (WINAPI *pInterlockedPushEntrySList)(PSLIST_HEADER,PSLIST_ENTRY);
-    HMODULE kernel32;
-
-    kernel32 = GetModuleHandleA("KERNEL32.DLL");
-    pInitializeSListHead = (void*) GetProcAddress(kernel32, "InitializeSListHead");
-    pQueryDepthSList = (void*) GetProcAddress(kernel32, "QueryDepthSList");
-    pInterlockedFlushSList = (void*) GetProcAddress(kernel32, "InterlockedFlushSList");
-    pInterlockedPopEntrySList = (void*) GetProcAddress(kernel32, "InterlockedPopEntrySList");
-    pInterlockedPushEntrySList = (void*) GetProcAddress(kernel32, "InterlockedPushEntrySList");
-    if (pInitializeSListHead == NULL ||
-        pQueryDepthSList == NULL ||
-        pInterlockedFlushSList == NULL ||
-        pInterlockedPopEntrySList == NULL ||
-        pInterlockedPushEntrySList == NULL)
-    {
-        win_skip("some required slist entrypoints were not found, skipping tests\n");
-        return;
-    }
-
-    memset(&slist_header, 0xFF, sizeof(slist_header));
-    pInitializeSListHead(&slist_header);
-    size = pQueryDepthSList(&slist_header);
-    ok(size == 0, "initially created slist has size %d, expected 0\n", size);
-
     item1.value = 1;
-    ok(pInterlockedPushEntrySList(&slist_header, &item1.entry) == NULL,
-        "previous entry in empty slist wasn't NULL\n");
-    size = pQueryDepthSList(&slist_header);
-    ok(size == 1, "slist with 1 item has size %d\n", size);
-
     item2.value = 2;
-    entry = pInterlockedPushEntrySList(&slist_header, &item2.entry);
-    ok(entry != NULL, "previous entry in non-empty slist was NULL\n");
-    if (entry != NULL)
-    {
-        pitem = (struct item*) entry;
-        ok(pitem->value == 1, "previous entry in slist wasn't the one added\n");
-    }
-    size = pQueryDepthSList(&slist_header);
-    ok(size == 2, "slist with 2 items has size %d\n", size);
-
     item3.value = 3;
-    entry = pInterlockedPushEntrySList(&slist_header, &item3.entry);
-    ok(entry != NULL, "previous entry in non-empty slist was NULL\n");
-    if (entry != NULL)
-    {
-        pitem = (struct item*) entry;
-        ok(pitem->value == 2, "previous entry in slist wasn't the one added\n");
-    }
-    size = pQueryDepthSList(&slist_header);
-    ok(size == 3, "slist with 3 items has size %d\n", size);
 
-    entry = pInterlockedPopEntrySList(&slist_header);
-    ok(entry != NULL, "entry shouldn't be NULL\n");
-    if (entry != NULL)
-    {
-        pitem = (struct item*) entry;
-        ok(pitem->value == 3, "unexpected entry removed\n");
-    }
-    size = pQueryDepthSList(&slist_header);
-    ok(size == 2, "slist with 2 items has size %d\n", size);
+    memset(&slist_header, 0xff, sizeof(slist_header));
+    InitializeSListHead(&slist_header);
+    size = QueryDepthSList(&slist_header);
+    ok(size == 0, "Expected size == 0, got %u\n", size);
 
-    entry = pInterlockedFlushSList(&slist_header);
-    size = pQueryDepthSList(&slist_header);
-    ok(size == 0, "flushed slist should be empty, size is %d\n", size);
-    if (size == 0)
-    {
-        ok(pInterlockedPopEntrySList(&slist_header) == NULL,
-            "popping empty slist didn't return NULL\n");
-    }
-    ok(((struct item*)entry)->value == 2, "item 2 not in front of list\n");
-    ok(((struct item*)entry->Next)->value == 1, "item 1 not at the back of list\n");
+    /* test PushEntry, PopEntry and Flush */
+    entry = InterlockedPushEntrySList(&slist_header, &item1.entry);
+    ok(entry == NULL, "Expected entry == NULL, got %p\n", entry);
+    size = QueryDepthSList(&slist_header);
+    ok(size == 1, "Expected size == 1, got %u\n", size);
 
+    entry = InterlockedPushEntrySList(&slist_header, &item2.entry);
+    ok(entry != NULL, "Expected entry != NULL, got %p\n", entry);
+    item = CONTAINING_RECORD(entry, struct item, entry);
+    ok(item->value == 1, "Expected item->value == 1, got %u\n", item->value);
+    size = QueryDepthSList(&slist_header);
+    ok(size == 2, "Expected size == 2, got %u\n", size);
+
+    entry = InterlockedPushEntrySList(&slist_header, &item3.entry);
+    ok(entry != NULL, "Expected entry != NULL, got %p\n", entry);
+    item = CONTAINING_RECORD(entry, struct item, entry);
+    ok(item->value == 2, "Expected item->value == 2, got %u\n", item->value);
+    size = QueryDepthSList(&slist_header);
+    ok(size == 3, "Expected size == 3, got %u\n", size);
+
+    entry = InterlockedPopEntrySList(&slist_header);
+    ok(entry != NULL, "Expected entry != NULL, got %p\n", entry);
+    item = CONTAINING_RECORD(entry, struct item, entry);
+    ok(item->value == 3, "Expected item->value == 3, got %u\n", item->value);
+    size = QueryDepthSList(&slist_header);
+    ok(size == 2, "Expected size == 2, got %u\n", size);
+
+    entry = InterlockedFlushSList(&slist_header);
+    ok(entry != NULL, "Expected entry != NULL, got %p\n", entry);
+    item = CONTAINING_RECORD(entry, struct item, entry);
+    ok(item->value == 2, "Expected item->value == 2, got %u\n", item->value);
+    item = CONTAINING_RECORD(item->entry.Next, struct item, entry);
+    ok(item->value == 1, "Expected item->value == 1, got %u\n", item->value);
+    size = QueryDepthSList(&slist_header);
+    ok(size == 0, "Expected size == 0, got %u\n", size);
+    entry = InterlockedPopEntrySList(&slist_header);
+    ok(entry == NULL, "Expected entry == NULL, got %p\n", entry);
+
+    /* test RtlInterlockedPushListSList */
+    entry = InterlockedPushEntrySList(&slist_header, &item3.entry);
+    ok(entry == NULL, "Expected entry == NULL, got %p\n", entry);
+    entry = call_func4(pRtlInterlockedPushListSList, &slist_header, &item2.entry, &item1.entry, 42);
+    ok(entry != NULL, "Expected entry != NULL, got %p\n", entry);
+    item = CONTAINING_RECORD(entry, struct item, entry);
+    ok(item->value == 3, "Expected item->value == 3, got %u\n", item->value);
+    size = QueryDepthSList(&slist_header);
+    ok(size == 43, "Expected size == 43, got %u\n", size);
+
+    entry = InterlockedPopEntrySList(&slist_header);
+    ok(entry != NULL, "Expected entry != NULL, got %p\n", entry);
+    item = CONTAINING_RECORD(entry, struct item, entry);
+    ok(item->value == 2, "Expected item->value == 2, got %u\n", item->value);
+    size = QueryDepthSList(&slist_header);
+    ok(size == 42, "Expected size == 42, got %u\n", size);
+
+    entry = InterlockedPopEntrySList(&slist_header);
+    ok(entry != NULL, "Expected entry != NULL, got %p\n", entry);
+    item = CONTAINING_RECORD(entry, struct item, entry);
+    ok(item->value == 1, "Expected item->value == 1, got %u\n", item->value);
+    size = QueryDepthSList(&slist_header);
+    ok(size == 41, "Expected size == 41, got %u\n", size);
+
+    entry = InterlockedPopEntrySList(&slist_header);
+    ok(entry != NULL, "Expected entry != NULL, got %p\n", entry);
+    item = CONTAINING_RECORD(entry, struct item, entry);
+    ok(item->value == 3, "Expected item->value == 3, got %u\n", item->value);
+    size = QueryDepthSList(&slist_header);
+    ok(size == 40, "Expected size == 40, got %u\n", size);
+
+    entry = InterlockedPopEntrySList(&slist_header);
+    ok(entry == NULL, "Expected entry == NULL, got %p\n", entry);
+    size = QueryDepthSList(&slist_header);
+    ok(size == 40, "Expected size == 40, got %u\n", size);
+
+    entry = InterlockedFlushSList(&slist_header);
+    ok(entry == NULL, "Expected entry == NULL, got %p\n", entry);
+    size = QueryDepthSList(&slist_header);
+    ok(size == 40 || broken(size == 0) /* >= Win 8 */, "Expected size == 40, got %u\n", size);
+
+    entry = InterlockedPushEntrySList(&slist_header, &item1.entry);
+    ok(entry == NULL, "Expected entry == NULL, got %p\n", entry);
+    entry = InterlockedFlushSList(&slist_header);
+    ok(entry != NULL, "Expected entry != NULL, got %p\n", entry);
+    item = CONTAINING_RECORD(entry, struct item, entry);
+    ok(item->value == 1, "Expected item->value == 1, got %u\n", item->value);
+    size = QueryDepthSList(&slist_header);
+    ok(size == 0, "Expected size == 0, got %u\n", size);
+
+    /* test RtlInterlockedPushListSListEx */
+    if (pRtlInterlockedPushListSListEx)
+    {
+        entry = InterlockedPushEntrySList(&slist_header, &item3.entry);
+        ok(entry == NULL, "Expected entry == NULL, got %p\n", entry);
+        entry = pRtlInterlockedPushListSListEx(&slist_header, &item2.entry, &item1.entry, 42);
+        ok(entry != NULL, "Expected entry != NULL, got %p\n", entry);
+        item = CONTAINING_RECORD(entry, struct item, entry);
+        ok(item->value == 3, "Expected item->value == 3, got %u\n", item->value);
+        size = QueryDepthSList(&slist_header);
+        ok(size == 43, "Expected size == 43, got %u\n", size);
+
+        entry = InterlockedFlushSList(&slist_header);
+        ok(entry != NULL, "Expected entry != NULL, got %p\n", entry);
+        item = CONTAINING_RECORD(entry, struct item, entry);
+        ok(item->value == 2, "Expected item->value == 2, got %u\n", item->value);
+        item = CONTAINING_RECORD(item->entry.Next, struct item, entry);
+        ok(item->value == 1, "Expected item->value == 1, got %u\n", item->value);
+        item = CONTAINING_RECORD(item->entry.Next, struct item, entry);
+        ok(item->value == 3, "Expected item->value == 3, got %u\n", item->value);
+        size = QueryDepthSList(&slist_header);
+        ok(size == 0, "Expected size == 0, got %u\n", size);
+    }
+    else
+        win_skip("RtlInterlockedPushListSListEx not available, skipping tests\n");
+
+    /* test with a lot of items */
     for (i = 0; i < 65536; i++)
     {
-        entry = HeapAlloc(GetProcessHeap(), 0, sizeof(*entry));
-        pInterlockedPushEntrySList(&slist_header, entry);
+        item = HeapAlloc(GetProcessHeap(), 0, sizeof(*item));
+        item->value = i + 1;
+        entry = InterlockedPushEntrySList(&slist_header, &item->entry);
+        if (i)
+        {
+            ok(entry != NULL, "Expected entry != NULL, got %p\n", entry);
+            item = CONTAINING_RECORD(entry, struct item, entry);
+            ok(item->value == i, "Expected item->value == %u, got %u\n", i, item->value);
+        }
+        else
+        {
+            ok(entry == NULL, "Expected entry == NULL, got %p\n", entry);
+        }
+        size = QueryDepthSList(&slist_header);
+        ok(size == ((i + 1) & 0xffff), "Expected size == %u, got %u\n", (i + 1) & 0xffff, size);
     }
 
-    entry = pInterlockedFlushSList(&slist_header);
-    ok(entry != NULL, "not flushed\n");
-    while (entry)
+    entry = InterlockedFlushSList(&slist_header);
+    for (i = 65536; i > 0; i--)
     {
-        next = entry->Next;
-        HeapFree(GetProcessHeap(), 0, entry);
-        entry = next;
+        ok(entry != NULL, "Expected entry != NULL, got %p\n", entry);
+        item = CONTAINING_RECORD(entry, struct item, entry);
+        ok(item->value == i, "Expected item->value == %u, got %u\n", i, item->value);
+        entry = item->entry.Next;
+        HeapFree(GetProcessHeap(), 0, item);
     }
+    ok(entry == NULL, "Expected entry == NULL, got %p\n", entry);
+    size = QueryDepthSList(&slist_header);
+    ok(size == 0, "Expected size == 0, got %u\n", size);
+    entry = InterlockedPopEntrySList(&slist_header);
+    ok(entry == NULL, "Expected entry == NULL, got %p\n", entry);
 }
 
 static void test_event(void)
@@ -1067,6 +1186,8 @@ static HANDLE modify_handle(HANDLE handle, DWORD modify)
 static void test_WaitForSingleObject(void)
 {
     HANDLE signaled, nonsignaled, invalid;
+    LARGE_INTEGER timeout;
+    NTSTATUS status;
     DWORD ret;
 
     signaled = CreateEventW(NULL, TRUE, TRUE, NULL);
@@ -1136,12 +1257,29 @@ static void test_WaitForSingleObject(void)
     ok(ret == WAIT_OBJECT_0, "expected WAIT_OBJECT_0, got %d\n", ret);
     ok(GetLastError() == 0xdeadbeef, "expected 0xdeadbeef, got %d\n", GetLastError());
 
+    /* pseudo handles are allowed in WaitForSingleObject and NtWaitForSingleObject */
+    ret = WaitForSingleObject(GetCurrentProcess(), 100);
+    ok(ret == WAIT_TIMEOUT, "expected WAIT_TIMEOUT, got %u\n", ret);
+
+    ret = WaitForSingleObject(GetCurrentThread(), 100);
+    ok(ret == WAIT_TIMEOUT, "expected WAIT_TIMEOUT, got %u\n", ret);
+
+    timeout.QuadPart = -1000000;
+    status = pNtWaitForSingleObject(GetCurrentProcess(), FALSE, &timeout);
+    ok(status == STATUS_TIMEOUT, "expected STATUS_TIMEOUT, got %08x\n", status);
+
+    timeout.QuadPart = -1000000;
+    status = pNtWaitForSingleObject(GetCurrentThread(), FALSE, &timeout);
+    ok(status == STATUS_TIMEOUT, "expected STATUS_TIMEOUT, got %08x\n", status);
+
     CloseHandle(signaled);
     CloseHandle(nonsignaled);
 }
 
 static void test_WaitForMultipleObjects(void)
 {
+    LARGE_INTEGER timeout;
+    NTSTATUS status;
     DWORD r;
     int i;
     HANDLE maxevents[MAXIMUM_WAIT_OBJECTS];
@@ -1172,20 +1310,46 @@ static void test_WaitForMultipleObjects(void)
         SetEvent(maxevents[i]);
 
     /* a manual-reset event remains signaled, an auto-reset event is cleared */
-    r = pNtWaitForMultipleObjects(MAXIMUM_WAIT_OBJECTS, maxevents, TRUE, FALSE, NULL);
-    ok( r == WAIT_OBJECT_0, "should signal lowest handle first, got %d\n", r);
-    r = pNtWaitForMultipleObjects(MAXIMUM_WAIT_OBJECTS, maxevents, TRUE, FALSE, NULL);
-    ok( r == WAIT_OBJECT_0, "should signal handle #0 first, got %d\n", r);
+    status = pNtWaitForMultipleObjects(MAXIMUM_WAIT_OBJECTS, maxevents, TRUE, FALSE, NULL);
+    ok(status == STATUS_WAIT_0, "should signal lowest handle first, got %08x\n", status);
+    status = pNtWaitForMultipleObjects(MAXIMUM_WAIT_OBJECTS, maxevents, TRUE, FALSE, NULL);
+    ok(status == STATUS_WAIT_0, "should signal handle #0 first, got %08x\n", status);
     ok(ResetEvent(maxevents[0]), "ResetEvent\n");
     for (i=1; i<MAXIMUM_WAIT_OBJECTS; i++)
     {
         /* the lowest index is checked first and remaining events are untouched */
-        r = pNtWaitForMultipleObjects(MAXIMUM_WAIT_OBJECTS, maxevents, TRUE, FALSE, NULL);
-        ok( r == WAIT_OBJECT_0+i, "should signal handle #%d first, got %d\n", i, r);
+        status = pNtWaitForMultipleObjects(MAXIMUM_WAIT_OBJECTS, maxevents, TRUE, FALSE, NULL);
+        ok(status == STATUS_WAIT_0 + i, "should signal handle #%d first, got %08x\n", i, status);
     }
 
     for (i=0; i<MAXIMUM_WAIT_OBJECTS; i++)
         if (maxevents[i]) CloseHandle(maxevents[i]);
+
+    /* in contrast to WaitForSingleObject, pseudo handles are not allowed in
+     * WaitForMultipleObjects and NtWaitForMultipleObjects */
+    maxevents[0] = GetCurrentProcess();
+    SetLastError(0xdeadbeef);
+    r = WaitForMultipleObjects(1, maxevents, FALSE, 100);
+    todo_wine ok(r == WAIT_FAILED, "expected WAIT_FAILED, got %u\n", r);
+    todo_wine ok(GetLastError() == ERROR_INVALID_HANDLE,
+                 "expected ERROR_INVALID_HANDLE, got %u\n", GetLastError());
+
+    maxevents[0] = GetCurrentThread();
+    SetLastError(0xdeadbeef);
+    r = WaitForMultipleObjects(1, maxevents, FALSE, 100);
+    todo_wine ok(r == WAIT_FAILED, "expected WAIT_FAILED, got %u\n", r);
+    todo_wine ok(GetLastError() == ERROR_INVALID_HANDLE,
+                 "expected ERROR_INVALID_HANDLE, got %u\n", GetLastError());
+
+    timeout.QuadPart = -1000000;
+    maxevents[0] = GetCurrentProcess();
+    status = pNtWaitForMultipleObjects(1, maxevents, TRUE, FALSE, &timeout);
+    todo_wine ok(status == STATUS_INVALID_HANDLE, "expected STATUS_INVALID_HANDLE, got %08x\n", status);
+
+    timeout.QuadPart = -1000000;
+    maxevents[0] = GetCurrentThread();
+    status = pNtWaitForMultipleObjects(1, maxevents, TRUE, FALSE, &timeout);
+    todo_wine ok(status == STATUS_INVALID_HANDLE, "expected STATUS_INVALID_HANDLE, got %08x\n", status);
 }
 
 static BOOL g_initcallback_ret, g_initcallback_called;
@@ -1571,9 +1735,9 @@ static SRWLOCK condvar_srwlock;
 
 /* Sequence of wake/sleep to check boundary conditions:
  * 0: init
- * 1: producer emits a WakeConditionVaribale without consumer waiting.
+ * 1: producer emits a WakeConditionVariable without consumer waiting.
  * 2: consumer sleeps without a wake expecting timeout
- * 3: producer emits a WakeAllConditionVaribale without consumer waiting.
+ * 3: producer emits a WakeAllConditionVariable without consumer waiting.
  * 4: consumer sleeps without a wake expecting timeout
  * 5: a wake is handed to a SleepConditionVariableCS
  * 6: a wakeall is handed to a SleepConditionVariableCS
@@ -2303,8 +2467,191 @@ static void test_srwlock_example(void)
     trace("number of total exclusive accesses is %d\n", srwlock_protected_value);
 }
 
+static DWORD WINAPI alertable_wait_thread(void *param)
+{
+    HANDLE *semaphores = param;
+    LARGE_INTEGER timeout;
+    NTSTATUS status;
+    DWORD result;
+
+    ReleaseSemaphore(semaphores[0], 1, NULL);
+    result = WaitForMultipleObjectsEx(1, &semaphores[1], TRUE, 1000, TRUE);
+    ok(result == WAIT_IO_COMPLETION, "expected WAIT_IO_COMPLETION, got %u\n", result);
+    result = WaitForMultipleObjectsEx(1, &semaphores[1], TRUE, 200, TRUE);
+    ok(result == WAIT_OBJECT_0, "expected WAIT_OBJECT_0, got %u\n", result);
+
+    ReleaseSemaphore(semaphores[0], 1, NULL);
+    timeout.QuadPart = -10000000;
+    status = pNtWaitForMultipleObjects(1, &semaphores[1], FALSE, TRUE, &timeout);
+    ok(status == STATUS_USER_APC, "expected STATUS_USER_APC, got %08x\n", status);
+    timeout.QuadPart = -2000000;
+    status = pNtWaitForMultipleObjects(1, &semaphores[1], FALSE, TRUE, &timeout);
+    ok(status == STATUS_WAIT_0, "expected STATUS_WAIT_0, got %08x\n", status);
+
+    ReleaseSemaphore(semaphores[0], 1, NULL);
+    timeout.QuadPart = -10000000;
+    status = pNtWaitForMultipleObjects(1, &semaphores[1], FALSE, TRUE, &timeout);
+    ok(status == STATUS_USER_APC, "expected STATUS_USER_APC, got %08x\n", status);
+    result = WaitForSingleObject(semaphores[0], 0);
+    ok(result == WAIT_TIMEOUT, "expected WAIT_TIMEOUT, got %u\n", result);
+
+    return 0;
+}
+
+static void CALLBACK alertable_wait_apc(ULONG_PTR userdata)
+{
+    HANDLE *semaphores = (void *)userdata;
+    ReleaseSemaphore(semaphores[1], 1, NULL);
+}
+
+static void CALLBACK alertable_wait_apc2(ULONG_PTR userdata)
+{
+    HANDLE *semaphores = (void *)userdata;
+    DWORD result;
+
+    result = WaitForSingleObject(semaphores[0], 1000);
+    ok(result == WAIT_OBJECT_0, "expected WAIT_OBJECT_0, got %u\n", result);
+}
+
+static void test_alertable_wait(void)
+{
+    HANDLE thread, semaphores[2];
+    DWORD result;
+
+    semaphores[0] = CreateSemaphoreW(NULL, 0, 2, NULL);
+    ok(semaphores[0] != NULL, "CreateSemaphore failed with %u\n", GetLastError());
+    semaphores[1] = CreateSemaphoreW(NULL, 0, 1, NULL);
+    ok(semaphores[1] != NULL, "CreateSemaphore failed with %u\n", GetLastError());
+    thread = CreateThread(NULL, 0, alertable_wait_thread, semaphores, 0, NULL);
+    ok(thread != NULL, "CreateThread failed with %u\n", GetLastError());
+
+    result = WaitForSingleObject(semaphores[0], 1000);
+    ok(result == WAIT_OBJECT_0, "expected WAIT_OBJECT_0, got %u\n", result);
+    Sleep(100); /* ensure the thread is blocking in WaitForMultipleObjectsEx */
+    result = QueueUserAPC(alertable_wait_apc, thread, (ULONG_PTR)semaphores);
+    ok(result != 0, "QueueUserAPC failed with %u\n", GetLastError());
+
+    result = WaitForSingleObject(semaphores[0], 1000);
+    ok(result == WAIT_OBJECT_0, "expected WAIT_OBJECT_0, got %u\n", result);
+    Sleep(100); /* ensure the thread is blocking in NtWaitForMultipleObjects */
+    result = QueueUserAPC(alertable_wait_apc, thread, (ULONG_PTR)semaphores);
+    ok(result != 0, "QueueUserAPC failed with %u\n", GetLastError());
+
+    result = WaitForSingleObject(semaphores[0], 1000);
+    ok(result == WAIT_OBJECT_0, "expected WAIT_OBJECT_0, got %u\n", result);
+    Sleep(100); /* ensure the thread is blocking in NtWaitForMultipleObjects */
+    result = QueueUserAPC(alertable_wait_apc2, thread, (ULONG_PTR)semaphores);
+    ok(result != 0, "QueueUserAPC failed with %u\n", GetLastError());
+    result = QueueUserAPC(alertable_wait_apc2, thread, (ULONG_PTR)semaphores);
+    ok(result != 0, "QueueUserAPC failed with %u\n", GetLastError());
+    ReleaseSemaphore(semaphores[0], 2, NULL);
+
+    result = WaitForSingleObject(thread, 1000);
+    ok(result == WAIT_OBJECT_0, "expected WAIT_OBJECT_0, got %u\n", result);
+    CloseHandle(thread);
+    CloseHandle(semaphores[0]);
+    CloseHandle(semaphores[1]);
+}
+
+struct apc_deadlock_info
+{
+    PROCESS_INFORMATION *pi;
+    HANDLE event;
+    BOOL running;
+};
+
+static DWORD WINAPI apc_deadlock_thread(void *param)
+{
+    struct apc_deadlock_info *info = param;
+    PROCESS_INFORMATION *pi = info->pi;
+    NTSTATUS status;
+    SIZE_T size;
+    void *base;
+
+    while (info->running)
+    {
+        base = NULL;
+        size = 0x1000;
+        status = pNtAllocateVirtualMemory(pi->hProcess, &base, 0, &size,
+                                          MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        ok(!status, "expected STATUS_SUCCESS, got %08x\n", status);
+        ok(base != NULL, "expected base != NULL, got %p\n", base);
+        SetEvent(info->event);
+
+        size = 0;
+        status = pNtFreeVirtualMemory(pi->hProcess, &base, &size, MEM_RELEASE);
+        ok(!status, "expected STATUS_SUCCESS, got %08x\n", status);
+        SetEvent(info->event);
+    }
+
+    return 0;
+}
+
+static void test_apc_deadlock(void)
+{
+    struct apc_deadlock_info info;
+    PROCESS_INFORMATION pi;
+    STARTUPINFOA si = { sizeof(si) };
+    char cmdline[MAX_PATH];
+    HANDLE event, thread;
+    DWORD result;
+    BOOL success;
+    char **argv;
+    int i;
+
+    winetest_get_mainargs(&argv);
+    sprintf(cmdline, "\"%s\" sync apc_deadlock", argv[0]);
+    success = CreateProcessA(argv[0], cmdline, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+    ok(success, "CreateProcess failed with %u\n", GetLastError());
+
+    event = CreateEventA(NULL, FALSE, FALSE, NULL);
+    ok(event != NULL, "CreateEvent failed with %u\n", GetLastError());
+
+    info.pi = &pi;
+    info.event = event;
+    info.running = TRUE;
+
+    thread = CreateThread(NULL, 0, apc_deadlock_thread, &info, 0, NULL);
+    ok(thread != NULL, "CreateThread failed with %u\n", GetLastError());
+    result = WaitForSingleObject(event, 1000);
+    ok(result == WAIT_OBJECT_0, "expected WAIT_OBJECT_0, got %u\n", result);
+
+    for (i = 0; i < 1000 && info.running; i++)
+    {
+        result = SuspendThread(pi.hThread);
+        ok(result == 0, "expected 0, got %u\n", result);
+
+        WaitForSingleObject(event, 0); /* reset event */
+        result = WaitForSingleObject(event, 1000);
+        if (result == WAIT_TIMEOUT)
+        {
+            todo_wine
+            ok(result == WAIT_OBJECT_0, "expected WAIT_OBJECT_0, got %u\n", result);
+            info.running = FALSE;
+        }
+        else
+            ok(result == WAIT_OBJECT_0, "expected WAIT_OBJECT_0, got %u\n", result);
+
+        result = ResumeThread(pi.hThread);
+        ok(result == 1, "expected 1, got %u\n", result);
+        Sleep(1);
+    }
+
+    info.running = FALSE;
+    result = WaitForSingleObject(thread, 1000);
+    ok(result == WAIT_OBJECT_0, "expected WAIT_OBJECT_0, got %u\n", result);
+    CloseHandle(thread);
+    CloseHandle(event);
+
+    TerminateProcess(pi.hProcess, 0);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+}
+
 START_TEST(sync)
 {
+    char **argv;
+    int argc;
     HMODULE hdll = GetModuleHandleA("kernel32.dll");
     HMODULE hntdll = GetModuleHandleA("ntdll.dll");
 
@@ -2333,8 +2680,24 @@ START_TEST(sync)
     pReleaseSRWLockShared = (void *)GetProcAddress(hdll, "ReleaseSRWLockShared");
     pTryAcquireSRWLockExclusive = (void *)GetProcAddress(hdll, "TryAcquireSRWLockExclusive");
     pTryAcquireSRWLockShared = (void *)GetProcAddress(hdll, "TryAcquireSRWLockShared");
+    pNtAllocateVirtualMemory = (void *)GetProcAddress(hntdll, "NtAllocateVirtualMemory");
+    pNtFreeVirtualMemory = (void *)GetProcAddress(hntdll, "NtFreeVirtualMemory");
+    pNtWaitForSingleObject = (void *)GetProcAddress(hntdll, "NtWaitForSingleObject");
     pNtWaitForMultipleObjects = (void *)GetProcAddress(hntdll, "NtWaitForMultipleObjects");
+    pRtlInterlockedPushListSList = (void *)GetProcAddress(hntdll, "RtlInterlockedPushListSList");
+    pRtlInterlockedPushListSListEx = (void *)GetProcAddress(hntdll, "RtlInterlockedPushListSListEx");
 
+    argc = winetest_get_mainargs( &argv );
+    if (argc >= 3)
+    {
+        if (!strcmp(argv[2], "apc_deadlock"))
+        {
+            for (;;) SleepEx(INFINITE, TRUE);
+        }
+        return;
+    }
+
+    init_fastcall_thunk();
     test_signalandwait();
     test_mutex();
     test_slist();
@@ -2350,4 +2713,6 @@ START_TEST(sync)
     test_condvars_consumer_producer();
     test_srwlock_base();
     test_srwlock_example();
+    test_alertable_wait();
+    test_apc_deadlock();
 }

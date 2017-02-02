@@ -111,6 +111,7 @@ static const char * const atom_names[NB_XATOMS - FIRST_XATOM] =
     "SELECTION_DATA",
     "TARGETS",
     "TEXT",
+    "TIMESTAMP",
     "UTF8_STRING",
     "RAW_ASCENT",
     "RAW_DESCENT",
@@ -138,6 +139,7 @@ static const char * const atom_names[NB_XATOMS - FIRST_XATOM] =
     "_NET_WM_PING",
     "_NET_WM_STATE",
     "_NET_WM_STATE_ABOVE",
+    "_NET_WM_STATE_DEMANDS_ATTENTION",
     "_NET_WM_STATE_FULLSCREEN",
     "_NET_WM_STATE_MAXIMIZED_HORZ",
     "_NET_WM_STATE_MAXIMIZED_VERT",
@@ -166,24 +168,11 @@ static const char * const atom_names[NB_XATOMS - FIRST_XATOM] =
     "XdndActionAsk",
     "XdndActionPrivate",
     "XdndSelection",
-    "XdndTarget",
     "XdndTypeList",
     "HTML Format",
-    "WCF_BITMAP",
-    "WCF_DIB",
-    "WCF_DIBV5",
     "WCF_DIF",
-    "WCF_DSPBITMAP",
-    "WCF_DSPENHMETAFILE",
-    "WCF_DSPMETAFILEPICT",
-    "WCF_DSPTEXT",
     "WCF_ENHMETAFILE",
     "WCF_HDROP",
-    "WCF_LOCALE",
-    "WCF_METAFILEPICT",
-    "WCF_OEMTEXT",
-    "WCF_OWNERDISPLAY",
-    "WCF_PALETTE",
     "WCF_PENDATA",
     "WCF_RIFF",
     "WCF_SYLK",
@@ -207,8 +196,14 @@ static const char * const atom_names[NB_XATOMS - FIRST_XATOM] =
  */
 static inline BOOL ignore_error( Display *display, XErrorEvent *event )
 {
-    if ((event->request_code == X_SetInputFocus || event->request_code == X_ChangeWindowAttributes) &&
-        (event->error_code == BadMatch || event->error_code == BadWindow)) return TRUE;
+    if ((event->request_code == X_SetInputFocus ||
+         event->request_code == X_ChangeWindowAttributes ||
+         event->request_code == X_SendEvent) &&
+        (event->error_code == BadMatch ||
+         event->error_code == BadWindow)) return TRUE;
+
+    /* the clipboard display interacts with external windows, ignore all errors */
+    if (display == clipboard_display) return TRUE;
 
     /* ignore a number of errors on gdi display caused by creating/destroying windows */
     if (display == gdi_display)
@@ -588,7 +583,6 @@ static BOOL process_attach(void)
     if (use_xkb) use_xkb = XkbUseExtension( gdi_display, NULL, NULL );
 #endif
     X11DRV_InitKeyboard( gdi_display );
-    X11DRV_InitClipboard();
     if (use_xim) use_xim = X11DRV_InitXIM( input_style );
 
     return TRUE;
@@ -596,15 +590,14 @@ static BOOL process_attach(void)
 
 
 /***********************************************************************
- *           X11DRV thread termination routine
+ *           ThreadDetach (X11DRV.@)
  */
-static void thread_detach(void)
+void CDECL X11DRV_ThreadDetach(void)
 {
     struct x11drv_thread_data *data = TlsGetValue( thread_data_tls_index );
 
     if (data)
     {
-        X11DRV_ResetSelectionOwner();
         if (data->xim) XCloseIM( data->xim );
         if (data->font_set) XFreeFontSet( data->display, data->font_set );
         XCloseDisplay( data->display );
@@ -689,11 +682,9 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
     switch(reason)
     {
     case DLL_PROCESS_ATTACH:
+        DisableThreadLibraryCalls( hinst );
         x11drv_module = hinst;
         ret = process_attach();
-        break;
-    case DLL_THREAD_DETACH:
-        thread_detach();
         break;
     }
     return ret;

@@ -22,7 +22,9 @@ enum type_id
     INetFwAuthorizedApplications_tid,
     INetFwMgr_tid,
     INetFwOpenPort_tid,
+    INetFwOpenPorts_tid,
     INetFwPolicy_tid,
+    INetFwPolicy2_tid,
     INetFwProfile_tid,
     last_tid
 };
@@ -32,6 +34,7 @@ void release_typelib(void) DECLSPEC_HIDDEN;
 
 HRESULT NetFwMgr_create(IUnknown *, LPVOID *) DECLSPEC_HIDDEN;
 HRESULT NetFwPolicy_create(IUnknown *, LPVOID *) DECLSPEC_HIDDEN;
+HRESULT NetFwPolicy2_create(IUnknown *, void **) DECLSPEC_HIDDEN;
 HRESULT NetFwProfile_create(IUnknown *, LPVOID *) DECLSPEC_HIDDEN;
 HRESULT NetFwAuthorizedApplication_create(IUnknown *, LPVOID *) DECLSPEC_HIDDEN;
 HRESULT NetFwAuthorizedApplications_create(IUnknown *, LPVOID *) DECLSPEC_HIDDEN;

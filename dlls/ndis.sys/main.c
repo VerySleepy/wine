@@ -2,6 +2,7 @@
  * ndis.sys
  *
  * Copyright 2014 Austin English
+ * Copyright 2016 André Hentschel
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -18,23 +19,50 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "config.h"
-
 #include <stdarg.h>
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
+#include "winternl.h"
+#include "ddk/wdm.h"
+#include "ddk/ndis.h"
+#include "wine/debug.h"
 
-BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
+WINE_DEFAULT_DEBUG_CHANNEL(ndis);
+
+NTSTATUS WINAPI DriverEntry(DRIVER_OBJECT *driver, UNICODE_STRING *path)
 {
-    switch (reason)
-    {
-        case DLL_WINE_PREATTACH:
-            return FALSE;    /* prefer native version */
-        case DLL_PROCESS_ATTACH:
-            DisableThreadLibraryCalls(instance);
-            break;
-    }
+    TRACE("(%p, %s)\n", driver, debugstr_w(path->Buffer));
 
-    return TRUE;
+    return STATUS_SUCCESS;
+}
+
+NDIS_STATUS WINAPI NdisAllocateMemoryWithTag(void **address, UINT length, ULONG tag)
+{
+    FIXME("(%p, %u, %u): stub\n", address, length, tag);
+    return NDIS_STATUS_FAILURE;
+}
+
+void WINAPI NdisAllocateSpinLock(NDIS_SPIN_LOCK *lock)
+{
+    FIXME("(%p): stub\n", lock);
+}
+
+void WINAPI NdisRegisterProtocol(NDIS_STATUS *status, NDIS_HANDLE *handle,
+                                 NDIS_PROTOCOL_CHARACTERISTICS *prot, UINT len)
+{
+    FIXME("(%p, %p, %p, %u): stub\n", status, handle, prot, len);
+    *status = NDIS_STATUS_FAILURE;
+}
+
+CCHAR WINAPI NdisSystemProcessorCount(void)
+{
+    SYSTEM_INFO si;
+
+    TRACE("()\n");
+    GetSystemInfo(&si);
+
+    return si.dwNumberOfProcessors;
 }

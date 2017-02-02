@@ -28,6 +28,8 @@
 #include <time.h>
 #include <assert.h>
 
+#define NONAMELESSUNION
+
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "windef.h"
@@ -94,7 +96,7 @@ static CRITICAL_SECTION service_cs = { &service_cs_debug, -1, 0, 0, 0, 0 };
 static service_data **services;
 static unsigned int nb_services;
 static HANDLE service_event;
-static HANDLE stop_event;
+static BOOL stop_service;
 
 extern HANDLE CDECL __wine_make_process_system(void);
 
@@ -150,8 +152,7 @@ static inline DWORD multisz_cb(LPCWSTR wmultisz)
 /******************************************************************************
  * RPC connection with services.exe
  */
-
-DECLSPEC_HIDDEN handle_t __RPC_USER MACHINE_HANDLEW_bind(MACHINE_HANDLEW MachineName)
+static handle_t rpc_wstr_bind(RPC_WSTR str)
 {
     WCHAR transport[] = SVCCTL_TRANSPORT;
     WCHAR endpoint[] = SVCCTL_ENDPOINT;
@@ -159,7 +160,7 @@ DECLSPEC_HIDDEN handle_t __RPC_USER MACHINE_HANDLEW_bind(MACHINE_HANDLEW Machine
     RPC_STATUS status;
     handle_t rpc_handle;
 
-    status = RpcStringBindingComposeW(NULL, transport, (RPC_WSTR)MachineName, endpoint, NULL, &binding_str);
+    status = RpcStringBindingComposeW(NULL, transport, str, endpoint, NULL, &binding_str);
     if (status != RPC_S_OK)
     {
         ERR("RpcStringBindingComposeW failed (%d)\n", (DWORD)status);
@@ -178,7 +179,59 @@ DECLSPEC_HIDDEN handle_t __RPC_USER MACHINE_HANDLEW_bind(MACHINE_HANDLEW Machine
     return rpc_handle;
 }
 
+static handle_t rpc_cstr_bind(RPC_CSTR str)
+{
+    RPC_CSTR transport = (RPC_CSTR)SVCCTL_TRANSPORTA;
+    RPC_CSTR endpoint = (RPC_CSTR)SVCCTL_ENDPOINTA;
+    RPC_CSTR binding_str;
+    RPC_STATUS status;
+    handle_t rpc_handle;
+
+    status = RpcStringBindingComposeA(NULL, transport, str, endpoint, NULL, &binding_str);
+    if (status != RPC_S_OK)
+    {
+        ERR("RpcStringBindingComposeW failed (%d)\n", (DWORD)status);
+        return NULL;
+    }
+
+    status = RpcBindingFromStringBindingA(binding_str, &rpc_handle);
+    RpcStringFreeA(&binding_str);
+
+    if (status != RPC_S_OK)
+    {
+        ERR("Couldn't connect to services.exe: error code %u\n", (DWORD)status);
+        return NULL;
+    }
+
+    return rpc_handle;
+}
+
+DECLSPEC_HIDDEN handle_t __RPC_USER MACHINE_HANDLEA_bind(MACHINE_HANDLEA MachineName)
+{
+    return rpc_cstr_bind((RPC_CSTR)MachineName);
+}
+
+DECLSPEC_HIDDEN void __RPC_USER MACHINE_HANDLEA_unbind(MACHINE_HANDLEA MachineName, handle_t h)
+{
+    RpcBindingFree(&h);
+}
+
+DECLSPEC_HIDDEN handle_t __RPC_USER MACHINE_HANDLEW_bind(MACHINE_HANDLEW MachineName)
+{
+    return rpc_wstr_bind((RPC_WSTR)MachineName);
+}
+
 DECLSPEC_HIDDEN void __RPC_USER MACHINE_HANDLEW_unbind(MACHINE_HANDLEW MachineName, handle_t h)
+{
+    RpcBindingFree(&h);
+}
+
+DECLSPEC_HIDDEN handle_t __RPC_USER SVCCTL_HANDLEW_bind(SVCCTL_HANDLEW MachineName)
+{
+    return rpc_wstr_bind((RPC_WSTR)MachineName);
+}
+
+DECLSPEC_HIDDEN void __RPC_USER SVCCTL_HANDLEW_unbind(SVCCTL_HANDLEW MachineName, handle_t h)
 {
     RpcBindingFree(&h);
 }
@@ -326,9 +379,9 @@ static DWORD WINAPI service_thread(LPVOID arg)
 /******************************************************************************
  * service_handle_start
  */
-static DWORD service_handle_start(service_data *service, const WCHAR *data, DWORD count)
+static DWORD service_handle_start(service_data *service, const void *data, DWORD data_size)
 {
-    TRACE("%s argsize %u\n", debugstr_w(service->name), count);
+    DWORD count = data_size / sizeof(WCHAR);
 
     if (service->thread)
     {
@@ -337,8 +390,11 @@ static DWORD service_handle_start(service_data *service, const WCHAR *data, DWOR
     }
 
     heap_free(service->args);
-    service->args = heap_alloc(count * sizeof(WCHAR));
-    memcpy( service->args, data, count * sizeof(WCHAR) );
+    service->args = heap_alloc((count + 2) * sizeof(WCHAR));
+    if (count) memcpy( service->args, data, count * sizeof(WCHAR) );
+    service->args[count++] = 0;
+    service->args[count++] = 0;
+
     service->thread = CreateThread( NULL, 0, service_thread,
                                     service, 0, NULL );
     SetEvent( service_event );  /* notify the main loop */
@@ -348,14 +404,16 @@ static DWORD service_handle_start(service_data *service, const WCHAR *data, DWOR
 /******************************************************************************
  * service_handle_control
  */
-static DWORD service_handle_control(const service_data *service, DWORD dwControl)
+static DWORD service_handle_control(service_data *service, DWORD control, const void *data, DWORD data_size)
 {
     DWORD ret = ERROR_INVALID_SERVICE_CONTROL;
 
-    TRACE("%s control %u\n", debugstr_w(service->name), dwControl);
+    TRACE("%s control %u data %p data_size %u\n", debugstr_w(service->name), control, data, data_size);
 
-    if (service->handler)
-        ret = service->handler(dwControl, 0, NULL, service->context);
+    if (control == SERVICE_CONTROL_START)
+        ret = service_handle_start(service, data, data_size);
+    else if (service->handler)
+        ret = service->handler(control, 0, (void *)data, service->context);
     return ret;
 }
 
@@ -371,7 +429,8 @@ static DWORD WINAPI service_control_dispatcher(LPVOID arg)
     {
         service_data *service;
         service_start_info info;
-        WCHAR *data = NULL;
+        BYTE *data = NULL;
+        WCHAR *name;
         BOOL r;
         DWORD data_size = 0, count, result;
 
@@ -407,40 +466,46 @@ static DWORD WINAPI service_control_dispatcher(LPVOID arg)
             }
         }
 
-        /* find the service */
+        EnterCriticalSection( &service_cs );
 
-        if (!(service = find_service_by_name( data )))
+        /* validate service name */
+        name = (WCHAR *)data;
+        if (!info.name_size || data_size < info.name_size * sizeof(WCHAR) || name[info.name_size - 1])
         {
-            FIXME( "got request %u for unknown service %s\n", info.cmd, debugstr_w(data));
+            ERR( "got request without valid service name\n" );
             result = ERROR_INVALID_PARAMETER;
             goto done;
         }
 
-        TRACE( "got request %u for service %s\n", info.cmd, debugstr_w(data) );
-
-        /* handle the request */
-        switch (info.cmd)
+        if (info.magic != SERVICE_PROTOCOL_MAGIC)
         {
-        case WINESERV_STARTINFO:
-            if (!service->handle)
-            {
-                if (!(service->handle = OpenServiceW( disp->manager, data, SERVICE_SET_STATUS )) ||
-                    !(service->full_access_handle = OpenServiceW( disp->manager, data,
-                            GENERIC_READ|GENERIC_WRITE )))
-                    FIXME( "failed to open service %s\n", debugstr_w(data) );
-            }
-            result = service_handle_start(service, data, data_size / sizeof(WCHAR));
-            break;
-        case WINESERV_SENDCONTROL:
-            result = service_handle_control(service, info.control);
-            break;
-        default:
-            ERR("received invalid command %u\n", info.cmd);
+            ERR( "received invalid request for service %s\n", debugstr_w(name) );
             result = ERROR_INVALID_PARAMETER;
-            break;
+            goto done;
         }
 
+        /* find the service */
+        if (!(service = find_service_by_name( name )))
+        {
+            FIXME( "got request for unknown service %s\n", debugstr_w(name) );
+            result = ERROR_INVALID_PARAMETER;
+            goto done;
+        }
+
+        if (!service->handle)
+        {
+            if (!(service->handle = OpenServiceW( disp->manager, name, SERVICE_SET_STATUS )) ||
+                !(service->full_access_handle = OpenServiceW( disp->manager, name,
+                        GENERIC_READ|GENERIC_WRITE )))
+                FIXME( "failed to open service %s\n", debugstr_w(name) );
+        }
+
+        data_size -= info.name_size * sizeof(WCHAR);
+        result = service_handle_control(service, info.control, data_size ?
+                                        &data[info.name_size * sizeof(WCHAR)] : NULL, data_size);
+
     done:
+        LeaveCriticalSection( &service_cs );
         WriteFile( disp->pipe, &result, sizeof(result), &count, NULL );
         heap_free( data );
     }
@@ -480,22 +545,21 @@ static BOOL service_run_main_thread(void)
     }
 
     service_event = CreateEventW( NULL, FALSE, FALSE, NULL );
-    stop_event = CreateEventW( NULL, FALSE, FALSE, NULL );
+    stop_service  = FALSE;
 
     /* FIXME: service_control_dispatcher should be merged into the main thread */
     wait_handles[0] = __wine_make_process_system();
     wait_handles[1] = CreateThread( NULL, 0, service_control_dispatcher, disp, 0, NULL );
     wait_handles[2] = service_event;
-    wait_handles[3] = stop_event;
 
     TRACE("Starting %d services running as process %d\n",
           nb_services, GetCurrentProcessId());
 
     /* wait for all the threads to pack up and exit */
-    for (;;)
+    while (!stop_service)
     {
         EnterCriticalSection( &service_cs );
-        for (i = 0, n = 4; i < nb_services && n < MAXIMUM_WAIT_OBJECTS; i++)
+        for (i = 0, n = 3; i < nb_services && n < MAXIMUM_WAIT_OBJECTS; i++)
         {
             if (!services[i]->thread) continue;
             wait_services[n] = i;
@@ -527,13 +591,13 @@ static BOOL service_run_main_thread(void)
                     {
                         FIXME("service should be able to delay shutdown\n");
                         timeout += spi.dwPreshutdownTimeout;
-                        ret = service_handle_control( services[i], SERVICE_CONTROL_PRESHUTDOWN );
+                        ret = service_handle_control( services[i], SERVICE_CONTROL_PRESHUTDOWN, NULL, 0 );
                         wait_handles[n++] = services[i]->thread;
                     }
                 }
                 else if (res && (st.dwControlsAccepted & SERVICE_ACCEPT_SHUTDOWN))
                 {
-                    ret = service_handle_control( services[i], SERVICE_CONTROL_SHUTDOWN );
+                    ret = service_handle_control( services[i], SERVICE_CONTROL_SHUTDOWN, NULL, 0 );
                     wait_handles[n++] = services[i]->thread;
                 }
             }
@@ -553,17 +617,18 @@ static BOOL service_run_main_thread(void)
         {
             continue;  /* rebuild the list */
         }
-        else if (ret == 3)
-        {
-            return TRUE;
-        }
         else if (ret < n)
         {
-            services[wait_services[ret]]->thread = 0;
-            CloseHandle( wait_handles[ret] );
+            i = wait_services[ret];
+            EnterCriticalSection( &service_cs );
+            CloseHandle( services[i]->thread );
+            services[i]->thread = NULL;
+            LeaveCriticalSection( &service_cs );
         }
         else return FALSE;
     }
+
+    return TRUE;
 }
 
 /******************************************************************************
@@ -741,9 +806,21 @@ SetServiceStatus( SERVICE_STATUS_HANDLE hService, LPSERVICE_STATUS lpStatus )
         return FALSE;
     }
 
-    if (lpStatus->dwCurrentState == SERVICE_STOPPED) {
-        SetEvent(stop_event);
-        CloseServiceHandle((SC_HANDLE)hService);
+    if (lpStatus->dwCurrentState == SERVICE_STOPPED)
+    {
+        unsigned int i, count = 0;
+        EnterCriticalSection( &service_cs );
+        for (i = 0; i < nb_services; i++)
+        {
+            if (services[i]->handle == (SC_HANDLE)hService) continue;
+            if (services[i]->thread) count++;
+        }
+        if (!count)
+        {
+            stop_service = TRUE;
+            SetEvent( service_event );  /* notify the main loop */
+        }
+        LeaveCriticalSection( &service_cs );
     }
 
     return TRUE;
@@ -921,7 +998,7 @@ SC_HANDLE WINAPI OpenServiceA( SC_HANDLE hSCManager, LPCSTR lpServiceName,
     LPWSTR lpServiceNameW;
     SC_HANDLE ret;
 
-    TRACE("%p %s %d\n", hSCManager, debugstr_a(lpServiceName), dwDesiredAccess);
+    TRACE("%p %s 0x%08x\n", hSCManager, debugstr_a(lpServiceName), dwDesiredAccess);
 
     lpServiceNameW = SERV_dup(lpServiceName);
     ret = OpenServiceW( hSCManager, lpServiceNameW, dwDesiredAccess);
@@ -940,7 +1017,7 @@ DWORD SERV_OpenServiceW( SC_HANDLE hSCManager, LPCWSTR lpServiceName,
 {
     DWORD err;
 
-    TRACE("%p %s %d\n", hSCManager, debugstr_w(lpServiceName), dwDesiredAccess);
+    TRACE("%p %s 0x%08x\n", hSCManager, debugstr_w(lpServiceName), dwDesiredAccess);
 
     if (!hSCManager)
         return ERROR_INVALID_HANDLE;
@@ -1006,11 +1083,22 @@ CreateServiceW( SC_HANDLE hSCManager, LPCWSTR lpServiceName,
 
     __TRY
     {
-        err = svcctl_CreateServiceW(hSCManager, lpServiceName,
-                lpDisplayName, dwDesiredAccess, dwServiceType, dwStartType, dwErrorControl,
-                lpBinaryPathName, lpLoadOrderGroup, lpdwTagId, (const BYTE*)lpDependencies,
-                multisz_cb(lpDependencies), lpServiceStartName, (const BYTE*)lpPassword, passwdlen,
-                (SC_RPC_HANDLE *)&handle);
+        BOOL is_wow64;
+
+        IsWow64Process(GetCurrentProcess(), &is_wow64);
+
+        if (is_wow64)
+            err = svcctl_CreateServiceWOW64W(hSCManager, lpServiceName,
+                    lpDisplayName, dwDesiredAccess, dwServiceType, dwStartType, dwErrorControl,
+                    lpBinaryPathName, lpLoadOrderGroup, lpdwTagId, (const BYTE*)lpDependencies,
+                    multisz_cb(lpDependencies), lpServiceStartName, (const BYTE*)lpPassword, passwdlen,
+                    (SC_RPC_HANDLE *)&handle);
+        else
+            err = svcctl_CreateServiceW(hSCManager, lpServiceName,
+                    lpDisplayName, dwDesiredAccess, dwServiceType, dwStartType, dwErrorControl,
+                    lpBinaryPathName, lpLoadOrderGroup, lpdwTagId, (const BYTE*)lpDependencies,
+                    multisz_cb(lpDependencies), lpServiceStartName, (const BYTE*)lpPassword, passwdlen,
+                    (SC_RPC_HANDLE *)&handle);
     }
     __EXCEPT(rpc_filter)
     {
@@ -1387,7 +1475,7 @@ QueryServiceConfigW( SC_HANDLE hService,
 
     __TRY
     {
-        err = svcctl_QueryServiceConfigW(hService, &config);
+        err = svcctl_QueryServiceConfigW(hService, &config, cbBufSize, pcbBytesNeeded);
     }
     __EXCEPT(rpc_filter)
     {
@@ -1619,9 +1707,6 @@ EnumServicesStatusW( SC_HANDLE hmngr, DWORD type, DWORD state, LPENUM_SERVICE_ST
     TRACE("%p 0x%x 0x%x %p %u %p %p %p\n", hmngr, type, state, services, size, needed,
           returned, resume_handle);
 
-    if (resume_handle)
-        FIXME("resume handle not supported\n");
-
     if (!hmngr)
     {
         SetLastError( ERROR_INVALID_HANDLE );
@@ -1637,7 +1722,7 @@ EnumServicesStatusW( SC_HANDLE hmngr, DWORD type, DWORD state, LPENUM_SERVICE_ST
 
     __TRY
     {
-        err = svcctl_EnumServicesStatusW( hmngr, type, state, (BYTE *)services, size, needed, returned );
+        err = svcctl_EnumServicesStatusW( hmngr, type, state, (BYTE *)services, size, needed, returned, resume_handle );
     }
     __EXCEPT(rpc_filter)
     {
@@ -1748,9 +1833,6 @@ EnumServicesStatusExW( SC_HANDLE hmngr, SC_ENUM_TYPE level, DWORD type, DWORD st
     TRACE("%p %u 0x%x 0x%x %p %u %p %p %p %s\n", hmngr, level, type, state, buffer,
           size, needed, returned, resume_handle, debugstr_w(group));
 
-    if (resume_handle)
-        FIXME("resume handle not supported\n");
-
     if (level != SC_ENUM_PROCESS_INFO)
     {
         SetLastError( ERROR_INVALID_LEVEL );
@@ -1771,8 +1853,8 @@ EnumServicesStatusExW( SC_HANDLE hmngr, SC_ENUM_TYPE level, DWORD type, DWORD st
 
     __TRY
     {
-        err = svcctl_EnumServicesStatusExW( hmngr, type, state, buffer, size, needed,
-                                            returned, group );
+        err = svcctl_EnumServicesStatusExW( hmngr, SC_ENUM_PROCESS_INFO, type, state, buffer, size, needed,
+                                            returned, resume_handle, group );
     }
     __EXCEPT(rpc_filter)
     {
@@ -2155,7 +2237,11 @@ BOOL WINAPI ChangeServiceConfig2W( SC_HANDLE hService, DWORD dwInfoLevel,
 
     __TRY
     {
-        err = svcctl_ChangeServiceConfig2W( hService, dwInfoLevel, lpInfo );
+        SC_RPC_CONFIG_INFOW info;
+
+        info.dwInfoLevel = dwInfoLevel;
+        info.u.descr = lpInfo;
+        err = svcctl_ChangeServiceConfig2W( hService, info );
     }
     __EXCEPT(rpc_filter)
     {
@@ -2288,7 +2374,6 @@ SERVICE_STATUS_HANDLE WINAPI RegisterServiceCtrlHandlerExW( LPCWSTR lpServiceNam
 {
     service_data *service;
     SC_HANDLE hService = 0;
-    BOOL found = FALSE;
 
     TRACE("%s %p %p\n", debugstr_w(lpServiceName), lpHandlerProc, lpContext);
 
@@ -2298,12 +2383,10 @@ SERVICE_STATUS_HANDLE WINAPI RegisterServiceCtrlHandlerExW( LPCWSTR lpServiceNam
         service->handler = lpHandlerProc;
         service->context = lpContext;
         hService = service->handle;
-        found = TRUE;
     }
     LeaveCriticalSection( &service_cs );
 
-    if (!found) SetLastError(ERROR_SERVICE_DOES_NOT_EXIST);
-
+    if (!hService) SetLastError( ERROR_SERVICE_DOES_NOT_EXIST );
     return (SERVICE_STATUS_HANDLE)hService;
 }
 
@@ -2333,4 +2416,38 @@ BOOL WINAPI EnumDependentServicesW( SC_HANDLE hService, DWORD dwServiceState,
 
     *lpServicesReturned = 0;
     return TRUE;
+}
+
+/******************************************************************************
+ * NotifyServiceStatusChangeW [ADVAPI32.@]
+ */
+DWORD WINAPI NotifyServiceStatusChangeW(SC_HANDLE hService, DWORD dwNotifyMask,
+        SERVICE_NOTIFYW *pNotifyBuffer)
+{
+    DWORD dummy;
+    BOOL ret;
+    SERVICE_STATUS_PROCESS st;
+
+    FIXME("%p 0x%x %p - semi-stub\n", hService, dwNotifyMask, pNotifyBuffer);
+
+    ret = QueryServiceStatusEx(hService, SC_STATUS_PROCESS_INFO, (void*)&st, sizeof(st), &dummy);
+    if (ret)
+    {
+        /* dwNotifyMask is a set of bitflags in same order as SERVICE_ statuses */
+        if (dwNotifyMask & (1 << (st.dwCurrentState - SERVICE_STOPPED)))
+        {
+            pNotifyBuffer->dwNotificationStatus = ERROR_SUCCESS;
+            memcpy(&pNotifyBuffer->ServiceStatus, &st, sizeof(pNotifyBuffer->ServiceStatus));
+            pNotifyBuffer->dwNotificationTriggered = 1 << (st.dwCurrentState - SERVICE_STOPPED);
+            pNotifyBuffer->pszServiceNames = NULL;
+            TRACE("Queueing notification: 0x%x\n", pNotifyBuffer->dwNotificationTriggered);
+            QueueUserAPC((PAPCFUNC)pNotifyBuffer->pfnNotifyCallback,
+                    GetCurrentThread(), (ULONG_PTR)pNotifyBuffer);
+        }
+    }
+
+    /* TODO: If the service is not currently in a matching state, we should
+     * tell `services` to monitor it. */
+
+    return ERROR_SUCCESS;
 }

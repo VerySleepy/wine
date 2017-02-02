@@ -1117,12 +1117,11 @@ void macdrv_hotkey_press(const macdrv_event *event)
 /***********************************************************************
  *              macdrv_process_text_input
  */
-BOOL macdrv_process_text_input(UINT vkey, UINT scan, UINT repeat, const BYTE *key_state, void *himc)
+void macdrv_process_text_input(UINT vkey, UINT scan, UINT repeat, const BYTE *key_state, void *himc, int* done)
 {
     struct macdrv_thread_data *thread_data = macdrv_thread_data();
     unsigned int flags;
     int keyc;
-    BOOL ret = FALSE;
 
     TRACE("vkey 0x%04x scan 0x%04x repeat %u himc %p\n", vkey, scan, repeat, himc);
 
@@ -1149,15 +1148,11 @@ BOOL macdrv_process_text_input(UINT vkey, UINT scan, UINT repeat, const BYTE *ke
         if (thread_data->keyc2vkey[keyc] == vkey) break;
 
     if (keyc >= sizeof(thread_data->keyc2vkey)/sizeof(thread_data->keyc2vkey[0]))
-        goto done;
+        return;
 
     TRACE("flags 0x%08x keyc 0x%04x\n", flags, keyc);
 
-    ret = macdrv_send_text_input_event(((scan & 0x8000) == 0), flags, repeat, keyc, himc);
-
-done:
-    TRACE(" -> %s\n", ret ? "TRUE" : "FALSE");
-    return ret;
+    macdrv_send_text_input_event(((scan & 0x8000) == 0), flags, repeat, keyc, himc, done);
 }
 
 
@@ -1191,7 +1186,15 @@ HKL CDECL macdrv_ActivateKeyboardLayout(HKL hkl, UINT flags)
             if (macdrv_select_input_source(layout->input_source))
             {
                 oldHkl = thread_data->active_keyboard_layout;
+                if (thread_data->keyboard_layout_uchr)
+                    CFRelease(thread_data->keyboard_layout_uchr);
+
+                macdrv_get_input_source_info(&thread_data->keyboard_layout_uchr, &thread_data->keyboard_type,
+                                             &thread_data->iso_keyboard, NULL);
                 thread_data->active_keyboard_layout = hkl;
+                thread_data->dead_key_state = 0;
+
+                macdrv_compute_keyboard_layout(thread_data);
             }
             break;
         }
@@ -1550,7 +1553,7 @@ INT CDECL macdrv_ToUnicodeEx(UINT virtKey, UINT scanCode, const BYTE *lpKeyState
     INT ret = 0;
     int keyc;
     BOOL is_menu = (flags & 0x1);
-    OSStatus status;
+    int status;
     const UCKeyboardLayout *uchr;
     UInt16 keyAction;
     UInt32 modifierKeyState;
@@ -1669,7 +1672,7 @@ INT CDECL macdrv_ToUnicodeEx(UINT virtKey, UINT scanCode, const BYTE *lpKeyState
         &len, bufW);
     if (status != noErr)
     {
-        ERR_(key)("Couldn't translate keycode 0x%04x, status %ld\n", keyc, status);
+        ERR_(key)("Couldn't translate keycode 0x%04x, status %d\n", keyc, status);
         goto done;
     }
     if (!is_menu)
@@ -1692,7 +1695,7 @@ INT CDECL macdrv_ToUnicodeEx(UINT virtKey, UINT scanCode, const BYTE *lpKeyState
             &savedDeadKeyState, bufW_size, &len, bufW);
         if (status != noErr)
         {
-            ERR_(key)("Couldn't translate keycode 0x%04x, status %ld\n", keyc, status);
+            ERR_(key)("Couldn't translate keycode 0x%04x, status %d\n", keyc, status);
             goto done;
         }
 

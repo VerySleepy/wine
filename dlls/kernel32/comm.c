@@ -25,8 +25,6 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "windef.h"
 #include "winbase.h"
 #include "winerror.h"
@@ -809,6 +807,8 @@ BOOL WINAPI SetCommState( HANDLE handle, LPDCB lpdcb)
     SERIAL_HANDFLOW            shf;
     SERIAL_CHARS               sc;
     DWORD dwBytesReturned;
+
+    TRACE("handle %p, ptr %p\n", handle, lpdcb);
 
     if (lpdcb == NULL)
     {

@@ -23,7 +23,9 @@
  * compatible with XPCOM, usable in C code.
  */
 
-cpp_quote("#define GECKO_VERSION \"2.34\"")
+#pragma makedep header
+
+cpp_quote("#define GECKO_VERSION \"2.47\"")
 cpp_quote("#define GECKO_VERSION_STRING \"Wine Gecko \" GECKO_VERSION")
 
 import "wtypes.idl";
@@ -111,6 +113,7 @@ interface nsISelection;
 interface nsIDOMHTMLSelectElement;
 interface nsIFile;
 interface nsIDocShell;
+interface mozIDOMWindowProxy;
 
 interface IMoniker;
 
@@ -131,7 +134,6 @@ typedef nsISupports nsISHistory;
 typedef nsISupports nsIWidget;
 typedef nsISupports nsIPrompt;
 typedef nsISupports nsIAuthPrompt;
-typedef nsISupports nsIDOMDocumentType;
 typedef nsISupports nsIDOMDOMImplementation;
 typedef nsISupports nsIDOMCDATASection;
 typedef nsISupports nsIDOMProcessingInstruction;
@@ -145,12 +147,9 @@ typedef nsISupports nsIAtom;
 typedef nsISupports nsISupportsArray;
 typedef nsISupports nsIContentFilter;
 typedef nsISupports nsIDOMMediaList;
-typedef nsISupports nsIDOMHTMLTableCaptionElement;
 typedef nsISupports nsIDOMHTMLTableSectionElement;
 typedef nsISupports nsIDOMClientRectList;
 typedef nsISupports nsINode;
-typedef nsISupports nsIStyleSheet;
-typedef nsISupports nsIStyleRule;
 typedef nsISupports nsIDOMUserDataHandler;
 typedef nsISupports nsISHEntry;
 typedef nsISupports nsIPresShell;
@@ -190,12 +189,19 @@ typedef nsISupports nsIDOMBlob;
 typedef nsISupports nsIPrivacyTransitionObserver;
 typedef nsISupports nsIDOMHTMLPropertiesCollection;
 typedef nsISupports mozIDOMApplication;
-typedef nsISupports nsILoadGroupConnectionInfo;
 typedef nsISupports nsIDOMCrypto;
 typedef nsISupports nsIDOMPkcs11;
 typedef nsISupports nsIDocShellTreeOwner;
 typedef nsISupports nsIArray;
 typedef nsISupports nsILoadInfo;
+typedef nsISupports nsIContentSecurityPolicy;
+typedef nsISupports nsIXMLHttpRequestUpload;
+typedef nsISupports nsIClassInfo;
+typedef nsISupports nsILoadContext;
+typedef nsISupports nsIDomainPolicy;
+typedef nsISupports nsIScriptContext;
+typedef nsISupports nsIObjectInputStream;
+typedef nsISupports nsIObjectOutputStream;
 
 typedef void *JSContext;
 typedef void *JSObject;
@@ -223,21 +229,6 @@ interface nsIFactory : nsISupports
 {
     nsresult CreateInstance(nsISupports *aOuter, const nsIID *iid, void **result);
     nsresult LockFactory(bool lock);
-}
-
-[
-    object,
-    uuid(6aef11c4-8615-44a6-9711-98f43805693d),
-    local
-]
-interface nsIMemory : nsISupports
-{
-    void *Alloc(/*size_t*/ int size);
-    void *Realloc(void *_ptr, /*size_t*/ int newSize);
-    void Free(void *_ptr);
-    nsresult HeapMinimize(bool immediate);
-    nsresult IsLowMemory(bool *_retval);
-    nsresult IsLowMemoryPlatform(bool *_retval);
 }
 
 [
@@ -404,7 +395,7 @@ interface nsISeekableStream : nsISupports
 
 [
     object,
-    uuid(395fe045-7d18-4adb-a3fd-af98c8a1af11),
+    uuid(92073a54-6d78-4f30-913a-b871813208c6),
     local
 ]
 interface nsIURI : nsISupports
@@ -433,6 +424,7 @@ interface nsIURI : nsISupports
     nsresult Clone(nsIURI **_retval);
     nsresult Resolve(const nsACString *relativePath, nsACString *_retval);
     nsresult GetAsciiSpec(nsACString *aAsciiSpec);
+    nsresult GetAsciiHostPort(nsACString *aAsciiHostPort);
     nsresult GetAsciiHost(nsACString *aAsciiHost);
     nsresult GetOriginCharset(nsACString *aOriginCharset);
     nsresult GetRef(nsACString *aRef);
@@ -445,7 +437,7 @@ interface nsIURI : nsISupports
 
 [
     object,
-    uuid(1419aa16-f134-4154-9886-00c7c5147a13),
+    uuid(86adcd89-0b70-47a2-b0fe-5bb2c5f37e31),
     local
 ]
 interface nsIURL : nsIURI
@@ -468,7 +460,7 @@ interface nsIURL : nsIURI
 
 [
     object,
-    uuid(7750029c-1b0a-414e-8359-a77f24a2a0a6),
+    uuid(e91ac988-27c2-448b-b1a1-3822e1ef1987),
     local
 ]
 interface nsIFileURL : nsIURL
@@ -496,6 +488,7 @@ interface nsIMutable : nsISupports
 interface nsIStandardURL : nsIMutable
 {
     nsresult Init(uint32_t aUrlType, int32_t aDefaultPort, const nsACString *aSpec, const char *aOriginCharset, nsIURI *aBaseURI);
+    nsresult SetDefaultPort(int32_t aNewDefaultPort);
 }
 
 [
@@ -541,7 +534,7 @@ interface nsIStreamListener : nsIRequestObserver
 
 [
     object,
-    uuid(afb57ac2-bce5-4ee3-bb34-385089a9ba5c),
+    uuid(f0c87725-7a35-463c-9ceb-2c07f23406cc),
     local
 ]
 interface nsILoadGroup : nsIRequest
@@ -556,14 +549,16 @@ interface nsILoadGroup : nsIRequest
     nsresult GetActiveCount(uint32_t *aActiveCount);
     nsresult GetNotificationCallbacks(nsIInterfaceRequestor **aNotificationCallbacks);
     nsresult SetNotificationCallbacks(nsIInterfaceRequestor *aNotificationCallbacks);
-    nsresult GetConnectionInfo(nsILoadGroupConnectionInfo **aConnectionInfo);
+    nsresult GetSchedulingContextID(nsID *aSchedulingContextID);
     nsresult GetDefaultLoadFlags(nsLoadFlags *aDefaultLoadFlags);
     nsresult SetDefaultLoadFlags(nsLoadFlags aDefaultLoadFlags);
+    nsresult GetUserAgentOverrideCache(nsACString *aUserAgentOverrideCache);
+    nsresult SetUserAgentOverrideCache(const nsACString *aUserAgentOverrideCache);
 }
 
 [
     object,
-    uuid(1bc48693-c45d-45f4-8ab1-46e323037fe1),
+    uuid(2c389865-23db-4aa7-9fe5-60cc7b00697e),
     local
 ]
 interface nsIChannel : nsIRequest
@@ -577,6 +572,7 @@ interface nsIChannel : nsIRequest
     const UINT LOAD_CLASSIFY_URI            = 1 << 22;
     const UINT LOAD_MEDIA_SNIFFER_OVERRIDES_CONTENT_TYPE = 1 << 23;
     const UINT LOAD_EXPLICIT_CREDENTIALS    = 1 << 24;
+    const UINT LOAD_BYPASS_SERVICE_WORKER   = 1 << 25;
 
     nsresult GetOriginalURI(nsIURI **aOriginalURI);
     nsresult SetOriginalURI(nsIURI *aOriginalURI);
@@ -593,7 +589,9 @@ interface nsIChannel : nsIRequest
     nsresult GetContentLength(int64_t *aContentLength);
     nsresult SetContentLength(int64_t aContentLength);
     nsresult Open(nsIInputStream **_retval);
+    nsresult Open2(nsIInputStream **_retval);
     nsresult AsyncOpen(nsIStreamListener *aListener, nsISupports *aContext);
+    nsresult AsyncOpen2(nsIStreamListener *aListener);
     nsresult GetContentDisposition(uint32_t *aContentDisposition);
     nsresult SetContentDisposition(uint32_t aContentDisposition);
     nsresult GetContentDispositionFilename(nsAString *aContentDispositionFilename);
@@ -615,7 +613,7 @@ interface nsIHttpHeaderVisitor : nsISupports
 
 [
     object,
-    uuid(1bc753ad-5b88-454d-b4c0-4fd34cce6d96),
+    uuid(b2596105-3d0d-4e6a-824f-0539713bb879),
     local
 ]
 interface nsIHttpChannel : nsIChannel
@@ -624,9 +622,17 @@ interface nsIHttpChannel : nsIChannel
     nsresult SetRequestMethod(const nsACString *aRequestMethod);
     nsresult GetReferrer(nsIURI **aReferrer);
     nsresult SetReferrer(nsIURI *aReferrer);
+    nsresult GetReferrerPolicy(uint32_t *aReferrerPolicy);
+    nsresult SetReferrerWithPolicy(nsIURI *referrer, uint32_t referrerPolicy);
+    nsresult GetProtocolVersion(nsACString *aProtocolVersion);
+    nsresult GetTransferSize(uint64_t *aTransferSize);
+    nsresult GetDecodedBodySize(uint64_t *aDecodedBodySize);
+    nsresult GetEncodedBodySize(uint64_t *aEncodedBodySize);
     nsresult GetRequestHeader(const nsACString *aHeader, nsACString *_retval);
     nsresult SetRequestHeader(const nsACString *aHeader, const nsACString *aValue, bool aMerge);
+    nsresult SetEmptyRequestHeader(const nsACString *aHeader);
     nsresult VisitRequestHeaders(nsIHttpHeaderVisitor *aVisitor);
+    nsresult VisitNonDefaultRequestHeaders(nsIHttpHeaderVisitor *aVisitor);
     nsresult GetAllowPipelining(bool *aAllowPipelining);
     nsresult SetAllowPipelining(bool aAllowPipelining);
     nsresult GetAllowSTS(bool *aAllowSTS);
@@ -636,17 +642,22 @@ interface nsIHttpChannel : nsIChannel
     nsresult GetResponseStatus(uint32_t *aResponseStatus);
     nsresult GetResponseStatusText(nsACString *aResponseStatusText);
     nsresult GetRequestSucceeded(bool *aRequestSucceeded);
+    nsresult GetIsMainDocumentChannel(bool *aIsMainDocumentChannel);
+    nsresult SetIsMainDocumentChannel(bool aIsMainDocumentChannel);
     nsresult GetResponseHeader(const nsACString *header, nsACString *_retval);
     nsresult SetResponseHeader(const nsACString *header, const nsACString *value, bool merge);
     nsresult VisitResponseHeaders(nsIHttpHeaderVisitor *aVisitor);
     nsresult IsNoStoreResponse(bool *_retval);
     nsresult IsNoCacheResponse(bool *_retval);
-    nsresult RedirectTo(nsIURI *aNewURI);
+    nsresult IsPrivateResponse(bool *_retval);
+    nsresult RedirectTo(nsIURI *aTargetURI);
+    nsresult GetSchedulingContextID(nsID *aSchedulingContextID);
+    nsresult SetSchedulingContextID(const nsID aSchedulingContextID);
 }
 
 [
     object,
-    uuid(a4bf4fc5-b5a9-4098-bd20-409d71bf18e6),
+    uuid(4e28263d-1e03-46f4-aa5c-9512f91957f9),
     local
 ]
 interface nsIHttpChannelInternal : nsISupports
@@ -655,9 +666,11 @@ interface nsIHttpChannelInternal : nsISupports
     nsresult SetDocumentURI(nsIURI *aDocumentURI);
     nsresult GetRequestVersion(uint32_t *major, uint32_t *minor);
     nsresult GetResponseVersion(uint32_t *major, uint32_t *minor);
-    nsresult TakeAllSecurityMessages(void /*securityMessagesArray*/ *aMessages);
+    nsresult TakeAllSecurityMessages(void /*nsCOMArray<nsISecurityConsoleMessage>*/ *aMessages);
     nsresult SetCookie(const char *aCookieHeader);
     nsresult SetupFallbackChannel(const char *aFallbackKey);
+    nsresult GetThirdPartyFlags(uint32_t *aThirdPartyFlags);
+    nsresult SetThirdPartyFlags(uint32_t aThirdPartyFlags);
     nsresult GetForceAllowThirdPartyCookie(bool *aForceAllowThirdPartyCookie);
     nsresult SetForceAllowThirdPartyCookie(bool aForceAllowThirdPartyCookie);
     nsresult GetCanceled(bool *aCanceled);
@@ -671,15 +684,29 @@ interface nsIHttpChannelInternal : nsISupports
     nsresult HTTPUpgrade(const nsACString *aProtocolName, nsIHttpUpgradeListener *aListener);
     nsresult GetAllowSpdy(bool *aAllowSpdy);
     nsresult SetAllowSpdy(bool aAllowSpdy);
-    nsresult GetLoadAsBlocking(bool *aLoadAsBlocking);
-    nsresult SetLoadAsBlocking(bool aLoadAsBlocking);
-    nsresult GetLoadUnblocked(bool *aLoadUnblocked);
-    nsresult SetLoadUnblocked(bool aLoadUnblocked);
     nsresult GetResponseTimeoutEnabled(bool *aResponseTimeoutEnabled);
     nsresult SetResponseTimeoutEnabled(bool aResponseTimeoutEnabled);
-    nsresult GetApiRedirectToURI(nsIURI * *aApiRedirectToURI);
-    nsresult AddRedirect(nsIPrincipal *aPrincipal);
+    nsresult GetInitialRwin(uint32_t *aInitialRwin) ;
+    nsresult SetInitialRwin(uint32_t aInitialRwin);
+    nsresult GetApiRedirectToURI(nsIURI **aApiRedirectToURI);
+    nsresult GetAllowAltSvc(bool *aAllowAltSvc);
+    nsresult SetAllowAltSvc(bool aAllowAltSvc);
     nsresult GetLastModifiedTime(PRTime *aLastModifiedTime);
+    nsresult ForceIntercepted(uint64_t aInterceptionID);
+    nsresult GetResponseSynthesized(bool *aResponseSynthesized);
+    nsresult GetCorsIncludeCredentials(bool *aCorsIncludeCredentials);
+    nsresult SetCorsIncludeCredentials(bool aCorsIncludeCredentials);
+    nsresult GetCorsMode(uint32_t *aCorsMode);
+    nsresult SetCorsMode(uint32_t aCorsMode);
+    nsresult GetRedirectMode(uint32_t *aRedirectMode);
+    nsresult SetRedirectMode(uint32_t aRedirectMode);
+    nsresult GetTopWindowURI(nsIURI **aTopWindowURI);
+    nsresult GetNetworkInterfaceId(nsACString *aNetworkInterfaceId);
+    nsresult SetNetworkInterfaceId(const nsACString *aNetworkInterfaceId);
+    nsresult GetProxyURI(nsIURI **aProxyURI);
+    nsresult SetCorsPreflightParameters(const void /*nsTArray<nsCString>*/ *unsafeHeaders);
+    nsresult GetBlockAuthPrompt(bool *aBlockAuthPrompt) ;
+    nsresult SetBlockAuthPrompt(bool aBlockAuthPrompt);
 }
 
 [
@@ -706,14 +733,15 @@ interface nsIAsyncVerifyRedirectCallback : nsISupports
 
 [
     object,
-    uuid(a430d870-df77-4502-9570-d46a8de33154),
+    uuid(0197720d-37ed-4e75-8956-d0d296e4d8a6),
     local
 ]
 interface nsIChannelEventSink : nsISupports
 {
-    cpp_quote("#define REDIRECT_TEMPORARY 1")
-    cpp_quote("#define REDIRECT_PERMANENT 2")
-    cpp_quote("#define REDIRECT_INTERNAL  4")
+    const UINT REDIRECT_TEMPORARY = 1;
+    const UINT REDIRECT_PERMANENT = 2;
+    const UINT REDIRECT_INTERNAL  = 4;
+    const UINT REDIRECT_STS_UPGRADE = 8;
 
     nsresult AsyncOnChannelRedirect(nsIChannel *oldChannel, nsIChannel *newChannel, uint32_t flags,
                                     nsIAsyncVerifyRedirectCallback *callback);
@@ -879,7 +907,7 @@ interface nsIDOMMozNamedAttrMap : nsISupports
 
 [
     object,
-    uuid(56545150-a001-484e-9ed4-cb319eebd7b3),
+    uuid(cc35b412-009b-46a3-9be0-76448f12548d),
     local
 ]
 interface nsIDOMNode : nsISupports
@@ -930,7 +958,7 @@ interface nsIDOMNode : nsISupports
     nsresult GetNamespaceURI(nsAString *aNamespaceURI);
     nsresult GetPrefix(nsAString *aPrefix);
     nsresult GetLocalName(nsAString *aLocalName);
-    nsresult HasAttributes(bool *_retval);
+    nsresult UnusedPlaceholder(bool *_retval);
     nsresult GetDOMBaseURI(nsAString *aBaseURI);
     nsresult CompareDocumentPosition(nsIDOMNode *other, uint16_t *_retval);
     nsresult GetTextContent(nsAString *aTextContent);
@@ -939,7 +967,7 @@ interface nsIDOMNode : nsISupports
     nsresult IsDefaultNamespace(const nsAString *namespaceURI, bool *_retval);
     nsresult LookupNamespaceURI(const nsAString *prefix, nsAString *_retval);
     nsresult IsEqualNode(nsIDOMNode *arg, bool *_retval);
-    nsresult SetUserData(const nsAString *key, nsIVariant *data, nsIDOMUserDataHandler *handler, nsIVariant **_retval);
+    nsresult SetUserData(const nsAString *key, nsIVariant *data, nsIVariant **_retval);
     nsresult GetUserData(const nsAString *key, nsIVariant **_retval);
     nsresult Contains(nsIDOMNode *aOther, bool *_retval);
 
@@ -949,7 +977,7 @@ interface nsIDOMNode : nsISupports
 
 [
     object,
-    uuid(a974a4d3-2ff1-445b-8b8e-0aada5d4eedc),
+    uuid(7db491e8-a3a3-4432-ad67-e6c33e24ac6d),
     local
 ]
 interface nsIDOMAttr : nsIDOMNode
@@ -979,7 +1007,7 @@ interface nsIDOMClientRect : nsISupports
 
 [
     object,
-    uuid(d7de6065-1776-4f52-a776-4bbeabacbdaf),
+    uuid(6289999b-1008-4269-b42a-413ec5a9d3f4),
     local
 ]
 interface nsIDOMElement : nsIDOMNode
@@ -999,6 +1027,7 @@ interface nsIDOMElement : nsIDOMNode
     nsresult RemoveAttributeNS(const nsAString *namespaceURI, const nsAString *localName);
     nsresult HasAttribute(const nsAString *name, bool *_retval);
     nsresult HasAttributeNS(const nsAString *namespaceURI, const nsAString *localName, bool *_retval);
+    nsresult HasAttributes(bool *_retval);
     nsresult GetAttributeNode(const nsAString *name, nsIDOMAttr **_retval);
     nsresult SetAttributeNode(nsIDOMAttr *newAttr, nsIDOMAttr **_retval);
     nsresult RemoveAttributeNode(nsIDOMAttr *oldAttr, nsIDOMAttr **_retval);
@@ -1049,7 +1078,7 @@ interface nsIDOMElementCSSInlineStyle : nsISupports
 
 [
     object,
-    uuid(db3352cf-04f3-4e7e-baa0-cd2f81b46328),
+    uuid(b0c42392-d0e7-4f6a-beb5-a698ce648945),
     local
 ]
 interface nsIDOMHTMLElement : nsIDOMElement
@@ -1116,7 +1145,24 @@ interface nsIDOMHTMLHeadElement : nsISupports
 
 [
     object,
-    uuid(84f72a38-1873-46f8-937c-1df22d7e7cae),
+    uuid(2a3f789e-0667-464f-a8d7-6f58513443d9),
+    local
+]
+interface nsIDOMHTMLMetaElement : nsISupports
+{
+    nsresult GetContent(nsAString *aContent);
+    nsresult SetContent(const nsAString *aContent);
+    nsresult GetHttpEquiv(nsAString *aHttpEquiv);
+    nsresult SetHttpEquiv(const nsAString *aHttpEquiv);
+    nsresult GetName(nsAString *aName);
+    nsresult SetName(const nsAString *aName);
+    nsresult GetScheme(nsAString *aScheme);
+    nsresult SetScheme(const nsAString *aScheme);
+}
+
+[
+    object,
+    uuid(4109a2d2-e7af-445d-bb72-c7c9b875f35e),
     local
 ]
 interface nsIDOMCharacterData : nsIDOMNode
@@ -1134,7 +1180,7 @@ interface nsIDOMCharacterData : nsIDOMNode
 
 [
     object,
-    uuid(d14d13b4-21d5-49e2-8d59-76a24156db54),
+    uuid(67273994-6aff-4091-9de9-b788a249f783),
     local
 ]
 interface nsIDOMText : nsIDOMCharacterData
@@ -1145,7 +1191,7 @@ interface nsIDOMText : nsIDOMCharacterData
 
 [
     object,
-    uuid(e702a5d2-3aa8-4788-b048-2d3b3e6d16f2),
+    uuid(e7866ff8-b7fc-494f-87c0-fb017d8a4d30),
     local
 ]
 interface nsIDOMComment : nsIDOMCharacterData
@@ -1154,7 +1200,21 @@ interface nsIDOMComment : nsIDOMCharacterData
 
 [
     object,
-    uuid(75a237af-133e-40f0-8196-2a172867c41a),
+    uuid(cd7467b9-0f26-4787-a359-66e80ba8db92),
+    local
+]
+interface nsIDOMDocumentType : nsIDOMNode
+{
+    nsresult GetName(nsAString *aName);
+    nsresult GetPublicId(nsAString *aPublicId);
+    nsresult GetSystemId(nsAString *aSystemId);
+    nsresult GetInternalSubset(nsAString *aInternalSubset);
+    nsresult MozRemove();
+}
+
+[
+    object,
+    uuid(48eb8d72-95bb-402e-a8fc-f2b187abcbdb),
     local
 ]
 interface nsIDOMDocumentFragment : nsIDOMNode
@@ -1165,7 +1225,7 @@ interface nsIDOMDocumentFragment : nsIDOMNode
 
 [
     object,
-    uuid(d24d1118-a527-4d5a-9c4e-fb07dfc2fc27),
+    uuid(b15fa0f4-97c1-4388-af62-2ceff7a89bdf),
     local
 ]
 interface nsIDOMDocument : nsIDOMNode
@@ -1197,7 +1257,7 @@ interface nsIDOMDocument : nsIDOMNode
             nsIDOMTreeWalker **_retval);
     cpp_quote("#undef CreateEvent")
     nsresult CreateEvent(const nsAString *eventType, nsIDOMEvent **_retval);
-    nsresult GetDefaultView(nsIDOMWindow **aDefaultView);
+    nsresult GetDefaultView(mozIDOMWindowProxy **aDefaultView);
     nsresult GetCharacterSet(nsAString *aCharacterSet);
     nsresult GetDir(nsAString *aDir);
     nsresult SetDir(const nsAString *aDir);
@@ -1241,7 +1301,7 @@ interface nsIDOMDocument : nsIDOMNode
 
 [
     object,
-    uuid(b73be9dd-bcc8-44df-8b01-3389e277427f),
+    uuid(cd31e61f-cfc2-4b91-9385-17b6a2d0633d),
     local
 ]
 interface nsIDOMHTMLDocument : nsIDOMDocument
@@ -1371,70 +1431,62 @@ interface nsISelection : nsISupports
 
 [
     object,
-    uuid(a6cf906f-15b3-11d2-932e-00805f8add32),
+    uuid(8d64f457-fb8c-49ea-a359-cef30eed9774),
     local
 ]
 interface nsIDOMWindowCollection : nsISupports
 {
     nsresult GetLength(uint32_t *aLength);
-    nsresult Item(uint32_t index, nsIDOMWindow **_retval);
-    nsresult NamedItem(const nsAString *name, nsIDOMWindow **_retval);
+    nsresult Item(uint32_t index, mozIDOMWindowProxy **_retval);
+    nsresult NamedItem(const nsAString *name, mozIDOMWindowProxy **_retval);
 }
 
 [
     object,
-    uuid(ed7cc4e4-cf5b-42af-9c2e-8df074a01470),
+    uuid(75fbabd6-7a2e-4787-aa33-449a33512135),
+    local
+]
+interface mozIDOMWindow : nsISupports
+{
+}
+
+[
+    object,
+    uuid(53ca090c-e739-48b9-8911-208c72f9191e),
+    local
+]
+interface mozIDOMWindowProxy : nsISupports
+{
+}
+
+[
+    object,
+    uuid(ab30b7cc-f7f9-4b9b-befb-7dbf6cf86d46),
     local
 ]
 interface nsIDOMWindow : nsISupports
 {
-    nsresult GetWindow(nsIDOMWindow **aWindow);
-    nsresult GetSelf(nsIDOMWindow **aSelf);
     nsresult GetDocument(nsIDOMDocument **aDocument);
     nsresult GetName(nsAString *aName);
     nsresult SetName(const nsAString *aName);
     nsresult GetLocation(nsIDOMLocation **aLocation);
-    nsresult GetHistory(nsISupports **aHistory);
-    nsresult GetLocationbar(nsISupports **aLocationbar);
-    nsresult GetMenubar(nsISupports **aMenubar);
-    nsresult GetPersonalbar(nsISupports **aPersonalbar);
-    nsresult GetScrollbars(nsISupports **aScrollbars);
-    nsresult GetStatusbar(nsISupports **aStatusbar);
-    nsresult GetToolbar(nsISupports **aToolbar);
-    nsresult GetStatus(nsAString *aStatus);
-    nsresult SetStatus(const nsAString *aStatus);
     nsresult Close();
     nsresult Stop();
     nsresult Focus();
     nsresult Blur();
     nsresult GetLength(uint32_t *aLength);
-    nsresult GetScriptableTop(nsIDOMWindow **aTop);
     nsresult GetRealTop(nsIDOMWindow **aTop);
-    nsresult GetScriptableParent(nsIDOMWindow **aParent);
     nsresult GetRealParent(nsIDOMWindow **aParent);
-    nsresult GetScriptableOpener(JSContext* cx, int /* JS::MutableHandleValue */ aOpener);
-    nsresult SetScriptableOpener(JSContext* cx, int /* JS::HandleValue */ aOpener);
-    nsresult GetOpener(nsIDOMWindow **aOpenerWindow);
-    nsresult SetOpener(nsIDOMWindow *aOpenerWindow);
-    nsresult GetScriptableFrameElement(nsIDOMElement **aFrameElement);
+    nsresult GetOpener(mozIDOMWindowProxy **aOpenerWindow);
+    nsresult SetOpener(mozIDOMWindowProxy *aOpenerWindow);
     nsresult GetRealFrameElement(nsIDOMElement **aFrameElement);
     nsresult GetNavigator(nsIDOMNavigator **aNavigator);
-    nsresult GetApplicationCache(nsIDOMOfflineResourceList **aApplicationCache);
-    nsresult Alert(const nsAString *text);
-    nsresult Confirm(const nsAString *text, bool *_retval);
-    nsresult Prompt(const nsAString *aMessage, const nsAString *aInitial, nsAString *_retval);
     nsresult Print();
-    nsresult ShowModalDialog(const nsAString *aURI, nsIVariant *aArgs, const nsAString *aOptions, uint8_t _argc, nsIVariant **_retval);
-    nsresult PostMessageMoz(const long /*jsval*/ *message, const nsAString *targetOrigin, const /*JS::Value*/ void *transfer, JSContext *cx);
-    nsresult Atob(const nsAString *aAsciiString, nsAString *_retval);
-    nsresult Btoa(const nsAString *aBase64Data, nsAString *_retval);
     nsresult GetSessionStorage(nsISupports **aSessionStorage);
     nsresult GetLocalStorage(nsISupports **aLocalStorage);
     nsresult GetIndexedDB(nsISupports **aIndexedDB);
-    nsresult GetMozIndexedDB(nsISupports **aMozIndexedDB);
     nsresult GetSelection(nsISelection **_retval);
     nsresult MatchMedia(const nsAString *media_query_list, nsISupports **_retval);
-    nsresult GetScreen(nsIDOMScreen **aScreen);
     nsresult GetInnerWidth(int32_t *aInnerWidth);
     nsresult SetInnerWidth(int32_t aInnerWidth);
     nsresult GetInnerHeight(int32_t *aInnerHeight);
@@ -1456,18 +1508,11 @@ interface nsIDOMWindow : nsISupports
     nsresult SetOuterHeight(int32_t aOuterHeight);
     nsresult GetComputedStyle(nsIDOMElement *elt, const nsAString *pseudoElt, nsIDOMCSSStyleDeclaration **_retval);
     nsresult GetDefaultComputedStyle(nsIDOMElement *elt, const nsAString *pseudoElt, nsIDOMCSSStyleDeclaration **_retval);
-    nsresult GetWindowRoot(nsIDOMEventTarget **aWindowRoot);
     nsresult GetFrames(nsIDOMWindowCollection **aFrames);
     nsresult GetTextZoom(float *aTextZoom);
     nsresult SetTextZoom(float aTextZoom);
     nsresult ScrollByLines(int32_t numLines);
     nsresult ScrollByPages(int32_t numPages);
-    nsresult SizeToContent();
-    nsresult GetContent(nsIDOMWindow **aContent);
-    nsresult GetPrompter(nsIPrompt **aPrompter);
-    nsresult GetClosed(bool *aClosed);
-    nsresult GetCrypto(nsIDOMCrypto **aCrypto);
-    nsresult GetControllers(nsIControllers **aControllers);
     nsresult GetMozInnerScreenX(float *aMozInnerScreenX);
     nsresult GetMozInnerScreenY(float *aMozInnerScreenY);
     nsresult GetDevicePixelRatio(float *aDevicePixelRatio);
@@ -1478,65 +1523,11 @@ interface nsIDOMWindow : nsISupports
     nsresult Back();
     nsresult Forward();
     nsresult Home();
-    nsresult MoveTo(int32_t xPos, int32_t yPos);
-    nsresult MoveBy(int32_t xDif, int32_t yDif);
-    nsresult ResizeTo(int32_t width, int32_t height);
-    nsresult ResizeBy(int32_t widthDif, int32_t heightDif);
     nsresult Open(const nsAString *url, const nsAString *name, const nsAString *options, nsIDOMWindow **_retval);
-    nsresult OpenDialog(const nsAString *url, const nsAString *name, const nsAString *options, nsISupports *aExtraArgument,
-            nsIDOMWindow **_retval);
-    nsresult UpdateCommands(const nsAString *action, nsISelection *sel, int16_t reason);
     nsresult Find(const nsAString *str, bool caseSensitive, bool backwards, bool wrapAround, bool wholeWord,
             bool searchInFrames, bool showDialog, bool *_retval);
-    nsresult GetMozPaintCount(uint64_t *aMozPaintCount);
-    nsresult MozRequestAnimationFrame(nsIFrameRequestCallback *aCallback, int32_t *_retval);
-    nsresult RequestAnimationFrame(void /*const JS::Value*/ *aCallback, JSContext* cx, int32_t *_retval);
-    nsresult MozCancelAnimationFrame(int32_t aHandle);
-    nsresult MozCancelRequestAnimationFrame(int32_t aHandle);
-    nsresult CancelAnimationFrame(int32_t aHandle);
-    nsresult GetMozAnimationStartTime(int64_t *aMozAnimationStartTime);
-    nsresult GetOnafterprint(JSContext *cx, jsval *aOnafterprint);
-    nsresult SetOnafterprint(JSContext *cx, const jsval *aOnafterprint);
-    nsresult GetOnbeforeprint(JSContext *cx, jsval *aOnbeforeprint);
-    nsresult SetOnbeforeprint(JSContext *cx, const jsval *aOnbeforeprint);
-    nsresult GetOnbeforeunload(JSContext *cx, jsval *aOnbeforeunload);
-    nsresult SetOnbeforeunload(JSContext *cx, const jsval *aOnbeforeunload);
-    nsresult GetOnhashchange(JSContext *cx, jsval *aOnhashchange);
-    nsresult SetOnhashchange(JSContext *cx, const jsval *aOnhashchange);
-    nsresult GetOnlanguagechange(JSContext *cx, jsval *aOnlanguagechange);
-    nsresult SetOnlanguagechange(JSContext *cx, const jsval *aOnlanguagechange);
-    nsresult GetOnmessage(JSContext *cx, jsval *aOnmessage);
-    nsresult SetOnmessage(JSContext *cx, const jsval *aOnmessage);
-    nsresult GetOnoffline(JSContext *cx, jsval *aOnoffline);
-    nsresult SetOnoffline(JSContext *cx, const jsval *aOnoffline);
-    nsresult GetOnonline(JSContext *cx, jsval *aOnonline);
-    nsresult SetOnonline(JSContext *cx, const jsval *aOnonline);
-    nsresult GetOnpopstate(JSContext *cx, jsval *aOnpopstate);
-    nsresult SetOnpopstate(JSContext *cx, const jsval *aOnpopstate);
-    nsresult GetOnpagehide(JSContext *cx, jsval *aOnpagehide);
-    nsresult SetOnpagehide(JSContext *cx, const jsval *aOnpagehide);
-    nsresult GetOnpageshow(JSContext *cx, jsval *aOnpageshow);
-    nsresult SetOnpageshow(JSContext *cx, const jsval *aOnpageshow);
-    nsresult GetOnresize(JSContext *cx, jsval *aOnresize);
-    nsresult SetOnresize(JSContext *cx, const jsval *aOnresize);
-    nsresult GetOnunload(JSContext *cx, jsval *aOnunload);
-    nsresult SetOnunload(JSContext *cx, const jsval *aOnunload);
-    nsresult GetOndevicemotion(JSContext *cx, jsval *aOndevicemotion);
-    nsresult SetOndevicemotion(JSContext *cx, const jsval *aOndevicemotion);
-    nsresult GetOndeviceorientation(JSContext *cx, jsval *aOndeviceorientation);
-    nsresult SetOndeviceorientation(JSContext *cx, const jsval *aOndeviceorientation);
-    nsresult GetOndeviceproximity(JSContext* cx, jsval *aOndeviceproximity);
-    nsresult SetOndeviceproximity(JSContext* cx, const jsval *aOndeviceproximity);
-    nsresult GetOnuserproximity(JSContext* cx, jsval *aOndeviceproximity);
-    nsresult SetOnuserproximity(JSContext* cx, const jsval *aOndeviceproximity);
-    nsresult GetOndevicelight(JSContext* cx, jsval *aOndevicelight);
-    nsresult SetOndevicelight(JSContext* cx, const jsval *aOndevicelight);
-    nsresult GetOnmouseenter(JSContext* cx, jsval *aOnmouseenter);
-    nsresult SetOnmouseenter(JSContext* cx, const jsval *aOnmouseenter);
-    nsresult GetOnmouseleave(JSContext* cx, jsval *aOnmouseleave);
-    nsresult SetOnmouseleave(JSContext* cx, const jsval *aOnmouseleave);
-    nsresult GetConsole(JSContext *cx, jsval *aConsole);
-    nsresult SetConsole(JSContext *cx, const jsval *aConsole);
+    nsresult GetInnerWindow(mozIDOMWindow **aInnerWindow);
+    nsresult GetOuterWindow(mozIDOMWindowProxy **aOuterWindow);
 }
 
 [
@@ -1864,7 +1855,7 @@ interface nsIDOMHTMLTextAreaElement : nsISupports
 
 [
     object,
-    uuid(4627336e-3070-4e73-8f67-3851b54cc0eb),
+    uuid(fe96dc1c-40e4-4974-9354-e3fce663c3d5),
     local
 ]
 interface nsIDOMHTMLScriptElement : nsISupports
@@ -1885,13 +1876,11 @@ interface nsIDOMHTMLScriptElement : nsISupports
     nsresult SetHtmlFor(const nsAString *aHtmlFor);
     nsresult GetEvent(nsAString *aEvent);
     nsresult SetEvent(const nsAString *aEvent);
-    nsresult GetCrossOrigin(nsAString *aCrossOrigin);
-    nsresult SetCrossOrigin(const nsAString *aCrossOrigin);
 }
 
 [
     object,
-    uuid(e83e726a-0aef-4292-938b-253fec691e2f),
+    uuid(ec18e71c-4f5c-4cc3-aa36-5273168644dc),
     local
 ]
 interface nsIDOMHTMLImageElement : nsISupports
@@ -1904,8 +1893,6 @@ interface nsIDOMHTMLImageElement : nsISupports
     nsresult SetSrcset(const nsAString *aSrcset) ;
     nsresult GetSizes(nsAString *aSizes);
     nsresult SetSizes(const nsAString *aSizes);
-    nsresult GetCrossOrigin(nsAString *aCrossOrigin);
-    nsresult SetCrossOrigin(const nsAString *aCrossOrigin);
     nsresult GetUseMap(nsAString *aUseMap);
     nsresult SetUseMap(const nsAString *aUseMap);
     nsresult GetIsMap(bool *aIsMap);
@@ -1988,7 +1975,45 @@ interface nsIDOMHTMLAnchorElement : nsISupports
 
 [
     object,
-    uuid(95d6ec66-2754-45bd-a068-49ac1fb45004),
+    uuid(40c78026-36dc-40ca-9221-de73267e9e99),
+    local
+]
+interface nsIDOMHTMLAreaElement : nsISupports
+{
+    nsresult GetAlt(const nsAString *aAlt);
+    nsresult SetAlt(nsAString *aAlt);
+    nsresult GetCoords(const nsAString *aCoords);
+    nsresult SetCoords(nsAString *aCoords);
+    nsresult GetShape(const nsAString *aShape);
+    nsresult SetShape(nsAString *aShape);
+    nsresult GetHref(const nsAString *aHref);
+    nsresult SetHref(nsAString *aHref);
+    nsresult GetTarget(const nsAString *aTarget);
+    nsresult SetTarget(nsAString *aTarget);
+    nsresult GetPing(const nsAString *aPing);
+    nsresult SetPing(nsAString *aPing);
+    nsresult GetDownload(const nsAString *aDownload);
+    nsresult SetDownload(nsAString *aDownload);
+    nsresult GetProtocol(const nsAString *aProtocol);
+    nsresult SetProtocol(nsAString *aProtocol);
+    nsresult GetHost(const nsAString *aHost);
+    nsresult SetHost(nsAString *aHost);
+    nsresult GetPort(const nsAString *aPort);
+    nsresult SetPort(nsAString *aPort);
+    nsresult GetPathname(const nsAString *aPathname);
+    nsresult SetPathname(nsAString *aPathname);
+    nsresult GetSearch(const nsAString *aSearch);
+    nsresult SetSearch(nsAString *aSearch);
+    nsresult GetHash(const nsAString *aHash);
+    nsresult SetHash(nsAString *aHash);
+    nsresult GetNoHref(const nsAString *aNoHref);
+    nsresult SetNoHref(nsAString *aNoHref);
+    nsresult ToString(nsAString *_retval);
+}
+
+[
+    object,
+    uuid(ee50b7ab-0015-4fbe-89e0-e3feacd4ffde),
     local
 ]
 interface nsIDOMHTMLLinkElement : nsISupports
@@ -2011,8 +2036,6 @@ interface nsIDOMHTMLLinkElement : nsISupports
     nsresult SetTarget(const nsAString *aTarget);
     nsresult GetType(nsAString *aType);
     nsresult SetType(const nsAString *aType);
-    nsresult GetCrossOrigin(nsAString *aCrossOrigin);
-    nsresult SetCrossOrigin(const nsAString *aCrossOrigin);
 }
 
 [
@@ -2022,8 +2045,8 @@ interface nsIDOMHTMLLinkElement : nsISupports
 ]
 interface nsIDOMHTMLTableElement : nsISupports
 {
-    nsresult GetCaption(nsIDOMHTMLTableCaptionElement **aCaption);
-    nsresult SetCaption(nsIDOMHTMLTableCaptionElement *aCaption);
+    nsresult GetCaption(nsIDOMHTMLElement **aCaption);
+    nsresult SetCaption(nsIDOMHTMLElement *aCaption);
     nsresult GetTHead(nsIDOMHTMLElement **aTHead);
     nsresult SetTHead(nsIDOMHTMLElement *aTHead);
     nsresult GetTFoot(nsIDOMHTMLElement **aTFoot);
@@ -2150,14 +2173,13 @@ interface nsIDOMHTMLIFrameElement : nsISupports
     nsresult GetWidth(nsAString *aWidth);
     nsresult SetWidth(const nsAString *aWidth);
     nsresult GetContentDocument(nsIDOMDocument **aContentDocument);
-    nsresult GetContentWindow(nsIDOMWindow **aContentWindow);
     nsresult GetAllowFullscreen(bool *aAllowFullscreen);
     nsresult SetAllowFullscreen(bool aAllowFullscreen);
 }
 
 [
     object,
-    uuid(60ab25b9-3246-4f50-b0d4-21e73ba88cd6),
+    uuid(012a8982-c9d3-4614-91e2-18ee51c97c06),
     local
 ]
 interface nsIDOMHTMLFrameElement : nsISupports
@@ -2179,7 +2201,6 @@ interface nsIDOMHTMLFrameElement : nsISupports
     nsresult GetSrc(nsAString *aSrc);
     nsresult SetSrc(const nsAString *aSrc);
     nsresult GetContentDocument(nsIDOMDocument **aContentDocument);
-    nsresult GetContentWindow(nsIDOMWindow **aContentWindow);
 }
 
 [
@@ -2250,13 +2271,13 @@ interface nsIDOMHTMLStyleElement : nsISupports
 
 [
     object,
-    uuid(94928ab3-8b63-11d3-989d-001083010e9b),
+    uuid(10a28f38-32e8-4c63-8aa1-12eaaebc369a),
     local
 ]
 interface nsIURIContentListener : nsISupports
 {
     nsresult OnStartURIOpen(nsIURI *aURI, bool *_retval);
-    nsresult DoContent(const char *aContentType, bool aIsContentPreferred, nsIRequest *aRequest,
+    nsresult DoContent(const nsACString *aContentType, bool aIsContentPreferred, nsIRequest *aRequest,
         nsIStreamListener **aContentHandler, bool *_retval);
     nsresult IsPreferred(const char *aContentType, char **aDesiredContentType, bool *_retval);
     nsresult CanHandleContent(const char *aContentType, bool aIsContentPreferred,
@@ -2280,7 +2301,7 @@ interface nsITooltipListener : nsISupports
 
 [
     object,
-    uuid(33e9d001-caab-4ba9-8961-54902f197202),
+    uuid(4052b6da-4faa-4646-b3a1-7e16a01c2dc2),
     local
 ]
 interface nsIWebBrowser : nsISupports
@@ -2291,7 +2312,7 @@ interface nsIWebBrowser : nsISupports
     nsresult SetContainerWindow(nsIWebBrowserChrome *aContainerWindow);
     nsresult GetParentURIContentListener(nsIURIContentListener **aParentURIContentListener);
     nsresult SetParentURIContentListener(nsIURIContentListener *aParentURIContentListener);
-    nsresult GetContentDOMWindow(nsIDOMWindow **aContentDOMWindow);
+    nsresult GetContentDOMWindow(mozIDOMWindowProxy **aContentDOMWindow);
     nsresult GetIsActive(bool *aIsActive);
     nsresult SetIsActive(bool aIsActive);
 }
@@ -2314,7 +2335,7 @@ typedef void* nativeWindow;
 
 [
     object,
-    uuid(9da319f3-eee6-4504-81a5-6A19cf6215bf),
+    uuid(ca635529-a977-4552-9b8a-66187e54d882),
     local
 ]
 interface nsIBaseWindow : nsISupports
@@ -2324,6 +2345,7 @@ interface nsIBaseWindow : nsISupports
     nsresult Create();
     nsresult Destroy();
     nsresult SetPosition(int32_t x, int32_t y);
+    nsresult SetPositionDesktopPix(int32_t x, int32_t y);
     nsresult GetPosition(int32_t *x, int32_t *y);
     nsresult SetSize(int32_t cx, int32_t cy, bool fRepaint);
     nsresult GetSize(int32_t *cx, int32_t *cy);
@@ -2341,6 +2363,7 @@ interface nsIBaseWindow : nsISupports
     nsresult SetEnabled(bool aEnabled);
     nsresult GetMainWidget(nsIWidget **aMainWidget);
     nsresult GetUnscaledDevicePixelsPerCSSPixel(double *aUnscaledDevicePixelsPerCSSPixel);
+    nsresult GetDevicePixelsPerDesktopPixel(double *aDevicePixelsPerDesktopPixel);
     nsresult SetFocus();
     nsresult GetTitle(PRUnichar **aTitle);
     nsresult SetTitle(const PRUnichar *aTitle);
@@ -2348,7 +2371,7 @@ interface nsIBaseWindow : nsISupports
 
 [
     object,
-    uuid(b7568a50-4c50-442c-a6be-3a340a48d89a),
+    uuid(3ade79d4-8cb9-4952-b18d-4f9b63ca0d31),
     local
 ]
 interface nsIWebNavigation : nsISupports
@@ -2370,6 +2393,7 @@ interface nsIWebNavigation : nsISupports
     const UINT LOAD_FLAGS_BYPASS_CLASSIFIER       = 0x10000;
     const UINT LOAD_FLAGS_FORCE_ALLOW_COOKIES     = 0x20000;
     const UINT LOAD_FLAGS_DISALLOW_INHERIT_OWNER  = 0x40000;
+    const UINT LOAD_FLAGS_ERROR_LOAD_CHANGES_RV   = 0x80000;
 
     nsresult GetCanGoBack(bool *aCanGoBack);
     nsresult GetCanGoForward(bool *aCanGoForward);
@@ -2378,7 +2402,7 @@ interface nsIWebNavigation : nsISupports
     nsresult GotoIndex(int32_t index);
     nsresult LoadURI(const PRUnichar *aURI, uint32_t aLoadFlags, nsIURI *aReferrer,
             nsIInputStream *aPostData, nsIInputStream *aHeaders);
-    nsresult LoadURIWithBase(const PRUnichar *aURI, uint32_t aLoadFlags, nsIURI *aReferrer,
+    nsresult LoadURIWithOptions(const PRUnichar *aURI, uint32_t aLoadFlags, nsIURI *aReferrer, uint32_t aReferrerPolicy,
             nsIInputStream *aPostData, nsIInputStream *aHeaders, nsIURI *aBaseURI);
     nsresult Reload(uint32_t aReloadFlags);
     nsresult Stop(uint32_t aStopFlags);
@@ -2391,14 +2415,14 @@ interface nsIWebNavigation : nsISupports
 
 [
     object,
-    uuid(bd0efb3b-1c81-4fb0-b16d-576a2be48a95),
+    uuid(c4d64640-b332-4db6-a2a5-e08566000dc9),
     local
 ]
 interface nsIWebProgress : nsISupports
 {
     nsresult AddProgressListener(nsIWebProgressListener *aListener, uint32_t aNotifyMask);
     nsresult RemoveProgressListener(nsIWebProgressListener *aListener);
-    nsresult GetDOMWindow(nsIDOMWindow **aDOMWindow);
+    nsresult GetDOMWindow(mozIDOMWindowProxy **aDOMWindow);
     nsresult GetDOMWindowID(uint64_t *aDOMWindowID);
     nsresult GetIsTopLevel(bool *aIsTopLevel);
     nsresult GetIsLoadingDocument(bool *aIsLoadingDocument);
@@ -2407,7 +2431,7 @@ interface nsIWebProgress : nsISupports
 
 [
     object,
-    uuid(1bcfc611-8941-4c39-9e06-7116e564a1ce),
+    uuid(ecc5cbad-57fc-4731-b0bd-09e865bd62ad),
     local
 ]
 interface nsIPrintSettings : nsISupports
@@ -2417,6 +2441,7 @@ interface nsIPrintSettings : nsISupports
     nsresult SetPrintOptions(int32_t aType, bool aTurnOnOff);
     nsresult GetPrintOptions(int32_t aType, bool *_retval);
     nsresult GetPrintOptionsBits(int32_t *_retval);
+    nsresult SetPrintOptionsBits(int32_t bits);
     nsresult GetEffectivePageSize(double *aWidth, double *aHeight);
     nsresult Clone(nsIPrintSettings **_retval);
     nsresult Assign(nsIPrintSettings *aPS);
@@ -2490,8 +2515,6 @@ interface nsIPrintSettings : nsISupports
     nsresult SetShowPrintProgress(bool aShowPrintProgress);
     nsresult GetPaperName(PRUnichar **aPaperName);
     nsresult SetPaperName(const PRUnichar *aPaperName);
-    nsresult GetPaperSizeType(int16_t *aPaperSizeType);
-    nsresult SetPaperSizeType(int16_t aPaperSizeType);
     nsresult GetPaperData(int16_t *aPaperData);
     nsresult SetPaperData(int16_t aPaperData);
     nsresult GetPaperWidth(double *aPaperWidth);
@@ -2500,22 +2523,12 @@ interface nsIPrintSettings : nsISupports
     nsresult SetPaperHeight(double aPaperHeight);
     nsresult GetPaperSizeUnit(int16_t *aPaperSizeUnit);
     nsresult SetPaperSizeUnit(int16_t aPaperSizeUnit);
-    nsresult GetPlexName(PRUnichar **aPlexName);
-    nsresult SetPlexName(const PRUnichar *aPlexName);
-    nsresult GetColorspace(PRUnichar **aColorspace);
-    nsresult SetColorspace(const PRUnichar *aColorspace);
-    nsresult GetResolutionName(PRUnichar **aResolutionName);
-    nsresult SetResolutionName(const PRUnichar aResolutionName);
-    nsresult GetDownloadFonts(bool *aDownloadFonts);
-    nsresult SetDownloadFonts(bool aDownloadFonts);
     nsresult GetPrintReversed(bool *aPrintReversed);
     nsresult SetPrintReversed(bool aPrintReversed);
     nsresult GetPrintInColor(bool *aPrintInColor);
     nsresult SetPrintInColor(bool aPrintInColor);
     nsresult GetOrientation(int32_t *aOrientation);
     nsresult SetOrientation(int32_t aOrientation);
-    nsresult GetPrintCommand(PRUnichar **aPrintCommand);
-    nsresult SetPrintCommand(const PRUnichar *aPrintCommand);
     nsresult GetNumCopies(int32_t *aNumCopies);
     nsresult SetNumCopies(int32_t aNumCopies);
     nsresult GetPrinterName(PRUnichar **aPrinterName);
@@ -2550,14 +2563,14 @@ interface nsIPrintSettings : nsISupports
 
 [
     object,
-    uuid(9a7ca4b0-fbba-11d4-a869-00105a183419),
+    uuid(c9a934ed-fff1-4971-bfba-6c25ad70e1e6),
     local
 ]
 interface nsIWebBrowserPrint : nsISupports
 {
     nsresult GetGlobalPrintSettings(nsIPrintSettings **aGlobalPrintSettings);
     nsresult GetCurrentPrintSettings(nsIPrintSettings **aCurrentPrintSettings);
-    nsresult GetCurrentChildDOMWindow(nsIDOMWindow **aCurrentChildDOMWindow);
+    nsresult GetCurrentChildDOMWindow(mozIDOMWindowProxy **aCurrentChildDOMWindow);
     nsresult GetDoingPrint(bool *aDoingPrint);
     nsresult GetDoingPrintPreview(bool *aDoingPrintPreview);
     nsresult GetIsFramesetDocument(bool *aIsFramesetDocument);
@@ -2566,7 +2579,7 @@ interface nsIWebBrowserPrint : nsISupports
     nsresult GetIsRangeSelection(bool *aIsRangeSelection);
     nsresult GetPrintPreviewNumPages(int32_t *aPrintPreviewNumPages);
     nsresult Print(nsIPrintSettings *aThePrintSettings, nsIWebProgressListener *aWPListener);
-    nsresult PrintPreview(nsIPrintSettings *aThePrintSettings, nsIDOMWindow *aChildDOMWin,
+    nsresult PrintPreview(nsIPrintSettings *aThePrintSettings, mozIDOMWindowProxy *aChildDOMWin,
                           nsIWebProgressListener *aWPListener);
     nsresult PrintPreviewNavigate(int16_t aNavType, int32_t aPageNum);
     nsresult Cancel();
@@ -2599,7 +2612,7 @@ interface nsIScrollable : nsISupports
 
 [
     object,
-    uuid(dfb5a307-7ecf-41dd-aee2-f1d623459c44),
+    uuid(2fa6884a-ae65-412a-9d4c-ce6e34544ba1),
     local
 ]
 interface nsIFile : nsISupports
@@ -2625,6 +2638,7 @@ interface nsIFile : nsISupports
     nsresult MoveTo(nsIFile *newParentDir, const nsAString *newName);
     nsresult MoveToNative(nsIFile *newParentDir, const nsAString *newName);
     nsresult RenameTo(nsIFile *newParentDir, const nsAString *newName);
+    nsresult RenameToNative(nsIFile *newParentDir, const nsACString *newName);
     nsresult Remove(bool recursive);
     nsresult GetPermissions(uint32_t *aPermissions);
     nsresult SetPermissions(uint32_t pPermissions);
@@ -2673,6 +2687,8 @@ interface nsIFile : nsISupports
     nsresult Launch();
     nsresult GetRelativeDescriptor(nsIFile *fromFile, nsACString *_retval);
     nsresult SetRelativeDescriptor(nsIFile *fromFile, const nsACString *relativeDesc);
+    nsresult GetRelativePath(nsIFile *fromFile, nsACString *_retval);
+    nsresult SetRelativePath(nsIFile *fromFile, const nsACString *relativeDesc);
 }
 
 [
@@ -2745,7 +2761,7 @@ interface nsIDirectoryServiceProvider2 : nsIDirectoryServiceProvider
 
 [
     object,
-    uuid(f5753fec-a051-4ddc-8891-11f1f1575072),
+    uuid(a87210e6-7c8c-41f7-864d-df809015193e),
     local
 ]
 interface nsIProtocolHandler : nsISupports
@@ -2770,12 +2786,14 @@ interface nsIProtocolHandler : nsISupports
     const unsigned long URI_CROSS_ORIGIN_NEEDS_WEBAPPS_PERM = (1<<16);
     const unsigned long URI_SYNC_LOAD_IS_OK = (1<<17);
     const unsigned long URI_SAFE_TO_LOAD_IN_SECURE_CONTEXT = (1<<18);
+    const unsigned long URI_FETCHABLE_BY_ANYONE = (1 << 19);
 
     nsresult GetScheme(nsACString *aScheme);
     nsresult GetDefaultPort(int32_t *aDefaultPort);
     nsresult GetProtocolFlags(uint32_t *aProtocolFlags);
     nsresult NewURI(const nsACString *aSpec, const char *aOriginCharset,
                     nsIURI *aBaseURI, nsIURI **_retval);
+    nsresult NewChannel2(nsIURI *aURI, nsILoadInfo *aLoadinfo, nsIChannel **_retval);
     nsresult NewChannel(nsIURI *aURI, nsIChannel **_retval);
     nsresult AllowPort(int32_t port, const char *scheme, bool *_retval);
 }
@@ -2792,7 +2810,21 @@ interface nsIExternalProtocolHandler : nsIProtocolHandler
 
 [
     object,
-    uuid(bddeda3f-9020-4d12-8c70-984ee9f7935e),
+    uuid(d13c21ca-7329-45a5-8912-9d2e2fef1231),
+    local
+]
+interface nsIIOServiceHook : nsISupports
+{
+    nsresult NewChannel(nsIURI *aURI, nsILoadInfo *aLoadInfo, nsIChannel **_retval);
+    nsresult GetProtocolHandler(nsIProtocolHandler *aHandler, nsIProtocolHandler **_retval);
+    nsresult NewURI(const nsACString *aSpec, const char *aOriginCharset, nsIURI *aBaseURI, nsIURI **_retval);
+    nsresult ProtocolHasFlags(nsIURI *aURI, uint32_t aFlag, bool *_retval);
+    nsresult URIChainHasFlags(nsIURI *aURI, uint32_t aFlags, bool *_retval);
+}
+
+[
+    object,
+    uuid(4286de5a-b2ea-446f-8f70-e2a461f42694),
     local
 ]
 interface nsIIOService : nsISupports
@@ -2802,38 +2834,30 @@ interface nsIIOService : nsISupports
     nsresult NewURI(const nsACString *aSpec, const char *aOriginCharset, nsIURI *aBaseURI,
                     nsIURI **_retval);
     nsresult NewFileURI(nsIFile *aFile, nsIURI **_retval);
+    nsresult NewChannelFromURI2(nsIURI *aURI, nsIDOMNode *aLoadingNode, nsIPrincipal *aLoadingPrincipal,
+            nsIPrincipal *aTriggeringPrincipal, uint32_t aSecurityFlags, uint32_t aContentPolicyType,
+            nsIChannel **_retval);
+    nsresult NewChannelFromURIWithLoadInfo(nsIURI *aURI, nsILoadInfo *aLoadInfo, nsIChannel **_retval);
     nsresult NewChannelFromURI(nsIURI *aURI, nsIChannel **_retval);
+    nsresult NewChannel2(const nsACString *aSpec, const char *aOriginCharset, nsIURI *aBaseURI,
+            nsIDOMNode *aLoadingNode, nsIPrincipal *aLoadingPrincipal, nsIPrincipal *aTriggeringPrincipal,
+            uint32_t aSecurityFlags, uint32_t aContentPolicyType, nsIChannel **_retval);
     nsresult NewChannel(const nsACString *aSpec, const char *aOriginCharset, nsIURI *aBaseURI,
                         nsIChannel **_retval);
     nsresult GetOffline(bool *aOffline);
     nsresult SetOffline(bool aOffline);
+    nsresult GetConnectivity(bool *aConnectivity);
+    nsresult SetAppOffline(uint32_t appId, int32_t state);
+    nsresult IsAppOffline(uint32_t appId, bool *_retval);
+    nsresult GetAppOfflineState(uint32_t appId, int32_t *_retval);
     nsresult AllowPort(int32_t aPort, const char *aScheme, bool *_retval);
     nsresult ExtractScheme(const nsACString *urlString, nsACString *_retval);
+    nsresult SetHook(nsIIOServiceHook *aHook);
 }
 
 [
     object,
-    uuid(ca68c485-9db3-4c12-82a6-4fab7948e2d5),
-    local,
-]
-interface nsINetUtil : nsISupports
-{
-    nsresult ParseContentType(const nsACString *aTypeHeader, nsACString *aCharset,
-            bool *aHadCharset, nsACString *_retval);
-    nsresult ProtocolHasFlags(nsIURI *aURI, uint32_t aFlag, bool *_retval);
-    nsresult URIChainHasFlags(nsIURI *aURI, uint32_t aFlags, bool *_retval);
-    nsresult ToImmutableURI(nsIURI *aURI, nsIURI **_retval);
-    nsresult NewSimpleNestedURI(nsIURI *aURI, nsIURI **_retval);
-    nsresult EscapeString(const nsACString *aString, uint32_t aEscapeType, nsACString *_retval);
-    nsresult EscapeURL(const nsACString *aStr, uint32_t aFlags, nsACString *_retval);
-    nsresult UnescapeString(const nsACString *aStr, uint32_t aFlags, nsACString *_retval);
-    nsresult ExtractCharsetFromContentType(const nsACString *aTypeHeader, nsACString *aCharset,
-            int32_t *aCharsetStart, int32_t *aCharsetEnd, bool *_retval);
-}
-
-[
-    object,
-    uuid(9c5d3c58-1dd1-11b2-a1c9-f3699284657a),
+    uuid(7f8c754e-5b36-44be-bc96-191b49f08ea6),
     local
 ]
 interface nsIWebBrowserFocus : nsISupports
@@ -2842,8 +2866,8 @@ interface nsIWebBrowserFocus : nsISupports
     nsresult Deactivate();
     nsresult SetFocusAtFirstElement();
     nsresult SetFocusAtLastElement();
-    nsresult GetFocusedWindow(nsIDOMWindow **aFocusedWindow);
-    nsresult SetFocusedWindow(nsIDOMWindow *aFocusedWindow);
+    nsresult GetFocusedWindow(mozIDOMWindowProxy **aFocusedWindow);
+    nsresult SetFocusedWindow(mozIDOMWindowProxy *aFocusedWindow);
     nsresult GetFocusedElement(nsIDOMElement **aFocusedElement);
     nsresult SetFocusedElement(nsIDOMElement *aFocusedElement);
 }
@@ -2895,7 +2919,7 @@ interface nsIDOMEventTarget : nsISupports
 
 [
     object,
-    uuid(02d54f52-a1f5-4ad2-b560-36f14012935e),
+    uuid(f58daacf-4d1a-4002-8fd7-06b614dfbcf6),
     local
 ]
 interface nsIDOMEvent : nsISupports
@@ -2909,7 +2933,7 @@ interface nsIDOMEvent : nsISupports
     nsresult GetTimeStamp(DOMTimeStamp *aTimeStamp);
     nsresult StopPropagation();
     nsresult PreventDefault();
-    nsresult InitEvent(const nsAString *eventTypeArg, bool canBubbleArg, bool cancelableArg);
+    void /* thiscall */ InitEvent(const nsAString *eventTypeArg, bool canBubbleArg, bool cancelableArg);
     nsresult GetDefaultPrevented(bool *aDefaultPrevented);
     nsresult StopImmediatePropagation();
     nsresult GetOriginalTarget(nsIDOMEventTarget **aOriginalTarget);
@@ -2919,17 +2943,18 @@ interface nsIDOMEvent : nsISupports
     nsresult DuplicatePrivateData();
     nsresult SetTarget(nsIDOMEventTarget *aTarget);
     bool IsDispatchStopped();
-    /*nsEvent*/ void *GetInternalNSEvent();
+    /*WidgedEvent*/ void *WidgetEventPtr();
     void SetTrusted(bool aTrusted);
     void Serialize(/*IPC::Message*/ void *aMsg, bool aSerializeInterfaceType);
     bool Deserialize(const /*IPC::Message*/ void *aMsg, void **aIter);
     void SetOwner(void /*mozilla::dom::EventTarget*/ *aOwner);
     void /*nsDOMEvent*/ *InternalDOMEvent();
+    nsresult StopCrossProcessForwarding();
 }
 
 [
     object,
-    uuid(11911980-607c-4efd-aacc-de3b9005c058),
+    uuid(46b44e33-13c2-4eb3-bf80-76a4e0857ccc),
     local
 ]
 interface nsIDOMWindowUtils : nsISupports
@@ -2940,17 +2965,17 @@ interface nsIDOMWindowUtils : nsISupports
     nsresult GetCursorType(int16_t *_retval);
     nsresult GetDocumentMetadata(const nsAString *aName, nsAString *_retval);
     nsresult Redraw(uint32_t aCount, uint32_t *_retval);
-    nsresult SetCSSViewport(float aWidthPx, float aHeightPx);
+    nsresult UpdateLayerTree();
     nsresult GetViewportInfo(uint32_t aDisplayWidth, uint32_t aDisplayHeight, double *aDefaultZoom, bool *aAllowZoom,
             double *aMinZoom, double *aMaxZoom, uint32_t *aWidth, uint32_t *aHeight, bool *aAutoSize);
     nsresult SetDisplayPortForElement(float aXPx, float aYPx, float aWidthPx, float aHeightPx,
             nsIDOMElement *aElement, uint32_t aPriority);
     nsresult SetDisplayPortMarginsForElement(float aLeftMargin, float aTopMargin, float aRightMargin, float aBottomMargin,
-            uint32_t aAlignmentX, uint32_t aAlignmentY, nsIDOMElement *aElement, uint32_t aPriority);
+            nsIDOMElement *aElement, uint32_t aPriority);
     nsresult SetDisplayPortBaseForElement(int32_t aX, int32_t aY, int32_t aWidth, int32_t aHeight, nsIDOMElement *aElement);
-    nsresult SetCriticalDisplayPortForElement(float aXPx, float aYPx, float aWidthPx, float aHeightPx, nsIDOMElement *aElement);
-    nsresult SetResolution(float aXResolution, float aYResolution);
-    nsresult GetResolution(float *aXResolution, float *aYResolution);
+    nsresult SetResolution(float aResolution);
+    nsresult GetResolution(float *aResolution);
+    nsresult SetResolutionAndScaleTo(float aResolution);
     nsresult GetIsResolutionSet(bool *aIsResolutionSet);
     nsresult GetIsFirstPaint(bool *aIsFirstPaint);
     nsresult SetIsFirstPaint(bool aIsFirstPaint);
@@ -2979,15 +3004,17 @@ interface nsIDOMWindowUtils : nsISupports
     nsresult SendKeyEvent(const nsAString *aType, int32_t aKeyCode, int32_t aCharCode, int32_t aModifiers,
            uint32_t aAdditionalFlags, bool *_retval);
     nsresult SendNativeKeyEvent(int32_t aNativeKeyboardLayout, int32_t aNativeKeyCode, int32_t aModifierFlags,
-           const nsAString *aCharacters, const nsAString *aUnmodifiedCharacters);
+           const nsAString *aCharacters, const nsAString *aUnmodifiedCharacters, nsIObserver *aObserver);
     nsresult SendNativeMouseEvent(int32_t aScreenX, int32_t aScreenY, int32_t aNativeMessage, int32_t aModifierFlags,
-           nsIDOMElement *aElement);
+           nsIDOMElement *aElement, nsIObserver *aObserver);
+    nsresult SendNativeMouseMove(int32_t aScreenX, int32_t aScreenY, nsIDOMElement *aElement, nsIObserver *aObserver);
     nsresult SendNativeMouseScrollEvent(int32_t aScreenX, int32_t aScreenY, uint32_t aNativeMessage, double aDeltaX,
-           double aDeltaY, double aDeltaZ, uint32_t aModifierFlags, uint32_t aAdditionalFlags, nsIDOMElement *aElement);
+           double aDeltaY, double aDeltaZ, uint32_t aModifierFlags, uint32_t aAdditionalFlags, nsIDOMElement *aElement,
+           nsIObserver *aObserver);
     nsresult SendNativeTouchPoint(uint32_t aPointerId, uint32_t aTouchState, int32_t aScreenX, int32_t aScreenY,
-           double aPressure, uint32_t aOrientation);
-    nsresult SendNativeTouchTap(int32_t aScreenX, int32_t aScreenY, bool aLongTap);
-    nsresult ClearNativeTouchSequence();
+           double aPressure, uint32_t aOrientation, nsIObserver *aObserver);
+    nsresult SendNativeTouchTap(int32_t aScreenX, int32_t aScreenY, bool aLongTap, nsIObserver *aObserver);
+    nsresult ClearNativeTouchSequence(nsIObserver *aObserver);
     nsresult ActivateNativeMenuItemAt(const nsAString *indexString);
     nsresult ForceUpdateNativeMenuAt(const nsAString *indexString);
     nsresult Focus(nsIDOMElement *aElement);
@@ -3019,27 +3046,27 @@ interface nsIDOMWindowUtils : nsISupports
     nsresult DispatchEventToChromeOnly(nsIDOMEventTarget *aTarget, nsIDOMEvent *aEvent, bool *_retval);
     nsresult GetClassName(const /*JS::Value*/ void *aObject, JSContext *cx, char **_retval);
     nsresult SendContentCommandEvent(const nsAString *aType, nsITransferable *aTransferable);
-    nsresult SendCompositionEvent(const nsAString *aType, const nsAString *aData, const nsAString *aLocale);
-    nsresult CreateCompositionStringSynthesizer(int /*nsICompositionStringSynthesizer*/ **_retval);
     nsresult SendQueryContentEvent(uint32_t aType, uint32_t aOffset, uint32_t aLength, int32_t aX, int32_t aY,
             uint32_t aAdditionalFlags, nsIQueryContentEventResult **_retval);
-    nsresult RemoteFrameFullscreenChanged(nsIDOMElement *aFrameElement, const nsAString *aNewOrigin);
+    nsresult RemoteFrameFullscreenChanged(nsIDOMElement *aFrameElement);
     nsresult RemoteFrameFullscreenReverted();
+    nsresult HandleFullscreenRequests(bool *_retval);
     nsresult ExitFullscreen();
     nsresult SendSelectionSetEvent(uint32_t aOffset, uint32_t aLength, uint32_t aAdditionalFlags, bool *_retval);
     nsresult SelectAtPoint(float aX, float aY, uint32_t aSelectBehavior, bool *_retval);
     nsresult GetVisitedDependentComputedStyle(nsIDOMElement *aElement, const nsAString *aPseudoElement,
            const nsAString *aPropertyName, nsAString *_retval);
-    nsresult GetParent(const /*JS::Value*/ void *obj, JSContext *cx, /*JS::Value*/ void *_retval);
     nsresult GetOuterWindowID(uint64_t *aOuterWindowID);
     nsresult GetCurrentInnerWindowID(uint64_t *aCurrentInnerWindowID);
     nsresult EnterModalState();
     nsresult LeaveModalState();
     nsresult IsInModalState(bool *_retval);
+    nsresult SetDesktopModeViewport(bool aDesktopModeViewport);
     nsresult SuspendTimeouts();
     nsresult ResumeTimeouts();
     nsresult GetLayerManagerType(nsAString *aLayerManagerType);
     nsresult GetLayerManagerRemote(bool *aLayerManagerRemote);
+    nsresult GetSupportsHardwareH264Decoding(void /* JS::MutableHandleValue */ *aSupportsHardwareH264Decoding);
     nsresult StartFrameTimeRecording(uint32_t *startIndex);
     nsresult StopFrameTimeRecording(uint32_t startIndex, uint32_t *frameCount, float **frameIntervals);
     nsresult BeginTabSwitch();
@@ -3051,19 +3078,25 @@ interface nsIDOMWindowUtils : nsISupports
     nsresult AdvanceTimeAndRefresh(int64_t aMilliseconds);
     nsresult RestoreNormalRefresh();
     nsresult GetIsTestControllingRefreshes(bool *aIsTestControllingRefreshes);
-    nsresult SetAsyncScrollOffset(nsIDOMNode *aNode, int32_t aX, int32_t aY);
+    nsresult GetAsyncPanZoomEnabled(bool *aAsyncPanZoomEnabled);
+    nsresult SetAsyncScrollOffset(nsIDOMNode *aNode, float aX, float aY);
+    nsresult SetAsyncZoom(nsIDOMNode *aRootElement, float aValue);
+    nsresult FlushApzRepaints(bool *_retval);
+    nsresult ZoomToFocusedInput();
     nsresult ComputeAnimationDistance(nsIDOMElement *element, const nsAString *property, const nsAString *value1,
            const nsAString *value2, double *_retval);
-    nsresult WrapDOMFile(nsIFile *aFile, nsIDOMFile **_retval);
+    nsresult WrapDOMFile(nsIFile *aFile, nsISupports **_retval);
     nsresult GetFocusedInputType(char **aFocusedInputType);
-    nsresult FindElementWithViewId(long /*nsViewID*/ aId, nsIDOMElement **_retval);
     nsresult GetViewId(nsIDOMElement *aElement, long /*nsViewID*/ *_retval);
     nsresult LeafLayersPartitionWindow(bool *_retval);
-    nsresult GetMayHaveTouchEventListeners(bool *aMayHaveTouchEventListeners);
     nsresult CheckAndClearPaintedState(nsIDOMElement *aElement, bool *_retval);
+    nsresult IsPartOfOpaqueLayer(nsIDOMElement *aElement, bool *_retval);
+    nsresult NumberOfAssignedPaintedLayers(nsIDOMElement **aElements, uint32_t count, uint32_t *_retval);
     nsresult GetFileId(const /*JS::Value*/ void *aFile, JSContext *cx, int64_t *_retval);
+    nsresult GetFilePath(void /*JS::HandleValue*/ *aFile, JSContext *cx, nsAString *_retval);
     nsresult GetFileReferences(const nsAString *aDatabaseName, int64_t aId, void /*JS::HandleValue*/ *aOptions,
            int32_t *aRefCnt, int32_t *aDBRefCnt, int32_t *aSliceRefCnt, JSContext* cx, bool *_retval);
+    nsresult FlushPendingFileDeletions();
     nsresult IsIncrementalGCEnabled(JSContext *cx, bool *_retval);
     nsresult StartPCCountProfiling(JSContext *cx);
     nsresult StopPCCountProfiling(JSContext *cx);
@@ -3074,31 +3107,44 @@ interface nsIDOMWindowUtils : nsISupports
     nsresult GetPaintingSuppressed(bool *aPaintingSuppressed);
     nsresult GetPlugins(JSContext *cx, /*JS::Value*/ void *aPlugins);
     nsresult SetScrollPositionClampingScrollPortSize(float aWidth, float aHeight);
-    nsresult SetContentDocumentFixedPositionMargins(float aTop, float aRight, float aBottom, float aLeft);
     nsresult DisableDialogs();
     nsresult EnableDialogs();
     nsresult AreDialogsEnabled(bool *_retval);
     nsresult LoadSheet(nsIURI *sheetURI, uint32_t type);
+    nsresult LoadSheetUsingURIString(const nsACString *sheetURI, uint32_t type);
     nsresult AddSheet(nsIDOMStyleSheet *sheet, uint32_t type);
     nsresult RemoveSheet(nsIURI *sheetURI, uint32_t type);
+    nsresult  RemoveSheetUsingURIString(const nsACString *sheetURI, uint32_t type);
     nsresult GetIsHandlingUserInput(bool *aIsHandlingUserInput);
     nsresult AllowScriptsToClose();
     nsresult GetIsParentWindowMainWidgetVisible(bool *aIsParentWindowMainWidgetVisible);
     nsresult IsNodeDisabledForEvents(nsIDOMNode *aNode, bool *_retval);
     nsresult GetPaintFlashing(bool *aPaintFlashing);
     nsresult SetPaintFlashing(bool aPaintFlashing);
-    nsresult RunInStableState(nsIRunnable *runnable);
-    nsresult RunBeforeNextEvent(nsIRunnable *runnable);
-    nsresult GetOMTAStyle(nsIDOMElement *aElement, const nsAString *aProperty, nsAString *_retval);
+    nsresult GetOMTAStyle(nsIDOMElement *aElement, const nsAString *aProperty,
+            const nsAString *aPseudoElement, nsAString *_retval);
+    nsresult RequestCompositorProperty(const nsAString *aProperty, float *_retval);
     nsresult SetHandlingUserInput(bool aHandlingInput, void /*nsIJSRAIIHelper*/ **_retval);
     nsresult GetContentAPZTestData(JSContext *cx, int /*JS::MutableHandleValue*/ _retval);
     nsresult GetCompositorAPZTestData(JSContext *cx, void /*JS::MutableHandleValue*/ *_retval);
+    nsresult PostRestyleSelfEvent(nsIDOMElement *aElement);
     nsresult GetAudioMuted(bool *aAudioMuted) ;
     nsresult SetAudioMuted(bool aAudioMuted);
     nsresult GetAudioVolume(float *aAudioVolume);
     nsresult SetAudioVolume(float aAudioVolume);
     nsresult XpconnectArgument(nsIDOMWindowUtils *aThis);
     nsresult AskPermission(void /*nsIContentPermissionRequest*/ *aRequest);
+    nsresult GetFramesConstructed(uint64_t *aFramesConstructed);
+    nsresult GetFramesReflowed(uint64_t *aFramesReflowed);
+    nsresult SetChromeMargin(int32_t aTop, int32_t aRight, int32_t aBottom, int32_t aLeft);
+    nsresult GetServiceWorkersTestingEnabled(bool *aServiceWorkersTestingEnabled);
+    nsresult SetServiceWorkersTestingEnabled(bool aServiceWorkersTestingEnabled);
+    nsresult GetFrameUniformityTestData(JSContext* cx, int /*JS::MutableHandleValue*/  *_retval);
+    nsresult EnterChaosMode();
+    nsresult LeaveChaosMode();
+    nsresult HasRuleProcessorUsedByMultipleStyleSets(uint32_t aSheetType, bool *_retval);
+    nsresult ForceUseCounterFlush(nsIDOMNode *aNode);
+    nsresult SetNextPaintSyncId(int32_t aSyncId);
 }
 
 cpp_quote("#define CONTEXT_NONE              0x00")
@@ -3121,15 +3167,15 @@ interface nsIContextMenuListener : nsISupports
 
 [
     object,
-    uuid(d73852f8-7bd6-477d-8233-117dbf83860b),
+    uuid(85ae52eb-37fa-4fd9-a2e6-c7d0f2a521b3),
     local
 ]
-interface nsIDOMUIEvent : nsIDOMEvent
+interface nsIDOMUIEvent : nsISupports
 {
-    nsresult GetView(nsIDOMWindow **aView);
+    nsresult GetView(mozIDOMWindowProxy **aView);
     nsresult GetDetail(int32_t *aDetail);
     nsresult InitUIEvent(const nsAString *typeArg, bool canBubbleArg, bool cancelableArg,
-            nsIDOMWindow *viewArg, int32_t detailArg);
+            mozIDOMWindowProxy *viewArg, int32_t detailArg);
     nsresult GetLayerX(int32_t *aLayerX);
     nsresult GetLayerY(int32_t *aLayerY);
     nsresult GetPageX(int32_t *aPageX);
@@ -3140,11 +3186,12 @@ interface nsIDOMUIEvent : nsIDOMEvent
     nsresult GetCancelBubble(bool *aCancelBubble);
     nsresult SetCancelBubble(bool aCancelBubble);
     nsresult GetIsChar(bool *aIsChar);
+    void* /* mozilla::dom::Event thiscall */ AsEvent();
 }
 
 [
     object,
-    uuid(df068636-9a5b-11e3-b71f-2c27d728e7f9),
+    uuid(5bdab8d8-7933-4c5c-b6d1-ab34481237f7),
     local
 ]
 interface nsIDOMMouseEvent : nsIDOMUIEvent
@@ -3163,23 +3210,17 @@ interface nsIDOMMouseEvent : nsIDOMUIEvent
     nsresult GetButtons(uint16_t *aButtons);
     nsresult GetRelatedTarget(nsIDOMEventTarget **aRelatedTarget);
     nsresult InitMouseEvent(const nsAString *typeArg, bool canBubbleArg, bool cancelableArg,
-            nsIDOMWindow *viewArg, int32_t detailArg, int32_t screenXArg, int32_t screenYArg,
-            int32_t clientXArg, int32_t clientYArg, bool ctrlKeyArg, bool altKeyArg,
-            bool shiftKeyArg, bool metaKeyArg, uint16_t buttonArg,
-            nsIDOMEventTarget *relatedTargetArg);
+            mozIDOMWindow *viewArg, int32_t detailArg, int32_t screenXArg, int32_t screenYArg,
+            int32_t clientXArg, int32_t clientYArg, bool ctrlKeyArg, bool altKeyArg, bool shiftKeyArg,
+            bool metaKeyArg, uint16_t buttonArg, nsIDOMEventTarget *relatedTargetArg);
     nsresult GetMozPressure(float *aMozPressure);
     nsresult GetMozInputSource(uint16_t *aMozInputSource);
-    nsresult InitNSMouseEvent(const nsAString *typeArg, bool canBubbleArg, bool cancelableArg,
-            nsIDOMWindow *viewArg, int32_t detailArg, int32_t screenXArg, int32_t screenYArg,
-            int32_t clientXArg, int32_t clientYArg, bool ctrlKeyArg, bool altKeyArg, bool shiftKeyArg,
-            bool metaKeyArg, uint16_t buttonArg, nsIDOMEventTarget *relatedTargetArg, float pressure,
-            uint16_t inputSourceArg);
     nsresult GetModifierState(const nsAString *keyArg, bool *_retval);
 }
 
 [
     object,
-    uuid(d2b3e35f-8627-4732-a92d-cda54c8f8054),
+    uuid(2e52eb99-670d-469a-b51f-8efee2dd091d),
     local
 ]
 interface nsIDOMKeyEvent : nsIDOMUIEvent
@@ -3191,7 +3232,7 @@ interface nsIDOMKeyEvent : nsIDOMUIEvent
     nsresult GetShiftKey(bool *aShiftKey);
     nsresult GetMetaKey(bool *aMetaKey);
     nsresult InitKeyEvent(const nsAString *typeArg, bool canBubbleArg,
-            bool cancelableArg, nsIDOMWindow *viewArg, bool ctrlKeyArg,
+            bool cancelableArg, mozIDOMWindowProxy *viewArg, bool ctrlKeyArg,
             bool altKeyArg, bool shiftKeyArg, bool metaKeyArg, uint32_t keyCodeArg,
             uint32_t charCodeArg);
     nsresult GetModifierState(const nsAString *keyArg, bool *_retval);
@@ -3244,34 +3285,34 @@ interface nsIComponentRegistrar : nsISupports
 
 [
     object,
-    uuid(1630c61a-325e-49ca-8759-a31b16c47aa5),
+    uuid(404ebfa2-d8f4-4c94-8416-e65a55f9df5a),
     local
 ]
 interface nsIPromptService : nsISupports
 {
-    nsresult Alert(nsIDOMWindow *aParent, const PRUnichar *aDialogTitle,
+    nsresult Alert(mozIDOMWindowProxy *aParent, const PRUnichar *aDialogTitle,
             const PRUnichar *aText);
-    nsresult AlertCheck(nsIDOMWindow *aParent, const PRUnichar *aDialogTitle,
+    nsresult AlertCheck(mozIDOMWindowProxy *aParent, const PRUnichar *aDialogTitle,
             const PRUnichar *aText, const PRUnichar *aCheckMsg, bool *aCheckState);
-    nsresult Confirm(nsIDOMWindow *aParent, const PRUnichar *aDialogTitle,
+    nsresult Confirm(mozIDOMWindowProxy *aParent, const PRUnichar *aDialogTitle,
             const PRUnichar *aText, bool *_retval);
-    nsresult ConfirmCheck(nsIDOMWindow *aParent, const PRUnichar *aDialogTitle,
+    nsresult ConfirmCheck(mozIDOMWindowProxy *aParent, const PRUnichar *aDialogTitle,
             const PRUnichar *aText, const PRUnichar *aCheckMsg, bool *aCheckState,
             bool *_retval);
-    nsresult ConfirmEx(nsIDOMWindow *aParent, const PRUnichar *aDialogTitle,
+    nsresult ConfirmEx(mozIDOMWindowProxy *aParent, const PRUnichar *aDialogTitle,
             const PRUnichar *aText, uint32_t aButtonFlags, const PRUnichar *aButton0Title,
             const PRUnichar *aButton1Title, const PRUnichar *aButton2Title,
             const PRUnichar *aCheckMsg, bool *aCheckState, int32_t *_retval);
-    nsresult Prompt(nsIDOMWindow *aParent, const PRUnichar *aDialogTitle,
+    nsresult Prompt(mozIDOMWindowProxy *aParent, const PRUnichar *aDialogTitle,
             const PRUnichar *aText, PRUnichar **aValue, const PRUnichar *aCheckMsg,
             bool *aCheckState, bool *_retval);
-    nsresult PromptUsernameAndPassword(nsIDOMWindow *aParent, const PRUnichar *aDialogTitle,
+    nsresult PromptUsernameAndPassword(mozIDOMWindowProxy *aParent, const PRUnichar *aDialogTitle,
             const PRUnichar *aText, PRUnichar **aUsername, PRUnichar **aPassword,
             const PRUnichar *aCheckMsg, bool *aCheckState, bool *_retval);
-    nsresult PromptPassword(nsIDOMWindow *aParent, const PRUnichar *aDialogTitle,
+    nsresult PromptPassword(mozIDOMWindowProxy *aParent, const PRUnichar *aDialogTitle,
             const PRUnichar *aText, PRUnichar **aPassword, const PRUnichar *aCheckMsg,
             bool *aCheckState, bool *_retval);
-    nsresult Select(nsIDOMWindow *aParent, const PRUnichar *aDialogTitle,
+    nsresult Select(mozIDOMWindowProxy *aParent, const PRUnichar *aDialogTitle,
             const PRUnichar *aText, uint32_t aCount, const PRUnichar **aSelectList,
             int32_t *aOutSelection, bool *_retval);
 }
@@ -3288,23 +3329,23 @@ interface nsITooltipTextProvider : nsISupports
 
 [
     object,
-    uuid(24f3f4da-18a4-448d-876d-7360fefac029),
+    uuid(24f963d1-e6fc-43ea-a206-99ac5fcc5265),
     local
 ]
 interface nsIEditingSession : nsISupports
 {
     nsresult GetEditorStatus(uint32_t *aEditorStatus);
-    nsresult MakeWindowEditable(nsIDOMWindow *window, const char *aEditorType,
+    nsresult MakeWindowEditable(mozIDOMWindowProxy *window, const char *aEditorType,
             bool doAfterUriLoad, bool aMakeWholeDocumentEditable, bool aInteractive);
-    nsresult WindowIsEditable(nsIDOMWindow *window, bool *_retval);
-    nsresult GetEditorForWindow(nsIDOMWindow *window, nsIEditor **_retval);
-    nsresult SetupEditorOnWindow(nsIDOMWindow *window);
-    nsresult TearDownEditorOnWindow(nsIDOMWindow *window);
-    nsresult SetEditorOnControllers(nsIDOMWindow *aWindow, nsIEditor *aEditor);
-    nsresult DisableJSAndPlugins(nsIDOMWindow *aWindow);
-    nsresult RestoreJSAndPlugins(nsIDOMWindow *aWindow);
-    nsresult DetachFromWindow(nsIDOMWindow *aWindow);
-    nsresult ReattachToWindow(nsIDOMWindow *aWindow);
+    nsresult WindowIsEditable(mozIDOMWindowProxy *window, bool *_retval);
+    nsresult GetEditorForWindow(mozIDOMWindowProxy *window, nsIEditor **_retval);
+    nsresult SetupEditorOnWindow(mozIDOMWindowProxy *window);
+    nsresult TearDownEditorOnWindow(mozIDOMWindowProxy *window);
+    nsresult SetEditorOnControllers(mozIDOMWindowProxy *aWindow, nsIEditor *aEditor);
+    nsresult DisableJSAndPlugins(mozIDOMWindowProxy *aWindow);
+    nsresult RestoreJSAndPlugins(mozIDOMWindowProxy *aWindow);
+    nsresult DetachFromWindow(mozIDOMWindowProxy *aWindow);
+    nsresult ReattachToWindow(mozIDOMWindowProxy *aWindow);
     nsresult GetJsAndPluginsDisabled(bool *aJsAndPluginsDisabled);
 }
 
@@ -3333,19 +3374,19 @@ interface nsICommandParams : nsISupports
 
 [
     object,
-    uuid(080d2001-f91e-11d4-a73c-f9242928207c),
+    uuid(bb5a1730-d83b-4fa2-831b-35b9d5842e84),
     local
 ]
 interface nsICommandManager : nsISupports
 {
     nsresult AddCommandObserver(nsIObserver *aCommandObserver, const char *aCommandToObserve);
     nsresult RemoveCommandObserver(nsIObserver *aCommandObserver, const char *aCommandObserved);
-    nsresult IsCommandSupported(const char *aCommandName, nsIDOMWindow *aTargetWindow, bool *_retval);
-    nsresult IsCommandEnabled(const char *aCommandName, nsIDOMWindow *aTargetWindow, bool *_retval);
-    nsresult GetCommandState(const char *aCommandName, nsIDOMWindow *aTargetWindow,
+    nsresult IsCommandSupported(const char *aCommandName, mozIDOMWindowProxy *aTargetWindow, bool *_retval);
+    nsresult IsCommandEnabled(const char *aCommandName, mozIDOMWindowProxy *aTargetWindow, bool *_retval);
+    nsresult GetCommandState(const char *aCommandName, mozIDOMWindowProxy *aTargetWindow,
             nsICommandParams *aCommandParams);
     nsresult DoCommand(const char *aCommandName, nsICommandParams *aCommandParams,
-            nsIDOMWindow *aTargetWindow);
+            mozIDOMWindowProxy *aTargetWindow);
 }
 
 [
@@ -3390,7 +3431,7 @@ interface nsIController : nsISupports
 
 [
     object,
-    uuid(697a2fe1-5549-48e7-9a1a-c29dab14e239),
+    uuid(8e1bab9d-8815-4d2c-a24d-7aba5239dc22),
     local
 ]
 interface nsIContent : nsISupports
@@ -3400,7 +3441,7 @@ interface nsIContent : nsISupports
 
 [
     object,
-    uuid(613ea294-0288-48b4-9e7b-0fe93f8cf895),
+    uuid(ce1f7627-7109-4977-ba77-490ffde07aaa),
     local
 ]
 interface nsIDocument : nsISupports
@@ -3434,12 +3475,13 @@ interface nsIContentSerializer : nsISupports
 
 [
     object,
-    uuid(04714a01-e02f-4ef5-a388-612451d0db16),
+    uuid(094be624-f0bf-400f-89e2-6a84baab9474),
     local
 ]
 interface nsIEditor  : nsISupports
 {
     nsresult GetSelection([out] nsISelection *_retval);
+    nsresult FinalizeSelection();
     nsresult Init([in] nsIDOMDocument *doc, nsIContent *aRoot, nsISelectionController *aSelCon, uint32_t aFlags, nsAString *initialValue);
     nsresult SetAttributeOrEquivalent([in] nsIDOMElement *element, [in] const nsAString *sourceAttrName, [in] const nsAString *sourceAttrValue, [in] bool aSuppressTransaction);
     nsresult RemoveAttributeOrEquivalent([in] nsIDOMElement *element, [in] const nsAString *sourceAttrName, [in] bool aSuppressTransaction);
@@ -3485,6 +3527,7 @@ interface nsIEditor  : nsISupports
     nsresult CanCut([out] bool *_retval);
     nsresult Copy();
     nsresult CanCopy([out] bool *_retval);
+    nsresult CanDelete(bool *_retval);
     nsresult Paste([in] int32_t aSelectionType);
     nsresult PasteTransferable(nsITransferable *aTransferable);
     nsresult CanPaste([in] int32_t aSelectionType, [out] bool *_retval);
@@ -3524,7 +3567,7 @@ interface nsIEditor  : nsISupports
 
 [
     object,
-    uuid(393a364f-e8e2-48a1-a271-a0067b6bac9b),
+    uuid(87ee993e-985f-4a43-a974-0d9512da2fb0),
     local
 ]
 interface nsIHTMLEditor : nsISupports
@@ -3582,7 +3625,6 @@ interface nsIHTMLEditor : nsISupports
     nsresult IsAnonymousElement([in] nsIDOMElement *aElement, [out] bool *_retval);
     nsresult GetReturnInParagraphCreatesNewParagraph([out] bool *_retval);
     nsresult SetReturnInParagraphCreatesNewParagraph([in] bool prb);
-    nsresult BreakIsVisible(nsIDOMNode *aNode, bool *_retval);
     void /*Element*/ *GetActiveEditingHost();
 }
 
@@ -3611,7 +3653,7 @@ interface nsIClipboardCommands : nsISupports
 
 [
     object,
-    uuid(edb99640-8378-4106-8673-e701a086eb1c),
+    uuid(9b7c586f-9214-480c-a2c4-49b526fff1a6),
     local
 ]
 interface nsIDocShellTreeItem : nsISupports
@@ -3637,12 +3679,12 @@ interface nsIDocShellTreeItem : nsISupports
     nsresult FindChildWithName(const PRUnichar *aName, bool aRecurse, bool aSameType, nsIDocShellTreeItem *aRequestor,
             nsIDocShellTreeItem *aOriginalRequestor, nsIDocShellTreeItem **_retval);
     nsIDocument /* thiscall */ *GetDocument();
-    void /* thiscall nsPIDOMWindow */ *GetWindow();
+    void /* thiscall nsPIDOMWindowOuter */ *GetWindow();
 }
 
 [
     object,
-    uuid(702e0a92-7d63-490e-b5ee-d247e6bd4588),
+    uuid(2da17016-7851-4a45-a7a8-00b360e01595),
     local
 ]
 interface nsIContentViewer : nsISupports
@@ -3652,11 +3694,10 @@ interface nsIContentViewer : nsISupports
     nsresult SetContainer(nsIDocShell *aContainer);
     void /* thiscall */ LoadStart(nsIDocument *aDoc);
     nsresult LoadComplete(nsresult aStatus);
-    nsresult PermitUnload(bool aCallerClosesWindow, bool *_retval);
+    nsresult PermitUnload(bool *_retval);
     nsresult GetInPermitUnload(bool *aInPermitUnload);
-    nsresult /* thiscall */ PermitUnloadInternal(bool aCallerClosesWindow, bool *aShouldPrompt, bool *_retval);
+    nsresult /* thiscall */ PermitUnloadInternal(bool *aShouldPrompt, bool *_retval);
     nsresult GetBeforeUnloadFiring(bool *aBeforeUnloadFiring);
-    nsresult ResetCloseWindow();
     nsresult PageHide(bool isUnload);
     nsresult Close(nsISHEntry *historyEntry);
     nsresult Destroy();
@@ -3703,7 +3744,6 @@ interface nsIContentViewer : nsISupports
     nsresult GetMinFontSize(int32_t *aMinFontSize);
     nsresult SetMinFontSize(int32_t aMinFontSize);
     nsresult AppendSubtree(void /*nsTArray<nsCOMPtr<nsIContentViewer> >*/ *array);
-    nsresult ChangeMaxLineBoxWidth(int32_t maxLineBoxWidth);
     nsresult PausePainting();
     nsresult ResumePainting();
     nsresult EmulateMedium(const nsAString *aMediaType);
@@ -3712,15 +3752,20 @@ interface nsIContentViewer : nsISupports
 
 [
     object,
-    uuid(c8d3b1e1-565a-427e-9d68-b109910ce9b7),
+    uuid(e7570e5a-f1d6-452d-b4f8-b35fdc63aa03),
     local
 ]
 interface nsIDocShellLoadInfo : nsISupports
 {
-    typedef int nsDocShellInfoLoadType;
+    typedef int32_t nsDocShellInfoLoadType;
+    typedef uint32_t nsDocShellInfoReferrerPolicy;
 
     nsresult GetReferrer(nsIURI **aReferrer);
     nsresult SetReferrer(nsIURI *aReferrer);
+    nsresult GetOriginalURI(nsIURI **aOriginalURI);
+    nsresult SetOriginalURI(nsIURI *aOriginalURI);
+    nsresult GetLoadReplace(bool *aLoadReplace);
+    nsresult SetLoadReplace(bool aLoadReplace);
     nsresult GetOwner(nsISupports **aOwner);
     nsresult SetOwner(nsISupports *aOwner);
     nsresult GetInheritOwner(bool *aInheritOwner);
@@ -3739,6 +3784,8 @@ interface nsIDocShellLoadInfo : nsISupports
     nsresult SetHeadersStream(nsIInputStream *aHeadersStream);
     nsresult GetSendReferrer(bool *aSendReferrer);
     nsresult SetSendReferrer(bool aSendReferrer);
+    nsresult GetReferrerPolicy(nsDocShellInfoReferrerPolicy *aReferrerPolicy);
+    nsresult SetReferrerPolicy(nsDocShellInfoReferrerPolicy aReferrerPolicy);
     nsresult GetIsSrcdocLoad(bool *aIsSrcdocLoad);
     nsresult GetSrcdocData(nsAString *aSrcdocData);
     nsresult SetSrcdocData(const nsAString *aSrcdocData);
@@ -3750,7 +3797,7 @@ interface nsIDocShellLoadInfo : nsISupports
 
 [
     object,
-    uuid(3646c915-df79-4500-8b57-c65ab9c3b39f),
+    uuid(049234fe-da10-478b-bc5d-bc6f9a1ba63d),
     local
 ]
 interface nsIDocShell : nsIDocShellTreeItem
@@ -3758,10 +3805,12 @@ interface nsIDocShell : nsIDocShellTreeItem
     nsresult LoadURI(nsIURI *uri, nsIDocShellLoadInfo *loadInfo, uint32_t aLoadFlags, bool firstParty);
     nsresult LoadStream(nsIInputStream *aStream, nsIURI *aURI, const nsACString *aContentType,
             const nsACString *aContentCharset, nsIDocShellLoadInfo *aLoadInfo);
-    nsresult InternalLoad(nsIURI *aURI, nsIURI *aReferrer, nsISupports *aOwner, uint32_t aFlags, const PRUnichar *aWindowTarget,
-            const char *aTypeHint, nsACString *aFileName, nsIInputStream *aPostDataStream, nsIInputStream *aHeadersStream,
-            uint32_t aLoadFlags, nsISHEntry *aSHEntry, bool firstParty, const nsAString *aSrcdoc, nsIDocShell *aSourceDocShell,
-            nsIURI *aBaseURI, nsIDocShell **aDocShell, nsIRequest **aRequest);
+    nsresult InternalLoad(nsIURI *aURI, nsIURI *aOriginalURI, bool aLoadReplace, nsIURI *aReferrer,
+            uint32_t aReferrerPolicy, nsISupports *aOwner, uint32_t aFlags, const PRUnichar *aWindowTarget,
+            const char *aTypeHint, nsACString *aFileName, nsIInputStream *aPostDataStream,
+            nsIInputStream *aHeadersStream, uint32_t aLoadFlags, nsISHEntry *aSHEntry, bool firstParty,
+            const nsAString *aSrcdoc, nsIDocShell *aSourceDocShell, nsIURI *aBaseURI, nsIDocShell **aDocShell,
+            nsIRequest **aRequest);
     nsresult AddState(jsval *aData, const nsAString *aTitle, const nsAString *aURL, bool aReplace, JSContext *cx);
     nsresult CreateLoadInfo(nsIDocShellLoadInfo **loadInfo);
     nsresult PrepareForNewContentModel();
@@ -3773,6 +3822,8 @@ interface nsIDocShell : nsIDocShellTreeItem
     nsresult GetContentViewer(nsIContentViewer **aContentViewer);
     nsresult GetChromeEventHandler(nsIDOMEventTarget **aChromeEventHandler);
     nsresult SetChromeEventHandler(nsIDOMEventTarget *aChromeEventHandler);
+    nsresult GetCustomUserAgent(nsAString *aCustomUserAgent);
+    nsresult SetCustomUserAgent(const nsAString *aCustomUserAgent);
     nsresult GetAllowPlugins(bool *aAllowPlugins);
     nsresult SetAllowPlugins(bool aAllowPlugins);
     nsresult GetAllowJavascript(bool *aAllowJavascript);
@@ -3793,6 +3844,8 @@ interface nsIDocShell : nsIDocShellTreeItem
     nsresult SetAllowWindowControl(bool aAllowWindowControl);
     nsresult GetAllowContentRetargeting(bool *aAllowContentRetargeting);
     nsresult SetAllowContentRetargeting(bool aAllowContentRetargeting);
+    nsresult GetAllowContentRetargetingOnChildren(bool *aAllowContentRetargetingOnChildren);
+    nsresult SetAllowContentRetargetingOnChildren(bool aAllowContentRetargetingOnChildren);
     nsresult GetDocShellEnumerator(int32_t aItemType, int32_t aDirection, nsISimpleEnumerator **_retval);
     nsresult GetAppType(uint32_t *aAppType);
     nsresult SetAppType(uint32_t aAppType);
@@ -3804,7 +3857,7 @@ interface nsIDocShell : nsIDocShellTreeItem
     nsresult SetMarginWidth(int32_t aMarginWidth);
     nsresult GetMarginHeight(int32_t *aMarginHeight);
     nsresult SetMarginHeight(int32_t aMarginHeight);
-    nsresult TabToTreeOwner(bool forward, bool *tookFocus);
+    nsresult TabToTreeOwner(bool forward, bool forDocumentNavigation, bool *_retval);
     nsresult GetBusyFlags(uint32_t *aBusyFlags);
     nsresult GetLoadType(uint32_t *aLoadType);
     nsresult SetLoadType(uint32_t aLoadType);
@@ -3824,7 +3877,7 @@ interface nsIDocShell : nsIDocShellTreeItem
     nsresult GetRestoringDocument(bool *aRestoringDocument);
     nsresult GetUseErrorPages(bool *aUseErrorPages);
     nsresult SetUseErrorPages(bool aUseErrorPages);
-    nsresult DisplayLoadError(nsresult aError, nsIURI *aURI, const PRUnichar *aURL, nsIChannel *aFailedChannel);
+    nsresult DisplayLoadError(nsresult aError, nsIURI *aURI, const char16_t *aURL, nsIChannel *aFailedChannel, bool *_retval);
     nsresult GetFailedChannel(nsIChannel **aFailedChannel);
     nsresult GetPreviousTransIndex(int32_t *aPreviousTransIndex);
     nsresult GetLoadedTransIndex(int32_t *aLoadedTransIndex);
@@ -3849,6 +3902,9 @@ interface nsIDocShell : nsIDocShellTreeItem
     nsresult GetCanExecuteScripts(bool *aCanExecuteScripts);
     nsresult GetIsActive(bool *aIsActive);
     nsresult SetIsActive(bool aIsActive);
+    nsresult SetIsActiveAndForeground(bool aIsActive);
+    nsresult SetIsPrerendered(bool prerendered);
+    nsresult GetIsPrerendered(bool *aIsPrerendered);
     nsresult GetHistoryID(uint64_t *aHistoryID);
     nsresult GetIsAppTab(bool *aIsAppTab);
     nsresult SetIsAppTab(bool aIsAppTab);
@@ -3858,10 +3914,12 @@ interface nsIDocShell : nsIDocShellTreeItem
     nsresult GatherCharsetMenuTelemetry();
     nsresult GetForcedCharset(nsIAtom **aForcedCharset);
     nsresult SetForcedCharset(nsIAtom *aForcedCharset);
-    void SetParentCharset(const nsACString *parentCharset, int32_t parentCharsetSource, nsIPrincipal *parentCharsetPrincipal);
-    void GetParentCharset(nsACString *parentCharset, int32_t *parentCharsetSource, nsIPrincipal **parentCharsetPrincipal);
-    nsresult GetParentCharsetSource(int32_t *aParentCharsetSource);
-    nsresult SetParentCharsetSource(int32_t aParentCharsetSource);
+    void /* thiscall */ SetParentCharset(const nsACString *parentCharset, int32_t parentCharsetSource, nsIPrincipal *parentCharsetPrincipal);
+    void /* thiscall */ GetParentCharset(nsACString *parentCharset, int32_t *parentCharsetSource, nsIPrincipal **parentCharsetPrincipal);
+    nsresult GetRecordProfileTimelineMarkers(bool *aRecordProfileTimelineMarkers);
+    nsresult SetRecordProfileTimelineMarkers(bool aRecordProfileTimelineMarkers);
+    nsresult Now(int /* DOMHighResTimeStamp */ *_retval);
+    nsresult PopProfileTimelineMarkers(JSContext *cx, void /*JS::MutableHandleValue*/ *_retval);
     nsresult AddWeakPrivacyTransitionObserver(nsIPrivacyTransitionObserver *obs);
     nsresult AddWeakReflowObserver(nsISupports /*nsIReflowObserver*/ *obs);
     nsresult RemoveWeakReflowObserver(nsISupports /*nsIReflowObserver*/ *obs);
@@ -3869,28 +3927,32 @@ interface nsIDocShell : nsIDocShellTreeItem
     nsresult AddWeakScrollObserver(void /*nsIScrollObserver*/ *obs);
     nsresult RemoveWeakScrollObserver(void /*nsIScrollObserver*/ *obs);
     nsresult NotifyScrollObservers();
-    nsresult GetIsBrowserElement(bool *aIsBrowserElement);
     nsresult GetIsApp(bool *aIsApp);
-    nsresult GetIsBrowserOrApp(bool *aIsBrowserOrApp);
-    nsresult GetIsInBrowserElement(bool *aIsInBrowserElement);
-    nsresult GetIsInBrowserOrApp(bool *aIsInBrowserOrApp);
-    nsresult SetIsApp(uint32_t ownAppId);
-    nsresult SetIsBrowserInsideApp(uint32_t containingAppId);
+    nsresult GetFrameType(uint32_t *aFrameType);
+    nsresult SetFrameType(uint32_t aFrameType);
+    nsresult GetIsMozBrowserOrApp(bool *aIsMozBrowserOrApp);
+    nsresult GetIsIsolatedMozBrowserElement(bool *aIsIsolatedMozBrowserElement);
+    nsresult GetIsInIsolatedMozBrowserElement(bool *aIsInIsolatedMozBrowserElement);
+    nsresult SetIsInIsolatedMozBrowserElement(bool aIsInIsolatedMozBrowserElement);
+    nsresult GetIsInMozBrowserOrApp(bool *aIsInMozBrowserOrApp);
     nsresult GetAppId(uint32_t *aAppId);
     nsresult GetAppManifestURL(nsAString *aAppManifestURL);
     nsresult GetSameTypeParentIgnoreBrowserAndAppBoundaries(nsIDocShell **_retval);
+    nsresult GetSameTypeRootTreeItemIgnoreBrowserAndAppBoundaries(nsIDocShell **_retval);
     nsresult GetAsyncPanZoomEnabled(bool *aAsyncPanZoomEnabled);
     nsresult GetSandboxFlags(uint32_t *aSandboxFlags);
     nsresult SetSandboxFlags(uint32_t aSandboxFlags);
     nsresult GetOnePermittedSandboxedNavigator(nsIDocShell **aOnePermittedSandboxedNavigator);
     nsresult SetOnePermittedSandboxedNavigator(nsIDocShell *aOnePermittedSandboxedNavigator);
-    bool IsSandboxedFrom(nsIDocShell *aTargetDocShell);
+    bool /* thiscall */ IsSandboxedFrom(nsIDocShell *aTargetDocShell);
     nsresult GetMixedContentChannel(nsIChannel **aMixedContentChannel);
     nsresult SetMixedContentChannel(nsIChannel *aMixedContentChannel);
     nsresult GetAllowMixedContentAndConnectionData(bool *rootHasSecureConnection, bool *allowMixedContent, bool *isRootDocShell);
     bool PluginsAllowedInCurrentDoc();
     nsresult GetFullscreenAllowed(bool *aFullscreenAllowed);
     nsresult SetFullscreenAllowed(bool allowed);
+    uint32_t OrientationLock();
+    void SetOrientationLock(uint32_t orientationLock);
     nsresult GetAffectPrivateSessionLifetime(bool *aAffectPrivateSessionLifetime);
     nsresult SetAffectPrivateSessionLifetime(bool aAffectPrivateSessionLifetime);
     nsresult GetMayEnableCharacterEncodingMenu(bool *aMayEnableCharacterEncodingMenu);
@@ -3911,31 +3973,43 @@ interface nsIDocShell : nsIDocShellTreeItem
     nsresult DoCommand(const char *command);
     bool IsInvisible();
     void SetInvisible(bool aIsInvisibleDochsell);
-    void /*nsIScriptGlobalObject*/ *GetScriptGlobalObject();
+    void /* nsIScriptGlobalObject thiscall */ *GetScriptGlobalObject();
     nsresult GetDeviceSizeIsPageSize(bool *aDeviceSizeIsPageSize);
     nsresult SetDeviceSizeIsPageSize(bool aDeviceSizeIsPageSize);
     void /* thiscall */ SetOpener(void /*nsITabParent*/ *aOpener);
-    void /* thiscall nsITabParent */ *GetOpener(void) = 0;
-    void /* thiscall */ SetOpenedRemote(void /*nsITabParent*/ *aOpenedRemote);
-    void /* thiscall nsITabParent */ *GetOpenedRemote();
-    void /*mozilla::dom::URLSearchParams */ *GetURLSearchParams(void) = 0;
+    void /* thiscall nsITabParent */ *GetOpener();
+    void /* thiscall */ NotifyJSRunToCompletionStart(const char *aReason, const char16_t *functionName,
+            const char16_t *fileName, uint32_t lineNumber);
+    void /* thiscall */ NotifyJSRunToCompletionStop();
+    nsresult GetHasLoadedNonBlankURI(bool *aHasLoadedNonBlankURI);
+    nsresult GetPaymentRequestId(nsAString *aPaymentRequestId);
+    nsresult SetPaymentRequestId(const nsAString *aPaymentRequestId);
+    nsresult GetWindowDraggingAllowed(bool *aWindowDraggingAllowed);
+    nsresult SetWindowDraggingAllowed(bool aWindowDraggingAllowed);
+    nsresult GetCurrentScrollRestorationIsManual(bool *aCurrentScrollRestorationIsManual);
+    nsresult SetCurrentScrollRestorationIsManual(bool aCurrentScrollRestorationIsManual);
+    nsresult GetOriginAttributes(JSContext* cx, void* /* JS::MutableHandleValue */ _retval);
+    nsresult SetOriginAttributes(int /* JS::HandleValue */ aAttrs, JSContext *cx);
 }
 
 [
     object,
-    uuid(16fe5e3e-eadc-4312-9d44-b6bedd6b5474),
+    uuid(6d674c17-0fbc-4633-8f46-734e87ebf0c7),
     local
 ]
 interface nsIMutationObserver : nsISupports
 {
+    typedef struct {} nsAttrValue;
+
     void CharacterDataWillChange(nsIDocument *aDocument, nsIContent *aContent,
                                  void /*CharacterDataChangeInfo*/ *aInfo);
     void CharacterDataChanged(nsIDocument *aDocument, nsIContent *aContent,
                               void /*CharacterDataChangeInfo*/ *aInfo);
-    void AttributeWillChange(nsIDocument *aDocument, nsIContent *aContent, int32_t aNameSpaceID,
-                             nsIAtom *aAttribute, int32_t aModType);
-    void AttributeChanged(nsIDocument *aDocument, nsIContent *aContent, int32_t aNameSpaceID,
-                          nsIAtom *aAttribute, int32_t aModType);
+    void AttributeWillChange(nsIDocument *aDocument, /*mozilla::dom::Element*/ void *aElement, int32_t aNameSpaceID,
+                             nsIAtom *aAttribute, int32_t aModType, const nsAttrValue *aNewValue);
+    void AttributeChanged(nsIDocument *aDocument, /*mozilla::dom::Element*/ void *aElement, int32_t aNameSpaceID,
+                          nsIAtom *aAttribute, int32_t aModType, const nsAttrValue *aOldValue);
+    void NativeAnonymousChildListChange(nsIDocument *aDocument, nsIContent *aContent, bool aIsRemove);
     void AttributeSetToCurrentValue(nsIDocument *aDocument, /*mozilla::dom::Element*/ void *aElement,
                                     int32_t aNameSpaceID, nsIAtom *aAttribute);
     void ContentAppended(nsIDocument *aDocument, nsIContent *aContainer, nsIContent *aFirstNewContent,
@@ -3993,12 +4067,16 @@ interface nsIParser : nsISupports
 
 [
     object,
-    uuid(900bc4bc-8b6c-4cba-82fa-568a80fffd3e),
+    uuid(71041fa3-6dd7-4cde-bb76-aecc69e17578),
     local
 ]
 interface nsIDocumentObserver : nsIMutationObserver
 {
     typedef uint32_t nsUpdateType;
+
+    typedef struct {
+        void *dummy;
+    } mozilla_StyleSheetHandle;
 
     typedef struct {
         uint64_t mStates;
@@ -4010,14 +4088,12 @@ interface nsIDocumentObserver : nsIMutationObserver
     void EndLoad(nsIDocument *aDocument);
     void ContentStatesChanged(nsIDocument *aDocument, nsIContent *aContent, EventStates aStateMask);
     void DocumentStatesChanged(nsIDocument *aDocument, EventStates aStateMask);
-    void StyleSheetAdded(nsIDocument *aDocument, nsIStyleSheet *aStyleSheet, bool aDocumentSheet);
-    void StyleSheetRemoved(nsIDocument *aDocument, nsIStyleSheet *aStyleSheet, bool aDocumentSheet);
-    void StyleSheetApplicableStateChanged(nsIDocument *aDocument, nsIStyleSheet *aStyleSheet,
-                                          bool aApplicable);
-    void StyleRuleChanged(nsIDocument *aDocument, nsIStyleSheet *aStyleSheet, nsIStyleRule *aOldStyleRule,
-                          nsIStyleRule *aNewStyleRule);
-    void StyleRuleAdded(nsIDocument *aDocument, nsIStyleSheet *aStyleSheet, nsIStyleRule *aStyleRule);
-    void StyleRuleRemoved(nsIDocument *aDocument, nsIStyleSheet *aStyleSheet, nsIStyleRule *aStyleRule);
+    void StyleSheetAdded(mozilla_StyleSheetHandle aStyleSheet, bool aDocumentSheet);
+    void StyleSheetRemoved(mozilla_StyleSheetHandle aStyleSheet, bool aDocumentSheet);
+    void StyleSheetApplicableStateChanged(mozilla_StyleSheetHandle aStyleSheet);
+    void StyleRuleChanged(mozilla_StyleSheetHandle aStyleSheet);
+    void StyleRuleAdded(mozilla_StyleSheetHandle aStyleSheet);
+    void StyleRuleRemoved(mozilla_StyleSheetHandle aStyleSheet);
     void BindToDocument(nsIDocument *aDocument, nsIContent *aContent);
     void AttemptToExecuteScript(nsIContent *aContent, nsIParser *aParser, bool *aBlock);
 }
@@ -4040,12 +4116,79 @@ interface nsIContentUtils : nsISupports
 
 [
     object,
+    uuid(15c05894-408e-4798-b527-a8c32d9c5f8c),
+    local
+]
+interface nsIAudioChannelAgentCallback : nsISupports
+{
+    nsresult WindowVolumeChanged(float aVolume, bool aMuted);
+    nsresult WindowAudioCaptureChanged(bool aCapture);
+}
+
+[
+    object,
     uuid(8f672000-bab9-4c60-aaaf-2673c4e2a4c6),
     local
 ]
-interface nsIPluginInstance : nsISupports
+interface nsIPluginInstance : nsIAudioChannelAgentCallback
 {
     nsresult GetDOMElement(nsIDOMElement **aDOMElement);
+}
+
+[
+    object,
+    uuid(11afa8be-d997-4e07-a6a3-6f872ec3ee7f),
+    local
+]
+interface nsIGlobalObject : nsISupports
+{
+}
+
+[
+    object,
+    uuid(3eedba38-8d22-41e1-817a-0e43e165b664),
+    local
+]
+interface nsIScriptObjectPrincipal : nsISupports
+{
+    nsIPrincipal* /* thiscall */ GetPrincipal();
+}
+
+[
+    object,
+    uuid(6f54214c-7175-498d-9d2d-0429e38c2869),
+    local
+]
+interface nsIXMLHttpRequest : nsISupports
+{
+    nsresult GetChannel(nsIChannel **aChannel);
+    nsresult GetResponseXML(nsIDOMDocument **aResponseXML);
+    nsresult GetResponseText(nsAString *aResponseText);
+    nsresult GetResponseType(nsAString *aResponseType);
+    nsresult SetResponseType(const nsAString *aResponseType);
+    nsresult GetResponse(JSContext*cx, int /*JS::MutableHandleValue*/ aResponse);
+    nsresult GetStatus(uint32_t *aStatus);
+    nsresult GetStatusText(nsACString *aStatusText);
+    nsresult SlowAbort();
+    nsresult GetAllResponseHeaders(nsACString *_retval);
+    nsresult GetResponseHeader(const nsACString *header, nsACString *_retval);
+    nsresult Open(const nsACString *method, const nsACString *url, bool async, const nsAString *user, const nsAString *password, uint8_t _argc);
+    nsresult Send(nsIVariant *body);
+    nsresult SetRequestHeader(const nsACString *header, const nsACString *value);
+    nsresult GetTimeout(uint32_t *aTimeout);
+    nsresult SetTimeout(uint32_t aTimeout);
+    nsresult GetReadyState(uint16_t *aReadyState);
+    nsresult SlowOverrideMimeType(const nsAString *mimetype);
+    nsresult GetMozBackgroundRequest(bool *aMozBackgroundRequest);
+    nsresult SetMozBackgroundRequest(bool aMozBackgroundRequest);
+    nsresult GetWithCredentials(bool *aWithCredentials);
+    nsresult SetWithCredentials(bool aWithCredentials);
+    nsresult Init(nsIPrincipal *principal, nsIScriptContext *scriptContext, nsIGlobalObject *globalObject, nsIURI *baseURI, nsILoadGroup *loadGroup);
+    nsresult GetUpload(nsIXMLHttpRequestUpload **aUpload);
+    nsresult GetOnreadystatechange(JSContext*cx, int /*JS::MutableHandleValue*/ aOnreadystatechange);
+    nsresult SetOnreadystatechange(JSContext*cx, int /*JS::HandleValue*/ aOnreadystatechange);
+    nsresult GetMozAnon(bool *aMozAnon);
+    nsresult GetMozSystem(bool *aMozSystem);
 }
 
 cpp_quote("DEFINE_GUID(IID_nsCycleCollectionISupports, 0xc61eac14,0x5f7a,0x4481,0x96,0x5e,0x7e,0xaa,0x6e,0xff,0xa8,0x5f);")

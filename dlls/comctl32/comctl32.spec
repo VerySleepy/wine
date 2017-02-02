@@ -88,6 +88,7 @@
 375 stdcall -noname -private StrCSpnIW(wstr wstr)
 376 stdcall -noname -private IntlStrEqWorkerA(long str str long)
 377 stdcall -noname -private IntlStrEqWorkerW(long wstr wstr long)
+380 stdcall -ordinal LoadIconMetric(ptr wstr long ptr)
 381 stdcall -ordinal LoadIconWithScaleDown(ptr wstr long long ptr)
 382 stdcall -noname SmoothScrollWindow(ptr)
 383 stub -noname DoReaderMode
@@ -127,10 +128,12 @@
 @ stdcall DestroyPropertySheetPage(long)
 @ stdcall -private DllGetVersion(ptr)
 @ stdcall -private DllInstall(long wstr)
-@ stdcall DPA_GetSize(ptr)
+@ stdcall -ret64 DPA_GetSize(ptr)
 @ stdcall DrawShadowText(long wstr long ptr long long long long long)
 @ stdcall DrawStatusText(long ptr ptr long) DrawStatusTextA
 @ stdcall DrawStatusTextW(long ptr wstr long)
+@ stdcall DSA_Clone(ptr)
+@ stdcall -ret64 DSA_GetSize(ptr)
 @ stdcall FlatSB_EnableScrollBar (long long long)
 @ stdcall FlatSB_GetScrollInfo (long long ptr)
 @ stdcall FlatSB_GetScrollPos (long long)

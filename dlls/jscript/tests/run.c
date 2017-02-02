@@ -84,6 +84,7 @@ DEFINE_EXPECT(global_propputref_d);
 DEFINE_EXPECT(global_propputref_i);
 DEFINE_EXPECT(global_propdelete_d);
 DEFINE_EXPECT(global_nopropdelete_d);
+DEFINE_EXPECT(global_propdeleteerror_d);
 DEFINE_EXPECT(global_success_d);
 DEFINE_EXPECT(global_success_i);
 DEFINE_EXPECT(global_notexists_d);
@@ -110,6 +111,8 @@ DEFINE_EXPECT(ActiveScriptSite_OnScriptError);
 DEFINE_EXPECT(invoke_func);
 DEFINE_EXPECT(DeleteMemberByDispID);
 DEFINE_EXPECT(DeleteMemberByDispID_false);
+DEFINE_EXPECT(DeleteMemberByDispID_error);
+DEFINE_EXPECT(BindHandler);
 
 #define DISPID_GLOBAL_TESTPROPGET   0x1000
 #define DISPID_GLOBAL_TESTPROPPUT   0x1001
@@ -140,9 +143,11 @@ DEFINE_EXPECT(DeleteMemberByDispID_false);
 #define DISPID_GLOBAL_DISPEXFUNC    0x101a
 #define DISPID_GLOBAL_TESTPROPPUTREF 0x101b
 #define DISPID_GLOBAL_GETSCRIPTSTATE 0x101c
+#define DISPID_GLOBAL_BINDEVENTHANDLER 0x101d
 
-#define DISPID_GLOBAL_TESTPROPDELETE    0x2000
-#define DISPID_GLOBAL_TESTNOPROPDELETE  0x2001
+#define DISPID_GLOBAL_TESTPROPDELETE      0x2000
+#define DISPID_GLOBAL_TESTNOPROPDELETE    0x2001
+#define DISPID_GLOBAL_TESTPROPDELETEERROR 0x2002
 
 #define DISPID_TESTOBJ_PROP         0x2000
 #define DISPID_TESTOBJ_ONLYDISPID   0x2001
@@ -268,6 +273,13 @@ static HRESULT WINAPI DispatchEx_Invoke(IDispatchEx *iface, DISPID dispIdMember,
 }
 
 static HRESULT WINAPI DispatchEx_GetDispID(IDispatchEx *iface, BSTR bstrName, DWORD grfdex, DISPID *pid)
+{
+    ok(0, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI DispatchEx_InvokeEx(IDispatchEx *iface, DISPID id, LCID lcid, WORD wFlags, DISPPARAMS *pdp,
+        VARIANT *res, EXCEPINFO *pei, IServiceProvider *pspCaller)
 {
     ok(0, "unexpected call\n");
     return E_NOTIMPL;
@@ -471,11 +483,15 @@ static HRESULT WINAPI dispexFunc_InvokeEx(IDispatchEx *iface, DISPID id, LCID lc
         ok(pdp->cArgs == 2, "cArgs = %d\n", pdp->cArgs);
         ok(pdp->cNamedArgs == 1, "cNamedArgs = %d\n", pdp->cNamedArgs);
         ok(res != NULL, "res == NULL\n");
-        ok(wFlags == (DISPATCH_PROPERTYGET|DISPATCH_METHOD), "wFlags = %x\n", wFlags);
         ok(pei != NULL, "pei == NULL\n");
 
         ok(V_VT(pdp->rgvarg+1) == VT_BOOL, "V_VT(pdp->rgvarg+1) = %d\n", V_VT(pdp->rgvarg+1));
-        ok(!V_BOOL(pdp->rgvarg+1), "V_BOOL(pdp->rgvarg+1) = %x\n", V_BOOL(pdp->rgvarg+1));
+
+        if(V_BOOL(pdp->rgvarg+1))
+            /* NOTE: If called by Function.apply(), native doesn't set DISPATCH_PROPERTYGET flag. */
+            todo_wine ok(wFlags == DISPATCH_METHOD, "wFlags = %x\n", wFlags);
+        else
+            ok(wFlags == (DISPATCH_PROPERTYGET|DISPATCH_METHOD), "wFlags = %x\n", wFlags);
 
         ok(V_VT(pdp->rgvarg) == VT_DISPATCH, "V_VT(pdp->rgvarg) = %d\n", V_VT(pdp->rgvarg));
         ok(V_DISPATCH(pdp->rgvarg) != NULL, "V_DISPATCH(pdp->rgvarg) == NULL\n");
@@ -555,12 +571,15 @@ static HRESULT WINAPI pureDisp_Invoke(IDispatchEx *iface, DISPID dispIdMember, R
         ok(pdp->cArgs == 1, "cArgs = %d\n", pdp->cArgs);
         ok(!pdp->cNamedArgs, "cNamedArgs = %d\n", pdp->cNamedArgs);
         ok(res != NULL, "res == NULL\n");
-        ok(wFlags == (DISPATCH_PROPERTYGET|DISPATCH_METHOD), "wFlags = %x\n", wFlags);
         ok(ei != NULL, "ei == NULL\n");
         ok(puArgErr != NULL, "puArgErr == NULL\n");
 
         ok(V_VT(pdp->rgvarg) == VT_BOOL, "V_VT(pdp->rgvarg) = %d\n", V_VT(pdp->rgvarg));
-        ok(!V_BOOL(pdp->rgvarg), "V_BOOL(pdp->rgvarg) = %x\n", V_BOOL(pdp->rgvarg));
+
+        if(V_BOOL(pdp->rgvarg))
+            todo_wine ok(wFlags == DISPATCH_METHOD, "wFlags = %x\n", wFlags);
+        else
+            ok(wFlags == (DISPATCH_PROPERTYGET|DISPATCH_METHOD), "wFlags = %x\n", wFlags);
 
         if(res)
             V_VT(res) = VT_NULL;
@@ -582,6 +601,75 @@ static IDispatchExVtbl pureDispVtbl = {
 };
 
 static IDispatchEx pureDisp = { &pureDispVtbl };
+
+static HRESULT WINAPI BindEventHandler_QueryInterface(IBindEventHandler *iface, REFIID riid, void **ppv)
+{
+    ok(0, "unexpected call\n");
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI BindEventHandler_AddRef(IBindEventHandler *iface)
+{
+    return 2;
+}
+
+static ULONG WINAPI BindEventHandler_Release(IBindEventHandler *iface)
+{
+    return 1;
+}
+
+static HRESULT WINAPI BindEventHandler_BindHandler(IBindEventHandler *iface, const WCHAR *event, IDispatch *disp)
+{
+    CHECK_EXPECT(BindHandler);
+    ok(!strcmp_wa(event, "eventName"), "event = %s\n", wine_dbgstr_w(event));
+    ok(disp != NULL, "disp = NULL\n");
+    return S_OK;
+}
+
+static const IBindEventHandlerVtbl BindEventHandlerVtbl = {
+    BindEventHandler_QueryInterface,
+    BindEventHandler_AddRef,
+    BindEventHandler_Release,
+    BindEventHandler_BindHandler
+};
+
+static IBindEventHandler BindEventHandler = { &BindEventHandlerVtbl };
+
+static HRESULT WINAPI bindEventHandlerDisp_QueryInterface(IDispatchEx *iface, REFIID riid, void **ppv)
+{
+    if(IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDispatch) || IsEqualGUID(riid, &IID_IDispatchEx)) {
+        *ppv = iface;
+        return S_OK;
+    }
+
+    if(IsEqualGUID(riid, &IID_IBindEventHandler)) {
+        *ppv = &BindEventHandler;
+        return S_OK;
+    }
+
+    *ppv = NULL;
+    return E_NOINTERFACE;
+}
+
+static IDispatchExVtbl bindEventHandlerDispVtbl = {
+    bindEventHandlerDisp_QueryInterface,
+    DispatchEx_AddRef,
+    DispatchEx_Release,
+    DispatchEx_GetTypeInfoCount,
+    DispatchEx_GetTypeInfo,
+    DispatchEx_GetIDsOfNames,
+    DispatchEx_Invoke,
+    DispatchEx_GetDispID,
+    DispatchEx_InvokeEx,
+    DispatchEx_DeleteMemberByName,
+    DispatchEx_DeleteMemberByDispID,
+    DispatchEx_GetMemberProperties,
+    DispatchEx_GetMemberName,
+    DispatchEx_GetNextDispID,
+    DispatchEx_GetNameSpaceParent
+};
+
+static IDispatchEx bindEventHandlerDisp = { &bindEventHandlerDispVtbl };
 
 static HRESULT WINAPI Global_GetDispID(IDispatchEx *iface, BSTR bstrName, DWORD grfdex, DISPID *pid)
 {
@@ -629,6 +717,12 @@ static HRESULT WINAPI Global_GetDispID(IDispatchEx *iface, BSTR bstrName, DWORD 
         CHECK_EXPECT(global_nopropdelete_d);
         test_grfdex(grfdex, fdexNameCaseSensitive);
         *pid = DISPID_GLOBAL_TESTNOPROPDELETE;
+        return S_OK;
+    }
+    if(!strcmp_wa(bstrName, "testPropDeleteError")) {
+        CHECK_EXPECT(global_propdeleteerror_d);
+        test_grfdex(grfdex, fdexNameCaseSensitive);
+        *pid = DISPID_GLOBAL_TESTPROPDELETEERROR;
         return S_OK;
     }
     if(!strcmp_wa(bstrName, "getVT")) {
@@ -760,6 +854,11 @@ static HRESULT WINAPI Global_GetDispID(IDispatchEx *iface, BSTR bstrName, DWORD 
 
     if(!strcmp_wa(bstrName, "getScriptState")) {
         *pid = DISPID_GLOBAL_GETSCRIPTSTATE;
+        return S_OK;
+    }
+
+    if(!strcmp_wa(bstrName, "bindEventHandler")) {
+        *pid = DISPID_GLOBAL_BINDEVENTHANDLER;
         return S_OK;
     }
 
@@ -1127,6 +1226,11 @@ static HRESULT WINAPI Global_InvokeEx(IDispatchEx *iface, DISPID id, LCID lcid, 
         return S_OK;
     }
 
+    case DISPID_GLOBAL_BINDEVENTHANDLER:
+        V_VT(pvarRes) = VT_DISPATCH;
+        V_DISPATCH(pvarRes) = (IDispatch*)&bindEventHandlerDisp;
+        return S_OK;
+
     case DISPID_GLOBAL_PROPARGPUT:
         CHECK_EXPECT(global_propargput_i);
         ok(wFlags == INVOKE_PROPERTYPUT, "wFlags = %x\n", wFlags);
@@ -1273,6 +1377,9 @@ static HRESULT WINAPI Global_DeleteMemberByDispID(IDispatchEx *iface, DISPID id)
     case DISPID_GLOBAL_TESTNOPROPDELETE:
         CHECK_EXPECT(DeleteMemberByDispID_false);
         return S_FALSE;
+    case DISPID_GLOBAL_TESTPROPDELETEERROR:
+        CHECK_EXPECT(DeleteMemberByDispID_error);
+        return E_FAIL;
     default:
         ok(0, "id = %d\n", id);
     }
@@ -1760,6 +1867,17 @@ static void parse_script_a(const char *src)
     parse_script_af(SCRIPTITEM_GLOBALMEMBERS, src);
 }
 
+static void parse_script_ae(const char *src, HRESULT exhres)
+{
+    BSTR tmp;
+    HRESULT hres;
+
+    tmp = a2bstr(src);
+    hres = parse_script(SCRIPTITEM_GLOBALMEMBERS, tmp);
+    SysFreeString(tmp);
+    ok(hres == exhres, "parse_script failed: %08x, expected %08x\n", hres, exhres);
+}
+
 static void parse_script_with_error_a(const char *src, SCODE errorcode, ULONG line, LONG pos, LPCSTR source, LPCSTR desc, LPCSTR linetext)
 {
     BSTR tmp, script_source, description, line_text;
@@ -1974,6 +2092,49 @@ static void test_start(void)
     script_engine = NULL;
 }
 
+static void test_automagic(void)
+{
+    IActiveScriptParse *parser;
+    IActiveScript *engine;
+    BSTR str;
+    HRESULT hres;
+
+    script_engine = engine = create_script();
+    if(!engine)
+        return;
+
+    hres = IActiveScript_QueryInterface(engine, &IID_IActiveScriptParse, (void**)&parser);
+    ok(hres == S_OK, "Could not get IActiveScriptParse: %08x\n", hres);
+
+    hres = IActiveScriptParse_InitNew(parser);
+    ok(hres == S_OK, "InitNew failed: %08x\n", hres);
+
+    hres = IActiveScript_SetScriptSite(engine, &ActiveScriptSite);
+    ok(hres == S_OK, "SetScriptSite failed: %08x\n", hres);
+
+    hres = IActiveScript_AddNamedItem(engine, testW, SCRIPTITEM_ISVISIBLE|SCRIPTITEM_ISSOURCE|SCRIPTITEM_GLOBALMEMBERS);
+    ok(hres == S_OK, "AddNamedItem failed: %08x\n", hres);
+
+    str = a2bstr("function bindEventHandler::eventName() {}\n"
+                 "reportSuccess();");
+    hres = IActiveScriptParse_ParseScriptText(parser, str, NULL, NULL, NULL, 0, 0, 0, NULL, NULL);
+    ok(hres == S_OK, "ParseScriptText failed: %08x\n", hres);
+    SysFreeString(str);
+
+    SET_EXPECT(BindHandler);
+    SET_EXPECT(global_success_d);
+    SET_EXPECT(global_success_i);
+    hres = IActiveScript_SetScriptState(engine, SCRIPTSTATE_STARTED);
+    ok(hres == S_OK, "SetScriptState(SCRIPTSTATE_STARTED) failed: %08x\n", hres);
+    CHECK_CALLED(BindHandler);
+    CHECK_CALLED(global_success_d);
+    CHECK_CALLED(global_success_i);
+
+    IActiveScript_Release(engine);
+    IActiveScriptParse_Release(parser);
+    script_engine = NULL;
+}
+
 static HRESULT parse_script_expr(const char *expr, VARIANT *res, IActiveScript **engine_ret)
 {
     IActiveScriptParse *parser;
@@ -2014,6 +2175,56 @@ static HRESULT parse_script_expr(const char *expr, VARIANT *res, IActiveScript *
         IActiveScript_Release(engine);
     }
     return hres;
+}
+
+static void test_retval(void)
+{
+    BSTR str = a2bstr("reportSuccess(), true");
+    IActiveScriptParse *parser;
+    IActiveScript *engine;
+    SCRIPTSTATE state;
+    VARIANT res;
+    HRESULT hres;
+
+    engine = create_script();
+
+    hres = IActiveScript_QueryInterface(engine, &IID_IActiveScriptParse, (void**)&parser);
+    ok(hres == S_OK, "Could not get IActiveScriptParse: %08x\n", hres);
+
+    hres = IActiveScriptParse_InitNew(parser);
+    ok(hres == S_OK, "InitNew failed: %08x\n", hres);
+
+    hres = IActiveScript_SetScriptSite(engine, &ActiveScriptSite);
+    ok(hres == S_OK, "SetScriptSite failed: %08x\n", hres);
+
+    SET_EXPECT(GetItemInfo_testVal);
+    hres = IActiveScript_AddNamedItem(engine, test_valW,
+            SCRIPTITEM_ISVISIBLE|SCRIPTITEM_ISSOURCE|SCRIPTITEM_GLOBALMEMBERS);
+    ok(hres == S_OK, "AddNamedItem failed: %08x\n", hres);
+    CHECK_CALLED(GetItemInfo_testVal);
+
+    V_VT(&res) = VT_NULL;
+    SET_EXPECT(global_success_d);
+    SET_EXPECT(global_success_i);
+    hres = IActiveScriptParse_ParseScriptText(parser, str, NULL, NULL, NULL, 0, 0, 0, &res, NULL);
+    CHECK_CALLED(global_success_d);
+    CHECK_CALLED(global_success_i);
+    ok(hres == S_OK, "ParseScriptText failed: %08x\n", hres);
+    ok(V_VT(&res) == VT_EMPTY, "V_VT(&res) = %d\n", V_VT(&res));
+
+    hres = IActiveScript_GetScriptState(engine, &state);
+    ok(hres == S_OK, "GetScriptState failed: %08x\n", hres);
+    ok(state == SCRIPTSTATE_INITIALIZED, "state = %d\n", state);
+
+    hres = IActiveScript_SetScriptState(engine, SCRIPTSTATE_STARTED);
+    ok(hres == S_OK, "SetScriptState(SCRIPTSTATE_STARTED) failed: %08x\n", hres);
+
+    hres = IActiveScript_Close(engine);
+    ok(hres == S_OK, "Close failed: %08x\n", hres);
+
+    IActiveScriptParse_Release(parser);
+    IActiveScript_Release(engine);
+    SysFreeString(str);
 }
 
 static void test_default_value(void)
@@ -2084,6 +2295,7 @@ static void test_script_exprs(void)
     CHECK_CALLED(global_success_i);
 
     test_default_value();
+    test_retval();
 
     testing_expr = FALSE;
 }
@@ -2266,6 +2478,12 @@ static BOOL run_tests(void)
     CHECK_CALLED(global_nopropdelete_d);
     CHECK_CALLED(DeleteMemberByDispID_false);
 
+    SET_EXPECT(global_propdeleteerror_d);
+    SET_EXPECT(DeleteMemberByDispID_error);
+    parse_script_ae("delete testPropDeleteError;", E_FAIL);
+    CHECK_CALLED(global_propdeleteerror_d);
+    CHECK_CALLED(DeleteMemberByDispID_error);
+
     SET_EXPECT(puredisp_prop_d);
     parse_script_a("ok((delete pureDisp.prop) === false, 'delete pureDisp.prop did not return true');");
     CHECK_CALLED(puredisp_prop_d);
@@ -2290,6 +2508,14 @@ static BOOL run_tests(void)
     parse_script_a("var t = {func: dispexFunc}; t = t.func(false);");
     CHECK_CALLED(dispexfunc_value);
 
+    SET_EXPECT(dispexfunc_value);
+    parse_script_a("Function.prototype.apply.call(dispexFunc, testObj, [true]);");
+    CHECK_CALLED(dispexfunc_value);
+
+    SET_EXPECT(puredisp_value);
+    parse_script_a("Function.prototype.apply.call(pureDisp, testObj, [true]);");
+    CHECK_CALLED(puredisp_value);
+
     parse_script_a("(function reportSuccess() {})()");
 
     parse_script_a("ok(typeof(test) === 'object', \"typeof(test) != 'object'\");");
@@ -2303,6 +2529,8 @@ static BOOL run_tests(void)
     SET_EXPECT(global_propget_d);
     parse_script_a("eval('var testPropGet;');");
     CHECK_CALLED(global_propget_d);
+
+    parse_script_a("var testPropGet; function testPropGet() {}");
 
     SET_EXPECT(global_notexists_d);
     parse_script_a("var notExists; notExists = 1;");
@@ -2451,6 +2679,7 @@ static BOOL run_tests(void)
     test_isvisible(FALSE);
     test_isvisible(TRUE);
     test_start();
+    test_automagic();
 
     parse_script_af(0, "test.testThis2(this);");
     parse_script_af(0, "(function () { test.testThis2(this); })();");

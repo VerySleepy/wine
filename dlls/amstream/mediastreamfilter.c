@@ -29,7 +29,6 @@
 #include "wine/strmbase.h"
 
 #include "amstream_private.h"
-#include "amstream.h"
 
 #include "ddstream.h"
 
@@ -250,6 +249,8 @@ static ULONG WINAPI MediaStreamFilterImpl_Release(IMediaStreamFilter *iface)
             IMediaStream_Release(This->streams[i]);
             IPin_Release(This->pins[i]);
         }
+        CoTaskMemFree(This->streams);
+        CoTaskMemFree(This->pins);
         BaseFilter_Destroy(&This->filter);
         HeapFree(GetProcessHeap(), 0, This);
     }
@@ -359,7 +360,7 @@ static HRESULT WINAPI MediaStreamFilterImpl_AddMediaStream(IMediaStreamFilter* i
     if (!pins)
         return E_OUTOFMEMORY;
     This->pins = pins;
-    info.pFilter = (IBaseFilter*)&This->filter;
+    info.pFilter = &This->filter.IBaseFilter_iface;
     info.dir = PINDIR_INPUT;
     hr = IAMMediaStream_GetInformation(pAMMediaStream, &purpose_id, NULL);
     if (FAILED(hr))
@@ -373,11 +374,11 @@ static HRESULT WINAPI MediaStreamFilterImpl_AddMediaStream(IMediaStreamFilter* i
         return hr;
 
     pin = (MediaStreamFilter_InputPin*)This->pins[This->nb_streams];
-    pin->pin.pin.pinInfo.pFilter = (LPVOID)This;
+    pin->pin.pin.pinInfo.pFilter = &This->filter.IBaseFilter_iface;
     This->streams[This->nb_streams] = (IMediaStream*)pAMMediaStream;
     This->nb_streams++;
 
-    IMediaStream_AddRef((IMediaStream*)pAMMediaStream);
+    IAMMediaStream_AddRef(pAMMediaStream);
 
     return S_OK;
 }
@@ -521,7 +522,7 @@ HRESULT MediaStreamFilter_create(IUnknown *pUnkOuter, void **ppObj)
 
     BaseFilter_Init(&object->filter, (IBaseFilterVtbl*)&MediaStreamFilter_Vtbl, &CLSID_MediaStreamFilter, (DWORD_PTR)(__FILE__ ": MediaStreamFilterImpl.csFilter"), &BaseFuncTable);
 
-    *ppObj = object;
+    *ppObj = &object->filter.IBaseFilter_iface;
 
     return S_OK;
 }

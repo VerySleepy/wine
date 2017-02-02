@@ -109,7 +109,9 @@ static REFIID tid_id[] =
     &IID_INetFwAuthorizedApplications,
     &IID_INetFwMgr,
     &IID_INetFwOpenPort,
+    &IID_INetFwOpenPorts,
     &IID_INetFwPolicy,
+    &IID_INetFwPolicy2,
     &IID_INetFwProfile
 };
 

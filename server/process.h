@@ -26,6 +26,7 @@
 struct atom_table;
 struct handle_table;
 struct startup_info;
+struct job;
 
 /* process startup state */
 enum startup_state { STARTUP_IN_PROGRESS, STARTUP_DONE, STARTUP_ABORTED };
@@ -55,7 +56,7 @@ struct process
 {
     struct object        obj;             /* object header */
     struct list          entry;           /* entry in system-wide process list */
-    struct process      *parent;          /* parent process */
+    process_id_t         parent_id;       /* parent process id (at the time of creation) */
     struct list          thread_list;     /* thread list */
     struct thread       *debugger;        /* thread debugging this process */
     struct handle_table *handles;         /* handle entries */
@@ -75,6 +76,9 @@ struct process
     unsigned int         is_system:1;     /* is it a system process? */
     unsigned int         debug_children:1;/* also debug all child processes */
     unsigned int         is_terminating:1;/* is process terminating? */
+    struct job          *job;             /* job object ascoicated with this process */
+    struct list          job_entry;       /* list entry for job object */
+    struct list          asyncs;          /* list of async object owned by the process */
     struct list          locks;           /* list of file locks owned by the process */
     struct list          classes;         /* window classes owned by the process */
     struct console_input*console;         /* console input */
@@ -87,6 +91,7 @@ struct process
     struct list          dlls;            /* list of loaded dlls */
     client_ptr_t         peb;             /* PEB address in client address space */
     client_ptr_t         ldt_copy;        /* pointer to LDT copy in client addr space */
+    struct dir_cache    *dir_cache;       /* map of client-side directory cache */
     unsigned int         trace_data;      /* opaque data used by the process tracing mechanism */
     struct list          rawinput_devices;/* list of registered rawinput devices */
     const struct rawinput_device *rawinput_mouse; /* rawinput mouse device, if any */
@@ -100,11 +105,10 @@ struct process_snapshot
     int             threads;  /* number of threads */
     int             priority; /* priority class */
     int             handles;  /* number of handles */
-    int             unix_pid; /* Unix pid */
 };
 
 #define CPU_FLAG(cpu) (1 << (cpu))
-#define CPU_64BIT_MASK CPU_FLAG(CPU_x86_64)
+#define CPU_64BIT_MASK (CPU_FLAG(CPU_x86_64) | CPU_FLAG(CPU_ARM64))
 
 /* process functions */
 

@@ -35,6 +35,7 @@ typedef struct bitmap_data {
     UINT height;
     double xres;
     double yres;
+    const struct bitmap_data *alt_data;
 } bitmap_data;
 
 typedef struct BitmapTestSrc {
@@ -42,6 +43,11 @@ typedef struct BitmapTestSrc {
     LONG ref;
     const bitmap_data *data;
 } BitmapTestSrc;
+
+static BOOL near_equal(float a, float b)
+{
+    return fabsf(a - b) < 0.001;
+}
 
 static inline BitmapTestSrc *impl_from_IWICBitmapSource(IWICBitmapSource *iface)
 {
@@ -196,6 +202,44 @@ static void DeleteTestBitmap(BitmapTestSrc *This)
     HeapFree(GetProcessHeap(), 0, This);
 }
 
+static BOOL compare_bits(const struct bitmap_data *expect, UINT buffersize, const BYTE *converted_bits)
+{
+    BOOL equal;
+
+    if (IsEqualGUID(expect->format, &GUID_WICPixelFormat32bppBGR))
+    {
+        /* ignore the padding byte when comparing data */
+        UINT i;
+        const DWORD *a=(const DWORD*)expect->bits, *b=(const DWORD*)converted_bits;
+        equal=TRUE;
+        for (i=0; i<(buffersize/4); i++)
+            if ((a[i]&0xffffff) != (b[i]&0xffffff))
+            {
+                equal = FALSE;
+                break;
+            }
+    }
+    else if (IsEqualGUID(expect->format, &GUID_WICPixelFormat32bppGrayFloat))
+    {
+        UINT i;
+        const float *a=(const float*)expect->bits, *b=(const float*)converted_bits;
+        equal=TRUE;
+        for (i=0; i<(buffersize/4); i++)
+            if (!near_equal(a[i], b[i]))
+            {
+                equal = FALSE;
+                break;
+            }
+    }
+    else
+        equal = (memcmp(expect->bits, converted_bits, buffersize) == 0);
+
+    if (!equal && expect->alt_data)
+        equal = compare_bits(expect->alt_data, buffersize, converted_bits);
+
+    return equal;
+}
+
 static void compare_bitmap_data(const struct bitmap_data *expect, IWICBitmapSource *source, const char *name)
 {
     BYTE *converted_bits;
@@ -231,42 +275,13 @@ static void compare_bitmap_data(const struct bitmap_data *expect, IWICBitmapSour
     converted_bits = HeapAlloc(GetProcessHeap(), 0, buffersize);
     hr = IWICBitmapSource_CopyPixels(source, &prc, stride, buffersize, converted_bits);
     ok(SUCCEEDED(hr), "CopyPixels(%s) failed, hr=%x\n", name, hr);
-    if (IsEqualGUID(expect->format, &GUID_WICPixelFormat32bppBGR))
-    {
-        /* ignore the padding byte when comparing data */
-        UINT i;
-        BOOL equal=TRUE;
-        const DWORD *a=(const DWORD*)expect->bits, *b=(const DWORD*)converted_bits;
-        for (i=0; i<(buffersize/4); i++)
-            if ((a[i]&0xffffff) != (b[i]&0xffffff))
-            {
-                equal = FALSE;
-                break;
-            }
-        ok(equal, "unexpected pixel data (%s)\n", name);
-    }
-    else
-        ok(memcmp(expect->bits, converted_bits, buffersize) == 0, "unexpected pixel data (%s)\n", name);
+    ok(compare_bits(expect, buffersize, converted_bits), "unexpected pixel data (%s)\n", name);
 
     /* Test with NULL rectangle - should copy the whole bitmap */
+    memset(converted_bits, 0xaa, buffersize);
     hr = IWICBitmapSource_CopyPixels(source, NULL, stride, buffersize, converted_bits);
     ok(SUCCEEDED(hr), "CopyPixels(%s,rc=NULL) failed, hr=%x\n", name, hr);
-    if (IsEqualGUID(expect->format, &GUID_WICPixelFormat32bppBGR))
-    {
-        /* ignore the padding byte when comparing data */
-        UINT i;
-        BOOL equal=TRUE;
-        const DWORD *a=(const DWORD*)expect->bits, *b=(const DWORD*)converted_bits;
-        for (i=0; i<(buffersize/4); i++)
-            if ((a[i]&0xffffff) != (b[i]&0xffffff))
-            {
-                equal = FALSE;
-                break;
-            }
-        ok(equal, "unexpected pixel data with rc=NULL (%s)\n", name);
-    }
-    else
-        ok(memcmp(expect->bits, converted_bits, buffersize) == 0, "unexpected pixel data with rc=NULL (%s)\n", name);
+    ok(compare_bits(expect, buffersize, converted_bits), "unexpected pixel data (%s)\n", name);
 
     HeapFree(GetProcessHeap(), 0, converted_bits);
 }
@@ -295,6 +310,37 @@ static const BYTE bits_32bppBGRA[] = {
 static const struct bitmap_data testdata_32bppBGRA = {
     &GUID_WICPixelFormat32bppBGRA, 32, bits_32bppBGRA, 4, 2, 96.0, 96.0};
 
+/* XP and 2003 use linear color conversion, later versions use sRGB gamma */
+static const float bits_32bppGrayFloat_xp[] = {
+    0.114000f,0.587000f,0.299000f,0.000000f,
+    0.886000f,0.413000f,0.701000f,1.000000f};
+static const struct bitmap_data testdata_32bppGrayFloat_xp = {
+    &GUID_WICPixelFormat32bppGrayFloat, 32, (const BYTE *)bits_32bppGrayFloat_xp, 4, 2, 96.0, 96.0};
+
+static const float bits_32bppGrayFloat[] = {
+    0.072200f,0.715200f,0.212600f,0.000000f,
+    0.927800f,0.284800f,0.787400f,1.000000f};
+static const struct bitmap_data testdata_32bppGrayFloat = {
+    &GUID_WICPixelFormat32bppGrayFloat, 32, (const BYTE *)bits_32bppGrayFloat, 4, 2, 96.0, 96.0, &testdata_32bppGrayFloat_xp};
+
+static const BYTE bits_8bppGray_xp[] = {
+    29,150,76,0,
+    226,105,179,255};
+static const struct bitmap_data testdata_8bppGray_xp = {
+    &GUID_WICPixelFormat8bppGray, 8, bits_8bppGray_xp, 4, 2, 96.0, 96.0};
+
+static const BYTE bits_8bppGray[] = {
+    76,220,127,0,
+    247,145,230,255};
+static const struct bitmap_data testdata_8bppGray = {
+    &GUID_WICPixelFormat8bppGray, 8, bits_8bppGray, 4, 2, 96.0, 96.0, &testdata_8bppGray_xp};
+
+static const BYTE bits_24bppBGR_gray[] = {
+    76,76,76, 220,220,220, 127,127,127, 0,0,0,
+    247,247,247, 145,145,145, 230,230,230, 255,255,255};
+static const struct bitmap_data testdata_24bppBGR_gray = {
+    &GUID_WICPixelFormat24bppBGR, 24, bits_24bppBGR_gray, 4, 2, 96.0, 96.0};
+
 static void test_conversion(const struct bitmap_data *src, const struct bitmap_data *dst, const char *name, BOOL todo)
 {
     BitmapTestSrc *src_obj;
@@ -304,9 +350,7 @@ static void test_conversion(const struct bitmap_data *src, const struct bitmap_d
     CreateTestBitmap(src, &src_obj);
 
     hr = WICConvertBitmapSource(dst->format, &src_obj->IWICBitmapSource_iface, &dst_bitmap);
-    if (todo)
-        todo_wine ok(SUCCEEDED(hr), "WICConvertBitmapSource(%s) failed, hr=%x\n", name, hr);
-    else
+    todo_wine_if (todo)
         ok(SUCCEEDED(hr), "WICConvertBitmapSource(%s) failed, hr=%x\n", name, hr);
 
     if (SUCCEEDED(hr))
@@ -374,15 +418,23 @@ typedef struct property_opt_test_data
     VARTYPE initial_var_type;
     int i_init_val;
     float f_init_val;
+    BOOL skippable;
 } property_opt_test_data;
 
 static const WCHAR wszTiffCompressionMethod[] = {'T','i','f','f','C','o','m','p','r','e','s','s','i','o','n','M','e','t','h','o','d',0};
 static const WCHAR wszCompressionQuality[] = {'C','o','m','p','r','e','s','s','i','o','n','Q','u','a','l','i','t','y',0};
 static const WCHAR wszInterlaceOption[] = {'I','n','t','e','r','l','a','c','e','O','p','t','i','o','n',0};
+static const WCHAR wszFilterOption[] = {'F','i','l','t','e','r','O','p','t','i','o','n',0};
 
 static const struct property_opt_test_data testdata_tiff_props[] = {
     { wszTiffCompressionMethod, VT_UI1,         VT_UI1,  WICTiffCompressionDontCare },
     { wszCompressionQuality,    VT_R4,          VT_EMPTY },
+    { NULL }
+};
+
+static const struct property_opt_test_data testdata_png_props[] = {
+    { wszInterlaceOption, VT_BOOL, VT_BOOL, 0 },
+    { wszFilterOption,    VT_UI1,  VT_UI1, WICPngFilterUnspecified, 0.0f, TRUE /* not supported on XP/2k3 */},
     { NULL }
 };
 
@@ -411,6 +463,13 @@ static void test_specific_encoder_properties(IPropertyBag2 *options, const prope
         pb.pstrName = (LPOLESTR)data[i].name;
 
         hr = IPropertyBag2_Read(options, 1, &pb, NULL, &pvarValue, &phrError);
+
+        if (data[i].skippable && idx == -1)
+        {
+            win_skip("Property %s is not supported on this machine.\n", wine_dbgstr_w(data[i].name));
+            i++;
+            continue;
+        }
 
         ok(idx >= 0, "Property %s not in output of GetPropertyInfo\n",
            wine_dbgstr_w(data[i].name));
@@ -495,12 +554,14 @@ static void test_encoder_properties(const CLSID* clsid_encoder, IPropertyBag2 *o
         if (FAILED(hr))
             return;
 
-        ok(cProperties == cProperties2, "Missmatch of property count (IPropertyBag2::CountProperties=%i, IPropertyBag2::GetPropertyInfo=%i)\n",
+        ok(cProperties == cProperties2, "Mismatch of property count (IPropertyBag2::CountProperties=%i, IPropertyBag2::GetPropertyInfo=%i)\n",
            (int)cProperties, (int)cProperties2);
     }
 
-    if (clsid_encoder == &CLSID_WICTiffEncoder)
+    if (IsEqualCLSID(clsid_encoder, &CLSID_WICTiffEncoder))
         test_specific_encoder_properties(options, testdata_tiff_props, all_props, cProperties2);
+    else if (IsEqualCLSID(clsid_encoder, &CLSID_WICPngEncoder))
+        test_specific_encoder_properties(options, testdata_png_props, all_props, cProperties2);
 
     for (i=0; i < cProperties2; i++)
     {
@@ -735,6 +796,14 @@ START_TEST(converter)
 
     test_conversion(&testdata_32bppBGR, &testdata_24bppRGB, "32bppBGR -> 24bppRGB", FALSE);
     test_conversion(&testdata_24bppRGB, &testdata_32bppBGR, "24bppRGB -> 32bppBGR", FALSE);
+    test_conversion(&testdata_32bppBGRA, &testdata_24bppRGB, "32bppBGRA -> 24bppRGB", FALSE);
+
+    test_conversion(&testdata_24bppRGB, &testdata_32bppGrayFloat, "24bppRGB -> 32bppGrayFloat", FALSE);
+    test_conversion(&testdata_32bppBGR, &testdata_32bppGrayFloat, "32bppBGR -> 32bppGrayFloat", FALSE);
+
+    test_conversion(&testdata_24bppBGR, &testdata_8bppGray, "24bppBGR -> 8bppGray", FALSE);
+    test_conversion(&testdata_32bppBGR, &testdata_8bppGray, "32bppBGR -> 8bppGray", FALSE);
+    test_conversion(&testdata_32bppGrayFloat, &testdata_24bppBGR_gray, "32bppGrayFloat -> 24bppBGR gray", FALSE);
 
     test_invalid_conversion();
     test_default_converter();

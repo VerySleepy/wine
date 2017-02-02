@@ -74,7 +74,7 @@ static void test_createfont(void)
     stat = GdipDeleteFontFamily(fontfamily2);
     expect(Ok, stat);
 
-    /* Test to see if returned size is based on unit (its not) */
+    /* Test to see if returned size is based on unit (it's not) */
     GdipGetFontSize(font, &size);
     ok (size == 12, "Expected 12, got %f\n", size);
     GdipDeleteFont(font);
@@ -726,6 +726,7 @@ static void test_font_metrics(void)
 static void test_font_substitution(void)
 {
     WCHAR ms_shell_dlg[LF_FACESIZE];
+    char fallback_font[LF_FACESIZE];
     HDC hdc;
     HFONT hfont;
     LOGFONTA lf;
@@ -772,13 +773,23 @@ static void test_font_substitution(void)
     status = GdipCreateFontFamilyFromName(nonexistent, NULL, &family);
     ok(status == FontFamilyNotFound, "expected FontFamilyNotFound, got %d\n", status);
 
+    /* nonexistent fonts fallback to Arial, or something else if it's missing */
+    strcpy(lf.lfFaceName,"Arial");
+    status = GdipCreateFontFromLogfontA(hdc, &lf, &font);
+    expect(Ok, status);
+    status = GdipGetLogFontA(font, graphics, &lf);
+    expect(Ok, status);
+    strcpy(fallback_font,lf.lfFaceName);
+    trace("fallback font %s\n", fallback_font);
+    GdipDeleteFont(font);
+
     lstrcpyA(lf.lfFaceName, "ThisFontShouldNotExist");
     status = GdipCreateFontFromLogfontA(hdc, &lf, &font);
     expect(Ok, status);
     memset(&lf, 0xfe, sizeof(lf));
     status = GdipGetLogFontA(font, graphics, &lf);
     expect(Ok, status);
-    ok(!lstrcmpA(lf.lfFaceName, "Arial"), "wrong face name %s\n", lf.lfFaceName);
+    ok(!lstrcmpA(lf.lfFaceName, fallback_font), "wrong face name %s / %s\n", lf.lfFaceName, fallback_font);
     GdipDeleteFont(font);
 
     /* empty FaceName */
@@ -788,7 +799,7 @@ static void test_font_substitution(void)
     memset(&lf, 0xfe, sizeof(lf));
     status = GdipGetLogFontA(font, graphics, &lf);
     expect(Ok, status);
-    ok(!lstrcmpA(lf.lfFaceName, "Arial"), "wrong face name %s\n", lf.lfFaceName);
+    ok(!lstrcmpA(lf.lfFaceName, fallback_font), "wrong face name %s / %s\n", lf.lfFaceName, fallback_font);
     GdipDeleteFont(font);
 
     /* zeroing out lfWeight and lfCharSet leads to font creation failure */

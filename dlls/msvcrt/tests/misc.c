@@ -21,7 +21,29 @@
 #include "wine/test.h"
 #include <errno.h>
 #include <stdio.h>
+#include <math.h>
 #include "msvcrt.h"
+#include <process.h>
+
+static inline float __port_infinity(void)
+{
+    static const unsigned __inf_bytes = 0x7f800000;
+    return *(const float *)&__inf_bytes;
+}
+#define INFINITY __port_infinity()
+
+static inline float __port_nan(void)
+{
+    static const unsigned __nan_bytes = 0x7fc00000;
+    return *(const float *)&__nan_bytes;
+}
+#define NAN __port_nan()
+
+static inline BOOL almost_equal(double d1, double d2) {
+    if(d1-d2>-1e-30 && d1-d2<1e-30)
+        return TRUE;
+    return FALSE;
+}
 
 static int (__cdecl *prand_s)(unsigned int *);
 static int (__cdecl *pI10_OUTPUT)(long double, int, int, void*);
@@ -34,6 +56,11 @@ static void (__cdecl *p__invalid_parameter)(const wchar_t*,
         const wchar_t*, const wchar_t*, unsigned int, uintptr_t);
 static void (__cdecl *p_qsort_s)(void*, MSVCRT_size_t, MSVCRT_size_t,
         int (__cdecl*)(void*, const void*, const void*), void*);
+static double (__cdecl *p_atan)(double);
+static double (__cdecl *p_exp)(double);
+static double (__cdecl *p_tanh)(double);
+static void *(__cdecl *p_lfind_s)(const void*, const void*, unsigned int*,
+        size_t, int (__cdecl *)(void*, const void*, const void*), void*);
 
 static void init(void)
 {
@@ -48,6 +75,10 @@ static void init(void)
     p_set_errno = (void *)GetProcAddress(hmod, "_set_errno");
     p__invalid_parameter = (void *)GetProcAddress(hmod, "_invalid_parameter");
     p_qsort_s = (void *)GetProcAddress(hmod, "qsort_s");
+    p_atan = (void *)GetProcAddress(hmod, "atan");
+    p_exp = (void *)GetProcAddress(hmod, "exp");
+    p_tanh = (void *)GetProcAddress(hmod, "tanh");
+    p_lfind_s = (void *)GetProcAddress(hmod, "_lfind_s");
 }
 
 static void test_rand_s(void)
@@ -153,13 +184,9 @@ static void test_I10_OUTPUT(void)
         ok(!strcmp(out.str, I10_OUTPUT_tests[i].out.str), "%d: out.str = %s\n", i, out.str);
 
         j = strlen(I10_OUTPUT_tests[i].remain);
-        if(j && I10_OUTPUT_tests[i].remain[j-1]=='9')
-            todo_wine ok(!strncmp(out.str+out.len+1, I10_OUTPUT_tests[i].remain, j),
-                    "%d: &out.str[%d] = %.25s...\n", i, out.len+1, out.str+out.len+1);
-        else
+        todo_wine_if(j && I10_OUTPUT_tests[i].remain[j-1]=='9')
             ok(!strncmp(out.str+out.len+1, I10_OUTPUT_tests[i].remain, j),
                     "%d: &out.str[%d] = %.25s...\n", i, out.len+1, out.str+out.len+1);
-
 
         for(j=out.len+strlen(I10_OUTPUT_tests[i].remain)+1; j<sizeof(out.str); j++)
             if(out.str[j] != '#')
@@ -236,7 +263,7 @@ static void test__get_doserrno(void)
     out = 0xdeadbeef;
     ret = p_get_doserrno(&out);
     ok(ret == 0, "Expected _get_doserrno to return 0, got %d\n", ret);
-    ok(out == ERROR_INVALID_CMM, "Expected output variable to be ERROR_INVAID_CMM, got %d\n", out);
+    ok(out == ERROR_INVALID_CMM, "Expected output variable to be ERROR_INVALID_CMM, got %d\n", out);
 }
 
 static void test__get_errno(void)
@@ -477,6 +504,170 @@ static void test_qsort_s(void)
         ok(tab[i] == i, "data sorted incorrectly on position %d: %d\n", i, tab[i]);
 }
 
+static void test_math_functions(void)
+{
+    double ret;
+
+    errno = 0xdeadbeef;
+    p_atan(NAN);
+    ok(errno == EDOM, "errno = %d\n", errno);
+
+    errno = 0xdeadbeef;
+    ret = p_atan(INFINITY);
+    ok(almost_equal(ret, 1.57079632679489661923), "ret = %lf\n", ret);
+    ok(errno == 0xdeadbeef, "errno = %d\n", errno);
+
+    errno = 0xdeadbeef;
+    ret = p_atan(-INFINITY);
+    ok(almost_equal(ret, -1.57079632679489661923), "ret = %lf\n", ret);
+    ok(errno == 0xdeadbeef, "errno = %d\n", errno);
+
+    errno = 0xdeadbeef;
+    p_tanh(NAN);
+    ok(errno == EDOM, "errno = %d\n", errno);
+
+    errno = 0xdeadbeef;
+    ret = p_tanh(INFINITY);
+    ok(almost_equal(ret, 1.0), "ret = %lf\n", ret);
+    ok(errno == 0xdeadbeef, "errno = %d\n", errno);
+
+    errno = 0xdeadbeef;
+    p_exp(NAN);
+    ok(errno == EDOM, "errno = %d\n", errno);
+
+    errno = 0xdeadbeef;
+    p_exp(INFINITY);
+    ok(errno == 0xdeadbeef, "errno = %d\n", errno);
+}
+
+static void __cdecl test_thread_func(void *end_thread_type)
+{
+    if (end_thread_type == (void*)1)
+        _endthread();
+    else if (end_thread_type == (void*)2)
+        ExitThread(0);
+    else if (end_thread_type == (void*)3)
+        _endthreadex(0);
+}
+
+static unsigned __stdcall test_thread_func_ex(void *arg)
+{
+    _endthread();
+    return 0;
+}
+
+static void test_thread_handle_close(void)
+{
+    HANDLE hThread;
+    DWORD ret;
+
+    /* _beginthread: handle is not closed on ExitThread and _endthreadex */
+    hThread = (HANDLE)_beginthread(test_thread_func, 0, (void*)0);
+    ok(hThread != INVALID_HANDLE_VALUE, "_beginthread failed (%d)\n", errno);
+    WaitForSingleObject(hThread, INFINITE);
+    ret = CloseHandle(hThread);
+    ok(!ret, "ret = %d\n", ret);
+
+    hThread = (HANDLE)_beginthread(test_thread_func, 0, (void*)1);
+    ok(hThread != INVALID_HANDLE_VALUE, "_beginthread failed (%d)\n", errno);
+    WaitForSingleObject(hThread, INFINITE);
+    ret = CloseHandle(hThread);
+    ok(!ret, "ret = %d\n", ret);
+
+    hThread = (HANDLE)_beginthread(test_thread_func, 0, (void*)2);
+    ok(hThread != INVALID_HANDLE_VALUE, "_beginthread failed (%d)\n", errno);
+    Sleep(150);
+    ret = WaitForSingleObject(hThread, INFINITE);
+    ok(ret == WAIT_OBJECT_0, "ret = %d\n", ret);
+    ret = CloseHandle(hThread);
+    ok(ret, "ret = %d\n", ret);
+
+    hThread = (HANDLE)_beginthread(test_thread_func, 0, (void*)3);
+    ok(hThread != INVALID_HANDLE_VALUE, "_beginthread failed (%d)\n", errno);
+    Sleep(150);
+    ret = WaitForSingleObject(hThread, INFINITE);
+    ok(ret == WAIT_OBJECT_0, "ret = %d\n", ret);
+    ret = CloseHandle(hThread);
+    ok(ret, "ret = %d\n", ret);
+
+    /* _beginthreadex: handle is not closed on _endthread */
+    hThread = (HANDLE)_beginthreadex(NULL,0, test_thread_func_ex, NULL, 0, NULL);
+    ok(hThread != NULL, "_beginthreadex failed (%d)\n", errno);
+    Sleep(150);
+    ret = WaitForSingleObject(hThread, INFINITE);
+    ok(ret == WAIT_OBJECT_0, "ret = %d\n", ret);
+    ret = CloseHandle(hThread);
+    ok(ret, "ret = %d\n", ret);
+}
+
+static int __cdecl _lfind_s_comp(void *ctx, const void *l, const void *r)
+{
+    *(int *)ctx = 0xdeadc0de;
+    return *(int *)l - *(int *)r;
+}
+
+static void test__lfind_s(void)
+{
+    static const int tests[] = {9000, 8001, 7002, 6003, 1003, 5004, 4005, 3006, 2007};
+    unsigned int num;
+    void *found;
+    int ctx;
+    int key;
+
+    if (!p_lfind_s)
+    {
+        win_skip("_lfind_s is not available\n");
+        return;
+    }
+
+    key = 1234;
+    num = sizeof(tests)/sizeof(tests[0]);
+
+    errno = 0xdeadbeef;
+    found = p_lfind_s(NULL, tests, &num, sizeof(int), _lfind_s_comp, NULL);
+    ok(errno == EINVAL, "errno = %d\n", errno);
+    ok(!found, "Expected NULL, got %p\n", found);
+
+    errno = 0xdeadbeef;
+    found = p_lfind_s(&key, NULL, &num, sizeof(int), _lfind_s_comp, NULL);
+    ok(errno == EINVAL, "errno = %d\n", errno);
+    ok(!found, "Expected NULL, got %p\n", found);
+
+    errno = 0xdeadbeef;
+    found = p_lfind_s(&key, tests, &num, 0, _lfind_s_comp, NULL);
+    ok(errno == EINVAL, "errno = %d\n", errno);
+    ok(!found, "Expected NULL, got %p\n", found);
+
+    errno = 0xdeadbeef;
+    found = p_lfind_s(&key, tests, &num, sizeof(int), NULL, NULL);
+    ok(errno == EINVAL, "errno = %d\n", errno);
+    ok(!found, "Expected NULL, got %p\n", found);
+
+    ctx = -1;
+    key = 9000;
+    errno = 0xdeadbeef;
+    found = p_lfind_s(&key, tests, &num, sizeof(int), _lfind_s_comp, &ctx);
+    ok(errno == 0xdeadbeef, "errno = %d\n", errno);
+    ok(found == tests, "Expected %p, got %p\n", tests, found);
+    ok(ctx == 0xdeadc0de, "Expected 0xdeadc0de, got %x\n", ctx);
+
+    ctx = -1;
+    key = 2007;
+    errno = 0xdeadbeef;
+    found = p_lfind_s(&key, tests, &num, sizeof(int), _lfind_s_comp, &ctx);
+    ok(errno == 0xdeadbeef, "errno = %d\n", errno);
+    ok(found == tests+8, "Expected %p, got %p\n", tests+8, found);
+    ok(ctx == 0xdeadc0de, "Expected 0xdeadc0de, got %x\n", ctx);
+
+    ctx = -1;
+    key = 1234;
+    errno = 0xdeadbeef;
+    found = p_lfind_s(&key, tests, &num, sizeof(int), _lfind_s_comp, &ctx);
+    ok(errno == 0xdeadbeef, "errno = %d\n", errno);
+    ok(!found, "Expected NULL, got %p\n", found);
+    ok(ctx == 0xdeadc0de, "Expected 0xdeadc0de, got %x\n", ctx);
+}
+
 START_TEST(misc)
 {
     int arg_c;
@@ -504,4 +695,7 @@ START_TEST(misc)
     test__popen(arg_v[0]);
     test__invalid_parameter();
     test_qsort_s();
+    test_math_functions();
+    test_thread_handle_close();
+    test__lfind_s();
 }

@@ -51,6 +51,12 @@ static HRESULT to_bstr_array( BSTR *strings, DWORD count, VARIANT *var )
     return S_OK;
 }
 
+static void free_bstr_array( BSTR *strings, DWORD count )
+{
+    while (count--)
+        SysFreeString( *(strings++) );
+}
+
 static HRESULT to_i4_array( DWORD *values, DWORD count, VARIANT *var )
 {
     SAFEARRAY *sa;
@@ -109,12 +115,16 @@ static HRESULT enum_key( HKEY root, const WCHAR *subkey, VARIANT *names, VARIANT
         if (!(strings[i] = SysAllocString( buf )))
         {
             for (i--; i >= 0; i--) SysFreeString( strings[i] );
-            hr = ERROR_OUTOFMEMORY;
+            hr = E_OUTOFMEMORY;
             break;
         }
         i++;
     }
-    if (hr == S_OK && !res) hr = to_bstr_array( strings, i, names );
+    if (hr == S_OK && !res)
+    {
+        hr = to_bstr_array( strings, i, names );
+        free_bstr_array( strings, i );
+    }
     set_variant( VT_UI4, res, NULL, retval );
     RegCloseKey( hkey );
     heap_free( strings );
@@ -210,7 +220,7 @@ static HRESULT enum_values( HKEY root, const WCHAR *subkey, VARIANT *names, VARI
         if (!(value_names[i] = SysAllocString( buf )))
         {
             for (i--; i >= 0; i--) SysFreeString( value_names[i] );
-            hr = ERROR_OUTOFMEMORY;
+            hr = E_OUTOFMEMORY;
             break;
         }
         i++;
@@ -218,6 +228,7 @@ static HRESULT enum_values( HKEY root, const WCHAR *subkey, VARIANT *names, VARI
     if (hr == S_OK && !res)
     {
         hr = to_bstr_array( value_names, i, names );
+        free_bstr_array( value_names, i );
         if (hr == S_OK) hr = to_i4_array( value_types, i, types );
     }
 

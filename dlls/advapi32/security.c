@@ -19,6 +19,8 @@
  *
  */
 
+#include "config.h"
+
 #include <stdarg.h>
 #include <string.h>
 
@@ -133,6 +135,7 @@ static const WELLKNOWNSID WellKnownSids[] =
     { {'M','E'}, WinMediumLabelSid, { SID_REVISION, 1, { SECURITY_MANDATORY_LABEL_AUTHORITY}, { SECURITY_MANDATORY_MEDIUM_RID } } },
     { {'H','I'}, WinHighLabelSid, { SID_REVISION, 1, { SECURITY_MANDATORY_LABEL_AUTHORITY}, { SECURITY_MANDATORY_HIGH_RID } } },
     { {'S','I'}, WinSystemLabelSid, { SID_REVISION, 1, { SECURITY_MANDATORY_LABEL_AUTHORITY}, { SECURITY_MANDATORY_SYSTEM_RID } } },
+    { {0,0}, WinBuiltinAnyPackageSid, { SID_REVISION, 2, { SECURITY_APP_PACKAGE_AUTHORITY }, { SECURITY_APP_PACKAGE_BASE_RID, SECURITY_BUILTIN_PACKAGE_ANY_PACKAGE } } },
 };
 
 /* these SIDs must be constructed as relative to some domain - only the RID is well-known */
@@ -147,16 +150,16 @@ static const WELLKNOWNRID WellKnownRids[] = {
     { {'L','A'}, WinAccountAdministratorSid,    DOMAIN_USER_RID_ADMIN },
     { {'L','G'}, WinAccountGuestSid,            DOMAIN_USER_RID_GUEST },
     { {0,0}, WinAccountKrbtgtSid,           DOMAIN_USER_RID_KRBTGT },
-    { {0,0}, WinAccountDomainAdminsSid,     DOMAIN_GROUP_RID_ADMINS },
-    { {0,0}, WinAccountDomainUsersSid,      DOMAIN_GROUP_RID_USERS },
-    { {0,0}, WinAccountDomainGuestsSid,     DOMAIN_GROUP_RID_GUESTS },
-    { {0,0}, WinAccountComputersSid,        DOMAIN_GROUP_RID_COMPUTERS },
-    { {0,0}, WinAccountControllersSid,      DOMAIN_GROUP_RID_CONTROLLERS },
-    { {0,0}, WinAccountCertAdminsSid,       DOMAIN_GROUP_RID_CERT_ADMINS },
-    { {0,0}, WinAccountSchemaAdminsSid,     DOMAIN_GROUP_RID_SCHEMA_ADMINS },
-    { {0,0}, WinAccountEnterpriseAdminsSid, DOMAIN_GROUP_RID_ENTERPRISE_ADMINS },
-    { {0,0}, WinAccountPolicyAdminsSid,     DOMAIN_GROUP_RID_POLICY_ADMINS },
-    { {0,0}, WinAccountRasAndIasServersSid, DOMAIN_ALIAS_RID_RAS_SERVERS },
+    { {'D','A'}, WinAccountDomainAdminsSid,     DOMAIN_GROUP_RID_ADMINS },
+    { {'D','U'}, WinAccountDomainUsersSid,      DOMAIN_GROUP_RID_USERS },
+    { {'D','G'}, WinAccountDomainGuestsSid,     DOMAIN_GROUP_RID_GUESTS },
+    { {'D','C'}, WinAccountComputersSid,        DOMAIN_GROUP_RID_COMPUTERS },
+    { {'D','D'}, WinAccountControllersSid,      DOMAIN_GROUP_RID_CONTROLLERS },
+    { {'C','A'}, WinAccountCertAdminsSid,       DOMAIN_GROUP_RID_CERT_ADMINS },
+    { {'S','A'}, WinAccountSchemaAdminsSid,     DOMAIN_GROUP_RID_SCHEMA_ADMINS },
+    { {'E','A'}, WinAccountEnterpriseAdminsSid, DOMAIN_GROUP_RID_ENTERPRISE_ADMINS },
+    { {'P','A'}, WinAccountPolicyAdminsSid,     DOMAIN_GROUP_RID_POLICY_ADMINS },
+    { {'R','S'}, WinAccountRasAndIasServersSid, DOMAIN_ALIAS_RID_RAS_SERVERS },
 };
 
 
@@ -173,7 +176,9 @@ typedef struct _AccountSid {
 static const WCHAR Account_Operators[] = { 'A','c','c','o','u','n','t',' ','O','p','e','r','a','t','o','r','s',0 };
 static const WCHAR Administrator[] = {'A','d','m','i','n','i','s','t','r','a','t','o','r',0 };
 static const WCHAR Administrators[] = { 'A','d','m','i','n','i','s','t','r','a','t','o','r','s',0 };
+static const WCHAR ALL_APPLICATION_PACKAGES[] = { 'A','L','L',' ','A','P','P','L','I','C','A','T','I','O','N',' ','P','A','C','K','A','G','E','S',0 };
 static const WCHAR ANONYMOUS_LOGON[] = { 'A','N','O','N','Y','M','O','U','S',' ','L','O','G','O','N',0 };
+static const WCHAR APPLICATION_PACKAGE_AUTHORITY[] = { 'A','P','P','L','I','C','A','T','I','O','N',' ','P','A','C','K','A','G','E',' ','A','U','T','H','O','R','I','T','Y',0 };
 static const WCHAR Authenticated_Users[] = { 'A','u','t','h','e','n','t','i','c','a','t','e','d',' ','U','s','e','r','s',0 };
 static const WCHAR Backup_Operators[] = { 'B','a','c','k','u','p',' ','O','p','e','r','a','t','o','r','s',0 };
 static const WCHAR BATCH[] = { 'B','A','T','C','H',0 };
@@ -277,6 +282,7 @@ static const AccountSid ACCOUNT_SIDS[] = {
     { WinOtherOrganizationSid, Other_Organization, NT_AUTHORITY, SidTypeWellKnownGroup },
     { WinBuiltinPerfMonitoringUsersSid, Performance_Monitor_Users, BUILTIN, SidTypeAlias },
     { WinBuiltinPerfLoggingUsersSid, Performance_Log_Users, BUILTIN, SidTypeAlias },
+    { WinBuiltinAnyPackageSid, ALL_APPLICATION_PACKAGES, APPLICATION_PACKAGE_AUTHORITY, SidTypeWellKnownGroup },
 };
 /*
  * ACE access rights
@@ -311,6 +317,10 @@ static const WCHAR SDDL_GENERIC_READ[]     = {'G','R',0};
 static const WCHAR SDDL_GENERIC_WRITE[]    = {'G','W',0};
 static const WCHAR SDDL_GENERIC_EXECUTE[]  = {'G','X',0};
 
+static const WCHAR SDDL_NO_READ_UP[]       = {'N','R',0};
+static const WCHAR SDDL_NO_WRITE_UP[]      = {'N','W',0};
+static const WCHAR SDDL_NO_EXECUTE_UP[]    = {'N','X',0};
+
 /*
  * ACL flags
  */
@@ -325,6 +335,7 @@ static const WCHAR SDDL_ACCESS_ALLOWED[]        = {'A',0};
 static const WCHAR SDDL_ACCESS_DENIED[]         = {'D',0};
 static const WCHAR SDDL_AUDIT[]                 = {'A','U',0};
 static const WCHAR SDDL_ALARM[]                 = {'A','L',0};
+static const WCHAR SDDL_MANDATORY_LABEL[]       = {'M','L',0};
 
 /*
  * ACE flags
@@ -397,7 +408,7 @@ static inline BOOL set_ntstatus( NTSTATUS status )
 }
 
 /* helper function for SE_FILE_OBJECT objects in [Get|Set]NamedSecurityInfo */
-static inline DWORD get_security_file( LPWSTR full_file_name, DWORD access, HANDLE *file )
+static inline DWORD get_security_file( LPCWSTR full_file_name, DWORD access, HANDLE *file )
 {
     UNICODE_STRING file_nameW;
     OBJECT_ATTRIBUTES attr;
@@ -411,7 +422,7 @@ static inline DWORD get_security_file( LPWSTR full_file_name, DWORD access, HAND
     attr.Attributes = OBJ_CASE_INSENSITIVE;
     attr.ObjectName = &file_nameW;
     attr.SecurityDescriptor = NULL;
-    status = NtCreateFile( file, access, &attr, &io, NULL, FILE_FLAG_BACKUP_SEMANTICS,
+    status = NtCreateFile( file, access|SYNCHRONIZE, &attr, &io, NULL, FILE_FLAG_BACKUP_SEMANTICS,
                            FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE, FILE_OPEN,
                            FILE_OPEN_FOR_BACKUP_INTENT, NULL, 0 );
     RtlFreeUnicodeString( &file_nameW );
@@ -426,8 +437,10 @@ static inline DWORD get_security_service( LPWSTR full_service_name, DWORD access
 
     err = SERV_OpenSCManagerW( NULL, NULL, access, (SC_HANDLE *)&manager );
     if (err == ERROR_SUCCESS)
+    {
         err = SERV_OpenServiceW( manager, full_service_name, access, (SC_HANDLE *)service );
-    CloseServiceHandle( manager );
+        CloseServiceHandle( manager );
+    }
     return err;
 }
 
@@ -778,7 +791,7 @@ BOOL WINAPI
 SetTokenInformation( HANDLE token, TOKEN_INFORMATION_CLASS tokeninfoclass,
 		     LPVOID tokeninfo, DWORD tokeninfolength )
 {
-    TRACE("(%p, %s, %p, %d): stub\n",
+    TRACE("(%p, %s, %p, %d)\n",
           token,
           (tokeninfoclass == TokenUser) ? "TokenUser" :
           (tokeninfoclass == TokenGroups) ? "TokenGroups" :
@@ -858,7 +871,7 @@ BOOL WINAPI CreateRestrictedToken(
     PHANDLE newToken)
 {
     TOKEN_TYPE type;
-    SECURITY_IMPERSONATION_LEVEL level = TokenImpersonationLevel;
+    SECURITY_IMPERSONATION_LEVEL level = SecurityAnonymous;
     DWORD size;
 
     FIXME("(%p, 0x%x, %u, %p, %u, %p, %u, %p, %p): stub\n",
@@ -1154,7 +1167,8 @@ GetEffectiveRightsFromAclW( PACL pacl, PTRUSTEEW pTrustee, PACCESS_MASK pAccessR
 PSID_IDENTIFIER_AUTHORITY WINAPI
 GetSidIdentifierAuthority( PSID pSid )
 {
-	return RtlIdentifierAuthoritySid(pSid);
+    SetLastError(ERROR_SUCCESS);
+    return RtlIdentifierAuthoritySid(pSid);
 }
 
 /******************************************************************************
@@ -1533,6 +1547,52 @@ BOOL WINAPI SetSecurityDescriptorControl( PSECURITY_DESCRIPTOR pSecurityDescript
         pSecurityDescriptor, ControlBitsOfInterest, ControlBitsToSet ) );
 }
 
+/******************************************************************************
+ * GetWindowsAccountDomainSid         [ADVAPI32.@]
+ */
+BOOL WINAPI GetWindowsAccountDomainSid( PSID sid, PSID domain_sid, DWORD *size )
+{
+    SID_IDENTIFIER_AUTHORITY domain_ident = { SECURITY_NT_AUTHORITY };
+    DWORD required_size;
+    int i;
+
+    FIXME( "(%p %p %p): semi-stub\n", sid, domain_sid, size );
+
+    if (!sid || !IsValidSid( sid ))
+    {
+        SetLastError( ERROR_INVALID_SID );
+        return FALSE;
+    }
+
+    if (!size)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+
+    if (*GetSidSubAuthorityCount( sid ) < 4)
+    {
+        SetLastError( ERROR_INVALID_SID );
+        return FALSE;
+    }
+
+    required_size = GetSidLengthRequired( 4 );
+    if (*size < required_size || !domain_sid)
+    {
+        *size = required_size;
+        SetLastError( domain_sid ? ERROR_INSUFFICIENT_BUFFER :
+                                   ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+
+    InitializeSid( domain_sid, &domain_ident, 4 );
+    for (i = 0; i < 4; i++)
+        *GetSidSubAuthority( domain_sid, i ) = *GetSidSubAuthority( sid, i );
+
+    *size = required_size;
+    return TRUE;
+}
+
 /*	##############################
 	######	ACL FUNCTIONS	######
 	##############################
@@ -1582,6 +1642,22 @@ BOOL WINAPI AddAccessAllowedAceEx(
 }
 
 /******************************************************************************
+ *  AddAccessAllowedObjectAce [ADVAPI32.@]
+ */
+BOOL WINAPI AddAccessAllowedObjectAce(
+        IN OUT PACL pAcl,
+        IN DWORD dwAceRevision,
+        IN DWORD dwAceFlags,
+        IN DWORD dwAccessMask,
+        IN GUID* pObjectTypeGuid,
+        IN GUID* pInheritedObjectTypeGuid,
+        IN PSID pSid)
+{
+    return set_ntstatus(RtlAddAccessAllowedObjectAce(pAcl, dwAceRevision, dwAceFlags, dwAccessMask,
+                        pObjectTypeGuid, pInheritedObjectTypeGuid, pSid));
+}
+
+/******************************************************************************
  *  AddAccessDeniedAce [ADVAPI32.@]
  */
 BOOL WINAPI AddAccessDeniedAce(
@@ -1604,6 +1680,22 @@ BOOL WINAPI AddAccessDeniedAceEx(
         IN PSID pSid)
 {
     return set_ntstatus(RtlAddAccessDeniedAceEx(pAcl, dwAceRevision, AceFlags, AccessMask, pSid));
+}
+
+/******************************************************************************
+ *  AddAccessDeniedObjectAce [ADVAPI32.@]
+ */
+BOOL WINAPI AddAccessDeniedObjectAce(
+    IN OUT PACL pAcl,
+    IN DWORD dwAceRevision,
+    IN DWORD dwAceFlags,
+    IN DWORD dwAccessMask,
+    IN GUID* pObjectTypeGuid,
+    IN GUID* pInheritedObjectTypeGuid,
+    IN PSID pSid)
+{
+    return set_ntstatus( RtlAddAccessDeniedObjectAce(pAcl, dwAceRevision, dwAceFlags, dwAccessMask,
+                         pObjectTypeGuid, pInheritedObjectTypeGuid, pSid) );
 }
 
 /******************************************************************************
@@ -2029,7 +2121,7 @@ GetFileSecurityW( LPCWSTR lpFileName,
 {
     HANDLE hfile;
     NTSTATUS status;
-    DWORD access = 0;
+    DWORD access = 0, err;
 
     TRACE("(%s,%d,%p,%d,%p)\n", debugstr_w(lpFileName),
           RequestedInformation, pSecurityDescriptor,
@@ -2041,10 +2133,12 @@ GetFileSecurityW( LPCWSTR lpFileName,
     if (RequestedInformation & SACL_SECURITY_INFORMATION)
         access |= ACCESS_SYSTEM_SECURITY;
 
-    hfile = CreateFileW( lpFileName, access, FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
-                         NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0 );
-    if ( hfile == INVALID_HANDLE_VALUE )
+    err = get_security_file( lpFileName, access, &hfile);
+    if (err)
+    {
+        SetLastError(err);
         return FALSE;
+    }
 
     status = NtQuerySecurityObject( hfile, RequestedInformation, pSecurityDescriptor,
                                     nLength, lpnLengthNeeded );
@@ -2153,7 +2247,7 @@ LookupAccountSidW(
     }
 
     /* check the well known SIDs first */
-    for (i = 0; i <= 60; i++) {
+    for (i = 0; i <= WinAccountProtectedUsersSid; i++) {
         if (IsWellKnownSid(sid, i)) {
             for (j = 0; j < (sizeof(ACCOUNT_SIDS) / sizeof(ACCOUNT_SIDS[0])); j++) {
                 if (ACCOUNT_SIDS[j].type == i) {
@@ -2325,7 +2419,7 @@ SetFileSecurityW( LPCWSTR lpFileName,
                     PSECURITY_DESCRIPTOR pSecurityDescriptor )
 {
     HANDLE file;
-    DWORD access = 0;
+    DWORD access = 0, err;
     NTSTATUS status;
 
     TRACE("(%s, 0x%x, %p)\n", debugstr_w(lpFileName), RequestedInformation,
@@ -2339,10 +2433,12 @@ SetFileSecurityW( LPCWSTR lpFileName,
     if (RequestedInformation & DACL_SECURITY_INFORMATION)
         access |= WRITE_DAC;
 
-    file = CreateFileW( lpFileName, access, FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
-                        NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL );
-    if (file == INVALID_HANDLE_VALUE)
+    err = get_security_file( lpFileName, access, &file);
+    if (err)
+    {
+        SetLastError(err);
         return FALSE;
+    }
 
     status = NtSetSecurityObject( file, RequestedInformation, pSecurityDescriptor );
     CloseHandle( file );
@@ -2492,6 +2588,15 @@ BOOL WINAPI ImpersonateLoggedOnUser(HANDLE hToken)
 }
 
 /******************************************************************************
+ * ImpersonateAnonymousToken [ADVAPI32.@]
+ */
+BOOL WINAPI ImpersonateAnonymousToken( HANDLE thread )
+{
+    TRACE("(%p)\n", thread);
+    return set_ntstatus( NtImpersonateAnonymousToken( thread ) );
+}
+
+/******************************************************************************
  * AccessCheck [ADVAPI32.@]
  */
 BOOL WINAPI
@@ -2583,7 +2688,7 @@ BOOL WINAPI AddAuditAccessAce(
 }
 
 /******************************************************************************
- *  AddAuditAccessAce [ADVAPI32.@]
+ *  AddAuditAccessAceEx [ADVAPI32.@]
  */
 BOOL WINAPI AddAuditAccessAceEx(
     IN OUT PACL pAcl,
@@ -2596,6 +2701,24 @@ BOOL WINAPI AddAuditAccessAceEx(
 {
     return set_ntstatus( RtlAddAuditAccessAceEx(pAcl, dwAceRevision, dwAceFlags, dwAccessMask, pSid,
                                               bAuditSuccess, bAuditFailure) );
+}
+
+/******************************************************************************
+ *  AddAuditAccessObjectAce [ADVAPI32.@]
+ */
+BOOL WINAPI AddAuditAccessObjectAce(
+    IN OUT PACL pAcl,
+    IN DWORD dwAceRevision,
+    IN DWORD dwAceFlags,
+    IN DWORD dwAccessMask,
+    IN GUID* pObjectTypeGuid,
+    IN GUID* pInheritedObjectTypeGuid,
+    IN PSID pSid,
+    IN BOOL bAuditSuccess,
+    IN BOOL bAuditFailure)
+{
+    return set_ntstatus( RtlAddAuditAccessObjectAce(pAcl, dwAceRevision, dwAceFlags, dwAccessMask,
+           pObjectTypeGuid, pInheritedObjectTypeGuid, pSid, bAuditSuccess, bAuditFailure) );
 }
 
 /******************************************************************************
@@ -4048,6 +4171,8 @@ DWORD WINAPI SetNamedSecurityInfoW(LPWSTR pObjectName,
         }
         break;
     case SE_FILE_OBJECT:
+        if (SecurityInfo & DACL_SECURITY_INFORMATION)
+            access |= READ_CONTROL;
         if (!(err = get_security_file( pObjectName, access, &handle )))
         {
             err = SetSecurityInfo( handle, ObjectType, SecurityInfo, psidOwner, psidGroup, pDacl, pSacl );
@@ -4141,6 +4266,7 @@ static const ACEFLAG AceType[] =
     { SDDL_AUDIT,          SYSTEM_AUDIT_ACE_TYPE },
     { SDDL_ACCESS_ALLOWED, ACCESS_ALLOWED_ACE_TYPE },
     { SDDL_ACCESS_DENIED,  ACCESS_DENIED_ACE_TYPE },
+    { SDDL_MANDATORY_LABEL,SYSTEM_MANDATORY_LABEL_ACE_TYPE },
     /*
     { SDDL_OBJECT_ACCESS_ALLOWED, ACCESS_ALLOWED_OBJECT_ACE_TYPE },
     { SDDL_OBJECT_ACCESS_DENIED,  ACCESS_DENIED_OBJECT_ACE_TYPE },
@@ -4251,6 +4377,10 @@ static const ACEFLAG AceRights[] =
     { SDDL_KEY_READ,        KEY_READ },
     { SDDL_KEY_WRITE,       KEY_WRITE },
     { SDDL_KEY_EXECUTE,     KEY_EXECUTE },
+
+    { SDDL_NO_READ_UP,      SYSTEM_MANDATORY_LABEL_NO_READ_UP },
+    { SDDL_NO_WRITE_UP,     SYSTEM_MANDATORY_LABEL_NO_WRITE_UP },
+    { SDDL_NO_EXECUTE_UP,   SYSTEM_MANDATORY_LABEL_NO_EXECUTE_UP },
     { NULL, 0 },
 };
 
@@ -4439,12 +4569,14 @@ static BOOL ParseStringSecurityDescriptorToSecurityDescriptor(
 {
     BOOL bret = FALSE;
     WCHAR toktype;
-    WCHAR tok[MAX_PATH];
+    WCHAR *tok;
     LPCWSTR lptoken;
     LPBYTE lpNext = NULL;
     DWORD len;
 
     *cBytes = sizeof(SECURITY_DESCRIPTOR);
+
+    tok = heap_alloc( (lstrlenW(StringSecurityDescriptor) + 1) * sizeof(WCHAR));
 
     if (SecurityDescriptor)
         lpNext = (LPBYTE)(SecurityDescriptor + 1);
@@ -4567,6 +4699,7 @@ static BOOL ParseStringSecurityDescriptorToSecurityDescriptor(
     bret = TRUE;
 
 lend:
+    heap_free(tok);
     return bret;
 }
 
@@ -5166,20 +5299,16 @@ BOOL WINAPI ConvertToAutoInheritPrivateObjectSecurity(
     return FALSE;
 }
 
-BOOL WINAPI CreatePrivateObjectSecurity(
-        PSECURITY_DESCRIPTOR ParentDescriptor,
-        PSECURITY_DESCRIPTOR CreatorDescriptor,
-        PSECURITY_DESCRIPTOR* NewDescriptor,
-        BOOL IsDirectoryObject,
-        HANDLE Token,
-        PGENERIC_MAPPING GenericMapping )
+BOOL WINAPI CreatePrivateObjectSecurityEx(
+    PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR creator, PSECURITY_DESCRIPTOR *out,
+    GUID *objtype, BOOL is_directory, ULONG flags, HANDLE token, PGENERIC_MAPPING mapping)
 {
     SECURITY_DESCRIPTOR_RELATIVE *relative;
     DWORD needed, offset;
     BYTE *buffer;
 
-    FIXME("%p %p %p %d %p %p - returns fake SECURITY_DESCRIPTOR\n", ParentDescriptor,
-          CreatorDescriptor, NewDescriptor, IsDirectoryObject, Token, GenericMapping);
+    FIXME("%p %p %p %p %d %u %p %p - returns fake SECURITY_DESCRIPTOR\n", parent, creator, out,
+          objtype, is_directory, flags, token, mapping);
 
     needed = sizeof(SECURITY_DESCRIPTOR_RELATIVE);
     needed += sizeof(sidWorld);
@@ -5212,8 +5341,23 @@ BOOL WINAPI CreatePrivateObjectSecurity(
     GetWorldAccessACL( (ACL *)(buffer + offset) );
     relative->Sacl = offset;
 
-    *NewDescriptor = relative;
+    *out = relative;
     return TRUE;
+}
+
+BOOL WINAPI CreatePrivateObjectSecurity(
+    PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR creator, PSECURITY_DESCRIPTOR *out,
+    BOOL is_container, HANDLE token, PGENERIC_MAPPING mapping)
+{
+    return CreatePrivateObjectSecurityEx(parent, creator, out, NULL, is_container, 0, token, mapping);
+}
+
+BOOL WINAPI CreatePrivateObjectSecurityWithMultipleInheritance(
+    PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR creator, PSECURITY_DESCRIPTOR *out,
+    GUID **types, ULONG count, BOOL is_container, ULONG flags, HANDLE token, PGENERIC_MAPPING mapping)
+{
+    FIXME(": semi-stub\n");
+    return CreatePrivateObjectSecurityEx(parent, creator, out, NULL, is_container, flags, token, mapping);
 }
 
 BOOL WINAPI DestroyPrivateObjectSecurity( PSECURITY_DESCRIPTOR* ObjectDescriptor )
@@ -5224,7 +5368,7 @@ BOOL WINAPI DestroyPrivateObjectSecurity( PSECURITY_DESCRIPTOR* ObjectDescriptor
     return TRUE;
 }
 
-BOOL WINAPI CreateProcessAsUserA(
+BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessAsUserA(
         HANDLE hToken,
         LPCSTR lpApplicationName,
         LPSTR lpCommandLine,
@@ -5279,7 +5423,7 @@ BOOL WINAPI CreateProcessAsUserA(
     return ret;
 }
 
-BOOL WINAPI CreateProcessAsUserW(
+BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessAsUserW(
         HANDLE hToken,
         LPCWSTR lpApplicationName,
         LPWSTR lpCommandLine,
@@ -5725,6 +5869,7 @@ DWORD WINAPI SetSecurityInfo(HANDLE handle, SE_OBJECT_TYPE ObjectType,
                       PSID psidGroup, PACL pDacl, PACL pSacl)
 {
     SECURITY_DESCRIPTOR sd;
+    PACL dacl = pDacl;
     NTSTATUS status;
 
     if (!InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION))
@@ -5735,7 +5880,130 @@ DWORD WINAPI SetSecurityInfo(HANDLE handle, SE_OBJECT_TYPE ObjectType,
     if (SecurityInfo & GROUP_SECURITY_INFORMATION)
         SetSecurityDescriptorGroup(&sd, psidGroup, FALSE);
     if (SecurityInfo & DACL_SECURITY_INFORMATION)
-        SetSecurityDescriptorDacl(&sd, TRUE, pDacl, FALSE);
+    {
+        if (ObjectType == SE_FILE_OBJECT && pDacl)
+        {
+            SECURITY_DESCRIPTOR_CONTROL control;
+            PSECURITY_DESCRIPTOR psd;
+            OBJECT_NAME_INFORMATION *name_info;
+            DWORD size, rev;
+
+            status = NtQuerySecurityObject(handle, SecurityInfo, NULL, 0, &size);
+            if (status != STATUS_BUFFER_TOO_SMALL)
+                return RtlNtStatusToDosError(status);
+
+            psd = heap_alloc(size);
+            if (!psd)
+                return ERROR_NOT_ENOUGH_MEMORY;
+
+            status = NtQuerySecurityObject(handle, SecurityInfo, psd, size, &size);
+            if (status)
+            {
+                heap_free(psd);
+                return RtlNtStatusToDosError(status);
+            }
+
+            status = RtlGetControlSecurityDescriptor(psd, &control, &rev);
+            heap_free(psd);
+            if (status)
+                return RtlNtStatusToDosError(status);
+            /* TODO: copy some control flags to new sd */
+
+            /* inherit parent directory DACL */
+            if (!(control & SE_DACL_PROTECTED))
+            {
+                status = NtQueryObject(handle, ObjectNameInformation, NULL, 0, &size);
+                if (status != STATUS_INFO_LENGTH_MISMATCH)
+                    return RtlNtStatusToDosError(status);
+
+                name_info = heap_alloc(size);
+                if (!name_info)
+                    return ERROR_NOT_ENOUGH_MEMORY;
+
+                status = NtQueryObject(handle, ObjectNameInformation, name_info, size, NULL);
+                if (status)
+                {
+                    heap_free(name_info);
+                    return RtlNtStatusToDosError(status);
+                }
+
+                for (name_info->Name.Length-=2; name_info->Name.Length>0; name_info->Name.Length-=2)
+                    if (name_info->Name.Buffer[name_info->Name.Length/2-1]=='\\' ||
+                            name_info->Name.Buffer[name_info->Name.Length/2-1]=='/')
+                        break;
+                if (name_info->Name.Length)
+                {
+                    OBJECT_ATTRIBUTES attr;
+                    IO_STATUS_BLOCK io;
+                    HANDLE parent;
+                    PSECURITY_DESCRIPTOR parent_sd;
+                    ACL *parent_dacl;
+                    DWORD err = ERROR_ACCESS_DENIED;
+
+                    name_info->Name.Buffer[name_info->Name.Length/2] = 0;
+
+                    attr.Length = sizeof(attr);
+                    attr.RootDirectory = 0;
+                    attr.Attributes = 0;
+                    attr.ObjectName = &name_info->Name;
+                    attr.SecurityDescriptor = NULL;
+                    status = NtOpenFile(&parent, READ_CONTROL|SYNCHRONIZE, &attr, &io,
+                            FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+                            FILE_OPEN_FOR_BACKUP_INTENT);
+                    heap_free(name_info);
+                    if (!status)
+                    {
+                        err = GetSecurityInfo(parent, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+                                NULL, NULL, &parent_dacl, NULL, &parent_sd);
+                        CloseHandle(parent);
+                    }
+
+                    if (!err)
+                    {
+                        int i;
+
+                        dacl = heap_alloc_zero(pDacl->AclSize+parent_dacl->AclSize);
+                        if (!dacl)
+                        {
+                            LocalFree(parent_sd);
+                            return ERROR_NOT_ENOUGH_MEMORY;
+                        }
+                        memcpy(dacl, pDacl, pDacl->AclSize);
+                        dacl->AclSize = pDacl->AclSize+parent_dacl->AclSize;
+
+                        for (i=0; i<parent_dacl->AceCount; i++)
+                        {
+                            ACE_HEADER *ace;
+
+                            if (!GetAce(parent_dacl, i, (void*)&ace))
+                                continue;
+                            if (!(ace->AceFlags & (OBJECT_INHERIT_ACE|CONTAINER_INHERIT_ACE)))
+                                continue;
+                            if ((ace->AceFlags & (OBJECT_INHERIT_ACE|CONTAINER_INHERIT_ACE)) !=
+                                    (OBJECT_INHERIT_ACE|CONTAINER_INHERIT_ACE))
+                            {
+                                FIXME("unsupported flags: %x\n", ace->AceFlags);
+                                continue;
+                            }
+
+                            if (ace->AceFlags & NO_PROPAGATE_INHERIT_ACE)
+                                ace->AceFlags &= ~(OBJECT_INHERIT_ACE|CONTAINER_INHERIT_ACE|NO_PROPAGATE_INHERIT_ACE);
+                            ace->AceFlags &= ~INHERIT_ONLY_ACE;
+                            ace->AceFlags |= INHERITED_ACE;
+
+                            if(!AddAce(dacl, ACL_REVISION, MAXDWORD, ace, ace->AceSize))
+                                WARN("error adding inherited ACE\n");
+                        }
+                        LocalFree(parent_sd);
+                    }
+                }
+                else
+                    heap_free(name_info);
+            }
+        }
+
+        SetSecurityDescriptorDacl(&sd, TRUE, dacl, FALSE);
+    }
     if (SecurityInfo & SACL_SECURITY_INFORMATION)
         SetSecurityDescriptorSacl(&sd, TRUE, pSacl, FALSE);
 
@@ -5749,6 +6017,8 @@ DWORD WINAPI SetSecurityInfo(HANDLE handle, SE_OBJECT_TYPE ObjectType,
         status = NtSetSecurityObject(handle, SecurityInfo, &sd);
         break;
     }
+    if (dacl != pDacl)
+        heap_free(dacl);
     return RtlNtStatusToDosError(status);
 }
 

@@ -230,10 +230,24 @@ ULONG WINAPI EnableTraceEx( LPCGUID provider, LPCGUID source, TRACEHANDLE hSessi
                             UCHAR level, ULONGLONG anykeyword, ULONGLONG allkeyword, ULONG enableprop,
                             PEVENT_FILTER_DESCRIPTOR filterdesc )
 {
-    FIXME("(%s, %s, %s, %d, %c, %s, %s, %d, %p): stub\n", debugstr_guid(provider),
+    FIXME("(%s, %s, %s, %u, %u, %s, %s, %u, %p): stub\n", debugstr_guid(provider),
             debugstr_guid(source), wine_dbgstr_longlong(hSession), enable, level,
             wine_dbgstr_longlong(anykeyword), wine_dbgstr_longlong(allkeyword),
             enableprop, filterdesc);
+
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ * EnableTraceEx2 [ADVAPI32.@]
+ */
+ULONG WINAPI EnableTraceEx2( TRACEHANDLE handle, LPCGUID provider, ULONG control, UCHAR level,
+                             ULONGLONG match_any, ULONGLONG match_all, ULONG timeout,
+                             PENABLE_TRACE_PARAMETERS params )
+{
+    FIXME("(%s, %s, %u, %u, %s, %s, %u, %p): stub\n", wine_dbgstr_longlong(handle),
+          debugstr_guid(provider), control, level, wine_dbgstr_longlong(match_any),
+          wine_dbgstr_longlong(match_all), timeout, params);
 
     return ERROR_SUCCESS;
 }
@@ -742,59 +756,6 @@ BOOL WINAPI ReportEventW( HANDLE hEventLog, WORD wType, WORD wCategory, DWORD dw
 }
 
 /******************************************************************************
- * RegisterTraceGuidsW [ADVAPI32.@]
- *
- * Register an event trace provider and the event trace classes that it uses
- * to generate events.
- *
- * PARAMS
- *  RequestAddress     [I]   ControlCallback function
- *  RequestContext     [I]   Optional provider-defined context
- *  ControlGuid        [I]   GUID of the registering provider
- *  GuidCount          [I]   Number of elements in the TraceGuidReg array
- *  TraceGuidReg       [I/O] Array of TRACE_GUID_REGISTRATION structures
- *  MofImagePath       [I]   not supported, set to NULL
- *  MofResourceName    [I]   not supported, set to NULL
- *  RegistrationHandle [O]   Provider's registration handle
- *
- * RETURNS
- *  Success: ERROR_SUCCESS
- *  Failure: System error code
- *
- * FIXME
- *  Stub.
- */
-ULONG WINAPI RegisterTraceGuidsW( WMIDPREQUEST RequestAddress,
-                PVOID RequestContext, LPCGUID ControlGuid, ULONG GuidCount,
-                PTRACE_GUID_REGISTRATION TraceGuidReg, LPCWSTR MofImagePath,
-                LPCWSTR MofResourceName, PTRACEHANDLE RegistrationHandle )
-{
-    FIXME("(%p, %p, %s, %u, %p, %s, %s, %p): stub\n", RequestAddress, RequestContext,
-          debugstr_guid(ControlGuid), GuidCount, TraceGuidReg, debugstr_w(MofImagePath),
-          debugstr_w(MofResourceName), RegistrationHandle);
-    return ERROR_SUCCESS;
-}
-
-/******************************************************************************
- * RegisterTraceGuidsA [ADVAPI32.@]
- *
- * See RegisterTraceGuidsW.
- *
- * FIXME
- *  Stub.
- */
-ULONG WINAPI RegisterTraceGuidsA( WMIDPREQUEST RequestAddress,
-                PVOID RequestContext, LPCGUID ControlGuid, ULONG GuidCount,
-                PTRACE_GUID_REGISTRATION TraceGuidReg, LPCSTR MofImagePath,
-                LPCSTR MofResourceName, PTRACEHANDLE RegistrationHandle )
-{
-    FIXME("(%p, %p, %s, %u, %p, %s, %s, %p): stub\n", RequestAddress, RequestContext,
-          debugstr_guid(ControlGuid), GuidCount, TraceGuidReg, debugstr_a(MofImagePath),
-          debugstr_a(MofResourceName), RegistrationHandle);
-    return ERROR_SUCCESS;
-}
-
-/******************************************************************************
  * StartTraceW [ADVAPI32.@]
  *
  * Register and start an event trace session
@@ -868,26 +829,6 @@ ULONG WINAPI UnregisterTraceGuids( TRACEHANDLE RegistrationHandle )
 }
 
 /******************************************************************************
- * EventRegister [ADVAPI32.@]
- */
-ULONG WINAPI EventRegister( LPCGUID provider, PENABLECALLBACK callback, PVOID context, PREGHANDLE handle )
-{
-    FIXME("%s, %p, %p, %p\n", debugstr_guid(provider), callback, context, handle);
-
-    *handle = 0xdeadbeef;
-    return ERROR_SUCCESS;
-}
-
-/******************************************************************************
- * EventUnregister [ADVAPI32.@]
- */
-ULONG WINAPI EventUnregister( REGHANDLE handle )
-{
-    FIXME("%s: stub\n", wine_dbgstr_longlong(handle));
-    return ERROR_SUCCESS;
-}
-
-/******************************************************************************
  * EventEnabled [ADVAPI32.@]
  *
  */
@@ -908,12 +849,33 @@ BOOLEAN WINAPI EventProviderEnabled( REGHANDLE handle, UCHAR level, ULONGLONG ke
 }
 
 /******************************************************************************
+ * EventActivityIdControl [ADVAPI32.@]
+ *
+ */
+ULONG WINAPI EventActivityIdControl(ULONG code, GUID *guid)
+{
+    FIXME("0x%x, %p: stub\n", code, guid);
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
  * EventWrite [ADVAPI32.@]
  */
 ULONG WINAPI EventWrite( REGHANDLE handle, PCEVENT_DESCRIPTOR descriptor, ULONG count,
                          PEVENT_DATA_DESCRIPTOR data )
 {
     FIXME("%s, %p, %u, %p: stub\n", wine_dbgstr_longlong(handle), descriptor, count, data);
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ * EventWriteTransfer [ADVAPI32.@]
+ */
+ULONG WINAPI EventWriteTransfer( REGHANDLE handle, PCEVENT_DESCRIPTOR descriptor, LPCGUID activity,
+                                 LPCGUID related, ULONG count, PEVENT_DATA_DESCRIPTOR data )
+{
+    FIXME("%s, %p, %s, %s, %u, %p: stub\n", wine_dbgstr_longlong(handle), descriptor,
+          debugstr_guid(activity), debugstr_guid(related), count, data);
     return ERROR_SUCCESS;
 }
 
@@ -996,13 +958,4 @@ ULONG WINAPI EnumerateTraceGuids(PTRACE_GUID_PROPERTIES *propertiesarray,
 {
     FIXME("%p %d %p: stub\n", propertiesarray, arraycount, guidcount);
     return ERROR_INVALID_PARAMETER;
-}
-
-/******************************************************************************
- * WmiOpenBlock [ADVAPI32.@]
- */
-NTSTATUS WINAPI WmiOpenBlock(GUID *guid, ULONG access, PVOID *datablock)
-{
-    FIXME("%s %d %p: stub\n", debugstr_guid(guid), access, datablock);
-    return ERROR_SUCCESS;
 }

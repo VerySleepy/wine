@@ -30,7 +30,6 @@
 
 #define COBJMACROS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "winerror.h"
 #include "windef.h"
@@ -107,6 +106,8 @@ static HRESULT WINAPI ISF_Desktop_fnQueryInterface(
 
     TRACE ("(%p)->(%s,%p)\n", This, shdebugstr_guid (riid), ppvObj);
 
+    if (!ppvObj) return E_POINTER;
+
     *ppvObj = NULL;
 
     if (IsEqualIID (riid, &IID_IUnknown) ||
@@ -154,7 +155,6 @@ static HRESULT WINAPI ISF_Desktop_fnParseDisplayName (IShellFolder2 * iface,
                 DWORD * pchEaten, LPITEMIDLIST * ppidl, DWORD * pdwAttributes)
 {
     IDesktopFolderImpl *This = impl_from_IShellFolder2(iface);
-    IShellFolder *shell_folder = (IShellFolder*)iface;
     WCHAR szElement[MAX_PATH];
     LPCWSTR szNext = NULL;
     LPITEMIDLIST pidlTemp = NULL;
@@ -267,7 +267,7 @@ static HRESULT WINAPI ISF_Desktop_fnParseDisplayName (IShellFolder2 * iface,
         else
         {
             if (pdwAttributes && *pdwAttributes)
-                hr = SHELL32_GetItemAttributes(shell_folder, pidlTemp, pdwAttributes);
+                hr = SHELL32_GetItemAttributes(iface, pidlTemp, pdwAttributes);
         }
     }
 
@@ -278,15 +278,44 @@ static HRESULT WINAPI ISF_Desktop_fnParseDisplayName (IShellFolder2 * iface,
     return hr;
 }
 
+static void add_shell_namespace_extensions(IEnumIDListImpl *list, HKEY root)
+{
+    static const WCHAR Desktop_NameSpaceW[] = { 'S','O','F','T','W','A','R','E','\\',
+        'M','i','c','r','o','s','o','f','t','\\','W','i','n','d','o','w','s','\\',
+        'C','u','r','r','e','n','t','V','e','r','s','i','o','n','\\',
+        'E','x','p','l','o','r','e','r','\\','D','e','s','k','t','o','p','\\',
+        'N','a','m','e','s','p','a','c','e','\0' };
+    static const WCHAR clsidfmtW[] = {'C','L','S','I','D','\\','%','s','\\',
+        'S','h','e','l','l','F','o','l','d','e','r',0};
+    static const WCHAR attributesW[] = {'A','t','t','r','i','b','u','t','e','s',0};
+    WCHAR guid[39], clsidkeyW[sizeof(clsidfmtW)/sizeof(*clsidfmtW) + 39];
+    DWORD size, i = 0;
+    HKEY hkey;
+
+    if (RegOpenKeyExW(root, Desktop_NameSpaceW, 0, KEY_READ, &hkey))
+        return;
+
+    size = sizeof(guid)/sizeof(guid[0]);
+    while (!RegEnumKeyExW(hkey, i++, guid, &size, 0, NULL, NULL, NULL))
+    {
+        DWORD attributes, value_size = sizeof(attributes);
+
+        /* Check if extension is configured as nonenumerable */
+        sprintfW(clsidkeyW, clsidfmtW, guid);
+        RegGetValueW(HKEY_CLASSES_ROOT, clsidkeyW, attributesW, RRF_RT_REG_DWORD | RRF_ZEROONFAILURE,
+            NULL, &attributes, &value_size);
+
+        if (!(attributes & SFGAO_NONENUMERATED))
+            AddToEnumList(list, _ILCreateGuidFromStrW(guid));
+        size = sizeof(guid)/sizeof(guid[0]);
+    }
+
+    RegCloseKey(hkey);
+}
+
 /**************************************************************************
  *  CreateDesktopEnumList()
  */
-static const WCHAR Desktop_NameSpaceW[] = { 'S','O','F','T','W','A','R','E',
- '\\','M','i','c','r','o','s','o','f','t','\\','W','i','n','d','o','w','s','\\',
- 'C','u','r','r','e','n','t','V','e','r','s','i','o','n','\\','E','x','p','l',
- 'o','r','e','r','\\','D','e','s','k','t','o','p','\\','N','a','m','e','s','p',
- 'a','c','e','\0' };
-
 static BOOL CreateDesktopEnumList(IEnumIDListImpl *list, DWORD dwFlags)
 {
     BOOL ret = TRUE;
@@ -297,39 +326,9 @@ static BOOL CreateDesktopEnumList(IEnumIDListImpl *list, DWORD dwFlags)
     /* enumerate the root folders */
     if (dwFlags & SHCONTF_FOLDERS)
     {
-        HKEY hkey;
-        UINT i;
-
-        /* create the pidl for This item */
         ret = AddToEnumList(list, _ILCreateMyComputer());
-
-        for (i=0; i<2; i++) {
-            if (ret && !RegOpenKeyExW(i == 0 ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER,
-                                      Desktop_NameSpaceW, 0, KEY_READ, &hkey))
-            {
-                WCHAR iid[50];
-                int i=0;
-
-                while (ret)
-                {
-                    DWORD size;
-                    LONG r;
-
-                    size = sizeof (iid) / sizeof (iid[0]);
-                    r = RegEnumKeyExW(hkey, i, iid, &size, 0, NULL, NULL, NULL);
-                    if (ERROR_SUCCESS == r)
-                    {
-                        ret = AddToEnumList(list, _ILCreateGuidFromStrW(iid));
-                        i++;
-                    }
-                    else if (ERROR_NO_MORE_ITEMS == r)
-                        break;
-                    else
-                        ret = FALSE;
-                }
-                RegCloseKey(hkey);
-            }
-        }
+        add_shell_namespace_extensions(list, HKEY_LOCAL_MACHINE);
+        add_shell_namespace_extensions(list, HKEY_CURRENT_USER);
     }
 
     /* enumerate the elements in %windir%\desktop */
@@ -453,7 +452,6 @@ static HRESULT WINAPI ISF_Desktop_fnGetAttributesOf (IShellFolder2 * iface,
                 UINT cidl, LPCITEMIDLIST * apidl, DWORD * rgfInOut)
 {
     IDesktopFolderImpl *This = impl_from_IShellFolder2(iface);
-    IShellFolder *shell_folder = (IShellFolder*)iface;
 
     static const DWORD dwDesktopAttributes = 
         SFGAO_STORAGE | SFGAO_HASPROPSHEET | SFGAO_STORAGEANCESTOR |
@@ -483,7 +481,7 @@ static HRESULT WINAPI ISF_Desktop_fnGetAttributesOf (IShellFolder2 * iface,
             } else if (_ILIsMyComputer(*apidl)) {
                 *rgfInOut &= dwMyComputerAttributes;
             } else {
-                SHELL32_GetItemAttributes ( shell_folder, *apidl, rgfInOut);
+                SHELL32_GetItemAttributes(iface, *apidl, rgfInOut);
             }
             apidl++;
             cidl--;

@@ -212,6 +212,7 @@ struct
 void _start(void);
 extern char _end[];
 __ASM_GLOBAL_FUNC(_start,
+                  __ASM_CFI("\t.cfi_undefined %eip\n")
                   "\tmovl $243,%eax\n"        /* SYS_set_thread_area */
                   "\tmovl $thread_ldt,%ebx\n"
                   "\tint $0x80\n"             /* allocate gs segment */
@@ -363,6 +364,7 @@ void *thread_data[256];
 void _start(void);
 extern char _end[];
 __ASM_GLOBAL_FUNC(_start,
+                  __ASM_CFI(".cfi_undefined %rip\n\t")
                   "movq %rsp,%rax\n\t"
                   "leaq -144(%rsp),%rsp\n\t" /* allocate some space for extra aux values */
                   "movq %rax,(%rsp)\n\t"     /* orig stack pointer */
@@ -423,7 +425,7 @@ SYSCALL_FUNC( wld_mmap, 9 /* SYS_mmap */ );
 int wld_mprotect( const void *addr, size_t len, int prot );
 SYSCALL_FUNC( wld_mprotect, 10 /* SYS_mprotect */ );
 
-int wld_prctl( int code, int arg );
+int wld_prctl( int code, long arg );
 SYSCALL_FUNC( wld_prctl, 157 /* SYS_prctl */ );
 
 uid_t wld_getuid(void);

@@ -193,6 +193,15 @@ static const TEST_URL_CANONICALIZE TEST_CANONICALIZE[] = {
     {"res://c:\\tests/res\\foo%20bar/strange\\sth", 0, S_OK, "res://c:\\tests/res\\foo%20bar/strange\\sth", FALSE},
     {"res://c:\\tests/res\\foo%20bar/strange\\sth", URL_FILE_USE_PATHURL, S_OK, "res://c:\\tests/res\\foo%20bar/strange\\sth", FALSE},
     {"res://c:\\tests/res\\foo%20bar/strange\\sth", URL_UNESCAPE, S_OK, "res://c:\\tests/res\\foo bar/strange\\sth", FALSE},
+    {"/A/../B/./C/../../test_remove_dot_segments", 0, S_OK, "/test_remove_dot_segments", FALSE},
+    {"/A/../B/./C/../../test_remove_dot_segments", URL_FILE_USE_PATHURL, S_OK, "/test_remove_dot_segments", FALSE},
+    {"/A/../B/./C/../../test_remove_dot_segments", URL_WININET_COMPATIBILITY, S_OK, "/test_remove_dot_segments", FALSE},
+    {"/A/B\\C/D\\E", 0, S_OK, "/A/B\\C/D\\E", FALSE},
+    {"/A/B\\C/D\\E", URL_FILE_USE_PATHURL, S_OK, "/A/B\\C/D\\E", FALSE},
+    {"/A/B\\C/D\\E", URL_WININET_COMPATIBILITY, S_OK, "/A/B\\C/D\\E", FALSE},
+    {"///A/../B", 0, S_OK, "///B", FALSE},
+    {"///A/../B", URL_FILE_USE_PATHURL, S_OK, "///B", FALSE},
+    {"///A/../B", URL_WININET_COMPATIBILITY, S_OK, "///B", FALSE},
     {"A", 0, S_OK, "A", FALSE},
     {"../A", 0, S_OK, "../A", FALSE},
     {"A/../B", 0, S_OK, "B", TRUE},
@@ -300,6 +309,45 @@ static const TEST_URL_ESCAPE TEST_ESCAPE[] = {
     {"ftp:////fo/o@bar.baz/foo/bar", 0, 0, S_OK, "ftp:////fo/o@bar.baz/foo/bar"},
 
     {"ftp\x1f\1end/", 0, 0, S_OK, "ftp%1F%01end/"}
+};
+
+typedef struct _TEST_URL_ESCAPEW {
+    const WCHAR url[INTERNET_MAX_URL_LENGTH];
+    DWORD flags;
+    HRESULT expectret;
+    const WCHAR expecturl[INTERNET_MAX_URL_LENGTH];
+    const WCHAR win7url[INTERNET_MAX_URL_LENGTH];  /* <= Win7 */
+    const WCHAR vistaurl[INTERNET_MAX_URL_LENGTH]; /* <= Vista/2k8 */
+} TEST_URL_ESCAPEW;
+
+static const TEST_URL_ESCAPEW TEST_ESCAPEW[] = {
+    {{' ','<','>','"',0},  URL_ESCAPE_AS_UTF8, S_OK, {'%','2','0','%','3','C','%','3','E','%','2','2',0}},
+    {{'{','}','|','\\',0}, URL_ESCAPE_AS_UTF8, S_OK, {'%','7','B','%','7','D','%','7','C','%','5','C',0}},
+    {{'^',']','[','`',0},  URL_ESCAPE_AS_UTF8, S_OK, {'%','5','E','%','5','D','%','5','B','%','6','0',0}},
+    {{'&','/','?','#',0},  URL_ESCAPE_AS_UTF8, S_OK, {'%','2','6','/','?','#',0}},
+    {{'M','a','s','s',0},  URL_ESCAPE_AS_UTF8, S_OK, {'M','a','s','s',0}},
+
+    /* broken < Win8/10 */
+
+    {{'M','a',0xdf,0},  URL_ESCAPE_AS_UTF8, S_OK, {'M','a','%','C','3','%','9','F',0},
+                                                  {'M','a','%','D','F',0}},
+    /* 0x2070E */
+    {{0xd841,0xdf0e,0}, URL_ESCAPE_AS_UTF8, S_OK, {'%','F','0','%','A','0','%','9','C','%','8','E',0},
+                                                  {'%','E','F','%','B','F','%','B','D','%','E','F','%','B','F','%','B','D',0},
+                                                  {0xd841,0xdf0e,0}},
+    /* 0x27A3E */
+    {{0xd85e,0xde3e,0}, URL_ESCAPE_AS_UTF8, S_OK, {'%','F','0','%','A','7','%','A','8','%','B','E',0},
+                                                  {'%','E','F','%','B','F','%','B','D','%','E','F','%','B','F','%','B','D',0},
+                                                  {0xd85e,0xde3e,0}},
+
+    {{0xd85e,0},        URL_ESCAPE_AS_UTF8, S_OK, {'%','E','F','%','B','F','%','B','D',0},
+                                                  {0xd85e,0}},
+    {{0xd85e,0x41},     URL_ESCAPE_AS_UTF8, S_OK, {'%','E','F','%','B','F','%','B','D','A',0},
+                                                  {0xd85e,'A',0}},
+    {{0xdc00,0},        URL_ESCAPE_AS_UTF8, S_OK, {'%','E','F','%','B','F','%','B','D',0},
+                                                  {0xdc00,0}},
+    {{0xffff,0},        URL_ESCAPE_AS_UTF8, S_OK, {'%','E','F','%','B','F','%','B','F',0},
+                                                  {0xffff,0}},
 };
 
 /* ################ */
@@ -799,10 +847,7 @@ static void test_url_canonicalize(int index, const char *szUrl, DWORD dwFlags, H
     ok(ret == dwExpectReturn || ret == dwExpectReturnAlt,
        "UrlCanonicalizeA failed: expected=0x%08x or 0x%08x, got=0x%08x, index %d\n",
        dwExpectReturn, dwExpectReturnAlt, ret, index);
-    if (todo)
-        todo_wine
-        ok(strcmp(szReturnUrl,szExpectUrl)==0, "UrlCanonicalizeA dwFlags 0x%08x url '%s' Expected \"%s\", but got \"%s\", index %d\n", dwFlags, szUrl, szExpectUrl, szReturnUrl, index);
-    else
+    todo_wine_if (todo)
         ok(strcmp(szReturnUrl,szExpectUrl)==0, "UrlCanonicalizeA dwFlags 0x%08x url '%s' Expected \"%s\", but got \"%s\", index %d\n", dwFlags, szUrl, szExpectUrl, szReturnUrl, index);
 
     if (pUrlCanonicalizeW) {
@@ -862,6 +907,15 @@ static void test_UrlEscapeA(void)
     ok(size == 34, "got %d, expected %d\n", size, 34);
     ok(empty_string[0] == 127, "String has changed, empty_string[0] = %d\n", empty_string[0]);
 
+    size = 1;
+    empty_string[0] = 127;
+    ret = pUrlEscapeA("/woningplan/woonkamer basis.swf", empty_string, &size, URL_ESCAPE_AS_UTF8);
+    ok(ret == E_NOTIMPL || broken(ret == E_POINTER), /* < Win7/Win2k8 */
+        "got %x, expected %x\n", ret, E_NOTIMPL);
+    ok(size == 1 || broken(size == 34), /* < Win7/Win2k8 */
+        "got %d, expected %d\n", size, 1);
+    ok(empty_string[0] == 127, "String has changed, empty_string[0] = %d\n", empty_string[0]);
+
     for(i=0; i<sizeof(TEST_ESCAPE)/sizeof(TEST_ESCAPE[0]); i++) {
         CHAR ret_url[INTERNET_MAX_URL_LENGTH];
 
@@ -876,12 +930,14 @@ static void test_UrlEscapeA(void)
 
 static void test_UrlEscapeW(void)
 {
+    static const WCHAR path_test[] = {'/','t','e','s','t',0};
     static const WCHAR naW[] = {'f','t','p',31,255,250,0x2122,'e','n','d','/',0};
     static const WCHAR naescapedW[] = {'f','t','p','%','1','F','%','F','F','%','F','A',0x2122,'e','n','d','/',0};
     static const WCHAR out[] = {'f','o','o','%','2','0','b','a','r',0};
     WCHAR overwrite[] = {'f','o','o',' ','b','a','r',0,0,0};
     WCHAR ret_urlW[INTERNET_MAX_URL_LENGTH];
-    DWORD size = 0;
+    WCHAR empty_string[] = {0};
+    DWORD size;
     HRESULT ret;
     WCHAR wc;
     int i;
@@ -890,6 +946,42 @@ static void test_UrlEscapeW(void)
         win_skip("UrlEscapeW not found\n");
         return;
     }
+
+    /* Check error paths */
+
+    ret = UrlEscapeW(path_test, NULL, NULL, URL_ESCAPE_SPACES_ONLY);
+    ok(ret == E_INVALIDARG, "got %x, expected %x\n", ret, E_INVALIDARG);
+
+    size = 0;
+    ret = UrlEscapeW(path_test, NULL, &size, URL_ESCAPE_SPACES_ONLY);
+    ok(ret == E_INVALIDARG, "got %x, expected %x\n", ret, E_INVALIDARG);
+    ok(size == 0, "got %d, expected %d\n", size, 0);
+
+    ret = UrlEscapeW(path_test, empty_string, NULL, URL_ESCAPE_SPACES_ONLY);
+    ok(ret == E_INVALIDARG, "got %x, expected %x\n", ret, E_INVALIDARG);
+
+    size = 0;
+    ret = UrlEscapeW(path_test, empty_string, &size, URL_ESCAPE_SPACES_ONLY);
+    ok(ret == E_INVALIDARG, "got %x, expected %x\n", ret, E_INVALIDARG);
+    ok(size == 0, "got %d, expected %d\n", size, 0);
+
+    ret = UrlEscapeW(path_test, NULL, NULL, URL_ESCAPE_SPACES_ONLY);
+    ok(ret == E_INVALIDARG, "got %x, expected %x\n", ret, E_INVALIDARG);
+
+    size = 1;
+    ret = UrlEscapeW(path_test, NULL, &size, URL_ESCAPE_SPACES_ONLY);
+    ok(ret == E_INVALIDARG, "got %x, expected %x\n", ret, E_INVALIDARG);
+    ok(size == 1, "got %d, expected %d\n", size, 1);
+
+    ret = UrlEscapeW(path_test, empty_string, NULL, URL_ESCAPE_SPACES_ONLY);
+    ok(ret == E_INVALIDARG, "got %x, expected %x\n", ret, E_INVALIDARG);
+
+    size = 1;
+    ret = UrlEscapeW(path_test, empty_string, &size, URL_ESCAPE_SPACES_ONLY);
+    ok(ret == E_POINTER, "got %x, expected %x\n", ret, E_POINTER);
+    ok(size == 6, "got %d, expected %d\n", size, 6);
+
+    /* Check actual escaping */
 
     size = sizeof(overwrite)/sizeof(WCHAR);
     ret = pUrlEscapeW(overwrite, overwrite, &size, URL_ESCAPE_SPACES_ONLY);
@@ -924,6 +1016,21 @@ static void test_UrlEscapeW(void)
             wine_dbgstr_w(expected_urlW), wine_dbgstr_w(ret_urlW), wine_dbgstr_w(urlW), TEST_ESCAPE[i].flags);
         FreeWideString(urlW);
         FreeWideString(expected_urlW);
+    }
+
+    for(i=0; i<sizeof(TEST_ESCAPEW)/sizeof(TEST_ESCAPEW[0]); i++) {
+        WCHAR ret_url[INTERNET_MAX_URL_LENGTH];
+
+        size = INTERNET_MAX_URL_LENGTH;
+        ret = pUrlEscapeW(TEST_ESCAPEW[i].url, ret_url, &size, TEST_ESCAPEW[i].flags);
+        ok(ret == TEST_ESCAPEW[i].expectret, "UrlEscapeW returned 0x%08x instead of 0x%08x for \"%s\"\n",
+           ret, TEST_ESCAPEW[i].expectret, wine_dbgstr_w(TEST_ESCAPEW[i].url));
+        ok(!lstrcmpW(ret_url, TEST_ESCAPEW[i].expecturl) ||
+           broken(!lstrcmpW(ret_url, TEST_ESCAPEW[i].vistaurl)) ||
+           broken(!lstrcmpW(ret_url, TEST_ESCAPEW[i].win7url)),
+            "Expected \"%s\" or \"%s\" or \"%s\", but got \"%s\" for \"%s\"\n",
+            wine_dbgstr_w(TEST_ESCAPEW[i].expecturl), wine_dbgstr_w(TEST_ESCAPEW[i].vistaurl),
+            wine_dbgstr_w(TEST_ESCAPEW[i].win7url), wine_dbgstr_w(ret_url), wine_dbgstr_w(TEST_ESCAPEW[i].url));
     }
 }
 
@@ -1375,6 +1482,7 @@ static const struct parse_url_test_t {
     {"htt?p://www.winehq.org/",URL_E_INVALID_SYNTAX},
     {"ab-://www.winehq.org/",S_OK,3,URL_SCHEME_UNKNOWN},
     {" http://www.winehq.org/",URL_E_INVALID_SYNTAX},
+    {"HTTP://www.winehq.org/",S_OK,4,URL_SCHEME_HTTP},
 };
 
 static void test_ParseURL(void)

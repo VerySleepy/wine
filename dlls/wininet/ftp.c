@@ -359,7 +359,7 @@ static BOOL FTP_FtpPutFileW(ftp_session_t *lpwfs, LPCWSTR lpszLocalFile,
 
     hIC = lpwfs->lpAppInfo;
 
-    SendAsyncCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_SENDING_REQUEST, NULL, 0);
+    INTERNET_SendCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_SENDING_REQUEST, NULL, 0);
 
     if (FTP_SendStore(lpwfs, lpszNewRemoteFile, dwFlags))
     {
@@ -393,7 +393,7 @@ static BOOL FTP_FtpPutFileW(ftp_session_t *lpwfs, LPCWSTR lpszLocalFile,
 
         iar.dwResult = (DWORD)bSuccess;
         iar.dwError = bSuccess ? ERROR_SUCCESS : INTERNET_GetLastError();
-        SendAsyncCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_REQUEST_COMPLETE,
+        INTERNET_SendCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_REQUEST_COMPLETE,
             &iar, sizeof(INTERNET_ASYNC_RESULT));
     }
 
@@ -543,7 +543,7 @@ lend:
 
         iar.dwResult = bSuccess;
         iar.dwError = bSuccess ? ERROR_SUCCESS : ERROR_INTERNET_EXTENDED_ERROR;
-        SendAsyncCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_REQUEST_COMPLETE,
+        INTERNET_SendCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_REQUEST_COMPLETE,
             &iar, sizeof(INTERNET_ASYNC_RESULT));
     }
     return bSuccess;
@@ -686,7 +686,7 @@ lend:
 
         iar.dwResult = (DWORD)bSuccess;
         iar.dwError = bSuccess ? ERROR_SUCCESS : INTERNET_GetLastError();
-        SendAsyncCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_REQUEST_COMPLETE,
+        INTERNET_SendCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_REQUEST_COMPLETE,
             &iar, sizeof(INTERNET_ASYNC_RESULT));
     }
 
@@ -886,13 +886,13 @@ lend:
 	{
             iar.dwResult = (DWORD_PTR)hFindNext;
             iar.dwError = ERROR_SUCCESS;
-            SendAsyncCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_HANDLE_CREATED,
+            INTERNET_SendCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_HANDLE_CREATED,
                 &iar, sizeof(INTERNET_ASYNC_RESULT));
 	}
 
         iar.dwResult = (DWORD_PTR)hFindNext;
         iar.dwError = hFindNext ? ERROR_SUCCESS : INTERNET_GetLastError();
-        SendAsyncCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_REQUEST_COMPLETE,
+        INTERNET_SendCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_REQUEST_COMPLETE,
             &iar, sizeof(INTERNET_ASYNC_RESULT));
     }
 
@@ -1096,7 +1096,7 @@ lend:
 
         iar.dwResult = bSuccess;
         iar.dwError = bSuccess ? ERROR_SUCCESS : ERROR_INTERNET_EXTENDED_ERROR;
-        SendAsyncCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_REQUEST_COMPLETE,
+        INTERNET_SendCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_REQUEST_COMPLETE,
             &iar, sizeof(INTERNET_ASYNC_RESULT));
     }
 
@@ -1222,7 +1222,7 @@ static DWORD FTPFILE_WriteFile(object_header_t *hdr, const void *buffer, DWORD s
     res = sock_send(lpwh->nDataSocket, buffer, size, 0);
 
     *written = res>0 ? res : 0;
-    return res >= 0 ? ERROR_SUCCESS : sock_get_error();
+    return res >= 0 ? ERROR_SUCCESS : WSAGetLastError();
 }
 
 static void FTP_ReceiveRequestData(ftp_file_t *file, BOOL first_notif)
@@ -1412,7 +1412,7 @@ static HINTERNET FTP_FtpOpenFileW(ftp_session_t *lpwfs,
 	{
             iar.dwResult = (DWORD_PTR)lpwh->hdr.hInternet;
             iar.dwError = ERROR_SUCCESS;
-            SendAsyncCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_HANDLE_CREATED,
+            INTERNET_SendCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_HANDLE_CREATED,
                 &iar, sizeof(INTERNET_ASYNC_RESULT));
 	}
 
@@ -1421,7 +1421,7 @@ static HINTERNET FTP_FtpOpenFileW(ftp_session_t *lpwfs,
         }else {
             iar.dwResult = 0;
             iar.dwError = INTERNET_GetLastError();
-            SendAsyncCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_REQUEST_COMPLETE,
+            INTERNET_SendCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_REQUEST_COMPLETE,
                     &iar, sizeof(INTERNET_ASYNC_RESULT));
         }
     }
@@ -1746,7 +1746,7 @@ static BOOL FTP_FtpGetFileW(ftp_session_t *lpwfs, LPCWSTR lpszRemoteFile, LPCWST
 
         iar.dwResult = (DWORD)bSuccess;
         iar.dwError = bSuccess ? ERROR_SUCCESS : INTERNET_GetLastError();
-        SendAsyncCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_REQUEST_COMPLETE,
+        INTERNET_SendCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_REQUEST_COMPLETE,
             &iar, sizeof(INTERNET_ASYNC_RESULT));
     }
 
@@ -1906,7 +1906,7 @@ lend:
 
         iar.dwResult = (DWORD)bSuccess;
         iar.dwError = bSuccess ? ERROR_SUCCESS : INTERNET_GetLastError();
-        SendAsyncCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_REQUEST_COMPLETE,
+        INTERNET_SendCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_REQUEST_COMPLETE,
             &iar, sizeof(INTERNET_ASYNC_RESULT));
     }
 
@@ -2049,7 +2049,7 @@ lend:
 
         iar.dwResult = (DWORD)bSuccess;
         iar.dwError = bSuccess ? ERROR_SUCCESS : INTERNET_GetLastError();
-        SendAsyncCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_REQUEST_COMPLETE,
+        INTERNET_SendCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_REQUEST_COMPLETE,
             &iar, sizeof(INTERNET_ASYNC_RESULT));
     }
 
@@ -2208,7 +2208,7 @@ lend:
 
         iar.dwResult = (DWORD)bSuccess;
         iar.dwError = bSuccess ? ERROR_SUCCESS : INTERNET_GetLastError();
-        SendAsyncCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_REQUEST_COMPLETE,
+        INTERNET_SendCallback(&lpwfs->hdr, lpwfs->hdr.dwContext, INTERNET_STATUS_REQUEST_COMPLETE,
             &iar, sizeof(INTERNET_ASYNC_RESULT));
     }
 
@@ -2309,7 +2309,7 @@ BOOL WINAPI FtpCommandW( HINTERNET hConnect, BOOL fExpectResponse, DWORD dwFlags
     strcat(cmd, szCRLF);
     len--;
 
-    TRACE("Sending (%s) len(%d)\n", cmd, len);
+    TRACE("Sending (%s) len(%d)\n", debugstr_a(cmd), len);
     while ((nBytesSent < len) && (nRC != -1))
     {
         nRC = sock_send(lpwfs->sndSocket, cmd + nBytesSent, len - nBytesSent, 0);
@@ -2360,7 +2360,7 @@ static void FTPSESSION_CloseConnection(object_header_t *hdr)
 
     TRACE("\n");
 
-    SendAsyncCallback(&lpwfs->hdr, lpwfs->hdr.dwContext,
+    INTERNET_SendCallback(&lpwfs->hdr, lpwfs->hdr.dwContext,
                       INTERNET_STATUS_CLOSING_CONNECTION, 0, 0);
 
     if (lpwfs->download_in_progress != NULL)
@@ -2375,7 +2375,7 @@ static void FTPSESSION_CloseConnection(object_header_t *hdr)
     if (lpwfs->pasvSocket != -1)
         closesocket(lpwfs->pasvSocket);
 
-    SendAsyncCallback(&lpwfs->hdr, lpwfs->hdr.dwContext,
+    INTERNET_SendCallback(&lpwfs->hdr, lpwfs->hdr.dwContext,
                       INTERNET_STATUS_CONNECTION_CLOSED, 0, 0);
 }
 
@@ -2447,7 +2447,7 @@ HINTERNET FTP_Connect(appinfo_t *hIC, LPCWSTR lpszServerName,
     socklen_t sock_namelen;
     BOOL bSuccess = FALSE;
     ftp_session_t *lpwfs = NULL;
-    char szaddr[INET_ADDRSTRLEN];
+    char szaddr[INET6_ADDRSTRLEN];
 
     TRACE("%p  Server(%s) Port(%d) User(%s) Paswd(%s)\n",
 	    hIC, debugstr_w(lpszServerName),
@@ -2526,16 +2526,16 @@ HINTERNET FTP_Connect(appinfo_t *hIC, LPCWSTR lpszServerName,
         iar.dwResult = (DWORD_PTR)lpwfs->hdr.hInternet;
         iar.dwError = ERROR_SUCCESS;
 
-        SendAsyncCallback(&hIC->hdr, dwContext,
+        INTERNET_SendCallback(&hIC->hdr, dwContext,
                       INTERNET_STATUS_HANDLE_CREATED, &iar,
                       sizeof(INTERNET_ASYNC_RESULT));
     }
         
-    SendAsyncCallback(&hIC->hdr, dwContext, INTERNET_STATUS_RESOLVING_NAME,
+    INTERNET_SendCallback(&hIC->hdr, dwContext, INTERNET_STATUS_RESOLVING_NAME,
         (LPWSTR) lpszServerName, (strlenW(lpszServerName)+1) * sizeof(WCHAR));
 
     sock_namelen = sizeof(socketAddr);
-    if (!GetAddress(lpszServerName, lpwfs->serverport, (struct sockaddr *)&socketAddr, &sock_namelen))
+    if (!GetAddress(lpszServerName, lpwfs->serverport, (struct sockaddr *)&socketAddr, &sock_namelen, szaddr))
     {
 	INTERNET_SetLastError(ERROR_INTERNET_NAME_NOT_RESOLVED);
         goto lerror;
@@ -2548,8 +2548,7 @@ HINTERNET FTP_Connect(appinfo_t *hIC, LPCWSTR lpszServerName,
         goto lerror;
     }
 
-    inet_ntop(socketAddr.sin_family, &socketAddr.sin_addr, szaddr, sizeof(szaddr));
-    SendAsyncCallback(&hIC->hdr, dwContext, INTERNET_STATUS_NAME_RESOLVED,
+    INTERNET_SendCallback(&hIC->hdr, dwContext, INTERNET_STATUS_NAME_RESOLVED,
                       szaddr, strlen(szaddr)+1);
 
     init_winsock();
@@ -2560,12 +2559,12 @@ HINTERNET FTP_Connect(appinfo_t *hIC, LPCWSTR lpszServerName,
         goto lerror;
     }
 
-    SendAsyncCallback(&hIC->hdr, dwContext, INTERNET_STATUS_CONNECTING_TO_SERVER,
+    INTERNET_SendCallback(&hIC->hdr, dwContext, INTERNET_STATUS_CONNECTING_TO_SERVER,
                       szaddr, strlen(szaddr)+1);
 
     if (connect(nsocket, (struct sockaddr *)&socketAddr, sock_namelen) < 0)
     {
-	ERR("Unable to connect (%d)\n", sock_get_error());
+	ERR("Unable to connect (%d)\n", WSAGetLastError());
 	INTERNET_SetLastError(ERROR_INTERNET_CANNOT_CONNECT);
 	closesocket(nsocket);
     }
@@ -2573,7 +2572,7 @@ HINTERNET FTP_Connect(appinfo_t *hIC, LPCWSTR lpszServerName,
     {
         TRACE("Connected to server\n");
 	lpwfs->sndSocket = nsocket;
-        SendAsyncCallback(&hIC->hdr, dwContext, INTERNET_STATUS_CONNECTED_TO_SERVER,
+        INTERNET_SendCallback(&hIC->hdr, dwContext, INTERNET_STATUS_CONNECTED_TO_SERVER,
                           szaddr, strlen(szaddr)+1);
 
 	sock_namelen = sizeof(lpwfs->socketAddress);
@@ -2729,7 +2728,7 @@ static BOOL FTP_SendCommandA(INT nSocket, FTP_COMMAND ftpCmd, LPCSTR lpszParam,
 	sprintf(buf, "%s%s%s%s", szFtpCommands[ftpCmd], dwParamLen ? " " : "",
 		dwParamLen ? lpszParam : "", szCRLF);
 
-	TRACE("Sending (%s) len(%d)\n", buf, len);
+	TRACE("Sending (%s) len(%d)\n", debugstr_a(buf), len);
 	while((nBytesSent < len) && (nRC != -1))
 	{
 		nRC = sock_send(nSocket, buf+nBytesSent, len - nBytesSent, 0);
@@ -2787,7 +2786,7 @@ INT FTP_ReceiveResponse(ftp_session_t *lpwfs, DWORD_PTR dwContext)
 
     TRACE("socket(%d)\n", lpwfs->sndSocket);
 
-    SendAsyncCallback(&lpwfs->hdr, dwContext, INTERNET_STATUS_RECEIVING_RESPONSE, NULL, 0);
+    INTERNET_SendCallback(&lpwfs->hdr, dwContext, INTERNET_STATUS_RECEIVING_RESPONSE, NULL, 0);
 
     while(1)
     {
@@ -2820,7 +2819,7 @@ INT FTP_ReceiveResponse(ftp_session_t *lpwfs, DWORD_PTR dwContext)
     {
         rc = atoi(lpszResponse);
 
-        SendAsyncCallback(&lpwfs->hdr, dwContext, INTERNET_STATUS_RESPONSE_RECEIVED,
+        INTERNET_SendCallback(&lpwfs->hdr, dwContext, INTERNET_STATUS_RESPONSE_RECEIVED,
 		    &nRecv, sizeof(DWORD));
     }
 

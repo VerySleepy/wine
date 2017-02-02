@@ -264,7 +264,7 @@ static HRESULT GAMEUX_updateStatisticsFile(struct GAMEUX_STATS *stats)
                     }
 
                     if(SUCCEEDED(hr))
-                        hr = IXMLDOMNode_appendChild(categoryNode, statisticsNode, &statisticsNode);
+                        hr = IXMLDOMNode_appendChild(categoryNode, statisticsNode, NULL);
 
                     IXMLDOMElement_Release(statisticsElement);
                     IXMLDOMNode_Release(statisticsNode);
@@ -578,6 +578,8 @@ static HRESULT GAMEUX_loadStatisticsFromFile(struct GAMEUX_STATS *data)
                             }
                         }
 
+                        IXMLDOMNodeList_Release(categoryChildren);
+
                         if(SUCCEEDED(hr))
                             hr = S_OK;
                     }
@@ -627,6 +629,7 @@ static HRESULT GAMEUX_loadGameStatistics(struct GAMEUX_STATS *pStats,
     TRACE("(%p, %s, %d, %p)\n", pStats, debugstr_w(sGameId), openType, pOpenResult);
 
     hr = GAMEUX_buildStatisticsFilePath(sGameId, pStats->sStatsFile);
+    if (FAILED(hr)) return hr;
 
     hr = GAMEUX_loadStatisticsFromFile(pStats);
     TRACE("ldstats finished, res: %#x\n", hr);
@@ -1127,7 +1130,7 @@ static HRESULT STDMETHODCALLTYPE GameStatisticsMgrImpl_RemoveGameStatistics(
         hr = GAMEUX_buildStatisticsFilePath(lpApplicationId, sStatsFile);
 
     if(SUCCEEDED(hr))
-        hr = (DeleteFileW(sStatsFile)==TRUE ? S_OK : HRESULT_FROM_WIN32(GetLastError()));
+        hr = DeleteFileW(sStatsFile) ? S_OK : HRESULT_FROM_WIN32(GetLastError());
 
     return hr;
 }

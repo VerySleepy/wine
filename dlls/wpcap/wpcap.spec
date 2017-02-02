@@ -51,7 +51,7 @@
 @ stub pcap_open_dead
 @ cdecl pcap_open_live(str long long long ptr) wine_pcap_open_live
 @ stub pcap_open_offline
-@ stub pcap_parsesrcstr
+@ cdecl pcap_parsesrcstr(str ptr ptr ptr ptr ptr) wine_pcap_parsesrcstr
 @ stub pcap_perror
 @ stub pcap_read
 @ stub pcap_remoteact_accept
@@ -74,5 +74,5 @@
 @ cdecl pcap_snapshot(ptr) wine_pcap_snapshot
 @ cdecl pcap_stats(ptr ptr) wine_pcap_stats
 @ stub pcap_stats_ex
-@ stub pcap_strerror
+@ cdecl pcap_strerror(long) msvcrt.strerror
 @ cdecl wsockinit() wine_wsockinit

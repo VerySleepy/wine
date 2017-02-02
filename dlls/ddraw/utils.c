@@ -299,18 +299,8 @@ void ddrawformat_from_wined3dformat(DDPIXELFORMAT *DDPixelFormat, enum wined3d_f
             DDPixelFormat->u5.dwLuminanceAlphaBitMask = 0x00000000;
             break;
 
-        case WINED3DFMT_R16G16_SNORM:
-            DDPixelFormat->dwFlags = DDPF_BUMPDUDV;
-            DDPixelFormat->dwFourCC = 0;
-            DDPixelFormat->u1.dwBumpBitCount = 32;
-            DDPixelFormat->u2.dwBumpDuBitMask =         0x0000ffff;
-            DDPixelFormat->u3.dwBumpDvBitMask =         0xffff0000;
-            DDPixelFormat->u4.dwBumpLuminanceBitMask =  0x00000000;
-            DDPixelFormat->u5.dwLuminanceAlphaBitMask = 0x00000000;
-            break;
-
         case WINED3DFMT_R5G5_SNORM_L6_UNORM:
-            DDPixelFormat->dwFlags = DDPF_BUMPDUDV;
+            DDPixelFormat->dwFlags = DDPF_BUMPDUDV | DDPF_BUMPLUMINANCE;
             DDPixelFormat->dwFourCC = 0;
             DDPixelFormat->u1.dwBumpBitCount = 16;
             DDPixelFormat->u2.dwBumpDuBitMask =         0x0000001f;
@@ -320,7 +310,7 @@ void ddrawformat_from_wined3dformat(DDPIXELFORMAT *DDPixelFormat, enum wined3d_f
             break;
 
         case WINED3DFMT_R8G8_SNORM_L8X8_UNORM:
-            DDPixelFormat->dwFlags = DDPF_BUMPDUDV;
+            DDPixelFormat->dwFlags = DDPF_BUMPDUDV | DDPF_BUMPLUMINANCE;
             DDPixelFormat->dwFourCC = 0;
             DDPixelFormat->u1.dwBumpBitCount = 32;
             DDPixelFormat->u2.dwBumpDuBitMask =         0x000000ff;
@@ -496,19 +486,19 @@ enum wined3d_format_id wined3dformat_from_ddrawformat(const DDPIXELFORMAT *DDPix
             {
                 case 16:
                     if (DDPixelFormat->u2.dwStencilBitDepth == 1) return WINED3DFMT_S1_UINT_D15_UNORM;
-                    WARN("Unknown depth stenil format: 16 z bits, %u stencil bits\n",
+                    WARN("Unknown depth stencil format: 16 z bits, %u stencil bits.\n",
                             DDPixelFormat->u2.dwStencilBitDepth);
                     return WINED3DFMT_UNKNOWN;
 
                 case 32:
                     if (DDPixelFormat->u2.dwStencilBitDepth == 8) return WINED3DFMT_D24_UNORM_S8_UINT;
                     else if (DDPixelFormat->u2.dwStencilBitDepth == 4) return WINED3DFMT_S4X4_UINT_D24_UNORM;
-                    WARN("Unknown depth stenil format: 32 z bits, %u stencil bits\n",
+                    WARN("Unknown depth stencil format: 32 z bits, %u stencil bits.\n",
                             DDPixelFormat->u2.dwStencilBitDepth);
                     return WINED3DFMT_UNKNOWN;
 
                 default:
-                    WARN("Unknown depth stenil format: %u z bits, %u stencil bits\n",
+                    WARN("Unknown depth stencil format: %u z bits, %u stencil bits.\n",
                             DDPixelFormat->u1.dwZBufferBitDepth, DDPixelFormat->u2.dwStencilBitDepth);
                     return WINED3DFMT_UNKNOWN;
             }
@@ -550,13 +540,6 @@ enum wined3d_format_id wined3dformat_from_ddrawformat(const DDPIXELFORMAT *DDPix
             (DDPixelFormat->u4.dwBumpLuminanceBitMask == 0x00000000) )
         {
             return WINED3DFMT_R8G8_SNORM;
-        }
-        else if ( (DDPixelFormat->u1.dwBumpBitCount         == 32        ) &&
-                  (DDPixelFormat->u2.dwBumpDuBitMask        == 0x0000ffff) &&
-                  (DDPixelFormat->u3.dwBumpDvBitMask        == 0xffff0000) &&
-                  (DDPixelFormat->u4.dwBumpLuminanceBitMask == 0x00000000) )
-        {
-            return WINED3DFMT_R16G16_SNORM;
         }
         else if ( (DDPixelFormat->u1.dwBumpBitCount         == 16        ) &&
                   (DDPixelFormat->u2.dwBumpDuBitMask        == 0x0000001f) &&
@@ -686,7 +669,7 @@ DDRAW_dump_DDSCAPS(const DDSCAPS *in)
     in_bis.dwCaps = in->dwCaps;
     in_bis.dwCaps2 = 0;
     in_bis.dwCaps3 = 0;
-    in_bis.dwCaps4 = 0;
+    in_bis.u1.dwCaps4 = 0;
 
     DDRAW_dump_DDSCAPS2(&in_bis);
 }
@@ -776,7 +759,7 @@ void DDRAW_dump_surface_desc(const DDSURFACEDESC2 *lpddsd)
         ME(DDSD_WIDTH, DDRAW_dump_DWORD, dwWidth),
         ME(DDSD_PITCH, DDRAW_dump_DWORD, u1 /* lPitch */),
         ME(DDSD_LINEARSIZE, DDRAW_dump_DWORD, u1 /* dwLinearSize */),
-        ME(DDSD_BACKBUFFERCOUNT, DDRAW_dump_DWORD, dwBackBufferCount),
+        ME(DDSD_BACKBUFFERCOUNT, DDRAW_dump_DWORD, u5.dwBackBufferCount),
         ME(DDSD_MIPMAPCOUNT, DDRAW_dump_DWORD, u2 /* dwMipMapCount */),
         ME(DDSD_ZBUFFERBITDEPTH, DDRAW_dump_DWORD, u2 /* dwZBufferBitDepth */), /* This is for 'old-style' D3D */
         ME(DDSD_REFRESHRATE, DDRAW_dump_DWORD, u2 /* dwRefreshRate */),
@@ -862,7 +845,7 @@ void DDRAW_Convert_DDSCAPS_1_To_2(const DDSCAPS* pIn, DDSCAPS2* pOut)
     pOut->dwCaps = pIn->dwCaps;
     pOut->dwCaps2 = 0;
     pOut->dwCaps3 = 0;
-    pOut->dwCaps4 = 0;
+    pOut->u1.dwCaps4 = 0;
 }
 
 void DDRAW_Convert_DDDEVICEIDENTIFIER_2_To_1(const DDDEVICEIDENTIFIER2* pIn, DDDEVICEIDENTIFIER* pOut)
@@ -1147,7 +1130,7 @@ void DDSD_to_DDSD2(const DDSURFACEDESC *in, DDSURFACEDESC2 *out)
     /* ddsCaps is read even without DDSD_CAPS set. See dsurface:no_ddsd_caps_test */
     out->ddsCaps.dwCaps = in->ddsCaps.dwCaps;
     if (in->dwFlags & DDSD_PITCH) out->u1.lPitch = in->u1.lPitch;
-    if (in->dwFlags & DDSD_BACKBUFFERCOUNT) out->dwBackBufferCount = in->dwBackBufferCount;
+    if (in->dwFlags & DDSD_BACKBUFFERCOUNT) out->u5.dwBackBufferCount = in->dwBackBufferCount;
     if (in->dwFlags & DDSD_ALPHABITDEPTH) out->dwAlphaBitDepth = in->dwAlphaBitDepth;
     /* DDraw(native, and wine) does not set the DDSD_LPSURFACE, so always copy */
     out->lpSurface = in->lpSurface;
@@ -1188,7 +1171,7 @@ void DDSD2_to_DDSD(const DDSURFACEDESC2 *in, DDSURFACEDESC *out)
     /* ddsCaps is read even without DDSD_CAPS set. See dsurface:no_ddsd_caps_test */
     out->ddsCaps.dwCaps = in->ddsCaps.dwCaps;
     if (in->dwFlags & DDSD_PITCH) out->u1.lPitch = in->u1.lPitch;
-    if (in->dwFlags & DDSD_BACKBUFFERCOUNT) out->dwBackBufferCount = in->dwBackBufferCount;
+    if (in->dwFlags & DDSD_BACKBUFFERCOUNT) out->dwBackBufferCount = in->u5.dwBackBufferCount;
     if (in->dwFlags & DDSD_ZBUFFERBITDEPTH) out->u2.dwZBufferBitDepth = in->u2.dwMipMapCount; /* same union */
     if (in->dwFlags & DDSD_ALPHABITDEPTH) out->dwAlphaBitDepth = in->dwAlphaBitDepth;
     /* DDraw(native, and wine) does not set the DDSD_LPSURFACE, so always copy */

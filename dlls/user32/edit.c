@@ -305,7 +305,7 @@ static INT EDIT_WordBreakProc(EDITSTATE *es, LPWSTR s, INT index, INT count, INT
     case WB_RIGHT:
         if (!count)
             break;
-        while (s[index] && index < count && !es->logAttr[index].fSoftBreak)
+        while (index < count && s[index] && !es->logAttr[index].fSoftBreak)
             index++;
         ret = index;
         break;
@@ -498,7 +498,7 @@ static void EDIT_BuildLineDefs_ML(EDITSTATE *es, INT istart, INT iend, INT delta
 	LINEDEF *current_line;
 	LINEDEF *previous_line;
 	LINEDEF *start_line;
-	INT line_index = 0, nstart_line = 0, nstart_index = 0;
+	INT line_index = 0, nstart_line, nstart_index;
 	INT line_count = es->line_count;
 	INT orig_net_length;
 	RECT rc;
@@ -631,7 +631,7 @@ static void EDIT_BuildLineDefs_ML(EDITSTATE *es, INT istart, INT iend, INT delta
 			prev = current_line->net_length - 1;
 			w = current_line->net_length;
 			d = (float)current_line->width/(float)fw;
-			if (d > 1.2) d -= 0.2;
+			if (d > 1.2f) d -= 0.2f;
 			next = prev/d;
 			if (next >= prev) next = prev-1;
 			do {
@@ -1079,7 +1079,7 @@ static LRESULT EDIT_EM_PosFromChar(EDITSTATE *es, INT index, BOOL after_wrap)
 	INT x = 0;
 	INT y = 0;
 	INT w;
-	INT lw = 0;
+	INT lw;
 	LINEDEF *line_def;
 
 	index = min(index, len);
@@ -2194,12 +2194,9 @@ static INT EDIT_PaintText(EDITSTATE *es, HDC dc, INT x, INT y, INT line, INT col
 		ret = (INT)LOWORD(TabbedTextOutW(dc, x, y, es->text + li + col, count,
 					es->tabs_count, es->tabs, es->format_rect.left - es->x_offset));
 	} else {
-		LPWSTR text = es->text;
-		TextOutW(dc, x, y, text + li + col, count);
-		GetTextExtentPoint32W(dc, text + li + col, count, &size);
+		TextOutW(dc, x, y, es->text + li + col, count);
+		GetTextExtentPoint32W(dc, es->text + li + col, count, &size);
 		ret = size.cx;
-		if (es->style & ES_PASSWORD)
-			HeapFree(GetProcessHeap(), 0, text);
 	}
 	if (rev) {
 		if (es->composition_len == 0)
@@ -2379,14 +2376,9 @@ static void EDIT_SetRectNP(EDITSTATE *es, const RECT *rc)
 	else if (es->style & WS_BORDER) {
 		bw = GetSystemMetrics(SM_CXBORDER) + 1;
 		bh = GetSystemMetrics(SM_CYBORDER) + 1;
-		es->format_rect.left += bw;
-		es->format_rect.right -= bw;
-		if (es->format_rect.bottom - es->format_rect.top
-		  >= es->line_height + 2 * bh)
-		{
-		    es->format_rect.top += bh;
-		    es->format_rect.bottom -= bh;
-		}
+                InflateRect(&es->format_rect, -bw, 0);
+                if (es->format_rect.bottom - es->format_rect.top >= es->line_height + 2 * bh)
+                    InflateRect(&es->format_rect, 0, -bh);
 	}
 	
 	es->format_rect.left += es->left_margin;
@@ -2580,7 +2572,7 @@ static void EDIT_EM_ReplaceSel(EDITSTATE *es, BOOL can_undo, LPCWSTR lpsz_replac
 	LPWSTR p;
 	HRGN hrgn = 0;
 	LPWSTR buf = NULL;
-	UINT bufl = 0;
+	UINT bufl;
 
 	TRACE("%s, can_undo %d, send_update %d\n",
 	    debugstr_w(lpsz_replace), can_undo, send_update);
@@ -2606,7 +2598,7 @@ static void EDIT_EM_ReplaceSel(EDITSTATE *es, BOOL can_undo, LPCWSTR lpsz_replac
 		if (es->buffer_limit < (tl - (e-s)))
 			strl = 0;
 		else
-			strl = es->buffer_limit - (tl - (e-s));
+			strl = min(strl, es->buffer_limit - (tl - (e-s)));
 	}
 
 	if (!EDIT_MakeFit(es, tl - (e - s) + strl))
@@ -2729,8 +2721,7 @@ static void EDIT_EM_ReplaceSel(EDITSTATE *es, BOOL can_undo, LPCWSTR lpsz_replac
 			EDIT_EM_EmptyUndoBuffer(es);
 	}
 
-	if (bufl)
-		HeapFree(GetProcessHeap(), 0, buf);
+	HeapFree(GetProcessHeap(), 0, buf);
  
 	s += strl;
 
@@ -2873,24 +2864,24 @@ static void EDIT_EM_SetLimitText(EDITSTATE *es, UINT limit)
  * action wParam despite what the docs say. EC_USEFONTINFO calculates the
  * margin according to the textmetrics of the current font.
  *
- * FIXME - With TrueType or vector fonts EC_USEFONTINFO currently sets one third
- * of the char's width as the margin, but this is not how Windows handles this.
- * For all other fonts Windows sets the margins to zero.
- *
- * FIXME - When EC_USEFONTINFO is used the margins only change if the
- * edit control is equal to or larger than a certain size.
- * Interestingly if one subtracts both the left and right margins from
- * this size one always seems to get an even number.  The extents of
- * the (four character) string "'**'" match this quite closely, so
- * we'll use this until we come up with a better idea.
+ * When EC_USEFONTINFO is used in the non_cjk case the margins only
+ * change if the edit control is equal to or larger than a certain
+ * size.  Though there is an exception for the empty client rect case
+ * with small font sizes.
  */
-static int calc_min_set_margin_size(HDC dc, INT left, INT right)
+static BOOL is_cjk(UINT charset)
 {
-    WCHAR magic_string[] = {'\'','*','*','\'', 0};
-    SIZE sz;
-
-    GetTextExtentPointW(dc, magic_string, sizeof(magic_string)/sizeof(WCHAR) - 1, &sz);
-    return sz.cx + left + right;
+    switch(charset)
+    {
+    case SHIFTJIS_CHARSET:
+    case HANGUL_CHARSET:
+    case GB2312_CHARSET:
+    case CHINESEBIG5_CHARSET:
+        return TRUE;
+    }
+    /* HANGUL_CHARSET is strange, though treated as CJK by Win 8, it is
+     * not by other versions including Win 10. */
+    return FALSE;
 }
 
 static void EDIT_EM_SetMargins(EDITSTATE *es, INT action,
@@ -2904,19 +2895,25 @@ static void EDIT_EM_SetMargins(EDITSTATE *es, INT action,
         if (es->font && (left == EC_USEFONTINFO || right == EC_USEFONTINFO)) {
             HDC dc = GetDC(es->hwndSelf);
             HFONT old_font = SelectObject(dc, es->font);
-            GetTextMetricsW(dc, &tm);
+            LONG width = GdiGetCharDimensions(dc, &tm, NULL);
+            RECT rc;
+
             /* The default margins are only non zero for TrueType or Vector fonts */
             if (tm.tmPitchAndFamily & ( TMPF_VECTOR | TMPF_TRUETYPE )) {
-                int min_size;
-                RECT rc;
-                /* This must be calculated more exactly! But how? */
-                default_left_margin = tm.tmAveCharWidth / 2;
-                default_right_margin = tm.tmAveCharWidth / 2;
-                min_size = calc_min_set_margin_size(dc, default_left_margin, default_right_margin);
-                GetClientRect(es->hwndSelf, &rc);
-                if (!IsRectEmpty(&rc) && (rc.right - rc.left < min_size)) {
-                    default_left_margin = es->left_margin;
-                    default_right_margin = es->right_margin;
+                if (!is_cjk(tm.tmCharSet)) {
+                    default_left_margin = width / 2;
+                    default_right_margin = width / 2;
+
+                    GetClientRect(es->hwndSelf, &rc);
+                    if (rc.right - rc.left < (width / 2 + width) * 2 &&
+                        (width >= 28 || !IsRectEmpty(&rc)) ) {
+                        default_left_margin = es->left_margin;
+                        default_right_margin = es->right_margin;
+                    }
+                } else {
+                    /* FIXME: figure out the CJK values. They are not affected by the client rect. */
+                    default_left_margin = width / 2;
+                    default_right_margin = width / 2;
                 }
             }
             SelectObject(dc, old_font);
@@ -3926,12 +3923,11 @@ static void EDIT_WM_SetText(EDITSTATE *es, LPCWSTR text, BOOL unicode)
  *	WM_SIZE
  *
  */
-static void EDIT_WM_Size(EDITSTATE *es, UINT action, INT width, INT height)
+static void EDIT_WM_Size(EDITSTATE *es, UINT action)
 {
 	if ((action == SIZE_MAXIMIZED) || (action == SIZE_RESTORED)) {
 		RECT rc;
-		TRACE("width = %d, height = %d\n", width, height);
-		SetRect(&rc, 0, 0, width, height);
+		GetClientRect(es->hwndSelf, &rc);
 		EDIT_SetRectNP(es, &rc);
 		EDIT_UpdateText(es, NULL, TRUE);
 	}
@@ -4304,7 +4300,7 @@ static LRESULT EDIT_EM_GetThumb(EDITSTATE *es)
 static void EDIT_GetCompositionStr(HIMC hIMC, LPARAM CompFlag, EDITSTATE *es)
 {
     LONG buflen;
-    LPWSTR lpCompStr = NULL;
+    LPWSTR lpCompStr;
     LPSTR lpCompStrAttr = NULL;
     DWORD dwBufLenAttr;
 
@@ -4347,8 +4343,6 @@ static void EDIT_GetCompositionStr(HIMC hIMC, LPARAM CompFlag, EDITSTATE *es)
                     dwBufLenAttr);
             lpCompStrAttr[dwBufLenAttr] = 0;
         }
-        else
-            lpCompStrAttr = NULL;
     }
 
     /* check for change in composition start */
@@ -4677,7 +4671,7 @@ LRESULT EditWndProc_common( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, B
 
 	case EM_GETRECT:
 		if (lParam)
-			CopyRect((LPRECT)lParam, &es->format_rect);
+			*((LPRECT)lParam) = es->format_rect;
 		break;
 
 	case EM_SETRECT:
@@ -5099,7 +5093,7 @@ LRESULT EditWndProc_common( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, B
 		break;
 
 	case WM_SIZE:
-		EDIT_WM_Size(es, (UINT)wParam, LOWORD(lParam), HIWORD(lParam));
+		EDIT_WM_Size(es, (UINT)wParam);
 		break;
 
         case WM_STYLECHANGED:

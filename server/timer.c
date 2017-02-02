@@ -72,6 +72,8 @@ static const struct object_ops timer_ops =
     default_get_sd,            /* get_sd */
     default_set_sd,            /* set_sd */
     no_lookup_name,            /* lookup_name */
+    directory_link_name,       /* link_name */
+    default_unlink_name,       /* unlink_name */
     no_open_file,              /* open_file */
     no_close_handle,           /* close_handle */
     timer_destroy              /* destroy */
@@ -79,12 +81,12 @@ static const struct object_ops timer_ops =
 
 
 /* create a timer object */
-static struct timer *create_timer( struct directory *root, const struct unicode_str *name,
-                                   unsigned int attr, int manual )
+static struct timer *create_timer( struct object *root, const struct unicode_str *name,
+                                   unsigned int attr, int manual, const struct security_descriptor *sd )
 {
     struct timer *timer;
 
-    if ((timer = create_named_object_dir( root, name, attr, &timer_ops )))
+    if ((timer = create_named_object( root, &timer_ops, name, attr, sd )))
     {
         if (get_error() != STATUS_OBJECT_NAME_EXISTS)
         {
@@ -181,10 +183,8 @@ static void timer_dump( struct object *obj, int verbose )
 {
     struct timer *timer = (struct timer *)obj;
     assert( obj->ops == &timer_ops );
-    fprintf( stderr, "Timer manual=%d when=%s period=%u ",
+    fprintf( stderr, "Timer manual=%d when=%s period=%u\n",
              timer->manual, get_timeout_str(timer->when), timer->period );
-    dump_object_name( &timer->obj );
-    fputc( '\n', stderr );
 }
 
 static struct object_type *timer_get_type( struct object *obj )
@@ -231,16 +231,15 @@ DECL_HANDLER(create_timer)
 {
     struct timer *timer;
     struct unicode_str name;
-    struct directory *root = NULL;
+    struct object *root;
+    const struct security_descriptor *sd;
+    const struct object_attributes *objattr = get_req_object_attributes( &sd, &name, &root );
 
-    reply->handle = 0;
-    get_req_unicode_str( &name );
-    if (req->rootdir && !(root = get_directory_obj( current->process, req->rootdir, 0 )))
-        return;
+    if (!objattr) return;
 
-    if ((timer = create_timer( root, &name, req->attributes, req->manual )))
+    if ((timer = create_timer( root, &name, objattr->attributes, req->manual, sd )))
     {
-        reply->handle = alloc_handle( current->process, timer, req->access, req->attributes );
+        reply->handle = alloc_handle( current->process, timer, req->access, objattr->attributes );
         release_object( timer );
     }
 
@@ -250,21 +249,10 @@ DECL_HANDLER(create_timer)
 /* open a handle to a timer */
 DECL_HANDLER(open_timer)
 {
-    struct unicode_str name;
-    struct directory *root = NULL;
-    struct timer *timer;
+    struct unicode_str name = get_req_unicode_str();
 
-    get_req_unicode_str( &name );
-    if (req->rootdir && !(root = get_directory_obj( current->process, req->rootdir, 0 )))
-        return;
-
-    if ((timer = open_object_dir( root, &name, req->attributes, &timer_ops )))
-    {
-        reply->handle = alloc_handle( current->process, &timer->obj, req->access, req->attributes );
-        release_object( timer );
-    }
-
-    if (root) release_object( root );
+    reply->handle = open_object( current->process, req->rootdir, req->access,
+                                 &timer_ops, &name, req->attributes );
 }
 
 /* set a waitable timer */

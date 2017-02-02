@@ -155,7 +155,7 @@ static HRESULT WINAPI object_QueryInterface(
         IsEqualGUID( riid, &IID_IDispatch ) ||
         IsEqualGUID( riid, &IID_IUnknown ))
     {
-        *ppvObject = object;
+        *ppvObject = iface;
     }
     else
     {
@@ -356,6 +356,7 @@ struct objectset
     ISWbemObjectSet ISWbemObjectSet_iface;
     LONG refs;
     IEnumWbemClassObject *objectenum;
+    LONG count;
 };
 
 static inline struct objectset *impl_from_ISWbemObjectSet(
@@ -398,7 +399,7 @@ static HRESULT WINAPI objectset_QueryInterface(
         IsEqualGUID( riid, &IID_IDispatch ) ||
         IsEqualGUID( riid, &IID_IUnknown ))
     {
-        *ppvObject = objectset;
+        *ppvObject = iface;
     }
     else
     {
@@ -517,20 +518,10 @@ static HRESULT WINAPI objectset_get_Count(
     LONG *iCount )
 {
     struct objectset *objectset = impl_from_ISWbemObjectSet( iface );
-    LONG count = 0, total = 0;
 
     TRACE( "%p, %p\n", objectset, iCount );
 
-    while (IEnumWbemClassObject_Skip( objectset->objectenum, WBEM_INFINITE, 1 ) == S_OK) count++;
-
-    IEnumWbemClassObject_Reset( objectset->objectenum );
-    while (IEnumWbemClassObject_Skip( objectset->objectenum, WBEM_INFINITE, 1 ) == S_OK) total++;
-
-    count = total - count;
-    IEnumWbemClassObject_Reset( objectset->objectenum );
-    while (count--) IEnumWbemClassObject_Skip( objectset->objectenum, WBEM_INFINITE, 1 );
-
-    *iCount = total;
+    *iCount = objectset->count;
     return S_OK;
 }
 
@@ -567,6 +558,14 @@ static const ISWbemObjectSetVtbl objectset_vtbl =
     objectset_ItemIndex
 };
 
+static LONG get_object_count( IEnumWbemClassObject *iter )
+{
+    LONG count = 0;
+    while (IEnumWbemClassObject_Skip( iter, WBEM_INFINITE, 1 ) == S_OK) count++;
+    IEnumWbemClassObject_Reset( iter );
+    return count;
+}
+
 static HRESULT SWbemObjectSet_create( IEnumWbemClassObject *wbem_objectenum, ISWbemObjectSet **obj )
 {
     struct objectset *objectset;
@@ -578,6 +577,7 @@ static HRESULT SWbemObjectSet_create( IEnumWbemClassObject *wbem_objectenum, ISW
     objectset->refs = 1;
     objectset->objectenum = wbem_objectenum;
     IEnumWbemClassObject_AddRef( objectset->objectenum );
+    objectset->count = get_object_count( objectset->objectenum );
 
     *obj = &objectset->ISWbemObjectSet_iface;
     TRACE( "returning iface %p\n", *obj );
@@ -630,7 +630,7 @@ static HRESULT WINAPI enumvar_QueryInterface(
     if (IsEqualGUID( riid, &IID_IEnumVARIANT ) ||
         IsEqualGUID( riid, &IID_IUnknown ))
     {
-        *ppvObject = enumvar;
+        *ppvObject = iface;
     }
     else
     {
@@ -763,7 +763,7 @@ static HRESULT WINAPI services_QueryInterface(
         IsEqualGUID( riid, &IID_IDispatch ) ||
         IsEqualGUID( riid, &IID_IUnknown ))
     {
-        *ppvObject = services;
+        *ppvObject = iface;
     }
     else
     {
@@ -1224,7 +1224,8 @@ static ULONG WINAPI locator_Release(
     if (!refs)
     {
         TRACE( "destroying %p\n", locator );
-        IWbemLocator_Release( locator->locator );
+        if (locator->locator)
+            IWbemLocator_Release( locator->locator );
         heap_free( locator );
     }
     return refs;

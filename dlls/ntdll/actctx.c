@@ -28,10 +28,9 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
+#define NONAMELESSUNION
 #include "winternl.h"
 #include "ddk/wdm.h"
 #include "ntdll_misc.h"
@@ -2450,7 +2449,7 @@ static NTSTATUS open_nt_file( HANDLE *handle, UNICODE_STRING *name )
     attr.ObjectName = name;
     attr.SecurityDescriptor = NULL;
     attr.SecurityQualityOfService = NULL;
-    return NtOpenFile( handle, GENERIC_READ, &attr, &io, FILE_SHARE_READ, FILE_SYNCHRONOUS_IO_ALERT );
+    return NtOpenFile( handle, GENERIC_READ | SYNCHRONIZE, &attr, &io, FILE_SHARE_READ, FILE_SYNCHRONOUS_IO_ALERT );
 }
 
 static NTSTATUS get_module_filename( HMODULE module, UNICODE_STRING *str, unsigned int extra_len )
@@ -2695,9 +2694,8 @@ static WCHAR *lookup_manifest_file( HANDLE dir, struct assembly_identity *ai )
               ai->version.major, ai->version.minor, lang );
     RtlInitUnicodeString( &lookup_us, lookup );
 
-    NtQueryDirectoryFile( dir, 0, NULL, NULL, &io, buffer, sizeof(buffer),
-                          FileBothDirectoryInformation, FALSE, &lookup_us, TRUE );
-    if (io.u.Status == STATUS_SUCCESS)
+    if (!NtQueryDirectoryFile( dir, 0, NULL, NULL, &io, buffer, sizeof(buffer),
+                               FileBothDirectoryInformation, FALSE, &lookup_us, TRUE ))
     {
         ULONG min_build = ai->version.build, min_revision = ai->version.revision;
         FILE_BOTH_DIR_INFORMATION *dir_info;
@@ -2710,9 +2708,9 @@ static WCHAR *lookup_manifest_file( HANDLE dir, struct assembly_identity *ai )
         {
             if (data_pos >= data_len)
             {
-                NtQueryDirectoryFile( dir, 0, NULL, NULL, &io, buffer, sizeof(buffer),
-                                      FileBothDirectoryInformation, FALSE, &lookup_us, FALSE );
-                if (io.u.Status != STATUS_SUCCESS) break;
+                if (NtQueryDirectoryFile( dir, 0, NULL, NULL, &io, buffer, sizeof(buffer),
+                                          FileBothDirectoryInformation, FALSE, &lookup_us, FALSE ))
+                    break;
                 data_len = io.Information;
                 data_pos = 0;
             }
@@ -2791,7 +2789,7 @@ static NTSTATUS lookup_winsxs(struct actctx_loader* acl, struct assembly_identit
     attr.SecurityDescriptor = NULL;
     attr.SecurityQualityOfService = NULL;
 
-    if (!NtOpenFile( &handle, GENERIC_READ, &attr, &io, FILE_SHARE_READ | FILE_SHARE_WRITE,
+    if (!NtOpenFile( &handle, GENERIC_READ | SYNCHRONIZE, &attr, &io, FILE_SHARE_READ | FILE_SHARE_WRITE,
                      FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT ))
     {
         sxs_ai = *ai;
@@ -3134,19 +3132,22 @@ static NTSTATUS find_dll_redirection(ACTIVATION_CONTEXT* actctx, const UNICODE_S
     index = find_string_index(actctx->dllredirect_section, name);
     if (!index) return STATUS_SXS_KEY_NOT_FOUND;
 
-    dll = get_dllredirect_data(actctx, index);
+    if (data)
+    {
+        dll = get_dllredirect_data(actctx, index);
 
-    data->ulDataFormatVersion = 1;
-    data->lpData = dll;
-    data->ulLength = dll->size;
-    data->lpSectionGlobalData = NULL;
-    data->ulSectionGlobalDataLength = 0;
-    data->lpSectionBase = actctx->dllredirect_section;
-    data->ulSectionTotalLength = RtlSizeHeap( GetProcessHeap(), 0, actctx->dllredirect_section );
-    data->hActCtx = NULL;
+        data->ulDataFormatVersion = 1;
+        data->lpData = dll;
+        data->ulLength = dll->size;
+        data->lpSectionGlobalData = NULL;
+        data->ulSectionGlobalDataLength = 0;
+        data->lpSectionBase = actctx->dllredirect_section;
+        data->ulSectionTotalLength = RtlSizeHeap( GetProcessHeap(), 0, actctx->dllredirect_section );
+        data->hActCtx = NULL;
 
-    if (data->cbSize >= FIELD_OFFSET(ACTCTX_SECTION_KEYED_DATA, ulAssemblyRosterIndex) + sizeof(ULONG))
-        data->ulAssemblyRosterIndex = index->rosterindex;
+        if (data->cbSize >= FIELD_OFFSET(ACTCTX_SECTION_KEYED_DATA, ulAssemblyRosterIndex) + sizeof(ULONG))
+            data->ulAssemblyRosterIndex = index->rosterindex;
+    }
 
     return STATUS_SUCCESS;
 }
@@ -3330,7 +3331,7 @@ static NTSTATUS find_window_class(ACTIVATION_CONTEXT* actctx, const UNICODE_STRI
         {
             const WCHAR *nameW = (WCHAR*)((BYTE*)actctx->wndclass_section + iter->name_offset);
 
-            if (!strcmpW(nameW, name->Buffer))
+            if (!strcmpiW(nameW, name->Buffer))
             {
                 index = iter;
                 break;
@@ -3343,20 +3344,23 @@ static NTSTATUS find_window_class(ACTIVATION_CONTEXT* actctx, const UNICODE_STRI
 
     if (!index) return STATUS_SXS_KEY_NOT_FOUND;
 
-    class = get_wndclass_data(actctx, index);
+    if (data)
+    {
+        class = get_wndclass_data(actctx, index);
 
-    data->ulDataFormatVersion = 1;
-    data->lpData = class;
-    /* full length includes string length with nulls */
-    data->ulLength = class->size + class->name_len + class->module_len + 2*sizeof(WCHAR);
-    data->lpSectionGlobalData = NULL;
-    data->ulSectionGlobalDataLength = 0;
-    data->lpSectionBase = actctx->wndclass_section;
-    data->ulSectionTotalLength = RtlSizeHeap( GetProcessHeap(), 0, actctx->wndclass_section );
-    data->hActCtx = NULL;
+        data->ulDataFormatVersion = 1;
+        data->lpData = class;
+        /* full length includes string length with nulls */
+        data->ulLength = class->size + class->name_len + class->module_len + 2*sizeof(WCHAR);
+        data->lpSectionGlobalData = NULL;
+        data->ulSectionGlobalDataLength = 0;
+        data->lpSectionBase = actctx->wndclass_section;
+        data->ulSectionTotalLength = RtlSizeHeap( GetProcessHeap(), 0, actctx->wndclass_section );
+        data->hActCtx = NULL;
 
-    if (data->cbSize >= FIELD_OFFSET(ACTCTX_SECTION_KEYED_DATA, ulAssemblyRosterIndex) + sizeof(ULONG))
-        data->ulAssemblyRosterIndex = index->rosterindex;
+        if (data->cbSize >= FIELD_OFFSET(ACTCTX_SECTION_KEYED_DATA, ulAssemblyRosterIndex) + sizeof(ULONG))
+            data->ulAssemblyRosterIndex = index->rosterindex;
+    }
 
     return STATUS_SUCCESS;
 }
@@ -4398,19 +4402,22 @@ static NTSTATUS find_progid_redirection(ACTIVATION_CONTEXT* actctx, const UNICOD
     index = find_string_index(actctx->progid_section, name);
     if (!index) return STATUS_SXS_KEY_NOT_FOUND;
 
-    progid = get_progid_data(actctx, index);
+    if (data)
+    {
+        progid = get_progid_data(actctx, index);
 
-    data->ulDataFormatVersion = 1;
-    data->lpData = progid;
-    data->ulLength = progid->size;
-    data->lpSectionGlobalData = (BYTE*)actctx->progid_section + actctx->progid_section->global_offset;
-    data->ulSectionGlobalDataLength = actctx->progid_section->global_len;
-    data->lpSectionBase = actctx->progid_section;
-    data->ulSectionTotalLength = RtlSizeHeap( GetProcessHeap(), 0, actctx->progid_section );
-    data->hActCtx = NULL;
+        data->ulDataFormatVersion = 1;
+        data->lpData = progid;
+        data->ulLength = progid->size;
+        data->lpSectionGlobalData = (BYTE*)actctx->progid_section + actctx->progid_section->global_offset;
+        data->ulSectionGlobalDataLength = actctx->progid_section->global_len;
+        data->lpSectionBase = actctx->progid_section;
+        data->ulSectionTotalLength = RtlSizeHeap( GetProcessHeap(), 0, actctx->progid_section );
+        data->hActCtx = NULL;
 
-    if (data->cbSize >= FIELD_OFFSET(ACTCTX_SECTION_KEYED_DATA, ulAssemblyRosterIndex) + sizeof(ULONG))
-        data->ulAssemblyRosterIndex = index->rosterindex;
+        if (data->cbSize >= FIELD_OFFSET(ACTCTX_SECTION_KEYED_DATA, ulAssemblyRosterIndex) + sizeof(ULONG))
+            data->ulAssemblyRosterIndex = index->rosterindex;
+    }
 
     return STATUS_SUCCESS;
 }
@@ -4442,7 +4449,7 @@ static NTSTATUS find_string(ACTIVATION_CONTEXT* actctx, ULONG section_kind,
 
     if (status != STATUS_SUCCESS) return status;
 
-    if (flags & FIND_ACTCTX_SECTION_KEY_RETURN_HACTCTX)
+    if (data && (flags & FIND_ACTCTX_SECTION_KEY_RETURN_HACTCTX))
     {
         actctx_addref(actctx);
         data->hActCtx = actctx;
@@ -4578,7 +4585,7 @@ NTSTATUS WINAPI RtlCreateActivationContext( HANDLE *handle, const void *ptr )
         }
 
         ret = RtlDosPathNameToNtPathName_U(source ? source : pActCtx->lpSource, &nameW, NULL, NULL);
-        if (source) RtlFreeHeap( GetProcessHeap(), 0, source );
+        RtlFreeHeap( GetProcessHeap(), 0, source );
         if (!ret)
         {
             status = STATUS_NO_SUCH_FILE;
@@ -5009,7 +5016,7 @@ NTSTATUS WINAPI RtlFindActivationContextSectionString( ULONG flags, const GUID *
         FIXME("unknown flags %08x\n", flags);
         return STATUS_INVALID_PARAMETER;
     }
-    if (!data || data->cbSize < offsetof(ACTCTX_SECTION_KEYED_DATA, ulAssemblyRosterIndex) ||
+    if ((data && data->cbSize < offsetof(ACTCTX_SECTION_KEYED_DATA, ulAssemblyRosterIndex)) ||
         !section_name || !section_name->Buffer)
     {
         WARN("invalid parameter\n");

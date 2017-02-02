@@ -42,8 +42,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(reg);
 
-/* maximum length of a key name in bytes (without terminating null) */
-#define MAX_NAME_LENGTH  (255 * sizeof(WCHAR))
 /* maximum length of a value name in bytes (without terminating null) */
 #define MAX_VALUE_LENGTH (16383 * sizeof(WCHAR))
 
@@ -56,32 +54,47 @@ NTSTATUS WINAPI NtCreateKey( PHANDLE retkey, ACCESS_MASK access, const OBJECT_AT
                              PULONG dispos )
 {
     NTSTATUS ret;
+    data_size_t len;
+    struct object_attributes *objattr;
 
     if (!retkey || !attr) return STATUS_ACCESS_VIOLATION;
     if (attr->Length > sizeof(OBJECT_ATTRIBUTES)) return STATUS_INVALID_PARAMETER;
-    if (attr->ObjectName->Length > MAX_NAME_LENGTH) return STATUS_BUFFER_OVERFLOW;
 
     TRACE( "(%p,%s,%s,%x,%x,%p)\n", attr->RootDirectory, debugstr_us(attr->ObjectName),
            debugstr_us(class), options, access, retkey );
 
+    if ((ret = alloc_object_attributes( attr, &objattr, &len ))) return ret;
+
     SERVER_START_REQ( create_key )
     {
-        req->parent     = wine_server_obj_handle( attr->RootDirectory );
         req->access     = access;
-        req->attributes = attr->Attributes;
         req->options    = options;
-        req->namelen    = attr->ObjectName->Length;
-        wine_server_add_data( req, attr->ObjectName->Buffer, attr->ObjectName->Length );
+        wine_server_add_data( req, objattr, len );
         if (class) wine_server_add_data( req, class->Buffer, class->Length );
-        if (!(ret = wine_server_call( req )))
-        {
-            *retkey = wine_server_ptr_handle( reply->hkey );
-            if (dispos) *dispos = reply->created ? REG_CREATED_NEW_KEY : REG_OPENED_EXISTING_KEY;
-        }
+        ret = wine_server_call( req );
+        *retkey = wine_server_ptr_handle( reply->hkey );
+        if (dispos && !ret) *dispos = reply->created ? REG_CREATED_NEW_KEY : REG_OPENED_EXISTING_KEY;
     }
     SERVER_END_REQ;
+
     TRACE("<- %p\n", *retkey);
+    RtlFreeHeap( GetProcessHeap(), 0, objattr );
     return ret;
+}
+
+NTSTATUS WINAPI NtCreateKeyTransacted( PHANDLE retkey, ACCESS_MASK access, const OBJECT_ATTRIBUTES *attr,
+                                       ULONG TitleIndex, const UNICODE_STRING *class, ULONG options,
+                                       HANDLE transacted, ULONG *dispos )
+{
+    FIXME( "(%p,%s,%s,%x,%x,%p,%p)\n", attr->RootDirectory, debugstr_us(attr->ObjectName),
+           debugstr_us(class), options, access, transacted, retkey );
+    return STATUS_NOT_IMPLEMENTED;
+}
+
+NTSTATUS WINAPI NtRenameKey( HANDLE handle, UNICODE_STRING *name )
+{
+    FIXME( "(%p %s)\n", handle, debugstr_us(name) );
+    return STATUS_NOT_IMPLEMENTED;
 }
 
 /******************************************************************************
@@ -105,6 +118,41 @@ NTSTATUS WINAPI RtlpNtCreateKey( PHANDLE retkey, ACCESS_MASK access, const OBJEC
     return NtCreateKey(retkey, access, attr, 0, NULL, 0, dispos);
 }
 
+static NTSTATUS open_key( PHANDLE retkey, ACCESS_MASK access, const OBJECT_ATTRIBUTES *attr, ULONG options )
+{
+    NTSTATUS ret;
+
+    if (!retkey || !attr || !attr->ObjectName) return STATUS_ACCESS_VIOLATION;
+    if ((ret = validate_open_object_attributes( attr ))) return ret;
+
+    TRACE( "(%p,%s,%x,%p)\n", attr->RootDirectory,
+           debugstr_us(attr->ObjectName), access, retkey );
+    if (options & ~REG_OPTION_OPEN_LINK)
+        FIXME("options %x not implemented\n", options);
+
+    SERVER_START_REQ( open_key )
+    {
+        req->parent     = wine_server_obj_handle( attr->RootDirectory );
+        req->access     = access;
+        req->attributes = attr->Attributes;
+        wine_server_add_data( req, attr->ObjectName->Buffer, attr->ObjectName->Length );
+        ret = wine_server_call( req );
+        *retkey = wine_server_ptr_handle( reply->hkey );
+    }
+    SERVER_END_REQ;
+    TRACE("<- %p\n", *retkey);
+    return ret;
+}
+
+/******************************************************************************
+ * NtOpenKeyEx [NTDLL.@]
+ * ZwOpenKeyEx [NTDLL.@]
+ */
+NTSTATUS WINAPI NtOpenKeyEx( PHANDLE retkey, ACCESS_MASK access, const OBJECT_ATTRIBUTES *attr, ULONG options )
+{
+    return open_key( retkey, access, attr, options );
+}
+
 /******************************************************************************
  * NtOpenKey [NTDLL.@]
  * ZwOpenKey [NTDLL.@]
@@ -115,29 +163,20 @@ NTSTATUS WINAPI RtlpNtCreateKey( PHANDLE retkey, ACCESS_MASK access, const OBJEC
  */
 NTSTATUS WINAPI NtOpenKey( PHANDLE retkey, ACCESS_MASK access, const OBJECT_ATTRIBUTES *attr )
 {
-    NTSTATUS ret;
-    DWORD len;
+    return open_key( retkey, access, attr, 0 );
+}
 
-    if (!retkey || !attr) return STATUS_ACCESS_VIOLATION;
-    if (attr->Length > sizeof(OBJECT_ATTRIBUTES)) return STATUS_INVALID_PARAMETER;
-    len = attr->ObjectName->Length;
-    TRACE( "(%p,%s,%x,%p)\n", attr->RootDirectory,
-           debugstr_us(attr->ObjectName), access, retkey );
+NTSTATUS WINAPI NtOpenKeyTransactedEx( PHANDLE retkey, ACCESS_MASK access, const OBJECT_ATTRIBUTES *attr,
+                                       ULONG options, HANDLE transaction )
+{
+    FIXME( "(%p %x %p %x %p)\n", retkey, access, attr, options, transaction );
+    return STATUS_NOT_IMPLEMENTED;
+}
 
-    if (len > MAX_NAME_LENGTH) return STATUS_BUFFER_OVERFLOW;
-
-    SERVER_START_REQ( open_key )
-    {
-        req->parent     = wine_server_obj_handle( attr->RootDirectory );
-        req->access     = access;
-        req->attributes = attr->Attributes;
-        wine_server_add_data( req, attr->ObjectName->Buffer, len );
-        ret = wine_server_call( req );
-        *retkey = wine_server_ptr_handle( reply->hkey );
-    }
-    SERVER_END_REQ;
-    TRACE("<- %p\n", *retkey);
-    return ret;
+NTSTATUS WINAPI NtOpenKeyTransacted( PHANDLE retkey, ACCESS_MASK access, const OBJECT_ATTRIBUTES *attr,
+                                     HANDLE transaction )
+{
+    return NtOpenKeyTransactedEx( retkey, access, attr, 0, transaction );
 }
 
 /******************************************************************************
@@ -218,10 +257,11 @@ static NTSTATUS enumerate_key( HANDLE handle, int index, KEY_INFORMATION_CLASS i
 
     switch(info_class)
     {
-    case KeyBasicInformation: data_ptr = ((KEY_BASIC_INFORMATION *)info)->Name; break;
-    case KeyFullInformation:  data_ptr = ((KEY_FULL_INFORMATION *)info)->Class; break;
-    case KeyNodeInformation:  data_ptr = ((KEY_NODE_INFORMATION *)info)->Name;  break;
-    case KeyNameInformation:  data_ptr = ((KEY_NAME_INFORMATION *)info)->Name;  break;
+    case KeyBasicInformation:  data_ptr = ((KEY_BASIC_INFORMATION *)info)->Name; break;
+    case KeyFullInformation:   data_ptr = ((KEY_FULL_INFORMATION *)info)->Class; break;
+    case KeyNodeInformation:   data_ptr = ((KEY_NODE_INFORMATION *)info)->Name;  break;
+    case KeyNameInformation:   data_ptr = ((KEY_NAME_INFORMATION *)info)->Name;  break;
+    case KeyCachedInformation: data_ptr = ((KEY_CACHED_INFORMATION *)info)+1;    break;
     default:
         FIXME( "Information class %d not implemented\n", info_class );
         return STATUS_INVALID_PARAMETER;
@@ -292,6 +332,23 @@ static NTSTATUS enumerate_key( HANDLE handle, int index, KEY_INFORMATION_CLASS i
                     keyinfo.NameLength = reply->namelen;
                     memcpy( info, &keyinfo, min( length, fixed_size ) );
                 }
+                break;
+            case KeyCachedInformation:
+                {
+                    KEY_CACHED_INFORMATION keyinfo;
+                    fixed_size = sizeof(keyinfo);
+                    keyinfo.LastWriteTime.QuadPart = reply->modif;
+                    keyinfo.TitleIndex = 0;
+                    keyinfo.SubKeys = reply->subkeys;
+                    keyinfo.MaxNameLen = reply->max_subkey;
+                    keyinfo.Values = reply->values;
+                    keyinfo.MaxValueNameLen = reply->max_value;
+                    keyinfo.MaxValueDataLen = reply->max_data;
+                    keyinfo.NameLength = reply->namelen;
+                    memcpy( info, &keyinfo, min( length, fixed_size ) );
+                }
+                break;
+            default:
                 break;
             }
             *result_len = fixed_size + reply->total;
@@ -479,7 +536,7 @@ NTSTATUS WINAPI NtQueryValueKey( HANDLE handle, const UNICODE_STRING *name,
 {
     NTSTATUS ret;
     UCHAR *data_ptr;
-    unsigned int fixed_size = 0, min_size = 0;
+    unsigned int fixed_size, min_size;
 
     TRACE( "(%p,%s,%d,%p,%d)\n", handle, debugstr_us(name), info_class, info, length );
 
@@ -600,50 +657,55 @@ NTSTATUS WINAPI NtLoadKey( const OBJECT_ATTRIBUTES *attr, OBJECT_ATTRIBUTES *fil
     NTSTATUS ret;
     HANDLE hive;
     IO_STATUS_BLOCK io;
+    data_size_t len;
+    struct object_attributes *objattr;
 
     TRACE("(%p,%p)\n", attr, file);
 
-    ret = NtCreateFile(&hive, GENERIC_READ, file, &io, NULL, FILE_ATTRIBUTE_NORMAL, 0,
+    ret = NtCreateFile(&hive, GENERIC_READ | SYNCHRONIZE, file, &io, NULL, FILE_ATTRIBUTE_NORMAL, 0,
                        FILE_OPEN, 0, NULL, 0);
     if (ret) return ret;
 
+    if ((ret = alloc_object_attributes( attr, &objattr, &len ))) return ret;
+
     SERVER_START_REQ( load_registry )
     {
-        req->hkey = wine_server_obj_handle( attr->RootDirectory );
         req->file = wine_server_obj_handle( hive );
-        wine_server_add_data(req, attr->ObjectName->Buffer, attr->ObjectName->Length);
+        wine_server_add_data( req, objattr, len );
         ret = wine_server_call( req );
     }
     SERVER_END_REQ;
 
     NtClose(hive);
-   
+    RtlFreeHeap( GetProcessHeap(), 0, objattr );
     return ret;
 }
 
 /******************************************************************************
- *  NtNotifyChangeKey	[NTDLL.@]
- *  ZwNotifyChangeKey   [NTDLL.@]
+ *  NtNotifyChangeMultipleKeys  [NTDLL.@]
+ *  ZwNotifyChangeMultipleKeys  [NTDLL.@]
  */
-NTSTATUS WINAPI NtNotifyChangeKey(
-	IN HANDLE KeyHandle,
-	IN HANDLE Event,
-	IN PIO_APC_ROUTINE ApcRoutine OPTIONAL,
-	IN PVOID ApcContext OPTIONAL,
-	OUT PIO_STATUS_BLOCK IoStatusBlock,
-	IN ULONG CompletionFilter,
-	IN BOOLEAN Asynchronous,
-	OUT PVOID ChangeBuffer,
-	IN ULONG Length,
-	IN BOOLEAN WatchSubtree)
+NTSTATUS WINAPI NtNotifyChangeMultipleKeys(
+        HANDLE KeyHandle,
+        ULONG Count,
+        OBJECT_ATTRIBUTES *SubordinateObjects,
+        HANDLE Event,
+        PIO_APC_ROUTINE ApcRoutine,
+        PVOID ApcContext,
+        PIO_STATUS_BLOCK IoStatusBlock,
+        ULONG CompletionFilter,
+        BOOLEAN WatchSubtree,
+        PVOID ChangeBuffer,
+        ULONG Length,
+        BOOLEAN Asynchronous)
 {
     NTSTATUS ret;
 
-    TRACE("(%p,%p,%p,%p,%p,0x%08x, 0x%08x,%p,0x%08x,0x%08x)\n",
-        KeyHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, CompletionFilter,
+    TRACE("(%p,%u,%p,%p,%p,%p,%p,0x%08x, 0x%08x,%p,0x%08x,0x%08x)\n",
+        KeyHandle, Count, SubordinateObjects, Event, ApcRoutine, ApcContext, IoStatusBlock, CompletionFilter,
         Asynchronous, ChangeBuffer, Length, WatchSubtree);
 
-    if (ApcRoutine || ApcContext || ChangeBuffer || Length)
+    if (Count || SubordinateObjects || ApcRoutine || ApcContext || ChangeBuffer || Length)
         FIXME("Unimplemented optional parameter\n");
 
     if (!Asynchronous)
@@ -667,12 +729,33 @@ NTSTATUS WINAPI NtNotifyChangeKey(
  
     if (!Asynchronous)
     {
-        if (ret == STATUS_SUCCESS)
-            NtWaitForSingleObject( Event, FALSE, NULL );
+        if (ret == STATUS_PENDING)
+            ret = NtWaitForSingleObject( Event, FALSE, NULL );
         NtClose( Event );
     }
 
-    return STATUS_SUCCESS;
+    return ret;
+}
+
+/******************************************************************************
+ *  NtNotifyChangeKey	[NTDLL.@]
+ *  ZwNotifyChangeKey   [NTDLL.@]
+ */
+NTSTATUS WINAPI NtNotifyChangeKey(
+	IN HANDLE KeyHandle,
+	IN HANDLE Event,
+	IN PIO_APC_ROUTINE ApcRoutine OPTIONAL,
+	IN PVOID ApcContext OPTIONAL,
+	OUT PIO_STATUS_BLOCK IoStatusBlock,
+	IN ULONG CompletionFilter,
+	IN BOOLEAN WatchSubtree,
+	OUT PVOID ChangeBuffer,
+	IN ULONG Length,
+	IN BOOLEAN Asynchronous)
+{
+    return NtNotifyChangeMultipleKeys(KeyHandle, 0, NULL, Event, ApcRoutine, ApcContext,
+                                      IoStatusBlock, CompletionFilter, WatchSubtree,
+                                      ChangeBuffer, Length, Asynchronous);
 }
 
 /******************************************************************************
@@ -826,42 +909,33 @@ NTSTATUS WINAPI NtUnloadKey(IN POBJECT_ATTRIBUTES attr)
 NTSTATUS WINAPI RtlFormatCurrentUserKeyPath( IN OUT PUNICODE_STRING KeyPath)
 {
     static const WCHAR pathW[] = {'\\','R','e','g','i','s','t','r','y','\\','U','s','e','r','\\'};
-    HANDLE token;
+    char buffer[sizeof(TOKEN_USER) + sizeof(SID) + sizeof(DWORD)*SID_MAX_SUB_AUTHORITIES];
+    DWORD len = sizeof(buffer);
     NTSTATUS status;
 
-    status = NtOpenThreadToken(GetCurrentThread(), TOKEN_READ, TRUE, &token);
-    if (status == STATUS_NO_TOKEN)
-        status = NtOpenProcessToken(GetCurrentProcess(), TOKEN_READ, &token);
+    status = NtQueryInformationToken(GetCurrentThreadEffectiveToken(), TokenUser, buffer, len, &len);
     if (status == STATUS_SUCCESS)
     {
-        char buffer[sizeof(TOKEN_USER) + sizeof(SID) + sizeof(DWORD)*SID_MAX_SUB_AUTHORITIES];
-        DWORD len = sizeof(buffer);
-
-        status = NtQueryInformationToken(token, TokenUser, buffer, len, &len);
-        if (status == STATUS_SUCCESS)
+        KeyPath->MaximumLength = 0;
+        status = RtlConvertSidToUnicodeString(KeyPath, ((TOKEN_USER *)buffer)->User.Sid, FALSE);
+        if (status == STATUS_BUFFER_OVERFLOW)
         {
-            KeyPath->MaximumLength = 0;
-            status = RtlConvertSidToUnicodeString(KeyPath, ((TOKEN_USER *)buffer)->User.Sid, FALSE);
-            if (status == STATUS_BUFFER_OVERFLOW)
+            PWCHAR buf = RtlAllocateHeap(GetProcessHeap(), 0,
+                                         sizeof(pathW) + KeyPath->Length + sizeof(WCHAR));
+            if (buf)
             {
-                PWCHAR buf = RtlAllocateHeap(GetProcessHeap(), 0,
-                                             sizeof(pathW) + KeyPath->Length + sizeof(WCHAR));
-                if (buf)
-                {
-                    memcpy(buf, pathW, sizeof(pathW));
-                    KeyPath->MaximumLength = KeyPath->Length + sizeof(WCHAR);
-                    KeyPath->Buffer = (PWCHAR)((LPBYTE)buf + sizeof(pathW));
-                    status = RtlConvertSidToUnicodeString(KeyPath,
-                                                          ((TOKEN_USER *)buffer)->User.Sid, FALSE);
-                    KeyPath->Buffer = buf;
-                    KeyPath->Length += sizeof(pathW);
-                    KeyPath->MaximumLength += sizeof(pathW);
-                }
-                else
-                    status = STATUS_NO_MEMORY;
+                memcpy(buf, pathW, sizeof(pathW));
+                KeyPath->MaximumLength = KeyPath->Length + sizeof(WCHAR);
+                KeyPath->Buffer = (PWCHAR)((LPBYTE)buf + sizeof(pathW));
+                status = RtlConvertSidToUnicodeString(KeyPath,
+                                                      ((TOKEN_USER *)buffer)->User.Sid, FALSE);
+                KeyPath->Buffer = buf;
+                KeyPath->Length += sizeof(pathW);
+                KeyPath->MaximumLength += sizeof(pathW);
             }
+            else
+                status = STATUS_NO_MEMORY;
         }
-        NtClose(token);
     }
     return status;
 }
@@ -1124,7 +1198,7 @@ static NTSTATUS RTL_GetKeyHandle(ULONG RelativeTo, PCWSTR Path, PHANDLE handle)
 /*************************************************************************
  * RtlQueryRegistryValues   [NTDLL.@]
  *
- * Query multiple registry values with a signle call.
+ * Query multiple registry values with a single call.
  *
  * PARAMS
  *  RelativeTo  [I] Registry path that Path refers to
@@ -1301,7 +1375,7 @@ out:
 /*************************************************************************
  * RtlCheckRegistryKey   [NTDLL.@]
  *
- * Query multiple registry values with a signle call.
+ * Query multiple registry values with a single call.
  *
  * PARAMS
  *  RelativeTo [I] Registry path that Path refers to
@@ -1331,7 +1405,7 @@ NTSTATUS WINAPI RtlCheckRegistryKey(IN ULONG RelativeTo, IN PWSTR Path)
 /*************************************************************************
  * RtlDeleteRegistryValue   [NTDLL.@]
  *
- * Query multiple registry values with a signle call.
+ * Query multiple registry values with a single call.
  *
  * PARAMS
  *  RelativeTo [I] Registry path that Path refers to
@@ -1399,5 +1473,69 @@ NTSTATUS WINAPI RtlWriteRegistryValue( ULONG RelativeTo, PCWSTR path, PCWSTR nam
     status = NtSetValueKey( hkey, &str, 0, type, data, length );
     NtClose( hkey );
 
+    return status;
+}
+
+/*************************************************************************
+ * NtQueryLicenseValue   [NTDLL.@]
+ *
+ * NOTES
+ *  On Windows all license properties are stored in a single key, but
+ *  unless there is some app which explicitly depends on that, there is
+ *  no good reason to reproduce that.
+ */
+NTSTATUS WINAPI NtQueryLicenseValue( const UNICODE_STRING *name, ULONG *result_type,
+                                     PVOID data, ULONG length, ULONG *result_len )
+{
+    static const WCHAR LicenseInformationW[] = {'M','a','c','h','i','n','e','\\',
+                                                'S','o','f','t','w','a','r','e','\\',
+                                                'W','i','n','e','\\','L','i','c','e','n','s','e',
+                                                'I','n','f','o','r','m','a','t','i','o','n',0};
+    KEY_VALUE_PARTIAL_INFORMATION *info;
+    NTSTATUS status = STATUS_OBJECT_NAME_NOT_FOUND;
+    DWORD info_length, count;
+    OBJECT_ATTRIBUTES attr;
+    UNICODE_STRING keyW;
+    HANDLE hkey;
+
+    if (!name || !name->Buffer || !name->Length || !result_len)
+        return STATUS_INVALID_PARAMETER;
+
+    info_length = FIELD_OFFSET(KEY_VALUE_PARTIAL_INFORMATION, Data) + length;
+    info = RtlAllocateHeap( GetProcessHeap(), 0, info_length );
+    if (!info) return STATUS_NO_MEMORY;
+
+    attr.Length = sizeof(attr);
+    attr.RootDirectory = 0;
+    attr.ObjectName = &keyW;
+    attr.Attributes = 0;
+    attr.SecurityDescriptor = NULL;
+    attr.SecurityQualityOfService = NULL;
+    RtlInitUnicodeString( &keyW, LicenseInformationW );
+
+    /* @@ Wine registry key: HKLM\Software\Wine\LicenseInformation */
+    if (!NtOpenKey( &hkey, KEY_READ, &attr ))
+    {
+        status = NtQueryValueKey( hkey, name, KeyValuePartialInformation,
+                                  info, info_length, &count );
+        if (!status || status == STATUS_BUFFER_OVERFLOW)
+        {
+            if (result_type)
+                *result_type = info->Type;
+
+            *result_len = info->DataLength;
+
+            if (status == STATUS_BUFFER_OVERFLOW)
+                status = STATUS_BUFFER_TOO_SMALL;
+            else
+                memcpy( data, info->Data, info->DataLength );
+        }
+        NtClose( hkey );
+    }
+
+    if (status == STATUS_OBJECT_NAME_NOT_FOUND)
+        FIXME( "License key %s not found\n", debugstr_w(name->Buffer) );
+
+    RtlFreeHeap( GetProcessHeap(), 0, info );
     return status;
 }

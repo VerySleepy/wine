@@ -80,6 +80,10 @@
 @ stdcall CreateScalableFontResourceA(long str str str)
 @ stdcall CreateScalableFontResourceW(long wstr wstr wstr)
 @ stdcall CreateSolidBrush(long)
+@ stdcall D3DKMTCreateDCFromMemory(ptr)
+@ stdcall D3DKMTDestroyDCFromMemory(ptr)
+@ stdcall D3DKMTEscape(ptr)
+@ stdcall D3DKMTOpenAdapterFromHdc(ptr)
 @ stdcall DPtoLP(long ptr long)
 @ stdcall DeleteColorSpace(long)
 @ stdcall DeleteDC(long)
@@ -277,7 +281,9 @@
 @ stdcall GetEnhMetaFileW(wstr)
 # @ stub GetFontAssocStatus
 @ stdcall GetFontData(long long long ptr long)
+@ stdcall GetFontFileInfo(long long ptr long ptr)
 @ stdcall GetFontLanguageInfo(long)
+@ stdcall GetFontRealizationInfo(long ptr)
 @ stub GetFontResourceInfo
 @ stdcall GetFontResourceInfoW(wstr ptr ptr long)
 @ stdcall GetFontUnicodeRanges(ptr ptr)

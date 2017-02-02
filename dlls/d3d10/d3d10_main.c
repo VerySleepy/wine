@@ -117,7 +117,7 @@ HRESULT WINAPI D3D10CreateDevice(IDXGIAdapter *adapter, D3D10_DRIVER_TYPE driver
         }
     }
 
-    hr = D3D10CoreCreateDevice(factory, adapter, flags, NULL, device);
+    hr = D3D10CoreCreateDevice(factory, adapter, flags, D3D_FEATURE_LEVEL_10_0, device);
     IDXGIAdapter_Release(adapter);
     IDXGIFactory_Release(factory);
     if (FAILED(hr))
@@ -139,8 +139,8 @@ HRESULT WINAPI D3D10CreateDeviceAndSwapChain(IDXGIAdapter *adapter, D3D10_DRIVER
     IDXGIFactory *factory;
     HRESULT hr;
 
-    TRACE("adapter %p, driver_type %s, swrast %p, flags %#x, sdk_version %d,\n"
-            "\tswapchain_desc %p, swapchain %p, device %p\n",
+    TRACE("adapter %p, driver_type %s, swrast %p, flags %#x, sdk_version %d, "
+            "swapchain_desc %p, swapchain %p, device %p\n",
             adapter, debug_d3d10_driver_type(driver_type), swrast, flags, sdk_version,
             swapchain_desc, swapchain, device);
 
@@ -199,6 +199,14 @@ HRESULT WINAPI D3D10CreateDeviceAndSwapChain(IDXGIAdapter *adapter, D3D10_DRIVER
     return S_OK;
 }
 
+static int d3d10_effect_type_compare(const void *key, const struct wine_rb_entry *entry)
+{
+    const struct d3d10_effect_type *t = WINE_RB_ENTRY_VALUE(entry, const struct d3d10_effect_type, entry);
+    const DWORD *id = key;
+
+    return *id - t->id;
+}
+
 HRESULT WINAPI D3D10CreateEffectFromMemory(void *data, SIZE_T data_size, UINT flags,
         ID3D10Device *device, ID3D10EffectPool *effect_pool, ID3D10Effect **effect)
 {
@@ -215,6 +223,7 @@ HRESULT WINAPI D3D10CreateEffectFromMemory(void *data, SIZE_T data_size, UINT fl
         return E_OUTOFMEMORY;
     }
 
+    wine_rb_init(&object->types, d3d10_effect_type_compare);
     object->ID3D10Effect_iface.lpVtbl = &d3d10_effect_vtbl;
     object->refcount = 1;
     ID3D10Device_AddRef(device);
@@ -252,6 +261,14 @@ HRESULT WINAPI D3D10CompileEffectFromMemory(void *data, SIZE_T data_size, const 
     return E_NOTIMPL;
 }
 
+HRESULT WINAPI D3D10CreateEffectPoolFromMemory(void *data, SIZE_T data_size, UINT fx_flags,
+        ID3D10Device *device, ID3D10EffectPool **effect_pool)
+{
+    FIXME("data %p, data_size %lu, fx_flags %#x, device %p, effect_pool %p stub.\n",
+            data, data_size, fx_flags, device, effect_pool);
+
+    return E_NOTIMPL;
+}
 
 const char * WINAPI D3D10GetVertexShaderProfile(ID3D10Device *device)
 {

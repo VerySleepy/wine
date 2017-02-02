@@ -209,6 +209,13 @@ void MSSTYLES_CloseThemeFile(PTHEME_FILE tf)
                     tf->classes = pcls->next;
                     while(pcls->partstate) {
                         PTHEME_PARTSTATE ps = pcls->partstate;
+
+                        while(ps->properties) {
+                            PTHEME_PROPERTY prop = ps->properties;
+                            ps->properties = prop->next;
+                            HeapFree(GetProcessHeap(), 0, prop);
+                        }
+
                         pcls->partstate = ps->next;
                         HeapFree(GetProcessHeap(), 0, ps);
                     }
@@ -674,8 +681,8 @@ static PTHEME_PROPERTY MSSTYLES_AddMetric(PTHEME_FILE tf, int iPropertyPrimitive
 struct PARSECOLORSTATE
 {
     int colorCount;
-    int colorElements[TMT_LASTCOLOR-TMT_FIRSTCOLOR];
-    COLORREF colorRgb[TMT_LASTCOLOR-TMT_FIRSTCOLOR];
+    int colorElements[TMT_LASTCOLOR-TMT_FIRSTCOLOR+1];
+    COLORREF colorRgb[TMT_LASTCOLOR-TMT_FIRSTCOLOR+1];
     int captionColors;
 };
 
@@ -1261,9 +1268,9 @@ static HRESULT MSSTYLES_GetFont (LPCWSTR lpCur, LPCWSTR lpEnd,
     pFont->lfCharSet = DEFAULT_CHARSET;
     while(MSSTYLES_GetNextToken(lpCur, lpEnd, &lpCur, attr, sizeof(attr)/sizeof(attr[0]))) {
         if(!lstrcmpiW(szBold, attr)) pFont->lfWeight = FW_BOLD;
-        else if(!!lstrcmpiW(szItalic, attr)) pFont->lfItalic = TRUE;
-        else if(!!lstrcmpiW(szUnderline, attr)) pFont->lfUnderline = TRUE;
-        else if(!!lstrcmpiW(szStrikeOut, attr)) pFont->lfStrikeOut = TRUE;
+        else if(!lstrcmpiW(szItalic, attr)) pFont->lfItalic = TRUE;
+        else if(!lstrcmpiW(szUnderline, attr)) pFont->lfUnderline = TRUE;
+        else if(!lstrcmpiW(szStrikeOut, attr)) pFont->lfStrikeOut = TRUE;
     }
     *lpValEnd = lpCur;
     return S_OK;

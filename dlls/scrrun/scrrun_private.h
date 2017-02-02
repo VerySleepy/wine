@@ -16,7 +16,7 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 #ifndef _SCRRUN_PRIVATE_H_
-#define _SCRRUN_PRIVATE_H
+#define _SCRRUN_PRIVATE_H_
 
 extern HRESULT WINAPI FileSystem_CreateInstance(IClassFactory*,IUnknown*,REFIID,void**) DECLSPEC_HIDDEN;
 extern HRESULT WINAPI Dictionary_CreateInstance(IClassFactory*,IUnknown*,REFIID,void**) DECLSPEC_HIDDEN;
@@ -37,6 +37,14 @@ typedef enum tid_t
 } tid_t;
 
 HRESULT get_typeinfo(tid_t tid, ITypeInfo **typeinfo) DECLSPEC_HIDDEN;
+
+struct provideclassinfo {
+    IProvideClassInfo IProvideClassInfo_iface;
+    IUnknown *outer;
+    const GUID *guid;
+};
+
+extern void init_classinfo(const GUID *guid, IUnknown *outer, struct provideclassinfo *classinfo) DECLSPEC_HIDDEN;
 
 static inline void *heap_alloc(size_t len)
 {

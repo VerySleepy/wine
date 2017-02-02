@@ -335,7 +335,7 @@ static inline HRESULT add_bool_property(IDxDiagContainerImpl_Container *node, co
         return E_OUTOFMEMORY;
 
     V_VT(&prop->vProp) = VT_BOOL;
-    V_BOOL(&prop->vProp) = data;
+    V_BOOL(&prop->vProp) = data ? VARIANT_TRUE : VARIANT_FALSE;
 
     list_add_tail(&node->properties, &prop->entry);
     ++node->nProperties;
@@ -346,6 +346,7 @@ static inline HRESULT add_bool_property(IDxDiagContainerImpl_Container *node, co
 static inline HRESULT add_ull_as_bstr_property(IDxDiagContainerImpl_Container *node, const WCHAR *propName, ULONGLONG data )
 {
     IDxDiagContainerImpl_Property *prop;
+    HRESULT hr;
 
     prop = allocate_property_information(propName);
     if (!prop)
@@ -354,7 +355,12 @@ static inline HRESULT add_ull_as_bstr_property(IDxDiagContainerImpl_Container *n
     V_VT(&prop->vProp) = VT_UI8;
     V_UI8(&prop->vProp) = data;
 
-    VariantChangeType(&prop->vProp, &prop->vProp, 0, VT_BSTR);
+    hr = VariantChangeType(&prop->vProp, &prop->vProp, 0, VT_BSTR);
+    if (FAILED(hr))
+    {
+        free_property_information(prop);
+        return hr;
+    }
 
     list_add_tail(&node->properties, &prop->entry);
     ++node->nProperties;
@@ -856,7 +862,7 @@ static BOOL get_texture_memory(GUID *adapter, DWORD *available_mem)
     if (SUCCEEDED(hr))
     {
         dd_caps.dwCaps = DDSCAPS_LOCALVIDMEM | DDSCAPS_VIDEOMEMORY;
-        dd_caps.dwCaps2 = dd_caps.dwCaps3 = dd_caps.dwCaps4 = 0;
+        dd_caps.dwCaps2 = dd_caps.dwCaps3 = dd_caps.u1.dwCaps4 = 0;
         hr = IDirectDraw7_GetAvailableVidMem(pDirectDraw, &dd_caps, available_mem, NULL);
         IDirectDraw7_Release(pDirectDraw);
         if (SUCCEEDED(hr))
@@ -918,6 +924,7 @@ static HRESULT fill_display_information_d3d(IDxDiagContainerImpl_Container *node
         static const WCHAR b3DAccelerationExists[] = {'b','3','D','A','c','c','e','l','e','r','a','t','i','o','n','E','x','i','s','t','s',0};
         static const WCHAR b3DAccelerationEnabled[] = {'b','3','D','A','c','c','e','l','e','r','a','t','i','o','n','E','n','a','b','l','e','d',0};
         static const WCHAR bDDAccelerationEnabled[] = {'b','D','D','A','c','c','e','l','e','r','a','t','i','o','n','E','n','a','b','l','e','d',0};
+        static const WCHAR bNoHardware[] = {'b','N','o','H','a','r','d','w','a','r','e',0};
 
         D3DADAPTER_IDENTIFIER9 adapter_info;
         D3DDISPLAYMODE adapter_mode;
@@ -1063,6 +1070,10 @@ static HRESULT fill_display_information_d3d(IDxDiagContainerImpl_Container *node
         hr = add_bool_property(display_adapter, bDDAccelerationEnabled, hardware_accel);
         if (FAILED(hr))
             goto cleanup;
+
+        hr = add_bool_property(display_adapter, bNoHardware, FALSE);
+        if (FAILED(hr))
+            goto cleanup;
     }
 
     hr = S_OK;
@@ -1112,7 +1123,7 @@ static HRESULT fill_display_information_fallback(IDxDiagContainerImpl_Container 
         return S_OK;
 
     dd_caps.dwCaps = DDSCAPS_LOCALVIDMEM | DDSCAPS_VIDEOMEMORY;
-    dd_caps.dwCaps2 = dd_caps.dwCaps3 = dd_caps.dwCaps4 = 0;
+    dd_caps.dwCaps2 = dd_caps.dwCaps3 = dd_caps.u1.dwCaps4 = 0;
     hr = IDirectDraw7_GetAvailableVidMem(pDirectDraw, &dd_caps, &tmp, NULL);
     if (SUCCEEDED(hr))
     {

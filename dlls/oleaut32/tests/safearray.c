@@ -212,7 +212,7 @@ static HRESULT WINAPI RecordInfo_GetFieldNames(IRecordInfo *iface, ULONG *pcName
 static BOOL WINAPI RecordInfo_IsMatchingType(IRecordInfo *iface, IRecordInfo *info2)
 {
   ok(0, "unexpected call\n");
-  return E_NOTIMPL;
+  return FALSE;
 }
 
 static PVOID WINAPI RecordInfo_RecordCreate(IRecordInfo *iface)
@@ -456,11 +456,15 @@ static void test_safearray(void)
         bound.lLbound = 0;
         SafeArrayRedim(a, &bound);
         SafeArrayPtrOfIndex(a, indices, (void **)&ptr1);
-        ok(*(WORD *)ptr1 == 0, "Expanded area not zero-initialized\n");
+        ok(*(WORD *)ptr1 == 0 ||
+           broken(*(WORD *)ptr1 != 0), /* Win 2003 */
+           "Expanded area not zero-initialized\n");
 
         indices[1] = 1;
         SafeArrayPtrOfIndex(a, indices, (void **)&ptr1);
-        ok(*(WORD *)ptr1 == 0x55aa, "Data not preserved when resizing array\n");
+        ok(*(WORD *)ptr1 == 0x55aa ||
+           broken(*(WORD *)ptr1 != 0x55aa), /* Win 2003 */
+           "Data not preserved when resizing array\n");
 
         hres = SafeArrayDestroy(a);
         ok(hres == S_OK,"SAD failed with hres %x\n", hres);
@@ -704,8 +708,8 @@ static void test_safearray(void)
     if (!pSafeArrayAllocDescriptorEx)
         return;
 
-	for (i=0;i<sizeof(vttypes)/sizeof(vttypes[0]);i++) {
-        a = NULL;
+    for (i = 0; i < sizeof(vttypes)/sizeof(vttypes[0]); i++) {
+		a = NULL;
 		hres = pSafeArrayAllocDescriptorEx(vttypes[i].vt,1,&a);
 		ok(hres == S_OK, "SafeArrayAllocDescriptorEx gave hres 0x%x\n", hres);
 		ok(a->fFeatures == vttypes[i].expflags,"SAADE(%d) resulted with flags %x, expected %x\n", vttypes[i].vt, a->fFeatures, vttypes[i].expflags);
@@ -758,7 +762,7 @@ static void test_safearray(void)
 		}
 		hres = SafeArrayDestroyDescriptor(a);
 		ok(hres == S_OK,"SADD failed with hres %x\n",hres);
-	}
+    }
 }
 
 static void test_SafeArrayAllocDestroyDescriptor(void)
@@ -1961,40 +1965,99 @@ static void test_SafeArrayChangeTypeEx(void)
 
 static void test_SafeArrayDestroyData (void)
 {
-  SAFEARRAYBOUND sab;
+  SAFEARRAYBOUND sab[2];
   SAFEARRAY *sa;
   HRESULT hres;
   int value = 0xdeadbeef;
   LONG index[1];
   void *temp_pvData;
+  USHORT features;
 
-  sab.lLbound = 0;
-  sab.cElements = 10;
-  sa = SafeArrayCreate(VT_INT, 1, &sab);
+  sab[0].lLbound = 0;
+  sab[0].cElements = 10;
+  sa = SafeArrayCreate(VT_INT, 1, sab);
   ok(sa != NULL, "Create() failed.\n");
-  if (!sa)
-    return;
+  ok(sa->fFeatures == FADF_HAVEVARTYPE, "got 0x%x\n", sa->fFeatures);
+
   index[0] = 1;
   SafeArrayPutElement (sa, index, &value);
 
 /* SafeArrayDestroyData shouldn't free pvData if FADF_STATIC is set. */
-  sa->fFeatures |= FADF_STATIC;
+  features = (sa->fFeatures |= FADF_STATIC);
   temp_pvData = sa->pvData;
   hres = SafeArrayDestroyData(sa);
   ok(hres == S_OK, "SADData FADF_STATIC failed, error code %x.\n",hres);
+  ok(features == sa->fFeatures, "got 0x%x\n", sa->fFeatures);
   ok(sa->pvData == temp_pvData, "SADData FADF_STATIC: pvData=%p, expected %p (fFeatures = %d).\n",
     sa->pvData, temp_pvData, sa->fFeatures);
   SafeArrayGetElement (sa, index, &value);
   ok(value == 0, "Data not cleared after SADData\n");
 
 /* Clear FADF_STATIC, now really destroy the data. */
-  sa->fFeatures ^= FADF_STATIC;
+  features = (sa->fFeatures ^= FADF_STATIC);
   hres = SafeArrayDestroyData(sa);
   ok(hres == S_OK, "SADData !FADF_STATIC failed, error code %x.\n",hres);
+  ok(features == sa->fFeatures, "got 0x%x\n", sa->fFeatures);
   ok(sa->pvData == NULL, "SADData !FADF_STATIC: pvData=%p, expected NULL.\n", sa->pvData);
 
   hres = SafeArrayDestroy(sa);
   ok(hres == S_OK, "SAD failed, error code %x.\n", hres);
+
+  /* two dimensions */
+  sab[0].lLbound = 0;
+  sab[0].cElements = 10;
+  sab[1].lLbound = 0;
+  sab[1].cElements = 10;
+
+  sa = SafeArrayCreate(VT_INT, 2, sab);
+  ok(sa != NULL, "Create() failed.\n");
+  ok(sa->fFeatures == FADF_HAVEVARTYPE, "got 0x%x\n", sa->fFeatures);
+
+  features = sa->fFeatures;
+  hres = SafeArrayDestroyData(sa);
+  ok(hres == S_OK, "got 0x%08x\n",hres);
+  ok(features == sa->fFeatures, "got 0x%x\n", sa->fFeatures);
+
+  SafeArrayDestroy(sa);
+
+  /* try to destroy data from descriptor */
+  hres = SafeArrayAllocDescriptor(1, &sa);
+  ok(hres == S_OK, "got 0x%08x\n", hres);
+  ok(sa->fFeatures == 0, "got 0x%x\n", sa->fFeatures);
+
+  hres = SafeArrayDestroyData(sa);
+  ok(hres == S_OK, "got 0x%08x\n", hres);
+  ok(sa->fFeatures == 0, "got 0x%x\n", sa->fFeatures);
+
+  hres = SafeArrayDestroyDescriptor(sa);
+  ok(hres == S_OK, "got 0x%08x\n", hres);
+
+  hres = SafeArrayAllocDescriptor(2, &sa);
+  ok(hres == S_OK, "got 0x%08x\n", hres);
+  ok(sa->fFeatures == 0, "got 0x%x\n", sa->fFeatures);
+
+  hres = SafeArrayDestroyData(sa);
+  ok(hres == S_OK, "got 0x%08x\n", hres);
+  ok(sa->fFeatures == 0, "got 0x%x\n", sa->fFeatures);
+
+  hres = SafeArrayDestroyDescriptor(sa);
+  ok(hres == S_OK, "got 0x%08x\n", hres);
+
+  /* vector case */
+  sa = SafeArrayCreateVector(VT_I4, 0, 10);
+  ok(sa != NULL, "got %p\n", sa);
+  ok(sa->fFeatures == (FADF_CREATEVECTOR|FADF_HAVEVARTYPE), "got 0x%x\n", sa->fFeatures);
+
+  ok(sa->pvData != NULL, "got %p\n", sa->pvData);
+  hres = SafeArrayDestroyData(sa);
+  ok(hres == S_OK, "got 0x%08x\n", hres);
+todo_wine
+  ok(sa->fFeatures == FADF_HAVEVARTYPE, "got 0x%x\n", sa->fFeatures);
+  ok(sa->pvData != NULL, "got %p\n", sa->pvData);
+  /* There seems to be a bug on windows, especially visible on 64bit systems,
+     probably double-free of similar issue. */
+  sa->pvData = NULL;
+  SafeArrayDestroy(sa);
 }
 
 static void test_safearray_layout(void)

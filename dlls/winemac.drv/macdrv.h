@@ -129,12 +129,12 @@ struct macdrv_win_data
 {
     HWND                hwnd;                   /* hwnd that this private data belongs to */
     macdrv_window       cocoa_window;
+    macdrv_view         cocoa_view;
+    macdrv_view         client_cocoa_view;
     RECT                window_rect;            /* USER window rectangle relative to parent */
     RECT                whole_rect;             /* Mac window rectangle for the whole window relative to parent */
     RECT                client_rect;            /* client area relative to parent */
     int                 pixel_format;           /* pixel format for GL */
-    macdrv_view         gl_view;                /* view for GL */
-    RECT                gl_rect;                /* GL view rectangle relative to whole_rect */
     COLORREF            color_key;              /* color key for layered window; CLR_INVALID is not color keyed */
     unsigned int        on_screen : 1;          /* is window ordered in? (minimized or not) */
     unsigned int        shaped : 1;             /* is window using a custom region shape? */
@@ -165,6 +165,7 @@ extern void macdrv_window_close_requested(HWND hwnd) DECLSPEC_HIDDEN;
 extern void macdrv_window_frame_changed(HWND hwnd, const macdrv_event *event) DECLSPEC_HIDDEN;
 extern void macdrv_window_got_focus(HWND hwnd, const macdrv_event *event) DECLSPEC_HIDDEN;
 extern void macdrv_window_lost_focus(HWND hwnd, const macdrv_event *event) DECLSPEC_HIDDEN;
+extern void macdrv_app_activated(void) DECLSPEC_HIDDEN;
 extern void macdrv_app_deactivated(void) DECLSPEC_HIDDEN;
 extern void macdrv_app_quit_requested(const macdrv_event *event) DECLSPEC_HIDDEN;
 extern void macdrv_window_maximize_requested(HWND hwnd) DECLSPEC_HIDDEN;
@@ -172,9 +173,10 @@ extern void macdrv_window_minimize_requested(HWND hwnd) DECLSPEC_HIDDEN;
 extern void macdrv_window_did_unminimize(HWND hwnd) DECLSPEC_HIDDEN;
 extern void macdrv_window_brought_forward(HWND hwnd) DECLSPEC_HIDDEN;
 extern void macdrv_window_resize_ended(HWND hwnd) DECLSPEC_HIDDEN;
-extern void macdrv_window_restore_requested(HWND hwnd) DECLSPEC_HIDDEN;
+extern void macdrv_window_restore_requested(HWND hwnd, const macdrv_event *event) DECLSPEC_HIDDEN;
 extern void macdrv_window_drag_begin(HWND hwnd) DECLSPEC_HIDDEN;
 extern void macdrv_window_drag_end(HWND hwnd) DECLSPEC_HIDDEN;
+extern void macdrv_reassert_window_position(HWND hwnd) DECLSPEC_HIDDEN;
 extern BOOL query_resize_size(HWND hwnd, macdrv_query *query) DECLSPEC_HIDDEN;
 extern BOOL query_resize_start(HWND hwnd) DECLSPEC_HIDDEN;
 extern BOOL query_min_max_info(HWND hwnd) DECLSPEC_HIDDEN;
@@ -193,20 +195,21 @@ extern HKL macdrv_get_hkl_from_source(TISInputSourceRef input_source) DECLSPEC_H
 
 extern void macdrv_displays_changed(const macdrv_event *event) DECLSPEC_HIDDEN;
 
-extern void macdrv_clipboard_process_attach(void) DECLSPEC_HIDDEN;
+extern void CDECL macdrv_UpdateClipboard(void) DECLSPEC_HIDDEN;
+extern void macdrv_init_clipboard(void) DECLSPEC_HIDDEN;
 extern BOOL query_pasteboard_data(HWND hwnd, CFStringRef type) DECLSPEC_HIDDEN;
+extern void macdrv_lost_pasteboard_ownership(HWND hwnd) DECLSPEC_HIDDEN;
 extern const char *debugstr_format(UINT id) DECLSPEC_HIDDEN;
 extern HANDLE macdrv_get_pasteboard_data(CFTypeRef pasteboard, UINT desired_format) DECLSPEC_HIDDEN;
-extern BOOL CDECL macdrv_pasteboard_has_format(CFTypeRef pasteboard, UINT desired_format) DECLSPEC_HIDDEN;
-extern CFArrayRef macdrv_copy_pasteboard_formats(CFTypeRef pasteboard) DECLSPEC_HIDDEN;
+extern BOOL macdrv_pasteboard_has_format(CFTypeRef pasteboard, UINT desired_format) DECLSPEC_HIDDEN;
+extern UINT* macdrv_get_pasteboard_formats(CFTypeRef pasteboard, UINT* num_formats) DECLSPEC_HIDDEN;
 
 extern BOOL query_drag_operation(macdrv_query* query) DECLSPEC_HIDDEN;
 extern BOOL query_drag_exited(macdrv_query* query) DECLSPEC_HIDDEN;
 extern BOOL query_drag_drop(macdrv_query* query) DECLSPEC_HIDDEN;
 
 extern struct opengl_funcs *macdrv_wine_get_wgl_driver(PHYSDEV dev, UINT version) DECLSPEC_HIDDEN;
-extern void sync_gl_view(struct macdrv_win_data *data) DECLSPEC_HIDDEN;
-extern void set_gl_view_parent(HWND hwnd, HWND parent) DECLSPEC_HIDDEN;
+extern void sync_gl_view(struct macdrv_win_data* data, const RECT* old_whole_rect, const RECT* old_client_rect) DECLSPEC_HIDDEN;
 
 extern CGImageRef create_cgimage_from_icon_bitmaps(HDC hdc, HANDLE icon, HBITMAP hbmColor,
                                                    unsigned char *color_bits, int color_size, HBITMAP hbmMask,
@@ -218,15 +221,17 @@ extern CFArrayRef create_app_icon_images(void) DECLSPEC_HIDDEN;
 extern void macdrv_status_item_mouse_button(const macdrv_event *event) DECLSPEC_HIDDEN;
 extern void macdrv_status_item_mouse_move(const macdrv_event *event) DECLSPEC_HIDDEN;
 
+extern void check_retina_status(void) DECLSPEC_HIDDEN;
 
 /**************************************************************************
  * Mac IME driver
  */
 
-extern BOOL macdrv_process_text_input(UINT vkey, UINT scan, UINT repeat, const BYTE *key_state,
-                                      void *himc) DECLSPEC_HIDDEN;
+extern void macdrv_process_text_input(UINT vkey, UINT scan, UINT repeat, const BYTE *key_state,
+                                      void *himc, int* done) DECLSPEC_HIDDEN;
 
 extern void macdrv_im_set_text(const macdrv_event *event) DECLSPEC_HIDDEN;
+extern void macdrv_sent_text_input(const macdrv_event *event) DECLSPEC_HIDDEN;
 extern BOOL query_ime_char_rect(macdrv_query* query) DECLSPEC_HIDDEN;
 
 #endif  /* __WINE_MACDRV_H */

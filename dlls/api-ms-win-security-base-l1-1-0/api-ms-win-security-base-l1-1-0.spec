@@ -7,14 +7,14 @@
 @ stub AccessCheckByTypeResultListandAuditAlarmW
 @ stdcall AddAccessAllowedAce(ptr long long ptr) advapi32.AddAccessAllowedAce
 @ stdcall AddAccessAllowedAceEx(ptr long long long ptr) advapi32.AddAccessAllowedAceEx
-@ stub AddAccessAllowedObjectAce
+@ stdcall AddAccessAllowedObjectAce(ptr long long long ptr ptr ptr) advapi32.AddAccessAllowedObjectAce
 @ stdcall AddAccessDeniedAce(ptr long long ptr) advapi32.AddAccessDeniedAce
 @ stdcall AddAccessDeniedAceEx(ptr long long long ptr) advapi32.AddAccessDeniedAceEx
-@ stub AddAccessDeniedObjectAce
+@ stdcall AddAccessDeniedObjectAce(ptr long long long ptr ptr ptr) advapi32.AddAccessDeniedObjectAce
 @ stdcall AddAce(ptr long long ptr long) advapi32.AddAce
 @ stdcall AddAuditAccessAce(ptr long long ptr long long) advapi32.AddAuditAccessAce
 @ stdcall AddAuditAccessAceEx(ptr long long long ptr long long) advapi32.AddAuditAccessAceEx
-@ stub AddAuditAccessObjectAce
+@ stdcall AddAuditAccessObjectAce(ptr long long long ptr ptr ptr long long) advapi32.AddAuditAccessObjectAce
 @ stdcall AddMandatoryAce(ptr long long long ptr) advapi32.AddMandatoryAce
 @ stdcall AdjustTokenGroups(long long ptr long ptr ptr) advapi32.AdjustTokenGroups
 @ stdcall AdjustTokenPrivileges(long long ptr long ptr ptr) advapi32.AdjustTokenPrivileges
@@ -26,8 +26,8 @@
 @ stdcall ConvertToAutoInheritPrivateObjectSecurity(ptr ptr ptr ptr long ptr) advapi32.ConvertToAutoInheritPrivateObjectSecurity
 @ stdcall CopySid(long ptr ptr) advapi32.CopySid
 @ stdcall CreatePrivateObjectSecurity(ptr ptr ptr long long ptr) advapi32.CreatePrivateObjectSecurity
-@ stub CreatePrivateObjectSecurityEx
-@ stub CreatePrivateObjectSecurityWithMultipleInheritance
+@ stdcall CreatePrivateObjectSecurityEx(ptr ptr ptr ptr long long long ptr) advapi32.CreatePrivateObjectSecurityEx
+@ stdcall CreatePrivateObjectSecurityWithMultipleInheritance(ptr ptr ptr ptr long long long long ptr) advapi32.CreatePrivateObjectSecurityWithMultipleInheritance
 @ stdcall CreateRestrictedToken(long long long ptr long ptr long ptr ptr) advapi32.CreateRestrictedToken
 @ stdcall CreateWellKnownSid(long ptr ptr ptr) advapi32.CreateWellKnownSid
 @ stdcall DeleteAce(ptr long) advapi32.DeleteAce
@@ -57,8 +57,8 @@
 @ stdcall GetSidSubAuthority(ptr long) advapi32.GetSidSubAuthority
 @ stdcall GetSidSubAuthorityCount(ptr) advapi32.GetSidSubAuthorityCount
 @ stdcall GetTokenInformation(long long ptr long ptr) advapi32.GetTokenInformation
-@ stub GetWindowsAccountDomainSid
-@ stub ImpersonateAnonymousToken
+@ stdcall GetWindowsAccountDomainSid(ptr ptr ptr) advapi32.GetWindowsAccountDomainSid
+@ stdcall ImpersonateAnonymousToken(long) advapi32.ImpersonateAnonymousToken
 @ stdcall ImpersonateLoggedOnUser(long) advapi32.ImpersonateLoggedOnUser
 @ stdcall ImpersonateSelf(long) advapi32.ImpersonateSelf
 @ stdcall InitializeAcl(ptr long long) advapi32.InitializeAcl

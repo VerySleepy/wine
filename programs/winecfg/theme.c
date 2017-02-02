@@ -83,6 +83,9 @@ HRESULT WINAPI CloseThemeFile (HTHEMEFILE hThemeFile);
 HRESULT WINAPI EnumThemes (LPCWSTR pszThemePath, EnumThemeProc callback,
                            LPVOID lpData);
 
+static void refresh_sysparams(HWND hDlg);
+static void on_sysparam_change(HWND hDlg);
+
 /* A struct to keep both the internal and "fancy" name of a color or size */
 typedef struct
 {
@@ -388,7 +391,7 @@ static BOOL update_color_and_size (int themeIndex, HWND comboColor,
 }
 
 /* Apply a theme from a given theme, color and size combo box item index. */
-static void do_apply_theme (int themeIndex, int colorIndex, int sizeIndex)
+static void do_apply_theme (HWND dialog, int themeIndex, int colorIndex, int sizeIndex)
 {
     static char b[] = "\0";
 
@@ -423,6 +426,8 @@ static void do_apply_theme (int themeIndex, int colorIndex, int sizeIndex)
 	    ApplyTheme (NULL, b, NULL);
 	}
     }
+
+    refresh_sysparams(dialog);
 }
 
 static BOOL updating_ui;
@@ -491,7 +496,7 @@ static void apply_theme(HWND dialog)
     sizeIndex = SendMessageW (GetDlgItem (dialog, IDC_THEME_SIZECOMBO),
         CB_GETCURSEL, 0, 0);
 
-    do_apply_theme (themeIndex, colorIndex, sizeIndex);
+    do_apply_theme (dialog, themeIndex, colorIndex, sizeIndex);
     theme_dirty = FALSE;
 }
 
@@ -527,14 +532,14 @@ static struct
     {-1,                COLOR_INACTIVEBORDER,   "InactiveBorder" }, /* IDC_SYSPARAMS_INACTIVE_BORDER */
     {-1,                COLOR_BTNSHADOW,        "ButtonShadow"  }, /* IDC_SYSPARAMS_BUTTON_SHADOW */
     {-1,                COLOR_GRAYTEXT,         "GrayText"      }, /* IDC_SYSPARAMS_GRAY_TEXT */
-    {-1,                COLOR_BTNHILIGHT,       "ButtonHilight" }, /* IDC_SYSPARAMS_BUTTON_HILIGHT */
+    {-1,                COLOR_BTNHIGHLIGHT,     "ButtonHilight" }, /* IDC_SYSPARAMS_BUTTON_HIGHLIGHT */
     {-1,                COLOR_3DDKSHADOW,       "ButtonDkShadow" }, /* IDC_SYSPARAMS_BUTTON_DARK_SHADOW */
     {-1,                COLOR_3DLIGHT,          "ButtonLight"   }, /* IDC_SYSPARAMS_BUTTON_LIGHT */
     {-1,                COLOR_ALTERNATEBTNFACE, "ButtonAlternateFace" }, /* IDC_SYSPARAMS_BUTTON_ALTERNATE */
     {-1,                COLOR_HOTLIGHT,         "HotTrackingColor" }, /* IDC_SYSPARAMS_HOT_TRACKING */
     {-1,                COLOR_GRADIENTACTIVECAPTION, "GradientActiveTitle" }, /* IDC_SYSPARAMS_ACTIVE_TITLE_GRADIENT */
     {-1,                COLOR_GRADIENTINACTIVECAPTION, "GradientInactiveTitle" }, /* IDC_SYSPARAMS_INACTIVE_TITLE_GRADIENT */
-    {-1,                COLOR_MENUHILIGHT,      "MenuHilight"   }, /* IDC_SYSPARAMS_MENU_HILIGHT */
+    {-1,                COLOR_MENUHILIGHT,      "MenuHilight"   }, /* IDC_SYSPARAMS_MENU_HIGHLIGHT */
     {-1,                COLOR_MENUBAR,          "MenuBar"       }, /* IDC_SYSPARAMS_MENUBAR */
 };
 
@@ -630,7 +635,7 @@ static void on_theme_install(HWND dialog)
       title, sizeof (title) / sizeof (title[0]));
 
   ofn.lStructSize = sizeof(OPENFILENAMEW);
-  ofn.hwndOwner = 0;
+  ofn.hwndOwner = dialog;
   ofn.hInstance = 0;
   ofn.lpstrFilter = filter;
   ofn.lpstrCustomFilter = NULL;
@@ -745,7 +750,7 @@ static void init_shell_folder_listview_headers(HWND dialog) {
     LoadStringW(GetModuleHandleW(NULL), IDS_LINKS_TO, szLinksTo, sizeof(szLinksTo)/sizeof(WCHAR));
 
     GetClientRect(GetDlgItem(dialog, IDC_LIST_SFPATHS), &viewRect);
-    width = (viewRect.right - viewRect.left) / 4;
+    width = (viewRect.right - viewRect.left) / 3;
 
     listColumn.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
     listColumn.pszText = szShellFolder;
@@ -956,6 +961,21 @@ static void apply_shell_folder_changes(void) {
     }
 }
 
+static void refresh_sysparams(HWND hDlg)
+{
+    int i;
+
+    for (i = 0; i < sizeof(metrics) / sizeof(metrics[0]); i++)
+    {
+        if (metrics[i].sm_idx != -1)
+            metrics[i].size = GetSystemMetrics(metrics[i].sm_idx);
+        if (metrics[i].color_idx != -1)
+            metrics[i].color = GetSysColor(metrics[i].color_idx);
+    }
+
+    on_sysparam_change(hDlg);
+}
+
 static void read_sysparams(HWND hDlg)
 {
     WCHAR buffer[256];
@@ -991,35 +1011,42 @@ static void read_sysparams(HWND hDlg)
 
 static void apply_sysparams(void)
 {
-    NONCLIENTMETRICSW nonclient_metrics;
+    NONCLIENTMETRICSW ncm;
     int i, cnt = 0;
     int colors_idx[sizeof(metrics) / sizeof(metrics[0])];
     COLORREF colors[sizeof(metrics) / sizeof(metrics[0])];
+    HDC hdc;
+    int dpi;
 
-    nonclient_metrics.cbSize = sizeof(nonclient_metrics);
-    SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(nonclient_metrics), &nonclient_metrics, 0);
+    hdc = GetDC( 0 );
+    dpi = GetDeviceCaps( hdc, LOGPIXELSY );
+    ReleaseDC( 0, hdc );
 
-    nonclient_metrics.iMenuWidth = nonclient_metrics.iMenuHeight =
-            metrics[IDC_SYSPARAMS_MENU - IDC_SYSPARAMS_BUTTON].size;
-    nonclient_metrics.iCaptionWidth = nonclient_metrics.iCaptionHeight =
-            metrics[IDC_SYSPARAMS_ACTIVE_TITLE - IDC_SYSPARAMS_BUTTON].size;
-    nonclient_metrics.iScrollWidth = nonclient_metrics.iScrollHeight =
-            metrics[IDC_SYSPARAMS_SCROLLBAR - IDC_SYSPARAMS_BUTTON].size;
+    ncm.cbSize = sizeof(ncm);
+    SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0);
 
-    memcpy(&(nonclient_metrics.lfMenuFont),
-           &(metrics[IDC_SYSPARAMS_MENU_TEXT - IDC_SYSPARAMS_BUTTON].lf),
-           sizeof(LOGFONTW));
-    memcpy(&(nonclient_metrics.lfCaptionFont),
-           &(metrics[IDC_SYSPARAMS_ACTIVE_TITLE_TEXT - IDC_SYSPARAMS_BUTTON].lf),
-           sizeof(LOGFONTW));
-    memcpy(&(nonclient_metrics.lfStatusFont),
-           &(metrics[IDC_SYSPARAMS_TOOLTIP_TEXT - IDC_SYSPARAMS_BUTTON].lf),
-           sizeof(LOGFONTW));
-    memcpy(&(nonclient_metrics.lfMessageFont),
-           &(metrics[IDC_SYSPARAMS_MSGBOX_TEXT - IDC_SYSPARAMS_BUTTON].lf),
-           sizeof(LOGFONTW));
+    /* convert metrics back to twips */
+    ncm.iMenuWidth = ncm.iMenuHeight =
+        MulDiv( metrics[IDC_SYSPARAMS_MENU - IDC_SYSPARAMS_BUTTON].size, -1440, dpi );
+    ncm.iCaptionWidth = ncm.iCaptionHeight =
+        MulDiv( metrics[IDC_SYSPARAMS_ACTIVE_TITLE - IDC_SYSPARAMS_BUTTON].size, -1440, dpi );
+    ncm.iScrollWidth = ncm.iScrollHeight =
+        MulDiv( metrics[IDC_SYSPARAMS_SCROLLBAR - IDC_SYSPARAMS_BUTTON].size, -1440, dpi );
+    ncm.iSmCaptionWidth = MulDiv( ncm.iSmCaptionWidth, -1440, dpi );
+    ncm.iSmCaptionHeight = MulDiv( ncm.iSmCaptionHeight, -1440, dpi );
 
-    SystemParametersInfoW(SPI_SETNONCLIENTMETRICS, sizeof(nonclient_metrics), &nonclient_metrics,
+    ncm.lfMenuFont    = metrics[IDC_SYSPARAMS_MENU_TEXT - IDC_SYSPARAMS_BUTTON].lf;
+    ncm.lfCaptionFont = metrics[IDC_SYSPARAMS_ACTIVE_TITLE_TEXT - IDC_SYSPARAMS_BUTTON].lf;
+    ncm.lfStatusFont  = metrics[IDC_SYSPARAMS_TOOLTIP_TEXT - IDC_SYSPARAMS_BUTTON].lf;
+    ncm.lfMessageFont = metrics[IDC_SYSPARAMS_MSGBOX_TEXT - IDC_SYSPARAMS_BUTTON].lf;
+
+    ncm.lfMenuFont.lfHeight    = MulDiv( ncm.lfMenuFont.lfHeight, -72, dpi );
+    ncm.lfCaptionFont.lfHeight = MulDiv( ncm.lfCaptionFont.lfHeight, -72, dpi );
+    ncm.lfStatusFont.lfHeight  = MulDiv( ncm.lfStatusFont.lfHeight, -72, dpi );
+    ncm.lfMessageFont.lfHeight = MulDiv( ncm.lfMessageFont.lfHeight, -72, dpi );
+    ncm.lfSmCaptionFont.lfHeight = MulDiv( ncm.lfSmCaptionFont.lfHeight, -72, dpi );
+
+    SystemParametersInfoW(SPI_SETNONCLIENTMETRICS, sizeof(ncm), &ncm,
                           SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
 
     for (i = 0; i < sizeof(metrics) / sizeof(metrics[0]); i++)
@@ -1070,14 +1097,52 @@ static void on_draw_item(HWND hDlg, WPARAM wParam, LPARAM lParam)
 
     if (draw_info->CtlID == IDC_SYSPARAM_COLOR)
     {
-        UINT state = DFCS_ADJUSTRECT | DFCS_BUTTONPUSH;
+        UINT state;
+        HTHEME theme;
+        RECT buttonrect;
 
-        if (draw_info->itemState & ODS_DISABLED)
-            state |= DFCS_INACTIVE;
-        else
-            state |= draw_info->itemState & ODS_SELECTED ? DFCS_PUSHED : 0;
+        theme = OpenThemeData(NULL, WC_BUTTONW);
 
-        DrawFrameControl(draw_info->hDC, &draw_info->rcItem, DFC_BUTTON, state);
+        if (theme) {
+            MARGINS margins;
+
+            if (draw_info->itemState & ODS_DISABLED)
+                state = PBS_DISABLED;
+            else if (draw_info->itemState & ODS_SELECTED)
+                state = PBS_PRESSED;
+            else
+                state = PBS_NORMAL;
+
+            if (IsThemeBackgroundPartiallyTransparent(theme, BP_PUSHBUTTON, state))
+                DrawThemeParentBackground(draw_info->hwndItem, draw_info->hDC, NULL);
+
+            DrawThemeBackground(theme, draw_info->hDC, BP_PUSHBUTTON, state, &draw_info->rcItem, NULL);
+
+            buttonrect = draw_info->rcItem;
+
+            GetThemeMargins(theme, draw_info->hDC, BP_PUSHBUTTON, state, TMT_CONTENTMARGINS, &draw_info->rcItem, &margins);
+
+            buttonrect.left += margins.cxLeftWidth;
+            buttonrect.top += margins.cyTopHeight;
+            buttonrect.right -= margins.cxRightWidth;
+            buttonrect.bottom -= margins.cyBottomHeight;
+
+            if (draw_info->itemState & ODS_FOCUS)
+                DrawFocusRect(draw_info->hDC, &buttonrect);
+
+            CloseThemeData(theme);
+        } else {
+            state = DFCS_ADJUSTRECT | DFCS_BUTTONPUSH;
+
+            if (draw_info->itemState & ODS_DISABLED)
+                state |= DFCS_INACTIVE;
+            else
+                state |= draw_info->itemState & ODS_SELECTED ? DFCS_PUSHED : 0;
+
+            DrawFrameControl(draw_info->hDC, &draw_info->rcItem, DFC_BUTTON, state);
+
+            buttonrect = draw_info->rcItem;
+        }
 
         if (!(draw_info->itemState & ODS_DISABLED))
         {
@@ -1087,10 +1152,10 @@ static void on_draw_item(HWND hDlg, WPARAM wParam, LPARAM lParam)
             index = SendDlgItemMessageW(hDlg, IDC_SYSPARAM_COMBO, CB_GETITEMDATA, index, 0);
             brush = CreateSolidBrush(metrics[index].color);
 
-            InflateRect(&draw_info->rcItem, -1, -1);
-            FrameRect(draw_info->hDC, &draw_info->rcItem, black_brush);
-            InflateRect(&draw_info->rcItem, -1, -1);
-            FillRect(draw_info->hDC, &draw_info->rcItem, brush);
+            InflateRect(&buttonrect, -1, -1);
+            FrameRect(draw_info->hDC, &buttonrect, black_brush);
+            InflateRect(&buttonrect, -1, -1);
+            FillRect(draw_info->hDC, &buttonrect, brush);
             DeleteObject(brush);
         }
     }
@@ -1108,7 +1173,8 @@ static void on_select_font(HWND hDlg)
     cf.lpLogFont = &(metrics[index].lf);
     cf.Flags = CF_SCREENFONTS | CF_INITTOLOGFONTSTRUCT | CF_NOSCRIPTSEL | CF_NOVERTFONTS;
 
-    ChooseFontW(&cf);
+    if (ChooseFontW(&cf))
+        SendMessageW(GetParent(hDlg), PSM_CHANGED, 0, 0);
 }
 
 INT_PTR CALLBACK
@@ -1155,8 +1221,17 @@ ThemeDlgProc (HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
                             int index = SendDlgItemMessageW(hDlg, IDC_SYSPARAM_COMBO, CB_GETCURSEL, 0, 0);
 
                             index = SendDlgItemMessageW(hDlg, IDC_SYSPARAM_COMBO, CB_GETITEMDATA, index, 0);
-                            metrics[index].size = atoi(text);
-                            HeapFree(GetProcessHeap(), 0, text);
+
+                            if (text)
+                            {
+                                metrics[index].size = atoi(text);
+                                HeapFree(GetProcessHeap(), 0, text);
+                            }
+                            else
+                            {
+                                /* for empty string set to minimum value */
+                                SendDlgItemMessageW(hDlg, IDC_SYSPARAM_SIZE_UD, UDM_GETRANGE32, (WPARAM)&metrics[index].size, 0);
+                            }
 
                             SendMessageW(GetParent(hDlg), PSM_CHANGED, 0, 0);
                             break;

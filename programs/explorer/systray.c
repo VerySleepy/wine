@@ -77,9 +77,22 @@ struct icon
     UINT           info_flags;      /* flags for info balloon */
     UINT           info_timeout;    /* timeout for info balloon */
     HICON          info_icon;       /* info balloon icon */
+    UINT           version;         /* notify icon api version */
 };
 
 static struct list icon_list = LIST_INIT( icon_list );
+
+struct taskbar_button
+{
+    struct list entry;
+    HWND        hwnd;
+    HWND        button;
+    BOOL        active;
+    BOOL        visible;
+};
+
+static struct list taskbar_buttons = LIST_INIT( taskbar_buttons );
+
 static HWND tray_window;
 
 static unsigned int alloc_displayed;
@@ -87,24 +100,27 @@ static unsigned int nb_displayed;
 static struct icon **displayed;  /* array of currently displayed icons */
 
 static BOOL hide_systray, enable_shell;
-static int icon_cx, icon_cy, tray_width;
+static int icon_cx, icon_cy, tray_width, tray_height;
+static int start_button_width, taskbar_button_width;
+static WCHAR start_label[50];
 
 static struct icon *balloon_icon;
 static HWND balloon_window;
 
-static HWND start_button;
-
 #define MIN_DISPLAYED 8
 #define ICON_BORDER  2
 
-#define VALID_WIN_TIMER      1
-#define BALLOON_CREATE_TIMER 2
-#define BALLOON_SHOW_TIMER   3
+#define BALLOON_CREATE_TIMER 1
+#define BALLOON_SHOW_TIMER   2
 
-#define VALID_WIN_TIMEOUT        2000
 #define BALLOON_CREATE_TIMEOUT   2000
 #define BALLOON_SHOW_MIN_TIMEOUT 10000
 #define BALLOON_SHOW_MAX_TIMEOUT 30000
+
+#define WM_POPUPSYSTEMMENU  0x0313
+
+static void do_hide_systray(void);
+static void do_show_systray(void);
 
 /* Retrieves icon record by owner window and ID */
 static struct icon *get_icon(HWND owner, UINT id)
@@ -124,8 +140,8 @@ static RECT get_icon_rect( struct icon *icon )
 
     rect.right = tray_width - icon_cx * icon->display;
     rect.left = rect.right - icon_cx;
-    rect.top = 0;
-    rect.bottom = icon_cy;
+    rect.top = (tray_height - icon_cy) / 2;
+    rect.bottom = rect.top + icon_cy;
     return rect;
 }
 
@@ -296,9 +312,9 @@ static void invalidate_icons( unsigned int start, unsigned int end )
     RECT rect;
 
     rect.left = tray_width - (end + 1) * icon_cx;
-    rect.top  = 0;
+    rect.top  = (tray_height - icon_cy) / 2;
     rect.right = tray_width - start * icon_cx;
-    rect.bottom = icon_cy;
+    rect.bottom = rect.top + icon_cy;
     InvalidateRect( tray_window, &rect, TRUE );
 }
 
@@ -325,7 +341,7 @@ static BOOL show_icon(struct icon *icon)
     update_tooltip_position( icon );
     invalidate_icons( nb_displayed-1, nb_displayed-1 );
 
-    if (nb_displayed == 1 && !hide_systray) ShowWindow( tray_window, SW_SHOWNA );
+    if (nb_displayed == 1 && !hide_systray) do_show_systray();
 
     create_tooltip(icon);
     update_balloon( icon );
@@ -352,7 +368,7 @@ static BOOL hide_icon(struct icon *icon)
     invalidate_icons( icon->display, nb_displayed );
     icon->display = -1;
 
-    if (!nb_displayed && !enable_shell) ShowWindow( tray_window, SW_HIDE );
+    if (!nb_displayed && !enable_shell) do_hide_systray();
 
     update_balloon( icon );
     update_tooltip_position( icon );
@@ -430,7 +446,6 @@ static BOOL add_icon(NOTIFYICONDATAW *nid)
     icon->owner  = nid->hWnd;
     icon->display = -1;
 
-    if (list_empty( &icon_list )) SetTimer( tray_window, VALID_WIN_TIMER, VALID_WIN_TIMEOUT, NULL );
     list_add_tail(&icon_list, &icon->entry);
 
     return modify_icon( icon, nid );
@@ -443,17 +458,65 @@ static BOOL delete_icon(struct icon *icon)
     list_remove(&icon->entry);
     DestroyIcon(icon->image);
     HeapFree(GetProcessHeap(), 0, icon);
-    if (list_empty( &icon_list )) KillTimer( tray_window, VALID_WIN_TIMER );
     return TRUE;
 }
 
-/* cleanup icons belonging to windows that have been destroyed */
-static void cleanup_destroyed_windows(void)
+/* cleanup icons belonging to a window that has been destroyed */
+static void cleanup_systray_window( HWND hwnd )
 {
     struct icon *icon, *next;
 
     LIST_FOR_EACH_ENTRY_SAFE( icon, next, &icon_list, struct icon, entry )
-        if (!IsWindow( icon->owner )) delete_icon( icon );
+        if (icon->owner == hwnd) delete_icon( icon );
+
+    if (wine_notify_icon)
+    {
+        NOTIFYICONDATAW nid = { sizeof(nid), hwnd };
+        wine_notify_icon( 0xdead, &nid );
+    }
+}
+
+/* update the taskbar buttons when something changed */
+static void sync_taskbar_buttons(void)
+{
+    struct taskbar_button *win;
+    int pos = 0, count = 0;
+    int width = taskbar_button_width;
+    int right = tray_width - nb_displayed * icon_cx;
+    HWND foreground = GetAncestor( GetForegroundWindow(), GA_ROOTOWNER );
+
+    if (!IsWindowVisible( tray_window )) return;
+
+    LIST_FOR_EACH_ENTRY( win, &taskbar_buttons, struct taskbar_button, entry )
+    {
+        if (!win->hwnd)  /* start button */
+        {
+            SetWindowPos( win->button, 0, pos, 0, start_button_width, tray_height,
+                          SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW );
+            pos += start_button_width;
+            continue;
+        }
+        win->active = (win->hwnd == foreground);
+        win->visible = IsWindowVisible( win->hwnd ) && !GetWindow( win->hwnd, GW_OWNER );
+        if (win->visible) count++;
+    }
+
+    /* shrink buttons if space is tight */
+    if (count && (count * width > right - pos))
+        width = max( taskbar_button_width / 4, (right - pos) / count );
+
+    LIST_FOR_EACH_ENTRY( win, &taskbar_buttons, struct taskbar_button, entry )
+    {
+        if (!win->hwnd) continue;  /* start button */
+        if (win->visible && right - pos >= width)
+        {
+            SetWindowPos( win->button, 0, pos, 0, width, tray_height,
+                          SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW );
+            InvalidateRect( win->button, NULL, TRUE );
+            pos += width;
+        }
+        else SetWindowPos( win->button, 0, 0, 0, 0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW );
+    }
 }
 
 static BOOL handle_incoming(HWND hwndSource, COPYDATASTRUCT *cds)
@@ -524,13 +587,128 @@ static BOOL handle_incoming(HWND hwndSource, COPYDATASTRUCT *cds)
     case NIM_MODIFY:
         if (icon) ret = modify_icon( icon, &nid );
         break;
+    case NIM_SETVERSION:
+        if (icon)
+        {
+            icon->version = nid.u.uVersion;
+            ret = TRUE;
+        }
+        break;
     default:
         WINE_FIXME("unhandled tray message: %ld\n", cds->dwData);
         break;
     }
 
     if (nid.hIcon) DestroyIcon( nid.hIcon );
+    sync_taskbar_buttons();
     return ret;
+}
+
+static void add_taskbar_button( HWND hwnd )
+{
+    struct taskbar_button *win;
+
+    if (hide_systray) return;
+
+    /* ignore our own windows */
+    if (hwnd)
+    {
+        DWORD process;
+        if (!GetWindowThreadProcessId( hwnd, &process ) || process == GetCurrentProcessId()) return;
+    }
+
+    if (!(win = HeapAlloc( GetProcessHeap(), 0, sizeof(*win) ))) return;
+    win->hwnd = hwnd;
+    win->button = CreateWindowW( WC_BUTTONW, NULL, WS_CHILD | BS_OWNERDRAW,
+                                 0, 0, 0, 0, tray_window, (HMENU)hwnd, 0, 0 );
+    list_add_tail( &taskbar_buttons, &win->entry );
+}
+
+static struct taskbar_button *find_taskbar_button( HWND hwnd )
+{
+    struct taskbar_button *win;
+
+    LIST_FOR_EACH_ENTRY( win, &taskbar_buttons, struct taskbar_button, entry )
+        if (win->hwnd == hwnd) return win;
+
+    return NULL;
+}
+
+static void remove_taskbar_button( HWND hwnd )
+{
+    struct taskbar_button *win = find_taskbar_button( hwnd );
+
+    if (!win) return;
+    list_remove( &win->entry );
+    DestroyWindow( win->button );
+    HeapFree( GetProcessHeap(), 0, win );
+}
+
+static void paint_taskbar_button( const DRAWITEMSTRUCT *dis )
+{
+    RECT rect;
+    UINT flags = DC_TEXT;
+    struct taskbar_button *win = find_taskbar_button( LongToHandle( dis->CtlID ));
+
+    if (!win) return;
+    GetClientRect( dis->hwndItem, &rect );
+    DrawFrameControl( dis->hDC, &rect, DFC_BUTTON, DFCS_BUTTONPUSH | DFCS_ADJUSTRECT |
+                      ((dis->itemState & ODS_SELECTED) ? DFCS_PUSHED : 0 ));
+    if (win->hwnd)
+    {
+        flags |= win->active ? DC_ACTIVE : DC_INBUTTON;
+        DrawCaptionTempW( win->hwnd, dis->hDC, &rect, 0, 0, NULL, flags );
+    }
+    else  /* start button */
+        DrawCaptionTempW( 0, dis->hDC, &rect, 0, 0, start_label, flags | DC_INBUTTON | DC_ICON );
+}
+
+static void click_taskbar_button( HWND button )
+{
+    LONG_PTR id = GetWindowLongPtrW( button, GWLP_ID );
+    HWND hwnd = (HWND)id;
+
+    if (!hwnd)  /* start button */
+    {
+        do_startmenu( tray_window );
+        return;
+    }
+
+    if (IsIconic( hwnd ))
+    {
+        SendMessageW( hwnd, WM_SYSCOMMAND, SC_RESTORE, 0 );
+        return;
+    }
+
+    if (IsWindowEnabled( hwnd ))
+    {
+        if (hwnd == GetForegroundWindow())
+        {
+            SendMessageW( hwnd, WM_SYSCOMMAND, SC_MINIMIZE, 0 );
+            return;
+        }
+    }
+    else  /* look for an enabled window owned by this one */
+    {
+        HWND owned = GetWindow( GetDesktopWindow(), GW_CHILD );
+        while (owned && owned != hwnd)
+        {
+            if (IsWindowVisible( owned ) &&
+                IsWindowEnabled( owned ) &&
+                (GetWindow( owned, GW_OWNER ) == hwnd))
+                break;
+            owned = GetWindow( owned, GW_HWNDNEXT );
+        }
+        hwnd = owned;
+    }
+    SetForegroundWindow( hwnd );
+}
+
+static void show_taskbar_contextmenu( HWND button, LPARAM lparam )
+{
+    ULONG_PTR id = GetWindowLongPtrW( button, GWLP_ID );
+
+    if (id) SendNotifyMessageW( (HWND)id, WM_POPUPSYSTEMMENU, 0, lparam );
 }
 
 static void do_hide_systray(void)
@@ -541,6 +719,58 @@ static void do_hide_systray(void)
                   0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE );
 }
 
+static BOOL notify_owner( struct icon *icon, UINT msg, POINT pt )
+{
+    WPARAM wp = icon->id;
+    LPARAM lp = msg;
+
+    if (icon->version >= NOTIFY_VERSION_4)
+    {
+        ClientToScreen( tray_window, &pt );
+        wp = MAKEWPARAM( pt.x, pt.y );
+        lp = MAKELPARAM( msg, icon->id );
+    }
+
+    TRACE( "relaying 0x%x\n", msg );
+    if (!PostMessageW( icon->owner, icon->callback_message, wp, lp ) &&
+        (GetLastError() == ERROR_INVALID_WINDOW_HANDLE))
+    {
+        WARN( "application window was destroyed, removing icon %u\n", icon->id );
+        delete_icon( icon );
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static void do_show_systray(void)
+{
+    SIZE size;
+    NONCLIENTMETRICSW ncm;
+    HFONT font;
+    HDC hdc = GetDC( 0 );
+
+    ncm.cbSize = sizeof(NONCLIENTMETRICSW);
+    SystemParametersInfoW( SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICSW), &ncm, 0 );
+    font = CreateFontIndirectW( &ncm.lfCaptionFont );
+    /* FIXME: Implement BCM_GETIDEALSIZE and use that instead. */
+    SelectObject( hdc, font );
+    GetTextExtentPointA( hdc, "abcdefghijklmnopqrstuvwxyz", 26, &size );
+    taskbar_button_width = size.cx;
+    GetTextExtentPointW( hdc, start_label, lstrlenW(start_label), &size );
+    /* add some margins (FIXME) */
+    size.cx += 12 + GetSystemMetrics( SM_CXSMICON );
+    size.cy += 4;
+    ReleaseDC( 0, hdc );
+    DeleteObject( font );
+
+    tray_width = GetSystemMetrics( SM_CXSCREEN );
+    tray_height = max( icon_cy, size.cy );
+    start_button_width = size.cx;
+    SetWindowPos( tray_window, HWND_TOPMOST, 0, GetSystemMetrics( SM_CYSCREEN ) - tray_height,
+                  tray_width, tray_height, SWP_NOACTIVATE | SWP_SHOWWINDOW );
+    sync_taskbar_buttons();
+}
+
 static LRESULT WINAPI tray_wndproc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     switch (msg)
@@ -549,19 +779,13 @@ static LRESULT WINAPI tray_wndproc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
         return handle_incoming((HWND)wparam, (COPYDATASTRUCT *)lparam);
 
     case WM_DISPLAYCHANGE:
-        if (hide_systray) do_hide_systray();
-        else
-        {
-            tray_width = GetSystemMetrics( SM_CXSCREEN );
-            SetWindowPos( tray_window, 0, 0, GetSystemMetrics( SM_CYSCREEN ) - icon_cy,
-                          tray_width, icon_cy, SWP_NOZORDER | SWP_NOACTIVATE );
-        }
+        if (hide_systray || (!nb_displayed && !enable_shell)) do_hide_systray();
+        else do_show_systray();
         break;
 
     case WM_TIMER:
         switch (wparam)
         {
-        case VALID_WIN_TIMER:      cleanup_destroyed_windows(); break;
         case BALLOON_CREATE_TIMER: balloon_create_timer(); break;
         case BALLOON_SHOW_TIMER:   balloon_timer(); break;
         }
@@ -598,11 +822,9 @@ static LRESULT WINAPI tray_wndproc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
     case WM_MBUTTONDBLCLK:
         {
             MSG message;
-            struct icon *icon = icon_from_point( (short)LOWORD(lparam), (short)HIWORD(lparam) );
+            POINT pt = { (short)LOWORD(lparam), (short)HIWORD(lparam) };
+            struct icon *icon = icon_from_point( pt.x, pt.y );
             if (!icon) break;
-
-            /* notify the owner hwnd of the message */
-            WINE_TRACE("relaying 0x%x\n", msg);
 
             message.hwnd = hwnd;
             message.message = msg;
@@ -610,12 +832,19 @@ static LRESULT WINAPI tray_wndproc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             message.lParam = lparam;
             SendMessageW( icon->tooltip, TTM_RELAYEVENT, 0, (LPARAM)&message );
 
-            if (!PostMessageW( icon->owner, icon->callback_message, (WPARAM) icon->id, (LPARAM) msg ) &&
-                GetLastError() == ERROR_INVALID_WINDOW_HANDLE)
+            if (!notify_owner( icon, msg, pt )) break;
+
+            if (icon->version > 0)
             {
-                WINE_WARN("application window was destroyed without removing "
-                          "notification icon, removing automatically\n");
-                delete_icon( icon );
+                switch (msg)
+                {
+                case WM_RBUTTONUP:
+                    notify_owner( icon, WM_CONTEXTMENU, pt );
+                    break;
+                case WM_LBUTTONUP:
+                    notify_owner( icon, NIN_SELECT, pt );
+                    break;
+                }
             }
             break;
         }
@@ -625,10 +854,20 @@ static LRESULT WINAPI tray_wndproc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
         ShowWindow( hwnd, SW_HIDE );
         return 0;
 
-    case WM_COMMAND:
-        if ((HWND)lparam == start_button && HIWORD(wparam) == BN_CLICKED)
-            do_startmenu(hwnd);
+    case WM_DRAWITEM:
+        paint_taskbar_button( (const DRAWITEMSTRUCT *)lparam );
         break;
+
+    case WM_COMMAND:
+        if (HIWORD(wparam) == BN_CLICKED) click_taskbar_button( (HWND)lparam );
+        break;
+
+    case WM_CONTEXTMENU:
+        show_taskbar_contextmenu( (HWND)wparam, lparam );
+        break;
+
+    case WM_MOUSEACTIVATE:
+        return MA_NOACTIVATE;
 
     case WM_INITMENUPOPUP:
     case WM_MENUCOMMAND:
@@ -640,14 +879,20 @@ static LRESULT WINAPI tray_wndproc( HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
     return 0;
 }
 
-static void get_system_text_size( const WCHAR *text, SIZE *size )
+/* notification posted to the desktop window */
+void handle_parent_notify( HWND hwnd, WPARAM wp )
 {
-    /* FIXME: Implement BCM_GETIDEALSIZE and use that instead. */
-    HDC hdc = GetDC( 0 );
-
-    GetTextExtentPointW(hdc, text, lstrlenW(text), size);
-
-    ReleaseDC( 0, hdc );
+    switch (LOWORD(wp))
+    {
+    case WM_CREATE:
+        add_taskbar_button( hwnd );
+        break;
+    case WM_DESTROY:
+        remove_taskbar_button( hwnd );
+        cleanup_systray_window( hwnd );
+        break;
+    }
+    sync_taskbar_buttons();
 }
 
 /* this function creates the listener window */
@@ -655,9 +900,6 @@ void initialize_systray( HMODULE graphics_driver, BOOL using_root, BOOL arg_enab
 {
     WNDCLASSEXW class;
     static const WCHAR classname[] = {'S','h','e','l','l','_','T','r','a','y','W','n','d',0};
-    static const WCHAR button_class[] = {'B','u','t','t','o','n',0};
-    WCHAR start_label[50];
-    SIZE start_text_size;
 
     wine_notify_icon = (void *)GetProcAddress( graphics_driver, "wine_notify_icon" );
 
@@ -683,10 +925,8 @@ void initialize_systray( HMODULE graphics_driver, BOOL using_root, BOOL arg_enab
         return;
     }
 
-    tray_width = GetSystemMetrics( SM_CXSCREEN );
     tray_window = CreateWindowExW( WS_EX_NOACTIVATE, classname, NULL, WS_POPUP,
-                                   0, GetSystemMetrics( SM_CYSCREEN ) - icon_cy,
-                                   tray_width, icon_cy, 0, 0, 0, 0 );
+                                   0, GetSystemMetrics( SM_CYSCREEN ), 0, 0, 0, 0, 0, 0 );
     if (!tray_window)
     {
         WINE_ERR("Could not create tray window\n");
@@ -695,12 +935,8 @@ void initialize_systray( HMODULE graphics_driver, BOOL using_root, BOOL arg_enab
 
     LoadStringW( NULL, IDS_START_LABEL, start_label, sizeof(start_label)/sizeof(WCHAR) );
 
-    get_system_text_size( start_label, &start_text_size );
-
-    start_button = CreateWindowW( button_class, start_label, WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
-        0, 0, start_text_size.cx + 8, icon_cy, tray_window, 0, 0, 0 );
-
-    if (enable_shell && !hide_systray) ShowWindow( tray_window, SW_SHOWNA );
+    add_taskbar_button( 0 );
 
     if (hide_systray) do_hide_systray();
+    else if (enable_shell) do_show_systray();
 }

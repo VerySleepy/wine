@@ -1166,8 +1166,8 @@ static void test_aes(int keylen)
 
     /* Does AES provider support salt? */
     result = CryptGetKeyParam(hKey, KP_SALT, NULL, &dwLen, 0);
-    ok((!result && GetLastError() == NTE_BAD_KEY) || result /* Win7 */,
-       "expected NTE_BAD_KEY, got %08x\n", GetLastError());
+    todo_wine ok(result || broken(GetLastError() == NTE_BAD_KEY), /* Vista or older */
+       "Expected OK, got last error %d\n", GetLastError());
     if (result)
         ok(!dwLen, "unexpected salt length %d\n", dwLen);
 
@@ -1728,7 +1728,7 @@ static void test_rc4(void)
         dwLen = 0;
         result = CryptGetKeyParam(hKey, KP_SALT, NULL, &dwLen, 0);
         ok(result, "%08x\n", GetLastError());
-        if (BASE_PROV || STRONG_PROV || nt4)
+        if (BASE_PROV || STRONG_PROV)
             ok(dwLen == 11, "expected salt length 11, got %d\n", dwLen);
         else
             ok(dwLen == 0 || broken(nt4 && dwLen == 11), "expected salt length 0, got %d\n", dwLen);
@@ -1971,8 +1971,7 @@ static void test_import_private(void)
      * actual buffer.  The private exponent can be omitted, its length is
      * inferred from the passed-in length parameter.
      */
-    dwLen = sizeof(BLOBHEADER) + sizeof(RSAPUBKEY) +
-        rsaPubKey->bitlen / 8 + 5 * rsaPubKey->bitlen / 16;
+    dwLen = sizeof(BLOBHEADER) + sizeof(RSAPUBKEY) + rsaPubKey->bitlen / 2;
     for (; dwLen < sizeof(abPlainPrivateKey); dwLen++)
     {
         result = CryptImportKey(hProv, abPlainPrivateKey, dwLen, 0, 0, &hKeyExchangeKey);
@@ -2802,8 +2801,18 @@ static void test_schannel_provider(void)
     if (!result) return;
 
     result = CryptCreateHash(hProv, CALG_SCHANNEL_MASTER_HASH, hMasterSecret, 0, &hMasterHash);
-    ok (result, "%08x\n", GetLastError());
-    if (!result) return;
+    ok (result ||
+        broken(!result), /* Windows 8 and greater */
+        "%08x\n", GetLastError());
+    if (!result)
+    {
+        win_skip("Broken TLS1 hash creation\n");
+        CryptDestroyKey(hRSAKey);
+        CryptDestroyKey(hMasterSecret);
+        CryptReleaseContext(hProv, 0);
+        CryptAcquireContextA(&hProv, NULL, NULL, PROV_RSA_SCHANNEL, CRYPT_DELETEKEYSET);
+        return;
+    }
 
     /* Deriving the server write encryption key from the master hash can't
      * succeed before the encryption key algorithm is set.
@@ -3837,7 +3846,7 @@ START_TEST(rsaenh)
         if(!BASE_PROV) test_key_derivation(STRONG_PROV ? "STRONG" : "ENH");
         clean_up_base_environment();
     }
-    if (!init_base_environment(MS_ENHANCED_PROV_A, 0))
+
     test_key_permissions();
     test_key_initialization();
     test_schannel_provider();

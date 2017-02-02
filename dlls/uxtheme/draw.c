@@ -98,9 +98,9 @@ HRESULT WINAPI DrawThemeParentBackground(HWND hwnd, HDC hdc, RECT *prc)
     if(!hParent)
         hParent = hwnd;
     if(prc) {
-        CopyRect(&rt, prc);
+        rt = *prc;
         MapWindowPoints(hwnd, hParent, (LPPOINT)&rt, 2);
-        
+
         clip = CreateRectRgn(0,0,1,1);
         hasClip = GetClipRgn(hdc, clip);
         if(hasClip == -1)
@@ -142,7 +142,7 @@ HRESULT WINAPI DrawThemeBackground(HTHEME hTheme, HDC hdc, int iPartId,
     opts.dwFlags = 0;
     if(pClipRect) {
         opts.dwFlags |= DTBG_CLIPRECT;
-        CopyRect(&opts.rcClip, pClipRect);
+        opts.rcClip = *pClipRect;
     }
     return DrawThemeBackgroundEx(hTheme, hdc, iPartId, iStateId, pRect, &opts);
 }
@@ -257,6 +257,9 @@ static HRESULT UXTHEME_LoadImage(HTHEME hTheme, HDC hdc, int iPartId, int iState
 
     imagenum = max (min (imagecount, iStateId), 1) - 1;
     GetObjectW(*hBmp, sizeof(bmp), &bmp);
+
+    if(imagecount < 1) imagecount = 1;
+
     if(imagelayout == IL_VERTICAL) {
         int height = bmp.bmHeight/imagecount;
         bmpRect->left = 0;
@@ -290,22 +293,33 @@ static inline BOOL UXTHEME_StretchBlt(HDC hdcDst, int nXOriginDst, int nYOriginD
       255,         /* SourceConstantAlpha */
       AC_SRC_ALPHA /* AlphaFormat */
     };
+
+    BOOL ret = TRUE;
+    int old_stretch_mode;
+    POINT old_brush_org;
+
+    old_stretch_mode = SetStretchBltMode(hdcDst, HALFTONE);
+    SetBrushOrgEx(hdcDst, nXOriginDst, nYOriginDst, &old_brush_org);
+
     if (transparent == ALPHABLEND_BINARY) {
         /* Ensure we don't pass any negative values to TransparentBlt */
-        return TransparentBlt(hdcDst, nXOriginDst, nYOriginDst, abs(nWidthDst), abs(nHeightDst),
+        ret = TransparentBlt(hdcDst, nXOriginDst, nYOriginDst, abs(nWidthDst), abs(nHeightDst),
                               hdcSrc, nXOriginSrc, nYOriginSrc, abs(nWidthSrc), abs(nHeightSrc),
                               transcolor);
-    }
-    if ((transparent == ALPHABLEND_NONE) ||
+    } else if ((transparent == ALPHABLEND_NONE) ||
         !AlphaBlend(hdcDst, nXOriginDst, nYOriginDst, nWidthDst, nHeightDst,
                     hdcSrc, nXOriginSrc, nYOriginSrc, nWidthSrc, nHeightSrc,
                     blendFunc))
     {
-        return StretchBlt(hdcDst, nXOriginDst, nYOriginDst, nWidthDst, nHeightDst,
+        ret = StretchBlt(hdcDst, nXOriginDst, nYOriginDst, nWidthDst, nHeightDst,
                           hdcSrc, nXOriginSrc, nYOriginSrc, nWidthSrc, nHeightSrc,
                           SRCCOPY);
     }
-    return TRUE;
+
+    SetBrushOrgEx(hdcDst, old_brush_org.x, old_brush_org.y, NULL);
+    SetStretchBltMode(hdcDst, old_stretch_mode);
+
+    return ret;
 }
 
 /***********************************************************************
@@ -564,7 +578,7 @@ static HRESULT get_image_part_size (HTHEME hTheme, HDC hdc, int iPartId,
                 int sizingtype = ST_STRETCH;
                 BOOL uniformsizing = FALSE;
 
-                CopyRect(&rcDst, prc);
+                rcDst = *prc;
 
                 dstSize.x = rcDst.right-rcDst.left;
                 dstSize.y = rcDst.bottom-rcDst.top;
@@ -649,9 +663,9 @@ static HRESULT UXTHEME_DrawImageBackground(HTHEME hTheme, HDC hdc, int iPartId,
                                     const DTBGOPTS *pOptions)
 {
     HRESULT hr = S_OK;
-    HBITMAP bmpSrc;
+    HBITMAP bmpSrc, bmpSrcResized = NULL;
     HGDIOBJ oldSrc;
-    HDC hdcSrc;
+    HDC hdcSrc, hdcOrigSrc = NULL;
     RECT rcSrc;
     RECT rcDst;
     POINT dstSize;
@@ -672,7 +686,7 @@ static HRESULT UXTHEME_DrawImageBackground(HTHEME hTheme, HDC hdc, int iPartId,
     }
     oldSrc = SelectObject(hdcSrc, bmpSrc);
 
-    CopyRect(&rcDst, pRect);
+    rcDst = *pRect;
     
     get_transparency (hTheme, iPartId, iStateId, hasAlpha, &transparent,
         &transparentcolor, FALSE);
@@ -714,6 +728,34 @@ static HRESULT UXTHEME_DrawImageBackground(HTHEME hTheme, HDC hdc, int iPartId,
         dstSize.y = abs(dstSize.y);
 
         GetThemeMargins(hTheme, hdc, iPartId, iStateId, TMT_SIZINGMARGINS, NULL, &sm);
+
+        /* Resize source image if destination smaller than margins */
+        if (sm.cyTopHeight + sm.cyBottomHeight > dstSize.y || sm.cxLeftWidth + sm.cxRightWidth > dstSize.x) {
+            if (sm.cyTopHeight + sm.cyBottomHeight > dstSize.y) {
+                sm.cyTopHeight = MulDiv(sm.cyTopHeight, dstSize.y, srcSize.y);
+                sm.cyBottomHeight = dstSize.y - sm.cyTopHeight;
+                srcSize.y = dstSize.y;
+            }
+
+            if (sm.cxLeftWidth + sm.cxRightWidth > dstSize.x) {
+                sm.cxLeftWidth = MulDiv(sm.cxLeftWidth, dstSize.x, srcSize.x);
+                sm.cxRightWidth = dstSize.x - sm.cxLeftWidth;
+                srcSize.x = dstSize.x;
+            }
+
+            hdcOrigSrc = hdcSrc;
+            hdcSrc = CreateCompatibleDC(NULL);
+            bmpSrcResized = CreateBitmap(srcSize.x, srcSize.y, 1, 32, NULL);
+            SelectObject(hdcSrc, bmpSrcResized);
+
+            UXTHEME_StretchBlt(hdcSrc, 0, 0, srcSize.x, srcSize.y, hdcOrigSrc, rcSrc.left, rcSrc.top,
+                               rcSrc.right - rcSrc.left, rcSrc.bottom - rcSrc.top, transparent, transparentcolor);
+
+            rcSrc.left = 0;
+            rcSrc.top = 0;
+            rcSrc.right = srcSize.x;
+            rcSrc.bottom = srcSize.y;
+        }
 
         hdcDst = hdc;
         OffsetViewportOrgEx(hdcDst, rcDst.left, rcDst.top, &org);
@@ -819,7 +861,9 @@ draw_error:
     }
     SelectObject(hdcSrc, oldSrc);
     DeleteDC(hdcSrc);
-    CopyRect(pRect, &rcDst);
+    if (bmpSrcResized) DeleteObject(bmpSrcResized);
+    if (hdcOrigSrc) DeleteDC(hdcOrigSrc);
+    *pRect = rcDst;
     return hr;
 }
 
@@ -957,7 +1001,7 @@ static HRESULT UXTHEME_DrawBorderBackground(HTHEME hTheme, HDC hdc, int iPartId,
     HRESULT hr;
     RECT rt;
 
-    CopyRect(&rt, pRect);
+    rt = *pRect;
 
     hr = UXTHEME_DrawBorderRectangle(hTheme, hdc, iPartId, iStateId, &rt, pOptions);
     if(FAILED(hr))
@@ -999,7 +1043,7 @@ HRESULT WINAPI DrawThemeBackgroundEx(HTHEME hTheme, HDC hdc, int iPartId,
         else
             IntersectClipRect(hdc, opts->rcClip.left, opts->rcClip.top, opts->rcClip.right, opts->rcClip.bottom);
     }
-    CopyRect(&rt, pRect);
+    rt = *pRect;
 
     if(bgtype == BT_IMAGEFILE)
         hr = UXTHEME_DrawImageBackground(hTheme, hdc, iPartId, iStateId, &rt, opts);
@@ -1582,15 +1626,36 @@ HRESULT WINAPI DrawThemeIcon(HTHEME hTheme, HDC hdc, int iPartId, int iStateId,
     FIXME("%d %d: stub\n", iPartId, iStateId);
     if(!hTheme)
         return E_HANDLE;
-    return ERROR_CALL_NOT_IMPLEMENTED;
+    return E_NOTIMPL;
 }
 
 /***********************************************************************
  *      DrawThemeText                                       (UXTHEME.@)
  */
 HRESULT WINAPI DrawThemeText(HTHEME hTheme, HDC hdc, int iPartId, int iStateId,
-                             LPCWSTR pszText, int iCharCount, DWORD dwTextFlags,
-                             DWORD dwTextFlags2, const RECT *pRect)
+                             LPCWSTR pszText, int iCharCount, DWORD flags,
+                             DWORD flags2, const RECT *pRect)
+{
+    DTTOPTS opts;
+    RECT rt;
+
+    TRACE("%d %d\n", iPartId, iStateId);
+
+    rt = *pRect;
+
+    opts.dwSize = sizeof(opts);
+    if (flags2 & DTT_GRAYED) {
+        opts.dwFlags = DTT_TEXTCOLOR;
+        opts.crText = GetSysColor(COLOR_GRAYTEXT);
+    }
+    return DrawThemeTextEx(hTheme, hdc, iPartId, iStateId, pszText, iCharCount, flags, &rt, &opts);
+}
+
+/***********************************************************************
+ *      DrawThemeTextEx                                     (UXTHEME.@)
+ */
+HRESULT WINAPI DrawThemeTextEx(HTHEME hTheme, HDC hdc, int iPartId, int iStateId,
+    LPCWSTR pszText, int iCharCount, DWORD flags, RECT *rect, const DTTOPTS *options)
 {
     HRESULT hr;
     HFONT hFont = NULL;
@@ -1599,11 +1664,15 @@ HRESULT WINAPI DrawThemeText(HTHEME hTheme, HDC hdc, int iPartId, int iStateId,
     COLORREF textColor;
     COLORREF oldTextColor;
     int oldBkMode;
-    RECT rt;
-    
-    TRACE("%d %d: stub\n", iPartId, iStateId);
+
+    TRACE("%p %p %d %d %s:%d 0x%08x %p %p\n", hTheme, hdc, iPartId, iStateId,
+        debugstr_wn(pszText, iCharCount), iCharCount, flags, rect, options);
+
     if(!hTheme)
         return E_HANDLE;
+
+    if (options->dwFlags & ~DTT_TEXTCOLOR)
+        FIXME("unsupported flags 0x%08x\n", options->dwFlags);
     
     hr = GetThemeFont(hTheme, hdc, iPartId, iStateId, TMT_FONT, &logfont);
     if(SUCCEEDED(hr)) {
@@ -1611,19 +1680,19 @@ HRESULT WINAPI DrawThemeText(HTHEME hTheme, HDC hdc, int iPartId, int iStateId,
         if(!hFont)
             TRACE("Failed to create font\n");
     }
-    CopyRect(&rt, pRect);
+
     if(hFont)
         oldFont = SelectObject(hdc, hFont);
-        
-    if(dwTextFlags2 & DTT_GRAYED)
-        textColor = GetSysColor(COLOR_GRAYTEXT);
+
+    if (options->dwFlags & DTT_TEXTCOLOR)
+        textColor = options->crText;
     else {
         if(FAILED(GetThemeColor(hTheme, iPartId, iStateId, TMT_TEXTCOLOR, &textColor)))
             textColor = GetTextColor(hdc);
     }
     oldTextColor = SetTextColor(hdc, textColor);
     oldBkMode = SetBkMode(hdc, TRANSPARENT);
-    DrawTextW(hdc, pszText, iCharCount, &rt, dwTextFlags);
+    DrawTextW(hdc, pszText, iCharCount, rect, flags);
     SetBkMode(hdc, oldBkMode);
     SetTextColor(hdc, oldTextColor);
 
@@ -1678,7 +1747,7 @@ HRESULT WINAPI GetThemeBackgroundContentRect(HTHEME hTheme, HDC hdc, int iPartId
         /* If nothing was found, leave unchanged */
     }
 
-    TRACE("left:%d,top:%d,right:%d,bottom:%d\n", pContentRect->left, pContentRect->top, pContentRect->right, pContentRect->bottom);
+    TRACE("%s\n", wine_dbgstr_rect(pContentRect));
 
     return S_OK;
 }
@@ -1726,7 +1795,121 @@ HRESULT WINAPI GetThemeBackgroundExtent(HTHEME hTheme, HDC hdc, int iPartId,
         /* If nothing was found, leave unchanged */
     }
 
-    TRACE("left:%d,top:%d,right:%d,bottom:%d\n", pExtentRect->left, pExtentRect->top, pExtentRect->right, pExtentRect->bottom);
+    TRACE("%s\n", wine_dbgstr_rect(pExtentRect));
+
+    return S_OK;
+}
+
+static inline void flush_rgn_data( HRGN rgn, RGNDATA *data )
+{
+    HRGN tmp = ExtCreateRegion( NULL, data->rdh.dwSize + data->rdh.nRgnSize, data );
+
+    CombineRgn( rgn, rgn, tmp, RGN_OR );
+    DeleteObject( tmp );
+    data->rdh.nCount = 0;
+}
+
+static inline void add_row( HRGN rgn, RGNDATA *data, int x, int y, int len )
+{
+    RECT *rect = (RECT *)data->Buffer + data->rdh.nCount;
+
+    if (len <= 0) return;
+    rect->left   = x;
+    rect->top    = y;
+    rect->right  = x + len;
+    rect->bottom = y + 1;
+    data->rdh.nCount++;
+    if (data->rdh.nCount * sizeof(RECT) > data->rdh.nRgnSize - sizeof(RECT))
+        flush_rgn_data( rgn, data );
+}
+
+static HRESULT create_image_bg_region(HTHEME theme, int part, int state, const RECT *rect, HRGN *rgn)
+{
+    RECT r;
+    HDC dc;
+    HBITMAP bmp;
+    HRGN hrgn;
+    BOOL istrans;
+    COLORREF transcolour;
+    HBRUSH transbrush;
+    unsigned int x, y, start;
+    BITMAPINFO bitmapinfo;
+    DWORD *bits;
+    char buffer[4096];
+    RGNDATA *data = (RGNDATA *)buffer;
+
+    if (FAILED(GetThemeBool(theme, part, state, TMT_TRANSPARENT, &istrans)) || !istrans) {
+        *rgn = CreateRectRgn(rect->left, rect->top, rect->right, rect->bottom);
+        return S_OK;
+    }
+
+    r = *rect;
+    OffsetRect(&r, -r.left, -r.top);
+
+    if (FAILED(GetThemeColor(theme, part, state, TMT_TRANSPARENTCOLOR, &transcolour)))
+        transcolour = RGB(255, 0, 255); /* defaults to magenta */
+
+    dc = CreateCompatibleDC(NULL);
+    if (!dc) {
+        WARN("CreateCompatibleDC failed\n");
+        return E_FAIL;
+    }
+
+    bitmapinfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bitmapinfo.bmiHeader.biWidth = rect->right - rect->left;
+    bitmapinfo.bmiHeader.biHeight = -(rect->bottom - rect->top);
+    bitmapinfo.bmiHeader.biPlanes = 1;
+    bitmapinfo.bmiHeader.biBitCount = 32;
+    bitmapinfo.bmiHeader.biCompression = BI_RGB;
+    bitmapinfo.bmiHeader.biSizeImage = bitmapinfo.bmiHeader.biWidth * bitmapinfo.bmiHeader.biHeight * 4;
+    bitmapinfo.bmiHeader.biXPelsPerMeter = 0;
+    bitmapinfo.bmiHeader.biYPelsPerMeter = 0;
+    bitmapinfo.bmiHeader.biClrUsed = 0;
+    bitmapinfo.bmiHeader.biClrImportant = 0;
+
+    bmp = CreateDIBSection(dc, &bitmapinfo, DIB_RGB_COLORS, (void**)&bits, NULL, 0);
+    if (!bmp) {
+        WARN("CreateDIBSection failed\n");
+        DeleteDC(dc);
+        return E_FAIL;
+    }
+
+    SelectObject(dc, bmp);
+
+    transbrush = CreateSolidBrush(transcolour);
+    FillRect(dc, &r, transbrush);
+    DeleteObject(transbrush);
+
+    if (FAILED(DrawThemeBackground(theme, dc, part, state, &r, NULL))) {
+        WARN("DrawThemeBackground failed\n");
+        DeleteObject(bmp);
+        DeleteDC(dc);
+        return E_FAIL;
+    }
+
+    data->rdh.dwSize = sizeof(data->rdh);
+    data->rdh.iType  = RDH_RECTANGLES;
+    data->rdh.nCount = 0;
+    data->rdh.nRgnSize = sizeof(buffer) - sizeof(data->rdh);
+
+    hrgn = CreateRectRgn(0, 0, 0, 0);
+
+    for (y = 0; y < r.bottom; y++, bits += r.right) {
+        x = 0;
+        while (x < r.right) {
+            while (x < r.right && (bits[x] & 0xffffff) == transcolour) x++;
+            start = x;
+            while (x < r.right && !((bits[x] & 0xffffff) == transcolour)) x++;
+            add_row( hrgn, data, rect->left + start, rect->top + y, x - start );
+        }
+    }
+
+    if (data->rdh.nCount > 0) flush_rgn_data(hrgn, data);
+
+    *rgn = hrgn;
+
+    DeleteObject(bmp);
+    DeleteDC(dc);
 
     return S_OK;
 }
@@ -1752,8 +1935,7 @@ HRESULT WINAPI GetThemeBackgroundRegion(HTHEME hTheme, HDC hdc, int iPartId,
 
     GetThemeEnumValue(hTheme, iPartId, iStateId, TMT_BGTYPE, &bgtype);
     if(bgtype == BT_IMAGEFILE) {
-        FIXME("Images not handled yet\n");
-        hr = ERROR_CALL_NOT_IMPLEMENTED;
+        hr = create_image_bg_region(hTheme, iPartId, iStateId, pRect, pRegion);
     }
     else if(bgtype == BT_BORDERFILL) {
         *pRegion = CreateRectRgn(pRect->left, pRect->top, pRect->right, pRect->bottom);
@@ -1834,13 +2016,13 @@ HRESULT WINAPI GetThemeTextExtent(HTHEME hTheme, HDC hdc, int iPartId,
     LOGFONTW logfont;
     RECT rt = {0,0,0xFFFF,0xFFFF};
     
-    TRACE("%d %d: stub\n", iPartId, iStateId);
+    TRACE("%d %d\n", iPartId, iStateId);
     if(!hTheme)
         return E_HANDLE;
 
     if(pBoundingRect)
-        CopyRect(&rt, pBoundingRect);
-            
+        rt = *pBoundingRect;
+
     hr = GetThemeFont(hTheme, hdc, iPartId, iStateId, TMT_FONT, &logfont);
     if(SUCCEEDED(hr)) {
         hFont = CreateFontIndirectW(&logfont);
@@ -1851,7 +2033,7 @@ HRESULT WINAPI GetThemeTextExtent(HTHEME hTheme, HDC hdc, int iPartId,
         oldFont = SelectObject(hdc, hFont);
         
     DrawTextW(hdc, pszText, iCharCount, &rt, dwTextFlags|DT_CALCRECT);
-    CopyRect(pExtentRect, &rt);
+    *pExtentRect = rt;
 
     if(hFont) {
         SelectObject(hdc, oldFont);

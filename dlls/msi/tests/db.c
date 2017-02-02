@@ -470,6 +470,7 @@ static void test_msidecomposedesc(void)
     /* test a valid feature descriptor */
     desc = "']gAVn-}f(ZXfeAR6.jiFollowTheWhiteRabbit>3w2x^IGfe?CxI5heAvk.";
     len = 0;
+    prod[0] = feature[0] = comp[0] = 0;
     r = pMsiDecomposeDescriptorA(desc, prod, feature, comp, &len);
     ok(r == ERROR_SUCCESS, "returned an error\n");
     ok(len == strlen(desc), "length was wrong\n");
@@ -484,6 +485,28 @@ static void test_msidecomposedesc(void)
     len = 0;
     r = pMsiDecomposeDescriptorA(desc, prod, feature, comp, &len);
     ok(r == ERROR_INVALID_PARAMETER, "returned wrong error\n");
+
+    /* test a feature descriptor with < instead of > */
+    desc = "']gAVn-}f(ZXfeAR6.jiFollowTheWhiteRabbit<3w2x^IGfe?CxI5heAvk.";
+    len = 0;
+    prod[0] = feature[0] = 0;
+    comp[0] = 0x55;
+    r = pMsiDecomposeDescriptorA(desc, prod, feature, comp, &len);
+    ok(r == ERROR_SUCCESS, "returned an error\n");
+    ok(len == 41, "got %u\n", len);
+    ok(!strcmp(prod,"{90110409-6000-11D3-8CFE-0150048383C9}"), "got '%s'\n", prod);
+    ok(!strcmp(feature,"FollowTheWhiteRabbit"), "got '%s'\n", feature);
+    ok(!comp[0], "got '%s'\n", comp);
+
+    len = 0;
+    prod[0] = feature[0] = 0;
+    comp[0] = 0x55;
+    r = pMsiDecomposeDescriptorA("yh1BVN)8A$!!!!!MKKSkAlwaysInstalledIntl_1033<", prod, feature, comp, &len);
+    ok(r == ERROR_SUCCESS, "got %u\n", r);
+    ok(len == 45, "got %u\n", len);
+    ok(!strcmp(prod, "{90150000-006E-0409-0000-0000000FF1CE}"), "got '%s'\n", prod);
+    ok(!strcmp(feature, "AlwaysInstalledIntl_1033"), "got '%s'\n", feature);
+    ok(!comp[0], "got '%s'\n", comp);
 
     /*
      * Test a valid feature descriptor with the
@@ -1286,13 +1309,15 @@ static void test_viewgetcolumninfo(void)
     r = run_query( hdb, 0,
             "CREATE TABLE `Properties` "
             "( `Property` CHAR(255), "
-	    "  `Value` CHAR(1), "
-	    "  `Intvalue` INT, "
-	    "  `Integervalue` INTEGER, "
-	    "  `Shortvalue` SHORT, "
-	    "  `Longvalue` LONG, "
-	    "  `Longcharvalue` LONGCHAR "
-	    "  PRIMARY KEY `Property`)" );
+            "  `Value` CHAR(1), "
+            "  `Intvalue` INT, "
+            "  `Integervalue` INTEGER, "
+            "  `Shortvalue` SHORT, "
+            "  `Longvalue` LONG, "
+            "  `Longcharvalue` LONGCHAR, "
+            "  `Charvalue` CHAR, "
+            "  `Localizablevalue` CHAR LOCALIZABLE "
+            "  PRIMARY KEY `Property`)" );
     ok( r == ERROR_SUCCESS , "Failed to create table\n" );
 
     /* check the column types */
@@ -1306,6 +1331,8 @@ static void test_viewgetcolumninfo(void)
     ok( check_record( rec, 5, "I2"), "wrong record type\n");
     ok( check_record( rec, 6, "I4"), "wrong record type\n");
     ok( check_record( rec, 7, "S0"), "wrong record type\n");
+    ok( check_record( rec, 8, "S0"), "wrong record type\n");
+    ok( check_record( rec, 9, "L0"), "wrong record type\n");
 
     MsiCloseHandle( rec );
 
@@ -1317,6 +1344,8 @@ static void test_viewgetcolumninfo(void)
     ok( 0x1502 == get_columns_table_type(hdb, "Properties", 5 ), "_columns table wrong\n");
     ok( 0x1104 == get_columns_table_type(hdb, "Properties", 6 ), "_columns table wrong\n");
     ok( 0x1d00 == get_columns_table_type(hdb, "Properties", 7 ), "_columns table wrong\n");
+    ok( 0x1d00 == get_columns_table_type(hdb, "Properties", 8 ), "_columns table wrong\n");
+    ok( 0x1f00 == get_columns_table_type(hdb, "Properties", 9 ), "_columns table wrong\n");
 
     /* now try the names */
     rec = get_column_info( hdb, "select * from `Properties`", MSICOLINFO_NAMES );
@@ -1329,6 +1358,8 @@ static void test_viewgetcolumninfo(void)
     ok( check_record( rec, 5, "Shortvalue"), "wrong record type\n");
     ok( check_record( rec, 6, "Longvalue"), "wrong record type\n");
     ok( check_record( rec, 7, "Longcharvalue"), "wrong record type\n");
+    ok( check_record( rec, 8, "Charvalue"), "wrong record type\n");
+    ok( check_record( rec, 9, "Localizablevalue"), "wrong record type\n");
 
     MsiCloseHandle( rec );
 
@@ -2770,7 +2801,7 @@ static void test_markers(void)
     DeleteFileA(msifile);
 }
 
-#define MY_NVIEWS 4000    /* Largest installer I've seen uses < 2k */
+#define MY_NVIEWS 4000    /* Largest installer I've seen uses < 2000 */
 static void test_handle_limit(void)
 {
     int i;
@@ -3189,7 +3220,8 @@ static void test_try_transform(void)
     r = MsiDatabaseApplyTransformA( hdb, mstfile, 0 );
     ok( r == ERROR_SUCCESS, "return code %d, should be ERROR_SUCCESS\n", r );
 
-    MsiDatabaseCommit( hdb );
+    r = MsiDatabaseCommit( hdb );
+    ok( r == ERROR_SUCCESS , "Failed to commit database\n" );
 
     /* check new values */
     hrec = 0;
@@ -7264,7 +7296,7 @@ static void test_forcecodepage(void)
     create_file_data("forcecodepage.idt", "\r\n\r\n9999\t_ForceCodepage\r\n", 0);
 
     r = MsiDatabaseImportA(hdb, CURR_DIR, "forcecodepage.idt");
-    ok(r == ERROR_FUNCTION_FAILED, "Expected ERROR_SUCCESS, got %d\n", r);
+    ok(r == ERROR_FUNCTION_FAILED, "Expected ERROR_FUNCTION_FAILED, got %d\n", r);
 
     MsiCloseHandle(hdb);
     DeleteFileA(msifile);
@@ -8059,7 +8091,7 @@ static void test_dbmerge(void)
     r = run_query(href, 0, query);
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
 
-    /* column sting types don't match exactly */
+    /* column string types don't match exactly */
     r = MsiDatabaseMergeA(hdb, href, "MergeErrors");
     ok(r == ERROR_SUCCESS,
        "Expected ERROR_SUCCESS, got %d\n", r);

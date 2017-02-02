@@ -99,6 +99,9 @@
 #endif
 
 
+#include "macdrv_res.h"
+
+
 /* Must match the values of Cocoa's NSDragOperation enum. */
 enum {
     DRAG_OP_NONE    = 0,
@@ -115,6 +118,12 @@ enum {
     TOPMOST_FLOAT_INACTIVE_NONE,
     TOPMOST_FLOAT_INACTIVE_NONFULLSCREEN,
     TOPMOST_FLOAT_INACTIVE_ALL,
+};
+
+enum {
+    GL_SURFACE_IN_FRONT_OPAQUE,
+    GL_SURFACE_IN_FRONT_TRANSPARENT,
+    GL_SURFACE_BEHIND,
 };
 
 enum {
@@ -149,6 +158,80 @@ extern int right_option_is_alt DECLSPEC_HIDDEN;
 extern int allow_immovable_windows DECLSPEC_HIDDEN;
 extern int cursor_clipping_locks_windows DECLSPEC_HIDDEN;
 extern int use_precise_scrolling DECLSPEC_HIDDEN;
+extern int gl_surface_mode DECLSPEC_HIDDEN;
+extern CFDictionaryRef localized_strings DECLSPEC_HIDDEN;
+extern int retina_enabled DECLSPEC_HIDDEN;  /* Whether Retina mode is enabled via registry setting. */
+extern int retina_on DECLSPEC_HIDDEN;       /* Whether Retina mode is currently active (enabled and display is in default mode). */
+
+static inline CGRect cgrect_mac_from_win(CGRect rect)
+{
+    if (retina_on)
+    {
+        rect.origin.x /= 2;
+        rect.origin.y /= 2;
+        rect.size.width /= 2;
+        rect.size.height /= 2;
+    }
+
+    return rect;
+}
+
+static inline CGRect cgrect_win_from_mac(CGRect rect)
+{
+    if (retina_on)
+    {
+        rect.origin.x *= 2;
+        rect.origin.y *= 2;
+        rect.size.width *= 2;
+        rect.size.height *= 2;
+    }
+
+    return rect;
+}
+
+static inline CGSize cgsize_mac_from_win(CGSize size)
+{
+    if (retina_on)
+    {
+        size.width /= 2;
+        size.height /= 2;
+    }
+
+    return size;
+}
+
+static inline CGSize cgsize_win_from_mac(CGSize size)
+{
+    if (retina_on)
+    {
+        size.width *= 2;
+        size.height *= 2;
+    }
+
+    return size;
+}
+
+static inline CGPoint cgpoint_mac_from_win(CGPoint point)
+{
+    if (retina_on)
+    {
+        point.x /= 2;
+        point.y /= 2;
+    }
+
+    return point;
+}
+
+static inline CGPoint cgpoint_win_from_mac(CGPoint point)
+{
+    if (retina_on)
+    {
+        point.x *= 2;
+        point.y *= 2;
+    }
+
+    return point;
+}
 
 extern int macdrv_start_cocoa_app(unsigned long long tickcount) DECLSPEC_HIDDEN;
 extern void macdrv_window_rejected_focus(const struct macdrv_event *event) DECLSPEC_HIDDEN;
@@ -157,6 +240,7 @@ extern void macdrv_set_application_icon(CFArrayRef images) DECLSPEC_HIDDEN;
 extern void macdrv_quit_reply(int reply) DECLSPEC_HIDDEN;
 extern int macdrv_using_input_method(void) DECLSPEC_HIDDEN;
 extern void macdrv_set_mouse_capture_window(macdrv_window window) DECLSPEC_HIDDEN;
+extern void macdrv_set_cocoa_retina_mode(int new_mode) DECLSPEC_HIDDEN;
 
 
 /* cursor */
@@ -175,6 +259,7 @@ extern int macdrv_set_display_mode(const struct macdrv_display* display,
 
 /* event */
 enum {
+    APP_ACTIVATED,
     APP_DEACTIVATED,
     APP_QUIT_REQUESTED,
     DISPLAYS_CHANGED,
@@ -183,12 +268,16 @@ enum {
     KEY_PRESS,
     KEY_RELEASE,
     KEYBOARD_CHANGED,
+    LOST_PASTEBOARD_OWNERSHIP,
     MOUSE_BUTTON,
     MOUSE_MOVED,
     MOUSE_MOVED_ABSOLUTE,
     MOUSE_SCROLL,
     QUERY_EVENT,
+    QUERY_EVENT_NO_PREEMPT_WAIT,
+    REASSERT_WINDOW_POSITION,
     RELEASE_CAPTURE,
+    SENT_TEXT_INPUT,
     STATUS_ITEM_MOUSE_BUTTON,
     STATUS_ITEM_MOUSE_MOVE,
     WINDOW_BROUGHT_FORWARD,
@@ -213,7 +302,7 @@ enum {
     QUIT_REASON_SHUTDOWN,
 };
 
-typedef uint32_t macdrv_event_mask;
+typedef uint64_t macdrv_event_mask;
 
 typedef struct macdrv_event {
     int                 refs;
@@ -274,6 +363,10 @@ typedef struct macdrv_event {
             struct macdrv_query *query;
         }                                           query_event;
         struct {
+            int handled;
+            int *done;
+        }                                           sent_text_input;
+        struct {
             macdrv_status_item  item;
             int                 button;
             int                 down;
@@ -291,6 +384,10 @@ typedef struct macdrv_event {
             unsigned long   serial;
             void           *tried_windows;
         }                                           window_got_focus;
+        struct {
+            int     keep_frame;
+            CGRect  frame;
+        }                                           window_restore_requested;
     };
 } macdrv_event;
 
@@ -416,14 +513,18 @@ extern void macdrv_clear_window_color_key(macdrv_window w) DECLSPEC_HIDDEN;
 extern void macdrv_window_use_per_pixel_alpha(macdrv_window w, int use_per_pixel_alpha) DECLSPEC_HIDDEN;
 extern void macdrv_give_cocoa_window_focus(macdrv_window w, int activate) DECLSPEC_HIDDEN;
 extern void macdrv_set_window_min_max_sizes(macdrv_window w, CGSize min_size, CGSize max_size) DECLSPEC_HIDDEN;
-extern macdrv_view macdrv_create_view(macdrv_window w, CGRect rect) DECLSPEC_HIDDEN;
+extern macdrv_view macdrv_create_view(CGRect rect) DECLSPEC_HIDDEN;
 extern void macdrv_dispose_view(macdrv_view v) DECLSPEC_HIDDEN;
-extern void macdrv_set_view_window_and_frame(macdrv_view v, macdrv_window w, CGRect rect) DECLSPEC_HIDDEN;
+extern void macdrv_set_view_frame(macdrv_view v, CGRect rect) DECLSPEC_HIDDEN;
+extern void macdrv_set_view_superview(macdrv_view v, macdrv_view s, macdrv_window w, macdrv_view p, macdrv_view n) DECLSPEC_HIDDEN;
+extern void macdrv_set_view_hidden(macdrv_view v, int hidden) DECLSPEC_HIDDEN;
 extern void macdrv_add_view_opengl_context(macdrv_view v, macdrv_opengl_context c) DECLSPEC_HIDDEN;
 extern void macdrv_remove_view_opengl_context(macdrv_view v, macdrv_opengl_context c) DECLSPEC_HIDDEN;
+extern int macdrv_get_view_backing_size(macdrv_view v, int backing_size[2]) DECLSPEC_HIDDEN;
+extern void macdrv_set_view_backing_size(macdrv_view v, const int backing_size[2]) DECLSPEC_HIDDEN;
 extern uint32_t macdrv_window_background_color(void) DECLSPEC_HIDDEN;
-extern int macdrv_send_text_input_event(int pressed, unsigned int flags, int repeat, int keyc,
-                                        void* data) DECLSPEC_HIDDEN;
+extern void macdrv_send_text_input_event(int pressed, unsigned int flags, int repeat, int keyc,
+                                         void* data, int* done) DECLSPEC_HIDDEN;
 
 
 /* keyboard */
@@ -440,15 +541,15 @@ extern int macdrv_layout_list_needs_update DECLSPEC_HIDDEN;
 /* clipboard */
 extern CFArrayRef macdrv_copy_pasteboard_types(CFTypeRef pasteboard) DECLSPEC_HIDDEN;
 extern CFDataRef macdrv_copy_pasteboard_data(CFTypeRef pasteboard, CFStringRef type) DECLSPEC_HIDDEN;
-extern int macdrv_is_pasteboard_owner(void) DECLSPEC_HIDDEN;
-extern void macdrv_clear_pasteboard(void) DECLSPEC_HIDDEN;
+extern int macdrv_is_pasteboard_owner(macdrv_window w) DECLSPEC_HIDDEN;
+extern void macdrv_clear_pasteboard(macdrv_window w) DECLSPEC_HIDDEN;
 extern int macdrv_set_pasteboard_data(CFStringRef type, CFDataRef data, macdrv_window w) DECLSPEC_HIDDEN;
 
 
 /* opengl */
 extern macdrv_opengl_context macdrv_create_opengl_context(void* cglctx) DECLSPEC_HIDDEN;
 extern void macdrv_dispose_opengl_context(macdrv_opengl_context c) DECLSPEC_HIDDEN;
-extern void macdrv_make_context_current(macdrv_opengl_context c, macdrv_view v) DECLSPEC_HIDDEN;
+extern void macdrv_make_context_current(macdrv_opengl_context c, macdrv_view v, CGRect r) DECLSPEC_HIDDEN;
 extern void macdrv_update_opengl_context(macdrv_opengl_context c) DECLSPEC_HIDDEN;
 extern void macdrv_flush_opengl_context(macdrv_opengl_context c) DECLSPEC_HIDDEN;
 

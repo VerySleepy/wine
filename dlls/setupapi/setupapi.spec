@@ -71,8 +71,8 @@
 @ stdcall CM_Get_DevNode_Registry_PropertyW(long long ptr ptr long long)
 @ stdcall CM_Get_DevNode_Registry_Property_ExA(long long ptr ptr ptr long ptr)
 @ stdcall CM_Get_DevNode_Registry_Property_ExW(long long ptr ptr ptr long ptr)
-@ stub CM_Get_DevNode_Status
-@ stub CM_Get_DevNode_Status_Ex
+@ stdcall CM_Get_DevNode_Status(ptr ptr long long)
+@ stdcall CM_Get_DevNode_Status_Ex(ptr ptr long long ptr)
 @ stdcall CM_Get_Device_IDA(ptr ptr long long)
 @ stdcall CM_Get_Device_IDW(ptr ptr long long)
 @ stdcall CM_Get_Device_ID_ExA(ptr ptr long long ptr)
@@ -125,7 +125,7 @@
 @ stub CM_Get_Res_Des_Data_Size_Ex
 @ stub CM_Get_Sibling
 @ stub CM_Get_Sibling_Ex
-@ stub CM_Get_Version
+@ stdcall CM_Get_Version()
 @ stub CM_Get_Version_Ex
 @ stub CM_Intersect_Range_List
 @ stub CM_Invert_Range_List
@@ -342,6 +342,7 @@
 @ stub SetupDiGetDeviceInterfaceAlias
 @ stdcall SetupDiGetDeviceInterfaceDetailA(long ptr ptr long ptr ptr)
 @ stdcall SetupDiGetDeviceInterfaceDetailW(long ptr ptr long ptr ptr)
+@ stdcall SetupDiGetDevicePropertyW(ptr ptr ptr ptr ptr long ptr long)
 @ stdcall SetupDiGetDeviceRegistryPropertyA(long ptr long ptr ptr long ptr)
 @ stdcall SetupDiGetDeviceRegistryPropertyW(long ptr long ptr ptr long ptr)
 @ stub SetupDiGetDriverInfoDetailA
@@ -380,13 +381,14 @@
 @ stdcall SetupDiOpenDeviceInterfaceW(ptr wstr long ptr)
 @ stdcall SetupDiRegisterDeviceInfo(ptr ptr long ptr ptr ptr)
 @ stdcall SetupDiRemoveDevice(ptr ptr)
-@ stub SetupDiRemoveDeviceInterface
+@ stdcall SetupDiRemoveDeviceInterface(ptr ptr)
+@ stdcall SetupDiSelectBestCompatDrv(ptr ptr)
 @ stub SetupDiSelectDevice
 @ stub SetupDiSelectOEMDrv
 @ stdcall SetupDiSetClassInstallParamsA(ptr ptr ptr long)
 @ stdcall SetupDiSetClassInstallParamsW(ptr ptr ptr long)
 @ stdcall SetupDiSetDeviceInstallParamsA(ptr ptr ptr)
-@ stub SetupDiSetDeviceInstallParamsW
+@ stdcall SetupDiSetDeviceInstallParamsW(ptr ptr ptr)
 @ stdcall SetupDiSetDeviceRegistryPropertyA(ptr ptr long ptr ptr)
 @ stdcall SetupDiSetDeviceRegistryPropertyW(ptr ptr long ptr ptr)
 @ stub SetupDiSetDriverInstallParamsA
@@ -459,7 +461,7 @@
 @ stdcall SetupInstallServicesFromInfSectionW(long wstr long)
 @ stdcall SetupIterateCabinetA(str long ptr ptr)
 @ stdcall SetupIterateCabinetW(wstr long ptr ptr)
-@ stub SetupLogErrorA
+@ stdcall SetupLogErrorA(str long)
 @ stdcall SetupLogErrorW(wstr long)
 @ stdcall SetupLogFileA(ptr str str str long str str str long)
 @ stdcall SetupLogFileW(ptr wstr wstr wstr long wstr wstr wstr long)

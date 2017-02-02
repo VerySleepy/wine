@@ -17,15 +17,16 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include "resource.h"
+
 #define KEY_MAX_LEN             1024
 
 #define REG_FORMAT_5 1
 #define REG_FORMAT_4 2
 
-const CHAR *getAppName(void);
+void __cdecl output_message(unsigned int id, ...);
 
 BOOL export_registry_key(WCHAR *file_name, WCHAR *reg_key_name, DWORD format);
 BOOL import_registry_file(FILE *in);
 void delete_registry_key(WCHAR *reg_key_name);
-WCHAR* GetWideString(const char* strA);
 CHAR* GetMultiByteString(const WCHAR* strW);

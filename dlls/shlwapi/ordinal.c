@@ -28,8 +28,6 @@
 #include <string.h>
 
 #define COBJMACROS
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "windef.h"
 #include "winbase.h"
@@ -260,6 +258,9 @@ BOOL WINAPI SHFreeShared(HANDLE hShared, DWORD dwProcId)
   HANDLE hClose;
 
   TRACE("(%p %d)\n", hShared, dwProcId);
+
+  if (!hShared)
+    return TRUE;
 
   /* Get a copy of the handle for our process, closing the source handle */
   hClose = SHMapHandle(hShared, dwProcId, GetCurrentProcessId(),
@@ -1386,7 +1387,7 @@ HRESULT WINAPI IUnknown_SetSite(
  *
  * PARAMS
  *  lpUnknown [I] Object supporting the IPersist interface
- *  lpClassId [O] Destination for Class Id
+ *  clsid     [O] Destination for Class Id
  *
  * RETURNS
  *  Success: S_OK. lpClassId contains the Class Id requested.
@@ -1394,23 +1395,30 @@ HRESULT WINAPI IUnknown_SetSite(
  *           E_NOINTERFACE If lpUnknown does not support IPersist,
  *           Or an HRESULT error code.
  */
-HRESULT WINAPI IUnknown_GetClassID(IUnknown *lpUnknown, CLSID* lpClassId)
+HRESULT WINAPI IUnknown_GetClassID(IUnknown *lpUnknown, CLSID *clsid)
 {
-  IPersist* lpPersist;
-  HRESULT hRet = E_FAIL;
+    IPersist *persist;
+    HRESULT hr;
 
-  TRACE("(%p,%s)\n", lpUnknown, debugstr_guid(lpClassId));
+    TRACE("(%p, %p)\n", lpUnknown, clsid);
 
-  if (lpUnknown)
-  {
-    hRet = IUnknown_QueryInterface(lpUnknown,&IID_IPersist,(void**)&lpPersist);
-    if (SUCCEEDED(hRet))
+    if (!lpUnknown)
     {
-      IPersist_GetClassID(lpPersist, lpClassId);
-      IPersist_Release(lpPersist);
+        memset(clsid, 0, sizeof(*clsid));
+        return E_FAIL;
     }
-  }
-  return hRet;
+
+    hr = IUnknown_QueryInterface(lpUnknown, &IID_IPersist, (void**)&persist);
+    if (hr != S_OK)
+    {
+        hr = IUnknown_QueryInterface(lpUnknown, &IID_IPersistFolder, (void**)&persist);
+        if (hr != S_OK)
+            return hr;
+    }
+
+    hr = IPersist_GetClassID(persist, clsid);
+    IPersist_Release(persist);
+    return hr;
 }
 
 /*************************************************************************
@@ -4037,7 +4045,7 @@ BOOL WINAPI IsOS(DWORD feature)
     case OS_SMALLBUSINESSSERVER:
         ISOS_RETURN(platform == VER_PLATFORM_WIN32_NT)
     case OS_TABLETPC:
-        FIXME("(OS_TABLEPC) What should we return here?\n");
+        FIXME("(OS_TABLETPC) What should we return here?\n");
         return FALSE;
     case OS_SERVERADMINUI:
         FIXME("(OS_SERVERADMINUI) What should we return here?\n");
@@ -4834,7 +4842,7 @@ typedef struct SHELL_USER_PERMISSION { /* ...and this should be in shlwapi.h */
  * NOTES
  *  Call should free returned descriptor with LocalFree
  */
-PSECURITY_DESCRIPTOR WINAPI GetShellSecurityDescriptor(PSHELL_USER_PERMISSION *apUserPerm, int cUserPerm)
+PSECURITY_DESCRIPTOR WINAPI GetShellSecurityDescriptor(const PSHELL_USER_PERMISSION *apUserPerm, int cUserPerm)
 {
     PSID *sidlist;
     PSID  cur_user = NULL;
@@ -5182,9 +5190,9 @@ HRESULT WINAPI IUnknown_QueryServiceForWebBrowserApp(IUnknown* lpUnknown,
  *  pValue: address to receive the property value as a 32-bit signed integer
  *
  * RETURNS
- *  0 for Success
+ *  HRESULT codes
  */
-BOOL WINAPI SHPropertyBag_ReadLONG(IPropertyBag *ppb, LPCWSTR pszPropName, LPLONG pValue)
+HRESULT WINAPI SHPropertyBag_ReadLONG(IPropertyBag *ppb, LPCWSTR pszPropName, LPLONG pValue)
 {
     VARIANT var;
     HRESULT hr;

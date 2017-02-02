@@ -298,10 +298,6 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         {
             LONG hitcode;
             POINT pt;
-            WND *wndPtr = WIN_GetPtr( hwnd );
-            HMENU hMenu = wndPtr->hSysMenu;
-            WIN_ReleasePtr( wndPtr );
-            if (!hMenu) return 0;
             pt.x = (short)LOWORD(lParam);
             pt.y = (short)HIWORD(lParam);
             hitcode = NC_HandleNCHitTest(hwnd, pt);
@@ -315,16 +311,11 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         break;
 
     case WM_POPUPSYSTEMMENU:
-        {
-            /* This is an undocumented message used by the windows taskbar to
-               display the system menu of windows that belong to other processes. */
-            HMENU menu = GetSystemMenu(hwnd, FALSE);
-
-            if (menu)
-                TrackPopupMenu(menu, TPM_LEFTBUTTON|TPM_RIGHTBUTTON,
-                               LOWORD(lParam), HIWORD(lParam), 0, hwnd, NULL);
-            return 0;
-        }
+        /* This is an undocumented message used by the windows taskbar to
+           display the system menu of windows that belong to other processes. */
+        TrackPopupMenu( GetSystemMenu(hwnd, FALSE), TPM_LEFTBUTTON|TPM_RIGHTBUTTON,
+                        (short)LOWORD(lParam), (short)HIWORD(lParam), 0, hwnd, NULL );
+        return 0;
 
     case WM_NCACTIVATE:
         return NC_HandleNCActivate( hwnd, wParam, lParam );
@@ -581,12 +572,7 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         break;
 
     case WM_ISACTIVEICON:
-        {
-            WND *wndPtr = WIN_GetPtr( hwnd );
-            BOOL ret = (wndPtr->flags & WIN_NCACTIVATED) != 0;
-            WIN_ReleasePtr( wndPtr );
-            return ret;
-        }
+        return (win_get_flags( hwnd ) & WIN_NCACTIVATED) != 0;
 
     case WM_NOTIFYFORMAT:
       if (IsWindowUnicode(hwnd)) return NFR_UNICODE;
@@ -605,10 +591,32 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             {
             case ICON_SMALL:
                 ret = wndPtr->hIconSmall;
+                if (ret && !lParam && wndPtr->hIcon)
+                {
+                    wndPtr->hIconSmall2 = CopyImage( wndPtr->hIcon, IMAGE_ICON,
+                                                     GetSystemMetrics( SM_CXSMICON ),
+                                                     GetSystemMetrics( SM_CYSMICON ), 0 );
+                }
+                else if (lParam && wndPtr->hIconSmall2)
+                {
+                    DestroyIcon( wndPtr->hIconSmall2 );
+                    wndPtr->hIconSmall2 = NULL;
+                }
                 wndPtr->hIconSmall = (HICON)lParam;
                 break;
             case ICON_BIG:
                 ret = wndPtr->hIcon;
+                if (wndPtr->hIconSmall2)
+                {
+                    DestroyIcon( wndPtr->hIconSmall2 );
+                    wndPtr->hIconSmall2 = NULL;
+                }
+                if (lParam && !wndPtr->hIconSmall)
+                {
+                    wndPtr->hIconSmall2 = CopyImage( (HICON)lParam, IMAGE_ICON,
+                                                     GetSystemMetrics( SM_CXSMICON ),
+                                                     GetSystemMetrics( SM_CYSMICON ), 0 );
+                }
                 wndPtr->hIcon = (HICON)lParam;
                 break;
             default:
@@ -639,9 +647,7 @@ static LRESULT DEFWND_DefWinProc( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                 ret = wndPtr->hIcon;
                 break;
             case ICON_SMALL2:
-                ret = wndPtr->hIconSmall;
-                if (!ret) ret = (HICON)GetClassLongPtrW( hwnd, GCLP_HICONSM );
-                /* FIXME: should have a default here if class icon is null */
+                ret = wndPtr->hIconSmall ? wndPtr->hIconSmall : wndPtr->hIconSmall2;
                 break;
             default:
                 ret = 0;

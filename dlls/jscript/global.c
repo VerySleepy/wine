@@ -67,6 +67,7 @@ static const WCHAR ScriptEngineBuildVersionW[] =
     {'S','c','r','i','p','t','E','n','g','i','n','e','B','u','i','l','d','V','e','r','s','i','o','n',0};
 static const WCHAR CollectGarbageW[] = {'C','o','l','l','e','c','t','G','a','r','b','a','g','e',0};
 static const WCHAR MathW[] = {'M','a','t','h',0};
+static const WCHAR JSONW[] = {'J','S','O','N',0};
 static const WCHAR encodeURIW[] = {'e','n','c','o','d','e','U','R','I',0};
 static const WCHAR decodeURIW[] = {'d','e','c','o','d','e','U','R','I',0};
 static const WCHAR encodeURIComponentW[] = {'e','n','c','o','d','e','U','R','I','C','o','m','p','o','n','e','n','t',0};
@@ -149,8 +150,8 @@ static HRESULT JSGlobal_escape(script_ctx_t *ctx, vdisp_t *jsthis, WORD flags, u
             len += 3;
     }
 
-    ret = jsstr_alloc_buf(len, &ret_str);
-    if(!ret) {
+    ret_str = jsstr_alloc_buf(len, &ret);
+    if(!ret_str) {
         jsstr_release(str);
         return E_OUTOFMEMORY;
     }
@@ -184,9 +185,11 @@ static HRESULT JSGlobal_escape(script_ctx_t *ctx, vdisp_t *jsthis, WORD flags, u
 }
 
 /* ECMA-262 3rd Edition    15.1.2.1 */
-static HRESULT JSGlobal_eval(script_ctx_t *ctx, vdisp_t *jsthis, WORD flags, unsigned argc, jsval_t *argv,
+HRESULT JSGlobal_eval(script_ctx_t *ctx, vdisp_t *jsthis, WORD flags, unsigned argc, jsval_t *argv,
         jsval_t *r)
 {
+    call_frame_t *frame;
+    DWORD exec_flags = EXEC_EVAL;
     bytecode_t *code;
     const WCHAR *src;
     HRESULT hres;
@@ -205,7 +208,7 @@ static HRESULT JSGlobal_eval(script_ctx_t *ctx, vdisp_t *jsthis, WORD flags, uns
         return S_OK;
     }
 
-    if(!ctx->exec_ctx) {
+    if(!(frame = ctx->call_ctx)) {
         FIXME("No active exec_ctx\n");
         return E_UNEXPECTED;
     }
@@ -221,7 +224,12 @@ static HRESULT JSGlobal_eval(script_ctx_t *ctx, vdisp_t *jsthis, WORD flags, uns
         return throw_syntax_error(ctx, hres, NULL);
     }
 
-    hres = exec_source(ctx->exec_ctx, code, &code->global_code, TRUE, r);
+    if(frame->flags & EXEC_GLOBAL)
+        exec_flags |= EXEC_GLOBAL;
+    if(flags & DISPATCH_JSCRIPT_CALLEREXECSSOURCE)
+        exec_flags |= EXEC_RETURN_TO_INTERP;
+    hres = exec_source(ctx, exec_flags, code, &code->global_code, frame->scope,
+            frame->this_obj, NULL, frame->variable_obj, 0, NULL, r);
     release_bytecode(code);
     return hres;
 }
@@ -264,8 +272,7 @@ static HRESULT JSGlobal_isFinite(script_ctx_t *ctx, vdisp_t *jsthis, WORD flags,
         if(FAILED(hres))
             return hres;
 
-        if(!isinf(n) && !isnan(n))
-            ret = TRUE;
+        ret = is_finite(n);
     }
 
     if(r)
@@ -503,8 +510,8 @@ static HRESULT JSGlobal_unescape(script_ctx_t *ctx, vdisp_t *jsthis, WORD flags,
         len++;
     }
 
-    ret = jsstr_alloc_buf(len, &ret_str);
-    if(!ret) {
+    ret_str = jsstr_alloc_buf(len, &ret);
+    if(!ret_str) {
         jsstr_release(str);
         return E_OUTOFMEMORY;
     }
@@ -642,8 +649,8 @@ static HRESULT JSGlobal_encodeURI(script_ctx_t *ctx, vdisp_t *jsthis, WORD flags
         }
     }
 
-    rptr = jsstr_alloc_buf(len, &ret);
-    if(!rptr) {
+    ret = jsstr_alloc_buf(len, &rptr);
+    if(!ret) {
         jsstr_release(str);
         return E_OUTOFMEMORY;
     }
@@ -721,8 +728,8 @@ static HRESULT JSGlobal_decodeURI(script_ctx_t *ctx, vdisp_t *jsthis, WORD flags
         }
     }
 
-    ret = jsstr_alloc_buf(len, &ret_str);
-    if(!ret) {
+    ret_str = jsstr_alloc_buf(len, &ret);
+    if(!ret_str) {
         jsstr_release(str);
         return E_OUTOFMEMORY;
     }
@@ -792,8 +799,8 @@ static HRESULT JSGlobal_encodeURIComponent(script_ctx_t *ctx, vdisp_t *jsthis, W
         }
     }
 
-    ret = jsstr_alloc_buf(len, &ret_str);
-    if(!ret) {
+    ret_str = jsstr_alloc_buf(len, &ret);
+    if(!ret_str) {
         jsstr_release(str);
         return E_OUTOFMEMORY;
     }
@@ -892,7 +899,7 @@ static HRESULT JSGlobal_decodeURIComponent(script_ctx_t *ctx, vdisp_t *jsthis, W
         }
     }
 
-    out_ptr = jsstr_alloc_buf(len, &ret);
+    ret = jsstr_alloc_buf(len, &out_ptr);
     if(!ret) {
         jsstr_release(str);
         return E_OUTOFMEMORY;
@@ -1107,6 +1114,19 @@ HRESULT init_global(script_ctx_t *ctx)
     jsdisp_release(math);
     if(FAILED(hres))
         return hres;
+
+    if(ctx->version >= 2) {
+        jsdisp_t *json;
+
+        hres = create_json(ctx, &json);
+        if(FAILED(hres))
+            return hres;
+
+        hres = jsdisp_propput_dontenum(ctx->global, JSONW, jsval_obj(json));
+        jsdisp_release(json);
+        if(FAILED(hres))
+            return hres;
+    }
 
     hres = create_activex_constr(ctx, &constr);
     if(FAILED(hres))

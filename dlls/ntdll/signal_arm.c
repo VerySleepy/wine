@@ -2,7 +2,7 @@
  * ARM signal handling routines
  *
  * Copyright 2002 Marcus Meissner, SuSE Linux AG
- * Copyright 2010, 2011 André Hentschel
+ * Copyright 2010-2013, 2015 André Hentschel
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -96,8 +96,20 @@ typedef struct ucontext
 
 /* Exceptions */
 # define ERROR_sig(context)         REG_sig(error_code, context)
-# define FAULT_sig(context)         REG_sig(fault_address, context)
 # define TRAP_sig(context)          REG_sig(trap_no, context)
+
+#elif defined(__FreeBSD__)
+
+/* All Registers access - only for local access */
+# define REGn_sig(reg_num, context) ((context)->uc_mcontext.__gregs[reg_num])
+
+/* Special Registers access  */
+# define SP_sig(context)            REGn_sig(_REG_SP, context)    /* Stack pointer */
+# define LR_sig(context)            REGn_sig(_REG_LR, context)    /* Link register */
+# define PC_sig(context)            REGn_sig(_REG_PC, context)    /* Program counter */
+# define CPSR_sig(context)          REGn_sig(_REG_CPSR, context)  /* Current State Register */
+# define IP_sig(context)            REGn_sig(_REG_R12, context)   /* Intra-Procedure-call scratch register */
+# define FP_sig(context)            REGn_sig(_REG_FP, context)    /* Frame pointer */
 
 #endif /* linux */
 
@@ -122,6 +134,35 @@ struct UNWIND_INFO
     WORD count : 5;
     WORD unknown2 : 4;
 };
+
+
+/***********************************************************************
+ *           get_trap_code
+ *
+ * Get the trap code for a signal.
+ */
+static inline enum arm_trap_code get_trap_code( const ucontext_t *sigcontext )
+{
+#ifdef TRAP_sig
+    return TRAP_sig(sigcontext);
+#else
+    return TRAP_ARM_UNKNOWN;  /* unknown trap code */
+#endif
+}
+
+/***********************************************************************
+ *           get_error_code
+ *
+ * Get the error code for a signal.
+ */
+static inline WORD get_error_code( const ucontext_t *sigcontext )
+{
+#ifdef ERROR_sig
+    return ERROR_sig(sigcontext);
+#else
+    return 0;
+#endif
+}
 
 /***********************************************************************
  *           dispatch_signal
@@ -206,6 +247,13 @@ static inline void restore_fpu( CONTEXT *context, const ucontext_t *sigcontext )
     FIXME("not implemented\n");
 }
 
+/**************************************************************************
+ *		__chkstk (NTDLL.@)
+ *
+ * Incoming r4 contains words to allocate, converting to bytes then return
+ */
+__ASM_GLOBAL_FUNC( __chkstk, "lsl r4, r4, #2\n\t"
+                             "bx lr" )
 
 /***********************************************************************
  *		RtlCaptureContext (NTDLL.@)
@@ -214,7 +262,7 @@ static inline void restore_fpu( CONTEXT *context, const ucontext_t *sigcontext )
 __ASM_STDCALL_FUNC( RtlCaptureContext, 4,
                     ".arm\n\t"
                     "stmfd SP!, {r1}\n\t"
-                    "mov r1, #0x40\n\t"     /* CONTEXT_ARM */
+                    "mov r1, #0x0200000\n\t"/* CONTEXT_ARM */
                     "add r1, r1, #0x3\n\t"  /* CONTEXT_FULL */
                     "str r1, [r0]\n\t"      /* context->ContextFlags */
                     "ldmfd SP!, {r1}\n\t"
@@ -236,7 +284,7 @@ __ASM_STDCALL_FUNC( RtlCaptureContext, 4,
                     "str PC, [r0, #0x40]\n\t"  /* context->Pc */
                     "mrs r1, CPSR\n\t"
                     "str r1, [r0, #0x44]\n\t"  /* context->Cpsr */
-                    "mov PC, LR\n"
+                    "bx lr"
                     )
 
 
@@ -443,7 +491,7 @@ static void WINAPI raise_segv_exception( EXCEPTION_RECORD *rec, CONTEXT *context
         if (rec->NumberParameters == 2)
         {
             if (!(rec->ExceptionCode = virtual_handle_fault( (void *)rec->ExceptionInformation[1],
-                                                             rec->ExceptionInformation[0] )))
+                                                             rec->ExceptionInformation[0], FALSE )))
                 goto done;
         }
         break;
@@ -587,7 +635,7 @@ static void segv_handler( int signal, siginfo_t *info, void *ucontext )
     ucontext_t *context = ucontext;
 
     /* check for page fault inside the thread stack */
-    if (TRAP_sig(context) == TRAP_ARM_PAGEFLT &&
+    if (get_trap_code(context) == TRAP_ARM_PAGEFLT &&
         (char *)info->si_addr >= (char *)NtCurrentTeb()->DeallocationStack &&
         (char *)info->si_addr < (char *)NtCurrentTeb()->Tib.StackBase &&
         virtual_handle_stack_fault( info->si_addr ))
@@ -604,7 +652,7 @@ static void segv_handler( int signal, siginfo_t *info, void *ucontext )
     rec = setup_exception( context, raise_segv_exception );
     if (rec->ExceptionCode == EXCEPTION_STACK_OVERFLOW) return;
 
-    switch(TRAP_sig(context))
+    switch(get_trap_code(context))
     {
     case TRAP_ARM_PRIVINFLT:   /* Invalid opcode exception */
         rec->ExceptionCode = EXCEPTION_ILLEGAL_INSTRUCTION;
@@ -612,14 +660,20 @@ static void segv_handler( int signal, siginfo_t *info, void *ucontext )
     case TRAP_ARM_PAGEFLT:  /* Page fault */
         rec->ExceptionCode = EXCEPTION_ACCESS_VIOLATION;
         rec->NumberParameters = 2;
-        rec->ExceptionInformation[0] = (ERROR_sig(context) & 0x800) != 0;
+        rec->ExceptionInformation[0] = (get_error_code(context) & 0x800) != 0;
         rec->ExceptionInformation[1] = (ULONG_PTR)info->si_addr;
         break;
     case TRAP_ARM_ALIGNFLT:  /* Alignment check exception */
         rec->ExceptionCode = EXCEPTION_DATATYPE_MISALIGNMENT;
         break;
+    case TRAP_ARM_UNKNOWN:   /* Unknown fault code */
+        rec->ExceptionCode = EXCEPTION_ACCESS_VIOLATION;
+        rec->NumberParameters = 2;
+        rec->ExceptionInformation[0] = 0;
+        rec->ExceptionInformation[1] = 0xffffffff;
+        break;
     default:
-        ERR("Got unexpected trap %ld\n", TRAP_sig(context));
+        ERR("Got unexpected trap %d\n", get_trap_code(context));
         rec->ExceptionCode = EXCEPTION_ILLEGAL_INSTRUCTION;
         break;
     }
@@ -806,7 +860,7 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *sigcontext )
  */
 int CDECL __wine_set_signal_handler(unsigned int sig, wine_signal_handler wsh)
 {
-    if (sig > sizeof(handlers) / sizeof(handlers[0])) return -1;
+    if (sig >= sizeof(handlers) / sizeof(handlers[0])) return -1;
     if (handlers[sig] != NULL) return -2;
     handlers[sig] = wsh;
     return 0;
@@ -858,21 +912,6 @@ void signal_free_thread( TEB *teb )
     NtFreeVirtualMemory( NtCurrentProcess(), (void **)&teb, &size, MEM_RELEASE );
 }
 
-/**********************************************************************
- *      set_tpidrurw
- *
- * Win32/ARM applications expect the TEB pointer to be in the TPIDRURW register.
- */
-#ifdef __ARM_ARCH_7A__
-extern void set_tpidrurw( TEB *teb );
-__ASM_GLOBAL_FUNC( set_tpidrurw,
-                   "mcr p15, 0, r0, c13, c0, 2\n\t" /* TEB -> TPIDRURW */
-                   "blx lr" )
-#else
-void set_tpidrurw( TEB *teb )
-{
-}
-#endif
 
 /**********************************************************************
  *		signal_init_thread
@@ -886,7 +925,12 @@ void signal_init_thread( TEB *teb )
         pthread_key_create( &teb_key, NULL );
         init_done = TRUE;
     }
-    set_tpidrurw( teb );
+
+#if defined(__ARM_ARCH_7A__) || defined(__ARM_ARCH_8A__)
+    /* Win32/ARM applications expect the TEB pointer to be in the TPIDRURW register. */
+    __asm__ __volatile__( "mcr p15, 0, %0, c13, c0, 2" : : "r" (teb) );
+#endif
+
     pthread_setspecific( teb_key, teb );
 }
 

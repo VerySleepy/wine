@@ -103,7 +103,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(mdi);
 
 #define MDI_MAXTITLELENGTH      0xa1
 
-#define WM_MDICALCCHILDSCROLL   0x10ac /* this is exactly what Windows uses */
+#define WM_MDICALCCHILDSCROLL   0x003f /* this is exactly what Windows uses */
 
 /* "More Windows..." definitions */
 #define MDI_MOREWINDOWSLIMIT    9       /* after this number of windows, a "More Windows..."
@@ -127,6 +127,7 @@ typedef struct
      * states it must keep coherency with USER32 on its own. This is true for
      * Windows as well.
      */
+    LONG      reserved;
     UINT      nActiveChildren;
     HWND      hwndChildMaximized;
     HWND      hwndActiveChild;
@@ -369,17 +370,6 @@ static LRESULT MDISetMenu( HWND hwnd, HMENU hmenuFrame,
             return (LRESULT)oldFrameMenu;
         }
     }
-    else
-    {
-        /* SetMenu() may already have been called, meaning that this window
-         * already has its menu. But they may have done a SetMenu() on
-         * an MDI window, and called MDISetMenu() after the fact, meaning
-         * that the "if" to this "else" wouldn't catch the need to
-         * augment the frame menu.
-         */
-        if( ci->hwndChildMaximized )
-            MDI_AugmentFrameMenu( hwndFrame, ci->hwndChildMaximized );
-    }
 
     return 0;
 }
@@ -399,7 +389,7 @@ static LRESULT MDI_RefreshMenu(MDICLIENTINFO *ci)
 
     if (!IsMenu(ci->hWindowMenu))
     {
-        WARN("Window menu handle %p is no more valid\n", ci->hWindowMenu);
+        WARN("Window menu handle %p is no longer valid\n", ci->hWindowMenu);
         return 0;
     }
 
@@ -500,8 +490,7 @@ static void MDI_ChildGetMinMaxInfo( HWND client, HWND hwnd, MINMAXINFO* lpMinMax
     lpMinMax->ptMaxPosition.x = rect.left;
     lpMinMax->ptMaxPosition.y = rect.top;
 
-    TRACE("max rect (%d,%d - %d, %d)\n",
-                        rect.left,rect.top,rect.right,rect.bottom);
+    TRACE("max rect %s\n", wine_dbgstr_rect(&rect));
 }
 
 /**********************************************************************
@@ -838,7 +827,7 @@ static void MDITile( HWND client, MDICLIENTINFO *ci, WPARAM wParam )
 static BOOL MDI_AugmentFrameMenu( HWND frame, HWND hChild )
 {
     HMENU menu = GetMenu( frame );
-    HMENU  	hSysPopup = 0;
+    HMENU  	hSysPopup;
     HBITMAP hSysMenuBitmap = 0;
     HICON hIcon;
 
@@ -864,9 +853,14 @@ static BOOL MDI_AugmentFrameMenu( HWND frame, HWND hChild )
     /* The system menu is replaced by the child icon */
     hIcon = (HICON)SendMessageW(hChild, WM_GETICON, ICON_SMALL, 0);
     if (!hIcon)
+        hIcon = (HICON)GetClassLongPtrW(hChild, GCLP_HICONSM);
+    if (!hIcon)
         hIcon = (HICON)SendMessageW(hChild, WM_GETICON, ICON_BIG, 0);
     if (!hIcon)
-        hIcon = LoadImageW(0, MAKEINTRESOURCEW(IDI_WINLOGO), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+        hIcon = (HICON)GetClassLongPtrW(hChild, GCLP_HICON);
+    if (!hIcon)
+        hIcon = LoadImageW(0, (LPWSTR)IDI_WINLOGO, IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+                           GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
     if (hIcon)
     {
       HDC hMemDC;
@@ -1049,12 +1043,7 @@ LRESULT MDIClientWndProc_common( HWND hwnd, UINT message, WPARAM wParam, LPARAM 
 
     if (!(ci = get_client_info( hwnd )))
     {
-        if (message == WM_NCCREATE)
-        {
-            WND *wndPtr = WIN_GetPtr( hwnd );
-            wndPtr->flags |= WIN_ISMDICLIENT;
-            WIN_ReleasePtr( wndPtr );
-        }
+        if (message == WM_NCCREATE) win_set_flags( hwnd, WIN_ISMDICLIENT, 0 );
         return unicode ? DefWindowProcW( hwnd, message, wParam, lParam ) :
                          DefWindowProcA( hwnd, message, wParam, lParam );
     }
@@ -1244,10 +1233,7 @@ LRESULT MDIClientWndProc_common( HWND hwnd, UINT message, WPARAM wParam, LPARAM 
 	{
 	    RECT	rect;
 
-	    rect.left = 0;
-	    rect.top = 0;
-	    rect.right = LOWORD(lParam);
-	    rect.bottom = HIWORD(lParam);
+            SetRect(&rect, 0, 0, LOWORD(lParam), HIWORD(lParam));
 	    AdjustWindowRectEx(&rect, GetWindowLongA(ci->hwndActiveChild, GWL_STYLE),
                                0, GetWindowLongA(ci->hwndActiveChild, GWL_EXSTYLE) );
 	    MoveWindow(ci->hwndActiveChild, rect.left, rect.top,
@@ -1479,7 +1465,8 @@ LRESULT WINAPI DefMDIChildProcW( HWND hwnd, UINT message,
         break;
 
     case WM_CHILDACTIVATE:
-        MDI_ChildActivate( client, hwnd );
+        if (IsWindowEnabled( hwnd ))
+            MDI_ChildActivate( client, hwnd );
         return 0;
 
     case WM_SYSCOMMAND:
@@ -1704,6 +1691,7 @@ void WINAPI CalcChildScroll( HWND hwnd, INT scroll )
     SCROLLINFO info;
     RECT childRect, clientRect;
     HWND *list;
+    DWORD style;
 
     GetClientRect( hwnd, &clientRect );
     SetRectEmpty( &childRect );
@@ -1713,7 +1701,7 @@ void WINAPI CalcChildScroll( HWND hwnd, INT scroll )
         int i;
         for (i = 0; list[i]; i++)
         {
-            DWORD style = GetWindowLongW( list[i], GWL_STYLE );
+            style = GetWindowLongW( list[i], GWL_STYLE );
             if (style & WS_MAXIMIZE)
             {
                 HeapFree( GetProcessHeap(), 0, list );
@@ -1735,22 +1723,29 @@ void WINAPI CalcChildScroll( HWND hwnd, INT scroll )
     info.cbSize = sizeof(info);
     info.fMask = SIF_POS | SIF_RANGE;
 
-    /* set the specific */
+    /* set the specific values and apply but only if window style allows */
+    style = GetWindowLongW( hwnd, GWL_STYLE );
     switch( scroll )
     {
 	case SB_BOTH:
 	case SB_HORZ:
-			info.nMin = childRect.left;
-			info.nMax = childRect.right - clientRect.right;
-			info.nPos = clientRect.left - childRect.left;
-			SetScrollInfo(hwnd, SB_HORZ, &info, TRUE);
+                        if (style & (WS_HSCROLL | WS_VSCROLL))
+                        {
+                            info.nMin = childRect.left;
+                            info.nMax = childRect.right - clientRect.right;
+                            info.nPos = clientRect.left - childRect.left;
+                            SetScrollInfo(hwnd, SB_HORZ, &info, TRUE);
+                        }
 			if (scroll == SB_HORZ) break;
 			/* fall through */
 	case SB_VERT:
-			info.nMin = childRect.top;
-			info.nMax = childRect.bottom - clientRect.bottom;
-			info.nPos = clientRect.top - childRect.top;
-			SetScrollInfo(hwnd, SB_VERT, &info, TRUE);
+                        if (style & (WS_HSCROLL | WS_VSCROLL))
+                        {
+                            info.nMin = childRect.top;
+                            info.nMax = childRect.bottom - clientRect.bottom;
+                            info.nPos = clientRect.top - childRect.top;
+                            SetScrollInfo(hwnd, SB_VERT, &info, TRUE);
+                        }
 			break;
     }
 }

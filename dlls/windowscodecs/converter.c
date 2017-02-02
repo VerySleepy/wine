@@ -1,5 +1,6 @@
 /*
  * Copyright 2009 Vincent Povirk
+ * Copyright 2016 Dmitry Timoshkov
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -19,13 +20,13 @@
 #include "config.h"
 
 #include <stdarg.h>
+#include <math.h>
 
 #define COBJMACROS
 
 #include "windef.h"
 #include "winbase.h"
 #include "objbase.h"
-#include "wincodec.h"
 
 #include "wincodecs_private.h"
 
@@ -50,6 +51,7 @@ enum pixelformat {
     format_16bppBGRA5551,
     format_24bppBGR,
     format_24bppRGB,
+    format_32bppGrayFloat,
     format_32bppBGR,
     format_32bppBGRA,
     format_32bppPBGRA,
@@ -77,6 +79,55 @@ typedef struct FormatConverter {
     WICBitmapPaletteType palette_type;
     CRITICAL_SECTION lock; /* must be held when initialized */
 } FormatConverter;
+
+/* https://www.w3.org/Graphics/Color/srgb */
+static inline float from_sRGB_component(float f)
+{
+    if (f <= 0.04045f) return f / 12.92f;
+    return powf((f + 0.055f) / 1.055f, 2.4f);
+}
+
+static inline float to_sRGB_component(float f)
+{
+    if (f <= 0.0031308f) return 12.92f * f;
+    return 1.055f * powf(f, 1.0f/2.4f) - 0.055f;
+}
+
+#if 0 /* FIXME: enable once needed */
+static void from_sRGB(BYTE *bgr)
+{
+    float r, g, b;
+
+    r = bgr[2] / 255.0f;
+    g = bgr[1] / 255.0f;
+    b = bgr[0] / 255.0f;
+
+    r = from_sRGB_component(r);
+    g = from_sRGB_component(g);
+    b = from_sRGB_component(b);
+
+    bgr[2] = (BYTE)(r * 255.0f);
+    bgr[1] = (BYTE)(g * 255.0f);
+    bgr[0] = (BYTE)(b * 255.0f);
+}
+
+static void to_sRGB(BYTE *bgr)
+{
+    float r, g, b;
+
+    r = bgr[2] / 255.0f;
+    g = bgr[1] / 255.0f;
+    b = bgr[0] / 255.0f;
+
+    r = to_sRGB_component(r);
+    g = to_sRGB_component(g);
+    b = to_sRGB_component(b);
+
+    bgr[2] = (BYTE)(r * 255.0f);
+    bgr[1] = (BYTE)(g * 255.0f);
+    bgr[0] = (BYTE)(b * 255.0f);
+}
+#endif
 
 static inline FormatConverter *impl_from_IWICFormatConverter(IWICFormatConverter *iface)
 {
@@ -206,7 +257,7 @@ static HRESULT copypixels_to_32bppBGRA(struct FormatConverter *This, const WICRe
                         *dstpixel++ = colors[srcval>>6];
                         if (x+1 < prc->Width) *dstpixel++ = colors[srcval>>4&0x3];
                         if (x+2 < prc->Width) *dstpixel++ = colors[srcval>>2&0x3];
-                        if (x+1 < prc->Width) *dstpixel++ = colors[srcval&0x3];
+                        if (x+3 < prc->Width) *dstpixel++ = colors[srcval&0x3];
                     }
                     srcrow += srcstride;
                     dstrow += cbStride;
@@ -918,6 +969,49 @@ static HRESULT copypixels_to_24bppBGR(struct FormatConverter *This, const WICRec
             return res;
         }
         return S_OK;
+
+    case format_32bppGrayFloat:
+        if (prc)
+        {
+            BYTE *srcdata;
+            UINT srcstride, srcdatasize;
+
+            srcstride = 4 * prc->Width;
+            srcdatasize = srcstride * prc->Height;
+
+            srcdata = HeapAlloc(GetProcessHeap(), 0, srcdatasize);
+            if (!srcdata) return E_OUTOFMEMORY;
+
+            hr = IWICBitmapSource_CopyPixels(This->source, prc, srcstride, srcdatasize, srcdata);
+
+            if (SUCCEEDED(hr))
+            {
+                INT x, y;
+                BYTE *src = srcdata, *dst = pbBuffer;
+
+                for (y = 0; y < prc->Height; y++)
+                {
+                    float *gray_float = (float *)src;
+                    BYTE *bgr = dst;
+
+                    for (x = 0; x < prc->Width; x++)
+                    {
+                        BYTE gray = (BYTE)floorf(to_sRGB_component(gray_float[x]) * 255.0f + 0.51f);
+                        *bgr++ = gray;
+                        *bgr++ = gray;
+                        *bgr++ = gray;
+                    }
+                    src += srcstride;
+                    dst += cbStride;
+                }
+            }
+
+            HeapFree(GetProcessHeap(), 0, srcdata);
+
+            return hr;
+        }
+        return S_OK;
+
     default:
         FIXME("Unimplemented conversion path!\n");
         return WINCODEC_ERR_UNSUPPORTEDOPERATION;
@@ -954,6 +1048,7 @@ static HRESULT copypixels_to_24bppRGB(struct FormatConverter *This, const WICRec
             const BYTE *srcpixel;
             BYTE *dstrow;
             BYTE *dstpixel;
+            BYTE tmppixel[3];
 
             srcstride = 4 * prc->Width;
             srcdatasize = srcstride * prc->Height;
@@ -971,16 +1066,18 @@ static HRESULT copypixels_to_24bppRGB(struct FormatConverter *This, const WICRec
                     srcpixel=srcrow;
                     dstpixel=dstrow;
                     for (x=0; x<prc->Width; x++) {
-                        *dstpixel++=*srcpixel++; /* blue */
-                        *dstpixel++=*srcpixel++; /* green */
-                        *dstpixel++=*srcpixel++; /* red */
+                        tmppixel[0]=*srcpixel++; /* blue */
+                        tmppixel[1]=*srcpixel++; /* green */
+                        tmppixel[2]=*srcpixel++; /* red */
                         srcpixel++; /* alpha */
+
+                        *dstpixel++=tmppixel[2]; /* red */
+                        *dstpixel++=tmppixel[1]; /* green */
+                        *dstpixel++=tmppixel[0]; /* blue */
                     }
                     srcrow += srcstride;
                     dstrow += cbStride;
                 }
-
-                reverse_bgr8(3, pbBuffer, prc->Width, prc->Height, cbStride);
             }
 
             HeapFree(GetProcessHeap(), 0, srcdata);
@@ -994,6 +1091,97 @@ static HRESULT copypixels_to_24bppRGB(struct FormatConverter *This, const WICRec
     }
 }
 
+static HRESULT copypixels_to_32bppGrayFloat(struct FormatConverter *This, const WICRect *prc,
+    UINT cbStride, UINT cbBufferSize, BYTE *pbBuffer, enum pixelformat source_format)
+{
+    HRESULT hr;
+
+    switch (source_format)
+    {
+    case format_32bppBGR:
+    case format_32bppBGRA:
+    case format_32bppPBGRA:
+    case format_32bppGrayFloat:
+        if (prc)
+        {
+            hr = IWICBitmapSource_CopyPixels(This->source, prc, cbStride, cbBufferSize, pbBuffer);
+            break;
+        }
+        return S_OK;
+
+    default:
+        hr = copypixels_to_32bppBGRA(This, prc, cbStride, cbBufferSize, pbBuffer, source_format);
+        break;
+    }
+
+    if (SUCCEEDED(hr) && prc && source_format != format_32bppGrayFloat)
+    {
+        INT x, y;
+        BYTE *p = pbBuffer;
+
+        for (y = 0; y < prc->Height; y++)
+        {
+            BYTE *bgr = p;
+            for (x = 0; x < prc->Width; x++)
+            {
+                float gray = (bgr[2] * 0.2126f + bgr[1] * 0.7152f + bgr[0] * 0.0722f) / 255.0f;
+                *(float *)bgr = gray;
+                bgr += 4;
+            }
+            p += cbStride;
+        }
+    }
+    return hr;
+}
+
+static HRESULT copypixels_to_8bppGray(struct FormatConverter *This, const WICRect *prc,
+    UINT cbStride, UINT cbBufferSize, BYTE *pbBuffer, enum pixelformat source_format)
+{
+    HRESULT hr;
+    BYTE *srcdata;
+    UINT srcstride, srcdatasize;
+
+    if (source_format == format_8bppGray)
+    {
+        if (prc)
+            return IWICBitmapSource_CopyPixels(This->source, prc, cbStride, cbBufferSize, pbBuffer);
+
+        return S_OK;
+    }
+
+    srcstride = 3 * prc->Width;
+    srcdatasize = srcstride * prc->Height;
+
+    srcdata = HeapAlloc(GetProcessHeap(), 0, srcdatasize);
+    if (!srcdata) return E_OUTOFMEMORY;
+
+    hr = copypixels_to_24bppBGR(This, prc, srcstride, srcdatasize, srcdata, source_format);
+    if (SUCCEEDED(hr) && prc)
+    {
+        INT x, y;
+        BYTE *src = srcdata, *dst = pbBuffer;
+
+        for (y = 0; y < prc->Height; y++)
+        {
+            BYTE *bgr = src;
+
+            for (x = 0; x < prc->Width; x++)
+            {
+                float gray = (bgr[2] * 0.2126f + bgr[1] * 0.7152f + bgr[0] * 0.0722f) / 255.0f;
+
+                gray = to_sRGB_component(gray) * 255.0f;
+                dst[x] = (BYTE)floorf(gray + 0.51f);
+                bgr += 3;
+            }
+            src += srcstride;
+            dst += cbStride;
+        }
+    }
+
+    HeapFree(GetProcessHeap(), 0, srcdata);
+    return hr;
+}
+
 static const struct pixelformatinfo supported_formats[] = {
     {format_1bppIndexed, &GUID_WICPixelFormat1bppIndexed, NULL},
     {format_2bppIndexed, &GUID_WICPixelFormat2bppIndexed, NULL},
@@ -1002,13 +1190,14 @@ static const struct pixelformatinfo supported_formats[] = {
     {format_BlackWhite, &GUID_WICPixelFormatBlackWhite, NULL},
     {format_2bppGray, &GUID_WICPixelFormat2bppGray, NULL},
     {format_4bppGray, &GUID_WICPixelFormat4bppGray, NULL},
-    {format_8bppGray, &GUID_WICPixelFormat8bppGray, NULL},
+    {format_8bppGray, &GUID_WICPixelFormat8bppGray, copypixels_to_8bppGray},
     {format_16bppGray, &GUID_WICPixelFormat16bppGray, NULL},
     {format_16bppBGR555, &GUID_WICPixelFormat16bppBGR555, NULL},
     {format_16bppBGR565, &GUID_WICPixelFormat16bppBGR565, NULL},
     {format_16bppBGRA5551, &GUID_WICPixelFormat16bppBGRA5551, NULL},
     {format_24bppBGR, &GUID_WICPixelFormat24bppBGR, copypixels_to_24bppBGR},
     {format_24bppRGB, &GUID_WICPixelFormat24bppRGB, copypixels_to_24bppRGB},
+    {format_32bppGrayFloat, &GUID_WICPixelFormat32bppGrayFloat, copypixels_to_32bppGrayFloat},
     {format_32bppBGR, &GUID_WICPixelFormat32bppBGR, copypixels_to_32bppBGR},
     {format_32bppBGRA, &GUID_WICPixelFormat32bppBGRA, copypixels_to_32bppBGRA},
     {format_32bppPBGRA, &GUID_WICPixelFormat32bppPBGRA, copypixels_to_32bppPBGRA},
@@ -1098,7 +1287,7 @@ static HRESULT WINAPI FormatConverter_GetPixelFormat(IWICFormatConverter *iface,
 {
     FormatConverter *This = impl_from_IWICFormatConverter(iface);
 
-    TRACE("(%p,%p): stub\n", iface, pPixelFormat);
+    TRACE("(%p,%p)\n", iface, pPixelFormat);
 
     if (This->source)
         memcpy(pPixelFormat, This->dst_format->guid, sizeof(GUID));
@@ -1113,7 +1302,7 @@ static HRESULT WINAPI FormatConverter_GetResolution(IWICFormatConverter *iface,
 {
     FormatConverter *This = impl_from_IWICFormatConverter(iface);
 
-    TRACE("(%p,%p,%p): stub\n", iface, pDpiX, pDpiY);
+    TRACE("(%p,%p,%p)\n", iface, pDpiX, pDpiY);
 
     if (This->source)
         return IWICBitmapSource_GetResolution(This->source, pDpiX, pDpiY);

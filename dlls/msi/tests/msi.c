@@ -50,6 +50,8 @@ static BOOL (WINAPI *pIsWow64Process)(HANDLE, PBOOL);
 
 static INSTALLSTATE (WINAPI *pMsiGetComponentPathA)
     (LPCSTR, LPCSTR, LPSTR, DWORD*);
+static INSTALLSTATE (WINAPI *pMsiGetComponentPathExA)
+    (LPCSTR, LPCSTR, LPCSTR, MSIINSTALLCONTEXT, LPSTR, LPDWORD);
 static INSTALLSTATE (WINAPI *pMsiProvideComponentA)
     (LPCSTR, LPCSTR, LPCSTR, DWORD, LPSTR, LPDWORD);
 static INSTALLSTATE (WINAPI *pMsiProvideComponentW)
@@ -92,6 +94,7 @@ static void init_functionpointers(void)
       trace("GetProcAddress(%s) failed\n", #func);
 
     GET_PROC(hmsi, MsiGetComponentPathA)
+    GET_PROC(hmsi, MsiGetComponentPathExA);
     GET_PROC(hmsi, MsiProvideComponentA)
     GET_PROC(hmsi, MsiProvideComponentW)
     GET_PROC(hmsi, MsiGetFileHashA)
@@ -556,6 +559,18 @@ static const char property_dat[] =
     "UpgradeCode\t{9574448F-9B86-4E07-B6F6-8D199DA12127}\n"
     "MSIFASTINSTALL\t1\n";
 
+static const char ci2_property_dat[] =
+    "Property\tValue\n"
+    "s72\tl0\n"
+    "Property\tProperty\n"
+    "INSTALLLEVEL\t3\n"
+    "Manufacturer\tWine\n"
+    "ProductCode\t{FF4AFE9C-6AC2-44F9-A060-9EA6BD16C75E}\n"
+    "ProductName\tMSITEST2\n"
+    "ProductVersion\t1.1.1\n"
+    "UpgradeCode\t{6B60C3CA-B8CA-4FB7-A395-092D98FF5D2A}\n"
+    "MSIFASTINSTALL\t1\n";
+
 static const char mcp_component_dat[] =
     "Component\tComponentId\tDirectory_\tAttributes\tCondition\tKeyPath\n"
     "s72\tS38\ts72\ti2\tS255\tS72\n"
@@ -827,22 +842,26 @@ static const char ci_install_exec_seq_dat[] =
     "Action\tCondition\tSequence\n"
     "s72\tS255\tI2\n"
     "InstallExecuteSequence\tAction\n"
-    "CostFinalize\t\t1000\n"
     "CostInitialize\t\t800\n"
     "FileCost\t\t900\n"
-    "InstallFiles\t\t4000\n"
-    "InstallServices\t\t5000\n"
-    "InstallFinalize\t\t6600\n"
-    "InstallInitialize\t\t1500\n"
-    "RunInstall\t\t1600\n"
+    "CostFinalize\t\t1000\n"
     "InstallValidate\t\t1400\n"
-    "LaunchConditions\t\t100";
+    "InstallInitialize\t\t1500\n"
+    "RunInstall\tnot Installed\t1550\n"
+    "ProcessComponents\t\t1600\n"
+    "UnpublishFeatures\t\t1800\n"
+    "RemoveFiles\t\t3500\n"
+    "InstallFiles\t\t4000\n"
+    "RegisterProduct\t\t6100\n"
+    "PublishFeatures\t\t6300\n"
+    "PublishProduct\t\t6400\n"
+    "InstallFinalize\t\t6600\n";
 
 static const char ci_custom_action_dat[] =
     "Action\tType\tSource\tTarget\tISComments\n"
     "s72\ti2\tS64\tS0\tS255\n"
     "CustomAction\tAction\n"
-    "RunInstall\t87\tmsitest\\concurrent.msi\tMYPROP=[UILevel]\t\n";
+    "RunInstall\t23\tmsitest\\concurrent.msi\tMYPROP=[UILevel]\t\n";
 
 static const char ci_component_dat[] =
     "Component\tComponentId\tDirectory_\tAttributes\tCondition\tKeyPath\n"
@@ -1008,7 +1027,7 @@ static const msi_table ci2_tables[] =
     ADD_TABLE(ci2_file),
     ADD_TABLE(install_exec_seq),
     ADD_TABLE(lus0_media),
-    ADD_TABLE(property),
+    ADD_TABLE(ci2_property),
 };
 
 static const msi_table cl_tables[] =
@@ -3504,6 +3523,146 @@ static void test_MsiProvideComponent(void)
     DeleteFileA(msifile);
 }
 
+static void test_MsiProvideQualifiedComponentEx(void)
+{
+    UINT r;
+    INSTALLSTATE state;
+    char comp[39], comp_squashed[33], comp2[39], comp2_base85[21], comp2_squashed[33];
+    char prod[39], prod_base85[21], prod_squashed[33];
+    char desc[MAX_PATH], buf[MAX_PATH], keypath[MAX_PATH], path[MAX_PATH];
+    DWORD len = sizeof(buf);
+    REGSAM access = KEY_ALL_ACCESS;
+    HKEY hkey, hkey2, hkey3, hkey4, hkey5;
+    LONG res;
+
+    if (is_process_limited())
+    {
+        skip( "process is limited\n" );
+        return;
+    }
+
+    create_test_guid( comp, comp_squashed );
+    compose_base85_guid( comp2, comp2_base85, comp2_squashed );
+    compose_base85_guid( prod, prod_base85, prod_squashed );
+
+    r = MsiProvideQualifiedComponentExA( comp, "qualifier", INSTALLMODE_EXISTING, prod, 0, 0, buf, &len );
+    ok( r == ERROR_UNKNOWN_COMPONENT, "got %u\n", r );
+
+    lstrcpyA( keypath, "Software\\Classes\\Installer\\Components\\" );
+    lstrcatA( keypath, comp_squashed );
+
+    if (is_wow64) access |= KEY_WOW64_64KEY;
+    res = RegCreateKeyExA( HKEY_LOCAL_MACHINE, keypath, 0, NULL, 0, access, NULL, &hkey, NULL );
+    ok( res == ERROR_SUCCESS, "got %d\n", res );
+
+    lstrcpyA( desc, prod_base85 );
+    memcpy( desc + lstrlenA(desc), "feature<\0", sizeof("feature<\0") );
+    res = RegSetValueExA( hkey, "qualifier", 0, REG_MULTI_SZ, (const BYTE *)desc,
+                          lstrlenA(prod_base85) + sizeof("feature<\0") );
+    ok( res == ERROR_SUCCESS, "got %d\n", res );
+
+    r = MsiProvideQualifiedComponentExA( comp, "qualifier", INSTALLMODE_EXISTING, prod, 0, 0, buf, &len );
+    ok( r == ERROR_UNKNOWN_PRODUCT, "got %u\n", r );
+
+    r = MsiProvideQualifiedComponentExA( comp, "qualifier", INSTALLMODE_EXISTING, NULL, 0, 0, buf, &len );
+    ok( r == ERROR_UNKNOWN_PRODUCT, "got %u\n", r );
+
+    state = MsiQueryProductStateA( prod );
+    ok( state == INSTALLSTATE_UNKNOWN, "got %d\n", state );
+
+    lstrcpyA( keypath, "Software\\Classes\\Installer\\Products\\" );
+    lstrcatA( keypath, prod_squashed );
+
+    res = RegCreateKeyExA( HKEY_LOCAL_MACHINE, keypath, 0, NULL, 0, access, NULL, &hkey2, NULL );
+    ok( res == ERROR_SUCCESS, "got %d\n", res );
+
+    state = MsiQueryProductStateA( prod );
+    ok( state == INSTALLSTATE_ADVERTISED, "got %d\n", state );
+
+    r = MsiProvideQualifiedComponentExA( comp, "qualifier", INSTALLMODE_EXISTING, prod, 0, 0, buf, &len );
+    todo_wine ok( r == ERROR_UNKNOWN_FEATURE, "got %u\n", r );
+
+    lstrcpyA( keypath, "Software\\Classes\\Installer\\Features\\" );
+    lstrcatA( keypath, prod_squashed );
+
+    res = RegCreateKeyExA( HKEY_LOCAL_MACHINE, keypath, 0, NULL, 0, access, NULL, &hkey3, NULL );
+    ok( res == ERROR_SUCCESS, "got %d\n", res );
+
+    state = MsiQueryFeatureStateA( prod, "feature" );
+    ok( state == INSTALLSTATE_UNKNOWN, "got %d\n", state );
+
+    res = RegSetValueExA( hkey3, "feature", 0, REG_SZ, (const BYTE *)"", 1 );
+    ok( res == ERROR_SUCCESS, "got %d\n", res );
+
+    state = MsiQueryFeatureStateA( prod, "feature" );
+    ok( state == INSTALLSTATE_ADVERTISED, "got %d\n", state );
+
+    r = MsiProvideQualifiedComponentExA( comp, "qualifier", INSTALLMODE_EXISTING, prod, 0, 0, buf, &len );
+    ok( r == ERROR_FILE_NOT_FOUND, "got %u\n", r );
+
+    len = sizeof(buf);
+    r = MsiProvideQualifiedComponentExA( comp, "qualifier", INSTALLMODE_EXISTING, NULL, 0, 0, buf, &len );
+    ok( r == ERROR_FILE_NOT_FOUND, "got %u\n", r );
+
+    lstrcpyA( keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\Installer\\UserData\\S-1-5-18\\Products\\" );
+    lstrcatA( keypath, prod_squashed );
+    lstrcatA( keypath, "\\Features" );
+
+    res = RegCreateKeyExA( HKEY_LOCAL_MACHINE, keypath, 0, NULL, 0, access, NULL, &hkey4, NULL );
+    ok( res == ERROR_SUCCESS, "got %d\n", res );
+
+    res = RegSetValueExA( hkey4, "feature", 0, REG_SZ, (const BYTE *)comp2_base85, sizeof(comp2_base85) );
+    ok( res == ERROR_SUCCESS, "got %d\n", res );
+
+    state = MsiQueryFeatureStateA( prod, "feature" );
+    ok( state == INSTALLSTATE_ADVERTISED, "got %d\n", state );
+
+    lstrcpyA( keypath, "Software\\Microsoft\\Windows\\CurrentVersion\\Installer\\UserData\\S-1-5-18\\Components\\" );
+    lstrcatA( keypath, comp2_squashed );
+
+    res = RegCreateKeyExA( HKEY_LOCAL_MACHINE, keypath, 0, NULL, 0, access, NULL, &hkey5, NULL );
+    ok( res == ERROR_SUCCESS, "got %d\n", res );
+
+    res = RegSetValueExA( hkey5, prod_squashed, 0, REG_SZ, (const BYTE *)"c:\\nosuchfile", sizeof("c:\\nosuchfile") );
+    ok( res == ERROR_SUCCESS, "got %d\n", res );
+
+    state = MsiQueryFeatureStateA( prod, "feature" );
+    ok( state == INSTALLSTATE_LOCAL, "got %d\n", state );
+
+    r = MsiProvideQualifiedComponentExA( comp, "qualifier", INSTALLMODE_EXISTING, prod, 0, 0, buf, &len );
+    ok( r == ERROR_FILE_NOT_FOUND, "got %u\n", r );
+
+    GetCurrentDirectoryA( MAX_PATH, path );
+    lstrcatA( path, "\\msitest" );
+    CreateDirectoryA( path, NULL );
+    lstrcatA( path, "\\test.txt" );
+    create_file( path, "test", 100 );
+
+    res = RegSetValueExA( hkey5, prod_squashed, 0, REG_SZ, (const BYTE *)path, lstrlenA(path) + 1 );
+    ok( res == ERROR_SUCCESS, "got %d\n", res );
+
+    buf[0] = 0;
+    len = sizeof(buf);
+    r = MsiProvideQualifiedComponentExA( comp, "qualifier", INSTALLMODE_EXISTING, prod, 0, 0, buf, &len );
+    ok( r == ERROR_SUCCESS, "got %u\n", r );
+    ok( len == lstrlenA(path), "got %u\n", len );
+    ok( !lstrcmpA( path, buf ), "got '%s'\n", buf );
+
+    DeleteFileA( "msitest\\text.txt" );
+    RemoveDirectoryA( "msitest" );
+
+    delete_key( hkey5, "", access & KEY_WOW64_64KEY );
+    RegCloseKey( hkey5 );
+    delete_key( hkey4, "", access & KEY_WOW64_64KEY );
+    RegCloseKey( hkey4 );
+    delete_key( hkey3, "", access & KEY_WOW64_64KEY );
+    RegCloseKey( hkey3 );
+    delete_key( hkey2, "", access & KEY_WOW64_64KEY );
+    RegCloseKey( hkey2 );
+    delete_key( hkey, "", access & KEY_WOW64_64KEY );
+    RegCloseKey( hkey );
+}
+
 static void test_MsiGetProductCode(void)
 {
     HKEY compkey, prodkey;
@@ -4226,12 +4385,11 @@ static void test_MsiGetFileVersion(void)
     ok(versz == verchecksz, "Expected %d, got %d\n", verchecksz, versz);
 
     /* pcchLangBuf not big enough */
-    langsz = 3;
+    langsz = 4;
     lstrcpyA(lang, "lang");
     r = MsiGetFileVersionA(path, NULL, NULL, lang, &langsz);
     ok(r == ERROR_MORE_DATA, "Expected ERROR_MORE_DATA, got %d\n", r);
-    ok(!strncmp(lang, langcheck, 2),
-       "Expected first character of \"%s\", got \"%s\"\n", langcheck, lang);
+    ok(lstrcmpA(lang, "lang"), "lang not set\n");
     ok(langsz >= langchecksz, "Expected %d >= %d\n", langsz, langchecksz);
 
     /* pcchVersionBuf big enough, pcchLangBuf not big enough */
@@ -4252,7 +4410,7 @@ static void test_MsiGetFileVersion(void)
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
     ok(versz == verchecksz, "Expected %d, got %d\n", verchecksz, versz);
     ok(langsz >= langchecksz && langsz < MAX_PATH, "Expected %d >= %d\n", langsz, langchecksz);
-    ok(lstrcmpA(lang, "lang"), "lang buffer not modified\n");
+    ok(strstr(lang, langcheck) != NULL, "expected %s in %s\n", langcheck, lang);
 
     /* NULL pcchVersionBuf and pcchLangBuf */
     r = MsiGetFileVersionA(path, version, NULL, lang, NULL);
@@ -14181,22 +14339,23 @@ static void test_concurrentinstall(void)
     if (r == ERROR_INSTALL_PACKAGE_REJECTED)
     {
         skip("Not enough rights to perform tests\n");
-        DeleteFileA(path);
         goto error;
     }
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
-    if (!delete_pf("msitest\\augustus", TRUE))
-        trace("concurrent installs not supported\n");
+    ok(delete_pf("msitest\\augustus", TRUE), "File not installed\n");
     ok(delete_pf("msitest\\maximus", TRUE), "File not installed\n");
     ok(delete_pf("msitest", FALSE), "Directory not created\n");
 
     r = MsiConfigureProductA("{38847338-1BBC-4104-81AC-2FAAC7ECDDCD}", INSTALLLEVEL_DEFAULT,
                              INSTALLSTATE_ABSENT);
-    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
+    ok(r == ERROR_SUCCESS, "got %u\n", r);
 
-    DeleteFileA(path);
+    r = MsiConfigureProductA("{FF4AFE9C-6AC2-44F9-A060-9EA6BD16C75E}", INSTALLLEVEL_DEFAULT,
+                             INSTALLSTATE_ABSENT);
+    ok(r == ERROR_SUCCESS, "got %u\n", r);
 
 error:
+    DeleteFileA(path);
     DeleteFileA(msifile);
     DeleteFileA("msitest\\msitest\\augustus");
     DeleteFileA("msitest\\maximus");
@@ -14425,8 +14584,10 @@ START_TEST(msi)
     test_lastusedsource();
     test_setpropertyfolder();
     test_sourcedir_props();
-    test_concurrentinstall();
+    if (pMsiGetComponentPathExA)
+        test_concurrentinstall();
     test_command_line_parsing();
+    test_MsiProvideQualifiedComponentEx();
 
     SetCurrentDirectoryA(prev_path);
 }

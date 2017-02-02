@@ -156,7 +156,8 @@ todo_wine
 
     hr = ITaskService_GetFolder(service, dot, &folder);
 todo_wine
-    ok(hr == HRESULT_FROM_WIN32(ERROR_INVALID_NAME), "expected ERROR_INVALID_NAME, got %#x\n", hr);
+    ok(hr == HRESULT_FROM_WIN32(ERROR_INVALID_NAME) || hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) /* win7 */,
+       "expected ERROR_INVALID_NAME, got %#x\n", hr);
 
     hr = ITaskService_GetFolder(service, bslash, &folder);
     ok(hr == S_OK, "GetFolder error %#x\n", hr);
@@ -201,7 +202,8 @@ todo_wine
     ok(hr == HRESULT_FROM_WIN32(ERROR_INVALID_NAME), "expected ERROR_INVALID_NAME, got %#x\n", hr);
 
     hr = ITaskService_GetFolder(service, Wine_Folder1_Folder2, &subfolder);
-    ok(hr == HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND), "expected ERROR_PATH_NOT_FOUND, got %#x\n", hr);
+    ok(hr == HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND) || hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) /* win7 */,
+       "expected ERROR_PATH_NOT_FOUND, got %#x\n", hr);
 
     hr = ITaskFolder_CreateFolder(folder, bslash, v_null, &subfolder);
 todo_wine
@@ -215,7 +217,6 @@ todo_wine
     ok(hr == HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS), "expected ERROR_ALREADY_EXISTS, got %#x\n", hr);
 
     hr = ITaskFolder_CreateFolder(folder, Wine_Folder1_, v_null, &subfolder);
-todo_wine
     ok(hr == HRESULT_FROM_WIN32(ERROR_INVALID_NAME), "expected ERROR_INVALID_NAME, got %#x\n", hr);
 
     hr = ITaskFolder_CreateFolder(folder, Wine, v_null, &subfolder);
@@ -295,7 +296,6 @@ todo_wine
     SysFreeString(bstr);
 
     hr = ITaskFolder_GetFolder(subfolder, bslash, &subfolder2);
-todo_wine
     ok(hr == HRESULT_FROM_WIN32(ERROR_INVALID_NAME), "expected ERROR_INVALID_NAME, got %#x\n", hr);
 
     hr = ITaskFolder_GetFolder(subfolder, NULL, &subfolder2);
@@ -345,13 +345,13 @@ todo_wine
 
     hr = ITaskFolder_DeleteFolder(folder, Wine_Folder1_Folder2, 0);
     ok(hr == S_OK, "DeleteFolder error %#x\n", hr);
-    ITaskFolder_DeleteFolder(folder, Wine_Folder1+1, 0);
+    hr = ITaskFolder_DeleteFolder(folder, Wine_Folder1+1, 0);
     ok(hr == S_OK, "DeleteFolder error %#x\n", hr);
     hr = ITaskFolder_DeleteFolder(folder, Wine+1, 0);
     ok(hr == S_OK, "DeleteFolder error %#x\n", hr);
 
     hr = ITaskFolder_DeleteFolder(folder, Wine, 0);
-    ok(hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND), "expected ERROR_FILE_NOT_FOUND, got %#x\n", hr);
+    ok(hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) || hr == S_OK /* win7 */, "expected ERROR_FILE_NOT_FOUND, got %#x\n", hr);
 
     hr = ITaskFolder_DeleteFolder(folder, NULL, 0);
     ok(hr == E_ACCESSDENIED || hr == E_INVALIDARG /* Vista */, "expected E_ACCESSDENIED, got %#x\n", hr);
@@ -764,13 +764,15 @@ static void test_GetTask(void)
     ITaskFolder_DeleteFolder(root, Wine, 0);
 
     hr = ITaskFolder_GetTask(root, Wine_Task1, &task1);
-    ok(hr == HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND), "expected ERROR_PATH_NOT_FOUND, got %#x\n", hr);
+    ok(hr == HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND) || hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) /* win7 */,
+       "expected ERROR_PATH_NOT_FOUND, got %#x\n", hr);
 
     hr = ITaskFolder_CreateFolder(root, Wine, v_null, &folder);
     ok(hr == S_OK, "CreateFolder error %#x\n", hr);
 
     hr = ITaskFolder_GetTask(root, Wine, &task1);
-    ok(hr == HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND), "expected ERROR_PATH_NOT_FOUND, got %#x\n", hr);
+    ok(hr == HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND) || hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) /* win7 */,
+       "expected ERROR_PATH_NOT_FOUND, got %#x\n", hr);
 
     MultiByteToWideChar(CP_ACP, 0, xml1, -1, xmlW, sizeof(xmlW)/sizeof(xmlW[0]));
 
@@ -782,6 +784,7 @@ static void test_GetTask(void)
         {
             hr = ITaskFolder_DeleteTask(root, Wine_Task1, 0);
             ok(hr == S_OK, "DeleteTask error %#x\n", hr);
+            IRegisteredTask_Release(task1);
         }
     }
 
@@ -809,8 +812,10 @@ todo_wine
 
     for (i = 0; i < sizeof(open_existing_task)/sizeof(open_existing_task[0]); i++)
     {
-        hr = ITaskFolder_RegisterTask(root, Wine_Task1, xmlW, open_existing_task[i].flags, v_null, v_null, TASK_LOGON_NONE, v_null, &task1);
+        hr = ITaskFolder_RegisterTask(root, Wine_Task1, xmlW, open_existing_task[i].flags, v_null, v_null, TASK_LOGON_NONE, v_null, &task2);
         ok(hr == open_existing_task[i].hr, "%d: expected %#x, got %#x\n", i, open_existing_task[i].hr, hr);
+        if (hr == S_OK)
+            IRegisteredTask_Release(task2);
     }
 
     hr = IRegisteredTask_get_Name(task1, NULL);
@@ -935,7 +940,7 @@ todo_wine
     ok(hr == S_OK, "DeleteTask error %#x\n", hr);
 
     hr = ITaskFolder_DeleteTask(folder, Task2, 0);
-    ok(hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND), "expected ERROR_FILE_NOT_FOUND, got %#x\n", hr);
+    ok(hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) || hr == S_OK /* win7 */, "expected ERROR_FILE_NOT_FOUND, got %#x\n", hr);
 
     hr = ITaskFolder_RegisterTask(root, NULL, xmlW, TASK_CREATE, v_null, v_null, TASK_LOGON_NONE, v_null, &task1);
     ok(hr == S_OK, "RegisterTask error %#x\n", hr);
@@ -949,6 +954,7 @@ todo_wine
 
     hr = ITaskFolder_DeleteTask(root, bstr, 0);
     ok(hr == S_OK, "DeleteTask error %#x\n", hr);
+    SysFreeString(bstr);
 
     hr = ITaskFolder_RegisterTask(folder, NULL, xmlW, TASK_CREATE, v_null, v_null, TASK_LOGON_NONE, v_null, &task1);
     ok(hr == E_INVALIDARG, "expected E_INVALIDARG, got %#x\n", hr);
@@ -1006,7 +1012,10 @@ static void test_settings_v1(ITaskDefinition *taskdef, struct settings *test, st
     if (!def->restart_interval[0])
         ok(bstr == NULL, "expected NULL, got %s\n", wine_dbgstr_w(bstr));
     else
+    {
         ok(!lstrcmpW(bstr, def->restart_interval), "expected %s, got %s\n", wine_dbgstr_w(def->restart_interval), wine_dbgstr_w(bstr));
+        SysFreeString(bstr);
+    }
 
     hr = ITaskSettings_get_RestartCount(set, &vint);
     ok(hr == S_OK, "expected S_OK, got %#x\n", hr);
@@ -1052,7 +1061,10 @@ static void test_settings_v1(ITaskDefinition *taskdef, struct settings *test, st
     if (!test->delete_expired_task_after[0])
         ok(bstr == NULL, "expected NULL, got %s\n", wine_dbgstr_w(bstr));
     else
+    {
         ok(!lstrcmpW(bstr, test->delete_expired_task_after), "expected %s, got %s\n", wine_dbgstr_w(test->delete_expired_task_after), wine_dbgstr_w(bstr));
+        SysFreeString(bstr);
+    }
 
     hr = ITaskSettings_get_Priority(set, &vint);
     ok(hr == S_OK, "expected S_OK, got %#x\n", hr);
@@ -1094,7 +1106,11 @@ static void change_settings(ITaskDefinition *taskdef, struct settings *test)
 todo_wine
     ok(hr == S_OK, "expected S_OK, got %#x\n", hr);
     /* FIXME: Remove once implemented */
-    if (hr != S_OK) return;
+    if (hr != S_OK)
+    {
+        ITaskSettings_Release(set);
+        return;
+    }
 
     hr = ITaskSettings_put_RestartCount(set, test->restart_count);
     ok(hr == S_OK, "expected S_OK, got %#x\n", hr);
@@ -1153,6 +1169,41 @@ todo_wine
     /* FIXME: set IIdleSettings and INetworkSettings */
 
     ITaskSettings_Release(set);
+}
+
+static void test_daily_trigger(ITrigger *trigger)
+{
+    IDailyTrigger *daily_trigger;
+    short interval;
+    HRESULT hr;
+
+    hr = ITrigger_QueryInterface(trigger, &IID_IDailyTrigger, (void**)&daily_trigger);
+    ok(hr == S_OK, "Could not get IDailyTrigger iface: %08x\n", hr);
+
+    interval = -1;
+    hr = IDailyTrigger_get_DaysInterval(daily_trigger, &interval);
+    ok(hr == S_OK, "get_DaysInterval failed: %08x\n", hr);
+    ok(interval == 1, "interval = %d\n", interval);
+
+    hr = IDailyTrigger_put_DaysInterval(daily_trigger, -2);
+    ok(hr == E_INVALIDARG, "put_DaysInterval failed: %08x\n", hr);
+    hr = IDailyTrigger_put_DaysInterval(daily_trigger, 0);
+    ok(hr == E_INVALIDARG, "put_DaysInterval failed: %08x\n", hr);
+
+    interval = -1;
+    hr = IDailyTrigger_get_DaysInterval(daily_trigger, &interval);
+    ok(hr == S_OK, "get_DaysInterval failed: %08x\n", hr);
+    ok(interval == 1, "interval = %d\n", interval);
+
+    hr = IDailyTrigger_put_DaysInterval(daily_trigger, 2);
+    ok(hr == S_OK, "put_DaysInterval failed: %08x\n", hr);
+
+    interval = -1;
+    hr = IDailyTrigger_get_DaysInterval(daily_trigger, &interval);
+    ok(hr == S_OK, "get_DaysInterval failed: %08x\n", hr);
+    ok(interval == 2, "interval = %d\n", interval);
+
+    IDailyTrigger_Release(daily_trigger);
 }
 
 static void create_action(ITaskDefinition *taskdef)
@@ -1277,10 +1328,12 @@ static void test_TaskDefinition(void)
         100, 1, TASK_INSTANCES_STOP_EXISTING, TASK_COMPATIBILITY_V1, VARIANT_FALSE, VARIANT_FALSE,
         VARIANT_FALSE, VARIANT_FALSE, VARIANT_TRUE, VARIANT_TRUE, VARIANT_FALSE, VARIANT_TRUE,
         VARIANT_TRUE, VARIANT_TRUE };
+    ITriggerCollection *trigger_col, *trigger_col2;
     HRESULT hr;
     ITaskService *service;
     ITaskDefinition *taskdef;
     IRegistrationInfo *reginfo;
+    ITrigger *trigger;
     BSTR xml, bstr;
     VARIANT var;
     WCHAR xmlW[sizeof(xml1)];
@@ -1403,6 +1456,22 @@ if (hr == S_OK)
     ok(hr == S_OK, "get_Description error %#x\n", hr);
 if (hr == S_OK)
     ok(!bstr, "expected NULL, got %s\n", wine_dbgstr_w(bstr));
+
+    hr = ITaskDefinition_get_Triggers(taskdef, &trigger_col);
+    ok(hr == S_OK, "get_Triggers failed: %08x\n", hr);
+    ok(trigger_col != NULL, "Triggers = NULL\n");
+
+    hr = ITriggerCollection_Create(trigger_col, TASK_TRIGGER_DAILY, &trigger);
+    ok(hr == S_OK, "Create failed: %08x\n", hr);
+    ok(trigger != NULL, "trigger = NULL\n");
+    test_daily_trigger(trigger);
+    ITrigger_Release(trigger);
+    ITriggerCollection_Release(trigger_col);
+
+    hr = ITaskDefinition_get_Triggers(taskdef, &trigger_col2);
+    ok(hr == S_OK, "get_Triggers failed: %08x\n", hr);
+    ok(trigger_col == trigger_col2, "Mismatched triggers\n");
+    ITriggerCollection_Release(trigger_col2);
 
     IRegistrationInfo_Release(reginfo);
     ITaskDefinition_Release(taskdef);

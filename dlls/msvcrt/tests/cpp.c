@@ -146,7 +146,7 @@ static void init_thiscall_thunk(void)
 }
 
 #define call_func1(func,_this) call_thiscall_func1(func,_this)
-#define call_func2(func,_this,a) call_thiscall_func2(func,_this,(const void*)a)
+#define call_func2(func,_this,a) call_thiscall_func2(func,_this,(const void*)(a))
 
 #else
 
@@ -452,8 +452,7 @@ static void test_exception(void)
   {
     /* Check the rtti */
     type_info *ti = p__RTtypeid(&e);
-    ok (ti && ti->mangled &&
-        !strcmp(ti->mangled, ".?AVexception@@"), "bad rtti for e\n");
+    ok (ti && !strcmp(ti->mangled, ".?AVexception@@"), "bad rtti for e\n");
 
     if (ti)
     {
@@ -970,7 +969,11 @@ static void test_rtti(void)
   void *child_class_sig0 = &child_class_sig0_vtbl[1];
   void *virtual_base_class_vtbl[2] = {&virtual_base_class_rtti.object_locator};
   int virtual_base_class_vbtbl[2] = {0, 0x100};
-  void *virtual_base_class[2] = {&virtual_base_class_vtbl[1], virtual_base_class_vbtbl};
+  struct {
+      void *virtual_base[2];
+      char data[0x110-sizeof(void*)];
+      void *vbthis;
+  } virtual_base_class = { {&virtual_base_class_vtbl[1], virtual_base_class_vbtbl} };
 
   static const char* e_name = "name";
   type_info *ti,*bti;
@@ -1036,15 +1039,13 @@ static void test_rtti(void)
   child_class_sig0_rtti.object_locator.type_hierarchy = RTTI_REF_SIG0(child_class_sig0_rtti, object_hierarchy, base);
 
   ti = p__RTtypeid(&simple_class_sig0);
-  ok (ti && ti->mangled && !strcmp(ti->mangled, "simple_class"),
-          "incorrect rtti data\n");
+  ok (ti && !strcmp(ti->mangled, "simple_class"), "incorrect rtti data\n");
 
   casted = p__RTCastToVoid(&simple_class_sig0);
   ok (casted == (void*)&simple_class_sig0, "failed cast to void\n");
 
   ti = p__RTtypeid(&child_class_sig0);
-  ok (ti && ti->mangled && !strcmp(ti->mangled, "child_class"),
-          "incorrect rtti data\n");
+  ok (ti && !strcmp(ti->mangled, "child_class"), "incorrect rtti data\n");
 
   casted = p__RTCastToVoid(&child_class_sig0);
   ok (casted == (void*)&child_class_sig0, "failed cast to void\n");
@@ -1064,15 +1065,13 @@ static void test_rtti(void)
   }
 
   ti = p__RTtypeid(&simple_class);
-  ok (ti && ti->mangled && !strcmp(ti->mangled, "simple_class"),
-          "incorrect rtti data\n");
+  ok (ti && !strcmp(ti->mangled, "simple_class"), "incorrect rtti data\n");
 
   casted = p__RTCastToVoid(&simple_class);
   ok (casted == (void*)&simple_class, "failed cast to void\n");
 
   ti = p__RTtypeid(&child_class);
-  ok (ti && ti->mangled && !strcmp(ti->mangled, "child_class"),
-        "incorrect rtti data\n");
+  ok (ti && !strcmp(ti->mangled, "child_class"), "incorrect rtti data\n");
 
   casted = p__RTCastToVoid(&child_class);
   ok (casted == (void*)&child_class, "failed cast to void\n");
@@ -1087,7 +1086,7 @@ static void test_rtti(void)
   ok(casted == (char*)&child_class+4, "failed cast to child class (%p %p)\n", casted, &child_class);
 
   casted = p__RTDynamicCast(&virtual_base_class, 0, &virtual_base_class_rtti.type_info[0], &virtual_base_class_rtti.type_info[1], 0);
-  ok(casted == (char*)&virtual_base_class+0x110+sizeof(void*), "failed cast to child class (%p %p)\n", casted, &virtual_base_class);
+  ok(casted == &virtual_base_class.vbthis, "failed cast to child class (%p %p)\n", casted, &virtual_base_class);
 }
 
 struct _demangle {
@@ -1114,10 +1113,8 @@ static void test_demangle_datatype(void)
     for (i = 0; i < num_test; i++)
     {
 	name = p__unDName(0, demangle[i].mangled, 0, pmalloc, pfree, 0x2800);
-	if (demangle[i].test_in_wine)
-	    ok(name != NULL && !strcmp(name,demangle[i].result), "Got name \"%s\" for %d\n", name, i);
-	else
-	    todo_wine ok(name != NULL && !strcmp(name,demangle[i].result), "Got name %s for %d\n", name, i);
+        todo_wine_if (!demangle[i].test_in_wine)
+            ok(name != NULL && !strcmp(name,demangle[i].result), "Got name \"%s\" for %d\n", name, i);
         if(name)
             pfree(name);
     }
@@ -1323,6 +1320,11 @@ static void test_demangle(void)
 /* 128 */ {"??Xstd@@YAAEAV?$complex@M@0@AEAV10@AEBV10@@Z",
            "class std::complex<float> & std::operator*=(class std::complex<float> &,class std::complex<float> const &)",
            "??Xstd@@YAAEAV?$complex@M@0@AEAV10@AEBV10@@Z", 2},
+/* 129 */ {"??$run@XVTask_Render_Preview@@@QtConcurrent@@YA?AV?$QFuture@X@@PEAVTask_Render_Preview@@P82@EAAXXZ@Z",
+           "class QFuture<void> __cdecl QtConcurrent::run<void,class Task_Render_Preview>(class Task_Render_Preview * __ptr64,void (__cdecl Task_Render_Preview::*)(void) __ptr64)",
+           "??$run@XVTask_Render_Preview@@@QtConcurrent@@YA?AV?$QFuture@X@@PEAVTask_Render_Preview@@P82@EAAXXZ@Z"},
+/* 130 */ {"??_E?$TStrArray@$$BY0BAA@D$0BA@@@UAEPAXI@Z",
+           "public: virtual void * __thiscall TStrArray<char [256],16>::`vector deleting destructor'(unsigned int)"},
     };
     int i, num_test = (sizeof(test)/sizeof(test[0]));
     char* name;

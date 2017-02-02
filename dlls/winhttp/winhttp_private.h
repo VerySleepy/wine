@@ -110,6 +110,7 @@ typedef struct
     LPWSTR proxy_username;
     LPWSTR proxy_password;
     struct list cookie_cache;
+    HANDLE unload_event;
 } session_t;
 
 typedef struct
@@ -148,6 +149,14 @@ typedef struct
     BOOL is_request; /* part of request headers? */
 } header_t;
 
+enum auth_target
+{
+    TARGET_INVALID = -1,
+    TARGET_SERVER,
+    TARGET_PROXY,
+    TARGET_MAX
+};
+
 enum auth_scheme
 {
     SCHEME_INVALID = -1,
@@ -155,7 +164,8 @@ enum auth_scheme
     SCHEME_NTLM,
     SCHEME_PASSPORT,
     SCHEME_DIGEST,
-    SCHEME_NEGOTIATE
+    SCHEME_NEGOTIATE,
+    SCHEME_MAX
 };
 
 struct authinfo
@@ -201,12 +211,23 @@ typedef struct
     DWORD num_accept_types;
     struct authinfo *authinfo;
     struct authinfo *proxy_authinfo;
+    HANDLE task_wait;
+    HANDLE task_cancel;
+    HANDLE task_thread;
+    struct list task_queue;
+    CRITICAL_SECTION task_cs;
+    struct
+    {
+        WCHAR *username;
+        WCHAR *password;
+    } creds[TARGET_MAX][SCHEME_MAX];
 } request_t;
 
 typedef struct _task_header_t task_header_t;
 
 struct _task_header_t
 {
+    struct list entry;
     request_t *request;
     void (*proc)( task_header_t * );
 };
@@ -340,6 +361,21 @@ static inline char *strdupWA( const WCHAR *src )
         int len = WideCharToMultiByte( CP_ACP, 0, src, -1, NULL, 0, NULL, NULL );
         if ((dst = heap_alloc( len )))
             WideCharToMultiByte( CP_ACP, 0, src, -1, dst, len, NULL, NULL );
+    }
+    return dst;
+}
+
+static inline char *strdupWA_sized( const WCHAR *src, DWORD size )
+{
+    char *dst = NULL;
+    if (src)
+    {
+        int len = WideCharToMultiByte( CP_ACP, 0, src, size, NULL, 0, NULL, NULL ) + 1;
+        if ((dst = heap_alloc( len )))
+        {
+            WideCharToMultiByte( CP_ACP, 0, src, len, dst, size, NULL, NULL );
+            dst[len - 1] = 0;
+        }
     }
     return dst;
 }

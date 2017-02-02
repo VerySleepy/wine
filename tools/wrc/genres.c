@@ -263,11 +263,13 @@ static void string_to_upper(string_t *str)
 
     if(str->type == str_char)
     {
-        for (i = 0; i < str->size; i++) str->str.cstr[i] = toupper((unsigned char)str->str.cstr[i]);
+        for (i = 0; i < str->size; i++)
+            if (str->str.cstr[i] >= 'a' && str->str.cstr[i] <= 'z') str->str.cstr[i] -= 32;
     }
     else if(str->type == str_unicode)
     {
-        for (i = 0; i < str->size; i++) str->str.wstr[i] = toupperW(str->str.wstr[i]);
+        for (i = 0; i < str->size; i++)
+            if (str->str.wstr[i] >= 'a' && str->str.wstr[i] <= 'z') str->str.wstr[i] -= 32;
     }
     else
     {
@@ -297,8 +299,11 @@ static int parse_accel_string( const string_t *key, int flags )
 	}
 	else if(key->str.cstr[0] == '^')
 	{
-            keycode = toupper((unsigned char)key->str.cstr[1]) - '@';
-            if(keycode >= ' ')
+            if (key->str.cstr[1] >= 'a' && key->str.cstr[1] <= 'z')
+                keycode = key->str.cstr[1] - 'a' + 1;
+            else if (key->str.cstr[1] >= 'A' && key->str.cstr[1] <= 'Z')
+                keycode = key->str.cstr[1] - 'A' + 1;
+            else
             {
                 print_location( &key->loc );
                 error("Control-code out of range\n");
@@ -324,8 +329,11 @@ static int parse_accel_string( const string_t *key, int flags )
 	}
 	else if(key->str.wstr[0] == '^')
 	{
-            keycode = toupperW(key->str.wstr[1]) - '@';
-            if(keycode >= ' ')
+            if (key->str.wstr[1] >= 'a' && key->str.wstr[1] <= 'z')
+                keycode = key->str.wstr[1] - 'a' + 1;
+            else if (key->str.wstr[1] >= 'A' && key->str.wstr[1] <= 'Z')
+                keycode = key->str.wstr[1] - 'A' + 1;
+            else
             {
                 print_location( &key->loc );
                 error("Control-code out of range\n");
@@ -657,11 +665,11 @@ static res_t *dialog2res(name_id_t *name, dialog_t *dlg)
 		put_word(res, dlg->width);
 		put_word(res, dlg->height);
 		if(dlg->menu)
-			put_name_id(res, dlg->menu, TRUE, dlg->lvc.language);
+			put_name_id(res, dlg->menu, FALSE, dlg->lvc.language);
 		else
 			put_word(res, 0);
 		if(dlg->dlgclass)
-			put_name_id(res, dlg->dlgclass, TRUE, dlg->lvc.language);
+			put_name_id(res, dlg->dlgclass, FALSE, dlg->lvc.language);
 		else
 			put_word(res, 0);
 		if(dlg->title)
@@ -709,7 +717,7 @@ static res_t *dialog2res(name_id_t *name, dialog_t *dlg)
 			else
 				put_word(res, ctrl->id);
 			if(ctrl->ctlclass)
-				put_name_id(res, ctrl->ctlclass, TRUE, dlg->lvc.language);
+				put_name_id(res, ctrl->ctlclass, FALSE, dlg->lvc.language);
 			else
 				internal_error(__FILE__, __LINE__, "Control has no control-class\n");
 			if(ctrl->title)
@@ -868,7 +876,7 @@ static void menuexitem2res(res_t *res, menu_item_t *menitem, const language_t *l
 	{
 		put_dword(res, itm->gottype ? itm->type : 0);
 		put_dword(res, itm->gotstate ? itm->state : 0);
-		put_dword(res, itm->gotid ? itm->id : 0);	/* FIXME: Docu. says word */
+		put_dword(res, itm->gotid ? itm->id : 0);
 		put_word(res, (itm->popup ? 0x01 : 0) | (!itm->next ? MF_END : 0));
 		if(itm->name)
 			put_string(res, itm->name, str_unicode, TRUE, lang);

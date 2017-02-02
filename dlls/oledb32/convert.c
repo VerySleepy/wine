@@ -20,8 +20,6 @@
 #include <stdarg.h>
 
 #define COBJMACROS
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "windef.h"
 #include "winbase.h"
@@ -182,6 +180,15 @@ static HRESULT WINAPI convert_DataConvert(IDataConvert* iface,
     {
         *dst_status = DBSTATUS_S_ISNULL;
         *dst_len = 0;
+        return S_OK;
+    }
+
+    if(src_type == DBTYPE_VARIANT && V_VT((VARIANT*)src) == VT_NULL)
+    {
+        if(dst_type == DBTYPE_VARIANT)
+            *dst_len = sizeof(VARIANT);
+
+        *dst_status = DBSTATUS_S_ISNULL;
         return S_OK;
     }
 
@@ -633,18 +640,9 @@ static HRESULT WINAPI convert_DataConvert(IDataConvert* iface,
         }
         break;
         case DBTYPE_VARIANT:
-            if(V_VT((VARIANT*)src) == VT_NULL)
-            {
-                *dst_status = DBSTATUS_S_ISNULL;
-                *dst_len = get_length(DBTYPE_BSTR);
-                return S_OK;
-            }
-            else
-            {
-                VariantInit(&tmp);
-                if ((hr = VariantChangeType(&tmp, (VARIANT*)src, 0, VT_BSTR)) == S_OK)
-                    *d = V_BSTR(&tmp);
-            }
+            VariantInit(&tmp);
+            if ((hr = VariantChangeType(&tmp, (VARIANT*)src, 0, VT_BSTR)) == S_OK)
+                *d = V_BSTR(&tmp);
             break;
         default: FIXME("Unimplemented conversion %04x -> BSTR\n", src_type); return E_NOTIMPL;
         }
@@ -1002,44 +1000,35 @@ static HRESULT WINAPI convert_DataConvert(IDataConvert* iface,
             return S_OK;
         case DBTYPE_VARIANT:
         {
-            if(V_VT((VARIANT*)src) == VT_NULL)
+            switch(V_VT((VARIANT*)src))
             {
-                *dst_status = DBSTATUS_S_ISNULL;
-                *dst_len = 0;
+            case VT_UI1 | VT_ARRAY:
+            {
+                LONG l;
+                BYTE *data = NULL;
+
+                hr = SafeArrayGetUBound(V_ARRAY((VARIANT*)src), 1, &l);
+                if(FAILED(hr))
+                    return hr;
+
+                hr = SafeArrayAccessData(V_ARRAY((VARIANT*)src), (VOID**)&data);
+                if(FAILED(hr))
+                {
+                    ERR("SafeArrayAccessData Failed = 0x%08x\n", hr);
+                    return hr;
+                }
+
+                *dst_len = l+1;
+                *dst_status = DBSTATUS_S_OK;
+                memcpy(d, data, *dst_len);
+
+                SafeArrayUnaccessData(V_ARRAY((VARIANT*)src));
                 return S_OK;
             }
-            else
-            {
-                switch(V_VT((VARIANT*)src))
-                {
-                case VT_UI1 | VT_ARRAY:
-                {
-                    LONG l;
-                    BYTE *data = NULL;
-
-                    hr = SafeArrayGetUBound(V_ARRAY((VARIANT*)src), 1, &l);
-                    if(FAILED(hr))
-                        return hr;
-
-                    hr = SafeArrayAccessData(V_ARRAY((VARIANT*)src), (VOID**)&data);
-                    if(FAILED(hr))
-                    {
-                        ERR("SafeArrayAccessData Failed = 0x%08x\n", hr);
-                        return hr;
-                    }
-
-                    *dst_len = l+1;
-                    *dst_status = DBSTATUS_S_OK;
-                    memcpy(d, data, *dst_len);
-
-                    SafeArrayUnaccessData(V_ARRAY((VARIANT*)src));
-                    return S_OK;
-                }
-                break;
-                default:
-                    FIXME("Unimplemented variant type %d -> BYTES\n", V_VT((VARIANT*)src));
-                    return E_NOTIMPL;
-                }
+            break;
+            default:
+                FIXME("Unimplemented variant type %d -> BYTES\n", V_VT((VARIANT*)src));
+                return E_NOTIMPL;
             }
         }
         break;
@@ -1355,6 +1344,9 @@ static HRESULT WINAPI convert_GetConversionSize(IDataConvert* iface,
     if ((*dst_len = get_length(dst_type)))
         return S_OK;
 
+    if(src_type == DBTYPE_VARIANT && V_VT((VARIANT*)src) == VT_NULL)
+        return S_OK;
+
     switch (dst_type)
     {
     case DBTYPE_STR:
@@ -1383,10 +1375,16 @@ static HRESULT WINAPI convert_GetConversionSize(IDataConvert* iface,
         switch (src_type)
         {
         case DBTYPE_VARIANT:
-            if(V_VT((VARIANT*)src) == VT_BSTR)
-                *dst_len = (SysStringLen(V_BSTR((VARIANT*)src))+1) * sizeof(WCHAR);
-            else
-                WARN("DBTYPE_VARIANT(%d)->DBTYPE_WSTR unimplemented\n", V_VT((VARIANT*)src));
+        {
+            VARIANT v;
+
+            VariantInit(&v);
+            if ((hr = VariantChangeType(&v, (VARIANT*)src, 0, VT_BSTR)) == S_OK)
+            {
+                *dst_len = (SysStringLen(V_BSTR(&v))+1) * sizeof(WCHAR);
+                VariantClear(&v);
+            }
+        }
             break;
         case DBTYPE_STR:
             if(src_len)

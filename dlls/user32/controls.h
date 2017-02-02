@@ -81,8 +81,8 @@ extern const struct builtin_class_descr SCROLL_builtin_class DECLSPEC_HIDDEN;
 extern const struct builtin_class_descr STATIC_builtin_class DECLSPEC_HIDDEN;
 extern const struct builtin_class_descr IME_builtin_class DECLSPEC_HIDDEN;
 
-extern LRESULT WINAPI ImeWndProcA(HWND,UINT,WPARAM,LPARAM);
-extern LRESULT WINAPI ImeWndProcW(HWND,UINT,WPARAM,LPARAM);
+extern LRESULT WINAPI ImeWndProcA(HWND,UINT,WPARAM,LPARAM) DECLSPEC_HIDDEN;
+extern LRESULT WINAPI ImeWndProcW(HWND,UINT,WPARAM,LPARAM) DECLSPEC_HIDDEN;
 extern LRESULT WINAPI DesktopWndProc(HWND,UINT,WPARAM,LPARAM) DECLSPEC_HIDDEN;
 extern LRESULT WINAPI IconTitleWndProc(HWND,UINT,WPARAM,LPARAM) DECLSPEC_HIDDEN;
 extern LRESULT WINAPI PopupMenuWndProc(HWND,UINT,WPARAM,LPARAM) DECLSPEC_HIDDEN;
@@ -241,7 +241,6 @@ typedef struct tagDIALOGINFO
 } DIALOGINFO;
 
 #define DF_END  0x0001
-#define DF_OWNERENABLED 0x0002
 
 extern DIALOGINFO *DIALOG_get_info( HWND hwnd, BOOL create ) DECLSPEC_HIDDEN;
 extern INT DIALOG_DoDialogBox( HWND hwnd, HWND owner ) DECLSPEC_HIDDEN;

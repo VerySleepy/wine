@@ -33,7 +33,7 @@
 #include <assert.h>
 
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
+
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "windef.h"
@@ -52,6 +52,7 @@
 WINE_DEFAULT_DEBUG_CHANNEL(win);
 WINE_DECLARE_DEBUG_CHANNEL(keyboard);
 
+INT global_key_state_counter = 0;
 
 /***********************************************************************
  *           get_key_state
@@ -107,7 +108,7 @@ BOOL set_capture_window( HWND hwnd, UINT gui_flags, HWND *prev_ret )
     {
         USER_Driver->pSetCapture( hwnd, gui_flags );
 
-        if (previous && previous != hwnd)
+        if (previous)
             SendMessageW( previous, WM_CAPTURECHANGED, 0, (LPARAM)hwnd );
 
         if (prev_ret) *prev_ret = previous;
@@ -368,7 +369,8 @@ static void check_for_events( UINT flags )
  */
 SHORT WINAPI DECLSPEC_HOTPATCH GetAsyncKeyState( INT key )
 {
-    struct user_thread_info *thread_info = get_user_thread_info();
+    struct user_key_state_info *key_state_info = get_user_thread_info()->key_state;
+    INT counter = global_key_state_counter;
     SHORT ret;
 
     if (key < 0 || key >= 256) return 0;
@@ -377,24 +379,36 @@ SHORT WINAPI DECLSPEC_HOTPATCH GetAsyncKeyState( INT key )
 
     if ((ret = USER_Driver->pGetAsyncKeyState( key )) == -1)
     {
-        if (thread_info->key_state &&
-            !(thread_info->key_state[key] & 0xc0) &&
-            GetTickCount() - thread_info->key_state_time < 50)
+        if (key_state_info &&
+            !(key_state_info->state[key] & 0xc0) &&
+            key_state_info->counter == counter &&
+            GetTickCount() - key_state_info->time < 50)
+        {
+            /* use cached value */
             return 0;
-
-        if (!thread_info->key_state) thread_info->key_state = HeapAlloc( GetProcessHeap(), 0, 256 );
+        }
+        else if (!key_state_info)
+        {
+            key_state_info = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*key_state_info) );
+            get_user_thread_info()->key_state = key_state_info;
+        }
 
         ret = 0;
         SERVER_START_REQ( get_key_state )
         {
             req->tid = 0;
             req->key = key;
-            if (thread_info->key_state) wine_server_set_reply( req, thread_info->key_state, 256 );
+            if (key_state_info) wine_server_set_reply( req, key_state_info->state,
+                                                       sizeof(key_state_info->state) );
             if (!wine_server_call( req ))
             {
                 if (reply->state & 0x40) ret |= 0x0001;
                 if (reply->state & 0x80) ret |= 0x8000;
-                thread_info->key_state_time = GetTickCount();
+                if (key_state_info)
+                {
+                    key_state_info->time    = GetTickCount();
+                    key_state_info->counter = counter;
+                }
             }
         }
         SERVER_END_REQ;
@@ -420,7 +434,7 @@ DWORD WINAPI GetQueueStatus( UINT flags )
 
     SERVER_START_REQ( get_queue_status )
     {
-        req->clear = 1;
+        req->clear_bits = flags;
         wine_server_call( req );
         ret = MAKELONG( reply->changed_bits & flags, reply->wake_bits & flags );
     }
@@ -440,7 +454,7 @@ BOOL WINAPI GetInputState(void)
 
     SERVER_START_REQ( get_queue_status )
     {
-        req->clear = 0;
+        req->clear_bits = 0;
         wine_server_call( req );
         ret = reply->wake_bits & (QS_KEY | QS_MOUSEBUTTON);
     }
@@ -482,7 +496,17 @@ UINT WINAPI GetRawInputDeviceList(RAWINPUTDEVICELIST *devices, UINT *device_coun
 {
     TRACE("devices %p, device_count %p, size %u.\n", devices, device_count, size);
 
-    if (size != sizeof(*devices) || !device_count) return ~0U;
+    if (size != sizeof(*devices))
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return ~0U;
+    }
+
+    if (!device_count)
+    {
+        SetLastError(ERROR_NOACCESS);
+        return ~0U;
+    }
 
     if (!devices)
     {
@@ -492,6 +516,7 @@ UINT WINAPI GetRawInputDeviceList(RAWINPUTDEVICELIST *devices, UINT *device_coun
 
     if (*device_count < 2)
     {
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
         *device_count = 2;
         return ~0U;
     }
@@ -859,9 +884,22 @@ WORD WINAPI VkKeyScanExW(WCHAR cChar, HKL dwhkl)
 /**********************************************************************
  *		OemKeyScan (USER32.@)
  */
-DWORD WINAPI OemKeyScan(WORD wOemChar)
+DWORD WINAPI OemKeyScan( WORD oem )
 {
-    return wOemChar;
+    WCHAR wchr;
+    DWORD vkey, scan;
+    char oem_char = LOBYTE( oem );
+
+    if (!OemToCharBuffW( &oem_char, &wchr, 1 ))
+        return -1;
+
+    vkey = VkKeyScanW( wchr );
+    scan = MapVirtualKeyW( LOBYTE( vkey ), MAPVK_VK_TO_VSC );
+    if (!scan) return -1;
+
+    vkey &= 0xff00;
+    vkey <<= 8;
+    return vkey | scan;
 }
 
 /******************************************************************************
@@ -1022,6 +1060,7 @@ INT WINAPI ToUnicode(UINT virtKey, UINT scanCode, const BYTE *lpKeyState,
 INT WINAPI ToUnicodeEx(UINT virtKey, UINT scanCode, const BYTE *lpKeyState,
 		       LPWSTR lpwStr, int size, UINT flags, HKL hkl)
 {
+    if (!lpKeyState) return 0;
     return USER_Driver->pToUnicodeEx(virtKey, scanCode, lpKeyState, lpwStr, size, flags, hkl);
 }
 

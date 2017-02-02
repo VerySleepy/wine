@@ -228,6 +228,31 @@ static void codeview_init_basic_types(struct module* module)
     cv_basic_types[T_64PINT8]   = &symt_new_pointer(module, cv_basic_types[T_INT8], 8)->symt;
     cv_basic_types[T_64PUINT8]  = &symt_new_pointer(module, cv_basic_types[T_UINT8], 8)->symt;
     cv_basic_types[T_64PHRESULT]= &symt_new_pointer(module, cv_basic_types[T_HRESULT], 8)->symt;
+
+    cv_basic_types[T_PVOID]   = &symt_new_pointer(module, cv_basic_types[T_VOID],   sizeof(void*))->symt;
+    cv_basic_types[T_PCHAR]   = &symt_new_pointer(module, cv_basic_types[T_CHAR],   sizeof(void*))->symt;
+    cv_basic_types[T_PSHORT]  = &symt_new_pointer(module, cv_basic_types[T_SHORT],  sizeof(void*))->symt;
+    cv_basic_types[T_PLONG]   = &symt_new_pointer(module, cv_basic_types[T_LONG],   sizeof(void*))->symt;
+    cv_basic_types[T_PQUAD]   = &symt_new_pointer(module, cv_basic_types[T_QUAD],   sizeof(void*))->symt;
+    cv_basic_types[T_PUCHAR]  = &symt_new_pointer(module, cv_basic_types[T_UCHAR],  sizeof(void*))->symt;
+    cv_basic_types[T_PUSHORT] = &symt_new_pointer(module, cv_basic_types[T_USHORT], sizeof(void*))->symt;
+    cv_basic_types[T_PULONG]  = &symt_new_pointer(module, cv_basic_types[T_ULONG],  sizeof(void*))->symt;
+    cv_basic_types[T_PUQUAD]  = &symt_new_pointer(module, cv_basic_types[T_UQUAD],  sizeof(void*))->symt;
+    cv_basic_types[T_PBOOL08] = &symt_new_pointer(module, cv_basic_types[T_BOOL08], sizeof(void*))->symt;
+    cv_basic_types[T_PBOOL16] = &symt_new_pointer(module, cv_basic_types[T_BOOL16], sizeof(void*))->symt;
+    cv_basic_types[T_PBOOL32] = &symt_new_pointer(module, cv_basic_types[T_BOOL32], sizeof(void*))->symt;
+    cv_basic_types[T_PBOOL64] = &symt_new_pointer(module, cv_basic_types[T_BOOL64], sizeof(void*))->symt;
+    cv_basic_types[T_PREAL32] = &symt_new_pointer(module, cv_basic_types[T_REAL32], sizeof(void*))->symt;
+    cv_basic_types[T_PREAL64] = &symt_new_pointer(module, cv_basic_types[T_REAL64], sizeof(void*))->symt;
+    cv_basic_types[T_PREAL80] = &symt_new_pointer(module, cv_basic_types[T_REAL80], sizeof(void*))->symt;
+    cv_basic_types[T_PRCHAR]  = &symt_new_pointer(module, cv_basic_types[T_RCHAR],  sizeof(void*))->symt;
+    cv_basic_types[T_PWCHAR]  = &symt_new_pointer(module, cv_basic_types[T_WCHAR],  sizeof(void*))->symt;
+    cv_basic_types[T_PINT2]   = &symt_new_pointer(module, cv_basic_types[T_INT2],   sizeof(void*))->symt;
+    cv_basic_types[T_PUINT2]  = &symt_new_pointer(module, cv_basic_types[T_UINT2],  sizeof(void*))->symt;
+    cv_basic_types[T_PINT4]   = &symt_new_pointer(module, cv_basic_types[T_INT4],   sizeof(void*))->symt;
+    cv_basic_types[T_PUINT4]  = &symt_new_pointer(module, cv_basic_types[T_UINT4],  sizeof(void*))->symt;
+    cv_basic_types[T_PINT8]   = &symt_new_pointer(module, cv_basic_types[T_INT8],   sizeof(void*))->symt;
+    cv_basic_types[T_PUINT8]  = &symt_new_pointer(module, cv_basic_types[T_UINT8],  sizeof(void*))->symt;
 }
 
 static int leaf_as_variant(VARIANT* v, const unsigned short int* leaf)
@@ -1000,7 +1025,7 @@ static struct symt* codeview_add_type_struct(struct codeview_type_parse* ctp,
         hash_table_iter_init(&ctp->module->ht_types, &hti, name);
         while ((ptr = hash_table_iter_up(&hti)))
         {
-            type = GET_ENTRY(ptr, struct symt_ht, hash_elt);
+            type = CONTAINING_RECORD(ptr, struct symt_ht, hash_elt);
 
             if (type->symt.tag == SymTagUDT &&
                 type->hash_elt.name && !strcmp(type->hash_elt.name, name))
@@ -1980,18 +2005,24 @@ static BOOL codeview_snarf(const struct msc_debug_info* msc_dbg, const BYTE* roo
             break;
 
         /* the symbols we can safely ignore for now */
-        case 0x112c:
+        case S_TRAMPOLINE:
         case S_FRAMEINFO_V2:
         case S_SECUCOOKIE_V3:
         case S_SECTINFO_V3:
         case S_SUBSECTINFO_V3:
         case S_ENTRYPOINT_V3:
-        case 0x113e:
-        case 0x1139:
-        case 0x1141:
-        case 0x1142:
-        case 0x1143:
-        case 0x1144:
+        case S_LOCAL_VS2013:
+        case S_CALLSITEINFO:
+        case S_DEFRANGE_REGISTER:
+        case S_DEFRANGE_FRAMEPOINTER_REL:
+        case S_DEFRANGE_SUBFIELD_REGISTER:
+        case S_FPOFF_VS2013:
+        case S_DEFRANGE_REGISTER_REL:
+        case S_BUILDINFO:
+        case S_INLINESITE:
+        case S_INLINESITE_END:
+        case S_FILESTATIC:
+        case S_CALLEES:
             TRACE("Unsupported symbol id %x\n", sym->generic.id);
             break;
 
@@ -2954,9 +2985,9 @@ static BOOL  pev_get_val(struct pevaluator* pev, const char* str, DWORD_PTR* val
         hash_table_iter_init(&pev->values, &hti, str);
         while ((ptr = hash_table_iter_up(&hti)))
         {
-            if (!strcmp(GET_ENTRY(ptr, struct zvalue, elt)->elt.name, str))
+            if (!strcmp(CONTAINING_RECORD(ptr, struct zvalue, elt)->elt.name, str))
             {
-                *val = GET_ENTRY(ptr, struct zvalue, elt)->value;
+                *val = CONTAINING_RECORD(ptr, struct zvalue, elt)->value;
                 return TRUE;
             }
         }
@@ -3009,9 +3040,9 @@ static BOOL  pev_set_value(struct pevaluator* pev, const char* name, DWORD_PTR v
     hash_table_iter_init(&pev->values, &hti, name);
     while ((ptr = hash_table_iter_up(&hti)))
     {
-        if (!strcmp(GET_ENTRY(ptr, struct zvalue, elt)->elt.name, name))
+        if (!strcmp(CONTAINING_RECORD(ptr, struct zvalue, elt)->elt.name, name))
         {
-            GET_ENTRY(ptr, struct zvalue, elt)->value = val;
+            CONTAINING_RECORD(ptr, struct zvalue, elt)->value = val;
             break;
         }
     }

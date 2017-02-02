@@ -45,9 +45,9 @@
 
 #include "msxml_private.h"
 
-WINE_DEFAULT_DEBUG_CHANNEL(msxml);
-
 #ifdef HAVE_LIBXML2
+
+WINE_DEFAULT_DEBUG_CHANNEL(msxml);
 
 typedef enum
 {
@@ -668,7 +668,7 @@ static void format_error_message_from_id(saxlocator *This, HRESULT hr)
     {
         WCHAR msg[1024];
         if(!FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM,
-                    NULL, hr, 0, msg, sizeof(msg), NULL))
+                    NULL, hr, 0, msg, sizeof(msg)/sizeof(msg[0]), NULL))
         {
             FIXME("MSXML errors not yet supported.\n");
             msg[0] = '\0';
@@ -690,12 +690,13 @@ static void format_error_message_from_id(saxlocator *This, HRESULT hr)
 static void update_position(saxlocator *This, BOOL fix_column)
 {
     const xmlChar *p = This->pParserCtxt->input->cur-1;
+    const xmlChar *baseP = This->pParserCtxt->input->base;
 
     This->line = xmlSAX2GetLineNumber(This->pParserCtxt);
     if(fix_column)
     {
         This->column = 1;
-        for(; *p!='\n' && *p!='\r' && p>=This->pParserCtxt->input->base; p--)
+        for(;p>=baseP && *p!='\n' && *p!='\r'; p--)
             This->column++;
     }
     else
@@ -2521,7 +2522,7 @@ static HRESULT internal_parseBuffer(saxreader *This, const char *buffer, int siz
     if (encoding == XML_CHAR_ENCODING_NONE)
     {
         const WCHAR *ptr = (WCHAR*)buffer;
-        /* xml declaration with possibly specfied encoding will be still handled by parser */
+        /* an xml declaration with optional encoding will still be handled by the parser */
         if ((size >= 2) && *ptr == '<' && ptr[1] != '?')
         {
             enc_name = (xmlChar*)xmlGetCharEncodingName(XML_CHAR_ENCODING_UTF16LE);

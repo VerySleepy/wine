@@ -161,12 +161,6 @@ static inline void call_copy_ctor( void *func, void *this, void *src, int has_vb
                              : : "r" (func), "c" (this), "r" (src) : "eax", "edx", "memory" );
 }
 
-/* call the destructor of the exception object */
-static inline void call_dtor( void *func, void *object )
-{
-    __asm__ __volatile__("call *%0" : : "r" (func), "c" (object) : "eax", "edx", "memory" );
-}
-
 /* continue execution to the specified address after exception is caught */
 static inline void DECLSPEC_NORETURN continue_after_catch( cxx_exception_frame* frame, void *addr )
 {
@@ -266,7 +260,7 @@ static void dump_function_descr( const cxx_function_descr *descr )
 
 /* check if the exception type is caught by a given catch block, and return the type that matched */
 static const cxx_type_info *find_caught_type( cxx_exception_type *exc_type,
-                                              const catchblock_info *catchblock )
+                                              const type_info *catch_ti, UINT catch_flags )
 {
     UINT i;
 
@@ -274,16 +268,16 @@ static const cxx_type_info *find_caught_type( cxx_exception_type *exc_type,
     {
         const cxx_type_info *type = exc_type->type_info_table->info[i];
 
-        if (!catchblock->type_info) return type;   /* catch(...) matches any type */
-        if (catchblock->type_info != type->type_info)
+        if (!catch_ti) return type;   /* catch(...) matches any type */
+        if (catch_ti != type->type_info)
         {
-            if (strcmp( catchblock->type_info->mangled, type->type_info->mangled )) continue;
+            if (strcmp( catch_ti->mangled, type->type_info->mangled )) continue;
         }
         /* type is the same, now check the flags */
         if ((exc_type->flags & TYPE_FLAG_CONST) &&
-            !(catchblock->flags & TYPE_FLAG_CONST)) continue;
+            !(catch_flags & TYPE_FLAG_CONST)) continue;
         if ((exc_type->flags & TYPE_FLAG_VOLATILE) &&
-            !(catchblock->flags & TYPE_FLAG_VOLATILE)) continue;
+            !(catch_flags & TYPE_FLAG_VOLATILE)) continue;
         return type;  /* it matched */
     }
     return NULL;
@@ -349,11 +343,10 @@ static void cxx_local_unwind( cxx_exception_frame* frame, const cxx_function_des
 struct catch_func_nested_frame
 {
     EXCEPTION_REGISTRATION_RECORD frame;     /* standard exception frame */
-    EXCEPTION_RECORD             *prev_rec;  /* previous record to restore in thread data */
     cxx_exception_frame          *cxx_frame; /* frame of parent exception */
     const cxx_function_descr     *descr;     /* descriptor of parent exception */
     int                           trylevel;  /* current try level */
-    EXCEPTION_RECORD             *rec;       /* rec associated with frame */
+    cxx_frame_info                frame_info;
 };
 
 /* handler for exceptions happening while calling a catch function */
@@ -364,7 +357,7 @@ static DWORD catch_function_nested_handler( EXCEPTION_RECORD *rec, EXCEPTION_REG
 
     if (rec->ExceptionFlags & (EH_UNWINDING | EH_EXIT_UNWIND))
     {
-        msvcrt_get_thread_data()->exc_record = nested_frame->prev_rec;
+        __CxxUnregisterExceptionObject(&nested_frame->frame_info, FALSE);
         return ExceptionContinueSearch;
     }
 
@@ -372,7 +365,8 @@ static DWORD catch_function_nested_handler( EXCEPTION_RECORD *rec, EXCEPTION_REG
 
     if(rec->ExceptionCode == CXX_EXCEPTION)
     {
-        PEXCEPTION_RECORD prev_rec = nested_frame->rec;
+        PEXCEPTION_RECORD prev_rec = msvcrt_get_thread_data()->exc_record;
+
         if((rec->ExceptionInformation[1] == 0 && rec->ExceptionInformation[2] == 0) ||
                 (prev_rec->ExceptionCode == CXX_EXCEPTION &&
                  rec->ExceptionInformation[1] == prev_rec->ExceptionInformation[1] &&
@@ -387,22 +381,6 @@ static DWORD catch_function_nested_handler( EXCEPTION_RECORD *rec, EXCEPTION_REG
                     TRACE("re-propage: obj: %lx, type: %lx\n",
                             rec->ExceptionInformation[1], rec->ExceptionInformation[2]);
             }
-        }
-        else if (nested_frame->prev_rec && nested_frame->prev_rec->ExceptionCode == CXX_EXCEPTION &&
-                nested_frame->prev_rec->ExceptionInformation[1] == prev_rec->ExceptionInformation[1] &&
-                nested_frame->prev_rec->ExceptionInformation[2] == prev_rec->ExceptionInformation[2])
-        {
-            TRACE("detect threw new exception in catch block - not owning old(obj: %lx type: %lx)\n",
-                    prev_rec->ExceptionInformation[1], prev_rec->ExceptionInformation[2]);
-        }
-        else if (prev_rec->ExceptionCode == CXX_EXCEPTION) {
-            /* new exception in exception handler, destroy old */
-            void *object = (void*)prev_rec->ExceptionInformation[1];
-            cxx_exception_type *info = (cxx_exception_type*) prev_rec->ExceptionInformation[2];
-            TRACE("detect threw new exception in catch block - destroy old(obj: %p type: %p)\n",
-                    object, info);
-            if(info && info->destructor)
-                call_dtor( info->destructor, object );
         }
         else
         {
@@ -419,6 +397,7 @@ static DWORD catch_function_nested_handler( EXCEPTION_RECORD *rec, EXCEPTION_REG
 /* returns the address to continue execution to after the catch block was called */
 static inline void call_catch_block( PEXCEPTION_RECORD rec, cxx_exception_frame *frame,
                                      const cxx_function_descr *descr, int nested_trylevel,
+                                     EXCEPTION_REGISTRATION_RECORD *catch_frame,
                                      cxx_exception_type *info )
 {
     UINT i;
@@ -426,12 +405,15 @@ static inline void call_catch_block( PEXCEPTION_RECORD rec, cxx_exception_frame 
     void *addr, *object = (void *)rec->ExceptionInformation[1];
     struct catch_func_nested_frame nested_frame;
     int trylevel = frame->trylevel;
-    thread_data_t *thread_data = msvcrt_get_thread_data();
     DWORD save_esp = ((DWORD*)frame)[-1];
+    thread_data_t *data;
 
     for (i = 0; i < descr->tryblock_count; i++)
     {
         const tryblock_info *tryblock = &descr->tryblock[i];
+
+        /* only handle try blocks inside current catch block */
+        if (catch_frame && nested_trylevel > tryblock->start_level) continue;
 
         if (trylevel < tryblock->start_level) continue;
         if (trylevel > tryblock->end_level) continue;
@@ -442,7 +424,8 @@ static inline void call_catch_block( PEXCEPTION_RECORD rec, cxx_exception_frame 
             const catchblock_info *catchblock = &tryblock->catchblock[j];
             if(info)
             {
-                const cxx_type_info *type = find_caught_type( info, catchblock );
+                const cxx_type_info *type = find_caught_type( info,
+                        catchblock->type_info, catchblock->flags );
                 if (!type) continue;
 
                 TRACE( "matched type %p in tryblock %d catchblock %d\n", type, i, j );
@@ -458,32 +441,35 @@ static inline void call_catch_block( PEXCEPTION_RECORD rec, cxx_exception_frame 
                 TRACE("found catch(...) block\n");
             }
 
+            /* Add frame info here so exception is not freed inside RtlUnwind call */
+            _CreateFrameInfo(&nested_frame.frame_info.frame_info,
+                    (void*)rec->ExceptionInformation[1]);
+
             /* unwind the stack */
-            RtlUnwind( frame, 0, rec, 0 );
+            RtlUnwind( catch_frame ? catch_frame : &frame->frame, 0, rec, 0 );
             cxx_local_unwind( frame, descr, tryblock->start_level );
             frame->trylevel = tryblock->end_level + 1;
+
+            data = msvcrt_get_thread_data();
+            nested_frame.frame_info.rec = data->exc_record;
+            data->exc_record = rec;
 
             /* call the catch block */
             TRACE( "calling catch block %p addr %p ebp %p\n",
                    catchblock, catchblock->handler, &frame->ebp );
 
             /* setup an exception block for nested exceptions */
-
             nested_frame.frame.Handler = catch_function_nested_handler;
-            nested_frame.prev_rec  = thread_data->exc_record;
             nested_frame.cxx_frame = frame;
             nested_frame.descr     = descr;
             nested_frame.trylevel  = nested_trylevel + 1;
-            nested_frame.rec = rec;
 
             __wine_push_frame( &nested_frame.frame );
-            thread_data->exc_record = rec;
             addr = call_ebp_func( catchblock->handler, &frame->ebp );
-            thread_data->exc_record = nested_frame.prev_rec;
             __wine_pop_frame( &nested_frame.frame );
 
             ((DWORD*)frame)[-1] = save_esp;
-            if (info && info->destructor) call_dtor( info->destructor, object );
+            __CxxUnregisterExceptionObject(&nested_frame.frame_info, FALSE);
             TRACE( "done, continuing at %p\n", addr );
 
             continue_after_catch( frame, addr );
@@ -491,6 +477,62 @@ static inline void call_catch_block( PEXCEPTION_RECORD rec, cxx_exception_frame 
     }
 }
 
+/*********************************************************************
+ *		__CxxExceptionFilter (MSVCRT.@)
+ */
+int CDECL __CxxExceptionFilter( PEXCEPTION_POINTERS ptrs,
+                                const type_info *ti, int flags, void **copy)
+{
+    const cxx_type_info *type;
+    PEXCEPTION_RECORD rec;
+
+    TRACE( "%p %p %x %p\n", ptrs, ti, flags, copy );
+
+    if (!ptrs) return EXCEPTION_CONTINUE_SEARCH;
+
+    /* handle catch(...) */
+    if (!ti) return EXCEPTION_EXECUTE_HANDLER;
+
+    rec = ptrs->ExceptionRecord;
+    if (rec->ExceptionCode != CXX_EXCEPTION || rec->NumberParameters != 3 ||
+            rec->ExceptionInformation[0] < CXX_FRAME_MAGIC_VC6 ||
+            rec->ExceptionInformation[0] > CXX_FRAME_MAGIC_VC8)
+        return EXCEPTION_CONTINUE_SEARCH;
+
+    if (rec->ExceptionInformation[1] == 0 && rec->ExceptionInformation[2] == 0)
+    {
+        rec = msvcrt_get_thread_data()->exc_record;
+        if (!rec) return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    type = find_caught_type( (cxx_exception_type*)rec->ExceptionInformation[2], ti, flags );
+    if (!type) return EXCEPTION_CONTINUE_SEARCH;
+
+    if (copy)
+    {
+        void *object = (void *)rec->ExceptionInformation[1];
+
+        if (flags & TYPE_FLAG_REFERENCE)
+        {
+            *copy = get_this_pointer( &type->offsets, object );
+        }
+        else if (type->flags & CLASS_IS_SIMPLE_TYPE)
+        {
+            memmove( copy, object, type->size );
+            /* if it is a pointer, adjust it */
+            if (type->size == sizeof(void*)) *copy = get_this_pointer( &type->offsets, *copy );
+        }
+        else  /* copy the object */
+        {
+            if (type->copy_ctor)
+                call_copy_ctor( type->copy_ctor, copy, get_this_pointer(&type->offsets,object),
+                        (type->flags & CLASS_HAS_VIRTUAL_BASE_CLASS) );
+            else
+                memmove( copy, get_this_pointer(&type->offsets,object), type->size );
+        }
+    }
+    return EXCEPTION_EXECUTE_HANDLER;
+}
 
 /*********************************************************************
  *		cxx_frame_handler
@@ -571,7 +613,7 @@ DWORD CDECL cxx_frame_handler( PEXCEPTION_RECORD rec, cxx_exception_frame* frame
         }
     }
 
-    call_catch_block( rec, frame, descr, frame->trylevel, exc_type );
+    call_catch_block( rec, frame, descr, frame->trylevel, nested_frame, exc_type );
     return ExceptionContinueSearch;
 }
 
@@ -909,6 +951,8 @@ int CDECL _except_handler4_common( ULONG *cookie, void (*check_cookie)(void),
 
                 if (retval == EXCEPTION_EXECUTE_HANDLER)
                 {
+                    __DestructExceptionObject(rec);
+
                     /* Unwind all higher frames, this one will handle the exception */
                     _global_unwind2((EXCEPTION_REGISTRATION_RECORD*)frame);
                     msvcrt_local_unwind4( cookie, frame, trylevel, &frame->_ebp );
@@ -1070,8 +1114,85 @@ void __stdcall _seh_longjmp_unwind(struct MSVCRT___JUMP_BUFFER *jmp)
  */
 void __stdcall _seh_longjmp_unwind4(struct MSVCRT___JUMP_BUFFER *jmp)
 {
-    msvcrt_local_unwind4( (void *)jmp->Cookie, (MSVCRT_EXCEPTION_FRAME *)jmp->Registration,
+    msvcrt_local_unwind4( (ULONG *)&jmp->Cookie, (MSVCRT_EXCEPTION_FRAME *)jmp->Registration,
                           jmp->TryLevel, (void *)jmp->Ebp );
+}
+
+/*********************************************************************
+ *              _fpieee_flt (MSVCRT.@)
+ */
+int __cdecl _fpieee_flt(ULONG exception_code, EXCEPTION_POINTERS *ep,
+        int (__cdecl *handler)(_FPIEEE_RECORD*))
+{
+    FLOATING_SAVE_AREA *ctx = &ep->ContextRecord->FloatSave;
+    _FPIEEE_RECORD rec;
+    int ret;
+
+    TRACE("(%x %p %p)\n", exception_code, ep, handler);
+
+    switch(exception_code) {
+    case STATUS_FLOAT_DIVIDE_BY_ZERO:
+    case STATUS_FLOAT_INEXACT_RESULT:
+    case STATUS_FLOAT_INVALID_OPERATION:
+    case STATUS_FLOAT_OVERFLOW:
+    case STATUS_FLOAT_UNDERFLOW:
+        break;
+    default:
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    memset(&rec, 0, sizeof(rec));
+    rec.RoundingMode = ctx->ControlWord >> 10;
+    switch((ctx->ControlWord >> 8) & 0x3) {
+    case 0: rec.Precision = 2; break;
+    case 1: rec.Precision = 3; break;
+    case 2: rec.Precision = 1; break;
+    case 3: rec.Precision = 0; break;
+    }
+    rec.Status.InvalidOperation = ctx->StatusWord & 0x1;
+    rec.Status.ZeroDivide = ((ctx->StatusWord & 0x4) != 0);
+    rec.Status.Overflow = ((ctx->StatusWord & 0x8) != 0);
+    rec.Status.Underflow = ((ctx->StatusWord & 0x10) != 0);
+    rec.Status.Inexact = ((ctx->StatusWord & 0x20) != 0);
+    rec.Enable.InvalidOperation = ((ctx->ControlWord & 0x1) == 0);
+    rec.Enable.ZeroDivide = ((ctx->ControlWord & 0x4) == 0);
+    rec.Enable.Overflow = ((ctx->ControlWord & 0x8) == 0);
+    rec.Enable.Underflow = ((ctx->ControlWord & 0x10) == 0);
+    rec.Enable.Inexact = ((ctx->ControlWord & 0x20) == 0);
+    rec.Cause.InvalidOperation = rec.Enable.InvalidOperation & rec.Status.InvalidOperation;
+    rec.Cause.ZeroDivide = rec.Enable.ZeroDivide & rec.Status.ZeroDivide;
+    rec.Cause.Overflow = rec.Enable.Overflow & rec.Status.Overflow;
+    rec.Cause.Underflow = rec.Enable.Underflow & rec.Status.Underflow;
+    rec.Cause.Inexact = rec.Enable.Inexact & rec.Status.Inexact;
+
+    TRACE("opcode: %x\n", *(ULONG*)ep->ContextRecord->FloatSave.ErrorOffset);
+
+    if(*(WORD*)ctx->ErrorOffset == 0x35dc) { /* fdiv m64fp */
+        if(exception_code==STATUS_FLOAT_DIVIDE_BY_ZERO || exception_code==STATUS_FLOAT_INVALID_OPERATION) {
+            rec.Operand1.OperandValid = 1;
+            rec.Result.OperandValid = 0;
+        } else {
+            rec.Operand1.OperandValid = 0;
+            rec.Result.OperandValid = 1;
+        }
+        rec.Operand2.OperandValid = 1;
+        rec.Operation = _FpCodeDivide;
+        rec.Operand1.Format = _FpFormatFp80;
+        memcpy(&rec.Operand1.Value.Fp80Value, ctx->RegisterArea, sizeof(rec.Operand1.Value.Fp80Value));
+        rec.Operand2.Format = _FpFormatFp64;
+        rec.Operand2.Value.Fp64Value = *(double*)ctx->DataOffset;
+        rec.Result.Format = _FpFormatFp80;
+        memcpy(&rec.Result.Value.Fp80Value, ctx->RegisterArea, sizeof(rec.Operand1.Value.Fp80Value));
+
+        ret = handler(&rec);
+
+        if(ret == EXCEPTION_CONTINUE_EXECUTION)
+            memcpy(ctx->RegisterArea, &rec.Result.Value.Fp80Value, sizeof(rec.Operand1.Value.Fp80Value));
+        return ret;
+    }
+
+    FIXME("unsupported opcode: %x\n", *(ULONG*)ep->ContextRecord->FloatSave.ErrorOffset);
+    return EXCEPTION_CONTINUE_SEARCH;
 }
 
 #endif  /* __i386__ */

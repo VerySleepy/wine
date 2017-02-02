@@ -137,6 +137,23 @@ static const char metadata_tEXt[] = {
     0x3f,0x64,0x19,0xf3 /* chunk CRC */
 };
 
+static const char metadata_gAMA[] = {
+    0,0,0,4, /* chunk length */
+    'g','A','M','A', /* chunk type */
+    0,0,130,53, /* gamma */
+    0xff,0xff,0xff,0xff /* chunk CRC */
+};
+
+static const char metadata_cHRM[] = {
+    0,0,0,32, /* chunk length */
+    'c','H','R','M', /* chunk type */
+    0,0,122,38, 0,0,128,132, /* white point */
+    0,0,250,0, 0,0,128,232, /* red */
+    0,0,117,48, 0,0,234,96, /* green */
+    0,0,58,152, 0,0,23,112, /* blue */
+    0xff,0xff,0xff,0xff /* chunk CRC */
+};
+
 static const char pngimage[285] = {
 0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,0x49,0x48,0x44,0x52,
 0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,0x08,0x02,0x00,0x00,0x00,0x90,0x77,0x53,
@@ -401,6 +418,112 @@ static void test_metadata_tEXt(void)
 
     hr = IWICMetadataReader_GetValueByIndex(reader, 1, NULL, NULL, NULL);
     ok(hr == E_INVALIDARG, "GetValueByIndex failed, hr=%x\n", hr);
+
+    IWICMetadataReader_Release(reader);
+}
+
+static void test_metadata_gAMA(void)
+{
+    HRESULT hr;
+    IWICMetadataReader *reader;
+    PROPVARIANT schema, id, value;
+    ULONG count;
+    GUID format;
+    static const WCHAR ImageGamma[] = {'I','m','a','g','e','G','a','m','m','a',0};
+
+    PropVariantInit(&schema);
+    PropVariantInit(&id);
+    PropVariantInit(&value);
+
+    hr = CoCreateInstance(&CLSID_WICPngGamaMetadataReader, NULL, CLSCTX_INPROC_SERVER,
+        &IID_IWICMetadataReader, (void**)&reader);
+    ok(hr == S_OK || broken(hr == REGDB_E_CLASSNOTREG) /*winxp*/, "CoCreateInstance failed, hr=%x\n", hr);
+    if (FAILED(hr)) return;
+
+    load_stream((IUnknown*)reader, metadata_gAMA, sizeof(metadata_gAMA), WICPersistOptionsDefault);
+
+    hr = IWICMetadataReader_GetMetadataFormat(reader, &format);
+    ok(hr == S_OK, "GetMetadataFormat failed, hr=%x\n", hr);
+    ok(IsEqualGUID(&format, &GUID_MetadataFormatChunkgAMA), "unexpected format %s\n", wine_dbgstr_guid(&format));
+
+    hr = IWICMetadataReader_GetCount(reader, &count);
+    ok(hr == S_OK, "GetCount failed, hr=%x\n", hr);
+    ok(count == 1, "unexpected count %i\n", count);
+
+    hr = IWICMetadataReader_GetValueByIndex(reader, 0, &schema, &id, &value);
+    ok(hr == S_OK, "GetValue failed, hr=%x\n", hr);
+
+    ok(schema.vt == VT_EMPTY, "unexpected vt: %i\n", schema.vt);
+    PropVariantClear(&schema);
+
+    ok(id.vt == VT_LPWSTR, "unexpected vt: %i\n", id.vt);
+    ok(!lstrcmpW(U(id).pwszVal, ImageGamma), "unexpected value: %s\n", wine_dbgstr_w(U(id).pwszVal));
+    PropVariantClear(&id);
+
+    ok(value.vt == VT_UI4, "unexpected vt: %i\n", value.vt);
+    ok(U(value).ulVal == 33333, "unexpected value: %u\n", U(value).ulVal);
+    PropVariantClear(&value);
+
+    IWICMetadataReader_Release(reader);
+}
+
+static void test_metadata_cHRM(void)
+{
+    HRESULT hr;
+    IWICMetadataReader *reader;
+    PROPVARIANT schema, id, value;
+    ULONG count;
+    GUID format;
+    int i;
+    static const WCHAR expected_names[8][12] = {
+        {'W','h','i','t','e','P','o','i','n','t','X',0},
+        {'W','h','i','t','e','P','o','i','n','t','Y',0},
+        {'R','e','d','X',0},
+        {'R','e','d','Y',0},
+        {'G','r','e','e','n','X',0},
+        {'G','r','e','e','n','Y',0},
+        {'B','l','u','e','X',0},
+        {'B','l','u','e','Y',0},
+    };
+    static const ULONG expected_vals[8] = {
+        31270,32900, 64000,33000, 30000,60000, 15000,6000
+    };
+
+    PropVariantInit(&schema);
+    PropVariantInit(&id);
+    PropVariantInit(&value);
+
+    hr = CoCreateInstance(&CLSID_WICPngChrmMetadataReader, NULL, CLSCTX_INPROC_SERVER,
+        &IID_IWICMetadataReader, (void**)&reader);
+    ok(hr == S_OK || broken(hr == REGDB_E_CLASSNOTREG) /*winxp*/, "CoCreateInstance failed, hr=%x\n", hr);
+    if (FAILED(hr)) return;
+
+    load_stream((IUnknown*)reader, metadata_cHRM, sizeof(metadata_cHRM), WICPersistOptionsDefault);
+
+    hr = IWICMetadataReader_GetMetadataFormat(reader, &format);
+    ok(hr == S_OK, "GetMetadataFormat failed, hr=%x\n", hr);
+    ok(IsEqualGUID(&format, &GUID_MetadataFormatChunkcHRM), "unexpected format %s\n", wine_dbgstr_guid(&format));
+
+    hr = IWICMetadataReader_GetCount(reader, &count);
+    ok(hr == S_OK, "GetCount failed, hr=%x\n", hr);
+    ok(count == 8, "unexpected count %i\n", count);
+
+    for (i=0; i<8; i++)
+    {
+        hr = IWICMetadataReader_GetValueByIndex(reader, i, &schema, &id, &value);
+        ok(hr == S_OK, "GetValue failed, hr=%x\n", hr);
+
+        ok(schema.vt == VT_EMPTY, "unexpected vt: %i\n", schema.vt);
+        PropVariantClear(&schema);
+
+        ok(id.vt == VT_LPWSTR, "unexpected vt: %i\n", id.vt);
+        ok(!lstrcmpW(U(id).pwszVal, expected_names[i]), "got %s, expected %s\n", wine_dbgstr_w(U(id).pwszVal), wine_dbgstr_w(expected_names[i]));
+        PropVariantClear(&id);
+
+        ok(value.vt == VT_UI4, "unexpected vt: %i\n", value.vt);
+        ok(U(value).ulVal == expected_vals[i], "got %u, expected %u\n", U(value).ulVal, expected_vals[i]);
+        PropVariantClear(&value);
+    }
 
     IWICMetadataReader_Release(reader);
 }
@@ -912,6 +1035,8 @@ static void test_metadata_png(void)
     IWICBitmapFrameDecode *frame;
     IWICMetadataBlockReader *blockreader;
     IWICMetadataReader *reader;
+    IWICMetadataQueryReader *queryreader;
+    IWICComponentFactory *factory;
     GUID containerformat;
     HRESULT hr;
     UINT count=0xdeadbeef;
@@ -946,11 +1071,11 @@ static void test_metadata_png(void)
         ok(IsEqualGUID(&containerformat, &GUID_ContainerFormatPng), "unexpected container format\n");
 
         hr = IWICMetadataBlockReader_GetCount(blockreader, NULL);
-        todo_wine ok(hr == E_INVALIDARG, "GetCount failed, hr=%x\n", hr);
+        ok(hr == E_INVALIDARG, "GetCount failed, hr=%x\n", hr);
 
         hr = IWICMetadataBlockReader_GetCount(blockreader, &count);
-        todo_wine ok(hr == S_OK, "GetCount failed, hr=%x\n", hr);
-        todo_wine ok(count == 1, "unexpected count %d\n", count);
+        ok(hr == S_OK, "GetCount failed, hr=%x\n", hr);
+        ok(count == 1, "unexpected count %d\n", count);
 
         if (0)
         {
@@ -960,18 +1085,19 @@ static void test_metadata_png(void)
         }
 
         hr = IWICMetadataBlockReader_GetReaderByIndex(blockreader, 0, &reader);
-        todo_wine ok(hr == S_OK, "GetReaderByIndex failed, hr=%x\n", hr);
+        ok(hr == S_OK, "GetReaderByIndex failed, hr=%x\n", hr);
 
         if (SUCCEEDED(hr))
         {
             hr = IWICMetadataReader_GetMetadataFormat(reader, &containerformat);
-            ok(IsEqualGUID(&containerformat, &GUID_MetadataFormatChunktIME) ||
+            ok(hr == S_OK, "GetMetadataFormat failed, hr=%#x\n", hr);
+            todo_wine ok(IsEqualGUID(&containerformat, &GUID_MetadataFormatChunktIME) ||
                broken(IsEqualGUID(&containerformat, &GUID_MetadataFormatUnknown)) /* Windows XP */,
                "unexpected container format\n");
 
             hr = IWICMetadataReader_GetCount(reader, &count);
             ok(hr == S_OK, "GetCount error %#x\n", hr);
-            ok(count == 6 || broken(count == 1) /* XP */, "expected 6, got %u\n", count);
+            todo_wine ok(count == 6 || broken(count == 1) /* XP */, "expected 6, got %u\n", count);
             if (count == 6)
                 compare_metadata(reader, td, count);
 
@@ -981,7 +1107,32 @@ static void test_metadata_png(void)
         hr = IWICMetadataBlockReader_GetReaderByIndex(blockreader, 1, &reader);
         todo_wine ok(hr == WINCODEC_ERR_VALUEOUTOFRANGE, "GetReaderByIndex failed, hr=%x\n", hr);
 
+        hr = CoCreateInstance(&CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IWICComponentFactory, (void**)&factory);
+        ok(hr == S_OK, "CoCreateInstance failed, hr=%x\n", hr);
+
+        hr = IWICComponentFactory_CreateQueryReaderFromBlockReader(factory, NULL, &queryreader);
+        ok(hr == E_INVALIDARG, "CreateQueryReaderFromBlockReader should have failed: %08x\n", hr);
+
+        hr = IWICComponentFactory_CreateQueryReaderFromBlockReader(factory, blockreader, NULL);
+        ok(hr == E_INVALIDARG, "CreateQueryReaderFromBlockReader should have failed: %08x\n", hr);
+
+        hr = IWICComponentFactory_CreateQueryReaderFromBlockReader(factory, blockreader, &queryreader);
+        ok(hr == S_OK, "CreateQueryReaderFromBlockReader failed: %08x\n", hr);
+
+        IWICMetadataQueryReader_Release(queryreader);
+
+        IWICComponentFactory_Release(factory);
+
         IWICMetadataBlockReader_Release(blockreader);
+    }
+
+    hr = IWICBitmapFrameDecode_GetMetadataQueryReader(frame, &queryreader);
+    ok(hr == S_OK, "GetMetadataQueryReader failed: %08x\n", hr);
+
+    if (SUCCEEDED(hr))
+    {
+        IWICMetadataQueryReader_Release(queryreader);
     }
 
     IWICBitmapFrameDecode_Release(frame);
@@ -1073,6 +1224,7 @@ static void test_metadata_gif(void)
     IWICBitmapFrameDecode *frame;
     IWICMetadataBlockReader *blockreader;
     IWICMetadataReader *reader;
+    IWICMetadataQueryReader *queryreader;
     GUID format;
     HRESULT hr;
     UINT count;
@@ -1109,6 +1261,7 @@ static void test_metadata_gif(void)
         if (SUCCEEDED(hr))
         {
             hr = IWICMetadataReader_GetMetadataFormat(reader, &format);
+            ok(hr == S_OK, "GetMetadataFormat failed, hr=%#x\n", hr);
             ok(IsEqualGUID(&format, &GUID_MetadataFormatLSD), /* Logical Screen Descriptor */
                "wrong metadata format %s\n", wine_dbgstr_guid(&format));
 
@@ -1157,6 +1310,7 @@ static void test_metadata_gif(void)
         if (SUCCEEDED(hr))
         {
             hr = IWICMetadataReader_GetMetadataFormat(reader, &format);
+            ok(hr == S_OK, "GetMetadataFormat failed, hr=%#x\n", hr);
             ok(IsEqualGUID(&format, &GUID_MetadataFormatIMD), /* Image Descriptor */
                "wrong metadata format %s\n", wine_dbgstr_guid(&format));
 
@@ -1210,6 +1364,7 @@ static void test_metadata_gif(void)
         if (SUCCEEDED(hr))
         {
             hr = IWICMetadataReader_GetMetadataFormat(reader, &format);
+            ok(hr == S_OK, "GetMetadataFormat failed, hr=%#x\n", hr);
             ok(IsEqualGUID(&format, &GUID_MetadataFormatLSD), /* Logical Screen Descriptor */
                "wrong metadata format %s\n", wine_dbgstr_guid(&format));
 
@@ -1228,6 +1383,7 @@ static void test_metadata_gif(void)
         if (SUCCEEDED(hr))
         {
             hr = IWICMetadataReader_GetMetadataFormat(reader, &format);
+            ok(hr == S_OK, "GetMetadataFormat failed, hr=%#x\n", hr);
             ok(IsEqualGUID(&format, &GUID_MetadataFormatAPE), /* Application Extension */
                "wrong metadata format %s\n", wine_dbgstr_guid(&format));
 
@@ -1246,6 +1402,7 @@ static void test_metadata_gif(void)
         if (SUCCEEDED(hr))
         {
             hr = IWICMetadataReader_GetMetadataFormat(reader, &format);
+            ok(hr == S_OK, "GetMetadataFormat failed, hr=%#x\n", hr);
             ok(IsEqualGUID(&format, &GUID_MetadataFormatGifComment), /* Comment Extension */
                "wrong metadata format %s\n", wine_dbgstr_guid(&format));
 
@@ -1264,6 +1421,7 @@ static void test_metadata_gif(void)
         if (SUCCEEDED(hr))
         {
             hr = IWICMetadataReader_GetMetadataFormat(reader, &format);
+            ok(hr == S_OK, "GetMetadataFormat failed, hr=%#x\n", hr);
             ok(IsEqualGUID(&format, &GUID_MetadataFormatUnknown),
                "wrong metadata format %s\n", wine_dbgstr_guid(&format));
 
@@ -1312,6 +1470,7 @@ static void test_metadata_gif(void)
         if (SUCCEEDED(hr))
         {
             hr = IWICMetadataReader_GetMetadataFormat(reader, &format);
+            ok(hr == S_OK, "GetMetadataFormat failed, hr=%#x\n", hr);
             ok(IsEqualGUID(&format, &GUID_MetadataFormatIMD), /* Image Descriptor */
                "wrong metadata format %s\n", wine_dbgstr_guid(&format));
 
@@ -1330,6 +1489,7 @@ static void test_metadata_gif(void)
         if (SUCCEEDED(hr))
         {
             hr = IWICMetadataReader_GetMetadataFormat(reader, &format);
+            ok(hr == S_OK, "GetMetadataFormat failed, hr=%#x\n", hr);
             ok(IsEqualGUID(&format, &GUID_MetadataFormatGifComment), /* Comment Extension */
                 "wrong metadata format %s\n", wine_dbgstr_guid(&format));
 
@@ -1349,6 +1509,7 @@ static void test_metadata_gif(void)
         if (SUCCEEDED(hr))
         {
             hr = IWICMetadataReader_GetMetadataFormat(reader, &format);
+            ok(hr == S_OK, "GetMetadataFormat failed, hr=%#x\n", hr);
             ok(IsEqualGUID(&format, &GUID_MetadataFormatUnknown),
                "wrong metadata format %s\n", wine_dbgstr_guid(&format));
 
@@ -1367,6 +1528,7 @@ static void test_metadata_gif(void)
         if (SUCCEEDED(hr))
         {
             hr = IWICMetadataReader_GetMetadataFormat(reader, &format);
+            ok(hr == S_OK, "GetMetadataFormat failed, hr=%#x\n", hr);
             ok(IsEqualGUID(&format, &GUID_MetadataFormatGCE), /* Graphic Control Extension */
                "wrong metadata format %s\n", wine_dbgstr_guid(&format));
 
@@ -1383,6 +1545,16 @@ static void test_metadata_gif(void)
         ok(hr == E_INVALIDARG, "expected E_INVALIDARG, got %#x\n", hr);
 
         IWICMetadataBlockReader_Release(blockreader);
+    }
+
+    hr = IWICBitmapFrameDecode_GetMetadataQueryReader(frame, &queryreader);
+    ok(hr == S_OK ||
+            broken(hr == WINCODEC_ERR_UNSUPPORTEDOPERATION) /* before Vista */,
+            "GetMetadataQueryReader failed: %08x\n", hr);
+
+    if (SUCCEEDED(hr))
+    {
+        IWICMetadataQueryReader_Release(queryreader);
     }
 
     IWICBitmapFrameDecode_Release(frame);
@@ -1794,6 +1966,8 @@ START_TEST(metadata)
 
     test_metadata_unknown();
     test_metadata_tEXt();
+    test_metadata_gAMA();
+    test_metadata_cHRM();
     test_metadata_IFD();
     test_metadata_Exif();
     test_create_reader();

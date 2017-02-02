@@ -32,6 +32,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(event);
 static const char *dbgstr_event(int type)
 {
     static const char * const event_names[] = {
+        "APP_ACTIVATED",
         "APP_DEACTIVATED",
         "APP_QUIT_REQUESTED",
         "DISPLAYS_CHANGED",
@@ -40,12 +41,16 @@ static const char *dbgstr_event(int type)
         "KEY_PRESS",
         "KEY_RELEASE",
         "KEYBOARD_CHANGED",
+        "LOST_PASTEBOARD_OWNERSHIP",
         "MOUSE_BUTTON",
         "MOUSE_MOVED",
         "MOUSE_MOVED_ABSOLUTE",
         "MOUSE_SCROLL",
         "QUERY_EVENT",
+        "QUERY_EVENT_NO_PREEMPT_WAIT",
+        "REASSERT_WINDOW_POSITION",
         "RELEASE_CAPTURE",
+        "SENT_TEXT_INPUT",
         "STATUS_ITEM_MOUSE_BUTTON",
         "STATUS_ITEM_MOUSE_MOVE",
         "WINDOW_BROUGHT_FORWARD",
@@ -100,10 +105,12 @@ static macdrv_event_mask get_event_mask(DWORD mask)
 
     if (mask & QS_POSTMESSAGE)
     {
+        event_mask |= event_mask_for_type(APP_ACTIVATED);
         event_mask |= event_mask_for_type(APP_DEACTIVATED);
         event_mask |= event_mask_for_type(APP_QUIT_REQUESTED);
         event_mask |= event_mask_for_type(DISPLAYS_CHANGED);
         event_mask |= event_mask_for_type(IM_SET_TEXT);
+        event_mask |= event_mask_for_type(LOST_PASTEBOARD_OWNERSHIP);
         event_mask |= event_mask_for_type(STATUS_ITEM_MOUSE_BUTTON);
         event_mask |= event_mask_for_type(STATUS_ITEM_MOUSE_MOVE);
         event_mask |= event_mask_for_type(WINDOW_DID_UNMINIMIZE);
@@ -115,7 +122,10 @@ static macdrv_event_mask get_event_mask(DWORD mask)
     if (mask & QS_SENDMESSAGE)
     {
         event_mask |= event_mask_for_type(QUERY_EVENT);
+        event_mask |= event_mask_for_type(QUERY_EVENT_NO_PREEMPT_WAIT);
+        event_mask |= event_mask_for_type(REASSERT_WINDOW_POSITION);
         event_mask |= event_mask_for_type(RELEASE_CAPTURE);
+        event_mask |= event_mask_for_type(SENT_TEXT_INPUT);
         event_mask |= event_mask_for_type(WINDOW_BROUGHT_FORWARD);
         event_mask |= event_mask_for_type(WINDOW_CLOSE_REQUESTED);
         event_mask |= event_mask_for_type(WINDOW_DRAG_BEGIN);
@@ -133,7 +143,7 @@ static macdrv_event_mask get_event_mask(DWORD mask)
 /***********************************************************************
  *              macdrv_query_event
  *
- * Handler for QUERY_EVENT queries.
+ * Handler for QUERY_EVENT and QUERY_EVENT_NO_PREEMPT_WAIT queries.
  */
 static void macdrv_query_event(HWND hwnd, const macdrv_event *event)
 {
@@ -202,6 +212,9 @@ void macdrv_handle_event(const macdrv_event *event)
 
     switch (event->type)
     {
+    case APP_ACTIVATED:
+        macdrv_app_activated();
+        break;
     case APP_DEACTIVATED:
         macdrv_app_deactivated();
         break;
@@ -224,6 +237,9 @@ void macdrv_handle_event(const macdrv_event *event)
     case KEYBOARD_CHANGED:
         macdrv_keyboard_changed(event);
         break;
+    case LOST_PASTEBOARD_OWNERSHIP:
+        macdrv_lost_pasteboard_ownership(hwnd);
+        break;
     case MOUSE_BUTTON:
         macdrv_mouse_button(hwnd, event);
         break;
@@ -235,10 +251,17 @@ void macdrv_handle_event(const macdrv_event *event)
         macdrv_mouse_scroll(hwnd, event);
         break;
     case QUERY_EVENT:
+    case QUERY_EVENT_NO_PREEMPT_WAIT:
         macdrv_query_event(hwnd, event);
+        break;
+    case REASSERT_WINDOW_POSITION:
+        macdrv_reassert_window_position(hwnd);
         break;
     case RELEASE_CAPTURE:
         macdrv_release_capture(hwnd, event);
+        break;
+    case SENT_TEXT_INPUT:
+        macdrv_sent_text_input(event);
         break;
     case STATUS_ITEM_MOUSE_BUTTON:
         macdrv_status_item_mouse_button(event);
@@ -280,7 +303,7 @@ void macdrv_handle_event(const macdrv_event *event)
         macdrv_window_resize_ended(hwnd);
         break;
     case WINDOW_RESTORE_REQUESTED:
-        macdrv_window_restore_requested(hwnd);
+        macdrv_window_restore_requested(hwnd, event);
         break;
     default:
         TRACE("    ignoring\n");
@@ -331,6 +354,7 @@ DWORD CDECL macdrv_MsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *handle
     }
 
     if (data->current_event && data->current_event->type != QUERY_EVENT &&
+        data->current_event->type != QUERY_EVENT_NO_PREEMPT_WAIT &&
         data->current_event->type != APP_QUIT_REQUESTED &&
         data->current_event->type != WINDOW_DRAG_BEGIN)
         event_mask = 0;  /* don't process nested events */

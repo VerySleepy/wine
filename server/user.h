@@ -49,6 +49,7 @@ struct winstation
     struct list        desktops;           /* list of desktops of this winstation */
     struct clipboard  *clipboard;          /* clipboard information */
     struct atom_table *atom_table;         /* global atom table */
+    struct namespace  *desktop_names;      /* namespace for desktops of this winstation */
 };
 
 struct global_cursor
@@ -90,6 +91,7 @@ extern void free_process_user_handles( struct process *process );
 
 /* clipboard functions */
 
+extern void cleanup_clipboard_window( struct desktop *desktop, user_handle_t window );
 extern void cleanup_clipboard_thread( struct thread *thread );
 
 /* hook functions */
@@ -110,6 +112,8 @@ extern int attach_thread_input( struct thread *thread_from, struct thread *threa
 extern void detach_thread_input( struct thread *thread_from );
 extern void post_message( user_handle_t win, unsigned int message,
                           lparam_t wparam, lparam_t lparam );
+extern void send_notify_message( user_handle_t win, unsigned int message,
+                                 lparam_t wparam, lparam_t lparam );
 extern void post_win_event( struct thread *thread, unsigned int event,
                             user_handle_t win, unsigned int object_id,
                             unsigned int child_id, client_ptr_t proc,
@@ -201,6 +205,14 @@ static inline int intersect_rect( rectangle_t *dst, const rectangle_t *src1, con
     dst->right  = min( src1->right, src2->right );
     dst->bottom = min( src1->bottom, src2->bottom );
     return (dst->left < dst->right && dst->top < dst->bottom);
+}
+
+/* validate a window handle and return the full handle */
+static inline user_handle_t get_valid_window_handle( user_handle_t win )
+{
+    if (get_user_object_handle( &win, USER_WINDOW )) return win;
+    set_win32_error( ERROR_INVALID_WINDOW_HANDLE );
+    return 0;
 }
 
 #endif  /* __WINE_SERVER_USER_H */

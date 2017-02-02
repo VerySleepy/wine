@@ -23,7 +23,6 @@
 
 #define COBJMACROS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "windef.h"
 #include "wingdi.h"
@@ -350,7 +349,7 @@ static HRESULT WINAPI IDataObject_fnQueryGetData(IDataObject *iface, LPFORMATETC
 	for (i=0; i<MAX_FORMATS; i++)
 	{
 	  if ((This->pFormatEtc[i].cfFormat == pformatetc->cfFormat)
-	   && (This->pFormatEtc[i].tymed == pformatetc->tymed))
+	   && (This->pFormatEtc[i].tymed & pformatetc->tymed))
 	  {
 	    return S_OK;
 	  }

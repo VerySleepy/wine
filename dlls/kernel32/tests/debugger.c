@@ -30,12 +30,6 @@
 #define STATUS_DEBUGGER_INACTIVE         ((NTSTATUS) 0xC0000354)
 #endif
 
-#ifdef __GNUC__
-#define PRINTF_ATTR(fmt,args) __attribute__((format (printf,fmt,args)))
-#else
-#define PRINTF_ATTR(fmt,args)
-#endif
-
 #define child_ok (winetest_set_location(__FILE__, __LINE__), 0) ? (void)0 : test_child_ok
 
 static int    myARGC;
@@ -45,11 +39,10 @@ static BOOL (WINAPI *pCheckRemoteDebuggerPresent)(HANDLE,PBOOL);
 static BOOL (WINAPI *pDebugActiveProcessStop)(DWORD);
 static BOOL (WINAPI *pDebugSetProcessKillOnExit)(BOOL);
 static BOOL (WINAPI *pIsDebuggerPresent)(void);
-static struct _TEB * (WINAPI *pNtCurrentTeb)(void);
 
 static LONG child_failures;
 
-static void PRINTF_ATTR(2, 3) test_child_ok(int condition, const char *msg, ...)
+static void WINETEST_PRINTF_ATTR(2, 3) test_child_ok(int condition, const char *msg, ...)
 {
     va_list valist;
 
@@ -158,7 +151,7 @@ typedef struct
 
 static void doCrash(int argc,  char** argv)
 {
-    char* p;
+    volatile char* p;
 
     /* make sure the exception gets to the debugger */
     SetErrorMode( 0 );
@@ -585,18 +578,15 @@ static void doChild(int argc, char **argv)
     child_ok(ret, "CheckRemoteDebuggerPresent failed, last error %#x.\n", GetLastError());
     child_ok(debug, "Expected debug != 0, got %#x.\n", debug);
 
-    if (pNtCurrentTeb)
-    {
-        pNtCurrentTeb()->Peb->BeingDebugged = FALSE;
+    NtCurrentTeb()->Peb->BeingDebugged = FALSE;
 
-        ret = pIsDebuggerPresent();
-        child_ok(!ret, "Expected ret != 0, got %#x.\n", ret);
-        ret = pCheckRemoteDebuggerPresent(GetCurrentProcess(), &debug);
-        child_ok(ret, "CheckRemoteDebuggerPresent failed, last error %#x.\n", GetLastError());
-        child_ok(debug, "Expected debug != 0, got %#x.\n", debug);
+    ret = pIsDebuggerPresent();
+    child_ok(!ret, "Expected ret != 0, got %#x.\n", ret);
+    ret = pCheckRemoteDebuggerPresent(GetCurrentProcess(), &debug);
+    child_ok(ret, "CheckRemoteDebuggerPresent failed, last error %#x.\n", GetLastError());
+    child_ok(debug, "Expected debug != 0, got %#x.\n", debug);
 
-        pNtCurrentTeb()->Peb->BeingDebugged = TRUE;
-    }
+    NtCurrentTeb()->Peb->BeingDebugged = TRUE;
 
     blackbox.failures = child_failures;
     save_blackbox(blackbox_file, &blackbox, sizeof(blackbox));
@@ -821,8 +811,6 @@ START_TEST(debugger)
     pDebugActiveProcessStop=(void*)GetProcAddress(hdll, "DebugActiveProcessStop");
     pDebugSetProcessKillOnExit=(void*)GetProcAddress(hdll, "DebugSetProcessKillOnExit");
     pIsDebuggerPresent=(void*)GetProcAddress(hdll, "IsDebuggerPresent");
-    hdll=GetModuleHandleA("ntdll.dll");
-    if (hdll) pNtCurrentTeb = (void*)GetProcAddress(hdll, "NtCurrentTeb");
 
     myARGC=winetest_get_mainargs(&myARGV);
     if (myARGC >= 3 && strcmp(myARGV[2], "crash") == 0)

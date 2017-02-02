@@ -27,7 +27,6 @@
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "windef.h"
 #include "winbase.h"
 #include "winerror.h"
@@ -191,11 +190,13 @@ BOOL WINAPI ReadDirectoryChangesW( HANDLE handle, LPVOID buffer, DWORD len, BOOL
             return TRUE;
 
         WaitForSingleObjectEx( ov.hEvent, INFINITE, TRUE );
-        CloseHandle( ov.hEvent );
         if (returned)
             *returned = ios->Information;
         status = ios->u.Status;
     }
+
+    if (!overlapped)
+        CloseHandle( ov.hEvent );
 
     if (status != STATUS_SUCCESS)
     {

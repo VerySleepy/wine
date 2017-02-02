@@ -2890,7 +2890,8 @@ static void test_VarR4FromDec(void)
 
   CONVERT_DEC(VarR4FromDec,2,0x80,0,3276800); EXPECT(-32768.0f);
   CONVERT_DEC(VarR4FromDec,2,0,0,3276700);    EXPECT(32767.0f);
-  
+  CONVERT_DEC(VarR4FromDec,10,0,0,3276700);   EXPECT(0.00032767f);
+
   CONVERT_DEC(VarR4FromDec,0,0,1,0);        EXPECT(18446744073709551616.0f);
 }
 
@@ -3527,6 +3528,9 @@ static void test_VarDateFromStr(void)
   DFS("1-2-1970");        EXPECT_DBL(25570.0);
   DFS("13-1-1970");       EXPECT_DBL(25581.0);
   DFS("1970-1-13");       EXPECT_DBL(25581.0);
+  DFS("6/30/2011 01:20:34");          EXPECT_DBL(40724.05594907407);
+  DFS("6/30/2011 01:20:34 AM");       EXPECT_DBL(40724.05594907407);
+  DFS("6/30/2011 01:20:34 PM");       EXPECT_DBL(40724.55594907407);
   /* Native fails "1999 January 3, 9AM". I consider that a bug in native */
 
   /* test a non-english data string */
@@ -5397,9 +5401,12 @@ static void test_SysAllocString(void)
   if (str)
   {
     LPINTERNAL_BSTR bstr = Get(str);
+    DWORD_PTR p = (DWORD_PTR)str;
+    int align = sizeof(void *);
 
     ok (bstr->dwLen == 8, "Expected 8, got %d\n", bstr->dwLen);
     ok (!lstrcmpW(bstr->szString, szTest), "String different\n");
+    ok ((p & ~(align-1)) == p, "Not aligned to %d\n", align);
     SysFreeString(str);
   }
 }
@@ -5443,7 +5450,9 @@ static void test_SysAllocStringByteLen(void)
 {
   const OLECHAR szTest[10] = { 'T','e','s','t','\0' };
   const CHAR szTestA[6] = { 'T','e','s','t','\0','?' };
+  char *buf;
   BSTR str;
+  int i;
 
   if (sizeof(void *) == 4)  /* not limited to 0x80000000 on Win64 */
   {
@@ -5486,6 +5495,7 @@ static void test_SysAllocStringByteLen(void)
 
     ok (bstr->dwLen == 3, "Expected 3, got %d\n", bstr->dwLen);
     ok (!lstrcmpA((LPCSTR)bstr->szString, szTestTruncA), "String different\n");
+    ok (!bstr->szString[2], "String not terminated\n");
     SysFreeString(str);
   }
 
@@ -5499,6 +5509,32 @@ static void test_SysAllocStringByteLen(void)
     ok (!lstrcmpW(bstr->szString, szTest), "String different\n");
     SysFreeString(str);
   }
+
+  /* Make sure terminating null is aligned properly */
+  buf = HeapAlloc(GetProcessHeap(), 0, 1025);
+  ok (buf != NULL, "Expected non-NULL\n");
+  for (i = 0; i < 1024; i++)
+  {
+    LPINTERNAL_BSTR bstr;
+
+    str = SysAllocStringByteLen(NULL, i);
+    ok (str != NULL, "Expected non-NULL\n");
+    bstr = Get(str);
+    ok (bstr->dwLen == i, "Expected %d, got %d\n", i, bstr->dwLen);
+    ok (!bstr->szString[(i+sizeof(WCHAR)-1)/sizeof(WCHAR)], "String not terminated\n");
+    SysFreeString(str);
+
+    memset(buf, 0xaa, 1025);
+    str = SysAllocStringByteLen(buf, i);
+    ok (str != NULL, "Expected non-NULL\n");
+    bstr = Get(str);
+    ok (bstr->dwLen == i, "Expected %d, got %d\n", i, bstr->dwLen);
+    buf[i] = 0;
+    ok (!lstrcmpA((LPCSTR)bstr->szString, buf), "String different\n");
+    ok (!bstr->szString[(i+sizeof(WCHAR)-1)/sizeof(WCHAR)], "String not terminated\n");
+    SysFreeString(str);
+  }
+  HeapFree(GetProcessHeap(), 0, buf);
 }
 
 static void test_SysReAllocString(void)
@@ -5853,6 +5889,16 @@ static void test_IUnknownChangeTypeEx(void)
 
   lcid = MAKELCID(MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), SORT_DEFAULT);
 
+  /* NULL IUnknown -> IDispatch */
+  V_VT(&vSrc) = VT_UNKNOWN;
+  V_UNKNOWN(&vSrc) = NULL;
+  VariantInit(&vDst);
+  V_DISPATCH(&vDst) = (void*)0xdeadbeef;
+  hres = VariantChangeTypeEx(&vDst, &vSrc, lcid, 0, VT_DISPATCH);
+  ok(hres == S_OK && V_VT(&vDst) == VT_DISPATCH && V_DISPATCH(&vDst) == NULL,
+     "change unk(src,dst): expected 0x%08x,%d,%p, got 0x%08x,%d,%p\n",
+     S_OK, VT_DISPATCH, NULL, hres, V_VT(&vDst), V_DISPATCH(&vDst));
+
   V_VT(&vSrc) = VT_UNKNOWN;
   V_UNKNOWN(&vSrc) = pu;
 
@@ -5996,6 +6042,16 @@ static void test_IDispatchChangeTypeEx(void)
   pd = &d.IDispatch_iface;
 
   lcid = MAKELCID(MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), SORT_DEFAULT);
+
+  /* NULL IDispatch -> IUnknown */
+  V_VT(&vSrc) = VT_DISPATCH;
+  V_DISPATCH(&vSrc) = NULL;
+  VariantInit(&vDst);
+  V_UNKNOWN(&vDst) = (void*)0xdeadbeef;
+  hres = VariantChangeTypeEx(&vDst, &vSrc, lcid, 0, VT_UNKNOWN);
+  ok(hres == S_OK && V_VT(&vDst) == VT_UNKNOWN && V_UNKNOWN(&vDst) == NULL,
+     "change unk(src,dst): expected 0x%08x,%d,%p, got 0x%08x,%d,%p\n",
+     S_OK, VT_UNKNOWN, NULL, hres, V_VT(&vDst), V_UNKNOWN(&vDst));
 
   V_VT(&vSrc) = VT_DISPATCH;
   V_DISPATCH(&vSrc) = pd;
@@ -6318,6 +6374,11 @@ static void test_bstr_cache(void)
 
     static const WCHAR testW[] = {'t','e','s','t',0};
 
+    if (GetEnvironmentVariableA("OANOCACHE", NULL, 0)) {
+        skip("BSTR cache is disabled, some tests will be skipped.\n");
+        return;
+    }
+
     str = SysAllocString(testW);
     /* This should put the string into cache */
     SysFreeString(str);
@@ -6331,9 +6392,15 @@ static void test_bstr_cache(void)
     ok(str == str2, "str != str2\n");
     SysFreeString(str2);
 
-    /* Fill the bucket with cached entries. */
+    /* Fill the bucket with cached entries.
+       We roll our own, to show that the cache doesn't use
+       the bstr length field to determine bucket allocation. */
     for(i=0; i < sizeof(strs)/sizeof(*strs); i++)
-        strs[i] = SysAllocStringLen(NULL, 24);
+    {
+        DWORD_PTR *ptr = CoTaskMemAlloc(64);
+        ptr[0] = 0;
+        strs[i] = (BSTR)(ptr + 1);
+    }
     for(i=0; i < sizeof(strs)/sizeof(*strs); i++)
         SysFreeString(strs[i]);
 
@@ -6382,22 +6449,30 @@ static void test_recinfo(void)
 {
     static const WCHAR testW[] = {'t','e','s','t',0};
     static WCHAR teststructW[] = {'t','e','s','t','_','s','t','r','u','c','t',0};
+    static WCHAR teststruct2W[] = {'t','e','s','t','_','s','t','r','u','c','t','2',0};
+    static WCHAR teststruct3W[] = {'t','e','s','t','_','s','t','r','u','c','t','3',0};
+    WCHAR filenameW[MAX_PATH], filename2W[MAX_PATH];
+    ITypeInfo *typeinfo, *typeinfo2, *typeinfo3;
+    IRecordInfo *recinfo, *recinfo2, *recinfo3;
     struct test_struct teststruct, testcopy;
-    WCHAR filenameW[MAX_PATH];
+    ITypeLib *typelib, *typelib2;
     const char *filename;
-    IRecordInfo *recinfo;
-    ITypeInfo *typeinfo;
     DummyDispatch dispatch;
-    ITypeLib *typelib;
     TYPEATTR *attr;
     MEMBERID memid;
     UINT16 found;
     HRESULT hr;
     ULONG size;
+    BOOL ret;
 
     filename = create_test_typelib(2);
     MultiByteToWideChar(CP_ACP, 0, filename, -1, filenameW, MAX_PATH);
     hr = LoadTypeLibEx(filenameW, REGKIND_NONE, &typelib);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    filename = create_test_typelib(3);
+    MultiByteToWideChar(CP_ACP, 0, filename, -1, filename2W, MAX_PATH);
+    hr = LoadTypeLibEx(filename2W, REGKIND_NONE, &typelib2);
     ok(hr == S_OK, "got 0x%08x\n", hr);
 
     typeinfo = NULL;
@@ -6410,8 +6485,39 @@ static void test_recinfo(void)
     ok(IsEqualGUID(&attr->guid, &UUID_test_struct), "got %s\n", wine_dbgstr_guid(&attr->guid));
     ok(attr->typekind == TKIND_RECORD, "got %d\n", attr->typekind);
 
+    typeinfo2 = NULL;
+    found = 1;
+    hr = ITypeLib_FindName(typelib, teststruct2W, 0, &typeinfo2, &memid, &found);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(typeinfo2 != NULL, "got %p\n", typeinfo2);
+
+    typeinfo3 = NULL;
+    found = 1;
+    hr = ITypeLib_FindName(typelib2, teststruct3W, 0, &typeinfo3, &memid, &found);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(typeinfo3 != NULL, "got %p\n", typeinfo3);
+
     hr = GetRecordInfoFromTypeInfo(typeinfo, &recinfo);
     ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = GetRecordInfoFromTypeInfo(typeinfo2, &recinfo2);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = GetRecordInfoFromTypeInfo(typeinfo3, &recinfo3);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    /* IsMatchingType, these two records only differ in GUIDs */
+    ret = IRecordInfo_IsMatchingType(recinfo, recinfo2);
+    ok(!ret, "got %d\n", ret);
+
+    /* these two have same GUIDs, but different set of fields */
+    ret = IRecordInfo_IsMatchingType(recinfo2, recinfo3);
+    ok(ret, "got %d\n", ret);
+
+    IRecordInfo_Release(recinfo3);
+    ITypeInfo_Release(typeinfo3);
+    IRecordInfo_Release(recinfo2);
+    ITypeInfo_Release(typeinfo2);
 
     size = 0;
     hr = IRecordInfo_GetSize(recinfo, &size);
@@ -6471,7 +6577,8 @@ static void test_recinfo(void)
 
     ITypeInfo_Release(typeinfo);
     ITypeLib_Release(typelib);
-    DeleteFileA(filename);
+    DeleteFileW(filenameW);
+    DeleteFileW(filename2W);
 }
 
 START_TEST(vartype)

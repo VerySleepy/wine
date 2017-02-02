@@ -33,9 +33,6 @@
 static HWND hMainWnd;
 
 #define expect_eq(expr, value, type, fmt) { type val = expr; ok(val == (value), #expr " expected " fmt " got " fmt "\n", (value), val); }
-#define expect_rect(r, _left, _top, _right, _bottom) ok(r.left == _left && r.top == _top && \
-    r.bottom == _bottom && r.right == _right, "Invalid rect (%d,%d) (%d,%d) vs (%d,%d) (%d,%d)\n", \
-    r.left, r.top, r.right, r.bottom, _left, _top, _right, _bottom);
 
 static int g_nReceivedColorStatic = 0;
 
@@ -117,6 +114,21 @@ static void test_updates(int style, int flags)
     DestroyWindow(hStatic);
 }
 
+static void test_set_text(void)
+{
+    HWND hStatic = build_static(SS_SIMPLE);
+    char buffA[10];
+
+    GetWindowTextA(hStatic, buffA, sizeof(buffA));
+    ok(!strcmp(buffA, "Test"), "got wrong text %s\n", buffA);
+
+    SetWindowTextA(hStatic, NULL);
+    GetWindowTextA(hStatic, buffA, sizeof(buffA));
+    ok(buffA[0] == 0, "got wrong text %s\n", buffA);
+
+    DestroyWindow(hStatic);
+}
+
 START_TEST(static)
 {
     static const char szClassName[] = "testclass";
@@ -148,6 +160,7 @@ START_TEST(static)
     test_updates(SS_WHITERECT, TODO_COUNT);
     test_updates(SS_ETCHEDHORZ, TODO_COUNT);
     test_updates(SS_ETCHEDVERT, TODO_COUNT);
+    test_set_text();
 
     DestroyWindow(hMainWnd);
 }

@@ -552,6 +552,35 @@ static void copy_rect( dib_info *dst, const RECT *dst_rect, const dib_info *src,
     }
 }
 
+static void mask_rect( dib_info *dst, const RECT *dst_rect, const dib_info *src, const RECT *src_rect,
+                       const struct clipped_rects *clipped_rects, INT rop2 )
+{
+    POINT origin;
+    const RECT *rects;
+    int i, count;
+
+    if (rop2 == R2_BLACK || rop2 == R2_NOT || rop2 == R2_NOP || rop2 == R2_WHITE)
+        return copy_rect( dst, dst_rect, src, src_rect, clipped_rects, rop2 );
+
+    if (clipped_rects)
+    {
+        rects = clipped_rects->rects;
+        count = clipped_rects->count;
+    }
+    else
+    {
+        rects = dst_rect;
+        count = 1;
+    }
+
+    for (i = 0; i < count; i++)
+    {
+        origin.x = src_rect->left + rects[i].left - dst_rect->left;
+        origin.y = src_rect->top  + rects[i].top  - dst_rect->top;
+        dst->funcs->mask_rect( dst, &rects[i], src, &origin, rop2 );
+    }
+}
+
 static DWORD blend_rect( dib_info *dst, const RECT *dst_rect, const dib_info *src, const RECT *src_rect,
                          HRGN clip, BLENDFUNCTION blend )
 {
@@ -828,6 +857,7 @@ static DWORD get_image_dib_info( dib_info *dib, BITMAPINFO *info,
         bits->ptr = dib->bits.ptr;
         bits->is_copy = FALSE;
         bits->free = NULL;
+        bits->param = NULL;
         if (dib->stride < 0) bits->ptr = (char *)bits->ptr + (dib->height - 1) * dib->stride;
         src->x += dib->rect.left;
         src->y += dib->rect.top;
@@ -858,11 +888,15 @@ DWORD dibdrv_GetImage( PHYSDEV dev, BITMAPINFO *info, struct gdi_image_bits *bit
     return get_image_dib_info( &pdev->dib, info, bits, src );
 }
 
-static BOOL matching_color_info( const dib_info *dib, const BITMAPINFO *info )
+static BOOL matching_color_info( const dib_info *dib, const BITMAPINFO *info, BOOL allow_mask_rect )
 {
     const RGBQUAD *color_table = info->bmiColors;
 
     if (info->bmiHeader.biPlanes != 1) return FALSE;
+
+    if (allow_mask_rect && info->bmiHeader.biBitCount == 1 && dib->bit_count != 1)
+        return TRUE;
+
     if (info->bmiHeader.biBitCount != dib->bit_count) return FALSE;
 
     switch (info->bmiHeader.biBitCount)
@@ -917,7 +951,7 @@ DWORD put_image_into_bitmap( BITMAPOBJ *bmp, HRGN clip, BITMAPINFO *info,
     dib_info dib, src_dib;
 
     if (!init_dib_info_from_bitmapobj( &dib, bmp )) return ERROR_OUTOFMEMORY;
-    if (!matching_color_info( &dib, info )) goto update_format;
+    if (!matching_color_info( &dib, info, FALSE )) goto update_format;
     if (!bits) return ERROR_SUCCESS;
     if ((src->width != dst->width) || (src->height != dst->height)) return ERROR_TRANSFORM_NOT_SUPPORTED;
 
@@ -951,17 +985,23 @@ DWORD dibdrv_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info,
                        const struct gdi_image_bits *bits, struct bitblt_coords *src,
                        struct bitblt_coords *dst, DWORD rop )
 {
+    DC *dc = get_physdev_dc( dev );
     struct clipped_rects clipped_rects;
     DWORD ret = ERROR_SUCCESS;
     dib_info src_dib;
     HRGN tmp_rgn = 0;
     dibdrv_physdev *pdev = get_dibdrv_pdev( dev );
+    BOOL stretch = (src->width != dst->width) || (src->height != dst->height);
 
     TRACE( "%p %p\n", dev, info );
 
-    if (!matching_color_info( &pdev->dib, info )) goto update_format;
+    if (!matching_color_info( &pdev->dib, info, !stretch && !rop_uses_pat( rop ) )) goto update_format;
     if (!bits) return ERROR_SUCCESS;
-    if ((src->width != dst->width) || (src->height != dst->height)) return ERROR_TRANSFORM_NOT_SUPPORTED;
+    if (stretch) return ERROR_TRANSFORM_NOT_SUPPORTED;
+
+    /* For mask_rect, 1-bpp source without a color table uses the destination DC colors */
+    if (info->bmiHeader.biBitCount == 1 && pdev->dib.bit_count != 1 && !info->bmiHeader.biClrUsed)
+        get_mono_dc_colors( dc, info, 2 );
 
     init_dib_info_from_bitmapinfo( &src_dib, info, bits->ptr );
     src_dib.bits.is_copy = bits->is_copy;
@@ -980,7 +1020,10 @@ DWORD dibdrv_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info,
         if (!rop_uses_pat( rop ))
         {
             int rop2 = ((rop >> 16) & 0xf) + 1;
-            copy_rect( &pdev->dib, &dst->visrect, &src_dib, &src->visrect, &clipped_rects, rop2 );
+            if (pdev->dib.bit_count == info->bmiHeader.biBitCount)
+                copy_rect( &pdev->dib, &dst->visrect, &src_dib, &src->visrect, &clipped_rects, rop2 );
+            else
+                mask_rect( &pdev->dib, &dst->visrect, &src_dib, &src->visrect, &clipped_rects, rop2 );
         }
         else
             ret = execute_rop( pdev, &dst->visrect, &src_dib, &src->visrect, &clipped_rects, rop );
@@ -1348,18 +1391,12 @@ COLORREF get_pixel_bitmapinfo( const BITMAPINFO *info, void *bits, struct bitblt
 BOOL dibdrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
                         PHYSDEV src_dev, struct bitblt_coords *src, DWORD rop )
 {
-    BOOL ret;
-    DC *dc_dst = get_dc_ptr( dst_dev->hdc );
-
-    if (!dc_dst) return FALSE;
+    DC *dc_dst = get_physdev_dc( dst_dev );
 
     if (dst->width == 1 && src->width > 1) src->width--;
     if (dst->height == 1 && src->height > 1) src->height--;
 
-    ret = dc_dst->nulldrv.funcs->pStretchBlt( &dc_dst->nulldrv, dst,
-                                              src_dev, src, rop );
-    release_dc_ptr( dc_dst );
-    return ret;
+    return dc_dst->nulldrv.funcs->pStretchBlt( &dc_dst->nulldrv, dst, src_dev, src, rop );
 }
 
 /***********************************************************************
@@ -1368,14 +1405,9 @@ BOOL dibdrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
 BOOL dibdrv_AlphaBlend( PHYSDEV dst_dev, struct bitblt_coords *dst,
                         PHYSDEV src_dev, struct bitblt_coords *src, BLENDFUNCTION blend )
 {
-    BOOL ret;
-    DC *dc_dst = get_dc_ptr( dst_dev->hdc );
+    DC *dc_dst = get_physdev_dc( dst_dev );
 
-    if (!dc_dst) return FALSE;
-
-    ret = dc_dst->nulldrv.funcs->pAlphaBlend( &dc_dst->nulldrv, dst, src_dev, src, blend );
-    release_dc_ptr( dc_dst );
-    return ret;
+    return dc_dst->nulldrv.funcs->pAlphaBlend( &dc_dst->nulldrv, dst, src_dev, src, blend );
 }
 
 /***********************************************************************
@@ -1385,6 +1417,7 @@ BOOL dibdrv_GradientFill( PHYSDEV dev, TRIVERTEX *vert_array, ULONG nvert,
                           void *grad_array, ULONG ngrad, ULONG mode )
 {
     dibdrv_physdev *pdev = get_dibdrv_pdev( dev );
+    DC *dc = get_physdev_dc( dev );
     const GRADIENT_TRIANGLE *tri = grad_array;
     const GRADIENT_RECT *rect = grad_array;
     unsigned int i;
@@ -1399,7 +1432,7 @@ BOOL dibdrv_GradientFill( PHYSDEV dev, TRIVERTEX *vert_array, ULONG nvert,
         pts[i].x = vert_array[i].x;
         pts[i].y = vert_array[i].y;
     }
-    LPtoDP( dev->hdc, pts, nvert );
+    lp_to_dp( dc, pts, nvert );
 
     switch (mode)
     {

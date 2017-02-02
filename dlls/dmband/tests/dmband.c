@@ -162,7 +162,7 @@ static void test_dmband(void)
     hr = IDirectMusicBand_QueryInterface(dmb, &IID_IPersistStream, (void**)&ps);
     ok(hr == S_OK, "QueryInterface for IID_IPersistStream failed: %08x\n", hr);
     hr = IPersistStream_GetClassID(ps, &class);
-    todo_wine ok(hr == E_NOTIMPL, "IPersistStream_GetClassID failed: %08x\n", hr);
+    ok(hr == E_NOTIMPL, "IPersistStream_GetClassID failed: %08x\n", hr);
     hr = IPersistStream_IsDirty(ps);
     ok(hr == S_FALSE, "IPersistStream_IsDirty failed: %08x\n", hr);
     hr = IPersistStream_GetSizeMax(ps, &size);
@@ -171,6 +171,75 @@ static void test_dmband(void)
     ok(hr == E_NOTIMPL, "IPersistStream_Save failed: %08x\n", hr);
 
     while (IDirectMusicBand_Release(dmb));
+}
+
+static void test_bandtrack(void)
+{
+    IDirectMusicTrack8 *dmt8;
+    IPersistStream *ps;
+    CLSID class;
+    ULARGE_INTEGER size;
+    HRESULT hr;
+
+    hr = CoCreateInstance(&CLSID_DirectMusicBandTrack, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IDirectMusicTrack8, (void**)&dmt8);
+    ok(hr == S_OK, "DirectMusicBandTrack create failed: %08x, expected S_OK\n", hr);
+
+    /* IDirectMusicTrack8 */
+    todo_wine {
+    hr = IDirectMusicTrack8_Init(dmt8, NULL);
+    ok(hr == E_POINTER, "IDirectMusicTrack8_Init failed: %08x\n", hr);
+    hr = IDirectMusicTrack8_InitPlay(dmt8, NULL, NULL, NULL, 0, 0);
+    ok(hr == E_POINTER, "IDirectMusicTrack8_InitPlay failed: %08x\n", hr);
+    }
+    hr = IDirectMusicTrack8_EndPlay(dmt8, NULL);
+    ok(hr == S_OK, "IDirectMusicTrack8_EndPlay failed: %08x\n", hr);
+    todo_wine {
+    hr = IDirectMusicTrack8_Play(dmt8, NULL, 0, 0, 0, 0, NULL, NULL, 0);
+    ok(hr == DMUS_S_END, "IDirectMusicTrack8_Play failed: %08x\n", hr);
+    hr = IDirectMusicTrack8_GetParam(dmt8, NULL, 0, NULL, NULL);
+    ok(hr == E_POINTER, "IDirectMusicTrack8_GetParam failed: %08x\n", hr);
+    hr = IDirectMusicTrack8_SetParam(dmt8, NULL, 0, NULL);
+    ok(hr == E_POINTER, "IDirectMusicTrack8_SetParam failed: %08x\n", hr);
+    }
+    hr = IDirectMusicTrack8_IsParamSupported(dmt8, NULL);
+    ok(hr == E_POINTER, "IDirectMusicTrack8_IsParamSupported failed: %08x\n", hr);
+    hr = IDirectMusicTrack8_AddNotificationType(dmt8, NULL);
+    ok(hr == E_NOTIMPL, "IDirectMusicTrack8_AddNotificationType failed: %08x\n", hr);
+    hr = IDirectMusicTrack8_RemoveNotificationType(dmt8, NULL);
+    ok(hr == E_NOTIMPL, "IDirectMusicTrack8_RemoveNotificationType failed: %08x\n", hr);
+    todo_wine {
+    hr = IDirectMusicTrack8_Clone(dmt8, 0, 0, NULL);
+    ok(hr == E_POINTER, "IDirectMusicTrack8_Clone failed: %08x\n", hr);
+    hr = IDirectMusicTrack8_PlayEx(dmt8, NULL, 0, 0, 0, 0, NULL, NULL, 0);
+    ok(hr == DMUS_S_END, "IDirectMusicTrack8_PlayEx failed: %08x\n", hr);
+    hr = IDirectMusicTrack8_GetParamEx(dmt8, NULL, 0, NULL, NULL, NULL, 0);
+    ok(hr == E_POINTER, "IDirectMusicTrack8_GetParamEx failed: %08x\n", hr);
+    hr = IDirectMusicTrack8_SetParamEx(dmt8, NULL, 0, NULL, NULL, 0);
+    ok(hr == E_POINTER, "IDirectMusicTrack8_SetParamEx failed: %08x\n", hr);
+    }
+    hr = IDirectMusicTrack8_Compose(dmt8, NULL, 0, NULL);
+    ok(hr == E_NOTIMPL, "IDirectMusicTrack8_Compose failed: %08x\n", hr);
+    hr = IDirectMusicTrack8_Join(dmt8, NULL, 0, NULL, 0, NULL);
+    todo_wine ok(hr == E_POINTER, "IDirectMusicTrack8_Join failed: %08x\n", hr);
+
+    /* IPersistStream */
+    hr = IDirectMusicTrack8_QueryInterface(dmt8, &IID_IPersistStream, (void**)&ps);
+    ok(hr == S_OK, "QueryInterface for IID_IPersistStream failed: %08x\n", hr);
+    hr = IPersistStream_GetClassID(ps, &class);
+    ok(hr == S_OK, "IPersistStream_GetClassID failed: %08x\n", hr);
+    ok(IsEqualGUID(&class, &CLSID_DirectMusicBandTrack),
+            "Expected class CLSID_DirectMusicBandTrack got %s\n", wine_dbgstr_guid(&class));
+
+    /* Unimplemented IPersistStream methods */
+    hr = IPersistStream_IsDirty(ps);
+    ok(hr == S_FALSE, "IPersistStream_IsDirty failed: %08x\n", hr);
+    hr = IPersistStream_GetSizeMax(ps, &size);
+    ok(hr == E_NOTIMPL, "IPersistStream_GetSizeMax failed: %08x\n", hr);
+    hr = IPersistStream_Save(ps, NULL, TRUE);
+    ok(hr == E_NOTIMPL, "IPersistStream_Save failed: %08x\n", hr);
+
+    while (IDirectMusicTrack8_Release(dmt8));
 }
 
 START_TEST(dmband)
@@ -187,6 +256,7 @@ START_TEST(dmband)
     test_COM();
     test_COM_bandtrack();
     test_dmband();
+    test_bandtrack();
 
     CoUninitialize();
 }

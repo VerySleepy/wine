@@ -76,7 +76,26 @@ double __cdecl _y0(double);
 double __cdecl _y1(double);
 double __cdecl _yn(int, double);
 
-#ifdef __x86_64__
+double __cdecl cbrt(double);
+double __cdecl exp2(double);
+double __cdecl log2(double);
+double __cdecl rint(double);
+double __cdecl round(double);
+double __cdecl trunc(double);
+
+float __cdecl cbrtf(float);
+float __cdecl exp2f(float);
+float __cdecl log2f(float);
+float __cdecl rintf(float);
+float __cdecl roundf(float);
+float __cdecl truncf(float);
+
+long __cdecl lrint(double);
+long __cdecl lrintf(float);
+long __cdecl lround(double);
+long __cdecl lroundf(float);
+
+#if defined(__x86_64__) || defined(__arm__)
 
 float __cdecl sinf(float);
 float __cdecl cosf(float);
@@ -120,14 +139,17 @@ float __cdecl fmodf(float, float);
 #define sqrtf(x) ((float)sqrt((double)(x)))
 #define ceilf(x) ((float)ceil((double)(x)))
 #define floorf(x) ((float)floor((double)(x)))
+#define fabsf(x) ((float)fabs((double)(x)))
 #define frexpf(x) ((float)frexp((double)(x)))
 #define modff(x,y) ((float)modf((double)(x), (double*)(y)))
 #define fmodf(x,y) ((float)fmod((double)(x), (double)(y)))
 
 #endif
 
-#define fabsf(x) ((float)fabs((double)(x)))
 #define ldexpf(x,y) ((float)ldexp((double)(x),(y)))
+
+double __cdecl nearbyint(double);
+float __cdecl nearbyintf(float);
 
 float __cdecl _hypotf(float, float);
 
@@ -145,6 +167,12 @@ static const union {
 #    define HUGE_VAL    (__huge_val.__d)
 #  endif
 #endif
+
+#define FP_INFINITE   1
+#define FP_NAN        2
+#define FP_NORMAL    -1
+#define FP_SUBNORMAL -2
+#define FP_ZERO       0
 
 #ifdef __cplusplus
 }

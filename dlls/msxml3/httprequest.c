@@ -48,9 +48,9 @@
 
 #include "wine/debug.h"
 
-WINE_DEFAULT_DEBUG_CHANNEL(msxml);
-
 #ifdef HAVE_LIBXML2
+
+WINE_DEFAULT_DEBUG_CHANNEL(msxml);
 
 static const WCHAR colspaceW[] = {':',' ',0};
 static const WCHAR crlfW[] = {'\r','\n',0};
@@ -114,7 +114,6 @@ typedef struct
 {
     httprequest req;
     IServerXMLHTTPRequest IServerXMLHTTPRequest_iface;
-    LONG ref;
 } serverhttp;
 
 static inline httprequest *impl_from_IXMLHTTPRequest( IXMLHTTPRequest *iface )
@@ -174,6 +173,19 @@ static void free_response_headers(httprequest *This)
 
     SysFreeString(This->raw_respheaders);
     This->raw_respheaders = NULL;
+}
+
+static void free_request_headers(httprequest *This)
+{
+    struct httpheader *header, *header2;
+
+    LIST_FOR_EACH_ENTRY_SAFE(header, header2, &This->reqheaders, struct httpheader, entry)
+    {
+        list_remove(&header->entry);
+        SysFreeString(header->header);
+        SysFreeString(header->value);
+        heap_free(header);
+    }
 }
 
 struct BindStatusCallback
@@ -888,6 +900,7 @@ static HRESULT httprequest_open(httprequest *This, BSTR method, BSTR url,
     SysFreeString(This->user);
     SysFreeString(This->password);
     This->user = This->password = NULL;
+    free_request_headers(This);
 
     if (!strcmpiW(method, MethodGetW))
     {
@@ -1273,8 +1286,6 @@ static HRESULT httprequest_put_onreadystatechange(httprequest *This, IDispatch *
 
 static void httprequest_release(httprequest *This)
 {
-    struct httpheader *header, *header2;
-
     if (This->site)
         IUnknown_Release( This->site );
     if (This->uri)
@@ -1286,15 +1297,8 @@ static void httprequest_release(httprequest *This)
     SysFreeString(This->user);
     SysFreeString(This->password);
 
-    /* request headers */
-    LIST_FOR_EACH_ENTRY_SAFE(header, header2, &This->reqheaders, struct httpheader, entry)
-    {
-        list_remove(&header->entry);
-        SysFreeString(header->header);
-        SysFreeString(header->value);
-        heap_free(header);
-    }
-    /* response headers */
+    /* cleanup headers lists */
+    free_request_headers(This);
     free_response_headers(This);
     SysFreeString(This->status_text);
 
@@ -1555,19 +1559,19 @@ static HRESULT WINAPI
 httprequest_ObjectWithSite_QueryInterface( IObjectWithSite* iface, REFIID riid, void** ppvObject )
 {
     httprequest *This = impl_from_IObjectWithSite(iface);
-    return IXMLHTTPRequest_QueryInterface( (IXMLHTTPRequest *)This, riid, ppvObject );
+    return IXMLHTTPRequest_QueryInterface(&This->IXMLHTTPRequest_iface, riid, ppvObject);
 }
 
 static ULONG WINAPI httprequest_ObjectWithSite_AddRef( IObjectWithSite* iface )
 {
     httprequest *This = impl_from_IObjectWithSite(iface);
-    return IXMLHTTPRequest_AddRef((IXMLHTTPRequest *)This);
+    return IXMLHTTPRequest_AddRef(&This->IXMLHTTPRequest_iface);
 }
 
 static ULONG WINAPI httprequest_ObjectWithSite_Release( IObjectWithSite* iface )
 {
     httprequest *This = impl_from_IObjectWithSite(iface);
-    return IXMLHTTPRequest_Release((IXMLHTTPRequest *)This);
+    return IXMLHTTPRequest_Release(&This->IXMLHTTPRequest_iface);
 }
 
 static HRESULT WINAPI httprequest_ObjectWithSite_GetSite( IObjectWithSite *iface, REFIID iid, void **ppvSite )
@@ -1651,19 +1655,19 @@ static const IObjectWithSiteVtbl ObjectWithSiteVtbl =
 static HRESULT WINAPI httprequest_Safety_QueryInterface(IObjectSafety *iface, REFIID riid, void **ppv)
 {
     httprequest *This = impl_from_IObjectSafety(iface);
-    return IXMLHTTPRequest_QueryInterface( (IXMLHTTPRequest *)This, riid, ppv );
+    return IXMLHTTPRequest_QueryInterface(&This->IXMLHTTPRequest_iface, riid, ppv);
 }
 
 static ULONG WINAPI httprequest_Safety_AddRef(IObjectSafety *iface)
 {
     httprequest *This = impl_from_IObjectSafety(iface);
-    return IXMLHTTPRequest_AddRef((IXMLHTTPRequest *)This);
+    return IXMLHTTPRequest_AddRef(&This->IXMLHTTPRequest_iface);
 }
 
 static ULONG WINAPI httprequest_Safety_Release(IObjectSafety *iface)
 {
     httprequest *This = impl_from_IObjectSafety(iface);
-    return IXMLHTTPRequest_Release((IXMLHTTPRequest *)This);
+    return IXMLHTTPRequest_Release(&This->IXMLHTTPRequest_iface);
 }
 
 static HRESULT WINAPI httprequest_Safety_GetInterfaceSafetyOptions(IObjectSafety *iface, REFIID riid,
@@ -1732,7 +1736,7 @@ static HRESULT WINAPI ServerXMLHTTPRequest_QueryInterface(IServerXMLHTTPRequest 
 static ULONG WINAPI ServerXMLHTTPRequest_AddRef(IServerXMLHTTPRequest *iface)
 {
     serverhttp *This = impl_from_IServerXMLHTTPRequest( iface );
-    ULONG ref = InterlockedIncrement( &This->ref );
+    ULONG ref = InterlockedIncrement( &This->req.ref );
     TRACE("(%p)->(%u)\n", This, ref );
     return ref;
 }
@@ -1740,7 +1744,7 @@ static ULONG WINAPI ServerXMLHTTPRequest_AddRef(IServerXMLHTTPRequest *iface)
 static ULONG WINAPI ServerXMLHTTPRequest_Release(IServerXMLHTTPRequest *iface)
 {
     serverhttp *This = impl_from_IServerXMLHTTPRequest( iface );
-    ULONG ref = InterlockedDecrement( &This->ref );
+    ULONG ref = InterlockedDecrement( &This->req.ref );
 
     TRACE("(%p)->(%u)\n", This, ref );
 
@@ -2036,7 +2040,6 @@ HRESULT ServerXMLHTTP_create(void **obj)
 
     init_httprequest(&req->req);
     req->IServerXMLHTTPRequest_iface.lpVtbl = &ServerXMLHTTPRequestVtbl;
-    req->ref = 1;
 
     *obj = &req->IServerXMLHTTPRequest_iface;
 

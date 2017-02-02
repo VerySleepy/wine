@@ -4,6 +4,7 @@
  * Copyright 1995 Alexandre Julliard
  * Copyright 2005 Ivan Leo Puoti
  * Copyright 2005 Laurent Pinchart
+ * Copyright 2014-2015 Sebastian Lackner
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -23,16 +24,18 @@
 #include "config.h"
 #include "wine/port.h"
 
-#ifdef __i386__
-
 #include <stdarg.h>
 
 #include "windef.h"
 #include "winbase.h"
 #include "winternl.h"
+#define WIN32_NO_STATUS
+#include "ddk/wdm.h"
 #include "excpt.h"
 #include "wine/debug.h"
 #include "wine/exception.h"
+
+#ifdef __i386__
 
 WINE_DEFAULT_DEBUG_CHANNEL(int);
 
@@ -59,7 +62,7 @@ static inline struct idtr get_idtr(void)
 }
 
 /* store an operand into a register */
-static void store_reg( CONTEXT *context, BYTE regmodrm, const BYTE *addr, int long_op )
+static void store_reg_word( CONTEXT *context, BYTE regmodrm, const BYTE *addr, int long_op )
 {
     switch((regmodrm >> 3) & 7)
     {
@@ -95,6 +98,22 @@ static void store_reg( CONTEXT *context, BYTE regmodrm, const BYTE *addr, int lo
         if (long_op) context->Edi = *(const DWORD *)addr;
         else context->Edi = (context->Edi & 0xffff0000) | *(const WORD *)addr;
         break;
+    }
+}
+
+/* store an operand into a byte register */
+static void store_reg_byte( CONTEXT *context, BYTE regmodrm, const BYTE *addr )
+{
+    switch((regmodrm >> 3) & 7)
+    {
+    case 0: context->Eax = (context->Eax & 0xffffff00) | *addr; break;
+    case 1: context->Ecx = (context->Ecx & 0xffffff00) | *addr; break;
+    case 2: context->Edx = (context->Edx & 0xffffff00) | *addr; break;
+    case 3: context->Ebx = (context->Ebx & 0xffffff00) | *addr; break;
+    case 4: context->Eax = (context->Eax & 0xffff00ff) | (*addr << 8); break;
+    case 5: context->Ecx = (context->Ecx & 0xffff00ff) | (*addr << 8); break;
+    case 6: context->Edx = (context->Edx & 0xffff00ff) | (*addr << 8); break;
+    case 7: context->Ebx = (context->Ebx & 0xffff00ff) | (*addr << 8); break;
     }
 }
 
@@ -404,19 +423,26 @@ static DWORD emulate_instruction( EXCEPTION_RECORD *rec, CONTEXT *context )
         }
         break;  /* Unable to emulate it */
 
+    case 0x8a: /* mov Eb, Gb */
     case 0x8b: /* mov Ev, Gv */
     {
-        BYTE *addr = INSTR_GetOperandAddr(context, instr + 1, long_addr,
+        BYTE *data = INSTR_GetOperandAddr(context, instr + 1, long_addr,
                                           segprefix, &len);
+        unsigned int data_size = (*instr == 0x8b) ? (long_op ? 4 : 2) : 1;
         struct idtr idtr = get_idtr();
-        unsigned int offset = addr - idtr.base;
+        unsigned int offset = data - idtr.base;
 
-        if (offset <= idtr.limit + 1 - (long_op ? 4 : 2))
+        if (offset <= idtr.limit + 1 - data_size)
         {
             idt[1].LimitLow = 0x100; /* FIXME */
             idt[2].LimitLow = 0x11E; /* FIXME */
             idt[3].LimitLow = 0x500; /* FIXME */
-            store_reg( context, instr[1], (BYTE *)idt + offset, long_op );
+
+            switch (*instr)
+            {
+            case 0x8a: store_reg_byte( context, instr[1], (BYTE *)idt + offset ); break;
+            case 0x8b: store_reg_word( context, instr[1], (BYTE *)idt + offset, long_op ); break;
+            }
             context->Eip += prefixlen + len + 1;
             return ExceptionContinueExecution;
         }
@@ -452,4 +478,299 @@ LONG CALLBACK vectored_handler( EXCEPTION_POINTERS *ptrs )
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
-#endif  /* __i386__ */
+#elif defined(__x86_64__)  /* __i386__ */
+
+WINE_DEFAULT_DEBUG_CHANNEL(int);
+
+#define REX_B   1
+#define REX_X   2
+#define REX_R   4
+#define REX_W   8
+
+#define REGMODRM_MOD( regmodrm, rex )   ((regmodrm) >> 6)
+#define REGMODRM_REG( regmodrm, rex )   (((regmodrm) >> 3) & 7) | (((rex) & REX_R) ? 8 : 0)
+#define REGMODRM_RM( regmodrm, rex )    (((regmodrm) & 7) | (((rex) & REX_B) ? 8 : 0))
+
+#define SIB_SS( sib, rex )      ((sib) >> 6)
+#define SIB_INDEX( sib, rex )   (((sib) >> 3) & 7) | (((rex) & REX_X) ? 8 : 0)
+#define SIB_BASE( sib, rex )    (((sib) & 7) | (((rex) & REX_B) ? 8 : 0))
+
+/* keep in sync with dlls/ntdll/thread.c:thread_init */
+static const BYTE *wine_user_shared_data = (BYTE *)0x7ffe0000;
+static const BYTE *user_shared_data      = (BYTE *)0xfffff78000000000;
+
+static inline DWORD64 *get_int_reg( CONTEXT *context, int index )
+{
+    return &context->Rax + index; /* index should be in range 0 .. 15 */
+}
+
+static inline int get_op_size( int long_op, int rex )
+{
+    if (rex & REX_W)
+        return sizeof(DWORD64);
+    else if (long_op)
+        return sizeof(DWORD);
+    else
+        return sizeof(WORD);
+}
+
+/* store an operand into a register */
+static void store_reg_word( CONTEXT *context, BYTE regmodrm, const BYTE *addr, int long_op, int rex )
+{
+    int index = REGMODRM_REG( regmodrm, rex );
+    BYTE *reg = (BYTE *)get_int_reg( context, index );
+    memcpy( reg, addr, get_op_size( long_op, rex ) );
+}
+
+/* store an operand into a byte register */
+static void store_reg_byte( CONTEXT *context, BYTE regmodrm, const BYTE *addr, int rex )
+{
+    int index = REGMODRM_REG( regmodrm, rex );
+    BYTE *reg = (BYTE *)get_int_reg( context, index );
+    if (!rex && index >= 4 && index < 8) reg -= (4 * sizeof(DWORD64) - 1); /* special case: ah, ch, dh, bh */
+    *reg = *addr;
+}
+
+/***********************************************************************
+ *           INSTR_GetOperandAddr
+ *
+ * Return the address of an instruction operand (from the mod/rm byte).
+ */
+static BYTE *INSTR_GetOperandAddr( CONTEXT *context, BYTE *instr,
+                                   int long_addr, int rex, int segprefix, int *len )
+{
+    int mod, rm, ss = 0, off, have_sib = 0;
+    DWORD64 base = 0, index = 0;
+
+#define GET_VAL( val, type ) \
+    { *val = *(type *)instr; instr += sizeof(type); *len += sizeof(type); }
+
+    *len = 0;
+    GET_VAL( &mod, BYTE );
+    rm  = REGMODRM_RM( mod, rex );
+    mod = REGMODRM_MOD( mod, rex );
+
+    if (mod == 3)
+        return (BYTE *)get_int_reg( context, rm );
+
+    if ((rm & 7) == 4)
+    {
+        BYTE sib;
+        int id;
+
+        GET_VAL( &sib, BYTE );
+        rm = SIB_BASE( sib, rex );
+        id = SIB_INDEX( sib, rex );
+        ss = SIB_SS( sib, rex );
+
+        index = (id != 4) ? *get_int_reg( context, id ) : 0;
+        if (!long_addr) index &= 0xffffffff;
+        have_sib = 1;
+    }
+
+    base = *get_int_reg( context, rm );
+    if (!long_addr) base &= 0xffffffff;
+
+    switch (mod)
+    {
+    case 0:
+        if (rm == 5)  /* special case */
+        {
+            base = have_sib ? 0 : context->Rip;
+            if (!long_addr) base &= 0xffffffff;
+            GET_VAL( &off, DWORD );
+            base += (signed long)off;
+        }
+        break;
+
+    case 1:  /* 8-bit disp */
+        GET_VAL( &off, BYTE );
+        base += (signed char)off;
+        break;
+
+    case 2:  /* 32-bit disp */
+        GET_VAL( &off, DWORD );
+        base += (signed long)off;
+        break;
+    }
+
+    /* FIXME: we assume that all segments have a base of 0 */
+    return (BYTE *)(base + (index << ss));
+#undef GET_VAL
+}
+
+
+/***********************************************************************
+ *           emulate_instruction
+ *
+ * Emulate a privileged instruction.
+ * Returns exception continuation status.
+ */
+static DWORD emulate_instruction( EXCEPTION_RECORD *rec, CONTEXT *context )
+{
+    int prefix, segprefix, prefixlen, len, long_op, long_addr, rex;
+    BYTE *instr;
+
+    long_op = long_addr = 1;
+    instr = (BYTE *)context->Rip;
+    if (!instr) return ExceptionContinueSearch;
+
+    /* First handle any possible prefix */
+
+    segprefix = -1;  /* no seg prefix */
+    rex = 0;  /* no rex prefix */
+    prefix = 1;
+    prefixlen = 0;
+    while(prefix)
+    {
+        switch(*instr)
+        {
+        case 0x2e:
+            segprefix = context->SegCs;
+            break;
+        case 0x36:
+            segprefix = context->SegSs;
+            break;
+        case 0x3e:
+            segprefix = context->SegDs;
+            break;
+        case 0x26:
+            segprefix = context->SegEs;
+            break;
+        case 0x64:
+            segprefix = context->SegFs;
+            break;
+        case 0x65:
+            segprefix = context->SegGs;
+            break;
+        case 0x66:
+            long_op = !long_op;  /* opcode size prefix */
+            break;
+        case 0x67:
+            long_addr = !long_addr;  /* addr size prefix */
+            break;
+        case 0xf0:  /* lock */
+        break;
+        case 0xf2:  /* repne */
+        break;
+        case 0xf3:  /* repe */
+            break;
+        default:
+            prefix = 0;  /* no more prefixes */
+            break;
+        }
+        if (*instr >= 0x40 && *instr < 0x50)  /* rex */
+        {
+            rex = *instr;
+            prefix = TRUE;
+        }
+        if (prefix)
+        {
+            instr++;
+            prefixlen++;
+        }
+    }
+
+    /* Now look at the actual instruction */
+
+    switch(*instr)
+    {
+    case 0x0f: /* extended instruction */
+        switch(instr[1])
+        {
+        case 0xb6: /* movzx Eb, Gv */
+        case 0xb7: /* movzx Ew, Gv */
+        {
+            BYTE *data = INSTR_GetOperandAddr( context, instr + 2, long_addr,
+                                               rex, segprefix, &len );
+            unsigned int data_size = (instr[1] == 0xb7) ? 2 : 1;
+            SIZE_T offset = data - user_shared_data;
+
+            if (offset <= sizeof(KSHARED_USER_DATA) - data_size)
+            {
+                ULONGLONG temp = 0;
+                memcpy( &temp, wine_user_shared_data + offset, data_size );
+                store_reg_word( context, instr[2], (BYTE *)&temp, long_op, rex );
+                context->Rip += prefixlen + len + 2;
+                return ExceptionContinueExecution;
+            }
+            break;  /* Unable to emulate it */
+        }
+        }
+        break;  /* Unable to emulate it */
+
+    case 0x8a: /* mov Eb, Gb */
+    case 0x8b: /* mov Ev, Gv */
+    {
+        BYTE *data = INSTR_GetOperandAddr( context, instr + 1, long_addr,
+                                           rex, segprefix, &len );
+        unsigned int data_size = (*instr == 0x8b) ? get_op_size( long_op, rex ) : 1;
+        SIZE_T offset = data - user_shared_data;
+
+        if (offset <= sizeof(KSHARED_USER_DATA) - data_size)
+        {
+            switch (*instr)
+            {
+            case 0x8a: store_reg_byte( context, instr[1], wine_user_shared_data + offset, rex ); break;
+            case 0x8b: store_reg_word( context, instr[1], wine_user_shared_data + offset, long_op, rex ); break;
+            }
+            context->Rip += prefixlen + len + 1;
+            return ExceptionContinueExecution;
+        }
+        break;  /* Unable to emulate it */
+    }
+
+    case 0xa0: /* mov Ob, AL */
+    case 0xa1: /* mov Ovqp, rAX */
+    {
+        BYTE *data = (BYTE *)(long_addr ? *(DWORD64 *)(instr + 1) : *(DWORD *)(instr + 1));
+        unsigned int data_size = (*instr == 0xa1) ? get_op_size( long_op, rex ) : 1;
+        SIZE_T offset = data - user_shared_data;
+        len = long_addr ? sizeof(DWORD64) : sizeof(DWORD);
+
+        if (offset <= sizeof(KSHARED_USER_DATA) - data_size)
+        {
+            memcpy( &context->Rax, wine_user_shared_data + offset, data_size );
+            context->Rip += prefixlen + len + 1;
+            return ExceptionContinueExecution;
+        }
+        break;  /* Unable to emulate it */
+    }
+    }
+    return ExceptionContinueSearch;  /* Unable to emulate it */
+}
+
+
+/***********************************************************************
+ *           vectored_handler
+ *
+ * Vectored exception handler used to emulate protected instructions
+ * from 64-bit code.
+ */
+LONG CALLBACK vectored_handler( EXCEPTION_POINTERS *ptrs )
+{
+    EXCEPTION_RECORD *record = ptrs->ExceptionRecord;
+    CONTEXT *context = ptrs->ContextRecord;
+
+    if (record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+        record->ExceptionInformation[0] == EXCEPTION_READ_FAULT)
+    {
+        if (emulate_instruction( record, context ) == ExceptionContinueExecution)
+        {
+            TRACE( "next instruction rip=%lx\n", context->Rip );
+            TRACE( "  rax=%016lx rbx=%016lx rcx=%016lx rdx=%016lx\n",
+                   context->Rax, context->Rbx, context->Rcx, context->Rdx );
+            TRACE( "  rsi=%016lx rdi=%016lx rbp=%016lx rsp=%016lx\n",
+                   context->Rsi, context->Rdi, context->Rbp, context->Rsp );
+            TRACE( "   r8=%016lx  r9=%016lx r10=%016lx r11=%016lx\n",
+                   context->R8, context->R9, context->R10, context->R11 );
+            TRACE( "  r12=%016lx r13=%016lx r14=%016lx r15=%016lx\n",
+                   context->R12, context->R13, context->R14, context->R15 );
+
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+#endif  /* __x86_64__ */

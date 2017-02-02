@@ -40,41 +40,36 @@ WINE_DEFAULT_DEBUG_CHANNEL(oledb);
 
 struct ErrorEntry
 {
-    struct list entry;
     ERRORINFO       info;
     DISPPARAMS      dispparams;
-    IUnknown        *unknown;
+    IUnknown        *custom_error;
     DWORD           lookupID;
 };
 
-typedef struct ErrorInfoImpl
+typedef struct errorrecords
 {
     IErrorInfo     IErrorInfo_iface;
     IErrorRecords  IErrorRecords_iface;
     LONG ref;
 
-    GUID m_Guid;
-    BSTR source;
-    BSTR description;
-    BSTR help_file;
-    DWORD help_context;
+    struct ErrorEntry *records;
+    unsigned int allocated;
+    unsigned int count;
+} errorrecords;
 
-    struct list errors;
-} ErrorInfoImpl;
-
-static inline ErrorInfoImpl *impl_from_IErrorInfo( IErrorInfo *iface )
+static inline errorrecords *impl_from_IErrorInfo( IErrorInfo *iface )
 {
-    return CONTAINING_RECORD(iface, ErrorInfoImpl, IErrorInfo_iface);
+    return CONTAINING_RECORD(iface, errorrecords, IErrorInfo_iface);
 }
 
-static inline ErrorInfoImpl *impl_from_IErrorRecords( IErrorRecords *iface )
+static inline errorrecords *impl_from_IErrorRecords( IErrorRecords *iface )
 {
-    return CONTAINING_RECORD(iface, ErrorInfoImpl, IErrorRecords_iface);
+    return CONTAINING_RECORD(iface, errorrecords, IErrorRecords_iface);
 }
 
-static HRESULT WINAPI IErrorInfoImpl_QueryInterface(IErrorInfo* iface, REFIID riid, void **ppvoid)
+static HRESULT WINAPI errorrecords_QueryInterface(IErrorInfo* iface, REFIID riid, void **ppvoid)
 {
-    ErrorInfoImpl *This = impl_from_IErrorInfo(iface);
+    errorrecords *This = impl_from_IErrorInfo(iface);
     TRACE("(%p)->(%s, %p)\n", This, debugstr_guid(riid),ppvoid);
 
     *ppvoid = NULL;
@@ -98,246 +93,305 @@ static HRESULT WINAPI IErrorInfoImpl_QueryInterface(IErrorInfo* iface, REFIID ri
     return E_NOINTERFACE;
 }
 
-static ULONG WINAPI IErrorInfoImpl_AddRef(IErrorInfo* iface)
+static ULONG WINAPI errorrecords_AddRef(IErrorInfo* iface)
 {
-    ErrorInfoImpl *This = impl_from_IErrorInfo(iface);
+    errorrecords *This = impl_from_IErrorInfo(iface);
     TRACE("(%p)->%u\n",This,This->ref);
     return InterlockedIncrement(&This->ref);
 }
 
-static ULONG WINAPI IErrorInfoImpl_Release(IErrorInfo* iface)
+static ULONG WINAPI errorrecords_Release(IErrorInfo* iface)
 {
-    ErrorInfoImpl *This = impl_from_IErrorInfo(iface);
+    errorrecords *This = impl_from_IErrorInfo(iface);
     ULONG ref = InterlockedDecrement(&This->ref);
-    struct ErrorEntry *cursor, *cursor2;
 
     TRACE("(%p)->%u\n",This,ref+1);
 
     if (!ref)
     {
-        SysFreeString(This->source);
-        SysFreeString(This->description);
-        SysFreeString(This->help_file);
+        unsigned int i;
 
-        LIST_FOR_EACH_ENTRY_SAFE(cursor, cursor2, &This->errors, struct ErrorEntry, entry)
+        for (i = 0; i < This->count; i++)
         {
-            list_remove(&cursor->entry);
-            if(cursor->unknown)
-                IUnknown_Release(cursor->unknown);
+            DISPPARAMS *dispparams = &This->records[i].dispparams;
+            unsigned int j;
 
-            heap_free(cursor);
+            if (This->records[i].custom_error)
+                IUnknown_Release(This->records[i].custom_error);
+
+            for (j = 0; j < dispparams->cArgs && dispparams->rgvarg; j++)
+                VariantClear(&dispparams->rgvarg[i]);
+            CoTaskMemFree(dispparams->rgvarg);
+            CoTaskMemFree(dispparams->rgdispidNamedArgs);
         }
+        heap_free(This->records);
         heap_free(This);
     }
     return ref;
 }
 
-static HRESULT WINAPI IErrorInfoImpl_GetGUID(IErrorInfo* iface, GUID * pGUID)
+static HRESULT WINAPI errorrecords_GetGUID(IErrorInfo* iface, GUID *guid)
 {
-    ErrorInfoImpl *This = impl_from_IErrorInfo(iface);
+    errorrecords *This = impl_from_IErrorInfo(iface);
 
-    TRACE("(%p)\n",This);
+    TRACE("(%p)->(%p)\n", This, guid);
 
-    if(!pGUID )
+    if (!guid)
         return E_INVALIDARG;
 
-    *pGUID = This->m_Guid;
+    *guid = GUID_NULL;
 
     return S_OK;
 }
 
-static HRESULT WINAPI IErrorInfoImpl_GetSource(IErrorInfo* iface, BSTR *pBstrSource)
+static HRESULT WINAPI errorrecords_GetSource(IErrorInfo* iface, BSTR *source)
 {
-    ErrorInfoImpl *This = impl_from_IErrorInfo(iface);
+    errorrecords *This = impl_from_IErrorInfo(iface);
 
-    TRACE("(%p)->(%p)\n",This, pBstrSource);
+    TRACE("(%p)->(%p)\n", This, source);
 
-    if (pBstrSource == NULL)
+    if (!source)
         return E_INVALIDARG;
 
-    *pBstrSource = SysAllocString(This->source);
+    *source = NULL;
 
-    return S_OK;
+    return E_FAIL;
 }
 
-static HRESULT WINAPI IErrorInfoImpl_GetDescription(IErrorInfo* iface, BSTR *pBstrDescription)
+static HRESULT WINAPI errorrecords_GetDescription(IErrorInfo* iface, BSTR *description)
 {
-    ErrorInfoImpl *This = impl_from_IErrorInfo(iface);
+    errorrecords *This = impl_from_IErrorInfo(iface);
 
-    TRACE("(%p)->(%p)\n",This, pBstrDescription);
+    TRACE("(%p)->(%p)\n", This, description);
 
-    if (pBstrDescription == NULL)
+    if (!description)
         return E_INVALIDARG;
 
-    *pBstrDescription = SysAllocString(This->description);
+    *description = NULL;
 
-    return S_OK;
+    return E_FAIL;
 }
 
-static HRESULT WINAPI IErrorInfoImpl_GetHelpFile(IErrorInfo* iface, BSTR *pBstrHelpFile)
+static HRESULT WINAPI errorrecords_GetHelpFile(IErrorInfo* iface, BSTR *helpfile)
 {
-    ErrorInfoImpl *This = impl_from_IErrorInfo(iface);
+    errorrecords *This = impl_from_IErrorInfo(iface);
 
-    TRACE("(%p)->(%p)\n",This, pBstrHelpFile);
+    TRACE("(%p)->(%p)\n", This, helpfile);
 
-    if (pBstrHelpFile == NULL)
+    if (!helpfile)
         return E_INVALIDARG;
 
-    *pBstrHelpFile = SysAllocString(This->help_file);
+    *helpfile = NULL;
 
-    return S_OK;
+    return E_FAIL;
 }
 
-static HRESULT WINAPI IErrorInfoImpl_GetHelpContext(IErrorInfo* iface, DWORD *pdwHelpContext)
+static HRESULT WINAPI errorrecords_GetHelpContext(IErrorInfo* iface, DWORD *context)
 {
-    ErrorInfoImpl *This = impl_from_IErrorInfo(iface);
+    errorrecords *This = impl_from_IErrorInfo(iface);
 
-    TRACE("(%p)->(%p)\n",This, pdwHelpContext);
+    TRACE("(%p)->(%p)\n", This, context);
 
-    if (pdwHelpContext == NULL)
+    if (!context)
         return E_INVALIDARG;
 
-    *pdwHelpContext = This->help_context;
+    *context = 0;
 
-    return S_OK;
+    return E_FAIL;
 }
 
 static const IErrorInfoVtbl ErrorInfoVtbl =
 {
-    IErrorInfoImpl_QueryInterface,
-    IErrorInfoImpl_AddRef,
-    IErrorInfoImpl_Release,
-    IErrorInfoImpl_GetGUID,
-    IErrorInfoImpl_GetSource,
-    IErrorInfoImpl_GetDescription,
-    IErrorInfoImpl_GetHelpFile,
-    IErrorInfoImpl_GetHelpContext
+    errorrecords_QueryInterface,
+    errorrecords_AddRef,
+    errorrecords_Release,
+    errorrecords_GetGUID,
+    errorrecords_GetSource,
+    errorrecords_GetDescription,
+    errorrecords_GetHelpFile,
+    errorrecords_GetHelpContext
 };
 
 static HRESULT WINAPI errorrec_QueryInterface(IErrorRecords *iface, REFIID riid, void **ppvObject)
 {
-    ErrorInfoImpl *This = impl_from_IErrorRecords(iface);
+    errorrecords *This = impl_from_IErrorRecords(iface);
     return IErrorInfo_QueryInterface(&This->IErrorInfo_iface, riid, ppvObject);
 }
 
 static ULONG WINAPI WINAPI errorrec_AddRef(IErrorRecords *iface)
 {
-    ErrorInfoImpl *This = impl_from_IErrorRecords(iface);
+    errorrecords *This = impl_from_IErrorRecords(iface);
     return IErrorInfo_AddRef(&This->IErrorInfo_iface);
 }
 
 static ULONG WINAPI WINAPI errorrec_Release(IErrorRecords *iface)
 {
-    ErrorInfoImpl *This = impl_from_IErrorRecords(iface);
+    errorrecords *This = impl_from_IErrorRecords(iface);
     return IErrorInfo_Release(&This->IErrorInfo_iface);
+}
+
+static HRESULT dup_dispparams(DISPPARAMS *src, DISPPARAMS *dest)
+{
+    unsigned int i;
+
+    if (!src)
+    {
+        memset(dest, 0, sizeof(*dest));
+        return S_OK;
+    }
+
+    *dest = *src;
+
+    if (src->cArgs)
+    {
+        dest->rgvarg = CoTaskMemAlloc(dest->cArgs * sizeof(*dest->rgvarg));
+        for (i = 0; i < src->cArgs; i++)
+        {
+            VariantInit(&dest->rgvarg[i]);
+            VariantCopy(&dest->rgvarg[i], &src->rgvarg[i]);
+        }
+    }
+
+    if (src->cNamedArgs)
+    {
+        dest->rgdispidNamedArgs = CoTaskMemAlloc(dest->cNamedArgs * sizeof(*dest->rgdispidNamedArgs));
+        memcpy(dest->rgdispidNamedArgs, src->rgdispidNamedArgs, dest->cNamedArgs * sizeof(*dest->rgdispidNamedArgs));
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI errorrec_AddErrorRecord(IErrorRecords *iface, ERRORINFO *pErrorInfo,
         DWORD dwLookupID, DISPPARAMS *pdispparams, IUnknown *punkCustomError, DWORD dwDynamicErrorID)
 {
-    ErrorInfoImpl *This = impl_from_IErrorRecords(iface);
+    errorrecords *This = impl_from_IErrorRecords(iface);
     struct ErrorEntry *entry;
+    HRESULT hr;
 
     TRACE("(%p)->(%p %d %p %p %d)\n", This, pErrorInfo, dwLookupID, pdispparams, punkCustomError, dwDynamicErrorID);
 
     if(!pErrorInfo)
         return E_INVALIDARG;
 
-    entry = heap_alloc(sizeof(*entry));
-    if(!entry)
-        return E_OUTOFMEMORY;
+    if (!This->records)
+    {
+        const unsigned int initial_size = 16;
+        if (!(This->records = heap_alloc(initial_size * sizeof(*This->records))))
+            return E_OUTOFMEMORY;
 
+        This->allocated = initial_size;
+    }
+    else if (This->count == This->allocated)
+    {
+        struct ErrorEntry *new_ptr;
+
+        new_ptr = heap_realloc(This->records, 2 * This->allocated * sizeof(*This->records));
+        if (!new_ptr)
+            return E_OUTOFMEMORY;
+
+        This->records = new_ptr;
+        This->allocated *= 2;
+    }
+
+    entry = This->records + This->count;
     entry->info = *pErrorInfo;
-    if(pdispparams)
-        entry->dispparams = *pdispparams;
-    entry->unknown = punkCustomError;
-    if(entry->unknown)
-        IUnknown_AddRef(entry->unknown);
+
+    if (FAILED(hr = dup_dispparams(pdispparams, &entry->dispparams)))
+        return hr;
+
+    entry->custom_error = punkCustomError;
+    if (entry->custom_error)
+        IUnknown_AddRef(entry->custom_error);
     entry->lookupID = dwDynamicErrorID;
 
-    list_add_head(&This->errors, &entry->entry);
+    This->count++;
 
     return S_OK;
 }
 
-static HRESULT WINAPI errorrec_GetBasicErrorInfo(IErrorRecords *iface, ULONG ulRecordNum,
-        ERRORINFO *pErrorInfo)
+static HRESULT WINAPI errorrec_GetBasicErrorInfo(IErrorRecords *iface, ULONG index, ERRORINFO *info)
 {
-    ErrorInfoImpl *This = impl_from_IErrorRecords(iface);
+    errorrecords *This = impl_from_IErrorRecords(iface);
 
-    FIXME("(%p)->(%d %p)\n", This, ulRecordNum, pErrorInfo);
+    TRACE("(%p)->(%u %p)\n", This, index, info);
 
-    if(!pErrorInfo)
+    if (!info)
         return E_INVALIDARG;
 
-    if(ulRecordNum > list_count(&This->errors))
+    if (index >= This->count)
         return DB_E_BADRECORDNUM;
 
-    return E_NOTIMPL;
+    index = This->count - index - 1;
+    *info = This->records[index].info;
+    return S_OK;
 }
 
-static HRESULT WINAPI errorrec_GetCustomErrorObject(IErrorRecords *iface, ULONG ulRecordNum,
-        REFIID riid, IUnknown **ppObject)
+static HRESULT WINAPI errorrec_GetCustomErrorObject(IErrorRecords *iface, ULONG index,
+        REFIID riid, IUnknown **object)
 {
-    ErrorInfoImpl *This = impl_from_IErrorRecords(iface);
+    errorrecords *This = impl_from_IErrorRecords(iface);
 
-    FIXME("(%p)->(%d %s, %p)\n", This, ulRecordNum, debugstr_guid(riid), ppObject);
+    TRACE("(%p)->(%u %s %p)\n", This, index, debugstr_guid(riid), object);
 
-    if (!ppObject)
+    if (!object)
         return E_INVALIDARG;
 
-    *ppObject = NULL;
+    *object = NULL;
 
-    if(ulRecordNum > list_count(&This->errors))
+    if (index >= This->count)
         return DB_E_BADRECORDNUM;
 
-    return E_NOTIMPL;
+    index = This->count - index - 1;
+    if (This->records[index].custom_error)
+        return IUnknown_QueryInterface(This->records[index].custom_error, riid, (void **)object);
+    else
+        return S_OK;
 }
 
-static HRESULT WINAPI errorrec_GetErrorInfo(IErrorRecords *iface, ULONG ulRecordNum,
+static HRESULT WINAPI errorrec_GetErrorInfo(IErrorRecords *iface, ULONG index,
         LCID lcid, IErrorInfo **ppErrorInfo)
 {
-    ErrorInfoImpl *This = impl_from_IErrorRecords(iface);
+    errorrecords *This = impl_from_IErrorRecords(iface);
 
-    FIXME("(%p)->(%d %d, %p)\n", This, ulRecordNum, lcid, ppErrorInfo);
+    FIXME("(%p)->(%u %d, %p)\n", This, index, lcid, ppErrorInfo);
 
     if (!ppErrorInfo)
         return E_INVALIDARG;
 
-    if(ulRecordNum > list_count(&This->errors))
+    if (index >= This->count)
         return DB_E_BADRECORDNUM;
 
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI errorrec_GetErrorParameters(IErrorRecords *iface, ULONG ulRecordNum,
-        DISPPARAMS *pdispparams)
+static HRESULT WINAPI errorrec_GetErrorParameters(IErrorRecords *iface, ULONG index, DISPPARAMS *pdispparams)
 {
-    ErrorInfoImpl *This = impl_from_IErrorRecords(iface);
+    errorrecords *This = impl_from_IErrorRecords(iface);
 
-    FIXME("(%p)->(%d %p)\n", This, ulRecordNum, pdispparams);
+    TRACE("(%p)->(%u %p)\n", This, index, pdispparams);
 
     if (!pdispparams)
         return E_INVALIDARG;
 
-    if(ulRecordNum > list_count(&This->errors))
+    if (index >= This->count)
         return DB_E_BADRECORDNUM;
 
-    return E_NOTIMPL;
+    index = This->count - index - 1;
+    return dup_dispparams(&This->records[index].dispparams, pdispparams);
 }
 
-static HRESULT WINAPI errorrec_GetRecordCount(IErrorRecords *iface, ULONG *records)
+static HRESULT WINAPI errorrec_GetRecordCount(IErrorRecords *iface, ULONG *count)
 {
-    ErrorInfoImpl *This = impl_from_IErrorRecords(iface);
+    errorrecords *This = impl_from_IErrorRecords(iface);
 
-    TRACE("(%p)->(%p)\n", This, records);
+    TRACE("(%p)->(%p)\n", This, count);
 
-    if(!records)
+    if(!count)
         return E_INVALIDARG;
 
-    *records = list_count(&This->errors);
+    *count = This->count;
 
-    TRACE("<--(%d)\n", *records);
+    TRACE("<--(%u)\n", *count);
 
     return S_OK;
 }
@@ -357,7 +411,7 @@ static const IErrorRecordsVtbl ErrorRecordsVtbl =
 
 HRESULT create_error_info(IUnknown *outer, void **obj)
 {
-    ErrorInfoImpl *This;
+    errorrecords *This;
 
     TRACE("(%p, %p)\n", outer, obj);
 
@@ -371,12 +425,10 @@ HRESULT create_error_info(IUnknown *outer, void **obj)
     This->IErrorInfo_iface.lpVtbl = &ErrorInfoVtbl;
     This->IErrorRecords_iface.lpVtbl = &ErrorRecordsVtbl;
     This->ref = 1;
-    This->source = NULL;
-    This->description = NULL;
-    This->help_file = NULL;
-    This->help_context = 0;
 
-    list_init(&This->errors);
+    This->records = NULL;
+    This->allocated = 0;
+    This->count = 0;
 
     *obj = &This->IErrorInfo_iface;
 

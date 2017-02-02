@@ -25,7 +25,7 @@
 #include "d3dx9tex.h"
 #include "resources.h"
 
-static int has_2d_dxt3, has_2d_dxt5, has_cube_dxt5;
+static int has_2d_dxt3, has_2d_dxt5, has_cube_dxt5, has_3d_dxt3;
 
 /* 2x2 16-bit dds, no mipmaps */
 static const unsigned char dds_16bit[] = {
@@ -114,6 +114,22 @@ static inline void expect_vec4_(unsigned int line, const D3DXVECTOR4 *expected, 
         "Expected (%f, %f, %f, %f), got (%f, %f, %f, %f)\n",
         expected->x, expected->y, expected->z, expected->w,
         got->x, got->y, got->z, got->w);
+}
+
+static BOOL compare_color(DWORD c1, DWORD c2, BYTE max_diff)
+{
+    if (abs((c1 & 0xff) - (c2 & 0xff)) > max_diff)
+        return FALSE;
+    c1 >>= 8; c2 >>= 8;
+    if (abs((c1 & 0xff) - (c2 & 0xff)) > max_diff)
+        return FALSE;
+    c1 >>= 8; c2 >>= 8;
+    if (abs((c1 & 0xff) - (c2 & 0xff)) > max_diff)
+        return FALSE;
+    c1 >>= 8; c2 >>= 8;
+    if (abs((c1 & 0xff) - (c2 & 0xff)) > max_diff)
+        return FALSE;
+    return TRUE;
 }
 
 static BOOL is_autogenmipmap_supported(IDirect3DDevice9 *device, D3DRESOURCETYPE resource_type)
@@ -574,6 +590,14 @@ static void test_D3DXCheckVolumeTextureRequirements(IDirect3DDevice9 *device)
     hr = D3DXCheckVolumeTextureRequirements(device, NULL, NULL, NULL, NULL, 0, &format, D3DPOOL_DEFAULT);
     ok(hr == D3D_OK, "D3DXCheckVolumeTextureRequirements returned %#x, expected %#x\n", hr, D3D_OK);
     ok(format == D3DFMT_X8R8G8B8, "Returned format %u, expected %u\n", format, D3DFMT_X8R8G8B8);
+
+    format = D3DFMT_DXT3;
+    hr = D3DXCheckVolumeTextureRequirements(device, NULL, NULL, NULL, NULL, 0, &format, D3DPOOL_DEFAULT);
+    ok(hr == D3D_OK, "D3DXCheckVolumeTextureRequirements returned %#x, expected %#x\n", hr, D3D_OK);
+    if (has_3d_dxt3)
+        ok(format == D3DFMT_DXT3, "Returned format %u, expected %u\n", format, D3DFMT_DXT3);
+    else
+        todo_wine ok(format == D3DFMT_A8R8G8B8, "Returned format %u, expected %u\n", format, D3DFMT_A8R8G8B8);
 
     /* mipmaps */
     if (!(caps.TextureCaps & D3DPTEXTURECAPS_MIPVOLUMEMAP))
@@ -1489,10 +1513,8 @@ static void test_D3DXCreateTextureFromFileInMemory(IDirect3DDevice9 *device)
 
     /* Check that D3DXCreateTextureFromFileInMemory accepts cube texture dds file (only first face texture is loaded) */
     hr = D3DXCreateTextureFromFileInMemory(device, dds_cube_map, sizeof(dds_cube_map), &texture);
-    if (has_2d_dxt5)
+    todo_wine_if (!has_2d_dxt5)
         ok(hr == D3D_OK, "D3DXCreateTextureFromFileInMemory returned %#x, expected %#x.\n", hr, D3D_OK);
-    else
-        todo_wine ok(hr == D3D_OK, "D3DXCreateTextureFromFileInMemory returned %#x, expected %#x.\n", hr, D3D_OK);
     if (SUCCEEDED(hr))
     {
         type = IDirect3DTexture9_GetType(texture);
@@ -1517,10 +1539,8 @@ static void test_D3DXCreateTextureFromFileInMemory(IDirect3DDevice9 *device)
 
     /* Volume textures work too. */
     hr = D3DXCreateTextureFromFileInMemory(device, dds_volume_map, sizeof(dds_volume_map), &texture);
-    if (has_2d_dxt3)
+    todo_wine_if (!has_2d_dxt3)
         ok(hr == D3D_OK, "D3DXCreateTextureFromFileInMemory returned %#x, expected %#x.\n", hr, D3D_OK);
-    else
-        todo_wine ok(hr == D3D_OK, "D3DXCreateTextureFromFileInMemory returned %#x, expected %#x.\n", hr, D3D_OK);
     if (SUCCEEDED(hr))
     {
         type = IDirect3DTexture9_GetType(texture);
@@ -1746,10 +1766,8 @@ static void test_D3DXCreateCubeTextureFromFileInMemoryEx(IDirect3DDevice9 *devic
 
     hr = D3DXCreateCubeTextureFromFileInMemoryEx(device, dds_cube_map, sizeof(dds_cube_map), D3DX_DEFAULT, D3DX_DEFAULT,
         D3DUSAGE_DYNAMIC | D3DUSAGE_AUTOGENMIPMAP, D3DFMT_UNKNOWN, D3DPOOL_DEFAULT, D3DX_DEFAULT, D3DX_DEFAULT, 0, NULL, NULL, &cube_texture);
-    if (has_cube_dxt5)
+    todo_wine_if (!has_cube_dxt5)
         ok(hr == D3D_OK, "D3DXCreateCubeTextureFromFileInMemoryEx returned %#x, expected %#x.\n", hr, D3D_OK);
-    else
-        todo_wine ok(hr == D3D_OK, "D3DXCreateCubeTextureFromFileInMemoryEx returned %#x, expected %#x.\n", hr, D3D_OK);
     if (SUCCEEDED(hr)) IDirect3DCubeTexture9_Release(cube_texture);
 }
 
@@ -1774,10 +1792,8 @@ static void test_D3DXCreateVolumeTextureFromFileInMemory(IDirect3DDevice9 *devic
     ok(hr == D3DERR_INVALIDCALL, "D3DXCreateVolumeTextureFromFileInMemory returned %#x, expected %#x\n", hr, D3DERR_INVALIDCALL);
 
     hr = D3DXCreateVolumeTextureFromFileInMemory(device, dds_volume_map, sizeof(dds_volume_map), &volume_texture);
-    if (has_2d_dxt3)
+    todo_wine_if (!has_3d_dxt3)
         ok(hr == D3D_OK, "D3DXCreateVolumeTextureFromFileInMemory returned %#x, expected %#x\n", hr, D3D_OK);
-    else
-        todo_wine ok(hr == D3D_OK, "D3DXCreateVolumeTextureFromFileInMemory returned %#x, expected %#x\n", hr, D3D_OK);
     if (SUCCEEDED(hr))
     {
         levelcount = IDirect3DVolumeTexture9_GetLevelCount(volume_texture);
@@ -1788,6 +1804,7 @@ static void test_D3DXCreateVolumeTextureFromFileInMemory(IDirect3DDevice9 *devic
         ok(volume_desc.Width == 4, "Got width %u, expected 4\n", volume_desc.Width);
         ok(volume_desc.Height == 4, "Got height %u, expected 4\n", volume_desc.Height);
         ok(volume_desc.Depth == 2, "Got depth %u, expected 2\n", volume_desc.Depth);
+        ok(volume_desc.Pool == D3DPOOL_MANAGED, "Got pool %u, expected D3DPOOL_MANAGED\n", volume_desc.Pool);
 
         hr = IDirect3DVolumeTexture9_GetLevelDesc(volume_texture, 1, &volume_desc);
         ok(hr == D3D_OK, "GetLevelDesc returned %#x, expected %#x\n", hr, D3D_OK);
@@ -1990,6 +2007,230 @@ static void test_D3DXSaveTextureToFileInMemory(IDirect3DDevice9 *device)
     IDirect3DVolumeTexture9_Release(volume_texture);
 }
 
+static void test_texture_shader(void)
+{
+    static const DWORD shader_zero[] = {0x0};
+    static const DWORD shader_invalid[] = {0xeeee0100};
+    static const DWORD shader_empty[] = {0xfffe0200, 0x0000ffff};
+#if 0
+float4 main(float3 pos : POSITION, float3 size : PSIZE) : COLOR
+{
+    return float4(pos, 1.0);
+}
+#endif
+    static const DWORD shader_code[] =
+    {
+        0x54580100, 0x0015fffe, 0x42415443, 0x0000001c, 0x0000001f, 0x54580100, 0x00000000, 0x00000000,
+        0x00000100, 0x0000001c, 0x4d007874, 0x6f726369, 0x74666f73, 0x29522820, 0x534c4820, 0x6853204c,
+        0x72656461, 0x6d6f4320, 0x656c6970, 0x2e392072, 0x392e3932, 0x332e3235, 0x00313131, 0x000afffe,
+        0x54494c43, 0x00000004, 0x00000000, 0x3ff00000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+        0x00000000, 0x00000000, 0x0014fffe, 0x434c5846, 0x00000002, 0x10000003, 0x00000001, 0x00000000,
+        0x00000003, 0x00000000, 0x00000000, 0x00000004, 0x00000000, 0x10000001, 0x00000001, 0x00000000,
+        0x00000001, 0x00000000, 0x00000000, 0x00000004, 0x00000003, 0xf0f0f0f0, 0x0f0f0f0f, 0x0000ffff,
+    };
+    IDirect3DVolumeTexture9 *volume_texture;
+    IDirect3DCubeTexture9 *cube_texture;
+    D3DPRESENT_PARAMETERS d3dpp;
+    IDirect3DTexture9 *texture;
+    IDirect3DDevice9 *device;
+    ID3DXTextureShader *tx;
+    unsigned int x, y, z;
+    ID3DXBuffer *buffer;
+    unsigned int *data;
+    D3DLOCKED_RECT lr;
+    D3DLOCKED_BOX lb;
+    IDirect3D9 *d3d;
+    D3DCAPS9 caps;
+    HRESULT hr;
+    HWND wnd;
+
+    hr = D3DXCreateTextureShader(NULL, NULL);
+    ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#x.\n", hr);
+
+    hr = D3DXCreateTextureShader(NULL, &tx);
+    ok(hr == D3DERR_INVALIDCALL, "Got unexpected hr %#x.\n", hr);
+
+    hr = D3DXCreateTextureShader(shader_invalid, &tx);
+    todo_wine ok(hr == D3DXERR_INVALIDDATA, "Got unexpected hr %#x.\n", hr);
+
+    hr = D3DXCreateTextureShader(shader_zero, &tx);
+    todo_wine ok(hr == D3DXERR_INVALIDDATA, "Got unexpected hr %#x.\n", hr);
+
+    hr = D3DXCreateTextureShader(shader_empty, &tx);
+    todo_wine ok(hr == D3DXERR_INVALIDDATA, "Got unexpected hr %#x.\n", hr);
+
+    hr = D3DXCreateTextureShader(shader_code, &tx);
+    ok(SUCCEEDED(hr), "Got unexpected hr %#x.\n", hr);
+
+    hr = tx->lpVtbl->GetFunction(tx, &buffer);
+    todo_wine ok(SUCCEEDED(hr), "Failed to get texture shader bytecode.\n");
+    if (FAILED(hr))
+    {
+        skip("Texture shaders not supported, skipping further tests.\n");
+        IUnknown_Release(tx);
+        return;
+    }
+    ID3DXBuffer_Release(buffer);
+
+    if (!(wnd = CreateWindowA("static", "d3dx9_test", WS_OVERLAPPEDWINDOW, 0, 0,
+            640, 480, NULL, NULL, NULL, NULL)))
+    {
+        skip("Couldn't create application window.\n");
+        IUnknown_Release(tx);
+        return;
+    }
+    d3d = Direct3DCreate9(D3D_SDK_VERSION);
+    if (!d3d)
+    {
+        skip("Couldn't create IDirect3D9 object.\n");
+        DestroyWindow(wnd);
+        IUnknown_Release(tx);
+        return;
+    }
+
+    ZeroMemory(&d3dpp, sizeof(d3dpp));
+    d3dpp.Windowed = TRUE;
+    d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
+    hr = IDirect3D9_CreateDevice(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, wnd,
+            D3DCREATE_SOFTWARE_VERTEXPROCESSING, &d3dpp, &device);
+    if (FAILED(hr))
+    {
+        skip("Failed to create IDirect3DDevice9 object, hr %#x.\n", hr);
+        IDirect3D9_Release(d3d);
+        DestroyWindow(wnd);
+        IUnknown_Release(tx);
+        return;
+    }
+
+    IDirect3DDevice9_GetDeviceCaps(device, &caps);
+
+    hr = IDirect3DDevice9_CreateTexture(device, 256, 256, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM,
+            &texture, NULL);
+    ok(SUCCEEDED(hr), "Got unexpected hr %#x.\n", hr);
+
+    hr = D3DXFillTextureTX(texture, tx);
+    ok(SUCCEEDED(hr), "Got unexpected hr %#x.\n", hr);
+
+    hr = IDirect3DTexture9_LockRect(texture, 0, &lr, NULL, D3DLOCK_READONLY);
+    ok(SUCCEEDED(hr), "Locking texture failed, hr %#x.\n", hr);
+    data = lr.pBits;
+    for (y = 0; y < 256; ++y)
+    {
+        for (x = 0; x < 256; ++x)
+        {
+            unsigned int expected = 0xff000000 | x << 16 | y << 8;
+            /* The third position coordinate is apparently undefined for 2D textures. */
+            unsigned int color = data[y * lr.Pitch / sizeof(*data) + x] & 0xffffff00;
+
+            ok(compare_color(color, expected, 1), "Unexpected color %08x at (%u, %u).\n", color, x, y);
+        }
+    }
+    hr = IDirect3DTexture9_UnlockRect(texture, 0);
+    ok(SUCCEEDED(hr), "Unlocking texture failed, hr %#x.\n", hr);
+
+    IDirect3DTexture9_Release(texture);
+
+    if (!(caps.TextureCaps & D3DPTEXTURECAPS_CUBEMAP))
+    {
+        skip("Cube textures not supported, skipping tests.\n");
+        goto cleanup;
+    }
+
+    hr = IDirect3DDevice9_CreateCubeTexture(device, 256, 1, 0, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM,
+            &cube_texture, NULL);
+    ok(SUCCEEDED(hr), "Got unexpected hr %#x.\n", hr);
+
+    hr = D3DXFillCubeTextureTX(cube_texture, tx);
+    ok(SUCCEEDED(hr), "Got unexpected hr %#x.\n", hr);
+
+    for (z = 0; z < 6; ++z)
+    {
+        static const char * const mapping[6][3] =
+        {
+            {"-x", "-y", "1"},
+            {"+x", "-y", "0"},
+            {"+y", "1", "+x"},
+            {"-y", "0", "+x"},
+            {"1", "-y", "+x"},
+            {"0", "-y", "-x"},
+        };
+
+        hr = IDirect3DCubeTexture9_LockRect(cube_texture, z, 0, &lr, NULL, D3DLOCK_READONLY);
+        ok(SUCCEEDED(hr), "Locking texture failed, hr %#x.\n", hr);
+        data = lr.pBits;
+        for (y = 0; y < 256; ++y)
+        {
+            for (x = 0; x < 256; ++x)
+            {
+                unsigned int color = data[y * lr.Pitch / sizeof(*data) + x];
+                unsigned int expected = 0xff000000;
+                unsigned int i;
+
+                for (i = 0; i < 3; ++i)
+                {
+                    int component;
+
+                    if (mapping[z][i][0] == '0')
+                        component = 0;
+                    else if (mapping[z][i][0] == '1')
+                        component = 255;
+                    else
+                        component = mapping[z][i][1] == 'x' ? x * 2 - 255 : y * 2 - 255;
+                    if (mapping[z][i][0] == '-')
+                        component = -component;
+                    expected |= max(component, 0) << i * 8;
+                }
+                ok(compare_color(color, expected, 1), "Unexpected color %08x at (%u, %u, %u).\n",
+                        color, x, y, z);
+            }
+        }
+        hr = IDirect3DCubeTexture9_UnlockRect(cube_texture, z, 0);
+        ok(SUCCEEDED(hr), "Unlocking texture failed, hr %#x.\n", hr);
+    }
+
+    IDirect3DCubeTexture9_Release(cube_texture);
+
+    if (!(caps.TextureCaps & D3DPTEXTURECAPS_VOLUMEMAP) || caps.MaxVolumeExtent < 64)
+    {
+        skip("Volume textures not supported, skipping test.\n");
+        goto cleanup;
+    }
+    hr = IDirect3DDevice9_CreateVolumeTexture(device, 64, 64, 64, 1, 0, D3DFMT_A8R8G8B8,
+            D3DPOOL_SYSTEMMEM, &volume_texture, NULL);
+    ok(SUCCEEDED(hr), "Got unexpected hr %#x.\n", hr);
+
+    hr = D3DXFillVolumeTextureTX(volume_texture, tx);
+    ok(SUCCEEDED(hr), "Got unexpected hr %#x.\n", hr);
+
+    hr = IDirect3DVolumeTexture9_LockBox(volume_texture, 0, &lb, NULL, D3DLOCK_READONLY);
+    ok(SUCCEEDED(hr), "Locking texture failed, hr %#x.\n", hr);
+    data = lb.pBits;
+    for (z = 0; z < 64; ++z)
+    {
+        for (y = 0; y < 64; ++y)
+        {
+            for (x = 0; x < 64; ++x)
+            {
+                unsigned int expected = 0xff000000 | ((x * 4 + 2) << 16) | ((y * 4 + 2) << 8) | (z * 4 + 2);
+                unsigned int color = data[z * lb.SlicePitch / sizeof(*data) + y * lb.RowPitch / sizeof(*data) + x];
+
+                ok(compare_color(color, expected, 1), "Unexpected color %08x at (%u, %u, %u).\n",
+                        color, x, y, z);
+            }
+        }
+    }
+    hr = IDirect3DVolumeTexture9_UnlockBox(volume_texture, 0);
+    ok(SUCCEEDED(hr), "Unlocking texture failed, hr %#x.\n", hr);
+
+    IDirect3DVolumeTexture9_Release(volume_texture);
+
+ cleanup:
+    IDirect3DDevice9_Release(device);
+    IDirect3D9_Release(d3d);
+    DestroyWindow(wnd);
+    IUnknown_Release(tx);
+}
+
 START_TEST(texture)
 {
     HWND wnd;
@@ -2031,6 +2272,8 @@ START_TEST(texture)
     hr = IDirect3D9_CheckDeviceFormat(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL,
             D3DFMT_X8R8G8B8, 0, D3DRTYPE_CUBETEXTURE, D3DFMT_DXT5);
     has_cube_dxt5 = SUCCEEDED(hr);
+    has_3d_dxt3 = SUCCEEDED(IDirect3D9_CheckDeviceFormat(d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL,
+            D3DFMT_X8R8G8B8, 0, D3DRTYPE_VOLUMETEXTURE, D3DFMT_DXT3));
 
     test_D3DXCheckTextureRequirements(device);
     test_D3DXCheckCubeTextureRequirements(device);
@@ -2050,4 +2293,6 @@ START_TEST(texture)
     IDirect3DDevice9_Release(device);
     IDirect3D9_Release(d3d);
     DestroyWindow(wnd);
+
+    test_texture_shader();
 }

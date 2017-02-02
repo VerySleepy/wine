@@ -19,6 +19,7 @@
  */
 
 #include <stdarg.h>
+#include <stdio.h>
 
 #include "windef.h"
 #include "winbase.h"
@@ -41,6 +42,7 @@ static BOOL g_disp_A_to_W;
 static BOOL g_disp_set_stateimage;
 static BOOL g_beginedit_alter_text;
 static HFONT g_customdraw_font;
+static BOOL g_v6;
 
 #define NUM_MSG_SEQUENCES   3
 #define TREEVIEW_SEQ_INDEX  0
@@ -226,12 +228,91 @@ static const struct message parent_expand_empty_kb_seq[] = {
     { 0 }
 };
 
-static const struct message parent_singleexpand_seq[] = {
+static const struct message parent_singleexpand_seq0[] = {
+    /* alpha expands */
     { WM_NOTIFY, sent|id, 0, 0, TVN_SELCHANGINGA },
     { WM_NOTIFY, sent|id, 0, 0, TVN_SELCHANGEDA },
     { WM_NOTIFY, sent|id, 0, 0, TVN_SINGLEEXPAND },
     { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDINGA },
     { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDEDA },
+    { 0 }
+};
+
+static const struct message parent_singleexpand_seq1[] = {
+    /* bravo expands */
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SELCHANGINGA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SELCHANGEDA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SINGLEEXPAND },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDINGA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDEDA },
+    { 0 }
+};
+
+static const struct message parent_singleexpand_seq2[] = {
+    /* delta expands, bravo collapses */
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SELCHANGINGA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SELCHANGEDA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SINGLEEXPAND },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDINGA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDEDA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDINGA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDEDA },
+    { 0 }
+};
+
+static const struct message parent_singleexpand_seq3[] = {
+    /* foxtrot expands, alpha and delta collapse */
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SELCHANGINGA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SELCHANGEDA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SINGLEEXPAND },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDINGA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDEDA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDINGA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDEDA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDINGA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDEDA },
+    { 0 }
+};
+
+static const struct message parent_singleexpand_seq4[] = {
+    /* alpha expands, foxtrot collapses */
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SELCHANGINGA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SELCHANGEDA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SINGLEEXPAND },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDINGA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDEDA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDINGA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDEDA },
+    { 0 }
+};
+
+static const struct message parent_singleexpand_seq5[] = {
+    /* foxtrot expands while golf is selected, then golf expands and alpha collapses */
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SELCHANGINGA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDINGA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDEDA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SELCHANGEDA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SINGLEEXPAND },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDINGA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDEDA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDINGA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_ITEMEXPANDEDA },
+    { 0 }
+};
+
+static const struct message parent_singleexpand_seq6[] = {
+    /* hotel does not expand and india does not collapse because they have no children */
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SELCHANGINGA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SELCHANGEDA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SINGLEEXPAND },
+    { 0 }
+};
+
+static const struct message parent_singleexpand_seq7[] = {
+    /* india does not expand and hotel does not collapse because they have no children */
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SELCHANGINGA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SELCHANGEDA },
+    { WM_NOTIFY, sent|id, 0, 0, TVN_SINGLEEXPAND },
     { 0 }
 };
 
@@ -246,6 +327,8 @@ static const struct message empty_seq[] = {
 
 static const struct message parent_cd_seq[] = {
     { WM_NOTIFY, sent|id|custdraw, 0, 0, NM_CUSTOMDRAW, CDDS_PREPAINT },
+    { WM_NOTIFY, sent|id|custdraw, 0, 0, NM_CUSTOMDRAW, CDDS_ITEMPREPAINT },
+    { WM_NOTIFY, sent|id|custdraw, 0, 0, NM_CUSTOMDRAW, CDDS_ITEMPOSTPAINT },
     { WM_NOTIFY, sent|id|custdraw, 0, 0, NM_CUSTOMDRAW, CDDS_ITEMPREPAINT },
     { WM_NOTIFY, sent|id|custdraw, 0, 0, NM_CUSTOMDRAW, CDDS_ITEMPOSTPAINT },
     { WM_NOTIFY, sent|id|custdraw, 0, 0, NM_CUSTOMDRAW, CDDS_POSTPAINT },
@@ -825,6 +908,13 @@ static void test_get_set_item(void)
     expect(TRUE, ret);
     ok(tviRoot.state == TVIS_FOCUSED, "got state 0x%0x\n", tviRoot.state);
 
+    /* invalid item pointer, nt4 crashes here but later versions just return 0 */
+    tviRoot.hItem = (HTREEITEM)0xdeadbeef;
+    tviRoot.mask = TVIF_STATE;
+    tviRoot.state = 0;
+    ret = SendMessageA(hTree2, TVM_GETITEMA, 0, (LPARAM)&tviRoot);
+    expect(FALSE, ret);
+
     DestroyWindow(hTree);
     DestroyWindow(hTree2);
 }
@@ -1106,7 +1196,9 @@ static LRESULT CALLBACK parent_wnd_proc(HWND hWnd, UINT message, WPARAM wParam, 
 
             case TVN_ENDLABELEDITA: return TRUE;
             case TVN_ITEMEXPANDINGA:
-                ok(pTreeView->itemNew.mask ==
+              {
+                UINT newmask = pTreeView->itemNew.mask & ~TVIF_CHILDREN;
+                ok(newmask ==
                    (TVIF_HANDLE | TVIF_SELECTEDIMAGE | TVIF_IMAGE | TVIF_PARAM | TVIF_STATE),
                    "got wrong mask %x\n", pTreeView->itemNew.mask);
                 ok(pTreeView->itemOld.mask == 0,
@@ -1120,6 +1212,7 @@ static LRESULT CALLBACK parent_wnd_proc(HWND hWnd, UINT message, WPARAM wParam, 
                   ok(ret == TRUE, "got %lu\n", ret);
                 }
                 break;
+              }
             case TVN_ITEMEXPANDEDA:
                 ok(pTreeView->itemNew.mask & TVIF_STATE, "got wrong mask %x\n", pTreeView->itemNew.mask);
                 ok(pTreeView->itemNew.state & (TVIS_EXPANDED|TVIS_EXPANDEDONCE),
@@ -1169,6 +1262,7 @@ static LRESULT CALLBACK parent_wnd_proc(HWND hWnd, UINT message, WPARAM wParam, 
             {
                 NMTVCUSTOMDRAW *nmcd = (NMTVCUSTOMDRAW*)lParam;
                 COLORREF c0ffee = RGB(0xc0,0xff,0xee), cafe = RGB(0xca,0xfe,0x00);
+                COLORREF text = GetTextColor(nmcd->nmcd.hdc), bkgnd = GetBkColor(nmcd->nmcd.hdc);
 
                 msg.flags |= custdraw;
                 msg.stage = nmcd->nmcd.dwDrawStage;
@@ -1179,15 +1273,23 @@ static LRESULT CALLBACK parent_wnd_proc(HWND hWnd, UINT message, WPARAM wParam, 
                 case CDDS_PREPAINT:
                     return CDRF_NOTIFYITEMDRAW|CDRF_NOTIFYITEMERASE|CDRF_NOTIFYPOSTPAINT;
                 case CDDS_ITEMPREPAINT:
-                    nmcd->clrTextBk = c0ffee;
+                    ok(text == nmcd->clrText || (g_v6 && nmcd->clrText == 0xffffffff),
+                       "got %08x vs %08x\n", text, nmcd->clrText);
+                    ok(bkgnd == nmcd->clrTextBk || (g_v6 && nmcd->clrTextBk == 0xffffffff),
+                       "got %08x vs %08x\n", bkgnd, nmcd->clrTextBk);
                     nmcd->clrText = cafe;
+                    nmcd->clrTextBk = c0ffee;
+                    SetTextColor(nmcd->nmcd.hdc, c0ffee);
+                    SetBkColor(nmcd->nmcd.hdc, cafe);
                     if (g_customdraw_font)
                         SelectObject(nmcd->nmcd.hdc, g_customdraw_font);
                     return CDRF_NOTIFYPOSTPAINT|CDRF_NEWFONT;
                 case CDDS_ITEMPOSTPAINT:
                     /* at the point of post paint notification colors are already restored */
-                    ok(GetTextColor(nmcd->nmcd.hdc) != cafe, "got 0%x\n", GetTextColor(nmcd->nmcd.hdc));
-                    ok(GetBkColor(nmcd->nmcd.hdc) != c0ffee, "got 0%x\n", GetBkColor(nmcd->nmcd.hdc));
+                    ok(nmcd->clrText == cafe, "got 0%x\n", nmcd->clrText);
+                    ok(nmcd->clrTextBk == c0ffee, "got 0%x\n", nmcd->clrTextBk);
+                    ok(text != cafe, "got 0%x\n", text);
+                    ok(bkgnd != c0ffee, "got 0%x\n", bkgnd);
                     if (g_customdraw_font)
                         ok(GetCurrentObject(nmcd->nmcd.hdc, OBJ_FONT) != g_customdraw_font, "got %p\n",
                            GetCurrentObject(nmcd->nmcd.hdc, OBJ_FONT));
@@ -1442,6 +1544,7 @@ static void test_get_insertmarkcolor(void)
 
 static void test_expandnotify(void)
 {
+    HTREEITEM hitem;
     HWND hTree;
     BOOL ret;
     TVITEMA item;
@@ -1592,6 +1695,22 @@ static void test_expandnotify(void)
     expect(FALSE, ret);
     ok_sequence(sequences, PARENT_SEQ_INDEX, parent_expand_empty_kb_seq, "expand node with no children", FALSE);
 
+    /* stay on current selection and set non-zero children count */
+    hitem = (HTREEITEM)SendMessageA(hTree, TVM_GETNEXTITEM, TVGN_CARET, 0);
+    ok(hitem != NULL, "got %p\n", hitem);
+
+    item.hItem = hitem;
+    item.mask = TVIF_CHILDREN;
+    item.cChildren = 0x80000000;
+
+    ret = SendMessageA(hTree, TVM_SETITEMA, 0, (LPARAM)&item);
+    expect(TRUE, ret);
+
+    flush_sequences(sequences, NUM_MSG_SEQUENCES);
+    ret = SendMessageA(hTree, WM_KEYDOWN, VK_ADD, 0);
+    expect(FALSE, ret);
+    ok_sequence(sequences, PARENT_SEQ_INDEX, parent_collapse_2nd_kb_seq, "expand node with children", FALSE);
+
     DestroyWindow(hTree);
 }
 
@@ -1637,21 +1756,95 @@ static void test_expandedimage(void)
 static void test_TVS_SINGLEEXPAND(void)
 {
     HWND hTree;
+    HTREEITEM alpha, bravo, charlie, delta, echo, foxtrot, golf, hotel, india, juliet;
+    TVINSERTSTRUCTA ins;
+    char foo[] = "foo";
+    char context[32];
+    int i;
     BOOL ret;
+
+    /* build a fairly complex tree
+     * - TVI_ROOT
+     *   - alpha
+     *     - bravo
+     *       - charlie
+     *     - delta
+     *       - echo
+     *   - foxtrot
+     *     - golf
+     *       - hotel
+     *       - india
+     *     - juliet
+     */
+    struct
+    {
+        HTREEITEM *handle;
+        HTREEITEM *parent;
+        UINT final_state;
+    }
+    items[] =
+    {
+        { &alpha,    NULL,      TVIS_EXPANDEDONCE               },
+        { &bravo,    &alpha,    TVIS_EXPANDEDONCE               },
+        { &charlie,  &bravo,    0                               },
+        { &delta,    &alpha,    TVIS_EXPANDEDONCE               },
+        { &echo,     &delta,    0                               },
+        { &foxtrot,  NULL,      TVIS_EXPANDEDONCE|TVIS_EXPANDED },
+        { &golf,     &foxtrot,  TVIS_EXPANDEDONCE|TVIS_EXPANDED },
+        { &hotel,    &golf,     0                               },
+        { &india,    &golf,     TVIS_SELECTED                   },
+        { &juliet,   &foxtrot,  0                               }
+    };
+
+    struct
+    {
+        HTREEITEM *select;
+        const struct message *sequence;
+    }
+    sequence_tests[] =
+    {
+        { &alpha,    parent_singleexpand_seq0 },
+        { &bravo,    parent_singleexpand_seq1 },
+        { &delta,    parent_singleexpand_seq2 },
+        { &foxtrot,  parent_singleexpand_seq3 },
+        { &alpha,    parent_singleexpand_seq4 },
+        { &golf,     parent_singleexpand_seq5 },
+        { &hotel,    parent_singleexpand_seq6 },
+        { &india,    parent_singleexpand_seq7 },
+        { &india,    empty_seq }
+    };
 
     hTree = create_treeview_control(0);
     SetWindowLongA(hTree, GWL_STYLE, GetWindowLongA(hTree, GWL_STYLE) | TVS_SINGLEEXPAND);
     /* to avoid painting related notifications */
     ShowWindow(hTree, SW_HIDE);
-    fill_tree(hTree);
+    for (i = 0; i < sizeof(items)/sizeof(items[0]); i++)
+    {
+        ins.hParent = items[i].parent ? *items[i].parent : TVI_ROOT;
+        ins.hInsertAfter = TVI_FIRST;
+        U(ins).item.mask = TVIF_TEXT;
+        U(ins).item.pszText = foo;
+        *items[i].handle = TreeView_InsertItemA(hTree, &ins);
+    }
 
-    flush_sequences(sequences, NUM_MSG_SEQUENCES);
-    ret = SendMessageA(hTree, TVM_SELECTITEM, TVGN_CARET, (LPARAM)hRoot);
-    ok(ret, "got %d\n", ret);
-    ok_sequence(sequences, PARENT_SEQ_INDEX, parent_singleexpand_seq, "singleexpand notifications", FALSE);
+    for (i = 0; i < sizeof(sequence_tests)/sizeof(sequence_tests[0]); i++)
+    {
+        flush_sequences(sequences, NUM_MSG_SEQUENCES);
+        ret = SendMessageA(hTree, TVM_SELECTITEM, TVGN_CARET, (LPARAM)(*sequence_tests[i].select));
+        ok(ret, "got %d\n", ret);
+        sprintf(context, "singleexpand notifications %d", i);
+        ok_sequence(sequences, PARENT_SEQ_INDEX, sequence_tests[i].sequence, context, FALSE);
+    }
+
+    for (i = 0; i < sizeof(items)/sizeof(items[0]); i++)
+    {
+        ret = SendMessageA(hTree, TVM_GETITEMSTATE, (WPARAM)(*items[i].handle), 0xFFFF);
+        ok(ret == items[i].final_state, "singleexpand items[%d]: expected state 0x%x got 0x%x\n",
+           i, items[i].final_state, ret);
+    }
 
     /* a workaround for NT4 that sends expand notifications when nothing is about to expand */
-    ret = SendMessageA(hTree, TVM_DELETEITEM, 0, (LPARAM)hRoot);
+    ret = SendMessageA(hTree, TVM_DELETEITEM, 0, (LPARAM)TVI_ROOT);
     ok(ret, "got %d\n", ret);
     fill_tree(hTree);
     ret = SendMessageA(hTree, TVM_SELECTITEM, TVGN_CARET, 0);
@@ -1697,7 +1890,12 @@ static void test_delete_items(void)
 {
     const struct message *msg;
     HWND hTree;
+    HTREEITEM hItem1, hItem2;
+    TVINSERTSTRUCTA ins;
     INT ret;
+
+    static CHAR item1[] = "Item 1";
+    static CHAR item2[] = "Item 2";
 
     hTree = create_treeview_control(0);
     fill_tree(hTree);
@@ -1717,6 +1915,34 @@ static void test_delete_items(void)
     }
 
     ret = SendMessageA(hTree, TVM_GETCOUNT, 0, 0);
+    ok(ret == 0, "got %d\n", ret);
+
+    DestroyWindow(hTree);
+
+    /* Regression test for a crash when deleting the first visible item while bRedraw == false. */
+    hTree = create_treeview_control(0);
+
+    ret = SendMessageA(hTree, WM_SETREDRAW, FALSE, 0);
+    ok(ret == 0, "got %d\n", ret);
+
+    ins.hParent = TVI_ROOT;
+    ins.hInsertAfter = TVI_ROOT;
+    U(ins).item.mask = TVIF_TEXT;
+    U(ins).item.pszText = item1;
+    hItem1 = TreeView_InsertItemA(hTree, &ins);
+    ok(hItem1 != NULL, "InsertItem failed\n");
+
+    ins.hParent = TVI_ROOT;
+    ins.hInsertAfter = hItem1;
+    U(ins).item.mask = TVIF_TEXT;
+    U(ins).item.pszText = item2;
+    hItem2 = TreeView_InsertItemA(hTree, &ins);
+    ok(hItem2 != NULL, "InsertItem failed\n");
+
+    ret = SendMessageA(hTree, TVM_DELETEITEM, 0, (LPARAM)hItem1);
+    ok(ret == TRUE, "got %d\n", ret);
+
+    ret = SendMessageA(hTree, WM_SETREDRAW, TRUE, 0);
     ok(ret == 0, "got %d\n", ret);
 
     DestroyWindow(hTree);
@@ -2103,20 +2329,12 @@ static void test_WM_GETDLGCODE(void)
 
 static void test_customdraw(void)
 {
-    static const char *rootA = "root";
-    TVINSERTSTRUCTA ins;
-    HTREEITEM hRoot;
     LOGFONTA lf;
     HWND hwnd;
 
     hwnd = create_treeview_control(0);
-
-    ins.hParent = TVI_ROOT;
-    ins.hInsertAfter = TVI_ROOT;
-    U(ins).item.mask = TVIF_TEXT;
-    U(ins).item.pszText = (char*)rootA;
-    hRoot = TreeView_InsertItemA(hwnd, &ins);
-    ok(hRoot != NULL, "got %p\n", hRoot);
+    fill_tree(hwnd);
+    SendMessageA(hwnd, TVM_EXPAND, TVE_EXPAND, (WPARAM)hRoot);
 
     /* create additional font, custom draw handler will select it */
     SystemParametersInfoA(SPI_GETICONTITLELOGFONT, sizeof(lf), &lf, 0);
@@ -2151,6 +2369,30 @@ static void test_WM_KEYDOWN(void)
     flush_sequences(sequences, NUM_MSG_SEQUENCES);
     SendMessageA(hwnd, WM_KEYDOWN, VK_RETURN, 0);
     ok_sequence(sequences, PARENT_SEQ_INDEX, parent_vk_return_seq, "WM_KEYDOWN/VK_RETURN parent notification", TRUE);
+
+    DestroyWindow(hwnd);
+}
+
+static void test_TVS_FULLROWSELECT(void)
+{
+    DWORD style;
+    HWND hwnd;
+
+    /* try to create both with TVS_HASLINES and TVS_FULLROWSELECT */
+    hwnd = create_treeview_control(TVS_FULLROWSELECT);
+
+    style = GetWindowLongA(hwnd, GWL_STYLE);
+    ok((style & (TVS_FULLROWSELECT | TVS_HASLINES)) == (TVS_FULLROWSELECT | TVS_HASLINES), "got style 0x%08x\n", style);
+
+    DestroyWindow(hwnd);
+
+    /* create just with TVS_HASLINES, try to enable TVS_FULLROWSELECT later */
+    hwnd = create_treeview_control(0);
+
+    style = GetWindowLongA(hwnd, GWL_STYLE);
+    SetWindowLongA(hwnd, GWL_STYLE, style | TVS_FULLROWSELECT);
+    style = GetWindowLongA(hwnd, GWL_STYLE);
+    ok(style & TVS_FULLROWSELECT, "got style 0x%08x\n", style);
 
     DestroyWindow(hwnd);
 }
@@ -2230,6 +2472,7 @@ START_TEST(treeview)
     test_WM_GETDLGCODE();
     test_customdraw();
     test_WM_KEYDOWN();
+    test_TVS_FULLROWSELECT();
 
     if (!load_v6_module(&ctx_cookie, &hCtx))
     {
@@ -2238,6 +2481,7 @@ START_TEST(treeview)
     }
 
     /* comctl32 version 6 tests start here */
+    g_v6 = TRUE;
     test_expandedimage();
     test_htreeitem_layout();
     test_WM_GETDLGCODE();

@@ -37,6 +37,8 @@
 #include "wincon.h"
 #include "wine/debug.h"
 
+#include "cppexcept.h"
+
 WINE_DEFAULT_DEBUG_CHANNEL(seh);
 
 static MSVCRT_security_error_handler security_error_handler;
@@ -325,4 +327,173 @@ void CDECL __security_error_handler(int code, void *data)
 LPTOP_LEVEL_EXCEPTION_FILTER CDECL MSVCR110__crtSetUnhandledExceptionFilter(LPTOP_LEVEL_EXCEPTION_FILTER filter)
 {
     return SetUnhandledExceptionFilter(filter);
+}
+
+/*********************************************************************
+ * _CreateFrameInfo (MSVCR80.@)
+ */
+frame_info* CDECL _CreateFrameInfo(frame_info *fi, void *obj)
+{
+    thread_data_t *data = msvcrt_get_thread_data();
+
+    TRACE("(%p, %p)\n", fi, obj);
+
+    fi->next = data->frame_info_head;
+    data->frame_info_head = fi;
+    fi->object = obj;
+    return fi;
+}
+
+/*********************************************************************
+ * _FindAndUnlinkFrame (MSVCR80.@)
+ */
+void CDECL _FindAndUnlinkFrame(frame_info *fi)
+{
+    thread_data_t *data = msvcrt_get_thread_data();
+    frame_info *cur = data->frame_info_head;
+
+    TRACE("(%p)\n", fi);
+
+    if (cur == fi)
+    {
+        data->frame_info_head = cur->next;
+        return;
+    }
+
+    for (; cur->next; cur = cur->next)
+    {
+        if (cur->next == fi)
+        {
+            cur->next = fi->next;
+            return;
+        }
+    }
+
+    ERR("frame not found, native crashes in this case\n");
+}
+
+/*********************************************************************
+ *              _IsExceptionObjectToBeDestroyed (MSVCR80.@)
+ */
+BOOL __cdecl _IsExceptionObjectToBeDestroyed(const void *obj)
+{
+    frame_info *cur;
+
+    TRACE( "%p\n", obj );
+
+    for (cur = msvcrt_get_thread_data()->frame_info_head; cur; cur = cur->next)
+    {
+        if (cur->object == obj)
+            return FALSE;
+    }
+
+    return TRUE;
+}
+
+/*********************************************************************
+ * __DestructExceptionObject (MSVCRT.@)
+ */
+void CDECL __DestructExceptionObject(EXCEPTION_RECORD *rec)
+{
+    cxx_exception_type *info = (cxx_exception_type*) rec->ExceptionInformation[2];
+    void *object = (void*)rec->ExceptionInformation[1];
+
+    TRACE("(%p)\n", rec);
+
+    if (rec->ExceptionCode != CXX_EXCEPTION) return;
+#ifndef __x86_64__
+    if (rec->NumberParameters != 3) return;
+#else
+    if (rec->NumberParameters != 4) return;
+#endif
+    if (rec->ExceptionInformation[0] < CXX_FRAME_MAGIC_VC6 ||
+            rec->ExceptionInformation[0] > CXX_FRAME_MAGIC_VC8) return;
+
+    if (!info || !info->destructor)
+        return;
+
+#if defined(__i386__)
+    __asm__ __volatile__("call *%0" : : "r" (info->destructor), "c" (object) : "eax", "edx", "memory" );
+#elif defined(__x86_64__)
+    ((void (__cdecl*)(void*))(info->destructor+rec->ExceptionInformation[3]))(object);
+#else
+    ((void (__cdecl*)(void*))info->destructor)(object);
+#endif
+}
+
+/*********************************************************************
+ *  __CxxRegisterExceptionObject (MSVCRT.@)
+ */
+BOOL CDECL __CxxRegisterExceptionObject(EXCEPTION_RECORD **rec, cxx_frame_info *frame_info)
+{
+    thread_data_t *data = msvcrt_get_thread_data();
+
+    TRACE("(%p, %p)\n", rec, frame_info);
+
+    if (!rec || !*rec)
+    {
+        frame_info->rec = (void*)-1;
+        frame_info->unk = (void*)-1;
+        return TRUE;
+    }
+
+    frame_info->rec = data->exc_record;
+    frame_info->unk = 0;
+    data->exc_record = *rec;
+    _CreateFrameInfo(&frame_info->frame_info, (void*)(*rec)->ExceptionInformation[1]);
+    return TRUE;
+}
+
+/*********************************************************************
+ *  __CxxUnregisterExceptionObject (MSVCRT.@)
+ */
+void CDECL __CxxUnregisterExceptionObject(cxx_frame_info *frame_info, BOOL in_use)
+{
+    thread_data_t *data = msvcrt_get_thread_data();
+
+    TRACE("(%p)\n", frame_info);
+
+    if(frame_info->rec == (void*)-1)
+        return;
+
+    _FindAndUnlinkFrame(&frame_info->frame_info);
+    if(data->exc_record->ExceptionCode == CXX_EXCEPTION && !in_use
+            && _IsExceptionObjectToBeDestroyed((void*)data->exc_record->ExceptionInformation[1]))
+        __DestructExceptionObject(data->exc_record);
+    data->exc_record = frame_info->rec;
+}
+
+struct __std_exception_data {
+    char       *what;
+    MSVCRT_bool dofree;
+};
+
+/*********************************************************************
+ *  __std_exception_copy (MSVCRT.@)
+ */
+void CDECL MSVCRT___std_exception_copy(const struct __std_exception_data *src,
+                                       struct __std_exception_data *dst)
+{
+    TRACE("(%p %p)\n", src, dst);
+
+    if(src->dofree && src->what) {
+        dst->what   = MSVCRT__strdup(src->what);
+        dst->dofree = 1;
+    } else {
+        dst->what   = src->what;
+        dst->dofree = 0;
+    }
+}
+
+/*********************************************************************
+ *  __std_exception_destroy (MSVCRT.@)
+ */
+void CDECL MSVCRT___std_exception_destroy(struct __std_exception_data *data)
+{
+    TRACE("(%p)\n", data);
+
+    if(data->dofree)
+        MSVCRT_free(data->what);
+    data->what   = NULL;
+    data->dofree = 0;
 }

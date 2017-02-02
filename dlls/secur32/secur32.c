@@ -36,6 +36,7 @@
 
 #include "wine/list.h"
 #include "wine/debug.h"
+#include "wine/unicode.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(secur32);
 
@@ -563,6 +564,7 @@ static void SECUR32_initializeProviders(void)
     /* First load built-in providers */
     SECUR32_initSchannelSP();
     SECUR32_initNTLMSP();
+    SECUR32_initKerberosSP();
     /* Load the Negotiate provider last so apps stumble over the working NTLM
      * provider first. Attempting to fix bug #16905 while keeping the
      * application reported on wine-users on 2006-09-12 working. */
@@ -1053,6 +1055,18 @@ BOOLEAN WINAPI GetComputerObjectNameW(
     LsaClose(policyHandle);
 
     return status;
+}
+
+SECURITY_STATUS WINAPI AddSecurityPackageA(LPSTR name, SECURITY_PACKAGE_OPTIONS *options)
+{
+    FIXME("(%s %p)\n", debugstr_a(name), options);
+    return E_NOTIMPL;
+}
+
+SECURITY_STATUS WINAPI AddSecurityPackageW(LPWSTR name, SECURITY_PACKAGE_OPTIONS *options)
+{
+    FIXME("(%s %p)\n", debugstr_w(name), options);
+    return E_NOTIMPL;
 }
 
 /***********************************************************************

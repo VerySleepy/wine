@@ -649,12 +649,15 @@ static HRESULT test_secondary8(LPGUID lpGuid, BOOL play,
             ok(rc==DSERR_INVALIDPARAM,
                "IDirectSound8_CreateSoundBuffer(secondary) should have "
                "returned DSERR_INVALIDPARAM, returned %08x\n", rc);
-            if (secondary)
-            {
-                ref=IDirectSoundBuffer_Release(secondary);
-                ok(ref==0,"IDirectSoundBuffer_Release() primary has %d references, should have 0\n",ref);
-            }
             init_format(&wfx,WAVE_FORMAT_PCM,22050,16,1);
+
+            /* Invalid flag combination */
+            bufdesc.dwFlags|=DSBCAPS_CTRLPAN;
+            rc=IDirectSound8_CreateSoundBuffer(dso,&bufdesc,&secondary,NULL);
+            ok(rc==DSERR_INVALIDPARAM,
+               "IDirectSound8_CreateSoundBuffer(secondary) should have "
+               "returned DSERR_INVALIDPARAM, returned %08x\n", rc);
+            bufdesc.dwFlags&=~DSBCAPS_CTRLPAN;
         }
 
         if (winetest_interactive) {
@@ -726,7 +729,17 @@ static HRESULT test_secondary8(LPGUID lpGuid, BOOL play,
                 ok(rc==DS_OK,"IDirectSoundBuffer_SetVolume(secondary) failed: %08x\n",rc);
                 rc=IDirectSoundBuffer_SetPan(secondary,0);
                 ok(rc==DS_OK,"IDirectSoundBuffer_SetPan(secondary) failed: %08x\n",rc);
+            } else {
+                LONG pan;
+
+                rc=IDirectSoundBuffer_GetPan(secondary,&pan);
+                ok(rc==DSERR_CONTROLUNAVAIL,"IDirectSoundBuffer_GetPan() "
+                   "should have returned DSERR_CONTROLUNAVAIL, returned: %08x\n", rc);
+                rc=IDirectSoundBuffer_SetPan(secondary,0);
+                ok(rc==DSERR_CONTROLUNAVAIL,"IDirectSoundBuffer_SetPan() "
+                   "should have returned DSERR_CONTROLUNAVAIL, returned: %08x\n", rc);
             }
+
             if (has_duplicate) {
                 LPDIRECTSOUNDBUFFER duplicated=NULL;
 

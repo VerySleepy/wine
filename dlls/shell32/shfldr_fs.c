@@ -30,7 +30,6 @@
 
 #define COBJMACROS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "winerror.h"
 #include "windef.h"
@@ -343,10 +342,8 @@ IShellFolder_fnParseDisplayName (IShellFolder2 * iface,
                  &pidlTemp, (LPOLESTR) szNext, pchEaten, pdwAttributes);
             } else {
                 /* it's the last element */
-                if (pdwAttributes && *pdwAttributes) {
-                    hr = SHELL32_GetItemAttributes((IShellFolder *)&This->IShellFolder2_iface,
-                            pidlTemp, pdwAttributes);
-                }
+                if (pdwAttributes && *pdwAttributes)
+                    hr = SHELL32_GetItemAttributes(&This->IShellFolder2_iface, pidlTemp, pdwAttributes);
             }
         }
     }
@@ -512,19 +509,19 @@ IShellFolder_fnGetAttributesOf (IShellFolder2 * iface, UINT cidl,
         *rgfInOut = ~0;
 
     if(cidl == 0){
-        IShellFolder *psfParent = NULL;
+        IShellFolder2 *parent = NULL;
         LPCITEMIDLIST rpidl = NULL;
 
-        hr = SHBindToParent(This->pidlRoot, &IID_IShellFolder, (LPVOID*)&psfParent, &rpidl);
+        hr = SHBindToParent(This->pidlRoot, &IID_IShellFolder2, (void **)&parent, &rpidl);
         if(SUCCEEDED(hr)) {
-            SHELL32_GetItemAttributes (psfParent, rpidl, rgfInOut);
-            IShellFolder_Release(psfParent);
+            SHELL32_GetItemAttributes(parent, rpidl, rgfInOut);
+            IShellFolder2_Release(parent);
         }
     }
     else {
         while (cidl > 0 && *apidl) {
             pdump (*apidl);
-            SHELL32_GetItemAttributes((IShellFolder *)&This->IShellFolder2_iface, *apidl, rgfInOut);
+            SHELL32_GetItemAttributes(&This->IShellFolder2_iface, *apidl, rgfInOut);
             apidl++;
             cidl--;
         }
@@ -1483,9 +1480,15 @@ IFSFldr_PersistFolder3_InitializeEx (IPersistFolder3 * iface,
         pdump (ppfti->pidlTargetFolder);
 
     if (This->pidlRoot)
-        __SHFreeAndNil (&This->pidlRoot);    /* free the old */
+    {
+        SHFree(This->pidlRoot);
+        This->pidlRoot = NULL;
+    }
     if (This->sPathTarget)
-        __SHFreeAndNil (&This->sPathTarget);
+    {
+        SHFree(This->sPathTarget);
+        This->sPathTarget = NULL;
+    }
 
     /*
      * Root path and pidl

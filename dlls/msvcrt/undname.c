@@ -202,7 +202,7 @@ static BOOL str_array_push(struct parsed_symbol* sym, const char* ptr, int len,
             c = '>';
             if (i < a->start) c = '-';
             else if (i >= a->num) c = '}';
-            TRACE("%p\t%d%c %s\n", a, i, c, a->elts[i]);
+            TRACE("%p\t%d%c %s\n", a, i, c, debugstr_a(a->elts[i]));
         }
     }
 
@@ -224,7 +224,7 @@ static char* str_array_get_ref(struct array* cref, unsigned idx)
         return NULL;
     }
     TRACE("Returning %p[%d] => %s\n", 
-          cref, idx, cref->elts[cref->start + idx]);
+          cref, idx, debugstr_a(cref->elts[cref->start + idx]));
     return cref->elts[cref->start + idx];
 }
 
@@ -520,7 +520,7 @@ static char* get_literal_string(struct parsed_symbol* sym)
               (*sym->current >= 'a' && *sym->current <= 'z') ||
               (*sym->current >= '0' && *sym->current <= '9') ||
               *sym->current == '_' || *sym->current == '$')) {
-            TRACE("Failed at '%c' in %s\n", *sym->current, ptr);
+            TRACE("Failed at '%c' in %s\n", *sym->current, debugstr_a(ptr));
             return NULL;
         }
     } while (*++sym->current != '@');
@@ -859,14 +859,55 @@ static BOOL demangle_datatype(struct parsed_symbol* sym, struct datatype_t* ct,
     case 'P': /* Pointer */
         if (isdigit(*sym->current))
 	{
-            /* FIXME: P6 = Function pointer, others who knows.. */
-            if (*sym->current++ == '6')
+            /* FIXME:
+             *   P6 = Function pointer
+             *   P8 = Member function pointer
+             *   others who knows.. */
+            if (*sym->current == '8')
             {
                 char*                   args = NULL;
                 const char*             call_conv;
                 const char*             exported;
                 struct datatype_t       sub_ct;
                 unsigned                mark = sym->stack.num;
+                const char*             class;
+                const char*             modifier;
+                const char*             ptr_modif;
+
+                sym->current++;
+
+                if (!(class = get_class_name(sym)))
+                    goto done;
+                if (!get_modifier(sym, &modifier, &ptr_modif))
+                    goto done;
+                if (modifier)
+                    modifier = str_printf(sym, "%s %s", modifier, ptr_modif);
+                else if(ptr_modif[0])
+                    modifier = str_printf(sym, " %s", ptr_modif);
+                if (!get_calling_convention(*sym->current++,
+                            &call_conv, &exported,
+                            sym->flags & ~UNDNAME_NO_ALLOCATION_LANGUAGE))
+                    goto done;
+                if (!demangle_datatype(sym, &sub_ct, pmt_ref, FALSE))
+                    goto done;
+
+                args = get_args(sym, pmt_ref, TRUE, '(', ')');
+                if (!args) goto done;
+                sym->stack.num = mark;
+
+                ct->left  = str_printf(sym, "%s%s (%s %s::*",
+                        sub_ct.left, sub_ct.right, call_conv, class);
+                ct->right = str_printf(sym, ")%s%s", args, modifier);
+            }
+            else if (*sym->current == '6')
+            {
+                char*                   args = NULL;
+                const char*             call_conv;
+                const char*             exported;
+                struct datatype_t       sub_ct;
+                unsigned                mark = sym->stack.num;
+
+                sym->current++;
 
                 if (!get_calling_convention(*sym->current++,
                                             &call_conv, &exported, 
@@ -904,6 +945,7 @@ static BOOL demangle_datatype(struct parsed_symbol* sym, struct datatype_t* ct,
     case '5': case '6': case '7': case '8': case '9':
         /* Referring back to previously parsed type */
         /* left and right are pushed as two separate strings */
+        if (!pmt_ref) goto done;
         ct->left = str_array_get_ref(pmt_ref, (dt - '0') * 2);
         ct->right = str_array_get_ref(pmt_ref, (dt - '0') * 2 + 1);
         if (!ct->left) goto done;
@@ -950,7 +992,37 @@ static BOOL demangle_datatype(struct parsed_symbol* sym, struct datatype_t* ct,
             }
             break;
         case '$':
-            if (*sym->current == 'C')
+            if (*sym->current == 'B')
+            {
+                unsigned            mark = sym->stack.num;
+                struct datatype_t   sub_ct;
+                const char*         arr = NULL;
+                sym->current++;
+
+                /* multidimensional arrays */
+                if (*sym->current == 'Y')
+                {
+                    const char* n1;
+                    int num;
+
+                    sym->current++;
+                    if (!(n1 = get_number(sym))) goto done;
+                    num = atoi(n1);
+
+                    while (num--)
+                        arr = str_printf(sym, "%s[%s]", arr, get_number(sym));
+                }
+
+                if (!demangle_datatype(sym, &sub_ct, pmt_ref, FALSE)) goto done;
+
+                if (arr)
+                    ct->left = str_printf(sym, "%s %s", sub_ct.left, arr);
+                else
+                    ct->left = sub_ct.left;
+                ct->right = sub_ct.right;
+                sym->stack.num = mark;
+            }
+            else if (*sym->current == 'C')
             {
                 const char *ptr, *ptr_modif;
 
@@ -1379,6 +1451,8 @@ static BOOL symbol_demangle(struct parsed_symbol* sym)
                         sym->current++;
                         str_array_init(&pmt);
                         demangle_datatype(sym, &ct, &pmt, FALSE);
+                        if (!demangle_datatype(sym, &ct, NULL, FALSE))
+                            goto done;
                         function_name = str_printf(sym, "%s%s `RTTI Type Descriptor'",
                                                    ct.left, ct.right);
                         sym->current--;
@@ -1500,7 +1574,7 @@ static BOOL symbol_demangle(struct parsed_symbol* sym)
     else ret = FALSE;
 done:
     if (ret) assert(sym->result);
-    else WARN("Failed at %s\n", sym->current);
+    else WARN("Failed at %s\n", debugstr_a(sym->current));
 
     return ret;
 }
@@ -1531,7 +1605,7 @@ char* CDECL __unDNameEx(char* buffer, const char* mangled, int buflen,
     const char*                 result;
 
     TRACE("(%p,%s,%d,%p,%p,%p,%x)\n",
-          buffer, mangled, buflen, memget, memfree, unknown, flags);
+          buffer, debugstr_a(mangled), buflen, memget, memfree, unknown, flags);
     
     /* The flags details is not documented by MS. However, it looks exactly
      * like the UNDNAME_ manifest constants from imagehlp.h and dbghelp.h

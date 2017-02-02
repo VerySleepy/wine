@@ -29,7 +29,6 @@
 
 #define COBJMACROS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "winerror.h"
 #include "windef.h"
@@ -233,8 +232,7 @@ static HRESULT WINAPI ISF_MyComputer_fnParseDisplayName (IShellFolder2 *iface,
     else
     {
         if (pdwAttributes && *pdwAttributes)
-            SHELL32_GetItemAttributes ((IShellFolder*)&This->IShellFolder2_iface, pidlTemp,
-                    pdwAttributes);
+            SHELL32_GetItemAttributes (&This->IShellFolder2_iface, pidlTemp, pdwAttributes);
         hr = S_OK;
     }
 
@@ -478,18 +476,18 @@ static HRESULT WINAPI ISF_MyComputer_fnGetAttributesOf (IShellFolder2 * iface,
         *rgfInOut = ~0;
     
     if(cidl == 0){
-        IShellFolder *psfParent = NULL;
+        IShellFolder2 *parent = NULL;
         LPCITEMIDLIST rpidl = NULL;
 
-        hr = SHBindToParent(This->pidlRoot, &IID_IShellFolder, (LPVOID*)&psfParent, &rpidl);
+        hr = SHBindToParent(This->pidlRoot, &IID_IShellFolder2, (void **)&parent, &rpidl);
         if(SUCCEEDED(hr)) {
-            SHELL32_GetItemAttributes (psfParent, rpidl, rgfInOut);
-            IShellFolder_Release(psfParent);
+            SHELL32_GetItemAttributes(parent, rpidl, rgfInOut);
+            IShellFolder2_Release(parent);
         }
     } else {
         while (cidl > 0 && *apidl) {
             pdump (*apidl);
-            SHELL32_GetItemAttributes ((IShellFolder*)&This->IShellFolder2_iface, *apidl, rgfInOut);
+            SHELL32_GetItemAttributes(&This->IShellFolder2_iface, *apidl, rgfInOut);
             apidl++;
             cidl--;
         }
@@ -697,15 +695,12 @@ static HRESULT WINAPI ISF_MyComputer_fnGetDisplayNameOf (IShellFolder2 *iface,
             /* long view "lw_name (C:)" */
             if (!(dwFlags & SHGDN_FORPARSING))
             {
-                DWORD dwVolumeSerialNumber, dwMaximumComponetLength, dwFileSystemFlags;
-                WCHAR wszDrive[18] = {0};
                 static const WCHAR wszOpenBracket[] = {' ','(',0};
                 static const WCHAR wszCloseBracket[] = {')',0};
+                WCHAR wszDrive[32 /* label */ + 6 /* ' (C:)'\0 */] = {0};
 
-                GetVolumeInformationW (pszPath, wszDrive,
-                           sizeof(wszDrive)/sizeof(wszDrive[0]) - 6,
-                           &dwVolumeSerialNumber,
-                           &dwMaximumComponetLength, &dwFileSystemFlags, NULL, 0);
+                GetVolumeInformationW (pszPath, wszDrive, sizeof(wszDrive)/sizeof(wszDrive[0]) - 5,
+                        NULL, NULL, NULL, NULL, 0);
                 strcatW (wszDrive, wszOpenBracket);
                 lstrcpynW (wszDrive + strlenW(wszDrive), pszPath, 3);
                 strcatW (wszDrive, wszCloseBracket);

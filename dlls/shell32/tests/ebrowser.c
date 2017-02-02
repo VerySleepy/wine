@@ -71,6 +71,10 @@ DEFINE_GUID(IID_UnknownInterface17,   0x3d5d8c60, 0x21e4, 0x4b03, 0x83,0xb8, 0xc
 DEFINE_GUID(IID_UnknownInterface18,   0x1fc45c07, 0x9e35, 0x4276, 0xad,0x7f, 0x08,0x60,0x3a,0xa0,0xf6,0x0f);
 DEFINE_GUID(IID_UnknownInterface19,   0xacd9b67a, 0xceab, 0x4c6c, 0x90,0xa1, 0xe8,0x57,0xc6,0x59,0xe3,0x9d);
 DEFINE_GUID(IID_UnknownInterface20,   0xd0fe6f62, 0xdea4, 0x46c9, 0x9d,0xae, 0x36,0xcb,0x13,0x99,0x78,0xfa);
+DEFINE_GUID(IID_UnknownInterface21,   0x732c1ccd, 0xbc5c, 0x4065, 0x88,0xcb, 0xfb,0x5b,0xce,0xa7,0x1f,0x66);
+DEFINE_GUID(IID_UnknownInterface22,   0xc13b3d3a, 0x10d6, 0x43f5, 0x98,0xdb, 0xb7,0xdd,0xd9,0x87,0xb3,0x3d);
+DEFINE_GUID(IID_UnknownInterface23,   0x2e228ba3, 0xea25, 0x4378, 0x97,0xb6, 0xd5,0x74,0xfa,0xeb,0xa3,0x56);
+DEFINE_GUID(IID_UnknownInterface24,   0xd56a2092, 0x7dbf, 0x4144, 0xa1,0x10, 0xc2,0x96,0x3a,0x70,0x98,0x32);
 
 static HWND hwnd;
 
@@ -98,7 +102,7 @@ static HRESULT ebrowser_instantiate(IExplorerBrowser **peb)
 static HRESULT ebrowser_initialize(IExplorerBrowser *peb)
 {
     RECT rc;
-    rc.top = rc.left = 0; rc.bottom = rc.right = 500;
+    SetRect(&rc, 0, 0, 500, 500);
     return IExplorerBrowser_Initialize(peb, hwnd, &rc, NULL);
 }
 
@@ -759,8 +763,10 @@ static void test_initialization(void)
 {
     IExplorerBrowser *peb;
     IShellBrowser *psb;
+    HWND eb_hwnd;
     HRESULT hr;
     ULONG lres;
+    LONG style;
     RECT rc;
 
     ebrowser_instantiate(&peb);
@@ -800,25 +806,23 @@ static void test_initialization(void)
     /* Initialize with a few different rectangles */
     peb = NULL;
     ebrowser_instantiate(&peb);
-    rc.left = 50; rc.top = 20; rc.right = 100; rc.bottom = 80;
+    SetRect(&rc, 50, 20, 100, 80);
     hr = IExplorerBrowser_Initialize(peb, hwnd, &rc, NULL);
     ok(hr == S_OK, "got (0x%08x)\n", hr);
     hr = IExplorerBrowser_QueryInterface(peb, &IID_IShellBrowser, (void**)&psb);
     ok(hr == S_OK, "Got 0x%08x\n", hr);
     if(SUCCEEDED(hr))
     {
-        HWND eb_hwnd;
         RECT eb_rc;
         char buf[1024];
-        LONG style, expected_style;
+        LONG expected_style;
         static const RECT exp_rc = {0, 0, 48, 58};
 
         hr = IShellBrowser_GetWindow(psb, &eb_hwnd);
         ok(hr == S_OK, "Got 0x%08x\n", hr);
 
         GetClientRect(eb_hwnd, &eb_rc);
-        ok(EqualRect(&eb_rc, &exp_rc), "Got client rect (%d, %d)-(%d, %d)\n",
-           eb_rc.left, eb_rc.top, eb_rc.right, eb_rc.bottom);
+        ok(EqualRect(&eb_rc, &exp_rc), "Got client rect %s\n", wine_dbgstr_rect(&eb_rc));
 
         GetWindowRect(eb_hwnd, &eb_rc);
         ok(eb_rc.right - eb_rc.left == 50, "Got window width %d\n", eb_rc.right - eb_rc.left);
@@ -856,8 +860,31 @@ static void test_initialization(void)
         ok(lres == 0, "Got refcount %d\n", lres);
     }
 
+    /* check window style with EBO_NOBORDER */
     ebrowser_instantiate(&peb);
-    rc.left = 0; rc.top = 0; rc.right = 0; rc.bottom = 0;
+    hr = IExplorerBrowser_SetOptions(peb, EBO_NOBORDER);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    SetRect(&rc, 50, 20, 100, 80);
+
+    hr = IExplorerBrowser_Initialize(peb, hwnd, &rc, NULL);
+    ok(hr == S_OK, "got (0x%08x)\n", hr);
+
+    hr = IExplorerBrowser_QueryInterface(peb, &IID_IShellBrowser, (void**)&psb);
+    ok(hr == S_OK, "Got 0x%08x\n", hr);
+
+    hr = IShellBrowser_GetWindow(psb, &eb_hwnd);
+    ok(hr == S_OK, "Got 0x%08x\n", hr);
+
+    style = GetWindowLongPtrW(eb_hwnd, GWL_STYLE);
+    ok(!(style & WS_BORDER) || broken(style & WS_BORDER) /* before win8 */, "got style 0x%08x\n", style);
+
+    IShellBrowser_Release(psb);
+    IExplorerBrowser_Destroy(peb);
+    IExplorerBrowser_Release(peb);
+
+    /* empty rectangle */
+    ebrowser_instantiate(&peb);
+    SetRectEmpty(&rc);
     hr = IExplorerBrowser_Initialize(peb, hwnd, &rc, NULL);
     ok(hr == S_OK, "got (0x%08x)\n", hr);
     IExplorerBrowser_Destroy(peb);
@@ -865,7 +892,7 @@ static void test_initialization(void)
     ok(lres == 0, "Got refcount %d\n", lres);
 
     ebrowser_instantiate(&peb);
-    rc.left = -1; rc.top = -1; rc.right = 1; rc.bottom = 1;
+    SetRect(&rc, -1, -1, 1, 1);
     hr = IExplorerBrowser_Initialize(peb, hwnd, &rc, NULL);
     ok(hr == S_OK, "got (0x%08x)\n", hr);
     IExplorerBrowser_Destroy(peb);
@@ -873,7 +900,7 @@ static void test_initialization(void)
     ok(lres == 0, "Got refcount %d\n", lres);
 
     ebrowser_instantiate(&peb);
-    rc.left = 10; rc.top = 10; rc.right = 5; rc.bottom = 5;
+    SetRect(&rc, 10, 10, 5, 5);
     hr = IExplorerBrowser_Initialize(peb, hwnd, &rc, NULL);
     ok(hr == S_OK, "got (0x%08x)\n", hr);
     IExplorerBrowser_Destroy(peb);
@@ -881,7 +908,7 @@ static void test_initialization(void)
     ok(lres == 0, "Got refcount %d\n", lres);
 
     ebrowser_instantiate(&peb);
-    rc.left = 10; rc.top = 10; rc.right = 5; rc.bottom = 5;
+    SetRect(&rc, 10, 10, 5, 5);
     hr = IExplorerBrowser_Initialize(peb, hwnd, &rc, NULL);
     ok(hr == S_OK, "got (0x%08x)\n", hr);
     IExplorerBrowser_Destroy(peb);
@@ -937,6 +964,13 @@ static void test_SetSite(void)
         { &IID_UnknownInterface16,      &IID_UnknownInterface16, 0, NULL },
         { &IID_UnknownInterface17,      &IID_UnknownInterface17, 0, NULL },
         { &IID_UnknownInterface17,      &IID_UnknownInterface19, 0, NULL },
+        /* Win 10 */
+        { &IID_UnknownInterface21,      &IID_UnknownInterface21, 0, NULL },
+        { &IID_UnknownInterface21,      &IID_IFileDialog, 0, NULL },
+        { &IID_UnknownInterface22,      &IID_UnknownInterface22, 0, NULL },
+        { &IID_UnknownInterface23,      &IID_UnknownInterface23, 0, NULL },
+        { &IID_UnknownInterface24,      &IID_UnknownInterface24, 0, NULL },
+        { &IID_UnknownInterface24,      &IID_IFileDialog, 0, NULL },
 
         /* Other services requested in Vista, Windows 2008 but not in Windows 7 */
         { &IID_IBrowserSettings_Vista,  &IID_IBrowserSettings_Vista, 0, NULL },
@@ -1077,16 +1111,16 @@ static void test_basics(void)
     ebrowser_initialize(peb);
 
     /* SetRect */
-    rc.left = 0; rc.top = 0; rc.right = 0; rc.bottom = 0;
+    SetRectEmpty(&rc);
     hr = IExplorerBrowser_SetRect(peb, NULL, rc);
     ok(hr == S_OK, "got (0x%08x)\n", hr);
 
-    rc.left = 100; rc.top = 100; rc.right = 10; rc.bottom = 10;
+    SetRect(&rc, 100, 100, 10, 10);
     hr = IExplorerBrowser_SetRect(peb, NULL, rc);
     ok(hr == S_OK, "got (0x%08x)\n", hr);
 
     /* SetRect with DeferWindowPos */
-    rc.left = rc.top = 0; rc.right = rc.bottom = 10;
+    SetRect(&rc, 0, 0, 10, 10);
     hdwp = BeginDeferWindowPos(1);
     hr = IExplorerBrowser_SetRect(peb, &hdwp, rc);
     ok(hr == S_OK, "got (0x%08x)\n", hr);
@@ -1101,7 +1135,7 @@ static void test_basics(void)
     ok(!lres, "EndDeferWindowPos succeeded unexpectedly.\n");
 
     /* Test positioning */
-    rc.left = 10; rc.top = 20; rc.right = 50; rc.bottom = 50;
+    SetRect(&rc, 10, 20, 50, 50);
     hr = IExplorerBrowser_SetRect(peb, NULL, rc);
     ok(hr == S_OK, "got (0x%08x)\n", hr);
     hr = IExplorerBrowser_QueryInterface(peb, &IID_IShellBrowser, (void**)&psb);
@@ -1118,8 +1152,7 @@ static void test_basics(void)
 
         GetClientRect(eb_hwnd, &eb_rc);
         MapWindowPoints(eb_hwnd, hwnd, (POINT*)&eb_rc, 2);
-        ok(EqualRect(&eb_rc, &exp_rc), "Got rect (%d, %d) - (%d, %d)\n",
-           eb_rc.left, eb_rc.top, eb_rc.right, eb_rc.bottom);
+        ok(EqualRect(&eb_rc, &exp_rc), "Got rect %s\n", wine_dbgstr_rect(&eb_rc));
 
         /* Try resizing with invalid hdwp */
         rc.bottom = 25;
@@ -1128,16 +1161,14 @@ static void test_basics(void)
         ok(hr == E_FAIL, "Got 0x%08x\n", hr);
         GetClientRect(eb_hwnd, &eb_rc);
         MapWindowPoints(eb_hwnd, hwnd, (POINT*)&eb_rc, 2);
-        ok(EqualRect(&eb_rc, &exp_rc), "Got rect (%d, %d) - (%d, %d)\n",
-           eb_rc.left, eb_rc.top, eb_rc.right, eb_rc.bottom);
+        ok(EqualRect(&eb_rc, &exp_rc), "Got rect %s\n", wine_dbgstr_rect(&eb_rc));
 
         hdwp = NULL;
         hr = IExplorerBrowser_SetRect(peb, &hdwp, rc);
         ok(hr == S_OK, "Got 0x%08x\n", hr);
         GetClientRect(eb_hwnd, &eb_rc);
         MapWindowPoints(eb_hwnd, hwnd, (POINT*)&eb_rc, 2);
-        ok(EqualRect(&eb_rc, &exp_rc2), "Got rect (%d, %d) - (%d, %d)\n",
-           eb_rc.left, eb_rc.top, eb_rc.right, eb_rc.bottom);
+        ok(EqualRect(&eb_rc, &exp_rc2), "Got rect %s\n", wine_dbgstr_rect(&eb_rc));
 
         IShellBrowser_Release(psb);
     }
@@ -1469,7 +1500,7 @@ static void test_navigation(void)
         test_browse_pidl_sb(peb2, &ebev, pidl_relative, SBSP_RELATIVE, S_OK, 1, 1, 0, 1);
 
         ILFree(pidl_relative);
-        /* IShellFolder_Release(psf); */
+        IShellFolder_Release(psf);
         IFolderView_Release(pfv);
     }
 
@@ -1691,7 +1722,7 @@ static void test_InputObject(void)
     hr = IInputObject_TranslateAcceleratorIO(pio, &msg_a);
     todo_wine ok(hr == E_FAIL, "Got 0x%08x\n", hr);
 
-    rc.left = 0; rc.top = 0; rc.right = 100; rc.bottom = 100;
+    SetRect(&rc, 0, 0, 100, 100);
     hr = IExplorerBrowser_Initialize(peb, hwnd, &rc, NULL);
     ok(hr == S_OK, "Got 0x%08x\n", hr);
 

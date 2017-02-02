@@ -79,6 +79,8 @@ static WCHAR units_inW[MAX_STRING_LEN];
 static WCHAR units_inchW[MAX_STRING_LEN];
 static WCHAR units_ptW[MAX_STRING_LEN];
 
+static int last_bullet = PFN_BULLET;
+
 static LRESULT OnSize( HWND hWnd, WPARAM wParam, LPARAM lParam );
 
 typedef enum
@@ -105,20 +107,16 @@ static void DoLoadStrings(void)
 
     HINSTANCE hInstance = GetModuleHandleW(0);
 
-    LoadStringW(hInstance, STRING_RICHTEXT_FILES_RTF, p, MAX_STRING_LEN);
-    p += lstrlenW(p) + 1;
+    p += 1 + LoadStringW(hInstance, STRING_RICHTEXT_FILES_RTF, p, MAX_STRING_LEN);
     lstrcpyW(p, files_rtf);
     p += lstrlenW(p) + 1;
-    LoadStringW(hInstance, STRING_TEXT_FILES_TXT, p, MAX_STRING_LEN);
-    p += lstrlenW(p) + 1;
+    p += 1 + LoadStringW(hInstance, STRING_TEXT_FILES_TXT, p, MAX_STRING_LEN);
     lstrcpyW(p, files_txt);
     p += lstrlenW(p) + 1;
-    LoadStringW(hInstance, STRING_TEXT_FILES_UNICODE_TXT, p, MAX_STRING_LEN);
-    p += lstrlenW(p) + 1;
+    p += 1 + LoadStringW(hInstance, STRING_TEXT_FILES_UNICODE_TXT, p, MAX_STRING_LEN);
     lstrcpyW(p, files_txt);
     p += lstrlenW(p) + 1;
-    LoadStringW(hInstance, STRING_ALL_FILES, p, MAX_STRING_LEN);
-    p += lstrlenW(p) + 1;
+    p += 1 + LoadStringW(hInstance, STRING_ALL_FILES, p, MAX_STRING_LEN);
     lstrcpyW(p, files_all);
     p += lstrlenW(p) + 1;
     *p = '\0';
@@ -154,7 +152,7 @@ static int MessageBoxWithResStringW(HWND hWnd, LPCWSTR lpText, LPCWSTR lpCaption
 }
 
 
-static void AddButton(HWND hwndToolBar, int nImage, int nCommand)
+static void AddButtonStyle(HWND hwndToolBar, int nImage, int nCommand, BYTE style)
 {
     TBBUTTON button;
 
@@ -162,10 +160,15 @@ static void AddButton(HWND hwndToolBar, int nImage, int nCommand)
     button.iBitmap = nImage;
     button.idCommand = nCommand;
     button.fsState = TBSTATE_ENABLED;
-    button.fsStyle = BTNS_BUTTON;
+    button.fsStyle = style;
     button.dwData = 0;
     button.iString = -1;
     SendMessageW(hwndToolBar, TB_ADDBUTTONSW, 1, (LPARAM)&button);
+}
+
+static void AddButton(HWND hwndToolBar, int nImage, int nCommand)
+{
+    AddButtonStyle(hwndToolBar, nImage, nCommand, BTNS_BUTTON);
 }
 
 static void AddSeparator(HWND hwndToolBar)
@@ -1232,7 +1235,7 @@ static LRESULT handle_findmsg(LPFINDREPLACEW pFr)
         if (pFr->lpstrFindWhat != custom_data->findBuffer)
         {
             lstrcpynW(custom_data->findBuffer, pFr->lpstrFindWhat,
-                      sizeof(custom_data->findBuffer));
+                      sizeof(custom_data->findBuffer) / sizeof(WCHAR));
             pFr->lpstrFindWhat = custom_data->findBuffer;
         }
 
@@ -1572,8 +1575,15 @@ static INT_PTR CALLBACK paraformat_proc(HWND hWnd, UINT message, WPARAM wParam, 
                         int index;
                         float num;
                         int ret = 0;
-                        PARAFORMAT pf;
+                        PARAFORMAT2 pf;
                         UNIT unit;
+                        BOOL in_list = FALSE;
+
+                        pf.cbSize = sizeof(pf);
+                        pf.dwMask = PFM_NUMBERING;
+                        SendMessageW(hEditorWnd, EM_GETPARAFORMAT, 0, (LPARAM)&pf);
+                        if ((pf.dwMask & PFM_NUMBERING) && pf.wNumbering)
+                            in_list = TRUE;
 
                         index = SendMessageW(hListWnd, CB_GETCURSEL, 0, 0);
                         pf.wAlignment = ALIGNMENT_VALUES[index];
@@ -1623,6 +1633,12 @@ static INT_PTR CALLBACK paraformat_proc(HWND hWnd, UINT message, WPARAM wParam, 
                             pf.cbSize = sizeof(pf);
                             pf.dwMask = PFM_ALIGNMENT | PFM_OFFSET | PFM_RIGHTINDENT |
                                         PFM_STARTINDENT;
+                            if (in_list)
+                            {
+                                pf.wNumberingTab = max(pf.dxOffset, 0);
+                                pf.dwMask |= PFM_NUMBERINGTAB;
+                            }
+
                             SendMessageW(hEditorWnd, EM_SETPARAFORMAT, 0, (LPARAM)&pf);
                         }
                     }
@@ -1812,7 +1828,7 @@ static LRESULT OnCreate( HWND hWnd )
     if(!SendMessageW(hReBarWnd, RB_SETBARINFO, 0, (LPARAM)&rbi))
         return -1;
 
-    hToolBarWnd = CreateToolbarEx(hReBarWnd, CCS_NOPARENTALIGN|CCS_NOMOVEY|WS_VISIBLE|WS_CHILD|TBSTYLE_TOOLTIPS|BTNS_BUTTON,
+    hToolBarWnd = CreateToolbarEx(hReBarWnd, CCS_NOPARENTALIGN|CCS_NOMOVEY|WS_VISIBLE|WS_CHILD|TBSTYLE_TOOLTIPS,
       IDC_TOOLBAR,
       1, hInstance, IDB_TOOLBAR,
       NULL, 0,
@@ -1874,8 +1890,10 @@ static LRESULT OnCreate( HWND hWnd )
     SendMessageW(hReBarWnd, RB_INSERTBANDW, -1, (LPARAM)&rbb);
 
     hFormatBarWnd = CreateToolbarEx(hReBarWnd,
-         CCS_NOPARENTALIGN | CCS_NOMOVEY | WS_VISIBLE | TBSTYLE_TOOLTIPS | BTNS_BUTTON,
+         CCS_NOPARENTALIGN | CCS_NOMOVEY | WS_VISIBLE | TBSTYLE_TOOLTIPS,
          IDC_FORMATBAR, 8, hInstance, IDB_FORMATBAR, NULL, 0, 16, 16, 16, 16, sizeof(TBBUTTON));
+
+    SendMessageW(hFormatBarWnd, TB_SETEXTENDEDSTYLE, 0, TBSTYLE_EX_DRAWDDARROWS);
 
     AddButton(hFormatBarWnd, 0, ID_FORMAT_BOLD);
     AddButton(hFormatBarWnd, 1, ID_FORMAT_ITALIC);
@@ -1886,7 +1904,7 @@ static LRESULT OnCreate( HWND hWnd )
     AddButton(hFormatBarWnd, 5, ID_ALIGN_CENTER);
     AddButton(hFormatBarWnd, 6, ID_ALIGN_RIGHT);
     AddSeparator(hFormatBarWnd);
-    AddButton(hFormatBarWnd, 7, ID_BULLET);
+    AddButtonStyle(hFormatBarWnd, 7, ID_BULLETONOFF, BTNS_DROPDOWN);
 
     SendMessageW(hFormatBarWnd, TB_AUTOSIZE, 0, 0);
 
@@ -1994,7 +2012,7 @@ static LRESULT OnUser( HWND hWnd )
     SendMessageW(hwndFormatBar, TB_CHECKBUTTON, ID_ALIGN_CENTER, (pf.wAlignment == PFA_CENTER));
     SendMessageW(hwndFormatBar, TB_CHECKBUTTON, ID_ALIGN_RIGHT, (pf.wAlignment == PFA_RIGHT));
 
-    SendMessageW(hwndFormatBar, TB_CHECKBUTTON, ID_BULLET, (pf.wNumbering & PFN_BULLET));
+    SendMessageW(hwndFormatBar, TB_CHECKBUTTON, ID_BULLETONOFF, pf.wNumbering ? TRUE : FALSE);
     return 0;
 }
 
@@ -2005,6 +2023,7 @@ static LRESULT OnNotify( HWND hWnd, LPARAM lParam)
     NMHDR *pHdr = (NMHDR *)lParam;
     HWND hwndFontList = GetDlgItem(hwndReBar, IDC_FONTLIST);
     HWND hwndSizeList = GetDlgItem(hwndReBar, IDC_SIZELIST);
+    HWND hwndFormatBar = GetDlgItem(hwndReBar, IDC_FORMATBAR);
 
     if (pHdr->hwndFrom == hwndFontList || pHdr->hwndFrom == hwndSizeList)
     {
@@ -2022,22 +2041,51 @@ static LRESULT OnNotify( HWND hWnd, LPARAM lParam)
         return 0;
     }
 
-    if (pHdr->hwndFrom != hwndEditor)
-        return 0;
-
-    if (pHdr->code == EN_SELCHANGE)
+    if (pHdr->hwndFrom == hwndFormatBar)
     {
-        SELCHANGE *pSC = (SELCHANGE *)lParam;
-        char buf[128];
+        if (pHdr->code == TBN_DROPDOWN)
+        {
+            NMTOOLBARW *tb_notify = (NMTOOLBARW *)lParam;
+            HMENU menu = GetMenu( hWnd );
+            MENUITEMINFOW info;
+            TPMPARAMS params;
+            RECT rc;
 
-        update_font_list();
+            if (!menu) return 0;
+            info.cbSize = sizeof(info);
+            info.fMask = MIIM_SUBMENU;
+            GetMenuItemInfoW( menu, ID_LISTMENU, FALSE, &info );
+            if (!info.hSubMenu) return 0;
 
-        sprintf( buf,"selection = %d..%d, line count=%ld",
-                 pSC->chrg.cpMin, pSC->chrg.cpMax,
-                SendMessageW(hwndEditor, EM_GETLINECOUNT, 0, 0));
-        SetWindowTextA(GetDlgItem(hWnd, IDC_STATUSBAR), buf);
-        SendMessageW(hWnd, WM_USER, 0, 0);
-        return 1;
+            SendMessageW( tb_notify->hdr.hwndFrom, TB_GETRECT, (WPARAM)tb_notify->iItem, (LPARAM)&rc );
+            MapWindowPoints( tb_notify->hdr.hwndFrom, HWND_DESKTOP, (LPPOINT)&rc, 2 );
+
+            params.cbSize = sizeof(params);
+            params.rcExclude = rc;
+            TrackPopupMenuEx( info.hSubMenu,
+                              TPM_LEFTALIGN | TPM_LEFTBUTTON | TPM_VERTICAL,
+                              rc.left, rc.bottom, hWnd, &params );
+        }
+
+        return 0;
+    }
+
+    if (pHdr->hwndFrom == hwndEditor)
+    {
+        if (pHdr->code == EN_SELCHANGE)
+        {
+            SELCHANGE *pSC = (SELCHANGE *)lParam;
+            char buf[128];
+
+            update_font_list();
+
+            sprintf( buf,"selection = %d..%d, line count=%ld",
+                     pSC->chrg.cpMin, pSC->chrg.cpMax,
+                     SendMessageW(hwndEditor, EM_GETLINECOUNT, 0, 0));
+            SetWindowTextA(GetDlgItem(hWnd, IDC_STATUSBAR), buf);
+            SendMessageW(hWnd, WM_USER, 0, 0);
+            return 1;
+        }
     }
     return 0;
 }
@@ -2351,24 +2399,45 @@ static LRESULT OnCommand( HWND hWnd, WPARAM wParam, LPARAM lParam)
         SendMessageW(hwndEditor, EM_REDO, 0, 0);
         return 0;
 
+    case ID_BULLETONOFF:
     case ID_BULLET:
+    case ID_NUMBERING:
+    case ID_LCLETTER:
+    case ID_UCLETTER:
+    case ID_LCROMAN:
+    case ID_UCROMAN:
         {
-            PARAFORMAT pf;
-
+            PARAFORMAT2 pf;
+            WORD new_number = LOWORD(wParam) - ID_BULLET + PFN_BULLET;
             pf.cbSize = sizeof(pf);
             pf.dwMask = PFM_NUMBERING;
             SendMessageW(hwndEditor, EM_GETPARAFORMAT, 0, (LPARAM)&pf);
 
-            pf.dwMask |=  PFM_OFFSET;
+            pf.dwMask = PFM_NUMBERING | PFM_NUMBERINGSTART | PFM_NUMBERINGSTYLE | PFM_NUMBERINGTAB | PFM_OFFSET | PFM_OFFSETINDENT;
 
-            if(pf.wNumbering == PFN_BULLET)
+            if(pf.wNumbering && ((pf.wNumbering == new_number) || (LOWORD(wParam) == ID_BULLETONOFF)))
             {
                 pf.wNumbering = 0;
+                pf.wNumberingStart = 0;
+                pf.wNumberingStyle = 0;
+                pf.wNumberingTab = 0;
                 pf.dxOffset = 0;
+                pf.dxStartIndent = -360;
             } else
             {
-                pf.wNumbering = PFN_BULLET;
-                pf.dxOffset = 720;
+                pf.dxStartIndent = pf.wNumbering ? 0 : 360;
+
+                if (LOWORD(wParam) == ID_BULLETONOFF)
+                    pf.wNumbering = last_bullet;
+                else
+                {
+                    pf.wNumbering = new_number;
+                    last_bullet = pf.wNumbering;
+                }
+                pf.wNumberingStart = 1;
+                pf.wNumberingStyle = PFNS_PERIOD;
+                pf.wNumberingTab = 360;
+                pf.dxOffset = 360;
             }
 
             SendMessageW(hwndEditor, EM_SETPARAFORMAT, 0, (LPARAM)&pf);
@@ -2482,55 +2551,57 @@ static LRESULT OnInitPopupMenu( HWND hWnd, WPARAM wParam )
     MENUITEMINFOW mi;
 
     SendMessageW(hEditorWnd, EM_GETSEL, (WPARAM)&selFrom, (LPARAM)&selTo);
-    EnableMenuItem(hMenu, ID_EDIT_COPY, MF_BYCOMMAND|(selFrom == selTo) ? MF_GRAYED : MF_ENABLED);
-    EnableMenuItem(hMenu, ID_EDIT_CUT, MF_BYCOMMAND|(selFrom == selTo) ? MF_GRAYED : MF_ENABLED);
+    EnableMenuItem(hMenu, ID_EDIT_COPY, (selFrom == selTo) ? MF_GRAYED : MF_ENABLED);
+    EnableMenuItem(hMenu, ID_EDIT_CUT, (selFrom == selTo) ? MF_GRAYED : MF_ENABLED);
 
     pf.cbSize = sizeof(PARAFORMAT);
     SendMessageW(hwndEditor, EM_GETPARAFORMAT, 0, (LPARAM)&pf);
     CheckMenuItem(hMenu, ID_EDIT_READONLY,
-      MF_BYCOMMAND|(GetWindowLongW(hwndEditor, GWL_STYLE)&ES_READONLY ? MF_CHECKED : MF_UNCHECKED));
+      (GetWindowLongW(hwndEditor, GWL_STYLE) & ES_READONLY) ? MF_CHECKED : MF_UNCHECKED);
     CheckMenuItem(hMenu, ID_EDIT_MODIFIED,
-      MF_BYCOMMAND|(SendMessageW(hwndEditor, EM_GETMODIFY, 0, 0) ? MF_CHECKED : MF_UNCHECKED));
+      SendMessageW(hwndEditor, EM_GETMODIFY, 0, 0) ? MF_CHECKED : MF_UNCHECKED);
     if (pf.dwMask & PFM_ALIGNMENT)
         nAlignment = pf.wAlignment;
-    CheckMenuItem(hMenu, ID_ALIGN_LEFT, MF_BYCOMMAND|(nAlignment == PFA_LEFT) ?
-            MF_CHECKED : MF_UNCHECKED);
-    CheckMenuItem(hMenu, ID_ALIGN_CENTER, MF_BYCOMMAND|(nAlignment == PFA_CENTER) ?
-            MF_CHECKED : MF_UNCHECKED);
-    CheckMenuItem(hMenu, ID_ALIGN_RIGHT, MF_BYCOMMAND|(nAlignment == PFA_RIGHT) ?
-            MF_CHECKED : MF_UNCHECKED);
-    CheckMenuItem(hMenu, ID_BULLET, MF_BYCOMMAND | ((pf.wNumbering == PFN_BULLET) ?
-            MF_CHECKED : MF_UNCHECKED));
-    EnableMenuItem(hMenu, ID_EDIT_UNDO, MF_BYCOMMAND|(SendMessageW(hwndEditor, EM_CANUNDO, 0, 0)) ?
+    CheckMenuItem(hMenu, ID_ALIGN_LEFT, (nAlignment == PFA_LEFT) ?  MF_CHECKED : MF_UNCHECKED);
+    CheckMenuItem(hMenu, ID_ALIGN_CENTER, (nAlignment == PFA_CENTER) ?  MF_CHECKED : MF_UNCHECKED);
+    CheckMenuItem(hMenu, ID_ALIGN_RIGHT, (nAlignment == PFA_RIGHT) ?  MF_CHECKED : MF_UNCHECKED);
+
+    CheckMenuItem(hMenu, ID_BULLET, ((pf.wNumbering == PFN_BULLET) ?  MF_CHECKED : MF_UNCHECKED));
+    CheckMenuItem(hMenu, ID_NUMBERING, ((pf.wNumbering == PFN_ARABIC) ?  MF_CHECKED : MF_UNCHECKED));
+    CheckMenuItem(hMenu, ID_LCLETTER, ((pf.wNumbering == PFN_LCLETTER) ?  MF_CHECKED : MF_UNCHECKED));
+    CheckMenuItem(hMenu, ID_UCLETTER, ((pf.wNumbering == PFN_UCLETTER) ?  MF_CHECKED : MF_UNCHECKED));
+    CheckMenuItem(hMenu, ID_LCROMAN, ((pf.wNumbering == PFN_LCROMAN) ?  MF_CHECKED : MF_UNCHECKED));
+    CheckMenuItem(hMenu, ID_UCROMAN, ((pf.wNumbering == PFN_UCROMAN) ?  MF_CHECKED : MF_UNCHECKED));
+
+    EnableMenuItem(hMenu, ID_EDIT_UNDO, SendMessageW(hwndEditor, EM_CANUNDO, 0, 0) ?
             MF_ENABLED : MF_GRAYED);
-    EnableMenuItem(hMenu, ID_EDIT_REDO, MF_BYCOMMAND|(SendMessageW(hwndEditor, EM_CANREDO, 0, 0)) ?
+    EnableMenuItem(hMenu, ID_EDIT_REDO, SendMessageW(hwndEditor, EM_CANREDO, 0, 0) ?
             MF_ENABLED : MF_GRAYED);
 
-    CheckMenuItem(hMenu, ID_TOGGLE_TOOLBAR, MF_BYCOMMAND|(is_bar_visible(BANDID_TOOLBAR)) ?
+    CheckMenuItem(hMenu, ID_TOGGLE_TOOLBAR, is_bar_visible(BANDID_TOOLBAR) ?
             MF_CHECKED : MF_UNCHECKED);
 
-    CheckMenuItem(hMenu, ID_TOGGLE_FORMATBAR, MF_BYCOMMAND|(is_bar_visible(BANDID_FORMATBAR)) ?
+    CheckMenuItem(hMenu, ID_TOGGLE_FORMATBAR, is_bar_visible(BANDID_FORMATBAR) ?
             MF_CHECKED : MF_UNCHECKED);
 
-    CheckMenuItem(hMenu, ID_TOGGLE_STATUSBAR, MF_BYCOMMAND|IsWindowVisible(hwndStatus) ?
+    CheckMenuItem(hMenu, ID_TOGGLE_STATUSBAR, IsWindowVisible(hwndStatus) ?
             MF_CHECKED : MF_UNCHECKED);
 
-    CheckMenuItem(hMenu, ID_TOGGLE_RULER, MF_BYCOMMAND|(is_bar_visible(BANDID_RULER)) ? MF_CHECKED : MF_UNCHECKED);
+    CheckMenuItem(hMenu, ID_TOGGLE_RULER, is_bar_visible(BANDID_RULER) ? MF_CHECKED : MF_UNCHECKED);
 
     gt.flags = GTL_NUMCHARS;
     gt.codepage = 1200;
     textLength = SendMessageW(hEditorWnd, EM_GETTEXTLENGTHEX, (WPARAM)&gt, 0);
-    EnableMenuItem(hMenu, ID_FIND, MF_BYCOMMAND|(textLength ? MF_ENABLED : MF_GRAYED));
+    EnableMenuItem(hMenu, ID_FIND, textLength ? MF_ENABLED : MF_GRAYED);
 
     mi.cbSize = sizeof(mi);
     mi.fMask = MIIM_DATA;
 
     GetMenuItemInfoW(hMenu, ID_FIND_NEXT, FALSE, &mi);
 
-    EnableMenuItem(hMenu, ID_FIND_NEXT, MF_BYCOMMAND|((textLength && mi.dwItemData) ?
-                   MF_ENABLED : MF_GRAYED));
+    EnableMenuItem(hMenu, ID_FIND_NEXT, (textLength && mi.dwItemData) ?  MF_ENABLED : MF_GRAYED);
 
-    EnableMenuItem(hMenu, ID_REPLACE, MF_BYCOMMAND|(textLength ? MF_ENABLED : MF_GRAYED));
+    EnableMenuItem(hMenu, ID_REPLACE, textLength ? MF_ENABLED : MF_GRAYED);
 
     return 0;
 }

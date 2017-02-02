@@ -22,6 +22,7 @@
 #include <stddef.h>
 #include "windows.h"
 #include "mmsystem.h"
+#include "objbase.h"
 #include "wine/test.h"
 
 extern const char* mmsys_error(MMRESULT error); /* from wave.c */
@@ -514,8 +515,8 @@ static void test_midiStream(UINT udev, HWND hwnd)
 
         rc = midiOutPrepareHeader((HMIDIOUT)hm, &mhdr, offsetof(MIDIHDR,dwOffset)-1);
         ok(rc==MMSYSERR_INVALPARAM, "midiOutPrepare tiny rc=%s\n", mmsys_error(rc));
-        rc = midiOutPrepareHeader((HMIDIOUT)hm, &mhdr, offsetof(MIDIHDR,dwOffset));
-        ok(!rc, "midiOutPrepare old size rc=%s\n", mmsys_error(rc));
+        rc = midiOutPrepareHeader((HMIDIOUT)hm, &mhdr, sizeof(mhdr));
+        ok(!rc, "midiOutPrepare size rc=%s\n", mmsys_error(rc));
         ok(mhdr.dwFlags & MHDR_PREPARED, "MHDR.dwFlags when prepared %x\n", mhdr.dwFlags);
 
         /* The device is still in paused mode and should queue the message. */
@@ -557,9 +558,9 @@ static void test_midiStream(UINT udev, HWND hwnd)
         /* Native fills dwOffset regardless of the cbMidiHdr size argument to midiStreamOut */
         ok(1234567890!=mhdr.dwOffset, "play left MIDIHDR.dwOffset at %u\n", mhdr.dwOffset);
 
-        rc = midiOutUnprepareHeader((HMIDIOUT)hm, &mhdr, offsetof(MIDIHDR,dwOffset));
+        rc = midiOutUnprepareHeader((HMIDIOUT)hm, &mhdr, sizeof(mhdr));
         ok(!rc, "midiOutUnprepare rc=%s\n", mmsys_error(rc));
-        rc = midiOutUnprepareHeader((HMIDIOUT)hm, &mhdr, offsetof(MIDIHDR,dwOffset));
+        rc = midiOutUnprepareHeader((HMIDIOUT)hm, &mhdr, sizeof(mhdr));
         ok(!rc, "midiOutUnprepare #2 rc=%s\n", mmsys_error(rc));
 
         trace("MIDIHDR stream flags=%x when finished\n", mhdr.dwFlags);
@@ -584,9 +585,9 @@ static void test_midiStream(UINT udev, HWND hwnd)
 
         mhdr.dwFlags |= MHDR_ISSTRM;
         /* Preset flags (e.g. MHDR_ISSTRM) do not disturb. */
-        rc = midiOutPrepareHeader((HMIDIOUT)hm, &mhdr, offsetof(MIDIHDR,dwOffset));
+        rc = midiOutPrepareHeader((HMIDIOUT)hm, &mhdr, sizeof(mhdr));
         ok(!rc, "midiOutPrepare used flags %x rc=%s\n", mhdr.dwFlags, mmsys_error(rc));
-        rc = midiOutUnprepareHeader((HMIDIOUT)hm, &mhdr, offsetof(MIDIHDR,dwOffset));
+        rc = midiOutUnprepareHeader((HMIDIOUT)hm, &mhdr, sizeof(mhdr));
         ok(!rc, "midiOutUnprepare used flags %x rc=%s\n", mhdr.dwFlags, mmsys_error(rc));
 
         rc = midiStreamRestart(hm);
@@ -800,11 +801,9 @@ static void test_midi_outfns(HWND hwnd)
         ok(rc==MMSYSERR_BADDEVICEID || broken(rc==MMSYSERR_NODRIVER /*nt,w2k*/), "midiOutGetDevCaps MAPPER with no MIDI rc=%s\n", mmsys_error(rc));
 
         rc = midiOutOpen(&hm, MIDIMAPPER, 0, 0, CALLBACK_NULL);
-        if (rc==MIDIERR_INVALIDSETUP) todo_wine /* Wine without snd-seq */
-        ok(rc==MMSYSERR_BADDEVICEID || broken(rc==MMSYSERR_NODRIVER /*w2k*/), "midiOutOpen MAPPER with no MIDI rc=%s\n", mmsys_error(rc));
-        else
-        ok(rc==MMSYSERR_BADDEVICEID || broken(rc==MMSYSERR_NODRIVER /*w2k sound disabled*/),
-           "midiOutOpen MAPPER with no MIDI rc=%s\n", mmsys_error(rc));
+        todo_wine_if (rc == MIDIERR_INVALIDSETUP) /* Wine without snd-seq */
+            ok(rc == MMSYSERR_BADDEVICEID || broken(rc == MMSYSERR_NODRIVER /*w2k sound disabled*/),
+               "midiOutOpen MAPPER with no MIDI rc=%s\n", mmsys_error(rc));
         if (!rc) {
             rc = midiOutClose(hm);
             ok(!rc, "midiOutClose rc=%s\n", mmsys_error(rc));
@@ -837,10 +836,15 @@ static void test_midi_outfns(HWND hwnd)
 START_TEST(midi)
 {
     HWND hwnd = 0;
+
+    CoInitialize(NULL); /* Needed for Win 10 */
+
     if (1) /* select 1 for CALLBACK_WINDOW or 0 for CALLBACK_FUNCTION */
     hwnd = CreateWindowExA(0, "static", "winmm midi test", WS_POPUP, 0,0,100,100,
                            0, 0, 0, NULL);
     test_midi_infns(hwnd);
     test_midi_outfns(hwnd);
     if (hwnd) DestroyWindow(hwnd);
+
+    CoUninitialize();
 }

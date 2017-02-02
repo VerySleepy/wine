@@ -52,10 +52,11 @@ static const struct gdi_obj_funcs dc_funcs =
 
 static inline DC *get_dc_obj( HDC hdc )
 {
-    DC *dc = GDI_GetObjPtr( hdc, 0 );
+    WORD type;
+    DC *dc = get_any_obj_ptr( hdc, &type );
     if (!dc) return NULL;
 
-    switch (GetObjectType( hdc ))
+    switch (type)
     {
     case OBJ_DC:
     case OBJ_MEMDC:
@@ -75,14 +76,14 @@ static inline DC *get_dc_obj( HDC hdc )
  */
 static void set_initial_dc_state( DC *dc )
 {
-    dc->wndOrgX             = 0;
-    dc->wndOrgY             = 0;
-    dc->wndExtX             = 1;
-    dc->wndExtY             = 1;
-    dc->vportOrgX           = 0;
-    dc->vportOrgY           = 0;
-    dc->vportExtX           = 1;
-    dc->vportExtY           = 1;
+    dc->wnd_org.x           = 0;
+    dc->wnd_org.y           = 0;
+    dc->wnd_ext.cx          = 1;
+    dc->wnd_ext.cy          = 1;
+    dc->vport_org.x         = 0;
+    dc->vport_org.y         = 0;
+    dc->vport_ext.cx        = 1;
+    dc->vport_ext.cy        = 1;
     dc->miterLimit          = 10.0f; /* 10.0 is the default, from MSDN */
     dc->layout              = 0;
     dc->font_code_page      = CP_ACP;
@@ -95,8 +96,8 @@ static void set_initial_dc_state( DC *dc )
     dc->dcBrushColor        = RGB( 255, 255, 255 );
     dc->dcPenColor          = RGB( 0, 0, 0 );
     dc->textColor           = RGB( 0, 0, 0 );
-    dc->brushOrgX           = 0;
-    dc->brushOrgY           = 0;
+    dc->brush_org.x         = 0;
+    dc->brush_org.y         = 0;
     dc->mapperFlags         = 0;
     dc->textAlign           = TA_LEFT | TA_TOP | TA_NOUPDATECP;
     dc->charExtra           = 0;
@@ -104,8 +105,8 @@ static void set_initial_dc_state( DC *dc )
     dc->breakRem            = 0;
     dc->MapMode             = MM_TEXT;
     dc->GraphicsMode        = GM_COMPATIBLE;
-    dc->CursPosX            = 0;
-    dc->CursPosY            = 0;
+    dc->cur_pos.x           = 0;
+    dc->cur_pos.y           = 0;
     dc->ArcDirection        = AD_COUNTERCLOCKWISE;
     dc->xformWorld2Wnd.eM11 = 1.0f;
     dc->xformWorld2Wnd.eM12 = 0.0f;
@@ -310,17 +311,28 @@ static BOOL DC_InvertXform( const XFORM *xformSrc, XFORM *xformDest )
 static void construct_window_to_viewport(DC *dc, XFORM *xform)
 {
     double scaleX, scaleY;
-    scaleX = (double)dc->vportExtX / (double)dc->wndExtX;
-    scaleY = (double)dc->vportExtY / (double)dc->wndExtY;
+    scaleX = (double)dc->vport_ext.cx / (double)dc->wnd_ext.cx;
+    scaleY = (double)dc->vport_ext.cy / (double)dc->wnd_ext.cy;
 
     if (dc->layout & LAYOUT_RTL) scaleX = -scaleX;
     xform->eM11 = scaleX;
     xform->eM12 = 0.0;
     xform->eM21 = 0.0;
     xform->eM22 = scaleY;
-    xform->eDx  = (double)dc->vportOrgX - scaleX * (double)dc->wndOrgX;
-    xform->eDy  = (double)dc->vportOrgY - scaleY * (double)dc->wndOrgY;
+    xform->eDx  = (double)dc->vport_org.x - scaleX * (double)dc->wnd_org.x;
+    xform->eDy  = (double)dc->vport_org.y - scaleY * (double)dc->wnd_org.y;
     if (dc->layout & LAYOUT_RTL) xform->eDx = dc->vis_rect.right - dc->vis_rect.left - 1 - xform->eDx;
+}
+
+/***********************************************************************
+ *        linear_xform_cmp
+ *
+ * Compares the linear transform portion of two XFORMs (i.e. the 2x2 submatrix).
+ * Returns 0 if they match.
+ */
+static inline int linear_xform_cmp( const XFORM *a, const XFORM *b )
+{
+    return memcmp( a, b, FIELD_OFFSET( XFORM, eDx ) );
 }
 
 /***********************************************************************
@@ -350,11 +362,11 @@ void DC_UpdateXforms( DC *dc )
 
     /* Reselect the font and pen back into the dc so that the size
        gets updated. */
-    if (memcmp(&oldworld2vport, &dc->xformWorld2Vport, sizeof(oldworld2vport)) &&
+    if (linear_xform_cmp( &oldworld2vport, &dc->xformWorld2Vport ) &&
         !GdiIsMetaFileDC(dc->hSelf))
     {
-        SelectObject(dc->hSelf, GetCurrentObject(dc->hSelf, OBJ_FONT));
-        SelectObject(dc->hSelf, GetCurrentObject(dc->hSelf, OBJ_PEN));
+        SelectObject(dc->hSelf, dc->hFont);
+        SelectObject(dc->hSelf, dc->hPen);
     }
 }
 
@@ -382,8 +394,7 @@ INT nulldrv_SaveDC( PHYSDEV dev )
     newdc->textColor        = dc->textColor;
     newdc->dcBrushColor     = dc->dcBrushColor;
     newdc->dcPenColor       = dc->dcPenColor;
-    newdc->brushOrgX        = dc->brushOrgX;
-    newdc->brushOrgY        = dc->brushOrgY;
+    newdc->brush_org        = dc->brush_org;
     newdc->mapperFlags      = dc->mapperFlags;
     newdc->textAlign        = dc->textAlign;
     newdc->charExtra        = dc->charExtra;
@@ -391,21 +402,16 @@ INT nulldrv_SaveDC( PHYSDEV dev )
     newdc->breakRem         = dc->breakRem;
     newdc->MapMode          = dc->MapMode;
     newdc->GraphicsMode     = dc->GraphicsMode;
-    newdc->CursPosX         = dc->CursPosX;
-    newdc->CursPosY         = dc->CursPosY;
+    newdc->cur_pos          = dc->cur_pos;
     newdc->ArcDirection     = dc->ArcDirection;
     newdc->xformWorld2Wnd   = dc->xformWorld2Wnd;
     newdc->xformWorld2Vport = dc->xformWorld2Vport;
     newdc->xformVport2World = dc->xformVport2World;
     newdc->vport2WorldValid = dc->vport2WorldValid;
-    newdc->wndOrgX          = dc->wndOrgX;
-    newdc->wndOrgY          = dc->wndOrgY;
-    newdc->wndExtX          = dc->wndExtX;
-    newdc->wndExtY          = dc->wndExtY;
-    newdc->vportOrgX        = dc->vportOrgX;
-    newdc->vportOrgY        = dc->vportOrgY;
-    newdc->vportExtX        = dc->vportExtX;
-    newdc->vportExtY        = dc->vportExtY;
+    newdc->wnd_org          = dc->wnd_org;
+    newdc->wnd_ext          = dc->wnd_ext;
+    newdc->vport_org        = dc->vport_org;
+    newdc->vport_ext        = dc->vport_ext;
     newdc->virtual_res      = dc->virtual_res;
     newdc->virtual_size     = dc->virtual_size;
 
@@ -465,8 +471,7 @@ BOOL nulldrv_RestoreDC( PHYSDEV dev, INT level )
     dc->textColor        = dcs->textColor;
     dc->dcBrushColor     = dcs->dcBrushColor;
     dc->dcPenColor       = dcs->dcPenColor;
-    dc->brushOrgX        = dcs->brushOrgX;
-    dc->brushOrgY        = dcs->brushOrgY;
+    dc->brush_org        = dcs->brush_org;
     dc->mapperFlags      = dcs->mapperFlags;
     dc->textAlign        = dcs->textAlign;
     dc->charExtra        = dcs->charExtra;
@@ -474,21 +479,16 @@ BOOL nulldrv_RestoreDC( PHYSDEV dev, INT level )
     dc->breakRem         = dcs->breakRem;
     dc->MapMode          = dcs->MapMode;
     dc->GraphicsMode     = dcs->GraphicsMode;
-    dc->CursPosX         = dcs->CursPosX;
-    dc->CursPosY         = dcs->CursPosY;
+    dc->cur_pos          = dcs->cur_pos;
     dc->ArcDirection     = dcs->ArcDirection;
     dc->xformWorld2Wnd   = dcs->xformWorld2Wnd;
     dc->xformWorld2Vport = dcs->xformWorld2Vport;
     dc->xformVport2World = dcs->xformVport2World;
     dc->vport2WorldValid = dcs->vport2WorldValid;
-    dc->wndOrgX          = dcs->wndOrgX;
-    dc->wndOrgY          = dcs->wndOrgY;
-    dc->wndExtX          = dcs->wndExtX;
-    dc->wndExtY          = dcs->wndExtY;
-    dc->vportOrgX        = dcs->vportOrgX;
-    dc->vportOrgY        = dcs->vportOrgY;
-    dc->vportExtX        = dcs->vportExtX;
-    dc->vportExtY        = dcs->vportExtY;
+    dc->wnd_org          = dcs->wnd_org;
+    dc->wnd_ext          = dcs->wnd_ext;
+    dc->vport_org        = dcs->vport_org;
+    dc->vport_ext        = dcs->vport_ext;
     dc->virtual_res      = dcs->virtual_res;
     dc->virtual_size     = dcs->virtual_size;
 
@@ -1048,9 +1048,9 @@ INT WINAPI SetGraphicsMode( HDC hdc, INT mode )
         ret = dc->GraphicsMode;
         dc->GraphicsMode = mode;
     }
-    release_dc_ptr( dc );
     /* font metrics depend on the graphics mode */
-    if (ret) SelectObject(dc->hSelf, GetCurrentObject(dc->hSelf, OBJ_FONT));
+    if (ret != mode) SelectObject(dc->hSelf, dc->hFont);
+    release_dc_ptr( dc );
     return ret;
 }
 
@@ -1495,7 +1495,7 @@ UINT WINAPI GetBoundsRect(HDC hdc, LPRECT rect, UINT flags)
             rect->bottom = min( rect->bottom, dc->vis_rect.bottom - dc->vis_rect.top );
             ret = DCB_SET;
         }
-        DPtoLP( hdc, (POINT *)rect, 2 );
+        dp_to_lp( dc, (POINT *)rect, 2 );
     }
     else ret = 0;
 
@@ -1534,7 +1534,7 @@ UINT WINAPI SetBoundsRect(HDC hdc, const RECT* rect, UINT flags)
     {
         RECT rc = *rect;
 
-        LPtoDP( hdc, (POINT *)&rc, 2 );
+        lp_to_dp( dc, (POINT *)&rc, 2 );
         add_bounds_rect( &dc->bounds, &rc );
     }
 
@@ -1791,8 +1791,7 @@ BOOL WINAPI GetBrushOrgEx( HDC hdc, LPPOINT pt )
 {
     DC * dc = get_dc_ptr( hdc );
     if (!dc) return FALSE;
-    pt->x = dc->brushOrgX;
-    pt->y = dc->brushOrgY;
+    *pt = dc->brush_org;
     release_dc_ptr( dc );
     return TRUE;
 }
@@ -1805,8 +1804,7 @@ BOOL WINAPI GetCurrentPositionEx( HDC hdc, LPPOINT pt )
 {
     DC * dc = get_dc_ptr( hdc );
     if (!dc) return FALSE;
-    pt->x = dc->CursPosX;
-    pt->y = dc->CursPosY;
+    *pt = dc->cur_pos;
     release_dc_ptr( dc );
     return TRUE;
 }
@@ -1819,8 +1817,7 @@ BOOL WINAPI GetViewportExtEx( HDC hdc, LPSIZE size )
 {
     DC * dc = get_dc_ptr( hdc );
     if (!dc) return FALSE;
-    size->cx = dc->vportExtX;
-    size->cy = dc->vportExtY;
+    *size = dc->vport_ext;
     release_dc_ptr( dc );
     return TRUE;
 }
@@ -1833,8 +1830,7 @@ BOOL WINAPI GetViewportOrgEx( HDC hdc, LPPOINT pt )
 {
     DC * dc = get_dc_ptr( hdc );
     if (!dc) return FALSE;
-    pt->x = dc->vportOrgX;
-    pt->y = dc->vportOrgY;
+    *pt = dc->vport_org;
     release_dc_ptr( dc );
     return TRUE;
 }
@@ -1847,8 +1843,7 @@ BOOL WINAPI GetWindowExtEx( HDC hdc, LPSIZE size )
 {
     DC * dc = get_dc_ptr( hdc );
     if (!dc) return FALSE;
-    size->cx = dc->wndExtX;
-    size->cy = dc->wndExtY;
+    *size = dc->wnd_ext;
     release_dc_ptr( dc );
     return TRUE;
 }
@@ -1861,8 +1856,7 @@ BOOL WINAPI GetWindowOrgEx( HDC hdc, LPPOINT pt )
 {
     DC * dc = get_dc_ptr( hdc );
     if (!dc) return FALSE;
-    pt->x = dc->wndOrgX;
-    pt->y = dc->wndOrgY;
+    *pt = dc->wnd_org;
     release_dc_ptr( dc );
     return TRUE;
 }

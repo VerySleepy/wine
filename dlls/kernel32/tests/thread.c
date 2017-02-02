@@ -28,11 +28,14 @@
 /* the tests intentionally pass invalid pointers and need an exception handler */
 #define WINE_NO_INLINE_STRING
 
+#include <ntstatus.h>
+#define WIN32_NO_STATUS
 #include <windef.h>
 #include <winbase.h>
 #include <winnt.h>
 #include <winerror.h>
 #include <winnls.h>
+#include <winternl.h>
 #include "wine/test.h"
 
 /* THREAD_ALL_ACCESS in Vista+ PSDKs is incompatible with older Windows versions */
@@ -65,6 +68,10 @@
 #define ARCH "x86"
 #elif defined __x86_64__
 #define ARCH "amd64"
+#elif defined __arm__
+#define ARCH "arm"
+#elif defined __aarch64__
+#define ARCH "arm64"
 #else
 #define ARCH "none"
 #endif
@@ -86,10 +93,15 @@ static BOOL   (WINAPI *pDeactivateActCtx)(DWORD,ULONG_PTR);
 static BOOL   (WINAPI *pGetCurrentActCtx)(HANDLE *);
 static void   (WINAPI *pReleaseActCtx)(HANDLE);
 static PTP_POOL (WINAPI *pCreateThreadpool)(PVOID);
+static void (WINAPI *pCloseThreadpool)(PTP_POOL);
 static PTP_WORK (WINAPI *pCreateThreadpoolWork)(PTP_WORK_CALLBACK,PVOID,PTP_CALLBACK_ENVIRON);
 static void (WINAPI *pSubmitThreadpoolWork)(PTP_WORK);
 static void (WINAPI *pWaitForThreadpoolWorkCallbacks)(PTP_WORK,BOOL);
 static void (WINAPI *pCloseThreadpoolWork)(PTP_WORK);
+static NTSTATUS (WINAPI *pNtQueryInformationThread)(HANDLE,THREADINFOCLASS,PVOID,ULONG,PULONG);
+static BOOL (WINAPI *pGetThreadGroupAffinity)(HANDLE,GROUP_AFFINITY*);
+static BOOL (WINAPI *pSetThreadGroupAffinity)(HANDLE,const GROUP_AFFINITY*,GROUP_AFFINITY*);
+static NTSTATUS (WINAPI *pNtSetInformationThread)(HANDLE,THREADINFOCLASS,LPCVOID,ULONG);
 
 static HANDLE create_target_process(const char *arg)
 {
@@ -215,9 +227,8 @@ static DWORD WINAPI threadFunc1(LPVOID p)
 /* Double check that all threads really did run by validating that
    they have all written to the shared memory. There should be no race
    here, since all threads were synchronized after the write.*/
-   for(i=0;i<NUM_THREADS;i++) {
-     while(tstruct->threadmem[i]==0) ;
-   }
+   for (i = 0; i < NUM_THREADS; i++)
+      ok(tstruct->threadmem[i] != 0, "expected threadmem[%d] != 0\n", i);
 
    /* lstrlenA contains an exception handler so this makes sure exceptions work in threads */
    ok( lstrlenA( (char *)0xdeadbeef ) == 0, "lstrlenA: unexpected success\n" );
@@ -868,6 +879,15 @@ static VOID test_thread_processor(void)
    retMask = SetThreadAffinityMask(curthread,~0);
    ok(broken(retMask==0) || retMask==processMask,
       "SetThreadAffinityMask(thread,-1) failed to request all processors.\n");
+
+    if (retMask == processMask)
+    {
+        /* Show that the "all processors" flag is handled in ntdll */
+        DWORD_PTR mask = ~0u;
+        NTSTATUS status = pNtSetInformationThread(curthread, ThreadAffinityMask, &mask, sizeof(mask));
+        ok(status == STATUS_SUCCESS, "Expected STATUS_SUCCESS in NtSetInformationThread, got %x\n", status);
+    }
+
    if (retMask == processMask && sizeof(ULONG_PTR) > sizeof(ULONG))
    {
        /* only the low 32-bits matter */
@@ -877,41 +897,99 @@ static VOID test_thread_processor(void)
        ok(retMask == processMask, "SetThreadAffinityMask failed\n");
    }
 /* NOTE: This only works on WinNT/2000/XP) */
-   if (pSetThreadIdealProcessor) {
-     SetLastError(0xdeadbeef);
-     error=pSetThreadIdealProcessor(curthread,0);
-     if (GetLastError()==ERROR_CALL_NOT_IMPLEMENTED)
-     {
-       win_skip("SetThreadIdealProcessor is not implemented\n");
-       return;
-     }
-     ok(error!=-1, "SetThreadIdealProcessor failed\n");
+    if (pSetThreadIdealProcessor)
+    {
+        SetLastError(0xdeadbeef);
+        error=pSetThreadIdealProcessor(curthread,0);
+        if (GetLastError() != ERROR_CALL_NOT_IMPLEMENTED)
+        {
+            ok(error!=-1, "SetThreadIdealProcessor failed\n");
 
-     if (is_wow64)
-     {
-         SetLastError(0xdeadbeef);
-         error=pSetThreadIdealProcessor(curthread,MAXIMUM_PROCESSORS+1);
-         todo_wine
-         ok(error!=-1, "SetThreadIdealProcessor failed for %u on Wow64\n", MAXIMUM_PROCESSORS+1);
+            if (is_wow64)
+            {
+                SetLastError(0xdeadbeef);
+                error=pSetThreadIdealProcessor(curthread,MAXIMUM_PROCESSORS+1);
+                todo_wine
+                ok(error!=-1, "SetThreadIdealProcessor failed for %u on Wow64\n", MAXIMUM_PROCESSORS+1);
 
-         SetLastError(0xdeadbeef);
-         error=pSetThreadIdealProcessor(curthread,65);
-         ok(error==-1, "SetThreadIdealProcessor succeeded with an illegal processor #\n");
-         ok(GetLastError()==ERROR_INVALID_PARAMETER,
-            "Expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
-     }
-     else
-     {
-         SetLastError(0xdeadbeef);
-         error=pSetThreadIdealProcessor(curthread,MAXIMUM_PROCESSORS+1);
-         ok(error==-1, "SetThreadIdealProcessor succeeded with an illegal processor #\n");
-         ok(GetLastError()==ERROR_INVALID_PARAMETER,
-            "Expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
-     }
+                SetLastError(0xdeadbeef);
+                error=pSetThreadIdealProcessor(curthread,65);
+                ok(error==-1, "SetThreadIdealProcessor succeeded with an illegal processor #\n");
+                ok(GetLastError()==ERROR_INVALID_PARAMETER,
+                   "Expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+            }
+            else
+            {
+                SetLastError(0xdeadbeef);
+                error=pSetThreadIdealProcessor(curthread,MAXIMUM_PROCESSORS+1);
+                ok(error==-1, "SetThreadIdealProcessor succeeded with an illegal processor #\n");
+                ok(GetLastError()==ERROR_INVALID_PARAMETER,
+                   "Expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+            }
 
-     error=pSetThreadIdealProcessor(curthread,MAXIMUM_PROCESSORS);
-     ok(error!=-1, "SetThreadIdealProcessor failed\n");
-   }
+            error=pSetThreadIdealProcessor(curthread,MAXIMUM_PROCESSORS);
+            ok(error!=-1, "SetThreadIdealProcessor failed\n");
+        }
+        else
+            win_skip("SetThreadIdealProcessor is not implemented\n");
+    }
+
+    if (pGetThreadGroupAffinity && pSetThreadGroupAffinity)
+    {
+        GROUP_AFFINITY affinity, affinity_new;
+        NTSTATUS status;
+
+        memset(&affinity, 0, sizeof(affinity));
+        ok(pGetThreadGroupAffinity(curthread, &affinity), "GetThreadGroupAffinity failed\n");
+
+        SetLastError(0xdeadbeef);
+        ok(!pGetThreadGroupAffinity(curthread, NULL), "GetThreadGroupAffinity succeeded\n");
+        ok(GetLastError() == ERROR_INVALID_PARAMETER || broken(GetLastError() == ERROR_NOACCESS), /* Win 7 and 8 */
+           "Expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+        ok(affinity.Group == 0, "Expected group 0 got %u\n", affinity.Group);
+
+        memset(&affinity_new, 0, sizeof(affinity_new));
+        affinity_new.Group = 0;
+        affinity_new.Mask  = affinity.Mask;
+        ok(pSetThreadGroupAffinity(curthread, &affinity_new, &affinity), "SetThreadGroupAffinity failed\n");
+        ok(affinity_new.Mask == affinity.Mask, "Expected old affinity mask %lx, got %lx\n",
+           affinity_new.Mask, affinity.Mask);
+
+        /* show that the "all processors" flag is not supported for SetThreadGroupAffinity */
+        affinity_new.Group = 0;
+        affinity_new.Mask  = ~0u;
+        SetLastError(0xdeadbeef);
+        ok(!pSetThreadGroupAffinity(curthread, &affinity_new, NULL), "SetThreadGroupAffinity succeeded\n");
+        ok(GetLastError() == ERROR_INVALID_PARAMETER,
+           "Expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+
+        affinity_new.Group = 1; /* assumes that you have less than 64 logical processors */
+        affinity_new.Mask  = 0x1;
+        SetLastError(0xdeadbeef);
+        ok(!pSetThreadGroupAffinity(curthread, &affinity_new, NULL), "SetThreadGroupAffinity succeeded\n");
+        ok(GetLastError() == ERROR_INVALID_PARAMETER,
+           "Expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+
+        SetLastError(0xdeadbeef);
+        ok(!pSetThreadGroupAffinity(curthread, NULL, NULL), "SetThreadGroupAffinity succeeded\n");
+        ok(GetLastError() == ERROR_NOACCESS,
+           "Expected ERROR_NOACCESS, got %d\n", GetLastError());
+
+        /* show that the access violation was detected in ntdll */
+        status = pNtSetInformationThread(curthread, ThreadGroupInformation, NULL, sizeof(affinity_new));
+        ok(status == STATUS_ACCESS_VIOLATION,
+           "Expected STATUS_ACCESS_VIOLATION, got %08x\n", status);
+
+        /* restore original mask */
+        affinity_new.Group = 0;
+        affinity_new.Mask  = affinity.Mask;
+        SetLastError(0xdeadbeef);
+        ok(pSetThreadGroupAffinity(curthread, &affinity_new, &affinity), "SetThreadGroupAffinity failed\n");
+        ok(affinity_new.Mask == affinity.Mask, "Expected old affinity mask %lx, got %lx\n",
+           affinity_new.Mask, affinity.Mask);
+    }
+    else
+        win_skip("Get/SetThreadGroupAffinity not available\n");
 }
 
 static VOID test_GetThreadExitCode(void)
@@ -1005,10 +1083,10 @@ static void test_SetThreadContext(void)
     ctx.ContextFlags = CONTEXT_FULL;
     SetLastError(0xdeadbeef);
     ret = GetThreadContext( thread, &ctx );
-    ok( (!ret && (GetLastError() == ERROR_GEN_FAILURE)) ||
+    ok( (!ret && ((GetLastError() == ERROR_GEN_FAILURE) || (GetLastError() == ERROR_ACCESS_DENIED))) ||
         (!ret && broken(GetLastError() == ERROR_INVALID_HANDLE)) || /* win2k */
         broken(ret),   /* 32bit application on NT 5.x 64bit */
-        "got %d with %u (expected FALSE with ERROR_GEN_FAILURE)\n",
+        "got %d with %u (expected FALSE with ERROR_GEN_FAILURE or ERROR_ACCESS_DENIED)\n",
         ret, GetLastError() );
 
     SetLastError(0xdeadbeef);
@@ -1020,6 +1098,46 @@ static void test_SetThreadContext(void)
         ret, GetLastError() );
 
     CloseHandle( thread );
+}
+
+static void test_GetThreadSelectorEntry(void)
+{
+    LDT_ENTRY entry;
+    CONTEXT ctx;
+    DWORD limit;
+    void *base;
+    BOOL ret;
+
+    memset(&ctx, 0x11, sizeof(ctx));
+    ctx.ContextFlags = CONTEXT_SEGMENTS | CONTEXT_CONTROL;
+    ret = GetThreadContext(GetCurrentThread(), &ctx);
+    ok(ret, "GetThreadContext error %u\n", GetLastError());
+    ok(!HIWORD(ctx.SegCs), "expected HIWORD(SegCs) == 0, got %u\n", ctx.SegCs);
+    ok(!HIWORD(ctx.SegDs), "expected HIWORD(SegDs) == 0, got %u\n", ctx.SegDs);
+    ok(!HIWORD(ctx.SegFs), "expected HIWORD(SegFs) == 0, got %u\n", ctx.SegFs);
+
+    ret = GetThreadSelectorEntry(GetCurrentThread(), ctx.SegCs, &entry);
+    ok(ret, "GetThreadSelectorEntry(SegCs) error %u\n", GetLastError());
+    ret = GetThreadSelectorEntry(GetCurrentThread(), ctx.SegDs, &entry);
+    ok(ret, "GetThreadSelectorEntry(SegDs) error %u\n", GetLastError());
+
+    memset(&entry, 0x11, sizeof(entry));
+    ret = GetThreadSelectorEntry(GetCurrentThread(), ctx.SegFs, &entry);
+    ok(ret, "GetThreadSelectorEntry(SegFs) error %u\n", GetLastError());
+    entry.HighWord.Bits.Type &= ~1; /* ignore accessed bit */
+
+    base  = (void *)((entry.HighWord.Bits.BaseHi << 24) | (entry.HighWord.Bits.BaseMid << 16) | entry.BaseLow);
+    limit = (entry.HighWord.Bits.LimitHi << 16) | entry.LimitLow;
+
+    ok(base == NtCurrentTeb(),                "expected %p, got %p\n", NtCurrentTeb(), base);
+    ok(limit == 0x0fff || limit == 0x4000,    "expected 0x0fff or 0x4000, got %#x\n", limit);
+    ok(entry.HighWord.Bits.Type == 0x12,      "expected 0x12, got %#x\n", entry.HighWord.Bits.Type);
+    ok(entry.HighWord.Bits.Dpl == 3,          "expected 3, got %u\n", entry.HighWord.Bits.Dpl);
+    ok(entry.HighWord.Bits.Pres == 1,         "expected 1, got %u\n", entry.HighWord.Bits.Pres);
+    ok(entry.HighWord.Bits.Sys == 0,          "expected 0, got %u\n", entry.HighWord.Bits.Sys);
+    ok(entry.HighWord.Bits.Reserved_0 == 0,   "expected 0, got %u\n", entry.HighWord.Bits.Reserved_0);
+    ok(entry.HighWord.Bits.Default_Big == 1,  "expected 1, got %u\n", entry.HighWord.Bits.Default_Big);
+    ok(entry.HighWord.Bits.Granularity == 0,  "expected 0, got %u\n", entry.HighWord.Bits.Granularity);
 }
 
 #endif  /* __i386__ */
@@ -1127,33 +1245,64 @@ static void test_RegisterWaitForSingleObject(void)
 
     ret = pUnregisterWait(wait_handle);
     ok(ret, "UnregisterWait failed with error %d\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = pUnregisterWait(NULL);
+    ok(!ret, "Expected UnregisterWait to fail\n");
+    ok(GetLastError() == ERROR_INVALID_HANDLE,
+       "Expected ERROR_INVALID_HANDLE, got %d\n", GetLastError());
 }
 
-static DWORD TLS_main;
-static DWORD TLS_index0, TLS_index1;
+static DWORD LS_main;
+static DWORD LS_index0, LS_index1;
+static DWORD LS_OutOfIndexesValue;
 
-static DWORD WINAPI TLS_InheritanceProc(LPVOID p)
+/* Function pointers to the FLS/TLS functions to test in LS_ThreadProc() */
+static DWORD (WINAPI *LS_AllocFunc)(void);
+static PVOID (WINAPI *LS_GetValueFunc)(DWORD);
+static BOOL (WINAPI *LS_SetValueFunc)(DWORD, PVOID);
+static BOOL (WINAPI *LS_FreeFunc)(DWORD);
+
+/* Names of the functions tested in LS_ThreadProc(), for error messages */
+static const char* LS_AllocFuncName = "";
+static const char* LS_GetValueFuncName = "";
+static const char* LS_SetValueFuncName = "";
+static const char* LS_FreeFuncName = "";
+
+/* FLS entry points, dynamically loaded in platforms that support them */
+static DWORD (WINAPI *pFlsAlloc)(PFLS_CALLBACK_FUNCTION);
+static BOOL (WINAPI *pFlsFree)(DWORD);
+static PVOID (WINAPI *pFlsGetValue)(DWORD);
+static BOOL (WINAPI *pFlsSetValue)(DWORD,PVOID);
+
+/* A thunk function to make FlsAlloc compatible with the signature of TlsAlloc */
+static DWORD WINAPI FLS_AllocFuncThunk(void)
 {
-  /* We should NOT inherit the TLS values from our parent or from the
+  return pFlsAlloc(NULL);
+}
+
+static DWORD WINAPI LS_InheritanceProc(LPVOID p)
+{
+  /* We should NOT inherit the FLS/TLS values from our parent or from the
      main thread.  */
   LPVOID val;
 
-  val = TlsGetValue(TLS_main);
-  ok(val == NULL, "TLS inheritance failed\n");
+  val = LS_GetValueFunc(LS_main);
+  ok(val == NULL, "%s inheritance failed\n", LS_GetValueFuncName);
 
-  val = TlsGetValue(TLS_index0);
-  ok(val == NULL, "TLS inheritance failed\n");
+  val = LS_GetValueFunc(LS_index0);
+  ok(val == NULL, "%s inheritance failed\n", LS_GetValueFuncName);
 
-  val = TlsGetValue(TLS_index1);
-  ok(val == NULL, "TLS inheritance failed\n");
+  val = LS_GetValueFunc(LS_index1);
+  ok(val == NULL, "%s inheritance failed\n", LS_GetValueFuncName);
 
   return 0;
 }
 
-/* Basic TLS usage test.  Make sure we can create slots and the values we
-   store in them are separate among threads.  Also test TLS value
-   inheritance with TLS_InheritanceProc.  */
-static DWORD WINAPI TLS_ThreadProc(LPVOID p)
+/* Basic FLS/TLS usage test.  Make sure we can create slots and the values we
+   store in them are separate among threads.  Also test FLS/TLS value
+   inheritance with LS_InheritanceProc.  */
+static DWORD WINAPI LS_ThreadProc(LPVOID p)
 {
   LONG_PTR id = (LONG_PTR) p;
   LPVOID val;
@@ -1161,80 +1310,80 @@ static DWORD WINAPI TLS_ThreadProc(LPVOID p)
 
   if (sync_threads_and_run_one(0, id))
   {
-    TLS_index0 = TlsAlloc();
-    ok(TLS_index0 != TLS_OUT_OF_INDEXES, "TlsAlloc failed\n");
+    LS_index0 = LS_AllocFunc();
+    ok(LS_index0 != LS_OutOfIndexesValue, "%s failed\n", LS_AllocFuncName);
   }
   resync_after_run();
 
   if (sync_threads_and_run_one(1, id))
   {
-    TLS_index1 = TlsAlloc();
-    ok(TLS_index1 != TLS_OUT_OF_INDEXES, "TlsAlloc failed\n");
+    LS_index1 = LS_AllocFunc();
+    ok(LS_index1 != LS_OutOfIndexesValue, "%s failed\n", LS_AllocFuncName);
 
     /* Slot indices should be different even if created in different
        threads.  */
-    ok(TLS_index0 != TLS_index1, "TlsAlloc failed\n");
+    ok(LS_index0 != LS_index1, "%s failed\n", LS_AllocFuncName);
 
     /* Both slots should be initialized to NULL */
-    val = TlsGetValue(TLS_index0);
-    ok(GetLastError() == ERROR_SUCCESS, "TlsGetValue failed\n");
-    ok(val == NULL, "TLS slot not initialized correctly\n");
+    val = LS_GetValueFunc(LS_index0);
+    ok(GetLastError() == ERROR_SUCCESS, "%s failed\n", LS_GetValueFuncName);
+    ok(val == NULL, "Slot not initialized correctly\n");
 
-    val = TlsGetValue(TLS_index1);
-    ok(GetLastError() == ERROR_SUCCESS, "TlsGetValue failed\n");
-    ok(val == NULL, "TLS slot not initialized correctly\n");
+    val = LS_GetValueFunc(LS_index1);
+    ok(GetLastError() == ERROR_SUCCESS, "%s failed\n", LS_GetValueFuncName);
+    ok(val == NULL, "Slot not initialized correctly\n");
   }
   resync_after_run();
 
   if (sync_threads_and_run_one(0, id))
   {
-    val = TlsGetValue(TLS_index0);
-    ok(GetLastError() == ERROR_SUCCESS, "TlsGetValue failed\n");
-    ok(val == NULL, "TLS slot not initialized correctly\n");
+    val = LS_GetValueFunc(LS_index0);
+    ok(GetLastError() == ERROR_SUCCESS, "%s failed\n", LS_GetValueFuncName);
+    ok(val == NULL, "Slot not initialized correctly\n");
 
-    val = TlsGetValue(TLS_index1);
-    ok(GetLastError() == ERROR_SUCCESS, "TlsGetValue failed\n");
-    ok(val == NULL, "TLS slot not initialized correctly\n");
+    val = LS_GetValueFunc(LS_index1);
+    ok(GetLastError() == ERROR_SUCCESS, "%s failed\n", LS_GetValueFuncName);
+    ok(val == NULL, "Slot not initialized correctly\n");
 
-    ret = TlsSetValue(TLS_index0, (LPVOID) 1);
-    ok(ret, "TlsSetValue failed\n");
+    ret = LS_SetValueFunc(LS_index0, (LPVOID) 1);
+    ok(ret, "%s failed\n", LS_SetValueFuncName);
 
-    ret = TlsSetValue(TLS_index1, (LPVOID) 2);
-    ok(ret, "TlsSetValue failed\n");
+    ret = LS_SetValueFunc(LS_index1, (LPVOID) 2);
+    ok(ret, "%s failed\n", LS_SetValueFuncName);
 
-    val = TlsGetValue(TLS_index0);
-    ok(GetLastError() == ERROR_SUCCESS, "TlsGetValue failed\n");
-    ok(val == (LPVOID) 1, "TLS slot not initialized correctly\n");
+    val = LS_GetValueFunc(LS_index0);
+    ok(GetLastError() == ERROR_SUCCESS, "%s failed\n", LS_GetValueFuncName);
+    ok(val == (LPVOID) 1, "Slot not initialized correctly\n");
 
-    val = TlsGetValue(TLS_index1);
-    ok(GetLastError() == ERROR_SUCCESS, "TlsGetValue failed\n");
-    ok(val == (LPVOID) 2, "TLS slot not initialized correctly\n");
+    val = LS_GetValueFunc(LS_index1);
+    ok(GetLastError() == ERROR_SUCCESS, "%s failed\n", LS_GetValueFuncName);
+    ok(val == (LPVOID) 2, "Slot not initialized correctly\n");
   }
   resync_after_run();
 
   if (sync_threads_and_run_one(1, id))
   {
-    val = TlsGetValue(TLS_index0);
-    ok(GetLastError() == ERROR_SUCCESS, "TlsGetValue failed\n");
-    ok(val == NULL, "TLS slot not initialized correctly\n");
+    val = LS_GetValueFunc(LS_index0);
+    ok(GetLastError() == ERROR_SUCCESS, "%s failed\n", LS_GetValueFuncName);
+    ok(val == NULL, "Slot not initialized correctly\n");
 
-    val = TlsGetValue(TLS_index1);
-    ok(GetLastError() == ERROR_SUCCESS, "TlsGetValue failed\n");
-    ok(val == NULL, "TLS slot not initialized correctly\n");
+    val = LS_GetValueFunc(LS_index1);
+    ok(GetLastError() == ERROR_SUCCESS, "%s failed\n", LS_GetValueFuncName);
+    ok(val == NULL, "Slot not initialized correctly\n");
 
-    ret = TlsSetValue(TLS_index0, (LPVOID) 3);
-    ok(ret, "TlsSetValue failed\n");
+    ret = LS_SetValueFunc(LS_index0, (LPVOID) 3);
+    ok(ret, "%s failed\n", LS_SetValueFuncName);
 
-    ret = TlsSetValue(TLS_index1, (LPVOID) 4);
-    ok(ret, "TlsSetValue failed\n");
+    ret = LS_SetValueFunc(LS_index1, (LPVOID) 4);
+    ok(ret, "%s failed\n", LS_SetValueFuncName);
 
-    val = TlsGetValue(TLS_index0);
-    ok(GetLastError() == ERROR_SUCCESS, "TlsGetValue failed\n");
-    ok(val == (LPVOID) 3, "TLS slot not initialized correctly\n");
+    val = LS_GetValueFunc(LS_index0);
+    ok(GetLastError() == ERROR_SUCCESS, "%s failed\n", LS_GetValueFuncName);
+    ok(val == (LPVOID) 3, "Slot not initialized correctly\n");
 
-    val = TlsGetValue(TLS_index1);
-    ok(GetLastError() == ERROR_SUCCESS, "TlsGetValue failed\n");
-    ok(val == (LPVOID) 4, "TLS slot not initialized correctly\n");
+    val = LS_GetValueFunc(LS_index1);
+    ok(GetLastError() == ERROR_SUCCESS, "%s failed\n", LS_GetValueFuncName);
+    ok(val == (LPVOID) 4, "Slot not initialized correctly\n");
   }
   resync_after_run();
 
@@ -1243,36 +1392,36 @@ static DWORD WINAPI TLS_ThreadProc(LPVOID p)
     HANDLE thread;
     DWORD waitret, tid;
 
-    val = TlsGetValue(TLS_index0);
-    ok(GetLastError() == ERROR_SUCCESS, "TlsGetValue failed\n");
-    ok(val == (LPVOID) 1, "TLS slot not initialized correctly\n");
+    val = LS_GetValueFunc(LS_index0);
+    ok(GetLastError() == ERROR_SUCCESS, "%s failed\n", LS_GetValueFuncName);
+    ok(val == (LPVOID) 1, "Slot not initialized correctly\n");
 
-    val = TlsGetValue(TLS_index1);
-    ok(GetLastError() == ERROR_SUCCESS, "TlsGetValue failed\n");
-    ok(val == (LPVOID) 2, "TLS slot not initialized correctly\n");
+    val = LS_GetValueFunc(LS_index1);
+    ok(GetLastError() == ERROR_SUCCESS, "%s failed\n", LS_GetValueFuncName);
+    ok(val == (LPVOID) 2, "Slot not initialized correctly\n");
 
-    thread = CreateThread(NULL, 0, TLS_InheritanceProc, 0, 0, &tid);
+    thread = CreateThread(NULL, 0, LS_InheritanceProc, 0, 0, &tid);
     ok(thread != NULL, "CreateThread failed\n");
     waitret = WaitForSingleObject(thread, 60000);
     ok(waitret == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
     CloseHandle(thread);
 
-    ret = TlsFree(TLS_index0);
-    ok(ret, "TlsFree failed\n");
+    ret = LS_FreeFunc(LS_index0);
+    ok(ret, "%s failed\n", LS_FreeFuncName);
   }
   resync_after_run();
 
   if (sync_threads_and_run_one(1, id))
   {
-    ret = TlsFree(TLS_index1);
-    ok(ret, "TlsFree failed\n");
+    ret = LS_FreeFunc(LS_index1);
+    ok(ret, "%s failed\n", LS_FreeFuncName);
   }
   resync_after_run();
 
   return 0;
 }
 
-static void test_TLS(void)
+static void run_LS_tests(void)
 {
   HANDLE threads[2];
   LONG_PTR i;
@@ -1281,17 +1430,17 @@ static void test_TLS(void)
 
   init_thread_sync_helpers();
 
-  /* Allocate a TLS slot in the main thread to test for inheritance.  */
-  TLS_main = TlsAlloc();
-  ok(TLS_main != TLS_OUT_OF_INDEXES, "TlsAlloc failed\n");
-  suc = TlsSetValue(TLS_main, (LPVOID) 4114);
-  ok(suc, "TlsSetValue failed\n");
+  /* Allocate a slot in the main thread to test for inheritance.  */
+  LS_main = LS_AllocFunc();
+  ok(LS_main != LS_OutOfIndexesValue, "%s failed\n", LS_AllocFuncName);
+  suc = LS_SetValueFunc(LS_main, (LPVOID) 4114);
+  ok(suc, "%s failed\n", LS_SetValueFuncName);
 
   for (i = 0; i < 2; ++i)
   {
     DWORD tid;
 
-    threads[i] = CreateThread(NULL, 0, TLS_ThreadProc, (LPVOID) i, 0, &tid);
+    threads[i] = CreateThread(NULL, 0, LS_ThreadProc, (LPVOID) i, 0, &tid);
     ok(threads[i] != NULL, "CreateThread failed\n");
   }
 
@@ -1301,9 +1450,49 @@ static void test_TLS(void)
   for (i = 0; i < 2; ++i)
     CloseHandle(threads[i]);
 
-  suc = TlsFree(TLS_main);
-  ok(suc, "TlsFree failed\n");
+  suc = LS_FreeFunc(LS_main);
+  ok(suc, "%s failed\n", LS_FreeFuncName);
   cleanup_thread_sync_helpers();
+}
+
+static void test_TLS(void)
+{
+  LS_OutOfIndexesValue = TLS_OUT_OF_INDEXES;
+
+  LS_AllocFunc = &TlsAlloc;
+  LS_GetValueFunc = &TlsGetValue;
+  LS_SetValueFunc = &TlsSetValue;
+  LS_FreeFunc = &TlsFree;
+
+  LS_AllocFuncName = "TlsAlloc";
+  LS_GetValueFuncName = "TlsGetValue";
+  LS_SetValueFuncName = "TlsSetValue";
+  LS_FreeFuncName = "TlsFree";
+
+  run_LS_tests();
+}
+
+static void test_FLS(void)
+{
+  if (!pFlsAlloc || !pFlsFree || !pFlsGetValue || !pFlsSetValue)
+  {
+     win_skip("Fiber Local Storage not supported\n");
+     return;
+  }
+
+  LS_OutOfIndexesValue = FLS_OUT_OF_INDEXES;
+
+  LS_AllocFunc = &FLS_AllocFuncThunk;
+  LS_GetValueFunc = pFlsGetValue;
+  LS_SetValueFunc = pFlsSetValue;
+  LS_FreeFunc = pFlsFree;
+
+  LS_AllocFuncName = "FlsAlloc";
+  LS_GetValueFuncName = "FlsGetValue";
+  LS_SetValueFuncName = "FlsSetValue";
+  LS_FreeFuncName = "FlsFree";
+
+  run_LS_tests();
 }
 
 static void test_ThreadErrorMode(void)
@@ -1399,16 +1588,25 @@ static void test_ThreadErrorMode(void)
     pSetThreadErrorMode(oldmode, NULL);
 }
 
-#if defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__))
+#if (defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__))) || (defined(_MSC_VER) && defined(__i386__))
 static inline void set_fpu_cw(WORD cw)
 {
+#ifdef _MSC_VER
+    __asm { fnclex }
+    __asm { fldcw [cw] }
+#else
     __asm__ volatile ("fnclex; fldcw %0" : : "m" (cw));
+#endif
 }
 
 static inline WORD get_fpu_cw(void)
 {
     WORD cw = 0;
+#ifdef _MSC_VER
+    __asm { fnstcw [cw] }
+#else
     __asm__ volatile ("fnstcw %0" : "=m" (cw));
+#endif
     return cw;
 }
 
@@ -1557,7 +1755,7 @@ static void test_thread_actctx(void)
 
     handle = (void*)0xdeadbeef;
     b = pGetCurrentActCtx(&handle);
-    ok(b, "GetCurentActCtx failed: %u\n", GetLastError());
+    ok(b, "GetCurrentActCtx failed: %u\n", GetLastError());
     ok(handle == 0, "active context %p\n", handle);
 
     /* without active context */
@@ -1576,7 +1774,7 @@ static void test_thread_actctx(void)
 
     handle = 0;
     b = pGetCurrentActCtx(&handle);
-    ok(b, "GetCurentActCtx failed: %u\n", GetLastError());
+    ok(b, "GetCurrentActCtx failed: %u\n", GetLastError());
     ok(handle != 0, "no active context\n");
     pReleaseActCtx(handle);
 
@@ -1627,8 +1825,8 @@ static void test_threadpool(void)
     int workcalled = 0;
 
     if (!pCreateThreadpool) {
-        todo_wine win_skip("thread pool apis not supported.\n");
-	return;
+        win_skip("thread pool apis not supported.\n");
+        return;
     }
 
     work = pCreateThreadpoolWork(threadpool_workcallback, &workcalled, NULL);
@@ -1640,7 +1838,8 @@ static void test_threadpool(void)
     ok (workcalled == 1, "expected work to be called once, got %d\n", workcalled);
 
     pool = pCreateThreadpool(NULL);
-    todo_wine ok (pool != NULL, "CreateThreadpool failed\n");
+    ok (pool != NULL, "CreateThreadpool failed\n");
+    pCloseThreadpool(pool);
 }
 
 static void test_reserved_tls(void)
@@ -1680,9 +1879,113 @@ static void test_reserved_tls(void)
     }
 }
 
+static void test_thread_info(void)
+{
+    char buf[4096];
+    static const ULONG info_size[] =
+    {
+        sizeof(THREAD_BASIC_INFORMATION), /* ThreadBasicInformation */
+        sizeof(KERNEL_USER_TIMES), /* ThreadTimes */
+        sizeof(ULONG), /* ThreadPriority */
+        sizeof(ULONG), /* ThreadBasePriority */
+        sizeof(ULONG_PTR), /* ThreadAffinityMask */
+        sizeof(HANDLE), /* ThreadImpersonationToken */
+        sizeof(THREAD_DESCRIPTOR_INFORMATION), /* ThreadDescriptorTableEntry */
+        sizeof(BOOLEAN), /* ThreadEnableAlignmentFaultFixup */
+        0, /* ThreadEventPair_Reusable */
+        sizeof(ULONG_PTR), /* ThreadQuerySetWin32StartAddress */
+        sizeof(ULONG), /* ThreadZeroTlsCell */
+        sizeof(LARGE_INTEGER), /* ThreadPerformanceCount */
+        sizeof(ULONG), /* ThreadAmILastThread */
+        sizeof(ULONG), /* ThreadIdealProcessor */
+        sizeof(ULONG), /* ThreadPriorityBoost */
+        sizeof(ULONG_PTR), /* ThreadSetTlsArrayAddress */
+        sizeof(ULONG), /* ThreadIsIoPending */
+        sizeof(BOOLEAN), /* ThreadHideFromDebugger */
+        /* FIXME: Add remaining classes */
+    };
+    HANDLE thread;
+    ULONG i, status, ret_len;
+
+    if (!pOpenThread)
+    {
+        win_skip("OpenThread is not available on this platform\n");
+        return;
+    }
+
+    if (!pNtQueryInformationThread)
+    {
+        win_skip("NtQueryInformationThread is not available on this platform\n");
+        return;
+    }
+
+    thread = pOpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, GetCurrentThreadId());
+    if (!thread)
+    {
+        win_skip("THREAD_QUERY_LIMITED_INFORMATION is not supported on this platform\n");
+        return;
+    }
+
+    for (i = 0; i < sizeof(info_size)/sizeof(info_size[0]); i++)
+    {
+        memset(buf, 0, sizeof(buf));
+
+#ifdef __i386__
+        if (i == ThreadDescriptorTableEntry)
+        {
+            CONTEXT ctx;
+            THREAD_DESCRIPTOR_INFORMATION *tdi = (void *)buf;
+
+            ctx.ContextFlags = CONTEXT_SEGMENTS;
+            GetThreadContext(GetCurrentThread(), &ctx);
+            tdi->Selector = ctx.SegDs;
+        }
+#endif
+        ret_len = 0;
+        status = pNtQueryInformationThread(thread, i, buf, info_size[i], &ret_len);
+        if (status == STATUS_NOT_IMPLEMENTED) continue;
+        if (status == STATUS_INVALID_INFO_CLASS) continue;
+        if (status == STATUS_UNSUCCESSFUL) continue;
+
+        switch (i)
+        {
+        case ThreadBasicInformation:
+        case ThreadAmILastThread:
+        case ThreadPriorityBoost:
+            ok(status == STATUS_SUCCESS, "for info %u expected STATUS_SUCCESS, got %08x (ret_len %u)\n", i, status, ret_len);
+            break;
+
+#ifdef __i386__
+        case ThreadDescriptorTableEntry:
+            ok(status == STATUS_SUCCESS || broken(status == STATUS_ACCESS_DENIED) /* testbot VM is broken */,
+               "for info %u expected STATUS_SUCCESS, got %08x (ret_len %u)\n", i, status, ret_len);
+            break;
+#endif
+
+        case ThreadTimes:
+todo_wine
+            ok(status == STATUS_SUCCESS, "for info %u expected STATUS_SUCCESS, got %08x (ret_len %u)\n", i, status, ret_len);
+            break;
+
+        case ThreadAffinityMask:
+        case ThreadQuerySetWin32StartAddress:
+todo_wine
+            ok(status == STATUS_ACCESS_DENIED, "for info %u expected STATUS_ACCESS_DENIED, got %08x (ret_len %u)\n", i, status, ret_len);
+            break;
+
+        default:
+            ok(status == STATUS_ACCESS_DENIED, "for info %u expected STATUS_ACCESS_DENIED, got %08x (ret_len %u)\n", i, status, ret_len);
+            break;
+        }
+    }
+
+    CloseHandle(thread);
+}
+
 static void init_funcs(void)
 {
     HMODULE hKernel32 = GetModuleHandleA("kernel32.dll");
+    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
 
 /* Neither Cygwin nor mingW export OpenThread, so do a dynamic check
    so that the compile passes */
@@ -1705,27 +2008,38 @@ static void init_funcs(void)
     X(ReleaseActCtx);
 
     X(CreateThreadpool);
+    X(CloseThreadpool);
     X(CreateThreadpoolWork);
     X(SubmitThreadpoolWork);
     X(WaitForThreadpoolWorkCallbacks);
     X(CloseThreadpoolWork);
+
+    X(GetThreadGroupAffinity);
+    X(SetThreadGroupAffinity);
+
+    X(FlsAlloc);
+    X(FlsFree);
+    X(FlsSetValue);
+    X(FlsGetValue);
+#undef X
+
+#define X(f) p##f = (void*)GetProcAddress(ntdll, #f)
+   if (ntdll)
+   {
+       X(NtQueryInformationThread);
+       X(RtlGetThreadErrorMode);
+       X(NtSetInformationThread);
+   }
 #undef X
 }
 
 START_TEST(thread)
 {
-   HINSTANCE ntdll;
    int argc;
    char **argv;
    argc = winetest_get_mainargs( &argv );
 
    init_funcs();
-
-   ntdll=GetModuleHandleA("ntdll.dll");
-   if (ntdll)
-   {
-       pRtlGetThreadErrorMode=(void *)GetProcAddress(ntdll,"RtlGetThreadErrorMode");
-   }
 
    if (argc >= 3)
    {
@@ -1753,6 +2067,7 @@ START_TEST(thread)
        return;
    }
 
+   test_thread_info();
    test_reserved_tls();
    test_CreateRemoteThread();
    test_CreateThread_basic();
@@ -1766,12 +2081,14 @@ START_TEST(thread)
    test_GetThreadExitCode();
 #ifdef __i386__
    test_SetThreadContext();
+   test_GetThreadSelectorEntry();
 #endif
    test_QueueUserWorkItem();
    test_RegisterWaitForSingleObject();
    test_TLS();
+   test_FLS();
    test_ThreadErrorMode();
-#if defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__))
+#if (defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__))) || (defined(_MSC_VER) && defined(__i386__))
    test_thread_fpu_cw();
 #endif
    test_thread_actctx();

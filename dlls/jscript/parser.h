@@ -62,6 +62,10 @@ static inline void *parser_alloc_tmp(parser_ctx_t *ctx, DWORD size)
     return heap_pool_alloc(&ctx->script->tmp_heap, size);
 }
 
+BOOL is_identifier_char(WCHAR) DECLSPEC_HIDDEN;
+BOOL unescape(WCHAR*) DECLSPEC_HIDDEN;
+HRESULT parse_decimal(const WCHAR**,const WCHAR*,double*) DECLSPEC_HIDDEN;
+
 typedef enum {
     LT_DOUBLE,
     LT_STRING,
@@ -285,10 +289,12 @@ struct _source_elements_t {
 typedef struct _function_expression_t {
     expression_t expr;
     const WCHAR *identifier;
+    const WCHAR *event_target;
     parameter_t *parameter_list;
     source_elements_t *source_elements;
     const WCHAR *src_str;
     DWORD src_len;
+    unsigned func_id;
 
     struct _function_expression_t *next; /* for compiler */
 } function_expression_t;

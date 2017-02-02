@@ -21,7 +21,6 @@
 
 #define COBJMACROS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include <stdarg.h>
 
@@ -122,7 +121,6 @@ typedef struct
 {
     msi_dialog* dialog;
     msi_control *parent;
-    DWORD       attributes;
     LPWSTR      propval;
 } radio_button_group_descr;
 
@@ -496,42 +494,17 @@ static MSIRECORD *msi_get_binary_record( MSIDATABASE *db, LPCWSTR name )
     return MSI_QueryGetRecord( db, query, name );
 }
 
-static LPWSTR msi_create_tmp_path(void)
-{
-    WCHAR tmp[MAX_PATH];
-    LPWSTR path = NULL;
-    DWORD len, r;
-
-    r = GetTempPathW( MAX_PATH, tmp );
-    if( !r )
-        return path;
-    len = lstrlenW( tmp ) + 20;
-    path = msi_alloc( len * sizeof (WCHAR) );
-    if( path )
-    {
-        r = GetTempFileNameW( tmp, szMsi, 0, path );
-        if (!r)
-        {
-            msi_free( path );
-            path = NULL;
-        }
-    }
-    return path;
-}
-
 static HANDLE msi_load_image( MSIDATABASE *db, LPCWSTR name, UINT type,
                               UINT cx, UINT cy, UINT flags )
 {
-    MSIRECORD *rec = NULL;
+    MSIRECORD *rec;
     HANDLE himage = NULL;
     LPWSTR tmp;
     UINT r;
 
     TRACE("%p %s %u %u %08x\n", db, debugstr_w(name), cx, cy, flags);
 
-    tmp = msi_create_tmp_path();
-    if( !tmp )
-        return himage;
+    if (!(tmp = msi_create_temp_file( db ))) return NULL;
 
     rec = msi_get_binary_record( db, name );
     if( rec )
@@ -579,6 +552,17 @@ static void msi_dialog_update_controls( msi_dialog *dialog, LPCWSTR property )
     LIST_FOR_EACH_ENTRY( control, &dialog->controls, msi_control, entry )
     {
         if ( control->property && !strcmpW( control->property, property ) && control->update )
+            control->update( dialog, control );
+    }
+}
+
+static void msi_dialog_update_all_controls( msi_dialog *dialog )
+{
+    msi_control *control;
+
+    LIST_FOR_EACH_ENTRY( control, &dialog->controls, msi_control, entry )
+    {
+        if ( control->property && control->update )
             control->update( dialog, control );
     }
 }
@@ -720,11 +704,13 @@ static void event_subscribe( msi_dialog *dialog, const WCHAR *event, const WCHAR
 {
     struct subscriber *sub;
 
-    TRACE("event %s control %s attribute %s\n", debugstr_w(event), debugstr_w(control), debugstr_w(attribute));
+    TRACE("dialog %s event %s control %s attribute %s\n", debugstr_w(dialog->name), debugstr_w(event),
+          debugstr_w(control), debugstr_w(attribute));
 
     LIST_FOR_EACH_ENTRY( sub, &dialog->package->subscriptions, struct subscriber, entry )
     {
-        if (!strcmpiW( sub->event, event ) &&
+        if (sub->dialog == dialog &&
+            !strcmpiW( sub->event, event ) &&
             !strcmpiW( sub->control, control ) &&
             !strcmpiW( sub->attribute, attribute ))
         {
@@ -2256,6 +2242,7 @@ static UINT msi_dialog_pathedit_control( msi_dialog *dialog, MSIRECORD *rec )
     control->attributes = MSI_RecordGetInteger( rec, 8 );
     prop = MSI_RecordGetString( rec, 9 );
     control->property = msi_dialog_dup_property( dialog, prop, FALSE );
+    control->update = msi_dialog_update_pathedit;
 
     info->dialog = dialog;
     info->control = control;
@@ -2287,15 +2274,10 @@ static UINT msi_dialog_create_radiobutton( MSIRECORD *rec, LPVOID param )
     msi_dialog *dialog = group->dialog;
     msi_control *control;
     LPCWSTR prop, text, name;
-    DWORD style, attributes = group->attributes;
+    DWORD style = WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTORADIOBUTTON | BS_MULTILINE;
 
-    style = WS_CHILD | BS_AUTORADIOBUTTON | BS_MULTILINE | WS_TABSTOP;
     name = MSI_RecordGetString( rec, 3 );
     text = MSI_RecordGetString( rec, 8 );
-    if( attributes & msidbControlAttributesVisible )
-        style |= WS_VISIBLE;
-    if( ~attributes & msidbControlAttributesEnabled )
-        style |= WS_DISABLED;
 
     control = dialog_create_window( dialog, rec, 0, szButton, name, text, style,
                                     group->parent->hwnd );
@@ -2358,6 +2340,10 @@ static UINT msi_dialog_radiogroup_control( msi_dialog *dialog, MSIRECORD *rec )
     TRACE("%p %p %s\n", dialog, rec, debugstr_w( prop ));
 
     attr = MSI_RecordGetInteger( rec, 8 );
+    if (attr & msidbControlAttributesVisible)
+        style |= WS_VISIBLE;
+    if (~attr & msidbControlAttributesEnabled)
+        style |= WS_DISABLED;
     if (attr & msidbControlAttributesHasBorder)
         style |= BS_GROUPBOX;
     else
@@ -2387,7 +2373,6 @@ static UINT msi_dialog_radiogroup_control( msi_dialog *dialog, MSIRECORD *rec )
 
     group.dialog = dialog;
     group.parent = control;
-    group.attributes = MSI_RecordGetInteger( rec, 8 );
     group.propval = msi_dup_property( dialog->package->db, control->property );
 
     r = MSI_IterateRecords( view, 0, msi_dialog_create_radiobutton, &group );
@@ -2720,7 +2705,7 @@ static UINT msi_dialog_selection_tree( msi_dialog *dialog, MSIRECORD *rec )
 
     /* create the treeview control */
     style = TVS_HASLINES | TVS_HASBUTTONS | TVS_LINESATROOT;
-    style |= WS_GROUP | WS_VSCROLL;
+    style |= WS_GROUP | WS_VSCROLL | WS_TABSTOP;
     control = msi_dialog_add_control( dialog, rec, WC_TREEVIEWW, style );
     if (!control)
     {
@@ -3624,7 +3609,7 @@ static void msi_dialog_adjust_dialog_pos( msi_dialog *dialog, MSIRECORD *rec, LP
     dialog->size.cx = sz.cx;
     dialog->size.cy = sz.cy;
 
-    TRACE("%u %u %u %u\n", pos->left, pos->top, pos->right, pos->bottom);
+    TRACE("%s\n", wine_dbgstr_rect(pos));
 
     style = GetWindowLongPtrW( dialog->hwnd, GWL_STYLE );
     AdjustWindowRect( pos, style, FALSE );
@@ -3693,8 +3678,11 @@ static LRESULT msi_dialog_oncreate( HWND hwnd, LPCREATESTRUCTW cs )
     if (!dialog->default_font)
     {
         dialog->default_font = strdupW(dfv);
-        msiobj_release( &rec->hdr );
-        if (!dialog->default_font) return -1;
+        if (!dialog->default_font)
+        {
+            msiobj_release( &rec->hdr );
+            return -1;
+        }
     }
 
     title = msi_get_deformatted_field( dialog->package, rec, 7 );
@@ -4414,7 +4402,11 @@ static UINT event_spawn_dialog( msi_dialog *dialog, const WCHAR *argument )
 {
     /* don't destroy a modeless dialogs that might be our parent */
     event_do_dialog( dialog->package, argument, dialog, FALSE );
-    if (dialog->package->CurrentInstallState != ERROR_SUCCESS) msi_dialog_end_dialog( dialog );
+    if (dialog->package->CurrentInstallState != ERROR_SUCCESS)
+        msi_dialog_end_dialog( dialog );
+    else
+        msi_dialog_update_all_controls(dialog);
+
     return ERROR_SUCCESS;
 }
 

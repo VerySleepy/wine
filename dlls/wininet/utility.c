@@ -125,32 +125,13 @@ time_t ConvertTimeString(LPCWSTR asctime)
 }
 
 
-BOOL GetAddress(LPCWSTR lpszServerName, INTERNET_PORT nServerPort,
-	struct sockaddr *psa, socklen_t *sa_len)
+BOOL GetAddress(const WCHAR *name, INTERNET_PORT port, struct sockaddr *psa, int *sa_len, char *addr_str)
 {
-    struct addrinfo *res, hints;
-    WCHAR *found;
-    char *name;
-    int len, sz;
+    ADDRINFOW *res, hints;
+    void *addr = NULL;
     int ret;
 
-    TRACE("%s\n", debugstr_w(lpszServerName));
-
-    /* Validate server name first
-     * Check if there is something like
-     * pinger.macromedia.com:80
-     * if yes, eliminate the :80....
-     */
-    found = strchrW(lpszServerName, ':');
-    if (found)
-        len = found - lpszServerName;
-    else
-        len = strlenW(lpszServerName);
-
-    sz = WideCharToMultiByte( CP_UNIXCP, 0, lpszServerName, len, NULL, 0, NULL, NULL );
-    if (!(name = heap_alloc(sz + 1))) return FALSE;
-    WideCharToMultiByte( CP_UNIXCP, 0, lpszServerName, len, name, sz, NULL, NULL );
-    name[sz] = 0;
+    TRACE("%s\n", debugstr_w(name));
 
     memset( &hints, 0, sizeof(hints) );
     /* Prefer IPv4 to IPv6 addresses, since some servers do not listen on
@@ -158,23 +139,22 @@ BOOL GetAddress(LPCWSTR lpszServerName, INTERNET_PORT nServerPort,
      */
     hints.ai_family = AF_INET;
 
-    ret = getaddrinfo( name, NULL, &hints, &res );
+    ret = GetAddrInfoW(name, NULL, &hints, &res);
     if (ret != 0)
     {
-        TRACE("failed to get IPv4 address of %s, retrying with IPv6\n", debugstr_w(lpszServerName));
+        TRACE("failed to get IPv4 address of %s, retrying with IPv6\n", debugstr_w(name));
         hints.ai_family = AF_INET6;
-        ret = getaddrinfo( name, NULL, &hints, &res );
+        ret = GetAddrInfoW(name, NULL, &hints, &res);
     }
-    heap_free( name );
     if (ret != 0)
     {
-        TRACE("failed to get address of %s\n", debugstr_w(lpszServerName));
+        TRACE("failed to get address of %s\n", debugstr_w(name));
         return FALSE;
     }
     if (*sa_len < res->ai_addrlen)
     {
         WARN("address too small\n");
-        freeaddrinfo( res );
+        FreeAddrInfoW(res);
         return FALSE;
     }
     *sa_len = res->ai_addrlen;
@@ -183,14 +163,18 @@ BOOL GetAddress(LPCWSTR lpszServerName, INTERNET_PORT nServerPort,
     switch (res->ai_family)
     {
     case AF_INET:
-        ((struct sockaddr_in *)psa)->sin_port = htons(nServerPort);
+        addr = &((struct sockaddr_in *)psa)->sin_addr;
+        ((struct sockaddr_in *)psa)->sin_port = htons(port);
         break;
     case AF_INET6:
-        ((struct sockaddr_in6 *)psa)->sin6_port = htons(nServerPort);
+        addr = &((struct sockaddr_in6 *)psa)->sin6_addr;
+        ((struct sockaddr_in6 *)psa)->sin6_port = htons(port);
         break;
     }
 
-    freeaddrinfo( res );
+    if(addr_str)
+        inet_ntop(res->ai_family, addr, addr_str, INET6_ADDRSTRLEN);
+    FreeAddrInfoW(res);
     return TRUE;
 }
 
@@ -290,61 +274,4 @@ void INTERNET_SendCallback(object_header_t *hdr, DWORD_PTR context, DWORD status
 
     if(new_info != info)
         heap_free(new_info);
-}
-
-typedef struct {
-    task_header_t hdr;
-    DWORD_PTR context;
-    DWORD     status;
-    LPVOID    status_info;
-    DWORD     status_info_len;
-} send_callback_task_t;
-
-static void SendAsyncCallbackProc(task_header_t *hdr)
-{
-    send_callback_task_t *task = (send_callback_task_t*)hdr;
-
-    TRACE("%p\n", task->hdr.hdr);
-
-    INTERNET_SendCallback(task->hdr.hdr, task->context, task->status, task->status_info, task->status_info_len);
-
-    /* And frees the copy of the status info */
-    heap_free(task->status_info);
-}
-
-void SendAsyncCallback(object_header_t *hdr, DWORD_PTR dwContext,
-                       DWORD dwInternetStatus, LPVOID lpvStatusInfo,
-                       DWORD dwStatusInfoLength)
-{
-    TRACE("(%p, %08lx, %d (%s), %p, %d): %sasync call with callback %p\n",
-	  hdr, dwContext, dwInternetStatus, get_callback_name(dwInternetStatus),
-	  lpvStatusInfo, dwStatusInfoLength,
-	  hdr->dwFlags & INTERNET_FLAG_ASYNC ? "" : "non ",
-	  hdr->lpfnStatusCB);
-    
-    if (!(hdr->lpfnStatusCB))
-	return;
-    
-    if (hdr->dwFlags & INTERNET_FLAG_ASYNC)
-    {
-        send_callback_task_t *task;
-        void *lpvStatusInfo_copy = lpvStatusInfo;
-
-        if (lpvStatusInfo)
-        {
-            lpvStatusInfo_copy = heap_alloc(dwStatusInfoLength);
-            memcpy(lpvStatusInfo_copy, lpvStatusInfo, dwStatusInfoLength);
-        }
-
-        task = alloc_async_task(hdr, SendAsyncCallbackProc, sizeof(*task));
-        task->context = dwContext;
-        task->status = dwInternetStatus;
-        task->status_info = lpvStatusInfo_copy;
-        task->status_info_len = dwStatusInfoLength;
-	
-        INTERNET_AsyncCall(&task->hdr);
-    }
-    else
-	INTERNET_SendCallback(hdr, dwContext, dwInternetStatus,
-			      lpvStatusInfo, dwStatusInfoLength);
 }

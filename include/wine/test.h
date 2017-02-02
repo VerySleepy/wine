@@ -56,9 +56,9 @@ extern int winetest_interactive;
 extern const char *winetest_platform;
 
 extern void winetest_set_location( const char* file, int line );
-extern void winetest_start_todo( const char* platform );
+extern void winetest_start_todo( int is_todo );
 extern int winetest_loop_todo(void);
-extern void winetest_end_todo( const char* platform );
+extern void winetest_end_todo(void);
 extern int winetest_get_mainargs( char*** pargv );
 extern LONG winetest_get_failures(void);
 extern void winetest_add_failures( LONG new_failures );
@@ -66,6 +66,7 @@ extern void winetest_wait_child_process( HANDLE process );
 
 extern const char *wine_dbgstr_wn( const WCHAR *str, int n );
 extern const char *wine_dbgstr_guid( const GUID *guid );
+extern const char *wine_dbgstr_rect( const RECT *rect );
 static inline const char *wine_dbgstr_w( const WCHAR *s ) { return wine_dbgstr_wn( s, -1 ); }
 
 /* strcmpW is available for tests compiled under Wine, but not in standalone
@@ -98,20 +99,15 @@ extern int winetest_vok( int condition, const char *msg, __winetest_va_list ap )
 extern void winetest_vskip( const char *msg, __winetest_va_list ap );
 
 #ifdef __GNUC__
+# define WINETEST_PRINTF_ATTR(fmt,args) __attribute__((format (printf,fmt,args)))
+#else
+# define WINETEST_PRINTF_ATTR(fmt,args)
+#endif
 
-extern void __winetest_cdecl winetest_ok( int condition, const char *msg, ... ) __attribute__((format (printf,2,3) ));
-extern void __winetest_cdecl winetest_skip( const char *msg, ... ) __attribute__((format (printf,1,2)));
-extern void __winetest_cdecl winetest_win_skip( const char *msg, ... ) __attribute__((format (printf,1,2)));
-extern void __winetest_cdecl winetest_trace( const char *msg, ... ) __attribute__((format (printf,1,2)));
-
-#else /* __GNUC__ */
-
-extern void __winetest_cdecl winetest_ok( int condition, const char *msg, ... );
-extern void __winetest_cdecl winetest_skip( const char *msg, ... );
-extern void __winetest_cdecl winetest_win_skip( const char *msg, ... );
-extern void __winetest_cdecl winetest_trace( const char *msg, ... );
-
-#endif /* __GNUC__ */
+extern void __winetest_cdecl winetest_ok( int condition, const char *msg, ... ) WINETEST_PRINTF_ATTR(2,3);
+extern void __winetest_cdecl winetest_skip( const char *msg, ... ) WINETEST_PRINTF_ATTR(1,2);
+extern void __winetest_cdecl winetest_win_skip( const char *msg, ... ) WINETEST_PRINTF_ATTR(1,2);
+extern void __winetest_cdecl winetest_trace( const char *msg, ... ) WINETEST_PRINTF_ATTR(1,2);
 
 #define ok_(file, line)       (winetest_set_location(file, line), 0) ? (void)0 : winetest_ok
 #define skip_(file, line)     (winetest_set_location(file, line), 0) ? (void)0 : winetest_skip
@@ -123,10 +119,11 @@ extern void __winetest_cdecl winetest_trace( const char *msg, ... );
 #define win_skip win_skip_(__FILE__, __LINE__)
 #define trace    trace_(__FILE__, __LINE__)
 
-#define todo(platform) for (winetest_start_todo(platform); \
-                            winetest_loop_todo(); \
-                            winetest_end_todo(platform))
-#define todo_wine      todo("wine")
+#define todo_if(is_todo) for (winetest_start_todo(is_todo); \
+                              winetest_loop_todo(); \
+                              winetest_end_todo())
+#define todo_wine               todo_if(!strcmp(winetest_platform, "wine"))
+#define todo_wine_if(is_todo)   todo_if((is_todo) && !strcmp(winetest_platform, "wine"))
 
 
 #ifdef NONAMELESSUNION
@@ -225,7 +222,7 @@ typedef struct
 {
     const char* current_file;        /* file of current check */
     int current_line;                /* line of current check */
-    int todo_level;                  /* current todo nesting level */
+    unsigned int todo_level;         /* current todo nesting level */
     int todo_do_loop;
     char *str_pos;                   /* position in debug buffer */
     char strings[2000];              /* buffer for debug strings */
@@ -310,9 +307,9 @@ int winetest_vok( int condition, const char *msg, __winetest_va_list args )
     {
         if (condition)
         {
-            fprintf( stdout, "%s:%d: Test succeeded inside todo block: ",
-                     data->current_file, data->current_line );
-            vfprintf(stdout, msg, args);
+            printf( "%s:%d: Test succeeded inside todo block: ",
+                    data->current_file, data->current_line );
+            vprintf(msg, args);
             InterlockedIncrement(&todo_failures);
             return 0;
         }
@@ -320,9 +317,9 @@ int winetest_vok( int condition, const char *msg, __winetest_va_list args )
         {
             if (winetest_debug > 0)
             {
-                fprintf( stdout, "%s:%d: Test marked todo: ",
-                         data->current_file, data->current_line );
-                vfprintf(stdout, msg, args);
+                printf( "%s:%d: Test marked todo: ",
+                        data->current_file, data->current_line );
+                vprintf(msg, args);
             }
             InterlockedIncrement(&todo_successes);
             return 1;
@@ -332,17 +329,17 @@ int winetest_vok( int condition, const char *msg, __winetest_va_list args )
     {
         if (!condition)
         {
-            fprintf( stdout, "%s:%d: Test failed: ",
-                     data->current_file, data->current_line );
-            vfprintf(stdout, msg, args);
+            printf( "%s:%d: Test failed: ",
+                    data->current_file, data->current_line );
+            vprintf(msg, args);
             InterlockedIncrement(&failures);
             return 0;
         }
         else
         {
             if (report_success)
-                fprintf( stdout, "%s:%d: Test succeeded\n",
-                         data->current_file, data->current_line);
+                printf( "%s:%d: Test succeeded\n",
+                        data->current_file, data->current_line);
             InterlockedIncrement(&successes);
             return 1;
         }
@@ -365,9 +362,9 @@ void __winetest_cdecl winetest_trace( const char *msg, ... )
 
     if (winetest_debug > 0)
     {
-        fprintf( stdout, "%s:%d: ", data->current_file, data->current_line );
+        printf( "%s:%d: ", data->current_file, data->current_line );
         __winetest_va_start(valist, msg);
-        vfprintf(stdout, msg, valist);
+        vprintf(msg, valist);
         __winetest_va_end(valist);
     }
 }
@@ -376,8 +373,8 @@ void winetest_vskip( const char *msg, __winetest_va_list args )
 {
     tls_data* data=get_tls_data();
 
-    fprintf( stdout, "%s:%d: Tests skipped: ", data->current_file, data->current_line );
-    vfprintf(stdout, msg, args);
+    printf( "%s:%d: Tests skipped: ", data->current_file, data->current_line );
+    vprintf(msg, args);
     skipped++;
 }
 
@@ -400,11 +397,10 @@ void __winetest_cdecl winetest_win_skip( const char *msg, ... )
     __winetest_va_end(valist);
 }
 
-void winetest_start_todo( const char* platform )
+void winetest_start_todo( int is_todo )
 {
     tls_data* data=get_tls_data();
-    if (strcmp(winetest_platform,platform)==0)
-        data->todo_level++;
+    data->todo_level = (data->todo_level << 1) | (is_todo != 0);
     data->todo_do_loop=1;
 }
 
@@ -416,13 +412,10 @@ int winetest_loop_todo(void)
     return do_loop;
 }
 
-void winetest_end_todo( const char* platform )
+void winetest_end_todo(void)
 {
-    if (strcmp(winetest_platform,platform)==0)
-    {
-        tls_data* data=get_tls_data();
-        data->todo_level--;
-    }
+    tls_data* data=get_tls_data();
+    data->todo_level >>= 1;
 }
 
 int winetest_get_mainargs( char*** pargv )
@@ -447,7 +440,7 @@ void winetest_wait_child_process( HANDLE process )
     DWORD exit_code = 1;
 
     if (WaitForSingleObject( process, 30000 ))
-        fprintf( stdout, "%s: child process wait failed\n", current_test->name );
+        printf( "%s: child process wait failed\n", current_test->name );
     else
         GetExitCodeProcess( process, &exit_code );
 
@@ -455,13 +448,13 @@ void winetest_wait_child_process( HANDLE process )
     {
         if (exit_code > 255)
         {
-            fprintf( stdout, "%s: exception 0x%08x in child process\n", current_test->name, exit_code );
+            printf( "%s: exception 0x%08x in child process\n", current_test->name, exit_code );
             InterlockedIncrement( &failures );
         }
         else
         {
-            fprintf( stdout, "%s: %u failures in child process\n",
-                     current_test->name, exit_code );
+            printf( "%s: %u failures in child process\n",
+                    current_test->name, exit_code );
             while (exit_code-- > 0)
                 InterlockedIncrement(&failures);
         }
@@ -537,6 +530,17 @@ const char *wine_dbgstr_guid( const GUID *guid )
     return res;
 }
 
+const char *wine_dbgstr_rect( const RECT *rect )
+{
+    char *res;
+
+    if (!rect) return "(null)";
+    res = get_temp_buffer( 60 );
+    sprintf( res, "(%d,%d)-(%d,%d)", rect->left, rect->top, rect->right, rect->bottom );
+    release_temp_buffer( res, strlen(res) + 1 );
+    return res;
+}
+
 /* Find a test by name */
 static const struct test *find_test( const char *name )
 {
@@ -562,8 +566,9 @@ static void list_tests(void)
 {
     const struct test *test;
 
-    fprintf( stdout, "Valid test names:\n" );
-    for (test = winetest_testlist; test->name; test++) fprintf( stdout, "    %s\n", test->name );
+    printf( "Valid test names:\n" );
+    for (test = winetest_testlist; test->name; test++)
+        printf( "    %s\n", test->name );
 }
 
 
@@ -575,7 +580,7 @@ static int run_test( const char *name )
 
     if (!(test = find_test( name )))
     {
-        fprintf( stdout, "Fatal: test '%s' does not exist.\n", name );
+        printf( "Fatal: test '%s' does not exist.\n", name );
         exit_process(1);
     }
     successes = failures = todo_successes = todo_failures = 0;
@@ -585,11 +590,11 @@ static int run_test( const char *name )
 
     if (winetest_debug)
     {
-        fprintf( stdout, "%s: %d tests executed (%d marked as todo, %d %s), %d skipped.\n",
-                 test->name, successes + failures + todo_successes + todo_failures,
-                 todo_successes, failures + todo_failures,
-                 (failures + todo_failures != 1) ? "failures" : "failure",
-                 skipped );
+        printf( "%s: %d tests executed (%d marked as todo, %d %s), %d skipped.\n",
+                test->name, successes + failures + todo_successes + todo_failures,
+                todo_successes, failures + todo_failures,
+                (failures + todo_failures != 1) ? "failures" : "failure",
+                skipped );
     }
     status = (failures + todo_failures < 255) ? failures + todo_failures : 255;
     return status;
@@ -599,7 +604,7 @@ static int run_test( const char *name )
 /* Display usage and exit */
 static void usage( const char *argv0 )
 {
-    fprintf( stdout, "Usage: %s test_name\n\n", argv0 );
+    printf( "Usage: %s test_name\n\n", argv0 );
     list_tests();
     exit_process(1);
 }
@@ -610,12 +615,20 @@ static LONG CALLBACK exc_filter( EXCEPTION_POINTERS *ptrs )
     tls_data *data = get_tls_data();
 
     if (data->current_file)
-        fprintf( stdout, "%s:%d: this is the last test seen before the exception\n",
-                 data->current_file, data->current_line );
-    fprintf( stdout, "%s: unhandled exception %08x at %p\n", current_test->name,
-             ptrs->ExceptionRecord->ExceptionCode, ptrs->ExceptionRecord->ExceptionAddress );
+        printf( "%s:%d: this is the last test seen before the exception\n",
+                data->current_file, data->current_line );
+    printf( "%s: unhandled exception %08x at %p\n", current_test->name,
+            ptrs->ExceptionRecord->ExceptionCode, ptrs->ExceptionRecord->ExceptionAddress );
     fflush( stdout );
     return EXCEPTION_EXECUTE_HANDLER;
+}
+
+/* check if we're running under wine */
+static BOOL running_under_wine(void)
+{
+    HMODULE module = GetModuleHandleA( "ntdll.dll" );
+    if (!module) return FALSE;
+    return (GetProcAddress( module, "wine_server_call" ) != NULL);
 }
 
 #ifdef __GNUC__
@@ -632,7 +645,11 @@ int main( int argc, char **argv )
     winetest_argc = argc;
     winetest_argv = argv;
 
-    if (GetEnvironmentVariableA( "WINETEST_PLATFORM", p, sizeof(p) )) winetest_platform = strdup(p);
+    if (GetEnvironmentVariableA( "WINETEST_PLATFORM", p, sizeof(p) ))
+        winetest_platform = strdup(p);
+    else if (running_under_wine())
+        winetest_platform = "wine";
+
     if (GetEnvironmentVariableA( "WINETEST_DEBUG", p, sizeof(p) )) winetest_debug = atoi(p);
     if (GetEnvironmentVariableA( "WINETEST_INTERACTIVE", p, sizeof(p) )) winetest_interactive = atoi(p);
     if (GetEnvironmentVariableA( "WINETEST_REPORT_SUCCESS", p, sizeof(p) )) report_success = atoi(p);

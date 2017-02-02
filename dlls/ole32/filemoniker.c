@@ -25,7 +25,6 @@
 
 #define COBJMACROS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "windef.h"
 #include "winbase.h"
@@ -501,12 +500,12 @@ FileMonikerImpl_BindToObject(IMoniker* iface, IBindCtx* pbc, IMoniker* pmkToLeft
             /* if the requested class was loaded before ! we don't need to reload it */
             res = IRunningObjectTable_GetObject(prot,iface,&pObj);
 
-            if (res==S_FALSE){
+            if (res != S_OK){
                 /* first activation of this class */
                 res=GetClassFile(This->filePathName,&clsID);
                 if (SUCCEEDED(res)){
 
-                    res=CoCreateInstance(&clsID,NULL,CLSCTX_ALL,&IID_IPersistFile,(void**)&ppf);
+                    res=CoCreateInstance(&clsID,NULL,CLSCTX_SERVER,&IID_IPersistFile,(void**)&ppf);
                     if (SUCCEEDED(res)){
 
                         res=IPersistFile_Load(ppf,This->filePathName,STGM_READ);
@@ -695,39 +694,39 @@ FileMonikerImpl_ComposeWith(IMoniker* iface, IMoniker* pmkRight,
         lastIdx2=FileMonikerImpl_DecomposePath(str2,&strDec2)-1;
 
         if ((lastIdx1==-1 && lastIdx2>-1)||(lastIdx1==1 && lstrcmpW(strDec1[0],twoPoint)==0))
-            return MK_E_SYNTAX;
+            res = MK_E_SYNTAX;
+        else{
+            if(lstrcmpW(strDec1[lastIdx1],bkSlash)==0)
+                lastIdx1--;
 
-        if(lstrcmpW(strDec1[lastIdx1],bkSlash)==0)
-            lastIdx1--;
+            /* for each "..\" in the left of str2 remove the right element from str1 */
+            for(i=0; ( (lastIdx1>=0) && (strDec2[i]!=NULL) && (lstrcmpW(strDec2[i],twoPoint)==0) ); i+=2){
 
-        /* for etch "..\" in the left of str2 remove the right element from str1 */
-        for(i=0; ( (lastIdx1>=0) && (strDec2[i]!=NULL) && (lstrcmpW(strDec2[i],twoPoint)==0) ) ;i+=2){
+                lastIdx1-=2;
+            }
 
-            lastIdx1-=2;
+            /* the length of the composed path string is increased by the sum of the two paths' lengths */
+            newStr=HeapAlloc(GetProcessHeap(),0,sizeof(WCHAR)*(lstrlenW(str1)+lstrlenW(str2)+1));
+
+            if (newStr){
+                /* new path is the concatenation of the rest of str1 and str2 */
+                for(*newStr=0,j=0;j<=lastIdx1;j++)
+                    strcatW(newStr,strDec1[j]);
+
+                if ((strDec2[i]==NULL && lastIdx1>-1 && lastIdx2>-1) || lstrcmpW(strDec2[i],bkSlash)!=0)
+                    strcatW(newStr,bkSlash);
+
+                for(j=i;j<=lastIdx2;j++)
+                    strcatW(newStr,strDec2[j]);
+
+                /* create a new moniker with the new string */
+                res=CreateFileMoniker(newStr,ppmkComposite);
+
+                /* free string memory used by this function */
+                HeapFree(GetProcessHeap(),0,newStr);
+            }
+            else res = E_OUTOFMEMORY;
         }
-
-        /* the length of the composed path string  is raised by the sum of the two paths lengths  */
-        newStr=HeapAlloc(GetProcessHeap(),0,sizeof(WCHAR)*(lstrlenW(str1)+lstrlenW(str2)+1));
-
-        if (newStr)
-        {
-            /* new path is the concatenation of the rest of str1 and str2 */
-            for(*newStr=0,j=0;j<=lastIdx1;j++)
-                strcatW(newStr,strDec1[j]);
-
-            if ((strDec2[i]==NULL && lastIdx1>-1 && lastIdx2>-1) || lstrcmpW(strDec2[i],bkSlash)!=0)
-                strcatW(newStr,bkSlash);
-
-            for(j=i;j<=lastIdx2;j++)
-                strcatW(newStr,strDec2[j]);
-
-            /* create a new moniker with the new string */
-            res=CreateFileMoniker(newStr,ppmkComposite);
-
-            /* free all strings space memory used by this function */
-            HeapFree(GetProcessHeap(),0,newStr);
-        }
-        else res = E_OUTOFMEMORY;
 
         free_stringtable(strDec1);
         free_stringtable(strDec2);
@@ -924,7 +923,8 @@ static HRESULT WINAPI
 FileMonikerImpl_CommonPrefixWith(IMoniker* iface,IMoniker* pmkOther,IMoniker** ppmkPrefix)
 {
 
-    LPOLESTR pathThis = NULL, pathOther = NULL,*stringTable1,*stringTable2,commonPath = NULL;
+    LPOLESTR pathThis = NULL, pathOther = NULL, *stringTable1 = NULL;
+    LPOLESTR *stringTable2 = NULL, commonPath = NULL;
     IBindCtx *bindctx;
     DWORD mkSys;
     ULONG nb1,nb2,i,sameIdx;
@@ -1012,8 +1012,8 @@ failed:
     CoTaskMemFree(pathThis);
     CoTaskMemFree(pathOther);
     CoTaskMemFree(commonPath);
-    free_stringtable(stringTable1);
-    free_stringtable(stringTable2);
+    if (stringTable1) free_stringtable(stringTable1);
+    if (stringTable2) free_stringtable(stringTable2);
 
     return ret;
 }

@@ -52,9 +52,9 @@
 #define _UNLOCK_FILE_(file) MSVCRT__unlock_file(MSVCRT_stdin)
 #ifdef WIDE_SCANF
 #ifdef SECURE
-#define _FUNCTION_ static int MSVCRT_vcwscanf_s_l(const char *format, MSVCRT__locale_t locale, __ms_va_list ap)
+#define _FUNCTION_ static int MSVCRT_vcwscanf_s_l(const MSVCRT_wchar_t *format, MSVCRT__locale_t locale, __ms_va_list ap)
 #else  /* SECURE */
-#define _FUNCTION_ static int MSVCRT_vcwscanf_l(const char *format, MSVCRT__locale_t locale, __ms_va_list ap)
+#define _FUNCTION_ static int MSVCRT_vcwscanf_l(const MSVCRT_wchar_t *format, MSVCRT__locale_t locale, __ms_va_list ap)
 #endif /* SECURE */
 #else  /* WIDE_SCANF */
 #ifdef SECURE
@@ -68,7 +68,11 @@
 #undef _EOF_
 #define _EOF_ 0
 #ifdef STRING_LEN
+#ifdef WIDE_CHAR
 #define _GETC_(file) (consumed==length ? '\0' : (consumed++, *file++))
+#else /* WIDE_CHAR */
+#define _GETC_(file) (consumed==length ? '\0' : (consumed++, (unsigned char)*file++))
+#endif /* WIDE_CHAR */
 #define _UNGETC_(nch, file) do { file--; consumed--; } while(0)
 #define _LOCK_FILE_(file) do {} while(0)
 #define _UNLOCK_FILE_(file) do {} while(0)
@@ -86,7 +90,11 @@
 #endif /* SECURE */
 #endif /* WIDE_SCANF */
 #else /* STRING_LEN */
+#ifdef WIDE_CHAR
 #define _GETC_(file) (consumed++, *file++)
+#else /* WIDE_CHAR */
+#define _GETC_(file) (consumed++, (unsigned char)*file++)
+#endif /* WIDE_CHAR */
 #define _UNGETC_(nch, file) do { file--; consumed--; } while(0)
 #define _LOCK_FILE_(file) do {} while(0)
 #define _UNLOCK_FILE_(file) do {} while(0)
@@ -423,8 +431,7 @@ _FUNCTION_ {
 
                     st = 1;
                     if (!suppress) {
-                        if (L_prefix) _SET_NUMBER_(double);
-                        else if (l_prefix) _SET_NUMBER_(double);
+                        if (L_prefix || l_prefix) _SET_NUMBER_(double);
                         else _SET_NUMBER_(float);
                     }
                 }

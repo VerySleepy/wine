@@ -24,7 +24,6 @@
 #include "winreg.h"
 #include "objbase.h"
 #include "shlwapi.h"
-#include "wincodec.h"
 #include "wincodecs_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wincodecs);
@@ -757,7 +756,7 @@ static HRESULT WINAPI IWICStreamImpl_QueryInterface(IWICStream *iface,
     if (IsEqualIID(&IID_IUnknown, iid) || IsEqualIID(&IID_IStream, iid) ||
         IsEqualIID(&IID_ISequentialStream, iid) || IsEqualIID(&IID_IWICStream, iid))
     {
-        *ppv = This;
+        *ppv = &This->IWICStream_iface;
         IUnknown_AddRef((IUnknown*)*ppv);
         return S_OK;
     }

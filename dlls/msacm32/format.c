@@ -400,12 +400,8 @@ MMRESULT WINAPI acmFormatDetailsW(HACMDRIVER had, PACMFORMATDETAILSW pafd, DWORD
     MMRESULT			mmr;
     static const WCHAR		fmt1[] = {'%','d',' ','H','z',0};
     static const WCHAR		fmt2[] = {';',' ','%','d',' ','b','i','t','s',0};
-    ACMFORMATTAGDETAILSA	aftd;
 
     TRACE("(%p, %p, %d)\n", had, pafd, fdwDetails);
-
-    memset(&aftd, 0, sizeof(aftd));
-    aftd.cbStruct = sizeof(aftd);
 
     if (pafd->cbStruct < sizeof(*pafd)) return MMSYSERR_INVALPARAM;
 
@@ -675,6 +671,9 @@ MMRESULT WINAPI acmFormatSuggest(HACMDRIVER had, PWAVEFORMATEX pwfxSrc,
 
     TRACE("(%p, %p, %p, %d, %d)\n",
 	  had, pwfxSrc, pwfxDst, cbwfxDst, fdwSuggest);
+
+    if (!pwfxSrc || !pwfxDst)
+        return MMSYSERR_INVALPARAM;
 
     if (fdwSuggest & ~(ACM_FORMATSUGGESTF_NCHANNELS|ACM_FORMATSUGGESTF_NSAMPLESPERSEC|
 		       ACM_FORMATSUGGESTF_WBITSPERSAMPLE|ACM_FORMATSUGGESTF_WFORMATTAG))

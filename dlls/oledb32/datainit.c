@@ -18,8 +18,6 @@
 #include <stdarg.h>
 
 #define COBJMACROS
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "windef.h"
 #include "winbase.h"
@@ -31,6 +29,7 @@
 #include "oledb_private.h"
 
 #include "wine/debug.h"
+#include "wine/list.h"
 #include "wine/unicode.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(oledb);
@@ -348,12 +347,115 @@ static const struct dbproperty dbproperties[] = {
 #endif
 };
 
-
-static HRESULT set_dbpropset(BSTR name, BSTR value, DBPROPSET **propset)
+struct dbprop_pair
 {
-    VARIANT src, dest;
+    struct list entry;
+    BSTR name;
+    BSTR value;
+};
+
+struct dbprops
+{
+    struct list props;
+    unsigned int count;
+};
+
+/* name/value strings are reused, so they shouldn't be freed after this call */
+static HRESULT add_dbprop_to_list(struct dbprops *props, BSTR name, BSTR value)
+{
+    struct dbprop_pair *pair;
+
+    pair = heap_alloc(sizeof(*pair));
+    if (!pair)
+        return E_OUTOFMEMORY;
+
+    pair->name = name;
+    pair->value = value;
+    list_add_tail(&props->props, &pair->entry);
+    props->count++;
+    return S_OK;
+}
+
+static void free_dbprop_list(struct dbprops *props)
+{
+    struct dbprop_pair *p, *p2;
+    LIST_FOR_EACH_ENTRY_SAFE(p, p2, &props->props, struct dbprop_pair, entry)
+    {
+        list_remove(&p->entry);
+        SysFreeString(p->name);
+        SysFreeString(p->value);
+        heap_free(p);
+    }
+}
+
+static HRESULT parse_init_string(const WCHAR *initstring, struct dbprops *props)
+{
+    const WCHAR *start;
+    WCHAR *eq;
+    HRESULT hr = S_OK;
+
+    list_init(&props->props);
+    props->count = 0;
+
+    start = initstring;
+    while (start && (eq = strchrW(start, '=')))
+    {
+        static const WCHAR providerW[] = {'P','r','o','v','i','d','e','r',0};
+        BSTR value, name;
+        WCHAR *delim;
+
+        name = SysAllocStringLen(start, eq - start);
+        /* skip equal sign to get value */
+        eq++;
+
+        if (*eq == '"')
+        {
+            /* for quoted value string, skip opening mark, look for terminating one */
+            eq++;
+            delim = strchrW(eq, '"');
+        }
+        else
+            delim = strchrW(eq, ';');
+
+        value = SysAllocStringLen(eq, delim ? delim - eq : -1);
+
+        /* skip semicolon if present */
+        if (delim)
+        {
+            if (*delim == '"')
+               delim++;
+            if (*delim == ';')
+               delim++;
+        }
+        start = delim;
+
+        if (!strcmpiW(name, providerW))
+        {
+            SysFreeString(name);
+            SysFreeString(value);
+            continue;
+        }
+
+        TRACE("property (name=%s, value=%s)\n", debugstr_w(name), debugstr_w(value));
+
+        hr = add_dbprop_to_list(props, name, value);
+        if (FAILED(hr))
+        {
+            SysFreeString(name);
+            SysFreeString(value);
+            break;
+        }
+    }
+
+    if (FAILED(hr))
+        free_dbprop_list(props);
+
+    return hr;
+}
+
+static const struct dbproperty *get_known_dprop_descr(BSTR name)
+{
     int min, max, n;
-    HRESULT hr;
 
     min = 0;
     max = sizeof(dbproperties)/sizeof(struct dbproperty) - 1;
@@ -374,58 +476,124 @@ static HRESULT set_dbpropset(BSTR name, BSTR value, DBPROPSET **propset)
             max = n-1;
     }
 
-    if (min > max)
-    {
-        *propset = NULL;
-        FIXME("unsupported property %s\n", debugstr_w(name));
-        return E_FAIL;
-    }
+    return (min <= max) ? &dbproperties[n] : NULL;
+}
 
-    VariantInit(&dest);
-
-    V_VT(&src) = VT_BSTR;
-    V_BSTR(&src) = value;
-
-    hr = VariantChangeType(&dest, &src, 0, dbproperties[n].type);
-    if (FAILED(hr))
-    {
-        ERR("failed to init property %s value as type %d\n", debugstr_w(name), dbproperties[n].type);
-        return hr;
-    }
+static HRESULT get_dbpropset_from_proplist(struct dbprops *props, DBPROPSET **propset)
+{
+    struct dbprop_pair *pair;
+    int i = 0;
+    HRESULT hr;
 
     *propset = CoTaskMemAlloc(sizeof(DBPROPSET));
     if (!*propset)
-    {
-        VariantClear(&dest);
         return E_OUTOFMEMORY;
-    }
 
-    (*propset)->rgProperties = CoTaskMemAlloc(sizeof(DBPROP));
+    (*propset)->rgProperties = CoTaskMemAlloc(props->count*sizeof(DBPROP));
     if (!(*propset)->rgProperties)
     {
-        VariantClear(&dest);
         CoTaskMemFree(*propset);
+        *propset = NULL;
         return E_OUTOFMEMORY;
     }
 
-    (*propset)->cProperties = 1;
-    (*propset)->guidPropertySet = DBPROPSET_DBINIT;
-    (*propset)->rgProperties[0].dwPropertyID = dbproperties[n].id;
-    (*propset)->rgProperties[0].dwOptions = dbproperties[n].options;
-    (*propset)->rgProperties[0].dwStatus = 0;
-    memset(&(*propset)->rgProperties[0].colid, 0, sizeof(DBID));
-    (*propset)->rgProperties[0].vValue = dest;
+    (*propset)->cProperties = 0;
+    LIST_FOR_EACH_ENTRY(pair, &props->props, struct dbprop_pair, entry)
+    {
+        const struct dbproperty *descr = get_known_dprop_descr(pair->name);
+        VARIANT dest, src;
+
+        if (!descr)
+        {
+            static const WCHAR eqW[] = {'=',0};
+            BSTR str;
+            int len;
+
+            /* provider specific property is always VT_BSTR */
+            len = SysStringLen(pair->name) + SysStringLen(pair->value) + 1 /* for '=' */;
+            str = SysAllocStringLen(NULL, len);
+            strcpyW(str, pair->name);
+            strcatW(str, eqW);
+            strcatW(str, pair->value);
+
+            (*propset)->cProperties++;
+            (*propset)->guidPropertySet = DBPROPSET_DBINIT;
+            (*propset)->rgProperties[i].dwPropertyID = DBPROP_INIT_PROVIDERSTRING;
+            (*propset)->rgProperties[i].dwOptions = DBPROPOPTIONS_REQUIRED;
+            (*propset)->rgProperties[i].dwStatus = 0;
+            memset(&(*propset)->rgProperties[i].colid, 0, sizeof(DBID));
+            V_VT(&(*propset)->rgProperties[i].vValue) = VT_BSTR;
+            V_BSTR(&(*propset)->rgProperties[i].vValue) = str;
+            i++;
+            continue;
+        }
+
+        V_VT(&src) = VT_BSTR;
+        V_BSTR(&src) = pair->value;
+
+        VariantInit(&dest);
+        hr = VariantChangeType(&dest, &src, 0, descr->type);
+        if (FAILED(hr))
+        {
+            ERR("failed to init property %s value as type %d\n", debugstr_w(pair->name), descr->type);
+            free_dbpropset(1, *propset);
+            *propset = NULL;
+            return hr;
+        }
+
+        (*propset)->cProperties++;
+        (*propset)->guidPropertySet = DBPROPSET_DBINIT;
+        (*propset)->rgProperties[i].dwPropertyID = descr->id;
+        (*propset)->rgProperties[i].dwOptions = descr->options;
+        (*propset)->rgProperties[i].dwStatus = 0;
+        memset(&(*propset)->rgProperties[i].colid, 0, sizeof(DBID));
+        (*propset)->rgProperties[i].vValue = dest;
+        i++;
+    }
 
     return S_OK;
 }
 
 /*** IDataInitialize methods ***/
+static void datasource_release(BOOL created, IUnknown **datasource)
+{
+    if (!created)
+        return;
+
+    IUnknown_Release(*datasource);
+    *datasource = NULL;
+}
+
+static inline WCHAR *strdupW(const WCHAR *src)
+{
+    WCHAR *dest;
+    if (!src) return NULL;
+    dest = heap_alloc((strlenW(src)+1)*sizeof(WCHAR));
+    if (dest)
+        strcpyW(dest, src);
+    return dest;
+}
+
+static WCHAR *strstriW(const WCHAR *str, const WCHAR *sub)
+{
+    LPWSTR strlower, sublower, r;
+    strlower = CharLowerW(strdupW(str));
+    sublower = CharLowerW(strdupW(sub));
+    r = strstrW(strlower, sublower);
+    if (r)
+        r = (LPWSTR)str + (r - strlower);
+    heap_free(strlower);
+    heap_free(sublower);
+    return r;
+}
+
 static HRESULT WINAPI datainit_GetDataSource(IDataInitialize *iface, IUnknown *outer, DWORD clsctx,
                                 LPWSTR initstring, REFIID riid, IUnknown **datasource)
 {
     static const WCHAR providerW[] = {'P','r','o','v','i','d','e','r','=',0};
     static const WCHAR msdasqlW[] = {'M','S','D','A','S','Q','L',0};
     datainit *This = impl_from_IDataInitialize(iface);
+    BOOL datasource_created = FALSE;
     IDBProperties *dbprops;
     DBPROPSET *propset;
     WCHAR *prov = NULL;
@@ -436,7 +604,7 @@ static HRESULT WINAPI datainit_GetDataSource(IDataInitialize *iface, IUnknown *o
 
     /* first get provider name */
     provclsid = IID_NULL;
-    if (initstring && (prov = strstrW(initstring, providerW)))
+    if (initstring && (prov = strstriW(initstring, providerW)))
     {
         WCHAR *start, *progid;
         int len;
@@ -500,10 +668,10 @@ static HRESULT WINAPI datainit_GetDataSource(IDataInitialize *iface, IUnknown *o
 
         TRACE("initial data source provider %s\n", debugstr_w(V_BSTR(&propset->rgProperties[0].vValue)));
         initprov = IID_NULL;
-        CLSIDFromProgID(V_BSTR(&propset->rgProperties[0].vValue), &initprov);
+        hr = CLSIDFromProgID(V_BSTR(&propset->rgProperties[0].vValue), &initprov);
         free_dbpropset(count, propset);
 
-        if (!IsEqualIID(&provclsid, &initprov)) return DB_E_MISMATCHEDPROVIDER;
+        if (FAILED(hr) || !IsEqualIID(&provclsid, &initprov)) return DB_E_MISMATCHEDPROVIDER;
     }
 
     if (!*datasource)
@@ -513,56 +681,47 @@ static HRESULT WINAPI datainit_GetDataSource(IDataInitialize *iface, IUnknown *o
 
         if (FAILED(hr) && IsEqualIID(riid, &IID_IDBInitialize))
             hr = create_db_init(datasource);
+
+        datasource_created = *datasource != NULL;
     }
 
     /* now set properties */
     if (initstring)
     {
-        WCHAR *eq, *start;
+        struct dbprops props;
 
         hr = IUnknown_QueryInterface(*datasource, &IID_IDBProperties, (void**)&dbprops);
         if (FAILED(hr))
         {
-            WARN("provider doesn't support IDBProperties\n");
+            ERR("provider doesn't support IDBProperties\n");
+            datasource_release(datasource_created, datasource);
             return hr;
         }
 
-        start = initstring;
-        while (start && (eq = strchrW(start, '=')))
+        hr = parse_init_string(initstring, &props);
+        if (FAILED(hr))
         {
-            static const WCHAR providerW[] = {'P','r','o','v','i','d','e','r',0};
-            WCHAR *scol = strchrW(eq+1, ';');
-            BSTR value, name;
-
-            name = SysAllocStringLen(start, eq - start);
-            /* skip equal sign to get value */
-            eq++;
-            value = SysAllocStringLen(eq, scol ? scol - eq : -1);
-
-            /* skip semicolon if present */
-            if (scol) scol++;
-            start = scol;
-
-            if (!strcmpW(name, providerW))
-            {
-                SysFreeString(name);
-                SysFreeString(value);
-                continue;
-            }
-
-            TRACE("property (name=%s, value=%s)\n", debugstr_w(name), debugstr_w(value));
-
-            hr = set_dbpropset(name, value, &propset);
-            SysFreeString(name);
-            SysFreeString(value);
-            if (FAILED(hr)) break;
-
-            hr = IDBProperties_SetProperties(dbprops, 1, propset);
-            free_dbpropset(1, propset);
-            TRACE("provider ret 0x%08x\n", hr);
+            datasource_release(datasource_created, datasource);
+            return hr;
         }
 
+        hr = get_dbpropset_from_proplist(&props, &propset);
+        free_dbprop_list(&props);
+        if (FAILED(hr))
+        {
+            datasource_release(datasource_created, datasource);
+            return hr;
+        }
+
+        hr = IDBProperties_SetProperties(dbprops, 1, propset);
         IDBProperties_Release(dbprops);
+        free_dbpropset(1, propset);
+        if (FAILED(hr))
+        {
+            ERR("SetProperties failed, 0x%08x\n", hr);
+            datasource_release(datasource_created, datasource);
+            return hr;
+        }
     }
 
     return hr;

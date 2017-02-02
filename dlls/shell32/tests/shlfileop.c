@@ -164,6 +164,9 @@ static void clean_after_shfo_tests(void)
     DeleteFileA("test4.txt\\test1.txt");
     DeleteFileA("test4.txt\\test2.txt");
     DeleteFileA("test4.txt\\test3.txt");
+    DeleteFileA("test4.txt\\one.txt");
+    DeleteFileA("test4.txt\\nested\\two.txt");
+    RemoveDirectoryA("test4.txt\\nested");
     RemoveDirectoryA("test4.txt");
     DeleteFileA("testdir2\\one.txt");
     DeleteFileA("testdir2\\test1.txt");
@@ -814,9 +817,10 @@ static void test_rename(void)
     retval = SHFileOperationA(&shfo);
     ok(retval == ERROR_CANCELLED ||
        retval == DE_DIFFDIR || /* Vista */
+       retval == DE_FILEDESTISFLD || /* Vista, running from c: */
        broken(retval == DE_OPCANCELLED) || /* Win9x */
        broken(retval == 65652), /* NT4 */
-       "Expected ERROR_CANCELLED or DE_DIFFDIR\n");
+       "Expected ERROR_CANCELLED or DE_DIFFDIR, got %u\n", retval);
     ok(file_exists("test1.txt"), "Expected test1.txt to exist\n");
 
     /* pFrom is empty */
@@ -1816,6 +1820,30 @@ static void test_copy(void)
         ok(DeleteFileA("abcdefgh.abc"), "Expected file to exist\n");
     ok(DeleteFileA("dir\\abcdefgh.abc"), "Expected file to exist\n");
     ok(RemoveDirectoryA("dir"), "Expected dir to exist\n");
+
+    /* Check last error after a successful file operation. */
+    clean_after_shfo_tests();
+    init_shfo_tests();
+    shfo.pFrom = "test1.txt\0";
+    shfo.pTo = "testdir2\0";
+    shfo.fFlags = FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI;
+    SetLastError(0xdeadbeef);
+    retval = SHFileOperationA(&shfo);
+    ok(retval == ERROR_SUCCESS, "File copy failed with %d\n", retval);
+    ok(!shfo.fAnyOperationsAborted, "Didn't expect aborted operations\n");
+    ok(GetLastError() == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", GetLastError());
+
+    /* Check last error after a failed file operation. */
+    clean_after_shfo_tests();
+    init_shfo_tests();
+    shfo.pFrom = "nonexistent\0";
+    shfo.pTo = "testdir2\0";
+    shfo.fFlags = FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI;
+    SetLastError(0xdeadbeef);
+    retval = SHFileOperationA(&shfo);
+    ok(retval != ERROR_SUCCESS, "Unexpected ERROR_SUCCESS\n");
+    ok(!shfo.fAnyOperationsAborted, "Didn't expect aborted operations\n");
+    ok(GetLastError() == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", GetLastError());
 }
 
 /* tests the FO_MOVE action */
@@ -1825,6 +1853,48 @@ static void test_move(void)
     CHAR from[5*MAX_PATH];
     CHAR to[5*MAX_PATH];
     DWORD retval;
+
+    clean_after_shfo_tests();
+    init_shfo_tests();
+
+    shfo.hwnd = NULL;
+    shfo.wFunc = FO_MOVE;
+    shfo.pFrom = from;
+    shfo.pTo = to;
+    shfo.fFlags = FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI | FOF_NOCONFIRMMKDIR;
+    shfo.hNameMappings = NULL;
+    shfo.lpszProgressTitle = NULL;
+    shfo.fAnyOperationsAborted = FALSE;
+
+    set_curr_dir_path(from, "testdir2\\*.*\0");
+    set_curr_dir_path(to, "test4.txt\\*.*\0");
+    retval = SHFileOperationA(&shfo);
+    ok(retval != 0, "SHFileOperation should fail\n");
+    ok(!shfo.fAnyOperationsAborted, "fAnyOperationsAborted %d\n", shfo.fAnyOperationsAborted);
+
+    ok(file_exists("testdir2"), "dir should not be moved\n");
+    ok(file_exists("testdir2\\one.txt"), "file should not be moved\n");
+    ok(file_exists("testdir2\\nested"), "dir should not be moved\n");
+    ok(file_exists("testdir2\\nested\\two.txt"), "file should not be moved\n");
+
+    set_curr_dir_path(from, "testdir2\\*.*\0");
+    set_curr_dir_path(to, "test4.txt\0");
+    retval = SHFileOperationA(&shfo);
+    ok(!retval, "SHFileOperation error %#x\n", retval);
+    ok(!shfo.fAnyOperationsAborted, "fAnyOperationsAborted %d\n", shfo.fAnyOperationsAborted);
+
+    ok(file_exists("testdir2"), "dir should not be moved\n");
+    ok(!file_exists("testdir2\\one.txt"), "file should be moved\n");
+    ok(!file_exists("testdir2\\nested"), "dir should be moved\n");
+    ok(!file_exists("testdir2\\nested\\two.txt"), "file should be moved\n");
+
+    ok(file_exists("test4.txt"), "dir should exist\n");
+    ok(file_exists("test4.txt\\one.txt"), "file should exist\n");
+    ok(file_exists("test4.txt\\nested"), "dir should exist\n");
+    ok(file_exists("test4.txt\\nested\\two.txt"), "file should exist\n");
+
+    clean_after_shfo_tests();
+    init_shfo_tests();
 
     shfo.hwnd = NULL;
     shfo.wFunc = FO_MOVE;
@@ -2419,6 +2489,7 @@ static void test_unicode(void)
     SHFILEOPSTRUCTW shfoW;
     int ret;
     HANDLE file;
+    static const WCHAR UNICODE_PATH_TO[] = {'c',':','\\',0x00ae,0x00ae,'\0'};
 
     if (!pSHFileOperationW)
     {
@@ -2429,7 +2500,7 @@ static void test_unicode(void)
     shfoW.hwnd = NULL;
     shfoW.wFunc = FO_DELETE;
     shfoW.pFrom = UNICODE_PATH;
-    shfoW.pTo = '\0';
+    shfoW.pTo = NULL;
     shfoW.fFlags = FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI;
     shfoW.hNameMappings = NULL;
     shfoW.lpszProgressTitle = NULL;
@@ -2444,6 +2515,11 @@ static void test_unicode(void)
     if (GetLastError()==ERROR_CALL_NOT_IMPLEMENTED)
     {
         skip("Unicode tests skipped on non-unicode system\n");
+        return;
+    }
+    if (GetLastError()==ERROR_ACCESS_DENIED)
+    {
+        skip("test needs admin rights\n");
         return;
     }
     CloseHandle(file);
@@ -2485,6 +2561,37 @@ static void test_unicode(void)
     ret = pSHFileOperationW(&shfoW);
     ok(!ret, "Directory is not removed, ErrorCode: %d\n", ret);
     ok(!file_existsW(UNICODE_PATH), "The directory should have been removed\n");
+
+    shfoW.hwnd = NULL;
+    shfoW.wFunc = FO_COPY;
+    shfoW.pFrom = UNICODE_PATH;
+    shfoW.pTo = UNICODE_PATH_TO;
+    shfoW.fFlags = FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI;
+    shfoW.hNameMappings = NULL;
+    shfoW.lpszProgressTitle = NULL;
+
+    /* Check last error after a successful file operation. */
+    createTestFileW(UNICODE_PATH);
+    ok(file_existsW(UNICODE_PATH), "The file does not exist\n");
+    SetLastError(0xdeadbeef);
+    ret = SHFileOperationW(&shfoW);
+    ok(ret == ERROR_SUCCESS, "File copy failed with %d\n", ret);
+    ok(!shfoW.fAnyOperationsAborted, "Didn't expect aborted operations\n");
+    ok(GetLastError() == ERROR_SUCCESS ||
+       broken(GetLastError() == ERROR_INVALID_HANDLE), /* WinXp, win2k3 */
+       "Expected ERROR_SUCCESS, got %d\n", GetLastError());
+    DeleteFileW(UNICODE_PATH_TO);
+
+    /* Check last error after a failed file operation. */
+    DeleteFileW(UNICODE_PATH);
+    ok(!file_existsW(UNICODE_PATH), "The file should have been removed\n");
+    SetLastError(0xdeadbeef);
+    ret = SHFileOperationW(&shfoW);
+    ok(ret != ERROR_SUCCESS, "Unexpected ERROR_SUCCESS\n");
+    ok(!shfoW.fAnyOperationsAborted, "Didn't expect aborted operations\n");
+    ok(GetLastError() == ERROR_SUCCESS ||
+       broken(GetLastError() == ERROR_INVALID_HANDLE), /* WinXp, win2k3 */
+       "Expected ERROR_SUCCESS, got %d\n", GetLastError());
 }
 
 static void

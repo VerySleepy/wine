@@ -20,6 +20,7 @@
 #include "wine/port.h"
 
 #include "d2d1_private.h"
+#include "wincodec.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d2d);
 
@@ -62,11 +63,12 @@ static ULONG STDMETHODCALLTYPE d2d_bitmap_Release(ID2D1Bitmap *iface)
     struct d2d_bitmap *bitmap = impl_from_ID2D1Bitmap(iface);
     ULONG refcount = InterlockedDecrement(&bitmap->refcount);
 
-    TRACE("%p increasing refcount to %u.\n", iface, refcount);
+    TRACE("%p decreasing refcount to %u.\n", iface, refcount);
 
     if (!refcount)
     {
         ID3D10ShaderResourceView_Release(bitmap->view);
+        ID2D1Factory_Release(bitmap->factory);
         HeapFree(GetProcessHeap(), 0, bitmap);
     }
 
@@ -75,9 +77,11 @@ static ULONG STDMETHODCALLTYPE d2d_bitmap_Release(ID2D1Bitmap *iface)
 
 static void STDMETHODCALLTYPE d2d_bitmap_GetFactory(ID2D1Bitmap *iface, ID2D1Factory **factory)
 {
-    FIXME("iface %p, factory %p stub!\n", iface, factory);
+    struct d2d_bitmap *bitmap = impl_from_ID2D1Bitmap(iface);
 
-    *factory = NULL;
+    TRACE("iface %p, factory %p.\n", iface, factory);
+
+    ID2D1Factory_AddRef(*factory = bitmap->factory);
 }
 
 static D2D1_SIZE_F * STDMETHODCALLTYPE d2d_bitmap_GetSize(ID2D1Bitmap *iface, D2D1_SIZE_F *size)
@@ -103,10 +107,11 @@ static D2D1_SIZE_U * STDMETHODCALLTYPE d2d_bitmap_GetPixelSize(ID2D1Bitmap *ifac
 
 static D2D1_PIXEL_FORMAT * STDMETHODCALLTYPE d2d_bitmap_GetPixelFormat(ID2D1Bitmap *iface, D2D1_PIXEL_FORMAT *format)
 {
-    FIXME("iface %p stub!\n", iface);
+    struct d2d_bitmap *bitmap = impl_from_ID2D1Bitmap(iface);
 
-    format->format = DXGI_FORMAT_UNKNOWN;
-    format->alphaMode = D2D1_ALPHA_MODE_UNKNOWN;
+    TRACE("iface %p, format %p.\n", iface, format);
+
+    *format = bitmap->format;
     return format;
 }
 
@@ -139,9 +144,30 @@ static HRESULT STDMETHODCALLTYPE d2d_bitmap_CopyFromRenderTarget(ID2D1Bitmap *if
 static HRESULT STDMETHODCALLTYPE d2d_bitmap_CopyFromMemory(ID2D1Bitmap *iface,
         const D2D1_RECT_U *dst_rect, const void *src_data, UINT32 pitch)
 {
-    FIXME("iface %p, dst_rect %p, src_data %p, pitch %u stub!\n", iface, dst_rect, src_data, pitch);
+    struct d2d_bitmap *bitmap = impl_from_ID2D1Bitmap(iface);
+    ID3D10Device *device;
+    ID3D10Resource *dst;
+    D3D10_BOX box;
 
-    return E_NOTIMPL;
+    TRACE("iface %p, dst_rect %p, src_data %p, pitch %u.\n", iface, dst_rect, src_data, pitch);
+
+    if (dst_rect)
+    {
+        box.left = dst_rect->left;
+        box.top = dst_rect->top;
+        box.front = 0;
+        box.right = dst_rect->right;
+        box.bottom = dst_rect->bottom;
+        box.back = 1;
+    }
+
+    ID3D10ShaderResourceView_GetResource(bitmap->view, &dst);
+    ID3D10ShaderResourceView_GetDevice(bitmap->view, &device);
+    ID3D10Device_UpdateSubresource(device, dst, 0, dst_rect ? &box : NULL, src_data, pitch, 0);
+    ID3D10Device_Release(device);
+    ID3D10Resource_Release(dst);
+
+    return S_OK;
 }
 
 static const struct ID2D1BitmapVtbl d2d_bitmap_vtbl =
@@ -159,18 +185,75 @@ static const struct ID2D1BitmapVtbl d2d_bitmap_vtbl =
     d2d_bitmap_CopyFromMemory,
 };
 
-HRESULT d2d_bitmap_init(struct d2d_bitmap *bitmap, struct d2d_d3d_render_target *render_target,
-        D2D1_SIZE_U size, const void *src_data, UINT32 pitch, const D2D1_BITMAP_PROPERTIES *desc)
+static BOOL format_supported(const D2D1_PIXEL_FORMAT *format)
+{
+    unsigned int i;
+
+    static const D2D1_PIXEL_FORMAT supported_formats[] =
+    {
+        {DXGI_FORMAT_R32G32B32A32_FLOAT,    D2D1_ALPHA_MODE_PREMULTIPLIED},
+        {DXGI_FORMAT_R32G32B32A32_FLOAT,    D2D1_ALPHA_MODE_IGNORE       },
+        {DXGI_FORMAT_R16G16B16A16_FLOAT,    D2D1_ALPHA_MODE_PREMULTIPLIED},
+        {DXGI_FORMAT_R16G16B16A16_FLOAT,    D2D1_ALPHA_MODE_IGNORE       },
+        {DXGI_FORMAT_R16G16B16A16_UNORM,    D2D1_ALPHA_MODE_PREMULTIPLIED},
+        {DXGI_FORMAT_R16G16B16A16_UNORM,    D2D1_ALPHA_MODE_IGNORE       },
+        {DXGI_FORMAT_R8G8B8A8_UNORM,        D2D1_ALPHA_MODE_PREMULTIPLIED},
+        {DXGI_FORMAT_R8G8B8A8_UNORM,        D2D1_ALPHA_MODE_IGNORE       },
+        {DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,   D2D1_ALPHA_MODE_PREMULTIPLIED},
+        {DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,   D2D1_ALPHA_MODE_IGNORE       },
+        {DXGI_FORMAT_A8_UNORM,              D2D1_ALPHA_MODE_PREMULTIPLIED},
+        {DXGI_FORMAT_A8_UNORM,              D2D1_ALPHA_MODE_STRAIGHT     },
+        {DXGI_FORMAT_B8G8R8A8_UNORM,        D2D1_ALPHA_MODE_PREMULTIPLIED},
+        {DXGI_FORMAT_B8G8R8A8_UNORM,        D2D1_ALPHA_MODE_IGNORE       },
+        {DXGI_FORMAT_B8G8R8X8_UNORM,        D2D1_ALPHA_MODE_IGNORE       },
+        {DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,   D2D1_ALPHA_MODE_PREMULTIPLIED},
+        {DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,   D2D1_ALPHA_MODE_IGNORE       },
+    };
+
+    for (i = 0; i < sizeof(supported_formats) / sizeof(*supported_formats); ++i)
+    {
+        if (supported_formats[i].format == format->format
+                && supported_formats[i].alphaMode == format->alphaMode)
+            return TRUE;
+    }
+
+    return FALSE;
+}
+
+static void d2d_bitmap_init(struct d2d_bitmap *bitmap, ID2D1Factory *factory,
+        ID3D10ShaderResourceView *view, D2D1_SIZE_U size, const D2D1_BITMAP_PROPERTIES *desc)
+{
+    bitmap->ID2D1Bitmap_iface.lpVtbl = &d2d_bitmap_vtbl;
+    bitmap->refcount = 1;
+    ID2D1Factory_AddRef(bitmap->factory = factory);
+    ID3D10ShaderResourceView_AddRef(bitmap->view = view);
+    bitmap->pixel_size = size;
+    bitmap->format = desc->pixelFormat;
+    bitmap->dpi_x = desc->dpiX;
+    bitmap->dpi_y = desc->dpiY;
+
+    if (bitmap->dpi_x == 0.0f && bitmap->dpi_y == 0.0f)
+    {
+        bitmap->dpi_x = 96.0f;
+        bitmap->dpi_y = 96.0f;
+    }
+}
+
+HRESULT d2d_bitmap_create(ID2D1Factory *factory, ID3D10Device *device, D2D1_SIZE_U size, const void *src_data,
+        UINT32 pitch, const D2D1_BITMAP_PROPERTIES *desc, struct d2d_bitmap **bitmap)
 {
     D3D10_SUBRESOURCE_DATA resource_data;
     D3D10_TEXTURE2D_DESC texture_desc;
+    ID3D10ShaderResourceView *view;
     ID3D10Texture2D *texture;
     HRESULT hr;
 
-    FIXME("Ignoring bitmap properties.\n");
-
-    bitmap->ID2D1Bitmap_iface.lpVtbl = &d2d_bitmap_vtbl;
-    bitmap->refcount = 1;
+    if (!format_supported(&desc->pixelFormat))
+    {
+        WARN("Tried to create bitmap with unsupported format {%#x / %#x}.\n",
+                desc->pixelFormat.format, desc->pixelFormat.alphaMode);
+        return D2DERR_UNSUPPORTED_PIXEL_FORMAT;
+    }
 
     texture_desc.Width = size.width;
     texture_desc.Height = size.height;
@@ -187,13 +270,14 @@ HRESULT d2d_bitmap_init(struct d2d_bitmap *bitmap, struct d2d_d3d_render_target 
     resource_data.pSysMem = src_data;
     resource_data.SysMemPitch = pitch;
 
-    if (FAILED(hr = ID3D10Device_CreateTexture2D(render_target->device, &texture_desc, &resource_data, &texture)))
+    if (FAILED(hr = ID3D10Device_CreateTexture2D(device, &texture_desc,
+            src_data ? &resource_data : NULL, &texture)))
     {
         ERR("Failed to create texture, hr %#x.\n", hr);
         return hr;
     }
 
-    hr = ID3D10Device_CreateShaderResourceView(render_target->device, (ID3D10Resource *)texture, NULL, &bitmap->view);
+    hr = ID3D10Device_CreateShaderResourceView(device, (ID3D10Resource *)texture, NULL, &view);
     ID3D10Texture2D_Release(texture);
     if (FAILED(hr))
     {
@@ -201,17 +285,249 @@ HRESULT d2d_bitmap_init(struct d2d_bitmap *bitmap, struct d2d_d3d_render_target 
         return hr;
     }
 
-    bitmap->pixel_size = size;
-    bitmap->dpi_x = desc->dpiX;
-    bitmap->dpi_y = desc->dpiY;
-
-    if (bitmap->dpi_x == 0.0f && bitmap->dpi_y == 0.0f)
+    if ((*bitmap = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(**bitmap))))
     {
-        bitmap->dpi_x = 96.0f;
-        bitmap->dpi_y = 96.0f;
+        d2d_bitmap_init(*bitmap, factory, view, size, desc);
+        TRACE("Created bitmap %p.\n", *bitmap);
     }
 
-    return S_OK;
+    ID3D10ShaderResourceView_Release(view);
+
+    return *bitmap ? S_OK : E_OUTOFMEMORY;
+}
+
+HRESULT d2d_bitmap_create_shared(ID2D1RenderTarget *render_target, ID3D10Device *target_device,
+        REFIID iid, void *data, const D2D1_BITMAP_PROPERTIES *desc, struct d2d_bitmap **bitmap)
+{
+    D2D1_BITMAP_PROPERTIES d;
+    ID2D1Factory *factory;
+
+    if (IsEqualGUID(iid, &IID_ID2D1Bitmap))
+    {
+        struct d2d_bitmap *src_impl = unsafe_impl_from_ID2D1Bitmap(data);
+        ID3D10Device *device;
+        HRESULT hr = S_OK;
+
+        ID2D1RenderTarget_GetFactory(render_target, &factory);
+        if (src_impl->factory != factory)
+        {
+            hr = D2DERR_WRONG_FACTORY;
+            goto failed;
+        }
+
+        ID3D10ShaderResourceView_GetDevice(src_impl->view, &device);
+        ID3D10Device_Release(device);
+        if (device != target_device)
+        {
+            hr = D2DERR_UNSUPPORTED_OPERATION;
+            goto failed;
+        }
+
+        if (!desc)
+        {
+            d.pixelFormat = src_impl->format;
+            d.dpiX = src_impl->dpi_x;
+            d.dpiY = src_impl->dpi_y;
+            desc = &d;
+        }
+
+        if (!format_supported(&desc->pixelFormat))
+        {
+            WARN("Tried to create bitmap with unsupported format {%#x / %#x}.\n",
+                    desc->pixelFormat.format, desc->pixelFormat.alphaMode);
+            hr = D2DERR_UNSUPPORTED_PIXEL_FORMAT;
+            goto failed;
+        }
+
+        if (!(*bitmap = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(**bitmap))))
+        {
+            hr = E_OUTOFMEMORY;
+            goto failed;
+        }
+
+        d2d_bitmap_init(*bitmap, factory, src_impl->view, src_impl->pixel_size, desc);
+        TRACE("Created bitmap %p.\n", *bitmap);
+
+    failed:
+        ID2D1Factory_Release(factory);
+        return hr;
+    }
+
+    if (IsEqualGUID(iid, &IID_IDXGISurface) || IsEqualGUID(iid, &IID_IDXGISurface1))
+    {
+        ID3D10ShaderResourceView *view;
+        DXGI_SURFACE_DESC surface_desc;
+        IDXGISurface *surface = data;
+        ID3D10Resource *resource;
+        D2D1_SIZE_U pixel_size;
+        ID3D10Device *device;
+        HRESULT hr;
+
+        if (FAILED(IDXGISurface_QueryInterface(surface, &IID_ID3D10Resource, (void **)&resource)))
+        {
+            WARN("Failed to get d3d resource from dxgi surface.\n");
+            return E_FAIL;
+        }
+
+        ID3D10Resource_GetDevice(resource, &device);
+        ID3D10Device_Release(device);
+        if (device != target_device)
+        {
+            ID3D10Resource_Release(resource);
+            return D2DERR_UNSUPPORTED_OPERATION;
+        }
+
+        hr = ID3D10Device_CreateShaderResourceView(target_device, resource, NULL, &view);
+        ID3D10Resource_Release(resource);
+        if (FAILED(hr))
+        {
+            WARN("Failed to create shader resource view, hr %#x.\n", hr);
+            return hr;
+        }
+
+        if (!(*bitmap = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(**bitmap))))
+        {
+            ID3D10ShaderResourceView_Release(view);
+            return E_OUTOFMEMORY;
+        }
+
+        d = *desc;
+        if (d.dpiX == 0.0f || d.dpiY == 0.0f)
+        {
+            float dpi_x, dpi_y;
+
+            ID2D1RenderTarget_GetDpi(render_target, &dpi_x, &dpi_y);
+            if (d.dpiX == 0.0f)
+                d.dpiX = dpi_x;
+            if (d.dpiY == 0.0f)
+                d.dpiY = dpi_y;
+        }
+
+        if (FAILED(hr = IDXGISurface_GetDesc(surface, &surface_desc)))
+        {
+            WARN("Failed to get surface desc, hr %#x.\n", hr);
+            ID3D10ShaderResourceView_Release(view);
+            return hr;
+        }
+
+        pixel_size.width = surface_desc.Width;
+        pixel_size.height = surface_desc.Height;
+
+        ID2D1RenderTarget_GetFactory(render_target, &factory);
+        d2d_bitmap_init(*bitmap, factory, view, pixel_size, &d);
+        ID3D10ShaderResourceView_Release(view);
+        ID2D1Factory_Release(factory);
+        TRACE("Created bitmap %p.\n", *bitmap);
+
+        return S_OK;
+    }
+
+    WARN("Unhandled interface %s.\n", debugstr_guid(iid));
+
+    return E_INVALIDARG;
+}
+
+HRESULT d2d_bitmap_create_from_wic_bitmap(ID2D1Factory *factory, ID3D10Device *device, IWICBitmapSource *bitmap_source,
+        const D2D1_BITMAP_PROPERTIES *desc, struct d2d_bitmap **bitmap)
+{
+    const D2D1_PIXEL_FORMAT *d2d_format;
+    D2D1_BITMAP_PROPERTIES bitmap_desc;
+    WICPixelFormatGUID wic_format;
+    unsigned int bpp, data_size;
+    D2D1_SIZE_U size;
+    unsigned int i;
+    WICRect rect;
+    UINT32 pitch;
+    HRESULT hr;
+    void *data;
+
+    static const struct
+    {
+        const WICPixelFormatGUID *wic;
+        D2D1_PIXEL_FORMAT d2d;
+    }
+    format_lookup[] =
+    {
+        {&GUID_WICPixelFormat32bppPBGRA, {DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED}},
+        {&GUID_WICPixelFormat32bppBGR,   {DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE}},
+    };
+
+    if (FAILED(hr = IWICBitmapSource_GetSize(bitmap_source, &size.width, &size.height)))
+    {
+        WARN("Failed to get bitmap size, hr %#x.\n", hr);
+        return hr;
+    }
+
+    if (!desc)
+    {
+        bitmap_desc.pixelFormat.format = DXGI_FORMAT_UNKNOWN;
+        bitmap_desc.pixelFormat.alphaMode = D2D1_ALPHA_MODE_UNKNOWN;
+        bitmap_desc.dpiX = 0.0f;
+        bitmap_desc.dpiY = 0.0f;
+    }
+    else
+    {
+        bitmap_desc = *desc;
+    }
+
+    if (FAILED(hr = IWICBitmapSource_GetPixelFormat(bitmap_source, &wic_format)))
+    {
+        WARN("Failed to get bitmap format, hr %#x.\n", hr);
+        return hr;
+    }
+
+    for (i = 0, d2d_format = NULL; i < sizeof(format_lookup) / sizeof(*format_lookup); ++i)
+    {
+        if (IsEqualGUID(&wic_format, format_lookup[i].wic))
+        {
+            d2d_format = &format_lookup[i].d2d;
+            break;
+        }
+    }
+
+    if (!d2d_format)
+    {
+        WARN("Unsupported WIC bitmap format %s.\n", debugstr_guid(&wic_format));
+        return D2DERR_UNSUPPORTED_PIXEL_FORMAT;
+    }
+
+    if (bitmap_desc.pixelFormat.format == DXGI_FORMAT_UNKNOWN)
+        bitmap_desc.pixelFormat.format = d2d_format->format;
+    if (bitmap_desc.pixelFormat.alphaMode == D2D1_ALPHA_MODE_UNKNOWN)
+        bitmap_desc.pixelFormat.alphaMode = d2d_format->alphaMode;
+
+    switch (bitmap_desc.pixelFormat.format)
+    {
+        case DXGI_FORMAT_B8G8R8A8_UNORM:
+            bpp = 4;
+            break;
+
+        default:
+            FIXME("Unhandled format %#x.\n", bitmap_desc.pixelFormat.format);
+            return D2DERR_UNSUPPORTED_PIXEL_FORMAT;
+    }
+
+    pitch = ((bpp * size.width) + 15) & ~15;
+    data_size = pitch * size.height;
+    if (!(data = HeapAlloc(GetProcessHeap(), 0, data_size)))
+        return E_OUTOFMEMORY;
+
+    rect.X = 0;
+    rect.Y = 0;
+    rect.Width = size.width;
+    rect.Height = size.height;
+    if (FAILED(hr = IWICBitmapSource_CopyPixels(bitmap_source, &rect, pitch, data_size, data)))
+    {
+        WARN("Failed to copy bitmap pixels, hr %#x.\n", hr);
+        HeapFree(GetProcessHeap(), 0, data);
+        return hr;
+    }
+
+    hr = d2d_bitmap_create(factory, device, size, data, pitch, &bitmap_desc, bitmap);
+
+    HeapFree(GetProcessHeap(), 0, data);
+
+    return hr;
 }
 
 struct d2d_bitmap *unsafe_impl_from_ID2D1Bitmap(ID2D1Bitmap *iface)

@@ -6,9 +6,6 @@
  * Copyright 2006 Stefan Dösinger
  * Copyright 2008 Denver Gingerich
  *
- * This file contains the (internal) driver registration functions,
- * driver enumeration APIs and DirectDraw creation functions.
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -51,7 +48,7 @@ struct callback_info
 };
 
 /* Enumeration callback for converting DirectDrawEnumerateA to DirectDrawEnumerateExA */
-static HRESULT CALLBACK enum_callback(GUID *guid, char *description, char *driver_name,
+static BOOL CALLBACK enum_callback(GUID *guid, char *description, char *driver_name,
                                       void *context, HMONITOR monitor)
 {
     const struct callback_info *info = context;
@@ -63,6 +60,7 @@ static void ddraw_enumerate_secondary_devices(struct wined3d *wined3d, LPDDENUMC
                                               void *context)
 {
     struct wined3d_adapter_identifier adapter_id;
+    struct wined3d_output_desc output_desc;
     BOOL cont_enum = TRUE;
     HRESULT hr = S_OK;
     UINT adapter = 0;
@@ -79,13 +77,14 @@ static void ddraw_enumerate_secondary_devices(struct wined3d *wined3d, LPDDENUMC
         adapter_id.description = DriverDescription;
         adapter_id.description_size = sizeof(DriverDescription);
         wined3d_mutex_lock();
-        hr = wined3d_get_adapter_identifier(wined3d, adapter, 0x0, &adapter_id);
+        if (SUCCEEDED(hr = wined3d_get_adapter_identifier(wined3d, adapter, 0x0, &adapter_id)))
+            hr = wined3d_get_output_desc(wined3d, adapter, &output_desc);
         wined3d_mutex_unlock();
         if (SUCCEEDED(hr))
         {
             TRACE("Interface %d: %s\n", adapter, wine_dbgstr_guid(&adapter_id.device_identifier));
             cont_enum = callback(&adapter_id.device_identifier, adapter_id.description,
-                    adapter_id.device_name, context, wined3d_get_adapter_monitor(wined3d, adapter));
+                    adapter_id.device_name, context, output_desc.monitor);
         }
     }
 }
@@ -233,15 +232,13 @@ DDRAW_Create(const GUID *guid,
     enum wined3d_device_type device_type;
     struct ddraw *ddraw;
     HRESULT hr;
+    DWORD flags = 0;
 
     TRACE("driver_guid %s, ddraw %p, outer_unknown %p, interface_iid %s.\n",
             debugstr_guid(guid), DD, UnkOuter, debugstr_guid(iid));
 
     *DD = NULL;
 
-    /* We don't care about this guids. Well, there's no special guid anyway
-     * OK, we could
-     */
     if (guid == (GUID *) DDCREATE_EMULATIONONLY)
     {
         /* Use the reference device id. This doesn't actually change anything,
@@ -263,6 +260,9 @@ DDRAW_Create(const GUID *guid,
     if (UnkOuter != NULL)
         return CLASS_E_NOAGGREGATION;
 
+    if (!IsEqualGUID(iid, &IID_IDirectDraw7))
+        flags = WINED3D_LEGACY_FFP_LIGHTING;
+
     /* DirectDraw creation comes here */
     ddraw = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*ddraw));
     if (!ddraw)
@@ -271,7 +271,7 @@ DDRAW_Create(const GUID *guid,
         return E_OUTOFMEMORY;
     }
 
-    hr = ddraw_init(ddraw, device_type);
+    hr = ddraw_init(ddraw, flags, device_type);
     if (FAILED(hr))
     {
         WARN("Failed to initialize ddraw object, hr %#x.\n", hr);
@@ -408,9 +408,9 @@ HRESULT WINAPI DirectDrawEnumerateExA(LPDDENUMCALLBACKEXA callback, void *contex
         FIXME("flags 0x%08x not handled\n", flags & ~DDENUM_ATTACHEDSECONDARYDEVICES);
 
     TRACE("Enumerating ddraw interfaces\n");
-    if (!(wined3d = wined3d_create(WINED3D_LEGACY_DEPTH_BIAS)))
+    if (!(wined3d = wined3d_create(DDRAW_WINED3D_FLAGS)))
     {
-        if (!(wined3d = wined3d_create(WINED3D_LEGACY_DEPTH_BIAS | WINED3D_NO3D)))
+        if (!(wined3d = wined3d_create(DDRAW_WINED3D_FLAGS | WINED3D_NO3D)))
         {
             WARN("Failed to create a wined3d object.\n");
             return E_FAIL;
@@ -772,7 +772,7 @@ HRESULT WINAPI DllUnregisterServer(void)
  *
  * Params:
  *  surf: The enumerated surface
- *  desc: it's description
+ *  desc: its description
  *  context: Pointer to the ddraw impl
  *
  * Returns:

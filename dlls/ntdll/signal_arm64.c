@@ -121,13 +121,15 @@ static void save_context( CONTEXT *context, const ucontext_t *sigcontext )
     /* Save normal registers */
     C(0); C(1); C(2); C(3); C(4); C(5); C(6); C(7); C(8); C(9);
     C(10); C(11); C(12); C(13); C(14); C(15); C(16); C(17); C(18); C(19);
-    C(20); C(21); C(22); C(23); C(24); C(25); C(26); C(27); C(28); C(29); C(30);
+    C(20); C(21); C(22); C(23); C(24); C(25); C(26); C(27); C(28);
 #undef C
 
     context->ContextFlags = CONTEXT_FULL;
+    context->Fp     = FP_sig(sigcontext);     /* Frame pointer */
+    context->Lr     = LR_sig(sigcontext);     /* Link register */
     context->Sp     = SP_sig(sigcontext);     /* Stack pointer */
     context->Pc     = PC_sig(sigcontext);     /* Program Counter */
-    context->PState = PSTATE_sig(sigcontext); /* Current State Register */
+    context->Cpsr   = PSTATE_sig(sigcontext); /* Current State Register */
 }
 
 
@@ -142,12 +144,14 @@ static void restore_context( const CONTEXT *context, ucontext_t *sigcontext )
     /* Restore normal registers */
     C(0); C(1); C(2); C(3); C(4); C(5); C(6); C(7); C(8); C(9);
     C(10); C(11); C(12); C(13); C(14); C(15); C(16); C(17); C(18); C(19);
-    C(20); C(21); C(22); C(23); C(24); C(25); C(26); C(27); C(28); C(29); C(30);
+    C(20); C(21); C(22); C(23); C(24); C(25); C(26); C(27); C(28);
 #undef C
 
+    FP_sig(sigcontext)     = context->Fp;     /* Frame pointer */
+    LR_sig(sigcontext)     = context->Lr;     /* Link register */
     SP_sig(sigcontext)     = context->Sp;     /* Stack pointer */
     PC_sig(sigcontext)     = context->Pc;     /* Program Counter */
-    PSTATE_sig(sigcontext) = context->PState; /* Current State Register */
+    PSTATE_sig(sigcontext) = context->Cpsr;   /* Current State Register */
 }
 
 
@@ -175,11 +179,52 @@ static inline void restore_fpu( CONTEXT *context, const ucontext_t *sigcontext )
 /***********************************************************************
  *		RtlCaptureContext (NTDLL.@)
  */
-void WINAPI RtlCaptureContext( CONTEXT *context )
-{
-    FIXME( "Not implemented on ARM64\n" );
-    memset( context, 0, sizeof(*context) );
-}
+/* FIXME: Use the Stack instead of the actual register values? */
+__ASM_STDCALL_FUNC( RtlCaptureContext, 8,
+                    "stp x0, x1, [sp, #-32]!\n\t"
+                    "mov w1, #0x400000\n\t"         /* CONTEXT_ARM64 */
+                    "add w1, w1, #0x3\n\t"          /* CONTEXT_FULL */
+                    "str w1, [x0]\n\t"              /* context->ContextFlags */ /* 32-bit, look at cpsr */
+                    "mrs x1, DAIF\n\t"
+                    "str w1, [x0, #0x4]\n\t"        /* context->Cpsr */
+                    "ldp x0, x1, [sp], #32\n\t"
+                    "str x0, [x0, #0x8]\n\t"        /* context->X0 */
+                    "str x1, [x0, #0x10]\n\t"       /* context->X1 */
+                    "str x2, [x0, #0x18]\n\t"       /* context->X2 */
+                    "str x3, [x0, #0x20]\n\t"       /* context->X3 */
+                    "str x4, [x0, #0x28]\n\t"       /* context->X4 */
+                    "str x5, [x0, #0x30]\n\t"       /* context->X5 */
+                    "str x6, [x0, #0x38]\n\t"       /* context->X6 */
+                    "str x7, [x0, #0x40]\n\t"       /* context->X7 */
+                    "str x8, [x0, #0x48]\n\t"       /* context->X8 */
+                    "str x9, [x0, #0x50]\n\t"       /* context->X9 */
+                    "str x10, [x0, #0x58]\n\t"      /* context->X10 */
+                    "str x11, [x0, #0x60]\n\t"      /* context->X11 */
+                    "str x12, [x0, #0x68]\n\t"      /* context->X12 */
+                    "str x13, [x0, #0x70]\n\t"      /* context->X13 */
+                    "str x14, [x0, #0x78]\n\t"      /* context->X14 */
+                    "str x15, [x0, #0x80]\n\t"      /* context->X15 */
+                    "str x16, [x0, #0x88]\n\t"      /* context->X16 */
+                    "str x17, [x0, #0x90]\n\t"      /* context->X17 */
+                    "str x18, [x0, #0x98]\n\t"      /* context->X18 */
+                    "str x19, [x0, #0xa0]\n\t"      /* context->X19 */
+                    "str x20, [x0, #0xa8]\n\t"      /* context->X20 */
+                    "str x21, [x0, #0xb0]\n\t"      /* context->X21 */
+                    "str x22, [x0, #0xb8]\n\t"      /* context->X22 */
+                    "str x23, [x0, #0xc0]\n\t"      /* context->X23 */
+                    "str x24, [x0, #0xc8]\n\t"      /* context->X24 */
+                    "str x25, [x0, #0xd0]\n\t"      /* context->X25 */
+                    "str x26, [x0, #0xd8]\n\t"      /* context->X26 */
+                    "str x27, [x0, #0xe0]\n\t"      /* context->X27 */
+                    "str x28, [x0, #0xe8]\n\t"      /* context->X28 */
+                    "str x29, [x0, #0xf0]\n\t"      /* context->Fp */
+                    "str x30, [x0, #0xf8]\n\t"      /* context->Lr */
+                    "mov x1, sp\n\t"
+                    "str x1, [x0, #0x100]\n\t"      /* context->Sp */
+                    "adr x1, 1f\n\t"
+                    "1: str x1, [x0, #0x108]\n\t"   /* context->Pc */
+                    "ret"
+                    )
 
 /***********************************************************************
  *           set_cpu_context
@@ -201,9 +246,11 @@ void copy_context( CONTEXT *to, const CONTEXT *from, DWORD flags )
     flags &= ~CONTEXT_ARM64;  /* get rid of CPU id */
     if (flags & CONTEXT_CONTROL)
     {
+        to->Fp      = from->Fp;
+        to->Lr      = from->Lr;
         to->Sp      = from->Sp;
         to->Pc      = from->Pc;
-        to->PState  = from->PState;
+        to->Cpsr    = from->Cpsr;
     }
     if (flags & CONTEXT_INTEGER)
     {
@@ -211,7 +258,7 @@ void copy_context( CONTEXT *to, const CONTEXT *from, DWORD flags )
     /* Restore normal registers */
     C(0); C(1); C(2); C(3); C(4); C(5); C(6); C(7); C(8); C(9);
     C(10); C(11); C(12); C(13); C(14); C(15); C(16); C(17); C(18); C(19);
-    C(20); C(21); C(22); C(23); C(24); C(25); C(26); C(27); C(28); C(29); C(30);
+    C(20); C(21); C(22); C(23); C(24); C(25); C(26); C(27); C(28);
 #undef C
     }
 }
@@ -231,9 +278,11 @@ NTSTATUS context_to_server( context_t *to, const CONTEXT *from )
     if (flags & CONTEXT_CONTROL)
     {
         to->flags |= SERVER_CTX_CONTROL;
+        to->integer.arm64_regs.x[29] = from->Fp;
+        to->integer.arm64_regs.x[30] = from->Lr;
         to->ctl.arm64_regs.sp     = from->Sp;
         to->ctl.arm64_regs.pc     = from->Pc;
-        to->ctl.arm64_regs.pstate = from->PState;
+        to->ctl.arm64_regs.pstate = from->Cpsr;
     }
     if (flags & CONTEXT_INTEGER)
     {
@@ -242,7 +291,7 @@ NTSTATUS context_to_server( context_t *to, const CONTEXT *from )
     /* Restore normal registers */
     C(0); C(1); C(2); C(3); C(4); C(5); C(6); C(7); C(8); C(9);
     C(10); C(11); C(12); C(13); C(14); C(15); C(16); C(17); C(18); C(19);
-    C(20); C(21); C(22); C(23); C(24); C(25); C(26); C(27); C(28); C(29); C(30);
+    C(20); C(21); C(22); C(23); C(24); C(25); C(26); C(27); C(28);
 #undef C
     }
     return STATUS_SUCCESS;
@@ -262,9 +311,11 @@ NTSTATUS context_from_server( CONTEXT *to, const context_t *from )
     if (from->flags & SERVER_CTX_CONTROL)
     {
         to->ContextFlags |= CONTEXT_CONTROL;
+        to->Fp     = from->integer.arm64_regs.x[29];
+        to->Lr     = from->integer.arm64_regs.x[30];
         to->Sp     = from->ctl.arm64_regs.sp;
         to->Pc     = from->ctl.arm64_regs.pc;
-        to->PState = from->ctl.arm64_regs.pstate;
+        to->Cpsr   = from->ctl.arm64_regs.pstate;
     }
     if (from->flags & SERVER_CTX_INTEGER)
     {
@@ -273,7 +324,7 @@ NTSTATUS context_from_server( CONTEXT *to, const context_t *from )
     /* Restore normal registers */
     C(0); C(1); C(2); C(3); C(4); C(5); C(6); C(7); C(8); C(9);
     C(10); C(11); C(12); C(13); C(14); C(15); C(16); C(17); C(18); C(19);
-    C(20); C(21); C(22); C(23); C(24); C(25); C(26); C(27); C(28); C(29); C(30);
+    C(20); C(21); C(22); C(23); C(24); C(25); C(26); C(27); C(28);
 #undef C
      }
     return STATUS_SUCCESS;
@@ -293,7 +344,7 @@ static EXCEPTION_RECORD *setup_exception( ucontext_t *sigcontext, raise_func fun
     } *stack;
     DWORD exception_code = 0;
 
-    stack = (struct stack_layout *)(SP_sig(sigcontext) & ~3);
+    stack = (struct stack_layout *)(SP_sig(sigcontext) & ~15);
     stack--;  /* push the stack_layout structure */
 
     stack->rec.ExceptionRecord  = NULL;
@@ -326,7 +377,7 @@ static void WINAPI raise_segv_exception( EXCEPTION_RECORD *rec, CONTEXT *context
         if (rec->NumberParameters == 2)
         {
             if (!(rec->ExceptionCode = virtual_handle_fault( (void *)rec->ExceptionInformation[1],
-                                                             rec->ExceptionInformation[0] )))
+                                                             rec->ExceptionInformation[0], FALSE )))
                 goto done;
         }
         break;
@@ -681,7 +732,7 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *sigcontext )
  */
 int CDECL __wine_set_signal_handler(unsigned int sig, wine_signal_handler wsh)
 {
-    if (sig > sizeof(handlers) / sizeof(handlers[0])) return -1;
+    if (sig >= sizeof(handlers) / sizeof(handlers[0])) return -1;
     if (handlers[sig] != NULL) return -2;
     handlers[sig] = wsh;
     return 0;
@@ -748,6 +799,10 @@ void signal_init_thread( TEB *teb )
         pthread_key_create( &teb_key, NULL );
         init_done = TRUE;
     }
+
+    /* Win64/ARM applications expect the TEB pointer to be in the x18 platform register. */
+    __asm__ __volatile__( "mov x18, %0" : : "r" (teb) );
+
     pthread_setspecific( teb_key, teb );
 }
 

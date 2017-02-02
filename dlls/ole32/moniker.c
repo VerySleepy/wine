@@ -33,6 +33,7 @@
 #include "windef.h"
 #include "winbase.h"
 #include "winuser.h"
+#include "winsvc.h"
 #include "wtypes.h"
 #include "ole2.h"
 
@@ -131,32 +132,52 @@ static IrotHandle get_irot_handle(void)
 
 static BOOL start_rpcss(void)
 {
-    PROCESS_INFORMATION pi;
-    STARTUPINFOW si;
-    WCHAR cmd[MAX_PATH];
-    static const WCHAR rpcss[] = {'\\','r','p','c','s','s','.','e','x','e',0};
-    BOOL rslt;
-    void *redir;
+    static const WCHAR rpcssW[] = {'R','p','c','S','s',0};
+    SC_HANDLE scm, service;
+    SERVICE_STATUS_PROCESS status;
+    BOOL ret = FALSE;
 
     TRACE("\n");
 
-    ZeroMemory(&si, sizeof(STARTUPINFOA));
-    si.cb = sizeof(STARTUPINFOA);
-    GetSystemDirectoryW( cmd, MAX_PATH - sizeof(rpcss)/sizeof(WCHAR) );
-    strcatW( cmd, rpcss );
-
-    Wow64DisableWow64FsRedirection( &redir );
-    rslt = CreateProcessW( cmd, cmd, NULL, NULL, FALSE, DETACHED_PROCESS, NULL, NULL, &si, &pi );
-    Wow64RevertWow64FsRedirection( redir );
-
-    if (rslt)
+    if (!(scm = OpenSCManagerW( NULL, NULL, 0 )))
     {
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-        Sleep(100);
+        ERR( "failed to open service manager\n" );
+        return FALSE;
     }
+    if (!(service = OpenServiceW( scm, rpcssW, SERVICE_START | SERVICE_QUERY_STATUS )))
+    {
+        ERR( "failed to open RpcSs service\n" );
+        CloseServiceHandle( scm );
+        return FALSE;
+    }
+    if (StartServiceW( service, 0, NULL ) || GetLastError() == ERROR_SERVICE_ALREADY_RUNNING)
+    {
+        ULONGLONG start_time = GetTickCount64();
+        do
+        {
+            DWORD dummy;
 
-    return rslt;
+            if (!QueryServiceStatusEx( service, SC_STATUS_PROCESS_INFO,
+                                       (BYTE *)&status, sizeof(status), &dummy ))
+                break;
+            if (status.dwCurrentState == SERVICE_RUNNING)
+            {
+                ret = TRUE;
+                break;
+            }
+            if (GetTickCount64() - start_time > 30000) break;
+            Sleep( 100 );
+
+        } while (status.dwCurrentState == SERVICE_START_PENDING);
+
+        if (status.dwCurrentState != SERVICE_RUNNING)
+            WARN( "RpcSs failed to start %u\n", status.dwCurrentState );
+    }
+    else ERR( "failed to start RpcSs service\n" );
+
+    CloseServiceHandle( service );
+    CloseServiceHandle( scm );
+    return ret;
 }
 
 static HRESULT create_stream_on_mip_ro(const InterfaceData *mip, IStream **stream)
@@ -305,7 +326,7 @@ RunningObjectTableImpl_QueryInterface(IRunningObjectTable* iface,
 {
     RunningObjectTableImpl *This = impl_from_IRunningObjectTable(iface);
 
-    TRACE("(%p,%p,%p)\n",This,riid,ppvObject);
+    TRACE("(%p,%s,%p)\n",This,debugstr_guid(riid),ppvObject);
 
     /* validate arguments */
 
@@ -316,7 +337,7 @@ RunningObjectTableImpl_QueryInterface(IRunningObjectTable* iface,
 
     if (IsEqualIID(&IID_IUnknown, riid) ||
         IsEqualIID(&IID_IRunningObjectTable, riid))
-        *ppvObject = This;
+        *ppvObject = &This->IRunningObjectTable_iface;
 
     if ((*ppvObject)==0)
         return E_NOINTERFACE;
@@ -1198,7 +1219,7 @@ HRESULT WINAPI GetClassFile(LPCOLESTR filePathName,CLSID *pclsid)
     IStorage *pstg=0;
     HRESULT res;
     int nbElm, length, i;
-    LONG sizeProgId;
+    LONG sizeProgId, ret;
     LPOLESTR *pathDec=0,absFile=0,progId=0;
     LPWSTR extension;
     static const WCHAR bkslashW[] = {'\\',0};
@@ -1211,10 +1232,10 @@ HRESULT WINAPI GetClassFile(LPCOLESTR filePathName,CLSID *pclsid)
 
         res=StgOpenStorage(filePathName,NULL,STGM_READ | STGM_SHARE_DENY_WRITE,NULL,0,&pstg);
 
-        if (SUCCEEDED(res))
+        if (SUCCEEDED(res)) {
             res=ReadClassStg(pstg,pclsid);
-
-        IStorage_Release(pstg);
+            IStorage_Release(pstg);
+        }
 
         return res;
     }
@@ -1264,26 +1285,26 @@ HRESULT WINAPI GetClassFile(LPCOLESTR filePathName,CLSID *pclsid)
         return MK_E_INVALIDEXTENSION;
     }
 
-    res=RegQueryValueW(HKEY_CLASSES_ROOT, extension, NULL, &sizeProgId);
-
-    /* get the progId associated to the extension */
-    progId = CoTaskMemAlloc(sizeProgId);
-    res = RegQueryValueW(HKEY_CLASSES_ROOT, extension, progId, &sizeProgId);
-
-    if (res==ERROR_SUCCESS)
-        /* return the clsid associated to the progId */
-        res= CLSIDFromProgID(progId,pclsid);
+    ret = RegQueryValueW(HKEY_CLASSES_ROOT, extension, NULL, &sizeProgId);
+    if (!ret) {
+        /* get the progId associated to the extension */
+        progId = CoTaskMemAlloc(sizeProgId);
+        ret = RegQueryValueW(HKEY_CLASSES_ROOT, extension, progId, &sizeProgId);
+        if (!ret)
+            /* return the clsid associated to the progId */
+            res = CLSIDFromProgID(progId, pclsid);
+        else
+            res = HRESULT_FROM_WIN32(ret);
+        CoTaskMemFree(progId);
+    }
+    else
+        res = HRESULT_FROM_WIN32(ret);
 
     for(i=0; pathDec[i]!=NULL;i++)
         CoTaskMemFree(pathDec[i]);
     CoTaskMemFree(pathDec);
 
-    CoTaskMemFree(progId);
-
-    if (res==ERROR_SUCCESS)
-        return res;
-
-    return MK_E_INVALIDEXTENSION;
+    return res != S_OK ? MK_E_INVALIDEXTENSION : res;
 }
 
 /***********************************************************************
@@ -1293,7 +1314,7 @@ static HRESULT WINAPI EnumMonikerImpl_QueryInterface(IEnumMoniker* iface,REFIID 
 {
     EnumMonikerImpl *This = impl_from_IEnumMoniker(iface);
 
-    TRACE("(%p,%p,%p)\n",This,riid,ppvObject);
+    TRACE("(%p,%s,%p)\n",This,debugstr_guid(riid),ppvObject);
 
     /* validate arguments */
     if (ppvObject == NULL)
@@ -1301,17 +1322,12 @@ static HRESULT WINAPI EnumMonikerImpl_QueryInterface(IEnumMoniker* iface,REFIID 
 
     *ppvObject = NULL;
 
-    if (IsEqualIID(&IID_IUnknown, riid))
-        *ppvObject = This;
+    if (IsEqualIID(&IID_IUnknown, riid) || IsEqualIID(&IID_IEnumMoniker, riid))
+        *ppvObject = &This->IEnumMoniker_iface;
     else
-        if (IsEqualIID(&IID_IEnumMoniker, riid))
-            *ppvObject = This;
-
-    if ((*ppvObject)==NULL)
         return E_NOINTERFACE;
 
     IEnumMoniker_AddRef(iface);
-
     return S_OK;
 }
 
@@ -1532,7 +1548,7 @@ static HRESULT WINAPI MonikerMarshalInner_QueryInterface(IUnknown *iface, REFIID
     if (IsEqualIID(&IID_IUnknown, riid) || IsEqualIID(&IID_IMarshal, riid))
     {
         *ppv = &This->IMarshal_iface;
-        IUnknown_AddRef((IUnknown *)&This->IMarshal_iface);
+        IMarshal_AddRef(&This->IMarshal_iface);
         return S_OK;
     }
     FIXME("No interface for %s\n", debugstr_guid(riid));

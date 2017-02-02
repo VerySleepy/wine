@@ -125,6 +125,8 @@
 #define GLYPH_BLOCK_MASK  (GLYPH_BLOCK_SIZE - 1)
 #define GLYPH_MAX         65536
 
+#define NUM_PAGES         17
+
 #define GSUB_E_NOFEATURE -2
 #define GSUB_E_NOGLYPH -1
 
@@ -169,7 +171,7 @@ typedef struct {
     OUTLINETEXTMETRICW *otm;
     SCRIPT_FONTPROPERTIES sfp;
     BOOL sfnt;
-    CacheGlyphPage *page[0x11];
+    CacheGlyphPage *page[NUM_PAGES];
     ABC *widths[GLYPH_MAX / GLYPH_BLOCK_SIZE];
     LPVOID GSUB_Table;
     LPVOID GDEF_Table;
@@ -224,7 +226,7 @@ typedef void (*reorder_function)(LPWSTR pwChar, IndicSyllable *syllable, lexical
 int USP10_FindGlyphInLogClust(const WORD* pwLogClust, int cChars, WORD target) DECLSPEC_HIDDEN;
 
 BOOL BIDI_DetermineLevels( LPCWSTR lpString, INT uCount, const SCRIPT_STATE *s,
-                const SCRIPT_CONTROL *c, WORD *lpOutLevels ) DECLSPEC_HIDDEN;
+                const SCRIPT_CONTROL *c, WORD *lpOutLevels, WORD *lpOutOverrides ) DECLSPEC_HIDDEN;
 BOOL BIDI_GetStrengths(LPCWSTR lpString, INT uCount, const SCRIPT_CONTROL *c,
                       WORD* lpStrength) DECLSPEC_HIDDEN;
 INT BIDI_ReorderV2lLevel(int level, int *pIndexs, const BYTE* plevel, int cch, BOOL fReverse) DECLSPEC_HIDDEN;

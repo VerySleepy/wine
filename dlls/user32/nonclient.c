@@ -98,7 +98,7 @@ NC_AdjustRectOuter (LPRECT rect, DWORD style, BOOL menu, DWORD exStyle)
         if ((exStyle & WS_EX_DLGMODALFRAME) ||
             (style & (WS_THICKFRAME|WS_DLGFRAME))) adjust = 2; /* outer */
     }
-    if ((style & WS_THICKFRAME) && !(exStyle & WS_EX_DLGMODALFRAME))
+    if (style & WS_THICKFRAME)
         adjust +=  ( GetSystemMetrics (SM_CXFRAME)
                    - GetSystemMetrics (SM_CXDLGFRAME)); /* The resize border */
     if ((style & (WS_BORDER|WS_DLGFRAME)) ||
@@ -168,11 +168,12 @@ static HICON NC_IconForWindow( HWND hwnd )
     if (!hIcon) hIcon = (HICON) GetClassLongPtrW( hwnd, GCLP_HICONSM );
     if (!hIcon) hIcon = (HICON) GetClassLongPtrW( hwnd, GCLP_HICON );
 
-    /* If there is no hIcon specified and this is a modal dialog,
+    /* If there is no icon specified and this is not a modal dialog,
      * get the default one.
      */
-    if (!hIcon && (GetWindowLongW( hwnd, GWL_STYLE ) & DS_MODALFRAME))
-        hIcon = LoadImageW(0, (LPCWSTR)IDI_WINLOGO, IMAGE_ICON, 0, 0, LR_DEFAULTCOLOR);
+    if (!hIcon && !(GetWindowLongW( hwnd, GWL_EXSTYLE ) & WS_EX_DLGMODALFRAME))
+        hIcon = LoadImageW(0, (LPCWSTR)IDI_WINLOGO, IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+                           GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR | LR_SHARED);
     return hIcon;
 }
 
@@ -311,12 +312,13 @@ BOOL WINAPI DrawCaptionTempW (HWND hwnd, HDC hdc, const RECT *rect, HFONT hFont,
         if (!hIcon) hIcon = NC_IconForWindow(hwnd);
         DrawIconEx (hdc, pt.x, pt.y, hIcon, GetSystemMetrics(SM_CXSMICON),
                     GetSystemMetrics(SM_CYSMICON), 0, 0, DI_NORMAL);
-        rc.left += (rc.bottom - rc.top);
+        rc.left = pt.x + GetSystemMetrics( SM_CXSMICON );
     }
 
     /* drawing text */
     if (uFlags & DC_TEXT) {
         HFONT hOldFont;
+        WCHAR text[128];
 
         if (uFlags & DC_INBUTTON)
             SetTextColor (hdc, GetSysColor (COLOR_BTNTEXT));
@@ -339,16 +341,14 @@ BOOL WINAPI DrawCaptionTempW (HWND hwnd, HDC hdc, const RECT *rect, HFONT hFont,
             hOldFont = SelectObject (hdc, hNewFont);
         }
 
-        if (str)
-            DrawTextW (hdc, str, -1, &rc,
-                         DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_LEFT);
-        else {
-            WCHAR szText[128];
-            INT nLen;
-            nLen = GetWindowTextW (hwnd, szText, 128);
-            DrawTextW (hdc, szText, nLen, &rc,
-                         DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_LEFT);
+        if (!str)
+        {
+            if (!GetWindowTextW( hwnd, text, sizeof(text)/sizeof(WCHAR) )) text[0] = 0;
+            str = text;
         }
+        rc.left += 2;
+        DrawTextW( hdc, str, -1, &rc, ((uFlags & 0x4000) ? DT_CENTER : DT_LEFT) |
+                   DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS );
 
         if (hFont)
             SelectObject (hdc, hOldFont);
@@ -1102,6 +1102,7 @@ static void  NC_DoNCPaint( HWND  hwnd, HRGN  clip )
  */
 LRESULT NC_HandleNCPaint( HWND hwnd , HRGN clip)
 {
+    HWND parent = GetAncestor( hwnd, GA_PARENT );
     DWORD dwStyle = GetWindowLongW( hwnd, GWL_STYLE );
 
     if( dwStyle & WS_VISIBLE )
@@ -1110,6 +1111,9 @@ LRESULT NC_HandleNCPaint( HWND hwnd , HRGN clip)
 	    WINPOS_RedrawIconTitle( hwnd );
 	else
 	    NC_DoNCPaint( hwnd, clip );
+
+        if (parent == GetDesktopWindow())
+            PostMessageW( parent, WM_PARENTNOTIFY, WM_NCPAINT, (LPARAM)hwnd );
     }
     return 0;
 }
@@ -1122,18 +1126,13 @@ LRESULT NC_HandleNCPaint( HWND hwnd , HRGN clip)
  */
 LRESULT NC_HandleNCActivate( HWND hwnd, WPARAM wParam, LPARAM lParam )
 {
-    WND* wndPtr = WIN_GetPtr( hwnd );
-
-    if (!wndPtr || wndPtr == WND_OTHER_PROCESS) return FALSE;
-
     /* Lotus Notes draws menu descriptions in the caption of its main
      * window. When it wants to restore original "system" view, it just
      * sends WM_NCACTIVATE message to itself. Any optimizations here in
      * attempt to minimize redrawings lead to a not restored caption.
      */
-    if (wParam) wndPtr->flags |= WIN_NCACTIVATED;
-    else wndPtr->flags &= ~WIN_NCACTIVATED;
-    WIN_ReleasePtr( wndPtr );
+    if (wParam) win_set_flags( hwnd, WIN_NCACTIVATED, 0 );
+    else win_set_flags( hwnd, 0, WIN_NCACTIVATED );
 
     /* This isn't documented but is reproducible in at least XP SP2 and
      * Outlook 2007 depends on it
@@ -1144,6 +1143,9 @@ LRESULT NC_HandleNCActivate( HWND hwnd, WPARAM wParam, LPARAM lParam )
             WINPOS_RedrawIconTitle( hwnd );
         else
             NC_DoNCPaint( hwnd, (HRGN)1 );
+
+        if (GetAncestor( hwnd, GA_PARENT ) == GetDesktopWindow())
+            PostMessageW( GetDesktopWindow(), WM_PARENTNOTIFY, WM_NCACTIVATE, (LPARAM)hwnd );
     }
 
     return TRUE;
@@ -1485,8 +1487,6 @@ LRESULT NC_HandleNCRButtonDown( HWND hwnd, WPARAM wParam, LPARAM lParam )
     {
     case HTCAPTION:
     case HTSYSMENU:
-        if (!GetSystemMenu( hwnd, FALSE )) break;
-
         SetCapture( hwnd );
         for (;;)
         {
@@ -1500,7 +1500,7 @@ LRESULT NC_HandleNCRButtonDown( HWND hwnd, WPARAM wParam, LPARAM lParam )
         }
         ReleaseCapture();
         if (hittest == HTCAPTION || hittest == HTSYSMENU)
-            SendMessageW( hwnd, WM_SYSCOMMAND, SC_MOUSEMENU + HTSYSMENU, msg.lParam );
+            SendMessageW( hwnd, WM_CONTEXTMENU, (WPARAM)hwnd, MAKELPARAM(msg.pt.x, msg.pt.y));
         break;
     }
     return 0;

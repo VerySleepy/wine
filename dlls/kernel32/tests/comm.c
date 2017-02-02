@@ -941,7 +941,8 @@ static void test_waittxempty(void)
         evtmask = 0;
         SetLastError(0xdeadbeef);
         res = WaitCommEvent(hcom, &evtmask, &ovl_wait);
-        ok((!res && GetLastError() == ERROR_IO_PENDING) || res /* busy system */, "%d: WaitCommEvent error %d\n", i, GetLastError());
+        ok(res /* busy system */ || GetLastError() == ERROR_IO_PENDING,
+           "%d: WaitCommEvent error %d\n", i, GetLastError());
 
         res = WaitForSingleObject(ovl_wait.hEvent, TIMEOUT);
         if (i == 0)
@@ -2150,13 +2151,9 @@ static void test_read_write(void)
                     iob.Information = -1;
                     offset.QuadPart = (LONGLONG)i;
                     status = pNtReadFile(hcom, 0, NULL, NULL, &iob, buf, 0, &offset, NULL);
-                    /* FIXME: Remove once Wine is fixed */
-                    if (status == STATUS_PENDING) WaitForSingleObject(hcom, TIMEOUT);
                     if (i >= 0)
                     {
-todo_wine
                         ok(status == STATUS_SUCCESS, "%d: expected STATUS_SUCCESS, got %#x\n", i, status);
-todo_wine
                         ok(U(iob).Status == STATUS_SUCCESS, "%d: expected STATUS_SUCCESS, got %#x\n", i, U(iob).Status);
                         ok(iob.Information == 0, "%d: expected 0, got %lu\n", i, iob.Information);
                     }

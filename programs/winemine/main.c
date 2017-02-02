@@ -80,38 +80,31 @@ static void LoadBoard( BOARD *p_board )
     RegOpenKeyExW( HKEY_CURRENT_USER, registry_key, 0, KEY_QUERY_VALUE, &hkey );
 
     size = sizeof( p_board->pos.x );
-    if( !RegQueryValueExW( hkey, xposW, NULL, &type,
-            (LPBYTE) &p_board->pos.x, &size ) == ERROR_SUCCESS )
+    if( RegQueryValueExW( hkey, xposW, NULL, &type, (BYTE*) &p_board->pos.x, &size ) )
 	p_board->pos.x = 0;
 
     size = sizeof( p_board->pos.y );
-    if( !RegQueryValueExW( hkey, yposW, NULL, &type,
-            (LPBYTE) &p_board->pos.y, &size ) == ERROR_SUCCESS )
+    if( RegQueryValueExW( hkey, yposW, NULL, &type, (BYTE*) &p_board->pos.y, &size ) )
         p_board->pos.y = 0;
 
     size = sizeof( p_board->rows );
-    if( !RegQueryValueExW( hkey, heightW, NULL, &type,
-            (LPBYTE) &p_board->rows, &size ) == ERROR_SUCCESS )
+    if( RegQueryValueExW( hkey, heightW, NULL, &type, (BYTE*) &p_board->rows, &size ) )
         p_board->rows = BEGINNER_ROWS;
 
     size = sizeof( p_board->cols );
-    if( !RegQueryValueExW( hkey, widthW, NULL, &type,
-            (LPBYTE) &p_board->cols, &size ) == ERROR_SUCCESS )
+    if( RegQueryValueExW( hkey, widthW, NULL, &type, (BYTE*) &p_board->cols, &size ) )
         p_board->cols = BEGINNER_COLS;
 
     size = sizeof( p_board->mines );
-    if( !RegQueryValueExW( hkey, minesW, NULL, &type,
-            (LPBYTE) &p_board->mines, &size ) == ERROR_SUCCESS )
+    if( RegQueryValueExW( hkey, minesW, NULL, &type, (BYTE*) &p_board->mines, &size ) )
         p_board->mines = BEGINNER_MINES;
 
     size = sizeof( p_board->difficulty );
-    if( !RegQueryValueExW( hkey, difficultyW, NULL, &type,
-            (LPBYTE) &p_board->difficulty, &size ) == ERROR_SUCCESS )
+    if( RegQueryValueExW( hkey, difficultyW, NULL, &type, (BYTE*) &p_board->difficulty, &size ) )
         p_board->difficulty = BEGINNER;
 
     size = sizeof( p_board->IsMarkQ );
-    if( !RegQueryValueExW( hkey, markW, NULL, &type,
-            (LPBYTE) &p_board->IsMarkQ, &size ) == ERROR_SUCCESS )
+    if( RegQueryValueExW( hkey, markW, NULL, &type, (BYTE*) &p_board->IsMarkQ, &size ) )
         p_board->IsMarkQ = TRUE;
 
     for( i = 0; i < 3; i++ ) {
@@ -127,8 +120,7 @@ static void LoadBoard( BOARD *p_board )
     for( i = 0; i < 3; i++ ) {
         wsprintfW( key_name, timeW, i+1 );
         size = sizeof( p_board->best_time[i] );
-        if( !RegQueryValueExW( hkey, key_name, NULL, &type,
-                (LPBYTE) &p_board->best_time[i], &size ) == ERROR_SUCCESS )
+        if( RegQueryValueExW( hkey, key_name, NULL, &type, (BYTE*) &p_board->best_time[i], &size ) )
             p_board->best_time[i] = 999;
     }
     RegCloseKey( hkey );
@@ -321,10 +313,8 @@ static void CreateBoard( BOARD *p_board )
     p_board->face_bmp = SMILE_BMP;
     p_board->time = 0;
 
-    wnd_rect.left   = p_board->pos.x;
-    wnd_rect.right  = p_board->pos.x + p_board->width;
-    wnd_rect.top    = p_board->pos.y;
-    wnd_rect.bottom = p_board->pos.y + p_board->height;
+    SetRect(&wnd_rect, p_board->pos.x, p_board->pos.y, p_board->pos.x + p_board->width,
+            p_board->pos.y + p_board->height);
     AdjustWindowRect(&wnd_rect, wnd_style, TRUE);
 
     /* Make sure the window is completely on the screen */
@@ -1003,7 +993,7 @@ static LRESULT WINAPI MainProc( HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             LoadStringW( board.hInst, IDS_APPNAME, appname, sizeof(appname)/sizeof(WCHAR) );
             LoadStringW( board.hInst, IDS_ABOUT, other, sizeof(other)/sizeof(WCHAR) );
             ShellAboutW( hWnd, appname, other,
-                         LoadImageA( board.hInst, "WINEMINE", IMAGE_ICON, 48, 48, LR_SHARED ));
+                         LoadImageW(board.hInst, MAKEINTRESOURCEW(IDI_WINEMINE), IMAGE_ICON, 48, 48, LR_SHARED));
             return 0;
         }
         default:

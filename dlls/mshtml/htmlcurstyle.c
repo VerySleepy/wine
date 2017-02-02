@@ -17,6 +17,7 @@
  */
 
 #include <stdarg.h>
+#include <assert.h>
 
 #define COBJMACROS
 
@@ -163,8 +164,10 @@ static HRESULT WINAPI HTMLCurrentStyle_get_position(IHTMLCurrentStyle *iface, BS
 static HRESULT WINAPI HTMLCurrentStyle_get_styleFloat(IHTMLCurrentStyle *iface, BSTR *p)
 {
     HTMLCurrentStyle *This = impl_from_IHTMLCurrentStyle(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    return get_nsstyle_attr(This->nsstyle, STYLEID_FLOAT, p, 0);
 }
 
 static HRESULT WINAPI HTMLCurrentStyle_get_color(IHTMLCurrentStyle *iface, VARIANT *p)
@@ -779,15 +782,15 @@ static HRESULT WINAPI HTMLCurrentStyle_get_accelerator(IHTMLCurrentStyle *iface,
 static HRESULT WINAPI HTMLCurrentStyle_get_overflowX(IHTMLCurrentStyle *iface, BSTR *p)
 {
     HTMLCurrentStyle *This = impl_from_IHTMLCurrentStyle(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    TRACE("(%p)->(%p)\n", This, p);
+    return get_nsstyle_attr(This->nsstyle, STYLEID_OVERFLOW_X, p, 0);
 }
 
 static HRESULT WINAPI HTMLCurrentStyle_get_overflowY(IHTMLCurrentStyle *iface, BSTR *p)
 {
     HTMLCurrentStyle *This = impl_from_IHTMLCurrentStyle(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    TRACE("(%p)->(%p)\n", This, p);
+    return get_nsstyle_attr(This->nsstyle, STYLEID_OVERFLOW_Y, p, 0);
 }
 
 static HRESULT WINAPI HTMLCurrentStyle_get_textTransform(IHTMLCurrentStyle *iface, BSTR *p)
@@ -1191,8 +1194,10 @@ static HRESULT WINAPI HTMLCurrentStyle3_get_wordSpacing(IHTMLCurrentStyle3 *ifac
 static HRESULT WINAPI HTMLCurrentStyle3_get_whiteSpace(IHTMLCurrentStyle3 *iface, BSTR *p)
 {
     HTMLCurrentStyle *This = impl_from_IHTMLCurrentStyle3(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    return get_nsstyle_attr(This->nsstyle, STYLEID_WHITE_SPACE, p, 0);
 }
 
 static const IHTMLCurrentStyle3Vtbl HTMLCurrentStyle3Vtbl = {
@@ -1277,8 +1282,8 @@ static HRESULT WINAPI HTMLCurrentStyle4_get_maxHeight(IHTMLCurrentStyle4 *iface,
 static HRESULT WINAPI HTMLCurrentStyle4_get_minWidth(IHTMLCurrentStyle4 *iface, VARIANT *p)
 {
     HTMLCurrentStyle *This = impl_from_IHTMLCurrentStyle4(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    TRACE("(%p)->(%p)\n", This, p);
+    return get_nsstyle_attr_var(This->nsstyle, STYLEID_MIN_WIDTH, p, 0);
 }
 
 static HRESULT WINAPI HTMLCurrentStyle4_get_maxWidth(IHTMLCurrentStyle4 *iface, VARIANT *p)
@@ -1312,14 +1317,14 @@ static const tid_t HTMLCurrentStyle_iface_tids[] = {
 static dispex_static_data_t HTMLCurrentStyle_dispex = {
     NULL,
     DispHTMLCurrentStyle_tid,
-    NULL,
     HTMLCurrentStyle_iface_tids
 };
 
 HRESULT HTMLCurrentStyle_Create(HTMLElement *elem, IHTMLCurrentStyle **p)
 {
     nsIDOMCSSStyleDeclaration *nsstyle;
-    nsIDOMWindow *nsview;
+    mozIDOMWindowProxy *nsview;
+    nsIDOMWindow *nswindow;
     nsAString nsempty_str;
     HTMLCurrentStyle *ret;
     nsresult nsres;
@@ -1335,11 +1340,21 @@ HRESULT HTMLCurrentStyle_Create(HTMLElement *elem, IHTMLCurrentStyle **p)
         return E_FAIL;
     }
 
+    nsres = mozIDOMWindowProxy_QueryInterface(nsview, &IID_nsIDOMWindow, (void**)&nswindow);
+    mozIDOMWindowProxy_Release(nsview);
+    assert(nsres == NS_OK);
+
     nsAString_Init(&nsempty_str, NULL);
-    nsres = nsIDOMWindow_GetComputedStyle(nsview, (nsIDOMElement*)elem->nselem, &nsempty_str, &nsstyle);
+    nsres = nsIDOMWindow_GetComputedStyle(nswindow, (nsIDOMElement*)elem->nselem, &nsempty_str, &nsstyle);
     nsAString_Finish(&nsempty_str);
+    nsIDOMWindow_Release(nswindow);
     if(NS_FAILED(nsres)) {
         ERR("GetComputedStyle failed: %08x\n", nsres);
+        return E_FAIL;
+    }
+
+    if(!nsstyle) {
+        ERR("GetComputedStyle returned NULL nsstyle\n");
         return E_FAIL;
     }
 

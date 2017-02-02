@@ -23,7 +23,6 @@
 
 #define COBJMACROS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "windef.h"
 #include "winbase.h"
@@ -501,8 +500,8 @@ static HRESULT WINAPI HttpNegotiate_GetRootSecurityId(IHttpNegotiate2 *iface,
         BYTE *pbSecurityId, DWORD *pcbSecurityId, DWORD_PTR dwReserved)
 {
     BSCallback *This = impl_from_IHttpNegotiate2(iface);
-    FIXME("(%p)->(%p %p %ld)\n", This, pbSecurityId, pcbSecurityId, dwReserved);
-    return E_NOTIMPL;
+    TRACE("(%p)->(%p %p %ld)\n", This, pbSecurityId, pcbSecurityId, dwReserved);
+    return E_NOTIMPL; /* FIXME */
 }
 
 static const IHttpNegotiate2Vtbl HttpNegotiate2Vtbl = {
@@ -928,6 +927,8 @@ static HRESULT on_start_nsrequest(nsChannelBSC *This)
 {
     nsresult nsres;
 
+    This->nschannel->binding = This;
+
     /* FIXME: it's needed for http connections from BindToObject. */
     if(!This->nschannel->response_status)
         This->nschannel->response_status = 200;
@@ -940,6 +941,8 @@ static HRESULT on_start_nsrequest(nsChannelBSC *This)
     }
 
     if(This->is_doc_channel) {
+        if(!This->bsc.window)
+            return E_ABORT; /* Binding aborted in OnStartRequest call. */
         update_window_doc(This->bsc.window);
         if(This->bsc.window->base.outer_window->readystate != READYSTATE_LOADING)
             set_ready_state(This->bsc.window->base.outer_window, READYSTATE_LOADING);
@@ -971,11 +974,15 @@ static void on_stop_nsrequest(nsChannelBSC *This, HRESULT result)
             WARN("OnStopRequest failed: %08x\n", nsres);
     }
 
-    if(This->nschannel && This->nschannel->load_group) {
-        nsres = nsILoadGroup_RemoveRequest(This->nschannel->load_group,
-                (nsIRequest*)&This->nschannel->nsIHttpChannel_iface, NULL, request_result);
-        if(NS_FAILED(nsres))
-            ERR("RemoveRequest failed: %08x\n", nsres);
+    if(This->nschannel) {
+        if(This->nschannel->load_group) {
+            nsres = nsILoadGroup_RemoveRequest(This->nschannel->load_group,
+                    (nsIRequest*)&This->nschannel->nsIHttpChannel_iface, NULL, request_result);
+            if(NS_FAILED(nsres))
+                ERR("RemoveRequest failed: %08x\n", nsres);
+        }
+        if(This->nschannel->binding == This)
+            This->nschannel->binding = NULL;
     }
 }
 
@@ -1054,7 +1061,9 @@ static HRESULT read_stream_data(nsChannelBSC *This, IStream *stream)
                     return E_OUTOFMEMORY;
             }
 
-            on_start_nsrequest(This);
+            hres = on_start_nsrequest(This);
+            if(FAILED(hres))
+                return hres;
         }
 
         nsres = nsIStreamListener_OnDataAvailable(This->nslistener,
@@ -1134,7 +1143,7 @@ static nsrefcnt NSAPI nsAsyncVerifyRedirectCallback_Release(nsIAsyncVerifyRedire
     return ref;
 }
 
-static nsresult NSAPI nsAsyncVerifyRedirectCallback_AsyncOnChannelRedirect(nsIAsyncVerifyRedirectCallback *iface, nsresult result)
+static nsresult NSAPI nsAsyncVerifyRedirectCallback_OnRedirectVerifyCallback(nsIAsyncVerifyRedirectCallback *iface, nsresult result)
 {
     nsRedirectCallback *This = impl_from_nsIAsyncVerifyRedirectCallback(iface);
     nsChannel *old_nschannel;
@@ -1181,7 +1190,7 @@ static const nsIAsyncVerifyRedirectCallbackVtbl nsAsyncVerifyRedirectCallbackVtb
     nsAsyncVerifyRedirectCallback_QueryInterface,
     nsAsyncVerifyRedirectCallback_AddRef,
     nsAsyncVerifyRedirectCallback_Release,
-    nsAsyncVerifyRedirectCallback_AsyncOnChannelRedirect
+    nsAsyncVerifyRedirectCallback_OnRedirectVerifyCallback
 };
 
 static HRESULT create_redirect_callback(nsChannel *nschannel, nsChannelBSC *bsc, nsRedirectCallback **ret)
@@ -1214,8 +1223,11 @@ static void nsChannelBSC_destroy(BSCallback *bsc)
 {
     nsChannelBSC *This = nsChannelBSC_from_BSCallback(bsc);
 
-    if(This->nschannel)
+    if(This->nschannel) {
+        if(This->nschannel->binding == This)
+            This->nschannel->binding = NULL;
         nsIHttpChannel_Release(&This->nschannel->nsIHttpChannel_iface);
+    }
     if(This->nslistener)
         nsIStreamListener_Release(This->nslistener);
     if(This->nscontext)
@@ -1385,10 +1397,10 @@ static HRESULT nsChannelBSC_stop_binding(BSCallback *bsc, HRESULT result)
 {
     nsChannelBSC *This = nsChannelBSC_from_BSCallback(bsc);
 
-    if(result != E_ABORT) {
+    if(result != E_ABORT && This->is_doc_channel && This->bsc.window) {
         if(FAILED(result))
             handle_navigation_error(This, result);
-        else if(This->is_doc_channel && This->nschannel) {
+        else if(This->nschannel) {
             result = async_stop_request(This);
             if(SUCCEEDED(result))
                 return S_OK;
@@ -1411,10 +1423,17 @@ static HRESULT handle_redirect(nsChannelBSC *This, const WCHAR *new_url)
     nsRedirectCallback *callback;
     nsIChannelEventSink *sink;
     nsChannel *new_channel;
+    IMoniker *mon;
     nsresult nsres;
     HRESULT hres;
 
     TRACE("(%p)->(%s)\n", This, debugstr_w(new_url));
+
+    hres = CreateURLMoniker(NULL, new_url, &mon);
+    if(FAILED(hres))
+        return hres;
+    IMoniker_Release(This->bsc.mon);
+    This->bsc.mon = mon;
 
     if(!This->nschannel || !This->nschannel->notif_callback)
         return S_OK;
@@ -1596,10 +1615,29 @@ static HRESULT nsChannelBSC_on_progress(BSCallback *bsc, ULONG status_code, LPCW
     return S_OK;
 }
 
+static HRESULT process_response_status_text(const WCHAR *header, const WCHAR *header_end, char **status_text)
+{
+    header = strchrW(header + 1, ' ');
+    if(!header || header >= header_end)
+        return E_FAIL;
+    header = strchrW(header + 1, ' ');
+    if(!header || header >= header_end)
+        return E_FAIL;
+    ++header;
+
+    *status_text = heap_strndupWtoU(header, header_end - header);
+
+    if(!*status_text)
+        return E_OUTOFMEMORY;
+
+    return S_OK;
+}
+
 static HRESULT nsChannelBSC_on_response(BSCallback *bsc, DWORD response_code,
         LPCWSTR response_headers)
 {
     nsChannelBSC *This = nsChannelBSC_from_BSCallback(bsc);
+    char *str;
     HRESULT hres;
 
     This->response_processed = TRUE;
@@ -1609,6 +1647,15 @@ static HRESULT nsChannelBSC_on_response(BSCallback *bsc, DWORD response_code,
         const WCHAR *headers;
 
         headers = strchrW(response_headers, '\r');
+        hres = process_response_status_text(response_headers, headers, &str);
+        if(FAILED(hres)) {
+            WARN("parsing headers failed: %08x\n", hres);
+            return hres;
+        }
+
+        heap_free(This->nschannel->response_status_text);
+        This->nschannel->response_status_text = str;
+
         if(headers && headers[1] == '\n') {
             headers += 2;
             hres = process_response_headers(This, headers);
@@ -1822,8 +1869,7 @@ HRESULT channelbsc_load_stream(HTMLInnerWindow *pending_window, IMoniker *mon, I
     if(SUCCEEDED(hres))
         hres = async_stop_request(bscallback);
     if(FAILED(hres))
-        IBindStatusCallback_OnStopBinding(&bscallback->bsc.IBindStatusCallback_iface, hres,
-                ERROR_SUCCESS);
+        IBindStatusCallback_OnStopBinding(&bscallback->bsc.IBindStatusCallback_iface, hres, NULL);
 
     return hres;
 }
@@ -2324,7 +2370,7 @@ static HRESULT translate_uri(HTMLOuterWindow *window, IUri *orig_uri, BSTR *ret_
 
         hres = IDocHostUIHandler_TranslateUrl(window->doc_obj->hostui, 0, display_uri,
                 &translated_url);
-        if(hres == S_OK) {
+        if(hres == S_OK && translated_url) {
             TRACE("%08x %s -> %s\n", hres, debugstr_w(display_uri), debugstr_w(translated_url));
             SysFreeString(display_uri);
             hres = create_uri(translated_url, 0, &uri);

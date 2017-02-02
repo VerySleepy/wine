@@ -101,6 +101,10 @@ function testFunc1(x, y) {
     ok(tmp === false, "arguments deleted");
     ok(typeof(arguments) === "object", "typeof(arguments) = " + typeof(arguments));
 
+    x = 2;
+    ok(x === 2, "x = " + x);
+    ok(arguments[0] === 2, "arguments[0] = " + arguments[0]);
+
     return true;
 }
 
@@ -194,6 +198,59 @@ ok(testRecFunc.arguments === null, "testRecFunc.arguments = " + testRecFunc.argu
 testRecFunc(true);
 ok(testRecFunc.arguments === null, "testRecFunc.arguments = " + testRecFunc.arguments);
 
+function argumentsTest() {
+    var save = arguments;
+    with({arguments: 1}) {
+        ok(arguments === 1, "arguments = " + arguments);
+        (function() {
+            ok(argumentsTest.arguments === save, "unexpected argumentsTest.arguments");
+        })();
+    }
+    eval('ok(arguments === save, "unexpected arguments");');
+    [1,2].sort(function() {
+        ok(argumentsTest.arguments === save, "unexpected argumentsTest.arguments");
+        return 1;
+    });
+}
+
+argumentsTest();
+
+// arguments object detached from its execution context
+(function() {
+    var args, get_x, set_x;
+
+    function test_args(detached) {
+        ok(args[0] === 1, "args[0] = " + args[0]);
+        set_x(2);
+        ok(args[0] === (detached ? 1 : 2), "args[0] = " + args[0] + " expected " + (detached ? 1 : 2));
+        args[0] = 3;
+        ok(get_x() === (detached ? 2 : 3), "get_x() = " + get_x());
+        ok(args[0] === 3, "args[0] = " + args[0]);
+    }
+
+    (function(x) {
+        args = arguments;
+        get_x = function() { return x; };
+        set_x = function(v) { x = v; };
+
+        test_args(false);
+        x = 1;
+    })(1);
+
+    test_args(true);
+})();
+
+// arguments is a regular variable, it may be overwritten
+(function() {
+    ok(typeof(arguments) === "object", "typeof(arguments) = " + typeof(arguments));
+    arguments = 1;
+    ok(arguments === 1, "arguments = " + arguments);
+})();
+
+(function callAsExprTest() {
+    ok(callAsExprTest.arguments === null, "callAsExprTest.arguments = " + callAsExprTest.arguments);
+})(1,2);
+
 tmp = (function() {1;})();
 ok(tmp === undefined, "tmp = " + tmp);
 tmp = eval("1;");
@@ -212,7 +269,77 @@ testNoRes();
 testRes() && testRes();
 testNoRes(), testNoRes();
 
+(function() {
+    eval("var x=1;");
+    ok(x === 1, "x = " + x);
+})();
+
+(function() {
+    var e = eval;
+    var r = e(1);
+    ok(r === 1, "r = " + r);
+    (function(x, a) { x(a); })(eval, "2");
+})();
+
+(function(r) {
+    r = eval("1");
+    ok(r === 1, "r = " + r);
+    (function(x, a) { x(a); })(eval, "2");
+})();
+
 tmp = (function(){ return testNoRes(), testRes();})();
+
+var f1, f2;
+
+ok(funcexpr() == 2, "funcexpr() = " + funcexpr());
+
+f1 = function funcexpr() { return 1; }
+ok(f1 != funcexpr, "f1 == funcexpr");
+ok(f1() === 1, "f1() = " + f1());
+
+f2 = function funcexpr() { return 2; }
+ok(f2 != funcexpr, "f2 != funcexpr");
+ok(f2() === 2, "f2() = " + f2());
+
+f1 = null;
+for(i = 0; i < 3; i++) {
+    f2 = function funcexpr2() {};
+    ok(f1 != f2, "f1 == f2");
+    f1 = f2;
+}
+
+f1 = null;
+for(i = 0; i < 3; i++) {
+    f2 = function() {};
+    ok(f1 != f2, "f1 == f2");
+    f1 = f2;
+}
+
+(function() {
+    ok(infuncexpr() == 2, "infuncexpr() = " + infuncexpr());
+
+    f1 = function infuncexpr() { return 1; }
+    ok(f1 != funcexpr, "f1 == funcexpr");
+    ok(f1() === 1, "f1() = " + f1());
+
+    f2 = function infuncexpr() { return 2; }
+    ok(f2 != funcexpr, "f2 != funcexpr");
+    ok(f2() === 2, "f2() = " + f2());
+
+    f1 = null;
+    for(i = 0; i < 3; i++) {
+        f2 = function infuncexpr2() {};
+        ok(f1 != f2, "f1 == f2");
+        f1 = f2;
+    }
+
+    f1 = null;
+    for(i = 0; i < 3; i++) {
+        f2 = function() {};
+        ok(f1 != f2, "f1 == f2");
+        f1 = f2;
+    }
+})();
 
 var obj1 = new Object();
 ok(typeof(obj1) === "object", "typeof(obj1) is not object");
@@ -274,6 +401,20 @@ ok(typeof(obj2) === "object", "typeof(obj2) = " + typeof(obj2));
 
 var obj3 = new Object;
 ok(typeof(obj3) === "object", "typeof(obj3) is not object");
+
+(function() {
+    ok(typeof(func) === "function", "typeof(func) = " + typeof(func));
+    function func() {}
+    ok(typeof(func) === "function", "typeof(func) = " + typeof(func));
+    func = 0;
+    ok(typeof(func) === "number", "typeof(func) = " + typeof(func));
+})();
+
+(function(f) {
+    ok(typeof(f) === "function", "typeof(f) = " + typeof(f));
+    function f() {};
+    ok(typeof(f) === "function", "typeof(f) = " + typeof(f));
+})(1);
 
 for(var iter in "test")
     ok(false, "unexpected forin call, test = " + iter);
@@ -388,6 +529,10 @@ tmp = 2.5*3.5;
 /* ok(tmp === 8.75, "2.5*3.5 !== 8.75"); */
 ok(tmp > 8.749999 && tmp < 8.750001, "2.5*3.5 !== 8.75");
 ok(getVT(tmp) === "VT_R8", "getVT(2.5*3.5) !== VT_R8");
+
+tmp = 2*.5;
+ok(tmp === 1, "2*.5 !== 1");
+ok(getVT(tmp) == "VT_I4", "getVT(2*.5) !== VT_I4");
 
 tmp = 4/2;
 ok(tmp === 2, "4/2 !== 2");
@@ -1173,6 +1318,38 @@ try {
     ok(false, "deleteTest not throwed exception?");
 }catch(ex) {}
 
+(function() {
+    var to_delete = 2;
+    var r = delete to_delete;
+    ok(r === false, "delete 1 returned " + r);
+    if(r)
+        return;
+    ok(to_delete === 2, "to_delete = " + to_delete);
+
+    to_delete = new Object();
+    r = delete to_delete;
+    ok(r === false, "delete 2 returned " + r);
+    ok(typeof(to_delete) === "object", "typeof(to_delete) = " + typeof(to_delete));
+})();
+
+(function(to_delete) {
+    var r = delete to_delete;
+    ok(r === false, "delete 3 returned " + r);
+    ok(to_delete === 2, "to_delete = " + to_delete);
+
+    to_delete = new Object();
+    r = delete to_delete;
+    ok(r === false, "delete 4 returned " + r);
+    ok(typeof(to_delete) === "object", "typeof(to_delete) = " + typeof(to_delete));
+})(2);
+
+(function() {
+    with({to_delete: new Object()}) {
+        var r = delete to_delete;
+        ok(r === true, "delete returned " + r);
+    }
+})();
+
 if (false)
     if (true)
         ok(false, "if evaluated");
@@ -1419,6 +1596,24 @@ tmp = (function() {
         return ret;
 })();
 ok(tmp, "tmp = " + tmp);
+
+(function() {
+    ok(typeof(func) === "function", "typeof(func)  = " + typeof(func));
+    with(new Object()) {
+        var x = false && function func() {};
+    }
+    ok(typeof(func) === "function", "typeof(func)  = " + typeof(func));
+})();
+
+(function() {
+    ok(x === undefined, "x = " + x); // x is declared, but never initialized
+    with({x: 1}) {
+        ok(x === 1, "x = " + x);
+        var x = 2;
+        ok(x === 2, "x = " + x);
+    }
+    ok(x === undefined, "x = " + x);
+})();
 
 /* NoNewline rule parser tests */
 while(true) {

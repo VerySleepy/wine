@@ -25,6 +25,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+
 #include "windef.h"
 #include "winbase.h"
 #include "winver.h"
@@ -354,7 +355,7 @@ static HWND *list_window_parents( HWND hwnd )
 {
     WND *win;
     HWND current, *list;
-    int i, pos = 0, size = 16, count = 0;
+    int i, pos = 0, size = 16, count;
 
     if (!(list = HeapAlloc( GetProcessHeap(), 0, size * sizeof(HWND) ))) return NULL;
 
@@ -437,11 +438,13 @@ static void send_parent_notify( HWND hwnd, UINT msg )
  */
 static void update_window_state( HWND hwnd )
 {
-    RECT window_rect, client_rect;
+    RECT window_rect, client_rect, valid_rects[2];
 
     WIN_GetRectangles( hwnd, COORDS_PARENT, &window_rect, &client_rect );
+    valid_rects[0] = valid_rects[1] = client_rect;
     set_window_pos( hwnd, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOCLIENTSIZE | SWP_NOCLIENTMOVE |
-                    SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW, &window_rect, &client_rect, NULL );
+                    SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW,
+                    &window_rect, &client_rect, valid_rects );
 }
 
 
@@ -598,7 +601,7 @@ void flush_window_surfaces( BOOL idle )
     now = GetTickCount();
     if (idle) last_idle = now;
     /* if not idle, we only flush if there's evidence that the app never goes idle */
-    else if ((int)(now - last_idle) < 1000) goto done;
+    else if ((int)(now - last_idle) < 50) goto done;
 
     LIST_FOR_EACH_ENTRY( surface, &window_surfaces, struct window_surface, entry )
         surface->funcs->flush( surface );
@@ -655,6 +658,24 @@ HWND WIN_IsCurrentThread( HWND hwnd )
 
     if (!(ptr = WIN_GetPtr( hwnd )) || ptr == WND_OTHER_PROCESS || ptr == WND_DESKTOP) return 0;
     if (ptr->tid == GetCurrentThreadId()) ret = ptr->obj.handle;
+    WIN_ReleasePtr( ptr );
+    return ret;
+}
+
+
+/***********************************************************************
+ *           win_set_flags
+ *
+ * Set the flags of a window and return the previous value.
+ */
+UINT win_set_flags( HWND hwnd, UINT set_mask, UINT clear_mask )
+{
+    UINT ret;
+    WND *ptr = WIN_GetPtr( hwnd );
+
+    if (!ptr || ptr == WND_OTHER_PROCESS || ptr == WND_DESKTOP) return 0;
+    ret = ptr->flags;
+    ptr->flags = (ret & ~clear_mask) | set_mask;
     WIN_ReleasePtr( ptr );
     return ret;
 }
@@ -774,10 +795,7 @@ ULONG WIN_SetStyle( HWND hwnd, ULONG set_bits, ULONG clear_bits )
 
     if (ok && ((style.styleOld ^ style.styleNew) & WS_VISIBLE))
     {
-        /* Some apps try to make their window visible through WM_SETREDRAW.
-         * Only do that if the window was never explicitly hidden,
-         * because Steam messes with WM_SETREDRAW after hiding its windows. */
-        made_visible = !(win->flags & WIN_HIDDEN) && (style.styleNew & WS_VISIBLE);
+        made_visible = (style.styleNew & WS_VISIBLE) != 0;
         invalidate_dce( win, NULL );
     }
     WIN_ReleasePtr( win );
@@ -940,6 +958,13 @@ LRESULT WIN_DestroyWindow( HWND hwnd )
 
     TRACE("%p\n", hwnd );
 
+    /* destroy default IME window */
+    if (win_set_flags( hwnd, 0, WIN_HAS_IME_WIN ) & WIN_HAS_IME_WIN)
+    {
+        TRACE("unregister IME window for %p\n", hwnd);
+        imm_unregister_window( hwnd );
+    }
+
     /* free child windows */
     if ((list = WIN_ListChildren( hwnd )))
     {
@@ -981,6 +1006,7 @@ LRESULT WIN_DestroyWindow( HWND hwnd )
     wndPtr->text = NULL;
     HeapFree( GetProcessHeap(), 0, wndPtr->pScroll );
     wndPtr->pScroll = NULL;
+    DestroyIcon( wndPtr->hIconSmall2 );
     surface = wndPtr->surface;
     wndPtr->surface = NULL;
     WIN_ReleasePtr( wndPtr );
@@ -1322,16 +1348,7 @@ HWND WIN_CreateWindowEx( CREATESTRUCTW *cs, LPCWSTR className, HINSTANCE module,
     /* Fix the styles for MDI children */
     if (cs->dwExStyle & WS_EX_MDICHILD)
     {
-        UINT flags = 0;
-
-        wndPtr = WIN_GetPtr(cs->hwndParent);
-        if (wndPtr && wndPtr != WND_OTHER_PROCESS && wndPtr != WND_DESKTOP)
-        {
-            flags = wndPtr->flags;
-            WIN_ReleasePtr(wndPtr);
-        }
-
-        if (!(flags & WIN_ISMDICLIENT))
+        if (!(win_get_flags( cs->hwndParent ) & WIN_ISMDICLIENT))
         {
             WARN("WS_EX_MDICHILD, but parent %p is not MDIClient\n", cs->hwndParent);
             return 0;
@@ -1471,6 +1488,7 @@ HWND WIN_CreateWindowEx( CREATESTRUCTW *cs, LPCWSTR className, HINSTANCE module,
     wndPtr->userdata       = 0;
     wndPtr->hIcon          = 0;
     wndPtr->hIconSmall     = 0;
+    wndPtr->hIconSmall2    = 0;
     wndPtr->hSysMenu       = 0;
 
     wndPtr->min_pos.x = wndPtr->min_pos.y = -1;
@@ -1593,6 +1611,15 @@ HWND WIN_CreateWindowEx( CREATESTRUCTW *cs, LPCWSTR className, HINSTANCE module,
         goto failed;
     }
 
+    /* create default IME window */
+
+    if (imm_register_window && !is_desktop_window( hwnd ) &&
+        parent != get_hwnd_message_parent() && imm_register_window( hwnd ))
+    {
+        TRACE("register IME window for %p\n", hwnd);
+        win_set_flags( hwnd, WIN_HAS_IME_WIN, 0 );
+    }
+
     /* send WM_NCCALCSIZE */
 
     if (WIN_GetRectangles( hwnd, COORDS_PARENT, &rect, NULL ))
@@ -1625,17 +1652,13 @@ HWND WIN_CreateWindowEx( CREATESTRUCTW *cs, LPCWSTR className, HINSTANCE module,
 
     /* send the size messages */
 
-    if (!(wndPtr = WIN_GetPtr( hwnd )) ||
-          wndPtr == WND_OTHER_PROCESS || wndPtr == WND_DESKTOP) return 0;
-    if (!(wndPtr->flags & WIN_NEED_SIZE))
+    if (!(win_get_flags( hwnd ) & WIN_NEED_SIZE))
     {
-        WIN_ReleasePtr( wndPtr );
         WIN_GetRectangles( hwnd, COORDS_PARENT, NULL, &rect );
         SendMessageW( hwnd, WM_SIZE, SIZE_RESTORED,
                       MAKELONG(rect.right-rect.left, rect.bottom-rect.top));
         SendMessageW( hwnd, WM_MOVE, 0, MAKELONG( rect.left, rect.top ) );
     }
-    else WIN_ReleasePtr( wndPtr );
 
     /* Show the window, maximizing or minimizing if needed */
 
@@ -1656,6 +1679,9 @@ HWND WIN_CreateWindowEx( CREATESTRUCTW *cs, LPCWSTR className, HINSTANCE module,
 
     send_parent_notify( hwnd, WM_CREATE );
     if (!IsWindow( hwnd )) return 0;
+
+    if (parent == GetDesktopWindow())
+        PostMessageW( parent, WM_PARENTNOTIFY, WM_CREATE, (LPARAM)hwnd );
 
     if (cs->style & WS_VISIBLE)
     {
@@ -1765,6 +1791,8 @@ static void WIN_SendDestroyMsg( HWND hwnd )
         if (hwnd == info.hwndCaret) DestroyCaret();
         if (hwnd == info.hwndActive) WINPOS_ActivateOtherWindow( hwnd );
     }
+
+    if (hwnd == GetClipboardOwner()) CLIPBOARD_ReleaseOwner( hwnd );
 
     /*
      * Send the WM_DESTROY to the window.
@@ -1876,9 +1904,6 @@ BOOL WINAPI DestroyWindow( HWND hwnd )
     WIN_SendDestroyMsg( hwnd );
     if (!IsWindow( hwnd )) return TRUE;
 
-    if (GetClipboardOwner() == hwnd)
-        CLIPBOARD_ReleaseOwner();
-
       /* Destroy the window storage */
 
     WIN_DestroyWindow( hwnd );
@@ -1913,7 +1938,7 @@ BOOL WINAPI OpenIcon( HWND hwnd )
  */
 HWND WINAPI FindWindowExW( HWND parent, HWND child, LPCWSTR className, LPCWSTR title )
 {
-    HWND *list = NULL;
+    HWND *list;
     HWND retvalue = 0;
     int i = 0, len = 0;
     WCHAR *buffer = NULL;
@@ -2035,45 +2060,57 @@ HWND WINAPI GetDesktopWindow(void)
 
     if (!thread_info->top_window)
     {
-        USEROBJECTFLAGS flags;
-        if (!GetUserObjectInformationW( GetProcessWindowStation(), UOI_FLAGS, &flags,
-                                        sizeof(flags), NULL ) || (flags.dwFlags & WSF_VISIBLE))
+        static const WCHAR explorer[] = {'\\','e','x','p','l','o','r','e','r','.','e','x','e',0};
+        static const WCHAR args[] = {' ','/','d','e','s','k','t','o','p',0};
+        STARTUPINFOW si;
+        PROCESS_INFORMATION pi;
+        WCHAR windir[MAX_PATH];
+        WCHAR app[MAX_PATH + sizeof(explorer)/sizeof(WCHAR)];
+        WCHAR cmdline[MAX_PATH + (sizeof(explorer) + sizeof(args))/sizeof(WCHAR)];
+        WCHAR desktop[MAX_PATH];
+        void *redir;
+
+        SERVER_START_REQ( set_user_object_info )
         {
-            static const WCHAR explorer[] = {'\\','e','x','p','l','o','r','e','r','.','e','x','e',0};
-            static const WCHAR args[] = {' ','/','d','e','s','k','t','o','p',0};
-            STARTUPINFOW si;
-            PROCESS_INFORMATION pi;
-            WCHAR windir[MAX_PATH];
-            WCHAR app[MAX_PATH + sizeof(explorer)/sizeof(WCHAR)];
-            WCHAR cmdline[MAX_PATH + (sizeof(explorer) + sizeof(args))/sizeof(WCHAR)];
-            void *redir;
-
-            memset( &si, 0, sizeof(si) );
-            si.cb = sizeof(si);
-            si.dwFlags = STARTF_USESTDHANDLES;
-            si.hStdInput  = 0;
-            si.hStdOutput = 0;
-            si.hStdError  = GetStdHandle( STD_ERROR_HANDLE );
-
-            GetSystemDirectoryW( windir, MAX_PATH );
-            strcpyW( app, windir );
-            strcatW( app, explorer );
-            strcpyW( cmdline, app );
-            strcatW( cmdline, args );
-
-            Wow64DisableWow64FsRedirection( &redir );
-            if (CreateProcessW( app, cmdline, NULL, NULL, FALSE, DETACHED_PROCESS,
-                                NULL, windir, &si, &pi ))
+            req->handle = wine_server_obj_handle( GetThreadDesktop(GetCurrentThreadId()) );
+            req->flags  = SET_USER_OBJECT_GET_FULL_NAME;
+            wine_server_set_reply( req, desktop, sizeof(desktop) - sizeof(WCHAR) );
+            if (!wine_server_call( req ))
             {
-                TRACE( "started explorer pid %04x tid %04x\n", pi.dwProcessId, pi.dwThreadId );
-                WaitForInputIdle( pi.hProcess, 10000 );
-                CloseHandle( pi.hThread );
-                CloseHandle( pi.hProcess );
+                size_t size = wine_server_reply_size( reply );
+                desktop[size / sizeof(WCHAR)] = 0;
+                TRACE( "starting explorer for desktop %s\n", debugstr_w(desktop) );
             }
-            else WARN( "failed to start explorer, err %d\n", GetLastError() );
-            Wow64RevertWow64FsRedirection( redir );
+            else
+                desktop[0] = 0;
         }
-        else TRACE( "not starting explorer since winstation is not visible\n" );
+        SERVER_END_REQ;
+
+        memset( &si, 0, sizeof(si) );
+        si.cb = sizeof(si);
+        si.lpDesktop = *desktop ? desktop : NULL;
+        si.dwFlags = STARTF_USESTDHANDLES;
+        si.hStdInput  = 0;
+        si.hStdOutput = 0;
+        si.hStdError  = GetStdHandle( STD_ERROR_HANDLE );
+
+        GetSystemDirectoryW( windir, MAX_PATH );
+        strcpyW( app, windir );
+        strcatW( app, explorer );
+        strcpyW( cmdline, app );
+        strcatW( cmdline, args );
+
+        Wow64DisableWow64FsRedirection( &redir );
+        if (CreateProcessW( app, cmdline, NULL, NULL, FALSE, DETACHED_PROCESS,
+                            NULL, windir, &si, &pi ))
+        {
+            TRACE( "started explorer pid %04x tid %04x\n", pi.dwProcessId, pi.dwThreadId );
+            WaitForInputIdle( pi.hProcess, 10000 );
+            CloseHandle( pi.hThread );
+            CloseHandle( pi.hProcess );
+        }
+        else WARN( "failed to start explorer, err %d\n", GetLastError() );
+        Wow64RevertWow64FsRedirection( redir );
 
         SERVER_START_REQ( get_desktop_window )
         {
@@ -2346,6 +2383,8 @@ LONG_PTR WIN_SetWindowLong( HWND hwnd, INT offset, UINT size, LONG_PTR newval, B
         newval = style.styleNew;
         /* WS_CLIPSIBLINGS can't be reset on top-level windows */
         if (wndPtr->parent == GetDesktopWindow()) newval |= WS_CLIPSIBLINGS;
+        /* WS_MINIMIZE can't be reset */
+        if (wndPtr->dwStyle & WS_MINIMIZE) newval |= WS_MINIMIZE;
         /* FIXME: changing WS_DLGFRAME | WS_THICKFRAME is supposed to change
            WS_EX_WINDOWEDGE too */
         break;
@@ -2499,7 +2538,7 @@ LONG_PTR WIN_SetWindowLong( HWND hwnd, INT offset, UINT size, LONG_PTR newval, B
     if ((offset == GWL_STYLE && ((style.styleOld ^ style.styleNew) & WS_VISIBLE)) ||
         (offset == GWL_EXSTYLE && ((style.styleOld ^ style.styleNew) & WS_EX_LAYERED)))
     {
-        made_visible = !(wndPtr->flags & WIN_HIDDEN) && (wndPtr->dwStyle & WS_VISIBLE);
+        made_visible = (wndPtr->dwStyle & WS_VISIBLE) != 0;
         invalidate_dce( wndPtr, NULL );
     }
     WIN_ReleasePtr( wndPtr );
@@ -2662,7 +2701,7 @@ LONG WINAPI DECLSPEC_HOTPATCH SetWindowLongA( HWND hwnd, INT offset, LONG newval
  * and WM_STYLECHANGED afterwards.
  * App ver 4.0 can't use SetWindowLong to change WS_EX_TOPMOST.
  */
-LONG WINAPI SetWindowLongW(
+LONG WINAPI DECLSPEC_HOTPATCH SetWindowLongW(
     HWND hwnd,  /* [in] window to alter */
     INT offset, /* [in] offset, in bytes, of location to alter */
     LONG newval /* [in] new value of location */
@@ -2678,13 +2717,15 @@ INT WINAPI GetWindowTextA( HWND hwnd, LPSTR lpString, INT nMaxCount )
 {
     WCHAR *buffer;
 
-    if (!lpString) return 0;
+    if (!lpString || nMaxCount <= 0) return 0;
 
     if (WIN_IsCurrentProcess( hwnd ))
+    {
+        lpString[0] = 0;
         return (INT)SendMessageA( hwnd, WM_GETTEXT, nMaxCount, (LPARAM)lpString );
+    }
 
     /* when window belongs to other process, don't send a message */
-    if (nMaxCount <= 0) return 0;
     if (!(buffer = HeapAlloc( GetProcessHeap(), 0, nMaxCount * sizeof(WCHAR) ))) return 0;
     get_server_window_text( hwnd, buffer, nMaxCount );
     if (!WideCharToMultiByte( CP_ACP, 0, buffer, -1, lpString, nMaxCount, NULL, NULL ))
@@ -2723,13 +2764,15 @@ INT WINAPI InternalGetWindowText(HWND hwnd,LPWSTR lpString,INT nMaxCount )
  */
 INT WINAPI GetWindowTextW( HWND hwnd, LPWSTR lpString, INT nMaxCount )
 {
-    if (!lpString) return 0;
+    if (!lpString || nMaxCount <= 0) return 0;
 
     if (WIN_IsCurrentProcess( hwnd ))
+    {
+        lpString[0] = 0;
         return (INT)SendMessageW( hwnd, WM_GETTEXT, nMaxCount, (LPARAM)lpString );
+    }
 
     /* when window belongs to other process, don't send a message */
-    if (nMaxCount <= 0) return 0;
     get_server_window_text( hwnd, lpString, nMaxCount );
     return strlenW(lpString);
 }
@@ -2967,6 +3010,8 @@ HWND WINAPI SetParent( HWND hwnd, HWND parent )
     POINT pt;
     BOOL ret;
 
+    TRACE("(%p %p)\n", hwnd, parent);
+
     if (is_broadcast(hwnd) || is_broadcast(parent))
     {
         SetLastError(ERROR_INVALID_PARAMETER);
@@ -3190,7 +3235,6 @@ HWND WINAPI GetWindow( HWND hwnd, UINT rel )
 BOOL WINAPI ShowOwnedPopups( HWND owner, BOOL fShow )
 {
     int count = 0;
-    WND *pWnd;
     HWND *win_array = WIN_ListChildren( GetDesktopWindow() );
 
     if (!win_array) return TRUE;
@@ -3199,35 +3243,24 @@ BOOL WINAPI ShowOwnedPopups( HWND owner, BOOL fShow )
     while (--count >= 0)
     {
         if (GetWindow( win_array[count], GW_OWNER ) != owner) continue;
-        if (!(pWnd = WIN_GetPtr( win_array[count] ))) continue;
-        if (pWnd == WND_OTHER_PROCESS) continue;
         if (fShow)
         {
-            if (pWnd->flags & WIN_NEEDS_SHOW_OWNEDPOPUP)
-            {
-                WIN_ReleasePtr( pWnd );
+            if (win_get_flags( win_array[count] ) & WIN_NEEDS_SHOW_OWNEDPOPUP)
                 /* In Windows, ShowOwnedPopups(TRUE) generates
                  * WM_SHOWWINDOW messages with SW_PARENTOPENING,
                  * regardless of the state of the owner
                  */
                 SendMessageW(win_array[count], WM_SHOWWINDOW, SW_SHOWNORMAL, SW_PARENTOPENING);
-                continue;
-            }
         }
         else
         {
-            if (pWnd->dwStyle & WS_VISIBLE)
-            {
-                WIN_ReleasePtr( pWnd );
+            if (GetWindowLongW( win_array[count], GWL_STYLE ) & WS_VISIBLE)
                 /* In Windows, ShowOwnedPopups(FALSE) generates
                  * WM_SHOWWINDOW messages with SW_PARENTCLOSING,
                  * regardless of the state of the owner
                  */
                 SendMessageW(win_array[count], WM_SHOWWINDOW, SW_HIDE, SW_PARENTCLOSING);
-                continue;
-            }
         }
-        WIN_ReleasePtr( pWnd );
     }
     HeapFree( GetProcessHeap(), 0, win_array );
     return TRUE;
@@ -3339,6 +3372,31 @@ BOOL WINAPI EnumDesktopWindows( HDESK desktop, WNDENUMPROC func, LPARAM lparam )
 }
 
 
+#ifdef __i386__
+/* Some apps pass a non-stdcall proc to EnumChildWindows,
+ * so we need a small assembly wrapper to call the proc.
+ */
+extern LRESULT enum_callback_wrapper( WNDENUMPROC proc, HWND hwnd, LPARAM lparam );
+__ASM_GLOBAL_FUNC( enum_callback_wrapper,
+    "pushl %ebp\n\t"
+    __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
+    __ASM_CFI(".cfi_rel_offset %ebp,0\n\t")
+    "movl %esp,%ebp\n\t"
+    __ASM_CFI(".cfi_def_cfa_register %ebp\n\t")
+    "pushl 16(%ebp)\n\t"
+    "pushl 12(%ebp)\n\t"
+    "call *8(%ebp)\n\t"
+    "leave\n\t"
+    __ASM_CFI(".cfi_def_cfa %esp,4\n\t")
+    __ASM_CFI(".cfi_same_value %ebp\n\t")
+    "ret" )
+#else
+static inline LRESULT enum_callback_wrapper( WNDENUMPROC proc, HWND hwnd, LPARAM lparam )
+{
+    return proc( hwnd, lparam );
+}
+#endif /* __i386__ */
+
 /**********************************************************************
  *           WIN_EnumChildWindows
  *
@@ -3356,7 +3414,7 @@ static BOOL WIN_EnumChildWindows( HWND *list, WNDENUMPROC func, LPARAM lParam )
         /* Build children list first */
         childList = WIN_ListChildren( *list );
 
-        ret = func( *list, lParam );
+        ret = enum_callback_wrapper( func, *list, lParam );
 
         if (childList)
         {
@@ -3411,17 +3469,45 @@ BOOL WINAPI AnyPopup(void)
  */
 BOOL WINAPI FlashWindow( HWND hWnd, BOOL bInvert )
 {
+    FLASHWINFO finfo;
+
+    finfo.cbSize = sizeof(FLASHWINFO);
+    finfo.dwFlags = bInvert ? FLASHW_ALL : FLASHW_STOP;
+    finfo.uCount = 1;
+    finfo.dwTimeout = 0;
+    finfo.hwnd = hWnd;
+    return FlashWindowEx( &finfo );
+}
+
+/*******************************************************************
+ *		FlashWindowEx (USER32.@)
+ */
+BOOL WINAPI FlashWindowEx( PFLASHWINFO pfinfo )
+{
     WND *wndPtr;
 
-    TRACE("%p\n", hWnd);
+    TRACE( "%p\n", pfinfo );
 
-    if (IsIconic( hWnd ))
+    if (!pfinfo)
     {
-        RedrawWindow( hWnd, 0, 0, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_FRAME );
+        SetLastError( ERROR_NOACCESS );
+        return FALSE;
+    }
 
-        wndPtr = WIN_GetPtr(hWnd);
+    if (!pfinfo->hwnd || pfinfo->cbSize != sizeof(FLASHWINFO) || !IsWindow( pfinfo->hwnd ))
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    FIXME( "%p - semi-stub\n", pfinfo );
+
+    if (IsIconic( pfinfo->hwnd ))
+    {
+        RedrawWindow( pfinfo->hwnd, 0, 0, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_FRAME );
+
+        wndPtr = WIN_GetPtr( pfinfo->hwnd );
         if (!wndPtr || wndPtr == WND_OTHER_PROCESS || wndPtr == WND_DESKTOP) return FALSE;
-        if (bInvert && !(wndPtr->flags & WIN_NCACTIVATED))
+        if (pfinfo->dwFlags && !(wndPtr->flags & WIN_NCACTIVATED))
         {
             wndPtr->flags |= WIN_NCACTIVATED;
         }
@@ -3430,32 +3516,26 @@ BOOL WINAPI FlashWindow( HWND hWnd, BOOL bInvert )
             wndPtr->flags &= ~WIN_NCACTIVATED;
         }
         WIN_ReleasePtr( wndPtr );
+        USER_Driver->pFlashWindowEx( pfinfo );
         return TRUE;
     }
     else
     {
         WPARAM wparam;
+        HWND hwnd = pfinfo->hwnd;
 
-        wndPtr = WIN_GetPtr(hWnd);
+        wndPtr = WIN_GetPtr( hwnd );
         if (!wndPtr || wndPtr == WND_OTHER_PROCESS || wndPtr == WND_DESKTOP) return FALSE;
-        hWnd = wndPtr->obj.handle;  /* make it a full handle */
+        hwnd = wndPtr->obj.handle;  /* make it a full handle */
 
-        if (bInvert) wparam = !(wndPtr->flags & WIN_NCACTIVATED);
-        else wparam = (hWnd == GetForegroundWindow());
+        if (pfinfo->dwFlags) wparam = !(wndPtr->flags & WIN_NCACTIVATED);
+        else wparam = (hwnd == GetForegroundWindow());
 
         WIN_ReleasePtr( wndPtr );
-        SendMessageW( hWnd, WM_NCACTIVATE, wparam, 0 );
+        SendMessageW( hwnd, WM_NCACTIVATE, wparam, 0 );
+        USER_Driver->pFlashWindowEx( pfinfo );
         return wparam;
     }
-}
-
-/*******************************************************************
- *		FlashWindowEx (USER32.@)
- */
-BOOL WINAPI FlashWindowEx( PFLASHWINFO pfwi )
-{
-    FIXME("%p\n", pfwi);
-    return TRUE;
 }
 
 /*******************************************************************
@@ -3505,11 +3585,7 @@ BOOL WINAPI DragDetect( HWND hWnd, POINT pt )
     WORD wDragWidth = GetSystemMetrics(SM_CXDRAG);
     WORD wDragHeight= GetSystemMetrics(SM_CYDRAG);
 
-    rect.left = pt.x - wDragWidth;
-    rect.right = pt.x + wDragWidth;
-
-    rect.top = pt.y - wDragHeight;
-    rect.bottom = pt.y + wDragHeight;
+    SetRect(&rect, pt.x - wDragWidth, pt.y - wDragHeight, pt.x + wDragWidth, pt.y + wDragHeight);
 
     SetCapture(hWnd);
 
@@ -3645,7 +3721,7 @@ BOOL WINAPI SetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alpha, DWO
 {
     BOOL ret;
 
-    TRACE("(%p,%08x,%d,%x): stub!\n", hwnd, key, alpha, flags);
+    TRACE("(%p,%08x,%d,%x)\n", hwnd, key, alpha, flags);
 
     SERVER_START_REQ( set_window_layered_info )
     {

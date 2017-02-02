@@ -500,7 +500,7 @@ static char *FDI_read_string(FDI_Int *fdi, INT_PTR hf, long cabsize)
         break;
       }
       /* The buffer is too small for the string. Reset the file to the point
-       * were we started, free the buffer and increase the size for the next try
+       * where we started, free the buffer and increase the size for the next try
        */
       fdi->seek(hf, base, SEEK_SET);
       fdi->free(buf);
@@ -2582,7 +2582,7 @@ BOOL __cdecl FDICopy(
      * where all the cabinet files needed for decryption are simultaneously
      * available.  But presumably, the API is supposed to support cabinets which
      * are split across multiple CDROMS; we may need to change our implementation
-     * to strictly serialize it's file usage so that it opens only one cabinet
+     * to strictly serialize its file usage so that it opens only one cabinet
      * at a time.  Some experimentation with Windows is needed to figure out the
      * precise semantics required.  The relevant code is here and in fdi_decomp().
      */
@@ -2613,8 +2613,8 @@ BOOL __cdecl FDICopy(
        * if we imagine parallelized access to the FDICopy API.
        *
        * The current implementation punts -- it just returns the previous cabinet and
-       * it's info from the header of this cabinet.  This provides the right answer in
-       * 95% of the cases; its worth checking if Microsoft cuts the same corner before
+       * its info from the header of this cabinet.  This provides the right answer in
+       * 95% of the cases; it's worth checking if Microsoft cuts the same corner before
        * we "fix" it.
        */
       ZeroMemory(&fdin, sizeof(FDINOTIFICATION));

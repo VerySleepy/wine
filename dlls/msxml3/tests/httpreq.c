@@ -43,9 +43,10 @@
 #define EXPECT_REF(node,ref) _expect_ref((IUnknown*)node, ref, __LINE__)
 static void _expect_ref(IUnknown* obj, ULONG ref, int line)
 {
-    ULONG rc = IUnknown_AddRef(obj);
-    IUnknown_Release(obj);
-    ok_(__FILE__,line)(rc-1 == ref, "expected refcount %d, got %d\n", ref, rc-1);
+    ULONG rc;
+    IUnknown_AddRef(obj);
+    rc = IUnknown_Release(obj);
+    ok_(__FILE__, line)(rc == ref, "expected refcount %d, got %d\n", ref, rc);
 }
 
 DEFINE_GUID(SID_SContainerDispatch, 0xb722be00, 0x4e68, 0x101b, 0xa2, 0xbc, 0x00, 0xaa, 0x00, 0x40, 0x47, 0x70);
@@ -1432,7 +1433,7 @@ static void test_XMLHTTP(void)
     IXMLHttpRequest *xhr;
     IObjectWithSite *obj_site, *obj_site2;
     BSTR bstrResponse, str, str1;
-    VARIANT varbody, varbody_ref;
+    VARIANT varbody;
     VARIANT dummy;
     LONG state, status, bound;
     IDispatch *event;
@@ -1618,12 +1619,11 @@ static void test_XMLHTTP(void)
         SysFreeString(bstrResponse);
     }
 
-    /* POST: VT_VARIANT|VT_BYREF body */
+    /* POST: VT_VARIANT body */
+    /* VT_VARIANT|VT_BYREF fails on Windows 10 */
     test_open(xhr, "POST", urlA, S_OK);
 
-    V_VT(&varbody_ref) = VT_VARIANT|VT_BYREF;
-    V_VARIANTREF(&varbody_ref) = &varbody;
-    hr = IXMLHttpRequest_send(xhr, varbody_ref);
+    hr = IXMLHttpRequest_send(xhr, varbody);
     EXPECT_HR(hr, S_OK);
 
     /* GET request */
@@ -1684,6 +1684,7 @@ static void test_XMLHTTP(void)
     hr = GetHGlobalFromStream((IStream*)V_UNKNOWN(&varbody), &g);
     EXPECT_HR(hr, S_OK);
     ok(g != NULL, "got %p\n", g);
+    VariantClear(&varbody);
 
     IDispatch_Release(event);
 
@@ -1751,6 +1752,7 @@ static void test_safe_httpreq(void)
     test_open(xhr, "GET", "http://www.test.winehq.org/tests/hello.html", E_ACCESSDENIED);
 
     IXMLHttpRequest_Release(xhr);
+    free_bstrs();
 }
 
 START_TEST(httpreq)

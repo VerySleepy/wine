@@ -194,7 +194,7 @@ HBITMAP WINAPI CreateBitmapIndirect( const BITMAP *bmp )
 
     /* Windows ignores the provided bm.bmWidthBytes */
     bm.bmWidthBytes = get_bitmap_stride( bm.bmWidth, bm.bmBitsPixel );
-    /* XP doesn't allow to create bitmaps larger than 128 Mb */
+    /* XP doesn't allow creating bitmaps larger than 128 MB */
     if (bm.bmHeight > 128 * 1024 * 1024 / bm.bmWidthBytes)
     {
         SetLastError( ERROR_NOT_ENOUGH_MEMORY );
@@ -253,7 +253,7 @@ LONG WINAPI GetBitmapBits(
     dst_stride = get_bitmap_stride( bmp->dib.dsBm.bmWidth, bmp->dib.dsBm.bmBitsPixel );
     ret = max = dst_stride * bmp->dib.dsBm.bmHeight;
     if (!bits) goto done;
-    if (count > max) count = max;
+    if (count < 0 || count > max) count = max;
     ret = count;
 
     src.visrect.left = 0;

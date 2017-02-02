@@ -35,8 +35,8 @@
 #include <stdarg.h>
 
 #define COBJMACROS
-#define NONAMELESSSTRUCT
 #define NONAMELESSUNION
+
 #include "windef.h"
 #include "winbase.h"
 #include "winuser.h"
@@ -55,6 +55,7 @@
 #include "unknwn.h"
 #include "oleidl.h"
 #include "shobjidl.h"
+#include "strmif.h"
 
 #include "initguid.h"
 #include "ksmedia.h"
@@ -92,7 +93,6 @@ WCHAR wine_vxd_drv[] = { 'w','i','n','e','m','m','.','v','x','d', 0 };
 
 /* All default settings, you most likely don't want to touch these, see wiki on UsefulRegistryKeys */
 int ds_hel_buflen = 32768 * 2;
-int ds_snd_queue_max = 10;
 static HINSTANCE instance;
 
 /*
@@ -145,15 +145,10 @@ void setup_dsound_options(void)
     if (!get_config_key( hkey, appkey, "HelBuflen", buffer, MAX_PATH ))
         ds_hel_buflen = atoi(buffer);
 
-    if (!get_config_key( hkey, appkey, "SndQueueMax", buffer, MAX_PATH ))
-        ds_snd_queue_max = atoi(buffer);
-
-
     if (appkey) RegCloseKey( appkey );
     if (hkey) RegCloseKey( hkey );
 
     TRACE("ds_hel_buflen = %d\n", ds_hel_buflen);
-    TRACE("ds_snd_queue_max = %d\n", ds_snd_queue_max);
 }
 
 static const char * get_device_id(LPCGUID pGuid)
@@ -515,7 +510,7 @@ HRESULT enumerate_mmdevices(EDataFlow flow, GUID *guids,
         }
 
         if(device != defdev){
-            send_device(device, &guids[n], cb, user);
+            keep_going = send_device(device, &guids[n], cb, user);
             ++n;
         }
 
@@ -528,7 +523,7 @@ HRESULT enumerate_mmdevices(EDataFlow flow, GUID *guids,
 
     release_mmdevenum(devenum, init_hr);
 
-    return (keep_going == TRUE) ? S_OK : S_FALSE;
+    return keep_going ? S_OK : S_FALSE;
 }
 
 /***************************************************************************

@@ -87,7 +87,10 @@ static  void*   source_map_file(const char* name, HANDLE* hMap, unsigned* size)
     hFile = CreateFileA(name, GENERIC_READ, FILE_SHARE_READ, NULL,
                         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile == INVALID_HANDLE_VALUE) return (void*)-1;
-    if (size != NULL && (*size = GetFileSize(hFile, NULL)) == -1) return (void*)-1;
+    if (size != NULL && (*size = GetFileSize(hFile, NULL)) == INVALID_FILE_SIZE) {
+        CloseHandle(hFile);
+        return (void*)-1;
+    }
     *hMap = CreateFileMappingW(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
     CloseHandle(hFile);
     if (!*hMap) return (void*)-1;
@@ -231,7 +234,7 @@ static int source_display(const char* sourcefile, int start, int end)
                  * OK, I guess the user doesn't really want to see it
                  * after all.
                  */
-                ol = source_add_file(sourcefile, NULL);
+                source_add_file(sourcefile, NULL);
                 return FALSE;
             }
         }

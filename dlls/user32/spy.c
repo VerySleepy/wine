@@ -1559,8 +1559,9 @@ static const USER_MSG toolbar_array[] = {
           USM(TB_MAPACCELERATORW       ,0),
           USM(TB_GETSTRINGW            ,0),
           USM(TB_GETSTRINGA            ,0),
-          USM(TB_UNKWN45D              ,8),
+          USM(TB_SETBOUNDINGSIZE       ,8),
           USM(TB_SETHOTITEM2           ,0),
+          USM(TB_HASACCELERATOR        ,0),
           USM(TB_SETLISTGAP            ,0),
           USM(TB_GETIMAGELISTCOUNT     ,0),
           USM(TB_GETIDEALSIZE          ,8),
@@ -2520,10 +2521,10 @@ static void SPY_DumpStructure(const SPY_INSTANCE *sp_e, BOOL enter)
                     TRACE("NMHDR hwndFrom=%p idFrom=0x%08lx code=0x%08x\n",
                           pnmh->hwndFrom, pnmh->idFrom, pnmh->code);
             }
+            break;
         default:
             if (sp_e->data_len > 0)
                 SPY_DumpMem ("MSG lParam", (UINT *)sp_e->lParam, sp_e->data_len);
-            break;
         }
 
 }

@@ -350,12 +350,27 @@ ok(Object(1) instanceof Number, "Object(1) is not instance of Number");
 ok(Object("") instanceof String, "Object('') is not instance of String");
 ok(Object(false) instanceof Boolean, "Object(false) is not instance of Boolean");
 
+ok(new Object(1) instanceof Number, "Object(1) is not instance of Number");
+ok(new Object("") instanceof String, "Object('') is not instance of String");
+ok(new Object(false) instanceof Boolean, "Object(false) is not instance of Boolean");
+
 obj = new Object();
 ok(Object(obj) === obj, "Object(obj) !== obj");
 
 ok(typeof(Object()) === "object", "typeof(Object()) !== 'object'");
 ok(typeof(Object(undefined)) === "object", "typeof(Object(undefined)) !== 'object'");
 ok(typeof(Object(null)) === "object", "typeof(Object(null)) !== 'object'");
+ok(typeof(Object(nullDisp)) === "object", "typeof(Object(nullDisp)) !== 'object'");
+
+ok(Object(nullDisp) != nullDisp, "Object(nullDisp) == nullDisp");
+ok(new Object(nullDisp) != nullDisp, "new Object(nullDisp) == nullDisp");
+
+ok(Object(testObj) === testObj, "Object(testObj) != testObj\n");
+ok(new Object(testObj) === testObj, "new Object(testObj) != testObj\n");
+
+tmp = new Object();
+ok(Object(tmp) === tmp, "Object(tmp) != tmp");
+ok(new Object(tmp) === tmp, "new Object(tmp) != tmp");
 
 var obj = new Object();
 obj.toString = function (x) {
@@ -614,6 +629,12 @@ tmp = "abcd".indexOf();
 ok(tmp == -1, "indexOf = " + tmp);
 tmp = "abcd".indexOf("b", bigInt);
 ok(tmp == -1, "indexOf = " + tmp);
+tmp = "abcd".indexOf("abcd",0);
+ok(tmp === 0, "indexOf = " + tmp);
+tmp = "abcd".indexOf("abcd",1);
+ok(tmp === -1, "indexOf = " + tmp);
+tmp = ("ab" + String.fromCharCode(0) + "cd").indexOf(String.fromCharCode(0));
+ok(tmp === 2, "indexOf = " + tmp);
 
 tmp = "abcd".lastIndexOf("bc",1);
 ok(tmp === 1, "lastIndexOf = " + tmp);
@@ -635,6 +656,12 @@ tmp = strObj.lastIndexOf("b");
 ok(tmp === 1, "lastIndexOf = " + tmp);
 tmp = "bbb".lastIndexOf("b", bigInt);
 ok(tmp === 2, "lastIndexOf = " + tmp);
+tmp = "abcd".lastIndexOf("abcd",4);
+ok(tmp === 0, "lastIndexOf = " + tmp);
+tmp = "abcd".lastIndexOf("abcd",0);
+ok(tmp === 0, "lastIndexOf = " + tmp);
+tmp = ("ab" + String.fromCharCode(0) + "cd").lastIndexOf(String.fromCharCode(0));
+ok(tmp === 2, "lastIndexOf = " + tmp);
 
 tmp = "".toLowerCase();
 ok(tmp === "", "''.toLowerCase() = " + tmp);
@@ -646,6 +673,8 @@ tmp = "tEsT".toLowerCase();
 ok(tmp === "test", "''.toLowerCase() = " + tmp);
 tmp = "tEsT".toLowerCase(3);
 ok(tmp === "test", "''.toLowerCase(3) = " + tmp);
+tmp = ("tE" + String.fromCharCode(0) + "sT").toLowerCase();
+ok(tmp === "te" + String.fromCharCode(0) + "st", "''.toLowerCase() = " + tmp);
 
 tmp = "".toUpperCase();
 ok(tmp === "", "''.toUpperCase() = " + tmp);
@@ -657,6 +686,8 @@ tmp = "tEsT".toUpperCase();
 ok(tmp === "TEST", "''.toUpperCase() = " + tmp);
 tmp = "tEsT".toUpperCase(3);
 ok(tmp === "TEST", "''.toUpperCase(3) = " + tmp);
+tmp = ("tE" + String.fromCharCode(0) + "sT").toUpperCase();
+ok(tmp === "TE" + String.fromCharCode(0) + "ST", "''.toUpperCase() = " + tmp);
 
 tmp = "".anchor();
 ok(tmp === "<A NAME=\"undefined\"></A>", "''.anchor() = " + tmp);
@@ -901,6 +932,11 @@ tmp = arr.toString();
 ok(tmp === "1,2,,false,,,a", "arr.toString() = " + tmp);
 tmp = arr.toString("test");
 ok(tmp === "1,2,,false,,,a", "arr.toString() = " + tmp);
+
+arr = ["a", "b"];
+
+tmp = arr.join(String.fromCharCode(0));
+ok(tmp === "a" + String.fromCharCode(0) + "b", "arr.join(String.fromCharCode(0)) = " + tmp);
 
 arr = new Object();
 arr.length = 3;
@@ -1766,6 +1802,89 @@ ok(isNaN(tmp), "Math.tan(Infinity) is not NaN");
 tmp = Math.tan(-Infinity);
 ok(isNaN(tmp), "Math.tan(-Infinity) is not NaN");
 
+(function() {
+    if(invokeVersion < 2)
+        return;
+
+    var stringify_tests = [
+        [[true], "true"],
+        [[false], "false"],
+        [[null], "null"],
+        [[1], "1"],
+        [["test"], "\"test\""],
+        [["test\"\\\b\f\n\r\t\u0002 !"], "\"test\\\"\\\\\\b\\f\\n\\r\\t\\u0002 !\""],
+        [[NaN], "null"],
+        [[Infinity], "null"],
+        [[-Infinity], "null"],
+        [[{prop1: true, prop2: "string"}], "{\"prop1\":true,\"prop2\":\"string\"}"],
+        [[{prop1: true, prop2: testObj, prop3: undefined}], "{\"prop1\":true}"],
+        [[{prop1: true, prop2: {prop: "string"}},undefined,"  "],
+                "{\n  \"prop1\": true,\n  \"prop2\": {\n    \"prop\": \"string\"\n  }\n}"],
+        [[{ },undefined," "], "{}"],
+        [[[,2,undefined,3,{ },]],"[null,2,null,3,{},null]"],
+        [[[,2,undefined,3,{prop:0},],undefined,"  "],"[\n  null,\n  2,\n  null,\n  3,\n  {\n    \"prop\": 0\n  },\n  null\n]"]
+    ];
+
+    var i, s, v;
+
+    for(i=0; i < stringify_tests.length; i++) {
+        s = JSON.stringify.apply(null, stringify_tests[i][0]);
+        ok(s === stringify_tests[i][1],
+           "["+i+"] stringify(" + stringify_tests[i][0] + ") returned " + s + " expected " + stringify_tests[i][1]);
+    }
+
+    s = JSON.stringify(testObj);
+    ok(s === undefined || s === "undefined" /* broken on some old versions */,
+       "stringify(testObj) returned " + s + " expected undfined");
+
+    s = JSON.stringify(undefined);
+    ok(s === undefined || s === "undefined" /* broken on some old versions */,
+       "stringify(undefined) returned " + s + " expected undfined");
+
+    var parse_tests = [
+        ["true", true],
+        ["   \nnull  ", null],
+        ["{}", {}],
+        ["\"\\r\\n test\\u1111\"", "\r\n test\u1111"],
+        ["{\"x\" :\n true}", {x:true}],
+        ["{\"x y\": {}, \"z\": {\"x\":null}}", {"x y":{}, z:{x:null}}],
+        ["[]", []],
+        ["[false,{},{\"x\": []}]", [false,{},{x:[]}]],
+        ["0", 0],
+        ["- 1", -1],
+        ["1e2147483648", Infinity]
+    ];
+
+    function json_cmp(x, y) {
+        if(x === y)
+            return true;
+
+        if(!(x instanceof Object) || !(y instanceof Object))
+            return false;
+
+        for(var prop in x) {
+            if(!x.hasOwnProperty(prop))
+                continue;
+            if(!x.hasOwnProperty(prop))
+                return false;
+            if(!json_cmp(x[prop], y[prop]))
+                return false;
+        }
+
+        for(var prop in y) {
+            if(!x.hasOwnProperty(prop) && y.hasOwnProperty(prop))
+                return false;
+        }
+
+        return true;
+    }
+
+    for(i=0; i < parse_tests.length; i++) {
+        v = JSON.parse(parse_tests[i][0]);
+        ok(json_cmp(v, parse_tests[i][1]), "parse[" + i + "] returned " + v + ", expected " + parse_tests[i][1]);
+    }
+})();
+
 var func = function  (a) {
         var a = 1;
         if(a) return;
@@ -1868,6 +1987,16 @@ tmp = func();
 ok(tmp === undefined, "func() = " + tmp);
 tmp = func.toString();
 ok(tmp == "function anonymous() {\n\n}", "func.toString() = " + tmp);
+
+// Function constructor called as function
+func = Function("return 3;");
+
+tmp = func();
+ok(tmp === 3, "func() = " + tmp);
+ok(func.call() === 3, "func.call() = " + tmp);
+ok(func.length === 0, "func.length = " + func.length);
+tmp = func.toString();
+ok(tmp === "function anonymous() {\nreturn 3;\n}", "func.toString() = " + tmp);
 
 func = (function() {
         var tmp = 3;
@@ -2005,6 +2134,8 @@ ok(Date.parse("Jan 20 2009 UTC") === 1232409600000, "Date.parse(\"Jan 20 2009 UT
 ok(Date.parse("Jan 20 2009 GMT") === 1232409600000, "Date.parse(\"Jan 20 2009 GMT\") = " + Date.parse("Jan 20 2009 GMT"));
 ok(Date.parse("Jan 20 2009 UTC-0") === 1232409600000, "Date.parse(\"Jan 20 2009 UTC-0\") = " + Date.parse("Jan 20 2009 UTC-0"));
 ok(Date.parse("Jan 20 2009 UTC+0000") === 1232409600000, "Date.parse(\"Jan 20 2009 UTC+0000\") = " + Date.parse("Jan 20 2009 UTC+0000"));
+ok(Date.parse("Jan 20 2009 UTC-1") === 1232413200000, "Date.parse(\"Jan 20 2009 UTC-1\") = " + Date.parse("Jan 20 2009 UTC-1"));
+ok(Date.parse("Jan 20 2009 UTC+1") === 1232406000000, "Date.parse(\"Jan 20 2009 UTC+1\") = " + Date.parse("Jan 20 2009 UTC+1"));
 ok(Date.parse("Ju 13 79 UTC") === 300672000000, "Date.parse(\"Ju 13 79 UTC\") = " + Date.parse("Ju 13 79 UTC"));
 ok(Date.parse("12Au91 UTC") === 681955200000, "Date.parse(\"12Au91 UTC\") = " + Date.parse("12Au91 UTC"));
 ok(Date.parse("7/02/17 UTC") === -1656806400000, "Date.parse(\"7/02/17 UTC\") = " + Date.parse("7/02/17 UTC"));
@@ -2013,6 +2144,29 @@ ok(Date.parse("February 31   UTC, 2000 12:31:17 PM") === 952000277000,
         "Date.parse(\"February 31   UTC, 2000 12:31:17 PM\") = " + Date.parse("February 31   UTC, 2000 12:31:17 PM"));
 ok(Date.parse("71 11:32AM Dec 12 UTC BC ") === -64346358480000, "Date.parse(\"71 11:32AM Dec 12 UTC BC \") = " + Date.parse("71 11:32AM Dec 12 UTC BC "));
 ok(Date.parse("23/71/2000 11::32::UTC") === 1010662320000, "Date.parse(\"23/71/2000 11::32::UTC\") = " + Date.parse("23/71/2000 11::32::UTC"));
+ok(Date.parse("1970/01/01") === Date.parse("01/01/1970"), "Date.parse(\"1970/01/01\") = " + Date.parse("1970/01/01"));
+ok(Date.parse("71/12/14") === Date.parse("12/14/1971"), "Date.parse(\"71/12/14\") = " + Date.parse("71/12/14"));
+ok(Date.parse("Tue, 22 Mar 2016 09:57:55 -0300") === Date.parse("Tue, 22 Mar 2016 09:57:55 GMT-0300"),
+        "Date.parse(\"Tue, 22 Mar 2016 09:57:55 -0300\") = " + Date.parse("Tue, 22 Mar 2016 09:57:55 -0300"));
+ok(Date.parse("Tue, 22 Mar 2016 09:57:55 +0400") === Date.parse("Tue, 22 Mar 2016 09:57:55 UTC+0400"),
+        "Date.parse(\"Tue, 22 Mar 2016 09:57:55 +0400\") = " + Date.parse("Tue, 22 Mar 2016 09:57:55 +0400"));
+
+tmp = (new Date()).toGMTString();
+ok(tmp.indexOf(String.fromCharCode(0)) == -1, "invalid null byte");
+tmp = (new Date()).toLocaleDateString();
+ok(tmp.indexOf(String.fromCharCode(0)) == -1, "invalid null byte");
+tmp = (new Date(1600, 1, 1, 0, 0, 0, 0)).toLocaleDateString();
+ok(tmp.indexOf(String.fromCharCode(0)) == -1, "invalid null byte");
+tmp = (new Date(1600, 1, 1, 0, 0, 0, 0)).toLocaleString();
+ok(tmp.indexOf(String.fromCharCode(0)) == -1, "invalid null byte");
+tmp = (new Date()).toLocaleTimeString();
+ok(tmp.indexOf(String.fromCharCode(0)) == -1, "invalid null byte");
+tmp = (new Date()).toString();
+ok(tmp.indexOf(String.fromCharCode(0)) == -1, "invalid null byte");
+tmp = (new Date()).toTimeString();
+ok(tmp.indexOf(String.fromCharCode(0)) == -1, "invalid null byte");
+tmp = (new Date()).toUTCString();
+ok(tmp.indexOf(String.fromCharCode(0)) == -1, "invalid null byte");
 
 ok(typeof(Math.PI) === "number", "typeof(Math.PI) = " + typeof(Math.PI));
 ok(Math.floor(Math.PI*100) === 314, "Math.PI = " + Math.PI);
@@ -2705,6 +2859,14 @@ testFunctions(VBArray.prototype, [
         ["lbound", 0],
         ["toArray", 0],
         ["ubound", 0]
+]);
+
+if(invokeVersion < 2)
+    ok(typeof(JSON) === "undefined", "JSON is not undefined");
+else
+    testFunctions(JSON, [
+        ["parse", 2],
+        ["stringify", 3]
     ]);
 
 ok(ActiveXObject.length == 1, "ActiveXObject.length = " + ActiveXObject.length);

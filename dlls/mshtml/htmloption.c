@@ -70,14 +70,14 @@ static ULONG WINAPI HTMLOptionElement_Release(IHTMLOptionElement *iface)
 static HRESULT WINAPI HTMLOptionElement_GetTypeInfoCount(IHTMLOptionElement *iface, UINT *pctinfo)
 {
     HTMLOptionElement *This = impl_from_IHTMLOptionElement(iface);
-    return IDispatchEx_GetTypeInfoCount(&This->element.node.dispex.IDispatchEx_iface, pctinfo);
+    return IDispatchEx_GetTypeInfoCount(&This->element.node.event_target.dispex.IDispatchEx_iface, pctinfo);
 }
 
 static HRESULT WINAPI HTMLOptionElement_GetTypeInfo(IHTMLOptionElement *iface, UINT iTInfo,
                                               LCID lcid, ITypeInfo **ppTInfo)
 {
     HTMLOptionElement *This = impl_from_IHTMLOptionElement(iface);
-    return IDispatchEx_GetTypeInfo(&This->element.node.dispex.IDispatchEx_iface, iTInfo, lcid,
+    return IDispatchEx_GetTypeInfo(&This->element.node.event_target.dispex.IDispatchEx_iface, iTInfo, lcid,
             ppTInfo);
 }
 
@@ -86,7 +86,7 @@ static HRESULT WINAPI HTMLOptionElement_GetIDsOfNames(IHTMLOptionElement *iface,
                                                 LCID lcid, DISPID *rgDispId)
 {
     HTMLOptionElement *This = impl_from_IHTMLOptionElement(iface);
-    return IDispatchEx_GetIDsOfNames(&This->element.node.dispex.IDispatchEx_iface, riid, rgszNames,
+    return IDispatchEx_GetIDsOfNames(&This->element.node.event_target.dispex.IDispatchEx_iface, riid, rgszNames,
             cNames, lcid, rgDispId);
 }
 
@@ -95,7 +95,7 @@ static HRESULT WINAPI HTMLOptionElement_Invoke(IHTMLOptionElement *iface, DISPID
                             VARIANT *pVarResult, EXCEPINFO *pExcepInfo, UINT *puArgErr)
 {
     HTMLOptionElement *This = impl_from_IHTMLOptionElement(iface);
-    return IDispatchEx_Invoke(&This->element.node.dispex.IDispatchEx_iface, dispIdMember, riid,
+    return IDispatchEx_Invoke(&This->element.node.event_target.dispex.IDispatchEx_iface, dispIdMember, riid,
             lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
 }
 
@@ -166,15 +166,53 @@ static HRESULT WINAPI HTMLOptionElement_get_value(IHTMLOptionElement *iface, BST
 static HRESULT WINAPI HTMLOptionElement_put_defaultSelected(IHTMLOptionElement *iface, VARIANT_BOOL v)
 {
     HTMLOptionElement *This = impl_from_IHTMLOptionElement(iface);
-    FIXME("(%p)->(%x)\n", This, v);
-    return E_NOTIMPL;
+    cpp_bool val, selected;
+    nsresult nsres;
+
+    TRACE("(%p)->(%x)\n", This, v);
+
+    val = (v == VARIANT_TRUE);
+
+    nsres = nsIDOMHTMLOptionElement_GetSelected(This->nsoption, &selected);
+    if(NS_FAILED(nsres)) {
+        ERR("GetSelected failed: %08x\n", nsres);
+        return E_FAIL;
+    }
+
+    nsres = nsIDOMHTMLOptionElement_SetDefaultSelected(This->nsoption, val);
+    if(NS_FAILED(nsres)) {
+        ERR("SetDefaultSelected failed: %08x\n", nsres);
+        return E_FAIL;
+    }
+
+    if(val != selected) {
+        nsres = nsIDOMHTMLOptionElement_SetSelected(This->nsoption, selected); /* WinAPI will reserve selected property */
+        if(NS_FAILED(nsres)) {
+            ERR("SetSelected failed: %08x\n", nsres);
+            return E_FAIL;
+        }
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLOptionElement_get_defaultSelected(IHTMLOptionElement *iface, VARIANT_BOOL *p)
 {
     HTMLOptionElement *This = impl_from_IHTMLOptionElement(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    cpp_bool val;
+    nsresult nsres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+    if(!p)
+        return E_POINTER;
+    nsres = nsIDOMHTMLOptionElement_GetDefaultSelected(This->nsoption, &val);
+    if(NS_FAILED(nsres)) {
+        ERR("GetDefaultSelected failed: %08x\n", nsres);
+        return E_FAIL;
+    }
+
+    *p = val ? VARIANT_TRUE : VARIANT_FALSE;
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLOptionElement_put_index(IHTMLOptionElement *iface, LONG v)
@@ -187,8 +225,21 @@ static HRESULT WINAPI HTMLOptionElement_put_index(IHTMLOptionElement *iface, LON
 static HRESULT WINAPI HTMLOptionElement_get_index(IHTMLOptionElement *iface, LONG *p)
 {
     HTMLOptionElement *This = impl_from_IHTMLOptionElement(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    LONG val;
+    nsresult nsres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    if(!p)
+        return E_INVALIDARG;
+
+    nsres = nsIDOMHTMLOptionElement_GetIndex(This->nsoption, &val);
+    if(NS_FAILED(nsres)) {
+        ERR("GetIndex failed: %08x\n", nsres);
+        return E_FAIL;
+    }
+    *p = val;
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLOptionElement_put_text(IHTMLOptionElement *iface, BSTR v)
@@ -256,8 +307,42 @@ static HRESULT WINAPI HTMLOptionElement_get_text(IHTMLOptionElement *iface, BSTR
 static HRESULT WINAPI HTMLOptionElement_get_form(IHTMLOptionElement *iface, IHTMLFormElement **p)
 {
     HTMLOptionElement *This = impl_from_IHTMLOptionElement(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+    nsIDOMHTMLFormElement *nsform;
+    nsIDOMNode *form_node;
+    HTMLDOMNode *node;
+    HRESULT hres;
+    nsresult nsres;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    if(!p)
+        return E_POINTER;
+
+    nsres = nsIDOMHTMLOptionElement_GetForm(This->nsoption, &nsform);
+    if (NS_FAILED(nsres)) {
+        ERR("GetForm failed: %08x, nsform: %p\n", nsres, nsform);
+        *p = NULL;
+        return E_FAIL;
+    }
+    if (nsform == NULL) {
+        TRACE("nsform not found\n");
+        *p = NULL;
+        return S_OK;
+    }
+
+    nsres = nsIDOMHTMLFormElement_QueryInterface(nsform, &IID_nsIDOMNode, (void**)&form_node);
+    nsIDOMHTMLFormElement_Release(nsform);
+    assert(nsres == NS_OK);
+
+    hres = get_node(This->element.node.doc, form_node, TRUE, &node);
+    nsIDOMNode_Release(form_node);
+    if (FAILED(hres))
+        return hres;
+
+    hres = IHTMLDOMNode_QueryInterface(&node->IHTMLDOMNode_iface, &IID_IHTMLElement, (void**)p);
+
+    node_release(node);
+    return hres;
 }
 
 static const IHTMLOptionElementVtbl HTMLOptionElementVtbl = {
@@ -359,8 +444,8 @@ static const tid_t HTMLOptionElement_iface_tids[] = {
 static dispex_static_data_t HTMLOptionElement_dispex = {
     NULL,
     DispHTMLOptionElement_tid,
-    NULL,
-    HTMLOptionElement_iface_tids
+    HTMLOptionElement_iface_tids,
+    HTMLElement_init_dispex_info
 };
 
 HRESULT HTMLOptionElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem, HTMLElement **elem)
@@ -540,8 +625,8 @@ static const tid_t HTMLOptionElementFactory_iface_tids[] = {
 static dispex_static_data_t HTMLOptionElementFactory_dispex = {
     NULL,
     IHTMLOptionElementFactory_tid,
-    NULL,
-    HTMLOptionElementFactory_iface_tids
+    HTMLOptionElementFactory_iface_tids,
+    HTMLElement_init_dispex_info
 };
 
 HRESULT HTMLOptionElementFactory_Create(HTMLInnerWindow *window, HTMLOptionElementFactory **ret_ptr)

@@ -25,7 +25,7 @@
 #include <string.h>
 
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
+
 #include "windef.h"
 #include "winerror.h"
 #include "winbase.h"
@@ -1593,17 +1593,12 @@ static HRESULT DP_IF_CreatePlayer( IDirectPlayImpl *This, void *lpMsgHdr, DPID *
      player total */
   lpPData = DP_CreatePlayer( This, lpidPlayer, lpPlayerName, dwCreateFlags,
                              hEvent, bAnsi );
-
-  if( lpPData == NULL )
-  {
-    return DPERR_CANTADDPLAYER;
-  }
-
   /* Create the list object and link it in */
   lpPList = HeapAlloc( GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof( *lpPList ) );
-  if( lpPList == NULL )
+  if( !lpPData || !lpPList )
   {
-    FIXME( "Memory leak\n" );
+    HeapFree( GetProcessHeap(), 0, lpPData );
+    HeapFree( GetProcessHeap(), 0, lpPList );
     return DPERR_CANTADDPLAYER;
   }
 
@@ -5821,7 +5816,7 @@ static HRESULT DirectPlayEnumerateAW(LPDPENUMDPCALLBACKA lpEnumCallbackA,
 	guid_cache = HeapAlloc(GetProcessHeap(), 0, sizeof(GUID) * dwIndex);
 	if (!guid_cache)
 	{
-	    ERR(": failed to alloc required memory.\n");
+	    ERR(": failed to allocate required memory.\n");
 	    return DPERR_EXCEPTION;
 	}
 	cache_count = dwIndex;

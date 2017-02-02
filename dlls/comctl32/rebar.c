@@ -730,8 +730,7 @@ REBAR_CalcHorzBand (const REBAR_INFO *infoPtr, UINT rstart, UINT rend)
 	  lpBand->fDraw |= DRAW_GRIPPER;
 	  lpBand->rcGripper.left   += REBAR_PRE_GRIPPER;
 	  lpBand->rcGripper.right  = lpBand->rcGripper.left + GRIPPER_WIDTH;
-	  lpBand->rcGripper.top    += 2;
-	  lpBand->rcGripper.bottom -= 2;
+          InflateRect(&lpBand->rcGripper, 0, -2);
 
 	  SetRect (&lpBand->rcCapImage,
 		   lpBand->rcGripper.right+REBAR_ALWAYS_SPACE, lpBand->rcBand.top,
@@ -806,15 +805,11 @@ REBAR_CalcHorzBand (const REBAR_INFO *infoPtr, UINT rstart, UINT rend)
 
       /* flag if notify required and invalidate rectangle */
       if (lpBand->fDraw & NTF_INVALIDATE) {
-          TRACE("invalidating (%d,%d)-(%d,%d)\n",
-		lpBand->rcBand.left,
-		lpBand->rcBand.top,
-		lpBand->rcBand.right + SEP_WIDTH,
-		lpBand->rcBand.bottom + SEP_WIDTH);
 	  lpBand->fDraw &= ~NTF_INVALIDATE;
 	  work = lpBand->rcBand;
 	  work.right += SEP_WIDTH;
 	  work.bottom += SEP_WIDTH;
+	  TRACE("invalidating %s\n", wine_dbgstr_rect(&work));
 	  InvalidateRect(infoPtr->hwndSelf, &work, TRUE);
 	  if (lpBand->hwndChild) InvalidateRect(lpBand->hwndChild, NULL, TRUE);
       }
@@ -863,8 +858,7 @@ REBAR_CalcVertBand (const REBAR_INFO *infoPtr, UINT rstart, UINT rend)
 	    }
 	    else {
 		/*  horizontal gripper  */
-		lpBand->rcGripper.left   += 2;
-		lpBand->rcGripper.right  -= 2;
+                InflateRect(&lpBand->rcGripper, -2, 0);
 		lpBand->rcGripper.top    += REBAR_PRE_GRIPPER;
 		lpBand->rcGripper.bottom  = lpBand->rcGripper.top + GRIPPER_WIDTH;
 
@@ -927,15 +921,11 @@ REBAR_CalcVertBand (const REBAR_INFO *infoPtr, UINT rstart, UINT rend)
 	}
 
 	if (lpBand->fDraw & NTF_INVALIDATE) {
-            TRACE("invalidating (%d,%d)-(%d,%d)\n",
-                  rcBand.left,
-                  rcBand.top,
-                  rcBand.right + SEP_WIDTH,
-                  rcBand.bottom + SEP_WIDTH);
 	    lpBand->fDraw &= ~NTF_INVALIDATE;
 	    work = rcBand;
 	    work.bottom += SEP_WIDTH;
 	    work.right += SEP_WIDTH;
+	    TRACE("invalidating %s\n", wine_dbgstr_rect(&work));
 	    InvalidateRect(infoPtr->hwndSelf, &work, TRUE);
 	    if (lpBand->hwndChild) InvalidateRect(lpBand->hwndChild, NULL, TRUE);
 	}
@@ -1396,7 +1386,7 @@ REBAR_Layout(REBAR_INFO *infoPtr)
     adjcx = get_rect_cx(infoPtr, &rcAdj);
 
     if (infoPtr->uNumBands == 0) {
-        TRACE("No bands - setting size to (0,%d), vert: %x\n", adjcx, infoPtr->dwStyle & CCS_VERT);
+        TRACE("No bands - setting size to (0,%d), style: %x\n", adjcx, infoPtr->dwStyle);
         infoPtr->calcSize.cx = adjcx;
         /* the calcSize.cy won't change for a 0 band rebar */
         infoPtr->uNumRows = 0;
@@ -1581,7 +1571,7 @@ REBAR_AutoSize(REBAR_INFO *infoPtr, BOOL needsLayout)
     GetClientRect(infoPtr->hwndSelf, &rcNew);
 
     GetClientRect(infoPtr->hwndSelf, &autosize.rcTarget);
-    autosize.fChanged = (memcmp(&rc, &rcNew, sizeof(RECT)) == 0);
+    autosize.fChanged = EqualRect(&rc, &rcNew);
     autosize.rcTarget = rc;
     autosize.rcActual = rcNew;
     REBAR_Notify((NMHDR *)&autosize, infoPtr, RBN_AUTOSIZE);
@@ -2294,7 +2284,7 @@ REBAR_GetBandInfoT(const REBAR_INFO *infoPtr, UINT uIndex, LPREBARBANDINFOW lprb
     if (lprbbi->fMask & RBBIM_CHILDSIZE) {
 	lprbbi->cxMinChild = lpBand->cxMinChild;
 	lprbbi->cyMinChild = lpBand->cyMinChild;
-        /* to make tests pass we follow Windows behaviour and allow to read these fields only
+        /* to make tests pass we follow Windows' behaviour and allow reading these fields only
          * for RBBS_VARIABLEHEIGHTS bands */
         if (lprbbi->cbSize >= REBARBANDINFOW_V6_SIZE && (lpBand->fStyle & RBBS_VARIABLEHEIGHT)) {
 	    lprbbi->cyChild    = lpBand->cyChild;
@@ -2399,7 +2389,7 @@ REBAR_GetRect (const REBAR_INFO *infoPtr, INT iBand, RECT *lprc)
 
     lpBand = REBAR_GetBand(infoPtr, iBand);
     /* For CCS_VERT the coordinates will be swapped - like on Windows */
-    CopyRect (lprc, &lpBand->rcBand);
+    *lprc = lpBand->rcBand;
 
     TRACE("band %d, (%s)\n", iBand, wine_dbgstr_rect(lprc));
 
@@ -3331,7 +3321,7 @@ REBAR_NCHitTest (const REBAR_INFO *infoPtr, LPARAM lParam)
 	      ret, i);
 	ret = (LRESULT) i;
     }
-    TRACE("returning %ld, client point (%d,%d)\n", ret, clpt.x, clpt.y);
+    TRACE("returning %ld, client point %s\n", ret, wine_dbgstr_point(&clpt));
     return ret;
 }
 

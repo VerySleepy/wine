@@ -101,6 +101,15 @@ extern "C" {
 #define FD_ACCEPT_BIT              3
 #define FD_CONNECT_BIT             4
 #define FD_CLOSE_BIT               5
+#define FD_QOS_BIT                 6
+#define FD_GROUP_QOS_BIT           7
+#define FD_ROUTING_INTERFACE_CHANGE_BIT 8
+#define FD_ADDRESS_LIST_CHANGE_BIT 9
+
+#define FD_QOS                      0x00000040
+#define FD_GROUP_QOS                0x00000080
+#define FD_ROUTING_INTERFACE_CHANGE 0x00000100
+#define FD_ADDRESS_LIST_CHANGE      0x00000200
 
 /* Constants for LPCONDITIONPROC */
 #define CF_ACCEPT                  0x0000
@@ -111,6 +120,33 @@ extern "C" {
 #define SD_RECEIVE                 0x00
 #define SD_SEND                    0x01
 #define SD_BOTH                    0x02
+
+/* Constants for WSAPoll() */
+#ifndef USE_WS_PREFIX
+#ifndef __WINE_WINE_PORT_H
+#define POLLERR                    0x0001
+#define POLLHUP                    0x0002
+#define POLLNVAL                   0x0004
+#define POLLWRNORM                 0x0010
+#define POLLWRBAND                 0x0020
+#define POLLRDNORM                 0x0100
+#define POLLRDBAND                 0x0200
+#define POLLPRI                    0x0400
+#define POLLIN                     (POLLRDNORM|POLLRDBAND)
+#define POLLOUT                    (POLLWRNORM)
+#endif
+#else
+#define WS_POLLERR                 0x0001
+#define WS_POLLHUP                 0x0002
+#define WS_POLLNVAL                0x0004
+#define WS_POLLWRNORM              0x0010
+#define WS_POLLWRBAND              0x0020
+#define WS_POLLRDNORM              0x0100
+#define WS_POLLRDBAND              0x0200
+#define WS_POLLPRI                 0x0400
+#define WS_POLLIN                  (WS_POLLRDNORM|WS_POLLRDBAND)
+#define WS_POLLOUT                 (WS_POLLWRNORM)
+#endif
 
 /* Constants for WSAIoctl() */
 #ifdef USE_WS_PREFIX
@@ -184,11 +220,14 @@ extern "C" {
 #endif /* USE_WS_PREFIX */
 
 /* Constants for WSAIoctl() */
-#define WSA_FLAG_OVERLAPPED        0x01
-#define WSA_FLAG_MULTIPOINT_C_ROOT 0x02
-#define WSA_FLAG_MULTIPOINT_C_LEAF 0x04
-#define WSA_FLAG_MULTIPOINT_D_ROOT 0x08
-#define WSA_FLAG_MULTIPOINT_D_LEAF 0x10
+#define WSA_FLAG_OVERLAPPED             0x0001
+#define WSA_FLAG_MULTIPOINT_C_ROOT      0x0002
+#define WSA_FLAG_MULTIPOINT_C_LEAF      0x0004
+#define WSA_FLAG_MULTIPOINT_D_ROOT      0x0008
+#define WSA_FLAG_MULTIPOINT_D_LEAF      0x0010
+#define WSA_FLAG_ACCESS_SYSTEM_SECURITY 0x0040
+#define WSA_FLAG_NO_HANDLE_INHERIT      0x0080
+#define WSA_FLAG_REGISTERED_IO          0x0100
 
 /* Constants for WSAJoinLeaf() */
 #define JL_SENDER_ONLY    0x01
@@ -207,6 +246,33 @@ extern "C" {
 #define LUP_RETURN_QUERY_STRING 0x0800
 #define LUP_RETURN_ALL          (LUP_RETURN_ADDR|LUP_RETURN_BLOB|LUP_RETURN_ALIASES|LUP_RETURN_QUERY_STRING \
                                 |LUP_RETURN_NAME|LUP_RETURN_TYPE|LUP_RETURN_VERSION|LUP_RETURN_COMMENT)
+
+/* Constants for dwNameSpace from struct WSANAMESPACE_INFO */
+#define NS_ALL         0
+#define NS_SAP         1
+#define NS_NDS         2
+#define NS_PEER_BROWSE 3
+#define NS_SLP         5
+#define NS_DHCP        6
+#define NS_TCPIP_LOCAL 10
+#define NS_TCPIP_HOSTS 11
+#define NS_DNS         12
+#define NS_NETBT       13
+#define NS_WINS        14
+#define NS_NLA         15
+#define NS_BTH         16
+#define NS_NBP         20
+#define NS_MS          30
+#define NS_STDA        31
+#define NS_NTDS        32
+#define NS_EMAIL       37
+#define NS_PNRPNAME    38
+#define NS_PNRPCLOUD   39
+#define NS_X500        40
+#define NS_NIS         41
+#define NS_NISPLUS     42
+#define NS_WRQ         50
+#define NS_NETDES      60
 
 #ifndef GUID_DEFINED
 #include <guiddef.h>
@@ -255,6 +321,13 @@ typedef struct _WSAPROTOCOLCHAIN
 #define LITTLEENDIAN                        0x0001
 
 #define SECURITY_PROTOCOL_NONE              0x0000
+
+typedef struct /*WS(pollfd)*/
+{
+    SOCKET fd;
+    SHORT events;
+    SHORT revents;
+} WSAPOLLFD;
 
 #define WSAPROTOCOL_LEN  255
 typedef struct _WSAPROTOCOL_INFOA
@@ -659,6 +732,7 @@ INT WINAPI WSALookupServiceNextW(HANDLE,DWORD,LPDWORD,LPWSAQUERYSETW);
 int WINAPI WSANSPIoctl(HANDLE,DWORD,LPVOID,DWORD,LPVOID,DWORD,LPDWORD,LPWSACOMPLETION);
 int WINAPI WSANtohl(SOCKET,ULONG,ULONG*);
 int WINAPI WSANtohs(SOCKET,WS(u_short),WS(u_short)*);
+int WINAPI WSAPoll(WSAPOLLFD*,ULONG,int);
 INT WINAPI WSAProviderConfigChange(LPHANDLE,LPWSAOVERLAPPED,LPWSAOVERLAPPED_COMPLETION_ROUTINE);
 int WINAPI WSARecv(SOCKET,LPWSABUF,DWORD,LPDWORD,LPDWORD,LPWSAOVERLAPPED,LPWSAOVERLAPPED_COMPLETION_ROUTINE);
 int WINAPI WSARecvDisconnect(SOCKET,LPWSABUF);
@@ -733,6 +807,7 @@ typedef int (WINAPI *LPFN_WSANSPIOCTL)(HANDLE,DWORD,LPVOID,DWORD,LPVOID,DWORD,LP
 typedef int (WINAPI *LPFN_WSANTOHL)(SOCKET,ULONG,ULONG*);
 typedef int (WINAPI *LPFN_WSANTOHS)(SOCKET,WS(u_short),WS(u_short)*);
 typedef INT (WINAPI *LPFN_WSAPROVIDERCONFIGCHANGE)(LPHANDLE,LPWSAOVERLAPPED,LPWSAOVERLAPPED_COMPLETION_ROUTINE);
+typedef int (WINAPI *LPFN_WSAPOLL)(WSAPOLLFD*,ULONG,int);
 typedef int (WINAPI *LPFN_WSARECV)(SOCKET,LPWSABUF,DWORD,LPDWORD,LPDWORD,LPWSAOVERLAPPED,LPWSAOVERLAPPED_COMPLETION_ROUTINE);
 typedef int (WINAPI *LPFN_WSARECVDISCONNECT)(SOCKET,LPWSABUF);
 typedef int (WINAPI *LPFN_WSARECVFROM)(SOCKET,LPWSABUF,DWORD,LPDWORD,LPDWORD,struct WS(sockaddr)*,LPINT,LPWSAOVERLAPPED,LPWSAOVERLAPPED_COMPLETION_ROUTINE);

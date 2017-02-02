@@ -22,7 +22,6 @@
 
 #define COBJMACROS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "winerror.h"
 #include "windef.h"
@@ -499,7 +498,7 @@ static LRESULT navpane_splitter_beginresize(ExplorerBrowserImpl *This, HWND hwnd
 
     SetCapture(hwnd);
 
-    CopyRect(&This->splitter_rc, &This->navpane.rc);
+    This->splitter_rc = This->navpane.rc;
     This->splitter_rc.left = This->splitter_rc.right - SPLITTER_WIDTH;
 
     splitter_draw(GetParent(hwnd), &This->splitter_rc);
@@ -517,8 +516,7 @@ static LRESULT navpane_splitter_resizing(ExplorerBrowserImpl *This, HWND hwnd, L
     dx = (SHORT)LOWORD(lParam);
     TRACE("%d.\n", dx);
 
-    CopyRect(&rc, &This->navpane.rc);
-
+    rc = This->navpane.rc;
     new_width = This->navpane.width + dx;
     if(new_width > NP_MIN_WIDTH && This->sv_rc.right - new_width > SV_MIN_WIDTH)
     {
@@ -526,7 +524,7 @@ static LRESULT navpane_splitter_resizing(ExplorerBrowserImpl *This, HWND hwnd, L
         rc.left = rc.right - SPLITTER_WIDTH;
         splitter_draw(GetParent(hwnd), &This->splitter_rc);
         splitter_draw(GetParent(hwnd), &rc);
-        CopyRect(&This->splitter_rc, &rc);
+        This->splitter_rc = rc;
     }
 
     return TRUE;
@@ -705,7 +703,7 @@ static void initialize_navpane(ExplorerBrowserImpl *This, HWND hwnd_parent, RECT
         wc.hInstance        = shell32_hInstance;
         wc.hIcon            = 0;
         wc.hCursor          = LoadCursorW(0, (LPWSTR)IDC_SIZEWE);
-        wc.hbrBackground    = (HBRUSH)(COLOR_HIGHLIGHT + 1);
+        wc.hbrBackground    = (HBRUSH)(COLOR_3DFACE + 1);
         wc.lpszMenuName     = NULL;
         wc.lpszClassName    = navpane_classname;
 
@@ -877,7 +875,9 @@ static HRESULT WINAPI IExplorerBrowser_fnInitialize(IExplorerBrowser *iface,
         if (!RegisterClassW(&wc)) return E_FAIL;
     }
 
-    style = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_BORDER;
+    style = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS;
+    if (!(This->eb_options & EBO_NOBORDER))
+        style |= WS_BORDER;
     This->hwnd_main = CreateWindowExW(WS_EX_CONTROLPARENT, EB_CLASS_NAME, NULL, style,
                                       prc->left, prc->top,
                                       prc->right - prc->left, prc->bottom - prc->top,
@@ -1031,7 +1031,7 @@ static HRESULT WINAPI IExplorerBrowser_fnSetOptions(IExplorerBrowser *iface,
 {
     ExplorerBrowserImpl *This = impl_from_IExplorerBrowser(iface);
     static const EXPLORER_BROWSER_OPTIONS unsupported_options =
-        EBO_ALWAYSNAVIGATE | EBO_NOWRAPPERWINDOW | EBO_HTMLSHAREPOINTVIEW;
+        EBO_ALWAYSNAVIGATE | EBO_NOWRAPPERWINDOW | EBO_HTMLSHAREPOINTVIEW | EBO_NOPERSISTVIEWSTATE;
 
     TRACE("%p (0x%x)\n", This, dwFlag);
 

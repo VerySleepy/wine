@@ -38,6 +38,11 @@
 #ifdef HAVE_SYS_STAT_H
 # include <sys/stat.h>
 #endif
+#ifdef MAJOR_IN_MKDEV
+# include <sys/mkdev.h>
+#elif defined(MAJOR_IN_SYSMACROS)
+# include <sys/sysmacros.h>
+#endif
 #include <sys/types.h>
 
 #ifdef HAVE_SYS_IOCTL_H
@@ -116,10 +121,9 @@ typedef struct
 
 #endif
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
+#define NONAMELESSUNION
 #include "windef.h"
 #include "winternl.h"
 #include "winioctl.h"
@@ -668,7 +672,7 @@ static NTSTATUS CDROM_Open(int fd, int* dev)
     NTSTATUS ret = STATUS_SUCCESS;
     int         empty = -1;
 
-    fstat(fd, &st);
+    if (fstat(fd, &st) == -1) return FILE_GetNtStatus();
 
     RtlEnterCriticalSection( &cache_section );
     for (*dev = 0; *dev < MAX_CACHE_ENTRIES; (*dev)++)
@@ -749,8 +753,8 @@ static NTSTATUS CDROM_GetDeviceNumber(int dev, STORAGE_DEVICE_NUMBER* devnum)
 static NTSTATUS CDROM_GetDriveGeometry(int dev, int fd, DISK_GEOMETRY* dg)
 {
   CDROM_TOC     toc;
-  NTSTATUS      ret = 0;
-  int           fsize = 0;
+  NTSTATUS      ret;
+  int           fsize;
 
   if ((ret = CDROM_ReadTOC(dev, fd, &toc)) != 0) return ret;
 
@@ -2433,7 +2437,7 @@ static NTSTATUS DVD_ReadKey(int fd, PDVD_COPY_PROTECT_KEY key)
 static NTSTATUS DVD_GetRegion(int fd, PDVD_REGION region)
 {
 #if defined(linux)
-    NTSTATUS ret = STATUS_NOT_SUPPORTED;
+    NTSTATUS ret;
     dvd_struct dvd;
     dvd_authinfo auth_info;
 
@@ -2461,7 +2465,7 @@ static NTSTATUS DVD_GetRegion(int fd, PDVD_REGION region)
     dk_dvd_read_structure_t dvd;
     DVDRegionPlaybackControlInfo rpc;
     DVDCopyrightInfo copy;
-    NTSTATUS ret = STATUS_NOT_SUPPORTED;
+    NTSTATUS ret;
 
     key.format = kDVDKeyFormatRegionState;
     key.keyClass = kDVDKeyClassCSS_CPPM_CPRM;
@@ -2490,6 +2494,28 @@ static NTSTATUS DVD_GetRegion(int fd, PDVD_REGION region)
     FIXME("not supported on this O/S\n");
     return STATUS_NOT_SUPPORTED;
 #endif
+}
+
+static DWORD DVD_ReadStructureSize(const DVD_READ_STRUCTURE *structure, DWORD size)
+{
+    if (!structure || size != sizeof(DVD_READ_STRUCTURE))
+        return 0;
+
+    switch (structure->Format)
+    {
+    case DvdPhysicalDescriptor:
+        return sizeof(DVD_LAYER_DESCRIPTOR);
+    case DvdCopyrightDescriptor:
+        return sizeof(DVD_COPYRIGHT_DESCRIPTOR);
+    case DvdDiskKeyDescriptor:
+        return sizeof(DVD_DISK_KEY_DESCRIPTOR);
+    case DvdBCADescriptor:
+        return sizeof(DVD_BCA_DESCRIPTOR);
+    case DvdManufacturerDescriptor:
+        return sizeof(DVD_MANUFACTURER_DESCRIPTOR);
+    default:
+        return 0;
+    }
 }
 
 /******************************************************************
@@ -2615,7 +2641,7 @@ static NTSTATUS DVD_ReadStructure(int dev, const DVD_READ_STRUCTURE *structure, 
 	break;
     }
 #elif defined(__APPLE__)
-    NTSTATUS ret = STATUS_NOT_SUPPORTED;
+    NTSTATUS ret;
     dk_dvd_read_structure_t dvdrs;
     union
     {
@@ -2750,7 +2776,7 @@ static NTSTATUS DVD_ReadStructure(int dev, const DVD_READ_STRUCTURE *structure, 
 static NTSTATUS GetInquiryData(int fd, PSCSI_ADAPTER_BUS_INFO BufferOut, DWORD OutBufferSize)
 {
 #ifdef HAVE_SG_IO_HDR_T_INTERFACE_ID
-    PSCSI_INQUIRY_DATA pInquiryData = NULL;
+    PSCSI_INQUIRY_DATA pInquiryData;
     UCHAR sense_buffer[32];
     int iochk, version;
     sg_io_hdr_t iocmd;
@@ -2813,7 +2839,7 @@ NTSTATUS CDROM_DeviceIoControl(HANDLE hDevice,
 {
     DWORD       sz = 0;
     NTSTATUS    status = STATUS_SUCCESS;
-    int fd, needs_close, dev;
+    int fd, needs_close, dev = 0;
 
     TRACE("%p %s %p %d %p %d %p\n",
           hDevice, iocodex(dwIoControlCode), lpInBuffer, nInBufferSize,
@@ -3091,11 +3117,14 @@ NTSTATUS CDROM_DeviceIoControl(HANDLE hDevice,
         sz = sizeof(DVD_REGION);
         if (lpInBuffer != NULL || nInBufferSize != 0) status = STATUS_INVALID_PARAMETER;
         else if (nOutBufferSize < sz) status = STATUS_BUFFER_TOO_SMALL;
-        TRACE("doing DVD_Get_REGION\n");
-        status = DVD_GetRegion(fd, lpOutBuffer);
+        else
+        {
+            TRACE("doing DVD_Get_REGION\n");
+            status = DVD_GetRegion(fd, lpOutBuffer);
+        }
         break;
     case IOCTL_DVD_READ_STRUCTURE:
-        sz = sizeof(DVD_LAYER_DESCRIPTOR);
+        sz = DVD_ReadStructureSize(lpInBuffer, nInBufferSize);
         if (lpInBuffer == NULL || nInBufferSize != sizeof(DVD_READ_STRUCTURE)) status = STATUS_INVALID_PARAMETER;
         else if (nOutBufferSize < sz || !lpOutBuffer) status = STATUS_BUFFER_TOO_SMALL;
         else

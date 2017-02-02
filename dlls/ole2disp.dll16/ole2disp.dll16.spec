@@ -5,7 +5,7 @@
 5 pascal SysReAllocStringLen(ptr str word) SysReAllocStringLen16
 6 pascal SysFreeString(segstr)		SysFreeString16
 7 pascal SysStringLen(segstr)		SysStringLen16
-8 stub VARIANTINIT
+8 pascal VariantInit(ptr) VariantInit16
 9 stub VARIANTCLEAR
 10 stub VARIANTCOPY
 11 stub VARIANTCOPYIND
@@ -14,14 +14,14 @@
 14 stub DOSDATETIMETOVARIANTTIME
 15 stub SAFEARRAYCREATE
 16 stub SAFEARRAYDESTROY
-17 stub SAFEARRAYGETDIM
-18 stub SAFEARRAYGETELEMSIZE
+17 pascal -ret16 SafeArrayGetDim(ptr) SafeArrayGetDim16
+18 pascal -ret16 SafeArrayGetElemsize(ptr) SafeArrayGetElemsize16
 19 stub SAFEARRAYGETUBOUND
 20 stub SAFEARRAYGETLBOUND
-21 stub SAFEARRAYLOCK
-22 stub SAFEARRAYUNLOCK
-23 stub SAFEARRAYACCESSDATA
-24 stub SAFEARRAYUNACCESSDATA
+21 pascal SafeArrayLock(ptr) SafeArrayLock16
+22 pascal SafeArrayUnlock(ptr) SafeArrayUnlock16
+23 pascal SafeArrayAccessData(ptr ptr) SafeArrayAccessData16
+24 pascal SafeArrayUnaccessData(ptr) SafeArrayUnaccessData16
 25 stub SAFEARRAYGETELEMENT
 26 stub SAFEARRAYPUTELEMENT
 27 stub SAFEARRAYCOPY
@@ -35,9 +35,9 @@
 35 pascal RegisterActiveObject(ptr ptr long ptr) RegisterActiveObject16
 36 stub REVOKEACTIVEOBJECT
 37 stub GETACTIVEOBJECT
-38 stub SAFEARRAYALLOCDESCRIPTOR
-39 stub SAFEARRAYALLOCDATA
-40 stub SAFEARRAYDESTROYDESCRIPTOR
+38 pascal SafeArrayAllocDescriptor(word ptr) SafeArrayAllocDescriptor16
+39 pascal SafeArrayAllocData(ptr) SafeArrayAllocData16
+40 pascal SafeArrayDestroyDescriptor(segptr) SafeArrayDestroyDescriptor16
 41 stub SAFEARRAYDESTROYDATA
 42 stub SAFEARRAYREDIM
 43 stub VARI2FROMI4

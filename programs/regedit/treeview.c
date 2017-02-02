@@ -22,7 +22,7 @@
 #define WIN32_LEAN_AND_MEAN     /* Exclude rarely-used stuff from Windows headers */
 
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
+
 #include <windows.h>
 #include <commctrl.h>
 #include <stdlib.h>
@@ -95,17 +95,17 @@ static BOOL get_item_path(HWND hwndTV, HTREEITEM hItem, HKEY* phKey, LPWSTR* pKe
 
 LPWSTR GetItemPath(HWND hwndTV, HTREEITEM hItem, HKEY* phRootKey)
 {
-    int pathLen = 0, maxLen;
+    int pathLen = 0, maxLen = 1024;
     WCHAR *pathBuffer;
 
-    pathBuffer = HeapAlloc(GetProcessHeap(), 0, 1024*sizeof(WCHAR));
+    if (!hItem) {
+         hItem = (HTREEITEM)SendMessageW(hwndTV, TVM_GETNEXTITEM, TVGN_CARET, 0);
+         if (!hItem) return NULL;
+    }
+
+    pathBuffer = HeapAlloc(GetProcessHeap(), 0, maxLen*sizeof(WCHAR));
     if (!pathBuffer) return NULL;
     *pathBuffer = 0;
-    maxLen = HeapSize(GetProcessHeap(), 0, pathBuffer);
-    if (maxLen == (SIZE_T) - 1) return NULL;
-    maxLen = maxLen / sizeof(WCHAR);
-    if (!hItem) hItem = (HTREEITEM)SendMessageW(hwndTV, TVM_GETNEXTITEM, TVGN_CARET, 0);
-    if (!hItem) return NULL;
     if (!get_item_path(hwndTV, hItem, phRootKey, &pathBuffer, &pathLen, &maxLen)) return NULL;
     return pathBuffer;
 }
@@ -226,9 +226,10 @@ static BOOL match_item(HWND hwndTV, HTREEITEM hItem, LPCWSTR sstring, int mode, 
 
     if (mode & (SEARCH_VALUES | SEARCH_CONTENT)) {
         int i, adjust;
-        WCHAR valName[KEY_MAX_LEN], *KeyPath;
+        WCHAR *valName, *KeyPath;
         HKEY hKey, hRoot;
-        DWORD lenName;
+        DWORD lenName, lenNameMax, lenValueMax;
+        WCHAR *buffer = NULL;
         
         KeyPath = GetItemPath(hwndTV, hItem, &hRoot);
 
@@ -241,7 +242,14 @@ static BOOL match_item(HWND hwndTV, HTREEITEM hItem, LPCWSTR sstring, int mode, 
         }
 
         HeapFree(GetProcessHeap(), 0, KeyPath);
-        lenName = KEY_MAX_LEN;
+
+        if (ERROR_SUCCESS != RegQueryInfoKeyW(hKey, NULL, NULL, NULL, NULL, NULL, NULL, NULL, &lenNameMax, &lenValueMax, NULL, NULL))
+            return FALSE;
+
+        lenName = ++lenNameMax;
+        if (!(valName = HeapAlloc(GetProcessHeap(), 0, lenName * sizeof(valName[0]) )))
+            return FALSE;
+
         adjust = 0;
         /* RegEnumValue won't return empty default value, so fake it when dealing with *row,
            which corresponds to list view rows, not value ids */
@@ -252,14 +260,16 @@ static BOOL match_item(HWND hwndTV, HTREEITEM hItem, LPCWSTR sstring, int mode, 
         if (i < 0) i = 0;
         while(1) {
             DWORD lenValue = 0, type = 0;
-            lenName = KEY_MAX_LEN;
+            lenName = lenNameMax;
             
             if (ERROR_SUCCESS != RegEnumValueW(hKey,
-                i, valName, &lenName, NULL, &type, NULL, &lenValue))
+                i, valName, &lenName, NULL, &type, NULL, NULL))
                 break;
             
             if (mode & SEARCH_VALUES) {
                 if (match_string(valName, sstring, mode)) {
+                    HeapFree(GetProcessHeap(), 0, valName);
+                    HeapFree(GetProcessHeap(), 0, buffer);
                     RegCloseKey(hKey);
                     *row = i+adjust;
                     return TRUE;
@@ -267,23 +277,27 @@ static BOOL match_item(HWND hwndTV, HTREEITEM hItem, LPCWSTR sstring, int mode, 
             }
             
             if ((mode & SEARCH_CONTENT) && (type == REG_EXPAND_SZ || type == REG_SZ)) {
-                LPWSTR buffer;
-                buffer = HeapAlloc(GetProcessHeap(), 0, lenValue);
+                if (!buffer)
+                    buffer = HeapAlloc(GetProcessHeap(), 0, lenValueMax);
                 if (!buffer)
                     break;
-                if (ERROR_SUCCESS != RegEnumValueW(hKey, i, NULL, NULL, NULL, &type, (LPBYTE)buffer, &lenValue))
+                lenName = lenNameMax;
+                lenValue = lenValueMax;
+                if (ERROR_SUCCESS != RegEnumValueW(hKey, i, valName, &lenName, NULL, &type, (LPBYTE)buffer, &lenValue))
                     break;
                 if (match_string(buffer, sstring, mode)) {
+                    HeapFree(GetProcessHeap(), 0, valName);
                     HeapFree(GetProcessHeap(), 0, buffer);
                     RegCloseKey(hKey);
                     *row = i+adjust;
                     return TRUE;
                 }
-                HeapFree(GetProcessHeap(), 0, buffer);
             }
                             
             i++;
         }
+        HeapFree(GetProcessHeap(), 0, valName);
+        HeapFree(GetProcessHeap(), 0, buffer);
         RegCloseKey(hKey);
     }        
     return FALSE;
@@ -515,6 +529,7 @@ HWND StartKeyRename(HWND hwndTV)
     HTREEITEM hItem;
 
     if(!(hItem = (HTREEITEM)SendMessageW(hwndTV, TVM_GETNEXTITEM, TVGN_CARET, 0))) return 0;
+    SetWindowLongPtrW(hwndTV, GWLP_USERDATA, 1);
     return (HWND)SendMessageW(hwndTV, TVM_EDITLABELW, 0, (LPARAM)hItem);
 }
 

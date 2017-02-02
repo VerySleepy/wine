@@ -43,17 +43,6 @@
 #include "dmusics.h"
 
 /*****************************************************************************
- * Interfaces
- */
-typedef struct IDirectMusicAuditionTrack IDirectMusicAuditionTrack;
-typedef struct IDirectMusicChordTrack IDirectMusicChordTrack;
-typedef struct IDirectMusicCommandTrack IDirectMusicCommandTrack;
-typedef struct IDirectMusicMelodyFormulationTrack IDirectMusicMelodyFormulationTrack;
-typedef struct IDirectMusicMotifTrack IDirectMusicMotifTrack;
-typedef struct IDirectMusicMuteTrack IDirectMusicMuteTrack;
-typedef struct IDirectMusicStyleTrack IDirectMusicStyleTrack;
-	
-/*****************************************************************************
  * ClassFactory
  */
 extern HRESULT WINAPI create_dmstyle(REFIID lpcGUID, LPVOID* ppobj) DECLSPEC_HIDDEN;
@@ -97,122 +86,11 @@ typedef struct _DMUS_PRIVATE_STYLE_ITEM {
 } DMUS_PRIVATE_STYLE_ITEM, *LPDMUS_PRIVATE_STYLE_ITEM;
 
 
-/*****************************************************************************
- * IDirectMusicAuditionTrack implementation structure
- */
-struct IDirectMusicAuditionTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicAuditionTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-};
-
-/*****************************************************************************
- * IDirectMusicChordTrack implementation structure
- */
-struct IDirectMusicChordTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicChordTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-  DWORD dwScale;
-};
-
 typedef struct _DMUS_PRIVATE_COMMAND {
 	struct list entry; /* for listing elements */
 	DMUS_IO_COMMAND pCommand;
 	IDirectMusicCollection* ppReferenceCollection;
 } DMUS_PRIVATE_COMMAND, *LPDMUS_PRIVATE_COMMAND;
-
-/*****************************************************************************
- * IDirectMusicCommandTrack implementation structure
- */
-struct IDirectMusicCommandTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicCommandTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-  /* track data */
-  struct list Commands;
-};
-
-/*****************************************************************************
- * IDirectMusicMelodyFormulationTrack implementation structure
- */
-struct IDirectMusicMelodyFormulationTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicMelodyFormulationTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-};
-
-/* IUnknown: */
-extern HRESULT WINAPI IDirectMusicMelodyFormulationTrack_IUnknown_QueryInterface (LPUNKNOWN iface, REFIID riid, LPVOID *ppobj) DECLSPEC_HIDDEN;
-extern ULONG WINAPI   IDirectMusicMelodyFormulationTrack_IUnknown_AddRef (LPUNKNOWN iface) DECLSPEC_HIDDEN;
-/* IDirectMusicTrack(8): */
-extern ULONG WINAPI   IDirectMusicMelodyFormulationTrack_IDirectMusicTrack_AddRef (LPDIRECTMUSICTRACK8 iface) DECLSPEC_HIDDEN;
-/* IPersistStream: */
-extern ULONG WINAPI   IDirectMusicMelodyFormulationTrack_IPersistStream_AddRef (LPPERSISTSTREAM iface) DECLSPEC_HIDDEN;
-
-/*****************************************************************************
- * IDirectMusicMotifTrack implementation structure
- */
-struct IDirectMusicMotifTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicMotifTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-};
-
-/*****************************************************************************
- * IDirectMusicMuteTrack implementation structure
- */
-struct IDirectMusicMuteTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicMuteTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-};
-
-/*****************************************************************************
- * IDirectMusicStyleTrack implementation structure
- */
-struct IDirectMusicStyleTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicStyleTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-  
-  struct list Items;
-};
 
 /**********************************************************************
  * Dll lifetime tracking declaration for dmstyle.dll

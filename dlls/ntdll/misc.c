@@ -27,10 +27,16 @@
 #include <sys/utsname.h>
 #endif
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "wine/library.h"
 #include "wine/debug.h"
 #include "ntdll_misc.h"
+#include "wmistr.h"
+#include "evntrace.h"
+#include "evntprov.h"
 
+WINE_DEFAULT_DEBUG_CHANNEL(ntdll);
 
 LPCSTR debugstr_ObjectAttributes(const OBJECT_ATTRIBUTES *oa)
 {
@@ -324,4 +330,118 @@ void * __cdecl _lfind( const void *key, const void *base, unsigned int *nmemb,
         if (!compar(key,(char*)base+(size*i)))
             return (char*)base+(size*i);
     return NULL;
+}
+
+/******************************************************************************
+ *                  WinSqmEndSession   (NTDLL.@)
+ */
+NTSTATUS WINAPI WinSqmEndSession(HANDLE session)
+{
+    FIXME("(%p): stub\n", session);
+    return STATUS_NOT_IMPLEMENTED;
+}
+
+/*********************************************************************
+ *                  WinSqmIsOptedIn   (NTDLL.@)
+ */
+BOOL WINAPI WinSqmIsOptedIn(void)
+{
+    FIXME("(): stub\n");
+    return FALSE;
+}
+
+/******************************************************************************
+ *                  WinSqmStartSession   (NTDLL.@)
+ */
+HANDLE WINAPI WinSqmStartSession(GUID *sessionguid, DWORD sessionid, DWORD unknown1)
+{
+    FIXME("(%p, 0x%x, 0x%x): stub\n", sessionguid, sessionid, unknown1);
+    return INVALID_HANDLE_VALUE;
+}
+
+/******************************************************************************
+ *                  EtwEventRegister (NTDLL.@)
+ */
+ULONG WINAPI EtwEventRegister( LPCGUID provider, PENABLECALLBACK callback, PVOID context,
+                PREGHANDLE handle )
+{
+    FIXME("(%s, %p, %p, %p) stub.\n", debugstr_guid(provider), callback, context, handle);
+
+    *handle = 0xdeadbeef;
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ *                  EtwEventUnregister (NTDLL.@)
+ */
+ULONG WINAPI EtwEventUnregister( REGHANDLE handle )
+{
+    FIXME("(%s) stub.\n", wine_dbgstr_longlong(handle));
+    return ERROR_SUCCESS;
+}
+
+/*********************************************************************
+ *                  EtwEventSetInformation   (NTDLL.@)
+ */
+ULONG WINAPI EtwEventSetInformation( REGHANDLE handle, EVENT_INFO_CLASS class, void *info,
+                                     ULONG length )
+{
+    FIXME("(%s, %u, %p, %u) stub\n", wine_dbgstr_longlong(handle), class, info, length);
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ *                  EtwRegisterTraceGuidsW (NTDLL.@)
+ *
+ * Register an event trace provider and the event trace classes that it uses
+ * to generate events.
+ *
+ * PARAMS
+ *  RequestAddress     [I]   ControlCallback function
+ *  RequestContext     [I]   Optional provider-defined context
+ *  ControlGuid        [I]   GUID of the registering provider
+ *  GuidCount          [I]   Number of elements in the TraceGuidReg array
+ *  TraceGuidReg       [I/O] Array of TRACE_GUID_REGISTRATION structures
+ *  MofImagePath       [I]   not supported, set to NULL
+ *  MofResourceName    [I]   not supported, set to NULL
+ *  RegistrationHandle [O]   Provider's registration handle
+ *
+ * RETURNS
+ *  Success: ERROR_SUCCESS
+ *  Failure: System error code
+ */
+ULONG WINAPI EtwRegisterTraceGuidsW( WMIDPREQUEST RequestAddress,
+                void *RequestContext, const GUID *ControlGuid, ULONG GuidCount,
+                TRACE_GUID_REGISTRATION *TraceGuidReg, const WCHAR *MofImagePath,
+                const WCHAR *MofResourceName, TRACEHANDLE *RegistrationHandle )
+{
+    FIXME("(%p, %p, %s, %u, %p, %s, %s, %p): stub\n", RequestAddress, RequestContext,
+          debugstr_guid(ControlGuid), GuidCount, TraceGuidReg, debugstr_w(MofImagePath),
+          debugstr_w(MofResourceName), RegistrationHandle);
+
+    if (TraceGuidReg)
+    {
+        ULONG i;
+        for (i = 0; i < GuidCount; i++)
+        {
+            FIXME("  register trace class %s\n", debugstr_guid(TraceGuidReg[i].Guid));
+            TraceGuidReg[i].RegHandle = (HANDLE)0xdeadbeef;
+        }
+    }
+    *RegistrationHandle = (TRACEHANDLE)0xdeadbeef;
+    return ERROR_SUCCESS;
+}
+
+/******************************************************************************
+ *                  EtwRegisterTraceGuidsA (NTDLL.@)
+ */
+ULONG WINAPI EtwRegisterTraceGuidsA( WMIDPREQUEST RequestAddress,
+                void *RequestContext, const GUID *ControlGuid, ULONG GuidCount,
+                TRACE_GUID_REGISTRATION *TraceGuidReg, const char *MofImagePath,
+                const char *MofResourceName, TRACEHANDLE *RegistrationHandle )
+{
+    FIXME("(%p, %p, %s, %u, %p, %s, %s, %p): stub\n", RequestAddress, RequestContext,
+          debugstr_guid(ControlGuid), GuidCount, TraceGuidReg, debugstr_a(MofImagePath),
+          debugstr_a(MofResourceName), RegistrationHandle);
+    return ERROR_SUCCESS;
 }

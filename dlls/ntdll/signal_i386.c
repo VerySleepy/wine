@@ -1011,25 +1011,6 @@ static inline void save_fpu( CONTEXT *context )
 
 
 /***********************************************************************
- *           save_fpux
- *
- * Save the thread FPU extended context.
- */
-static inline void save_fpux( CONTEXT *context )
-{
-#ifdef __GNUC__
-    /* we have to enforce alignment by hand */
-    char buffer[sizeof(XMM_SAVE_AREA32) + 16];
-    XMM_SAVE_AREA32 *state = (XMM_SAVE_AREA32 *)(((ULONG_PTR)buffer + 15) & ~15);
-
-    __asm__ __volatile__( "fxsave %0" : "=m" (*state) );
-    context->ContextFlags |= CONTEXT_EXTENDED_REGISTERS;
-    memcpy( context->ExtendedRegisters, state, sizeof(*state) );
-#endif
-}
-
-
-/***********************************************************************
  *           restore_fpu
  *
  * Restore the FPU context to a sigcontext.
@@ -1572,6 +1553,31 @@ static inline DWORD is_privileged_instr( CONTEXT *context )
     }
 }
 
+
+/***********************************************************************
+ *           handle_interrupt
+ *
+ * Handle an interrupt.
+ */
+static inline BOOL handle_interrupt( unsigned int interrupt, EXCEPTION_RECORD *rec, CONTEXT *context )
+{
+    switch(interrupt)
+    {
+    case 0x2d:
+        context->Eip += 3;
+        rec->ExceptionCode = EXCEPTION_BREAKPOINT;
+        rec->ExceptionAddress = (void *)context->Eip;
+        rec->NumberParameters = is_wow64 ? 1 : 3;
+        rec->ExceptionInformation[0] = context->Eax;
+        rec->ExceptionInformation[1] = context->Ecx;
+        rec->ExceptionInformation[2] = context->Edx;
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+
 /***********************************************************************
  *           check_invalid_gs
  *
@@ -1907,7 +1913,7 @@ static void WINAPI raise_segv_exception( EXCEPTION_RECORD *rec, CONTEXT *context
             if (rec->ExceptionInformation[1] == 0xffffffff && check_invalid_gs( context ))
                 goto done;
             if (!(rec->ExceptionCode = virtual_handle_fault( (void *)rec->ExceptionInformation[1],
-                                                             rec->ExceptionInformation[0] )))
+                                                             rec->ExceptionInformation[0], FALSE )))
                 goto done;
             if (rec->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
                 rec->ExceptionInformation[0] == EXCEPTION_EXECUTE_FAULT)
@@ -1932,6 +1938,21 @@ static void WINAPI raise_segv_exception( EXCEPTION_RECORD *rec, CONTEXT *context
             /* Disable AC flag, return */
             context->EFlags &= ~0x00040000;
             goto done;
+        }
+        break;
+    case EXCEPTION_BREAKPOINT:
+        if (!is_wow64)
+        {
+            /* On Wow64, the upper DWORD of Rax contains garbage, and the debug
+             * service is usually not recognized when called from usermode. */
+            switch (rec->ExceptionInformation[0])
+            {
+                case 1: /* BREAKPOINT_PRINT */
+                case 3: /* BREAKPOINT_LOAD_SYMBOLS */
+                case 4: /* BREAKPOINT_UNLOAD_SYMBOLS */
+                case 5: /* BREAKPOINT_COMMAND_STRING (>= Win2003) */
+                    goto done;
+            }
         }
         break;
     }
@@ -2046,6 +2067,15 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
     ucontext_t *context = sigcontext;
     void *stack = init_handler( sigcontext, &fs, &gs );
 
+    /* check for exceptions on the signal stack caused by write watches */
+    if (get_trap_code(context) == TRAP_x86_PAGEFLT &&
+        (char *)stack >= (char *)get_signal_stack() &&
+        (char *)stack < (char *)get_signal_stack() + signal_stack_size &&
+        !virtual_handle_fault( siginfo->si_addr, (get_error_code(context) >> 1) & 0x09, TRUE ))
+    {
+        return;
+    }
+
     /* check for page fault inside the thread stack */
     if (get_trap_code(context) == TRAP_x86_PAGEFLT &&
         (char *)siginfo->si_addr >= (char *)NtCurrentTeb()->DeallocationStack &&
@@ -2082,8 +2112,10 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
     case TRAP_x86_PROTFLT:   /* General protection fault */
     case TRAP_x86_UNKNOWN:   /* Unknown fault code */
         {
+            CONTEXT *win_context = get_exception_context( rec );
             WORD err = get_error_code(context);
-            if (!err && (rec->ExceptionCode = is_privileged_instr( get_exception_context(rec) ))) break;
+            if (!err && (rec->ExceptionCode = is_privileged_instr( win_context ))) break;
+            if ((err & 7) == 2 && handle_interrupt( err >> 3, rec, win_context )) break;
             rec->ExceptionCode = EXCEPTION_ACCESS_VIOLATION;
             rec->NumberParameters = 2;
             rec->ExceptionInformation[0] = 0;
@@ -2138,6 +2170,10 @@ static void trap_handler( int signal, siginfo_t *siginfo, void *sigcontext )
         /* fall through */
     default:
         rec->ExceptionCode = EXCEPTION_BREAKPOINT;
+        rec->NumberParameters = is_wow64 ? 1 : 3;
+        rec->ExceptionInformation[0] = 0;
+        rec->ExceptionInformation[1] = 0; /* FIXME */
+        rec->ExceptionInformation[2] = 0; /* FIXME */
         break;
     }
 }
@@ -2173,7 +2209,7 @@ static void fpe_handler( int signal, siginfo_t *siginfo, void *sigcontext )
         /* TODO:
          * Behaviour only tested for divide-by-zero exceptions
          * Check for other SIMD exceptions as well */
-        if(siginfo->si_code != FPE_FLTDIV)
+        if(siginfo->si_code != FPE_FLTDIV && siginfo->si_code != FPE_FLTINV)
             FIXME("untested SIMD exception: %#x. Might not work correctly\n",
                   siginfo->si_code);
 

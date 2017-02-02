@@ -17,8 +17,10 @@
  *
  */
 
-#include "wine/debug.h"
-#include "d3dx9_36_private.h"
+#include "config.h"
+#include "wine/port.h"
+
+#include "d3dx9_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3dx);
 
@@ -375,4 +377,23 @@ void set_number(void *outdata, D3DXPARAMETER_TYPE outtype, const void *indata, D
             *(DWORD *)outdata = 0;
             break;
     }
+}
+
+
+/***********************************************************************
+ * D3DXDebugMute
+ * Returns always FALSE for us.
+ */
+BOOL WINAPI D3DXDebugMute(BOOL mute)
+{
+    return FALSE;
+}
+
+/***********************************************************************
+ * D3DXGetDriverLevel.
+ * Returns always 900 (DX 9) for us
+ */
+UINT WINAPI D3DXGetDriverLevel(struct IDirect3DDevice9 *device)
+{
+    return 900;
 }

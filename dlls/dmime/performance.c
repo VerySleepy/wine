@@ -920,8 +920,8 @@ static HRESULT WINAPI IDirectMusicPerformance8Impl_InitAudio(IDirectMusicPerform
 	  if (ppDirectSound)
 	    *ppDirectSound = dsound;  
 	}
-	
-	IDirectMusicPerformance8Impl_Init(iface, ppDirectMusic, dsound, hWnd);
+
+        IDirectMusicPerformance8_Init(iface, ppDirectMusic, dsound, hWnd);
 
 	/* Init increases the ref count of the dsound object. Decrement it if the app doesn't want a pointer to the object. */
 	if (NULL == ppDirectSound) {
@@ -987,7 +987,6 @@ static HRESULT WINAPI IDirectMusicPerformance8Impl_CreateAudioPath(IDirectMusicP
         IUnknown *pSourceConfig, BOOL fActivate, IDirectMusicAudioPath **ppNewPath)
 {
         IDirectMusicPerformance8Impl *This = impl_from_IDirectMusicPerformance8(iface);
-	IDirectMusicAudioPathImpl *default_path;
 	IDirectMusicAudioPath *pPath;
 
 	FIXME("(%p, %p, %d, %p): stub\n", This, pSourceConfig, fActivate, ppNewPath);
@@ -997,8 +996,7 @@ static HRESULT WINAPI IDirectMusicPerformance8Impl_CreateAudioPath(IDirectMusicP
 	}
 
         create_dmaudiopath(&IID_IDirectMusicAudioPath, (void**)&pPath);
-	default_path = (IDirectMusicAudioPathImpl*)((char*)(pPath) - offsetof(IDirectMusicAudioPathImpl,AudioPathVtbl));
-        default_path->pPerf = &This->IDirectMusicPerformance8_iface;
+        set_audiopath_perf_pointer(pPath, iface);
 
 	/** TODO */
 	
@@ -1011,11 +1009,10 @@ static HRESULT WINAPI IDirectMusicPerformance8Impl_CreateStandardAudioPath(IDire
         DWORD dwType, DWORD dwPChannelCount, BOOL fActivate, IDirectMusicAudioPath **ppNewPath)
 {
         IDirectMusicPerformance8Impl *This = impl_from_IDirectMusicPerformance8(iface);
-	IDirectMusicAudioPathImpl *default_path;
 	IDirectMusicAudioPath *pPath;
 	DSBUFFERDESC desc;
 	WAVEFORMATEX format;
-	LPDIRECTSOUNDBUFFER buffer;
+	IDirectSoundBuffer *buffer, *primary_buffer;
 	HRESULT hr = S_OK;
 
 	FIXME("(%p)->(%d, %d, %d, %p): semi-stub\n", This, dwType, dwPChannelCount, fActivate, ppNewPath);
@@ -1024,9 +1021,7 @@ static HRESULT WINAPI IDirectMusicPerformance8Impl_CreateStandardAudioPath(IDire
 	  return E_POINTER;
 	}
 
-        create_dmaudiopath(&IID_IDirectMusicAudioPath, (void**)&pPath);
-	default_path = (IDirectMusicAudioPathImpl*)((char*)(pPath) - offsetof(IDirectMusicAudioPathImpl,AudioPathVtbl));
-        default_path->pPerf = &This->IDirectMusicPerformance8_iface;
+        *ppNewPath = NULL;
 
 	/* Secondary buffer description */
 	memset(&format, 0, sizeof(format));
@@ -1040,7 +1035,7 @@ static HRESULT WINAPI IDirectMusicPerformance8Impl_CreateStandardAudioPath(IDire
 	
 	memset(&desc, 0, sizeof(desc));
 	desc.dwSize = sizeof(desc);
-	desc.dwFlags = DSBCAPS_CTRLFX | DSBCAPS_CTRLPAN | DSBCAPS_CTRLVOLUME | DSBCAPS_GLOBALFOCUS;
+        desc.dwFlags = DSBCAPS_CTRLFX | DSBCAPS_CTRLVOLUME | DSBCAPS_GLOBALFOCUS;
 	desc.dwBufferBytes = DSBSIZE_MIN;
 	desc.dwReserved = 0;
 	desc.lpwfxFormat = &format;
@@ -1051,46 +1046,42 @@ static HRESULT WINAPI IDirectMusicPerformance8Impl_CreateStandardAudioPath(IDire
                 desc.dwFlags |= DSBCAPS_CTRL3D | DSBCAPS_CTRLFREQUENCY | DSBCAPS_MUTE3DATMAXDISTANCE;
 		break;
 	case DMUS_APATH_DYNAMIC_MONO:
-	        desc.dwFlags |= DSBCAPS_CTRLFREQUENCY;
+                desc.dwFlags |= DSBCAPS_CTRLPAN | DSBCAPS_CTRLFREQUENCY;
 		break;
 	case DMUS_APATH_SHARED_STEREOPLUSREVERB:
 	        /* normally we have to create 2 buffers (one for music other for reverb)
 		 * in this case. See msdn
                  */
 	case DMUS_APATH_DYNAMIC_STEREO:
-		desc.dwFlags |= DSBCAPS_CTRLFREQUENCY;
+                desc.dwFlags |= DSBCAPS_CTRLPAN | DSBCAPS_CTRLFREQUENCY;
 		format.nChannels = 2;
 		format.nBlockAlign *= 2;
 		format.nAvgBytesPerSec *=2;
 		break;
 	default:
-	        HeapFree(GetProcessHeap(), 0, default_path); 
-	        *ppNewPath = NULL;
 	        return E_INVALIDARG;
 	}
 
 	/* FIXME: Should we create one secondary buffer for each PChannel? */
 	hr = IDirectSound8_CreateSoundBuffer ((LPDIRECTSOUND8) This->pDirectSound, &desc, &buffer, NULL);
-	if (FAILED(hr)) {
-	        HeapFree(GetProcessHeap(), 0, default_path); 
-	        *ppNewPath = NULL;
+	if (FAILED(hr))
 	        return DSERR_BUFFERLOST;
-	}
-	default_path->pDSBuffer = buffer;
 
 	/* Update description for creating primary buffer */
 	desc.dwFlags |= DSBCAPS_PRIMARYBUFFER;
 	desc.dwBufferBytes = 0;
 	desc.lpwfxFormat = NULL;
 
-	hr = IDirectSound8_CreateSoundBuffer ((LPDIRECTSOUND8) This->pDirectSound, &desc, &buffer, NULL);
+	hr = IDirectSound8_CreateSoundBuffer ((LPDIRECTSOUND8) This->pDirectSound, &desc, &primary_buffer, NULL);
 	if (FAILED(hr)) {
-                IDirectSoundBuffer_Release(default_path->pDSBuffer);
-	        HeapFree(GetProcessHeap(), 0, default_path); 
-	        *ppNewPath = NULL;
+                IDirectSoundBuffer_Release(buffer);
 	        return DSERR_BUFFERLOST;
 	}
-	default_path->pPrimary = buffer;
+
+	create_dmaudiopath(&IID_IDirectMusicAudioPath, (void**)&pPath);
+	set_audiopath_perf_pointer(pPath, iface);
+	set_audiopath_dsound_buffer(pPath, buffer);
+	set_audiopath_primary_dsound_buffer(pPath, primary_buffer);
 
 	*ppNewPath = pPath;
 	
@@ -1105,15 +1096,15 @@ static HRESULT WINAPI IDirectMusicPerformance8Impl_SetDefaultAudioPath(IDirectMu
         IDirectMusicPerformance8Impl *This = impl_from_IDirectMusicPerformance8(iface);
 
 	FIXME("(%p, %p): semi-stub\n", This, pAudioPath);
-	if (NULL != This->pDefaultPath) {
+
+	if (This->pDefaultPath) {
 		IDirectMusicAudioPath_Release(This->pDefaultPath);
-		((IDirectMusicAudioPathImpl*) This->pDefaultPath)->pPerf = NULL;
 		This->pDefaultPath = NULL;
 	}
 	This->pDefaultPath = pAudioPath;
-	if (NULL != This->pDefaultPath) {
+	if (This->pDefaultPath) {
 		IDirectMusicAudioPath_AddRef(This->pDefaultPath);
-		((IDirectMusicAudioPathImpl*)This->pDefaultPath)->pPerf = &This->IDirectMusicPerformance8_iface;
+		set_audiopath_perf_pointer(This->pDefaultPath, iface);
 	}
 
 	return S_OK;
@@ -1207,7 +1198,7 @@ HRESULT WINAPI create_dmperformance(REFIID lpcGUID, void **ppobj)
 {
 	IDirectMusicPerformance8Impl *obj;
 
-        TRACE("(%p,%p)\n", lpcGUID, ppobj);
+        TRACE("(%s, %p)\n", debugstr_guid(lpcGUID), ppobj);
 
 	obj = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectMusicPerformance8Impl));
         if (NULL == obj) {

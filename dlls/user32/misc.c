@@ -20,6 +20,8 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include "config.h"
+
 #include <stdarg.h>
 
 #include "windef.h"
@@ -39,6 +41,8 @@ WINE_DEFAULT_DEBUG_CHANNEL(win);
 
 #define IMM_INIT_MAGIC 0x19650412
 static HWND (WINAPI *imm_get_ui_window)(HKL);
+BOOL (WINAPI *imm_register_window)(HWND) = NULL;
+void (WINAPI *imm_unregister_window)(HWND) = NULL;
 
 /* MSIME messages */
 static UINT WM_MSIME_SERVICE;
@@ -466,12 +470,61 @@ BOOL WINAPI GetMonitorInfoW(HMONITOR hMonitor, LPMONITORINFO lpMonitorInfo)
     return ret;
 }
 
+#ifdef __i386__
+/* Some apps pass a non-stdcall callback to EnumDisplayMonitors,
+ * so we need a small assembly wrapper to call it.
+ * MJ's Help Diagnostic expects that %ecx contains the address to the rect.
+ */
+struct enumdisplaymonitors_lparam
+{
+    MONITORENUMPROC proc;
+    LPARAM lparam;
+};
+
+extern BOOL CALLBACK enumdisplaymonitors_callback_wrapper(HMONITOR monitor, HDC hdc, LPRECT rect, LPARAM lparam);
+__ASM_STDCALL_FUNC( enumdisplaymonitors_callback_wrapper, 16,
+    "pushl %ebp\n\t"
+    __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
+    __ASM_CFI(".cfi_rel_offset %ebp,0\n\t")
+    "movl %esp,%ebp\n\t"
+    __ASM_CFI(".cfi_def_cfa_register %ebp\n\t")
+    "subl $8,%esp\n\t"
+    "movl 20(%ebp),%eax\n\t"    /* struct enumdisplaymonitors_lparam *orig = (struct enumdisplaymonitors_lparam*)lparam */
+    "pushl 4(%eax)\n\t"         /* push orig->lparam */
+    "pushl 16(%ebp)\n\t"
+    "pushl 12(%ebp)\n\t"
+    "pushl 8(%ebp)\n\t"
+    "movl 16(%ebp),%ecx\n\t"
+    "call *(%eax)\n\t"          /* call orig->proc */
+    "leave\n\t"
+    __ASM_CFI(".cfi_def_cfa %esp,4\n\t")
+    __ASM_CFI(".cfi_same_value %ebp\n\t")
+    "ret $16" )
+#endif /* __i386__ */
+
 /***********************************************************************
  *		EnumDisplayMonitors (USER32.@)
  */
 BOOL WINAPI EnumDisplayMonitors( HDC hdc, LPRECT rect, MONITORENUMPROC proc, LPARAM lp )
 {
+#ifdef __i386__
+    struct enumdisplaymonitors_lparam orig = { proc, lp };
+    proc = enumdisplaymonitors_callback_wrapper;
+    lp = (LPARAM)&orig;
+#endif
     return USER_Driver->pEnumDisplayMonitors( hdc, rect, proc, lp );
+}
+
+
+/***********************************************************************
+ *              QueryDisplayConfig (USER32.@)
+ */
+LONG WINAPI QueryDisplayConfig(UINT32 flags, UINT32 *numpathelements, DISPLAYCONFIG_PATH_INFO *pathinfo,
+                               UINT32 *numinfoelements, DISPLAYCONFIG_MODE_INFO *modeinfo,
+                               DISPLAYCONFIG_TOPOLOGY_ID *topologyid)
+{
+   FIXME("(%08x %p %p %p %p %p)\n", flags, numpathelements, pathinfo, numinfoelements, modeinfo, topologyid);
+   return ERROR_CALL_NOT_IMPLEMENTED;
 }
 
 /***********************************************************************
@@ -485,7 +538,7 @@ void WINAPI RegisterSystemThread(DWORD flags, DWORD reserved)
 /***********************************************************************
  *           RegisterShellHookWindow			[USER32.@]
  */
-BOOL WINAPI RegisterShellHookWindow ( HWND hWnd )
+BOOL WINAPI RegisterShellHookWindow(HWND hWnd)
 {
     FIXME("(%p): stub\n", hWnd);
     return FALSE;
@@ -495,11 +548,10 @@ BOOL WINAPI RegisterShellHookWindow ( HWND hWnd )
 /***********************************************************************
  *           DeregisterShellHookWindow			[USER32.@]
  */
-HRESULT WINAPI DeregisterShellHookWindow ( DWORD u )
+BOOL WINAPI DeregisterShellHookWindow(HWND hWnd)
 {
-    FIXME("0x%08x stub\n",u);
-    return 0;
-
+    FIXME("(%p): stub\n", hWnd);
+    return FALSE;
 }
 
 
@@ -591,7 +643,7 @@ BOOL WINAPI AlignRects(LPRECT rect, DWORD b, DWORD c, DWORD d)
 {
     FIXME("(%p, %d, %d, %d): stub\n", rect, b, c, d);
     if (rect)
-        FIXME("rect: [[%d, %d], [%d, %d]]\n", rect->left, rect->top, rect->right, rect->bottom);
+        FIXME("rect: %s\n", wine_dbgstr_rect(rect));
     /* Calls OffsetRect */
     return FALSE;
 }
@@ -633,6 +685,8 @@ BOOL WINAPI User32InitializeImmEntryTable(DWORD magic)
 
     /* this part is not compatible with native imm32.dll */
     imm_get_ui_window = (void*)GetProcAddress(imm32, "__wine_get_ui_window");
+    imm_register_window = (void*)GetProcAddress(imm32, "__wine_register_window");
+    imm_unregister_window = (void*)GetProcAddress(imm32, "__wine_unregister_window");
     if (!imm_get_ui_window)
         FIXME("native imm32.dll not supported\n");
     return TRUE;
@@ -717,7 +771,26 @@ BOOL WINAPI UserHandleGrantAccess(HANDLE handle, HANDLE job, BOOL grant)
 HPOWERNOTIFY WINAPI RegisterPowerSettingNotification(HANDLE recipient, const GUID *guid, DWORD flags)
 {
     FIXME("(%p,%s,%x): stub\n", recipient, debugstr_guid(guid), flags);
-    return NULL;
+    return (HPOWERNOTIFY)0xdeadbeef;
+}
+
+/**********************************************************************
+ * UnregisterPowerSettingNotification [USER32.@]
+ */
+BOOL WINAPI UnregisterPowerSettingNotification(HPOWERNOTIFY handle)
+{
+    FIXME("(%p): stub\n", handle);
+    return TRUE;
+}
+
+/*****************************************************************************
+ * GetGestureConfig (USER32.@)
+ */
+BOOL WINAPI GetGestureConfig( HWND hwnd, DWORD reserved, DWORD flags, UINT *count, GESTURECONFIG *config, UINT size )
+{
+    FIXME("(%p %08x %08x %p %p %u): stub\n", hwnd, reserved, flags, count, config, size);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
 }
 
 /**********************************************************************
@@ -737,6 +810,30 @@ BOOL WINAPI IsTouchWindow( HWND hwnd, PULONG flags )
 {
     FIXME("(%p %p): stub\n", hwnd, flags);
     return FALSE;
+}
+
+/**********************************************************************
+ * IsWindowRedirectedForPrint [USER32.@]
+ */
+BOOL WINAPI IsWindowRedirectedForPrint( HWND hwnd )
+{
+    FIXME("(%p): stub\n", hwnd);
+    return FALSE;
+}
+
+/**********************************************************************
+ * GetDisplayConfigBufferSizes [USER32.@]
+ */
+LONG WINAPI GetDisplayConfigBufferSizes(UINT32 flags, UINT32 *num_path_info, UINT32 *num_mode_info)
+{
+    FIXME("(0x%x %p %p): stub\n", flags, num_path_info, num_mode_info);
+
+    if (!num_path_info || !num_mode_info)
+        return ERROR_INVALID_PARAMETER;
+
+    *num_path_info = 0;
+    *num_mode_info = 0;
+    return ERROR_NOT_SUPPORTED;
 }
 
 static const WCHAR imeW[] = {'I','M','E',0};
@@ -784,7 +881,7 @@ LRESULT WINAPI ImeWndProcA( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam )
 {
     HWND uiwnd;
 
-    if (msg==WM_CREATE || msg==WM_NCCREATE)
+    if (msg==WM_CREATE)
         return TRUE;
 
     if (imm_get_ui_window && is_ime_ui_msg(msg))
@@ -801,7 +898,7 @@ LRESULT WINAPI ImeWndProcW( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam )
 {
     HWND uiwnd;
 
-    if (msg==WM_CREATE || msg==WM_NCCREATE)
+    if (msg==WM_CREATE)
         return TRUE;
 
     if (imm_get_ui_window && is_ime_ui_msg(msg))

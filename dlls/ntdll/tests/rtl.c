@@ -82,7 +82,6 @@ static RTL_HANDLE * (WINAPI * pRtlAllocateHandle)(RTL_HANDLE_TABLE *, ULONG *);
 static BOOLEAN   (WINAPI * pRtlFreeHandle)(RTL_HANDLE_TABLE *, RTL_HANDLE *);
 static NTSTATUS  (WINAPI *pRtlAllocateAndInitializeSid)(PSID_IDENTIFIER_AUTHORITY,BYTE,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,DWORD,PSID*);
 static NTSTATUS  (WINAPI *pRtlFreeSid)(PSID);
-static struct _TEB * (WINAPI *pNtCurrentTeb)(void);
 static DWORD     (WINAPI *pRtlGetThreadErrorMode)(void);
 static NTSTATUS  (WINAPI *pRtlSetThreadErrorMode)(DWORD, LPDWORD);
 static IMAGE_BASE_RELOCATION *(WINAPI *pLdrProcessRelocationBlock)(void*,UINT,USHORT*,INT_PTR);
@@ -92,6 +91,13 @@ static NTSTATUS  (WINAPI *pRtlIpv4StringToAddressA)(PCSTR, BOOLEAN, PCSTR *, IN_
 static NTSTATUS  (WINAPI *pLdrAddRefDll)(ULONG, HMODULE);
 static NTSTATUS  (WINAPI *pLdrLockLoaderLock)(ULONG, ULONG*, ULONG_PTR*);
 static NTSTATUS  (WINAPI *pLdrUnlockLoaderLock)(ULONG, ULONG_PTR);
+static NTSTATUS  (WINAPI *pRtlGetCompressionWorkSpaceSize)(USHORT, PULONG, PULONG);
+static NTSTATUS  (WINAPI *pRtlDecompressBuffer)(USHORT, PUCHAR, ULONG, const UCHAR*, ULONG, PULONG);
+static NTSTATUS  (WINAPI *pRtlDecompressFragment)(USHORT, PUCHAR, ULONG, const UCHAR*, ULONG, ULONG, PULONG, PVOID);
+static NTSTATUS  (WINAPI *pRtlCompressBuffer)(USHORT, const UCHAR*, ULONG, PUCHAR, ULONG, ULONG, PULONG, PVOID);
+static BOOL      (WINAPI *pRtlIsCriticalSectionLocked)(CRITICAL_SECTION *);
+static BOOL      (WINAPI *pRtlIsCriticalSectionLockedByThread)(CRITICAL_SECTION *);
+static NTSTATUS  (WINAPI *pRtlInitializeCriticalSectionEx)(CRITICAL_SECTION *, ULONG, ULONG);
 
 static HMODULE hkernel32 = 0;
 static BOOL      (WINAPI *pIsWow64Process)(HANDLE, PBOOL);
@@ -129,7 +135,6 @@ static void InitFunctionPtrs(void)
 	pRtlFreeHandle = (void *)GetProcAddress(hntdll, "RtlFreeHandle");
         pRtlAllocateAndInitializeSid = (void *)GetProcAddress(hntdll, "RtlAllocateAndInitializeSid");
         pRtlFreeSid = (void *)GetProcAddress(hntdll, "RtlFreeSid");
-        pNtCurrentTeb = (void *)GetProcAddress(hntdll, "NtCurrentTeb");
         pRtlGetThreadErrorMode = (void *)GetProcAddress(hntdll, "RtlGetThreadErrorMode");
         pRtlSetThreadErrorMode = (void *)GetProcAddress(hntdll, "RtlSetThreadErrorMode");
         pLdrProcessRelocationBlock  = (void *)GetProcAddress(hntdll, "LdrProcessRelocationBlock");
@@ -139,6 +144,13 @@ static void InitFunctionPtrs(void)
         pLdrAddRefDll = (void *)GetProcAddress(hntdll, "LdrAddRefDll");
         pLdrLockLoaderLock = (void *)GetProcAddress(hntdll, "LdrLockLoaderLock");
         pLdrUnlockLoaderLock = (void *)GetProcAddress(hntdll, "LdrUnlockLoaderLock");
+        pRtlGetCompressionWorkSpaceSize = (void *)GetProcAddress(hntdll, "RtlGetCompressionWorkSpaceSize");
+        pRtlDecompressBuffer = (void *)GetProcAddress(hntdll, "RtlDecompressBuffer");
+        pRtlDecompressFragment = (void *)GetProcAddress(hntdll, "RtlDecompressFragment");
+        pRtlCompressBuffer = (void *)GetProcAddress(hntdll, "RtlCompressBuffer");
+        pRtlIsCriticalSectionLocked = (void *)GetProcAddress(hntdll, "RtlIsCriticalSectionLocked");
+        pRtlIsCriticalSectionLockedByThread = (void *)GetProcAddress(hntdll, "RtlIsCriticalSectionLockedByThread");
+        pRtlInitializeCriticalSectionEx = (void *)GetProcAddress(hntdll, "RtlInitializeCriticalSectionEx");
     }
     hkernel32 = LoadLibraryA("kernel32.dll");
     ok(hkernel32 != 0, "LoadLibrary failed\n");
@@ -649,46 +661,11 @@ static void test_RtlUniform(void)
 }
 
 
-static ULONG my_RtlRandom(PULONG seed)
-{
-    static ULONG saved_value[128] =
-    { /*   0 */ 0x4c8bc0aa, 0x4c022957, 0x2232827a, 0x2f1e7626, 0x7f8bdafb, 0x5c37d02a, 0x0ab48f72, 0x2f0c4ffa,
-      /*   8 */ 0x290e1954, 0x6b635f23, 0x5d3885c0, 0x74b49ff8, 0x5155fa54, 0x6214ad3f, 0x111e9c29, 0x242a3a09,
-      /*  16 */ 0x75932ae1, 0x40ac432e, 0x54f7ba7a, 0x585ccbd5, 0x6df5c727, 0x0374dad1, 0x7112b3f1, 0x735fc311,
-      /*  24 */ 0x404331a9, 0x74d97781, 0x64495118, 0x323e04be, 0x5974b425, 0x4862e393, 0x62389c1d, 0x28a68b82,
-      /*  32 */ 0x0f95da37, 0x7a50bbc6, 0x09b0091c, 0x22cdb7b4, 0x4faaed26, 0x66417ccd, 0x189e4bfa, 0x1ce4e8dd,
-      /*  40 */ 0x5274c742, 0x3bdcf4dc, 0x2d94e907, 0x32eac016, 0x26d33ca3, 0x60415a8a, 0x31f57880, 0x68c8aa52,
-      /*  48 */ 0x23eb16da, 0x6204f4a1, 0x373927c1, 0x0d24eb7c, 0x06dd7379, 0x2b3be507, 0x0f9c55b1, 0x2c7925eb,
-      /*  56 */ 0x36d67c9a, 0x42f831d9, 0x5e3961cb, 0x65d637a8, 0x24bb3820, 0x4d08e33d, 0x2188754f, 0x147e409e,
-      /*  64 */ 0x6a9620a0, 0x62e26657, 0x7bd8ce81, 0x11da0abb, 0x5f9e7b50, 0x23e444b6, 0x25920c78, 0x5fc894f0,
-      /*  72 */ 0x5e338cbb, 0x404237fd, 0x1d60f80f, 0x320a1743, 0x76013d2b, 0x070294ee, 0x695e243b, 0x56b177fd,
-      /*  80 */ 0x752492e1, 0x6decd52f, 0x125f5219, 0x139d2e78, 0x1898d11e, 0x2f7ee785, 0x4db405d8, 0x1a028a35,
-      /*  88 */ 0x63f6f323, 0x1f6d0078, 0x307cfd67, 0x3f32a78a, 0x6980796c, 0x462b3d83, 0x34b639f2, 0x53fce379,
-      /*  96 */ 0x74ba50f4, 0x1abc2c4b, 0x5eeaeb8d, 0x335a7a0d, 0x3973dd20, 0x0462d66b, 0x159813ff, 0x1e4643fd,
-      /* 104 */ 0x06bc5c62, 0x3115e3fc, 0x09101613, 0x47af2515, 0x4f11ec54, 0x78b99911, 0x3db8dd44, 0x1ec10b9b,
-      /* 112 */ 0x5b5506ca, 0x773ce092, 0x567be81a, 0x5475b975, 0x7a2cde1a, 0x494536f5, 0x34737bb4, 0x76d9750b,
-      /* 120 */ 0x2a1f6232, 0x2e49644d, 0x7dddcbe7, 0x500cebdb, 0x619dab9e, 0x48c626fe, 0x1cda3193, 0x52dabe9d };
-    ULONG rand;
-    int pos;
-    ULONG result;
-
-    rand = (*seed * 0x7fffffed + 0x7fffffc3) % 0x7fffffff;
-    *seed = (rand * 0x7fffffed + 0x7fffffc3) % 0x7fffffff;
-    pos = *seed & 0x7f;
-    result = saved_value[pos];
-    saved_value[pos] = rand;
-    return(result);
-}
-
-
 static void test_RtlRandom(void)
 {
-    ULONGLONG num;
+    int i, j;
     ULONG seed;
-    ULONG seed_bak;
-    ULONG seed_expected;
-    ULONG result;
-    ULONG result_expected;
+    ULONG res[512];
 
     if (!pRtlRandom)
     {
@@ -696,185 +673,14 @@ static void test_RtlRandom(void)
         return;
     }
 
-/*
- * Unlike RtlUniform, RtlRandom is not documented. We guess that for
- * RtlRandom D.H. Lehmer's 1948 algorithm is used like stated in
- * the documentation of the RtlUniform function. This algorithm is:
- *
- * seed = (seed * const_1 + const_2) % const_3;
- *
- * According to the RtlUniform documentation the random number is
- * distributed over [0..MAXLONG], but in reality it is distributed
- * over [0..MAXLONG-1]. Therefore const_3 might be MAXLONG + 1 or
- * MAXLONG:
- *
- * seed = (seed * const_1 + const_2) % (MAXLONG + 1);
- *
- * or
- *
- * seed = (seed * const_1 + const_2) % MAXLONG;
- *
- * To find out const_2 we just call RtlRandom with seed set to 0:
- */
     seed = 0;
-    result_expected = 0x320a1743;
-    seed_expected =0x44b;
-    result = pRtlRandom(&seed);
-
-/*
- * Windows Vista uses different algorithms, so skip the rest of the tests
- * until that is figured out. Trace output for the failures is about 10.5 MB!
- */
-
-    if (seed == 0x3fc) {
-        skip("Most likely running on Windows Vista which uses a different algorithm\n");
-        return;
+    for (i = 0; i < sizeof(res) / sizeof(res[0]); i++)
+    {
+        res[i] = pRtlRandom(&seed);
+        ok(seed != res[i], "%i: seed is same as res %x\n", i, seed);
+        for (j = 0; j < i; j++)
+            ok(res[i] != res[j], "res[%i] (%x) is same as res[%i] (%x)\n", j, res[j], i, res[i]);
     }
-
-    ok(result == result_expected,
-        "pRtlRandom(&seed (seed == 0)) returns %x, expected %x\n",
-        result, result_expected);
-    ok(seed == seed_expected,
-        "pRtlRandom(&seed (seed == 0)) sets seed to %x, expected %x\n",
-        seed, seed_expected);
-/*
- * Seed is not equal to result as with RtlUniform. To see more we
- * call RtlRandom again with seed set to 0:
- */
-    seed = 0;
-    result_expected = 0x7fffffc3;
-    seed_expected =0x44b;
-    result = pRtlRandom(&seed);
-    ok(result == result_expected,
-        "RtlRandom(&seed (seed == 0)) returns %x, expected %x\n",
-        result, result_expected);
-    ok(seed == seed_expected,
-        "RtlRandom(&seed (seed == 0)) sets seed to %x, expected %x\n",
-        seed, seed_expected);
-/*
- * Seed is set to the same value as before but the result is different.
- * To see more we call RtlRandom again with seed set to 0:
- */
-    seed = 0;
-    result_expected = 0x7fffffc3;
-    seed_expected =0x44b;
-    result = pRtlRandom(&seed);
-    ok(result == result_expected,
-        "RtlRandom(&seed (seed == 0)) returns %x, expected %x\n",
-        result, result_expected);
-    ok(seed == seed_expected,
-        "RtlRandom(&seed (seed == 0)) sets seed to %x, expected %x\n",
-        seed, seed_expected);
-/*
- * Seed is again set to the same value as before. This time we also
- * have the same result as before. Interestingly the value of the
- * result is 0x7fffffc3 which is the same value used in RtlUniform
- * as const_2. If we do
- *
- * seed = 0;
- * result = RtlUniform(&seed);
- *
- * we get the same result (0x7fffffc3) as with
- *
- * seed = 0;
- * RtlRandom(&seed);
- * seed = 0;
- * result = RtlRandom(&seed);
- *
- * And there is another interesting thing. If we do
- *
- * seed = 0;
- * RtlUniform(&seed);
- * RtlUniform(&seed);
- *
- * seed is set to the value 0x44b which ist the same value that
- *
- * seed = 0;
- * RtlRandom(&seed);
- *
- * assigns to seed. Putting these two findings together leads to
- * the conclusion that RtlRandom saves the value in some variable,
- * like in the following algorithm:
- *
- * result = saved_value;
- * saved_value = RtlUniform(&seed);
- * RtlUniform(&seed);
- * return(result);
- *
- * Now we do further tests with seed set to 1:
- */
-    seed = 1;
-    result_expected = 0x7a50bbc6;
-    seed_expected =0x5a1;
-    result = pRtlRandom(&seed);
-    ok(result == result_expected,
-        "RtlRandom(&seed (seed == 1)) returns %x, expected %x\n",
-        result, result_expected);
-    ok(seed == seed_expected,
-        "RtlRandom(&seed (seed == 1)) sets seed to %x, expected %x\n",
-        seed, seed_expected);
-/*
- * If there is just one saved_value the result now would be
- * 0x7fffffc3. From this test we can see that there is more than
- * one saved_value, like with this algorithm:
- *
- * result = saved_value[pos];
- * saved_value[pos] = RtlUniform(&seed);
- * RtlUniform(&seed);
- * return(result);
- *
- * But how is the value of pos determined? The calls to RtlUniform
- * create a sequence of random numbers. Every second random number
- * is put into the saved_value array and is used in some later call
- * of RtlRandom as result. The only reasonable source to determine
- * pos are the random numbers generated by RtlUniform which are not
- * put into the saved_value array. This are the values of seed
- * between the two calls of RtlUniform as in this algorithm:
- *
- * rand = RtlUniform(&seed);
- * RtlUniform(&seed);
- * pos = position(seed);
- * result = saved_value[pos];
- * saved_value[pos] = rand;
- * return(result);
- *
- * What remains to be determined is: The size of the saved_value array,
- * the initial values of the saved_value array and the function
- * position(seed). These tests are not shown here. 
- * The result of these tests is: The size of the saved_value array
- * is 128, the initial values can be seen in the my_RtlRandom
- * function and the position(seed) function is (seed & 0x7f).
- *
- * For a full test of RtlRandom use one of the following loop heads:
- *
- *  for (num = 0; num <= 0xffffffff; num++) {
- *      seed = num;
- *      ...
- *
- *  seed = 0;
- *  for (num = 0; num <= 0xffffffff; num++) {
- *      ...
- */
-    seed = 0;
-    for (num = 0; num <= 100000; num++) {
-        seed_bak = seed;
-	seed_expected = seed;
-        result_expected = my_RtlRandom(&seed_expected);
-	/* The following corrections are necessary because the */
-	/* previous tests changed the saved_value array */
-	if (num == 0) {
-	    result_expected = 0x7fffffc3;
-        } else if (num == 81) {
-	    result_expected = 0x7fffffb1;
-	} /* if */
-        result = pRtlRandom(&seed);
-        ok(result == result_expected,
-                "test: 0x%x%08x RtlUniform(&seed (seed == %x)) returns %x, expected %x\n",
-                (DWORD)(num >> 32), (DWORD)num, seed_bak, result, result_expected);
-        ok(seed == seed_expected,
-                "test: 0x%x%08x RtlUniform(&seed (seed == %x)) sets seed to %x, expected %x\n",
-                (DWORD)(num >> 32), (DWORD)num, seed_bak, result, seed_expected);
-    } /* for */
 }
 
 
@@ -1089,10 +895,12 @@ static void test_RtlThreadErrorMode(void)
        mode, oldmode);
     ok(pRtlGetThreadErrorMode() == 0x70,
        "RtlGetThreadErrorMode returned 0x%x, expected 0x%x\n", mode, 0x70);
-    if (!is_wow64 && pNtCurrentTeb)
-        ok(pNtCurrentTeb()->HardErrorDisabled == 0x70,
+    if (!is_wow64)
+    {
+        ok(NtCurrentTeb()->HardErrorDisabled == 0x70,
            "The TEB contains 0x%x, expected 0x%x\n",
-           pNtCurrentTeb()->HardErrorDisabled, 0x70);
+           NtCurrentTeb()->HardErrorDisabled, 0x70);
+    }
 
     status = pRtlSetThreadErrorMode(0, &mode);
     ok(status == STATUS_SUCCESS ||
@@ -1103,10 +911,12 @@ static void test_RtlThreadErrorMode(void)
        mode, 0x70);
     ok(pRtlGetThreadErrorMode() == 0,
        "RtlGetThreadErrorMode returned 0x%x, expected 0x%x\n", mode, 0);
-    if (!is_wow64 && pNtCurrentTeb)
-        ok(pNtCurrentTeb()->HardErrorDisabled == 0,
+    if (!is_wow64)
+    {
+        ok(NtCurrentTeb()->HardErrorDisabled == 0,
            "The TEB contains 0x%x, expected 0x%x\n",
-           pNtCurrentTeb()->HardErrorDisabled, 0);
+           NtCurrentTeb()->HardErrorDisabled, 0);
+    }
 
     for (mode = 1; mode; mode <<= 1)
     {
@@ -1599,6 +1409,691 @@ static void test_LdrLockLoaderLock(void)
     pLdrUnlockLoaderLock(0, magic);
 }
 
+static void test_RtlCompressBuffer(void)
+{
+    ULONG compress_workspace, decompress_workspace;
+    static const UCHAR test_buffer[] = "WineWineWine";
+    static UCHAR buf1[0x1000], buf2[0x1000];
+    ULONG final_size, buf_size;
+    UCHAR *workspace = NULL;
+    NTSTATUS status;
+
+    if (!pRtlCompressBuffer || !pRtlDecompressBuffer || !pRtlGetCompressionWorkSpaceSize)
+    {
+        win_skip("skipping RtlCompressBuffer tests, required functions not available\n");
+        return;
+    }
+
+    compress_workspace = decompress_workspace = 0xdeadbeef;
+    status = pRtlGetCompressionWorkSpaceSize(COMPRESSION_FORMAT_LZNT1, &compress_workspace,
+                                             &decompress_workspace);
+    ok(status == STATUS_SUCCESS, "got wrong status 0x%08x\n", status);
+    ok(compress_workspace != 0, "got wrong compress_workspace %u\n", compress_workspace);
+    workspace = HeapAlloc(GetProcessHeap(), 0, compress_workspace);
+    ok(workspace != NULL, "HeapAlloc failed %d\n", GetLastError());
+
+    /* test compression format / engine */
+    final_size = 0xdeadbeef;
+    status = pRtlCompressBuffer(COMPRESSION_FORMAT_NONE, test_buffer, sizeof(test_buffer),
+                                buf1, sizeof(buf1) - 1, 4096, &final_size, workspace);
+    ok(status == STATUS_INVALID_PARAMETER, "got wrong status 0x%08x\n", status);
+    ok(final_size == 0xdeadbeef, "got wrong final_size %u\n", final_size);
+
+    final_size = 0xdeadbeef;
+    status = pRtlCompressBuffer(COMPRESSION_FORMAT_DEFAULT, test_buffer, sizeof(test_buffer),
+                                buf1, sizeof(buf1) - 1, 4096, &final_size, workspace);
+    ok(status == STATUS_INVALID_PARAMETER, "got wrong status 0x%08x\n", status);
+    ok(final_size == 0xdeadbeef, "got wrong final_size %u\n", final_size);
+
+    final_size = 0xdeadbeef;
+    status = pRtlCompressBuffer(0xFF, test_buffer, sizeof(test_buffer),
+                                buf1, sizeof(buf1) - 1, 4096, &final_size, workspace);
+    ok(status == STATUS_UNSUPPORTED_COMPRESSION, "got wrong status 0x%08x\n", status);
+    ok(final_size == 0xdeadbeef, "got wrong final_size %u\n", final_size);
+
+    /* test compression */
+    final_size = 0xdeadbeef;
+    memset(buf1, 0x11, sizeof(buf1));
+    status = pRtlCompressBuffer(COMPRESSION_FORMAT_LZNT1, test_buffer, sizeof(test_buffer),
+                                buf1, sizeof(buf1), 4096, &final_size, workspace);
+    ok(status == STATUS_SUCCESS, "got wrong status 0x%08x\n", status);
+    ok((*(WORD *)buf1 & 0x7000) == 0x3000, "no chunk signature found %04x\n", *(WORD *)buf1);
+    todo_wine
+    ok(final_size < sizeof(test_buffer), "got wrong final_size %u\n", final_size);
+
+    /* test decompression */
+    buf_size = final_size;
+    final_size = 0xdeadbeef;
+    memset(buf2, 0x11, sizeof(buf2));
+    status = pRtlDecompressBuffer(COMPRESSION_FORMAT_LZNT1, buf2, sizeof(buf2),
+                                  buf1, buf_size, &final_size);
+    ok(status == STATUS_SUCCESS, "got wrong status 0x%08x\n", status);
+    ok(final_size == sizeof(test_buffer), "got wrong final_size %u\n", final_size);
+    ok(!memcmp(buf2, test_buffer, sizeof(test_buffer)), "got wrong decoded data\n");
+    ok(buf2[sizeof(test_buffer)] == 0x11, "too many bytes written\n");
+
+    /* buffer too small */
+    final_size = 0xdeadbeef;
+    memset(buf1, 0x11, sizeof(buf1));
+    status = pRtlCompressBuffer(COMPRESSION_FORMAT_LZNT1, test_buffer, sizeof(test_buffer),
+                                buf1, 4, 4096, &final_size, workspace);
+    ok(status == STATUS_BUFFER_TOO_SMALL, "got wrong status 0x%08x\n", status);
+
+    HeapFree(GetProcessHeap(), 0, workspace);
+}
+
+static void test_RtlGetCompressionWorkSpaceSize(void)
+{
+    ULONG compress_workspace, decompress_workspace;
+    NTSTATUS status;
+
+    if (!pRtlGetCompressionWorkSpaceSize)
+    {
+        win_skip("RtlGetCompressionWorkSpaceSize is not available\n");
+        return;
+    }
+
+    /* test invalid format / engine */
+    status = pRtlGetCompressionWorkSpaceSize(COMPRESSION_FORMAT_NONE, &compress_workspace,
+                                             &decompress_workspace);
+    ok(status == STATUS_INVALID_PARAMETER, "got wrong status 0x%08x\n", status);
+
+    status = pRtlGetCompressionWorkSpaceSize(COMPRESSION_FORMAT_DEFAULT, &compress_workspace,
+                                             &decompress_workspace);
+    ok(status == STATUS_INVALID_PARAMETER, "got wrong status 0x%08x\n", status);
+
+    status = pRtlGetCompressionWorkSpaceSize(0xFF, &compress_workspace, &decompress_workspace);
+    ok(status == STATUS_UNSUPPORTED_COMPRESSION, "got wrong status 0x%08x\n", status);
+
+    /* test LZNT1 with normal and maximum compression */
+    compress_workspace = decompress_workspace = 0xdeadbeef;
+    status = pRtlGetCompressionWorkSpaceSize(COMPRESSION_FORMAT_LZNT1, &compress_workspace,
+                                             &decompress_workspace);
+    ok(status == STATUS_SUCCESS, "got wrong status 0x%08x\n", status);
+    ok(compress_workspace != 0, "got wrong compress_workspace %u\n", compress_workspace);
+    ok(decompress_workspace == 0x1000, "got wrong decompress_workspace %u\n", decompress_workspace);
+
+    compress_workspace = decompress_workspace = 0xdeadbeef;
+    status = pRtlGetCompressionWorkSpaceSize(COMPRESSION_FORMAT_LZNT1 | COMPRESSION_ENGINE_MAXIMUM,
+                                             &compress_workspace, &decompress_workspace);
+    ok(status == STATUS_SUCCESS, "got wrong status 0x%08x\n", status);
+    ok(compress_workspace != 0, "got wrong compress_workspace %u\n", compress_workspace);
+    ok(decompress_workspace == 0x1000, "got wrong decompress_workspace %u\n", decompress_workspace);
+}
+
+/* helper for test_RtlDecompressBuffer, checks if a chunk is incomplete */
+static BOOL is_incomplete_chunk(const UCHAR *compressed, ULONG compressed_size, BOOL check_all)
+{
+    ULONG chunk_size;
+
+    if (compressed_size <= sizeof(WORD))
+        return TRUE;
+
+    while (compressed_size >= sizeof(WORD))
+    {
+        chunk_size = (*(WORD *)compressed & 0xFFF) + 1;
+        if (compressed_size < sizeof(WORD) + chunk_size)
+            return TRUE;
+        if (!check_all)
+            break;
+        compressed      += sizeof(WORD) + chunk_size;
+        compressed_size -= sizeof(WORD) + chunk_size;
+    }
+
+    return FALSE;
+}
+
+#define DECOMPRESS_BROKEN_FRAGMENT     1 /* < Win 7 */
+#define DECOMPRESS_BROKEN_TRUNCATED    2 /* broken on all machines */
+
+static void test_RtlDecompressBuffer(void)
+{
+    static const struct
+    {
+        UCHAR compressed[32];
+        ULONG compressed_size;
+        NTSTATUS status;
+        UCHAR uncompressed[32];
+        ULONG uncompressed_size;
+        DWORD broken_flags;
+    }
+    test_lznt[] =
+    {
+        /* 4 byte uncompressed chunk */
+        {
+            {0x03, 0x30, 'W', 'i', 'n', 'e'},
+            6,
+            STATUS_SUCCESS,
+            "Wine",
+            4,
+            DECOMPRESS_BROKEN_FRAGMENT
+        },
+        /* 8 byte uncompressed chunk */
+        {
+            {0x07, 0x30, 'W', 'i', 'n', 'e', 'W', 'i', 'n', 'e'},
+            10,
+            STATUS_SUCCESS,
+            "WineWine",
+            8,
+            DECOMPRESS_BROKEN_FRAGMENT
+        },
+        /* 4 byte compressed chunk */
+        {
+            {0x04, 0xB0, 0x00, 'W', 'i', 'n', 'e'},
+            7,
+            STATUS_SUCCESS,
+            "Wine",
+            4
+        },
+        /* 8 byte compressed chunk */
+        {
+            {0x08, 0xB0, 0x00, 'W', 'i', 'n', 'e', 'W', 'i', 'n', 'e'},
+            11,
+            STATUS_SUCCESS,
+            "WineWine",
+            8
+        },
+        /* compressed chunk using backwards reference */
+        {
+            {0x06, 0xB0, 0x10, 'W', 'i', 'n', 'e', 0x01, 0x30},
+            9,
+            STATUS_SUCCESS,
+            "WineWine",
+            8,
+            DECOMPRESS_BROKEN_TRUNCATED
+        },
+        /* compressed chunk using backwards reference with length > bytes_read */
+        {
+            {0x06, 0xB0, 0x10, 'W', 'i', 'n', 'e', 0x05, 0x30},
+            9,
+            STATUS_SUCCESS,
+            "WineWineWine",
+            12,
+            DECOMPRESS_BROKEN_TRUNCATED
+        },
+        /* same as above, but unused bits != 0 */
+        {
+            {0x06, 0xB0, 0x30, 'W', 'i', 'n', 'e', 0x01, 0x30},
+            9,
+            STATUS_SUCCESS,
+            "WineWine",
+            8,
+            DECOMPRESS_BROKEN_TRUNCATED
+        },
+        /* compressed chunk without backwards reference and unused bits != 0 */
+        {
+            {0x01, 0xB0, 0x02, 'W'},
+            4,
+            STATUS_SUCCESS,
+            "W",
+            1
+        },
+        /* termination sequence after first chunk */
+        {
+            {0x03, 0x30, 'W', 'i', 'n', 'e', 0x00, 0x00, 0x03, 0x30, 'W', 'i', 'n', 'e'},
+            14,
+            STATUS_SUCCESS,
+            "Wine",
+            4,
+            DECOMPRESS_BROKEN_FRAGMENT
+        },
+        /* compressed chunk using backwards reference with 4 bit offset, 12 bit length */
+        {
+            {0x14, 0xB0, 0x00, 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+                         0x00, 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+                         0x01, 0x01, 0xF0},
+            23,
+            STATUS_SUCCESS,
+            "ABCDEFGHIJKLMNOPABCD",
+            20,
+            DECOMPRESS_BROKEN_TRUNCATED
+        },
+        /* compressed chunk using backwards reference with 5 bit offset, 11 bit length */
+        {
+            {0x15, 0xB0, 0x00, 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+                         0x00, 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+                         0x02, 'A', 0x00, 0x78},
+            24,
+            STATUS_SUCCESS,
+            "ABCDEFGHIJKLMNOPABCD",
+            20,
+            DECOMPRESS_BROKEN_TRUNCATED
+        },
+        /* uncompressed chunk with invalid magic */
+        {
+            {0x03, 0x20, 'W', 'i', 'n', 'e'},
+            6,
+            STATUS_SUCCESS,
+            "Wine",
+            4,
+            DECOMPRESS_BROKEN_FRAGMENT
+        },
+        /* compressed chunk with invalid magic */
+        {
+            {0x04, 0xA0, 0x00, 'W', 'i', 'n', 'e'},
+            7,
+            STATUS_SUCCESS,
+            "Wine",
+            4
+        },
+        /* garbage byte after end of buffer */
+        {
+            {0x00, 0xB0, 0x02, 0x01},
+            4,
+            STATUS_SUCCESS,
+            "",
+            0
+        },
+        /* empty compressed chunk */
+        {
+            {0x00, 0xB0, 0x00},
+            3,
+            STATUS_SUCCESS,
+            "",
+            0
+        },
+        /* empty compressed chunk with unused bits != 0 */
+        {
+            {0x00, 0xB0, 0x01},
+            3,
+            STATUS_SUCCESS,
+            "",
+            0
+        },
+        /* empty input buffer */
+        {
+            {},
+            0,
+            STATUS_BAD_COMPRESSION_BUFFER,
+        },
+        /* incomplete chunk header */
+        {
+            {0x01},
+            1,
+            STATUS_BAD_COMPRESSION_BUFFER
+        },
+        /* incomplete chunk header */
+        {
+            {0x00, 0x30},
+            2,
+            STATUS_BAD_COMPRESSION_BUFFER
+        },
+        /* compressed chunk with invalid backwards reference */
+        {
+            {0x06, 0xB0, 0x10, 'W', 'i', 'n', 'e', 0x05, 0x40},
+            9,
+            STATUS_BAD_COMPRESSION_BUFFER
+        },
+        /* compressed chunk with incomplete backwards reference */
+        {
+            {0x05, 0xB0, 0x10, 'W', 'i', 'n', 'e', 0x05},
+            8,
+            STATUS_BAD_COMPRESSION_BUFFER
+        },
+        /* incomplete uncompressed chunk */
+        {
+            {0x07, 0x30, 'W', 'i', 'n', 'e'},
+            6,
+            STATUS_BAD_COMPRESSION_BUFFER
+        },
+        /* incomplete compressed chunk */
+        {
+            {0x08, 0xB0, 0x00, 'W', 'i', 'n', 'e'},
+            7,
+            STATUS_BAD_COMPRESSION_BUFFER
+        },
+        /* two compressed chunks, the second one incomplete */
+        {
+            {0x00, 0xB0, 0x02, 0x00, 0xB0},
+            5,
+            STATUS_BAD_COMPRESSION_BUFFER,
+        }
+    };
+
+    static UCHAR buf[0x2000], workspace[0x1000];
+    NTSTATUS status, expected_status;
+    ULONG final_size;
+    int i;
+
+    if (!pRtlDecompressBuffer || !pRtlDecompressFragment)
+    {
+        win_skip("RtlDecompressBuffer or RtlDecompressFragment is not available\n");
+        return;
+    }
+
+    /* test compression format / engine */
+    final_size = 0xdeadbeef;
+    status = pRtlDecompressBuffer(COMPRESSION_FORMAT_NONE, buf, sizeof(buf), test_lznt[0].compressed,
+                                  test_lznt[0].compressed_size, &final_size);
+    ok(status == STATUS_INVALID_PARAMETER, "got wrong status 0x%08x\n", status);
+    ok(final_size == 0xdeadbeef, "got wrong final_size %u\n", final_size);
+
+    final_size = 0xdeadbeef;
+    status = pRtlDecompressBuffer(COMPRESSION_FORMAT_DEFAULT, buf, sizeof(buf), test_lznt[0].compressed,
+                                  test_lznt[0].compressed_size, &final_size);
+    ok(status == STATUS_INVALID_PARAMETER, "got wrong status 0x%08x\n", status);
+    ok(final_size == 0xdeadbeef, "got wrong final_size %u\n", final_size);
+
+    final_size = 0xdeadbeef;
+    status = pRtlDecompressBuffer(0xFF, buf, sizeof(buf), test_lznt[0].compressed,
+                                  test_lznt[0].compressed_size, &final_size);
+    ok(status == STATUS_UNSUPPORTED_COMPRESSION, "got wrong status 0x%08x\n", status);
+    ok(final_size == 0xdeadbeef, "got wrong final_size %u\n", final_size);
+
+    /* regular tests for RtlDecompressBuffer */
+    for (i = 0; i < sizeof(test_lznt) / sizeof(test_lznt[0]); i++)
+    {
+        trace("Running test %d (compressed_size=%u, uncompressed_size=%u, status=0x%08x)\n",
+              i, test_lznt[i].compressed_size, test_lznt[i].uncompressed_size, test_lznt[i].status);
+
+        /* test with very big buffer */
+        final_size = 0xdeadbeef;
+        memset(buf, 0x11, sizeof(buf));
+        status = pRtlDecompressBuffer(COMPRESSION_FORMAT_LZNT1, buf, sizeof(buf), test_lznt[i].compressed,
+                                      test_lznt[i].compressed_size, &final_size);
+        ok(status == test_lznt[i].status || broken(status == STATUS_BAD_COMPRESSION_BUFFER &&
+           (test_lznt[i].broken_flags & DECOMPRESS_BROKEN_FRAGMENT)), "%d: got wrong status 0x%08x\n", i, status);
+        if (!status)
+        {
+            ok(final_size == test_lznt[i].uncompressed_size,
+               "%d: got wrong final_size %u\n", i, final_size);
+            ok(!memcmp(buf, test_lznt[i].uncompressed, test_lznt[i].uncompressed_size),
+               "%d: got wrong decoded data\n", i);
+            ok(buf[test_lznt[i].uncompressed_size] == 0x11,
+               "%d: buf[%u] was modified\n", i, test_lznt[i].uncompressed_size);
+        }
+
+        /* test that modifier for compression engine is ignored */
+        final_size = 0xdeadbeef;
+        memset(buf, 0x11, sizeof(buf));
+        status = pRtlDecompressBuffer(COMPRESSION_FORMAT_LZNT1 | COMPRESSION_ENGINE_MAXIMUM, buf, sizeof(buf),
+                                      test_lznt[i].compressed, test_lznt[i].compressed_size, &final_size);
+        ok(status == test_lznt[i].status || broken(status == STATUS_BAD_COMPRESSION_BUFFER &&
+           (test_lznt[i].broken_flags & DECOMPRESS_BROKEN_FRAGMENT)), "%d: got wrong status 0x%08x\n", i, status);
+        if (!status)
+        {
+            ok(final_size == test_lznt[i].uncompressed_size,
+               "%d: got wrong final_size %u\n", i, final_size);
+            ok(!memcmp(buf, test_lznt[i].uncompressed, test_lznt[i].uncompressed_size),
+               "%d: got wrong decoded data\n", i);
+            ok(buf[test_lznt[i].uncompressed_size] == 0x11,
+               "%d: buf[%u] was modified\n", i, test_lznt[i].uncompressed_size);
+        }
+
+        /* test with expected output size */
+        if (test_lznt[i].uncompressed_size > 0)
+        {
+            final_size = 0xdeadbeef;
+            memset(buf, 0x11, sizeof(buf));
+            status = pRtlDecompressBuffer(COMPRESSION_FORMAT_LZNT1, buf, test_lznt[i].uncompressed_size,
+                                          test_lznt[i].compressed, test_lznt[i].compressed_size, &final_size);
+            ok(status == test_lznt[i].status, "%d: got wrong status 0x%08x\n", i, status);
+            if (!status)
+            {
+                ok(final_size == test_lznt[i].uncompressed_size,
+                   "%d: got wrong final_size %u\n", i, final_size);
+                ok(!memcmp(buf, test_lznt[i].uncompressed, test_lznt[i].uncompressed_size),
+                   "%d: got wrong decoded data\n", i);
+                ok(buf[test_lznt[i].uncompressed_size] == 0x11,
+                   "%d: buf[%u] was modified\n", i, test_lznt[i].uncompressed_size);
+            }
+        }
+
+        /* test with smaller output size */
+        if (test_lznt[i].uncompressed_size > 1)
+        {
+            final_size = 0xdeadbeef;
+            memset(buf, 0x11, sizeof(buf));
+            status = pRtlDecompressBuffer(COMPRESSION_FORMAT_LZNT1, buf, test_lznt[i].uncompressed_size - 1,
+                                          test_lznt[i].compressed, test_lznt[i].compressed_size, &final_size);
+            if (test_lznt[i].broken_flags & DECOMPRESS_BROKEN_TRUNCATED)
+                todo_wine
+                ok(status == STATUS_BAD_COMPRESSION_BUFFER, "%d: got wrong status 0x%08x\n", i, status);
+            else
+                ok(status == test_lznt[i].status, "%d: got wrong status 0x%08x\n", i, status);
+            if (!status)
+            {
+                ok(final_size == test_lznt[i].uncompressed_size - 1,
+                   "%d: got wrong final_size %u\n", i, final_size);
+                ok(!memcmp(buf, test_lznt[i].uncompressed, test_lznt[i].uncompressed_size - 1),
+                   "%d: got wrong decoded data\n", i);
+                ok(buf[test_lznt[i].uncompressed_size - 1] == 0x11,
+                   "%d: buf[%u] was modified\n", i, test_lznt[i].uncompressed_size - 1);
+            }
+        }
+
+        /* test with zero output size */
+        final_size = 0xdeadbeef;
+        memset(buf, 0x11, sizeof(buf));
+        status = pRtlDecompressBuffer(COMPRESSION_FORMAT_LZNT1, buf, 0, test_lznt[i].compressed,
+                                      test_lznt[i].compressed_size, &final_size);
+        if (is_incomplete_chunk(test_lznt[i].compressed, test_lznt[i].compressed_size, FALSE))
+            ok(status == STATUS_BAD_COMPRESSION_BUFFER, "%d: got wrong status 0x%08x\n", i, status);
+        else
+        {
+            ok(status == STATUS_SUCCESS, "%d: got wrong status 0x%08x\n", i, status);
+            ok(final_size == 0, "%d: got wrong final_size %u\n", i, final_size);
+            ok(buf[0] == 0x11, "%d: buf[0] was modified\n", i);
+        }
+
+        /* test RtlDecompressFragment with offset = 0 */
+        final_size = 0xdeadbeef;
+        memset(buf, 0x11, sizeof(buf));
+        status = pRtlDecompressFragment(COMPRESSION_FORMAT_LZNT1, buf, sizeof(buf), test_lznt[i].compressed,
+                                        test_lznt[i].compressed_size, 0, &final_size, workspace);
+        if (test_lznt[i].broken_flags & DECOMPRESS_BROKEN_FRAGMENT)
+            todo_wine
+            ok(status == STATUS_BAD_COMPRESSION_BUFFER, "%d: got wrong status 0x%08x\n", i, status);
+        else
+            ok(status == test_lznt[i].status, "%d: got wrong status 0x%08x\n", i, status);
+        if (!status)
+        {
+            ok(final_size == test_lznt[i].uncompressed_size,
+               "%d: got wrong final_size %u\n", i, final_size);
+            ok(!memcmp(buf, test_lznt[i].uncompressed, test_lznt[i].uncompressed_size),
+               "%d: got wrong decoded data\n", i);
+            ok(buf[test_lznt[i].uncompressed_size] == 0x11,
+               "%d: buf[%u] was modified\n", i, test_lznt[i].uncompressed_size);
+        }
+
+        /* test RtlDecompressFragment with offset = 1 */
+        final_size = 0xdeadbeef;
+        memset(buf, 0x11, sizeof(buf));
+        status = pRtlDecompressFragment(COMPRESSION_FORMAT_LZNT1, buf, sizeof(buf), test_lznt[i].compressed,
+                                        test_lznt[i].compressed_size, 1, &final_size, workspace);
+        if (test_lznt[i].broken_flags & DECOMPRESS_BROKEN_FRAGMENT)
+            todo_wine
+            ok(status == STATUS_BAD_COMPRESSION_BUFFER, "%d: got wrong status 0x%08x\n", i, status);
+        else
+            ok(status == test_lznt[i].status, "%d: got wrong status 0x%08x\n", i, status);
+        if (!status)
+        {
+            if (test_lznt[i].uncompressed_size == 0)
+            {
+                todo_wine
+                ok(final_size == 4095, "%d: got wrong final_size %u\n", i, final_size);
+                /* Buffer doesn't contain any useful value on Windows */
+                ok(buf[4095] == 0x11, "%d: buf[4095] was modified\n", i);
+            }
+            else
+            {
+                ok(final_size == test_lznt[i].uncompressed_size - 1,
+                   "%d: got wrong final_size %u\n", i, final_size);
+                ok(!memcmp(buf, test_lznt[i].uncompressed + 1, test_lznt[i].uncompressed_size - 1),
+                   "%d: got wrong decoded data\n", i);
+                ok(buf[test_lznt[i].uncompressed_size - 1] == 0x11,
+                   "%d: buf[%u] was modified\n", i, test_lznt[i].uncompressed_size - 1);
+            }
+        }
+
+        /* test RtlDecompressFragment with offset = 4095 */
+        final_size = 0xdeadbeef;
+        memset(buf, 0x11, sizeof(buf));
+        status = pRtlDecompressFragment(COMPRESSION_FORMAT_LZNT1, buf, sizeof(buf), test_lznt[i].compressed,
+                                        test_lznt[i].compressed_size, 4095, &final_size, workspace);
+        if (test_lznt[i].broken_flags & DECOMPRESS_BROKEN_FRAGMENT)
+            todo_wine
+            ok(status == STATUS_BAD_COMPRESSION_BUFFER, "%d: got wrong status 0x%08x\n", i, status);
+        else
+            ok(status == test_lznt[i].status, "%d: got wrong status 0x%08x\n", i, status);
+        if (!status)
+        {
+            todo_wine
+            ok(final_size == 1, "%d: got wrong final_size %u\n", i, final_size);
+            todo_wine
+            ok(buf[0] == 0, "%d: padding is not zero\n", i);
+            ok(buf[1] == 0x11, "%d: buf[1] was modified\n", i);
+        }
+
+        /* test RtlDecompressFragment with offset = 4096 */
+        final_size = 0xdeadbeef;
+        memset(buf, 0x11, sizeof(buf));
+        status = pRtlDecompressFragment(COMPRESSION_FORMAT_LZNT1, buf, sizeof(buf), test_lznt[i].compressed,
+                                        test_lznt[i].compressed_size, 4096, &final_size, workspace);
+        expected_status = is_incomplete_chunk(test_lznt[i].compressed, test_lznt[i].compressed_size, TRUE) ?
+                          test_lznt[i].status : STATUS_SUCCESS;
+        ok(status == expected_status, "%d: got wrong status 0x%08x, expected 0x%08x\n", i, status, expected_status);
+        if (!status)
+        {
+            ok(final_size == 0, "%d: got wrong final_size %u\n", i, final_size);
+            ok(buf[0] == 0x11, "%d: buf[4096] was modified\n", i);
+        }
+    }
+}
+
+#undef DECOMPRESS_BROKEN_FRAGMENT
+#undef DECOMPRESS_BROKEN_TRUNCATED
+
+struct critsect_locked_info
+{
+    CRITICAL_SECTION crit;
+    HANDLE semaphores[2];
+};
+
+static DWORD WINAPI critsect_locked_thread(void *param)
+{
+    struct critsect_locked_info *info = param;
+    DWORD ret;
+
+    ret = pRtlIsCriticalSectionLocked(&info->crit);
+    ok(ret == TRUE, "expected TRUE, got %u\n", ret);
+    ret = pRtlIsCriticalSectionLockedByThread(&info->crit);
+    ok(ret == FALSE, "expected FALSE, got %u\n", ret);
+
+    ReleaseSemaphore(info->semaphores[0], 1, NULL);
+    ret = WaitForSingleObject(info->semaphores[1], 1000);
+    ok(ret == WAIT_OBJECT_0, "expected WAIT_OBJECT_0, got %u\n", ret);
+
+    ret = pRtlIsCriticalSectionLocked(&info->crit);
+    ok(ret == FALSE, "expected FALSE, got %u\n", ret);
+    ret = pRtlIsCriticalSectionLockedByThread(&info->crit);
+    ok(ret == FALSE, "expected FALSE, got %u\n", ret);
+
+    EnterCriticalSection(&info->crit);
+
+    ret = pRtlIsCriticalSectionLocked(&info->crit);
+    ok(ret == TRUE, "expected TRUE, got %u\n", ret);
+    ret = pRtlIsCriticalSectionLockedByThread(&info->crit);
+    ok(ret == TRUE, "expected TRUE, got %u\n", ret);
+
+    ReleaseSemaphore(info->semaphores[0], 1, NULL);
+    ret = WaitForSingleObject(info->semaphores[1], 1000);
+    ok(ret == WAIT_OBJECT_0, "expected WAIT_OBJECT_0, got %u\n", ret);
+
+    LeaveCriticalSection(&info->crit);
+    return 0;
+}
+
+static void test_RtlIsCriticalSectionLocked(void)
+{
+    struct critsect_locked_info info;
+    HANDLE thread;
+    BOOL ret;
+
+    if (!pRtlIsCriticalSectionLocked || !pRtlIsCriticalSectionLockedByThread)
+    {
+        win_skip("skipping RtlIsCriticalSectionLocked tests, required functions not available\n");
+        return;
+    }
+
+    InitializeCriticalSection(&info.crit);
+    info.semaphores[0] = CreateSemaphoreW(NULL, 0, 1, NULL);
+    ok(info.semaphores[0] != NULL, "CreateSemaphore failed with %u\n", GetLastError());
+    info.semaphores[1] = CreateSemaphoreW(NULL, 0, 1, NULL);
+    ok(info.semaphores[1] != NULL, "CreateSemaphore failed with %u\n", GetLastError());
+
+    ret = pRtlIsCriticalSectionLocked(&info.crit);
+    ok(ret == FALSE, "expected FALSE, got %u\n", ret);
+    ret = pRtlIsCriticalSectionLockedByThread(&info.crit);
+    ok(ret == FALSE, "expected FALSE, got %u\n", ret);
+
+    EnterCriticalSection(&info.crit);
+
+    ret = pRtlIsCriticalSectionLocked(&info.crit);
+    ok(ret == TRUE, "expected TRUE, got %u\n", ret);
+    ret = pRtlIsCriticalSectionLockedByThread(&info.crit);
+    ok(ret == TRUE, "expected TRUE, got %u\n", ret);
+
+    thread = CreateThread(NULL, 0, critsect_locked_thread, &info, 0, NULL);
+    ok(thread != NULL, "CreateThread failed with %u\n", GetLastError());
+    ret = WaitForSingleObject(info.semaphores[0], 1000);
+    ok(ret == WAIT_OBJECT_0, "expected WAIT_OBJECT_0, got %u\n", ret);
+
+    LeaveCriticalSection(&info.crit);
+
+    ReleaseSemaphore(info.semaphores[1], 1, NULL);
+    ret = WaitForSingleObject(info.semaphores[0], 1000);
+    ok(ret == WAIT_OBJECT_0, "expected WAIT_OBJECT_0, got %u\n", ret);
+
+    ret = pRtlIsCriticalSectionLocked(&info.crit);
+    ok(ret == TRUE, "expected TRUE, got %u\n", ret);
+    ret = pRtlIsCriticalSectionLockedByThread(&info.crit);
+    ok(ret == FALSE, "expected FALSE, got %u\n", ret);
+
+    ReleaseSemaphore(info.semaphores[1], 1, NULL);
+    ret = WaitForSingleObject(thread, 1000);
+    ok(ret == WAIT_OBJECT_0, "expected WAIT_OBJECT_0, got %u\n", ret);
+
+    CloseHandle(thread);
+    CloseHandle(info.semaphores[0]);
+    CloseHandle(info.semaphores[1]);
+    DeleteCriticalSection(&info.crit);
+}
+
+static void test_RtlInitializeCriticalSectionEx(void)
+{
+    static const CRITICAL_SECTION_DEBUG *no_debug = (void *)~(ULONG_PTR)0;
+    CRITICAL_SECTION cs;
+
+    if (!pRtlInitializeCriticalSectionEx)
+    {
+        win_skip("RtlInitializeCriticalSectionEx is not available\n");
+        return;
+    }
+
+    memset(&cs, 0x11, sizeof(cs));
+    pRtlInitializeCriticalSectionEx(&cs, 0, 0);
+    ok((cs.DebugInfo != NULL && cs.DebugInfo != no_debug) || broken(cs.DebugInfo == no_debug) /* >= Win 8 */,
+       "expected DebugInfo != NULL and DebugInfo != ~0, got %p\n", cs.DebugInfo);
+    ok(cs.LockCount == -1, "expected LockCount == -1, got %d\n", cs.LockCount);
+    ok(cs.RecursionCount == 0, "expected RecursionCount == 0, got %d\n", cs.RecursionCount);
+    ok(cs.LockSemaphore == NULL, "expected LockSemaphore == NULL, got %p\n", cs.LockSemaphore);
+    ok(cs.SpinCount == 0 || broken(cs.SpinCount != 0) /* >= Win 8 */,
+       "expected SpinCount == 0, got %ld\n", cs.SpinCount);
+    RtlDeleteCriticalSection(&cs);
+
+    memset(&cs, 0x11, sizeof(cs));
+    pRtlInitializeCriticalSectionEx(&cs, 0, RTL_CRITICAL_SECTION_FLAG_NO_DEBUG_INFO);
+    todo_wine
+    ok(cs.DebugInfo == no_debug, "expected DebugInfo == ~0, got %p\n", cs.DebugInfo);
+    ok(cs.LockCount == -1, "expected LockCount == -1, got %d\n", cs.LockCount);
+    ok(cs.RecursionCount == 0, "expected RecursionCount == 0, got %d\n", cs.RecursionCount);
+    ok(cs.LockSemaphore == NULL, "expected LockSemaphore == NULL, got %p\n", cs.LockSemaphore);
+    ok(cs.SpinCount == 0 || broken(cs.SpinCount != 0) /* >= Win 8 */,
+       "expected SpinCount == 0, got %ld\n", cs.SpinCount);
+    RtlDeleteCriticalSection(&cs);
+}
+
 START_TEST(rtl)
 {
     InitFunctionPtrs();
@@ -1625,4 +2120,9 @@ START_TEST(rtl)
     test_RtlIpv4StringToAddress();
     test_LdrAddRefDll();
     test_LdrLockLoaderLock();
+    test_RtlCompressBuffer();
+    test_RtlGetCompressionWorkSpaceSize();
+    test_RtlDecompressBuffer();
+    test_RtlIsCriticalSectionLocked();
+    test_RtlInitializeCriticalSectionEx();
 }

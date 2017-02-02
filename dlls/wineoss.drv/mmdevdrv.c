@@ -16,7 +16,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define NONAMELESSUNION
 #define COBJMACROS
 #include "config.h"
 
@@ -1204,7 +1203,7 @@ static HRESULT WINAPI AudioClient_GetStreamLatency(IAudioClient *iface,
 
     /* pretend we process audio in Period chunks, so max latency includes
      * the period time.  Some native machines add .6666ms in shared mode. */
-    *latency = This->period_us * 10 + 6666;
+    *latency = (REFERENCE_TIME)This->period_us * 10 + 6666;
 
     LeaveCriticalSection(&This->lock);
 
@@ -1394,7 +1393,7 @@ static void oss_write_data(ACImpl *This)
 {
     ssize_t written_bytes;
     UINT32 written_frames, in_oss_frames, write_limit, max_period, write_offs_frames, new_frames;
-    size_t to_write_frames, to_write_bytes, advanced;
+    SIZE_T to_write_frames, to_write_bytes, advanced;
     audio_buf_info bi;
     BYTE *buf;
 
@@ -1410,10 +1409,14 @@ static void oss_write_data(ACImpl *This)
                 bi.bytes, This->oss_bufsize_bytes);
         This->oss_bufsize_bytes = bi.bytes;
         in_oss_frames = 0;
-    }else if(This->oss_bufsize_bytes - bi.bytes <= bi.fragsize)
-        in_oss_frames = 0;
-    else
+    }else
         in_oss_frames = (This->oss_bufsize_bytes - bi.bytes) / This->fmt->nBlockAlign;
+
+    if(in_oss_frames > This->in_oss_frames){
+        TRACE("Capping reported frames from %u to %u\n",
+                in_oss_frames, This->in_oss_frames);
+        in_oss_frames = This->in_oss_frames;
+    }
 
     write_limit = 0;
     while(write_limit + in_oss_frames < max_period * 3)
@@ -1434,6 +1437,8 @@ static void oss_write_data(ACImpl *This)
     This->lcl_offs_frames %= This->bufsize_frames;
     This->held_frames -= advanced;
     This->in_oss_frames = in_oss_frames;
+    TRACE("advanced by %lu, lcl_offs: %u, held: %u, in_oss: %u\n",
+            advanced, This->lcl_offs_frames, This->held_frames, This->in_oss_frames);
 
 
     if(This->held_frames == This->in_oss_frames)
@@ -1449,7 +1454,9 @@ static void oss_write_data(ACImpl *This)
 
     to_write_frames = min(to_write_frames, write_limit);
     to_write_bytes = to_write_frames * This->fmt->nBlockAlign;
-
+    TRACE("going to write %lu frames from %u (%lu of %u)\n", to_write_frames,
+            write_offs_frames, to_write_frames + write_offs_frames,
+            This->bufsize_frames);
 
     buf = This->local_buffer + write_offs_frames * This->fmt->nBlockAlign;
 
@@ -1479,6 +1486,8 @@ static void oss_write_data(ACImpl *This)
 
         if(This->session->mute)
             silence_buffer(This, This->local_buffer, to_write_frames);
+
+        TRACE("wrapping to write %lu frames from beginning\n", to_write_frames);
 
         written_bytes = write(This->fd, This->local_buffer, to_write_bytes);
         if(written_bytes < 0){
@@ -2620,7 +2629,7 @@ static HRESULT WINAPI SimpleAudioVolume_SetMute(ISimpleAudioVolume *iface,
     AudioSessionWrapper *This = impl_from_ISimpleAudioVolume(iface);
     AudioSession *session = This->session;
 
-    TRACE("(%p)->(%u, %p)\n", session, mute, context);
+    TRACE("(%p)->(%u, %s)\n", session, mute, debugstr_guid(context));
 
     EnterCriticalSection(&session->lock);
 

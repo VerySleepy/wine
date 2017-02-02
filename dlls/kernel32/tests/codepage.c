@@ -28,6 +28,7 @@
 #include "winbase.h"
 #include "winnls.h"
 
+static const char foobarA[] = "foobar";
 static const WCHAR foobarW[] = {'f','o','o','b','a','r',0};
 
 static void test_destination_buffer(void)
@@ -144,48 +145,57 @@ static void test_negative_source_length(void)
 static void test_negative_dest_length(void)
 {
     int len, i;
-    static char buf[LONGBUFLEN];
+    static WCHAR bufW[LONGBUFLEN];
+    static char bufA[LONGBUFLEN];
     static WCHAR originalW[LONGBUFLEN];
     static char originalA[LONGBUFLEN];
     DWORD theError;
 
     /* Test return on -1 dest length */
     SetLastError( 0xdeadbeef );
-    memset(buf,'x',sizeof(buf));
-    len = WideCharToMultiByte(CP_ACP, 0, foobarW, -1, buf, -1, NULL, NULL);
-    todo_wine {
-      ok(len == 0 && GetLastError() == ERROR_INVALID_PARAMETER,
-         "WideCharToMultiByte(destlen -1): len=%d error=%x\n", len, GetLastError());
-    }
+    memset(bufA,'x',sizeof(bufA));
+    len = WideCharToMultiByte(CP_ACP, 0, foobarW, -1, bufA, -1, NULL, NULL);
+    ok(len == 0 && GetLastError() == ERROR_INVALID_PARAMETER,
+       "WideCharToMultiByte(destlen -1): len=%d error=%x\n", len, GetLastError());
+
+    SetLastError( 0xdeadbeef );
+    memset(bufW,'x',sizeof(bufW));
+    len = MultiByteToWideChar(CP_ACP, 0, foobarA, -1, bufW, -1);
+    ok(len == 0 && GetLastError() == ERROR_INVALID_PARAMETER,
+       "MultiByteToWideChar(destlen -1): len=%d error=%x\n", len, GetLastError());
 
     /* Test return on -1000 dest length */
     SetLastError( 0xdeadbeef );
-    memset(buf,'x',sizeof(buf));
-    len = WideCharToMultiByte(CP_ACP, 0, foobarW, -1, buf, -1000, NULL, NULL);
-    todo_wine {
-      ok(len == 0 && GetLastError() == ERROR_INVALID_PARAMETER,
-         "WideCharToMultiByte(destlen -1000): len=%d error=%x\n", len, GetLastError());
-    }
+    memset(bufA,'x',sizeof(bufA));
+    len = WideCharToMultiByte(CP_ACP, 0, foobarW, -1, bufA, -1000, NULL, NULL);
+    ok(len == 0 && GetLastError() == ERROR_INVALID_PARAMETER,
+       "WideCharToMultiByte(destlen -1000): len=%d error=%x\n", len, GetLastError());
+
+    SetLastError( 0xdeadbeef );
+    memset(bufW,'x',sizeof(bufW));
+    len = MultiByteToWideChar(CP_ACP, 0, foobarA, -1000, bufW, -1);
+    ok(len == 0 && GetLastError() == ERROR_INVALID_PARAMETER,
+       "MultiByteToWideChar(destlen -1000): len=%d error=%x\n", len, GetLastError());
 
     /* Test return on INT_MAX dest length */
     SetLastError( 0xdeadbeef );
-    memset(buf,'x',sizeof(buf));
-    len = WideCharToMultiByte(CP_ACP, 0, foobarW, -1, buf, INT_MAX, NULL, NULL);
-    ok(len == 7 && !lstrcmpA(buf, "foobar") && GetLastError() == 0xdeadbeef,
+    memset(bufA,'x',sizeof(bufA));
+    len = WideCharToMultiByte(CP_ACP, 0, foobarW, -1, bufA, INT_MAX, NULL, NULL);
+    ok(len == 7 && !lstrcmpA(bufA, "foobar") && GetLastError() == 0xdeadbeef,
        "WideCharToMultiByte(destlen INT_MAX): len=%d error=%x\n", len, GetLastError());
 
     /* Test return on INT_MAX dest length and very long input */
     SetLastError( 0xdeadbeef );
-    memset(buf,'x',sizeof(buf));
+    memset(bufA,'x',sizeof(bufA));
     for (i=0; i < LONGBUFLEN - 1; i++) {
         originalW[i] = 'Q';
         originalA[i] = 'Q';
     }
     originalW[LONGBUFLEN-1] = 0;
     originalA[LONGBUFLEN-1] = 0;
-    len = WideCharToMultiByte(CP_ACP, 0, originalW, -1, buf, INT_MAX, NULL, NULL);
+    len = WideCharToMultiByte(CP_ACP, 0, originalW, -1, bufA, INT_MAX, NULL, NULL);
     theError = GetLastError();
-    ok(len == LONGBUFLEN && !lstrcmpA(buf, originalA) && theError == 0xdeadbeef,
+    ok(len == LONGBUFLEN && !lstrcmpA(bufA, originalA) && theError == 0xdeadbeef,
        "WideCharToMultiByte(srclen %d, destlen INT_MAX): len %d error=%x\n", LONGBUFLEN, len, theError);
 
 }
@@ -276,12 +286,14 @@ static void test_overlapped_buffers(void)
 static void test_string_conversion(LPBOOL bUsedDefaultChar)
 {
     char mbc;
-    char mbs[5];
+    char mbs[15];
     int ret;
     WCHAR wc1 = 228;                           /* Western Windows-1252 character */
     WCHAR wc2 = 1088;                          /* Russian Windows-1251 character not displayable for Windows-1252 */
     static const WCHAR wcs[] = {'T', 'h', 1088, 'i', 0}; /* String with ASCII characters and a Russian character */
     static const WCHAR dbwcs[] = {28953, 25152, 0}; /* String with Chinese (codepage 950) characters */
+    static const WCHAR dbwcs2[] = {0x7bb8, 0x3d, 0xc813, 0xac00, 0xb77d, 0};
+    static const char default_char[] = {0xa3, 0xbf, 0};
 
     SetLastError(0xdeadbeef);
     ret = WideCharToMultiByte(1252, 0, &wc1, 1, &mbc, 1, NULL, bUsedDefaultChar);
@@ -356,6 +368,11 @@ static void test_string_conversion(LPBOOL bUsedDefaultChar)
     ret = WideCharToMultiByte(1252, 0, dbwcs, 3, mbs, sizeof(mbs), NULL, bUsedDefaultChar);
     ok(ret == 3, "ret is %d\n", ret);
     ok(!strcmp(mbs, "??"), "mbs is %s\n", mbs);
+    if(bUsedDefaultChar) ok(*bUsedDefaultChar == TRUE, "bUsedDefaultChar is %d\n", *bUsedDefaultChar);
+
+    ret = WideCharToMultiByte(936, WC_COMPOSITECHECK, dbwcs2, -1, mbs, sizeof(mbs), (const char *)default_char, bUsedDefaultChar);
+    ok(ret == 10, "ret is %d\n", ret);
+    ok(!strcmp(mbs, "\xf3\xe7\x3d\xa3\xbf\xa3\xbf\xa3\xbf"), "mbs is %s\n", mbs);
     if(bUsedDefaultChar) ok(*bUsedDefaultChar == TRUE, "bUsedDefaultChar is %d\n", *bUsedDefaultChar);
 
     /* Length-only tests */
@@ -1119,6 +1136,121 @@ static void test_threadcp(void)
     SetThreadLocale(last);
 }
 
+static void test_dbcs_to_widechar(void)
+{
+    int i, count, count2;
+    WCHAR wbuf[5];
+    unsigned char buf[] = {0xbf, 0xb4, 0xc7, '\0', 'x'};
+    static const DWORD flags[] = {
+        MB_PRECOMPOSED,
+        MB_COMPOSITE,
+
+        MB_PRECOMPOSED|MB_USEGLYPHCHARS,
+        MB_COMPOSITE  |MB_USEGLYPHCHARS,
+
+        MB_PRECOMPOSED|MB_ERR_INVALID_CHARS,
+        MB_COMPOSITE  |MB_ERR_INVALID_CHARS,
+
+        MB_PRECOMPOSED|MB_ERR_INVALID_CHARS|MB_USEGLYPHCHARS,
+        MB_COMPOSITE  |MB_ERR_INVALID_CHARS|MB_USEGLYPHCHARS,
+    };
+
+    for (i = 0; i < sizeof(flags)/sizeof(DWORD); ++i)
+    {
+        memset(wbuf, 0xff, sizeof(wbuf));
+        count = MultiByteToWideChar(936, flags[i], (char*)&buf[0], 2, NULL, 0);
+        count2 = MultiByteToWideChar(936, flags[i], (char*)&buf[0], 2, wbuf, count);
+
+        ok(count == 1, "%04x: returned %d (expected 1)\n", flags[i], count);
+        ok(count2 == 1, "%04x: returned %d (expected 1)\n", flags[i], count2);
+        ok(wbuf[0] == 0x770b, "%04x: returned %04x (expected 770b)\n", flags[i], wbuf[0]);
+        ok(wbuf[1] == 0xffff, "%04x: returned %04x (expected ffff)\n", flags[i], wbuf[1]);
+    }
+
+    for (i = 0; i < sizeof(flags)/sizeof(DWORD); ++i)
+    {
+        memset(wbuf, 0xff, sizeof(wbuf));
+        count = MultiByteToWideChar(936, flags[i], (char*)&buf[0], 3, NULL, 0);
+        SetLastError( 0xdeadbeef );
+        count2 = MultiByteToWideChar(936, flags[i], (char*)&buf[0], 3, wbuf, count);
+
+        if (flags[i] & MB_ERR_INVALID_CHARS)
+        {
+            ok(count == 0, "%04x: returned %d (expected 0)\n", flags[i], count);
+            ok(count2 == 0, "%04x: returned %d (expected 0)\n", flags[i], count2);
+            ok(GetLastError() == ERROR_NO_UNICODE_TRANSLATION, "%04x: returned %d (expected %d)\n",
+               flags[i], GetLastError(), ERROR_NO_UNICODE_TRANSLATION);
+        }
+        else
+        {
+            ok(count == 2, "%04x: returned %d (expected 2)\n", flags[i], count);
+            ok(count2 == 2, "%04x: returned %d (expected 2)\n", flags[i], count2);
+            ok(wbuf[0] == 0x770b, "%04x: returned %04x (expected 770b)\n", flags[i], wbuf[0]);
+            ok(wbuf[1] == 0x003f || broken(wbuf[1] == 0), /*windows xp*/
+               "%04x: wrong wide char: %04x\n", flags[i], wbuf[1]);
+            ok(wbuf[2] == 0xffff, "%04x: returned %04x (expected ffff)\n", flags[i], wbuf[2]);
+        }
+    }
+
+    /* src ends with null character */
+    for (i = 0; i < sizeof(flags)/sizeof(DWORD); ++i)
+    {
+        memset(wbuf, 0xff, sizeof(wbuf));
+        count = MultiByteToWideChar(936, flags[i], (char*)&buf[0], 4, NULL, 0);
+        SetLastError( 0xdeadbeef );
+        count2 = MultiByteToWideChar(936, flags[i], (char*)&buf[0], 4, wbuf, count);
+        ok(count == count2, "%04x: returned %d (expected %d)\n", flags[i], count2, count);
+
+        if (flags[i] & MB_ERR_INVALID_CHARS)
+        {
+            ok(count == 0, "%04x: returned %d (expected 0)\n", flags[i], count);
+            ok(GetLastError() == ERROR_NO_UNICODE_TRANSLATION, "%04x: returned %d (expected %d)\n",
+               flags[i], GetLastError(), ERROR_NO_UNICODE_TRANSLATION);
+        }
+        else
+        {
+            WCHAR wbuf_ok[]     = { 0x770b, 0x003f, '\0', 0xffff };
+            WCHAR wbuf_broken[] = { 0x770b, '\0', 0xffff, 0xffff };
+            ok(count == 3 || broken(count == 2 /*windows xp*/),
+               "%04x: returned %d (expected 3)\n", flags[i], count);
+            ok(!memcmp(wbuf, wbuf_ok, sizeof(wbuf_ok))
+               || broken(!memcmp(wbuf, wbuf_broken, sizeof(wbuf_broken))),
+               "%04x: returned %04x %04x %04x %04x (expected %04x %04x %04x %04x)\n",
+               flags[i], wbuf[0], wbuf[1], wbuf[2], wbuf[3],
+               wbuf_ok[0], wbuf_ok[1], wbuf_ok[2], wbuf_ok[3]);
+        }
+    }
+
+    /* src has null character, but not ends with it */
+    for (i = 0; i < sizeof(flags)/sizeof(DWORD); ++i)
+    {
+        memset(wbuf, 0xff, sizeof(wbuf));
+        count = MultiByteToWideChar(936, flags[i], (char*)&buf[0], 5, NULL, 0);
+        SetLastError( 0xdeadbeef );
+        count2 = MultiByteToWideChar(936, flags[i], (char*)&buf[0], 5, wbuf, count);
+        ok(count == count2, "%04x: returned %d (expected %d)\n", flags[i], count2, count);
+
+        if (flags[i] & MB_ERR_INVALID_CHARS)
+        {
+            ok(count == 0, "%04x: returned %d (expected 0)\n", flags[i], count);
+            ok(GetLastError() == ERROR_NO_UNICODE_TRANSLATION, "%04x: returned %d (expected %d)\n",
+               flags[i], GetLastError(), ERROR_NO_UNICODE_TRANSLATION);
+        }
+        else
+        {
+            WCHAR wbuf_ok[]     = { 0x770b, 0x003f, '\0', 'x', 0xffff };
+            WCHAR wbuf_broken[] = { 0x770b, '\0', 'x', 0xffff, 0xffff };
+            ok(count == 4 || broken(count == 3),
+               "%04x: returned %d (expected 4)\n", flags[i], count);
+            ok(!memcmp(wbuf, wbuf_ok, sizeof(wbuf_ok))
+               || broken(!memcmp(wbuf, wbuf_broken, sizeof(wbuf_broken))),
+               "%04x: returned %04x %04x %04x %04x %04x (expected %04x %04x %04x %04x %04x)\n",
+               flags[i], wbuf[0], wbuf[1], wbuf[2], wbuf[3], wbuf[4],
+               wbuf_ok[0], wbuf_ok[1], wbuf_ok[2], wbuf_ok[3], wbuf_ok[4]);
+        }
+    }
+}
+
 START_TEST(codepage)
 {
     BOOL bUsedDefaultChar;
@@ -1139,4 +1271,6 @@ START_TEST(codepage)
 
     test_undefined_byte_char();
     test_threadcp();
+
+    test_dbcs_to_widechar();
 }

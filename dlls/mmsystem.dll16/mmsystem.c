@@ -30,7 +30,7 @@
 #include <string.h>
 
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
+
 #include "windef.h"
 #include "winbase.h"
 #include "mmsystem.h"
@@ -1694,7 +1694,7 @@ DWORD WINAPI waveInMessage16(HWAVEIN16 hWaveIn, UINT16 uMessage,
 /**************************************************************************
  * 				mmTaskCreate		[MMSYSTEM.900]
  *
- * Creates a 16 bit MM task. It's entry point is lpFunc, and it should be
+ * Creates a 16 bit MM task. Its entry point is lpFunc, and it should be
  * called upon creation with dwPmt as parameter.
  */
 HINSTANCE16 WINAPI mmTaskCreate16(SEGPTR spProc, HINSTANCE16 *lphMmTask, DWORD dwPmt)
@@ -1943,7 +1943,7 @@ LRESULT	WINAPI mmThreadCreate16(FARPROC16 fpThreadAddr, LPHANDLE16 lpHndl, DWORD
 
     TRACE("(%p, %p, %08x, %08x)!\n", fpThreadAddr, lpHndl, dwPmt, dwFlags);
 
-    hndl = GlobalAlloc16(sizeof(WINE_MMTHREAD), GMEM_SHARE|GMEM_ZEROINIT);
+    hndl = GlobalAlloc16(GMEM_SHARE|GMEM_ZEROINIT, sizeof(WINE_MMTHREAD));
 
     if (hndl == 0) {
 	ret = 2;

@@ -78,7 +78,7 @@ static HRESULT get_ieframe_object(REFCLSID rclsid, REFIID riid, void **ppv)
  */
 HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void **ppv)
 {
-    TRACE("\n");
+    TRACE("(%s %s %p)\n", debugstr_guid(rclsid), debugstr_guid(riid), ppv);
 
     if(IsEqualGUID(&CLSID_WebBrowser, rclsid)
        || IsEqualGUID(&CLSID_WebBrowser_V1, rclsid)
@@ -146,7 +146,8 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD fdwReason, LPVOID fImpLoad)
     TRACE("%p 0x%x %p\n", hinst, fdwReason, fImpLoad);
     switch (fdwReason)
     {
-        case DLL_PROCESS_ATTACH:
+    case DLL_PROCESS_ATTACH:
+        DisableThreadLibraryCalls(hinst);
         break;
     case DLL_PROCESS_DETACH:
         if (fImpLoad) break;
@@ -257,9 +258,9 @@ DWORD WINAPI RunInstallUninstallStubs(void)
  *
  * Called by Emerge Desktop (alternative Windows Shell).
  */
-DWORD WINAPI RunInstallUninstallStubs2(void)
+DWORD WINAPI RunInstallUninstallStubs2(int arg)
 {
-    FIXME("(), stub!\n");
+    FIXME("(%d), stub!\n", arg);
     return 0x0deadbee;
 }
 

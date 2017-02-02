@@ -20,7 +20,6 @@
 
 #define COBJMACROS
 #define CONST_VTABLE
-#define NONAMELESSUNION
 
 /* needed for IInternetZoneManagerEx2 */
 #define _WIN32_IE 0x0700
@@ -759,7 +758,7 @@ static const zone_domain_mapping zone_domain_mappings[] = {
     {"wine.testing",NULL,"*",URLZONE_CUSTOM2}
 };
 
-static void register_zone_domains(void)
+static BOOL register_zone_domains(void)
 {
     HKEY domains;
     DWORD res, i;
@@ -772,6 +771,12 @@ static void register_zone_domains(void)
         DWORD zone = URLZONE_CUSTOM;
 
         res = RegCreateKeyA(domains, "local.machine", &domain);
+        if (res == ERROR_ACCESS_DENIED)
+        {
+            skip("need admin rights\n");
+            RegCloseKey(domains);
+            return FALSE;
+        }
         ok(res == ERROR_SUCCESS, "RegCreateKey failed: %d\n", res);
 
         res = RegSetValueExA(domain, "http", 0, REG_DWORD, (BYTE*)&zone, sizeof(DWORD));
@@ -811,6 +816,7 @@ static void register_zone_domains(void)
     }
 
     RegCloseKey(domains);
+    return TRUE;
 }
 
 static void unregister_zone_domains(void)
@@ -941,11 +947,7 @@ static void test_zone_domain_mappings(void)
 
         hres = IInternetSecurityManager_MapUrlToZone(secmgr, urlW, &zone, 0);
         ok(hres == S_OK, "MapUrlToZone failed: %08x\n", hres);
-        if(test->todo)
-            todo_wine
-                ok(zone == test->zone || broken(test->broken_zone == zone),
-                    "Expected %d, but got %d on test %d\n", test->zone, zone, i);
-        else
+        todo_wine_if (test->todo)
             ok(zone == test->zone || broken(test->broken_zone == zone),
                 "Expected %d, but got %d on test %d\n", test->zone, zone, i);
 
@@ -969,7 +971,7 @@ static void test_zone_domains(void)
 
     test_zone_domain_cache();
 
-    register_zone_domains();
+    if (!register_zone_domains()) return;
     run_child_process();
     unregister_zone_domains();
 }
@@ -1637,12 +1639,7 @@ static void test_InternetGetSecurityUrlEx(void)
             result = NULL;
 
             hr = pCoInternetGetSecurityUrlEx(uri, &result, PSU_DEFAULT, 0);
-            if(sec_url_ex_tests[i].todo) {
-                todo_wine
-                    ok(hr == sec_url_ex_tests[i].default_hres,
-                        "CoInternetGetSecurityUrlEx returned 0x%08x, expected 0x%08x on test %d\n",
-                        hr, sec_url_ex_tests[i].default_hres, i);
-            } else {
+            todo_wine_if (sec_url_ex_tests[i].todo) {
                 ok(hr == sec_url_ex_tests[i].default_hres,
                     "CoInternetGetSecurityUrlEx returned 0x%08x, expected 0x%08x on test %d\n",
                     hr, sec_url_ex_tests[i].default_hres, i);
@@ -1653,12 +1650,7 @@ static void test_InternetGetSecurityUrlEx(void)
                 hr = IUri_GetDisplayUri(result, &received);
                 ok(hr == S_OK, "GetDisplayUri returned 0x%08x on test %d\n", hr, i);
                 if(hr == S_OK) {
-                    if(sec_url_ex_tests[i].todo) {
-                        todo_wine
-                            ok(!strcmp_aw(sec_url_ex_tests[i].default_uri, received),
-                                "Expected %s but got %s on test %d\n", sec_url_ex_tests[i].default_uri,
-                                wine_dbgstr_w(received), i);
-                    } else {
+                    todo_wine_if (sec_url_ex_tests[i].todo) {
                         ok(!strcmp_aw(sec_url_ex_tests[i].default_uri, received),
                             "Expected %s but got %s on test %d\n", sec_url_ex_tests[i].default_uri,
                             wine_dbgstr_w(received), i);
@@ -1670,12 +1662,7 @@ static void test_InternetGetSecurityUrlEx(void)
 
             result = NULL;
             hr = pCoInternetGetSecurityUrlEx(uri, &result, PSU_SECURITY_URL_ONLY, 0);
-            if(sec_url_ex_tests[i].todo) {
-                todo_wine
-                    ok(hr == sec_url_ex_tests[i].default_hres,
-                        "CoInternetGetSecurityUrlEx returned 0x%08x, expected 0x%08x on test %d\n",
-                        hr, sec_url_ex_tests[i].default_hres, i);
-            } else {
+            todo_wine_if (sec_url_ex_tests[i].todo) {
                 ok(hr == sec_url_ex_tests[i].default_hres,
                     "CoInternetGetSecurityUrlEx returned 0x%08x, expected 0x%08x on test %d\n",
                     hr, sec_url_ex_tests[i].default_hres, i);
@@ -1686,12 +1673,7 @@ static void test_InternetGetSecurityUrlEx(void)
                 hr = IUri_GetDisplayUri(result, &received);
                 ok(hr == S_OK, "GetDisplayUri returned 0x%08x on test %d\n", hr, i);
                 if(hr == S_OK) {
-                    if(sec_url_ex_tests[i].todo) {
-                        todo_wine
-                            ok(!strcmp_aw(sec_url_ex_tests[i].default_uri, received),
-                                "Expected %s but got %s on test %d\n", sec_url_ex_tests[i].default_uri,
-                                wine_dbgstr_w(received), i);
-                    } else {
+                    todo_wine_if (sec_url_ex_tests[i].todo) {
                         ok(!strcmp_aw(sec_url_ex_tests[i].default_uri, received),
                             "Expected %s but got %s on test %d\n", sec_url_ex_tests[i].default_uri,
                             wine_dbgstr_w(received), i);
@@ -1859,14 +1841,7 @@ static void test_SecurityManagerEx2(void)
         ok(hres == S_OK, "CreateUri returned %08x for '%s'\n", hres, sec_mgr_ex2_tests[i].uri);
 
         hres = IInternetSecurityManagerEx2_MapUrlToZoneEx2(sec_mgr2, uri, &zone, 0, NULL, NULL);
-        if(sec_mgr_ex2_tests[i].map_todo) {
-            todo_wine
-                ok(hres == sec_mgr_ex2_tests[i].map_hres, "MapUrlZoneToEx2 returned %08x, expected %08x for '%s'\n",
-                    hres, sec_mgr_ex2_tests[i].map_hres, sec_mgr_ex2_tests[i].uri);
-            todo_wine
-                ok(zone == sec_mgr_ex2_tests[i].zone, "Expected zone %d, but got %d for '%s'\n", sec_mgr_ex2_tests[i].zone,
-                    zone, sec_mgr_ex2_tests[i].uri);
-        } else {
+        todo_wine_if (sec_mgr_ex2_tests[i].map_todo) {
             ok(hres == sec_mgr_ex2_tests[i].map_hres, "MapUrlToZoneEx2 returned %08x, expected %08x for '%s'\n",
                 hres, sec_mgr_ex2_tests[i].map_hres, sec_mgr_ex2_tests[i].uri);
             ok(zone == sec_mgr_ex2_tests[i].zone, "Expected zone %d, but got %d for '%s'\n", sec_mgr_ex2_tests[i].zone,
@@ -1877,19 +1852,7 @@ static void test_SecurityManagerEx2(void)
         memset(buf, 0xf0, buf_size);
 
         hres = IInternetSecurityManagerEx2_GetSecurityIdEx2(sec_mgr2, uri, buf, &buf_size, 0);
-        if(sec_mgr_ex2_tests[i].secid_todo) {
-            todo_wine
-                ok(hres == sec_mgr_ex2_tests[i].secid_hres, "GetSecurityIdEx2 returned %08x, expected %08x on test '%s'\n",
-                    hres, sec_mgr_ex2_tests[i].secid_hres, sec_mgr_ex2_tests[i].uri);
-            if(sec_mgr_ex2_tests[i].secid) {
-                todo_wine {
-                    ok(buf_size == sec_mgr_ex2_tests[i].secid_size, "Got wrong security id size=%d, expected %d on test '%s'\n",
-                        buf_size, sec_mgr_ex2_tests[i].secid_size, sec_mgr_ex2_tests[i].uri);
-                    ok(!memcmp(buf, sec_mgr_ex2_tests[i].secid, sec_mgr_ex2_tests[i].secid_size), "Got wrong security id on test '%s'\n",
-                        sec_mgr_ex2_tests[i].uri);
-                }
-            }
-        } else {
+        todo_wine_if (sec_mgr_ex2_tests[i].secid_todo) {
             ok(hres == sec_mgr_ex2_tests[i].secid_hres, "GetSecurityIdEx2 returned %08x, expected %08x on test '%s'\n",
                 hres, sec_mgr_ex2_tests[i].secid_hres, sec_mgr_ex2_tests[i].uri);
             if(sec_mgr_ex2_tests[i].secid) {

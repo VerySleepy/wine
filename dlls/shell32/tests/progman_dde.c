@@ -363,7 +363,7 @@ static void DdeExecuteCommand(DWORD instance, HCONV hConv, const char *strCmd, H
  * window creation happened were not encouraging (not including
  * SetWindowsHookEx).
  */
-static void CheckWindowCreated(const char *winName, BOOL closeWindow, int testParams)
+static HWND CheckWindowCreated(const char *winName, BOOL closeWindow, int testParams)
 {
     HWND window = NULL;
     int i;
@@ -372,7 +372,13 @@ static void CheckWindowCreated(const char *winName, BOOL closeWindow, int testPa
     for (i = 0; window == NULL && i < PDDE_POLL_NUM; i++)
     {
         Sleep(PDDE_POLL_TIME);
-        window = FindWindowA(NULL, winName);
+        /* Specify the window class name to make sure what we find is really an
+         * Explorer window. Explorer used two different window classes so try
+         * both.
+         */
+        window = FindWindowA("ExplorerWClass", winName);
+        if (!window)
+            window = FindWindowA("CabinetWClass", winName);
     }
     ok (window != NULL, "Window \"%s\" was not created in %i seconds - assumed failure.%s\n",
         winName, PDDE_POLL_NUM*PDDE_POLL_TIME/1000, GetStringFromTestParams(testParams));
@@ -381,7 +387,9 @@ static void CheckWindowCreated(const char *winName, BOOL closeWindow, int testPa
     if (window != NULL && closeWindow)
     {
         SendMessageA(window, WM_SYSCOMMAND, SC_CLOSE, 0);
+        window = NULL;
     }
+    return window;
 }
 
 /* Check for Existence (or non-existence) of a file or group
@@ -468,34 +476,27 @@ static void CreateGroupTest(DWORD instance, HCONV hConv, const char *command, UI
  *   if expected_result is DMLERR_NO_ERROR, test
  *        1. window is open
  */
-static void ShowGroupTest(DWORD instance, HCONV hConv, const char *command, UINT expected_result,
+static HWND ShowGroupTest(DWORD instance, HCONV hConv, const char *command, UINT expected_result,
                           const char *groupName, const char *windowTitle, BOOL closeAfterShowing, int testParams)
 {
     HDDEDATA hData;
     UINT error;
+    HWND hwnd = 0;
 
     DdeExecuteCommand(instance, hConv, command, &hData, &error, testParams);
 /* todo_wine...  Is expected to fail, wine stubbed functions DO fail */
 /* TODO REMOVE THIS CODE!!! */
-    if (expected_result == DMLERR_NOTPROCESSED)
-    {
+    todo_wine_if (expected_result != DMLERR_NOTPROCESSED)
         ok (expected_result == error, "ShowGroup %s: Expected Error %s, received %s.%s\n",
             groupName, GetStringFromError(expected_result), GetStringFromError(error),
             GetStringFromTestParams(testParams));
-    } else {
-        todo_wine
-        {
-            ok (expected_result == error, "ShowGroup %s: Expected Error %s, received %s.%s\n",
-                groupName, GetStringFromError(expected_result), GetStringFromError(error),
-                GetStringFromTestParams(testParams));
-        }
-    }
 
     if (error == DMLERR_NO_ERROR)
     {
         /* Check if Window is Open (polling) */
-        CheckWindowCreated(windowTitle, closeAfterShowing, testParams);
+        hwnd = CheckWindowCreated(windowTitle, closeAfterShowing, testParams);
     }
+    return hwnd;
 }
 
 /* Delete Group Test.
@@ -582,12 +583,13 @@ static void DeleteItemTest(DWORD instance, HCONV hConv, const char *command, UIN
  *   All samples I've seen using Compound were of this form (CreateGroup,
  *   AddItems) so this covers minimum expected functionality.
  */
-static void CompoundCommandTest(DWORD instance, HCONV hConv, const char *command, UINT expected_result,
+static HWND CompoundCommandTest(DWORD instance, HCONV hConv, const char *command, UINT expected_result,
                                 const char *groupName, const char *windowTitle, const char *fileName1,
                                 const char *fileName2, int testParams)
 {
     HDDEDATA hData;
     UINT error;
+    HWND hwnd = 0;
 
     DdeExecuteCommand(instance, hConv, command, &hData, &error, testParams);
     todo_wine
@@ -601,10 +603,11 @@ static void CompoundCommandTest(DWORD instance, HCONV hConv, const char *command
     {
         /* Check that File exists */
         CheckFileExistsInProgramGroups(groupName, TRUE, TRUE, NULL, testParams);
-        CheckWindowCreated(windowTitle, FALSE, testParams);
+        hwnd = CheckWindowCreated(windowTitle, FALSE, testParams);
         CheckFileExistsInProgramGroups(fileName1, TRUE, FALSE, groupName, testParams);
         CheckFileExistsInProgramGroups(fileName2, TRUE, FALSE, groupName, testParams);
     }
+    return hwnd;
 }
 
 static void CreateAddItemText(char *itemtext, const char *cmdline, const char *name)
@@ -626,6 +629,7 @@ static int DdeTestProgman(DWORD instance, HCONV hConv)
     char f1g1[MAX_PATH], f2g1[MAX_PATH], f3g1[MAX_PATH], f1g3[MAX_PATH], f2g3[MAX_PATH];
     char itemtext[MAX_PATH + 20];
     char comptext[2 * (MAX_PATH + 20) + 21];
+    HWND hwnd;
 
     testnum = 1;
     /* Invalid Command */
@@ -658,10 +662,11 @@ static int DdeTestProgman(DWORD instance, HCONV hConv)
     ShowGroupTest(instance, hConv, "[ShowGroup(Group1)]", DMLERR_NOTPROCESSED, "Group1", Group1Title, TRUE, DDE_TEST_SHOWGROUP|testnum++);
     DeleteItemTest(instance, hConv, "[DeleteItem(f3g1Name)]", DMLERR_NO_ERROR, "f3g1Name.lnk", "Group1", DDE_TEST_DELETEITEM|testnum++);
     ShowGroupTest(instance, hConv, "[ShowGroup(Startup,0)]", DMLERR_NO_ERROR, "Startup", StartupTitle, TRUE, DDE_TEST_SHOWGROUP|testnum++);
-    ShowGroupTest(instance, hConv, "[ShowGroup(Group1,0)]", DMLERR_NO_ERROR, "Group1", Group1Title, FALSE, DDE_TEST_SHOWGROUP|testnum++);
+    hwnd = ShowGroupTest(instance, hConv, "[ShowGroup(Group1,0)]", DMLERR_NO_ERROR, "Group1", Group1Title, FALSE, DDE_TEST_SHOWGROUP|testnum++);
 
     /* DeleteGroup Test - Note that Window is Open for this test */
     DeleteGroupTest(instance, hConv, "[DeleteGroup(Group1)]", DMLERR_NO_ERROR, "Group1", DDE_TEST_DELETEGROUP|testnum++);
+    if (hwnd) SendMessageA(hwnd, WM_SYSCOMMAND, SC_CLOSE, 0);
 
     /* Compound Execute String Command */
     lstrcpyA(comptext, "[CreateGroup(Group3)]");
@@ -669,9 +674,10 @@ static int DdeTestProgman(DWORD instance, HCONV hConv)
     lstrcatA(comptext, itemtext);
     CreateAddItemText(itemtext, f2g3, "f2g3Name");
     lstrcatA(comptext, itemtext);
-    CompoundCommandTest(instance, hConv, comptext, DMLERR_NO_ERROR, "Group3", Group3Title, "f1g3Name.lnk", "f2g3Name.lnk", DDE_TEST_COMPOUND|testnum++);
+    hwnd = CompoundCommandTest(instance, hConv, comptext, DMLERR_NO_ERROR, "Group3", Group3Title, "f1g3Name.lnk", "f2g3Name.lnk", DDE_TEST_COMPOUND|testnum++);
 
     DeleteGroupTest(instance, hConv, "[DeleteGroup(Group3)]", DMLERR_NO_ERROR, "Group3", DDE_TEST_DELETEGROUP|testnum++);
+    if (hwnd) SendMessageA(hwnd, WM_SYSCOMMAND, SC_CLOSE, 0);
 
     /* Full Parameters of Add Item */
     /* AddItem(CmdLine[,Name[,IconPath[,IconIndex[,xPos,yPos[,DefDir[,HotKey[,fMinimize[fSeparateSpace]]]]]]]) */

@@ -159,7 +159,7 @@ static void CopyClsid(HTREEITEM item)
 
         lstrcpyW(pLoc, ((ITEM_INFO *)tvi.lParam)->clsid);
         GlobalUnlock(hClipData);
-        hClipData = SetClipboardData(CF_UNICODETEXT, hClipData);
+        SetClipboardData(CF_UNICODETEXT, hClipData);
         CloseClipboard();
     }
 }
@@ -184,7 +184,7 @@ static void CopyHTMLTag(HTREEITEM item)
         ((ITEM_INFO *)tvi.lParam)->clsid[clsidLen] = '}';
 
         GlobalUnlock(hClipData);
-        hClipData = SetClipboardData(CF_UNICODETEXT, hClipData);
+        SetClipboardData(CF_UNICODETEXT, hClipData);
         CloseClipboard();
     }
 }
@@ -422,7 +422,7 @@ static int MenuCommand(WPARAM wParam, HWND hWnd)
             LoadStringW(globals.hMainInst, IDS_OPEN, wszTitle, sizeof(wszTitle)/sizeof(wszTitle[0]));
             LoadStringW(globals.hMainInst, IDS_OPEN_FILTER_TYPELIB, filter_typelib, sizeof(filter_typelib)/sizeof(WCHAR));
             LoadStringW(globals.hMainInst, IDS_OPEN_FILTER_ALL, filter_all, sizeof(filter_all)/sizeof(WCHAR));
-            snprintfW( filter, MAX_PATH, filterW, filter_typelib, 0, 0, filter_all, 0, 0 );
+            wsprintfW( filter, filterW, filter_typelib, 0, 0, filter_all, 0, 0 );
             InitOpenFileName(hWnd, &ofn, filter, wszTitle, wszName);
             if(GetOpenFileNameW(&ofn)) CreateTypeLibWindow(globals.hMainInst, wszName);
             break;
@@ -499,6 +499,7 @@ static BOOL InitApplication(HINSTANCE hInst)
     memset(&wc, 0, sizeof(WNDCLASSW));
     wc.lpfnWndProc = WndProc;
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
+    wc.hCursor       = LoadCursorW(0, (LPCWSTR)IDC_ARROW);
     wc.lpszMenuName = MAKEINTRESOURCEW(IDM_MENU);
     wc.lpszClassName = wszAppName;
 
@@ -557,12 +558,9 @@ int APIENTRY WinMain(HINSTANCE hInst, HINSTANCE hPrevInst, LPSTR lpCmdLine, int 
 {
     MSG msg;
     HANDLE hAccelTable;
-   
-    if(!hPrevInst)
-    {
-        if(!InitApplication(hInst))
-            return FALSE;
-    }
+
+    if(!InitApplication(hInst))
+        return FALSE;
 
     if(!InitInstance(hInst, nCmdShow))
         return FALSE;

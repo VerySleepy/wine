@@ -184,7 +184,9 @@
 # define		rtfGenerator		74
 # define		rtfNestTableProps	75
 # define		rtfNoNestTables		76
-# define		rtfMaxDestination	77	/* highest dest + 1 */
+# define                rtfShpPict              77
+# define                rtfNonShpPict           78
+# define                rtfMaxDestination       79      /* highest dest + 1 */
 
 # define	rtfFontFamily	4
 # define		rtfFFNil		0
@@ -1179,6 +1181,8 @@ struct _RTF_Info {
     int nestingLevel;
     BOOL canInheritInTbl;
     int borderType; /* value corresponds to the RTFBorder constants. */
+
+    PARAFORMAT2 fmt; /* Accumulated para fmt for current paragraph. */
 };
 
 

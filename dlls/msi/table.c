@@ -22,8 +22,6 @@
 #include <assert.h>
 
 #define COBJMACROS
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "windef.h"
 #include "winbase.h"
@@ -811,7 +809,7 @@ UINT msi_create_table( MSIDATABASE *db, LPCWSTR name, column_info *col_info,
         /* add each column to the _Columns table */
         r = TABLE_CreateView( db, szColumns, &tv );
         if( r )
-            return r;
+            goto err;
 
         r = tv->ops->execute( tv, 0 );
         TRACE("tv execute returned %x\n", r);
@@ -901,7 +899,7 @@ static UINT save_table( MSIDATABASE *db, const MSITABLE *t, UINT bytes_per_strre
     }
 
     rawsize = 0;
-    for (i = 0; i < t->row_count; i++)
+    for (i = 0; i < row_count; i++)
     {
         UINT ofs = 0, ofs_mem = 0;
 
@@ -1054,7 +1052,7 @@ static UINT TABLE_fetch_int( struct tagMSIVIEW *view, UINT row, UINT col, UINT *
     return ERROR_SUCCESS;
 }
 
-static UINT msi_stream_name( const MSITABLEVIEW *tv, UINT row, LPWSTR *pstname )
+static UINT get_stream_name( const MSITABLEVIEW *tv, UINT row, WCHAR **pstname )
 {
     LPWSTR p, stname = NULL;
     UINT i, r, type, ival;
@@ -1154,7 +1152,7 @@ static UINT TABLE_fetch_stream( struct tagMSIVIEW *view, UINT row, UINT col, ISt
     if( !view->ops->fetch_int )
         return ERROR_INVALID_PARAMETER;
 
-    r = msi_stream_name( tv, row, &name );
+    r = get_stream_name( tv, row, &name );
     if (r != ERROR_SUCCESS)
     {
         ERR("fetching stream, error = %u\n", r);
@@ -1216,39 +1214,63 @@ static UINT TABLE_get_row( struct tagMSIVIEW *view, UINT row, MSIRECORD **rec )
     return msi_view_get_row(tv->db, view, row, rec);
 }
 
-static UINT msi_addstreamW( MSIDATABASE *db, LPCWSTR name, IStream *data )
+static UINT add_stream( MSIDATABASE *db, const WCHAR *name, IStream *data )
 {
     static const WCHAR insert[] = {
         'I','N','S','E','R','T',' ','I','N','T','O',' ',
         '`','_','S','t','r','e','a','m','s','`',' ',
         '(','`','N','a','m','e','`',',','`','D','a','t','a','`',')',' ',
         'V','A','L','U','E','S',' ','(','?',',','?',')',0};
-    MSIQUERY *query = NULL;
+    static const WCHAR update[] = {
+        'U','P','D','A','T','E',' ','`','_','S','t','r','e','a','m','s','`',' ',
+        'S','E','T',' ','`','D','a','t','a','`',' ','=',' ','?',' ',
+        'W','H','E','R','E',' ','`','N','a','m','e','`',' ','=',' ','?',0};
+    MSIQUERY *query;
     MSIRECORD *rec;
     UINT r;
 
     TRACE("%p %s %p\n", db, debugstr_w(name), data);
 
-    rec = MSI_CreateRecord( 2 );
-    if ( !rec )
+    if (!(rec = MSI_CreateRecord( 2 )))
         return ERROR_OUTOFMEMORY;
 
     r = MSI_RecordSetStringW( rec, 1, name );
-    if ( r != ERROR_SUCCESS )
-       goto err;
+    if (r != ERROR_SUCCESS)
+       goto done;
 
     r = MSI_RecordSetIStream( rec, 2, data );
-    if ( r != ERROR_SUCCESS )
-       goto err;
+    if (r != ERROR_SUCCESS)
+       goto done;
 
     r = MSI_DatabaseOpenViewW( db, insert, &query );
-    if ( r != ERROR_SUCCESS )
-       goto err;
+    if (r != ERROR_SUCCESS)
+       goto done;
 
     r = MSI_ViewExecute( query, rec );
-
-err:
     msiobj_release( &query->hdr );
+    if (r == ERROR_SUCCESS)
+        goto done;
+
+    msiobj_release( &rec->hdr );
+    if (!(rec = MSI_CreateRecord( 2 )))
+        return ERROR_OUTOFMEMORY;
+
+    r = MSI_RecordSetIStream( rec, 1, data );
+    if (r != ERROR_SUCCESS)
+       goto done;
+
+    r = MSI_RecordSetStringW( rec, 2, name );
+    if (r != ERROR_SUCCESS)
+       goto done;
+
+    r = MSI_DatabaseOpenViewW( db, update, &query );
+    if (r != ERROR_SUCCESS)
+        goto done;
+
+    r = MSI_ViewExecute( query, rec );
+    msiobj_release( &query->hdr );
+
+done:
     msiobj_release( &rec->hdr );
     return r;
 }
@@ -1345,14 +1367,14 @@ static UINT TABLE_set_row( struct tagMSIVIEW *view, UINT row, MSIRECORD *rec, UI
                 if ( r != ERROR_SUCCESS )
                     return r;
 
-                r = msi_stream_name( tv, row, &stname );
+                r = get_stream_name( tv, row, &stname );
                 if ( r != ERROR_SUCCESS )
                 {
                     IStream_Release( stm );
                     return r;
                 }
 
-                r = msi_addstreamW( tv->db, stname, stm );
+                r = add_stream( tv->db, stname, stm );
                 IStream_Release( stm );
                 msi_free ( stname );
 
@@ -2303,8 +2325,7 @@ err:
 }
 
 static MSIRECORD *msi_get_transform_record( const MSITABLEVIEW *tv, const string_table *st,
-                                            IStorage *stg,
-                                            const BYTE *rawdata, UINT bytes_per_strref )
+                                            IStorage *stg, const BYTE *rawdata, UINT bytes_per_strref )
 {
     UINT i, val, ofs = 0;
     USHORT mask;
@@ -2337,12 +2358,14 @@ static MSIRECORD *msi_get_transform_record( const MSITABLEVIEW *tv, const string
 
             r = msi_record_encoded_stream_name( tv, rec, &encname );
             if ( r != ERROR_SUCCESS )
+            {
+                msiobj_release( &rec->hdr );
                 return NULL;
-
-            r = IStorage_OpenStream( stg, encname, NULL,
-                     STGM_READ | STGM_SHARE_EXCLUSIVE, 0, &stm );
+            }
+            r = IStorage_OpenStream( stg, encname, NULL, STGM_READ | STGM_SHARE_EXCLUSIVE, 0, &stm );
             if ( r != ERROR_SUCCESS )
             {
+                msiobj_release( &rec->hdr );
                 msi_free( encname );
                 return NULL;
             }
@@ -2715,7 +2738,7 @@ UINT msi_table_apply_transform( MSIDATABASE *db, IStorage *stg )
     IEnumSTATSTG *stgenum = NULL;
     TRANSFORMDATA *transform;
     TRANSFORMDATA *tables = NULL, *columns = NULL;
-    HRESULT r;
+    HRESULT hr;
     STATSTG stat;
     string_table *strings;
     UINT ret = ERROR_FUNCTION_FAILED;
@@ -2728,8 +2751,8 @@ UINT msi_table_apply_transform( MSIDATABASE *db, IStorage *stg )
     if( !strings )
         goto end;
 
-    r = IStorage_EnumElements( stg, 0, NULL, 0, &stgenum );
-    if( FAILED( r ) )
+    hr = IStorage_EnumElements( stg, 0, NULL, 0, &stgenum );
+    if (FAILED( hr ))
         goto end;
 
     list_init(&transforms);
@@ -2740,8 +2763,8 @@ UINT msi_table_apply_transform( MSIDATABASE *db, IStorage *stg )
         WCHAR name[0x40];
         ULONG count = 0;
 
-        r = IEnumSTATSTG_Next( stgenum, 1, &stat, &count );
-        if ( FAILED( r ) || !count )
+        hr = IEnumSTATSTG_Next( stgenum, 1, &stat, &count );
+        if (FAILED( hr ) || !count)
             break;
 
         decode_streamname( stat.pwcsName, name );
@@ -2771,12 +2794,10 @@ UINT msi_table_apply_transform( MSIDATABASE *db, IStorage *stg )
         TRACE("transform contains stream %s\n", debugstr_w(name));
 
         /* load the table */
-        r = TABLE_CreateView( db, transform->name, (MSIVIEW**) &tv );
-        if( r != ERROR_SUCCESS )
+        if (TABLE_CreateView( db, transform->name, (MSIVIEW**) &tv ) != ERROR_SUCCESS)
             continue;
 
-        r = tv->view.ops->execute( &tv->view, NULL );
-        if( r != ERROR_SUCCESS )
+        if (tv->view.ops->execute( &tv->view, NULL ) != ERROR_SUCCESS)
         {
             tv->view.ops->delete( &tv->view );
             continue;

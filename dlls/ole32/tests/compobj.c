@@ -37,6 +37,32 @@
 
 #include "wine/test.h"
 
+#define DEFINE_EXPECT(func) \
+    static BOOL expect_ ## func = FALSE, called_ ## func = FALSE
+
+#define SET_EXPECT(func) \
+    expect_ ## func = TRUE
+
+#define CHECK_EXPECT2(func) \
+    do { \
+        ok(expect_ ##func, "unexpected call " #func "\n"); \
+        called_ ## func = TRUE; \
+    }while(0)
+
+#define CHECK_EXPECT(func) \
+    do { \
+        CHECK_EXPECT2(func); \
+        expect_ ## func = FALSE; \
+    }while(0)
+
+#define CHECK_CALLED(func) \
+    do { \
+        ok(called_ ## func, "expected " #func "\n"); \
+        expect_ ## func = called_ ## func = FALSE; \
+    }while(0)
+
+DEFINE_EXPECT(CreateStub);
+
 /* functions that are not present on all versions of Windows */
 static HRESULT (WINAPI * pCoInitializeEx)(LPVOID lpReserved, DWORD dwCoInit);
 static HRESULT (WINAPI * pCoGetObjectContext)(REFIID riid, LPVOID *ppv);
@@ -44,6 +70,7 @@ static HRESULT (WINAPI * pCoSwitchCallContext)(IUnknown *pObject, IUnknown **ppO
 static HRESULT (WINAPI * pCoGetTreatAsClass)(REFCLSID clsidOld, LPCLSID pClsidNew);
 static HRESULT (WINAPI * pCoTreatAsClass)(REFCLSID clsidOld, REFCLSID pClsidNew);
 static HRESULT (WINAPI * pCoGetContextToken)(ULONG_PTR *token);
+static HRESULT (WINAPI * pCoGetApartmentType)(APTTYPE *type, APTTYPEQUALIFIER *qualifier);
 static LONG (WINAPI * pRegDeleteKeyExA)(HKEY, LPCSTR, REGSAM, DWORD);
 static LONG (WINAPI * pRegOverridePredefKey)(HKEY key, HKEY override);
 
@@ -68,6 +95,7 @@ static const GUID IID_Testiface6 = { 0x72222222, 0x1234, 0x1234, { 0x12, 0x34, 0
 static const GUID IID_TestPS = { 0x66666666, 0x8888, 0x7777, { 0x66, 0x66, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55 } };
 
 DEFINE_GUID(CLSID_InProcFreeMarshaler, 0x0000033a,0x0000,0x0000,0xc0,0x00,0x00,0x00,0x00,0x00,0x00,0x46);
+DEFINE_GUID(CLSID_testclsid, 0xacd014c7,0x9535,0x4fac,0x8b,0x53,0xa4,0x8c,0xa7,0xf4,0xd7,0x26);
 
 static const WCHAR stdfont[] = {'S','t','d','F','o','n','t',0};
 static const WCHAR wszNonExistent[] = {'N','o','n','E','x','i','s','t','e','n','t',0};
@@ -126,6 +154,7 @@ static ULONG WINAPI Test_IClassFactory_Release(LPCLASSFACTORY iface)
     return 1; /* non-heap-based object */
 }
 
+static IID create_instance_iid;
 static HRESULT WINAPI Test_IClassFactory_CreateInstance(
     LPCLASSFACTORY iface,
     IUnknown *pUnkOuter,
@@ -133,6 +162,7 @@ static HRESULT WINAPI Test_IClassFactory_CreateInstance(
     LPVOID *ppvObj)
 {
     *ppvObj = NULL;
+    create_instance_iid = *riid;
     if (pUnkOuter) return CLASS_E_NOAGGREGATION;
     return E_NOINTERFACE;
 }
@@ -243,12 +273,12 @@ static const char actctx_manifest[] =
 "              progid=\"ProgId.ProgId\""
 "              miscStatusIcon=\"recomposeonresize\""
 "    />"
-"    <comClass clsid=\"{0be35203-8f91-11ce-9de3-00aa004bb851}\""
+"    <comClass description=\"CustomFont Description\" clsid=\"{0be35203-8f91-11ce-9de3-00aa004bb851}\""
 "              progid=\"CustomFont\""
 "              miscStatusIcon=\"recomposeonresize\""
 "              miscStatusContent=\"insideout\""
 "    />"
-"    <comClass clsid=\"{0be35203-8f91-11ce-9de3-00aa004bb852}\""
+"    <comClass description=\"StdFont Description\" clsid=\"{0be35203-8f91-11ce-9de3-00aa004bb852}\""
 "              progid=\"StdFont\""
 "    />"
 "    <comClass clsid=\"{62222222-1234-1234-1234-56789abcdef0}\" >"
@@ -587,6 +617,26 @@ static DWORD CALLBACK ole_initialize_thread(LPVOID pv)
     return hr;
 }
 
+#define test_apt_type(t, q, t_t, t_q) _test_apt_type(t, q, t_t, t_q, __LINE__)
+static void _test_apt_type(APTTYPE expected_type, APTTYPEQUALIFIER expected_qualifier, BOOL todo_type,
+        BOOL todo_qualifier, int line)
+{
+    APTTYPEQUALIFIER qualifier = ~0u;
+    APTTYPE type = ~0u;
+    HRESULT hr;
+
+    if (!pCoGetApartmentType)
+        return;
+
+    hr = pCoGetApartmentType(&type, &qualifier);
+    ok_(__FILE__, line)(hr == S_OK || hr == CO_E_NOTINITIALIZED, "Unexpected return code: 0x%08x\n", hr);
+todo_wine_if(todo_type)
+    ok_(__FILE__, line)(type == expected_type, "Wrong apartment type %d, expected %d\n", type, expected_type);
+todo_wine_if(todo_qualifier)
+    ok_(__FILE__, line)(qualifier == expected_qualifier, "Wrong apartment qualifier %d, expected %d\n", qualifier,
+        expected_qualifier);
+}
+
 static void test_CoCreateInstance(void)
 {
     HRESULT hr;
@@ -631,6 +681,8 @@ static void test_CoCreateInstance(void)
     /* show that COM doesn't have to be initialized for multi-threaded apartments if another
        thread has already done so */
 
+    test_apt_type(APTTYPE_CURRENT, APTTYPEQUALIFIER_NONE, FALSE, FALSE);
+
     info.wait = CreateEventA(NULL, TRUE, FALSE, NULL);
     ok(info.wait != NULL, "CreateEvent failed with error %d\n", GetLastError());
 
@@ -641,6 +693,8 @@ static void test_CoCreateInstance(void)
     ok(thread != NULL, "CreateThread failed with error %d\n", GetLastError());
 
     ok( !WaitForSingleObject(info.wait, 10000 ), "wait timed out\n" );
+
+    test_apt_type(APTTYPE_MTA, APTTYPEQUALIFIER_IMPLICIT_MTA, TRUE, TRUE);
 
     pUnk = (IUnknown *)0xdeadbeef;
     hr = CoCreateInstance(rclsid, NULL, CLSCTX_INPROC_SERVER, &IID_IUnknown, (void **)&pUnk);
@@ -657,6 +711,8 @@ static void test_CoCreateInstance(void)
     CloseHandle(thread);
     CloseHandle(info.wait);
     CloseHandle(info.stop);
+
+    test_apt_type(APTTYPE_CURRENT, APTTYPEQUALIFIER_NONE, FALSE, FALSE);
 }
 
 static void test_CoGetClassObject(void)
@@ -683,6 +739,8 @@ static void test_CoGetClassObject(void)
     /* show that COM doesn't have to be initialized for multi-threaded apartments if another
        thread has already done so */
 
+    test_apt_type(APTTYPE_CURRENT, APTTYPEQUALIFIER_NONE, FALSE, FALSE);
+
     info.wait = CreateEventA(NULL, TRUE, FALSE, NULL);
     ok(info.wait != NULL, "CreateEvent failed with error %d\n", GetLastError());
 
@@ -693,6 +751,8 @@ static void test_CoGetClassObject(void)
     ok(thread != NULL, "CreateThread failed with error %d\n", GetLastError());
 
     ok( !WaitForSingleObject(info.wait, 10000), "wait timed out\n" );
+
+    test_apt_type(APTTYPE_MTA, APTTYPEQUALIFIER_IMPLICIT_MTA, TRUE, TRUE);
 
     pUnk = (IUnknown *)0xdeadbeef;
     hr = CoGetClassObject(rclsid, CLSCTX_INPROC_SERVER, NULL, &IID_IUnknown, (void **)&pUnk);
@@ -714,6 +774,8 @@ static void test_CoGetClassObject(void)
     CloseHandle(thread);
     CloseHandle(info.wait);
     CloseHandle(info.stop);
+
+    test_apt_type(APTTYPE_CURRENT, APTTYPEQUALIFIER_NONE, FALSE, FALSE);
 
     if (!pRegOverridePredefKey)
     {
@@ -759,6 +821,30 @@ static void test_CoGetClassObject(void)
         pDeactivateActCtx(0, cookie);
         pReleaseActCtx(handle);
     }
+
+    CoUninitialize();
+}
+
+static void test_CoCreateInstanceEx(void)
+{
+    MULTI_QI qi_res = { &IID_IMoniker };
+    DWORD cookie;
+    HRESULT hr;
+
+    CoInitialize(NULL);
+
+    hr = CoRegisterClassObject(&CLSID_WineOOPTest, (IUnknown *)&Test_ClassFactory,
+                               CLSCTX_INPROC_SERVER, REGCLS_MULTIPLEUSE, &cookie);
+    ok_ole_success(hr, "CoRegisterClassObject");
+
+    create_instance_iid = IID_NULL;
+    hr = CoCreateInstanceEx(&CLSID_WineOOPTest, NULL, CLSCTX_INPROC_SERVER, NULL, 1, &qi_res);
+    ok(hr == E_NOINTERFACE, "CoCreateInstanceEx failed: %08x\n", hr);
+    ok(IsEqualGUID(&create_instance_iid, qi_res.pIID), "Unexpected CreateInstance iid %s\n",
+       wine_dbgstr_guid(&create_instance_iid));
+
+    hr = CoRevokeClassObject(cookie);
+    ok_ole_success(hr, "CoRevokeClassObject");
 
     CoUninitialize();
 }
@@ -903,6 +989,59 @@ static void test_CoRegisterMessageFilter(void)
     CoUninitialize();
 }
 
+static IUnknown Test_Unknown;
+
+static HRESULT WINAPI EnumOLEVERB_QueryInterface(IEnumOLEVERB *iface, REFIID riid, void **ppv)
+{
+    return IUnknown_QueryInterface(&Test_Unknown, riid, ppv);
+}
+
+static ULONG WINAPI EnumOLEVERB_AddRef(IEnumOLEVERB *iface)
+{
+    return 2;
+}
+
+static ULONG WINAPI EnumOLEVERB_Release(IEnumOLEVERB *iface)
+{
+    return 1;
+}
+
+static HRESULT WINAPI EnumOLEVERB_Next(IEnumOLEVERB *iface, ULONG celt, OLEVERB *rgelt, ULONG *fetched)
+{
+    ok(0, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI EnumOLEVERB_Skip(IEnumOLEVERB *iface, ULONG celt)
+{
+    ok(0, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI EnumOLEVERB_Reset(IEnumOLEVERB *iface)
+{
+    ok(0, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI EnumOLEVERB_Clone(IEnumOLEVERB *iface, IEnumOLEVERB **ppenum)
+{
+    ok(0, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static const IEnumOLEVERBVtbl EnumOLEVERBVtbl = {
+    EnumOLEVERB_QueryInterface,
+    EnumOLEVERB_AddRef,
+    EnumOLEVERB_Release,
+    EnumOLEVERB_Next,
+    EnumOLEVERB_Skip,
+    EnumOLEVERB_Reset,
+    EnumOLEVERB_Clone
+};
+
+static IEnumOLEVERB EnumOLEVERB = { &EnumOLEVERBVtbl };
+
 static HRESULT WINAPI Test_IUnknown_QueryInterface(
     IUnknown *iface,
     REFIID riid,
@@ -910,16 +1049,17 @@ static HRESULT WINAPI Test_IUnknown_QueryInterface(
 {
     if (ppvObj == NULL) return E_POINTER;
 
-    if (IsEqualIID(riid, &IID_IUnknown) ||
-        IsEqualIID(riid, &IID_IWineTest))
-    {
+    if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IWineTest)) {
         *ppvObj = iface;
-        IUnknown_AddRef(iface);
-        return S_OK;
+    }else if(IsEqualIID(riid, &IID_IEnumOLEVERB)) {
+        *ppvObj = &EnumOLEVERB;
+    }else {
+        *ppvObj = NULL;
+        return E_NOINTERFACE;
     }
 
-    *ppvObj = NULL;
-    return E_NOINTERFACE;
+    IUnknown_AddRef((IUnknown*)*ppvObj);
+    return S_OK;
 }
 
 static ULONG WINAPI Test_IUnknown_AddRef(IUnknown *iface)
@@ -940,6 +1080,8 @@ static const IUnknownVtbl TestUnknown_Vtbl =
 };
 
 static IUnknown Test_Unknown = { &TestUnknown_Vtbl };
+
+static IPSFactoryBuffer *ps_factory_buffer;
 
 static HRESULT WINAPI PSFactoryBuffer_QueryInterface(
     IPSFactoryBuffer * This,
@@ -984,7 +1126,13 @@ static HRESULT WINAPI PSFactoryBuffer_CreateStub(
     /* [unique][in] */ IUnknown *pUnkServer,
     /* [out] */ IRpcStubBuffer **ppStub)
 {
-    return E_NOTIMPL;
+    CHECK_EXPECT(CreateStub);
+
+    ok(pUnkServer == (IUnknown*)&Test_Unknown, "unexpected pUnkServer %p\n", pUnkServer);
+    if(!ps_factory_buffer)
+        return E_NOTIMPL;
+
+    return IPSFactoryBuffer_CreateStub(ps_factory_buffer, &IID_IEnumOLEVERB, pUnkServer, ppStub);
 }
 
 static IPSFactoryBufferVtbl PSFactoryBufferVtbl =
@@ -1028,9 +1176,31 @@ static void test_CoRegisterPSClsid(void)
     hr = CreateStreamOnHGlobal(NULL, TRUE, &stream);
     ok_ole_success(hr, "CreateStreamOnHGlobal");
 
+    SET_EXPECT(CreateStub);
     hr = CoMarshalInterface(stream, &IID_IWineTest, &Test_Unknown, MSHCTX_INPROC, NULL, MSHLFLAGS_NORMAL);
     ok(hr == E_NOTIMPL, "CoMarshalInterface should have returned E_NOTIMPL instead of 0x%08x\n", hr);
+    CHECK_CALLED(CreateStub);
+
+    hr = CoGetPSClsid(&IID_IEnumOLEVERB, &clsid);
+    ok_ole_success(hr, "CoGetPSClsid");
+
+    hr = CoGetClassObject(&clsid, CLSCTX_INPROC_SERVER, NULL, &IID_IPSFactoryBuffer, (void **)&ps_factory_buffer);
+    ok_ole_success(hr, "CoGetClassObject");
+
+    hr = CoRegisterPSClsid(&IID_IEnumOLEVERB, &CLSID_WineTestPSFactoryBuffer);
+    ok_ole_success(hr, "CoRegisterPSClsid");
+
+    SET_EXPECT(CreateStub);
+    hr = CoMarshalInterface(stream, &IID_IEnumOLEVERB, (IUnknown*)&EnumOLEVERB, MSHCTX_INPROC, NULL, MSHLFLAGS_NORMAL);
+    ok(hr == S_OK, "CoMarshalInterface should have returned E_NOTIMPL instead of 0x%08x\n", hr);
+    CHECK_CALLED(CreateStub);
+
+    hr = CoMarshalInterface(stream, &IID_IEnumOLEVERB, &Test_Unknown, MSHCTX_INPROC, NULL, MSHLFLAGS_NORMAL);
+    ok(hr == S_OK, "CoMarshalInterface should have returned E_NOTIMPL instead of 0x%08x\n", hr);
+
     IStream_Release(stream);
+    IPSFactoryBuffer_Release(ps_factory_buffer);
+    ps_factory_buffer = NULL;
 
     hr = CoRevokeClassObject(dwRegistrationKey);
     ok_ole_success(hr, "CoRevokeClassObject");
@@ -1156,6 +1326,12 @@ static void test_CoGetPSClsid(void)
         ok(!res, "RegCreateKeyEx returned %d\n", res);
         res = RegCreateKeyExA(hkey_iface, clsidDeadBeef,
                               0, NULL, 0, KEY_ALL_ACCESS | opposite, NULL, &hkey, NULL);
+        if (res == ERROR_ACCESS_DENIED)
+        {
+            win_skip("Failed to create a key, skipping some of CoGetPSClsid() tests\n");
+            goto cleanup;
+        }
+
         ok(!res, "RegCreateKeyEx returned %d\n", res);
         res = RegCreateKeyExA(hkey, "ProxyStubClsid32",
                               0, NULL, 0, KEY_ALL_ACCESS | opposite, NULL, &hkey_psclsid, NULL);
@@ -1173,6 +1349,8 @@ static void test_CoGetPSClsid(void)
         RegCloseKey(hkey);
         res = pRegDeleteKeyExA(hkey_iface, clsidDeadBeef, opposite, 0);
         ok(!res, "RegDeleteKeyEx returned %d\n", res);
+
+    cleanup:
         RegCloseKey(hkey_iface);
     }
 
@@ -1554,7 +1732,7 @@ static void test_registered_object_thread_affinity(void)
     ok( !WaitForSingleObject(thread, 10000), "wait timed out\n" );
     GetExitCodeThread(thread, &exitcode);
     hr = exitcode;
-    ok(hr == RPC_E_WRONG_THREAD, "CoRevokeClassObject called from different "
+    ok(hr == RPC_E_WRONG_THREAD || broken(hr == S_OK) /* win8 */, "CoRevokeClassObject called from different "
        "thread to where registered should return RPC_E_WRONG_THREAD instead of 0x%08x\n", hr);
 
     thread = CreateThread(NULL, 0, register_class_object_thread, NULL, 0, &tid);
@@ -1629,7 +1807,7 @@ static void test_CoGetObjectContext(void)
 {
     HRESULT hr;
     ULONG refs;
-    IComThreadingInfo *pComThreadingInfo;
+    IComThreadingInfo *pComThreadingInfo, *threadinginfo2;
     IContextCallback *pContextCallback;
     IObjContext *pObjContext;
     APTTYPE apttype;
@@ -1637,10 +1815,11 @@ static void test_CoGetObjectContext(void)
     struct info info;
     HANDLE thread;
     DWORD tid, exitcode;
+    GUID id, id2;
 
     if (!pCoGetObjectContext)
     {
-        skip("CoGetObjectContext not present\n");
+        win_skip("CoGetObjectContext not present\n");
         return;
     }
 
@@ -1650,6 +1829,8 @@ static void test_CoGetObjectContext(void)
 
     /* show that COM doesn't have to be initialized for multi-threaded apartments if another
        thread has already done so */
+
+    test_apt_type(APTTYPE_CURRENT, APTTYPEQUALIFIER_NONE, FALSE, FALSE);
 
     info.wait = CreateEventA(NULL, TRUE, FALSE, NULL);
     ok(info.wait != NULL, "CreateEvent failed with error %d\n", GetLastError());
@@ -1662,9 +1843,28 @@ static void test_CoGetObjectContext(void)
 
     ok( !WaitForSingleObject(info.wait, 10000), "wait timed out\n" );
 
+    test_apt_type(APTTYPE_MTA, APTTYPEQUALIFIER_IMPLICIT_MTA, TRUE, TRUE);
+
     pComThreadingInfo = NULL;
     hr = pCoGetObjectContext(&IID_IComThreadingInfo, (void **)&pComThreadingInfo);
     ok(hr == S_OK, "Expected S_OK, got 0x%08x\n", hr);
+
+    threadinginfo2 = NULL;
+    hr = pCoGetObjectContext(&IID_IComThreadingInfo, (void **)&threadinginfo2);
+    ok(hr == S_OK, "Expected S_OK, got 0x%08x\n", hr);
+    ok(pComThreadingInfo == threadinginfo2, "got different instance\n");
+    IComThreadingInfo_Release(threadinginfo2);
+
+    hr = IComThreadingInfo_GetCurrentLogicalThreadId(pComThreadingInfo, NULL);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+
+    id = id2 = GUID_NULL;
+    hr = IComThreadingInfo_GetCurrentLogicalThreadId(pComThreadingInfo, &id);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = CoGetCurrentLogicalThreadId(&id2);
+    ok(IsEqualGUID(&id, &id2), "got %s, expected %s\n", wine_dbgstr_guid(&id), wine_dbgstr_guid(&id2));
+
     IComThreadingInfo_Release(pComThreadingInfo);
 
     SetEvent(info.stop);
@@ -1678,7 +1878,11 @@ static void test_CoGetObjectContext(void)
     CloseHandle(info.wait);
     CloseHandle(info.stop);
 
+    test_apt_type(APTTYPE_CURRENT, APTTYPEQUALIFIER_NONE, FALSE, FALSE);
+
     pCoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+
+    test_apt_type(APTTYPE_MAINSTA, APTTYPEQUALIFIER_NONE, FALSE, FALSE);
 
     hr = pCoGetObjectContext(&IID_IComThreadingInfo, (void **)&pComThreadingInfo);
     ok_ole_success(hr, "CoGetObjectContext");
@@ -1697,11 +1901,8 @@ static void test_CoGetObjectContext(void)
     hr = pCoGetObjectContext(&IID_IContextCallback, (void **)&pContextCallback);
     ok_ole_success(hr, "CoGetObjectContext(ContextCallback)");
 
-    if (hr == S_OK)
-    {
-        refs = IContextCallback_Release(pContextCallback);
-        ok(refs == 0, "pContextCallback should have 0 refs instead of %d refs\n", refs);
-    }
+    refs = IContextCallback_Release(pContextCallback);
+    ok(refs == 0, "pContextCallback should have 0 refs instead of %d refs\n", refs);
 
     CoUninitialize();
 
@@ -1724,11 +1925,8 @@ static void test_CoGetObjectContext(void)
     hr = pCoGetObjectContext(&IID_IContextCallback, (void **)&pContextCallback);
     ok_ole_success(hr, "CoGetObjectContext(ContextCallback)");
 
-    if (hr == S_OK)
-    {
-        refs = IContextCallback_Release(pContextCallback);
-        ok(refs == 0, "pContextCallback should have 0 refs instead of %d refs\n", refs);
-    }
+    refs = IContextCallback_Release(pContextCallback);
+    ok(refs == 0, "pContextCallback should have 0 refs instead of %d refs\n", refs);
 
     hr = pCoGetObjectContext(&IID_IObjContext, (void **)&pObjContext);
     ok_ole_success(hr, "CoGetObjectContext");
@@ -1850,7 +2048,7 @@ static void test_CoGetContextToken(void)
 {
     HRESULT hr;
     ULONG refs;
-    ULONG_PTR token;
+    ULONG_PTR token, token2;
     IObjContext *ctx;
     struct info info;
     HANDLE thread;
@@ -1870,6 +2068,8 @@ static void test_CoGetContextToken(void)
     /* show that COM doesn't have to be initialized for multi-threaded apartments if another
        thread has already done so */
 
+    test_apt_type(APTTYPE_CURRENT, APTTYPEQUALIFIER_NONE, FALSE, FALSE);
+
     info.wait = CreateEventA(NULL, TRUE, FALSE, NULL);
     ok(info.wait != NULL, "CreateEvent failed with error %d\n", GetLastError());
 
@@ -1881,9 +2081,16 @@ static void test_CoGetContextToken(void)
 
     ok( !WaitForSingleObject(info.wait, 10000), "wait timed out\n" );
 
+    test_apt_type(APTTYPE_MTA, APTTYPEQUALIFIER_IMPLICIT_MTA, TRUE, TRUE);
+
     token = 0;
     hr = pCoGetContextToken(&token);
     ok(hr == S_OK, "Expected S_OK, got 0x%08x\n", hr);
+
+    token2 = 0;
+    hr = pCoGetContextToken(&token2);
+    ok(hr == S_OK, "Expected S_OK, got 0x%08x\n", hr);
+    ok(token == token2, "got different token\n");
 
     SetEvent(info.stop);
     ok( !WaitForSingleObject(thread, 10000), "wait timed out\n" );
@@ -1896,7 +2103,11 @@ static void test_CoGetContextToken(void)
     CloseHandle(info.wait);
     CloseHandle(info.stop);
 
+    test_apt_type(APTTYPE_CURRENT, APTTYPEQUALIFIER_NONE, FALSE, FALSE);
+
     CoInitialize(NULL);
+
+    test_apt_type(APTTYPE_MAINSTA, APTTYPEQUALIFIER_NONE, FALSE, FALSE);
 
     hr = pCoGetContextToken(NULL);
     ok(hr == E_POINTER, "Expected E_POINTER, got 0x%08x\n", hr);
@@ -1906,18 +2117,23 @@ static void test_CoGetContextToken(void)
     ok(hr == S_OK, "Expected S_OK, got 0x%08x\n", hr);
     ok(token, "Expected token != 0\n");
 
+    token2 = 0;
+    hr = pCoGetContextToken(&token2);
+    ok(hr == S_OK, "Expected S_OK, got 0x%08x\n", hr);
+    ok(token2 == token, "got different token\n");
+
     refs = IUnknown_AddRef((IUnknown *)token);
-    todo_wine ok(refs == 1, "Expected 1, got %u\n", refs);
+    ok(refs == 1, "Expected 1, got %u\n", refs);
 
     hr = pCoGetObjectContext(&IID_IObjContext, (void **)&ctx);
     ok(hr == S_OK, "Expected S_OK, got 0x%08x\n", hr);
-    todo_wine ok(ctx == (IObjContext *)token, "Expected interface pointers to be the same\n");
+    ok(ctx == (IObjContext *)token, "Expected interface pointers to be the same\n");
 
     refs = IObjContext_AddRef(ctx);
-    todo_wine ok(refs == 3, "Expected 3, got %u\n", refs);
+    ok(refs == 3, "Expected 3, got %u\n", refs);
 
     refs = IObjContext_Release(ctx);
-    todo_wine ok(refs == 2, "Expected 2, got %u\n", refs);
+    ok(refs == 2, "Expected 2, got %u\n", refs);
 
     refs = IUnknown_Release((IUnknown *)token);
     ok(refs == 1, "Expected 1, got %u\n", refs);
@@ -1927,7 +2143,7 @@ static void test_CoGetContextToken(void)
     hr = pCoGetContextToken(&token);
     ok(hr == S_OK, "Expected S_OK, got 0x%08x\n", hr);
     ok(token, "Expected token != 0\n");
-    todo_wine ok(ctx == (IObjContext *)token, "Expected interface pointers to be the same\n");
+    ok(ctx == (IObjContext *)token, "Expected interface pointers to be the same\n");
 
     refs = IObjContext_AddRef(ctx);
     ok(refs == 2, "Expected 1, got %u\n", refs);
@@ -1961,10 +2177,14 @@ static void test_TreatAsClass(void)
     ok (IsEqualGUID(&out,&deadbeef), "expected to get same clsid back\n");
 
     lr = RegOpenKeyExA(HKEY_CLASSES_ROOT, "CLSID", 0, KEY_READ, &clsidkey);
-    ok(lr == ERROR_SUCCESS, "Couldn't open CLSID key\n");
+    ok(!lr, "Couldn't open CLSID key, error %d\n", lr);
 
     lr = RegCreateKeyExA(clsidkey, deadbeefA, 0, NULL, 0, KEY_WRITE, NULL, &deadbeefkey, NULL);
-    ok(lr == ERROR_SUCCESS, "Couldn't create class key\n");
+    if (lr) {
+        win_skip("CoGetTreatAsClass() tests will be skipped (failed to create a test key, error %d)\n", lr);
+        RegCloseKey(clsidkey);
+        return;
+    }
 
     hr = pCoTreatAsClass(&deadbeef, &deadbeef);
     ok(hr == REGDB_E_WRITEREGDB, "CoTreatAsClass gave wrong error: %08x\n", hr);
@@ -2040,6 +2260,73 @@ static void test_CoInitializeEx(void)
     OleUninitialize();
 }
 
+static void test_OleInitialize_InitCounting(void)
+{
+    HRESULT hr;
+    IUnknown *pUnk;
+    REFCLSID rclsid = &CLSID_InternetZoneManager;
+
+    /* 1. OleInitialize fails but OleUninitialize is still called: apartment stays initialized */
+    hr = pCoInitializeEx(NULL, COINIT_MULTITHREADED);
+    ok(hr == S_OK, "CoInitializeEx(COINIT_MULTITHREADED) failed with error 0x%08x\n", hr);
+
+    hr = OleInitialize(NULL);
+    ok(hr == RPC_E_CHANGED_MODE, "OleInitialize should have returned 0x%08x instead of 0x%08x\n", RPC_E_CHANGED_MODE, hr);
+    OleUninitialize();
+
+    pUnk = (IUnknown *)0xdeadbeef;
+    hr = CoCreateInstance(rclsid, NULL, 0x17, &IID_IUnknown, (void **)&pUnk);
+    ok(hr == S_OK, "CoCreateInstance should have returned 0x%08x instead of 0x%08x\n", S_OK, hr);
+    if (pUnk) IUnknown_Release(pUnk);
+
+    CoUninitialize();
+
+    /* 2. Extra multiple OleUninitialize: apartment stays initialized until CoUninitialize */
+    hr = CoInitialize(NULL);
+    ok(hr == S_OK, "CoInitialize() failed with error 0x%08x\n", hr);
+
+    hr = OleInitialize(NULL);
+    ok(hr == S_OK, "OleInitialize should have returned 0x%08x instead of 0x%08x\n", S_OK, hr);
+    OleUninitialize();
+    OleUninitialize();
+    OleUninitialize();
+
+    pUnk = (IUnknown *)0xdeadbeef;
+    hr = CoCreateInstance(rclsid, NULL, 0x17, &IID_IUnknown, (void **)&pUnk);
+    ok(hr == S_OK, "CoCreateInstance should have returned 0x%08x instead of 0x%08x\n", S_OK, hr);
+    if (pUnk) IUnknown_Release(pUnk);
+
+    CoUninitialize();
+
+    pUnk = (IUnknown *)0xdeadbeef;
+    hr = CoCreateInstance(rclsid, NULL, 0x17, &IID_IUnknown, (void **)&pUnk);
+    ok(hr == CO_E_NOTINITIALIZED, "CoCreateInstance should have returned 0x%08x instead of 0x%08x\n", CO_E_NOTINITIALIZED, hr);
+    if (pUnk) IUnknown_Release(pUnk);
+
+    /* 3. CoUninitialize does not formally deinit Ole */
+    hr = CoInitialize(NULL);
+    ok(hr == S_OK, "CoInitialize() failed with error 0x%08x\n", hr);
+
+    hr = OleInitialize(NULL);
+    ok(hr == S_OK, "OleInitialize should have returned 0x%08x instead of 0x%08x\n", S_OK, hr);
+
+    CoUninitialize();
+    CoUninitialize();
+
+    pUnk = (IUnknown *)0xdeadbeef;
+    hr = CoCreateInstance(rclsid, NULL, 0x17, &IID_IUnknown, (void **)&pUnk);
+    ok(hr == CO_E_NOTINITIALIZED, "CoCreateInstance should have returned 0x%08x instead of 0x%08x\n", CO_E_NOTINITIALIZED, hr);
+      /* COM is not initialized anymore */
+    if (pUnk) IUnknown_Release(pUnk);
+
+    hr = OleInitialize(NULL);
+    ok(hr == S_FALSE, "OleInitialize should have returned 0x%08x instead of 0x%08x\n", S_FALSE, hr);
+      /* ... but native OleInit returns S_FALSE as if Ole is considered initialized */
+
+    OleUninitialize();
+
+}
+
 static void test_OleRegGetMiscStatus(void)
 {
     ULONG_PTR cookie;
@@ -2084,6 +2371,163 @@ static void test_OleRegGetMiscStatus(void)
     }
 }
 
+static void test_OleRegGetUserType(void)
+{
+    static const WCHAR stdfont_usertypeW[] = {'S','t','a','n','d','a','r','d',' ','F','o','n','t',0};
+    static const WCHAR stdfont2_usertypeW[] = {'C','L','S','I','D','_','S','t','d','F','o','n','t',0};
+    static const WCHAR clsidkeyW[] = {'C','L','S','I','D',0};
+    static const WCHAR defvalueW[] = {'D','e','f','a','u','l','t',' ','N','a','m','e',0};
+    static const WCHAR auxvalue0W[] = {'A','u','x',' ','N','a','m','e',' ','0',0};
+    static const WCHAR auxvalue2W[] = {'A','u','x',' ','N','a','m','e',' ','2',0};
+    static const WCHAR auxvalue3W[] = {'A','u','x',' ','N','a','m','e',' ','3',0};
+    static const WCHAR auxvalue4W[] = {'A','u','x',' ','N','a','m','e',' ','4',0};
+
+    static const char auxvalues[][16] = {
+        "Aux Name 0",
+        "Aux Name 1",
+        "Aux Name 2",
+        "Aux Name 3",
+        "Aux Name 4"
+    };
+
+    HKEY clsidhkey, hkey, auxhkey, classkey;
+    DWORD form, ret, disposition;
+    WCHAR clsidW[39];
+    ULONG_PTR cookie;
+    HANDLE handle;
+    HRESULT hr;
+    WCHAR *str;
+    int i;
+
+    for (form = 0; form <= USERCLASSTYPE_APPNAME+1; form++) {
+        hr = OleRegGetUserType(&CLSID_Testclass, form, NULL);
+        ok(hr == E_INVALIDARG, "form %u: got 0x%08x\n", form, hr);
+
+        str = (void*)0xdeadbeef;
+        hr = OleRegGetUserType(&CLSID_Testclass, form, &str);
+        ok(hr == REGDB_E_CLASSNOTREG, "form %u: got 0x%08x\n", form, hr);
+        ok(str == NULL, "form %u: got %p\n", form, str);
+
+        /* same string returned for StdFont for all form types */
+        str = NULL;
+        hr = OleRegGetUserType(&CLSID_StdFont, form, &str);
+        ok(hr == S_OK, "form %u: got 0x%08x\n", form, hr);
+        ok(!lstrcmpW(str, stdfont_usertypeW) || !lstrcmpW(str, stdfont2_usertypeW) /* winxp */,
+            "form %u, got %s\n", form, wine_dbgstr_w(str));
+        CoTaskMemFree(str);
+    }
+
+    if ((handle = activate_context(actctx_manifest, &cookie)))
+    {
+        for (form = 0; form <= USERCLASSTYPE_APPNAME+1; form++) {
+            str = (void*)0xdeadbeef;
+            hr = OleRegGetUserType(&CLSID_Testclass, form, &str);
+            ok(hr == REGDB_E_CLASSNOTREG, "form %u: got 0x%08x\n", form, hr);
+            ok(str == NULL, "form %u: got %s\n", form, wine_dbgstr_w(str));
+
+            /* same string returned for StdFont for all form types */
+            str = NULL;
+            hr = OleRegGetUserType(&CLSID_StdFont, form, &str);
+            ok(hr == S_OK, "form %u: got 0x%08x\n", form, hr);
+            ok(!lstrcmpW(str, stdfont_usertypeW) || !lstrcmpW(str, stdfont2_usertypeW) /* winxp */,
+                "form %u, got %s\n", form, wine_dbgstr_w(str));
+            CoTaskMemFree(str);
+        }
+
+        pDeactivateActCtx(0, cookie);
+        pReleaseActCtx(handle);
+    }
+
+    /* test using registered CLSID */
+    StringFromGUID2(&CLSID_non_existent, clsidW, sizeof(clsidW)/sizeof(clsidW[0]));
+
+    ret = RegCreateKeyExW(HKEY_CLASSES_ROOT, clsidkeyW, 0, NULL, 0, KEY_ALL_ACCESS, NULL, &clsidhkey, &disposition);
+    if (!ret)
+    {
+        ret = RegCreateKeyExW(clsidhkey, clsidW, 0, NULL, 0, KEY_ALL_ACCESS, NULL, &classkey, NULL);
+        if (ret)
+            RegCloseKey(clsidhkey);
+    }
+
+    if (ret == ERROR_ACCESS_DENIED)
+    {
+        win_skip("Failed to create test key, skipping some of OleRegGetUserType() tests.\n");
+        return;
+    }
+
+    ok(!ret, "failed to create a key, error %d\n", ret);
+
+    ret = RegSetValueExW(classkey, NULL, 0, REG_SZ, (const BYTE*)defvalueW, sizeof(defvalueW));
+    ok(!ret, "got error %d\n", ret);
+
+    ret = RegCreateKeyExA(classkey, "AuxUserType", 0, NULL, 0, KEY_ALL_ACCESS, NULL, &auxhkey, NULL);
+    ok(!ret, "got error %d\n", ret);
+
+    /* populate AuxUserType */
+    for (i = 0; i <= 4; i++) {
+        char name[16];
+
+        sprintf(name, "AuxUserType\\%d", i);
+        ret = RegCreateKeyExA(classkey, name, 0, NULL, 0, KEY_ALL_ACCESS, NULL, &hkey, NULL);
+        ok(!ret, "got error %d\n", ret);
+
+        ret = RegSetValueExA(hkey, NULL, 0, REG_SZ, (const BYTE*)auxvalues[i], strlen(auxvalues[i]));
+        ok(!ret, "got error %d\n", ret);
+        RegCloseKey(hkey);
+    }
+
+    str = NULL;
+    hr = OleRegGetUserType(&CLSID_non_existent, 0, &str);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(!lstrcmpW(str, auxvalue0W), "got %s\n", wine_dbgstr_w(str));
+    CoTaskMemFree(str);
+
+    str = NULL;
+    hr = OleRegGetUserType(&CLSID_non_existent, USERCLASSTYPE_FULL, &str);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(!lstrcmpW(str, defvalueW), "got %s\n", wine_dbgstr_w(str));
+    CoTaskMemFree(str);
+
+    str = NULL;
+    hr = OleRegGetUserType(&CLSID_non_existent, USERCLASSTYPE_SHORT, &str);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(!lstrcmpW(str, auxvalue2W), "got %s\n", wine_dbgstr_w(str));
+    CoTaskMemFree(str);
+
+    str = NULL;
+    hr = OleRegGetUserType(&CLSID_non_existent, USERCLASSTYPE_APPNAME, &str);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(!lstrcmpW(str, auxvalue3W), "got %s\n", wine_dbgstr_w(str));
+    CoTaskMemFree(str);
+
+    str = NULL;
+    hr = OleRegGetUserType(&CLSID_non_existent, USERCLASSTYPE_APPNAME+1, &str);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(!lstrcmpW(str, auxvalue4W), "got %s\n", wine_dbgstr_w(str));
+    CoTaskMemFree(str);
+
+    str = NULL;
+    hr = OleRegGetUserType(&CLSID_non_existent, USERCLASSTYPE_APPNAME+2, &str);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(!lstrcmpW(str, defvalueW), "got %s\n", wine_dbgstr_w(str));
+    CoTaskMemFree(str);
+
+    /* registry cleanup */
+    for (i = 0; i <= 4; i++)
+    {
+        char name[2];
+        sprintf(name, "%d", i);
+        RegDeleteKeyA(auxhkey, name);
+    }
+    RegCloseKey(auxhkey);
+    RegDeleteKeyA(classkey, "AuxUserType");
+    RegCloseKey(classkey);
+    RegDeleteKeyW(clsidhkey, clsidW);
+    RegCloseKey(clsidhkey);
+    if (disposition == REG_CREATED_NEW_KEY)
+        RegDeleteKeyA(HKEY_CLASSES_ROOT, "CLSID");
+}
+
 static void test_CoCreateGuid(void)
 {
     HRESULT hr;
@@ -2105,9 +2549,61 @@ static DWORD CALLBACK release_semaphore_thread( LPVOID arg )
     return 0;
 }
 
+static DWORD CALLBACK send_message_thread(LPVOID arg)
+{
+    HWND hWnd = arg;
+    Sleep(50);
+    SendMessageA(hWnd, WM_DDE_FIRST, 0, 0);
+    return 0;
+}
+
+static DWORD CALLBACK post_message_thread(LPVOID arg)
+{
+    HWND hWnd = arg;
+    Sleep(50);
+    PostMessageA(hWnd, WM_DDE_FIRST, 0, 0);
+    return 0;
+}
+
+static const char cls_name[] = "cowait_test_class";
+static DWORD CALLBACK test_CoWaitForMultipleHandles_thread(LPVOID arg)
+{
+    HANDLE *handles = arg;
+    BOOL success;
+    DWORD index;
+    HRESULT hr;
+    HWND hWnd;
+    MSG msg;
+
+    hr = pCoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    ok(hr == S_OK, "CoInitializeEx failed with error 0x%08x\n", hr);
+
+    hWnd = CreateWindowExA(0, cls_name, "Test (thread)", WS_TILEDWINDOW, 0, 0, 640, 480, 0, 0, 0, 0);
+    ok(hWnd != 0, "CreateWindowExA failed %u\n", GetLastError());
+
+    index = 0xdeadbeef;
+    PostMessageA(hWnd, WM_DDE_FIRST, 0, 0);
+    hr = CoWaitForMultipleHandles(0, 50, 2, handles, &index);
+    ok(hr == RPC_S_CALLPENDING, "expected RPC_S_CALLPENDING, got 0x%08x\n", hr);
+    ok(index==0 || index==0xdeadbeef/* Win 8 */, "expected index 0, got %u\n", index);
+    success = PeekMessageA(&msg, hWnd, WM_DDE_FIRST, WM_DDE_FIRST, PM_REMOVE);
+    ok(!success, "CoWaitForMultipleHandles didn't pump any messages\n");
+
+    index = 0xdeadbeef;
+    PostMessageA(hWnd, WM_USER, 0, 0);
+    hr = CoWaitForMultipleHandles(0, 50, 2, handles, &index);
+    ok(hr == RPC_S_CALLPENDING, "expected RPC_S_CALLPENDING, got 0x%08x\n", hr);
+    ok(index==0 || index==0xdeadbeef/* Win 8 */, "expected index 0, got %u\n", index);
+    success = PeekMessageA(&msg, hWnd, WM_USER, WM_USER, PM_REMOVE);
+    ok(success, "CoWaitForMultipleHandles unexpectedly pumped messages\n");
+
+    DestroyWindow(hWnd);
+    CoUninitialize();
+    return 0;
+}
+
 static void test_CoWaitForMultipleHandles(void)
 {
-    static const char cls_name[] = "cowait_test_class";
     HANDLE handles[2], thread;
     DWORD index, tid;
     WNDCLASSEXA wc;
@@ -2184,6 +2680,32 @@ static void test_CoWaitForMultipleHandles(void)
     ok(index == 0 || broken(index == 0xdeadbeef) /* Win 8 */, "expected index 0, got %u\n", index);
     success = PeekMessageA(&msg, hWnd, WM_DDE_FIRST, WM_DDE_FIRST, PM_REMOVE);
     ok(!success, "CoWaitForMultipleHandles didn't pump any messages\n");
+
+    /* test PostMessageA/SendMessageA from a different thread */
+
+    index = 0xdeadbeef;
+    thread = CreateThread(NULL, 0, post_message_thread, hWnd, 0, &tid);
+    ok(thread != NULL, "CreateThread failed, error %u\n", GetLastError());
+    hr = CoWaitForMultipleHandles(0, 100, 2, handles, &index);
+    ok(hr == RPC_S_CALLPENDING, "expected RPC_S_CALLPENDING, got 0x%08x\n", hr);
+    ok(index == 0 || broken(index == 0xdeadbeef) /* Win 8 */, "expected index 0, got %u\n", index);
+    success = PeekMessageA(&msg, hWnd, WM_DDE_FIRST, WM_DDE_FIRST, PM_REMOVE);
+    ok(!success, "CoWaitForMultipleHandles didn't pump any messages\n");
+    index = WaitForSingleObject(thread, 200);
+    ok(index == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
+    CloseHandle(thread);
+
+    index = 0xdeadbeef;
+    thread = CreateThread(NULL, 0, send_message_thread, hWnd, 0, &tid);
+    ok(thread != NULL, "CreateThread failed, error %u\n", GetLastError());
+    hr = CoWaitForMultipleHandles(0, 100, 2, handles, &index);
+    ok(hr == RPC_S_CALLPENDING, "expected RPC_S_CALLPENDING, got 0x%08x\n", hr);
+    ok(index == 0 || broken(index == 0xdeadbeef) /* Win 8 */, "expected index 0, got %u\n", index);
+    success = PeekMessageA(&msg, hWnd, WM_DDE_FIRST, WM_DDE_FIRST, PM_REMOVE);
+    ok(!success, "CoWaitForMultipleHandles didn't pump any messages\n");
+    index = WaitForSingleObject(thread, 200);
+    ok(index == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
+    CloseHandle(thread);
 
     ReleaseSemaphore(handles[0], 1, NULL);
     ReleaseSemaphore(handles[1], 1, NULL);
@@ -2266,12 +2788,127 @@ static void test_CoWaitForMultipleHandles(void)
     hr = CoWaitForMultipleHandles(COWAIT_INPUTAVAILABLE, 50, 2, handles, &index);
     ok(hr == RPC_S_CALLPENDING || broken(hr == E_INVALIDARG) || broken(hr == S_OK) /* Win 8 */,
        "expected RPC_S_CALLPENDING, got 0x%08x\n", hr);
-    ReleaseSemaphore(handles[1], 1, NULL);
+    if (hr != S_OK) ReleaseSemaphore(handles[1], 1, NULL);
     ok(index == 0 || broken(index == 1) /* Win 8 */, "expected index 0, got %u\n", index);
     success = PeekMessageA(&msg, hWnd, WM_DDE_FIRST, WM_DDE_FIRST, PM_REMOVE);
     ok(!success || broken(success && hr == E_INVALIDARG),
        "CoWaitForMultipleHandles didn't pump any messages\n");
     index = WaitForSingleObject(thread, 200);
+    ok(index == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
+    CloseHandle(thread);
+
+    /* test behaviour of WM_QUIT (semaphores are still locked) */
+
+    PostMessageA(hWnd, WM_QUIT, 40, 0);
+    memset(&msg, 0, sizeof(msg));
+    success = PeekMessageA(&msg, hWnd, WM_QUIT, WM_QUIT, PM_REMOVE);
+    ok(success, "PeekMessageA failed, error %u\n", GetLastError());
+    ok(msg.message == WM_QUIT, "expected msg.message = WM_QUIT, got %u\n", msg.message);
+    ok(msg.wParam == 40, "expected msg.wParam = 40, got %lu\n", msg.wParam);
+    success = PeekMessageA(&msg, hWnd, WM_QUIT, WM_QUIT, PM_REMOVE);
+    ok(!success, "PeekMessageA succeeded\n");
+
+    index = 0xdeadbeef;
+    PostMessageA(hWnd, WM_DDE_FIRST, 0, 0);
+    PostMessageA(hWnd, WM_QUIT, 41, 0);
+    thread = CreateThread(NULL, 0, post_message_thread, hWnd, 0, &tid);
+    ok(thread != NULL, "CreateThread failed, error %u\n", GetLastError());
+    hr = CoWaitForMultipleHandles(0, 100, 2, handles, &index);
+    ok(hr == RPC_S_CALLPENDING, "expected RPC_S_CALLPENDING, got 0x%08x\n", hr);
+    ok(index == 0 || broken(index == 0xdeadbeef) /* Win 8 */, "expected index 0, got %u\n", index);
+    success = PeekMessageA(&msg, hWnd, WM_DDE_FIRST, WM_DDE_FIRST, PM_REMOVE);
+    todo_wine
+    ok(success || broken(!success) /* Win 2000/XP/8 */, "PeekMessageA failed, error %u\n", GetLastError());
+    success = PeekMessageA(&msg, hWnd, WM_DDE_FIRST, WM_DDE_FIRST, PM_REMOVE);
+    ok(!success, "PeekMessageA succeeded\n");
+    memset(&msg, 0, sizeof(msg));
+    success = PeekMessageA(&msg, hWnd, WM_QUIT, WM_QUIT, PM_REMOVE);
+    todo_wine
+    ok(!success || broken(success) /* Win 2000/XP/8 */, "PeekMessageA succeeded\n");
+    if (success)
+    {
+        ok(msg.message == WM_QUIT, "expected msg.message = WM_QUIT, got %u\n", msg.message);
+        ok(msg.wParam == 41, "expected msg.wParam = 41, got %lu\n", msg.wParam);
+    }
+    index = WaitForSingleObject(thread, 200);
+    ok(index == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
+    CloseHandle(thread);
+
+    index = 0xdeadbeef;
+    PostMessageA(hWnd, WM_DDE_FIRST, 0, 0);
+    PostMessageA(hWnd, WM_QUIT, 42, 0);
+    thread = CreateThread(NULL, 0, send_message_thread, hWnd, 0, &tid);
+    ok(thread != NULL, "CreateThread failed, error %u\n", GetLastError());
+    hr = CoWaitForMultipleHandles(0, 100, 2, handles, &index);
+    ok(hr == RPC_S_CALLPENDING, "expected RPC_S_CALLPENDING, got 0x%08x\n", hr);
+    ok(index == 0 || broken(index == 0xdeadbeef) /* Win 8 */, "expected index 0, got %u\n", index);
+    success = PeekMessageA(&msg, hWnd, WM_DDE_FIRST, WM_DDE_FIRST, PM_REMOVE);
+    ok(!success, "CoWaitForMultipleHandles didn't pump all WM_DDE_FIRST messages\n");
+    memset(&msg, 0, sizeof(msg));
+    success = PeekMessageA(&msg, hWnd, WM_QUIT, WM_QUIT, PM_REMOVE);
+    ok(success, "PeekMessageA failed, error %u\n", GetLastError());
+    ok(msg.message == WM_QUIT, "expected msg.message = WM_QUIT, got %u\n", msg.message);
+    ok(msg.wParam == 42, "expected msg.wParam = 42, got %lu\n", msg.wParam);
+    index = WaitForSingleObject(thread, 200);
+    ok(index == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
+    CloseHandle(thread);
+
+    PostQuitMessage(43);
+    memset(&msg, 0, sizeof(msg));
+    success = PeekMessageA(&msg, hWnd, WM_QUIT, WM_QUIT, PM_REMOVE);
+    ok(success || broken(!success) /* Win 8 */, "PeekMessageA failed, error %u\n", GetLastError());
+    if (!success)
+        win_skip("PostQuitMessage didn't queue a WM_QUIT message, skipping tests\n");
+    else
+    {
+        ok(msg.message == WM_QUIT, "expected msg.message = WM_QUIT, got %u\n", msg.message);
+        ok(msg.wParam == 43, "expected msg.wParam = 43, got %lu\n", msg.wParam);
+        success = PeekMessageA(&msg, hWnd, WM_QUIT, WM_QUIT, PM_REMOVE);
+        ok(!success, "PeekMessageA succeeded\n");
+
+        index = 0xdeadbeef;
+        PostMessageA(hWnd, WM_DDE_FIRST, 0, 0);
+        PostQuitMessage(44);
+        thread = CreateThread(NULL, 0, post_message_thread, hWnd, 0, &tid);
+        ok(thread != NULL, "CreateThread failed, error %u\n", GetLastError());
+        hr = CoWaitForMultipleHandles(0, 100, 2, handles, &index);
+        ok(hr == RPC_S_CALLPENDING, "expected RPC_S_CALLPENDING, got 0x%08x\n", hr);
+        ok(index == 0 || broken(index == 0xdeadbeef) /* Win 8 */, "expected index 0, got %u\n", index);
+        success = PeekMessageA(&msg, hWnd, WM_DDE_FIRST, WM_DDE_FIRST, PM_REMOVE);
+        ok(success, "PeekMessageA failed, error %u\n", GetLastError());
+        success = PeekMessageA(&msg, hWnd, WM_DDE_FIRST, WM_DDE_FIRST, PM_REMOVE);
+        todo_wine
+        ok(!success, "PeekMessageA succeeded\n");
+        success = PeekMessageA(&msg, hWnd, WM_QUIT, WM_QUIT, PM_REMOVE);
+        todo_wine
+        ok(!success, "CoWaitForMultipleHandles didn't remove WM_QUIT messages\n");
+        index = WaitForSingleObject(thread, 200);
+        ok(index == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
+        CloseHandle(thread);
+
+        index = 0xdeadbeef;
+        PostMessageA(hWnd, WM_DDE_FIRST, 0, 0);
+        PostQuitMessage(45);
+        thread = CreateThread(NULL, 0, send_message_thread, hWnd, 0, &tid);
+        ok(thread != NULL, "CreateThread failed, error %u\n", GetLastError());
+        hr = CoWaitForMultipleHandles(0, 100, 2, handles, &index);
+        ok(hr == RPC_S_CALLPENDING, "expected RPC_S_CALLPENDING, got 0x%08x\n", hr);
+        ok(index == 0 || broken(index == 0xdeadbeef) /* Win 8 */, "expected index 0, got %u\n", index);
+        success = PeekMessageA(&msg, hWnd, WM_DDE_FIRST, WM_DDE_FIRST, PM_REMOVE);
+        ok(success, "PeekMessageA failed, error %u\n", GetLastError());
+        success = PeekMessageA(&msg, hWnd, WM_DDE_FIRST, WM_DDE_FIRST, PM_REMOVE);
+        todo_wine
+        ok(!success, "PeekMessageA succeeded\n");
+        success = PeekMessageA(&msg, hWnd, WM_QUIT, WM_QUIT, PM_REMOVE);
+        ok(!success, "CoWaitForMultipleHandles didn't remove WM_QUIT messages\n");
+        index = WaitForSingleObject(thread, 200);
+        ok(index == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
+        CloseHandle(thread);
+    }
+
+    /* test message pumping when CoWaitForMultipleHandles is called from non main apartment thread */
+    thread = CreateThread(NULL, 0, test_CoWaitForMultipleHandles_thread, handles, 0, &tid);
+    index = WaitForSingleObject(thread, 500);
     ok(index == WAIT_OBJECT_0, "WaitForSingleObject failed\n");
     CloseHandle(thread);
 
@@ -2281,6 +2918,642 @@ static void test_CoWaitForMultipleHandles(void)
 
     success = UnregisterClassA(cls_name, GetModuleHandleA(0));
     ok(success, "UnregisterClass failed %u\n", GetLastError());
+
+    CoUninitialize();
+}
+
+static void test_CoGetMalloc(void)
+{
+    IMalloc *imalloc;
+    HRESULT hr;
+
+    if (0) /* crashes on native */
+        hr = CoGetMalloc(0, NULL);
+
+    imalloc = (void*)0xdeadbeef;
+    hr = CoGetMalloc(0, &imalloc);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+    ok(imalloc == NULL, "got %p\n", imalloc);
+
+    imalloc = (void*)0xdeadbeef;
+    hr = CoGetMalloc(MEMCTX_SHARED, &imalloc);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+    ok(imalloc == NULL, "got %p\n", imalloc);
+
+    imalloc = (void*)0xdeadbeef;
+    hr = CoGetMalloc(MEMCTX_MACSYSTEM, &imalloc);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+    ok(imalloc == NULL, "got %p\n", imalloc);
+
+    imalloc = (void*)0xdeadbeef;
+    hr = CoGetMalloc(MEMCTX_UNKNOWN, &imalloc);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+    ok(imalloc == NULL, "got %p\n", imalloc);
+
+    imalloc = (void*)0xdeadbeef;
+    hr = CoGetMalloc(MEMCTX_SAME, &imalloc);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+    ok(imalloc == NULL, "got %p\n", imalloc);
+
+    imalloc = NULL;
+    hr = CoGetMalloc(MEMCTX_TASK, &imalloc);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(imalloc != NULL, "got %p\n", imalloc);
+    IMalloc_Release(imalloc);
+}
+
+static void test_CoGetApartmentType(void)
+{
+    APTTYPEQUALIFIER qualifier;
+    APTTYPE type;
+    HRESULT hr;
+
+    if (!pCoGetApartmentType)
+    {
+        win_skip("CoGetApartmentType not present\n");
+        return;
+    }
+
+    hr = pCoGetApartmentType(NULL, NULL);
+    ok(hr == E_INVALIDARG, "CoGetApartmentType succeeded, error: 0x%08x\n", hr);
+
+    type = 0xdeadbeef;
+    hr = pCoGetApartmentType(&type, NULL);
+    ok(hr == E_INVALIDARG, "CoGetApartmentType succeeded, error: 0x%08x\n", hr);
+    ok(type == 0xdeadbeef, "Expected 0xdeadbeef, got %u\n", type);
+
+    qualifier = 0xdeadbeef;
+    hr = pCoGetApartmentType(NULL, &qualifier);
+    ok(hr == E_INVALIDARG, "CoGetApartmentType succeeded, error: 0x%08x\n", hr);
+    ok(qualifier == 0xdeadbeef, "Expected 0xdeadbeef, got %u\n", qualifier);
+
+    type = 0xdeadbeef;
+    qualifier = 0xdeadbeef;
+    hr = pCoGetApartmentType(&type, &qualifier);
+    ok(hr == CO_E_NOTINITIALIZED, "CoGetApartmentType succeeded, error: 0x%08x\n", hr);
+    ok(type == APTTYPE_CURRENT, "Expected APTTYPE_CURRENT, got %u\n", type);
+    ok(qualifier == APTTYPEQUALIFIER_NONE, "Expected APTTYPEQUALIFIER_NONE, got %u\n", qualifier);
+
+    type = 0xdeadbeef;
+    qualifier = 0xdeadbeef;
+    hr = pCoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    ok(hr == S_OK, "CoInitializeEx failed, error: 0x%08x\n", hr);
+    hr = pCoGetApartmentType(&type, &qualifier);
+    ok(hr == S_OK, "CoGetApartmentType failed, error: 0x%08x\n", hr);
+    ok(type == APTTYPE_MAINSTA, "Expected APTTYPE_MAINSTA, got %u\n", type);
+    ok(qualifier == APTTYPEQUALIFIER_NONE, "Expected APTTYPEQUALIFIER_NONE, got %u\n", qualifier);
+    CoUninitialize();
+
+    type = 0xdeadbeef;
+    qualifier = 0xdeadbeef;
+    hr = pCoInitializeEx(NULL, COINIT_MULTITHREADED);
+    ok(hr == S_OK, "CoInitializeEx failed, error: 0x%08x\n", hr);
+    hr = pCoGetApartmentType(&type, &qualifier);
+    ok(hr == S_OK, "CoGetApartmentType failed, error: 0x%08x\n", hr);
+    ok(type == APTTYPE_MTA, "Expected APTTYPE_MTA, got %u\n", type);
+    ok(qualifier == APTTYPEQUALIFIER_NONE, "Expected APTTYPEQUALIFIER_NONE, got %u\n", qualifier);
+    CoUninitialize();
+}
+
+static HRESULT WINAPI testspy_QI(IMallocSpy *iface, REFIID riid, void **obj)
+{
+    if (IsEqualIID(riid, &IID_IMallocSpy) || IsEqualIID(riid, &IID_IUnknown))
+    {
+        *obj = iface;
+        IMallocSpy_AddRef(iface);
+        return S_OK;
+    }
+
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI testspy_AddRef(IMallocSpy *iface)
+{
+    return 2;
+}
+
+static ULONG WINAPI testspy_Release(IMallocSpy *iface)
+{
+    return 1;
+}
+
+static SIZE_T WINAPI testspy_PreAlloc(IMallocSpy *iface, SIZE_T cb)
+{
+    ok(0, "unexpected call\n");
+    return 0;
+}
+
+static void* WINAPI testspy_PostAlloc(IMallocSpy *iface, void *ptr)
+{
+    ok(0, "unexpected call\n");
+    return NULL;
+}
+
+static void* WINAPI testspy_PreFree(IMallocSpy *iface, void *ptr, BOOL spyed)
+{
+    ok(0, "unexpected call\n");
+    return NULL;
+}
+
+static void WINAPI testspy_PostFree(IMallocSpy *iface, BOOL spyed)
+{
+    ok(0, "unexpected call\n");
+}
+
+static SIZE_T WINAPI testspy_PreRealloc(IMallocSpy *iface, void *ptr, SIZE_T cb, void **newptr, BOOL spyed)
+{
+    ok(0, "unexpected call\n");
+    return 0;
+}
+
+static void* WINAPI testspy_PostRealloc(IMallocSpy *iface, void *ptr, BOOL spyed)
+{
+    ok(0, "unexpected call\n");
+    return NULL;
+}
+
+static void* WINAPI testspy_PreGetSize(IMallocSpy *iface, void *ptr, BOOL spyed)
+{
+    ok(0, "unexpected call\n");
+    return NULL;
+}
+
+static SIZE_T WINAPI testspy_PostGetSize(IMallocSpy *iface, SIZE_T actual, BOOL spyed)
+{
+    ok(0, "unexpected call\n");
+    return 0;
+}
+
+static void* WINAPI testspy_PreDidAlloc(IMallocSpy *iface, void *ptr, BOOL spyed)
+{
+    ok(0, "unexpected call\n");
+    return NULL;
+}
+
+static int WINAPI testspy_PostDidAlloc(IMallocSpy *iface, void *ptr, BOOL spyed, int actual)
+{
+    ok(0, "unexpected call\n");
+    return 0;
+}
+
+static void WINAPI testspy_PreHeapMinimize(IMallocSpy *iface)
+{
+    ok(0, "unexpected call\n");
+}
+
+static void WINAPI testspy_PostHeapMinimize(IMallocSpy *iface)
+{
+    ok(0, "unexpected call\n");
+}
+
+static const IMallocSpyVtbl testspyvtbl =
+{
+    testspy_QI,
+    testspy_AddRef,
+    testspy_Release,
+    testspy_PreAlloc,
+    testspy_PostAlloc,
+    testspy_PreFree,
+    testspy_PostFree,
+    testspy_PreRealloc,
+    testspy_PostRealloc,
+    testspy_PreGetSize,
+    testspy_PostGetSize,
+    testspy_PreDidAlloc,
+    testspy_PostDidAlloc,
+    testspy_PreHeapMinimize,
+    testspy_PostHeapMinimize
+};
+
+static IMallocSpy testspy = { &testspyvtbl };
+
+static void test_IMallocSpy(void)
+{
+    IMalloc *imalloc;
+    HRESULT hr;
+
+    hr = CoRegisterMallocSpy(NULL);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+
+    hr = CoRevokeMallocSpy();
+    ok(hr == CO_E_OBJNOTREG, "got 0x%08x\n", hr);
+
+    hr = CoRegisterMallocSpy(&testspy);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = CoRegisterMallocSpy(NULL);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+
+    hr = CoRegisterMallocSpy(&testspy);
+    ok(hr == CO_E_OBJISREG, "got 0x%08x\n", hr);
+
+    imalloc = NULL;
+    hr = CoGetMalloc(MEMCTX_TASK, &imalloc);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(imalloc != NULL, "got %p\n", imalloc);
+
+    IMalloc_Free(imalloc, NULL);
+
+    IMalloc_Release(imalloc);
+
+    hr = CoRevokeMallocSpy();
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = CoRevokeMallocSpy();
+    ok(hr == CO_E_OBJNOTREG, "got 0x%08x\n", hr);
+}
+
+static void test_CoGetCurrentLogicalThreadId(void)
+{
+    HRESULT hr;
+    GUID id;
+
+    hr = CoGetCurrentLogicalThreadId(NULL);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+
+    id = GUID_NULL;
+    hr = CoGetCurrentLogicalThreadId(&id);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(!IsEqualGUID(&id, &GUID_NULL), "got null id\n");
+}
+
+static HRESULT WINAPI testinitialize_QI(IInitializeSpy *iface, REFIID riid, void **obj)
+{
+    if (IsEqualIID(riid, &IID_IInitializeSpy) || IsEqualIID(riid, &IID_IUnknown))
+    {
+        *obj = iface;
+        IInitializeSpy_AddRef(iface);
+        return S_OK;
+    }
+
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI testinitialize_AddRef(IInitializeSpy *iface)
+{
+    return 2;
+}
+
+static ULONG WINAPI testinitialize_Release(IInitializeSpy *iface)
+{
+    return 1;
+}
+
+static HRESULT WINAPI testinitialize_PreInitialize(IInitializeSpy *iface, DWORD coinit, DWORD aptrefs)
+{
+    ok(0, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI testinitialize_PostInitialize(IInitializeSpy *iface, HRESULT hr, DWORD coinit, DWORD aptrefs)
+{
+    ok(0, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI testinitialize_PreUninitialize(IInitializeSpy *iface, DWORD aptrefs)
+{
+    ok(0, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI testinitialize_PostUninitialize(IInitializeSpy *iface, DWORD aptrefs)
+{
+    ok(0, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static const IInitializeSpyVtbl testinitializevtbl =
+{
+    testinitialize_QI,
+    testinitialize_AddRef,
+    testinitialize_Release,
+    testinitialize_PreInitialize,
+    testinitialize_PostInitialize,
+    testinitialize_PreUninitialize,
+    testinitialize_PostUninitialize
+};
+
+static IInitializeSpy testinitialize = { &testinitializevtbl };
+
+static void test_IInitializeSpy(void)
+{
+    ULARGE_INTEGER cookie, cookie1, cookie2;
+    HRESULT hr;
+
+    hr = CoRegisterInitializeSpy(NULL, NULL);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+
+    cookie.QuadPart = 1;
+    hr = CoRegisterInitializeSpy(NULL, &cookie);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+    ok(cookie.QuadPart == 1, "got wrong cookie\n");
+
+    hr = CoRegisterInitializeSpy(&testinitialize, NULL);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+
+    cookie.HighPart = 0;
+    cookie.LowPart = 1;
+    hr = CoRegisterInitializeSpy(&testinitialize, &cookie);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+todo_wine {
+    ok(cookie.HighPart == GetCurrentThreadId(), "got high part 0x%08x, expected 0x%08x\n", cookie.HighPart,
+        GetCurrentThreadId());
+    ok(cookie.LowPart == 0, "got wrong low part 0x%x\n", cookie.LowPart);
+}
+    /* register same instance one more time */
+    cookie1.HighPart = 0;
+    cookie1.LowPart = 0;
+    hr = CoRegisterInitializeSpy(&testinitialize, &cookie1);
+todo_wine {
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(cookie1.HighPart == GetCurrentThreadId(), "got high part 0x%08x, expected 0x%08x\n", cookie1.HighPart,
+        GetCurrentThreadId());
+    ok(cookie1.LowPart == 1, "got wrong low part 0x%x\n", cookie1.LowPart);
+}
+    cookie2.HighPart = 0;
+    cookie2.LowPart = 0;
+    hr = CoRegisterInitializeSpy(&testinitialize, &cookie2);
+todo_wine {
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(cookie2.HighPart == GetCurrentThreadId(), "got high part 0x%08x, expected 0x%08x\n", cookie2.HighPart,
+        GetCurrentThreadId());
+    ok(cookie2.LowPart == 2, "got wrong low part 0x%x\n", cookie2.LowPart);
+}
+    hr = CoRevokeInitializeSpy(cookie1);
+todo_wine
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = CoRevokeInitializeSpy(cookie1);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+
+    cookie1.HighPart = 0;
+    cookie1.LowPart = 0;
+    hr = CoRegisterInitializeSpy(&testinitialize, &cookie1);
+todo_wine {
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(cookie1.HighPart == GetCurrentThreadId(), "got high part 0x%08x, expected 0x%08x\n", cookie1.HighPart,
+        GetCurrentThreadId());
+    ok(cookie1.LowPart == 1, "got wrong low part 0x%x\n", cookie1.LowPart);
+}
+    hr = CoRevokeInitializeSpy(cookie);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = CoRevokeInitializeSpy(cookie1);
+todo_wine
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = CoRevokeInitializeSpy(cookie2);
+todo_wine
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+}
+
+static HRESULT g_persistfile_qi_ret;
+static HRESULT g_persistfile_load_ret;
+static HRESULT WINAPI testinstance_QI(IPersistFile *iface, REFIID riid, void **obj)
+{
+    if (IsEqualIID(riid, &IID_IUnknown)) {
+        *obj = iface;
+        IUnknown_AddRef(iface);
+        return S_OK;
+    }
+
+    if (IsEqualIID(riid, &IID_IPersistFile)) {
+        if (SUCCEEDED(g_persistfile_qi_ret)) {
+            *obj = iface;
+            IUnknown_AddRef(iface);
+        }
+        else
+            *obj = NULL;
+        return g_persistfile_qi_ret;
+    }
+
+    ok(0, "unexpected riid %s\n", wine_dbgstr_guid(riid));
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI testinstance_AddRef(IPersistFile *iface)
+{
+    return 2;
+}
+
+static ULONG WINAPI testinstance_Release(IPersistFile *iface)
+{
+    return 1;
+}
+
+static HRESULT WINAPI testinstance_GetClassID(IPersistFile *iface, CLSID *clsid)
+{
+    ok(0, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI testinstance_IsDirty(IPersistFile *iface)
+{
+    ok(0, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI testinstance_Load(IPersistFile *iface, LPCOLESTR filename, DWORD mode)
+{
+    return g_persistfile_load_ret;
+}
+
+static HRESULT WINAPI testinstance_Save(IPersistFile *iface, LPCOLESTR filename, BOOL remember)
+{
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI testinstance_SaveCompleted(IPersistFile *iface, LPCOLESTR filename)
+{
+    ok(0, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI testinstance_GetCurFile(IPersistFile *iface, LPOLESTR *filename)
+{
+    ok(0, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static const IPersistFileVtbl testpersistfilevtbl = {
+    testinstance_QI,
+    testinstance_AddRef,
+    testinstance_Release,
+    testinstance_GetClassID,
+    testinstance_IsDirty,
+    testinstance_Load,
+    testinstance_Save,
+    testinstance_SaveCompleted,
+    testinstance_GetCurFile
+};
+
+static IPersistFile testpersistfile = { &testpersistfilevtbl };
+
+static HRESULT WINAPI getinstance_cf_QI(IClassFactory *iface, REFIID riid, void **obj)
+{
+    if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IClassFactory)) {
+        *obj = iface;
+        IClassFactory_AddRef(iface);
+        return S_OK;
+    }
+
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI getinstance_cf_AddRef(IClassFactory *iface)
+{
+    return 2;
+}
+
+static ULONG WINAPI getinstance_cf_Release(IClassFactory *iface)
+{
+    return 1;
+}
+
+static HRESULT WINAPI getinstance_cf_CreateInstance(IClassFactory *iface, IUnknown *outer,
+    REFIID riid, void **obj)
+{
+    if (IsEqualIID(riid, &IID_IUnknown)) {
+        *obj = &testpersistfile;
+        return S_OK;
+    }
+
+    ok(0, "unexpected call, riid %s\n", wine_dbgstr_guid(riid));
+    *obj = NULL;
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI getinstance_cf_LockServer(IClassFactory *iface, BOOL lock)
+{
+    ok(0, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static const IClassFactoryVtbl getinstance_cf_vtbl = {
+    getinstance_cf_QI,
+    getinstance_cf_AddRef,
+    getinstance_cf_Release,
+    getinstance_cf_CreateInstance,
+    getinstance_cf_LockServer
+};
+
+static IClassFactory getinstance_cf = { &getinstance_cf_vtbl  };
+
+static void test_CoGetInstanceFromFile(void)
+{
+    static const WCHAR filenameW[] = {'d','u','m','m','y','p','a','t','h',0};
+    CLSID *clsid = (CLSID*)&CLSID_testclsid;
+    MULTI_QI mqi[2];
+    DWORD cookie;
+    HRESULT hr;
+
+    hr = pCoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    /* CLSID is not specified, file does not exist */
+    mqi[0].pIID = &IID_IUnknown;
+    mqi[0].pItf = NULL;
+    mqi[0].hr = E_NOTIMPL;
+    hr = CoGetInstanceFromFile(NULL, NULL, NULL, CLSCTX_INPROC_SERVER, STGM_READ, (OLECHAR*)filenameW, 1, mqi);
+todo_wine
+    ok(hr == MK_E_CANTOPENFILE, "got 0x%08x\n", hr);
+    ok(mqi[0].pItf == NULL, "got %p\n", mqi[0].pItf);
+    ok(mqi[0].hr == E_NOINTERFACE, "got 0x%08x\n", mqi[0].hr);
+
+    /* class is not available */
+    mqi[0].pIID = &IID_IUnknown;
+    mqi[0].pItf = NULL;
+    mqi[0].hr = E_NOTIMPL;
+    hr = CoGetInstanceFromFile(NULL, clsid, NULL, CLSCTX_INPROC_SERVER, STGM_READ, (OLECHAR*)filenameW, 1, mqi);
+    ok(hr == REGDB_E_CLASSNOTREG, "got 0x%08x\n", hr);
+    ok(mqi[0].pItf == NULL, "got %p\n", mqi[0].pItf);
+    ok(mqi[0].hr == REGDB_E_CLASSNOTREG, "got 0x%08x\n", mqi[0].hr);
+
+    hr = CoRegisterClassObject(clsid, (IUnknown*)&getinstance_cf, CLSCTX_INPROC_SERVER, REGCLS_MULTIPLEUSE,
+        &cookie);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    mqi[0].pIID = &IID_IUnknown;
+    mqi[0].pItf = (void*)0xdeadbeef;
+    mqi[0].hr = S_OK;
+    hr = CoGetInstanceFromFile(NULL, clsid, NULL, CLSCTX_INPROC_SERVER, STGM_READ, (OLECHAR*)filenameW, 1, mqi);
+todo_wine {
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+    ok(mqi[0].pItf == (void*)0xdeadbeef, "got %p\n", mqi[0].pItf);
+}
+    ok(mqi[0].hr == S_OK, "got 0x%08x\n", mqi[0].hr);
+
+    mqi[0].pIID = &IID_IUnknown;
+    mqi[0].pItf = (void*)0xdeadbeef;
+    mqi[0].hr = E_NOTIMPL;
+    hr = CoGetInstanceFromFile(NULL, clsid, NULL, CLSCTX_INPROC_SERVER, STGM_READ, (OLECHAR*)filenameW, 1, mqi);
+todo_wine {
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+    ok(mqi[0].pItf == (void*)0xdeadbeef, "got %p\n", mqi[0].pItf);
+    ok(mqi[0].hr == E_NOTIMPL, "got 0x%08x\n", mqi[0].hr);
+}
+    mqi[0].pIID = &IID_IUnknown;
+    mqi[0].pItf = NULL;
+    mqi[0].hr = E_NOTIMPL;
+    hr = CoGetInstanceFromFile(NULL, clsid, NULL, CLSCTX_INPROC_SERVER, STGM_READ, (OLECHAR*)filenameW, 1, mqi);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(mqi[0].pItf != NULL, "got %p\n", mqi[0].pItf);
+    ok(mqi[0].hr == S_OK, "got 0x%08x\n", mqi[0].hr);
+
+    mqi[0].pIID = &IID_IUnknown;
+    mqi[0].pItf = NULL;
+    mqi[0].hr = S_OK;
+    hr = CoGetInstanceFromFile(NULL, clsid, NULL, CLSCTX_INPROC_SERVER, STGM_READ, (OLECHAR*)filenameW, 1, mqi);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(mqi[0].pItf != NULL, "got %p\n", mqi[0].pItf);
+    ok(mqi[0].hr == S_OK, "got 0x%08x\n", mqi[0].hr);
+
+    mqi[0].pIID = &IID_IUnknown;
+    mqi[0].pItf = NULL;
+    mqi[0].hr = S_OK;
+    g_persistfile_qi_ret = S_FALSE;
+    hr = CoGetInstanceFromFile(NULL, clsid, NULL, CLSCTX_INPROC_SERVER, STGM_READ, (OLECHAR*)filenameW, 1, mqi);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(mqi[0].pItf != NULL, "got %p\n", mqi[0].pItf);
+    ok(mqi[0].hr == S_OK, "got 0x%08x\n", mqi[0].hr);
+    g_persistfile_qi_ret = S_OK;
+
+    mqi[0].pIID = &IID_IUnknown;
+    mqi[0].pItf = NULL;
+    mqi[0].hr = S_OK;
+    mqi[1].pIID = &IID_IUnknown;
+    mqi[1].pItf = NULL;
+    mqi[1].hr = S_OK;
+    g_persistfile_qi_ret = 0x8000efef;
+    hr = CoGetInstanceFromFile(NULL, clsid, NULL, CLSCTX_INPROC_SERVER, STGM_READ, (OLECHAR*)filenameW, 2, mqi);
+    ok(hr == 0x8000efef, "got 0x%08x\n", hr);
+    ok(mqi[0].pItf == NULL, "got %p\n", mqi[0].pItf);
+    ok(mqi[0].hr == 0x8000efef, "got 0x%08x\n", mqi[0].hr);
+    ok(mqi[1].pItf == NULL, "got %p\n", mqi[1].pItf);
+    ok(mqi[1].hr == 0x8000efef, "got 0x%08x\n", mqi[1].hr);
+    g_persistfile_qi_ret = S_OK;
+
+    mqi[0].pIID = &IID_IUnknown;
+    mqi[0].pItf = NULL;
+    mqi[0].hr = S_OK;
+    mqi[1].pIID = &IID_IUnknown;
+    mqi[1].pItf = NULL;
+    mqi[1].hr = S_OK;
+    g_persistfile_load_ret = 0x8000fefe;
+    hr = CoGetInstanceFromFile(NULL, clsid, NULL, CLSCTX_INPROC_SERVER, STGM_READ, (OLECHAR*)filenameW, 2, mqi);
+    ok(hr == 0x8000fefe, "got 0x%08x\n", hr);
+    ok(mqi[0].pItf == NULL, "got %p\n", mqi[0].pItf);
+    ok(mqi[0].hr == 0x8000fefe, "got 0x%08x\n", mqi[0].hr);
+    ok(mqi[1].pItf == NULL, "got %p\n", mqi[1].pItf);
+    ok(mqi[1].hr == 0x8000fefe, "got 0x%08x\n", mqi[1].hr);
+    g_persistfile_load_ret = S_OK;
+
+    hr = CoRevokeClassObject(cookie);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
 
     CoUninitialize();
 }
@@ -2296,6 +3569,7 @@ static void init_funcs(void)
     pCoGetTreatAsClass = (void*)GetProcAddress(hOle32,"CoGetTreatAsClass");
     pCoTreatAsClass = (void*)GetProcAddress(hOle32,"CoTreatAsClass");
     pCoGetContextToken = (void*)GetProcAddress(hOle32, "CoGetContextToken");
+    pCoGetApartmentType = (void*)GetProcAddress(hOle32, "CoGetApartmentType");
     pRegDeleteKeyExA = (void*)GetProcAddress(hAdvapi32, "RegDeleteKeyExA");
     pRegOverridePredefKey = (void*)GetProcAddress(hAdvapi32, "RegOverridePredefKey");
     pCoInitializeEx = (void*)GetProcAddress(hOle32, "CoInitializeEx");
@@ -2328,6 +3602,7 @@ START_TEST(compobj)
     test_CoCreateInstance();
     test_ole_menu();
     test_CoGetClassObject();
+    test_CoCreateInstanceEx();
     test_CoRegisterMessageFilter();
     test_CoRegisterPSClsid();
     test_CoGetPSClsid();
@@ -2343,7 +3618,15 @@ START_TEST(compobj)
     test_CoGetContextToken();
     test_TreatAsClass();
     test_CoInitializeEx();
+    test_OleInitialize_InitCounting();
     test_OleRegGetMiscStatus();
     test_CoCreateGuid();
     test_CoWaitForMultipleHandles();
+    test_CoGetMalloc();
+    test_OleRegGetUserType();
+    test_CoGetApartmentType();
+    test_IMallocSpy();
+    test_CoGetCurrentLogicalThreadId();
+    test_IInitializeSpy();
+    test_CoGetInstanceFromFile();
 }

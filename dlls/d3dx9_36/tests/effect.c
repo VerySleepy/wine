@@ -22,6 +22,17 @@
 #include "wine/test.h"
 #include "d3dx9.h"
 
+#ifndef INFINITY
+static inline float __port_infinity(void)
+{
+    static const unsigned __inf_bytes = 0x7f800000;
+    return *(const float *)&__inf_bytes;
+}
+#define INFINITY __port_infinity()
+#endif /* INFINITY */
+
+#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof(*arr))
+
 /* helper functions */
 static BOOL compare_float(FLOAT f, FLOAT g, UINT ulps)
 {
@@ -1953,7 +1964,7 @@ static void test_effect_parameter_value(IDirect3DDevice9 *device)
             hr = effect->lpVtbl->SetBool(effect, parameter, bvalue);
             if (!res_desc->Elements && res_desc->Rows == 1 && res_desc->Columns == 1)
             {
-                bvalue = bvalue ? TRUE : FALSE;
+                bvalue = TRUE;
                 set_number(expected_value, res_desc->Type, &bvalue, D3DXPT_BOOL);
                 ok(hr == D3D_OK, "%u - %s: SetBool failed, got %#x, expected %#x\n", i, res_full_name, hr, D3D_OK);
             }
@@ -2389,6 +2400,43 @@ static void test_effect_parameter_value(IDirect3DDevice9 *device)
     }
 }
 
+static void test_effect_setvalue_object(IDirect3DDevice9 *device)
+{
+    ID3DXEffect *effect;
+    D3DXHANDLE parameter;
+    IDirect3DTexture9 *texture;
+    IDirect3DTexture9 *texture_set;
+    HRESULT hr;
+    ULONG count;
+
+    hr = D3DXCreateEffect(device, test_effect_parameter_value_blob_object,
+            sizeof(test_effect_parameter_value_blob_object), NULL, NULL, 0, NULL, &effect, NULL);
+    ok(hr == D3D_OK, "Got result %#x, expected 0 (D3D_OK).\n", hr);
+
+    parameter = effect->lpVtbl->GetParameterByName(effect, NULL, "tex");
+    ok(parameter != NULL, "GetParameterByName failed, got %p\n", parameter);
+
+    texture = NULL;
+    hr = D3DXCreateTexture(device, D3DX_DEFAULT, D3DX_DEFAULT, D3DX_DEFAULT, 0, 0, D3DPOOL_DEFAULT, &texture);
+    ok(hr == D3D_OK, "Got result %#x, expected 0 (D3D_OK).\n", hr);
+    hr = effect->lpVtbl->SetValue(effect, parameter, &texture, sizeof(texture));
+    ok(hr == D3D_OK, "Got result %#x, expected 0 (D3D_OK).\n", hr);
+    texture_set = NULL;
+    hr = effect->lpVtbl->GetValue(effect, parameter, &texture_set, sizeof(texture_set));
+    ok(hr == D3D_OK, "Got result %#x, expected 0 (D3D_OK).\n", hr);
+    ok(texture == texture_set, "Texture does not match.\n");
+
+    count = IDirect3DTexture9_Release(texture_set);
+    ok(count == 2, "Got reference count %u, expected 2.\n", count);
+    texture_set = NULL;
+    hr = effect->lpVtbl->SetValue(effect, parameter, &texture_set, sizeof(texture_set));
+    ok(hr == D3D_OK, "Got result %#x, expected 0 (D3D_OK).\n", hr);
+    count = IDirect3DTexture9_Release(texture);
+    ok(!count, "Got reference count %u, expected 0.\n", count);
+
+    effect->lpVtbl->Release(effect);
+}
+
 /*
  * fxc.exe /Tfx_2_0
  */
@@ -2692,6 +2740,1550 @@ static void test_effect_compilation_errors(IDirect3DDevice9 *device)
     effect->lpVtbl->Release(effect);
 }
 
+/*
+ * fxc.exe /Tfx_2_0
+ */
+#if 0
+vertexshader vs_arr1[2] =
+{
+    asm
+    {
+        vs_1_1
+        def c0, 1, 1, 1, 1
+        mov oPos, c0
+    },
+    asm
+    {
+        vs_2_0
+        def c0, 2, 2, 2, 2
+        mov oPos, c0
+    }
+};
+
+sampler sampler1 =
+    sampler_state
+    {
+        MipFilter = LINEAR;
+    };
+
+float4x4 camera : VIEW = {4.0,0.0,0.0,0.0, 0.0,0.0,0.0,0.0, 0.0,0.0,0.0,0.0, 0.0,0.0,0.0,6.0};
+technique tech0
+{
+   pass p0
+   {
+       vertexshader = vs_arr1[1];
+       VertexShaderConstant1[3] = {2,2,2,2};
+       BlendOp = 2;
+       AlphaOp[3] = 4;
+       ZEnable = true;
+       WorldTransform[1]={2.0,0.0,0.0,0.0, 0.0,0.0,0.0,0.0, 0.0,0.0,0.0,0.0, 0.0,0.0,0.0,4.0};
+       ViewTransform=(camera);
+       LightEnable[2] = TRUE;
+       LightType[2] = POINT;
+       LightPosition[2] = {4.0f, 5.0f, 6.0f};
+       Sampler[1] = sampler1;
+   }
+}
+#endif
+static const DWORD test_effect_states_effect_blob[] =
+{
+    0xfeff0901, 0x000002e8, 0x00000000, 0x00000010, 0x00000004, 0x00000020, 0x00000000, 0x00000002,
+    0x00000001, 0x00000002, 0x00000008, 0x615f7376, 0x00317272, 0x0000000a, 0x00000004, 0x00000074,
+    0x00000000, 0x00000000, 0x00000002, 0x00000002, 0x00000002, 0x00000000, 0x00000000, 0x00000000,
+    0x00000001, 0x00000001, 0x00000001, 0x000000ab, 0x00000100, 0x00000044, 0x00000040, 0x00000009,
+    0x706d6173, 0x3172656c, 0x00000000, 0x00000003, 0x00000002, 0x000000e0, 0x000000ec, 0x00000000,
+    0x00000004, 0x00000004, 0x40800000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x40c00000, 0x00000007, 0x656d6163, 0x00006172, 0x00000005, 0x57454956, 0x00000000,
+    0x00000003, 0x00000010, 0x00000004, 0x00000000, 0x00000000, 0x00000000, 0x40000000, 0x40000000,
+    0x40000000, 0x40000000, 0x00000003, 0x00000003, 0x00000000, 0x00000000, 0x00000000, 0x00000004,
+    0x00000001, 0x00000002, 0x00000002, 0x00000002, 0x00000000, 0x00000000, 0x00000000, 0x00000001,
+    0x00000001, 0x00000004, 0x00000002, 0x00000002, 0x00000000, 0x00000000, 0x00000000, 0x00000001,
+    0x00000001, 0x00000001, 0x00000002, 0x00000002, 0x00000000, 0x00000000, 0x00000000, 0x00000001,
+    0x00000001, 0x40000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x40800000, 0x00000003, 0x00000002, 0x00000000, 0x00000000, 0x00000000, 0x00000010, 0x00000001,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000003, 0x00000002, 0x00000000, 0x00000000, 0x00000000, 0x00000004, 0x00000004, 0x00000001,
+    0x00000002, 0x00000002, 0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000001,
+    0x00000002, 0x00000002, 0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x40800000,
+    0x40a00000, 0x40c00000, 0x00000003, 0x00000002, 0x00000000, 0x00000000, 0x00000000, 0x00000003,
+    0x00000001, 0x00000000, 0x0000000a, 0x00000004, 0x00000000, 0x00000000, 0x00000000, 0x00000003,
+    0x00003070, 0x00000006, 0x68636574, 0x00000030, 0x00000003, 0x00000001, 0x00000005, 0x00000004,
+    0x00000004, 0x00000018, 0x00000000, 0x00000000, 0x0000002c, 0x00000060, 0x00000000, 0x00000000,
+    0x00000084, 0x000000a0, 0x00000000, 0x00000000, 0x000002dc, 0x00000000, 0x00000001, 0x000002d4,
+    0x00000000, 0x0000000b, 0x00000092, 0x00000000, 0x000000fc, 0x000000f8, 0x00000098, 0x00000003,
+    0x00000120, 0x00000110, 0x0000004b, 0x00000000, 0x00000140, 0x0000013c, 0x0000006b, 0x00000003,
+    0x00000160, 0x0000015c, 0x00000000, 0x00000000, 0x00000180, 0x0000017c, 0x0000007d, 0x00000001,
+    0x000001dc, 0x0000019c, 0x0000007c, 0x00000000, 0x00000238, 0x000001f8, 0x00000091, 0x00000002,
+    0x00000258, 0x00000254, 0x00000084, 0x00000002, 0x00000278, 0x00000274, 0x00000088, 0x00000002,
+    0x000002a0, 0x00000294, 0x000000b2, 0x00000001, 0x000002c0, 0x000002bc, 0x00000002, 0x00000003,
+    0x00000001, 0x0000002c, 0xfffe0101, 0x00000051, 0xa00f0000, 0x3f800000, 0x3f800000, 0x3f800000,
+    0x3f800000, 0x00000001, 0xc00f0000, 0xa0e40000, 0x0000ffff, 0x00000002, 0x0000002c, 0xfffe0200,
+    0x05000051, 0xa00f0000, 0x40000000, 0x40000000, 0x40000000, 0x40000000, 0x02000001, 0xc00f0000,
+    0xa0e40000, 0x0000ffff, 0x00000000, 0x00000000, 0xffffffff, 0x0000000a, 0x00000001, 0x00000009,
+    0x706d6173, 0x3172656c, 0x00000000, 0x00000000, 0x00000000, 0xffffffff, 0x00000006, 0x00000000,
+    0x0000016c, 0x46580200, 0x0030fffe, 0x42415443, 0x0000001c, 0x0000008b, 0x46580200, 0x00000001,
+    0x0000001c, 0x20000100, 0x00000088, 0x00000030, 0x00000002, 0x00000004, 0x00000038, 0x00000048,
+    0x656d6163, 0xab006172, 0x00030003, 0x00040004, 0x00000001, 0x00000000, 0x40800000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x40c00000, 0x4d007874, 0x6f726369,
+    0x74666f73, 0x29522820, 0x534c4820, 0x6853204c, 0x72656461, 0x6d6f4320, 0x656c6970, 0x2e392072,
+    0x392e3932, 0x332e3235, 0x00313131, 0x0002fffe, 0x54494c43, 0x00000000, 0x0024fffe, 0x434c5846,
+    0x00000004, 0x10000004, 0x00000001, 0x00000000, 0x00000002, 0x00000000, 0x00000000, 0x00000004,
+    0x00000000, 0x10000004, 0x00000001, 0x00000000, 0x00000002, 0x00000004, 0x00000000, 0x00000004,
+    0x00000004, 0x10000004, 0x00000001, 0x00000000, 0x00000002, 0x00000008, 0x00000000, 0x00000004,
+    0x00000008, 0x10000004, 0x00000001, 0x00000000, 0x00000002, 0x0000000c, 0x00000000, 0x00000004,
+    0x0000000c, 0xf0f0f0f0, 0x0f0f0f0f, 0x0000ffff, 0x00000000, 0x00000000, 0xffffffff, 0x00000000,
+    0x00000001, 0x0000000b, 0x615f7376, 0x5b317272, 0x00005d31,
+};
+#define TEST_EFFECT_STATES_VSHADER_POS 271
+
+static void test_effect_states(IDirect3DDevice9 *device)
+{
+    D3DMATRIX test_mat =
+    {{{
+        -1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f
+    }}};
+    D3DMATRIX test_mat_camera =
+    {{{
+        4.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 6.0f
+    }}};
+    D3DMATRIX test_mat_world1 =
+    {{{
+        2.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 4.0f
+    }}};
+    D3DMATRIX mat;
+    HRESULT hr;
+    ID3DXEffect *effect;
+    UINT npasses;
+    DWORD value;
+    IDirect3DVertexShader9 *vshader;
+    void *byte_code;
+    UINT byte_code_size;
+    BOOL bval;
+    D3DLIGHT9 light;
+    float float_data[4];
+
+    hr = D3DXCreateEffect(device, test_effect_states_effect_blob, sizeof(test_effect_states_effect_blob),
+            NULL, NULL, 0, NULL, &effect, NULL);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+
+    /* State affected in passes saved/restored even if no pass
+       was performed. States not present in passes are not saved &
+       restored */
+    hr = IDirect3DDevice9_SetRenderState(device, D3DRS_BLENDOP, 1);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    hr = IDirect3DDevice9_SetRenderState(device, D3DRS_ALPHAFUNC, 1);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+
+    hr = effect->lpVtbl->Begin(effect, &npasses, 0);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    ok(npasses == 1, "Expected 1 pass, got %u\n", npasses);
+
+    hr = IDirect3DDevice9_SetRenderState(device, D3DRS_BLENDOP, 3);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    hr = IDirect3DDevice9_SetRenderState(device, D3DRS_ALPHAFUNC, 2);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+
+    hr = effect->lpVtbl->End(effect);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+
+    hr = IDirect3DDevice9_GetRenderState(device, D3DRS_BLENDOP, &value);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    ok(value == 1, "Got result %u, expected %u.\n", value, 1);
+    hr = IDirect3DDevice9_GetRenderState(device, D3DRS_ALPHAFUNC, &value);
+    ok(value == 2, "Got result %u, expected %u.\n", value, 2);
+
+    /* Test states application in BeginPass. No states are restored
+       on EndPass. */
+    hr = IDirect3DDevice9_SetSamplerState(device, 1, D3DSAMP_MIPFILTER, 0);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    hr = IDirect3DDevice9_SetRenderState(device, D3DRS_ZENABLE, 0);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+
+    hr = IDirect3DDevice9_GetLightEnable(device, 2, &bval);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    if (hr == D3D_OK)
+        ok(!bval, "Got result %u, expected 0.\n", bval);
+
+    hr = IDirect3DDevice9_SetTransform(device, D3DTS_WORLDMATRIX(1), &test_mat);
+    hr = effect->lpVtbl->Begin(effect, &npasses, 0);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+
+    hr = IDirect3DDevice9_GetTransform(device, D3DTS_WORLDMATRIX(1), &mat);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    ok(!memcmp(mat.m, test_mat.m, sizeof(mat)), "World matrix does not match.\n");
+
+    hr = effect->lpVtbl->BeginPass(effect, 0);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+
+    hr = IDirect3DDevice9_GetTransform(device, D3DTS_WORLDMATRIX(1), &mat);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    ok(!memcmp(mat.m, test_mat_world1.m, sizeof(mat)), "World matrix does not match.\n");
+
+    hr = IDirect3DDevice9_GetTransform(device, D3DTS_VIEW, &mat);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    ok(!memcmp(mat.m, test_mat_camera.m, sizeof(mat)), "View matrix does not match.\n");
+
+    hr = IDirect3DDevice9_GetRenderState(device, D3DRS_BLENDOP, &value);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    ok(value == 2, "Got result %u, expected %u\n", value, 2);
+
+    hr = IDirect3DDevice9_GetVertexShader(device, &vshader);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    ok(vshader != NULL, "Got NULL vshader.\n");
+    if (vshader)
+    {
+        hr = IDirect3DVertexShader9_GetFunction(vshader, NULL, &byte_code_size);
+        ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+        byte_code = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, byte_code_size);
+        hr = IDirect3DVertexShader9_GetFunction(vshader, byte_code, &byte_code_size);
+        ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+        ok(byte_code_size > 1, "Got unexpected byte code size %u.\n", byte_code_size);
+        ok(!memcmp(byte_code, &test_effect_states_effect_blob[TEST_EFFECT_STATES_VSHADER_POS], byte_code_size),
+            "Incorrect shader selected.\n");
+        HeapFree(GetProcessHeap(), 0, byte_code);
+        IDirect3DVertexShader9_Release(vshader);
+    }
+
+    hr = IDirect3DDevice9_GetLightEnable(device, 2, &bval);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    if (hr == D3D_OK)
+        ok(bval, "Got result %u, expected TRUE.\n", bval);
+    hr = IDirect3DDevice9_GetLight(device, 2, &light);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    if (hr == D3D_OK)
+        ok(light.Position.x == 4.0f && light.Position.y == 5.0f && light.Position.z == 6.0f,
+                "Got unexpected light position (%f, %f, %f).\n", light.Position.x, light.Position.y, light.Position.z);
+    hr = IDirect3DDevice9_GetVertexShaderConstantF(device, 3, float_data, 1);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    ok(float_data[0] == 2.0f && float_data[1] == 2.0f && float_data[2] == 2.0f && float_data[3] == 2.0f,
+            "Got unexpected vertex shader floats: (%f %f %f %f).\n",
+            float_data[0], float_data[1], float_data[2], float_data[3]);
+
+    hr = effect->lpVtbl->EndPass(effect);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    hr = IDirect3DDevice9_GetRenderState(device, D3DRS_BLENDOP, &value);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    ok(value == 2, "Got result %u, expected %u\n", value, 2);
+
+    hr = IDirect3DDevice9_GetRenderState(device, D3DRS_ZENABLE, &value);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    ok(value, "Got result %u, expected TRUE.\n", value);
+
+    hr = IDirect3DDevice9_GetSamplerState(device, 1, D3DSAMP_MIPFILTER, &value);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    ok(value == D3DTEXF_LINEAR, "Unexpected sampler 1 mipfilter %u.\n", value);
+
+    hr = IDirect3DDevice9_GetTextureStageState(device, 3, D3DTSS_ALPHAOP, &value);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    ok(value == 4, "Unexpected texture stage 3 AlphaOp %u.\n", value);
+
+    hr = effect->lpVtbl->End(effect);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+
+    hr = IDirect3DDevice9_GetTransform(device, D3DTS_WORLDMATRIX(1), &mat);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    ok(!memcmp(mat.m, test_mat.m, sizeof(mat)), "World matrix not restored.\n");
+
+    hr = IDirect3DDevice9_GetLightEnable(device, 2, &bval);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    if (hr == D3D_OK)
+        ok(!bval, "Got result %u, expected 0.\n", bval);
+
+    /* State is not restored if effect is released without End call */
+    hr = IDirect3DDevice9_SetRenderState(device, D3DRS_BLENDOP, 1);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+
+    hr = effect->lpVtbl->Begin(effect, &npasses, 0);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+
+    hr = IDirect3DDevice9_SetRenderState(device, D3DRS_BLENDOP, 3);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+
+    effect->lpVtbl->Release(effect);
+
+    hr = IDirect3DDevice9_GetRenderState(device, D3DRS_BLENDOP, &value);
+    ok(hr == D3D_OK, "Got result %x, expected 0 (D3D_OK).\n", hr);
+    ok(value == 3, "Got result %u, expected %u.\n", value, 1);
+}
+
+/*
+ * fxc.exe /Tfx_2_0
+ */
+#if 0
+float4 g_Pos1;
+float4 g_Pos2;
+float4 g_Selector[2] = {{0, 0, 0, 0}, {10, 10, 10, 10}};
+
+float4 opvect1 = {0.0, -0.0, -2.2, 3.402823466e+38F};
+float4 opvect2 = {1.0, 2.0, -3.0, 4.0};
+float4 opvect3 = {0.0, -0.0, -2.2, 3.402823466e+38F};
+
+float4 vect_sampler = {1, 2, 3, 4};
+
+int4 g_iVect = {4, 3, 2, 1};
+
+vertexshader vs_arr[3] =
+{
+    asm
+    {
+        vs_1_0
+        def c0, 1, 1, 1, 1
+        mov oPos, c0
+    },
+    asm
+    {
+        vs_1_1
+        def c0, 2, 2, 2, 2
+        mov oPos, c0
+    },
+    asm
+    {
+        vs_2_0
+        def c0, 3, 3, 3, 3
+        mov oPos, c0
+    }
+};
+
+row_major float4x3 m4x3row = {{11, 12, 13}, {21, 22, 23}, {31, 32, 33}, {41, 42, 43}};
+row_major float3x4 m3x4row = {{11, 12, 13, 14}, {21, 22, 23, 24}, {31, 32, 33, 34}};
+column_major float4x3 m4x3column = {{11, 12, 13},{21, 22, 23},{31, 32, 33},{41, 42, 43}};
+column_major float3x4 m3x4column = {{11, 12, 13, 14}, {21, 22, 23, 24}, {31, 32, 33, 34}};
+row_major float2x2 m2x2row = {{11, 12}, {21, 22}};
+column_major float2x2 m2x2column = {{11, 12}, {21, 22}};
+row_major float2x3 m2x3row = {{11, 12, 13}, {21, 22, 23}};
+column_major float2x3 m2x3column = {{11, 12, 13}, {21, 22, 23}};
+row_major float3x2 m3x2row = {{11, 12}, {21, 22}, {31, 32}};
+column_major float3x2 m3x2column = {{11, 12}, {21, 22}, {31, 32}};
+
+row_major bool2x3 mb2x3row = {{true, false, true}, {false, true, true}};
+column_major bool2x3 mb2x3column = {{true, false, true}, {false, true, true}};
+
+struct test_struct
+{
+    float3 v1;
+    float fv;
+    float4 v2;
+};
+
+struct struct_array
+{
+    test_struct ts[2];
+};
+
+test_struct ts1[1] = {{{9, 10, 11}, 12, {13, 14, 15, 16}}};
+test_struct ts2[2] = {{{0, 0, 0}, 0, {0, 0, 0, 0}}, {{1, 2, 3}, 4, {5, 6, 7, 8}}};
+struct_array ts3 = {{{1, 2, 3}, 4, {5, 6, 7, 8}}, {{9, 10, 11}, 12, {13, 14, 15, 16}}};
+
+float arr1[1] = {91};
+float arr2[2] = {92, 93};
+
+Texture2D tex1;
+Texture2D tex2;
+sampler sampler1 =
+sampler_state
+{
+    Texture = tex1;
+    MinFilter = g_iVect.y;
+    MagFilter = vect_sampler.x + vect_sampler.y;
+};
+
+struct VS_OUTPUT
+{
+    float4 Position   : POSITION;
+    float2 TextureUV  : TEXCOORD0;
+    float4 Diffuse    : COLOR0;
+};
+VS_OUTPUT RenderSceneVS(float4 vPos : POSITION,
+                        float3 vNormal : NORMAL,
+                        float2 vTexCoord0 : TEXCOORD0,
+                        uniform int nNumLights,
+                        uniform bool bTexture)
+{
+    VS_OUTPUT Output;
+
+    if (g_Selector[1].y > float4(0.5, 0.5, 0.5, 0.5).y)
+        Output.Position = -g_Pos1 * 2 - float4(-4, -5, -6, -7);
+    else
+        Output.Position = -g_Pos2 * 3 - float4(-4, -5, -6, -7);
+    Output.TextureUV = float2(0, 0);
+    Output.Diffuse = 0;
+    Output.Diffuse.xyz = mul(vPos, m4x3column);
+    Output.Diffuse += mul(vPos, m3x4column);
+    Output.Diffuse += mul(vPos, m3x4row);
+    Output.Diffuse.xyz += mul(vPos, m4x3row);
+    Output.Diffuse += mul(vPos, ts1[0].fv);
+    Output.Diffuse += mul(vPos, ts1[0].v2);
+    Output.Diffuse += mul(vPos, ts2[1].fv);
+    Output.Diffuse += mul(vPos, ts2[1].v2);
+    Output.Diffuse += mul(vPos, arr1[0]);
+    Output.Diffuse += mul(vPos, arr2[1]);
+    Output.Diffuse += mul(vPos, ts3.ts[1].fv);
+    Output.Diffuse += mul(vPos, ts3.ts[1].v2);
+    Output.Diffuse += tex2Dlod(sampler1, g_Pos1);
+    return Output;
+}
+
+struct PS_OUTPUT
+{
+    float4 RGBColor : COLOR0;  /* Pixel color */
+};
+PS_OUTPUT RenderScenePS( VS_OUTPUT In, uniform bool2x3 mb)
+{
+    PS_OUTPUT Output;
+    int i;
+
+    Output.RGBColor = In.Diffuse;
+    Output.RGBColor.xy += mul(In.Diffuse, m2x2row);
+    Output.RGBColor.xy += mul(In.Diffuse, m2x2column);
+    Output.RGBColor.xy += mul(In.Diffuse, m3x2row);
+    Output.RGBColor.xy += mul(In.Diffuse, m3x2column);
+    Output.RGBColor.xyz += mul(In.Diffuse, m2x3row);
+    Output.RGBColor.xyz += mul(In.Diffuse, m2x3column);
+    for (i = 0; i < g_iVect.x; ++i)
+        Output.RGBColor.xyz += mul(In.Diffuse, m2x3column);
+    if (mb[1][1])
+    {
+        Output.RGBColor += sin(Output.RGBColor);
+        Output.RGBColor += cos(Output.RGBColor);
+        Output.RGBColor.xyz += mul(Output.RGBColor, m2x3column);
+        Output.RGBColor.xyz += mul(Output.RGBColor, m2x3row);
+        Output.RGBColor.xy += mul(Output.RGBColor, m3x2column);
+        Output.RGBColor.xy += mul(Output.RGBColor, m3x2row);
+    }
+    Output.RGBColor += tex2D(sampler1, In.TextureUV);
+    return Output;
+}
+
+vertexshader vs_arr2[1] = {compile vs_3_0 RenderSceneVS(1, true)};
+pixelshader ps_arr[1] = {compile ps_3_0 RenderScenePS(mb2x3row)};
+
+technique tech0
+{
+    pass p0
+    {
+        VertexShader = vs_arr2[g_iVect.w - 1];
+        PixelShader  = ps_arr[g_iVect.w - 1];
+
+        LightEnable[0] = TRUE;
+        LightEnable[1] = TRUE;
+        LightEnable[2] = TRUE;
+        LightEnable[3] = TRUE;
+        LightEnable[4] = TRUE;
+        LightEnable[5] = TRUE;
+        LightEnable[6] = TRUE;
+        LightEnable[7] = TRUE;
+        LightType[0] = POINT;
+        LightType[1] = POINT;
+        LightType[2] = POINT;
+        LightType[3] = POINT;
+        LightType[4] = POINT;
+        LightType[5] = POINT;
+        LightType[6] = POINT;
+        LightType[7] = POINT;
+        LightDiffuse[0] = 1 / opvect1;
+        LightDiffuse[1] = rsqrt(opvect1);
+        LightDiffuse[2] = opvect1 * opvect2;
+        LightDiffuse[3] = opvect1 + opvect2;
+        LightDiffuse[4] = float4(opvect1 < opvect2);
+        LightDiffuse[5] = float4(opvect1 >= opvect2);
+        LightDiffuse[6] = -opvect1;
+        LightDiffuse[7] = rcp(opvect1);
+
+        LightAmbient[0] = frac(opvect1);
+        LightAmbient[1] = min(opvect1, opvect2);
+        LightAmbient[2] = max(opvect1, opvect2);
+        LightAmbient[3] = sin(opvect1);
+        LightAmbient[4] = cos(opvect1);
+        LightAmbient[5] = 1e-2 / opvect1;
+        LightAmbient[6] = float4(0, dot(opvect1, opvect2), dot(opvect2, opvect2), 0);
+        LightAmbient[7] = opvect1 + 1e-12 * opvect2 - opvect3;
+
+        LightSpecular[0] = float4(dot(opvect1.zx, opvect2.xy), dot(opvect1.zzx, opvect2.xyz),
+                dot(opvect1.zzzx, opvect2.xxyy), 0);
+        LightSpecular[1] = float4(opvect1[g_iVect.z], g_iVect[opvect2.y],
+                g_Selector[g_iVect.w].x + g_Selector[g_iVect.w].y,
+                g_Selector[g_iVect.w].x + g_Selector[g_iVect.x].y);
+    }
+    pass p1
+    {
+        VertexShader = vs_arr[g_iVect.z];
+    }
+}
+#endif
+static const DWORD test_effect_preshader_effect_blob[] =
+{
+    0xfeff0901, 0x00000ef4, 0x00000000, 0x00000003, 0x00000001, 0x00000030, 0x00000000, 0x00000000,
+    0x00000004, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000007, 0x6f505f67,
+    0x00003173, 0x00000003, 0x00000001, 0x00000068, 0x00000000, 0x00000000, 0x00000004, 0x00000001,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000007, 0x6f505f67, 0x00003273, 0x00000003,
+    0x00000001, 0x000000b0, 0x00000000, 0x00000002, 0x00000004, 0x00000001, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x41200000, 0x41200000, 0x41200000, 0x41200000, 0x0000000b, 0x65535f67,
+    0x7463656c, 0x0000726f, 0x00000003, 0x00000001, 0x000000ec, 0x00000000, 0x00000000, 0x00000004,
+    0x00000001, 0x00000000, 0x80000000, 0xc00ccccd, 0x7f7fffff, 0x00000008, 0x6576706f, 0x00317463,
+    0x00000003, 0x00000001, 0x00000124, 0x00000000, 0x00000000, 0x00000004, 0x00000001, 0x3f800000,
+    0x40000000, 0xc0400000, 0x40800000, 0x00000008, 0x6576706f, 0x00327463, 0x00000003, 0x00000001,
+    0x0000015c, 0x00000000, 0x00000000, 0x00000004, 0x00000001, 0x00000000, 0x80000000, 0xc00ccccd,
+    0x7f7fffff, 0x00000008, 0x6576706f, 0x00337463, 0x00000003, 0x00000001, 0x00000194, 0x00000000,
+    0x00000000, 0x00000004, 0x00000001, 0x3f800000, 0x40000000, 0x40400000, 0x40800000, 0x0000000d,
+    0x74636576, 0x6d61735f, 0x72656c70, 0x00000000, 0x00000002, 0x00000001, 0x000001d4, 0x00000000,
+    0x00000000, 0x00000004, 0x00000001, 0x00000004, 0x00000003, 0x00000002, 0x00000001, 0x00000008,
+    0x56695f67, 0x00746365, 0x00000010, 0x00000004, 0x00000200, 0x00000000, 0x00000003, 0x00000001,
+    0x00000002, 0x00000003, 0x00000007, 0x615f7376, 0x00007272, 0x00000003, 0x00000002, 0x00000258,
+    0x00000000, 0x00000000, 0x00000004, 0x00000003, 0x41300000, 0x41400000, 0x41500000, 0x41a80000,
+    0x41b00000, 0x41b80000, 0x41f80000, 0x42000000, 0x42040000, 0x42240000, 0x42280000, 0x422c0000,
+    0x00000008, 0x3378346d, 0x00776f72, 0x00000003, 0x00000002, 0x000002b0, 0x00000000, 0x00000000,
+    0x00000003, 0x00000004, 0x41300000, 0x41400000, 0x41500000, 0x41600000, 0x41a80000, 0x41b00000,
+    0x41b80000, 0x41c00000, 0x41f80000, 0x42000000, 0x42040000, 0x42080000, 0x00000008, 0x3478336d,
+    0x00776f72, 0x00000003, 0x00000002, 0x00000308, 0x00000000, 0x00000000, 0x00000004, 0x00000003,
+    0x41300000, 0x41400000, 0x41500000, 0x41a80000, 0x41b00000, 0x41b80000, 0x41f80000, 0x42000000,
+    0x42040000, 0x42240000, 0x42280000, 0x422c0000, 0x0000000b, 0x3378346d, 0x756c6f63, 0x00006e6d,
+    0x00000003, 0x00000002, 0x00000364, 0x00000000, 0x00000000, 0x00000003, 0x00000004, 0x41300000,
+    0x41400000, 0x41500000, 0x41600000, 0x41a80000, 0x41b00000, 0x41b80000, 0x41c00000, 0x41f80000,
+    0x42000000, 0x42040000, 0x42080000, 0x0000000b, 0x3478336d, 0x756c6f63, 0x00006e6d, 0x00000003,
+    0x00000002, 0x000003a0, 0x00000000, 0x00000000, 0x00000002, 0x00000002, 0x41300000, 0x41400000,
+    0x41a80000, 0x41b00000, 0x00000008, 0x3278326d, 0x00776f72, 0x00000003, 0x00000002, 0x000003d8,
+    0x00000000, 0x00000000, 0x00000002, 0x00000002, 0x41300000, 0x41400000, 0x41a80000, 0x41b00000,
+    0x0000000b, 0x3278326d, 0x756c6f63, 0x00006e6d, 0x00000003, 0x00000002, 0x0000041c, 0x00000000,
+    0x00000000, 0x00000002, 0x00000003, 0x41300000, 0x41400000, 0x41500000, 0x41a80000, 0x41b00000,
+    0x41b80000, 0x00000008, 0x3378326d, 0x00776f72, 0x00000003, 0x00000002, 0x0000045c, 0x00000000,
+    0x00000000, 0x00000002, 0x00000003, 0x41300000, 0x41400000, 0x41500000, 0x41a80000, 0x41b00000,
+    0x41b80000, 0x0000000b, 0x3378326d, 0x756c6f63, 0x00006e6d, 0x00000003, 0x00000002, 0x000004a0,
+    0x00000000, 0x00000000, 0x00000003, 0x00000002, 0x41300000, 0x41400000, 0x41a80000, 0x41b00000,
+    0x41f80000, 0x42000000, 0x00000008, 0x3278336d, 0x00776f72, 0x00000003, 0x00000002, 0x000004e0,
+    0x00000000, 0x00000000, 0x00000003, 0x00000002, 0x41300000, 0x41400000, 0x41a80000, 0x41b00000,
+    0x41f80000, 0x42000000, 0x0000000b, 0x3278336d, 0x756c6f63, 0x00006e6d, 0x00000001, 0x00000002,
+    0x00000524, 0x00000000, 0x00000000, 0x00000002, 0x00000003, 0x00000001, 0x00000000, 0x00000001,
+    0x00000000, 0x00000001, 0x00000001, 0x00000009, 0x7832626d, 0x776f7233, 0x00000000, 0x00000001,
+    0x00000002, 0x00000568, 0x00000000, 0x00000000, 0x00000002, 0x00000003, 0x00000001, 0x00000000,
+    0x00000001, 0x00000000, 0x00000001, 0x00000001, 0x0000000c, 0x7832626d, 0x6c6f6333, 0x006e6d75,
+    0x00000000, 0x00000005, 0x00000604, 0x00000000, 0x00000001, 0x00000003, 0x00000003, 0x00000001,
+    0x0000060c, 0x00000000, 0x00000000, 0x00000003, 0x00000001, 0x00000003, 0x00000000, 0x00000614,
+    0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000003, 0x00000001, 0x0000061c, 0x00000000,
+    0x00000000, 0x00000004, 0x00000001, 0x41100000, 0x41200000, 0x41300000, 0x41400000, 0x41500000,
+    0x41600000, 0x41700000, 0x41800000, 0x00000004, 0x00317374, 0x00000003, 0x00003176, 0x00000003,
+    0x00007666, 0x00000003, 0x00003276, 0x00000000, 0x00000005, 0x000006d0, 0x00000000, 0x00000002,
+    0x00000003, 0x00000003, 0x00000001, 0x000006d8, 0x00000000, 0x00000000, 0x00000003, 0x00000001,
+    0x00000003, 0x00000000, 0x000006e0, 0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000003,
+    0x00000001, 0x000006e8, 0x00000000, 0x00000000, 0x00000004, 0x00000001, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x3f800000, 0x40000000,
+    0x40400000, 0x40800000, 0x40a00000, 0x40c00000, 0x40e00000, 0x41000000, 0x00000004, 0x00327374,
+    0x00000003, 0x00003176, 0x00000003, 0x00007666, 0x00000003, 0x00003276, 0x00000000, 0x00000005,
+    0x000007b4, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x00000005, 0x000007bc, 0x00000000,
+    0x00000002, 0x00000003, 0x00000003, 0x00000001, 0x000007c4, 0x00000000, 0x00000000, 0x00000003,
+    0x00000001, 0x00000003, 0x00000000, 0x000007cc, 0x00000000, 0x00000000, 0x00000001, 0x00000001,
+    0x00000003, 0x00000001, 0x000007d4, 0x00000000, 0x00000000, 0x00000004, 0x00000001, 0x3f800000,
+    0x40000000, 0x40400000, 0x40800000, 0x40a00000, 0x40c00000, 0x40e00000, 0x41000000, 0x41100000,
+    0x41200000, 0x41300000, 0x41400000, 0x41500000, 0x41600000, 0x41700000, 0x41800000, 0x00000004,
+    0x00337374, 0x00000003, 0x00007374, 0x00000003, 0x00003176, 0x00000003, 0x00007666, 0x00000003,
+    0x00003276, 0x00000003, 0x00000000, 0x000007fc, 0x00000000, 0x00000001, 0x00000001, 0x00000001,
+    0x42b60000, 0x00000005, 0x31727261, 0x00000000, 0x00000003, 0x00000000, 0x0000082c, 0x00000000,
+    0x00000002, 0x00000001, 0x00000001, 0x42b80000, 0x42ba0000, 0x00000005, 0x32727261, 0x00000000,
+    0x00000007, 0x00000004, 0x00000850, 0x00000000, 0x00000000, 0x00000004, 0x00000005, 0x31786574,
+    0x00000000, 0x00000007, 0x00000004, 0x00000874, 0x00000000, 0x00000000, 0x00000005, 0x00000005,
+    0x32786574, 0x00000000, 0x0000000a, 0x00000004, 0x00000920, 0x00000000, 0x00000000, 0x00000006,
+    0x00000007, 0x00000004, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000002, 0x00000002,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000000, 0x00000003, 0x00000002,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000003, 0x000000a4, 0x00000100,
+    0x00000898, 0x00000894, 0x000000aa, 0x00000100, 0x000008b0, 0x000008ac, 0x000000a9, 0x00000100,
+    0x000008d0, 0x000008cc, 0x00000009, 0x706d6173, 0x3172656c, 0x00000000, 0x00000010, 0x00000004,
+    0x00000948, 0x00000000, 0x00000001, 0x00000007, 0x00000008, 0x615f7376, 0x00327272, 0x0000000f,
+    0x00000004, 0x0000096c, 0x00000000, 0x00000001, 0x00000008, 0x00000007, 0x615f7370, 0x00007272,
+    0x00000009, 0x00000010, 0x00000004, 0x00000000, 0x00000000, 0x00000000, 0x0000000a, 0x0000000f,
+    0x00000004, 0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000002, 0x00000002, 0x00000000,
+    0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000001, 0x00000002, 0x00000002, 0x00000000,
+    0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000001, 0x00000002, 0x00000002, 0x00000000,
+    0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000001, 0x00000002, 0x00000002, 0x00000000,
+    0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000001, 0x00000002, 0x00000002, 0x00000000,
+    0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000001, 0x00000002, 0x00000002, 0x00000000,
+    0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000001, 0x00000002, 0x00000002, 0x00000000,
+    0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000001, 0x00000002, 0x00000002, 0x00000000,
+    0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000001, 0x00000002, 0x00000002, 0x00000000,
+    0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000001, 0x00000002, 0x00000002, 0x00000000,
+    0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000001, 0x00000002, 0x00000002, 0x00000000,
+    0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000001, 0x00000002, 0x00000002, 0x00000000,
+    0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000001, 0x00000002, 0x00000002, 0x00000000,
+    0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000001, 0x00000002, 0x00000002, 0x00000000,
+    0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000001, 0x00000002, 0x00000002, 0x00000000,
+    0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000001, 0x00000002, 0x00000002, 0x00000000,
+    0x00000000, 0x00000000, 0x00000001, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000003, 0x00000002, 0x00000000, 0x00000000, 0x00000000, 0x00000004, 0x00000001, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000003, 0x00000002, 0x00000000, 0x00000000, 0x00000000,
+    0x00000004, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000003, 0x00000002,
+    0x00000000, 0x00000000, 0x00000000, 0x00000004, 0x00000001, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000003, 0x00000002, 0x00000000, 0x00000000, 0x00000000, 0x00000004, 0x00000001,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000003, 0x00000002, 0x00000000, 0x00000000,
+    0x00000000, 0x00000004, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000003,
+    0x00000002, 0x00000000, 0x00000000, 0x00000000, 0x00000004, 0x00000001, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000003, 0x00000002, 0x00000000, 0x00000000, 0x00000000, 0x00000004,
+    0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000003, 0x00000002, 0x00000000,
+    0x00000000, 0x00000000, 0x00000004, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000003, 0x00000002, 0x00000000, 0x00000000, 0x00000000, 0x00000004, 0x00000001, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000003, 0x00000002, 0x00000000, 0x00000000, 0x00000000,
+    0x00000004, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000003, 0x00000002,
+    0x00000000, 0x00000000, 0x00000000, 0x00000004, 0x00000001, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000003, 0x00000002, 0x00000000, 0x00000000, 0x00000000, 0x00000004, 0x00000001,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000003, 0x00000002, 0x00000000, 0x00000000,
+    0x00000000, 0x00000004, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000003,
+    0x00000002, 0x00000000, 0x00000000, 0x00000000, 0x00000004, 0x00000001, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000003, 0x00000002, 0x00000000, 0x00000000, 0x00000000, 0x00000004,
+    0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000003, 0x00000002, 0x00000000,
+    0x00000000, 0x00000000, 0x00000004, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000003, 0x00000002, 0x00000000, 0x00000000, 0x00000000, 0x00000004, 0x00000001, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000003, 0x00000002, 0x00000000, 0x00000000, 0x00000000,
+    0x00000004, 0x00000001, 0x00000003, 0x00003070, 0x0000000b, 0x00000010, 0x00000004, 0x00000000,
+    0x00000000, 0x00000000, 0x00000003, 0x00003170, 0x00000006, 0x68636574, 0x00000030, 0x0000001f,
+    0x00000001, 0x0000000b, 0x0000000c, 0x00000004, 0x00000020, 0x00000000, 0x00000000, 0x0000003c,
+    0x00000058, 0x00000000, 0x00000000, 0x00000074, 0x00000090, 0x00000000, 0x00000000, 0x000000c0,
+    0x000000dc, 0x00000000, 0x00000000, 0x000000f8, 0x00000114, 0x00000000, 0x00000000, 0x00000130,
+    0x0000014c, 0x00000000, 0x00000000, 0x00000168, 0x00000184, 0x00000000, 0x00000000, 0x000001a8,
+    0x000001c4, 0x00000000, 0x00000000, 0x000001e0, 0x000001f4, 0x00000000, 0x00000000, 0x0000020c,
+    0x00000228, 0x00000000, 0x00000000, 0x00000264, 0x00000280, 0x00000000, 0x00000000, 0x000002bc,
+    0x000002d8, 0x00000000, 0x00000000, 0x00000318, 0x00000334, 0x00000000, 0x00000000, 0x00000374,
+    0x00000390, 0x00000000, 0x00000000, 0x000003ac, 0x000003c8, 0x00000000, 0x00000000, 0x000003e8,
+    0x00000404, 0x00000000, 0x00000000, 0x00000428, 0x00000444, 0x00000000, 0x00000000, 0x0000046c,
+    0x00000488, 0x00000000, 0x00000000, 0x000004ac, 0x000004c8, 0x00000000, 0x00000000, 0x000004f0,
+    0x0000050c, 0x00000000, 0x00000000, 0x00000534, 0x00000550, 0x00000000, 0x00000000, 0x00000578,
+    0x000005e4, 0x00000000, 0x00000000, 0x00000624, 0x00000690, 0x00000000, 0x00000000, 0x000006f0,
+    0x00000774, 0x00000000, 0x00000000, 0x000007dc, 0x000007f8, 0x00000000, 0x00000000, 0x00000808,
+    0x00000824, 0x00000000, 0x00000000, 0x00000838, 0x0000084c, 0x00000000, 0x00000000, 0x0000085c,
+    0x00000870, 0x00000000, 0x00000000, 0x00000880, 0x000008ec, 0x00000000, 0x00000000, 0x00000930,
+    0x00000944, 0x00000000, 0x00000000, 0x00000954, 0x00000968, 0x00000000, 0x00000000, 0x00000ee8,
+    0x00000000, 0x00000002, 0x00000ec0, 0x00000000, 0x00000024, 0x00000092, 0x00000000, 0x0000097c,
+    0x00000978, 0x00000093, 0x00000000, 0x00000994, 0x00000990, 0x00000091, 0x00000000, 0x000009ac,
+    0x000009a8, 0x00000091, 0x00000001, 0x000009cc, 0x000009c8, 0x00000091, 0x00000002, 0x000009ec,
+    0x000009e8, 0x00000091, 0x00000003, 0x00000a0c, 0x00000a08, 0x00000091, 0x00000004, 0x00000a2c,
+    0x00000a28, 0x00000091, 0x00000005, 0x00000a4c, 0x00000a48, 0x00000091, 0x00000006, 0x00000a6c,
+    0x00000a68, 0x00000091, 0x00000007, 0x00000a8c, 0x00000a88, 0x00000084, 0x00000000, 0x00000aac,
+    0x00000aa8, 0x00000084, 0x00000001, 0x00000acc, 0x00000ac8, 0x00000084, 0x00000002, 0x00000aec,
+    0x00000ae8, 0x00000084, 0x00000003, 0x00000b0c, 0x00000b08, 0x00000084, 0x00000004, 0x00000b2c,
+    0x00000b28, 0x00000084, 0x00000005, 0x00000b4c, 0x00000b48, 0x00000084, 0x00000006, 0x00000b6c,
+    0x00000b68, 0x00000084, 0x00000007, 0x00000b8c, 0x00000b88, 0x00000085, 0x00000000, 0x00000bb8,
+    0x00000ba8, 0x00000085, 0x00000001, 0x00000be4, 0x00000bd4, 0x00000085, 0x00000002, 0x00000c10,
+    0x00000c00, 0x00000085, 0x00000003, 0x00000c3c, 0x00000c2c, 0x00000085, 0x00000004, 0x00000c68,
+    0x00000c58, 0x00000085, 0x00000005, 0x00000c94, 0x00000c84, 0x00000085, 0x00000006, 0x00000cc0,
+    0x00000cb0, 0x00000085, 0x00000007, 0x00000cec, 0x00000cdc, 0x00000087, 0x00000000, 0x00000d18,
+    0x00000d08, 0x00000087, 0x00000001, 0x00000d44, 0x00000d34, 0x00000087, 0x00000002, 0x00000d70,
+    0x00000d60, 0x00000087, 0x00000003, 0x00000d9c, 0x00000d8c, 0x00000087, 0x00000004, 0x00000dc8,
+    0x00000db8, 0x00000087, 0x00000005, 0x00000df4, 0x00000de4, 0x00000087, 0x00000006, 0x00000e20,
+    0x00000e10, 0x00000087, 0x00000007, 0x00000e4c, 0x00000e3c, 0x00000086, 0x00000000, 0x00000e78,
+    0x00000e68, 0x00000086, 0x00000001, 0x00000ea4, 0x00000e94, 0x00000ee0, 0x00000000, 0x00000001,
+    0x00000092, 0x00000000, 0x00000ecc, 0x00000ec8, 0x00000007, 0x00000018, 0x00000008, 0x000007cc,
+    0xffff0300, 0x00c0fffe, 0x42415443, 0x0000001c, 0x000002cb, 0xffff0300, 0x00000009, 0x0000001c,
+    0x00000000, 0x000002c4, 0x000000d0, 0x00000001, 0x00000001, 0x000000d8, 0x000000e8, 0x000000f8,
+    0x00080002, 0x00000002, 0x00000104, 0x00000114, 0x00000134, 0x00060002, 0x00000002, 0x0000013c,
+    0x0000014c, 0x0000016c, 0x00000002, 0x00000003, 0x00000178, 0x00000188, 0x000001b8, 0x000a0002,
+    0x00000002, 0x000001c0, 0x000001d0, 0x000001f0, 0x000c0002, 0x00000002, 0x000001fc, 0x0000020c,
+    0x0000022c, 0x00030002, 0x00000003, 0x00000234, 0x00000244, 0x00000274, 0x00000000, 0x00000005,
+    0x00000280, 0x00000290, 0x000002a8, 0x00000003, 0x00000001, 0x000002b4, 0x00000000, 0x56695f67,
+    0x00746365, 0x00020001, 0x00040001, 0x00000001, 0x00000000, 0x00000004, 0x00000003, 0x00000002,
+    0x00000001, 0x3278326d, 0x756c6f63, 0xab006e6d, 0x00030003, 0x00020002, 0x00000001, 0x00000000,
+    0x41300000, 0x41a80000, 0x00000000, 0x00000000, 0x41400000, 0x41b00000, 0x00000000, 0x00000000,
+    0x3278326d, 0x00776f72, 0x00030002, 0x00020002, 0x00000001, 0x00000000, 0x41300000, 0x41400000,
+    0x00000000, 0x00000000, 0x41a80000, 0x41b00000, 0x00000000, 0x00000000, 0x3378326d, 0x756c6f63,
+    0xab006e6d, 0x00030003, 0x00030002, 0x00000001, 0x00000000, 0x41300000, 0x41a80000, 0x00000000,
+    0x00000000, 0x41400000, 0x41b00000, 0x00000000, 0x00000000, 0x41500000, 0x41b80000, 0x00000000,
+    0x00000000, 0x3378326d, 0x00776f72, 0x00030002, 0x00030002, 0x00000001, 0x00000000, 0x41300000,
+    0x41400000, 0x41500000, 0x00000000, 0x41a80000, 0x41b00000, 0x41b80000, 0x00000000, 0x3278336d,
+    0x756c6f63, 0xab006e6d, 0x00030003, 0x00020003, 0x00000001, 0x00000000, 0x41300000, 0x41a80000,
+    0x41f80000, 0x00000000, 0x41400000, 0x41b00000, 0x42000000, 0x00000000, 0x3278336d, 0x00776f72,
+    0x00030002, 0x00020003, 0x00000001, 0x00000000, 0x41300000, 0x41400000, 0x00000000, 0x00000000,
+    0x41a80000, 0x41b00000, 0x00000000, 0x00000000, 0x41f80000, 0x42000000, 0x00000000, 0x00000000,
+    0x7832626d, 0x776f7233, 0xababab00, 0x00010002, 0x00030002, 0x00000001, 0x00000000, 0xffffffff,
+    0x00000000, 0xffffffff, 0x00000000, 0xffffffff, 0xffffffff, 0x706d6173, 0x3172656c, 0xababab00,
+    0x000c0004, 0x00010001, 0x00000001, 0x00000000, 0x335f7370, 0x4d00305f, 0x6f726369, 0x74666f73,
+    0x29522820, 0x534c4820, 0x6853204c, 0x72656461, 0x6d6f4320, 0x656c6970, 0x2e392072, 0x392e3932,
+    0x332e3235, 0x00313131, 0x05000051, 0xa00f000e, 0x3d2aaaa4, 0xbf000000, 0x3f800000, 0xbe22f983,
+    0x05000051, 0xa00f000f, 0x00000000, 0x3e22f983, 0x3e800000, 0xbab609ba, 0x05000051, 0xa00f0010,
+    0x40c90fdb, 0xc0490fdb, 0xb4878163, 0x37cfb5a1, 0x0200001f, 0x80000005, 0x90030000, 0x0200001f,
+    0x8000000a, 0x900f0001, 0x0200001f, 0x90000000, 0xa00f0800, 0x03000005, 0x80030000, 0xa0e40007,
+    0x90550001, 0x04000004, 0x80030000, 0x90000001, 0xa0e40006, 0x80e40000, 0x03000002, 0x80030000,
+    0x80e40000, 0x90e40001, 0x02000001, 0x80010001, 0xa000000f, 0x0400005a, 0x80010002, 0x90e40001,
+    0xa0e40008, 0x80000001, 0x0400005a, 0x80020002, 0x90e40001, 0xa0e40009, 0x80000001, 0x03000002,
+    0x80030000, 0x80e40000, 0x80e40002, 0x03000005, 0x800c0000, 0xa0440004, 0x90550001, 0x04000004,
+    0x800c0000, 0x90000001, 0xa0440003, 0x80e40000, 0x04000004, 0x800c0000, 0x90aa0001, 0xa0440005,
+    0x80e40000, 0x03000002, 0x80030000, 0x80ee0000, 0x80e40000, 0x03000008, 0x80010002, 0x90e40001,
+    0xa0e4000c, 0x03000008, 0x80020002, 0x90e40001, 0xa0e4000d, 0x03000002, 0x80030000, 0x80e40000,
+    0x80e40002, 0x03000005, 0x800e0001, 0xa090000b, 0x90550001, 0x04000004, 0x800e0001, 0x90000001,
+    0xa090000a, 0x80e40001, 0x02000001, 0x80040000, 0x90aa0001, 0x03000002, 0x80070000, 0x80e40000,
+    0x80f90001, 0x0400005a, 0x80010002, 0x90e40001, 0xa0e40000, 0x80000001, 0x0400005a, 0x80020002,
+    0x90e40001, 0xa0e40001, 0x80000001, 0x0400005a, 0x80040002, 0x90e40001, 0xa0e40002, 0x80000001,
+    0x03000002, 0x80070000, 0x80e40000, 0x80e40002, 0x02000001, 0x80070003, 0x80e40000, 0x01000026,
+    0xf0e40000, 0x03000002, 0x80070003, 0x80e40002, 0x80e40003, 0x00000027, 0x01000028, 0xe0e40804,
+    0x02000001, 0x80080003, 0x90ff0001, 0x04000004, 0x800f0000, 0x80e40003, 0xa055000f, 0xa0aa000f,
+    0x02000013, 0x800f0000, 0x80e40000, 0x04000004, 0x800f0000, 0x80e40000, 0xa0000010, 0xa0550010,
+    0x03000005, 0x800f0000, 0x80e40000, 0x80e40000, 0x04000004, 0x800f0002, 0x80e40000, 0xa0aa0010,
+    0xa0ff0010, 0x04000004, 0x800f0002, 0x80e40000, 0x80e40002, 0xa0ff000f, 0x04000004, 0x800f0002,
+    0x80e40000, 0x80e40002, 0xa000000e, 0x04000004, 0x800f0002, 0x80e40000, 0x80e40002, 0xa055000e,
+    0x04000004, 0x800f0000, 0x80e40000, 0x80e40002, 0x80e40003, 0x03000002, 0x800f0000, 0x80e40000,
+    0xa0aa000e, 0x04000004, 0x800f0002, 0x80e40000, 0xa1ff000e, 0xa155000e, 0x02000013, 0x800f0002,
+    0x80e40002, 0x04000004, 0x800f0002, 0x80e40002, 0xa0000010, 0xa0550010, 0x03000005, 0x800f0002,
+    0x80e40002, 0x80e40002, 0x04000004, 0x800f0004, 0x80e40002, 0xa0aa0010, 0xa0ff0010, 0x04000004,
+    0x800f0004, 0x80e40002, 0x80e40004, 0xa0ff000f, 0x04000004, 0x800f0004, 0x80e40002, 0x80e40004,
+    0xa000000e, 0x04000004, 0x800f0004, 0x80e40002, 0x80e40004, 0xa055000e, 0x04000004, 0x800f0000,
+    0x80e40002, 0x80e40004, 0x80e40000, 0x03000002, 0x800f0003, 0x80e40000, 0xa0aa000e, 0x0400005a,
+    0x80010000, 0x80e40003, 0xa0e40000, 0x80000001, 0x0400005a, 0x80020000, 0x80e40003, 0xa0e40001,
+    0x80000001, 0x0400005a, 0x80040000, 0x80e40003, 0xa0e40002, 0x80000001, 0x03000002, 0x80070000,
+    0x80e40000, 0x80e40003, 0x03000005, 0x80070001, 0x80550000, 0xa0e4000b, 0x04000004, 0x80070001,
+    0x80000000, 0xa0e4000a, 0x80e40001, 0x03000002, 0x80070003, 0x80e40000, 0x80e40001, 0x03000008,
+    0x80010000, 0x80e40003, 0xa0e4000c, 0x03000008, 0x80020000, 0x80e40003, 0xa0e4000d, 0x03000002,
+    0x80030000, 0x80e40000, 0x80e40003, 0x03000005, 0x800c0000, 0x80550000, 0xa0440004, 0x04000004,
+    0x800c0000, 0x80000000, 0xa0440003, 0x80e40000, 0x04000004, 0x800c0000, 0x80aa0003, 0xa0440005,
+    0x80e40000, 0x03000002, 0x80030003, 0x80ee0000, 0x80e40000, 0x0000002a, 0x02000001, 0x80080003,
+    0x90ff0001, 0x0000002b, 0x03000042, 0x800f0000, 0x90e40000, 0xa0e40800, 0x03000002, 0x800f0800,
+    0x80e40000, 0x80e40003, 0x0000ffff, 0x00000007, 0x00000afc, 0xfffe0300, 0x012ffffe, 0x42415443,
+    0x0000001c, 0x00000487, 0xfffe0300, 0x0000000b, 0x0000001c, 0x00000000, 0x00000480, 0x000000f8,
+    0x00200002, 0x00000001, 0x00000100, 0x00000110, 0x00000120, 0x001d0002, 0x00000002, 0x00000128,
+    0x00000138, 0x00000158, 0x001f0002, 0x00000001, 0x00000160, 0x00000170, 0x00000180, 0x00100002,
+    0x00000004, 0x0000018c, 0x0000019c, 0x000001dc, 0x00140002, 0x00000003, 0x000001e4, 0x000001f4,
+    0x00000224, 0x00170002, 0x00000003, 0x00000230, 0x00000240, 0x00000270, 0x000c0002, 0x00000004,
+    0x00000278, 0x00000288, 0x000002c8, 0x00000003, 0x00000001, 0x000002d4, 0x00000000, 0x000002e4,
+    0x001a0002, 0x00000003, 0x0000033c, 0x0000034c, 0x0000037c, 0x00000002, 0x00000006, 0x00000380,
+    0x00000390, 0x000003f0, 0x00060002, 0x00000006, 0x00000410, 0x00000420, 0x31727261, 0xababab00,
+    0x00030000, 0x00010001, 0x00000001, 0x00000000, 0x42b60000, 0x00000000, 0x00000000, 0x00000000,
+    0x32727261, 0xababab00, 0x00030000, 0x00010001, 0x00000002, 0x00000000, 0x42b80000, 0x00000000,
+    0x00000000, 0x00000000, 0x42ba0000, 0x00000000, 0x00000000, 0x00000000, 0x6f505f67, 0xab003173,
+    0x00030001, 0x00040001, 0x00000001, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x3478336d, 0x756c6f63, 0xab006e6d, 0x00030003, 0x00040003, 0x00000001, 0x00000000, 0x41300000,
+    0x41a80000, 0x41f80000, 0x00000000, 0x41400000, 0x41b00000, 0x42000000, 0x00000000, 0x41500000,
+    0x41b80000, 0x42040000, 0x00000000, 0x41600000, 0x41c00000, 0x42080000, 0x00000000, 0x3478336d,
+    0x00776f72, 0x00030002, 0x00040003, 0x00000001, 0x00000000, 0x41300000, 0x41400000, 0x41500000,
+    0x41600000, 0x41a80000, 0x41b00000, 0x41b80000, 0x41c00000, 0x41f80000, 0x42000000, 0x42040000,
+    0x42080000, 0x3378346d, 0x756c6f63, 0xab006e6d, 0x00030003, 0x00030004, 0x00000001, 0x00000000,
+    0x41300000, 0x41a80000, 0x41f80000, 0x42240000, 0x41400000, 0x41b00000, 0x42000000, 0x42280000,
+    0x41500000, 0x41b80000, 0x42040000, 0x422c0000, 0x3378346d, 0x00776f72, 0x00030002, 0x00030004,
+    0x00000001, 0x00000000, 0x41300000, 0x41400000, 0x41500000, 0x00000000, 0x41a80000, 0x41b00000,
+    0x41b80000, 0x00000000, 0x41f80000, 0x42000000, 0x42040000, 0x00000000, 0x42240000, 0x42280000,
+    0x422c0000, 0x00000000, 0x706d6173, 0x3172656c, 0xababab00, 0x000c0004, 0x00010001, 0x00000001,
+    0x00000000, 0x00317374, 0xab003176, 0x00030001, 0x00030001, 0x00000001, 0x00000000, 0xab007666,
+    0x00030000, 0x00010001, 0x00000001, 0x00000000, 0xab003276, 0x00030001, 0x00040001, 0x00000001,
+    0x00000000, 0x000002e8, 0x000002ec, 0x000002fc, 0x00000300, 0x00000310, 0x00000314, 0x00000005,
+    0x00080001, 0x00030001, 0x00000324, 0x41100000, 0x41200000, 0x41300000, 0x00000000, 0x41400000,
+    0x00000000, 0x00000000, 0x00000000, 0x41500000, 0x41600000, 0x41700000, 0x41800000, 0x00327374,
+    0x00000005, 0x00080001, 0x00030002, 0x00000324, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x3f800000, 0x40000000, 0x40400000, 0x00000000, 0x40800000, 0x00000000, 0x00000000, 0x00000000,
+    0x40a00000, 0x40c00000, 0x40e00000, 0x41000000, 0x00337374, 0xab007374, 0x00000005, 0x00080001,
+    0x00030002, 0x00000324, 0x000003f4, 0x000003f8, 0x00000005, 0x00100001, 0x00010001, 0x00000408,
+    0x3f800000, 0x40000000, 0x40400000, 0x00000000, 0x40800000, 0x00000000, 0x00000000, 0x00000000,
+    0x40a00000, 0x40c00000, 0x40e00000, 0x41000000, 0x41100000, 0x41200000, 0x41300000, 0x00000000,
+    0x41400000, 0x00000000, 0x00000000, 0x00000000, 0x41500000, 0x41600000, 0x41700000, 0x41800000,
+    0x335f7376, 0x4d00305f, 0x6f726369, 0x74666f73, 0x29522820, 0x534c4820, 0x6853204c, 0x72656461,
+    0x6d6f4320, 0x656c6970, 0x2e392072, 0x392e3932, 0x332e3235, 0x00313131, 0x00ecfffe, 0x53455250,
+    0x46580201, 0x0043fffe, 0x42415443, 0x0000001c, 0x000000d7, 0x46580201, 0x00000003, 0x0000001c,
+    0x00000100, 0x000000d4, 0x00000058, 0x00020002, 0x00000001, 0x00000060, 0x00000070, 0x00000080,
+    0x00030002, 0x00000001, 0x00000088, 0x00000070, 0x00000098, 0x00000002, 0x00000002, 0x000000a4,
+    0x000000b4, 0x6f505f67, 0xab003173, 0x00030001, 0x00040001, 0x00000001, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x6f505f67, 0xab003273, 0x00030001, 0x00040001, 0x00000001,
+    0x00000000, 0x65535f67, 0x7463656c, 0xab00726f, 0x00030001, 0x00040001, 0x00000002, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x41200000, 0x41200000, 0x41200000, 0x41200000,
+    0x4d007874, 0x6f726369, 0x74666f73, 0x29522820, 0x534c4820, 0x6853204c, 0x72656461, 0x6d6f4320,
+    0x656c6970, 0x2e392072, 0x392e3932, 0x332e3235, 0x00313131, 0x000cfffe, 0x49535250, 0x00000021,
+    0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x00000000, 0x00000001, 0x00000021, 0x00000001,
+    0x00000000, 0x00000000, 0x0032fffe, 0x54494c43, 0x00000018, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x3fe00000, 0x00000000,
+    0xc0000000, 0x00000000, 0xc0080000, 0x00000000, 0x00000000, 0x00000000, 0x40100000, 0x00000000,
+    0x40140000, 0x00000000, 0x40180000, 0x00000000, 0x401c0000, 0x0064fffe, 0x434c5846, 0x00000009,
+    0xa0500004, 0x00000002, 0x00000000, 0x00000001, 0x00000011, 0x00000000, 0x00000002, 0x00000008,
+    0x00000000, 0x00000007, 0x00000000, 0x20400004, 0x00000002, 0x00000000, 0x00000007, 0x00000000,
+    0x00000000, 0x00000001, 0x00000014, 0x00000000, 0x00000007, 0x00000004, 0xa0500004, 0x00000002,
+    0x00000000, 0x00000001, 0x00000012, 0x00000000, 0x00000002, 0x0000000c, 0x00000000, 0x00000007,
+    0x00000000, 0x20400004, 0x00000002, 0x00000000, 0x00000007, 0x00000000, 0x00000000, 0x00000001,
+    0x00000014, 0x00000000, 0x00000007, 0x00000008, 0x10100004, 0x00000001, 0x00000000, 0x00000007,
+    0x00000008, 0x00000000, 0x00000007, 0x00000000, 0x20400004, 0x00000002, 0x00000000, 0x00000007,
+    0x00000000, 0x00000000, 0x00000007, 0x00000004, 0x00000000, 0x00000007, 0x0000000c, 0xa0200001,
+    0x00000002, 0x00000000, 0x00000001, 0x00000010, 0x00000000, 0x00000002, 0x00000005, 0x00000000,
+    0x00000007, 0x00000000, 0xa0500004, 0x00000002, 0x00000000, 0x00000007, 0x00000000, 0x00000000,
+    0x00000007, 0x0000000c, 0x00000000, 0x00000007, 0x00000004, 0x20400004, 0x00000002, 0x00000000,
+    0x00000007, 0x00000004, 0x00000000, 0x00000007, 0x00000008, 0x00000000, 0x00000004, 0x00000084,
+    0xf0f0f0f0, 0x0f0f0f0f, 0x0000ffff, 0x05000051, 0xa00f0022, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x0200001f, 0x80000000, 0x900f0000, 0x0200001f, 0x90000000, 0xa00f0800, 0x0200001f,
+    0x80000000, 0xe00f0000, 0x0200001f, 0x80000005, 0xe0030001, 0x0200001f, 0x8000000a, 0xe00f0002,
+    0x03000009, 0x80010000, 0x90e40000, 0xa0e40017, 0x03000009, 0x80020000, 0x90e40000, 0xa0e40018,
+    0x03000009, 0x80040000, 0x90e40000, 0xa0e40019, 0x03000008, 0x80010001, 0x90e40000, 0xa0e40010,
+    0x03000008, 0x80020001, 0x90e40000, 0xa0e40011, 0x03000008, 0x80040001, 0x90e40000, 0xa0e40012,
+    0x03000008, 0x80080001, 0x90e40000, 0xa0e40013, 0x02000001, 0x80080000, 0xa0000022, 0x03000002,
+    0x800f0000, 0x80e40000, 0x80e40001, 0x03000005, 0x800f0001, 0xa0e40015, 0x90550000, 0x04000004,
+    0x800f0001, 0x90000000, 0xa0e40014, 0x80e40001, 0x04000004, 0x800f0001, 0x90aa0000, 0xa0e40016,
+    0x80e40001, 0x03000002, 0x800f0000, 0x80e40000, 0x80e40001, 0x03000005, 0x80070001, 0xa0e4000d,
+    0x90550000, 0x04000004, 0x80070001, 0x90000000, 0xa0e4000c, 0x80e40001, 0x04000004, 0x80070001,
+    0x90aa0000, 0xa0e4000e, 0x80e40001, 0x04000004, 0x80070001, 0x90ff0000, 0xa0e4000f, 0x80e40001,
+    0x03000002, 0x80070000, 0x80e40000, 0x80e40001, 0x04000004, 0x800f0000, 0x90e40000, 0xa000001b,
+    0x80e40000, 0x03000009, 0x80010001, 0x90e40000, 0xa0e4001c, 0x03000002, 0x800f0000, 0x80e40000,
+    0x80000001, 0x04000004, 0x800f0000, 0x90e40000, 0xa0000004, 0x80e40000, 0x03000009, 0x80010001,
+    0x90e40000, 0xa0e40005, 0x03000002, 0x800f0000, 0x80e40000, 0x80000001, 0x04000004, 0x800f0000,
+    0x90e40000, 0xa0000020, 0x80e40000, 0x04000004, 0x800f0000, 0x90e40000, 0xa000001e, 0x80e40000,
+    0x04000004, 0x800f0000, 0x90e40000, 0xa000000a, 0x80e40000, 0x03000009, 0x80010001, 0x90e40000,
+    0xa0e4000b, 0x03000002, 0x800f0000, 0x80e40000, 0x80000001, 0x0300005f, 0x800f0001, 0xa0e4001f,
+    0xa0e40800, 0x03000002, 0xe00f0002, 0x80e40000, 0x80e40001, 0x02000001, 0xe00f0000, 0xa0e40021,
+    0x02000001, 0xe0030001, 0xa0000022, 0x0000ffff, 0x00000005, 0x00000000, 0x00000004, 0x00000000,
+    0x00000001, 0x0000002c, 0xfffe0101, 0x00000051, 0xa00f0000, 0x3f800000, 0x3f800000, 0x3f800000,
+    0x3f800000, 0x00000001, 0xc00f0000, 0xa0e40000, 0x0000ffff, 0x00000002, 0x0000002c, 0xfffe0101,
+    0x00000051, 0xa00f0000, 0x40000000, 0x40000000, 0x40000000, 0x40000000, 0x00000001, 0xc00f0000,
+    0xa0e40000, 0x0000ffff, 0x00000003, 0x0000002c, 0xfffe0200, 0x05000051, 0xa00f0000, 0x40400000,
+    0x40400000, 0x40400000, 0x40400000, 0x02000001, 0xc00f0000, 0xa0e40000, 0x0000ffff, 0x00000000,
+    0x00000001, 0xffffffff, 0x00000000, 0x00000002, 0x000000e8, 0x00000008, 0x615f7376, 0x00007272,
+    0x46580200, 0x0024fffe, 0x42415443, 0x0000001c, 0x0000005b, 0x46580200, 0x00000001, 0x0000001c,
+    0x00000100, 0x00000058, 0x00000030, 0x00000002, 0x00000001, 0x00000038, 0x00000048, 0x56695f67,
+    0x00746365, 0x00020001, 0x00040001, 0x00000001, 0x00000000, 0x40800000, 0x40400000, 0x40000000,
+    0x3f800000, 0x4d007874, 0x6f726369, 0x74666f73, 0x29522820, 0x534c4820, 0x6853204c, 0x72656461,
+    0x6d6f4320, 0x656c6970, 0x2e392072, 0x392e3932, 0x332e3235, 0x00313131, 0x0002fffe, 0x54494c43,
+    0x00000000, 0x000cfffe, 0x434c5846, 0x00000001, 0x10000001, 0x00000001, 0x00000000, 0x00000002,
+    0x00000002, 0x00000000, 0x00000004, 0x00000000, 0xf0f0f0f0, 0x0f0f0f0f, 0x0000ffff, 0x00000000,
+    0x00000000, 0xffffffff, 0x00000023, 0x00000000, 0x000003f0, 0x46580200, 0x0056fffe, 0x42415443,
+    0x0000001c, 0x00000123, 0x46580200, 0x00000004, 0x0000001c, 0x20000100, 0x00000120, 0x0000006c,
+    0x00000002, 0x00000002, 0x00000078, 0x00000088, 0x000000a8, 0x00040002, 0x00000001, 0x000000b0,
+    0x000000c0, 0x000000d0, 0x00020002, 0x00000001, 0x000000d8, 0x000000e8, 0x000000f8, 0x00030002,
+    0x00000001, 0x00000100, 0x00000110, 0x65535f67, 0x7463656c, 0xab00726f, 0x00030001, 0x00040001,
+    0x00000002, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x41200000, 0x41200000,
+    0x41200000, 0x41200000, 0x56695f67, 0x00746365, 0x00020001, 0x00040001, 0x00000001, 0x00000000,
+    0x40800000, 0x40400000, 0x40000000, 0x3f800000, 0x6576706f, 0x00317463, 0x00030001, 0x00040001,
+    0x00000001, 0x00000000, 0x00000000, 0x80000000, 0xc00ccccd, 0x7f7fffff, 0x6576706f, 0x00327463,
+    0x00030001, 0x00040001, 0x00000001, 0x00000000, 0x3f800000, 0x40000000, 0xc0400000, 0x40800000,
+    0x4d007874, 0x6f726369, 0x74666f73, 0x29522820, 0x534c4820, 0x6853204c, 0x72656461, 0x6d6f4320,
+    0x656c6970, 0x2e392072, 0x392e3932, 0x332e3235, 0x00313131, 0x004afffe, 0x54494c43, 0x00000024,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x3ff00000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x3ff00000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x3ff00000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x3ff00000,
+    0x0057fffe, 0x434c5846, 0x00000007, 0x50000004, 0x00000002, 0x00000000, 0x00000002, 0x00000008,
+    0x00000001, 0x00000002, 0x00000012, 0x00000001, 0x00000014, 0x00000000, 0x00000004, 0x00000000,
+    0x10400001, 0x00000001, 0x00000000, 0x00000002, 0x0000000d, 0x00000000, 0x00000007, 0x00000000,
+    0x10100001, 0x00000001, 0x00000000, 0x00000007, 0x00000000, 0x00000000, 0x00000007, 0x00000004,
+    0xa0400001, 0x00000002, 0x00000000, 0x00000007, 0x00000004, 0x00000000, 0x00000002, 0x0000000d,
+    0x00000000, 0x00000007, 0x00000000, 0x50000004, 0x00000002, 0x00000000, 0x00000002, 0x00000010,
+    0x00000001, 0x00000007, 0x00000000, 0x00000001, 0x00000014, 0x00000000, 0x00000004, 0x00000001,
+    0xa0400001, 0x00000002, 0x00000001, 0x00000002, 0x00000013, 0x00000002, 0x00000001, 0x00000001,
+    0x00000002, 0x00000013, 0x00000002, 0x00000000, 0x00000000, 0x00000004, 0x00000002, 0xa0400001,
+    0x00000002, 0x00000001, 0x00000002, 0x00000010, 0x00000002, 0x00000001, 0x00000001, 0x00000002,
+    0x00000013, 0x00000002, 0x00000000, 0x00000000, 0x00000004, 0x00000003, 0xf0f0f0f0, 0x0f0f0f0f,
+    0x0000ffff, 0x00000000, 0x00000000, 0xffffffff, 0x00000022, 0x00000000, 0x000002cc, 0x46580200,
+    0x0033fffe, 0x42415443, 0x0000001c, 0x00000097, 0x46580200, 0x00000002, 0x0000001c, 0x20000100,
+    0x00000094, 0x00000044, 0x00000002, 0x00000001, 0x0000004c, 0x0000005c, 0x0000006c, 0x00010002,
+    0x00000001, 0x00000074, 0x00000084, 0x6576706f, 0x00317463, 0x00030001, 0x00040001, 0x00000001,
+    0x00000000, 0x00000000, 0x80000000, 0xc00ccccd, 0x7f7fffff, 0x6576706f, 0x00327463, 0x00030001,
+    0x00040001, 0x00000001, 0x00000000, 0x3f800000, 0x40000000, 0xc0400000, 0x40800000, 0x4d007874,
+    0x6f726369, 0x74666f73, 0x29522820, 0x534c4820, 0x6853204c, 0x72656461, 0x6d6f4320, 0x656c6970,
+    0x2e392072, 0x392e3932, 0x332e3235, 0x00313131, 0x001afffe, 0x54494c43, 0x0000000c, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0061fffe,
+    0x434c5846, 0x00000006, 0xa0500001, 0x00000002, 0x00000000, 0x00000002, 0x00000002, 0x00000000,
+    0x00000002, 0x00000004, 0x00000000, 0x00000007, 0x00000000, 0xa0500001, 0x00000002, 0x00000000,
+    0x00000002, 0x00000000, 0x00000000, 0x00000002, 0x00000005, 0x00000000, 0x00000007, 0x00000001,
+    0xa0400001, 0x00000002, 0x00000000, 0x00000007, 0x00000001, 0x00000000, 0x00000007, 0x00000000,
+    0x00000000, 0x00000004, 0x00000000, 0x70e00001, 0x00000006, 0x00000000, 0x00000002, 0x00000002,
+    0x00000000, 0x00000002, 0x00000002, 0x00000000, 0x00000002, 0x00000000, 0x00000000, 0x00000002,
+    0x00000004, 0x00000000, 0x00000002, 0x00000005, 0x00000000, 0x00000002, 0x00000006, 0x00000000,
+    0x00000004, 0x00000001, 0x70e00001, 0x00000008, 0x00000000, 0x00000002, 0x00000002, 0x00000000,
+    0x00000002, 0x00000002, 0x00000000, 0x00000002, 0x00000002, 0x00000000, 0x00000002, 0x00000000,
+    0x00000000, 0x00000002, 0x00000004, 0x00000000, 0x00000002, 0x00000004, 0x00000000, 0x00000002,
+    0x00000005, 0x00000000, 0x00000002, 0x00000005, 0x00000000, 0x00000004, 0x00000002, 0x10000001,
+    0x00000001, 0x00000000, 0x00000001, 0x00000008, 0x00000000, 0x00000004, 0x00000003, 0xf0f0f0f0,
+    0x0f0f0f0f, 0x0000ffff, 0x00000000, 0x00000000, 0xffffffff, 0x00000021, 0x00000000, 0x00000248,
+    0x46580200, 0x003efffe, 0x42415443, 0x0000001c, 0x000000c3, 0x46580200, 0x00000003, 0x0000001c,
+    0x20000100, 0x000000c0, 0x00000058, 0x00000002, 0x00000001, 0x00000060, 0x00000070, 0x00000080,
+    0x00010002, 0x00000001, 0x00000088, 0x00000098, 0x000000a8, 0x00020002, 0x00000001, 0x000000b0,
+    0x00000070, 0x6576706f, 0x00317463, 0x00030001, 0x00040001, 0x00000001, 0x00000000, 0x00000000,
+    0x80000000, 0xc00ccccd, 0x7f7fffff, 0x6576706f, 0x00327463, 0x00030001, 0x00040001, 0x00000001,
+    0x00000000, 0x3f800000, 0x40000000, 0xc0400000, 0x40800000, 0x6576706f, 0x00337463, 0x00030001,
+    0x00040001, 0x00000001, 0x00000000, 0x4d007874, 0x6f726369, 0x74666f73, 0x29522820, 0x534c4820,
+    0x6853204c, 0x72656461, 0x6d6f4320, 0x656c6970, 0x2e392072, 0x392e3932, 0x332e3235, 0x00313131,
+    0x0022fffe, 0x54494c43, 0x00000010, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x812dea11, 0x3d719799, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x002dfffe, 0x434c5846, 0x00000004, 0xa0500004, 0x00000002,
+    0x00000000, 0x00000001, 0x0000000c, 0x00000000, 0x00000002, 0x00000004, 0x00000000, 0x00000007,
+    0x00000000, 0x20400004, 0x00000002, 0x00000000, 0x00000007, 0x00000000, 0x00000000, 0x00000002,
+    0x00000000, 0x00000000, 0x00000007, 0x00000004, 0x10100004, 0x00000001, 0x00000000, 0x00000002,
+    0x00000008, 0x00000000, 0x00000007, 0x00000000, 0x20400004, 0x00000002, 0x00000000, 0x00000007,
+    0x00000000, 0x00000000, 0x00000007, 0x00000004, 0x00000000, 0x00000004, 0x00000000, 0xf0f0f0f0,
+    0x0f0f0f0f, 0x0000ffff, 0x00000000, 0x00000000, 0xffffffff, 0x00000020, 0x00000000, 0x000001f0,
+    0x46580200, 0x0033fffe, 0x42415443, 0x0000001c, 0x00000097, 0x46580200, 0x00000002, 0x0000001c,
+    0x20000100, 0x00000094, 0x00000044, 0x00000002, 0x00000001, 0x0000004c, 0x0000005c, 0x0000006c,
+    0x00010002, 0x00000001, 0x00000074, 0x00000084, 0x6576706f, 0x00317463, 0x00030001, 0x00040001,
+    0x00000001, 0x00000000, 0x00000000, 0x80000000, 0xc00ccccd, 0x7f7fffff, 0x6576706f, 0x00327463,
+    0x00030001, 0x00040001, 0x00000001, 0x00000000, 0x3f800000, 0x40000000, 0xc0400000, 0x40800000,
+    0x4d007874, 0x6f726369, 0x74666f73, 0x29522820, 0x534c4820, 0x6853204c, 0x72656461, 0x6d6f4320,
+    0x656c6970, 0x2e392072, 0x392e3932, 0x332e3235, 0x00313131, 0x001afffe, 0x54494c43, 0x0000000c,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x002afffe, 0x434c5846, 0x00000004, 0x50000004, 0x00000002, 0x00000000, 0x00000002, 0x00000000,
+    0x00000000, 0x00000002, 0x00000004, 0x00000000, 0x00000004, 0x00000001, 0x50000004, 0x00000002,
+    0x00000000, 0x00000002, 0x00000004, 0x00000000, 0x00000002, 0x00000004, 0x00000000, 0x00000004,
+    0x00000002, 0x10000001, 0x00000001, 0x00000000, 0x00000001, 0x00000008, 0x00000000, 0x00000004,
+    0x00000000, 0x10000001, 0x00000001, 0x00000000, 0x00000001, 0x00000008, 0x00000000, 0x00000004,
+    0x00000003, 0xf0f0f0f0, 0x0f0f0f0f, 0x0000ffff, 0x00000000, 0x00000000, 0xffffffff, 0x0000001f,
+    0x00000000, 0x000001a8, 0x46580200, 0x0024fffe, 0x42415443, 0x0000001c, 0x0000005b, 0x46580200,
+    0x00000001, 0x0000001c, 0x20000100, 0x00000058, 0x00000030, 0x00000002, 0x00000001, 0x00000038,
+    0x00000048, 0x6576706f, 0x00317463, 0x00030001, 0x00040001, 0x00000001, 0x00000000, 0x00000000,
+    0x80000000, 0xc00ccccd, 0x7f7fffff, 0x4d007874, 0x6f726369, 0x74666f73, 0x29522820, 0x534c4820,
+    0x6853204c, 0x72656461, 0x6d6f4320, 0x656c6970, 0x2e392072, 0x392e3932, 0x332e3235, 0x00313131,
+    0x0012fffe, 0x54494c43, 0x00000008, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x47ae147b, 0x3f847ae1, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x002ffffe, 0x434c5846, 0x00000005, 0x10300001, 0x00000001,
+    0x00000000, 0x00000002, 0x00000000, 0x00000000, 0x00000007, 0x00000000, 0x10300001, 0x00000001,
+    0x00000000, 0x00000002, 0x00000001, 0x00000000, 0x00000007, 0x00000001, 0x10300001, 0x00000001,
+    0x00000000, 0x00000002, 0x00000002, 0x00000000, 0x00000007, 0x00000002, 0x10300001, 0x00000001,
+    0x00000000, 0x00000002, 0x00000003, 0x00000000, 0x00000007, 0x00000003, 0xa0500004, 0x00000002,
+    0x00000000, 0x00000001, 0x00000004, 0x00000000, 0x00000007, 0x00000000, 0x00000000, 0x00000004,
+    0x00000000, 0xf0f0f0f0, 0x0f0f0f0f, 0x0000ffff, 0x00000000, 0x00000000, 0xffffffff, 0x0000001e,
+    0x00000000, 0x000000dc, 0x46580200, 0x0024fffe, 0x42415443, 0x0000001c, 0x0000005b, 0x46580200,
+    0x00000001, 0x0000001c, 0x20000100, 0x00000058, 0x00000030, 0x00000002, 0x00000001, 0x00000038,
+    0x00000048, 0x6576706f, 0x00317463, 0x00030001, 0x00040001, 0x00000001, 0x00000000, 0x00000000,
+    0x80000000, 0xc00ccccd, 0x7f7fffff, 0x4d007874, 0x6f726369, 0x74666f73, 0x29522820, 0x534c4820,
+    0x6853204c, 0x72656461, 0x6d6f4320, 0x656c6970, 0x2e392072, 0x392e3932, 0x332e3235, 0x00313131,
+    0x0002fffe, 0x54494c43, 0x00000000, 0x000cfffe, 0x434c5846, 0x00000001, 0x10900004, 0x00000001,
+    0x00000000, 0x00000002, 0x00000000, 0x00000000, 0x00000004, 0x00000000, 0xf0f0f0f0, 0x0f0f0f0f,
+    0x0000ffff, 0x00000000, 0x00000000, 0xffffffff, 0x0000001d, 0x00000000, 0x000000dc, 0x46580200,
+    0x0024fffe, 0x42415443, 0x0000001c, 0x0000005b, 0x46580200, 0x00000001, 0x0000001c, 0x20000100,
+    0x00000058, 0x00000030, 0x00000002, 0x00000001, 0x00000038, 0x00000048, 0x6576706f, 0x00317463,
+    0x00030001, 0x00040001, 0x00000001, 0x00000000, 0x00000000, 0x80000000, 0xc00ccccd, 0x7f7fffff,
+    0x4d007874, 0x6f726369, 0x74666f73, 0x29522820, 0x534c4820, 0x6853204c, 0x72656461, 0x6d6f4320,
+    0x656c6970, 0x2e392072, 0x392e3932, 0x332e3235, 0x00313131, 0x0002fffe, 0x54494c43, 0x00000000,
+    0x000cfffe, 0x434c5846, 0x00000001, 0x10800004, 0x00000001, 0x00000000, 0x00000002, 0x00000000,
+    0x00000000, 0x00000004, 0x00000000, 0xf0f0f0f0, 0x0f0f0f0f, 0x0000ffff, 0x00000000, 0x00000000,
+    0xffffffff, 0x0000001c, 0x00000000, 0x00000124, 0x46580200, 0x0033fffe, 0x42415443, 0x0000001c,
+    0x00000097, 0x46580200, 0x00000002, 0x0000001c, 0x20000100, 0x00000094, 0x00000044, 0x00000002,
+    0x00000001, 0x0000004c, 0x0000005c, 0x0000006c, 0x00010002, 0x00000001, 0x00000074, 0x00000084,
+    0x6576706f, 0x00317463, 0x00030001, 0x00040001, 0x00000001, 0x00000000, 0x00000000, 0x80000000,
+    0xc00ccccd, 0x7f7fffff, 0x6576706f, 0x00327463, 0x00030001, 0x00040001, 0x00000001, 0x00000000,
+    0x3f800000, 0x40000000, 0xc0400000, 0x40800000, 0x4d007874, 0x6f726369, 0x74666f73, 0x29522820,
+    0x534c4820, 0x6853204c, 0x72656461, 0x6d6f4320, 0x656c6970, 0x2e392072, 0x392e3932, 0x332e3235,
+    0x00313131, 0x0002fffe, 0x54494c43, 0x00000000, 0x000ffffe, 0x434c5846, 0x00000001, 0x20100004,
+    0x00000002, 0x00000000, 0x00000002, 0x00000000, 0x00000000, 0x00000002, 0x00000004, 0x00000000,
+    0x00000004, 0x00000000, 0xf0f0f0f0, 0x0f0f0f0f, 0x0000ffff, 0x00000000, 0x00000000, 0xffffffff,
+    0x0000001b, 0x00000000, 0x00000124, 0x46580200, 0x0033fffe, 0x42415443, 0x0000001c, 0x00000097,
+    0x46580200, 0x00000002, 0x0000001c, 0x20000100, 0x00000094, 0x00000044, 0x00000002, 0x00000001,
+    0x0000004c, 0x0000005c, 0x0000006c, 0x00010002, 0x00000001, 0x00000074, 0x00000084, 0x6576706f,
+    0x00317463, 0x00030001, 0x00040001, 0x00000001, 0x00000000, 0x00000000, 0x80000000, 0xc00ccccd,
+    0x7f7fffff, 0x6576706f, 0x00327463, 0x00030001, 0x00040001, 0x00000001, 0x00000000, 0x3f800000,
+    0x40000000, 0xc0400000, 0x40800000, 0x4d007874, 0x6f726369, 0x74666f73, 0x29522820, 0x534c4820,
+    0x6853204c, 0x72656461, 0x6d6f4320, 0x656c6970, 0x2e392072, 0x392e3932, 0x332e3235, 0x00313131,
+    0x0002fffe, 0x54494c43, 0x00000000, 0x000ffffe, 0x434c5846, 0x00000001, 0x20000004, 0x00000002,
+    0x00000000, 0x00000002, 0x00000000, 0x00000000, 0x00000002, 0x00000004, 0x00000000, 0x00000004,
+    0x00000000, 0xf0f0f0f0, 0x0f0f0f0f, 0x0000ffff, 0x00000000, 0x00000000, 0xffffffff, 0x0000001a,
+    0x00000000, 0x000000dc, 0x46580200, 0x0024fffe, 0x42415443, 0x0000001c, 0x0000005b, 0x46580200,
+    0x00000001, 0x0000001c, 0x20000100, 0x00000058, 0x00000030, 0x00000002, 0x00000001, 0x00000038,
+    0x00000048, 0x6576706f, 0x00317463, 0x00030001, 0x00040001, 0x00000001, 0x00000000, 0x00000000,
+    0x80000000, 0xc00ccccd, 0x7f7fffff, 0x4d007874, 0x6f726369, 0x74666f73, 0x29522820, 0x534c4820,
+    0x6853204c, 0x72656461, 0x6d6f4320, 0x656c6970, 0x2e392072, 0x392e3932, 0x332e3235, 0x00313131,
+    0x0002fffe, 0x54494c43, 0x00000000, 0x000cfffe, 0x434c5846, 0x00000001, 0x10400004, 0x00000001,
+    0x00000000, 0x00000002, 0x00000000, 0x00000000, 0x00000004, 0x00000000, 0xf0f0f0f0, 0x0f0f0f0f,
+    0x0000ffff, 0x00000000, 0x00000000, 0xffffffff, 0x00000019, 0x00000000, 0x0000013c, 0x46580200,
+    0x0024fffe, 0x42415443, 0x0000001c, 0x0000005b, 0x46580200, 0x00000001, 0x0000001c, 0x20000100,
+    0x00000058, 0x00000030, 0x00000002, 0x00000001, 0x00000038, 0x00000048, 0x6576706f, 0x00317463,
+    0x00030001, 0x00040001, 0x00000001, 0x00000000, 0x00000000, 0x80000000, 0xc00ccccd, 0x7f7fffff,
+    0x4d007874, 0x6f726369, 0x74666f73, 0x29522820, 0x534c4820, 0x6853204c, 0x72656461, 0x6d6f4320,
+    0x656c6970, 0x2e392072, 0x392e3932, 0x332e3235, 0x00313131, 0x0002fffe, 0x54494c43, 0x00000000,
+    0x0024fffe, 0x434c5846, 0x00000004, 0x10300001, 0x00000001, 0x00000000, 0x00000002, 0x00000000,
+    0x00000000, 0x00000004, 0x00000000, 0x10300001, 0x00000001, 0x00000000, 0x00000002, 0x00000001,
+    0x00000000, 0x00000004, 0x00000001, 0x10300001, 0x00000001, 0x00000000, 0x00000002, 0x00000002,
+    0x00000000, 0x00000004, 0x00000002, 0x10300001, 0x00000001, 0x00000000, 0x00000002, 0x00000003,
+    0x00000000, 0x00000004, 0x00000003, 0xf0f0f0f0, 0x0f0f0f0f, 0x0000ffff, 0x00000000, 0x00000000,
+    0xffffffff, 0x00000018, 0x00000000, 0x000000dc, 0x46580200, 0x0024fffe, 0x42415443, 0x0000001c,
+    0x0000005b, 0x46580200, 0x00000001, 0x0000001c, 0x20000100, 0x00000058, 0x00000030, 0x00000002,
+    0x00000001, 0x00000038, 0x00000048, 0x6576706f, 0x00317463, 0x00030001, 0x00040001, 0x00000001,
+    0x00000000, 0x00000000, 0x80000000, 0xc00ccccd, 0x7f7fffff, 0x4d007874, 0x6f726369, 0x74666f73,
+    0x29522820, 0x534c4820, 0x6853204c, 0x72656461, 0x6d6f4320, 0x656c6970, 0x2e392072, 0x392e3932,
+    0x332e3235, 0x00313131, 0x0002fffe, 0x54494c43, 0x00000000, 0x000cfffe, 0x434c5846, 0x00000001,
+    0x10100004, 0x00000001, 0x00000000, 0x00000002, 0x00000000, 0x00000000, 0x00000004, 0x00000000,
+    0xf0f0f0f0, 0x0f0f0f0f, 0x0000ffff, 0x00000000, 0x00000000, 0xffffffff, 0x00000017, 0x00000000,
+    0x00000124, 0x46580200, 0x0033fffe, 0x42415443, 0x0000001c, 0x00000097, 0x46580200, 0x00000002,
+    0x0000001c, 0x20000100, 0x00000094, 0x00000044, 0x00000002, 0x00000001, 0x0000004c, 0x0000005c,
+    0x0000006c, 0x00010002, 0x00000001, 0x00000074, 0x00000084, 0x6576706f, 0x00317463, 0x00030001,
+    0x00040001, 0x00000001, 0x00000000, 0x00000000, 0x80000000, 0xc00ccccd, 0x7f7fffff, 0x6576706f,
+    0x00327463, 0x00030001, 0x00040001, 0x00000001, 0x00000000, 0x3f800000, 0x40000000, 0xc0400000,
+    0x40800000, 0x4d007874, 0x6f726369, 0x74666f73, 0x29522820, 0x534c4820, 0x6853204c, 0x72656461,
+    0x6d6f4320, 0x656c6970, 0x2e392072, 0x392e3932, 0x332e3235, 0x00313131, 0x0002fffe, 0x54494c43,
+    0x00000000, 0x000ffffe, 0x434c5846, 0x00000001, 0x20300004, 0x00000002, 0x00000000, 0x00000002,
+    0x00000000, 0x00000000, 0x00000002, 0x00000004, 0x00000000, 0x00000004, 0x00000000, 0xf0f0f0f0,
+    0x0f0f0f0f, 0x0000ffff, 0x00000000, 0x00000000, 0xffffffff, 0x00000016, 0x00000000, 0x00000124,
+    0x46580200, 0x0033fffe, 0x42415443, 0x0000001c, 0x00000097, 0x46580200, 0x00000002, 0x0000001c,
+    0x20000100, 0x00000094, 0x00000044, 0x00000002, 0x00000001, 0x0000004c, 0x0000005c, 0x0000006c,
+    0x00010002, 0x00000001, 0x00000074, 0x00000084, 0x6576706f, 0x00317463, 0x00030001, 0x00040001,
+    0x00000001, 0x00000000, 0x00000000, 0x80000000, 0xc00ccccd, 0x7f7fffff, 0x6576706f, 0x00327463,
+    0x00030001, 0x00040001, 0x00000001, 0x00000000, 0x3f800000, 0x40000000, 0xc0400000, 0x40800000,
+    0x4d007874, 0x6f726369, 0x74666f73, 0x29522820, 0x534c4820, 0x6853204c, 0x72656461, 0x6d6f4320,
+    0x656c6970, 0x2e392072, 0x392e3932, 0x332e3235, 0x00313131, 0x0002fffe, 0x54494c43, 0x00000000,
+    0x000ffffe, 0x434c5846, 0x00000001, 0x20200004, 0x00000002, 0x00000000, 0x00000002, 0x00000000,
+    0x00000000, 0x00000002, 0x00000004, 0x00000000, 0x00000004, 0x00000000, 0xf0f0f0f0, 0x0f0f0f0f,
+    0x0000ffff, 0x00000000, 0x00000000, 0xffffffff, 0x00000015, 0x00000000, 0x00000124, 0x46580200,
+    0x0033fffe, 0x42415443, 0x0000001c, 0x00000097, 0x46580200, 0x00000002, 0x0000001c, 0x20000100,
+    0x00000094, 0x00000044, 0x00000002, 0x00000001, 0x0000004c, 0x0000005c, 0x0000006c, 0x00010002,
+    0x00000001, 0x00000074, 0x00000084, 0x6576706f, 0x00317463, 0x00030001, 0x00040001, 0x00000001,
+    0x00000000, 0x00000000, 0x80000000, 0xc00ccccd, 0x7f7fffff, 0x6576706f, 0x00327463, 0x00030001,
+    0x00040001, 0x00000001, 0x00000000, 0x3f800000, 0x40000000, 0xc0400000, 0x40800000, 0x4d007874,
+    0x6f726369, 0x74666f73, 0x29522820, 0x534c4820, 0x6853204c, 0x72656461, 0x6d6f4320, 0x656c6970,
+    0x2e392072, 0x392e3932, 0x332e3235, 0x00313131, 0x0002fffe, 0x54494c43, 0x00000000, 0x000ffffe,
+    0x434c5846, 0x00000001, 0x20400004, 0x00000002, 0x00000000, 0x00000002, 0x00000000, 0x00000000,
+    0x00000002, 0x00000004, 0x00000000, 0x00000004, 0x00000000, 0xf0f0f0f0, 0x0f0f0f0f, 0x0000ffff,
+    0x00000000, 0x00000000, 0xffffffff, 0x00000014, 0x00000000, 0x00000124, 0x46580200, 0x0033fffe,
+    0x42415443, 0x0000001c, 0x00000097, 0x46580200, 0x00000002, 0x0000001c, 0x20000100, 0x00000094,
+    0x00000044, 0x00000002, 0x00000001, 0x0000004c, 0x0000005c, 0x0000006c, 0x00010002, 0x00000001,
+    0x00000074, 0x00000084, 0x6576706f, 0x00317463, 0x00030001, 0x00040001, 0x00000001, 0x00000000,
+    0x00000000, 0x80000000, 0xc00ccccd, 0x7f7fffff, 0x6576706f, 0x00327463, 0x00030001, 0x00040001,
+    0x00000001, 0x00000000, 0x3f800000, 0x40000000, 0xc0400000, 0x40800000, 0x4d007874, 0x6f726369,
+    0x74666f73, 0x29522820, 0x534c4820, 0x6853204c, 0x72656461, 0x6d6f4320, 0x656c6970, 0x2e392072,
+    0x392e3932, 0x332e3235, 0x00313131, 0x0002fffe, 0x54494c43, 0x00000000, 0x000ffffe, 0x434c5846,
+    0x00000001, 0x20500004, 0x00000002, 0x00000000, 0x00000002, 0x00000000, 0x00000000, 0x00000002,
+    0x00000004, 0x00000000, 0x00000004, 0x00000000, 0xf0f0f0f0, 0x0f0f0f0f, 0x0000ffff, 0x00000000,
+    0x00000000, 0xffffffff, 0x00000013, 0x00000000, 0x0000013c, 0x46580200, 0x0024fffe, 0x42415443,
+    0x0000001c, 0x0000005b, 0x46580200, 0x00000001, 0x0000001c, 0x20000100, 0x00000058, 0x00000030,
+    0x00000002, 0x00000001, 0x00000038, 0x00000048, 0x6576706f, 0x00317463, 0x00030001, 0x00040001,
+    0x00000001, 0x00000000, 0x00000000, 0x80000000, 0xc00ccccd, 0x7f7fffff, 0x4d007874, 0x6f726369,
+    0x74666f73, 0x29522820, 0x534c4820, 0x6853204c, 0x72656461, 0x6d6f4320, 0x656c6970, 0x2e392072,
+    0x392e3932, 0x332e3235, 0x00313131, 0x0002fffe, 0x54494c43, 0x00000000, 0x0024fffe, 0x434c5846,
+    0x00000004, 0x10700001, 0x00000001, 0x00000000, 0x00000002, 0x00000000, 0x00000000, 0x00000004,
+    0x00000000, 0x10700001, 0x00000001, 0x00000000, 0x00000002, 0x00000001, 0x00000000, 0x00000004,
+    0x00000001, 0x10700001, 0x00000001, 0x00000000, 0x00000002, 0x00000002, 0x00000000, 0x00000004,
+    0x00000002, 0x10700001, 0x00000001, 0x00000000, 0x00000002, 0x00000003, 0x00000000, 0x00000004,
+    0x00000003, 0xf0f0f0f0, 0x0f0f0f0f, 0x0000ffff, 0x00000000, 0x00000000, 0xffffffff, 0x00000012,
+    0x00000000, 0x0000013c, 0x46580200, 0x0024fffe, 0x42415443, 0x0000001c, 0x0000005b, 0x46580200,
+    0x00000001, 0x0000001c, 0x20000100, 0x00000058, 0x00000030, 0x00000002, 0x00000001, 0x00000038,
+    0x00000048, 0x6576706f, 0x00317463, 0x00030001, 0x00040001, 0x00000001, 0x00000000, 0x00000000,
+    0x80000000, 0xc00ccccd, 0x7f7fffff, 0x4d007874, 0x6f726369, 0x74666f73, 0x29522820, 0x534c4820,
+    0x6853204c, 0x72656461, 0x6d6f4320, 0x656c6970, 0x2e392072, 0x392e3932, 0x332e3235, 0x00313131,
+    0x0002fffe, 0x54494c43, 0x00000000, 0x0024fffe, 0x434c5846, 0x00000004, 0x10300001, 0x00000001,
+    0x00000000, 0x00000002, 0x00000000, 0x00000000, 0x00000004, 0x00000000, 0x10300001, 0x00000001,
+    0x00000000, 0x00000002, 0x00000001, 0x00000000, 0x00000004, 0x00000001, 0x10300001, 0x00000001,
+    0x00000000, 0x00000002, 0x00000002, 0x00000000, 0x00000004, 0x00000002, 0x10300001, 0x00000001,
+    0x00000000, 0x00000002, 0x00000003, 0x00000000, 0x00000004, 0x00000003, 0xf0f0f0f0, 0x0f0f0f0f,
+    0x0000ffff, 0x00000000, 0x00000000, 0xffffffff, 0x00000001, 0x00000002, 0x00000134, 0x00000008,
+    0x615f7370, 0x00007272, 0x46580200, 0x0024fffe, 0x42415443, 0x0000001c, 0x0000005b, 0x46580200,
+    0x00000001, 0x0000001c, 0x00000100, 0x00000058, 0x00000030, 0x00000002, 0x00000001, 0x00000038,
+    0x00000048, 0x56695f67, 0x00746365, 0x00020001, 0x00040001, 0x00000001, 0x00000000, 0x40800000,
+    0x40400000, 0x40000000, 0x3f800000, 0x4d007874, 0x6f726369, 0x74666f73, 0x29522820, 0x534c4820,
+    0x6853204c, 0x72656461, 0x6d6f4320, 0x656c6970, 0x2e392072, 0x392e3932, 0x332e3235, 0x00313131,
+    0x0012fffe, 0x54494c43, 0x00000008, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xbff00000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x000ffffe, 0x434c5846, 0x00000001, 0xa0400001, 0x00000002,
+    0x00000000, 0x00000002, 0x00000003, 0x00000000, 0x00000001, 0x00000004, 0x00000000, 0x00000004,
+    0x00000000, 0xf0f0f0f0, 0x0f0f0f0f, 0x0000ffff, 0x00000000, 0x00000000, 0xffffffff, 0x00000000,
+    0x00000002, 0x00000134, 0x00000008, 0x615f7376, 0x00327272, 0x46580200, 0x0024fffe, 0x42415443,
+    0x0000001c, 0x0000005b, 0x46580200, 0x00000001, 0x0000001c, 0x00000100, 0x00000058, 0x00000030,
+    0x00000002, 0x00000001, 0x00000038, 0x00000048, 0x56695f67, 0x00746365, 0x00020001, 0x00040001,
+    0x00000001, 0x00000000, 0x40800000, 0x40400000, 0x40000000, 0x3f800000, 0x4d007874, 0x6f726369,
+    0x74666f73, 0x29522820, 0x534c4820, 0x6853204c, 0x72656461, 0x6d6f4320, 0x656c6970, 0x2e392072,
+    0x392e3932, 0x332e3235, 0x00313131, 0x0012fffe, 0x54494c43, 0x00000008, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xbff00000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x000ffffe, 0x434c5846,
+    0x00000001, 0xa0400001, 0x00000002, 0x00000000, 0x00000002, 0x00000003, 0x00000000, 0x00000001,
+    0x00000004, 0x00000000, 0x00000004, 0x00000000, 0xf0f0f0f0, 0x0f0f0f0f, 0x0000ffff, 0xffffffff,
+    0x0000001c, 0x00000000, 0x00000002, 0x00000000, 0x000000f0, 0x46580200, 0x0026fffe, 0x42415443,
+    0x0000001c, 0x00000063, 0x46580200, 0x00000001, 0x0000001c, 0x20000100, 0x00000060, 0x00000030,
+    0x00000002, 0x00000001, 0x00000040, 0x00000050, 0x74636576, 0x6d61735f, 0x72656c70, 0xababab00,
+    0x00030001, 0x00040001, 0x00000001, 0x00000000, 0x3f800000, 0x40000000, 0x40400000, 0x40800000,
+    0x4d007874, 0x6f726369, 0x74666f73, 0x29522820, 0x534c4820, 0x6853204c, 0x72656461, 0x6d6f4320,
+    0x656c6970, 0x2e392072, 0x392e3932, 0x332e3235, 0x00313131, 0x0002fffe, 0x54494c43, 0x00000000,
+    0x000ffffe, 0x434c5846, 0x00000001, 0xa0400001, 0x00000002, 0x00000000, 0x00000002, 0x00000001,
+    0x00000000, 0x00000002, 0x00000000, 0x00000000, 0x00000004, 0x00000000, 0xf0f0f0f0, 0x0f0f0f0f,
+    0x0000ffff, 0xffffffff, 0x0000001c, 0x00000000, 0x00000001, 0x00000000, 0x000000dc, 0x46580200,
+    0x0024fffe, 0x42415443, 0x0000001c, 0x0000005b, 0x46580200, 0x00000001, 0x0000001c, 0x20000100,
+    0x00000058, 0x00000030, 0x00000002, 0x00000001, 0x00000038, 0x00000048, 0x56695f67, 0x00746365,
+    0x00020001, 0x00040001, 0x00000001, 0x00000000, 0x40800000, 0x40400000, 0x40000000, 0x3f800000,
+    0x4d007874, 0x6f726369, 0x74666f73, 0x29522820, 0x534c4820, 0x6853204c, 0x72656461, 0x6d6f4320,
+    0x656c6970, 0x2e392072, 0x392e3932, 0x332e3235, 0x00313131, 0x0002fffe, 0x54494c43, 0x00000000,
+    0x000cfffe, 0x434c5846, 0x00000001, 0x10000001, 0x00000001, 0x00000000, 0x00000002, 0x00000001,
+    0x00000000, 0x00000004, 0x00000000, 0xf0f0f0f0, 0x0f0f0f0f, 0x0000ffff, 0xffffffff, 0x0000001c,
+    0x00000000, 0x00000000, 0x00000001, 0x00000005, 0x31786574, 0x00000000,
+};
+#define TEST_EFFECT_PRESHADER_VSHADER_POS 2458
+#define TEST_EFFECT_PRESHADER_VSHADER_LEN 13
+
+static void test_effect_preshader(IDirect3DDevice9 *device)
+{
+    static const D3DXVECTOR4 test_effect_preshader_fconstsv[] =
+    {
+        {0.0f,   0.0f,  0.0f,  0.0f},
+        {0.0f,   0.0f,  0.0f,  0.0f},
+        {0.0f,   0.0f,  0.0f,  0.0f},
+        {1.0f,   2.0f,  3.0f,  0.0f},
+        {4.0f,   0.0f,  0.0f,  0.0f},
+        {5.0f,   6.0f,  7.0f,  8.0f},
+        {1.0f,   2.0f,  3.0f,  0.0f},
+        {4.0f,   0.0f,  0.0f,  0.0f},
+        {5.0f,   6.0f,  7.0f,  8.0f},
+        {9.0f,  10.0f, 11.0f,  0.0f},
+        {12.0f,  0.0f,  0.0f,  0.0f},
+        {13.0f, 14.0f, 15.0f, 16.0f},
+        {11.0f, 12.0f, 13.0f,  0.0f},
+        {21.0f, 22.0f, 23.0f,  0.0f},
+        {31.0f, 32.0f, 33.0f,  0.0f},
+        {41.0f, 42.0f, 43.0f,  0.0f},
+        {11.0f, 21.0f, 31.0f,  0.0f},
+        {12.0f, 22.0f, 32.0f,  0.0f},
+        {13.0f, 23.0f, 33.0f,  0.0f},
+        {14.0f, 24.0f, 34.0f,  0.0f},
+        {11.0f, 12.0f, 13.0f, 14.0f},
+        {21.0f, 22.0f, 23.0f, 24.0f},
+        {31.0f, 32.0f, 33.0f, 34.0f},
+        {11.0f, 21.0f, 31.0f, 41.0f},
+        {12.0f, 22.0f, 32.0f, 42.0f},
+        {13.0f, 23.0f, 33.0f, 43.0f},
+        {9.0f,  10.0f, 11.0f,  0.0f},
+        {12.0f,  0.0f,  0.0f,  0.0f},
+        {13.0f, 14.0f, 15.0f, 16.0f},
+        {92.0f,  0.0f,  0.0f,  0.0f},
+        {93.0f,  0.0f,  0.0f,  0.0f},
+        {0.0f,   0.0f,  0.0f,  0.0f},
+        {91.0f,  0.0f,  0.0f,  0.0f},
+        {4.0f,   5.0f,  6.0f,  7.0f},
+    };
+    static const D3DXVECTOR4 test_effect_preshader_fconstsp[] =
+    {
+        {11.0f, 21.0f,  0.0f, 0.0f},
+        {12.0f, 22.0f,  0.0f, 0.0f},
+        {13.0f, 23.0f,  0.0f, 0.0f},
+        {11.0f, 12.0f,  0.0f, 0.0f},
+        {21.0f, 22.0f,  0.0f, 0.0f},
+        {31.0f, 32.0f,  0.0f, 0.0f},
+        {11.0f, 12.0f,  0.0f, 0.0f},
+        {21.0f, 22.0f,  0.0f, 0.0f},
+        {11.0f, 21.0f,  0.0f, 0.0f},
+        {12.0f, 22.0f,  0.0f, 0.0f},
+        {11.0f, 12.0f, 13.0f, 0.0f},
+        {21.0f, 22.0f, 23.0f, 0.0f},
+        {11.0f, 21.0f, 31.0f, 0.0f},
+        {12.0f, 22.0f, 32.0f, 0.0f}
+    };
+    static const BOOL test_effect_preshader_bconsts[] =
+    {
+        TRUE, FALSE, TRUE, FALSE, TRUE, FALSE
+    };
+    static const int test_effect_preshader_iconsts[][4] =
+    {
+        {4, 3, 2, 1}
+    };
+    static const struct
+    {
+        const char *comment;
+        BOOL todo[4];
+        unsigned int result[4];
+        unsigned int ulps;
+    }
+    test_effect_preshader_op_results[] =
+    {
+        {"1 / op", {FALSE, FALSE, FALSE, FALSE}, {0x7f800000, 0xff800000, 0xbee8ba2e, 0x00200000}},
+        {"rsq",    {FALSE, FALSE, FALSE, FALSE}, {0x7f800000, 0x7f800000, 0x3f2c985c, 0x1f800001}, 1},
+        {"mul",    {FALSE, FALSE, FALSE, FALSE}, {0x00000000, 0x80000000, 0x40d33334, 0x7f800000}},
+        {"add",    {FALSE, FALSE, FALSE, FALSE}, {0x3f800000, 0x40000000, 0xc0a66666, 0x7f7fffff}},
+        {"lt",     {FALSE, FALSE, FALSE, FALSE}, {0x3f800000, 0x3f800000, 0x00000000, 0x00000000}},
+        {"ge",     {FALSE, FALSE, FALSE, FALSE}, {0x00000000, 0x00000000, 0x3f800000, 0x3f800000}},
+        {"neg",    {FALSE, FALSE, FALSE, FALSE}, {0x80000000, 0x00000000, 0x400ccccd, 0xff7fffff}},
+        {"rcp",    {FALSE, FALSE, FALSE, FALSE}, {0x7f800000, 0xff800000, 0xbee8ba2e, 0x00200000}},
+        {"frac",   {FALSE, FALSE, FALSE, FALSE}, {0x00000000, 0x00000000, 0x3f4ccccc, 0x00000000}},
+        {"min",    {FALSE, FALSE, FALSE, FALSE}, {0x00000000, 0x80000000, 0xc0400000, 0x40800000}},
+        {"max",    {FALSE, FALSE, FALSE, FALSE}, {0x3f800000, 0x40000000, 0xc00ccccd, 0x7f7fffff}},
+#if __x86_64__
+        {"sin",    {FALSE, FALSE, FALSE, FALSE}, {0x00000000, 0x80000000, 0xbf4ef99e, 0xbf0599b3}},
+        {"cos",    {FALSE, FALSE, FALSE, FALSE}, {0x3f800000, 0x3f800000, 0xbf16a803, 0x3f5a5f96}},
+#else
+        {"sin",    {FALSE, FALSE, FALSE,  TRUE}, {0x00000000, 0x80000000, 0xbf4ef99e, 0x3f792dc4}},
+        {"cos",    {FALSE, FALSE, FALSE,  TRUE}, {0x3f800000, 0x3f800000, 0xbf16a803, 0xbe6acefc}},
+#endif
+        {"den mul",{FALSE, FALSE, FALSE, FALSE}, {0x7f800000, 0xff800000, 0xbb94f209, 0x000051ec}},
+        {"dot",    {FALSE, FALSE, FALSE, FALSE}, {0x00000000, 0x7f800000, 0x41f00000, 0x00000000}},
+        {"prec",   {FALSE, FALSE,  TRUE, FALSE}, {0x2b8cbccc, 0x2c0cbccc, 0xac531800, 0x00000000}},
+        {"dotswiz", {FALSE, FALSE, FALSE, FALSE}, {0xc00ccccd, 0xc0d33334, 0xc10ccccd, 0}},
+        {"reladdr", { TRUE,  TRUE,  TRUE,  TRUE}, {0xc00ccccd, 0x40000000, 0x41a00000, 0x41500000}},
+    };
+#define TEST_EFFECT_PRES_NFLOATV ARRAY_SIZE(test_effect_preshader_fconstsv)
+#define TEST_EFFECT_PRES_NFLOATP ARRAY_SIZE(test_effect_preshader_fconstsp)
+#define TEST_EFFECT_PRES_NFLOATMAX (TEST_EFFECT_PRES_NFLOATV > TEST_EFFECT_PRES_NFLOATP ? \
+            TEST_EFFECT_PRES_NFLOATV : TEST_EFFECT_PRES_NFLOATP)
+#define TEST_EFFECT_PRES_NBOOL ARRAY_SIZE(test_effect_preshader_bconsts)
+#define TEST_EFFECT_PRES_NINT ARRAY_SIZE(test_effect_preshader_iconsts)
+#define TEST_EFFECT_PRES_NOPTESTS ARRAY_SIZE(test_effect_preshader_op_results)
+
+    static const D3DXVECTOR4 fvect1 = {28.0f, 29.0f, 30.0f, 31.0f};
+    static const D3DXVECTOR4 fvect2 = {0.0f, 0.0f, 1.0f, 0.0f};
+    static const D3DXVECTOR4 fvect_empty = {-9999.0f, -9999.0f, -9999.0f, -9999.0f};
+    static const int ivect_empty[4] = {-1, -1, -1, -1};
+    HRESULT hr;
+    ID3DXEffect *effect;
+    D3DXHANDLE par;
+    unsigned int npasses;
+    DWORD value;
+    BOOL bval;
+    D3DLIGHT9 light;
+    D3DXVECTOR4 fdata[TEST_EFFECT_PRES_NFLOATMAX];
+    int idata[TEST_EFFECT_PRES_NINT][4];
+    BOOL bdata[TEST_EFFECT_PRES_NBOOL];
+    IDirect3DVertexShader9 *vshader;
+    void *byte_code;
+    unsigned int byte_code_size;
+    unsigned int i, j;
+    D3DCAPS9 caps;
+
+    hr = IDirect3DDevice9_GetDeviceCaps(device, &caps);
+    ok(SUCCEEDED(hr), "Failed to get device caps, hr %#x.\n", hr);
+    if (caps.VertexShaderVersion < D3DVS_VERSION(3, 0)
+            || caps.PixelShaderVersion < D3DPS_VERSION(3, 0))
+    {
+        skip("Test requires VS >= 3 and PS >= 3, skipping.\n");
+        return;
+    }
+
+    hr = D3DXCreateEffect(device, test_effect_preshader_effect_blob, sizeof(test_effect_preshader_effect_blob),
+            NULL, NULL, 0, NULL, &effect, NULL);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    for (i = 0; i < 256; ++i)
+    {
+        hr = IDirect3DDevice9_SetVertexShaderConstantF(device, i, &fvect_empty.x, 1);
+        ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    }
+    for (i = 0; i < 224; ++i)
+    {
+        hr = IDirect3DDevice9_SetPixelShaderConstantF(device, i, &fvect_empty.x, 1);
+        ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    }
+    bval = FALSE;
+    for (i = 0; i < 16; ++i)
+    {
+        hr = IDirect3DDevice9_SetPixelShaderConstantB(device, i, &bval, 1);
+        ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    }
+    for (i = 0; i < 16; ++i)
+    {
+        hr = IDirect3DDevice9_SetPixelShaderConstantI(device, i, ivect_empty, 1);
+        ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    }
+
+    hr = effect->lpVtbl->Begin(effect, &npasses, 0);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    par = effect->lpVtbl->GetParameterByName(effect, NULL, "g_Pos2");
+    ok(par != NULL, "GetParameterByName failed.\n");
+
+    hr = effect->lpVtbl->SetVector(effect, par, &fvect1);
+    ok(hr == D3D_OK, "SetVector failed, hr %#x.\n", hr);
+
+    hr = effect->lpVtbl->BeginPass(effect, 0);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    hr = IDirect3DDevice9_GetVertexShaderConstantF(device, 0, &fdata[0].x, TEST_EFFECT_PRES_NFLOATV);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(!memcmp(fdata, test_effect_preshader_fconstsv, sizeof(test_effect_preshader_fconstsv)),
+            "Vertex shader float constants do not match.\n");
+    for (i = TEST_EFFECT_PRES_NFLOATV; i < 256; ++i)
+    {
+        hr = IDirect3DDevice9_GetVertexShaderConstantF(device, i, &fdata[0].x, 1);
+        ok(hr == D3D_OK, "Got result %#x.\n", hr);
+        ok(!memcmp(fdata, &fvect_empty, sizeof(fvect_empty)),
+                "Vertex shader float constants do not match.\n");
+    }
+    hr = IDirect3DDevice9_GetPixelShaderConstantF(device, 0, &fdata[0].x, TEST_EFFECT_PRES_NFLOATP);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(!memcmp(fdata, test_effect_preshader_fconstsp, sizeof(test_effect_preshader_fconstsp)),
+            "Pixel shader float constants do not match.\n");
+    for (i = TEST_EFFECT_PRES_NFLOATP; i < 224; ++i)
+    {
+        hr = IDirect3DDevice9_GetPixelShaderConstantF(device, i, &fdata[0].x, 1);
+        ok(hr == D3D_OK, "Got result %#x.\n", hr);
+        ok(!memcmp(fdata, &fvect_empty, sizeof(fvect_empty)),
+                "Pixel shader float constants do not match.\n");
+    }
+    hr = IDirect3DDevice9_GetPixelShaderConstantI(device, 0, idata[0], TEST_EFFECT_PRES_NINT);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(!memcmp(idata, test_effect_preshader_iconsts, sizeof(test_effect_preshader_iconsts)),
+            "Pixel shader integer constants do not match.\n");
+    for (i = TEST_EFFECT_PRES_NINT; i < 16; ++i)
+    {
+        hr = IDirect3DDevice9_GetPixelShaderConstantI(device, i, idata[0], 1);
+        ok(hr == D3D_OK, "Got result %#x.\n", hr);
+        ok(!memcmp(idata[0], ivect_empty, sizeof(ivect_empty)),
+                "Pixel shader integer constants do not match.\n");
+    }
+
+    hr = IDirect3DDevice9_GetPixelShaderConstantB(device, 0, bdata, TEST_EFFECT_PRES_NBOOL);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    for (i = 0; i < TEST_EFFECT_PRES_NBOOL; ++i)
+        todo_wine_if(!bdata[i] != !test_effect_preshader_bconsts[i])
+        ok(!bdata[i] == !test_effect_preshader_bconsts[i],
+                "Pixel shader boolean constants do not match.\n");
+    for (; i < 16; ++i)
+    {
+        hr = IDirect3DDevice9_GetPixelShaderConstantB(device, i, &bval, 1);
+        ok(hr == D3D_OK && !bval, "Got result %#x, boolean register value %u.\n", hr, bval);
+    }
+
+    for (i = 0; i < TEST_EFFECT_PRES_NOPTESTS; ++i)
+    {
+        float *v;
+
+        hr = IDirect3DDevice9_GetLight(device, i % 8, &light);
+        v = i < 8 ? &light.Diffuse.r : (i < 16 ? &light.Ambient.r : &light.Specular.r);
+        ok(hr == D3D_OK, "Got result %#x.\n", hr);
+        for (j = 0; j < 4; ++j)
+        {
+            todo_wine_if(test_effect_preshader_op_results[i].todo[j])
+            ok(compare_float(v[j], ((float *)test_effect_preshader_op_results[i].result)[j],
+                    test_effect_preshader_op_results[i].ulps),
+                    "Operation %s, component %u, expected %#x, got %#x (%g).\n",
+                    test_effect_preshader_op_results[i].comment, j,
+                    test_effect_preshader_op_results[i].result[j], ((unsigned int *)v)[j], v[j]);
+        }
+    }
+
+    hr = IDirect3DDevice9_GetSamplerState(device, 0, D3DSAMP_MINFILTER, &value);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(value == 3, "Unexpected sampler 0 minfilter %u.\n", value);
+    hr = IDirect3DDevice9_GetSamplerState(device, 0, D3DSAMP_MAGFILTER, &value);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    todo_wine ok(value == 3, "Unexpected sampler 0 magfilter %u.\n", value);
+    hr = IDirect3DDevice9_GetSamplerState(device, D3DVERTEXTEXTURESAMPLER0, D3DSAMP_MINFILTER, &value);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(value == 3, "Unexpected sampler 0 minfilter %u.\n", value);
+    hr = IDirect3DDevice9_GetSamplerState(device, D3DVERTEXTEXTURESAMPLER0, D3DSAMP_MAGFILTER, &value);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    todo_wine ok(value == 3, "Unexpected sampler 0 magfilter %u.\n", value);
+
+    hr = effect->lpVtbl->EndPass(effect);
+
+    par = effect->lpVtbl->GetParameterByName(effect, NULL, "g_iVect");
+    ok(par != NULL, "GetParameterByName failed.\n");
+    hr = effect->lpVtbl->SetVector(effect, par, &fvect2);
+    ok(hr == D3D_OK, "SetVector failed, hr %#x.\n", hr);
+    hr = effect->lpVtbl->BeginPass(effect, 1);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    hr = IDirect3DDevice9_GetVertexShader(device, &vshader);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(!!vshader, "Got NULL vshader.\n");
+
+    hr = IDirect3DVertexShader9_GetFunction(vshader, NULL, &byte_code_size);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    byte_code = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, byte_code_size);
+    hr = IDirect3DVertexShader9_GetFunction(vshader, byte_code, &byte_code_size);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(byte_code_size > 1, "Got unexpected byte code size %u.\n", byte_code_size);
+    ok(!memcmp(byte_code,
+            &test_effect_preshader_effect_blob[TEST_EFFECT_PRESHADER_VSHADER_POS +
+            TEST_EFFECT_PRESHADER_VSHADER_LEN], byte_code_size),
+            "Incorrect shader selected.\n");
+    HeapFree(GetProcessHeap(), 0, byte_code);
+    IDirect3DVertexShader9_Release(vshader);
+
+    hr = IDirect3DDevice9_SetVertexShader(device, NULL);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    hr = effect->lpVtbl->SetVector(effect, par, &fvect1);
+    ok(hr == D3D_OK, "SetVector failed, hr %#x.\n", hr);
+    hr = effect->lpVtbl->CommitChanges(effect);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    hr = IDirect3DDevice9_GetVertexShader(device, &vshader);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    ok(!vshader, "Incorrect shader selected.\n");
+
+    hr = effect->lpVtbl->EndPass(effect);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    hr = effect->lpVtbl->End(effect);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    effect->lpVtbl->Release(effect);
+}
+
+struct test_preshader_op_def
+{
+    const char *mnem;
+    unsigned int opcode;
+    unsigned int args_count;
+    unsigned int expected_result[4];
+    D3DXVECTOR4 fvect1, fvect2;
+    unsigned int ulps;
+    BOOL todo[4];
+};
+
+static void test_preshader_op(IDirect3DDevice9 *device, const DWORD *sample_effect_blob,
+        unsigned int sample_effect_blob_size, const struct test_preshader_op_def *test)
+{
+    static const struct
+    {
+        unsigned int pos;
+        unsigned int result_index;
+    }
+    blob_position[] =
+    {
+        {0, 0},
+        {4334, 0},
+        {4185, 2}
+    };
+    DWORD *test_effect_blob;
+    HRESULT hr;
+    ID3DXEffect *effect;
+    D3DLIGHT9 light;
+    unsigned int i, passes_count;
+    float *v;
+    unsigned int op_pos, op_step;
+    D3DXHANDLE param;
+
+    op_step = 2 + (test->args_count + 1) * 3;
+    op_pos = blob_position[test->args_count].pos;
+
+    test_effect_blob = HeapAlloc(GetProcessHeap(), 0, sample_effect_blob_size);
+    memcpy(test_effect_blob, sample_effect_blob, sample_effect_blob_size);
+    for (i = 0; i < 4; ++i)
+        test_effect_blob[op_pos + i * op_step] = test->opcode;
+
+    hr = D3DXCreateEffect(device, test_effect_blob, sample_effect_blob_size,
+            NULL, NULL, 0, NULL, &effect, NULL);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    hr = effect->lpVtbl->Begin(effect, &passes_count, 0);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    param = effect->lpVtbl->GetParameterByName(effect, NULL, "opvect1");
+    ok(!!param, "GetParameterByName failed.\n");
+    hr = effect->lpVtbl->SetVector(effect, param, &test->fvect1);
+    ok(hr == D3D_OK, "SetVector failed, hr %#x.\n", hr);
+
+    if (test->args_count > 1)
+    {
+        param = effect->lpVtbl->GetParameterByName(effect, NULL, "opvect2");
+        ok(!!param, "GetParameterByName failed.\n");
+        hr = effect->lpVtbl->SetVector(effect, param, &test->fvect2);
+        ok(hr == D3D_OK, "SetVector failed, hr %#x.\n", hr);
+    }
+
+    hr = effect->lpVtbl->BeginPass(effect, 0);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    hr = IDirect3DDevice9_GetLight(device, blob_position[test->args_count].result_index, &light);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    v = &light.Diffuse.r;
+    for (i = 0; i < 4; ++i)
+        todo_wine_if(test->todo[i])
+        ok(compare_float(v[i], ((float *)test->expected_result)[i], test->ulps),
+                "Operation %s, component %u, expected %#x (%g), got %#x (%g).\n", test->mnem, i,
+                test->expected_result[i], ((float *)test->expected_result)[i], ((unsigned int *)v)[i], v[i]);
+
+    hr = effect->lpVtbl->EndPass(effect);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    hr = effect->lpVtbl->End(effect);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    effect->lpVtbl->Release(effect);
+    HeapFree(GetProcessHeap(), 0, test_effect_blob);
+}
+
+static void test_effect_preshader_ops(IDirect3DDevice9 *device)
+{
+    const struct test_preshader_op_def op_tests[] =
+    {
+        {"exp", 0x10500001, 1, {0x3f800000, 0x3f800000, 0x3e5edc66, 0x7f800000},
+                {0.0f, -0.0f, -2.2f, 3.402823466e+38f}, {1.0f, 2.0f, -3.0f, 4.0f}},
+        {"0 * INF", 0x20500004, 2, {0xffc00000, 0xffc00000, 0xc0d33334, 0x7f800000},
+                {0.0f, -0.0f, -2.2f, 3.402823466e+38f}, {INFINITY, INFINITY, 3.0f, 4.0f}},
+    };
+    unsigned int i;
+
+    for (i = 0; i < ARRAY_SIZE(op_tests); ++i)
+        test_preshader_op(device, test_effect_preshader_effect_blob, sizeof(test_effect_preshader_effect_blob),
+                &op_tests[i]);
+}
+
+static void test_isparameterused_children(ID3DXEffect *effect, D3DXHANDLE tech, D3DXHANDLE param)
+{
+    D3DXPARAMETER_DESC desc;
+    D3DXHANDLE param_child;
+    unsigned int i, child_count;
+    HRESULT hr;
+
+    hr = effect->lpVtbl->GetParameterDesc(effect, param, &desc);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+    child_count = desc.Elements ? desc.Elements : desc.StructMembers;
+    for (i = 0; i < child_count; ++i)
+    {
+        param_child = desc.Elements ? effect->lpVtbl->GetParameterElement(effect, param, i)
+                : effect->lpVtbl->GetParameter(effect, param, i);
+        ok(!!param_child, "Failed getting child parameter %s[%u].\n", desc.Name, i);
+        ok(!effect->lpVtbl->IsParameterUsed(effect, param_child, tech),
+                "Unexpected IsParameterUsed() result for %s[%u].\n", desc.Name, i);
+        test_isparameterused_children(effect, tech, param_child);
+    }
+}
+
+static void test_isparameterused_param_with_children(ID3DXEffect *effect, D3DXHANDLE tech, const char *name,
+        BOOL expected_result)
+{
+    D3DXHANDLE param;
+
+    param = effect->lpVtbl->GetParameterByName(effect, NULL, name);
+    ok(!!param, "GetParameterByName failed for %s.\n", name);
+
+    ok(!effect->lpVtbl->IsParameterUsed(effect, param, tech) == !expected_result,
+            "Unexpected IsParameterUsed() result for %s.\n", name);
+
+    test_isparameterused_children(effect, tech, param);
+}
+
+static void test_effect_isparameterused(IDirect3DDevice9 *device)
+{
+    static const struct
+    {
+        const char *name;
+        BOOL expected_result;
+    }
+    check_parameters[] =
+    {
+        {"g_Pos1", TRUE},
+        {"g_Pos2", TRUE},
+        {"g_Selector", TRUE},
+        {"opvect1", TRUE},
+        {"opvect2", TRUE},
+        {"opvect3", TRUE},
+        {"arr2", TRUE},
+        {"vs_arr", TRUE},
+        {"g_iVect", TRUE},
+        {"vect_sampler", TRUE},
+        {"tex1", TRUE},
+        {"tex2", FALSE},
+        {"sampler1", TRUE},
+        {"ts1", TRUE},
+        {"ts2", TRUE},
+        {"ts3", TRUE},
+    };
+    ID3DXEffect *effect;
+    HRESULT hr;
+    D3DXHANDLE tech;
+    unsigned int i;
+
+    hr = D3DXCreateEffect(device, test_effect_preshader_effect_blob, sizeof(test_effect_preshader_effect_blob),
+            NULL, NULL, 0, NULL, &effect, NULL);
+    ok(hr == D3D_OK, "Got result %#x.\n", hr);
+
+    tech = effect->lpVtbl->GetTechniqueByName(effect, "tech0");
+    ok(!!tech, "GetTechniqueByName failed.\n");
+
+    for (i = 0; i < ARRAY_SIZE(check_parameters); ++i)
+        test_isparameterused_param_with_children(effect, tech, check_parameters[i].name,
+                check_parameters[i].expected_result);
+
+    effect->lpVtbl->Release(effect);
+}
+
 START_TEST(effect)
 {
     HWND wnd;
@@ -2728,8 +4320,13 @@ START_TEST(effect)
     test_create_effect_and_pool(device);
     test_create_effect_compiler();
     test_effect_parameter_value(device);
+    test_effect_setvalue_object(device);
     test_effect_variable_names(device);
     test_effect_compilation_errors(device);
+    test_effect_states(device);
+    test_effect_preshader(device);
+    test_effect_preshader_ops(device);
+    test_effect_isparameterused(device);
 
     count = IDirect3DDevice9_Release(device);
     ok(count == 0, "The device was not properly freed: refcount %u\n", count);

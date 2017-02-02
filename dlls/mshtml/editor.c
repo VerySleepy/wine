@@ -60,7 +60,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(mshtml);
 #define NSCMD_OL           "cmd_ol"
 #define NSCMD_OUTDENT      "cmd_outdent"
 #define NSCMD_PASTE        "cmd_paste"
-#define NSCMD_SELECTALL           "cmd_selectAll"
 #define NSCMD_SELECTBEGINLINE     "cmd_selectBeginLine"
 #define NSCMD_SELECTBOTTOM        "cmd_selectBottom"
 #define NSCMD_SELECTCHARNEXT      "cmd_selectCharNext"
@@ -137,7 +136,7 @@ static nsresult get_ns_command_state(NSContainer *This, const char *cmd, nsIComm
         return nsres;
     }
 
-    nsres = nsICommandManager_GetCommandState(cmdmgr, cmd, This->doc->basedoc.window->nswindow, nsparam);
+    nsres = nsICommandManager_GetCommandState(cmdmgr, cmd, This->doc->basedoc.window->window_proxy, nsparam);
     if(NS_FAILED(nsres))
         ERR("GetCommandState(%s) failed: %08x\n", debugstr_a(cmd), nsres);
 
@@ -380,23 +379,23 @@ static void set_font_size(HTMLDocument *This, LPCWSTR size)
     set_dirty(This, VARIANT_TRUE);
 }
 
-static void handle_arrow_key(HTMLDocument *This, nsIDOMKeyEvent *event, const char * const cmds[4])
+static void handle_arrow_key(HTMLDocument *This, nsIDOMEvent *event, nsIDOMKeyEvent *key_event, const char * const cmds[4])
 {
     int i=0;
     cpp_bool b;
 
-    nsIDOMKeyEvent_GetCtrlKey(event, &b);
+    nsIDOMKeyEvent_GetCtrlKey(key_event, &b);
     if(b)
         i |= 1;
 
-    nsIDOMKeyEvent_GetShiftKey(event, &b);
+    nsIDOMKeyEvent_GetShiftKey(key_event, &b);
     if(b)
         i |= 2;
 
     if(cmds[i])
         do_ns_editor_command(This->doc_obj->nscontainer, cmds[i]);
 
-    nsIDOMKeyEvent_PreventDefault(event);
+    nsIDOMEvent_PreventDefault(event);
 }
 
 void handle_edit_event(HTMLDocument *This, nsIDOMEvent *event)
@@ -418,7 +417,7 @@ void handle_edit_event(HTMLDocument *This, nsIDOMEvent *event)
         };
 
         TRACE("left\n");
-        handle_arrow_key(This, key_event, cmds);
+        handle_arrow_key(This, event, key_event, cmds);
         break;
     }
     case DOM_VK_RIGHT: {
@@ -430,7 +429,7 @@ void handle_edit_event(HTMLDocument *This, nsIDOMEvent *event)
         };
 
         TRACE("right\n");
-        handle_arrow_key(This, key_event, cmds);
+        handle_arrow_key(This, event, key_event, cmds);
         break;
     }
     case DOM_VK_UP: {
@@ -442,7 +441,7 @@ void handle_edit_event(HTMLDocument *This, nsIDOMEvent *event)
         };
 
         TRACE("up\n");
-        handle_arrow_key(This, key_event, cmds);
+        handle_arrow_key(This, event, key_event, cmds);
         break;
     }
     case DOM_VK_DOWN: {
@@ -454,7 +453,7 @@ void handle_edit_event(HTMLDocument *This, nsIDOMEvent *event)
         };
 
         TRACE("down\n");
-        handle_arrow_key(This, key_event, cmds);
+        handle_arrow_key(This, event, key_event, cmds);
         break;
     }
     case DOM_VK_DELETE: {
@@ -465,7 +464,7 @@ void handle_edit_event(HTMLDocument *This, nsIDOMEvent *event)
         };
 
         TRACE("delete\n");
-        handle_arrow_key(This, key_event, cmds);
+        handle_arrow_key(This, event, key_event, cmds);
         break;
     }
     case DOM_VK_HOME: {
@@ -477,7 +476,7 @@ void handle_edit_event(HTMLDocument *This, nsIDOMEvent *event)
         };
 
         TRACE("home\n");
-        handle_arrow_key(This, key_event, cmds);
+        handle_arrow_key(This, event, key_event, cmds);
         break;
     }
     case DOM_VK_END: {
@@ -489,7 +488,7 @@ void handle_edit_event(HTMLDocument *This, nsIDOMEvent *event)
         };
 
         TRACE("end\n");
-        handle_arrow_key(This, key_event, cmds);
+        handle_arrow_key(This, event, key_event, cmds);
         break;
     }
     }
@@ -649,20 +648,6 @@ static HRESULT exec_font(HTMLDocument *This, DWORD cmdexecopt, VARIANT *in, VARI
 
     FIXME("(%p)->(%p %p)\n", This, in, out);
     return E_NOTIMPL;
-}
-
-static HRESULT exec_selectall(HTMLDocument *This, DWORD cmdexecopt, VARIANT *in, VARIANT *out)
-{
-    TRACE("(%p)\n", This);
-
-    if(in || out)
-        FIXME("unsupported args\n");
-
-    if(This->doc_obj->nscontainer)
-        do_ns_command(This, NSCMD_SELECTALL, NULL);
-
-    update_doc(This, UPDATE_UI);
-    return S_OK;
 }
 
 static HRESULT exec_bold(HTMLDocument *This, DWORD cmdexecopt, VARIANT *in, VARIANT *out)
@@ -1208,19 +1193,10 @@ static HRESULT exec_hyperlink(HTMLDocument *This, DWORD cmdexecopt, VARIANT *in,
     return hres;
 }
 
-static HRESULT query_selall_status(HTMLDocument *This, OLECMD *cmd)
-{
-    TRACE("(%p)->(%p)\n", This, cmd);
-
-    cmd->cmdf = OLECMDF_SUPPORTED|OLECMDF_ENABLED;
-    return S_OK;
-}
-
 const cmdtable_t editmode_cmds[] = {
     {IDM_DELETE,          query_edit_status,    exec_delete},
     {IDM_FONTNAME,        query_edit_status,    exec_fontname},
     {IDM_FONTSIZE,        query_edit_status,    exec_fontsize},
-    {IDM_SELECTALL,       query_selall_status , exec_selectall},
     {IDM_FORECOLOR,       query_edit_status,    exec_forecolor},
     {IDM_BOLD,            query_edit_status,    exec_bold},
     {IDM_ITALIC,          query_edit_status,    exec_italic},
@@ -1352,7 +1328,7 @@ HRESULT setup_edit_mode(HTMLDocumentObj *doc)
         if(doc->ip_window)
             call_set_active_object(doc->ip_window, &doc->basedoc.IOleInPlaceActiveObject_iface);
 
-        memset(&rcBorderWidths, 0, sizeof(rcBorderWidths));
+        SetRectEmpty(&rcBorderWidths);
         if(doc->frame)
             IOleInPlaceFrame_SetBorderSpace(doc->frame, &rcBorderWidths);
     }

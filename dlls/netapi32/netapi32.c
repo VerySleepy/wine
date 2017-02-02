@@ -51,6 +51,7 @@
 #include "winnls.h"
 #include "dsrole.h"
 #include "dsgetdc.h"
+#include "davclnt.h"
 #include "wine/debug.h"
 #include "wine/library.h"
 #include "wine/list.h"
@@ -505,10 +506,10 @@ static unsigned char ace_flags_to_samba( BYTE flags )
     return ret;
 }
 
-#define GENERIC_ALL_ACCESS     (1 << 28)
-#define GENERIC_EXECUTE_ACCESS (1 << 29)
-#define GENERIC_WRITE_ACCESS   (1 << 30)
-#define GENERIC_READ_ACCESS    (1 << 31)
+#define GENERIC_ALL_ACCESS     (1u << 28)
+#define GENERIC_EXECUTE_ACCESS (1u << 29)
+#define GENERIC_WRITE_ACCESS   (1u << 30)
+#define GENERIC_READ_ACCESS    (1u << 31)
 
 static unsigned int access_mask_to_samba( DWORD mask )
 {
@@ -1042,7 +1043,8 @@ NET_API_STATUS WINAPI NetServerGetInfo(LMSTR servername, DWORD level, LPBYTE* bu
             GetComputerNameW(computerName, &computerNameLen);
             computerNameLen++; /* include NULL terminator */
 
-            size = sizeof(SERVER_INFO_101) + computerNameLen * sizeof(WCHAR);
+            /* Plus 1 for empty comment */
+            size = sizeof(SERVER_INFO_101) + (computerNameLen + 1) * sizeof(WCHAR);
             ret = NetApiBufferAllocate(size, (LPVOID *)bufptr);
             if (ret == NERR_Success)
             {
@@ -1060,7 +1062,9 @@ NET_API_STATUS WINAPI NetServerGetInfo(LMSTR servername, DWORD level, LPBYTE* bu
                 info->sv101_version_minor = verInfo.dwMinorVersion;
                  /* Use generic type as no wine equivalent of DC / Server */
                 info->sv101_type = SV_TYPE_NT;
-                info->sv101_comment = NULL;
+                info->sv101_comment = (LMSTR)(*bufptr + sizeof(SERVER_INFO_101)
+                                              + computerNameLen * sizeof(WCHAR));
+                info->sv101_comment[0] = '\0';
             }
             break;
         }
@@ -1080,8 +1084,51 @@ NET_API_STATUS WINAPI NetStatisticsGet(LMSTR server, LMSTR service,
                                        DWORD level, DWORD options,
                                        LPBYTE *bufptr)
 {
-    TRACE("(%p, %p, %d, %d, %p)\n", server, service, level, options, bufptr);
-    return NERR_InternalError;
+    int res;
+    static const WCHAR SERVICE_WORKSTATION[] = {
+                 'L', 'a', 'n', 'm', 'a', 'n',
+                 'W', 'o', 'r', 'k', 's', 't', 'a', 't', 'i', 'o', 'n', '\0'};
+    static const WCHAR SERVICE_SERVER[] = {
+                 'L', 'a', 'n', 'm', 'a', 'n',
+                 'S', 'e', 'r', 'v', 'e', 'r', '\0'};
+    union
+    {
+        STAT_WORKSTATION_0 workst;
+        STAT_SERVER_0 server;
+    } *stat;
+    void *dataptr;
+
+    TRACE("(server %s, service %s, level %d, options %d, buffer %p): stub\n",
+          debugstr_w(server), debugstr_w(service), level, options, bufptr);
+
+    res = NetApiBufferAllocate(sizeof(*stat), &dataptr);
+    if (res != NERR_Success) return res;
+
+    res = NERR_InternalError;
+    stat = dataptr;
+    switch (level)
+    {
+        case 0:
+            if (!lstrcmpW(service, SERVICE_WORKSTATION))
+            {
+                /* Fill the struct STAT_WORKSTATION_0 properly */
+                memset(&stat->workst, 0, sizeof(stat->workst));
+                res = NERR_Success;
+            }
+            else if (!lstrcmpW(service, SERVICE_SERVER))
+            {
+                /* Fill the struct STAT_SERVER_0 properly */
+                memset(&stat->server, 0, sizeof(stat->server));
+                res = NERR_Success;
+            }
+            break;
+    }
+    if (res != NERR_Success)
+        NetApiBufferFree(dataptr);
+    else
+        *bufptr = dataptr;
+
+    return res;
 }
 
 NET_API_STATUS WINAPI NetUseEnum(LMSTR server, DWORD level, LPBYTE* bufptr, DWORD prefmaxsize,
@@ -1580,7 +1627,12 @@ NET_API_STATUS WINAPI NetWkstaUserGetInfo(LMSTR reserved, DWORD level,
                 (lstrlenW(ui->wkui0_username) + 1) * sizeof(WCHAR),
                 (LPVOID *) bufptr);
             if (nastatus != NERR_Success)
+            {
+                NetApiBufferFree(ui);
                 return nastatus;
+            }
+            ui = (PWKSTA_USER_INFO_0) *bufptr;
+            ui->wkui0_username = (LMSTR) (*bufptr + sizeof(WKSTA_USER_INFO_0));
         }
         break;
     }
@@ -2287,13 +2339,103 @@ NetUserGetLocalGroups(LPCWSTR servername, LPCWSTR username, DWORD level,
  */
 NET_API_STATUS WINAPI
 NetUserEnum(LPCWSTR servername, DWORD level, DWORD filter, LPBYTE* bufptr,
-	    DWORD prefmaxlen, LPDWORD entriesread, LPDWORD totalentries,
-	    LPDWORD resume_handle)
+            DWORD prefmaxlen, LPDWORD entriesread, LPDWORD totalentries,
+            LPDWORD resume_handle)
 {
-  FIXME("(%s,%d, 0x%d,%p,%d,%p,%p,%p) stub!\n", debugstr_w(servername), level,
-        filter, bufptr, prefmaxlen, entriesread, totalentries, resume_handle);
+    NET_API_STATUS status;
+    WCHAR user[UNLEN + 1];
+    DWORD size, len = sizeof(user)/sizeof(user[0]);
 
-  return ERROR_ACCESS_DENIED;
+    TRACE("(%s, %u, 0x%x, %p, %u, %p, %p, %p)\n", debugstr_w(servername), level,
+          filter, bufptr, prefmaxlen, entriesread, totalentries, resume_handle);
+
+    status = NETAPI_ValidateServername(servername);
+    if (status != NERR_Success)
+        return status;
+
+    if (!NETAPI_IsLocalComputer(servername))
+    {
+        FIXME("Only implemented for local computer, but remote server"
+              "%s was requested.\n", debugstr_w(servername));
+        return NERR_InvalidComputer;
+    }
+
+    if (!GetUserNameW(user, &len)) return GetLastError();
+
+    switch (level)
+    {
+    case 0:
+    {
+        USER_INFO_0 *info;
+
+        size = sizeof(*info) + (strlenW(user) + 1) * sizeof(WCHAR);
+
+        if (prefmaxlen < size)
+            status = ERROR_MORE_DATA;
+        else
+            status = NetApiBufferAllocate(size, (void **)&info);
+
+        if (status != NERR_Success)
+            return status;
+
+        info->usri0_name = (WCHAR *)((char *)info + sizeof(*info));
+        strcpyW(info->usri0_name, user);
+
+        *bufptr = (BYTE *)info;
+        *entriesread = *totalentries = 1;
+        break;
+    }
+    case 20:
+    {
+        USER_INFO_20 *info;
+        SID *sid;
+        UCHAR *count;
+        DWORD *rid;
+        SID_NAME_USE use;
+
+        size = sizeof(*info) + (strlenW(user) + 1) * sizeof(WCHAR);
+
+        if (prefmaxlen < size)
+            status = ERROR_MORE_DATA;
+        else
+            status = NetApiBufferAllocate(size, (void **)&info);
+
+        if (status != NERR_Success)
+            return status;
+
+        size = len = 0;
+        LookupAccountNameW(NULL, user, NULL, &size, NULL, &len, &use);
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+            return GetLastError();
+
+        status = NetApiBufferAllocate(size, (void **)&sid);
+        if (status != NERR_Success)
+            return status;
+
+        if (!LookupAccountNameW(NULL, user, sid, &size, NULL, &len, &use))
+            return GetLastError();
+
+        count = GetSidSubAuthorityCount(sid);
+        rid = GetSidSubAuthority(sid, *count - 1);
+
+        info->usri20_name      = (WCHAR *)((char *)info + sizeof(*info));
+        strcpyW(info->usri20_name, user);
+        info->usri20_full_name = NULL;
+        info->usri20_comment   = NULL;
+        info->usri20_flags     = UF_NORMAL_ACCOUNT;
+        info->usri20_user_id   = *rid;
+
+        *bufptr = (BYTE *)info;
+        *entriesread = *totalentries = 1;
+
+        NetApiBufferFree(sid);
+        break;
+    }
+    default:
+        FIXME("level %u not supported\n", level);
+        return ERROR_INVALID_LEVEL;
+    }
+    return NERR_Success;
 }
 
 /************************************************************
@@ -2547,6 +2689,17 @@ NET_API_STATUS WINAPI NetGetAnyDCName(LPCWSTR servername, LPCWSTR domainname, LP
     FIXME("(%s, %s, %p) stub!\n", debugstr_w(servername),
           debugstr_w(domainname), bufptr);
     return ERROR_NO_SUCH_DOMAIN;
+}
+
+/************************************************************
+ *                NetGroupAddUser  (NETAPI32.@)
+ */
+NET_API_STATUS WINAPI
+NetGroupAddUser(LPCWSTR servername, LPCWSTR groupname, LPCWSTR username)
+{
+    FIXME("(%s, %s, %s) stub!\n", debugstr_w(servername),
+          debugstr_w(groupname), debugstr_w(username));
+    return NERR_Success;
 }
 
 /************************************************************
@@ -3199,4 +3352,178 @@ NET_API_STATUS WINAPI NetLocalGroupSetMembers(
     FIXME("(%s %s %d %p %d) stub!\n", debugstr_w(servername),
             debugstr_w(groupname), level, buf, totalentries);
     return NERR_Success;
+}
+
+/************************************************************
+ *                DavGetHTTPFromUNCPath (NETAPI32.@)
+ */
+DWORD WINAPI DavGetHTTPFromUNCPath(const WCHAR *unc_path, WCHAR *buf, DWORD *buflen)
+{
+    static const WCHAR httpW[] = {'h','t','t','p',':','/','/',0};
+    static const WCHAR httpsW[] = {'h','t','t','p','s',':','/','/',0};
+    static const WCHAR sslW[] = {'S','S','L',0};
+    static const WCHAR fmtW[] = {':','%','u',0};
+    const WCHAR *p = unc_path, *q, *server, *path, *scheme = httpW;
+    UINT i, len_server, len_path = 0, len_port = 0, len, port = 0;
+    WCHAR *end, portbuf[12];
+
+    TRACE("(%s %p %p)\n", debugstr_w(unc_path), buf, buflen);
+
+    if (p[0] != '\\' || p[1] != '\\' || !p[2]) return ERROR_INVALID_PARAMETER;
+    q = p += 2;
+    while (*q && *q != '\\' && *q != '/' && *q != '@') q++;
+    server = p;
+    len_server = q - p;
+    if (*q == '@')
+    {
+        p = ++q;
+        while (*p && (*p != '\\' && *p != '/' && *p != '@')) p++;
+        if (p - q == 3 && !memicmpW( q, sslW, 3 ))
+        {
+            scheme = httpsW;
+            q = p;
+        }
+        else if ((port = strtolW( q, &end, 10 ))) q = end;
+        else return ERROR_INVALID_PARAMETER;
+    }
+    if (*q == '@')
+    {
+        if (!(port = strtolW( ++q, &end, 10 ))) return ERROR_INVALID_PARAMETER;
+        q = end;
+    }
+    if (*q == '\\' || *q  == '/') q++;
+    path = q;
+    while (*q++) len_path++;
+    if (len_path && (path[len_path - 1] == '\\' || path[len_path - 1] == '/'))
+        len_path--; /* remove trailing slash */
+
+    sprintfW( portbuf, fmtW, port );
+    if (scheme == httpsW)
+    {
+        len = strlenW( httpsW );
+        if (port && port != 443) len_port = strlenW( portbuf );
+    }
+    else
+    {
+        len = strlenW( httpW );
+        if (port && port != 80) len_port = strlenW( portbuf );
+    }
+    len += len_server;
+    len += len_port;
+    if (len_path) len += len_path + 1; /* leading '/' */
+    len++; /* nul */
+
+    if (*buflen < len)
+    {
+        *buflen = len;
+        return ERROR_INSUFFICIENT_BUFFER;
+    }
+
+    memcpy( buf, scheme, strlenW(scheme) * sizeof(WCHAR) );
+    buf += strlenW( scheme );
+    memcpy( buf, server, len_server * sizeof(WCHAR) );
+    buf += len_server;
+    if (len_port)
+    {
+        memcpy( buf, portbuf, len_port * sizeof(WCHAR) );
+        buf += len_port;
+    }
+    if (len_path)
+    {
+        *buf++ = '/';
+        for (i = 0; i < len_path; i++)
+        {
+            if (path[i] == '\\') *buf++ = '/';
+            else *buf++ = path[i];
+        }
+    }
+    *buf = 0;
+    *buflen = len;
+
+    return ERROR_SUCCESS;
+}
+
+/************************************************************
+ *                DavGetUNCFromHTTPPath (NETAPI32.@)
+ */
+DWORD WINAPI DavGetUNCFromHTTPPath(const WCHAR *http_path, WCHAR *buf, DWORD *buflen)
+{
+    static const WCHAR httpW[] = {'h','t','t','p'};
+    static const WCHAR httpsW[] = {'h','t','t','p','s'};
+    static const WCHAR davrootW[] = {'\\','D','a','v','W','W','W','R','o','o','t'};
+    static const WCHAR sslW[] = {'@','S','S','L'};
+    static const WCHAR port80W[] = {'8','0'};
+    static const WCHAR port443W[] = {'4','4','3'};
+    const WCHAR *p = http_path, *server, *port = NULL, *path = NULL;
+    DWORD i, len = 0, len_server = 0, len_port = 0, len_path = 0;
+    BOOL ssl;
+
+    TRACE("(%s %p %p)\n", debugstr_w(http_path), buf, buflen);
+
+    while (*p && *p != ':') { p++; len++; };
+    if (len == sizeof(httpW)/sizeof(httpW[0]) && !memicmpW( http_path, httpW, len )) ssl = FALSE;
+    else if (len == sizeof(httpsW)/sizeof(httpsW[0]) && !memicmpW( http_path, httpsW, len )) ssl = TRUE;
+    else return ERROR_INVALID_PARAMETER;
+
+    if (p[0] != ':' || p[1] != '/' || p[2] != '/') return ERROR_INVALID_PARAMETER;
+    server = p += 3;
+
+    while (*p && *p != ':' && *p != '/') { p++; len_server++; };
+    if (!len_server) return ERROR_BAD_NET_NAME;
+    if (*p == ':')
+    {
+        port = ++p;
+        while (*p && isdigitW(*p)) { p++; len_port++; };
+        if (len_port == 2 && !ssl && !memcmp( port, port80W, sizeof(port80W) )) port = NULL;
+        else if (len_port == 3 && ssl && !memcmp( port, port443W, sizeof(port443W) )) port = NULL;
+        path = p;
+    }
+    else if (*p == '/') path = p;
+
+    while (*p)
+    {
+        if (p[0] == '/' && p[1] == '/') return ERROR_BAD_NET_NAME;
+        p++; len_path++;
+    }
+    if (len_path && path[len_path - 1] == '/') len_path--;
+
+    len = len_server + 2; /* \\ */
+    if (ssl) len += 4; /* @SSL */
+    if (port) len += len_port + 1 /* @ */;
+    len += sizeof(davrootW)/sizeof(davrootW[0]);
+    len += len_path + 1; /* nul */
+
+    if (*buflen < len)
+    {
+        *buflen = len;
+        return ERROR_INSUFFICIENT_BUFFER;
+    }
+
+    buf[0] = buf[1] = '\\';
+    buf += 2;
+    memcpy( buf, server, len_server * sizeof(WCHAR) );
+    buf += len_server;
+    if (ssl)
+    {
+        memcpy( buf, sslW, sizeof(sslW) );
+        buf += 4;
+    }
+    if (port)
+    {
+        *buf++ = '@';
+        memcpy( buf, port, len_port * sizeof(WCHAR) );
+        buf += len_port;
+    }
+    memcpy( buf, davrootW, sizeof(davrootW) );
+    buf += sizeof(davrootW)/sizeof(davrootW[0]);
+    for (i = 0; i < len_path; i++)
+    {
+        if (path[i] == '/') *buf++ = '\\';
+        else *buf++ = path[i];
+    }
+
+    *buf = 0;
+    *buflen = len;
+
+    return ERROR_SUCCESS;
 }

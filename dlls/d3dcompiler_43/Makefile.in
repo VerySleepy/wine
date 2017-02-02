@@ -1,14 +1,14 @@
 MODULE    = d3dcompiler_43.dll
 IMPORTLIB = d3dcompiler
 IMPORTS   = dxguid uuid
-EXTRALIBS = $(LIBWPP)
+EXTRALIBS = -lwpp
 
 C_SRCS = \
 	asmparser.c \
 	blob.c \
 	bytecodewriter.c \
 	compiler.c \
-	d3dcompiler_43_main.c \
+	main.c \
 	reflection.c \
 	utils.c
 

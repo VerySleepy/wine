@@ -59,11 +59,12 @@ enum wgl_handle_type
 
 struct opengl_context
 {
-    DWORD               tid;         /* thread that the context is current in */
-    HDC                 draw_dc;     /* current drawing DC */
-    HDC                 read_dc;     /* current reading DC */
-    GLubyte            *extensions;  /* extension string */
-    struct wgl_context *drv_ctx;     /* driver context */
+    DWORD               tid;           /* thread that the context is current in */
+    HDC                 draw_dc;       /* current drawing DC */
+    HDC                 read_dc;       /* current reading DC */
+    GLubyte            *extensions;    /* extension string */
+    GLuint             *disabled_exts; /* indices of disabled extensions */
+    struct wgl_context *drv_ctx;       /* driver context */
 };
 
 struct wgl_handle
@@ -90,6 +91,8 @@ static CRITICAL_SECTION_DEBUG critsect_debug =
       0, 0, { (DWORD_PTR)(__FILE__ ": wgl_section") }
 };
 static CRITICAL_SECTION wgl_section = { &critsect_debug, -1, 0, 0, 0, 0 };
+
+static const MAT2 identity = { {0,1},{0,0},{0,0},{0,1} };
 
 static inline struct opengl_funcs *get_dc_funcs( HDC hdc )
 {
@@ -205,6 +208,7 @@ BOOL WINAPI wglDeleteContext(HGLRC hglrc)
     }
     if (hglrc == NtCurrentTeb()->glCurrentRC) wglMakeCurrent( 0, 0 );
     ptr->funcs->wgl.p_wglDeleteContext( ptr->u.context->drv_ctx );
+    HeapFree( GetProcessHeap(), 0, ptr->u.context->disabled_exts );
     HeapFree( GetProcessHeap(), 0, ptr->u.context->extensions );
     HeapFree( GetProcessHeap(), 0, ptr->u.context );
     free_handle_ptr( ptr );
@@ -270,8 +274,17 @@ HGLRC WINAPI wglCreateContextAttribsARB( HDC hdc, HGLRC share, const int *attrib
     struct opengl_context *context;
     struct opengl_funcs *funcs = get_dc_funcs( hdc );
 
-    if (!funcs || !funcs->ext.p_wglCreateContextAttribsARB) return 0;
-    if (share && !(share_ptr = get_handle_ptr( share, HANDLE_CONTEXT ))) return 0;
+    if (!funcs)
+    {
+        SetLastError( ERROR_DC_NOT_FOUND );
+        return 0;
+    }
+    if (!funcs->ext.p_wglCreateContextAttribsARB) return 0;
+    if (share && !(share_ptr = get_handle_ptr( share, HANDLE_CONTEXT )))
+    {
+        SetLastError( ERROR_INVALID_OPERATION );
+        return 0;
+    }
     if ((drv_ctx = funcs->ext.p_wglCreateContextAttribsARB( hdc,
                                               share_ptr ? share_ptr->u.context->drv_ctx : NULL, attribs )))
     {
@@ -687,11 +700,30 @@ int WINAPI wglGetLayerPaletteEntries(HDC hdc,
   return 0;
 }
 
+static BOOL filter_extensions(const char *extensions, GLubyte **exts_list, GLuint **disabled_exts);
+
 void WINAPI glGetIntegerv(GLenum pname, GLint *data)
 {
     const struct opengl_funcs *funcs = NtCurrentTeb()->glTable;
 
     TRACE("(%d, %p)\n", pname, data);
+    if (pname == GL_NUM_EXTENSIONS)
+    {
+        struct wgl_handle *ptr = get_current_context_ptr();
+
+        if (ptr->u.context->disabled_exts ||
+            filter_extensions(NULL, NULL, &ptr->u.context->disabled_exts))
+        {
+            const GLuint *disabled_exts = ptr->u.context->disabled_exts;
+            GLint count, disabled_count = 0;
+
+            funcs->gl.p_glGetIntegerv(pname, &count);
+            while (*disabled_exts++ != ~0u)
+                disabled_count++;
+            *data = count - disabled_count;
+            return;
+        }
+    }
     funcs->gl.p_glGetIntegerv(pname, data);
 }
 
@@ -707,6 +739,21 @@ const GLubyte * WINAPI glGetStringi(GLenum name, GLuint index)
         *func_ptr = funcs->wgl.p_wglGetProcAddress("glGetStringi");
     }
 
+    if (name == GL_EXTENSIONS)
+    {
+        struct wgl_handle *ptr = get_current_context_ptr();
+
+        if (ptr->u.context->disabled_exts ||
+            filter_extensions(NULL, NULL, &ptr->u.context->disabled_exts))
+        {
+            const GLuint *disabled_exts = ptr->u.context->disabled_exts;
+            unsigned int disabled_count = 0;
+
+            while (index + disabled_count >= *disabled_exts++)
+                disabled_count++;
+            return funcs->ext.p_glGetStringi(name, index + disabled_count);
+        }
+    }
     return funcs->ext.p_glGetStringi(name, index);
 }
 
@@ -791,7 +838,7 @@ static BOOL is_extension_supported(const char* extension)
 
             /* Compare the major/minor version numbers of the native OpenGL library and what is required by the function.
              * The gl_version string is guaranteed to have at least a major/minor and sometimes it has a release number as well. */
-            if( (gl_version[0] >= version[0]) || ((gl_version[0] == version[0]) && (gl_version[2] >= version[2])) ) {
+            if( (gl_version[0] > version[0]) || ((gl_version[0] == version[0]) && (gl_version[2] >= version[2])) ) {
                 return TRUE;
             }
             WARN("The function requires OpenGL version '%c.%c' while your drivers only provide '%c.%c'\n", version[0], version[2], gl_version[0], gl_version[2]);
@@ -839,7 +886,24 @@ PROC WINAPI wglGetProcAddress( LPCSTR name )
         void *driver_func = funcs->wgl.p_wglGetProcAddress( name );
 
         if (!is_extension_supported(ext_ret->extension))
+        {
+            unsigned int i;
+            static const struct { const char *name, *alt; } alternatives[] =
+            {
+                { "glCopyTexSubImage3DEXT", "glCopyTexSubImage3D" },     /* needed by RuneScape */
+                { "glVertexAttribDivisor", "glVertexAttribDivisorARB"},  /* needed by Caffeine */
+            };
+
+            for (i = 0; i < sizeof(alternatives)/sizeof(alternatives[0]); i++)
+            {
+                if (strcmp( name, alternatives[i].name )) continue;
+                WARN("Extension %s required for %s not supported, trying %s\n",
+                    ext_ret->extension, name, alternatives[i].alt );
+                return wglGetProcAddress( alternatives[i].alt );
+            }
             WARN("Extension %s required for %s not supported\n", ext_ret->extension, name);
+            return NULL;
+        }
 
         if (driver_func == NULL)
         {
@@ -1018,7 +1082,7 @@ BOOL WINAPI wglGetPixelFormatAttribfvARB( HDC hdc, int format, int layer, UINT c
  */
 HPBUFFERARB WINAPI wglCreatePbufferARB( HDC hdc, int format, int width, int height, const int *attribs )
 {
-    HPBUFFERARB ret = 0;
+    HPBUFFERARB ret;
     struct wgl_pbuffer *pbuffer;
     struct opengl_funcs *funcs = get_dc_funcs( hdc );
 
@@ -1158,6 +1222,58 @@ BOOL WINAPI wglSetPixelFormatWINE( HDC hdc, int format )
 }
 
 /***********************************************************************
+ *              wglQueryCurrentRendererIntegerWINE
+ *
+ * Provided by the WGL_WINE_query_renderer extension.
+ */
+BOOL WINAPI wglQueryCurrentRendererIntegerWINE( GLenum attribute, GLuint *value )
+{
+    const struct opengl_funcs *funcs = NtCurrentTeb()->glTable;
+
+    if (!funcs->ext.p_wglQueryCurrentRendererIntegerWINE) return FALSE;
+    return funcs->ext.p_wglQueryCurrentRendererIntegerWINE( attribute, value );
+}
+
+/***********************************************************************
+ *              wglQueryCurrentRendererStringWINE
+ *
+ * Provided by the WGL_WINE_query_renderer extension.
+ */
+const GLchar * WINAPI wglQueryCurrentRendererStringWINE( GLenum attribute )
+{
+    const struct opengl_funcs *funcs = NtCurrentTeb()->glTable;
+
+    if (!funcs->ext.p_wglQueryCurrentRendererStringWINE) return NULL;
+    return funcs->ext.p_wglQueryCurrentRendererStringWINE( attribute );
+}
+
+/***********************************************************************
+ *              wglQueryRendererIntegerWINE
+ *
+ * Provided by the WGL_WINE_query_renderer extension.
+ */
+BOOL WINAPI wglQueryRendererIntegerWINE( HDC dc, GLint renderer, GLenum attribute, GLuint *value )
+{
+    const struct opengl_funcs *funcs = get_dc_funcs( dc );
+
+    if (!funcs || !funcs->ext.p_wglQueryRendererIntegerWINE) return FALSE;
+    return funcs->ext.p_wglQueryRendererIntegerWINE( dc, renderer, attribute, value );
+}
+
+/***********************************************************************
+ *              wglQueryRendererStringWINE
+ *
+ * Provided by the WGL_WINE_query_renderer extension.
+ */
+const GLchar * WINAPI wglQueryRendererStringWINE( HDC dc, GLint renderer, GLenum attribute )
+{
+    const struct opengl_funcs *funcs = get_dc_funcs( dc );
+
+    if (!funcs || !funcs->ext.p_wglQueryRendererStringWINE) return NULL;
+    return funcs->ext.p_wglQueryRendererStringWINE( dc, renderer, attribute );
+}
+
+/***********************************************************************
  *		wglUseFontBitmaps_common
  */
 static BOOL wglUseFontBitmaps_common( HDC hdc, DWORD first, DWORD count, DWORD listBase, BOOL unicode )
@@ -1173,7 +1289,6 @@ static BOOL wglUseFontBitmaps_common( HDC hdc, DWORD first, DWORD count, DWORD l
      funcs->gl.p_glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 
      for (glyph = first; glyph < first + count; glyph++) {
-         static const MAT2 identity = { {0,1},{0,0},{0,0},{0,1} };
          unsigned int needed_size, height, width, width_int;
 
          if (unicode)
@@ -1440,7 +1555,6 @@ static BOOL wglUseFontOutlines_common(HDC hdc,
 {
     const struct opengl_funcs *funcs = NtCurrentTeb()->glTable;
     UINT glyph;
-    const MAT2 identity = {{0,1},{0,0},{0,0},{0,1}};
     GLUtesselator *tess = NULL;
     LOGFONTW lf;
     HFONT old_font, unscaled_font;
@@ -1708,23 +1822,120 @@ GLint WINAPI glDebugEntry( GLint unknown1, GLint unknown2 )
     return 0;
 }
 
-/* build the extension string by filtering out the disabled extensions */
-static GLubyte *filter_extensions( const char *extensions )
+static GLubyte *filter_extensions_list(const char *extensions, const char *disabled)
 {
-    static const char *disabled;
     char *p, *str;
     const char *end;
 
+    p = str = HeapAlloc(GetProcessHeap(), 0, strlen(extensions) + 2);
+    if (!str)
+        return NULL;
+
     TRACE( "GL_EXTENSIONS:\n" );
 
-    if (!extensions) extensions = "";
+    for (;;)
+    {
+        while (*extensions == ' ')
+            extensions++;
+        if (!*extensions)
+            break;
+        if (!(end = strchr(extensions, ' ')))
+            end = extensions + strlen(extensions);
+        memcpy(p, extensions, end - extensions);
+        p[end - extensions] = 0;
+        if (!has_extension(disabled, p, strlen(p)))
+        {
+            TRACE("++ %s\n", p);
+            p += end - extensions;
+            *p++ = ' ';
+        }
+        else
+        {
+            TRACE("-- %s (disabled by config)\n", p);
+        }
+        extensions = end;
+    }
+    *p = 0;
+    return (GLubyte *)str;
+}
+
+static GLuint *filter_extensions_index(const char *disabled)
+{
+    const struct opengl_funcs *funcs = NtCurrentTeb()->glTable;
+    const char *ext, *end, *gl_ext;
+    GLuint *disabled_exts, *new_disabled_exts;
+    unsigned int i = 0, j, disabled_size;
+    GLint extensions_count;
+
+    if (!funcs->ext.p_glGetStringi)
+    {
+        void **func_ptr = (void **)&funcs->ext.p_glGetStringi;
+
+        *func_ptr = funcs->wgl.p_wglGetProcAddress("glGetStringi");
+        if (!funcs->ext.p_glGetStringi)
+            return NULL;
+    }
+
+    funcs->gl.p_glGetIntegerv(GL_NUM_EXTENSIONS, &extensions_count);
+    disabled_size = 2;
+    disabled_exts = HeapAlloc(GetProcessHeap(), 0, disabled_size * sizeof(*disabled_exts));
+    if (!disabled_exts)
+        return NULL;
+
+    TRACE( "GL_EXTENSIONS:\n" );
+
+    for (j = 0; j < extensions_count; ++j)
+    {
+        gl_ext = (const char *)funcs->ext.p_glGetStringi(GL_EXTENSIONS, j);
+        ext = disabled;
+        for (;;)
+        {
+            while (*ext == ' ')
+                ext++;
+            if (!*ext)
+            {
+                TRACE("++ %s\n", gl_ext);
+                break;
+            }
+            if (!(end = strchr(ext, ' ')))
+                end = ext + strlen(ext);
+
+            if (!strncmp(gl_ext, ext, end - ext) && !gl_ext[end - ext])
+            {
+                if (i + 1 == disabled_size)
+                {
+                    disabled_size *= 2;
+                    new_disabled_exts = HeapReAlloc(GetProcessHeap(), 0, disabled_exts,
+                                                    disabled_size * sizeof(*disabled_exts));
+                    if (!new_disabled_exts)
+                    {
+                        disabled_exts[i] = ~0u;
+                        return disabled_exts;
+                    }
+                    disabled_exts = new_disabled_exts;
+                }
+                TRACE("-- %s (disabled by config)\n", gl_ext);
+                disabled_exts[i++] = j;
+                break;
+            }
+            ext = end;
+        }
+    }
+    disabled_exts[i] = ~0u;
+    return disabled_exts;
+}
+
+/* build the extension string by filtering out the disabled extensions */
+static BOOL filter_extensions(const char *extensions, GLubyte **exts_list, GLuint **disabled_exts)
+{
+    static const char *disabled;
 
     if (!disabled)
     {
         HKEY hkey;
         DWORD size;
+        char *str = NULL;
 
-        str = NULL;
         /* @@ Wine registry key: HKCU\Software\Wine\OpenGL */
         if (!RegOpenKeyA( HKEY_CURRENT_USER, "Software\\Wine\\OpenGL", &hkey ))
         {
@@ -1743,29 +1954,16 @@ static GLubyte *filter_extensions( const char *extensions )
         else disabled = "";
     }
 
-    if (!disabled[0]) return NULL;
-    if ((str = HeapAlloc( GetProcessHeap(), 0, strlen(extensions) + 2 )))
-    {
-        p = str;
-        for (;;)
-        {
-            while (*extensions == ' ') extensions++;
-            if (!*extensions) break;
-            if (!(end = strchr( extensions, ' ' ))) end = extensions + strlen( extensions );
-            memcpy( p, extensions, end - extensions );
-            p[end - extensions] = 0;
-            if (!has_extension( disabled, p , strlen( p )))
-            {
-                TRACE("++ %s\n", p );
-                p += end - extensions;
-                *p++ = ' ';
-            }
-            else TRACE("-- %s (disabled by config)\n", p );
-            extensions = end;
-        }
-        *p = 0;
-    }
-    return (GLubyte *)str;
+    if (!disabled[0])
+        return FALSE;
+
+    if (extensions && !*exts_list)
+        *exts_list = filter_extensions_list(extensions, disabled);
+
+    if (!*disabled_exts)
+        *disabled_exts = filter_extensions_index(disabled);
+
+    return (exts_list && *exts_list) || *disabled_exts;
 }
 
 /***********************************************************************
@@ -1780,7 +1978,7 @@ const GLubyte * WINAPI glGetString( GLenum name )
     {
         struct wgl_handle *ptr = get_current_context_ptr();
         if (ptr->u.context->extensions ||
-            ((ptr->u.context->extensions = filter_extensions( (const char *)ret ))))
+            filter_extensions((const char *)ret, &ptr->u.context->extensions, &ptr->u.context->disabled_exts))
             ret = ptr->u.context->extensions;
     }
     return ret;

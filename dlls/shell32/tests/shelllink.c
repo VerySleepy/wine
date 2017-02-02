@@ -248,7 +248,7 @@ static void test_get_set(void)
     strcpy(buffer,"garbage");
     r = IShellLinkA_GetPath(sl, buffer, sizeof(buffer), NULL, SLGP_RAWPATH);
     ok(r==S_OK, "GetPath failed (0x%08x)\n", r);
-    ok(!strcmp(buffer, "C:\\nonexistent\\file") ||
+    todo_wine ok(!strcmp(buffer, "C:\\nonexistent\\file") ||
        broken(!strcmp(buffer, "C:\\\"c:\\nonexistent\\file\"")), /* NT4 */
        "case doesn't match\n");
 
@@ -351,12 +351,6 @@ static void test_get_set(void)
  */
 
 #define lok                   ok_(__FILE__, line)
-#define lok_todo_4(todo_flag,a,b,c,d) \
-    if ((todo & todo_flag) == 0) lok((a), (b), (c), (d)); \
-    else todo_wine lok((a), (b), (c), (d));
-#define lok_todo_2(todo_flag,a,b) \
-    if ((todo & todo_flag) == 0) lok((a), (b)); \
-    else todo_wine lok((a), (b));
 #define check_lnk(a,b,c)        check_lnk_(__LINE__, (a), (b), (c))
 
 void create_lnk_(int line, const WCHAR* path, lnk_desc_t* desc, int save_fails)
@@ -433,16 +427,8 @@ void create_lnk_(int line, const WCHAR* path, lnk_desc_t* desc, int save_fails)
         lok(str == NULL, "got %p\n", str);
 
         r = IPersistFile_Save(pf, path, TRUE);
-        if (save_fails)
-        {
-            todo_wine {
+        todo_wine_if (save_fails)
             lok(r == S_OK, "save failed (0x%08x)\n", r);
-            }
-        }
-        else
-        {
-            lok(r == S_OK, "save failed (0x%08x)\n", r);
-        }
 
         /* test GetCurFile after ::Save */
         r = IPersistFile_GetCurFile(pf, &str);
@@ -533,44 +519,44 @@ static void check_lnk_(int line, const WCHAR* path, lnk_desc_t* desc, int todo)
         strcpy(buffer,"garbage");
         r = IShellLinkA_GetDescription(sl, buffer, sizeof(buffer));
         lok(r == S_OK, "GetDescription failed (0x%08x)\n", r);
-        lok_todo_4(0x1, strcmp(buffer, desc->description)==0,
-           "GetDescription returned '%s' instead of '%s'\n",
-           buffer, desc->description);
+        todo_wine_if ((todo & 0x1) != 0)
+            lok(strcmp(buffer, desc->description)==0, "GetDescription returned '%s' instead of '%s'\n",
+                buffer, desc->description);
     }
     if (desc->workdir)
     {
         strcpy(buffer,"garbage");
         r = IShellLinkA_GetWorkingDirectory(sl, buffer, sizeof(buffer));
         lok(r == S_OK, "GetWorkingDirectory failed (0x%08x)\n", r);
-        lok_todo_4(0x2, lstrcmpiA(buffer, desc->workdir)==0,
-           "GetWorkingDirectory returned '%s' instead of '%s'\n",
-           buffer, desc->workdir);
+        todo_wine_if ((todo & 0x2) != 0)
+            lok(lstrcmpiA(buffer, desc->workdir)==0, "GetWorkingDirectory returned '%s' instead of '%s'\n",
+                buffer, desc->workdir);
     }
     if (desc->path)
     {
         strcpy(buffer,"garbage");
         r = IShellLinkA_GetPath(sl, buffer, sizeof(buffer), NULL, SLGP_RAWPATH);
         lok(SUCCEEDED(r), "GetPath failed (0x%08x)\n", r);
-        lok_todo_4(0x4, lstrcmpiA(buffer, desc->path)==0,
-           "GetPath returned '%s' instead of '%s'\n",
-           buffer, desc->path);
+        todo_wine_if ((todo & 0x4) != 0)
+            lok(lstrcmpiA(buffer, desc->path)==0, "GetPath returned '%s' instead of '%s'\n",
+                buffer, desc->path);
     }
     if (desc->pidl)
     {
         LPITEMIDLIST pidl=NULL;
         r = IShellLinkA_GetIDList(sl, &pidl);
         lok(r == S_OK, "GetIDList failed (0x%08x)\n", r);
-        lok_todo_2(0x8, pILIsEqual(pidl, desc->pidl),
-           "GetIDList returned an incorrect pidl\n");
+        todo_wine_if ((todo & 0x8) != 0)
+            lok(pILIsEqual(pidl, desc->pidl), "GetIDList returned an incorrect pidl\n");
     }
     if (desc->showcmd)
     {
         int i=0xdeadbeef;
         r = IShellLinkA_GetShowCmd(sl, &i);
         lok(r == S_OK, "GetShowCmd failed (0x%08x)\n", r);
-        lok_todo_4(0x10, i==desc->showcmd,
-           "GetShowCmd returned 0x%0x instead of 0x%0x\n",
-           i, desc->showcmd);
+        todo_wine_if ((todo & 0x10) != 0)
+            lok(i==desc->showcmd, "GetShowCmd returned 0x%0x instead of 0x%0x\n",
+                i, desc->showcmd);
     }
     if (desc->icon)
     {
@@ -578,21 +564,21 @@ static void check_lnk_(int line, const WCHAR* path, lnk_desc_t* desc, int todo)
         strcpy(buffer,"garbage");
         r = IShellLinkA_GetIconLocation(sl, buffer, sizeof(buffer), &i);
         lok(r == S_OK, "GetIconLocation failed (0x%08x)\n", r);
-        lok_todo_4(0x20, lstrcmpiA(buffer, desc->icon)==0,
-           "GetIconLocation returned '%s' instead of '%s'\n",
-           buffer, desc->icon);
-        lok_todo_4(0x20, i==desc->icon_id,
-           "GetIconLocation returned 0x%0x instead of 0x%0x\n",
-           i, desc->icon_id);
+        todo_wine_if ((todo & 0x20) != 0) {
+            lok(lstrcmpiA(buffer, desc->icon)==0, "GetIconLocation returned '%s' instead of '%s'\n",
+                buffer, desc->icon);
+            lok(i==desc->icon_id, "GetIconLocation returned 0x%0x instead of 0x%0x\n",
+                i, desc->icon_id);
+        }
     }
     if (desc->hotkey)
     {
         WORD i=0xbeef;
         r = IShellLinkA_GetHotkey(sl, &i);
         lok(r == S_OK, "GetHotkey failed (0x%08x)\n", r);
-        lok_todo_4(0x40, i==desc->hotkey,
-           "GetHotkey returned 0x%04x instead of 0x%04x\n",
-           i, desc->hotkey);
+        todo_wine_if ((todo & 0x40) != 0)
+            lok(i==desc->hotkey, "GetHotkey returned 0x%04x instead of 0x%04x\n",
+                i, desc->hotkey);
     }
 
     IShellLinkA_Release(sl);
@@ -993,7 +979,6 @@ static void test_SHGetStockIconInfo(void)
 {
     BYTE buffer[sizeof(SHSTOCKICONINFO) + 16];
     SHSTOCKICONINFO *sii = (SHSTOCKICONINFO *) buffer;
-    BOOL atleast_win7;
     HRESULT hr;
     INT i;
 
@@ -1007,11 +992,11 @@ static void test_SHGetStockIconInfo(void)
     /* negative values are handled */
     memset(buffer, '#', sizeof(buffer));
     sii->cbSize = sizeof(SHSTOCKICONINFO);
-    hr = pSHGetStockIconInfo(-1, SHGSI_ICONLOCATION, sii);
+    hr = pSHGetStockIconInfo(SIID_INVALID, SHGSI_ICONLOCATION, sii);
     ok(hr == E_INVALIDARG, "-1: got 0x%x (expected E_INVALIDARG)\n", hr);
 
     /* max. id for vista is 140 (no definition exists for this value) */
-    for (i = 0; i <= 140; i++)
+    for (i = SIID_DOCNOASSOC; i <= SIID_CLUSTEREDDRIVE; i++)
     {
         memset(buffer, '#', sizeof(buffer));
         sii->cbSize = sizeof(SHSTOCKICONINFO);
@@ -1026,38 +1011,17 @@ static void test_SHGetStockIconInfo(void)
                   sii->iIcon, wine_dbgstr_w(sii->szPath));
     }
 
-    /* there are more icons since win7 */
-    memset(buffer, '#', sizeof(buffer));
-    sii->cbSize = sizeof(SHSTOCKICONINFO);
-    hr = pSHGetStockIconInfo(i, SHGSI_ICONLOCATION, sii);
-    atleast_win7 = (!hr);
-
-    for (; i < (SIID_MAX_ICONS + 25) ; i++)
+    /* test invalid icons indices that are invalid for all platforms */
+    for (i = SIID_MAX_ICONS; i < (SIID_MAX_ICONS + 25) ; i++)
     {
         memset(buffer, '#', sizeof(buffer));
         sii->cbSize = sizeof(SHSTOCKICONINFO);
         hr = pSHGetStockIconInfo(i, SHGSI_ICONLOCATION, sii);
-
-        if (atleast_win7 && (i == (SIID_MAX_ICONS - 1)) && broken(hr == E_INVALIDARG))
-        {
-            /* Off by one windows bug: there are SIID_MAX_ICONS icons from 0
-             * up to SIID_MAX_ICONS-1 on Windows 8, but the last one is missing
-             * on Windows 7.
-             */
-            trace("%3d: got E_INVALIDARG (windows bug: off by one)\n", i);
-        }
-        else if (atleast_win7 && (i < (SIID_MAX_ICONS)))
-        {
-            ok(hr == S_OK,
-                "%3d: got 0x%x, iSysImageIndex: 0x%x, iIcon: 0x%x (expected S_OK)\n",
-                i, hr, sii->iSysImageIndex, sii->iIcon);
-
-            if ((hr == S_OK) && (winetest_debug > 1))
-                trace("%3d: got iSysImageIndex %3d, iIcon %3d and %s\n", i, sii->iSysImageIndex,
-                      sii->iIcon, wine_dbgstr_w(sii->szPath));
-        }
-        else
-            ok(hr == E_INVALIDARG, "%3d: got 0x%x (expected E_INVALIDARG)\n", i, hr);
+        ok(hr == E_INVALIDARG, "%3d: got 0x%x (expected E_INVALIDARG)\n", i, hr);
+    todo_wine {
+        ok(sii->iSysImageIndex == -1, "%d: got iSysImageIndex %d\n", i, sii->iSysImageIndex);
+        ok(sii->iIcon == -1, "%d: got iIcon %d\n", i, sii->iIcon);
+    }
     }
 
     /* test more returned SHSTOCKICONINFO elements without extra flags */
@@ -1186,6 +1150,153 @@ static void test_propertystore(void)
     IShellLinkW_Release(linkW);
 }
 
+static void test_ExtractIcon(void)
+{
+    static const WCHAR nameW[] = {'\\','e','x','t','r','a','c','t','i','c','o','n','_','t','e','s','t','.','t','x','t',0};
+    static const WCHAR shell32W[] = {'s','h','e','l','l','3','2','.','d','l','l',0};
+    WCHAR pathW[MAX_PATH];
+    HICON hicon, hicon2;
+    char path[MAX_PATH];
+    HANDLE file;
+    int r;
+
+    /* specified instance handle */
+    hicon = ExtractIconA(GetModuleHandleA("shell32.dll"), NULL, 0);
+todo_wine
+    ok(hicon == NULL, "Got icon %p\n", hicon);
+    hicon2 = ExtractIconA(GetModuleHandleA("shell32.dll"), "shell32.dll", -1);
+    ok(hicon2 != NULL, "Got icon %p\n", hicon2);
+
+    /* existing index */
+    hicon = ExtractIconA(NULL, "shell32.dll", 0);
+    ok(hicon != NULL && HandleToLong(hicon) != -1, "Got icon %p\n", hicon);
+    DestroyIcon(hicon);
+
+    /* returns number of resources */
+    hicon = ExtractIconA(NULL, "shell32.dll", -1);
+    ok(HandleToLong(hicon) > 1 && hicon == hicon2, "Got icon %p\n", hicon);
+
+    /* invalid index, valid dll name */
+    hicon = ExtractIconA(NULL, "shell32.dll", 3000);
+    ok(hicon == NULL, "Got icon %p\n", hicon);
+
+    /* Create a temporary non-executable file */
+    GetTempPathA(sizeof(path), path);
+    strcat(path, "\\extracticon_test.txt");
+    file = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    ok(file != INVALID_HANDLE_VALUE, "Failed to create a test file\n");
+    CloseHandle(file);
+
+    hicon = ExtractIconA(NULL, path, 0);
+todo_wine
+    ok(hicon == NULL, "Got icon %p\n", hicon);
+
+    hicon = ExtractIconA(NULL, path, -1);
+    ok(hicon == NULL, "Got icon %p\n", hicon);
+
+    hicon = ExtractIconA(NULL, path, 1);
+todo_wine
+    ok(hicon == NULL, "Got icon %p\n", hicon);
+
+    r = DeleteFileA(path);
+    ok(r, "failed to delete file %s (%d)\n", path, GetLastError());
+
+    /* same for W variant */
+if (0)
+{
+    /* specified instance handle, crashes on XP, 2k3 */
+    hicon = ExtractIconW(GetModuleHandleA("shell32.dll"), NULL, 0);
+    ok(hicon == NULL, "Got icon %p\n", hicon);
+}
+    hicon2 = ExtractIconW(GetModuleHandleA("shell32.dll"), shell32W, -1);
+    ok(hicon2 != NULL, "Got icon %p\n", hicon2);
+
+    /* existing index */
+    hicon = ExtractIconW(NULL, shell32W, 0);
+    ok(hicon != NULL && HandleToLong(hicon) != -1, "Got icon %p\n", hicon);
+    DestroyIcon(hicon);
+
+    /* returns number of resources */
+    hicon = ExtractIconW(NULL, shell32W, -1);
+    ok(HandleToLong(hicon) > 1 && hicon == hicon2, "Got icon %p\n", hicon);
+
+    /* invalid index, valid dll name */
+    hicon = ExtractIconW(NULL, shell32W, 3000);
+    ok(hicon == NULL, "Got icon %p\n", hicon);
+
+    /* Create a temporary non-executable file */
+    GetTempPathW(sizeof(pathW)/sizeof(pathW[0]), pathW);
+    lstrcatW(pathW, nameW);
+    file = CreateFileW(pathW, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    ok(file != INVALID_HANDLE_VALUE, "Failed to create a test file\n");
+    CloseHandle(file);
+
+    hicon = ExtractIconW(NULL, pathW, 0);
+todo_wine
+    ok(hicon == NULL, "Got icon %p\n", hicon);
+
+    hicon = ExtractIconW(NULL, pathW, -1);
+    ok(hicon == NULL, "Got icon %p\n", hicon);
+
+    hicon = ExtractIconW(NULL, pathW, 1);
+todo_wine
+    ok(hicon == NULL, "Got icon %p\n", hicon);
+
+    r = DeleteFileW(pathW);
+    ok(r, "failed to delete file %s (%d)\n", path, GetLastError());
+}
+
+static void test_ExtractAssociatedIcon(void)
+{
+    char pathA[MAX_PATH];
+    HICON hicon;
+    WORD index;
+
+    /* empty path */
+    index = 0;
+    *pathA = 0;
+    hicon = ExtractAssociatedIconA(NULL, pathA, &index);
+todo_wine {
+    ok(hicon != NULL, "Got icon %p\n", hicon);
+    ok(!*pathA, "Unexpected path %s\n", pathA);
+    ok(index == 0, "Unexpected index %u\n", index);
+}
+    DestroyIcon(hicon);
+
+    /* by index */
+    index = 0;
+    strcpy(pathA, "shell32.dll");
+    hicon = ExtractAssociatedIconA(NULL, pathA, &index);
+    ok(hicon != NULL, "Got icon %p\n", hicon);
+    ok(!strcmp(pathA, "shell32.dll"), "Unexpected path %s\n", pathA);
+    ok(index == 0, "Unexpected index %u\n", index);
+    DestroyIcon(hicon);
+
+    /* valid dll name, invalid index */
+    index = 5000;
+    strcpy(pathA, "user32.dll");
+    hicon = ExtractAssociatedIconA(NULL, pathA, &index);
+    CharLowerBuffA(pathA, strlen(pathA));
+todo_wine {
+    ok(hicon != NULL, "Got icon %p\n", hicon);
+    ok(!!strstr(pathA, "shell32.dll"), "Unexpected path %s\n", pathA);
+}
+    ok(index != 5000, "Unexpected index %u\n", index);
+    DestroyIcon(hicon);
+
+    /* associated icon */
+    index = 0xcaca;
+    strcpy(pathA, "dummy.exe");
+    hicon = ExtractAssociatedIconA(NULL, pathA, &index);
+    CharLowerBuffA(pathA, strlen(pathA));
+todo_wine {
+    ok(hicon != NULL, "Got icon %p\n", hicon);
+    ok(!!strstr(pathA, "shell32.dll"), "Unexpected path %s\n", pathA);
+}
+    ok(index != 0xcaca, "Unexpected index %u\n", index);
+    DestroyIcon(hicon);
+}
+
 START_TEST(shelllink)
 {
     HRESULT r;
@@ -1214,6 +1325,8 @@ START_TEST(shelllink)
     test_SHGetStockIconInfo();
     test_SHExtractIcons();
     test_propertystore();
+    test_ExtractIcon();
+    test_ExtractAssociatedIcon();
 
     CoUninitialize();
 }

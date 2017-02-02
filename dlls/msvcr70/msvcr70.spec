@@ -119,13 +119,13 @@
 @ stub __CxxCallUnwindDtor
 @ stub __CxxCallUnwindVecDtor
 @ cdecl -arch=i386,x86_64,arm __CxxDetectRethrow(ptr)
-@ stub __CxxExceptionFilter
+@ cdecl -arch=i386,x86_64,arm __CxxExceptionFilter(ptr ptr long ptr)
 @ cdecl -arch=i386,x86_64,arm -norelay __CxxFrameHandler(ptr ptr ptr ptr)
 @ stdcall -arch=i386 __CxxLongjmpUnwind(ptr)
 @ cdecl -arch=i386,x86_64,arm __CxxQueryExceptionSize()
-@ stub __CxxRegisterExceptionObject
-@ stub __CxxUnregisterExceptionObject
-@ stub __DestructExceptionObject
+@ cdecl __CxxRegisterExceptionObject(ptr ptr)
+@ cdecl __CxxUnregisterExceptionObject(ptr long)
+@ cdecl __DestructExceptionObject(ptr)
 @ cdecl __RTCastToVoid(ptr) MSVCRT___RTCastToVoid
 @ cdecl __RTDynamicCast(ptr long ptr ptr long) MSVCRT___RTDynamicCast
 @ cdecl __RTtypeid(ptr) MSVCRT___RTtypeid
@@ -313,7 +313,7 @@
 @ cdecl _flushall() MSVCRT__flushall
 @ extern _fmode MSVCRT__fmode
 @ cdecl _fpclass(double) MSVCRT__fpclass
-@ stub _fpieee_flt(long ptr ptr)
+@ cdecl -arch=i386,x86_64,arm _fpieee_flt(long ptr ptr)
 @ cdecl _fpreset()
 @ cdecl _fputchar(long) MSVCRT__fputchar
 @ cdecl _fputwchar(long) MSVCRT__fputwchar
@@ -343,8 +343,8 @@
 @ cdecl _getpid() _getpid
 @ stub _getsystime(ptr)
 @ cdecl _getw(ptr) MSVCRT__getw
-@ stub _getwch
-@ stub _getwche
+@ cdecl _getwch()
+@ cdecl _getwche()
 @ cdecl _getws(ptr) MSVCRT__getws
 @ cdecl -arch=i386 _global_unwind2(ptr)
 @ cdecl _gmtime64(ptr) MSVCRT__gmtime64
@@ -423,8 +423,8 @@
 @ cdecl _mbcjistojms(long)
 @ cdecl _mbcjmstojis(long)
 @ cdecl _mbclen(ptr)
-@ stub _mbctohira(long)
-@ stub _mbctokata(long)
+@ cdecl _mbctohira(long)
+@ cdecl _mbctokata(long)
 @ cdecl _mbctolower(long)
 @ cdecl _mbctombb(long)
 @ cdecl _mbctoupper(long)
@@ -495,7 +495,7 @@
 @ cdecl _putch(long)
 @ cdecl _putenv(str)
 @ cdecl _putw(long ptr) MSVCRT__putw
-@ cdecl _putwch(long) MSVCRT__putwch
+@ cdecl _putwch(long)
 @ cdecl _putws(wstr) MSVCRT__putws
 # extern _pwctype
 @ cdecl _read(long ptr long) MSVCRT__read
@@ -578,7 +578,7 @@
 @ cdecl _ultow(long ptr long) ntdll._ultow
 @ cdecl _umask(long) MSVCRT__umask
 @ cdecl _ungetch(long)
-@ stub _ungetwch
+@ cdecl _ungetwch(long)
 @ cdecl _unlink(str) MSVCRT__unlink
 @ cdecl _unloaddll(long)
 @ cdecl _unlock(long)
@@ -641,7 +641,7 @@
 @ cdecl _wmkdir(wstr) MSVCRT__wmkdir
 @ cdecl _wmktemp(wstr) MSVCRT__wmktemp
 @ varargs _wopen(wstr long) MSVCRT__wopen
-@ stub _wperror(wstr)
+@ cdecl _wperror(wstr) MSVCRT__wperror
 @ extern _wpgmptr MSVCRT__wpgmptr
 @ cdecl _wpopen(wstr wstr) MSVCRT__wpopen
 @ cdecl _wputenv(wstr)
@@ -668,7 +668,7 @@
 @ cdecl _wstrtime(ptr) MSVCRT__wstrtime
 @ cdecl _wsystem(wstr)
 @ cdecl _wtempnam(wstr wstr) MSVCRT__wtempnam
-@ cdecl _wtmpnam(ptr) MSVCRT_wtmpnam
+@ cdecl _wtmpnam(ptr) MSVCRT__wtmpnam
 @ cdecl _wtof(wstr) MSVCRT__wtof
 @ cdecl _wtoi(wstr) MSVCRT__wtoi
 @ cdecl -ret64 _wtoi64(wstr) MSVCRT__wtoi64
@@ -686,7 +686,7 @@
 @ cdecl asin(double) MSVCRT_asin
 @ cdecl atan(double) MSVCRT_atan
 @ cdecl atan2(double double) MSVCRT_atan2
-@ cdecl atexit(ptr) MSVCRT_atexit
+@ cdecl -private atexit(ptr) MSVCRT_atexit  # not imported to avoid conflicts with Mingw
 @ cdecl atof(str) MSVCRT_atof
 @ cdecl atoi(str) MSVCRT_atoi
 @ cdecl atol(str) ntdll.atol

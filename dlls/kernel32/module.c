@@ -948,7 +948,10 @@ static HMODULE load_library( const UNICODE_STRING *libname, DWORD flags )
     if (nts != STATUS_SUCCESS)
     {
         hModule = 0;
-        SetLastError( RtlNtStatusToDosError( nts ) );
+        if (nts == STATUS_DLL_NOT_FOUND && (GetVersion() & 0x80000000))
+            SetLastError( ERROR_DLL_NOT_FOUND );
+        else
+            SetLastError( RtlNtStatusToDosError( nts ) );
     }
 done:
     HeapFree( GetProcessHeap(), 0, load_path );
@@ -1226,7 +1229,7 @@ BOOL WINAPI K32EnumProcessModules(HANDLE process, HMODULE *lphModule,
     if (!init_module_iterator(&iter, process))
         return FALSE;
 
-    if (!needed)
+    if ((cb && !lphModule) || !needed)
     {
         SetLastError(ERROR_NOACCESS);
         return FALSE;

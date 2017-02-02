@@ -371,14 +371,8 @@ static BOOL TAB_InternalGetItemRect(
          (itemIndex < infoPtr->leftmostVisible)))
     {
         TRACE("Not Visible\n");
-        /* need to initialize these to empty rects */
-        if (itemRect)
-        {
-            memset(itemRect,0,sizeof(RECT));
-            itemRect->bottom = infoPtr->tabHeight;
-        }
-        if (selectedRect)
-            memset(selectedRect,0,sizeof(RECT));
+        SetRect(itemRect, 0, 0, 0, infoPtr->tabHeight);
+        SetRectEmpty(selectedRect);
         return FALSE;
     }
 
@@ -458,7 +452,7 @@ static BOOL TAB_InternalGetItemRect(
   /* Now, calculate the position of the item as if it were selected. */
   if (selectedRect!=NULL)
   {
-    CopyRect(selectedRect, itemRect);
+    *selectedRect = *itemRect;
 
     /* The rectangle of a selected item is a bit wider. */
     if(infoPtr->dwStyle & TCS_VERTICAL)
@@ -1243,8 +1237,7 @@ static void TAB_SetItemBounds (TAB_INFO *infoPtr)
         tabwidth = max(tabwidth, infoPtr->tabMinWidth);
 
       curr->rect.right = curr->rect.left + tabwidth;
-      TRACE("for <%s>, l,r=%d,%d\n",
-	  debugstr_w(curr->pszText), curr->rect.left, curr->rect.right);
+      TRACE("for <%s>, rect %s\n", debugstr_w(curr->pszText), wine_dbgstr_rect(&curr->rect));
     }
 
     /*
@@ -1263,8 +1256,7 @@ static void TAB_SetItemBounds (TAB_INFO *infoPtr)
 
 	curr->rect.left = 0;
         curItemRowCount++;
-	TRACE("wrapping <%s>, l,r=%d,%d\n", debugstr_w(curr->pszText),
-	    curr->rect.left, curr->rect.right);
+	TRACE("wrapping <%s>, rect %s\n", debugstr_w(curr->pszText), wine_dbgstr_rect(&curr->rect));
     }
 
     curr->rect.bottom = 0;
@@ -1377,9 +1369,7 @@ static void TAB_SetItemBounds (TAB_INFO *infoPtr)
           else
             curItemLeftPos = curr->rect.right;
 
-          TRACE("arranging <%s>, l,r=%d,%d, row=%d\n",
-	      debugstr_w(curr->pszText), curr->rect.left,
-	      curr->rect.right, curr->rect.top);
+          TRACE("arranging <%s>, rect %s\n", debugstr_w(curr->pszText), wine_dbgstr_rect(&curr->rect));
       }
 
       /*
@@ -1429,9 +1419,7 @@ static void TAB_SetItemBounds (TAB_INFO *infoPtr)
 	      item->rect.left += iCount * widthDiff;
 	      item->rect.right += (iCount + 1) * widthDiff;
 
-              TRACE("adjusting 1 <%s>, l,r=%d,%d\n",
-		  debugstr_w(item->pszText),
-		  item->rect.left, item->rect.right);
+              TRACE("adjusting 1 <%s>, rect %s\n", debugstr_w(item->pszText), wine_dbgstr_rect(&item->rect));
 
 	    }
 	    TAB_GetItem(infoPtr, iIndex - 1)->rect.right += remainder;
@@ -1441,12 +1429,8 @@ static void TAB_SetItemBounds (TAB_INFO *infoPtr)
 	    start->rect.left = clientRect.left;
 	    start->rect.right = clientRect.right - 4;
 
-            TRACE("adjusting 2 <%s>, l,r=%d,%d\n",
-		debugstr_w(start->pszText),
-		start->rect.left, start->rect.right);
-
+            TRACE("adjusting 2 <%s>, rect %s\n", debugstr_w(start->pszText), wine_dbgstr_rect(&start->rect));
 	  }
-
 
 	  iIndexStart = iIndexEnd;
 	}
@@ -1619,12 +1603,7 @@ TAB_DrawItemInterior(const TAB_INFO *infoPtr, HDC hdc, INT iItem, RECT *drawRect
 	}
       }
       else
-      {
-	drawRect->left   += 2;
-	drawRect->top    += 2;
-	drawRect->right  -= 2;
-	drawRect->bottom -= 2;
-      }
+        InflateRect(drawRect, -2, -2);
     }
     else
     {
@@ -1633,8 +1612,7 @@ TAB_DrawItemInterior(const TAB_INFO *infoPtr, HDC hdc, INT iItem, RECT *drawRect
         if (iItem != infoPtr->iSelected)
 	{
 	  drawRect->left   += 2;
-	  drawRect->top    += 2;
-	  drawRect->bottom -= 2;
+          InflateRect(drawRect, 0, -2);
 	}
       }
       else if (infoPtr->dwStyle & TCS_VERTICAL)
@@ -1645,9 +1623,8 @@ TAB_DrawItemInterior(const TAB_INFO *infoPtr, HDC hdc, INT iItem, RECT *drawRect
 	}
 	else
 	{
-	  drawRect->top    += 2;
 	  drawRect->right  -= 2;
-	  drawRect->bottom -= 2;
+          InflateRect(drawRect, 0, -2);
 	}
       }
       else if (infoPtr->dwStyle & TCS_BOTTOM)
@@ -1730,10 +1707,7 @@ TAB_DrawItemInterior(const TAB_INFO *infoPtr, HDC hdc, INT iItem, RECT *drawRect
     drawRect->top += 2;
     drawRect->right -= 1;
     if ( iItem == infoPtr->iSelected )
-    {
-        drawRect->right -= 1;
-        drawRect->left += 1;
-    }
+        InflateRect(drawRect, -1, 0);
 
     id = (UINT)GetWindowLongPtrW( infoPtr->hwnd, GWLP_ID );
 
@@ -1749,7 +1723,7 @@ TAB_DrawItemInterior(const TAB_INFO *infoPtr, HDC hdc, INT iItem, RECT *drawRect
       dis.itemState |= ODS_FOCUS;
     dis.hwndItem = infoPtr->hwnd;
     dis.hDC      = hdc;
-    CopyRect(&dis.rcItem,drawRect);
+    dis.rcItem = *drawRect;
 
     /* when extra data fits ULONG_PTR, store it directly */
     if (infoPtr->cbInfo > sizeof(LPARAM))
@@ -1779,8 +1753,7 @@ TAB_DrawItemInterior(const TAB_INFO *infoPtr, HDC hdc, INT iItem, RECT *drawRect
     rcImage = *drawRect;
 
     rcTemp = *drawRect;
-
-    rcText.left = rcText.top = rcText.right = rcText.bottom = 0;
+    SetRectEmpty(&rcText);
 
     /* get the rectangle that the text fits in */
     if (item->pszText)

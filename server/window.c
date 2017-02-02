@@ -1855,6 +1855,7 @@ void destroy_window( struct window *win )
     if (win == progman_window) progman_window = NULL;
     if (win == taskman_window) taskman_window = NULL;
     free_hotkeys( win->desktop, win->handle );
+    cleanup_clipboard_window( win->desktop, win->handle );
     free_user_handle( win->handle );
     destroy_properties( win );
     list_remove( &win->entry );
@@ -1865,6 +1866,11 @@ void destroy_window( struct window *win )
         if (desktop->top_window == win) desktop->top_window = NULL;
         else desktop->msg_window = NULL;
     }
+    else if (is_desktop_window( win->parent ))
+    {
+        post_message( win->parent->handle, WM_PARENTNOTIFY, WM_DESTROY, win->handle );
+    }
+
     detach_window_thread( win );
     if (win->win_region) free_region( win->win_region );
     if (win->update_region) free_region( win->update_region );
@@ -1879,7 +1885,7 @@ void destroy_window( struct window *win )
 DECL_HANDLER(create_window)
 {
     struct window *win, *parent = NULL, *owner = NULL;
-    struct unicode_str cls_name;
+    struct unicode_str cls_name = get_req_unicode_str();
     atom_t atom;
 
     reply->handle = 0;
@@ -1896,10 +1902,10 @@ DECL_HANDLER(create_window)
             return;
         }
         else /* owner must be a top-level window */
-            while (!is_desktop_window(owner->parent)) owner = owner->parent;
+            while ((owner->style & (WS_POPUP|WS_CHILD)) == WS_CHILD && !is_desktop_window(owner->parent))
+                owner = owner->parent;
     }
 
-    get_req_unicode_str( &cls_name );
     atom = cls_name.len ? find_global_atom( NULL, &cls_name ) : req->atom;
 
     if (!(win = create_window( parent, owner, atom, req->instance ))) return;
@@ -1948,10 +1954,14 @@ DECL_HANDLER(destroy_window)
 DECL_HANDLER(get_desktop_window)
 {
     struct desktop *desktop = get_thread_desktop( current, 0 );
+    int force;
 
     if (!desktop) return;
 
-    if (!desktop->top_window && req->force)  /* create it */
+    /* if winstation is invisible, then avoid roundtrip */
+    force = req->force || !(desktop->winstation->flags & WSF_VISIBLE);
+
+    if (!desktop->top_window && force)  /* create it */
     {
         if ((desktop->top_window = create_window( NULL, NULL, DESKTOP_ATOM, 0 )))
         {
@@ -1960,7 +1970,7 @@ DECL_HANDLER(get_desktop_window)
         }
     }
 
-    if (!desktop->msg_window && req->force)  /* create it */
+    if (!desktop->msg_window && force)  /* create it */
     {
         static const WCHAR messageW[] = {'M','e','s','s','a','g','e'};
         static const struct unicode_str name = { messageW, sizeof(messageW) };
@@ -2109,11 +2119,10 @@ DECL_HANDLER(get_window_children)
     unsigned int total;
     user_handle_t *data;
     data_size_t len;
-    struct unicode_str cls_name;
+    struct unicode_str cls_name = get_req_unicode_str();
     atom_t atom = req->atom;
     struct desktop *desktop = NULL;
 
-    get_req_unicode_str( &cls_name );
     if (cls_name.len && !(atom = find_global_atom( NULL, &cls_name ))) return;
 
     if (req->desktop)
@@ -2664,12 +2673,11 @@ DECL_HANDLER(redraw_window)
 /* set a window property */
 DECL_HANDLER(set_window_property)
 {
-    struct unicode_str name;
+    struct unicode_str name = get_req_unicode_str();
     struct window *win = get_window( req->window );
 
     if (!win) return;
 
-    get_req_unicode_str( &name );
     if (name.len)
     {
         atom_t atom = add_global_atom( NULL, &name );
@@ -2686,10 +2694,9 @@ DECL_HANDLER(set_window_property)
 /* remove a window property */
 DECL_HANDLER(remove_window_property)
 {
-    struct unicode_str name;
+    struct unicode_str name = get_req_unicode_str();
     struct window *win = get_window( req->window );
 
-    get_req_unicode_str( &name );
     if (win)
     {
         atom_t atom = name.len ? find_global_atom( NULL, &name ) : req->atom;
@@ -2701,10 +2708,9 @@ DECL_HANDLER(remove_window_property)
 /* get a window property */
 DECL_HANDLER(get_window_property)
 {
-    struct unicode_str name;
+    struct unicode_str name = get_req_unicode_str();
     struct window *win = get_window( req->window );
 
-    get_req_unicode_str( &name );
     if (win)
     {
         atom_t atom = name.len ? find_global_atom( NULL, &name ) : req->atom;

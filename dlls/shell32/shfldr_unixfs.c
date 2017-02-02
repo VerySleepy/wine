@@ -148,7 +148,6 @@
 
 #define COBJMACROS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "windef.h"
 #include "winbase.h"
@@ -385,7 +384,7 @@ static inline BOOL UNIXFS_is_pidl_of_type(LPCITEMIDLIST pIDL, SHCONTF fFilter) {
  *
  * RETURNS
  *  Success, TRUE
- *  Failure, FALSE - Path not existent, too long, insufficient rights, too many symlinks
+ *  Failure, FALSE - Nonexistent path, too long, insufficient rights, too many symlinks
  */
 static BOOL UNIXFS_get_unix_path(LPCWSTR pszDosPath, char *pszCanonicalPath)
 {
@@ -669,7 +668,7 @@ static HRESULT UNIXFS_path_to_pidl(UnixFolder *pUnixFolder, LPBC pbc, const WCHA
         szCompletePath[cPathLen-1] = '\0';
 
     if ((szCompletePath[0] != '/') || (pNextPathElement[0] != '/')) {
-        ERR("szCompletePath: %s, pNextPathElment: %s\n", szCompletePath, pNextPathElement);
+        ERR("szCompletePath: %s, pNextPathElement: %s\n", szCompletePath, pNextPathElement);
         return E_FAIL;
     }
     
@@ -777,7 +776,7 @@ static HRESULT UNIXFS_initialize_target_folder(UnixFolder *This, const char *szB
         current = ILGetNext(current);
     };
 
-    /* Build the path and compute the attributes*/
+    /* Build the path and compute the attributes */
     This->m_dwAttributes = 
             dwAttributes|SFGAO_FOLDER|SFGAO_HASSUBFOLDER|SFGAO_FILESYSANCESTOR|SFGAO_CANRENAME;
     This->m_pszPath = pNextDir = SHAlloc(dwPathLen);
@@ -848,7 +847,7 @@ static HRESULT UNIXFS_copy(LPCWSTR pwszDosSrc, LPCWSTR pwszDosDst)
         op.pFrom = pwszSrc;
         op.pTo = pwszDst;
         op.fFlags = FOF_ALLOWUNDO;
-        if (!SHFileOperationW(&op))
+        if (SHFileOperationW(&op))
         {
             WARN("SHFileOperationW failed\n");
             res = E_FAIL;
@@ -1124,24 +1123,24 @@ static HRESULT WINAPI ShellFolder2_CreateViewObject(IShellFolder2* iface, HWND h
 }
 
 static HRESULT WINAPI ShellFolder2_GetAttributesOf(IShellFolder2* iface, UINT cidl,
-    LPCITEMIDLIST* apidl, SFGAOF* rgfInOut)
+    LPCITEMIDLIST* apidl, SFGAOF* attrs)
 {
     UnixFolder *This = impl_from_IShellFolder2(iface);
     HRESULT hr = S_OK;
         
-    TRACE("(%p)->(%u %p %p)\n", This, cidl, apidl, rgfInOut);
+    TRACE("(%p)->(%u %p %p)\n", This, cidl, apidl, attrs);
  
-    if (!rgfInOut || (cidl && !apidl)) 
+    if (!attrs || (cidl && !apidl))
         return E_INVALIDARG;
     
     if (cidl == 0) {
-        *rgfInOut &= This->m_dwAttributes;
+        *attrs &= This->m_dwAttributes;
     } else {
         char szAbsolutePath[FILENAME_MAX], *pszRelativePath;
         UINT i;
 
-        *rgfInOut = SFGAO_CANCOPY|SFGAO_CANMOVE|SFGAO_CANLINK|SFGAO_CANRENAME|SFGAO_CANDELETE|
-                    SFGAO_HASPROPSHEET|SFGAO_DROPTARGET|SFGAO_FILESYSTEM;
+        *attrs = SFGAO_CANCOPY | SFGAO_CANMOVE | SFGAO_CANLINK | SFGAO_CANRENAME | SFGAO_CANDELETE |
+            SFGAO_HASPROPSHEET | SFGAO_DROPTARGET | SFGAO_FILESYSTEM;
         lstrcpyA(szAbsolutePath, This->m_pszPath);
         pszRelativePath = szAbsolutePath + lstrlenA(szAbsolutePath);
         for (i=0; i<cidl; i++) {
@@ -1150,12 +1149,15 @@ static HRESULT WINAPI ShellFolder2_GetAttributesOf(IShellFolder2* iface, UINT ci
                 if (!UNIXFS_filename_from_shitemid(apidl[i], pszRelativePath)) 
                     return E_INVALIDARG;
                 if (!(dos_name = wine_get_dos_file_name( szAbsolutePath )))
-                    *rgfInOut &= ~SFGAO_FILESYSTEM;
+                    *attrs &= ~SFGAO_FILESYSTEM;
                 else
                     HeapFree( GetProcessHeap(), 0, dos_name );
             }
             if (_ILIsFolder(apidl[i])) 
-                *rgfInOut |= SFGAO_FOLDER|SFGAO_HASSUBFOLDER|SFGAO_FILESYSANCESTOR;
+                *attrs |= SFGAO_FOLDER | SFGAO_HASSUBFOLDER | SFGAO_FILESYSANCESTOR |
+                    SFGAO_STORAGEANCESTOR | SFGAO_STORAGE;
+            else
+                *attrs |= SFGAO_STREAM;
         }
     }
 
@@ -1979,7 +1981,7 @@ static HRESULT UNIXFS_delete_with_shfileop(UnixFolder *This, UINT cidl, const LP
     op.wFunc = FO_DELETE;
     op.pFrom = wszPathsList;
     op.fFlags = FOF_ALLOWUNDO;
-    if (!SHFileOperationW(&op))
+    if (SHFileOperationW(&op))
     {
         WARN("SHFileOperationW failed\n");
         ret = E_FAIL;
@@ -2336,22 +2338,22 @@ static HRESULT CreateUnixFolder(IUnknown *outer, REFIID riid, void **ppv, const 
 }
 
 HRESULT WINAPI UnixFolder_Constructor(IUnknown *pUnkOuter, REFIID riid, LPVOID *ppv) {
-    TRACE("(pUnkOuter=%p, riid=%p, ppv=%p)\n", pUnkOuter, riid, ppv);
+    TRACE("(pUnkOuter=%p, riid=%s, ppv=%p)\n", pUnkOuter, debugstr_guid(riid), ppv);
     return CreateUnixFolder(pUnkOuter, riid, ppv, &CLSID_UnixFolder);
 }
 
 HRESULT WINAPI UnixDosFolder_Constructor(IUnknown *pUnkOuter, REFIID riid, LPVOID *ppv) {
-    TRACE("(pUnkOuter=%p, riid=%p, ppv=%p)\n", pUnkOuter, riid, ppv);
+    TRACE("(pUnkOuter=%p, riid=%s, ppv=%p)\n", pUnkOuter, debugstr_guid(riid), ppv);
     return CreateUnixFolder(pUnkOuter, riid, ppv, &CLSID_UnixDosFolder);
 }
 
 HRESULT WINAPI FolderShortcut_Constructor(IUnknown *pUnkOuter, REFIID riid, LPVOID *ppv) {
-    TRACE("(pUnkOuter=%p, riid=%p, ppv=%p)\n", pUnkOuter, riid, ppv);
+    TRACE("(pUnkOuter=%p, riid=%s, ppv=%p)\n", pUnkOuter, debugstr_guid(riid), ppv);
     return CreateUnixFolder(pUnkOuter, riid, ppv, &CLSID_FolderShortcut);
 }
 
 HRESULT WINAPI MyDocuments_Constructor(IUnknown *pUnkOuter, REFIID riid, LPVOID *ppv) {
-    TRACE("(pUnkOuter=%p, riid=%p, ppv=%p)\n", pUnkOuter, riid, ppv);
+    TRACE("(pUnkOuter=%p, riid=%s, ppv=%p)\n", pUnkOuter, debugstr_guid(riid), ppv);
     return CreateUnixFolder(pUnkOuter, riid, ppv, &CLSID_MyDocuments);
 }
 
@@ -2388,7 +2390,7 @@ static void UnixSubFolderIterator_Destroy(UnixSubFolderIterator *iterator) {
 static HRESULT WINAPI UnixSubFolderIterator_IEnumIDList_QueryInterface(IEnumIDList* iface, 
     REFIID riid, void** ppv)
 {
-    TRACE("(iface=%p, riid=%p, ppv=%p)\n", iface, riid, ppv);
+    TRACE("(iface=%p, riid=%s, ppv=%p)\n", iface, debugstr_guid(riid), ppv);
     
     if (!ppv) return E_INVALIDARG;
     

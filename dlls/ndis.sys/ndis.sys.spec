@@ -12,11 +12,11 @@
 @ stub NdisAllocateBufferPool
 @ stub NdisAllocateFromBlockPool
 @ stub NdisAllocateMemory
-@ stub NdisAllocateMemoryWithTag
+@ stdcall NdisAllocateMemoryWithTag(ptr long long)
 @ stub NdisAllocatePacket
 @ stub NdisAllocatePacketPool
 @ stub NdisAllocatePacketPoolEx
-@ stub NdisAllocateSpinLock
+@ stdcall NdisAllocateSpinLock(ptr)
 @ stub NdisAnsiStringToUnicodeString
 @ stub NdisBufferLength
 @ stub NdisBufferVirtualAddress
@@ -130,7 +130,7 @@
 @ stub NdisImmediateWritePortUshort
 @ stub NdisImmediateWriteSharedMemory
 @ stub NdisInitAnsiString
-@ stub NdisInitUnicodeString
+@ stdcall NdisInitUnicodeString(ptr wstr) ntdll.RtlInitUnicodeString
 @ stub NdisInitializeEvent
 @ stub NdisInitializeReadWriteLock
 @ stub NdisInitializeString
@@ -238,7 +238,7 @@
 @ stub NdisReadNetworkAddress
 @ stub NdisReadPciSlotInformation
 @ stub NdisReadPcmciaAttributeMemory
-@ stub NdisRegisterProtocol
+@ stdcall NdisRegisterProtocol(ptr ptr ptr long)
 @ stub NdisRegisterTdiCallBack
 @ stub NdisReleaseReadWriteLock
 @ stub NdisReleaseSpinLock
@@ -257,7 +257,7 @@
 @ stub NdisSetTimer
 @ stub NdisSetTimerEx
 @ stub NdisSetupDmaTransfer
-@ stub NdisSystemProcessorCount
+@ stdcall NdisSystemProcessorCount()
 @ stub NdisTerminateWrapper
 @ stub NdisTransferData
 @ stub NdisUnchainBufferAtBack

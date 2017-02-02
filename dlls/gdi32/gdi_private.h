@@ -72,14 +72,10 @@ typedef struct tagDC
     BOOL         bounds_enabled:1; /* bounds tracking is enabled */
     BOOL         path_open:1;      /* path is currently open (only for saved DCs) */
 
-    INT          wndOrgX;          /* Window origin */
-    INT          wndOrgY;
-    INT          wndExtX;          /* Window extent */
-    INT          wndExtY;
-    INT          vportOrgX;        /* Viewport origin */
-    INT          vportOrgY;
-    INT          vportExtX;        /* Viewport extent */
-    INT          vportExtY;
+    POINT        wnd_org;          /* Window origin */
+    SIZE         wnd_ext;          /* Window extent */
+    POINT        vport_org;        /* Viewport origin */
+    SIZE         vport_ext;        /* Viewport extent */
     SIZE         virtual_res;      /* Initially HORZRES,VERTRES. Changed by SetVirtualResolution */
     SIZE         virtual_size;     /* Initially HORZSIZE,VERTSIZE. Changed by SetVirtualResolution */
     RECT         vis_rect;         /* visible rectangle in screen coords */
@@ -112,8 +108,7 @@ typedef struct tagDC
     COLORREF      textColor;
     COLORREF      dcBrushColor;
     COLORREF      dcPenColor;
-    short         brushOrgX;
-    short         brushOrgY;
+    POINT         brush_org;
 
     DWORD         mapperFlags;       /* Font mapper flags */
     WORD          textAlign;         /* Text alignment from SetTextAlign() */
@@ -123,8 +118,7 @@ typedef struct tagDC
     INT           MapMode;
     INT           GraphicsMode;      /* Graphics mode */
     ABORTPROC     pAbortProc;        /* AbortProc for Printing */
-    INT           CursPosX;          /* Current position */
-    INT           CursPosY;
+    POINT         cur_pos;           /* Current position */
     INT           ArcDirection;
     XFORM         xformWorld2Wnd;    /* World-to-window transformation */
     XFORM         xformWorld2Vport;  /* World-to-viewport transformation */
@@ -205,6 +199,7 @@ extern BOOL intersect_vis_rectangles( struct bitblt_coords *dst, struct bitblt_c
 extern DWORD stretch_bits( const BITMAPINFO *src_info, struct bitblt_coords *src,
                            BITMAPINFO *dst_info, struct bitblt_coords *dst,
                            struct gdi_image_bits *bits, int mode ) DECLSPEC_HIDDEN;
+extern void get_mono_dc_colors( DC *dc, BITMAPINFO *info, int count ) DECLSPEC_HIDDEN;
 
 /* brush.c */
 extern BOOL store_brush_pattern( LOGBRUSH *brush, struct brush_pattern *pattern ) DECLSPEC_HIDDEN;
@@ -253,7 +248,7 @@ extern DWORD blend_bitmapinfo( const BITMAPINFO *src_info, void *src_bits, struc
 extern DWORD gradient_bitmapinfo( const BITMAPINFO *info, void *bits, TRIVERTEX *vert_array, ULONG nvert,
                                   void *grad_array, ULONG ngrad, ULONG mode, const POINT *dev_pts, HRGN rgn ) DECLSPEC_HIDDEN;
 extern COLORREF get_pixel_bitmapinfo( const BITMAPINFO *info, void *bits, struct bitblt_coords *src ) DECLSPEC_HIDDEN;
-extern BOOL render_aa_text_bitmapinfo( HDC hdc, BITMAPINFO *info, struct gdi_image_bits *bits,
+extern BOOL render_aa_text_bitmapinfo( DC *dc, BITMAPINFO *info, struct gdi_image_bits *bits,
                                        struct bitblt_coords *src, INT x, INT y, UINT flags,
                                        UINT aa_flags, LPCWSTR str, UINT count, const INT *dx ) DECLSPEC_HIDDEN;
 extern DWORD get_image_from_bitmap( BITMAPOBJ *bmp, BITMAPINFO *info,
@@ -276,15 +271,17 @@ extern HENHMETAFILE EMF_Create_HENHMETAFILE(ENHMETAHEADER *emh, BOOL on_disk ) D
 
 /* freetype.c */
 
-/* Undocumented structure filled in by GdiRealizationInfo */
-typedef struct
+/* Undocumented structure filled in by GetFontRealizationInfo */
+struct font_realization_info
 {
+    DWORD size;        /* could be 16 or 24 */
     DWORD flags;       /* 1 for bitmap fonts, 3 for scalable fonts */
     DWORD cache_num;   /* keeps incrementing - num of fonts that have been created allowing for caching?? */
-    DWORD unknown2;    /* fixed for a given font - looks like it could be the order of the face in the font list or the order
-                          in which the face was first rendered. */
-} realization_info_t;
-
+    DWORD instance_id; /* identifies a realized font instance */
+    DWORD unk;         /* unknown */
+    WORD  face_index;  /* face index in case of font collections */
+    WORD  simulations; /* 0 bit - bold simulation, 1 bit - oblique simulation */
+};
 
 extern INT WineEngAddFontResourceEx(LPCWSTR, DWORD, PVOID) DECLSPEC_HIDDEN;
 extern HANDLE WineEngAddFontMemResourceEx(PVOID, DWORD, PVOID, LPDWORD) DECLSPEC_HIDDEN;
@@ -297,6 +294,7 @@ extern HGDIOBJ alloc_gdi_handle( void *obj, WORD type, const struct gdi_obj_func
 extern void *free_gdi_handle( HGDIOBJ handle ) DECLSPEC_HIDDEN;
 extern HGDIOBJ get_full_gdi_handle( HGDIOBJ handle ) DECLSPEC_HIDDEN;
 extern void *GDI_GetObjPtr( HGDIOBJ, WORD ) DECLSPEC_HIDDEN;
+extern void *get_any_obj_ptr( HGDIOBJ, WORD * ) DECLSPEC_HIDDEN;
 extern void GDI_ReleaseObj( HGDIOBJ ) DECLSPEC_HIDDEN;
 extern void GDI_CheckNotLock(void) DECLSPEC_HIDDEN;
 extern UINT GDI_get_ref_count( HGDIOBJ handle ) DECLSPEC_HIDDEN;
@@ -305,13 +303,40 @@ extern BOOL GDI_dec_ref_count( HGDIOBJ handle ) DECLSPEC_HIDDEN;
 extern void GDI_hdc_using_object(HGDIOBJ obj, HDC hdc) DECLSPEC_HIDDEN;
 extern void GDI_hdc_not_using_object(HGDIOBJ obj, HDC hdc) DECLSPEC_HIDDEN;
 
+/* mapping.c */
+extern BOOL dp_to_lp( DC *dc, POINT *points, INT count ) DECLSPEC_HIDDEN;
+extern void lp_to_dp( DC *dc, POINT *points, INT count ) DECLSPEC_HIDDEN;
+
 /* metafile.c */
 extern HMETAFILE MF_Create_HMETAFILE(METAHEADER *mh) DECLSPEC_HIDDEN;
 extern METAHEADER *MF_CreateMetaHeaderDisk(METAHEADER *mr, LPCVOID filename, BOOL unicode ) DECLSPEC_HIDDEN;
 
+/* Format of comment record added by GetWinMetaFileBits */
+#include <pshpack2.h>
+typedef struct
+{
+    DWORD magic;   /* WMFC */
+    WORD unk04;    /* 1 */
+    WORD unk06;    /* 0 */
+    WORD unk08;    /* 0 */
+    WORD unk0a;    /* 1 */
+    WORD checksum;
+    DWORD unk0e;   /* 0 */
+    DWORD num_chunks;
+    DWORD chunk_size;
+    DWORD remaining_size;
+    DWORD emf_size;
+    BYTE emf_data[1];
+} emf_in_wmf_comment;
+#include <poppack.h>
+
+#define WMFC_MAGIC 0x43464d57
+
 /* path.c */
 
 extern void free_gdi_path( struct gdi_path *path ) DECLSPEC_HIDDEN;
+extern struct gdi_path *get_gdi_flat_path( DC *dc, HRGN *rgn ) DECLSPEC_HIDDEN;
+extern int get_gdi_path_data( struct gdi_path *path, POINT **points, BYTE **flags ) DECLSPEC_HIDDEN;
 extern BOOL PATH_SavePath( DC *dst, DC *src ) DECLSPEC_HIDDEN;
 extern BOOL PATH_RestorePath( DC *dst, DC *src ) DECLSPEC_HIDDEN;
 
@@ -328,12 +353,14 @@ extern BOOL add_rect_to_region( HRGN rgn, const RECT *rect ) DECLSPEC_HIDDEN;
 extern INT mirror_region( HRGN dst, HRGN src, INT width ) DECLSPEC_HIDDEN;
 extern BOOL REGION_FrameRgn( HRGN dest, HRGN src, INT x, INT y ) DECLSPEC_HIDDEN;
 
+#define RGN_DEFAULT_RECTS 4
 typedef struct
 {
     INT size;
     INT numRects;
     RECT *rects;
     RECT extents;
+    RECT rects_buf[RGN_DEFAULT_RECTS];
 } WINEREGION;
 
 /* return the region data without making a copy */
@@ -344,6 +371,39 @@ static inline const WINEREGION *get_wine_region(HRGN rgn)
 static inline void release_wine_region(HRGN rgn)
 {
     GDI_ReleaseObj(rgn);
+}
+
+/**********************************************************
+ *     region_find_pt
+ *
+ * Return either the index of the rectangle that contains (x,y) or the first
+ * rectangle after it.  Sets *hit to TRUE if the region contains (x,y).
+ * Note if (x,y) follows all rectangles, then the return value will be rgn->numRects.
+ */
+static inline int region_find_pt( const WINEREGION *rgn, int x, int y, BOOL *hit )
+{
+    int i, start = 0, end = rgn->numRects - 1;
+    BOOL h = FALSE;
+
+    while (start <= end)
+    {
+        i = (start + end) / 2;
+
+        if (rgn->rects[i].bottom <= y ||
+            (rgn->rects[i].top <= y && rgn->rects[i].right <= x))
+            start = i + 1;
+        else if (rgn->rects[i].top > y ||
+                 (rgn->rects[i].bottom > y && rgn->rects[i].left > x))
+            end = i - 1;
+        else
+        {
+            h = TRUE;
+            break;
+        }
+    }
+
+    if (hit) *hit = h;
+    return h ? i : start;
 }
 
 /* null driver entry points */
@@ -368,6 +428,7 @@ extern BOOL nulldrv_FrameRgn( PHYSDEV dev, HRGN rgn, HBRUSH brush, INT width, IN
 extern LONG nulldrv_GetBitmapBits( HBITMAP bitmap, void *bits, LONG size ) DECLSPEC_HIDDEN;
 extern COLORREF nulldrv_GetNearestColor( PHYSDEV dev, COLORREF color ) DECLSPEC_HIDDEN;
 extern COLORREF nulldrv_GetPixel( PHYSDEV dev, INT x, INT y ) DECLSPEC_HIDDEN;
+extern UINT nulldrv_GetSystemPaletteEntries( PHYSDEV dev, UINT start, UINT count, PALETTEENTRY *entries ) DECLSPEC_HIDDEN;
 extern BOOL nulldrv_GradientFill( PHYSDEV dev, TRIVERTEX *vert_array, ULONG nvert,
                                   void * grad_array, ULONG ngrad, ULONG mode ) DECLSPEC_HIDDEN;
 extern INT  nulldrv_IntersectClipRect( PHYSDEV dev, INT left, INT top, INT right, INT bottom ) DECLSPEC_HIDDEN;
@@ -407,6 +468,13 @@ extern BOOL nulldrv_WidenPath( PHYSDEV dev ) DECLSPEC_HIDDEN;
 static inline DC *get_nulldrv_dc( PHYSDEV dev )
 {
     return CONTAINING_RECORD( dev, DC, nulldrv );
+}
+
+static inline DC *get_physdev_dc( PHYSDEV dev )
+{
+    while (dev->funcs != &null_driver)
+        dev = dev->next;
+    return get_nulldrv_dc( dev );
 }
 
 /* Undocumented value for DIB's iUsage: Indicates a mono DIB w/o pal entries */

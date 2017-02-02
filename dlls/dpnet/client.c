@@ -31,7 +31,6 @@
 #include "objbase.h"
 #include "wine/debug.h"
 
-#include "dplay8.h"
 #include "dpnet_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dpnet);
@@ -40,6 +39,10 @@ typedef struct IDirectPlay8LobbyClientImpl
 {
     IDirectPlay8LobbyClient IDirectPlay8LobbyClient_iface;
     LONG ref;
+
+    PFNDPNMESSAGEHANDLER msghandler;
+    DWORD flags;
+    void *usercontext;
 } IDirectPlay8LobbyClientImpl;
 
 static inline IDirectPlay8LobbyClientImpl *impl_from_IDirectPlay8LobbyClient(IDirectPlay8LobbyClient *iface)
@@ -86,8 +89,11 @@ static ULONG WINAPI IDirectPlay8ClientImpl_Release(IDirectPlay8Client *iface)
 
     TRACE("(%p) ref=%u\n", This, ref);
 
-    if (!ref) {
-        HeapFree(GetProcessHeap(), 0, This);
+    if (!ref)
+    {
+        heap_free(This->username);
+        heap_free(This->data);
+        heap_free(This);
     }
     return ref;
 }
@@ -107,6 +113,8 @@ static HRESULT WINAPI IDirectPlay8ClientImpl_Initialize(IDirectPlay8Client *ifac
     This->usercontext = pvUserContext;
     This->msghandler = pfn;
     This->flags = dwFlags;
+
+    init_winsock();
 
     return DPN_OK;
 }
@@ -182,9 +190,50 @@ static HRESULT WINAPI IDirectPlay8ClientImpl_SetClientInfo(IDirectPlay8Client *i
         const DPN_PLAYER_INFO * const pdpnPlayerInfo, void * const pvAsyncContext,
         DPNHANDLE * const phAsyncHandle, const DWORD dwFlags)
 {
-  IDirectPlay8ClientImpl *This = impl_from_IDirectPlay8Client(iface);
-  FIXME("(%p):(%p,%p,%x): Stub\n", This, pvAsyncContext, phAsyncHandle, dwFlags);
-  return DPN_OK; 
+    IDirectPlay8ClientImpl *This = impl_from_IDirectPlay8Client(iface);
+    FIXME("(%p):(%p,%p,%x): Semi-stub.\n", This, pvAsyncContext, phAsyncHandle, dwFlags);
+
+    if(!pdpnPlayerInfo)
+       return E_POINTER;
+
+    if(phAsyncHandle)
+        FIXME("Async handle currently not supported.\n");
+
+    if (pdpnPlayerInfo->dwInfoFlags & DPNINFO_NAME)
+    {
+        heap_free(This->username);
+        This->username = NULL;
+
+        if(pdpnPlayerInfo->pwszName)
+        {
+            This->username = heap_strdupW(pdpnPlayerInfo->pwszName);
+            if (!This->username)
+                return E_OUTOFMEMORY;
+        }
+    }
+
+    if (pdpnPlayerInfo->dwInfoFlags & DPNINFO_DATA)
+    {
+        heap_free(This->data);
+        This->data = NULL;
+        This->datasize = 0;
+
+        if(!pdpnPlayerInfo->pvData && pdpnPlayerInfo->dwDataSize)
+            return E_POINTER;
+
+        if(pdpnPlayerInfo->dwDataSize && pdpnPlayerInfo->pvData)
+        {
+            This->data = heap_alloc(pdpnPlayerInfo->dwDataSize);
+            if (!This->data)
+                return E_OUTOFMEMORY;
+
+            This->datasize = pdpnPlayerInfo->dwDataSize;
+
+            memcpy(This->data, pdpnPlayerInfo->pvData, pdpnPlayerInfo->dwDataSize);
+        }
+    }
+
+    return DPN_OK;
 }
 
 static HRESULT WINAPI IDirectPlay8ClientImpl_GetServerInfo(IDirectPlay8Client *iface,
@@ -205,9 +254,12 @@ static HRESULT WINAPI IDirectPlay8ClientImpl_GetServerAddress(IDirectPlay8Client
 
 static HRESULT WINAPI IDirectPlay8ClientImpl_Close(IDirectPlay8Client *iface, const DWORD dwFlags)
 {
-  IDirectPlay8ClientImpl *This = impl_from_IDirectPlay8Client(iface);
-  FIXME("(%p):(%x): Stub\n", This, dwFlags);
-  return DPN_OK; 
+    IDirectPlay8ClientImpl *This = impl_from_IDirectPlay8Client(iface);
+    FIXME("(%p):(%x): Stub\n", This, dwFlags);
+
+    This->msghandler = NULL;
+
+    return DPN_OK;
 }
 
 static HRESULT WINAPI IDirectPlay8ClientImpl_ReturnBuffer(IDirectPlay8Client *iface,
@@ -383,9 +435,18 @@ static HRESULT WINAPI lobbyclient_Initialize(IDirectPlay8LobbyClient *iface, voi
 {
     IDirectPlay8LobbyClientImpl *This = impl_from_IDirectPlay8LobbyClient(iface);
 
-    FIXME("(%p)->(%p %p 0x%08x)\n", This, context, msghandler, flags);
+    TRACE("(%p):(%p,%p,%x)\n", This, context, msghandler, flags);
 
-    return E_NOTIMPL;
+    if(!msghandler)
+        return E_POINTER;
+
+    This->usercontext = context;
+    This->msghandler = msghandler;
+    This->flags = flags;
+
+    init_winsock();
+
+    return DPN_OK;
 }
 
 static HRESULT WINAPI lobbyclient_EnumLocalPrograms(IDirectPlay8LobbyClient *iface, GUID* guidapplication,

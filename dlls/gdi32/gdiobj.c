@@ -38,7 +38,7 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(gdi);
 
-#define FIRST_GDI_HANDLE 16
+#define FIRST_GDI_HANDLE 32
 #define MAX_GDI_HANDLES  16384
 
 struct hdc_list
@@ -829,13 +829,13 @@ HGDIOBJ get_full_gdi_handle( HGDIOBJ handle )
 }
 
 /***********************************************************************
- *           GDI_GetObjPtr
+ *           get_any_obj_ptr
  *
- * Return a pointer to the GDI object associated to the handle.
- * Return NULL if the object has the wrong magic number.
+ * Return a pointer to, and the type of, the GDI object
+ * associated with the handle.
  * The object must be released with GDI_ReleaseObj.
  */
-void *GDI_GetObjPtr( HGDIOBJ handle, WORD type )
+void *get_any_obj_ptr( HGDIOBJ handle, WORD *type )
 {
     void *ptr = NULL;
     struct gdi_handle_entry *entry;
@@ -844,13 +844,32 @@ void *GDI_GetObjPtr( HGDIOBJ handle, WORD type )
 
     if ((entry = handle_entry( handle )))
     {
-        if (!type || entry->type == type) ptr = entry->obj;
+        ptr = entry->obj;
+        *type = entry->type;
     }
 
     if (!ptr) LeaveCriticalSection( &gdi_section );
     return ptr;
 }
 
+/***********************************************************************
+ *           GDI_GetObjPtr
+ *
+ * Return a pointer to the GDI object associated with the handle.
+ * Return NULL if the object has the wrong type.
+ * The object must be released with GDI_ReleaseObj.
+ */
+void *GDI_GetObjPtr( HGDIOBJ handle, WORD type )
+{
+    WORD ret_type;
+    void *ptr = get_any_obj_ptr( handle, &ret_type );
+    if (ptr && ret_type != type)
+    {
+        GDI_ReleaseObj( handle );
+        ptr = NULL;
+    }
+    return ptr;
+}
 
 /***********************************************************************
  *           GDI_ReleaseObj
@@ -867,7 +886,7 @@ void GDI_ReleaseObj( HGDIOBJ handle )
  */
 void GDI_CheckNotLock(void)
 {
-    if (gdi_section.OwningThread == ULongToHandle(GetCurrentThreadId()) && gdi_section.RecursionCount)
+    if (RtlIsCriticalSectionLockedByThread(&gdi_section))
     {
         ERR( "BUG: holding GDI lock\n" );
         DebugBreak();

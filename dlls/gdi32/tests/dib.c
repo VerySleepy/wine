@@ -116,7 +116,7 @@ static const char *sha1_graphics_a8r8g8b8[] =
     "94645300d6eb51020a7ef8261dee2941cd51b5df",
     "c56f5bdc9cac4f0bc81c33295d9aed8eaf4cb1f2",
     "21cdfde38ac7edbb241ec83d82f31286e90c4629",
-    "1fd2f4dcb62f8522171872e43fd4a35041d68100",
+    "0e6fc62522b0d6d2019f826ac0b586b91bd0d4fe",
     "68c18db6abfda626cab12d198298d4c39264bfbc",
     "6b59ae6c20749020ad43175e05110dc33b6a59b5",
     "39c31de73aafcfcadf0bf414da4495be9de54417",
@@ -128,8 +128,9 @@ static const char *sha1_graphics_a8r8g8b8[] =
     "a1fe9aa885584a0f713d7c6f76c89830fbf28563",
     "d7085333becdec7759a5229e5fe9ba1e11db0c22",
     "aaf62842bb98d8a2945c4f643baf50afaeea9307",
-    "287b2f2f2fb5a1d7ee4a29b43342103d78a7a8ab",
+    "d7e34fa02db7ad52327f80389bd1ba1b72b6c692",
     "d7dd4700f49808541bba99244b7eb5840e0a2439",
+    "00b4e9b243a36a7210a48bcb7c2d410d9cd8c8c7",
     "af99228aa4cfbd1f61bd824db046144a3c6c2ed7",
     "568f87f0194ca19b69a5b2bcdef795d89c5721ce",
     "a37810f46dee8741fe5adbb3f1f2e87012ffc929",
@@ -189,7 +190,7 @@ static const char *sha1_graphics_a8r8g8b8_bitfields[] =
     "94645300d6eb51020a7ef8261dee2941cd51b5df",
     "c56f5bdc9cac4f0bc81c33295d9aed8eaf4cb1f2",
     "21cdfde38ac7edbb241ec83d82f31286e90c4629",
-    "1fd2f4dcb62f8522171872e43fd4a35041d68100",
+    "0e6fc62522b0d6d2019f826ac0b586b91bd0d4fe",
     "68c18db6abfda626cab12d198298d4c39264bfbc",
     "6b59ae6c20749020ad43175e05110dc33b6a59b5",
     "39c31de73aafcfcadf0bf414da4495be9de54417",
@@ -201,8 +202,9 @@ static const char *sha1_graphics_a8r8g8b8_bitfields[] =
     "a1fe9aa885584a0f713d7c6f76c89830fbf28563",
     "d7085333becdec7759a5229e5fe9ba1e11db0c22",
     "aaf62842bb98d8a2945c4f643baf50afaeea9307",
-    "287b2f2f2fb5a1d7ee4a29b43342103d78a7a8ab",
+    "d7e34fa02db7ad52327f80389bd1ba1b72b6c692",
     "d7dd4700f49808541bba99244b7eb5840e0a2439",
+    "00b4e9b243a36a7210a48bcb7c2d410d9cd8c8c7",
     "af99228aa4cfbd1f61bd824db046144a3c6c2ed7",
     "568f87f0194ca19b69a5b2bcdef795d89c5721ce",
     "a37810f46dee8741fe5adbb3f1f2e87012ffc929",
@@ -262,7 +264,7 @@ static const char *sha1_graphics_a8b8g8r8[] =
     "19b32a0daa91201725b5e13820c343d0a84ff698",
     "abca6a80a99b05722d2d87ce2a8b94ef1ae549e1",
     "2ba70994d0b4ce87fdf6fbc33ada11252178061e",
-    "7b4e1d47a03e2cec236d8fb6e2ae89d8ed078f79",
+    "9b81ccc2d956d1de019085f971ba19435fe5feae",
     "075c4cb50e2cf96ab5d132c9f7bb1c1deb4735bd",
     "8566c1110ab5cb8f754787b47923c8bff38f790c",
     "89e90d6159d59886bbbf0c40a7cd01293c3cfda3",
@@ -274,8 +276,9 @@ static const char *sha1_graphics_a8b8g8r8[] =
     "88fd743d00bd37d2ed722092146795b044d08a6e",
     "c0537ec24147e74939219213d864ee113cad9967",
     "118bf4c5bddc206ba737f7aa8b239940cd1aadc2",
-    "7cb51f6c5f1dae926601986c934533df5f8baa9f",
+    "eac5d164b83edf2cf85bac242686f9f617ec1fa4",
     "86c84cc8306975edecc6d4a89a8aff29f59b55a7",
+    "698d6393e97539806351368f95be478c6fbc62b0",
     "af99228aa4cfbd1f61bd824db046144a3c6c2ed7",
     "25675c30adfe24d6cae60793b156dfdaa36ac3ba",
     "849d4abf4b690128a5f70e9b8ac78f20c437de06",
@@ -335,7 +338,7 @@ static const char *sha1_graphics_r10g10b10[] =
     "5f629ab51719dd0ca5a67d880eb2631f5b598a7b",
     "1ceb85697f649a62b1753438daa14944af7f450c",
     "98ce4dbc04eb48fa0f96ef813db5b4dfa1b2dd39",
-    "3addb9ccd8f56fc0825f61b1b5af67d3297f4ded",
+    "1cb0c7d9d89cdbce7b47d19ef0365bb6b2adc831",
     "f00bac7e18827cfb264fae2e8a0da17b9db18d52",
     "63c1c6c63e82f3b8bd977a1381b248e05321394d",
     "ada202d2f526f6995f83412479891c1764b66e5a",
@@ -347,8 +350,9 @@ static const char *sha1_graphics_r10g10b10[] =
     "0790585dfaef94f912b1ee81477d4ac448708708",
     "589fb8a85d924ad19ed78409ae89475ba479c30a",
     "43d67bc61ef54014b022891e5c024fc24b1fe797",
-    "e8783644428b637adbe80bcd084a33428cb69983",
+    "5a713a91fd471fd331bd13b0868c994aa2ffe2b2",
     "fc0c32afb719295f28bcfef22803bef94f798e20",
+    "bb2a421bab95f9b5420704ef44c0f3214a0b5a11",
     "36f6db4fbe2a1630a7597d3a446f2902755c96ef",
     "d3f08946300e1700865042aed121870e292d1095",
     "4782df8e24127e66a434b4e839adebf2dbb223fb",
@@ -408,7 +412,7 @@ static const char *sha1_graphics_r6g6b6[] =
     "3d27002f4fe3c943468b7e3ef6985962c41ac8dc",
     "3231c4d87faefb7ec5bd377613969c05b70343fc",
     "00394e438e9edde978e88602c9ad2a572e965bf6",
-    "e760be69cb37c7be35d5968d7a294e1fd49d4f66",
+    "c0c41390270ba082ee8211576fee39c676813c42",
     "996fb708ddc4b94eb8d1585bd83a5c8a1e2633ba",
     "caa39eb482e8fc2e00f1c6737735c023ac9363ef",
     "c1250ff2b67e6d2a8baccc5c93f8f5ad933c5c4f",
@@ -420,8 +424,9 @@ static const char *sha1_graphics_r6g6b6[] =
     "47499ad13b719de18c59c2bc9b38ed578db50b95",
     "643e82ac67ab2b0c034a3fcfa498b072a5f2be5c",
     "cd01f2c0a63b2229d4467d2f874d58edca32b3d4",
-    "94b54f1da5212b3f3a1195eda5ea927e160bc89d",
+    "8ad5cd520cd628b76d2e5a3f318ae1bbb6b4c994",
     "49341c297a887186bd47d7465d827ab3147f05e3",
+    "514c07281ef6702c35e68b230e897303a8cdec81",
     "325279e76367200d3fd7194d81c09fd139988ece",
     "c3def160a1e847605ff0fc7edd30397fa90635a0",
     "2b3e87e0b705b03c7c08f403409ab82cce095ba1",
@@ -481,7 +486,7 @@ static const char *sha1_graphics_24[] =
     "b0a959745b2db1d9f449e68e4479a4f36301879c",
     "63f764b9bd2f4876ab1ee0f3c0eb55b5a7de5212",
     "e171f6ec77bca91d6b8559911bce296c0bac469e",
-    "9725669042ef68acb408404d196496d10340bb5a",
+    "33bb75c12f083d799d287fe9caddedbb3892e6fa",
     "26e7e1c300ba0c5aaaef03eeb71d529f6def9289",
     "b1f602d2a74095cc0115ae2ae07b642498e6c0fc",
     "03d5eb8e3a6662e6dc183f88ee2f285065fc9c51",
@@ -493,8 +498,9 @@ static const char *sha1_graphics_24[] =
     "80086808fca03e757d812e31d1ae576bf90dac9d",
     "9560096f1b85ae6d939d736165c44df00a47c424",
     "1015e0217ea13eaa62c7666b8b81aafd75f8f610",
-    "93e1aec608e037af3bfb7bd32dde446abe4eea11",
+    "5578c80048520732557abf3a3a3fa22c85015d7d",
     "b25ba91487ec945410deb2b51bc1156890c032a8",
+    "4c8c936372755f95051f1159b7ff65a484e1a555",
     "d347ca5c6c4b6a61389247c3b6f61564033e8c25",
     "ee315634ed92da3a32c2675ecd1b369471c60936",
     "099c688a920f606655b485e8f0a433dc811bc976",
@@ -553,7 +559,7 @@ static const char *sha1_graphics_r5g5b5[] =
     "a8d6a5285a927ba3a3be34b06a06c70a20d4c1b3",
     "e428d213ad02651287894f093413949dcb369208",
     "7df915bedcc5951a1b6f828490f7dbb93212e835",
-    "645dc251d205139282b17eb7bece1055fff3bcd0",
+    "8720478d904a84c24071e97c731c1ba7882b131e",
     "76215275593631f5900aad3616d725733dc39493",
     "81655a550703849a616d4a16504bb9c6f999285f",
     "573d65665d20f00d36d9782ae2b89772140524ab",
@@ -569,9 +575,10 @@ static const char *sha1_graphics_r5g5b5[] =
     "059db9f0426b371e464ef3d30f1a4f4aa599e101",
     "a52d6ceee5c2a04b4e059c0d49337a997cc17e40",
     "aa4a0a4b7f2697aaf270c89874631974bd9d7183",
-    "585061e403d9cac1603a38af420efe87338f381a",
+    "a7506e2c001d271593297c9eda9b984d4d894774",
     "8f447a3820c83662086dfa836da2205b0130fd5f",
     "3772003c7fb420003512d0c437b3659d96d89ce4",
+    "2ebf37d81da3f11434652d06bf65d55e96b090aa",
     "dab47c9dc149e570045d699598b14a613bf319b3",
     "2daca4d26a086ed34894693be0b0374402232809",
     "904f1d82159bcf5485f323bd12b859dc5e83f8eb",
@@ -630,7 +637,7 @@ static const char *sha1_graphics_r4g4b4[] =
     "957a86fbe8a96dd068db65e4e624a52bcc84af46",
     "13b0f240054dc57ba0e2dfde74048496304a2c7f",
     "51ef267eb9c15487c9430f505e8a6c929eb2170c",
-    "1b593d8e031d3b37fecf6f1df5a8f96c8e8bfef8",
+    "60c0752f592c6426a2f4a71173b44c5c086f4f2a",
     "9dd123938b0a02601d8d458ecbd6535ddefea724",
     "815a1e4fc7f3a00c2990c150e87eba0b13f66811",
     "75ae8c80af4356a1a5eebde6608fbc31e8a95372",
@@ -642,8 +649,9 @@ static const char *sha1_graphics_r4g4b4[] =
     "8c40d6d8e0c696c31f04c896e492a2a38703d870",
     "e13c821c236ea0b67cca64c9da7be15e88fc712f",
     "9af4907a8144458a73dbb7471784f8c3d9aeffcf",
-    "e4731b63d41f6b51e30752ea52d85c4a2938731b",
+    "104e85bad287a62dfe25f0e78280179f18bac765",
     "f0acb3cfcda62e95bee5f7bc8830ffeb3dd7e5a7",
+    "fde993dfce1551ef220f5a07ce4acd66e8524ac5",
     "07b10c3f191d0a93e5e5694aae37dcad407e10f5",
     "f7900e60347029876ba55e8f0c4c02e89deb36b6",
     "f373a5f37b82e7523c64c08eb509b6191e49b173",
@@ -702,7 +710,7 @@ static const char *sha1_graphics_8_color[] =
     "3b7488731da48635d86be551ab7c8c0f91c78219",
     "4fd49cb49853ef950fd0b7e2e35718a71c8374c7",
     "e15a355fc09bfd22267917898e2266168ff410e3",
-    "b9688566bddf18586787c00e68724e51e97dfb72",
+    "7a9c326a56a94621377a7258be70ba50042ca9a2",
     "5e38e03310f1c66f2052af2a745d8c60515707c5",
     "f994fb5019bf4c1a96eccf89af599eae0aa6b412",
     "3a71ad6fef147067641e49a5f69b2454e3a5010d",
@@ -720,8 +728,9 @@ static const char *sha1_graphics_8_color[] =
     "46f772c2832b3aad584674db666bd63e48b4f338",
     "a9f9ca0049235db51ab7359a5fc3d21be42d2aac",
     "f3dc739da41fb299637c8660e8c46917ddcf87a8",
-    "eae47bf865d932f22a6e59b6fe8d041f220e1fbc",
+    "abd2fff80f74b311072ecdb91ce9ceba268fa6e9",
     "9ae38bb94c7b4c0c6dfebbee23d1de4db9b77488",
+    "8269b32b4a34440f1fa37927308debc7eb85f3fa",
     "678979a45126a76eb629992cd64734862f53a555",
     "2f7ba8803604c032cb1a1228bc021f0f1c03e245",
     "52e7c2f8b01592898c13f1e7633881e350244209",
@@ -784,7 +793,7 @@ static const char *sha1_graphics_8_grayscale[] =
     "24caede65b40815a60b83c4edfa06bdc542388cd",
     "650a51bedd1af92469d2950eb95220db35f95c6e",
     "3f43aa11e6fccb747cc13224583fb2f951fee08c",
-    "04cea9753b575ecce8e55357eddfcec10ddfbbea",
+    "b83f78ae85df87fc7af565db276c60c102274f20",
     "6b6f4b97f05e015eb37a5f6aff637235feacd030",
     "1bd06e4e11929e5e91c3c9f20def639b20e731e8",
     "d63a6086547e90d2ba84aaebfeae24f3ba0c04f1",
@@ -802,8 +811,9 @@ static const char *sha1_graphics_8_grayscale[] =
     "640a49455acabca6954a7fbb6af4e872af342d11",
     "589e7911e09332ee090371deae17b0120ff990b5",
     "a1a941fa270cda48c648553ed4b427e16e96f8e0",
-    "f30a8d9f73ca043c5bfc18d9595e299fc0a39eec",
+    "115c90df05b1ff754dbdfe2a712ef126034d952d",
     "fb63bbb2f944fb63ed2d7399f07b168740c1034b",
+    "ae45f0d463ff916f3cb630103969fd49e8d09ef4",
     "3685c9ae95118a83db3569832c29753276fa1264",
     "09640bad951c33e7d70a1fced83b1869f65b3fc5",
     "5eb00252664ec39e61359adb1dade4906a87a248",
@@ -863,7 +873,7 @@ static const char *sha1_graphics_8[] =
     "ea39ac62ca2f815a1d029340c6465994b6f03cb0",
     "9a603513cd81acf70cf8b27b0d544e7f672e9d40",
     "f4a334e69535de74ee5ed54be93a75120a66e54a",
-    "559fd1d15447745527c61fe43a94c6708bff3e39",
+    "f751a55fb738b63b6fd7c229c33ef92605d0c9c1",
     "995f77f2f53398399f09d1365cb4dfd105764e5c",
     "61907a6685bba93077da40cfb28cf2ab74552fd2",
     "122015e5e17c1c317c6e51c0e207826b606a4077",
@@ -879,8 +889,9 @@ static const char *sha1_graphics_8[] =
     "9e996fc74eeef53f0a6c31aabb2edce6e103f189",
     "6b8abd1785304d6531c1e4cc65c1ffcdcb2196a5",
     "7d1bfff706b0713e53209407889f83a0da26a81d",
+    "5a1d8f9ea978b820edbc5c9e1c6f1cac022620ad",
     "31e667c2dbb81dcf81d01cb88f794e88ddb90ff2",
-    "31e667c2dbb81dcf81d01cb88f794e88ddb90ff2",
+    "c404446958788fac00ee1eff571d682bc21dd7ac",
     "465d9cd0a77ab4fcf035aa67544b2a26269e0b09",
     "600d6b2713d5e4c0d90c02660245ed26c7ae3033",
     "0025a440866a404523a8a20e79a8891e45a2ff56",
@@ -939,7 +950,7 @@ static const char *sha1_graphics_4[] =
     "b672afbeeafb44194a821f0def81a8892872937e",
     "db0124045882b598feea192186cf7eb7a0387866",
     "602d91471378fe24a2d0248bd8a92b624f099fea",
-    "e772873b87a0f55ea51a3da323f64bf8814c6703",
+    "c93a86adfe58dc2d461f2ed962883d6b90888848",
     "21aa1ff238a2d78efed1aa658ac8fe21b1e64daa",
     "1a579cd280422131c35e907a023ee0e80749b5a4",
     "bbf027f506cbb80d359bf4892fcb75f816f2e446",
@@ -951,8 +962,9 @@ static const char *sha1_graphics_4[] =
     "7811c536a6527112b438a6413f3927f2c79086a7",
     "525ef3615040225752a2fe646ab99ee64e360630",
     "46760975993f9881b7bbe94123173e6a683d3f25",
+    "c644f460937107214a88d5eb9e846d27abd8c874",
     "df5feb905a31c288008cf5e82d73ac818a160d82",
-    "df5feb905a31c288008cf5e82d73ac818a160d82",
+    "4f9658dde0432a711a4d783c1b5aa3365fb7d54b",
     "d8af3868c66c7d6dac35ec8ee0317b38a6910bb1",
     "ec8e2aebfb4a1c28ebcd0e053b9e4d8638b50951",
     "ccf8d11b1e81895e9781f17c227c821228d8714b",
@@ -1011,7 +1023,7 @@ static const char *sha1_graphics_4_grayscale[] =
     "9c0da52c4ceaa8fdfcff7351328dd520bb57e985",
     "f8224430462f6a93f85ef33b8aa7299525990708",
     "1cf93cecc942b41ab8fae21ea18418a6d64873e5",
-    "d58b8760ef01c12e691651c932d683c66fde3654",
+    "71a1705ee14068ee8c6c6680c1bd99703fb6abd7",
     "94438c82b8812fe81a69d5d1429c5967cdbfed7a",
     "764ea26f10fe11f7bdb538a26fc33d44b3a95d6d",
     "94ad53c578f6034dfc5c666e363203cdfb00f2cc",
@@ -1023,8 +1035,9 @@ static const char *sha1_graphics_4_grayscale[] =
     "2f3fb1bd8f416198d70e06f6d519571cd5eb4ef4",
     "cc96ccaf6b99f60a49b03017515f83cba22b4c40",
     "5eeb56afea8040a8fb18c11f29931b836474126d",
-    "a3405c085fc2f2184bcd0d1edcdcc66927e33659",
+    "30c256a783c4874261667bb31307eb282ab9470e",
     "f8681c09f1abfc38d31e47622cb8798cd896a00e",
+    "0ba7e5d68419702605739acb52fcc01c96cb63d4",
     "b5ee51cfc73acb59a2f6124509ea236f8fc7f9f7",
     "d374d4d92c940ae42a9b42c14d744341b68a8c14",
     "06a6a224be0f5cdc51ac4704f9f57fc1f3813d6f",
@@ -1101,7 +1114,7 @@ static const char *sha1_graphics_1[] =
     "be36cda370650e6d5fb0570aeb8ced491d0c2b1c",
     "4c34cb8e47f9ff4b4348aa2d40cce7cb54d65cb0",
     "18f4497e43903e8df5b27da4ceebf62b15550a87",
-    "3fa3570a2ebd38042b90f24bd3496233bca5a23d",
+    "399e988c922b7fad1c8f6907541c5dda65e60408",
     "2fcd25c2d19a01fa631fd19135d9f28b26b86259",
     "655cfadeb157233c804d42b58195569c8846e3c1",
     "65c8811c609203fd424f5ed5f92ca2268a1dca54",
@@ -1113,8 +1126,9 @@ static const char *sha1_graphics_1[] =
     "ee22f43ea867228c6ff937d39e1826e285a107e8",
     "832c3c3afd056e5d1cdfb2f466f27225c4adcc6c",
     "a2a928de9007d765da496abec8c21b23601f8c45",
-    "28ded40e72d4327b9413571476b167fb28a1f420",
+    "41a417c1f25f2619301afa44bfcde85198985792",
     "23366004515f3bc46796ea505d748f8d0f97fbe1",
+    "ba682eb15c0ddffb942e6086e0ccad2353ed7241",
     "88763f8e8fcf4f78fa864325791a9dd35a0bd279",
     "013cee26bac8f815eadad4bfc012d9b5d01c3b7f",
     "44a28536466dc895feb824b23dfd4a47c6948af8",
@@ -1175,7 +1189,7 @@ static const RECT graphics_bounds[] =
     { 10, 10, 110, 110 },
     { 10, 10, 120, 110 },
     { 10, 10, 110, 120 },
-    { 100, 100, 356, 356 },
+    { 0, 4, 356, 356 },
     { 100, 100, 356, 356 },
     { 50, 50, 306, 306 },
     { 100, 100, 356, 356 },
@@ -1187,8 +1201,9 @@ static const RECT graphics_bounds[] =
     { 100, 100, 356, 356 },
     { 100, 100, 356, 356 },
     { 100, 100, 356, 356 },
+    { 10, 10, 356, 356 },
     { 100, 100, 356, 356 },
-    { 100, 100, 356, 356 },
+    { 0, 0, 260, 39 },
     { 10, 10, 416, 26 },
     { 10, 8, 60, 104 },
     { 0, 10, 511, 306 },
@@ -1271,14 +1286,12 @@ static void compare_bounds( HDC hdc, const char *info )
         current_bounds->right == -1 &&
         current_bounds->bottom == -1)
     {
-        ok( 0, "missing bounds, got { %d, %d, %d, %d },\n", rect.left, rect.top, rect.right, rect.bottom );
+        ok( 0, "missing bounds, got %s,\n", wine_dbgstr_rect( &rect ));
         return;
     }
 
-    ok( !memcmp( current_bounds, &rect, sizeof(RECT) ),
-        "%s: %s: expected bounds %d,%d,%d,%d got %d,%d,%d,%d\n", dst_format, info,
-        current_bounds->left, current_bounds->top, current_bounds->right, current_bounds->bottom,
-        rect.left, rect.top, rect.right, rect.bottom );
+    ok( EqualRect( current_bounds, &rect ), "%s: %s: expected bounds %s got %s\n", dst_format, info,
+        wine_dbgstr_rect( current_bounds ), wine_dbgstr_rect( &rect ));
     current_bounds++;
 }
 
@@ -1318,10 +1331,7 @@ static void compare_hash_broken_todo(HDC hdc, const BITMAPINFO *bmi, BYTE *bits,
     for(i = 1; i <= num_broken; i++)
         ok_cond = ok_cond || broken( !strcmp(hash, current_sha1[i]) );
 
-    if(todo)
-        todo_wine ok( ok_cond, "%s: %s: expected hash %s got %s\n",
-                      dst_format, info, *current_sha1, hash );
-    else
+    todo_wine_if(todo)
         ok( ok_cond, "%s: %s: expected hash %s got %s\n",
             dst_format, info, *current_sha1, hash );
 
@@ -2186,6 +2196,18 @@ static void draw_graphics(HDC hdc, const BITMAPINFO *bmi, BYTE *bits)
         }
 
     BitBlt( hdc, 100, 100, 256, 256, src_dc, 0, 0, SRCCOPY );
+
+    /* Interesting cases for 1-bpp dst */
+    BitBlt( hdc, 1, 4, 2, 2, src_dc, 0, 0, SRCCOPY );
+    BitBlt( hdc, 1, 8, 16, 2, src_dc, 0, 0, SRCCOPY );
+    BitBlt( hdc, 1, 12, 15, 2, src_dc, 0, 0, SRCCOPY );
+    BitBlt( hdc, 0, 16, 8, 2, src_dc, 0, 0, SRCCOPY );
+    BitBlt( hdc, 0, 20, 9, 2, src_dc, 0, 0, SRCCOPY );
+    BitBlt( hdc, 7, 24, 1, 2, src_dc, 0, 0, SRCCOPY );
+    BitBlt( hdc, 7, 28, 2, 2, src_dc, 0, 0, SRCCOPY );
+    BitBlt( hdc, 7, 32, 9, 2, src_dc, 0, 0, SRCCOPY );
+    BitBlt( hdc, 7, 36, 10, 2, src_dc, 0, 0, SRCCOPY );
+
     if (bmi->bmiHeader.biBitCount == 8)  /* broken on NT4 */
         compare_hash_broken_todo(hdc, bmi, bits, "BitBlt src 32-bpp SRCCOPY", 1, FALSE );
     else
@@ -2391,6 +2413,12 @@ static void draw_graphics(HDC hdc, const BITMAPINFO *bmi, BYTE *bits)
             src_bits[(y * 256 + x) / 8] = 7 * x + 3 * y;
 
     BitBlt( hdc, 100, 100, 256, 256, src_dc, 0, 0, SRCCOPY );
+    /* Some interesting src co-ords */
+    BitBlt( hdc, 10, 10, 3, 10, src_dc, 0, 0, SRCCOPY );
+    BitBlt( hdc, 20, 10, 3, 10, src_dc, 2, 0, SRCCOPY );
+    BitBlt( hdc, 30, 10, 3, 10, src_dc, 5, 0, SRCCOPY );
+    BitBlt( hdc, 40, 10, 3, 10, src_dc, 6, 0, SRCCOPY );
+    BitBlt( hdc, 50, 10, 20, 10, src_dc, 6, 0, SRCCOPY );
     compare_hash(hdc, bmi, bits, "BitBlt src 1-bpp SRCCOPY" );
 
     blend.SourceConstantAlpha = 0x90;
@@ -2406,6 +2434,36 @@ static void draw_graphics(HDC hdc, const BITMAPINFO *bmi, BYTE *bits)
         if (!pGdiAlphaBlend) skip_compare(1);
         else compare_hash(hdc, bmi, bits, "AlphaBlend src 1-bpp" );
     }
+
+    /* blitting with 1-bpp ddb source */
+
+    bmp = CreateBitmap( 16, 16, 1, 1, ddb_brush_bits );
+    DeleteObject( SelectObject( src_dc, bmp ) );
+
+    old_text = GetTextColor( hdc );
+    old_bkgnd = GetBkColor( hdc );
+    for (i = 0; i < 256; i += 13)
+    {
+        SetTextColor(hdc, RGB( i, 2*i, 255 - i ) );
+        SetBkColor(hdc, RGB( 255 - i, i / 3, i ) );
+        BitBlt( hdc, i, 0, 13, 13, src_dc, 0, 0, SRCCOPY );
+    }
+    for (i = 0; i < 256; i += 13)
+    {
+        SetTextColor(hdc, PALETTEINDEX( i ));
+        SetBkColor(hdc, PALETTEINDEX( i + 3 ));
+        BitBlt( hdc, i, 13, 13, 13, src_dc, 0, 0, SRCCOPY );
+    }
+    for (i = 0; i < 256; i += 13)
+    {
+        SetTextColor(hdc, DIBINDEX( i ));
+        SetBkColor(hdc, DIBINDEX( i + 3 ));
+        BitBlt( hdc, i, 26, 13, 13, src_dc, 0, 0, SRCCOPY );
+    }
+    SetTextColor( hdc, old_text );
+    SetBkColor( hdc, old_bkgnd );
+    compare_hash_broken_todo(hdc, bmi, bits, "BitBlt src 1-bpp ddb SRCCOPY", 0,
+                             bmi->bmiHeader.biBitCount <= 8 /* todo: DIBINDEX for indexed formats */ );
 
     DeleteDC( src_dc );
     DeleteObject( bmp );
@@ -2778,6 +2836,9 @@ static void draw_graphics(HDC hdc, const BITMAPINFO *bmi, BYTE *bits)
     compare_hash(hdc, bmi, bits, "flood fill" );
 
     ExtSelectClipRgn( hdc, NULL, RGN_COPY );
+
+    ret = ExtFloodFill( hdc, -1, -1, RGB( 0, 0xff, 0 ), FLOODFILLSURFACE );
+    ok (!ret, "got ret %d\n", ret);
 
     SelectObject(hdc, orig_brush);
     SelectObject(hdc, orig_pen);

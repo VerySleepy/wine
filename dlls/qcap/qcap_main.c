@@ -25,8 +25,6 @@
 #include <stdarg.h>
 
 #define COBJMACROS
-#define NONAMELESSSTRUCT
-#define NONAMELESSUNION
 
 #include "windef.h"
 #include "winbase.h"
@@ -79,7 +77,7 @@ FactoryTemplate const g_Templates[] = {
     {
         wAudioCaptureFilter,
         &CLSID_AudioRecord,
-        NULL, /* FIXME: Implement QCAP_createAudioCaptureFilter */
+        QCAP_createAudioCaptureFilter,
         NULL
     },{
         wAVICompressor,
@@ -134,7 +132,7 @@ FactoryTemplate const g_Templates[] = {
     },{
         wSmartTeeFilter,
         &CLSID_SmartTee,
-        NULL, /* FIXME: Implement QCAP_createSmartTeeFilter */
+        QCAP_createSmartTeeFilter,
         NULL
     },{
         wAudioInMixerProp,
@@ -187,7 +185,7 @@ HRESULT WINAPI DllCanUnloadNow(void)
 {
     TRACE("\n");
 
-    if (STRMBASE_DllCanUnloadNow() && objects_ref == 0)
+    if (STRMBASE_DllCanUnloadNow() == S_OK && objects_ref == 0)
         return S_OK;
     return S_FALSE;
 }

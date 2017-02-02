@@ -24,7 +24,6 @@
 
 #define COBJMACROS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "winerror.h"
 #include "windef.h"
@@ -602,8 +601,14 @@ static HRESULT WINAPI ItemMonikerImpl_GetTimeOfLastChange(IMoniker* iface,
         /* IMoniker::GetTimeOfLastChange on the pmkToLeft parameter.                                            */
 
         res=CreateGenericComposite(pmkToLeft,iface,&compositeMk);
+        if (FAILED(res))
+            return res;
 
         res=IBindCtx_GetRunningObjectTable(pbc,&rot);
+        if (FAILED(res)) {
+            IMoniker_Release(compositeMk);
+            return res;
+        }
 
         if (IRunningObjectTable_GetTimeOfLastChange(rot,compositeMk,pItemTime)!=S_OK)
 
@@ -770,7 +775,7 @@ static HRESULT WINAPI ItemMonikerROTDataImpl_QueryInterface(IROTData *iface,REFI
 
     ItemMonikerImpl *This = impl_from_IROTData(iface);
 
-    TRACE("(%p,%p,%p)\n",iface,riid,ppvObject);
+    TRACE("(%p,%s,%p)\n",iface,debugstr_guid(riid),ppvObject);
 
     return ItemMonikerImpl_QueryInterface(&This->IMoniker_iface, riid, ppvObject);
 }

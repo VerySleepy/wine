@@ -51,9 +51,12 @@ typedef struct {
     char *content_type;
     char *charset;
     UINT32 response_status;
+    char *response_status_text;
     REQUEST_METHOD request_method;
     struct list response_headers;
     struct list request_headers;
+
+    nsChannelBSC *binding;
 } nsChannel;
 
 typedef struct {

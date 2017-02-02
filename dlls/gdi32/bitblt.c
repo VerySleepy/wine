@@ -112,7 +112,7 @@ static BOOL get_vis_rectangles( DC *dc_dst, struct bitblt_coords *dst,
     rect.top    = dst->log_y;
     rect.right  = dst->log_x + dst->log_width;
     rect.bottom = dst->log_y + dst->log_height;
-    LPtoDP( dc_dst->hSelf, (POINT *)&rect, 2 );
+    lp_to_dp( dc_dst, (POINT *)&rect, 2 );
     dst->x      = rect.left;
     dst->y      = rect.top;
     dst->width  = rect.right - rect.left;
@@ -134,7 +134,7 @@ static BOOL get_vis_rectangles( DC *dc_dst, struct bitblt_coords *dst,
     rect.top    = src->log_y;
     rect.right  = src->log_x + src->log_width;
     rect.bottom = src->log_y + src->log_height;
-    LPtoDP( dc_src->hSelf, (POINT *)&rect, 2 );
+    lp_to_dp( dc_src, (POINT *)&rect, 2 );
     src->x      = rect.left;
     src->y      = rect.top;
     src->width  = rect.right - rect.left;
@@ -221,24 +221,38 @@ static DWORD blend_bits( const BITMAPINFO *src_info, const struct gdi_image_bits
     return blend_bitmapinfo( src_info, src_bits->ptr, src, dst_info, dst_bits->ptr, dst, blend );
 }
 
-/* helper to retrieve either both colors or only the background color for monochrome blits */
-static void get_mono_dc_colors( HDC hdc, BITMAPINFO *info, int count )
+static RGBQUAD get_dc_rgb_color( DC *dc, COLORREF color )
 {
-    COLORREF color = GetBkColor( hdc );
+    RGBQUAD ret = { 0, 0, 0, 0 };
 
-    info->bmiColors[count - 1].rgbRed      = GetRValue( color );
-    info->bmiColors[count - 1].rgbGreen    = GetGValue( color );
-    info->bmiColors[count - 1].rgbBlue     = GetBValue( color );
-    info->bmiColors[count - 1].rgbReserved = 0;
-
-    if (count > 1)
+    if (color & (1 << 24))  /* PALETTEINDEX */
     {
-        color = GetTextColor( hdc );
-        info->bmiColors[0].rgbRed      = GetRValue( color );
-        info->bmiColors[0].rgbGreen    = GetGValue( color );
-        info->bmiColors[0].rgbBlue     = GetBValue( color );
-        info->bmiColors[0].rgbReserved = 0;
+        PALETTEENTRY pal;
+
+        if (!GetPaletteEntries( dc->hPalette, LOWORD(color), 1, &pal ))
+            GetPaletteEntries( dc->hPalette, 0, 1, &pal );
+        ret.rgbRed   = pal.peRed;
+        ret.rgbGreen = pal.peGreen;
+        ret.rgbBlue  = pal.peBlue;
+        return ret;
     }
+    if (color >> 16 == 0x10ff)  /* DIBINDEX */
+    {
+        /* FIXME: need to propagate the index into the conversion functions */
+        WARN( "monochrome blit uses DIBINDEX %x\n", color );
+        return ret;
+    }
+    ret.rgbRed   = GetRValue( color );
+    ret.rgbGreen = GetGValue( color );
+    ret.rgbBlue  = GetBValue( color );
+    return ret;
+}
+
+/* helper to retrieve either both colors or only the background color for monochrome blits */
+void get_mono_dc_colors( DC *dc, BITMAPINFO *info, int count )
+{
+    info->bmiColors[count - 1] = get_dc_rgb_color( dc, dc->backgroundColor );
+    if (count > 1) info->bmiColors[0] = get_dc_rgb_color( dc, dc->textColor );
     info->bmiHeader.biClrUsed = count;
 }
 
@@ -249,7 +263,7 @@ static void get_mono_dc_colors( HDC hdc, BITMAPINFO *info, int count )
 BOOL nulldrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
                          PHYSDEV src_dev, struct bitblt_coords *src, DWORD rop )
 {
-    DC *dc_src, *dc_dst = get_nulldrv_dc( dst_dev );
+    DC *dc_src = get_physdev_dc( src_dev ), *dc_dst = get_nulldrv_dc( dst_dev );
     char src_buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
     char dst_buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
     BITMAPINFO *src_info = (BITMAPINFO *)src_buffer;
@@ -257,13 +271,9 @@ BOOL nulldrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
     DWORD err;
     struct gdi_image_bits bits;
 
-    if (!(dc_src = get_dc_ptr( src_dev->hdc ))) return FALSE;
     src_dev = GET_DC_PHYSDEV( dc_src, pGetImage );
     if (src_dev->funcs->pGetImage( src_dev, src_info, &bits, src ))
-    {
-        release_dc_ptr( dc_src );
         return FALSE;
-    }
 
     dst_dev = GET_DC_PHYSDEV( dc_dst, pPutImage );
     copy_bitmapinfo( dst_info, src_info );
@@ -274,7 +284,7 @@ BOOL nulldrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
 
         /* 1-bpp source without a color table uses the destination DC colors */
         if (src_info->bmiHeader.biBitCount == 1 && !src_info->bmiHeader.biClrUsed)
-            get_mono_dc_colors( dst_dev->hdc, src_info, 2 );
+            get_mono_dc_colors( dc_dst, src_info, 2 );
 
         if (dst_info->bmiHeader.biBitCount == 1 && !dst_colors)
         {
@@ -282,9 +292,9 @@ BOOL nulldrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
              * that contains only the background color; except with a 1-bpp source,
              * in which case it uses the source colors */
             if (src_info->bmiHeader.biBitCount > 1)
-                get_mono_dc_colors( src_dev->hdc, dst_info, 1 );
+                get_mono_dc_colors( dc_src, dst_info, 1 );
             else
-                get_mono_dc_colors( src_dev->hdc, dst_info, 2 );
+                get_mono_dc_colors( dc_src, dst_info, 2 );
         }
 
         if (!(err = convert_bits( src_info, src, dst_info, &bits )))
@@ -299,12 +309,11 @@ BOOL nulldrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
         ((src->width != dst->width) || (src->height != dst->height)))
     {
         copy_bitmapinfo( src_info, dst_info );
-        err = stretch_bits( src_info, src, dst_info, dst, &bits, GetStretchBltMode( dst_dev->hdc ));
+        err = stretch_bits( src_info, src, dst_info, dst, &bits, dc_dst->stretchBltMode );
         if (!err) err = dst_dev->funcs->pPutImage( dst_dev, 0, dst_info, &bits, src, dst, rop );
     }
 
     if (bits.free) bits.free( &bits );
-    release_dc_ptr( dc_src );
     return !err;
 }
 
@@ -312,7 +321,7 @@ BOOL nulldrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
 BOOL nulldrv_AlphaBlend( PHYSDEV dst_dev, struct bitblt_coords *dst,
                          PHYSDEV src_dev, struct bitblt_coords *src, BLENDFUNCTION func )
 {
-    DC *dc_src, *dc_dst = get_nulldrv_dc( dst_dev );
+    DC *dc_src = get_physdev_dc( src_dev ), *dc_dst = get_nulldrv_dc( dst_dev );
     char src_buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
     char dst_buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
     BITMAPINFO *src_info = (BITMAPINFO *)src_buffer;
@@ -320,7 +329,6 @@ BOOL nulldrv_AlphaBlend( PHYSDEV dst_dev, struct bitblt_coords *dst,
     DWORD err;
     struct gdi_image_bits bits;
 
-    if (!(dc_src = get_dc_ptr( src_dev->hdc ))) return FALSE;
     src_dev = GET_DC_PHYSDEV( dc_src, pGetImage );
     err = src_dev->funcs->pGetImage( src_dev, src_info, &bits, src );
     if (err) goto done;
@@ -344,7 +352,6 @@ BOOL nulldrv_AlphaBlend( PHYSDEV dst_dev, struct bitblt_coords *dst,
 
     if (bits.free) bits.free( &bits );
 done:
-    release_dc_ptr( dc_src );
     if (err) SetLastError( err );
     return !err;
 }
@@ -419,7 +426,7 @@ BOOL nulldrv_GradientFill( PHYSDEV dev, TRIVERTEX *vert_array, ULONG nvert,
         pts[i].x = vert_array[i].x;
         pts[i].y = vert_array[i].y;
     }
-    LPtoDP( dev->hdc, pts, nvert );
+    lp_to_dp( dc, pts, nvert );
 
     /* compute bounding rect of all the rectangles/triangles */
     reset_bounds( &dst.visrect );
@@ -495,7 +502,7 @@ COLORREF nulldrv_GetPixel( PHYSDEV dev, INT x, INT y )
 
     src.visrect.left = x;
     src.visrect.top  = y;
-    LPtoDP( dev->hdc, (POINT *)&src.visrect, 1 );
+    lp_to_dp( dc, (POINT *)&src.visrect, 1 );
     src.visrect.right  = src.visrect.left + 1;
     src.visrect.bottom = src.visrect.top + 1;
     src.x = src.visrect.left;
@@ -558,8 +565,8 @@ BOOL WINAPI PatBlt( HDC hdc, INT left, INT top, INT width, INT height, DWORD rop
 /***********************************************************************
  *           BitBlt    (GDI32.@)
  */
-BOOL WINAPI BitBlt( HDC hdcDst, INT xDst, INT yDst, INT width,
-                    INT height, HDC hdcSrc, INT xSrc, INT ySrc, DWORD rop )
+BOOL WINAPI DECLSPEC_HOTPATCH BitBlt( HDC hdcDst, INT xDst, INT yDst, INT width,
+                                      INT height, HDC hdcSrc, INT xSrc, INT ySrc, DWORD rop )
 {
     if (!rop_uses_src( rop )) return PatBlt( hdcDst, xDst, yDst, width, height, rop );
     else return StretchBlt( hdcDst, xDst, yDst, width, height,
@@ -799,6 +806,7 @@ BOOL WINAPI MaskBlt(HDC hdcDest, INT nXDest, INT nYDest,
 
     /* combine both using the mask as a pattern brush */
     SelectObject(hDC2, hbrMask);
+    SetBrushOrgEx(hDC2, -xMask, -yMask, NULL);
     BitBlt(hDC2, 0, 0, nWidth, nHeight, hDC1, 0, 0, 0xac0744 ); /* (D & P) | (S & ~P) */ 
     SelectObject(hDC2, hbrTmp);
 
@@ -931,12 +939,12 @@ BOOL WINAPI GdiAlphaBlend(HDC hdcDst, int xDst, int yDst, int widthDst, int heig
         src.log_y      = ySrc;
         src.log_width  = widthSrc;
         src.log_height = heightSrc;
-        src.layout     = GetLayout( hdcSrc );
+        src.layout     = dcSrc->layout;
         dst.log_x      = xDst;
         dst.log_y      = yDst;
         dst.log_width  = widthDst;
         dst.log_height = heightDst;
-        dst.layout     = GetLayout( hdcDst );
+        dst.layout     = dcDst->layout;
         ret = !get_vis_rectangles( dcDst, &dst, dcSrc, &src );
 
         TRACE("src %p log=%d,%d %dx%d phys=%d,%d %dx%d vis=%s  dst %p log=%d,%d %dx%d phys=%d,%d %dx%d vis=%s  blend=%02x/%02x/%02x/%02x\n",

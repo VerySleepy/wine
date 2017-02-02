@@ -37,9 +37,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(mshtml);
 
-const IID IID_HTMLPluginContainer =
-    {0xbd7a6050,0xb373,0x4f6f,{0xa4,0x93,0xdd,0x40,0xc5,0x23,0xa8,0x6a}};
-
 static BOOL check_load_safety(PluginHost *host)
 {
     DWORD policy_size, policy;
@@ -127,10 +124,7 @@ static void update_readystate(PluginHost *host)
 /* FIXME: We shouldn't need this function and we should embed plugin directly in the main document */
 static void get_pos_rect(PluginHost *host, RECT *ret)
 {
-    ret->top = 0;
-    ret->left = 0;
-    ret->bottom = host->rect.bottom - host->rect.top;
-    ret->right = host->rect.right - host->rect.left;
+    SetRect(ret, 0, 0, host->rect.right - host->rect.left, host->rect.bottom - host->rect.top);
 }
 
 static void load_prop_bag(PluginHost *host, IPersistPropertyBag *persist_prop_bag)
@@ -317,7 +311,7 @@ void update_plugin_window(PluginHost *host, HWND hwnd, const RECT *rect)
 
     TRACE("%p %s\n", hwnd, wine_dbgstr_rect(rect));
 
-    if(memcmp(rect, &host->rect, sizeof(RECT))) {
+    if(!EqualRect(rect, &host->rect)) {
         host->rect = *rect;
         rect_changed = TRUE;
     }

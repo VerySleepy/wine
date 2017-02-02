@@ -42,6 +42,8 @@ static SECURITY_STATUS (SEC_ENTRY * pFreeContextBuffer)(PVOID pv);
 static SECURITY_STATUS (SEC_ENTRY * pQuerySecurityPackageInfoA)(SEC_CHAR*, PSecPkgInfoA*);
 static SECURITY_STATUS (SEC_ENTRY * pAcquireCredentialsHandleA)(SEC_CHAR*, SEC_CHAR*,
                             ULONG, PLUID, PVOID, SEC_GET_KEY_FN, PVOID, PCredHandle, PTimeStamp);
+static SECURITY_STATUS (SEC_ENTRY * pAcquireCredentialsHandleW)(SEC_CHAR*, SEC_WCHAR*,
+                            ULONG, PLUID, void*, SEC_GET_KEY_FN, void*, CredHandle*, TimeStamp*);
 static SECURITY_STATUS (SEC_ENTRY * pInitializeSecurityContextA)(PCredHandle, PCtxtHandle,
                             SEC_CHAR*, ULONG, ULONG, ULONG, PSecBufferDesc, ULONG, 
                             PCtxtHandle, PSecBufferDesc, PULONG, PTimeStamp);
@@ -149,6 +151,11 @@ static BYTE crypt_message_server2[] =
    {0xc8, 0xf2, 0x39, 0x7f, 0x0c, 0xaf, 0xf5, 0x5d, 0xef, 0x0c,
     0x8b, 0x5f, 0x82};
 
+static char test_user[] = "testuser",
+            workgroup[] = "WORKGROUP",
+            test_pass[] = "testpass",
+            sec_pkg_name[] = "NTLM";
+
 static void InitFunctionPtrs(void)
 {
     secdll = LoadLibraryA("secur32.dll");
@@ -160,6 +167,7 @@ static void InitFunctionPtrs(void)
         pFreeContextBuffer = (PVOID)GetProcAddress(secdll, "FreeContextBuffer");
         pQuerySecurityPackageInfoA = (PVOID)GetProcAddress(secdll, "QuerySecurityPackageInfoA");
         pAcquireCredentialsHandleA = (PVOID)GetProcAddress(secdll, "AcquireCredentialsHandleA");
+        pAcquireCredentialsHandleW = (void*)GetProcAddress(secdll, "AcquireCredentialsHandleW");
         pInitializeSecurityContextA = (PVOID)GetProcAddress(secdll, "InitializeSecurityContextA");
         pCompleteAuthToken = (PVOID)GetProcAddress(secdll, "CompleteAuthToken");
         pAcceptSecurityContext = (PVOID)GetProcAddress(secdll, "AcceptSecurityContext");
@@ -327,7 +335,7 @@ static SECURITY_STATUS setupClient(SspiData *sspi_data, SEC_CHAR *provider)
         trace("AcquireCredentialsHandle() returned %s\n", getSecError(ret));
     }
 
-    ok(ret == SEC_E_OK, "AcquireCredentialsHande() returned %s\n", 
+    ok(ret == SEC_E_OK, "AcquireCredentialsHandle() returned %s\n",
             getSecError(ret));
 
     return ret;
@@ -355,7 +363,7 @@ static SECURITY_STATUS setupServer(SspiData *sspi_data, SEC_CHAR *provider)
         trace("AcquireCredentialsHandle() returned %s\n", getSecError(ret));
     }
 
-    ok(ret == SEC_E_OK, "AcquireCredentialsHande() returned %s\n",
+    ok(ret == SEC_E_OK, "AcquireCredentialsHandle() returned %s\n",
             getSecError(ret));
 
     return ret;
@@ -568,10 +576,6 @@ static void testInitializeSecurityContextFlags(void)
     PSecPkgInfoA            pkg_info = NULL;
     SspiData                client;
     SEC_WINNT_AUTH_IDENTITY_A id;
-    static char             sec_pkg_name[] = "NTLM",
-                            test_user[]    = "testuser",
-                            workgroup[]    = "WORKGROUP",
-                            test_pass[]    = "testpass";
     ULONG                   req_attr, ctxt_attr;
     TimeStamp               ttl;
     PBYTE                   packet;
@@ -793,10 +797,6 @@ static void testAuth(ULONG data_rep, BOOL fake)
     SspiData                client, server;
     SEC_WINNT_AUTH_IDENTITY_A id;
     SecPkgContext_Sizes     ctxt_sizes;
-    static char             sec_pkg_name[] = "NTLM",
-                            test_user[] = "testuser",
-                            workgroup[] = "WORKGROUP",
-                            test_pass[] = "testpass";
 
     if(pQuerySecurityPackageInfoA( sec_pkg_name, &pkg_info)!= SEC_E_OK)
     {
@@ -928,11 +928,8 @@ static void testSignSeal(void)
     static char             sec_pkg_name[] = "NTLM";
     SecBufferDesc           crypt;
     SecBuffer               data[2], fake_data[2], complex_data[4];
-    ULONG                   qop = 0;
+    ULONG                   qop = 0xdeadbeef;
     SecPkgContext_Sizes     ctxt_sizes;
-    static char             test_user[] = "testuser",
-                            workgroup[] = "WORKGROUP",
-                            test_pass[] = "testpass";
 
     complex_data[1].pvBuffer = complex_data[3].pvBuffer = NULL;
 
@@ -1041,12 +1038,13 @@ static void testSignSeal(void)
     ok(sec_status == SEC_E_MESSAGE_ALTERED,
             "VerifySignature returned %s, not SEC_E_MESSAGE_ALTERED.\n",
             getSecError(sec_status));
+    ok(qop == 0xdeadbeef, "qop changed to %u\n", qop);
 
     memcpy(data[0].pvBuffer, message_signature, data[0].cbBuffer);
-
     sec_status = pVerifySignature(&client.ctxt, &crypt, 0, &qop);
     ok(sec_status == SEC_E_OK, "VerifySignature returned %s, not SEC_E_OK.\n",
             getSecError(sec_status));
+    ok(qop == 0xdeadbeef, "qop changed to %u\n", qop);
 
     sec_status = pEncryptMessage(&client.ctxt, 0, &crypt, 0);
     if (sec_status == SEC_E_UNSUPPORTED_FUNCTION)
@@ -1093,6 +1091,7 @@ static void testSignSeal(void)
         ok(!memcmp(crypt.pBuffers[1].pvBuffer, message_binary,
                    crypt.pBuffers[1].cbBuffer),
            "Failed to decrypt message correctly.\n");
+        ok(qop == 0xdeadbeef, "qop changed to %u\n", qop);
     }
     else trace( "A different session key is being used\n" );
 
@@ -1130,6 +1129,7 @@ static void testSignSeal(void)
     sec_status = pVerifySignature(&client.ctxt, &crypt, 0, &qop);
     ok(sec_status == SEC_E_OK, "VerifySignature returned %s, not SEC_E_OK\n",
             getSecError(sec_status));
+    ok(qop == 0xdeadbeef, "qop changed to %u\n", qop);
 
     sec_status = pEncryptMessage(&client.ctxt, 0, &crypt, 0);
     ok(sec_status == SEC_E_OK, "EncryptMessage returned %s, not SEC_E_OK.\n",
@@ -1161,6 +1161,7 @@ static void testSignSeal(void)
     sec_status = pDecryptMessage(&client.ctxt, &crypt, 0, &qop);
     ok(sec_status == SEC_E_OK, "DecryptMessage returned %s, not SEC_E_OK.\n",
             getSecError(sec_status));
+    ok(qop == 0xdeadbeef, "qop changed to %u\n", qop);
 
 
 end:
@@ -1182,10 +1183,6 @@ static BOOL testAcquireCredentialsHandle(void)
 {
     CredHandle cred;
     TimeStamp ttl;
-    static char test_user[] = "testuser",
-                workgroup[] = "WORKGROUP",
-                test_pass[] = "testpass",
-                sec_pkg_name[] = "NTLM";
     SECURITY_STATUS ret;
     SEC_WINNT_AUTH_IDENTITY_A id;
     PSecPkgInfoA pkg_info = NULL;
@@ -1207,21 +1204,21 @@ static BOOL testAcquireCredentialsHandle(void)
 
     ret = pAcquireCredentialsHandleA(NULL, sec_pkg_name, SECPKG_CRED_OUTBOUND,
             NULL, &id, NULL, NULL, &cred, &ttl);
-    ok(ret == SEC_E_OK, "AcquireCredentialsHande() returned %s\n",
+    ok(ret == SEC_E_OK, "AcquireCredentialsHandle() returned %s\n",
             getSecError(ret));
     pFreeCredentialsHandle(&cred);
 
     id.DomainLength = 0;
     ret = pAcquireCredentialsHandleA(NULL, sec_pkg_name, SECPKG_CRED_OUTBOUND,
             NULL, &id, NULL, NULL, &cred, &ttl);
-    ok(ret == SEC_E_OK, "AcquireCredentialsHande() returned %s\n",
+    ok(ret == SEC_E_OK, "AcquireCredentialsHandle() returned %s\n",
             getSecError(ret));
     pFreeCredentialsHandle(&cred);
 
     id.Domain = NULL;
     ret = pAcquireCredentialsHandleA(NULL, sec_pkg_name, SECPKG_CRED_OUTBOUND,
             NULL, &id, NULL, NULL, &cred, &ttl);
-    ok(ret == SEC_E_OK, "AcquireCredentialsHande() returned %s\n",
+    ok(ret == SEC_E_OK, "AcquireCredentialsHandle() returned %s\n",
             getSecError(ret));
     pFreeCredentialsHandle(&cred);
 
@@ -1231,7 +1228,7 @@ static BOOL testAcquireCredentialsHandle(void)
     id.User = NULL;
     ret = pAcquireCredentialsHandleA(NULL, sec_pkg_name, SECPKG_CRED_OUTBOUND,
             NULL, &id, NULL, NULL, &cred, &ttl);
-    ok(ret == SEC_E_OK, "AcquireCredentialsHande() returned %s\n",
+    ok(ret == SEC_E_OK, "AcquireCredentialsHandle() returned %s\n",
             getSecError(ret));
     pFreeCredentialsHandle(&cred);
 
@@ -1241,18 +1238,104 @@ static BOOL testAcquireCredentialsHandle(void)
     id.PasswordLength = 0;
     ret = pAcquireCredentialsHandleA(NULL, sec_pkg_name, SECPKG_CRED_OUTBOUND,
             NULL, &id, NULL, NULL, &cred, &ttl);
-    ok(ret == SEC_E_OK, "AcquireCredentialsHande() returned %s\n",
+    ok(ret == SEC_E_OK, "AcquireCredentialsHandle() returned %s\n",
             getSecError(ret));
     pFreeCredentialsHandle(&cred);
     return TRUE;
 }
 
+static void testAcquireCredentialsHandleW(void)
+{
+    CredHandle cred;
+    TimeStamp ttl;
+    static WCHAR sec_pkg_nameW[] = {'N','T','L','M',0 };
+    static WCHAR test_userW[]    = {'t','e','s','t','u','s','e','r',0 };
+    static WCHAR workgroupW[]    = {'W','O','R','K','G','R','O','U','P',0};
+    static WCHAR test_passW[]    = {'t','e','s','t','p','a','s','s',0};
+    SECURITY_STATUS ret;
+    SEC_WINNT_AUTH_IDENTITY_A idA;
+    SEC_WINNT_AUTH_IDENTITY_W id;
+    PSecPkgInfoA pkg_info = NULL;
+
+    if(!pAcquireCredentialsHandleW)
+    {
+        win_skip("AcquireCredentialsHandleW not available\n");
+        return;
+    }
+
+    if(pQuerySecurityPackageInfoA(sec_pkg_name, &pkg_info) != SEC_E_OK)
+    {
+        ok(0, "NTLM package not installed, skipping test\n");
+        return;
+    }
+    pFreeContextBuffer(pkg_info);
+
+    id.User = test_userW;
+    id.UserLength = lstrlenW(test_userW);
+    id.Domain = workgroupW;
+    id.DomainLength = lstrlenW(workgroupW);
+    id.Password = test_passW;
+    id.PasswordLength = lstrlenW(test_passW);
+    id.Flags = SEC_WINNT_AUTH_IDENTITY_UNICODE;
+
+    ret = pAcquireCredentialsHandleW(NULL, sec_pkg_nameW, SECPKG_CRED_OUTBOUND,
+            NULL, &id, NULL, NULL, &cred, &ttl);
+    ok(ret == SEC_E_OK, "AcquireCredentialsHandeW() returned %s\n",
+            getSecError(ret));
+    pFreeCredentialsHandle(&cred);
+
+    id.DomainLength = 0;
+    ret = pAcquireCredentialsHandleW(NULL, sec_pkg_nameW, SECPKG_CRED_OUTBOUND,
+            NULL, &id, NULL, NULL, &cred, &ttl);
+    ok(ret == SEC_E_OK, "AcquireCredentialsHandeW() returned %s\n",
+            getSecError(ret));
+    pFreeCredentialsHandle(&cred);
+
+    id.Domain = NULL;
+    ret = pAcquireCredentialsHandleW(NULL, sec_pkg_nameW, SECPKG_CRED_OUTBOUND,
+            NULL, &id, NULL, NULL, &cred, &ttl);
+    ok(ret == SEC_E_OK, "AcquireCredentialsHandeW() returned %s\n",
+            getSecError(ret));
+    pFreeCredentialsHandle(&cred);
+
+    id.Domain = workgroupW;
+    id.DomainLength = lstrlenW(workgroupW);
+    id.UserLength = 0;
+    id.User = NULL;
+    ret = pAcquireCredentialsHandleW(NULL, sec_pkg_nameW, SECPKG_CRED_OUTBOUND,
+            NULL, &id, NULL, NULL, &cred, &ttl);
+    ok(ret == SEC_E_OK, "AcquireCredentialsHandeW() returned %s\n",
+            getSecError(ret));
+    pFreeCredentialsHandle(&cred);
+
+    id.User = test_userW;
+    id.UserLength = lstrlenW(test_userW);
+    id.Password = test_passW;    /* NULL string causes a crash. */
+    id.PasswordLength = 0;
+    ret = pAcquireCredentialsHandleW(NULL, sec_pkg_nameW, SECPKG_CRED_OUTBOUND,
+            NULL, &id, NULL, NULL, &cred, &ttl);
+    ok(ret == SEC_E_OK, "AcquireCredentialsHandeW() returned %s\n",
+            getSecError(ret));
+    pFreeCredentialsHandle(&cred);
+
+    /* Test using the ASCII structure. */
+    idA.User = (unsigned char*) test_user;
+    idA.UserLength = strlen(test_user);
+    idA.Domain = (unsigned char *) workgroup;
+    idA.DomainLength = strlen(workgroup);
+    idA.Password = (unsigned char*) test_pass;
+    idA.PasswordLength = strlen(test_pass);
+    idA.Flags = SEC_WINNT_AUTH_IDENTITY_ANSI;
+
+    ret = pAcquireCredentialsHandleW(NULL, sec_pkg_nameW, SECPKG_CRED_OUTBOUND,
+            NULL, &idA, NULL, NULL, &cred, &ttl);
+    ok(ret == SEC_E_OK, "AcquireCredentialsHandeW() returned %s\n",
+            getSecError(ret));
+    pFreeCredentialsHandle(&cred);
+}
+
 static void test_cred_multiple_use(void)
 {
-    static char test_user[] = "testuser",
-                workgroup[] = "WORKGROUP",
-                test_pass[] = "testpass",
-                sec_pkg_name[] = "NTLM";
     SECURITY_STATUS ret;
     SEC_WINNT_AUTH_IDENTITY_A id;
     PSecPkgInfoA            pkg_info = NULL;
@@ -1285,7 +1368,7 @@ static void test_cred_multiple_use(void)
 
     ret = pAcquireCredentialsHandleA(NULL, sec_pkg_name, SECPKG_CRED_OUTBOUND,
             NULL, &id, NULL, NULL, &cred, &ttl);
-    ok(ret == SEC_E_OK, "AcquireCredentialsHande() returned %s\n",
+    ok(ret == SEC_E_OK, "AcquireCredentialsHandle() returned %s\n",
             getSecError(ret));
 
     buffer_desc.ulVersion = SECBUFFER_VERSION;
@@ -1333,7 +1416,7 @@ static void test_null_auth_data(void)
 
     status = pAcquireCredentialsHandleA(NULL, (SEC_CHAR *)"NTLM", SECPKG_CRED_OUTBOUND,
                                         NULL, NULL, NULL, NULL, &cred, &ttl);
-    ok(status == SEC_E_OK, "AcquireCredentialsHande() failed %s\n", getSecError(status));
+    ok(status == SEC_E_OK, "AcquireCredentialsHandle() failed %s\n", getSecError(status));
 
     buffers[0].cbBuffer = info->cbMaxToken;
     buffers[0].BufferType = SECBUFFER_TOKEN;
@@ -1369,6 +1452,8 @@ START_TEST(ntlm)
        pAcquireCredentialsHandleA && pInitializeSecurityContextA &&
        pCompleteAuthToken && pQuerySecurityPackageInfoA)
     {
+        testAcquireCredentialsHandleW();
+
         if(!testAcquireCredentialsHandle())
             goto cleanup;
         testInitializeSecurityContextFlags();

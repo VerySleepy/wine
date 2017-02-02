@@ -19,16 +19,8 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define NONAMELESSUNION
-
-#define COBJMACROS
-
-#include "wine/debug.h"
-
-#include "winbase.h"
-#include "wingdi.h"
-#include "dxfile.h"
-#include "rmxfguid.h"
+#include "config.h"
+#include "wine/port.h"
 
 #include "d3drm_private.h"
 
@@ -356,7 +348,9 @@ static void clean_mesh_builder_data(struct d3drm_mesh_builder *mesh_builder)
     }
     mesh_builder->nb_materials = 0;
     HeapFree(GetProcessHeap(), 0, mesh_builder->materials);
+    mesh_builder->materials = NULL;
     HeapFree(GetProcessHeap(), 0, mesh_builder->material_indices);
+    mesh_builder->material_indices = NULL;
 }
 
 static HRESULT WINAPI d3drm_mesh_builder2_QueryInterface(IDirect3DRMMeshBuilder2 *iface, REFIID riid, void **out)
@@ -1067,7 +1061,7 @@ HRESULT load_mesh_data(IDirect3DRMMeshBuilder3 *iface, IDirectXFileData *pData,
             return hr;
     }
 
-    TRACE("Mesh name is '%s'\n", This->name ? This->name : "");
+    TRACE("Mesh name is %s\n", debugstr_a(This->name));
 
     This->nb_normals = 0;
 
@@ -1160,6 +1154,7 @@ HRESULT load_mesh_data(IDirect3DRMMeshBuilder3 *iface, IDirectXFileData *pData,
             IDirectXFileObject *child;
             DWORD i = 0;
             float* values;
+            struct d3drm_texture *texture_object;
 
             TRACE("Process MeshMaterialList\n");
 
@@ -1232,8 +1227,7 @@ HRESULT load_mesh_data(IDirect3DRMMeshBuilder3 *iface, IDirectXFileData *pData,
 
                 values = (float*)ptr;
 
-                This->materials[i].color = RGBA_MAKE((BYTE)(values[0] * 255.0f), (BYTE)(values[1] * 255.0f),
-                        (BYTE)(values[2] * 255.0f), (BYTE)(values[3] * 255.0f));
+                d3drm_set_color(&This->materials[i].color, values[0], values[1], values[2], values[3]);
 
                 IDirect3DRMMaterial2_SetAmbient(This->materials[i].material, values[0], values [1], values[2]); /* Alpha ignored */
                 IDirect3DRMMaterial2_SetPower(This->materials[i].material, values[4]);
@@ -1248,20 +1242,21 @@ HRESULT load_mesh_data(IDirect3DRMMeshBuilder3 *iface, IDirectXFileData *pData,
                     IDirectXFileData *data;
                     char **filename;
 
-                    hr = IDirectXFileObject_QueryInterface(material_child, &IID_IDirectXFileData, (void **)&data);
-                    if (FAILED(hr))
+                    if (FAILED(hr = IDirectXFileObject_QueryInterface(material_child,
+                            &IID_IDirectXFileData, (void **)&data)))
                     {
                         IDirectXFileDataReference *reference;
 
-                        hr = IDirectXFileObject_QueryInterface(material_child, &IID_IDirectXFileDataReference, (void **)&reference);
-                        if (FAILED(hr))
-                            goto end;
-
-                        hr = IDirectXFileDataReference_Resolve(reference, &data);
-                        IDirectXFileDataReference_Release(reference);
-                        if (FAILED(hr))
-                            goto end;
+                        if (SUCCEEDED(IDirectXFileObject_QueryInterface(material_child,
+                                &IID_IDirectXFileDataReference, (void **)&reference)))
+                        {
+                            hr = IDirectXFileDataReference_Resolve(reference, &data);
+                            IDirectXFileDataReference_Release(reference);
+                        }
                     }
+                    IDirectXFileObject_Release(material_child);
+                    if (FAILED(hr))
+                        goto end;
 
                     hr = IDirectXFileData_GetType(data, &guid);
                     if (hr != DXFILE_OK)
@@ -1296,16 +1291,16 @@ HRESULT load_mesh_data(IDirect3DRMMeshBuilder3 *iface, IDirectXFileData *pData,
                             if (file != INVALID_HANDLE_VALUE)
                             {
                                 CloseHandle(file);
-
-                                hr = Direct3DRMTexture_create(&IID_IDirect3DRMTexture3, (IUnknown**)&This->materials[i].texture);
-                                if (FAILED(hr))
+                                if (FAILED(hr = d3drm_texture_create(&texture_object, NULL)))
                                 {
                                     IDirectXFileData_Release(data);
                                     goto end;
                                 }
+                                This->materials[i].texture = &texture_object->IDirect3DRMTexture3_iface;
                             }
                         }
                     }
+                    IDirectXFileData_Release(data);
                 }
                 else if (hr != DXFILEERR_NOMOREOBJECTS)
                 {
@@ -1364,7 +1359,10 @@ HRESULT load_mesh_data(IDirect3DRMMeshBuilder3 *iface, IDirectXFileData *pData,
         if (!This->nb_normals)
         {
             /* Compute face normal */
-            if (nb_face_indexes > 2)
+            if (nb_face_indexes > 2
+                    && faces_vertex_idx_ptr[0] < This->nb_vertices
+                    && faces_vertex_idx_ptr[1] < This->nb_vertices
+                    && faces_vertex_idx_ptr[2] < This->nb_vertices)
             {
                 D3DVECTOR a, b;
 
@@ -1687,7 +1685,7 @@ static HRESULT WINAPI d3drm_mesh_builder3_SetColorRGB(IDirect3DRMMeshBuilder3 *i
 
     TRACE("iface %p, red %.8e, green %.8e, blue %.8e.\n", iface, red, green, blue);
 
-    mesh_builder->color = RGBA_MAKE((BYTE)(red * 255.0f), (BYTE)(green * 255.0f), (BYTE)(blue * 255.0f), 0xff);
+    d3drm_set_color(&mesh_builder->color, red, green, blue, 1.0f);
 
     return D3DRM_OK;
 }
@@ -2204,7 +2202,7 @@ static HRESULT WINAPI d3drm_mesh_builder3_GetNormals(IDirect3DRMMeshBuilder3 *if
     struct d3drm_mesh_builder *mesh_builder = impl_from_IDirect3DRMMeshBuilder3(iface);
     DWORD count = mesh_builder->nb_normals - start_idx;
 
-    TRACE("iface %p, start_idx %u, normal_count %p, normals %p stub!\n",
+    TRACE("iface %p, start_idx %u, normal_count %p, normals %p.\n",
             iface, start_idx, normal_count, normals);
 
     if (normal_count)
@@ -2588,7 +2586,7 @@ static HRESULT WINAPI d3drm_mesh_SetGroupColorRGB(IDirect3DRMMesh *iface,
     if (id >= mesh->nb_groups)
         return D3DRMERR_BADVALUE;
 
-    mesh->groups[id].color = RGBA_MAKE((BYTE)(red * 255.0f), (BYTE)(green * 255.0f), (BYTE)(blue * 255.0f), 0xff);
+    d3drm_set_color(&mesh->groups[id].color, red, green, blue, 1.0f);
 
     return D3DRM_OK;
 }

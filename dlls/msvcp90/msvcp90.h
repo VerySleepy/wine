@@ -37,9 +37,11 @@ typedef SSIZE_T streamsize;
 #define STREAMSIZE_BITS 32
 #endif
 
+void __cdecl _invalid_parameter_noinfo(void);
 void __cdecl _invalid_parameter(const wchar_t*, const wchar_t*,
         const wchar_t*, unsigned int, uintptr_t);
 BOOL __cdecl __uncaught_exception(void);
+int __cdecl _callnewh(size_t);
 
 extern void* (__cdecl *MSVCRT_operator_new)(MSVCP_size_t);
 extern void (__cdecl *MSVCRT_operator_delete)(void*);
@@ -71,14 +73,16 @@ extern MSVCP_bool (__thiscall *critical_section_trylock)(critical_section*);
 #endif
 
 /* basic_string<char, char_traits<char>, allocator<char>> */
-#define BUF_SIZE_CHAR 16
 typedef struct
 {
 #if _MSVCP_VER <= 90
     void *allocator;
 #endif
     union {
+#if _MSVCP_VER >= 70
+#define BUF_SIZE_CHAR 16
         char buf[BUF_SIZE_CHAR];
+#endif
         char *ptr;
     } data;
     MSVCP_size_t size;
@@ -92,21 +96,23 @@ basic_string_char* __thiscall MSVCP_basic_string_char_ctor(basic_string_char*);
 basic_string_char* __thiscall MSVCP_basic_string_char_ctor_cstr(basic_string_char*, const char*);
 basic_string_char* __thiscall MSVCP_basic_string_char_ctor_cstr_len(basic_string_char*, const char*, MSVCP_size_t);
 basic_string_char* __thiscall MSVCP_basic_string_char_copy_ctor(basic_string_char*, const basic_string_char*);
-void __thiscall MSVCP_basic_string_char_dtor(basic_string_char*);
+void* __thiscall MSVCP_basic_string_char_dtor(basic_string_char*);
 const char* __thiscall MSVCP_basic_string_char_c_str(const basic_string_char*);
 void __thiscall MSVCP_basic_string_char_clear(basic_string_char*);
 basic_string_char* __thiscall MSVCP_basic_string_char_append_ch(basic_string_char*, char);
 MSVCP_size_t __thiscall MSVCP_basic_string_char_length(const basic_string_char*);
 basic_string_char* __thiscall MSVCP_basic_string_char_assign(basic_string_char*, const basic_string_char*);
 
-#define BUF_SIZE_WCHAR 8
 typedef struct
 {
 #if _MSVCP_VER <= 90
     void *allocator;
 #endif
     union {
+#if _MSVCP_VER >= 70
+#define BUF_SIZE_WCHAR 8
         wchar_t buf[BUF_SIZE_WCHAR];
+#endif
         wchar_t *ptr;
     } data;
     MSVCP_size_t size;
@@ -119,7 +125,7 @@ typedef struct
 basic_string_wchar* __thiscall MSVCP_basic_string_wchar_ctor(basic_string_wchar*);
 basic_string_wchar* __thiscall MSVCP_basic_string_wchar_ctor_cstr(basic_string_wchar*, const wchar_t*);
 basic_string_wchar* __thiscall MSVCP_basic_string_wchar_ctor_cstr_len(basic_string_wchar*, const wchar_t*, MSVCP_size_t);
-void __thiscall MSVCP_basic_string_wchar_dtor(basic_string_wchar*);
+void* __thiscall MSVCP_basic_string_wchar_dtor(basic_string_wchar*);
 const wchar_t* __thiscall MSVCP_basic_string_wchar_c_str(const basic_string_wchar*);
 void __thiscall MSVCP_basic_string_wchar_clear(basic_string_wchar*);
 basic_string_wchar* __thiscall MSVCP_basic_string_wchar_append_ch(basic_string_wchar*, wchar_t);
@@ -138,11 +144,23 @@ typedef struct
     char null_str;
 } _Yarn_char;
 
+_Yarn_char* __thiscall _Yarn_char_ctor(_Yarn_char*);
 _Yarn_char* __thiscall _Yarn_char_ctor_cstr(_Yarn_char*, const char*);
 _Yarn_char* __thiscall _Yarn_char_copy_ctor(_Yarn_char*, const _Yarn_char*);
 const char* __thiscall _Yarn_char_c_str(const _Yarn_char*);
 void __thiscall _Yarn_char_dtor(_Yarn_char*);
 _Yarn_char* __thiscall _Yarn_char_op_assign(_Yarn_char*, const _Yarn_char*);
+
+typedef struct
+{
+    wchar_t *str;
+    wchar_t null_str;
+} _Yarn_wchar;
+
+_Yarn_wchar* __thiscall _Yarn_wchar_ctor(_Yarn_wchar*);
+const wchar_t* __thiscall _Yarn_wchar__C_str(const _Yarn_wchar*);
+void __thiscall _Yarn_wchar_dtor(_Yarn_wchar*);
+_Yarn_wchar* __thiscall _Yarn_wchar_op_assign_cstr(_Yarn_wchar*, const wchar_t*);
 
 /* class locale::facet */
 typedef struct {
@@ -169,6 +187,17 @@ typedef struct {
 #endif
 } _Ctypevec;
 
+#if _MSVCP_VER >= 140
+typedef struct {
+    int wchar;
+    unsigned short byte, state;
+} _Mbstatet;
+#define MBSTATET_TO_INT(state) ((state)->wchar)
+#else
+typedef int _Mbstatet;
+#define MBSTATET_TO_INT(state) (*(state))
+#endif
+
 /* class codecvt_base */
 typedef struct {
     locale_facet facet;
@@ -180,16 +209,23 @@ typedef struct {
 } codecvt_char;
 
 MSVCP_bool __thiscall codecvt_base_always_noconv(const codecvt_base*);
-int __thiscall codecvt_char_unshift(const codecvt_char*, int*, char*, char*, char**);
-int __thiscall codecvt_char_out(const codecvt_char*, int*, const char*,
+int __thiscall codecvt_char_unshift(const codecvt_char*, _Mbstatet*, char*, char*, char**);
+int __thiscall codecvt_char_out(const codecvt_char*, _Mbstatet*, const char*,
         const char*, const char**, char*, char*, char**);
-int __thiscall codecvt_char_in(const codecvt_char*, int*, const char*,
+int __thiscall codecvt_char_in(const codecvt_char*, _Mbstatet*, const char*,
         const char*, const char**, char*, char*, char**);
 int __thiscall codecvt_base_max_length(const codecvt_base*);
 
 typedef struct {
+#if _MSVCP_VER < 110
     LCID handle;
+#endif
     unsigned page;
+#if _MSVCP_VER >= 110
+    int mb_max;
+    int unk;
+    BYTE isleadbyte[32];
+#endif
 } _Cvtvec;
 
 /* class codecvt<wchar> */
@@ -198,10 +234,10 @@ typedef struct {
     _Cvtvec cvt;
 } codecvt_wchar;
 
-int __thiscall codecvt_wchar_unshift(const codecvt_wchar*, int*, char*, char*, char**);
-int __thiscall codecvt_wchar_out(const codecvt_wchar*, int*, const wchar_t*,
+int __thiscall codecvt_wchar_unshift(const codecvt_wchar*, _Mbstatet*, char*, char*, char**);
+int __thiscall codecvt_wchar_out(const codecvt_wchar*, _Mbstatet*, const wchar_t*,
         const wchar_t*, const wchar_t**, char*, char*, char**);
-int __thiscall codecvt_wchar_in(const codecvt_wchar*, int*, const char*,
+int __thiscall codecvt_wchar_in(const codecvt_wchar*, _Mbstatet*, const char*,
         const char*, const char**, wchar_t*, wchar_t*, wchar_t**);
 
 /* class ctype_base */
@@ -233,6 +269,9 @@ wchar_t __thiscall ctype_wchar_widen_ch(const ctype_wchar*, char);
 /* class locale */
 typedef struct
 {
+#if _MSVCP_VER >= 140
+    int unused;
+#endif
     struct _locale__Locimp *ptr;
 } locale;
 
@@ -250,7 +289,11 @@ ctype_wchar* ctype_short_use_facet(const locale*);
 
 /* class _Lockit */
 typedef struct {
+#if _MSVCP_VER >= 70
     int locktype;
+#else
+    char empty_struct;
+#endif
 } _Lockit;
 
 #define _LOCK_LOCALE 0
@@ -362,8 +405,12 @@ typedef struct _ios_base {
     streamsize wide;
     IOS_BASE_iosarray *arr;
     IOS_BASE_fnarray *calls;
+#if _MSVCP_VER < 70
+    locale loc;
+#else
     locale *loc;
-#if _MSVCP_VER == 70
+#endif
+#if _MSVCP_VER <= 70
     MSVCP_size_t stdstr;
 #endif
 } ios_base;
@@ -371,7 +418,7 @@ typedef struct _ios_base {
 /* class basic_streambuf<char> */
 typedef struct {
     const vtable_ptr *vtable;
-#if _MSVCP_VER <= 100
+#if _MSVCP_VER >= 70 && _MSVCP_VER <= 100
     mutex lock;
 #endif
     char *rbuf;
@@ -386,7 +433,11 @@ typedef struct {
     int wsize;
     int *prsize;
     int *pwsize;
+#if _MSVCP_VER < 70
+    locale loc;
+#else
     locale *loc;
+#endif
 } basic_streambuf_char;
 
 typedef struct {
@@ -410,7 +461,7 @@ int __thiscall basic_streambuf_char_sputc(basic_streambuf_char*, char);
 /* class basic_streambuf<wchar> */
 typedef struct {
     const vtable_ptr *vtable;
-#if _MSVCP_VER <= 100
+#if _MSVCP_VER >= 70 && _MSVCP_VER <= 100
     mutex lock;
 #endif
     wchar_t *rbuf;
@@ -425,7 +476,11 @@ typedef struct {
     int wsize;
     int *prsize;
     int *pwsize;
+#if _MSVCP_VER < 70
+    locale loc;
+#else
     locale *loc;
+#endif
 } basic_streambuf_wchar;
 
 typedef struct {
@@ -446,10 +501,18 @@ unsigned short __thiscall basic_streambuf_wchar_sgetc(basic_streambuf_wchar*);
 unsigned short __thiscall basic_streambuf_wchar_sbumpc(basic_streambuf_wchar*);
 unsigned short __thiscall basic_streambuf_wchar_sputc(basic_streambuf_wchar*, wchar_t);
 
+#if _MSVCP_VER < 70
+#define IOS_LOCALE(ios) (&(ios)->loc)
+#else
+#define IOS_LOCALE(ios) ((ios)->loc)
+#endif
+
 /* class num_get<char> */
 typedef struct {
     locale_facet facet;
+#if _MSVCP_VER <= 100
     _Cvtvec cvt;
+#endif
 } num_get;
 
 num_get* num_get_char_use_facet(const locale*);
@@ -505,7 +568,9 @@ istreambuf_iterator_wchar *__thiscall num_get_wchar_get_bool(const num_get*, ist
 /* class num_put<wchar> */
 typedef struct {
     locale_facet facet;
+#if _MSVCP_VER < 110
     _Cvtvec cvt;
+#endif
 } num_put;
 
 num_put* num_put_char_use_facet(const locale*);
@@ -584,4 +649,12 @@ static inline int mbstowcs_wrapper( size_t *ret, wchar_t *wcs, size_t size, cons
 #define memmove_s( dst, size, src, count ) memmove_wrapper( dst, size, src, count )
 #define mbstowcs_s( ret, wcs, size, mbs, count ) mbstowcs_wrapper( ret, wcs, size, mbs, count )
 #define hypotf( x, y ) ((float)hypot( (double)(x), (double)(y) ))
+#endif
+
+void free_misc(void);
+
+#if _MSVCP_VER >= 140
+#define UCRTBASE_PRINTF_STANDARD_SNPRINTF_BEHAVIOUR      (0x0002)
+int __cdecl __stdio_common_vsprintf(unsigned __int64 options, char *str, size_t len, const char *format,
+                                    _locale_t locale, __ms_va_list valist);
 #endif

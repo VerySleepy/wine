@@ -659,6 +659,54 @@ BOOLEAN __cdecl std_numeric_limits_bool_min(void) { return FALSE; }
 /* ?min@?$numeric_limits@_W@std@@SA_WXZ -> public: static wchar_t __cdecl std::numeric_limits<wchar_t>::min(void) */
 WCHAR __cdecl std_numeric_limits_wchar_t_min(void) { return 0; }
 
+/* ?lowest@?$numeric_limits@C@std@@SACXZ */
+signed char __cdecl std_numeric_limits_signed_char_lowest(void) { return SCHAR_MIN; }
+
+/* ?lowest@?$numeric_limits@D@std@@SADXZ */
+char __cdecl std_numeric_limits_char_lowest(void) { return CHAR_MIN; }
+
+/* ?lowest@?$numeric_limits@E@std@@SAEXZ */
+unsigned char __cdecl std_numeric_limits_unsigned_char_lowest(void) { return 0; }
+
+/* ?lowest@?$numeric_limits@F@std@@SAFXZ */
+short __cdecl std_numeric_limits_short_lowest(void) { return SHRT_MIN; }
+
+/* ?lowest@?$numeric_limits@G@std@@SAGXZ */
+unsigned short __cdecl std_numeric_limits_unsigned_short_lowest(void) { return 0; }
+
+/* ?lowest@?$numeric_limits@H@std@@SAHXZ */
+int __cdecl std_numeric_limits_int_lowest(void) { return INT_MIN; }
+
+/* ?lowest@?$numeric_limits@I@std@@SAIXZ */
+unsigned int __cdecl std_numeric_limits_unsigned_int_lowest(void) { return 0; }
+
+/* ?lowest@?$numeric_limits@J@std@@SAJXZ */
+LONG __cdecl std_numeric_limits_long_lowest(void) { return LONG_MIN; }
+
+/* ?lowest@?$numeric_limits@K@std@@SAKXZ */
+ULONG __cdecl std_numeric_limits_unsigned_long_lowest(void) { return 0; }
+
+/* ?lowest@?$numeric_limits@M@std@@SAMXZ */
+float __cdecl std_numeric_limits_float_lowest(void) { return -FLT_MAX; }
+
+/* ?lowest@?$numeric_limits@N@std@@SANXZ */
+double __cdecl std_numeric_limits_double_lowest(void) { return -DBL_MAX; }
+
+/* ?lowest@?$numeric_limits@O@std@@SAOXZ */
+LDOUBLE __cdecl std_numeric_limits_long_double_lowest(void) { return -LDBL_MAX; }
+
+/* ?lowest@?$numeric_limits@_J@std@@SA_JXZ */
+__int64 __cdecl std_numeric_limits_int64_lowest(void) { return I64_MIN; }
+
+/* ?lowest@?$numeric_limits@_K@std@@SA_KXZ */
+unsigned __int64 __cdecl std_numeric_limits_unsigned_int64_lowest(void) { return 0; }
+
+/* ?lowest@?$numeric_limits@_N@std@@SA_NXZ */
+BOOLEAN __cdecl std_numeric_limits_bool_lowest(void) { return FALSE; }
+
+/* ?lowest@?$numeric_limits@_W@std@@SA_WXZ */
+WCHAR __cdecl std_numeric_limits_wchar_t_lowest(void) { return 0; }
+
 /* ?quiet_NaN@?$numeric_limits@C@std@@SACXZ -> public: static signed char __cdecl std::numeric_limits<signed char>::quiet_NaN(void) */
 signed char __cdecl std_numeric_limits_signed_char_quiet_NaN(void) { return 0; }
 
@@ -2225,4 +2273,94 @@ complex_double* __cdecl complex_double_sqrt(complex_double *ret, const complex_d
 {
     complex_double c = { 0.5, 0 };
     return complex_double_pow(ret, l, &c);
+}
+
+static short dclass(double x)
+{
+    switch(_fpclass(x)) {
+    case _FPCLASS_SNAN:
+    case _FPCLASS_QNAN:
+        return FP_NAN;
+    case _FPCLASS_NINF:
+    case _FPCLASS_PINF:
+        return FP_INFINITE;
+    case _FPCLASS_ND:
+    case _FPCLASS_PD:
+        return FP_SUBNORMAL;
+    case _FPCLASS_NN:
+    case _FPCLASS_PN:
+    default:
+        return FP_NORMAL;
+    case _FPCLASS_NZ:
+    case _FPCLASS_PZ:
+        return FP_ZERO;
+    }
+}
+
+/* _Dtest */
+short __cdecl _Dtest(double *x)
+{
+    return dclass(*x);
+}
+
+/* _FDtest */
+short __cdecl _FDtest(float *x)
+{
+    return dclass(*x);
+}
+
+/* _Dscale */
+short __cdecl _Dscale(double *x, int exp)
+{
+    *x *= pow(2, exp);
+    return dclass(*x);
+}
+
+/* _FDscale */
+short __cdecl _FDscale(float *x, int exp)
+{
+    *x *= pow(2, exp);
+    return dclass(*x);
+}
+
+/* _Exp */
+/* computes y * e^(*x) * 2^scale */
+short __cdecl _Exp(double *x, double y, int scale)
+{
+    double ed;
+    int e;
+
+    if(y == 0) {
+        *x = 0;
+        return FP_ZERO;
+    }
+
+    *x /= M_LN2;
+    ed = floor(*x);
+    *x -= ed;
+    e = ed;
+
+    if(ed!=e && ed>0)
+        scale = INT_MAX;
+    else if(ed!=e && ed<0)
+        scale = INT_MIN;
+    else if(scale>0 && e>0 && scale+e<=0)
+        scale = INT_MAX;
+    else if(scale<0 && e<0 && scale+e>=0)
+        scale = INT_MIN;
+    else
+        scale += e;
+
+    *x = y * pow(2.0, *x);
+    return _Dscale(x, scale);
+}
+
+/* _FExp */
+short __cdecl _FExp(float *x, float y, short scale)
+{
+    double d = *x;
+    _Exp(&d, y, scale);
+    *x = d;
+
+    return dclass(*x);
 }

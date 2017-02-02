@@ -134,7 +134,8 @@ static inline BOOL is_special_env_var( const char *var )
             !strncmp( var, "PWD=", sizeof("PWD=")-1 ) ||
             !strncmp( var, "HOME=", sizeof("HOME=")-1 ) ||
             !strncmp( var, "TEMP=", sizeof("TEMP=")-1 ) ||
-            !strncmp( var, "TMP=", sizeof("TMP=")-1 ));
+            !strncmp( var, "TMP=", sizeof("TMP=")-1 ) ||
+            !strncmp( var, "QT_", sizeof("QT_")-1 ));
 }
 
 
@@ -400,7 +401,8 @@ static void set_registry_variables( HANDLE hkey, ULONG type )
  */
 static BOOL set_registry_environment( BOOL volatile_only )
 {
-    static const WCHAR env_keyW[] = {'M','a','c','h','i','n','e','\\',
+    static const WCHAR env_keyW[] = {'\\','R','e','g','i','s','t','r','y','\\',
+                                     'M','a','c','h','i','n','e','\\',
                                      'S','y','s','t','e','m','\\',
                                      'C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t','\\',
                                      'C','o','n','t','r','o','l','\\',
@@ -504,7 +506,8 @@ static WCHAR *get_reg_value( HKEY hkey, const WCHAR *name )
  */
 static void set_additional_environment(void)
 {
-    static const WCHAR profile_keyW[] = {'M','a','c','h','i','n','e','\\',
+    static const WCHAR profile_keyW[] = {'\\','R','e','g','i','s','t','r','y','\\',
+                                         'M','a','c','h','i','n','e','\\',
                                          'S','o','f','t','w','a','r','e','\\',
                                          'M','i','c','r','o','s','o','f','t','\\',
                                          'W','i','n','d','o','w','s',' ','N','T','\\',
@@ -517,7 +520,7 @@ static void set_additional_environment(void)
     OBJECT_ATTRIBUTES attr;
     UNICODE_STRING nameW;
     WCHAR *profile_dir = NULL, *all_users_dir = NULL;
-    WCHAR buf[MAX_COMPUTERNAME_LENGTH];
+    WCHAR buf[MAX_COMPUTERNAME_LENGTH+1];
     HANDLE hkey;
     DWORD len;
 
@@ -570,7 +573,8 @@ static void set_wow64_environment(void)
     static const WCHAR archW[]    = {'P','R','O','C','E','S','S','O','R','_','A','R','C','H','I','T','E','C','T','U','R','E',0};
     static const WCHAR arch6432W[] = {'P','R','O','C','E','S','S','O','R','_','A','R','C','H','I','T','E','W','6','4','3','2',0};
     static const WCHAR x86W[] = {'x','8','6',0};
-    static const WCHAR versionW[] = {'M','a','c','h','i','n','e','\\',
+    static const WCHAR versionW[] = {'\\','R','e','g','i','s','t','r','y','\\',
+                                     'M','a','c','h','i','n','e','\\',
                                      'S','o','f','t','w','a','r','e','\\',
                                      'M','i','c','r','o','s','o','f','t','\\',
                                      'W','i','n','d','o','w','s','\\',
@@ -1112,36 +1116,58 @@ static DWORD WINAPI start_process( PEB *peb )
  */
 static void set_process_name( int argc, char *argv[] )
 {
+    BOOL shift_strings;
+    char *p, *name;
+    int i;
+
 #ifdef HAVE_SETPROCTITLE
     setproctitle("-%s", argv[1]);
-#endif
+    shift_strings = FALSE;
+#else
+    p = argv[0];
 
-#ifdef HAVE_PRCTL
-    int i, offset;
-    char *p, *prctl_name = argv[1];
-    char *end = argv[argc-1] + strlen(argv[argc-1]) + 1;
-
-#ifndef PR_SET_NAME
-# define PR_SET_NAME 15
-#endif
-
-    if ((p = strrchr( prctl_name, '\\' ))) prctl_name = p + 1;
-    if ((p = strrchr( prctl_name, '/' ))) prctl_name = p + 1;
-
-    if (prctl( PR_SET_NAME, prctl_name ) != -1)
+    shift_strings = (argc >= 2);
+    for (i = 1; i < argc; i++)
     {
-        offset = argv[1] - argv[0];
-        memmove( argv[1] - offset, argv[1], end - argv[1] );
+        p += strlen(p) + 1;
+        if (p != argv[i])
+        {
+            shift_strings = FALSE;
+            break;
+        }
+    }
+#endif
+
+    if (shift_strings)
+    {
+        int offset = argv[1] - argv[0];
+        char *end = argv[argc-1] + strlen(argv[argc-1]) + 1;
+        memmove( argv[0], argv[1], end - argv[1] );
         memset( end - offset, 0, offset );
-        for (i = 1; i < argc; i++) argv[i-1] = argv[i] - offset;
+        for (i = 1; i < argc; i++)
+            argv[i-1] = argv[i] - offset;
         argv[i-1] = NULL;
     }
     else
-#endif  /* HAVE_PRCTL */
     {
         /* remove argv[0] */
         memmove( argv, argv + 1, argc * sizeof(argv[0]) );
     }
+
+    name = argv[0];
+    if ((p = strrchr( name, '\\' ))) name = p + 1;
+    if ((p = strrchr( name, '/' ))) name = p + 1;
+
+#if defined(HAVE_SETPROGNAME)
+    setprogname( name );
+#endif
+
+#ifdef HAVE_PRCTL
+#ifndef PR_SET_NAME
+# define PR_SET_NAME 15
+#endif
+    prctl( PR_SET_NAME, name );
+#endif  /* HAVE_PRCTL */
 }
 
 
@@ -2493,7 +2519,12 @@ static void exec_process( LPCWSTR name )
 
     /* Determine executable type */
 
-    if (binary_info.flags & BINARY_FLAG_DLL) return;
+    if (binary_info.flags & BINARY_FLAG_DLL)
+    {
+        CloseHandle( hFile );
+        return;
+    }
+
     switch (binary_info.type)
     {
     case BINARY_PE:
@@ -2551,7 +2582,7 @@ static DWORD wait_input_idle( HANDLE process, DWORD timeout )
 /***********************************************************************
  *           WinExec   (KERNEL32.@)
  */
-UINT WINAPI WinExec( LPCSTR lpCmdLine, UINT nCmdShow )
+UINT WINAPI DECLSPEC_HOTPATCH WinExec( LPCSTR lpCmdLine, UINT nCmdShow )
 {
     PROCESS_INFORMATION info;
     STARTUPINFOA startup;
@@ -3563,8 +3594,8 @@ BOOL WINAPI QueryFullProcessImageNameW(HANDLE hProcess, DWORD dwFlags, LPWSTR lp
         ntlen = devlen + (result->Length/sizeof(WCHAR) - 2);
         if (ntlen + 1 > *pdwSize)
         {
-            SetLastError(ERROR_INSUFFICIENT_BUFFER);
-            return FALSE;
+            status = STATUS_BUFFER_TOO_SMALL;
+            goto cleanup;
         }
         *pdwSize = ntlen;
 
@@ -3737,10 +3768,10 @@ BOOL WINAPI K32GetProcessMemoryInfo(HANDLE process,
  */
 BOOL WINAPI ProcessIdToSessionId( DWORD procid, DWORD *sessionid_ptr )
 {
-    /* According to MSDN, if the calling process is not in a terminal
-     * services environment, then the sessionid returned is zero.
-     */
-    *sessionid_ptr = 0;
+    if (procid != GetCurrentProcessId())
+        FIXME("Unsupported for other processes.\n");
+
+    *sessionid_ptr = NtCurrentTeb()->Peb->SessionId;
     return TRUE;
 }
 
@@ -3828,11 +3859,31 @@ BOOL WINAPI GetLogicalProcessorInformation(PSYSTEM_LOGICAL_PROCESSOR_INFORMATION
 /***********************************************************************
  *           GetLogicalProcessorInformationEx   (KERNEL32.@)
  */
-BOOL WINAPI GetLogicalProcessorInformationEx(LOGICAL_PROCESSOR_RELATIONSHIP relationship, PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX buffer, PDWORD pBufLen)
+BOOL WINAPI GetLogicalProcessorInformationEx(LOGICAL_PROCESSOR_RELATIONSHIP relationship, SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *buffer, DWORD *len)
 {
-    FIXME("(%u,%p,%p): stub\n", relationship, buffer, pBufLen);
-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-    return FALSE;
+    NTSTATUS status;
+
+    TRACE("(%u,%p,%p)\n", relationship, buffer, len);
+
+    if (!len)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+
+    status = NtQuerySystemInformationEx( SystemLogicalProcessorInformationEx, &relationship, sizeof(relationship),
+        buffer, *len, len );
+    if (status == STATUS_INFO_LENGTH_MISMATCH)
+    {
+        SetLastError( ERROR_INSUFFICIENT_BUFFER );
+        return FALSE;
+    }
+    if (status != STATUS_SUCCESS)
+    {
+        SetLastError( RtlNtStatusToDosError( status ) );
+        return FALSE;
+    }
+    return TRUE;
 }
 
 /***********************************************************************
@@ -3871,7 +3922,8 @@ DWORD WINAPI WTSGetActiveConsoleSessionId(void)
 {
     static int once;
     if (!once++) FIXME("stub\n");
-    return 0;
+    /* Return current session id. */
+    return NtCurrentTeb()->Peb->SessionId;
 }
 
 /**********************************************************************
@@ -3952,6 +4004,27 @@ BOOL WINAPI GetNumaAvailableMemoryNode(UCHAR node, PULONGLONG available_bytes)
     return FALSE;
 }
 
+/***********************************************************************
+ *           GetNumaProcessorNode (KERNEL32.@)
+ */
+BOOL WINAPI GetNumaProcessorNode(UCHAR processor, PUCHAR node)
+{
+    SYSTEM_INFO si;
+
+    TRACE("(%d, %p)\n", processor, node);
+
+    GetSystemInfo( &si );
+    if (processor < si.dwNumberOfProcessors)
+    {
+        *node = 0;
+        return TRUE;
+    }
+
+    *node = 0xFF;
+    SetLastError(ERROR_INVALID_PARAMETER);
+    return FALSE;
+}
+
 /**********************************************************************
  *           GetProcessDEPPolicy     (KERNEL32.@)
  */
@@ -4013,4 +4086,124 @@ UINT WINAPI GetSystemFirmwareTable(DWORD provider, DWORD id, PVOID buffer, DWORD
     FIXME("(%d %d %p %d):stub\n", provider, id, buffer, size);
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return 0;
+}
+
+struct proc_thread_attr
+{
+    DWORD_PTR attr;
+    SIZE_T size;
+    void *value;
+};
+
+struct _PROC_THREAD_ATTRIBUTE_LIST
+{
+    DWORD mask;  /* bitmask of items in list */
+    DWORD size;  /* max number of items in list */
+    DWORD count; /* number of items in list */
+    DWORD pad;
+    DWORD_PTR unk;
+    struct proc_thread_attr attrs[1];
+};
+
+/***********************************************************************
+ *           InitializeProcThreadAttributeList       (KERNEL32.@)
+ */
+BOOL WINAPI InitializeProcThreadAttributeList(struct _PROC_THREAD_ATTRIBUTE_LIST *list,
+                                              DWORD count, DWORD flags, SIZE_T *size)
+{
+    SIZE_T needed;
+    BOOL ret = FALSE;
+
+    TRACE("(%p %d %x %p)\n", list, count, flags, size);
+
+    needed = FIELD_OFFSET(struct _PROC_THREAD_ATTRIBUTE_LIST, attrs[count]);
+    if (list && *size >= needed)
+    {
+        list->mask = 0;
+        list->size = count;
+        list->count = 0;
+        list->unk = 0;
+        ret = TRUE;
+    }
+    else
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+
+    *size = needed;
+    return ret;
+}
+
+/***********************************************************************
+ *           UpdateProcThreadAttribute       (KERNEL32.@)
+ */
+BOOL WINAPI UpdateProcThreadAttribute(struct _PROC_THREAD_ATTRIBUTE_LIST *list,
+                                      DWORD flags, DWORD_PTR attr, void *value, SIZE_T size,
+                                      void *prev_ret, SIZE_T *size_ret)
+{
+    DWORD mask;
+    struct proc_thread_attr *entry;
+
+    TRACE("(%p %x %08lx %p %ld %p %p)\n", list, flags, attr, value, size, prev_ret, size_ret);
+
+    if (list->count >= list->size)
+    {
+        SetLastError(ERROR_GEN_FAILURE);
+        return FALSE;
+    }
+
+    switch (attr)
+    {
+    case PROC_THREAD_ATTRIBUTE_PARENT_PROCESS:
+        if (size != sizeof(HANDLE))
+        {
+            SetLastError(ERROR_BAD_LENGTH);
+            return FALSE;
+        }
+        break;
+
+    case PROC_THREAD_ATTRIBUTE_HANDLE_LIST:
+        if ((size / sizeof(HANDLE)) * sizeof(HANDLE) != size)
+        {
+            SetLastError(ERROR_BAD_LENGTH);
+            return FALSE;
+        }
+        break;
+
+    case PROC_THREAD_ATTRIBUTE_IDEAL_PROCESSOR:
+        if (size != sizeof(PROCESSOR_NUMBER))
+        {
+            SetLastError(ERROR_BAD_LENGTH);
+            return FALSE;
+        }
+        break;
+
+    default:
+        SetLastError(ERROR_NOT_SUPPORTED);
+        return FALSE;
+    }
+
+    mask = 1 << (attr & PROC_THREAD_ATTRIBUTE_NUMBER);
+
+    if (list->mask & mask)
+    {
+        SetLastError(ERROR_OBJECT_NAME_EXISTS);
+        return FALSE;
+    }
+
+    list->mask |= mask;
+
+    entry = list->attrs + list->count;
+    entry->attr = attr;
+    entry->size = size;
+    entry->value = value;
+    list->count++;
+
+    return TRUE;
+}
+
+/***********************************************************************
+ *           DeleteProcThreadAttributeList       (KERNEL32.@)
+ */
+void WINAPI DeleteProcThreadAttributeList(struct _PROC_THREAD_ATTRIBUTE_LIST *list)
+{
+    return;
 }

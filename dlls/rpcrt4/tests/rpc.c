@@ -2,6 +2,7 @@
  * Unit test suite for rpc functions
  *
  * Copyright 2002 Greg Turner
+ * Copyright 2008-2009 Robert Shearman
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -21,6 +22,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+#define COBJMACROS
 #include <ntstatus.h>
 #define WIN32_NO_STATUS
 #include "wine/test.h"
@@ -29,7 +31,10 @@
 #include <winnt.h>
 #include <winerror.h>
 #include <ole2.h>
+#include <oleauto.h>
 #include <ntsecapi.h>
+#include <initguid.h>
+#include <netfw.h>
 
 #include "rpc.h"
 #include "rpcdce.h"
@@ -224,10 +229,8 @@ static void test_rpc_ncacn_ip_tcp(void)
     ok(status == RPC_S_OK, "return wrong\n");
 
     status = RpcMgmtStopServerListening(NULL);
-todo_wine {
     ok(status == RPC_S_NOT_LISTENING,
        "wrong RpcMgmtStopServerListening error (%u)\n", status);
-}
 
     status = RpcMgmtWaitServerListen();
     ok(status == RPC_S_NOT_LISTENING,
@@ -244,9 +247,7 @@ todo_wine {
     ok(status == RPC_S_OK, "RpcServerRegisterIf failed (%u)\n", status);
 
     status = RpcServerListen(1, 20, TRUE);
-todo_wine {
     ok(status == RPC_S_OK, "RpcServerListen failed (%u)\n", status);
-}
 
     status = RpcServerListen(1, 20, TRUE);
 todo_wine {
@@ -435,13 +436,10 @@ static void test_I_RpcMapWin32Status(void)
     RPC_STATUS rpc_status;
     BOOL w2k3_up = FALSE;
 
-    /* Windows 2003 and Vista return STATUS_UNSUCCESSFUL if given an unknown status */
+    /* Windows 2003 and above return STATUS_UNSUCCESSFUL if given an unknown status */
     win32status = I_RpcMapWin32Status(9999);
     if (win32status == STATUS_UNSUCCESSFUL)
-    {
-        trace("We are on Windows 2003 or Vista\n");
         w2k3_up = TRUE;
-    }
 
     /* On Windows XP-SP1 and below some statuses are not mapped and return
      * the given status
@@ -665,7 +663,7 @@ static void test_I_RpcExceptionFilter(void)
 
     if (!pI_RpcExceptionFilter)
     {
-        skip("I_RpcExceptionFilter not exported\n");
+        win_skip("I_RpcExceptionFilter not exported\n");
         return;
     }
 
@@ -684,9 +682,9 @@ static void test_I_RpcExceptionFilter(void)
         case STATUS_ACCESS_VIOLATION:
         case STATUS_ILLEGAL_INSTRUCTION:
         case STATUS_PRIVILEGED_INSTRUCTION:
-        case 0xc00000aa /* STATUS_INSTRUCTION_MISALIGNMENT */:
+        case STATUS_INSTRUCTION_MISALIGNMENT:
         case STATUS_STACK_OVERFLOW:
-        case 0xc0000194 /* STATUS_POSSIBLE_DEADLOCK */:
+        case STATUS_POSSIBLE_DEADLOCK:
             ok(retval == EXCEPTION_CONTINUE_SEARCH, "I_RpcExceptionFilter(0x%x) should have returned %d instead of %d\n",
                exception, EXCEPTION_CONTINUE_SEARCH, retval);
             break;
@@ -791,13 +789,17 @@ static void test_UuidCreateSequential(void)
     UUID guid1;
     BYTE version;
     RPC_STATUS (WINAPI *pUuidCreateSequential)(UUID *) = (void *)GetProcAddress(GetModuleHandleA("rpcrt4.dll"), "UuidCreateSequential");
+    RPC_STATUS (WINAPI *pI_UuidCreate)(UUID *) = (void*)GetProcAddress(GetModuleHandleA("rpcrt4.dll"), "I_UuidCreate");
     RPC_STATUS ret;
 
     if (!pUuidCreateSequential)
     {
-        skip("UuidCreateSequential not exported\n");
+        win_skip("UuidCreateSequential not exported\n");
         return;
     }
+
+    ok(pI_UuidCreate != pUuidCreateSequential, "got %p, %p\n", pI_UuidCreate, pUuidCreateSequential);
+
     ret = pUuidCreateSequential(&guid1);
     ok(!ret || ret == RPC_S_UUID_LOCAL_ONLY,
        "expected RPC_S_OK or RPC_S_UUID_LOCAL_ONLY, got %08x\n", ret);
@@ -812,7 +814,7 @@ static void test_UuidCreateSequential(void)
             /* If the call succeeded, there's a valid (non-multicast) MAC
              * address in the uuid:
              */
-            ok(!(guid1.Data4[2] & 0x01),
+            ok(!(guid1.Data4[2] & 0x01) || broken(guid1.Data4[2] & 0x01), /* Win 8.1 */
                "GUID does not appear to contain a MAC address: %s\n",
                wine_dbgstr_guid(&guid1));
         }
@@ -836,6 +838,14 @@ static void test_UuidCreateSequential(void)
         ok(!memcmp(guid1.Data4, guid2.Data4, sizeof(guid2.Data4)),
            "unexpected value in MAC address: %s\n",
            wine_dbgstr_guid(&guid2));
+
+        /* I_UuidCreate does exactly the same */
+        pI_UuidCreate(&guid2);
+        version = (guid2.Data3 & 0xf000) >> 12;
+        ok(version == 1, "unexpected version %d\n", version);
+        ok(!memcmp(guid1.Data4, guid2.Data4, sizeof(guid2.Data4)),
+           "unexpected value in MAC address: %s\n",
+           wine_dbgstr_guid(&guid2));
     }
 }
 
@@ -854,19 +864,12 @@ static void test_RpcServerInqDefaultPrincName(void)
 {
     RPC_STATUS ret;
     RPC_CSTR principal, saved_principal;
-    BOOLEAN (WINAPI *pGetUserNameExA)(EXTENDED_NAME_FORMAT,LPSTR,PULONG);
     char *username;
     ULONG len = 0;
 
-    pGetUserNameExA = (void *)GetProcAddress( LoadLibraryA("secur32.dll"), "GetUserNameExA" );
-    if (!pGetUserNameExA)
-    {
-        win_skip( "GetUserNameExA not exported\n" );
-        return;
-    }
-    pGetUserNameExA( NameSamCompatible, NULL, &len );
+    GetUserNameExA( NameSamCompatible, NULL, &len );
     username = HeapAlloc( GetProcessHeap(), 0, len );
-    pGetUserNameExA( NameSamCompatible, username, &len );
+    GetUserNameExA( NameSamCompatible, username, &len );
 
     ret = RpcServerInqDefaultPrincNameA( 0, NULL );
     ok( ret == RPC_S_UNKNOWN_AUTHN_SERVICE, "got %u\n", ret );
@@ -903,11 +906,301 @@ static void test_RpcServerInqDefaultPrincName(void)
     HeapFree( GetProcessHeap(), 0, username );
 }
 
+static void test_RpcServerRegisterAuthInfo(void)
+{
+    RPC_STATUS status;
+
+    status = RpcServerRegisterAuthInfoW(NULL, 600, NULL, NULL);
+    ok(status == RPC_S_UNKNOWN_AUTHN_SERVICE, "status = %x\n", status);
+}
+
+static void test_RpcServerUseProtseq(void)
+{
+    RPC_STATUS status;
+    RPC_BINDING_VECTOR *bindings;
+    ULONG i;
+    ULONG binding_count_before;
+    ULONG binding_count_after1;
+    ULONG binding_count_after2;
+    ULONG endpoints_registered = 0;
+    static unsigned char iptcp[] = "ncacn_ip_tcp";
+    static unsigned char np[] = "ncacn_np";
+    static unsigned char ncalrpc[] = "ncalrpc";
+    BOOL iptcp_registered = FALSE, np_registered = FALSE, ncalrpc_registered = FALSE;
+
+    status = RpcServerInqBindings(&bindings);
+    if (status == RPC_S_NO_BINDINGS)
+        binding_count_before = 0;
+    else
+    {
+        binding_count_before = bindings->Count;
+        ok(status == RPC_S_OK, "RpcServerInqBindings failed with status %d\n", status);
+        for (i = 0; i < bindings->Count; i++)
+        {
+            RPC_CSTR str_bind;
+            status = RpcBindingToStringBindingA(bindings->BindingH[i], &str_bind);
+            ok(status == RPC_S_OK, "RpcBindingToStringBinding failed with status %d\n", status);
+            if (lstrlenA((const char *)str_bind) > 12 && !memcmp(str_bind, "ncacn_ip_tcp", 12))
+                iptcp_registered = TRUE;
+            if (lstrlenA((const char *)str_bind) > 8 && !memcmp(str_bind, "ncacn_np", 8))
+                np_registered = TRUE;
+            if (lstrlenA((const char *)str_bind) > 7 && !memcmp(str_bind, "ncalrpc", 7))
+                ncalrpc_registered = TRUE;
+            RpcStringFreeA(&str_bind);
+        }
+        RpcBindingVectorFree(&bindings);
+    }
+
+    /* show that RpcServerUseProtseqEp(..., NULL, ...) is the same as
+     * RpcServerUseProtseq(...) */
+    status = RpcServerUseProtseqEpA(ncalrpc, 0, NULL, NULL);
+    ok(status == RPC_S_OK || broken(status == RPC_S_INVALID_ENDPOINT_FORMAT),
+       "RpcServerUseProtseqEp with NULL endpoint failed with status %d\n",
+       status);
+
+    /* register protocol sequences without explicit endpoints */
+    status = RpcServerUseProtseqA(np, 0, NULL);
+    if (status == RPC_S_PROTSEQ_NOT_SUPPORTED)
+        win_skip("ncacn_np not supported\n");
+    else
+        ok(status == RPC_S_OK, "RpcServerUseProtseq(ncacn_np) failed with status %d\n", status);
+    if (status == RPC_S_OK && !np_registered) endpoints_registered++;
+
+    status = RpcServerUseProtseqA(iptcp, 0, NULL);
+    ok(status == RPC_S_OK, "RpcServerUseProtseq(ncacn_ip_tcp) failed with status %d\n", status);
+    if (status == RPC_S_OK && !iptcp_registered) endpoints_registered++;
+
+    status = RpcServerUseProtseqA(ncalrpc, 0, NULL);
+    ok(status == RPC_S_OK, "RpcServerUseProtseqEp(ncalrpc) failed with status %d\n", status);
+    if (status == RPC_S_OK && !ncalrpc_registered) endpoints_registered++;
+
+    status = RpcServerInqBindings(&bindings);
+    ok(status == RPC_S_OK, "RpcServerInqBindings failed with status %d\n", status);
+    binding_count_after1 = bindings->Count;
+    ok(binding_count_after1 == binding_count_before + endpoints_registered,
+       "wrong binding count - before: %u, after %u, endpoints registered %u\n",
+       binding_count_before, binding_count_after1, endpoints_registered);
+    for (i = 0; i < bindings->Count; i++)
+    {
+        RPC_CSTR str_bind;
+        status = RpcBindingToStringBindingA(bindings->BindingH[i], &str_bind);
+        ok(status == RPC_S_OK, "RpcBindingToStringBinding failed with status %d\n", status);
+        trace("string binding: %s\n", str_bind);
+        RpcStringFreeA(&str_bind);
+    }
+    RpcBindingVectorFree(&bindings);
+
+    /* re-register - endpoints should be reused */
+    status = RpcServerUseProtseqA(np, 0, NULL);
+    if (status == RPC_S_PROTSEQ_NOT_SUPPORTED)
+        win_skip("ncacn_np not supported\n");
+    else
+        ok(status == RPC_S_OK, "RpcServerUseProtseq(ncacn_np) failed with status %d\n", status);
+
+    status = RpcServerUseProtseqA(iptcp, 0, NULL);
+    ok(status == RPC_S_OK, "RpcServerUseProtseq(ncacn_ip_tcp) failed with status %d\n", status);
+
+    status = RpcServerUseProtseqA(ncalrpc, 0, NULL);
+    ok(status == RPC_S_OK, "RpcServerUseProtseqEp(ncalrpc) failed with status %d\n", status);
+
+    status = RpcServerInqBindings(&bindings);
+    ok(status == RPC_S_OK, "RpcServerInqBindings failed with status %d\n", status);
+    binding_count_after2 = bindings->Count;
+    ok(binding_count_after2 == binding_count_after1,
+       "bindings should have been re-used - after1: %u after2: %u\n",
+       binding_count_after1, binding_count_after2);
+    RpcBindingVectorFree(&bindings);
+}
+
+static void test_endpoint_mapper(RPC_CSTR protseq, RPC_CSTR address)
+{
+    static unsigned char annotation[] = "Test annotation string.";
+    RPC_STATUS status;
+    RPC_BINDING_VECTOR *binding_vector;
+    handle_t handle;
+    unsigned char *binding;
+
+    status = RpcServerRegisterIf(IFoo_v0_0_s_ifspec, NULL, NULL);
+    ok(status == RPC_S_OK, "%s: RpcServerRegisterIf failed (%u)\n", protseq, status);
+
+    status = RpcServerInqBindings(&binding_vector);
+    ok(status == RPC_S_OK, "%s: RpcServerInqBindings failed with error %u\n", protseq, status);
+
+    /* register endpoints created in test_RpcServerUseProtseq */
+    status = RpcEpRegisterA(IFoo_v0_0_s_ifspec, binding_vector, NULL, annotation);
+    ok(status == RPC_S_OK, "%s: RpcEpRegisterA failed with error %u\n", protseq, status);
+    /* reregister the same endpoint with no annotation */
+    status = RpcEpRegisterA(IFoo_v0_0_s_ifspec, binding_vector, NULL, NULL);
+    ok(status == RPC_S_OK, "%s: RpcEpRegisterA failed with error %u\n", protseq, status);
+
+    status = RpcStringBindingComposeA(NULL, protseq, address,
+                                     NULL, NULL, &binding);
+    ok(status == RPC_S_OK, "%s: RpcStringBindingCompose failed (%u)\n", protseq, status);
+
+    status = RpcBindingFromStringBindingA(binding, &handle);
+    ok(status == RPC_S_OK, "%s: RpcBindingFromStringBinding failed (%u)\n", protseq, status);
+
+    RpcStringFreeA(&binding);
+
+    status = RpcBindingReset(handle);
+    ok(status == RPC_S_OK, "%s: RpcBindingReset failed with error %u\n", protseq, status);
+
+    status = RpcEpResolveBinding(handle, IFoo_v0_0_s_ifspec);
+    ok(status == RPC_S_OK || broken(status == RPC_S_SERVER_UNAVAILABLE), /* win9x */
+       "%s: RpcEpResolveBinding failed with error %u\n", protseq, status);
+
+    status = RpcBindingReset(handle);
+    ok(status == RPC_S_OK, "%s: RpcBindingReset failed with error %u\n", protseq, status);
+
+    status = RpcBindingFree(&handle);
+    ok(status == RPC_S_OK, "%s: RpcBindingFree failed with error %u\n", protseq, status);
+
+    status = RpcServerUnregisterIf(NULL, NULL, FALSE);
+    ok(status == RPC_S_OK, "%s: RpcServerUnregisterIf failed (%u)\n", protseq, status);
+
+    status = RpcEpUnregister(IFoo_v0_0_s_ifspec, binding_vector, NULL);
+    ok(status == RPC_S_OK, "%s: RpcEpUnregisterA failed with error %u\n", protseq, status);
+
+    status = RpcBindingVectorFree(&binding_vector);
+    ok(status == RPC_S_OK, "%s: RpcBindingVectorFree failed with error %u\n", protseq, status);
+}
+
+static BOOL is_process_elevated(void)
+{
+    HANDLE token;
+    if (OpenProcessToken( GetCurrentProcess(), TOKEN_QUERY, &token ))
+    {
+        TOKEN_ELEVATION_TYPE type;
+        DWORD size;
+        BOOL ret;
+
+        ret = GetTokenInformation( token, TokenElevationType, &type, sizeof(type), &size );
+        CloseHandle( token );
+        return (ret && type == TokenElevationTypeFull);
+    }
+    return FALSE;
+}
+
+static BOOL is_firewall_enabled(void)
+{
+    HRESULT hr, init;
+    INetFwMgr *mgr = NULL;
+    INetFwPolicy *policy = NULL;
+    INetFwProfile *profile = NULL;
+    VARIANT_BOOL enabled = VARIANT_FALSE;
+
+    init = CoInitializeEx( 0, COINIT_APARTMENTTHREADED );
+
+    hr = CoCreateInstance( &CLSID_NetFwMgr, NULL, CLSCTX_INPROC_SERVER, &IID_INetFwMgr,
+                           (void **)&mgr );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    hr = INetFwMgr_get_LocalPolicy( mgr, &policy );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    hr = INetFwPolicy_get_CurrentProfile( policy, &profile );
+    if (hr != S_OK) goto done;
+
+    hr = INetFwProfile_get_FirewallEnabled( profile, &enabled );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+done:
+    if (policy) INetFwPolicy_Release( policy );
+    if (profile) INetFwProfile_Release( profile );
+    if (mgr) INetFwMgr_Release( mgr );
+    if (SUCCEEDED( init )) CoUninitialize();
+    return (enabled == VARIANT_TRUE);
+}
+
+enum firewall_op
+{
+    APP_ADD,
+    APP_REMOVE
+};
+
+static HRESULT set_firewall( enum firewall_op op )
+{
+    static const WCHAR testW[] = {'r','p','c','r','t','4','_','t','e','s','t',0};
+    HRESULT hr, init;
+    INetFwMgr *mgr = NULL;
+    INetFwPolicy *policy = NULL;
+    INetFwProfile *profile = NULL;
+    INetFwAuthorizedApplication *app = NULL;
+    INetFwAuthorizedApplications *apps = NULL;
+    BSTR name, image = SysAllocStringLen( NULL, MAX_PATH );
+
+    if (!GetModuleFileNameW( NULL, image, MAX_PATH ))
+    {
+        SysFreeString( image );
+        return E_FAIL;
+    }
+    init = CoInitializeEx( 0, COINIT_APARTMENTTHREADED );
+
+    hr = CoCreateInstance( &CLSID_NetFwMgr, NULL, CLSCTX_INPROC_SERVER, &IID_INetFwMgr,
+                           (void **)&mgr );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    hr = INetFwMgr_get_LocalPolicy( mgr, &policy );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    hr = INetFwPolicy_get_CurrentProfile( policy, &profile );
+    if (hr != S_OK) goto done;
+
+    INetFwProfile_get_AuthorizedApplications( profile, &apps );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    hr = CoCreateInstance( &CLSID_NetFwAuthorizedApplication, NULL, CLSCTX_INPROC_SERVER,
+                           &IID_INetFwAuthorizedApplication, (void **)&app );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    hr = INetFwAuthorizedApplication_put_ProcessImageFileName( app, image );
+    if (hr != S_OK) goto done;
+
+    name = SysAllocString( testW );
+    hr = INetFwAuthorizedApplication_put_Name( app, name );
+    SysFreeString( name );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    if (op == APP_ADD)
+        hr = INetFwAuthorizedApplications_Add( apps, app );
+    else if (op == APP_REMOVE)
+        hr = INetFwAuthorizedApplications_Remove( apps, image );
+    else
+        hr = E_INVALIDARG;
+
+done:
+    if (app) INetFwAuthorizedApplication_Release( app );
+    if (apps) INetFwAuthorizedApplications_Release( apps );
+    if (policy) INetFwPolicy_Release( policy );
+    if (profile) INetFwProfile_Release( profile );
+    if (mgr) INetFwMgr_Release( mgr );
+    if (SUCCEEDED( init )) CoUninitialize();
+    SysFreeString( image );
+    return hr;
+}
+
 START_TEST( rpc )
 {
+    static unsigned char ncacn_np[] = "ncacn_np";
+    static unsigned char ncalrpc[] = "ncalrpc";
+    static unsigned char np_address[] = ".";
+    BOOL firewall_enabled = is_firewall_enabled();
+
+    if (firewall_enabled && !is_process_elevated())
+    {
+        skip("no privileges, skipping tests to avoid firewall dialog\n");
+        return;
+    }
+
     UuidConversionAndComparison();
     TestDceErrorInqText();
-    test_rpc_ncacn_ip_tcp();
     test_towers();
     test_I_RpcMapWin32Status();
     test_RpcStringBindingParseA();
@@ -917,4 +1210,22 @@ START_TEST( rpc )
     test_UuidCreateSequential();
     test_RpcBindingFree();
     test_RpcServerInqDefaultPrincName();
+    test_RpcServerRegisterAuthInfo();
+
+    if (firewall_enabled)
+    {
+        HRESULT hr = set_firewall(APP_ADD);
+        if (hr != S_OK)
+        {
+            skip("can't authorize app in firewall %08x\n", hr);
+            return;
+        }
+    }
+
+    test_rpc_ncacn_ip_tcp();
+    test_RpcServerUseProtseq();
+    test_endpoint_mapper(ncacn_np, np_address);
+    test_endpoint_mapper(ncalrpc, NULL);
+
+    if (firewall_enabled) set_firewall(APP_REMOVE);
 }

@@ -29,7 +29,6 @@
 
 #define COBJMACROS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "windef.h"
 #include "winbase.h"
@@ -52,21 +51,21 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(appwizcpl);
 
-#define GECKO_VERSION "2.34"
+#define GECKO_VERSION "2.47"
 
 #ifdef __i386__
 #define ARCH_STRING "x86"
-#define GECKO_SHA "e9646cf9d683a6f4e254bcff3864a863fe8287e9"
+#define GECKO_SHA "f9a937e9a46d47fda701d257e60601f22e7a4510"
 #elif defined(__x86_64__)
 #define ARCH_STRING "x86_64"
-#define GECKO_SHA "2b4274f7c3b22b74c35ebc0423bb943597af3945"
+#define GECKO_SHA "8efa810b1ac83d59e0171d4347d21730560926da"
 #else
 #define ARCH_STRING ""
 #define GECKO_SHA "???"
 #endif
 
-#define MONO_VERSION "4.5.4"
-#define MONO_SHA "2b271d0bc92d5c9c45febd76fb11f9fcc29ea6d8"
+#define MONO_VERSION "4.6.4"
+#define MONO_SHA "d58509c3a4e5fa88c56c14e0413a803aa82f6118"
 
 typedef struct {
     const char *version;
@@ -307,7 +306,7 @@ static enum install_res install_from_default_dir(void)
     const char *data_dir, *package_dir;
     char *dir_buf = NULL;
     int len;
-    BOOL ret;
+    enum install_res ret;
 
     if((data_dir = wine_get_data_dir())) {
         package_dir = data_dir;
@@ -404,7 +403,7 @@ static enum install_res install_from_cache(void)
         return INSTALL_NEXT;
 
     if(!sha_check(cache_file_name)) {
-        WARN("could not validate check sum\n");
+        WARN("could not validate checksum\n");
         DeleteFileW(cache_file_name);
         heap_free(cache_file_name);
         return INSTALL_NEXT;
@@ -415,11 +414,19 @@ static enum install_res install_from_cache(void)
     return res;
 }
 
+static IInternetBindInfo InstallCallbackBindInfo;
+
 static HRESULT WINAPI InstallCallback_QueryInterface(IBindStatusCallback *iface,
         REFIID riid, void **ppv)
 {
     if(IsEqualGUID(&IID_IUnknown, riid) || IsEqualGUID(&IID_IBindStatusCallback, riid)) {
         *ppv = iface;
+        return S_OK;
+    }
+
+    if(IsEqualGUID(&IID_IInternetBindInfo, riid)) {
+        TRACE("IID_IInternetBindInfo\n");
+        *ppv = &InstallCallbackBindInfo;
         return S_OK;
     }
 
@@ -564,10 +571,64 @@ static const IBindStatusCallbackVtbl InstallCallbackVtbl = {
 
 static IBindStatusCallback InstallCallback = { &InstallCallbackVtbl };
 
+static HRESULT WINAPI InstallCallbackBindInfo_QueryInterface(IInternetBindInfo *iface, REFIID riid, void **ppv)
+{
+    return IBindStatusCallback_QueryInterface(&InstallCallback, riid, ppv);
+}
+
+static ULONG WINAPI InstallCallbackBindInfo_AddRef(IInternetBindInfo *iface)
+{
+    return 2;
+}
+
+static ULONG WINAPI InstallCallbackBindInfo_Release(IInternetBindInfo *iface)
+{
+    return 1;
+}
+
+static HRESULT WINAPI InstallCallbackBindInfo_GetBindInfo(IInternetBindInfo *iface, DWORD *bindf, BINDINFO *bindinfo)
+{
+    ERR("\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI InstallCallbackBindInfo_GetBindString(IInternetBindInfo *iface, ULONG string_type,
+        WCHAR **strs, ULONG cnt, ULONG *fetched)
+{
+    static const WCHAR wine_addon_downloaderW[] =
+        {'W','i','n','e',' ','A','d','d','o','n',' ','D','o','w','n','l','o','a','d','e','r',0};
+
+    switch(string_type) {
+    case BINDSTRING_USER_AGENT:
+        TRACE("BINDSTRING_USER_AGENT\n");
+
+        *strs = CoTaskMemAlloc(sizeof(wine_addon_downloaderW));
+        if(!*strs)
+            return E_OUTOFMEMORY;
+
+        memcpy(*strs, wine_addon_downloaderW, sizeof(wine_addon_downloaderW));
+        *fetched = 1;
+        return S_OK;
+    }
+
+    return E_NOTIMPL;
+}
+
+static const IInternetBindInfoVtbl InstallCallbackBindInfoVtbl = {
+    InstallCallbackBindInfo_QueryInterface,
+    InstallCallbackBindInfo_AddRef,
+    InstallCallbackBindInfo_Release,
+    InstallCallbackBindInfo_GetBindInfo,
+    InstallCallbackBindInfo_GetBindString
+};
+
+static IInternetBindInfo InstallCallbackBindInfo = { &InstallCallbackBindInfoVtbl };
+
 static void append_url_params( WCHAR *url )
 {
     static const WCHAR arch_formatW[] = {'?','a','r','c','h','='};
     static const WCHAR v_formatW[] = {'&','v','='};
+    static const WCHAR winevW[] = {'&','w','i','n','e','v','='};
     DWORD size = INTERNET_MAX_URL_LENGTH * sizeof(WCHAR);
     DWORD len = strlenW(url);
 
@@ -577,7 +638,10 @@ static void append_url_params( WCHAR *url )
                                url+len, size/sizeof(WCHAR)-len)-1;
     memcpy(url+len, v_formatW, sizeof(v_formatW));
     len += sizeof(v_formatW)/sizeof(WCHAR);
-    MultiByteToWideChar(CP_ACP, 0, addon->version, -1, url+len, size/sizeof(WCHAR)-len);
+    len += MultiByteToWideChar(CP_ACP, 0, addon->version, -1, url+len, size/sizeof(WCHAR)-len)-1;
+    memcpy(url+len, winevW, sizeof(winevW));
+    len += sizeof(winevW)/sizeof(WCHAR);
+    MultiByteToWideChar(CP_ACP, 0, PACKAGE_VERSION, -1, url+len, size/sizeof(WCHAR)-len);
 }
 
 static LPWSTR get_url(void)

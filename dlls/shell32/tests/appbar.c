@@ -29,6 +29,7 @@
 static const CHAR testwindow_class[] = "testwindow";
 
 static HMONITOR (WINAPI *pMonitorFromWindow)(HWND, DWORD);
+static HRESULT (WINAPI *pGetCurrentProcessExplicitAppUserModelID)(PWSTR*);
 
 typedef BOOL (*boolean_function)(void);
 
@@ -195,9 +196,8 @@ static void register_testwindow_class(void)
 
 #define test_window_rects(a, b) \
     ok(!IntersectRect(&rc, &windows[a].allocated_rect, &windows[b].allocated_rect), \
-        "rectangles intersect (%i,%i,%i,%i)/(%i,%i,%i,%i)\n", \
-        windows[a].allocated_rect.left, windows[a].allocated_rect.top, windows[a].allocated_rect.right, windows[a].allocated_rect.bottom, \
-        windows[b].allocated_rect.left, windows[b].allocated_rect.top, windows[b].allocated_rect.right, windows[b].allocated_rect.bottom)
+        "rectangles intersect %s / %s\n", wine_dbgstr_rect(&windows[a].allocated_rect), \
+        wine_dbgstr_rect(&windows[b].allocated_rect))
 
 static void test_setpos(void)
 {
@@ -231,10 +231,7 @@ static void test_setpos(void)
     windows[0].registered = TRUE;
     windows[0].to_be_deleted = FALSE;
     windows[0].edge = ABE_BOTTOM;
-    windows[0].desired_rect.left = 0;
-    windows[0].desired_rect.right = screen_width;
-    windows[0].desired_rect.top = screen_height - 15;
-    windows[0].desired_rect.bottom = screen_height;
+    SetRect(&windows[0].desired_rect, 0, screen_height - 15, screen_width, screen_height);
     SetWindowLongPtrA(windows[0].hwnd, GWLP_USERDATA, (LONG_PTR)&windows[0]);
     testwindow_setpos(windows[0].hwnd);
     do_events();
@@ -252,10 +249,7 @@ static void test_setpos(void)
     windows[1].registered = TRUE;
     windows[1].to_be_deleted = FALSE;
     windows[1].edge = ABE_BOTTOM;
-    windows[1].desired_rect.left = 0;
-    windows[1].desired_rect.right = screen_width;
-    windows[1].desired_rect.top = screen_height - 10;
-    windows[1].desired_rect.bottom = screen_height;
+    SetRect(&windows[1].desired_rect, 0, screen_height - 10, screen_width, screen_height);
     SetWindowLongPtrA(windows[1].hwnd, GWLP_USERDATA, (LONG_PTR)&windows[1]);
     testwindow_setpos(windows[1].hwnd);
 
@@ -284,10 +278,7 @@ static void test_setpos(void)
     windows[2].registered = TRUE;
     windows[2].to_be_deleted = FALSE;
     windows[2].edge = ABE_BOTTOM;
-    windows[2].desired_rect.left = 0;
-    windows[2].desired_rect.right = screen_width;
-    windows[2].desired_rect.top = screen_height - 10;
-    windows[2].desired_rect.bottom = screen_height;
+    SetRect(&windows[2].desired_rect, 0, screen_height - 10, screen_width, screen_height);
     SetWindowLongPtrA(windows[2].hwnd, GWLP_USERDATA, (LONG_PTR)&windows[2]);
     testwindow_setpos(windows[2].hwnd);
 
@@ -298,10 +289,7 @@ static void test_setpos(void)
 
     /* move windows[2] to the right side of the screen */
     windows[2].edge = ABE_RIGHT;
-    windows[2].desired_rect.left = screen_width - 15;
-    windows[2].desired_rect.right = screen_width;
-    windows[2].desired_rect.top = 0;
-    windows[2].desired_rect.bottom = screen_height;
+    SetRect(&windows[2].desired_rect, screen_width - 15, 0, screen_width, screen_height);
     testwindow_setpos(windows[2].hwnd);
 
     do_events_until(no_appbars_intersect);
@@ -311,10 +299,7 @@ static void test_setpos(void)
 
     /* move windows[1] to the top of the screen */
     windows[1].edge = ABE_TOP;
-    windows[1].desired_rect.left = 0;
-    windows[1].desired_rect.right = screen_width;
-    windows[1].desired_rect.top = 0;
-    windows[1].desired_rect.bottom = 15;
+    SetRect(&windows[1].desired_rect, 0, 0, screen_width, 15);
     testwindow_setpos(windows[1].hwnd);
 
     do_events_until(no_appbars_intersect);
@@ -324,10 +309,7 @@ static void test_setpos(void)
 
     /* move windows[1] back to the bottom of the screen */
     windows[1].edge = ABE_BOTTOM;
-    windows[1].desired_rect.left = 0;
-    windows[1].desired_rect.right = screen_width;
-    windows[1].desired_rect.top = screen_height - 10;
-    windows[1].desired_rect.bottom = screen_height;
+    SetRect(&windows[1].desired_rect, 0, screen_height - 10, screen_width, screen_height);
     testwindow_setpos(windows[1].hwnd);
 
     do_events_until(no_appbars_intersect);
@@ -430,15 +412,39 @@ static void test_appbarget(void)
     return;
 }
 
+static void test_GetCurrentProcessExplicitAppUserModelID(void)
+{
+    WCHAR *appid;
+    HRESULT hr;
+
+    if (!pGetCurrentProcessExplicitAppUserModelID)
+    {
+        win_skip("GetCurrentProcessExplicitAppUserModelID() is not supported.\n");
+        return;
+    }
+
+    if (0) /* crashes on native */
+        hr = pGetCurrentProcessExplicitAppUserModelID(NULL);
+
+    appid = (void*)0xdeadbeef;
+    hr = pGetCurrentProcessExplicitAppUserModelID(&appid);
+todo_wine
+    ok(hr == E_FAIL, "got 0x%08x\n", hr);
+    ok(appid == NULL, "got %p\n", appid);
+}
+
 START_TEST(appbar)
 {
-    HMODULE huser32;
+    HMODULE huser32, hshell32;
 
     huser32 = GetModuleHandleA("user32.dll");
+    hshell32 = GetModuleHandleA("shell32.dll");
     pMonitorFromWindow = (void*)GetProcAddress(huser32, "MonitorFromWindow");
+    pGetCurrentProcessExplicitAppUserModelID = (void*)GetProcAddress(hshell32, "GetCurrentProcessExplicitAppUserModelID");
 
     register_testwindow_class();
 
     test_setpos();
     test_appbarget();
+    test_GetCurrentProcessExplicitAppUserModelID();
 }

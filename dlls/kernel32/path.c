@@ -28,8 +28,6 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "winerror.h"
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -122,7 +120,8 @@ static BOOL add_boot_rename_entry( LPCWSTR source, LPCWSTR dest, DWORD flags )
     static const WCHAR ValueName[] = {'P','e','n','d','i','n','g',
                                       'F','i','l','e','R','e','n','a','m','e',
                                       'O','p','e','r','a','t','i','o','n','s',0};
-    static const WCHAR SessionW[] = {'M','a','c','h','i','n','e','\\',
+    static const WCHAR SessionW[] = {'\\','R','e','g','i','s','t','r','y','\\',
+                                     'M','a','c','h','i','n','e','\\',
                                      'S','y','s','t','e','m','\\',
                                      'C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t','\\',
                                      'C','o','n','t','r','o','l','\\',
@@ -293,6 +292,7 @@ DWORD WINAPI GetLongPathNameW( LPCWSTR shortpath, LPWSTR longpath, DWORD longlen
     BOOL                unixabsolute;
     WIN32_FIND_DATAW    wfd;
     HANDLE              goit;
+    BOOL                is_legal_8dot3;
 
     if (!shortpath)
     {
@@ -335,22 +335,12 @@ DWORD WINAPI GetLongPathNameW( LPCWSTR shortpath, LPWSTR longpath, DWORD longlen
         /* check for path delimiters and reproduce them */
         if (shortpath[sp] == '\\' || shortpath[sp] == '/')
         {
-            if (!lp || tmplongpath[lp-1] != '\\')
-            {
-                /* strip double "\\" */
-                tmplongpath[lp++] = '\\';
-            }
+            tmplongpath[lp++] = shortpath[sp++];
             tmplongpath[lp] = 0; /* terminate string */
-            sp++;
             continue;
         }
 
         p = shortpath + sp;
-        if (sp == 0 && p[0] == '.' && (p[1] == '/' || p[1] == '\\'))
-        {
-            tmplongpath[lp++] = *p++;
-            tmplongpath[lp++] = *p++;
-        }
         for (; *p && *p != '/' && *p != '\\'; p++);
         tmplen = p - (shortpath + sp);
         lstrcpynW(tmplongpath + lp, shortpath + sp, tmplen + 1);
@@ -365,7 +355,7 @@ DWORD WINAPI GetLongPathNameW( LPCWSTR shortpath, LPWSTR longpath, DWORD longlen
             }
         }
 
-        /* Check if the file exists and use the existing file name */
+        /* Check if the file exists */
         goit = FindFirstFileW(tmplongpath, &wfd);
         if (goit == INVALID_HANDLE_VALUE)
         {
@@ -374,7 +364,12 @@ DWORD WINAPI GetLongPathNameW( LPCWSTR shortpath, LPWSTR longpath, DWORD longlen
             return 0;
         }
         FindClose(goit);
-        strcpyW(tmplongpath + lp, wfd.cFileName);
+
+        is_legal_8dot3 = FALSE;
+        CheckNameLegalDOS8Dot3W(tmplongpath + lp, NULL, 0, NULL, &is_legal_8dot3);
+        /* Use the existing file name if it's a short name */
+        if (is_legal_8dot3)
+            strcpyW(tmplongpath + lp, wfd.cFileName);
         lp += strlenW(tmplongpath + lp);
         sp += tmplen;
     }
@@ -442,10 +437,10 @@ DWORD WINAPI GetLongPathNameA( LPCSTR shortpath, LPSTR longpath, DWORD longlen )
  */
 DWORD WINAPI GetShortPathNameW( LPCWSTR longpath, LPWSTR shortpath, DWORD shortlen )
 {
-    WCHAR               tmpshortpath[MAX_PATHNAME_LEN];
+    WCHAR               *tmpshortpath;
     LPCWSTR             p;
     DWORD               sp = 0, lp = 0;
-    DWORD               tmplen;
+    DWORD               tmplen, buf_len;
     WIN32_FIND_DATAW    wfd;
     HANDLE              goit;
 
@@ -462,12 +457,29 @@ DWORD WINAPI GetShortPathNameW( LPCWSTR longpath, LPWSTR shortpath, DWORD shortl
         return 0;
     }
 
-    /* check for drive letter */
-    if (longpath[0] != '/' && longpath[1] == ':' )
+    /* code below only removes characters from string, never adds, so this is
+     * the largest buffer that tmpshortpath will need to have */
+    buf_len = strlenW(longpath) + 1;
+    tmpshortpath = HeapAlloc(GetProcessHeap(), 0, buf_len * sizeof(WCHAR));
+    if (!tmpshortpath)
     {
-        tmpshortpath[0] = longpath[0];
-        tmpshortpath[1] = ':';
-        sp = lp = 2;
+        SetLastError(ERROR_OUTOFMEMORY);
+        return 0;
+    }
+
+    if (longpath[0] == '\\' && longpath[1] == '\\' && longpath[2] == '?' && longpath[3] == '\\')
+    {
+        memcpy(tmpshortpath, longpath, 4 * sizeof(WCHAR));
+        sp = lp = 4;
+    }
+
+    /* check for drive letter */
+    if (longpath[lp] != '/' && longpath[lp + 1] == ':' )
+    {
+        tmpshortpath[sp] = longpath[lp];
+        tmpshortpath[sp + 1] = ':';
+        sp += 2;
+        lp += 2;
     }
 
     while (longpath[lp])
@@ -475,23 +487,12 @@ DWORD WINAPI GetShortPathNameW( LPCWSTR longpath, LPWSTR shortpath, DWORD shortl
         /* check for path delimiters and reproduce them */
         if (longpath[lp] == '\\' || longpath[lp] == '/')
         {
-            if (!sp || tmpshortpath[sp-1] != '\\')
-            {
-                /* strip double "\\" */
-                tmpshortpath[sp] = '\\';
-                sp++;
-            }
+            tmpshortpath[sp++] = longpath[lp++];
             tmpshortpath[sp] = 0; /* terminate string */
-            lp++;
             continue;
         }
 
         p = longpath + lp;
-        if (lp == 0 && p[0] == '.' && (p[1] == '/' || p[1] == '\\'))
-        {
-            tmpshortpath[sp++] = *p++;
-            tmpshortpath[sp++] = *p++;
-        }
         for (; *p && *p != '/' && *p != '\\'; p++);
         tmplen = p - (longpath + lp);
         lstrcpynW(tmpshortpath + sp, longpath + lp, tmplen + 1);
@@ -510,6 +511,23 @@ DWORD WINAPI GetShortPathNameW( LPCWSTR longpath, LPWSTR shortpath, DWORD shortl
         goit = FindFirstFileW(tmpshortpath, &wfd);
         if (goit == INVALID_HANDLE_VALUE) goto notfound;
         FindClose(goit);
+
+        /* In rare cases (like "a.abcd") short path may be longer than original path.
+         * Make sure we have enough space in temp buffer. */
+        if (wfd.cAlternateFileName[0] && tmplen < strlenW(wfd.cAlternateFileName))
+        {
+            WCHAR *new_buf;
+            buf_len += strlenW(wfd.cAlternateFileName) - tmplen;
+            new_buf = HeapReAlloc(GetProcessHeap(), 0, tmpshortpath, buf_len * sizeof(WCHAR));
+            if(!new_buf)
+            {
+                HeapFree(GetProcessHeap(), 0, tmpshortpath);
+                SetLastError(ERROR_OUTOFMEMORY);
+                return 0;
+            }
+            tmpshortpath = new_buf;
+        }
+
         strcpyW(tmpshortpath + sp, wfd.cAlternateFileName[0] ? wfd.cAlternateFileName : wfd.cFileName);
         sp += strlenW(tmpshortpath + sp);
         lp += tmplen;
@@ -524,9 +542,11 @@ DWORD WINAPI GetShortPathNameW( LPCWSTR longpath, LPWSTR shortpath, DWORD shortl
         tmplen--; /* length without 0 */
     }
 
+    HeapFree(GetProcessHeap(), 0, tmpshortpath);
     return tmplen;
 
  notfound:
+    HeapFree(GetProcessHeap(), 0, tmpshortpath);
     TRACE("not found!\n" );
     SetLastError ( ERROR_FILE_NOT_FOUND );
     return 0;
@@ -621,13 +641,18 @@ DWORD WINAPI GetTempPathW( DWORD count, LPWSTR path )
 
     ret++; /* add space for terminating 0 */
 
-    if (count)
+    if (count >= ret)
     {
         lstrcpynW(path, tmp_path, count);
-        if (count >= ret)
-            ret--; /* return length without 0 */
-        else if (count < 4)
-            path[0] = 0; /* avoid returning ambiguous "X:" */
+        /* the remaining buffer must be zeroed up to 32766 bytes in XP or 32767
+         * bytes after it, we will assume the > XP behavior for now */
+        memset(path + ret, 0, (min(count, 32767) - ret) * sizeof(WCHAR));
+        ret--; /* return length without 0 */
+    }
+    else if (count)
+    {
+        /* the buffer must be cleared if contents will not fit */
+        memset(path, 0, count * sizeof(WCHAR));
     }
 
     TRACE("returning %u, %s\n", ret, debugstr_w(path));
@@ -929,7 +954,6 @@ DWORD WINAPI SearchPathW( LPCWSTR path, LPCWSTR name, LPCWSTR ext, DWORD buflen,
             if (!search)
             {
                 SetLastError( ERROR_OUTOFMEMORY );
-                HeapFree( GetProcessHeap(), 0, dll_path );
                 return 0;
             }
             strcpyW( search, name );
@@ -1242,7 +1266,7 @@ BOOL WINAPI MoveFileWithProgressW( LPCWSTR source, LPCWSTR dest,
     attr.SecurityDescriptor = NULL;
     attr.SecurityQualityOfService = NULL;
 
-    status = NtOpenFile( &source_handle, 0, &attr, &io, 0, FILE_SYNCHRONOUS_IO_NONALERT );
+    status = NtOpenFile( &source_handle, SYNCHRONIZE, &attr, &io, 0, FILE_SYNCHRONOUS_IO_NONALERT );
     if (status == STATUS_SUCCESS)
         status = wine_nt_to_unix_file_name( &nt_name, &source_unix, FILE_OPEN, FALSE );
     RtlFreeUnicodeString( &nt_name );
@@ -1266,7 +1290,7 @@ BOOL WINAPI MoveFileWithProgressW( LPCWSTR source, LPCWSTR dest,
         SetLastError( ERROR_PATH_NOT_FOUND );
         goto error;
     }
-    status = NtOpenFile( &dest_handle, GENERIC_READ | GENERIC_WRITE, &attr, &io, 0,
+    status = NtOpenFile( &dest_handle, GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE, &attr, &io, 0,
                          FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT );
     if (status == STATUS_SUCCESS)  /* destination exists */
     {
@@ -1524,7 +1548,7 @@ BOOL WINAPI CreateDirectoryW( LPCWSTR path, LPSECURITY_ATTRIBUTES sa )
     attr.SecurityDescriptor = sa ? sa->lpSecurityDescriptor : NULL;
     attr.SecurityQualityOfService = NULL;
 
-    status = NtCreateFile( &handle, GENERIC_READ, &attr, &io, NULL,
+    status = NtCreateFile( &handle, GENERIC_READ | SYNCHRONIZE, &attr, &io, NULL,
                            FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_CREATE,
                            FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT, NULL, 0 );
 
@@ -1605,16 +1629,22 @@ BOOL WINAPI RemoveDirectoryW( LPCWSTR path )
     attr.SecurityDescriptor = NULL;
     attr.SecurityQualityOfService = NULL;
 
-    status = NtOpenFile( &handle, DELETE, &attr, &io,
+    status = NtOpenFile( &handle, DELETE | SYNCHRONIZE, &attr, &io,
                          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                          FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT );
-    if (status == STATUS_SUCCESS)
-        status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN, FALSE );
-    RtlFreeUnicodeString( &nt_name );
-
     if (status != STATUS_SUCCESS)
     {
         SetLastError( RtlNtStatusToDosError(status) );
+        RtlFreeUnicodeString( &nt_name );
+        return FALSE;
+    }
+
+    status = wine_nt_to_unix_file_name( &nt_name, &unix_name, FILE_OPEN, FALSE );
+    RtlFreeUnicodeString( &nt_name );
+    if (status != STATUS_SUCCESS)
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        NtClose( handle );
         return FALSE;
     }
 
@@ -1958,7 +1988,7 @@ WCHAR * CDECL wine_get_dos_file_name( LPCSTR str )
 /*************************************************************************
  *           CreateSymbolicLinkW   (KERNEL32.@)
  */
-BOOL WINAPI CreateSymbolicLinkW(LPCWSTR link, LPCWSTR target, DWORD flags)
+BOOLEAN WINAPI CreateSymbolicLinkW(LPCWSTR link, LPCWSTR target, DWORD flags)
 {
     FIXME("(%s %s %d): stub\n", debugstr_w(link), debugstr_w(target), flags);
     return TRUE;
@@ -1967,7 +1997,7 @@ BOOL WINAPI CreateSymbolicLinkW(LPCWSTR link, LPCWSTR target, DWORD flags)
 /*************************************************************************
  *           CreateSymbolicLinkA   (KERNEL32.@)
  */
-BOOL WINAPI CreateSymbolicLinkA(LPCSTR link, LPCSTR target, DWORD flags)
+BOOLEAN WINAPI CreateSymbolicLinkA(LPCSTR link, LPCSTR target, DWORD flags)
 {
     FIXME("(%s %s %d): stub\n", debugstr_a(link), debugstr_a(target), flags);
     return TRUE;
@@ -1990,5 +2020,74 @@ BOOL WINAPI CreateHardLinkTransactedW(LPCWSTR link, LPCWSTR target, LPSECURITY_A
 {
     FIXME("(%s %s %p %p): stub\n", debugstr_w(link), debugstr_w(target), sa, transaction);
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+/*************************************************************************
+ *           CheckNameLegalDOS8Dot3A   (KERNEL32.@)
+ */
+BOOL WINAPI CheckNameLegalDOS8Dot3A(const char *name, char *oemname, DWORD oemname_len,
+        BOOL *contains_spaces, BOOL *is_legal)
+{
+    WCHAR *nameW;
+
+    TRACE("(%s %p %u %p %p)\n", name, oemname,
+            oemname_len, contains_spaces, is_legal);
+
+    if (!name || !is_legal)
+        return FALSE;
+
+    if (!(nameW = FILE_name_AtoW( name, FALSE ))) return FALSE;
+
+    return CheckNameLegalDOS8Dot3W( nameW, oemname, oemname_len, contains_spaces, is_legal );
+}
+
+/*************************************************************************
+ *           CheckNameLegalDOS8Dot3W   (KERNEL32.@)
+ */
+BOOL WINAPI CheckNameLegalDOS8Dot3W(const WCHAR *name, char *oemname, DWORD oemname_len,
+        BOOL *contains_spaces_ret, BOOL *is_legal)
+{
+    OEM_STRING oem_str;
+    UNICODE_STRING nameW;
+    BOOLEAN contains_spaces;
+
+    TRACE("(%s %p %u %p %p)\n", wine_dbgstr_w(name), oemname,
+          oemname_len, contains_spaces_ret, is_legal);
+
+    if (!name || !is_legal)
+        return FALSE;
+
+    RtlInitUnicodeString( &nameW, name );
+
+    if (oemname) {
+        oem_str.Length = oemname_len;
+        oem_str.MaximumLength = oemname_len;
+        oem_str.Buffer = oemname;
+    }
+
+    *is_legal = RtlIsNameLegalDOS8Dot3( &nameW, oemname ? &oem_str : NULL, &contains_spaces );
+    if (contains_spaces_ret) *contains_spaces_ret = contains_spaces;
+
+    return TRUE;
+}
+
+/*************************************************************************
+ *           SetSearchPathMode   (KERNEL32.@)
+ */
+BOOL WINAPI SetSearchPathMode(DWORD flags)
+{
+    FIXME("(%x): stub\n", flags);
+    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
+    return FALSE;
+}
+
+/*************************************************************************
+ *           SetDefaultDllDirectories   (KERNEL32.@)
+ */
+BOOL WINAPI SetDefaultDllDirectories(DWORD flags)
+{
+    FIXME("(%x): stub\n", flags);
+    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
     return FALSE;
 }

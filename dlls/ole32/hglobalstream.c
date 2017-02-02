@@ -31,7 +31,6 @@
 
 #define COBJMACROS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "windef.h"
 #include "winbase.h"
@@ -90,7 +89,7 @@ static HRESULT WINAPI HGLOBALStreamImpl_QueryInterface(
       IsEqualIID(&IID_ISequentialStream, riid) ||
       IsEqualIID(&IID_IStream, riid))
   {
-    *ppvObject = This;
+    *ppvObject = &This->IStream_iface;
   }
 
   if ((*ppvObject)==0)

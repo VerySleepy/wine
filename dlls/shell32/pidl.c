@@ -32,7 +32,6 @@
 
 #define COBJMACROS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "windef.h"
 #include "winbase.h"
@@ -1478,6 +1477,7 @@ HRESULT WINAPI SHGetIDListFromObject(IUnknown *punk, PIDLIST_ABSOLUTE *ppidl)
         {
             /* We might be able to get IPersistFolder2 from a shellfolder. */
             ret = SHGetIDListFromObject((IUnknown*)psf, ppidl);
+            IShellFolder_Release(psf);
         }
         IFolderView_Release(pfv);
         return ret;
@@ -2408,15 +2408,18 @@ void _ILGetFileType(LPCITEMIDLIST pidl, LPSTR pOut, UINT uOutSize)
     {
         char sTemp[64];
 
-        if(uOutSize > 0)
-            pOut[0] = 0;
-        if (_ILGetExtension (pidl, sTemp, 64))
+        /* "name" or "name." or any unhandled => "File" */
+        lstrcpynA (pOut, "File", uOutSize);
+
+        /* If there's space for more, try to get a better description. */
+        if (uOutSize > 6 && _ILGetExtension (pidl, sTemp, 64))
         {
             if (!( HCR_MapTypeToValueA(sTemp, sTemp, 64, TRUE)
-                && HCR_MapTypeToValueA(sTemp, pOut, uOutSize, FALSE )))
+                && HCR_MapTypeToValueA(sTemp, pOut, uOutSize, FALSE ))
+                && sTemp[0])
             {
                 lstrcpynA (pOut, sTemp, uOutSize - 6);
-                strcat (pOut, "-file");
+                strcat (pOut, " file");
             }
         }
     }

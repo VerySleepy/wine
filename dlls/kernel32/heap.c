@@ -362,7 +362,7 @@ HGLOBAL WINAPI GlobalAlloc(
 
    if((flags & GMEM_MOVEABLE)==0) /* POINTER */
    {
-      palloc=HeapAlloc(GetProcessHeap(), hpflags, size);
+      palloc = HeapAlloc( GetProcessHeap(), hpflags, max( 1, size ));
       TRACE( "(flags=%04x) returning %p\n",  flags, palloc );
       return palloc;
    }
@@ -557,7 +557,7 @@ HGLOBAL WINAPI GlobalHandle(
         /* GlobalAlloc with GMEM_MOVEABLE then magic test in HeapValidate  */
         /* will fail.                                                      */
         if (ISPOINTER(pmem)) {
-            if (HeapValidate( GetProcessHeap(), 0, pmem )) {
+            if (HeapValidate( GetProcessHeap(), HEAP_NO_SERIALIZE, pmem )) {
                 handle = (HGLOBAL)pmem;  /* valid fixed block */
                 break;
             }
@@ -569,8 +569,8 @@ HGLOBAL WINAPI GlobalHandle(
         maybe_intern = HANDLE_TO_INTERN( handle );
         if (maybe_intern->Magic == MAGIC_GLOBAL_USED) {
             test = maybe_intern->Pointer;
-            if (HeapValidate( GetProcessHeap(), 0, (const char *)test - HGLOBAL_STORAGE ) && /* obj(-handle) valid arena? */
-                HeapValidate( GetProcessHeap(), 0, maybe_intern ))  /* intern valid arena? */
+            if (HeapValidate( GetProcessHeap(), HEAP_NO_SERIALIZE, (const char *)test - HGLOBAL_STORAGE ) && /* obj(-handle) valid arena? */
+                HeapValidate( GetProcessHeap(), HEAP_NO_SERIALIZE, maybe_intern ))  /* intern valid arena? */
                 break;  /* valid moveable block */
         }
         handle = 0;
@@ -749,7 +749,7 @@ HGLOBAL WINAPI GlobalFree(HGLOBAL hmem)
         hreturned = 0;
         if(ISPOINTER(hmem)) /* POINTER */
         {
-            if(!HeapFree(GetProcessHeap(), 0, hmem))
+            if(!HeapFree(GetProcessHeap(), HEAP_NO_SERIALIZE, hmem))
             {
                 SetLastError(ERROR_INVALID_HANDLE);
                 hreturned = hmem;
@@ -769,9 +769,9 @@ HGLOBAL WINAPI GlobalFree(HGLOBAL hmem)
                 /*    SetLastError(ERROR_INVALID_HANDLE);  */
 
                 if(pintern->Pointer)
-                    if(!HeapFree(GetProcessHeap(), 0, (char *)(pintern->Pointer)-HGLOBAL_STORAGE))
+                    if(!HeapFree(GetProcessHeap(), HEAP_NO_SERIALIZE, (char *)(pintern->Pointer)-HGLOBAL_STORAGE))
                         hreturned=hmem;
-                if(!HeapFree(GetProcessHeap(), 0, pintern))
+                if(!HeapFree(GetProcessHeap(), HEAP_NO_SERIALIZE, pintern))
                     hreturned=hmem;
             }
             else
@@ -961,10 +961,16 @@ SIZE_T WINAPI GlobalCompact( DWORD minfree )
  *  Windows memory management does not provide a separate local heap
  *  and global heap.
  */
-HLOCAL WINAPI LocalAlloc(
-                UINT flags, /* [in] Allocation attributes */
-                SIZE_T size /* [in] Number of bytes to allocate */
-) {
+HLOCAL WINAPI LocalAlloc( UINT flags, SIZE_T size )
+{
+    /* LocalAlloc allows a 0-size fixed block, but GlobalAlloc doesn't */
+    if (!(flags & LMEM_MOVEABLE))
+    {
+        DWORD heap_flags = (flags & LMEM_ZEROINIT) ? HEAP_ZERO_MEMORY : 0;
+        void *ret = HeapAlloc( GetProcessHeap(), heap_flags, size );
+        TRACE( "(flags=%04x) returning %p\n",  flags, ret );
+        return ret;
+    }
     return GlobalAlloc( flags, size );
 }
 
@@ -1436,7 +1442,8 @@ VOID WINAPI GlobalMemoryStatus( LPMEMORYSTATUS lpBuffer )
          lpBuffer->dwAvailPageFile = 2U*1024*1024*1024 -  lpBuffer->dwAvailPhys - 1;
 
     /* limit page file size for really old binaries */
-    if (nt->OptionalHeader.MajorSubsystemVersion < 4)
+    if (nt->OptionalHeader.MajorSubsystemVersion < 4 ||
+        nt->OptionalHeader.MajorOperatingSystemVersion < 4)
     {
         if (lpBuffer->dwTotalPageFile > MAXLONG) lpBuffer->dwTotalPageFile = MAXLONG;
         if (lpBuffer->dwAvailPageFile > MAXLONG) lpBuffer->dwAvailPageFile = MAXLONG;
@@ -1449,6 +1456,27 @@ VOID WINAPI GlobalMemoryStatus( LPMEMORYSTATUS lpBuffer )
           lpBuffer->dwTotalVirtual, lpBuffer->dwAvailVirtual );
 }
 
+/***********************************************************************
+ *           GetPhysicallyInstalledSystemMemory   (KERNEL32.@)
+ */
+BOOL WINAPI GetPhysicallyInstalledSystemMemory(ULONGLONG *total_memory)
+{
+    MEMORYSTATUSEX memstatus;
+
+    FIXME("stub: %p\n", total_memory);
+
+    if (!total_memory)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    memstatus.dwLength = sizeof(memstatus);
+    GlobalMemoryStatusEx(&memstatus);
+    *total_memory = memstatus.ullTotalPhys / 1024;
+    return TRUE;
+}
+
 BOOL WINAPI GetSystemFileCacheSize(PSIZE_T mincache, PSIZE_T maxcache, PDWORD flags)
 {
     FIXME("stub: %p %p %p\n", mincache, maxcache, flags);
@@ -1459,6 +1487,21 @@ BOOL WINAPI GetSystemFileCacheSize(PSIZE_T mincache, PSIZE_T maxcache, PDWORD fl
 BOOL WINAPI SetSystemFileCacheSize(SIZE_T mincache, SIZE_T maxcache, DWORD flags)
 {
     FIXME("stub: %ld %ld %d\n", mincache, maxcache, flags);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+BOOL WINAPI AllocateUserPhysicalPages(HANDLE process, ULONG_PTR *pages, ULONG_PTR *userarray)
+{
+    FIXME("stub: %p %p %p\n",process, pages, userarray);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+BOOL WINAPI FreeUserPhysicalPages(HANDLE process, ULONG_PTR *pages, ULONG_PTR *userarray)
+{
+    FIXME("stub: %p %p %p\n", process, pages, userarray);
+    *pages = 0;
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
 }

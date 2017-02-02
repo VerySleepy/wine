@@ -60,7 +60,7 @@ static void CompCatCacheDaemon_Destructor(CompCatCacheDaemon *This)
     This->cs.DebugInfo->Spare[0] = 0;
     DeleteCriticalSection(&This->cs);
     heap_free(This);
-    BROWSEUI_refCount--;
+    InterlockedDecrement(&BROWSEUI_refCount);
 }
 
 static HRESULT WINAPI CompCatCacheDaemon_QueryInterface(IRunnableTask *iface, REFIID iid, LPVOID *ppvOut)
@@ -70,7 +70,7 @@ static HRESULT WINAPI CompCatCacheDaemon_QueryInterface(IRunnableTask *iface, RE
 
     if (IsEqualIID(iid, &IID_IRunnableTask) || IsEqualIID(iid, &IID_IUnknown))
     {
-        *ppvOut = This;
+        *ppvOut = &This->IRunnableTask_iface;
     }
 
     if (*ppvOut)
@@ -158,7 +158,7 @@ HRESULT CompCatCacheDaemon_Constructor(IUnknown *pUnkOuter, IUnknown **ppOut)
     This->cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": CompCatCacheDaemon.cs");
 
     TRACE("returning %p\n", This);
-    *ppOut = (IUnknown *)This;
-    BROWSEUI_refCount++;
+    *ppOut = (IUnknown *)&This->IRunnableTask_iface;
+    InterlockedIncrement(&BROWSEUI_refCount);
     return S_OK;
 }

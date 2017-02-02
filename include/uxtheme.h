@@ -53,6 +53,46 @@ HRESULT WINAPI DrawThemeParentBackground(HWND,HDC,RECT*);
 HRESULT WINAPI DrawThemeText(HTHEME,HDC,int,int,LPCWSTR,int,DWORD,DWORD,
                              const RECT*);
 
+/* DTTOPTS.dwFlags bits */
+#define DTT_TEXTCOLOR    0x00000001
+#define DTT_BORDERCOLOR  0x00000002
+#define DTT_SHADOWCOLOR  0x00000004
+#define DTT_SHADOWTYPE   0x00000008
+#define DTT_SHADOWOFFSET 0x00000010
+#define DTT_BORDERSIZE   0x00000020
+#define DTT_FONTPROP     0x00000040
+#define DTT_COLORPROP    0x00000080
+#define DTT_STATEID      0x00000100
+#define DTT_CALCRECT     0x00000200
+#define DTT_APPLYOVERLAY 0x00000400
+#define DTT_GLOWSIZE     0x00000800
+#define DTT_CALLBACK     0x00001000
+#define DTT_COMPOSITED   0x00002000
+#define DTT_VALIDBITS    0x00003fff
+
+typedef int (WINAPI *DTT_CALLBACK_PROC)(HDC,LPWSTR,int,RECT*,UINT,LPARAM);
+
+typedef struct _DTTOPTS {
+    DWORD dwSize;
+    DWORD dwFlags;
+    COLORREF crText;
+    COLORREF crBorder;
+    COLORREF crShadow;
+    int iTextShadowType;
+    POINT ptShadowOffset;
+    int iBorderSize;
+    int iFontPropId;
+    int iColorPropId;
+    int iStateId;
+    BOOL fApplyOverlay;
+    int iGlowSize;
+    DTT_CALLBACK_PROC pfnDrawTextCallback;
+    LPARAM lParam;
+} DTTOPTS, *PDTTOPTS;
+
+HRESULT WINAPI DrawThemeTextEx(HTHEME,HDC,int,int,LPCWSTR,int,DWORD,RECT*,
+                               const DTTOPTS*);
+
 #define ETDT_DISABLE       0x00000001
 #define ETDT_ENABLE        0x00000002
 #define ETDT_USETABTEXTURE 0x00000004
@@ -97,7 +137,8 @@ HRESULT WINAPI GetThemeFilename(HTHEME,int,int,int,LPWSTR,int);
 HRESULT WINAPI GetThemeFont(HTHEME,HDC,int,int,int,LOGFONTW*);
 HRESULT WINAPI GetThemeInt(HTHEME,int,int,int,int*);
 
-#define MAX_INTLIST_COUNT 10
+/* MAX_INTLIST_COUNT was 10 before Vista */
+#define MAX_INTLIST_COUNT 402
 typedef struct _INTLIST {
     int iValueCount;
     int iValues[MAX_INTLIST_COUNT];
@@ -145,6 +186,7 @@ HRESULT WINAPI GetThemeSysString(HTHEME,int,LPWSTR,int);
 HRESULT WINAPI GetThemeTextExtent(HTHEME,HDC,int,int,LPCWSTR,int,DWORD,
                                   const RECT*,RECT*);
 HRESULT WINAPI GetThemeTextMetrics(HTHEME,HDC,int,int,TEXTMETRICW*);
+HRESULT WINAPI GetThemeTransitionDuration(HTHEME,int,int,int,int,DWORD*);
 HTHEME WINAPI GetWindowTheme(HWND);
 
 #define HTTB_BACKGROUNDSEG          0x0000
@@ -204,5 +246,40 @@ HPAINTBUFFER WINAPI BeginBufferedPaint(HDC, const RECT *, BP_BUFFERFORMAT,
                                        BP_PAINTPARAMS *,HDC *);
 
 HRESULT WINAPI EndBufferedPaint(HPAINTBUFFER, BOOL);
+
+HRESULT WINAPI BufferedPaintClear(HPAINTBUFFER, const RECT *);
+HRESULT WINAPI BufferedPaintSetAlpha(HPAINTBUFFER, const RECT *, BYTE);
+HRESULT WINAPI GetBufferedPaintBits(HPAINTBUFFER, RGBQUAD **, int *);
+HDC WINAPI GetBufferedPaintDC(HPAINTBUFFER);
+HDC WINAPI GetBufferedPaintTargetDC(HPAINTBUFFER);
+HRESULT WINAPI GetBufferedPaintTargetRect(HPAINTBUFFER, RECT *prc);
+
+/* double-buffered animation functions */
+
+typedef HANDLE HANIMATIONBUFFER;
+
+typedef enum _BP_ANIMATIONSTYLE
+{
+    BPAS_NONE,
+    BPAS_LINEAR,
+    BPAS_CUBIC,
+    BPAS_SINE
+} BP_ANIMATIONSTYLE;
+
+typedef struct _BP_ANIMATIONPARAMS
+{
+    DWORD cbSize;
+    DWORD dwFlags;
+    BP_ANIMATIONSTYLE style;
+    DWORD dwDuration;
+} BP_ANIMATIONPARAMS, *PBP_ANIMATIONPARAMS;
+
+HANIMATIONBUFFER WINAPI BeginBufferedAnimation(HWND, HDC, const RECT *,
+                                               BP_BUFFERFORMAT, BP_PAINTPARAMS *,
+                                               BP_ANIMATIONPARAMS *, HDC *, HDC *);
+
+BOOL WINAPI BufferedPaintRenderAnimation(HWND, HDC);
+HRESULT WINAPI BufferedPaintStopAllAnimations(HWND);
+HRESULT WINAPI EndBufferedAnimation(HANIMATIONBUFFER, BOOL);
 
 #endif

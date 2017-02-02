@@ -331,9 +331,7 @@ static void PSDRV_UpdateDevCaps( PSDRV_PDEVICE *physDev )
 	physDev->PageSize.cy = 0;
     }
 
-    TRACE("ImageableArea = %d,%d - %d,%d: PageSize = %dx%d\n",
-	  physDev->ImageableArea.left, physDev->ImageableArea.bottom,
-	  physDev->ImageableArea.right, physDev->ImageableArea.top,
+    TRACE("ImageableArea = %s: PageSize = %dx%d\n", wine_dbgstr_rect(&physDev->ImageableArea),
 	  physDev->PageSize.cx, physDev->PageSize.cy);
 
     /* these are in device units */
@@ -856,7 +854,6 @@ static const struct gdi_dc_funcs psdrv_funcs =
     NULL,                               /* pFontIsLinked */
     NULL,                               /* pFrameRgn */
     NULL,                               /* pGdiComment */
-    NULL,                               /* pGdiRealizationInfo */
     NULL,                               /* pGetBoundsRect */
     NULL,                               /* pGetCharABCWidths */
     NULL,                               /* pGetCharABCWidthsI */
@@ -864,6 +861,7 @@ static const struct gdi_dc_funcs psdrv_funcs =
     PSDRV_GetDeviceCaps,                /* pGetDeviceCaps */
     NULL,                               /* pGetDeviceGammaRamp */
     NULL,                               /* pGetFontData */
+    NULL,                               /* pGetFontRealizationInfo */
     NULL,                               /* pGetFontUnicodeRanges */
     NULL,                               /* pGetGlyphIndices */
     NULL,                               /* pGetGlyphOutline */

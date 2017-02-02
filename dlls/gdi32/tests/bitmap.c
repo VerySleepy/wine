@@ -23,15 +23,21 @@
 #include <assert.h>
 #include <string.h>
 
+#include "ntstatus.h"
+#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "winerror.h"
 #include "wingdi.h"
 #include "winuser.h"
 #include "mmsystem.h"
+#include "winternl.h"
+#include "ddk/d3dkmthk.h"
 
 #include "wine/test.h"
 
+static NTSTATUS (WINAPI *pD3DKMTCreateDCFromMemory)( D3DKMT_CREATEDCFROMMEMORY *desc );
+static NTSTATUS (WINAPI *pD3DKMTDestroyDCFromMemory)( const D3DKMT_DESTROYDCFROMMEMORY *desc );
 static BOOL (WINAPI *pGdiAlphaBlend)(HDC,int,int,int,int,HDC,int,int,int,int,BLENDFUNCTION);
 static BOOL (WINAPI *pGdiGradientFill)(HDC,TRIVERTEX*,ULONG,void*,ULONG,ULONG);
 static DWORD (WINAPI *pSetLayout)(HDC hdc, DWORD layout);
@@ -56,8 +62,9 @@ static void test_bitmap_info(HBITMAP hbm, INT expected_depth, const BITMAPINFOHE
 {
     BITMAP bm;
     BITMAP bma[2];
-    INT ret, width_bytes;
+    INT ret, width_bytes, i;
     BYTE buf[512], buf_cmp[512];
+    INT test_size[] = {0 /*first value will be changed */, 0, -1, -1000, ~0, sizeof(buf)};
 
     ret = GetObjectW(hbm, sizeof(bm), &bm);
     ok(ret == sizeof(bm), "GetObject returned %d\n", ret);
@@ -75,17 +82,28 @@ static void test_bitmap_info(HBITMAP hbm, INT expected_depth, const BITMAPINFOHE
     assert(sizeof(buf) == sizeof(buf_cmp));
 
     SetLastError(0xdeadbeef);
-    ret = GetBitmapBits(hbm, 0, NULL);
-    ok(ret == bm.bmWidthBytes * bm.bmHeight, "%d != %d\n", ret, bm.bmWidthBytes * bm.bmHeight);
+    test_size[0] = bm.bmWidthBytes * bm.bmHeight;
+    /* NULL output buffer with different count values */
+    for (i = 0; i < sizeof(test_size) / sizeof(test_size[0]); i++)
+    {
+        ret = GetBitmapBits(hbm, test_size[i], NULL);
+        ok(ret == bm.bmWidthBytes * bm.bmHeight, "%d != %d\n", ret, bm.bmWidthBytes * bm.bmHeight);
+    }
 
     memset(buf_cmp, 0xAA, sizeof(buf_cmp));
     memset(buf_cmp, 0, bm.bmWidthBytes * bm.bmHeight);
 
-    memset(buf, 0xAA, sizeof(buf));
-    ret = GetBitmapBits(hbm, sizeof(buf), buf);
-    ok(ret == bm.bmWidthBytes * bm.bmHeight, "%d != %d\n", ret, bm.bmWidthBytes * bm.bmHeight);
-    ok(!memcmp(buf, buf_cmp, sizeof(buf)),
-        "buffers do not match, depth %d\n", bmih->biBitCount);
+    /* Correct output buffer with different count values */
+    for (i = 0; i < sizeof(test_size) / sizeof(test_size[0]); i++)
+    {
+        int expect = i == 1 ? 0 : bm.bmWidthBytes * bm.bmHeight;
+        memset(buf, 0xAA, sizeof(buf));
+        ret = GetBitmapBits(hbm, test_size[i], buf);
+        ok(ret == expect, "Test[%d]: %d != %d\n", i, ret, expect);
+        if (expect)
+            ok(!memcmp(buf, buf_cmp, sizeof(buf)),
+               "Test[%d]: buffers do not match, depth %d\n", i, bmih->biBitCount);
+    }
 
     /* test various buffer sizes for GetObject */
     ret = GetObjectW(hbm, sizeof(*bma) * 2, bma);
@@ -862,12 +880,13 @@ static void test_dibsections(void)
     ok( ret == 1, "SetDIBColorTable returned unexpected result %u\n", ret );
     ok( rgb[0].rgbReserved == 123, "Expected rgbReserved = 123, got %u\n", rgb[0].rgbReserved );
 
+    rgb[0].rgbRed = rgb[0].rgbGreen = rgb[0].rgbBlue = rgb[0].rgbReserved = -1;
     ret = GetDIBColorTable( hdcmem, 0, 1, rgb );
     ok( ret == 1, "GetDIBColorTable returned unexpected result %u\n", ret );
     ok( rgb[0].rgbRed == 1, "Expected rgbRed = 1, got %u\n", rgb[0].rgbRed );
     ok( rgb[0].rgbGreen == 2, "Expected rgbGreen = 2, got %u\n", rgb[0].rgbGreen );
     ok( rgb[0].rgbBlue == 3, "Expected rgbBlue = 3, got %u\n", rgb[0].rgbBlue );
-    todo_wine ok( rgb[0].rgbReserved == 0, "Expected rgbReserved = 0, got %u\n", rgb[0].rgbReserved );
+    ok( rgb[0].rgbReserved == 0, "Expected rgbReserved = 0, got %u\n", rgb[0].rgbReserved );
 
     SelectObject(hdcmem, oldbm);
     DeleteObject(hdib);
@@ -1588,7 +1607,7 @@ static BOOL is_black_pen( COLORREF fg, COLORREF bg, int r, int g, int b )
 static void test_bitmap_colors( HDC hdc, COLORREF fg, COLORREF bg, int r, int g, int b )
 {
     static const WORD pattern_bits[] = { 0x5555, 0xaaaa, 0x5555, 0xaaaa, 0x5555, 0xaaaa, 0x5555, 0xaaaa };
-    char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
+    char buffer[FIELD_OFFSET( BITMAPINFO, bmiColors ) + 256 * sizeof(RGBQUAD)];
     BITMAPINFO *info = (BITMAPINFO *)buffer;
     RGBQUAD *colors = info->bmiColors;
     WORD bits[16];
@@ -5630,14 +5649,261 @@ static void test_SetDIBitsToDevice_RLE8(void)
     HeapFree( GetProcessHeap(), 0, info );
 }
 
+static void test_D3DKMTCreateDCFromMemory( void )
+{
+    D3DKMT_DESTROYDCFROMMEMORY destroy_desc;
+    D3DKMT_CREATEDCFROMMEMORY create_desc;
+    unsigned int width_bytes;
+    unsigned int i, x, y, z;
+    DWORD expected, colour;
+    BYTE data[12][48];
+    NTSTATUS status;
+    HGDIOBJ *bitmap;
+    DIBSECTION dib;
+    BOOL fail, ret;
+    DWORD type;
+    int size;
+
+    static const struct
+    {
+        const char *name;
+        D3DDDIFORMAT format;
+        unsigned int bit_count;
+        DWORD mask_r, mask_g, mask_b;
+        NTSTATUS status;
+    }
+    test_data[] =
+    {
+        { "R8G8B8",      D3DDDIFMT_R8G8B8,      24, 0x00000000, 0x00000000, 0x00000000, STATUS_SUCCESS },
+        { "A8R8G8B8",    D3DDDIFMT_A8R8G8B8,    32, 0x00000000, 0x00000000, 0x00000000, STATUS_SUCCESS },
+        { "X8R8G8B8",    D3DDDIFMT_X8R8G8B8,    32, 0x00000000, 0x00000000, 0x00000000, STATUS_SUCCESS },
+        { "R5G6B5",      D3DDDIFMT_R5G6B5,      16, 0x0000f800, 0x000007e0, 0x0000001f, STATUS_SUCCESS },
+        { "X1R5G5B5",    D3DDDIFMT_X1R5G5B5,    16, 0x00007c00, 0x000003e0, 0x0000001f, STATUS_SUCCESS },
+        { "A1R5G5B5",    D3DDDIFMT_A1R5G5B5,    16, 0x00007c00, 0x000003e0, 0x0000001f, STATUS_SUCCESS },
+        { "R3G3B2",      D3DDDIFMT_R3G3B2,      8,  0x00000000, 0x00000000, 0x00000000, STATUS_INVALID_PARAMETER },
+        { "A2B10G10R10", D3DDDIFMT_A2B10G10R10, 32, 0x00000000, 0x00000000, 0x00000000, STATUS_INVALID_PARAMETER },
+        { "A8B8G8R8",    D3DDDIFMT_A8B8G8R8,    32, 0x00000000, 0x00000000, 0x00000000, STATUS_INVALID_PARAMETER },
+        { "X8B8G8R8",    D3DDDIFMT_A8B8G8R8,    32, 0x00000000, 0x00000000, 0x00000000, STATUS_INVALID_PARAMETER },
+        { "A2R10G10B10", D3DDDIFMT_A2R10G10B10, 32, 0x00000000, 0x00000000, 0x00000000, STATUS_INVALID_PARAMETER },
+        { "P8",          D3DDDIFMT_P8,          8,  0x00000000, 0x00000000, 0x00000000, STATUS_SUCCESS },
+        { "L8",          D3DDDIFMT_L8,          8,  0x00000000, 0x00000000, 0x00000000, STATUS_INVALID_PARAMETER },
+        { "A8L8",        D3DDDIFMT_A8L8,        16, 0x00000000, 0x00000000, 0x00000000, STATUS_INVALID_PARAMETER },
+        { "V8U8",        D3DDDIFMT_V8U8,        16, 0x00000000, 0x00000000, 0x00000000, STATUS_INVALID_PARAMETER },
+        { "Q8W8V8U8",    D3DDDIFMT_Q8W8V8U8,    32, 0x00000000, 0x00000000, 0x00000000, STATUS_INVALID_PARAMETER },
+        { "DXT1",        D3DDDIFMT_DXT1,        4,  0x00000000, 0x00000000, 0x00000000, STATUS_INVALID_PARAMETER },
+        { "DXT2",        D3DDDIFMT_DXT2,        8,  0x00000000, 0x00000000, 0x00000000, STATUS_INVALID_PARAMETER },
+        { "DXT3",        D3DDDIFMT_DXT3,        8,  0x00000000, 0x00000000, 0x00000000, STATUS_INVALID_PARAMETER },
+        { "DXT4",        D3DDDIFMT_DXT4,        8,  0x00000000, 0x00000000, 0x00000000, STATUS_INVALID_PARAMETER },
+        { "DXT5",        D3DDDIFMT_DXT5,        8,  0x00000000, 0x00000000, 0x00000000, STATUS_INVALID_PARAMETER },
+    };
+
+    if (!pD3DKMTCreateDCFromMemory)
+    {
+        win_skip("D3DKMTCreateDCFromMemory() is not implemented.\n");
+        return;
+    }
+
+    status = pD3DKMTCreateDCFromMemory( NULL );
+    ok(status == STATUS_INVALID_PARAMETER, "Got unexpected status %#x.\n", status);
+
+    for (i = 0; i < sizeof(test_data) / sizeof(*test_data); ++i)
+    {
+        memset( data, 0xaa, sizeof(data) );
+
+        create_desc.pMemory = data;
+        create_desc.Format = test_data[i].format;
+        create_desc.Width = 9;
+        create_desc.Height = 7;
+        create_desc.Pitch = sizeof(*data);
+        create_desc.hDeviceDc = NULL;
+        create_desc.pColorTable = NULL;
+        create_desc.hDc = (void *)0x010baade;
+        create_desc.hBitmap = (void *)0x020baade;
+
+        status = pD3DKMTCreateDCFromMemory( &create_desc );
+        ok(status == STATUS_INVALID_PARAMETER, "%s: Got unexpected status %#x.\n",
+           test_data[i].name, status);
+
+        create_desc.hDeviceDc = CreateCompatibleDC( NULL );
+        create_desc.pMemory = NULL;
+        status = pD3DKMTCreateDCFromMemory( &create_desc );
+        ok(status == STATUS_INVALID_PARAMETER, "%s: Got unexpected status %#x.\n",
+           test_data[i].name, status);
+
+        create_desc.pMemory = data;
+        create_desc.Height = 0;
+        status = pD3DKMTCreateDCFromMemory( &create_desc );
+        ok(status == STATUS_INVALID_PARAMETER, "%s: Got unexpected status %#x.\n",
+           test_data[i].name, status);
+        ok(create_desc.hDc == (void *)0x010baade, "%s: Got unexpected dc %p.\n",
+           test_data[i].name, create_desc.hDc);
+        ok(create_desc.hBitmap == (void *)0x020baade, "%s: Got unexpected bitmap %p.\n",
+           test_data[i].name, create_desc.hBitmap);
+
+        create_desc.Height = 7;
+        create_desc.Width = 0;
+        status = pD3DKMTCreateDCFromMemory( &create_desc );
+        ok(status == test_data[i].status, "%s: Got unexpected status %#x, expected %#x.\n",
+           test_data[i].name, status, test_data[i].status);
+        if (status == STATUS_SUCCESS)
+        {
+            destroy_desc.hDc = create_desc.hDc;
+            destroy_desc.hBitmap = create_desc.hBitmap;
+            status = pD3DKMTDestroyDCFromMemory( &destroy_desc );
+            ok(status == STATUS_SUCCESS, "%s: Got unexpected status %#x.\n", test_data[i].name, status);
+            create_desc.hDc = (void *)0x010baade;
+            create_desc.hBitmap = (void *)0x020baade;
+        }
+
+        create_desc.Pitch = 0;
+        status = pD3DKMTCreateDCFromMemory( &create_desc );
+        ok(status == STATUS_INVALID_PARAMETER, "%s: Got unexpected status %#x.\n",
+           test_data[i].name, status);
+        ok(create_desc.hDc == (void *)0x010baade, "%s: Got unexpected dc %p.\n",
+           test_data[i].name, create_desc.hDc);
+        ok(create_desc.hBitmap == (void *)0x020baade, "%s: Got unexpected bitmap %p.\n",
+           test_data[i].name, create_desc.hBitmap);
+
+        create_desc.Width = 9;
+        create_desc.Pitch = sizeof(*data);
+        status = pD3DKMTCreateDCFromMemory( &create_desc );
+        ok(status == test_data[i].status, "%s: Got unexpected status %#x, expected %#x.\n",
+           test_data[i].name, status, test_data[i].status);
+        if (status == STATUS_SUCCESS)
+        {
+            ok(!!create_desc.hDc, "%s: Got unexpected dc %p.\n",
+               test_data[i].name, create_desc.hDc);
+            ok(!!create_desc.hBitmap, "%s: Got unexpected bitmap %p.\n",
+               test_data[i].name, create_desc.hBitmap);
+        }
+        else
+        {
+            ok(create_desc.hDc == (void *)0x010baade, "%s: Got unexpected dc %p.\n",
+               test_data[i].name, create_desc.hDc);
+            ok(create_desc.hBitmap == (void *)0x020baade, "%s: Got unexpected bitmap %p.\n",
+               test_data[i].name, create_desc.hBitmap);
+            continue;
+        }
+
+        type = GetObjectType( create_desc.hDc );
+        ok(type == OBJ_MEMDC, "%s: Got unexpected object type %#x.\n", test_data[i].name, type);
+        type = GetObjectType( create_desc.hBitmap );
+        ok(type == OBJ_BITMAP, "%s: Got unexpected object type %#x.\n", test_data[i].name, type);
+        bitmap = GetCurrentObject( create_desc.hDc, OBJ_BITMAP );
+        ok(bitmap == create_desc.hBitmap, "%s: Got unexpected bitmap %p, expected %p.\n",
+           test_data[i].name, bitmap, create_desc.hBitmap);
+
+        size = GetObjectA( bitmap, sizeof(dib), &dib );
+        ok(size == sizeof(dib), "%s: Got unexpected size %d.\n", test_data[i].name, size);
+        ok(!dib.dsBm.bmType, "%s: Got unexpected type %#x.\n",
+           test_data[i].name, dib.dsBm.bmType);
+        ok(dib.dsBm.bmWidth == create_desc.Width, "%s: Got unexpected width %d.\n",
+           test_data[i].name, dib.dsBm.bmWidth);
+        ok(dib.dsBm.bmHeight == create_desc.Height, "%s: Got unexpected height %d.\n",
+           test_data[i].name, dib.dsBm.bmHeight);
+        width_bytes = get_dib_stride( create_desc.Width, test_data[i].bit_count );
+        ok(dib.dsBm.bmWidthBytes == width_bytes, "%s: Got unexpected width bytes %d.\n",
+           test_data[i].name, dib.dsBm.bmWidthBytes);
+        ok(dib.dsBm.bmPlanes == 1, "%s: Got unexpected plane count %d.\n",
+           test_data[i].name, dib.dsBm.bmPlanes);
+        ok(dib.dsBm.bmBitsPixel == test_data[i].bit_count, "%s: Got unexpected bit count %d.\n",
+           test_data[i].name, dib.dsBm.bmBitsPixel);
+        ok(dib.dsBm.bmBits == create_desc.pMemory, "%s: Got unexpected bits %p, expected %p.\n",
+           test_data[i].name, dib.dsBm.bmBits, create_desc.pMemory);
+
+        ok(dib.dsBmih.biSize == sizeof(dib.dsBmih), "%s: Got unexpected size %u.\n",
+           test_data[i].name, dib.dsBmih.biSize);
+        ok(dib.dsBmih.biWidth == create_desc.Width, "%s: Got unexpected width %d.\n",
+           test_data[i].name, dib.dsBmih.biHeight);
+        ok(dib.dsBmih.biHeight == create_desc.Height, "%s: Got unexpected height %d.\n",
+           test_data[i].name, dib.dsBmih.biHeight);
+        ok(dib.dsBmih.biPlanes == 1, "%s: Got unexpected plane count %u.\n",
+           test_data[i].name, dib.dsBmih.biPlanes);
+        ok(dib.dsBmih.biBitCount == test_data[i].bit_count, "%s: Got unexpected bit count %u.\n",
+           test_data[i].name, dib.dsBmih.biBitCount);
+        ok(dib.dsBmih.biCompression == (test_data[i].bit_count == 16 ? BI_BITFIELDS : BI_RGB),
+           "%s: Got unexpected compression %#x.\n",
+           test_data[i].name, dib.dsBmih.biCompression);
+        ok(!dib.dsBmih.biSizeImage, "%s: Got unexpected image size %u.\n",
+           test_data[i].name, dib.dsBmih.biSizeImage);
+        ok(!dib.dsBmih.biXPelsPerMeter, "%s: Got unexpected horizontal resolution %d.\n",
+           test_data[i].name, dib.dsBmih.biXPelsPerMeter);
+        ok(!dib.dsBmih.biYPelsPerMeter, "%s: Got unexpected vertical resolution %d.\n",
+           test_data[i].name, dib.dsBmih.biYPelsPerMeter);
+        if (test_data[i].format == D3DDDIFMT_P8)
+        {
+            ok(dib.dsBmih.biClrUsed == 256, "%s: Got unexpected used colour count %u.\n",
+               test_data[i].name, dib.dsBmih.biClrUsed);
+            ok(dib.dsBmih.biClrImportant == 256, "%s: Got unexpected important colour count %u.\n",
+               test_data[i].name, dib.dsBmih.biClrImportant);
+        }
+        else
+        {
+            ok(!dib.dsBmih.biClrUsed, "%s: Got unexpected used colour count %u.\n",
+               test_data[i].name, dib.dsBmih.biClrUsed);
+            ok(!dib.dsBmih.biClrImportant, "%s: Got unexpected important colour count %u.\n",
+               test_data[i].name, dib.dsBmih.biClrImportant);
+        }
+
+        ok(dib.dsBitfields[0] == test_data[i].mask_r && dib.dsBitfields[1] == test_data[i].mask_g
+           && dib.dsBitfields[2] == test_data[i].mask_b,
+           "%s: Got unexpected colour masks 0x%08x 0x%08x 0x%08x.\n",
+           test_data[i].name, dib.dsBitfields[0], dib.dsBitfields[1], dib.dsBitfields[2]);
+        ok(!dib.dshSection, "%s: Got unexpected section %p.\n", test_data[i].name, dib.dshSection);
+        ok(!dib.dsOffset, "%s: Got unexpected offset %u.\n", test_data[i].name, dib.dsOffset);
+
+        ret = BitBlt( create_desc.hDc, 0, 0, 4, 10, NULL, 0, 0, BLACKNESS );
+        ok(ret, "Failed to blit.\n");
+        ret = BitBlt( create_desc.hDc, 1, 1, 2, 2, NULL, 0, 0, WHITENESS );
+        ok(ret, "Failed to blit.\n");
+
+        destroy_desc.hDc = create_desc.hDc;
+        destroy_desc.hBitmap = create_desc.hBitmap;
+
+        status = pD3DKMTDestroyDCFromMemory( NULL );
+        ok(status == STATUS_INVALID_PARAMETER, "%s: Got unexpected status %#x.\n", test_data[i].name, status);
+        status = pD3DKMTDestroyDCFromMemory( &destroy_desc );
+        ok(status == STATUS_SUCCESS, "%s: Got unexpected status %#x.\n", test_data[i].name, status);
+        status = pD3DKMTDestroyDCFromMemory( &destroy_desc );
+        ok(status == STATUS_INVALID_PARAMETER, "%s: Got unexpected status %#x.\n", test_data[i].name, status);
+
+        ret = DeleteDC( create_desc.hDeviceDc );
+        ok(ret, "Failed to delete dc.\n");
+
+        for (y = 0, fail = FALSE; y < 12 && !fail; ++y)
+        {
+            for (x = 0; x < sizeof(*data) / (test_data[i].bit_count / 8) && !fail; ++x)
+            {
+                for (z = 0, colour = 0; z < test_data[i].bit_count / 8; ++z)
+                {
+                    colour = colour << 8 | data[y][x * (test_data[i].bit_count / 8) + z];
+                }
+
+                if ((x == 1 || x == 2) && (y == 1 || y == 2))
+                    expected = 0xffffffff >> (32 - test_data[i].bit_count);
+                else if (x < 4 && y < 7)
+                    expected = 0x00000000;
+                else
+                    expected = 0xaaaaaaaa >> (32 - test_data[i].bit_count);
+                ok(colour == expected, "%s: Got unexpected colour 0x%08x at %u, %u, expected 0x%08x.\n",
+                   test_data[i].name, colour, x, y, expected);
+                if (colour != expected)
+                    fail = TRUE;
+            }
+        }
+    }
+}
+
 START_TEST(bitmap)
 {
     HMODULE hdll;
 
     hdll = GetModuleHandleA("gdi32.dll");
-    pGdiAlphaBlend   = (void*)GetProcAddress(hdll, "GdiAlphaBlend");
-    pGdiGradientFill = (void*)GetProcAddress(hdll, "GdiGradientFill");
-    pSetLayout       = (void*)GetProcAddress(hdll, "SetLayout");
+    pD3DKMTCreateDCFromMemory  = (void *)GetProcAddress( hdll, "D3DKMTCreateDCFromMemory" );
+    pD3DKMTDestroyDCFromMemory = (void *)GetProcAddress( hdll, "D3DKMTDestroyDCFromMemory" );
+    pGdiAlphaBlend             = (void *)GetProcAddress( hdll, "GdiAlphaBlend" );
+    pGdiGradientFill           = (void *)GetProcAddress( hdll, "GdiGradientFill" );
+    pSetLayout                 = (void *)GetProcAddress( hdll, "SetLayout" );
 
     test_createdibitmap();
     test_dibsections();
@@ -5674,4 +5940,5 @@ START_TEST(bitmap)
     test_SetDIBits_RLE8();
     test_SetDIBitsToDevice();
     test_SetDIBitsToDevice_RLE8();
+    test_D3DKMTCreateDCFromMemory();
 }

@@ -37,8 +37,8 @@ static unsigned int dd_mode_count;
 static unsigned int max_width;
 static unsigned int max_height;
 
-static const unsigned int widths[]  = {320, 400, 512, 640, 800, 1024, 1152, 1280, 1400, 1600};
-static const unsigned int heights[] = {200, 300, 384, 480, 600,  768,  864, 1024, 1050, 1200};
+static const unsigned int widths[]  = {320, 320, 400, 512, 640, 640, 800, 1024, 1152, 1280, 1280, 1400, 1600};
+static const unsigned int heights[] = {200, 240, 300, 384, 400, 480, 600,  768,  864,  960, 1024, 1050, 1200};
 #define NUM_DESKTOP_MODES (sizeof(widths) / sizeof(widths[0]))
 
 #define _NET_WM_STATE_REMOVE 0
@@ -180,7 +180,6 @@ BOOL CDECL X11DRV_create_desktop( UINT width, UINT height )
 
 struct desktop_resize_data
 {
-    RECT  old_screen_rect;
     RECT  old_virtual_rect;
     RECT  new_virtual_rect;
 };
@@ -259,7 +258,6 @@ void X11DRV_resize_desktop( unsigned int width, unsigned int height )
     HWND hwnd = GetDesktopWindow();
     struct desktop_resize_data resize_data;
 
-    resize_data.old_screen_rect = get_primary_monitor_rect();
     resize_data.old_virtual_rect = get_virtual_screen_rect();
 
     xinerama_init( width, height );

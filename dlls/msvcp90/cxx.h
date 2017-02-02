@@ -16,7 +16,8 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-/* Copied from dlls/msvcrt/cpp.c */
+/* Copied from dlls/msvcrt/cxx.h */
+#undef __thiscall
 #ifdef __i386__  /* thiscall functions are i386-specific */
 
 #define THISCALL(func) __thiscall_ ## func
@@ -303,6 +304,7 @@ typedef enum __exception_type {
     EXCEPTION_RERAISE,
     EXCEPTION,
     EXCEPTION_BAD_ALLOC,
+    EXCEPTION_BAD_CAST,
     EXCEPTION_LOGIC_ERROR,
     EXCEPTION_LENGTH_ERROR,
     EXCEPTION_OUT_OF_RANGE,

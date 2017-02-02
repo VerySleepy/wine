@@ -394,17 +394,8 @@ static void test_GetNextDlgItem(void)
     {
         HWND a;
         a = (p->tab ? GetNextDlgTabItem : GetNextDlgGroupItem) (hwnd[p->dlg], hwnd[p->ctl], p->prev);
-        if (p->isok)
-        {
+        todo_wine_if (!p->isok)
             ok (a == hwnd[p->res], "Test %d: %s %s item of %d in %d was %d instead of %d\n", p->test, p->prev ? "Prev" : "Next", p->tab ? "Tab" : "Group", p->ctl, p->dlg, id(a), p->res);
-        }
-        else
-        {
-            todo_wine
-            {
-                ok (a == hwnd[p->res], "Test %d: %s %s item of %d in %d was actually  %d matching expected %d\n", p->test, p->prev ? "Prev" : "Next", p->tab ? "Tab" : "Group", p->ctl, p->dlg, id(a), p->res);
-            }
-        }
         p++;
     }
 }
@@ -719,8 +710,23 @@ static void test_WM_NEXTDLGCTL(void)
     DestroyWindow(g_hwndTestDlg);
 }
 
+static LRESULT CALLBACK hook_proc(INT code, WPARAM wParam, LPARAM lParam)
+{
+    ok(0, "unexpected hook called, code %d\n", code);
+    return CallNextHookEx(NULL, code, wParam, lParam);
+}
+
+static BOOL g_MSGF_DIALOGBOX;
+static LRESULT CALLBACK hook_proc2(INT code, WPARAM wParam, LPARAM lParam)
+{
+    ok(code == MSGF_DIALOGBOX, "unexpected hook called, code %d\n", code);
+    g_MSGF_DIALOGBOX = code == MSGF_DIALOGBOX;
+    return CallNextHookEx(NULL, code, wParam, lParam);
+}
+
 static void test_IsDialogMessage(void)
 {
+    HHOOK hook;
     MSG msg;
 
     g_hwndMain = CreateWindowA("IsDialogMessageWindowClass", "IsDialogMessageWindowClass",
@@ -732,11 +738,34 @@ static void test_IsDialogMessage(void)
     assert (g_hwndButton1);
     assert (g_hwndButtonCancel);
 
+    if (0)
+    {
+        /* crashes on Windows */
+        IsDialogMessageA(NULL, NULL);
+        IsDialogMessageA(g_hwndMain, NULL);
+    }
+
     /* The focus should initially be nowhere.  The first TAB should take it
      * to the first button.  The second TAB should take it to the Cancel
      * button.
      */
+
+    /* valid window, invalid message window */
+    hook = SetWindowsHookExA(WH_MSGFILTER, hook_proc2, NULL, GetCurrentThreadId());
+    FormTabMsg (&msg, (HWND)0xbeefbeef);
+    ok (!IsDialogMessageA(g_hwndMain, &msg), "expected failure\n");
+    ok(g_MSGF_DIALOGBOX, "hook wasn't called\n");
+    g_MSGF_DIALOGBOX = FALSE;
+    UnhookWindowsHookEx(hook);
+
+    hook = SetWindowsHookExA(WH_MSGFILTER, hook_proc, NULL, GetCurrentThreadId());
     FormTabMsg (&msg, g_hwndMain);
+
+    ok (!IsDialogMessageA(NULL, &msg), "expected failure\n");
+    ok (!IsDialogMessageA((HWND)0xbeefbeef, &msg), "expected failure\n");
+
+    UnhookWindowsHookEx(hook);
+
     ok (IsDialogMessageA(g_hwndMain, &msg), "Did not handle first TAB\n");
     ok ((GetFocus() == g_hwndButton1), "Focus did not move to first button\n");
     FormTabMsg (&msg, g_hwndButton1);
@@ -746,6 +775,18 @@ static void test_IsDialogMessage(void)
     FormEnterMsg (&msg, g_hwndButtonCancel);
     ok (IsDialogMessageA(g_hwndMain, &msg), "Did not handle the ENTER\n");
     ok (g_terminated, "ENTER did not terminate\n");
+
+    /* matching but invalid window handles, NULL */
+    hook = SetWindowsHookExA(WH_MSGFILTER, hook_proc, NULL, GetCurrentThreadId());
+
+    FormTabMsg (&msg, NULL);
+    ok (!IsDialogMessageA(msg.hwnd, &msg), "expected failure\n");
+
+    /* matching but invalid window handles, not NULL */
+    FormTabMsg (&msg, (HWND)0xbeefbeef);
+    ok (!IsDialogMessageA(msg.hwnd, &msg), "expected failure\n");
+
+    UnhookWindowsHookEx(hook);
 }
 
 
@@ -795,7 +836,8 @@ static INT_PTR CALLBACK focusDlgWinProc (HWND hDlg, UINT uiMsg, WPARAM wParam,
     switch (uiMsg)
     {
     case WM_INITDIALOG:
-       return TRUE;
+        SetWindowTextA(GetDlgItem(hDlg, 200), "new caption");
+        return TRUE;
 
     case WM_COMMAND:
        if (LOWORD(wParam) == 200)
@@ -964,6 +1006,34 @@ static void test_focus(void)
         SetFocus(NULL);
         SendMessageA(hDlg, WM_SETFOCUS, 0, 0);
         ok(GetFocus() == hLabel, "Focus not set to label on WM_SETFOCUS, focus=%p dialog=%p label=%p\n", GetFocus(), hDlg, hLabel);
+
+        DestroyWindow(hDlg);
+    }
+
+    /* Test 5:
+     * Select textbox's text on creation */
+    {
+        HWND hDlg;
+        HRSRC hResource;
+        HANDLE hTemplate;
+        DLGTEMPLATE* pTemplate;
+        HWND edit;
+        DWORD selectionStart = 0xdead, selectionEnd = 0xbeef;
+
+        hResource = FindResourceA(g_hinst,"FOCUS_TEST_DIALOG_3", (LPCSTR)RT_DIALOG);
+        hTemplate = LoadResource(g_hinst, hResource);
+        pTemplate = LockResource(hTemplate);
+
+        hDlg = CreateDialogIndirectParamA(g_hinst, pTemplate, NULL, focusDlgWinProc, 0);
+        ok(hDlg != 0, "Failed to create test dialog.\n");
+        edit = GetDlgItem(hDlg, 200);
+
+        ok(GetFocus() == edit, "Focus not set to edit, focus=%p, dialog=%p, edit=%p\n",
+                GetFocus(), hDlg, edit);
+        SendMessageA(edit, EM_GETSEL, (WPARAM)&selectionStart, (LPARAM)&selectionEnd);
+        ok(selectionStart == 0 && selectionEnd == 11,
+                "Text selection after WM_SETFOCUS is [%i, %i) expected [0, 11)\n",
+                selectionStart, selectionEnd);
 
         DestroyWindow(hDlg);
     }

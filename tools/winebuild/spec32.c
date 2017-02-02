@@ -46,6 +46,8 @@
 #define IMAGE_NT_OPTIONAL_HDR64_MAGIC 0x20b
 #define IMAGE_ROM_OPTIONAL_HDR_MAGIC  0x107
 
+int needs_get_pc_thunk = 0;
+
 /* check if entry point needs a relay thunk */
 static inline int needs_relay( const ORDDEF *odp )
 {
@@ -78,7 +80,7 @@ static int is_float_arg( const ORDDEF *odp, int arg )
 }
 
 /* check if dll will output relay thunks */
-int has_relays( DLLSPEC *spec )
+static int has_relays( DLLSPEC *spec )
 {
     int i;
 
@@ -189,6 +191,7 @@ static void output_relay_debug( DLLSPEC *spec )
             {
                 output( "\tcall %s\n", asm_name("__wine_spec_get_pc_thunk_eax") );
                 output( "1:\tleal .L__wine_spec_relay_descr-1b(%%eax),%%eax\n" );
+                needs_get_pc_thunk = 1;
             }
             else output( "\tmovl $.L__wine_spec_relay_descr,%%eax\n" );
             output( "\tpushl %%eax\n" );
@@ -529,8 +532,8 @@ void output_module( DLLSPEC *spec )
              spec->characteristics );
     output( "\t.short 0x%04x\n",          /* Magic */
              get_ptr_size() == 8 ? IMAGE_NT_OPTIONAL_HDR64_MAGIC : IMAGE_NT_OPTIONAL_HDR32_MAGIC );
-    output( "\t.byte 0\n" );              /* MajorLinkerVersion */
-    output( "\t.byte 0\n" );              /* MinorLinkerVersion */
+    output( "\t.byte 7\n" );              /* MajorLinkerVersion */
+    output( "\t.byte 10\n" );             /* MinorLinkerVersion */
     output( "\t.long 0\n" );              /* SizeOfCode */
     output( "\t.long 0\n" );              /* SizeOfInitializedData */
     output( "\t.long 0\n" );              /* SizeOfUninitializedData */
@@ -616,6 +619,7 @@ void output_module( DLLSPEC *spec )
  */
 void BuildSpec32File( DLLSPEC *spec )
 {
+    needs_get_pc_thunk = 0;
     resolve_imports( spec );
     output_standard_file_header();
     output_module( spec );
@@ -623,6 +627,7 @@ void BuildSpec32File( DLLSPEC *spec )
     output_exports( spec );
     output_imports( spec );
     if (is_undefined( "__wine_call_from_regs" )) output_asm_relays();
+    if (needs_get_pc_thunk) output_get_pc_thunk();
     output_resources( spec );
     output_gnu_stack_note();
 }
@@ -710,8 +715,8 @@ void output_fake_module( DLLSPEC *spec )
     put_word( get_ptr_size() == 8 ?
               IMAGE_NT_OPTIONAL_HDR64_MAGIC :
               IMAGE_NT_OPTIONAL_HDR32_MAGIC );       /* Magic */
-    put_byte(  0 );                                  /* MajorLinkerVersion */
-    put_byte(  0 );                                  /* MinorLinkerVersion */
+    put_byte(  7 );                                  /* MajorLinkerVersion */
+    put_byte(  10 );                                 /* MinorLinkerVersion */
     put_dword( text_size );                          /* SizeOfCode */
     put_dword( 0 );                                  /* SizeOfInitializedData */
     put_dword( 0 );                                  /* SizeOfUninitializedData */
@@ -862,8 +867,6 @@ void output_def_file( DLLSPEC *spec, int include_private )
     {
         const ORDDEF *odp = &spec->entry_points[i];
         int is_data = 0;
-
-        if (!odp) continue;
 
         if (odp->name) name = odp->name;
         else if (odp->export_name) name = odp->export_name;

@@ -40,6 +40,7 @@ my @dll_groups =
   "msvcp100",
   "msvcp110",
   "msvcp120",
+  "msvcp140",
   "msvcp71",
   "msvcp80",
   "msvcp70",
@@ -48,32 +49,30 @@ my @dll_groups =
  [
   "msvcr120",
   "msvcr120_app",
+  "concrt140",
+ ],
+ [
+  "ucrtbase",
+  "api-ms-win-crt-conio-l1-1-0",
+  "api-ms-win-crt-convert-l1-1-0",
+  "api-ms-win-crt-environment-l1-1-0",
+  "api-ms-win-crt-filesystem-l1-1-0",
+  "api-ms-win-crt-heap-l1-1-0",
+  "api-ms-win-crt-locale-l1-1-0",
+  "api-ms-win-crt-math-l1-1-0",
+  "api-ms-win-crt-multibyte-l1-1-0",
+  "api-ms-win-crt-private-l1-1-0",
+  "api-ms-win-crt-process-l1-1-0",
+  "api-ms-win-crt-runtime-l1-1-0",
+  "api-ms-win-crt-stdio-l1-1-0",
+  "api-ms-win-crt-string-l1-1-0",
+  "api-ms-win-crt-time-l1-1-0",
+  "api-ms-win-crt-utility-l1-1-0",
+  "vcruntime140",
  ],
  [
   "msvcp120",
   "msvcp120_app",
- ],
- [
-  "d3dx9_36",
-  "d3dx9_43",
-  "d3dx9_42",
-  "d3dx9_41",
-  "d3dx9_40",
-  "d3dx9_39",
-  "d3dx9_38",
-  "d3dx9_37",
-  "d3dx9_35",
-  "d3dx9_34",
-  "d3dx9_33",
-  "d3dx9_32",
-  "d3dx9_31",
-  "d3dx9_30",
-  "d3dx9_29",
-  "d3dx9_28",
-  "d3dx9_27",
-  "d3dx9_26",
-  "d3dx9_25",
-  "d3dx9_24",
  ],
  [
   "d3dx10_43",
@@ -89,23 +88,6 @@ my @dll_groups =
   "d3dx10_33",
  ],
  [
-  "d3dx11_43",
-  "d3dx11_42",
- ],
- [
-  "d3dcompiler_43",
-  "d3dcompiler_42",
-  "d3dcompiler_41",
-  "d3dcompiler_40",
-  "d3dcompiler_39",
-  "d3dcompiler_38",
-  "d3dcompiler_37",
-  "d3dcompiler_36",
-  "d3dcompiler_35",
-  "d3dcompiler_34",
-  "d3dcompiler_33",
- ],
- [
   "xinput1_3",
   "xinput1_4",
   "xinput1_2",
@@ -115,9 +97,14 @@ my @dll_groups =
  [
   "setupapi",
   "cfgmgr32",
+  "api-ms-win-devices-config-l1-1-1",
+  "api-ms-win-devices-query-l1-1-1",
  ],
  [
   "vcomp",
+  "vcomp140",
+  "vcomp120",
+  "vcomp110",
   "vcomp100",
   "vcomp90",
  ],
@@ -128,94 +115,228 @@ my @dll_groups =
   "api-ms-win-downlevel-advapi32-l2-1-0",
   "api-ms-win-security-base-l1-1-0",
   "api-ms-win-core-registry-l1-1-0",
+  "api-ms-win-eventing-classicprovider-l1-1-0",
+  "api-ms-win-eventing-consumer-l1-1-0",
+  "api-ms-win-eventing-controller-l1-1-0",
   "api-ms-win-eventing-provider-l1-1-0",
+  "api-ms-win-eventlog-legacy-l1-1-0",
+  "api-ms-win-security-audit-l1-1-1",
   "api-ms-win-security-base-l1-2-0",
+  "api-ms-win-security-base-private-l1-1-1",
+  "api-ms-win-security-lsalookup-l1-1-0",
+  "api-ms-win-security-lsalookup-l1-1-1",
+  "api-ms-win-security-lsalookup-l2-1-1",
+  "api-ms-win-security-lsapolicy-l1-1-0",
   "api-ms-win-security-sddl-l1-1-0",
+  "api-ms-win-service-core-l1-1-0",
   "api-ms-win-service-core-l1-1-1",
   "api-ms-win-service-management-l1-1-0",
+  "api-ms-win-service-management-l2-1-0",
+  "api-ms-win-service-private-l1-1-1",
+  "api-ms-win-service-winsvc-l1-1-0",
   "api-ms-win-service-winsvc-l1-2-0",
  ],
  [
+  "netapi32",
+  "ext-ms-win-domainjoin-netjoin-l1-1-0",
+ ],
+ [
+  "ntdll",
+  "api-ms-win-core-xstate-l1-1-0",
+ ],
+ [
+  "ntdll",
+  "powrprof",
+  "api-ms-win-power-base-l1-1-0",
+  "api-ms-win-power-setting-l1-1-0",
+ ],
+ [
   "kernel32",
+  "api-ms-win-appmodel-identity-l1-1-0",
+  "api-ms-win-appmodel-runtime-l1-1-1",
   "api-ms-win-downlevel-normaliz-l1-1-0",
   "api-ms-win-core-processthreads-l1-1-0",
-  "api-ms-win-core-processthreads-l1-1-1",
+  "api-ms-win-core-appcompat-l1-1-1",
+  "api-ms-win-core-atoms-l1-1-0",
+  "api-ms-win-core-debug-l1-1-0",
   "api-ms-win-core-debug-l1-1-1",
+  "api-ms-win-core-delayload-l1-1-0",
+  "api-ms-win-core-delayload-l1-1-1",
+  "api-ms-win-core-errorhandling-l1-1-0",
   "api-ms-win-core-errorhandling-l1-1-1",
+  "api-ms-win-core-interlocked-l1-1-0",
   "api-ms-win-core-interlocked-l1-2-0",
+  "api-ms-win-core-misc-l1-1-0",
   "api-ms-win-core-profile-l1-1-0",
+  "api-ms-win-core-realtime-l1-1-0",
+  "api-ms-win-core-sidebyside-l1-1-0",
   "api-ms-win-core-string-l1-1-0",
+  "api-ms-win-core-string-obsolete-l1-1-0",
+  "api-ms-win-core-sysinfo-l1-1-0",
   "api-ms-win-core-sysinfo-l1-2-0",
   "api-ms-win-core-util-l1-1-0",
+  "api-ms-win-core-synch-l1-1-0",
   "api-ms-win-core-synch-l1-2-0",
   "api-ms-win-core-console-l1-1-0",
+  "api-ms-win-core-console-l2-1-0",
+  "api-ms-win-core-file-l1-1-0",
+  "api-ms-win-core-file-l1-2-1",
   "api-ms-win-core-file-l1-2-0",
+  "api-ms-win-core-file-l2-1-0",
+  "api-ms-win-core-file-l2-1-1",
   "api-ms-win-core-handle-l1-1-0",
+  "api-ms-win-core-heap-l1-1-0",
   "api-ms-win-core-heap-l1-2-0",
   "api-ms-win-core-heap-obsolete-l1-1-0",
+  "api-ms-win-core-io-l1-1-0",
   "api-ms-win-core-io-l1-1-1",
+  "api-ms-win-core-job-l1-1-0",
+  "api-ms-win-core-job-l2-1-0",
   "api-ms-win-core-kernel32-legacy-l1-1-0",
-  "api-ms-win-core-libraryloader-l1-1-1",
+  "api-ms-win-core-kernel32-legacy-l1-1-1",
+  "api-ms-win-core-kernel32-private-l1-1-1",
+  "api-ms-win-core-libraryloader-l1-2-2",
+  "api-ms-win-core-localization-l1-1-0",
   "api-ms-win-core-localization-l1-2-0",
+  "api-ms-win-core-localization-l2-1-0",
   "api-ms-win-core-localization-obsolete-l1-1-0",
+  "api-ms-win-core-localization-obsolete-l1-2-0",
+  "api-ms-win-core-localization-private-l1-1-0",
+  "api-ms-win-core-memory-l1-1-0",
   "api-ms-win-core-memory-l1-1-1",
-  "api-ms-win-core-namedpipe-l1-2-0",
+  "api-ms-win-core-memory-l1-1-2",
+  "api-ms-win-core-namespace-l1-1-0",
+  "api-ms-win-core-normalization-l1-1-0",
+  "api-ms-win-core-privateprofile-l1-1-1",
+  "api-ms-win-core-processenvironment-l1-1-0",
   "api-ms-win-core-processenvironment-l1-2-0",
   "api-ms-win-core-psapi-l1-1-0",
+  "api-ms-win-core-psapi-obsolete-l1-1-0",
+  "api-ms-win-core-threadpool-l1-1-0",
+  "api-ms-win-core-threadpool-l1-2-0",
   "api-ms-win-core-threadpool-legacy-l1-1-0",
   "api-ms-win-core-timezone-l1-1-0",
-  "api-ms-win-core-file-l2-1-1",
+  "api-ms-win-core-toolhelp-l1-1-0",
   "api-ms-win-core-sysinfo-l1-2-1",
   "api-ms-win-core-processthreads-l1-1-2",
   "api-ms-win-core-fibers-l1-1-0",
   "api-ms-win-core-fibers-l1-1-1",
-  "api-ms-win-core-file-l2-1-0",
   "api-ms-win-core-localization-l1-2-1",
   "api-ms-win-core-datetime-l1-1-0",
   "api-ms-win-core-datetime-l1-1-1",
+  "api-ms-win-core-windowserrorreporting-l1-1-0",
+  "api-ms-win-core-wow64-l1-1-0",
   "api-ms-win-core-xstate-l2-1-0",
   "api-ms-win-core-errorhandling-l1-1-2",
+  "api-ms-win-core-util-l1-1-0",
+  "ext-ms-win-kernel32-package-current-l1-1-0",
+ ],
+ [
+  "kernel32",
+  "user32",
+  "api-ms-win-core-appinit-l1-1-0",
+  "api-ms-win-core-libraryloader-l1-1-0",
+  "api-ms-win-core-libraryloader-l1-1-1",
+  "api-ms-win-core-libraryloader-l1-2-0",
+ ],
+ [
+  "kernel32",
+  "advapi32",
+  "api-ms-win-core-namedpipe-l1-1-0",
+  "api-ms-win-core-namedpipe-l1-2-0",
+  "api-ms-win-core-processthreads-l1-1-1",
+ ],
+ [
+  "kernel32",
+  "advapi32",
+  "user32",
+  "kernelbase",
+  "api-ms-win-core-bem-l1-1-0",
  ],
  [
   "ole32",
   "api-ms-win-downlevel-ole32-l1-1-0",
   "api-ms-win-core-com-l1-1-0",
+  "api-ms-win-core-com-l1-1-1",
+  "api-ms-win-core-com-private-l1-1-0",
   "combase",
+  "iprop",
  ],
  [
   "shell32",
   "api-ms-win-downlevel-shell32-l1-1-0",
+  "api-ms-win-shell-shellcom-l1-1-0",
+  "api-ms-win-shell-shellfolders-l1-1-0",
  ],
  [
   "shlwapi",
   "api-ms-win-downlevel-shlwapi-l1-1-0",
   "api-ms-win-downlevel-shlwapi-l2-1-0",
+  "api-ms-win-core-registryuserspecific-l1-1-0",
   "api-ms-win-core-shlwapi-legacy-l1-1-0",
+  "api-ms-win-core-shlwapi-obsolete-l1-1-0",
   "api-ms-win-core-url-l1-1-0",
  ],
  [
   "user32",
+  "api-ms-win-core-stringansi-l1-1-0",
+  "api-ms-win-core-string-l2-1-0",
   "api-ms-win-downlevel-user32-l1-1-0",
   "api-ms-win-ntuser-dc-access-l1-1-0",
+  "api-ms-win-rtcore-ntuser-private-l1-1-0",
+  "ext-ms-win-ntuser-message-l1-1-1",
+  "ext-ms-win-ntuser-private-l1-1-1",
+  "ext-ms-win-ntuser-rectangle-ext-l1-1-0",
+  "ext-ms-win-ntuser-uicontext-ext-l1-1-0",
+  "ext-ms-win-ntuser-window-l1-1-1",
+  "ext-ms-win-rtcore-ntuser-dc-access-l1-1-0",
+  "ext-ms-win-rtcore-ntuser-dpi-l1-1-0",
+  "ext-ms-win-rtcore-ntuser-sysparams-l1-1-0",
  ],
  [
   "version",
+  "api-ms-win-core-versionansi-l1-1-0",
+  "api-ms-win-core-version-l1-1-0",
+  "api-ms-win-core-version-private-l1-1-0",
   "api-ms-win-downlevel-version-l1-1-0",
  ],
  [
   "msvcrt",
   "ntdll",
   "ntoskrnl.exe",
+  "api-ms-win-core-apiquery-l1-1-0",
+  "api-ms-win-core-rtlsupport-l1-1-0",
   "api-ms-win-core-rtlsupport-l1-2-0",
  ],
  [
   "gdi32",
+  "api-ms-win-dx-d3dkmt-l1-1-0",
+  "ext-ms-win-gdi-dc-create-l1-1-1",
+  "ext-ms-win-gdi-dc-l1-2-0",
   "ext-ms-win-gdi-devcaps-l1-1-0",
+  "ext-ms-win-gdi-draw-l1-1-1",
+  "ext-ms-win-gdi-render-l1-1-0",
+  "ext-ms-win-rtcore-gdi-object-l1-1-0",
+  "ext-ms-win-rtcore-gdi-rgn-l1-1-0",
  ],
  [
   "combase",
+  "api-ms-win-core-winrt-errorprivate-l1-1-1",
   "api-ms-win-core-winrt-l1-1-0",
+  "api-ms-win-core-winrt-registration-l1-1-0",
   "api-ms-win-core-winrt-string-l1-1-0",
+ ],
+ [
+  "bthprops.cpl",
+  "irprops.cpl",
+ ],
+ [
+  "sfc_os",
+  "sfc",
+ ],
+ [
+  "bcrypt",
+  "ncrypt",
  ],
 );
 
@@ -228,21 +349,17 @@ foreach my $arg (@ARGV)
     elsif ($arg eq "-d") { $show_duplicates = 1; }
 }
 
-sub update_file($)
+# update a file if changed
+sub update_file($$)
 {
     my $file = shift;
-    my $ret = !(-f $file) || system "cmp $file $file.new >/dev/null";
-    if (!$ret)
-    {
-        unlink "$file.new";
-    }
-    else
-    {
-        #system "diff -u $file $file.new";
-        rename "$file.new", "$file";
-        print "$file updated\n";
-    }
-    return $ret;
+    my $new = shift;
+
+    open FILE, ">$file.new" or die "cannot create $file.new";
+    print FILE $new;
+    close FILE;
+    rename "$file.new", "$file";
+    print "$file updated\n";
 }
 
 # parse a spec file line
@@ -284,11 +401,12 @@ sub update_spec_file($)
     my $name = shift;
     my $file = "dlls/$name/$name.spec";
     my %stubs;
+    my ($old, $new);
 
     open SPEC, "<$file" or die "cannot open $file";
-    open NEW, ">$file.new" or die "cannot create $file.new";
     while (<SPEC>)
     {
+        $old .= $_;
         chomp;
 
         my $commented_out = 0;
@@ -335,7 +453,7 @@ sub update_spec_file($)
         if ($parent{callconv} ne "stub" || $parent{args})
         {
             my $callconv = $parent{callconv} ne "stub" ? $parent{callconv} :
-                           $parent{spec} =~ /msvc/ ? "cdecl" : "stdcall";  # hack
+                           $parent{spec} =~ /(msvc|ucrtbase)/ ? "cdecl" : "stdcall";  # hack
             $_ = sprintf "$descr{ordinal} %s %s%s", $callconv, $flags, $func;
 
             if ($parent{target} =~ /$group_head\./)  # use the same forward as parent if possible
@@ -354,11 +472,10 @@ sub update_spec_file($)
         $_ .= $descr{comment} || "";
 
       done:
-        print NEW "$_\n";
+        $new .= "$_\n";
     }
     close SPEC;
-    close NEW;
-    update_file( $file );
+    update_file( $file, $new ) if $old ne $new;
 }
 
 sub sync_spec_files(@)

@@ -22,6 +22,7 @@
 #include <windef.h>
 #include <wine/test.h>
 #include <dmusici.h>
+#include <audioclient.h>
 
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
 
@@ -57,11 +58,13 @@ static void test_COM_audiopath(void)
     }
     hr = IDirectMusicPerformance8_InitAudio(performance, NULL, NULL, NULL,
             DMUS_APATH_SHARED_STEREOPLUSREVERB, 64, DMUS_AUDIOF_ALL, NULL);
-    if (hr == DSERR_NODRIVER) {
-        skip("No audio driver\n");
+    ok(hr == S_OK || hr == DSERR_NODRIVER ||
+       broken(hr == AUDCLNT_E_ENDPOINT_CREATE_FAILED), /* Win 10 testbot */
+       "DirectMusicPerformance_InitAudio failed: %08x\n", hr);
+    if (FAILED(hr)) {
+        skip("Audio failed to initialize\n");
         return;
     }
-    ok(hr == S_OK, "DirectMusicPerformance_InitAudio failed: %08x\n", hr);
     hr = IDirectMusicPerformance8_GetDefaultAudioPath(performance, &dmap);
     ok(hr == S_OK, "DirectMusicPerformance_GetDefaultAudioPath failed: %08x\n", hr);
 
@@ -81,6 +84,7 @@ static void test_COM_audiopath(void)
 
     hr = IDirectMusicAudioPath_QueryInterface(dmap, &IID_IUnknown, (void**)&unk);
     ok(hr == S_OK, "QueryInterface for IID_IUnknown failed: %08x\n", hr);
+    ok(unk == (IUnknown*)dmap, "got %p, %p\n", unk, dmap);
     refcount = IUnknown_AddRef(unk);
     ok(refcount == 5, "refcount == %u, expected 5\n", refcount);
     refcount = IUnknown_Release(unk);
@@ -301,6 +305,7 @@ static void test_COM_segmentstate(void)
 
 static void test_COM_track(void)
 {
+    IDirectMusicTrack *dmt;
     IDirectMusicTrack8 *dmt8;
     IPersistStream *ps;
     IUnknown *unk;
@@ -310,21 +315,23 @@ static void test_COM_track(void)
     const struct {
         REFCLSID clsid;
         const char *name;
+        BOOL has_dmt8;
     } class[] = {
-        { X(DirectMusicLyricsTrack) },
-        { X(DirectMusicMarkerTrack) },
-        { X(DirectMusicParamControlTrack) },
-        { X(DirectMusicSegmentTriggerTrack) },
-        { X(DirectMusicSeqTrack) },
-        { X(DirectMusicSysExTrack) },
-        { X(DirectMusicTempoTrack) },
-        { X(DirectMusicTimeSigTrack) },
-        { X(DirectMusicWaveTrack) }
+        { X(DirectMusicLyricsTrack), TRUE },
+        { X(DirectMusicMarkerTrack), FALSE },
+        { X(DirectMusicParamControlTrack), TRUE },
+        { X(DirectMusicSegmentTriggerTrack), TRUE },
+        { X(DirectMusicSeqTrack), TRUE },
+        { X(DirectMusicSysExTrack), TRUE },
+        { X(DirectMusicTempoTrack), TRUE },
+        { X(DirectMusicTimeSigTrack), FALSE },
+        { X(DirectMusicWaveTrack), TRUE }
     };
 #undef X
     unsigned int i;
 
     for (i = 0; i < ARRAY_SIZE(class); i++) {
+        trace("Testing %s\n", class[i].name);
         /* COM aggregation */
         dmt8 = (IDirectMusicTrack8*)0xdeadbeef;
         hr = CoCreateInstance(class[i].clsid, (IUnknown*)&dmt8, CLSCTX_INPROC_SERVER, &IID_IUnknown,
@@ -344,29 +351,37 @@ static void test_COM_track(void)
                 class[i].name, hr);
 
         /* Same refcount for all DirectMusicTrack interfaces */
-        hr = CoCreateInstance(class[i].clsid, NULL, CLSCTX_INPROC_SERVER, &IID_IDirectMusicTrack8,
-                (void**)&dmt8);
-        if (hr == E_NOINTERFACE && !dmt8) {
-            skip("%s not created with CoCreateInstance()\n", class[i].name);
-            continue;
-        }
+        hr = CoCreateInstance(class[i].clsid, NULL, CLSCTX_INPROC_SERVER, &IID_IDirectMusicTrack,
+                (void**)&dmt);
         ok(hr == S_OK, "%s create failed: %08x, expected S_OK\n", class[i].name, hr);
-        refcount = IDirectMusicTrack8_AddRef(dmt8);
+        refcount = IDirectMusicTrack_AddRef(dmt);
         ok(refcount == 2, "refcount == %u, expected 2\n", refcount);
 
-        hr = IDirectMusicTrack8_QueryInterface(dmt8, &IID_IPersistStream, (void**)&ps);
+        hr = IDirectMusicTrack_QueryInterface(dmt, &IID_IPersistStream, (void**)&ps);
         ok(hr == S_OK, "QueryInterface for IID_IPersistStream failed: %08x\n", hr);
         refcount = IPersistStream_AddRef(ps);
         ok(refcount == 4, "refcount == %u, expected 4\n", refcount);
         IPersistStream_Release(ps);
 
-        hr = IDirectMusicTrack8_QueryInterface(dmt8, &IID_IUnknown, (void**)&unk);
+        hr = IDirectMusicTrack_QueryInterface(dmt, &IID_IUnknown, (void**)&unk);
         ok(hr == S_OK, "QueryInterface for IID_IUnknown failed: %08x\n", hr);
         refcount = IUnknown_AddRef(unk);
         ok(refcount == 5, "refcount == %u, expected 5\n", refcount);
         refcount = IUnknown_Release(unk);
 
-        while (IDirectMusicTrack8_Release(dmt8));
+        hr = IDirectMusicTrack_QueryInterface(dmt, &IID_IDirectMusicTrack8, (void**)&dmt8);
+        if (class[i].has_dmt8) {
+            ok(hr == S_OK, "QueryInterface for IID_IDirectMusicTrack8 failed: %08x\n", hr);
+            refcount = IDirectMusicTrack8_AddRef(dmt8);
+            ok(refcount == 6, "refcount == %u, expected 6\n", refcount);
+            refcount = IDirectMusicTrack8_Release(dmt8);
+        } else {
+            ok(hr == E_NOINTERFACE, "QueryInterface for IID_IDirectMusicTrack8 failed: %08x\n", hr);
+            refcount = IDirectMusicTrack_AddRef(dmt);
+            ok(refcount == 5, "refcount == %u, expected 5\n", refcount);
+        }
+
+        while (IDirectMusicTrack_Release(dmt));
     }
 }
 
@@ -390,13 +405,13 @@ static void test_audiopathconfig(void)
     hr = IDirectMusicObject_QueryInterface(dmo, &IID_IPersistStream, (void**)&ps);
     ok(hr == S_OK, "QueryInterface for IID_IPersistStream failed: %08x\n", hr);
     hr = IPersistStream_GetClassID(ps, &class);
-    todo_wine ok(hr == S_OK, "IPersistStream_GetClassID failed: %08x\n", hr);
-    todo_wine ok(IsEqualGUID(&class, &CLSID_DirectMusicAudioPathConfig),
+    ok(hr == S_OK, "IPersistStream_GetClassID failed: %08x\n", hr);
+    ok(IsEqualGUID(&class, &CLSID_DirectMusicAudioPathConfig),
             "Expected class CLSID_DirectMusicAudioPathConfig got %s\n", wine_dbgstr_guid(&class));
 
     /* Unimplemented IPersistStream methods */
     hr = IPersistStream_IsDirty(ps);
-    todo_wine ok(hr == S_FALSE, "IPersistStream_IsDirty failed: %08x\n", hr);
+    ok(hr == S_FALSE, "IPersistStream_IsDirty failed: %08x\n", hr);
     hr = IPersistStream_GetSizeMax(ps, &size);
     ok(hr == E_NOTIMPL, "IPersistStream_GetSizeMax failed: %08x\n", hr);
     hr = IPersistStream_Save(ps, NULL, TRUE);
@@ -421,13 +436,14 @@ static void test_graph(void)
     hr = IDirectMusicGraph_QueryInterface(dmg, &IID_IPersistStream, (void**)&ps);
     ok(hr == S_OK, "QueryInterface for IID_IPersistStream failed: %08x\n", hr);
     hr = IPersistStream_GetClassID(ps, &class);
-    todo_wine ok(hr == S_OK, "IPersistStream_GetClassID failed: %08x\n", hr);
-    todo_wine ok(IsEqualGUID(&class, &CLSID_DirectMusicGraph),
-            "Expected class CLSID_DirectMusicGraph got %s\n", wine_dbgstr_guid(&class));
+    ok(hr == S_OK || broken(hr == E_NOTIMPL) /* win2k */, "IPersistStream_GetClassID failed: %08x\n", hr);
+    if (hr == S_OK)
+        ok(IsEqualGUID(&class, &CLSID_DirectMusicGraph),
+                "Expected class CLSID_DirectMusicGraph got %s\n", wine_dbgstr_guid(&class));
 
     /* Unimplemented IPersistStream methods */
     hr = IPersistStream_IsDirty(ps);
-    todo_wine ok(hr == S_FALSE, "IPersistStream_IsDirty failed: %08x\n", hr);
+    ok(hr == S_FALSE, "IPersistStream_IsDirty failed: %08x\n", hr);
     hr = IPersistStream_GetSizeMax(ps, &size);
     ok(hr == E_NOTIMPL, "IPersistStream_GetSizeMax failed: %08x\n", hr);
     hr = IPersistStream_Save(ps, NULL, TRUE);
@@ -452,9 +468,10 @@ static void test_segment(void)
     hr = IDirectMusicSegment_QueryInterface(dms, &IID_IPersistStream, (void**)&ps);
     ok(hr == S_OK, "QueryInterface for IID_IPersistStream failed: %08x\n", hr);
     hr = IPersistStream_GetClassID(ps, &class);
-    ok(hr == S_OK, "IPersistStream_GetClassID failed: %08x\n", hr);
-    ok(IsEqualGUID(&class, &CLSID_DirectMusicSegment),
-            "Expected class CLSID_DirectMusicSegment got %s\n", wine_dbgstr_guid(&class));
+    ok(hr == S_OK || broken(hr == E_NOTIMPL) /* win2k */, "IPersistStream_GetClassID failed: %08x\n", hr);
+    if (hr == S_OK)
+        ok(IsEqualGUID(&class, &CLSID_DirectMusicSegment),
+                "Expected class CLSID_DirectMusicSegment got %s\n", wine_dbgstr_guid(&class));
 
     /* Unimplemented IPersistStream methods */
     hr = IPersistStream_IsDirty(ps);
@@ -465,6 +482,99 @@ static void test_segment(void)
     ok(hr == E_NOTIMPL, "IPersistStream_Save failed: %08x\n", hr);
 
     while (IDirectMusicSegment_Release(dms));
+}
+
+static void test_track(void)
+{
+    IDirectMusicTrack *dmt;
+    IDirectMusicTrack8 *dmt8;
+    IPersistStream *ps;
+    CLSID classid;
+    ULARGE_INTEGER size;
+    HRESULT hr;
+#define X(class)        &CLSID_ ## class, #class
+    const struct {
+        REFCLSID clsid;
+        const char *name;
+        BOOL has_param;
+    } class[] = {
+        { X(DirectMusicLyricsTrack), TRUE },
+        { X(DirectMusicMarkerTrack), TRUE },
+        { X(DirectMusicParamControlTrack), TRUE },
+        { X(DirectMusicSegmentTriggerTrack), TRUE },
+        { X(DirectMusicSeqTrack), FALSE },
+        { X(DirectMusicSysExTrack), FALSE },
+        { X(DirectMusicTempoTrack), TRUE },
+        { X(DirectMusicTimeSigTrack), TRUE },
+        { X(DirectMusicWaveTrack), TRUE }
+    };
+#undef X
+    unsigned int i;
+
+    for (i = 0; i < ARRAY_SIZE(class); i++) {
+        trace("Testing %s\n", class[i].name);
+        hr = CoCreateInstance(class[i].clsid, NULL, CLSCTX_INPROC_SERVER, &IID_IDirectMusicTrack,
+                (void**)&dmt);
+        ok(hr == S_OK, "%s create failed: %08x, expected S_OK\n", class[i].name, hr);
+
+        /* IDirectMusicTrack */
+        if (!class[i].has_param) {
+            hr = IDirectMusicTrack_GetParam(dmt, NULL, 0, NULL, NULL);
+            ok(hr == E_NOTIMPL, "IDirectMusicTrack_GetParam failed: %08x\n", hr);
+            hr = IDirectMusicTrack_SetParam(dmt, NULL, 0, NULL);
+            ok(hr == E_NOTIMPL, "IDirectMusicTrack_SetParam failed: %08x\n", hr);
+            hr = IDirectMusicTrack_IsParamSupported(dmt, NULL);
+            ok(hr == E_NOTIMPL, "IDirectMusicTrack_IsParamSupported failed: %08x\n", hr);
+        }
+        if (class[i].clsid != &CLSID_DirectMusicMarkerTrack &&
+                class[i].clsid != &CLSID_DirectMusicTimeSigTrack) {
+            hr = IDirectMusicTrack_AddNotificationType(dmt, NULL);
+            ok(hr == E_NOTIMPL, "IDirectMusicTrack_AddNotificationType failed: %08x\n", hr);
+            hr = IDirectMusicTrack_RemoveNotificationType(dmt, NULL);
+            ok(hr == E_NOTIMPL, "IDirectMusicTrack_RemoveNotificationType failed: %08x\n", hr);
+        }
+        hr = IDirectMusicTrack_Clone(dmt, 0, 0, NULL);
+        todo_wine ok(hr == E_POINTER, "IDirectMusicTrack_Clone failed: %08x\n", hr);
+
+        /* IDirectMusicTrack8 */
+        hr = IDirectMusicTrack_QueryInterface(dmt, &IID_IDirectMusicTrack8, (void**)&dmt8);
+        if (hr == S_OK) {
+            hr = IDirectMusicTrack8_PlayEx(dmt8, NULL, 0, 0, 0, 0, NULL, NULL, 0);
+            todo_wine ok(hr == E_POINTER, "IDirectMusicTrack8_PlayEx failed: %08x\n", hr);
+            if (!class[i].has_param) {
+                hr = IDirectMusicTrack8_GetParamEx(dmt8, NULL, 0, NULL, NULL, NULL, 0);
+                ok(hr == E_NOTIMPL, "IDirectMusicTrack8_GetParamEx failed: %08x\n", hr);
+                hr = IDirectMusicTrack8_SetParamEx(dmt8, NULL, 0, NULL, NULL, 0);
+                ok(hr == E_NOTIMPL, "IDirectMusicTrack8_SetParamEx failed: %08x\n", hr);
+            }
+            hr = IDirectMusicTrack8_Compose(dmt8, NULL, 0, NULL);
+            ok(hr == E_NOTIMPL, "IDirectMusicTrack8_Compose failed: %08x\n", hr);
+            hr = IDirectMusicTrack8_Join(dmt8, NULL, 0, NULL, 0, NULL);
+            if (class[i].clsid == &CLSID_DirectMusicTempoTrack)
+                todo_wine ok(hr == E_POINTER, "IDirectMusicTrack8_Join failed: %08x\n", hr);
+            else
+                ok(hr == E_NOTIMPL, "IDirectMusicTrack8_Join failed: %08x\n", hr);
+            IDirectMusicTrack8_Release(dmt8);
+        }
+
+        /* IPersistStream */
+        hr = IDirectMusicTrack_QueryInterface(dmt, &IID_IPersistStream, (void**)&ps);
+        ok(hr == S_OK, "QueryInterface for IID_IPersistStream failed: %08x\n", hr);
+        hr = IPersistStream_GetClassID(ps, &classid);
+        ok(hr == S_OK, "IPersistStream_GetClassID failed: %08x\n", hr);
+        ok(IsEqualGUID(&classid, class[i].clsid),
+                "Expected class %s got %s\n", class[i].name, wine_dbgstr_guid(&classid));
+        hr = IPersistStream_IsDirty(ps);
+        ok(hr == S_FALSE, "IPersistStream_IsDirty failed: %08x\n", hr);
+
+        /* Unimplemented IPersistStream methods */
+        hr = IPersistStream_GetSizeMax(ps, &size);
+        ok(hr == E_NOTIMPL, "IPersistStream_GetSizeMax failed: %08x\n", hr);
+        hr = IPersistStream_Save(ps, NULL, TRUE);
+        ok(hr == E_NOTIMPL, "IPersistStream_Save failed: %08x\n", hr);
+
+        while (IDirectMusicTrack_Release(dmt));
+    }
 }
 
 START_TEST(dmime)
@@ -486,6 +596,7 @@ START_TEST(dmime)
     test_audiopathconfig();
     test_graph();
     test_segment();
+    test_track();
 
     CoUninitialize();
 }

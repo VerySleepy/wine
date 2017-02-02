@@ -1020,8 +1020,11 @@ static void test_cdf_parsing(void)
     catmember = NULL;
     catmembertag = NULL;
     while ((catmembertag = pCryptCATCDFEnumMembersByCDFTagEx(catcdf, catmembertag, cdf_callback, &catmember, FALSE, NULL))) ;
-    todo_wine
-    CHECK_EXPECT(CRYPTCAT_E_AREA_MEMBER, CRYPTCAT_E_CDF_MEMBER_FILE_PATH);
+    ok(error_area == 0xffffffff || broken(error_area == CRYPTCAT_E_AREA_MEMBER) /* < win81 */,
+       "Expected area 0xffffffff, got %08x\n", error_area);
+    ok(local_error == 0xffffffff || broken(local_error == CRYPTCAT_E_CDF_MEMBER_FILE_PATH) /* < win81 */,
+       "Expected error 0xffffffff, got %08x\n", local_error);
+
     pCryptCATCDFClose(catcdf);
     DeleteFileA(cdffileA);
     todo_wine
@@ -1233,21 +1236,21 @@ static void test_sip(void)
     ok(ret, "CryptSIPRetrieveSubjectGuid failed (%x)\n", GetLastError());
 
     ret = pPutSignedDataMsg(&info, X509_ASN_ENCODING, &index, 4, (BYTE*)"test");
-    ok(!ret, "CryptSIPPutSignedDataMsg succeedded\n");
+    ok(!ret, "CryptSIPPutSignedDataMsg succeeded\n");
     index = GetLastError();
     ok(index == ERROR_PATH_NOT_FOUND, "GetLastError returned %x\n", index);
 
     info.hFile = file;
     info.pwsFileName = nameW;
     ret = pPutSignedDataMsg(&info, X509_ASN_ENCODING, &index, 4, (BYTE*)"test");
-    ok(!ret, "CryptSIPPutSignedDataMsg succeedded\n");
+    ok(!ret, "CryptSIPPutSignedDataMsg succeeded\n");
     index = GetLastError();
     todo_wine ok(index == ERROR_INVALID_PARAMETER, "GetLastError returned %x\n", index);
 
     info.hFile = INVALID_HANDLE_VALUE;
     info.pwsFileName = nameW;
     ret = pPutSignedDataMsg(&info, X509_ASN_ENCODING, &index, 4, (BYTE*)"test");
-    ok(!ret, "CryptSIPPutSignedDataMsg succeedded\n");
+    ok(!ret, "CryptSIPPutSignedDataMsg succeeded\n");
     index = GetLastError();
     ok(index == ERROR_SHARING_VIOLATION, "GetLastError returned %x\n", index);
 

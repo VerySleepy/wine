@@ -49,10 +49,6 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(xdnd);
 
-/* Maximum wait time for selection notify */
-#define SELECTION_RETRIES 500  /* wait for .1 seconds */
-#define SELECTION_WAIT    1000 /* us */
-
 typedef struct tagXDNDDATA
 {
     int cf_win;
@@ -71,10 +67,11 @@ static HWND XDNDLastTargetWnd;
 /* might be an ancestor of XDNDLastTargetWnd */
 static HWND XDNDLastDropTargetWnd;
 
-static void X11DRV_XDND_InsertXDNDData(int property, int format, HANDLE contents);
+static void X11DRV_XDND_InsertXDNDData( Atom property, UINT format, HANDLE contents );
 static void X11DRV_XDND_ResolveProperty(Display *display, Window xwin, Time tm,
     Atom *types, unsigned long count);
-static void X11DRV_XDND_SendDropFiles(HWND hwnd);
+static BOOL X11DRV_XDND_HasHDROP(void);
+static HRESULT X11DRV_XDND_SendDropFiles(HWND hwnd);
 static void X11DRV_XDND_FreeDragDropOp(void);
 
 static CRITICAL_SECTION xdnd_cs;
@@ -209,7 +206,7 @@ void X11DRV_XDND_EnterEvent( HWND hWnd, XClientMessageEvent *event )
 
     if (version > WINE_XDND_VERSION)
     {
-        TRACE("Ignores unsupported version\n");
+        ERR("ignoring unsupported XDND version %d\n", version);
         return;
     }
 
@@ -284,7 +281,7 @@ void X11DRV_XDND_PositionEvent( HWND hWnd, XClientMessageEvent *event )
         /* Notify OLE of DragEnter. Result determines if we accept */
         HWND dropTargetWindow;
 
-        if (XDNDLastDropTargetWnd)
+        if (XDNDAccepted && XDNDLastDropTargetWnd)
         {
             dropTarget = get_droptarget_pointer(XDNDLastDropTargetWnd);
             if (dropTarget)
@@ -304,20 +301,19 @@ void X11DRV_XDND_PositionEvent( HWND hWnd, XClientMessageEvent *event )
         XDNDLastDropTargetWnd = dropTargetWindow;
         if (dropTarget)
         {
+            DWORD effect_ignore = effect;
             hr = IDropTarget_DragEnter(dropTarget, &XDNDDataObject,
-                                       MK_LBUTTON, pointl, &effect);
-            if (SUCCEEDED(hr))
+                                       MK_LBUTTON, pointl, &effect_ignore);
+            if (hr == S_OK)
             {
-                if (effect != DROPEFFECT_NONE)
-                {
-                    XDNDAccepted = TRUE;
-                    TRACE("the application accepted the drop\n");
-                }
-                else
-                    TRACE("the application refused the drop\n");
+                XDNDAccepted = TRUE;
+                TRACE("the application accepted the drop (effect = %d)\n", effect_ignore);
             }
             else
+            {
+                XDNDAccepted = FALSE;
                 WARN("IDropTarget_DragEnter failed, error 0x%08X\n", hr);
+            }
             IDropTarget_Release(dropTarget);
         }
     }
@@ -328,7 +324,7 @@ void X11DRV_XDND_PositionEvent( HWND hWnd, XClientMessageEvent *event )
         if (dropTarget)
         {
             hr = IDropTarget_DragOver(dropTarget, MK_LBUTTON, pointl, &effect);
-            if (SUCCEEDED(hr))
+            if (hr == S_OK)
                 XDNDDropEffect = effect;
             else
                 WARN("IDropTarget_DragOver failed, error 0x%08X\n", hr);
@@ -338,11 +334,15 @@ void X11DRV_XDND_PositionEvent( HWND hWnd, XClientMessageEvent *event )
 
     if (XDNDAccepted)
         accept = 1;
-    if (GetWindowLongW( hWnd, GWL_EXSTYLE ) & WS_EX_ACCEPTFILES)
+    else if ((GetWindowLongW( hWnd, GWL_EXSTYLE ) & WS_EX_ACCEPTFILES) &&
+            X11DRV_XDND_HasHDROP())
+    {
         accept = 1;
+        effect = DROPEFFECT_COPY;
+    }
 
-    TRACE("action req: %ld accept(%d) at x(%d),y(%d)\n",
-          event->data.l[4], accept, XDNDxy.x, XDNDxy.y);
+    TRACE("actionRequested(%ld) accept(%d) chosen(0x%x) at x(%d),y(%d)\n",
+          event->data.l[4], accept, effect, XDNDxy.x, XDNDxy.y);
 
     /*
      * Let source know if we're accepting the drop by
@@ -373,36 +373,70 @@ void X11DRV_XDND_DropEvent( HWND hWnd, XClientMessageEvent *event )
 {
     XClientMessageEvent e;
     IDropTarget *dropTarget;
-
-    TRACE("\n");
-
-    /* If we have a HDROP type we send a WM_ACCEPTFILES.*/
-    if (GetWindowLongW( hWnd, GWL_EXSTYLE ) & WS_EX_ACCEPTFILES)
-        X11DRV_XDND_SendDropFiles( hWnd );
+    DWORD effect = XDNDDropEffect;
+    int accept = 0; /* Assume we're not accepting */
+    BOOL drop_file = TRUE;
 
     /* Notify OLE of Drop */
-    dropTarget = get_droptarget_pointer(XDNDLastDropTargetWnd);
-    if (dropTarget)
+    if (XDNDAccepted)
     {
-        HRESULT hr;
-        POINTL pointl;
-        DWORD effect = XDNDDropEffect;
-
-        pointl.x = XDNDxy.x;
-        pointl.y = XDNDxy.y;
-        hr = IDropTarget_Drop(dropTarget, &XDNDDataObject, MK_LBUTTON,
-                              pointl, &effect);
-        if (SUCCEEDED(hr))
+        dropTarget = get_droptarget_pointer(XDNDLastDropTargetWnd);
+        if (dropTarget && effect!=DROPEFFECT_NONE)
         {
-            if (effect != DROPEFFECT_NONE)
-                TRACE("drop succeeded\n");
+            HRESULT hr;
+            POINTL pointl;
+
+            pointl.x = XDNDxy.x;
+            pointl.y = XDNDxy.y;
+            hr = IDropTarget_Drop(dropTarget, &XDNDDataObject, MK_LBUTTON,
+                                  pointl, &effect);
+            if (hr == S_OK)
+            {
+                if (effect != DROPEFFECT_NONE)
+                {
+                    TRACE("drop succeeded\n");
+                    accept = 1;
+                    drop_file = FALSE;
+                }
+                else
+                    TRACE("the application refused the drop\n");
+            }
+            else if (FAILED(hr))
+                WARN("drop failed, error 0x%08X\n", hr);
             else
-                TRACE("the application refused the drop\n");
+            {
+                WARN("drop returned 0x%08X\n", hr);
+                drop_file = FALSE;
+            }
+            IDropTarget_Release(dropTarget);
         }
-        else
-            WARN("drop failed, error 0x%08X\n", hr);
-        IDropTarget_Release(dropTarget);
+        else if (dropTarget)
+        {
+            HRESULT hr = IDropTarget_DragLeave(dropTarget);
+            if (FAILED(hr))
+                WARN("IDropTarget_DragLeave failed, error 0x%08X\n", hr);
+            IDropTarget_Release(dropTarget);
+        }
     }
+
+    if (drop_file)
+    {
+        /* Only send WM_DROPFILES if Drop didn't succeed or DROPEFFECT_NONE was set.
+         * Doing both causes winamp to duplicate the dropped files (#29081) */
+        if ((GetWindowLongW( hWnd, GWL_EXSTYLE ) & WS_EX_ACCEPTFILES) &&
+                X11DRV_XDND_HasHDROP())
+        {
+            HRESULT hr = X11DRV_XDND_SendDropFiles( hWnd );
+            if (SUCCEEDED(hr))
+            {
+                accept = 1;
+                effect = DROPEFFECT_COPY;
+            }
+        }
+    }
+
+    TRACE("effectRequested(0x%x) accept(%d) performed(0x%x) at x(%d),y(%d)\n",
+          XDNDDropEffect, accept, effect, XDNDxy.x, XDNDxy.y);
 
     X11DRV_XDND_FreeDragDropOp();
 
@@ -414,6 +448,11 @@ void X11DRV_XDND_DropEvent( HWND hWnd, XClientMessageEvent *event )
     e.message_type = x11drv_atom(XdndFinished);
     e.format = 32;
     e.data.l[0] = event->window;
+    e.data.l[1] = accept;
+    if (accept)
+        e.data.l[2] = X11DRV_XDND_DROPEFFECTToXdndAction(effect);
+    else
+        e.data.l[2] = None;
     XSendEvent(event->display, event->data.l[0], False, NoEventMask, (XEvent*)&e);
 }
 
@@ -429,13 +468,16 @@ void X11DRV_XDND_LeaveEvent( HWND hWnd, XClientMessageEvent *event )
     TRACE("DND Operation canceled\n");
 
     /* Notify OLE of DragLeave */
-    dropTarget = get_droptarget_pointer(XDNDLastDropTargetWnd);
-    if (dropTarget)
+    if (XDNDAccepted)
     {
-        HRESULT hr = IDropTarget_DragLeave(dropTarget);
-        if (FAILED(hr))
-            WARN("IDropTarget_DragLeave failed, error 0x%08X\n", hr);
-        IDropTarget_Release(dropTarget);
+        dropTarget = get_droptarget_pointer(XDNDLastDropTargetWnd);
+        if (dropTarget)
+        {
+            HRESULT hr = IDropTarget_DragLeave(dropTarget);
+            if (FAILED(hr))
+                WARN("IDropTarget_DragLeave failed, error 0x%08X\n", hr);
+            IDropTarget_Release(dropTarget);
+        }
     }
 
     X11DRV_XDND_FreeDragDropOp();
@@ -450,9 +492,6 @@ void X11DRV_XDND_LeaveEvent( HWND hWnd, XClientMessageEvent *event )
 static void X11DRV_XDND_ResolveProperty(Display *display, Window xwin, Time tm,
                                         Atom *types, unsigned long count)
 {
-    unsigned int i, j;
-    BOOL res;
-    XEvent xe;
     XDNDDATA *current, *next;
     BOOL haveHDROP = FALSE;
 
@@ -460,37 +499,8 @@ static void X11DRV_XDND_ResolveProperty(Display *display, Window xwin, Time tm,
 
     X11DRV_XDND_FreeDragDropOp(); /* Clear previously cached data */
 
-    for (i = 0; i < count; i++)
-    {
-        HANDLE contents;
-        UINT windowsFormat;
-
-        TRACE("requesting atom %ld from xwin %ld\n", types[i], xwin);
-
-        if (types[i] == 0)
-            continue;
-
-        XConvertSelection(display, x11drv_atom(XdndSelection), types[i],
-                          x11drv_atom(XdndTarget), xwin, /*tm*/CurrentTime);
-
-        /*
-         * Wait for SelectionNotify
-         */
-        for (j = 0; j < SELECTION_RETRIES; j++)
-        {
-            res = XCheckTypedWindowEvent(display, xwin, SelectionNotify, &xe);
-            if (res && xe.xselection.selection == x11drv_atom(XdndSelection)) break;
-
-            usleep(SELECTION_WAIT);
-        }
-
-        if (xe.xselection.property == None)
-            continue;
-
-        contents = X11DRV_CLIPBOARD_ImportSelection(display, types[i], xwin, x11drv_atom(XdndTarget), &windowsFormat);
-        if (contents)
-            X11DRV_XDND_InsertXDNDData(types[i], windowsFormat, contents);
-    }
+    X11DRV_CLIPBOARD_ImportSelection( display, xwin, x11drv_atom(XdndSelection),
+                                      types, count, X11DRV_XDND_InsertXDNDData );
 
     /* On Windows when there is a CF_HDROP, there are no other CF_ formats.
      * foobar2000 relies on this (spaces -> %20's without it).
@@ -523,7 +533,7 @@ static void X11DRV_XDND_ResolveProperty(Display *display, Window xwin, Time tm,
  *
  * Cache available XDND property
  */
-static void X11DRV_XDND_InsertXDNDData(int property, int format, HANDLE contents)
+static void X11DRV_XDND_InsertXDNDData( Atom property, UINT format, HANDLE contents )
 {
     LPXDNDDATA current = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(XDNDDATA));
 
@@ -540,9 +550,9 @@ static void X11DRV_XDND_InsertXDNDData(int property, int format, HANDLE contents
 
 
 /**************************************************************************
- * X11DRV_XDND_SendDropFiles
+ * X11DRV_XDND_HasHDROP
  */
-static void X11DRV_XDND_SendDropFiles(HWND hwnd)
+static BOOL X11DRV_XDND_HasHDROP(void)
 {
     LPXDNDDATA current = NULL;
     BOOL found = FALSE;
@@ -559,10 +569,33 @@ static void X11DRV_XDND_SendDropFiles(HWND hwnd)
         }
     }
 
+    LeaveCriticalSection(&xdnd_cs);
+
+    return found;
+}
+
+/**************************************************************************
+ * X11DRV_XDND_SendDropFiles
+ */
+static HRESULT X11DRV_XDND_SendDropFiles(HWND hwnd)
+{
+    HRESULT hr;
+    LPXDNDDATA current = NULL;
+    BOOL found = FALSE;
+
+    EnterCriticalSection(&xdnd_cs);
+
+    LIST_FOR_EACH_ENTRY(current, &xdndData, XDNDDATA, entry)
+    {
+         if (current->cf_win == CF_HDROP)
+         {
+             found = TRUE;
+             break;
+         }
+    }
     if (found)
     {
         HGLOBAL dropHandle = GlobalAlloc(GMEM_FIXED, GlobalSize(current->contents));
-
         if (dropHandle)
         {
             DROPFILES *lpDrop = GlobalLock(dropHandle);
@@ -575,12 +608,23 @@ static void X11DRV_XDND_SendDropFiles(HWND hwnd)
                     lpDrop->fNC, lpDrop->pt.x, lpDrop->pt.y, ((char*)lpDrop) + lpDrop->pFiles,
                     debugstr_w((WCHAR*)(((char*)lpDrop) + lpDrop->pFiles)));
             GlobalUnlock(dropHandle);
-            if (!PostMessageW(hwnd, WM_DROPFILES, (WPARAM)dropHandle, 0))
+            if (PostMessageW(hwnd, WM_DROPFILES, (WPARAM)dropHandle, 0))
+                hr = S_OK;
+            else
+            {
+                hr = HRESULT_FROM_WIN32(GetLastError());
                 GlobalFree(dropHandle);
+            }
         }
+        else
+            hr = HRESULT_FROM_WIN32(GetLastError());
     }
+    else
+        hr = E_FAIL;
 
     LeaveCriticalSection(&xdnd_cs);
+
+    return hr;
 }
 
 

@@ -537,8 +537,9 @@ DWORD_PTR WINAPI SHGetFileInfoW(LPCWSTR path,DWORD dwFileAttributes,
     /* get the type name */
     if (SUCCEEDED(hr) && (flags & SHGFI_TYPENAME))
     {
+        static const WCHAR szFolder[] = { 'F','o','l','d','e','r',0 };
         static const WCHAR szFile[] = { 'F','i','l','e',0 };
-        static const WCHAR szDashFile[] = { '-','f','i','l','e',0 };
+        static const WCHAR szSpaceFile[] = { ' ','f','i','l','e',0 };
 
         if (!(flags & SHGFI_USEFILEATTRIBUTES) || (flags & SHGFI_PIDL))
         {
@@ -550,17 +551,29 @@ DWORD_PTR WINAPI SHGetFileInfoW(LPCWSTR path,DWORD dwFileAttributes,
         else
         {
             if (dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-                strcatW (psfi->szTypeName, szFile);
+                strcatW (psfi->szTypeName, szFolder);
             else 
             {
                 WCHAR sTemp[64];
 
                 lstrcpyW(sTemp,PathFindExtensionW(szFullPath));
-                if (!( HCR_MapTypeToValueW(sTemp, sTemp, 64, TRUE) &&
+                if (sTemp[0] == 0 || (sTemp[0] == '.' && sTemp[1] == 0))
+                {
+                    /* "name" or "name." => "File" */
+                    lstrcpynW (psfi->szTypeName, szFile, 64);
+                }
+                else if (!( HCR_MapTypeToValueW(sTemp, sTemp, 64, TRUE) &&
                     HCR_MapTypeToValueW(sTemp, psfi->szTypeName, 80, FALSE )))
                 {
-                    lstrcpynW (psfi->szTypeName, sTemp, 64);
-                    strcatW (psfi->szTypeName, szDashFile);
+                    if (sTemp[0])
+                    {
+                        lstrcpynW (psfi->szTypeName, sTemp, 64);
+                        strcatW (psfi->szTypeName, szSpaceFile);
+                    }
+                    else
+                    {
+                        lstrcpynW (psfi->szTypeName, szFile, 64);
+                    }
                 }
             }
         }
@@ -941,6 +954,15 @@ VOID WINAPI Printers_UnregisterWindow(HANDLE hClassPidl, HWND hwnd)
 {
     FIXME("(%p, %p) stub!\n", hClassPidl, hwnd);
 } 
+
+/*************************************************************************
+ * SHGetPropertyStoreForWindow [SHELL32.@]
+ */
+HRESULT WINAPI SHGetPropertyStoreForWindow(HWND hwnd, REFIID riid, void **ppv)
+{
+    FIXME("(%p %p %p) stub!\n", hwnd, riid, ppv);
+    return E_NOTIMPL;
+}
 
 /*************************************************************************
  * SHGetPropertyStoreFromParsingName [SHELL32.@]
@@ -1378,6 +1400,16 @@ HRESULT WINAPI SetCurrentProcessExplicitAppUserModelID(PCWSTR appid)
 }
 
 /***********************************************************************
+ *              GetCurrentProcessExplicitAppUserModelID (SHELL32.@)
+ */
+HRESULT WINAPI GetCurrentProcessExplicitAppUserModelID(PWSTR *appid)
+{
+    FIXME("%p: stub\n", appid);
+    *appid = NULL;
+    return E_NOTIMPL;
+}
+
+/***********************************************************************
  *              SHSetUnreadMailCountW (SHELL32.@)
  */
 HRESULT WINAPI SHSetUnreadMailCountW(LPCWSTR mailaddress, DWORD count, LPCWSTR executecommand)
@@ -1393,4 +1425,14 @@ HRESULT WINAPI SHEnumerateUnreadMailAccountsW(HKEY user, DWORD idx, LPWSTR maila
 {
     FIXME("%p %d %p %d: stub\n", user, idx, mailaddress, mailaddresslen);
     return E_NOTIMPL;
+}
+
+/***********************************************************************
+ *              SHQueryUserNotificationState (SHELL32.@)
+ */
+HRESULT WINAPI SHQueryUserNotificationState(QUERY_USER_NOTIFICATION_STATE *state)
+{
+    FIXME("%p: stub\n", state);
+    *state = QUNS_ACCEPTS_NOTIFICATIONS;
+    return S_OK;
 }

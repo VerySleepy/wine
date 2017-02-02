@@ -57,6 +57,201 @@ static int strcmp_ww(LPCWSTR strw1, LPCWSTR strw2)
     return lstrcmpA(stra1, stra2);
 }
 
+typedef struct TestLockBytes {
+    ILockBytes ILockBytes_iface;
+    LONG ref;
+    BYTE* contents;
+    ULONG size;
+    ULONG buffer_size;
+    HRESULT lock_hr;
+    ULONG locks_supported;
+    ULONG lock_called;
+} TestLockBytes;
+
+static inline TestLockBytes *impl_from_ILockBytes(ILockBytes *iface)
+{
+    return CONTAINING_RECORD(iface, TestLockBytes, ILockBytes_iface);
+}
+
+static HRESULT WINAPI TestLockBytes_QueryInterface(ILockBytes *iface, REFIID iid,
+    void **ppv)
+{
+    TestLockBytes *This = impl_from_ILockBytes(iface);
+
+    if (!ppv) return E_INVALIDARG;
+
+    if (IsEqualIID(&IID_IUnknown, iid) ||
+        IsEqualIID(&IID_ILockBytes, iid))
+        *ppv = &This->ILockBytes_iface;
+    else
+        return E_NOINTERFACE;
+
+    IUnknown_AddRef((IUnknown*)*ppv);
+    return S_OK;
+}
+
+static ULONG WINAPI TestLockBytes_AddRef(ILockBytes *iface)
+{
+    TestLockBytes *This = impl_from_ILockBytes(iface);
+    ULONG ref = InterlockedIncrement(&This->ref);
+    return ref;
+}
+
+static ULONG WINAPI TestLockBytes_Release(ILockBytes *iface)
+{
+    TestLockBytes *This = impl_from_ILockBytes(iface);
+    ULONG ref = InterlockedDecrement(&This->ref);
+    return ref;
+}
+
+static HRESULT WINAPI TestLockBytes_ReadAt(ILockBytes *iface,
+    ULARGE_INTEGER ulOffset, void *pv, ULONG cb, ULONG *pcbRead)
+{
+    TestLockBytes *This = impl_from_ILockBytes(iface);
+    ULONG dummy;
+
+    if (!pv) return E_INVALIDARG;
+
+    if (!pcbRead) pcbRead = &dummy;
+
+    if (ulOffset.QuadPart >= This->size)
+    {
+        *pcbRead = 0;
+        return S_OK;
+    }
+
+    cb = min(cb, This->size - ulOffset.QuadPart);
+
+    *pcbRead = cb;
+    memcpy(pv, &This->contents[ulOffset.QuadPart], cb);
+
+    return S_OK;
+}
+
+static HRESULT WINAPI TestLockBytes_WriteAt(ILockBytes *iface,
+    ULARGE_INTEGER ulOffset, const void *pv, ULONG cb, ULONG *pcbWritten)
+{
+    TestLockBytes *This = impl_from_ILockBytes(iface);
+    HRESULT hr;
+    ULONG dummy;
+
+    if (!pv) return E_INVALIDARG;
+
+    if (!pcbWritten) pcbWritten = &dummy;
+
+    if (ulOffset.QuadPart + cb > This->size)
+    {
+        ULARGE_INTEGER new_size;
+        new_size.QuadPart = ulOffset.QuadPart + cb;
+        hr = ILockBytes_SetSize(iface, new_size);
+        if (FAILED(hr)) return hr;
+    }
+
+    *pcbWritten = cb;
+    memcpy(&This->contents[ulOffset.QuadPart], pv, cb);
+
+    return S_OK;
+}
+
+static HRESULT WINAPI TestLockBytes_Flush(ILockBytes *iface)
+{
+    return S_OK;
+}
+
+static HRESULT WINAPI TestLockBytes_SetSize(ILockBytes *iface,
+    ULARGE_INTEGER cb)
+{
+    TestLockBytes *This = impl_from_ILockBytes(iface);
+
+    if (This->buffer_size < cb.QuadPart)
+    {
+        ULONG new_buffer_size = max(This->buffer_size * 2, cb.QuadPart);
+        BYTE* new_buffer = HeapAlloc(GetProcessHeap(), 0, new_buffer_size);
+        if (!new_buffer) return E_OUTOFMEMORY;
+        memcpy(new_buffer, This->contents, This->size);
+        HeapFree(GetProcessHeap(), 0, This->contents);
+        This->contents = new_buffer;
+    }
+
+    if (cb.QuadPart > This->size)
+        memset(&This->contents[This->size], 0, cb.QuadPart - This->size);
+
+    This->size = cb.QuadPart;
+
+    return S_OK;
+}
+
+static HRESULT WINAPI TestLockBytes_LockRegion(ILockBytes *iface,
+    ULARGE_INTEGER libOffset, ULARGE_INTEGER cb, DWORD dwLockType)
+{
+    TestLockBytes *This = impl_from_ILockBytes(iface);
+    This->lock_called++;
+    return This->lock_hr;
+}
+
+static HRESULT WINAPI TestLockBytes_UnlockRegion(ILockBytes *iface,
+    ULARGE_INTEGER libOffset, ULARGE_INTEGER cb, DWORD dwLockType)
+{
+    TestLockBytes *This = impl_from_ILockBytes(iface);
+    return This->lock_hr;
+}
+
+static HRESULT WINAPI TestLockBytes_Stat(ILockBytes *iface,
+    STATSTG *pstatstg, DWORD grfStatFlag)
+{
+    TestLockBytes *This = impl_from_ILockBytes(iface);
+    static const WCHAR dummy_name[] = {'d','u','m','m','y',0};
+
+    if (!pstatstg) return E_INVALIDARG;
+
+    memset(pstatstg, 0, sizeof(STATSTG));
+
+    if (!(grfStatFlag & STATFLAG_NONAME))
+    {
+        pstatstg->pwcsName = CoTaskMemAlloc(sizeof(dummy_name));
+        if (!pstatstg->pwcsName) return E_OUTOFMEMORY;
+        memcpy(pstatstg->pwcsName, dummy_name, sizeof(dummy_name));
+    }
+
+    pstatstg->type = STGTY_LOCKBYTES;
+    pstatstg->cbSize.QuadPart = This->size;
+    pstatstg->grfLocksSupported = This->locks_supported;
+
+    return S_OK;
+}
+
+static const ILockBytesVtbl TestLockBytes_Vtbl = {
+    TestLockBytes_QueryInterface,
+    TestLockBytes_AddRef,
+    TestLockBytes_Release,
+    TestLockBytes_ReadAt,
+    TestLockBytes_WriteAt,
+    TestLockBytes_Flush,
+    TestLockBytes_SetSize,
+    TestLockBytes_LockRegion,
+    TestLockBytes_UnlockRegion,
+    TestLockBytes_Stat
+};
+
+static void CreateTestLockBytes(TestLockBytes **This)
+{
+    *This = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(**This));
+
+    if (*This)
+    {
+        (*This)->ILockBytes_iface.lpVtbl = &TestLockBytes_Vtbl;
+        (*This)->ref = 1;
+    }
+}
+
+static void DeleteTestLockBytes(TestLockBytes *This)
+{
+    ok(This->ILockBytes_iface.lpVtbl == &TestLockBytes_Vtbl, "test lock bytes %p deleted with incorrect vtable\n", This);
+    ok(This->ref == 1, "test lock bytes %p deleted with %i references instead of 1\n", This, This->ref);
+    HeapFree(GetProcessHeap(), 0, This->contents);
+    HeapFree(GetProcessHeap(), 0, This);
+}
+
 static void test_hglobal_storage_stat(void)
 {
     ILockBytes *ilb = NULL;
@@ -318,6 +513,7 @@ static void test_storage_stream(void)
     ULARGE_INTEGER p;
     unsigned char buffer[0x100];
     IUnknown *unk;
+    BOOL ret;
 
     DeleteFileA(filenameA);
 
@@ -496,8 +692,8 @@ static void test_storage_stream(void)
         IStorage_Release(stg);
     }
 
-    r = DeleteFileA(filenameA);
-    ok(r, "file should exist\n");
+    ret = DeleteFileA(filenameA);
+    ok(ret, "file should exist\n");
 }
 
 static BOOL touch_file(LPCSTR filename)
@@ -544,6 +740,7 @@ static void test_open_storage(void)
     IStorage *stg = NULL, *stg2 = NULL;
     HRESULT r;
     DWORD stgm;
+    BOOL ret;
 
     /* try opening a zero length file - it should stay zero length */
     DeleteFileA(filenameA);
@@ -703,8 +900,8 @@ static void test_open_storage(void)
     r = StgOpenStorage( filename, NULL, STGM_NOSNAPSHOT | STGM_PRIORITY, NULL, 0, &stg);
     ok(r == STG_E_INVALIDFLAG, "should fail\n");
 
-    r = DeleteFileA(filenameA);
-    ok(r, "file didn't exist\n");
+    ret = DeleteFileA(filenameA);
+    ok(ret, "file didn't exist\n");
 }
 
 static void test_storage_suminfo(void)
@@ -979,7 +1176,7 @@ static void test_writeclassstg(void)
 {
     IStorage *stg = NULL;
     HRESULT r;
-    CLSID temp_cls;
+    CLSID temp_cls, cls2;
 
     DeleteFileA(filenameA);
 
@@ -990,6 +1187,12 @@ static void test_writeclassstg(void)
 
     r = ReadClassStg( NULL, NULL );
     ok(r == E_INVALIDARG, "ReadClassStg should return E_INVALIDARG instead of 0x%08X\n", r);
+
+    memset(&temp_cls, 0xcc, sizeof(temp_cls));
+    memset(&cls2, 0xcc, sizeof(cls2));
+    r = ReadClassStg( NULL, &temp_cls );
+    ok(r == E_INVALIDARG, "got 0x%08x\n", r);
+    ok(IsEqualCLSID(&temp_cls, &cls2), "got wrong clsid\n");
 
     r = ReadClassStg( stg, NULL );
     ok(r == E_INVALIDARG, "ReadClassStg should return E_INVALIDARG instead of 0x%08X\n", r);
@@ -1027,6 +1230,7 @@ static void test_streamenum(void)
     static const WCHAR stmname[] = { 'C','O','N','T','E','N','T','S',0 };
     static const WCHAR stmname2[] = { 'A','B','C','D','E','F','G','H','I',0 };
     static const WCHAR stmname3[] = { 'A','B','C','D','E','F','G','H','I','J',0 };
+    static const STATSTG stat_null;
     STATSTG stat;
     IEnumSTATSTG *ee = NULL;
     ULONG count;
@@ -1072,10 +1276,12 @@ static void test_streamenum(void)
     r = IStorage_DestroyElement(stg, stmname);
     ok(r==S_OK, "IStorage->DestroyElement failed\n");
 
+    memset(&stat, 0xad, sizeof(stat));
     count = 0xf00;
     r = IEnumSTATSTG_Next(ee, 1, &stat, &count);
     ok(r==S_FALSE, "IEnumSTATSTG->Next failed\n");
     ok(count == 0, "count wrong\n");
+    ok(memcmp(&stat, &stat_null, sizeof(stat)) == 0, "stat is not zeroed\n");
 
     /* reset and try again */
     r = IEnumSTATSTG_Reset(ee);
@@ -1202,6 +1408,7 @@ static void test_transact(void)
     static const WCHAR stmname2[] = { 'F','O','O',0 };
     static const WCHAR stgname[] = { 'P','E','R','M','S','T','G',0 };
     static const WCHAR stgname2[] = { 'T','E','M','P','S','T','G',0 };
+    BOOL ret;
 
     DeleteFileA(filenameA);
 
@@ -1322,8 +1529,8 @@ static void test_transact(void)
 
     IStorage_Release(stg);
 
-    r = DeleteFileA(filenameA);
-    ok( r == TRUE, "deleted file\n");
+    ret = DeleteFileA(filenameA);
+    ok(ret, "deleted file\n");
 }
 
 static void test_substorage_share(void)
@@ -1334,6 +1541,7 @@ static void test_substorage_share(void)
     static const WCHAR stgname[] = { 'P','E','R','M','S','T','G',0 };
     static const WCHAR stmname[] = { 'C','O','N','T','E','N','T','S',0 };
     static const WCHAR othername[] = { 'N','E','W','N','A','M','E',0 };
+    BOOL ret;
 
     DeleteFileA(filenameA);
 
@@ -1413,8 +1621,8 @@ static void test_substorage_share(void)
 
     IStorage_Release(stg);
 
-    r = DeleteFileA(filenameA);
-    ok( r == TRUE, "deleted file\n");
+    ret = DeleteFileA(filenameA);
+    ok(ret, "deleted file\n");
 }
 
 static void test_revert(void)
@@ -1427,6 +1635,7 @@ static void test_revert(void)
     static const WCHAR stgname[] = { 'P','E','R','M','S','T','G',0 };
     static const WCHAR stgname2[] = { 'T','E','M','P','S','T','G',0 };
     STATSTG statstg;
+    BOOL ret;
 
     DeleteFileA(filenameA);
 
@@ -1544,8 +1753,8 @@ static void test_revert(void)
 
     IStorage_Release(stg);
 
-    r = DeleteFileA(filenameA);
-    ok( r == TRUE, "deleted file\n");
+    ret = DeleteFileA(filenameA);
+    ok(ret, "deleted file\n");
 
     /* Revert only invalidates objects in transacted mode */
     r = StgCreateDocfile( filename, STGM_CREATE | STGM_SHARE_EXCLUSIVE |
@@ -1564,8 +1773,8 @@ static void test_revert(void)
     IStream_Release(stm);
     IStorage_Release(stg);
 
-    r = DeleteFileA(filenameA);
-    ok( r == TRUE, "deleted file\n");
+    ret = DeleteFileA(filenameA);
+    ok(ret, "deleted file\n");
 }
 
 static void test_parent_free(void)
@@ -1577,6 +1786,7 @@ static void test_parent_free(void)
     static const WCHAR stgname[] = { 'P','E','R','M','S','T','G',0 };
     ULONG ref;
     STATSTG statstg;
+    BOOL ret;
 
     DeleteFileA(filenameA);
 
@@ -1626,8 +1836,8 @@ static void test_parent_free(void)
 
     IStorage_Release(stg);
 
-    r = DeleteFileA(filenameA);
-    ok( r == TRUE, "deleted file\n");
+    ret = DeleteFileA(filenameA);
+    ok(ret, "deleted file\n");
 }
 
 static void test_nonroot_transacted(void)
@@ -1638,6 +1848,7 @@ static void test_nonroot_transacted(void)
     static const WCHAR stgname[] = { 'P','E','R','M','S','T','G',0 };
     static const WCHAR stmname[] = { 'C','O','N','T','E','N','T','S',0 };
     static const WCHAR stmname2[] = { 'F','O','O',0 };
+    BOOL ret;
 
     DeleteFileA(filenameA);
 
@@ -1746,13 +1957,13 @@ static void test_nonroot_transacted(void)
 
     IStorage_Release(stg);
 
-    r = DeleteFileA(filenameA);
-    ok( r == TRUE, "deleted file\n");
+    ret = DeleteFileA(filenameA);
+    ok(ret, "deleted file\n");
 }
 
 static void test_ReadClassStm(void)
 {
-    CLSID clsid;
+    CLSID clsid, clsid2;
     HRESULT hr;
     IStream *pStream;
     static const LARGE_INTEGER llZero;
@@ -1767,6 +1978,12 @@ static void test_ReadClassStm(void)
 
     hr = ReadClassStm(pStream, NULL);
     ok(hr == E_INVALIDARG, "ReadClassStm should have returned E_INVALIDARG instead of 0x%08x\n", hr);
+
+    memset(&clsid, 0xcc, sizeof(clsid));
+    memset(&clsid2, 0xcc, sizeof(clsid2));
+    hr = ReadClassStm(NULL, &clsid);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+    ok(IsEqualCLSID(&clsid, &clsid2), "got wrong clsid\n");
 
     /* test not rewound stream */
     hr = ReadClassStm(pStream, &clsid);
@@ -2216,6 +2433,7 @@ static void test_fmtusertypestg(void)
     static const WCHAR fileW[] = {'f','m','t','t','e','s','t',0};
     static WCHAR userTypeW[] = {'S','t','g','U','s','r','T','y','p','e',0};
     static const WCHAR strmNameW[] = {1,'C','o','m','p','O','b','j',0};
+    static const STATSTG statstg_null;
 
     hr = StgCreateDocfile( fileW, STGM_CREATE | STGM_SHARE_EXCLUSIVE | STGM_READWRITE, 0, &stg);
     ok(hr == S_OK, "should succeed, res=%x\n", hr);
@@ -2234,6 +2452,7 @@ static void test_fmtusertypestg(void)
             BOOL found = FALSE;
             STATSTG statstg;
             DWORD got;
+            memset(&statstg, 0xad, sizeof(statstg));
             while ((hr = IEnumSTATSTG_Next(stat, 1, &statstg, &got)) == S_OK && got == 1)
             {
                 if (strcmp_ww(statstg.pwcsName, strmNameW) == 0)
@@ -2242,6 +2461,7 @@ static void test_fmtusertypestg(void)
                     ok(0, "found unexpected stream or storage\n");
                 CoTaskMemFree(statstg.pwcsName);
             }
+            ok(memcmp(&statstg, &statstg_null, sizeof(statstg)) == 0, "statstg is not zeroed\n");
             ok(found == TRUE, "expected storage to contain stream \\0001CompObj\n");
             IEnumSTATSTG_Release(stat);
         }
@@ -2258,6 +2478,7 @@ static void test_fmtusertypestg(void)
             BOOL found = FALSE;
             STATSTG statstg;
             DWORD got;
+            memset(&statstg, 0xad, sizeof(statstg));
             while ((hr = IEnumSTATSTG_Next(stat, 1, &statstg, &got)) == S_OK && got == 1)
             {
                 if (strcmp_ww(statstg.pwcsName, strmNameW) == 0)
@@ -2266,6 +2487,7 @@ static void test_fmtusertypestg(void)
                     ok(0, "found unexpected stream or storage\n");
                 CoTaskMemFree(statstg.pwcsName);
             }
+            ok(memcmp(&statstg, &statstg_null, sizeof(statstg)) == 0, "statstg is not zeroed\n");
             ok(found == TRUE, "expected storage to contain stream \\0001CompObj\n");
             IEnumSTATSTG_Release(stat);
         }
@@ -2730,6 +2952,7 @@ static void test_rename(void)
     static const WCHAR stgname2[] = { 'S','T','G',0 };
     static const WCHAR stmname[] = { 'C','O','N','T','E','N','T','S',0 };
     static const WCHAR stmname2[] = { 'E','N','T','S',0 };
+    BOOL ret;
 
     DeleteFileA(filenameA);
 
@@ -2786,8 +3009,8 @@ static void test_rename(void)
 
     IStorage_Release(stg);
 
-    r = DeleteFileA(filenameA);
-    ok( r == TRUE, "deleted file\n");
+    ret = DeleteFileA(filenameA);
+    ok(ret, "deleted file\n");
 }
 
 static void test_toplevel_stat(void)
@@ -2873,6 +3096,7 @@ static void test_substorage_enum(void)
     HRESULT r;
     ULONG ref;
     static const WCHAR stgname[] = { 'P','E','R','M','S','T','G',0 };
+    BOOL ret;
 
     DeleteFileA(filenameA);
 
@@ -2908,8 +3132,8 @@ static void test_substorage_enum(void)
 
     IStorage_Release(stg);
 
-    r = DeleteFileA(filenameA);
-    ok( r == TRUE, "deleted file\n");
+    ret = DeleteFileA(filenameA);
+    ok(ret, "deleted file\n");
 }
 
 static void test_copyto_locking(void)
@@ -2920,6 +3144,7 @@ static void test_copyto_locking(void)
     static const WCHAR stgname[] = { 'S','T','G','1',0 };
     static const WCHAR stgname2[] = { 'S','T','G','2',0 };
     static const WCHAR stmname[] = { 'C','O','N','T','E','N','T','S',0 };
+    BOOL ret;
 
     DeleteFileA(filenameA);
 
@@ -2959,8 +3184,8 @@ static void test_copyto_locking(void)
     IStorage_Release(stg2);
     IStorage_Release(stg);
 
-    r = DeleteFileA(filenameA);
-    ok( r == TRUE, "deleted file\n");
+    ret = DeleteFileA(filenameA);
+    ok(ret, "deleted file\n");
 }
 
 static void test_copyto_recursive(void)
@@ -2969,6 +3194,7 @@ static void test_copyto_recursive(void)
     HRESULT r;
     static const WCHAR stgname[] = { 'S','T','G','1',0 };
     static const WCHAR stgname2[] = { 'S','T','G','2',0 };
+    BOOL ret;
 
     DeleteFileA(filenameA);
 
@@ -3010,8 +3236,8 @@ static void test_copyto_recursive(void)
     IStorage_Release(stg2);
     IStorage_Release(stg);
 
-    r = DeleteFileA(filenameA);
-    ok( r == TRUE, "deleted file\n");
+    ret = DeleteFileA(filenameA);
+    ok(ret, "deleted file\n");
 }
 
 static void test_hglobal_storage_creation(void)
@@ -3153,22 +3379,22 @@ struct lock_test
     BOOL todo;
 };
 
-static const int priority_locked_bytes[] = { 0x58, 0x81, 0x93, -1 };
-static const int rwex_locked_bytes[] = { 0x93, 0xa7, 0xbb, 0xcf, -1 };
-static const int rw_locked_bytes[] = { 0x93, 0xa7, -1 };
-static const int nosn_locked_bytes[] = { 0x6c, 0x93, 0xa7, 0xcf, -1 };
-static const int rwdw_locked_bytes[] = { 0x93, 0xa7, 0xcf, -1 };
-static const int wodw_locked_bytes[] = { 0xa7, 0xcf, -1 };
-static const int tr_locked_bytes[] = { 0x93, -1 };
+static const int priority_locked_bytes[] = { 0x158, 0x181, 0x193, -1 };
+static const int rwex_locked_bytes[] = { 0x193, 0x1a7, 0x1bb, 0x1cf, -1 };
+static const int rw_locked_bytes[] = { 0x193, 0x1a7, -1 };
+static const int nosn_locked_bytes[] = { 0x16c, 0x193, 0x1a7, 0x1cf, -1 };
+static const int rwdw_locked_bytes[] = { 0x193, 0x1a7, 0x1cf, -1 };
+static const int wodw_locked_bytes[] = { 0x1a7, 0x1cf, -1 };
+static const int tr_locked_bytes[] = { 0x193, -1 };
 static const int no_locked_bytes[] = { -1 };
-static const int roex_locked_bytes[] = { 0x93, 0xbb, 0xcf, -1 };
+static const int roex_locked_bytes[] = { 0x193, 0x1bb, 0x1cf, -1 };
 
-static const int rwex_fail_ranges[] = { 0x93,0xe3, -1 };
-static const int rw_fail_ranges[] = { 0xbb,0xe3, -1 };
-static const int rwdw_fail_ranges[] = { 0xa7,0xe3, -1 };
-static const int dw_fail_ranges[] = { 0xa7,0xcf, -1 };
-static const int tr_fail_ranges[] = { 0xbb,0xcf, -1 };
-static const int pr_fail_ranges[] = { 0x80,0x81, 0xbb,0xcf, -1 };
+static const int rwex_fail_ranges[] = { 0x193,0x1e3, -1 };
+static const int rw_fail_ranges[] = { 0x1bb,0x1e3, -1 };
+static const int rwdw_fail_ranges[] = { 0x1a7,0x1e3, -1 };
+static const int dw_fail_ranges[] = { 0x1a7,0x1cf, -1 };
+static const int tr_fail_ranges[] = { 0x1bb,0x1cf, -1 };
+static const int pr_fail_ranges[] = { 0x180,0x181, 0x1bb,0x1cf, -1 };
 static const int roex_fail_ranges[] = { 0x0,-1 };
 
 static const struct lock_test lock_tests[] = {
@@ -3185,8 +3411,8 @@ static const struct lock_test lock_tests[] = {
     { STGM_READWRITE|STGM_TRANSACTED|STGM_SHARE_DENY_WRITE, FALSE, GENERIC_READ|GENERIC_WRITE, FILE_SHARE_READ, rwdw_locked_bytes, rwdw_fail_ranges, FALSE },
     { STGM_READ|STGM_SHARE_DENY_WRITE, FALSE, GENERIC_READ, FILE_SHARE_READ, no_locked_bytes, dw_fail_ranges, TRUE },
     { STGM_READ|STGM_TRANSACTED, FALSE, GENERIC_READ, FILE_SHARE_READ|FILE_SHARE_WRITE, tr_locked_bytes, tr_fail_ranges, FALSE },
-    { STGM_READ|STGM_SHARE_EXCLUSIVE, FALSE, GENERIC_READ, FILE_SHARE_READ, roex_locked_bytes, roex_fail_ranges, TRUE },
-    { STGM_READ|STGM_SHARE_EXCLUSIVE|STGM_TRANSACTED, FALSE, GENERIC_READ, FILE_SHARE_READ, roex_locked_bytes, roex_fail_ranges, TRUE },
+    { STGM_READ|STGM_SHARE_EXCLUSIVE, FALSE, GENERIC_READ, FILE_SHARE_READ, roex_locked_bytes, roex_fail_ranges, FALSE },
+    { STGM_READ|STGM_SHARE_EXCLUSIVE|STGM_TRANSACTED, FALSE, GENERIC_READ, FILE_SHARE_READ, roex_locked_bytes, roex_fail_ranges, FALSE },
 };
 
 static BOOL can_open(LPCWSTR filename, DWORD access, DWORD sharing)
@@ -3313,7 +3539,7 @@ static void test_locking(void)
             ol.u.s.OffsetHigh = 0;
             ol.hEvent = NULL;
 
-            for (ol.u.s.Offset = 0x7fffff00; ol.u.s.Offset != 0x80000000; ol.u.s.Offset++)
+            for (ol.u.s.Offset = 0x7ffffe00; ol.u.s.Offset != 0x80000000; ol.u.s.Offset++)
             {
                 if (LockFileEx(hfile, LOCKFILE_EXCLUSIVE_LOCK|LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &ol))
                     locked = FALSE;
@@ -3325,7 +3551,7 @@ static void test_locking(void)
 
                 UnlockFileEx(hfile, 0, 1, 0, &ol);
 
-                if ((ol.u.s.Offset&0xff) == *next_lock)
+                if ((ol.u.s.Offset&0x1ff) == *next_lock)
                 {
                     expect_locked = TRUE;
                     next_lock++;
@@ -3362,14 +3588,17 @@ static void test_locking(void)
             ol.u.s.OffsetHigh = 0;
             ol.hEvent = NULL;
 
-            for (ol.u.s.Offset = 0x7fffff00; ol.u.s.Offset != 0x80000000; ol.u.s.Offset++)
+            for (ol.u.s.Offset = 0x7ffffe00; ol.u.s.Offset != 0x80000000; ol.u.s.Offset++)
             {
                 if (ol.u.s.Offset == 0x7fffff92 ||
                     (ol.u.s.Offset == 0x7fffff80 && current->stg_mode == (STGM_TRANSACTED|STGM_READWRITE)) ||
                     (ol.u.s.Offset == 0x7fffff80 && current->stg_mode == (STGM_TRANSACTED|STGM_READ)))
                     continue; /* This makes opens hang */
 
-                LockFileEx(hfile, LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &ol);
+                if (ol.u.s.Offset < 0x7fffff00)
+                    LockFileEx(hfile, 0, 0, 1, 0, &ol);
+                else
+                    LockFileEx(hfile, LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &ol);
 
                 hr = StgOpenStorage(filename, NULL, current->stg_mode, NULL, 0, &stg);
                 ok(hr == S_OK || hr == STG_E_LOCKVIOLATION || hr == STG_E_SHAREVIOLATION, "failed with unexpected hr %x\n", hr);
@@ -3379,11 +3608,11 @@ static void test_locking(void)
 
                 failed = FAILED(hr);
 
-                if (!expect_failed && (ol.u.s.Offset&0xff) == next_range[0])
+                if (!expect_failed && (ol.u.s.Offset&0x1ff) == next_range[0])
                 {
                     expect_failed = TRUE;
                 }
-                else if (expect_failed && (ol.u.s.Offset&0xff) == next_range[1])
+                else if (expect_failed && (ol.u.s.Offset&0x1ff) == next_range[1])
                 {
                     expect_failed = FALSE;
                     next_range += 2;
@@ -3642,6 +3871,54 @@ static void test_overwrite(void)
     DeleteFileA(filenameA);
 }
 
+static void test_custom_lockbytes(void)
+{
+    static const WCHAR stmname[] = { 'C','O','N','T','E','N','T','S',0 };
+    TestLockBytes* lockbytes;
+    HRESULT hr;
+    IStorage* stg;
+    IStream* stm;
+
+    CreateTestLockBytes(&lockbytes);
+
+    hr = StgCreateDocfileOnILockBytes(&lockbytes->ILockBytes_iface, STGM_CREATE|STGM_READWRITE|STGM_TRANSACTED, 0, &stg);
+    ok(hr==S_OK, "StgCreateDocfileOnILockBytes failed %x\n", hr);
+
+    hr = IStorage_CreateStream(stg, stmname, STGM_SHARE_EXCLUSIVE|STGM_READWRITE, 0, 0, &stm);
+    ok(hr==S_OK, "IStorage_CreateStream failed %x\n", hr);
+
+    IStream_Release(stm);
+
+    hr = IStorage_Commit(stg, 0);
+
+    IStorage_Release(stg);
+
+    ok(!lockbytes->lock_called, "unexpected call to LockRegion\n");
+
+    lockbytes->locks_supported = LOCK_WRITE|LOCK_EXCLUSIVE|LOCK_ONLYONCE;
+
+    hr = StgCreateDocfileOnILockBytes(&lockbytes->ILockBytes_iface, STGM_CREATE|STGM_READWRITE|STGM_TRANSACTED, 0, &stg);
+    ok(hr==S_OK, "StgCreateDocfileOnILockBytes failed %x\n", hr);
+
+    hr = IStorage_CreateStream(stg, stmname, STGM_SHARE_EXCLUSIVE|STGM_READWRITE, 0, 0, &stm);
+    ok(hr==S_OK, "IStorage_CreateStream failed %x\n", hr);
+
+    IStream_Release(stm);
+
+    hr = IStorage_Commit(stg, 0);
+
+    IStorage_Release(stg);
+
+    ok(lockbytes->lock_called, "expected LockRegion to be called\n");
+
+    lockbytes->lock_hr = STG_E_INVALIDFUNCTION;
+
+    hr = StgCreateDocfileOnILockBytes(&lockbytes->ILockBytes_iface, STGM_CREATE|STGM_READWRITE|STGM_TRANSACTED, 0, &stg);
+    ok(hr==STG_E_INVALIDFUNCTION, "StgCreateDocfileOnILockBytes failed %x\n", hr);
+
+    DeleteTestLockBytes(lockbytes);
+}
+
 START_TEST(storage32)
 {
     CHAR temp[MAX_PATH];
@@ -3690,4 +3967,5 @@ START_TEST(storage32)
     test_locking();
     test_transacted_shared();
     test_overwrite();
+    test_custom_lockbytes();
 }

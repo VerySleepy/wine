@@ -426,6 +426,37 @@ UINT WINAPI GetSystemPaletteEntries(
 }
 
 
+/* null driver fallback implementation for GetSystemPaletteEntries */
+UINT nulldrv_GetSystemPaletteEntries( PHYSDEV dev, UINT start, UINT count, PALETTEENTRY *entries )
+{
+    if (entries && start < 256)
+    {
+        UINT i;
+        const RGBQUAD *default_entries;
+
+        if (start + count > 256) count = 256 - start;
+
+        default_entries = get_default_color_table( 8 );
+        for (i = 0; i < count; ++i)
+        {
+            if (start + i < 10 || start + i >= 246)
+            {
+                entries[i].peRed = default_entries[start + i].rgbRed;
+                entries[i].peGreen = default_entries[start + i].rgbGreen;
+                entries[i].peBlue = default_entries[start + i].rgbBlue;
+            }
+            else
+            {
+                entries[i].peRed = 0;
+                entries[i].peGreen = 0;
+                entries[i].peBlue = 0;
+            }
+            entries[i].peFlags = 0;
+        }
+    }
+    return 0;
+}
+
 /***********************************************************************
  * GetNearestPaletteIndex [GDI32.@]
  *
@@ -472,6 +503,7 @@ UINT WINAPI GetNearestPaletteIndex(
 COLORREF nulldrv_GetNearestColor( PHYSDEV dev, COLORREF color )
 {
     unsigned char spec_type;
+    DC *dc = get_nulldrv_dc( dev );
 
     if (!(GetDeviceCaps( dev->hdc, RASTERCAPS ) & RC_PALETTE)) return color;
 
@@ -481,7 +513,7 @@ COLORREF nulldrv_GetNearestColor( PHYSDEV dev, COLORREF color )
         /* we need logical palette for PALETTERGB and PALETTEINDEX colorrefs */
         UINT index;
         PALETTEENTRY entry;
-        HPALETTE hpal = GetCurrentObject( dev->hdc, OBJ_PAL );
+        HPALETTE hpal = dc->hPalette;
 
         if (!hpal) hpal = GetStockObject( DEFAULT_PALETTE );
         if (spec_type == 2) /* PALETTERGB */

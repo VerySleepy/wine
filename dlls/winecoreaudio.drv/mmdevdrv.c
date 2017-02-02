@@ -36,6 +36,7 @@
 #include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <fcntl.h>
+#include <fenv.h>
 #include <unistd.h>
 
 #include <libkern/OSAtomic.h>
@@ -192,9 +193,6 @@ typedef struct _SessionMgr {
     IMMDevice *device;
 } SessionMgr;
 
-static const WCHAR drv_keyW[] = {'S','o','f','t','w','a','r','e','\\',
-    'W','i','n','e','\\','D','r','i','v','e','r','s','\\',
-    'w','i','n','e','c','o','r','e','a','u','d','i','o','.','d','r','v',0};
 static const WCHAR drv_key_devicesW[] = {'S','o','f','t','w','a','r','e','\\',
     'W','i','n','e','\\','D','r','i','v','e','r','s','\\',
     'w','i','n','e','c','o','r','e','a','u','d','i','o','.','d','r','v','\\','d','e','v','i','c','e','s',0};
@@ -409,7 +407,7 @@ HRESULT WINAPI AUDDRV_GetEndpointIDs(EDataFlow flow, WCHAR ***ids,
     sc = AudioObjectGetPropertyData(kAudioObjectSystemObject, &addr, 0,
             NULL, &size, &default_id);
     if(sc != noErr){
-        WARN("Getting _DefaultInputDevice property failed: %lx\n", sc);
+        WARN("Getting _DefaultInputDevice property failed: %x\n", (int)sc);
         default_id = -1;
     }
 
@@ -417,7 +415,7 @@ HRESULT WINAPI AUDDRV_GetEndpointIDs(EDataFlow flow, WCHAR ***ids,
     sc = AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &addr, 0,
             NULL, &devsize);
     if(sc != noErr){
-        WARN("Getting _Devices property size failed: %lx\n", sc);
+        WARN("Getting _Devices property size failed: %x\n", (int)sc);
         return osstatus_to_hresult(sc);
     }
 
@@ -428,7 +426,7 @@ HRESULT WINAPI AUDDRV_GetEndpointIDs(EDataFlow flow, WCHAR ***ids,
     sc = AudioObjectGetPropertyData(kAudioObjectSystemObject, &addr, 0, NULL,
             &devsize, devices);
     if(sc != noErr){
-        WARN("Getting _Devices property failed: %lx\n", sc);
+        WARN("Getting _Devices property failed: %x\n", (int)sc);
         HeapFree(GetProcessHeap(), 0, devices);
         return osstatus_to_hresult(sc);
     }
@@ -465,7 +463,7 @@ HRESULT WINAPI AUDDRV_GetEndpointIDs(EDataFlow flow, WCHAR ***ids,
         sc = AudioObjectGetPropertyDataSize(devices[i], &addr, 0, NULL, &size);
         if(sc != noErr){
             WARN("Unable to get _StreamConfiguration property size for "
-                    "device %lu: %lx\n", devices[i], sc);
+                    "device %u: %x\n", (unsigned int)devices[i], (int)sc);
             continue;
         }
 
@@ -483,7 +481,7 @@ HRESULT WINAPI AUDDRV_GetEndpointIDs(EDataFlow flow, WCHAR ***ids,
                 &size, buffers);
         if(sc != noErr){
             WARN("Unable to get _StreamConfiguration property for "
-                    "device %lu: %lx\n", devices[i], sc);
+                    "device %u: %x\n", (unsigned int)devices[i], (int)sc);
             HeapFree(GetProcessHeap(), 0, buffers);
             continue;
         }
@@ -505,8 +503,8 @@ HRESULT WINAPI AUDDRV_GetEndpointIDs(EDataFlow flow, WCHAR ***ids,
         sc = AudioObjectGetPropertyData(devices[i], &addr, 0, NULL,
                 &size, &name);
         if(sc != noErr){
-            WARN("Unable to get _Name property for device %lu: %lx\n",
-                    devices[i], sc);
+            WARN("Unable to get _Name property for device %u: %x\n",
+                    (unsigned int)devices[i], (int)sc);
             continue;
         }
 
@@ -624,7 +622,7 @@ static AudioComponentInstance get_audiounit(EDataFlow dataflow, AudioDeviceID ad
 
     sc = AudioComponentInstanceNew(comp, &unit);
     if(sc != noErr){
-        WARN("AudioComponentInstanceNew failed: %lx\n", sc);
+        WARN("AudioComponentInstanceNew failed: %x\n", (int)sc);
         return NULL;
     }
 
@@ -635,7 +633,7 @@ static AudioComponentInstance get_audiounit(EDataFlow dataflow, AudioDeviceID ad
         sc = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO,
                 kAudioUnitScope_Input, 1, &enableio, sizeof(enableio));
         if(sc != noErr){
-            WARN("Couldn't enable I/O on input element: %lx\n", sc);
+            WARN("Couldn't enable I/O on input element: %x\n", (int)sc);
             AudioComponentInstanceDispose(unit);
             return NULL;
         }
@@ -644,7 +642,7 @@ static AudioComponentInstance get_audiounit(EDataFlow dataflow, AudioDeviceID ad
         sc = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO,
                 kAudioUnitScope_Output, 0, &enableio, sizeof(enableio));
         if(sc != noErr){
-            WARN("Couldn't disable I/O on output element: %lx\n", sc);
+            WARN("Couldn't disable I/O on output element: %x\n", (int)sc);
             AudioComponentInstanceDispose(unit);
             return NULL;
         }
@@ -1134,7 +1132,7 @@ static void capture_resample(ACImpl *This)
         sc = AudioConverterFillComplexBuffer(This->converter, feed_cb,
                 This, &wanted_frames, &converted_list, NULL);
         if(sc != noErr){
-            WARN("AudioConverterFillComplexBuffer failed: %lx\n", sc);
+            WARN("AudioConverterFillComplexBuffer failed: %x\n", (int)sc);
             break;
         }
 
@@ -1218,11 +1216,11 @@ static OSStatus ca_capture_cb(void *user, AudioUnitRenderActionFlags *flags,
 static void dump_adesc(const char *aux, AudioStreamBasicDescription *desc)
 {
     TRACE("%s: mSampleRate: %f\n", aux, desc->mSampleRate);
-    TRACE("%s: mBytesPerPacket: %ld\n", aux, desc->mBytesPerPacket);
-    TRACE("%s: mFramesPerPacket: %ld\n", aux, desc->mFramesPerPacket);
-    TRACE("%s: mBytesPerFrame: %ld\n", aux, desc->mBytesPerFrame);
-    TRACE("%s: mChannelsPerFrame: %ld\n", aux, desc->mChannelsPerFrame);
-    TRACE("%s: mBitsPerChannel: %ld\n", aux, desc->mBitsPerChannel);
+    TRACE("%s: mBytesPerPacket: %u\n", aux, (unsigned int)desc->mBytesPerPacket);
+    TRACE("%s: mFramesPerPacket: %u\n", aux, (unsigned int)desc->mFramesPerPacket);
+    TRACE("%s: mBytesPerFrame: %u\n", aux, (unsigned int)desc->mBytesPerFrame);
+    TRACE("%s: mChannelsPerFrame: %u\n", aux, (unsigned int)desc->mChannelsPerFrame);
+    TRACE("%s: mBitsPerChannel: %u\n", aux, (unsigned int)desc->mBitsPerChannel);
 }
 
 static HRESULT ca_setup_audiounit(EDataFlow dataflow, AudioComponentInstance unit,
@@ -1236,6 +1234,8 @@ static HRESULT ca_setup_audiounit(EDataFlow dataflow, AudioComponentInstance uni
         AudioStreamBasicDescription desc;
         UInt32 size;
         Float64 rate;
+        fenv_t fenv;
+        BOOL fenv_stored = TRUE;
 
         hr = ca_get_audiodesc(&desc, fmt);
         if(FAILED(hr))
@@ -1248,7 +1248,7 @@ static HRESULT ca_setup_audiounit(EDataFlow dataflow, AudioComponentInstance uni
         sc = AudioUnitGetProperty(unit, kAudioUnitProperty_StreamFormat,
                 kAudioUnitScope_Input, 1, dev_desc, &size);
         if(sc != noErr){
-            WARN("Couldn't get unit format: %lx\n", sc);
+            WARN("Couldn't get unit format: %x\n", (int)sc);
             return osstatus_to_hresult(sc);
         }
         dump_adesc("hardware", dev_desc);
@@ -1261,13 +1261,23 @@ static HRESULT ca_setup_audiounit(EDataFlow dataflow, AudioComponentInstance uni
         sc = AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat,
                 kAudioUnitScope_Output, 1, dev_desc, sizeof(*dev_desc));
         if(sc != noErr){
-            WARN("Couldn't set unit format: %lx\n", sc);
+            WARN("Couldn't set unit format: %x\n", (int)sc);
             return osstatus_to_hresult(sc);
         }
 
+        /* AudioConverterNew requires divide-by-zero SSE exceptions to be masked */
+        if(feholdexcept(&fenv)){
+            WARN("Failed to store fenv state\n");
+            fenv_stored = FALSE;
+        }
+
         sc = AudioConverterNew(dev_desc, &desc, converter);
+
+        if(fenv_stored && fesetenv(&fenv))
+            WARN("Failed to restore fenv state\n");
+
         if(sc != noErr){
-            WARN("Couldn't create audio converter: %lx\n", sc);
+            WARN("Couldn't create audio converter: %x\n", (int)sc);
             return osstatus_to_hresult(sc);
         }
     }else{
@@ -1279,7 +1289,7 @@ static HRESULT ca_setup_audiounit(EDataFlow dataflow, AudioComponentInstance uni
         sc = AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat,
                 kAudioUnitScope_Input, 0, dev_desc, sizeof(*dev_desc));
         if(sc != noErr){
-            WARN("Couldn't set format: %lx\n", sc);
+            WARN("Couldn't set format: %x\n", (int)sc);
             return osstatus_to_hresult(sc);
         }
     }
@@ -1386,7 +1396,7 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient *iface,
         sc = AudioUnitSetProperty(This->unit, kAudioOutputUnitProperty_SetInputCallback,
                 kAudioUnitScope_Output, 1, &input, sizeof(input));
         if(sc != noErr){
-            WARN("Couldn't set callback: %lx\n", sc);
+            WARN("Couldn't set callback: %x\n", (int)sc);
             AudioConverterDispose(This->converter);
             This->converter = NULL;
             CoTaskMemFree(This->fmt);
@@ -1404,7 +1414,7 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient *iface,
         sc = AudioUnitSetProperty(This->unit, kAudioUnitProperty_SetRenderCallback,
                 kAudioUnitScope_Input, 0, &input, sizeof(input));
         if(sc != noErr){
-            WARN("Couldn't set callback: %lx\n", sc);
+            WARN("Couldn't set callback: %x\n", (int)sc);
             CoTaskMemFree(This->fmt);
             This->fmt = NULL;
             OSSpinLockUnlock(&This->lock);
@@ -1414,7 +1424,7 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient *iface,
 
     sc = AudioUnitInitialize(This->unit);
     if(sc != noErr){
-        WARN("Couldn't initialize: %lx\n", sc);
+        WARN("Couldn't initialize: %x\n", (int)sc);
         if(This->converter){
             AudioConverterDispose(This->converter);
             This->converter = NULL;
@@ -1429,7 +1439,7 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient *iface,
      * a while to return */
     sc = AudioOutputUnitStart(This->unit);
     if(sc != noErr){
-        WARN("Unit failed to start: %lx\n", sc);
+        WARN("Unit failed to start: %x\n", (int)sc);
         if(This->converter){
             AudioConverterDispose(This->converter);
             This->converter = NULL;
@@ -1528,7 +1538,7 @@ static HRESULT ca_get_max_stream_latency(ACImpl *This, UInt32 *max)
     sc = AudioObjectGetPropertyDataSize(This->adevid, &addr, 0, NULL,
             &size);
     if(sc != noErr){
-        WARN("Unable to get size for _Streams property: %lx\n", sc);
+        WARN("Unable to get size for _Streams property: %x\n", (int)sc);
         return osstatus_to_hresult(sc);
     }
 
@@ -1538,7 +1548,7 @@ static HRESULT ca_get_max_stream_latency(ACImpl *This, UInt32 *max)
 
     sc = AudioObjectGetPropertyData(This->adevid, &addr, 0, NULL, &size, ids);
     if(sc != noErr){
-        WARN("Unable to get _Streams property: %lx\n", sc);
+        WARN("Unable to get _Streams property: %x\n", (int)sc);
         HeapFree(GetProcessHeap(), 0, ids);
         return osstatus_to_hresult(sc);
     }
@@ -1554,7 +1564,7 @@ static HRESULT ca_get_max_stream_latency(ACImpl *This, UInt32 *max)
         sc = AudioObjectGetPropertyData(ids[i], &addr, 0, NULL,
                 &size, &latency);
         if(sc != noErr){
-            WARN("Unable to get _Latency property: %lx\n", sc);
+            WARN("Unable to get _Latency property: %x\n", (int)sc);
             continue;
         }
 
@@ -1596,7 +1606,7 @@ static HRESULT WINAPI AudioClient_GetStreamLatency(IAudioClient *iface,
     sc = AudioObjectGetPropertyData(This->adevid, &addr, 0, NULL,
             &size, &latency);
     if(sc != noErr){
-        WARN("Couldn't get _Latency property: %lx\n", sc);
+        WARN("Couldn't get _Latency property: %x\n", (int)sc);
         OSSpinLockUnlock(&This->lock);
         return osstatus_to_hresult(sc);
     }
@@ -1759,7 +1769,7 @@ static HRESULT WINAPI AudioClient_GetMixFormat(IAudioClient *iface,
     sc = AudioObjectGetPropertyDataSize(This->adevid, &addr, 0, NULL, &size);
     if(sc != noErr){
         CoTaskMemFree(fmt);
-        WARN("Unable to get size for _StreamConfiguration property: %lx\n", sc);
+        WARN("Unable to get size for _StreamConfiguration property: %x\n", (int)sc);
         return osstatus_to_hresult(sc);
     }
 
@@ -1774,7 +1784,7 @@ static HRESULT WINAPI AudioClient_GetMixFormat(IAudioClient *iface,
     if(sc != noErr){
         CoTaskMemFree(fmt);
         HeapFree(GetProcessHeap(), 0, buffers);
-        WARN("Unable to get _StreamConfiguration property: %lx\n", sc);
+        WARN("Unable to get _StreamConfiguration property: %x\n", (int)sc);
         return osstatus_to_hresult(sc);
     }
 
@@ -1791,7 +1801,7 @@ static HRESULT WINAPI AudioClient_GetMixFormat(IAudioClient *iface,
     sc = AudioObjectGetPropertyData(This->adevid, &addr, 0, NULL, &size, &rate);
     if(sc != noErr){
         CoTaskMemFree(fmt);
-        WARN("Unable to get _NominalSampleRate property: %lx\n", sc);
+        WARN("Unable to get _NominalSampleRate property: %x\n", (int)sc);
         return osstatus_to_hresult(sc);
     }
     fmt->Format.nSamplesPerSec = rate;
@@ -2845,7 +2855,7 @@ static HRESULT ca_setvol(ACImpl *This, UINT32 index)
     sc = AudioUnitSetParameter(This->unit, kHALOutputParam_Volume,
             kAudioUnitScope_Global, 0, level, 0);
     if(sc != noErr)
-        WARN("Couldn't set volume: %lx\n", sc);
+        WARN("Couldn't set volume: %x\n", (int)sc);
 
     return S_OK;
 }
@@ -2946,7 +2956,7 @@ static HRESULT WINAPI SimpleAudioVolume_SetMute(ISimpleAudioVolume *iface,
     AudioSessionWrapper *This = impl_from_ISimpleAudioVolume(iface);
     AudioSession *session = This->session;
 
-    TRACE("(%p)->(%u, %p)\n", session, mute, context);
+    TRACE("(%p)->(%u, %s)\n", session, mute, debugstr_guid(context));
 
     if(context)
         FIXME("Notifications not supported yet\n");

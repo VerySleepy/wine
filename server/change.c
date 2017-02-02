@@ -141,6 +141,8 @@ struct dir
     struct list    change_records;   /* data for the change */
     struct list    in_entry; /* entry in the inode dirs list */
     struct inode  *inode;    /* inode of the associated directory */
+    struct process *client_process;  /* client process that has a cache for this directory */
+    int             client_entry;    /* entry in client process cache */
 };
 
 static struct fd *dir_get_fd( struct object *obj );
@@ -148,13 +150,15 @@ static struct security_descriptor *dir_get_sd( struct object *obj );
 static int dir_set_sd( struct object *obj, const struct security_descriptor *sd,
                        unsigned int set_info );
 static void dir_dump( struct object *obj, int verbose );
+static struct object_type *dir_get_type( struct object *obj );
+static int dir_close_handle( struct object *obj, struct process *process, obj_handle_t handle );
 static void dir_destroy( struct object *obj );
 
 static const struct object_ops dir_ops =
 {
     sizeof(struct dir),       /* size */
     dir_dump,                 /* dump */
-    no_get_type,              /* get_type */
+    dir_get_type,             /* get_type */
     add_queue,                /* add_queue */
     remove_queue,             /* remove_queue */
     default_fd_signaled,      /* signaled */
@@ -165,8 +169,10 @@ static const struct object_ops dir_ops =
     dir_get_sd,               /* get_sd */
     dir_set_sd,               /* set_sd */
     no_lookup_name,           /* lookup_name */
+    no_link_name,             /* link_name */
+    NULL,                     /* unlink_name */
     no_open_file,             /* open_file */
-    fd_close_handle,          /* close_handle */
+    dir_close_handle,         /* close_handle */
     dir_destroy               /* destroy */
 };
 
@@ -177,15 +183,96 @@ static const struct fd_ops dir_fd_ops =
 {
     dir_get_poll_events,         /* get_poll_events */
     default_poll_event,          /* poll_event */
-    no_flush,                    /* flush */
     dir_get_fd_type,             /* get_fd_type */
+    no_fd_read,                  /* read */
+    no_fd_write,                 /* write */
+    no_fd_flush,                 /* flush */
     default_fd_ioctl,            /* ioctl */
     default_fd_queue_async,      /* queue_async */
-    default_fd_reselect_async,   /* reselect_async */
-    default_fd_cancel_async      /* cancel_async */
+    default_fd_reselect_async    /* reselect_async */
 };
 
 static struct list change_list = LIST_INIT(change_list);
+
+/* per-process structure to keep track of cache entries on the client size */
+struct dir_cache
+{
+    unsigned int  size;
+    unsigned int  count;
+    unsigned char state[1];
+};
+
+enum dir_cache_state
+{
+    DIR_CACHE_STATE_FREE,
+    DIR_CACHE_STATE_INUSE,
+    DIR_CACHE_STATE_RELEASED
+};
+
+/* return an array of cache entries that can be freed on the client side */
+static int *get_free_dir_cache_entries( struct process *process, data_size_t *size )
+{
+    int *ret;
+    struct dir_cache *cache = process->dir_cache;
+    unsigned int i, j, count;
+
+    if (!cache) return NULL;
+    for (i = count = 0; i < cache->count && count < *size / sizeof(*ret); i++)
+        if (cache->state[i] == DIR_CACHE_STATE_RELEASED) count++;
+    if (!count) return NULL;
+
+    if ((ret = malloc( count * sizeof(*ret) )))
+    {
+        for (i = j = 0; j < count; i++)
+        {
+            if (cache->state[i] != DIR_CACHE_STATE_RELEASED) continue;
+            cache->state[i] = DIR_CACHE_STATE_FREE;
+            ret[j++] = i;
+        }
+        *size = count * sizeof(*ret);
+    }
+    return ret;
+}
+
+/* allocate a new client-side directory cache entry */
+static int alloc_dir_cache_entry( struct dir *dir, struct process *process )
+{
+    unsigned int i = 0;
+    struct dir_cache *cache = process->dir_cache;
+
+    if (cache)
+        for (i = 0; i < cache->count; i++)
+            if (cache->state[i] == DIR_CACHE_STATE_FREE) goto found;
+
+    if (!cache || cache->count == cache->size)
+    {
+        unsigned int size = cache ? cache->size * 2 : 256;
+        if (!(cache = realloc( cache, offsetof( struct dir_cache, state[size] ))))
+        {
+            set_error( STATUS_NO_MEMORY );
+            return -1;
+        }
+        process->dir_cache = cache;
+        cache->size = size;
+    }
+    cache->count = i + 1;
+
+found:
+    cache->state[i] = DIR_CACHE_STATE_INUSE;
+    return i;
+}
+
+/* release a directory cache entry; it will be freed on the client side on the next cache request */
+static void release_dir_cache_entry( struct dir *dir )
+{
+    struct dir_cache *cache;
+
+    if (!dir->client_process) return;
+    cache = dir->client_process->dir_cache;
+    cache->state[dir->client_entry] = DIR_CACHE_STATE_RELEASED;
+    release_object( dir->client_process );
+    dir->client_process = NULL;
+}
 
 static void dnotify_adjust_changes( struct dir *dir )
 {
@@ -248,6 +335,13 @@ static void dir_dump( struct object *obj, int verbose )
     fprintf( stderr, "Dirfile fd=%p filter=%08x\n", dir->fd, dir->filter );
 }
 
+static struct object_type *dir_get_type( struct object *obj )
+{
+    static const WCHAR name[] = {'F','i','l','e'};
+    static const struct unicode_str str = { name, sizeof(name) };
+    return get_object_type( &str );
+}
+
 /* enter here directly from SIGIO signal handler */
 void do_change_notify( int unix_fd )
 {
@@ -270,7 +364,7 @@ void sigio_callback(void)
     LIST_FOR_EACH_ENTRY( dir, &change_list, struct dir, entry )
     {
         if (interlocked_xchg( &dir->notified, 0 ))
-            fd_async_wake_up( dir->fd, ASYNC_TYPE_WAIT, STATUS_NOTIFY_ENUM_DIR );
+            fd_async_wake_up( dir->fd, ASYNC_TYPE_WAIT, STATUS_ALERTED );
     }
 }
 
@@ -373,6 +467,15 @@ static struct change_record *get_first_change_record( struct dir *dir )
     return LIST_ENTRY( ptr, struct change_record, entry );
 }
 
+static int dir_close_handle( struct object *obj, struct process *process, obj_handle_t handle )
+{
+    struct dir *dir = (struct dir *)obj;
+
+    if (!fd_close_handle( obj, process, handle )) return 0;
+    if (obj->handle_count == 1) release_dir_cache_entry( dir ); /* closing last handle, release cache */
+    return 1;  /* ok to close */
+}
+
 static void dir_destroy( struct object *obj )
 {
     struct change_record *record;
@@ -390,6 +493,7 @@ static void dir_destroy( struct object *obj )
 
     while ((record = get_first_change_record( dir ))) free( record );
 
+    release_dir_cache_entry( dir );
     release_object( dir->fd );
 
     if (inotify_fd && list_empty( &change_list ))
@@ -596,8 +700,7 @@ static const struct fd_ops inotify_fd_ops =
     NULL,                        /* get_fd_type */
     NULL,                        /* ioctl */
     NULL,                        /* queue_async */
-    NULL,                        /* reselect_async */
-    NULL,                        /* cancel_async */
+    NULL                         /* reselect_async */
 };
 
 static int inotify_get_poll_events( struct fd *fd )
@@ -1092,11 +1195,38 @@ struct object *create_dir_obj( struct fd *fd, unsigned int access, mode_t mode )
     dir->fd = fd;
     dir->mode = mode;
     dir->uid  = ~(uid_t)0;
+    dir->client_process = NULL;
     set_fd_user( fd, &dir_fd_ops, &dir->obj );
 
     dir_add_to_existing_notify( dir );
 
     return &dir->obj;
+}
+
+/* retrieve (or allocate) the client-side directory cache entry */
+DECL_HANDLER(get_directory_cache_entry)
+{
+    struct dir *dir;
+    int *free_entries;
+    data_size_t free_size;
+
+    if (!(dir = get_dir_obj( current->process, req->handle, 0 ))) return;
+
+    if (!dir->client_process)
+    {
+        if ((dir->client_entry = alloc_dir_cache_entry( dir, current->process )) == -1) goto done;
+        dir->client_process = (struct process *)grab_object( current->process );
+    }
+
+    if (dir->client_process == current->process) reply->entry = dir->client_entry;
+    else set_error( STATUS_SHARING_VIOLATION );
+
+done:  /* allow freeing entries even on failure */
+    free_size = get_reply_max_size();
+    free_entries = get_free_dir_cache_entries( current->process, &free_size );
+    if (free_entries) set_reply_data_ptr( free_entries, free_size );
+
+    release_object( dir );
 }
 
 /* enable change notifications for a directory */
@@ -1116,7 +1246,7 @@ DECL_HANDLER(read_directory_changes)
         return;
 
     /* requests don't timeout */
-    if (!(async = fd_queue_async( dir->fd, &req->async, ASYNC_TYPE_WAIT ))) goto end;
+    if (!(async = fd_queue_async( dir->fd, &req->async, NULL, ASYNC_TYPE_WAIT ))) goto end;
 
     /* assign it once */
     if (!dir->filter)

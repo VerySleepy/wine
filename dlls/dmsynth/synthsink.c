@@ -67,8 +67,6 @@ static ULONG WINAPI IDirectMusicSynthSinkImpl_AddRef(LPDIRECTMUSICSYNTHSINK ifac
 
     TRACE("(%p)->(): new ref = %u\n", This, ref);
 
-    DMSYNTH_LockModule();
-
     return ref;
 }
 
@@ -83,9 +81,8 @@ static ULONG WINAPI IDirectMusicSynthSinkImpl_Release(LPDIRECTMUSICSYNTHSINK ifa
         if (This->latency_clock)
             IReferenceClock_Release(This->latency_clock);
         HeapFree(GetProcessHeap(), 0, This);
+        DMSYNTH_UnlockModule();
     }
-
-    DMSYNTH_UnlockModule();
 
     return ref;
 }
@@ -267,12 +264,12 @@ static const IKsControlVtbl DMSynthSinkImpl_IKsControl_Vtbl = {
 };
 
 /* for ClassFactory */
-HRESULT WINAPI DMUSIC_CreateDirectMusicSynthSinkImpl(LPCGUID riid, LPVOID* ret_iface, LPUNKNOWN unkouter)
+HRESULT WINAPI DMUSIC_CreateDirectMusicSynthSinkImpl(REFIID riid, void **ret_iface)
 {
     IDirectMusicSynthSinkImpl *obj;
     HRESULT hr;
 
-    TRACE("(%p,%p,%p)\n", riid, ret_iface, unkouter);
+    TRACE("(%s, %p)\n", debugstr_guid(riid), ret_iface);
 
     *ret_iface = NULL;
 
@@ -282,7 +279,7 @@ HRESULT WINAPI DMUSIC_CreateDirectMusicSynthSinkImpl(LPCGUID riid, LPVOID* ret_i
 
     obj->IDirectMusicSynthSink_iface.lpVtbl = &DirectMusicSynthSink_Vtbl;
     obj->IKsControl_iface.lpVtbl = &DMSynthSinkImpl_IKsControl_Vtbl;
-    obj->ref = 0;
+    obj->ref = 1;
 
     hr = CoCreateInstance(&CLSID_SystemClock, NULL, CLSCTX_INPROC_SERVER, &IID_IReferenceClock, (LPVOID*)&obj->latency_clock);
     if (FAILED(hr))
@@ -291,13 +288,9 @@ HRESULT WINAPI DMUSIC_CreateDirectMusicSynthSinkImpl(LPCGUID riid, LPVOID* ret_i
         return hr;
     }
 
-    hr = IDirectMusicSynthSinkImpl_QueryInterface((LPDIRECTMUSICSYNTHSINK)obj, riid, ret_iface);
-    if (FAILED(hr))
-    {
-        IReferenceClock_Release(obj->latency_clock);
-        HeapFree(GetProcessHeap(), 0, obj);
-        return hr;
-    }
+    DMSYNTH_LockModule();
+    hr = IDirectMusicSynthSink_QueryInterface(&obj->IDirectMusicSynthSink_iface, riid, ret_iface);
+    IDirectMusicSynthSink_Release(&obj->IDirectMusicSynthSink_iface);
 
-    return S_OK;
+    return hr;
 }

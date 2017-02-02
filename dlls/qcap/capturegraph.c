@@ -23,8 +23,6 @@
 #include <stdarg.h>
 
 #define COBJMACROS
-#define NONAMELESSSTRUCT
-#define NONAMELESSUNION
 
 #include "windef.h"
 #include "winbase.h"
@@ -251,6 +249,178 @@ fnCaptureGraphBuilder2_FindInterface(ICaptureGraphBuilder2 * iface,
      */
 }
 
+static HRESULT match_smart_tee_pin(CaptureGraphImpl *This,
+                                   const GUID *pCategory,
+                                   const GUID *pType,
+                                   IUnknown *pSource,
+                                   IPin **source_out)
+{
+    static const WCHAR inputW[] = {'I','n','p','u','t',0};
+    static const WCHAR captureW[] = {'C','a','p','t','u','r','e',0};
+    static const WCHAR previewW[] = {'P','r','e','v','i','e','w',0};
+    IPin *capture = NULL;
+    IPin *preview = NULL;
+    IPin *peer = NULL;
+    IBaseFilter *smartTee = NULL;
+    BOOL needSmartTee = FALSE;
+    HRESULT hr;
+
+    TRACE("(%p, %s, %s, %p, %p)\n", This, debugstr_guid(pCategory), debugstr_guid(pType), pSource, source_out);
+    hr = ICaptureGraphBuilder2_FindPin(&This->ICaptureGraphBuilder2_iface, pSource,
+            PINDIR_OUTPUT, &PIN_CATEGORY_CAPTURE, pType, FALSE, 0, &capture);
+    if (SUCCEEDED(hr)) {
+        hr = ICaptureGraphBuilder2_FindPin(&This->ICaptureGraphBuilder2_iface, pSource,
+                PINDIR_OUTPUT, &PIN_CATEGORY_PREVIEW, pType, FALSE, 0, &preview);
+        if (FAILED(hr))
+            needSmartTee = TRUE;
+    } else {
+        hr = E_INVALIDARG;
+        goto end;
+    }
+    if (!needSmartTee) {
+        if (IsEqualIID(pCategory, &PIN_CATEGORY_CAPTURE)) {
+            hr = IPin_ConnectedTo(capture, &peer);
+            if (hr == VFW_E_NOT_CONNECTED) {
+                *source_out = capture;
+                IPin_AddRef(*source_out);
+                hr = S_OK;
+            } else
+                hr = E_INVALIDARG;
+        } else {
+            hr = IPin_ConnectedTo(preview, &peer);
+            if (hr == VFW_E_NOT_CONNECTED) {
+                *source_out = preview;
+                IPin_AddRef(*source_out);
+                hr = S_OK;
+            } else
+                hr = E_INVALIDARG;
+        }
+        goto end;
+    }
+    hr = IPin_ConnectedTo(capture, &peer);
+    if (SUCCEEDED(hr)) {
+        PIN_INFO pinInfo;
+        GUID classID;
+        hr = IPin_QueryPinInfo(peer, &pinInfo);
+        if (SUCCEEDED(hr)) {
+            hr = IBaseFilter_GetClassID(pinInfo.pFilter, &classID);
+            if (SUCCEEDED(hr)) {
+                if (IsEqualIID(&classID, &CLSID_SmartTee)) {
+                    smartTee = pinInfo.pFilter;
+                    IBaseFilter_AddRef(smartTee);
+                }
+            }
+            IBaseFilter_Release(pinInfo.pFilter);
+        }
+        if (!smartTee) {
+            hr = E_INVALIDARG;
+            goto end;
+        }
+    } else if (hr == VFW_E_NOT_CONNECTED) {
+        hr = CoCreateInstance(&CLSID_SmartTee, NULL, CLSCTX_INPROC_SERVER,
+                &IID_IBaseFilter, (LPVOID*)&smartTee);
+        if (SUCCEEDED(hr)) {
+            hr = IGraphBuilder_AddFilter(This->mygraph, smartTee, NULL);
+            if (SUCCEEDED(hr)) {
+                IPin *smartTeeInput = NULL;
+                hr = IBaseFilter_FindPin(smartTee, inputW, &smartTeeInput);
+                if (SUCCEEDED(hr)) {
+                    hr = IGraphBuilder_ConnectDirect(This->mygraph, capture, smartTeeInput, NULL);
+                    IPin_Release(smartTeeInput);
+                }
+            }
+        }
+        if (FAILED(hr)) {
+            TRACE("adding SmartTee failed with hr=0x%08x\n", hr);
+            hr = E_INVALIDARG;
+            goto end;
+        }
+    } else {
+        hr = E_INVALIDARG;
+        goto end;
+    }
+    if (IsEqualIID(pCategory, &PIN_CATEGORY_CAPTURE))
+        hr = IBaseFilter_FindPin(smartTee, captureW, source_out);
+    else {
+        hr = IBaseFilter_FindPin(smartTee, previewW, source_out);
+        if (SUCCEEDED(hr))
+            hr = VFW_S_NOPREVIEWPIN;
+    }
+
+end:
+    if (capture)
+        IPin_Release(capture);
+    if (preview)
+        IPin_Release(preview);
+    if (peer)
+        IPin_Release(peer);
+    if (smartTee)
+        IBaseFilter_Release(smartTee);
+    TRACE("for %s returning hr=0x%08x, *source_out=%p\n", IsEqualIID(pCategory, &PIN_CATEGORY_CAPTURE) ? "capture" : "preview", hr, source_out ? *source_out : 0);
+    return hr;
+}
+
+static HRESULT find_unconnected_pin(CaptureGraphImpl *This,
+        const GUID *pCategory, const GUID *pType, IUnknown *pSource, IPin **out_pin)
+{
+    int index = 0;
+    IPin *source_out;
+    HRESULT hr;
+    BOOL usedSmartTeePreviewPin = FALSE;
+
+    /* depth-first search the graph for the first unconnected pin that matches
+     * the given category and type */
+    for(;;){
+        IPin *nextpin;
+
+        if (pCategory && (IsEqualIID(pCategory, &PIN_CATEGORY_CAPTURE) || IsEqualIID(pCategory, &PIN_CATEGORY_PREVIEW))){
+            IBaseFilter *sourceFilter = NULL;
+            hr = IUnknown_QueryInterface(pSource, &IID_IBaseFilter, (void**)&sourceFilter);
+            if (SUCCEEDED(hr)) {
+                hr = match_smart_tee_pin(This, pCategory, pType, pSource, &source_out);
+                if (hr == VFW_S_NOPREVIEWPIN)
+                    usedSmartTeePreviewPin = TRUE;
+                IBaseFilter_Release(sourceFilter);
+            } else {
+                hr = ICaptureGraphBuilder2_FindPin(&This->ICaptureGraphBuilder2_iface, pSource, PINDIR_OUTPUT, pCategory, pType, FALSE, index, &source_out);
+            }
+            if (FAILED(hr))
+                return E_INVALIDARG;
+        } else {
+            hr = ICaptureGraphBuilder2_FindPin(&This->ICaptureGraphBuilder2_iface, pSource, PINDIR_OUTPUT, pCategory, pType, FALSE, index, &source_out);
+            if (FAILED(hr))
+                return E_INVALIDARG;
+        }
+
+        hr = IPin_ConnectedTo(source_out, &nextpin);
+        if(SUCCEEDED(hr)){
+            PIN_INFO info;
+
+            IPin_Release(source_out);
+
+            hr = IPin_QueryPinInfo(nextpin, &info);
+            if(FAILED(hr) || !info.pFilter){
+                WARN("QueryPinInfo failed: %08x\n", hr);
+                return hr;
+            }
+
+            hr = find_unconnected_pin(This, pCategory, pType, (IUnknown*)info.pFilter, out_pin);
+
+            IBaseFilter_Release(info.pFilter);
+
+            if(SUCCEEDED(hr))
+                return hr;
+        }else{
+            *out_pin = source_out;
+            if(usedSmartTeePreviewPin)
+                return VFW_S_NOPREVIEWPIN;
+            return S_OK;
+        }
+
+        index++;
+    }
+}
+
 static HRESULT WINAPI
 fnCaptureGraphBuilder2_RenderStream(ICaptureGraphBuilder2 * iface,
                                     const GUID *pCategory,
@@ -260,8 +430,9 @@ fnCaptureGraphBuilder2_RenderStream(ICaptureGraphBuilder2 * iface,
                                     IBaseFilter *pfRenderer)
 {
     CaptureGraphImpl *This = impl_from_ICaptureGraphBuilder2(iface);
-    IPin *source_out, *renderer_in, *capture, *preview;
-    HRESULT hr;
+    IPin *source_out = NULL, *renderer_in;
+    BOOL rendererNeedsRelease = FALSE;
+    HRESULT hr, return_hr = S_OK;
 
     FIXME("(%p/%p)->(%s, %s, %p, %p, %p) semi-stub!\n", This, iface,
           debugstr_guid(pCategory), debugstr_guid(pType),
@@ -272,35 +443,56 @@ fnCaptureGraphBuilder2_RenderStream(ICaptureGraphBuilder2 * iface,
         FIXME("Need a capture graph\n");
         return E_UNEXPECTED;
     }
-    if (!pfRenderer)
-    {
-        FIXME("pfRenderer == NULL not yet supported\n");
-        return E_NOTIMPL;
-    }
-
-    hr = ICaptureGraphBuilder2_FindPin(iface, pSource, PINDIR_OUTPUT, pCategory, pType, TRUE, 0, &source_out);
-    if (FAILED(hr))
-        return E_INVALIDARG;
 
     if (pCategory && IsEqualIID(pCategory, &PIN_CATEGORY_VBI)) {
         FIXME("Tee/Sink-to-Sink filter not supported\n");
-        IPin_Release(source_out);
         return E_NOTIMPL;
     }
 
-    hr = ICaptureGraphBuilder2_FindPin(iface, pSource, PINDIR_OUTPUT, &PIN_CATEGORY_CAPTURE, NULL, TRUE, 0, &capture);
-    if (SUCCEEDED(hr)) {
-        hr = ICaptureGraphBuilder2_FindPin(iface, pSource, PINDIR_OUTPUT, &PIN_CATEGORY_PREVIEW, NULL, TRUE, 0, &preview);
-        if (FAILED(hr))
-            FIXME("Smart Tee filter not supported - not creating preview pin\n");
-        else
-            IPin_Release(preview);
-        IPin_Release(capture);
+    hr = find_unconnected_pin(This, pCategory, pType, pSource, &source_out);
+    if (FAILED(hr))
+        return hr;
+    return_hr = hr;
+
+    if (!pfRenderer)
+    {
+        IEnumMediaTypes *enumMedia = NULL;
+        hr = IPin_EnumMediaTypes(source_out, &enumMedia);
+        if (SUCCEEDED(hr)) {
+            AM_MEDIA_TYPE *mediaType;
+            hr = IEnumMediaTypes_Next(enumMedia, 1, &mediaType, NULL);
+            if (SUCCEEDED(hr)) {
+                if (IsEqualIID(&mediaType->majortype, &MEDIATYPE_Video)) {
+                    hr = CoCreateInstance(&CLSID_VideoRenderer, NULL, CLSCTX_INPROC_SERVER,
+                            &IID_IBaseFilter, (void**)&pfRenderer);
+                } else if (IsEqualIID(&mediaType->majortype, &MEDIATYPE_Audio)) {
+                    hr = CoCreateInstance(&CLSID_DSoundRender, NULL, CLSCTX_INPROC_SERVER,
+                            &IID_IBaseFilter, (void**)&pfRenderer);
+                } else {
+                    FIXME("cannot automatically load renderer for majortype %s\n", debugstr_guid(&mediaType->majortype));
+                    hr = E_FAIL;
+                }
+                if (SUCCEEDED(hr)) {
+                    rendererNeedsRelease = TRUE;
+                    hr = IGraphBuilder_AddFilter(This->mygraph, pfRenderer, NULL);
+                }
+                DeleteMediaType(mediaType);
+            }
+            IEnumMediaTypes_Release(enumMedia);
+        }
+        if (FAILED(hr)) {
+            if (rendererNeedsRelease)
+                IBaseFilter_Release(pfRenderer);
+            IPin_Release(source_out);
+            return hr;
+        }
     }
 
     hr = ICaptureGraphBuilder2_FindPin(iface, (IUnknown*)pfRenderer, PINDIR_INPUT, NULL, NULL, TRUE, 0, &renderer_in);
     if (FAILED(hr))
     {
+        if (rendererNeedsRelease)
+            IBaseFilter_Release(pfRenderer);
         IPin_Release(source_out);
         return hr;
     }
@@ -333,6 +525,10 @@ fnCaptureGraphBuilder2_RenderStream(ICaptureGraphBuilder2 * iface,
 
     IPin_Release(source_out);
     IPin_Release(renderer_in);
+    if (rendererNeedsRelease)
+        IBaseFilter_Release(pfRenderer);
+    if (SUCCEEDED(hr))
+        return return_hr;
     return hr;
 }
 

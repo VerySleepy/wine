@@ -123,11 +123,8 @@ static void init(void)
     wc.lpszClassName = progressTestClass;
     wc.lpfnWndProc = progress_test_wnd_proc;
     RegisterClassA(&wc);
-    
-    rect.left = 0;
-    rect.top = 0;
-    rect.right = 400;
-    rect.bottom = 20;
+
+    SetRect(&rect, 0, 0, 400, 20);
     ret = AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, FALSE);
     ok(ret, "got %d\n", ret);
     
@@ -209,10 +206,8 @@ static void test_redraw(void)
     SetRectEmpty(&last_paint_rect);
     SendMessageA(hProgressWnd, PBM_SETPOS, 10, 0);
     GetClientRect(hProgressWnd, &client_rect);
-    ok(EqualRect(&last_paint_rect, &client_rect),
-       "last_paint_rect was { %d, %d, %d, %d } instead of { %d, %d, %d, %d }\n",
-       last_paint_rect.left, last_paint_rect.top, last_paint_rect.right, last_paint_rect.bottom,
-       client_rect.left, client_rect.top, client_rect.right, client_rect.bottom);
+    ok(EqualRect(&last_paint_rect, &client_rect), "last_paint_rect was %s instead of %s\n",
+       wine_dbgstr_rect(&last_paint_rect), wine_dbgstr_rect(&client_rect));
     update_window(hProgressWnd);
     ok(!erased, "Progress bar shouldn't have erased the background\n");
 
@@ -221,10 +216,8 @@ static void test_redraw(void)
     SetRectEmpty(&last_paint_rect);
     SendMessageA(hProgressWnd, PBM_SETPOS, 0, 0);
     GetClientRect(hProgressWnd, &client_rect);
-    ok(EqualRect(&last_paint_rect, &client_rect),
-       "last_paint_rect was { %d, %d, %d, %d } instead of { %d, %d, %d, %d }\n",
-       last_paint_rect.left, last_paint_rect.top, last_paint_rect.right, last_paint_rect.bottom,
-       client_rect.left, client_rect.top, client_rect.right, client_rect.bottom);
+    ok(EqualRect(&last_paint_rect, &client_rect), "last_paint_rect was %s instead of %s\n",
+       wine_dbgstr_rect(&last_paint_rect), wine_dbgstr_rect(&client_rect));
     update_window(hProgressWnd);
     ok(erased, "Progress bar should have erased the background\n");
 }

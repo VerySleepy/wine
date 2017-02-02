@@ -22,16 +22,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define NONAMELESSUNION
-
 #include "config.h"
 #include "wine/port.h"
 
-#include "windef.h"
-#include "wingdi.h"
-#include "d3dx9_36_private.h"
-
-#include "wine/debug.h"
+#include "d3dx9_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3dx);
 
@@ -1382,19 +1376,16 @@ D3DXQUATERNION * WINAPI D3DXQuaternionExp(D3DXQUATERNION *out, const D3DXQUATERN
 
 D3DXQUATERNION* WINAPI D3DXQuaternionInverse(D3DXQUATERNION *pout, const D3DXQUATERNION *pq)
 {
-    D3DXQUATERNION out;
     FLOAT norm;
 
     TRACE("pout %p, pq %p\n", pout, pq);
 
     norm = D3DXQuaternionLengthSq(pq);
 
-    out.x = -pq->x / norm;
-    out.y = -pq->y / norm;
-    out.z = -pq->z / norm;
-    out.w = pq->w / norm;
-
-    *pout =out;
+    pout->x = -pq->x / norm;
+    pout->y = -pq->y / norm;
+    pout->z = -pq->z / norm;
+    pout->w = pq->w / norm;
     return pout;
 }
 
@@ -1596,6 +1587,7 @@ static D3DXQUATERNION add_diff(const D3DXQUATERNION *q1, const D3DXQUATERNION *q
 void WINAPI D3DXQuaternionSquadSetup(D3DXQUATERNION *paout, D3DXQUATERNION *pbout, D3DXQUATERNION *pcout, const D3DXQUATERNION *pq0, const D3DXQUATERNION *pq1, const D3DXQUATERNION *pq2, const D3DXQUATERNION *pq3)
 {
     D3DXQUATERNION q, temp1, temp2, temp3, zero;
+    D3DXQUATERNION aout, cout;
 
     TRACE("paout %p, pbout %p, pcout %p, pq0 %p, pq1 %p, pq2 %p, pq3 %p\n", paout, pbout, pcout, pq0, pq1, pq2, pq3);
 
@@ -1604,17 +1596,17 @@ void WINAPI D3DXQuaternionSquadSetup(D3DXQUATERNION *paout, D3DXQUATERNION *pbou
     zero.z = 0.0f;
     zero.w = 0.0f;
 
-    if ( D3DXQuaternionDot(pq0, pq1) <  0.0f )
+    if (D3DXQuaternionDot(pq0, pq1) < 0.0f)
         temp2 = add_diff(&zero, pq0, -1.0f);
     else
         temp2 = *pq0;
 
-    if ( D3DXQuaternionDot(pq1, pq2) < 0.0f )
-        *pcout = add_diff(&zero, pq2, -1.0f);
+    if (D3DXQuaternionDot(pq1, pq2) < 0.0f)
+        cout = add_diff(&zero, pq2, -1.0f);
     else
-        *pcout = *pq2;
+        cout = *pq2;
 
-    if ( D3DXQuaternionDot(pcout, pq3) < 0.0f )
+    if (D3DXQuaternionDot(&cout, pq3) < 0.0f)
         temp3 = add_diff(&zero, pq3, -1.0f);
     else
         temp3 = *pq3;
@@ -1622,7 +1614,7 @@ void WINAPI D3DXQuaternionSquadSetup(D3DXQUATERNION *paout, D3DXQUATERNION *pbou
     D3DXQuaternionInverse(&temp1, pq1);
     D3DXQuaternionMultiply(&temp2, &temp1, &temp2);
     D3DXQuaternionLn(&temp2, &temp2);
-    D3DXQuaternionMultiply(&q, &temp1, pcout);
+    D3DXQuaternionMultiply(&q, &temp1, &cout);
     D3DXQuaternionLn(&q, &q);
     temp1 = add_diff(&temp2, &q, 1.0f);
     temp1.x *= -0.25f;
@@ -1630,9 +1622,9 @@ void WINAPI D3DXQuaternionSquadSetup(D3DXQUATERNION *paout, D3DXQUATERNION *pbou
     temp1.z *= -0.25f;
     temp1.w *= -0.25f;
     D3DXQuaternionExp(&temp1, &temp1);
-    D3DXQuaternionMultiply(paout, pq1, &temp1);
+    D3DXQuaternionMultiply(&aout, pq1, &temp1);
 
-    D3DXQuaternionInverse(&temp1, pcout);
+    D3DXQuaternionInverse(&temp1, &cout);
     D3DXQuaternionMultiply(&temp2, &temp1, pq1);
     D3DXQuaternionLn(&temp2, &temp2);
     D3DXQuaternionMultiply(&q, &temp1, &temp3);
@@ -1643,19 +1635,23 @@ void WINAPI D3DXQuaternionSquadSetup(D3DXQUATERNION *paout, D3DXQUATERNION *pbou
     temp1.z *= -0.25f;
     temp1.w *= -0.25f;
     D3DXQuaternionExp(&temp1, &temp1);
-    D3DXQuaternionMultiply(pbout, pcout, &temp1);
-
-    return;
+    D3DXQuaternionMultiply(pbout, &cout, &temp1);
+    *paout = aout;
+    *pcout = cout;
 }
 
 void WINAPI D3DXQuaternionToAxisAngle(const D3DXQUATERNION *pq, D3DXVECTOR3 *paxis, FLOAT *pangle)
 {
     TRACE("pq %p, paxis %p, pangle %p\n", pq, paxis, pangle);
 
-    paxis->x = pq->x;
-    paxis->y = pq->y;
-    paxis->z = pq->z;
-    *pangle = 2.0f * acosf(pq->w);
+    if (paxis)
+    {
+        paxis->x = pq->x;
+        paxis->y = pq->y;
+        paxis->z = pq->z;
+    }
+    if (pangle)
+        *pangle = 2.0f * acosf(pq->w);
 }
 
 /*_________________D3DXVec2_____________________*/
@@ -1717,12 +1713,15 @@ D3DXVECTOR2* WINAPI D3DXVec2Normalize(D3DXVECTOR2 *pout, const D3DXVECTOR2 *pv)
 
 D3DXVECTOR4* WINAPI D3DXVec2Transform(D3DXVECTOR4 *pout, const D3DXVECTOR2 *pv, const D3DXMATRIX *pm)
 {
+    D3DXVECTOR4 out;
+
     TRACE("pout %p, pv %p, pm %p\n", pout, pv, pm);
 
-    pout->x = pm->u.m[0][0] * pv->x + pm->u.m[1][0] * pv->y  + pm->u.m[3][0];
-    pout->y = pm->u.m[0][1] * pv->x + pm->u.m[1][1] * pv->y  + pm->u.m[3][1];
-    pout->z = pm->u.m[0][2] * pv->x + pm->u.m[1][2] * pv->y  + pm->u.m[3][2];
-    pout->w = pm->u.m[0][3] * pv->x + pm->u.m[1][3] * pv->y  + pm->u.m[3][3];
+    out.x = pm->u.m[0][0] * pv->x + pm->u.m[1][0] * pv->y  + pm->u.m[3][0];
+    out.y = pm->u.m[0][1] * pv->x + pm->u.m[1][1] * pv->y  + pm->u.m[3][1];
+    out.z = pm->u.m[0][2] * pv->x + pm->u.m[1][2] * pv->y  + pm->u.m[3][2];
+    out.w = pm->u.m[0][3] * pv->x + pm->u.m[1][3] * pv->y  + pm->u.m[3][3];
+    *pout = out;
     return pout;
 }
 
@@ -1900,12 +1899,15 @@ D3DXVECTOR3* WINAPI D3DXVec3ProjectArray(D3DXVECTOR3* out, UINT outstride, const
 
 D3DXVECTOR4* WINAPI D3DXVec3Transform(D3DXVECTOR4 *pout, const D3DXVECTOR3 *pv, const D3DXMATRIX *pm)
 {
+    D3DXVECTOR4 out;
+
     TRACE("pout %p, pv %p, pm %p\n", pout, pv, pm);
 
-    pout->x = pm->u.m[0][0] * pv->x + pm->u.m[1][0] * pv->y + pm->u.m[2][0] * pv->z + pm->u.m[3][0];
-    pout->y = pm->u.m[0][1] * pv->x + pm->u.m[1][1] * pv->y + pm->u.m[2][1] * pv->z + pm->u.m[3][1];
-    pout->z = pm->u.m[0][2] * pv->x + pm->u.m[1][2] * pv->y + pm->u.m[2][2] * pv->z + pm->u.m[3][2];
-    pout->w = pm->u.m[0][3] * pv->x + pm->u.m[1][3] * pv->y + pm->u.m[2][3] * pv->z + pm->u.m[3][3];
+    out.x = pm->u.m[0][0] * pv->x + pm->u.m[1][0] * pv->y + pm->u.m[2][0] * pv->z + pm->u.m[3][0];
+    out.y = pm->u.m[0][1] * pv->x + pm->u.m[1][1] * pv->y + pm->u.m[2][1] * pv->z + pm->u.m[3][1];
+    out.z = pm->u.m[0][2] * pv->x + pm->u.m[1][2] * pv->y + pm->u.m[2][2] * pv->z + pm->u.m[3][2];
+    out.w = pm->u.m[0][3] * pv->x + pm->u.m[1][3] * pv->y + pm->u.m[2][3] * pv->z + pm->u.m[3][3];
+    *pout = out;
     return pout;
 }
 
@@ -2138,21 +2140,21 @@ unsigned short float_32_to_16(const float in)
     if (isnan(in)) return (sign ? 0xffff : 0x7fff);
     if (in == 0.0f) return (sign ? 0x8000 : 0x0000);
 
-    if (tmp < powf(2, 10))
+    if (tmp < (float)(1u << 10))
     {
         do
         {
             tmp *= 2.0f;
             exp--;
-        } while (tmp < powf(2, 10));
+        } while (tmp < (float)(1u << 10));
     }
-    else if (tmp >= powf(2, 11))
+    else if (tmp >= (float)(1u << 11))
     {
         do
         {
             tmp /= 2.0f;
             exp++;
-        } while (tmp >= powf(2, 11));
+        } while (tmp >= (float)(1u << 11));
     }
 
     exp += 10;  /* Normalize the mantissa */
@@ -2190,7 +2192,7 @@ unsigned short float_32_to_16(const float in)
         exp = origexp;
 
         /* the 13 extra bits from single precision are used for rounding */
-        mantissa = (unsigned int)(tmp * powf(2, 13));
+        mantissa = (unsigned int)(tmp * (1u << 13));
         mantissa >>= 1 - exp; /* denormalize */
 
         mantissa -= ~(mantissa >> 13) & 1; /* round half to even */

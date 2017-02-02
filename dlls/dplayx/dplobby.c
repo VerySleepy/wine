@@ -21,7 +21,7 @@
 
 #define COBJMACROS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
+
 #include "windef.h"
 #include "winbase.h"
 #include "winerror.h"
@@ -762,8 +762,6 @@ static HRESULT WINAPI IDirectPlayLobby3AImpl_EnumAddressTypes( IDirectPlayLobby3
       DWORD    dwAtIndex;
       LPCSTR   atKey = "Address Types";
       LPCSTR   guidDataSubKey   = "Guid";
-      FILETIME filetime;
-
 
       TRACE(" this time through: %s\n", subKeyName );
 

@@ -494,13 +494,12 @@ static const struct gdi_dc_funcs x11drv_funcs =
     X11DRV_ExtFloodFill,                /* pExtFloodFill */
     NULL,                               /* pExtSelectClipRgn */
     NULL,                               /* pExtTextOut */
-    NULL,                               /* pFillPath */
+    X11DRV_FillPath,                    /* pFillPath */
     NULL,                               /* pFillRgn */
     NULL,                               /* pFlattenPath */
     NULL,                               /* pFontIsLinked */
     NULL,                               /* pFrameRgn */
     NULL,                               /* pGdiComment */
-    NULL,                               /* pGdiRealizationInfo */
     NULL,                               /* pGetBoundsRect */
     NULL,                               /* pGetCharABCWidths */
     NULL,                               /* pGetCharABCWidthsI */
@@ -508,6 +507,7 @@ static const struct gdi_dc_funcs x11drv_funcs =
     X11DRV_GetDeviceCaps,               /* pGetDeviceCaps */
     X11DRV_GetDeviceGammaRamp,          /* pGetDeviceGammaRamp */
     NULL,                               /* pGetFontData */
+    NULL,                               /* pGetFontRealizationInfo */
     NULL,                               /* pGetFontUnicodeRanges */
     NULL,                               /* pGetGlyphIndices */
     NULL,                               /* pGetGlyphOutline */
@@ -589,8 +589,8 @@ static const struct gdi_dc_funcs x11drv_funcs =
     NULL,                               /* pStartPage */
     X11DRV_StretchBlt,                  /* pStretchBlt */
     NULL,                               /* pStretchDIBits */
-    NULL,                               /* pStrokeAndFillPath */
-    NULL,                               /* pStrokePath */
+    X11DRV_StrokeAndFillPath,           /* pStrokeAndFillPath */
+    X11DRV_StrokePath,                  /* pStrokePath */
     X11DRV_UnrealizePalette,            /* pUnrealizePalette */
     NULL,                               /* pWidenPath */
     X11DRV_wine_get_wgl_driver,         /* wine_get_wgl_driver */

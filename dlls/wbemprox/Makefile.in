@@ -1,5 +1,6 @@
+EXTRADEFS = -DUSE_WS_PREFIX
 MODULE    = wbemprox.dll
-IMPORTS   = version iphlpapi dxgi oleaut32 ole32 advapi32 user32 gdi32 ws2_32
+IMPORTS   = winspool version iphlpapi dxgi oleaut32 ole32 advapi32 user32 gdi32 ws2_32 rpcrt4
 
 C_SRCS = \
 	builtin.c \

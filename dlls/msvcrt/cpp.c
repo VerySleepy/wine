@@ -904,7 +904,7 @@ const type_info* CDECL MSVCRT___RTtypeid(void *cppobj)
     {
         __non_rtti_object e;
         MSVCRT___non_rtti_object_ctor( &e, "Bad read pointer - no RTTI data!" );
-        _CxxThrowException( &e, &bad_typeid_exception_type );
+        _CxxThrowException( &e, &__non_rtti_object_exception_type );
         return NULL;
     }
     __ENDTRY
@@ -941,7 +941,7 @@ const type_info* CDECL MSVCRT___RTtypeid(void *cppobj)
     {
         __non_rtti_object e;
         MSVCRT___non_rtti_object_ctor( &e, "Bad read pointer - no RTTI data!" );
-        _CxxThrowException( &e, &bad_typeid_exception_type );
+        _CxxThrowException( &e, &__non_rtti_object_exception_type );
         return NULL;
     }
     __ENDTRY
@@ -1028,7 +1028,7 @@ void* CDECL MSVCRT___RTDynamicCast(void *cppobj, int unknown,
     {
         __non_rtti_object e;
         MSVCRT___non_rtti_object_ctor( &e, "Access violation - no RTTI data!" );
-        _CxxThrowException( &e, &bad_typeid_exception_type );
+        _CxxThrowException( &e, &__non_rtti_object_exception_type );
         return NULL;
     }
     __ENDTRY
@@ -1091,7 +1091,7 @@ void* CDECL MSVCRT___RTDynamicCast(void *cppobj, int unknown,
     {
         __non_rtti_object e;
         MSVCRT___non_rtti_object_ctor( &e, "Access violation - no RTTI data!" );
-        _CxxThrowException( &e, &bad_typeid_exception_type );
+        _CxxThrowException( &e, &__non_rtti_object_exception_type );
         return NULL;
     }
     __ENDTRY
@@ -1131,7 +1131,7 @@ void* CDECL MSVCRT___RTCastToVoid(void *cppobj)
     {
         __non_rtti_object e;
         MSVCRT___non_rtti_object_ctor( &e, "Access violation - no RTTI data!" );
-        _CxxThrowException( &e, &bad_typeid_exception_type );
+        _CxxThrowException( &e, &__non_rtti_object_exception_type );
         return NULL;
     }
     __ENDTRY
@@ -1142,6 +1142,7 @@ void* CDECL MSVCRT___RTCastToVoid(void *cppobj)
 /*********************************************************************
  *		_CxxThrowException (MSVCRT.@)
  */
+#ifndef __x86_64__
 void WINAPI _CxxThrowException( exception *object, const cxx_exception_type *type )
 {
     ULONG_PTR args[3];
@@ -1151,6 +1152,18 @@ void WINAPI _CxxThrowException( exception *object, const cxx_exception_type *typ
     args[2] = (ULONG_PTR)type;
     RaiseException( CXX_EXCEPTION, EH_NONCONTINUABLE, 3, args );
 }
+#else
+void WINAPI _CxxThrowException( exception *object, const cxx_exception_type *type )
+{
+    ULONG_PTR args[4];
+
+    args[0] = CXX_FRAME_MAGIC_VC6;
+    args[1] = (ULONG_PTR)object;
+    args[2] = (ULONG_PTR)type;
+    RtlPcToFileHeader( (void*)type, (void**)&args[3]);
+    RaiseException( CXX_EXCEPTION, EH_NONCONTINUABLE, 4, args );
+}
+#endif
 
 /*********************************************************************
  * ?_is_exception_typeof@@YAHABVtype_info@@PAU_EXCEPTION_POINTERS@@@Z
@@ -1477,7 +1490,132 @@ void __cdecl __ExceptionPtrCurrentException(exception_ptr *ep)
 }
 #endif
 
+/*********************************************************************
+ * ?__ExceptionPtrToBool@@YA_NPBX@Z
+ * ?__ExceptionPtrToBool@@YA_NPEBX@Z
+ */
+MSVCRT_bool __cdecl __ExceptionPtrToBool(exception_ptr *ep)
+{
+    return !!ep->rec;
+}
+
 void* __cdecl __AdjustPointer(void *obj, const this_ptr_offsets *off)
 {
     return get_this_pointer(off, obj);
 }
+
+#if _MSVCR_VER >= 140
+typedef struct
+{
+    char *name;
+    char mangled[1];
+} type_info140;
+
+typedef struct
+{
+    SLIST_ENTRY entry;
+    char name[1];
+} type_info_entry;
+
+static void* CDECL type_info_entry_malloc(MSVCRT_size_t size)
+{
+    type_info_entry *ret = MSVCRT_malloc(FIELD_OFFSET(type_info_entry, name) + size);
+    return ret->name;
+}
+
+static void CDECL type_info_entry_free(void *ptr)
+{
+    ptr = (char*)ptr - FIELD_OFFSET(type_info_entry, name);
+    MSVCRT_free(ptr);
+}
+
+/******************************************************************
+ *		__std_type_info_compare (UCRTBASE.@)
+ */
+int CDECL MSVCRT_type_info_compare(const type_info140 *l, const type_info140 *r)
+{
+    int ret;
+
+    if (l == r) ret = 0;
+    else ret = strcmp(l->mangled + 1, r->mangled + 1);
+    TRACE("(%p %p) returning %d\n", l, r, ret);
+    return ret;
+}
+
+/******************************************************************
+ *		__std_type_info_name (UCRTBASE.@)
+ */
+const char* CDECL MSVCRT_type_info_name_list(type_info140 *ti, SLIST_HEADER *header)
+{
+      if (!ti->name)
+      {
+          char* name = __unDName(0, ti->mangled + 1, 0,
+                  type_info_entry_malloc, type_info_entry_free, UNDNAME_NO_ARGUMENTS | UNDNAME_32_BIT_DECODE);
+          if (name)
+          {
+              unsigned int len = strlen(name);
+
+              while (len && name[--len] == ' ')
+                  name[len] = '\0';
+
+              if (InterlockedCompareExchangePointer((void**)&ti->name, name, NULL))
+              {
+                  type_info_entry_free(name);
+              }
+              else
+              {
+                  type_info_entry *entry = (type_info_entry*)(name-FIELD_OFFSET(type_info_entry, name));
+                  InterlockedPushEntrySList(header, &entry->entry);
+              }
+          }
+      }
+      TRACE("(%p) returning %s\n", ti, ti->name);
+      return ti->name;
+}
+
+/******************************************************************
+ *		__std_type_info_destroy_list  (UCRTBASE.@)
+ */
+void CDECL MSVCRT_type_info_destroy_list(SLIST_HEADER *header)
+{
+    SLIST_ENTRY *cur, *next;
+
+    TRACE("(%p)\n", header);
+
+    for(cur = InterlockedFlushSList(header); cur; cur = next)
+    {
+        next = cur->Next;
+        MSVCRT_free(cur);
+    }
+}
+
+/******************************************************************
+ *              __std_type_info_hash (UCRTBASE.@)
+ */
+MSVCRT_size_t CDECL MSVCRT_type_info_hash(const type_info140 *ti)
+{
+    MSVCRT_size_t hash, fnv_prime;
+    const char *p;
+
+#ifdef _WIN64
+    hash = 0xcbf29ce484222325;
+    fnv_prime = 0x100000001b3;
+#else
+    hash = 0x811c9dc5;
+    fnv_prime = 0x1000193;
+#endif
+
+    TRACE("(%p)->%s\n", ti, ti->mangled);
+
+    for(p = ti->mangled+1; *p; p++) {
+        hash ^= *p;
+        hash *= fnv_prime;
+    }
+
+#ifdef _WIN64
+    hash ^= hash >> 32;
+#endif
+
+    return hash;
+}
+#endif

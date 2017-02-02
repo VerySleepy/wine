@@ -338,6 +338,8 @@ RPCRTAPI RPC_STATUS RPC_ENTRY
 RPCRTAPI RPC_STATUS RPC_ENTRY
   RpcBindingReset( RPC_BINDING_HANDLE Binding );
 RPCRTAPI RPC_STATUS RPC_ENTRY
+  RpcBindingServerFromClient( RPC_BINDING_HANDLE ClientBinding, RPC_BINDING_HANDLE* ServerBinding );
+RPCRTAPI RPC_STATUS RPC_ENTRY
   RpcBindingSetObject( RPC_BINDING_HANDLE Binding, UUID* ObjectUuid );
 RPCRTAPI RPC_STATUS RPC_ENTRY
   RpcBindingSetOption( RPC_BINDING_HANDLE Binding, ULONG Option, ULONG_PTR OptionValue );
@@ -451,6 +453,11 @@ RPCRTAPI RPC_STATUS RPC_ENTRY
 RPCRTAPI RPC_STATUS RPC_ENTRY
   RpcServerRegisterIf2( RPC_IF_HANDLE IfSpec, UUID* MgrTypeUuid, RPC_MGR_EPV* MgrEpv,
                         unsigned int Flags, unsigned int MaxCalls, unsigned int MaxRpcSize, RPC_IF_CALLBACK_FN* IfCallbackFn );
+
+RPCRTAPI RPC_STATUS RPC_ENTRY
+  RpcServerRegisterIf3( RPC_IF_HANDLE IfSpec, UUID* MgrTypeUuid, RPC_MGR_EPV* MgrEpv,
+                        unsigned int Flags, unsigned int MaxCalls, unsigned int MaxRpcSize,
+                        RPC_IF_CALLBACK_FN* IfCallbackFn, void* SecurityDescriptor );
 
 RPCRTAPI RPC_STATUS RPC_ENTRY
   RpcServerUnregisterIf( RPC_IF_HANDLE IfSpec, UUID* MgrTypeUuid, unsigned int WaitForCallsToComplete );

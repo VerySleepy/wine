@@ -1343,10 +1343,7 @@ MENU_DrawScrollArrows(const POPUPMENU *lppop, HDC hdc)
         hOrigBitmap = SelectObject(hdcMem, get_up_arrow_bitmap());
     else
         hOrigBitmap = SelectObject(hdcMem, get_up_arrow_inactive_bitmap());
-    rect.left = 0;
-    rect.top = 0;
-    rect.right = lppop->Width;
-    rect.bottom = arrow_bitmap_height;
+    SetRect(&rect, 0, 0, lppop->Width, arrow_bitmap_height);
     FillRect(hdc, &rect, GetSysColorBrush(COLOR_MENU));
     BitBlt(hdc, (lppop->Width - arrow_bitmap_width) / 2, 0,
            arrow_bitmap_width, arrow_bitmap_height, hdcMem, 0, 0, SRCCOPY);
@@ -1458,6 +1455,7 @@ static void MENU_DrawMenuItem( HWND hwnd, HMENU hmenu, HWND hwndOwner, HDC hdc, 
         ** the menu owner has finished drawing.
         */
         DRAWITEMSTRUCT dis;
+        COLORREF old_bk, old_text;
 
         dis.CtlType   = ODT_MENU;
 	dis.CtlID     = 0;
@@ -1475,8 +1473,12 @@ static void MENU_DrawMenuItem( HWND hwnd, HMENU hmenu, HWND hwndOwner, HDC hdc, 
 	      "hwndItem=%p, hdc=%p, rcItem=%s\n", hwndOwner,
 	      dis.itemID, dis.itemState, dis.itemAction, dis.hwndItem,
 	      dis.hDC, wine_dbgstr_rect( &dis.rcItem));
+        old_bk = GetBkColor( hdc );
+        old_text = GetTextColor( hdc );
         SendMessageW( hwndOwner, WM_DRAWITEM, 0, (LPARAM)&dis );
         /* Draw the popup-menu arrow */
+        SetBkColor( hdc, old_bk );
+        SetTextColor( hdc, old_text );
         if (lpitem->fType & MF_POPUP)
             draw_popup_arrow( hdc, rect, arrow_bitmap_width,
                     arrow_bitmap_height);
@@ -1737,7 +1739,7 @@ static void MENU_DrawMenuItem( HWND hwnd, HMENU hmenu, HWND hwndOwner, HDC hdc, 
  */
 static void MENU_DrawPopupMenu( HWND hwnd, HDC hdc, HMENU hmenu )
 {
-    HBRUSH hPrevBrush = 0, brush = GetSysColorBrush( COLOR_MENU );
+    HBRUSH hPrevBrush, brush = GetSysColorBrush( COLOR_MENU );
     RECT rect;
     POPUPMENU *menu = MENU_GetMenu( hmenu );
 
@@ -2804,7 +2806,7 @@ static LRESULT MENU_DoNextMenu( MTRACKER* pmt, UINT vk, UINT wFlags )
  * The idea is not to show the popup if the next input message is
  * going to hide it anyway.
  */
-static BOOL MENU_SuspendPopup( MTRACKER* pmt, UINT16 uMsg )
+static BOOL MENU_SuspendPopup( MTRACKER* pmt, UINT uMsg )
 {
     MSG msg;
 
@@ -2876,7 +2878,7 @@ static BOOL MENU_KeyEscape(MTRACKER* pmt, UINT wFlags)
  *
  * Handle a VK_LEFT key event in a menu.
  */
-static void MENU_KeyLeft( MTRACKER* pmt, UINT wFlags )
+static void MENU_KeyLeft( MTRACKER* pmt, UINT wFlags, UINT msg )
 {
     POPUPMENU *menu;
     HMENU hmenutmp, hmenuprev;
@@ -2916,7 +2918,7 @@ static void MENU_KeyLeft( MTRACKER* pmt, UINT wFlags )
 	   /* A sublevel menu was displayed - display the next one
 	    * unless there is another displacement coming up */
 
-	    if( !MENU_SuspendPopup( pmt, WM_KEYDOWN ) )
+	    if( !MENU_SuspendPopup( pmt, msg ) )
 		pmt->hCurrentMenu = MENU_ShowSubPopup(pmt->hOwnerWnd,
 						pmt->hTopMenu, TRUE, wFlags);
 	}
@@ -2929,7 +2931,7 @@ static void MENU_KeyLeft( MTRACKER* pmt, UINT wFlags )
  *
  * Handle a VK_RIGHT key event in a menu.
  */
-static void MENU_KeyRight( MTRACKER* pmt, UINT wFlags )
+static void MENU_KeyRight( MTRACKER* pmt, UINT wFlags, UINT msg )
 {
     HMENU hmenutmp;
     POPUPMENU *menu = MENU_GetMenu( pmt->hTopMenu );
@@ -2973,7 +2975,7 @@ static void MENU_KeyRight( MTRACKER* pmt, UINT wFlags )
 	     MENU_MoveSelection( pmt->hOwnerWnd, pmt->hTopMenu, ITEM_NEXT );
 
 	if( hmenutmp || pmt->trackFlags & TF_SUSPENDPOPUP )
-	    if( !MENU_SuspendPopup(pmt, WM_KEYDOWN) )
+	    if( !MENU_SuspendPopup( pmt, msg ) )
 		pmt->hCurrentMenu = MENU_ShowSubPopup(pmt->hOwnerWnd,
 						       pmt->hTopMenu, TRUE, wFlags);
     }
@@ -3029,6 +3031,9 @@ static BOOL MENU_TrackMenu( HMENU hmenu, UINT wFlags, INT x, INT y,
     /* owner may not be visible when tracking a popup, so use the menu itself */
     capture_win = (wFlags & TPM_POPUPMENU) ? menu->hWnd : mt.hOwnerWnd;
     set_capture_window( capture_win, GUI_INMENUMODE, NULL );
+
+    if ((wFlags & TPM_POPUPMENU) && menu->nItems == 0)
+        return FALSE;
 
     __TRY while (!fEndMenu)
     {
@@ -3173,11 +3178,11 @@ static BOOL MENU_TrackMenu( HMENU hmenu, UINT wFlags, INT x, INT y,
 		    break;
 
 		case VK_LEFT:
-		    MENU_KeyLeft( &mt, wFlags );
+		    MENU_KeyLeft( &mt, wFlags, msg.message );
 		    break;
 
 		case VK_RIGHT:
-		    MENU_KeyRight( &mt, wFlags );
+		    MENU_KeyRight( &mt, wFlags, msg.message );
 		    break;
 
 		case VK_ESCAPE:
@@ -3470,6 +3475,10 @@ BOOL WINAPI TrackPopupMenuEx( HMENU hMenu, UINT wFlags, INT x, INT y,
         /* Send WM_INITMENUPOPUP message only if TPM_NONOTIFY flag is not specified */
         if (!(wFlags & TPM_NONOTIFY))
             SendMessageW( hWnd, WM_INITMENUPOPUP, (WPARAM)hMenu, 0);
+
+        if (menu->wFlags & MF_SYSMENU)
+            MENU_InitSysMenuPopup( hMenu, GetWindowLongW( hWnd, GWL_STYLE ),
+                                   GetClassLongW( hWnd, GCL_STYLE));
 
         if (MENU_ShowPopup( hWnd, hMenu, 0, wFlags, x, y, 0, 0 ))
             ret = MENU_TrackMenu( hMenu, wFlags | TPM_POPUPMENU, 0, 0, hWnd,
@@ -3996,7 +4005,12 @@ BOOL WINAPI ModifyMenuW( HMENU hMenu, UINT pos, UINT flags,
     else
         TRACE("%p %d %04x %04lx %p\n", hMenu, pos, flags, id, str );
 
-    if (!(item = MENU_FindItem( &hMenu, &pos, flags ))) return FALSE;
+    if (!(item = MENU_FindItem( &hMenu, &pos, flags )))
+    {
+        /* workaround for Word 95: pretend that SC_TASKLIST item exists */
+        if (pos == SC_TASKLIST && !(flags & MF_BYPOSITION)) return TRUE;
+        return FALSE;
+    }
     MENU_GetMenu(hMenu)->Height = 0; /* force size recalculate */
     MENU_mnu2mnuii( flags, id, str, &mii);
     return SetMenuItemInfo_common( item, &mii, TRUE);
@@ -4561,7 +4575,7 @@ static BOOL GetMenuItemInfo_common ( HMENU hmenu, UINT item, BOOL bypos,
         SetLastError( ERROR_MENU_ITEM_NOT_FOUND);
         return FALSE;
     }
-    
+
     if( lpmii->fMask & MIIM_TYPE) {
         if( lpmii->fMask & ( MIIM_STRING | MIIM_FTYPE | MIIM_BITMAP)) {
             WARN("invalid combination of fMask bits used\n");
@@ -4570,7 +4584,8 @@ static BOOL GetMenuItemInfo_common ( HMENU hmenu, UINT item, BOOL bypos,
             return FALSE;
         }
 	lpmii->fType = menu->fType & MENUITEMINFO_TYPE_MASK;
-        if( menu->hbmpItem) lpmii->fType |= MFT_BITMAP;
+        if (menu->hbmpItem && !IS_MAGIC_BITMAP(menu->hbmpItem))
+            lpmii->fType |= MFT_BITMAP;
 	lpmii->hbmpItem = menu->hbmpItem; /* not on Win9x/ME */
         if( lpmii->fType & MFT_BITMAP) {
 	    lpmii->dwTypeData = (LPWSTR) menu->hbmpItem;
@@ -4867,14 +4882,20 @@ static BOOL MENU_NormalizeMenuItemInfoStruct( const MENUITEMINFOW *pmii_in,
 BOOL WINAPI SetMenuItemInfoA(HMENU hmenu, UINT item, BOOL bypos,
                                  const MENUITEMINFOA *lpmii)
 {
+    MENUITEM *menuitem;
     MENUITEMINFOW mii;
 
     TRACE("hmenu %p, item %u, by pos %d, info %p\n", hmenu, item, bypos, lpmii);
 
     if (!MENU_NormalizeMenuItemInfoStruct( (const MENUITEMINFOW *)lpmii, &mii )) return FALSE;
 
-    return SetMenuItemInfo_common(MENU_FindItem(&hmenu, &item, bypos? MF_BYPOSITION : 0),
-                                  &mii, FALSE);
+    if (!(menuitem = MENU_FindItem( &hmenu, &item, bypos? MF_BYPOSITION : 0 )))
+    {
+        /* workaround for Word 95: pretend that SC_TASKLIST item exists */
+        if (item == SC_TASKLIST && !bypos) return TRUE;
+        return FALSE;
+    }
+    return SetMenuItemInfo_common( menuitem, &mii, FALSE );
 }
 
 /**********************************************************************
@@ -4883,13 +4904,19 @@ BOOL WINAPI SetMenuItemInfoA(HMENU hmenu, UINT item, BOOL bypos,
 BOOL WINAPI SetMenuItemInfoW(HMENU hmenu, UINT item, BOOL bypos,
                                  const MENUITEMINFOW *lpmii)
 {
+    MENUITEM *menuitem;
     MENUITEMINFOW mii;
 
     TRACE("hmenu %p, item %u, by pos %d, info %p\n", hmenu, item, bypos, lpmii);
 
     if (!MENU_NormalizeMenuItemInfoStruct( lpmii, &mii )) return FALSE;
-    return SetMenuItemInfo_common(MENU_FindItem(&hmenu,
-                &item, bypos? MF_BYPOSITION : 0), &mii, TRUE);
+    if (!(menuitem = MENU_FindItem( &hmenu, &item, bypos? MF_BYPOSITION : 0 )))
+    {
+        /* workaround for Word 95: pretend that SC_TASKLIST item exists */
+        if (item == SC_TASKLIST && !bypos) return TRUE;
+        return FALSE;
+    }
+    return SetMenuItemInfo_common( menuitem, &mii, TRUE );
 }
 
 /**********************************************************************

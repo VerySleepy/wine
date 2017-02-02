@@ -29,6 +29,7 @@
 #include "wine/debug.h"
 
 #include "mshtml_private.h"
+#include "htmlevent.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(mshtml);
 
@@ -70,7 +71,7 @@ static HRESULT WINAPI HTMLLinkElement_GetTypeInfoCount(IHTMLLinkElement *iface, 
 {
     HTMLLinkElement *This = impl_from_IHTMLLinkElement(iface);
 
-    return IDispatchEx_GetTypeInfoCount(&This->element.node.dispex.IDispatchEx_iface, pctinfo);
+    return IDispatchEx_GetTypeInfoCount(&This->element.node.event_target.dispex.IDispatchEx_iface, pctinfo);
 }
 
 static HRESULT WINAPI HTMLLinkElement_GetTypeInfo(IHTMLLinkElement *iface, UINT iTInfo,
@@ -78,7 +79,7 @@ static HRESULT WINAPI HTMLLinkElement_GetTypeInfo(IHTMLLinkElement *iface, UINT 
 {
     HTMLLinkElement *This = impl_from_IHTMLLinkElement(iface);
 
-    return IDispatchEx_GetTypeInfo(&This->element.node.dispex.IDispatchEx_iface, iTInfo, lcid,
+    return IDispatchEx_GetTypeInfo(&This->element.node.event_target.dispex.IDispatchEx_iface, iTInfo, lcid,
             ppTInfo);
 }
 
@@ -88,7 +89,7 @@ static HRESULT WINAPI HTMLLinkElement_GetIDsOfNames(IHTMLLinkElement *iface, REF
 {
     HTMLLinkElement *This = impl_from_IHTMLLinkElement(iface);
 
-    return IDispatchEx_GetIDsOfNames(&This->element.node.dispex.IDispatchEx_iface, riid, rgszNames,
+    return IDispatchEx_GetIDsOfNames(&This->element.node.event_target.dispex.IDispatchEx_iface, riid, rgszNames,
             cNames, lcid, rgDispId);
 }
 
@@ -98,7 +99,7 @@ static HRESULT WINAPI HTMLLinkElement_Invoke(IHTMLLinkElement *iface, DISPID dis
 {
     HTMLLinkElement *This = impl_from_IHTMLLinkElement(iface);
 
-    return IDispatchEx_Invoke(&This->element.node.dispex.IDispatchEx_iface, dispIdMember, riid,
+    return IDispatchEx_Invoke(&This->element.node.event_target.dispex.IDispatchEx_iface, dispIdMember, riid,
             lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
 }
 
@@ -242,15 +243,19 @@ static HRESULT WINAPI HTMLLinkElement_get_onreadystatechange(IHTMLLinkElement *i
 static HRESULT WINAPI HTMLLinkElement_put_onload(IHTMLLinkElement *iface, VARIANT v)
 {
     HTMLLinkElement *This = impl_from_IHTMLLinkElement(iface);
-    FIXME("(%p)->(%s)\n", This, debugstr_variant(&v));
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%s)\n", This, debugstr_variant(&v));
+
+    return set_node_event(&This->element.node, EVENTID_LOAD, &v);
 }
 
 static HRESULT WINAPI HTMLLinkElement_get_onload(IHTMLLinkElement *iface, VARIANT *p)
 {
     HTMLLinkElement *This = impl_from_IHTMLLinkElement(iface);
-    FIXME("(%p)->(%p)\n", This, p);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%p)\n", This, p);
+
+    return get_node_event(&This->element.node, EVENTID_LOAD, p);
 }
 
 static HRESULT WINAPI HTMLLinkElement_put_onerror(IHTMLLinkElement *iface, VARIANT v)
@@ -444,8 +449,8 @@ static const tid_t HTMLLinkElement_iface_tids[] = {
 static dispex_static_data_t HTMLLinkElement_dispex = {
     NULL,
     DispHTMLLinkElement_tid,
-    NULL,
-    HTMLLinkElement_iface_tids
+    HTMLLinkElement_iface_tids,
+    HTMLElement_init_dispex_info
 };
 
 HRESULT HTMLLinkElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem, HTMLElement **elem)

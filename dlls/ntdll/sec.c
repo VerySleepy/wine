@@ -558,6 +558,16 @@ NTSTATUS WINAPI RtlValidSecurityDescriptor(
 }
 
 /**************************************************************************
+ * RtlValidRelativeSecurityDescriptor		[NTDLL.@]
+ */
+BOOLEAN WINAPI RtlValidRelativeSecurityDescriptor(PSECURITY_DESCRIPTOR descriptor,
+    ULONG length, SECURITY_INFORMATION info)
+{
+    FIXME("%p,%u,%d: semi-stub\n", descriptor, length, info);
+    return RtlValidSecurityDescriptor(descriptor) == STATUS_SUCCESS;
+}
+
+/**************************************************************************
  *  RtlLengthSecurityDescriptor			[NTDLL.@]
  */
 ULONG WINAPI RtlLengthSecurityDescriptor(
@@ -1167,7 +1177,7 @@ NTSTATUS WINAPI RtlAddAce(
 	PACE_HEADER	ace,targetace;
 	int		nrofaces;
 
-	if (acl->AclRevision != ACL_REVISION)
+	if (!RtlValidAcl(acl))
 		return STATUS_INVALID_PARAMETER;
 	if (!RtlFirstFreeAce(acl,&targetace))
 		return STATUS_INVALID_PARAMETER;
@@ -1180,6 +1190,8 @@ NTSTATUS WINAPI RtlAddAce(
 		return STATUS_INVALID_PARAMETER;
 	memcpy(targetace,acestart,acelen);
 	acl->AceCount+=nrofaces;
+	if (rev > acl->AclRevision)
+		acl->AclRevision = rev;
 	return STATUS_SUCCESS;
 }
 
@@ -1248,6 +1260,23 @@ NTSTATUS WINAPI RtlAddAccessAllowedAceEx(
 }
 
 /******************************************************************************
+ *  RtlAddAccessAllowedObjectAce		[NTDLL.@]
+ */
+NTSTATUS WINAPI RtlAddAccessAllowedObjectAce(
+    IN OUT PACL pAcl,
+    IN DWORD dwAceRevision,
+    IN DWORD dwAceFlags,
+    IN DWORD dwAccessMask,
+    IN GUID* pObjectTypeGuid,
+    IN GUID* pInheritedObjectTypeGuid,
+    IN PSID pSid)
+{
+    FIXME("%p %x %x %x %p %p %p - stub\n", pAcl, dwAceRevision, dwAceFlags, dwAccessMask,
+          pObjectTypeGuid, pInheritedObjectTypeGuid, pSid);
+    return STATUS_NOT_IMPLEMENTED;
+}
+
+/******************************************************************************
  *  RtlAddAccessDeniedAce		[NTDLL.@]
  */
 NTSTATUS WINAPI RtlAddAccessDeniedAce(
@@ -1273,6 +1302,23 @@ NTSTATUS WINAPI RtlAddAccessDeniedAceEx(
 
     return add_access_ace(pAcl, dwAceRevision, AceFlags,
                           AccessMask, pSid, ACCESS_DENIED_ACE_TYPE);
+}
+
+/******************************************************************************
+ *  RtlAddAccessDeniedObjectAce [NTDLL.@]
+ */
+NTSTATUS WINAPI RtlAddAccessDeniedObjectAce(
+    IN OUT PACL pAcl,
+    IN DWORD dwAceRevision,
+    IN DWORD dwAceFlags,
+    IN DWORD dwAccessMask,
+    IN GUID* pObjectTypeGuid,
+    IN GUID* pInheritedObjectTypeGuid,
+    IN PSID pSid)
+{
+    FIXME("%p %x %x %x %p %p %p - stub\n", pAcl, dwAceRevision, dwAceFlags, dwAccessMask,
+          pObjectTypeGuid, pInheritedObjectTypeGuid, pSid);
+    return STATUS_NOT_IMPLEMENTED;
 }
 
 /************************************************************************** 
@@ -1313,7 +1359,26 @@ NTSTATUS WINAPI RtlAddAuditAccessAce(
 {
     return RtlAddAuditAccessAceEx(pAcl, dwAceRevision, 0, dwAccessMask, pSid, bAuditSuccess, bAuditFailure);
 }
- 
+
+/******************************************************************************
+ *  RtlAddAuditAccessObjectAce [NTDLL.@]
+ */
+NTSTATUS WINAPI RtlAddAuditAccessObjectAce(
+    IN OUT PACL pAcl,
+    IN DWORD dwAceRevision,
+    IN DWORD dwAceFlags,
+    IN DWORD dwAccessMask,
+    IN GUID* pObjectTypeGuid,
+    IN GUID* pInheritedObjectTypeGuid,
+    IN PSID pSid,
+    IN BOOL bAuditSuccess,
+    IN BOOL bAuditFailure)
+{
+    FIXME("%p %x %x %x %p %p %p %d %d - stub\n", pAcl, dwAceRevision, dwAceFlags, dwAccessMask,
+          pObjectTypeGuid, pInheritedObjectTypeGuid, pSid, bAuditSuccess, bAuditFailure);
+    return STATUS_NOT_IMPLEMENTED;
+}
+
 /******************************************************************************
  *  RtlValidAcl		[NTDLL.@]
  */
@@ -1518,6 +1583,16 @@ RtlImpersonateSelf(SECURITY_IMPERSONATION_LEVEL ImpersonationLevel)
     NtClose( ProcessToken );
 
     return Status;
+}
+
+/******************************************************************************
+ *  NtImpersonateAnonymousToken      [NTDLL.@]
+ */
+NTSTATUS WINAPI
+NtImpersonateAnonymousToken(HANDLE thread)
+{
+    FIXME("(%p): stub\n", thread);
+    return STATUS_NOT_IMPLEMENTED;
 }
 
 /******************************************************************************

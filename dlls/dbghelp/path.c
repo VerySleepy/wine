@@ -490,7 +490,13 @@ static BOOL CALLBACK module_find_cb(PCWSTR buffer, PVOID user)
                 if ((mapping = MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0)) != NULL)
                 {
                     IMAGE_NT_HEADERS*   nth = RtlImageNtHeader(mapping);
-
+                    if (!nth)
+                    {
+                        UnmapViewOfFile(mapping);
+                        CloseHandle(hMap);
+                        CloseHandle(hFile);
+                        return FALSE;
+                    }
                     matched++;
                     timestamp = nth->FileHeader.TimeDateStamp;
                     size = nth->OptionalHeader.SizeOfImage;
@@ -522,7 +528,7 @@ static BOOL CALLBACK module_find_cb(PCWSTR buffer, PVOID user)
         }
         break;
     case DMT_MACHO:
-        if (macho_fetch_file_info(buffer, 0, &size, &checksum))
+        if (macho_fetch_file_info(NULL, buffer, 0, 0, &size, &checksum))
         {
             matched++;
             if (checksum == mf->dw1) matched++;

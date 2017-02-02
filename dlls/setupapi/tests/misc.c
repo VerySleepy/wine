@@ -29,6 +29,7 @@
 #include "winuser.h"
 #include "winreg.h"
 #include "setupapi.h"
+#include "cfgmgr32.h"
 
 #include "wine/test.h"
 
@@ -230,6 +231,11 @@ static void test_SetupCopyOEMInf(void)
     strcat(path, tmpfile);
     SetLastError(0xdeadbeef);
     res = pSetupCopyOEMInfA(path, NULL, SPOST_NONE, 0, NULL, 0, NULL, NULL);
+    if (!res && GetLastError() == ERROR_ACCESS_DENIED)
+    {
+        skip("SetupCopyOEMInfA() failed on insufficient permissions\n");
+        return;
+    }
     ok(res == TRUE, "Expected TRUE, got %d\n", res);
     ok(GetLastError() == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", GetLastError());
     ok(file_exists(path), "Expected source inf to exist\n");
@@ -776,6 +782,54 @@ static void test_defaultcallback(void)
     SetupTermDefaultQueueCallback(ctxt);
 }
 
+static void test_SetupLogError(void)
+{
+    BOOL ret;
+    DWORD error;
+
+    SetLastError(0xdeadbeef);
+    ret = SetupLogErrorA("Test without opening\r\n", LogSevInformation);
+    error = GetLastError();
+    ok(!ret, "SetupLogError succeeded\n");
+    ok(error == ERROR_FILE_INVALID, "got wrong error: %d\n", error);
+
+    SetLastError(0xdeadbeef);
+    ret = SetupOpenLog(FALSE);
+    if (!ret && GetLastError() == ERROR_ACCESS_DENIED)
+    {
+        skip("SetupOpenLog() failed on insufficient permissions\n");
+        return;
+    }
+    ok(ret, "SetupOpenLog failed, error %d\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = SetupLogErrorA("Test with wrong log severity\r\n", LogSevMaximum);
+    error = GetLastError();
+    ok(!ret, "SetupLogError succeeded\n");
+    ok(error == 0xdeadbeef, "got wrong error: %d\n", error);
+    ret = SetupLogErrorA("Test without EOL", LogSevInformation);
+    ok(ret, "SetupLogError failed\n");
+
+    SetLastError(0xdeadbeef);
+    ret = SetupLogErrorA(NULL, LogSevInformation);
+    ok(ret || broken(!ret && GetLastError() == ERROR_INVALID_PARAMETER /* Win Vista+ */),
+        "SetupLogError failed: %08x\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = SetupOpenLog(FALSE);
+    ok(ret, "SetupOpenLog failed, error %d\n", GetLastError());
+
+    SetupCloseLog();
+}
+
+static void test_CM_Get_Version(void)
+{
+    WORD ret;
+
+    ret = CM_Get_Version();
+    ok(ret == 0x0400, "got version %#x\n", ret);
+}
+
 START_TEST(misc)
 {
     HMODULE hsetupapi = GetModuleHandleA("setupapi.dll");
@@ -807,4 +861,7 @@ START_TEST(misc)
         win_skip("SetupUninstallOEMInfA is not available\n");
 
     test_defaultcallback();
+
+    test_SetupLogError();
+    test_CM_Get_Version();
 }

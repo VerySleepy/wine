@@ -18,10 +18,13 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#define COBJMACROS
 #include <windows.h>
 #include <ole2.h>
+#include <oleauto.h>
 #include <secext.h>
 #include <rpcdce.h>
+#include <netfw.h>
 #include "wine/test.h"
 #include "server.h"
 #include "server_defines.h"
@@ -44,7 +47,6 @@ static void (WINAPI *pNDRSContextMarshall2)(RPC_BINDING_HANDLE, NDR_SCONTEXT, vo
 static NDR_SCONTEXT (WINAPI *pNDRSContextUnmarshall2)(RPC_BINDING_HANDLE, void*, ULONG, void*, ULONG);
 static RPC_STATUS (WINAPI *pRpcServerRegisterIfEx)(RPC_IF_HANDLE,UUID*, RPC_MGR_EPV*, unsigned int,
                    unsigned int,RPC_IF_CALLBACK_FN*);
-static BOOLEAN (WINAPI *pGetUserNameExA)(EXTENDED_NAME_FORMAT, LPSTR, PULONG);
 static RPC_STATUS (WINAPI *pRpcBindingSetAuthInfoExA)(RPC_BINDING_HANDLE, RPC_CSTR, ULONG, ULONG,
                                                       RPC_AUTH_IDENTITY_HANDLE, ULONG, RPC_SECURITY_QOS *);
 static RPC_STATUS (WINAPI *pRpcServerRegisterAuthInfoA)(RPC_CSTR, ULONG, RPC_AUTH_KEY_RETRIEVAL_FN, LPVOID);
@@ -60,14 +62,12 @@ static const WCHAR worldW[] = { 'W','o','r','l','d','!',0 };
 static void InitFunctionPointers(void)
 {
     HMODULE hrpcrt4 = GetModuleHandleA("rpcrt4.dll");
-    HMODULE hsecur32 = LoadLibraryA("secur32.dll");
 
     pNDRSContextMarshall2 = (void *)GetProcAddress(hrpcrt4, "NDRSContextMarshall2");
     pNDRSContextUnmarshall2 = (void *)GetProcAddress(hrpcrt4, "NDRSContextUnmarshall2");
     pRpcServerRegisterIfEx = (void *)GetProcAddress(hrpcrt4, "RpcServerRegisterIfEx");
     pRpcBindingSetAuthInfoExA = (void *)GetProcAddress(hrpcrt4, "RpcBindingSetAuthInfoExA");
     pRpcServerRegisterAuthInfoA = (void *)GetProcAddress(hrpcrt4, "RpcServerRegisterAuthInfoA");
-    pGetUserNameExA = (void *)GetProcAddress(hsecur32, "GetUserNameExA");
 
     if (!pNDRSContextMarshall2) old_windows_version = TRUE;
 }
@@ -744,6 +744,46 @@ void __cdecl s_context_handle_test(void)
 
         pNDRSContextUnmarshall2(binding, buf, NDR_LOCAL_DATA_REPRESENTATION, &server_if2.InterfaceId, 0);
     }
+
+    binding = NULL;
+    status = RpcBindingServerFromClient(NULL, &binding);
+
+    ok(status == RPC_S_OK, "expected RPC_S_OK got %u\n", status);
+    ok(binding != NULL, "binding is NULL\n");
+
+    if (status == RPC_S_OK && binding != NULL)
+    {
+        unsigned char* string_binding = NULL;
+        unsigned char* object_uuid = NULL;
+        unsigned char* protseq = NULL;
+        unsigned char* network_address = NULL;
+        unsigned char* endpoint = NULL;
+        unsigned char* network_options = NULL;
+
+        status = RpcBindingToStringBindingA(binding, &string_binding);
+        ok(status == RPC_S_OK, "expected RPC_S_OK got %u\n", status);
+        ok(string_binding != NULL, "string_binding is NULL\n");
+
+        status = RpcStringBindingParseA(string_binding, &object_uuid, &protseq, &network_address, &endpoint, &network_options);
+        ok(status == RPC_S_OK, "expected RPC_S_OK got %u\n", status);
+        ok(protseq != NULL && *protseq != '\0', "protseq is %s\n", protseq);
+        ok(network_address != NULL && *network_address != '\0', "network_address is %s\n", network_address);
+
+        todo_wine
+        {
+            ok(object_uuid != NULL && *object_uuid == '\0', "object_uuid is %s\n", object_uuid);
+            ok(endpoint != NULL && *endpoint == '\0', "endpoint is %s\n", endpoint);
+            ok(network_options != NULL && *network_options == '\0', "network_options is %s\n", network_options);
+        }
+
+        RpcStringFreeA(&string_binding);
+        RpcStringFreeA(&object_uuid);
+        RpcStringFreeA(&protseq);
+        RpcStringFreeA(&network_address);
+        RpcStringFreeA(&endpoint);
+        RpcStringFreeA(&network_options);
+        RpcBindingFree(&binding);
+    }
 }
 
 void __cdecl s_get_numbers(int length, int size, pints_t n[])
@@ -980,8 +1020,11 @@ basic_tests(void)
 
   if (!old_windows_version)
   {
+      re = 0xdeadbeef;
       get_ranged_enum(&re);
-      ok(re == RE3, "get_ranged_enum() returned %d instead of RE3\n", re);
+      ok(re == RE3 ||
+         broken(re == MAKELONG(re, 0xdead)), /* Win 8, Win 10 */
+         "get_ranged_enum() returned %x instead of RE3\n", re);
   }
 }
 
@@ -1471,7 +1514,7 @@ void __cdecl s_authinfo_test(unsigned int protseq, int secure)
             todo_wine
             ok(principal != NULL, "NULL principal\n");
         }
-        if (protseq == RPC_PROTSEQ_LRPC && principal && pGetUserNameExA)
+        if (protseq == RPC_PROTSEQ_LRPC && principal)
         {
             int len;
             char *spn;
@@ -1485,6 +1528,15 @@ void __cdecl s_authinfo_test(unsigned int protseq, int secure)
         }
         ok(level == RPC_C_AUTHN_LEVEL_PKT_PRIVACY, "level unchanged\n");
         ok(authnsvc == RPC_C_AUTHN_WINNT, "authnsvc unchanged\n");
+        RpcStringFreeA(&principal);
+
+        status = RpcBindingInqAuthClientA(NULL, &privs, &principal, &level, &authnsvc, NULL);
+        ok(status == RPC_S_OK, "expected RPC_S_OK got %u\n", status);
+        RpcStringFreeA(&principal);
+
+        status = RpcBindingInqAuthClientExA(NULL, &privs, &principal, &level, &authnsvc, NULL, 0);
+        ok(status == RPC_S_OK, "expected RPC_S_OK got %u\n", status);
+        RpcStringFreeA(&principal);
 
         status = RpcImpersonateClient(NULL);
         ok(status == RPC_S_OK, "expected RPC_S_OK got %u\n", status);
@@ -1519,9 +1571,6 @@ set_auth_info(RPC_BINDING_HANDLE handle)
     RPC_STATUS status;
     RPC_SECURITY_QOS qos;
 
-    if (!pGetUserNameExA)
-        return;
-
     qos.Version = 1;
     qos.Capabilities = RPC_C_QOS_CAPABILITIES_MUTUAL_AUTH;
     qos.IdentityTracking = RPC_C_QOS_IDENTITY_STATIC;
@@ -1530,6 +1579,26 @@ set_auth_info(RPC_BINDING_HANDLE handle)
     status = pRpcBindingSetAuthInfoExA(handle, (RPC_CSTR)domain_and_user, RPC_C_AUTHN_LEVEL_PKT_PRIVACY,
                                        RPC_C_AUTHN_WINNT, NULL, 0, &qos);
     ok(status == RPC_S_OK, "RpcBindingSetAuthInfoExA failed %d\n", status);
+}
+
+#define test_is_server_listening(a,b) _test_is_server_listening(__LINE__,a,b)
+static void _test_is_server_listening(unsigned line, RPC_BINDING_HANDLE binding, RPC_STATUS expected_status)
+{
+    RPC_STATUS status;
+    status = RpcMgmtIsServerListening(binding);
+    ok_(__FILE__,line)(status == expected_status, "RpcMgmtIsServerListening returned %u, expected %u\n",
+                       status, expected_status);
+}
+
+#define test_is_server_listening2(a,b,c) _test_is_server_listening2(__LINE__,a,b,c)
+static void _test_is_server_listening2(unsigned line, RPC_BINDING_HANDLE binding, RPC_STATUS expected_status,
+        RPC_STATUS expected_status2)
+{
+    RPC_STATUS status;
+    status = RpcMgmtIsServerListening(binding);
+    ok_(__FILE__,line)(status == expected_status || status == expected_status2,
+                       "RpcMgmtIsServerListening returned %u, expected %u or %u\n",
+                       status, expected_status, expected_status2);
 }
 
 static void
@@ -1553,6 +1622,7 @@ client(const char *test)
 
     run_tests();
     authinfo_test(RPC_PROTSEQ_TCP, 0);
+    test_is_server_listening2(IServer_IfHandle, RPC_S_OK, RPC_S_ACCESS_DENIED);
 
     ok(RPC_S_OK == RpcStringFreeA(&binding), "RpcStringFree\n");
     ok(RPC_S_OK == RpcBindingFree(&IServer_IfHandle), "RpcBindingFree\n");
@@ -1564,6 +1634,7 @@ client(const char *test)
 
     set_auth_info(IServer_IfHandle);
     authinfo_test(RPC_PROTSEQ_TCP, 1);
+    test_is_server_listening(IServer_IfHandle, RPC_S_ACCESS_DENIED);
 
     ok(RPC_S_OK == RpcStringFreeA(&binding), "RpcStringFree\n");
     ok(RPC_S_OK == RpcBindingFree(&IServer_IfHandle), "RpcBindingFree\n");
@@ -1575,6 +1646,7 @@ client(const char *test)
 
     run_tests(); /* can cause RPC_X_BAD_STUB_DATA exception */
     authinfo_test(RPC_PROTSEQ_LRPC, 0);
+    test_is_server_listening(IServer_IfHandle, RPC_S_OK);
 
     ok(RPC_S_OK == RpcStringFreeA(&binding), "RpcStringFree\n");
     ok(RPC_S_OK == RpcBindingFree(&IServer_IfHandle), "RpcBindingFree\n");
@@ -1586,6 +1658,7 @@ client(const char *test)
 
     set_auth_info(IServer_IfHandle);
     authinfo_test(RPC_PROTSEQ_LRPC, 1);
+    test_is_server_listening(IServer_IfHandle, RPC_S_OK);
 
     ok(RPC_S_OK == RpcStringFreeA(&binding), "RpcStringFree\n");
     ok(RPC_S_OK == RpcBindingFree(&IServer_IfHandle), "RpcBindingFree\n");
@@ -1595,9 +1668,12 @@ client(const char *test)
     ok(RPC_S_OK == RpcStringBindingComposeA(NULL, np, address_np, pipe, NULL, &binding), "RpcStringBindingCompose\n");
     ok(RPC_S_OK == RpcBindingFromStringBindingA(binding, &IServer_IfHandle), "RpcBindingFromStringBinding\n");
 
+    test_is_server_listening(IServer_IfHandle, RPC_S_OK);
     run_tests();
     authinfo_test(RPC_PROTSEQ_NMP, 0);
+    test_is_server_listening(IServer_IfHandle, RPC_S_OK);
     stop();
+    test_is_server_listening(IServer_IfHandle, RPC_S_NOT_LISTENING);
 
     ok(RPC_S_OK == RpcStringFreeA(&binding), "RpcStringFree\n");
     ok(RPC_S_OK == RpcBindingFree(&IServer_IfHandle), "RpcBindingFree\n");
@@ -1638,8 +1714,10 @@ server(void)
   else
     status = RpcServerRegisterIf(s_IServer_v0_0_s_ifspec, NULL, NULL);
   ok(status == RPC_S_OK, "RpcServerRegisterIf failed with status %d\n", status);
+  test_is_server_listening(NULL, RPC_S_NOT_LISTENING);
   status = RpcServerListen(1, 20, TRUE);
   ok(status == RPC_S_OK, "RpcServerListen failed with status %d\n", status);
+  test_is_server_listening(NULL, RPC_S_OK);
   stop_event = CreateEventW(NULL, FALSE, FALSE, NULL);
   ok(stop_event != NULL, "CreateEvent failed with error %d\n", GetLastError());
 
@@ -1651,11 +1729,9 @@ server(void)
   if (ncalrpc_status == RPC_S_OK)
   {
     run_client("ncalrpc_basic");
-    if (pGetUserNameExA)
-    {
-      /* we don't need to register RPC_C_AUTHN_WINNT for ncalrpc */
-      run_client("ncalrpc_secure");
-    }
+
+    /* we don't need to register RPC_C_AUTHN_WINNT for ncalrpc */
+    run_client("ncalrpc_secure");
   }
   else
     skip("lrpc tests skipped due to earlier failure\n");
@@ -1682,22 +1758,145 @@ server(void)
   }
 }
 
+static BOOL is_process_elevated(void)
+{
+    HANDLE token;
+    if (OpenProcessToken( GetCurrentProcess(), TOKEN_QUERY, &token ))
+    {
+        TOKEN_ELEVATION_TYPE type;
+        DWORD size;
+        BOOL ret;
+
+        ret = GetTokenInformation( token, TokenElevationType, &type, sizeof(type), &size );
+        CloseHandle( token );
+        return (ret && type == TokenElevationTypeFull);
+    }
+    return FALSE;
+}
+
+static BOOL is_firewall_enabled(void)
+{
+    HRESULT hr, init;
+    INetFwMgr *mgr = NULL;
+    INetFwPolicy *policy = NULL;
+    INetFwProfile *profile = NULL;
+    VARIANT_BOOL enabled = VARIANT_FALSE;
+
+    init = CoInitializeEx( 0, COINIT_APARTMENTTHREADED );
+
+    hr = CoCreateInstance( &CLSID_NetFwMgr, NULL, CLSCTX_INPROC_SERVER, &IID_INetFwMgr,
+                           (void **)&mgr );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    hr = INetFwMgr_get_LocalPolicy( mgr, &policy );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    hr = INetFwPolicy_get_CurrentProfile( policy, &profile );
+    if (hr != S_OK) goto done;
+
+    hr = INetFwProfile_get_FirewallEnabled( profile, &enabled );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+done:
+    if (policy) INetFwPolicy_Release( policy );
+    if (profile) INetFwProfile_Release( profile );
+    if (mgr) INetFwMgr_Release( mgr );
+    if (SUCCEEDED( init )) CoUninitialize();
+    return (enabled == VARIANT_TRUE);
+}
+
+enum firewall_op
+{
+    APP_ADD,
+    APP_REMOVE
+};
+
+static HRESULT set_firewall( enum firewall_op op )
+{
+    static const WCHAR testW[] = {'r','p','c','r','t','4','_','t','e','s','t',0};
+    HRESULT hr, init;
+    INetFwMgr *mgr = NULL;
+    INetFwPolicy *policy = NULL;
+    INetFwProfile *profile = NULL;
+    INetFwAuthorizedApplication *app = NULL;
+    INetFwAuthorizedApplications *apps = NULL;
+    BSTR name, image = SysAllocStringLen( NULL, MAX_PATH );
+
+    if (!GetModuleFileNameW( NULL, image, MAX_PATH ))
+    {
+        SysFreeString( image );
+        return E_FAIL;
+    }
+    init = CoInitializeEx( 0, COINIT_APARTMENTTHREADED );
+
+    hr = CoCreateInstance( &CLSID_NetFwMgr, NULL, CLSCTX_INPROC_SERVER, &IID_INetFwMgr,
+                           (void **)&mgr );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    hr = INetFwMgr_get_LocalPolicy( mgr, &policy );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    hr = INetFwPolicy_get_CurrentProfile( policy, &profile );
+    if (hr != S_OK) goto done;
+
+    INetFwProfile_get_AuthorizedApplications( profile, &apps );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    hr = CoCreateInstance( &CLSID_NetFwAuthorizedApplication, NULL, CLSCTX_INPROC_SERVER,
+                           &IID_INetFwAuthorizedApplication, (void **)&app );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    hr = INetFwAuthorizedApplication_put_ProcessImageFileName( app, image );
+    if (hr != S_OK) goto done;
+
+    name = SysAllocString( testW );
+    hr = INetFwAuthorizedApplication_put_Name( app, name );
+    SysFreeString( name );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    if (op == APP_ADD)
+        hr = INetFwAuthorizedApplications_Add( apps, app );
+    else if (op == APP_REMOVE)
+        hr = INetFwAuthorizedApplications_Remove( apps, image );
+    else
+        hr = E_INVALIDARG;
+
+done:
+    if (app) INetFwAuthorizedApplication_Release( app );
+    if (apps) INetFwAuthorizedApplications_Release( apps );
+    if (policy) INetFwPolicy_Release( policy );
+    if (profile) INetFwProfile_Release( profile );
+    if (mgr) INetFwMgr_Release( mgr );
+    if (SUCCEEDED( init )) CoUninitialize();
+    SysFreeString( image );
+    return hr;
+}
+
 START_TEST(server)
 {
+  ULONG size = 0;
   int argc;
   char **argv;
+  BOOL firewall_enabled = is_firewall_enabled();
 
   InitFunctionPointers();
 
-  if (pGetUserNameExA)
+  if (firewall_enabled && !is_process_elevated())
   {
-    ULONG size = 0;
-    ok(!pGetUserNameExA(NameSamCompatible, NULL, &size), "GetUserNameExA\n");
-    domain_and_user = HeapAlloc(GetProcessHeap(), 0, size);
-    ok(pGetUserNameExA(NameSamCompatible, domain_and_user, &size), "GetUserNameExA\n");
+    trace("no privileges, skipping tests to avoid firewall dialog\n");
+    return;
   }
-  else
-    win_skip("GetUserNameExA is needed for some authentication tests\n");
+
+  ok(!GetUserNameExA(NameSamCompatible, NULL, &size), "GetUserNameExA\n");
+  domain_and_user = HeapAlloc(GetProcessHeap(), 0, size);
+  ok(GetUserNameExA(NameSamCompatible, domain_and_user, &size), "GetUserNameExA\n");
 
   argc = winetest_get_mainargs(&argv);
   progname = argv[0];
@@ -1715,7 +1914,20 @@ START_TEST(server)
     RpcEndExcept
   }
   else
+  {
+    if (firewall_enabled)
+    {
+      HRESULT hr = set_firewall(APP_ADD);
+      if (hr != S_OK)
+      {
+        skip("can't authorize app in firewall %08x\n", hr);
+        HeapFree(GetProcessHeap(), 0, domain_and_user);
+        return;
+      }
+    }
     server();
+    if (firewall_enabled) set_firewall(APP_REMOVE);
+  }
 
   HeapFree(GetProcessHeap(), 0, domain_and_user);
 }

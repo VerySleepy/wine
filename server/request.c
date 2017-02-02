@@ -65,6 +65,8 @@
 
 #include "file.h"
 #include "process.h"
+#include "thread.h"
+#include "security.h"
 #define WANT_REQUEST_HANDLERS
 #include "request.h"
 
@@ -102,6 +104,8 @@ static const struct object_ops master_socket_ops =
     default_get_sd,                /* get_sd */
     default_set_sd,                /* set_sd */
     no_lookup_name,                /* lookup_name */
+    no_link_name,                  /* link_name */
+    NULL,                          /* unlink_name */
     no_open_file,                  /* open_file */
     no_close_handle,               /* close_handle */
     master_socket_destroy          /* destroy */
@@ -115,8 +119,7 @@ static const struct fd_ops master_socket_fd_ops =
     NULL,                          /* get_fd_type */
     NULL,                          /* ioctl */
     NULL,                          /* queue_async */
-    NULL,                          /* reselect_async */
-    NULL                           /* cancel_async */
+    NULL                           /* reselect_async */
 };
 
 
@@ -163,6 +166,59 @@ void *set_reply_data_size( data_size_t size )
     return current->reply_data;
 }
 
+/* return object attributes from the current request */
+const struct object_attributes *get_req_object_attributes( const struct security_descriptor **sd,
+                                                           struct unicode_str *name,
+                                                           struct object **root )
+{
+    static const struct object_attributes empty_attributes;
+    const struct object_attributes *attr = get_req_data();
+    data_size_t size = get_req_data_size();
+
+    if (root) *root = NULL;
+
+    if (!size)
+    {
+        *sd = NULL;
+        name->len = 0;
+        return &empty_attributes;
+    }
+
+    if ((size < sizeof(*attr)) || (size - sizeof(*attr) < attr->sd_len) ||
+        (size - sizeof(*attr) - attr->sd_len < attr->name_len))
+    {
+        set_error( STATUS_ACCESS_VIOLATION );
+        return NULL;
+    }
+    if (attr->sd_len && !sd_is_valid( (const struct security_descriptor *)(attr + 1), attr->sd_len ))
+    {
+        set_error( STATUS_INVALID_SECURITY_DESCR );
+        return NULL;
+    }
+    if ((attr->name_len & (sizeof(WCHAR) - 1)) || attr->name_len >= 65534)
+    {
+        set_error( STATUS_OBJECT_NAME_INVALID );
+        return NULL;
+    }
+    if (root && attr->rootdir && attr->name_len)
+    {
+        if (!(*root = get_directory_obj( current->process, attr->rootdir ))) return NULL;
+    }
+    *sd = attr->sd_len ? (const struct security_descriptor *)(attr + 1) : NULL;
+    name->len = attr->name_len;
+    name->str = (const WCHAR *)(attr + 1) + attr->sd_len / sizeof(WCHAR);
+    return attr;
+}
+
+/* return a pointer to the request data following an object attributes structure */
+const void *get_req_data_after_objattr( const struct object_attributes *attr, data_size_t *len )
+{
+    const void *ptr = (const WCHAR *)((const struct object_attributes *)get_req_data() + 1) +
+                       attr->sd_len / sizeof(WCHAR) + attr->name_len / sizeof(WCHAR);
+    *len = get_req_data_size() - ((const char *)ptr - (const char *)get_req_data());
+    return ptr;
+}
+
 /* write the remaining part of the reply */
 void write_reply( struct thread *thread )
 {
@@ -184,7 +240,7 @@ void write_reply( struct thread *thread )
     }
     if (errno == EPIPE)
         kill_thread( thread, 0 );  /* normal death */
-    else if (errno != EWOULDBLOCK && errno != EAGAIN)
+    else if (errno != EWOULDBLOCK && (EWOULDBLOCK == EAGAIN || errno != EAGAIN))
         fatal_protocol_error( thread, "reply write: %s\n", strerror( errno ));
 }
 
@@ -311,7 +367,7 @@ error:
         kill_thread( thread, 0 );
     else if (ret > 0)
         fatal_protocol_error( thread, "partial read %d\n", ret );
-    else if (errno != EWOULDBLOCK && errno != EAGAIN)
+    else if (errno != EWOULDBLOCK && (EWOULDBLOCK == EAGAIN || errno != EAGAIN))
         fatal_protocol_error( thread, "read: %s\n", strerror( errno ));
 }
 
@@ -392,7 +448,7 @@ int receive_fd( struct process *process )
     }
     else
     {
-        if (errno != EWOULDBLOCK && errno != EAGAIN)
+        if (errno != EWOULDBLOCK && (EWOULDBLOCK == EAGAIN || errno != EAGAIN))
         {
             fprintf( stderr, "Protocol error: process %04x: ", process->id );
             perror( "recvmsg" );

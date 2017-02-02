@@ -1112,10 +1112,16 @@ static const char vp_custom_action_dat[] =
     "CustomAction\tAction\n"
     "TestPrimaryVolumePath0\t19\t\tPrimaryVolumePath set before CostFinalize\t\n"
     "TestPrimaryVolumeSpaceAvailable0\t19\t\tPrimaryVolumeSpaceAvailable set before CostFinalize\t\n"
+    "TestPrimaryVolumeSpaceRequired0\t19\t\tPrimaryVolumeSpaceRequired set before CostFinalize\t\n"
+    "TestPrimaryVolumeSpaceRemaining0\t19\t\tPrimaryVolumeSpaceRemaining set before CostFinalize\t\n"
     "TestPrimaryVolumePath1\t19\t\tPrimaryVolumePath set before InstallValidate\t\n"
     "TestPrimaryVolumeSpaceAvailable1\t19\t\tPrimaryVolumeSpaceAvailable not set before InstallValidate\t\n"
+    "TestPrimaryVolumeSpaceRequired1\t19\t\tPrimaryVolumeSpaceRequired not set before InstallValidate\t\n"
+    "TestPrimaryVolumeSpaceRemaining1\t19\t\tPrimaryVolumeSpaceRemaining not set before InstallValidate\t\n"
     "TestPrimaryVolumePath2\t19\t\tPrimaryVolumePath not set after InstallValidate\t\n"
-    "TestPrimaryVolumeSpaceAvailable2\t19\t\tPrimaryVolumeSpaceAvailable not set after InstallValidate\t\n";
+    "TestPrimaryVolumeSpaceAvailable2\t19\t\tPrimaryVolumeSpaceAvailable not set after InstallValidate\t\n"
+    "TestPrimaryVolumeSpaceRequired2\t19\t\tPrimaryVolumeSpaceRequired not set after InstallValidate\t\n"
+    "TestPrimaryVolumeSpaceRemaining2\t19\t\tPrimaryVolumeSpaceRemaining not set after InstallValidate\t\n";
 
 static const char vp_install_exec_seq_dat[] =
     "Action\tCondition\tSequence\n"
@@ -1126,12 +1132,18 @@ static const char vp_install_exec_seq_dat[] =
     "FileCost\t\t300\n"
     "TestPrimaryVolumePath0\tPrimaryVolumePath AND NOT REMOVE\t400\n"
     "TestPrimaryVolumeSpaceAvailable0\tPrimaryVolumeSpaceAvailable AND NOT REMOVE\t500\n"
+    "TestPrimaryVolumeSpaceRequired0\tPrimaryVolumeSpaceRequired AND NOT REMOVE\t510\n"
+    "TestPrimaryVolumeSpaceRemaining0\tPrimaryVolumeSpaceRemaining AND NOT REMOVE\t520\n"
     "CostFinalize\t\t600\n"
     "TestPrimaryVolumePath1\tPrimaryVolumePath AND NOT REMOVE\t600\n"
     "TestPrimaryVolumeSpaceAvailable1\tNOT PrimaryVolumeSpaceAvailable AND NOT REMOVE\t800\n"
+    "TestPrimaryVolumeSpaceRequired1\tNOT PrimaryVolumeSpaceRequired AND NOT REMOVE\t810\n"
+    "TestPrimaryVolumeSpaceRemaining1\tNOT PrimaryVolumeSpaceRemaining AND NOT REMOVE\t820\n"
     "InstallValidate\t\t900\n"
     "TestPrimaryVolumePath2\tNOT PrimaryVolumePath AND NOT REMOVE\t1000\n"
     "TestPrimaryVolumeSpaceAvailable2\tNOT PrimaryVolumeSpaceAvailable AND NOT REMOVE\t1100\n"
+    "TestPrimaryVolumeSpaceRequired2\tNOT PrimaryVolumeSpaceRequired AND NOT REMOVE\t1110\n"
+    "TestPrimaryVolumeSpaceRemaining2\tNOT PrimaryVolumeSpaceRemaining AND NOT REMOVE\t1120\n"
     "InstallInitialize\t\t1200\n"
     "ProcessComponents\t\t1300\n"
     "RemoveFiles\t\t1400\n"
@@ -2932,6 +2944,7 @@ static void test_continuouscabs(void)
     if (r == ERROR_INSTALL_PACKAGE_REJECTED)
     {
         skip("Not enough rights to perform tests\n");
+        goto error;
     }
     else
     {
@@ -2983,7 +2996,7 @@ static void test_continuouscabs(void)
     }
     else
     {
-        ok(r == ERROR_INSTALL_FAILURE, "Expected ERROR_INSTALL_FAIRE, got %u\n", r);
+        ok(r == ERROR_INSTALL_FAILURE, "Expected ERROR_INSTALL_FAILURE, got %u\n", r);
         todo_wine ok(!delete_pf("msitest\\augustus", TRUE), "File installed\n");
         ok(!delete_pf("msitest\\caesar", TRUE), "File installed\n");
         todo_wine ok(!delete_pf("msitest\\maximus", TRUE), "File installed\n");
@@ -3014,6 +3027,7 @@ static void test_continuouscabs(void)
         ok(delete_pf("msitest", FALSE), "Directory not created\n");
     }
 
+error:
     delete_cab_files();
     DeleteFileA(msifile);
 }
@@ -3157,7 +3171,12 @@ static void test_samesequence(void)
     MsiSetInternalUI(INSTALLUILEVEL_NONE, NULL);
 
     r = MsiInstallProductA(msifile, NULL);
-    ok(r == ERROR_SUCCESS || broken(r == ERROR_INSTALL_FAILURE), "Expected ERROR_SUCCESS, got %u\n", r);
+    if (r == ERROR_INSTALL_FAILURE)
+    {
+        win_skip("unprivileged user?\n");
+        goto error;
+    }
+    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
     if (r == ERROR_SUCCESS)
     {
         ok(delete_pf("msitest\\augustus", TRUE), "File not installed\n");
@@ -3165,6 +3184,8 @@ static void test_samesequence(void)
         ok(delete_pf("msitest\\maximus", TRUE), "File not installed\n");
         ok(delete_pf("msitest", FALSE), "Directory not created\n");
     }
+
+error:
     delete_cab_files();
     DeleteFileA(msifile);
 }
@@ -3179,7 +3200,13 @@ static void test_uiLevelFlags(void)
     MsiSetInternalUI(INSTALLUILEVEL_NONE | INSTALLUILEVEL_SOURCERESONLY, NULL);
 
     r = MsiInstallProductA(msifile, NULL);
-    ok(r == ERROR_SUCCESS || broken(r == ERROR_INSTALL_FAILURE), "Expected ERROR_SUCCESS, got %u\n", r);
+    if (r == ERROR_INSTALL_FAILURE)
+    {
+        win_skip("unprivileged user?\n");
+        goto error;
+    }
+
+    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
     if (r == ERROR_SUCCESS)
     {
         ok(!delete_pf("msitest\\maximus", TRUE), "UI install occurred, but execute-only was requested.\n");
@@ -3187,6 +3214,8 @@ static void test_uiLevelFlags(void)
         ok(delete_pf("msitest\\augustus", TRUE), "File not installed\n");
         ok(delete_pf("msitest", FALSE), "Directory not created\n");
     }
+
+error:
     delete_cab_files();
     DeleteFileA(msifile);
 }
@@ -4512,6 +4541,11 @@ static void test_missingcomponent(void)
         skip("Not enough rights to perform tests\n");
         goto error;
     }
+    else if (r == ERROR_INSTALL_FAILURE)
+    {
+        win_skip("broken result\n");
+        goto error;
+    }
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
     ok(pf_exists("msitest\\hydrogen"), "File not installed\n");
     ok(pf_exists("msitest\\helium"), "File not installed\n");
@@ -4678,6 +4712,16 @@ static void test_propcase(void)
         skip("Not enough rights to perform tests\n");
         goto error;
     }
+    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
+    ok(delete_pf("msitest\\augustus", TRUE), "File not installed\n");
+    ok(delete_pf("msitest", FALSE), "Directory not created\n");
+
+    r = MsiInstallProductA(msifile, "Prop1=\"Copyright \"\"My Company\"\" 2015\" MyProp=42");
+    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
+    ok(delete_pf("msitest\\augustus", TRUE), "File not installed\n");
+    ok(delete_pf("msitest", FALSE), "Directory not created\n");
+
+    r = MsiInstallProductA(msifile, "Prop1=\"\"\"install.exe\"\" /Install\" MyProp=\"42\"");
     ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
     ok(delete_pf("msitest\\augustus", TRUE), "File not installed\n");
     ok(delete_pf("msitest", FALSE), "Directory not created\n");
@@ -5080,7 +5124,7 @@ static void process_pending_renames(HKEY hkey)
         else
         {
             fileret = DeleteFileA(src);
-            ok(fileret, "Failed to delete file %s (%u)\n", src, GetLastError());
+            ok(fileret || broken(!fileret) /* win2k3 */, "Failed to delete file %s (%u)\n", src, GetLastError());
         }
     }
 
@@ -5844,6 +5888,57 @@ static void test_shared_component(void)
     DeleteFileA(msifile2);
 }
 
+static void test_remove_upgrade_code(void)
+{
+    UINT r;
+    LONG res;
+    HKEY hkey;
+    REGSAM access = KEY_ALL_ACCESS;
+    DWORD type, size;
+    char buf[1];
+
+    if (is_process_limited())
+    {
+        skip( "process is limited\n" );
+        return;
+    }
+    if (is_wow64) access |= KEY_WOW64_64KEY;
+
+    create_test_files();
+    create_database( msifile, icon_base_tables, sizeof(icon_base_tables)/sizeof(icon_base_tables[0]) );
+
+    MsiSetInternalUI( INSTALLUILEVEL_NONE, NULL );
+
+    r = MsiInstallProductA( msifile, "FULL=1" );
+    ok(r == ERROR_SUCCESS, "got %u\n", r);
+
+    res = RegOpenKeyExA( HKEY_LOCAL_MACHINE,
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Installer\\UpgradeCodes\\51AAE0C44620A5E4788506E91F249BD2",
+        0, access, &hkey );
+    ok( res == ERROR_SUCCESS, "got %d\n", res );
+
+    type = 0xdeadbeef;
+    buf[0] = 0x55;
+    size = sizeof(buf);
+    res = RegQueryValueExA( hkey, "94A88FD7F6998CE40A22FB59F6B9C2BB", NULL, &type, (BYTE *)buf, &size );
+    ok( res == ERROR_SUCCESS, "got %d\n", res );
+    ok( type == REG_SZ, "got %u\n", type );
+    ok( size == 1, "got %u\n", size );
+    ok( !buf[0], "wrong data\n" );
+    RegCloseKey( hkey );
+
+    r = MsiInstallProductA( msifile, "REMOVE=ALL" );
+    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %u\n", r);
+
+    res = RegOpenKeyExA( HKEY_LOCAL_MACHINE,
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Installer\\UpgradeCodes\\51AAE0C44620A5E4788506E91F249BD2",
+        0, access, &hkey );
+    ok( res == ERROR_FILE_NOT_FOUND, "got %d\n", res );
+
+    RemoveDirectoryA( "msitest" );
+    DeleteFileA( msifile );
+}
+
 START_TEST(install)
 {
     DWORD len;
@@ -5890,7 +5985,8 @@ START_TEST(install)
     lstrcatA(log_file, "\\msitest.log");
     MsiEnableLogA(INSTALLLOGMODE_FATALEXIT, log_file, 0);
 
-    test_MsiInstallProduct();
+    if (pSRSetRestorePointA) /* test has side-effects on win2k3 that cause failures in following tests */
+        test_MsiInstallProduct();
     test_MsiSetComponentState();
     test_packagecoltypes();
     test_continuouscabs();
@@ -5929,6 +6025,7 @@ START_TEST(install)
     test_mixed_package();
     test_volume_props();
     test_shared_component();
+    test_remove_upgrade_code();
 
     DeleteFileA(log_file);
 

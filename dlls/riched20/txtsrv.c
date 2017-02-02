@@ -21,8 +21,6 @@
 #include "config.h"
 #include "wine/port.h"
 
-#define NONAMELESSSTRUCT
-#define NONAMELESSUNION
 #define COBJMACROS
 
 #include "editor.h"
@@ -288,10 +286,9 @@ DECLSPEC_HIDDEN HRESULT WINAPI fnTextSrv_TxSetText(ITextServices *iface, LPCWSTR
    ME_Cursor cursor;
 
    ME_SetCursorToStart(This->editor, &cursor);
-   ME_InternalDeleteText(This->editor, &cursor,
-                         ME_GetTextLength(This->editor), FALSE);
-   ME_InsertTextFromCursor(This->editor, 0, pszText, -1,
-                           This->editor->pBuffer->pDefaultStyle);
+   ME_InternalDeleteText(This->editor, &cursor, ME_GetTextLength(This->editor), FALSE);
+   if(pszText)
+       ME_InsertTextFromCursor(This->editor, 0, pszText, -1, This->editor->pBuffer->pDefaultStyle);
    ME_SetSelection(This->editor, 0, 0);
    This->editor->nModifyStep = 0;
    OleFlushClipboard();
@@ -401,7 +398,7 @@ static const ITextServicesVtbl textservices_vtbl =
 HRESULT WINAPI CreateTextServices(IUnknown  *pUnkOuter, ITextHost *pITextHost, IUnknown  **ppUnk)
 {
    ITextServicesImpl *ITextImpl;
-   HRESULT hres;
+
    TRACE("%p %p --> %p\n", pUnkOuter, pITextHost, ppUnk);
    if (pITextHost == NULL)
       return E_POINTER;
@@ -416,14 +413,9 @@ HRESULT WINAPI CreateTextServices(IUnknown  *pUnkOuter, ITextHost *pITextHost, I
    ITextImpl->pMyHost = pITextHost;
    ITextImpl->IUnknown_inner.lpVtbl = &textservices_inner_vtbl;
    ITextImpl->ITextServices_iface.lpVtbl = &textservices_vtbl;
-   ITextImpl->editor = ME_MakeEditor(pITextHost, FALSE);
+   ITextImpl->editor = ME_MakeEditor(pITextHost, FALSE, ES_LEFT);
    ITextImpl->editor->exStyleFlags = 0;
-   ITextImpl->editor->rcFormat.left = 0;
-   ITextImpl->editor->rcFormat.top = 0;
-   ITextImpl->editor->rcFormat.right = 0;
-   ITextImpl->editor->rcFormat.bottom = 0;
-
-   ME_HandleMessage(ITextImpl->editor, WM_CREATE, 0, 0, TRUE, &hres);
+   SetRectEmpty(&ITextImpl->editor->rcFormat);
 
    if (pUnkOuter)
       ITextImpl->outer_unk = pUnkOuter;

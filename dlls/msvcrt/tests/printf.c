@@ -27,13 +27,34 @@
  
 #include <stdio.h>
 #include <errno.h>
-#include <math.h>
+#include <locale.h>
 
 #include "windef.h"
 #include "winbase.h"
 #include "winnls.h"
 
 #include "wine/test.h"
+
+static inline float __port_infinity(void)
+{
+    static const unsigned __inf_bytes = 0x7f800000;
+    return *(const float *)&__inf_bytes;
+}
+#define INFINITY __port_infinity()
+
+static inline float __port_nan(void)
+{
+    static const unsigned __nan_bytes = 0x7fc00000;
+    return *(const float *)&__nan_bytes;
+}
+#define NAN __port_nan()
+
+static inline float __port_ind(void)
+{
+    static const unsigned __ind_bytes = 0xffc00000;
+    return *(const float *)&__ind_bytes;
+}
+#define IND __port_ind()
 
 static int (__cdecl *p__vscprintf)(const char *format, __ms_va_list valist);
 static int (__cdecl *p__vscwprintf)(const wchar_t *format, __ms_va_list valist);
@@ -82,7 +103,7 @@ static void test_sprintf( void )
 {
     char buffer[100];
     const char *format;
-    double pnumber=789456123, inf, nan;
+    double pnumber=789456123;
     int x, r;
     WCHAR wide[] = { 'w','i','d','e',0};
 
@@ -301,6 +322,11 @@ static void test_sprintf( void )
     ok(!strcmp(buffer,"D"),"I64D failed: %s\n",buffer);
     ok( r==1, "return count wrong\n");
 
+    format = "%zx";
+    r = sprintf(buffer,format,1);
+    ok(!strcmp(buffer, "zx"), "Problem with \"z\" interpretation\n");
+    ok( r==2, "return count wrong\n");
+
     format = "% d";
     r = sprintf(buffer,format,1);
     ok(!strcmp(buffer, " 1"),"Problem with sign place-holder: '%s'\n",buffer);
@@ -393,10 +419,20 @@ static void test_sprintf( void )
         ok(!strcmp(buffer,"0000000000000039"),"Pointer formatted incorrectly \"%s\"\n",buffer);
         ok( r==16, "return count wrong\n");
 
+        format = "%Np";
+        r = sprintf(buffer,format,(void *)57);
+        ok(!strcmp(buffer,"0000000000000039"),"Pointer formatted incorrectly \"%s\"\n",buffer);
+        ok( r==16, "return count wrong\n");
+
         format = "%#-020p";
         r = sprintf(buffer,format,(void *)57);
         ok(!strcmp(buffer,"0X0000000000000039  "),"Pointer formatted incorrectly\n");
         ok( r==20, "return count wrong\n");
+
+        format = "%Ix %d";
+        r = sprintf(buffer,format,(size_t)0x12345678123456,1);
+        ok(!strcmp(buffer,"12345678123456 1"),"buffer = %s\n",buffer);
+        ok( r==16, "return count wrong\n");
     }
     else
     {
@@ -415,10 +451,20 @@ static void test_sprintf( void )
         ok(!strcmp(buffer,"00000039"),"Pointer formatted incorrectly \"%s\"\n",buffer);
         ok( r==8, "return count wrong\n");
 
+        format = "%Np";
+        r = sprintf(buffer,format,(void *)57);
+        ok(!strcmp(buffer,"00000039"),"Pointer formatted incorrectly \"%s\"\n",buffer);
+        ok( r==8, "return count wrong\n");
+
         format = "%#-012p";
         r = sprintf(buffer,format,(void *)57);
         ok(!strcmp(buffer,"0X00000039  "),"Pointer formatted incorrectly\n");
         ok( r==12, "return count wrong\n");
+
+        format = "%Ix %d";
+        r = sprintf(buffer,format,0x123456,1);
+        ok(!strcmp(buffer,"123456 1"),"buffer = %s\n",buffer);
+        ok( r==8, "return count wrong\n");
     }
 
     format = "%04s";
@@ -650,6 +696,11 @@ static void test_sprintf( void )
     ok(!strcmp(buffer,""), "failed\n");
     ok( r==0, "return count wrong\n");
 
+    format = "%N";
+    r = sprintf(buffer, format,-1);
+    ok(!strcmp(buffer,""), "failed\n");
+    ok( r==0, "return count wrong\n");
+
     format = "%H";
     r = sprintf(buffer, format,-1);
     ok(!strcmp(buffer,"H"), "failed\n");
@@ -675,40 +726,82 @@ static void test_sprintf( void )
     r = sprintf(buffer, format, 0x12345);
     ok(!strcmp(buffer,"2345"), "failed \"%s\"\n", buffer);
 
-    nan = 0.0;
-    inf = 1.0/nan;
-    nan = sqrt(-1);
     format = "%lf";
-    r = sprintf(buffer, format, nan);
+    r = sprintf(buffer, format, IND);
     ok(r==9, "r = %d\n", r);
     ok(!strcmp(buffer, "-1.#IND00"), "failed: \"%s\"\n", buffer);
-    r = sprintf(buffer, format, inf);
+    r = sprintf(buffer, format, NAN);
+    ok(r==8, "r = %d\n", r);
+    ok(!strcmp(buffer, "1.#QNAN0"), "failed: \"%s\"\n", buffer);
+    r = sprintf(buffer, format, INFINITY);
     ok(r==8, "r = %d\n", r);
     ok(!strcmp(buffer, "1.#INF00"), "failed: \"%s\"\n", buffer);
 
     format = "%le";
-    r = sprintf(buffer, format, nan);
+    r = sprintf(buffer, format, IND);
     ok(r==14, "r = %d\n", r);
     ok(!strcmp(buffer, "-1.#IND00e+000"), "failed: \"%s\"\n", buffer);
-    r = sprintf(buffer, format, inf);
+    r = sprintf(buffer, format, NAN);
+    ok(r==13, "r = %d\n", r);
+    ok(!strcmp(buffer, "1.#QNAN0e+000"), "failed: \"%s\"\n", buffer);
+    r = sprintf(buffer, format, INFINITY);
     ok(r==13, "r = %d\n", r);
     ok(!strcmp(buffer, "1.#INF00e+000"), "failed: \"%s\"\n", buffer);
 
     format = "%lg";
-    r = sprintf(buffer, format, nan);
+    r = sprintf(buffer, format, IND);
     ok(r==7, "r = %d\n", r);
     ok(!strcmp(buffer, "-1.#IND"), "failed: \"%s\"\n", buffer);
-    r = sprintf(buffer, format, inf);
+    r = sprintf(buffer, format, NAN);
+    ok(r==7, "r = %d\n", r);
+    ok(!strcmp(buffer, "1.#QNAN"), "failed: \"%s\"\n", buffer);
+    r = sprintf(buffer, format, INFINITY);
     ok(r==6, "r = %d\n", r);
     ok(!strcmp(buffer, "1.#INF"), "failed: \"%s\"\n", buffer);
 
     format = "%010.2lf";
-    r = sprintf(buffer, format, nan);
+    r = sprintf(buffer, format, IND);
     ok(r==10, "r = %d\n", r);
     ok(!strcmp(buffer, "-000001.#J"), "failed: \"%s\"\n", buffer);
-    r = sprintf(buffer, format, inf);
+    r = sprintf(buffer, format, NAN);
+    ok(r==10, "r = %d\n", r);
+    ok(!strcmp(buffer, "0000001.#R"), "failed: \"%s\"\n", buffer);
+    r = sprintf(buffer, format, INFINITY);
     ok(r==10, "r = %d\n", r);
     ok(!strcmp(buffer, "0000001.#J"), "failed: \"%s\"\n", buffer);
+
+    format = "%c";
+    r = sprintf(buffer, format, 'a');
+    ok(r==1, "r = %d\n", r);
+    ok(!strcmp(buffer, "a"), "failed: \"%s\"\n", buffer);
+    r = sprintf(buffer, format, 0xa082);
+    ok(r==1, "r = %d\n", r);
+    ok(!strcmp(buffer, "\x82"), "failed: \"%s\"\n", buffer);
+
+    format = "%C";
+    r = sprintf(buffer, format, 'a');
+    ok(r==1, "r = %d\n", r);
+    ok(!strcmp(buffer, "a"), "failed: \"%s\"\n", buffer);
+    r = sprintf(buffer, format, 0x3042);
+    ok(r==0, "r = %d\n", r);
+    ok(!strcmp(buffer, ""), "failed: \"%s\"\n", buffer);
+
+    if(!setlocale(LC_ALL, "Japanese_Japan.932")) {
+        win_skip("Japanese_Japan.932 locale not available\n");
+        return;
+    }
+
+    format = "%c";
+    r = sprintf(buffer, format, 0xa082);
+    ok(r==1, "r = %d\n", r);
+    ok(!strcmp(buffer, "\x82"), "failed: \"%s\"\n", buffer);
+
+    format = "%C";
+    r = sprintf(buffer, format, 0x3042);
+    ok(r==2, "r = %d\n", r);
+    ok(!strcmp(buffer, "\x82\xa0"), "failed: \"%s\"\n", buffer);
+
+    setlocale(LC_ALL, "C");
 }
 
 static void test_swprintf( void )
@@ -758,7 +851,7 @@ static void test_snprintf (void)
             fmt, expect, n);
         ok (!memcmp (fmt, buffer, valid),
             "\"%s\": rendered \"%.*s\"\n", fmt, valid, buffer);
-    };
+    }
 }
 
 static void test_fprintf(void)
@@ -852,7 +945,7 @@ static void test_fcvt(void)
 {
     char *str;
     int dec=100, sign=100;
-    
+
     /* Numbers less than 1.0 with different precisions */
     str = _fcvt(0.0001, 1, &dec, &sign );
     ok( 0 == strcmp(str,""), "bad return '%s'\n", str);

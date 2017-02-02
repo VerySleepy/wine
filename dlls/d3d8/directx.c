@@ -24,8 +24,6 @@
 
 #include <stdarg.h>
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "windef.h"
 #include "winbase.h"
 #include "wingdi.h"
@@ -222,6 +220,9 @@ static HRESULT WINAPI d3d8_CheckDeviceType(IDirect3D8 *iface, UINT adapter, D3DD
     TRACE("iface %p, adapter %u, device_type %#x, display_format %#x, backbuffer_format %#x, windowed %#x.\n",
             iface, adapter, device_type, display_format, backbuffer_format, windowed);
 
+    if (!windowed && display_format != D3DFMT_X8R8G8B8 && display_format != D3DFMT_R5G6B5)
+        return WINED3DERR_NOTAVAILABLE;
+
     wined3d_mutex_lock();
     hr = wined3d_check_device_type(d3d8->wined3d, adapter, device_type, wined3dformat_from_d3dformat(display_format),
             wined3dformat_from_d3dformat(backbuffer_format), windowed);
@@ -240,16 +241,31 @@ static HRESULT WINAPI d3d8_CheckDeviceFormat(IDirect3D8 *iface, UINT adapter, D3
     TRACE("iface %p, adapter %u, device_type %#x, adapter_format %#x, usage %#x, resource_type %#x, format %#x.\n",
             iface, adapter, device_type, adapter_format, usage, resource_type, format);
 
+    usage = usage & (WINED3DUSAGE_MASK | WINED3DUSAGE_QUERY_MASK);
     switch (resource_type)
     {
+        case D3DRTYPE_CUBETEXTURE:
+            usage |= WINED3DUSAGE_LEGACY_CUBEMAP;
+        case D3DRTYPE_TEXTURE:
+            usage |= WINED3DUSAGE_TEXTURE;
+        case D3DRTYPE_SURFACE:
+            wined3d_rtype = WINED3D_RTYPE_TEXTURE_2D;
+            break;
+
+        case D3DRTYPE_VOLUMETEXTURE:
+        case D3DRTYPE_VOLUME:
+            usage |= WINED3DUSAGE_TEXTURE;
+            wined3d_rtype = WINED3D_RTYPE_TEXTURE_3D;
+            break;
+
         case D3DRTYPE_VERTEXBUFFER:
         case D3DRTYPE_INDEXBUFFER:
             wined3d_rtype = WINED3D_RTYPE_BUFFER;
             break;
 
         default:
-            wined3d_rtype = resource_type;
-            break;
+            FIXME("Unhandled resource type %#x.\n", resource_type);
+            return WINED3DERR_INVALIDCALL;
     }
 
     wined3d_mutex_lock();
@@ -268,6 +284,9 @@ static HRESULT WINAPI d3d8_CheckDeviceMultiSampleType(IDirect3D8 *iface, UINT ad
 
     TRACE("iface %p, adapter %u, device_type %#x, format %#x, windowed %#x, multisample_type %#x.\n",
             iface, adapter, device_type, format, windowed, multisample_type);
+
+    if (multisample_type > D3DMULTISAMPLE_16_SAMPLES)
+        return D3DERR_INVALIDCALL;
 
     wined3d_mutex_lock();
     hr = wined3d_check_device_multisample_type(d3d8->wined3d, adapter, device_type,
@@ -340,15 +359,22 @@ static HRESULT WINAPI d3d8_GetDeviceCaps(IDirect3D8 *iface, UINT adapter, D3DDEV
 static HMONITOR WINAPI d3d8_GetAdapterMonitor(IDirect3D8 *iface, UINT adapter)
 {
     struct d3d8 *d3d8 = impl_from_IDirect3D8(iface);
-    HMONITOR ret;
+    struct wined3d_output_desc desc;
+    HRESULT hr;
 
     TRACE("iface %p, adapter %u.\n", iface, adapter);
 
     wined3d_mutex_lock();
-    ret = wined3d_get_adapter_monitor(d3d8->wined3d, adapter);
+    hr = wined3d_get_output_desc(d3d8->wined3d, adapter, &desc);
     wined3d_mutex_unlock();
 
-    return ret;
+    if (FAILED(hr))
+    {
+        WARN("Failed to get output desc, hr %#x.\n", hr);
+        return NULL;
+    }
+
+    return desc.monitor;
 }
 
 static HRESULT WINAPI d3d8_CreateDevice(IDirect3D8 *iface, UINT adapter,
@@ -404,7 +430,9 @@ static const struct IDirect3D8Vtbl d3d8_vtbl =
 
 BOOL d3d8_init(struct d3d8 *d3d8)
 {
-    DWORD flags = WINED3D_LEGACY_DEPTH_BIAS | WINED3D_VIDMEM_ACCOUNTING | WINED3D_HANDLE_RESTORE;
+    DWORD flags = WINED3D_LEGACY_DEPTH_BIAS | WINED3D_VIDMEM_ACCOUNTING
+            | WINED3D_HANDLE_RESTORE | WINED3D_PIXEL_CENTER_INTEGER
+            | WINED3D_LEGACY_UNBOUND_RESOURCE_COLOR | WINED3D_NO_PRIMITIVE_RESTART;
 
     d3d8->IDirect3D8_iface.lpVtbl = &d3d8_vtbl;
     d3d8->refcount = 1;

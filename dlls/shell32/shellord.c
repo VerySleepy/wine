@@ -876,7 +876,11 @@ void WINAPI SHAddToRecentDocs (UINT uFlags,LPCVOID pv)
     switch (uFlags)
     {
     case SHARD_PIDL:
-        SHGetPathFromIDListA(pv, doc_name);
+        if (!SHGetPathFromIDListA(pv, doc_name))
+        {
+            WARN("can't get path from PIDL\n");
+            return;
+        }
         break;
 
     case SHARD_PATHA:
@@ -1551,21 +1555,6 @@ BOOL WINAPI SHWaitForFileToOpen(
 }
 
 /************************************************************************
- *	@				[SHELL32.654]
- *
- * NOTES
- *  first parameter seems to be a pointer (same as passed to WriteCabinetState)
- *  second one could be a size (0x0c). The size is the same as the structure saved to
- *  HCU\Software\Microsoft\Windows\CurrentVersion\Explorer\CabinetState
- *  I'm (js) guessing: this one is just ReadCabinetState ;-)
- */
-HRESULT WINAPI shell32_654 (CABINETSTATE *cs, int length)
-{
-	TRACE("%p %d\n",cs,length);
-	return ReadCabinetState(cs,length);
-}
-
-/************************************************************************
  *	RLBuildListOfPaths			[SHELL32.146]
  *
  * NOTES
@@ -2127,6 +2116,15 @@ DWORD WINAPI SHFormatDrive(HWND hwnd, UINT drive, UINT fmtID, UINT options)
     FIXME("%p, 0x%08x, 0x%08x, 0x%08x - stub\n", hwnd, drive, fmtID, options);
 
     return SHFMT_NOFORMAT;
+}
+
+/*************************************************************************
+ *              SHRemoveLocalizedName (SHELL32.@)
+ */
+HRESULT WINAPI SHRemoveLocalizedName(const WCHAR *path)
+{
+    FIXME("%s stub\n", debugstr_w(path));
+    return S_OK;
 }
 
 /*************************************************************************

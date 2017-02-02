@@ -64,6 +64,15 @@ typedef struct _DISPATCHER_CONTEXT
     DWORD                 VirtualVfpHead;
 } DISPATCHER_CONTEXT;
 
+/*********************************************************************
+ *		__CxxExceptionFilter (MSVCRT.@)
+ */
+int CDECL __CxxExceptionFilter( PEXCEPTION_POINTERS ptrs,
+                                const type_info *ti, int flags, void **copy )
+{
+    FIXME( "%p %p %x %p: not implemented\n", ptrs, ti, flags, copy );
+    return EXCEPTION_CONTINUE_SEARCH;
+}
 
 /*********************************************************************
  *		__CxxFrameHandler (MSVCRT.@)
@@ -182,6 +191,16 @@ void __cdecl MSVCRT_longjmp(struct MSVCRT___JUMP_BUFFER *jmp, int retval)
         RtlUnwind((void *)jmp->Frame, (void *)jmp->Pc, &rec, IntToPtr(retval));
     }
     longjmp_set_regs(jmp, retval);
+}
+
+/*********************************************************************
+ *              _fpieee_flt (MSVCRT.@)
+ */
+int __cdecl _fpieee_flt(ULONG exception_code, EXCEPTION_POINTERS *ep,
+        int (__cdecl *handler)(_FPIEEE_RECORD*))
+{
+    FIXME("(%x %p %p)\n", exception_code, ep, handler);
+    return EXCEPTION_CONTINUE_SEARCH;
 }
 
 #endif  /* __arm__ */

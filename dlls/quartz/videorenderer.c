@@ -20,8 +20,6 @@
 
 #include "config.h"
 
-#define NONAMELESSSTRUCT
-#define NONAMELESSUNION
 #include "quartz_private.h"
 #include "pin.h"
 
@@ -64,6 +62,7 @@ typedef struct VideoRendererImpl
     RECT WindowPos;
     LONG VideoWidth;
     LONG VideoHeight;
+    LONG FullScreenMode;
 } VideoRendererImpl;
 
 static inline VideoRendererImpl *impl_from_BaseWindow(BaseWindow *iface)
@@ -186,7 +185,7 @@ static void VideoRenderer_AutoShowWindow(VideoRendererImpl *This)
 
         AdjustWindowRectEx(&This->WindowPos, style, FALSE, style_ex);
 
-        TRACE("WindowPos: %d %d %d %d\n", This->WindowPos.left, This->WindowPos.top, This->WindowPos.right, This->WindowPos.bottom);
+        TRACE("WindowPos: %s\n", wine_dbgstr_rect(&This->WindowPos));
         SetWindowPos(This->baseControlWindow.baseWindow.hWnd, NULL,
             This->WindowPos.left,
             This->WindowPos.top,
@@ -244,8 +243,8 @@ static DWORD VideoRenderer_SendSampleData(VideoRendererImpl* This, LPBYTE data, 
         return E_FAIL;
     }
 
-    TRACE("Src Rect: %d %d %d %d\n", This->SourceRect.left, This->SourceRect.top, This->SourceRect.right, This->SourceRect.bottom);
-    TRACE("Dst Rect: %d %d %d %d\n", This->DestRect.left, This->DestRect.top, This->DestRect.right, This->DestRect.bottom);
+    TRACE("Src Rect: %s\n", wine_dbgstr_rect(&This->SourceRect));
+    TRACE("Dst Rect: %s\n", wine_dbgstr_rect(&This->DestRect));
 
     StretchDIBits(This->baseControlWindow.baseWindow.hDC, This->DestRect.left, This->DestRect.top, This->DestRect.right -This->DestRect.left,
                   This->DestRect.bottom - This->DestRect.top, This->SourceRect.left, This->SourceRect.top,
@@ -432,9 +431,7 @@ static RECT WINAPI VideoRenderer_GetDefaultRect(BaseWindow *iface)
     VideoRendererImpl *This = impl_from_BaseWindow(iface);
     static RECT defRect;
 
-    defRect.left = defRect.top = 0;
-    defRect.right = This->VideoWidth;
-    defRect.bottom = This->VideoHeight;
+    SetRect(&defRect, 0, 0, This->VideoWidth, This->VideoHeight);
 
     return defRect;
 }
@@ -598,10 +595,7 @@ static HRESULT WINAPI VideoRenderer_SetDefaultSourceRect(BaseControlVideo* iface
 {
     VideoRendererImpl *This = impl_from_BaseControlVideo(iface);
 
-    This->SourceRect.left = 0;
-    This->SourceRect.top = 0;
-    This->SourceRect.right = This->VideoWidth;
-    This->SourceRect.bottom = This->VideoHeight;
+    SetRect(&This->SourceRect, 0, 0, This->VideoWidth, This->VideoHeight);
 
     return S_OK;
 }
@@ -614,10 +608,7 @@ static HRESULT WINAPI VideoRenderer_SetDefaultTargetRect(BaseControlVideo* iface
     if (!GetClientRect(This->baseControlWindow.baseWindow.hWnd, &rect))
         return E_FAIL;
 
-    This->DestRect.left = 0;
-    This->DestRect.top = 0;
-    This->DestRect.right = rect.right;
-    This->DestRect.bottom = rect.bottom;
+    SetRect(&This->DestRect, 0, 0, rect.right, rect.bottom);
 
     return S_OK;
 }
@@ -800,7 +791,7 @@ static HRESULT WINAPI BasicVideo_QueryInterface(IBasicVideo *iface, REFIID riid,
 {
     VideoRendererImpl *This = impl_from_IBasicVideo(iface);
 
-    TRACE("(%p/%p)->(%s (%p), %p)\n", This, iface, debugstr_guid(riid), riid, ppvObj);
+    TRACE("(%p/%p)->(%s, %p)\n", This, iface, debugstr_guid(riid), ppvObj);
 
     return IUnknown_QueryInterface(This->outer_unk, riid, ppvObj);
 }
@@ -872,7 +863,7 @@ static HRESULT WINAPI VideoWindow_QueryInterface(IVideoWindow *iface, REFIID rii
 {
     VideoRendererImpl *This = impl_from_IVideoWindow(iface);
 
-    TRACE("(%p/%p)->(%s (%p), %p)\n", This, iface, debugstr_guid(riid), riid, ppvObj);
+    TRACE("(%p/%p)->(%s, %p)\n", This, iface, debugstr_guid(riid), ppvObj);
 
     return IUnknown_QueryInterface(This->outer_unk, riid, ppvObj);
 }
@@ -900,7 +891,12 @@ static HRESULT WINAPI VideoWindow_get_FullScreenMode(IVideoWindow *iface,
 {
     VideoRendererImpl *This = impl_from_IVideoWindow(iface);
 
-    FIXME("(%p/%p)->(%p): stub !!!\n", This, iface, FullScreenMode);
+    TRACE("(%p/%p)->(%p): %d\n", This, iface, FullScreenMode, This->FullScreenMode);
+
+    if (!FullScreenMode)
+        return E_POINTER;
+
+    *FullScreenMode = This->FullScreenMode;
 
     return S_OK;
 }
@@ -928,6 +924,7 @@ static HRESULT WINAPI VideoWindow_put_FullScreenMode(IVideoWindow *iface,
         SetWindowPos(This->baseControlWindow.baseWindow.hWnd,0,This->DestRect.left,This->DestRect.top,This->DestRect.right,This->DestRect.bottom,SWP_NOZORDER|SWP_SHOWWINDOW);
         This->WindowPos = This->DestRect;
     }
+    This->FullScreenMode = FullScreenMode;
 
     return S_OK;
 }
@@ -1035,6 +1032,7 @@ HRESULT VideoRenderer_create(IUnknown *pUnkOuter, void **ppv)
     ZeroMemory(&pVideoRenderer->SourceRect, sizeof(RECT));
     ZeroMemory(&pVideoRenderer->DestRect, sizeof(RECT));
     ZeroMemory(&pVideoRenderer->WindowPos, sizeof(RECT));
+    pVideoRenderer->FullScreenMode = OAFALSE;
 
     if (pUnkOuter)
         pVideoRenderer->outer_unk = pUnkOuter;

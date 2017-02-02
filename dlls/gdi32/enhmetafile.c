@@ -1138,9 +1138,9 @@ BOOL WINAPI PlayEnhMetaFileRecord(
 	rc.top = pExtTextOutA->emrtext.rcl.top;
 	rc.right = pExtTextOutA->emrtext.rcl.right;
 	rc.bottom = pExtTextOutA->emrtext.rcl.bottom;
-        TRACE("EMR_EXTTEXTOUTA: x,y = %d, %d. rect = %d, %d - %d, %d. flags %08x\n",
+        TRACE("EMR_EXTTEXTOUTA: x,y = %d, %d. rect = %s. flags %08x\n",
               pExtTextOutA->emrtext.ptlReference.x, pExtTextOutA->emrtext.ptlReference.y,
-              rc.left, rc.top, rc.right, rc.bottom, pExtTextOutA->emrtext.fOptions);
+              wine_dbgstr_rect(&rc), pExtTextOutA->emrtext.fOptions);
 
         old_mode = SetGraphicsMode(hdc, pExtTextOutA->iGraphicsMode);
         /* Reselect the font back into the dc so that the transformation
@@ -1174,9 +1174,9 @@ BOOL WINAPI PlayEnhMetaFileRecord(
 	rc.top = pExtTextOutW->emrtext.rcl.top;
 	rc.right = pExtTextOutW->emrtext.rcl.right;
 	rc.bottom = pExtTextOutW->emrtext.rcl.bottom;
-        TRACE("EMR_EXTTEXTOUTW: x,y = %d, %d.  rect = %d, %d - %d, %d. flags %08x\n",
+        TRACE("EMR_EXTTEXTOUTW: x,y = %d, %d.  rect = %s. flags %08x\n",
               pExtTextOutW->emrtext.ptlReference.x, pExtTextOutW->emrtext.ptlReference.y,
-              rc.left, rc.top, rc.right, rc.bottom, pExtTextOutW->emrtext.fOptions);
+              wine_dbgstr_rect(&rc), pExtTextOutW->emrtext.fOptions);
 
         old_mode = SetGraphicsMode(hdc, pExtTextOutW->iGraphicsMode);
         /* Reselect the font back into the dc so that the transformation
@@ -1820,6 +1820,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
             HBITMAP hBmp = 0, hBmpOld = 0;
             const BITMAPINFO *pbi = (const BITMAPINFO *)((const BYTE *)mr + pBitBlt->offBmiSrc);
 
+            SetGraphicsMode(hdcSrc, GM_ADVANCED);
             SetWorldTransform(hdcSrc, &pBitBlt->xformSrc);
 
             hBrush = CreateSolidBrush(pBitBlt->crBkColorSrc);
@@ -1862,6 +1863,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
             HBITMAP hBmp = 0, hBmpOld = 0;
             const BITMAPINFO *pbi = (const BITMAPINFO *)((const BYTE *)mr + pStretchBlt->offBmiSrc);
 
+            SetGraphicsMode(hdcSrc, GM_ADVANCED);
             SetWorldTransform(hdcSrc, &pStretchBlt->xformSrc);
 
             hBrush = CreateSolidBrush(pStretchBlt->crBkColorSrc);
@@ -1904,6 +1906,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
             const BITMAPINFO *pbi = (const BITMAPINFO *)((const BYTE *)mr + pAlphaBlend->offBmiSrc);
             void *bits;
 
+            SetGraphicsMode(hdcSrc, GM_ADVANCED);
             SetWorldTransform(hdcSrc, &pAlphaBlend->xformSrc);
 
             hBmp = CreateDIBSection(hdc, pbi, pAlphaBlend->iUsageSrc, &bits, NULL, 0);
@@ -1929,6 +1932,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
 	HBITMAP hBmp, hBmpOld, hBmpMask;
 	const BITMAPINFO *pbi;
 
+        SetGraphicsMode(hdcSrc, GM_ADVANCED);
 	SetWorldTransform(hdcSrc, &pMaskBlt->xformSrc);
 
 	hBrush = CreateSolidBrush(pMaskBlt->crBkColorSrc);
@@ -1977,6 +1981,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
 	const BITMAPINFO *pbi;
 	POINT pts[3];
 
+        SetGraphicsMode(hdcSrc, GM_ADVANCED);
 	SetWorldTransform(hdcSrc, &pPlgBlt->xformSrc);
 
 	pts[0].x = pPlgBlt->aptlDest[0].x; pts[0].y = pPlgBlt->aptlDest[0].y;
@@ -2175,23 +2180,30 @@ BOOL WINAPI PlayEnhMetaFileRecord(
 	break;
     }
 
+    case EMR_GRADIENTFILL:
+    {
+        EMRGRADIENTFILL *grad = (EMRGRADIENTFILL *)mr;
+        GdiGradientFill( hdc, grad->Ver, grad->nVer, grad->Ver + grad->nVer,
+                         grad->nTri, grad->ulMode );
+        break;
+    }
+
     case EMR_POLYDRAW16:
     case EMR_GLSRECORD:
     case EMR_GLSBOUNDEDRECORD:
-	case EMR_DRAWESCAPE :
-	case EMR_EXTESCAPE:
-	case EMR_STARTDOC:
-	case EMR_SMALLTEXTOUT:
-	case EMR_FORCEUFIMAPPING:
-	case EMR_NAMEDESCAPE:
-	case EMR_COLORCORRECTPALETTE:
-	case EMR_SETICMPROFILEA:
-	case EMR_SETICMPROFILEW:
-	case EMR_TRANSPARENTBLT:
-	case EMR_GRADIENTFILL:
-	case EMR_SETLINKEDUFI:
-	case EMR_COLORMATCHTOTARGETW:
-	case EMR_CREATECOLORSPACEW:
+    case EMR_DRAWESCAPE:
+    case EMR_EXTESCAPE:
+    case EMR_STARTDOC:
+    case EMR_SMALLTEXTOUT:
+    case EMR_FORCEUFIMAPPING:
+    case EMR_NAMEDESCAPE:
+    case EMR_COLORCORRECTPALETTE:
+    case EMR_SETICMPROFILEA:
+    case EMR_SETICMPROFILEW:
+    case EMR_TRANSPARENTBLT:
+    case EMR_SETLINKEDUFI:
+    case EMR_COLORMATCHTOTARGETW:
+    case EMR_CREATECOLORSPACEW:
 
     default:
       /* From docs: If PlayEnhMetaFileRecord doesn't recognize a
@@ -2202,8 +2214,7 @@ BOOL WINAPI PlayEnhMetaFileRecord(
   tmprc.left = tmprc.top = 0;
   tmprc.right = tmprc.bottom = 1000;
   LPtoDP(hdc, (POINT*)&tmprc, 2);
-  TRACE("L:0,0 - 1000,1000 -> D:%d,%d - %d,%d\n", tmprc.left,
-	tmprc.top, tmprc.right, tmprc.bottom);
+  TRACE("L:0,0 - 1000,1000 -> D:%s\n", wine_dbgstr_rect(&tmprc));
 
   return TRUE;
 }
@@ -2288,6 +2299,7 @@ BOOL WINAPI EnumEnhMetaFile(
 	SetLastError(ERROR_NOT_ENOUGH_MEMORY);
 	return FALSE;
     }
+    info->state.mode = MM_TEXT;
     info->state.wndOrgX = 0;
     info->state.wndOrgY = 0;
     info->state.wndExtX = 1;
@@ -2338,71 +2350,68 @@ BOOL WINAPI EnumEnhMetaFile(
         old_arcdir = SetArcDirection(hdc, AD_COUNTERCLOCKWISE);
         old_polyfill = SetPolyFillMode(hdc, ALTERNATE);
         old_stretchblt = SetStretchBltMode(hdc, BLACKONWHITE);
-    }
 
-    info->state.mode = MM_TEXT;
+        if ( IS_WIN9X() )
+        {
+            /* Win95 leaves the vp/win ext/org info alone */
+            info->init_transform.eM11 = 1.0;
+            info->init_transform.eM12 = 0.0;
+            info->init_transform.eM21 = 0.0;
+            info->init_transform.eM22 = 1.0;
+            info->init_transform.eDx  = 0.0;
+            info->init_transform.eDy  = 0.0;
+        }
+        else
+        {
+            /* WinNT combines the vp/win ext/org info into a transform */
+            double xscale, yscale;
+            xscale = (double)vp_size.cx / (double)win_size.cx;
+            yscale = (double)vp_size.cy / (double)win_size.cy;
+            info->init_transform.eM11 = xscale;
+            info->init_transform.eM12 = 0.0;
+            info->init_transform.eM21 = 0.0;
+            info->init_transform.eM22 = yscale;
+            info->init_transform.eDx  = (double)vp_org.x - xscale * (double)win_org.x;
+            info->init_transform.eDy  = (double)vp_org.y - yscale * (double)win_org.y;
 
-    if ( IS_WIN9X() )
-    {
-        /* Win95 leaves the vp/win ext/org info alone */
-        info->init_transform.eM11 = 1.0;
-        info->init_transform.eM12 = 0.0;
-        info->init_transform.eM21 = 0.0;
-        info->init_transform.eM22 = 1.0;
-        info->init_transform.eDx  = 0.0;
-        info->init_transform.eDy  = 0.0;
-    }
-    else
-    {
-        /* WinNT combines the vp/win ext/org info into a transform */
-        double xscale, yscale;
-        xscale = (double)vp_size.cx / (double)win_size.cx;
-        yscale = (double)vp_size.cy / (double)win_size.cy;
-        info->init_transform.eM11 = xscale;
-        info->init_transform.eM12 = 0.0;
-        info->init_transform.eM21 = 0.0;
-        info->init_transform.eM22 = yscale;
-        info->init_transform.eDx  = (double)vp_org.x - xscale * (double)win_org.x;
-        info->init_transform.eDy  = (double)vp_org.y - yscale * (double)win_org.y;
+            CombineTransform(&info->init_transform, &savedXform, &info->init_transform);
+        }
 
-        CombineTransform(&info->init_transform, &savedXform, &info->init_transform);
-    }
+        if ( lpRect && WIDTH(emh->rclFrame) && HEIGHT(emh->rclFrame) )
+        {
+            double xSrcPixSize, ySrcPixSize, xscale, yscale;
+            XFORM xform;
 
-    if ( lpRect && WIDTH(emh->rclFrame) && HEIGHT(emh->rclFrame) )
-    {
-        double xSrcPixSize, ySrcPixSize, xscale, yscale;
-        XFORM xform;
+            TRACE("rect: %s. rclFrame: (%d,%d)-(%d,%d)\n", wine_dbgstr_rect(lpRect),
+               emh->rclFrame.left, emh->rclFrame.top, emh->rclFrame.right,
+               emh->rclFrame.bottom);
 
-        TRACE("rect: %d,%d - %d,%d. rclFrame: %d,%d - %d,%d\n",
-           lpRect->left, lpRect->top, lpRect->right, lpRect->bottom,
-           emh->rclFrame.left, emh->rclFrame.top, emh->rclFrame.right,
-           emh->rclFrame.bottom);
+            xSrcPixSize = (double) emh->szlMillimeters.cx / emh->szlDevice.cx;
+            ySrcPixSize = (double) emh->szlMillimeters.cy / emh->szlDevice.cy;
+            xscale = (double) WIDTH(*lpRect) * 100.0 /
+                     WIDTH(emh->rclFrame) * xSrcPixSize;
+            yscale = (double) HEIGHT(*lpRect) * 100.0 /
+                     HEIGHT(emh->rclFrame) * ySrcPixSize;
+            TRACE("xscale = %f, yscale = %f\n", xscale, yscale);
 
-        xSrcPixSize = (double) emh->szlMillimeters.cx / emh->szlDevice.cx;
-        ySrcPixSize = (double) emh->szlMillimeters.cy / emh->szlDevice.cy;
-        xscale = (double) WIDTH(*lpRect) * 100.0 /
-                 WIDTH(emh->rclFrame) * xSrcPixSize;
-        yscale = (double) HEIGHT(*lpRect) * 100.0 /
-                 HEIGHT(emh->rclFrame) * ySrcPixSize;
-        TRACE("xscale = %f, yscale = %f\n", xscale, yscale);
+            xform.eM11 = xscale;
+            xform.eM12 = 0;
+            xform.eM21 = 0;
+            xform.eM22 = yscale;
+            xform.eDx = (double) lpRect->left - (double) WIDTH(*lpRect) / WIDTH(emh->rclFrame) * emh->rclFrame.left;
+            xform.eDy = (double) lpRect->top - (double) HEIGHT(*lpRect) / HEIGHT(emh->rclFrame) * emh->rclFrame.top;
 
-        xform.eM11 = xscale;
-        xform.eM12 = 0;
-        xform.eM21 = 0;
-        xform.eM22 = yscale;
-        xform.eDx = (double) lpRect->left - (double) WIDTH(*lpRect) / WIDTH(emh->rclFrame) * emh->rclFrame.left;
-        xform.eDy = (double) lpRect->top - (double) HEIGHT(*lpRect) / HEIGHT(emh->rclFrame) * emh->rclFrame.top;
+            CombineTransform(&info->init_transform, &xform, &info->init_transform);
+        }
 
-        CombineTransform(&info->init_transform, &xform, &info->init_transform);
-    }
-
-    /* WinNT resets the current vp/win org/ext */
-    if ( !IS_WIN9X() && hdc )
-    {
-        SetMapMode(hdc, MM_TEXT);
-        SetWindowOrgEx(hdc, 0, 0, NULL);
-        SetViewportOrgEx(hdc, 0, 0, NULL);
-        EMF_Update_MF_Xform(hdc, info);
+        /* WinNT resets the current vp/win org/ext */
+        if ( !IS_WIN9X() )
+        {
+            SetMapMode(hdc, MM_TEXT);
+            SetWindowOrgEx(hdc, 0, 0, NULL);
+            SetViewportOrgEx(hdc, 0, 0, NULL);
+            EMF_Update_MF_Xform(hdc, info);
+        }
     }
 
     ret = TRUE;
@@ -2676,7 +2685,60 @@ UINT WINAPI GetEnhMetaFilePaletteEntries( HENHMETAFILE hEmf,
   return infoForCallBack.cEntries;
 }
 
-typedef struct gdi_mf_comment
+/******************************************************************
+ *             extract_emf_from_comment
+ *
+ * If the WMF was created by GetWinMetaFileBits, then extract the
+ * original EMF that is stored in MFCOMMENT chunks.
+ */
+static HENHMETAFILE extract_emf_from_comment( const BYTE *buf, UINT mf_size )
+{
+    METAHEADER *mh = (METAHEADER *)buf;
+    METARECORD *mr;
+    emf_in_wmf_comment *chunk;
+    WORD checksum = 0;
+    DWORD size = 0, remaining, chunks;
+    BYTE *emf_bits = NULL, *ptr;
+    UINT offset;
+    HENHMETAFILE emf = NULL;
+
+    if (mf_size < sizeof(*mh)) return NULL;
+
+    for (offset = mh->mtHeaderSize * 2; offset < mf_size; offset += (mr->rdSize * 2))
+    {
+	mr = (METARECORD *)((char *)mh + offset);
+        chunk = (emf_in_wmf_comment *)(mr->rdParm + 2);
+
+        if (mr->rdFunction != META_ESCAPE || mr->rdParm[0] != MFCOMMENT) goto done;
+        if (chunk->magic != WMFC_MAGIC) goto done;
+
+        if (!emf_bits)
+        {
+            size = remaining = chunk->emf_size;
+            chunks = chunk->num_chunks;
+            emf_bits = ptr = HeapAlloc( GetProcessHeap(), 0, size );
+            if (!emf_bits) goto done;
+        }
+        if (chunk->chunk_size > remaining) goto done;
+        remaining -= chunk->chunk_size;
+        if (chunk->remaining_size != remaining) goto done;
+        memcpy( ptr, chunk->emf_data, chunk->chunk_size );
+        ptr += chunk->chunk_size;
+        if (--chunks == 0) break;
+    }
+
+    for (offset = 0; offset < mf_size / 2; offset++)
+        checksum += *((WORD *)buf + offset);
+    if (checksum) goto done;
+
+    emf = SetEnhMetaFileBits( size, emf_bits );
+
+done:
+    HeapFree( GetProcessHeap(), 0, emf_bits );
+    return emf;
+}
+
+typedef struct wmf_in_emf_comment
 {
     DWORD ident;
     DWORD iComment;
@@ -2684,7 +2746,7 @@ typedef struct gdi_mf_comment
     DWORD nChecksum;
     DWORD fFlags;
     DWORD cbWinMetaFile;
-} gdi_mf_comment;
+} wmf_in_emf_comment;
 
 /******************************************************************
  *         SetWinMetaFileBits   (GDI32.@)
@@ -2711,6 +2773,9 @@ HENHMETAFILE WINAPI SetWinMetaFileBits(UINT cbBuffer, const BYTE *lpbBuffer, HDC
         WARN("SetMetaFileBitsEx failed\n");
         return NULL;
     }
+
+    ret = extract_emf_from_comment( lpbBuffer, cbBuffer );
+    if (ret) return ret;
 
     if(!hdcRef)
         hdcRef = hdcdisp = CreateDCW(szDisplayW, NULL, NULL, NULL);
@@ -2764,10 +2829,10 @@ HENHMETAFILE WINAPI SetWinMetaFileBits(UINT cbBuffer, const BYTE *lpbBuffer, HDC
      */
     if (mm != MM_TEXT)
     {
-        gdi_mf_comment *mfcomment;
+        wmf_in_emf_comment *mfcomment;
         UINT mfcomment_size;
 
-        mfcomment_size = sizeof (gdi_mf_comment) + cbBuffer;
+        mfcomment_size = sizeof (*mfcomment) + cbBuffer;
         mfcomment = HeapAlloc(GetProcessHeap(), 0, mfcomment_size);
         if (mfcomment)
         {

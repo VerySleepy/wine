@@ -39,19 +39,27 @@ WINE_DEFAULT_DEBUG_CHANNEL(scrrun);
 static const WCHAR bsW[] = {'\\',0};
 static const WCHAR utf16bom = 0xfeff;
 
+struct filesystem {
+    struct provideclassinfo classinfo;
+    IFileSystem3 IFileSystem3_iface;
+};
+
 struct foldercollection {
+    struct provideclassinfo classinfo;
     IFolderCollection IFolderCollection_iface;
     LONG ref;
     BSTR path;
 };
 
 struct filecollection {
+    struct provideclassinfo classinfo;
     IFileCollection IFileCollection_iface;
     LONG ref;
     BSTR path;
 };
 
 struct drivecollection {
+    struct provideclassinfo classinfo;
     IDriveCollection IDriveCollection_iface;
     LONG ref;
     DWORD drives;
@@ -87,18 +95,21 @@ struct enumvariant {
 };
 
 struct drive {
+    struct provideclassinfo classinfo;
     IDrive IDrive_iface;
     LONG ref;
     BSTR root;
 };
 
 struct folder {
+    struct provideclassinfo classinfo;
     IFolder IFolder_iface;
     LONG ref;
     BSTR path;
 };
 
 struct file {
+    struct provideclassinfo classinfo;
     IFile IFile_iface;
     LONG ref;
 
@@ -106,6 +117,7 @@ struct file {
 };
 
 struct textstream {
+    struct provideclassinfo classinfo;
     ITextStream ITextStream_iface;
     LONG ref;
 
@@ -120,6 +132,11 @@ enum iotype {
     IORead,
     IOWrite
 };
+
+static inline struct filesystem *impl_from_IFileSystem3(IFileSystem3 *iface)
+{
+    return CONTAINING_RECORD(iface, struct filesystem, IFileSystem3_iface);
+}
 
 static inline struct drive *impl_from_IDrive(IDrive *iface)
 {
@@ -226,13 +243,17 @@ static HRESULT WINAPI textstream_QueryInterface(ITextStream *iface, REFIID riid,
         IsEqualIID(riid, &IID_IDispatch) ||
         IsEqualIID(riid, &IID_IUnknown))
     {
-        *obj = iface;
-        ITextStream_AddRef(iface);
-        return S_OK;
+        *obj = &This->ITextStream_iface;
     }
+    else if (IsEqualIID(riid, &IID_IProvideClassInfo))
+    {
+        *obj = &This->classinfo.IProvideClassInfo_iface;
+    }
+    else
+        return E_NOINTERFACE;
 
-    *obj = NULL;
-    return E_NOINTERFACE;
+    IUnknown_AddRef((IUnknown*)*obj);
+    return S_OK;
 }
 
 static ULONG WINAPI textstream_AddRef(ITextStream *iface)
@@ -633,8 +654,16 @@ static HRESULT WINAPI textstream_SkipLine(ITextStream *iface)
 static HRESULT WINAPI textstream_Close(ITextStream *iface)
 {
     struct textstream *This = impl_from_ITextStream(iface);
-    FIXME("(%p): stub\n", This);
-    return E_NOTIMPL;
+    HRESULT hr = S_OK;
+
+    TRACE("(%p)\n", This);
+
+    if(!CloseHandle(This->file))
+        hr = S_FALSE;
+
+    This->file = NULL;
+
+    return hr;
 }
 
 static const ITextStreamVtbl textstreamvtbl = {
@@ -713,6 +742,7 @@ static HRESULT create_textstream(const WCHAR *filename, DWORD disposition, IOMod
         }
     }
 
+    init_classinfo(&CLSID_TextStream, (IUnknown *)&stream->ITextStream_iface, &stream->classinfo);
     *ret = &stream->ITextStream_iface;
     return S_OK;
 }
@@ -729,12 +759,16 @@ static HRESULT WINAPI drive_QueryInterface(IDrive *iface, REFIID riid, void **ob
         IsEqualIID( riid, &IID_IDispatch ) ||
         IsEqualIID( riid, &IID_IUnknown))
     {
-        *obj = iface;
-        IDrive_AddRef(iface);
+        *obj = &This->IDrive_iface;
+    }
+    else if (IsEqualIID( riid, &IID_IProvideClassInfo ))
+    {
+        *obj = &This->classinfo.IProvideClassInfo_iface;
     }
     else
         return E_NOINTERFACE;
 
+    IUnknown_AddRef((IUnknown*)*obj);
     return S_OK;
 }
 
@@ -1072,6 +1106,7 @@ static HRESULT create_drive(WCHAR letter, IDrive **drive)
     This->root[2] = '\\';
     This->root[3] = 0;
 
+    init_classinfo(&CLSID_Drive, (IUnknown *)&This->IDrive_iface, &This->classinfo);
     *drive = &This->IDrive_iface;
     return S_OK;
 }
@@ -1565,12 +1600,16 @@ static HRESULT WINAPI foldercoll_QueryInterface(IFolderCollection *iface, REFIID
         IsEqualIID( riid, &IID_IDispatch ) ||
         IsEqualIID( riid, &IID_IUnknown ))
     {
-        *obj = iface;
-        IFolderCollection_AddRef(iface);
+        *obj = &This->IFolderCollection_iface;
+    }
+    else if (IsEqualIID( riid, &IID_IProvideClassInfo ))
+    {
+        *obj = &This->classinfo.IProvideClassInfo_iface;
     }
     else
         return E_NOINTERFACE;
 
+    IUnknown_AddRef((IUnknown*)*obj);
     return S_OK;
 }
 
@@ -1745,6 +1784,7 @@ static HRESULT create_foldercoll(BSTR path, IFolderCollection **folders)
         return E_OUTOFMEMORY;
     }
 
+    init_classinfo(&CLSID_Folders, (IUnknown *)&This->IFolderCollection_iface, &This->classinfo);
     *folders = &This->IFolderCollection_iface;
 
     return S_OK;
@@ -1762,12 +1802,16 @@ static HRESULT WINAPI filecoll_QueryInterface(IFileCollection *iface, REFIID rii
         IsEqualIID( riid, &IID_IDispatch ) ||
         IsEqualIID( riid, &IID_IUnknown ))
     {
-        *obj = iface;
-        IFileCollection_AddRef(iface);
+        *obj = &This->IFileCollection_iface;
+    }
+    else if (IsEqualIID( riid, &IID_IProvideClassInfo ))
+    {
+        *obj = &This->classinfo.IProvideClassInfo_iface;
     }
     else
         return E_NOINTERFACE;
 
+    IUnknown_AddRef((IUnknown*)*obj);
     return S_OK;
 }
 
@@ -1934,6 +1978,7 @@ static HRESULT create_filecoll(BSTR path, IFileCollection **files)
         return E_OUTOFMEMORY;
     }
 
+    init_classinfo(&CLSID_Files, (IUnknown *)&This->IFileCollection_iface, &This->classinfo);
     *files = &This->IFileCollection_iface;
     return S_OK;
 }
@@ -1950,12 +1995,16 @@ static HRESULT WINAPI drivecoll_QueryInterface(IDriveCollection *iface, REFIID r
         IsEqualIID( riid, &IID_IDispatch ) ||
         IsEqualIID( riid, &IID_IUnknown ))
     {
-        *obj = iface;
-        IDriveCollection_AddRef(iface);
+        *obj = &This->IDriveCollection_iface;
+    }
+    else if (IsEqualIID( riid, &IID_IProvideClassInfo ))
+    {
+        *obj = &This->classinfo.IProvideClassInfo_iface;
     }
     else
         return E_NOINTERFACE;
 
+    IUnknown_AddRef((IUnknown*)*obj);
     return S_OK;
 }
 
@@ -2099,6 +2148,7 @@ static HRESULT create_drivecoll(IDriveCollection **drives)
     for (This->count = 0; mask; This->count++)
         mask &= mask - 1;
 
+    init_classinfo(&CLSID_Drives, (IUnknown *)&This->IDriveCollection_iface, &This->classinfo);
     *drives = &This->IDriveCollection_iface;
     return S_OK;
 }
@@ -2115,12 +2165,16 @@ static HRESULT WINAPI folder_QueryInterface(IFolder *iface, REFIID riid, void **
         IsEqualIID( riid, &IID_IDispatch ) ||
         IsEqualIID( riid, &IID_IUnknown))
     {
-        *obj = iface;
-        IFolder_AddRef(iface);
+        *obj = &This->IFolder_iface;
+    }
+    else if (IsEqualIID( riid, &IID_IProvideClassInfo ))
+    {
+        *obj = &This->classinfo.IProvideClassInfo_iface;
     }
     else
         return E_NOINTERFACE;
 
+    IUnknown_AddRef((IUnknown*)*obj);
     return S_OK;
 }
 
@@ -2439,6 +2493,7 @@ HRESULT create_folder(const WCHAR *path, IFolder **folder)
         return E_OUTOFMEMORY;
     }
 
+    init_classinfo(&CLSID_Folder, (IUnknown *)&This->IFolder_iface, &This->classinfo);
     *folder = &This->IFolder_iface;
 
     return S_OK;
@@ -2450,17 +2505,23 @@ static HRESULT WINAPI file_QueryInterface(IFile *iface, REFIID riid, void **obj)
 
     TRACE("(%p)->(%s %p)\n", This, debugstr_guid(riid), obj);
 
+    *obj = NULL;
+
     if (IsEqualIID(riid, &IID_IFile) ||
             IsEqualIID(riid, &IID_IDispatch) ||
             IsEqualIID(riid, &IID_IUnknown))
     {
-        *obj = iface;
-        IFile_AddRef(iface);
-        return S_OK;
+        *obj = &This->IFile_iface;
     }
+    else if (IsEqualIID( riid, &IID_IProvideClassInfo ))
+    {
+        *obj = &This->classinfo.IProvideClassInfo_iface;
+    }
+    else
+        return E_NOINTERFACE;
 
-    *obj = NULL;
-    return E_NOINTERFACE;
+    IUnknown_AddRef((IUnknown*)*obj);
+    return S_OK;
 }
 
 static ULONG WINAPI file_AddRef(IFile *iface)
@@ -2546,11 +2607,20 @@ static HRESULT WINAPI file_Invoke(IFile *iface, DISPID dispIdMember, REFIID riid
     return hr;
 }
 
-static HRESULT WINAPI file_get_Path(IFile *iface, BSTR *pbstrPath)
+static HRESULT WINAPI file_get_Path(IFile *iface, BSTR *path)
 {
     struct file *This = impl_from_IFile(iface);
-    FIXME("(%p)->(%p)\n", This, pbstrPath);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%p)\n", This, path);
+
+    if (!path)
+        return E_POINTER;
+
+    *path = SysAllocString(This->path);
+    if (!*path)
+        return E_OUTOFMEMORY;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI file_get_Name(IFile *iface, BSTR *name)
@@ -2636,8 +2706,10 @@ static HRESULT WINAPI file_get_Attributes(IFile *iface, FileAttribute *pfa)
 static HRESULT WINAPI file_put_Attributes(IFile *iface, FileAttribute pfa)
 {
     struct file *This = impl_from_IFile(iface);
-    FIXME("(%p)->(%x)\n", This, pfa);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%x)\n", This, pfa);
+
+    return SetFileAttributesW(This->path, pfa) ? S_OK : create_error(GetLastError());
 }
 
 static HRESULT WINAPI file_get_DateCreated(IFile *iface, DATE *pdate)
@@ -2794,12 +2866,15 @@ static HRESULT create_file(BSTR path, IFile **file)
         return create_error(GetLastError());
     }
 
+    init_classinfo(&CLSID_File, (IUnknown *)&f->IFile_iface, &f->classinfo);
     *file = &f->IFile_iface;
     return S_OK;
 }
 
 static HRESULT WINAPI filesys_QueryInterface(IFileSystem3 *iface, REFIID riid, void **ppvObject)
 {
+    struct filesystem *This = impl_from_IFileSystem3(iface);
+
     TRACE("%p %s %p\n", iface, debugstr_guid(riid), ppvObject);
 
     if ( IsEqualGUID( riid, &IID_IFileSystem3 ) ||
@@ -2807,7 +2882,11 @@ static HRESULT WINAPI filesys_QueryInterface(IFileSystem3 *iface, REFIID riid, v
          IsEqualGUID( riid, &IID_IDispatch ) ||
          IsEqualGUID( riid, &IID_IUnknown ) )
     {
-        *ppvObject = iface;
+        *ppvObject = &This->IFileSystem3_iface;
+    }
+    else if (IsEqualGUID( riid, &IID_IProvideClassInfo ))
+    {
+        *ppvObject = &This->classinfo.IProvideClassInfo_iface;
     }
     else if ( IsEqualGUID( riid, &IID_IDispatchEx ))
     {
@@ -2827,7 +2906,7 @@ static HRESULT WINAPI filesys_QueryInterface(IFileSystem3 *iface, REFIID riid, v
         return E_NOINTERFACE;
     }
 
-    IFileSystem3_AddRef(iface);
+    IUnknown_AddRef((IUnknown*)*ppvObject);
 
     return S_OK;
 }
@@ -3103,12 +3182,26 @@ static HRESULT WINAPI filesys_GetBaseName(IFileSystem3 *iface, BSTR Path,
     return S_OK;
 }
 
-static HRESULT WINAPI filesys_GetExtensionName(IFileSystem3 *iface, BSTR Path,
-                                            BSTR *pbstrResult)
+static HRESULT WINAPI filesys_GetExtensionName(IFileSystem3 *iface, BSTR path,
+                                            BSTR *ext)
 {
-    FIXME("%p %s %p\n", iface, debugstr_w(Path), pbstrResult);
+    INT len;
 
-    return E_NOTIMPL;
+    TRACE("%p %s %p\n", iface, debugstr_w(path), ext);
+
+    *ext = NULL;
+    len = SysStringLen(path);
+    while (len) {
+        if (path[len-1] == '.') {
+            *ext = SysAllocString(&path[len]);
+            if (!*ext)
+                return E_OUTOFMEMORY;
+            break;
+        }
+        len--;
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI filesys_GetAbsolutePathName(IFileSystem3 *iface, BSTR Path,
@@ -3188,9 +3281,27 @@ static HRESULT WINAPI filesys_GetTempName(IFileSystem3 *iface, BSTR *pbstrResult
 static HRESULT WINAPI filesys_DriveExists(IFileSystem3 *iface, BSTR DriveSpec,
                                             VARIANT_BOOL *pfExists)
 {
-    FIXME("%p %s %p\n", iface, debugstr_w(DriveSpec), pfExists);
+    UINT len;
+    WCHAR driveletter;
+    TRACE("%p %s %p\n", iface, debugstr_w(DriveSpec), pfExists);
 
-    return E_NOTIMPL;
+    if (!pfExists) return E_POINTER;
+
+    *pfExists = VARIANT_FALSE;
+    len = SysStringLen(DriveSpec);
+
+    if (len >= 1) {
+        driveletter = toupperW(DriveSpec[0]);
+        if (driveletter >= 'A' && driveletter <= 'Z'
+                && (len < 2 || DriveSpec[1] == ':')
+                && (len < 3 || DriveSpec[2] == '\\')) {
+            const WCHAR root[] = {driveletter, ':', '\\', 0};
+            UINT drivetype = GetDriveTypeW(root);
+            *pfExists = drivetype != DRIVE_NO_ROOT_DIR && drivetype != DRIVE_UNKNOWN ? VARIANT_TRUE : VARIANT_FALSE;
+        }
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI filesys_FileExists(IFileSystem3 *iface, BSTR path, VARIANT_BOOL *ret)
@@ -3221,9 +3332,40 @@ static HRESULT WINAPI filesys_FolderExists(IFileSystem3 *iface, BSTR path, VARIA
 static HRESULT WINAPI filesys_GetDrive(IFileSystem3 *iface, BSTR DriveSpec,
                                             IDrive **ppdrive)
 {
-    FIXME("%p %s %p\n", iface, debugstr_w(DriveSpec), ppdrive);
+    UINT len;
+    HRESULT hr;
+    WCHAR driveletter;
+    VARIANT_BOOL drive_exists;
 
-    return E_NOTIMPL;
+    TRACE("%p %s %p\n", iface, debugstr_w(DriveSpec), ppdrive);
+
+    if (!ppdrive)
+        return E_POINTER;
+
+    *ppdrive = NULL;
+
+    /* DriveSpec may be one of: 'x', 'x:', 'x:\', '\\computer\share' */
+    len = SysStringLen(DriveSpec);
+    if (!len)
+        return E_INVALIDARG;
+    else if (len <= 3) {
+        driveletter = toupperW(DriveSpec[0]);
+        if (driveletter < 'A' || driveletter > 'Z'
+                || (len >= 2 && DriveSpec[1] != ':')
+                || (len == 3 && DriveSpec[2] != '\\'))
+            return E_INVALIDARG;
+        hr = IFileSystem3_DriveExists(iface, DriveSpec, &drive_exists);
+        if (FAILED(hr))
+            return hr;
+        if (drive_exists == VARIANT_FALSE)
+            return CTL_E_DEVICEUNAVAILABLE;
+        return create_drive(driveletter, ppdrive);
+    } else {
+        if (DriveSpec[0] != '\\' || DriveSpec[1] != '\\')
+            return E_INVALIDARG;
+        FIXME("%s not implemented yet\n", debugstr_w(DriveSpec));
+        return E_NOTIMPL;
+    }
 }
 
 static HRESULT WINAPI filesys_GetFile(IFileSystem3 *iface, BSTR FilePath,
@@ -3262,11 +3404,41 @@ static HRESULT WINAPI filesys_GetFolder(IFileSystem3 *iface, BSTR FolderPath,
 
 static HRESULT WINAPI filesys_GetSpecialFolder(IFileSystem3 *iface,
                                             SpecialFolderConst SpecialFolder,
-                                            IFolder **ppfolder)
+                                            IFolder **folder)
 {
-    FIXME("%p %d %p\n", iface, SpecialFolder, ppfolder);
+    WCHAR pathW[MAX_PATH];
+    DWORD ret;
 
-    return E_NOTIMPL;
+    TRACE("%p %d %p\n", iface, SpecialFolder, folder);
+
+    if (!folder)
+        return E_POINTER;
+
+    *folder = NULL;
+
+    switch (SpecialFolder)
+    {
+    case WindowsFolder:
+        ret = GetWindowsDirectoryW(pathW, sizeof(pathW)/sizeof(WCHAR));
+        break;
+    case SystemFolder:
+        ret = GetSystemDirectoryW(pathW, sizeof(pathW)/sizeof(WCHAR));
+        break;
+    case TemporaryFolder:
+        ret = GetTempPathW(sizeof(pathW)/sizeof(WCHAR), pathW);
+        /* we don't want trailing backslash */
+        if (ret && pathW[ret-1] == '\\')
+            pathW[ret-1] = 0;
+        break;
+    default:
+        FIXME("unknown special folder type, %d\n", SpecialFolder);
+        return E_INVALIDARG;
+    }
+
+    if (!ret)
+        return HRESULT_FROM_WIN32(GetLastError());
+
+    return create_folder(pathW, folder);
 }
 
 static inline HRESULT delete_file(const WCHAR *file, DWORD file_len, VARIANT_BOOL force)
@@ -3779,11 +3951,13 @@ static const struct IFileSystem3Vtbl filesys_vtbl =
     filesys_GetFileVersion
 };
 
-static IFileSystem3 filesystem = { &filesys_vtbl };
+static struct filesystem filesystem;
 
 HRESULT WINAPI FileSystem_CreateInstance(IClassFactory *iface, IUnknown *outer, REFIID riid, void **ppv)
 {
     TRACE("(%p %s %p)\n", outer, debugstr_guid(riid), ppv);
 
-    return IFileSystem3_QueryInterface(&filesystem, riid, ppv);
+    filesystem.IFileSystem3_iface.lpVtbl = &filesys_vtbl;
+    init_classinfo(&CLSID_FileSystemObject, (IUnknown *)&filesystem.IFileSystem3_iface, &filesystem.classinfo);
+    return IFileSystem3_QueryInterface(&filesystem.IFileSystem3_iface, riid, ppv);
 }

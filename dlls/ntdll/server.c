@@ -75,6 +75,8 @@
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
+#include "windef.h"
+#include "winnt.h"
 #include "wine/library.h"
 #include "wine/server.h"
 #include "wine/debug.h"
@@ -126,6 +128,17 @@ static RTL_CRITICAL_SECTION_DEBUG critsect_debug =
 };
 static RTL_CRITICAL_SECTION fd_cache_section = { &critsect_debug, -1, 0, 0, 0, 0 };
 
+/* atomically exchange a 64-bit value */
+static inline LONG64 interlocked_xchg64( LONG64 *dest, LONG64 val )
+{
+#ifdef _WIN64
+    return (LONG64)interlocked_xchg_ptr( (void **)dest, (void *)val );
+#else
+    LONG64 tmp = *dest;
+    while (interlocked_cmpxchg64( dest, val, tmp ) != tmp) tmp = *dest;
+    return tmp;
+#endif
+}
 
 #ifdef __GNUC__
 static void fatal_error( const char *err, ... ) __attribute__((noreturn, format(printf,1,2)));
@@ -391,16 +404,17 @@ static BOOL invoke_apc( const apc_call_t *call, apc_result_t *result )
     }
     case APC_ASYNC_IO:
     {
-        void *apc = NULL;
+        void *apc = NULL, *arg = NULL;
         IO_STATUS_BLOCK *iosb = wine_server_get_ptr( call->async_io.sb );
-        NTSTATUS (*func)(void *, IO_STATUS_BLOCK *, NTSTATUS, void **) = wine_server_get_ptr( call->async_io.func );
+        NTSTATUS (*func)(void *, IO_STATUS_BLOCK *, NTSTATUS, void **, void **) = wine_server_get_ptr( call->async_io.func );
         result->type = call->type;
         result->async_io.status = func( wine_server_get_ptr( call->async_io.user ),
-                                        iosb, call->async_io.status, &apc );
+                                        iosb, call->async_io.status, &apc, &arg );
         if (result->async_io.status != STATUS_PENDING)
         {
             result->async_io.total = iosb->Information;
             result->async_io.apc   = wine_server_client_ptr( apc );
+            result->async_io.arg   = wine_server_client_ptr( arg );
         }
         break;
     }
@@ -600,10 +614,11 @@ unsigned int server_select( const select_op_t *select_op, data_size_t size, UINT
         if (ret != STATUS_USER_APC) break;
         if (invoke_apc( &call, &result ))
         {
-            /* if we ran a user apc we have to check once more if an object got signaled,
+            /* if we ran a user apc we have to check once more if additional apcs are queued,
              * but we don't want to wait */
             abs_timeout = 0;
             user_apc = TRUE;
+            size = 0;
         }
 
         /* don't signal multiple times */
@@ -662,7 +677,6 @@ unsigned int server_queue_process_apc( HANDLE process, const apc_call_t *call, a
             SERVER_END_REQ;
 
             if (!ret && result->type == APC_NONE) continue;  /* APC didn't run, try again */
-            if (ret) NtClose( handle );
         }
         return ret;
     }
@@ -789,19 +803,27 @@ static int receive_fd( obj_handle_t *handle )
 /***********************************************************************/
 /* fd cache support */
 
-struct fd_cache_entry
+#include "pshpack1.h"
+union fd_cache_entry
 {
-    int fd;
-    enum server_fd_type type : 5;
-    unsigned int        access : 3;
-    unsigned int        options : 24;
+    LONG64 data;
+    struct
+    {
+        int fd;
+        enum server_fd_type type : 5;
+        unsigned int        access : 3;
+        unsigned int        options : 24;
+    } s;
 };
+#include "poppack.h"
 
-#define FD_CACHE_BLOCK_SIZE  (65536 / sizeof(struct fd_cache_entry))
+C_ASSERT( sizeof(union fd_cache_entry) == sizeof(LONG64) );
+
+#define FD_CACHE_BLOCK_SIZE  (65536 / sizeof(union fd_cache_entry))
 #define FD_CACHE_ENTRIES     128
 
-static struct fd_cache_entry *fd_cache[FD_CACHE_ENTRIES];
-static struct fd_cache_entry fd_cache_initial_block[FD_CACHE_BLOCK_SIZE];
+static union fd_cache_entry *fd_cache[FD_CACHE_ENTRIES];
+static union fd_cache_entry fd_cache_initial_block[FD_CACHE_BLOCK_SIZE];
 
 static inline unsigned int handle_to_index( HANDLE handle, unsigned int *entry )
 {
@@ -820,7 +842,7 @@ static BOOL add_fd_to_cache( HANDLE handle, int fd, enum server_fd_type type,
                             unsigned int access, unsigned int options )
 {
     unsigned int entry, idx = handle_to_index( handle, &entry );
-    int prev_fd;
+    union fd_cache_entry cache;
 
     if (entry >= FD_CACHE_ENTRIES)
     {
@@ -833,41 +855,46 @@ static BOOL add_fd_to_cache( HANDLE handle, int fd, enum server_fd_type type,
         if (!entry) fd_cache[0] = fd_cache_initial_block;
         else
         {
-            void *ptr = wine_anon_mmap( NULL, FD_CACHE_BLOCK_SIZE * sizeof(struct fd_cache_entry),
+            void *ptr = wine_anon_mmap( NULL, FD_CACHE_BLOCK_SIZE * sizeof(union fd_cache_entry),
                                         PROT_READ | PROT_WRITE, 0 );
             if (ptr == MAP_FAILED) return FALSE;
             fd_cache[entry] = ptr;
         }
     }
+
     /* store fd+1 so that 0 can be used as the unset value */
-    prev_fd = interlocked_xchg( &fd_cache[entry][idx].fd, fd + 1 ) - 1;
-    fd_cache[entry][idx].type = type;
-    fd_cache[entry][idx].access = access;
-    fd_cache[entry][idx].options = options;
-    if (prev_fd != -1) close( prev_fd );
+    cache.s.fd = fd + 1;
+    cache.s.type = type;
+    cache.s.access = access;
+    cache.s.options = options;
+    cache.data = interlocked_xchg64( &fd_cache[entry][idx].data, cache.data );
+    assert( !cache.s.fd );
     return TRUE;
 }
 
 
 /***********************************************************************
  *           get_cached_fd
- *
- * Caller must hold fd_cache_section.
  */
-static inline int get_cached_fd( HANDLE handle, enum server_fd_type *type,
-                                 unsigned int *access, unsigned int *options )
+static inline NTSTATUS get_cached_fd( HANDLE handle, int *fd, enum server_fd_type *type,
+                                      unsigned int *access, unsigned int *options )
 {
     unsigned int entry, idx = handle_to_index( handle, &entry );
-    int fd = -1;
+    union fd_cache_entry cache;
 
-    if (entry < FD_CACHE_ENTRIES && fd_cache[entry])
-    {
-        fd = fd_cache[entry][idx].fd - 1;
-        if (type) *type = fd_cache[entry][idx].type;
-        if (access) *access = fd_cache[entry][idx].access;
-        if (options) *options = fd_cache[entry][idx].options;
-    }
-    return fd;
+    if (entry >= FD_CACHE_ENTRIES || !fd_cache[entry]) return STATUS_INVALID_HANDLE;
+
+    cache.data = interlocked_cmpxchg64( &fd_cache[entry][idx].data, 0, 0 );
+    if (!cache.data) return STATUS_INVALID_HANDLE;
+
+    /* if fd type is invalid, fd stores an error value */
+    if (cache.s.type == FD_TYPE_INVALID) return cache.s.fd - 1;
+
+    *fd = cache.s.fd - 1;
+    if (type) *type = cache.s.type;
+    if (access) *access = cache.s.access;
+    if (options) *options = cache.s.options;
+    return STATUS_SUCCESS;
 }
 
 
@@ -880,7 +907,11 @@ int server_remove_fd_from_cache( HANDLE handle )
     int fd = -1;
 
     if (entry < FD_CACHE_ENTRIES && fd_cache[entry])
-        fd = interlocked_xchg( &fd_cache[entry][idx].fd, 0 ) - 1;
+    {
+        union fd_cache_entry cache;
+        cache.data = interlocked_xchg64( &fd_cache[entry][idx].data, 0 );
+        if (cache.s.type != FD_TYPE_INVALID) fd = cache.s.fd - 1;
+    }
 
     return fd;
 }
@@ -896,40 +927,47 @@ int server_get_unix_fd( HANDLE handle, unsigned int wanted_access, int *unix_fd,
 {
     sigset_t sigset;
     obj_handle_t fd_handle;
-    int ret = 0, fd;
+    int ret, fd = -1;
     unsigned int access = 0;
 
     *unix_fd = -1;
     *needs_close = 0;
     wanted_access &= FILE_READ_DATA | FILE_WRITE_DATA | FILE_APPEND_DATA;
 
+    ret = get_cached_fd( handle, &fd, type, &access, options );
+    if (ret != STATUS_INVALID_HANDLE) goto done;
+
     server_enter_uninterrupted_section( &fd_cache_section, &sigset );
-
-    fd = get_cached_fd( handle, type, &access, options );
-    if (fd != -1) goto done;
-
-    SERVER_START_REQ( get_handle_fd )
+    ret = get_cached_fd( handle, &fd, type, &access, options );
+    if (ret == STATUS_INVALID_HANDLE)
     {
-        req->handle = wine_server_obj_handle( handle );
-        if (!(ret = wine_server_call( req )))
+        SERVER_START_REQ( get_handle_fd )
         {
-            if (type) *type = reply->type;
-            if (options) *options = reply->options;
-            access = reply->access;
-            if ((fd = receive_fd( &fd_handle )) != -1)
+            req->handle = wine_server_obj_handle( handle );
+            if (!(ret = wine_server_call( req )))
             {
-                assert( wine_server_ptr_handle(fd_handle) == handle );
-                *needs_close = (!reply->cacheable ||
-                                !add_fd_to_cache( handle, fd, reply->type,
-                                                  reply->access, reply->options ));
+                if (type) *type = reply->type;
+                if (options) *options = reply->options;
+                access = reply->access;
+                if ((fd = receive_fd( &fd_handle )) != -1)
+                {
+                    assert( wine_server_ptr_handle(fd_handle) == handle );
+                    *needs_close = (!reply->cacheable ||
+                                    !add_fd_to_cache( handle, fd, reply->type,
+                                                      reply->access, reply->options ));
+                }
+                else ret = STATUS_TOO_MANY_OPENED_FILES;
             }
-            else ret = STATUS_TOO_MANY_OPENED_FILES;
+            else if (reply->cacheable)
+            {
+                add_fd_to_cache( handle, ret, FD_TYPE_INVALID, 0, 0 );
+            }
         }
+        SERVER_END_REQ;
     }
-    SERVER_END_REQ;
+    server_leave_uninterrupted_section( &fd_cache_section, &sigset );
 
 done:
-    server_leave_uninterrupted_section( &fd_cache_section, &sigset );
     if (!ret && ((access & wanted_access) != wanted_access))
     {
         ret = STATUS_ACCESS_DENIED;
@@ -1108,17 +1146,6 @@ static void setup_config_dir(void)
         mkdir( config_dir, 0777 );
         if (chdir( config_dir ) == -1) fatal_perror( "chdir to %s\n", config_dir );
 
-        if ((p = getenv( "WINEARCH" )) && !strcmp( p, "win32" ))
-        {
-            /* force creation of a 32-bit prefix */
-            int fd = open( "system.reg", O_WRONLY | O_CREAT | O_EXCL, 0666 );
-            if (fd != -1)
-            {
-                static const char regfile[] = "WINE REGISTRY Version 2\n\n#arch=win32\n";
-                write( fd, regfile, sizeof(regfile) - 1 );
-                close( fd );
-            }
-        }
         MESSAGE( "wine: created the configuration directory '%s'\n", config_dir );
     }
 
@@ -1348,7 +1375,15 @@ void server_init_process(void)
             fatal_perror( "Bad server socket %d", fd_socket );
         unsetenv( "WINESERVERSOCKET" );
     }
-    else fd_socket = server_connect();
+    else
+    {
+        const char *arch = getenv( "WINEARCH" );
+
+        if (arch && strcmp( arch, "win32" ) && strcmp( arch, "win64" ))
+            fatal_error( "WINEARCH set to invalid value '%s', it must be either win32 or win64.\n", arch );
+
+        fd_socket = server_connect();
+    }
 
     /* setup the signal mask */
     sigemptyset( &server_block_set );
@@ -1472,7 +1507,7 @@ size_t server_init_thread( void *entry_point )
     }
     SERVER_END_REQ;
 
-    is_wow64 = !is_win64 && (server_cpus & (1 << CPU_x86_64)) != 0;
+    is_wow64 = !is_win64 && (server_cpus & ((1 << CPU_x86_64) | (1 << CPU_ARM64))) != 0;
     ntdll_get_thread_data()->wow64_redir = is_wow64;
 
     switch (ret)

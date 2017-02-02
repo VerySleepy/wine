@@ -35,9 +35,14 @@ typedef struct {
     IMediaEvent*   mevent;
     IVideoWindow*  vidwin;
     IBasicVideo*   vidbasic;
+    IBasicAudio*   audio;
     DWORD          time_format;
     UINT           command_table;
-    HWND parent;
+    HWND           parent;
+    MCIDEVICEID    notify_devid;
+    HANDLE         callback;
+    HANDLE         thread;
+    HANDLE         stop_event;
 } WINE_MCIQTZ;
 
 #endif  /* __WINE_PRIVATE_MCIQTZ_H */

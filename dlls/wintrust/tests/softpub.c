@@ -176,16 +176,15 @@ static void test_utils(SAFE_PROVIDER_FUNCTIONS *funcs)
         ok(data.csSigners == 2, "Expected 2 signers, got %d\n", data.csSigners);
         ok(!memcmp(&data.pasSigners[1], &sgnr, sizeof(sgnr)),
          "Unexpected data in signer\n");
-        /* This also adds, but the data aren't copied */
+        /* This also adds, but the index is ignored */
         sgnr.cbStruct = sizeof(DWORD);
         ret = funcs->pfnAddSgnr2Chain(&data, FALSE, 0, &sgnr);
         ok(ret, "pfnAddSgnr2Chain failed: %08x\n", GetLastError());
         ok(data.csSigners == 3, "Expected 3 signers, got %d\n", data.csSigners);
-        ok(data.pasSigners[0].cbStruct == 0, "Unexpected data size %d\n",
-         data.pasSigners[0].cbStruct);
-        ok(data.pasSigners[0].sftVerifyAsOf.dwLowDateTime == 0,
-         "Unexpected verify time %d\n",
-         data.pasSigners[0].sftVerifyAsOf.dwLowDateTime);
+        sgnr.sftVerifyAsOf.dwLowDateTime = 0;
+        todo_wine
+        ok(!memcmp(&data.pasSigners[2], &sgnr, sizeof(sgnr)),
+           "Unexpected data in signer\n");
         /* But too large a thing isn't added */
         sgnr.cbStruct = sizeof(sgnr) + sizeof(DWORD);
         SetLastError(0xdeadbeef);
@@ -251,6 +250,8 @@ static void testInitialize(SAFE_PROVIDER_FUNCTIONS *funcs, GUID *actionID)
     if (data.padwTrustStepErrors)
     {
         /* Apparently, cdwTrustStepErrors does not need to be set. */
+        memset(data.padwTrustStepErrors, 0,
+         TRUSTERROR_MAX_STEPS * sizeof(DWORD));
         ret = funcs->pfnInitialize(&data);
         ok(ret == S_OK, "Expected S_OK, got %08x\n", ret);
         data.cdwTrustStepErrors = 1;
@@ -301,6 +302,7 @@ static void testObjTrust(SAFE_PROVIDER_FUNCTIONS *funcs, GUID *actionID)
 {
     HRESULT ret;
     CRYPT_PROVIDER_DATA data = { 0 };
+    CRYPT_PROVIDER_SIGSTATE sig_state = { 0 };
     WINTRUST_DATA wintrust_data = { 0 };
     WINTRUST_CERT_INFO certInfo = { sizeof(WINTRUST_CERT_INFO), 0 };
     WINTRUST_FILE_INFO fileInfo = { sizeof(WINTRUST_FILE_INFO), 0 };
@@ -314,6 +316,7 @@ static void testObjTrust(SAFE_PROVIDER_FUNCTIONS *funcs, GUID *actionID)
     /* Crashes
     ret = funcs->pfnObjectTrust(NULL);
      */
+    data.pSigState = &sig_state;
     data.pWintrustData = &wintrust_data;
     data.padwTrustStepErrors =
      funcs->pfnAlloc(TRUSTERROR_MAX_STEPS * sizeof(DWORD));
@@ -542,8 +545,10 @@ static const BYTE selfSignedCert[] = {
 static void testCertTrust(SAFE_PROVIDER_FUNCTIONS *funcs, GUID *actionID)
 {
     CRYPT_PROVIDER_DATA data = { 0 };
+    CRYPT_PROVIDER_SIGSTATE sig_state = { 0 };
     CRYPT_PROVIDER_SGNR sgnr = { sizeof(sgnr), { 0 } };
     HRESULT ret;
+    BOOL b;
 
     if (!CertFreeCertificateChain_p)
     {
@@ -551,6 +556,7 @@ static void testCertTrust(SAFE_PROVIDER_FUNCTIONS *funcs, GUID *actionID)
         return;
     }
 
+    data.pSigState = &sig_state;
     data.padwTrustStepErrors =
      funcs->pfnAlloc(TRUSTERROR_MAX_STEPS * sizeof(DWORD));
     if (!data.padwTrustStepErrors)
@@ -563,8 +569,8 @@ static void testCertTrust(SAFE_PROVIDER_FUNCTIONS *funcs, GUID *actionID)
     ok(data.padwTrustStepErrors[TRUSTERROR_STEP_FINAL_CERTPROV] ==
      TRUST_E_NOSIGNATURE, "Expected TRUST_E_NOSIGNATURE, got %08x\n",
      data.padwTrustStepErrors[TRUSTERROR_STEP_FINAL_CERTPROV]);
-    ret = funcs->pfnAddSgnr2Chain(&data, FALSE, 0, &sgnr);
-    if (ret)
+    b = funcs->pfnAddSgnr2Chain(&data, FALSE, 0, &sgnr);
+    if (b)
     {
         PCCERT_CONTEXT cert;
 
@@ -577,8 +583,8 @@ static void testCertTrust(SAFE_PROVIDER_FUNCTIONS *funcs, GUID *actionID)
         {
             WINTRUST_DATA wintrust_data = { 0 };
 
-            ret = funcs->pfnAddCert2Chain(&data, 0, FALSE, 0, cert);
-            ok(ret == S_FALSE, "Expected S_FALSE, got %08x\n", ret);
+            b = funcs->pfnAddCert2Chain(&data, 0, FALSE, 0, cert);
+            ok(b == TRUE, "Expected TRUE, got %d\n", b);
 
             /* If pWintrustData isn't set, crashes attempting to access
              * pWintrustData->fdwRevocationChecks
@@ -776,15 +782,6 @@ static void test_sip_create_indirect_data(void)
     ret = CryptSIPCreateIndirectData_p(&subjinfo, NULL, NULL);
     ok(!ret && GetLastError() == ERROR_INVALID_PARAMETER,
        "expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
-    count = 0xdeadbeef;
-    SetLastError(0xdeadbeef);
-    ret = CryptSIPCreateIndirectData_p(&subjinfo, &count, NULL);
-    todo_wine
-    ok(!ret && (GetLastError() == NTE_BAD_ALGID ||
-                GetLastError() == ERROR_INVALID_PARAMETER /* Win7 */),
-       "expected NTE_BAD_ALGID or ERROR_INVALID_PARAMETER, got %08x\n",
-       GetLastError());
-    ok(count == 0xdeadbeef, "expected count to be unmodified, got %d\n", count);
     subjinfo.DigestAlgorithm.pszObjId = oid_sha1;
     count = 0xdeadbeef;
     ret = CryptSIPCreateIndirectData_p(&subjinfo, &count, NULL);

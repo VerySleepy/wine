@@ -640,3 +640,109 @@ void CDECL MSVCRT___set_app_type(int app_type)
   TRACE("(%d) %s application\n", app_type, app_type == 2 ? "Gui" : "Console");
   MSVCRT_app_type = app_type;
 }
+
+/*********************************************************************
+ *		_get_initial_narrow_environment (UCRTBASE.@)
+ */
+char** CDECL _get_initial_narrow_environment(void)
+{
+  return MSVCRT___initenv;
+}
+
+/*********************************************************************
+ *		_configure_narrow_argv (UCRTBASE.@)
+ */
+int CDECL _configure_narrow_argv(int mode)
+{
+  TRACE("(%d)\n", mode);
+  return 0;
+}
+
+/*********************************************************************
+ *		_initialize_narrow_environment (UCRTBASE.@)
+ */
+int CDECL _initialize_narrow_environment(void)
+{
+  TRACE("\n");
+  return 0;
+}
+
+/*********************************************************************
+ *		_get_initial_wide_environment (UCRTBASE.@)
+ */
+MSVCRT_wchar_t** CDECL _get_initial_wide_environment(void)
+{
+  return MSVCRT___winitenv;
+}
+
+/*********************************************************************
+ *		_configure_wide_argv (UCRTBASE.@)
+ */
+int CDECL _configure_wide_argv(int mode)
+{
+  FIXME("(%d) stub\n", mode);
+  return 0;
+}
+
+/*********************************************************************
+ *		_initialize_wide_environment (UCRTBASE.@)
+ */
+int CDECL _initialize_wide_environment(void)
+{
+  FIXME("stub\n");
+  return 0;
+}
+
+/*********************************************************************
+ *		_get_narrow_winmain_command_line (UCRTBASE.@)
+ */
+char* CDECL _get_narrow_winmain_command_line(void)
+{
+  static char *narrow_command_line;
+  char *s;
+
+  if (narrow_command_line)
+      return narrow_command_line;
+
+  s = GetCommandLineA();
+  while (*s && *s != ' ' && *s != '\t')
+  {
+      if (*s++ == '"')
+      {
+          while (*s && *s++ != '"')
+              ;
+      }
+  }
+
+  while (*s == ' ' || *s == '\t')
+      s++;
+
+  return narrow_command_line = s;
+}
+
+/*********************************************************************
+ *		_get_wide_winmain_command_line (UCRTBASE.@)
+ */
+MSVCRT_wchar_t* CDECL _get_wide_winmain_command_line(void)
+{
+  static MSVCRT_wchar_t *wide_command_line;
+  MSVCRT_wchar_t *s;
+
+  if (wide_command_line)
+      return wide_command_line;
+
+  s = GetCommandLineW();
+  while (*s && *s != ' ' && *s != '\t')
+  {
+      if (*s++ == '"')
+      {
+          while (*s && *s++ != '"')
+              ;
+      }
+  }
+
+  while (*s == ' ' || *s == '\t')
+      s++;
+
+  return wide_command_line = s;
+}

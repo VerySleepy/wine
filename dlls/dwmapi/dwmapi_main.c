@@ -22,8 +22,6 @@
 #include "config.h"
 #include <stdarg.h>
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #define COBJMACROS
 #include "windef.h"
 #include "winbase.h"
@@ -128,7 +126,7 @@ HRESULT WINAPI DwmSetWindowAttribute(HWND hwnd, DWORD attributenum, LPCVOID attr
 
     if (!once++) FIXME("(%p, %x, %p, %x) stub\n", hwnd, attributenum, attribute, size);
 
-    return E_NOTIMPL;
+    return S_OK;
 }
 
 /**********************************************************************
@@ -252,3 +250,21 @@ HRESULT WINAPI DwmDetachMilContent(HWND hwnd)
     FIXME("(%p) stub\n", hwnd);
     return E_NOTIMPL;
 }
+
+/**********************************************************************
+ *           DwmUpdateThumbnailProperties         (DWMAPI.@)
+ */
+HRESULT WINAPI DwmUpdateThumbnailProperties(HTHUMBNAIL thumbnail, const DWM_THUMBNAIL_PROPERTIES *props)
+{
+    FIXME("(%p, %p) stub\n", thumbnail, props);
+    return E_NOTIMPL;
+}
+
+/**********************************************************************
+ *           DwmSetPresentParameters         (DWMAPI.@)
+ */
+HRESULT WINAPI DwmSetPresentParameters(HWND hwnd, DWM_PRESENT_PARAMETERS *params)
+{
+    FIXME("(%p %p) stub\n", hwnd, params);
+    return S_OK;
+};

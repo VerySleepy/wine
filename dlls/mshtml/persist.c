@@ -22,8 +22,6 @@
 #include <stdio.h>
 
 #define COBJMACROS
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "windef.h"
 #include "winbase.h"
@@ -130,8 +128,12 @@ void set_current_mon(HTMLOuterWindow *This, IMoniker *mon, DWORD flags)
     HRESULT hres;
 
     if(This->mon) {
-        if(This->doc_obj && !(flags & (BINDING_REPLACE|BINDING_REFRESH)))
-            notify_travellog_update(This->doc_obj);
+        if(This->doc_obj && !(flags & (BINDING_REPLACE|BINDING_REFRESH))) {
+            if(This == This->doc_obj->basedoc.window)
+                notify_travellog_update(This->doc_obj);
+            else
+                TRACE("Skipping travellog update for frame navigation.\n");
+        }
         IMoniker_Release(This->mon);
         This->mon = NULL;
     }
@@ -160,7 +162,7 @@ void set_current_mon(HTMLOuterWindow *This, IMoniker *mon, DWORD flags)
         if(SUCCEEDED(hres)) {
             hres = create_uri(url, 0, &uri);
             if(FAILED(hres)) {
-                WARN("CrateUri failed: %08x\n", hres);
+                WARN("CreateUri failed: %08x\n", hres);
                 set_current_uri(This, NULL);
                 This->url = SysAllocString(url);
                 CoTaskMemFree(url);
@@ -446,11 +448,11 @@ static void notif_readystate(HTMLOuterWindow *window)
         call_property_onchanged(&window->doc_obj->basedoc.cp_container, DISPID_READYSTATE);
 
     fire_event(window->base.inner_window->doc, EVENTID_READYSTATECHANGE, FALSE,
-            window->base.inner_window->doc->node.nsnode, NULL, NULL);
+            &window->base.inner_window->doc->node, NULL, NULL);
 
     if(window->frame_element)
         fire_event(window->frame_element->element.node.doc, EVENTID_READYSTATECHANGE,
-                   TRUE, window->frame_element->element.node.nsnode, NULL, NULL);
+                   TRUE, &window->frame_element->element.node, NULL, NULL);
 }
 
 typedef struct {
@@ -874,7 +876,7 @@ static HRESULT WINAPI PersistStreamInit_IsDirty(IPersistStreamInit *iface)
     return S_FALSE;
 }
 
-static HRESULT WINAPI PersistStreamInit_Load(IPersistStreamInit *iface, LPSTREAM pStm)
+static HRESULT WINAPI PersistStreamInit_Load(IPersistStreamInit *iface, IStream *pStm)
 {
     HTMLDocument *This = impl_from_IPersistStreamInit(iface);
     IMoniker *mon;
@@ -898,7 +900,7 @@ static HRESULT WINAPI PersistStreamInit_Load(IPersistStreamInit *iface, LPSTREAM
     return hres;
 }
 
-static HRESULT WINAPI PersistStreamInit_Save(IPersistStreamInit *iface, LPSTREAM pStm,
+static HRESULT WINAPI PersistStreamInit_Save(IPersistStreamInit *iface, IStream *pStm,
                                              BOOL fClearDirty)
 {
     HTMLDocument *This = impl_from_IPersistStreamInit(iface);

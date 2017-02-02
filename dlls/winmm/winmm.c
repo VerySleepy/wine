@@ -44,7 +44,7 @@
 #include <string.h>
 
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
+
 #include "windef.h"
 #include "winbase.h"
 #include "mmsystem.h"
@@ -79,7 +79,7 @@ static	BOOL	WINMM_CreateIData(HINSTANCE hInstDLL)
 {
     hWinMM32Instance = hInstDLL;
     psLastEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
-    return TRUE;
+    return psLastEvent != NULL;
 }
 
 /******************************************************************
@@ -137,9 +137,10 @@ BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID fImpLoad)
     case DLL_PROCESS_ATTACH:
         DisableThreadLibraryCalls(hInstDLL);
 
-	if (!WINMM_CreateIData(hInstDLL))
-	    return FALSE;
-	break;
+        if (!WINMM_CreateIData(hInstDLL))
+            return FALSE;
+
+        break;
     case DLL_PROCESS_DETACH:
         if(fImpLoad)
             break;
@@ -229,6 +230,7 @@ UINT WINAPI auxGetDevCapsA(UINT_PTR uDeviceID, LPAUXCAPSA lpCaps, UINT uSize)
 	WideCharToMultiByte( CP_ACP, 0, acW.szPname, -1, acA.szPname,
                              sizeof(acA.szPname), NULL, NULL );
 	acA.wTechnology    = acW.wTechnology;
+	acA.wReserved1     = acW.wReserved1;
 	acA.dwSupport      = acW.dwSupport;
 	memcpy(lpCaps, &acA, min(uSize, sizeof(acA)));
     }

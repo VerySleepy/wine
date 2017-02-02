@@ -19,6 +19,7 @@
  */
 
 #include "dmstyle_private.h"
+#include "dmobject.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dmstyle);
 WINE_DECLARE_DEBUG_CHANNEL(dmfile);
@@ -28,10 +29,8 @@ WINE_DECLARE_DEBUG_CHANNEL(dmfile);
  */
 typedef struct IDirectMusicStyle8Impl {
     IDirectMusicStyle8 IDirectMusicStyle8_iface;
-    const IDirectMusicObjectVtbl *ObjectVtbl;
-    const IPersistStreamVtbl *PersistStreamVtbl;
+    struct dmobject dmobj;
     LONG ref;
-    DMUS_OBJECTDESC *pDesc;
     DMUS_IO_STYLE style;
     struct list Motifs;
     struct list Bands;
@@ -56,9 +55,9 @@ static HRESULT WINAPI IDirectMusicStyle8Impl_QueryInterface(IDirectMusicStyle8 *
             IsEqualIID(riid, &IID_IDirectMusicStyle8))
         *ret_iface = iface;
     else if (IsEqualIID(riid, &IID_IDirectMusicObject))
-        *ret_iface = &This->ObjectVtbl;
+        *ret_iface = &This->dmobj.IDirectMusicObject_iface;
     else if (IsEqualIID(riid, &IID_IPersistStream))
-        *ret_iface = &This->PersistStreamVtbl;
+        *ret_iface = &This->dmobj.IPersistStream_iface;
     else {
         WARN("(%p, %s, %p): not found\n", This, debugstr_dmguid(riid), ret_iface);
         return E_NOINTERFACE;
@@ -86,7 +85,6 @@ static ULONG WINAPI IDirectMusicStyle8Impl_Release(IDirectMusicStyle8 *iface)
     TRACE("(%p) ref=%d\n", This, ref);
 
     if (!ref) {
-        HeapFree(GetProcessHeap(), 0, This->pDesc);
         HeapFree(GetProcessHeap(), 0, This);
         DMSTYLE_UnlockModule();
     }
@@ -209,65 +207,15 @@ static const IDirectMusicStyle8Vtbl dmstyle8_vtbl = {
 };
 
 /* IDirectMusicStyle8Impl IDirectMusicObject part: */
-static HRESULT WINAPI IDirectMusicStyle8Impl_IDirectMusicObject_QueryInterface (LPDIRECTMUSICOBJECT iface, REFIID riid, LPVOID *ppobj) {
-	ICOM_THIS_MULTI(IDirectMusicStyle8Impl, ObjectVtbl, iface);
-        return IDirectMusicStyle8_QueryInterface(&This->IDirectMusicStyle8_iface, riid, ppobj);
+static inline IDirectMusicStyle8Impl *impl_from_IDirectMusicObject(IDirectMusicObject *iface)
+{
+    return CONTAINING_RECORD(iface, IDirectMusicStyle8Impl, dmobj.IDirectMusicObject_iface);
 }
 
-static ULONG WINAPI IDirectMusicStyle8Impl_IDirectMusicObject_AddRef (LPDIRECTMUSICOBJECT iface) {
-	ICOM_THIS_MULTI(IDirectMusicStyle8Impl, ObjectVtbl, iface);
-        return IDirectMusicStyle8_AddRef(&This->IDirectMusicStyle8_iface);
-}
-
-static ULONG WINAPI IDirectMusicStyle8Impl_IDirectMusicObject_Release (LPDIRECTMUSICOBJECT iface) {
-	ICOM_THIS_MULTI(IDirectMusicStyle8Impl, ObjectVtbl, iface);
-        return IDirectMusicStyle8_Release(&This->IDirectMusicStyle8_iface);
-}
-
-static HRESULT WINAPI IDirectMusicStyle8Impl_IDirectMusicObject_GetDescriptor (LPDIRECTMUSICOBJECT iface, LPDMUS_OBJECTDESC pDesc) {
-	ICOM_THIS_MULTI(IDirectMusicStyle8Impl, ObjectVtbl, iface);
-	TRACE("(%p, %p)\n", This, pDesc);
-	/* I think we shouldn't return pointer here since then values can be changed; it'd be a mess */
-	memcpy (pDesc, This->pDesc, This->pDesc->dwSize);
-	return S_OK;
-}
-
-static HRESULT WINAPI IDirectMusicStyle8Impl_IDirectMusicObject_SetDescriptor (LPDIRECTMUSICOBJECT iface, LPDMUS_OBJECTDESC pDesc) {
-	ICOM_THIS_MULTI(IDirectMusicStyle8Impl, ObjectVtbl, iface);
-	TRACE("(%p, %p): setting descriptor:\n%s\n", This, pDesc, debugstr_DMUS_OBJECTDESC (pDesc));
-
-	/* According to MSDN, we should copy only given values, not whole struct */	
-	if (pDesc->dwValidData & DMUS_OBJ_OBJECT)
-		This->pDesc->guidObject = pDesc->guidObject;
-	if (pDesc->dwValidData & DMUS_OBJ_CLASS)
-		This->pDesc->guidClass = pDesc->guidClass;
-	if (pDesc->dwValidData & DMUS_OBJ_NAME)
-		lstrcpynW (This->pDesc->wszName, pDesc->wszName, DMUS_MAX_NAME);
-	if (pDesc->dwValidData & DMUS_OBJ_CATEGORY)
-		lstrcpynW (This->pDesc->wszCategory, pDesc->wszCategory, DMUS_MAX_CATEGORY);
-	if (pDesc->dwValidData & DMUS_OBJ_FILENAME)
-		lstrcpynW (This->pDesc->wszFileName, pDesc->wszFileName, DMUS_MAX_FILENAME);
-	if (pDesc->dwValidData & DMUS_OBJ_VERSION)
-		This->pDesc->vVersion = pDesc->vVersion;
-	if (pDesc->dwValidData & DMUS_OBJ_DATE)
-		This->pDesc->ftDate = pDesc->ftDate;
-	if (pDesc->dwValidData & DMUS_OBJ_MEMORY) {
-		This->pDesc->llMemLength = pDesc->llMemLength;
-		memcpy (This->pDesc->pbMemData, pDesc->pbMemData, pDesc->llMemLength);
-	}
-	if (pDesc->dwValidData & DMUS_OBJ_STREAM) {
-		/* according to MSDN, we copy the stream */
-		IStream_Clone (pDesc->pStream, &This->pDesc->pStream);	
-	}
-	
-	/* add new flags */
-	This->pDesc->dwValidData |= pDesc->dwValidData;
-
-	return S_OK;
-}
-
-static HRESULT WINAPI IDirectMusicStyle8Impl_IDirectMusicObject_ParseDescriptor (LPDIRECTMUSICOBJECT iface, LPSTREAM pStream, LPDMUS_OBJECTDESC pDesc) {
-	ICOM_THIS_MULTI(IDirectMusicStyle8Impl, ObjectVtbl, iface);
+static HRESULT WINAPI IDirectMusicObjectImpl_ParseDescriptor(IDirectMusicObject *iface,
+        IStream *pStream, DMUS_OBJECTDESC *pDesc)
+{
+        IDirectMusicStyle8Impl *This = impl_from_IDirectMusicObject(iface);
 	DMUS_PRIVATE_CHUNK Chunk;
 	DWORD StreamSize, StreamCount, ListSize[1], ListCount[1];
 	LARGE_INTEGER liMove; /* used when skipping chunks */
@@ -414,46 +362,23 @@ static HRESULT WINAPI IDirectMusicStyle8Impl_IDirectMusicObject_ParseDescriptor 
 	return S_OK;
 }
 
-static const IDirectMusicObjectVtbl DirectMusicStyle8_Object_Vtbl = {
-  IDirectMusicStyle8Impl_IDirectMusicObject_QueryInterface,
-  IDirectMusicStyle8Impl_IDirectMusicObject_AddRef,
-  IDirectMusicStyle8Impl_IDirectMusicObject_Release,
-  IDirectMusicStyle8Impl_IDirectMusicObject_GetDescriptor,
-  IDirectMusicStyle8Impl_IDirectMusicObject_SetDescriptor,
-  IDirectMusicStyle8Impl_IDirectMusicObject_ParseDescriptor
+static const IDirectMusicObjectVtbl dmobject_vtbl = {
+    dmobj_IDirectMusicObject_QueryInterface,
+    dmobj_IDirectMusicObject_AddRef,
+    dmobj_IDirectMusicObject_Release,
+    dmobj_IDirectMusicObject_GetDescriptor,
+    dmobj_IDirectMusicObject_SetDescriptor,
+    IDirectMusicObjectImpl_ParseDescriptor
 };
 
 /* IDirectMusicStyle8Impl IPersistStream part: */
-static HRESULT WINAPI IDirectMusicStyle8Impl_IPersistStream_QueryInterface (LPPERSISTSTREAM iface, REFIID riid, LPVOID *ppobj) {
-  ICOM_THIS_MULTI(IDirectMusicStyle8Impl, PersistStreamVtbl, iface);
-  return IDirectMusicStyle8_QueryInterface(&This->IDirectMusicStyle8_iface, riid, ppobj);
+static inline IDirectMusicStyle8Impl *impl_from_IPersistStream(IPersistStream *iface)
+{
+    return CONTAINING_RECORD(iface, IDirectMusicStyle8Impl, dmobj.IPersistStream_iface);
 }
 
-static ULONG WINAPI IDirectMusicStyle8Impl_IPersistStream_AddRef (LPPERSISTSTREAM iface) {
-  ICOM_THIS_MULTI(IDirectMusicStyle8Impl, PersistStreamVtbl, iface);
-  return IDirectMusicStyle8_AddRef(&This->IDirectMusicStyle8_iface);
-}
-
-static ULONG WINAPI IDirectMusicStyle8Impl_IPersistStream_Release (LPPERSISTSTREAM iface) {
-  ICOM_THIS_MULTI(IDirectMusicStyle8Impl, PersistStreamVtbl, iface);
-  return IDirectMusicStyle8_Release(&This->IDirectMusicStyle8_iface);
-}
-
-static HRESULT WINAPI IDirectMusicStyle8Impl_IPersistStream_GetClassID (LPPERSISTSTREAM iface, CLSID* pClassID) {
-  ICOM_THIS_MULTI(IDirectMusicStyle8Impl, PersistStreamVtbl, iface);
-  TRACE("(%p, %p)\n", This, pClassID);
-  *pClassID = CLSID_DirectMusicStyle;
-  return S_OK;
-}
-
-static HRESULT WINAPI IDirectMusicStyle8Impl_IPersistStream_IsDirty (LPPERSISTSTREAM iface) {
-  ICOM_THIS_MULTI(IDirectMusicStyle8Impl, PersistStreamVtbl, iface);
-  FIXME("(%p): stub, always S_FALSE\n", This);
-  return S_FALSE;
-}
-
-static HRESULT IDirectMusicStyle8Impl_IPersistStream_LoadBand (LPPERSISTSTREAM iface, IStream* pClonedStream, IDirectMusicBand** ppBand) {
-
+static HRESULT load_band(IStream *pClonedStream, IDirectMusicBand **ppBand)
+{
   HRESULT hr = E_FAIL;
   IPersistStream* pPersistStream = NULL;
   
@@ -481,8 +406,9 @@ static HRESULT IDirectMusicStyle8Impl_IPersistStream_LoadBand (LPPERSISTSTREAM i
   return S_OK;
 }
 
-static HRESULT IDirectMusicStyle8Impl_IPersistStream_ParsePartRefList (LPPERSISTSTREAM iface, DMUS_PRIVATE_CHUNK* pChunk, IStream* pStm, LPDMUS_PRIVATE_STYLE_MOTIF pNewMotif) {
-  /*ICOM_THIS_MULTI(IDirectMusicStyle8Impl, PersistStreamVtbl, iface);*/
+static HRESULT parse_part_ref_list(DMUS_PRIVATE_CHUNK *pChunk, IStream *pStm,
+        DMUS_PRIVATE_STYLE_MOTIF *pNewMotif)
+{
   HRESULT hr = E_FAIL;
   DMUS_PRIVATE_CHUNK Chunk;
   DWORD ListSize[3], ListCount[3];
@@ -514,7 +440,7 @@ static HRESULT IDirectMusicStyle8Impl_IPersistStream_ParsePartRefList (LPPERSIST
       hr = IStream_Read (pStm, &pNewItem->part_ref, sizeof(DMUS_IO_PARTREF), NULL);
       /*TRACE_(dmfile)(" - sizeof %lu\n",  sizeof(DMUS_IO_PARTREF));*/
       list_add_tail (&pNewMotif->Items, &pNewItem->entry);      
-      DM_STRUCT_INIT(&pNewItem->desc);
+      pNewItem->desc.dwSize = sizeof(pNewItem->desc);
       break;
     }    
     case FOURCC_LIST: {
@@ -573,9 +499,8 @@ static HRESULT IDirectMusicStyle8Impl_IPersistStream_ParsePartRefList (LPPERSIST
   return S_OK;
 }
 
-static HRESULT IDirectMusicStyle8Impl_IPersistStream_ParsePartList (LPPERSISTSTREAM iface, DMUS_PRIVATE_CHUNK* pChunk, IStream* pStm) {
-
-  /*ICOM_THIS_MULTI(IDirectMusicStyle8Impl, PersistStreamVtbl, iface);*/
+static HRESULT parse_part_list(DMUS_PRIVATE_CHUNK *pChunk, IStream *pStm)
+{
   HRESULT hr = E_FAIL;
   DMUS_PRIVATE_CHUNK Chunk;
   DWORD ListSize[3], ListCount[3];
@@ -706,19 +631,16 @@ static HRESULT IDirectMusicStyle8Impl_IPersistStream_ParsePartList (LPPERSISTSTR
   return S_OK;
 }
 
-static HRESULT IDirectMusicStyle8Impl_IPersistStream_ParsePatternList (LPPERSISTSTREAM iface, DMUS_PRIVATE_CHUNK* pChunk, IStream* pStm) {
-
-  ICOM_THIS_MULTI(IDirectMusicStyle8Impl, PersistStreamVtbl, iface);
+static HRESULT parse_pattern_list(IDirectMusicStyle8Impl *This, DMUS_PRIVATE_CHUNK *pChunk,
+        IStream *pStm)
+{
   HRESULT hr = E_FAIL;
   DMUS_PRIVATE_CHUNK Chunk;
   DWORD ListSize[3], ListCount[3];
   LARGE_INTEGER liMove; /* used when skipping chunks */
 
-  DMUS_OBJECTDESC desc;
   IDirectMusicBand* pBand = NULL;
   LPDMUS_PRIVATE_STYLE_MOTIF pNewMotif = NULL;
-
-  DM_STRUCT_INIT(&desc);
 
   if (pChunk->fccID != DMUS_FOURCC_PATTERN_LIST) {
     ERR_(dmfile)(": %s chunk should be a PATTERN list\n", debugstr_fourcc (pChunk->fccID));
@@ -747,7 +669,7 @@ static HRESULT IDirectMusicStyle8Impl_IPersistStream_ParsePatternList (LPPERSIST
       /** TODO trace pattern */
 
       /** reset all data, as a new pattern begin */
-      DM_STRUCT_INIT(&pNewMotif->desc);
+      pNewMotif->desc.dwSize = sizeof(pNewMotif->desc);
       list_init (&pNewMotif->Items);
       break;
     }
@@ -785,8 +707,8 @@ static HRESULT IDirectMusicStyle8Impl_IPersistStream_ParsePatternList (LPPERSIST
 	liMove.QuadPart = 0;
 	liMove.QuadPart -= sizeof(FOURCC) + (sizeof(FOURCC)+sizeof(DWORD));
 	IStream_Seek (pClonedStream, liMove, STREAM_SEEK_CUR, NULL);
-	
-	hr = IDirectMusicStyle8Impl_IPersistStream_LoadBand (iface, pClonedStream, &pBand);
+
+        hr = load_band(pClonedStream, &pBand);
 	if (FAILED(hr)) {
 	  ERR(": could not load track\n");
 	  return hr;
@@ -845,7 +767,7 @@ static HRESULT IDirectMusicStyle8Impl_IPersistStream_ParsePatternList (LPPERSIST
       }
       case DMUS_FOURCC_PARTREF_LIST: {
 	TRACE_(dmfile)(": PartRef list\n");
-	hr = IDirectMusicStyle8Impl_IPersistStream_ParsePartRefList (iface, &Chunk, pStm, pNewMotif);
+        hr = parse_part_ref_list(&Chunk, pStm, pNewMotif);
 	if (FAILED(hr)) return hr;
 	break;
       }
@@ -871,9 +793,9 @@ static HRESULT IDirectMusicStyle8Impl_IPersistStream_ParsePatternList (LPPERSIST
   return S_OK;
 }
 
-static HRESULT IDirectMusicStyle8Impl_IPersistStream_ParseStyleForm (LPPERSISTSTREAM iface, DMUS_PRIVATE_CHUNK* pChunk, IStream* pStm) {
-  ICOM_THIS_MULTI(IDirectMusicStyle8Impl, PersistStreamVtbl, iface);
-
+static HRESULT parse_style_form(IDirectMusicStyle8Impl *This, DMUS_PRIVATE_CHUNK *pChunk,
+        IStream *pStm)
+{
   HRESULT hr = E_FAIL;
   DMUS_PRIVATE_CHUNK Chunk;
   DWORD StreamSize, StreamCount, ListSize[3], ListCount[3];
@@ -893,8 +815,8 @@ static HRESULT IDirectMusicStyle8Impl_IPersistStream_ParseStyleForm (LPPERSISTST
     IStream_Read (pStm, &Chunk, sizeof(FOURCC)+sizeof(DWORD), NULL);
     StreamCount += sizeof(FOURCC) + sizeof(DWORD) + Chunk.dwSize;
     TRACE_(dmfile)(": %s chunk (size = %d)", debugstr_fourcc (Chunk.fccID), Chunk.dwSize);
-    
-    hr = IDirectMusicUtils_IPersistStream_ParseDescGeneric(&Chunk, pStm, This->pDesc);
+
+    hr = IDirectMusicUtils_IPersistStream_ParseDescGeneric(&Chunk, pStm, &This->dmobj.desc);
     if (FAILED(hr)) return hr;
 
     if (hr == S_FALSE) {
@@ -926,8 +848,8 @@ static HRESULT IDirectMusicStyle8Impl_IPersistStream_ParseStyleForm (LPPERSISTST
 	  liMove.QuadPart = 0;
 	  liMove.QuadPart -= sizeof(FOURCC) + (sizeof(FOURCC)+sizeof(DWORD));
 	  IStream_Seek (pClonedStream, liMove, STREAM_SEEK_CUR, NULL);
-	  
-	  hr = IDirectMusicStyle8Impl_IPersistStream_LoadBand (iface, pClonedStream, &pBand);
+
+          hr = load_band(pClonedStream, &pBand);
 	  if (FAILED(hr)) {
 	    ERR(": could not load track\n");
 	    return hr;
@@ -972,8 +894,8 @@ static HRESULT IDirectMusicStyle8Impl_IPersistStream_ParseStyleForm (LPPERSISTST
 	    IStream_Read (pStm, &Chunk, sizeof(FOURCC)+sizeof(DWORD), NULL);
 	    ListCount[0] += sizeof(FOURCC) + sizeof(DWORD) + Chunk.dwSize;
             TRACE_(dmfile)(": %s chunk (size = %d)", debugstr_fourcc (Chunk.fccID), Chunk.dwSize);
-	    
-	    hr = IDirectMusicUtils_IPersistStream_ParseUNFOGeneric(&Chunk, pStm, This->pDesc);
+
+            hr = IDirectMusicUtils_IPersistStream_ParseUNFOGeneric(&Chunk, pStm, &This->dmobj.desc);
 	    if (FAILED(hr)) return hr;
 	    
 	    if (hr == S_FALSE) {
@@ -992,13 +914,13 @@ static HRESULT IDirectMusicStyle8Impl_IPersistStream_ParseStyleForm (LPPERSISTST
 	}
 	case DMUS_FOURCC_PART_LIST: {
 	  TRACE_(dmfile)(": PART list\n");
-	  hr = IDirectMusicStyle8Impl_IPersistStream_ParsePartList (iface, &Chunk, pStm);
+          hr = parse_part_list(&Chunk, pStm);
 	  if (FAILED(hr)) return hr;
 	  break;
 	}
 	case  DMUS_FOURCC_PATTERN_LIST: {
 	  TRACE_(dmfile)(": PATTERN list\n");
-	  hr = IDirectMusicStyle8Impl_IPersistStream_ParsePatternList (iface, &Chunk, pStm);
+          hr = parse_pattern_list(This, &Chunk, pStm);
 	  if (FAILED(hr)) return hr;
 	  break;
 	}
@@ -1025,9 +947,9 @@ static HRESULT IDirectMusicStyle8Impl_IPersistStream_ParseStyleForm (LPPERSISTST
   return S_OK;
 }
 
-static HRESULT WINAPI IDirectMusicStyle8Impl_IPersistStream_Load (LPPERSISTSTREAM iface, IStream* pStm) {
-  ICOM_THIS_MULTI(IDirectMusicStyle8Impl, PersistStreamVtbl, iface);
-  
+static HRESULT WINAPI IPersistStreamImpl_Load(IPersistStream *iface, IStream *pStm)
+{
+  IDirectMusicStyle8Impl *This = impl_from_IPersistStream(iface);
   DMUS_PRIVATE_CHUNK Chunk;
   LARGE_INTEGER liMove; /* used when skipping chunks */
   HRESULT hr;
@@ -1043,7 +965,7 @@ static HRESULT WINAPI IDirectMusicStyle8Impl_IPersistStream_Load (LPPERSISTSTREA
     switch (Chunk.fccID) {
     case DMUS_FOURCC_STYLE_FORM: {
       TRACE_(dmfile)(": Style form\n");
-      hr = IDirectMusicStyle8Impl_IPersistStream_ParseStyleForm (iface, &Chunk, pStm);
+      hr = parse_style_form(This, &Chunk, pStm);
       if (FAILED(hr)) return hr;
       break;
     }
@@ -1068,28 +990,15 @@ static HRESULT WINAPI IDirectMusicStyle8Impl_IPersistStream_Load (LPPERSISTSTREA
   return S_OK;
 }
 
-static HRESULT WINAPI IDirectMusicStyle8Impl_IPersistStream_Save (LPPERSISTSTREAM iface, IStream* pStm, BOOL fClearDirty) {
-  ICOM_THIS_MULTI(IDirectMusicStyle8Impl, PersistStreamVtbl, iface);
-  FIXME("(%p): Saving not implemented yet\n", This);
-  return E_NOTIMPL;
-}
-
-static HRESULT WINAPI IDirectMusicStyle8Impl_IPersistStream_GetSizeMax (LPPERSISTSTREAM iface, ULARGE_INTEGER* pcbSize) {
-  ICOM_THIS_MULTI(IDirectMusicStyle8Impl, PersistStreamVtbl, iface);
-  FIXME("(%p, %p): stub\n", This, pcbSize);
-  return E_NOTIMPL;
-
-}
-
-static const IPersistStreamVtbl DirectMusicStyle8_PersistStream_Vtbl = {
-  IDirectMusicStyle8Impl_IPersistStream_QueryInterface,
-  IDirectMusicStyle8Impl_IPersistStream_AddRef,
-  IDirectMusicStyle8Impl_IPersistStream_Release,
-  IDirectMusicStyle8Impl_IPersistStream_GetClassID,
-  IDirectMusicStyle8Impl_IPersistStream_IsDirty,
-  IDirectMusicStyle8Impl_IPersistStream_Load,
-  IDirectMusicStyle8Impl_IPersistStream_Save,
-  IDirectMusicStyle8Impl_IPersistStream_GetSizeMax
+static const IPersistStreamVtbl persiststream_vtbl = {
+    dmobj_IPersistStream_QueryInterface,
+    dmobj_IPersistStream_AddRef,
+    dmobj_IPersistStream_Release,
+    dmobj_IPersistStream_GetClassID,
+    unimpl_IPersistStream_IsDirty,
+    IPersistStreamImpl_Load,
+    unimpl_IPersistStream_Save,
+    unimpl_IPersistStream_GetSizeMax
 };
 
 /* for ClassFactory */
@@ -1104,13 +1013,10 @@ HRESULT WINAPI create_dmstyle(REFIID lpcGUID, void **ppobj)
     return E_OUTOFMEMORY;
   }
   obj->IDirectMusicStyle8_iface.lpVtbl = &dmstyle8_vtbl;
-  obj->ObjectVtbl = &DirectMusicStyle8_Object_Vtbl;
-  obj->PersistStreamVtbl = &DirectMusicStyle8_PersistStream_Vtbl;
-  obj->pDesc = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(DMUS_OBJECTDESC));
-  DM_STRUCT_INIT(obj->pDesc);
-  obj->pDesc->dwValidData |= DMUS_OBJ_CLASS;
-  obj->pDesc->guidClass = CLSID_DirectMusicStyle;
   obj->ref = 1;
+  dmobject_init(&obj->dmobj, &CLSID_DirectMusicStyle, (IUnknown *)&obj->IDirectMusicStyle8_iface);
+  obj->dmobj.IDirectMusicObject_iface.lpVtbl = &dmobject_vtbl;
+  obj->dmobj.IPersistStream_iface.lpVtbl = &persiststream_vtbl;
   list_init (&obj->Bands);
   list_init (&obj->Motifs);
 

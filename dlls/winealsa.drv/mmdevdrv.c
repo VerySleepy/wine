@@ -923,6 +923,7 @@ static ULONG WINAPI AudioClient_Release(IAudioClient *iface)
         HeapFree(GetProcessHeap(), 0, This->vols);
         HeapFree(GetProcessHeap(), 0, This->local_buffer);
         HeapFree(GetProcessHeap(), 0, This->remapping_buf);
+        HeapFree(GetProcessHeap(), 0, This->silence_buf);
         HeapFree(GetProcessHeap(), 0, This->tmp_buffer);
         HeapFree(GetProcessHeap(), 0, This->hw_params);
         CoTaskMemFree(This->fmt);
@@ -1306,7 +1307,7 @@ static HRESULT WINAPI AudioClient_Initialize(IAudioClient *iface,
 
     dump_fmt(fmt);
 
-    This->need_remapping = map_channels(This, fmt, &This->alsa_channels, This->alsa_channel_map) == S_OK ? TRUE : FALSE;
+    This->need_remapping = map_channels(This, fmt, &This->alsa_channels, This->alsa_channel_map) == S_OK;
 
     if((err = snd_pcm_hw_params_any(This->pcm_handle, This->hw_params)) < 0){
         WARN("Unable to get hw_params: %d (%s)\n", err, snd_strerror(err));
@@ -1827,7 +1828,7 @@ static HRESULT WINAPI AudioClient_GetMixFormat(IAudioClient *iface,
     }
 
     if(max_channels > 6)
-        fmt->Format.nChannels = 6;
+        fmt->Format.nChannels = 2;
     else
         fmt->Format.nChannels = max_channels;
 
@@ -3389,7 +3390,7 @@ static HRESULT WINAPI SimpleAudioVolume_SetMute(ISimpleAudioVolume *iface,
     AudioSessionWrapper *This = impl_from_ISimpleAudioVolume(iface);
     AudioSession *session = This->session;
 
-    TRACE("(%p)->(%u, %p)\n", session, mute, context);
+    TRACE("(%p)->(%u, %s)\n", session, mute, debugstr_guid(context));
 
     if(context)
         FIXME("Notifications not supported yet\n");
@@ -4067,7 +4068,9 @@ HRESULT WINAPI AUDDRV_GetPropValue(GUID *guid, const PROPERTYKEY *prop, PROPVARI
 
         out->vt = VT_UI4;
 
-        if (num_speakers >= 6)
+        if (num_speakers > 6)
+            out->u.ulVal = KSAUDIO_SPEAKER_STEREO;
+        else if (num_speakers == 6)
             out->u.ulVal = KSAUDIO_SPEAKER_5POINT1;
         else if (num_speakers >= 4)
             out->u.ulVal = KSAUDIO_SPEAKER_QUAD;

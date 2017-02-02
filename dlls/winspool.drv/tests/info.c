@@ -672,6 +672,50 @@ static void test_ConfigurePort(void)
 
 /* ########################### */
 
+static void test_ClosePrinter(void)
+{
+    HANDLE printer = 0;
+    BOOL res;
+
+    /* NULL is handled */
+    SetLastError(0xdeadbeef);
+    res = ClosePrinter(NULL);
+    ok(!res && (GetLastError() == ERROR_INVALID_HANDLE),
+        "got %d with %d (expected FALSE with ERROR_INVALID_HANDLE)\n",
+        res, GetLastError());
+
+    /* A random value as HANDLE is handled */
+    SetLastError(0xdeadbeef);
+    res = ClosePrinter( (void *) -1);
+    if (is_spooler_deactivated(res, GetLastError())) return;
+    ok(!res && (GetLastError() == ERROR_INVALID_HANDLE),
+        "got %d with %d (expected FALSE with ERROR_INVALID_HANDLE)\n",
+         res, GetLastError());
+
+
+    /* Normal use (The Spooler service is needed) */
+    SetLastError(0xdeadbeef);
+    res = OpenPrinterA(default_printer, &printer, NULL);
+    if (is_spooler_deactivated(res, GetLastError())) return;
+    if (res)
+    {
+        SetLastError(0xdeadbeef);
+        res = ClosePrinter(printer);
+        ok(res, "got %d with %d (expected TRUE)\n", res, GetLastError());
+
+
+        /* double free is handled */
+        SetLastError(0xdeadbeef);
+        res = ClosePrinter(printer);
+        ok(!res && (GetLastError() == ERROR_INVALID_HANDLE),
+            "got %d with %d (expected FALSE with ERROR_INVALID_HANDLE)\n",
+            res, GetLastError());
+
+    }
+}
+
+/* ########################### */
+
 static void test_DeleteMonitor(void)
 {
     MONITOR_INFO_2A         mi2a;
@@ -721,8 +765,7 @@ static void test_DeleteMonitor(void)
     AddMonitorA(NULL, 2, (LPBYTE) &mi2a);
     SetLastError(MAGIC_DEAD);
     res = DeleteMonitorA(NULL, invalid_env, winetest);
-    ok( res ||
-        (!res && GetLastError() == ERROR_INVALID_ENVIRONMENT) /* Vista/W2K8 */,
+    ok( res || GetLastError() == ERROR_INVALID_ENVIRONMENT /* Vista/W2K8 */,
         "returned %d with %d\n", res, GetLastError());
 
     /* the monitor-name */
@@ -1012,7 +1055,7 @@ static void test_EnumMonitors(void)
         pcbNeeded = MAGIC_DEAD;
         pcReturned = MAGIC_DEAD;
         res = EnumMonitorsA(NULL, level, buffer, cbBuf, NULL, &pcReturned);
-        ok( res || (!res && (GetLastError() == RPC_X_NULL_REF_POINTER)) ,
+        ok( res || GetLastError() == RPC_X_NULL_REF_POINTER,
             "(%d) returned %d with %d (expected '!=0' or '0' with "
             "RPC_X_NULL_REF_POINTER)\n", level, res, GetLastError());
 
@@ -1020,7 +1063,7 @@ static void test_EnumMonitors(void)
         pcReturned = MAGIC_DEAD;
         SetLastError(MAGIC_DEAD);
         res = EnumMonitorsA(NULL, level, buffer, cbBuf, &pcbNeeded, NULL);
-        ok( res || (!res && (GetLastError() == RPC_X_NULL_REF_POINTER)) ,
+        ok( res || GetLastError() == RPC_X_NULL_REF_POINTER,
             "(%d) returned %d with %d (expected '!=0' or '0' with "
             "RPC_X_NULL_REF_POINTER)\n", level, res, GetLastError());
 
@@ -1230,7 +1273,7 @@ static void test_EnumPrinterDrivers(void)
         pcbNeeded = 0xdeadbeef;
         pcReturned = 0xdeadbeef;
         res = EnumPrinterDriversA(NULL, NULL, level, buffer, cbBuf, NULL, &pcReturned);
-        ok( res || (!res && (GetLastError() == RPC_X_NULL_REF_POINTER)) ,
+        ok( res || GetLastError() == RPC_X_NULL_REF_POINTER,
             "(%u) got %u with %u (expected '!=0' or '0' with "
             "RPC_X_NULL_REF_POINTER)\n", level, res, GetLastError());
 
@@ -1238,7 +1281,7 @@ static void test_EnumPrinterDrivers(void)
         pcReturned = 0xdeadbeef;
         SetLastError(0xdeadbeef);
         res = EnumPrinterDriversA(NULL, NULL, level, buffer, cbBuf, &pcbNeeded, NULL);
-        ok( res || (!res && (GetLastError() == RPC_X_NULL_REF_POINTER)) ,
+        ok( res || GetLastError() == RPC_X_NULL_REF_POINTER,
             "(%u) got %u with %u (expected '!=0' or '0' with "
             "RPC_X_NULL_REF_POINTER)\n", level, res, GetLastError());
 
@@ -1790,7 +1833,7 @@ static void test_OpenPrinter(void)
     SetLastError(MAGIC_DEAD);
     res = OpenPrinterA(NULL, &hprinter, NULL);
     if (is_spooler_deactivated(res, GetLastError())) return;
-    ok(res || (!res && GetLastError() == ERROR_INVALID_PARAMETER),
+    ok(res || GetLastError() == ERROR_INVALID_PARAMETER,
         "returned %d with %d (expected '!=0' or '0' with ERROR_INVALID_PARAMETER)\n",
         res, GetLastError());
     if(res) {
@@ -1824,7 +1867,7 @@ static void test_OpenPrinter(void)
         hprinter = (HANDLE) 0xdeadbeef;
         SetLastError(0xdeadbeef);
         res = OpenPrinterA(local_server, &hprinter, NULL);
-        ok(res || (!res && GetLastError() == ERROR_INVALID_PARAMETER),
+        ok(res || GetLastError() == ERROR_INVALID_PARAMETER,
             "returned %d with %d (expected '!=0' or '0' with ERROR_INVALID_PARAMETER)\n",
             res, GetLastError());
         if(res) ClosePrinter(hprinter);
@@ -1965,21 +2008,21 @@ static void test_SetDefaultPrinter(void)
     WriteProfileStringA("windows", "device", org_value);
     SetLastError(MAGIC_DEAD);
     res = pSetDefaultPrinterA("");
-    ok(res || (!res && (GetLastError() == ERROR_INVALID_PRINTER_NAME)),
+    ok(res || GetLastError() == ERROR_INVALID_PRINTER_NAME,
         "returned %d with %d (expected '!=0' or '0' with "
         "ERROR_INVALID_PRINTER_NAME)\n", res, GetLastError());
 
     WriteProfileStringA("windows", "device", org_value);
     SetLastError(MAGIC_DEAD);
     res = pSetDefaultPrinterA(NULL);
-    ok(res || (!res && (GetLastError() == ERROR_INVALID_PRINTER_NAME)),
+    ok(res || GetLastError() == ERROR_INVALID_PRINTER_NAME,
         "returned %d with %d (expected '!=0' or '0' with "
         "ERROR_INVALID_PRINTER_NAME)\n", res, GetLastError());
 
     WriteProfileStringA("windows", "device", org_value);
     SetLastError(MAGIC_DEAD);
     res = pSetDefaultPrinterA(default_printer);
-    ok(res || (!res && (GetLastError() == ERROR_INVALID_PRINTER_NAME)),
+    ok(res || GetLastError() == ERROR_INVALID_PRINTER_NAME,
         "returned %d with %d (expected '!=0' or '0' with "
         "ERROR_INVALID_PRINTER_NAME)\n", res, GetLastError());
 
@@ -2000,7 +2043,7 @@ static void test_SetDefaultPrinter(void)
         goto restore_old_printer;
 
     /* we get ERROR_INVALID_PRINTER_NAME when no printer is installed */
-    ok(res || (!res && (GetLastError() == ERROR_INVALID_PRINTER_NAME)),
+    ok(res || GetLastError() == ERROR_INVALID_PRINTER_NAME,
          "returned %d with %d (expected '!=0' or '0' with "
          "ERROR_INVALID_PRINTER_NAME)\n", res, GetLastError());
 
@@ -2008,14 +2051,14 @@ static void test_SetDefaultPrinter(void)
     SetLastError(MAGIC_DEAD);
     res = pSetDefaultPrinterA(NULL);
     /* we get ERROR_INVALID_PRINTER_NAME when no printer is installed */
-    ok(res || (!res && (GetLastError() == ERROR_INVALID_PRINTER_NAME)),
+    ok(res || GetLastError() == ERROR_INVALID_PRINTER_NAME,
         "returned %d with %d (expected '!=0' or '0' with "
         "ERROR_INVALID_PRINTER_NAME)\n", res, GetLastError());
 
     WriteProfileStringA("windows", "device", NULL);    
     SetLastError(MAGIC_DEAD);
     res = pSetDefaultPrinterA(default_printer);
-    ok(res || (!res && (GetLastError() == ERROR_INVALID_PRINTER_NAME)),
+    ok(res || GetLastError() == ERROR_INVALID_PRINTER_NAME,
         "returned %d with %d (expected '!=0' or '0' with "
         "ERROR_INVALID_PRINTER_NAME)\n", res, GetLastError());
 
@@ -3024,6 +3067,7 @@ START_TEST(info)
     test_AddPort();
     test_AddPortEx();
     test_ConfigurePort();
+    test_ClosePrinter();
     test_DeleteMonitor();
     test_DeletePort();
     test_DeviceCapabilities();
@@ -3038,7 +3082,9 @@ START_TEST(info)
     test_GetDefaultPrinter();
     test_GetPrinterDriverDirectory();
     test_GetPrintProcessorDirectory();
+    test_IsValidDevmodeW();
     test_OpenPrinter();
+    test_OpenPrinter_defaults();
     test_GetPrinter();
     test_GetPrinterData();
     test_GetPrinterDataEx();
@@ -3046,8 +3092,6 @@ START_TEST(info)
     test_SetDefaultPrinter();
     test_XcvDataW_MonitorUI();
     test_XcvDataW_PortIsValid();
-    test_IsValidDevmodeW();
-    test_OpenPrinter_defaults();
 
     /* Cleanup our temporary file */
     DeleteFileA(tempfileA);

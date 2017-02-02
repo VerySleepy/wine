@@ -378,6 +378,52 @@ BOOL WINAPI SetThreadStackGuarantee(PULONG stacksize)
     return TRUE;
 }
 
+/***********************************************************************
+ *              GetThreadGroupAffinity (KERNEL32.@)
+ */
+BOOL WINAPI GetThreadGroupAffinity( HANDLE thread, GROUP_AFFINITY *affinity )
+{
+    NTSTATUS status;
+
+    if (!affinity)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+
+    status = NtQueryInformationThread( thread, ThreadGroupInformation,
+                                       affinity, sizeof(*affinity), NULL );
+    if (status)
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+/***********************************************************************
+ *              SetThreadGroupAffinity (KERNEL32.@)
+ */
+BOOL WINAPI SetThreadGroupAffinity( HANDLE thread, const GROUP_AFFINITY *affinity_new,
+                                    GROUP_AFFINITY *affinity_old )
+{
+    NTSTATUS status;
+
+    if (affinity_old && !GetThreadGroupAffinity( thread, affinity_old ))
+        return FALSE;
+
+    status = NtSetInformationThread( thread, ThreadGroupInformation,
+                                     affinity_new, sizeof(*affinity_new) );
+    if (status)
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
 /**********************************************************************
  *           SetThreadAffinityMask   (KERNEL32.@)
  */
@@ -557,6 +603,35 @@ DWORD WINAPI GetThreadId(HANDLE Thread)
     return HandleToULong(tbi.ClientId.UniqueThread);
 }
 
+/**********************************************************************
+ * GetProcessIdOfThread [KERNEL32.@]
+ *
+ * Retrieve process identifier given thread belongs to.
+ *
+ * PARAMS
+ *  Thread [I] The thread identifier.
+ *
+ * RETURNS
+ *    Success: Process identifier
+ *    Failure: 0
+ */
+DWORD WINAPI GetProcessIdOfThread(HANDLE Thread)
+{
+    THREAD_BASIC_INFORMATION tbi;
+    NTSTATUS status;
+
+    TRACE("(%p)\n", Thread);
+
+    status = NtQueryInformationThread(Thread, ThreadBasicInformation, &tbi,
+                                      sizeof(tbi), NULL);
+    if (status)
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        return 0;
+    }
+
+    return HandleToULong(tbi.ClientId.UniqueProcess);
+}
 
 /***********************************************************************
  * GetCurrentThread [KERNEL32.@]  Gets pseudohandle for current thread
@@ -607,7 +682,41 @@ __ASM_STDCALL_FUNC( GetCurrentThreadId, 0, ".byte 0x64\n\tmovl 0x24,%eax\n\tret"
 /* HANDLE WINAPI GetProcessHeap(void) */
 __ASM_STDCALL_FUNC( GetProcessHeap, 0, ".byte 0x64\n\tmovl 0x30,%eax\n\tmovl 0x18(%eax),%eax\n\tret");
 
-#elif defined(__x86_64__) && !defined(__APPLE__)
+#elif defined(__x86_64__)
+
+#ifdef __APPLE__
+
+/***********************************************************************
+ *		SetLastError (KERNEL32.@)
+ */
+/* void WINAPI SetLastError( DWORD error ); */
+__ASM_STDCALL_FUNC( SetLastError, 8, ".byte 0x65\n\tmovq 0x30,%rax\n\tmovl %ecx,0x68(%rax)\n\tret" );
+
+/***********************************************************************
+ *		GetLastError (KERNEL32.@)
+ */
+/* DWORD WINAPI GetLastError(void); */
+__ASM_STDCALL_FUNC( GetLastError, 0, ".byte 0x65\n\tmovq 0x30,%rax\n\tmovl 0x68(%rax),%eax\n\tret" );
+
+/***********************************************************************
+ *		GetCurrentProcessId (KERNEL32.@)
+ */
+/* DWORD WINAPI GetCurrentProcessId(void) */
+__ASM_STDCALL_FUNC( GetCurrentProcessId, 0, ".byte 0x65\n\tmovq 0x30,%rax\n\tmovl 0x40(%rax),%eax\n\tret" );
+
+/***********************************************************************
+ *		GetCurrentThreadId (KERNEL32.@)
+ */
+/* DWORD WINAPI GetCurrentThreadId(void) */
+__ASM_STDCALL_FUNC( GetCurrentThreadId, 0, ".byte 0x65\n\tmovq 0x30,%rax\n\tmovl 0x48(%rax),%eax\n\tret" );
+
+/***********************************************************************
+ *		GetProcessHeap (KERNEL32.@)
+ */
+/* HANDLE WINAPI GetProcessHeap(void) */
+__ASM_STDCALL_FUNC( GetProcessHeap, 0, ".byte 0x65\n\tmovq 0x30,%rax\n\tmovq 0x60(%rax),%rax\n\tmovq 0x30(%rax),%rax\n\tret");
+
+#else
 
 /***********************************************************************
  *		SetLastError (KERNEL32.@)
@@ -638,6 +747,8 @@ __ASM_STDCALL_FUNC( GetCurrentThreadId, 0, ".byte 0x65\n\tmovl 0x48,%eax\n\tret"
  */
 /* HANDLE WINAPI GetProcessHeap(void) */
 __ASM_STDCALL_FUNC( GetProcessHeap, 0, ".byte 0x65\n\tmovq 0x60,%rax\n\tmovq 0x30(%rax),%rax\n\tret");
+
+#endif /* __APPLE__ */
 
 #else  /* __x86_64__ */
 
@@ -813,21 +924,184 @@ BOOL WINAPI GetThreadIOPendingFlag( HANDLE thread, PBOOL io_pending )
 }
 
 /***********************************************************************
- *              SetThreadPreferredUILanguages (KERNEL32.@)
+ *              CallbackMayRunLong (KERNEL32.@)
  */
-BOOL WINAPI SetThreadPreferredUILanguages( DWORD flags, PCZZWSTR buffer, PULONG count )
+BOOL WINAPI CallbackMayRunLong( TP_CALLBACK_INSTANCE *instance )
 {
-    FIXME( "%u, %p, %p\n", flags, buffer, count );
+    NTSTATUS status;
+
+    TRACE( "%p\n", instance );
+
+    status = TpCallbackMayRunLong( instance );
+    if (status)
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        return FALSE;
+    }
+
     return TRUE;
 }
 
 /***********************************************************************
- *              GetThreadPreferredUILanguages (KERNEL32.@)
+ *              CreateThreadpool (KERNEL32.@)
  */
-BOOL WINAPI GetThreadPreferredUILanguages( DWORD flags, PULONG count, PCZZWSTR buffer, PULONG buffersize )
+PTP_POOL WINAPI CreateThreadpool( PVOID reserved )
 {
-    FIXME( "%u, %p, %p %p\n", flags, count, buffer, buffersize );
-    *count = 0;
-    *buffersize = 0;
+    TP_POOL *pool;
+    NTSTATUS status;
+
+    TRACE( "%p\n", reserved );
+
+    status = TpAllocPool( &pool, reserved );
+    if (status)
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        return NULL;
+    }
+
+    return pool;
+}
+
+/***********************************************************************
+ *              CreateThreadpoolCleanupGroup (KERNEL32.@)
+ */
+PTP_CLEANUP_GROUP WINAPI CreateThreadpoolCleanupGroup( void )
+{
+    TP_CLEANUP_GROUP *group;
+    NTSTATUS status;
+
+    TRACE( "\n" );
+
+    status = TpAllocCleanupGroup( &group );
+    if (status)
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        return NULL;
+    }
+
+    return group;
+}
+
+/***********************************************************************
+ *              CreateThreadpoolTimer (KERNEL32.@)
+ */
+PTP_TIMER WINAPI CreateThreadpoolTimer( PTP_TIMER_CALLBACK callback, PVOID userdata,
+                                        TP_CALLBACK_ENVIRON *environment )
+{
+    TP_TIMER *timer;
+    NTSTATUS status;
+
+    TRACE( "%p, %p, %p\n", callback, userdata, environment );
+
+    status = TpAllocTimer( &timer, callback, userdata, environment );
+    if (status)
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        return NULL;
+    }
+
+    return timer;
+}
+
+/***********************************************************************
+ *              CreateThreadpoolWait (KERNEL32.@)
+ */
+PTP_WAIT WINAPI CreateThreadpoolWait( PTP_WAIT_CALLBACK callback, PVOID userdata,
+                                      TP_CALLBACK_ENVIRON *environment )
+{
+    TP_WAIT *wait;
+    NTSTATUS status;
+
+    TRACE( "%p, %p, %p\n", callback, userdata, environment );
+
+    status = TpAllocWait( &wait, callback, userdata, environment );
+    if (status)
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        return NULL;
+    }
+
+    return wait;
+}
+
+/***********************************************************************
+ *              CreateThreadpoolWork (KERNEL32.@)
+ */
+PTP_WORK WINAPI CreateThreadpoolWork( PTP_WORK_CALLBACK callback, PVOID userdata,
+                                      TP_CALLBACK_ENVIRON *environment )
+{
+    TP_WORK *work;
+    NTSTATUS status;
+
+    TRACE( "%p, %p, %p\n", callback, userdata, environment );
+
+    status = TpAllocWork( &work, callback, userdata, environment );
+    if (status)
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        return NULL;
+    }
+
+    return work;
+}
+
+/***********************************************************************
+ *              SetThreadpoolTimer (KERNEL32.@)
+ */
+VOID WINAPI SetThreadpoolTimer( TP_TIMER *timer, FILETIME *due_time,
+                                DWORD period, DWORD window_length )
+{
+    LARGE_INTEGER timeout;
+
+    TRACE( "%p, %p, %u, %u\n", timer, due_time, period, window_length );
+
+    if (due_time)
+    {
+        timeout.u.LowPart = due_time->dwLowDateTime;
+        timeout.u.HighPart = due_time->dwHighDateTime;
+    }
+
+    TpSetTimer( timer, due_time ? &timeout : NULL, period, window_length );
+}
+
+/***********************************************************************
+ *              SetThreadpoolWait (KERNEL32.@)
+ */
+VOID WINAPI SetThreadpoolWait( TP_WAIT *wait, HANDLE handle, FILETIME *due_time )
+{
+    LARGE_INTEGER timeout;
+
+    TRACE( "%p, %p, %p\n", wait, handle, due_time );
+
+    if (!handle)
+    {
+        due_time = NULL;
+    }
+    else if (due_time)
+    {
+        timeout.u.LowPart = due_time->dwLowDateTime;
+        timeout.u.HighPart = due_time->dwHighDateTime;
+    }
+
+    TpSetWait( wait, handle, due_time ? &timeout : NULL );
+}
+
+/***********************************************************************
+ *              TrySubmitThreadpoolCallback (KERNEL32.@)
+ */
+BOOL WINAPI TrySubmitThreadpoolCallback( PTP_SIMPLE_CALLBACK callback, PVOID userdata,
+                                         TP_CALLBACK_ENVIRON *environment )
+{
+    NTSTATUS status;
+
+    TRACE( "%p, %p, %p\n", callback, userdata, environment );
+
+    status = TpSimpleTryPost( callback, userdata, environment );
+    if (status)
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        return FALSE;
+    }
+
     return TRUE;
 }

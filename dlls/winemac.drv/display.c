@@ -25,11 +25,28 @@
 #include "winuser.h"
 #include "winreg.h"
 #include "ddrawi.h"
+#include "wine/unicode.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(display);
 
 
+struct display_mode_descriptor
+{
+    DWORD width;
+    DWORD height;
+    DWORD pixel_width;
+    DWORD pixel_height;
+    DWORD io_flags;
+    double refresh;
+    CFStringRef pixel_encoding;
+};
+
+
 BOOL CDECL macdrv_EnumDisplaySettingsEx(LPCWSTR devname, DWORD mode, LPDEVMODEW devmode, DWORD flags);
+
+
+static const char initial_mode_key[] = "Initial Display Mode";
+static const WCHAR pixelencodingW[] = {'P','i','x','e','l','E','n','c','o','d','i','n','g',0};
 
 
 static CFArrayRef modes;
@@ -43,6 +60,8 @@ static CRITICAL_SECTION_DEBUG critsect_debug =
       0, 0, { (DWORD_PTR)(__FILE__ ": modes_section") }
 };
 static CRITICAL_SECTION modes_section = { &critsect_debug, -1, 0, 0, 0, 0 };
+
+static BOOL inited_original_display_mode;
 
 
 static inline HMONITOR display_id_to_monitor(CGDirectDisplayID display_id)
@@ -157,6 +176,253 @@ static BOOL write_registry_settings(const DEVMODEW *dm)
 }
 
 
+static BOOL write_display_settings(HKEY parent_hkey, CGDirectDisplayID displayID)
+{
+    BOOL ret = FALSE;
+    char display_key_name[19];
+    HKEY display_hkey;
+    CGDisplayModeRef display_mode;
+    DWORD val;
+    CFStringRef pixel_encoding;
+    size_t len;
+    WCHAR* buf = NULL;
+
+    snprintf(display_key_name, sizeof(display_key_name), "Display 0x%08x", CGDisplayUnitNumber(displayID));
+    /* @@ Wine registry key: HKLM\Software\Wine\Mac Driver\Initial Display Mode\Display 0xnnnnnnnn */
+    if (RegCreateKeyExA(parent_hkey, display_key_name, 0, NULL,
+                        REG_OPTION_VOLATILE, KEY_WRITE, NULL, &display_hkey, NULL))
+        return FALSE;
+
+    display_mode = CGDisplayCopyDisplayMode(displayID);
+    if (!display_mode)
+        goto fail;
+
+    val = CGDisplayModeGetWidth(display_mode);
+    if (RegSetValueExA(display_hkey, "Width", 0, REG_DWORD, (const BYTE*)&val, sizeof(val)))
+        goto fail;
+    val = CGDisplayModeGetHeight(display_mode);
+    if (RegSetValueExA(display_hkey, "Height", 0, REG_DWORD, (const BYTE*)&val, sizeof(val)))
+        goto fail;
+    val = CGDisplayModeGetRefreshRate(display_mode) * 100;
+    if (RegSetValueExA(display_hkey, "RefreshRateTimes100", 0, REG_DWORD, (const BYTE*)&val, sizeof(val)))
+        goto fail;
+    val = CGDisplayModeGetIOFlags(display_mode);
+    if (RegSetValueExA(display_hkey, "IOFlags", 0, REG_DWORD, (const BYTE*)&val, sizeof(val)))
+        goto fail;
+
+#if defined(MAC_OS_X_VERSION_10_8) && MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_8
+    if (CGDisplayModeGetPixelWidth != NULL && CGDisplayModeGetPixelHeight != NULL)
+    {
+        val = CGDisplayModeGetPixelWidth(display_mode);
+        if (RegSetValueExA(display_hkey, "PixelWidth", 0, REG_DWORD, (const BYTE*)&val, sizeof(val)))
+            goto fail;
+        val = CGDisplayModeGetPixelHeight(display_mode);
+        if (RegSetValueExA(display_hkey, "PixelHeight", 0, REG_DWORD, (const BYTE*)&val, sizeof(val)))
+            goto fail;
+    }
+#endif
+
+    pixel_encoding = CGDisplayModeCopyPixelEncoding(display_mode);
+    len = CFStringGetLength(pixel_encoding);
+    buf = HeapAlloc(GetProcessHeap(), 0, (len + 1) * sizeof(WCHAR));
+    CFStringGetCharacters(pixel_encoding, CFRangeMake(0, len), (UniChar*)buf);
+    buf[len] = 0;
+    CFRelease(pixel_encoding);
+    if (RegSetValueExW(display_hkey, pixelencodingW, 0, REG_SZ, (const BYTE*)buf, (len + 1) * sizeof(WCHAR)))
+        goto fail;
+
+    ret = TRUE;
+
+fail:
+    HeapFree(GetProcessHeap(), 0, buf);
+    if (display_mode) CGDisplayModeRelease(display_mode);
+    RegCloseKey(display_hkey);
+    if (!ret)
+        RegDeleteKeyA(parent_hkey, display_key_name);
+    return ret;
+}
+
+
+static void init_original_display_mode(void)
+{
+    BOOL success = FALSE;
+    HKEY mac_driver_hkey, parent_hkey;
+    DWORD disposition;
+    struct macdrv_display *displays = NULL;
+    int num_displays, i;
+
+    if (inited_original_display_mode)
+        return;
+
+    /* @@ Wine registry key: HKLM\Software\Wine\Mac Driver */
+    if (RegCreateKeyExA(HKEY_LOCAL_MACHINE, "Software\\Wine\\Mac Driver", 0, NULL,
+                        0, KEY_ALL_ACCESS, NULL, &mac_driver_hkey, NULL))
+        return;
+
+    /* @@ Wine registry key: HKLM\Software\Wine\Mac Driver\Initial Display Mode */
+    if (RegCreateKeyExA(mac_driver_hkey, initial_mode_key, 0, NULL,
+                        REG_OPTION_VOLATILE, KEY_WRITE, NULL, &parent_hkey, &disposition))
+    {
+        parent_hkey = NULL;
+        goto fail;
+    }
+
+    /* If we didn't create a new key, then it already existed.  Something already stored
+       the initial display mode since Wine was started.  We don't want to overwrite it. */
+    if (disposition != REG_CREATED_NEW_KEY)
+        goto done;
+
+    if (macdrv_get_displays(&displays, &num_displays))
+        goto fail;
+
+    for (i = 0; i < num_displays; i++)
+    {
+        if (!write_display_settings(parent_hkey, displays[i].displayID))
+            goto fail;
+    }
+
+done:
+    success = TRUE;
+
+fail:
+    macdrv_free_displays(displays);
+    RegCloseKey(parent_hkey);
+    if (!success && parent_hkey)
+        RegDeleteTreeA(mac_driver_hkey, initial_mode_key);
+    RegCloseKey(mac_driver_hkey);
+    if (success)
+        inited_original_display_mode = TRUE;
+}
+
+
+static BOOL read_dword(HKEY hkey, const char* name, DWORD* val)
+{
+    DWORD type, size = sizeof(*val);
+    if (RegQueryValueExA(hkey, name, 0, &type, (BYTE*)val, &size) || type != REG_DWORD || size != sizeof(*val))
+        return FALSE;
+    return TRUE;
+}
+
+
+static void free_display_mode_descriptor(struct display_mode_descriptor* desc)
+{
+    if (desc)
+    {
+        if (desc->pixel_encoding)
+            CFRelease(desc->pixel_encoding);
+        HeapFree(GetProcessHeap(), 0, desc);
+    }
+}
+
+
+static struct display_mode_descriptor* create_original_display_mode_descriptor(CGDirectDisplayID displayID)
+{
+    static const char display_key_format[] = "Software\\Wine\\Mac Driver\\Initial Display Mode\\Display 0x%08x";
+    struct display_mode_descriptor* ret = NULL;
+    struct display_mode_descriptor* desc;
+    char display_key[sizeof(display_key_format) + 10];
+    HKEY hkey;
+    DWORD type, size;
+    DWORD refresh100;
+    WCHAR* pixel_encoding = NULL, *end;
+
+    init_original_display_mode();
+
+    snprintf(display_key, sizeof(display_key), display_key_format, CGDisplayUnitNumber(displayID));
+    /* @@ Wine registry key: HKLM\Software\Wine\Mac Driver\Initial Display Mode\Display 0xnnnnnnnn */
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, display_key, 0, KEY_READ, &hkey))
+        return NULL;
+
+    desc = HeapAlloc(GetProcessHeap(), 0, sizeof(*desc));
+    desc->pixel_encoding = NULL;
+
+    if (!read_dword(hkey, "Width", &desc->width) ||
+        !read_dword(hkey, "Height", &desc->height) ||
+        !read_dword(hkey, "RefreshRateTimes100", &refresh100) ||
+        !read_dword(hkey, "IOFlags", &desc->io_flags))
+        goto done;
+    if (refresh100)
+        desc->refresh = refresh100 / 100.0;
+    else
+        desc->refresh = 60;
+
+    if (!read_dword(hkey, "PixelWidth", &desc->pixel_width) ||
+        !read_dword(hkey, "PixelHeight", &desc->pixel_height))
+    {
+        desc->pixel_width = desc->width;
+        desc->pixel_height = desc->height;
+    }
+
+    size = 0;
+    if (RegQueryValueExW(hkey, pixelencodingW, 0, &type, NULL, &size) || type != REG_SZ)
+        goto done;
+    pixel_encoding = HeapAlloc(GetProcessHeap(), 0, size * sizeof(WCHAR));
+    if (RegQueryValueExW(hkey, pixelencodingW, 0, &type, (BYTE*)pixel_encoding, &size) || type != REG_SZ)
+        goto done;
+    if ((end = memchrW(pixel_encoding, 0, size)))
+        size = end - pixel_encoding;
+    desc->pixel_encoding = CFStringCreateWithCharacters(NULL, (const UniChar*)pixel_encoding, size);
+
+    ret = desc;
+
+done:
+    if (!ret)
+        free_display_mode_descriptor(desc);
+    HeapFree(GetProcessHeap(), 0, pixel_encoding);
+    RegCloseKey(hkey);
+    return ret;
+}
+
+
+static BOOL display_mode_matches_descriptor(CGDisplayModeRef mode, const struct display_mode_descriptor* desc)
+{
+    DWORD mode_io_flags;
+    double mode_refresh;
+    CFStringRef mode_pixel_encoding;
+
+    if (!desc)
+        return FALSE;
+
+    if (CGDisplayModeGetWidth(mode) != desc->width ||
+        CGDisplayModeGetHeight(mode) != desc->height)
+        return FALSE;
+
+    mode_io_flags = CGDisplayModeGetIOFlags(mode);
+    if ((desc->io_flags ^ mode_io_flags) & (kDisplayModeValidFlag | kDisplayModeSafeFlag | kDisplayModeStretchedFlag |
+                                            kDisplayModeInterlacedFlag | kDisplayModeTelevisionFlag))
+        return FALSE;
+
+    mode_refresh = CGDisplayModeGetRefreshRate(mode);
+    if (!mode_refresh)
+        mode_refresh = 60;
+    if (fabs(desc->refresh - mode_refresh) > 0.1)
+        return FALSE;
+
+#if defined(MAC_OS_X_VERSION_10_8) && MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_8
+    if (CGDisplayModeGetPixelWidth != NULL && CGDisplayModeGetPixelHeight != NULL)
+    {
+        if (CGDisplayModeGetPixelWidth(mode) != desc->pixel_width ||
+            CGDisplayModeGetPixelHeight(mode) != desc->pixel_height)
+            return FALSE;
+    }
+    else
+#endif
+    if (CGDisplayModeGetWidth(mode) != desc->pixel_width ||
+        CGDisplayModeGetHeight(mode) != desc->pixel_height)
+        return FALSE;
+
+    mode_pixel_encoding = CGDisplayModeCopyPixelEncoding(mode);
+    if (!CFEqual(mode_pixel_encoding, desc->pixel_encoding))
+    {
+        CFRelease(mode_pixel_encoding);
+        return FALSE;
+    }
+    CFRelease(mode_pixel_encoding);
+
+    return TRUE;
+}
+
+
 static int display_mode_bits_per_pixel(CGDisplayModeRef display_mode)
 {
     CFStringRef pixel_encoding;
@@ -222,7 +488,7 @@ static int get_default_bpp(void)
 
 
 #if defined(MAC_OS_X_VERSION_10_8) && MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_8
-static CFDictionaryRef create_mode_dict(CGDisplayModeRef display_mode)
+static CFDictionaryRef create_mode_dict(CGDisplayModeRef display_mode, BOOL is_original)
 {
     CFDictionaryRef ret;
     SInt32 io_flags = CGDisplayModeGetIOFlags(display_mode);
@@ -231,6 +497,12 @@ static CFDictionaryRef create_mode_dict(CGDisplayModeRef display_mode)
     double refresh_rate = CGDisplayModeGetRefreshRate(display_mode);
     CFStringRef pixel_encoding = CGDisplayModeCopyPixelEncoding(display_mode);
     CFNumberRef cf_io_flags, cf_width, cf_height, cf_refresh;
+
+    if (retina_enabled && is_original)
+    {
+        width *= 2;
+        height *= 2;
+    }
 
     io_flags &= kDisplayModeValidFlag | kDisplayModeSafeFlag | kDisplayModeInterlacedFlag |
                 kDisplayModeStretchedFlag | kDisplayModeTelevisionFlag;
@@ -291,6 +563,7 @@ static CFArrayRef copy_display_modes(CGDirectDisplayID display)
         CGDisplayModeGetPixelWidth != NULL && CGDisplayModeGetPixelHeight != NULL)
     {
         CFDictionaryRef options;
+        struct display_mode_descriptor* desc;
         CFMutableDictionaryRef modes_by_size;
         CFIndex i, count;
         CGDisplayModeRef* mode_array;
@@ -305,70 +578,73 @@ static CFArrayRef copy_display_modes(CGDirectDisplayID display)
         if (!modes)
             return NULL;
 
+        desc = create_original_display_mode_descriptor(display);
+
         modes_by_size = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
         count = CFArrayGetCount(modes);
         for (i = 0; i < count; i++)
         {
             BOOL better = TRUE;
             CGDisplayModeRef new_mode = (CGDisplayModeRef)CFArrayGetValueAtIndex(modes, i);
-            uint32_t new_flags = CGDisplayModeGetIOFlags(new_mode);
-            CFStringRef pixel_encoding;
-            size_t width_points;
-            size_t height_points;
-            CFDictionaryRef key;
-            CGDisplayModeRef old_mode;
+            BOOL new_is_original = display_mode_matches_descriptor(new_mode, desc);
+            CFDictionaryRef key = create_mode_dict(new_mode, new_is_original);
 
-            if (!(new_flags & kDisplayModeDefaultFlag) && (pixel_encoding = CGDisplayModeCopyPixelEncoding(new_mode)))
+            /* If a given mode is the user's default, then always list it in preference to any similar
+               modes that may exist. */
+            if (new_is_original)
+                better = TRUE;
+            else
             {
-                BOOL bpp30 = CFEqual(pixel_encoding, CFSTR(kIO30BitDirectPixels));
-                CFRelease(pixel_encoding);
-                if (bpp30)
+                CFStringRef pixel_encoding = CGDisplayModeCopyPixelEncoding(new_mode);
+                CGDisplayModeRef old_mode;
+
+                if (pixel_encoding)
                 {
-                    /* This is an odd pixel encoding.  It seems it's only returned
-                       when using kCGDisplayShowDuplicateLowResolutionModes.  It's
-                       32bpp in terms of the actual raster layout, but it's 10
-                       bits per component.  I think that no Windows program is
-                       likely to need it and they will probably be confused by it.
-                       Skip it. */
-                    continue;
+                    BOOL bpp30 = CFEqual(pixel_encoding, CFSTR(kIO30BitDirectPixels));
+                    CFRelease(pixel_encoding);
+                    if (bpp30)
+                    {
+                        /* This is an odd pixel encoding.  It seems it's only returned
+                           when using kCGDisplayShowDuplicateLowResolutionModes.  It's
+                           32bpp in terms of the actual raster layout, but it's 10
+                           bits per component.  I think that no Windows program is
+                           likely to need it and they will probably be confused by it.
+                           Skip it. */
+                        CFRelease(key);
+                        continue;
+                    }
                 }
-            }
 
-            width_points = CGDisplayModeGetWidth(new_mode);
-            height_points = CGDisplayModeGetHeight(new_mode);
-            key = create_mode_dict(new_mode);
-            old_mode = (CGDisplayModeRef)CFDictionaryGetValue(modes_by_size, key);
-
-            if (old_mode)
-            {
-                uint32_t old_flags = CGDisplayModeGetIOFlags(old_mode);
-
-                /* If a given mode is the user's default, then always list it in preference to any similar
-                   modes that may exist. */
-                if ((new_flags & kDisplayModeDefaultFlag) && !(old_flags & kDisplayModeDefaultFlag))
-                    better = TRUE;
-                else if (!(new_flags & kDisplayModeDefaultFlag) && (old_flags & kDisplayModeDefaultFlag))
-                    better = FALSE;
-                else
+                old_mode = (CGDisplayModeRef)CFDictionaryGetValue(modes_by_size, key);
+                if (old_mode)
                 {
-                    /* Otherwise, prefer a mode whose pixel size equals its point size over one which
-                       is scaled. */
-                    size_t new_width_pixels = CGDisplayModeGetPixelWidth(new_mode);
-                    size_t new_height_pixels = CGDisplayModeGetPixelHeight(new_mode);
-                    size_t old_width_pixels = CGDisplayModeGetPixelWidth(old_mode);
-                    size_t old_height_pixels = CGDisplayModeGetPixelHeight(old_mode);
-                    BOOL new_size_same = (new_width_pixels == width_points && new_height_pixels == height_points);
-                    BOOL old_size_same = (old_width_pixels == width_points && old_height_pixels == height_points);
+                    BOOL old_is_original = display_mode_matches_descriptor(old_mode, desc);
 
-                    if (new_size_same && !old_size_same)
-                        better = TRUE;
-                    else if (!new_size_same && old_size_same)
+                    if (old_is_original)
                         better = FALSE;
                     else
                     {
-                        /* Otherwise, prefer the mode with the smaller pixel size. */
-                        if (old_width_pixels < new_width_pixels || old_height_pixels < new_height_pixels)
+                        /* Otherwise, prefer a mode whose pixel size equals its point size over one which
+                           is scaled. */
+                        size_t width_points = CGDisplayModeGetWidth(new_mode);
+                        size_t height_points = CGDisplayModeGetHeight(new_mode);
+                        size_t new_width_pixels = CGDisplayModeGetPixelWidth(new_mode);
+                        size_t new_height_pixels = CGDisplayModeGetPixelHeight(new_mode);
+                        size_t old_width_pixels = CGDisplayModeGetPixelWidth(old_mode);
+                        size_t old_height_pixels = CGDisplayModeGetPixelHeight(old_mode);
+                        BOOL new_size_same = (new_width_pixels == width_points && new_height_pixels == height_points);
+                        BOOL old_size_same = (old_width_pixels == width_points && old_height_pixels == height_points);
+
+                        if (new_size_same && !old_size_same)
+                            better = TRUE;
+                        else if (!new_size_same && old_size_same)
                             better = FALSE;
+                        else
+                        {
+                            /* Otherwise, prefer the mode with the smaller pixel size. */
+                            if (old_width_pixels < new_width_pixels || old_height_pixels < new_height_pixels)
+                                better = FALSE;
+                        }
                     }
                 }
             }
@@ -379,6 +655,7 @@ static CFArrayRef copy_display_modes(CGDirectDisplayID display)
             CFRelease(key);
         }
 
+        free_display_mode_descriptor(desc);
         CFRelease(modes);
 
         count = CFDictionaryGetCount(modes_by_size);
@@ -396,6 +673,23 @@ static CFArrayRef copy_display_modes(CGDirectDisplayID display)
 }
 
 
+void check_retina_status(void)
+{
+    if (retina_enabled)
+    {
+        struct display_mode_descriptor* desc = create_original_display_mode_descriptor(kCGDirectMainDisplay);
+        CGDisplayModeRef mode = CGDisplayCopyDisplayMode(kCGDirectMainDisplay);
+        BOOL new_value = display_mode_matches_descriptor(mode, desc);
+
+        CGDisplayModeRelease(mode);
+        free_display_mode_descriptor(desc);
+
+        if (new_value != retina_on)
+            macdrv_set_cocoa_retina_mode(new_value);
+    }
+}
+
+
 /***********************************************************************
  *              ChangeDisplaySettingsEx  (MACDRV.@)
  *
@@ -410,11 +704,15 @@ LONG CDECL macdrv_ChangeDisplaySettingsEx(LPCWSTR devname, LPDEVMODEW devmode,
     struct macdrv_display *displays;
     int num_displays;
     CFArrayRef display_modes;
+    struct display_mode_descriptor* desc;
     CFIndex count, i, safe, best;
     CGDisplayModeRef best_display_mode;
     uint32_t best_io_flags;
+    BOOL best_is_original;
 
     TRACE("%s %p %p 0x%08x %p\n", debugstr_w(devname), devmode, hwnd, flags, lpvoid);
+
+    init_original_display_mode();
 
     if (devmode)
     {
@@ -475,16 +773,25 @@ LONG CDECL macdrv_ChangeDisplaySettingsEx(LPCWSTR devname, LPDEVMODEW devmode,
         TRACE(" %sinterlaced", devmode->dmDisplayFlags & DM_INTERLACED ? "" : "non-");
     TRACE("\n");
 
+    desc = create_original_display_mode_descriptor(displays[0].displayID);
+
     safe = -1;
     best_display_mode = NULL;
     count = CFArrayGetCount(display_modes);
     for (i = 0; i < count; i++)
     {
         CGDisplayModeRef display_mode = (CGDisplayModeRef)CFArrayGetValueAtIndex(display_modes, i);
+        BOOL is_original = display_mode_matches_descriptor(display_mode, desc);
         uint32_t io_flags = CGDisplayModeGetIOFlags(display_mode);
         int mode_bpp = display_mode_bits_per_pixel(display_mode);
         size_t width = CGDisplayModeGetWidth(display_mode);
         size_t height = CGDisplayModeGetHeight(display_mode);
+
+        if (is_original && retina_enabled)
+        {
+            width *= 2;
+            height *= 2;
+        }
 
         if (!(io_flags & kDisplayModeValidFlag) || !(io_flags & kDisplayModeSafeFlag))
             continue;
@@ -544,6 +851,7 @@ better:
         best_display_mode = display_mode;
         best = safe;
         best_io_flags = io_flags;
+        best_is_original = is_original;
     }
 
     if (best_display_mode)
@@ -564,6 +872,12 @@ better:
             size_t width = CGDisplayModeGetWidth(best_display_mode);
             size_t height = CGDisplayModeGetHeight(best_display_mode);
 
+            if (best_is_original && retina_enabled)
+            {
+                width *= 2;
+                height *= 2;
+            }
+
             SendMessageW(GetDesktopWindow(), WM_MACDRV_UPDATE_DESKTOP_RECT, mode_bpp,
                          MAKELPARAM(width, height));
             ret = DISP_CHANGE_SUCCESSFUL;
@@ -581,6 +895,7 @@ better:
             bpp, devmode->dmDisplayFrequency);
     }
 
+    free_display_mode_descriptor(desc);
     CFRelease(display_modes);
     macdrv_free_displays(displays);
 
@@ -675,6 +990,8 @@ BOOL CDECL macdrv_EnumDisplaySettingsEx(LPCWSTR devname, DWORD mode,
     uint32_t io_flags;
 
     TRACE("%s, %u, %p + %hu, %08x\n", debugstr_w(devname), mode, devmode, devmode->dmSize, flags);
+
+    init_original_display_mode();
 
     memcpy(devmode->dmDeviceName, dev_name, sizeof(dev_name));
     devmode->dmSpecVersion = DM_SPECVERSION;
@@ -807,6 +1124,16 @@ BOOL CDECL macdrv_EnumDisplaySettingsEx(LPCWSTR devname, DWORD mode,
 
     devmode->dmPelsWidth = CGDisplayModeGetWidth(display_mode);
     devmode->dmPelsHeight = CGDisplayModeGetHeight(display_mode);
+    if (retina_enabled)
+    {
+        struct display_mode_descriptor* desc = create_original_display_mode_descriptor(displays[0].displayID);
+        if (display_mode_matches_descriptor(display_mode, desc))
+        {
+            devmode->dmPelsWidth *= 2;
+            devmode->dmPelsHeight *= 2;
+        }
+        free_display_mode_descriptor(desc);
+    }
     devmode->dmFields |= DM_PELSWIDTH | DM_PELSHEIGHT;
 
     devmode->dmDisplayFlags = 0;
@@ -1054,8 +1381,18 @@ void macdrv_displays_changed(const macdrv_event *event)
         size_t width = CGDisplayModeGetWidth(mode);
         size_t height = CGDisplayModeGetHeight(mode);
         int mode_bpp = display_mode_bits_per_pixel(mode);
+        struct display_mode_descriptor* desc = create_original_display_mode_descriptor(mainDisplay);
+        BOOL is_original = display_mode_matches_descriptor(mode, desc);
 
+        free_display_mode_descriptor(desc);
         CGDisplayModeRelease(mode);
+
+        if (is_original && retina_enabled)
+        {
+            width *= 2;
+            height *= 2;
+        }
+
         SendMessageW(hwnd, WM_MACDRV_UPDATE_DESKTOP_RECT, mode_bpp,
                      MAKELPARAM(width, height));
     }

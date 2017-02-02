@@ -26,10 +26,16 @@
 
 #include "windef.h"
 #include "winbase.h"
+#include "wingdi.h"
 #include "objbase.h"
 #include "shlguid.h"
 
 #include "wine/test.h"
+
+#include "initguid.h"
+
+DEFINE_GUID(CLSID_Picture_Metafile,0x315,0,0,0xc0,0,0,0,0,0,0,0x46);
+DEFINE_GUID(CLSID_Picture_Dib,0x316,0,0,0xc0,0,0,0,0,0,0,0x46);
 
 #define ok_ole_success(hr, func) ok(hr == S_OK, func " failed with error 0x%08x\n", hr)
 
@@ -105,10 +111,36 @@ static FORMATETC *g_expected_fetc = NULL;
 
 static BOOL g_showRunnable = TRUE;
 static BOOL g_isRunning = TRUE;
-static BOOL g_failGetMiscStatus;
+static HRESULT g_GetMiscStatusFailsWith = S_OK;
 static HRESULT g_QIFailsWith;
 
 static UINT cf_test_1, cf_test_2, cf_test_3;
+
+/****************************************************************************
+ * PresentationDataHeader
+ *
+ * This structure represents the header of the \002OlePresXXX stream in
+ * the OLE object storage.
+ */
+typedef struct PresentationDataHeader
+{
+    /* clipformat:
+     *  - standard clipformat:
+     *  DWORD length = 0xffffffff;
+     *  DWORD cfFormat;
+     *  - or custom clipformat:
+     *  DWORD length;
+     *  CHAR format_name[length]; (null-terminated)
+     */
+    DWORD unknown3; /* 4, possibly TYMED_ISTREAM */
+    DVASPECT dvAspect;
+    DWORD lindex;
+    DWORD tymed;
+    DWORD unknown7; /* 0 */
+    DWORD dwObjectExtentX;
+    DWORD dwObjectExtentY;
+    DWORD dwSize;
+} PresentationDataHeader;
 
 #define CHECK_EXPECTED_METHOD(method_name) \
     do { \
@@ -124,12 +156,7 @@ static UINT cf_test_1, cf_test_2, cf_test_3;
             while (expected_method_list->flags & TEST_OPTIONAL && \
                    strcmp(expected_method_list->method, method_name) != 0) \
                 expected_method_list++; \
-            if (expected_method_list->flags & TEST_TODO) \
-                todo_wine \
-                    ok(!strcmp(expected_method_list->method, method_name), \
-                       "Expected %s to be called instead of %s\n", \
-                       expected_method_list->method, method_name); \
-            else \
+            todo_wine_if (expected_method_list->flags & TEST_TODO) \
                 ok(!strcmp(expected_method_list->method, method_name), \
                    "Expected %s to be called instead of %s\n", \
                    expected_method_list->method, method_name); \
@@ -389,12 +416,15 @@ static HRESULT WINAPI OleObject_EnumAdvise
 static HRESULT WINAPI OleObject_GetMiscStatus
 (
     IOleObject *iface,
-    DWORD dwAspect,
+    DWORD aspect,
     DWORD *pdwStatus
 )
 {
     CHECK_EXPECTED_METHOD("OleObject_GetMiscStatus");
-    if(!g_failGetMiscStatus)
+
+    ok(aspect == DVASPECT_CONTENT, "got aspect %d\n", aspect);
+
+    if (g_GetMiscStatusFailsWith == S_OK)
     {
         *pdwStatus = OLEMISC_RECOMPOSEONRESIZE;
         return S_OK;
@@ -402,7 +432,7 @@ static HRESULT WINAPI OleObject_GetMiscStatus
     else
     {
         *pdwStatus = 0x1234;
-        return E_FAIL;
+        return g_GetMiscStatusFailsWith;
     }
 }
 
@@ -449,7 +479,7 @@ static IOleObject OleObject = { &OleObjectVtbl };
 static HRESULT WINAPI OleObjectPersistStg_QueryInterface(IPersistStorage *iface, REFIID riid, void **ppv)
 {
     trace("OleObjectPersistStg_QueryInterface\n");
-    return IUnknown_QueryInterface((IUnknown *)&OleObject, riid, ppv);
+    return IOleObject_QueryInterface(&OleObject, riid, ppv);
 }
 
 static ULONG WINAPI OleObjectPersistStg_AddRef(IPersistStorage *iface)
@@ -547,7 +577,7 @@ static IPersistStorage OleObjectPersistStg = { &OleObjectPersistStgVtbl };
 
 static HRESULT WINAPI OleObjectCache_QueryInterface(IOleCache *iface, REFIID riid, void **ppv)
 {
-    return IUnknown_QueryInterface((IUnknown *)&OleObject, riid, ppv);
+    return IOleObject_QueryInterface(&OleObject, riid, ppv);
 }
 
 static ULONG WINAPI OleObjectCache_AddRef(IOleCache *iface)
@@ -673,7 +703,7 @@ static ULONG WINAPI OleObjectCF_Release(IClassFactory *iface)
 
 static HRESULT WINAPI OleObjectCF_CreateInstance(IClassFactory *iface, IUnknown *punkOuter, REFIID riid, void **ppv)
 {
-    return IUnknown_QueryInterface((IUnknown *)&OleObject, riid, ppv);
+    return IOleObject_QueryInterface(&OleObject, riid, ppv);
 }
 
 static HRESULT WINAPI OleObjectCF_LockServer(IClassFactory *iface, BOOL lock)
@@ -694,7 +724,7 @@ static IClassFactory OleObjectCF = { &OleObjectCFVtbl };
 
 static HRESULT WINAPI OleObjectRunnable_QueryInterface(IRunnableObject *iface, REFIID riid, void **ppv)
 {
-    return IUnknown_QueryInterface((IUnknown *)&OleObject, riid, ppv);
+    return IOleObject_QueryInterface(&OleObject, riid, ppv);
 }
 
 static ULONG WINAPI OleObjectRunnable_AddRef(IRunnableObject *iface)
@@ -885,6 +915,30 @@ static void test_OleCreate(IStorage *pStorage)
         { "OleObject_Release", TEST_OPTIONAL /* NT4 only */ },
         { NULL, 0 }
     };
+    static const struct expected_method methods_olerender_draw_with_site[] =
+    {
+        { "OleObject_QueryInterface", 0 },
+        { "OleObject_AddRef", 0 },
+        { "OleObject_QueryInterface", 0 },
+        { "OleObject_AddRef", 0 },
+        { "OleObject_GetMiscStatus", 0 },
+        { "OleObject_QueryInterface", 0 },
+        { "OleObjectPersistStg_AddRef", 0 },
+        { "OleObjectPersistStg_InitNew", 0 },
+        { "OleObjectPersistStg_Release", 0 },
+        { "OleObject_SetClientSite", 0 },
+        { "OleObject_Release", 0 },
+        { "OleObject_QueryInterface", 0 },
+        { "OleObjectRunnable_AddRef", 0 },
+        { "OleObjectRunnable_Run", 0 },
+        { "OleObjectRunnable_Release", 0 },
+        { "OleObject_QueryInterface", 0 },
+        { "OleObjectCache_AddRef", 0 },
+        { "OleObjectCache_Cache", 0 },
+        { "OleObjectCache_Release", 0 },
+        { "OleObject_Release", 0 },
+        { NULL, 0 }
+    };
     static const struct expected_method methods_olerender_format[] =
     {
         { "OleObject_QueryInterface", 0 },
@@ -987,6 +1041,23 @@ static void test_OleCreate(IStorage *pStorage)
     IOleObject_Release(pObject);
     CHECK_NO_EXTRA_METHODS();
 
+    expected_method_list = methods_olerender_draw_with_site;
+    trace("OleCreate with OLERENDER_DRAW, with site:\n");
+    hr = OleCreate(&CLSID_Equation3, &IID_IOleObject, OLERENDER_DRAW, NULL, (IOleClientSite*)0xdeadbeef, pStorage, (void **)&pObject);
+    ok_ole_success(hr, "OleCreate");
+    IOleObject_Release(pObject);
+    CHECK_NO_EXTRA_METHODS();
+
+    /* GetMiscStatus fails */
+    g_GetMiscStatusFailsWith = 0x8fafefaf;
+    expected_method_list = methods_olerender_draw_with_site;
+    trace("OleCreate with OLERENDER_DRAW, with site:\n");
+    hr = OleCreate(&CLSID_Equation3, &IID_IOleObject, OLERENDER_DRAW, NULL, (IOleClientSite*)0xdeadbeef, pStorage, (void **)&pObject);
+    ok_ole_success(hr, "OleCreate");
+    IOleObject_Release(pObject);
+    CHECK_NO_EXTRA_METHODS();
+    g_GetMiscStatusFailsWith = S_OK;
+
     formatetc.cfFormat = CF_TEXT;
     formatetc.ptd = NULL;
     formatetc.dwAspect = DVASPECT_CONTENT;
@@ -1037,6 +1108,7 @@ static void test_OleLoad(IStorage *pStorage)
 {
     HRESULT hr;
     IOleObject *pObject;
+    DWORD fmt;
 
     static const struct expected_method methods_oleload[] =
     {
@@ -1059,7 +1131,7 @@ static void test_OleLoad(IStorage *pStorage)
 
     /* Test once with IOleObject_GetMiscStatus failing */
     expected_method_list = methods_oleload;
-    g_failGetMiscStatus = TRUE;
+    g_GetMiscStatusFailsWith = E_FAIL;
     trace("OleLoad:\n");
     hr = OleLoad(pStorage, &IID_IOleObject, (IOleClientSite *)0xdeadbeef, (void **)&pObject);
     ok(hr == S_OK ||
@@ -1075,9 +1147,9 @@ static void test_OleLoad(IStorage *pStorage)
         IOleObject_Release(pObject);
         CHECK_NO_EXTRA_METHODS();
     }
+    g_GetMiscStatusFailsWith = S_OK;
 
     /* Test again, let IOleObject_GetMiscStatus succeed. */
-    g_failGetMiscStatus = FALSE;
     expected_method_list = methods_oleload;
     trace("OleLoad:\n");
     hr = OleLoad(pStorage, &IID_IOleObject, (IOleClientSite *)0xdeadbeef, (void **)&pObject);
@@ -1093,6 +1165,105 @@ static void test_OleLoad(IStorage *pStorage)
 
         IOleObject_Release(pObject);
         CHECK_NO_EXTRA_METHODS();
+    }
+
+    for (fmt = CF_TEXT; fmt < CF_MAX; fmt++)
+    {
+        static const WCHAR olrepres[] = { 2,'O','l','e','P','r','e','s','0','0','0',0 };
+        IStorage *stg;
+        IStream *stream;
+        IUnknown *obj;
+        DWORD data, i, tymed, data_size;
+        PresentationDataHeader header;
+        HDC hdc;
+        HGDIOBJ hobj;
+        RECT rc;
+        char buf[256];
+
+        for (i = 0; i < 7; i++)
+        {
+            hr = StgCreateDocfile(NULL, STGM_READWRITE | STGM_CREATE | STGM_SHARE_EXCLUSIVE | STGM_DELETEONRELEASE, 0, &stg);
+            ok(hr == S_OK, "StgCreateDocfile error %#x\n", hr);
+
+            hr = IStorage_SetClass(stg, &CLSID_WineTest);
+            ok(hr == S_OK, "SetClass error %#x\n", hr);
+
+            hr = IStorage_CreateStream(stg, olrepres, STGM_READWRITE | STGM_SHARE_EXCLUSIVE | STGM_CREATE, 0, 0, &stream);
+            ok(hr == S_OK, "CreateStream error %#x\n", hr);
+
+            data = ~0;
+            hr = IStream_Write(stream, &data, sizeof(data), NULL);
+            ok(hr == S_OK, "Write error %#x\n", hr);
+
+            data = fmt;
+            hr = IStream_Write(stream, &data, sizeof(data), NULL);
+            ok(hr == S_OK, "Write error %#x\n", hr);
+
+            switch (fmt)
+            {
+            case CF_BITMAP:
+                /* FIXME: figure out stream format */
+                hobj = CreateBitmap(1, 1, 1, 1, NULL);
+                data_size = GetBitmapBits(hobj, sizeof(buf), buf);
+                DeleteObject(hobj);
+                break;
+
+            case CF_METAFILEPICT:
+            case CF_ENHMETAFILE:
+                hdc = CreateMetaFileA(NULL);
+                hobj = CloseMetaFile(hdc);
+                data_size = GetMetaFileBitsEx(hobj, sizeof(buf), buf);
+                DeleteMetaFile(hobj);
+                break;
+
+            default:
+                data_size = sizeof(buf);
+                memset(buf, 'A', sizeof(buf));
+                break;
+            }
+
+            tymed = 1 << i;
+
+            header.unknown3 = 4;
+            header.dvAspect = DVASPECT_CONTENT;
+            header.lindex = -1;
+            header.tymed = tymed;
+            header.unknown7 = 0;
+            header.dwObjectExtentX = 1;
+            header.dwObjectExtentY = 1;
+            header.dwSize = data_size;
+            hr = IStream_Write(stream, &header, sizeof(header), NULL);
+            ok(hr == S_OK, "Write error %#x\n", hr);
+
+            hr = IStream_Write(stream, buf, data_size, NULL);
+            ok(hr == S_OK, "Write error %#x\n", hr);
+
+            IStream_Release(stream);
+
+            hr = OleLoad(stg, &IID_IUnknown, NULL, (void **)&obj);
+            /* FIXME: figure out stream format */
+            if (fmt == CF_BITMAP && hr != S_OK)
+            {
+                IStorage_Release(stg);
+                continue;
+            }
+            ok(hr == S_OK, "OleLoad error %#x: cfFormat = %u, tymed = %u\n", hr, fmt, tymed);
+
+            hdc = CreateCompatibleDC(0);
+            SetRect(&rc, 0, 0, 100, 100);
+            hr = OleDraw(obj, DVASPECT_CONTENT, hdc, &rc);
+            DeleteDC(hdc);
+            if (fmt == CF_METAFILEPICT)
+                ok(hr == S_OK, "OleDraw error %#x: cfFormat = %u, tymed = %u\n", hr, fmt, tymed);
+            else if (fmt == CF_ENHMETAFILE)
+todo_wine
+                ok(hr == S_OK, "OleDraw error %#x: cfFormat = %u, tymed = %u\n", hr, fmt, tymed);
+            else
+                ok(hr == OLE_E_BLANK || hr == OLE_E_NOTRUNNING || hr == E_FAIL, "OleDraw should fail: %#x, cfFormat = %u, tymed = %u\n", hr, fmt, header.tymed);
+
+            IUnknown_Release(obj);
+            IStorage_Release(stg);
+        }
     }
 }
 
@@ -1320,11 +1491,44 @@ static IDataObjectVtbl DataObjectVtbl =
 
 static IDataObject DataObject = { &DataObjectVtbl };
 
+static HRESULT WINAPI Unknown_QueryInterface(IUnknown *iface, REFIID riid, void **ppv)
+{
+    *ppv = NULL;
+    if (IsEqualIID(riid, &IID_IUnknown)) *ppv = iface;
+    if (*ppv)
+    {
+        IUnknown_AddRef((IUnknown *)*ppv);
+        return S_OK;
+    }
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI Unknown_AddRef(IUnknown *iface)
+{
+    return 2;
+}
+
+static ULONG WINAPI Unknown_Release(IUnknown *iface)
+{
+    return 1;
+}
+
+static const IUnknownVtbl UnknownVtbl =
+{
+    Unknown_QueryInterface,
+    Unknown_AddRef,
+    Unknown_Release
+};
+
+static IUnknown unknown = { &UnknownVtbl };
+
 static void test_data_cache(void)
 {
     HRESULT hr;
     IOleCache2 *pOleCache;
+    IOleCache *olecache;
     IStorage *pStorage;
+    IUnknown *unk;
     IPersistStorage *pPS;
     IViewObject *pViewObject;
     IOleCacheControl *pOleCacheControl;
@@ -1389,6 +1593,39 @@ static void test_data_cache(void)
 
     hr = StgCreateDocfile(NULL, STGM_READWRITE | STGM_CREATE | STGM_SHARE_EXCLUSIVE | STGM_DELETEONRELEASE, 0, &pStorage);
     ok_ole_success(hr, "StgCreateDocfile");
+
+    /* aggregation */
+
+    /* requested is not IUnknown */
+    hr = CreateDataCache(&unknown, &CLSID_NULL, &IID_IOleCache2, (void**)&pOleCache);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+
+    hr = CreateDataCache(&unknown, &CLSID_NULL, &IID_IUnknown, (void**)&unk);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = IUnknown_QueryInterface(unk, &IID_IOleCache, (void**)&olecache);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    hr = IUnknown_QueryInterface(unk, &IID_IOleCache2, (void**)&pOleCache);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(unk != (IUnknown*)olecache, "got %p, expected %p\n", olecache, unk);
+    ok(unk != (IUnknown*)pOleCache, "got %p, expected %p\n", pOleCache, unk);
+    IOleCache2_Release(pOleCache);
+    IOleCache_Release(olecache);
+    IUnknown_Release(unk);
+
+    hr = CreateDataCache(NULL, &CLSID_NULL, &IID_IUnknown, (void**)&unk);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    hr = IUnknown_QueryInterface(unk, &IID_IOleCache, (void**)&olecache);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    hr = IUnknown_QueryInterface(unk, &IID_IOleCache2, (void**)&pOleCache);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+todo_wine {
+    ok(unk == (IUnknown*)olecache, "got %p, expected %p\n", olecache, unk);
+    ok(unk == (IUnknown*)pOleCache, "got %p, expected %p\n", pOleCache, unk);
+}
+    IOleCache2_Release(pOleCache);
+    IOleCache_Release(olecache);
+    IUnknown_Release(unk);
 
     /* Test with new data */
 
@@ -1680,6 +1917,113 @@ static void test_data_cache(void)
     IStorage_Release(pStorage);
 }
 
+
+static const WCHAR CONTENTS[] = {'C','O','N','T','E','N','T','S',0};
+
+/* 2 x 1 x 32 bpp dib. PelsPerMeter = 200x400 */
+static BYTE dib[] =
+{
+    0x42, 0x4d, 0x3e, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x36, 0x00, 0x00, 0x00, 0x28, 0x00,
+
+    0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00,
+    0x00, 0x00, 0x01, 0x00, 0x20, 0x00, 0x00, 0x00,
+
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc8, 0x00,
+    0x00, 0x00, 0x90, 0x01, 0x00, 0x00, 0x00, 0x00,
+
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+};
+
+static IStorage *create_storage( int num )
+{
+    IStorage *stg;
+    IStream *stm;
+    HRESULT hr;
+    ULONG written;
+
+    hr = StgCreateDocfile( NULL, STGM_READWRITE | STGM_SHARE_EXCLUSIVE | STGM_CREATE | STGM_DELETEONRELEASE, 0, &stg );
+    ok( hr == S_OK, "got %08x\n", hr);
+    hr = IStorage_SetClass( stg, &CLSID_Picture_Dib );
+    ok( hr == S_OK, "got %08x\n", hr);
+    hr = IStorage_CreateStream( stg, CONTENTS, STGM_READWRITE | STGM_SHARE_EXCLUSIVE | STGM_CREATE, 0, 0, &stm );
+    ok( hr == S_OK, "got %08x\n", hr);
+    if (num == 1) /* Set biXPelsPerMeter = 0 */
+    {
+        dib[0x26] = 0;
+        dib[0x27] = 0;
+    }
+    hr = IStream_Write( stm, dib, sizeof(dib), &written );
+    ok( hr == S_OK, "got %08x\n", hr);
+    IStream_Release( stm );
+    return stg;
+}
+
+static void test_data_cache_dib_contents_stream(int num)
+{
+    HRESULT hr;
+    IUnknown *unk;
+    IPersistStorage *persist;
+    IDataObject *data;
+    IViewObject2 *view;
+    IStorage *stg;
+    FORMATETC fmt = {CF_DIB, NULL, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+    STGMEDIUM med;
+    CLSID cls;
+    SIZEL sz;
+
+    hr = CreateDataCache( NULL, &CLSID_Picture_Metafile, &IID_IUnknown, (void **)&unk );
+    ok( SUCCEEDED(hr), "got %08x\n", hr );
+    hr = IUnknown_QueryInterface( unk, &IID_IPersistStorage, (void **)&persist );
+    ok( SUCCEEDED(hr), "got %08x\n", hr );
+    hr = IUnknown_QueryInterface( unk, &IID_IDataObject, (void **)&data );
+    ok( SUCCEEDED(hr), "got %08x\n", hr );
+    hr = IUnknown_QueryInterface( unk, &IID_IViewObject2, (void **)&view );
+    ok( SUCCEEDED(hr), "got %08x\n", hr );
+
+    stg = create_storage( num );
+
+    hr = IPersistStorage_Load( persist, stg );
+    ok( SUCCEEDED(hr), "got %08x\n", hr );
+    IStorage_Release( stg );
+
+    hr = IPersistStorage_GetClassID( persist, &cls );
+    ok( SUCCEEDED(hr), "got %08x\n", hr );
+    ok( IsEqualCLSID( &cls, &CLSID_Picture_Dib ), "class id mismatch\n" );
+
+    hr = IDataObject_GetData( data, &fmt, &med );
+    ok( SUCCEEDED(hr), "got %08x\n", hr );
+    if (SUCCEEDED(hr))
+    {
+        ok( med.tymed == TYMED_HGLOBAL, "got %x\n", med.tymed );
+        ReleaseStgMedium( &med );
+    }
+
+    hr = IViewObject2_GetExtent( view, DVASPECT_CONTENT, -1, NULL, &sz );
+    ok( SUCCEEDED(hr), "got %08x\n", hr );
+    if (num == 0)
+    {
+        ok( sz.cx == 1000, "got %d\n", sz.cx );
+        ok( sz.cy == 250, "got %d\n", sz.cy );
+    }
+    else
+    {
+        HDC hdc = GetDC( 0 );
+        LONG x = 2 * 2540 / GetDeviceCaps( hdc, LOGPIXELSX );
+        LONG y = 1 * 2540 / GetDeviceCaps( hdc, LOGPIXELSY );
+        ok( sz.cx == x, "got %d %d\n", sz.cx, x );
+        ok( sz.cy == y, "got %d %d\n", sz.cy, y );
+
+        ReleaseDC( 0, hdc );
+    }
+
+    IViewObject2_Release( view );
+    IDataObject_Release( data );
+    IPersistStorage_Release( persist );
+    IUnknown_Release( unk );
+}
+
 static void test_default_handler(void)
 {
     HRESULT hr;
@@ -1821,7 +2165,6 @@ static void test_default_handler(void)
     fmtetc.lindex = -1;
     fmtetc.tymed = TYMED_ENHMF;
     hr = IDataObject_QueryGetData(pDataObject, &fmtetc);
-    todo_wine
     ok(hr == OLE_E_NOTRUNNING, "IDataObject_QueryGetData should have returned OLE_E_NOTRUNNING instead of 0x%08x\n", hr);
 
     fmtetc.cfFormat = CF_TEXT;
@@ -1830,7 +2173,6 @@ static void test_default_handler(void)
     fmtetc.lindex = -1;
     fmtetc.tymed = TYMED_NULL;
     hr = IDataObject_QueryGetData(pDataObject, &fmtetc);
-    todo_wine
     ok(hr == OLE_E_NOTRUNNING, "IDataObject_QueryGetData should have returned OLE_E_NOTRUNNING instead of 0x%08x\n", hr);
 
     hr = IOleObject_QueryInterface(pObject, &IID_IRunnableObject, (void **)&pRunnableObject);
@@ -1933,50 +2275,97 @@ static void test_runnable(void)
     g_showRunnable = TRUE;
 }
 
-static HRESULT WINAPI Unknown_QueryInterface(IUnknown *iface, REFIID riid, void **ppv)
+
+static HRESULT WINAPI OleRun_QueryInterface(IRunnableObject *iface, REFIID riid, void **ppv)
 {
     *ppv = NULL;
-    if (IsEqualIID(riid, &IID_IUnknown)) *ppv = iface;
+
+    if (IsEqualIID(riid, &IID_IUnknown) ||
+        IsEqualIID(riid, &IID_IRunnableObject)) {
+        *ppv = iface;
+    }
+
     if (*ppv)
     {
         IUnknown_AddRef((IUnknown *)*ppv);
         return S_OK;
     }
+
     return E_NOINTERFACE;
 }
 
-static ULONG WINAPI Unknown_AddRef(IUnknown *iface)
+static ULONG WINAPI OleRun_AddRef(IRunnableObject *iface)
 {
     return 2;
 }
 
-static ULONG WINAPI Unknown_Release(IUnknown *iface)
+static ULONG WINAPI OleRun_Release(IRunnableObject *iface)
 {
     return 1;
 }
 
-static const IUnknownVtbl UnknownVtbl =
+static HRESULT WINAPI OleRun_GetRunningClass(IRunnableObject *iface, CLSID *clsid)
 {
-    Unknown_QueryInterface,
-    Unknown_AddRef,
-    Unknown_Release
+    ok(0, "unexpected\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI OleRun_Run(IRunnableObject *iface, LPBINDCTX ctx)
+{
+    ok(ctx == NULL, "got %p\n", ctx);
+    return 0xdeadc0de;
+}
+
+static BOOL WINAPI OleRun_IsRunning(IRunnableObject *iface)
+{
+    ok(0, "unexpected\n");
+    return FALSE;
+}
+
+static HRESULT WINAPI OleRun_LockRunning(IRunnableObject *iface, BOOL lock,
+    BOOL last_unlock_closes)
+{
+    ok(0, "unexpected\n");
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI OleRun_SetContainedObject(IRunnableObject *iface, BOOL contained)
+{
+    ok(0, "unexpected\n");
+    return E_NOTIMPL;
+}
+
+static const IRunnableObjectVtbl oleruntestvtbl =
+{
+    OleRun_QueryInterface,
+    OleRun_AddRef,
+    OleRun_Release,
+    OleRun_GetRunningClass,
+    OleRun_Run,
+    OleRun_IsRunning,
+    OleRun_LockRunning,
+    OleRun_SetContainedObject
 };
 
-static IUnknown unknown = { &UnknownVtbl };
+static IRunnableObject testrunnable = { &oleruntestvtbl };
 
 static void test_OleRun(void)
 {
     HRESULT hr;
 
+    /* doesn't support IRunnableObject */
     hr = OleRun(&unknown);
     ok(hr == S_OK, "OleRun failed 0x%08x\n", hr);
+
+    hr = OleRun((IUnknown*)&testrunnable);
+    ok(hr == 0xdeadc0de, "got 0x%08x\n", hr);
 }
 
 static void test_OleLockRunning(void)
 {
     HRESULT hr;
 
-    hr = OleLockRunning((LPUNKNOWN)&unknown, TRUE, FALSE);
+    hr = OleLockRunning(&unknown, TRUE, FALSE);
     ok(hr == S_OK, "OleLockRunning failed 0x%08x\n", hr);
 }
 
@@ -2385,6 +2774,8 @@ START_TEST(ole2)
     ok_ole_success(hr, "CoRevokeClassObject");
 
     test_data_cache();
+    test_data_cache_dib_contents_stream( 0 );
+    test_data_cache_dib_contents_stream( 1 );
     test_default_handler();
     test_runnable();
     test_OleRun();

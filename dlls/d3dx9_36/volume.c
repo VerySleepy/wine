@@ -16,8 +16,10 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#include "wine/debug.h"
-#include "d3dx9_36_private.h"
+#include "config.h"
+#include "wine/port.h"
+
+#include "d3dx9_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3dx);
 
@@ -189,7 +191,7 @@ HRESULT WINAPI D3DXLoadVolumeFromMemory(IDirect3DVolume9 *dst_volume,
         if (((src_format_desc->type != FORMAT_ARGB) && (src_format_desc->type != FORMAT_INDEX)) ||
             (dst_format_desc->type != FORMAT_ARGB))
         {
-            FIXME("Pixel format conversion not implemented %#x -> %#x\n",
+            FIXME("Pixel format conversion is not implemented %#x -> %#x\n",
                     src_format_desc->format, dst_format_desc->format);
             return E_NOTIMPL;
         }
@@ -238,14 +240,16 @@ HRESULT WINAPI D3DXLoadVolumeFromFileInMemory(IDirect3DVolume9 *dst_volume,
     D3DBOX box;
     D3DXIMAGE_INFO image_info;
 
-    TRACE("dst_volume %p, dst_palette %p, dst_box %p, src_data %p, src_data_size %u, src_box %p,\n",
-            dst_volume, dst_palette, dst_box, src_data, src_data_size, src_box);
-    TRACE("filter %#x, color_key %#x, src_info %p.\n", filter, color_key, src_info);
+    TRACE("dst_volume %p, dst_palette %p, dst_box %p, src_data %p, src_data_size %u, src_box %p, "
+            "filter %#x, color_key 0x%08x, src_info %p.\n",
+            dst_volume, dst_palette, dst_box, src_data, src_data_size, src_box,
+            filter, color_key, src_info);
 
-    if (!dst_volume || !src_data) return D3DERR_INVALIDCALL;
+    if (!dst_volume || !src_data)
+        return D3DERR_INVALIDCALL;
 
-    hr = D3DXGetImageInfoFromFileInMemory(src_data, src_data_size, &image_info);
-    if (FAILED(hr)) return hr;
+    if (FAILED(hr = D3DXGetImageInfoFromFileInMemory(src_data, src_data_size, &image_info)))
+        return hr;
 
     if (src_box)
     {

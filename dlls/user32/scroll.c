@@ -360,18 +360,12 @@ static BOOL SCROLL_PtInRectEx( LPRECT lpRect, POINT pt, BOOL vertical )
     if (vertical)
     {
         scrollbarWidth = lpRect->right - lpRect->left;
-        rect.left -= scrollbarWidth*8;
-        rect.right += scrollbarWidth*8;
-        rect.top -= scrollbarWidth*2;
-        rect.bottom += scrollbarWidth*2;
+        InflateRect(&rect, scrollbarWidth * 8, scrollbarWidth * 2);
     }
     else
     {
         scrollbarWidth = lpRect->bottom - lpRect->top;
-        rect.left -= scrollbarWidth*2;
-        rect.right += scrollbarWidth*2;
-        rect.top -= scrollbarWidth*8;
-        rect.bottom += scrollbarWidth*8;
+        InflateRect(&rect, scrollbarWidth * 2, scrollbarWidth * 8);
     }
     return PtInRect( &rect, pt );
 }
@@ -1096,7 +1090,6 @@ static void SCROLL_HandleScrollEvent( HWND hwnd, INT nBar, UINT msg, POINT pt)
 void SCROLL_TrackScrollBar( HWND hwnd, INT scrollbar, POINT pt )
 {
     MSG msg;
-    INT xoffset = 0, yoffset = 0;
 
     if (scrollbar != SB_CTL)
     {
@@ -1117,8 +1110,8 @@ void SCROLL_TrackScrollBar( HWND hwnd, INT scrollbar, POINT pt )
             msg.message == WM_MOUSEMOVE ||
             (msg.message == WM_SYSTIMER && msg.wParam == SCROLL_TIMER))
         {
-            pt.x = (short)LOWORD(msg.lParam) + xoffset;
-            pt.y = (short)HIWORD(msg.lParam) + yoffset;
+            pt.x = (short)LOWORD(msg.lParam);
+            pt.y = (short)HIWORD(msg.lParam);
             SCROLL_HandleScrollEvent( hwnd, scrollbar, msg.message, pt );
         }
         else
@@ -2040,7 +2033,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH EnableScrollBar( HWND hwnd, UINT nBar, UINT flags 
 	nBar = SB_HORZ;
     }
     else
-	bFineWithMe = TRUE;
+	bFineWithMe = nBar != SB_CTL;
 
     if (!(infoPtr = SCROLL_GetInternalInfo( hwnd, nBar, TRUE ))) return FALSE;
     if (bFineWithMe && infoPtr->flags == flags) return FALSE;

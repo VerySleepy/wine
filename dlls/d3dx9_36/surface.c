@@ -18,9 +18,10 @@
  *
  */
 
-#include "wine/debug.h"
-#include "wine/unicode.h"
-#include "d3dx9_36_private.h"
+#include "config.h"
+#include "wine/port.h"
+
+#include "d3dx9_private.h"
 
 #include "initguid.h"
 #include "ole2.h"
@@ -77,7 +78,7 @@ static const GUID *d3dformat_to_wic_guid(D3DFORMAT format)
 /* dds_header.flags */
 #define DDS_CAPS 0x1
 #define DDS_HEIGHT 0x2
-#define DDS_WIDTH 0x2
+#define DDS_WIDTH 0x4
 #define DDS_PITCH 0x8
 #define DDS_PIXELFORMAT 0x1000
 #define DDS_MIPMAPCOUNT 0x20000
@@ -146,15 +147,15 @@ static D3DFORMAT dds_fourcc_to_d3dformat(DWORD fourcc)
 {
     unsigned int i;
     static const DWORD known_fourcc[] = {
-        MAKEFOURCC('U','Y','V','Y'),
-        MAKEFOURCC('Y','U','Y','2'),
-        MAKEFOURCC('R','G','B','G'),
-        MAKEFOURCC('G','R','G','B'),
-        MAKEFOURCC('D','X','T','1'),
-        MAKEFOURCC('D','X','T','2'),
-        MAKEFOURCC('D','X','T','3'),
-        MAKEFOURCC('D','X','T','4'),
-        MAKEFOURCC('D','X','T','5'),
+        D3DFMT_UYVY,
+        D3DFMT_YUY2,
+        D3DFMT_R8G8_B8G8,
+        D3DFMT_G8R8_G8B8,
+        D3DFMT_DXT1,
+        D3DFMT_DXT2,
+        D3DFMT_DXT3,
+        D3DFMT_DXT4,
+        D3DFMT_DXT5,
         D3DFMT_R16F,
         D3DFMT_G16R16F,
         D3DFMT_A16B16G16R16F,
@@ -390,7 +391,7 @@ static HRESULT get_image_info_from_dds(const void *buffer, UINT length, D3DXIMAG
     info->Width = header->width;
     info->Height = header->height;
     info->Depth = 1;
-    info->MipLevels = (header->flags & DDS_MIPMAPCOUNT) ?  header->miplevels : 1;
+    info->MipLevels = header->miplevels ? header->miplevels : 1;
 
     info->Format = dds_pixel_format_to_d3dformat(&header->pixel_format);
     if (info->Format == D3DFMT_UNKNOWN)
@@ -487,13 +488,11 @@ static HRESULT save_dds_surface_to_memory(ID3DXBuffer **dst_buffer, IDirect3DSur
 
     memset(header, 0, sizeof(*header));
     header->signature = MAKEFOURCC('D','D','S',' ');
-    header->size = sizeof(*header);
-    header->flags = DDS_CAPS | DDS_HEIGHT | DDS_WIDTH | DDS_PITCH | DDS_PIXELFORMAT | DDS_MIPMAPCOUNT;
+    /* The signature is not really part of the DDS header */
+    header->size = sizeof(*header) - FIELD_OFFSET(struct dds_header, size);
+    header->flags = DDS_CAPS | DDS_HEIGHT | DDS_WIDTH | DDS_PIXELFORMAT;
     header->height = src_desc.Height;
     header->width = src_desc.Width;
-    header->pitch_or_linear_size = dst_pitch;
-    header->depth = 1;
-    header->miplevels = 1;
     header->caps = DDS_CAPS_TEXTURE;
     hr = d3dformat_to_dds_pixel_format(&header->pixel_format, src_desc.Format);
     if (FAILED(hr))
@@ -1525,7 +1524,6 @@ void copy_pixels(const BYTE *src, UINT src_row_pitch, UINT src_slice_pitch,
  * Copies the source buffer to the destination buffer, performing
  * any necessary format conversion and color keying.
  * Pixels outsize the source rect are blacked out.
- * Works only for ARGB formats with 1 - 4 bytes per pixel.
  */
 void convert_argb_pixels(const BYTE *src, UINT src_row_pitch, UINT src_slice_pitch, const struct volume *src_size,
         const struct pixel_format_desc *src_format, BYTE *dst, UINT dst_row_pitch, UINT dst_slice_pitch,
@@ -1562,6 +1560,7 @@ void convert_argb_pixels(const BYTE *src, UINT src_row_pitch, UINT src_slice_pit
 
             for (x = 0; x < min_width; x++) {
                 if (!src_format->to_rgba && !dst_format->from_rgba
+                        && src_format->type == dst_format->type
                         && src_format->bytes_per_pixel <= 4 && dst_format->bytes_per_pixel <= 4)
                 {
                     DWORD val;
@@ -1628,7 +1627,6 @@ void convert_argb_pixels(const BYTE *src, UINT src_row_pitch, UINT src_slice_pit
  * Copies the source buffer to the destination buffer, performing
  * any necessary format conversion, color keying and stretching
  * using a point filter.
- * Works only for ARGB formats with 1 - 4 bytes per pixel.
  */
 void point_filter_argb_pixels(const BYTE *src, UINT src_row_pitch, UINT src_slice_pitch, const struct volume *src_size,
         const struct pixel_format_desc *src_format, BYTE *dst, UINT dst_row_pitch, UINT dst_slice_pitch,
@@ -1665,6 +1663,7 @@ void point_filter_argb_pixels(const BYTE *src, UINT src_row_pitch, UINT src_slic
                 const BYTE *src_ptr = src_row_ptr + (x * src_size->width / dst_size->width) * src_format->bytes_per_pixel;
 
                 if (!src_format->to_rgba && !dst_format->from_rgba
+                        && src_format->type == dst_format->type
                         && src_format->bytes_per_pixel <= 4 && dst_format->bytes_per_pixel <= 4)
                 {
                     DWORD val;
@@ -1758,7 +1757,7 @@ HRESULT WINAPI D3DXLoadSurfaceFromMemory(IDirect3DSurface9 *dst_surface,
     D3DLOCKED_RECT lockrect;
     struct volume src_size, dst_size;
 
-    TRACE("(%p, %p, %s, %p, %#x, %u, %p, %s %#x, 0x%08x)\n",
+    TRACE("(%p, %p, %s, %p, %#x, %u, %p, %s, %#x, 0x%08x)\n",
             dst_surface, dst_palette, wine_dbgstr_rect(dst_rect), src_memory, src_format,
             src_pitch, src_palette, wine_dbgstr_rect(src_rect), filter, color_key);
 
@@ -2006,7 +2005,7 @@ HRESULT WINAPI D3DXSaveSurfaceToFileInMemory(ID3DXBuffer **dst_buffer, D3DXIMAGE
 
     if (src_palette)
     {
-        FIXME("Saving surfaces with palettized pixel formats not implemented yet\n");
+        FIXME("Saving surfaces with palettized pixel formats is not implemented yet\n");
         return D3DERR_INVALIDCALL;
     }
 

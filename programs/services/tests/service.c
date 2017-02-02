@@ -83,6 +83,9 @@ static DWORD WINAPI service_handler(DWORD ctrl, DWORD event_type, void *event_da
         SetServiceStatus(service_handle, &status);
         SetEvent(service_stop_event);
         return NO_ERROR;
+    case 128:
+        service_event("CUSTOM");
+        return 0xdeadbeef;
     default:
         status.dwCurrentState = SERVICE_RUNNING;
         SetServiceStatus( service_handle, &status );
@@ -93,11 +96,17 @@ static DWORD WINAPI service_handler(DWORD ctrl, DWORD event_type, void *event_da
 static void WINAPI service_main(DWORD argc, char **argv)
 {
     SERVICE_STATUS status;
+    char buf[64];
     BOOL res;
 
-    service_ok(argc == 1, "argc = %d", argc);
-    if(argc)
-        service_ok(!strcmp(argv[0], service_name), "argv[0] = %s, expected %s", argv[0], service_name);
+    service_ok(argc == 3, "argc = %u, expected 3\n", argc);
+    service_ok(!strcmp(argv[0], service_name), "argv[0] = '%s', expected '%s'\n", argv[0], service_name);
+    service_ok(!strcmp(argv[1], "param1"), "argv[1] = '%s', expected 'param1'\n", argv[1]);
+    service_ok(!strcmp(argv[2], "param2"), "argv[2] = '%s', expected 'param2'\n", argv[2]);
+
+    buf[0] = 0;
+    GetEnvironmentVariableA("PATHEXT", buf, sizeof(buf));
+    service_ok(buf[0], "did not find PATHEXT environment variable\n");
 
     service_handle = pRegisterServiceCtrlHandlerExA(service_name, service_handler, NULL);
     service_ok(service_handle != NULL, "RegisterServiceCtrlHandlerEx failed: %u\n", GetLastError());
@@ -112,7 +121,7 @@ static void WINAPI service_main(DWORD argc, char **argv)
     status.dwCheckPoint              = 0;
     status.dwWaitHint                = 10000;
     res = SetServiceStatus(service_handle, &status);
-    service_ok(res, "SetServiceStatus(SERVICE_RUNNING) failed: %u", GetLastError());
+    service_ok(res, "SetServiceStatus(SERVICE_RUNNING) failed: %u\n", GetLastError());
 
     service_event("RUNNING");
 
@@ -121,7 +130,7 @@ static void WINAPI service_main(DWORD argc, char **argv)
     status.dwCurrentState     = SERVICE_STOPPED;
     status.dwControlsAccepted = 0;
     res = SetServiceStatus(service_handle, &status);
-    service_ok(res, "SetServiceStatus(SERVICE_STOPPED) failed: %u", GetLastError());
+    service_ok(res, "SetServiceStatus(SERVICE_STOPPED) failed: %u\n", GetLastError());
 }
 
 static void service_process(void (WINAPI *p_service_main)(DWORD, char **))
@@ -141,7 +150,7 @@ static void service_process(void (WINAPI *p_service_main)(DWORD, char **))
     if(pipe_handle == INVALID_HANDLE_VALUE)
         return;
 
-    service_trace("Starting...");
+    service_trace("Starting...\n");
 
     service_stop_event = CreateEventA(NULL, TRUE, FALSE, NULL);
     service_ok(service_stop_event != NULL, "Could not create event: %u\n", GetLastError());
@@ -191,9 +200,8 @@ static void WINAPI no_stop_main(DWORD argc, char **argv)
     SERVICE_STATUS status;
     BOOL res;
 
-    service_ok(argc == 1, "argc = %d", argc);
-    if(argc)
-        service_ok(!strcmp(argv[0], service_name), "argv[0] = %s, expected %s", argv[0], service_name);
+    service_ok(argc == 1, "argc = %u, expected 1\n", argc);
+    service_ok(!strcmp(argv[0], service_name), "argv[0] = '%s', expected '%s'\n", argv[0], service_name);
 
     service_handle = pRegisterServiceCtrlHandlerExA(service_name, no_stop_handler, NULL);
     service_ok(service_handle != NULL, "RegisterServiceCtrlHandlerEx failed: %u\n", GetLastError());
@@ -208,7 +216,7 @@ static void WINAPI no_stop_main(DWORD argc, char **argv)
     status.dwCheckPoint              = 0;
     status.dwWaitHint                = 10000;
     res = SetServiceStatus(service_handle, &status);
-    service_ok(res, "SetServiceStatus(SERVICE_RUNNING) failed: %u", GetLastError());
+    service_ok(res, "SetServiceStatus(SERVICE_RUNNING) failed: %u\n", GetLastError());
 
     service_event("RUNNING");
 }
@@ -275,7 +283,7 @@ static void expect_event(const char *event_name)
 
 static DWORD WINAPI pipe_thread(void *arg)
 {
-    char buf[257], *ptr;
+    char buf[512], *ptr;
     DWORD read;
     BOOL res;
 
@@ -292,11 +300,11 @@ static DWORD WINAPI pipe_thread(void *arg)
 
         for(ptr = buf; ptr < buf+read; ptr += strlen(ptr)+1) {
             if(!strncmp(ptr, "TRACE:", 6)) {
-                trace("service trace: %s\n", ptr+6);
+                trace("service trace: %s", ptr+6);
             }else if(!strncmp(ptr, "OK:", 3)) {
-                ok(1, "service: %s\n", ptr+3);
+                ok(1, "service: %s", ptr+3);
             }else if(!strncmp(ptr, "FAIL:", 5)) {
-                ok(0, "service: %s\n", ptr+5);
+                ok(0, "service: %s", ptr+5);
             }else if(!strncmp(ptr, "EVENT:", 6)) {
                 trace("service event: %s\n", ptr+6);
                 EnterCriticalSection(&event_cs);
@@ -317,15 +325,18 @@ static DWORD WINAPI pipe_thread(void *arg)
 
 static void test_service(void)
 {
+    static const char *argv[2] = {"param1", "param2"};
     SC_HANDLE service_handle = register_service("simple_service");
+    SERVICE_STATUS_PROCESS status2;
     SERVICE_STATUS status;
+    DWORD bytes;
     BOOL res;
 
     if(!service_handle)
         return;
 
     trace("starting...\n");
-    res = StartServiceA(service_handle, 0, NULL);
+    res = StartServiceA(service_handle, 2, argv);
     ok(res, "StartService failed: %u\n", GetLastError());
     if(!res) {
         DeleteService(service_handle);
@@ -346,6 +357,15 @@ static void test_service(void)
     ok(status.dwCheckPoint == 0, "status.dwCheckPoint = %d\n", status.dwCheckPoint);
     todo_wine ok(status.dwWaitHint == 0, "status.dwWaitHint = %d\n", status.dwWaitHint);
 
+    res = QueryServiceStatusEx(service_handle, SC_STATUS_PROCESS_INFO, (BYTE *)&status2, sizeof(status2), &bytes);
+    ok(res, "QueryServiceStatusEx failed: %u\n", GetLastError());
+    ok(status2.dwCurrentState == SERVICE_RUNNING, "status2.dwCurrentState = %x\n", status2.dwCurrentState);
+    ok(status2.dwProcessId != 0, "status2.dwProcessId = %d\n", status2.dwProcessId);
+
+    res = ControlService(service_handle, 128, &status);
+    ok(res, "ControlService failed: %u\n", GetLastError());
+    expect_event("CUSTOM");
+
     res = ControlService(service_handle, SERVICE_CONTROL_STOP, &status);
     ok(res, "ControlService failed: %u\n", GetLastError());
     expect_event("STOP");
@@ -359,7 +379,9 @@ static void test_service(void)
 static inline void test_no_stop(void)
 {
     SC_HANDLE service_handle = register_service("no_stop");
+    SERVICE_STATUS_PROCESS status2;
     SERVICE_STATUS status;
+    DWORD bytes;
     BOOL res;
 
     if(!service_handle)
@@ -390,6 +412,11 @@ static inline void test_no_stop(void)
     ok(status.dwCheckPoint == 0, "status.dwCheckPoint = %d\n", status.dwCheckPoint);
     todo_wine ok(status.dwWaitHint == 0, "status.dwWaitHint = %d\n", status.dwWaitHint);
 
+    res = QueryServiceStatusEx(service_handle, SC_STATUS_PROCESS_INFO, (BYTE *)&status2, sizeof(status2), &bytes);
+    ok(res, "QueryServiceStatusEx failed: %u\n", GetLastError());
+    ok(status2.dwCurrentState == SERVICE_RUNNING, "status2.dwCurrentState = %x\n", status2.dwCurrentState);
+    ok(status2.dwProcessId != 0, "status2.dwProcessId = %d\n", status2.dwProcessId);
+
     res = ControlService(service_handle, SERVICE_CONTROL_STOP, &status);
     ok(res, "ControlService failed: %u\n", GetLastError());
     expect_event("STOP");
@@ -406,6 +433,11 @@ static inline void test_no_stop(void)
     ok(status.dwCheckPoint == 0, "status.dwCheckPoint = %d\n", status.dwCheckPoint);
     ok(status.dwWaitHint == 0, "status.dwWaitHint = %d\n", status.dwWaitHint);
 
+    res = QueryServiceStatusEx(service_handle, SC_STATUS_PROCESS_INFO, (BYTE *)&status2, sizeof(status2), &bytes);
+    ok(res, "QueryServiceStatusEx failed: %u\n", GetLastError());
+    ok(status2.dwProcessId == 0 || broken(status2.dwProcessId != 0),
+       "status2.dwProcessId = %d\n", status2.dwProcessId);
+
     res = DeleteService(service_handle);
     ok(res, "DeleteService failed: %u\n", GetLastError());
 
@@ -420,6 +452,11 @@ static inline void test_no_stop(void)
             status.dwServiceSpecificExitCode);
     ok(status.dwCheckPoint == 0, "status.dwCheckPoint = %d\n", status.dwCheckPoint);
     ok(status.dwWaitHint == 0, "status.dwWaitHint = %d\n", status.dwWaitHint);
+
+    res = QueryServiceStatusEx(service_handle, SC_STATUS_PROCESS_INFO, (BYTE *)&status2, sizeof(status2), &bytes);
+    ok(res, "QueryServiceStatusEx failed: %u\n", GetLastError());
+    ok(status2.dwProcessId == 0 || broken(status2.dwProcessId != 0),
+       "status2.dwProcessId = %d\n", status2.dwProcessId);
 
     CloseServiceHandle(service_handle);
 
@@ -442,7 +479,6 @@ static void test_runner(void (*p_run_test)(void))
     if(pipe_handle == INVALID_HANDLE_VALUE)
         return;
 
-    InitializeCriticalSection(&event_cs);
     event_handle = CreateEventA(NULL, FALSE, FALSE, NULL);
     ok(event_handle != INVALID_HANDLE_VALUE, "CreateEvent failed: %u\n", GetLastError());
     if(event_handle == INVALID_HANDLE_VALUE)
@@ -464,6 +500,8 @@ START_TEST(service)
 {
     char **argv;
     int argc;
+
+    InitializeCriticalSection(&event_cs);
 
     pRegisterServiceCtrlHandlerExA = (void*)GetProcAddress(GetModuleHandleA("advapi32.dll"), "RegisterServiceCtrlHandlerExA");
     if(!pRegisterServiceCtrlHandlerExA) {

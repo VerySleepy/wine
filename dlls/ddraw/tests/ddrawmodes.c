@@ -337,9 +337,10 @@ static void flushdisplaymodes(void)
 
 static HRESULT WINAPI enummodescallback(DDSURFACEDESC *lpddsd, void *lpContext)
 {
-    trace("Width = %i, Height = %i, bpp = %i, Refresh Rate = %i, Pitch = %i, flags =%02X\n",
-        lpddsd->dwWidth, lpddsd->dwHeight, U1(lpddsd->ddpfPixelFormat).dwRGBBitCount,
-          U2(*lpddsd).dwRefreshRate, U1(*lpddsd).lPitch, lpddsd->dwFlags);
+    if (winetest_debug > 1)
+        trace("Width = %i, Height = %i, bpp = %i, Refresh Rate = %i, Pitch = %i, flags =%02X\n",
+              lpddsd->dwWidth, lpddsd->dwHeight, U1(lpddsd->ddpfPixelFormat).dwRGBBitCount,
+              U2(*lpddsd).dwRefreshRate, U1(*lpddsd).lPitch, lpddsd->dwFlags);
 
     /* Check that the pitch is valid if applicable */
     if(lpddsd->dwFlags & DDSD_PITCH)
@@ -366,9 +367,10 @@ static HRESULT WINAPI enummodescallback(DDSURFACEDESC *lpddsd, void *lpContext)
 
 static HRESULT WINAPI enummodescallback_16bit(DDSURFACEDESC *lpddsd, void *lpContext)
 {
-    trace("Width = %i, Height = %i, bpp = %i, Refresh Rate = %i, Pitch = %i, flags =%02X\n",
-        lpddsd->dwWidth, lpddsd->dwHeight, U1(lpddsd->ddpfPixelFormat).dwRGBBitCount,
-          U2(*lpddsd).dwRefreshRate, U1(*lpddsd).lPitch, lpddsd->dwFlags);
+    if (winetest_debug > 1)
+        trace("Width = %i, Height = %i, bpp = %i, Refresh Rate = %i, Pitch = %i, flags =%02X\n",
+              lpddsd->dwWidth, lpddsd->dwHeight, U1(lpddsd->ddpfPixelFormat).dwRGBBitCount,
+              U2(*lpddsd).dwRefreshRate, U1(*lpddsd).lPitch, lpddsd->dwFlags);
 
     ok(lpddsd->dwFlags == (DDSD_HEIGHT|DDSD_WIDTH|DDSD_PIXELFORMAT|DDSD_PITCH|DDSD_REFRESHRATE),
             "Wrong surface description flags %02X\n", lpddsd->dwFlags);
@@ -565,13 +567,13 @@ static void setdisplaymode(int i)
                       scrn.right, scrn.bottom, virt.left, virt.top, virt.right, virt.bottom);
                 if (!EqualRect(&scrn, &orig_rect))
                 {
-                    HRESULT rect_result;
+                    BOOL rect_result, ret;
 
                     /* Check that the client rect was resized */
-                    rc = GetClientRect(hwnd, &test);
-                    ok(rc!=0, "GetClientRect returned %x\n", rc);
-                    rc = EqualRect(&scrn, &test);
-                    todo_wine ok(rc!=0, "Fullscreen window has wrong size\n");
+                    ret = GetClientRect(hwnd, &test);
+                    ok(ret, "GetClientRect returned %d\n", ret);
+                    ret = EqualRect(&scrn, &test);
+                    todo_wine ok(ret, "Fullscreen window has wrong size\n");
 
                     /* Check that switching to normal cooperative level
                        does not restore the display mode */
@@ -930,8 +932,8 @@ static void testcooperativelevels_exclusive(void)
 
     /* rect_before_create is assumed to hold the screen rect */
     GetClientRect(hwnd, &window_rect);
-    rc = EqualRect(&rect_before_create, &window_rect);
-    ok(rc, "Fullscreen window has wrong size.\n");
+    success = EqualRect(&rect_before_create, &window_rect);
+    ok(success, "Fullscreen window has wrong size.\n");
 
     /* Set the focus window. Should fail */
     rc = IDirectDraw_SetCooperativeLevel(lpDD,

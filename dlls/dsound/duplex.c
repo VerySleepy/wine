@@ -22,8 +22,6 @@
 
 #include <stdarg.h>
 
-#define NONAMELESSSTRUCT
-#define NONAMELESSUNION
 #define COBJMACROS
 #include "windef.h"
 #include "winbase.h"
@@ -69,7 +67,7 @@ static void fullduplex_destroy(IDirectSoundFullDuplexImpl *This)
 }
 
 /*******************************************************************************
- * IUnknown implemetation for DirectSoundFullDuplex
+ * IUnknown implementation for DirectSoundFullDuplex
  */
 static inline IDirectSoundFullDuplexImpl *impl_from_IUnknown(IUnknown *iface)
 {

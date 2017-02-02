@@ -32,6 +32,7 @@
 #include "controls.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(user);
+WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
 static USER_DRIVER null_driver, lazy_load_driver;
 
@@ -120,14 +121,7 @@ static const USER_DRIVER *load_driver(void)
         GET_USER_FUNC(GetCursorPos);
         GET_USER_FUNC(SetCursorPos);
         GET_USER_FUNC(ClipCursor);
-        GET_USER_FUNC(AcquireClipboard);
-        GET_USER_FUNC(EmptyClipboard);
-        GET_USER_FUNC(SetClipboardData);
-        GET_USER_FUNC(GetClipboardData);
-        GET_USER_FUNC(CountClipboardFormats);
-        GET_USER_FUNC(EnumClipboardFormats);
-        GET_USER_FUNC(IsClipboardFormatAvailable);
-        GET_USER_FUNC(EndClipboardUpdate);
+        GET_USER_FUNC(UpdateClipboard);
         GET_USER_FUNC(ChangeDisplaySettingsEx);
         GET_USER_FUNC(EnumDisplayMonitors);
         GET_USER_FUNC(EnumDisplaySettingsEx);
@@ -135,6 +129,7 @@ static const USER_DRIVER *load_driver(void)
         GET_USER_FUNC(CreateDesktopWindow);
         GET_USER_FUNC(CreateWindow);
         GET_USER_FUNC(DestroyWindow);
+        GET_USER_FUNC(FlashWindowEx);
         GET_USER_FUNC(GetDC);
         GET_USER_FUNC(MsgWaitForMultipleObjectsEx);
         GET_USER_FUNC(ReleaseDC);
@@ -154,6 +149,7 @@ static const USER_DRIVER *load_driver(void)
         GET_USER_FUNC(WindowPosChanging);
         GET_USER_FUNC(WindowPosChanged);
         GET_USER_FUNC(SystemParametersInfo);
+        GET_USER_FUNC(ThreadDetach);
 #undef GET_USER_FUNC
     }
 
@@ -215,7 +211,7 @@ static UINT CDECL nulldrv_GetKeyboardLayoutList( INT size, HKL *layouts )
     baselayout = GetUserDefaultLCID();
     langid = PRIMARYLANGID(LANGIDFROMLCID(baselayout));
     if (langid == LANG_CHINESE || langid == LANG_JAPANESE || langid == LANG_KOREAN)
-        baselayout |= 0xe001 << 16; /* IME */
+        baselayout = MAKELONG( baselayout, 0xe001 ); /* IME */
     else
         baselayout |= baselayout << 16;
 
@@ -334,42 +330,8 @@ static BOOL CDECL nulldrv_ClipCursor( LPCRECT clip )
     return FALSE;
 }
 
-static INT CDECL nulldrv_AcquireClipboard( HWND hwnd )
+static void CDECL nulldrv_UpdateClipboard(void)
 {
-    return 0;
-}
-
-static BOOL CDECL nulldrv_CountClipboardFormats(void)
-{
-    return 0;
-}
-
-static void CDECL nulldrv_EmptyClipboard( BOOL keepunowned )
-{
-}
-
-static void CDECL nulldrv_EndClipboardUpdate(void)
-{
-}
-
-static UINT CDECL nulldrv_EnumClipboardFormats( UINT format )
-{
-    return 0;
-}
-
-static HANDLE CDECL nulldrv_GetClipboardData( UINT format )
-{
-    return 0;
-}
-
-static BOOL CDECL nulldrv_IsClipboardFormatAvailable( UINT format )
-{
-    return FALSE;
-}
-
-static BOOL CDECL nulldrv_SetClipboardData( UINT format, HANDLE handle, BOOL owner )
-{
-    return FALSE;
 }
 
 static LONG CDECL nulldrv_ChangeDisplaySettingsEx( LPCWSTR name, LPDEVMODEW mode, HWND hwnd,
@@ -407,12 +369,16 @@ static BOOL CDECL nulldrv_CreateWindow( HWND hwnd )
     if (!parent || parent == get_user_thread_info()->msg_window) return TRUE;
     if (warned++) return FALSE;
 
-    MESSAGE( "Application tried to create a window, but no driver could be loaded.\n");
-    if (driver_load_error[0]) MESSAGE( "%s\n", driver_load_error );
+    ERR_(winediag)( "Application tried to create a window, but no driver could be loaded.\n" );
+    if (driver_load_error[0]) ERR_(winediag)( "%s\n", driver_load_error );
     return FALSE;
 }
 
 static void CDECL nulldrv_DestroyWindow( HWND hwnd )
+{
+}
+
+static void CDECL nulldrv_FlashWindowEx( FLASHWINFO *info )
 {
 }
 
@@ -512,6 +478,10 @@ static BOOL CDECL nulldrv_SystemParametersInfo( UINT action, UINT int_param, voi
     return FALSE;
 }
 
+static void CDECL nulldrv_ThreadDetach( void )
+{
+}
+
 static USER_DRIVER null_driver =
 {
     /* keyboard functions */
@@ -536,14 +506,7 @@ static USER_DRIVER null_driver =
     nulldrv_SetCursorPos,
     nulldrv_ClipCursor,
     /* clipboard functions */
-    nulldrv_AcquireClipboard,
-    nulldrv_CountClipboardFormats,
-    nulldrv_EmptyClipboard,
-    nulldrv_EndClipboardUpdate,
-    nulldrv_EnumClipboardFormats,
-    nulldrv_GetClipboardData,
-    nulldrv_IsClipboardFormatAvailable,
-    nulldrv_SetClipboardData,
+    nulldrv_UpdateClipboard,
     /* display modes */
     nulldrv_ChangeDisplaySettingsEx,
     nulldrv_EnumDisplayMonitors,
@@ -553,6 +516,7 @@ static USER_DRIVER null_driver =
     nulldrv_CreateDesktopWindow,
     nulldrv_CreateWindow,
     nulldrv_DestroyWindow,
+    nulldrv_FlashWindowEx,
     nulldrv_GetDC,
     nulldrv_MsgWaitForMultipleObjectsEx,
     nulldrv_ReleaseDC,
@@ -572,7 +536,9 @@ static USER_DRIVER null_driver =
     nulldrv_WindowPosChanging,
     nulldrv_WindowPosChanged,
     /* system parameters */
-    nulldrv_SystemParametersInfo
+    nulldrv_SystemParametersInfo,
+    /* thread management */
+    nulldrv_ThreadDetach
 };
 
 
@@ -674,44 +640,9 @@ static BOOL CDECL loaderdrv_ClipCursor( LPCRECT clip )
     return load_driver()->pClipCursor( clip );
 }
 
-static INT CDECL loaderdrv_AcquireClipboard( HWND hwnd )
+static void CDECL loaderdrv_UpdateClipboard(void)
 {
-    return load_driver()->pAcquireClipboard( hwnd );
-}
-
-static BOOL CDECL loaderdrv_CountClipboardFormats(void)
-{
-    return load_driver()->pCountClipboardFormats();
-}
-
-static void CDECL loaderdrv_EmptyClipboard( BOOL keepunowned )
-{
-    load_driver()->pEmptyClipboard( keepunowned );
-}
-
-static void CDECL loaderdrv_EndClipboardUpdate(void)
-{
-    load_driver()->pEndClipboardUpdate();
-}
-
-static UINT CDECL loaderdrv_EnumClipboardFormats( UINT format )
-{
-    return load_driver()->pEnumClipboardFormats( format );
-}
-
-static HANDLE CDECL loaderdrv_GetClipboardData( UINT format )
-{
-    return load_driver()->pGetClipboardData( format );
-}
-
-static BOOL CDECL loaderdrv_IsClipboardFormatAvailable( UINT format )
-{
-    return load_driver()->pIsClipboardFormatAvailable( format );
-}
-
-static BOOL CDECL loaderdrv_SetClipboardData( UINT format, HANDLE handle, BOOL owner )
-{
-    return load_driver()->pSetClipboardData( format, handle, owner );
+    load_driver()->pUpdateClipboard();
 }
 
 static LONG CDECL loaderdrv_ChangeDisplaySettingsEx( LPCWSTR name, LPDEVMODEW mode, HWND hwnd,
@@ -743,6 +674,11 @@ static BOOL CDECL loaderdrv_CreateDesktopWindow( HWND hwnd )
 static BOOL CDECL loaderdrv_CreateWindow( HWND hwnd )
 {
     return load_driver()->pCreateWindow( hwnd );
+}
+
+static void CDECL loaderdrv_FlashWindowEx( FLASHWINFO *info )
+{
+    load_driver()->pFlashWindowEx( info );
 }
 
 static void CDECL loaderdrv_GetDC( HDC hdc, HWND hwnd, HWND top_win, const RECT *win_rect,
@@ -791,14 +727,7 @@ static USER_DRIVER lazy_load_driver =
     loaderdrv_SetCursorPos,
     loaderdrv_ClipCursor,
     /* clipboard functions */
-    loaderdrv_AcquireClipboard,
-    loaderdrv_CountClipboardFormats,
-    loaderdrv_EmptyClipboard,
-    loaderdrv_EndClipboardUpdate,
-    loaderdrv_EnumClipboardFormats,
-    loaderdrv_GetClipboardData,
-    loaderdrv_IsClipboardFormatAvailable,
-    loaderdrv_SetClipboardData,
+    loaderdrv_UpdateClipboard,
     /* display modes */
     loaderdrv_ChangeDisplaySettingsEx,
     loaderdrv_EnumDisplayMonitors,
@@ -808,6 +737,7 @@ static USER_DRIVER lazy_load_driver =
     loaderdrv_CreateDesktopWindow,
     loaderdrv_CreateWindow,
     nulldrv_DestroyWindow,
+    loaderdrv_FlashWindowEx,
     loaderdrv_GetDC,
     nulldrv_MsgWaitForMultipleObjectsEx,
     nulldrv_ReleaseDC,
@@ -827,5 +757,7 @@ static USER_DRIVER lazy_load_driver =
     nulldrv_WindowPosChanging,
     nulldrv_WindowPosChanged,
     /* system parameters */
-    nulldrv_SystemParametersInfo
+    nulldrv_SystemParametersInfo,
+    /* thread management */
+    nulldrv_ThreadDetach
 };

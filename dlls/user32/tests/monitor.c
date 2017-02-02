@@ -34,6 +34,7 @@ static BOOL (WINAPI *pGetMonitorInfoW)(HMONITOR,LPMONITORINFO);
 static HMONITOR (WINAPI *pMonitorFromPoint)(POINT,DWORD);
 static HMONITOR (WINAPI *pMonitorFromRect)(LPCRECT,DWORD);
 static HMONITOR (WINAPI *pMonitorFromWindow)(HWND,DWORD);
+static LONG (WINAPI *pGetDisplayConfigBufferSizes)(UINT32,UINT32*,UINT32*);
 
 static void init_function_pointers(void)
 {
@@ -48,6 +49,7 @@ static void init_function_pointers(void)
     GET_PROC(ChangeDisplaySettingsExW)
     GET_PROC(EnumDisplayDevicesA)
     GET_PROC(EnumDisplayMonitors)
+    GET_PROC(GetDisplayConfigBufferSizes)
     GET_PROC(GetMonitorInfoA)
     GET_PROC(GetMonitorInfoW)
     GET_PROC(MonitorFromPoint)
@@ -129,9 +131,9 @@ struct vid_mode
 };
 
 static const struct vid_mode vid_modes_test[] = {
-    {640, 480, 0, 0, DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL | DM_DISPLAYFREQUENCY, 1},
+    {640, 480, 0, 0, DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL | DM_DISPLAYFREQUENCY, 0},
     {640, 480, 0, 0, DM_PELSWIDTH | DM_PELSHEIGHT |                 DM_DISPLAYFREQUENCY, 1},
-    {640, 480, 0, 0, DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL                      , 1},
+    {640, 480, 0, 0, DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL                      , 0},
     {640, 480, 0, 0, DM_PELSWIDTH | DM_PELSHEIGHT                                      , 1},
     {640, 480, 0, 0,                                DM_BITSPERPEL                      , 0},
     {640, 480, 0, 0,                                                DM_DISPLAYFREQUENCY, 0},
@@ -260,21 +262,21 @@ static void test_ChangeDisplaySettingsEx(void)
 
             /* Resolution change resets clip rect */
             ok(GetClipCursor(&r), "GetClipCursor() failed\n");
-            ok(EqualRect(&r, &virt), "Invalid clip rect: (%d %d) x (%d %d)\n", r.left, r.top, r.right, r.bottom);
+            ok(EqualRect(&r, &virt), "Invalid clip rect: %s\n", wine_dbgstr_rect(&r));
 
             if (!ClipCursor(NULL)) continue;
             ok(GetClipCursor(&r), "GetClipCursor() failed\n");
-            ok(EqualRect(&r, &virt), "Invalid clip rect: (%d %d) x (%d %d)\n", r.left, r.top, r.right, r.bottom);
+            ok(EqualRect(&r, &virt), "Invalid clip rect: %s\n", wine_dbgstr_rect(&r));
 
             /* This should always work. Primary monitor is at (0,0) */
             SetRect(&r1, 10, 10, 20, 20);
             ok(ClipCursor(&r1), "ClipCursor() failed\n");
             ok(GetClipCursor(&r), "GetClipCursor() failed\n");
-            ok(EqualRect(&r, &r1), "Invalid clip rect: (%d %d) x (%d %d)\n", r.left, r.top, r.right, r.bottom);
+            ok(EqualRect(&r, &r1), "Invalid clip rect: %s\n", wine_dbgstr_rect(&r));
             SetRect(&r1, 10, 10, 10, 10);
             ok(ClipCursor(&r1), "ClipCursor() failed\n");
             ok(GetClipCursor(&r), "GetClipCursor() failed\n");
-            ok(EqualRect(&r, &r1), "Invalid clip rect: (%d %d) x (%d %d)\n", r.left, r.top, r.right, r.bottom);
+            ok(EqualRect(&r, &r1), "Invalid clip rect: %s\n", wine_dbgstr_rect(&r));
             SetRect(&r1, 10, 10, 10, 9);
             ok(!ClipCursor(&r1), "ClipCursor() succeeded\n");
             /* Windows bug: further clipping fails once an empty rect is set, so we have to reset it */
@@ -283,9 +285,8 @@ static void test_ChangeDisplaySettingsEx(void)
             SetRect(&r1, virt.left - 10, virt.top - 10, virt.right + 20, virt.bottom + 20);
             ok(ClipCursor(&r1), "ClipCursor() failed\n");
             ok(GetClipCursor(&r), "GetClipCursor() failed\n");
-            ok(EqualRect(&r, &virt) ||
-               broken(EqualRect(&r, &r1)) /* win9x */,
-               "Invalid clip rect: (%d %d) x (%d %d)\n", r.left, r.top, r.right, r.bottom);
+            ok(EqualRect(&r, &virt) || broken(EqualRect(&r, &r1)) /* win9x */,
+               "Invalid clip rect: %s\n", wine_dbgstr_rect(&r));
             ClipCursor(&virt);
         }
     }
@@ -497,13 +498,12 @@ static void test_work_area(void)
     ret = pGetMonitorInfoA(hmon, &mi);
     ok(ret, "GetMonitorInfo error %u\n", GetLastError());
     ok(mi.dwFlags & MONITORINFOF_PRIMARY, "not a primary monitor\n");
-    trace("primary monitor (%d,%d-%d,%d)\n",
-        mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right, mi.rcMonitor.bottom);
+    trace("primary monitor %s\n", wine_dbgstr_rect(&mi.rcMonitor));
 
     SetLastError(0xdeadbeef);
     ret = SystemParametersInfoA(SPI_GETWORKAREA, 0, &rc_work, 0);
     ok(ret, "SystemParametersInfo error %u\n", GetLastError());
-    trace("work area (%d,%d-%d,%d)\n", rc_work.left, rc_work.top, rc_work.right, rc_work.bottom);
+    trace("work area %s\n", wine_dbgstr_rect(&rc_work));
     ok(EqualRect(&rc_work, &mi.rcWork), "work area is different\n");
 
     hwnd = CreateWindowExA(0, "static", NULL, WS_OVERLAPPEDWINDOW|WS_VISIBLE,100,100,10,10,0,0,0,NULL);
@@ -511,36 +511,82 @@ static void test_work_area(void)
 
     ret = GetWindowRect(hwnd, &rc_normal);
     ok(ret, "GetWindowRect failed\n");
-    trace("normal (%d,%d-%d,%d)\n", rc_normal.left, rc_normal.top, rc_normal.right, rc_normal.bottom);
+    trace("normal %s\n", wine_dbgstr_rect(&rc_normal));
 
     wp.length = sizeof(wp);
     ret = GetWindowPlacement(hwnd, &wp);
     ok(ret, "GetWindowPlacement failed\n");
-    trace("min: %d,%d max %d,%d normal %d,%d-%d,%d\n",
-          wp.ptMinPosition.x, wp.ptMinPosition.y,
-          wp.ptMaxPosition.x, wp.ptMaxPosition.y,
-          wp.rcNormalPosition.left, wp.rcNormalPosition.top,
-          wp.rcNormalPosition.right, wp.rcNormalPosition.bottom);
+    trace("min: %d,%d max %d,%d normal %s\n", wp.ptMinPosition.x, wp.ptMinPosition.y,
+          wp.ptMaxPosition.x, wp.ptMaxPosition.y, wine_dbgstr_rect(&wp.rcNormalPosition));
     OffsetRect(&wp.rcNormalPosition, rc_work.left, rc_work.top);
-    if (mi.rcMonitor.left != mi.rcWork.left ||
+    todo_wine_if (mi.rcMonitor.left != mi.rcWork.left ||
         mi.rcMonitor.top != mi.rcWork.top)  /* FIXME: remove once Wine is fixed */
-        todo_wine ok(EqualRect(&rc_normal, &wp.rcNormalPosition), "normal pos is different\n");
-    else
+    {
         ok(EqualRect(&rc_normal, &wp.rcNormalPosition), "normal pos is different\n");
+    }
 
     SetWindowLongA(hwnd, GWL_EXSTYLE, WS_EX_TOOLWINDOW);
 
     wp.length = sizeof(wp);
     ret = GetWindowPlacement(hwnd, &wp);
     ok(ret, "GetWindowPlacement failed\n");
-    trace("min: %d,%d max %d,%d normal %d,%d-%d,%d\n",
-          wp.ptMinPosition.x, wp.ptMinPosition.y,
-          wp.ptMaxPosition.x, wp.ptMaxPosition.y,
-          wp.rcNormalPosition.left, wp.rcNormalPosition.top,
-          wp.rcNormalPosition.right, wp.rcNormalPosition.bottom);
+    trace("min: %d,%d max %d,%d normal %s\n", wp.ptMinPosition.x, wp.ptMinPosition.y,
+          wp.ptMaxPosition.x, wp.ptMaxPosition.y, wine_dbgstr_rect(&wp.rcNormalPosition));
     ok(EqualRect(&rc_normal, &wp.rcNormalPosition), "normal pos is different\n");
 
     DestroyWindow(hwnd);
+}
+
+static void test_display_config(void)
+{
+    UINT32 paths, modes;
+    LONG ret;
+
+    if (!pGetDisplayConfigBufferSizes)
+    {
+        win_skip("GetDisplayConfigBufferSizes is not supported\n");
+        return;
+    }
+
+    ret = pGetDisplayConfigBufferSizes(QDC_ALL_PATHS, NULL, NULL);
+    ok(ret == ERROR_INVALID_PARAMETER, "got %d\n", ret);
+
+    paths = 100;
+    ret = pGetDisplayConfigBufferSizes(QDC_ALL_PATHS, &paths, NULL);
+    ok(ret == ERROR_INVALID_PARAMETER, "got %d\n", ret);
+    ok(paths == 100, "got %u\n", paths);
+
+    modes = 100;
+    ret = pGetDisplayConfigBufferSizes(QDC_ALL_PATHS, NULL, &modes);
+    ok(ret == ERROR_INVALID_PARAMETER, "got %d\n", ret);
+    ok(modes == 100, "got %u\n", modes);
+
+    paths = modes = 0;
+    ret = pGetDisplayConfigBufferSizes(QDC_ALL_PATHS, &paths, &modes);
+    if (!ret)
+        ok(paths > 0 && modes > 0, "got %u, %u\n", paths, modes);
+    else
+        ok(ret == ERROR_NOT_SUPPORTED, "got %d\n", ret);
+
+    /* Invalid flags, non-zero invalid flags validation is version (or driver?) dependent,
+       it's unreliable to use in tests. */
+    ret = pGetDisplayConfigBufferSizes(0, NULL, NULL);
+    ok(ret == ERROR_INVALID_PARAMETER, "got %d\n", ret);
+
+    paths = 100;
+    ret = pGetDisplayConfigBufferSizes(0, &paths, NULL);
+    ok(ret == ERROR_INVALID_PARAMETER, "got %d\n", ret);
+    ok(paths == 100, "got %u\n", paths);
+
+    modes = 100;
+    ret = pGetDisplayConfigBufferSizes(0, NULL, &modes);
+    ok(ret == ERROR_INVALID_PARAMETER, "got %d\n", ret);
+    ok(modes == 100, "got %u\n", modes);
+
+    paths = modes = 100;
+    ret = pGetDisplayConfigBufferSizes(0, &paths, &modes);
+    ok(ret == ERROR_INVALID_PARAMETER || ret == ERROR_NOT_SUPPORTED, "got %d\n", ret);
+    ok(modes == 0 && paths == 0, "got %u, %u\n", modes, paths);
 }
 
 START_TEST(monitor)
@@ -550,4 +596,5 @@ START_TEST(monitor)
     test_ChangeDisplaySettingsEx();
     test_monitors();
     test_work_area();
+    test_display_config();
 }

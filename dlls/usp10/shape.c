@@ -84,9 +84,9 @@ static void ShapeCharGlyphProp_Kannada( HDC hdc, ScriptCache *psc, SCRIPT_ANALYS
 static void ShapeCharGlyphProp_Malayalam( HDC hdc, ScriptCache *psc, SCRIPT_ANALYSIS *psa, const WCHAR* pwcChars, const INT cChars, const WORD* pwGlyphs, const INT cGlyphs, WORD *pwLogClust, SCRIPT_CHARPROP *pCharProp, SCRIPT_GLYPHPROP *pGlyphProp );
 static void ShapeCharGlyphProp_Khmer( HDC hdc, ScriptCache *psc, SCRIPT_ANALYSIS *psa, const WCHAR* pwcChars, const INT cChars, const WORD* pwGlyphs, const INT cGlyphs, WORD *pwLogClust, SCRIPT_CHARPROP *pCharProp, SCRIPT_GLYPHPROP *pGlyphProp );
 
-extern const unsigned short indic_syllabic_table[];
-extern const unsigned short wine_shaping_table[];
-extern const unsigned short wine_shaping_forms[LAST_ARABIC_CHAR - FIRST_ARABIC_CHAR + 1][4];
+extern const unsigned short indic_syllabic_table[] DECLSPEC_HIDDEN;
+extern const unsigned short wine_shaping_table[] DECLSPEC_HIDDEN;
+extern const unsigned short wine_shaping_forms[LAST_ARABIC_CHAR - FIRST_ARABIC_CHAR + 1][4] DECLSPEC_HIDDEN;
 
 enum joining_types {
     jtU,
@@ -950,7 +950,10 @@ static void ContextualShape_Control(HDC hdc, ScriptCache *psc, SCRIPT_ANALYSIS *
     {
         switch (pwcChars[i])
         {
-            case 0x000D: pwOutGlyphs[i] = psc->sfp.wgBlank; break;
+            case 0x000A:
+            case 0x000D:
+                pwOutGlyphs[i] = psc->sfp.wgBlank;
+                break;
             default:
                 if (pwcChars[i] < 0x1C)
                     pwOutGlyphs[i] = psc->sfp.wgDefault;
@@ -1593,7 +1596,7 @@ static void ReplaceInsertChars(HDC hdc, INT cWalk, INT* pcChars, WCHAR *pwOutCha
     cWalk=cWalk+1;
 
     /* Insert */
-    for (i = 1; replacements[i] != 0x0000 && i < 3; i++)
+    for (i = 1; i < 3 && replacements[i] != 0x0000; i++)
     {
         int j;
         for (j = *pcChars; j > cWalk; j--)
@@ -2152,7 +2155,7 @@ static inline int unicode_lex(WCHAR c)
     switch( type )
     {
         case 0x0d07: /* Unknown */
-        case 0x0e07: /* Unknwon */
+        case 0x0e07: /* Unknown */
         default: return lex_Generic;
         case 0x0001:
         case 0x0002:
@@ -3348,13 +3351,8 @@ rpRangeProperties = &ShapingData[psa->eScript].defaultTextRange;
 
 void SHAPE_ApplyOpenTypePositions(HDC hdc, ScriptCache *psc, SCRIPT_ANALYSIS *psa, const WORD* pwGlyphs, INT cGlyphs, int *piAdvance, GOFFSET *pGoffset )
 {
-    const TEXTRANGE_PROPERTIES *rpRangeProperties;
+    const TEXTRANGE_PROPERTIES *rpRangeProperties = &ShapingData[psa->eScript].defaultGPOSTextRange;
     int i;
-
-    rpRangeProperties = &ShapingData[psa->eScript].defaultGPOSTextRange;
-
-    if (!rpRangeProperties)
-        return;
 
     load_ot_tables(hdc, psc);
 

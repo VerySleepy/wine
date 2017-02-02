@@ -279,8 +279,6 @@ typedef struct
 struct hardware_msg_data
 {
     lparam_t        info;      /* extra info */
-    int             x;         /* x position */
-    int             y;         /* y position */
     unsigned int    hw_id;     /* unique id */
     unsigned int    flags;     /* hook flags */
     union
@@ -394,9 +392,10 @@ struct security_descriptor
 
 struct object_attributes
 {
-    obj_handle_t rootdir; /* root directory */
-    data_size_t sd_len;   /* length of security_descriptor data. may be 0 */
-    data_size_t name_len; /* length of the name string. may be 0 */
+    obj_handle_t rootdir;       /* root directory */
+    unsigned int attributes;    /* object attributes */
+    data_size_t  sd_len;        /* length of security_descriptor data. may be 0 */
+    data_size_t  name_len;      /* length of the name string. may be 0 */
     /* VARARG(sd,security_descriptor); */
     /* VARARG(name,unicode_str); */
 };
@@ -480,7 +479,7 @@ typedef union
     {
         enum apc_type    type;     /* APC_ASYNC_IO */
         unsigned int     status;   /* I/O status */
-        client_ptr_t     func;     /* unsigned int (*func)(void*, void*, unsigned int, void **); */
+        client_ptr_t     func;     /* unsigned int (*func)(void*, void*, unsigned int, void**, void**); */
         client_ptr_t     user;     /* user pointer */
         client_ptr_t     sb;       /* status block */
     } async_io;
@@ -570,6 +569,7 @@ typedef union
         enum apc_type    type;      /* APC_ASYNC_IO */
         unsigned int     status;    /* new status of async operation */
         client_ptr_t     apc;       /* user APC to call */
+        client_ptr_t     arg;       /* user APC argument */
         unsigned int     total;     /* bytes transferred */
     } async_io;
     struct
@@ -647,6 +647,75 @@ typedef union
         obj_handle_t     handle;    /* handle to new thread */
     } create_thread;
 } apc_result_t;
+
+typedef union
+{
+    unsigned int         major;     /* irp major function */
+    struct
+    {
+        unsigned int     major;     /* IRP_MJ_CREATE */
+        unsigned int     access;    /* access rights */
+        unsigned int     sharing;   /* sharing flags */
+        unsigned int     options;   /* file options */
+        client_ptr_t     device;    /* opaque ptr for the device */
+    } create;
+    struct
+    {
+        unsigned int     major;     /* IRP_MJ_CLOSE */
+        int              __pad;
+        client_ptr_t     file;      /* opaque ptr for the file object */
+    } close;
+    struct
+    {
+        unsigned int     major;     /* IRP_MJ_READ */
+        unsigned int     key;       /* driver key */
+        client_ptr_t     file;      /* opaque ptr for the file object */
+        file_pos_t       pos;       /* file position */
+    } read;
+    struct
+    {
+        unsigned int     major;     /* IRP_MJ_WRITE */
+        unsigned int     key;       /* driver key */
+        client_ptr_t     file;      /* opaque ptr for the file object */
+        file_pos_t       pos;       /* file position */
+    } write;
+    struct
+    {
+        unsigned int     major;     /* IRP_MJ_FLUSH_BUFFERS */
+        int              __pad;
+        client_ptr_t     file;      /* opaque ptr for the file object */
+    } flush;
+    struct
+    {
+        unsigned int     major;     /* IRP_MJ_DEVICE_CONTROL */
+        ioctl_code_t     code;      /* ioctl code */
+        client_ptr_t     file;      /* opaque ptr for the file object */
+    } ioctl;
+} irp_params_t;
+
+/* information about a PE image mapping, roughly equivalent to SECTION_IMAGE_INFORMATION */
+typedef struct
+{
+    client_ptr_t   base;
+    client_ptr_t   entry_point;
+    mem_size_t     map_size;
+    mem_size_t     stack_size;
+    mem_size_t     stack_commit;
+    unsigned int   zerobits;
+    unsigned int   subsystem;
+    unsigned short subsystem_low;
+    unsigned short subsystem_high;
+    unsigned int   gp;
+    unsigned short image_charact;
+    unsigned short dll_charact;
+    unsigned short machine;
+    unsigned char  contains_code;
+    unsigned char  image_flags;
+    unsigned int   loader_flags;
+    unsigned int   header_size;
+    unsigned int   file_size;
+    unsigned int   checksum;
+} pe_image_info_t;
 
 struct rawinput_device
 {
@@ -774,7 +843,8 @@ struct rawinput_device
     int          exit_code;        /* process exit code */
     int          priority;         /* priority class */
     cpu_type_t   cpu;              /* CPU that this process is running on */
-    int          debugger_present; /* process is being debugged */
+    short int    debugger_present; /* process is being debugged */
+    short int    debug_children;   /* inherit debugger to child processes */
 @END
 
 
@@ -797,12 +867,20 @@ struct rawinput_device
     process_id_t pid;           /* server process id */
     thread_id_t  tid;           /* server thread id */
     client_ptr_t teb;           /* thread teb pointer */
+    client_ptr_t entry_point;   /* thread entry point */
     affinity_t   affinity;      /* thread affinity mask */
-    timeout_t    creation_time; /* thread creation time */
-    timeout_t    exit_time;     /* thread exit time */
     int          exit_code;     /* thread exit code */
     int          priority;      /* thread priority level */
     int          last;          /* last thread in process */
+@END
+
+
+/* Retrieve information about thread times */
+@REQ(get_thread_times)
+    obj_handle_t handle;        /* thread handle */
+@REPLY
+    timeout_t    creation_time; /* thread creation time */
+    timeout_t    exit_time;     /* thread exit time */
 @END
 
 
@@ -812,11 +890,13 @@ struct rawinput_device
     int          mask;         /* setting mask (see below) */
     int          priority;     /* priority class */
     affinity_t   affinity;     /* affinity mask */
+    client_ptr_t entry_point;  /* thread entry point */
     obj_handle_t token;        /* impersonation token */
 @END
-#define SET_THREAD_INFO_PRIORITY 0x01
-#define SET_THREAD_INFO_AFFINITY 0x02
-#define SET_THREAD_INFO_TOKEN    0x04
+#define SET_THREAD_INFO_PRIORITY   0x01
+#define SET_THREAD_INFO_AFFINITY   0x02
+#define SET_THREAD_INFO_TOKEN      0x04
+#define SET_THREAD_INFO_ENTRYPOINT 0x08
 
 
 /* Retrieve information about a module */
@@ -957,7 +1037,6 @@ struct rawinput_device
 /* Create an event */
 @REQ(create_event)
     unsigned int access;        /* wanted access rights */
-    unsigned int attributes;    /* object attributes */
     int          manual_reset;  /* manual reset event */
     int          initial_state; /* initial state of the event */
     VARARG(objattr,object_attributes); /* object attributes */
@@ -993,7 +1072,6 @@ enum event_op { PULSE_EVENT, SET_EVENT, RESET_EVENT };
 /* Create a keyed event */
 @REQ(create_keyed_event)
     unsigned int access;        /* wanted access rights */
-    unsigned int attributes;    /* object attributes */
     VARARG(objattr,object_attributes); /* object attributes */
 @REPLY
     obj_handle_t handle;        /* handle to the event */
@@ -1013,7 +1091,6 @@ enum event_op { PULSE_EVENT, SET_EVENT, RESET_EVENT };
 /* Create a mutex */
 @REQ(create_mutex)
     unsigned int access;        /* wanted access rights */
-    unsigned int attributes;    /* object attributes */
     int          owned;         /* initially owned? */
     VARARG(objattr,object_attributes); /* object attributes */
 @REPLY
@@ -1040,10 +1117,19 @@ enum event_op { PULSE_EVENT, SET_EVENT, RESET_EVENT };
 @END
 
 
+/* Query a mutex */
+@REQ(query_mutex)
+    obj_handle_t  handle;       /* handle to mutex */
+@REPLY
+    unsigned int count;         /* current count of mutex */
+    int          owned;         /* true if owned by current thread */
+    int          abandoned;     /* true if abandoned */
+@END
+
+
 /* Create a semaphore */
 @REQ(create_semaphore)
     unsigned int access;        /* wanted access rights */
-    unsigned int attributes;    /* object attributes */
     unsigned int initial;       /* initial count */
     unsigned int max;           /* maximum count */
     VARARG(objattr,object_attributes); /* object attributes */
@@ -1081,7 +1167,6 @@ enum event_op { PULSE_EVENT, SET_EVENT, RESET_EVENT };
 /* Create a file */
 @REQ(create_file)
     unsigned int access;        /* wanted access rights */
-    unsigned int attributes;    /* object attributes */
     unsigned int sharing;       /* sharing flags */
     int          create;        /* file create action */
     unsigned int options;       /* file options */
@@ -1149,9 +1234,19 @@ enum server_fd_type
 };
 
 
+/* Retrieve (or allocate) the client-side directory cache entry */
+@REQ(get_directory_cache_entry)
+    obj_handle_t handle;        /* handle to the directory */
+@REPLY
+    int          entry;         /* cache entry on the client side */
+    VARARG(free,ints);          /* entries that can be freed */
+@END
+
+
 /* Flush a file buffers */
-@REQ(flush_file)
-    obj_handle_t handle;        /* handle to the file */
+@REQ(flush)
+    int            blocking;    /* whether it's a blocking flush */
+    async_data_t   async;       /* async I/O parameters */
 @REPLY
     obj_handle_t event;         /* event set when finished */
 @END
@@ -1433,20 +1528,27 @@ struct console_renderer_event
     short int    cursor_y;
     short int    width;         /* width of the screen buffer */
     short int    height;        /* height of the screen buffer */
-    short int    attr;          /* default attribute */
+    short int    attr;          /* default fill attributes (screen colors) */
+    short int    popup_attr;    /* pop-up color attributes */
     short int    win_left;      /* window actually displayed by renderer */
     short int    win_top;       /* the rect area is expressed within the */
     short int    win_right;     /* boundaries of the screen buffer */
     short int    win_bottom;
     short int    max_width;     /* maximum size (width x height) for the window */
     short int    max_height;
+    short int    font_width;    /* font size (width x height) */
+    short int    font_height;
+    VARARG(colors,uints);       /* color table */
 @END
-#define SET_CONSOLE_OUTPUT_INFO_CURSOR_GEOM     0x01
-#define SET_CONSOLE_OUTPUT_INFO_CURSOR_POS      0x02
-#define SET_CONSOLE_OUTPUT_INFO_SIZE            0x04
-#define SET_CONSOLE_OUTPUT_INFO_ATTR            0x08
-#define SET_CONSOLE_OUTPUT_INFO_DISPLAY_WINDOW  0x10
-#define SET_CONSOLE_OUTPUT_INFO_MAX_SIZE        0x20
+#define SET_CONSOLE_OUTPUT_INFO_CURSOR_GEOM     0x0001
+#define SET_CONSOLE_OUTPUT_INFO_CURSOR_POS      0x0002
+#define SET_CONSOLE_OUTPUT_INFO_SIZE            0x0004
+#define SET_CONSOLE_OUTPUT_INFO_ATTR            0x0008
+#define SET_CONSOLE_OUTPUT_INFO_DISPLAY_WINDOW  0x0010
+#define SET_CONSOLE_OUTPUT_INFO_MAX_SIZE        0x0020
+#define SET_CONSOLE_OUTPUT_INFO_FONT            0x0040
+#define SET_CONSOLE_OUTPUT_INFO_COLORTABLE      0x0080
+#define SET_CONSOLE_OUTPUT_INFO_POPUP_ATTR      0x0100
 
 
 /* Get info about a console (output only) */
@@ -1459,13 +1561,17 @@ struct console_renderer_event
     short int    cursor_y;
     short int    width;         /* width of the screen buffer */
     short int    height;        /* height of the screen buffer */
-    short int    attr;          /* default attribute */
+    short int    attr;          /* default fill attributes (screen colors) */
+    short int    popup_attr;    /* pop-up color attributes */
     short int    win_left;      /* window actually displayed by renderer */
     short int    win_top;       /* the rect area is expressed within the */
     short int    win_right;     /* boundaries of the screen buffer */
     short int    win_bottom;
     short int    max_width;     /* maximum size (width x height) for the window */
     short int    max_height;
+    short int    font_width;    /* font size (width x height) */
+    short int    font_height;
+    VARARG(colors,uints);       /* color table */
 @END
 
 /* Add input records to a console input queue */
@@ -1575,7 +1681,7 @@ enum char_info_mode
 /* Create a file mapping */
 @REQ(create_mapping)
     unsigned int access;        /* wanted access rights */
-    unsigned int attributes;    /* object attributes */
+    unsigned int flags;         /* SEC_* flags */
     unsigned int protect;       /* protection flags (see below) */
     mem_size_t   size;          /* mapping size */
     obj_handle_t file_handle;   /* file handle */
@@ -1616,11 +1722,11 @@ enum char_info_mode
     unsigned int access;        /* wanted access rights */
 @REPLY
     mem_size_t   size;          /* mapping size */
+    unsigned int flags;         /* SEC_* flags */
     int          protect;       /* protection flags */
-    int          header_size;   /* header size (for VPROT_IMAGE mapping) */
-    client_ptr_t base;          /* default base addr (for VPROT_IMAGE mapping) */
     obj_handle_t mapping;       /* duplicate mapping handle unless removable */
     obj_handle_t shared_file;   /* shared mapping file handle */
+    VARARG(image,pe_image_info);/* image info for SEC_IMAGE mappings */
 @END
 
 
@@ -1764,12 +1870,9 @@ enum char_info_mode
 
 /* Create a registry key */
 @REQ(create_key)
-    obj_handle_t parent;       /* handle to the parent key */
     unsigned int access;       /* desired access rights */
-    unsigned int attributes;   /* object attributes */
     unsigned int options;      /* creation options */
-    data_size_t  namelen;      /* length of key name in bytes */
-    VARARG(name,unicode_str,namelen);  /* key name */
+    VARARG(objattr,object_attributes); /* object attributes */
     VARARG(class,unicode_str);         /* class name */
 @REPLY
     obj_handle_t hkey;         /* handle to the created key */
@@ -1863,9 +1966,8 @@ enum char_info_mode
 
 /* Load a registry branch from a file */
 @REQ(load_registry)
-    obj_handle_t hkey;         /* root key to load to */
     obj_handle_t file;         /* file to load from */
-    VARARG(name,unicode_str);  /* subkey name */
+    VARARG(objattr,object_attributes); /* object attributes */
 @END
 
 
@@ -1894,10 +1996,8 @@ enum char_info_mode
 /* Create a waitable timer */
 @REQ(create_timer)
     unsigned int access;        /* wanted access rights */
-    unsigned int attributes;    /* object attributes */
-    obj_handle_t rootdir;       /* root directory */
     int          manual;        /* manual reset */
-    VARARG(name,unicode_str);   /* object name */
+    VARARG(objattr,object_attributes); /* object attributes */
 @REPLY
     obj_handle_t handle;        /* handle to the timer */
 @END
@@ -2058,7 +2158,7 @@ enum char_info_mode
 
 /* Get the current message queue status */
 @REQ(get_queue_status)
-    int          clear;        /* should we clear the change bits? */
+    unsigned int clear_bits;   /* should we clear the change bits? */
 @REPLY
     unsigned int wake_bits;    /* wake bits */
     unsigned int changed_bits; /* changed bits since last time */
@@ -2137,6 +2237,8 @@ enum message_type
     lparam_t        wparam;    /* parameters */
     lparam_t        lparam;    /* parameters */
     int             type;      /* message type */
+    int             x;         /* message x position */
+    int             y;         /* message y position */
     unsigned int    time;      /* message time */
     unsigned int    active_hooks; /* active hooks bitmap */
     data_size_t     total;     /* total size of extra data */
@@ -2248,6 +2350,40 @@ enum message_type
 @END
 
 
+/* Retrieve results of an async */
+@REQ(get_async_result)
+    client_ptr_t   user_arg;      /* user arg used to identify async */
+@REPLY
+    data_size_t    size;          /* result size (input or output depending on the operation) */
+    VARARG(out_data,bytes);       /* iosb output data */
+@END
+
+
+/* Perform a read on a file object */
+@REQ(read)
+    int            blocking;      /* whether it's a blocking read */
+    async_data_t   async;         /* async I/O parameters */
+    file_pos_t     pos;           /* read position */
+@REPLY
+    obj_handle_t   wait;          /* handle to wait on for blocking read */
+    unsigned int   options;       /* device open options */
+    VARARG(data,bytes);           /* read data */
+@END
+
+
+/* Perform a write on a file object */
+@REQ(write)
+    int            blocking;      /* whether it's a blocking write */
+    async_data_t   async;         /* async I/O parameters */
+    file_pos_t     pos;           /* write position */
+    VARARG(data,bytes);           /* write data */
+@REPLY
+    obj_handle_t   wait;          /* handle to wait on for blocking write */
+    unsigned int   options;       /* device open options */
+    data_size_t    size;          /* size written */
+@END
+
+
 /* Perform an ioctl on a file */
 @REQ(ioctl)
     ioctl_code_t   code;          /* ioctl code */
@@ -2261,19 +2397,19 @@ enum message_type
 @END
 
 
-/* Retrieve results of an async ioctl */
-@REQ(get_ioctl_result)
-    obj_handle_t   handle;        /* handle to the device */
-    client_ptr_t   user_arg;      /* user arg used to identify the request */
-@REPLY
-    VARARG(out_data,bytes);       /* ioctl output data */
+/* Store results of an async irp */
+@REQ(set_irp_result)
+    obj_handle_t handle;          /* handle to the irp */
+    unsigned int status;          /* status of the irp */
+    data_size_t  size;            /* result size (input or output depending on the operation) */
+    client_ptr_t file_ptr;        /* opaque pointer to the file object */
+    VARARG(data,bytes);           /* output data of the irp */
 @END
 
 
 /* Create a named pipe */
 @REQ(create_named_pipe)
     unsigned int   access;
-    unsigned int   attributes;   /* object attributes */
     unsigned int   options;
     unsigned int   sharing;
     unsigned int   maxinstances;
@@ -2632,6 +2768,7 @@ enum coords_relative
     unsigned int flags;           /* window station flags */
     unsigned int access;          /* wanted access rights */
     unsigned int attributes;      /* object attributes */
+    obj_handle_t rootdir;         /* root directory */
     VARARG(name,unicode_str);     /* object name */
 @REPLY
     obj_handle_t handle;          /* handle to the window station */
@@ -2642,6 +2779,7 @@ enum coords_relative
 @REQ(open_winstation)
     unsigned int access;          /* wanted access rights */
     unsigned int attributes;      /* object attributes */
+    obj_handle_t rootdir;         /* root directory */
     VARARG(name,unicode_str);     /* object name */
 @REPLY
     obj_handle_t handle;          /* handle to the window station */
@@ -2742,14 +2880,15 @@ enum coords_relative
 /* Get/set information about a user object (window station or desktop) */
 @REQ(set_user_object_info)
     obj_handle_t handle;          /* handle to the object */
-    unsigned int flags;           /* information to set */
+    unsigned int flags;           /* information to set/get */
     unsigned int obj_flags;       /* new object flags */
 @REPLY
     int          is_desktop;      /* is object a desktop? */
     unsigned int old_obj_flags;   /* old object flags */
     VARARG(name,unicode_str);     /* object name */
 @END
-#define SET_USER_OBJECT_FLAGS 1
+#define SET_USER_OBJECT_SET_FLAGS       1
+#define SET_USER_OBJECT_GET_FULL_NAME   2
 
 
 /* Register a hotkey */
@@ -2878,7 +3017,7 @@ enum coords_relative
     int            x;             /* caret x position */
     int            y;             /* caret y position */
     int            hide;          /* increment for hide count (can be negative to show it) */
-    int            state;         /* caret state (1=on, 0=off, -1=toggle current state) */
+    int            state;         /* caret state (see below) */
 @REPLY
     user_handle_t  full_handle;   /* handle to the current caret window */
     rectangle_t    old_rect;      /* previous caret rectangle */
@@ -2888,6 +3027,13 @@ enum coords_relative
 #define SET_CARET_POS        0x01  /* set the caret position from x,y */
 #define SET_CARET_HIDE       0x02  /* increment the caret hide count */
 #define SET_CARET_STATE      0x04  /* set the caret on/off state */
+enum caret_state
+{
+    CARET_STATE_OFF,        /* off */
+    CARET_STATE_ON,         /* on */
+    CARET_STATE_TOGGLE,     /* toggle current state */
+    CARET_STATE_ON_IF_MOVED /* on if the position differs, unchanged otherwise */
+};
 
 
 /* Set a window hook */
@@ -3011,30 +3157,107 @@ enum coords_relative
 #define SET_CLASS_EXTRA     0x0010
 
 
-/* Set/get clipboard information */
-@REQ(set_clipboard_info)
-    unsigned int   flags;       /* flags for fields to set (see below) */
-    user_handle_t  clipboard;   /* clipboard window */
-    user_handle_t  owner;       /* clipboard owner */
-    user_handle_t  viewer;      /* first clipboard viewer */
-    unsigned int   seqno;       /* change sequence number */
+/* Open the clipboard */
+@REQ(open_clipboard)
+    user_handle_t  window;         /* clipboard window */
 @REPLY
-    unsigned int   flags;           /* status flags (see below) */
-    user_handle_t  old_clipboard;   /* old clipboard window */
-    user_handle_t  old_owner;       /* old clipboard owner */
-    user_handle_t  old_viewer;      /* old clipboard viewer */
-    unsigned int   seqno;           /* current sequence number */
+    user_handle_t  owner;          /* current clipboard owner */
 @END
 
-#define SET_CB_OPEN      0x001
-#define SET_CB_OWNER     0x002
-#define SET_CB_VIEWER    0x004
-#define SET_CB_SEQNO     0x008
-#define SET_CB_RELOWNER  0x010
-#define SET_CB_CLOSE     0x020
-#define CB_OPEN          0x040
-#define CB_OWNER         0x080
-#define CB_PROCESS       0x100
+
+/* Close the clipboard */
+@REQ(close_clipboard)
+@REPLY
+    user_handle_t  viewer;         /* first clipboard viewer */
+    user_handle_t  owner;          /* current clipboard owner */
+@END
+
+
+/* Empty the clipboard and grab ownership */
+@REQ(empty_clipboard)
+@END
+
+
+/* Add a data format to the clipboard */
+@REQ(set_clipboard_data)
+    unsigned int   format;         /* clipboard format of the data */
+    unsigned int   lcid;           /* locale id to use for synthesizing text formats */
+    VARARG(data,bytes);            /* data contents */
+@REPLY
+    unsigned int   seqno;          /* sequence number for the set data */
+@END
+
+
+/* Fetch a data format from the clipboard */
+@REQ(get_clipboard_data)
+    unsigned int   format;         /* clipboard format of the data */
+    int            cached;         /* do we already have it in the client-side cache? */
+    unsigned int   seqno;          /* sequence number for the data in the cache */
+@REPLY
+    unsigned int   from;           /* for synthesized data, format to generate it from */
+    user_handle_t  owner;          /* clipboard owner for delayed-rendered formats */
+    unsigned int   seqno;          /* sequence number for the originally set data */
+    data_size_t    total;          /* total data size */
+    VARARG(data,bytes);            /* data contents */
+@END
+
+
+/* Retrieve a list of available formats */
+@REQ(get_clipboard_formats)
+    unsigned int   format;         /* specific format to query, return all if 0 */
+@REPLY
+    unsigned int   count;          /* count of available formats */
+    VARARG(formats,uints);         /* array of available formats */
+@END
+
+
+/* Retrieve the next available format */
+@REQ(enum_clipboard_formats)
+    unsigned int   previous;       /* previous format, or first if 0 */
+@REPLY
+    unsigned int   format;         /* next format */
+@END
+
+
+/* Release ownership of the clipboard */
+@REQ(release_clipboard)
+    user_handle_t  owner;          /* clipboard owner to release */
+@REPLY
+    user_handle_t  viewer;         /* first clipboard viewer */
+    user_handle_t  owner;          /* current clipboard owner */
+@END
+
+
+/* Get clipboard information */
+@REQ(get_clipboard_info)
+@REPLY
+    user_handle_t  window;         /* clipboard window */
+    user_handle_t  owner;          /* clipboard owner */
+    user_handle_t  viewer;         /* clipboard viewer */
+    unsigned int   seqno;          /* current sequence number */
+@END
+
+
+/* Set the clipboard viewer window */
+@REQ(set_clipboard_viewer)
+    user_handle_t  viewer;         /* clipboard viewer */
+    user_handle_t  previous;       /* if non-zero, check that this was the previous viewer */
+@REPLY
+    user_handle_t  old_viewer;     /* previous clipboard viewer */
+    user_handle_t  owner;          /* clipboard owner */
+@END
+
+
+/* Add a clipboard listener window */
+@REQ(add_clipboard_listener)
+    user_handle_t  window;         /* clipboard listener window */
+@END
+
+
+/* Remove a clipboard listener window */
+@REQ(remove_clipboard_listener)
+    user_handle_t  window;         /* clipboard listener window */
+@END
 
 
 /* Open a security token */
@@ -3162,14 +3385,28 @@ enum coords_relative
     VARARG(sd,security_descriptor); /* retrieved security descriptor */
 @END
 
+
+struct handle_info
+{
+    process_id_t owner;
+    obj_handle_t handle;
+    unsigned int access;
+};
+
+/* Return a list of all opened handles */
+@REQ(get_system_handles)
+@REPLY
+    unsigned int    count;        /* number of handles */
+    VARARG(data,handle_infos);    /* array of handle_infos */
+@END
+
+
 /* Create a mailslot */
 @REQ(create_mailslot)
     unsigned int   access;        /* wanted access rights */
-    unsigned int   attributes;    /* object attributes */
-    obj_handle_t   rootdir;       /* root directory */
     timeout_t      read_timeout;
     unsigned int   max_msgsize;
-    VARARG(name,unicode_str);     /* mailslot name */
+    VARARG(objattr,object_attributes); /* object attributes */
 @REPLY
     obj_handle_t   handle;        /* handle to the mailslot */
 @END
@@ -3190,9 +3427,7 @@ enum coords_relative
 /* Create a directory object */
 @REQ(create_directory)
     unsigned int   access;        /* access flags */
-    unsigned int   attributes;    /* object attributes */
-    obj_handle_t   rootdir;       /* root directory */
-    VARARG(directory_name,unicode_str); /* Directory name */
+    VARARG(objattr,object_attributes); /* object attributes */
 @REPLY
     obj_handle_t   handle;        /* handle to the directory */
 @END
@@ -3223,10 +3458,7 @@ enum coords_relative
 /* Create a symbolic link object */
 @REQ(create_symlink)
     unsigned int   access;        /* access flags */
-    unsigned int   attributes;    /* object attributes */
-    obj_handle_t   rootdir;       /* root directory */
-    data_size_t    name_len;      /* length of the symlink name in bytes */
-    VARARG(name,unicode_str,name_len); /* symlink name */
+    VARARG(objattr,object_attributes); /* object attributes */
     VARARG(target_name,unicode_str);   /* target name */
 @REPLY
     obj_handle_t   handle;        /* handle to the symlink */
@@ -3259,8 +3491,18 @@ enum coords_relative
 @REPLY
     unsigned int   access;        /* granted access mask */
     unsigned int   ref_count;     /* object ref count */
+    unsigned int   handle_count;  /* object handle count */
     data_size_t    total;         /* total needed size for name */
     VARARG(name,unicode_str);     /* object name */
+@END
+
+
+/* Query object type name information */
+@REQ(get_object_type)
+    obj_handle_t   handle;        /* handle to the object */
+@REPLY
+    data_size_t    total;         /* needed size for type name */
+    VARARG(type,unicode_str);     /* type name */
 @END
 
 
@@ -3312,21 +3554,19 @@ enum coords_relative
 @END
 
 
-/* Retrieve the next pending device ioctl request */
+/* Retrieve the next pending device irp request */
 @REQ(get_next_device_request)
     obj_handle_t manager;         /* handle to the device manager */
-    obj_handle_t prev;            /* handle to the previous ioctl */
-    unsigned int status;          /* status of the previous ioctl */
-    VARARG(prev_data,bytes);      /* output data of the previous ioctl */
+    obj_handle_t prev;            /* handle to the previous irp */
+    unsigned int status;          /* status of the previous irp */
 @REPLY
-    obj_handle_t next;            /* handle to the next ioctl */
-    ioctl_code_t code;            /* ioctl code */
-    client_ptr_t user_ptr;        /* opaque ptr for the device */
-    process_id_t client_pid;      /* pid of process calling ioctl */
-    thread_id_t  client_tid;      /* tid of thread calling ioctl */
+    irp_params_t params;          /* irp parameters */
+    obj_handle_t next;            /* handle to the next irp */
+    process_id_t client_pid;      /* pid of process calling irp */
+    thread_id_t  client_tid;      /* tid of thread calling irp */
     data_size_t  in_size;         /* total needed input size */
     data_size_t  out_size;        /* needed output size */
-    VARARG(next_data,bytes);      /* input data of the next ioctl */
+    VARARG(next_data,bytes);      /* input data of the next irp */
 @END
 
 
@@ -3353,10 +3593,8 @@ enum coords_relative
 /* Create I/O completion port */
 @REQ(create_completion)
     unsigned int access;          /* desired access to a port */
-    unsigned int attributes;      /* object attributes */
     unsigned int concurrent;      /* max number of concurrent active threads */
-    obj_handle_t rootdir;         /* root directory */
-    VARARG(filename,string);      /* port name */
+    VARARG(objattr,object_attributes); /* object attributes */
 @REPLY
     obj_handle_t handle;          /* port handle */
 @END
@@ -3367,7 +3605,7 @@ enum coords_relative
     unsigned int access;          /* desired access to a port */
     unsigned int attributes;      /* object attributes */
     obj_handle_t rootdir;         /* root directory */
-    VARARG(filename,string);      /* port name */
+    VARARG(filename,unicode_str); /* port name */
 @REPLY
     obj_handle_t handle;          /* port handle */
 @END
@@ -3416,6 +3654,22 @@ enum coords_relative
     apc_param_t    cvalue;        /* completion value */
     apc_param_t    information;   /* IO_STATUS_BLOCK Information */
     unsigned int   status;        /* completion status */
+@END
+
+
+/* set fd disposition information */
+@REQ(set_fd_disp_info)
+    obj_handle_t handle;          /* handle to a file or directory */
+    int          unlink;          /* whether to unlink file on close */
+@END
+
+
+/* set fd name information */
+@REQ(set_fd_name_info)
+    obj_handle_t handle;          /* handle to a file or directory */
+    obj_handle_t rootdir;         /* root directory */
+    int          link;            /* link instead of renaming */
+    VARARG(filename,string);      /* new file name */
 @END
 
 
@@ -3493,4 +3747,60 @@ enum coords_relative
 /* Store the suspend context of a thread */
 @REQ(set_suspend_context)
     VARARG(context,context);   /* thread context */
+@END
+
+
+/* Create a new job object */
+@REQ(create_job)
+    unsigned int access;          /* wanted access rights */
+    VARARG(objattr,object_attributes); /* object attributes */
+@REPLY
+    obj_handle_t handle;          /* handle to the job */
+@END
+
+
+/* Open a job object */
+@REQ(open_job)
+    unsigned int access;          /* wanted access rights */
+    unsigned int attributes;      /* object attributes */
+    obj_handle_t rootdir;         /* root directory */
+    VARARG(name,unicode_str);     /* object name */
+@REPLY
+    obj_handle_t handle;          /* handle to the job */
+@END
+
+
+/* Assign a job object to a process */
+@REQ(assign_job)
+    obj_handle_t job;             /* handle to the job */
+    obj_handle_t process;         /* handle to the process */
+@END
+
+
+/* Check if a process is associated with a job */
+@REQ(process_in_job)
+    obj_handle_t job;             /* handle to the job */
+    obj_handle_t process;         /* handle to the process */
+@END
+
+
+/* Set limit flags on a job */
+@REQ(set_job_limits)
+    obj_handle_t handle;          /* handle to the job */
+    unsigned int limit_flags;     /* new limit flags */
+@END
+
+
+/* Set new completion port for a job */
+@REQ(set_job_completion_port)
+    obj_handle_t job;             /* handle to the job */
+    obj_handle_t port;            /* handle to the completion port */
+    client_ptr_t key;             /* key to send with completion messages */
+@END
+
+
+/* Terminate all processes associated with the job  */
+@REQ(terminate_job)
+    obj_handle_t handle;          /* handle to the job */
+    int          status;          /* process exit code */
 @END

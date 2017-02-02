@@ -251,6 +251,10 @@ HANDLE thread_init(void)
     peb->TlsExpansionBitmap = &tls_expansion_bitmap;
     peb->FlsBitmap          = &fls_bitmap;
     peb->LdrData            = &ldr;
+    peb->OSMajorVersion     = 5;
+    peb->OSMinorVersion     = 1;
+    peb->OSBuildNumber      = 0xA28;
+    peb->OSPlatformId       = VER_PLATFORM_WIN32_NT;
     params.CurrentDirectory.DosPath.Buffer = current_dir;
     params.CurrentDirectory.DosPath.MaximumLength = sizeof(current_dir);
     params.wShowWindow = 1; /* SW_SHOWNORMAL */
@@ -279,6 +283,12 @@ HANDLE thread_init(void)
     peb->Reserved[0] = dyld_image_info & 0xFFFFFFFF;
 #endif
 #endif
+
+    /*
+     * Starting with Vista, the first user to log on has session id 1.
+     * Session id 0 is for processes that don't interact with the user (like services).
+     */
+    peb->SessionId = 1;
 
     /* allocate and initialize the initial TEB */
 
@@ -457,7 +467,7 @@ NTSTATUS WINAPI RtlCreateUserThread( HANDLE process, const SECURITY_DESCRIPTOR *
     pthread_t pthread_id;
     pthread_attr_t attr;
     struct ntdll_thread_data *thread_data;
-    struct startup_info *info = NULL;
+    struct startup_info *info;
     HANDLE handle = 0, actctx = 0;
     TEB *teb = NULL;
     DWORD tid = 0;
@@ -726,7 +736,7 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
 {
     NTSTATUS ret;
     DWORD dummy, i;
-    BOOL self = FALSE;
+    BOOL self;
 
 #ifdef __i386__
     /* on i386 debug registers always require a server call */
@@ -740,6 +750,8 @@ NTSTATUS WINAPI NtSetContextThread( HANDLE handle, const CONTEXT *context )
                 ntdll_get_thread_data()->dr6 == context->Dr6 &&
                 ntdll_get_thread_data()->dr7 == context->Dr7);
     }
+#else
+    self = FALSE;
 #endif
 
     if (!self)
@@ -824,9 +836,11 @@ NTSTATUS WINAPI NtGetContextThread( HANDLE handle, CONTEXT *context )
     DWORD needed_flags = context->ContextFlags;
     BOOL self = (handle == GetCurrentThread());
 
+    /* on i386/amd64 debug registers always require a server call */
 #ifdef __i386__
-    /* on i386 debug registers always require a server call */
     if (context->ContextFlags & (CONTEXT_DEBUG_REGISTERS & ~CONTEXT_i386)) self = FALSE;
+#elif defined(__x86_64__)
+    if (context->ContextFlags & (CONTEXT_DEBUG_REGISTERS & ~CONTEXT_AMD64)) self = FALSE;
 #endif
 
     if (!self)
@@ -962,12 +976,10 @@ NTSTATUS WINAPI NtQueryInformationThread( HANDLE handle, THREADINFOCLASS class,
     case ThreadTimes:
         {
             KERNEL_USER_TIMES   kusrt;
-            /* We need to do a server call to get the creation time or exit time */
-            /* This works on any thread */
-            SERVER_START_REQ( get_thread_info )
+
+            SERVER_START_REQ( get_thread_times )
             {
                 req->handle = wine_server_obj_handle( handle );
-                req->tid_in = 0;
                 status = wine_server_call( req );
                 if (status == STATUS_SUCCESS)
                 {
@@ -1016,7 +1028,7 @@ NTSTATUS WINAPI NtQueryInformationThread( HANDLE handle, THREADINFOCLASS class,
                 status = STATUS_INFO_LENGTH_MISMATCH;
             else if (!(tdi->Selector & 4))  /* GDT selector */
             {
-                unsigned sel = tdi->Selector & ~3;  /* ignore RPL */
+                unsigned sel = LOWORD(tdi->Selector) & ~3;  /* ignore RPL */
                 status = STATUS_SUCCESS;
                 if (!sel)  /* null selector */
                     memset( &tdi->Entry, 0, sizeof(tdi->Entry) );
@@ -1033,11 +1045,22 @@ NTSTATUS WINAPI NtQueryInformationThread( HANDLE handle, THREADINFOCLASS class,
                     tdi->Entry.HighWord.Bits.Granularity = 1;
                     tdi->Entry.HighWord.Bits.Default_Big = 1;
                     tdi->Entry.HighWord.Bits.Type        = 0x12;
+                    tdi->Entry.HighWord.Bits.Reserved_0  = 0;
                     /* it has to be one of the system GDT selectors */
                     if (sel != (wine_get_ds() & ~3) && sel != (wine_get_ss() & ~3))
                     {
                         if (sel == (wine_get_cs() & ~3))
                             tdi->Entry.HighWord.Bits.Type |= 8;  /* code segment */
+                        else if (sel == (ntdll_get_thread_data()->fs & ~3))
+                        {
+                            ULONG_PTR fs_base = (ULONG_PTR)NtCurrentTeb();
+                            tdi->Entry.BaseLow                   = fs_base & 0xffff;
+                            tdi->Entry.HighWord.Bits.BaseMid     = (fs_base >> 16) & 0xff;
+                            tdi->Entry.HighWord.Bits.BaseHi      = (fs_base >> 24) & 0xff;
+                            tdi->Entry.LimitLow                  = 0x0fff;
+                            tdi->Entry.HighWord.Bits.LimitHi     = 0;
+                            tdi->Entry.HighWord.Bits.Granularity = 0;
+                        }
                         else status = STATUS_ACCESS_DENIED;
                     }
                 }
@@ -1047,7 +1070,7 @@ NTSTATUS WINAPI NtQueryInformationThread( HANDLE handle, THREADINFOCLASS class,
                 SERVER_START_REQ( get_selector_entry )
                 {
                     req->handle = wine_server_obj_handle( handle );
-                    req->entry = tdi->Selector >> 3;
+                    req->entry = LOWORD(tdi->Selector) >> 3;
                     status = wine_server_call( req );
                     if (!status)
                     {
@@ -1088,12 +1111,51 @@ NTSTATUS WINAPI NtQueryInformationThread( HANDLE handle, THREADINFOCLASS class,
             SERVER_END_REQ;
             return status;
         }
+    case ThreadQuerySetWin32StartAddress:
+        {
+            SERVER_START_REQ( get_thread_info )
+            {
+                req->handle = wine_server_obj_handle( handle );
+                req->tid_in = 0;
+                status = wine_server_call( req );
+                if (status == STATUS_SUCCESS)
+                {
+                    PRTL_THREAD_START_ROUTINE entry = wine_server_get_ptr( reply->entry_point );
+                    if (data) memcpy( data, &entry, min( length, sizeof(entry) ) );
+                    if (ret_len) *ret_len = min( length, sizeof(entry) );
+                }
+            }
+            SERVER_END_REQ;
+            return status;
+        }
+    case ThreadGroupInformation:
+        {
+            const ULONG_PTR affinity_mask = get_system_affinity_mask();
+            GROUP_AFFINITY affinity;
+
+            memset(&affinity, 0, sizeof(affinity));
+            affinity.Group = 0; /* Wine only supports max 64 processors */
+
+            SERVER_START_REQ( get_thread_info )
+            {
+                req->handle = wine_server_obj_handle( handle );
+                req->tid_in = 0;
+                if (!(status = wine_server_call( req )))
+                    affinity.Mask = reply->affinity & affinity_mask;
+            }
+            SERVER_END_REQ;
+            if (status == STATUS_SUCCESS)
+            {
+                if (data) memcpy( data, &affinity, min( length, sizeof(affinity) ));
+                if (ret_len) *ret_len = min( length, sizeof(affinity) );
+            }
+        }
+        return status;
     case ThreadPriority:
     case ThreadBasePriority:
     case ThreadImpersonationToken:
     case ThreadEnableAlignmentFaultFixup:
     case ThreadEventPair_Reusable:
-    case ThreadQuerySetWin32StartAddress:
     case ThreadZeroTlsCell:
     case ThreadPerformanceCount:
     case ThreadIdealProcessor:
@@ -1205,14 +1267,53 @@ NTSTATUS WINAPI NtSetInformationThread( HANDLE handle, THREADINFOCLASS class,
     case ThreadHideFromDebugger:
         /* pretend the call succeeded to satisfy some code protectors */
         return STATUS_SUCCESS;
+    case ThreadQuerySetWin32StartAddress:
+        {
+            const PRTL_THREAD_START_ROUTINE *entry = data;
+            if (length != sizeof(PRTL_THREAD_START_ROUTINE)) return STATUS_INVALID_PARAMETER;
+            SERVER_START_REQ( set_thread_info )
+            {
+                req->handle   = wine_server_obj_handle( handle );
+                req->mask     = SET_THREAD_INFO_ENTRYPOINT;
+                req->entry_point = wine_server_client_ptr( *entry );
+                status = wine_server_call( req );
+            }
+            SERVER_END_REQ;
+        }
+        return status;
+    case ThreadGroupInformation:
+        {
+            const ULONG_PTR affinity_mask = get_system_affinity_mask();
+            const GROUP_AFFINITY *req_aff;
 
+            if (length != sizeof(*req_aff)) return STATUS_INVALID_PARAMETER;
+            if (!data) return STATUS_ACCESS_VIOLATION;
+            req_aff = data;
+
+            /* On Windows the request fails if the reserved fields are set */
+            if (req_aff->Reserved[0] || req_aff->Reserved[1] || req_aff->Reserved[2])
+                return STATUS_INVALID_PARAMETER;
+
+            /* Wine only supports max 64 processors */
+            if (req_aff->Group) return STATUS_INVALID_PARAMETER;
+            if (req_aff->Mask & ~affinity_mask) return STATUS_INVALID_PARAMETER;
+            if (!req_aff->Mask) return STATUS_INVALID_PARAMETER;
+            SERVER_START_REQ( set_thread_info )
+            {
+                req->handle   = wine_server_obj_handle( handle );
+                req->affinity = req_aff->Mask;
+                req->mask     = SET_THREAD_INFO_AFFINITY;
+                status = wine_server_call( req );
+            }
+            SERVER_END_REQ;
+        }
+        return status;
     case ThreadBasicInformation:
     case ThreadTimes:
     case ThreadPriority:
     case ThreadDescriptorTableEntry:
     case ThreadEnableAlignmentFaultFixup:
     case ThreadEventPair_Reusable:
-    case ThreadQuerySetWin32StartAddress:
     case ThreadPerformanceCount:
     case ThreadAmILastThread:
     case ThreadIdealProcessor:

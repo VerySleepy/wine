@@ -292,6 +292,7 @@ static void CLASS_FreeClass( CLASS *classPtr )
     list_remove( &classPtr->entry );
     if (classPtr->hbrBackground > (HBRUSH)(COLOR_GRADIENTINACTIVECAPTION + 1))
         DeleteObject( classPtr->hbrBackground );
+    DestroyIcon( classPtr->hIconSmIntern );
     HeapFree( GetProcessHeap(), 0, classPtr->menuName );
     HeapFree( GetProcessHeap(), 0, classPtr );
     USER_Unlock();
@@ -599,7 +600,8 @@ ATOM WINAPI RegisterClassExA( const WNDCLASSEXA* wc )
     classPtr->hIconSmIntern = wc->hIcon && !wc->hIconSm ?
                                             CopyImage( wc->hIcon, IMAGE_ICON,
                                                 GetSystemMetrics( SM_CXSMICON ),
-                                                GetSystemMetrics( SM_CYSMICON ), 0 ) : NULL;
+                                                GetSystemMetrics( SM_CYSMICON ),
+                                                LR_COPYFROMRESOURCE ) : NULL;
     classPtr->hCursor       = wc->hCursor;
     classPtr->hbrBackground = wc->hbrBackground;
     classPtr->winproc       = WINPROC_AllocProc( wc->lpfnWndProc, FALSE );
@@ -643,7 +645,8 @@ ATOM WINAPI RegisterClassExW( const WNDCLASSEXW* wc )
     classPtr->hIconSmIntern = wc->hIcon && !wc->hIconSm ?
                                             CopyImage( wc->hIcon, IMAGE_ICON,
                                                 GetSystemMetrics( SM_CXSMICON ),
-                                                GetSystemMetrics( SM_CYSMICON ), 0 ) : NULL;
+                                                GetSystemMetrics( SM_CYSMICON ),
+                                                LR_COPYFROMRESOURCE ) : NULL;
     classPtr->hCursor       = wc->hCursor;
     classPtr->hbrBackground = wc->hbrBackground;
     classPtr->winproc       = WINPROC_AllocProc( wc->lpfnWndProc, TRUE );
@@ -974,23 +977,24 @@ static ULONG_PTR CLASS_SetClassLong( HWND hwnd, INT offset, LONG_PTR newval,
         break;
     case GCLP_HICON:
         retval = (ULONG_PTR)class->hIcon;
-        if (retval && class->hIconSmIntern)
+        if (class->hIconSmIntern)
         {
             DestroyIcon(class->hIconSmIntern);
             class->hIconSmIntern = NULL;
         }
         if (newval && !class->hIconSm)
             class->hIconSmIntern = CopyImage( (HICON)newval, IMAGE_ICON,
-                      GetSystemMetrics( SM_CXSMICON ), GetSystemMetrics( SM_CYSMICON ), 0 );
+                      GetSystemMetrics( SM_CXSMICON ), GetSystemMetrics( SM_CYSMICON ),
+                      LR_COPYFROMRESOURCE );
         class->hIcon = (HICON)newval;
         break;
     case GCLP_HICONSM:
         retval = (ULONG_PTR)class->hIconSm;
-        if (retval && !newval)
-            class->hIconSmIntern = class->hIcon ? CopyImage( class->hIcon, IMAGE_ICON,
-                                                GetSystemMetrics( SM_CXSMICON ),
-                                                GetSystemMetrics( SM_CYSMICON ), 0 ) : NULL;
-        else if (!retval && newval && class->hIconSmIntern)
+        if (retval && !newval && class->hIcon)
+            class->hIconSmIntern = CopyImage( class->hIcon, IMAGE_ICON,
+                      GetSystemMetrics( SM_CXSMICON ), GetSystemMetrics( SM_CYSMICON ),
+                      LR_COPYFROMRESOURCE );
+        else if (newval && class->hIconSmIntern)
         {
             DestroyIcon(class->hIconSmIntern);
             class->hIconSmIntern = NULL;

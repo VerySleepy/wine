@@ -1,6 +1,5 @@
-PROGRAMS = wmc$(EXEEXT)
+PROGRAMS = wmc
 MANPAGES = wmc.man.in
-ALL_LIBS = $(GETTEXTPO_LIBS) $(LIBWINE_STATIC) $(LIBPORT)
 
 C_SRCS = \
 	lang.c \
@@ -12,15 +11,6 @@ C_SRCS = \
 
 BISON_SRCS = mcy.y
 
-OBJS = $(C_SRCS:.c=.o) $(BISON_SRCS:.y=.tab.o)
+EXTRALIBS = $(GETTEXTPO_LIBS)
 
-wmc$(EXEEXT): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $(OBJS) $(ALL_LIBS) $(LDFLAGS)
-
-.PHONY: install install-dev uninstall
-
-install install-dev:: wmc$(EXEEXT) install-man-pages
-	$(INSTALL_PROGRAM) wmc$(EXEEXT) $(DESTDIR)$(bindir)/wmc$(EXEEXT)
-
-uninstall::
-	$(RM) $(DESTDIR)$(bindir)/wmc$(EXEEXT)
+INSTALL_DEV = $(PROGRAMS)

@@ -57,7 +57,11 @@ BOOL disable_window_decorations = FALSE;
 int allow_immovable_windows = TRUE;
 int cursor_clipping_locks_windows = TRUE;
 int use_precise_scrolling = TRUE;
+int gl_surface_mode = GL_SURFACE_IN_FRONT_OPAQUE;
+int retina_enabled = FALSE;
 HMODULE macdrv_module = 0;
+
+CFDictionaryRef localized_strings;
 
 
 /**************************************************************************
@@ -183,8 +187,75 @@ static void setup_options(void)
     if (!get_config_key(hkey, appkey, "UsePreciseScrolling", buffer, sizeof(buffer)))
         use_precise_scrolling = IS_OPTION_TRUE(buffer[0]);
 
+    if (!get_config_key(hkey, appkey, "OpenGLSurfaceMode", buffer, sizeof(buffer)))
+    {
+        if (!strcmp(buffer, "transparent"))
+            gl_surface_mode = GL_SURFACE_IN_FRONT_TRANSPARENT;
+        else if (!strcmp(buffer, "behind"))
+            gl_surface_mode = GL_SURFACE_BEHIND;
+        else
+            gl_surface_mode = GL_SURFACE_IN_FRONT_OPAQUE;
+    }
+
+    /* Don't use appkey.  The DPI and monitor sizes should be consistent for all
+       processes in the prefix. */
+    if (!get_config_key(hkey, NULL, "RetinaMode", buffer, sizeof(buffer)))
+        retina_enabled = IS_OPTION_TRUE(buffer[0]);
+
     if (appkey) RegCloseKey(appkey);
     if (hkey) RegCloseKey(hkey);
+}
+
+
+/***********************************************************************
+ *              load_strings
+ */
+static void load_strings(HINSTANCE instance)
+{
+    static const unsigned int ids[] = {
+        STRING_MENU_WINE,
+        STRING_MENU_ITEM_HIDE_APPNAME,
+        STRING_MENU_ITEM_HIDE,
+        STRING_MENU_ITEM_HIDE_OTHERS,
+        STRING_MENU_ITEM_SHOW_ALL,
+        STRING_MENU_ITEM_QUIT_APPNAME,
+        STRING_MENU_ITEM_QUIT,
+
+        STRING_MENU_WINDOW,
+        STRING_MENU_ITEM_MINIMIZE,
+        STRING_MENU_ITEM_ZOOM,
+        STRING_MENU_ITEM_ENTER_FULL_SCREEN,
+        STRING_MENU_ITEM_BRING_ALL_TO_FRONT,
+    };
+    CFMutableDictionaryRef dict;
+    int i;
+
+    dict = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks,
+                                     &kCFTypeDictionaryValueCallBacks);
+    if (!dict)
+    {
+        ERR("Failed to create localized strings dictionary\n");
+        return;
+    }
+
+    for (i = 0; i < sizeof(ids) / sizeof(ids[0]); i++)
+    {
+        LPCWSTR str;
+        int len = LoadStringW(instance, ids[i], (LPWSTR)&str, 0);
+        if (str && len)
+        {
+            CFNumberRef key = CFNumberCreate(NULL, kCFNumberIntType, &ids[i]);
+            CFStringRef value = CFStringCreateWithCharacters(NULL, (UniChar*)str, len);
+            if (key && value)
+                CFDictionarySetValue(dict, key, value);
+            else
+                ERR("Failed to add string ID 0x%04x %s\n", ids[i], debugstr_wn(str, len));
+        }
+        else
+            ERR("Failed to load string ID 0x%04x\n", ids[i]);
+    }
+
+    localized_strings = dict;
 }
 
 
@@ -201,6 +272,7 @@ static BOOL process_attach(void)
         return FALSE;
 
     setup_options();
+    load_strings(macdrv_module);
 
     if ((thread_data_tls_index = TlsAlloc()) == TLS_OUT_OF_INDEXES) return FALSE;
 
@@ -211,16 +283,14 @@ static BOOL process_attach(void)
         return FALSE;
     }
 
-    macdrv_clipboard_process_attach();
-
     return TRUE;
 }
 
 
 /***********************************************************************
- *              thread_detach
+ *              ThreadDetach   (MACDRV.@)
  */
-static void thread_detach(void)
+void CDECL macdrv_ThreadDetach(void)
 {
     struct macdrv_thread_data *data = macdrv_thread_data();
 
@@ -310,11 +380,9 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved)
     switch(reason)
     {
     case DLL_PROCESS_ATTACH:
+        DisableThreadLibraryCalls( hinst );
         macdrv_module = hinst;
         ret = process_attach();
-        break;
-    case DLL_THREAD_DETACH:
-        thread_detach();
         break;
     }
     return ret;

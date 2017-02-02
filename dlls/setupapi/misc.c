@@ -42,6 +42,18 @@ WINE_DEFAULT_DEBUG_CHANNEL(setupapi);
 /* arbitrary limit not related to what native actually uses */
 #define OEM_INDEX_LIMIT 999
 
+/* Handles and critical sections for the SetupLog API */
+static HANDLE setupact = INVALID_HANDLE_VALUE;
+static HANDLE setuperr = INVALID_HANDLE_VALUE;
+static CRITICAL_SECTION setupapi_cs;
+static CRITICAL_SECTION_DEBUG critsect_debug =
+{
+    0, 0, &setupapi_cs,
+    { &critsect_debug.ProcessLocksList, &critsect_debug.ProcessLocksList },
+    0, 0, { (DWORD_PTR)(__FILE__ ": setupapi_cs") }
+};
+static CRITICAL_SECTION setupapi_cs = { &critsect_debug, -1, 0, 0, 0, 0 };
+
 /**************************************************************************
  * MyFree [SETUPAPI.@]
  *
@@ -1599,4 +1611,152 @@ BOOL WINAPI SetupSetNonInteractiveMode( BOOL flag )
 
     non_interactive_mode = flag;
     return ret;
+}
+
+/***********************************************************************
+ *      SetupCloseLog(SETUPAPI.@)
+ */
+void WINAPI SetupCloseLog(void)
+{
+    EnterCriticalSection(&setupapi_cs);
+
+    CloseHandle(setupact);
+    setupact = INVALID_HANDLE_VALUE;
+
+    CloseHandle(setuperr);
+    setuperr = INVALID_HANDLE_VALUE;
+
+    LeaveCriticalSection(&setupapi_cs);
+}
+
+/***********************************************************************
+ *      SetupOpenLog(SETUPAPI.@)
+ */
+BOOL WINAPI SetupOpenLog(BOOL reserved)
+{
+    WCHAR path[MAX_PATH];
+
+    static const WCHAR setupactlog[] = {'\\','s','e','t','u','p','a','c','t','.','l','o','g',0};
+    static const WCHAR setuperrlog[] = {'\\','s','e','t','u','p','e','r','r','.','l','o','g',0};
+
+    EnterCriticalSection(&setupapi_cs);
+
+    if (setupact != INVALID_HANDLE_VALUE && setuperr != INVALID_HANDLE_VALUE)
+    {
+        LeaveCriticalSection(&setupapi_cs);
+        return TRUE;
+    }
+
+    GetWindowsDirectoryW(path, MAX_PATH);
+    lstrcatW(path, setupactlog);
+
+    setupact = CreateFileW(path, FILE_GENERIC_WRITE, FILE_SHARE_WRITE | FILE_SHARE_READ,
+                           NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (setupact == INVALID_HANDLE_VALUE)
+    {
+        LeaveCriticalSection(&setupapi_cs);
+        return FALSE;
+    }
+
+    SetFilePointer(setupact, 0, NULL, FILE_END);
+
+    GetWindowsDirectoryW(path, MAX_PATH);
+    lstrcatW(path, setuperrlog);
+
+    setuperr = CreateFileW(path, FILE_GENERIC_WRITE, FILE_SHARE_WRITE | FILE_SHARE_READ,
+                           NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (setuperr == INVALID_HANDLE_VALUE)
+    {
+        CloseHandle(setupact);
+        setupact = INVALID_HANDLE_VALUE;
+        LeaveCriticalSection(&setupapi_cs);
+        return FALSE;
+    }
+
+    SetFilePointer(setuperr, 0, NULL, FILE_END);
+
+    LeaveCriticalSection(&setupapi_cs);
+
+    return TRUE;
+}
+
+/***********************************************************************
+ *      SetupLogErrorA(SETUPAPI.@)
+ */
+BOOL WINAPI SetupLogErrorA(LPCSTR message, LogSeverity severity)
+{
+    static const char null[] = "(null)";
+    BOOL ret;
+    DWORD written;
+    DWORD len;
+
+    EnterCriticalSection(&setupapi_cs);
+
+    if (setupact == INVALID_HANDLE_VALUE || setuperr == INVALID_HANDLE_VALUE)
+    {
+        SetLastError(ERROR_FILE_INVALID);
+        ret = FALSE;
+        goto done;
+    }
+
+    if (message == NULL)
+        message = null;
+
+    len = lstrlenA(message);
+
+    ret = WriteFile(setupact, message, len, &written, NULL);
+    if (!ret)
+        goto done;
+
+    if (severity >= LogSevMaximum)
+    {
+        ret = FALSE;
+        goto done;
+    }
+
+    if (severity > LogSevInformation)
+        ret = WriteFile(setuperr, message, len, &written, NULL);
+
+done:
+    LeaveCriticalSection(&setupapi_cs);
+    return ret;
+}
+
+/***********************************************************************
+ *      SetupLogErrorW(SETUPAPI.@)
+ */
+BOOL WINAPI SetupLogErrorW(LPCWSTR message, LogSeverity severity)
+{
+    LPSTR msg = NULL;
+    DWORD len;
+    BOOL ret;
+
+    if (message)
+    {
+        len = WideCharToMultiByte(CP_ACP, 0, message, -1, NULL, 0, NULL, NULL);
+        msg = HeapAlloc(GetProcessHeap(), 0, len);
+        if (msg == NULL)
+        {
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            return FALSE;
+        }
+        WideCharToMultiByte(CP_ACP, 0, message, -1, msg, len, NULL, NULL);
+    }
+
+    /* This is the normal way to proceed. The log files are ASCII files
+     * and W is to be converted.
+     */
+    ret = SetupLogErrorA(msg, severity);
+
+    HeapFree(GetProcessHeap(), 0, msg);
+    return ret;
+}
+
+/***********************************************************************
+ *      CM_Get_Version (SETUPAPI.@)
+ */
+WORD WINAPI CM_Get_Version(void)
+{
+    TRACE("()\n");
+    return 0x0400;
 }

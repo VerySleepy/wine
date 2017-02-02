@@ -658,7 +658,7 @@ LRESULT WINAPI SendDlgItemMessage16( HWND16 hwnd, INT16 id, UINT16 msg,
  */
 void WINAPI MapDialogRect16( HWND16 hwnd, LPRECT16 rect )
 {
-    RECT rect32;
+    RECT rect32 = { rect->left, rect->top, rect->right, rect->bottom };
     MapDialogRect( WIN_Handle32(hwnd), &rect32 );
     rect->left   = rect32.left;
     rect->right  = rect32.right;
@@ -744,7 +744,7 @@ INT16 WINAPI DialogBoxParam16( HINSTANCE16 hInst, LPCSTR template,
     {
         HWND owner = WIN_Handle32(owner16);
         hwnd = DIALOG_CreateIndirect16( hInst, data, owner, dlgProc, param, TRUE );
-        if (hwnd) ret = wow_handlers32.dialog_box_loop( hwnd, owner );
+        if (hwnd) ret = wow_handlers32.dialog_box_loop( hwnd, owner  );
         GlobalUnlock16( hmem );
     }
     FreeResource16( hmem );

@@ -2,8 +2,6 @@
  * Copyright (c) 2002 Lionel ULMER
  * Copyright (c) 2006 Stefan DÖSINGER
  *
- * This file contains the implementation of Direct3DVertexBuffer COM object
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -157,11 +155,11 @@ static ULONG WINAPI d3d_vertex_buffer7_Release(IDirect3DVertexBuffer7 *iface)
         wined3d_mutex_lock();
         wined3d_device_get_stream_source(buffer->ddraw->wined3d_device,
                 0, &curVB, &offset, &stride);
-        if (curVB == buffer->wineD3DVertexBuffer)
+        if (curVB == buffer->wined3d_buffer)
             wined3d_device_set_stream_source(buffer->ddraw->wined3d_device, 0, NULL, 0, 0);
 
-        wined3d_vertex_declaration_decref(buffer->wineD3DVertexDeclaration);
-        wined3d_buffer_decref(buffer->wineD3DVertexBuffer);
+        wined3d_vertex_declaration_decref(buffer->wined3d_declaration);
+        wined3d_buffer_decref(buffer->wined3d_buffer);
         wined3d_mutex_unlock();
 
         HeapFree(GetProcessHeap(), 0, buffer);
@@ -229,6 +227,7 @@ static HRESULT WINAPI d3d_vertex_buffer7_Lock(IDirect3DVertexBuffer7 *iface,
     struct d3d_vertex_buffer *buffer = impl_from_IDirect3DVertexBuffer7(iface);
     struct wined3d_resource_desc wined3d_desc;
     struct wined3d_resource *wined3d_resource;
+    struct wined3d_map_desc wined3d_map_desc;
     HRESULT hr;
     DWORD wined3d_flags = 0;
 
@@ -255,8 +254,8 @@ static HRESULT WINAPI d3d_vertex_buffer7_Lock(IDirect3DVertexBuffer7 *iface,
             if (SUCCEEDED(hr))
             {
                 buffer->dynamic = TRUE;
-                wined3d_buffer_decref(buffer->wineD3DVertexBuffer);
-                buffer->wineD3DVertexBuffer = new_buffer;
+                wined3d_buffer_decref(buffer->wined3d_buffer);
+                buffer->wined3d_buffer = new_buffer;
             }
             else
             {
@@ -270,12 +269,14 @@ static HRESULT WINAPI d3d_vertex_buffer7_Lock(IDirect3DVertexBuffer7 *iface,
     if (data_size)
     {
         /* Get the size, for returning it, and for locking */
-        wined3d_resource = wined3d_buffer_get_resource(buffer->wineD3DVertexBuffer);
+        wined3d_resource = wined3d_buffer_get_resource(buffer->wined3d_buffer);
         wined3d_resource_get_desc(wined3d_resource, &wined3d_desc);
         *data_size = wined3d_desc.size;
     }
 
-    hr = wined3d_buffer_map(buffer->wineD3DVertexBuffer, 0, 0, (BYTE **)data, wined3d_flags);
+    hr = wined3d_resource_map(wined3d_buffer_get_resource(buffer->wined3d_buffer),
+            0, &wined3d_map_desc, NULL, wined3d_flags);
+    *data = wined3d_map_desc.data;
 
     wined3d_mutex_unlock();
 
@@ -308,7 +309,7 @@ static HRESULT WINAPI d3d_vertex_buffer7_Unlock(IDirect3DVertexBuffer7 *iface)
     TRACE("iface %p.\n", iface);
 
     wined3d_mutex_lock();
-    wined3d_buffer_unmap(buffer->wineD3DVertexBuffer);
+    wined3d_resource_unmap(wined3d_buffer_get_resource(buffer->wined3d_buffer), 0);
     wined3d_mutex_unlock();
 
     return D3D_OK;
@@ -384,10 +385,10 @@ static HRESULT WINAPI d3d_vertex_buffer7_ProcessVertices(IDirect3DVertexBuffer7 
         wined3d_device_set_render_state(device_impl->wined3d_device, WINED3D_RS_CLIPPING, doClip);
 
     wined3d_device_set_stream_source(device_impl->wined3d_device,
-            0, src_buffer_impl->wineD3DVertexBuffer, 0, get_flexible_vertex_size(src_buffer_impl->fvf));
-    wined3d_device_set_vertex_declaration(device_impl->wined3d_device, src_buffer_impl->wineD3DVertexDeclaration);
+            0, src_buffer_impl->wined3d_buffer, 0, get_flexible_vertex_size(src_buffer_impl->fvf));
+    wined3d_device_set_vertex_declaration(device_impl->wined3d_device, src_buffer_impl->wined3d_declaration);
     hr = wined3d_device_process_vertices(device_impl->wined3d_device, src_idx, dst_idx,
-            count, dst_buffer_impl->wineD3DVertexBuffer, NULL, flags, dst_buffer_impl->fvf);
+            count, dst_buffer_impl->wined3d_buffer, NULL, flags, dst_buffer_impl->fvf);
 
     /* Restore the states if needed */
     if (doClip != oldClip)
@@ -438,7 +439,7 @@ static HRESULT WINAPI d3d_vertex_buffer7_GetVertexBufferDesc(IDirect3DVertexBuff
     if (!desc) return DDERR_INVALIDPARAMS;
 
     wined3d_mutex_lock();
-    wined3d_resource = wined3d_buffer_get_resource(buffer->wineD3DVertexBuffer);
+    wined3d_resource = wined3d_buffer_get_resource(buffer->wined3d_buffer);
     wined3d_resource_get_desc(wined3d_resource, &wined3d_desc);
     wined3d_mutex_unlock();
 
@@ -597,8 +598,7 @@ HRESULT d3d_vertex_buffer_create(struct d3d_vertex_buffer **vertex_buf,
 
     wined3d_mutex_lock();
 
-    hr = d3d_vertex_buffer_create_wined3d_buffer(buffer, FALSE, &buffer->wineD3DVertexBuffer);
-    if (FAILED(hr))
+    if (FAILED(hr = d3d_vertex_buffer_create_wined3d_buffer(buffer, FALSE, &buffer->wined3d_buffer)))
     {
         WARN("Failed to create wined3d vertex buffer, hr %#x.\n", hr);
         if (hr == WINED3DERR_INVALIDCALL)
@@ -606,15 +606,14 @@ HRESULT d3d_vertex_buffer_create(struct d3d_vertex_buffer **vertex_buf,
         goto end;
     }
 
-    buffer->wineD3DVertexDeclaration = ddraw_find_decl(ddraw, desc->dwFVF);
-    if (!buffer->wineD3DVertexDeclaration)
+    if (!(buffer->wined3d_declaration = ddraw_find_decl(ddraw, desc->dwFVF)))
     {
         ERR("Failed to find vertex declaration for fvf %#x.\n", desc->dwFVF);
-        wined3d_buffer_decref(buffer->wineD3DVertexBuffer);
+        wined3d_buffer_decref(buffer->wined3d_buffer);
         hr = DDERR_INVALIDPARAMS;
         goto end;
     }
-    wined3d_vertex_declaration_incref(buffer->wineD3DVertexDeclaration);
+    wined3d_vertex_declaration_incref(buffer->wined3d_declaration);
 
 end:
     wined3d_mutex_unlock();

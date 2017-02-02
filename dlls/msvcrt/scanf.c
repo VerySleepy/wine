@@ -66,7 +66,7 @@ static int wchar2digit(MSVCRT_wchar_t c, int base) {
 #undef SECURE
 #include "scanf.h"
 
-/* vfscanf_l */
+/* vfscanf_s_l */
 #define SECURE 1
 #include "scanf.h"
 
@@ -550,7 +550,7 @@ int CDECL _cscanf_s_l(const char *format, MSVCRT__locale_t locale, ...)
 /*********************************************************************
  *		_cwscanf (MSVCRT.@)
  */
-int CDECL _cwscanf(const char *format, ...)
+int CDECL _cwscanf(const MSVCRT_wchar_t *format, ...)
 {
     __ms_va_list valist;
     int res;
@@ -564,7 +564,7 @@ int CDECL _cwscanf(const char *format, ...)
 /*********************************************************************
  *		_cwscanf_l (MSVCRT.@)
  */
-int CDECL _cwscanf_l(const char *format, MSVCRT__locale_t locale, ...)
+int CDECL _cwscanf_l(const MSVCRT_wchar_t *format, MSVCRT__locale_t locale, ...)
 {
     __ms_va_list valist;
     int res;
@@ -578,7 +578,7 @@ int CDECL _cwscanf_l(const char *format, MSVCRT__locale_t locale, ...)
 /*********************************************************************
  *		_cwscanf_s (MSVCRT.@)
  */
-int CDECL _cwscanf_s(const char *format, ...)
+int CDECL _cwscanf_s(const MSVCRT_wchar_t *format, ...)
 {
     __ms_va_list valist;
     int res;
@@ -592,7 +592,7 @@ int CDECL _cwscanf_s(const char *format, ...)
 /*********************************************************************
  *		_cwscanf_s_l (MSVCRT.@)
  */
-int CDECL _cwscanf_s_l(const char *format, MSVCRT__locale_t locale, ...)
+int CDECL _cwscanf_s_l(const MSVCRT_wchar_t *format, MSVCRT__locale_t locale, ...)
 {
     __ms_va_list valist;
     int res;
@@ -659,6 +659,81 @@ int CDECL MSVCRT__snscanf_s_l(char *input, MSVCRT_size_t length,
     res = MSVCRT_vsnscanf_s_l(input, length, format, locale, valist);
     __ms_va_end(valist);
     return res;
+}
+
+
+/*********************************************************************
+ *		__stdio_common_vsscanf (MSVCRT.@)
+ */
+int CDECL MSVCRT__stdio_common_vsscanf(unsigned __int64 options,
+                                       const char *input, MSVCRT_size_t length,
+                                       const char *format,
+                                       MSVCRT__locale_t locale,
+                                       __ms_va_list valist)
+{
+    /* LEGACY_WIDE_SPECIFIERS only has got an effect on the wide
+     * scanf. LEGACY_MSVCRT_COMPATIBILITY affects parsing of nan/inf,
+     * but parsing of those isn't implemented at all yet. */
+    if (options & ~UCRTBASE_SCANF_MASK)
+        FIXME("options %s not handled\n", wine_dbgstr_longlong(options));
+    if (options & UCRTBASE_SCANF_SECURECRT)
+        return MSVCRT_vsnscanf_s_l(input, length, format, locale, valist);
+    else
+        return MSVCRT_vsnscanf_l(input, length, format, locale, valist);
+}
+
+/*********************************************************************
+ *		__stdio_common_vswscanf (MSVCRT.@)
+ */
+int CDECL MSVCRT__stdio_common_vswscanf(unsigned __int64 options,
+                                        const MSVCRT_wchar_t *input, MSVCRT_size_t length,
+                                        const MSVCRT_wchar_t *format,
+                                        MSVCRT__locale_t locale,
+                                        __ms_va_list valist)
+{
+    /* LEGACY_WIDE_SPECIFIERS only has got an effect on the wide
+     * scanf. LEGACY_MSVCRT_COMPATIBILITY affects parsing of nan/inf,
+     * but parsing of those isn't implemented at all yet. */
+    if (options & ~UCRTBASE_SCANF_MASK)
+        FIXME("options %s not handled\n", wine_dbgstr_longlong(options));
+    if (options & UCRTBASE_SCANF_SECURECRT)
+        return MSVCRT_vsnwscanf_s_l(input, length, format, locale, valist);
+    else
+        return MSVCRT_vsnwscanf_l(input, length, format, locale, valist);
+}
+
+/*********************************************************************
+ *		__stdio_common_vfscanf (MSVCRT.@)
+ */
+int CDECL MSVCRT__stdio_common_vfscanf(unsigned __int64 options,
+                                       MSVCRT_FILE *file,
+                                       const char *format,
+                                       MSVCRT__locale_t locale,
+                                       __ms_va_list valist)
+{
+    if (options & ~UCRTBASE_SCANF_SECURECRT)
+        FIXME("options %s not handled\n", wine_dbgstr_longlong(options));
+    if (options & UCRTBASE_SCANF_SECURECRT)
+        return MSVCRT_vfscanf_s_l(file, format, locale, valist);
+    else
+        return MSVCRT_vfscanf_l(file, format, locale, valist);
+}
+
+/*********************************************************************
+ *		__stdio_common_vfwscanf (MSVCRT.@)
+ */
+int CDECL MSVCRT__stdio_common_vfwscanf(unsigned __int64 options,
+                                        MSVCRT_FILE *file,
+                                        const MSVCRT_wchar_t *format,
+                                        MSVCRT__locale_t locale,
+                                        __ms_va_list valist)
+{
+    if (options & ~UCRTBASE_SCANF_SECURECRT)
+        FIXME("options %s not handled\n", wine_dbgstr_longlong(options));
+    if (options & UCRTBASE_SCANF_SECURECRT)
+        return MSVCRT_vfwscanf_s_l(file, format, locale, valist);
+    else
+        return MSVCRT_vfwscanf_l(file, format, locale, valist);
 }
 
 /*********************************************************************

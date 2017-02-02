@@ -43,9 +43,10 @@ static const WCHAR emptyW[] = {0};
 #define EXPECT_REF(obj,ref) _expect_ref((IUnknown*)obj, ref, __LINE__)
 static void _expect_ref(IUnknown* obj, ULONG ref, int line)
 {
-    ULONG rc = IUnknown_AddRef(obj);
-    IUnknown_Release(obj);
-    ok_(__FILE__,line)(rc-1 == ref, "expected refcount %d, got %d\n", ref, rc-1);
+    ULONG rc;
+    IUnknown_AddRef(obj);
+    rc = IUnknown_Release(obj);
+    ok_(__FILE__, line)(rc == ref, "expected refcount %d, got %d\n", ref, rc);
 }
 
 static LONG get_refcount(void *iface)
@@ -298,7 +299,10 @@ static inline void flush_sequence(struct call_sequence **seg, int sequence_index
             SysFreeString(call_seq->sequence[i].attributes[j].uriW);
             SysFreeString(call_seq->sequence[i].attributes[j].localW);
             SysFreeString(call_seq->sequence[i].attributes[j].qnameW);
+            SysFreeString(call_seq->sequence[i].attributes[j].valueW);
         }
+        HeapFree(GetProcessHeap(), 0, call_seq->sequence[i].attributes);
+        call_seq->sequence[i].attr_count = 0;
 
         SysFreeString(call_seq->sequence[i].arg1W);
         SysFreeString(call_seq->sequence[i].arg2W);
@@ -2391,6 +2395,7 @@ static void test_saxreader(void)
         hr = ISAXXMLReader_parse(reader, var);
         EXPECT_HR(hr, S_OK);
         ok_sequence(sequences, CONTENT_HANDLER_INDEX, test_seq, "content test attributes", TRUE);
+        IStream_Release(stream);
         hr = ISAXXMLReader_putFeature(reader, _bstr_("http://xml.org/sax/features/namespaces"), VARIANT_TRUE);
         EXPECT_HR(hr, S_OK);
 
@@ -2414,6 +2419,7 @@ static void test_saxreader(void)
         hr = ISAXXMLReader_parse(reader, var);
         EXPECT_HR(hr, S_OK);
         ok_sequence(sequences, CONTENT_HANDLER_INDEX, test_seq, "content test attributes", FALSE);
+        IStream_Release(stream);
 
         hr = ISAXXMLReader_putFeature(reader, _bstr_("http://xml.org/sax/features/namespace-prefixes"), VARIANT_TRUE);
         EXPECT_HR(hr, S_OK);
@@ -2862,9 +2868,7 @@ static void test_saxreader_encoding(void)
         CloseHandle(file);
 
         hr = ISAXXMLReader_parseURL(reader, testXmlW);
-        if (entry->todo)
-            todo_wine ok(hr == entry->hr, "Expected 0x%08x, got 0x%08x. CLSID %s\n", entry->hr, hr, entry->clsid);
-        else
+        todo_wine_if(entry->todo)
             ok(hr == entry->hr, "Expected 0x%08x, got 0x%08x. CLSID %s\n", entry->hr, hr, entry->clsid);
 
         DeleteFileA(testXmlA);
@@ -2924,7 +2928,6 @@ static void test_mxwriter_handlers(void)
         ok(hr == S_OK, "%s, expected S_OK, got %08x\n", wine_dbgstr_guid(riids[i]), hr);
         ok(writer2 == writer, "got %p, expected %p\n", writer2, writer);
         EXPECT_REF(writer, 3);
-        EXPECT_REF(writer2, 3);
         IMXWriter_Release(writer2);
         IUnknown_Release(handler);
     }
@@ -3302,7 +3305,6 @@ static void test_mxwriter_flush(void)
     pos2.QuadPart = 0;
     hr = IStream_Seek(stream, pos, STREAM_SEEK_CUR, &pos2);
     EXPECT_HR(hr, S_OK);
-todo_wine
     ok(pos2.QuadPart != 0, "unexpected stream beginning\n");
 
     hr = IMXWriter_get_output(writer, NULL);
@@ -4143,7 +4145,6 @@ static void test_mxwriter_stream(void)
         V_UNKNOWN(&dest) = (IUnknown*)&mxstream;
         hr = IMXWriter_put_output(writer, dest);
         ok(hr == S_OK, "put_output failed with %08x on test %d\n", hr, current_stream_test_index);
-        VariantClear(&dest);
 
         hr = IMXWriter_put_byteOrderMark(writer, test->bom);
         ok(hr == S_OK, "put_byteOrderMark failed with %08x on test %d\n", hr, current_stream_test_index);
@@ -4788,6 +4789,7 @@ static void test_mxwriter_dtd(void)
     ISAXLexicalHandler *lexical;
     IVBSAXDeclHandler *vbdecl;
     ISAXDeclHandler *decl;
+    ISAXDTDHandler *dtd;
     IMXWriter *writer;
     VARIANT dest;
     HRESULT hr;
@@ -4986,6 +4988,9 @@ static void test_mxwriter_dtd(void)
     hr = IVBSAXDeclHandler_externalEntityDecl(vbdecl, NULL, NULL, NULL);
     ok(hr == E_POINTER, "got 0x%08x\n", hr);
 
+    hr = ISAXDeclHandler_externalEntityDecl(decl, _bstr_("name"), 0, NULL, 0, NULL, 0);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+
     hr = ISAXDeclHandler_externalEntityDecl(decl, _bstr_("name"), -1, NULL, 0, NULL, 0);
     ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
 
@@ -4993,12 +4998,60 @@ static void test_mxwriter_dtd(void)
         _bstr_("sysid"), strlen("sysid"));
     ok(hr == S_OK, "got 0x%08x\n", hr);
 
+    hr = ISAXDeclHandler_externalEntityDecl(decl, _bstr_("name"), strlen("name"), NULL, 0, _bstr_("sysid"), strlen("sysid"));
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = ISAXDeclHandler_externalEntityDecl(decl, _bstr_("name"), strlen("name"), _bstr_("pubid"), strlen("pubid"),
+        NULL, 0);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+
     V_VT(&dest) = VT_EMPTY;
     hr = IMXWriter_get_output(writer, &dest);
     ok(hr == S_OK, "got 0x%08x\n", hr);
     ok(V_VT(&dest) == VT_BSTR, "got %d\n", V_VT(&dest));
-    ok(!lstrcmpW(_bstr_("<!ENTITY name PUBLIC \"pubid\" \"sysid\">\r\n"), V_BSTR(&dest)), "got wrong content %s\n", wine_dbgstr_w(V_BSTR(&dest)));
+    ok(!lstrcmpW(_bstr_(
+        "<!ENTITY name PUBLIC \"pubid\" \"sysid\">\r\n"
+        "<!ENTITY name SYSTEM \"sysid\">\r\n"),
+        V_BSTR(&dest)), "got wrong content %s\n", wine_dbgstr_w(V_BSTR(&dest)));
+
     VariantClear(&dest);
+
+    /* notation declaration */
+    hr = IMXWriter_QueryInterface(writer, &IID_ISAXDTDHandler, (void**)&dtd);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    V_VT(&dest) = VT_EMPTY;
+    hr = IMXWriter_put_output(writer, dest);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = ISAXDTDHandler_notationDecl(dtd, NULL, 0, NULL, 0, NULL, 0);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+
+    hr = ISAXDTDHandler_notationDecl(dtd, _bstr_("name"), strlen("name"), NULL, 0, NULL, 0);
+    ok(hr == E_INVALIDARG, "got 0x%08x\n", hr);
+
+    hr = ISAXDTDHandler_notationDecl(dtd, _bstr_("name"), strlen("name"), _bstr_("pubid"), strlen("pubid"), NULL, 0);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = ISAXDTDHandler_notationDecl(dtd, _bstr_("name"), strlen("name"), _bstr_("pubid"), strlen("pubid"), _bstr_("sysid"), strlen("sysid"));
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = ISAXDTDHandler_notationDecl(dtd, _bstr_("name"), strlen("name"), NULL, 0, _bstr_("sysid"), strlen("sysid"));
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = IMXWriter_get_output(writer, &dest);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(V_VT(&dest) == VT_BSTR, "got %d\n", V_VT(&dest));
+    ok(!lstrcmpW(_bstr_(
+        "<!NOTATION name"
+        "<!NOTATION name PUBLIC \"pubid\">\r\n"
+        "<!NOTATION name PUBLIC \"pubid\" \"sysid\">\r\n"
+        "<!NOTATION name SYSTEM \"sysid\">\r\n"),
+        V_BSTR(&dest)), "got wrong content %s\n", wine_dbgstr_w(V_BSTR(&dest)));
+
+    VariantClear(&dest);
+
+    ISAXDTDHandler_Release(dtd);
 
     ISAXContentHandler_Release(content);
     ISAXLexicalHandler_Release(lexical);
@@ -5579,7 +5632,7 @@ START_TEST(saxreader)
 
     if(FAILED(hr))
     {
-        skip("Failed to create SAXXMLReader instance\n");
+        win_skip("Failed to create SAXXMLReader instance\n");
         CoUninitialize();
         return;
     }
@@ -5629,7 +5682,7 @@ START_TEST(saxreader)
         test_mxattr_dispex();
     }
     else
-        skip("SAXAttributes not supported\n");
+        win_skip("SAXAttributes not supported\n");
 
     CoUninitialize();
 }

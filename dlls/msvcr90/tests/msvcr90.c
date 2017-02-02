@@ -25,6 +25,8 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <locale.h>
+#include <fpieee.h>
+#include <excpt.h>
 
 #include <windef.h>
 #include <winbase.h>
@@ -92,8 +94,10 @@ static int* (__cdecl *p_errno)(void);
 static __msvcrt_ulong* (__cdecl *p_doserrno)(void);
 static void (__cdecl *p_srand)(unsigned int);
 static char* (__cdecl *p_strtok)(char*, const char*);
+static char* (__cdecl *p_strtok_s)(char*, const char*, char**);
 static wchar_t* (__cdecl *p_wcstok)(wchar_t*, const wchar_t*);
 static unsigned char* (__cdecl *p__mbstok)(unsigned char*, const unsigned char*);
+static unsigned char* (__cdecl *p__mbstok_s)(unsigned char*, const unsigned char*, unsigned char**);
 static char* (__cdecl *p_strerror)(int);
 static wchar_t* (__cdecl *p_wcserror)(int);
 static char* (__cdecl *p_tmpnam)(char*);
@@ -123,6 +127,10 @@ static unsigned long (__cdecl *p_byteswap_ulong)(unsigned long);
 static void** (__cdecl *p__pxcptinfoptrs)(void);
 static void* (__cdecl *p__AdjustPointer)(void*, const void*);
 static int (__cdecl *p_fflush_nolock)(FILE*);
+static size_t (__cdecl *p_mbstowcs)(wchar_t*, const char*, size_t);
+static size_t (__cdecl *p_wcstombs)(char*, const wchar_t*, size_t);
+static char* (__cdecl *p_setlocale)(int, const char*);
+static int (__cdecl *p__fpieee_flt)(ULONG, EXCEPTION_POINTERS*, int (__cdecl *handler)(_FPIEEE_RECORD*));
 
 /* make sure we use the correct errno */
 #undef errno
@@ -283,7 +291,7 @@ static void* do_call_func2(void *func, void *_this, const void* arg)
 #endif
 
 #define call_func1(func,_this)   do_call_func1(func,_this)
-#define call_func2(func,_this,a) do_call_func2(func,_this,(const void*)a)
+#define call_func2(func,_this,a) do_call_func2(func,_this,(const void*)(a))
 
 #else
 
@@ -352,8 +360,10 @@ static BOOL init(void)
     SET(p_doserrno, "__doserrno");
     SET(p_srand, "srand");
     SET(p_strtok, "strtok");
+    SET(p_strtok_s, "strtok_s");
     SET(p_wcstok, "wcstok");
     SET(p__mbstok, "_mbstok");
+    SET(p__mbstok_s, "_mbstok_s");
     SET(p_strerror, "strerror");
     SET(p_wcserror, "_wcserror");
     SET(p_tmpnam, "tmpnam");
@@ -383,6 +393,10 @@ static BOOL init(void)
     SET(p__pxcptinfoptrs, "__pxcptinfoptrs");
     SET(p__AdjustPointer, "__AdjustPointer");
     SET(p_fflush_nolock, "_fflush_nolock");
+    SET(p_mbstowcs, "mbstowcs");
+    SET(p_wcstombs, "wcstombs");
+    SET(p_setlocale, "setlocale");
+    SET(p__fpieee_flt, "_fpieee_flt");
     if (sizeof(void *) == 8)
     {
         SET(p_type_info_name_internal_method, "?_name_internal_method@type_info@@QEBAPEBDPEAU__type_info_node@@@Z");
@@ -1479,6 +1493,310 @@ static void test__AdjustPointer(void)
     }
 }
 
+static void test_mbstowcs(void)
+{
+    wchar_t bufw[16];
+    char buf[16];
+    size_t ret;
+
+    buf[0] = 'a';
+    buf[1] = 0;
+    memset(bufw, 'x', sizeof(bufw));
+    ret = p_mbstowcs(bufw, buf, -1);
+    ok(ret == 1, "ret = %d\n", (int)ret);
+    ok(bufw[0] == 'a', "bufw[0] = '%c'\n", bufw[0]);
+    ok(bufw[1] == 0, "bufw[1] = '%c'\n", bufw[1]);
+
+    memset(bufw, 'x', sizeof(bufw));
+    ret = p_mbstowcs(bufw, buf, -1000);
+    ok(ret == 1, "ret = %d\n", (int)ret);
+    ok(bufw[0] == 'a', "bufw[0] = '%c'\n", bufw[0]);
+    ok(bufw[1] == 0, "bufw[1] = '%c'\n", bufw[1]);
+
+    memset(buf, 'x', sizeof(buf));
+    ret = p_wcstombs(buf, bufw, -1);
+    ok(ret == 1, "ret = %d\n", (int)ret);
+    ok(buf[0] == 'a', "buf[0] = '%c'\n", buf[0]);
+    ok(buf[1] == 0, "buf[1] = '%c'\n", buf[1]);
+
+    memset(buf, 'x', sizeof(buf));
+    ret = p_wcstombs(buf, bufw, -1000);
+    ok(ret == 1, "ret = %d\n", (int)ret);
+    ok(buf[0] == 'a', "buf[0] = '%c'\n", buf[0]);
+    ok(buf[1] == 0, "buf[1] = '%c'\n", buf[1]);
+
+    if(!p_setlocale(LC_ALL, "English")) {
+        win_skip("English locale not available\n");
+        return;
+    }
+
+    buf[0] = 'a';
+    buf[1] = 0;
+    memset(bufw, 'x', sizeof(bufw));
+    ret = p_mbstowcs(bufw, buf, -1);
+    ok(ret == -1, "ret = %d\n", (int)ret);
+    ok(bufw[0] == 0, "bufw[0] = '%c'\n", bufw[0]);
+
+    memset(bufw, 'x', sizeof(bufw));
+    ret = p_mbstowcs(bufw, buf, -1000);
+    ok(ret == -1, "ret = %d\n", (int)ret);
+    ok(bufw[0] == 0, "bufw[0] = '%c'\n", bufw[0]);
+
+    memset(buf, 'x', sizeof(buf));
+    ret = p_wcstombs(buf, bufw, -1);
+    ok(ret == 0, "ret = %d\n", (int)ret);
+    ok(buf[0] == 0, "buf[0] = '%c'\n", buf[0]);
+
+    memset(buf, 'x', sizeof(buf));
+    ret = p_wcstombs(buf, bufw, -1000);
+    ok(ret == 0, "ret = %d\n", (int)ret);
+    ok(buf[0] == 0, "buf[0] = '%c'\n", buf[0]);
+
+    p_setlocale(LC_ALL, "C");
+}
+
+static void test_strtok_s(void)
+{
+    char test[] = "a/b";
+    char empty[] = "";
+    char space[] = " ";
+    char delim[] = "/";
+    char *strret;
+    char *context;
+
+    context = (char*)0xdeadbeef;
+    strret = p_strtok_s( test, delim, &context);
+    ok(strret == test, "Expected test, got %p.\n", strret);
+    ok(context == test+2, "Expected test+2, got %p.\n", context);
+
+    strret = p_strtok_s( NULL, delim, &context);
+    ok(strret == test+2, "Expected test+2, got %p.\n", strret);
+    ok(context == test+3, "Expected test+3, got %p.\n", context);
+
+    strret = p_strtok_s( NULL, delim, &context);
+    ok(strret == NULL, "Expected NULL, got %p.\n", strret);
+    ok(context == test+3, "Expected test+3, got %p.\n", context);
+
+    context = NULL;
+    strret = p_strtok_s( empty, delim, &context);
+    ok(strret == NULL, "Expected NULL, got %p.\n", strret);
+    ok(context == empty, "Expected empty, got %p.\n", context);
+
+    strret = p_strtok_s( NULL, delim, &context);
+    ok(strret == NULL, "Expected NULL, got %p.\n", strret);
+    ok(context == empty, "Expected empty, got %p.\n", context);
+
+    context = NULL;
+    strret = p_strtok_s( space, delim, &context);
+    ok(strret == space, "Expected space, got %p.\n", strret);
+    ok(context == space+1, "Expected space+1, got %p.\n", context);
+
+    strret = p_strtok_s( NULL, delim, &context);
+    ok(strret == NULL, "Expected NULL, got %p.\n", strret);
+    ok(context == space+1, "Expected space+1, got %p.\n", context);
+}
+
+static void test__mbstok_s(void)
+{
+    unsigned char test[] = "a/b";
+    unsigned char empty[] = "";
+    unsigned char space[] = " ";
+    unsigned char delim[] = "/";
+    unsigned char *strret;
+    unsigned char *context;
+
+    context = (unsigned char*)0xdeadbeef;
+    strret = p__mbstok_s( test, delim, &context);
+    ok(strret == test, "Expected test, got %p.\n", strret);
+    ok(context == test+2, "Expected test+2, got %p.\n", context);
+
+    strret = p__mbstok_s( NULL, delim, &context);
+    ok(strret == test+2, "Expected test+2, got %p.\n", strret);
+    ok(context == test+3, "Expected test+3, got %p.\n", context);
+
+    strret = p__mbstok_s( NULL, delim, &context);
+    ok(strret == NULL, "Expected NULL, got %p.\n", strret);
+    ok(context == test+3, "Expected test+3, got %p.\n", context);
+
+    context = NULL;
+    strret = p__mbstok_s( empty, delim, &context);
+    ok(strret == NULL, "Expected NULL, got %p.\n", strret);
+    ok(context == empty, "Expected empty, got %p.\n", context);
+
+    strret = p__mbstok_s( NULL, delim, &context);
+    ok(strret == NULL, "Expected NULL, got %p.\n", strret);
+    ok(context == empty, "Expected empty, got %p.\n", context);
+
+    context = NULL;
+    strret = p__mbstok_s( space, delim, &context);
+    ok(strret == space, "Expected space, got %p.\n", strret);
+    ok(context == space+1, "Expected space+1, got %p.\n", context);
+
+    strret = p__mbstok_s( NULL, delim, &context);
+    ok(strret == NULL, "Expected NULL, got %p.\n", strret);
+    ok(context == space+1, "Expected space+1, got %p.\n", context);
+}
+
+#ifdef __i386__
+static _FPIEEE_RECORD fpieee_record;
+static int handler_called;
+static int __cdecl fpieee_handler(_FPIEEE_RECORD *rec)
+{
+    handler_called++;
+    fpieee_record = *rec;
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+static void test__fpieee_flt(void)
+{
+    double argd = 1.5;
+    struct {
+        DWORD exception_code;
+        WORD opcode;
+        DWORD data_offset;
+        DWORD control_word;
+        DWORD status_word;
+        _FPIEEE_RECORD rec;
+        int ret;
+    } test_data[] = {
+        { STATUS_FLOAT_DIVIDE_BY_ZERO, 0x35dc, (DWORD)&argd, 0, 0,
+            {0, 2, _FpCodeDivide,
+                {0}, {1, 1, 1, 1, 1}, {0},
+                {{0}, 1, _FpFormatFp80},
+                {{0}, 1, _FpFormatFp64},
+                {{0}, 0, _FpFormatFp80}},
+            EXCEPTION_CONTINUE_EXECUTION },
+        { STATUS_FLOAT_INEXACT_RESULT, 0x35dc, (DWORD)&argd, 0, 0,
+            {0, 2, _FpCodeDivide,
+                {0}, {1, 1, 1, 1, 1}, {0},
+                {{0}, 0, _FpFormatFp80},
+                {{0}, 1, _FpFormatFp64},
+                {{0}, 1, _FpFormatFp80}},
+            EXCEPTION_CONTINUE_EXECUTION },
+        { STATUS_FLOAT_INVALID_OPERATION, 0x35dc, (DWORD)&argd, 0, 0,
+            {0, 2, _FpCodeDivide,
+                {0}, {1, 1, 1, 1, 1}, {0},
+                {{0}, 1, _FpFormatFp80},
+                {{0}, 1, _FpFormatFp64},
+                {{0}, 0, _FpFormatFp80}},
+            EXCEPTION_CONTINUE_EXECUTION },
+        { STATUS_FLOAT_OVERFLOW, 0x35dc, (DWORD)&argd, 0, 0,
+            {0, 2, _FpCodeDivide,
+                {0}, {1, 1, 1, 1, 1}, {0},
+                {{0}, 0, _FpFormatFp80},
+                {{0}, 1, _FpFormatFp64},
+                {{0}, 1, _FpFormatFp80}},
+            EXCEPTION_CONTINUE_EXECUTION },
+        { STATUS_FLOAT_UNDERFLOW, 0x35dc, (DWORD)&argd, 0, 0,
+            {0, 2, _FpCodeDivide,
+                {0}, {1, 1, 1, 1, 1}, {0},
+                {{0}, 0, _FpFormatFp80},
+                {{0}, 1, _FpFormatFp64},
+                {{0}, 1, _FpFormatFp80}},
+            EXCEPTION_CONTINUE_EXECUTION },
+        { STATUS_FLOAT_DIVIDE_BY_ZERO, 0x35dc, (DWORD)&argd, 0, 0xffffffff,
+            {0, 2, _FpCodeDivide,
+                {1, 1, 1, 1, 1}, {1, 1, 1, 1, 1}, {1, 1, 1, 1, 1},
+                {{0}, 1, _FpFormatFp80},
+                {{0}, 1, _FpFormatFp64},
+                {{0}, 0, _FpFormatFp80}},
+            EXCEPTION_CONTINUE_EXECUTION },
+        { STATUS_FLOAT_DIVIDE_BY_ZERO, 0x35dc, (DWORD)&argd, 0xffffffff, 0xffffffff,
+            {3, 0, _FpCodeDivide,
+                {0}, {0}, {1, 1, 1, 1, 1},
+                {{0}, 1, _FpFormatFp80},
+                {{0}, 1, _FpFormatFp64},
+                {{0}, 0, _FpFormatFp80}},
+            EXCEPTION_CONTINUE_EXECUTION },
+    };
+    EXCEPTION_POINTERS ep;
+    EXCEPTION_RECORD rec;
+    CONTEXT ctx;
+    int i, ret;
+
+    if(!p__fpieee_flt) {
+        win_skip("_fpieee_flt not available\n");
+        return;
+    }
+
+    ep.ExceptionRecord = &rec;
+    ep.ContextRecord = &ctx;
+    memset(&rec, 0, sizeof(rec));
+    memset(&ctx, 0, sizeof(ctx));
+    ret = p__fpieee_flt(1, &ep, fpieee_handler);
+    ok(ret == EXCEPTION_CONTINUE_SEARCH, "_fpieee_flt returned %d\n", ret);
+    ok(handler_called == 0, "handler_called = %d\n", handler_called);
+
+    for(i=0; i<sizeof(test_data)/sizeof(test_data[0]); i++) {
+        ep.ExceptionRecord = &rec;
+        ep.ContextRecord = &ctx;
+        memset(&rec, 0, sizeof(rec));
+        memset(&ctx, 0, sizeof(ctx));
+
+        ctx.FloatSave.ErrorOffset = (DWORD)&test_data[i].opcode;
+        ctx.FloatSave.DataOffset = test_data[i].data_offset;
+        ctx.FloatSave.ControlWord = test_data[i].control_word;
+        ctx.FloatSave.StatusWord = test_data[i].status_word;
+
+        handler_called = 0;
+        ret = p__fpieee_flt(test_data[i].exception_code, &ep, fpieee_handler);
+        ok(ret == test_data[i].ret, "%d) _fpieee_flt returned %d\n", i, ret);
+        ok(handler_called == 1, "%d) handler_called = %d\n", i, handler_called);
+
+        ok(fpieee_record.RoundingMode == test_data[i].rec.RoundingMode,
+                "%d) RoundingMode = %x\n", i, fpieee_record.RoundingMode);
+        ok(fpieee_record.Precision == test_data[i].rec.Precision,
+                "%d) Precision = %x\n", i, fpieee_record.Precision);
+        ok(fpieee_record.Operation == test_data[i].rec.Operation,
+                "%d) Operation = %x\n", i, fpieee_record.Operation);
+        ok(fpieee_record.Cause.Inexact == test_data[i].rec.Cause.Inexact,
+                "%d) Cause.Inexact = %x\n", i, fpieee_record.Cause.Inexact);
+        ok(fpieee_record.Cause.Underflow == test_data[i].rec.Cause.Underflow,
+                "%d) Cause.Underflow = %x\n", i, fpieee_record.Cause.Underflow);
+        ok(fpieee_record.Cause.Overflow == test_data[i].rec.Cause.Overflow,
+                "%d) Cause.Overflow = %x\n", i, fpieee_record.Cause.Overflow);
+        ok(fpieee_record.Cause.ZeroDivide == test_data[i].rec.Cause.ZeroDivide,
+                "%d) Cause.ZeroDivide = %x\n", i, fpieee_record.Cause.ZeroDivide);
+        ok(fpieee_record.Cause.InvalidOperation == test_data[i].rec.Cause.InvalidOperation,
+                "%d) Cause.InvalidOperation = %x\n", i, fpieee_record.Cause.InvalidOperation);
+        ok(fpieee_record.Enable.Inexact == test_data[i].rec.Enable.Inexact,
+                "%d) Enable.Inexact = %x\n", i, fpieee_record.Enable.Inexact);
+        ok(fpieee_record.Enable.Underflow == test_data[i].rec.Enable.Underflow,
+                "%d) Enable.Underflow = %x\n", i, fpieee_record.Enable.Underflow);
+        ok(fpieee_record.Enable.Overflow == test_data[i].rec.Enable.Overflow,
+                "%d) Enable.Overflow = %x\n", i, fpieee_record.Enable.Overflow);
+        ok(fpieee_record.Enable.ZeroDivide == test_data[i].rec.Enable.ZeroDivide,
+                "%d) Enable.ZeroDivide = %x\n", i, fpieee_record.Enable.ZeroDivide);
+        ok(fpieee_record.Enable.InvalidOperation == test_data[i].rec.Enable.InvalidOperation,
+                "%d) Enable.InvalidOperation = %x\n", i, fpieee_record.Enable.InvalidOperation);
+        ok(fpieee_record.Status.Inexact == test_data[i].rec.Status.Inexact,
+                "%d) Status.Inexact = %x\n", i, fpieee_record.Status.Inexact);
+        ok(fpieee_record.Status.Underflow == test_data[i].rec.Status.Underflow,
+                "%d) Status.Underflow = %x\n", i, fpieee_record.Status.Underflow);
+        ok(fpieee_record.Status.Overflow == test_data[i].rec.Status.Overflow,
+                "%d) Status.Overflow = %x\n", i, fpieee_record.Status.Overflow);
+        ok(fpieee_record.Status.ZeroDivide == test_data[i].rec.Status.ZeroDivide,
+                "%d) Status.ZeroDivide = %x\n", i, fpieee_record.Status.ZeroDivide);
+        ok(fpieee_record.Status.InvalidOperation == test_data[i].rec.Status.InvalidOperation,
+                "%d) Status.InvalidOperation = %x\n", i, fpieee_record.Status.InvalidOperation);
+        ok(fpieee_record.Operand1.OperandValid == test_data[i].rec.Operand1.OperandValid,
+                "%d) Operand1.OperandValid = %x\n", i, fpieee_record.Operand1.OperandValid);
+        if(fpieee_record.Operand1.OperandValid) {
+            ok(fpieee_record.Operand1.Format == test_data[i].rec.Operand1.Format,
+                    "%d) Operand1.Format = %x\n", i, fpieee_record.Operand1.Format);
+        }
+        ok(fpieee_record.Operand2.OperandValid == test_data[i].rec.Operand2.OperandValid,
+                "%d) Operand2.OperandValid = %x\n", i, fpieee_record.Operand2.OperandValid);
+        ok(fpieee_record.Operand2.Format == test_data[i].rec.Operand2.Format,
+                "%d) Operand2.Format = %x\n", i, fpieee_record.Operand2.Format);
+        ok(fpieee_record.Result.OperandValid == test_data[i].rec.Result.OperandValid,
+                "%d) Result.OperandValid = %x\n", i, fpieee_record.Result.OperandValid);
+        ok(fpieee_record.Result.Format == test_data[i].rec.Result.Format,
+                "%d) Result.Format = %x\n", i, fpieee_record.Result.Format);
+    }
+}
+#endif
+
 START_TEST(msvcr90)
 {
     if(!init())
@@ -1507,4 +1825,10 @@ START_TEST(msvcr90)
     test_access_s();
     test_is_exception_typeof();
     test__AdjustPointer();
+    test_mbstowcs();
+    test_strtok_s();
+    test__mbstok_s();
+#ifdef __i386__
+    test__fpieee_flt();
+#endif
 }

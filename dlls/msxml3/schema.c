@@ -48,6 +48,8 @@
 
 #include "msxml_private.h"
 
+#ifdef HAVE_LIBXML2
+
 WINE_DEFAULT_DEBUG_CHANNEL(msxml);
 
 /* We use a chained hashtable, which can hold any number of schemas
@@ -57,8 +59,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(msxml);
 
 /* This is just the number of buckets, should be prime */
 #define DEFAULT_HASHTABLE_SIZE 17
-
-#ifdef HAVE_LIBXML2
 
 xmlDocPtr XDR_to_XSD_doc(xmlDocPtr xdr_doc, xmlChar const* nsURI);
 
@@ -1105,6 +1105,18 @@ static HRESULT WINAPI schema_cache_QueryInterface(IXMLDOMSchemaCollection2* ifac
     {
         *ppvObject = iface;
     }
+    else if(This->version == MSXML6 && IsEqualIID(riid, &CLSID_XMLSchemaCache60))
+    {
+        /*
+         * Version 6 can be queried for an interface with IID equal to CLSID.
+         * There is no public interface with that IID and returned pointer
+         * is equal to returned IXMLDOMSchemaCollection2 iface. We assume
+         * that it's just another way for querying IXMLDOMSchemaCollection2
+         * interface. Office 2013 ClickToRun installer uses this.
+         */
+        WARN("riid CLSID_XMLSchemaCache60, returning IXMLDOMSchemaCollection2 interface.\n");
+        *ppvObject = iface;
+    }
     else if (dispex_query_interface(&This->dispex, riid, ppvObject))
     {
         return *ppvObject ? S_OK : E_NOINTERFACE;
@@ -1226,15 +1238,39 @@ static HRESULT WINAPI schema_cache_add(IXMLDOMSchemaCollection2* iface, BSTR uri
             break;
 
         case VT_DISPATCH:
+        case VT_UNKNOWN:
             {
                 xmlDocPtr doc = NULL;
                 cache_entry* entry;
                 CacheEntryType type;
                 IXMLDOMNode* domnode = NULL;
-                IDispatch_QueryInterface(V_DISPATCH(&var), &IID_IXMLDOMNode, (void**)&domnode);
+                IUnknown_QueryInterface(V_UNKNOWN(&var), &IID_IXMLDOMNode, (void**)&domnode);
 
                 if (domnode)
-                    doc = xmlNodePtr_from_domnode(domnode, XML_DOCUMENT_NODE)->doc;
+                {
+                    DOMNodeType type;
+
+                    IXMLDOMNode_get_nodeType(domnode, &type);
+                    switch (type)
+                    {
+                    case NODE_ELEMENT:
+                    {
+                        IXMLDOMDocument *domdoc;
+                        VARIANT_BOOL b;
+                        BSTR xml;
+
+                        IXMLDOMNode_get_xml(domnode, &xml);
+                        DOMDocument_create(This->version, (void**)&domdoc);
+                        IXMLDOMDocument_loadXML(domdoc, xml, &b);
+                        SysFreeString(xml);
+                        doc = xmlNodePtr_from_domnode((IXMLDOMNode*)domdoc, XML_DOCUMENT_NODE)->doc;
+                        break;
+                    }
+                    default:
+                        doc = xmlNodePtr_from_domnode(domnode, XML_DOCUMENT_NODE)->doc;
+                        break;
+                    }
+                }
 
                 if (!doc)
                 {
@@ -1275,10 +1311,9 @@ static HRESULT WINAPI schema_cache_add(IXMLDOMSchemaCollection2* iface, BSTR uri
             break;
 
         default:
-            {
-                heap_free(name);
-                return E_INVALIDARG;
-            }
+            FIXME("arg type is not supported, %s\n", debugstr_variant(&var));
+            heap_free(name);
+            return E_INVALIDARG;
     }
     heap_free(name);
     return S_OK;

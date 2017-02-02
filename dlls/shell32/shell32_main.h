@@ -36,6 +36,7 @@
 #include "shlobj.h"
 #include "shellapi.h"
 #include "wine/unicode.h"
+#include "wine/list.h"
 
 /*******************************************
 *  global SHELL32.DLL variables
@@ -110,6 +111,8 @@ HRESULT IShellLink_ConstructFromFile(IUnknown * pUnkOuter, REFIID riid, LPCITEMI
 LPEXTRACTICONA	IExtractIconA_Constructor(LPCITEMIDLIST) DECLSPEC_HIDDEN;
 LPEXTRACTICONW	IExtractIconW_Constructor(LPCITEMIDLIST) DECLSPEC_HIDDEN;
 
+HRESULT WINAPI CustomDestinationList_Constructor(IUnknown *outer, REFIID riid, void **obj) DECLSPEC_HIDDEN;
+
 /* initialisation for FORMATETC */
 #define InitFormatEtc(fe, cf, med) \
 	{\
@@ -156,30 +159,6 @@ static inline BOOL SHELL_OsIsUnicode(void)
     return !(GetVersion() & 0x80000000);
 }
 
-#define __SHFreeAndNil(ptr) \
-	{\
-	  SHFree(*ptr); \
-	  *ptr = NULL; \
-	};
-static inline void __SHCloneStrA(char ** target,const char * source)
-{
-	*target = SHAlloc(strlen(source)+1);
-	strcpy(*target, source);
-}
-
-static inline void __SHCloneStrWtoA(char ** target, const WCHAR * source)
-{
-	int len = WideCharToMultiByte(CP_ACP, 0, source, -1, NULL, 0, NULL, NULL);
-	*target = SHAlloc(len);
-	WideCharToMultiByte(CP_ACP, 0, source, -1, *target, len, NULL, NULL);
-}
-
-static inline void __SHCloneStrW(WCHAR ** target, const WCHAR * source)
-{
-	*target = SHAlloc( (lstrlenW(source)+1) * sizeof(WCHAR) );
-	lstrcpyW(*target, source);
-}
-
 static inline WCHAR * __SHCloneStrAtoW(WCHAR ** target, const char * source)
 {
 	int len = MultiByteToWideChar(CP_ACP, 0, source, -1, NULL, 0);
@@ -205,19 +184,18 @@ BOOL SHELL_IsShortcut(LPCITEMIDLIST) DECLSPEC_HIDDEN;
 
 
 /* IEnumIDList stuff */
-struct enumlist
+struct pidl_enum_entry
 {
-        struct enumlist *pNext;
-        LPITEMIDLIST    pidl;
+    struct list entry;
+    LPITEMIDLIST pidl;
 };
 
 typedef struct
 {
-        IEnumIDList     IEnumIDList_iface;
-        LONG            ref;
-        struct enumlist *mpFirst;
-        struct enumlist *mpLast;
-        struct enumlist *mpCurrent;
+    IEnumIDList  IEnumIDList_iface;
+    LONG         ref;
+    struct list  pidls;
+    struct list *current;
 } IEnumIDListImpl;
 
 /* Creates an IEnumIDList; add LPITEMIDLISTs to it with AddToEnumList. */
@@ -229,6 +207,19 @@ BOOL AddToEnumList(IEnumIDListImpl *list, LPITEMIDLIST pidl) DECLSPEC_HIDDEN;
  */
 BOOL CreateFolderEnumList(IEnumIDListImpl *list, LPCWSTR lpszPath, DWORD dwFlags) DECLSPEC_HIDDEN;
 
+enum tid_t {
+    NULL_tid,
+    IShellDispatch6_tid,
+    IShellFolderViewDual3_tid,
+    Folder3_tid,
+    FolderItem2_tid,
+    FolderItems3_tid,
+    FolderItemVerb_tid,
+    FolderItemVerbs_tid,
+    LAST_tid
+};
+
+HRESULT get_typeinfo(enum tid_t, ITypeInfo**) DECLSPEC_HIDDEN;
 void release_typelib(void) DECLSPEC_HIDDEN;
 void release_desktop_folder(void) DECLSPEC_HIDDEN;
 

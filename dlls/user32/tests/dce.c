@@ -110,6 +110,12 @@ static void test_dc_attributes(void)
     }
     while (i > 0) ReleaseDC( hwnd_cache, hdcs[--i] );
 
+    /* Released cache DCs are 'disabled' */
+    rop = SetROP2( old_hdc, R2_BLACK );
+    todo_wine ok( rop == 0, "got %d\n", rop );
+    rop = GetROP2( old_hdc );
+    todo_wine ok( rop == 0, "got %d\n", rop );
+
     /* test own DC */
 
     hdc = GetDC( hwnd_owndc );
@@ -201,7 +207,7 @@ static void test_dc_visrgn(void)
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( rect.left >= 10 && rect.top >= 10 && rect.right <= 20 && rect.bottom <= 20,
-        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "invalid clip box %s\n", wine_dbgstr_rect( &rect ));
     ok( GetRgnBox( hrgn, &rect ) != ERROR, "region must still be valid\n" );
     ReleaseDC( hwnd_cache, hdc );
     ok( GetRgnBox( hrgn, &rect ) == ERROR, "region must no longer be valid\n" );
@@ -215,7 +221,7 @@ static void test_dc_visrgn(void)
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( rect.left >= 10 && rect.top >= 10 && rect.right <= 20 && rect.bottom <= 20,
-        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "invalid clip box %s\n", wine_dbgstr_rect( &rect ));
     ok( GetRgnBox( hrgn, &rect ) != ERROR, "region must still be valid\n" );
     ReleaseDC( hwnd_cache, hdc );
     ok( GetRgnBox( hrgn, &rect ) == ERROR, "region must no longer be valid\n" );
@@ -223,7 +229,7 @@ static void test_dc_visrgn(void)
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( !(rect.left >= 10 && rect.top >= 10 && rect.right <= 20 && rect.bottom <= 20),
-        "clip box should have been reset %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "clip box should have been reset %s\n", wine_dbgstr_rect( &rect ));
     ReleaseDC( hwnd_cache, hdc );
 
     /* window DC */
@@ -235,19 +241,19 @@ static void test_dc_visrgn(void)
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( rect.left >= 10 && rect.top >= 10 && rect.right <= 20 && rect.bottom <= 20,
-        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "invalid clip box %s\n", wine_dbgstr_rect( &rect ));
     ok( GetRgnBox( hrgn, &rect ) != ERROR, "region must still be valid\n" );
     ReleaseDC( hwnd_owndc, hdc );
     ok( GetRgnBox( hrgn, &rect ) != ERROR, "region must still be valid\n" );
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( rect.left >= 10 && rect.top >= 10 && rect.right <= 20 && rect.bottom <= 20,
-        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "invalid clip box %s\n", wine_dbgstr_rect( &rect ));
     hdc = GetDCEx( hwnd_owndc, 0, DCX_USESTYLE );
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( rect.left >= 10 && rect.top >= 10 && rect.right <= 20 && rect.bottom <= 20,
-        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "invalid clip box %s\n", wine_dbgstr_rect( &rect ));
     ok( GetRgnBox( hrgn, &rect ) != ERROR, "region must still be valid\n" );
     ReleaseDC( hwnd_owndc, hdc );
     ok( GetRgnBox( hrgn, &rect ) != ERROR, "region must still be valid\n" );
@@ -260,7 +266,7 @@ static void test_dc_visrgn(void)
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( rect.left >= 20 && rect.top >= 20 && rect.right <= 30 && rect.bottom <= 30,
-        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "invalid clip box %s\n", wine_dbgstr_rect( &rect ));
     ok( GetRgnBox( hrgn2, &rect ) != ERROR, "region2 must still be valid\n" );
     ReleaseDC( hwnd_owndc, hdc );
     ok( GetRgnBox( hrgn2, &rect ) != ERROR, "region2 must still be valid\n" );
@@ -269,7 +275,7 @@ static void test_dc_visrgn(void)
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( !(rect.left >= 20 && rect.top >= 20 && rect.right <= 30 && rect.bottom <= 30),
-        "clip box should have been reset %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "clip box should have been reset %s\n", wine_dbgstr_rect( &rect ));
     ReleaseDC( hwnd_owndc, hdc );
 
     /* class DC */
@@ -281,20 +287,20 @@ static void test_dc_visrgn(void)
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( rect.left >= 10 && rect.top >= 10 && rect.right <= 20 && rect.bottom <= 20,
-        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "invalid clip box %s\n", wine_dbgstr_rect( &rect ));
     ok( GetRgnBox( hrgn, &rect ) != ERROR, "region must still be valid\n" );
     ReleaseDC( hwnd_classdc, hdc );
     ok( GetRgnBox( hrgn, &rect ) != ERROR, "region must still be valid\n" );
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( rect.left >= 10 && rect.top >= 10 && rect.right <= 20 && rect.bottom <= 20,
-        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "invalid clip box %s\n", wine_dbgstr_rect( &rect ));
 
     hdc = GetDCEx( hwnd_classdc, 0, DCX_USESTYLE );
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( rect.left >= 10 && rect.top >= 10 && rect.right <= 20 && rect.bottom <= 20,
-        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "invalid clip box %s\n", wine_dbgstr_rect( &rect ));
     ok( GetRgnBox( hrgn, &rect ) != ERROR, "region must still be valid\n" );
     ReleaseDC( hwnd_classdc, hdc );
     ok( GetRgnBox( hrgn, &rect ) != ERROR, "region must still be valid\n" );
@@ -307,7 +313,7 @@ static void test_dc_visrgn(void)
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( rect.left >= 20 && rect.top >= 20 && rect.right <= 30 && rect.bottom <= 30,
-        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "invalid clip box %s\n", wine_dbgstr_rect( &rect ));
     ok( GetRgnBox( hrgn2, &rect ) != ERROR, "region2 must still be valid\n" );
 
     old_hdc = hdc;
@@ -317,13 +323,13 @@ static void test_dc_visrgn(void)
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( !(rect.left >= 20 && rect.top >= 20 && rect.right <= 30 && rect.bottom <= 30),
-        "clip box should have been reset %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "clip box should have been reset %s\n", wine_dbgstr_rect( &rect ));
     ReleaseDC( hwnd_classdc2, hdc );
     ok( GetRgnBox( hrgn2, &rect ) != ERROR, "region2 must still be valid\n" );
     hdc = GetDCEx( hwnd_classdc2, 0, DCX_EXCLUDERGN | DCX_USESTYLE );
     ok( GetRgnBox( hrgn2, &rect ) != ERROR, "region2 must still be valid\n" );
     ok( !(rect.left >= 20 && rect.top >= 20 && rect.right <= 30 && rect.bottom <= 30),
-        "clip box must have been reset %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "clip box must have been reset %s\n", wine_dbgstr_rect( &rect ));
     ReleaseDC( hwnd_classdc2, hdc );
 
     /* parent DC */
@@ -335,10 +341,8 @@ static void test_dc_visrgn(void)
     GetClipBox( hdc, &parent_rect );
     ReleaseDC( hwnd_parent, hdc );
 
-    ok( rect.left == parent_rect.left, "rect.left = %d, expected %d\n", rect.left, parent_rect.left );
-    ok( rect.top == parent_rect.top, "rect.top = %d, expected %d\n", rect.top, parent_rect.top );
-    ok( rect.right == parent_rect.right, "rect.right = %d, expected %d\n", rect.right, parent_rect.right );
-    ok( rect.bottom == parent_rect.bottom, "rect.bottom = %d, expected %d\n", rect.bottom, parent_rect.bottom );
+    ok( EqualRect( &rect, &parent_rect ), "rect = %s, expected %s\n", wine_dbgstr_rect( &rect ),
+        wine_dbgstr_rect( &parent_rect ));
 }
 
 
@@ -360,7 +364,7 @@ static void test_begin_paint(void)
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( rect.left >= 10 && rect.top >= 10 && rect.right <= 20 && rect.bottom <= 20,
-        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "invalid clip box %s\n", wine_dbgstr_rect( &rect ));
     EndPaint( hwnd_cache, &ps );
 
     /* window DC */
@@ -372,22 +376,22 @@ static void test_begin_paint(void)
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( rect.left >= 10 && rect.top >= 10 && rect.right <= 20 && rect.bottom <= 20,
-        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "invalid clip box %s\n", wine_dbgstr_rect( &rect ));
     ReleaseDC( hwnd_owndc, hdc );
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( rect.left >= 10 && rect.top >= 10 && rect.right <= 20 && rect.bottom <= 20,
-        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "invalid clip box %s\n", wine_dbgstr_rect( &rect ));
     ok( GetDC( hwnd_owndc ) == hdc, "got different hdc\n" );
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( rect.left >= 10 && rect.top >= 10 && rect.right <= 20 && rect.bottom <= 20,
-        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "invalid clip box %s\n", wine_dbgstr_rect( &rect ));
     EndPaint( hwnd_owndc, &ps );
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( !(rect.left >= 10 && rect.top >= 10 && rect.right <= 20 && rect.bottom <= 20),
-        "clip box should have been reset %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "clip box should have been reset %s\n", wine_dbgstr_rect( &rect ));
     RedrawWindow( hwnd_owndc, NULL, 0, RDW_VALIDATE|RDW_NOFRAME|RDW_NOERASE );
     SetRect( &rect, 10, 10, 20, 20 );
     RedrawWindow( hwnd_owndc, &rect, 0, RDW_INVALIDATE|RDW_ERASE );
@@ -395,12 +399,12 @@ static void test_begin_paint(void)
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( !(rect.left >= 10 && rect.top >= 10 && rect.right <= 20 && rect.bottom <= 20),
-        "clip box should be the whole window %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "clip box should be the whole window %s\n", wine_dbgstr_rect( &rect ));
     RedrawWindow( hwnd_owndc, NULL, 0, RDW_ERASENOW );
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( !(rect.left >= 10 && rect.top >= 10 && rect.right <= 20 && rect.bottom <= 20),
-        "clip box should still be the whole window %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "clip box should still be the whole window %s\n", wine_dbgstr_rect( &rect ));
 
     /* class DC */
 
@@ -411,7 +415,7 @@ static void test_begin_paint(void)
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( rect.left >= 10 && rect.top >= 10 && rect.right <= 20 && rect.bottom <= 20,
-        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "invalid clip box %s\n", wine_dbgstr_rect( &rect ));
 
     old_hdc = hdc;
     hdc = GetDC( hwnd_classdc2 );
@@ -419,7 +423,7 @@ static void test_begin_paint(void)
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( !(rect.left >= 10 && rect.top >= 10 && rect.right <= 20 && rect.bottom <= 20),
-        "clip box should have been reset %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "clip box should have been reset %s\n", wine_dbgstr_rect( &rect ));
     ReleaseDC( hwnd_classdc2, hdc );
     EndPaint( hwnd_classdc, &ps );
 
@@ -459,7 +463,7 @@ static void test_scroll_window(void)
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( rect.left >= 25 && rect.top >= 25 && rect.right <= 50 && rect.bottom <= 50,
-        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "invalid clip box %s\n", wine_dbgstr_rect( &rect ));
     EndPaint( hwnd_owndc, &ps );
 
     SetViewportExtEx( hdc, 2, 3, NULL );
@@ -470,7 +474,7 @@ static void test_scroll_window(void)
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( rect.left >= 25 && rect.top >= 25 && rect.right <= 50 && rect.bottom <= 50,
-        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "invalid clip box %s\n", wine_dbgstr_rect( &rect ));
     EndPaint( hwnd_owndc, &ps );
 
     ScrollWindowEx( hwnd_owndc, -5, -10, NULL, &clip, 0, NULL, SW_INVALIDATE | SW_ERASE );
@@ -478,7 +482,7 @@ static void test_scroll_window(void)
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( rect.left >= -5 && rect.top >= 5 && rect.right <= 20 && rect.bottom <= 30,
-        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "invalid clip box %s\n", wine_dbgstr_rect( &rect ));
     EndPaint( hwnd_owndc, &ps );
 
     SetViewportExtEx( hdc, 1, 1, NULL );
@@ -489,7 +493,7 @@ static void test_scroll_window(void)
     SetRectEmpty( &rect );
     GetClipBox( hdc, &rect );
     ok( rect.left >= 25 && rect.top >= 25 && rect.right <= 50 && rect.bottom <= 50,
-        "invalid clip box %d,%d-%d,%d\n", rect.left, rect.top, rect.right, rect.bottom );
+        "invalid clip box %s\n", wine_dbgstr_rect( &rect ));
     EndPaint( hwnd_owndc, &ps );
 }
 

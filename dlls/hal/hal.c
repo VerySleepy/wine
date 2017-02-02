@@ -23,9 +23,6 @@
 
 #include <stdarg.h>
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
-
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "windef.h"
@@ -157,4 +154,26 @@ KIRQL WINAPI KeGetCurrentIrql(VOID)
 {
     FIXME( " stub!\n");
     return 0;
+}
+
+UCHAR WINAPI READ_PORT_UCHAR(UCHAR *port)
+{
+    FIXME("(%p) stub!\n", port);
+    return 0;
+}
+
+ULONG WINAPI READ_PORT_ULONG(ULONG *port)
+{
+    FIXME("(%p) stub!\n", port);
+    return 0;
+}
+
+void WINAPI WRITE_PORT_UCHAR(UCHAR *port, UCHAR value)
+{
+    FIXME("(%p %d) stub!\n", port, value);
+}
+
+void WINAPI WRITE_PORT_ULONG(ULONG *port, ULONG value)
+{
+    FIXME("(%p %d) stub!\n", port, value);
 }

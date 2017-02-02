@@ -946,6 +946,7 @@ static inline BOOL strftime_date(char *str, MSVCRT_size_t *pos, MSVCRT_size_t ma
     char *format;
     SYSTEMTIME st;
     MSVCRT_size_t ret;
+    LCID lcid;
 
     st.wYear = mstm->tm_year + 1900;
     st.wMonth = mstm->tm_mon + 1;
@@ -956,10 +957,16 @@ static inline BOOL strftime_date(char *str, MSVCRT_size_t *pos, MSVCRT_size_t ma
     st.wSecond = mstm->tm_sec;
     st.wMilliseconds = 0;
 
+#if _MSVCR_VER < 110
+    lcid = time_data->lcid;
+#else
+    lcid = LocaleNameToLCID(time_data->locname, 0);
+#endif
+
     format = alternate ? time_data->str.names.date : time_data->str.names.short_date;
-    ret = GetDateFormatA(time_data->lcid, 0, &st, format, NULL, 0);
+    ret = GetDateFormatA(lcid, 0, &st, format, NULL, 0);
     if(ret && ret<max-*pos)
-        ret = GetDateFormatA(time_data->lcid, 0, &st, format, str+*pos, max-*pos);
+        ret = GetDateFormatA(lcid, 0, &st, format, str+*pos, max-*pos);
     if(!ret) {
         *str = 0;
         *MSVCRT__errno() = MSVCRT_EINVAL;
@@ -978,6 +985,7 @@ static inline BOOL strftime_time(char *str, MSVCRT_size_t *pos, MSVCRT_size_t ma
 {
     SYSTEMTIME st;
     MSVCRT_size_t ret;
+    LCID lcid;
 
     st.wYear = mstm->tm_year + 1900;
     st.wMonth = mstm->tm_mon + 1;
@@ -988,9 +996,15 @@ static inline BOOL strftime_time(char *str, MSVCRT_size_t *pos, MSVCRT_size_t ma
     st.wSecond = mstm->tm_sec;
     st.wMilliseconds = 0;
 
-    ret = GetTimeFormatA(time_data->lcid, 0, &st, time_data->str.names.time, NULL, 0);
+#if _MSVCR_VER < 110
+    lcid = time_data->lcid;
+#else
+    lcid = LocaleNameToLCID(time_data->locname, 0);
+#endif
+
+    ret = GetTimeFormatA(lcid, 0, &st, time_data->str.names.time, NULL, 0);
     if(ret && ret<max-*pos)
-        ret = GetTimeFormatA(time_data->lcid, 0, &st, time_data->str.names.time,
+        ret = GetTimeFormatA(lcid, 0, &st, time_data->str.names.time,
                 str+*pos, max-*pos);
     if(!ret) {
         *str = 0;
@@ -1041,11 +1055,8 @@ static inline BOOL strftime_int(char *str, MSVCRT_size_t *pos, MSVCRT_size_t max
     return TRUE;
 }
 
-/*********************************************************************
- *		_Strftime (MSVCRT.@)
- */
-MSVCRT_size_t CDECL _Strftime(char *str, MSVCRT_size_t max, const char *format,
-        const struct MSVCRT_tm *mstm, MSVCRT___lc_time_data *time_data)
+static MSVCRT_size_t strftime_helper(char *str, MSVCRT_size_t max, const char *format,
+        const struct MSVCRT_tm *mstm, MSVCRT___lc_time_data *time_data, MSVCRT__locale_t loc)
 {
     MSVCRT_size_t ret, tmp;
     BOOL alternate;
@@ -1060,10 +1071,15 @@ MSVCRT_size_t CDECL _Strftime(char *str, MSVCRT_size_t max, const char *format,
     }
 
     if(!time_data)
-        time_data = get_locinfo()->lc_time_curr;
+        time_data = loc ? loc->locinfo->lc_time_curr : get_locinfo()->lc_time_curr;
 
     for(ret=0; *format && ret<max; format++) {
         if(*format != '%') {
+            if(MSVCRT__isleadbyte_l((unsigned char)*format, loc)) {
+                str[ret++] = *(format++);
+                if(ret == max) continue;
+                if(!str[ret]) goto einval_error;
+            }
             str[ret++] = *format;
             continue;
         }
@@ -1220,41 +1236,67 @@ einval_error:
     return 0;
 }
 
+/********************************************************************
+ *     _strftime_l (MSVCRT.@)
+ */
+MSVCRT_size_t CDECL MSVCRT__strftime_l( char *str, MSVCRT_size_t max, const char *format,
+        const struct MSVCRT_tm *mstm, MSVCRT__locale_t loc )
+{
+    return strftime_helper(str, max, format, mstm, NULL, loc);
+}
+
+/*********************************************************************
+ *		_Strftime (MSVCRT.@)
+ */
+MSVCRT_size_t CDECL _Strftime(char *str, MSVCRT_size_t max, const char *format,
+        const struct MSVCRT_tm *mstm, MSVCRT___lc_time_data *time_data)
+{
+    return strftime_helper(str, max, format, mstm, time_data, NULL);
+}
+
 /*********************************************************************
  *		strftime (MSVCRT.@)
  */
 MSVCRT_size_t CDECL MSVCRT_strftime( char *str, MSVCRT_size_t max, const char *format,
                                      const struct MSVCRT_tm *mstm )
 {
-    return _Strftime(str, max, format, mstm, NULL);
+    return strftime_helper(str, max, format, mstm, NULL, NULL);
 }
 
 /*********************************************************************
- *		wcsftime (MSVCRT.@)
+ *              _wcsftime_l (MSVCRT.@)
  */
-MSVCRT_size_t CDECL MSVCRT_wcsftime( MSVCRT_wchar_t *str, MSVCRT_size_t max,
-                                     const MSVCRT_wchar_t *format, const struct MSVCRT_tm *mstm )
+MSVCRT_size_t CDECL MSVCRT__wcsftime_l( MSVCRT_wchar_t *str, MSVCRT_size_t max,
+        const MSVCRT_wchar_t *format, const struct MSVCRT_tm *mstm, MSVCRT__locale_t loc )
 {
     char *s, *fmt;
     MSVCRT_size_t len;
 
-    TRACE("%p %ld %s %p\n", str, max, debugstr_w(format), mstm );
+    TRACE("%p %ld %s %p %p\n", str, max, debugstr_w(format), mstm, loc);
 
-    len = WideCharToMultiByte( CP_UNIXCP, 0, format, -1, NULL, 0, NULL, NULL );
+    len = MSVCRT__wcstombs_l( NULL, format, 0, loc ) + 1;
     if (!(fmt = MSVCRT_malloc( len ))) return 0;
-    WideCharToMultiByte( CP_UNIXCP, 0, format, -1, fmt, len, NULL, NULL );
+    MSVCRT__wcstombs_l(fmt, format, len, loc);
 
     if ((s = MSVCRT_malloc( max*4 )))
     {
-        if (!MSVCRT_strftime( s, max*4, fmt, mstm )) s[0] = 0;
-        len = MultiByteToWideChar( CP_UNIXCP, 0, s, -1, str, max );
-        if (len) len--;
+        if (!MSVCRT__strftime_l( s, max*4, fmt, mstm, loc )) s[0] = 0;
+        len = MSVCRT__mbstowcs_l( str, s, max, loc );
         MSVCRT_free( s );
     }
     else len = 0;
 
     MSVCRT_free( fmt );
     return len;
+}
+
+/*********************************************************************
+ *     wcsftime (MSVCRT.@)
+ */
+MSVCRT_size_t CDECL MSVCRT_wcsftime( MSVCRT_wchar_t *str, MSVCRT_size_t max,
+                                     const MSVCRT_wchar_t *format, const struct MSVCRT_tm *mstm )
+{
+    return MSVCRT__wcsftime_l(str, max, format, mstm, NULL);
 }
 
 static char* asctime_buf(char *buf, const struct MSVCRT_tm *mstm)
@@ -1358,7 +1400,7 @@ int CDECL MSVCRT__wasctime_s(MSVCRT_wchar_t* time, MSVCRT_size_t size, const str
     if (!MSVCRT_CHECK_PMT(mstm != NULL)) return MSVCRT_EINVAL;
 
     ret = MSVCRT_asctime_s(buffer, sizeof(buffer), mstm);
-    if(!ret)
+    if(ret)
         return ret;
     MultiByteToWideChar(CP_ACP, 0, buffer, -1, time, size);
     return 0;
@@ -1467,6 +1509,51 @@ MSVCRT_wchar_t * CDECL MSVCRT__wctime(const MSVCRT___time32_t *time)
     return MSVCRT__wctime32( time );
 }
 #endif
+
+/*********************************************************************
+ *              _wctime64_s (MSVCRT.@)
+ */
+int CDECL MSVCRT__wctime64_s(MSVCRT_wchar_t *buf,
+        MSVCRT_size_t size, const MSVCRT___time64_t *time)
+{
+    struct MSVCRT_tm tm;
+    int ret;
+
+    if(!MSVCRT_CHECK_PMT(buf != NULL)) return MSVCRT_EINVAL;
+    if(!MSVCRT_CHECK_PMT(size != 0)) return MSVCRT_EINVAL;
+    buf[0] = 0;
+    if(!MSVCRT_CHECK_PMT(time != NULL)) return MSVCRT_EINVAL;
+    if(!MSVCRT_CHECK_PMT(*time >= 0)) return MSVCRT_EINVAL;
+    if(!MSVCRT_CHECK_PMT(*time <= _MAX__TIME64_T)) return MSVCRT_EINVAL;
+
+    ret = _localtime64_s(&tm, time);
+    if(ret != 0)
+        return ret;
+
+    return MSVCRT__wasctime_s(buf, size, &tm);
+}
+
+/*********************************************************************
+ *              _wctime32_s (MSVCRT.@)
+ */
+int CDECL MSVCRT__wctime32_s(MSVCRT_wchar_t *buf, MSVCRT_size_t size,
+        const MSVCRT___time32_t *time)
+{
+    struct MSVCRT_tm tm;
+    int ret;
+
+    if(!MSVCRT_CHECK_PMT(buf != NULL)) return MSVCRT_EINVAL;
+    if(!MSVCRT_CHECK_PMT(size != 0)) return MSVCRT_EINVAL;
+    buf[0] = 0;
+    if(!MSVCRT_CHECK_PMT(time != NULL)) return MSVCRT_EINVAL;
+    if(!MSVCRT_CHECK_PMT(*time >= 0)) return MSVCRT_EINVAL;
+
+    ret = _localtime32_s(&tm, time);
+    if(ret != 0)
+        return ret;
+
+    return MSVCRT__wasctime_s(buf, size, &tm);
+}
 
 /*********************************************************************
  * _get_timezone (MSVCR100.@)

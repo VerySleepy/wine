@@ -400,7 +400,7 @@ static BOOL is_elem_name(HTMLElement *elem, LPCWSTR name)
 static HRESULT get_item_idx(HTMLElementCollection *This, UINT idx, IDispatch **ret)
 {
     if(idx < This->len) {
-        *ret = (IDispatch*)This->elems[idx];
+        *ret = (IDispatch*)&This->elems[idx]->node.event_target.dispex.IDispatchEx_iface;
         IDispatch_AddRef(*ret);
     }
 
@@ -419,11 +419,13 @@ static HRESULT WINAPI HTMLElementCollection_item(IHTMLElementCollection *iface,
 
     switch(V_VT(&name)) {
     case VT_I4:
+    case VT_INT:
         if(V_I4(&name) < 0)
             return E_INVALIDARG;
         hres = get_item_idx(This, V_I4(&name), pdisp);
         break;
 
+    case VT_UI4:
     case VT_UINT:
         hres = get_item_idx(This, V_UINT(&name), pdisp);
         break;
@@ -619,7 +621,6 @@ static const tid_t HTMLElementCollection_iface_tids[] = {
 static dispex_static_data_t HTMLElementCollection_dispex = {
     &HTMLElementColection_dispex_vtbl,
     DispHTMLElementCollection_tid,
-    NULL,
     HTMLElementCollection_iface_tids
 };
 
@@ -721,7 +722,8 @@ IHTMLElementCollection *create_collection_from_htmlcol(HTMLDocumentNode *doc, ns
     HTMLDOMNode *node;
     HRESULT hres = S_OK;
 
-    nsIDOMHTMLCollection_GetLength(nscol, &length);
+    if(nscol)
+        nsIDOMHTMLCollection_GetLength(nscol, &length);
 
     buf.len = buf.size = length;
     if(buf.len) {
@@ -821,6 +823,9 @@ HRESULT get_elem_source_index(HTMLElement *elem, LONG *ret)
 static IHTMLElementCollection *HTMLElementCollection_Create(HTMLElement **elems, DWORD len)
 {
     HTMLElementCollection *ret = heap_alloc_zero(sizeof(HTMLElementCollection));
+
+    if (!ret)
+        return NULL;
 
     ret->IHTMLElementCollection_iface.lpVtbl = &HTMLElementCollectionVtbl;
     ret->ref = 1;

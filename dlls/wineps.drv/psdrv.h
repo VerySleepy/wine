@@ -393,7 +393,7 @@ static inline PSDRV_PDEVICE *get_psdrv_dev( PHYSDEV dev )
  *  Every glyph name in the Adobe Glyph List and the 35 core PostScript fonts
  */
 
-extern const INT    PSDRV_AGLGlyphNamesSize;
+extern const INT    PSDRV_AGLGlyphNamesSize DECLSPEC_HIDDEN;
 extern GLYPHNAME    PSDRV_AGLGlyphNames[] DECLSPEC_HIDDEN;
 
 
@@ -401,19 +401,19 @@ extern GLYPHNAME    PSDRV_AGLGlyphNames[] DECLSPEC_HIDDEN;
  *  The AGL encoding vector
  */
 
-extern const INT    	    PSDRV_AGLbyNameSize;    /* sorted by name -     */
-extern const UNICODEGLYPH   PSDRV_AGLbyName[] DECLSPEC_HIDDEN;	    /*  duplicates omitted  */
+extern const INT    	    PSDRV_AGLbyNameSize DECLSPEC_HIDDEN; /* sorted by name */
+extern const UNICODEGLYPH   PSDRV_AGLbyName[] DECLSPEC_HIDDEN;	 /*  duplicates omitted  */
 
-extern const INT    	    PSDRV_AGLbyUVSize;	    /* sorted by UV -	    */
-extern const UNICODEGLYPH   PSDRV_AGLbyUV[] DECLSPEC_HIDDEN;	    /*  duplicates included */
+extern const INT    	    PSDRV_AGLbyUVSize DECLSPEC_HIDDEN;	 /* sorted by UV */
+extern const UNICODEGLYPH   PSDRV_AGLbyUV[] DECLSPEC_HIDDEN;	 /*  duplicates included */
 
 extern HINSTANCE PSDRV_hInstance DECLSPEC_HIDDEN;
 extern HANDLE PSDRV_Heap DECLSPEC_HIDDEN;
 extern char *PSDRV_ANSIVector[256] DECLSPEC_HIDDEN;
 
-extern INPUTSLOT *find_slot( PPD *ppd, const PSDRV_DEVMODE *dm );
-extern PAGESIZE *find_pagesize( PPD *ppd, const PSDRV_DEVMODE *dm );
-extern DUPLEX *find_duplex( PPD *ppd, const PSDRV_DEVMODE *dm );
+extern INPUTSLOT *find_slot( PPD *ppd, const PSDRV_DEVMODE *dm ) DECLSPEC_HIDDEN;
+extern PAGESIZE *find_pagesize( PPD *ppd, const PSDRV_DEVMODE *dm ) DECLSPEC_HIDDEN;
+extern DUPLEX *find_duplex( PPD *ppd, const PSDRV_DEVMODE *dm ) DECLSPEC_HIDDEN;
 
 /* GDI driver functions */
 extern BOOL PSDRV_Arc( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
@@ -549,7 +549,7 @@ extern BOOL PSDRV_WriteBuiltinGlyphShow(PHYSDEV dev, LPCWSTR str, INT count) DEC
 
 extern BOOL PSDRV_SelectDownloadFont(PHYSDEV dev) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_WriteSetDownloadFont(PHYSDEV dev, BOOL vertical) DECLSPEC_HIDDEN;
-extern BOOL PSDRV_WriteDownloadGlyphShow(PHYSDEV dev, const WORD *glpyhs, UINT count) DECLSPEC_HIDDEN;
+extern BOOL PSDRV_WriteDownloadGlyphShow(PHYSDEV dev, const WORD *glyphs, UINT count) DECLSPEC_HIDDEN;
 extern BOOL PSDRV_EmptyDownloadList(PHYSDEV dev, BOOL write_undef) DECLSPEC_HIDDEN;
 
 extern DWORD write_spool( PHYSDEV dev, const void *data, DWORD num ) DECLSPEC_HIDDEN;

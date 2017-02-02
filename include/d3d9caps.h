@@ -20,6 +20,10 @@
 #ifndef __WINE_D3D9CAPS_H
 #define __WINE_D3D9CAPS_H
 
+#ifdef __i386__
+#include <pshpack4.h>
+#endif
+
 /*
  * Definitions
  */
@@ -112,6 +116,9 @@
 #define D3DPMISCCAPS_MRTPOSTPIXELSHADERBLENDING __MSABI_LONG(0x00080000)
 #define D3DPMISCCAPS_FOGVERTEXCLAMPED           __MSABI_LONG(0x00100000)
 
+#ifndef D3D_DISABLE_9EX
+#define D3DPMISCCAPS_POSTBLENDSRGBCONVERT       __MSABI_LONG(0x00200000)
+#endif
 
 #define D3DPRASTERCAPS_DITHER                     __MSABI_LONG(0x00000001)
 #define D3DPRASTERCAPS_PAT                        __MSABI_LONG(0x00000008)
@@ -391,5 +398,9 @@ typedef struct _D3DCAPS9 {
   DWORD               MaxPixelShader30InstructionSlots;
 
 } D3DCAPS9;
+
+#ifdef __i386__
+#include <poppack.h>
+#endif
 
 #endif

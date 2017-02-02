@@ -35,6 +35,7 @@ static REFIID tid_ids[] = {
     &IID_NULL,
     &IID_IWshCollection,
     &IID_IWshEnvironment,
+    &IID_IWshExec,
     &IID_IWshShell3,
     &IID_IWshShortcut
 };
@@ -114,7 +115,7 @@ static HRESULT WINAPI ClassFactory_QueryInterface(IClassFactory *iface, REFIID r
         return S_OK;
     }
 
-    FIXME("(%p)->(%s %p)\n", iface, debugstr_guid(riid), ppv);
+    WARN("(%p)->(%s %p)\n", iface, debugstr_guid(riid), ppv);
     return E_NOINTERFACE;
 }
 

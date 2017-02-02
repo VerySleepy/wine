@@ -35,26 +35,11 @@
 #include "olectl.h"
 
 #include "wine/unicode.h"
-#include "wine/list.h"
 
 #include "msctf.h"
 #include "msctf_internal.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(msctf);
-
-typedef struct tagThreadMgrSink {
-    struct list         entry;
-    union {
-        /* ThreadMgr Sinks */
-        IUnknown            *pIUnknown;
-        /* ITfActiveLanguageProfileNotifySink *pITfActiveLanguageProfileNotifySink; */
-        /* ITfDisplayAttributeNotifySink *pITfDisplayAttributeNotifySink; */
-        /* ITfKeyTraceEventSink *pITfKeyTraceEventSink; */
-        /* ITfPreservedKeyNotifySink *pITfPreservedKeyNotifySink; */
-        /* ITfThreadFocusSink *pITfThreadFocusSink; */
-        ITfThreadMgrEventSink *pITfThreadMgrEventSink;
-    } interfaces;
-} ThreadMgrSink;
 
 typedef struct tagPreservedKey
 {
@@ -79,7 +64,7 @@ typedef struct tagAssociatedWindow
 } AssociatedWindow;
 
 typedef struct tagACLMulti {
-    ITfThreadMgr ITfThreadMgr_iface;
+    ITfThreadMgrEx ITfThreadMgrEx_iface;
     ITfSource ITfSource_iface;
     ITfKeystrokeMgr ITfKeystrokeMgr_iface;
     ITfMessagePump ITfMessagePump_iface;
@@ -87,7 +72,7 @@ typedef struct tagACLMulti {
     /* const ITfThreadMgrExVtbl *ThreadMgrExVtbl; */
     /* const ITfConfigureSystemKeystrokeFeedVtbl *ConfigureSystemKeystrokeFeedVtbl; */
     /* const ITfLangBarItemMgrVtbl *LangBarItemMgrVtbl; */
-    /* const ITfUIElementMgrVtbl *UIElementMgrVtbl; */
+    ITfUIElementMgr ITfUIElementMgr_iface;
     ITfSourceSingle ITfSourceSingle_iface;
     LONG refCount;
 
@@ -99,8 +84,8 @@ typedef struct tagACLMulti {
     ITfDocumentMgr *focus;
     LONG activationCount;
 
-    ITfKeyEventSink *forgroundKeyEventSink;
-    CLSID forgroundTextService;
+    ITfKeyEventSink *foregroundKeyEventSink;
+    CLSID foregroundTextService;
 
     struct list CurrentPreservedKeys;
     struct list CreatedDocumentMgrs;
@@ -127,9 +112,9 @@ typedef struct tagEnumTfDocumentMgr {
 
 static HRESULT EnumTfDocumentMgr_Constructor(struct list* head, IEnumTfDocumentMgrs **ppOut);
 
-static inline ThreadMgr *impl_from_ITfThreadMgr(ITfThreadMgr *iface)
+static inline ThreadMgr *impl_from_ITfThreadMgrEx(ITfThreadMgrEx *iface)
 {
-    return CONTAINING_RECORD(iface, ThreadMgr, ITfThreadMgr_iface);
+    return CONTAINING_RECORD(iface, ThreadMgr, ITfThreadMgrEx_iface);
 }
 
 static inline ThreadMgr *impl_from_ITfSource(ITfSource *iface)
@@ -157,6 +142,11 @@ static inline ThreadMgr *impl_from_ITfThreadMgrEventSink(ITfThreadMgrEventSink *
     return CONTAINING_RECORD(iface, ThreadMgr, ITfThreadMgrEventSink_iface);
 }
 
+static inline ThreadMgr *impl_from_ITfUIElementMgr(ITfUIElementMgr *iface)
+{
+    return CONTAINING_RECORD(iface, ThreadMgr, ITfUIElementMgr_iface);
+}
+
 static inline ThreadMgr *impl_from_ITfSourceSingle(ITfSourceSingle *iface)
 {
     return CONTAINING_RECORD(iface, ThreadMgr, ITfSourceSingle_iface);
@@ -165,12 +155,6 @@ static inline ThreadMgr *impl_from_ITfSourceSingle(ITfSourceSingle *iface)
 static inline EnumTfDocumentMgr *impl_from_IEnumTfDocumentMgrs(IEnumTfDocumentMgrs *iface)
 {
     return CONTAINING_RECORD(iface, EnumTfDocumentMgr, IEnumTfDocumentMgrs_iface);
-}
-
-static void free_sink(ThreadMgrSink *sink)
-{
-        IUnknown_Release(sink->interfaces.pIUnknown);
-        HeapFree(GetProcessHeap(),0,sink);
 }
 
 static void ThreadMgr_Destructor(ThreadMgr *This)
@@ -186,43 +170,12 @@ static void ThreadMgr_Destructor(ThreadMgr *This)
     if (This->focus)
         ITfDocumentMgr_Release(This->focus);
 
-    /* free sinks */
-    LIST_FOR_EACH_SAFE(cursor, cursor2, &This->ActiveLanguageProfileNotifySink)
-    {
-        ThreadMgrSink* sink = LIST_ENTRY(cursor,ThreadMgrSink,entry);
-        list_remove(cursor);
-        free_sink(sink);
-    }
-    LIST_FOR_EACH_SAFE(cursor, cursor2, &This->DisplayAttributeNotifySink)
-    {
-        ThreadMgrSink* sink = LIST_ENTRY(cursor,ThreadMgrSink,entry);
-        list_remove(cursor);
-        free_sink(sink);
-    }
-    LIST_FOR_EACH_SAFE(cursor, cursor2, &This->KeyTraceEventSink)
-    {
-        ThreadMgrSink* sink = LIST_ENTRY(cursor,ThreadMgrSink,entry);
-        list_remove(cursor);
-        free_sink(sink);
-    }
-    LIST_FOR_EACH_SAFE(cursor, cursor2, &This->PreservedKeyNotifySink)
-    {
-        ThreadMgrSink* sink = LIST_ENTRY(cursor,ThreadMgrSink,entry);
-        list_remove(cursor);
-        free_sink(sink);
-    }
-    LIST_FOR_EACH_SAFE(cursor, cursor2, &This->ThreadFocusSink)
-    {
-        ThreadMgrSink* sink = LIST_ENTRY(cursor,ThreadMgrSink,entry);
-        list_remove(cursor);
-        free_sink(sink);
-    }
-    LIST_FOR_EACH_SAFE(cursor, cursor2, &This->ThreadMgrEventSink)
-    {
-        ThreadMgrSink* sink = LIST_ENTRY(cursor,ThreadMgrSink,entry);
-        list_remove(cursor);
-        free_sink(sink);
-    }
+    free_sinks(&This->ActiveLanguageProfileNotifySink);
+    free_sinks(&This->DisplayAttributeNotifySink);
+    free_sinks(&This->KeyTraceEventSink);
+    free_sinks(&This->PreservedKeyNotifySink);
+    free_sinks(&This->ThreadFocusSink);
+    free_sinks(&This->ThreadMgrEventSink);
 
     LIST_FOR_EACH_SAFE(cursor, cursor2, &This->CurrentPreservedKeys)
     {
@@ -252,14 +205,15 @@ static void ThreadMgr_Destructor(ThreadMgr *This)
     HeapFree(GetProcessHeap(),0,This);
 }
 
-static HRESULT WINAPI ThreadMgr_QueryInterface(ITfThreadMgr *iface, REFIID iid, LPVOID *ppvOut)
+static HRESULT WINAPI ThreadMgr_QueryInterface(ITfThreadMgrEx *iface, REFIID iid, LPVOID *ppvOut)
 {
-    ThreadMgr *This = impl_from_ITfThreadMgr(iface);
+    ThreadMgr *This = impl_from_ITfThreadMgrEx(iface);
     *ppvOut = NULL;
 
-    if (IsEqualIID(iid, &IID_IUnknown) || IsEqualIID(iid, &IID_ITfThreadMgr))
+    if (IsEqualIID(iid, &IID_IUnknown) || IsEqualIID(iid, &IID_ITfThreadMgr)
+        || IsEqualIID(iid, &IID_ITfThreadMgrEx))
     {
-        *ppvOut = &This->ITfThreadMgr_iface;
+        *ppvOut = &This->ITfThreadMgrEx_iface;
     }
     else if (IsEqualIID(iid, &IID_ITfSource))
     {
@@ -281,6 +235,10 @@ static HRESULT WINAPI ThreadMgr_QueryInterface(ITfThreadMgr *iface, REFIID iid, 
     {
         *ppvOut = This->CompartmentMgr;
     }
+    else if (IsEqualIID(iid, &IID_ITfUIElementMgr))
+    {
+        *ppvOut = &This->ITfUIElementMgr_iface;
+    }
     else if (IsEqualIID(iid, &IID_ITfSourceSingle))
     {
         *ppvOut = &This->ITfSourceSingle_iface;
@@ -288,7 +246,7 @@ static HRESULT WINAPI ThreadMgr_QueryInterface(ITfThreadMgr *iface, REFIID iid, 
 
     if (*ppvOut)
     {
-        ITfThreadMgr_AddRef(iface);
+        ITfThreadMgrEx_AddRef(iface);
         return S_OK;
     }
 
@@ -296,15 +254,15 @@ static HRESULT WINAPI ThreadMgr_QueryInterface(ITfThreadMgr *iface, REFIID iid, 
     return E_NOINTERFACE;
 }
 
-static ULONG WINAPI ThreadMgr_AddRef(ITfThreadMgr *iface)
+static ULONG WINAPI ThreadMgr_AddRef(ITfThreadMgrEx *iface)
 {
-    ThreadMgr *This = impl_from_ITfThreadMgr(iface);
+    ThreadMgr *This = impl_from_ITfThreadMgrEx(iface);
     return InterlockedIncrement(&This->refCount);
 }
 
-static ULONG WINAPI ThreadMgr_Release(ITfThreadMgr *iface)
+static ULONG WINAPI ThreadMgr_Release(ITfThreadMgrEx *iface)
 {
-    ThreadMgr *This = impl_from_ITfThreadMgr(iface);
+    ThreadMgr *This = impl_from_ITfThreadMgrEx(iface);
     ULONG ret;
 
     ret = InterlockedDecrement(&This->refCount);
@@ -317,31 +275,17 @@ static ULONG WINAPI ThreadMgr_Release(ITfThreadMgr *iface)
  * ITfThreadMgr functions
  *****************************************************/
 
-static HRESULT WINAPI ThreadMgr_fnActivate( ITfThreadMgr* iface, TfClientId *ptid)
+static HRESULT WINAPI ThreadMgr_Activate(ITfThreadMgrEx *iface, TfClientId *id)
 {
-    ThreadMgr *This = impl_from_ITfThreadMgr(iface);
+    ThreadMgr *This = impl_from_ITfThreadMgrEx(iface);
 
-    TRACE("(%p) %p\n",This, ptid);
-
-    if (!ptid)
-        return E_INVALIDARG;
-
-    if (!processId)
-    {
-        GUID guid;
-        CoCreateGuid(&guid);
-        ITfClientId_GetClientId(&This->ITfClientId_iface, &guid, &processId);
-    }
-
-    activate_textservices(iface);
-    This->activationCount++;
-    *ptid = processId;
-    return S_OK;
+    TRACE("(%p) %p\n", This, id);
+    return ITfThreadMgrEx_ActivateEx(iface, id, 0);
 }
 
-static HRESULT WINAPI ThreadMgr_fnDeactivate( ITfThreadMgr* iface)
+static HRESULT WINAPI ThreadMgr_Deactivate(ITfThreadMgrEx *iface)
 {
-    ThreadMgr *This = impl_from_ITfThreadMgr(iface);
+    ThreadMgr *This = impl_from_ITfThreadMgrEx(iface);
     TRACE("(%p)\n",This);
 
     if (This->activationCount == 0)
@@ -364,9 +308,9 @@ static HRESULT WINAPI ThreadMgr_fnDeactivate( ITfThreadMgr* iface)
     return S_OK;
 }
 
-static HRESULT WINAPI ThreadMgr_CreateDocumentMgr(ITfThreadMgr* iface, ITfDocumentMgr **ppdim)
+static HRESULT WINAPI ThreadMgr_CreateDocumentMgr(ITfThreadMgrEx *iface, ITfDocumentMgr **ppdim)
 {
-    ThreadMgr *This = impl_from_ITfThreadMgr(iface);
+    ThreadMgr *This = impl_from_ITfThreadMgrEx(iface);
     DocumentMgrEntry *mgrentry;
     HRESULT hr;
 
@@ -388,9 +332,9 @@ static HRESULT WINAPI ThreadMgr_CreateDocumentMgr(ITfThreadMgr* iface, ITfDocume
     return hr;
 }
 
-static HRESULT WINAPI ThreadMgr_EnumDocumentMgrs( ITfThreadMgr* iface, IEnumTfDocumentMgrs **ppEnum)
+static HRESULT WINAPI ThreadMgr_EnumDocumentMgrs(ITfThreadMgrEx *iface, IEnumTfDocumentMgrs **ppEnum)
 {
-    ThreadMgr *This = impl_from_ITfThreadMgr(iface);
+    ThreadMgr *This = impl_from_ITfThreadMgrEx(iface);
     TRACE("(%p) %p\n",This,ppEnum);
 
     if (!ppEnum)
@@ -399,10 +343,9 @@ static HRESULT WINAPI ThreadMgr_EnumDocumentMgrs( ITfThreadMgr* iface, IEnumTfDo
     return EnumTfDocumentMgr_Constructor(&This->CreatedDocumentMgrs, ppEnum);
 }
 
-static HRESULT WINAPI ThreadMgr_GetFocus( ITfThreadMgr* iface, ITfDocumentMgr
-**ppdimFocus)
+static HRESULT WINAPI ThreadMgr_GetFocus(ITfThreadMgrEx *iface, ITfDocumentMgr **ppdimFocus)
 {
-    ThreadMgr *This = impl_from_ITfThreadMgr(iface);
+    ThreadMgr *This = impl_from_ITfThreadMgrEx(iface);
     TRACE("(%p)\n",This);
 
     if (!ppdimFocus)
@@ -420,9 +363,9 @@ static HRESULT WINAPI ThreadMgr_GetFocus( ITfThreadMgr* iface, ITfDocumentMgr
     return S_OK;
 }
 
-static HRESULT WINAPI ThreadMgr_SetFocus( ITfThreadMgr* iface, ITfDocumentMgr *pdimFocus)
+static HRESULT WINAPI ThreadMgr_SetFocus(ITfThreadMgrEx *iface, ITfDocumentMgr *pdimFocus)
 {
-    ThreadMgr *This = impl_from_ITfThreadMgr(iface);
+    ThreadMgr *This = impl_from_ITfThreadMgrEx(iface);
     ITfDocumentMgr *check;
 
     TRACE("(%p) %p\n",This,pdimFocus);
@@ -468,7 +411,7 @@ static LRESULT CALLBACK ThreadFocusHookProc(int nCode, WPARAM wParam, LPARAM lPa
             {
                 TRACE("Triggering Associated window focus\n");
                 if (This->focus != wnd->docmgr)
-                    ThreadMgr_SetFocus((ITfThreadMgr*)This, wnd->docmgr);
+                    ThreadMgr_SetFocus(&This->ITfThreadMgrEx_iface, wnd->docmgr);
                 break;
             }
         }
@@ -493,10 +436,10 @@ static HRESULT SetupWindowsHook(ThreadMgr *This)
     return S_FALSE;
 }
 
-static HRESULT WINAPI ThreadMgr_AssociateFocus( ITfThreadMgr* iface, HWND hwnd,
+static HRESULT WINAPI ThreadMgr_AssociateFocus(ITfThreadMgrEx *iface, HWND hwnd,
 ITfDocumentMgr *pdimNew, ITfDocumentMgr **ppdimPrev)
 {
-    ThreadMgr *This = impl_from_ITfThreadMgr(iface);
+    ThreadMgr *This = impl_from_ITfThreadMgrEx(iface);
     struct list *cursor, *cursor2;
     AssociatedWindow *wnd;
 
@@ -535,9 +478,9 @@ ITfDocumentMgr *pdimNew, ITfDocumentMgr **ppdimPrev)
     return S_OK;
 }
 
-static HRESULT WINAPI ThreadMgr_IsThreadFocus( ITfThreadMgr* iface, BOOL *pfThreadFocus)
+static HRESULT WINAPI ThreadMgr_IsThreadFocus(ITfThreadMgrEx *iface, BOOL *pfThreadFocus)
 {
-    ThreadMgr *This = impl_from_ITfThreadMgr(iface);
+    ThreadMgr *This = impl_from_ITfThreadMgrEx(iface);
     HWND focus;
 
     TRACE("(%p) %p\n",This,pfThreadFocus);
@@ -546,26 +489,26 @@ static HRESULT WINAPI ThreadMgr_IsThreadFocus( ITfThreadMgr* iface, BOOL *pfThre
     return S_OK;
 }
 
-static HRESULT WINAPI ThreadMgr_GetFunctionProvider( ITfThreadMgr* iface, REFCLSID clsid,
+static HRESULT WINAPI ThreadMgr_GetFunctionProvider(ITfThreadMgrEx *iface, REFCLSID clsid,
 ITfFunctionProvider **ppFuncProv)
 {
-    ThreadMgr *This = impl_from_ITfThreadMgr(iface);
+    ThreadMgr *This = impl_from_ITfThreadMgrEx(iface);
     FIXME("STUB:(%p)\n",This);
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI ThreadMgr_EnumFunctionProviders( ITfThreadMgr* iface,
+static HRESULT WINAPI ThreadMgr_EnumFunctionProviders(ITfThreadMgrEx *iface,
 IEnumTfFunctionProviders **ppEnum)
 {
-    ThreadMgr *This = impl_from_ITfThreadMgr(iface);
+    ThreadMgr *This = impl_from_ITfThreadMgrEx(iface);
     FIXME("STUB:(%p)\n",This);
     return E_NOTIMPL;
 }
 
-static HRESULT WINAPI ThreadMgr_GetGlobalCompartment( ITfThreadMgr* iface,
+static HRESULT WINAPI ThreadMgr_GetGlobalCompartment(ITfThreadMgrEx *iface,
 ITfCompartmentMgr **ppCompMgr)
 {
-    ThreadMgr *This = impl_from_ITfThreadMgr(iface);
+    ThreadMgr *This = impl_from_ITfThreadMgrEx(iface);
     HRESULT hr;
     TRACE("(%p) %p\n",This, ppCompMgr);
 
@@ -584,13 +527,46 @@ ITfCompartmentMgr **ppCompMgr)
     return S_OK;
 }
 
-static const ITfThreadMgrVtbl ThreadMgrVtbl =
+static HRESULT WINAPI ThreadMgr_ActivateEx(ITfThreadMgrEx *iface, TfClientId *id, DWORD flags)
+{
+    ThreadMgr *This = impl_from_ITfThreadMgrEx(iface);
+
+    TRACE("(%p) %p, %#x\n", This, id, flags);
+
+    if (!id)
+        return E_INVALIDARG;
+
+    if (flags)
+        FIXME("Unimplemented flags %#x\n", flags);
+
+    if (!processId)
+    {
+        GUID guid;
+        CoCreateGuid(&guid);
+        ITfClientId_GetClientId(&This->ITfClientId_iface, &guid, &processId);
+    }
+
+    activate_textservices(iface);
+    This->activationCount++;
+    *id = processId;
+    return S_OK;
+}
+
+static HRESULT WINAPI ThreadMgr_GetActiveFlags(ITfThreadMgrEx *iface, DWORD *flags)
+{
+    ThreadMgr *This = impl_from_ITfThreadMgrEx(iface);
+
+    FIXME("STUB:(%p)\n", This);
+    return E_NOTIMPL;
+}
+
+static const ITfThreadMgrExVtbl ThreadMgrExVtbl =
 {
     ThreadMgr_QueryInterface,
     ThreadMgr_AddRef,
     ThreadMgr_Release,
-    ThreadMgr_fnActivate,
-    ThreadMgr_fnDeactivate,
+    ThreadMgr_Activate,
+    ThreadMgr_Deactivate,
     ThreadMgr_CreateDocumentMgr,
     ThreadMgr_EnumDocumentMgrs,
     ThreadMgr_GetFocus,
@@ -599,25 +575,28 @@ static const ITfThreadMgrVtbl ThreadMgrVtbl =
     ThreadMgr_IsThreadFocus,
     ThreadMgr_GetFunctionProvider,
     ThreadMgr_EnumFunctionProviders,
-    ThreadMgr_GetGlobalCompartment
+    ThreadMgr_GetGlobalCompartment,
+
+    ThreadMgr_ActivateEx,
+    ThreadMgr_GetActiveFlags
 };
 
 static HRESULT WINAPI Source_QueryInterface(ITfSource *iface, REFIID iid, LPVOID *ppvOut)
 {
     ThreadMgr *This = impl_from_ITfSource(iface);
-    return ITfThreadMgr_QueryInterface(&This->ITfThreadMgr_iface, iid, ppvOut);
+    return ITfThreadMgrEx_QueryInterface(&This->ITfThreadMgrEx_iface, iid, ppvOut);
 }
 
 static ULONG WINAPI Source_AddRef(ITfSource *iface)
 {
     ThreadMgr *This = impl_from_ITfSource(iface);
-    return ITfThreadMgr_AddRef(&This->ITfThreadMgr_iface);
+    return ITfThreadMgrEx_AddRef(&This->ITfThreadMgrEx_iface);
 }
 
 static ULONG WINAPI Source_Release(ITfSource *iface)
 {
     ThreadMgr *This = impl_from_ITfSource(iface);
-    return ITfThreadMgr_Release(&This->ITfThreadMgr_iface);
+    return ITfThreadMgrEx_Release(&This->ITfThreadMgrEx_iface);
 }
 
 /*****************************************************
@@ -627,7 +606,6 @@ static HRESULT WINAPI ThreadMgrSource_AdviseSink(ITfSource *iface,
         REFIID riid, IUnknown *punk, DWORD *pdwCookie)
 {
     ThreadMgr *This = impl_from_ITfSource(iface);
-    ThreadMgrSink *tms;
 
     TRACE("(%p) %s %p %p\n",This,debugstr_guid(riid),punk,pdwCookie);
 
@@ -635,47 +613,28 @@ static HRESULT WINAPI ThreadMgrSource_AdviseSink(ITfSource *iface,
         return E_INVALIDARG;
 
     if (IsEqualIID(riid, &IID_ITfThreadMgrEventSink))
+        return advise_sink(&This->ThreadMgrEventSink, &IID_ITfThreadMgrEventSink, COOKIE_MAGIC_TMSINK, punk, pdwCookie);
+
+    if (IsEqualIID(riid, &IID_ITfThreadFocusSink))
     {
-        tms = HeapAlloc(GetProcessHeap(),0,sizeof(ThreadMgrSink));
-        if (!tms)
-            return E_OUTOFMEMORY;
-        if (FAILED(IUnknown_QueryInterface(punk, riid, (LPVOID *)&tms->interfaces.pITfThreadMgrEventSink)))
-        {
-            HeapFree(GetProcessHeap(),0,tms);
-            return CONNECT_E_CANNOTCONNECT;
-        }
-        list_add_head(&This->ThreadMgrEventSink,&tms->entry);
-        *pdwCookie = generate_Cookie(COOKIE_MAGIC_TMSINK, tms);
-    }
-    else
-    {
-        FIXME("(%p) Unhandled Sink: %s\n",This,debugstr_guid(riid));
-        return E_NOTIMPL;
+        WARN("semi-stub for ITfThreadFocusSink: sink won't be used.\n");
+        return advise_sink(&This->ThreadMgrEventSink, &IID_ITfThreadMgrEventSink, COOKIE_MAGIC_TMSINK, punk, pdwCookie);
     }
 
-    TRACE("cookie %x\n",*pdwCookie);
-
-    return S_OK;
+    FIXME("(%p) Unhandled Sink: %s\n",This,debugstr_guid(riid));
+    return E_NOTIMPL;
 }
 
 static HRESULT WINAPI ThreadMgrSource_UnadviseSink(ITfSource *iface, DWORD pdwCookie)
 {
     ThreadMgr *This = impl_from_ITfSource(iface);
-    ThreadMgrSink *sink;
 
     TRACE("(%p) %x\n",This,pdwCookie);
 
     if (get_Cookie_magic(pdwCookie)!=COOKIE_MAGIC_TMSINK)
         return E_INVALIDARG;
 
-    sink = remove_Cookie(pdwCookie);
-    if (!sink)
-        return CONNECT_E_NOCONNECTION;
-
-    list_remove(&sink->entry);
-    free_sink(sink);
-
-    return S_OK;
+    return unadvise_sink(pdwCookie);
 }
 
 static const ITfSourceVtbl ThreadMgrSourceVtbl =
@@ -694,19 +653,19 @@ static const ITfSourceVtbl ThreadMgrSourceVtbl =
 static HRESULT WINAPI KeystrokeMgr_QueryInterface(ITfKeystrokeMgr *iface, REFIID iid, LPVOID *ppvOut)
 {
     ThreadMgr *This = impl_from_ITfKeystrokeMgr(iface);
-    return ITfThreadMgr_QueryInterface(&This->ITfThreadMgr_iface, iid, ppvOut);
+    return ITfThreadMgrEx_QueryInterface(&This->ITfThreadMgrEx_iface, iid, ppvOut);
 }
 
 static ULONG WINAPI KeystrokeMgr_AddRef(ITfKeystrokeMgr *iface)
 {
     ThreadMgr *This = impl_from_ITfKeystrokeMgr(iface);
-    return ITfThreadMgr_AddRef(&This->ITfThreadMgr_iface);
+    return ITfThreadMgrEx_AddRef(&This->ITfThreadMgrEx_iface);
 }
 
 static ULONG WINAPI KeystrokeMgr_Release(ITfKeystrokeMgr *iface)
 {
     ThreadMgr *This = impl_from_ITfKeystrokeMgr(iface);
-    return ITfThreadMgr_Release(&This->ITfThreadMgr_iface);
+    return ITfThreadMgrEx_Release(&This->ITfThreadMgrEx_iface);
 }
 
 static HRESULT WINAPI KeystrokeMgr_AdviseKeyEventSink(ITfKeystrokeMgr *iface,
@@ -736,15 +695,15 @@ static HRESULT WINAPI KeystrokeMgr_AdviseKeyEventSink(ITfKeystrokeMgr *iface,
 
     if (fForeground)
     {
-        if (This->forgroundKeyEventSink)
+        if (This->foregroundKeyEventSink)
         {
-            ITfKeyEventSink_OnSetFocus(This->forgroundKeyEventSink, FALSE);
-            ITfKeyEventSink_Release(This->forgroundKeyEventSink);
+            ITfKeyEventSink_OnSetFocus(This->foregroundKeyEventSink, FALSE);
+            ITfKeyEventSink_Release(This->foregroundKeyEventSink);
         }
         ITfKeyEventSink_AddRef(check);
         ITfKeyEventSink_OnSetFocus(check, TRUE);
-        This->forgroundKeyEventSink = check;
-        This->forgroundTextService = textservice;
+        This->foregroundKeyEventSink = check;
+        This->foregroundTextService = textservice;
     }
     return S_OK;
 }
@@ -772,11 +731,11 @@ static HRESULT WINAPI KeystrokeMgr_UnadviseKeyEventSink(ITfKeystrokeMgr *iface,
     set_textservice_sink(tid, &IID_ITfKeyEventSink, NULL);
     ITfKeyEventSink_Release(check);
 
-    if (This->forgroundKeyEventSink == check)
+    if (This->foregroundKeyEventSink == check)
     {
-        ITfKeyEventSink_Release(This->forgroundKeyEventSink);
-        This->forgroundKeyEventSink = NULL;
-        This->forgroundTextService = GUID_NULL;
+        ITfKeyEventSink_Release(This->foregroundKeyEventSink);
+        This->foregroundKeyEventSink = NULL;
+        This->foregroundTextService = GUID_NULL;
     }
     return S_OK;
 }
@@ -789,10 +748,10 @@ static HRESULT WINAPI KeystrokeMgr_GetForeground(ITfKeystrokeMgr *iface,
     if (!pclsid)
         return E_INVALIDARG;
 
-    if (IsEqualCLSID(&This->forgroundTextService,&GUID_NULL))
+    if (IsEqualCLSID(&This->foregroundTextService,&GUID_NULL))
         return S_FALSE;
 
-    *pclsid = This->forgroundTextService;
+    *pclsid = This->foregroundTextService;
     return S_OK;
 }
 
@@ -801,7 +760,8 @@ static HRESULT WINAPI KeystrokeMgr_TestKeyDown(ITfKeystrokeMgr *iface,
 {
     ThreadMgr *This = impl_from_ITfKeystrokeMgr(iface);
     FIXME("STUB:(%p)\n",This);
-    return E_NOTIMPL;
+    *pfEaten = FALSE;
+    return S_OK;
 }
 
 static HRESULT WINAPI KeystrokeMgr_TestKeyUp(ITfKeystrokeMgr *iface,
@@ -809,7 +769,8 @@ static HRESULT WINAPI KeystrokeMgr_TestKeyUp(ITfKeystrokeMgr *iface,
 {
     ThreadMgr *This = impl_from_ITfKeystrokeMgr(iface);
     FIXME("STUB:(%p)\n",This);
-    return E_NOTIMPL;
+    *pfEaten = FALSE;
+    return S_OK;
 }
 
 static HRESULT WINAPI KeystrokeMgr_KeyDown(ITfKeystrokeMgr *iface,
@@ -986,19 +947,19 @@ static const ITfKeystrokeMgrVtbl KeystrokeMgrVtbl =
 static HRESULT WINAPI MessagePump_QueryInterface(ITfMessagePump *iface, REFIID iid, LPVOID *ppvOut)
 {
     ThreadMgr *This = impl_from_ITfMessagePump(iface);
-    return ITfThreadMgr_QueryInterface(&This->ITfThreadMgr_iface, iid, ppvOut);
+    return ITfThreadMgrEx_QueryInterface(&This->ITfThreadMgrEx_iface, iid, ppvOut);
 }
 
 static ULONG WINAPI MessagePump_AddRef(ITfMessagePump *iface)
 {
     ThreadMgr *This = impl_from_ITfMessagePump(iface);
-    return ITfThreadMgr_AddRef(&This->ITfThreadMgr_iface);
+    return ITfThreadMgrEx_AddRef(&This->ITfThreadMgrEx_iface);
 }
 
 static ULONG WINAPI MessagePump_Release(ITfMessagePump *iface)
 {
     ThreadMgr *This = impl_from_ITfMessagePump(iface);
-    return ITfThreadMgr_Release(&This->ITfThreadMgr_iface);
+    return ITfThreadMgrEx_Release(&This->ITfThreadMgrEx_iface);
 }
 
 static HRESULT WINAPI MessagePump_PeekMessageA(ITfMessagePump *iface,
@@ -1059,19 +1020,19 @@ static const ITfMessagePumpVtbl MessagePumpVtbl =
 static HRESULT WINAPI ClientId_QueryInterface(ITfClientId *iface, REFIID iid, LPVOID *ppvOut)
 {
     ThreadMgr *This = impl_from_ITfClientId(iface);
-    return ITfThreadMgr_QueryInterface(&This->ITfThreadMgr_iface, iid, ppvOut);
+    return ITfThreadMgrEx_QueryInterface(&This->ITfThreadMgrEx_iface, iid, ppvOut);
 }
 
 static ULONG WINAPI ClientId_AddRef(ITfClientId *iface)
 {
     ThreadMgr *This = impl_from_ITfClientId(iface);
-    return ITfThreadMgr_AddRef(&This->ITfThreadMgr_iface);
+    return ITfThreadMgrEx_AddRef(&This->ITfThreadMgrEx_iface);
 }
 
 static ULONG WINAPI ClientId_Release(ITfClientId *iface)
 {
     ThreadMgr *This = impl_from_ITfClientId(iface);
-    return ITfThreadMgr_Release(&This->ITfThreadMgr_iface);
+    return ITfThreadMgrEx_Release(&This->ITfThreadMgrEx_iface);
 }
 
 static HRESULT WINAPI ClientId_GetClientId(ITfClientId *iface,
@@ -1105,34 +1066,34 @@ static const ITfClientIdVtbl ClientIdVtbl =
 static HRESULT WINAPI ThreadMgrEventSink_QueryInterface(ITfThreadMgrEventSink *iface, REFIID iid, LPVOID *ppvOut)
 {
     ThreadMgr *This = impl_from_ITfThreadMgrEventSink(iface);
-    return ITfThreadMgr_QueryInterface(&This->ITfThreadMgr_iface, iid, ppvOut);
+    return ITfThreadMgrEx_QueryInterface(&This->ITfThreadMgrEx_iface, iid, ppvOut);
 }
 
 static ULONG WINAPI ThreadMgrEventSink_AddRef(ITfThreadMgrEventSink *iface)
 {
     ThreadMgr *This = impl_from_ITfThreadMgrEventSink(iface);
-    return ITfThreadMgr_AddRef(&This->ITfThreadMgr_iface);
+    return ITfThreadMgrEx_AddRef(&This->ITfThreadMgrEx_iface);
 }
 
 static ULONG WINAPI ThreadMgrEventSink_Release(ITfThreadMgrEventSink *iface)
 {
     ThreadMgr *This = impl_from_ITfThreadMgrEventSink(iface);
-    return ITfThreadMgr_Release(&This->ITfThreadMgr_iface);
+    return ITfThreadMgrEx_Release(&This->ITfThreadMgrEx_iface);
 }
 
 
 static HRESULT WINAPI ThreadMgrEventSink_OnInitDocumentMgr(
         ITfThreadMgrEventSink *iface,ITfDocumentMgr *pdim)
 {
-    struct list *cursor;
     ThreadMgr *This = impl_from_ITfThreadMgrEventSink(iface);
+    ITfThreadMgrEventSink *sink;
+    struct list *cursor;
 
     TRACE("(%p) %p\n",This,pdim);
 
-    LIST_FOR_EACH(cursor, &This->ThreadMgrEventSink)
+    SINK_FOR_EACH(cursor, &This->ThreadMgrEventSink, ITfThreadMgrEventSink, sink)
     {
-        ThreadMgrSink* sink = LIST_ENTRY(cursor,ThreadMgrSink,entry);
-        ITfThreadMgrEventSink_OnInitDocumentMgr(sink->interfaces.pITfThreadMgrEventSink,pdim);
+        ITfThreadMgrEventSink_OnInitDocumentMgr(sink, pdim);
     }
 
     return S_OK;
@@ -1141,15 +1102,15 @@ static HRESULT WINAPI ThreadMgrEventSink_OnInitDocumentMgr(
 static HRESULT WINAPI ThreadMgrEventSink_OnUninitDocumentMgr(
         ITfThreadMgrEventSink *iface, ITfDocumentMgr *pdim)
 {
-    struct list *cursor;
     ThreadMgr *This = impl_from_ITfThreadMgrEventSink(iface);
+    ITfThreadMgrEventSink *sink;
+    struct list *cursor;
 
     TRACE("(%p) %p\n",This,pdim);
 
-    LIST_FOR_EACH(cursor, &This->ThreadMgrEventSink)
+    SINK_FOR_EACH(cursor, &This->ThreadMgrEventSink, ITfThreadMgrEventSink, sink)
     {
-        ThreadMgrSink* sink = LIST_ENTRY(cursor,ThreadMgrSink,entry);
-        ITfThreadMgrEventSink_OnUninitDocumentMgr(sink->interfaces.pITfThreadMgrEventSink,pdim);
+        ITfThreadMgrEventSink_OnUninitDocumentMgr(sink, pdim);
     }
 
     return S_OK;
@@ -1159,15 +1120,15 @@ static HRESULT WINAPI ThreadMgrEventSink_OnSetFocus(
         ITfThreadMgrEventSink *iface, ITfDocumentMgr *pdimFocus,
         ITfDocumentMgr *pdimPrevFocus)
 {
-    struct list *cursor;
     ThreadMgr *This = impl_from_ITfThreadMgrEventSink(iface);
+    ITfThreadMgrEventSink *sink;
+    struct list *cursor;
 
     TRACE("(%p) %p %p\n",This,pdimFocus, pdimPrevFocus);
 
-    LIST_FOR_EACH(cursor, &This->ThreadMgrEventSink)
+    SINK_FOR_EACH(cursor, &This->ThreadMgrEventSink, ITfThreadMgrEventSink, sink)
     {
-        ThreadMgrSink* sink = LIST_ENTRY(cursor,ThreadMgrSink,entry);
-        ITfThreadMgrEventSink_OnSetFocus(sink->interfaces.pITfThreadMgrEventSink, pdimFocus, pdimPrevFocus);
+        ITfThreadMgrEventSink_OnSetFocus(sink, pdimFocus, pdimPrevFocus);
     }
 
     return S_OK;
@@ -1176,15 +1137,15 @@ static HRESULT WINAPI ThreadMgrEventSink_OnSetFocus(
 static HRESULT WINAPI ThreadMgrEventSink_OnPushContext(
         ITfThreadMgrEventSink *iface, ITfContext *pic)
 {
-    struct list *cursor;
     ThreadMgr *This = impl_from_ITfThreadMgrEventSink(iface);
+    ITfThreadMgrEventSink *sink;
+    struct list *cursor;
 
     TRACE("(%p) %p\n",This,pic);
 
-    LIST_FOR_EACH(cursor, &This->ThreadMgrEventSink)
+    SINK_FOR_EACH(cursor, &This->ThreadMgrEventSink, ITfThreadMgrEventSink, sink)
     {
-        ThreadMgrSink* sink = LIST_ENTRY(cursor,ThreadMgrSink,entry);
-        ITfThreadMgrEventSink_OnPushContext(sink->interfaces.pITfThreadMgrEventSink,pic);
+        ITfThreadMgrEventSink_OnPushContext(sink, pic);
     }
 
     return S_OK;
@@ -1193,15 +1154,15 @@ static HRESULT WINAPI ThreadMgrEventSink_OnPushContext(
 static HRESULT WINAPI ThreadMgrEventSink_OnPopContext(
         ITfThreadMgrEventSink *iface, ITfContext *pic)
 {
-    struct list *cursor;
     ThreadMgr *This = impl_from_ITfThreadMgrEventSink(iface);
+    ITfThreadMgrEventSink *sink;
+    struct list *cursor;
 
     TRACE("(%p) %p\n",This,pic);
 
-    LIST_FOR_EACH(cursor, &This->ThreadMgrEventSink)
+    SINK_FOR_EACH(cursor, &This->ThreadMgrEventSink, ITfThreadMgrEventSink, sink)
     {
-        ThreadMgrSink* sink = LIST_ENTRY(cursor,ThreadMgrSink,entry);
-        ITfThreadMgrEventSink_OnPopContext(sink->interfaces.pITfThreadMgrEventSink,pic);
+        ITfThreadMgrEventSink_OnPopContext(sink, pic);
     }
 
     return S_OK;
@@ -1220,24 +1181,104 @@ static const ITfThreadMgrEventSinkVtbl ThreadMgrEventSinkVtbl =
 };
 
 /*****************************************************
+ * ITfUIElementMgr functions
+ *****************************************************/
+static HRESULT WINAPI UIElementMgr_QueryInterface(ITfUIElementMgr *iface, REFIID iid, void **ppvOut)
+{
+    ThreadMgr *This = impl_from_ITfUIElementMgr(iface);
+
+    return ITfThreadMgrEx_QueryInterface(&This->ITfThreadMgrEx_iface, iid, ppvOut);
+}
+
+static ULONG WINAPI UIElementMgr_AddRef(ITfUIElementMgr *iface)
+{
+    ThreadMgr *This = impl_from_ITfUIElementMgr(iface);
+
+    return ITfThreadMgrEx_AddRef(&This->ITfThreadMgrEx_iface);
+}
+
+static ULONG WINAPI UIElementMgr_Release(ITfUIElementMgr *iface)
+{
+    ThreadMgr *This = impl_from_ITfUIElementMgr(iface);
+
+    return ITfThreadMgrEx_Release(&This->ITfThreadMgrEx_iface);
+}
+
+static HRESULT WINAPI UIElementMgr_BeginUIElement(ITfUIElementMgr *iface, ITfUIElement *element,
+                                                  BOOL *show, DWORD *id)
+{
+    ThreadMgr *This = impl_from_ITfUIElementMgr(iface);
+
+    FIXME("STUB:(%p)\n", This);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI UIElementMgr_UpdateUIElement(ITfUIElementMgr *iface, DWORD id)
+{
+    ThreadMgr *This = impl_from_ITfUIElementMgr(iface);
+
+    FIXME("STUB:(%p)\n", This);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI UIElementMgr_EndUIElement(ITfUIElementMgr *iface, DWORD id)
+{
+    ThreadMgr *This = impl_from_ITfUIElementMgr(iface);
+
+    FIXME("STUB:(%p)\n", This);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI UIElementMgr_GetUIElement(ITfUIElementMgr *iface, DWORD id,
+                                                ITfUIElement **element)
+{
+    ThreadMgr *This = impl_from_ITfUIElementMgr(iface);
+
+    FIXME("STUB:(%p)\n", This);
+    return E_NOTIMPL;
+}
+
+static HRESULT WINAPI UIElementMgr_EnumUIElements(ITfUIElementMgr *iface,
+                                                  IEnumTfUIElements **enum_elements)
+{
+    ThreadMgr *This = impl_from_ITfUIElementMgr(iface);
+
+    FIXME("STUB:(%p)\n", This);
+    return E_NOTIMPL;
+}
+
+static const ITfUIElementMgrVtbl ThreadMgrUIElementMgrVtbl =
+{
+    UIElementMgr_QueryInterface,
+    UIElementMgr_AddRef,
+    UIElementMgr_Release,
+
+    UIElementMgr_BeginUIElement,
+    UIElementMgr_UpdateUIElement,
+    UIElementMgr_EndUIElement,
+    UIElementMgr_GetUIElement,
+    UIElementMgr_EnumUIElements
+};
+
+/*****************************************************
  * ITfSourceSingle functions
  *****************************************************/
 static HRESULT WINAPI ThreadMgrSourceSingle_QueryInterface(ITfSourceSingle *iface, REFIID iid, LPVOID *ppvOut)
 {
     ThreadMgr *This = impl_from_ITfSourceSingle(iface);
-    return ITfThreadMgr_QueryInterface(&This->ITfThreadMgr_iface, iid, ppvOut);
+    return ITfThreadMgrEx_QueryInterface(&This->ITfThreadMgrEx_iface, iid, ppvOut);
 }
 
 static ULONG WINAPI ThreadMgrSourceSingle_AddRef(ITfSourceSingle *iface)
 {
     ThreadMgr *This = impl_from_ITfSourceSingle(iface);
-    return ITfThreadMgr_AddRef(&This->ITfThreadMgr_iface);
+    return ITfThreadMgrEx_AddRef(&This->ITfThreadMgrEx_iface);
 }
 
 static ULONG WINAPI ThreadMgrSourceSingle_Release(ITfSourceSingle *iface)
 {
     ThreadMgr *This = impl_from_ITfSourceSingle(iface);
-    return ITfThreadMgr_Release(&This->ITfThreadMgr_iface);
+    return ITfThreadMgrEx_Release(&This->ITfThreadMgrEx_iface);
 }
 
 static HRESULT WINAPI ThreadMgrSourceSingle_AdviseSingleSink( ITfSourceSingle *iface,
@@ -1275,8 +1316,8 @@ HRESULT ThreadMgr_Constructor(IUnknown *pUnkOuter, IUnknown **ppOut)
     This = TlsGetValue(tlsIndex);
     if (This)
     {
-        ThreadMgr_AddRef(&This->ITfThreadMgr_iface);
-        *ppOut = (IUnknown*)&This->ITfThreadMgr_iface;
+        ThreadMgr_AddRef(&This->ITfThreadMgrEx_iface);
+        *ppOut = (IUnknown*)&This->ITfThreadMgrEx_iface;
         return S_OK;
     }
 
@@ -1284,17 +1325,18 @@ HRESULT ThreadMgr_Constructor(IUnknown *pUnkOuter, IUnknown **ppOut)
     if (This == NULL)
         return E_OUTOFMEMORY;
 
-    This->ITfThreadMgr_iface.lpVtbl= &ThreadMgrVtbl;
+    This->ITfThreadMgrEx_iface.lpVtbl = &ThreadMgrExVtbl;
     This->ITfSource_iface.lpVtbl = &ThreadMgrSourceVtbl;
-    This->ITfKeystrokeMgr_iface.lpVtbl= &KeystrokeMgrVtbl;
+    This->ITfKeystrokeMgr_iface.lpVtbl = &KeystrokeMgrVtbl;
     This->ITfMessagePump_iface.lpVtbl = &MessagePumpVtbl;
     This->ITfClientId_iface.lpVtbl = &ClientIdVtbl;
     This->ITfThreadMgrEventSink_iface.lpVtbl = &ThreadMgrEventSinkVtbl;
+    This->ITfUIElementMgr_iface.lpVtbl = &ThreadMgrUIElementMgrVtbl;
     This->ITfSourceSingle_iface.lpVtbl = &SourceSingleVtbl;
     This->refCount = 1;
     TlsSetValue(tlsIndex,This);
 
-    CompartmentMgr_Constructor((IUnknown*)This, &IID_IUnknown, (IUnknown**)&This->CompartmentMgr);
+    CompartmentMgr_Constructor((IUnknown*)&This->ITfThreadMgrEx_iface, &IID_IUnknown, (IUnknown**)&This->CompartmentMgr);
 
     list_init(&This->CurrentPreservedKeys);
     list_init(&This->CreatedDocumentMgrs);
@@ -1308,7 +1350,7 @@ HRESULT ThreadMgr_Constructor(IUnknown *pUnkOuter, IUnknown **ppOut)
     list_init(&This->ThreadMgrEventSink);
 
     TRACE("returning %p\n", This);
-    *ppOut = (IUnknown *)&This->ITfThreadMgr_iface;
+    *ppOut = (IUnknown *)&This->ITfThreadMgrEx_iface;
     return S_OK;
 }
 
@@ -1452,14 +1494,14 @@ static HRESULT EnumTfDocumentMgr_Constructor(struct list* head, IEnumTfDocumentM
     This->head = head;
     This->index = list_head(This->head);
 
-    TRACE("returning %p\n", This);
-    *ppOut = (IEnumTfDocumentMgrs*)This;
+    TRACE("returning %p\n", &This->IEnumTfDocumentMgrs_iface);
+    *ppOut = &This->IEnumTfDocumentMgrs_iface;
     return S_OK;
 }
 
 void ThreadMgr_OnDocumentMgrDestruction(ITfThreadMgr *iface, ITfDocumentMgr *mgr)
 {
-    ThreadMgr *This = impl_from_ITfThreadMgr(iface);
+    ThreadMgr *This = impl_from_ITfThreadMgrEx((ITfThreadMgrEx *)iface);
     struct list *cursor;
     LIST_FOR_EACH(cursor, &This->CreatedDocumentMgrs)
     {

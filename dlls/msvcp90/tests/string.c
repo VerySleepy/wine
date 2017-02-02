@@ -63,7 +63,7 @@ static basic_string_char* (__cdecl *p_basic_string_char_concatenate_cstr)(basic_
 static basic_string_char* (__thiscall *p_basic_string_char_ctor)(basic_string_char*);
 static basic_string_char* (__thiscall *p_basic_string_char_copy_ctor)(basic_string_char*, basic_string_char*);
 static basic_string_char* (__thiscall *p_basic_string_char_ctor_cstr)(basic_string_char*, const char*);
-static void (__thiscall *p_basic_string_char_dtor)(basic_string_char*);
+static void* (__thiscall *p_basic_string_char_dtor)(basic_string_char*);
 static basic_string_char* (__thiscall *p_basic_string_char_erase)(basic_string_char*, size_t, size_t);
 static basic_string_char* (__thiscall *p_basic_string_char_assign_cstr_len)(basic_string_char*, const char*, size_t);
 static const char* (__thiscall *p_basic_string_char_cstr)(basic_string_char*);
@@ -85,7 +85,7 @@ static size_t *p_basic_string_char_npos;
 static basic_string_wchar* (__thiscall *p_basic_string_wchar_ctor)(basic_string_wchar*);
 static basic_string_wchar* (__thiscall *p_basic_string_wchar_copy_ctor)(basic_string_wchar*, basic_string_wchar*);
 static basic_string_wchar* (__thiscall *p_basic_string_wchar_ctor_cstr)(basic_string_wchar*, const wchar_t*);
-static void (__thiscall *p_basic_string_wchar_dtor)(basic_string_wchar*);
+static void* (__thiscall *p_basic_string_wchar_dtor)(basic_string_wchar*);
 static basic_string_wchar* (__thiscall *p_basic_string_wchar_erase)(basic_string_wchar*, size_t, size_t);
 static basic_string_wchar* (__thiscall *p_basic_string_wchar_assign_cstr_len)(basic_string_wchar*, const wchar_t*, size_t);
 static const wchar_t* (__thiscall *p_basic_string_wchar_cstr)(basic_string_wchar*);
@@ -149,14 +149,14 @@ static void init_thiscall_thunk(void)
 }
 
 #define call_func1(func,_this) call_thiscall_func1(func,_this)
-#define call_func2(func,_this,a) call_thiscall_func2(func,_this,(const void*)a)
-#define call_func3(func,_this,a,b) call_thiscall_func3(func,_this,(const void*)a,(const void*)b)
-#define call_func4(func,_this,a,b,c) call_thiscall_func4(func,_this,(const void*)a,\
-        (const void*)b,(const void*)c)
-#define call_func5(func,_this,a,b,c,d) call_thiscall_func5(func,_this,(const void*)a,\
-        (const void*)b,(const void*)c,(const void*)d)
-#define call_func6(func,_this,a,b,c,d,e) call_thiscall_func6(func,_this,(const void*)a,\
-        (const void*)b,(const void*)c,(const void*)d,(const void*)e)
+#define call_func2(func,_this,a) call_thiscall_func2(func,_this,(const void*)(a))
+#define call_func3(func,_this,a,b) call_thiscall_func3(func,_this,(const void*)(a),(const void*)(b))
+#define call_func4(func,_this,a,b,c) call_thiscall_func4(func,_this,(const void*)(a),\
+        (const void*)(b),(const void*)(c))
+#define call_func5(func,_this,a,b,c,d) call_thiscall_func5(func,_this,(const void*)(a),\
+        (const void*)(b),(const void*)(c),(const void*)(d))
+#define call_func6(func,_this,a,b,c,d,e) call_thiscall_func6(func,_this,(const void*)(a),\
+        (const void*)(b),(const void*)(c),(const void*)(d),(const void*)(e))
 
 #else
 
@@ -409,9 +409,9 @@ static void test_basic_string_char_swap(void) {
     strcpy(atmp1, "qwerty");
     call_func2(p_basic_string_char_ctor_cstr, &str1, atmp1);
     call_func2(p_basic_string_char_swap, &str1, &str1);
-    ok(strcmp(atmp1, (const char *) call_func1(p_basic_string_char_cstr, &str1)) == 0, "Invalid value of str1\n");
+    ok(strcmp(atmp1, call_func1(p_basic_string_char_cstr, &str1)) == 0, "Invalid value of str1\n");
     call_func2(p_basic_string_char_swap, &str1, &str1);
-    ok(strcmp(atmp1, (const char *) call_func1(p_basic_string_char_cstr, &str1)) == 0, "Invalid value of str1\n");
+    ok(strcmp(atmp1, call_func1(p_basic_string_char_cstr, &str1)) == 0, "Invalid value of str1\n");
     call_func1(p_basic_string_char_dtor, &str1);
 
     /* str1 allocated, str2 local */
@@ -420,11 +420,11 @@ static void test_basic_string_char_swap(void) {
     call_func2(p_basic_string_char_ctor_cstr, &str1, atmp1);
     call_func2(p_basic_string_char_ctor_cstr, &str2, atmp2);
     call_func2(p_basic_string_char_swap, &str1, &str2);
-    ok(strcmp(atmp2, (const char *) call_func1(p_basic_string_char_cstr, &str1)) == 0, "Invalid value of str1\n");
-    ok(strcmp(atmp1, (const char *) call_func1(p_basic_string_char_cstr, &str2)) == 0, "Invalid value of str2\n");
+    ok(strcmp(atmp2, call_func1(p_basic_string_char_cstr, &str1)) == 0, "Invalid value of str1\n");
+    ok(strcmp(atmp1, call_func1(p_basic_string_char_cstr, &str2)) == 0, "Invalid value of str2\n");
     call_func2(p_basic_string_char_swap, &str1, &str2);
-    ok(strcmp(atmp1, (const char *) call_func1(p_basic_string_char_cstr, &str1)) == 0, "Invalid value of str1\n");
-    ok(strcmp(atmp2, (const char *) call_func1(p_basic_string_char_cstr, &str2)) == 0, "Invalid value of str2\n");
+    ok(strcmp(atmp1, call_func1(p_basic_string_char_cstr, &str1)) == 0, "Invalid value of str1\n");
+    ok(strcmp(atmp2, call_func1(p_basic_string_char_cstr, &str2)) == 0, "Invalid value of str2\n");
     call_func1(p_basic_string_char_dtor, &str1);
     call_func1(p_basic_string_char_dtor, &str2);
 }
@@ -607,8 +607,8 @@ static void test_basic_string_char_replace(void) {
 
         ret = call_func4(p_basic_string_char_replace_cstr, &str, tests[i].off, tests[i].len, tests[i].replace);
         ok(ret == &str, "str = %p ret = %p\n", ret, &str);
-        ok(strcmp(tests[i].ret, (const char *) call_func1(p_basic_string_char_cstr, ret)) == 0, "str = %s ret = %s\n",
-                  tests[i].ret, (const char *) call_func1(p_basic_string_char_cstr, ret));
+        ok(strcmp(tests[i].ret, call_func1(p_basic_string_char_cstr, ret)) == 0, "str = %s ret = %s\n",
+                  tests[i].ret, (const char*)call_func1(p_basic_string_char_cstr, ret));
 
         call_func1(p_basic_string_char_dtor, &str);
     }
@@ -694,9 +694,9 @@ static void test_basic_string_wchar_swap(void) {
     mbstowcs(wtmp1, "qwerty", 32);
     call_func2(p_basic_string_wchar_ctor_cstr, &str1, wtmp1);
     call_func2(p_basic_string_wchar_swap, &str1, &str1);
-    ok(wcscmp(wtmp1, (const wchar_t *) call_func1(p_basic_string_wchar_cstr, &str1)) == 0, "Invalid value of str1\n");
+    ok(wcscmp(wtmp1, call_func1(p_basic_string_wchar_cstr, &str1)) == 0, "Invalid value of str1\n");
     call_func2(p_basic_string_wchar_swap, &str1, &str1);
-    ok(wcscmp(wtmp1, (const wchar_t *) call_func1(p_basic_string_wchar_cstr, &str1)) == 0, "Invalid value of str1\n");
+    ok(wcscmp(wtmp1, call_func1(p_basic_string_wchar_cstr, &str1)) == 0, "Invalid value of str1\n");
     call_func1(p_basic_string_wchar_dtor, &str1);
 
     /* str1 allocated, str2 local */
@@ -705,11 +705,11 @@ static void test_basic_string_wchar_swap(void) {
     call_func2(p_basic_string_wchar_ctor_cstr, &str1, wtmp1);
     call_func2(p_basic_string_wchar_ctor_cstr, &str2, wtmp2);
     call_func2(p_basic_string_wchar_swap, &str1, &str2);
-    ok(wcscmp(wtmp2, (const wchar_t *) call_func1(p_basic_string_wchar_cstr, &str1)) == 0, "Invalid value of str1\n");
-    ok(wcscmp(wtmp1, (const wchar_t *) call_func1(p_basic_string_wchar_cstr, &str2)) == 0, "Invalid value of str2\n");
+    ok(wcscmp(wtmp2, call_func1(p_basic_string_wchar_cstr, &str1)) == 0, "Invalid value of str1\n");
+    ok(wcscmp(wtmp1, call_func1(p_basic_string_wchar_cstr, &str2)) == 0, "Invalid value of str2\n");
     call_func2(p_basic_string_wchar_swap, &str1, &str2);
-    ok(wcscmp(wtmp1, (const wchar_t *) call_func1(p_basic_string_wchar_cstr, &str1)) == 0, "Invalid value of str1\n");
-    ok(wcscmp(wtmp2, (const wchar_t *) call_func1(p_basic_string_wchar_cstr, &str2)) == 0, "Invalid value of str2\n");
+    ok(wcscmp(wtmp1, call_func1(p_basic_string_wchar_cstr, &str1)) == 0, "Invalid value of str1\n");
+    ok(wcscmp(wtmp2, call_func1(p_basic_string_wchar_cstr, &str2)) == 0, "Invalid value of str2\n");
     call_func1(p_basic_string_wchar_dtor, &str1);
     call_func1(p_basic_string_wchar_dtor, &str2);
 }
@@ -767,6 +767,26 @@ static void test_basic_string_char_find_last_not_of(void) {
     }
 }
 
+static void test_basic_string_dtor(void) {
+#ifdef __i386__
+    static const wchar_t qwerty[] = { 'q','w','e','r','t','y',0 };
+    basic_string_wchar str1;
+    basic_string_char str2;
+    void *ret;
+
+    /* FEAR 1 installer expects that string destructors set EAX to
+     * zero on return (see bug 37358). */
+
+    call_func2(p_basic_string_wchar_ctor_cstr, &str1, qwerty);
+    ret = call_func1(p_basic_string_wchar_dtor, &str1);
+    ok(ret == NULL, "expected NULL, got %p\n", ret);
+
+    call_func2(p_basic_string_char_ctor_cstr, &str2, "qwerty");
+    ret = call_func1(p_basic_string_char_dtor, &str2);
+    ok(ret == NULL, "expected NULL, got %p\n", ret);
+#endif
+}
+
 START_TEST(string)
 {
     if(!init())
@@ -783,6 +803,7 @@ START_TEST(string)
     test_basic_string_wchar();
     test_basic_string_wchar_swap();
     test_basic_string_char_find_last_not_of();
+    test_basic_string_dtor();
 
     ok(!invalid_parameter, "invalid_parameter_handler was invoked too many times\n");
 

@@ -60,7 +60,7 @@ static HRESULT WINAPI BaseRenderer_InputPin_ReceiveConnection(IPin * iface, IPin
 {
     BaseInputPin *This = impl_BaseInputPin_from_IPin(iface);
     BaseRenderer *renderer = impl_from_IBaseFilter(This->pin.pinInfo.pFilter);
-    HRESULT hr = S_OK;
+    HRESULT hr;
 
     TRACE("(%p/%p)->(%p, %p)\n", This, renderer, pReceivePin, pmt);
 
@@ -99,7 +99,7 @@ static HRESULT WINAPI BaseRenderer_InputPin_Disconnect(IPin * iface)
 
 static HRESULT WINAPI BaseRenderer_InputPin_EndOfStream(IPin * iface)
 {
-    HRESULT hr = S_OK;
+    HRESULT hr;
     BaseInputPin* This = impl_BaseInputPin_from_IPin(iface);
     BaseRenderer *pFilter = impl_from_IBaseFilter(This->pin.pinInfo.pFilter);
 
@@ -126,7 +126,7 @@ static HRESULT WINAPI BaseRenderer_InputPin_BeginFlush(IPin * iface)
 {
     BaseInputPin* This = impl_BaseInputPin_from_IPin(iface);
     BaseRenderer *pFilter = impl_from_IBaseFilter(This->pin.pinInfo.pFilter);
-    HRESULT hr = S_OK;
+    HRESULT hr;
 
     TRACE("(%p/%p)->()\n", This, iface);
 
@@ -151,7 +151,7 @@ static HRESULT WINAPI BaseRenderer_InputPin_EndFlush(IPin * iface)
 {
     BaseInputPin* This = impl_BaseInputPin_from_IPin(iface);
     BaseRenderer *pFilter = impl_from_IBaseFilter(This->pin.pinInfo.pFilter);
-    HRESULT hr = S_OK;
+    HRESULT hr;
 
     TRACE("(%p/%p)->()\n", This, pFilter);
 
@@ -238,7 +238,8 @@ static const BaseInputPinFuncTable input_BaseInputFuncTable = {
 };
 
 
-HRESULT WINAPI BaseRenderer_Init(BaseRenderer * This, const IBaseFilterVtbl *Vtbl, IUnknown *pUnkOuter, const CLSID *pClsid, DWORD_PTR DebugInfo, const BaseRendererFuncTable* pBaseFuncsTable)
+HRESULT WINAPI BaseRenderer_Init(BaseRenderer * This, const IBaseFilterVtbl *Vtbl, IUnknown *pUnkOuter, const CLSID *pClsid,
+    DWORD_PTR DebugInfo, const BaseRendererFuncTable* pBaseFuncsTable)
 {
     PIN_INFO piInput;
     HRESULT hr;
@@ -257,7 +258,8 @@ HRESULT WINAPI BaseRenderer_Init(BaseRenderer * This, const IBaseFilterVtbl *Vtb
 
     if (SUCCEEDED(hr))
     {
-        hr = CreatePosPassThru(pUnkOuter ? pUnkOuter: (IUnknown*)This, TRUE, &This->pInputPin->pin.IPin_iface, &This->pPosition);
+        hr = CreatePosPassThru(pUnkOuter ? pUnkOuter: (IUnknown *)&This->filter.IBaseFilter_iface, TRUE,
+                &This->pInputPin->pin.IPin_iface, &This->pPosition);
         if (FAILED(hr))
             return hr;
 

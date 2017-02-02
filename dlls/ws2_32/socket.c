@@ -33,6 +33,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
+#include <limits.h>
 #ifdef HAVE_SYS_IPC_H
 # include <sys/ipc.h>
 #endif
@@ -146,6 +147,7 @@
 #include "ws2tcpip.h"
 #include "ws2spi.h"
 #include "wsipx.h"
+#include "wsnwlink.h"
 #include "wshisotp.h"
 #include "mstcpip.h"
 #include "af_irda.h"
@@ -156,10 +158,6 @@
 #include "wine/debug.h"
 #include "wine/exception.h"
 #include "wine/unicode.h"
-
-#ifdef HAS_IPX
-# include "wsnwlink.h"
-#endif
 
 #if defined(linux) && !defined(IP_UNICAST_IF)
 #define IP_UNICAST_IF 50
@@ -173,6 +171,13 @@
 #ifndef INADDR_NONE
 #define INADDR_NONE ~0UL
 #endif
+
+#if !defined(TCP_KEEPIDLE) && defined(TCP_KEEPALIVE)
+/* TCP_KEEPALIVE is the Mac OS name for TCP_KEEPIDLE */
+#define TCP_KEEPIDLE TCP_KEEPALIVE
+#endif
+
+#define FILE_USE_FILE_POINTER_POSITION ((LONGLONG)-2)
 
 WINE_DEFAULT_DEBUG_CHANNEL(winsock);
 WINE_DECLARE_DEBUG_CHANNEL(winediag);
@@ -280,9 +285,18 @@ static inline const char *debugstr_sockaddr( const struct WS_sockaddr *a )
     switch (a->sa_family)
     {
     case WS_AF_INET:
+    {
+        char buf[16];
+        const char *p;
+        struct WS_sockaddr_in *sin = (struct WS_sockaddr_in *)a;
+
+        p = WS_inet_ntop( WS_AF_INET, &sin->sin_addr, buf, sizeof(buf) );
+        if (!p)
+            p = "(unknown IPv4 address)";
+
         return wine_dbg_sprintf("{ family AF_INET, address %s, port %d }",
-                                inet_ntoa(((const struct sockaddr_in *)a)->sin_addr),
-                                ntohs(((const struct sockaddr_in *)a)->sin_port));
+                                p, ntohs(sin->sin_port));
+    }
     case WS_AF_INET6:
     {
         char buf[46];
@@ -322,6 +336,132 @@ static inline const char *debugstr_sockaddr( const struct WS_sockaddr *a )
     }
 }
 
+static inline const char *debugstr_sockopt(int level, int optname)
+{
+    const char *stropt = NULL, *strlevel = NULL;
+
+#define DEBUG_SOCKLEVEL(x) case (x): strlevel = #x
+#define DEBUG_SOCKOPT(x) case (x): stropt = #x; break
+
+    switch(level)
+    {
+        DEBUG_SOCKLEVEL(WS_SOL_SOCKET);
+        switch(optname)
+        {
+            DEBUG_SOCKOPT(WS_SO_ACCEPTCONN);
+            DEBUG_SOCKOPT(WS_SO_BROADCAST);
+            DEBUG_SOCKOPT(WS_SO_BSP_STATE);
+            DEBUG_SOCKOPT(WS_SO_CONDITIONAL_ACCEPT);
+            DEBUG_SOCKOPT(WS_SO_CONNECT_TIME);
+            DEBUG_SOCKOPT(WS_SO_DEBUG);
+            DEBUG_SOCKOPT(WS_SO_DONTLINGER);
+            DEBUG_SOCKOPT(WS_SO_DONTROUTE);
+            DEBUG_SOCKOPT(WS_SO_ERROR);
+            DEBUG_SOCKOPT(WS_SO_EXCLUSIVEADDRUSE);
+            DEBUG_SOCKOPT(WS_SO_GROUP_ID);
+            DEBUG_SOCKOPT(WS_SO_GROUP_PRIORITY);
+            DEBUG_SOCKOPT(WS_SO_KEEPALIVE);
+            DEBUG_SOCKOPT(WS_SO_LINGER);
+            DEBUG_SOCKOPT(WS_SO_MAX_MSG_SIZE);
+            DEBUG_SOCKOPT(WS_SO_OOBINLINE);
+            DEBUG_SOCKOPT(WS_SO_OPENTYPE);
+            DEBUG_SOCKOPT(WS_SO_PROTOCOL_INFOA);
+            DEBUG_SOCKOPT(WS_SO_PROTOCOL_INFOW);
+            DEBUG_SOCKOPT(WS_SO_RCVBUF);
+            DEBUG_SOCKOPT(WS_SO_RCVTIMEO);
+            DEBUG_SOCKOPT(WS_SO_REUSEADDR);
+            DEBUG_SOCKOPT(WS_SO_SNDBUF);
+            DEBUG_SOCKOPT(WS_SO_SNDTIMEO);
+            DEBUG_SOCKOPT(WS_SO_TYPE);
+            DEBUG_SOCKOPT(WS_SO_UPDATE_CONNECT_CONTEXT);
+        }
+        break;
+
+        DEBUG_SOCKLEVEL(WS_NSPROTO_IPX);
+        switch(optname)
+        {
+            DEBUG_SOCKOPT(WS_IPX_PTYPE);
+            DEBUG_SOCKOPT(WS_IPX_FILTERPTYPE);
+            DEBUG_SOCKOPT(WS_IPX_DSTYPE);
+            DEBUG_SOCKOPT(WS_IPX_RECVHDR);
+            DEBUG_SOCKOPT(WS_IPX_MAXSIZE);
+            DEBUG_SOCKOPT(WS_IPX_ADDRESS);
+            DEBUG_SOCKOPT(WS_IPX_MAX_ADAPTER_NUM);
+        }
+        break;
+
+        DEBUG_SOCKLEVEL(WS_SOL_IRLMP);
+        switch(optname)
+        {
+            DEBUG_SOCKOPT(WS_IRLMP_ENUMDEVICES);
+        }
+        break;
+
+        DEBUG_SOCKLEVEL(WS_IPPROTO_TCP);
+        switch(optname)
+        {
+            DEBUG_SOCKOPT(WS_TCP_BSDURGENT);
+            DEBUG_SOCKOPT(WS_TCP_EXPEDITED_1122);
+            DEBUG_SOCKOPT(WS_TCP_NODELAY);
+        }
+        break;
+
+        DEBUG_SOCKLEVEL(WS_IPPROTO_IP);
+        switch(optname)
+        {
+            DEBUG_SOCKOPT(WS_IP_ADD_MEMBERSHIP);
+            DEBUG_SOCKOPT(WS_IP_DONTFRAGMENT);
+            DEBUG_SOCKOPT(WS_IP_DROP_MEMBERSHIP);
+            DEBUG_SOCKOPT(WS_IP_HDRINCL);
+            DEBUG_SOCKOPT(WS_IP_MULTICAST_IF);
+            DEBUG_SOCKOPT(WS_IP_MULTICAST_LOOP);
+            DEBUG_SOCKOPT(WS_IP_MULTICAST_TTL);
+            DEBUG_SOCKOPT(WS_IP_OPTIONS);
+            DEBUG_SOCKOPT(WS_IP_PKTINFO);
+            DEBUG_SOCKOPT(WS_IP_RECEIVE_BROADCAST);
+            DEBUG_SOCKOPT(WS_IP_TOS);
+            DEBUG_SOCKOPT(WS_IP_TTL);
+            DEBUG_SOCKOPT(WS_IP_UNICAST_IF);
+        }
+        break;
+
+        DEBUG_SOCKLEVEL(WS_IPPROTO_IPV6);
+        switch(optname)
+        {
+            DEBUG_SOCKOPT(WS_IPV6_ADD_MEMBERSHIP);
+            DEBUG_SOCKOPT(WS_IPV6_DROP_MEMBERSHIP);
+            DEBUG_SOCKOPT(WS_IPV6_MULTICAST_IF);
+            DEBUG_SOCKOPT(WS_IPV6_MULTICAST_HOPS);
+            DEBUG_SOCKOPT(WS_IPV6_MULTICAST_LOOP);
+            DEBUG_SOCKOPT(WS_IPV6_UNICAST_HOPS);
+            DEBUG_SOCKOPT(WS_IPV6_V6ONLY);
+            DEBUG_SOCKOPT(WS_IPV6_UNICAST_IF);
+            DEBUG_SOCKOPT(WS_IPV6_DONTFRAG);
+        }
+        break;
+    }
+#undef DEBUG_SOCKLEVEL
+#undef DEBUG_SOCKOPT
+
+    if (!strlevel)
+        strlevel = wine_dbg_sprintf("WS_0x%x", level);
+    if (!stropt)
+        stropt = wine_dbg_sprintf("WS_0x%x", optname);
+
+    return wine_dbg_sprintf("level %s, name %s", strlevel + 3, stropt + 3);
+}
+
+static inline const char *debugstr_optval(const char *optval, int optlenval)
+{
+    if (optval && !IS_INTRESOURCE(optval) && optlenval >= 1 && optlenval <= sizeof(DWORD))
+    {
+        DWORD value = 0;
+        memcpy(&value, optval, optlenval);
+        return wine_dbg_sprintf("%p (%u)", optval, value);
+    }
+    return wine_dbg_sprintf("%p", optval);
+}
+
 /* HANDLE<->SOCKET conversion (SOCKET is UINT_PTR). */
 #define SOCKET2HANDLE(s) ((HANDLE)(s))
 #define HANDLE2SOCKET(h) ((SOCKET)(h))
@@ -330,10 +470,23 @@ static inline const char *debugstr_sockaddr( const struct WS_sockaddr *a )
  * Async IO declarations
  ****************************************************************/
 
-typedef struct ws2_async
+struct ws2_async_io
 {
+    struct ws2_async_io *next;
+};
+
+struct ws2_async_shutdown
+{
+    struct ws2_async_io io;
+    HANDLE              hSocket;
+    IO_STATUS_BLOCK     iosb;
+    int                 type;
+};
+
+struct ws2_async
+{
+    struct ws2_async_io                 io;
     HANDLE                              hSocket;
-    int                                 type;
     LPWSAOVERLAPPED                     user_overlapped;
     LPWSAOVERLAPPED_COMPLETION_ROUTINE  completion_func;
     IO_STATUS_BLOCK                     local_iosb;
@@ -349,10 +502,11 @@ typedef struct ws2_async
     unsigned int                        n_iovecs;
     unsigned int                        first_iovec;
     struct iovec                        iovec[1];
-} ws2_async;
+};
 
-typedef struct ws2_accept_async
+struct ws2_accept_async
 {
+    struct ws2_async_io io;
     HANDLE              listen_socket;
     HANDLE              accept_socket;
     LPOVERLAPPED        user_overlapped;
@@ -362,7 +516,49 @@ typedef struct ws2_accept_async
     int                 local_len;
     int                 remote_len;
     struct ws2_async    *read;
-} ws2_accept_async;
+};
+
+struct ws2_transmitfile_async
+{
+    struct ws2_async_io   io;
+    char                  *buffer;
+    HANDLE                file;
+    DWORD                 file_read;
+    DWORD                 file_bytes;
+    DWORD                 bytes_per_send;
+    TRANSMIT_FILE_BUFFERS buffers;
+    DWORD                 flags;
+    LARGE_INTEGER         offset;
+    struct ws2_async      write;
+};
+
+static struct ws2_async_io *async_io_freelist;
+
+static void release_async_io( struct ws2_async_io *io )
+{
+    for (;;)
+    {
+        struct ws2_async_io *next = async_io_freelist;
+        io->next = next;
+        if (InterlockedCompareExchangePointer( (void **)&async_io_freelist, io, next ) == next) return;
+    }
+}
+
+static struct ws2_async_io *alloc_async_io( DWORD size )
+{
+    /* first free remaining previous fileinfos */
+
+    struct ws2_async_io *io = InterlockedExchangePointer( (void **)&async_io_freelist, NULL );
+
+    while (io)
+    {
+        struct ws2_async_io *next = io->next;
+        HeapFree( GetProcessHeap(), 0, io );
+        io = next;
+    }
+
+    return HeapAlloc( GetProcessHeap(), 0, size );
+}
 
 /****************************************************************/
 
@@ -390,6 +586,8 @@ struct per_thread_data
     struct WS_hostent *he_buffer;
     struct WS_servent *se_buffer;
     struct WS_protoent *pe_buffer;
+    struct pollfd *fd_cache;
+    unsigned int fd_count;
     int he_len;
     int se_len;
     int pe_len;
@@ -400,7 +598,7 @@ struct per_thread_data
 struct route {
     struct in_addr addr;
     IF_INDEX interface;
-    DWORD metric;
+    DWORD metric, default_route;
 };
 
 static INT num_startup;          /* reference counter */
@@ -419,6 +617,14 @@ int WSAIOCTL_GetInterfaceName(int intNumber, char *intName);
 static void WS_AddCompletion( SOCKET sock, ULONG_PTR CompletionValue, NTSTATUS CompletionStatus, ULONG Information );
 
 #define MAP_OPTION(opt) { WS_##opt, opt }
+
+static const int ws_flags_map[][2] =
+{
+    MAP_OPTION( MSG_OOB ),
+    MAP_OPTION( MSG_PEEK ),
+    MAP_OPTION( MSG_DONTROUTE ),
+    MAP_OPTION( MSG_WAITALL ),
+};
 
 static const int ws_sock_map[][2] =
 {
@@ -515,6 +721,7 @@ static const int ws_proto_map[][2] =
     MAP_OPTION( IPPROTO_IP ),
     MAP_OPTION( IPPROTO_TCP ),
     MAP_OPTION( IPPROTO_UDP ),
+    MAP_OPTION( IPPROTO_IPV6 ),
     MAP_OPTION( IPPROTO_ICMP ),
     MAP_OPTION( IPPROTO_IGMP ),
     MAP_OPTION( IPPROTO_RAW ),
@@ -566,6 +773,17 @@ static const int ws_eai_map[][2] =
     MAP_OPTION( EAI_SERVICE ),
     MAP_OPTION( EAI_SOCKTYPE ),
     { 0, 0 }
+};
+
+static const int ws_poll_map[][2] =
+{
+    MAP_OPTION( POLLERR ),
+    MAP_OPTION( POLLHUP ),
+    MAP_OPTION( POLLNVAL ),
+    MAP_OPTION( POLLWRNORM ),
+    MAP_OPTION( POLLWRBAND ),
+    MAP_OPTION( POLLRDNORM ),
+    { WS_POLLRDBAND, POLLPRI }
 };
 
 static const char magic_loopback_addr[] = {127, 12, 34, 56};
@@ -692,7 +910,6 @@ static UINT sock_get_error( int err )
 	switch(err)
     {
 	case EINTR:		return WSAEINTR;
-	case EBADF:		return WSAEBADF;
 	case EPERM:
 	case EACCES:		return WSAEACCES;
 	case EFAULT:		return WSAEFAULT;
@@ -701,6 +918,7 @@ static UINT sock_get_error( int err )
 	case EWOULDBLOCK:	return WSAEWOULDBLOCK;
 	case EINPROGRESS:	return WSAEINPROGRESS;
 	case EALREADY:		return WSAEALREADY;
+	case EBADF:
 	case ENOTSOCK:		return WSAENOTSOCK;
 	case EDESTADDRREQ:	return WSAEDESTADDRREQ;
 	case EMSGSIZE:		return WSAEMSGSIZE;
@@ -904,20 +1122,134 @@ static void _sync_sock_state(SOCKET s)
     (void)_is_blocking(s, &dummy);
 }
 
-static int _get_sock_error(SOCKET s, unsigned int bit)
+static void _get_sock_errors(SOCKET s, int *events)
 {
-    int events[FD_MAX_EVENTS];
-
     SERVER_START_REQ( get_socket_event )
     {
         req->handle  = wine_server_obj_handle( SOCKET2HANDLE(s) );
         req->service = FALSE;
         req->c_event = 0;
-        wine_server_set_reply( req, events, sizeof(events) );
+        wine_server_set_reply( req, events, sizeof(int) * FD_MAX_EVENTS );
         wine_server_call( req );
     }
     SERVER_END_REQ;
+}
+
+static int _get_sock_error(SOCKET s, unsigned int bit)
+{
+    int events[FD_MAX_EVENTS];
+    _get_sock_errors(s, events);
     return events[bit];
+}
+
+static int _get_fd_type(int fd)
+{
+    int sock_type = -1;
+    socklen_t optlen = sizeof(sock_type);
+    getsockopt(fd, SOL_SOCKET, SO_TYPE, (char*) &sock_type, &optlen);
+    return sock_type;
+}
+
+static BOOL set_dont_fragment(SOCKET s, int level, BOOL value)
+{
+    int fd, optname;
+
+    if (level == IPPROTO_IP)
+    {
+#ifdef IP_DONTFRAG
+        optname = IP_DONTFRAG;
+#elif defined(IP_MTU_DISCOVER) && defined(IP_PMTUDISC_DO) && defined(IP_PMTUDISC_DONT)
+        optname = IP_MTU_DISCOVER;
+        value = value ? IP_PMTUDISC_DO : IP_PMTUDISC_DONT;
+#else
+        static int once;
+        if (!once++)
+            FIXME("IP_DONTFRAGMENT for IPv4 not supported in this platform\n");
+        return TRUE; /* fake success */
+#endif
+    }
+    else
+    {
+#ifdef IPV6_DONTFRAG
+        optname = IPV6_DONTFRAG;
+#elif defined(IPV6_MTU_DISCOVER) && defined(IPV6_PMTUDISC_DO) && defined(IPV6_PMTUDISC_DONT)
+        optname = IPV6_MTU_DISCOVER;
+        value = value ? IPV6_PMTUDISC_DO : IPV6_PMTUDISC_DONT;
+#else
+        static int once;
+        if (!once++)
+            FIXME("IP_DONTFRAGMENT for IPv6 not supported in this platform\n");
+        return TRUE; /* fake success */
+#endif
+    }
+
+    fd = get_sock_fd(s, 0, NULL);
+    if (fd == -1) return FALSE;
+
+    if (!setsockopt(fd, level, optname, &value, sizeof(value)))
+        value = TRUE;
+    else
+    {
+        WSASetLastError(wsaErrno());
+        value = FALSE;
+    }
+
+    release_sock_fd(s, fd);
+    return value;
+}
+
+static BOOL get_dont_fragment(SOCKET s, int level, BOOL *out)
+{
+    int fd, optname, value, not_expected;
+    socklen_t optlen = sizeof(value);
+
+    if (level == IPPROTO_IP)
+    {
+#ifdef IP_DONTFRAG
+        optname = IP_DONTFRAG;
+        not_expected = 0;
+#elif defined(IP_MTU_DISCOVER) && defined(IP_PMTUDISC_DONT)
+        optname = IP_MTU_DISCOVER;
+        not_expected = IP_PMTUDISC_DONT;
+#else
+        static int once;
+        if (!once++)
+            FIXME("IP_DONTFRAGMENT for IPv4 not supported in this platform\n");
+        return TRUE; /* fake success */
+#endif
+    }
+    else
+    {
+#ifdef IPV6_DONTFRAG
+        optname = IPV6_DONTFRAG;
+        not_expected = 0;
+#elif defined(IPV6_MTU_DISCOVER) && defined(IPV6_PMTUDISC_DONT)
+        optname = IPV6_MTU_DISCOVER;
+        not_expected = IPV6_PMTUDISC_DONT;
+#else
+        static int once;
+        if (!once++)
+            FIXME("IP_DONTFRAGMENT for IPv6 not supported in this platform\n");
+        return TRUE; /* fake success */
+#endif
+    }
+
+    fd = get_sock_fd(s, 0, NULL);
+    if (fd == -1) return FALSE;
+
+    if (!getsockopt(fd, level, optname, &value, &optlen))
+    {
+        *out = value != not_expected;
+        value = TRUE;
+    }
+    else
+    {
+        WSASetLastError(wsaErrno());
+        value = FALSE;
+    }
+
+    release_sock_fd(s, fd);
+    return value;
 }
 
 static struct per_thread_data *get_per_thread_data(void)
@@ -942,9 +1274,7 @@ static void free_per_thread_data(void)
     HeapFree( GetProcessHeap(), 0, ptb->he_buffer );
     HeapFree( GetProcessHeap(), 0, ptb->se_buffer );
     HeapFree( GetProcessHeap(), 0, ptb->pe_buffer );
-    ptb->he_buffer = NULL;
-    ptb->se_buffer = NULL;
-    ptb->pe_buffer = NULL;
+    HeapFree( GetProcessHeap(), 0, ptb->fd_cache );
 
     HeapFree( GetProcessHeap(), 0, ptb );
     NtCurrentTeb()->WinSockData = NULL;
@@ -969,6 +1299,33 @@ BOOL WINAPI DllMain(HINSTANCE hInstDLL, DWORD fdwReason, LPVOID fImpLoad)
         break;
     }
     return TRUE;
+}
+
+/***********************************************************************
+ *          convert_flags()
+ *
+ * Converts send/recv flags from Windows format.
+ * Return the converted flag bits, unsupported flags remain unchanged.
+ */
+static int convert_flags(int flags)
+{
+    int i, out;
+    if (!flags) return 0;
+
+    for (out = i = 0; flags && i < sizeof(ws_flags_map) / sizeof(ws_flags_map[0]); i++)
+    {
+        if (ws_flags_map[i][0] & flags)
+        {
+            out |= ws_flags_map[i][1];
+            flags &= ~ws_flags_map[i][0];
+        }
+    }
+    if (flags)
+    {
+        FIXME("Unknown send/recv flags 0x%x, using anyway...\n", flags);
+        out |= flags;
+    }
+    return out;
 }
 
 /***********************************************************************
@@ -1047,42 +1404,33 @@ static char *strdup_lower(const char *str)
     return ret;
 }
 
-static inline int sock_error_p(int s)
-{
-    unsigned int optval;
-    socklen_t optlen = sizeof(optval);
-    getsockopt(s, SOL_SOCKET, SO_ERROR, (void *) &optval, &optlen);
-    if (optval) WARN("\t[%i] error: %d\n", s, optval);
-    return optval != 0;
-}
-
 /* Utility: get the SO_RCVTIMEO or SO_SNDTIMEO socket option
  * from an fd and return the value converted to milli seconds
- * or -1 if there is an infinite time out */
-static inline int get_rcvsnd_timeo( int fd, int optname)
+ * or 0 if there is an infinite time out */
+static inline INT64 get_rcvsnd_timeo( int fd, BOOL is_recv)
 {
   struct timeval tv;
   socklen_t len = sizeof(tv);
-  int ret = getsockopt(fd, SOL_SOCKET, optname, &tv, &len);
-  if( ret >= 0)
-      ret = tv.tv_sec * 1000 + tv.tv_usec / 1000;
-  if( ret <= 0 ) /* tv == {0,0} means infinite time out */
-      return -1;
-  return ret;
-}
+  int optname, res;
 
-/* macro wrappers for portability */
+  if (is_recv)
 #ifdef SO_RCVTIMEO
-#define GET_RCVTIMEO(fd) get_rcvsnd_timeo( (fd), SO_RCVTIMEO)
+      optname = SO_RCVTIMEO;
 #else
-#define GET_RCVTIMEO(fd) (-1)
+      return 0;
+#endif
+  else
+#ifdef SO_SNDTIMEO
+      optname = SO_SNDTIMEO;
+#else
+      return 0;
 #endif
 
-#ifdef SO_SNDTIMEO
-#define GET_SNDTIMEO(fd) get_rcvsnd_timeo( (fd), SO_SNDTIMEO)
-#else
-#define GET_SNDTIMEO(fd) (-1)
-#endif
+  res = getsockopt(fd, SOL_SOCKET, optname, &tv, &len);
+  if (res < 0)
+      return 0;
+  return (UINT64)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+}
 
 /* utility: given an fd, will block until one of the events occurs */
 static inline int do_block( int fd, int events, int timeout )
@@ -1178,6 +1526,40 @@ convert_socktype_u2w(int unixsocktype) {
 	    return ws_socktype_map[i][0];
     FIXME("unhandled UNIX socket type %d\n", unixsocktype);
     return -1;
+}
+
+static int convert_poll_w2u(int events)
+{
+    int i, ret;
+    for (i = ret = 0; events && i < sizeof(ws_poll_map) / sizeof(ws_poll_map[0]); i++)
+    {
+        if (ws_poll_map[i][0] & events)
+        {
+            ret |= ws_poll_map[i][1];
+            events &= ~ws_poll_map[i][0];
+        }
+    }
+
+    if (events)
+        FIXME("Unsupported WSAPoll() flags 0x%x\n", events);
+    return ret;
+}
+
+static int convert_poll_u2w(int events)
+{
+    int i, ret;
+    for (i = ret = 0; events && i < sizeof(ws_poll_map) / sizeof(ws_poll_map[0]); i++)
+    {
+        if (ws_poll_map[i][1] & events)
+        {
+            ret |= ws_poll_map[i][0];
+            events &= ~ws_poll_map[i][1];
+        }
+    }
+
+    if (events)
+        FIXME("Unsupported poll() flags 0x%x\n", events);
+    return ret;
 }
 
 static int set_ipx_packettype(int sock, int ptype)
@@ -1507,6 +1889,22 @@ static BOOL is_sockaddr_bound(const struct sockaddr *uaddr, int uaddrlen)
             FIXME("unknown address family %d\n", uaddr->sa_family);
             return TRUE;
     }
+}
+
+/* Returns -1 if getsockname fails, 0 if not bound, 1 otherwise */
+static int is_fd_bound(int fd, union generic_unix_sockaddr *uaddr, socklen_t *uaddrlen)
+{
+    union generic_unix_sockaddr inaddr;
+    socklen_t inlen;
+    int res;
+
+    if (!uaddr) uaddr = &inaddr;
+    if (!uaddrlen) uaddrlen = &inlen;
+
+    *uaddrlen = sizeof(inaddr);
+    res = getsockname(fd, &uaddr->addr, uaddrlen);
+    if (!res) res = is_sockaddr_bound(&uaddr->addr, *uaddrlen);
+    return res;
 }
 
 /* Returns 0 if successful, -1 if the buffer is too small */
@@ -1885,12 +2283,12 @@ static BOOL ws_protocol_info(SOCKET s, int unicode, WSAPROTOCOL_INFOW *buffer, i
 /* user APC called upon async completion */
 static void WINAPI ws2_async_apc( void *arg, IO_STATUS_BLOCK *iosb, ULONG reserved )
 {
-    ws2_async *wsa = arg;
+    struct ws2_async *wsa = arg;
 
     if (wsa->completion_func) wsa->completion_func( NtStatusToWSAError(iosb->u.Status),
                                                     iosb->Information, wsa->user_overlapped,
                                                     wsa->flags );
-    HeapFree( GetProcessHeap(), 0, wsa );
+    release_async_io( &wsa->io );
 }
 
 /***********************************************************************
@@ -1898,7 +2296,7 @@ static void WINAPI ws2_async_apc( void *arg, IO_STATUS_BLOCK *iosb, ULONG reserv
  *
  * Workhorse for both synchronous and asynchronous recv() operations.
  */
-static int WS2_recv( int fd, struct ws2_async *wsa )
+static int WS2_recv( int fd, struct ws2_async *wsa, int flags )
 {
 #ifndef HAVE_STRUCT_MSGHDR_MSG_ACCRIGHTS
     char pktbuf[512];
@@ -1928,7 +2326,7 @@ static int WS2_recv( int fd, struct ws2_async *wsa )
     hdr.msg_flags = 0;
 #endif
 
-    while ((n = recvmsg(fd, &hdr, wsa->flags)) == -1)
+    while ((n = recvmsg(fd, &hdr, flags)) == -1)
     {
         if (errno != EINTR)
             return -1;
@@ -1971,9 +2369,10 @@ static int WS2_recv( int fd, struct ws2_async *wsa )
  *
  * Handler for overlapped recv() operations.
  */
-static NTSTATUS WS2_async_recv( void* user, IO_STATUS_BLOCK* iosb, NTSTATUS status, void **apc)
+static NTSTATUS WS2_async_recv( void *user, IO_STATUS_BLOCK *iosb,
+                                NTSTATUS status, void **apc, void **arg )
 {
-    ws2_async* wsa = user;
+    struct ws2_async *wsa = user;
     int result = 0, fd;
 
     switch (status)
@@ -1982,7 +2381,7 @@ static NTSTATUS WS2_async_recv( void* user, IO_STATUS_BLOCK* iosb, NTSTATUS stat
         if ((status = wine_server_handle_to_fd( wsa->hSocket, FILE_READ_DATA, &fd, NULL ) ))
             break;
 
-        result = WS2_recv( fd, wsa );
+        result = WS2_recv( fd, wsa, convert_flags(wsa->flags) );
         wine_server_release_fd( wsa->hSocket, fd );
         if (result >= 0)
         {
@@ -2008,18 +2407,15 @@ static NTSTATUS WS2_async_recv( void* user, IO_STATUS_BLOCK* iosb, NTSTATUS stat
     {
         iosb->u.Status = status;
         iosb->Information = result;
-        *apc = ws2_async_apc;
+        if (wsa->completion_func)
+        {
+            *apc = ws2_async_apc;
+            *arg = wsa;
+        }
+        else
+            release_async_io( &wsa->io );
     }
     return status;
-}
-
-/* user APC called upon async accept completion */
-static void WINAPI ws2_async_accept_apc( void *arg, IO_STATUS_BLOCK *iosb, ULONG reserved )
-{
-    struct ws2_accept_async *wsa = arg;
-
-    HeapFree( GetProcessHeap(), 0, wsa->read );
-    HeapFree( GetProcessHeap(), 0, wsa );
 }
 
 /***********************************************************************
@@ -2028,21 +2424,20 @@ static void WINAPI ws2_async_accept_apc( void *arg, IO_STATUS_BLOCK *iosb, ULONG
  * This function is used to finish the read part of an accept request. It is
  * needed to place the completion on the correct socket (listener).
  */
-static NTSTATUS WS2_async_accept_recv( void *arg, IO_STATUS_BLOCK *iosb, NTSTATUS status, void **apc )
+static NTSTATUS WS2_async_accept_recv( void *user, IO_STATUS_BLOCK *iosb,
+                                       NTSTATUS status, void **apc, void **arg )
 {
     void *junk;
-    struct ws2_accept_async *wsa = arg;
+    struct ws2_accept_async *wsa = user;
 
-    status = WS2_async_recv( wsa->read, iosb, status, &junk );
+    status = WS2_async_recv( wsa->read, iosb, status, &junk, &junk );
     if (status == STATUS_PENDING)
         return status;
 
-    if (wsa->user_overlapped->hEvent)
-        SetEvent(wsa->user_overlapped->hEvent);
     if (wsa->cvalue)
         WS_AddCompletion( HANDLE2SOCKET(wsa->listen_socket), wsa->cvalue, iosb->u.Status, iosb->Information );
 
-    *apc = ws2_async_accept_apc;
+    release_async_io( &wsa->io );
     return status;
 }
 
@@ -2051,9 +2446,10 @@ static NTSTATUS WS2_async_accept_recv( void *arg, IO_STATUS_BLOCK *iosb, NTSTATU
  *
  * This is the function called to satisfy the AcceptEx callback
  */
-static NTSTATUS WS2_async_accept( void *arg, IO_STATUS_BLOCK *iosb, NTSTATUS status, void **apc )
+static NTSTATUS WS2_async_accept( void *user, IO_STATUS_BLOCK *iosb,
+                                  NTSTATUS status, void **apc, void **arg )
 {
-    struct ws2_accept_async *wsa = arg;
+    struct ws2_accept_async *wsa = user;
     int len;
     char *addr;
 
@@ -2104,6 +2500,7 @@ static NTSTATUS WS2_async_accept( void *arg, IO_STATUS_BLOCK *iosb, NTSTATUS sta
     {
         req->type           = ASYNC_TYPE_READ;
         req->async.handle   = wine_server_obj_handle( wsa->accept_socket );
+        req->async.event    = wine_server_obj_handle( wsa->user_overlapped->hEvent );
         req->async.callback = wine_server_client_ptr( WS2_async_accept_recv );
         req->async.iosb     = wine_server_client_ptr( iosb );
         req->async.arg      = wine_server_client_ptr( wsa );
@@ -2122,10 +2519,8 @@ finish:
     iosb->u.Status = status;
     iosb->Information = 0;
 
-    if (wsa->user_overlapped->hEvent)
-        SetEvent(wsa->user_overlapped->hEvent);
-
-    *apc = ws2_async_accept_apc;
+    if (wsa->read) release_async_io( &wsa->read->io );
+    release_async_io( &wsa->io );
     return status;
 }
 
@@ -2134,7 +2529,7 @@ finish:
  *
  * Workhorse for both synchronous and asynchronous send() operations.
  */
-static int WS2_send( int fd, struct ws2_async *wsa )
+static int WS2_send( int fd, struct ws2_async *wsa, int flags )
 {
     struct msghdr hdr;
     union generic_unix_sockaddr unix_addr;
@@ -2182,7 +2577,7 @@ static int WS2_send( int fd, struct ws2_async *wsa )
     hdr.msg_flags = 0;
 #endif
 
-    while ((ret = sendmsg(fd, &hdr, wsa->flags)) == -1)
+    while ((ret = sendmsg(fd, &hdr, flags)) == -1)
     {
         if (errno != EINTR)
             return -1;
@@ -2204,9 +2599,10 @@ static int WS2_send( int fd, struct ws2_async *wsa )
  *
  * Handler for overlapped send() operations.
  */
-static NTSTATUS WS2_async_send(void* user, IO_STATUS_BLOCK* iosb, NTSTATUS status, void **apc)
+static NTSTATUS WS2_async_send( void *user, IO_STATUS_BLOCK *iosb,
+                                NTSTATUS status, void **apc, void **arg )
 {
-    ws2_async* wsa = user;
+    struct ws2_async *wsa = user;
     int result = 0, fd;
 
     switch (status)
@@ -2222,7 +2618,7 @@ static NTSTATUS WS2_async_send(void* user, IO_STATUS_BLOCK* iosb, NTSTATUS statu
             break;
 
         /* check to see if the data is ready (non-blocking) */
-        result = WS2_send( fd, wsa );
+        result = WS2_send( fd, wsa, convert_flags(wsa->flags) );
         wine_server_release_fd( wsa->hSocket, fd );
 
         if (result >= 0)
@@ -2247,7 +2643,13 @@ static NTSTATUS WS2_async_send(void* user, IO_STATUS_BLOCK* iosb, NTSTATUS statu
     if (status != STATUS_PENDING)
     {
         iosb->u.Status = status;
-        *apc = ws2_async_apc;
+        if (wsa->completion_func)
+        {
+            *apc = ws2_async_apc;
+            *arg = wsa;
+        }
+        else
+            release_async_io( &wsa->io );
     }
     return status;
 }
@@ -2257,9 +2659,10 @@ static NTSTATUS WS2_async_send(void* user, IO_STATUS_BLOCK* iosb, NTSTATUS statu
  *
  * Handler for shutdown() operations on overlapped sockets.
  */
-static NTSTATUS WS2_async_shutdown( void* user, PIO_STATUS_BLOCK iosb, NTSTATUS status, void **apc )
+static NTSTATUS WS2_async_shutdown( void *user, IO_STATUS_BLOCK *iosb,
+                                    NTSTATUS status, void **apc, void **arg )
 {
-    ws2_async* wsa = user;
+    struct ws2_async_shutdown *wsa = user;
     int fd, err = 1;
 
     switch (status)
@@ -2279,7 +2682,7 @@ static NTSTATUS WS2_async_shutdown( void* user, PIO_STATUS_BLOCK iosb, NTSTATUS 
     }
     iosb->u.Status = status;
     iosb->Information = 0;
-    *apc = ws2_async_apc;
+    release_async_io( &wsa->io );
     return status;
 }
 
@@ -2290,25 +2693,24 @@ static NTSTATUS WS2_async_shutdown( void* user, PIO_STATUS_BLOCK iosb, NTSTATUS 
  */
 static int WS2_register_async_shutdown( SOCKET s, int type )
 {
-    struct ws2_async *wsa;
+    struct ws2_async_shutdown *wsa;
     NTSTATUS status;
 
-    TRACE("s %04lx type %d\n", s, type);
+    TRACE("socket %04lx type %d\n", s, type);
 
-    wsa = HeapAlloc( GetProcessHeap(), 0, FIELD_OFFSET( struct ws2_async, iovec[1] ));
+    wsa = (struct ws2_async_shutdown *)alloc_async_io( sizeof(*wsa) );
     if ( !wsa )
         return WSAEFAULT;
 
-    wsa->hSocket         = SOCKET2HANDLE(s);
-    wsa->type            = type;
-    wsa->completion_func = NULL;
+    wsa->hSocket = SOCKET2HANDLE(s);
+    wsa->type    = type;
 
     SERVER_START_REQ( register_async )
     {
         req->type   = type;
         req->async.handle   = wine_server_obj_handle( wsa->hSocket );
         req->async.callback = wine_server_client_ptr( WS2_async_shutdown );
-        req->async.iosb     = wine_server_client_ptr( &wsa->local_iosb );
+        req->async.iosb     = wine_server_client_ptr( &wsa->iosb );
         req->async.arg      = wine_server_client_ptr( wsa );
         req->async.cvalue   = 0;
         status = wine_server_call( req );
@@ -2353,11 +2755,12 @@ SOCKET WINAPI WS_accept(SOCKET s, struct WS_sockaddr *addr, int *addrlen32)
         SERVER_END_REQ;
         if (!status)
         {
-            if (addr && WS_getpeername(as, addr, addrlen32))
+            if (addr && addrlen32 && WS_getpeername(as, addr, addrlen32))
             {
                 WS_closesocket(as);
                 return SOCKET_ERROR;
             }
+            TRACE("\taccepted %04lx\n", as);
             return as;
         }
         if (is_blocking && status == STATUS_CANT_WAIT)
@@ -2384,9 +2787,8 @@ static BOOL WINAPI WS2_AcceptEx(SOCKET listener, SOCKET acceptor, PVOID dest, DW
     DWORD status;
     struct ws2_accept_async *wsa;
     int fd;
-    ULONG_PTR cvalue = (overlapped && ((ULONG_PTR)overlapped->hEvent & 1) == 0) ? (ULONG_PTR)overlapped : 0;
 
-    TRACE("(%lx, %lx, %p, %d, %d, %d, %p, %p)\n", listener, acceptor, dest, dest_len, local_addr_len,
+    TRACE("(%04lx, %04lx, %p, %d, %d, %d, %p, %p)\n", listener, acceptor, dest, dest_len, local_addr_len,
                                                   rem_addr_len, received, overlapped);
 
     if (!dest)
@@ -2423,7 +2825,7 @@ static BOOL WINAPI WS2_AcceptEx(SOCKET listener, SOCKET acceptor, PVOID dest, DW
     }
     release_sock_fd( acceptor, fd );
 
-    wsa = HeapAlloc( GetProcessHeap(), 0, sizeof(*wsa) );
+    wsa = (struct ws2_accept_async *)alloc_async_io( sizeof(*wsa) );
     if(!wsa)
     {
         SetLastError(WSAEFAULT);
@@ -2433,7 +2835,7 @@ static BOOL WINAPI WS2_AcceptEx(SOCKET listener, SOCKET acceptor, PVOID dest, DW
     wsa->listen_socket   = SOCKET2HANDLE(listener);
     wsa->accept_socket   = SOCKET2HANDLE(acceptor);
     wsa->user_overlapped = overlapped;
-    wsa->cvalue          = cvalue;
+    wsa->cvalue          = !((ULONG_PTR)overlapped->hEvent & 1) ? (ULONG_PTR)overlapped : 0;
     wsa->buf             = dest;
     wsa->data_len        = dest_len;
     wsa->local_len       = local_addr_len;
@@ -2443,7 +2845,7 @@ static BOOL WINAPI WS2_AcceptEx(SOCKET listener, SOCKET acceptor, PVOID dest, DW
     if (wsa->data_len)
     {
         /* set up a read request if we need it */
-        wsa->read = HeapAlloc( GetProcessHeap(), 0, FIELD_OFFSET(struct ws2_async, iovec[1]) );
+        wsa->read = (struct ws2_async *)alloc_async_io( offsetof(struct ws2_async, iovec[1]) );
         if (!wsa->read)
         {
             HeapFree( GetProcessHeap(), 0, wsa );
@@ -2459,6 +2861,7 @@ static BOOL WINAPI WS2_AcceptEx(SOCKET listener, SOCKET acceptor, PVOID dest, DW
         wsa->read->control     = NULL;
         wsa->read->n_iovecs    = 1;
         wsa->read->first_iovec = 0;
+        wsa->read->completion_func = NULL;
         wsa->read->iovec[0].iov_base = wsa->buf;
         wsa->read->iovec[0].iov_len  = wsa->data_len;
     }
@@ -2467,11 +2870,11 @@ static BOOL WINAPI WS2_AcceptEx(SOCKET listener, SOCKET acceptor, PVOID dest, DW
     {
         req->type           = ASYNC_TYPE_READ;
         req->async.handle   = wine_server_obj_handle( SOCKET2HANDLE(listener) );
+        req->async.event    = wine_server_obj_handle( overlapped->hEvent );
         req->async.callback = wine_server_client_ptr( WS2_async_accept );
         req->async.iosb     = wine_server_client_ptr( overlapped );
         req->async.arg      = wine_server_client_ptr( wsa );
-        req->async.cvalue   = cvalue;
-        /* We don't set event since we may also have to read */
+        req->async.cvalue   = wsa->cvalue;
         status = wine_server_call( req );
     }
     SERVER_END_REQ;
@@ -2484,6 +2887,294 @@ static BOOL WINAPI WS2_AcceptEx(SOCKET listener, SOCKET acceptor, PVOID dest, DW
 
     SetLastError( NtStatusToWSAError(status) );
     return FALSE;
+}
+
+/***********************************************************************
+ *     WS2_ReadFile                     (INTERNAL)
+ *
+ * Perform an APC-safe ReadFile operation
+ */
+static NTSTATUS WS2_ReadFile(HANDLE hFile, PIO_STATUS_BLOCK io_status, char* buffer, ULONG length,
+                             PLARGE_INTEGER offset)
+{
+    int result = -1, unix_handle;
+    unsigned int options;
+    NTSTATUS status;
+
+    TRACE( "(%p,%p,0x%08x)\n", hFile, buffer,length );
+
+    status = wine_server_handle_to_fd( hFile, FILE_READ_DATA, &unix_handle, &options );
+    if (status) return status;
+
+    while (result == -1)
+    {
+        if (offset->QuadPart != FILE_USE_FILE_POINTER_POSITION)
+            result = pread( unix_handle, buffer, length, offset->QuadPart );
+        else
+            result = read( unix_handle, buffer, length );
+        if (errno != EINTR)
+            break;
+    }
+
+    if (!result)
+        status = (length ? STATUS_END_OF_FILE : STATUS_SUCCESS);
+    else if (result != -1)
+        status = STATUS_SUCCESS;
+    else if (errno != EAGAIN)
+        status = wsaErrStatus();
+    else
+        status = STATUS_PENDING;
+
+    wine_server_release_fd( hFile, unix_handle );
+    TRACE("= 0x%08x (%d)\n", status, result);
+    if (status == STATUS_SUCCESS || status == STATUS_END_OF_FILE)
+    {
+        io_status->u.Status = status;
+        io_status->Information = result;
+    }
+
+    return status;
+}
+
+/***********************************************************************
+ *     WS2_transmitfile_getbuffer       (INTERNAL)
+ *
+ * Pick the appropriate buffer for a TransmitFile send operation.
+ */
+static NTSTATUS WS2_transmitfile_getbuffer( int fd, struct ws2_transmitfile_async *wsa )
+{
+    /* send any incomplete writes from a previous iteration */
+    if (wsa->write.first_iovec < wsa->write.n_iovecs)
+        return STATUS_PENDING;
+
+    /* process the header (if applicable) */
+    if (wsa->buffers.Head)
+    {
+        wsa->write.first_iovec       = 0;
+        wsa->write.n_iovecs          = 1;
+        wsa->write.iovec[0].iov_base = wsa->buffers.Head;
+        wsa->write.iovec[0].iov_len  = wsa->buffers.HeadLength;
+        wsa->buffers.Head            = NULL;
+        return STATUS_PENDING;
+    }
+
+    /* process the main file */
+    if (wsa->file)
+    {
+        DWORD bytes_per_send = wsa->bytes_per_send;
+        IO_STATUS_BLOCK iosb;
+        NTSTATUS status;
+
+        iosb.Information = 0;
+        /* when the size of the transfer is limited ensure that we don't go past that limit */
+        if (wsa->file_bytes != 0)
+            bytes_per_send = min(bytes_per_send, wsa->file_bytes - wsa->file_read);
+        status = WS2_ReadFile( wsa->file, &iosb, wsa->buffer, bytes_per_send, &wsa->offset );
+        if (wsa->offset.QuadPart != FILE_USE_FILE_POINTER_POSITION)
+            wsa->offset.QuadPart += iosb.Information;
+        if (status == STATUS_END_OF_FILE)
+            wsa->file = NULL; /* continue on to the footer */
+        else if (status != STATUS_SUCCESS)
+            return status;
+        else
+        {
+            if (iosb.Information)
+            {
+                wsa->write.first_iovec       = 0;
+                wsa->write.n_iovecs          = 1;
+                wsa->write.iovec[0].iov_base = wsa->buffer;
+                wsa->write.iovec[0].iov_len  = iosb.Information;
+                wsa->file_read += iosb.Information;
+            }
+
+            if (wsa->file_bytes != 0 && wsa->file_read >= wsa->file_bytes)
+                wsa->file = NULL;
+
+            return STATUS_PENDING;
+        }
+    }
+
+    /* send the footer (if applicable) */
+    if (wsa->buffers.Tail)
+    {
+        wsa->write.first_iovec       = 0;
+        wsa->write.n_iovecs          = 1;
+        wsa->write.iovec[0].iov_base = wsa->buffers.Tail;
+        wsa->write.iovec[0].iov_len  = wsa->buffers.TailLength;
+        wsa->buffers.Tail            = NULL;
+        return STATUS_PENDING;
+    }
+
+    return STATUS_SUCCESS;
+}
+
+/***********************************************************************
+ *     WS2_transmitfile_base            (INTERNAL)
+ *
+ * Shared implementation for both synchronous and asynchronous TransmitFile.
+ */
+static NTSTATUS WS2_transmitfile_base( int fd, struct ws2_transmitfile_async *wsa )
+{
+    NTSTATUS status;
+
+    status = WS2_transmitfile_getbuffer( fd, wsa );
+    if (status == STATUS_PENDING)
+    {
+        IO_STATUS_BLOCK *iosb = (IO_STATUS_BLOCK *)wsa->write.user_overlapped;
+        int n;
+
+        n = WS2_send( fd, &wsa->write, convert_flags(wsa->write.flags) );
+        if (n >= 0)
+        {
+            if (iosb) iosb->Information += n;
+        }
+        else if (errno != EAGAIN)
+            return wsaErrStatus();
+    }
+
+    return status;
+}
+
+/***********************************************************************
+ *     WS2_async_transmitfile           (INTERNAL)
+ *
+ * Asynchronous callback for overlapped TransmitFile operations.
+ */
+static NTSTATUS WS2_async_transmitfile( void *user, IO_STATUS_BLOCK *iosb,
+                                        NTSTATUS status, void **apc, void **arg )
+{
+    struct ws2_transmitfile_async *wsa = user;
+    int fd;
+
+    if (status == STATUS_ALERTED)
+    {
+        if (!(status = wine_server_handle_to_fd( wsa->write.hSocket, FILE_WRITE_DATA, &fd, NULL )))
+        {
+            status = WS2_transmitfile_base( fd, wsa );
+            wine_server_release_fd( wsa->write.hSocket, fd );
+        }
+        if (status == STATUS_PENDING)
+            return status;
+    }
+
+    iosb->u.Status = status;
+    release_async_io( &wsa->io );
+    return status;
+}
+
+/***********************************************************************
+ *     TransmitFile
+ */
+static BOOL WINAPI WS2_TransmitFile( SOCKET s, HANDLE h, DWORD file_bytes, DWORD bytes_per_send,
+                                     LPOVERLAPPED overlapped, LPTRANSMIT_FILE_BUFFERS buffers,
+                                     DWORD flags )
+{
+    union generic_unix_sockaddr uaddr;
+    unsigned int uaddrlen = sizeof(uaddr);
+    struct ws2_transmitfile_async *wsa;
+    NTSTATUS status;
+    int fd;
+
+    TRACE("(%lx, %p, %d, %d, %p, %p, %d)\n", s, h, file_bytes, bytes_per_send, overlapped,
+            buffers, flags );
+
+    fd = get_sock_fd( s, FILE_WRITE_DATA, NULL );
+    if (fd == -1)
+    {
+        WSASetLastError( WSAENOTSOCK );
+        return FALSE;
+    }
+    if (getpeername( fd, &uaddr.addr, &uaddrlen ) != 0)
+    {
+        release_sock_fd( s, fd );
+        WSASetLastError( WSAENOTCONN );
+        return FALSE;
+    }
+    if (flags)
+        FIXME("Flags are not currently supported (0x%x).\n", flags);
+
+    if (h && GetFileType( h ) != FILE_TYPE_DISK)
+    {
+        FIXME("Non-disk file handles are not currently supported.\n");
+        release_sock_fd( s, fd );
+        WSASetLastError( WSAEOPNOTSUPP );
+        return FALSE;
+    }
+
+    /* set reasonable defaults when requested */
+    if (!bytes_per_send)
+        bytes_per_send = (1 << 16); /* Depends on OS version: PAGE_SIZE, 2*PAGE_SIZE, or 2^16 */
+
+    if (!(wsa = (struct ws2_transmitfile_async *)alloc_async_io( sizeof(*wsa) + bytes_per_send )))
+    {
+        release_sock_fd( s, fd );
+        WSASetLastError( WSAEFAULT );
+        return FALSE;
+    }
+    if (buffers)
+        wsa->buffers = *buffers;
+    else
+        memset(&wsa->buffers, 0x0, sizeof(wsa->buffers));
+    wsa->buffer                = (char *)(wsa + 1);
+    wsa->file                  = h;
+    wsa->file_read             = 0;
+    wsa->file_bytes            = file_bytes;
+    wsa->bytes_per_send        = bytes_per_send;
+    wsa->flags                 = flags;
+    wsa->offset.QuadPart       = FILE_USE_FILE_POINTER_POSITION;
+    wsa->write.hSocket         = SOCKET2HANDLE(s);
+    wsa->write.addr            = NULL;
+    wsa->write.addrlen.val     = 0;
+    wsa->write.flags           = 0;
+    wsa->write.lpFlags         = &wsa->flags;
+    wsa->write.control         = NULL;
+    wsa->write.n_iovecs        = 0;
+    wsa->write.first_iovec     = 0;
+    wsa->write.user_overlapped = overlapped;
+    if (overlapped)
+    {
+        IO_STATUS_BLOCK *iosb = (IO_STATUS_BLOCK *)overlapped;
+        int status;
+
+        wsa->offset.u.LowPart  = overlapped->u.s.Offset;
+        wsa->offset.u.HighPart = overlapped->u.s.OffsetHigh;
+        iosb->u.Status = STATUS_PENDING;
+        iosb->Information = 0;
+        SERVER_START_REQ( register_async )
+        {
+            req->type           = ASYNC_TYPE_WRITE;
+            req->async.handle   = wine_server_obj_handle( SOCKET2HANDLE(s) );
+            req->async.event    = wine_server_obj_handle( overlapped->hEvent );
+            req->async.callback = wine_server_client_ptr( WS2_async_transmitfile );
+            req->async.iosb     = wine_server_client_ptr( iosb );
+            req->async.arg      = wine_server_client_ptr( wsa );
+            status = wine_server_call( req );
+        }
+        SERVER_END_REQ;
+
+        if(status != STATUS_PENDING) HeapFree( GetProcessHeap(), 0, wsa );
+        release_sock_fd( s, fd );
+        WSASetLastError( NtStatusToWSAError(status) );
+        return FALSE;
+    }
+
+    do
+    {
+        status = WS2_transmitfile_base( fd, wsa );
+        if (status == STATUS_PENDING)
+        {
+            /* block here */
+            do_block(fd, POLLOUT, -1);
+            _sync_sock_state(s); /* let wineserver notice connection */
+        }
+    }
+    while (status == STATUS_PENDING);
+    release_sock_fd( s, fd );
+
+    if (status != STATUS_SUCCESS)
+        WSASetLastError( NtStatusToWSAError(status) );
+    HeapFree( GetProcessHeap(), 0, wsa );
+    return (status == STATUS_SUCCESS);
 }
 
 /***********************************************************************
@@ -2563,8 +3254,6 @@ static int WINAPI WS2_WSARecvMsg( SOCKET s, LPWSAMSG msg, LPDWORD lpNumberOfByte
 static BOOL interface_bind( SOCKET s, int fd, struct sockaddr *addr )
 {
     struct sockaddr_in *in_sock = (struct sockaddr_in *) addr;
-    unsigned int sock_type = 0;
-    socklen_t optlen = sizeof(sock_type);
     in_addr_t bind_addr = in_sock->sin_addr.s_addr;
     PIP_ADAPTER_INFO adapters = NULL, adapter;
     BOOL ret = FALSE;
@@ -2573,7 +3262,7 @@ static BOOL interface_bind( SOCKET s, int fd, struct sockaddr *addr )
 
     if (bind_addr == htonl(INADDR_ANY) || bind_addr == htonl(INADDR_LOOPBACK))
         return FALSE; /* Not binding to a network adapter, special interface binding unnecessary. */
-    if (getsockopt(fd, SOL_SOCKET, SO_TYPE, &sock_type, &optlen) == -1 || sock_type != SOCK_DGRAM)
+    if (_get_fd_type(fd) != SOCK_DGRAM)
         return FALSE; /* Special interface binding is only necessary for UDP datagrams. */
     if (GetAdaptersInfo(NULL, &adap_size) != ERROR_BUFFER_OVERFLOW)
         goto cleanup;
@@ -2653,20 +3342,6 @@ int WINAPI WS_bind(SOCKET s, const struct WS_sockaddr* name, int namelen)
             }
             else
             {
-#ifdef IPV6_V6ONLY
-                const struct sockaddr_in6 *in6 = (const struct sockaddr_in6*) &uaddr;
-                if (name->sa_family == WS_AF_INET6 &&
-                    !memcmp(&in6->sin6_addr, &in6addr_any, sizeof(struct in6_addr)))
-                {
-                    int enable = 1;
-                    if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &enable, sizeof(enable)) == -1)
-                    {
-                        release_sock_fd( s, fd );
-                        SetLastError(WSAEAFNOSUPPORT);
-                        return SOCKET_ERROR;
-                    }
-                }
-#endif
                 if (name->sa_family == WS_AF_INET)
                 {
                     struct sockaddr_in *in4 = (struct sockaddr_in*) &uaddr;
@@ -2688,9 +3363,6 @@ int WINAPI WS_bind(SOCKET s, const struct WS_sockaddr* name, int namelen)
                     errno = loc_errno;
                     switch (errno)
                     {
-                    case EBADF:
-                        SetLastError(WSAENOTSOCK);
-                        break;
                     case EADDRNOTAVAIL:
                         SetLastError(WSAEINVAL);
                         break;
@@ -2729,9 +3401,23 @@ int WINAPI WS_bind(SOCKET s, const struct WS_sockaddr* name, int namelen)
  */
 int WINAPI WS_closesocket(SOCKET s)
 {
-    TRACE("socket %04lx\n", s);
-    if (CloseHandle(SOCKET2HANDLE(s))) return 0;
-    return SOCKET_ERROR;
+    int res = SOCKET_ERROR, fd;
+    if (num_startup)
+    {
+        fd = get_sock_fd(s, FILE_READ_DATA, NULL);
+        if (fd >= 0)
+        {
+            release_sock_fd(s, fd);
+            if (CloseHandle(SOCKET2HANDLE(s)))
+                res = 0;
+        }
+        else
+            SetLastError(WSAENOTSOCK);
+    }
+    else
+        SetLastError(WSANOTINITIALISED);
+    TRACE("(socket %04lx) -> %d\n", s, res);
+    return res;
 }
 
 static int do_connect(int fd, const struct WS_sockaddr* name, int namelen)
@@ -2824,6 +3510,7 @@ connect_success:
     _enable_event(SOCKET2HANDLE(s), FD_CONNECT|FD_READ|FD_WRITE,
                   FD_WINE_CONNECTED|FD_READ|FD_WRITE,
                   FD_CONNECT|FD_WINE_LISTENING);
+    TRACE("\tconnected %04lx\n", s);
     return 0;
 }
 
@@ -2846,8 +3533,6 @@ static BOOL WINAPI WS2_ConnectEx(SOCKET s, const struct WS_sockaddr* name, int n
                           PVOID sendBuf, DWORD sendBufLen, LPDWORD sent, LPOVERLAPPED ov)
 {
     int fd, ret, status;
-    union generic_unix_sockaddr uaddr;
-    socklen_t uaddrlen = sizeof(uaddr);
 
     if (!ov)
     {
@@ -2865,14 +3550,11 @@ static BOOL WINAPI WS2_ConnectEx(SOCKET s, const struct WS_sockaddr* name, int n
     TRACE("socket %04lx, ptr %p %s, length %d, sendptr %p, len %d, ov %p\n",
           s, name, debugstr_sockaddr(name), namelen, sendBuf, sendBufLen, ov);
 
-    if (getsockname(fd, &uaddr.addr, &uaddrlen) != 0)
+    ret = is_fd_bound(fd, NULL, NULL);
+    if (ret <= 0)
     {
-        SetLastError(wsaErrno());
-        return FALSE;
-    }
-    else if (!is_sockaddr_bound(&uaddr.addr, uaddrlen))
-    {
-        SetLastError(WSAEINVAL);
+        SetLastError(ret == -1 ? wsaErrno() : WSAEINVAL);
+        release_sock_fd( s, fd );
         return FALSE;
     }
 
@@ -2902,7 +3584,7 @@ static BOOL WINAPI WS2_ConnectEx(SOCKET s, const struct WS_sockaddr* name, int n
                       FD_WINE_CONNECTED|FD_WINE_LISTENING);
 
         /* Indirectly call WSASend */
-        if (!(wsa = HeapAlloc( GetProcessHeap(), 0, FIELD_OFFSET( struct ws2_async, iovec[1] ))))
+        if (!(wsa = (struct ws2_async *)alloc_async_io( offsetof( struct ws2_async, iovec[1] ))))
         {
             SetLastError(WSAEFAULT);
         }
@@ -2958,6 +3640,24 @@ connection_success:
     return TRUE;
 }
 
+/***********************************************************************
+ *             DisconnectEx
+ */
+static BOOL WINAPI WS2_DisconnectEx( SOCKET s, LPOVERLAPPED ov, DWORD flags, DWORD reserved )
+{
+    TRACE( "socket %04lx, ov %p, flags 0x%x, reserved 0x%x\n", s, ov, flags, reserved );
+
+    if (flags & TF_REUSE_SOCKET)
+        FIXME( "Reusing socket not supported yet\n" );
+
+    if (ov)
+    {
+        ov->Internal = STATUS_PENDING;
+        ov->InternalHigh = 0;
+    }
+
+    return !WS_shutdown( s, SD_BOTH );
+}
 
 /***********************************************************************
  *		getpeername		(WS2_32.5)
@@ -2967,7 +3667,7 @@ int WINAPI WS_getpeername(SOCKET s, struct WS_sockaddr *name, int *namelen)
     int fd;
     int res;
 
-    TRACE("socket: %04lx, ptr %p, len %08x\n", s, name, namelen ? *namelen : 0);
+    TRACE("socket %04lx, ptr %p, len %08x\n", s, name, namelen ? *namelen : 0);
 
     fd = get_sock_fd( s, 0, NULL );
     res = SOCKET_ERROR;
@@ -2997,6 +3697,61 @@ int WINAPI WS_getpeername(SOCKET s, struct WS_sockaddr *name, int *namelen)
     return res;
 }
 
+/* When binding to an UDP address with filter support the getsockname call on the socket
+ * will always return 0.0.0.0 instead of the filtered interface address. This function
+ * checks if the socket is interface-bound on UDP and return the correct address.
+ * This is required because applications often do a bind() with port zero followed by a
+ * getsockname() to retrieve the port and address acquired.
+ */
+static void interface_bind_check(int fd, struct sockaddr_in *addr)
+{
+#if !defined(IP_BOUND_IF) && !defined(LINUX_BOUND_IF)
+    return;
+#else
+    int ifindex;
+    socklen_t len;
+
+    /* Check for IPv4, address 0.0.0.0 and UDP socket */
+    if (addr->sin_family != AF_INET || addr->sin_addr.s_addr != 0)
+        return;
+    if (_get_fd_type(fd) != SOCK_DGRAM)
+        return;
+
+    ifindex = -1;
+    len = sizeof(ifindex);
+#if defined(IP_BOUND_IF)
+    getsockopt(fd, IPPROTO_IP, IP_BOUND_IF, &ifindex, &len);
+#elif defined(LINUX_BOUND_IF)
+    getsockopt(fd, IPPROTO_IP, IP_UNICAST_IF, &ifindex, &len);
+    if (ifindex > 0) ifindex = ntohl(ifindex);
+#endif
+    if (ifindex > 0)
+    {
+        PIP_ADAPTER_INFO adapters, adapter;
+        DWORD adap_size;
+
+        if (GetAdaptersInfo(NULL, &adap_size) != ERROR_BUFFER_OVERFLOW)
+            return;
+        adapters = HeapAlloc(GetProcessHeap(), 0, adap_size);
+        if (adapters && GetAdaptersInfo(adapters, &adap_size) == NO_ERROR)
+        {
+            /* Search the IPv4 adapter list for the appropriate bound interface */
+            for (adapter = adapters; adapter != NULL; adapter = adapter->Next)
+            {
+                in_addr_t adapter_addr;
+                if (adapter->Index != ifindex) continue;
+
+                adapter_addr = inet_addr(adapter->IpAddressList.IpAddress.String);
+                addr->sin_addr.s_addr = adapter_addr;
+                TRACE("reporting interface address from adapter %d\n", ifindex);
+                break;
+            }
+        }
+        HeapFree(GetProcessHeap(), 0, adapters);
+    }
+#endif
+}
+
 /***********************************************************************
  *		getsockname		(WS2_32.6)
  */
@@ -3005,7 +3760,7 @@ int WINAPI WS_getsockname(SOCKET s, struct WS_sockaddr *name, int *namelen)
     int fd;
     int res;
 
-    TRACE("socket: %04lx, ptr %p, len %08x\n", s, name, namelen ? *namelen : 0);
+    TRACE("socket %04lx, ptr %p, len %08x\n", s, name, namelen ? *namelen : 0);
 
     /* Check if what we've received is valid. Should we use IsBadReadPtr? */
     if( (name == NULL) || (namelen == NULL) )
@@ -3020,15 +3775,12 @@ int WINAPI WS_getsockname(SOCKET s, struct WS_sockaddr *name, int *namelen)
     if (fd != -1)
     {
         union generic_unix_sockaddr uaddr;
-        socklen_t uaddrlen = sizeof(uaddr);
+        socklen_t uaddrlen;
+        int bound = is_fd_bound(fd, &uaddr, &uaddrlen);
 
-        if (getsockname(fd, &uaddr.addr, &uaddrlen) != 0)
+        if (bound <= 0)
         {
-            SetLastError(wsaErrno());
-        }
-        else if (!is_sockaddr_bound(&uaddr.addr, uaddrlen))
-        {
-            SetLastError(WSAEINVAL);
+            SetLastError(bound == -1 ? wsaErrno() : WSAEINVAL);
         }
         else if (ws_sockaddr_u2ws(&uaddr.addr, name, namelen) != 0)
         {
@@ -3037,8 +3789,17 @@ int WINAPI WS_getsockname(SOCKET s, struct WS_sockaddr *name, int *namelen)
         }
         else
         {
-            res=0;
-            TRACE("=> %s\n", debugstr_sockaddr(name));
+            interface_bind_check(fd, (struct sockaddr_in*) &uaddr);
+            if (ws_sockaddr_u2ws(&uaddr.addr, name, namelen) != 0)
+            {
+                /* The buffer was too small */
+                SetLastError(WSAEFAULT);
+            }
+            else
+            {
+                res = 0;
+                TRACE("=> %s\n", debugstr_sockaddr(name));
+            }
         }
         release_sock_fd( s, fd );
     }
@@ -3054,8 +3815,9 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
     int fd;
     INT ret = 0;
 
-    TRACE("socket: %04lx, level 0x%x, name 0x%x, ptr %p, len %d\n",
-          s, level, optname, optval, optlen ? *optlen : 0);
+    TRACE("(socket %04lx, %s, optval %s, optlen %p (%d))\n", s,
+          debugstr_sockopt(level, optname), debugstr_optval(optval, 0),
+          optlen, optlen ? *optlen : 0);
 
     switch(level)
     {
@@ -3067,7 +3829,6 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
          * alphabetically */
         case WS_SO_BROADCAST:
         case WS_SO_DEBUG:
-        case WS_SO_ERROR:
         case WS_SO_KEEPALIVE:
         case WS_SO_OOBINLINE:
         case WS_SO_RCVBUF:
@@ -3078,7 +3839,7 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
             convert_sockopt(&level, &optname);
             if (getsockopt(fd, level, optname, optval, (socklen_t *)optlen) != 0 )
             {
-                SetLastError((errno == EBADF) ? WSAENOTSOCK : wsaErrno());
+                SetLastError(wsaErrno());
                 ret = SOCKET_ERROR;
             }
             release_sock_fd( s, fd );
@@ -3088,7 +3849,7 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
                 return SOCKET_ERROR;
             if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, optval, (socklen_t *)optlen) != 0 )
             {
-                SetLastError((errno == EBADF) ? WSAENOTSOCK : wsaErrno());
+                SetLastError(wsaErrno());
                 ret = SOCKET_ERROR;
             }
             else
@@ -3127,7 +3888,7 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
                 else
                 {
                     union generic_unix_sockaddr uaddr;
-                    socklen_t uaddrlen = sizeof(uaddr);
+                    socklen_t uaddrlen;
 
                     if ( (fd = get_sock_fd( s, 0, NULL )) == -1)
                         return SOCKET_ERROR;
@@ -3135,8 +3896,7 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
                     csinfo = (CSADDR_INFO*) optval;
 
                     /* Check if the sock is bound */
-                    if (!getsockname(fd, &uaddr.addr, &uaddrlen) &&
-                        is_sockaddr_bound(&uaddr.addr, uaddrlen))
+                    if (is_fd_bound(fd, &uaddr, &uaddrlen) == 1)
                     {
                         csinfo->LocalAddr.lpSockaddr =
                             (LPSOCKADDR) (optval + sizeof(CSADDR_INFO));
@@ -3186,7 +3946,7 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
 
             if (getsockopt(fd, SOL_SOCKET, SO_LINGER, &lingval, &len) != 0 )
             {
-                SetLastError((errno == EBADF) ? WSAENOTSOCK : wsaErrno());
+                SetLastError(wsaErrno());
                 ret = SOCKET_ERROR;
             }
             else
@@ -3232,11 +3992,40 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
             *optlen = sizeof(BOOL);
             return 0;
 
+        case WS_SO_ERROR:
+        {
+            if ( (fd = get_sock_fd( s, 0, NULL )) == -1)
+                return SOCKET_ERROR;
+            if (getsockopt(fd, SOL_SOCKET, SO_ERROR, optval, (socklen_t *)optlen) != 0 )
+            {
+                SetLastError(wsaErrno());
+                ret = SOCKET_ERROR;
+            }
+            release_sock_fd( s, fd );
+
+            /* The wineserver may have swallowed the error before us */
+            if (!ret && *(int*) optval == 0)
+            {
+                int i, events[FD_MAX_EVENTS];
+                _get_sock_errors(s, events);
+                for (i = 0; i < FD_MAX_EVENTS; i++)
+                {
+                    if(events[i])
+                    {
+                        events[i] = NtStatusToWSAError(events[i]);
+                        TRACE("returning SO_ERROR %d from wine server\n", events[i]);
+                        *(int*) optval = events[i];
+                        break;
+                    }
+                }
+            }
+            return ret;
+        }
+
         case WS_SO_LINGER:
         {
             struct linger lingval;
-            int so_type;
-            socklen_t len = sizeof(struct linger), slen = sizeof(int);
+            socklen_t len = sizeof(struct linger);
 
             /* struct linger and LINGER have different sizes */
             if (!optlen || *optlen < sizeof(LINGER) || !optval)
@@ -3247,14 +4036,14 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
             if ( (fd = get_sock_fd( s, 0, NULL )) == -1)
                 return SOCKET_ERROR;
 
-            if ((getsockopt(fd, SOL_SOCKET, SO_TYPE, &so_type, &slen) == 0 && so_type == SOCK_DGRAM))
+            if (_get_fd_type(fd) == SOCK_DGRAM)
             {
                 SetLastError(WSAENOPROTOOPT);
                 ret = SOCKET_ERROR;
             }
             else if (getsockopt(fd, SOL_SOCKET, SO_LINGER, &lingval, &len) != 0)
             {
-                SetLastError((errno == EBADF) ? WSAENOTSOCK : wsaErrno());
+                SetLastError(wsaErrno());
                 ret = SOCKET_ERROR;
             }
             else
@@ -3310,16 +4099,10 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
             }
             return ret ? 0 : SOCKET_ERROR;
         }
-#ifdef SO_RCVTIMEO
         case WS_SO_RCVTIMEO:
-#endif
-#ifdef SO_SNDTIMEO
         case WS_SO_SNDTIMEO:
-#endif
-#if defined(SO_RCVTIMEO) || defined(SO_SNDTIMEO)
         {
-            struct timeval tv;
-            socklen_t len = sizeof(struct timeval);
+            INT64 timeout;
 
             if (!optlen || *optlen < sizeof(int)|| !optval)
             {
@@ -3329,24 +4112,15 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
             if ( (fd = get_sock_fd( s, 0, NULL )) == -1)
                 return SOCKET_ERROR;
 
-            convert_sockopt(&level, &optname);
-            if (getsockopt(fd, level, optname, &tv, &len) != 0 )
-            {
-                SetLastError((errno == EBADF) ? WSAENOTSOCK : wsaErrno());
-                ret = SOCKET_ERROR;
-            }
-            else
-            {
-                *(int *)optval = tv.tv_sec * 1000 + tv.tv_usec / 1000;
-                *optlen = sizeof(int);
-            }
+            timeout = get_rcvsnd_timeo(fd, optname == WS_SO_RCVTIMEO);
+            *(int *)optval = timeout <= UINT_MAX ? timeout : UINT_MAX;
 
             release_sock_fd( s, fd );
             return ret;
         }
-#endif
         case WS_SO_TYPE:
         {
+            int sock_type;
             if (!optlen || *optlen < sizeof(int) || !optval)
             {
                 SetLastError(WSAEFAULT);
@@ -3355,13 +4129,14 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
             if ( (fd = get_sock_fd( s, 0, NULL )) == -1)
                 return SOCKET_ERROR;
 
-            if (getsockopt(fd, SOL_SOCKET, SO_TYPE, optval, (socklen_t *)optlen) != 0 )
+            sock_type = _get_fd_type(fd);
+            if (sock_type == -1)
             {
-                SetLastError((errno == EBADF) ? WSAENOTSOCK : wsaErrno());
+                SetLastError(wsaErrno());
                 ret = SOCKET_ERROR;
             }
             else
-                (*(int *)optval) = convert_socktype_u2w(*(int *)optval);
+                (*(int *)optval) = convert_socktype_u2w(sock_type);
 
             release_sock_fd( s, fd );
             return ret;
@@ -3518,7 +4293,7 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
             convert_sockopt(&level, &optname);
             if (getsockopt(fd, level, optname, optval, (socklen_t *)optlen) != 0 )
             {
-                SetLastError((errno == EBADF) ? WSAENOTSOCK : wsaErrno());
+                SetLastError(wsaErrno());
                 ret = SOCKET_ERROR;
             }
             release_sock_fd( s, fd );
@@ -3552,15 +4327,13 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
             convert_sockopt(&level, &optname);
             if (getsockopt(fd, level, optname, optval, (socklen_t *)optlen) != 0 )
             {
-                SetLastError((errno == EBADF) ? WSAENOTSOCK : wsaErrno());
+                SetLastError(wsaErrno());
                 ret = SOCKET_ERROR;
             }
             release_sock_fd( s, fd );
             return ret;
         case WS_IP_DONTFRAGMENT:
-            FIXME("WS_IP_DONTFRAGMENT is always false!\n");
-            *(BOOL*)optval = FALSE;
-            return 0;
+            return get_dont_fragment(s, IPPROTO_IP, (BOOL *)optval) ? 0 : SOCKET_ERROR;
         }
         FIXME("Unknown IPPROTO_IP optname 0x%08x\n", optname);
         return SOCKET_ERROR;
@@ -3587,15 +4360,13 @@ INT WINAPI WS_getsockopt(SOCKET s, INT level,
             convert_sockopt(&level, &optname);
             if (getsockopt(fd, level, optname, optval, (socklen_t *)optlen) != 0 )
             {
-                SetLastError((errno == EBADF) ? WSAENOTSOCK : wsaErrno());
+                SetLastError(wsaErrno());
                 ret = SOCKET_ERROR;
             }
             release_sock_fd( s, fd );
             return ret;
         case WS_IPV6_DONTFRAG:
-            FIXME("WS_IPV6_DONTFRAG is always false!\n");
-            *(BOOL*)optval = FALSE;
-            return 0;
+            return get_dont_fragment(s, IPPROTO_IPV6, (BOOL *)optval) ? 0 : SOCKET_ERROR;
         }
         FIXME("Unknown IPPROTO_IPV6 optname 0x%08x\n", optname);
         return SOCKET_ERROR;
@@ -3695,22 +4466,73 @@ WS_u_short WINAPI WS_ntohs(WS_u_short netshort)
  */
 char* WINAPI WS_inet_ntoa(struct WS_in_addr in)
 {
-    char* s = inet_ntoa(*((struct in_addr*)&in));
-    if( s )
-    {
-        struct per_thread_data *data = get_per_thread_data();
-        strcpy(data->ntoa_buffer, s);
-        return data->ntoa_buffer;
-    }
-    SetLastError(wsaErrno());
-    return NULL;
+    unsigned int long_ip = ntohl(in.WS_s_addr);
+    struct per_thread_data *data = get_per_thread_data();
+
+    sprintf( data->ntoa_buffer, "%u.%u.%u.%u",
+            (long_ip >> 24) & 0xff,
+            (long_ip >> 16) & 0xff,
+            (long_ip >> 8) & 0xff,
+            long_ip & 0xff);
+
+    return data->ntoa_buffer;
 }
 
-static const char *debugstr_wsaioctl(DWORD ioctl)
+static const char *debugstr_wsaioctl(DWORD code)
 {
-    const char *buf_type, *family;
+    const char *name = NULL, *buf_type, *family;
 
-    switch(ioctl & 0x18000000)
+#define IOCTL_NAME(x) case x: name = #x; break
+    switch (code)
+    {
+        IOCTL_NAME(WS_FIONBIO);
+        IOCTL_NAME(WS_FIONREAD);
+        IOCTL_NAME(WS_SIOCATMARK);
+        /* IOCTL_NAME(WS_SIO_ACQUIRE_PORT_RESERVATION); */
+        IOCTL_NAME(WS_SIO_ADDRESS_LIST_CHANGE);
+        IOCTL_NAME(WS_SIO_ADDRESS_LIST_QUERY);
+        IOCTL_NAME(WS_SIO_ASSOCIATE_HANDLE);
+        /* IOCTL_NAME(WS_SIO_ASSOCIATE_PORT_RESERVATION);
+        IOCTL_NAME(WS_SIO_BASE_HANDLE);
+        IOCTL_NAME(WS_SIO_BSP_HANDLE);
+        IOCTL_NAME(WS_SIO_BSP_HANDLE_SELECT);
+        IOCTL_NAME(WS_SIO_BSP_HANDLE_POLL);
+        IOCTL_NAME(WS_SIO_CHK_QOS); */
+        IOCTL_NAME(WS_SIO_ENABLE_CIRCULAR_QUEUEING);
+        IOCTL_NAME(WS_SIO_FIND_ROUTE);
+        IOCTL_NAME(WS_SIO_FLUSH);
+        IOCTL_NAME(WS_SIO_GET_BROADCAST_ADDRESS);
+        IOCTL_NAME(WS_SIO_GET_EXTENSION_FUNCTION_POINTER);
+        IOCTL_NAME(WS_SIO_GET_GROUP_QOS);
+        IOCTL_NAME(WS_SIO_GET_INTERFACE_LIST);
+        /* IOCTL_NAME(WS_SIO_GET_INTERFACE_LIST_EX); */
+        IOCTL_NAME(WS_SIO_GET_QOS);
+        /* IOCTL_NAME(WS_SIO_IDEAL_SEND_BACKLOG_CHANGE);
+        IOCTL_NAME(WS_SIO_IDEAL_SEND_BACKLOG_QUERY); */
+        IOCTL_NAME(WS_SIO_KEEPALIVE_VALS);
+        IOCTL_NAME(WS_SIO_MULTIPOINT_LOOPBACK);
+        IOCTL_NAME(WS_SIO_MULTICAST_SCOPE);
+        /* IOCTL_NAME(WS_SIO_QUERY_RSS_SCALABILITY_INFO);
+        IOCTL_NAME(WS_SIO_QUERY_WFP_ALE_ENDPOINT_HANDLE); */
+        IOCTL_NAME(WS_SIO_RCVALL);
+        IOCTL_NAME(WS_SIO_RCVALL_IGMPMCAST);
+        IOCTL_NAME(WS_SIO_RCVALL_MCAST);
+        /* IOCTL_NAME(WS_SIO_RELEASE_PORT_RESERVATION); */
+        IOCTL_NAME(WS_SIO_ROUTING_INTERFACE_CHANGE);
+        IOCTL_NAME(WS_SIO_ROUTING_INTERFACE_QUERY);
+        IOCTL_NAME(WS_SIO_SET_COMPATIBILITY_MODE);
+        IOCTL_NAME(WS_SIO_SET_GROUP_QOS);
+        IOCTL_NAME(WS_SIO_SET_QOS);
+        IOCTL_NAME(WS_SIO_TRANSLATE_HANDLE);
+        IOCTL_NAME(WS_SIO_UDP_CONNRESET);
+    }
+#undef IOCTL_NAME
+
+    if (name)
+        return name + 3;
+
+    /* If this is not a known code split its bits */
+    switch(code & 0x18000000)
     {
     case WS_IOC_WS2:
         family = "IOC_WS2";
@@ -3723,12 +4545,12 @@ static const char *debugstr_wsaioctl(DWORD ioctl)
         break;
     default: /* WS_IOC_UNIX */
     {
-        BYTE size = (ioctl >> 16) & WS_IOCPARM_MASK;
-        char x = (ioctl & 0xff00) >> 8;
-        BYTE y = ioctl & 0xff;
+        BYTE size = (code >> 16) & WS_IOCPARM_MASK;
+        char x = (code & 0xff00) >> 8;
+        BYTE y = code & 0xff;
         char args[14];
 
-        switch (ioctl & (WS_IOC_VOID|WS_IOC_INOUT))
+        switch (code & (WS_IOC_VOID|WS_IOC_INOUT))
         {
             case WS_IOC_VOID:
                 buf_type = "_IO";
@@ -3752,7 +4574,7 @@ static const char *debugstr_wsaioctl(DWORD ioctl)
     }
 
     /* We are different from WS_IOC_UNIX. */
-    switch (ioctl & (WS_IOC_VOID|WS_IOC_INOUT))
+    switch (code & (WS_IOC_VOID|WS_IOC_INOUT))
     {
         case WS_IOC_VOID:
             buf_type = "_WSAIO";
@@ -3772,7 +4594,7 @@ static const char *debugstr_wsaioctl(DWORD ioctl)
     }
 
     return wine_dbg_sprintf("%s(%s, %d)", buf_type, family,
-                            (USHORT)(ioctl & 0xffff));
+                            (USHORT)(code & 0xffff));
 }
 
 /* do an ioctl call through the server */
@@ -3783,18 +4605,27 @@ static DWORD server_ioctl_sock( SOCKET s, DWORD code, LPVOID in_buff, DWORD in_s
 {
     HANDLE event = overlapped ? overlapped->hEvent : 0;
     HANDLE handle = SOCKET2HANDLE( s );
-    struct ws2_async *wsa;
+    struct ws2_async *wsa = NULL;
+    IO_STATUS_BLOCK *io = (PIO_STATUS_BLOCK)overlapped, iosb;
+    void *cvalue = NULL;
     NTSTATUS status;
-    PIO_STATUS_BLOCK io;
 
-    if (!(wsa = RtlAllocateHeap( GetProcessHeap(), 0, sizeof(*wsa) )))
-        return WSA_NOT_ENOUGH_MEMORY;
-    wsa->hSocket           = handle;
-    wsa->user_overlapped   = overlapped;
-    wsa->completion_func   = completion;
-    io = (overlapped ? (PIO_STATUS_BLOCK)overlapped : &wsa->local_iosb);
+    if (completion)
+    {
+        if (!(wsa = (struct ws2_async *)alloc_async_io( sizeof(*wsa) )))
+            return WSA_NOT_ENOUGH_MEMORY;
+        wsa->hSocket           = handle;
+        wsa->user_overlapped   = overlapped;
+        wsa->completion_func   = completion;
+        if (!io) io = &wsa->local_iosb;
+        cvalue = wsa;
+    }
+    else if (!io)
+        io = &iosb;
+    else if (!((ULONG_PTR)overlapped->hEvent & 1))
+        cvalue = overlapped;
 
-    status = NtDeviceIoControlFile( handle, event, (PIO_APC_ROUTINE)ws2_async_apc, wsa, io, code,
+    status = NtDeviceIoControlFile( handle, event, wsa ? ws2_async_apc : NULL, cvalue, io, code,
                                     in_buff, in_size, out_buff, out_size );
     if (status == STATUS_NOT_SUPPORTED)
     {
@@ -3853,7 +4684,7 @@ INT WINAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in_buff, DWORD in_size, LPVOID 
         }
         if ((fd = get_sock_fd( s, 0, NULL )) == -1) return SOCKET_ERROR;
         if (ioctl(fd, FIONREAD, out_buff ) == -1)
-            status = (errno == EBADF) ? WSAENOTSOCK : wsaErrno();
+            status = wsaErrno();
         release_sock_fd( s, fd );
         break;
     }
@@ -3871,14 +4702,14 @@ INT WINAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in_buff, DWORD in_size, LPVOID 
         /* SO_OOBINLINE sockets must always return TRUE to SIOCATMARK */
         if ((getsockopt(fd, SOL_SOCKET, SO_OOBINLINE, &oob, &oobsize ) == -1)
            || (!oob && ioctl(fd, SIOCATMARK, &atmark ) == -1))
-            status = (errno == EBADF) ? WSAENOTSOCK : wsaErrno();
+            status = wsaErrno();
         else
         {
             /* The SIOCATMARK value read from ioctl() is reversed
              * because BSD returns TRUE if it's in the OOB mark
              * while Windows returns TRUE if there are NO OOB bytes.
              */
-            (*(WS_u_long *) out_buff) = oob | !atmark;
+            (*(WS_u_long *) out_buff) = oob || !atmark;
         }
 
         release_sock_fd( s, fd );
@@ -3964,19 +4795,17 @@ INT WINAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in_buff, DWORD in_size, LPVOID 
                         addr = inet_addr(ptr->IpAddressList.IpAddress.String);
                         mask = inet_addr(ptr->IpAddressList.IpMask.String);
                         bcast = addr | ~mask;
-                        intArray->iiAddress.AddressIn.sin_family = AF_INET;
+                        intArray->iiAddress.AddressIn.sin_family = WS_AF_INET;
                         intArray->iiAddress.AddressIn.sin_port = 0;
-                        intArray->iiAddress.AddressIn.sin_addr.WS_s_addr =
-                         addr;
-                        intArray->iiNetmask.AddressIn.sin_family = AF_INET;
+                        intArray->iiAddress.AddressIn.sin_addr.WS_s_addr = addr;
+
+                        intArray->iiNetmask.AddressIn.sin_family = WS_AF_INET;
                         intArray->iiNetmask.AddressIn.sin_port = 0;
-                        intArray->iiNetmask.AddressIn.sin_addr.WS_s_addr =
-                         mask;
-                        intArray->iiBroadcastAddress.AddressIn.sin_family =
-                         AF_INET;
+                        intArray->iiNetmask.AddressIn.sin_addr.WS_s_addr = mask;
+
+                        intArray->iiBroadcastAddress.AddressIn.sin_family = WS_AF_INET;
                         intArray->iiBroadcastAddress.AddressIn.sin_port = 0;
-                        intArray->iiBroadcastAddress.AddressIn.sin_addr.
-                         WS_s_addr = bcast;
+                        intArray->iiBroadcastAddress.AddressIn.sin_addr.WS_s_addr = bcast;
                         intArray++;
                         numInt++;
                      }
@@ -4060,7 +4889,7 @@ INT WINAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in_buff, DWORD in_size, LPVOID 
                 sa[i].lpSockaddr = (SOCKADDR *)&sockaddr[i];
                 sa[i].iSockaddrLength = sizeof(SOCKADDR);
 
-                sockaddr[i].sin_family = AF_INET;
+                sockaddr[i].sin_family = WS_AF_INET;
                 sockaddr[i].sin_port = 0;
                 sockaddr[i].sin_addr.WS_s_addr = inet_addr(p->IpAddressList.IpAddress.String);
                 i++;
@@ -4098,7 +4927,8 @@ INT WINAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in_buff, DWORD in_size, LPVOID 
         }
         else if ( IsEqualGUID(&disconnectex_guid, in_buff) )
         {
-            FIXME("SIO_GET_EXTENSION_FUNCTION_POINTER: unimplemented DisconnectEx\n");
+            *(LPFN_DISCONNECTEX *)out_buff = WS2_DisconnectEx;
+            break;
         }
         else if ( IsEqualGUID(&acceptex_guid, in_buff) )
         {
@@ -4112,7 +4942,8 @@ INT WINAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in_buff, DWORD in_size, LPVOID 
         }
         else if ( IsEqualGUID(&transmitfile_guid, in_buff) )
         {
-            FIXME("SIO_GET_EXTENSION_FUNCTION_POINTER: unimplemented TransmitFile\n");
+            *(LPFN_TRANSMITFILE *)out_buff = WS2_TransmitFile;
+            break;
         }
         else if ( IsEqualGUID(&transmitpackets_guid, in_buff) )
         {
@@ -4155,14 +4986,23 @@ INT WINAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in_buff, DWORD in_size, LPVOID 
         fd = get_sock_fd(s, 0, NULL);
         if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, (void *)&keepalive, sizeof(int)) == -1)
             status = WSAEINVAL;
-#if defined(TCP_KEEPIDLE) && defined(TCP_KEEPINTVL)
+#if defined(TCP_KEEPIDLE) || defined(TCP_KEEPINTVL)
         /* these values need to be set only if SO_KEEPALIVE is enabled */
         else if(keepalive)
         {
+#ifndef TCP_KEEPIDLE
+            FIXME("ignoring keepalive timeout\n");
+#else
             if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, (void *)&keepidle, sizeof(int)) == -1)
                 status = WSAEINVAL;
-            else if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, (void *)&keepintvl, sizeof(int)) == -1)
+            else
+#endif
+#ifdef TCP_KEEPINTVL
+            if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, (void *)&keepintvl, sizeof(int)) == -1)
                 status = WSAEINVAL;
+#else
+                FIXME("ignoring keepalive interval\n");
+#endif
         }
 #else
         else
@@ -4188,7 +5028,7 @@ INT WINAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in_buff, DWORD in_size, LPVOID 
            SetLastError(WSAEFAULT);
            return SOCKET_ERROR;
        }
-       if (daddr->sa_family != AF_INET)
+       if (daddr->sa_family != WS_AF_INET)
        {
            FIXME("unsupported address family %d\n", daddr->sa_family);
            status = WSAEAFNOSUPPORT;
@@ -4221,7 +5061,7 @@ INT WINAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in_buff, DWORD in_size, LPVOID 
            status = WSAEFAULT;
            break;
        }
-       saddr_in->sin_family = AF_INET;
+       saddr_in->sin_family = WS_AF_INET;
        saddr_in->sin_addr.S_un.S_addr = ipAddrTable->table[found_index].dwAddr;
        saddr_in->sin_port = 0;
        total = sizeof(struct WS_sockaddr_in);
@@ -4304,16 +5144,11 @@ int WINAPI WS_listen(SOCKET s, int backlog)
     TRACE("socket %04lx, backlog %d\n", s, backlog);
     if (fd != -1)
     {
-        union generic_unix_sockaddr uaddr;
-        socklen_t uaddrlen = sizeof(uaddr);
+        int bound = is_fd_bound(fd, NULL, NULL);
 
-        if (getsockname(fd, &uaddr.addr, &uaddrlen) != 0)
+        if (bound <= 0)
         {
-            SetLastError(wsaErrno());
-        }
-        else if (!is_sockaddr_bound(&uaddr.addr, uaddrlen))
-        {
-            SetLastError(WSAEINVAL);
+            SetLastError(bound == -1 ? wsaErrno() : WSAEINVAL);
         }
         else if (listen(fd, backlog) == 0)
         {
@@ -4372,6 +5207,7 @@ static struct pollfd *fd_sets_to_poll( const WS_fd_set *readfds, const WS_fd_set
 {
     unsigned int i, j = 0, count = 0;
     struct pollfd *fds;
+    struct per_thread_data *ptb = get_per_thread_data();
 
     if (readfds) count += readfds->fd_count;
     if (writefds) count += writefds->fd_count;
@@ -4382,34 +5218,81 @@ static struct pollfd *fd_sets_to_poll( const WS_fd_set *readfds, const WS_fd_set
         SetLastError(WSAEINVAL);
         return NULL;
     }
-    if (!(fds = HeapAlloc( GetProcessHeap(), 0, count * sizeof(fds[0]))))
+
+    /* check if the cache can hold all descriptors, if not do the resizing */
+    if (ptb->fd_count < count)
     {
-        SetLastError( ERROR_NOT_ENOUGH_MEMORY );
-        return NULL;
+        if (!(fds = HeapAlloc(GetProcessHeap(), 0, count * sizeof(fds[0]))))
+        {
+            SetLastError( ERROR_NOT_ENOUGH_MEMORY );
+            return NULL;
+        }
+        HeapFree(GetProcessHeap(), 0, ptb->fd_cache);
+        ptb->fd_cache = fds;
+        ptb->fd_count = count;
     }
+    else
+        fds = ptb->fd_cache;
+
     if (readfds)
         for (i = 0; i < readfds->fd_count; i++, j++)
         {
             fds[j].fd = get_sock_fd( readfds->fd_array[i], FILE_READ_DATA, NULL );
             if (fds[j].fd == -1) goto failed;
-            fds[j].events = POLLIN;
             fds[j].revents = 0;
+            if (is_fd_bound(fds[j].fd, NULL, NULL) == 1)
+            {
+                fds[j].events = POLLIN;
+            }
+            else
+            {
+                release_sock_fd( readfds->fd_array[i], fds[j].fd );
+                fds[j].fd = -1;
+                fds[j].events = 0;
+            }
         }
     if (writefds)
         for (i = 0; i < writefds->fd_count; i++, j++)
         {
             fds[j].fd = get_sock_fd( writefds->fd_array[i], FILE_WRITE_DATA, NULL );
             if (fds[j].fd == -1) goto failed;
-            fds[j].events = POLLOUT;
             fds[j].revents = 0;
+            if (is_fd_bound(fds[j].fd, NULL, NULL) == 1 ||
+                _get_fd_type(fds[j].fd) == SOCK_DGRAM)
+            {
+                fds[j].events = POLLOUT;
+            }
+            else
+            {
+                release_sock_fd( writefds->fd_array[i], fds[j].fd );
+                fds[j].fd = -1;
+                fds[j].events = 0;
+            }
         }
     if (exceptfds)
         for (i = 0; i < exceptfds->fd_count; i++, j++)
         {
             fds[j].fd = get_sock_fd( exceptfds->fd_array[i], 0, NULL );
             if (fds[j].fd == -1) goto failed;
-            fds[j].events = POLLHUP;
             fds[j].revents = 0;
+            if (is_fd_bound(fds[j].fd, NULL, NULL) == 1)
+            {
+                int oob_inlined = 0;
+                socklen_t olen = sizeof(oob_inlined);
+
+                fds[j].events = POLLHUP;
+
+                /* Check if we need to test for urgent data or not */
+                getsockopt(fds[j].fd, SOL_SOCKET, SO_OOBINLINE, (char*) &oob_inlined, &olen);
+                if (!oob_inlined)
+                    fds[j].events |= POLLPRI;
+            }
+            else
+            {
+                release_sock_fd( exceptfds->fd_array[i], fds[j].fd );
+                fds[j].fd = -1;
+                fds[j].events = 0;
+            }
         }
     return fds;
 
@@ -4418,14 +5301,13 @@ failed:
     j = 0;
     if (readfds)
         for (i = 0; i < readfds->fd_count && j < count; i++, j++)
-            release_sock_fd( readfds->fd_array[i], fds[j].fd );
+            if (fds[j].fd != -1) release_sock_fd( readfds->fd_array[i], fds[j].fd );
     if (writefds)
         for (i = 0; i < writefds->fd_count && j < count; i++, j++)
-            release_sock_fd( writefds->fd_array[i], fds[j].fd );
+            if (fds[j].fd != -1) release_sock_fd( writefds->fd_array[i], fds[j].fd );
     if (exceptfds)
         for (i = 0; i < exceptfds->fd_count && j < count; i++, j++)
-            release_sock_fd( exceptfds->fd_array[i], fds[j].fd );
-    HeapFree( GetProcessHeap(), 0, fds );
+            if (fds[j].fd != -1) release_sock_fd( exceptfds->fd_array[i], fds[j].fd );
     return NULL;
 }
 
@@ -4449,13 +5331,48 @@ static void release_poll_fds( const WS_fd_set *readfds, const WS_fd_set *writefd
     if (exceptfds)
     {
         for (i = 0; i < exceptfds->fd_count; i++, j++)
-            if (fds[j].fd != -1)
+        {
+            if (fds[j].fd == -1) continue;
+            release_sock_fd( exceptfds->fd_array[i], fds[j].fd );
+            if (fds[j].revents & POLLHUP)
             {
-                /* make sure we have a real error before releasing the fd */
-                if (!sock_error_p( fds[j].fd )) fds[j].revents = 0;
-                release_sock_fd( exceptfds->fd_array[i], fds[j].fd );
+                int fd = get_sock_fd( exceptfds->fd_array[i], 0, NULL );
+                if (fd != -1)
+                    release_sock_fd( exceptfds->fd_array[i], fd );
+                else
+                    fds[j].revents = 0;
             }
+        }
     }
+}
+
+static int do_poll(struct pollfd *pollfds, int count, int timeout)
+{
+    struct timeval tv1, tv2;
+    int ret, torig = timeout;
+
+    if (timeout > 0) gettimeofday( &tv1, 0 );
+
+    while ((ret = poll( pollfds, count, timeout )) < 0)
+    {
+        if (errno != EINTR) break;
+        if (timeout < 0) continue;
+        if (timeout == 0) return 0;
+
+        gettimeofday( &tv2, 0 );
+
+        tv2.tv_sec  -= tv1.tv_sec;
+        tv2.tv_usec -= tv1.tv_usec;
+        if (tv2.tv_usec < 0)
+        {
+            tv2.tv_usec += 1000000;
+            tv2.tv_sec  -= 1;
+        }
+
+        timeout = torig - (tv2.tv_sec * 1000) - (tv2.tv_usec + 999) / 1000;
+        if (timeout <= 0) return 0;
+    }
+    return ret;
 }
 
 /* map the poll results back into the Windows fd sets */
@@ -4499,7 +5416,6 @@ static int get_poll_results( WS_fd_set *readfds, WS_fd_set *writefds, WS_fd_set 
     return total;
 }
 
-
 /***********************************************************************
  *		select			(WS2_32.18)
  */
@@ -4508,8 +5424,6 @@ int WINAPI WS_select(int nfds, WS_fd_set *ws_readfds,
                      const struct WS_timeval* ws_timeout)
 {
     struct pollfd *pollfds;
-    struct timeval tv1, tv2;
-    int torig = 0;
     int count, ret, timeout = -1;
 
     TRACE("read %p, write %p, excp %p timeout %p\n",
@@ -4519,36 +5433,75 @@ int WINAPI WS_select(int nfds, WS_fd_set *ws_readfds,
         return SOCKET_ERROR;
 
     if (ws_timeout)
-    {
-        torig = (ws_timeout->tv_sec * 1000) + (ws_timeout->tv_usec + 999) / 1000;
-        timeout = torig;
-        gettimeofday( &tv1, 0 );
-    }
+        timeout = (ws_timeout->tv_sec * 1000) + (ws_timeout->tv_usec + 999) / 1000;
 
-    while ((ret = poll( pollfds, count, timeout )) < 0)
-    {
-        if (errno == EINTR)
-        {
-            if (!ws_timeout) continue;
-            gettimeofday( &tv2, 0 );
-
-            tv2.tv_sec  -= tv1.tv_sec;
-            tv2.tv_usec -= tv1.tv_usec;
-            if (tv2.tv_usec < 0)
-            {
-                tv2.tv_usec += 1000000;
-                tv2.tv_sec  -= 1;
-            }
-
-            timeout = torig - (tv2.tv_sec * 1000) - (tv2.tv_usec + 999) / 1000;
-            if (timeout <= 0) break;
-        } else break;
-    }
+    ret = do_poll(pollfds, count, timeout);
     release_poll_fds( ws_readfds, ws_writefds, ws_exceptfds, pollfds );
 
     if (ret == -1) SetLastError(wsaErrno());
     else ret = get_poll_results( ws_readfds, ws_writefds, ws_exceptfds, pollfds );
-    HeapFree( GetProcessHeap(), 0, pollfds );
+    return ret;
+}
+
+/***********************************************************************
+ *     WSAPoll
+ */
+int WINAPI WSAPoll(WSAPOLLFD *wfds, ULONG count, int timeout)
+{
+    int i, ret;
+    struct pollfd *ufds;
+
+    if (!count)
+    {
+        SetLastError(WSAEINVAL);
+        return SOCKET_ERROR;
+    }
+    if (!wfds)
+    {
+        SetLastError(WSAEFAULT);
+        return SOCKET_ERROR;
+    }
+
+    if (!(ufds = HeapAlloc(GetProcessHeap(), 0, count * sizeof(ufds[0]))))
+    {
+        SetLastError(WSAENOBUFS);
+        return SOCKET_ERROR;
+    }
+
+    for (i = 0; i < count; i++)
+    {
+        ufds[i].fd = get_sock_fd(wfds[i].fd, 0, NULL);
+        ufds[i].events = convert_poll_w2u(wfds[i].events);
+        ufds[i].revents = 0;
+    }
+
+    ret = do_poll(ufds, count, timeout);
+
+    for (i = 0; i < count; i++)
+    {
+        if (ufds[i].fd != -1)
+        {
+            release_sock_fd(wfds[i].fd, ufds[i].fd);
+            if (ufds[i].revents & POLLHUP)
+            {
+                /* Check if the socket still exists */
+                int fd = get_sock_fd(wfds[i].fd, 0, NULL);
+                if (fd != -1)
+                {
+                    wfds[i].revents = WS_POLLHUP;
+                    release_sock_fd(wfds[i].fd, fd);
+                }
+                else
+                    wfds[i].revents = WS_POLLNVAL;
+            }
+            else
+                wfds[i].revents = convert_poll_u2w(ufds[i].revents);
+        }
+        else
+            wfds[i].revents = WS_POLLNVAL;
+    }
+
+    HeapFree(GetProcessHeap(), 0, ufds);
     return ret;
 }
 
@@ -4613,7 +5566,7 @@ static int WS2_sendto( SOCKET s, LPWSABUF lpBuffers, DWORD dwBufferCount,
                        LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine )
 {
     unsigned int i, options;
-    int n, fd, err, overlapped;
+    int n, fd, err, overlapped, flags;
     struct ws2_async *wsa = NULL, localwsa;
     int totalLength = 0;
     DWORD bytes_sent;
@@ -4638,7 +5591,7 @@ static int WS2_sendto( SOCKET s, LPWSABUF lpBuffers, DWORD dwBufferCount,
         !(options & (FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT));
     if (overlapped || dwBufferCount > 1)
     {
-        if (!(wsa = HeapAlloc( GetProcessHeap(), 0, FIELD_OFFSET(struct ws2_async, iovec[dwBufferCount]) )))
+        if (!(wsa = (struct ws2_async *)alloc_async_io( offsetof(struct ws2_async, iovec[dwBufferCount]))))
         {
             err = WSAEFAULT;
             goto error;
@@ -4662,7 +5615,8 @@ static int WS2_sendto( SOCKET s, LPWSABUF lpBuffers, DWORD dwBufferCount,
         totalLength += lpBuffers[i].len;
     }
 
-    n = WS2_send( fd, wsa );
+    flags = convert_flags(dwFlags);
+    n = WS2_send( fd, wsa, flags );
     if (n == -1 && errno != EAGAIN)
     {
         err = wsaErrno();
@@ -4737,24 +5691,26 @@ static int WS2_sendto( SOCKET s, LPWSABUF lpBuffers, DWORD dwBufferCount,
         while (wsa->first_iovec < wsa->n_iovecs)
         {
             struct pollfd pfd;
-            int timeout = GET_SNDTIMEO(fd);
+            int poll_timeout = -1;
+            INT64 timeout = get_rcvsnd_timeo(fd, FALSE);
 
-            if (timeout != -1)
+            if (timeout)
             {
                 timeout -= GetTickCount() - timeout_start;
-                if (timeout < 0) timeout = 0;
+                if (timeout < 0) poll_timeout = 0;
+                else poll_timeout = timeout <= INT_MAX ? timeout : INT_MAX;
             }
 
             pfd.fd = fd;
             pfd.events = POLLOUT;
 
-            if (!timeout || !poll( &pfd, 1, timeout ))
+            if (!poll_timeout || !poll( &pfd, 1, poll_timeout ))
             {
                 err = WSAETIMEDOUT;
                 goto error; /* msdn says a timeout in send is fatal */
             }
 
-            n = WS2_send( fd, wsa );
+            n = WS2_send( fd, wsa, flags );
             if (n == -1 && errno != EAGAIN)
             {
                 err = wsaErrno();
@@ -4837,8 +5793,9 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
     struct linger linger;
     struct timeval tval;
 
-    TRACE("socket: %04lx, level 0x%x, name 0x%x, ptr %p, len %d\n",
-          s, level, optname, optval, optlen);
+    TRACE("(socket %04lx, %s, optval %s, optlen %d)\n", s,
+          debugstr_sockopt(level, optname), debugstr_optval(optval, optlen),
+          optlen);
 
     /* some broken apps pass the value directly instead of a pointer to it */
     if(optlen && IS_INTRESOURCE(optval))
@@ -5039,8 +5996,7 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
             convert_sockopt(&level, &optname);
             break;
         case WS_IP_DONTFRAGMENT:
-            FIXME("IP_DONTFRAGMENT is silently ignored!\n");
-            return 0;
+            return set_dont_fragment(s, IPPROTO_IP, *(BOOL *)optval) ? 0 : SOCKET_ERROR;
         default:
             FIXME("Unknown IPPROTO_IP optname 0x%08x\n", optname);
             return SOCKET_ERROR;
@@ -5060,18 +6016,40 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
         case WS_IPV6_MULTICAST_HOPS:
         case WS_IPV6_MULTICAST_LOOP:
         case WS_IPV6_UNICAST_HOPS:
-        case WS_IPV6_V6ONLY:
 #ifdef IPV6_UNICAST_IF
         case WS_IPV6_UNICAST_IF:
 #endif
             convert_sockopt(&level, &optname);
             break;
         case WS_IPV6_DONTFRAG:
-            FIXME("IPV6_DONTFRAG is silently ignored!\n");
-            return 0;
+            return set_dont_fragment(s, IPPROTO_IPV6, *(BOOL *)optval) ? 0 : SOCKET_ERROR;
         case WS_IPV6_PROTECTION_LEVEL:
             FIXME("IPV6_PROTECTION_LEVEL is ignored!\n");
             return 0;
+        case WS_IPV6_V6ONLY:
+        {
+            union generic_unix_sockaddr uaddr;
+            socklen_t uaddrlen;
+            int bound;
+
+            fd = get_sock_fd( s, 0, NULL );
+            if (fd == -1) return SOCKET_ERROR;
+
+            bound = is_fd_bound(fd, &uaddr, &uaddrlen);
+            release_sock_fd( s, fd );
+            if (bound == 0 && uaddr.addr.sa_family == AF_INET)
+            {
+                /* Changing IPV6_V6ONLY succeeds on AF_INET (IPv4) socket
+                 * on Windows (with IPv6 support) if the socket is unbound.
+                 * It is essentially a noop, though Windows does store the value
+                 */
+                WARN("Silently ignoring IPPROTO_IPV6+IPV6_V6ONLY on AF_INET socket\n");
+                return 0;
+            }
+            level = IPPROTO_IPV6;
+            optname = IPV6_V6ONLY;
+            break;
+        }
         default:
             FIXME("Unknown IPPROTO_IPV6 optname 0x%08x\n", optname);
             return SOCKET_ERROR;
@@ -5122,10 +6100,10 @@ int WINAPI WS_setsockopt(SOCKET s, int level, int optname,
 int WINAPI WS_shutdown(SOCKET s, int how)
 {
     int fd, err = WSAENOTSOCK;
-    unsigned int options, clear_flags = 0;
+    unsigned int options = 0, clear_flags = 0;
 
     fd = get_sock_fd( s, 0, &options );
-    TRACE("socket %04lx, how %i %x\n", s, how, options );
+    TRACE("socket %04lx, how 0x%x, options 0x%x\n", s, how, options );
 
     if (fd == -1)
         return SOCKET_ERROR;
@@ -5191,7 +6169,7 @@ SOCKET WINAPI WS_socket(int af, int type, int protocol)
 {
     TRACE("af=%d type=%d protocol=%d\n", af, type, protocol);
 
-    return WSASocketA( af, type, protocol, NULL, 0,
+    return WSASocketW( af, type, protocol, NULL, 0,
                        get_per_thread_data()->opentype ? 0 : WSA_FLAG_OVERLAPPED );
 }
 
@@ -5252,7 +6230,14 @@ struct WS_hostent* WINAPI WS_gethostbyaddr(const char *addr, int len, int type)
  */
 static int WS_compare_routes_by_metric_asc(const void *left, const void *right)
 {
-    return ((const struct route*)left)->metric - ((const struct route*)right)->metric;
+    const struct route *a = left, *b = right;
+    if (a->default_route && b->default_route)
+        return a->default_route - b->default_route;
+    if (a->default_route && !b->default_route)
+        return -1;
+    if (b->default_route && !a->default_route)
+        return 1;
+    return a->metric - b->metric;
 }
 
 /***********************************************************************
@@ -5269,7 +6254,7 @@ static int WS_compare_routes_by_metric_asc(const void *left, const void *right)
  */
 static struct WS_hostent* WS_get_local_ips( char *hostname )
 {
-    int numroutes = 0, i, j;
+    int numroutes = 0, i, j, default_routes = 0;
     DWORD n;
     PIP_ADAPTER_INFO adapters = NULL, k;
     struct WS_hostent *hostlist = NULL;
@@ -5296,10 +6281,13 @@ static struct WS_hostent* WS_get_local_ips( char *hostname )
     for (n = 0; n < routes->dwNumEntries; n++)
     {
         IF_INDEX ifindex;
-        DWORD ifmetric;
+        DWORD ifmetric, ifdefault = 0;
         BOOL exists = FALSE;
 
-        if (routes->table[n].u1.ForwardType != MIB_IPROUTE_TYPE_DIRECT)
+        /* Check if this is a default route (there may be more than one) */
+        if (!routes->table[n].dwForwardDest)
+            ifdefault = ++default_routes;
+        else if (routes->table[n].u1.ForwardType != MIB_IPROUTE_TYPE_DIRECT)
             continue;
         ifindex = routes->table[n].dwForwardIfIndex;
         ifmetric = routes->table[n].dwForwardMetric1;
@@ -5320,13 +6308,14 @@ static struct WS_hostent* WS_get_local_ips( char *hostname )
             goto cleanup; /* Memory allocation error, fail gracefully */
         route_addrs[numroutes].interface = ifindex;
         route_addrs[numroutes].metric = ifmetric;
+        route_addrs[numroutes].default_route = ifdefault;
         /* If no IP is found in the next step (for whatever reason)
          * then fall back to the magic loopback address.
          */
         memcpy(&(route_addrs[numroutes].addr.s_addr), magic_loopback_addr, 4);
         numroutes++;
     }
-   if (numroutes == 0)
+    if (numroutes == 0)
        goto cleanup; /* No routes, fall back to the Magic IP */
     /* Find the IP address associated with each found interface */
     for (i = 0; i < numroutes; i++)
@@ -5624,7 +6613,7 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
     struct addrinfo *unixaires = NULL;
     int   result;
     struct addrinfo unixhints, *punixhints = NULL;
-    char *hostname = NULL;
+    char *hostname;
     const char *node;
 
     *res = NULL;
@@ -5634,13 +6623,13 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
         return WSAHOST_NOT_FOUND;
     }
 
+    hostname = get_hostname();
+    if (!hostname) return WSA_NOT_ENOUGH_MEMORY;
+
     if (!nodename)
         node = NULL;
     else if (!nodename[0])
-    {
-        node = hostname = get_hostname();
-        if (!node) return WSA_NOT_ENOUGH_MEMORY;
-    }
+        node = hostname;
     else
         node = nodename;
 
@@ -5679,11 +6668,22 @@ int WINAPI WS_getaddrinfo(LPCSTR nodename, LPCSTR servname, const struct WS_addr
 
         else if (IS_IPX_PROTO(punixhints->ai_protocol) && punixhints->ai_socktype != SOCK_DGRAM)
             punixhints->ai_socktype = 0;
+
+        else if (punixhints->ai_protocol == IPPROTO_IPV6)
+            punixhints->ai_protocol = 0;
     }
 
     /* getaddrinfo(3) is thread safe, no need to wrap in CS */
     result = getaddrinfo(node, servname, punixhints, &unixaires);
 
+    if (result && !strcmp(hostname, node))
+    {
+        /* If it didn't work it means the host name IP is not in /etc/hosts, try again
+        * by sending a NULL host and avoid sending a NULL servname too because that
+        * is invalid */
+        ERR_(winediag)("Failed to resolve your host name IP\n");
+        result = getaddrinfo(NULL, servname ? servname : "0", punixhints, &unixaires);
+    }
     TRACE("%s, %s %p -> %p %d\n", debugstr_a(nodename), debugstr_a(servname), hints, res, result);
     HeapFree(GetProcessHeap(), 0, hostname);
 
@@ -5782,7 +6782,7 @@ static struct WS_addrinfoW *addrinfo_AtoW(const struct WS_addrinfo *ai)
     if (ai->ai_canonname)
     {
         int len = MultiByteToWideChar(CP_ACP, 0, ai->ai_canonname, -1, NULL, 0);
-        if (!(ret->ai_canonname = HeapAlloc(GetProcessHeap(), 0, len)))
+        if (!(ret->ai_canonname = HeapAlloc(GetProcessHeap(), 0, len*sizeof(WCHAR))))
         {
             HeapFree(GetProcessHeap(), 0, ret);
             return NULL;
@@ -5857,29 +6857,72 @@ static struct WS_addrinfo *addrinfo_WtoA(const struct WS_addrinfoW *ai)
 }
 
 /***********************************************************************
+ *		GetAddrInfoExW		(WS2_32.@)
+ */
+int WINAPI GetAddrInfoExW(const WCHAR *name, const WCHAR *servname, DWORD namespace, GUID *namespace_id,
+        const ADDRINFOEXW *hints, ADDRINFOEXW **result, struct timeval *timeout, OVERLAPPED *overlapped,
+        LPLOOKUPSERVICE_COMPLETION_ROUTINE completion_routine, HANDLE *handle)
+{
+    FIXME("(%s %s %x %s %p %p %p %p %p %p)\n", debugstr_w(name), debugstr_w(servname), namespace,
+          debugstr_guid(namespace_id), hints, result, timeout, overlapped, completion_routine, handle);
+    return WSAHOST_NOT_FOUND;
+}
+
+/***********************************************************************
  *		GetAddrInfoW		(WS2_32.@)
  */
 int WINAPI GetAddrInfoW(LPCWSTR nodename, LPCWSTR servname, const ADDRINFOW *hints, PADDRINFOW *res)
 {
-    int ret, len;
+    int ret = EAI_MEMORY, len, i;
     char *nodenameA = NULL, *servnameA = NULL;
     struct WS_addrinfo *resA, *hintsA = NULL;
+    WCHAR *local_nodenameW = (WCHAR *)nodename;
+
+    TRACE("nodename %s, servname %s, hints %p, result %p\n",
+          debugstr_w(nodename), debugstr_w(servname), hints, res);
 
     *res = NULL;
     if (nodename)
     {
-        len = WideCharToMultiByte(CP_ACP, 0, nodename, -1, NULL, 0, NULL, NULL);
-        if (!(nodenameA = HeapAlloc(GetProcessHeap(), 0, len))) return EAI_MEMORY;
-        WideCharToMultiByte(CP_ACP, 0, nodename, -1, nodenameA, len, NULL, NULL);
+        /* Is this an IDN? Most likely if any char is above the Ascii table, this
+         * is the simplest validation possible, further validation will be done by
+         * the native getaddrinfo() */
+        for (i = 0; nodename[i]; i++)
+        {
+            if (nodename[i] > 'z')
+                break;
+        }
+        if (nodename[i])
+        {
+            if (hints && (hints->ai_flags & WS_AI_DISABLE_IDN_ENCODING))
+            {
+                /* Name requires conversion but it was disabled */
+                ret = WSAHOST_NOT_FOUND;
+                WSASetLastError(ret);
+                goto end;
+            }
+
+            len = IdnToAscii(0, nodename, -1, NULL, 0);
+            if (!len)
+            {
+                ERR("Failed to convert %s to punycode\n", debugstr_w(nodename));
+                ret = EAI_FAIL;
+                goto end;
+            }
+            if (!(local_nodenameW = HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR)))) goto end;
+            IdnToAscii(0, nodename, -1, local_nodenameW, len);
+        }
+    }
+    if (local_nodenameW)
+    {
+        len = WideCharToMultiByte(CP_ACP, 0, local_nodenameW, -1, NULL, 0, NULL, NULL);
+        if (!(nodenameA = HeapAlloc(GetProcessHeap(), 0, len))) goto end;
+        WideCharToMultiByte(CP_ACP, 0, local_nodenameW, -1, nodenameA, len, NULL, NULL);
     }
     if (servname)
     {
         len = WideCharToMultiByte(CP_ACP, 0, servname, -1, NULL, 0, NULL, NULL);
-        if (!(servnameA = HeapAlloc(GetProcessHeap(), 0, len)))
-        {
-            HeapFree(GetProcessHeap(), 0, nodenameA);
-            return EAI_MEMORY;
-        }
+        if (!(servnameA = HeapAlloc(GetProcessHeap(), 0, len))) goto end;
         WideCharToMultiByte(CP_ACP, 0, servname, -1, servnameA, len, NULL, NULL);
     }
 
@@ -5893,6 +6936,9 @@ int WINAPI GetAddrInfoW(LPCWSTR nodename, LPCWSTR servname, const ADDRINFOW *hin
         WS_freeaddrinfo(resA);
     }
 
+end:
+    if (local_nodenameW != nodename)
+        HeapFree(GetProcessHeap(), 0, local_nodenameW);
     HeapFree(GetProcessHeap(), 0, nodenameA);
     HeapFree(GetProcessHeap(), 0, servnameA);
     return ret;
@@ -5912,6 +6958,14 @@ void WINAPI FreeAddrInfoW(PADDRINFOW ai)
         HeapFree(GetProcessHeap(), 0, ai);
         ai = next;
     }
+}
+
+/***********************************************************************
+ *      FreeAddrInfoExW      (WS2_32.@)
+ */
+void WINAPI FreeAddrInfoExW(ADDRINFOEXW *ai)
+{
+    FIXME("%p\n", ai);
 }
 
 int WINAPI WS_getnameinfo(const SOCKADDR *sa, WS_socklen_t salen, PCHAR host,
@@ -5996,16 +7050,35 @@ struct WS_servent* WINAPI WS_getservbyport(int port, const char *proto)
  */
 int WINAPI WS_gethostname(char *name, int namelen)
 {
+    char buf[256];
+    int len;
+
     TRACE("name %p, len %d\n", name, namelen);
 
-    if (gethostname(name, namelen) == 0)
+    if (!name)
     {
-        TRACE("<- '%s'\n", name);
-        return 0;
+        SetLastError(WSAEFAULT);
+        return SOCKET_ERROR;
     }
-    SetLastError((errno == EINVAL) ? WSAEFAULT : wsaErrno());
-    TRACE("<- ERROR !\n");
-    return SOCKET_ERROR;
+
+    if (gethostname(buf, sizeof(buf)) != 0)
+    {
+        SetLastError(wsaErrno());
+        return SOCKET_ERROR;
+    }
+
+    TRACE("<- '%s'\n", buf);
+    len = strlen(buf);
+    if (len > 15)
+        WARN("Windows supports NetBIOS name length up to 15 bytes!\n");
+    if (namelen <= len)
+    {
+        SetLastError(WSAEFAULT);
+        WARN("<- not enough space for hostname, required %d, got %d!\n", len + 1, namelen);
+        return SOCKET_ERROR;
+    }
+    strcpy(name, buf);
+    return 0;
 }
 
 
@@ -6022,7 +7095,7 @@ int WINAPI WSAEnumNetworkEvents(SOCKET s, WSAEVENT hEvent, LPWSANETWORKEVENTS lp
     int i;
     int errors[FD_MAX_EVENTS];
 
-    TRACE("%08lx, hEvent %p, lpEvent %p\n", s, hEvent, lpEvent );
+    TRACE("%04lx, hEvent %p, lpEvent %p\n", s, hEvent, lpEvent );
 
     SERVER_START_REQ( get_socket_event )
     {
@@ -6050,7 +7123,7 @@ int WINAPI WSAEventSelect(SOCKET s, WSAEVENT hEvent, LONG lEvent)
 {
     int ret;
 
-    TRACE("%08lx, hEvent %p, event %08x\n", s, hEvent, lEvent);
+    TRACE("%04lx, hEvent %p, event %08x\n", s, hEvent, lEvent);
 
     SERVER_START_REQ( set_socket_event )
     {
@@ -6119,7 +7192,7 @@ INT WINAPI WSAAsyncSelect(SOCKET s, HWND hWnd, UINT uMsg, LONG lEvent)
 {
     int ret;
 
-    TRACE("%lx, hWnd %p, uMsg %08x, event %08x\n", s, hWnd, uMsg, lEvent);
+    TRACE("%04lx, hWnd %p, uMsg %08x, event %08x\n", s, hWnd, uMsg, lEvent);
 
     SERVER_START_REQ( set_socket_event )
     {
@@ -6307,8 +7380,8 @@ SOCKET WINAPI WSASocketW(int af, int type, int protocol,
         req->type       = unixtype;
         req->protocol   = protocol;
         req->access     = GENERIC_READ|GENERIC_WRITE|SYNCHRONIZE;
-        req->attributes = OBJ_INHERIT;
-        req->flags      = dwFlags;
+        req->attributes = (dwFlags & WSA_FLAG_NO_HANDLE_INHERIT) ? 0 : OBJ_INHERIT;
+        req->flags      = dwFlags & ~WSA_FLAG_NO_HANDLE_INHERIT;
         set_error( wine_server_call( req ) );
         ret = HANDLE2SOCKET( wine_server_ptr_handle( reply->handle ));
     }
@@ -6318,6 +7391,25 @@ SOCKET WINAPI WSASocketW(int af, int type, int protocol,
         TRACE("\tcreated %04lx\n", ret );
         if (ipxptype > 0)
             set_ipx_packettype(ret, ipxptype);
+
+        /* ensure IP_DONTFRAGMENT is disabled, in Linux the global default can be enabled */
+        if (unixaf == AF_INET || unixaf == AF_INET6)
+            set_dont_fragment(ret, unixaf == AF_INET6 ? IPPROTO_IPV6 : IPPROTO_IP, FALSE);
+
+#ifdef IPV6_V6ONLY
+        if (unixaf == AF_INET6)
+        {
+            int fd = get_sock_fd(ret, 0, NULL);
+            if (fd != -1)
+            {
+                /* IPV6_V6ONLY is set by default on Windows */
+                int enable = 1;
+                if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &enable, sizeof(enable)))
+                    WARN("\tsetting IPV6_V6ONLY failed - errno = %i\n", errno);
+                release_sock_fd(ret, fd);
+            }
+        }
+#endif
        return ret;
     }
 
@@ -6633,8 +7725,8 @@ static int WS2_recv_base( SOCKET s, LPWSABUF lpBuffers, DWORD dwBufferCount,
                           LPWSABUF lpControlBuffer )
 {
     unsigned int i, options;
-    int n, fd, err, overlapped;
-    struct ws2_async *wsa, localwsa;
+    int n, fd, err, overlapped, flags;
+    struct ws2_async *wsa = NULL, localwsa;
     BOOL is_blocking;
     DWORD timeout_start = GetTickCount();
     ULONG_PTR cvalue = (lpOverlapped && ((ULONG_PTR)lpOverlapped->hEvent & 1) == 0) ? (ULONG_PTR)lpOverlapped : 0;
@@ -6649,11 +7741,23 @@ static int WS2_recv_base( SOCKET s, LPWSABUF lpBuffers, DWORD dwBufferCount,
 
     if (fd == -1) return SOCKET_ERROR;
 
+    if (*lpFlags & WS_MSG_OOB)
+    {
+        /* It's invalid to receive OOB data from an OOBINLINED socket
+         * as OOB data is turned into normal data. */
+        i = sizeof(n);
+        if (!getsockopt(fd, SOL_SOCKET, SO_OOBINLINE, (char*) &n, &i) && n)
+        {
+            err = WSAEINVAL;
+            goto error;
+        }
+    }
+
     overlapped = (lpOverlapped || lpCompletionRoutine) &&
         !(options & (FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT));
     if (overlapped || dwBufferCount > 1)
     {
-        if (!(wsa = HeapAlloc( GetProcessHeap(), 0, FIELD_OFFSET(struct ws2_async, iovec[dwBufferCount]) )))
+        if (!(wsa = (struct ws2_async *)alloc_async_io( offsetof(struct ws2_async, iovec[dwBufferCount]))))
         {
             err = WSAEFAULT;
             goto error;
@@ -6682,11 +7786,17 @@ static int WS2_recv_base( SOCKET s, LPWSABUF lpBuffers, DWORD dwBufferCount,
         wsa->iovec[i].iov_len  = lpBuffers[i].len;
     }
 
+    flags = convert_flags(wsa->flags);
     for (;;)
     {
-        n = WS2_recv( fd, wsa );
+        n = WS2_recv( fd, wsa, flags );
         if (n == -1)
         {
+            /* Unix-like systems return EINVAL when attempting to read OOB data from
+             * an empty socket buffer, convert that to a Windows expected return. */
+            if ((flags & MSG_OOB) && errno == EINVAL)
+                errno = EWOULDBLOCK;
+
             if (errno != EAGAIN)
             {
                 int loc_errno = errno;
@@ -6753,18 +7863,21 @@ static int WS2_recv_base( SOCKET s, LPWSABUF lpBuffers, DWORD dwBufferCount,
         if ( is_blocking )
         {
             struct pollfd pfd;
-            int timeout = GET_RCVTIMEO(fd);
-            if (timeout != -1)
+            int poll_timeout = -1;
+            INT64 timeout = get_rcvsnd_timeo(fd, TRUE);
+
+            if (timeout)
             {
                 timeout -= GetTickCount() - timeout_start;
-                if (timeout < 0) timeout = 0;
+                if (timeout < 0) poll_timeout = 0;
+                else poll_timeout = timeout <= INT_MAX ? timeout : INT_MAX;
             }
 
             pfd.fd = fd;
             pfd.events = POLLIN;
             if (*lpFlags & WS_MSG_OOB) pfd.events |= POLLPRI;
 
-            if (!timeout || !poll( &pfd, 1, timeout ))
+            if (!poll_timeout || !poll( &pfd, 1, poll_timeout ))
             {
                 err = WSAETIMEDOUT;
                 /* a timeout is not fatal */
@@ -6853,7 +7966,7 @@ SOCKET WINAPI WSAAccept( SOCKET s, struct WS_sockaddr *addr, LPINT addrlen,
        SOCKET cs;
        SOCKADDR src_addr, dst_addr;
 
-       TRACE("Socket %04lx, sockaddr %p, addrlen %p, fnCondition %p, dwCallbackData %ld\n",
+       TRACE("socket %04lx, sockaddr %p, addrlen %p, fnCondition %p, dwCallbackData %ld\n",
                s, addr, addrlen, lpfnCondition, dwCallbackData);
 
        cs = WS_accept(s, addr, addrlen);
@@ -6953,7 +8066,7 @@ int WINAPI WSAInstallServiceClassW(LPWSASERVICECLASSINFOW info)
  */
 int WINAPI WSARemoveServiceClass(LPGUID info)
 {
-    FIXME("Request to remove service %p\n",info);
+    FIXME("Request to remove service %s\n", debugstr_guid(info));
     SetLastError(WSATYPE_NOT_FOUND);
     return SOCKET_ERROR;
 }
@@ -7011,7 +8124,7 @@ INT WINAPI WS_inet_pton( INT family, PCSTR addr, PVOID buffer)
 #ifdef HAVE_INET_PTON
     int unixaf, ret;
 
-    TRACE("family %d, addr '%s', buffer (%p)\n", family, addr ? addr : "(null)", buffer);
+    TRACE("family %d, addr %s, buffer (%p)\n", family, debugstr_a(addr), buffer);
 
     if (!addr || !buffer)
     {
@@ -7036,6 +8149,56 @@ INT WINAPI WS_inet_pton( INT family, PCSTR addr, PVOID buffer)
 #endif
 }
 
+/***********************************************************************
+*              InetPtonW                      (WS2_32.@)
+*/
+INT WINAPI InetPtonW(INT family, PCWSTR addr, PVOID buffer)
+{
+    char *addrA;
+    int len;
+    INT ret;
+
+    TRACE("family %d, addr %s, buffer (%p)\n", family, debugstr_w(addr), buffer);
+
+    if (!addr)
+    {
+        SetLastError(WSAEFAULT);
+        return SOCKET_ERROR;
+    }
+
+    len = WideCharToMultiByte(CP_ACP, 0, addr, -1, NULL, 0, NULL, NULL);
+    if (!(addrA = HeapAlloc(GetProcessHeap(), 0, len)))
+    {
+        SetLastError(WSA_NOT_ENOUGH_MEMORY);
+        return SOCKET_ERROR;
+    }
+    WideCharToMultiByte(CP_ACP, 0, addr, -1, addrA, len, NULL, NULL);
+
+    ret = WS_inet_pton(family, addrA, buffer);
+
+    HeapFree(GetProcessHeap(), 0, addrA);
+    return ret;
+}
+
+/***********************************************************************
+ *              InetNtopW                      (WS2_32.@)
+ */
+PCWSTR WINAPI InetNtopW(INT family, PVOID addr, PWSTR buffer, SIZE_T len)
+{
+    char bufferA[WS_INET6_ADDRSTRLEN];
+    PWSTR ret = NULL;
+
+    TRACE("family %d, addr (%p), buffer (%p), len %ld\n", family, addr, buffer, len);
+
+    if (WS_inet_ntop(family, addr, bufferA, sizeof(bufferA)))
+    {
+        if (MultiByteToWideChar(CP_ACP, 0, bufferA, -1, buffer, len))
+            ret = buffer;
+        else
+            SetLastError(ERROR_INVALID_PARAMETER);
+    }
+    return ret;
+}
 
 /***********************************************************************
  *              WSAStringToAddressA                      (WS2_32.80)
@@ -7260,27 +8423,31 @@ INT WINAPI WSAAddressToStringA( LPSOCKADDR sockaddr, DWORD len,
     switch(sockaddr->sa_family)
     {
     case WS_AF_INET:
+    {
+        unsigned int long_ip = ntohl(((SOCKADDR_IN *)sockaddr)->sin_addr.WS_s_addr);
         if (len < sizeof(SOCKADDR_IN)) return SOCKET_ERROR;
         sprintf( buffer, "%u.%u.%u.%u:%u",
-               (unsigned int)(ntohl( ((SOCKADDR_IN *)sockaddr)->sin_addr.WS_s_addr ) >> 24 & 0xff),
-               (unsigned int)(ntohl( ((SOCKADDR_IN *)sockaddr)->sin_addr.WS_s_addr ) >> 16 & 0xff),
-               (unsigned int)(ntohl( ((SOCKADDR_IN *)sockaddr)->sin_addr.WS_s_addr ) >> 8 & 0xff),
-               (unsigned int)(ntohl( ((SOCKADDR_IN *)sockaddr)->sin_addr.WS_s_addr ) & 0xff),
+               (long_ip >> 24) & 0xff,
+               (long_ip >> 16) & 0xff,
+               (long_ip >> 8) & 0xff,
+               long_ip & 0xff,
                ntohs( ((SOCKADDR_IN *)sockaddr)->sin_port ) );
 
         p = strchr( buffer, ':' );
         if (!((SOCKADDR_IN *)sockaddr)->sin_port) *p = 0;
         break;
-
+    }
     case WS_AF_INET6:
     {
         struct WS_sockaddr_in6 *sockaddr6 = (LPSOCKADDR_IN6) sockaddr;
+        size_t slen;
 
         buffer[0] = 0;
         if (len < sizeof(SOCKADDR_IN6)) return SOCKET_ERROR;
         if ((sockaddr6->sin6_port))
             strcpy(buffer, "[");
-        if (!WS_inet_ntop(WS_AF_INET6, &sockaddr6->sin6_addr, buffer+strlen(buffer), sizeof(buffer)))
+        slen = strlen(buffer);
+        if (!WS_inet_ntop(WS_AF_INET6, &sockaddr6->sin6_addr, &buffer[slen], sizeof(buffer) - slen))
         {
             SetLastError(WSAEINVAL);
             return SOCKET_ERROR;
@@ -7493,7 +8660,7 @@ INT WINAPI WSALookupServiceNextW( HANDLE lookup, DWORD flags, LPDWORD len, LPWSA
  */
 INT WINAPI WSANtohl( SOCKET s, WS_u_long netlong, WS_u_long* lphostlong )
 {
-    TRACE( "(0x%04lx 0x%08x %p)\n", s, netlong, lphostlong );
+    TRACE( "(%04lx 0x%08x %p)\n", s, netlong, lphostlong );
 
     if (!lphostlong) return WSAEFAULT;
 
@@ -7506,7 +8673,7 @@ INT WINAPI WSANtohl( SOCKET s, WS_u_long netlong, WS_u_long* lphostlong )
  */
 INT WINAPI WSANtohs( SOCKET s, WS_u_short netshort, WS_u_short* lphostshort )
 {
-    TRACE( "(0x%04lx 0x%08x %p)\n", s, netshort, lphostshort );
+    TRACE( "(%04lx 0x%08x %p)\n", s, netshort, lphostshort );
 
     if (!lphostshort) return WSAEFAULT;
 
@@ -7529,7 +8696,7 @@ INT WINAPI WSAProviderConfigChange( LPHANDLE handle, LPWSAOVERLAPPED overlapped,
  */
 INT WINAPI WSARecvDisconnect( SOCKET s, LPWSABUF disconnectdata )
 {
-    TRACE( "(0x%04lx %p)\n", s, disconnectdata );
+    TRACE( "(%04lx %p)\n", s, disconnectdata );
 
     return WS_shutdown( s, SD_RECEIVE );
 }
@@ -7590,7 +8757,7 @@ INT WINAPI WSCInstallNameSpace( LPWSTR identifier, LPWSTR path, DWORD namespace,
  */
 INT WINAPI WSCUnInstallNameSpace( LPGUID lpProviderId )
 {
-    FIXME("(%p) Stub!\n", lpProviderId);
+    FIXME("(%s) Stub!\n", debugstr_guid(lpProviderId));
     return NO_ERROR;
 }
 

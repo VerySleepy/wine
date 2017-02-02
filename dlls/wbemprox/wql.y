@@ -583,6 +583,7 @@ static int get_token( const WCHAR *s, int *token )
     {
     case ' ':
     case '\t':
+    case '\r':
     case '\n':
         for (i = 1; isspaceW( s[i] ); i++) {}
         *token = TK_SPACE;
@@ -646,15 +647,13 @@ static int get_token( const WCHAR *s, int *token )
         return 1;
     case '\"':
     case '\'':
+        for (i = 1; s[i]; i++)
         {
-            for (i = 1; s[i]; i++)
-            {
-                if (s[i] == s[0]) break;
-            }
-            if (s[i]) i++;
-            *token = TK_STRING;
-            return i;
+            if (s[i] == s[0]) break;
         }
+        if (s[i]) i++;
+        *token = TK_STRING;
+        return i;
     case '.':
         if (!isdigitW( s[1] ))
         {

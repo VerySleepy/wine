@@ -31,8 +31,6 @@
 #include "objbase.h"
 #include "wine/debug.h"
 
-#include "dplay8.h"
-#include "dplobby8.h"
 #include "dpnet_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dpnet);
@@ -100,6 +98,8 @@ static HRESULT WINAPI IDirectPlay8LobbiedApplicationImpl_Initialize(IDirectPlay8
     This->flags = dwFlags;
     This->usercontext = pvUserContext;
     This->connection = pdpnhConnection;
+
+    init_winsock();
 
     return DPN_OK;
 }

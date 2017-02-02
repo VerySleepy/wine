@@ -7,7 +7,7 @@
 @ stdcall GetLogicalProcessorInformationEx(long ptr ptr) kernel32.GetLogicalProcessorInformationEx
 @ stdcall GetNativeSystemInfo(ptr) kernel32.GetNativeSystemInfo
 @ stub GetOsSafeBootMode
-@ stub GetPhysicallyInstalledSystemMemory
+@ stdcall GetPhysicallyInstalledSystemMemory(ptr) kernel32.GetPhysicallyInstalledSystemMemory
 @ stdcall GetProductInfo(long long long long ptr) kernel32.GetProductInfo
 @ stdcall GetSystemDirectoryA(ptr long) kernel32.GetSystemDirectoryA
 @ stdcall GetSystemDirectoryW(ptr long) kernel32.GetSystemDirectoryW
@@ -16,7 +16,7 @@
 @ stdcall GetSystemTime(ptr) kernel32.GetSystemTime
 @ stdcall GetSystemTimeAdjustment(ptr ptr ptr) kernel32.GetSystemTimeAdjustment
 @ stdcall GetSystemTimeAsFileTime(ptr) kernel32.GetSystemTimeAsFileTime
-@ stub GetSystemTimePreciseAsFileTime
+@ stdcall GetSystemTimePreciseAsFileTime(ptr) kernel32.GetSystemTimePreciseAsFileTime
 @ stdcall GetSystemWindowsDirectoryA(ptr long) kernel32.GetSystemWindowsDirectoryA
 @ stdcall GetSystemWindowsDirectoryW(ptr long) kernel32.GetSystemWindowsDirectoryW
 @ stdcall -ret64 GetTickCount64() kernel32.GetTickCount64

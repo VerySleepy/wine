@@ -91,6 +91,27 @@ static void acquire_tests(IDirectInputA *pDI, HWND hwnd)
     for (i = 0; i < sizeof(custom_state) / sizeof(custom_state[0]); i++)
         ok(custom_state[i] == 0, "Should be zeroed, got 0x%08x\n", custom_state[i]);
 
+    /* simulate some keyboard input */
+    SetFocus(hwnd);
+    keybd_event('Q', 0, 0, 0);
+    hr = IDirectInputDevice_GetDeviceState(pKeyboard, sizeof(custom_state), custom_state);
+    ok(SUCCEEDED(hr), "IDirectInputDevice_GetDeviceState() failed: %08x\n", hr);
+    if (!custom_state[0])
+        win_skip("Keyboard event not processed, skipping test\n");
+    else
+    {
+        /* unacquiring should reset the device state */
+        hr = IDirectInputDevice_Unacquire(pKeyboard);
+        ok(SUCCEEDED(hr), "IDirectInputDevice_Unacquire() failed: %08x\n", hr);
+        hr = IDirectInputDevice_Acquire(pKeyboard);
+        ok(SUCCEEDED(hr), "IDirectInputDevice_Acquire() failed: %08x\n", hr);
+        hr = IDirectInputDevice_GetDeviceState(pKeyboard, sizeof(custom_state), custom_state);
+        ok(SUCCEEDED(hr), "IDirectInputDevice_GetDeviceState failed: %08x\n", hr);
+        for (i = 0; i < sizeof(custom_state) / sizeof(custom_state[0]); i++)
+            ok(custom_state[i] == 0, "Should be zeroed, got 0x%08x\n", custom_state[i]);
+    }
+    keybd_event('Q', 0, KEYEVENTF_KEYUP, 0);
+
     if (pKeyboard) IUnknown_Release(pKeyboard);
 }
 
@@ -98,6 +119,12 @@ static const HRESULT SetCoop_null_window[16] =  {
     E_INVALIDARG, E_INVALIDARG, E_INVALIDARG, E_INVALIDARG,
     E_INVALIDARG, E_HANDLE,     E_HANDLE,     E_INVALIDARG,
     E_INVALIDARG, E_HANDLE,     S_OK,         E_INVALIDARG,
+    E_INVALIDARG, E_INVALIDARG, E_INVALIDARG, E_INVALIDARG};
+
+static const HRESULT SetCoop_invalid_window[16] =  {
+    E_INVALIDARG, E_INVALIDARG, E_INVALIDARG, E_INVALIDARG,
+    E_INVALIDARG, E_HANDLE,     E_HANDLE,     E_INVALIDARG,
+    E_INVALIDARG, E_HANDLE,     E_HANDLE,     E_INVALIDARG,
     E_INVALIDARG, E_INVALIDARG, E_INVALIDARG, E_INVALIDARG};
 
 static const HRESULT SetCoop_real_window[16] =  {
@@ -127,6 +154,11 @@ static void test_set_coop(IDirectInputA *pDI, HWND hwnd)
     {
         hr = IDirectInputDevice_SetCooperativeLevel(pKeyboard, NULL, i);
         ok(hr == SetCoop_null_window[i], "SetCooperativeLevel(NULL, %d): %08x\n", i, hr);
+    }
+    for (i=0; i<16; i++)
+    {
+        hr = IDirectInputDevice_SetCooperativeLevel(pKeyboard, (HWND)0x400000, i);
+        ok(hr == SetCoop_invalid_window[i], "SetCooperativeLevel(invalid, %d): %08x\n", i, hr);
     }
     for (i=0; i<16; i++)
     {

@@ -20,6 +20,8 @@
 #include <windows.h>
 #include <commctrl.h>
 
+#include "resources.h"
+
 #include "wine/test.h"
 
 #define expect(expected, got) ok(got == expected, "Expected %d, got %d\n", expected, got)
@@ -150,6 +152,7 @@ static void test_customdraw(void) {
    DWORD       iterationNumber;
    WNDCLASSA wc;
    LRESULT   lResult;
+   POINT orig_pos;
 
    /* Create a class to use the custom draw wndproc */
    wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -163,6 +166,8 @@ static void test_customdraw(void) {
    wc.lpszClassName = "CustomDrawClass";
    wc.lpfnWndProc = custom_draw_wnd_proc;
    RegisterClassA(&wc);
+
+   GetCursorPos(&orig_pos);
 
    for (iterationNumber = 0;
         iterationNumber < sizeof(expectedResults)/sizeof(expectedResults[0]);
@@ -236,7 +241,7 @@ static void test_customdraw(void) {
        DestroyWindow(parent);
    }
 
-
+   SetCursorPos(orig_pos.x, orig_pos.y);
 }
 
 static const CHAR testcallbackA[]  = "callback";
@@ -286,13 +291,15 @@ static HWND create_parent_window(void)
 
 static void test_gettext(void)
 {
+    static const CHAR testtip2A[] = "testtip\ttest2";
+    static const CHAR testtipA[] = "testtip";
     HWND hwnd, notify;
     TTTOOLINFOA toolinfoA;
     TTTOOLINFOW toolinfoW;
     LRESULT r;
-    CHAR bufA[10] = "";
+    CHAR bufA[16] = "";
     WCHAR bufW[10] = { 0 };
-    static const CHAR testtipA[] = "testtip";
+    DWORD length, style;
 
     notify = create_parent_window();
     ok(notify != NULL, "Expected notification window to be created\n");
@@ -314,25 +321,48 @@ static void test_gettext(void)
     toolinfoA.lParam = 0xdeadbeef;
     GetClientRect(hwnd, &toolinfoA.rect);
     r = SendMessageA(hwnd, TTM_ADDTOOLA, 0, (LPARAM)&toolinfoA);
-    if (r)
-    {
-        toolinfoA.hwnd = NULL;
-        toolinfoA.uId = 0x1234ABCD;
-        toolinfoA.lpszText = bufA;
-        SendMessageA(hwnd, TTM_GETTEXTA, 0, (LPARAM)&toolinfoA);
-        ok(strcmp(toolinfoA.lpszText, "") == 0, "lpszText should be an empty string\n");
+    ok(r, "got %ld\n", r);
 
-        toolinfoA.lpszText = bufA;
-        SendMessageA(hwnd, TTM_GETTOOLINFOA, 0, (LPARAM)&toolinfoA);
-        ok(toolinfoA.lpszText == NULL,
-           "expected NULL, got %p\n", toolinfoA.lpszText);
-    }
-    else
-    {
-        win_skip( "Old comctl32, not testing NULL text\n" );
-        DestroyWindow( hwnd );
-        return;
-    }
+    toolinfoA.hwnd = NULL;
+    toolinfoA.uId = 0x1234abcd;
+    toolinfoA.lpszText = bufA;
+    r = SendMessageA(hwnd, TTM_GETTEXTA, 0, (LPARAM)&toolinfoA);
+    ok(!r, "got %ld\n", r);
+    ok(!*toolinfoA.lpszText, "lpszText should be empty, got %s\n", toolinfoA.lpszText);
+
+    toolinfoA.lpszText = bufA;
+    r = SendMessageA(hwnd, TTM_GETTOOLINFOA, 0, (LPARAM)&toolinfoA);
+todo_wine
+    ok(!r, "got %ld\n", r);
+    ok(toolinfoA.lpszText == NULL, "expected NULL, got %p\n", toolinfoA.lpszText);
+
+    /* NULL hinst, valid resource id for text */
+    toolinfoA.cbSize = sizeof(TTTOOLINFOA);
+    toolinfoA.hwnd = NULL;
+    toolinfoA.hinst = NULL;
+    toolinfoA.uFlags = 0;
+    toolinfoA.uId = 0x1233abcd;
+    toolinfoA.lpszText = MAKEINTRESOURCEA(IDS_TBADD1);
+    toolinfoA.lParam = 0xdeadbeef;
+    GetClientRect(hwnd, &toolinfoA.rect);
+    r = SendMessageA(hwnd, TTM_ADDTOOLA, 0, (LPARAM)&toolinfoA);
+    ok(r, "failed to add a tool\n");
+
+    toolinfoA.hwnd = NULL;
+    toolinfoA.uId = 0x1233abcd;
+    toolinfoA.lpszText = bufA;
+    r = SendMessageA(hwnd, TTM_GETTEXTA, 0, (LPARAM)&toolinfoA);
+    ok(!r, "got %ld\n", r);
+    ok(!strcmp(toolinfoA.lpszText, "abc"), "got wrong text, %s\n", toolinfoA.lpszText);
+
+    toolinfoA.hinst = (HINSTANCE)0xdeadbee;
+    r = SendMessageA(hwnd, TTM_GETTOOLINFOA, 0, (LPARAM)&toolinfoA);
+todo_wine
+    ok(!r, "got %ld\n", r);
+    ok(toolinfoA.hinst == NULL, "expected NULL, got %p\n", toolinfoA.hinst);
+
+    r = SendMessageA(hwnd, TTM_DELTOOLA, 0, (LPARAM)&toolinfoA);
+    ok(!r, "got %ld\n", r);
 
     /* add another tool with text */
     toolinfoA.cbSize = sizeof(TTTOOLINFOA);
@@ -346,28 +376,26 @@ static void test_gettext(void)
     GetClientRect(hwnd, &toolinfoA.rect);
     r = SendMessageA(hwnd, TTM_ADDTOOLA, 0, (LPARAM)&toolinfoA);
     ok(r, "Adding the tool to the tooltip failed\n");
-    if (r)
-    {
-        DWORD length;
 
-        length = SendMessageA(hwnd, WM_GETTEXTLENGTH, 0, 0);
-        ok(length == 0, "Expected 0, got %d\n", length);
+    length = SendMessageA(hwnd, WM_GETTEXTLENGTH, 0, 0);
+    ok(length == 0, "Expected 0, got %d\n", length);
 
-        toolinfoA.hwnd = NULL;
-        toolinfoA.uId = 0x1235ABCD;
-        toolinfoA.lpszText = bufA;
-        SendMessageA(hwnd, TTM_GETTEXTA, 0, (LPARAM)&toolinfoA);
-        ok(strcmp(toolinfoA.lpszText, testtipA) == 0, "lpszText should be an empty string\n");
+    toolinfoA.hwnd = NULL;
+    toolinfoA.uId = 0x1235abcd;
+    toolinfoA.lpszText = bufA;
+    r = SendMessageA(hwnd, TTM_GETTEXTA, 0, (LPARAM)&toolinfoA);
+    ok(!r, "got %ld\n", r);
+    ok(!strcmp(toolinfoA.lpszText, testtipA), "expected %s, got %p\n", testtipA, toolinfoA.lpszText);
 
-        memset(bufA, 0x1f, sizeof(bufA));
-        toolinfoA.lpszText = bufA;
-        SendMessageA(hwnd, TTM_GETTOOLINFOA, 0, (LPARAM)&toolinfoA);
-        ok(strcmp(toolinfoA.lpszText, testtipA) == 0,
-           "expected %s, got %p\n", testtipA, toolinfoA.lpszText);
+    memset(bufA, 0x1f, sizeof(bufA));
+    toolinfoA.lpszText = bufA;
+    r = SendMessageA(hwnd, TTM_GETTOOLINFOA, 0, (LPARAM)&toolinfoA);
+todo_wine
+    ok(!r, "got %ld\n", r);
+    ok(!strcmp(toolinfoA.lpszText, testtipA), "expected %s, got %p\n", testtipA, toolinfoA.lpszText);
 
-        length = SendMessageA(hwnd, WM_GETTEXTLENGTH, 0, 0);
-        ok(length == 0, "Expected 0, got %d\n", length);
-    }
+    length = SendMessageA(hwnd, WM_GETTEXTLENGTH, 0, 0);
+    ok(length == 0, "Expected 0, got %d\n", length);
 
     /* add another with callback text */
     toolinfoA.cbSize = sizeof(TTTOOLINFOA);
@@ -380,33 +408,26 @@ static void test_gettext(void)
     GetClientRect(hwnd, &toolinfoA.rect);
     r = SendMessageA(hwnd, TTM_ADDTOOLA, 0, (LPARAM)&toolinfoA);
     ok(r, "Adding the tool to the tooltip failed\n");
-    if (r)
-    {
-        toolinfoA.hwnd = notify;
-        toolinfoA.uId = 0x1236ABCD;
-        toolinfoA.lpszText = bufA;
-        SendMessageA(hwnd, TTM_GETTEXTA, 0, (LPARAM)&toolinfoA);
-        ok(strcmp(toolinfoA.lpszText, testcallbackA) == 0,
-           "lpszText should be an (%s) string\n", testcallbackA);
 
-        toolinfoA.lpszText = bufA;
-        SendMessageA(hwnd, TTM_GETTOOLINFOA, 0, (LPARAM)&toolinfoA);
-        ok(toolinfoA.lpszText == LPSTR_TEXTCALLBACKA,
-           "expected LPSTR_TEXTCALLBACKA, got %p\n", toolinfoA.lpszText);
-    }
+    toolinfoA.hwnd = notify;
+    toolinfoA.uId = 0x1236abcd;
+    toolinfoA.lpszText = bufA;
+    r = SendMessageA(hwnd, TTM_GETTEXTA, 0, (LPARAM)&toolinfoA);
+    ok(!r, "got %ld\n", r);
+    ok(!strcmp(toolinfoA.lpszText, testcallbackA), "lpszText should be an (%s) string\n", testcallbackA);
+
+    toolinfoA.lpszText = bufA;
+    r = SendMessageA(hwnd, TTM_GETTOOLINFOA, 0, (LPARAM)&toolinfoA);
+todo_wine
+    ok(!r, "got %ld\n", r);
+    ok(toolinfoA.lpszText == LPSTR_TEXTCALLBACKA, "expected LPSTR_TEXTCALLBACKA, got %p\n", toolinfoA.lpszText);
 
     DestroyWindow(hwnd);
     DestroyWindow(notify);
 
-    SetLastError(0xdeadbeef);
     hwnd = CreateWindowExW(0, TOOLTIPS_CLASSW, NULL, 0,
                            10, 10, 300, 100,
                            NULL, NULL, NULL, 0);
-
-    if (!hwnd && GetLastError() == ERROR_CALL_NOT_IMPLEMENTED) {
-        win_skip("CreateWindowExW is not implemented\n");
-        return;
-    }
     ok(hwnd != NULL, "failed to create tooltip wnd\n");
 
     toolinfoW.cbSize = sizeof(TTTOOLINFOW);
@@ -428,6 +449,37 @@ static void test_gettext(void)
         SendMessageW(hwnd, TTM_GETTEXTW, 0, (LPARAM)&toolinfoW);
         ok(toolinfoW.lpszText[0] == 0, "lpszText should be an empty string\n");
     }
+
+    /* text with embedded tabs */
+    toolinfoA.cbSize = sizeof(TTTOOLINFOA);
+    toolinfoA.hwnd = NULL;
+    toolinfoA.hinst = GetModuleHandleA(NULL);
+    toolinfoA.uFlags = 0;
+    toolinfoA.uId = 0x1235abce;
+    strcpy(bufA, testtip2A);
+    toolinfoA.lpszText = bufA;
+    toolinfoA.lParam = 0xdeadbeef;
+    GetClientRect(hwnd, &toolinfoA.rect);
+    r = SendMessageA(hwnd, TTM_ADDTOOLA, 0, (LPARAM)&toolinfoA);
+    ok(r, "got %ld\n", r);
+
+    toolinfoA.hwnd = NULL;
+    toolinfoA.uId = 0x1235abce;
+    toolinfoA.lpszText = bufA;
+    r = SendMessageA(hwnd, TTM_GETTEXTA, 0, (LPARAM)&toolinfoA);
+    ok(!r, "got %ld\n", r);
+    ok(!strcmp(toolinfoA.lpszText, testtipA), "expected %s, got %s\n", testtipA, toolinfoA.lpszText);
+
+    /* enable TTS_NOPREFIX, original text is retained */
+    style = GetWindowLongA(hwnd, GWL_STYLE);
+    SetWindowLongA(hwnd, GWL_STYLE, style | TTS_NOPREFIX);
+
+    toolinfoA.hwnd = NULL;
+    toolinfoA.uId = 0x1235abce;
+    toolinfoA.lpszText = bufA;
+    r = SendMessageA(hwnd, TTM_GETTEXTA, 0, (LPARAM)&toolinfoA);
+    ok(!r, "got %ld\n", r);
+    ok(!strcmp(toolinfoA.lpszText, testtip2A), "expected %s, got %s\n", testtip2A, toolinfoA.lpszText);
 
     DestroyWindow(hwnd);
 }
@@ -813,6 +865,191 @@ static void test_track(void)
     DestroyWindow(parent);
 }
 
+static LRESULT CALLBACK info_wnd_proc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    switch(msg) {
+
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        break;
+
+    default:
+        return DefWindowProcA(hWnd, msg, wParam, lParam);
+    }
+    return 0;
+}
+
+static void test_setinfo(void)
+{
+   WNDCLASSA wc;
+   LRESULT   lResult;
+   HWND parent, parent2, hwndTip, hwndTip2;
+   TTTOOLINFOA toolInfo = { 0 };
+   TTTOOLINFOA toolInfo2 = { 0 };
+   WNDPROC wndProc;
+
+   /* Create a class to use the custom draw wndproc */
+   wc.style = CS_HREDRAW | CS_VREDRAW;
+   wc.cbClsExtra = 0;
+   wc.cbWndExtra = 0;
+   wc.hInstance = GetModuleHandleA(NULL);
+   wc.hIcon = NULL;
+   wc.hCursor = LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
+   wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
+   wc.lpszMenuName = NULL;
+   wc.lpszClassName = "SetInfoClass";
+   wc.lpfnWndProc = info_wnd_proc;
+   RegisterClassA(&wc);
+
+   /* Create a main window */
+   parent = CreateWindowExA(0, "SetInfoClass", NULL,
+                           WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX |
+                           WS_MAXIMIZEBOX | WS_VISIBLE,
+                           50, 50,
+                           300, 300,
+                           NULL, NULL, NULL, 0);
+   ok(parent != NULL, "Creation of main window failed\n");
+
+   parent2 = CreateWindowExA(0, "SetInfoClass", NULL,
+                           WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX |
+                           WS_MAXIMIZEBOX | WS_VISIBLE,
+                           50, 50,
+                           300, 300,
+                           NULL, NULL, NULL, 0);
+   ok(parent2 != NULL, "Creation of main window failed\n");
+
+   /* Make it show */
+   ShowWindow(parent2, SW_SHOWNORMAL);
+   flush_events(100);
+
+   /* Create Tooltip */
+   hwndTip = CreateWindowExA(WS_EX_TOPMOST, TOOLTIPS_CLASSA,
+                            NULL, TTS_NOPREFIX | TTS_ALWAYSTIP,
+                            CW_USEDEFAULT, CW_USEDEFAULT,
+                            CW_USEDEFAULT, CW_USEDEFAULT,
+                            parent, NULL, GetModuleHandleA(NULL), 0);
+   ok(hwndTip != NULL, "Creation of tooltip window failed\n");
+
+   hwndTip2 = CreateWindowExA(WS_EX_TOPMOST, TOOLTIPS_CLASSA,
+                            NULL, TTS_NOPREFIX | TTS_ALWAYSTIP,
+                            CW_USEDEFAULT, CW_USEDEFAULT,
+                            CW_USEDEFAULT, CW_USEDEFAULT,
+                            parent, NULL, GetModuleHandleA(NULL), 0);
+   ok(hwndTip2 != NULL, "Creation of tooltip window failed\n");
+
+
+   /* Make it topmost, as per the MSDN */
+   SetWindowPos(hwndTip, HWND_TOPMOST, 0, 0, 0, 0,
+         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
+   /* Create a tool */
+   toolInfo.cbSize = TTTOOLINFOA_V1_SIZE;
+   toolInfo.hwnd = parent;
+   toolInfo.hinst = GetModuleHandleA(NULL);
+   toolInfo.uFlags = TTF_SUBCLASS;
+   toolInfo.uId = 0x1234ABCD;
+   toolInfo.lpszText = (LPSTR)"This is a test tooltip";
+   toolInfo.lParam = 0xdeadbeef;
+   GetClientRect (parent, &toolInfo.rect);
+   lResult = SendMessageA(hwndTip, TTM_ADDTOOLA, 0, (LPARAM)&toolInfo);
+   ok(lResult, "Adding the tool to the tooltip failed\n");
+
+   toolInfo.cbSize = TTTOOLINFOA_V1_SIZE;
+   toolInfo.hwnd = parent2;
+   toolInfo.hinst = GetModuleHandleA(NULL);
+   toolInfo.uFlags = 0;
+   toolInfo.uId = 0x1234ABCE;
+   toolInfo.lpszText = (LPSTR)"This is a test tooltip";
+   toolInfo.lParam = 0xdeadbeef;
+   GetClientRect (parent, &toolInfo.rect);
+   lResult = SendMessageA(hwndTip, TTM_ADDTOOLA, 0, (LPARAM)&toolInfo);
+   ok(lResult, "Adding the tool to the tooltip failed\n");
+
+   /* Try to Remove Subclass */
+   toolInfo2.cbSize = TTTOOLINFOA_V1_SIZE;
+   toolInfo2.hwnd = parent;
+   toolInfo2.uId = 0x1234ABCD;
+   lResult = SendMessageA(hwndTip, TTM_GETTOOLINFOA, 0, (LPARAM)&toolInfo2);
+   ok(lResult, "GetToolInfo failed\n");
+   ok(toolInfo2.uFlags & TTF_SUBCLASS, "uFlags does not have subclass\n");
+   wndProc = (WNDPROC)GetWindowLongPtrA(parent, GWLP_WNDPROC);
+   ok (wndProc != info_wnd_proc, "Window Proc is wrong\n");
+
+   toolInfo2.uFlags &= ~TTF_SUBCLASS;
+   SendMessageA(hwndTip, TTM_SETTOOLINFOA, 0, (LPARAM)&toolInfo2);
+   lResult = SendMessageA(hwndTip, TTM_GETTOOLINFOA, 0, (LPARAM)&toolInfo2);
+   ok(lResult, "GetToolInfo failed\n");
+   ok(!(toolInfo2.uFlags & TTF_SUBCLASS), "uFlags has subclass\n");
+   wndProc = (WNDPROC)GetWindowLongPtrA(parent, GWLP_WNDPROC);
+   ok (wndProc != info_wnd_proc, "Window Proc is wrong\n");
+
+   /* Try to Add Subclass */
+
+   /* Make it topmost, as per the MSDN */
+   SetWindowPos(hwndTip2, HWND_TOPMOST, 0, 0, 0, 0,
+         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
+   toolInfo2.cbSize = TTTOOLINFOA_V1_SIZE;
+   toolInfo2.hwnd = parent2;
+   toolInfo2.uId = 0x1234ABCE;
+   lResult = SendMessageA(hwndTip, TTM_GETTOOLINFOA, 0, (LPARAM)&toolInfo2);
+   ok(lResult, "GetToolInfo failed\n");
+   ok(!(toolInfo2.uFlags & TTF_SUBCLASS), "uFlags has subclass\n");
+   wndProc = (WNDPROC)GetWindowLongPtrA(parent2, GWLP_WNDPROC);
+   ok (wndProc == info_wnd_proc, "Window Proc is wrong\n");
+
+   toolInfo2.uFlags |= TTF_SUBCLASS;
+   SendMessageA(hwndTip, TTM_SETTOOLINFOA, 0, (LPARAM)&toolInfo2);
+   lResult = SendMessageA(hwndTip, TTM_GETTOOLINFOA, 0, (LPARAM)&toolInfo2);
+   ok(lResult, "GetToolInfo failed\n");
+   ok(toolInfo2.uFlags & TTF_SUBCLASS, "uFlags does not have subclass\n");
+   wndProc = (WNDPROC)GetWindowLongPtrA(parent2, GWLP_WNDPROC);
+   ok (wndProc == info_wnd_proc, "Window Proc is wrong\n");
+
+   /* Clean up */
+   DestroyWindow(hwndTip);
+   DestroyWindow(hwndTip2);
+   DestroyWindow(parent);
+   DestroyWindow(parent2);
+}
+
+static void test_margin(void)
+{
+    RECT r, r1;
+    HWND hwnd;
+    DWORD ret;
+
+    hwnd = CreateWindowExA(0, TOOLTIPS_CLASSA, NULL, 0,
+                           10, 10, 300, 100,
+                           NULL, NULL, NULL, 0);
+    ok(hwnd != NULL, "failed to create tooltip wnd\n");
+
+    ret = SendMessageA(hwnd, TTM_SETMARGIN, 0, 0);
+    ok(!ret, "got %d\n", ret);
+
+    SetRect(&r, -1, -1, 1, 1);
+    ret = SendMessageA(hwnd, TTM_SETMARGIN, 0, (LPARAM)&r);
+    ok(!ret, "got %d\n", ret);
+
+    SetRectEmpty(&r1);
+    ret = SendMessageA(hwnd, TTM_GETMARGIN, 0, (LPARAM)&r1);
+    ok(!ret, "got %d\n", ret);
+    ok(EqualRect(&r, &r1), "got %s, was %s\n", wine_dbgstr_rect(&r1), wine_dbgstr_rect(&r));
+
+    ret = SendMessageA(hwnd, TTM_SETMARGIN, 0, 0);
+    ok(!ret, "got %d\n", ret);
+
+    SetRectEmpty(&r1);
+    ret = SendMessageA(hwnd, TTM_GETMARGIN, 0, (LPARAM)&r1);
+    ok(!ret, "got %d\n", ret);
+    ok(EqualRect(&r, &r1), "got %s, was %s\n", wine_dbgstr_rect(&r1), wine_dbgstr_rect(&r));
+
+    ret = SendMessageA(hwnd, TTM_GETMARGIN, 0, 0);
+    ok(!ret, "got %d\n", ret);
+
+    DestroyWindow(hwnd);
+}
+
 START_TEST(tooltips)
 {
     InitCommonControls();
@@ -824,4 +1061,6 @@ START_TEST(tooltips)
     test_longtextA();
     test_longtextW();
     test_track();
+    test_setinfo();
+    test_margin();
 }

@@ -36,6 +36,7 @@
 #include "winternl.h"
 
 #include "winemm.h"
+#include "resource.h"
 
 #include "ole2.h"
 #include "initguid.h"
@@ -47,12 +48,6 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(winmm);
-
-/* FIXME: Should be localized */
-static const WCHAR volumeW[] = {'V','o','l','u','m','e',0};
-static const WCHAR mastervolumeW[] = {'M','a','s','t','e','r',' ','V','o','l',
-    'u','m','e',0};
-static const WCHAR muteW[] = {'M','u','t','e',0};
 
 /* HWAVE (and HMIXER) format:
  *
@@ -211,12 +206,14 @@ void WINMM_DeleteWaveform(void)
             WINMM_Device *device = mmdevice->devices[j];
             if(device->handle)
                 CloseHandle(device->handle);
+            device->lock.DebugInfo->Spare[0] = 0;
             DeleteCriticalSection(&device->lock);
         }
 
         if(mmdevice->volume)
             ISimpleAudioVolume_Release(mmdevice->volume);
         CoTaskMemFree(mmdevice->dev_id);
+        mmdevice->lock.DebugInfo->Spare[0] = 0;
         DeleteCriticalSection(&mmdevice->lock);
     }
 
@@ -227,12 +224,14 @@ void WINMM_DeleteWaveform(void)
             WINMM_Device *device = mmdevice->devices[j];
             if(device->handle)
                 CloseHandle(device->handle);
+            device->lock.DebugInfo->Spare[0] = 0;
             DeleteCriticalSection(&device->lock);
         }
 
         if(mmdevice->volume)
             ISimpleAudioVolume_Release(mmdevice->volume);
         CoTaskMemFree(mmdevice->dev_id);
+        mmdevice->lock.DebugInfo->Spare[0] = 0;
         DeleteCriticalSection(&mmdevice->lock);
     }
 
@@ -900,8 +899,7 @@ static MMRESULT WINMM_TryDeviceMapping(WINMM_Device *device, WAVEFORMATEX *fmt,
 
     hr = IAudioClient_IsFormatSupported(device->client,
             AUDCLNT_SHAREMODE_SHARED, &target, &closer_fmt);
-    if(closer_fmt)
-        CoTaskMemFree(closer_fmt);
+    CoTaskMemFree(closer_fmt);
     if(hr != S_OK)
         return WAVERR_BADFORMAT;
 
@@ -1120,8 +1118,7 @@ static LRESULT WINMM_OpenDevice(WINMM_Device *device, WINMM_OpenInfo *info,
 
         hr = IAudioClient_IsFormatSupported(device->client,
                 AUDCLNT_SHAREMODE_SHARED, device->orig_fmt, &closer_fmt);
-        if(closer_fmt)
-            CoTaskMemFree(closer_fmt);
+        CoTaskMemFree(closer_fmt);
         if((hr == S_FALSE || hr == AUDCLNT_E_UNSUPPORTED_FORMAT) && !(info->flags & WAVE_FORMAT_DIRECT))
             ret = WINMM_MapDevice(device, TRUE, is_out);
         else
@@ -1420,6 +1417,8 @@ static HRESULT WINMM_CloseDevice(WINMM_Device *device)
 
     IAudioClock_Release(device->clock);
     device->clock = NULL;
+
+    HeapFree(GetProcessHeap(), 0, device->orig_fmt);
 
     return S_OK;
 }
@@ -2634,6 +2633,7 @@ UINT WINAPI waveOutGetDevCapsA(UINT_PTR uDeviceID, LPWAVEOUTCAPSA lpCaps,
 	wocA.dwFormats      = wocW.dwFormats;
 	wocA.wChannels      = wocW.wChannels;
 	wocA.dwSupport      = wocW.dwSupport;
+	wocA.wReserved1     = wocW.wReserved1;
 	memcpy(lpCaps, &wocA, min(uSize, sizeof(wocA)));
     }
     return ret;
@@ -2657,10 +2657,6 @@ UINT WINAPI waveOutGetDevCapsW(UINT_PTR uDeviceID, LPWAVEOUTCAPSW lpCaps,
     if (lpCaps == NULL)	return MMSYSERR_INVALPARAM;
 
     if(WINMM_IsMapper(uDeviceID)){
-        /* FIXME: Should be localized */
-        static const WCHAR mapper_pnameW[] = {'W','i','n','e',' ','S','o','u',
-            'n','d',' ','M','a','p','p','e','r',0};
-
         mapper_caps.wMid = 0xFF;
         mapper_caps.wPid = 0xFF;
         mapper_caps.vDriverVersion = 0x00010001;
@@ -2669,7 +2665,7 @@ UINT WINAPI waveOutGetDevCapsW(UINT_PTR uDeviceID, LPWAVEOUTCAPSW lpCaps,
         mapper_caps.dwSupport = WAVECAPS_LRVOLUME | WAVECAPS_VOLUME |
             WAVECAPS_SAMPLEACCURATE;
         mapper_caps.wChannels = 2;
-        lstrcpyW(mapper_caps.szPname, mapper_pnameW);
+        LoadStringW(hWinMM32Instance, IDS_MAPPER_NAME, mapper_caps.szPname, MAXPNAMELEN);
 
         caps = &mapper_caps;
     }else{
@@ -3318,17 +3314,13 @@ UINT WINAPI waveInGetDevCapsW(UINT_PTR uDeviceID, LPWAVEINCAPSW lpCaps, UINT uSi
         return MMSYSERR_INVALPARAM;
 
     if(WINMM_IsMapper(uDeviceID)){
-        /* FIXME: Should be localized */
-        static const WCHAR mapper_pnameW[] = {'W','i','n','e',' ','S','o','u',
-            'n','d',' ','M','a','p','p','e','r',0};
-
         mapper_caps.wMid = 0xFF;
         mapper_caps.wPid = 0xFF;
         mapper_caps.vDriverVersion = 0x00010001;
         mapper_caps.dwFormats = 0xFFFFFFFF;
         mapper_caps.wReserved1 = 0;
         mapper_caps.wChannels = 2;
-        lstrcpyW(mapper_caps.szPname, mapper_pnameW);
+        LoadStringW(hWinMM32Instance, IDS_MAPPER_NAME, mapper_caps.szPname, MAXPNAMELEN);
 
         caps = &mapper_caps;
     }else{
@@ -3367,6 +3359,7 @@ UINT WINAPI waveInGetDevCapsA(UINT_PTR uDeviceID, LPWAVEINCAPSA lpCaps, UINT uSi
                              sizeof(wicA.szPname), NULL, NULL );
 	wicA.dwFormats      = wicW.dwFormats;
 	wicA.wChannels      = wicW.wChannels;
+	wicA.wReserved1     = wicW.wReserved1;
 	memcpy(lpCaps, &wicA, min(uSize, sizeof(wicA)));
     }
     return ret;
@@ -4016,8 +4009,8 @@ static UINT WINMM_GetVolumeLineControl(WINMM_MMDevice *mmdevice, DWORD line,
     ctl->dwControlType = MIXERCONTROL_CONTROLTYPE_VOLUME;
     ctl->fdwControl = MIXERCONTROL_CONTROLF_UNIFORM;
     ctl->cMultipleItems = 0;
-    lstrcpyW(ctl->szShortName, volumeW);
-    lstrcpyW(ctl->szName, volumeW);
+    LoadStringW(hWinMM32Instance, IDS_VOLUME, ctl->szShortName, MIXER_SHORT_NAME_CHARS);
+    LoadStringW(hWinMM32Instance, IDS_VOLUME, ctl->szName, MIXER_LONG_NAME_CHARS);
     ctl->Bounds.s1.dwMinimum = 0;
     ctl->Bounds.s1.dwMaximum = 0xFFFF;
     ctl->Metrics.cSteps = 192;
@@ -4032,8 +4025,8 @@ static UINT WINMM_GetMuteLineControl(WINMM_MMDevice *mmdevice, DWORD line,
     ctl->dwControlType = MIXERCONTROL_CONTROLTYPE_MUTE;
     ctl->fdwControl = MIXERCONTROL_CONTROLF_UNIFORM;
     ctl->cMultipleItems = 0;
-    lstrcpyW(ctl->szShortName, muteW);
-    lstrcpyW(ctl->szName, muteW);
+    LoadStringW(hWinMM32Instance, IDS_MUTE, ctl->szShortName, MIXER_SHORT_NAME_CHARS);
+    LoadStringW(hWinMM32Instance, IDS_MUTE, ctl->szName, MIXER_LONG_NAME_CHARS);
     ctl->Bounds.s1.dwMinimum = 0;
     ctl->Bounds.s1.dwMaximum = 1;
     ctl->Metrics.cSteps = 0;
@@ -4144,8 +4137,8 @@ static UINT WINMM_GetSourceLineInfo(WINMM_MMDevice *mmdevice, UINT mmdev_index,
     info->Target.wPid = ~0;
     info->Target.vDriverVersion = 0;
 
-    lstrcpyW(info->szShortName, volumeW);
-    lstrcpyW(info->szName, mastervolumeW);
+    LoadStringW(hWinMM32Instance, IDS_VOLUME, info->szShortName, MIXER_SHORT_NAME_CHARS);
+    LoadStringW(hWinMM32Instance, IDS_MASTER_VOLUME, info->szName, MIXER_LONG_NAME_CHARS);
 
     if(is_out){
         info->dwComponentType = MIXERLINE_COMPONENTTYPE_SRC_WAVEOUT;
@@ -4177,8 +4170,8 @@ static UINT WINMM_GetDestinationLineInfo(WINMM_MMDevice *mmdevice,
     info->cConnections = 1;
     info->cControls = 2;
 
-    lstrcpyW(info->szShortName, volumeW);
-    lstrcpyW(info->szName, mastervolumeW);
+    LoadStringW(hWinMM32Instance, IDS_VOLUME, info->szShortName, MIXER_SHORT_NAME_CHARS);
+    LoadStringW(hWinMM32Instance, IDS_MASTER_VOLUME, info->szName, MIXER_LONG_NAME_CHARS);
 
     info->Target.dwDeviceID = mmdev_index;
     info->Target.wMid = ~0;
@@ -4298,6 +4291,8 @@ UINT WINAPI mixerGetLineInfoW(HMIXEROBJ hmix, LPMIXERLINEW lpmliW, DWORD fdwInfo
     if(!mmdevice)
         return MMSYSERR_INVALHANDLE;
 
+    lpmliW->dwUser = 0;
+
     switch(fdwInfo & MIXER_GETLINEINFOF_QUERYMASK){
     case MIXER_GETLINEINFOF_DESTINATION:
         return WINMM_GetDestinationLineInfo(mmdevice, mmdev_index, lpmliW,
@@ -4314,7 +4309,7 @@ UINT WINAPI mixerGetLineInfoW(HMIXEROBJ hmix, LPMIXERLINEW lpmliW, DWORD fdwInfo
         return MIXERR_INVALLINE;
     }
 
-    TRACE("Returning INVALFLAG on these flags: %x\n", fdwInfo & MIXER_GETLINEINFOF_QUERYMASK);
+    TRACE("Returning INVALFLAG on these flags: %x\n", fdwInfo);
     return MMSYSERR_INVALFLAG;
 }
 

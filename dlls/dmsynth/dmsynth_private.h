@@ -50,8 +50,8 @@ typedef struct IDirectMusicSynthSinkImpl IDirectMusicSynthSinkImpl;
 /*****************************************************************************
  * ClassFactory
  */
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicSynthImpl (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
-extern HRESULT WINAPI DMUSIC_CreateDirectMusicSynthSinkImpl (LPCGUID lpcGUID, LPVOID* ppobj, LPUNKNOWN pUnkOuter) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI DMUSIC_CreateDirectMusicSynthImpl(REFIID riid, void **ppobj) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI DMUSIC_CreateDirectMusicSynthSinkImpl(REFIID riid, void **ppobj) DECLSPEC_HIDDEN;
 
 /*****************************************************************************
  * IDirectMusicSynth8Impl implementation structure
@@ -104,12 +104,6 @@ typedef struct {
 } guid_info;
 
 /* used for initialising structs (primarily for DMUS_OBJECTDESC) */
-#define DM_STRUCT_INIT(x) 				\
-	do {								\
-		memset((x), 0, sizeof(*(x)));	\
-		(x)->dwSize = sizeof(*x);		\
-	} while (0)
-
 #define FE(x) { x, #x }	
 #define GE(x) { &x, #x }
 

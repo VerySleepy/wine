@@ -1789,6 +1789,16 @@ static void test_setmode(void)
         return;
     }
 
+    errno = 0xdeadbeef;
+    ret = _setmode(-2, 0);
+    ok(ret == -1, "_setmode returned %x, expected -1\n", ret);
+    ok(errno == EINVAL, "errno = %d\n", errno);
+
+    errno = 0xdeadbeef;
+    ret = _setmode(-2, _O_TEXT);
+    ok(ret == -1, "_setmode returned %x, expected -1\n", ret);
+    ok(errno == EBADF, "errno = %d\n", errno);
+
     fd = _open(name, _O_CREAT|_O_WRONLY, _S_IWRITE);
     ok(fd != -1, "failed to open file\n");
 
@@ -1850,6 +1860,11 @@ static void test_get_osfhandle(void)
 
     _close(fd);
     _unlink(fname);
+
+    errno = 0xdeadbeef;
+    handle = (HANDLE)_get_osfhandle(fd);
+    ok(handle == INVALID_HANDLE_VALUE, "_get_osfhandle returned %p\n", handle);
+    ok(errno == EBADF, "errno = %d\n", errno);
 }
 
 static void test_setmaxstdio(void)
@@ -2247,8 +2262,8 @@ static void test_write_flush_size(FILE *file, int bufsize)
     fpos_t pos, pos2;
 
     fd = fileno(file);
-    inbuffer = calloc(bufsize + 1, 1);
-    outbuffer = calloc(bufsize + 1, 1);
+    inbuffer = calloc(1, bufsize + 1);
+    outbuffer = calloc(1, bufsize + 1);
     _snprintf(outbuffer, bufsize + 1, "0,1,2,3,4,5,6,7,8,9");
 
     for (size = bufsize + 1; size >= bufsize - 1; size--) {
@@ -2310,6 +2325,65 @@ static void test_write_flush(void)
     fclose(file);
     unlink(tempf);
     free(tempf);
+}
+
+static void test_close(void)
+{
+    ioinfo *stdout_info, stdout_copy, *stderr_info, stderr_copy;
+    int fd1, fd2, ret1, ret2, ret3, ret4;
+    DWORD flags;
+    HANDLE h;
+
+    /* test close on fds that use the same handle */
+    h = CreateFileA("fdopen.tst", GENERIC_READ|GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL);
+    ok(h != INVALID_HANDLE_VALUE, "error opening fdopen.tst file\n");
+
+    fd1 = _open_osfhandle((intptr_t)h, 0);
+    ok(fd1 != -1, "_open_osfhandle failed (%d)\n", errno);
+    fd2 = _open_osfhandle((intptr_t)h, 0);
+    ok(fd2 != -1, "_open_osfhandle failed (%d)\n", errno);
+    ok(fd1 != fd2, "fd1 == fd2\n");
+
+    ok((HANDLE)_get_osfhandle(fd1) == h, "handles mismatch (%p != %p)\n",
+            (HANDLE)_get_osfhandle(fd1), h);
+    ok((HANDLE)_get_osfhandle(fd2) == h, "handles mismatch (%p != %p)\n",
+            (HANDLE)_get_osfhandle(fd2), h);
+    ret1 = close(fd1);
+    ok(!ret1, "close(fd1) failed (%d)\n", errno);
+    ok(!GetHandleInformation(h, &flags), "GetHandleInformation succeeded\n");
+    ok(close(fd2), "close(fd2) succeeded\n");
+
+    /* test close on stdout and stderr that use the same handle */
+    h = CreateFileA("fdopen.tst", GENERIC_READ|GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL);
+    ok(h != INVALID_HANDLE_VALUE, "error opening fdopen.tst file\n");
+
+    /* tests output will not be visible from now on */
+    stdout_info = &__pioinfo[STDOUT_FILENO/MSVCRT_FD_BLOCK_SIZE][STDOUT_FILENO%MSVCRT_FD_BLOCK_SIZE];
+    stderr_info = &__pioinfo[STDERR_FILENO/MSVCRT_FD_BLOCK_SIZE][STDERR_FILENO%MSVCRT_FD_BLOCK_SIZE];
+    stdout_copy = *stdout_info;
+    stderr_copy = *stderr_info;
+    stdout_info->handle = h;
+    stderr_info->handle = h;
+
+    ret1 = close(STDOUT_FILENO);
+    ret2 = GetHandleInformation(h, &flags);
+    ret3 = close(STDERR_FILENO);
+    ret4 = GetHandleInformation(h, &flags);
+
+    *stdout_info = stdout_copy;
+    *stderr_info = stderr_copy;
+    SetStdHandle(STD_OUTPUT_HANDLE, stdout_info->handle);
+    SetStdHandle(STD_ERROR_HANDLE, stderr_info->handle);
+    /* stdout and stderr restored */
+
+    ok(!ret1, "close(STDOUT_FILENO) failed\n");
+    ok(ret2, "GetHandleInformation failed\n");
+    ok(!ret3, "close(STDERR_FILENO) failed\n");
+    ok(!ret4, "GetHandleInformation succeeded\n");
+
+    DeleteFileA( "fdopen.tst" );
 }
 
 START_TEST(file)
@@ -2378,6 +2452,7 @@ START_TEST(file)
     test_mktemp();
     test__open_osfhandle();
     test_write_flush();
+    test_close();
 
     /* Wait for the (_P_NOWAIT) spawned processes to finish to make sure the report
      * file contains lines in the correct order

@@ -1149,8 +1149,8 @@ static HRESULT WINAPI OleObject_DoVerb(IOleObject *iface, LONG iVerb, LPMSG lpms
     ok(ip_frame != NULL, "ip_frame == NULL\n");
     ok(ip_uiwindow != NULL, "ip_uiwindow == NULL\n");
     ok((IOleInPlaceUIWindow*)ip_frame != ip_uiwindow, "ip_frame == ip_uiwindow\n");
-    ok(!memcmp(&pos_rect, lprcPosRect, sizeof(RECT)), "pos_rect != lpecPosRect\n");
-    ok(!memcmp(&clip_rect, lprcPosRect, sizeof(RECT)), "clip_rect != lpecPosRect\n");
+    ok(EqualRect(&pos_rect, lprcPosRect), "pos_rect != lpecPosRect\n");
+    ok(EqualRect(&clip_rect, lprcPosRect), "clip_rect != lpecPosRect\n");
     ok(frame_info.cb == sizeof(frame_info), "frame_info.cb = %d\n", frame_info.cb);
     ok(!frame_info.fMDIApp, "frame_info.fMDIApp = %x\n", frame_info.fMDIApp);
     ok(frame_info.hwndFrame != NULL, "frame_info.hwnd == NULL\n");
@@ -1569,7 +1569,7 @@ static void test_iface_wrapping(IHTMLObjectElement *elem)
     SET_EXPECT(wrapped_Release);
     unk = (void*)0xdeadbeef;
     hres = IHTMLObjectElement_QueryInterface(elem, &IID_ITestActiveX, (void**)&unk);
-    ok(hres == S_OK, "QueryInerface(IID_ITestActiveX failed: %08x\n", hres);
+    ok(hres == S_OK, "QueryInterface(IID_ITestActiveX failed: %08x\n", hres);
     CHECK_CALLED(QI_ITestActiveX);
     CHECK_CALLED(wrapped_AddRef);
     CHECK_CALLED(wrapped_Release);
@@ -1605,7 +1605,7 @@ static void test_iface_wrapping(IHTMLObjectElement *elem)
     SET_EXPECT(wrapped_Release);
     unk = (void*)0xdeadbeef;
     hres = IHTMLObjectElement_QueryInterface(elem, &IID_ITestActiveX, (void**)&unk2);
-    ok(hres == S_OK, "QueryInerface(IID_ITestActiveX failed: %08x\n", hres);
+    ok(hres == S_OK, "QueryInterface(IID_ITestActiveX failed: %08x\n", hres);
     CHECK_CALLED(QI_ITestActiveX);
     CHECK_CALLED(wrapped_AddRef);
     CHECK_CALLED(wrapped_Release);

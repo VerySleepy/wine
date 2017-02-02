@@ -27,6 +27,27 @@
 #include <winbase.h>
 #include "wine/test.h"
 
+static inline float __port_infinity(void)
+{
+        static const unsigned __inf_bytes = 0x7f800000;
+            return *(const float *)&__inf_bytes;
+}
+#define INFINITY __port_infinity()
+
+static inline float __port_nan(void)
+{
+        static const unsigned __nan_bytes = 0x7fc00000;
+            return *(const float *)&__nan_bytes;
+}
+#define NAN __port_nan()
+
+static inline float __port_ind(void)
+{
+        static const unsigned __ind_bytes = 0xffc00000;
+            return *(const float *)&__ind_bytes;
+}
+#define IND __port_ind()
+
 typedef double LDOUBLE;  /* long double is just a double */
 
 typedef struct {
@@ -60,6 +81,22 @@ typedef struct {
     float imag;
 } complex_float;
 
+typedef struct {
+    void *vtable;
+    size_t refs;
+} locale_facet;
+
+typedef unsigned char MSVCP_bool;
+
+typedef struct _locale__Locimp {
+    locale_facet facet;
+    locale_facet **facetvec;
+    size_t facet_cnt;
+    int catmask;
+    MSVCP_bool transparent;
+    basic_string_char name;
+} locale__Locimp;
+
 static void* (__cdecl *p_set_invalid_parameter_handler)(void*);
 static _locale_t (__cdecl *p__get_current_locale)(void);
 static void (__cdecl *p__free_locale)(_locale_t);
@@ -81,6 +118,7 @@ static MSVCP__Ctypevec* (__cdecl *p__Getctype)(MSVCP__Ctypevec*);
 static /*MSVCP__Collvec*/ULONGLONG (__cdecl *p__Getcoll)(void);
 static wctrans_t (__cdecl *p_wctrans)(const char*);
 static wint_t (__cdecl *p_towctrans)(wint_t, wctrans_t);
+static void (__cdecl *p_locale__Locimp__Locimp_Addfac)(locale__Locimp*,locale_facet*,size_t);
 
 #undef __thiscall
 #ifdef __i386__
@@ -229,6 +267,8 @@ static BOOL init(void)
     SET(p_std_Ctraits_long_double__Isnan, "?_Isnan@?$_Ctraits@O@std@@SA_NO@Z");
 
     if(sizeof(void*) == 8) { /* 64-bit initialization */
+        SET(p_locale__Locimp__Locimp_Addfac,
+                "?_Locimp_Addfac@_Locimp@locale@std@@CAXPEAV123@PEAVfacet@23@_K@Z");
         SET(p_char_assign, "?assign@?$char_traits@D@std@@SAXAEADAEBD@Z");
         SET(p_wchar_assign, "?assign@?$char_traits@_W@std@@SAXAEA_WAEB_W@Z");
         SET(p_short_assign, "?assign@?$char_traits@G@std@@SAXAEAGAEBG@Z");
@@ -289,6 +329,8 @@ static BOOL init(void)
         SET(p_complex_float_pow_cf,
                 "??$pow@M@std@@YA?AV?$complex@M@0@AEBV10@AEBM@Z");
     } else {
+        SET(p_locale__Locimp__Locimp_Addfac,
+                "?_Locimp_Addfac@_Locimp@locale@std@@CAXPAV123@PAVfacet@23@I@Z");
 #ifdef __arm__
         SET(p_char_assign, "?assign@?$char_traits@D@std@@SAXAADABD@Z");
         SET(p_wchar_assign, "?assign@?$char_traits@_W@std@@SAXAA_WAB_W@Z");
@@ -707,31 +749,34 @@ static void test_Ctraits_math_functions(void)
     ret = p_std_Ctraits_float__Isnan(0.0);
     ok(ret == FALSE, "ret = %d\n", ret);
 
-    ret = p_std_Ctraits_float__Isnan(0.0 / 0.0);
-    ok(ret == TRUE, "ret = %d\n", ret);
-
-    ret = p_std_Ctraits_float__Isnan(1.0 / 0.0);
+    ret = p_std_Ctraits_float__Isnan(INFINITY);
     ok(ret == FALSE, "ret = %d\n", ret);
 
-    ret = p_std_Ctraits_float__Isnan(-1.0 / 0.0);
+    ret = p_std_Ctraits_float__Isnan(-INFINITY);
     ok(ret == FALSE, "ret = %d\n", ret);
 
-    ret = p_std_Ctraits_float__Isnan(log(-1.0));
+    ret = p_std_Ctraits_float__Isnan(IND);
     ok(ret == TRUE, "ret = %d\n", ret);
 
-    ret = p_std_Ctraits_float__Isnan(sqrt(-1.0));
+    ret = p_std_Ctraits_float__Isnan(NAN);
     ok(ret == TRUE, "ret = %d\n", ret);
 
-    ret = p_std_Ctraits_double__Isnan(3.14159 / 0.0);
+    ret = p_std_Ctraits_double__Isnan(INFINITY);
     ok(ret == FALSE, "ret = %d\n", ret);
 
-    ret = p_std_Ctraits_double__Isnan(log(-3.14159));
+    ret = p_std_Ctraits_double__Isnan(IND);
     ok(ret == TRUE, "ret = %d\n", ret);
 
-    ret = p_std_Ctraits_long_double__Isnan(3.14159 / 0.0);
+    ret = p_std_Ctraits_double__Isnan(NAN);
+    ok(ret == TRUE, "ret = %d\n", ret);
+
+    ret = p_std_Ctraits_long_double__Isnan(INFINITY);
     ok(ret == FALSE, "ret = %d\n", ret);
 
-    ret = p_std_Ctraits_long_double__Isnan(sqrt(-3.14159));
+    ret = p_std_Ctraits_long_double__Isnan(IND);
+    ok(ret == TRUE, "ret = %d\n", ret);
+
+    ret = p_std_Ctraits_long_double__Isnan(NAN);
     ok(ret == TRUE, "ret = %d\n", ret);
 }
 
@@ -967,6 +1012,78 @@ static void test_complex(void)
     ok(almost_eq(c2.imag, 0.00035447), "c2.imag = %g\n", c2.imag);
 }
 
+static struct {
+    int value[2];
+    const char* export_name;
+} vbtable_size_exports_list[] = {
+    {{0x5c, 0xa8}, "??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_istream@DU?$char_traits@D@std@@@1@@"},
+    {{0x54, 0x98}, "??_8?$basic_fstream@DU?$char_traits@D@std@@@std@@7B?$basic_ostream@DU?$char_traits@D@std@@@1@@"},
+    {{0x5c, 0xa8}, "??_8?$basic_fstream@GU?$char_traits@G@std@@@std@@7B?$basic_istream@GU?$char_traits@G@std@@@1@@"},
+    {{0x54, 0x98}, "??_8?$basic_fstream@GU?$char_traits@G@std@@@std@@7B?$basic_ostream@GU?$char_traits@G@std@@@1@@"},
+    {{0x5c, 0xa8}, "??_8?$basic_fstream@_WU?$char_traits@_W@std@@@std@@7B?$basic_istream@_WU?$char_traits@_W@std@@@1@@"},
+    {{0x54, 0x98}, "??_8?$basic_fstream@_WU?$char_traits@_W@std@@@std@@7B?$basic_ostream@_WU?$char_traits@_W@std@@@1@@"},
+    {{0x58, 0xa0}, "??_8?$basic_ifstream@DU?$char_traits@D@std@@@std@@7B@"},
+    {{0x58, 0xa0}, "??_8?$basic_ifstream@GU?$char_traits@G@std@@@std@@7B@"},
+    {{0x58, 0xa0}, "??_8?$basic_ifstream@_WU?$char_traits@_W@std@@@std@@7B@"},
+    {{ 0xc, 0x18}, "??_8?$basic_iostream@DU?$char_traits@D@std@@@std@@7B?$basic_istream@DU?$char_traits@D@std@@@1@@"},
+    {{ 0x4,  0x8}, "??_8?$basic_iostream@DU?$char_traits@D@std@@@std@@7B?$basic_ostream@DU?$char_traits@D@std@@@1@@"},
+    {{ 0xc, 0x18}, "??_8?$basic_iostream@GU?$char_traits@G@std@@@std@@7B?$basic_istream@GU?$char_traits@G@std@@@1@@"},
+    {{ 0x4,  0x8}, "??_8?$basic_iostream@GU?$char_traits@G@std@@@std@@7B?$basic_ostream@GU?$char_traits@G@std@@@1@@"},
+    {{ 0xc, 0x18}, "??_8?$basic_iostream@_WU?$char_traits@_W@std@@@std@@7B?$basic_istream@_WU?$char_traits@_W@std@@@1@@"},
+    {{ 0x4,  0x8}, "??_8?$basic_iostream@_WU?$char_traits@_W@std@@@std@@7B?$basic_ostream@_WU?$char_traits@_W@std@@@1@@"},
+    {{ 0x8, 0x10}, "??_8?$basic_istream@DU?$char_traits@D@std@@@std@@7B@"},
+    {{ 0x8, 0x10}, "??_8?$basic_istream@GU?$char_traits@G@std@@@std@@7B@"},
+    {{ 0x8, 0x10}, "??_8?$basic_istream@_WU?$char_traits@_W@std@@@std@@7B@"},
+    {{0x50, 0x90}, "??_8?$basic_istringstream@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@7B@"},
+    {{0x50, 0x90}, "??_8?$basic_istringstream@GU?$char_traits@G@std@@V?$allocator@G@2@@std@@7B@"},
+    {{0x50, 0x90}, "??_8?$basic_istringstream@_WU?$char_traits@_W@std@@V?$allocator@_W@2@@std@@7B@"},
+    {{0x54, 0x98}, "??_8?$basic_ofstream@DU?$char_traits@D@std@@@std@@7B@"},
+    {{0x54, 0x98}, "??_8?$basic_ofstream@GU?$char_traits@G@std@@@std@@7B@"},
+    {{0x54, 0x98}, "??_8?$basic_ofstream@_WU?$char_traits@_W@std@@@std@@7B@"},
+    {{ 0x4,  0x8}, "??_8?$basic_ostream@DU?$char_traits@D@std@@@std@@7B@"},
+    {{ 0x4,  0x8}, "??_8?$basic_ostream@GU?$char_traits@G@std@@@std@@7B@"},
+    {{ 0x4,  0x8}, "??_8?$basic_ostream@_WU?$char_traits@_W@std@@@std@@7B@"},
+    {{0x4c, 0x88}, "??_8?$basic_ostringstream@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@7B@"},
+    {{0x4c, 0x88}, "??_8?$basic_ostringstream@GU?$char_traits@G@std@@V?$allocator@G@2@@std@@7B@"},
+    {{0x4c, 0x88}, "??_8?$basic_ostringstream@_WU?$char_traits@_W@std@@V?$allocator@_W@2@@std@@7B@"},
+    {{0x54, 0x98}, "??_8?$basic_stringstream@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@7B?$basic_istream@DU?$char_traits@D@std@@@1@@"},
+    {{0x4c, 0x88}, "??_8?$basic_stringstream@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@7B?$basic_ostream@DU?$char_traits@D@std@@@1@@"},
+    {{0x54, 0x98}, "??_8?$basic_stringstream@GU?$char_traits@G@std@@V?$allocator@G@2@@std@@7B?$basic_istream@GU?$char_traits@G@std@@@1@@"},
+    {{0x4c, 0x88}, "??_8?$basic_stringstream@GU?$char_traits@G@std@@V?$allocator@G@2@@std@@7B?$basic_ostream@GU?$char_traits@G@std@@@1@@"},
+    {{0x54, 0x98}, "??_8?$basic_stringstream@_WU?$char_traits@_W@std@@V?$allocator@_W@2@@std@@7B?$basic_istream@_WU?$char_traits@_W@std@@@1@@"},
+    {{0x4c, 0x88}, "??_8?$basic_stringstream@_WU?$char_traits@_W@std@@V?$allocator@_W@2@@std@@7B?$basic_ostream@_WU?$char_traits@_W@std@@@1@@"},
+    {{ 0x0,  0x0}, 0}
+};
+
+static void test_vbtable_size_exports(void)
+{
+    int i;
+    const int *p_vbtable;
+    int arch_idx = (sizeof(void*) == 8);
+
+    for (i = 0; vbtable_size_exports_list[i].export_name; i++)
+    {
+        SET(p_vbtable, vbtable_size_exports_list[i].export_name);
+
+        ok(p_vbtable[0] == 0, "vbtable[0] wrong, got 0x%x\n", p_vbtable[0]);
+        ok(p_vbtable[1] == vbtable_size_exports_list[i].value[arch_idx],
+                "%d: %s[1] wrong, got 0x%x\n", i, vbtable_size_exports_list[i].export_name, p_vbtable[1]);
+    }
+}
+
+
+
+static void test_locale__Locimp__Locimp_Addfac(void)
+{
+    locale__Locimp locimp;
+    locale_facet facet;
+
+    memset(&locimp, 0, sizeof(locimp));
+    memset(&facet, 0, sizeof(facet));
+    p_locale__Locimp__Locimp_Addfac(&locimp, &facet, 1);
+    ok(locimp.facet_cnt == 40, "locimp.facet_cnt = %d\n", (int)locimp.facet_cnt);
+}
+
 START_TEST(misc)
 {
     if(!init())
@@ -984,6 +1101,8 @@ START_TEST(misc)
     test_allocator_char();
     test_Ctraits_math_functions();
     test_complex();
+    test_vbtable_size_exports();
+    test_locale__Locimp__Locimp_Addfac();
 
     ok(!invalid_parameter, "invalid_parameter_handler was invoked too many times\n");
 

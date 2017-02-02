@@ -118,6 +118,7 @@ typedef struct {
 
 #define	COLUMNS	10
 	int		widths[COLUMNS];
+	int		widths_shown[COLUMNS];
 	int		positions[COLUMNS+1];
 
 	BOOL	treePane;
@@ -1634,9 +1635,10 @@ static void WineFile_OnRun( HWND hwnd )
 	static const WCHAR shell32_dll[] = {'S','H','E','L','L','3','2','.','D','L','L',0};
         void (WINAPI *pRunFileDlgAW )(HWND, HICON, LPWSTR, LPWSTR, LPWSTR, DWORD);
 	HMODULE hshell = GetModuleHandleW( shell32_dll );
+	HICON hIcon = LoadIconW(Globals.hInstance, MAKEINTRESOURCEW(IDI_WINEFILE));
 
 	pRunFileDlgAW = (void*)GetProcAddress(hshell, (LPCSTR)61);
-	if (pRunFileDlgAW) pRunFileDlgAW( hwnd, 0, NULL, NULL, NULL, RFF_NODEFAULT);
+	if (pRunFileDlgAW) pRunFileDlgAW( hwnd, hIcon, NULL, NULL, NULL, RFF_NODEFAULT);
 }
 
 static INT_PTR CALLBACK DestinationDlgProc(HWND hwnd, UINT nmsg, WPARAM wparam, LPARAM lparam)
@@ -2354,6 +2356,7 @@ static HWND create_header(HWND parent, Pane* pane, UINT id)
 		hdi.pszText = g_pos_names[idx];
 		hdi.fmt = HDF_STRING | g_pos_align[idx];
 		hdi.cxy = pane->widths[idx];
+		pane->widths_shown[idx] = hdi.cxy;
 		SendMessageW(hwnd, HDM_INSERTITEMW, idx, (LPARAM)&hdi);
 	}
 
@@ -2416,10 +2419,7 @@ static BOOL calc_widths(Pane* pane, BOOL anyway)
 		dis.itemState	  = 0;
 		dis.hwndItem	  = pane->hwnd;
 		dis.hDC			  = hdc;
-		dis.rcItem.left	  = 0;
-		dis.rcItem.top    = 0;
-		dis.rcItem.right  = 0;
-		dis.rcItem.bottom = 0;
+		SetRectEmpty(&dis.rcItem);
 		/*dis.itemData	  = 0; */
 
 		draw_item(pane, &dis, entry, COLUMNS);
@@ -2492,10 +2492,7 @@ static void calc_single_width(Pane* pane, int col)
 		dis.itemState	  = 0;
 		dis.hwndItem	  = pane->hwnd;
 		dis.hDC			  = hdc;
-		dis.rcItem.left	  = 0;
-		dis.rcItem.top    = 0;
-		dis.rcItem.right  = 0;
-		dis.rcItem.bottom = 0;
+		SetRectEmpty(&dis.rcItem);
 		/*dis.itemData	  = 0; */
 
 		draw_item(pane, &dis, entry, col);
@@ -2643,39 +2640,6 @@ static int insert_entries(Pane* pane, Entry* dir, LPCWSTR pattern, int filter_fl
 	return idx;
 }
 
-
-static void format_bytes(LPWSTR buffer, LONGLONG bytes)
-{
-	static const WCHAR sFmtSmall[]  = {'%', 'u', 0};
-	static const WCHAR sFmtBig[] = {'%', '.', '1', 'f', ' ', '%', 's', '\0'};
-
-	if (bytes < 1024)
-		sprintfW(buffer, sFmtSmall, (DWORD)bytes);
-	else
-	{
-		WCHAR unit[64];
-		UINT resid;
-		float fBytes;
-		if (bytes >= 1073741824)	/* 1 GB */
-		{
-			fBytes = ((float)bytes)/1073741824.f+.5f;
-			resid = IDS_UNIT_GB;
-		}
-		else if (bytes >= 1048576)	/* 1 MB */
-		{
-			fBytes = ((float)bytes)/1048576.f+.5f;
-			resid = IDS_UNIT_MB;
-		}
-		else /* bytes >= 1024 */	/* 1 kB */
-		{
-			fBytes = ((float)bytes)/1024.f+.5f;
-			resid = IDS_UNIT_KB;
-		}
-		LoadStringW(Globals.hInstance, resid, unit, sizeof(unit)/sizeof(*unit));
-		sprintfW(buffer, sFmtBig, fBytes, unit);
-	}
-}
-
 static void set_space_status(void)
 {
 	ULARGE_INTEGER ulFreeBytesToCaller, ulTotalBytes, ulFreeBytes;
@@ -2683,10 +2647,10 @@ static void set_space_status(void)
 
 	if (GetDiskFreeSpaceExW(NULL, &ulFreeBytesToCaller, &ulTotalBytes, &ulFreeBytes)) {
 		DWORD_PTR args[2];
-		format_bytes(b1, ulFreeBytesToCaller.QuadPart);
-		format_bytes(b2, ulTotalBytes.QuadPart);
-		args[0] = (DWORD_PTR)b1;
-		args[1] = (DWORD_PTR)b2;
+
+		args[0] = (DWORD_PTR)StrFormatByteSizeW(ulFreeBytesToCaller.QuadPart, b1, sizeof(b1)/sizeof(*b1));
+		args[1] = (DWORD_PTR)StrFormatByteSizeW(ulTotalBytes.QuadPart,        b2, sizeof(b2)/sizeof(*b2));
+
 		FormatMessageW(FORMAT_MESSAGE_FROM_STRING|FORMAT_MESSAGE_ARGUMENT_ARRAY,
 		               RS(fmt,IDS_FREE_SPACE_FMT), 0, 0, buffer,
 		               sizeof(buffer)/sizeof(*buffer), (__ms_va_list*)args);
@@ -3166,26 +3130,20 @@ static void set_header(Pane* pane)
 {
 	HDITEMW item;
 	int scroll_pos = GetScrollPos(pane->hwnd, SB_HORZ);
-	int i=0, x=0;
+	int i;
 
 	item.mask = HDI_WIDTH;
-	item.cxy = 0;
 
-	for(; (i < COLUMNS) && (x+pane->widths[i] < scroll_pos); i++) {
-		x += pane->widths[i];
-		SendMessageW(pane->hwndHeader, HDM_SETITEMW, i, (LPARAM)&item);
-	}
-
-	if (i < COLUMNS) {
-		x += pane->widths[i];
-		item.cxy = x - scroll_pos;
-		SendMessageW(pane->hwndHeader, HDM_SETITEMW, i++, (LPARAM)&item);
-
-		for(; i < COLUMNS; i++) {
+	for (i = 0; i < COLUMNS; ++i) {
+		if (pane->positions[i] >= scroll_pos) {
 			item.cxy = pane->widths[i];
-			x += pane->widths[i];
-			SendMessageW(pane->hwndHeader, HDM_SETITEMW, i, (LPARAM)&item);
+		} else if (pane->positions[i+1] <= scroll_pos) {
+			item.cxy = 0;
+		} else {
+			item.cxy = pane->positions[i+1] - scroll_pos;
 		}
+		pane->widths_shown[i] = item.cxy;
+		SendMessageW(pane->hwndHeader, HDM_SETITEMW, i, (LPARAM)&item);
 	}
 }
 
@@ -3195,13 +3153,14 @@ static LRESULT pane_notify(Pane* pane, NMHDR* pnmh)
 		case HDN_ITEMCHANGEDW: {
 			LPNMHEADERW phdn = (LPNMHEADERW)pnmh;
 			int idx = phdn->iItem;
-			int dx = phdn->pitem->cxy - pane->widths[idx];
+			int dx = phdn->pitem->cxy - pane->widths_shown[idx];
 			int i;
 
 			RECT clnt;
 			GetClientRect(pane->hwnd, &clnt);
 
 			pane->widths[idx] += dx;
+			pane->widths_shown[idx] += dx;
 
 			for(i=idx; ++i<=COLUMNS; )
 				pane->positions[i] += dx;
@@ -4213,7 +4172,7 @@ static void InitInstance(HINSTANCE hinstance)
 	wcChild.cbClsExtra    = 0;
 	wcChild.cbWndExtra    = 0;
 	wcChild.hInstance     = hinstance;
-	wcChild.hIcon         = 0;
+	wcChild.hIcon         = LoadIconW(hinstance, MAKEINTRESOURCEW(IDI_WINEFILE));
 	wcChild.hCursor       = LoadCursorW(0, (LPCWSTR)IDC_ARROW);
 	wcChild.hbrBackground = 0;
 	wcChild.lpszMenuName  = 0;

@@ -427,9 +427,7 @@ static void _test_GetCurMoniker(unsigned line, IUnknown *unk, IMoniker *exmon, c
         hres = IMoniker_GetDisplayName(mon, NULL, NULL, &url);
         ok(hres == S_OK, "GetDisplayName failed: %08x\n", hres);
 
-        if(is_todo)
-            todo_wine ok_(__FILE__,line)(!strcmp_wa(url, exurl), "unexpected url %s\n", wine_dbgstr_w(url));
-        else
+        todo_wine_if(is_todo)
             ok_(__FILE__,line)(!strcmp_wa(url, exurl), "unexpected url %s\n", wine_dbgstr_w(url));
         if(!*ptr)
             ok_(__FILE__,line)(!lstrcmpW(url, doc_url), "url %s != doc_url %s\n", wine_dbgstr_w(url), wine_dbgstr_w(doc_url));
@@ -872,7 +870,13 @@ static IHlinkFrame HlinkFrame = { &HlinkFrameVtbl };
 
 static HRESULT WINAPI NewWindowManager_QueryInterface(INewWindowManager *iface, REFIID riid, void **ppv)
 {
-    ok(0, "unexpected call\n");
+    if(IsEqualGUID(&IID_IUnknown, riid) || IsEqualGUID(riid, &IID_INewWindowManager)) {
+        *ppv = iface;
+        return S_OK;
+    }
+
+    trace("NewWindowManager_QueryInterface %s\n", wine_dbgstr_guid(riid));
+    *ppv = NULL;
     return E_NOINTERFACE;
 }
 
@@ -967,6 +971,7 @@ static HRESULT WINAPI PropertyNotifySink_OnChanged(IPropertyNotifySink *iface, D
     case 1014:
         CHECK_EXPECT2(OnChanged_1014);
         return S_OK;
+    case 1029:
     case 1030:
     case 3000022:
     case 3000023:
@@ -2607,12 +2612,16 @@ static HRESULT WINAPI DocHostUIHandler_TranslateUrl(IDocHostUIHandler2 *iface, D
     CHECK_EXPECT(TranslateUrl);
     ok(iface == expect_uihandler_iface, "called on unexpected iface\n");
     ok(!dwTranslate, "dwTranslate = %x\n", dwTranslate);
-    if(!loading_hash)
+    todo_wine_if(loading_hash)
         ok(!strcmp_wa(pchURLIn, nav_serv_url), "pchURLIn = %s, expected %s\n", wine_dbgstr_w(pchURLIn), nav_serv_url);
-    else
-        todo_wine ok(!strcmp_wa(pchURLIn, nav_serv_url), "pchURLIn = %s, expected %s\n", wine_dbgstr_w(pchURLIn), nav_serv_url);
     ok(ppchURLOut != NULL, "ppchURLOut == NULL\n");
     ok(!*ppchURLOut, "*ppchURLOut = %p\n", *ppchURLOut);
+
+    /* Not related to hash navigation, just return NULL and S_OK in some cases. */
+    if(loading_hash) {
+        *ppchURLOut = NULL;
+        return S_OK;
+    }
 
     return S_FALSE;
 }
@@ -2633,7 +2642,7 @@ static HRESULT WINAPI DocHostUIHandler_GetOverrideKeyPath(IDocHostUIHandler2 *if
     ok(pchKey != NULL, "pchKey = NULL\n");
     if(pchKey)
         ok(!*pchKey, "*pchKey=%p, expected NULL\n", *pchKey);
-    ok(!dw, "dw=%d, xepected 0\n", dw);
+    ok(!dw, "dw=%d, expected 0\n", dw);
     return S_OK;
 }
 
@@ -2866,8 +2875,6 @@ static HRESULT WINAPI OleCommandTarget_Exec(IOleCommandTarget *iface, const GUID
     }
 
     if(IsEqualGUID(&CGID_ShellDocView, pguidCmdGroup)) {
-        if(nCmdID != 63 && nCmdID != 178 && (!is_refresh || nCmdID != 37))
-            test_readyState(NULL);
         ok(nCmdexecopt == 0, "nCmdexecopts=%08x\n", nCmdexecopt);
 
         switch(nCmdID) {
@@ -2881,6 +2888,8 @@ static HRESULT WINAPI OleCommandTarget_Exec(IOleCommandTarget *iface, const GUID
                 test_readyState(NULL);
                 load_state = LD_LOADING;
             }else {
+                if(!is_refresh)
+                    test_readyState(NULL);
                 if(nav_url)
                     test_GetCurMoniker(doc_unk, NULL, nav_serv_url, FALSE);
                 else if(load_from_stream)
@@ -2944,6 +2953,7 @@ static HRESULT WINAPI OleCommandTarget_Exec(IOleCommandTarget *iface, const GUID
             if(pvaIn)
                 ok(V_VT(pvaOut) == VT_EMPTY, "V_VT(pvaOut)=%d\n", V_VT(pvaOut));
 
+            test_readyState(NULL);
             return E_NOTIMPL;
 
         case 103:
@@ -2952,6 +2962,7 @@ static HRESULT WINAPI OleCommandTarget_Exec(IOleCommandTarget *iface, const GUID
             ok(pvaIn == NULL, "pvaIn != NULL\n");
             ok(pvaOut == NULL, "pvaOut != NULL\n");
 
+            test_readyState(NULL);
             return E_NOTIMPL;
 
         case 105:
@@ -2960,12 +2971,14 @@ static HRESULT WINAPI OleCommandTarget_Exec(IOleCommandTarget *iface, const GUID
             ok(pvaIn != NULL, "pvaIn == NULL\n");
             ok(pvaOut == NULL, "pvaOut != NULL\n");
 
+            test_readyState(NULL);
             return E_NOTIMPL;
 
         case 138:
             CHECK_EXPECT2(Exec_ShellDocView_138);
             ok(!pvaIn, "pvaIn != NULL\n");
             ok(!pvaOut, "pvaOut != NULL\n");
+            test_readyState(NULL);
             return S_OK;
 
         case 140:
@@ -2974,10 +2987,13 @@ static HRESULT WINAPI OleCommandTarget_Exec(IOleCommandTarget *iface, const GUID
             ok(pvaIn == NULL, "pvaIn != NULL\n");
             ok(pvaOut == NULL, "pvaOut != NULL\n");
 
+            test_readyState(NULL);
             return E_NOTIMPL;
 
         case 83:
+        case 101:
         case 102:
+        case 132:
         case 133:
         case 134: /* TODO */
         case 135:
@@ -2991,6 +3007,7 @@ static HRESULT WINAPI OleCommandTarget_Exec(IOleCommandTarget *iface, const GUID
         case 180:
         case 181:
         case 182:
+        case 183:
             return E_NOTIMPL;
 
         default:
@@ -3447,7 +3464,8 @@ static HRESULT  WINAPI DocObjectService_FireBeforeNavigate2(IDocObjectService *i
     if(!testing_submit) {
         ok(!pPostData, "pPostData = %p\n", pPostData);
         ok(!cbPostData, "cbPostData = %d\n", cbPostData);
-        ok(!lpszHeaders, "lpszHeaders = %s\n", wine_dbgstr_w(lpszHeaders));
+        ok(!lpszHeaders || !strcmp_wa(lpszHeaders, "Referer: http://test.winehq.org/tests/winehq_snapshot/\r\n"),
+           "lpszHeaders = %s\n", wine_dbgstr_w(lpszHeaders));
     }else {
         ok(cbPostData == 9, "cbPostData = %d\n", cbPostData);
         ok(!memcmp(pPostData, "cmd=TEST", cbPostData), "pPostData = %p\n", pPostData);
@@ -3545,7 +3563,7 @@ static HRESULT  WINAPI DocObjectService_IsErrorUrl(
         LPCWSTR lpszUrl,
         BOOL *pfIsError)
 {
-    CHECK_EXPECT(IsErrorUrl);
+    CHECK_EXPECT2(IsErrorUrl);
     *pfIsError = FALSE;
     return S_OK;
 }
@@ -5731,7 +5749,6 @@ static void test_download(DWORD flags)
             SET_EXPECT(CountEntries);
         SET_EXPECT(Exec_HTTPEQUIV_DONE);
     }
-    SET_EXPECT(SetStatusText);
     if(nav_url || support_wbapp) {
         SET_EXPECT(UpdateUI);
         SET_EXPECT(Exec_UPDATECOMMANDS);
@@ -5773,9 +5790,7 @@ static void test_download(DWORD flags)
     if(flags & DWL_HTTP)
         SET_CALLED(Exec_SETPROGRESSMAX);
     if(flags &  DWL_EX_GETHOSTINFO) {
-        if(nav_url)
-            todo_wine CHECK_CALLED(GetHostInfo);
-        else
+        todo_wine_if(nav_url)
             CHECK_CALLED(GetHostInfo);
     }
     CHECK_CALLED(SetStatusText);
@@ -5798,10 +5813,8 @@ static void test_download(DWORD flags)
     if(flags & DWL_ONREADY_LOADING)
         CHECK_CALLED(Invoke_OnReadyStateChange_Loading);
     if(!(flags & (DWL_EMPTY|DWL_JAVASCRIPT))) {
-        if(!is_extern)
+        todo_wine_if(is_extern)
             CHECK_CALLED(Invoke_OnReadyStateChange_Interactive);
-        else
-            todo_wine CHECK_CALLED(Invoke_OnReadyStateChange_Interactive);
     }
     if(!is_js && !is_extern)
         CHECK_CALLED(Invoke_OnReadyStateChange_Complete);
@@ -5818,9 +5831,7 @@ static void test_download(DWORD flags)
         if(!(flags & DWL_FROM_HISTORY))
             todo_wine CHECK_CALLED(OnChanged_1012);
         todo_wine CHECK_CALLED(Exec_HTTPEQUIV);
-        if(!(flags & DWL_REFRESH))
-            todo_wine CHECK_CALLED(Exec_SETTITLE);
-        else
+        todo_wine_if(!(flags & DWL_REFRESH))
             CHECK_CALLED(Exec_SETTITLE);
     }
     if(!is_js) {
@@ -5833,10 +5844,8 @@ static void test_download(DWORD flags)
         todo_wine CHECK_CALLED(Exec_SETPROGRESSPOS);
     }
     if(!(flags & DWL_EMPTY)) {
-        if(!is_extern)
+        todo_wine_if(is_extern)
             CHECK_CALLED(Exec_SETDOWNLOADSTATE_0);
-        else
-            todo_wine CHECK_CALLED(Exec_SETDOWNLOADSTATE_0);
     }
     CLEAR_CALLED(Exec_ShellDocView_103);
     CLEAR_CALLED(Exec_ShellDocView_105);
@@ -5863,10 +5872,8 @@ static void test_download(DWORD flags)
     if(!is_js && !is_extern) {
         if(!editmode && !(flags & DWL_REFRESH)) {
             if(!(flags & DWL_EMPTY)) {
-                if(support_wbapp)
+                todo_wine_if(!support_wbapp)
                     CHECK_CALLED(FireNavigateComplete2);
-                else
-                    todo_wine CHECK_CALLED(FireNavigateComplete2);
             }
             CHECK_CALLED(FireDocumentComplete);
         }
@@ -6347,7 +6354,7 @@ static void _test_QueryStatus(unsigned line, IUnknown *unk, REFIID cgid, ULONG c
         return;
 
     hres = IOleCommandTarget_QueryStatus(cmdtrg, cgid, 1, &olecmd, NULL);
-    ok(hres == cmdf ? S_OK : OLECMDERR_E_NOTSUPPORTED, "QueryStatus(%u) failed: %08x\n", cmdid, hres);
+    ok(hres == (cmdf ? S_OK : OLECMDERR_E_NOTSUPPORTED), "QueryStatus(%u) failed: %08x\n", cmdid, hres);
 
     IOleCommandTarget_Release(cmdtrg);
 
@@ -6504,11 +6511,10 @@ static void test_exec_editmode(IUnknown *unk, BOOL loaded)
 
     editmode = TRUE;
 
-    if(loaded)
+    if(loaded) {
         load_state = LD_DOLOAD;
-
-    if(loaded)
         SET_EXPECT(GetClassID);
+    }
     SET_EXPECT(SetStatusText);
     SET_EXPECT(Exec_ShellDocView_37);
     SET_EXPECT(GetHostInfo);
@@ -7676,6 +7682,37 @@ static void test_cookies(IHTMLDocument2 *doc)
     SysFreeString(str2);
 }
 
+static void test_doc_domain(IHTMLDocument2 *doc)
+{
+    BSTR str;
+    HRESULT hres;
+
+    hres = IHTMLDocument2_get_domain(doc, &str);
+    ok(hres == S_OK, "get_domain failed: %08x\n", hres);
+    ok(!strcmp_wa(str, "test.winehq.org"), "domain = %s\n", wine_dbgstr_w(str));
+    SysFreeString(str);
+
+    str = a2bstr("winehq.org");
+    hres = IHTMLDocument2_put_domain(doc, str);
+    ok(hres == S_OK, "put_domain failed: %08x\n", hres);
+    SysFreeString(str);
+
+    hres = IHTMLDocument2_get_domain(doc, &str);
+    ok(hres == S_OK, "get_domain failed: %08x\n", hres);
+    ok(!strcmp_wa(str, "winehq.org"), "domain = %s\n", wine_dbgstr_w(str));
+    SysFreeString(str);
+
+    str = a2bstr("winehq.com");
+    hres = IHTMLDocument2_put_domain(doc, str);
+    ok(hres == E_INVALIDARG, "put_domain failed: %08x, expected E_INVALIDARG\n", hres);
+    SysFreeString(str);
+
+    hres = IHTMLDocument2_get_domain(doc, &str);
+    ok(hres == S_OK, "get_domain failed: %08x\n", hres);
+    ok(!strcmp_wa(str, "winehq.org"), "domain = %s\n", wine_dbgstr_w(str));
+    SysFreeString(str);
+}
+
 static void test_HTMLDocument_http(BOOL with_wbapp)
 {
     IMoniker *http_mon;
@@ -7713,6 +7750,7 @@ static void test_HTMLDocument_http(BOOL with_wbapp)
     test_GetCurMoniker((IUnknown*)doc, http_mon, NULL, FALSE);
     test_travellog(doc);
     test_binding_ui((IUnknown*)doc);
+    test_doc_domain(doc);
 
     nav_url = nav_serv_url = "http://test.winehq.org/tests/winehq_snapshot/"; /* for valid prev nav_url */
     if(support_wbapp) {
@@ -8493,8 +8531,12 @@ static void test_ServiceProvider(void)
     hres = IServiceProvider_QueryService(provider, &SID_SContainerDispatch, &IID_IUnknown, (void**)&unk);
     ok(hres == S_OK, "got 0x%08x\n", hres);
     ok(iface_cmp((IUnknown*)doc, unk), "got wrong pointer\n");
-
     IUnknown_Release(unk);
+
+    hres = IServiceProvider_QueryService(provider, &SID_SHTMLEditServices, &IID_IHTMLEditServices, (void**)&unk);
+    ok(hres == S_OK, "QueryService(HTMLEditServices) failed: %08x\n", hres);
+    IUnknown_Release(unk);
+
     IServiceProvider_Release(provider);
     release_document(doc);
 }

@@ -49,6 +49,22 @@ static LRESULT resize_window(WebBrowser *This, LONG width, LONG height)
     return 0;
 }
 
+static void notify_on_focus(WebBrowser *This, BOOL got_focus)
+{
+    IOleControlSite *control_site;
+    HRESULT hres;
+
+    if(!This->client)
+        return;
+
+    hres = IOleClientSite_QueryInterface(This->client, &IID_IOleControlSite, (void**)&control_site);
+    if(FAILED(hres))
+        return;
+
+    IOleControlSite_OnFocus(control_site, got_focus);
+    IOleControlSite_Release(control_site);
+}
+
 static LRESULT WINAPI shell_embedding_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     WebBrowser *This;
@@ -67,6 +83,12 @@ static LRESULT WINAPI shell_embedding_proc(HWND hwnd, UINT msg, WPARAM wParam, L
         return resize_window(This, LOWORD(lParam), HIWORD(lParam));
     case WM_DOCHOSTTASK:
         return process_dochost_tasks(&This->doc_host);
+    case WM_SETFOCUS:
+        notify_on_focus(This, TRUE);
+        break;
+    case WM_KILLFOCUS:
+        notify_on_focus(This, FALSE);
+        break;
     }
 
     return DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -203,6 +225,7 @@ static HRESULT activate_ui(WebBrowser *This, IOleClientSite *active_site)
         IOleInPlaceFrame_SetMenu(This->doc_host.frame, NULL, NULL, This->shell_embedding_hwnd);
 
     SetFocus(This->shell_embedding_hwnd);
+    notify_on_focus(This, TRUE);
 
     return S_OK;
 }
@@ -260,11 +283,21 @@ static HRESULT on_silent_change(WebBrowser *This)
     return S_OK;
 }
 
-static void release_client_site(WebBrowser *This)
+static void release_client_site(WebBrowser *This, BOOL destroy_win)
 {
     release_dochost_client(&This->doc_host);
 
-    if(This->shell_embedding_hwnd) {
+    if(This->client) {
+        IOleClientSite_Release(This->client);
+        This->client = NULL;
+    }
+
+    if(This->client_closed) {
+        IOleClientSite_Release(This->client_closed);
+        This->client_closed = NULL;
+    }
+
+    if(destroy_win && This->shell_embedding_hwnd) {
         DestroyWindow(This->shell_embedding_hwnd);
         This->shell_embedding_hwnd = NULL;
     }
@@ -282,11 +315,6 @@ static void release_client_site(WebBrowser *This)
     if(This->uiwindow) {
         IOleInPlaceUIWindow_Release(This->uiwindow);
         This->uiwindow = NULL;
-    }
-
-    if(This->client) {
-        IOleClientSite_Release(This->client);
-        This->client = NULL;
     }
 }
 
@@ -430,20 +458,34 @@ static HRESULT WINAPI OleObject_SetClientSite(IOleObject *iface, LPOLECLIENTSITE
 {
     WebBrowser *This = impl_from_IOleObject(iface);
     IDocHostUIHandler *hostui;
+    IOleCommandTarget *olecmd;
+    BOOL get_olecmd = TRUE;
     IOleContainer *container;
     IDispatch *disp;
     HRESULT hres;
 
     TRACE("(%p)->(%p)\n", This, pClientSite);
 
+    if(This->client_closed) {
+        IOleClientSite_Release(This->client_closed);
+        This->client_closed = NULL;
+    }
+
     if(This->client == pClientSite)
         return S_OK;
 
-    release_client_site(This);
+    if(This->client && pClientSite) {
+        get_olecmd = FALSE;
+        olecmd = This->doc_host.olecmd;
+        if(olecmd)
+            IOleCommandTarget_AddRef(olecmd);
+    }
+
+    release_client_site(This, !pClientSite);
 
     if(!pClientSite) {
-        on_commandstate_change(&This->doc_host, CSC_NAVIGATEBACK, VARIANT_FALSE);
-        on_commandstate_change(&This->doc_host, CSC_NAVIGATEFORWARD, VARIANT_FALSE);
+        on_commandstate_change(&This->doc_host, CSC_NAVIGATEBACK, FALSE);
+        on_commandstate_change(&This->doc_host, CSC_NAVIGATEFORWARD, FALSE);
 
         if(This->doc_host.document)
             deactivate_document(&This->doc_host);
@@ -463,21 +505,46 @@ static HRESULT WINAPI OleObject_SetClientSite(IOleObject *iface, LPOLECLIENTSITE
     if(SUCCEEDED(hres))
         This->doc_host.hostui = hostui;
 
-    hres = IOleClientSite_GetContainer(This->client, &container);
-    if(SUCCEEDED(hres)) {
-        ITargetContainer *target_container;
-
-        hres = IOleContainer_QueryInterface(container, &IID_ITargetContainer,
-                                            (void**)&target_container);
+    if(get_olecmd) {
+        hres = IOleClientSite_GetContainer(This->client, &container);
         if(SUCCEEDED(hres)) {
-            FIXME("Unsupported ITargetContainer\n");
-            ITargetContainer_Release(target_container);
-        }
+            ITargetContainer *target_container;
 
-        IOleContainer_Release(container);
+            hres = IOleContainer_QueryInterface(container, &IID_ITargetContainer,
+                    (void**)&target_container);
+            if(SUCCEEDED(hres)) {
+                FIXME("Unsupported ITargetContainer\n");
+                ITargetContainer_Release(target_container);
+            }
+
+            hres = IOleContainer_QueryInterface(container, &IID_IOleCommandTarget, (void**)&olecmd);
+            if(FAILED(hres))
+                olecmd = NULL;
+
+            IOleContainer_Release(container);
+        }else {
+            hres = IOleClientSite_QueryInterface(This->client, &IID_IOleCommandTarget, (void**)&olecmd);
+            if(FAILED(hres))
+                olecmd = NULL;
+        }
     }
 
-    create_shell_embedding_hwnd(This);
+    This->doc_host.olecmd = olecmd;
+
+    if(This->shell_embedding_hwnd) {
+        IOleInPlaceSite *inplace;
+        HWND parent;
+
+        hres = IOleClientSite_QueryInterface(This->client, &IID_IOleInPlaceSite, (void**)&inplace);
+        if(SUCCEEDED(hres)) {
+            hres = IOleInPlaceSite_GetWindow(inplace, &parent);
+            IOleInPlaceSite_Release(inplace);
+            if(SUCCEEDED(hres))
+                SHSetParentHwnd(This->shell_embedding_hwnd, parent);
+        }
+    }else {
+        create_shell_embedding_hwnd(This);
+    }
 
     on_offlineconnected_change(This);
     on_silent_change(This);
@@ -515,6 +582,8 @@ static HRESULT WINAPI OleObject_SetHostNames(IOleObject *iface, LPCOLESTR szCont
 static HRESULT WINAPI OleObject_Close(IOleObject *iface, DWORD dwSaveOption)
 {
     WebBrowser *This = impl_from_IOleObject(iface);
+    IOleClientSite *client;
+    HRESULT hres;
 
     TRACE("(%p)->(%d)\n", This, dwSaveOption);
 
@@ -529,12 +598,19 @@ static HRESULT WINAPI OleObject_Close(IOleObject *iface, DWORD dwSaveOption)
     if(This->uiwindow)
         IOleInPlaceUIWindow_SetActiveObject(This->uiwindow, NULL, NULL);
 
-    if(This->inplace) {
+    if(This->inplace)
         IOleInPlaceSiteEx_OnUIDeactivate(This->inplace, FALSE);
+    notify_on_focus(This, FALSE);
+    if(This->inplace)
         IOleInPlaceSiteEx_OnInPlaceDeactivate(This->inplace);
-    }
 
-    return IOleObject_SetClientSite(iface, NULL);
+    /* store old client site - we need to restore it in DoVerb */
+    client = This->client;
+    if(This->client)
+        IOleClientSite_AddRef(This->client);
+    hres = IOleObject_SetClientSite(iface, NULL);
+    This->client_closed = client;
+    return hres;
 }
 
 static HRESULT WINAPI OleObject_SetMoniker(IOleObject *iface, DWORD dwWhichMoniker, IMoniker* pmk)
@@ -575,6 +651,14 @@ static HRESULT WINAPI OleObject_DoVerb(IOleObject *iface, LONG iVerb, struct tag
 
     TRACE("(%p)->(%d %p %p %d %p %s)\n", This, iVerb, lpmsg, pActiveSite, lindex, hwndParent,
           wine_dbgstr_rect(lprcPosRect));
+
+    /* restore closed client site if we have one */
+    if(!This->client && This->client_closed) {
+        IOleClientSite *client = This->client_closed;
+        This->client_closed = NULL;
+        IOleObject_SetClientSite(iface, client);
+        IOleClientSite_Release(client);
+    }
 
     switch (iVerb)
     {
@@ -812,7 +896,7 @@ static HRESULT WINAPI OleInPlaceObject_SetObjectRects(IOleInPlaceObject *iface,
 {
     WebBrowser *This = impl_from_IOleInPlaceObject(iface);
 
-    TRACE("(%p)->(%p %p)\n", This, lprcPosRect, lprcClipRect);
+    TRACE("(%p)->(%s %s)\n", This, wine_dbgstr_rect(lprcPosRect), wine_dbgstr_rect(lprcClipRect));
 
     This->pos_rect = *lprcPosRect;
 
@@ -1099,8 +1183,8 @@ static HRESULT WINAPI WBOleCommandTarget_Exec(IOleCommandTarget *iface,
         VARIANT *pvaOut)
 {
     WebBrowser *This = impl_from_IOleCommandTarget(iface);
-    FIXME("(%p)->(%s %d %d %p %p)\n", This, debugstr_guid(pguidCmdGroup), nCmdID,
-          nCmdexecopt, pvaIn, pvaOut);
+    FIXME("(%p)->(%s %d %d %s %p)\n", This, debugstr_guid(pguidCmdGroup), nCmdID,
+          nCmdexecopt, debugstr_variant(pvaIn), pvaOut);
     return E_NOTIMPL;
 }
 
@@ -1137,5 +1221,5 @@ void WebBrowser_OleObject_Init(WebBrowser *This)
 
 void WebBrowser_OleObject_Destroy(WebBrowser *This)
 {
-    release_client_site(This);
+    release_client_site(This, TRUE);
 }

@@ -62,6 +62,7 @@ static BOOL test_ShouldDeactivate = FALSE;
 
 static DWORD tmSinkCookie;
 static DWORD tmSinkRefCount;
+static DWORD dmSinkCookie;
 static DWORD documentStatus;
 static ITfDocumentMgr *test_CurrentFocus = NULL;
 static ITfDocumentMgr *test_PrevFocus = NULL;
@@ -73,6 +74,7 @@ static INT  test_OnPushContext = SINK_UNEXPECTED;
 static INT  test_OnPopContext = SINK_UNEXPECTED;
 static INT  test_KEV_OnSetFocus = SINK_UNEXPECTED;
 static INT  test_ACP_AdviseSink = SINK_UNEXPECTED;
+static INT  test_ACP_UnadviseSink = SINK_UNEXPECTED;
 static INT  test_ACP_GetStatus = SINK_UNEXPECTED;
 static INT  test_ACP_RequestLock = SINK_UNEXPECTED;
 static INT  test_ACP_GetEndACP = SINK_UNEXPECTED;
@@ -117,9 +119,7 @@ static inline void _sink_fire_ok(INT *sink, const CHAR* name)
             *sink = (*sink & ~SINK_EXPECTED_COUNT_MASK) + (count << 16);
             return;
         default:
-            if (todo)
-                todo_wine winetest_ok(0, "Unexpected %s sink\n",name);
-            else
+            todo_wine_if (todo)
                 winetest_ok(0, "Unexpected %s sink\n",name);
     }
     *sink = SINK_FIRED;
@@ -147,9 +147,7 @@ static inline void _sink_check_ok(INT *sink, const CHAR* name)
                 winetest_trace("optional sink %s not fired\n",name);
             break;
         default:
-            if (todo)
-                todo_wine winetest_ok(0, "%s not fired as expected, in state %x\n",name,*sink);
-            else
+            todo_wine_if (todo)
                 winetest_ok(0, "%s not fired as expected, in state %x\n",name,*sink);
     }
     *sink = SINK_UNEXPECTED;
@@ -193,12 +191,11 @@ static void TextStoreACP_Destructor(TextStoreACP *This)
 
 static HRESULT WINAPI TextStoreACP_QueryInterface(ITextStoreACP *iface, REFIID iid, LPVOID *ppvOut)
 {
-    TextStoreACP *This = impl_from_ITextStoreACP(iface);
     *ppvOut = NULL;
 
     if (IsEqualIID(iid, &IID_IUnknown) || IsEqualIID(iid, &IID_ITextStoreACP))
     {
-        *ppvOut = This;
+        *ppvOut = iface;
     }
 
     if (*ppvOut)
@@ -230,19 +227,28 @@ static ULONG WINAPI TextStoreACP_Release(ITextStoreACP *iface)
 static HRESULT WINAPI TextStoreACP_AdviseSink(ITextStoreACP *iface,
     REFIID riid, IUnknown *punk, DWORD dwMask)
 {
+    ITextStoreACPServices *services;
     HRESULT hr;
 
     sink_fire_ok(&test_ACP_AdviseSink,"TextStoreACP_AdviseSink");
 
-    hr = IUnknown_QueryInterface(punk, &IID_ITextStoreACPSink,(LPVOID*)(&ACPSink));
+    if(ACPSink)
+        return S_OK;
+
+    hr = IUnknown_QueryInterface(punk, &IID_ITextStoreACPSink, (void**)&ACPSink);
     ok(SUCCEEDED(hr),"Unable to QueryInterface on sink\n");
+
+    hr = ITextStoreACPSink_QueryInterface(ACPSink, &IID_ITextStoreACPServices, (void**)&services);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ITextStoreACPServices_Release(services);
+
     return S_OK;
 }
 
 static HRESULT WINAPI TextStoreACP_UnadviseSink(ITextStoreACP *iface,
     IUnknown *punk)
 {
-    trace("\n");
+    sink_fire_ok(&test_ACP_UnadviseSink,"TextStoreACP_UnadviseSink");
     return S_OK;
 }
 
@@ -457,7 +463,7 @@ static HRESULT TextStoreACP_Constructor(IUnknown **ppOut)
     This->ITextStoreACP_iface.lpVtbl = &TextStoreACP_TextStoreACPVtbl;
     This->refCount = 1;
 
-    *ppOut = (IUnknown *)This;
+    *ppOut = (IUnknown*)&This->ITextStoreACP_iface;
     return S_OK;
 }
 
@@ -482,12 +488,11 @@ static void ThreadMgrEventSink_Destructor(ThreadMgrEventSink *This)
 
 static HRESULT WINAPI ThreadMgrEventSink_QueryInterface(ITfThreadMgrEventSink *iface, REFIID iid, LPVOID *ppvOut)
 {
-    ThreadMgrEventSink *This = impl_from_ITfThreadMgrEventSink(iface);
     *ppvOut = NULL;
 
     if (IsEqualIID(iid, &IID_IUnknown) || IsEqualIID(iid, &IID_ITfThreadMgrEventSink))
     {
-        *ppvOut = This;
+        *ppvOut = iface;
     }
 
     if (*ppvOut)
@@ -560,9 +565,9 @@ ITfContext *pic)
     hr = ITfContext_GetDocumentMgr(pic,&docmgr);
     ok(SUCCEEDED(hr),"GetDocumentMgr failed\n");
     test = (ITfContext*)0xdeadbeef;
-    ITfDocumentMgr_Release(docmgr);
     hr = ITfDocumentMgr_GetTop(docmgr,&test);
     ok(SUCCEEDED(hr),"GetTop failed\n");
+    ITfDocumentMgr_Release(docmgr);
     ok(test == pic, "Wrong context is on top\n");
     if (test)
         ITfContext_Release(test);
@@ -616,10 +621,46 @@ static HRESULT ThreadMgrEventSink_Constructor(IUnknown **ppOut)
     This->ITfThreadMgrEventSink_iface.lpVtbl = &ThreadMgrEventSink_ThreadMgrEventSinkVtbl;
     This->refCount = 1;
 
-    *ppOut = (IUnknown *)This;
+    *ppOut = (IUnknown*)&This->ITfThreadMgrEventSink_iface;
     return S_OK;
 }
 
+static HRESULT WINAPI TfTransitoryExtensionSink_QueryInterface(ITfTransitoryExtensionSink *iface, REFIID riid, void **ppv)
+{
+    if(IsEqualGUID(&IID_IUnknown, riid) || IsEqualGUID(&IID_ITfTransitoryExtensionSink, riid)) {
+        *ppv = iface;
+        return S_OK;
+    }
+
+    *ppv = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI TfTransitoryExtensionSink_AddRef(ITfTransitoryExtensionSink *iface)
+{
+    return 2;
+}
+
+static ULONG WINAPI TfTransitoryExtensionSink_Release(ITfTransitoryExtensionSink *iface)
+{
+    return 1;
+}
+
+static HRESULT WINAPI TfTransitoryExtensionSink_OnTransitoryExtensionUpdated(ITfTransitoryExtensionSink *iface, ITfContext *pic,
+        TfEditCookie ecReadOnly, ITfRange *pResultRange, ITfRange *pCompositionRange, BOOL *pfDeleteResultRange)
+{
+    ok(0, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static const ITfTransitoryExtensionSinkVtbl TfTransitoryExtensionSinkVtbl = {
+    TfTransitoryExtensionSink_QueryInterface,
+    TfTransitoryExtensionSink_AddRef,
+    TfTransitoryExtensionSink_Release,
+    TfTransitoryExtensionSink_OnTransitoryExtensionUpdated
+};
+
+static ITfTransitoryExtensionSink TfTransitoryExtensionSink = { &TfTransitoryExtensionSinkVtbl };
 
 /********************************************************************************************
  * Stub text service for testing
@@ -730,7 +771,7 @@ static HRESULT ClassFactory_Constructor(LPFNCONSTRUCTOR ctor, LPVOID *ppvOut)
     This->IClassFactory_iface.lpVtbl = &ClassFactoryVtbl;
     This->ref = 1;
     This->ctor = ctor;
-    *ppvOut = (LPVOID)This;
+    *ppvOut = &This->IClassFactory_iface;
     TS_refCount++;
     return S_OK;
 }
@@ -742,12 +783,11 @@ static void TextService_Destructor(TextService *This)
 
 static HRESULT WINAPI TextService_QueryInterface(ITfTextInputProcessor *iface, REFIID iid, LPVOID *ppvOut)
 {
-    TextService *This = impl_from_ITfTextInputProcessor(iface);
     *ppvOut = NULL;
 
     if (IsEqualIID(iid, &IID_IUnknown) || IsEqualIID(iid, &IID_ITfTextInputProcessor))
     {
-        *ppvOut = This;
+        *ppvOut = iface;
     }
 
     if (*ppvOut)
@@ -815,7 +855,7 @@ static HRESULT TextService_Constructor(IUnknown *pUnkOuter, IUnknown **ppOut)
     This->ITfTextInputProcessor_iface.lpVtbl = &TextService_TextInputProcessorVtbl;
     This->refCount = 1;
 
-    *ppOut = (IUnknown *)This;
+    *ppOut = (IUnknown*)&This->ITfTextInputProcessor_iface;
     return S_OK;
 }
 
@@ -921,6 +961,7 @@ static void test_EnumInputProcessorInfo(void)
             if(IsEqualGUID(&g,&CLSID_FakeService))
                 found = TRUE;
         }
+        IEnumGUID_Release(ppEnum);
     }
     ok(found,"Did not find registered text service\n");
 }
@@ -929,6 +970,11 @@ static void test_EnumLanguageProfiles(void)
 {
     BOOL found = FALSE;
     IEnumTfLanguageProfiles *ppEnum;
+    HRESULT hr;
+
+    hr = ITfInputProcessorProfiles_EnumLanguageProfiles(g_ipp, gLangid, NULL);
+    ok(hr == E_INVALIDARG, "EnumLanguageProfiles failed: %x\n", hr);
+
     if (SUCCEEDED(ITfInputProcessorProfiles_EnumLanguageProfiles(g_ipp,gLangid,&ppEnum)))
     {
         TF_LANGUAGEPROFILE profile;
@@ -943,6 +989,7 @@ static void test_EnumLanguageProfiles(void)
                 ok(IsEqualGUID(&profile.guidProfile,&CLSID_FakeService), "guidProfile Incorrect\n");
             }
         }
+        IEnumTfLanguageProfiles_Release(ppEnum);
     }
     ok(found,"Registered text service not found\n");
 }
@@ -1049,6 +1096,34 @@ static void test_ThreadMgrUnadviseSinks(void)
     ITfSource_Release(source);
 }
 
+static void test_DocumentMgrAdviseSinks(void)
+{
+    ITfSource *source;
+    HRESULT hr;
+
+    hr = ITfDocumentMgr_QueryInterface(g_dm, &IID_ITfSource, (void**)&source);
+    ok(hr == S_OK,"Failed to get IID_ITfSource for DocumentMgr\n");
+
+    dmSinkCookie = 0;
+    hr = ITfSource_AdviseSink(source, &IID_ITfTransitoryExtensionSink, (IUnknown*)&TfTransitoryExtensionSink, &dmSinkCookie);
+    ok(hr == S_OK,"Failed to Advise Sink\n");
+
+    ITfSource_Release(source);
+}
+
+static void test_DocumentMgrUnadviseSinks(void)
+{
+    ITfSource *source = NULL;
+    HRESULT hr;
+
+    hr = ITfDocumentMgr_QueryInterface(g_dm, &IID_ITfSource, (void**)&source);
+    ok(hr == S_OK,"Failed to get IID_ITfSource for DocumentMgr\n");
+
+    hr = ITfSource_UnadviseSink(source, dmSinkCookie);
+    ok(hr == S_OK,"Failed to unadvise Sink\n");
+    ITfSource_Release(source);
+}
+
 /**********************************************************************
  * ITfKeyEventSink
  **********************************************************************/
@@ -1070,12 +1145,11 @@ static void KeyEventSink_Destructor(KeyEventSink *This)
 
 static HRESULT WINAPI KeyEventSink_QueryInterface(ITfKeyEventSink *iface, REFIID iid, LPVOID *ppvOut)
 {
-    KeyEventSink *This = impl_from_ITfKeyEventSink(iface);
     *ppvOut = NULL;
 
     if (IsEqualIID(iid, &IID_IUnknown) || IsEqualIID(iid, &IID_ITfKeyEventSink))
     {
-        *ppvOut = This;
+        *ppvOut = iface;
     }
 
     if (*ppvOut)
@@ -1202,13 +1276,13 @@ static void test_KeystrokeMgr(void)
     ok(hr == E_INVALIDARG,"Wrong return, expected E_INVALIDARG\n");
 
     hr =ITfKeystrokeMgr_PreserveKey(keymgr, 0, &CLSID_PreservedKey, &tfpk, NULL, 0);
-    ok(hr==E_INVALIDARG,"ITfKeystrokeMgr_PreserveKey inproperly succeeded\n");
+    ok(hr==E_INVALIDARG,"ITfKeystrokeMgr_PreserveKey improperly succeeded\n");
 
     hr =ITfKeystrokeMgr_PreserveKey(keymgr, tid, &CLSID_PreservedKey, &tfpk, NULL, 0);
     ok(SUCCEEDED(hr),"ITfKeystrokeMgr_PreserveKey failed\n");
 
     hr =ITfKeystrokeMgr_PreserveKey(keymgr, tid, &CLSID_PreservedKey, &tfpk, NULL, 0);
-    ok(hr == TF_E_ALREADY_EXISTS,"ITfKeystrokeMgr_PreserveKey inproperly succeeded\n");
+    ok(hr == TF_E_ALREADY_EXISTS,"ITfKeystrokeMgr_PreserveKey improperly succeeded\n");
 
     preserved = FALSE;
     hr = ITfKeystrokeMgr_IsPreservedKey(keymgr, &CLSID_PreservedKey, &tfpk, &preserved);
@@ -1223,7 +1297,7 @@ static void test_KeystrokeMgr(void)
     if (hr == S_FALSE) ok(preserved == FALSE,"misreporting preserved key\n");
 
     hr = ITfKeystrokeMgr_UnpreserveKey(keymgr, &CLSID_PreservedKey,&tfpk);
-    ok(hr==CONNECT_E_NOCONNECTION,"ITfKeystrokeMgr_UnpreserveKey inproperly succeeded\n");
+    ok(hr==CONNECT_E_NOCONNECTION,"ITfKeystrokeMgr_UnpreserveKey improperly succeeded\n");
 
     hr = ITfKeystrokeMgr_UnadviseKeyEventSink(keymgr,tid);
     ok(SUCCEEDED(hr),"ITfKeystrokeMgr_UnadviseKeyEventSink failed\n");
@@ -1332,12 +1406,11 @@ static void TextEditSink_Destructor(TextEditSink *This)
 
 static HRESULT WINAPI TextEditSink_QueryInterface(ITfTextEditSink *iface, REFIID iid, LPVOID *ppvOut)
 {
-    TextEditSink *This = impl_from_ITfTextEditSink(iface);
     *ppvOut = NULL;
 
     if (IsEqualIID(iid, &IID_IUnknown) || IsEqualIID(iid, &IID_ITfTextEditSink))
     {
-        *ppvOut = This;
+        *ppvOut = iface;
     }
 
     if (*ppvOut)
@@ -1405,8 +1478,9 @@ static void test_startSession(void)
     DWORD editCookie;
     ITfDocumentMgr *dmtest;
     ITfContext *cxt,*cxt2,*cxt3,*cxtTest;
-    ITextStoreACP *ts;
+    ITextStoreACP *ts = NULL;
     TfClientId cid2 = 0;
+    ITfThreadMgrEx *tmex;
 
     hr = ITfThreadMgr_Deactivate(g_tm);
     ok(hr == E_UNEXPECTED,"Deactivate should have failed with E_UNEXPECTED\n");
@@ -1419,10 +1493,24 @@ static void test_startSession(void)
     test_ShouldActivate = FALSE;
     hr = ITfThreadMgr_Activate(g_tm,&cid2);
     ok(SUCCEEDED(hr),"Failed to Activate\n");
-    ok (cid == cid2, "Second activate client ID does not match\n");
+    ok(cid == cid2, "Second activate client ID does not match\n");
+
+    hr = ITfThreadMgr_QueryInterface(g_tm, &IID_ITfThreadMgrEx, (void **)&tmex);
+    if (hr == S_OK)
+    {
+        hr = ITfThreadMgrEx_ActivateEx(tmex, &cid2, 0);
+        ok(SUCCEEDED(hr), "Failed to Activate\n");
+        ok(cid == cid2, "ActivateEx client ID does not match\n");
+
+        ITfThreadMgrEx_Release(tmex);
+    }
+    else
+        win_skip("ITfThreadMgrEx is not supported\n");
 
     hr = ITfThreadMgr_Deactivate(g_tm);
-    ok(SUCCEEDED(hr),"Failed to Deactivate\n");
+    ok(SUCCEEDED(hr), "Failed to Deactivate\n");
+    hr = ITfThreadMgr_Deactivate(g_tm);
+    ok(SUCCEEDED(hr), "Failed to Deactivate\n");
 
     test_EnumDocumentMgr(g_tm,NULL,NULL);
 
@@ -1462,11 +1550,11 @@ static void test_startSession(void)
     ITfDocumentMgr_Release(dmtest);
 
     hr = TextStoreACP_Constructor((IUnknown**)&ts);
-    if (SUCCEEDED(hr))
-    {
-        hr = ITfDocumentMgr_CreateContext(g_dm, cid, 0, (IUnknown*)ts, &cxt, &editCookie);
-        ok(SUCCEEDED(hr),"CreateContext Failed\n");
-    }
+    ok(SUCCEEDED(hr),"Constructor Failed\n");
+    if (FAILED(hr)) return;
+
+    hr = ITfDocumentMgr_CreateContext(g_dm, cid, 0, (IUnknown*)ts, &cxt, &editCookie);
+    ok(SUCCEEDED(hr),"CreateContext Failed\n");
 
     hr = ITfDocumentMgr_CreateContext(g_dm, cid, 0, NULL, &cxt2, &editCookie);
     ok(SUCCEEDED(hr),"CreateContext Failed\n");
@@ -1557,6 +1645,8 @@ static void test_startSession(void)
     ok(hr == S_FALSE, "ITfContext_GetDocumentMgr wrong rc %x\n",hr);
     ok(dmtest == NULL,"returned documentmgr should be null\n");
 
+    ITfContext_Release(cxt2);
+
     hr = ITfDocumentMgr_GetTop(g_dm, &cxtTest);
     ok(SUCCEEDED(hr),"GetTop Failed\n");
     ok(cxtTest == cxt, "Wrong context on top\n");
@@ -1566,6 +1656,25 @@ static void test_startSession(void)
     ok(SUCCEEDED(hr),"GetBase Failed\n");
     ok(cxtTest == cxt, "Wrong context on base\n");
     ITfContext_Release(cxtTest);
+
+    hr = ITfDocumentMgr_CreateContext(g_dm, cid, 0, (IUnknown*)ts, &cxt2, &editCookie);
+    ok(hr == S_OK,"CreateContext Failed\n");
+
+    test_OnPushContext = SINK_EXPECTED;
+    test_ACP_AdviseSink = SINK_EXPECTED;
+    hr = ITfDocumentMgr_Push(g_dm, cxt2);
+    ok(hr == S_OK,"Push Failed\n");
+    sink_check_ok(&test_OnPushContext,"OnPushContext");
+    sink_check_ok(&test_ACP_AdviseSink,"TextStoreACP_AdviseSink");
+
+    test_ACP_UnadviseSink = SINK_EXPECTED;
+    cnt = check_context_refcount(cxt2);
+    test_OnPopContext = SINK_EXPECTED;
+    hr = ITfDocumentMgr_Pop(g_dm, 0);
+    ok(hr == S_OK,"Pop Failed\n");
+    ok(check_context_refcount(cxt2) < cnt, "Ref count did not decrease\n");
+    sink_check_ok(&test_OnPopContext,"OnPopContext");
+    sink_check_ok(&test_ACP_UnadviseSink,"TextStoreACP_AdviseSink");
 
     hr = ITfDocumentMgr_Pop(g_dm, 0);
     ok(FAILED(hr),"Pop Succeeded\n");
@@ -1688,12 +1797,11 @@ static void EditSession_Destructor(EditSession *This)
 
 static HRESULT WINAPI EditSession_QueryInterface(ITfEditSession *iface, REFIID iid, LPVOID *ppvOut)
 {
-    EditSession *This = impl_from_ITfEditSession(iface);
     *ppvOut = NULL;
 
     if (IsEqualIID(iid, &IID_IUnknown) || IsEqualIID(iid, &IID_ITfEditSession))
     {
-        *ppvOut = This;
+        *ppvOut = iface;
     }
 
     if (*ppvOut)
@@ -2067,11 +2175,11 @@ static void test_AssociateFocus(void)
     test_CurrentFocus = dm1;
     test_PrevFocus = FOCUS_IGNORE;
     test_OnSetFocus  = SINK_OPTIONAL;
-    test_ShouldDeactivate = SINK_OPTIONAL;
+    test_ShouldDeactivate = TRUE;
     hr = ITfThreadMgr_AssociateFocus(g_tm,wnd1,dm1,&olddm);
     ok(SUCCEEDED(hr),"AssociateFocus failed\n");
     sink_check_ok(&test_OnSetFocus,"OnSetFocus");
-    test_ShouldDeactivate = SINK_UNEXPECTED;
+    test_ShouldDeactivate = FALSE;
 
     processPendingMessages();
 
@@ -2103,12 +2211,14 @@ static void test_AssociateFocus(void)
     test_CurrentFocus = FOCUS_SAVE;
     test_PrevFocus = FOCUS_SAVE;
     test_OnSetFocus = SINK_SAVE;
+    test_ShouldDeactivate = TRUE; /* win 8/10 */
     ShowWindow(wnd2,SW_SHOWNORMAL);
     SetFocus(wnd2);
     sink_check_saved(&test_OnSetFocus,dm1,dm2,"OnSetFocus");
     test_CurrentFocus = FOCUS_IGNORE; /* occasional wine race */
     test_PrevFocus = FOCUS_IGNORE; /* occasional wine race */
     test_OnSetFocus = SINK_IGNORE; /* occasional wine race */
+    test_ShouldDeactivate = FALSE;
     processPendingMessages();
 
     ShowWindow(wnd3,SW_SHOWNORMAL);
@@ -2174,7 +2284,6 @@ static void test_AssociateFocus(void)
     test_PrevFocus = FOCUS_IGNORE;
     DestroyWindow(wnd1);
     DestroyWindow(wnd2);
-    test_OnSetFocus = SINK_UNEXPECTED;
     test_OnPopContext = SINK_OPTIONAL; /* Vista and greater */
     test_OnSetFocus = SINK_OPTIONAL; /* Vista and greater */
     ITfThreadMgr_GetFocus(g_tm, &test_PrevFocus);
@@ -2222,6 +2331,7 @@ START_TEST(inputprocessor)
         test_ThreadMgrAdviseSinks();
         test_Activate();
         test_startSession();
+        test_DocumentMgrAdviseSinks();
         test_TfGuidAtom();
         test_ClientId();
         test_KeystrokeMgr();
@@ -2232,9 +2342,13 @@ START_TEST(inputprocessor)
         test_FindClosestCategory();
         test_Disable();
         test_ThreadMgrUnadviseSinks();
+        test_DocumentMgrUnadviseSinks();
         test_UnregisterCategory();
         test_Unregister();
         test_profile_mgr();
+
+        ITextStoreACPSink_Release(ACPSink);
+        ITfDocumentMgr_Release(g_dm);
     }
     else
         skip("Unable to create InputProcessor\n");

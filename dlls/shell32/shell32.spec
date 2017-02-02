@@ -245,10 +245,10 @@
 
  650 stdcall -noname PathIsSameRoot(ptr ptr) PathIsSameRootAW
 
- 651 stdcall -noname ReadCabinetState(long long) # OldReadCabinetState
- 652 stdcall -noname WriteCabinetState(long)
+ 651 stdcall -noname @(ptr long) ReadCabinetState # OldReadCabinetState
+ 652 stdcall -noname WriteCabinetState(ptr)
  653 stdcall -noname PathProcessCommand(long long long long) PathProcessCommandAW
- 654 stdcall @(long long) shell32_654 # ReadCabinetState@8
+ 654 stdcall ReadCabinetState(ptr long)
 
  660 stdcall -noname FileIconInit(long)
  680 stdcall IsUserAnAdmin()
@@ -261,9 +261,11 @@
  704 stdcall -noname GUIDFromStringW(wstr ptr)
  709 stdcall SHGetSetFolderCustomSettings(ptr str long)
  714 stdcall @(ptr) SHELL32_714 # PathIsTemporaryW
+ 723 stdcall -noname SHCreateSessionKey(long ptr)
  727 stdcall SHGetImageList(long ptr ptr)
  730 stdcall -noname RestartDialogEx(long wstr long long)
  743 stdcall SHCreateFileExtractIconW(wstr long ptr ptr)
+ 747 stdcall SHLimitInputEdit(ptr ptr)
 
 1217 stub FOOBAR1217   # no joke! This is the real name!!
 
@@ -310,6 +312,7 @@
 @ stdcall FindExecutableW(wstr wstr ptr)
 @ stub FixupOptionalComponents
 @ stdcall FreeIconList(long)
+@ stdcall GetCurrentProcessExplicitAppUserModelID(ptr)
 @ stdcall InitNetworkAddressControl()
 @ stub InternalExtractIconListA
 @ stub InternalExtractIconListW
@@ -379,6 +382,7 @@
 @ stdcall SHGetItemFromDataObject(ptr long ptr ptr)
 @ stdcall SHGetItemFromObject(ptr ptr ptr)
 @ stdcall SHGetKnownFolderIDList(ptr long ptr ptr)
+@ stdcall SHGetKnownFolderItem(ptr long long ptr ptr)
 @ stdcall SHGetKnownFolderPath(ptr long ptr ptr)
 @ stdcall SHGetLocalizedName(wstr ptr long ptr)
 @ stdcall SHGetMalloc(ptr)
@@ -387,6 +391,7 @@
 @ stdcall SHGetPathFromIDList(ptr ptr) SHGetPathFromIDListA
 @ stdcall SHGetPathFromIDListA(ptr ptr)
 @ stdcall SHGetPathFromIDListW(ptr ptr)
+@ stdcall SHGetPropertyStoreForWindow(long ptr ptr)
 @ stdcall SHGetPropertyStoreFromParsingName(wstr ptr long ptr ptr)
 @ stdcall SHGetSettings(ptr long)
 @ stdcall SHGetSpecialFolderLocation(long long ptr)
@@ -407,6 +412,8 @@
 @ stdcall SHPathPrepareForWriteW(long ptr wstr long)
 @ stdcall SHQueryRecycleBinA(str ptr)
 @ stdcall SHQueryRecycleBinW(wstr ptr)
+@ stdcall SHQueryUserNotificationState(ptr)
+@ stdcall SHRemoveLocalizedName(wstr)
 @ stdcall SHSetLocalizedName(wstr wstr long)
 @ stdcall SHSetUnreadMailCountW(wstr long wstr)
 @ stdcall SHUpdateRecycleBinIcon()

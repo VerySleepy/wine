@@ -39,13 +39,14 @@
 #include <string.h>
 
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
+
 #include "windef.h"
 #include "winbase.h"
 #include "wingdi.h"
 #include "winuser.h"
 #include "winreg.h"
 #include "winnls.h"
+#include "ime.h"
 #include "x11drv.h"
 #include "wine/server.h"
 #include "wine/unicode.h"
@@ -980,11 +981,14 @@ static const WORD nonchar_key_vkey[256] =
     VK_BACK, VK_TAB, 0, VK_CLEAR, 0, VK_RETURN, 0, 0,           /* FF08 */
     0, 0, 0, VK_PAUSE, VK_SCROLL, 0, 0, 0,                      /* FF10 */
     0, 0, 0, VK_ESCAPE, 0, 0, 0, 0,                             /* FF18 */
-    /* unused */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* FF20 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* FF28 */
-    0, VK_HANGUL, 0, 0, VK_HANJA, 0, 0, 0,                      /* FF30 */
+    /* Japanese special keys */
+    0, VK_KANJI, VK_NONCONVERT, VK_CONVERT,                     /* FF20 */
+    VK_DBE_ROMAN, 0, 0, VK_DBE_HIRAGANA,
+    0, 0, VK_DBE_SBCSCHAR, 0, 0, 0, 0, 0,                       /* FF28 */
+    /* Korean special keys (FF31-) */
+    VK_DBE_ALPHANUMERIC, VK_HANGUL, 0, 0, VK_HANJA, 0, 0, 0,    /* FF30 */
     0, 0, 0, 0, 0, 0, 0, 0,                                     /* FF38 */
+    /* unused */
     0, 0, 0, 0, 0, 0, 0, 0,                                     /* FF40 */
     0, 0, 0, 0, 0, 0, 0, 0,                                     /* FF48 */
     /* cursor keys */
@@ -1034,11 +1038,13 @@ static const WORD nonchar_key_scan[256] =
     0x0E, 0x0F, 0x00, /*?*/ 0, 0x00, 0x1C, 0x00, 0x00,           /* FF08 */
     0x00, 0x00, 0x00, 0x45, 0x46, 0x00, 0x00, 0x00,              /* FF10 */
     0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,              /* FF18 */
-    /* unused */
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,              /* FF20 */
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,              /* FF28 */
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,              /* FF30 */
+    /* Japanese special keys */
+    0x00, 0x29, 0x7B, 0x79, 0x70, 0x00, 0x00, 0x70,              /* FF20 */
+    0x00, 0x00, 0x29, 0x00, 0x00, 0x00, 0x00, 0x00,              /* FF28 */
+    /* Korean special keys (FF31-) */
+    0x3A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,              /* FF30 */
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,              /* FF38 */
+    /* unused */
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,              /* FF40 */
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,              /* FF48 */
     /* cursor keys */
@@ -1223,7 +1229,7 @@ static void update_key_state( BYTE *keystate, BYTE key, int down )
  * from wine to another application and back.
  * Toggle keys are handled in HandleEvent.
  */
-void X11DRV_KeymapNotify( HWND hwnd, XEvent *event )
+BOOL X11DRV_KeymapNotify( HWND hwnd, XEvent *event )
 {
     int i, j;
     BYTE keystate[256];
@@ -1233,8 +1239,9 @@ void X11DRV_KeymapNotify( HWND hwnd, XEvent *event )
         WORD vkey;
         BOOL pressed;
     } modifiers[6]; /* VK_LSHIFT through VK_RMENU are contiguous */
+    BOOL lwin_pressed = FALSE, rwin_pressed = FALSE;
 
-    if (!get_async_key_state( keystate )) return;
+    if (!get_async_key_state( keystate )) return FALSE;
 
     memset(modifiers, 0, sizeof(modifiers));
 
@@ -1264,6 +1271,12 @@ void X11DRV_KeymapNotify( HWND hwnd, XEvent *event )
                 if (!modifiers[m].vkey) modifiers[m].vkey = vkey;
                 if (event->xkeymap.key_vector[i] & (1<<j)) modifiers[m].pressed = TRUE;
                 break;
+            case VK_LWIN:
+                if (event->xkeymap.key_vector[i] & (1<<j)) lwin_pressed = TRUE;
+                break;
+            case VK_RWIN:
+                if (event->xkeymap.key_vector[i] & (1<<j)) rwin_pressed = TRUE;
+                break;
             }
         }
     }
@@ -1281,13 +1294,29 @@ void X11DRV_KeymapNotify( HWND hwnd, XEvent *event )
         }
     }
 
+    if (!(keystate[VK_LWIN] & 0x80) != !lwin_pressed)
+    {
+        TRACE( "Adjusting state for VK_LWIN. State before %#.2x\n", keystate[VK_LWIN]);
+        update_key_state( keystate, VK_LWIN, lwin_pressed );
+        changed = TRUE;
+    }
+    if (!(keystate[VK_RWIN] & 0x80) != !rwin_pressed)
+    {
+        TRACE( "Adjusting state for VK_RWIN. State before %#.2x\n", keystate[VK_RWIN]);
+        update_key_state( keystate, VK_RWIN, rwin_pressed );
+        changed = TRUE;
+    }
+
     LeaveCriticalSection( &kbd_section );
-    if (!changed) return;
+    if (!changed) return FALSE;
 
     update_key_state( keystate, VK_CONTROL, (keystate[VK_LCONTROL] | keystate[VK_RCONTROL]) & 0x80 );
     update_key_state( keystate, VK_MENU, (keystate[VK_LMENU] | keystate[VK_RMENU]) & 0x80 );
     update_key_state( keystate, VK_SHIFT, (keystate[VK_LSHIFT] | keystate[VK_RSHIFT]) & 0x80 );
+    update_key_state( keystate, VK_LWIN, keystate[VK_LWIN] & 0x80 );
+    update_key_state( keystate, VK_RWIN, keystate[VK_RWIN] & 0x80 );
     set_async_key_state( keystate );
+    return TRUE;
 }
 
 static void update_lock_state( HWND hwnd, WORD vkey, UINT state, DWORD time )
@@ -1335,7 +1364,7 @@ static void update_lock_state( HWND hwnd, WORD vkey, UINT state, DWORD time )
  *
  * Handle a X key event
  */
-void X11DRV_KeyEvent( HWND hwnd, XEvent *xev )
+BOOL X11DRV_KeyEvent( HWND hwnd, XEvent *xev )
 {
     XKeyEvent *event = &xev->xkey;
     char buf[24];
@@ -1364,7 +1393,7 @@ void X11DRV_KeyEvent( HWND hwnd, XEvent *xev )
             if (Str == NULL)
             {
                 ERR_(key)("Failed to allocate memory!\n");
-                return;
+                return FALSE;
             }
             ascii_chars = XmbLookupString(xic, event, Str, ascii_chars, &keysym, &status);
         }
@@ -1379,7 +1408,7 @@ void X11DRV_KeyEvent( HWND hwnd, XEvent *xev )
         X11DRV_XIMLookupChars( Str, ascii_chars );
         if (buf != Str)
             HeapFree(GetProcessHeap(), 0, Str);
-        return;
+        return TRUE;
     }
 
     EnterCriticalSection( &kbd_section );
@@ -1419,7 +1448,7 @@ void X11DRV_KeyEvent( HWND hwnd, XEvent *xev )
 
     LeaveCriticalSection( &kbd_section );
 
-    if (!vkey) return;
+    if (!vkey) return FALSE;
 
     dwFlags = 0;
     if ( event->type == KeyRelease ) dwFlags |= KEYEVENTF_KEYUP;
@@ -1428,6 +1457,7 @@ void X11DRV_KeyEvent( HWND hwnd, XEvent *xev )
     update_lock_state( hwnd, vkey, event->state, event_time );
 
     X11DRV_send_keyboard_input( hwnd, vkey & 0xff, bScan, dwFlags, event_time );
+    return TRUE;
 }
 
 /**********************************************************************
@@ -1570,7 +1600,7 @@ static HKL get_locale_kbd_layout(void)
      */
     langid = PRIMARYLANGID(LANGIDFROMLCID(layout));
     if (langid == LANG_CHINESE || langid == LANG_JAPANESE || langid == LANG_KOREAN)
-        layout |= 0xe001 << 16; /* IME */
+        layout = MAKELONG( layout, 0xe001 ); /* IME */
     else
         layout |= layout << 16;
 
@@ -1925,9 +1955,8 @@ HKL CDECL X11DRV_GetKeyboardLayout(DWORD dwThreadid)
  */
 HKL CDECL X11DRV_LoadKeyboardLayout(LPCWSTR name, UINT flags)
 {
-    FIXME("%s, %04x: stub!\n", debugstr_w(name), flags);
-    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-    return 0;
+    FIXME("%s, %04x: semi-stub! Returning default layout.\n", debugstr_w(name), flags);
+    return get_locale_kbd_layout();
 }
 
 
@@ -1987,7 +2016,7 @@ HKL CDECL X11DRV_ActivateKeyboardLayout(HKL hkl, UINT flags)
 /***********************************************************************
  *           X11DRV_MappingNotify
  */
-void X11DRV_MappingNotify( HWND dummy, XEvent *event )
+BOOL X11DRV_MappingNotify( HWND dummy, XEvent *event )
 {
     HWND hwnd;
 
@@ -1998,6 +2027,7 @@ void X11DRV_MappingNotify( HWND dummy, XEvent *event )
     if (!hwnd) hwnd = GetActiveWindow();
     PostMessageW(hwnd, WM_INPUTLANGCHANGEREQUEST,
                  0 /*FIXME*/, (LPARAM)X11DRV_GetKeyboardLayout(0));
+    return TRUE;
 }
 
 
@@ -2544,6 +2574,14 @@ INT CDECL X11DRV_ToUnicodeEx(UINT virtKey, UINT scanCode, const BYTE *lpKeyState
             e.keycode = XKeysymToKeycode(e.display, XK_KP_Decimal);
     }
 
+    /* Ctrl-Space generates space on Windows */
+    if (e.state == ControlMask && virtKey == VK_SPACE)
+    {
+        bufW[0] = ' ';
+        ret = 1;
+        goto found;
+    }
+
     if (!e.keycode && virtKey != VK_NONAME)
       {
 	WARN_(key)("Unknown virtual key %X !!!\n", virtKey);
@@ -2664,8 +2702,8 @@ INT CDECL X11DRV_ToUnicodeEx(UINT virtKey, UINT scanCode, const BYTE *lpKeyState
            CTRL + number or CTRL + symbol */
         if (e.state & ControlMask)
         {
-            if (((keysym>=33) && (keysym < 'A')) ||
-                ((keysym > 'Z') && (keysym < 'a')) ||
+            if (((keysym>=33) && (keysym < '@')) ||
+                (keysym == '`') ||
                 (keysym == XK_Tab))
             {
                 lpChar[0] = 0;
@@ -2689,8 +2727,16 @@ INT CDECL X11DRV_ToUnicodeEx(UINT virtKey, UINT scanCode, const BYTE *lpKeyState
 	else if((lpKeyState[VK_CONTROL] & 0x80) /* Control is pressed */
 		&& (keysym == XK_Return || keysym == XK_KP_Enter))
         {
-            lpChar[0] = '\n';
-            ret = 1;
+            if (lpKeyState[VK_SHIFT] & 0x80)
+            {
+                lpChar[0] = 0;
+                ret = 0;
+            }
+            else
+            {
+                lpChar[0] = '\n';
+                ret = 1;
+            }
         }
 
         /* Hack to detect an XLookupString hard-coded to Latin1 */

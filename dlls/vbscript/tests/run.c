@@ -83,6 +83,8 @@ DEFINE_EXPECT(global_success_d);
 DEFINE_EXPECT(global_success_i);
 DEFINE_EXPECT(global_vbvar_d);
 DEFINE_EXPECT(global_vbvar_i);
+DEFINE_EXPECT(global_letobj_i);
+DEFINE_EXPECT(global_setobj_i);
 DEFINE_EXPECT(testobj_propget_d);
 DEFINE_EXPECT(testobj_propget_i);
 DEFINE_EXPECT(testobj_propput_d);
@@ -98,6 +100,7 @@ DEFINE_EXPECT(Next);
 DEFINE_EXPECT(GetWindow);
 DEFINE_EXPECT(GetUIBehavior);
 DEFINE_EXPECT(EnableModeless);
+DEFINE_EXPECT(OnScriptError);
 
 #define DISPID_GLOBAL_REPORTSUCCESS 1000
 #define DISPID_GLOBAL_TRACE         1001
@@ -117,6 +120,8 @@ DEFINE_EXPECT(EnableModeless);
 #define DISPID_GLOBAL_TESTARRAY     1015
 #define DISPID_GLOBAL_THROWINT      1016
 #define DISPID_GLOBAL_TESTOPTIONALARG 1017
+#define DISPID_GLOBAL_LETOBJ        1018
+#define DISPID_GLOBAL_SETOBJ        1019
 
 #define DISPID_TESTOBJ_PROPGET      2000
 #define DISPID_TESTOBJ_PROPPUT      2001
@@ -133,6 +138,8 @@ static BOOL strict_dispid_check, is_english, allow_ui;
 static const char *test_name = "(null)";
 static int test_counter;
 static SCRIPTUICHANDLING uic_handling = SCRIPTUICHANDLING_NOUIERROR;
+static IDispatchEx testObj;
+static HRESULT onerror_hres = E_NOTIMPL;
 
 static BSTR a2bstr(const char *str)
 {
@@ -333,9 +340,60 @@ static void test_disp(IDispatch *disp)
     ok(hres == DISP_E_MEMBERNOTFOUND, "InvokeEx failed: %08x, expected DISP_E_MEMBERNOTFOUND\n", hres);
     ok(V_VT(&v) == VT_EMPTY, "V_VT(v) = %d\n", V_VT(&v));
 
+    SET_EXPECT(testobj_value_i);
+    V_VT(args) = VT_DISPATCH;
+    V_DISPATCH(args) = (IDispatch*)&testObj;
+    dp.cArgs = dp.cNamedArgs = 1;
+    hres = IDispatchEx_InvokeEx(dispex, public_prop_id, 0, DISPATCH_PROPERTYPUT, &dp, NULL, &ei, NULL);
+    ok(hres == S_OK, "InvokeEx failed: %08x\n", hres);
+    CHECK_CALLED(testobj_value_i);
+
+    dp.cArgs = dp.cNamedArgs = 0;
+    hres = IDispatchEx_InvokeEx(dispex, public_prop_id, 0, DISPATCH_PROPERTYGET, &dp, &v, &ei, NULL);
+    ok(hres == S_OK, "InvokeEx failed: %08x\n", hres);
+    ok(V_VT(&v) == VT_I2, "V_VT(v) = %d\n", V_VT(&v));
+    ok(V_I2(&v) == 0, "V_I2(v) = %d\n", V_I2(&v));
+
+    V_VT(args) = VT_DISPATCH;
+    V_DISPATCH(args) = (IDispatch*)&testObj;
+    dp.cArgs = dp.cNamedArgs = 1;
+    hres = IDispatchEx_InvokeEx(dispex, public_prop_id, 0, DISPATCH_PROPERTYPUT|DISPATCH_PROPERTYPUTREF, &dp, NULL, &ei, NULL);
+    ok(hres == S_OK, "InvokeEx failed: %08x\n", hres);
+
+    V_VT(args) = VT_DISPATCH;
+    V_DISPATCH(args) = (IDispatch*)&testObj;
+    dp.cArgs = dp.cNamedArgs = 1;
+    hres = IDispatchEx_InvokeEx(dispex, public_prop_id, 0, DISPATCH_PROPERTYPUTREF, &dp, NULL, &ei, NULL);
+    ok(hres == S_OK, "InvokeEx failed: %08x\n", hres);
+
+    dp.cArgs = dp.cNamedArgs = 0;
+    hres = IDispatchEx_InvokeEx(dispex, public_prop_id, 0, DISPATCH_PROPERTYGET, &dp, &v, &ei, NULL);
+    ok(hres == S_OK, "InvokeEx failed: %08x\n", hres);
+    ok(V_VT(&v) == VT_DISPATCH, "V_VT(v) = %d\n", V_VT(&v));
+    ok(V_DISPATCH(&v) == (IDispatch*)&testObj, "V_DISPATCH(v) != testObj\n");
+
+    V_VT(args) = VT_BOOL;
+    V_BOOL(args) = VARIANT_TRUE;
+    dp.cArgs = dp.cNamedArgs = 1;
+    hres = IDispatchEx_InvokeEx(dispex, public_prop_id, 0, DISPATCH_PROPERTYPUT|DISPATCH_PROPERTYPUTREF, &dp, NULL, &ei, NULL);
+    ok(hres == S_OK, "InvokeEx failed: %08x\n", hres);
+
+    dp.cArgs = dp.cNamedArgs = 0;
+    hres = IDispatchEx_InvokeEx(dispex, public_prop_id, 0, DISPATCH_PROPERTYGET, &dp, &v, &ei, NULL);
+    ok(hres == S_OK, "InvokeEx failed: %08x\n", hres);
+    ok(V_VT(&v) == VT_BOOL, "V_VT(v) = %d\n", V_VT(&v));
+    ok(V_BOOL(&v) == VARIANT_TRUE, "V_BOOL(v) = %x\n", V_BOOL(&v));
+
+    V_VT(args) = VT_BOOL;
+    V_BOOL(args) = VARIANT_FALSE;
+    dp.cArgs = dp.cNamedArgs = 1;
+    hres = IDispatchEx_InvokeEx(dispex, public_prop_id, 0, DISPATCH_PROPERTYPUTREF, &dp, NULL, &ei, NULL);
+    ok(hres == DISP_E_EXCEPTION, "InvokeEx failed: %08x, expected DISP_E_EXCEPTION\n", hres);
+
     V_VT(args) = VT_BOOL;
     V_BOOL(args) = VARIANT_FALSE;
     dp.cArgs = 1;
+    dp.cNamedArgs = 0;
     V_VT(&v) = VT_BOOL;
     hres = IDispatchEx_InvokeEx(dispex, public_prop_id, 0, DISPATCH_PROPERTYPUT, &dp, NULL, &ei, NULL);
     ok(hres == DISP_E_PARAMNOTOPTIONAL, "InvokeEx failed: %08x, expected DISP_E_PARAMNOTOPTIONAL\n", hres);
@@ -503,7 +561,7 @@ static void test_safearray(SAFEARRAY *safearray, unsigned indims)
     ok(!safearray->cLocks, "safearray->cLocks = %x\n", safearray->cLocks);
 
     for(i=0; i < safearray->cDims; i++) {
-        ok(safearray->rgsabound[i].cElements == indims ? i+4 : 1, "safearray->rgsabound[%d].cElements = %d\n", i,
+        ok(safearray->rgsabound[i].cElements == (indims ? i+4 : 1), "safearray->rgsabound[%d].cElements = %d\n", i,
            safearray->rgsabound[i].cElements);
         ok(!safearray->rgsabound[i].lLbound, "safearray->rgsabound[%d].lLbound = %d\n", i, safearray->rgsabound[i].lLbound);
     }
@@ -962,6 +1020,16 @@ static HRESULT WINAPI Global_GetDispID(IDispatchEx *iface, BSTR bstrName, DWORD 
         *pid = DISPID_GLOBAL_VBVAR;
         return S_OK;
     }
+    if(!strcmp_wa(bstrName, "letobj")) {
+        test_grfdex(grfdex, fdexNameCaseInsensitive);
+        *pid = DISPID_GLOBAL_LETOBJ;
+        return S_OK;
+    }
+    if(!strcmp_wa(bstrName, "setobj")) {
+        test_grfdex(grfdex, fdexNameCaseInsensitive);
+        *pid = DISPID_GLOBAL_SETOBJ;
+        return S_OK;
+    }
     if(!strcmp_wa(bstrName, "isNullDisp")) {
         test_grfdex(grfdex, fdexNameCaseInsensitive);
         *pid = DISPID_GLOBAL_ISNULLDISP;
@@ -1122,6 +1190,40 @@ static HRESULT WINAPI Global_InvokeEx(IDispatchEx *iface, DISPID id, LCID lcid, 
 
         ok(V_VT(pdp->rgvarg) == VT_I2, "V_VT(psp->rgvargs) = %d\n", V_VT(pdp->rgvarg));
         ok(V_I2(pdp->rgvarg) == 3, "V_I2(psp->rgvargs) = %d\n", V_I2(pdp->rgvarg));
+        return S_OK;
+
+    case DISPID_GLOBAL_LETOBJ:
+        CHECK_EXPECT(global_letobj_i);
+
+        ok(wFlags == DISPATCH_PROPERTYPUT, "wFlags = %x\n", wFlags);
+        ok(pdp != NULL, "pdp == NULL\n");
+        ok(pdp->rgvarg != NULL, "rgvarg == NULL\n");
+        ok(pdp->rgdispidNamedArgs != NULL, "rgdispidNamedArgs == NULL\n");
+        ok(pdp->cArgs == 1, "cArgs = %d\n", pdp->cArgs);
+        ok(pdp->cNamedArgs == 1, "cNamedArgs = %d\n", pdp->cNamedArgs);
+        ok(pdp->rgdispidNamedArgs[0] == DISPID_PROPERTYPUT, "pdp->rgdispidNamedArgs[0] = %d\n", pdp->rgdispidNamedArgs[0]);
+        ok(!pvarRes, "pvarRes != NULL\n");
+        ok(pei != NULL, "pei == NULL\n");
+
+        ok(V_VT(pdp->rgvarg) == VT_DISPATCH, "V_VT(psp->rgvargs) = %d\n", V_VT(pdp->rgvarg));
+        ok(V_DISPATCH(pdp->rgvarg) == (IDispatch*)&testObj, "V_DISPATCH(psp->rgvargs) != testObj\n");
+        return S_OK;
+
+    case DISPID_GLOBAL_SETOBJ:
+        CHECK_EXPECT(global_setobj_i);
+
+        ok(wFlags == DISPATCH_PROPERTYPUTREF, "wFlags = %x\n", wFlags);
+        ok(pdp != NULL, "pdp == NULL\n");
+        ok(pdp->rgvarg != NULL, "rgvarg == NULL\n");
+        ok(pdp->rgdispidNamedArgs != NULL, "rgdispidNamedArgs == NULL\n");
+        ok(pdp->cArgs == 1, "cArgs = %d\n", pdp->cArgs);
+        ok(pdp->cNamedArgs == 1, "cNamedArgs = %d\n", pdp->cNamedArgs);
+        ok(pdp->rgdispidNamedArgs[0] == DISPID_PROPERTYPUT, "pdp->rgdispidNamedArgs[0] = %d\n", pdp->rgdispidNamedArgs[0]);
+        ok(!pvarRes, "pvarRes != NULL\n");
+        ok(pei != NULL, "pei == NULL\n");
+
+        ok(V_VT(pdp->rgvarg) == VT_DISPATCH, "V_VT(psp->rgvargs) = %d\n", V_VT(pdp->rgvarg));
+        ok(V_DISPATCH(pdp->rgvarg) == (IDispatch*)&testObj, "V_DISPATCH(psp->rgvargs) != testObj\n");
         return S_OK;
 
     case DISPID_GLOBAL_TESTOBJ:
@@ -1523,7 +1625,12 @@ static HRESULT WINAPI ActiveScriptSite_OnStateChange(IActiveScriptSite *iface, S
 
 static HRESULT WINAPI ActiveScriptSite_OnScriptError(IActiveScriptSite *iface, IActiveScriptError *pscripterror)
 {
-    return E_NOTIMPL;
+    HRESULT hr = onerror_hres;
+    CHECK_EXPECT(OnScriptError);
+
+    onerror_hres = E_NOTIMPL;
+
+    return hr;
 }
 
 static HRESULT WINAPI ActiveScriptSite_OnEnterScript(IActiveScriptSite *iface)
@@ -1827,18 +1934,22 @@ static void test_msgbox(void)
     SET_EXPECT(GetUIBehavior);
     SET_EXPECT(GetWindow);
     SET_EXPECT(EnableModeless);
+    SET_EXPECT(OnScriptError);
     hres = parse_script_ar("MsgBox \"testing...\"");
     ok(FAILED(hres), "script not failed\n");
     CHECK_CALLED(GetUIBehavior);
     CHECK_CALLED(GetWindow);
     CHECK_CALLED(EnableModeless);
+    todo_wine CHECK_CALLED(OnScriptError);
 
     uic_handling = SCRIPTUICHANDLING_NOUIERROR;
 
     SET_EXPECT(GetUIBehavior);
+    SET_EXPECT(OnScriptError);
     hres = parse_script_ar("MsgBox \"testing...\"");
     ok(FAILED(hres), "script not failed\n");
     CHECK_CALLED(GetUIBehavior);
+    todo_wine CHECK_CALLED(OnScriptError);
 }
 
 static HRESULT test_global_vars_ref(BOOL use_close)
@@ -2015,6 +2126,12 @@ static void run_tests(void)
     CHECK_CALLED(global_success_d);
     CHECK_CALLED(global_success_i);
 
+    SET_EXPECT(global_success_d);
+    SET_EXPECT(global_success_i);
+    parse_script_af(0, "TEST.reportSuccess()");
+    CHECK_CALLED(global_success_d);
+    CHECK_CALLED(global_success_i);
+
     SET_EXPECT(global_vbvar_d);
     SET_EXPECT(global_vbvar_i);
     parse_script_a("Option Explicit\nvbvar = 3");
@@ -2026,6 +2143,22 @@ static void run_tests(void)
     parse_script_a("Option Explicit\nvbvar() = 3");
     CHECK_CALLED(global_vbvar_d);
     CHECK_CALLED(global_vbvar_i);
+
+    SET_EXPECT(global_letobj_i);
+    parse_script_a("Option Explicit\nletobj = testObj");
+    CHECK_CALLED(global_letobj_i);
+
+    SET_EXPECT(global_letobj_i);
+    parse_script_a("Option Explicit\ntest.letobj = testObj");
+    CHECK_CALLED(global_letobj_i);
+
+    SET_EXPECT(global_setobj_i);
+    parse_script_a("Option Explicit\nset setobj = testObj");
+    CHECK_CALLED(global_setobj_i);
+
+    SET_EXPECT(global_setobj_i);
+    parse_script_a("Option Explicit\nset test.setobj = testObj");
+    CHECK_CALLED(global_setobj_i);
 
     SET_EXPECT(testobj_propget_d);
     SET_EXPECT(testobj_propget_i);
@@ -2068,8 +2201,10 @@ static void run_tests(void)
     parse_htmlscript_a("<!--\ndim x\nx=1\n-->\n");
     parse_htmlscript_a("<!--\ndim x\n-->\n<!--\nx=1\n-->\n");
 
+    SET_EXPECT(OnScriptError);
     hres = parse_script_ar("<!--");
     ok(FAILED(hres), "script didn't fail\n");
+    todo_wine CHECK_CALLED(OnScriptError);
 
     SET_EXPECT(global_success_d);
     SET_EXPECT(global_success_i);
@@ -2092,19 +2227,39 @@ static void run_tests(void)
     test_global_vars_ref(TRUE);
     test_global_vars_ref(FALSE);
 
+    SET_EXPECT(OnScriptError);
     hres = parse_script_ar("throwInt(&h80080008&)");
     ok(hres == 0x80080008, "hres = %08x\n", hres);
+    todo_wine CHECK_CALLED(OnScriptError);
 
     /* DISP_E_BADINDEX */
+    SET_EXPECT(OnScriptError);
     hres = parse_script_ar("throwInt(&h8002000b&)");
     ok(hres == MAKE_VBSERROR(9), "hres = %08x\n", hres);
+    todo_wine CHECK_CALLED(OnScriptError);
 
+    SET_EXPECT(OnScriptError);
     hres = parse_script_ar("throwInt(&h800a0009&)");
     ok(hres == MAKE_VBSERROR(9), "hres = %08x\n", hres);
+    todo_wine CHECK_CALLED(OnScriptError);
+
+    onerror_hres = S_OK;
+    SET_EXPECT(OnScriptError);
+    hres = parse_script_ar("throwInt(&h800a0009&)");
+    todo_wine ok(hres == SCRIPT_E_REPORTED, "hres = %08x\n", hres);
+    todo_wine CHECK_CALLED(OnScriptError);
 
     /* E_NOTIMPL */
+    SET_EXPECT(OnScriptError);
     hres = parse_script_ar("throwInt(&h80004001&)");
     ok(hres == MAKE_VBSERROR(445), "hres = %08x\n", hres);
+    todo_wine CHECK_CALLED(OnScriptError);
+
+    onerror_hres = S_OK;
+    SET_EXPECT(OnScriptError);
+    hres = parse_script_ar("throwInt(&h80004001&)");
+    todo_wine ok(hres == SCRIPT_E_REPORTED, "hres = %08x\n", hres);
+    todo_wine CHECK_CALLED(OnScriptError);
 
     SET_EXPECT(global_testoptionalarg_i);
     parse_script_a("call testOptionalArg(1,,2)");
@@ -2139,8 +2294,10 @@ static void run_tests(void)
     parse_script_a("x = y\n"
                    "Call ok(getVT(x) = \"VT_EMPTY*\", \"getVT(x) = \" & getVT(x))\n"
                    "Call ok(getVT(y) = \"VT_EMPTY*\", \"getVT(y) = \" & getVT(y))");
+    SET_EXPECT(OnScriptError);
     hres = parse_script_ar("x = y(\"a\")");
     ok(FAILED(hres), "script didn't fail\n");
+    todo_wine CHECK_CALLED(OnScriptError);
 
     run_from_res("lang.vbs");
     run_from_res("api.vbs");

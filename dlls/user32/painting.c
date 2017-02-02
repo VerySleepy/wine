@@ -56,6 +56,8 @@ struct dce
 
 static struct list dce_list = LIST_INIT(dce_list);
 
+#define DCE_CACHE_SIZE 64
+
 static BOOL CALLBACK dc_hook( HDC hDC, WORD code, DWORD_PTR data, LPARAM lParam );
 
 static const WCHAR displayW[] = { 'D','I','S','P','L','A','Y',0 };
@@ -311,7 +313,6 @@ static struct dce *get_window_dce( HWND hwnd )
                 {
                     win->dce = dce;
                     dce->hwnd = hwnd;
-                    dce->count++;
                     list_add_tail( &dce_list, &dce->entry );
                 }
                 WIN_ReleasePtr( win );
@@ -339,16 +340,17 @@ static struct dce *get_window_dce( HWND hwnd )
  */
 void free_dce( struct dce *dce, HWND hwnd )
 {
+    struct dce *dce_to_free = NULL;
+
     USER_Lock();
 
     if (dce)
     {
         if (!--dce->count)
         {
-            /* turn it into a cache entry */
-            SetHookFlags( dce->hdc, DCHF_RESETDC );
             release_dce( dce );
-            dce->flags |= DCX_CACHE;
+            list_remove( &dce->entry );
+            dce_to_free = dce;
         }
         else if (dce->hwnd == hwnd)
         {
@@ -363,7 +365,7 @@ void free_dce( struct dce *dce, HWND hwnd )
         LIST_FOR_EACH_ENTRY( dce, &dce_list, struct dce, entry )
         {
             if (dce->hwnd != hwnd) continue;
-            if (!(dce->flags & DCX_CACHE)) continue;
+            if (!(dce->flags & DCX_CACHE)) break;
 
             if (dce->count) WARN( "GetDC() without ReleaseDC() for window %p\n", hwnd );
             dce->count = 0;
@@ -372,6 +374,13 @@ void free_dce( struct dce *dce, HWND hwnd )
     }
 
     USER_Unlock();
+
+    if (dce_to_free)
+    {
+        SetDCHook( dce_to_free->hdc, NULL, 0 );
+        DeleteDC( dce_to_free->hdc );
+        HeapFree( GetProcessHeap(), 0, dce_to_free );
+    }
 }
 
 
@@ -422,10 +431,11 @@ void invalidate_dce( WND *win, const RECT *extra_rect )
 
     LIST_FOR_EACH_ENTRY( dce, &dce_list, struct dce, entry )
     {
+        if (!dce->hwnd) continue;
+
         TRACE( "%p: hwnd %p dcx %08x %s %s\n", dce, dce->hwnd, dce->flags,
                (dce->flags & DCX_CACHE) ? "Cache" : "Owned", dce->count ? "InUse" : "" );
 
-        if (!dce->hwnd) continue;
         if ((dce->hwnd == win->parent) && !(dce->flags & DCX_CLIPCHILDREN))
             continue;  /* child window positions don't bother us */
 
@@ -501,14 +511,10 @@ static BOOL CALLBACK dc_hook( HDC hDC, WORD code, DWORD_PTR data, LPARAM lParam 
             WARN("DC is not in use!\n");
         break;
     case DCHC_DELETEDC:
-        /*
-         * Windows will not let you delete a DC that is busy
-         * (between GetDC and ReleaseDC)
-         */
         USER_Lock();
-        if (dce->count > 1)
+        if (!(dce->flags & DCX_CACHE))
         {
-            WARN("Application trying to delete a busy DC %p\n", dce->hdc);
+            WARN("Application trying to delete an owned DC %p\n", dce->hdc);
             retv = FALSE;
         }
         else
@@ -831,65 +837,41 @@ static HWND fix_caret(HWND hWnd, const RECT *scroll_rect, INT dx, INT dy,
 {
     GUITHREADINFO info;
     RECT rect, mapped_rcCaret;
-    BOOL hide_caret = FALSE;
 
     info.cbSize = sizeof(info);
     if (!GetGUIThreadInfo( GetCurrentThreadId(), &info )) return 0;
     if (!info.hwndCaret) return 0;
     
+    mapped_rcCaret = info.rcCaret;
     if (info.hwndCaret == hWnd)
     {
-        /* Move the caret if it's (partially) in the source rectangle */
-        if (IntersectRect(&rect, scroll_rect, &info.rcCaret))
-        {
-            *move_caret = TRUE;
-            hide_caret = TRUE;
-            new_caret_pos->x = info.rcCaret.left + dx;
-            new_caret_pos->y = info.rcCaret.top + dy;
-        }
-        else
-        {
-            *move_caret = FALSE;
-            
-            /* Hide the caret if it's in the destination rectangle */
-            rect = *scroll_rect;
-            OffsetRect(&rect, dx, dy);
-            hide_caret = IntersectRect(&rect, &rect, &info.rcCaret);
-        }
+        /* The caret needs to be moved along with scrolling even if it's
+         * outside the visible area. Otherwise, when the caret is scrolled
+         * out from the view, the position won't get updated anymore and
+         * the caret will never scroll back again. */
+        *move_caret = TRUE;
+        new_caret_pos->x = info.rcCaret.left + dx;
+        new_caret_pos->y = info.rcCaret.top + dy;
     }
     else
     {
-        if ((flags & SW_SCROLLCHILDREN) && IsChild(hWnd, info.hwndCaret))
-        {
-            *move_caret = FALSE;
-            
-            /* Hide the caret if it's in the source or in the destination
-               rectangle */
-            mapped_rcCaret = info.rcCaret;
-            MapWindowPoints(info.hwndCaret, hWnd, (LPPOINT)&mapped_rcCaret, 2);
-            
-            if (IntersectRect(&rect, scroll_rect, &mapped_rcCaret))
-            {
-                hide_caret = TRUE;
-            }
-            else
-            {
-                rect = *scroll_rect;
-                OffsetRect(&rect, dx, dy);
-                hide_caret = IntersectRect(&rect, &rect, &mapped_rcCaret);
-            }
-        }
-        else
+        *move_caret = FALSE;
+        if (!(flags & SW_SCROLLCHILDREN) || !IsChild(hWnd, info.hwndCaret))
+            return 0;
+        MapWindowPoints(info.hwndCaret, hWnd, (LPPOINT)&mapped_rcCaret, 2);
+    }
+
+    /* If the caret is not in the src/dest rects, all is fine done. */
+    if (!IntersectRect(&rect, scroll_rect, &mapped_rcCaret))
+    {
+        rect = *scroll_rect;
+        OffsetRect(&rect, dx, dy);
+        if (!IntersectRect(&rect, &rect, &mapped_rcCaret))
             return 0;
     }
 
-    if (hide_caret)
-    {    
-        HideCaret(info.hwndCaret);
-        return info.hwndCaret;
-    }
-    else
-        return 0;
+    /* Indicate that the caret needs to be updated during the scrolling. */
+    return info.hwndCaret;
 }
 
 
@@ -998,7 +980,8 @@ HDC WINAPI GetDCEx( HWND hwnd, HRGN hrgnClip, DWORD flags )
 
     if ((flags & DCX_CACHE) || !(dce = get_window_dce( hwnd )))
     {
-        struct dce *dceEmpty = NULL, *dceUnused = NULL;
+        struct dce *dceEmpty = NULL, *dceUnused = NULL, *found = NULL;
+        unsigned int count = 0;
 
         /* Strategy: First, we attempt to find a non-empty but unused DCE with
          * compatible flags. Next, we look for an empty entry. If the cache is
@@ -1007,24 +990,23 @@ HDC WINAPI GetDCEx( HWND hwnd, HRGN hrgnClip, DWORD flags )
         USER_Lock();
         LIST_FOR_EACH_ENTRY( dce, &dce_list, struct dce, entry )
         {
-            if ((dce->flags & DCX_CACHE) && !dce->count)
+            if (!(dce->flags & DCX_CACHE)) break;
+            count++;
+            if (dce->count) continue;
+            dceUnused = dce;
+            if (!dce->hwnd) dceEmpty = dce;
+            else if ((dce->hwnd == hwnd) && !((dce->flags ^ flags) & clip_flags))
             {
-                dceUnused = dce;
-
-                if (!dce->hwnd) dceEmpty = dce;
-                else if ((dce->hwnd == hwnd) && !((dce->flags ^ flags) & clip_flags))
-                {
-                    TRACE("\tfound valid %p dce [%p], flags %08x\n",
-                          dce, hwnd, dce->flags );
-                    bUpdateVisRgn = FALSE;
-                    break;
-                }
+                TRACE( "found valid %p dce [%p], flags %08x\n", dce, hwnd, dce->flags );
+                found = dce;
+                bUpdateVisRgn = FALSE;
+                break;
             }
         }
+        if (!found) found = dceEmpty;
+        if (!found && count >= DCE_CACHE_SIZE) found = dceUnused;
 
-        if (&dce->entry == &dce_list)  /* nothing found */
-            dce = dceEmpty ? dceEmpty : dceUnused;
-
+        dce = found;
         if (dce) dce->count = 1;
 
         USER_Unlock();
@@ -1220,7 +1202,7 @@ BOOL WINAPI RedrawWindow( HWND hwnd, const RECT *rect, HRGN hrgn, UINT flags )
     else  /* need to build a list of the region rectangles */
     {
         DWORD size;
-        RGNDATA *data = NULL;
+        RGNDATA *data;
 
         if (!(size = GetRegionData( hrgn, 0, NULL ))) return FALSE;
         if (!(data = HeapAlloc( GetProcessHeap(), 0, size ))) return FALSE;
@@ -1400,8 +1382,8 @@ INT WINAPI ExcludeUpdateRgn( HDC hdc, HWND hwnd )
         MapWindowPoints( 0, hwnd, &pt, 1 );
         OffsetRgn( update_rgn, -pt.x, -pt.y );
         ret = ExtSelectClipRgn( hdc, update_rgn, RGN_DIFF );
-        DeleteObject( update_rgn );
     }
+    DeleteObject( update_rgn );
     return ret;
 }
 
@@ -1450,6 +1432,8 @@ static INT scroll_window( HWND hwnd, INT dx, INT dy, const RECT *rect, const REC
         DWORD style = GetWindowLongW( hwnd, GWL_STYLE );
 
         hwndCaret = fix_caret(hwnd, &rc, dx, dy, flags, &moveCaret, &newCaretPos);
+        if (hwndCaret)
+            HideCaret(hwndCaret);
 
         if (is_ex) dcxflags |= DCX_CACHE;
         if( style & WS_CLIPSIBLINGS) dcxflags |= DCX_CLIPSIBLINGS;
@@ -1501,6 +1485,13 @@ static INT scroll_window( HWND hwnd, INT dx, INT dy, const RECT *rect, const REC
                 CombineRgn( hrgnTemp, hrgnTemp, hrgnClip, RGN_AND );
                 CombineRgn( hrgnUpdate, hrgnUpdate, hrgnTemp, RGN_OR );
 
+                if (rcUpdate)
+                {
+                    RECT rcTemp;
+                    GetRgnBox( hrgnTemp, &rcTemp );
+                    UnionRect( rcUpdate, rcUpdate, &rcTemp );
+                }
+
                 if( !bOwnRgn)
                     CombineRgn( hrgnWinupd, hrgnWinupd, hrgnTemp, RGN_OR );
             }
@@ -1542,10 +1533,10 @@ static INT scroll_window( HWND hwnd, INT dx, INT dy, const RECT *rect, const REC
         DeleteObject( hrgnWinupd);
     }
 
-    if( hwndCaret ) {
-        if ( moveCaret ) SetCaretPos( newCaretPos.x, newCaretPos.y );
-        ShowCaret(hwndCaret);
-    }
+    if( moveCaret )
+        SetCaretPos( newCaretPos.x, newCaretPos.y );
+    if( hwndCaret )
+        ShowCaret( hwndCaret );
 
     if( bOwnRgn && hrgnUpdate ) DeleteObject( hrgnUpdate );
 

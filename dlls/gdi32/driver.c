@@ -30,6 +30,7 @@
 #include "winbase.h"
 #include "ddrawgdi.h"
 #include "wine/winbase16.h"
+#include "winternl.h"
 
 #include "gdi_private.h"
 #include "wine/unicode.h"
@@ -275,11 +276,6 @@ static BOOL nulldrv_GdiComment( PHYSDEV dev, UINT size, const BYTE *data )
     return FALSE;
 }
 
-static BOOL nulldrv_GdiRealizationInfo( PHYSDEV dev, void *info )
-{
-    return FALSE;
-}
-
 static UINT nulldrv_GetBoundsRect( PHYSDEV dev, RECT *rect, UINT flags )
 {
     return DCB_RESET;
@@ -333,6 +329,11 @@ static DWORD nulldrv_GetFontData( PHYSDEV dev, DWORD table, DWORD offset, LPVOID
     return FALSE;
 }
 
+static BOOL nulldrv_GetFontRealizationInfo( PHYSDEV dev, void *info )
+{
+    return FALSE;
+}
+
 static DWORD nulldrv_GetFontUnicodeRanges( PHYSDEV dev, LPGLYPHSET glyphs )
 {
     return 0;
@@ -370,11 +371,6 @@ static UINT nulldrv_GetOutlineTextMetrics( PHYSDEV dev, UINT size, LPOUTLINETEXT
     return 0;
 }
 
-static UINT nulldrv_GetSystemPaletteEntries( PHYSDEV dev, UINT start, UINT count, PALETTEENTRY *entries )
-{
-    return 0;
-}
-
 static UINT nulldrv_GetTextCharsetInfo( PHYSDEV dev, LPFONTSIGNATURE fs, DWORD flags )
 {
     return DEFAULT_CHARSET;
@@ -394,9 +390,9 @@ static INT nulldrv_GetTextFace( PHYSDEV dev, INT size, LPWSTR name )
 {
     INT ret = 0;
     LOGFONTW font;
-    HFONT hfont = GetCurrentObject( dev->hdc, OBJ_FONT );
+    DC *dc = get_nulldrv_dc( dev );
 
-    if (GetObjectW( hfont, sizeof(font), &font ))
+    if (GetObjectW( dc->hFont, sizeof(font), &font ))
     {
         ret = strlenW( font.lfFaceName ) + 1;
         if (name)
@@ -667,7 +663,6 @@ const struct gdi_dc_funcs null_driver =
     nulldrv_FontIsLinked,               /* pFontIsLinked */
     nulldrv_FrameRgn,                   /* pFrameRgn */
     nulldrv_GdiComment,                 /* pGdiComment */
-    nulldrv_GdiRealizationInfo,         /* pGdiRealizationInfo */
     nulldrv_GetBoundsRect,              /* pGetBoundsRect */
     nulldrv_GetCharABCWidths,           /* pGetCharABCWidths */
     nulldrv_GetCharABCWidthsI,          /* pGetCharABCWidthsI */
@@ -675,6 +670,7 @@ const struct gdi_dc_funcs null_driver =
     nulldrv_GetDeviceCaps,              /* pGetDeviceCaps */
     nulldrv_GetDeviceGammaRamp,         /* pGetDeviceGammaRamp */
     nulldrv_GetFontData,                /* pGetFontData */
+    nulldrv_GetFontRealizationInfo,     /* pGetFontRealizationInfo */
     nulldrv_GetFontUnicodeRanges,       /* pGetFontUnicodeRanges */
     nulldrv_GetGlyphIndices,            /* pGetGlyphIndices */
     nulldrv_GetGlyphOutline,            /* pGetGlyphOutline */
@@ -1152,4 +1148,22 @@ ULONG WINAPI DdQueryDisplaySettingsUniqueness(VOID)
     if (!warn_once++)
         FIXME("stub\n");
     return 0;
+}
+
+/******************************************************************************
+ *		D3DKMTOpenAdapterFromHdc [GDI32.@]
+ */
+NTSTATUS WINAPI D3DKMTOpenAdapterFromHdc( void *pData )
+{
+    FIXME("(%p): stub\n", pData);
+    return STATUS_NO_MEMORY;
+}
+
+/******************************************************************************
+ *		D3DKMTEscape [GDI32.@]
+ */
+NTSTATUS WINAPI D3DKMTEscape( const void *pData )
+{
+    FIXME("(%p): stub\n", pData);
+    return STATUS_NO_MEMORY;
 }

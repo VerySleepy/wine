@@ -88,11 +88,11 @@
 @ stub CoEnableCallCancellation
 @ stdcall CoFreeUnusedLibraries() ole32.CoFreeUnusedLibraries
 @ stdcall CoFreeUnusedLibrariesEx(long long) ole32.CoFreeUnusedLibrariesEx
-@ stub CoGetActivationState
+@ stdcall CoGetActivationState(int128 long ptr) ole32.CoGetActivationState
 @ stub CoGetApartmentID
-@ stub CoGetApartmentType
+@ stdcall CoGetApartmentType(ptr ptr) ole32.CoGetApartmentType
 @ stdcall CoGetCallContext(ptr ptr) ole32.CoGetCallContext
-@ stub CoGetCallState
+@ stdcall CoGetCallState(long ptr) ole32.CoGetCallState
 @ stdcall CoGetCallerTID(ptr) ole32.CoGetCallerTID
 @ stub CoGetCancelObject
 @ stdcall CoGetClassObject(ptr long ptr ptr ptr) ole32.CoGetClassObject
@@ -248,7 +248,7 @@
 @ stub RoFailFastWithErrorContext
 @ stub RoFreeParameterizedTypeExtra
 @ stub RoGetActivatableClassRegistration
-@ stub RoGetActivationFactory
+@ stdcall RoGetActivationFactory(ptr ptr ptr)
 @ stub RoGetAgileReference
 @ stub RoGetApartmentIdentifier
 @ stub RoGetErrorReportingFlags
@@ -287,9 +287,9 @@
 @ stub WdtpInterfacePointer_UserSize64
 @ stdcall WdtpInterfacePointer_UserUnmarshal(ptr ptr ptr ptr) ole32.WdtpInterfacePointer_UserUnmarshal
 @ stub WdtpInterfacePointer_UserUnmarshal64
-@ stub WindowsCompareStringOrdinal
-@ stub WindowsConcatString
-@ stdcall WindowsCreateString(ptr long ptr)
+@ stdcall WindowsCompareStringOrdinal(ptr ptr ptr)
+@ stdcall WindowsConcatString(ptr ptr ptr)
+@ stdcall WindowsCreateString(wstr long ptr)
 @ stdcall WindowsCreateStringReference(wstr long ptr ptr)
 @ stdcall WindowsDeleteString(ptr)
 @ stdcall WindowsDeleteStringBuffer(ptr)
@@ -302,7 +302,7 @@
 @ stdcall WindowsPromoteStringBuffer(ptr ptr)
 @ stub WindowsReplaceString
 @ stdcall WindowsStringHasEmbeddedNull(ptr ptr)
-@ stub WindowsSubstring
-@ stub WindowsSubstringWithSpecifiedLength
-@ stub WindowsTrimStringEnd
-@ stub WindowsTrimStringStart
+@ stdcall WindowsSubstring(ptr long ptr)
+@ stdcall WindowsSubstringWithSpecifiedLength(ptr long long ptr)
+@ stdcall WindowsTrimStringEnd(ptr ptr ptr)
+@ stdcall WindowsTrimStringStart(ptr ptr ptr)

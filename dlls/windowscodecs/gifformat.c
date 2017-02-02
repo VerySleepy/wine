@@ -27,8 +27,6 @@
 #include "windef.h"
 #include "winbase.h"
 #include "objbase.h"
-#include "wincodec.h"
-#include "wincodecsdk.h"
 
 #include "ungif.h"
 
@@ -75,7 +73,7 @@ static HRESULT load_LSD_metadata(IStream *stream, const GUID *vendor, DWORD opti
     hr = IStream_Read(stream, &lsd_data, sizeof(lsd_data), &bytesread);
     if (FAILED(hr) || bytesread != sizeof(lsd_data)) return S_OK;
 
-    result = HeapAlloc(GetProcessHeap(), 0, sizeof(MetadataItem) * 9);
+    result = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(MetadataItem) * 9);
     if (!result) return E_OUTOFMEMORY;
 
     for (i = 0; i < 9; i++)
@@ -180,7 +178,7 @@ static HRESULT load_IMD_metadata(IStream *stream, const GUID *vendor, DWORD opti
     hr = IStream_Read(stream, &imd_data, sizeof(imd_data), &bytesread);
     if (FAILED(hr) || bytesread != sizeof(imd_data)) return S_OK;
 
-    result = HeapAlloc(GetProcessHeap(), 0, sizeof(MetadataItem) * 8);
+    result = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(MetadataItem) * 8);
     if (!result) return E_OUTOFMEMORY;
 
     for (i = 0; i < 8; i++)
@@ -251,7 +249,7 @@ static HRESULT load_GCE_metadata(IStream *stream, const GUID *vendor, DWORD opti
                                  MetadataItem **items, DWORD *count)
 {
 #include "pshpack1.h"
-    struct graphic_control_extenstion
+    struct graphic_control_extension
     {
         BYTE packed;
         /* reservred: 3;
@@ -273,7 +271,7 @@ static HRESULT load_GCE_metadata(IStream *stream, const GUID *vendor, DWORD opti
     hr = IStream_Read(stream, &gce_data, sizeof(gce_data), &bytesread);
     if (FAILED(hr) || bytesread != sizeof(gce_data)) return S_OK;
 
-    result = HeapAlloc(GetProcessHeap(), 0, sizeof(MetadataItem) * 5);
+    result = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(MetadataItem) * 5);
     if (!result) return E_OUTOFMEMORY;
 
     for (i = 0; i < 5; i++)
@@ -329,7 +327,7 @@ static HRESULT load_APE_metadata(IStream *stream, const GUID *vendor, DWORD opti
                                  MetadataItem **items, DWORD *count)
 {
 #include "pshpack1.h"
-    struct application_extenstion
+    struct application_extension
     {
         BYTE extension_introducer;
         BYTE extension_label;
@@ -388,7 +386,7 @@ static HRESULT load_APE_metadata(IStream *stream, const GUID *vendor, DWORD opti
         data_size += subblock_size + 1;
     }
 
-    result = HeapAlloc(GetProcessHeap(), 0, sizeof(MetadataItem) * 2);
+    result = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(MetadataItem) * 2);
     if (!result)
     {
         HeapFree(GetProcessHeap(), 0, data);
@@ -436,7 +434,7 @@ static HRESULT load_GifComment_metadata(IStream *stream, const GUID *vendor, DWO
                                         MetadataItem **items, DWORD *count)
 {
 #include "pshpack1.h"
-    struct gif_extenstion
+    struct gif_extension
     {
         BYTE extension_introducer;
         BYTE extension_label;
@@ -493,7 +491,7 @@ static HRESULT load_GifComment_metadata(IStream *stream, const GUID *vendor, DWO
 
     data[data_size] = 0;
 
-    result = HeapAlloc(GetProcessHeap(), 0, sizeof(MetadataItem));
+    result = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(MetadataItem));
     if (!result)
     {
         HeapFree(GetProcessHeap(), 0, data);
@@ -545,7 +543,8 @@ static IStream *create_stream(const void *data, int data_size)
 }
 
 static HRESULT create_metadata_reader(const void *data, int data_size,
-                                      const CLSID *clsid, IWICMetadataReader **reader)
+                                      class_constructor constructor,
+                                      IWICMetadataReader **reader)
 {
     HRESULT hr;
     IWICMetadataReader *metadata_reader;
@@ -554,8 +553,7 @@ static HRESULT create_metadata_reader(const void *data, int data_size,
 
     /* FIXME: Use IWICComponentFactory_CreateMetadataReader once it's implemented */
 
-    hr = CoCreateInstance(clsid, NULL, CLSCTX_INPROC_SERVER,
-                          &IID_IWICMetadataReader, (void **)&metadata_reader);
+    hr = constructor(&IID_IWICMetadataReader, (void**)&metadata_reader);
     if (FAILED(hr)) return hr;
 
     hr = IWICMetadataReader_QueryInterface(metadata_reader, &IID_IWICPersistStream, (void **)&persist);
@@ -578,6 +576,7 @@ static HRESULT create_metadata_reader(const void *data, int data_size,
 typedef struct {
     IWICBitmapDecoder IWICBitmapDecoder_iface;
     IWICMetadataBlockReader IWICMetadataBlockReader_iface;
+    IStream *stream;
     BYTE LSD_data[13]; /* Logical Screen Descriptor */
     LONG ref;
     BOOL initialized;
@@ -815,8 +814,14 @@ static HRESULT WINAPI GifFrameDecode_CopyPixels(IWICBitmapFrameDecode *iface,
 static HRESULT WINAPI GifFrameDecode_GetMetadataQueryReader(IWICBitmapFrameDecode *iface,
     IWICMetadataQueryReader **ppIMetadataQueryReader)
 {
+    GifFrameDecode *This = impl_from_IWICBitmapFrameDecode(iface);
+
     TRACE("(%p,%p)\n", iface, ppIMetadataQueryReader);
-    return WINCODEC_ERR_UNSUPPORTEDOPERATION;
+
+    if (!ppIMetadataQueryReader)
+        return E_INVALIDARG;
+
+    return MetadataQueryReader_CreateInstance(&This->IWICMetadataBlockReader_iface, ppIMetadataQueryReader);
 }
 
 static HRESULT WINAPI GifFrameDecode_GetColorContexts(IWICBitmapFrameDecode *iface,
@@ -900,8 +905,7 @@ static HRESULT create_IMD_metadata_reader(GifFrameDecode *This, IWICMetadataRead
 
     /* FIXME: Use IWICComponentFactory_CreateMetadataReader once it's implemented */
 
-    hr = CoCreateInstance(&CLSID_WICIMDMetadataReader, NULL, CLSCTX_INPROC_SERVER,
-                          &IID_IWICMetadataReader, (void **)&metadata_reader);
+    hr = IMDReader_CreateInstance(&IID_IWICMetadataReader, (void **)&metadata_reader);
     if (FAILED(hr)) return hr;
 
     hr = IWICMetadataReader_QueryInterface(metadata_reader, &IID_IWICPersistStream, (void **)&persist);
@@ -957,7 +961,7 @@ static HRESULT WINAPI GifFrameDecode_Block_GetReaderByIndex(IWICMetadataBlockRea
 
     for (i = 0; i < This->frame->Extensions.ExtensionBlockCount; i++)
     {
-        const CLSID *clsid;
+        class_constructor constructor;
         const void *data;
         int data_size;
 
@@ -971,24 +975,24 @@ static HRESULT WINAPI GifFrameDecode_Block_GetReaderByIndex(IWICMetadataBlockRea
         }
         else if (This->frame->Extensions.ExtensionBlocks[i].Function == COMMENT_EXT_FUNC_CODE)
         {
-            clsid = &CLSID_WICGifCommentMetadataReader;
+            constructor = GifCommentReader_CreateInstance;
             data = This->frame->Extensions.ExtensionBlocks[i].Bytes;
             data_size = This->frame->Extensions.ExtensionBlocks[i].ByteCount;
         }
         else
         {
-            clsid = &CLSID_WICUnknownMetadataReader;
+            constructor = UnknownMetadataReader_CreateInstance;
             data = This->frame->Extensions.ExtensionBlocks[i].Bytes;
             data_size = This->frame->Extensions.ExtensionBlocks[i].ByteCount;
         }
-        return create_metadata_reader(data, data_size, clsid, reader);
+        return create_metadata_reader(data, data_size, constructor, reader);
     }
 
     if (gce_index == -1) return E_INVALIDARG;
 
     return create_metadata_reader(This->frame->Extensions.ExtensionBlocks[gce_index].Bytes + 3,
                                   This->frame->Extensions.ExtensionBlocks[gce_index].ByteCount - 4,
-                                  &CLSID_WICGCEMetadataReader, reader);
+                                  GCEReader_CreateInstance, reader);
 }
 
 static HRESULT WINAPI GifFrameDecode_Block_GetEnumerator(IWICMetadataBlockReader *iface,
@@ -1055,9 +1059,13 @@ static ULONG WINAPI GifDecoder_Release(IWICBitmapDecoder *iface)
 
     if (ref == 0)
     {
+        if (This->stream)
+        {
+            IStream_Release(This->stream);
+            DGifCloseFile(This->gif);
+        }
         This->lock.DebugInfo->Spare[0] = 0;
         DeleteCriticalSection(&This->lock);
-        DGifCloseFile(This->gif);
         HeapFree(GetProcessHeap(), 0, This);
     }
 
@@ -1141,6 +1149,9 @@ static HRESULT WINAPI GifDecoder_Initialize(IWICBitmapDecoder *iface, IStream *p
     seek.QuadPart = 0;
     IStream_Seek(pIStream, seek, STREAM_SEEK_SET, NULL);
     IStream_Read(pIStream, This->LSD_data, sizeof(This->LSD_data), NULL);
+
+    This->stream = pIStream;
+    IStream_AddRef(This->stream);
 
     This->initialized = TRUE;
 
@@ -1376,24 +1387,24 @@ static HRESULT WINAPI GifDecoder_Block_GetReaderByIndex(IWICMetadataBlockReader 
 
     if (index == 0)
         return create_metadata_reader(This->LSD_data, sizeof(This->LSD_data),
-                                      &CLSID_WICLSDMetadataReader, reader);
+                                      LSDReader_CreateInstance, reader);
 
     for (i = 0; i < This->gif->Extensions.ExtensionBlockCount; i++)
     {
-        const CLSID *clsid;
+        class_constructor constructor;
 
         if (index != i + 1) continue;
 
         if (This->gif->Extensions.ExtensionBlocks[i].Function == APPLICATION_EXT_FUNC_CODE)
-            clsid = &CLSID_WICAPEMetadataReader;
+            constructor = APEReader_CreateInstance;
         else if (This->gif->Extensions.ExtensionBlocks[i].Function == COMMENT_EXT_FUNC_CODE)
-            clsid = &CLSID_WICGifCommentMetadataReader;
+            constructor = GifCommentReader_CreateInstance;
         else
-            clsid = &CLSID_WICUnknownMetadataReader;
+            constructor = UnknownMetadataReader_CreateInstance;
 
         return create_metadata_reader(This->gif->Extensions.ExtensionBlocks[i].Bytes,
                                       This->gif->Extensions.ExtensionBlocks[i].ByteCount,
-                                      clsid, reader);
+                                      constructor, reader);
     }
 
     return E_INVALIDARG;
@@ -1431,6 +1442,7 @@ HRESULT GifDecoder_CreateInstance(REFIID iid, void** ppv)
 
     This->IWICBitmapDecoder_iface.lpVtbl = &GifDecoder_Vtbl;
     This->IWICMetadataBlockReader_iface.lpVtbl = &GifDecoder_BlockVtbl;
+    This->stream = NULL;
     This->ref = 1;
     This->initialized = FALSE;
     This->gif = NULL;

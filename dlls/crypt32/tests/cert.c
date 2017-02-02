@@ -2874,7 +2874,7 @@ static void testGetValidUsages(void)
              oids[i]);
         HeapFree(GetProcessHeap(), 0, oids);
     }
-    numOIDs = size = 0xdeadbeef;
+    numOIDs = 0xdeadbeef;
     /* Oddly enough, this crashes when the number of contexts is not 1:
     ret = pCertGetValidUsages(2, contexts, &numOIDs, NULL, &size);
      * but setting size to 0 allows it to succeed:
@@ -3626,7 +3626,6 @@ static void testVerifyRevocation(void)
      status.dwError == CRYPT_E_REVOCATION_OFFLINE /* WinME */,
      "expected CRYPT_E_NO_REVOCATION_CHECK or CRYPT_E_REVOCATION_OFFLINE, got %08x\n",
      status.dwError);
-    ok(status.dwIndex == 0, "expected index 0, got %d\n", status.dwIndex);
     ok(status.dwIndex == 0, "expected index 0, got %d\n", status.dwIndex);
     /* Now add a CRL to the hCrlStore */
     revPara.hCrlStore = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0,

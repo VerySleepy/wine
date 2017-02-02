@@ -102,6 +102,8 @@ void ME_CheckCharOffsets(ME_TextEditor *editor)
 {
   ME_DisplayItem *p = editor->pBuffer->pFirst;
   int ofs = 0, ofsp = 0;
+
+  TRACE_(richedit_check)("Checking begin\n");
   if(TRACE_ON(richedit_lists))
   {
     TRACE_(richedit_lists)("---\n");
@@ -113,6 +115,7 @@ void ME_CheckCharOffsets(ME_TextEditor *editor)
       case diTextEnd:
         TRACE_(richedit_check)("tend, real ofsp = %d, counted = %d\n", p->member.para.nCharOfs, ofsp+ofs);
         assert(ofsp+ofs == p->member.para.nCharOfs);
+        TRACE_(richedit_check)("Checking finished\n");
         return;
       case diParagraph:
         TRACE_(richedit_check)("para, real ofsp = %d, counted = %d\n", p->member.para.nCharOfs, ofsp+ofs);
@@ -137,6 +140,7 @@ void ME_CheckCharOffsets(ME_TextEditor *editor)
         assert(0);
     }
   } while(1);
+  TRACE_(richedit_check)("Checking finished\n");
 }
 
 /******************************************************************************
@@ -234,12 +238,8 @@ void ME_JoinRuns(ME_TextEditor *editor, ME_DisplayItem *p)
   ME_Remove(pNext);
   ME_DestroyDisplayItem(pNext);
   ME_UpdateRunFlags(editor, &p->member.run);
-  if(TRACE_ON(richedit))
-  {
-    TRACE("Before check after join\n");
+  if(TRACE_ON(richedit_check))
     ME_CheckCharOffsets(editor);
-    TRACE("After check after join\n");
-  }
 }
 
 /******************************************************************************
@@ -611,17 +611,16 @@ SIZE ME_GetRunSizeCommon(ME_Context *c, const ME_Paragraph *para, ME_Run *run, i
                          int startx, int *pAscent, int *pDescent)
 {
   SIZE size;
-  int nMaxLen = run->len;
+  WCHAR spaceW[] = {' ',0};
 
-  if (nLen>nMaxLen)
-    nLen = nMaxLen;
+  nLen = min( nLen, run->len );
 
-  /* FIXME the following call also ensures that TEXTMETRIC structure is filled
-   * this is wasteful for MERF_NONTEXT runs, but that shouldn't matter
-   * in practice
-   */
-
-  if (para->nFlags & MEPF_COMPLEX)
+  if (run->nFlags & MERF_ENDPARA)
+  {
+      nLen = min( nLen, 1 );
+      ME_GetTextExtent(c, spaceW, nLen, run->style, &size);
+  }
+  else if (para->nFlags & MEPF_COMPLEX)
   {
       size.cx = run->nWidth;
   }
@@ -642,7 +641,7 @@ SIZE ME_GetRunSizeCommon(ME_Context *c, const ME_Paragraph *para, ME_Run *run, i
   if (run->nFlags & MERF_TAB)
   {
     int pos = 0, i = 0, ppos, shift = 0;
-    PARAFORMAT2 *pFmt = para->pFmt;
+    const PARAFORMAT2 *pFmt = &para->fmt;
 
     if (c->editor->bEmulateVersion10 && /* v1.0 - 3.0 */
         pFmt->dwMask & PFM_TABLE && pFmt->wEffects & PFE_TABLE)
@@ -695,7 +694,7 @@ void ME_SetSelectionCharFormat(ME_TextEditor *editor, CHARFORMAT2W *pFmt)
     ME_Style *s;
     if (!editor->pBuffer->pCharStyle)
       editor->pBuffer->pCharStyle = ME_GetInsertStyle(editor, 0);
-    s = ME_ApplyStyle(editor->pBuffer->pCharStyle, pFmt);
+    s = ME_ApplyStyle(editor, editor->pBuffer->pCharStyle, pFmt);
     ME_ReleaseStyle(editor->pBuffer->pCharStyle);
     editor->pBuffer->pCharStyle = s;
   } else {
@@ -753,47 +752,27 @@ void ME_SetCharFormat(ME_TextEditor *editor, ME_Cursor *start, ME_Cursor *end, C
 
   for (run = start_run; run != end_run; run = ME_FindItemFwd( run, diRun ))
   {
-    ME_Style *new_style = ME_ApplyStyle(run->member.run.style, pFmt);
+    ME_Style *new_style = ME_ApplyStyle(editor, run->member.run.style, pFmt);
+    ME_Paragraph *para = run->member.run.para;
 
     add_undo_set_char_fmt( editor, run->member.run.para->nCharOfs + run->member.run.nCharOfs,
                            run->member.run.len, &run->member.run.style->fmt );
     ME_ReleaseStyle(run->member.run.style);
     run->member.run.style = new_style;
-    run->member.run.para->nFlags |= MEPF_REWRAP;
+
+    /* The para numbering style depends on the eop style */
+    if ((run->member.run.nFlags & MERF_ENDPARA) && para->para_num.style)
+    {
+      ME_ReleaseStyle(para->para_num.style);
+      para->para_num.style = NULL;
+    }
+    para->nFlags |= MEPF_REWRAP;
   }
-}
-
-/******************************************************************************
- * ME_SetDefaultCharFormat
- * 
- * Applies a style change to the default character style.
- */     
-void ME_SetDefaultCharFormat(ME_TextEditor *editor, CHARFORMAT2W *mod)
-{
-  ME_Style *style;
-
-  assert(mod->cbSize == sizeof(CHARFORMAT2W));
-  style = ME_ApplyStyle(editor->pBuffer->pDefaultStyle, mod);
-  editor->pBuffer->pDefaultStyle->fmt = style->fmt;
-  editor->pBuffer->pDefaultStyle->tm = style->tm;
-  ME_ReleaseStyle(style);
-  ME_MarkAllForWrapping(editor);
-  /*  pcf = editor->pBuffer->pDefaultStyle->fmt; */
 }
 
 static void ME_GetRunCharFormat(ME_TextEditor *editor, ME_DisplayItem *run, CHARFORMAT2W *pFmt)
 {
   ME_CopyCharFormat(pFmt, &run->member.run.style->fmt);
-  if ((pFmt->dwMask & CFM_UNDERLINETYPE) && (pFmt->bUnderlineType == CFU_CF1UNDERLINE))
-  {
-    pFmt->dwMask |= CFM_UNDERLINE;
-    pFmt->dwEffects |= CFE_UNDERLINE;
-  }
-  if ((pFmt->dwMask & CFM_UNDERLINETYPE) && (pFmt->bUnderlineType == CFU_UNDERLINENONE))
-  {
-    pFmt->dwMask |= CFM_UNDERLINE;
-    pFmt->dwEffects &= ~CFE_UNDERLINE;
-  }
 }
 
 /******************************************************************************

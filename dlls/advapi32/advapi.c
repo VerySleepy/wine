@@ -30,6 +30,7 @@
 #include "winternl.h"
 #include "winerror.h"
 #include "wincred.h"
+#include "wct.h"
 
 #include "wine/library.h"
 #include "wine/unicode.h"
@@ -187,7 +188,7 @@ BOOL WINAPI IsTextUnicode( LPCVOID buf, INT len, LPINT flags )
  */
 BOOL WINAPI AbortSystemShutdownA( LPSTR lpMachineName )
 {
-    TRACE("stub %s (harmless)\n", lpMachineName);
+    TRACE("stub %s (harmless)\n", debugstr_a(lpMachineName));
     return TRUE;
 }
 
@@ -320,4 +321,13 @@ DWORD WINAPI CommandLineFromMsiDescriptor( WCHAR *szDescriptor,
         r = mpcfd( szDescriptor, szCommandLine, pcchCommandLine, NULL );
     FreeLibrary( hmsi );
     return r;
+}
+
+/***********************************************************************
+ *      RegisterWaitChainCOMCallback (ole32.@)
+ */
+void WINAPI RegisterWaitChainCOMCallback(PCOGETCALLSTATE call_state_cb,
+                                         PCOGETACTIVATIONSTATE activation_state_cb)
+{
+    FIXME("%p, %p\n", call_state_cb, activation_state_cb);
 }

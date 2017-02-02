@@ -29,11 +29,9 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
-
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
+#define NONAMELESSUNION
 #include "windef.h"
 #include "winbase.h"
 #include "winerror.h"
@@ -59,8 +57,9 @@ static inline BOOL is_version_nt(void)
 HANDLE get_BaseNamedObjects_handle(void)
 {
     static HANDLE handle = NULL;
-    static const WCHAR basenameW[] =
-        {'\\','B','a','s','e','N','a','m','e','d','O','b','j','e','c','t','s',0};
+    static const WCHAR basenameW[] = {'\\','S','e','s','s','i','o','n','s','\\','%','u',
+                                      '\\','B','a','s','e','N','a','m','e','d','O','b','j','e','c','t','s',0};
+    WCHAR buffer[64];
     UNICODE_STRING str;
     OBJECT_ATTRIBUTES attr;
 
@@ -68,7 +67,8 @@ HANDLE get_BaseNamedObjects_handle(void)
     {
         HANDLE dir;
 
-        RtlInitUnicodeString(&str, basenameW);
+        sprintfW( buffer, basenameW, NtCurrentTeb()->Peb->SessionId );
+        RtlInitUnicodeString( &str, buffer );
         InitializeObjectAttributes(&attr, &str, 0, 0, NULL);
         NtOpenDirectoryObject(&dir, DIRECTORY_CREATE_OBJECT|DIRECTORY_TRAVERSE,
                               &attr);
@@ -148,6 +148,23 @@ DWORD WINAPI WaitForMultipleObjects( DWORD count, const HANDLE *handles,
     return WaitForMultipleObjectsEx( count, handles, wait_all, timeout, FALSE );
 }
 
+static HANDLE normalize_handle_if_console(HANDLE handle)
+{
+    if ((handle == (HANDLE)STD_INPUT_HANDLE) ||
+        (handle == (HANDLE)STD_OUTPUT_HANDLE) ||
+        (handle == (HANDLE)STD_ERROR_HANDLE))
+        handle = GetStdHandle( HandleToULong(handle) );
+
+    /* yes, even screen buffer console handles are waitable, and are
+     * handled as a handle to the console itself !!
+     */
+    if (is_console_handle(handle))
+    {
+        if (VerifyConsoleIoHandle(handle))
+            handle = GetConsoleInputWaitHandle();
+    }
+    return handle;
+}
 
 /***********************************************************************
  *           WaitForMultipleObjectsEx   (KERNEL32.@)
@@ -167,23 +184,7 @@ DWORD WINAPI WaitForMultipleObjectsEx( DWORD count, const HANDLE *handles,
         return WAIT_FAILED;
     }
     for (i = 0; i < count; i++)
-    {
-        if ((handles[i] == (HANDLE)STD_INPUT_HANDLE) ||
-            (handles[i] == (HANDLE)STD_OUTPUT_HANDLE) ||
-            (handles[i] == (HANDLE)STD_ERROR_HANDLE))
-            hloc[i] = GetStdHandle( HandleToULong(handles[i]) );
-        else
-            hloc[i] = handles[i];
-
-        /* yes, even screen buffer console handles are waitable, and are
-         * handled as a handle to the console itself !!
-         */
-        if (is_console_handle(hloc[i]))
-        {
-            if (VerifyConsoleIoHandle(hloc[i]))
-                hloc[i] = GetConsoleInputWaitHandle();
-        }
-    }
+        hloc[i] = normalize_handle_if_console(handles[i]);
 
     status = NtWaitForMultipleObjects( count, hloc, !wait_all, alertable,
                                        get_nt_timeout( &time, timeout ) );
@@ -209,6 +210,7 @@ BOOL WINAPI RegisterWaitForSingleObject(PHANDLE phNewWaitObject, HANDLE hObject,
     TRACE("%p %p %p %p %d %d\n",
           phNewWaitObject,hObject,Callback,Context,dwMilliseconds,dwFlags);
 
+    hObject = normalize_handle_if_console(hObject);
     status = RtlRegisterWait( phNewWaitObject, hObject, Callback, Context, dwMilliseconds, dwFlags );
     if (status != STATUS_SUCCESS)
     {
@@ -231,6 +233,7 @@ HANDLE WINAPI RegisterWaitForSingleObjectEx( HANDLE hObject,
     TRACE("%p %p %p %d %d\n",
           hObject,Callback,Context,dwMilliseconds,dwFlags);
 
+    hObject = normalize_handle_if_console(hObject);
     status = RtlRegisterWait( &hNewWaitObject, hObject, Callback, Context, dwMilliseconds, dwFlags );
     if (status != STATUS_SUCCESS)
     {
@@ -1549,10 +1552,10 @@ BOOL WINAPI WaitNamedPipeW (LPCWSTR name, DWORD nTimeOut)
     pipe_dev_name.Length = sizeof(leadin);
     pipe_dev_name.MaximumLength = sizeof(leadin);
     InitializeObjectAttributes(&attr,&pipe_dev_name, OBJ_CASE_INSENSITIVE, NULL, NULL);
-    status = NtOpenFile( &pipe_dev, FILE_READ_ATTRIBUTES, &attr,
+    status = NtOpenFile( &pipe_dev, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &attr,
                          &iosb, FILE_SHARE_READ | FILE_SHARE_WRITE,
                          FILE_SYNCHRONOUS_IO_NONALERT);
-    if (status != ERROR_SUCCESS)
+    if (status != STATUS_SUCCESS)
     {
         HeapFree( GetProcessHeap(), 0, pipe_wait);
         RtlFreeUnicodeString( &nt_name );

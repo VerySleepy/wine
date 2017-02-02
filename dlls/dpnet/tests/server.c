@@ -20,6 +20,8 @@
 #include <stdio.h>
 
 #include <dplay8.h>
+#define COBJMACROS
+#include <netfw.h>
 #include "wine/test.h"
 
 /* {CD0C3D4B-E15E-4CF2-9EA8-6E1D6548C5A5} */
@@ -98,16 +100,311 @@ static void create_server(void)
     }
 }
 
+static void test_server_info(void)
+{
+    HRESULT hr;
+    DPN_PLAYER_INFO info;
+    WCHAR name[] = {'w','i','n','e',0};
+    WCHAR name2[] = {'w','i','n','e','2',0};
+    WCHAR data[] = {'X','X','X','X',0};
+    IDirectPlay8Server *server = NULL;
+
+    hr = CoCreateInstance( &CLSID_DirectPlay8Server, NULL, CLSCTX_ALL, &IID_IDirectPlay8Server, (LPVOID*)&server);
+    ok(hr == S_OK, "Failed to create IDirectPlay8Server object\n");
+    if( SUCCEEDED(hr)  )
+    {
+        ZeroMemory( &info, sizeof(DPN_PLAYER_INFO) );
+        info.dwSize = sizeof(DPN_PLAYER_INFO);
+        info.dwInfoFlags = DPNINFO_NAME;
+
+        hr = IDirectPlay8Server_SetServerInfo(server, NULL, NULL, NULL, DPNSETSERVERINFO_SYNC);
+        ok(hr == E_POINTER, "got %x\n", hr);
+
+        info.pwszName = name;
+        hr = IDirectPlay8Server_SetServerInfo(server, &info, NULL, NULL, DPNSETSERVERINFO_SYNC);
+        ok(hr == DPNERR_UNINITIALIZED, "got %x\n", hr);
+
+        hr = IDirectPlay8Server_Initialize(server, NULL, DirectPlayMessageHandler, 0);
+        ok(hr == S_OK, "got 0x%08x\n", hr);
+
+        hr = IDirectPlay8Server_SetServerInfo(server, NULL, NULL, NULL, DPNSETSERVERINFO_SYNC);
+        ok(hr == E_POINTER, "got %x\n", hr);
+
+        info.pwszName = NULL;
+        hr = IDirectPlay8Server_SetServerInfo(server, &info, NULL, NULL, DPNSETSERVERINFO_SYNC);
+        ok(hr == S_OK, "got %x\n", hr);
+
+        info.pwszName = name;
+        hr = IDirectPlay8Server_SetServerInfo(server, &info, NULL, NULL, DPNSETSERVERINFO_SYNC);
+        ok(hr == S_OK, "got %x\n", hr);
+
+        info.dwInfoFlags = DPNINFO_NAME;
+        info.pwszName = name2;
+        hr = IDirectPlay8Server_SetServerInfo(server, &info, NULL, NULL, DPNSETSERVERINFO_SYNC);
+        ok(hr == S_OK, "got %x\n", hr);
+
+        info.dwInfoFlags = DPNINFO_DATA;
+        info.pwszName = NULL;
+        info.pvData = NULL;
+        info.dwDataSize = sizeof(data);
+        hr = IDirectPlay8Server_SetServerInfo(server, &info, NULL, NULL, DPNSETSERVERINFO_SYNC);
+        ok(hr == E_POINTER, "got %x\n", hr);
+
+        info.dwInfoFlags = DPNINFO_DATA;
+        info.pwszName = NULL;
+        info.pvData = data;
+        info.dwDataSize = 0;
+        hr = IDirectPlay8Server_SetServerInfo(server, &info, NULL, NULL, DPNSETSERVERINFO_SYNC);
+        ok(hr == S_OK, "got %x\n", hr);
+
+        info.dwInfoFlags = DPNINFO_DATA;
+        info.pwszName = NULL;
+        info.pvData = data;
+        info.dwDataSize = sizeof(data);
+        hr = IDirectPlay8Server_SetServerInfo(server, &info, NULL, NULL, DPNSETSERVERINFO_SYNC);
+        ok(hr == S_OK, "got %x\n", hr);
+
+        info.dwInfoFlags = DPNINFO_DATA | DPNINFO_NAME;
+        info.pwszName = name;
+        info.pvData = data;
+        info.dwDataSize = sizeof(data);
+        hr = IDirectPlay8Server_SetServerInfo(server, &info, NULL, NULL, DPNSETSERVERINFO_SYNC);
+        ok(hr == S_OK, "got %x\n", hr);
+
+        info.dwInfoFlags = DPNINFO_DATA | DPNINFO_NAME;
+        info.pwszName = name;
+        info.pvData = NULL;
+        info.dwDataSize = 0;
+        hr = IDirectPlay8Server_SetServerInfo(server, &info, NULL, NULL, DPNSETSERVERINFO_SYNC);
+        ok(hr == S_OK, "got %x\n", hr);
+
+        IDirectPlay8Server_Release(server);
+    }
+}
+
+static BOOL is_process_elevated(void)
+{
+    HANDLE token;
+    if (OpenProcessToken( GetCurrentProcess(), TOKEN_QUERY, &token ))
+    {
+        TOKEN_ELEVATION_TYPE type;
+        DWORD size;
+        BOOL ret;
+
+        ret = GetTokenInformation( token, TokenElevationType, &type, sizeof(type), &size );
+        CloseHandle( token );
+        return (ret && type == TokenElevationTypeFull);
+    }
+    return FALSE;
+}
+
+static BOOL is_firewall_enabled(void)
+{
+    HRESULT hr, init;
+    INetFwMgr *mgr = NULL;
+    INetFwPolicy *policy = NULL;
+    INetFwProfile *profile = NULL;
+    VARIANT_BOOL enabled = VARIANT_FALSE;
+
+    init = CoInitializeEx( 0, COINIT_APARTMENTTHREADED );
+
+    hr = CoCreateInstance( &CLSID_NetFwMgr, NULL, CLSCTX_INPROC_SERVER, &IID_INetFwMgr,
+                           (void **)&mgr );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    hr = INetFwMgr_get_LocalPolicy( mgr, &policy );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    hr = INetFwPolicy_get_CurrentProfile( policy, &profile );
+    if (hr != S_OK) goto done;
+
+    hr = INetFwProfile_get_FirewallEnabled( profile, &enabled );
+    ok( hr == S_OK, "got %08x\n", hr );
+
+done:
+    if (policy) INetFwPolicy_Release( policy );
+    if (profile) INetFwProfile_Release( profile );
+    if (mgr) INetFwMgr_Release( mgr );
+    if (SUCCEEDED( init )) CoUninitialize();
+    return (enabled == VARIANT_TRUE);
+}
+
+enum firewall_op
+{
+    APP_ADD,
+    APP_REMOVE
+};
+
+static HRESULT set_firewall( enum firewall_op op )
+{
+    static const WCHAR dpnsvrW[] =
+        {'c',':','\\','w','i','n','d','o','w','s','\\','s','y','s','t','e','m','3','2','\\',
+         'd','p','n','s','v','r','.','e','x','e',0};
+    static const WCHAR dpnsvr_wow64W[] =
+        {'c',':','\\','w','i','n','d','o','w','s','\\','s','y','s','w','o','w','6','4','\\',
+         'd','p','n','s','v','r','.','e','x','e',0};
+    static const WCHAR clientW[] =
+        {'d','p','n','e','t','_','c','l','i','e','n','t',0};
+    static const WCHAR serverW[] =
+        {'d','p','n','e','t','_','s','e','r','v','e','r',0};
+    HRESULT hr, init;
+    INetFwMgr *mgr = NULL;
+    INetFwPolicy *policy = NULL;
+    INetFwProfile *profile = NULL;
+    INetFwAuthorizedApplication *app = NULL;
+    INetFwAuthorizedApplications *apps = NULL;
+    BSTR name, image = SysAllocStringLen( NULL, MAX_PATH );
+    BOOL is_wow64;
+
+    if (!GetModuleFileNameW( NULL, image, MAX_PATH ))
+    {
+        SysFreeString( image );
+        return E_FAIL;
+    }
+
+    init = CoInitializeEx( 0, COINIT_APARTMENTTHREADED );
+
+    hr = CoCreateInstance( &CLSID_NetFwMgr, NULL, CLSCTX_INPROC_SERVER, &IID_INetFwMgr,
+                           (void **)&mgr );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    hr = INetFwMgr_get_LocalPolicy( mgr, &policy );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    hr = INetFwPolicy_get_CurrentProfile( policy, &profile );
+    if (hr != S_OK) goto done;
+
+    INetFwProfile_get_AuthorizedApplications( profile, &apps );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    hr = CoCreateInstance( &CLSID_NetFwAuthorizedApplication, NULL, CLSCTX_INPROC_SERVER,
+                           &IID_INetFwAuthorizedApplication, (void **)&app );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    hr = INetFwAuthorizedApplication_put_ProcessImageFileName( app, image );
+    if (hr != S_OK) goto done;
+
+    name = SysAllocString( clientW );
+    hr = INetFwAuthorizedApplication_put_Name( app, name );
+    SysFreeString( name );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    if (op == APP_ADD)
+        hr = INetFwAuthorizedApplications_Add( apps, app );
+    else if (op == APP_REMOVE)
+        hr = INetFwAuthorizedApplications_Remove( apps, image );
+    else
+        hr = E_INVALIDARG;
+    if (hr != S_OK) goto done;
+
+    INetFwAuthorizedApplication_Release( app );
+    hr = CoCreateInstance( &CLSID_NetFwAuthorizedApplication, NULL, CLSCTX_INPROC_SERVER,
+                           &IID_INetFwAuthorizedApplication, (void **)&app );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    SysFreeString( image );
+    IsWow64Process( GetCurrentProcess(), &is_wow64 );
+    image = is_wow64 ? SysAllocString( dpnsvr_wow64W ) : SysAllocString( dpnsvrW );
+    hr = INetFwAuthorizedApplication_put_ProcessImageFileName( app, image );
+    if (hr != S_OK) goto done;
+
+    name = SysAllocString( serverW );
+    hr = INetFwAuthorizedApplication_put_Name( app, name );
+    SysFreeString( name );
+    ok( hr == S_OK, "got %08x\n", hr );
+    if (hr != S_OK) goto done;
+
+    if (op == APP_ADD)
+        hr = INetFwAuthorizedApplications_Add( apps, app );
+    else if (op == APP_REMOVE)
+        hr = INetFwAuthorizedApplications_Remove( apps, image );
+    else
+        hr = E_INVALIDARG;
+
+done:
+    if (app) INetFwAuthorizedApplication_Release( app );
+    if (apps) INetFwAuthorizedApplications_Release( apps );
+    if (policy) INetFwPolicy_Release( policy );
+    if (profile) INetFwProfile_Release( profile );
+    if (mgr) INetFwMgr_Release( mgr );
+    if (SUCCEEDED( init )) CoUninitialize();
+    SysFreeString( image );
+    return hr;
+}
+
+/* taken from programs/winetest/main.c */
+static BOOL is_stub_dll(const char *filename)
+{
+    DWORD size, ver;
+    BOOL isstub = FALSE;
+    char *p, *data;
+
+    size = GetFileVersionInfoSizeA(filename, &ver);
+    if (!size) return FALSE;
+
+    data = HeapAlloc(GetProcessHeap(), 0, size);
+    if (!data) return FALSE;
+
+    if (GetFileVersionInfoA(filename, ver, size, data))
+    {
+        char buf[256];
+
+        sprintf(buf, "\\StringFileInfo\\%04x%04x\\OriginalFilename", MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), 1200);
+        if (VerQueryValueA(data, buf, (void**)&p, &size))
+            isstub = !lstrcmpiA("wcodstub.dll", p);
+    }
+    HeapFree(GetProcessHeap(), 0, data);
+
+    return isstub;
+}
+
 START_TEST(server)
 {
     HRESULT hr;
+    BOOL firewall_enabled;
+
+    if (!winetest_interactive &&
+        (is_stub_dll("c:\\windows\\system32\\dpnet.dll") ||
+         is_stub_dll("c:\\windows\\syswow64\\dpnet.dll")))
+    {
+        win_skip("dpnet is a stub dll, skipping tests\n");
+        return;
+    }
+
+    if ((firewall_enabled = is_firewall_enabled()) && !is_process_elevated())
+    {
+        skip("no privileges, skipping tests to avoid firewall dialog\n");
+        return;
+    }
+
+    if (firewall_enabled)
+    {
+        HRESULT hr = set_firewall(APP_ADD);
+        if (hr != S_OK)
+        {
+            skip("can't authorize app in firewall %08x\n", hr);
+            return;
+        }
+    }
 
     hr = CoInitialize(0);
     ok( hr == S_OK, "failed to init com\n");
     if (hr != S_OK)
-        return;
+        goto done;
 
     create_server();
+    test_server_info();
 
     CoUninitialize();
+
+done:
+    if (firewall_enabled) set_firewall(APP_REMOVE);
 }

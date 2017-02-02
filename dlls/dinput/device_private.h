@@ -81,6 +81,7 @@ struct IDirectInputDeviceImpl
     /* Action mapping */
     int                         num_actions; /* number of actions mapped */
     ActionMap                  *action_map;  /* array of mappings */
+    WCHAR                       username[MAX_PATH];
 };
 
 extern BOOL get_app_key(HKEY*, HKEY*) DECLSPEC_HIDDEN;
@@ -243,10 +244,6 @@ extern HRESULT WINAPI IDirectInputDevice8WImpl_BuildActionMap(LPDIRECTINPUTDEVIC
 							      LPDIACTIONFORMATW lpdiaf,
 							      LPCWSTR lpszUserName,
 							      DWORD dwFlags) DECLSPEC_HIDDEN;
-extern HRESULT WINAPI IDirectInputDevice8WImpl_SetActionMap(LPDIRECTINPUTDEVICE8W iface,
-							    LPDIACTIONFORMATW lpdiaf,
-							    LPCWSTR lpszUserName,
-							    DWORD dwFlags) DECLSPEC_HIDDEN;
 extern HRESULT WINAPI IDirectInputDevice8AImpl_GetImageInfo(LPDIRECTINPUTDEVICE8A iface,
 							    LPDIDEVICEIMAGEINFOHEADERA lpdiDevImageInfoHeader) DECLSPEC_HIDDEN;
 extern HRESULT WINAPI IDirectInputDevice8WImpl_GetImageInfo(LPDIRECTINPUTDEVICE8W iface,

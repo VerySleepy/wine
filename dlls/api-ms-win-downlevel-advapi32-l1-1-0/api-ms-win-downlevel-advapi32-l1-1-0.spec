@@ -7,14 +7,14 @@
 @ stub AccessCheckByTypeResultListAndAuditAlarmW
 @ stdcall AddAccessAllowedAce(ptr long long ptr) advapi32.AddAccessAllowedAce
 @ stdcall AddAccessAllowedAceEx(ptr long long long ptr) advapi32.AddAccessAllowedAceEx
-@ stub AddAccessAllowedObjectAce
+@ stdcall AddAccessAllowedObjectAce(ptr long long long ptr ptr ptr) advapi32.AddAccessAllowedObjectAce
 @ stdcall AddAccessDeniedAce(ptr long long ptr) advapi32.AddAccessDeniedAce
 @ stdcall AddAccessDeniedAceEx(ptr long long long ptr) advapi32.AddAccessDeniedAceEx
-@ stub AddAccessDeniedObjectAce
+@ stdcall AddAccessDeniedObjectAce(ptr long long long ptr ptr ptr) advapi32.AddAccessDeniedObjectAce
 @ stdcall AddAce(ptr long long ptr long) advapi32.AddAce
 @ stdcall AddAuditAccessAce(ptr long long ptr long long) advapi32.AddAuditAccessAce
 @ stdcall AddAuditAccessAceEx(ptr long long long ptr long long) advapi32.AddAuditAccessAceEx
-@ stub AddAuditAccessObjectAce
+@ stdcall AddAuditAccessObjectAce(ptr long long long ptr ptr ptr long long) advapi32.AddAuditAccessObjectAce
 @ stdcall AddMandatoryAce(ptr long long long ptr) advapi32.AddMandatoryAce
 @ stdcall AdjustTokenGroups(long long ptr long ptr ptr) advapi32.AdjustTokenGroups
 @ stdcall AdjustTokenPrivileges(long long ptr long ptr ptr) advapi32.AdjustTokenPrivileges
@@ -26,8 +26,8 @@
 @ stub ConvertToAutoInheritPrivateObjecSecurity
 @ stdcall CopySid(long ptr ptr) advapi32.CopySid
 @ stdcall CreatePrivateObjectSecurity(ptr ptr ptr long long ptr) advapi32.CreatePrivateObjectSecurity
-@ stub CreatePrivateObjectSecurityEx
-@ stub CreatePrivateObjectSecurityWithMultipleInheritance
+@ stdcall CreatePrivateObjectSecurityEx(ptr ptr ptr ptr long long long ptr) advapi32.CreatePrivateObjectSecurityEx
+@ stdcall CreatePrivateObjectSecurityWithMultipleInheritance(ptr ptr ptr ptr long long long long ptr) advapi32.CreatePrivateObjectSecurityWithMultipleInheritance
 @ stdcall CreateProcessAsUserW(long wstr wstr ptr ptr long long ptr wstr ptr ptr) advapi32.CreateProcessAsUserW
 @ stdcall CreateRestrictedToken(long long long ptr long ptr long ptr ptr) advapi32.CreateRestrictedToken
 @ stdcall CreateWellKnownSid(long ptr ptr ptr) advapi32.CreateWellKnownSid
@@ -38,14 +38,14 @@
 @ stub EqualDomainSid
 @ stdcall EqualPrefixSid(ptr ptr) advapi32.EqualPrefixSid
 @ stdcall EqualSid(ptr ptr) advapi32.EqualSid
-@ stub EventActivityIdControl
+@ stdcall EventActivityIdControl(long ptr) advapi32.EventActivityIdControl
 @ stdcall EventEnabled(int64 ptr) advapi32.EventEnabled
 @ stdcall EventProviderEnabled(int64 long int64) advapi32.EventProviderEnabled
 @ stdcall EventRegister(ptr ptr ptr ptr) advapi32.EventRegister
 @ stdcall EventUnregister(int64) advapi32.EventUnregister
 @ stdcall EventWrite(int64 ptr long ptr) advapi32.EventWrite
 @ stub EventWriteString
-@ stub EventWriteTransfer
+@ stdcall EventWriteTransfer(int64 ptr ptr ptr long ptr) advapi32.EventWriteTransfer
 @ stdcall FindFirstFreeAce(ptr ptr) advapi32.FindFirstFreeAce
 @ stdcall FreeSid(ptr) advapi32.FreeSid
 @ stdcall GetAce(ptr long ptr) advapi32.GetAce
@@ -84,7 +84,7 @@
 @ stdcall PrivilegedServiceAuditAlarmW(wstr wstr long ptr long) advapi32.PrivilegedServiceAuditAlarmW
 @ stub QuerySecurityAccessMask
 @ stdcall RegCloseKey(long) advapi32.RegCloseKey
-@ stub RegCopyTreeW
+@ stdcall RegCopyTreeW(long wstr long) advapi32.RegCopyTreeW
 @ stdcall RegCreateKeyExA(long str long ptr long long ptr ptr ptr) advapi32.RegCreateKeyExA
 @ stdcall RegCreateKeyExW(long wstr long ptr long long ptr ptr ptr) advapi32.RegCreateKeyExW
 @ stdcall RegDeleteKeyExA(long str long long) advapi32.RegDeleteKeyExA

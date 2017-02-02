@@ -65,6 +65,8 @@ static const struct object_ops event_ops =
     default_get_sd,            /* get_sd */
     default_set_sd,            /* set_sd */
     no_lookup_name,            /* lookup_name */
+    directory_link_name,       /* link_name */
+    default_unlink_name,       /* unlink_name */
     no_open_file,              /* open_file */
     no_close_handle,           /* close_handle */
     no_destroy                 /* destroy */
@@ -96,45 +98,30 @@ static const struct object_ops keyed_event_ops =
     default_get_sd,              /* get_sd */
     default_set_sd,              /* set_sd */
     no_lookup_name,              /* lookup_name */
+    directory_link_name,         /* link_name */
+    default_unlink_name,         /* unlink_name */
     no_open_file,                /* open_file */
     no_close_handle,             /* close_handle */
     no_destroy                   /* destroy */
 };
 
 
-struct event *create_event( struct directory *root, const struct unicode_str *name,
+struct event *create_event( struct object *root, const struct unicode_str *name,
                             unsigned int attr, int manual_reset, int initial_state,
                             const struct security_descriptor *sd )
 {
     struct event *event;
 
-    if ((event = create_named_object_dir( root, name, attr, &event_ops )))
+    if ((event = create_named_object( root, &event_ops, name, attr, sd )))
     {
         if (get_error() != STATUS_OBJECT_NAME_EXISTS)
         {
             /* initialize it if it didn't already exist */
             event->manual_reset = manual_reset;
             event->signaled     = initial_state;
-            if (sd) default_set_sd( &event->obj, sd, OWNER_SECURITY_INFORMATION|
-                                                     GROUP_SECURITY_INFORMATION|
-                                                     DACL_SECURITY_INFORMATION|
-                                                     SACL_SECURITY_INFORMATION );
         }
     }
     return event;
-}
-
-obj_handle_t alloc_wait_event( struct process *process )
-{
-    obj_handle_t handle = 0;
-    struct event *event = create_event( NULL, NULL, 0, 1, 0, NULL );
-
-    if (event)
-    {
-        handle = alloc_handle( process, event, EVENT_ALL_ACCESS, 0 );
-        release_object( event );
-    }
-    return handle;
 }
 
 struct event *get_event_obj( struct process *process, obj_handle_t handle, unsigned int access )
@@ -166,10 +153,8 @@ static void event_dump( struct object *obj, int verbose )
 {
     struct event *event = (struct event *)obj;
     assert( obj->ops == &event_ops );
-    fprintf( stderr, "Event manual=%d signaled=%d ",
+    fprintf( stderr, "Event manual=%d signaled=%d\n",
              event->manual_reset, event->signaled );
-    dump_object_name( &event->obj );
-    fputc( '\n', stderr );
 }
 
 static struct object_type *event_get_type( struct object *obj )
@@ -217,20 +202,16 @@ static int event_signal( struct object *obj, unsigned int access )
     return 1;
 }
 
-struct keyed_event *create_keyed_event( struct directory *root, const struct unicode_str *name,
+struct keyed_event *create_keyed_event( struct object *root, const struct unicode_str *name,
                                         unsigned int attr, const struct security_descriptor *sd )
 {
     struct keyed_event *event;
 
-    if ((event = create_named_object_dir( root, name, attr, &keyed_event_ops )))
+    if ((event = create_named_object( root, &keyed_event_ops, name, attr, sd )))
     {
         if (get_error() != STATUS_OBJECT_NAME_EXISTS)
         {
             /* initialize it if it didn't already exist */
-            if (sd) default_set_sd( &event->obj, sd, OWNER_SECURITY_INFORMATION|
-                                                     GROUP_SECURITY_INFORMATION|
-                                                     DACL_SECURITY_INFORMATION|
-                                                     SACL_SECURITY_INFORMATION );
         }
     }
     return event;
@@ -243,11 +224,7 @@ struct keyed_event *get_keyed_event_obj( struct process *process, obj_handle_t h
 
 static void keyed_event_dump( struct object *obj, int verbose )
 {
-    struct keyed_event *event = (struct keyed_event *)obj;
-    assert( obj->ops == &keyed_event_ops );
-    fprintf( stderr, "Keyed event " );
-    dump_object_name( &event->obj );
-    fputc( '\n', stderr );
+    fputs( "Keyed event\n", stderr );
 }
 
 static struct object_type *keyed_event_get_type( struct object *obj )
@@ -299,27 +276,20 @@ DECL_HANDLER(create_event)
 {
     struct event *event;
     struct unicode_str name;
-    struct directory *root = NULL;
-    const struct object_attributes *objattr = get_req_data();
+    struct object *root;
     const struct security_descriptor *sd;
+    const struct object_attributes *objattr = get_req_object_attributes( &sd, &name, &root );
 
-    reply->handle = 0;
+    if (!objattr) return;
 
-    if (!objattr_is_valid( objattr, get_req_data_size() ))
-        return;
-
-    sd = objattr->sd_len ? (const struct security_descriptor *)(objattr + 1) : NULL;
-    objattr_get_name( objattr, &name );
-
-    if (objattr->rootdir && !(root = get_directory_obj( current->process, objattr->rootdir, 0 )))
-        return;
-
-    if ((event = create_event( root, &name, req->attributes, req->manual_reset, req->initial_state, sd )))
+    if ((event = create_event( root, &name, objattr->attributes,
+                               req->manual_reset, req->initial_state, sd )))
     {
         if (get_error() == STATUS_OBJECT_NAME_EXISTS)
-            reply->handle = alloc_handle( current->process, event, req->access, req->attributes );
+            reply->handle = alloc_handle( current->process, event, req->access, objattr->attributes );
         else
-            reply->handle = alloc_handle_no_access_check( current->process, event, req->access, req->attributes );
+            reply->handle = alloc_handle_no_access_check( current->process, event,
+                                                          req->access, objattr->attributes );
         release_object( event );
     }
 
@@ -329,21 +299,10 @@ DECL_HANDLER(create_event)
 /* open a handle to an event */
 DECL_HANDLER(open_event)
 {
-    struct unicode_str name;
-    struct directory *root = NULL;
-    struct event *event;
+    struct unicode_str name = get_req_unicode_str();
 
-    get_req_unicode_str( &name );
-    if (req->rootdir && !(root = get_directory_obj( current->process, req->rootdir, 0 )))
-        return;
-
-    if ((event = open_object_dir( root, &name, req->attributes, &event_ops )))
-    {
-        reply->handle = alloc_handle( current->process, &event->obj, req->access, req->attributes );
-        release_object( event );
-    }
-
-    if (root) release_object( root );
+    reply->handle = open_object( current->process, req->rootdir, req->access,
+                                 &event_ops, &name, req->attributes );
 }
 
 /* do an event operation */
@@ -388,23 +347,19 @@ DECL_HANDLER(create_keyed_event)
 {
     struct keyed_event *event;
     struct unicode_str name;
-    struct directory *root = NULL;
-    const struct object_attributes *objattr = get_req_data();
+    struct object *root;
     const struct security_descriptor *sd;
+    const struct object_attributes *objattr = get_req_object_attributes( &sd, &name, &root );
 
-    if (!objattr_is_valid( objattr, get_req_data_size() )) return;
+    if (!objattr) return;
 
-    sd = objattr->sd_len ? (const struct security_descriptor *)(objattr + 1) : NULL;
-    objattr_get_name( objattr, &name );
-
-    if (objattr->rootdir && !(root = get_directory_obj( current->process, objattr->rootdir, 0 ))) return;
-
-    if ((event = create_keyed_event( root, &name, req->attributes, sd )))
+    if ((event = create_keyed_event( root, &name, objattr->attributes, sd )))
     {
         if (get_error() == STATUS_OBJECT_NAME_EXISTS)
-            reply->handle = alloc_handle( current->process, event, req->access, req->attributes );
+            reply->handle = alloc_handle( current->process, event, req->access, objattr->attributes );
         else
-            reply->handle = alloc_handle_no_access_check( current->process, event, req->access, req->attributes );
+            reply->handle = alloc_handle_no_access_check( current->process, event,
+                                                          req->access, objattr->attributes );
         release_object( event );
     }
     if (root) release_object( root );
@@ -413,17 +368,8 @@ DECL_HANDLER(create_keyed_event)
 /* open a handle to a keyed event */
 DECL_HANDLER(open_keyed_event)
 {
-    struct unicode_str name;
-    struct directory *root = NULL;
-    struct keyed_event *event;
+    struct unicode_str name = get_req_unicode_str();
 
-    get_req_unicode_str( &name );
-    if (req->rootdir && !(root = get_directory_obj( current->process, req->rootdir, 0 ))) return;
-
-    if ((event = open_object_dir( root, &name, req->attributes, &keyed_event_ops )))
-    {
-        reply->handle = alloc_handle( current->process, &event->obj, req->access, req->attributes );
-        release_object( event );
-    }
-    if (root) release_object( root );
+    reply->handle = open_object( current->process, req->rootdir, req->access,
+                                 &keyed_event_ops, &name, req->attributes );
 }

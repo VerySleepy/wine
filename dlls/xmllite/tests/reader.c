@@ -33,14 +33,6 @@
 
 DEFINE_GUID(IID_IXmlReaderInput, 0x0b3ccc9b, 0x9214, 0x428b, 0xa2, 0xae, 0xef, 0x3a, 0xa8, 0x71, 0xaf, 0xda);
 
-static HRESULT (WINAPI *pCreateXmlReader)(REFIID riid, void **ppvObject, IMalloc *pMalloc);
-static HRESULT (WINAPI *pCreateXmlReaderInputWithEncodingName)(IUnknown *stream,
-                                                        IMalloc *pMalloc,
-                                                        LPCWSTR encoding,
-                                                        BOOL hint,
-                                                        LPCWSTR base_uri,
-                                                        IXmlReaderInput **ppInput);
-
 static WCHAR *a2w(const char *str)
 {
     int len = MultiByteToWideChar(CP_ACP, 0, str, -1, NULL, 0);
@@ -96,15 +88,9 @@ static void ok_pos_(IXmlReader *reader, int line, int pos, int line_broken,
         broken_state = broken((line_broken == -1 ? line : line_broken) == l &&
                               (pos_broken == -1 ? pos : pos_broken) == p);
 
-    if (todo)
-        todo_wine
+    todo_wine_if (todo)
         ok_(__FILE__, _line_)((l == line && pos == p) || broken_state,
                             "Expected (%d,%d), got (%d,%d)\n", line, pos, l, p);
-    else
-    {
-        ok_(__FILE__, _line_)((l == line && pos == p) || broken_state,
-                            "Expected (%d,%d), got (%d,%d)\n", line, pos, l, p);
-    }
 }
 #define ok_pos(reader, l, p, l_brk, p_brk, todo) ok_pos_(reader, l, p, l_brk, p_brk, todo, __LINE__)
 
@@ -147,12 +133,8 @@ static void ok_iids_(const input_iids_t *iids, const IID **expected, const IID *
 
     while (expected[i++]) size++;
 
-    if (todo) {
-        todo_wine
-            ok_(__FILE__, line)(iids->count == size, "Sequence size mismatch (%d), got (%d)\n", size, iids->count);
-    }
-    else
-       ok_(__FILE__, line)(iids->count == size, "Sequence size mismatch (%d), got (%d)\n", size, iids->count);
+    todo_wine_if (todo)
+        ok_(__FILE__, line)(iids->count == size, "Sequence size mismatch (%d), got (%d)\n", size, iids->count);
 
     if (iids->count != size) return;
 
@@ -247,13 +229,7 @@ static void test_read_state_(IXmlReader *reader, XmlReadState expected,
     else
         broken_state = broken(exp_broken == state);
 
-    if (todo)
-    {
-    todo_wine
-        ok_(__FILE__, line)(state == expected || broken_state, "Expected (%s), got (%s)\n",
-                                   state_to_str(expected), state_to_str(state));
-    }
-    else
+    todo_wine_if (todo)
         ok_(__FILE__, line)(state == expected || broken_state, "Expected (%s), got (%s)\n",
                                    state_to_str(expected), state_to_str(state));
 }
@@ -383,27 +359,51 @@ static const ISequentialStreamVtbl teststreamvtbl =
     teststream_Write
 };
 
-static BOOL init_pointers(void)
+static HRESULT WINAPI resolver_QI(IXmlResolver *iface, REFIID riid, void **obj)
 {
-    /* don't free module here, it's to be unloaded on exit */
-    HMODULE mod = LoadLibraryA("xmllite.dll");
+    ok(0, "unexpected call, riid %s\n", wine_dbgstr_guid(riid));
 
-    if (!mod)
+    if (IsEqualIID(riid, &IID_IXmlResolver) || IsEqualIID(riid, &IID_IUnknown))
     {
-        win_skip("xmllite library not available\n");
-        return FALSE;
+        *obj = iface;
+        IXmlResolver_AddRef(iface);
+        return S_OK;
     }
 
-#define MAKEFUNC(f) if (!(p##f = (void*)GetProcAddress(mod, #f))) return FALSE;
-    MAKEFUNC(CreateXmlReader);
-    MAKEFUNC(CreateXmlReaderInputWithEncodingName);
-#undef MAKEFUNC
-
-    return TRUE;
+    *obj = NULL;
+    return E_NOINTERFACE;
 }
+
+static ULONG WINAPI resolver_AddRef(IXmlResolver *iface)
+{
+    return 2;
+}
+
+static ULONG WINAPI resolver_Release(IXmlResolver *iface)
+{
+    return 1;
+}
+
+static HRESULT WINAPI resolver_ResolveUri(IXmlResolver *iface, const WCHAR *base_uri,
+    const WCHAR *public_id, const WCHAR *system_id, IUnknown **input)
+{
+    ok(0, "unexpected call\n");
+    return E_NOTIMPL;
+}
+
+static const IXmlResolverVtbl resolvervtbl =
+{
+    resolver_QI,
+    resolver_AddRef,
+    resolver_Release,
+    resolver_ResolveUri
+};
+
+static IXmlResolver testresolver = { &resolvervtbl };
 
 static void test_reader_create(void)
 {
+    IXmlResolver *resolver;
     HRESULT hr;
     IXmlReader *reader;
     IUnknown *input;
@@ -413,11 +413,11 @@ static void test_reader_create(void)
     /* crashes native */
     if (0)
     {
-        pCreateXmlReader(&IID_IXmlReader, NULL, NULL);
-        pCreateXmlReader(NULL, (void**)&reader, NULL);
+        CreateXmlReader(&IID_IXmlReader, NULL, NULL);
+        CreateXmlReader(NULL, (void**)&reader, NULL);
     }
 
-    hr = pCreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
+    hr = CreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
     ok(hr == S_OK, "Expected S_OK, got %08x\n", hr);
 
     test_read_state(reader, XmlReadState_Closed, -1, FALSE);
@@ -426,6 +426,26 @@ static void test_reader_create(void)
     hr = IXmlReader_GetNodeType(reader, &nodetype);
     ok(hr == S_FALSE, "got %08x\n", hr);
     ok(nodetype == XmlNodeType_None, "got %d\n", nodetype);
+
+    resolver = (void*)0xdeadbeef;
+    hr = IXmlReader_GetProperty(reader, XmlReaderProperty_XmlResolver, (LONG_PTR*)&resolver);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(resolver == NULL, "got %p\n", resolver);
+
+    hr = IXmlReader_SetProperty(reader, XmlReaderProperty_XmlResolver, 0);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    hr = IXmlReader_SetProperty(reader, XmlReaderProperty_XmlResolver, (LONG_PTR)&testresolver);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    resolver = NULL;
+    hr = IXmlReader_GetProperty(reader, XmlReaderProperty_XmlResolver, (LONG_PTR*)&resolver);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(resolver == &testresolver, "got %p\n", resolver);
+    IXmlResolver_Release(resolver);
+
+    hr = IXmlReader_SetProperty(reader, XmlReaderProperty_XmlResolver, 0);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
 
     dtd = 2;
     hr = IXmlReader_GetProperty(reader, XmlReaderProperty_DtdProcessing, (LONG_PTR*)&dtd);
@@ -470,9 +490,9 @@ static void test_readerinput(void)
     HRESULT hr;
     LONG ref;
 
-    hr = pCreateXmlReaderInputWithEncodingName(NULL, NULL, NULL, FALSE, NULL, NULL);
+    hr = CreateXmlReaderInputWithEncodingName(NULL, NULL, NULL, FALSE, NULL, NULL);
     ok(hr == E_INVALIDARG, "Expected E_INVALIDARG, got %08x\n", hr);
-    hr = pCreateXmlReaderInputWithEncodingName(NULL, NULL, NULL, FALSE, NULL, &reader_input);
+    hr = CreateXmlReaderInputWithEncodingName(NULL, NULL, NULL, FALSE, NULL, &reader_input);
     ok(hr == E_INVALIDARG, "Expected E_INVALIDARG, got %08x\n", hr);
 
     hr = CreateStreamOnHGlobal(NULL, TRUE, &stream);
@@ -481,7 +501,7 @@ static void test_readerinput(void)
     ref = IStream_AddRef(stream);
     ok(ref == 2, "Expected 2, got %d\n", ref);
     IStream_Release(stream);
-    hr = pCreateXmlReaderInputWithEncodingName((IUnknown*)stream, NULL, NULL, FALSE, NULL, &reader_input);
+    hr = CreateXmlReaderInputWithEncodingName((IUnknown*)stream, NULL, NULL, FALSE, NULL, &reader_input);
     ok(hr == S_OK, "Expected S_OK, got %08x\n", hr);
 
     hr = IUnknown_QueryInterface(reader_input, &IID_IStream, (void**)&stream2);
@@ -496,7 +516,7 @@ static void test_readerinput(void)
     IStream_Release(stream);
 
     /* try ::SetInput() with valid IXmlReaderInput */
-    hr = pCreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
+    hr = CreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
     ok(hr == S_OK, "Expected S_OK, got %08x\n", hr);
 
     ref = IUnknown_AddRef(reader_input);
@@ -562,7 +582,7 @@ static void test_readerinput(void)
     ref = IUnknown_AddRef(input);
     ok(ref == 2, "Expected 2, got %d\n", ref);
     IUnknown_Release(input);
-    hr = pCreateXmlReaderInputWithEncodingName(input, NULL, NULL, FALSE, NULL, &reader_input);
+    hr = CreateXmlReaderInputWithEncodingName(input, NULL, NULL, FALSE, NULL, &reader_input);
     ok(hr == S_OK, "Expected S_OK, got %08x\n", hr);
     ok_iids(&input_iids, empty_seq, NULL, FALSE);
     /* IXmlReaderInput stores stream interface as IUnknown */
@@ -570,7 +590,7 @@ static void test_readerinput(void)
     ok(ref == 3, "Expected 3, got %d\n", ref);
     IUnknown_Release(input);
 
-    hr = pCreateXmlReader(&IID_IXmlReader, (LPVOID*)&reader, NULL);
+    hr = CreateXmlReader(&IID_IXmlReader, (LPVOID*)&reader, NULL);
     ok(hr == S_OK, "Expected S_OK, got %08x\n", hr);
 
     input_iids.count = 0;
@@ -601,7 +621,7 @@ static void test_readerinput(void)
     ok_iids(&input_iids, setinput_readerinput, NULL, FALSE);
 
     /* another reader */
-    hr = pCreateXmlReader(&IID_IXmlReader, (LPVOID*)&reader2, NULL);
+    hr = CreateXmlReader(&IID_IXmlReader, (LPVOID*)&reader2, NULL);
     ok(hr == S_OK, "Expected S_OK, got %08x\n", hr);
 
     /* resolving from IXmlReaderInput to IStream/ISequentialStream is done at
@@ -624,7 +644,7 @@ static void test_reader_state(void)
     XmlNodeType nodetype;
     HRESULT hr;
 
-    hr = pCreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
+    hr = CreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
     ok(hr == S_OK, "Expected S_OK, got %08x\n", hr);
 
     /* invalid arguments */
@@ -664,7 +684,7 @@ static void test_read_xmldeclaration(void)
     BOOL ret;
     const WCHAR *val;
 
-    hr = pCreateXmlReader(&IID_IXmlReader, (LPVOID*)&reader, NULL);
+    hr = CreateXmlReader(&IID_IXmlReader, (LPVOID*)&reader, NULL);
     ok(hr == S_OK, "Expected S_OK, got %08x\n", hr);
 
     /* position methods with Null args */
@@ -885,7 +905,7 @@ static void test_read_comment(void)
     IXmlReader *reader;
     HRESULT hr;
 
-    hr = pCreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
+    hr = CreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
     ok(hr == S_OK, "S_OK, got %08x\n", hr);
 
     while (test->xml)
@@ -967,7 +987,7 @@ static void test_read_pi(void)
     IXmlReader *reader;
     HRESULT hr;
 
-    hr = pCreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
+    hr = CreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
     ok(hr == S_OK, "S_OK, got %08x\n", hr);
 
     while (test->xml)
@@ -1083,7 +1103,7 @@ static void test_read_full(void)
     HRESULT hr;
     int i;
 
-    hr = pCreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
+    hr = CreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
     ok(hr == S_OK, "S_OK, got %08x\n", hr);
 
     stream = create_stream_on_data(test->xml, strlen(test->xml)+1);
@@ -1116,11 +1136,114 @@ static void test_read_full(void)
     IXmlReader_Release(reader);
 }
 
-static const char test_dtd[] =
+static const char test_public_dtd[] =
+    "<!DOCTYPE testdtd PUBLIC \"pubid\" \"externalid uri\" >";
+
+static void test_read_public_dtd(void)
+{
+    static const WCHAR sysvalW[] = {'e','x','t','e','r','n','a','l','i','d',' ','u','r','i',0};
+    static const WCHAR pubvalW[] = {'p','u','b','i','d',0};
+    static const WCHAR dtdnameW[] = {'t','e','s','t','d','t','d',0};
+    static const WCHAR sysW[] = {'S','Y','S','T','E','M',0};
+    static const WCHAR pubW[] = {'P','U','B','L','I','C',0};
+    IXmlReader *reader;
+    const WCHAR *str;
+    XmlNodeType type;
+    IStream *stream;
+    UINT len, count;
+    HRESULT hr;
+
+    hr = CreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
+    ok(hr == S_OK, "S_OK, got %08x\n", hr);
+
+    hr = IXmlReader_SetProperty(reader, XmlReaderProperty_DtdProcessing, DtdProcessing_Parse);
+    ok(hr == S_OK, "got 0x%8x\n", hr);
+
+    stream = create_stream_on_data(test_public_dtd, sizeof(test_public_dtd));
+    hr = IXmlReader_SetInput(reader, (IUnknown*)stream);
+    ok(hr == S_OK, "got %08x\n", hr);
+
+    type = XmlNodeType_None;
+    hr = IXmlReader_Read(reader, &type);
+    ok(hr == S_OK, "got 0x%8x\n", hr);
+    ok(type == XmlNodeType_DocumentType, "got type %d\n", type);
+
+    count = 0;
+    hr = IXmlReader_GetAttributeCount(reader, &count);
+    ok(hr == S_OK, "got %08x\n", hr);
+    ok(count == 2, "got %d\n", count);
+
+    hr = IXmlReader_MoveToFirstAttribute(reader);
+    ok(hr == S_OK, "got %08x\n", hr);
+
+    type = XmlNodeType_None;
+    hr = IXmlReader_GetNodeType(reader, &type);
+    ok(hr == S_OK, "got %08x\n", hr);
+    ok(type == XmlNodeType_Attribute, "got %d\n", type);
+
+    len = 0;
+    str = NULL;
+    hr = IXmlReader_GetLocalName(reader, &str, &len);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(len == lstrlenW(pubW), "got %u\n", len);
+    ok(!lstrcmpW(str, pubW), "got %s\n", wine_dbgstr_w(str));
+
+    len = 0;
+    str = NULL;
+    hr = IXmlReader_GetValue(reader, &str, &len);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(len == lstrlenW(pubvalW), "got %u\n", len);
+    ok(!lstrcmpW(str, pubvalW), "got %s\n", wine_dbgstr_w(str));
+
+    hr = IXmlReader_MoveToNextAttribute(reader);
+    ok(hr == S_OK, "got %08x\n", hr);
+
+    type = XmlNodeType_None;
+    hr = IXmlReader_GetNodeType(reader, &type);
+    ok(hr == S_OK, "got %08x\n", hr);
+    ok(type == XmlNodeType_Attribute, "got %d\n", type);
+
+    len = 0;
+    str = NULL;
+    hr = IXmlReader_GetLocalName(reader, &str, &len);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(len == lstrlenW(sysW), "got %u\n", len);
+    ok(!lstrcmpW(str, sysW), "got %s\n", wine_dbgstr_w(str));
+
+    len = 0;
+    str = NULL;
+    hr = IXmlReader_GetValue(reader, &str, &len);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(len == lstrlenW(sysvalW), "got %u\n", len);
+    ok(!lstrcmpW(str, sysvalW), "got %s\n", wine_dbgstr_w(str));
+
+    hr = IXmlReader_MoveToElement(reader);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    len = 0;
+    str = NULL;
+    hr = IXmlReader_GetLocalName(reader, &str, &len);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+todo_wine {
+    ok(len == lstrlenW(dtdnameW), "got %u\n", len);
+    ok(!lstrcmpW(str, dtdnameW), "got %s\n", wine_dbgstr_w(str));
+}
+    len = 0;
+    str = NULL;
+    hr = IXmlReader_GetQualifiedName(reader, &str, &len);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    ok(len == lstrlenW(dtdnameW), "got %u\n", len);
+    ok(!lstrcmpW(str, dtdnameW), "got %s\n", wine_dbgstr_w(str));
+
+    IStream_Release(stream);
+    IXmlReader_Release(reader);
+}
+
+static const char test_system_dtd[] =
     "<!DOCTYPE testdtd SYSTEM \"externalid uri\" >"
     "<!-- comment -->";
 
-static void test_read_dtd(void)
+static void test_read_system_dtd(void)
 {
     static const WCHAR sysvalW[] = {'e','x','t','e','r','n','a','l','i','d',' ','u','r','i',0};
     static const WCHAR dtdnameW[] = {'t','e','s','t','d','t','d',0};
@@ -1132,13 +1255,13 @@ static void test_read_dtd(void)
     UINT len, count;
     HRESULT hr;
 
-    hr = pCreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
+    hr = CreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
     ok(hr == S_OK, "S_OK, got %08x\n", hr);
 
     hr = IXmlReader_SetProperty(reader, XmlReaderProperty_DtdProcessing, DtdProcessing_Parse);
     ok(hr == S_OK, "got 0x%8x\n", hr);
 
-    stream = create_stream_on_data(test_dtd, sizeof(test_dtd));
+    stream = create_stream_on_data(test_system_dtd, sizeof(test_system_dtd));
     hr = IXmlReader_SetInput(reader, (IUnknown*)stream);
     ok(hr == S_OK, "got %08x\n", hr);
 
@@ -1225,7 +1348,7 @@ static void test_read_element(void)
     UINT depth;
     HRESULT hr;
 
-    hr = pCreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
+    hr = CreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
     ok(hr == S_OK, "S_OK, got %08x\n", hr);
 
     while (test->xml)
@@ -1239,7 +1362,8 @@ static void test_read_element(void)
         if (test->hr_broken)
             ok(hr == test->hr || broken(hr == test->hr_broken), "got %08x for %s\n", hr, test->xml);
         else
-            ok(hr == test->hr, "got %08x for %s\n", hr, test->xml);
+            todo_wine_if(test->hr == NC_E_UNDECLAREDPREFIX)
+                ok(hr == test->hr, "got %08x for %s\n", hr, test->xml);
         if (hr == S_OK)
         {
             const WCHAR *str;
@@ -1356,7 +1480,7 @@ static void test_read_pending(void)
     HRESULT hr;
     int c;
 
-    hr = pCreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
+    hr = CreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
     ok(hr == S_OK, "S_OK, got 0x%08x\n", hr);
 
     hr = IXmlReader_SetInput(reader, (IUnknown*)&teststream);
@@ -1394,7 +1518,7 @@ static void test_readvaluechunk(void)
     HRESULT hr;
     UINT c;
 
-    hr = pCreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
+    hr = CreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
     ok(hr == S_OK, "S_OK, got %08x\n", hr);
 
     stream = create_stream_on_data(testA, sizeof(testA));
@@ -1431,6 +1555,7 @@ static void test_readvaluechunk(void)
     ok(value[0] == 'c', "got %s\n", wine_dbgstr_w(value));
 
     IXmlReader_Release(reader);
+    IStream_Release(stream);
 }
 
 static struct test_entry cdata_tests[] = {
@@ -1448,7 +1573,7 @@ static void test_read_cdata(void)
     IXmlReader *reader;
     HRESULT hr;
 
-    hr = pCreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
+    hr = CreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
     ok(hr == S_OK, "S_OK, got %08x\n", hr);
 
     while (test->xml)
@@ -1514,14 +1639,7 @@ static void test_read_cdata(void)
             ok(hr == S_OK, "got 0x%08x\n", hr);
 
             str_exp = a2w(test->value);
-            if (test->todo)
-            {
-            todo_wine {
-                ok(len == strlen(test->value), "got %u\n", len);
-                ok(!lstrcmpW(str, str_exp), "got %s\n", wine_dbgstr_w(str));
-            }
-            }
-            else
+            todo_wine_if (test->todo)
             {
                 ok(len == strlen(test->value), "got %u\n", len);
                 ok(!lstrcmpW(str, str_exp), "got %s\n", wine_dbgstr_w(str));
@@ -1548,7 +1666,7 @@ static void test_read_text(void)
     IXmlReader *reader;
     HRESULT hr;
 
-    hr = pCreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
+    hr = CreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
     ok(hr == S_OK, "S_OK, got %08x\n", hr);
 
     while (test->xml)
@@ -1614,14 +1732,7 @@ static void test_read_text(void)
             ok(hr == S_OK, "got 0x%08x\n", hr);
 
             str_exp = a2w(test->value);
-            if (test->todo)
-            {
-            todo_wine {
-                ok(len == strlen(test->value), "got %u\n", len);
-                ok(!lstrcmpW(str, str_exp), "got %s\n", wine_dbgstr_w(str));
-            }
-            }
-            else
+            todo_wine_if (test->todo)
             {
                 ok(len == strlen(test->value), "got %u\n", len);
                 ok(!lstrcmpW(str, str_exp), "got %s\n", wine_dbgstr_w(str));
@@ -1653,7 +1764,7 @@ static void test_isemptyelement(void)
     IXmlReader *reader;
     HRESULT hr;
 
-    hr = pCreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
+    hr = CreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
     ok(hr == S_OK, "S_OK, got %08x\n", hr);
 
     while (test->xml)
@@ -1711,7 +1822,7 @@ static void test_read_attribute(void)
     IXmlReader *reader;
     HRESULT hr;
 
-    hr = pCreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
+    hr = CreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
     ok(hr == S_OK, "S_OK, got %08x\n", hr);
 
     while (test->xml)
@@ -1778,11 +1889,158 @@ static void test_read_attribute(void)
     IXmlReader_Release(reader);
 }
 
+static void test_reader_properties(void)
+{
+    IXmlReader *reader;
+    HRESULT hr;
+
+    hr = CreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
+    ok(hr == S_OK, "S_OK, got %08x\n", hr);
+
+    hr = IXmlReader_SetProperty(reader, XmlReaderProperty_MultiLanguage, 0);
+    ok(hr == S_OK, "SetProperty failed: %08x\n", hr);
+
+    hr = IXmlReader_SetProperty(reader, XmlReaderProperty_MaxElementDepth, 0);
+    ok(hr == S_OK, "SetProperty failed: %08x\n", hr);
+
+    IXmlReader_Release(reader);
+}
+
+static void test_prefix(void)
+{
+    static const struct
+    {
+        const char *xml;
+        const char *prefix1;
+        const char *prefix2;
+        const char *prefix3;
+    } prefix_tests[] =
+    {
+        { "<b xmlns=\"defns\" xml:a=\"a ns\"/>", "", "", "xml" },
+    };
+    IXmlReader *reader;
+    unsigned int i;
+    HRESULT hr;
+
+    hr = CreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
+    ok(hr == S_OK, "S_OK, got %08x\n", hr);
+
+    for (i = 0; i < sizeof(prefix_tests)/sizeof(prefix_tests[0]); i++) {
+        const WCHAR *prefix;
+        XmlNodeType type;
+        WCHAR *expected;
+        IStream *stream;
+
+        stream = create_stream_on_data(prefix_tests[i].xml, strlen(prefix_tests[i].xml) + 1);
+        hr = IXmlReader_SetInput(reader, (IUnknown *)stream);
+        ok(hr == S_OK, "got %08x\n", hr);
+
+        hr = IXmlReader_Read(reader, &type);
+        ok(hr == S_OK, "Read() failed, %#x\n", hr);
+        ok(type == XmlNodeType_Element, "Unexpected node type %d.\n", type);
+
+        expected = a2w(prefix_tests[i].prefix1);
+        hr = IXmlReader_GetPrefix(reader, &prefix, NULL);
+        ok(hr == S_OK, "GetPrefix() failed, %#x.\n", hr);
+        ok(!lstrcmpW(prefix, expected), "Unexpected prefix %s, expected %s.\n", wine_dbgstr_w(prefix),
+            wine_dbgstr_w(expected));
+        free_str(expected);
+
+        hr = IXmlReader_MoveToFirstAttribute(reader);
+        ok(hr == S_OK, "MoveToFirstAttribute() failed, %#x.\n", hr);
+
+        hr = IXmlReader_GetNodeType(reader, &type);
+        ok(hr == S_OK, "GetNodeType() failed, %#x.\n", hr);
+        ok(type == XmlNodeType_Attribute, "Unexpected node type %d.\n", type);
+
+        expected = a2w(prefix_tests[i].prefix2);
+        hr = IXmlReader_GetPrefix(reader, &prefix, NULL);
+        ok(hr == S_OK, "GetPrefix() failed, %#x.\n", hr);
+        ok(!lstrcmpW(prefix, expected), "Unexpected prefix %s, expected %s.\n", wine_dbgstr_w(prefix),
+            wine_dbgstr_w(expected));
+        free_str(expected);
+
+        hr = IXmlReader_MoveToNextAttribute(reader);
+        ok(hr == S_OK, "MoveToNextAttribute() failed, %#x.\n", hr);
+
+        hr = IXmlReader_GetNodeType(reader, &type);
+        ok(hr == S_OK, "GetNodeType() failed, %#x.\n", hr);
+        ok(type == XmlNodeType_Attribute, "Unexpected node type %d.\n", type);
+
+        expected = a2w(prefix_tests[i].prefix3);
+        hr = IXmlReader_GetPrefix(reader, &prefix, NULL);
+        ok(hr == S_OK, "GetPrefix() failed, %#x.\n", hr);
+        ok(!lstrcmpW(prefix, expected), "Unexpected prefix %s, expected %s.\n", wine_dbgstr_w(prefix),
+            wine_dbgstr_w(expected));
+        free_str(expected);
+
+        IStream_Release(stream);
+    }
+
+    IXmlReader_Release(reader);
+}
+
+static void test_namespaceuri(void)
+{
+    struct uri_test
+    {
+        const char *xml;
+        const char *uri[5];
+    } uri_tests[] =
+    {
+        { "<a xmlns=\"defns a\"><b xmlns=\"defns b\"><c xmlns=\"defns c\"/></b></a>",
+                { "defns a", "defns b", "defns c", "defns b", "defns a" }},
+        { "<r:a xmlns=\"defns a\" xmlns:r=\"ns r\"/>",
+                { "ns r" }},
+        { "<r:a xmlns=\"defns a\" xmlns:r=\"ns r\"><b/></r:a>",
+                { "ns r", "defns a", "ns r" }},
+        { "<a xmlns=\"defns a\" xmlns:r=\"ns r\"><r:b/></a>",
+                { "defns a", "ns r", "defns a" }},
+        { "<a><b><c/></b></a>",
+                { "", "", "", "", "" }},
+    };
+    IXmlReader *reader;
+    XmlNodeType type;
+    unsigned int i;
+    HRESULT hr;
+
+    hr = CreateXmlReader(&IID_IXmlReader, (void**)&reader, NULL);
+    ok(hr == S_OK, "S_OK, got %08x\n", hr);
+
+    for (i = 0; i < sizeof(uri_tests)/sizeof(uri_tests[0]); i++) {
+        IStream *stream = create_stream_on_data(uri_tests[i].xml, strlen(uri_tests[i].xml) + 1);
+        unsigned int j = 0;
+
+        hr = IXmlReader_SetInput(reader, (IUnknown *)stream);
+        ok(hr == S_OK, "got %08x\n", hr);
+
+        while (IXmlReader_Read(reader, &type) == S_OK) {
+            const WCHAR *uri, *local;
+            WCHAR *uriW;
+
+            ok(type == XmlNodeType_Element || type == XmlNodeType_EndElement, "Unexpected node type %d.\n", type);
+
+            hr = IXmlReader_GetLocalName(reader, &local, NULL);
+            ok(hr == S_OK, "S_OK, got %08x\n", hr);
+
+            hr = IXmlReader_GetNamespaceUri(reader, &uri, NULL);
+            ok(hr == S_OK, "S_OK, got %08x\n", hr);
+
+            uriW = a2w(uri_tests[i].uri[j]);
+            ok(!lstrcmpW(uriW, uri), "%s: uri %s\n", wine_dbgstr_w(local), wine_dbgstr_w(uri));
+            free_str(uriW);
+
+            j++;
+        }
+
+        IStream_Release(stream);
+    }
+
+    IXmlReader_Release(reader);
+}
+
 START_TEST(reader)
 {
-    if (!init_pointers())
-       return;
-
     test_reader_create();
     test_readerinput();
     test_reader_state();
@@ -1790,7 +2048,8 @@ START_TEST(reader)
     test_read_cdata();
     test_read_comment();
     test_read_pi();
-    test_read_dtd();
+    test_read_system_dtd();
+    test_read_public_dtd();
     test_read_element();
     test_isemptyelement();
     test_read_text();
@@ -1798,4 +2057,7 @@ START_TEST(reader)
     test_read_pending();
     test_readvaluechunk();
     test_read_xmldeclaration();
+    test_reader_properties();
+    test_prefix();
+    test_namespaceuri();
 }

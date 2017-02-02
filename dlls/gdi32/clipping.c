@@ -50,7 +50,7 @@ static inline RECT get_clip_rect( DC * dc, int left, int top, int right, int bot
     rect.top    = top;
     rect.right  = right;
     rect.bottom = bottom;
-    LPtoDP( dc->hSelf, (POINT *)&rect, 2 );
+    lp_to_dp( dc, (POINT *)&rect, 2 );
     if (dc->layout & LAYOUT_RTL)
     {
         int tmp = rect.left;
@@ -233,8 +233,8 @@ INT nulldrv_OffsetClipRgn( PHYSDEV dev, INT x, INT y )
 
     if (dc->hClipRgn)
     {
-        x = MulDiv( x, dc->vportExtX, dc->wndExtX );
-        y = MulDiv( y, dc->vportExtY, dc->wndExtY );
+        x = MulDiv( x, dc->vport_ext.cx, dc->wnd_ext.cx );
+        y = MulDiv( y, dc->vport_ext.cy, dc->wnd_ext.cy );
         if (dc->layout & LAYOUT_RTL) x = -x;
         ret = OffsetRgn( dc->hClipRgn, x, y );
 	update_dc_clipping( dc );
@@ -375,7 +375,7 @@ BOOL WINAPI PtVisible( HDC hdc, INT x, INT y )
 
     pt.x = x;
     pt.y = y;
-    LPtoDP( hdc, &pt, 1 );
+    lp_to_dp( dc, &pt, 1 );
     update_dc( dc );
     ret = (!get_dc_device_rect( dc, &visrect ) ||
            (pt.x >= visrect.left && pt.x < visrect.right &&
@@ -398,7 +398,7 @@ BOOL WINAPI RectVisible( HDC hdc, const RECT* rect )
     TRACE("%p %s\n", hdc, wine_dbgstr_rect( rect ));
 
     tmpRect = *rect;
-    LPtoDP( hdc, (POINT *)&tmpRect, 2 );
+    lp_to_dp( dc, (POINT *)&tmpRect, 2 );
     order_rect( &tmpRect );
 
     update_dc( dc );
@@ -438,7 +438,7 @@ INT WINAPI GetClipBox( HDC hdc, LPRECT rect )
         rect->left = rect->right - 1;
         rect->right = tmp - 1;
     }
-    DPtoLP( hdc, (LPPOINT)rect, 2 );
+    dp_to_lp( dc, (LPPOINT)rect, 2 );
     release_dc_ptr( dc );
     TRACE("%p => %d %s\n", hdc, ret, wine_dbgstr_rect( rect ));
     return ret;

@@ -51,8 +51,12 @@
 #include "ipstats.h"
 #include "ipifcons.h"
 #include "fltdefs.h"
+#include "ifdef.h"
+#include "netioapi.h"
+#include "tcpestats.h"
 
 #include "wine/debug.h"
+#include "wine/unicode.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(iphlpapi);
 
@@ -130,17 +134,27 @@ DWORD WINAPI AllocateAndGetIfTableFromStack(PMIB_IFTABLE *ppIfTable,
 }
 
 
-static int IpAddrTableSorter(const void *a, const void *b)
+static int IpAddrTableNumericSorter(const void *a, const void *b)
 {
-  int ret;
+  int ret = 0;
 
   if (a && b)
     ret = ((const MIB_IPADDRROW*)a)->dwAddr - ((const MIB_IPADDRROW*)b)->dwAddr;
-  else
-    ret = 0;
   return ret;
 }
 
+static int IpAddrTableLoopbackSorter(const void *a, const void *b)
+{
+  const MIB_IPADDRROW *left = a, *right = b;
+  int ret = 0;
+
+  if (isIfIndexLoopback(left->dwIndex))
+    ret = 1;
+  else if (isIfIndexLoopback(right->dwIndex))
+    ret = -1;
+
+  return ret;
+}
 
 /******************************************************************
  *    AllocateAndGetIpAddrTableFromStack (IPHLPAPI.@)
@@ -169,7 +183,7 @@ DWORD WINAPI AllocateAndGetIpAddrTableFromStack(PMIB_IPADDRTABLE *ppIpAddrTable,
   ret = getIPAddrTable(ppIpAddrTable, heap, flags);
   if (!ret && bOrder)
     qsort((*ppIpAddrTable)->table, (*ppIpAddrTable)->dwNumEntries,
-     sizeof(MIB_IPADDRROW), IpAddrTableSorter);
+     sizeof(MIB_IPADDRROW), IpAddrTableNumericSorter);
   TRACE("returning %d\n", ret);
   return ret;
 }
@@ -278,26 +292,140 @@ DWORD WINAPI CreateProxyArpEntry(DWORD dwAddress, DWORD dwMask, DWORD dwIfIndex)
   return ERROR_NOT_SUPPORTED;
 }
 
+static char *debugstr_ipv6(const struct WS_sockaddr_in6 *sin, char *buf)
+{
+    const IN6_ADDR *addr = &sin->sin6_addr;
+    char *p = buf;
+    int i;
+    BOOL in_zero = FALSE;
+
+    for (i = 0; i < 7; i++)
+    {
+        if (!addr->u.Word[i])
+        {
+            if (i == 0)
+                *p++ = ':';
+            if (!in_zero)
+            {
+                *p++ = ':';
+                in_zero = TRUE;
+            }
+        }
+        else
+        {
+            p += sprintf(p, "%x:", ntohs(addr->u.Word[i]));
+            in_zero = FALSE;
+        }
+    }
+    sprintf(p, "%x", ntohs(addr->u.Word[7]));
+    return buf;
+}
+
+static BOOL map_address_6to4( const SOCKADDR_IN6 *addr6, SOCKADDR_IN *addr4 )
+{
+    ULONG i;
+
+    if (addr6->sin6_family != WS_AF_INET6) return FALSE;
+
+    for (i = 0; i < 5; i++)
+        if (addr6->sin6_addr.u.Word[i]) return FALSE;
+
+    if (addr6->sin6_addr.u.Word[5] != 0xffff) return FALSE;
+
+    addr4->sin_family = WS_AF_INET;
+    addr4->sin_port   = addr6->sin6_port;
+    addr4->sin_addr.S_un.S_addr = addr6->sin6_addr.u.Word[6] << 16 | addr6->sin6_addr.u.Word[7];
+    memset( &addr4->sin_zero, 0, sizeof(addr4->sin_zero) );
+
+    return TRUE;
+}
+
+static BOOL find_src_address( MIB_IPADDRTABLE *table, const SOCKADDR_IN *dst, SOCKADDR_IN6 *src )
+{
+    MIB_IPFORWARDROW row;
+    DWORD i, j;
+
+    if (GetBestRoute( dst->sin_addr.S_un.S_addr, 0, &row )) return FALSE;
+
+    for (i = 0; i < table->dwNumEntries; i++)
+    {
+        /* take the first address */
+        if (table->table[i].dwIndex == row.dwForwardIfIndex)
+        {
+            src->sin6_family   = WS_AF_INET6;
+            src->sin6_port     = 0;
+            src->sin6_flowinfo = 0;
+            for (j = 0; j < 5; j++) src->sin6_addr.u.Word[j] = 0;
+            src->sin6_addr.u.Word[5] = 0xffff;
+            src->sin6_addr.u.Word[6] = table->table[i].dwAddr & 0xffff;
+            src->sin6_addr.u.Word[7] = table->table[i].dwAddr >> 16;
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
 
 /******************************************************************
  *    CreateSortedAddressPairs (IPHLPAPI.@)
  */
-DWORD WINAPI CreateSortedAddressPairs(const PSOCKADDR_IN6 source, DWORD sourcecount,
-                                      const PSOCKADDR_IN6 destination, DWORD destinationcount,
-                                      DWORD sortoptions,
-                                      PSOCKADDR_IN6_PAIR *sortedaddr, DWORD *sortedcount)
+DWORD WINAPI CreateSortedAddressPairs( const PSOCKADDR_IN6 src_list, DWORD src_count,
+                                       const PSOCKADDR_IN6 dst_list, DWORD dst_count,
+                                       DWORD options, PSOCKADDR_IN6_PAIR *pair_list,
+                                       DWORD *pair_count )
 {
-  FIXME("(source %p, sourcecount %d, destination %p, destcount %d, sortoptions %x,"
-        " sortedaddr %p, sortedcount %p): stub\n", source, sourcecount, destination,
-        destinationcount, sortoptions, sortedaddr, sortedcount);
+    DWORD i, size, ret;
+    SOCKADDR_IN6_PAIR *pairs;
+    SOCKADDR_IN6 *ptr;
+    SOCKADDR_IN addr4;
+    MIB_IPADDRTABLE *table;
 
-  if (source || sourcecount || !destination || !sortedaddr || !sortedcount || destinationcount > 500)
-    return ERROR_INVALID_PARAMETER;
+    FIXME( "(src_list %p src_count %u dst_list %p dst_count %u options %x pair_list %p pair_count %p): stub\n",
+           src_list, src_count, dst_list, dst_count, options, pair_list, pair_count );
 
-  /* Returning not supported tells the client we don't have IPv6 support
-   * so applications can fallback to IPv4.
-   */
-  return ERROR_NOT_SUPPORTED;
+    if (src_list || src_count || !dst_list || !pair_list || !pair_count || dst_count > 500)
+        return ERROR_INVALID_PARAMETER;
+
+    for (i = 0; i < dst_count; i++)
+    {
+        if (!map_address_6to4( &dst_list[i], &addr4 ))
+        {
+            FIXME("only mapped IPv4 addresses are supported\n");
+            return ERROR_NOT_SUPPORTED;
+        }
+    }
+
+    size = dst_count * sizeof(*pairs);
+    size += dst_count * sizeof(SOCKADDR_IN6) * 2; /* source address + destination address */
+    if (!(pairs = HeapAlloc( GetProcessHeap(), 0, size ))) return ERROR_NOT_ENOUGH_MEMORY;
+    ptr = (SOCKADDR_IN6 *)&pairs[dst_count];
+
+    if ((ret = getIPAddrTable( &table, GetProcessHeap(), 0 )))
+    {
+        HeapFree( GetProcessHeap(), 0, pairs );
+        return ret;
+    }
+
+    for (i = 0; i < dst_count; i++)
+    {
+        pairs[i].SourceAddress = ptr++;
+        if (!map_address_6to4( &dst_list[i], &addr4 ) ||
+            !find_src_address( table, &addr4, pairs[i].SourceAddress ))
+        {
+            char buf[46];
+            FIXME( "source address for %s not found\n", debugstr_ipv6(&dst_list[i], buf) );
+            memset( pairs[i].SourceAddress, 0, sizeof(*pairs[i].SourceAddress) );
+            pairs[i].SourceAddress->sin6_family = WS_AF_INET6;
+        }
+
+        pairs[i].DestinationAddress = ptr++;
+        memcpy( pairs[i].DestinationAddress, &dst_list[i], sizeof(*pairs[i].DestinationAddress) );
+    }
+    *pair_list = pairs;
+    *pair_count = dst_count;
+
+    HeapFree( GetProcessHeap(), 0, table );
+    return NO_ERROR;
 }
 
 
@@ -727,35 +855,6 @@ static char *debugstr_ipv4(const in_addr_t *in_addr, char *buf)
     return buf;
 }
 
-static char *debugstr_ipv6(const struct WS_sockaddr_in6 *sin, char *buf)
-{
-    const IN6_ADDR *addr = &sin->sin6_addr;
-    char *p = buf;
-    int i;
-    BOOL in_zero = FALSE;
-
-    for (i = 0; i < 7; i++)
-    {
-        if (!addr->u.Word[i])
-        {
-            if (i == 0)
-                *p++ = ':';
-            if (!in_zero)
-            {
-                *p++ = ':';
-                in_zero = TRUE;
-            }
-        }
-        else
-        {
-            p += sprintf(p, "%x:", ntohs(addr->u.Word[i]));
-            in_zero = FALSE;
-        }
-    }
-    sprintf(p, "%x", ntohs(addr->u.Word[7]));
-    return buf;
-}
-
 static ULONG count_v4_gateways(DWORD index, PMIB_IPFORWARDTABLE routeTable)
 {
     DWORD i, num_gateways = 0;
@@ -782,6 +881,31 @@ static PMIB_IPFORWARDROW findIPv4Gateway(DWORD index,
             row = &routeTable->table[i];
     }
     return row;
+}
+
+static void fill_unicast_addr_data(IP_ADAPTER_ADDRESSES *aa, IP_ADAPTER_UNICAST_ADDRESS *ua)
+{
+    /* Actually this information should be read somewhere from the system
+     * but it doesn't matter much for the bugs found so far.
+     * This information is required for DirectPlay8 games. */
+    if (aa->IfType != IF_TYPE_SOFTWARE_LOOPBACK)
+    {
+        ua->PrefixOrigin = IpPrefixOriginDhcp;
+        ua->SuffixOrigin = IpSuffixOriginDhcp;
+    }
+    else
+    {
+        ua->PrefixOrigin = IpPrefixOriginManual;
+        ua->SuffixOrigin = IpSuffixOriginManual;
+    }
+
+    /* The address is not duplicated in the network */
+    ua->DadState = IpDadStatePreferred;
+
+    /* Some address life time values, required even for non-dhcp addresses */
+    ua->ValidLifetime = 60000;
+    ua->PreferredLifetime = 60000;
+    ua->LeaseLifetime = 60000;
 }
 
 static ULONG adapterAddressesFromIndex(ULONG family, ULONG flags, IF_INDEX index,
@@ -884,6 +1008,15 @@ static ULONG adapterAddressesFromIndex(ULONG family, ULONG flags, IF_INDEX index
 
         TRACE("%s: %d IPv4 addresses, %d IPv6 addresses:\n", name, num_v4addrs,
               num_v6addrs);
+
+        buflen = MAX_INTERFACE_PHYSADDR;
+        getInterfacePhysicalByIndex(index, &buflen, aa->PhysicalAddress, &type);
+        aa->PhysicalAddressLength = buflen;
+        aa->IfType = typeFromMibType(type);
+        aa->ConnectionType = connectionTypeFromMibType(type);
+        aa->Luid.Info.NetLuidIndex = index;
+        aa->Luid.Info.IfType = aa->IfType;
+
         if (num_v4_gateways)
         {
             PMIB_IPFORWARDROW adapterRow;
@@ -899,7 +1032,7 @@ static ULONG adapterAddressesFromIndex(ULONG family, ULONG flags, IF_INDEX index
                 gw->u.s.Length = sizeof(IP_ADAPTER_GATEWAY_ADDRESS);
                 ptr += sizeof(IP_ADAPTER_GATEWAY_ADDRESS);
                 sin = (PSOCKADDR_IN)ptr;
-                sin->sin_family = AF_INET;
+                sin->sin_family = WS_AF_INET;
                 sin->sin_port = 0;
                 memcpy(&sin->sin_addr, &adapterRow->dwForwardNextHop,
                        sizeof(DWORD));
@@ -930,6 +1063,7 @@ static ULONG adapterAddressesFromIndex(ULONG family, ULONG flags, IF_INDEX index
                 sa->sin_port             = 0;
                 TRACE("IPv4 %d/%d: %s\n", i + 1, num_v4addrs,
                       debugstr_ipv4(&sa->sin_addr.S_un.S_addr, addr_buf));
+                fill_unicast_addr_data(aa, ua);
 
                 ptr += ua->u.s.Length + ua->Address.iSockaddrLength;
                 if (i < num_v4addrs - 1)
@@ -967,6 +1101,7 @@ static ULONG adapterAddressesFromIndex(ULONG family, ULONG flags, IF_INDEX index
                 memcpy(sa, v6addrs[i].lpSockaddr, sizeof(*sa));
                 TRACE("IPv6 %d/%d: %s\n", i + 1, num_v6addrs,
                       debugstr_ipv6(sa, addr_buf));
+                fill_unicast_addr_data(aa, ua);
 
                 ptr += ua->u.s.Length + ua->Address.iSockaddrLength;
                 if (i < num_v6addrs - 1)
@@ -1070,12 +1205,6 @@ static ULONG adapterAddressesFromIndex(ULONG family, ULONG flags, IF_INDEX index
                 }
             }
         }
-
-        buflen = MAX_INTERFACE_PHYSADDR;
-        getInterfacePhysicalByIndex(index, &buflen, aa->PhysicalAddress, &type);
-        aa->PhysicalAddressLength = buflen;
-        aa->IfType = typeFromMibType(type);
-        aa->ConnectionType = connectionTypeFromMibType(type);
 
         getInterfaceMtuByName(name, &aa->Mtu);
 
@@ -1382,8 +1511,10 @@ ULONG WINAPI DECLSPEC_HOTPATCH GetAdaptersAddresses(ULONG family, ULONG flags, P
         ret = ERROR_SUCCESS;
     }
     else
+    {
         ret = ERROR_BUFFER_OVERFLOW;
-    *buflen = total_size;
+        *buflen = total_size;
+    }
 
     TRACE("num adapters %u\n", table->numIndexes);
     HeapFree(GetProcessHeap(), 0, table);
@@ -1407,7 +1538,7 @@ DWORD WINAPI GetBestInterface(IPAddr dwDestAddr, PDWORD pdwBestIfIndex)
 {
     struct WS_sockaddr_in sa_in;
     memset(&sa_in, 0, sizeof(sa_in));
-    sa_in.sin_family = AF_INET;
+    sa_in.sin_family = WS_AF_INET;
     sa_in.sin_addr.S_un.S_addr = dwDestAddr;
     return GetBestInterfaceEx((struct WS_sockaddr *)&sa_in, pdwBestIfIndex);
 }
@@ -1435,7 +1566,7 @@ DWORD WINAPI GetBestInterfaceEx(struct WS_sockaddr *pDestAddr, PDWORD pdwBestIfI
   else {
     MIB_IPFORWARDROW ipRow;
 
-    if (pDestAddr->sa_family == AF_INET) {
+    if (pDestAddr->sa_family == WS_AF_INET) {
       ret = GetBestRoute(((struct WS_sockaddr_in *)pDestAddr)->sin_addr.S_un.S_addr, 0, &ipRow);
       if (ret == ERROR_SUCCESS)
         *pdwBestIfIndex = ipRow.dwForwardIfIndex;
@@ -1568,6 +1699,57 @@ DWORD WINAPI GetIfEntry(PMIB_IFROW pIfRow)
   return ret;
 }
 
+/******************************************************************
+ *    GetIfEntry2 (IPHLPAPI.@)
+ */
+DWORD WINAPI GetIfEntry2( MIB_IF_ROW2 *row2 )
+{
+    DWORD ret, len = sizeof(row2->Description)/sizeof(row2->Description[0]);
+    char buf[MAX_ADAPTER_NAME], *name;
+    MIB_IFROW row;
+
+    TRACE("%p\n", row2);
+
+    if (!row2 || (!(name = getInterfaceNameByIndex( row2->InterfaceIndex, buf )) &&
+                  !(name = getInterfaceNameByIndex( row2->InterfaceLuid.Info.NetLuidIndex, buf ))))
+    {
+        return ERROR_INVALID_PARAMETER;
+    }
+    if ((ret = getInterfaceEntryByName( name, &row ))) return ret;
+    if ((ret = getInterfaceStatsByName( name, &row ))) return ret;
+
+    memset( row2, 0, sizeof(*row2) );
+    row2->InterfaceLuid.Info.Reserved     = 0;
+    row2->InterfaceLuid.Info.NetLuidIndex = row.dwIndex;
+    row2->InterfaceLuid.Info.IfType       = row.dwType;
+    row2->InterfaceIndex                  = row.dwIndex;
+    row2->InterfaceGuid.Data1             = row.dwIndex;
+    row2->Type                            = row.dwType;
+    row2->Mtu                             = row.dwMtu;
+    MultiByteToWideChar( CP_UNIXCP, 0, (const char *)row.bDescr, -1, row2->Description, len );
+    row2->PhysicalAddressLength           = row.dwPhysAddrLen;
+    memcpy( &row2->PhysicalAddress, &row.bPhysAddr, row.dwPhysAddrLen );
+    memcpy( &row2->PermanentPhysicalAddress, &row.bPhysAddr, row.dwPhysAddrLen );
+    row2->OperStatus                      = IfOperStatusUp;
+    row2->AdminStatus                     = NET_IF_ADMIN_STATUS_UP;
+    row2->MediaConnectState               = MediaConnectStateConnected;
+    row2->ConnectionType                  = NET_IF_CONNECTION_DEDICATED;
+
+    /* stats */
+    row2->InOctets        = row.dwInOctets;
+    row2->InUcastPkts     = row.dwInUcastPkts;
+    row2->InNUcastPkts    = row.dwInNUcastPkts;
+    row2->InDiscards      = row.dwInDiscards;
+    row2->InErrors        = row.dwInErrors;
+    row2->InUnknownProtos = row.dwInUnknownProtos;
+    row2->OutOctets       = row.dwOutOctets;
+    row2->OutUcastPkts    = row.dwOutUcastPkts;
+    row2->OutNUcastPkts   = row.dwOutNUcastPkts;
+    row2->OutDiscards     = row.dwOutDiscards;
+    row2->OutErrors       = row.dwOutErrors;
+
+    return NO_ERROR;
+}
 
 static int IfTableSorter(const void *a, const void *b)
 {
@@ -1656,6 +1838,43 @@ DWORD WINAPI GetIfTable(PMIB_IFTABLE pIfTable, PULONG pdwSize, BOOL bOrder)
   return ret;
 }
 
+/******************************************************************
+ *    GetIfTable2 (IPHLPAPI.@)
+ */
+DWORD WINAPI GetIfTable2( MIB_IF_TABLE2 **table )
+{
+    DWORD i, nb_interfaces, size = sizeof(MIB_IF_TABLE2);
+    InterfaceIndexTable *index_table;
+    MIB_IF_TABLE2 *ret;
+
+    TRACE( "table %p\n", table );
+
+    if (!table) return ERROR_INVALID_PARAMETER;
+
+    if ((nb_interfaces = get_interface_indices( FALSE, NULL )) > 1)
+        size += (nb_interfaces - 1) * sizeof(MIB_IF_ROW2);
+
+    if (!(ret = HeapAlloc( GetProcessHeap(), 0, size ))) return ERROR_OUTOFMEMORY;
+
+    get_interface_indices( FALSE, &index_table );
+    if (!index_table)
+    {
+        HeapFree( GetProcessHeap(), 0, ret );
+        return ERROR_OUTOFMEMORY;
+    }
+
+    ret->NumEntries = 0;
+    for (i = 0; i < index_table->numIndexes; i++)
+    {
+        ret->Table[i].InterfaceIndex = index_table->indexes[i];
+        GetIfEntry2( &ret->Table[i] );
+        ret->NumEntries++;
+    }
+
+    HeapFree( GetProcessHeap(), 0, index_table );
+    *table = ret;
+    return NO_ERROR;
+}
 
 /******************************************************************
  *    GetInterfaceInfo (IPHLPAPI.@)
@@ -1779,9 +1998,14 @@ DWORD WINAPI GetIpAddrTable(PMIB_IPADDRTABLE pIpAddrTable, PULONG pdwSize, BOOL 
       else {
         *pdwSize = size;
         memcpy(pIpAddrTable, table, size);
+        /* sort by numeric IP value */
         if (bOrder)
           qsort(pIpAddrTable->table, pIpAddrTable->dwNumEntries,
-           sizeof(MIB_IPADDRROW), IpAddrTableSorter);
+           sizeof(MIB_IPADDRROW), IpAddrTableNumericSorter);
+        /* sort ensuring loopback interfaces are in the end */
+        else
+          qsort(pIpAddrTable->table, pIpAddrTable->dwNumEntries,
+           sizeof(MIB_IPADDRROW), IpAddrTableLoopbackSorter);
         ret = NO_ERROR;
       }
       HeapFree(GetProcessHeap(), 0, table);
@@ -2124,7 +2348,7 @@ BOOL WINAPI GetRTTAndHopCount(IPAddr DestIpAddress, PULONG HopCount, ULONG MaxHo
 DWORD WINAPI GetTcpTable(PMIB_TCPTABLE pTcpTable, PDWORD pdwSize, BOOL bOrder)
 {
     TRACE("pTcpTable %p, pdwSize %p, bOrder %d\n", pTcpTable, pdwSize, bOrder);
-    return GetExtendedTcpTable(pTcpTable, pdwSize, bOrder, AF_INET, TCP_TABLE_BASIC_ALL, 0);
+    return GetExtendedTcpTable(pTcpTable, pdwSize, bOrder, WS_AF_INET, TCP_TABLE_BASIC_ALL, 0);
 }
 
 /******************************************************************
@@ -2141,7 +2365,7 @@ DWORD WINAPI GetExtendedTcpTable(PVOID pTcpTable, PDWORD pdwSize, BOOL bOrder,
 
     if (!pdwSize) return ERROR_INVALID_PARAMETER;
 
-    if (ulAf != AF_INET)
+    if (ulAf != WS_AF_INET)
     {
         FIXME("ulAf = %u not supported\n", ulAf);
         return ERROR_NOT_SUPPORTED;
@@ -2189,7 +2413,7 @@ DWORD WINAPI GetExtendedTcpTable(PVOID pTcpTable, PDWORD pdwSize, BOOL bOrder,
  */
 DWORD WINAPI GetUdpTable(PMIB_UDPTABLE pUdpTable, PDWORD pdwSize, BOOL bOrder)
 {
-    return GetExtendedUdpTable(pUdpTable, pdwSize, bOrder, AF_INET, UDP_TABLE_BASIC, 0);
+    return GetExtendedUdpTable(pUdpTable, pdwSize, bOrder, WS_AF_INET, UDP_TABLE_BASIC, 0);
 }
 
 /******************************************************************
@@ -2206,7 +2430,7 @@ DWORD WINAPI GetExtendedUdpTable(PVOID pUdpTable, PDWORD pdwSize, BOOL bOrder,
 
     if (!pdwSize) return ERROR_INVALID_PARAMETER;
 
-    if (ulAf != AF_INET)
+    if (ulAf != WS_AF_INET)
     {
         FIXME("ulAf = %u not supported\n", ulAf);
         return ERROR_NOT_SUPPORTED;
@@ -2537,6 +2761,17 @@ DWORD WINAPI SetTcpEntry(PMIB_TCPROW pTcpRow)
   return 0;
 }
 
+/******************************************************************
+ *    SetPerTcpConnectionEStats (IPHLPAPI.@)
+ */
+DWORD WINAPI SetPerTcpConnectionEStats(PMIB_TCPROW row, TCP_ESTATS_TYPE state, PBYTE rw,
+                                       ULONG version, ULONG size, ULONG offset)
+{
+  FIXME("(row %p, state %d, rw %p, version %u, size %u, offset %u): stub\n",
+        row, state, rw, version, size, offset);
+  return ERROR_NOT_SUPPORTED;
+}
+
 
 /******************************************************************
  *    UnenableRouter (IPHLPAPI.@)
@@ -2627,4 +2862,178 @@ ULONG WINAPI GetTcp6Table2(PMIB_TCP6TABLE2 table, PULONG size, BOOL order)
 {
     FIXME("pTcp6Table2 %p, size %p, order %d: stub\n", table, size, order);
     return ERROR_NOT_SUPPORTED;
+}
+
+/******************************************************************
+ *    ConvertInterfaceGuidToLuid (IPHLPAPI.@)
+ */
+DWORD WINAPI ConvertInterfaceGuidToLuid(const GUID *guid, NET_LUID *luid)
+{
+    DWORD ret;
+    MIB_IFROW row;
+
+    TRACE("(%s %p)\n", debugstr_guid(guid), luid);
+
+    if (!guid || !luid) return ERROR_INVALID_PARAMETER;
+
+    row.dwIndex = guid->Data1;
+    if ((ret = GetIfEntry( &row ))) return ret;
+
+    luid->Info.Reserved     = 0;
+    luid->Info.NetLuidIndex = guid->Data1;
+    luid->Info.IfType       = row.dwType;
+    return NO_ERROR;
+}
+
+/******************************************************************
+ *    ConvertInterfaceIndexToLuid (IPHLPAPI.@)
+ */
+DWORD WINAPI ConvertInterfaceIndexToLuid(NET_IFINDEX index, NET_LUID *luid)
+{
+    MIB_IFROW row;
+
+    TRACE("(%u %p)\n", index, luid);
+
+    if (!luid) return ERROR_INVALID_PARAMETER;
+    memset( luid, 0, sizeof(*luid) );
+
+    row.dwIndex = index;
+    if (GetIfEntry( &row )) return ERROR_FILE_NOT_FOUND;
+
+    luid->Info.Reserved     = 0;
+    luid->Info.NetLuidIndex = index;
+    luid->Info.IfType       = row.dwType;
+    return NO_ERROR;
+}
+
+/******************************************************************
+ *    ConvertInterfaceLuidToGuid (IPHLPAPI.@)
+ */
+DWORD WINAPI ConvertInterfaceLuidToGuid(const NET_LUID *luid, GUID *guid)
+{
+    DWORD ret;
+    MIB_IFROW row;
+
+    TRACE("(%p %p)\n", luid, guid);
+
+    if (!luid || !guid) return ERROR_INVALID_PARAMETER;
+
+    row.dwIndex = luid->Info.NetLuidIndex;
+    if ((ret = GetIfEntry( &row ))) return ret;
+
+    guid->Data1 = luid->Info.NetLuidIndex;
+    return NO_ERROR;
+}
+
+/******************************************************************
+ *    ConvertInterfaceLuidToIndex (IPHLPAPI.@)
+ */
+DWORD WINAPI ConvertInterfaceLuidToIndex(const NET_LUID *luid, NET_IFINDEX *index)
+{
+    DWORD ret;
+    MIB_IFROW row;
+
+    TRACE("(%p %p)\n", luid, index);
+
+    if (!luid || !index) return ERROR_INVALID_PARAMETER;
+
+    row.dwIndex = luid->Info.NetLuidIndex;
+    if ((ret = GetIfEntry( &row ))) return ret;
+
+    *index = luid->Info.NetLuidIndex;
+    return NO_ERROR;
+}
+
+/******************************************************************
+ *    ConvertInterfaceLuidToNameA (IPHLPAPI.@)
+ */
+DWORD WINAPI ConvertInterfaceLuidToNameA(const NET_LUID *luid, char *name, SIZE_T len)
+{
+    DWORD ret;
+    MIB_IFROW row;
+
+    TRACE("(%p %p %u)\n", luid, name, (DWORD)len);
+
+    if (!luid) return ERROR_INVALID_PARAMETER;
+
+    row.dwIndex = luid->Info.NetLuidIndex;
+    if ((ret = GetIfEntry( &row ))) return ret;
+
+    if (!name || len < WideCharToMultiByte( CP_UNIXCP, 0, row.wszName, -1, NULL, 0, NULL, NULL ))
+        return ERROR_NOT_ENOUGH_MEMORY;
+
+    WideCharToMultiByte( CP_UNIXCP, 0, row.wszName, -1, name, len, NULL, NULL );
+    return NO_ERROR;
+}
+
+/******************************************************************
+ *    ConvertInterfaceLuidToNameW (IPHLPAPI.@)
+ */
+DWORD WINAPI ConvertInterfaceLuidToNameW(const NET_LUID *luid, WCHAR *name, SIZE_T len)
+{
+    DWORD ret;
+    MIB_IFROW row;
+
+    TRACE("(%p %p %u)\n", luid, name, (DWORD)len);
+
+    if (!luid || !name) return ERROR_INVALID_PARAMETER;
+
+    row.dwIndex = luid->Info.NetLuidIndex;
+    if ((ret = GetIfEntry( &row ))) return ret;
+
+    if (len < strlenW( row.wszName ) + 1) return ERROR_NOT_ENOUGH_MEMORY;
+    strcpyW( name, row.wszName );
+    return NO_ERROR;
+}
+
+/******************************************************************
+ *    ConvertInterfaceNameToLuidA (IPHLPAPI.@)
+ */
+DWORD WINAPI ConvertInterfaceNameToLuidA(const char *name, NET_LUID *luid)
+{
+    DWORD ret;
+    IF_INDEX index;
+    MIB_IFROW row;
+
+    TRACE("(%s %p)\n", debugstr_a(name), luid);
+
+    if ((ret = getInterfaceIndexByName( name, &index ))) return ERROR_INVALID_NAME;
+    if (!luid) return ERROR_INVALID_PARAMETER;
+
+    row.dwIndex = index;
+    if ((ret = GetIfEntry( &row ))) return ret;
+
+    luid->Info.Reserved     = 0;
+    luid->Info.NetLuidIndex = index;
+    luid->Info.IfType       = row.dwType;
+    return NO_ERROR;
+}
+
+/******************************************************************
+ *    ConvertInterfaceNameToLuidW (IPHLPAPI.@)
+ */
+DWORD WINAPI ConvertInterfaceNameToLuidW(const WCHAR *name, NET_LUID *luid)
+{
+    DWORD ret;
+    IF_INDEX index;
+    MIB_IFROW row;
+    char nameA[IF_MAX_STRING_SIZE + 1];
+
+    TRACE("(%s %p)\n", debugstr_w(name), luid);
+
+    if (!luid) return ERROR_INVALID_PARAMETER;
+    memset( luid, 0, sizeof(*luid) );
+
+    if (!WideCharToMultiByte( CP_UNIXCP, 0, name, -1, nameA, sizeof(nameA), NULL, NULL ))
+        return ERROR_INVALID_NAME;
+
+    if ((ret = getInterfaceIndexByName( nameA, &index ))) return ret;
+
+    row.dwIndex = index;
+    if ((ret = GetIfEntry( &row ))) return ret;
+
+    luid->Info.Reserved     = 0;
+    luid->Info.NetLuidIndex = index;
+    luid->Info.IfType       = row.dwType;
+    return NO_ERROR;
 }

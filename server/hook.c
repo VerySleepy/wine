@@ -88,6 +88,8 @@ static const struct object_ops hook_table_ops =
     default_get_sd,               /* get_sd */
     default_set_sd,               /* set_sd */
     no_lookup_name,               /* lookup_name */
+    no_link_name,                 /* link_name */
+    NULL,                         /* unlink_name */
     no_open_file,                 /* open_file */
     no_close_handle,              /* close_handle */
     hook_table_destroy            /* destroy */
@@ -356,7 +358,7 @@ unsigned int get_active_hooks(void)
 {
     struct hook_table *table = get_queue_hooks( current );
     struct hook_table *global_hooks = get_global_hooks( current );
-    unsigned int ret = 1 << 31;  /* set high bit to indicate that the bitmap is valid */
+    unsigned int ret = 1u << 31;  /* set high bit to indicate that the bitmap is valid */
     int id;
 
     for (id = WH_MINHOOK; id <= WH_WINEVENT; id++)

@@ -1436,10 +1436,10 @@ static DWORD put_pixmap_image( Pixmap pixmap, const XVisualInfo *vis,
         XPutImage( gdi_display, pixmap, gc, image, 0, 0, 0, 0, coords.width, coords.height );
         XFreeGC( gdi_display, gc );
         image->data = NULL;
+        if (dst_bits.free) dst_bits.free( &dst_bits );
     }
 
     XDestroyImage( image );
-    if (dst_bits.free) dst_bits.free( &dst_bits );
     return ret;
 
 update_format:
@@ -1937,6 +1937,7 @@ static void x11drv_surface_flush( struct window_surface *window_surface )
                    surface->header.rect.top + coords.visrect.top,
                    coords.visrect.right - coords.visrect.left,
                    coords.visrect.bottom - coords.visrect.top );
+        XFlush( gdi_display );
     }
     reset_bounds( &surface->bounds );
     window_surface->funcs->unlock( window_surface );

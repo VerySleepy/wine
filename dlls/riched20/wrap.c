@@ -23,6 +23,7 @@
 #include "editor.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(richedit);
+WINE_DECLARE_DEBUG_CHANNEL(richedit_check);
 
 /*
  * Unsolved problems:
@@ -32,6 +33,22 @@ WINE_DEFAULT_DEBUG_CHANNEL(richedit);
  * - no tabs
  */
 
+typedef struct tagME_WrapContext
+{
+  ME_Style *style;
+  ME_Context *context;
+  int nLeftMargin, nRightMargin;
+  int nFirstMargin;   /* Offset to first line's text, always to the text itself even if a para number is present */
+  int nParaNumOffset; /* Offset to the para number */
+  int nAvailWidth;    /* Width avail for text to wrap into.  Does not include any para number text */
+  int nRow;
+  POINT pt;
+  BOOL bOverflown, bWordWrap;
+  ME_DisplayItem *pPara;
+  ME_DisplayItem *pRowStart;
+
+  ME_DisplayItem *pLastSplittableRun;
+} ME_WrapContext;
 
 static BOOL get_run_glyph_buffers( ME_Run *run )
 {
@@ -123,12 +140,8 @@ static ME_DisplayItem *split_run_extents(ME_WrapContext *wc, ME_DisplayItem *ite
   ME_Cursor cursor = {wc->pPara, item, nVChar};
 
   assert(item->member.run.nCharOfs != -1);
-  if(TRACE_ON(richedit))
-  {
-    TRACE("Before check before split\n");
+  if(TRACE_ON(richedit_check))
     ME_CheckCharOffsets(editor);
-    TRACE("After check before split\n");
-  }
 
   run = &item->member.run;
 
@@ -147,15 +160,12 @@ static ME_DisplayItem *split_run_extents(ME_WrapContext *wc, ME_DisplayItem *ite
   run2->pt.x = run->pt.x+run->nWidth;
   run2->pt.y = run->pt.y;
 
-  if(TRACE_ON(richedit))
-  {
-    TRACE("Before check after split\n");
+  if(TRACE_ON(richedit_check))
     ME_CheckCharOffsets(editor);
-    TRACE("After check after split\n");
-    TRACE("After split: %s(%d, %d), %s(%d, %d)\n",
-      debugstr_run( run ), run->pt.x, run->pt.y,
-      debugstr_run( run2 ), run2->pt.x, run2->pt.y);
-  }
+
+  TRACE("After split: %s(%d, %d), %s(%d, %d)\n",
+        debugstr_run( run ), run->pt.x, run->pt.y,
+        debugstr_run( run2 ), run2->pt.x, run2->pt.y);
 
   return cursor.pRun;
 }
@@ -188,7 +198,7 @@ static void ME_BeginRow(ME_WrapContext *wc)
   PARAFORMAT2 *pFmt;
   ME_DisplayItem *para = wc->pPara;
 
-  pFmt = para->member.para.pFmt;
+  pFmt = &para->member.para.fmt;
   wc->pRowStart = NULL;
   wc->bOverflown = FALSE;
   wc->pLastSplittableRun = NULL;
@@ -210,7 +220,7 @@ static void ME_BeginRow(ME_WrapContext *wc)
       width -= cell->prev_cell->member.cell.nRightBoundary;
     if (!cell->prev_cell)
     {
-      int rowIndent = ME_GetTableRowEnd(para)->member.para.pFmt->dxStartIndent;
+      int rowIndent = ME_GetTableRowEnd(para)->member.para.fmt.dxStartIndent;
       width -= rowIndent;
     }
     cell->nWidth = max(ME_twips2pointsX(wc->context, width), 0);
@@ -295,7 +305,12 @@ static void ME_InsertRowStart(ME_WrapContext *wc, const ME_DisplayItem *pEnd)
   BOOL bSkippingSpaces = TRUE;
   int ascent = 0, descent = 0, width=0, shift = 0, align = 0;
 
-  /* wrap text */
+  /* Include height of para numbering label */
+  if (wc->nRow == 0 && para->fmt.wNumbering)
+  {
+      ascent = para->para_num.style->tm.tmAscent;
+      descent = para->para_num.style->tm.tmDescent;
+  }
 
   for (p = pEnd->prev; p!=wc->pRowStart->prev; p = p->prev)
   {
@@ -332,7 +347,7 @@ static void ME_InsertRowStart(ME_WrapContext *wc, const ME_DisplayItem *pEnd)
   para->nWidth = max(para->nWidth, width);
   row = ME_MakeRow(ascent+descent, ascent, width);
   if (wc->context->editor->bEmulateVersion10 && /* v1.0 - 3.0 */
-      (para->pFmt->dwMask & PFM_TABLE) && (para->pFmt->wEffects & PFE_TABLE))
+      (para->fmt.dwMask & PFM_TABLE) && (para->fmt.wEffects & PFE_TABLE))
   {
     /* The text was shifted down in ME_BeginRow so move the wrap context
      * back to where it should be. */
@@ -343,8 +358,8 @@ static void ME_InsertRowStart(ME_WrapContext *wc, const ME_DisplayItem *pEnd)
   row->member.row.pt = wc->pt;
   row->member.row.nLMargin = (!wc->nRow ? wc->nFirstMargin : wc->nLeftMargin);
   row->member.row.nRMargin = wc->nRightMargin;
-  assert(para->pFmt->dwMask & PFM_ALIGNMENT);
-  align = para->pFmt->wAlignment;
+  assert(para->fmt.dwMask & PFM_ALIGNMENT);
+  align = para->fmt.wAlignment;
   if (align == PFA_CENTER)
     shift = max((wc->nAvailWidth-width)/2, 0);
   if (align == PFA_RIGHT)
@@ -359,6 +374,13 @@ static void ME_InsertRowStart(ME_WrapContext *wc, const ME_DisplayItem *pEnd)
       p->member.run.pt.x += row->member.row.nLMargin+shift;
     }
   }
+
+  if (wc->nRow == 0 && para->fmt.wNumbering)
+  {
+    para->para_num.pt.x = wc->nParaNumOffset + shift;
+    para->para_num.pt.y = wc->pt.y + row->member.row.nBaseline;
+  }
+
   ME_InsertBefore(wc->pRowStart, row);
   wc->nRow++;
   wc->pt.y += row->member.row.nHeight;
@@ -368,7 +390,7 @@ static void ME_InsertRowStart(ME_WrapContext *wc, const ME_DisplayItem *pEnd)
 static void ME_WrapEndParagraph(ME_WrapContext *wc, ME_DisplayItem *p)
 {
   ME_DisplayItem *para = wc->pPara;
-  PARAFORMAT2 *pFmt = para->member.para.pFmt;
+  PARAFORMAT2 *pFmt = &para->member.para.fmt;
   if (wc->pRowStart)
     ME_InsertRowStart(wc, p);
   if (wc->context->editor->bEmulateVersion10 && /* v1.0 - 3.0 */
@@ -616,8 +638,8 @@ static ME_DisplayItem *ME_WrapHandleRun(ME_WrapContext *wc, ME_DisplayItem *p)
       wc->pt.x + run->nWidth - wc->context->pt.x > wc->nAvailWidth)
   {
     int loc = wc->context->pt.x + wc->nAvailWidth - wc->pt.x;
-    /* total white run ? */
-    if (run->nFlags & MERF_WHITESPACE) {
+    /* total white run or end para */
+    if (run->nFlags & (MERF_WHITESPACE | MERF_ENDPARA)) {
       /* let the overflow logic handle it */
       wc->bOverflown = TRUE;
       return p;
@@ -691,19 +713,19 @@ static ME_DisplayItem *ME_WrapHandleRun(ME_WrapContext *wc, ME_DisplayItem *p)
 static int ME_GetParaLineSpace(ME_Context* c, ME_Paragraph* para)
 {
   int   sp = 0, ls = 0;
-  if (!(para->pFmt->dwMask & PFM_LINESPACING)) return 0;
+  if (!(para->fmt.dwMask & PFM_LINESPACING)) return 0;
 
   /* FIXME: how to compute simply the line space in ls ??? */
   /* FIXME: does line spacing include the line itself ??? */
-  switch (para->pFmt->bLineSpacingRule)
+  switch (para->fmt.bLineSpacingRule)
   {
   case 0:       sp = ls; break;
   case 1:       sp = (3 * ls) / 2; break;
   case 2:       sp = 2 * ls; break;
-  case 3:       sp = ME_twips2pointsY(c, para->pFmt->dyLineSpacing); if (sp < ls) sp = ls; break;
-  case 4:       sp = ME_twips2pointsY(c, para->pFmt->dyLineSpacing); break;
-  case 5:       sp = para->pFmt->dyLineSpacing / 20; break;
-  default: FIXME("Unsupported spacing rule value %d\n", para->pFmt->bLineSpacingRule);
+  case 3:       sp = ME_twips2pointsY(c, para->fmt.dyLineSpacing); if (sp < ls) sp = ls; break;
+  case 4:       sp = ME_twips2pointsY(c, para->fmt.dyLineSpacing); break;
+  case 5:       sp = para->fmt.dyLineSpacing / 20; break;
+  default: FIXME("Unsupported spacing rule value %d\n", para->fmt.bLineSpacingRule);
   }
   if (c->editor->nZoomNumerator == 0)
     return sp;
@@ -751,6 +773,11 @@ static HRESULT itemize_para( ME_Context *c, ME_DisplayItem *p )
     HRESULT hr;
 
     assert( p->type == diParagraph );
+
+    if (para->fmt.dwMask & PFM_RTLPARA && para->fmt.wEffects & PFE_RTLPARA)
+        state.uBidiLevel = 1;
+
+    TRACE( "Base embedding level %d\n", state.uBidiLevel );
 
     while (1)
     {
@@ -856,6 +883,9 @@ static void ME_WrapTextParagraph(ME_Context *c, ME_DisplayItem *tp) {
   }
   ME_PrepareParagraphForWrapping(c, tp);
 
+  /* Calculate paragraph numbering label */
+  para_num_init( c, &tp->member.para );
+
   /* For now treating all non-password text as complex for better testing */
   if (!c->editor->cPasswordMask /* &&
       ScriptIsComplex( tp->member.para.text->szData, tp->member.para.text->nLen, SIC_COMPLEX ) == S_OK */)
@@ -864,22 +894,35 @@ static void ME_WrapTextParagraph(ME_Context *c, ME_DisplayItem *tp) {
           shape_para( c, tp );
   }
 
-  pFmt = tp->member.para.pFmt;
+  pFmt = &tp->member.para.fmt;
 
   wc.context = c;
   wc.pPara = tp;
 /*   wc.para_style = tp->member.para.style; */
   wc.style = NULL;
+  wc.nParaNumOffset = 0;
   if (tp->member.para.nFlags & MEPF_ROWEND) {
     wc.nFirstMargin = wc.nLeftMargin = wc.nRightMargin = 0;
   } else {
     int dxStartIndent = pFmt->dxStartIndent;
     if (tp->member.para.pCell) {
-      dxStartIndent += ME_GetTableRowEnd(tp)->member.para.pFmt->dxOffset;
+      dxStartIndent += ME_GetTableRowEnd(tp)->member.para.fmt.dxOffset;
     }
+    wc.nLeftMargin = ME_twips2pointsX(c, dxStartIndent + pFmt->dxOffset);
     wc.nFirstMargin = ME_twips2pointsX(c, dxStartIndent);
-    wc.nLeftMargin = wc.nFirstMargin + ME_twips2pointsX(c, pFmt->dxOffset);
+    if (pFmt->wNumbering)
+    {
+        wc.nParaNumOffset = wc.nFirstMargin;
+        dxStartIndent = max( ME_twips2pointsX(c, pFmt->wNumberingTab),
+                             tp->member.para.para_num.width );
+        wc.nFirstMargin += dxStartIndent;
+    }
     wc.nRightMargin = ME_twips2pointsX(c, pFmt->dxRightIndent);
+
+    if (wc.nFirstMargin < 0)
+        wc.nFirstMargin = 0;
+    if (wc.nLeftMargin < 0)
+        wc.nLeftMargin = 0;
   }
   if (c->editor->bEmulateVersion10 && /* v1.0 - 3.0 */
       pFmt->dwMask & PFM_TABLE && pFmt->wEffects & PFE_TABLE)
@@ -893,7 +936,7 @@ static void ME_WrapTextParagraph(ME_Context *c, ME_DisplayItem *tp) {
   if (!(pFmt->dwMask & PFM_TABLE && pFmt->wEffects & PFE_TABLE) &&
       pFmt->dwMask & PFM_BORDER)
   {
-    border = ME_GetParaBorderWidth(c, tp->member.para.pFmt->wBorders);
+    border = ME_GetParaBorderWidth(c, tp->member.para.fmt.wBorders);
     if (pFmt->wBorders & 1) {
       wc.nFirstMargin += border;
       wc.nLeftMargin += border;
@@ -920,7 +963,7 @@ static void ME_WrapTextParagraph(ME_Context *c, ME_DisplayItem *tp) {
   if (!(pFmt->dwMask & PFM_TABLE && pFmt->wEffects & PFE_TABLE) &&
       (pFmt->dwMask & PFM_BORDER) && (pFmt->wBorders & 8))
     wc.pt.y += border;
-  if (tp->member.para.pFmt->dwMask & PFM_SPACEAFTER)
+  if (tp->member.para.fmt.dwMask & PFM_SPACEAFTER)
     wc.pt.y += ME_twips2pointsY(c, pFmt->dySpaceAfter);
 
   tp->member.para.nFlags &= ~MEPF_REWRAP;
@@ -983,9 +1026,9 @@ BOOL ME_WrapMarkedParagraphs(ME_TextEditor *editor)
         }
         c.pt.y += borderWidth;
       }
-      if (endRowPara->member.para.pFmt->dxStartIndent > 0)
+      if (endRowPara->member.para.fmt.dxStartIndent > 0)
       {
-        int dxStartIndent = endRowPara->member.para.pFmt->dxStartIndent;
+        int dxStartIndent = endRowPara->member.para.fmt.dxStartIndent;
         cell = ME_FindItemFwd(item, diCell);
         cell->member.cell.pt.x += ME_twips2pointsX(&c, dxStartIndent);
         c.pt.x = cell->member.cell.pt.x;

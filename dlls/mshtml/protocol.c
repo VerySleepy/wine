@@ -575,7 +575,7 @@ static ULONG WINAPI ResProtocol_AddRef(IInternetProtocol *iface)
 
 static ULONG WINAPI ResProtocol_Release(IInternetProtocol *iface)
 {
-    ResProtocol *This = (ResProtocol*)iface;
+    ResProtocol *This = ResProtocol_from_IInternetProtocol(iface);
     IUnknown *pUnkOuter = This->pUnkOuter;
     ULONG ref = InterlockedDecrement(&This->ref);
 
@@ -643,7 +643,7 @@ static HRESULT WINAPI ResProtocol_Start(IInternetProtocol *iface, LPCWSTR szUrl,
         *url_file++ = 0;
     }else {
         url_file = res_type;
-        res_type = MAKEINTRESOURCEW(RT_HTML);
+        res_type = (LPWSTR)RT_HTML;
     }
 
     /* Ignore query and hash parts. */

@@ -28,7 +28,6 @@
 #define NOIMAGE
 #define NOTAPE
 
-#define NONAMELESSUNION
 #include <windows.h>
 #include <commdlg.h>
 
@@ -39,6 +38,7 @@
 #include <locale.h>
 #include <time.h>
 
+#include <shlwapi.h>
 #include <shellapi.h>   /* for ShellExecuteW() */
 #include <shlobj.h>
 

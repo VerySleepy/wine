@@ -164,7 +164,6 @@ static const tid_t HTMLDOMImplementation_iface_tids[] = {
 static dispex_static_data_t HTMLDOMImplementation_dispex = {
     NULL,
     IHTMLDOMImplementation_tid,
-    NULL,
     HTMLDOMImplementation_iface_tids
 };
 
@@ -329,7 +328,6 @@ static const tid_t OmHistory_iface_tids[] = {
 static dispex_static_data_t OmHistory_dispex = {
     NULL,
     DispHTMLHistory_tid,
-    NULL,
     OmHistory_iface_tids
 };
 
@@ -459,8 +457,11 @@ static HRESULT WINAPI HTMLPluginsCollection_get_length(IHTMLPluginsCollection *i
 static HRESULT WINAPI HTMLPluginsCollection_refresh(IHTMLPluginsCollection *iface, VARIANT_BOOL reload)
 {
     HTMLPluginsCollection *This = impl_from_IHTMLPluginsCollection(iface);
-    FIXME("(%p)->(%x)\n", This, reload);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%x)\n", This, reload);
+
+    /* Nothing to do here. */
+    return S_OK;
 }
 
 static const IHTMLPluginsCollectionVtbl HTMLPluginsCollectionVtbl = {
@@ -482,7 +483,6 @@ static const tid_t HTMLPluginsCollection_iface_tids[] = {
 static dispex_static_data_t HTMLPluginsCollection_dispex = {
     NULL,
     DispCPlugins_tid,
-    NULL,
     HTMLPluginsCollection_iface_tids
 };
 
@@ -627,7 +627,6 @@ static const tid_t HTMLMimeTypesCollection_iface_tids[] = {
 static dispex_static_data_t HTMLMimeTypesCollection_dispex = {
     NULL,
     IHTMLMimeTypesCollection_tid,
-    NULL,
     HTMLMimeTypesCollection_iface_tids
 };
 
@@ -1072,7 +1071,6 @@ static const tid_t OmNavigator_iface_tids[] = {
 static dispex_static_data_t OmNavigator_dispex = {
     NULL,
     DispHTMLNavigator_tid,
-    NULL,
     OmNavigator_iface_tids
 };
 

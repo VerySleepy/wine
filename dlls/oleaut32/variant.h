@@ -17,8 +17,7 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
+
 #include "windef.h"
 #include "winerror.h"
 #include "objbase.h"
@@ -115,7 +114,7 @@ typedef struct tagVARIANT_NUMBER_CHARS
   WCHAR cCurrencyDigitSeparator;
 } VARIANT_NUMBER_CHARS;
 
-unsigned int get_type_size(ULONG*, VARTYPE);
+unsigned int get_type_size(ULONG*, VARTYPE) DECLSPEC_HIDDEN;
 BOOL VARIANT_GetLocalisedText(LANGID, DWORD, WCHAR *) DECLSPEC_HIDDEN;
 HRESULT VARIANT_ClearInd(VARIANTARG *) DECLSPEC_HIDDEN;
 BOOL get_date_format(LCID, DWORD, const SYSTEMTIME *,

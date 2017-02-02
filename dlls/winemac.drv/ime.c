@@ -178,11 +178,11 @@ static HIMCC updateCompStr(HIMCC old, LPCWSTR compstr, DWORD len, DWORD *flags)
     {
         needed_size += lpcs->dwCompReadAttrLen;
         needed_size += lpcs->dwCompReadClauseLen;
-        needed_size += lpcs->dwCompReadStrLen * sizeof(DWORD);
+        needed_size += lpcs->dwCompReadStrLen * sizeof(WCHAR);
         needed_size += lpcs->dwResultReadClauseLen;
-        needed_size += lpcs->dwResultReadStrLen * sizeof(DWORD);
+        needed_size += lpcs->dwResultReadStrLen * sizeof(WCHAR);
         needed_size += lpcs->dwResultClauseLen;
-        needed_size += lpcs->dwResultStrLen * sizeof(DWORD);
+        needed_size += lpcs->dwResultStrLen * sizeof(WCHAR);
         needed_size += lpcs->dwPrivateSize;
     }
     rc = ImmCreateIMCC(needed_size);
@@ -271,6 +271,8 @@ static HIMCC updateCompStr(HIMCC old, LPCWSTR compstr, DWORD len, DWORD *flags)
         *(DWORD*)&newdata[current_offset] = len;
         current_offset += sizeof(DWORD);
     }
+    else
+        new_one->dwCompClauseLen = 0;
 
     /* CompStr */
     new_one->dwCompStrLen = len;
@@ -324,12 +326,12 @@ static HIMCC updateResultStr(HIMCC old, LPWSTR resultstr, DWORD len)
     {
         needed_size += lpcs->dwCompReadAttrLen;
         needed_size += lpcs->dwCompReadClauseLen;
-        needed_size += lpcs->dwCompReadStrLen * sizeof(DWORD);
+        needed_size += lpcs->dwCompReadStrLen * sizeof(WCHAR);
         needed_size += lpcs->dwCompAttrLen;
         needed_size += lpcs->dwCompClauseLen;
-        needed_size += lpcs->dwCompStrLen * sizeof(DWORD);
+        needed_size += lpcs->dwCompStrLen * sizeof(WCHAR);
         needed_size += lpcs->dwResultReadClauseLen;
-        needed_size += lpcs->dwResultReadStrLen * sizeof(DWORD);
+        needed_size += lpcs->dwResultReadStrLen * sizeof(WCHAR);
         needed_size += lpcs->dwPrivateSize;
     }
     rc = ImmCreateIMCC(needed_size);
@@ -411,6 +413,8 @@ static HIMCC updateResultStr(HIMCC old, LPWSTR resultstr, DWORD len)
         *(DWORD*)&newdata[current_offset] = len;
         current_offset += sizeof(DWORD);
     }
+    else
+        new_one->dwResultClauseLen = 0;
 
     /* ResultStr */
     new_one->dwResultStrLen = len;
@@ -690,7 +694,7 @@ UINT WINAPI ImeToAsciiEx(UINT uVKey, UINT uScanCode, const LPBYTE lpbKeyState,
     LPIMEPRIVATE myPrivate;
     HWND hwndDefault;
     UINT repeat;
-    INT rc;
+    int done = 0;
 
     TRACE("uVKey 0x%04x uScanCode 0x%04x fuState %u hIMC %p\n", uVKey, uScanCode, fuState, hIMC);
 
@@ -717,9 +721,12 @@ UINT WINAPI ImeToAsciiEx(UINT uVKey, UINT uScanCode, const LPBYTE lpbKeyState,
     UnlockRealIMC(hIMC);
 
     TRACE("Processing Mac 0x%04x\n", vkey);
-    rc = macdrv_process_text_input(uVKey, uScanCode, repeat, lpbKeyState, hIMC);
+    macdrv_process_text_input(uVKey, uScanCode, repeat, lpbKeyState, hIMC, &done);
 
-    if (!rc)
+    while (!done)
+        MsgWaitForMultipleObjectsEx(0, NULL, INFINITE, QS_POSTMESSAGE | QS_SENDMESSAGE, 0);
+
+    if (done < 0)
     {
         UINT msgs = 0;
         UINT msg = (uScanCode & 0x8000) ? WM_KEYUP : WM_KEYDOWN;
@@ -832,6 +839,7 @@ BOOL WINAPI NotifyIME(HIMC hIMC, DWORD dwAction, DWORD dwIndex, DWORD dwValue)
                         cpstr = (LPWSTR)&cdata[cs->dwCompStrOffset];
                         ImmUnlockIMCC(lpIMC->hCompStr);
                     }
+                    myPrivate = ImmLockIMCC(lpIMC->hPrivate);
                     if (cplen > 0)
                     {
                         WCHAR param = cpstr[0];
@@ -848,11 +856,13 @@ BOOL WINAPI NotifyIME(HIMC hIMC, DWORD dwAction, DWORD dwIndex, DWORD dwValue)
 
                         GenerateIMEMessage(hIMC, WM_IME_COMPOSITION, param,
                                            GCS_RESULTSTR | GCS_RESULTCLAUSE);
+
+                        GenerateIMEMessage(hIMC, WM_IME_ENDCOMPOSITION, 0, 0);
                     }
+                    else if (myPrivate->bInComposition)
+                        GenerateIMEMessage(hIMC, WM_IME_ENDCOMPOSITION, 0, 0);
 
-                    GenerateIMEMessage(hIMC, WM_IME_ENDCOMPOSITION, 0, 0);
 
-                    myPrivate = ImmLockIMCC(lpIMC->hPrivate);
                     myPrivate->bInComposition = FALSE;
                     ImmUnlockIMCC(lpIMC->hPrivate);
 
@@ -1480,6 +1490,15 @@ void macdrv_im_set_text(const macdrv_event *event)
 
     if (event->im_set_text.complete)
         IME_NotifyComplete(himc);
+}
+
+/***********************************************************************
+ *              macdrv_sent_text_input
+ */
+void macdrv_sent_text_input(const macdrv_event *event)
+{
+    TRACE("handled: %s\n", event->sent_text_input.handled ? "TRUE" : "FALSE");
+    *event->sent_text_input.done = event->sent_text_input.handled ? 1 : -1;
 }
 
 

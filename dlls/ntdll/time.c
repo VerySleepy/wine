@@ -42,8 +42,6 @@
 # include <mach/mach_time.h>
 #endif
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
 #include "windef.h"
@@ -54,7 +52,7 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(ntdll);
 
-static int init_tz_info(RTL_TIME_ZONE_INFORMATION *tzi);
+static int init_tz_info(RTL_DYNAMIC_TIME_ZONE_INFORMATION *tzi);
 
 static RTL_CRITICAL_SECTION TIME_tz_section;
 static RTL_CRITICAL_SECTION_DEBUG critsect_debug =
@@ -272,7 +270,7 @@ static LONG TIME_GetBias(void)
     RtlEnterCriticalSection( &TIME_tz_section );
     if (utc != last_utc)
     {
-        RTL_TIME_ZONE_INFORMATION tzi;
+        RTL_DYNAMIC_TIME_ZONE_INFORMATION tzi;
         int is_dst = init_tz_info( &tzi );
 
 	last_utc = utc;
@@ -555,7 +553,7 @@ static BOOL match_tz_date(const RTL_SYSTEM_TIME *st, const RTL_SYSTEM_TIME *reg_
     return TRUE;
 }
 
-static BOOL match_tz_info(const RTL_TIME_ZONE_INFORMATION *tzi, const RTL_TIME_ZONE_INFORMATION *reg_tzi)
+static BOOL match_tz_info(const RTL_DYNAMIC_TIME_ZONE_INFORMATION *tzi, const RTL_DYNAMIC_TIME_ZONE_INFORMATION *reg_tzi)
 {
     if (tzi->Bias == reg_tzi->Bias &&
         match_tz_date(&tzi->StandardDate, &reg_tzi->StandardDate) &&
@@ -586,7 +584,7 @@ static BOOL reg_query_value(HKEY hkey, LPCWSTR name, DWORD type, void *data, DWO
     return TRUE;
 }
 
-static void find_reg_tz_info(RTL_TIME_ZONE_INFORMATION *tzi)
+static void find_reg_tz_info(RTL_DYNAMIC_TIME_ZONE_INFORMATION *tzi, int year)
 {
     static const WCHAR Time_ZonesW[] = { 'M','a','c','h','i','n','e','\\',
         'S','o','f','t','w','a','r','e','\\',
@@ -594,11 +592,23 @@ static void find_reg_tz_info(RTL_TIME_ZONE_INFORMATION *tzi)
         'W','i','n','d','o','w','s',' ','N','T','\\',
         'C','u','r','r','e','n','t','V','e','r','s','i','o','n','\\',
         'T','i','m','e',' ','Z','o','n','e','s',0 };
+    static const WCHAR Dynamic_DstW[] = { 'D','y','n','a','m','i','c',' ','D','S','T',0 };
+    static const WCHAR fmtW[] = { '%','d',0 };
     HANDLE hkey;
     ULONG idx;
-    OBJECT_ATTRIBUTES attr;
-    UNICODE_STRING nameW;
-    WCHAR buf[128];
+    OBJECT_ATTRIBUTES attr, attrDynamic;
+    UNICODE_STRING nameW, nameDynamicW;
+    WCHAR buf[128], yearW[16];
+
+    sprintfW(yearW, fmtW, year);
+
+    attrDynamic.Length = sizeof(attrDynamic);
+    attrDynamic.RootDirectory = 0; /* will be replaced later */
+    attrDynamic.ObjectName = &nameDynamicW;
+    attrDynamic.Attributes = 0;
+    attrDynamic.SecurityDescriptor = NULL;
+    attrDynamic.SecurityQualityOfService = NULL;
+    RtlInitUnicodeString(&nameDynamicW, Dynamic_DstW);
 
     attr.Length = sizeof(attr);
     attr.RootDirectory = 0;
@@ -623,8 +633,10 @@ static void find_reg_tz_info(RTL_TIME_ZONE_INFORMATION *tzi)
         static const WCHAR stdW[] = { 'S','t','d',0 };
         static const WCHAR dltW[] = { 'D','l','t',0 };
         static const WCHAR tziW[] = { 'T','Z','I',0 };
-        RTL_TIME_ZONE_INFORMATION reg_tzi;
-        HANDLE hSubkey;
+        RTL_DYNAMIC_TIME_ZONE_INFORMATION reg_tzi;
+        HANDLE hSubkey, hSubkeyDynamicDST;
+        BOOL is_dynamic = FALSE;
+
         struct tz_reg_data
         {
             LONG bias;
@@ -656,7 +668,19 @@ static void find_reg_tz_info(RTL_TIME_ZONE_INFORMATION *tzi)
 
         get_value(hSubkey, stdW, REG_SZ, reg_tzi.StandardName, sizeof(reg_tzi.StandardName));
         get_value(hSubkey, dltW, REG_SZ, reg_tzi.DaylightName, sizeof(reg_tzi.DaylightName));
-        get_value(hSubkey, tziW, REG_BINARY, &tz_data, sizeof(tz_data));
+        memcpy(reg_tzi.TimeZoneKeyName, nameW.Buffer, nameW.Length);
+        reg_tzi.TimeZoneKeyName[nameW.Length/sizeof(WCHAR)] = 0;
+
+        /* Check for Dynamic DST entry first */
+        attrDynamic.RootDirectory = hSubkey;
+        if (!NtOpenKey(&hSubkeyDynamicDST, KEY_READ, &attrDynamic))
+        {
+            is_dynamic = reg_query_value(hSubkeyDynamicDST, yearW, REG_BINARY, &tz_data, sizeof(tz_data));
+            NtClose(hSubkeyDynamicDST);
+        }
+
+        if (!is_dynamic)
+            get_value(hSubkey, tziW, REG_BINARY, &tz_data, sizeof(tz_data));
 
 #undef get_value
 
@@ -726,9 +750,9 @@ static time_t find_dst_change(unsigned long min, unsigned long max, int *is_dst)
     return min;
 }
 
-static int init_tz_info(RTL_TIME_ZONE_INFORMATION *tzi)
+static int init_tz_info(RTL_DYNAMIC_TIME_ZONE_INFORMATION *tzi)
 {
-    static RTL_TIME_ZONE_INFORMATION cached_tzi;
+    static RTL_DYNAMIC_TIME_ZONE_INFORMATION cached_tzi;
     static int current_year = -1, current_bias = 65535;
     struct tm *tm;
     time_t year_start, year_end, tmp, dlt = 0, std = 0;
@@ -832,7 +856,7 @@ static int init_tz_info(RTL_TIME_ZONE_INFORMATION *tzi)
             tzi->StandardBias);
     }
 
-    find_reg_tz_info(tzi);
+    find_reg_tz_info(tzi, current_year + 1900);
     cached_tzi = *tzi;
 
     RtlLeaveCriticalSection( &TIME_tz_section );
@@ -852,7 +876,28 @@ static int init_tz_info(RTL_TIME_ZONE_INFORMATION *tzi)
  *   Success: STATUS_SUCCESS.
  *   Failure: An NTSTATUS error code indicating the problem.
  */
-NTSTATUS WINAPI RtlQueryTimeZoneInformation(RTL_TIME_ZONE_INFORMATION *tzinfo)
+NTSTATUS WINAPI RtlQueryTimeZoneInformation(RTL_TIME_ZONE_INFORMATION *ret)
+{
+    RTL_DYNAMIC_TIME_ZONE_INFORMATION tzinfo;
+
+    init_tz_info( &tzinfo );
+    memcpy( ret, &tzinfo, sizeof(*ret) );
+    return STATUS_SUCCESS;
+}
+
+/***********************************************************************
+ *      RtlQueryDynamicTimeZoneInformation [NTDLL.@]
+ *
+ * Get information about the current timezone.
+ *
+ * PARAMS
+ *   tzinfo [O] Destination for the retrieved timezone info.
+ *
+ * RETURNS
+ *   Success: STATUS_SUCCESS.
+ *   Failure: An NTSTATUS error code indicating the problem.
+ */
+NTSTATUS WINAPI RtlQueryDynamicTimeZoneInformation(RTL_DYNAMIC_TIME_ZONE_INFORMATION *tzinfo)
 {
     init_tz_info( tzinfo );
 

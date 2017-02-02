@@ -131,6 +131,7 @@ void* CDECL MSVCRT_operator_new(MSVCRT_size_t size)
 {
   void *retval;
   int freed;
+  MSVCRT_new_handler_func handler;
 
   do
   {
@@ -141,12 +142,11 @@ void* CDECL MSVCRT_operator_new(MSVCRT_size_t size)
       return retval;
     }
 
-    LOCK_HEAP;
-    if(MSVCRT_new_handler)
-      freed = (*MSVCRT_new_handler)(size);
+    handler = MSVCRT_new_handler;
+    if(handler)
+      freed = (*handler)(size);
     else
       freed = 0;
-    UNLOCK_HEAP;
   } while(freed);
 
   TRACE("(%ld) out of memory\n", size);
@@ -234,9 +234,11 @@ int CDECL MSVCRT__set_new_mode(int mode)
  */
 int CDECL _callnewh(MSVCRT_size_t size)
 {
-  if(MSVCRT_new_handler)
-    (*MSVCRT_new_handler)(size);
-  return 0;
+  int ret = 0;
+  MSVCRT_new_handler_func handler = MSVCRT_new_handler;
+  if(handler)
+    ret = (*handler)(size) ? 1 : 0;
+  return ret;
 }
 
 /*********************************************************************
@@ -390,15 +392,39 @@ size_t CDECL _aligned_msize(void *p, MSVCRT_size_t alignment, MSVCRT_size_t offs
 /*********************************************************************
  *		calloc (MSVCRT.@)
  */
-void* CDECL MSVCRT_calloc(MSVCRT_size_t size, MSVCRT_size_t count)
+void* CDECL MSVCRT_calloc(MSVCRT_size_t count, MSVCRT_size_t size)
 {
-  return msvcrt_heap_alloc(HEAP_ZERO_MEMORY, size*count);
+  MSVCRT_size_t bytes = count*size;
+
+  if (size && bytes / size != count)
+  {
+    *MSVCRT__errno() = MSVCRT_ENOMEM;
+    return NULL;
+  }
+
+  return msvcrt_heap_alloc(HEAP_ZERO_MEMORY, bytes);
+}
+
+/*********************************************************************
+ *		_calloc_base (UCRTBASE.@)
+ */
+void* CDECL _calloc_base(MSVCRT_size_t count, MSVCRT_size_t size)
+{
+  return MSVCRT_calloc(count, size);
 }
 
 /*********************************************************************
  *		free (MSVCRT.@)
  */
 void CDECL MSVCRT_free(void* ptr)
+{
+  msvcrt_heap_free(ptr);
+}
+
+/*********************************************************************
+ *		_free_base (UCRTBASE.@)
+ */
+void CDECL _free_base(void* ptr)
 {
   msvcrt_heap_free(ptr);
 }
@@ -415,6 +441,14 @@ void* CDECL MSVCRT_malloc(MSVCRT_size_t size)
 }
 
 /*********************************************************************
+ *                  _malloc_base (UCRTBASE.@)
+ */
+void* CDECL _malloc_base(MSVCRT_size_t size)
+{
+  return MSVCRT_malloc(size);
+}
+
+/*********************************************************************
  *		realloc (MSVCRT.@)
  */
 void* CDECL MSVCRT_realloc(void* ptr, MSVCRT_size_t size)
@@ -423,6 +457,14 @@ void* CDECL MSVCRT_realloc(void* ptr, MSVCRT_size_t size)
   if (size) return msvcrt_heap_realloc(0, ptr, size);
   MSVCRT_free(ptr);
   return NULL;
+}
+
+/*********************************************************************
+ *		_realloc_base (UCRTBASE.@)
+ */
+void* CDECL _realloc_base(void* ptr, MSVCRT_size_t size)
+{
+  return MSVCRT_realloc(ptr, size);
 }
 
 /*********************************************************************

@@ -192,7 +192,8 @@ static BOOL	start_debugger(PEXCEPTION_POINTERS epointers, HANDLE hEvent)
     BOOL		ret = FALSE;
     char 		buffer[256];
 
-    static const WCHAR AeDebugW[] = {'M','a','c','h','i','n','e','\\',
+    static const WCHAR AeDebugW[] = {'\\','R','e','g','i','s','t','r','y','\\',
+                                     'M','a','c','h','i','n','e','\\',
                                      'S','o','f','t','w','a','r','e','\\',
                                      'M','i','c','r','o','s','o','f','t','\\',
                                      'W','i','n','d','o','w','s',' ','N','T','\\',
@@ -401,6 +402,7 @@ static BOOL start_debugger_atomic(PEXCEPTION_POINTERS epointers)
  */
 static inline BOOL check_resource_write( void *addr )
 {
+    DWORD old_prot;
     void *rsrc;
     DWORD size;
     MEMORY_BASIC_INFORMATION info;
@@ -412,7 +414,7 @@ static inline BOOL check_resource_write( void *addr )
         return FALSE;
     if (addr < rsrc || (char *)addr >= (char *)rsrc + size) return FALSE;
     TRACE( "Broken app is writing to the resource data, enabling work-around\n" );
-    VirtualProtect( rsrc, size, PAGE_READWRITE, NULL );
+    VirtualProtect( rsrc, size, PAGE_READWRITE, &old_prot );
     return TRUE;
 }
 

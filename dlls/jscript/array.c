@@ -20,6 +20,7 @@
 #include "wine/port.h"
 
 #include <math.h>
+#include <assert.h>
 
 #include "jscript.h"
 
@@ -64,6 +65,12 @@ static inline ArrayInstance *array_this(vdisp_t *jsthis)
     return is_vclass(jsthis, JSCLASS_ARRAY) ? array_from_vdisp(jsthis) : NULL;
 }
 
+unsigned array_get_length(jsdisp_t *array)
+{
+    assert(is_class(array, JSCLASS_ARRAY));
+    return array_from_jsdisp(array)->length;
+}
+
 static HRESULT get_length(script_ctx_t *ctx, vdisp_t *vdisp, jsdisp_t **jsthis, DWORD *ret)
 {
     ArrayInstance *array;
@@ -96,7 +103,7 @@ static HRESULT get_length(script_ctx_t *ctx, vdisp_t *vdisp, jsdisp_t **jsthis, 
 static HRESULT set_length(jsdisp_t *obj, DWORD length)
 {
     if(is_class(obj, JSCLASS_ARRAY)) {
-        ((ArrayInstance*)obj)->length = length;
+        array_from_jsdisp(obj)->length = length;
         return S_OK;
     }
 
@@ -181,10 +188,10 @@ static HRESULT concat_obj(jsdisp_t *array, IDispatch *obj, DWORD *len)
     jsdisp_t *jsobj;
     HRESULT hres;
 
-    jsobj = iface_to_jsdisp((IUnknown*)obj);
+    jsobj = iface_to_jsdisp(obj);
     if(jsobj) {
         if(is_class(jsobj, JSCLASS_ARRAY)) {
-            hres = concat_array(array, (ArrayInstance*)jsobj, len);
+            hres = concat_array(array, array_from_jsdisp(jsobj), len);
             jsdisp_release(jsobj);
             return hres;
         }
@@ -231,9 +238,10 @@ static HRESULT Array_concat(script_ctx_t *ctx, vdisp_t *jsthis, WORD flags, unsi
     return S_OK;
 }
 
-static HRESULT array_join(script_ctx_t *ctx, jsdisp_t *array, DWORD length, const WCHAR *sep, jsval_t *r)
+static HRESULT array_join(script_ctx_t *ctx, jsdisp_t *array, DWORD length, const WCHAR *sep,
+        unsigned seplen, jsval_t *r)
 {
-    jsstr_t **str_tab, *ret;
+    jsstr_t **str_tab, *ret = NULL;
     jsval_t val;
     DWORD i;
     HRESULT hres = E_FAIL;
@@ -265,9 +273,7 @@ static HRESULT array_join(script_ctx_t *ctx, jsdisp_t *array, DWORD length, cons
     }
 
     if(SUCCEEDED(hres)) {
-        DWORD seplen = 0, len = 0;
-
-        seplen = strlenW(sep);
+        DWORD len = 0;
 
         if(str_tab[0])
             len = jsstr_length(str_tab[0]);
@@ -284,8 +290,8 @@ static HRESULT array_join(script_ctx_t *ctx, jsdisp_t *array, DWORD length, cons
         if(SUCCEEDED(hres)) {
             WCHAR *ptr = NULL;
 
-            ptr = jsstr_alloc_buf(len, &ret);
-            if(ptr) {
+            ret = jsstr_alloc_buf(len, &ptr);
+            if(ret) {
                 if(str_tab[0])
                     ptr += jsstr_flush(str_tab[0], ptr);
 
@@ -343,11 +349,11 @@ static HRESULT Array_join(script_ctx_t *ctx, vdisp_t *vthis, WORD flags, unsigne
         if(FAILED(hres))
             return hres;
 
-        hres = array_join(ctx, jsthis, length, sep, r);
+        hres = array_join(ctx, jsthis, length, sep, jsstr_length(sep_str), r);
 
         jsstr_release(sep_str);
     }else {
-        hres = array_join(ctx, jsthis, length, default_separatorW, r);
+        hres = array_join(ctx, jsthis, length, default_separatorW, strlenW(default_separatorW), r);
     }
 
     return hres;
@@ -688,7 +694,7 @@ static HRESULT Array_sort(script_ctx_t *ctx, vdisp_t *vthis, WORD flags, unsigne
             return E_FAIL;
         }
 
-        cmp_func = iface_to_jsdisp((IUnknown*)get_object(argv[0]));
+        cmp_func = iface_to_jsdisp(get_object(argv[0]));
         if(!cmp_func || !is_class(cmp_func, JSCLASS_FUNCTION)) {
             WARN("cmp_func is not a function\n");
             if(cmp_func)
@@ -928,7 +934,8 @@ static HRESULT Array_toString(script_ctx_t *ctx, vdisp_t *jsthis, WORD flags, un
     if(!array)
         return throw_type_error(ctx, JS_E_ARRAY_EXPECTED, NULL);
 
-    return array_join(ctx, &array->dispex, array->length, default_separatorW, r);
+    return array_join(ctx, &array->dispex, array->length, default_separatorW,
+                      strlenW(default_separatorW), r);
 }
 
 static HRESULT Array_toLocaleString(script_ctx_t *ctx, vdisp_t *vthis, WORD flags, unsigned argc, jsval_t *argv,
@@ -1004,7 +1011,8 @@ static HRESULT Array_get_value(script_ctx_t *ctx, jsdisp_t *jsthis, jsval_t *r)
 
     TRACE("\n");
 
-    return array_join(ctx, &array->dispex, array->length, default_separatorW, r);
+    return array_join(ctx, &array->dispex, array->length, default_separatorW,
+                      strlenW(default_separatorW), r);
 }
 
 static void Array_destructor(jsdisp_t *dispex)
@@ -1014,7 +1022,7 @@ static void Array_destructor(jsdisp_t *dispex)
 
 static void Array_on_put(jsdisp_t *dispex, const WCHAR *name)
 {
-    ArrayInstance *array = (ArrayInstance*)dispex;
+    ArrayInstance *array = array_from_jsdisp(dispex);
     const WCHAR *ptr = name;
     DWORD id = 0;
 

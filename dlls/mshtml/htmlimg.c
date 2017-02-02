@@ -70,14 +70,14 @@ static ULONG WINAPI HTMLImgElement_Release(IHTMLImgElement *iface)
 static HRESULT WINAPI HTMLImgElement_GetTypeInfoCount(IHTMLImgElement *iface, UINT *pctinfo)
 {
     HTMLImgElement *This = impl_from_IHTMLImgElement(iface);
-    return IDispatchEx_GetTypeInfoCount(&This->element.node.dispex.IDispatchEx_iface, pctinfo);
+    return IDispatchEx_GetTypeInfoCount(&This->element.node.event_target.dispex.IDispatchEx_iface, pctinfo);
 }
 
 static HRESULT WINAPI HTMLImgElement_GetTypeInfo(IHTMLImgElement *iface, UINT iTInfo,
                                               LCID lcid, ITypeInfo **ppTInfo)
 {
     HTMLImgElement *This = impl_from_IHTMLImgElement(iface);
-    return IDispatchEx_GetTypeInfo(&This->element.node.dispex.IDispatchEx_iface, iTInfo, lcid,
+    return IDispatchEx_GetTypeInfo(&This->element.node.event_target.dispex.IDispatchEx_iface, iTInfo, lcid,
             ppTInfo);
 }
 
@@ -86,7 +86,7 @@ static HRESULT WINAPI HTMLImgElement_GetIDsOfNames(IHTMLImgElement *iface, REFII
                                                 LCID lcid, DISPID *rgDispId)
 {
     HTMLImgElement *This = impl_from_IHTMLImgElement(iface);
-    return IDispatchEx_GetIDsOfNames(&This->element.node.dispex.IDispatchEx_iface, riid, rgszNames,
+    return IDispatchEx_GetIDsOfNames(&This->element.node.event_target.dispex.IDispatchEx_iface, riid, rgszNames,
             cNames, lcid, rgDispId);
 }
 
@@ -95,7 +95,7 @@ static HRESULT WINAPI HTMLImgElement_Invoke(IHTMLImgElement *iface, DISPID dispI
                             VARIANT *pVarResult, EXCEPINFO *pExcepInfo, UINT *puArgErr)
 {
     HTMLImgElement *This = impl_from_IHTMLImgElement(iface);
-    return IDispatchEx_Invoke(&This->element.node.dispex.IDispatchEx_iface, dispIdMember, riid,
+    return IDispatchEx_Invoke(&This->element.node.event_target.dispex.IDispatchEx_iface, dispIdMember, riid,
             lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
 }
 
@@ -291,7 +291,7 @@ static HRESULT WINAPI HTMLImgElement_put_src(IHTMLImgElement *iface, BSTR v)
     if(NS_FAILED(nsres))
         ERR("SetSrc failed: %08x\n", nsres);
 
-    return NS_OK;
+    return S_OK;
 }
 
 static HRESULT WINAPI HTMLImgElement_get_src(IHTMLImgElement *iface, BSTR *p)
@@ -734,8 +734,8 @@ static const tid_t HTMLImgElement_iface_tids[] = {
 static dispex_static_data_t HTMLImgElement_dispex = {
     NULL,
     DispHTMLImg_tid,
-    NULL,
-    HTMLImgElement_iface_tids
+    HTMLImgElement_iface_tids,
+    HTMLElement_init_dispex_info
 };
 
 HRESULT HTMLImgElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem, HTMLElement **elem)
@@ -980,7 +980,6 @@ static const dispex_static_data_vtbl_t HTMLImageElementFactory_dispex_vtbl = {
 static dispex_static_data_t HTMLImageElementFactory_dispex = {
     &HTMLImageElementFactory_dispex_vtbl,
     IHTMLImageElementFactory_tid,
-    NULL,
     HTMLImageElementFactory_iface_tids
 };
 

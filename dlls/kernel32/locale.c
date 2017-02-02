@@ -62,13 +62,13 @@ static const union cptable *mac_cptable;
 static const union cptable *unix_cptable;  /* NULL if UTF8 */
 
 static const WCHAR szLocaleKeyName[] = {
-    'M','a','c','h','i','n','e','\\','S','y','s','t','e','m','\\',
+    '\\','R','e','g','i','s','t','r','y','\\','M','a','c','h','i','n','e','\\','S','y','s','t','e','m','\\',
     'C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t','\\',
     'C','o','n','t','r','o','l','\\','N','l','s','\\','L','o','c','a','l','e',0
 };
 
 static const WCHAR szLangGroupsKeyName[] = {
-    'M','a','c','h','i','n','e','\\','S','y','s','t','e','m','\\',
+    '\\','R','e','g','i','s','t','r','y','\\','M','a','c','h','i','n','e','\\','S','y','s','t','e','m','\\',
     'C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t','\\',
     'C','o','n','t','r','o','l','\\','N','l','s','\\',
     'L','a','n','g','u','a','g','e',' ','G','r','o','u','p','s',0
@@ -452,6 +452,13 @@ static void parse_locale_name( const WCHAR *str, struct locale_name *name )
     name->codepage = 0;
     name->win_name[0] = 0;
     lstrcpynW( name->lang, str, sizeof(name->lang)/sizeof(WCHAR) );
+
+    if (!*name->lang)
+    {
+        name->lcid = LOCALE_INVARIANT;
+        name->matches = 4;
+        return;
+    }
 
     if (!(p = strpbrkW( name->lang, sepW )))
     {
@@ -868,7 +875,7 @@ void LOCALE_InitRegistry(void)
     if (locale_update_registry( hkey, lc_ctypeW, lcid_LC_CTYPE, NULL, 0 ))
     {
         static const WCHAR codepageW[] =
-            {'M','a','c','h','i','n','e','\\','S','y','s','t','e','m','\\',
+            {'\\','R','e','g','i','s','t','r','y','\\','M','a','c','h','i','n','e','\\','S','y','s','t','e','m','\\',
              'C','u','r','r','e','n','t','C','o','n','t','r','o','l','S','e','t','\\',
              'C','o','n','t','r','o','l','\\','N','l','s','\\','C','o','d','e','p','a','g','e',0};
 
@@ -904,6 +911,139 @@ void LOCALE_InitRegistry(void)
 }
 
 
+#ifdef __APPLE__
+/***********************************************************************
+ *           get_mac_locale
+ *
+ * Return a locale identifier string reflecting the Mac locale, in a form
+ * that parse_locale_name() will understand.  So, strip out unusual
+ * things like script, variant, etc.  Or, rather, just construct it as
+ * <lang>[_<country>].UTF-8.
+ */
+static const char* get_mac_locale(void)
+{
+    static char mac_locale[50];
+
+    if (!mac_locale[0])
+    {
+        CFLocaleRef locale = CFLocaleCopyCurrent();
+        CFStringRef lang = CFLocaleGetValue( locale, kCFLocaleLanguageCode );
+        CFStringRef country = CFLocaleGetValue( locale, kCFLocaleCountryCode );
+        CFStringRef locale_string;
+
+        if (country)
+            locale_string = CFStringCreateWithFormat(NULL, NULL, CFSTR("%@_%@"), lang, country);
+        else
+            locale_string = CFStringCreateCopy(NULL, lang);
+
+        CFStringGetCString(locale_string, mac_locale, sizeof(mac_locale), kCFStringEncodingUTF8);
+        strcat(mac_locale, ".UTF-8");
+
+        CFRelease(locale);
+        CFRelease(locale_string);
+    }
+
+    return mac_locale;
+}
+
+
+/***********************************************************************
+ *           has_env
+ */
+static BOOL has_env(const char* name)
+{
+    const char* value = getenv( name );
+    return value && value[0];
+}
+#endif
+
+
+/***********************************************************************
+ *           get_locale
+ *
+ * Get the locale identifier for a given category.  On most platforms,
+ * this is just a thin wrapper around setlocale().  On OS X, though, it
+ * is common for the Mac locale settings to not be supported by the C
+ * library.  So, we sometimes override the result with the Mac locale.
+ */
+static const char* get_locale(int category, const char* category_name)
+{
+    const char* ret = setlocale(category, NULL);
+
+#ifdef __APPLE__
+    /* If LC_ALL is set, respect it as a user override.
+       If LC_* is set, respect it as a user override, except if it's LC_CTYPE
+       and equal to UTF-8.  That's because, when the Mac locale isn't supported
+       by the C library, Terminal.app sets LC_CTYPE=UTF-8 and doesn't set LANG.
+       parse_locale_name() doesn't handle that properly, so we override that
+       with the Mac locale (which uses UTF-8 for the charset, anyway).
+       Otherwise:
+       For LC_MESSAGES, we override the C library because the user language
+       setting is separate from the locale setting on which LANG was based.
+       If the C library didn't get anything better from LANG than C or POSIX,
+       override that.  That probably means the Mac locale isn't supported by
+       the C library. */
+    if (!has_env( "LC_ALL" ) &&
+        ((category == LC_CTYPE && !strcmp( ret, "UTF-8" )) ||
+         (!has_env( category_name ) &&
+          (category == LC_MESSAGES || !strcmp( ret, "C" ) || !strcmp( ret, "POSIX" )))))
+    {
+        const char* override = get_mac_locale();
+
+        if (category == LC_MESSAGES)
+        {
+            /* Retrieve the preferred language as chosen in System Preferences. */
+            static char messages_locale[50];
+
+            if (!messages_locale[0])
+            {
+                CFArrayRef preferred_langs = CFLocaleCopyPreferredLanguages();
+                if (preferred_langs && CFArrayGetCount( preferred_langs ))
+                {
+                    CFStringRef preferred_lang = CFArrayGetValueAtIndex( preferred_langs, 0 );
+                    CFDictionaryRef components = CFLocaleCreateComponentsFromLocaleIdentifier( NULL, preferred_lang );
+                    if (components)
+                    {
+                        CFStringRef lang = CFDictionaryGetValue( components, kCFLocaleLanguageCode );
+                        CFStringRef country = CFDictionaryGetValue( components, kCFLocaleCountryCode );
+                        CFLocaleRef locale = NULL;
+                        CFStringRef locale_string;
+
+                        if (!country)
+                        {
+                            locale = CFLocaleCopyCurrent();
+                            country = CFLocaleGetValue( locale, kCFLocaleCountryCode );
+                        }
+
+                        if (country)
+                            locale_string = CFStringCreateWithFormat( NULL, NULL, CFSTR("%@_%@"), lang, country );
+                        else
+                            locale_string = CFStringCreateCopy( NULL, lang );
+                        CFStringGetCString( locale_string, messages_locale, sizeof(messages_locale), kCFStringEncodingUTF8 );
+                        strcat( messages_locale, ".UTF-8" );
+
+                        CFRelease( locale_string );
+                        if (locale) CFRelease( locale );
+                        CFRelease( components );
+                    }
+                }
+                if (preferred_langs)
+                    CFRelease( preferred_langs );
+            }
+
+            if (messages_locale[0])
+                override = messages_locale;
+        }
+
+        TRACE( "%s is %s; overriding with %s\n", category_name, debugstr_a(ret), debugstr_a(override) );
+        ret = override;
+    }
+#endif
+
+    return ret;
+}
+
+
 /***********************************************************************
  *           setup_unix_locales
  */
@@ -911,10 +1051,10 @@ static UINT setup_unix_locales(void)
 {
     struct locale_name locale_name;
     WCHAR buffer[128], ctype_buff[128];
-    char *locale;
+    const char *locale;
     UINT unix_cp = 0;
 
-    if ((locale = setlocale( LC_CTYPE, NULL )))
+    if ((locale = get_locale( LC_CTYPE, "LC_CTYPE" )))
     {
         strcpynAtoW( ctype_buff, locale, sizeof(ctype_buff)/sizeof(WCHAR) );
         parse_locale_name( ctype_buff, &locale_name );
@@ -928,7 +1068,7 @@ static UINT setup_unix_locales(void)
            locale_name.lcid, locale_name.matches, debugstr_a(locale) );
 
 #define GET_UNIX_LOCALE(cat) do \
-    if ((locale = setlocale( cat, NULL ))) \
+    if ((locale = get_locale( cat, #cat ))) \
     { \
         strcpynAtoW( buffer, locale, sizeof(buffer)/sizeof(WCHAR) ); \
         if (!strcmpW( buffer, ctype_buff )) lcid_##cat = lcid_LC_CTYPE; \
@@ -1039,6 +1179,120 @@ INT WINAPI GetSystemDefaultLocaleName(LPWSTR localename, INT len)
 {
     LCID lcid = GetSystemDefaultLCID();
     return LCIDToLocaleName(lcid, localename, len, 0);
+}
+
+static BOOL get_dummy_preferred_ui_language( DWORD flags, ULONG *count, WCHAR *buffer, ULONG *size )
+{
+    LCTYPE type;
+    int lsize;
+
+    FIXME("(0x%x %p %p %p) returning a dummy value (current locale)\n", flags, count, buffer, size);
+
+    if (flags & MUI_LANGUAGE_ID)
+        type = LOCALE_ILANGUAGE;
+    else
+        type = LOCALE_SNAME;
+
+    lsize = GetLocaleInfoW(LOCALE_SYSTEM_DEFAULT, type, NULL, 0);
+    if (!lsize)
+    {
+        /* keep last error from callee */
+        return FALSE;
+    }
+    lsize++;
+    if (!*size)
+    {
+        *size = lsize;
+        *count = 1;
+        return TRUE;
+    }
+
+    if (lsize > *size)
+    {
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+
+    if (!GetLocaleInfoW(LOCALE_SYSTEM_DEFAULT, type, buffer, *size))
+    {
+        /* keep last error from callee */
+        return FALSE;
+    }
+
+    buffer[lsize-1] = 0;
+    *size = lsize;
+    *count = 1;
+    TRACE("returned variable content: %d, \"%s\", %d\n", *count, debugstr_w(buffer), *size);
+    return TRUE;
+
+}
+
+/***********************************************************************
+ *             GetSystemPreferredUILanguages (KERNEL32.@)
+ */
+BOOL WINAPI GetSystemPreferredUILanguages(DWORD flags, ULONG* count, WCHAR* buffer, ULONG* size)
+{
+    if (flags & ~(MUI_LANGUAGE_NAME | MUI_LANGUAGE_ID | MUI_MACHINE_LANGUAGE_SETTINGS))
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if ((flags & MUI_LANGUAGE_NAME) && (flags & MUI_LANGUAGE_ID))
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (*size && !buffer)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    return get_dummy_preferred_ui_language( flags, count, buffer, size );
+}
+
+/***********************************************************************
+ *              SetThreadPreferredUILanguages (KERNEL32.@)
+ */
+BOOL WINAPI SetThreadPreferredUILanguages( DWORD flags, PCZZWSTR buffer, PULONG count )
+{
+    FIXME( "%u, %p, %p\n", flags, buffer, count );
+    return TRUE;
+}
+
+/***********************************************************************
+ *              GetThreadPreferredUILanguages (KERNEL32.@)
+ */
+BOOL WINAPI GetThreadPreferredUILanguages( DWORD flags, ULONG *count, WCHAR *buf, ULONG *size )
+{
+    FIXME( "%08x, %p, %p %p\n", flags, count, buf, size );
+    return get_dummy_preferred_ui_language( flags, count, buf, size );
+}
+
+/******************************************************************************
+ *             GetUserPreferredUILanguages (KERNEL32.@)
+ */
+BOOL WINAPI GetUserPreferredUILanguages( DWORD flags, ULONG *count, WCHAR *buffer, ULONG *size )
+{
+    TRACE( "%u %p %p %p\n", flags, count, buffer, size );
+
+    if (flags & ~(MUI_LANGUAGE_NAME | MUI_LANGUAGE_ID))
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if ((flags & MUI_LANGUAGE_NAME) && (flags & MUI_LANGUAGE_ID))
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (*size && !buffer)
+    {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+
+    return get_dummy_preferred_ui_language( flags, count, buffer, size );
 }
 
 /***********************************************************************
@@ -1177,6 +1431,17 @@ static INT get_registry_locale_info( struct registry_value *registry_value, LPWS
 
         status = NtQueryValueKey( hkey, &nameW, KeyValuePartialInformation, info, size, &size );
 
+        /* try again with a bigger buffer when we have to return the correct size */
+        if (status == STATUS_BUFFER_OVERFLOW && !buffer && size > info_size)
+        {
+            KEY_VALUE_PARTIAL_INFORMATION *new_info;
+            if ((new_info = HeapReAlloc( GetProcessHeap(), 0, info, size )))
+            {
+                info = new_info;
+                status = NtQueryValueKey( hkey, &nameW, KeyValuePartialInformation, info, size, &size );
+            }
+        }
+
         NtClose( hkey );
 
         if (!status)
@@ -1207,8 +1472,6 @@ static INT get_registry_locale_info( struct registry_value *registry_value, LPWS
             if (status == STATUS_BUFFER_OVERFLOW && !buffer)
             {
                 ret = (size - info_size) / sizeof(WCHAR);
-                if (!ret || ((WCHAR *)&info->Data)[ret-1])
-                    ret++;
             }
             else if (status == STATUS_OBJECT_NAME_NOT_FOUND)
             {
@@ -1279,7 +1542,8 @@ INT WINAPI GetLocaleInfoA( LCID lcid, LCTYPE lctype, LPSTR buffer, INT len )
         SetLastError( ERROR_INVALID_PARAMETER );
         return 0;
     }
-    if (lctype & LOCALE_RETURN_GENITIVE_NAMES )
+    if (((lctype & ~LOCALE_LOCALEINFOFLAGSMASK) == LOCALE_SSHORTTIME) ||
+         (lctype & LOCALE_RETURN_GENITIVE_NAMES))
     {
         SetLastError( ERROR_INVALID_FLAGS );
         return 0;
@@ -1488,7 +1752,7 @@ INT WINAPI GetLocaleInfoEx(LPCWSTR locale, LCTYPE info, LPWSTR buffer, INT len)
     if (!lcid) return 0;
 
     /* special handling for neutral locale names */
-    if (info == LOCALE_SNAME && strlenW(locale) == 2)
+    if (info == LOCALE_SNAME && locale && strlenW(locale) == 2)
     {
         if (len && len < 3)
         {
@@ -2109,7 +2373,7 @@ INT WINAPI MultiByteToWideChar( UINT page, DWORD flags, LPCSTR src, INT srclen,
     const union cptable *table;
     int ret;
 
-    if (!src || !srclen || (!dst && dstlen))
+    if (!src || !srclen || (!dst && dstlen) || dstlen < 0)
     {
         SetLastError( ERROR_INVALID_PARAMETER );
         return 0;
@@ -2274,8 +2538,8 @@ static int utf7_wcstombs(const WCHAR *src, int srclen, char *dst, int dstlen)
 
             if (offset)
             {
-                /* Windows won't create a padded base64 character if there's not room for the - sign too
-                 * this is probably a bug in Windows */
+                /* Windows won't create a padded base64 character if there's no room for the - sign
+                 * as well ; this is probably a bug in Windows */
                 if (dstlen > 0 && dest_index + 1 >= dstlen)
                     return -1;
 
@@ -2325,7 +2589,7 @@ INT WINAPI WideCharToMultiByte( UINT page, DWORD flags, LPCWSTR src, INT srclen,
     const union cptable *table;
     int ret, used_tmp;
 
-    if (!src || !srclen || (!dst && dstlen))
+    if (!src || !srclen || (!dst && dstlen) || dstlen < 0)
     {
         SetLastError( ERROR_INVALID_PARAMETER );
         return 0;
@@ -2497,6 +2761,9 @@ LCID WINAPI ConvertDefaultLocale( LCID lcid )
 
     switch (lcid)
     {
+    case LOCALE_INVARIANT:
+        /* keep as-is */
+        break;
     case LOCALE_SYSTEM_DEFAULT:
         lcid = GetSystemDefaultLCID();
         break;
@@ -2547,6 +2814,9 @@ BOOL WINAPI IsValidLocale( LCID lcid, DWORD flags )
 BOOL WINAPI IsValidLocaleName( LPCWSTR locale )
 {
     struct locale_name locale_name;
+
+    if (!locale)
+        return FALSE;
 
     /* string parsing */
     parse_locale_name( locale, &locale_name );
@@ -2723,6 +2993,12 @@ BOOL WINAPI GetStringTypeW( DWORD type, LPCWSTR src, INT count, LPWORD chartype 
         C2_OTHERNEUTRAL        /* LRE, LRO, RLE, RLO, PDF */
     };
 
+    if (!src)
+    {
+        SetLastError( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+
     if (count == -1) count = strlenW(src) + 1;
     switch(type)
     {
@@ -2747,7 +3023,7 @@ BOOL WINAPI GetStringTypeW( DWORD type, LPCWSTR src, INT count, LPWORD chartype 
             if ((c>=0x30A0)&&(c<=0x30FF)) type3 |= C3_KATAKANA;
             if ((c>=0x3040)&&(c<=0x309F)) type3 |= C3_HIRAGANA;
             if ((c>=0x4E00)&&(c<=0x9FAF)) type3 |= C3_IDEOGRAPH;
-            if ((c>=0x0600)&&(c<=0x06FF)) type3 |= C3_KASHIDA;
+            if (c == 0x0640) type3 |= C3_KASHIDA;
             if ((c>=0x3000)&&(c<=0x303F)) type3 |= C3_SYMBOL;
 
             if ((c>=0xD800)&&(c<=0xDBFF)) type3 |= C3_HIGHSURROGATE;
@@ -2861,6 +3137,216 @@ BOOL WINAPI GetStringTypeExA( LCID locale, DWORD type, LPCSTR src, INT count, LP
     return GetStringTypeA(locale, type, src, count, chartype);
 }
 
+/* compose a full-width katakana. return consumed source characters. */
+static INT compose_katakana( LPCWSTR src, INT srclen, LPWSTR dst )
+{
+    const static BYTE katakana_map[] = {
+        /* */ 0x02, 0x0c, 0x0d, 0x01, 0xfb, 0xf2, 0xa1, /* U+FF61- */
+        0xa3, 0xa5, 0xa7, 0xa9, 0xe3, 0xe5, 0xe7, 0xc3, /* U+FF68- */
+        0xfc, 0xa2, 0xa4, 0xa6, 0xa8, 0xaa, 0xab, 0xad, /* U+FF70- */
+        0xaf, 0xb1, 0xb3, 0xb5, 0xb7, 0xb9, 0xbb, 0xbd, /* U+FF78- */
+        0xbf, 0xc1, 0xc4, 0xc6, 0xc8, 0xca, 0xcb, 0xcc, /* U+FF80- */
+        0xcd, 0xce, 0xcf, 0xd2, 0xd5, 0xd8, 0xdb, 0xde, /* U+FF88- */
+        0xdf, 0xe0, 0xe1, 0xe2, 0xe4, 0xe6, 0xe8, 0xe9, /* U+FF90- */
+        0xea, 0xeb, 0xec, 0xed, 0xef, 0xf3, 0x99, 0x9a, /* U+FF98- */
+    };
+    WCHAR before, dummy;
+
+    if (!dst)
+        dst = &dummy;
+
+    switch (*src)
+    {
+    case 0x309b: case 0x309c:
+        *dst = *src - 2;
+        return 1;
+    case 0x30f0: case 0x30f1: case 0x30fd:
+        *dst = *src;
+        break;
+    default:
+    {
+        int shift = *src - 0xff61;
+        if (shift < 0 || shift >= sizeof(katakana_map)/sizeof(katakana_map[0]) )
+            return 0;
+        else
+            *dst = katakana_map[shift] | 0x3000;
+    }
+    }
+
+    if (srclen <= 1)
+        return 1;
+
+    before = *dst;
+
+    /* datakuten (voiced sound) */
+    if (*(src + 1) == 0xff9e)
+    {
+        if ((*src >= 0xff76 && *src <= 0xff84) ||
+            (*src >= 0xff8a && *src <= 0xff8e) ||
+            *src == 0x30fd)
+            *dst += 1;
+        else if (*src == 0xff73)
+            *dst = 0x30f4; /* KATAKANA LETTER VU */
+        else if (*src == 0xff9c)
+            *dst = 0x30f7; /* KATAKANA LETTER VA */
+        else if (*src == 0x30f0)
+            *dst = 0x30f8; /* KATAKANA LETTER VI */
+        else if (*src == 0x30f1)
+            *dst = 0x30f9; /* KATAKANA LETTER VE */
+        else if (*src == 0xff66)
+            *dst = 0x30fa; /* KATAKANA LETTER VO */
+    }
+
+    /* handakuten (semi-voiced sound) */
+    if (*(src + 1) == 0xff9f)
+        if (*src >= 0xff8a && *src <= 0xff8e)
+            *dst += 2;
+
+    return (*dst != before) ? 2 : 1;
+}
+
+/* map one or two half-width characters to one full-width character */
+static INT map_to_fullwidth( LPCWSTR src, INT srclen, LPWSTR dst )
+{
+    INT n;
+
+    if (*src <= '~' && *src > ' ' && *src != '\\')
+        *dst = *src - 0x20 + 0xff00;
+    else if (*src == ' ')
+        *dst = 0x3000;
+    else if (*src <= 0x00af && *src >= 0x00a2)
+    {
+        const static BYTE misc_symbols_table[] = {
+            0xe0, 0xe1, 0x00, 0xe5, 0xe4, 0x00, 0x00, /* U+00A2- */
+            0x00, 0x00, 0x00, 0xe2, 0x00, 0x00, 0xe3  /* U+00A9- */
+        };
+        if (misc_symbols_table[*src - 0x00a2])
+            *dst = misc_symbols_table[*src - 0x00a2] | 0xff00;
+        else
+            *dst = *src;
+    }
+    else if (*src == 0x20a9) /* WON SIGN */
+        *dst = 0xffe6;
+    else if ((n = compose_katakana(src, srclen, dst)) > 0)
+        return n;
+    else if (*src >= 0xffa0 && *src <= 0xffdc)
+    {
+        const static BYTE hangul_mapping_table[] = {
+            0x64, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,  /* U+FFA0- */
+            0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f,  /* U+FFA8- */
+            0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47,  /* U+FFB0- */
+            0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x00,  /* U+FFB8- */
+            0x00, 0x00, 0x4f, 0x50, 0x51, 0x52, 0x53, 0x54,  /* U+FFC0- */
+            0x00, 0x00, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a,  /* U+FFC8- */
+            0x00, 0x00, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f, 0x60,  /* U+FFD0- */
+            0x00, 0x00, 0x61, 0x62, 0x63                     /* U+FFD8- */
+        };
+
+        if (hangul_mapping_table[*src - 0xffa0])
+            *dst = hangul_mapping_table[*src - 0xffa0] | 0x3100;
+        else
+            *dst = *src;
+    }
+    else
+        *dst = *src;
+
+    return 1;
+}
+
+/* decompose a full-width katakana character into one or two half-width characters. */
+static INT decompose_katakana( WCHAR c, LPWSTR dst, INT dstlen )
+{
+    const static BYTE katakana_map[] = {
+        /* */ 0x9e, 0x9f, 0x9e, 0x9f, 0x00, 0x00, 0x00, /* U+3099- */
+        0x00, 0x67, 0x71, 0x68, 0x72, 0x69, 0x73, 0x6a, /* U+30a1- */
+        0x74, 0x6b, 0x75, 0x76, 0x01, 0x77, 0x01, 0x78, /* U+30a8- */
+        0x01, 0x79, 0x01, 0x7a, 0x01, 0x7b, 0x01, 0x7c, /* U+30b0- */
+        0x01, 0x7d, 0x01, 0x7e, 0x01, 0x7f, 0x01, 0x80, /* U+30b8- */
+        0x01, 0x81, 0x01, 0x6f, 0x82, 0x01, 0x83, 0x01, /* U+30c0- */
+        0x84, 0x01, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, /* U+30c8- */
+        0x01, 0x02, 0x8b, 0x01, 0x02, 0x8c, 0x01, 0x02, /* U+30d0- */
+        0x8d, 0x01, 0x02, 0x8e, 0x01, 0x02, 0x8f, 0x90, /* U+30d8- */
+        0x91, 0x92, 0x93, 0x6c, 0x94, 0x6d, 0x95, 0x6e, /* U+30e0- */
+        0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b, 0x00, 0x9c, /* U+30e8- */
+        0x00, 0x00, 0x66, 0x9d, 0x4e, 0x00, 0x00, 0x08, /* U+30f0- */
+        0x58, 0x58, 0x08, 0x65, 0x70, 0x00, 0x51        /* U+30f8- */
+    };
+    INT len = 0, shift = c - 0x3099;
+    BYTE k;
+
+    if (shift < 0 || shift >= sizeof(katakana_map)/sizeof(katakana_map[0]))
+        return 0;
+
+    k = katakana_map[shift];
+
+    if (!k)
+    {
+        if (dstlen > 0)
+            *dst = c;
+        len++;
+    }
+    else if (k > 0x60)
+    {
+        if (dstlen > 0)
+            *dst = k | 0xff00;
+        len++;
+    }
+    else
+    {
+        if (dstlen >= 2)
+        {
+            dst[0] = (k > 0x50) ? (c - (k & 0xf)) : (katakana_map[shift - k] | 0xff00);
+            dst[1] = (k == 2) ? 0xff9f : 0xff9e;
+        }
+        len += 2;
+    }
+    return len;
+}
+
+/* map single full-width character to single or double half-width characters. */
+static INT map_to_halfwidth(WCHAR c, LPWSTR dst, INT dstlen)
+{
+    INT n = decompose_katakana(c, dst, dstlen);
+    if (n > 0)
+        return n;
+
+    if (c == 0x3000)
+        *dst = ' ';
+    else if (c == 0x3001)
+        *dst = 0xff64;
+    else if (c == 0x3002)
+        *dst = 0xff61;
+    else if (c == 0x300c || c == 0x300d)
+        *dst = (c - 0x300c) + 0xff62;
+    else if (c >= 0x3131 && c <= 0x3163)
+    {
+        *dst = c - 0x3131 + 0xffa1;
+        if (*dst >= 0xffbf) *dst += 3;
+        if (*dst >= 0xffc8) *dst += 2;
+        if (*dst >= 0xffd0) *dst += 2;
+        if (*dst >= 0xffd8) *dst += 2;
+    }
+    else if (c == 0x3164)
+        *dst = 0xffa0;
+    else if (c == 0x2019)
+        *dst = '\'';
+    else if (c == 0x201d)
+        *dst = '"';
+    else if (c > 0xff00 && c < 0xff5f && c != 0xff3c)
+        *dst = c - 0xff00 + 0x20;
+    else if (c >= 0xffe0 && c <= 0xffe6)
+    {
+        const static WCHAR misc_symbol_map[] = {
+            0x00a2, 0x00a3, 0x00ac, 0x00af, 0x00a6, 0x00a5, 0x20a9
+        };
+        *dst = misc_symbol_map[c - 0xffe0];
+    }
+    else
+        *dst = c;
+
+    return 1;
+}
+
 /*************************************************************************
  *           LCMapStringEx   (KERNEL32.@)
  *
@@ -2885,10 +3371,15 @@ INT WINAPI LCMapStringEx(LPCWSTR name, DWORD flags, LPCWSTR src, INT srclen, LPW
                          LPNLSVERSIONINFO version, LPVOID reserved, LPARAM lparam)
 {
     LPWSTR dst_ptr;
+    INT len;
 
     if (version) FIXME("unsupported version structure %p\n", version);
     if (reserved) FIXME("unsupported reserved pointer %p\n", reserved);
-    if (lparam) FIXME("unsupported lparam %lx\n", lparam);
+    if (lparam)
+    {
+        static int once;
+        if (!once++) FIXME("unsupported lparam %lx\n", lparam);
+    }
 
     if (!src || !srclen || dstlen < 0)
     {
@@ -2900,7 +3391,8 @@ INT WINAPI LCMapStringEx(LPCWSTR name, DWORD flags, LPCWSTR src, INT srclen, LPW
     if ((flags & (LCMAP_LOWERCASE | LCMAP_UPPERCASE)) == (LCMAP_LOWERCASE | LCMAP_UPPERCASE) ||
         (flags & (LCMAP_HIRAGANA | LCMAP_KATAKANA)) == (LCMAP_HIRAGANA | LCMAP_KATAKANA) ||
         (flags & (LCMAP_HALFWIDTH | LCMAP_FULLWIDTH)) == (LCMAP_HALFWIDTH | LCMAP_FULLWIDTH) ||
-        (flags & (LCMAP_TRADITIONAL_CHINESE | LCMAP_SIMPLIFIED_CHINESE)) == (LCMAP_TRADITIONAL_CHINESE | LCMAP_SIMPLIFIED_CHINESE))
+        (flags & (LCMAP_TRADITIONAL_CHINESE | LCMAP_SIMPLIFIED_CHINESE)) == (LCMAP_TRADITIONAL_CHINESE | LCMAP_SIMPLIFIED_CHINESE) ||
+        !flags)
     {
         SetLastError(ERROR_INVALID_FLAGS);
         return 0;
@@ -2936,6 +3428,14 @@ INT WINAPI LCMapStringEx(LPCWSTR name, DWORD flags, LPCWSTR src, INT srclen, LPW
         SetLastError(ERROR_INVALID_FLAGS);
         return 0;
     }
+    if (((flags & (NORM_IGNORENONSPACE | NORM_IGNORESYMBOLS)) &&
+         (flags & ~(NORM_IGNORENONSPACE | NORM_IGNORESYMBOLS))) ||
+        ((flags & (LCMAP_HIRAGANA | LCMAP_KATAKANA | LCMAP_HALFWIDTH | LCMAP_FULLWIDTH)) &&
+         (flags & (LCMAP_SIMPLIFIED_CHINESE | LCMAP_TRADITIONAL_CHINESE))))
+    {
+        SetLastError(ERROR_INVALID_FLAGS);
+        return 0;
+    }
 
     if (srclen < 0) srclen = strlenW(src) + 1;
 
@@ -2944,61 +3444,146 @@ INT WINAPI LCMapStringEx(LPCWSTR name, DWORD flags, LPCWSTR src, INT srclen, LPW
 
     if (!dst) /* return required string length */
     {
-        INT len;
-
-        for (len = 0; srclen; src++, srclen--)
+        if (flags & NORM_IGNORESYMBOLS)
         {
-            WCHAR wch = *src;
-            /* tests show that win2k just ignores NORM_IGNORENONSPACE,
-             * and skips white space and punctuation characters for
-             * NORM_IGNORESYMBOLS.
-             */
-            if ((flags & NORM_IGNORESYMBOLS) && (get_char_typeW(wch) & (C1_PUNCT | C1_SPACE)))
-                continue;
-            len++;
+            for (len = 0; srclen; src++, srclen--)
+            {
+                WCHAR wch = *src;
+                /* tests show that win2k just ignores NORM_IGNORENONSPACE,
+                 * and skips white space and punctuation characters for
+                 * NORM_IGNORESYMBOLS.
+                 */
+                if (get_char_typeW(wch) & (C1_PUNCT | C1_SPACE))
+                    continue;
+                len++;
+            }
         }
+        else if (flags & LCMAP_FULLWIDTH)
+        {
+            for (len = 0; srclen; src++, srclen--, len++)
+            {
+                if (compose_katakana(src, srclen, NULL) == 2)
+                {
+                    src++;
+                    srclen--;
+                }
+            }
+        }
+        else if (flags & LCMAP_HALFWIDTH)
+        {
+            for (len = 0; srclen; src++, srclen--, len++)
+                if (decompose_katakana(*src, NULL, 0) == 2)
+                    len++;
+        }
+        else
+            len = srclen;
         return len;
     }
 
-    if (flags & LCMAP_UPPERCASE)
+    if (src == dst && (flags & ~(LCMAP_LOWERCASE | LCMAP_UPPERCASE)))
     {
-        for (dst_ptr = dst; srclen && dstlen; src++, srclen--)
-        {
-            WCHAR wch = *src;
-            if ((flags & NORM_IGNORESYMBOLS) && (get_char_typeW(wch) & (C1_PUNCT | C1_SPACE)))
-                continue;
-            *dst_ptr++ = toupperW(wch);
-            dstlen--;
-        }
+        SetLastError(ERROR_INVALID_FLAGS);
+        return 0;
     }
-    else if (flags & LCMAP_LOWERCASE)
+
+    if (flags & (NORM_IGNORENONSPACE | NORM_IGNORESYMBOLS))
     {
-        for (dst_ptr = dst; srclen && dstlen; src++, srclen--)
-        {
-            WCHAR wch = *src;
-            if ((flags & NORM_IGNORESYMBOLS) && (get_char_typeW(wch) & (C1_PUNCT | C1_SPACE)))
-                continue;
-            *dst_ptr++ = tolowerW(wch);
-            dstlen--;
-        }
-    }
-    else
-    {
-        if (src == dst)
-        {
-            SetLastError(ERROR_INVALID_FLAGS);
-            return 0;
-        }
-        for (dst_ptr = dst; srclen && dstlen; src++, srclen--)
+        for (len = dstlen, dst_ptr = dst; srclen && len; src++, srclen--)
         {
             WCHAR wch = *src;
             if ((flags & NORM_IGNORESYMBOLS) && (get_char_typeW(wch) & (C1_PUNCT | C1_SPACE)))
                 continue;
             *dst_ptr++ = wch;
-            dstlen--;
+            len--;
         }
+        goto done;
     }
 
+    if (flags & (LCMAP_FULLWIDTH | LCMAP_HALFWIDTH | LCMAP_HIRAGANA | LCMAP_KATAKANA))
+    {
+        for (len = dstlen, dst_ptr = dst; len && srclen; src++, srclen--, len--, dst_ptr++)
+        {
+            WCHAR wch;
+            if (flags & LCMAP_FULLWIDTH)
+            {
+                /* map half-width character to full-width one,
+                   e.g. U+FF71 -> U+30A2, U+FF8C U+FF9F -> U+30D7. */
+                if (map_to_fullwidth(src, srclen, &wch) == 2)
+                {
+                    src++;
+                    srclen--;
+                }
+            }
+            else
+                wch = *src;
+
+            if (flags & LCMAP_KATAKANA)
+            {
+                /* map hiragana to katakana, e.g. U+3041 -> U+30A1.
+                   we can't use C3_HIRAGANA as some characters can't map to katakana */
+                if ((wch >= 0x3041 && wch <= 0x3096) ||
+                    wch == 0x309D || wch == 0x309E)
+                    wch += 0x60;
+            }
+            else if (flags & LCMAP_HIRAGANA)
+            {
+                /* map katakana to hiragana, e.g. U+30A1 -> U+3041.
+                   we can't use C3_KATAKANA as some characters can't map to hiragana */
+                if ((wch >= 0x30A1 && wch <= 0x30F6) ||
+                    wch == 0x30FD || wch == 0x30FE)
+                    wch -= 0x60;
+            }
+
+            if (flags & LCMAP_HALFWIDTH)
+            {
+                /* map full-width character to half-width one,
+                   e.g. U+30A2 -> U+FF71, U+30D7 -> U+FF8C U+FF9F. */
+                if (map_to_halfwidth(wch, dst_ptr, dstlen) == 2)
+                {
+                    dstlen--;
+                    dst_ptr++;
+                    if (!dstlen)
+                    {
+                        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+                        return 0;
+                    }
+                }
+            }
+            else
+                *dst_ptr = wch;
+        }
+        if (!(flags & (LCMAP_UPPERCASE | LCMAP_LOWERCASE)))
+            goto done;
+
+        srclen = dst_ptr - dst;
+        src = dst;
+    }
+
+    if (flags & LCMAP_UPPERCASE)
+    {
+        for (len = dstlen, dst_ptr = dst; srclen && len; src++, srclen--)
+        {
+            *dst_ptr++ = toupperW(*src);
+            len--;
+        }
+    }
+    else if (flags & LCMAP_LOWERCASE)
+    {
+        for (len = dstlen, dst_ptr = dst; srclen && len; src++, srclen--)
+        {
+            *dst_ptr++ = tolowerW(*src);
+            len--;
+        }
+    }
+    else
+    {
+        len = min(srclen, dstlen);
+        memcpy(dst, src, len * sizeof(WCHAR));
+        dst_ptr = dst + len;
+        srclen -= len;
+    }
+
+done:
     if (srclen)
     {
         SetLastError(ERROR_INSUFFICIENT_BUFFER);
@@ -3239,6 +3824,7 @@ INT WINAPI CompareStringEx(LPCWSTR locale, DWORD flags, LPCWSTR str1, INT len1,
     DWORD semistub_flags = NORM_LINGUISTIC_CASING|LINGUISTIC_IGNORECASE|0x10000000;
     /* 0x10000000 is related to diacritics in Arabic, Japanese, and Hebrew */
     INT ret;
+    static int once;
 
     if (version) FIXME("unexpected version parameter\n");
     if (reserved) FIXME("unexpected reserved value\n");
@@ -3257,7 +3843,10 @@ INT WINAPI CompareStringEx(LPCWSTR locale, DWORD flags, LPCWSTR str1, INT len1,
     }
 
     if (flags & semistub_flags)
-        FIXME("semi-stub behavor for flag(s) 0x%x\n", flags & semistub_flags);
+    {
+        if (!once++)
+            FIXME("semi-stub behavior for flag(s) 0x%x\n", flags & semistub_flags);
+    }
 
     if (len1 < 0) len1 = strlenW(str1);
     if (len2 < 0) len2 = strlenW(str2);
@@ -3365,7 +3954,7 @@ INT WINAPI CompareStringA(LCID lcid, DWORD flags,
  */
 INT WINAPI CompareStringOrdinal(const WCHAR *str1, INT len1, const WCHAR *str2, INT len2, BOOL ignore_case)
 {
-    int ret, len;
+    int ret;
 
     if (!str1 || !str2)
     {
@@ -3375,19 +3964,7 @@ INT WINAPI CompareStringOrdinal(const WCHAR *str1, INT len1, const WCHAR *str2, 
     if (len1 < 0) len1 = strlenW(str1);
     if (len2 < 0) len2 = strlenW(str2);
 
-    len = min(len1, len2);
-    if (ignore_case)
-    {
-        ret = memicmpW(str1, str2, len);
-    }
-    else
-    {
-        ret = 0;
-        for (; len > 0; len--)
-            if ((ret = (*str1++ - *str2++))) break;
-    }
-    if (!ret) ret = len1 - len2;
-
+    ret = RtlCompareUnicodeStrings( str1, len1, str2, len2, ignore_case );
     if (ret < 0) return CSTR_LESS_THAN;
     if (ret > 0) return CSTR_GREATER_THAN;
     return CSTR_EQUAL;
@@ -3499,69 +4076,32 @@ void LOCALE_Init(void)
 
     UINT ansi_cp = 1252, oem_cp = 437, mac_cp = 10000, unix_cp;
 
+    setlocale( LC_ALL, "" );
+
 #ifdef __APPLE__
     /* MacOS doesn't set the locale environment variables so we have to do it ourselves */
-    char user_locale[50];
-
-    CFLocaleRef user_locale_ref = CFLocaleCopyCurrent();
-    CFStringRef user_locale_lang_ref = CFLocaleGetValue( user_locale_ref, kCFLocaleLanguageCode );
-    CFStringRef user_locale_country_ref = CFLocaleGetValue( user_locale_ref, kCFLocaleCountryCode );
-    CFStringRef user_locale_string_ref;
-
-    if (user_locale_country_ref)
+    if (!has_env("LANG"))
     {
-        user_locale_string_ref = CFStringCreateWithFormat(NULL, NULL, CFSTR("%@_%@"),
-            user_locale_lang_ref, user_locale_country_ref);
-    }
-    else
-    {
-        user_locale_string_ref = CFStringCreateCopy(NULL, user_locale_lang_ref);
-    }
+        const char* mac_locale = get_mac_locale();
 
-    CFStringGetCString( user_locale_string_ref, user_locale, sizeof(user_locale), kCFStringEncodingUTF8 );
-    strcat(user_locale, ".UTF-8");
-
-    unix_cp = CP_UTF8;  /* default to utf-8 even if we don't get a valid locale */
-    setenv( "LANG", user_locale, 0 );
-    TRACE( "setting locale to '%s'\n", user_locale );
+        setenv( "LANG", mac_locale, 1 );
+        if (setlocale( LC_ALL, "" ))
+            TRACE( "setting LANG to '%s'\n", mac_locale );
+        else
+        {
+            /* no C library locale matching Mac locale; don't pass garbage to children */
+            unsetenv("LANG");
+            TRACE( "Mac locale %s is not supported by the C library\n", debugstr_a(mac_locale) );
+        }
+    }
 #endif /* __APPLE__ */
-
-    setlocale( LC_ALL, "" );
 
     unix_cp = setup_unix_locales();
     if (!lcid_LC_MESSAGES) lcid_LC_MESSAGES = lcid_LC_CTYPE;
 
 #ifdef __APPLE__
-    /* Override lcid_LC_MESSAGES with user's preferred language if LC_MESSAGES is set to default */
-    if (!getenv("LC_ALL") && !getenv("LC_MESSAGES"))
-    {
-        /* Retrieve the preferred language as chosen in System Preferences. */
-        /* If language is a less specific variant of locale (e.g. 'en' vs. 'en_US'),
-           leave things be. */
-        CFArrayRef preferred_langs = CFLocaleCopyPreferredLanguages();
-        CFStringRef canonical_lang_string_ref = CFLocaleCreateCanonicalLanguageIdentifierFromString(NULL, user_locale_string_ref);
-        CFStringRef user_language_string_ref;
-        if (preferred_langs && canonical_lang_string_ref && CFArrayGetCount( preferred_langs ) &&
-            (user_language_string_ref = CFArrayGetValueAtIndex( preferred_langs, 0 )) &&
-            !CFEqual(user_language_string_ref, user_locale_lang_ref) &&
-            !CFEqual(user_language_string_ref, canonical_lang_string_ref))
-        {
-            struct locale_name locale_name;
-            WCHAR buffer[128];
-            CFStringGetCString( user_language_string_ref, user_locale, sizeof(user_locale), kCFStringEncodingUTF8 );
-            strcpynAtoW( buffer, user_locale, sizeof(buffer)/sizeof(WCHAR) );
-            parse_locale_name( buffer, &locale_name );
-            lcid_LC_MESSAGES = locale_name.lcid;
-            TRACE( "setting lcid_LC_MESSAGES to '%s' %04x\n", user_locale, lcid_LC_MESSAGES );
-        }
-        if (preferred_langs)
-            CFRelease( preferred_langs );
-        if (canonical_lang_string_ref)
-            CFRelease( canonical_lang_string_ref );
-    }
-
-    CFRelease( user_locale_ref );
-    CFRelease( user_locale_string_ref );
+    if (!unix_cp)
+        unix_cp = CP_UTF8;  /* default to utf-8 even if we don't get a valid locale */
 #endif
 
     NtSetDefaultUILanguage( LANGIDFROMLCID(lcid_LC_MESSAGES) );
@@ -4925,8 +5465,8 @@ INT WINAPI IdnToNameprepUnicode(DWORD dwFlags, LPCWSTR lpUnicodeCharStr, INT cch
         BIDI_L     = 0x8
     };
 
-    extern const unsigned short nameprep_char_type[];
-    extern const WCHAR nameprep_mapping[];
+    extern const unsigned short nameprep_char_type[] DECLSPEC_HIDDEN;
+    extern const WCHAR nameprep_mapping[] DECLSPEC_HIDDEN;
     const WCHAR *ptr;
     WORD flags;
     WCHAR buf[64], *map_str, norm_str[64], ch;
@@ -5284,10 +5824,28 @@ INT WINAPI IdnToUnicode(DWORD dwFlags, LPCWSTR lpASCIICharStr, INT cchASCIIChar,
 
 
 /******************************************************************************
- *           GetUserPreferredUILanguages (KERNEL32.@)
+ *           GetFileMUIPath (KERNEL32.@)
  */
-BOOL WINAPI GetUserPreferredUILanguages(DWORD flags, PULONG numlangs, PZZWSTR langbuffer, PULONG bufferlen)
+
+BOOL WINAPI GetFileMUIPath(DWORD flags, PCWSTR filepath, PWSTR language, PULONG languagelen,
+                           PWSTR muipath, PULONG muipathlen, PULONGLONG enumerator)
 {
-    FIXME( "stub: %u %p %p %p\n", flags, numlangs, langbuffer, bufferlen );
+    FIXME("stub: 0x%x, %s, %s, %p, %p, %p, %p\n", flags, debugstr_w(filepath),
+           debugstr_w(language), languagelen, muipath, muipathlen, enumerator);
+
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+
+    return FALSE;
+}
+
+/******************************************************************************
+ *           GetFileMUIInfo (KERNEL32.@)
+ */
+
+BOOL WINAPI GetFileMUIInfo(DWORD flags, PCWSTR path, FILEMUIINFO *info, DWORD *size)
+{
+    FIXME("stub: %u, %s, %p, %p\n", flags, debugstr_w(path), info, size);
+
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
 }

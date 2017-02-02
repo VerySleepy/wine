@@ -83,8 +83,10 @@ Only generate 32-bit or 64-bit code respectively (the default is to
 generate both 32-bit and 64-bit versions into the same destination
 file).
 .PP
-.IP "\fB--rt\fR"
-Enable additional language extensions for IDL to support WinRT.
+.IP "\fB--winrt\fR"
+Enable Windows Runtime mode.
+.IP "\fB--ns_prefix\fR"
+Prefix namespaces with ABI namespace.
 .PP
 .B Registration script options:
 .IP "\fB-r\fR"

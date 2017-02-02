@@ -65,13 +65,15 @@ static const struct object_ops semaphore_ops =
     default_get_sd,                /* get_sd */
     default_set_sd,                /* set_sd */
     no_lookup_name,                /* lookup_name */
+    directory_link_name,           /* link_name */
+    default_unlink_name,           /* unlink_name */
     no_open_file,                  /* open_file */
     no_close_handle,               /* close_handle */
     no_destroy                     /* destroy */
 };
 
 
-static struct semaphore *create_semaphore( struct directory *root, const struct unicode_str *name,
+static struct semaphore *create_semaphore( struct object *root, const struct unicode_str *name,
                                            unsigned int attr, unsigned int initial, unsigned int max,
                                            const struct security_descriptor *sd )
 {
@@ -82,17 +84,13 @@ static struct semaphore *create_semaphore( struct directory *root, const struct 
         set_error( STATUS_INVALID_PARAMETER );
         return NULL;
     }
-    if ((sem = create_named_object_dir( root, name, attr, &semaphore_ops )))
+    if ((sem = create_named_object( root, &semaphore_ops, name, attr, sd )))
     {
         if (get_error() != STATUS_OBJECT_NAME_EXISTS)
         {
             /* initialize it if it didn't already exist */
             sem->count = initial;
             sem->max   = max;
-            if (sd) default_set_sd( &sem->obj, sd, OWNER_SECURITY_INFORMATION|
-                                                   GROUP_SECURITY_INFORMATION|
-                                                   DACL_SECURITY_INFORMATION|
-                                                   SACL_SECURITY_INFORMATION );
         }
     }
     return sem;
@@ -124,9 +122,7 @@ static void semaphore_dump( struct object *obj, int verbose )
 {
     struct semaphore *sem = (struct semaphore *)obj;
     assert( obj->ops == &semaphore_ops );
-    fprintf( stderr, "Semaphore count=%d max=%d ", sem->count, sem->max );
-    dump_object_name( &sem->obj );
-    fputc( '\n', stderr );
+    fprintf( stderr, "Semaphore count=%d max=%d\n", sem->count, sem->max );
 }
 
 static struct object_type *semaphore_get_type( struct object *obj )
@@ -178,27 +174,19 @@ DECL_HANDLER(create_semaphore)
 {
     struct semaphore *sem;
     struct unicode_str name;
-    struct directory *root = NULL;
-    const struct object_attributes *objattr = get_req_data();
+    struct object *root;
     const struct security_descriptor *sd;
+    const struct object_attributes *objattr = get_req_object_attributes( &sd, &name, &root );
 
-    reply->handle = 0;
+    if (!objattr) return;
 
-    if (!objattr_is_valid( objattr, get_req_data_size() ))
-        return;
-
-    sd = objattr->sd_len ? (const struct security_descriptor *)(objattr + 1) : NULL;
-    objattr_get_name( objattr, &name );
-
-    if (objattr->rootdir && !(root = get_directory_obj( current->process, objattr->rootdir, 0 )))
-        return;
-
-    if ((sem = create_semaphore( root, &name, req->attributes, req->initial, req->max, sd )))
+    if ((sem = create_semaphore( root, &name, objattr->attributes, req->initial, req->max, sd )))
     {
         if (get_error() == STATUS_OBJECT_NAME_EXISTS)
-            reply->handle = alloc_handle( current->process, sem, req->access, req->attributes );
+            reply->handle = alloc_handle( current->process, sem, req->access, objattr->attributes );
         else
-            reply->handle = alloc_handle_no_access_check( current->process, sem, req->access, req->attributes );
+            reply->handle = alloc_handle_no_access_check( current->process, sem,
+                                                          req->access, objattr->attributes );
         release_object( sem );
     }
 
@@ -208,21 +196,10 @@ DECL_HANDLER(create_semaphore)
 /* open a handle to a semaphore */
 DECL_HANDLER(open_semaphore)
 {
-    struct unicode_str name;
-    struct directory *root = NULL;
-    struct semaphore *sem;
+    struct unicode_str name = get_req_unicode_str();
 
-    get_req_unicode_str( &name );
-    if (req->rootdir && !(root = get_directory_obj( current->process, req->rootdir, 0 )))
-        return;
-
-    if ((sem = open_object_dir( root, &name, req->attributes, &semaphore_ops )))
-    {
-        reply->handle = alloc_handle( current->process, &sem->obj, req->access, req->attributes );
-        release_object( sem );
-    }
-
-    if (root) release_object( root );
+    reply->handle = open_object( current->process, req->rootdir, req->access,
+                                 &semaphore_ops, &name, req->attributes );
 }
 
 /* release a semaphore */

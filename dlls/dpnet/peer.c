@@ -33,7 +33,6 @@
 #include "objbase.h"
 #include "wine/debug.h"
 
-#include "dplay8.h"
 #include "dpnet_private.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(dpnet);
@@ -47,6 +46,10 @@ typedef struct IDirectPlay8PeerImpl
     PFNDPNMESSAGEHANDLER msghandler;
     DWORD flags;
     void *usercontext;
+
+    WCHAR *username;
+    void  *data;
+    DWORD datasize;
 
     DPN_SP_CAPS spcaps;
 } IDirectPlay8PeerImpl;
@@ -92,7 +95,12 @@ static ULONG WINAPI IDirectPlay8PeerImpl_Release(IDirectPlay8Peer *iface)
     TRACE("(%p) ref=%d\n", This, RefCount);
 
     if(!RefCount)
-        HeapFree(GetProcessHeap(), 0, This);
+    {
+        heap_free(This->username);
+        heap_free(This->data);
+
+        heap_free(This);
+    }
 
     return RefCount;
 }
@@ -112,6 +120,8 @@ static HRESULT WINAPI IDirectPlay8PeerImpl_Initialize(IDirectPlay8Peer *iface,
     This->usercontext = pvUserContext;
     This->msghandler = pfn;
     This->flags = dwFlags;
+
+    init_winsock();
 
     return DPN_OK;
 }
@@ -310,9 +320,42 @@ static HRESULT WINAPI IDirectPlay8PeerImpl_SetPeerInfo(IDirectPlay8Peer *iface,
         const DPN_PLAYER_INFO * const pdpnPlayerInfo, void * const pvAsyncContext,
         DPNHANDLE * const phAsyncHandle, const DWORD dwFlags)
 {
-    FIXME("(%p)->(%p,%p,%p,%x): stub\n", iface, pdpnPlayerInfo, pvAsyncContext, phAsyncHandle, dwFlags);
+    IDirectPlay8PeerImpl* This = impl_from_IDirectPlay8Peer(iface);
 
-    return DPNERR_GENERIC;
+    FIXME("(%p)->(%p,%p,%p,%x) Semi-stub.\n", This, pdpnPlayerInfo, pvAsyncContext, phAsyncHandle, dwFlags);
+
+    if(!pdpnPlayerInfo)
+        return E_POINTER;
+
+    if(phAsyncHandle)
+        FIXME("Async handle currently not supported.\n");
+
+    if (pdpnPlayerInfo->dwInfoFlags & DPNINFO_NAME)
+    {
+        heap_free(This->username);
+        This->username = NULL;
+
+        if(pdpnPlayerInfo->pwszName)
+        {
+            This->username = heap_strdupW(pdpnPlayerInfo->pwszName);
+            if (!This->username)
+                return E_OUTOFMEMORY;
+        }
+    }
+
+    if (pdpnPlayerInfo->dwInfoFlags & DPNINFO_DATA)
+    {
+        heap_free(This->data);
+
+        This->datasize = pdpnPlayerInfo->dwDataSize;
+        This->data = heap_alloc(pdpnPlayerInfo->dwDataSize);
+        if (!This->data)
+            return E_OUTOFMEMORY;
+
+        memcpy(This->data, pdpnPlayerInfo->pvData, pdpnPlayerInfo->dwDataSize);
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI IDirectPlay8PeerImpl_GetPeerInfo(IDirectPlay8Peer *iface, const DPNID dpnid,
@@ -502,6 +545,7 @@ static const IDirectPlay8PeerVtbl DirectPlay8Peer_Vtbl =
 
 void init_dpn_sp_caps(DPN_SP_CAPS *dpnspcaps)
 {
+    dpnspcaps->dwSize = sizeof(DPN_SP_CAPS);
     dpnspcaps->dwFlags = DPNSPCAPS_SUPPORTSDPNSRV | DPNSPCAPS_SUPPORTSBROADCAST |
                          DPNSPCAPS_SUPPORTSALLADAPTERS | DPNSPCAPS_SUPPORTSTHREADPOOL;
     dpnspcaps->dwNumThreads = 3;

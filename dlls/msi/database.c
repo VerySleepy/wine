@@ -22,7 +22,6 @@
 #include <stdio.h>
 
 #define COBJMACROS
-#define NONAMELESSUNION
 
 #include "windef.h"
 #include "winbase.h"
@@ -100,6 +99,7 @@ static VOID MSI_CloseDatabase( MSIOBJECTHDR *arg )
         DeleteFileW( db->deletefile );
         msi_free( db->deletefile );
     }
+    msi_free( db->tempfolder );
 }
 
 static HRESULT db_initialize( IStorage *stg, const GUID *clsid )
@@ -155,8 +155,7 @@ UINT MSI_OpenDatabaseW(LPCWSTR szDBPath, LPCWSTR szPersist, MSIDATABASE **pdb)
     if( !pdb )
         return ERROR_INVALID_PARAMETER;
 
-    if (szPersist - MSIDBOPEN_PATCHFILE >= MSIDBOPEN_READONLY &&
-        szPersist - MSIDBOPEN_PATCHFILE <= MSIDBOPEN_CREATEDIRECT)
+    if (szPersist - MSIDBOPEN_PATCHFILE <= MSIDBOPEN_CREATEDIRECT)
     {
         TRACE("Database is a patch\n");
         szPersist -= MSIDBOPEN_PATCHFILE;
@@ -560,7 +559,7 @@ static LPWSTR msi_build_createsql_columns(LPWSTR *columns_data, LPWSTR *types, D
 static LPWSTR msi_build_createsql_postlude(LPWSTR *primary_keys, DWORD num_keys)
 {
     LPWSTR postlude, keys, ptr;
-    DWORD size, key_size, i;
+    DWORD size, i;
 
     static const WCHAR key_fmt[] = {'`','%','s','`',',',' ',0};
     static const WCHAR postlude_fmt[] = {'P','R','I','M','A','R','Y',' ','K','E','Y',' ','%','s',')',0};
@@ -574,9 +573,7 @@ static LPWSTR msi_build_createsql_postlude(LPWSTR *primary_keys, DWORD num_keys)
 
     for (i = 0, ptr = keys; i < num_keys; i++)
     {
-        key_size = lstrlenW(key_fmt) + lstrlenW(primary_keys[i]) -2;
-        sprintfW(ptr, key_fmt, primary_keys[i]);
-        ptr += key_size;
+        ptr += sprintfW(ptr, key_fmt, primary_keys[i]);
     }
 
     /* remove final ', ' */
@@ -2022,7 +2019,7 @@ HRESULT create_msi_remote_database( IUnknown *pOuter, LPVOID *ppObj )
     This->database = 0;
     This->refs = 1;
 
-    *ppObj = This;
+    *ppObj = &This->IWineMsiRemoteDatabase_iface;
 
     return S_OK;
 }

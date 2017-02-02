@@ -85,7 +85,7 @@ sub _check_function($$$$$$) {
 	    $implemented_calling_convention = "cdecl";
 	} elsif($calling_convention =~ /^(?:VFWAPIV|WINAPIV)$/) {
 	    $implemented_calling_convention = "varargs";
-	} elsif($calling_convention =~ /^(?:__stdcall|__RPC_STUB|__RPC_USER|NET_API_FUNCTION|RPC_ENTRY|VFWAPI|WINAPI|CALLBACK)$/) {
+	} elsif($calling_convention =~ /^(?:__stdcall|__RPC_STUB|__RPC_USER|NET_API_FUNCTION|RPC_ENTRY|SEC_ENTRY|VFWAPI|WINGDIPAPI|WMIAPI|WINAPI|CALLBACK)$/) {
 	    if(defined($implemented_return_kind) && $implemented_return_kind =~ /^(?:s_word|word|void)$/) {
 		$implemented_calling_convention = "pascal16";
 	    } else {
@@ -101,7 +101,7 @@ sub _check_function($$$$$$) {
 	    $implemented_calling_convention = "cdecl";
 	} elsif($calling_convention =~ /^(?:VFWAPIV|WINAPIV)$/) {
 	    $implemented_calling_convention = "varargs";
-	} elsif($calling_convention =~ /^(?:__stdcall|__RPC_STUB|__RPC_USER|APIENTRY|NET_API_FUNCTION|RPC_ENTRY|VFWAPI|WINAPI|CALLBACK)$/) {
+	} elsif($calling_convention =~ /^(?:__stdcall|__RPC_STUB|__RPC_USER|APIENTRY|NET_API_FUNCTION|RPC_ENTRY|SEC_ENTRY|VFWAPI|WINGDIPAPI|WMIAPI|WINAPI|CALLBACK)$/) {
 	    if(defined($implemented_return_kind) && $implemented_return_kind eq "longlong") {
 		$implemented_calling_convention = "stdcall"; # FIXME: Check entry flags
 	    } else {
@@ -320,14 +320,14 @@ sub _check_statements($$$) {
 		if($first_debug_message && $called_name =~ /^(?:FIXME|TRACE)$/) {
 		    $first_debug_message = 0;
 		    if($called_arguments =~ /^\"\((.*?)\)(.*?)\"\s*,\s*(.*?)$/) {
-			my $formating = $1;
+			my $formatting = $1;
 			my $extra = $2;
 			my $arguments = $3;
 
 			my $format;
 			my $argument;
 			my $n = 0;
-			while($formating && ($formating =~ s/^([^,]*),?//, $format = $1, $format =~ s/^\s*(.*?)\s*$/$1/) &&
+			while($formatting && ($formatting =~ s/^([^,]*),?//, $format = $1, $format =~ s/^\s*(.*?)\s*$/$1/) &&
 			      $arguments && ($arguments =~ s/^([^,]*),?//, $argument = $1, $argument =~ s/^\s*(.*?)\s*$/$1/))
 			{
 			    my $type = @{$function->argument_types}[$n];

@@ -587,17 +587,17 @@ static void X11DRV_PALETTE_FillDefaultColors( const PALETTEENTRY *sys_pal_templa
   * cube - based on Greg Kreider's code.
   */
 
-  int i = 0, idx = 0;
+  int i = 1, idx = 0;
   int red, no_r, inc_r;
   int green, no_g, inc_g;
   int blue, no_b, inc_b;
 
   if (palette_size <= NB_RESERVED_COLORS)
   	return;
-  while (i*i*i < (palette_size - NB_RESERVED_COLORS)) i++;
+  while (i*i*i <= (palette_size - NB_RESERVED_COLORS)) i++;
   no_r = no_g = no_b = --i;
-  if ((no_r * (no_g+1) * no_b) < (palette_size - NB_RESERVED_COLORS)) no_g++;
-  if ((no_r * no_g * (no_b+1)) < (palette_size - NB_RESERVED_COLORS)) no_b++;
+  if ((no_r * (no_g+1) * no_b) <= (palette_size - NB_RESERVED_COLORS)) no_g++;
+  if ((no_r * no_g * (no_b+1)) <= (palette_size - NB_RESERVED_COLORS)) no_b++;
   inc_r = (255 - NB_COLORCUBE_START_INDEX)/no_r;
   inc_g = (255 - NB_COLORCUBE_START_INDEX)/no_g;
   inc_b = (255 - NB_COLORCUBE_START_INDEX)/no_b;
@@ -1215,6 +1215,11 @@ UINT X11DRV_GetSystemPaletteEntries( PHYSDEV dev, UINT start, UINT count, LPPALE
 {
     UINT i;
 
+    if (!palette_size)
+    {
+        dev = GET_NEXT_PHYSDEV(dev, pGetSystemPaletteEntries);
+        return dev->funcs->pGetSystemPaletteEntries(dev, start, count, entries);
+    }
     if (!entries) return palette_size;
     if (start >= palette_size) return 0;
     if (start + count >= palette_size) count = palette_size - start;

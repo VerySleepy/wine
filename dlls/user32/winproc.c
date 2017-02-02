@@ -165,7 +165,7 @@ static inline WINDOWPROC *alloc_winproc( WNDPROC func, BOOL unicode )
                    proc_to_handle(proc), unicode ? 'W' : 'A', func,
                    winproc_used, MAX_WINPROCS );
         }
-        else FIXME( "too many winprocs, cannot allocate one for %p\n", func );
+        else WARN( "too many winprocs, cannot allocate one for %p\n", func );
     }
     else TRACE( "reusing %p for %p\n", proc_to_handle(proc), func );
 
@@ -309,7 +309,7 @@ WNDPROC WINPROC_AllocProc( WNDPROC func, BOOL unicode )
 {
     WINDOWPROC *proc;
 
-    if (!(proc = alloc_winproc( func, unicode ))) return NULL;
+    if (!(proc = alloc_winproc( func, unicode ))) return func;
     if (proc == WINPROC_PROC16) return func;
     return proc_to_handle( proc );
 }
@@ -876,6 +876,7 @@ BOOL WINPROC_call_window( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
     WND *wndPtr;
     WNDPROC func;
     WINDOWPROC *proc;
+    BOOL unicode_win;
 
     if (!(wndPtr = WIN_GetPtr( hwnd ))) return FALSE;
     if (wndPtr == WND_OTHER_PROCESS || wndPtr == WND_DESKTOP) return FALSE;
@@ -886,9 +887,8 @@ BOOL WINPROC_call_window( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
     }
     func = wndPtr->winproc;
     proc = handle_to_proc( wndPtr->winproc );
+    unicode_win = wndPtr->flags & WIN_ISUNICODE;
     WIN_ReleasePtr( wndPtr );
-
-    if (!proc) return TRUE;
 
     if (thread_info->recursion_count > MAX_WINPROC_RECURSION) return FALSE;
     thread_info->recursion_count++;
@@ -897,19 +897,27 @@ BOOL WINPROC_call_window( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
     {
         if (proc == WINPROC_PROC16)
             WINPROC_CallProcWtoA( wow_handlers.call_window_proc, hwnd, msg, wParam, lParam, result, func );
-        else if (proc->procW)
+        else if (proc && proc->procW)
             call_window_proc( hwnd, msg, wParam, lParam, result, proc->procW );
-        else
+        else if (proc)
             WINPROC_CallProcWtoA( call_window_proc, hwnd, msg, wParam, lParam, result, proc->procA );
+        else if (unicode_win)
+            call_window_proc( hwnd, msg, wParam, lParam, result, func );
+        else
+            WINPROC_CallProcWtoA( call_window_proc, hwnd, msg, wParam, lParam, result, func );
     }
     else
     {
         if (proc == WINPROC_PROC16)
             wow_handlers.call_window_proc( hwnd, msg, wParam, lParam, result, func );
-        else if (proc->procA)
+        else if (proc && proc->procA)
             call_window_proc( hwnd, msg, wParam, lParam, result, proc->procA );
-        else
+        else if (proc)
             WINPROC_CallProcAtoW( call_window_proc, hwnd, msg, wParam, lParam, result, proc->procW, mapping );
+        else if (unicode_win)
+            WINPROC_CallProcAtoW( call_window_proc, hwnd, msg, wParam, lParam, result, func, mapping );
+        else
+            call_window_proc( hwnd, msg, wParam, lParam, result, func );
     }
     thread_info->recursion_count--;
     return TRUE;

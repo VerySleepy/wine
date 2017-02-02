@@ -777,7 +777,7 @@ static void CBPaintBorder(
   }
   else
   {
-    CopyRect(&clientRect, &lphc->textRect);
+    clientRect = lphc->textRect;
 
     InflateRect(&clientRect, EDIT_CONTROL_PADDING(), EDIT_CONTROL_PADDING());
     InflateRect(&clientRect, COMBO_XBORDERSIZE(), COMBO_YBORDERSIZE());
@@ -974,7 +974,7 @@ static void CBDropDown( LPHEADCOMBO lphc )
     HMONITOR monitor;
     MONITORINFO mon_info;
    RECT rect,r;
-   int nItems = 0;
+   int nItems;
    int nDroppedHeight;
 
    TRACE("[%p]: drop down\n", lphc->self);

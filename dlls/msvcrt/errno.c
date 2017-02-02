@@ -344,6 +344,31 @@ void CDECL MSVCRT_perror(const char* str)
 }
 
 /*********************************************************************
+ *		_wperror (MSVCRT.@)
+ */
+void CDECL MSVCRT__wperror(const MSVCRT_wchar_t* str)
+{
+    MSVCRT_size_t size;
+    char *buffer = NULL;
+
+    if (str && *str)
+    {
+        size = MSVCRT_wcstombs(NULL, str, 0);
+        if (size == -1) return;
+        size++;
+        buffer = MSVCRT_malloc(size);
+        if (!buffer) return;
+        if (MSVCRT_wcstombs(buffer, str, size) == -1)
+        {
+            MSVCRT_free(buffer);
+            return;
+        }
+    }
+    MSVCRT_perror(buffer);
+    MSVCRT_free(buffer);
+}
+
+/*********************************************************************
  *		_wcserror_s (MSVCRT.@)
  */
 int CDECL MSVCRT__wcserror_s(MSVCRT_wchar_t* buffer, MSVCRT_size_t nc, int err)
@@ -433,6 +458,16 @@ void CDECL _seterrormode(int mode)
 void __cdecl MSVCRT__invalid_parameter(const MSVCRT_wchar_t *expr, const MSVCRT_wchar_t *func,
                                        const MSVCRT_wchar_t *file, unsigned int line, MSVCRT_uintptr_t arg)
 {
+#if _MSVCR_VER >= 140
+    thread_data_t *data = msvcrt_get_thread_data();
+
+    if (data->invalid_parameter_handler)
+    {
+        data->invalid_parameter_handler( expr, func, file, line, arg );
+        return;
+    }
+#endif
+
     if (invalid_parameter_handler) invalid_parameter_handler( expr, func, file, line, arg );
     else
     {
@@ -473,3 +508,29 @@ MSVCRT_invalid_parameter_handler CDECL _set_invalid_parameter_handler(
     invalid_parameter_handler = handler;
     return old;
 }
+
+#if _MSVCR_VER >= 140
+/*********************************************************************
+ * _get_thread_local_invalid_parameter_handler (UCRTBASE.@)
+ */
+MSVCRT_invalid_parameter_handler CDECL _get_thread_local_invalid_parameter_handler(void)
+{
+    TRACE("\n");
+    return msvcrt_get_thread_data()->invalid_parameter_handler;
+}
+
+/*********************************************************************
+ * _set_thread_local_invalid_parameter_handler (UCRTBASE.@)
+ */
+MSVCRT_invalid_parameter_handler CDECL _set_thread_local_invalid_parameter_handler(
+        MSVCRT_invalid_parameter_handler handler)
+{
+    thread_data_t *data = msvcrt_get_thread_data();
+    MSVCRT_invalid_parameter_handler old = data->invalid_parameter_handler;
+
+    TRACE("(%p)\n", handler);
+
+    data->invalid_parameter_handler = handler;
+    return old;
+}
+#endif

@@ -181,15 +181,26 @@ HRESULT WINAPI DECLSPEC_HOTPATCH DirectInputCreateW(HINSTANCE hinst, DWORD dwVer
     return DirectInputCreateEx(hinst, dwVersion, &IID_IDirectInput7W, (LPVOID *)ppDI, punkOuter);
 }
 
-static const char *_dump_DIDEVTYPE_value(DWORD dwDevType)
+static const char *_dump_DIDEVTYPE_value(DWORD dwDevType, DWORD dwVersion)
 {
-    switch (dwDevType) {
-        case 0: return "All devices";
-	case DIDEVTYPE_MOUSE: return "DIDEVTYPE_MOUSE";
-	case DIDEVTYPE_KEYBOARD: return "DIDEVTYPE_KEYBOARD";
-	case DIDEVTYPE_JOYSTICK: return "DIDEVTYPE_JOYSTICK";
-	case DIDEVTYPE_DEVICE: return "DIDEVTYPE_DEVICE";
-	default: return "Unknown";
+    if (dwVersion < 0x0800) {
+        switch (dwDevType) {
+            case 0: return "All devices";
+            case DIDEVTYPE_MOUSE: return "DIDEVTYPE_MOUSE";
+            case DIDEVTYPE_KEYBOARD: return "DIDEVTYPE_KEYBOARD";
+            case DIDEVTYPE_JOYSTICK: return "DIDEVTYPE_JOYSTICK";
+            case DIDEVTYPE_DEVICE: return "DIDEVTYPE_DEVICE";
+            default: return "Unknown";
+        }
+    } else {
+        switch (dwDevType) {
+            case DI8DEVCLASS_ALL: return "All devices";
+            case DI8DEVCLASS_POINTER: return "DI8DEVCLASS_POINTER";
+            case DI8DEVCLASS_KEYBOARD: return "DI8DEVCLASS_KEYBOARD";
+            case DI8DEVCLASS_DEVICE: return "DI8DEVCLASS_DEVICE";
+            case DI8DEVCLASS_GAMECTRL: return "DI8DEVCLASS_GAMECTRL";
+            default: return "Unknown";
+        }
     }
 }
 
@@ -339,6 +350,39 @@ static DWORD diactionformat_priorityW(LPDIACTIONFORMATW lpdiaf, DWORD genre)
     return priorityFlags;
 }
 
+#if defined __i386__ && defined _MSC_VER
+__declspec(naked) BOOL enum_callback_wrapper(void *callback, const void *instance, void *ref)
+{
+    __asm
+    {
+        push ebp
+        mov ebp, esp
+        push [ebp+16]
+        push [ebp+12]
+        call [ebp+8]
+        leave
+        ret
+    }
+}
+#elif defined __i386__ && defined __GNUC__
+extern BOOL enum_callback_wrapper(void *callback, const void *instance, void *ref);
+__ASM_GLOBAL_FUNC( enum_callback_wrapper,
+    "pushl %ebp\n\t"
+    __ASM_CFI(".cfi_adjust_cfa_offset 4\n\t")
+    __ASM_CFI(".cfi_rel_offset %ebp,0\n\t")
+    "movl %esp,%ebp\n\t"
+    __ASM_CFI(".cfi_def_cfa_register %ebp\n\t")
+    "pushl 16(%ebp)\n\t"
+    "pushl 12(%ebp)\n\t"
+    "call *8(%ebp)\n\t"
+    "leave\n\t"
+    __ASM_CFI(".cfi_def_cfa %esp,4\n\t")
+    __ASM_CFI(".cfi_same_value %ebp\n\t")
+    "ret" )
+#else
+#define enum_callback_wrapper(callback, instance, ref) (callback)((instance), (ref))
+#endif
+
 /******************************************************************************
  *	IDirectInputA_EnumDevices
  */
@@ -349,10 +393,11 @@ static HRESULT WINAPI IDirectInputAImpl_EnumDevices(
     IDirectInputImpl *This = impl_from_IDirectInput7A(iface);
     DIDEVICEINSTANCEA devInstance;
     unsigned int i;
-    int j, r;
+    int j;
+    HRESULT r;
 
-    TRACE("(this=%p,0x%04x '%s',%p,%p,%04x)\n",
-	  This, dwDevType, _dump_DIDEVTYPE_value(dwDevType),
+    TRACE("(this=%p,0x%04x '%s',%p,%p,0x%04x)\n",
+	  This, dwDevType, _dump_DIDEVTYPE_value(dwDevType, This->dwVersion),
 	  lpCallback, pvRef, dwFlags);
     _dump_EnumDevices_dwFlags(dwFlags);
 
@@ -371,7 +416,7 @@ static HRESULT WINAPI IDirectInputAImpl_EnumDevices(
             TRACE("  - checking device %u ('%s')\n", i, dinput_devices[i]->name);
             r = dinput_devices[i]->enum_deviceA(dwDevType, dwFlags, &devInstance, This->dwVersion, j);
             if (r == S_OK)
-                if (lpCallback(&devInstance,pvRef) == DIENUM_STOP)
+                if (enum_callback_wrapper(lpCallback, &devInstance, pvRef) == DIENUM_STOP)
                     return S_OK;
         }
     }
@@ -391,8 +436,8 @@ static HRESULT WINAPI IDirectInputWImpl_EnumDevices(
     int j;
     HRESULT r;
 
-    TRACE("(this=%p,0x%04x '%s',%p,%p,%04x)\n",
-	  This, dwDevType, _dump_DIDEVTYPE_value(dwDevType),
+    TRACE("(this=%p,0x%04x '%s',%p,%p,0x%04x)\n",
+	  This, dwDevType, _dump_DIDEVTYPE_value(dwDevType, This->dwVersion),
 	  lpCallback, pvRef, dwFlags);
     _dump_EnumDevices_dwFlags(dwFlags);
 
@@ -411,7 +456,7 @@ static HRESULT WINAPI IDirectInputWImpl_EnumDevices(
             TRACE("  - checking device %u ('%s')\n", i, dinput_devices[i]->name);
             r = dinput_devices[i]->enum_deviceW(dwDevType, dwFlags, &devInstance, This->dwVersion, j);
             if (r == S_OK)
-                if (lpCallback(&devInstance,pvRef) == DIENUM_STOP)
+                if (enum_callback_wrapper(lpCallback, &devInstance, pvRef) == DIENUM_STOP)
                     return S_OK;
         }
     }
@@ -1630,6 +1675,20 @@ void check_dinput_hooks(LPDIRECTINPUTDEVICE8W iface)
     PostThreadMessageW( hook_thread_id, WM_USER+0x10, 1, 0 );
 
     LeaveCriticalSection(&dinput_hook_crit);
+}
+
+void check_dinput_events(void)
+{
+    /* Windows does not do that, but our current implementation of winex11
+     * requires periodic event polling to forward events to the wineserver.
+     *
+     * We have to call this function from multiple places, because:
+     * - some games do not explicitly poll for mouse events
+     *   (for example Culpa Innata)
+     * - some games only poll the device, and neither keyboard nor mouse
+     *   (for example Civilization: Call to Power 2)
+     */
+    MsgWaitForMultipleObjectsEx(0, NULL, 0, QS_ALLINPUT, 0);
 }
 
 BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved)

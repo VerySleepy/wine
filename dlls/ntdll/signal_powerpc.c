@@ -678,7 +678,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
             rec.NumberParameters = 2;
             rec.ExceptionInformation[0] = 0; /* FIXME ? */
             rec.ExceptionInformation[1] = (ULONG_PTR)siginfo->si_addr;
-            if (!(rec.ExceptionCode = virtual_handle_fault(siginfo->si_addr, rec.ExceptionInformation[0])))
+            if (!(rec.ExceptionCode = virtual_handle_fault(siginfo->si_addr, rec.ExceptionInformation[0], FALSE)))
                 goto done;
             break;
 	default:
@@ -701,7 +701,7 @@ static void segv_handler( int signal, siginfo_t *siginfo, void *sigcontext )
             rec.NumberParameters = 2;
             rec.ExceptionInformation[0] = 0; /* FIXME ? */
             rec.ExceptionInformation[1] = (ULONG_PTR)siginfo->si_addr;
-            if (!(rec.ExceptionCode = virtual_handle_fault(siginfo->si_addr, rec.ExceptionInformation[0])))
+            if (!(rec.ExceptionCode = virtual_handle_fault(siginfo->si_addr, rec.ExceptionInformation[0], FALSE)))
                 goto done;
             break;
 #endif
@@ -940,7 +940,7 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *sigcontext )
  */
 int CDECL __wine_set_signal_handler(unsigned int sig, wine_signal_handler wsh)
 {
-    if (sig > sizeof(handlers) / sizeof(handlers[0])) return -1;
+    if (sig >= sizeof(handlers) / sizeof(handlers[0])) return -1;
     if (handlers[sig] != NULL) return -2;
     handlers[sig] = wsh;
     return 0;

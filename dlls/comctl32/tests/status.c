@@ -30,9 +30,8 @@
         RECT exp = {abs(got.left - _left), abs(got.top - _top), \
                     abs(got.right - _right), abs(got.bottom - _bottom)}; \
         ok(exp.left <= 2 && exp.top <= 2 && exp.right <= 2 && exp.bottom <= 2, \
-           "Expected rect {%d,%d, %d,%d}, got {%d,%d, %d,%d}\n", \
-           _left, _top, _right, _bottom, \
-           (got).left, (got).top, (got).right, (got).bottom); } while (0)
+           "Expected rect (%d,%d)-(%d,%d), got %s\n", _left, _top, _right, _bottom, \
+           wine_dbgstr_rect(&(got))); } while (0)
 
 static HINSTANCE hinst;
 static WNDPROC g_status_wndproc;
@@ -290,7 +289,7 @@ static void test_status_control(void)
     expect(5,LOWORD(r));
     expect(SBT_POPOUT,HIWORD(r));
     r = SendMessageW(hWndStatus, WM_GETTEXTLENGTH, 0, 0);
-    ok(r == 5 || broken(0x02000005 /* NT4 */), "Expected 5, got %d\n", r);
+    ok(r == 5, "Expected 5, got %d\n", r);
     r = SendMessageA(hWndStatus, SB_GETTEXTLENGTHA, 1, 0);
     expect(0,LOWORD(r));
     expect(SBT_OWNERDRAW,HIWORD(r));
@@ -344,6 +343,7 @@ static void test_status_control(void)
         r = SendMessageA(hWndStatus, SB_SETTEXTA, 0, (LPARAM)chstr);
         expect(TRUE,r);
         r = SendMessageA(hWndStatus, SB_GETTEXTA, 0, (LPARAM)charArray);
+        ok(r == strlen(charArray), "got %d\n", r);
         /* substitution with single space */
         if (ch > 0x00 && ch < 0x20 && ch != '\t')
             chstr[5] = ' ';

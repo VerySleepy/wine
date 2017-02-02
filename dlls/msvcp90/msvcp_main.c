@@ -69,50 +69,124 @@ MSVCP_bool (__thiscall *critical_section_trylock)(critical_section*);
 #endif
 
 #define VERSION_STRING(ver) #ver
+#if _MSVCP_VER >= 140
+#define MSVCRT_NAME(ver) "ucrtbase.dll"
+#define CONCRT_NAME(ver) "concrt" VERSION_STRING(ver) ".dll"
+#else
 #define MSVCRT_NAME(ver) "msvcr" VERSION_STRING(ver) ".dll"
+#endif
+
+#if _MSVCP_VER >= 140
+static void* __cdecl operator_new(MSVCP_size_t size)
+{
+    void *retval;
+    int freed;
+
+    do
+    {
+        retval = malloc(size);
+        if (retval)
+        {
+            TRACE("(%ld) returning %p\n", size, retval);
+            return retval;
+        }
+        freed = _callnewh(size);
+    } while (freed);
+
+    TRACE("(%ld) out of memory\n", size);
+    throw_exception(EXCEPTION_BAD_ALLOC, "bad allocation");
+    return NULL;
+}
+
+static void __cdecl operator_delete(void *mem)
+{
+    TRACE("(%p)\n", mem);
+    free(mem);
+}
+
+void __cdecl _invalid_parameter(const wchar_t *expr, const wchar_t *func, const wchar_t *file, unsigned int line, uintptr_t arg)
+{
+   _invalid_parameter_noinfo();
+}
+
+int __cdecl _scprintf(const char* fmt, ...)
+{
+    int ret;
+    __ms_va_list valist;
+    __ms_va_start(valist, fmt);
+    ret = __stdio_common_vsprintf(UCRTBASE_PRINTF_STANDARD_SNPRINTF_BEHAVIOUR, NULL, 0, fmt, NULL, valist);
+    __ms_va_end(valist);
+    return ret;
+}
+
+int __cdecl sprintf(char *buf, const char *fmt, ...)
+{
+    int ret;
+    __ms_va_list valist;
+    __ms_va_start(valist, fmt);
+    ret = __stdio_common_vsprintf(UCRTBASE_PRINTF_STANDARD_SNPRINTF_BEHAVIOUR, buf, -1, fmt, NULL, valist);
+    __ms_va_end(valist);
+    return ret;
+}
+#endif
 
 static void init_cxx_funcs(void)
 {
     HMODULE hmod = GetModuleHandleA( MSVCRT_NAME(_MSVCP_VER) );
+#if _MSVCP_VER >= 110
+    HMODULE hcon = hmod;
+#endif
 
     if (!hmod) FIXME( "%s not loaded\n", MSVCRT_NAME(_MSVCP_VER) );
 
+#if _MSVCP_VER >= 140
+    MSVCRT_operator_new = operator_new;
+    MSVCRT_operator_delete = operator_delete;
+    MSVCRT_set_new_handler = (void*)GetProcAddress(hmod, "_set_new_handler");
+
+    hcon = LoadLibraryA( CONCRT_NAME(_MSVCP_VER) );
+    if (!hcon) FIXME( "%s not loaded\n", CONCRT_NAME(_MSVCP_VER) );
+#else
     if (sizeof(void *) > sizeof(int))  /* 64-bit has different names */
     {
         MSVCRT_operator_new = (void*)GetProcAddress(hmod, "??2@YAPEAX_K@Z");
         MSVCRT_operator_delete = (void*)GetProcAddress(hmod, "??3@YAXPEAX@Z");
         MSVCRT_set_new_handler = (void*)GetProcAddress(hmod, "?_set_new_handler@@YAP6AH_K@ZP6AH0@Z@Z");
-
-#if _MSVCP_VER >= 110
-        critical_section_ctor = (void*)GetProcAddress(hmod, "??0critical_section@Concurrency@@QEAA@XZ");
-        critical_section_dtor = (void*)GetProcAddress(hmod, "??1critical_section@Concurrency@@QEAA@XZ");
-        critical_section_lock = (void*)GetProcAddress(hmod, "?lock@critical_section@Concurrency@@QEAAXXZ");
-        critical_section_unlock = (void*)GetProcAddress(hmod, "?unlock@critical_section@Concurrency@@QEAAXXZ");
-        critical_section_trylock = (void*)GetProcAddress(hmod, "?try_lock@critical_section@Concurrency@@QEAA_NXZ");
-#endif
     }
     else
     {
         MSVCRT_operator_new = (void*)GetProcAddress(hmod, "??2@YAPAXI@Z");
         MSVCRT_operator_delete = (void*)GetProcAddress(hmod, "??3@YAXPAX@Z");
         MSVCRT_set_new_handler = (void*)GetProcAddress(hmod, "?_set_new_handler@@YAP6AHI@ZP6AHI@Z@Z");
+    }
+#endif
 
 #if _MSVCP_VER >= 110
-#ifdef __arm__
-        critical_section_ctor = (void*)GetProcAddress(hmod, "??0critical_section@Concurrency@@QAA@XZ");
-        critical_section_dtor = (void*)GetProcAddress(hmod, "??1critical_section@Concurrency@@QAA@XZ");
-        critical_section_lock = (void*)GetProcAddress(hmod, "?lock@critical_section@Concurrency@@QAAXXZ");
-        critical_section_unlock = (void*)GetProcAddress(hmod, "?unlock@critical_section@Concurrency@@QAAXXZ");
-        critical_section_trylock = (void*)GetProcAddress(hmod, "?try_lock@critical_section@Concurrency@@QAA_NXZ");
-#else
-        critical_section_ctor = (void*)GetProcAddress(hmod, "??0critical_section@Concurrency@@QAE@XZ");
-        critical_section_dtor = (void*)GetProcAddress(hmod, "??1critical_section@Concurrency@@QAE@XZ");
-        critical_section_lock = (void*)GetProcAddress(hmod, "?lock@critical_section@Concurrency@@QAEXXZ");
-        critical_section_unlock = (void*)GetProcAddress(hmod, "?unlock@critical_section@Concurrency@@QAEXXZ");
-        critical_section_trylock = (void*)GetProcAddress(hmod, "?try_lock@critical_section@Concurrency@@QAE_NXZ");
-#endif
-#endif /* _MSVCP_VER >= 110 */
+    if (sizeof(void *) > sizeof(int))  /* 64-bit has different names */
+    {
+        critical_section_ctor = (void*)GetProcAddress(hcon, "??0critical_section@Concurrency@@QEAA@XZ");
+        critical_section_dtor = (void*)GetProcAddress(hcon, "??1critical_section@Concurrency@@QEAA@XZ");
+        critical_section_lock = (void*)GetProcAddress(hcon, "?lock@critical_section@Concurrency@@QEAAXXZ");
+        critical_section_unlock = (void*)GetProcAddress(hcon, "?unlock@critical_section@Concurrency@@QEAAXXZ");
+        critical_section_trylock = (void*)GetProcAddress(hcon, "?try_lock@critical_section@Concurrency@@QEAA_NXZ");
     }
+    else
+    {
+#ifdef __arm__
+        critical_section_ctor = (void*)GetProcAddress(hcon, "??0critical_section@Concurrency@@QAA@XZ");
+        critical_section_dtor = (void*)GetProcAddress(hcon, "??1critical_section@Concurrency@@QAA@XZ");
+        critical_section_lock = (void*)GetProcAddress(hcon, "?lock@critical_section@Concurrency@@QAAXXZ");
+        critical_section_unlock = (void*)GetProcAddress(hcon, "?unlock@critical_section@Concurrency@@QAAXXZ");
+        critical_section_trylock = (void*)GetProcAddress(hcon, "?try_lock@critical_section@Concurrency@@QAA_NXZ");
+#else
+        critical_section_ctor = (void*)GetProcAddress(hcon, "??0critical_section@Concurrency@@QAE@XZ");
+        critical_section_dtor = (void*)GetProcAddress(hcon, "??1critical_section@Concurrency@@QAE@XZ");
+        critical_section_lock = (void*)GetProcAddress(hcon, "?lock@critical_section@Concurrency@@QAEXXZ");
+        critical_section_unlock = (void*)GetProcAddress(hcon, "?unlock@critical_section@Concurrency@@QAEXXZ");
+        critical_section_trylock = (void*)GetProcAddress(hcon, "?try_lock@critical_section@Concurrency@@QAE_NXZ");
+#endif
+    }
+#endif /* _MSVCP_VER >= 110 */
 }
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
@@ -134,6 +208,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
             free_io();
             free_locale();
             free_lockit();
+            free_misc();
             break;
     }
 

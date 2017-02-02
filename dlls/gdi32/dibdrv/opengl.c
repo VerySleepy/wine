@@ -149,7 +149,8 @@ static int dibdrv_wglDescribePixelFormat( HDC hdc, int fmt, UINT size, PIXELFORM
 {
     int ret = sizeof(pixel_formats) / sizeof(pixel_formats[0]);
 
-    if (fmt <= 0 || fmt > ret) return ret;
+    if (!descr) return ret;
+    if (fmt <= 0 || fmt > ret) return 0;
     if (size < sizeof(*descr)) return 0;
 
     memset( descr, 0, sizeof(*descr) );
@@ -251,6 +252,7 @@ static BOOL dibdrv_wglMakeCurrent( HDC hdc, struct wgl_context *context )
     HBITMAP bitmap;
     BITMAPOBJ *bmp;
     dib_info dib;
+    GLenum type;
     BOOL ret = FALSE;
 
     if (!context)
@@ -281,7 +283,12 @@ static BOOL dibdrv_wglMakeCurrent( HDC hdc, struct wgl_context *context )
 
         TRACE( "context %p bits %p size %ux%u\n", context, bits, width, height );
 
-        ret = pOSMesaMakeCurrent( context->context, bits, GL_UNSIGNED_BYTE, width, height );
+        if (pixel_formats[context->format - 1].mesa == OSMESA_RGB_565)
+            type = GL_UNSIGNED_SHORT_5_6_5;
+        else
+            type = GL_UNSIGNED_BYTE;
+
+        ret = pOSMesaMakeCurrent( context->context, bits, type, width, height );
         if (ret)
         {
             pOSMesaPixelStore( OSMESA_ROW_LENGTH, abs( dib.stride ) * 8 / dib.bit_count );

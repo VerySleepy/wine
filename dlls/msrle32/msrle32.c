@@ -1567,8 +1567,16 @@ static LRESULT DecompressGetFormat(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
 
   size = lpbiIn->biSize;
 
-  if (lpbiIn->biBitCount <= 8)
-    size += lpbiIn->biClrUsed * sizeof(RGBQUAD);
+  if (lpbiIn->biBitCount <= 8) {
+    int colors;
+
+    if (lpbiIn->biClrUsed == 0)
+      colors = 1 << lpbiIn->biBitCount;
+    else
+      colors = lpbiIn->biClrUsed;
+
+    size += colors * sizeof(RGBQUAD);
+  }
 
   if (lpbiOut != NULL) {
     memcpy(lpbiOut, lpbiIn, size);
@@ -1596,7 +1604,7 @@ static LRESULT DecompressQuery(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
 
   /* check input format if given */
   if (lpbiIn != NULL) {
-    if (!isSupportedMRLE(lpbiIn))
+    if (!isSupportedMRLE(lpbiIn) && !isSupportedDIB(lpbiIn))
       return ICERR_BADFORMAT;
   }
 
@@ -1607,11 +1615,11 @@ static LRESULT DecompressQuery(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
 
     if (lpbiIn != NULL) {
       if (lpbiIn->biWidth  != lpbiOut->biWidth)
-	hr = ICERR_UNSUPPORTED;
+        hr = ICERR_UNSUPPORTED;
       if (lpbiIn->biHeight != lpbiOut->biHeight)
-	hr = ICERR_UNSUPPORTED;
+        hr = ICERR_UNSUPPORTED;
       if (lpbiIn->biBitCount > lpbiOut->biBitCount)
-	hr = ICERR_UNSUPPORTED;
+        hr = ICERR_UNSUPPORTED;
     }
   }
 
@@ -1645,49 +1653,57 @@ static LRESULT DecompressBegin(CodecInfo *pi, LPCBITMAPINFOHEADER lpbiIn,
   if (pi->bDecompress)
     DecompressEnd(pi);
 
-  rgbIn  = (const RGBQUAD*)((const BYTE*)lpbiIn  + lpbiIn->biSize);
-  rgbOut = (const RGBQUAD*)((const BYTE*)lpbiOut + lpbiOut->biSize);
+  if (lpbiIn->biCompression != BI_RGB)
+  {
+    int colors;
 
-  switch (lpbiOut->biBitCount) {
-  case 4:
-  case 8:
-    pi->palette_map = LocalAlloc(LPTR, lpbiIn->biClrUsed);
-    if (pi->palette_map == NULL)
-      return ICERR_MEMORY;
+    if (lpbiIn->biBitCount <= 8 && lpbiIn->biClrUsed == 0)
+      colors = 1 << lpbiIn->biBitCount;
+    else
+      colors = lpbiIn->biClrUsed;
 
-    for (i = 0; i < lpbiIn->biClrUsed; i++) {
-      pi->palette_map[i] = MSRLE32_GetNearestPaletteIndex(lpbiOut->biClrUsed, rgbOut, rgbIn[i]);
-    }
-    break;
-  case 15:
-  case 16:
-    pi->palette_map = LocalAlloc(LPTR, lpbiIn->biClrUsed * 2);
-    if (pi->palette_map == NULL)
-      return ICERR_MEMORY;
+    rgbIn  = (const RGBQUAD*)((const BYTE*)lpbiIn  + lpbiIn->biSize);
+    rgbOut = (const RGBQUAD*)((const BYTE*)lpbiOut + lpbiOut->biSize);
 
-    for (i = 0; i < lpbiIn->biClrUsed; i++) {
-      WORD color;
+    switch (lpbiOut->biBitCount) {
+    case 4:
+    case 8:
+      pi->palette_map = LocalAlloc(LPTR, colors);
+      if (pi->palette_map == NULL)
+        return ICERR_MEMORY;
 
-      if (lpbiOut->biBitCount == 15)
-	color = ((rgbIn[i].rgbRed >> 3) << 10)
-	  | ((rgbIn[i].rgbGreen >> 3) << 5) | (rgbIn[i].rgbBlue >> 3);
-      else
-	color = ((rgbIn[i].rgbRed >> 3) << 11)
-	  | ((rgbIn[i].rgbGreen >> 3) << 5) | (rgbIn[i].rgbBlue >> 3);
+      for (i = 0; i < colors; i++)
+        pi->palette_map[i] = MSRLE32_GetNearestPaletteIndex(colors, rgbOut, rgbIn[i]);
+      break;
+    case 15:
+    case 16:
+      pi->palette_map = LocalAlloc(LPTR, colors * 2);
+      if (pi->palette_map == NULL)
+        return ICERR_MEMORY;
 
-      pi->palette_map[i * 2 + 1] = color >> 8;
-      pi->palette_map[i * 2 + 0] = color & 0xFF;
+      for (i = 0; i < colors; i++) {
+        WORD color;
+
+        if (lpbiOut->biBitCount == 15)
+    color = ((rgbIn[i].rgbRed >> 3) << 10)
+      | ((rgbIn[i].rgbGreen >> 3) << 5) | (rgbIn[i].rgbBlue >> 3);
+        else
+    color = ((rgbIn[i].rgbRed >> 3) << 11)
+      | ((rgbIn[i].rgbGreen >> 3) << 5) | (rgbIn[i].rgbBlue >> 3);
+
+        pi->palette_map[i * 2 + 1] = color >> 8;
+        pi->palette_map[i * 2 + 0] = color & 0xFF;
+      };
+      break;
+    case 24:
+    case 32:
+      pi->palette_map = LocalAlloc(LPTR, colors * sizeof(RGBQUAD));
+      if (pi->palette_map == NULL)
+        return ICERR_MEMORY;
+      memcpy(pi->palette_map, rgbIn, colors * sizeof(RGBQUAD));
+      break;
     };
-    break;
-  case 24:
-  case 32:
-    pi->palette_map = LocalAlloc(LPTR, lpbiIn->biClrUsed * sizeof(RGBQUAD));
-    if (pi->palette_map == NULL)
-      return ICERR_MEMORY;
-    memcpy(pi->palette_map, rgbIn, lpbiIn->biClrUsed * sizeof(RGBQUAD));
-    break;
-  };
-
+  }
   pi->bDecompress = TRUE;
 
   return ICERR_OK;
@@ -1717,6 +1733,14 @@ static LRESULT Decompress(CodecInfo *pi, ICDECOMPRESS *pic, DWORD dwSize)
 
   assert(pic->lpbiInput->biWidth  == pic->lpbiOutput->biWidth);
   assert(pic->lpbiInput->biHeight == pic->lpbiOutput->biHeight);
+
+  /* Uncompressed frame? */
+  if (pic->lpbiInput->biCompression == BI_RGB)
+  {
+    pic->lpbiOutput->biSizeImage = pic->lpbiInput->biSizeImage;
+    memcpy(pic->lpOutput, pic->lpInput, pic->lpbiOutput->biSizeImage);
+    return ICERR_OK;
+  }
 
   pic->lpbiOutput->biSizeImage = DIBWIDTHBYTES(*pic->lpbiOutput) * pic->lpbiOutput->biHeight;
   if (pic->lpbiInput->biBitCount == 4)

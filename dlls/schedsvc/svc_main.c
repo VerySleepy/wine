@@ -129,35 +129,35 @@ static RPC_STATUS RPC_init(void)
     status = RpcServerUseProtseqEpW(transport, 0, NULL, NULL);
     if (status != RPC_S_OK)
     {
-        WINE_ERR("RpcServerUseProtseqEp error %#x\n", status);
+        ERR("RpcServerUseProtseqEp error %#x\n", status);
         return status;
     }
 
     status = RpcServerRegisterIf(ITaskSchedulerService_v1_0_s_ifspec, 0, 0);
     if (status != RPC_S_OK)
     {
-        WINE_ERR("RpcServerRegisterIf error %#x\n", status);
+        ERR("RpcServerRegisterIf error %#x\n", status);
         return status;
     }
 
     status = RpcServerInqBindings(&sched_bindings);
     if (status != RPC_S_OK)
     {
-        WINE_ERR("RpcServerInqBindings error %#x\n", status);
+        ERR("RpcServerInqBindings error %#x\n", status);
         return status;
     }
 
     status = RpcEpRegisterW(ITaskSchedulerService_v1_0_s_ifspec, sched_bindings, NULL, NULL);
     if (status != RPC_S_OK)
     {
-        WINE_ERR("RpcEpRegister error %#x\n", status);
+        ERR("RpcEpRegister error %#x\n", status);
         return status;
     }
 
     status = RpcServerListen(1, RPC_C_LISTEN_MAX_CALLS_DEFAULT, TRUE);
     if (status != RPC_S_OK)
     {
-        WINE_ERR("RpcServerListen error %#x\n", status);
+        ERR("RpcServerListen error %#x\n", status);
         return status;
     }
     return RPC_S_OK;
@@ -175,22 +175,24 @@ void WINAPI ServiceMain(DWORD argc, LPWSTR *argv)
 {
     TRACE("starting Task Scheduler Service\n");
 
-    if (RPC_init() != RPC_S_OK) return;
-
     schedsvc_handle = RegisterServiceCtrlHandlerW(scheduleW, schedsvc_handler);
     if (!schedsvc_handle)
     {
-        WINE_ERR("RegisterServiceCtrlHandler error %d\n", GetLastError());
+        ERR("RegisterServiceCtrlHandler error %d\n", GetLastError());
         return;
     }
 
     done_event = CreateEventW(NULL, TRUE, FALSE, NULL);
 
-    schedsvc_update_status(SERVICE_RUNNING);
+    schedsvc_update_status(SERVICE_START_PENDING);
 
-    WaitForSingleObject(done_event, INFINITE);
+    if (RPC_init() == RPC_S_OK)
+    {
+        schedsvc_update_status(SERVICE_RUNNING);
+        WaitForSingleObject(done_event, INFINITE);
+        RPC_finish();
+    }
 
-    RPC_finish();
     schedsvc_update_status(SERVICE_STOPPED);
 
     TRACE("exiting Task Scheduler Service\n");

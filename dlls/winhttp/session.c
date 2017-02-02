@@ -70,9 +70,12 @@ DWORD get_last_error( void )
 
 void send_callback( object_header_t *hdr, DWORD status, LPVOID info, DWORD buflen )
 {
-    TRACE("%p, 0x%08x, %p, %u\n", hdr, status, info, buflen);
-
-    if (hdr->callback && (hdr->notify_mask & status)) hdr->callback( hdr->handle, hdr->context, status, info, buflen );
+    if (hdr->callback && (hdr->notify_mask & status))
+    {
+        TRACE("%p, 0x%08x, %p, %u\n", hdr, status, info, buflen);
+        hdr->callback( hdr->handle, hdr->context, status, info, buflen );
+        TRACE("returning from 0x%08x callback\n", status);
+    }
 }
 
 /***********************************************************************
@@ -94,6 +97,8 @@ static void session_destroy( object_header_t *hdr )
     domain_t *domain;
 
     TRACE("%p\n", session);
+
+    if (session->unload_event) SetEvent( session->unload_event );
 
     LIST_FOR_EACH_SAFE( item, next, &session->cookie_cache )
     {
@@ -196,6 +201,16 @@ static BOOL session_set_option( object_header_t *hdr, DWORD option, LPVOID buffe
     case WINHTTP_OPTION_CONFIGURE_PASSPORT_AUTH:
         FIXME("WINHTTP_OPTION_CONFIGURE_PASSPORT_AUTH: 0x%x\n", *(DWORD *)buffer);
         return TRUE;
+    case WINHTTP_OPTION_UNLOAD_NOTIFY_EVENT:
+        TRACE("WINHTTP_OPTION_UNLOAD_NOTIFY_EVENT: %p\n", *(HANDLE *)buffer);
+        session->unload_event = *(HANDLE *)buffer;
+        return TRUE;
+    case WINHTTP_OPTION_MAX_CONNS_PER_SERVER:
+        FIXME("WINHTTP_OPTION_MAX_CONNS_PER_SERVER: %d\n", *(DWORD *)buffer);
+        return TRUE;
+    case WINHTTP_OPTION_MAX_CONNS_PER_1_0_SERVER:
+        FIXME("WINHTTP_OPTION_MAX_CONNS_PER_1_0_SERVER: %d\n", *(DWORD *)buffer);
+        return TRUE;
     default:
         FIXME("unimplemented option %u\n", option);
         set_last_error( ERROR_INVALID_PARAMETER );
@@ -267,6 +282,7 @@ HINTERNET WINAPI WinHttpOpen( LPCWSTR agent, DWORD access, LPCWSTR proxy, LPCWST
 end:
     release_object( &session->hdr );
     TRACE("returning %p\n", handle);
+    if (handle) set_last_error( ERROR_SUCCESS );
     return handle;
 }
 
@@ -543,6 +559,7 @@ end:
     release_object( &connect->hdr );
     release_object( &session->hdr );
     TRACE("returning %p\n", hconnect);
+    if (hconnect) set_last_error( ERROR_SUCCESS );
     return hconnect;
 }
 
@@ -552,10 +569,20 @@ end:
 static void request_destroy( object_header_t *hdr )
 {
     request_t *request = (request_t *)hdr;
-    unsigned int i;
+    unsigned int i, j;
 
     TRACE("%p\n", request);
 
+    if (request->task_thread)
+    {
+        /* Signal to the task proc to quit.  It will call
+           this again when it does. */
+        HANDLE thread = request->task_thread;
+        request->task_thread = 0;
+        SetEvent( request->task_cancel );
+        CloseHandle( thread );
+        return;
+    }
     release_object( &request->connect->hdr );
 
     destroy_authinfo( request->authinfo );
@@ -574,6 +601,14 @@ static void request_destroy( object_header_t *hdr )
     heap_free( request->headers );
     for (i = 0; i < request->num_accept_types; i++) heap_free( request->accept_types[i] );
     heap_free( request->accept_types );
+    for (i = 0; i < TARGET_MAX; i++)
+    {
+        for (j = 0; j < SCHEME_MAX; j++)
+        {
+            heap_free( request->creds[i][j].username );
+            heap_free( request->creds[i][j].password );
+        }
+    }
     heap_free( request );
 }
 
@@ -964,6 +999,14 @@ static BOOL request_set_option( object_header_t *hdr, DWORD option, LPVOID buffe
         if (!(session->proxy_password = buffer_to_str( buffer, buflen ))) return FALSE;
         return TRUE;
     }
+    case WINHTTP_OPTION_CLIENT_CERT_CONTEXT:
+        if (!(hdr->flags & WINHTTP_FLAG_SECURE))
+        {
+            SetLastError( ERROR_WINHTTP_INCORRECT_HANDLE_STATE );
+            return FALSE;
+        }
+        FIXME("WINHTTP_OPTION_CLIENT_CERT_CONTEXT\n");
+        return TRUE;
     default:
         FIXME("unimplemented option %u\n", option);
         set_last_error( ERROR_INVALID_PARAMETER );
@@ -1057,6 +1100,7 @@ HINTERNET WINAPI WinHttpOpenRequest( HINTERNET hconnect, LPCWSTR verb, LPCWSTR o
     request->hdr.context = connect->hdr.context;
     request->hdr.redirect_policy = connect->hdr.redirect_policy;
     list_init( &request->hdr.children );
+    list_init( &request->task_queue );
 
     addref_object( &connect->hdr );
     request->connect = connect;
@@ -1099,6 +1143,7 @@ end:
     release_object( &request->hdr );
     release_object( &connect->hdr );
     TRACE("returning %p\n", hrequest);
+    if (hrequest) set_last_error( ERROR_SUCCESS );
     return hrequest;
 }
 
@@ -1118,6 +1163,7 @@ BOOL WINAPI WinHttpCloseHandle( HINTERNET handle )
     }
     release_object( hdr );
     free_handle( handle );
+    set_last_error( ERROR_SUCCESS );
     return TRUE;
 }
 
@@ -1178,6 +1224,7 @@ BOOL WINAPI WinHttpQueryOption( HINTERNET handle, DWORD option, LPVOID buffer, L
     ret = query_option( hdr, option, buffer, buflen );
 
     release_object( hdr );
+    if (ret) set_last_error( ERROR_SUCCESS );
     return ret;
 }
 
@@ -1185,7 +1232,7 @@ static BOOL set_option( object_header_t *hdr, DWORD option, LPVOID buffer, DWORD
 {
     BOOL ret = TRUE;
 
-    if (!buffer)
+    if (!buffer && buflen)
     {
         set_last_error( ERROR_INVALID_PARAMETER );
         return FALSE;
@@ -1236,6 +1283,7 @@ BOOL WINAPI WinHttpSetOption( HINTERNET handle, DWORD option, LPVOID buffer, DWO
     ret = set_option( hdr, option, buffer, buflen );
 
     release_object( hdr );
+    if (ret) set_last_error( ERROR_SUCCESS );
     return ret;
 }
 
@@ -1317,7 +1365,14 @@ static BOOL get_system_proxy_autoconfig_url( char *buf, DWORD buflen )
     CFRelease( settings );
     return ret;
 #else
-    FIXME( "no support on this platform\n" );
+    static BOOL first = TRUE;
+    if (first)
+    {
+        FIXME( "no support on this platform\n" );
+        first = FALSE;
+    }
+    else
+        TRACE( "no support on this platform\n" );
     return FALSE;
 #endif
 }
@@ -1345,6 +1400,7 @@ BOOL WINAPI WinHttpDetectAutoProxyConfigUrl( DWORD flags, LPWSTR *url )
 
         if (!(urlW = strdupAW( system_url ))) return FALSE;
         *url = urlW;
+        set_last_error( ERROR_SUCCESS );
         return TRUE;
     }
     if (flags & WINHTTP_AUTO_DETECT_TYPE_DHCP)
@@ -1405,6 +1461,7 @@ BOOL WINAPI WinHttpDetectAutoProxyConfigUrl( DWORD flags, LPWSTR *url )
         set_last_error( ERROR_WINHTTP_AUTODETECTION_FAILED );
         *url = NULL;
     }
+    else set_last_error( ERROR_SUCCESS );
     return ret;
 }
 
@@ -1572,6 +1629,7 @@ BOOL WINAPI WinHttpGetDefaultProxyConfiguration( WINHTTP_PROXY_INFO *info )
         info->lpszProxy       = NULL;
         info->lpszProxyBypass = NULL;
     }
+    set_last_error( ERROR_SUCCESS );
     return TRUE;
 }
 
@@ -1654,6 +1712,7 @@ done:
         GlobalFree( config->lpszProxyBypass );
         config->lpszProxyBypass = NULL;
     }
+    else set_last_error( ERROR_SUCCESS );
     return ret;
 }
 
@@ -1705,6 +1764,8 @@ static char *download_script( const WCHAR *url, DWORD *out_size )
 
     memset( &uc, 0, sizeof(uc) );
     uc.dwStructSize = sizeof(uc);
+    uc.dwHostNameLength = -1;
+    uc.dwUrlPathLength = -1;
     if (!WinHttpCrackUrl( url, 0, 0, &uc )) return NULL;
     if (!(hostname = heap_alloc( (uc.dwHostNameLength + 1) * sizeof(WCHAR) ))) return NULL;
     memcpy( hostname, uc.lpszHostName, uc.dwHostNameLength * sizeof(WCHAR) );
@@ -1766,6 +1827,7 @@ static BOOL run_script( char *script, DWORD size, const WCHAR *url, WINHTTP_PROX
     char *result, *urlA;
     DWORD len_result;
     struct AUTO_PROXY_SCRIPT_BUFFER buffer;
+    URL_COMPONENTSW uc;
 
     buffer.dwStructSize = sizeof(buffer);
     buffer.lpszScriptBuffer = script;
@@ -1777,10 +1839,23 @@ static BOOL run_script( char *script, DWORD size, const WCHAR *url, WINHTTP_PROX
         heap_free( urlA );
         return FALSE;
     }
-    if ((ret = InternetGetProxyInfo( urlA, strlen(urlA), NULL, 0, &result, &len_result )))
+
+    memset( &uc, 0, sizeof(uc) );
+    uc.dwStructSize = sizeof(uc);
+    uc.dwHostNameLength = -1;
+
+    if (WinHttpCrackUrl( url, 0, 0, &uc ))
     {
-        ret = parse_script_result( result, info );
-        heap_free( result );
+        char *hostnameA = strdupWA_sized( uc.lpszHostName, uc.dwHostNameLength );
+
+        if ((ret = InternetGetProxyInfo( urlA, strlen(urlA),
+                        hostnameA, strlen(hostnameA), &result, &len_result )))
+        {
+            ret = parse_script_result( result, info );
+            heap_free( result );
+        }
+
+        heap_free( hostnameA );
     }
     heap_free( urlA );
     return InternetDeInitializeAutoProxyDll( NULL, 0 );
@@ -1838,6 +1913,7 @@ BOOL WINAPI WinHttpGetProxyForUrl( HINTERNET hsession, LPCWSTR url, WINHTTP_AUTO
 done:
     GlobalFree( detected_pac_url );
     release_object( &session->hdr );
+    if (ret) set_last_error( ERROR_SUCCESS );
     return ret;
 }
 
@@ -1945,6 +2021,7 @@ BOOL WINAPI WinHttpSetDefaultProxyConfiguration( WINHTTP_PROXY_INFO *info )
         }
         RegCloseKey( key );
     }
+    if (ret) set_last_error( ERROR_SUCCESS );
     return ret;
 }
 
@@ -1969,6 +2046,7 @@ WINHTTP_STATUS_CALLBACK WINAPI WinHttpSetStatusCallback( HINTERNET handle, WINHT
     hdr->notify_mask = flags;
 
     release_object( hdr );
+    set_last_error( ERROR_SUCCESS );
     return ret;
 }
 
@@ -2016,8 +2094,6 @@ BOOL WINAPI WinHttpSetTimeouts( HINTERNET handle, int resolve, int connect, int 
                 if (netconn_set_timeout( &request->netconn, TRUE, send )) ret = FALSE;
                 if (netconn_set_timeout( &request->netconn, FALSE, receive )) ret = FALSE;
             }
-
-            release_object( &request->hdr );
             break;
 
         case WINHTTP_HANDLE_TYPE_SESSION:
@@ -2035,10 +2111,11 @@ BOOL WINAPI WinHttpSetTimeouts( HINTERNET handle, int resolve, int connect, int 
             break;
 
         default:
-            release_object( hdr );
             set_last_error( ERROR_WINHTTP_INCORRECT_HANDLE_TYPE );
-            return FALSE;
+            ret = FALSE;
     }
+    release_object( hdr );
+    if (ret) set_last_error( ERROR_SUCCESS );
     return ret;
 }
 
@@ -2061,7 +2138,11 @@ BOOL WINAPI WinHttpTimeFromSystemTime( const SYSTEMTIME *time, LPWSTR string )
 
     TRACE("%p, %p\n", time, string);
 
-    if (!time || !string) return FALSE;
+    if (!time || !string)
+    {
+        set_last_error( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
 
     sprintfW( string, format,
               wkday[time->wDayOfWeek],
@@ -2072,6 +2153,7 @@ BOOL WINAPI WinHttpTimeFromSystemTime( const SYSTEMTIME *time, LPWSTR string )
               time->wMinute,
               time->wSecond );
 
+    set_last_error( ERROR_SUCCESS );
     return TRUE;
 }
 
@@ -2086,7 +2168,11 @@ BOOL WINAPI WinHttpTimeToSystemTime( LPCWSTR string, SYSTEMTIME *time )
 
     TRACE("%s, %p\n", debugstr_w(string), time);
 
-    if (!string || !time) return FALSE;
+    if (!string || !time)
+    {
+        set_last_error( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
 
     /* Windows does this too */
     GetSystemTime( time );
@@ -2094,6 +2180,8 @@ BOOL WINAPI WinHttpTimeToSystemTime( LPCWSTR string, SYSTEMTIME *time )
     /*  Convert an RFC1123 time such as 'Fri, 07 Jan 2005 12:06:35 GMT' into
      *  a SYSTEMTIME structure.
      */
+
+    set_last_error( ERROR_SUCCESS );
 
     while (*s && !isalphaW( *s )) s++;
     if (s[0] == '\0' || s[1] == '\0' || s[2] == '\0') return TRUE;

@@ -59,11 +59,11 @@ struct mapping
 {
     struct object   obj;             /* object header */
     mem_size_t      size;            /* mapping size */
+    unsigned int    flags;           /* SEC_* flags */
     int             protect;         /* protection flags */
     struct fd      *fd;              /* fd for mapped file */
     enum cpu_type   cpu;             /* client CPU (for PE image mapping) */
-    int             header_size;     /* size of headers (for PE image mapping) */
-    client_ptr_t    base;            /* default base addr (for PE image mapping) */
+    pe_image_info_t image;           /* image info (for PE image mapping) */
     struct ranges  *committed;       /* list of committed ranges in this mapping */
     struct file    *shared_file;     /* temp file for shared PE mapping */
     struct list     shared_entry;    /* entry in global shared PE mappings list */
@@ -91,6 +91,8 @@ static const struct object_ops mapping_ops =
     default_get_sd,              /* get_sd */
     default_set_sd,              /* set_sd */
     no_lookup_name,              /* lookup_name */
+    directory_link_name,         /* link_name */
+    default_unlink_name,         /* unlink_name */
     no_open_file,                /* open_file */
     fd_close_handle,             /* close_handle */
     mapping_destroy              /* destroy */
@@ -100,12 +102,13 @@ static const struct fd_ops mapping_fd_ops =
 {
     default_fd_get_poll_events,   /* get_poll_events */
     default_poll_event,           /* poll_event */
-    no_flush,                     /* flush */
     mapping_get_fd_type,          /* get_fd_type */
+    no_fd_read,                   /* read */
+    no_fd_write,                  /* write */
+    no_fd_flush,                  /* flush */
     no_fd_ioctl,                  /* ioctl */
     no_fd_queue_async,            /* queue_async */
-    default_fd_reselect_async,    /* reselect_async */
-    default_fd_cancel_async       /* cancel_async */
+    default_fd_reselect_async     /* reselect_async */
 };
 
 static struct list shared_list = LIST_INIT(shared_list);
@@ -368,7 +371,7 @@ static int build_shared_mapping( struct mapping *mapping, int fd,
 }
 
 /* retrieve the mapping parameters for an executable (PE) image */
-static unsigned int get_image_params( struct mapping *mapping, int unix_fd, int protect )
+static unsigned int get_image_params( struct mapping *mapping, file_pos_t file_size, int unix_fd )
 {
     IMAGE_DOS_HEADER dos;
     IMAGE_SECTION_HEADER *sec = NULL;
@@ -387,6 +390,7 @@ static unsigned int get_image_params( struct mapping *mapping, int unix_fd, int 
 
     /* load the headers */
 
+    if (!file_size) return STATUS_INVALID_FILE_FOR_SECTION;
     if (pread( unix_fd, &dos, sizeof(dos), 0 ) != sizeof(dos)) return STATUS_INVALID_IMAGE_NOT_MZ;
     if (dos.e_magic != IMAGE_DOS_SIGNATURE) return STATUS_INVALID_IMAGE_NOT_MZ;
     pos = dos.e_lfanew;
@@ -394,6 +398,7 @@ static unsigned int get_image_params( struct mapping *mapping, int unix_fd, int 
     size = pread( unix_fd, &nt, sizeof(nt), pos );
     if (size < sizeof(nt.Signature) + sizeof(nt.FileHeader)) return STATUS_INVALID_IMAGE_FORMAT;
     /* zero out Optional header in the case it's not present or partial */
+    size = min( size, sizeof(nt.Signature) + sizeof(nt.FileHeader) + nt.FileHeader.SizeOfOptionalHeader );
     if (size < sizeof(nt)) memset( (char *)&nt + size, 0, sizeof(nt) - size );
     if (nt.Signature != IMAGE_NT_SIGNATURE)
     {
@@ -433,23 +438,50 @@ static unsigned int get_image_params( struct mapping *mapping, int unix_fd, int 
     switch (nt.opt.hdr32.Magic)
     {
     case IMAGE_NT_OPTIONAL_HDR32_MAGIC:
-        mapping->size        = ROUND_SIZE( nt.opt.hdr32.SizeOfImage );
-        mapping->base        = nt.opt.hdr32.ImageBase;
-        mapping->header_size = nt.opt.hdr32.SizeOfHeaders;
+        mapping->image.base           = nt.opt.hdr32.ImageBase;
+        mapping->image.entry_point    = nt.opt.hdr32.ImageBase + nt.opt.hdr32.AddressOfEntryPoint;
+        mapping->image.map_size       = ROUND_SIZE( nt.opt.hdr32.SizeOfImage );
+        mapping->image.stack_size     = nt.opt.hdr32.SizeOfStackReserve;
+        mapping->image.stack_commit   = nt.opt.hdr32.SizeOfStackCommit;
+        mapping->image.subsystem      = nt.opt.hdr32.Subsystem;
+        mapping->image.subsystem_low  = nt.opt.hdr32.MinorSubsystemVersion;
+        mapping->image.subsystem_high = nt.opt.hdr32.MajorSubsystemVersion;
+        mapping->image.dll_charact    = nt.opt.hdr32.DllCharacteristics;
+        mapping->image.loader_flags   = nt.opt.hdr32.LoaderFlags;
+        mapping->image.header_size    = nt.opt.hdr32.SizeOfHeaders;
+        mapping->image.checksum       = nt.opt.hdr32.CheckSum;
         break;
     case IMAGE_NT_OPTIONAL_HDR64_MAGIC:
-        mapping->size        = ROUND_SIZE( nt.opt.hdr64.SizeOfImage );
-        mapping->base        = nt.opt.hdr64.ImageBase;
-        mapping->header_size = nt.opt.hdr64.SizeOfHeaders;
+        mapping->image.base           = nt.opt.hdr64.ImageBase;
+        mapping->image.entry_point    = nt.opt.hdr64.ImageBase + nt.opt.hdr64.AddressOfEntryPoint;
+        mapping->image.map_size       = ROUND_SIZE( nt.opt.hdr64.SizeOfImage );
+        mapping->image.stack_size     = nt.opt.hdr64.SizeOfStackReserve;
+        mapping->image.stack_commit   = nt.opt.hdr64.SizeOfStackCommit;
+        mapping->image.subsystem      = nt.opt.hdr64.Subsystem;
+        mapping->image.subsystem_low  = nt.opt.hdr64.MinorSubsystemVersion;
+        mapping->image.subsystem_high = nt.opt.hdr64.MajorSubsystemVersion;
+        mapping->image.dll_charact    = nt.opt.hdr64.DllCharacteristics;
+        mapping->image.loader_flags   = nt.opt.hdr64.LoaderFlags;
+        mapping->image.header_size    = nt.opt.hdr64.SizeOfHeaders;
+        mapping->image.checksum       = nt.opt.hdr64.CheckSum;
         break;
     }
+    mapping->image.image_charact = nt.FileHeader.Characteristics;
+    mapping->image.machine       = nt.FileHeader.Machine;
+    mapping->image.zerobits      = 0; /* FIXME */
+    mapping->image.gp            = 0; /* FIXME */
+    mapping->image.contains_code = 0; /* FIXME */
+    mapping->image.image_flags   = 0; /* FIXME */
+    mapping->image.file_size     = file_size;
 
     /* load the section headers */
 
     pos += sizeof(nt.Signature) + sizeof(nt.FileHeader) + nt.FileHeader.SizeOfOptionalHeader;
     size = sizeof(*sec) * nt.FileHeader.NumberOfSections;
-    if (pos + size > mapping->size) goto error;
-    if (pos + size > mapping->header_size) mapping->header_size = pos + size;
+    if (!mapping->size) mapping->size = mapping->image.map_size;
+    else if (mapping->size > mapping->image.map_size) return STATUS_SECTION_TOO_BIG;
+    if (pos + size > mapping->image.map_size) return STATUS_INVALID_FILE_FOR_SECTION;
+    if (pos + size > mapping->image.header_size) mapping->image.header_size = pos + size;
     if (!(sec = malloc( size ))) goto error;
     if (pread( unix_fd, sec, size, pos ) != size) goto error;
 
@@ -457,7 +489,6 @@ static unsigned int get_image_params( struct mapping *mapping, int unix_fd, int 
 
     if (mapping->shared_file) list_add_head( &shared_list, &mapping->shared_entry );
 
-    mapping->protect = protect;
     free( sec );
     return 0;
 
@@ -466,8 +497,8 @@ static unsigned int get_image_params( struct mapping *mapping, int unix_fd, int 
     return STATUS_INVALID_FILE_FOR_SECTION;
 }
 
-static struct object *create_mapping( struct directory *root, const struct unicode_str *name,
-                                      unsigned int attr, mem_size_t size, int protect,
+static struct object *create_mapping( struct object *root, const struct unicode_str *name,
+                                      unsigned int attr, mem_size_t size, unsigned int flags, int protect,
                                       obj_handle_t handle, const struct security_descriptor *sd )
 {
     struct mapping *mapping;
@@ -479,17 +510,14 @@ static struct object *create_mapping( struct directory *root, const struct unico
 
     if (!page_mask) page_mask = sysconf( _SC_PAGESIZE ) - 1;
 
-    if (!(mapping = create_named_object_dir( root, name, attr, &mapping_ops )))
+    if (!(mapping = create_named_object( root, &mapping_ops, name, attr, sd )))
         return NULL;
     if (get_error() == STATUS_OBJECT_NAME_EXISTS)
         return &mapping->obj;  /* Nothing else to do */
 
-    if (sd) default_set_sd( &mapping->obj, sd, OWNER_SECURITY_INFORMATION|
-                                               GROUP_SECURITY_INFORMATION|
-                                               DACL_SECURITY_INFORMATION|
-                                               SACL_SECURITY_INFORMATION );
-    mapping->header_size = 0;
-    mapping->base        = 0;
+    mapping->size        = size;
+    mapping->flags       = flags & (SEC_IMAGE | SEC_NOCACHE | SEC_WRITECOMBINE | SEC_LARGE_PAGES);
+    mapping->protect     = protect;
     mapping->fd          = NULL;
     mapping->shared_file = NULL;
     mapping->committed   = NULL;
@@ -502,7 +530,7 @@ static struct object *create_mapping( struct directory *root, const struct unico
         const unsigned int sharing = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
         unsigned int mapping_access = FILE_MAPPING_ACCESS;
 
-        if (!(protect & VPROT_COMMITTED))
+        if (flags & SEC_RESERVE)
         {
             set_error( STATUS_INVALID_PARAMETER );
             goto error;
@@ -511,9 +539,10 @@ static struct object *create_mapping( struct directory *root, const struct unico
         fd = get_obj_fd( (struct object *)file );
 
         /* file sharing rules for mappings are different so we use magic the access rights */
-        if (protect & VPROT_IMAGE) mapping_access |= FILE_MAPPING_IMAGE;
+        if (flags & SEC_IMAGE) mapping_access |= FILE_MAPPING_IMAGE;
         else if (protect & VPROT_WRITE) mapping_access |= FILE_MAPPING_WRITE;
 
+        mapping->flags |= SEC_FILE;
         if (!(mapping->fd = get_fd_object_for_mapping( fd, mapping_access, sharing )))
         {
             mapping->fd = dup_fd_object( fd, mapping_access, sharing, FILE_SYNCHRONOUS_IO_NONALERT );
@@ -524,48 +553,56 @@ static struct object *create_mapping( struct directory *root, const struct unico
         if (!mapping->fd) goto error;
 
         if ((unix_fd = get_unix_fd( mapping->fd )) == -1) goto error;
-        if (protect & VPROT_IMAGE)
-        {
-            unsigned int err = get_image_params( mapping, unix_fd, protect );
-            if (!err) return &mapping->obj;
-            set_error( err );
-            goto error;
-        }
         if (fstat( unix_fd, &st ) == -1)
         {
             file_set_error();
             goto error;
         }
-        if (!size)
+        if (flags & SEC_IMAGE)
         {
-            if (!(size = st.st_size))
+            unsigned int err = get_image_params( mapping, st.st_size, unix_fd );
+            if (!err) return &mapping->obj;
+            set_error( err );
+            goto error;
+        }
+        if (!mapping->size)
+        {
+            if (!(mapping->size = st.st_size))
             {
                 set_error( STATUS_MAPPED_FILE_SIZE_ZERO );
                 goto error;
             }
         }
-        else if (st.st_size < size && !grow_file( unix_fd, size )) goto error;
+        else if (st.st_size < mapping->size)
+        {
+            if (!(access & FILE_WRITE_DATA))
+            {
+                set_error( STATUS_SECTION_TOO_BIG );
+                goto error;
+            }
+            if (!grow_file( unix_fd, mapping->size )) goto error;
+        }
     }
     else  /* Anonymous mapping (no associated file) */
     {
-        if (!size || (protect & VPROT_IMAGE))
+        if (!mapping->size || (flags & SEC_IMAGE))
         {
             set_error( STATUS_INVALID_PARAMETER );
             goto error;
         }
-        if (!(protect & VPROT_COMMITTED))
+        mapping->flags |= flags & (SEC_COMMIT | SEC_RESERVE);
+        if (flags & SEC_RESERVE)
         {
             if (!(mapping->committed = mem_alloc( offsetof(struct ranges, ranges[8]) ))) goto error;
             mapping->committed->count = 0;
             mapping->committed->max   = 8;
         }
-        if ((unix_fd = create_temp_file( size )) == -1) goto error;
+        mapping->size = (mapping->size + page_mask) & ~((mem_size_t)page_mask);
+        if ((unix_fd = create_temp_file( mapping->size )) == -1) goto error;
         if (!(mapping->fd = create_anonymous_fd( &mapping_fd_ops, unix_fd, &mapping->obj,
                                                  FILE_SYNCHRONOUS_IO_NONALERT ))) goto error;
         allow_fd_caching( mapping->fd );
     }
-    mapping->size    = (size + page_mask) & ~((mem_size_t)page_mask);
-    mapping->protect = protect;
     return &mapping->obj;
 
  error:
@@ -601,13 +638,9 @@ static void mapping_dump( struct object *obj, int verbose )
 {
     struct mapping *mapping = (struct mapping *)obj;
     assert( obj->ops == &mapping_ops );
-    fprintf( stderr, "Mapping size=%08x%08x prot=%08x fd=%p header_size=%08x base=%08lx "
-             "shared_file=%p ",
+    fprintf( stderr, "Mapping size=%08x%08x flags=%08x prot=%08x fd=%p shared_file=%p\n",
              (unsigned int)(mapping->size >> 32), (unsigned int)mapping->size,
-             mapping->protect, mapping->fd, mapping->header_size,
-             (unsigned long)mapping->base, mapping->shared_file );
-    dump_object_name( &mapping->obj );
-    fputc( '\n', stderr );
+             mapping->flags, mapping->protect, mapping->fd, mapping->shared_file );
 }
 
 static struct object_type *mapping_get_type( struct object *obj )
@@ -659,29 +692,21 @@ int get_page_size(void)
 /* create a file mapping */
 DECL_HANDLER(create_mapping)
 {
-    struct object *obj;
+    struct object *root, *obj;
     struct unicode_str name;
-    struct directory *root = NULL;
-    const struct object_attributes *objattr = get_req_data();
     const struct security_descriptor *sd;
+    const struct object_attributes *objattr = get_req_object_attributes( &sd, &name, &root );
 
-    reply->handle = 0;
+    if (!objattr) return;
 
-    if (!objattr_is_valid( objattr, get_req_data_size() ))
-        return;
-
-    sd = objattr->sd_len ? (const struct security_descriptor *)(objattr + 1) : NULL;
-    objattr_get_name( objattr, &name );
-
-    if (objattr->rootdir && !(root = get_directory_obj( current->process, objattr->rootdir, 0 )))
-        return;
-
-    if ((obj = create_mapping( root, &name, req->attributes, req->size, req->protect, req->file_handle, sd )))
+    if ((obj = create_mapping( root, &name, objattr->attributes,
+                               req->size, req->flags, req->protect, req->file_handle, sd )))
     {
         if (get_error() == STATUS_OBJECT_NAME_EXISTS)
-            reply->handle = alloc_handle( current->process, obj, req->access, req->attributes );
+            reply->handle = alloc_handle( current->process, obj, req->access, objattr->attributes );
         else
-            reply->handle = alloc_handle_no_access_check( current->process, obj, req->access, req->attributes );
+            reply->handle = alloc_handle_no_access_check( current->process, obj,
+                                                          req->access, objattr->attributes );
         release_object( obj );
     }
 
@@ -691,21 +716,10 @@ DECL_HANDLER(create_mapping)
 /* open a handle to a mapping */
 DECL_HANDLER(open_mapping)
 {
-    struct unicode_str name;
-    struct directory *root = NULL;
-    struct mapping *mapping;
+    struct unicode_str name = get_req_unicode_str();
 
-    get_req_unicode_str( &name );
-    if (req->rootdir && !(root = get_directory_obj( current->process, req->rootdir, 0 )))
-        return;
-
-    if ((mapping = open_object_dir( root, &name, req->attributes, &mapping_ops )))
-    {
-        reply->handle = alloc_handle( current->process, &mapping->obj, req->access, req->attributes );
-        release_object( mapping );
-    }
-
-    if (root) release_object( root );
+    reply->handle = open_object( current->process, req->rootdir, req->access,
+                                 &mapping_ops, &name, req->attributes );
 }
 
 /* get a mapping information */
@@ -716,18 +730,26 @@ DECL_HANDLER(get_mapping_info)
 
     if (!(mapping = get_mapping_obj( current->process, req->handle, req->access ))) return;
 
-    if ((mapping->protect & VPROT_IMAGE) && mapping->cpu != current->process->cpu)
+    reply->size    = mapping->size;
+    reply->flags   = mapping->flags;
+    reply->protect = mapping->protect;
+
+    if (mapping->flags & SEC_IMAGE)
+        set_reply_data( &mapping->image, min( sizeof(mapping->image), get_reply_max_size() ));
+
+    if (!(req->access & (SECTION_MAP_READ | SECTION_MAP_WRITE)))  /* query only */
+    {
+        release_object( mapping );
+        return;
+    }
+
+    if ((mapping->flags & SEC_IMAGE) && mapping->cpu != current->process->cpu)
     {
         set_error( STATUS_INVALID_IMAGE_FORMAT );
         release_object( mapping );
         return;
     }
 
-    reply->size        = mapping->size;
-    reply->protect     = mapping->protect;
-    reply->header_size = mapping->header_size;
-    reply->base        = mapping->base;
-    reply->shared_file = 0;
     if ((fd = get_obj_fd( &mapping->obj )))
     {
         if (!is_fd_removable(fd)) reply->mapping = alloc_handle( current->process, mapping, 0, 0 );

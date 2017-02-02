@@ -3,6 +3,7 @@
  *
  * Copyright 1997 Dimitrie O. Paun
  * Copyright 1998,2000 Eric Kohl
+ * Copyright 2014-2015 Michael Müller
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -1084,7 +1085,7 @@ BOOL WINAPI SetWindowSubclass (HWND hWnd, SUBCLASSPROC pfnSubclass,
  * Gets the Reference data from a subclass.
  *
  * PARAMS
- *     hWnd [in] Handle to window which were subclassing
+ *     hWnd [in] Handle to the window which we are subclassing
  *     pfnSubclass [in] Pointer to the subclass procedure
  *     uID [in] Unique identifier of the subclassing procedure
  *     pdwRef [out] Pointer to the reference data
@@ -1127,7 +1128,7 @@ BOOL WINAPI GetWindowSubclass (HWND hWnd, SUBCLASSPROC pfnSubclass,
  * Removes a window subclass.
  *
  * PARAMS
- *     hWnd [in] Handle to the window were subclassing
+ *     hWnd [in] Handle to the window which we are subclassing
  *     pfnSubclass [in] Pointer to the subclass procedure
  *     uID [in] Unique identifier of this subclass
  *
@@ -1591,12 +1592,33 @@ LRESULT WINAPI SetPathWordBreakProc(HWND hwnd, BOOL bSet)
  *
  * Draw text with shadow.
  */
-int WINAPI DrawShadowText(HDC hdc, LPCWSTR pszText, UINT cch, RECT *rect, DWORD dwFlags,
-                          COLORREF crText, COLORREF crShadow, int ixOffset, int iyOffset)
+int WINAPI DrawShadowText(HDC hdc, LPCWSTR text, UINT length, RECT *rect, DWORD flags,
+                          COLORREF crText, COLORREF crShadow, int offset_x, int offset_y)
 {
-    FIXME("(%p, %s, %d, %p, %d, 0x%08x, 0x%08x, %d, %d): stub\n", hdc, debugstr_w(pszText), cch, rect, dwFlags,
-                                                                  crText, crShadow, ixOffset, iyOffset);
-    return DrawTextW(hdc, pszText, cch, rect, DT_LEFT);
+    int bkmode, ret;
+    COLORREF clr;
+    RECT r;
+
+    FIXME("(%p, %s, %d, %p, 0x%08x, 0x%08x, 0x%08x, %d, %d): semi-stub\n", hdc, debugstr_w(text),
+        length, rect, flags, crText, crShadow, offset_x, offset_y);
+
+    bkmode = SetBkMode(hdc, TRANSPARENT);
+    clr = SetTextColor(hdc, crShadow);
+
+    /* FIXME: for shadow we need to render normally, blur it, and blend with current background. */
+    r = *rect;
+    OffsetRect(&r, 1, 1);
+    DrawTextW(hdc, text, length, &r, flags);
+
+    SetTextColor(hdc, crText);
+
+    /* with text color on top of a shadow */
+    ret = DrawTextW(hdc, text, length, rect, flags);
+
+    SetTextColor(hdc, clr);
+    SetBkMode(hdc, bkmode);
+
+    return ret;
 }
 
 /***********************************************************************
@@ -1641,8 +1663,47 @@ HRESULT WINAPI TaskDialogIndirect(const TASKDIALOGCONFIG *pTaskConfig, int *pnBu
 /***********************************************************************
  * LoadIconWithScaleDown [COMCTL32.@]
  */
-HRESULT WINAPI LoadIconWithScaleDown(HINSTANCE hinst, PCWSTR name, int cx, int cy, HICON *icon)
+HRESULT WINAPI LoadIconWithScaleDown(HINSTANCE hinst, const WCHAR *name, int cx, int cy, HICON *icon)
 {
-    FIXME("stub: %p %s %d %d %p\n", hinst, wine_dbgstr_w(name), cx, cy, icon);
-    return E_NOTIMPL;
+    TRACE("(%p, %s, %d, %d, %p)\n", hinst, debugstr_w(name), cx, cy, icon);
+
+    *icon = NULL;
+
+    if (!name)
+        return E_INVALIDARG;
+
+    *icon = LoadImageW(hinst, name, IMAGE_ICON, cx, cy,
+                       (hinst || IS_INTRESOURCE(name)) ? 0 : LR_LOADFROMFILE);
+    if (!*icon)
+        return HRESULT_FROM_WIN32(GetLastError());
+
+    return S_OK;
+}
+
+/***********************************************************************
+ * LoadIconMetric [COMCTL32.@]
+ */
+HRESULT WINAPI LoadIconMetric(HINSTANCE hinst, const WCHAR *name, int size, HICON *icon)
+{
+    int cx, cy;
+
+    TRACE("(%p, %s, %d, %p)\n", hinst, debugstr_w(name), size, icon);
+
+    if (size == LIM_SMALL)
+    {
+        cx = GetSystemMetrics(SM_CXSMICON);
+        cy = GetSystemMetrics(SM_CYSMICON);
+    }
+    else if (size == LIM_LARGE)
+    {
+        cx = GetSystemMetrics(SM_CXICON);
+        cy = GetSystemMetrics(SM_CYICON);
+    }
+    else
+    {
+        *icon = NULL;
+        return E_INVALIDARG;
+    }
+
+    return LoadIconWithScaleDown(hinst, name, cx, cy, icon);
 }

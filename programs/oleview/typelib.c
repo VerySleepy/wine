@@ -616,7 +616,7 @@ static int EnumFuncs(ITypeInfo *pTypeInfo, TYPEATTR *pTypeAttr, HTREEITEM hParen
         }
 
         bstrParamNames = HeapAlloc(GetProcessHeap(), 0,
-                sizeof(BSTR*)*(pFuncDesc->cParams+1));
+                sizeof(BSTR)*(pFuncDesc->cParams+1));
         if(FAILED(ITypeInfo_GetNames(pTypeInfo, pFuncDesc->memid, bstrParamNames,
                 pFuncDesc->cParams+1, &namesNo)))
         {
@@ -1626,6 +1626,7 @@ BOOL TypeLibRegisterClassW(void)
     memset(&wcc, 0, sizeof(WNDCLASSW));
     wcc.lpfnWndProc = TypeLibProc;
     wcc.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
+    wcc.hCursor       = LoadCursorW(0, (LPCWSTR)IDC_ARROW);
     wcc.lpszMenuName = MAKEINTRESOURCEW(IDM_TYPELIB);
     wcc.lpszClassName = wszTypeLib;
 

@@ -154,7 +154,7 @@
 @ stdcall AllocConsole()
 @ stub -i386 AllocLSCallback
 @ stdcall -i386 -private AllocSLCallback(ptr ptr) krnl386.exe16.AllocSLCallback
-@ stub AllocateUserPhysicalPages
+@ stdcall AllocateUserPhysicalPages(long ptr ptr)
 @ stdcall ApplicationRecoveryFinished(long)
 @ stdcall ApplicationRecoveryInProgress(ptr)
 @ stdcall AreFileApisANSI()
@@ -204,13 +204,13 @@
 @ stdcall BuildCommDCBAndTimeoutsA(str ptr ptr)
 @ stdcall BuildCommDCBAndTimeoutsW(wstr ptr ptr)
 @ stdcall BuildCommDCBW(wstr ptr)
-# @ stub CallbackMayRunLong
+@ stdcall CallbackMayRunLong(ptr)
 @ stdcall CallNamedPipeA(str ptr long ptr long ptr long)
 @ stdcall CallNamedPipeW(wstr ptr long ptr long ptr long)
 @ stub CancelDeviceWakeupRequest
 @ stdcall CancelIo(long)
 @ stdcall CancelIoEx(long ptr)
-# @ stub CancelSynchronousIo
+@ stdcall CancelSynchronousIo(long)
 # @ stub CancelThreadpoolIo
 @ stdcall CancelTimerQueueTimer(ptr ptr)
 @ stdcall CancelWaitableTimer(long)
@@ -218,8 +218,8 @@
 # @ stub CheckElevation
 # @ stub CheckElevationEnabled
 # @ stub CheckForReadOnlyResource
-# @ stub CheckNameLegalDOS8Dot3A
-# @ stub CheckNameLegalDOS8Dot3W
+@ stdcall CheckNameLegalDOS8Dot3A(str ptr long ptr ptr)
+@ stdcall CheckNameLegalDOS8Dot3W(wstr ptr long ptr ptr)
 @ stdcall CheckRemoteDebuggerPresent(long ptr)
 @ stdcall ClearCommBreak(long)
 @ stdcall ClearCommError(long ptr ptr)
@@ -228,13 +228,13 @@
 # @ stub ClosePrivateNamespace
 @ stdcall CloseProfileUserMapping()
 @ stub CloseSystemHandle
-# @ stub CloseThreadpool
-# @ stub CloseThreadpoolCleanupGroup
-# @ stub CloseThreadpoolCleanupGroupMembers
+@ stdcall CloseThreadpool(ptr) ntdll.TpReleasePool
+@ stdcall CloseThreadpoolCleanupGroup(ptr) ntdll.TpReleaseCleanupGroup
+@ stdcall CloseThreadpoolCleanupGroupMembers(ptr long ptr) ntdll.TpReleaseCleanupGroupMembers
 # @ stub CloseThreadpoolIo
-# @ stub CloseThreadpoolTimer
-# @ stub CloseThreadpoolWait
-# @ stub CloseThreadpoolWork
+@ stdcall CloseThreadpoolTimer(ptr) ntdll.TpReleaseTimer
+@ stdcall CloseThreadpoolWait(ptr) ntdll.TpReleaseWait
+@ stdcall CloseThreadpoolWork(ptr) ntdll.TpReleaseWork
 @ stdcall CmdBatNotification(long)
 @ stdcall CommConfigDialogA(str long ptr)
 @ stdcall CommConfigDialogW(wstr long ptr)
@@ -331,12 +331,12 @@
 @ stdcall CreateSymbolicLinkW(wstr wstr long)
 @ stdcall CreateTapePartition(long long long long)
 @ stdcall CreateThread(ptr long ptr long long ptr)
-# @ stub CreateThreadpool
-# @ stub CreateThreadpoolCleanupGroup
+@ stdcall CreateThreadpool(ptr)
+@ stdcall CreateThreadpoolCleanupGroup()
 # @ stub CreateThreadpoolIo
-# @ stub CreateThreadpoolTimer
-# @ stub CreateThreadpoolWait
-# @ stub CreateThreadpoolWork
+@ stdcall CreateThreadpoolTimer(ptr ptr ptr)
+@ stdcall CreateThreadpoolWait(ptr ptr ptr)
+@ stdcall CreateThreadpoolWork(ptr ptr ptr)
 @ stdcall CreateTimerQueue ()
 @ stdcall CreateTimerQueueTimer(ptr long ptr ptr long long long)
 @ stdcall CreateToolhelp32Snapshot(long long)
@@ -355,7 +355,7 @@
 @ stdcall DebugBreakProcess(long)
 @ stdcall DebugSetProcessKillOnExit(long)
 @ stdcall DecodePointer(ptr) ntdll.RtlDecodePointer
-# @ stub DecodeSystemPointer ( -> ntdll.RtlDecodeSystemPointer)
+@ stdcall DecodeSystemPointer(ptr) ntdll.RtlDecodeSystemPointer
 @ stdcall DefineDosDeviceA(long str str)
 @ stdcall DefineDosDeviceW(long wstr wstr)
 @ stdcall DelayLoadFailureHook(str str)
@@ -367,9 +367,9 @@
 # @ stub DeleteFileTransactedA
 # @ stub DeleteFileTransactedW
 @ stdcall DeleteFileW(wstr)
-# @ stub DeleteProcThreadAttributeList
+@ stdcall DeleteProcThreadAttributeList(ptr)
 # @ stub DisableThreadProfiling
-# @ stub DisassociateCurrentThreadFromCallback
+@ stdcall DisassociateCurrentThreadFromCallback(ptr) ntdll.TpDisassociateCallback
 @ stdcall DeleteTimerQueue(long)
 @ stdcall DeleteTimerQueueEx (long long)
 @ stdcall DeleteTimerQueueTimer(long long long)
@@ -390,18 +390,18 @@
 @ stdcall DuplicateHandle(long long long ptr long long long)
 # @ stub EnableThreadProfiling
 @ stdcall EncodePointer(ptr) ntdll.RtlEncodePointer
-# @ stub EncodeSystemPointer ( -> ntdll.RtlEncodeSystemPointer)
+@ stdcall EncodeSystemPointer(ptr) ntdll.RtlEncodeSystemPointer
 @ stdcall EndUpdateResourceA(long long)
 @ stdcall EndUpdateResourceW(long long)
 @ stdcall EnterCriticalSection(ptr) ntdll.RtlEnterCriticalSection
 @ stdcall EnumCalendarInfoA(ptr long long long)
 @ stdcall EnumCalendarInfoExA(ptr long long long)
-# @ stub EnumCalendarInfoExEx
+@ stdcall EnumCalendarInfoExEx(ptr wstr long wstr long long)
 @ stdcall EnumCalendarInfoExW(ptr long long long)
 @ stdcall EnumCalendarInfoW(ptr long long long)
 @ stdcall EnumDateFormatsA(ptr long long)
 @ stdcall EnumDateFormatsExA(ptr long long)
-# @ stub EnumDateFormatsExEx
+@ stdcall EnumDateFormatsExEx(ptr wstr long long)
 @ stdcall EnumDateFormatsExW(ptr long long)
 @ stdcall EnumDateFormatsW(ptr long long)
 @ stdcall EnumLanguageGroupLocalesA(ptr long long ptr)
@@ -428,7 +428,7 @@
 @ stdcall EnumSystemLocalesEx(ptr long long ptr)
 @ stdcall EnumSystemLocalesW(ptr long)
 @ stdcall EnumTimeFormatsA(ptr long long)
-# @ stub EnumTimeFormatsEx
+@ stdcall EnumTimeFormatsEx(ptr wstr long long)
 @ stdcall EnumTimeFormatsW(ptr long long)
 @ stdcall EnumUILanguagesA(ptr long long)
 @ stdcall EnumUILanguagesW(ptr long long)
@@ -495,7 +495,6 @@
 @ stdcall FindFirstVolumeMountPointA(str ptr long)
 @ stdcall FindFirstVolumeMountPointW(wstr ptr long)
 @ stdcall FindFirstVolumeW(ptr long)
-# @ stub FreeLibraryWhenCallbackReturns
 @ stdcall FindNextChangeNotification(long)
 @ stdcall FindNextFileA(long ptr)
 # @ stub FindNextFileNameW
@@ -533,9 +532,10 @@
 @ stub -i386 FreeLSCallback
 @ stdcall FreeLibrary(long)
 @ stdcall FreeLibraryAndExitThread(long long)
+@ stdcall FreeLibraryWhenCallbackReturns(ptr ptr) ntdll.TpCallbackUnloadDllOnCompletion
 @ stdcall FreeResource(long)
 @ stdcall -i386 -private FreeSLCallback(long) krnl386.exe16.FreeSLCallback
-@ stub FreeUserPhysicalPages
+@ stdcall FreeUserPhysicalPages(long ptr ptr)
 @ stub FreeVirtualBuffer
 @ stdcall GenerateConsoleCtrlEvent(long long)
 @ stdcall -i386 -private Get16DLLAddress(long str) krnl386.exe16.Get16DLLAddress
@@ -582,8 +582,8 @@
 @ stdcall GetComputerNameW(ptr ptr)
 @ stub GetConsoleAliasA
 @ stub GetConsoleAliasExesA
-@ stub GetConsoleAliasExesLengthA
-@ stub GetConsoleAliasExesLengthW
+@ stdcall GetConsoleAliasExesLengthA()
+@ stdcall GetConsoleAliasExesLengthW()
 @ stub GetConsoleAliasExesW
 @ stdcall GetConsoleAliasW(wstr ptr long wstr)
 @ stub GetConsoleAliasesA
@@ -599,7 +599,7 @@
 @ stdcall GetConsoleCursorInfo(long ptr)
 @ stub GetConsoleCursorMode
 @ stdcall GetConsoleDisplayMode(ptr)
-@ stub GetConsoleFontInfo
+@ stdcall GetConsoleFontInfo(ptr long long ptr)
 @ stdcall GetConsoleFontSize(long long)
 @ stub GetConsoleHardwareState
 # @ stub GetConsoleHistoryInfo
@@ -615,7 +615,7 @@
 @ stdcall GetConsoleOutputCP()
 @ stdcall GetConsoleProcessList(ptr long)
 @ stdcall GetConsoleScreenBufferInfo(long ptr)
-# @ stub GetConsoleScreenBufferInfoEx
+@ stdcall GetConsoleScreenBufferInfoEx(long ptr)
 # @ stub GetConsoleSelectionInfo
 @ stdcall GetConsoleTitleA(ptr long)
 @ stdcall GetConsoleTitleW(ptr long)
@@ -632,7 +632,7 @@
 @ stdcall -norelay GetCurrentProcess()
 @ stdcall -norelay GetCurrentProcessId()
 @ stdcall GetCurrentProcessorNumber() ntdll.NtGetCurrentProcessorNumber
-# @ stub GetCurrentProcessorNumberEx
+@ stdcall GetCurrentProcessorNumberEx(ptr) ntdll.RtlGetCurrentProcessorNumberEx
 @ stdcall -norelay GetCurrentThread()
 @ stdcall -norelay GetCurrentThreadId()
 # @ stub -arch=x86_64 GetCurrentUmsThread
@@ -676,14 +676,14 @@
 # @ stub GetFileBandwidthReservation
 @ stdcall GetFileInformationByHandle(long ptr)
 @ stdcall GetFileInformationByHandleEx(long long ptr long)
-# @ stub GetFileMUIInfo
-# @ stub GetFileMUIPath
+@ stdcall GetFileMUIInfo(long wstr ptr ptr)
+@ stdcall GetFileMUIPath(long wstr wstr ptr ptr ptr ptr)
 @ stdcall GetFileSize(long ptr)
 @ stdcall GetFileSizeEx(long ptr)
 @ stdcall GetFileTime(long ptr ptr ptr)
 @ stdcall GetFileType(long)
-# @ stub GetFinalPathNameByHandleA
-# @ stub GetFinalPathNameByHandleW
+@ stdcall GetFinalPathNameByHandleA(long ptr long long)
+@ stdcall GetFinalPathNameByHandleW(long ptr long long)
 @ stdcall GetFirmwareEnvironmentVariableA(str str ptr long)
 @ stdcall GetFirmwareEnvironmentVariableW(wstr wstr ptr long)
 @ stdcall GetFullPathNameA(str long ptr ptr)
@@ -696,7 +696,7 @@
 @ stdcall GetHandleInformation(long ptr)
 @ stub -i386 GetLSCallbackTarget
 @ stub -i386 GetLSCallbackTemplate
-# @ stub GetLargePageMinimum
+@ stdcall GetLargePageMinimum()
 @ stdcall GetLargestConsoleWindowSize(long)
 @ stdcall GetLastError()
 @ stub GetLinguistLangSize
@@ -746,20 +746,20 @@
 @ stdcall GetNumaNodeProcessorMask(long ptr)
 # @ stub GetNumaNodeProcessorMaskEx
 # @ stub GetNumaProcessorMap
-# @ stub GetNumaProcessorNode
+@ stdcall GetNumaProcessorNode(long ptr)
 # @ stub GetNumaProcessorNodeEx
 # @ stub GetNumaProximityNode
 # @ stub GetNumaProximityNodeEx
 @ stdcall GetNumberFormatA(long long str ptr ptr long)
-# @ stub GetNumberFormatEx
+@ stdcall GetNumberFormatEx(wstr long wstr ptr ptr long)
 @ stdcall GetNumberFormatW(long long wstr ptr ptr long)
-@ stub GetNumberOfConsoleFonts
+@ stdcall GetNumberOfConsoleFonts()
 @ stdcall GetNumberOfConsoleInputEvents(long ptr)
 @ stdcall GetNumberOfConsoleMouseButtons(ptr)
 @ stdcall GetOEMCP()
 @ stdcall GetOverlappedResult(long ptr ptr long)
 @ stdcall GetUserPreferredUILanguages(long ptr ptr ptr)
-# @ stub GetPhysicallyInstalledSystemMemory
+@ stdcall GetPhysicallyInstalledSystemMemory(ptr)
 @ stdcall GetPriorityClass(long)
 @ stdcall GetPrivateProfileIntA(str str long str)
 @ stdcall GetPrivateProfileIntW(wstr wstr long wstr)
@@ -780,7 +780,7 @@
 @ stdcall -norelay GetProcessHeap()
 @ stdcall GetProcessHeaps(long ptr)
 @ stdcall GetProcessId(long)
-# @ stub GetProcessIdOfThread
+@ stdcall GetProcessIdOfThread(long)
 @ stdcall GetProcessIoCounters(long ptr)
 # @ stub GetProcessPreferredUILanguages
 @ stdcall GetProcessPriorityBoost(long ptr)
@@ -824,11 +824,12 @@
 @ stdcall GetSystemFirmwareTable(long long ptr long)
 @ stdcall GetSystemInfo(ptr)
 @ stdcall GetSystemPowerStatus(ptr)
-# @ stub GetSystemPreferredUILanguages
+@ stdcall GetSystemPreferredUILanguages(long ptr ptr ptr)
 @ stdcall GetSystemRegistryQuota(ptr ptr)
 @ stdcall GetSystemTime(ptr)
 @ stdcall GetSystemTimeAdjustment(ptr ptr ptr)
 @ stdcall GetSystemTimeAsFileTime(ptr)
+@ stdcall GetSystemTimePreciseAsFileTime(ptr)
 @ stdcall GetSystemTimes(ptr ptr ptr)
 @ stdcall GetSystemWindowsDirectoryA(ptr long)
 @ stdcall GetSystemWindowsDirectoryW(ptr long)
@@ -843,7 +844,7 @@
 @ stdcall GetTempPathW(long ptr)
 @ stdcall GetThreadContext(long ptr)
 @ stdcall GetThreadErrorMode()
-# @ stub GetThreadGroupAffinity
+@ stdcall GetThreadGroupAffinity(long ptr)
 @ stdcall GetThreadId(ptr)
 # @ stub GetThreadIdealProcessorEx
 @ stdcall GetThreadIOPendingFlag(long ptr)
@@ -859,7 +860,7 @@
 @ stdcall GetTimeFormatEx(wstr long ptr wstr ptr long)
 @ stdcall GetTimeFormatW(long long ptr wstr ptr long)
 @ stdcall GetTimeZoneInformation(ptr)
-# @ stub GetTimeZoneInformationForYear
+@ stdcall GetTimeZoneInformationForYear(long ptr ptr)
 @ stdcall GetThreadUILanguage()
 # @ stub GetUILanguageInfo
 # @ stub -arch=x86_64 GetUmsCompletionListEvent
@@ -944,7 +945,7 @@
 @ stdcall InitializeCriticalSection(ptr)
 @ stdcall InitializeCriticalSectionAndSpinCount(ptr long)
 @ stdcall InitializeCriticalSectionEx(ptr long long)
-# @ stub InitializeProcThreadAttributeList
+@ stdcall InitializeProcThreadAttributeList(ptr long long ptr)
 @ stdcall InitializeSListHead(ptr) ntdll.RtlInitializeSListHead
 @ stdcall InitializeSRWLock(ptr) ntdll.RtlInitializeSRWLock
 @ stdcall -arch=i386 InterlockedCompareExchange (ptr long long)
@@ -956,7 +957,8 @@
 @ stdcall -arch=i386 InterlockedIncrement(ptr)
 @ stdcall InterlockedPopEntrySList(ptr) ntdll.RtlInterlockedPopEntrySList
 @ stdcall InterlockedPushEntrySList(ptr ptr) ntdll.RtlInterlockedPushEntrySList
-# @ stub InterlockedPushListSList
+@ stdcall -norelay InterlockedPushListSList(ptr ptr ptr long) ntdll.RtlInterlockedPushListSList
+@ stdcall InterlockedPushListSListEx(ptr ptr ptr long) ntdll.RtlInterlockedPushListSListEx
 @ stub InvalidateConsoleDIBits
 @ stdcall InvalidateNLSCache()
 @ stdcall IsBadCodePtr(ptr)
@@ -980,7 +982,7 @@
 @ stub -i386 IsSLCallback
 @ stdcall IsSystemResumeAutomatic()
 @ stdcall IsThreadAFiber()
-# @ stub IsThreadpoolTimerSet
+@ stdcall IsThreadpoolTimerSet(ptr) ntdll.TpIsTimerSet
 # @ stub IsTimeZoneRedirectionEnabled
 # @ stub IsValidCalDateTime
 @ stdcall IsValidCodePage(long)
@@ -1034,7 +1036,7 @@
 @ stdcall LZSeek(long long long)
 @ stdcall LZStart()
 @ stdcall LeaveCriticalSection(ptr) ntdll.RtlLeaveCriticalSection
-# @ stub LeaveCriticalSectionWhenCallbackReturns
+@ stdcall LeaveCriticalSectionWhenCallbackReturns(ptr ptr) ntdll.TpCallbackLeaveCriticalSectionOnCompletion
 # @ stub LoadAppInitDlls
 @ stdcall LoadLibraryA(str)
 @ stdcall LoadLibraryExA( str long long)
@@ -1134,9 +1136,9 @@
 @ stdcall PeekConsoleInputW(ptr ptr long ptr)
 @ stdcall PeekNamedPipe(long ptr long ptr ptr ptr)
 @ stdcall PostQueuedCompletionStatus(long long ptr ptr)
-# @ stub PowerClearRequest
-# @ stub PowerCreateRequest
-# @ stub PowerSetRequest
+@ stdcall PowerClearRequest(long long)
+@ stdcall PowerCreateRequest(ptr)
+@ stdcall PowerSetRequest(long long)
 @ stdcall PrepareTape(ptr long long)
 @ stub PrivCopyFileExW
 @ stub PrivMoveFileIdentityW
@@ -1167,7 +1169,7 @@
 @ stdcall QueryPerformanceFrequency(ptr)
 # @ stub QueryProcessAffinityUpdateMode
 # @ stub QueryProcessCycleTime
-# @ stub QueryThreadCycleTime
+@ stdcall QueryThreadCycleTime(long ptr)
 # @ stub QueryThreadProfiling
 # @ stub QueryThreadpoolStackInformation
 # @ stub -arch=x86_64 QueryUmsThreadInformation
@@ -1194,48 +1196,48 @@
 @ stdcall ReadFileScatter(long ptr long ptr ptr)
 @ stdcall ReadProcessMemory(long ptr ptr long ptr)
 # @ stub ReadThreadProfilingData
-@ stdcall RegCloseKey(long) advapi32.RegCloseKey
-@ stdcall RegCreateKeyExA(long str long ptr long long ptr ptr ptr) advapi32.RegCreateKeyExA
-@ stdcall RegCreateKeyExW(long wstr long ptr long long ptr ptr ptr) advapi32.RegCreateKeyExW
-@ stdcall RegDeleteKeyExA(long str long long) advapi32.RegDeleteKeyExA
-@ stdcall RegDeleteKeyExW(long wstr long long) advapi32.RegDeleteKeyExW
-@ stdcall RegDeleteTreeA(long str) advapi32.RegDeleteTreeA
-@ stdcall RegDeleteTreeW(long wstr) advapi32.RegDeleteTreeW
-@ stdcall RegDeleteValueA(long str) advapi32.RegDeleteValueA
-@ stdcall RegDeleteValueW(long wstr) advapi32.RegDeleteValueW
+@ stdcall -private RegCloseKey(long) advapi32.RegCloseKey
+@ stdcall -private RegCreateKeyExA(long str long ptr long long ptr ptr ptr) advapi32.RegCreateKeyExA
+@ stdcall -private RegCreateKeyExW(long wstr long ptr long long ptr ptr ptr) advapi32.RegCreateKeyExW
+@ stdcall -private RegDeleteKeyExA(long str long long) advapi32.RegDeleteKeyExA
+@ stdcall -private RegDeleteKeyExW(long wstr long long) advapi32.RegDeleteKeyExW
+@ stdcall -private RegDeleteTreeA(long str) advapi32.RegDeleteTreeA
+@ stdcall -private RegDeleteTreeW(long wstr) advapi32.RegDeleteTreeW
+@ stdcall -private RegDeleteValueA(long str) advapi32.RegDeleteValueA
+@ stdcall -private RegDeleteValueW(long wstr) advapi32.RegDeleteValueW
 # stub RegDisablePredefinedCacheEx
-@ stdcall RegEnumKeyExA(long long ptr ptr ptr ptr ptr ptr) advapi32.RegEnumKeyExA
-@ stdcall RegEnumKeyExW(long long ptr ptr ptr ptr ptr ptr) advapi32.RegEnumKeyExW
-@ stdcall RegEnumValueA(long long ptr ptr ptr ptr ptr ptr) advapi32.RegEnumValueA
-@ stdcall RegEnumValueW(long long ptr ptr ptr ptr ptr ptr) advapi32.RegEnumValueW
-@ stdcall RegFlushKey(long) advapi32.RegFlushKey
-@ stdcall RegGetKeySecurity(long long ptr ptr) advapi32.RegGetKeySecurity
-@ stdcall RegGetValueA(long str str long ptr ptr ptr) advapi32.RegGetValueA
-@ stdcall RegGetValueW(long wstr wstr long ptr ptr ptr) advapi32.RegGetValueW
+@ stdcall -private RegEnumKeyExA(long long ptr ptr ptr ptr ptr ptr) advapi32.RegEnumKeyExA
+@ stdcall -private RegEnumKeyExW(long long ptr ptr ptr ptr ptr ptr) advapi32.RegEnumKeyExW
+@ stdcall -private RegEnumValueA(long long ptr ptr ptr ptr ptr ptr) advapi32.RegEnumValueA
+@ stdcall -private RegEnumValueW(long long ptr ptr ptr ptr ptr ptr) advapi32.RegEnumValueW
+@ stdcall -private RegFlushKey(long) advapi32.RegFlushKey
+@ stdcall -private RegGetKeySecurity(long long ptr ptr) advapi32.RegGetKeySecurity
+@ stdcall -private RegGetValueA(long str str long ptr ptr ptr) advapi32.RegGetValueA
+@ stdcall -private RegGetValueW(long wstr wstr long ptr ptr ptr) advapi32.RegGetValueW
 # stub RegKrnGetGlobalState
 # stub RegKrnInitialize
-@ stdcall RegLoadKeyA(long str str) advapi32.RegLoadKeyA
-@ stdcall RegLoadKeyW(long wstr wstr) advapi32.RegLoadKeyW
-@ stdcall RegLoadMUIStringA(long str str long ptr long str) advapi32.RegLoadMUIStringA
-@ stdcall RegLoadMUIStringW(long wstr wstr long ptr long wstr) advapi32.RegLoadMUIStringW
-@ stdcall RegNotifyChangeKeyValue(long long long long long) advapi32.RegNotifyChangeKeyValue
-@ stdcall RegOpenCurrentUser(long ptr) advapi32.RegOpenCurrentUser
-@ stdcall RegOpenKeyExA(long str long long ptr) advapi32.RegOpenKeyExA
-@ stdcall RegOpenKeyExW(long wstr long long ptr) advapi32.RegOpenKeyExW
-@ stdcall RegOpenUserClassesRoot(ptr long long ptr) advapi32.RegOpenUserClassesRoot
-@ stdcall RegQueryInfoKeyA(long ptr ptr ptr ptr ptr ptr ptr ptr ptr ptr ptr) advapi32.RegQueryInfoKeyA
-@ stdcall RegQueryInfoKeyW(long ptr ptr ptr ptr ptr ptr ptr ptr ptr ptr ptr) advapi32.RegQueryInfoKeyW
-@ stdcall RegQueryValueExA(long str ptr ptr ptr ptr) advapi32.RegQueryValueExA
-@ stdcall RegQueryValueExW(long wstr ptr ptr ptr ptr) advapi32.RegQueryValueExW
-@ stdcall RegRestoreKeyA(long str long) advapi32.RegRestoreKeyA
-@ stdcall RegRestoreKeyW(long wstr long) advapi32.RegRestoreKeyW
+@ stdcall -private RegLoadKeyA(long str str) advapi32.RegLoadKeyA
+@ stdcall -private RegLoadKeyW(long wstr wstr) advapi32.RegLoadKeyW
+@ stdcall -private RegLoadMUIStringA(long str str long ptr long str) advapi32.RegLoadMUIStringA
+@ stdcall -private RegLoadMUIStringW(long wstr wstr long ptr long wstr) advapi32.RegLoadMUIStringW
+@ stdcall -private RegNotifyChangeKeyValue(long long long long long) advapi32.RegNotifyChangeKeyValue
+@ stdcall -private RegOpenCurrentUser(long ptr) advapi32.RegOpenCurrentUser
+@ stdcall -private RegOpenKeyExA(long str long long ptr) advapi32.RegOpenKeyExA
+@ stdcall -private RegOpenKeyExW(long wstr long long ptr) advapi32.RegOpenKeyExW
+@ stdcall -private RegOpenUserClassesRoot(ptr long long ptr) advapi32.RegOpenUserClassesRoot
+@ stdcall -private RegQueryInfoKeyA(long ptr ptr ptr ptr ptr ptr ptr ptr ptr ptr ptr) advapi32.RegQueryInfoKeyA
+@ stdcall -private RegQueryInfoKeyW(long ptr ptr ptr ptr ptr ptr ptr ptr ptr ptr ptr) advapi32.RegQueryInfoKeyW
+@ stdcall -private RegQueryValueExA(long str ptr ptr ptr ptr) advapi32.RegQueryValueExA
+@ stdcall -private RegQueryValueExW(long wstr ptr ptr ptr ptr) advapi32.RegQueryValueExW
+@ stdcall -private RegRestoreKeyA(long str long) advapi32.RegRestoreKeyA
+@ stdcall -private RegRestoreKeyW(long wstr long) advapi32.RegRestoreKeyW
 # stub RegSaveKeyExA
 # stub RegSaveKeyExW
-@ stdcall RegSetKeySecurity(long long ptr) advapi32.RegSetKeySecurity
-@ stdcall RegSetValueExA(long str long long ptr long) advapi32.RegSetValueExA
-@ stdcall RegSetValueExW(long wstr long long ptr long) advapi32.RegSetValueExW
-@ stdcall RegUnLoadKeyA(long str) advapi32.RegUnLoadKeyA
-@ stdcall RegUnLoadKeyW(long wstr) advapi32.RegUnLoadKeyW
+@ stdcall -private RegSetKeySecurity(long long ptr) advapi32.RegSetKeySecurity
+@ stdcall -private RegSetValueExA(long str long long ptr long) advapi32.RegSetValueExA
+@ stdcall -private RegSetValueExW(long wstr long long ptr long) advapi32.RegSetValueExW
+@ stdcall -private RegUnLoadKeyA(long str) advapi32.RegUnLoadKeyA
+@ stdcall -private RegUnLoadKeyW(long wstr) advapi32.RegUnLoadKeyW
 @ stdcall RegisterApplicationRecoveryCallback(ptr ptr long long)
 @ stdcall RegisterApplicationRestart(wstr long)
 @ stub RegisterConsoleIME
@@ -1251,9 +1253,9 @@
 @ stdcall ReinitializeCriticalSection(ptr)
 @ stdcall ReleaseActCtx(ptr)
 @ stdcall ReleaseMutex(long)
-# @ stub ReleaseMutexWhenCallbackReturns
+@ stdcall ReleaseMutexWhenCallbackReturns(ptr long) ntdll.TpCallbackReleaseMutexOnCompletion
 @ stdcall ReleaseSemaphore(long long ptr)
-# @ stub ReleaseSemaphoreWhenCallbackReturns
+@ stdcall ReleaseSemaphoreWhenCallbackReturns(ptr long long) ntdll.TpCallbackReleaseSemaphoreOnCompletion
 @ stdcall ReleaseSRWLockExclusive(ptr) ntdll.RtlReleaseSRWLockExclusive
 @ stdcall ReleaseSRWLockShared(ptr) ntdll.RtlReleaseSRWLockShared
 @ stdcall RemoveDirectoryA(str)
@@ -1283,7 +1285,7 @@
 @ stdcall -register RtlCaptureContext(ptr) ntdll.RtlCaptureContext
 @ stdcall RtlCaptureStackBackTrace(long long ptr ptr) ntdll.RtlCaptureStackBackTrace
 @ stdcall -arch=x86_64 RtlCompareMemory(ptr ptr long) ntdll.RtlCompareMemory
-# @ stub -arch=x86_64 RtlCopyMemory
+@ stdcall -arch=x86_64 RtlCopyMemory(ptr ptr long) ntdll.RtlCopyMemory
 @ cdecl -arch=arm,x86_64 RtlDeleteFunctionTable(ptr) ntdll.RtlDeleteFunctionTable
 @ stdcall RtlFillMemory(ptr long long) ntdll.RtlFillMemory
 @ cdecl -arch=x86_64 RtlInstallFunctionTableCallback(long long long ptr ptr ptr) ntdll.RtlInstallFunctionTableCallback
@@ -1291,7 +1293,7 @@
 @ stdcall RtlMoveMemory(ptr ptr long) ntdll.RtlMoveMemory
 @ stdcall -arch=x86_64,arm RtlPcToFileHeader(ptr ptr) ntdll.RtlPcToFileHeader
 @ stdcall -arch=arm -register RtlRaiseException(ptr) ntdll.RtlRaiseException
-# @ stub -arch=x86_64 RtlRestoreContext
+@ stdcall -arch=x86_64 RtlRestoreContext(ptr ptr) ntdll.RtlRestoreContext
 @ stdcall RtlUnwind(ptr ptr ptr long) ntdll.RtlUnwind
 @ stdcall -arch=x86_64 RtlUnwindEx(long long ptr long ptr) ntdll.RtlUnwindEx
 @ stdcall -arch=x86_64 RtlVirtualUnwind(long long long ptr ptr ptr ptr ptr) ntdll.RtlVirtualUnwind
@@ -1344,12 +1346,12 @@
 @ stub SetConsoleCursorMode
 @ stdcall SetConsoleCursorPosition(long long)
 @ stdcall SetConsoleDisplayMode(long long ptr)
-@ stub SetConsoleFont
+@ stdcall SetConsoleFont(long long)
 @ stub SetConsoleHardwareState
 @ stdcall SetConsoleIcon(ptr)
 @ stdcall SetConsoleInputExeNameA(ptr)
 @ stdcall SetConsoleInputExeNameW(ptr)
-@ stub SetConsoleKeyShortcuts
+@ stdcall SetConsoleKeyShortcuts(long long ptr long)
 @ stub SetConsoleLocalEUDC
 @ stub SetConsoleMaximumWindowSize
 @ stub SetConsoleMenuClose
@@ -1360,20 +1362,20 @@
 @ stub SetConsoleOS2OemFormat
 @ stdcall SetConsoleOutputCP(long)
 @ stub SetConsolePalette
-# @ stub SetConsoleScreenBufferInfoEx
+@ stdcall SetConsoleScreenBufferInfoEx(long ptr)
 @ stdcall SetConsoleScreenBufferSize(long long)
 @ stdcall SetConsoleTextAttribute(long long)
 @ stdcall SetConsoleTitleA(str)
 @ stdcall SetConsoleTitleW(wstr)
 @ stdcall SetConsoleWindowInfo(long long ptr)
 @ stdcall SetCriticalSectionSpinCount(ptr long) ntdll.RtlSetCriticalSectionSpinCount
-# @ stub SetCurrentConsoleFontEx
+@ stdcall SetCurrentConsoleFontEx(long long ptr)
 @ stdcall SetCurrentDirectoryA(str)
 @ stdcall SetCurrentDirectoryW(wstr)
 @ stub SetDaylightFlag
 @ stdcall SetDefaultCommConfigA(str ptr long)
 @ stdcall SetDefaultCommConfigW(wstr ptr long)
-# @ stub SetDefaultDllDirectories
+@ stdcall SetDefaultDllDirectories(long)
 @ stdcall SetDllDirectoryA(str)
 @ stdcall SetDllDirectoryW(wstr)
 # @ stub SetDynamicTimeZoneInformation
@@ -1384,7 +1386,7 @@
 @ stdcall SetEnvironmentVariableW(wstr wstr)
 @ stdcall SetErrorMode(long)
 @ stdcall SetEvent(long)
-# @ stub SetEventWhenCallbackReturns
+@ stdcall SetEventWhenCallbackReturns(ptr long) ntdll.TpCallbackSetEventOnCompletion
 @ stdcall SetFileApisToANSI()
 @ stdcall SetFileApisToOEM()
 @ stdcall SetFileAttributesA(str long)
@@ -1392,7 +1394,7 @@
 # @ stub SetFileAttributesTransactedW
 @ stdcall SetFileAttributesW(wstr long)
 # @ stub SetFileBandwidthReservation
-# @ stub SetFileCompletionNotificationModes
+@ stdcall SetFileCompletionNotificationModes(long long)
 @ stdcall SetFileInformationByHandle(long long ptr long)
 # @ stub SetFileIoOverlappedRange
 @ stdcall SetFilePointer(long long ptr long)
@@ -1428,7 +1430,7 @@
 # @ stub SetProcessUserModeExceptionPolicy
 @ stdcall SetProcessWorkingSetSize(long long long)
 # @ stub SetProcessWorkingSetSizeEx
-# @ stub SetSearchPathMode
+@ stdcall SetSearchPathMode(long)
 @ stdcall SetStdHandle(long long)
 # @ stub SetStdHandleEx
 @ stdcall SetSystemFileCacheSize(long long long)
@@ -1442,7 +1444,7 @@
 @ stdcall SetThreadContext(long ptr)
 @ stdcall SetThreadErrorMode(long ptr)
 @ stdcall SetThreadExecutionState(long)
-# @ stub SetThreadGroupAffinity
+@ stdcall SetThreadGroupAffinity(long ptr ptr)
 @ stdcall SetThreadIdealProcessor(long long)
 # @ stub SetThreadIdealProcessorEx
 @ stdcall SetThreadLocale(long)
@@ -1453,10 +1455,10 @@
 # @ stub SetThreadToken
 @ stdcall SetThreadUILanguage(long)
 # @ stub SetThreadpoolStackInformation
-# @ stub SetThreadpoolThreadMaximum
-# @ stub SetThreadpoolThreadMinimum
-# @ stub SetThreadpoolTimer
-# @ stub SetThreadpoolWait
+@ stdcall SetThreadpoolThreadMaximum(ptr long) ntdll.TpSetPoolMaxThreads
+@ stdcall SetThreadpoolThreadMinimum(ptr long) ntdll.TpSetPoolMinThreads
+@ stdcall SetThreadpoolTimer(ptr ptr long long)
+@ stdcall SetThreadpoolWait(ptr long ptr)
 @ stdcall SetTimeZoneInformation(ptr)
 @ stub SetTimerQueueTimer
 # @ stub -arch=x86_64 SetUmsThreadInformation
@@ -1481,7 +1483,7 @@
 # @ stub SortCloseHandle
 # @ stub SortGetHandle
 # @ stub StartThreadpoolIo
-# @ stub SubmitThreadpoolWork
+@ stdcall SubmitThreadpoolWork(ptr) ntdll.TpPostWork
 @ stdcall SuspendThread(long)
 @ stdcall SwitchToFiber(ptr)
 @ stdcall SwitchToThread()
@@ -1508,7 +1510,7 @@
 @ stdcall TryAcquireSRWLockExclusive(ptr) ntdll.RtlTryAcquireSRWLockExclusive
 @ stdcall TryAcquireSRWLockShared(ptr) ntdll.RtlTryAcquireSRWLockShared
 @ stdcall TryEnterCriticalSection(ptr) ntdll.RtlTryEnterCriticalSection
-# @ stub TrySubmitThreadpoolCallback
+@ stdcall TrySubmitThreadpoolCallback(ptr ptr ptr)
 @ stdcall TzSpecificLocalTimeToSystemTime(ptr ptr ptr)
 # @ stub TzSpecificLocalTimeToSystemTimeEx
 # @ stub -arch=x86_64 uaw_lstrcmpW
@@ -1536,7 +1538,7 @@
 @ stdcall UnregisterWait(long)
 @ stdcall UnregisterWaitEx(long long)
 # @ stub UpdateCalendarDayOfWeek
-# @ stub UpdateProcThreadAttribute
+@ stdcall UpdateProcThreadAttribute(ptr long long ptr long ptr ptr)
 @ stdcall UpdateResourceA(long str str long ptr long)
 @ stdcall UpdateResourceW(long wstr wstr long ptr long)
 @ stub VDMConsoleOperation
@@ -1570,9 +1572,9 @@
 @ stdcall WaitForSingleObject(long long)
 @ stdcall WaitForSingleObjectEx(long long long)
 # @ stub WaitForThreadpoolIoCallbacks
-# @ stub WaitForThreadpoolTimerCallbacks
-# @ stub WaitForThreadpoolWaitCallbacks
-# @ stub WaitForThreadpoolWorkCallbacks
+@ stdcall WaitForThreadpoolTimerCallbacks(ptr long) ntdll.TpWaitForTimer
+@ stdcall WaitForThreadpoolWaitCallbacks(ptr long) ntdll.TpWaitForWait
+@ stdcall WaitForThreadpoolWorkCallbacks(ptr long) ntdll.TpWaitForWork
 @ stdcall WaitNamedPipeA (str long)
 @ stdcall WaitNamedPipeW (wstr long)
 @ stdcall WakeAllConditionVariable(ptr) ntdll.RtlWakeAllConditionVariable
@@ -1628,7 +1630,7 @@
 @ stdcall WriteTapemark(ptr long long long)
 @ stdcall ZombifyActCtx(ptr)
 @ stdcall -arch=x86_64 -private __C_specific_handler(ptr long ptr ptr) ntdll.__C_specific_handler
-@ stdcall -arch=x86_64 -private -norelay __chkstk() ntdll.__chkstk
+@ stdcall -arch=arm,x86_64 -private -norelay __chkstk() ntdll.__chkstk
 @ stub _DebugOut
 @ stub _DebugPrintf
 @ stdcall _hread(long ptr long)

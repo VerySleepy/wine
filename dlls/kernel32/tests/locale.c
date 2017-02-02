@@ -38,10 +38,12 @@
 
 static const WCHAR upper_case[] = {'\t','J','U','S','T','!',' ','A',',',' ','T','E','S','T',';',' ','S','T','R','I','N','G',' ','1','/','*','+','-','.','\r','\n',0};
 static const WCHAR lower_case[] = {'\t','j','u','s','t','!',' ','a',',',' ','t','e','s','t',';',' ','s','t','r','i','n','g',' ','1','/','*','+','-','.','\r','\n',0};
+static const WCHAR title_case[] = {'\t','J','u','s','t','!',' ','A',',',' ','T','e','s','t',';',' ','S','t','r','i','n','g',' ','1','/','*','+','-','.','\r','\n',0};
 static const WCHAR symbols_stripped[] = {'j','u','s','t','a','t','e','s','t','s','t','r','i','n','g','1',0};
 static const WCHAR localeW[] = {'e','n','-','U','S',0};
 static const WCHAR fooW[] = {'f','o','o',0};
 static const WCHAR emptyW[] = {0};
+static const WCHAR invalidW[] = {'i','n','v','a','l','i','d',0};
 
 static inline unsigned int strlenW( const WCHAR *str )
 {
@@ -71,7 +73,6 @@ static inline BOOL isdigitW( WCHAR wc )
 }
 
 /* Some functions are only in later versions of kernel32.dll */
-static HMODULE hKernel32;
 static WORD enumCount;
 
 static INT (WINAPI *pGetTimeFormatEx)(LPCWSTR, DWORD, const SYSTEMTIME *, LPCWSTR, LPWSTR, INT);
@@ -97,12 +98,17 @@ static INT (WINAPI *pCompareStringEx)(LPCWSTR, DWORD, LPCWSTR, INT, LPCWSTR, INT
 static INT (WINAPI *pGetGeoInfoA)(GEOID, GEOTYPE, LPSTR, INT, LANGID);
 static INT (WINAPI *pGetGeoInfoW)(GEOID, GEOTYPE, LPWSTR, INT, LANGID);
 static BOOL (WINAPI *pEnumSystemGeoID)(GEOCLASS, GEOID, GEO_ENUMPROC);
+static BOOL (WINAPI *pGetSystemPreferredUILanguages)(DWORD, ULONG*, WCHAR*, ULONG*);
+static BOOL (WINAPI *pGetThreadPreferredUILanguages)(DWORD, ULONG*, WCHAR*, ULONG*);
+static BOOL (WINAPI *pGetUserPreferredUILanguages)(DWORD, ULONG*, WCHAR*, ULONG*);
+static WCHAR (WINAPI *pRtlUpcaseUnicodeChar)(WCHAR);
+static INT (WINAPI *pGetNumberFormatEx)(LPCWSTR, DWORD, LPCWSTR, const NUMBERFMTW *, LPWSTR, int);
 
 static void InitFunctionPointers(void)
 {
-  hKernel32 = GetModuleHandleA("kernel32");
+  HMODULE mod = GetModuleHandleA("kernel32");
 
-#define X(f) p##f = (void*)GetProcAddress(hKernel32, #f)
+#define X(f) p##f = (void*)GetProcAddress(mod, #f)
   X(GetTimeFormatEx);
   X(GetDateFormatEx);
   X(EnumSystemLanguageGroupsA);
@@ -125,6 +131,13 @@ static void InitFunctionPointers(void)
   X(GetGeoInfoA);
   X(GetGeoInfoW);
   X(EnumSystemGeoID);
+  X(GetSystemPreferredUILanguages);
+  X(GetThreadPreferredUILanguages);
+  X(GetUserPreferredUILanguages);
+  X(GetNumberFormatEx);
+
+  mod = GetModuleHandleA("ntdll");
+  X(RtlUpcaseUnicodeChar);
 #undef X
 }
 
@@ -327,24 +340,13 @@ static void test_GetLocaleInfoW(void)
 
           val = 0;
           GetLocaleInfoW(lcid, LOCALE_ILANGUAGE|LOCALE_RETURN_NUMBER, (WCHAR*)&val, sizeof(val)/sizeof(WCHAR));
-          if (ptr->todo & 0x1)
-          {
-          todo_wine
-              ok(val == ptr->lcid || (val && broken(val == ptr->lcid_broken)), "%s: got wrong lcid 0x%04x, expected 0x%04x\n",
-                  wine_dbgstr_w(ptr->name), val, ptr->lcid);
-          }
-          else
+          todo_wine_if (ptr->todo & 0x1)
               ok(val == ptr->lcid || (val && broken(val == ptr->lcid_broken)), "%s: got wrong lcid 0x%04x, expected 0x%04x\n",
                   wine_dbgstr_w(ptr->name), val, ptr->lcid);
 
           /* now check LOCALE_SNAME */
           GetLocaleInfoW(lcid, LOCALE_SNAME, bufferW, COUNTOF(bufferW));
-          if (ptr->todo & 0x2)
-          todo_wine
-              ok(!lstrcmpW(bufferW, ptr->sname) ||
-                 (*ptr->sname_broken && broken(!lstrcmpW(bufferW, ptr->sname_broken))),
-                  "%s: got %s\n", wine_dbgstr_w(ptr->name), wine_dbgstr_w(bufferW));
-          else
+          todo_wine_if (ptr->todo & 0x2)
               ok(!lstrcmpW(bufferW, ptr->sname) ||
                  (*ptr->sname_broken && broken(!lstrcmpW(bufferW, ptr->sname_broken))),
                   "%s: got %s\n", wine_dbgstr_w(ptr->name), wine_dbgstr_w(bufferW));
@@ -1594,6 +1596,188 @@ static void test_GetNumberFormatA(void)
   }
 }
 
+static void test_GetNumberFormatEx(void)
+{
+  int ret;
+  NUMBERFMTW format;
+  static WCHAR dotW[] = {'.',0};
+  static WCHAR commaW[] = {',',0};
+  static const WCHAR enW[] = {'e','n','-','U','S',0};
+  static const WCHAR frW[] = {'f','r','-','F','R',0};
+  static const WCHAR bogusW[] = {'b','o','g','u','s',0};
+  WCHAR buffer[BUFFER_SIZE], input[BUFFER_SIZE], Expected[BUFFER_SIZE];
+
+  if (!pGetNumberFormatEx)
+  {
+    win_skip("GetNumberFormatEx is not available.\n");
+    return;
+  }
+
+  STRINGSW("23",""); /* NULL output, length > 0 --> Error */
+  ret = pGetNumberFormatEx(enW, 0, input, NULL, NULL, COUNTOF(buffer));
+  ok( !ret && GetLastError() == ERROR_INVALID_PARAMETER,
+      "Expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+
+  STRINGSW("23,53",""); /* Invalid character --> Error */
+  ret = pGetNumberFormatEx(enW, 0, input, NULL, buffer, COUNTOF(buffer));
+  ok( !ret && GetLastError() == ERROR_INVALID_PARAMETER,
+      "Expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+
+  STRINGSW("--",""); /* Double '-' --> Error */
+  ret = pGetNumberFormatEx(enW, 0, input, NULL, buffer, COUNTOF(buffer));
+  ok( !ret && GetLastError() == ERROR_INVALID_PARAMETER,
+      "Expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+
+  STRINGSW("0-",""); /* Trailing '-' --> Error */
+  ret = pGetNumberFormatEx(enW, 0, input, NULL, buffer, COUNTOF(buffer));
+  ok( !ret && GetLastError() == ERROR_INVALID_PARAMETER,
+      "Expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+
+  STRINGSW("0..",""); /* Double '.' --> Error */
+  ret = pGetNumberFormatEx(enW, 0, input, NULL, buffer, COUNTOF(buffer));
+  ok( !ret && GetLastError() == ERROR_INVALID_PARAMETER,
+      "Expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+
+  STRINGSW(" 0.1",""); /* Leading space --> Error */
+  ret = pGetNumberFormatEx(enW, 0, input, NULL, buffer, COUNTOF(buffer));
+  ok( !ret && GetLastError() == ERROR_INVALID_PARAMETER,
+      "Expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+
+  STRINGSW("1234","1"); /* Length too small --> Write up to length chars */
+  ret = pGetNumberFormatEx(enW, NUO, input, NULL, buffer, 2);
+  ok( !ret && GetLastError() == ERROR_INSUFFICIENT_BUFFER,
+      "Expected ERROR_INSUFFICIENT_BUFFER, got %d\n", GetLastError());
+
+  STRINGSW("23",""); /* Bogus locale --> Error */
+  ret = pGetNumberFormatEx(bogusW, NUO, input, NULL, buffer, COUNTOF(buffer));
+  ok( !ret && GetLastError() == ERROR_INVALID_PARAMETER,
+      "Expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+
+  memset(&format, 0, sizeof(format));
+
+  STRINGSW("2353",""); /* Format and flags given --> Error */
+  ret = pGetNumberFormatEx(enW, NUO, input, &format, buffer, COUNTOF(buffer));
+  ok( !ret, "Expected ret == 0, got %d\n", ret);
+  ok( GetLastError() == ERROR_INVALID_FLAGS || GetLastError() == ERROR_INVALID_PARAMETER,
+      "Expected ERROR_INVALID_FLAGS, got %d\n", GetLastError());
+
+  STRINGSW("2353",""); /* Invalid format --> Error */
+  ret = pGetNumberFormatEx(enW, 0, input, &format, buffer, COUNTOF(buffer));
+  ok( !ret && GetLastError() == ERROR_INVALID_PARAMETER,
+      "Expected ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+
+  STRINGSW("2353","2,353.00"); /* Valid number */
+  ret = pGetNumberFormatEx(enW, NUO, input, NULL, buffer, COUNTOF(buffer));
+  ok(ret, "Expected ret != 0, got %d, error %d\n", ret, GetLastError());
+  EXPECT_LENW; EXPECT_EQW;
+
+  STRINGSW("-2353","-2,353.00"); /* Valid negative number */
+  ret = pGetNumberFormatEx(enW, NUO, input, NULL, buffer, COUNTOF(buffer));
+  ok(ret, "Expected ret != 0, got %d, error %d\n", ret, GetLastError());
+  EXPECT_LENW; EXPECT_EQW;
+
+  STRINGSW("-353","-353.00"); /* test for off by one error in grouping */
+  ret = pGetNumberFormatEx(enW, NUO, input, NULL, buffer, COUNTOF(buffer));
+  ok(ret, "Expected ret != 0, got %d, error %d\n", ret, GetLastError());
+  EXPECT_LENW; EXPECT_EQW;
+
+  STRINGSW("2353.1","2,353.10"); /* Valid real number */
+  ret = pGetNumberFormatEx(enW, NUO, input, NULL, buffer, COUNTOF(buffer));
+  ok(ret, "Expected ret != 0, got %d, error %d\n", ret, GetLastError());
+  EXPECT_LENW; EXPECT_EQW;
+
+  STRINGSW("2353.111","2,353.11"); /* Too many DP --> Truncated */
+  ret = pGetNumberFormatEx(enW, NUO, input, NULL, buffer, COUNTOF(buffer));
+  ok(ret, "Expected ret != 0, got %d, error %d\n", ret, GetLastError());
+  EXPECT_LENW; EXPECT_EQW;
+
+  STRINGSW("2353.119","2,353.12");  /* Too many DP --> Rounded */
+  ret = pGetNumberFormatEx(enW, NUO, input, NULL, buffer, COUNTOF(buffer));
+  ok(ret, "Expected ret != 0, got %d, error %d\n", ret, GetLastError());
+  EXPECT_LENW; EXPECT_EQW;
+
+  format.NumDigits = 0; /* No decimal separator */
+  format.LeadingZero = 0;
+  format.Grouping = 0;  /* No grouping char */
+  format.NegativeOrder = 0;
+  format.lpDecimalSep = dotW;
+  format.lpThousandSep = commaW;
+
+  STRINGSW("2353","2353"); /* No decimal or grouping chars expected */
+  ret = pGetNumberFormatEx(enW, 0, input, &format, buffer, COUNTOF(buffer));
+  ok(ret, "Expected ret != 0, got %d, error %d\n", ret, GetLastError());
+  EXPECT_LENW; EXPECT_EQW;
+
+  format.NumDigits = 1; /* 1 DP --> Expect decimal separator */
+  STRINGSW("2353","2353.0");
+  ret = pGetNumberFormatEx(enW, 0, input, &format, buffer, COUNTOF(buffer));
+  ok(ret, "Expected ret != 0, got %d, error %d\n", ret, GetLastError());
+  EXPECT_LENW; EXPECT_EQW;
+
+  format.Grouping = 2; /* Group by 100's */
+  STRINGSW("2353","23,53.0");
+  ret = pGetNumberFormatEx(enW, 0, input, &format, buffer, COUNTOF(buffer));
+  ok(ret, "Expected ret != 0, got %d, error %d\n", ret, GetLastError());
+  EXPECT_LENW; EXPECT_EQW;
+
+  STRINGSW("235","235.0"); /* Grouping of a positive number */
+  format.Grouping = 3;
+  ret = pGetNumberFormatEx(enW, 0, input, &format, buffer, COUNTOF(buffer));
+  ok(ret, "Expected ret != 0, got %d, error %d\n", ret, GetLastError());
+  EXPECT_LENW; EXPECT_EQW;
+
+  STRINGSW("-235","-235.0"); /* Grouping of a negative number */
+  format.NegativeOrder = NEG_LEFT;
+  ret = pGetNumberFormatEx(enW, 0, input, &format, buffer, COUNTOF(buffer));
+  ok(ret, "Expected ret != 0, got %d, error %d\n", ret, GetLastError());
+  EXPECT_LENW; EXPECT_EQW;
+
+  format.LeadingZero = 1; /* Always provide leading zero */
+  STRINGSW(".5","0.5");
+  ret = pGetNumberFormatEx(enW, 0, input, &format, buffer, COUNTOF(buffer));
+  ok(ret, "Expected ret != 0, got %d, error %d\n", ret, GetLastError());
+  EXPECT_LENW; EXPECT_EQW;
+
+  format.NegativeOrder = NEG_PARENS;
+  STRINGSW("-1","(1.0)");
+  ret = pGetNumberFormatEx(enW, 0, input, &format, buffer, COUNTOF(buffer));
+  ok(ret, "Expected ret != 0, got %d, error %d\n", ret, GetLastError());
+  EXPECT_LENW; EXPECT_EQW;
+
+  format.NegativeOrder = NEG_LEFT;
+  STRINGSW("-1","-1.0");
+  ret = pGetNumberFormatEx(enW, 0, input, &format, buffer, COUNTOF(buffer));
+  ok(ret, "Expected ret != 0, got %d, error %d\n", ret, GetLastError());
+  EXPECT_LENW; EXPECT_EQW;
+
+  format.NegativeOrder = NEG_LEFT_SPACE;
+  STRINGSW("-1","- 1.0");
+  ret = pGetNumberFormatEx(enW, 0, input, &format, buffer, COUNTOF(buffer));
+  ok(ret, "Expected ret != 0, got %d, error %d\n", ret, GetLastError());
+  EXPECT_LENW; EXPECT_EQW;
+
+  format.NegativeOrder = NEG_RIGHT;
+  STRINGSW("-1","1.0-");
+  ret = pGetNumberFormatEx(enW, 0, input, &format, buffer, COUNTOF(buffer));
+  ok(ret, "Expected ret != 0, got %d, error %d\n", ret, GetLastError());
+  EXPECT_LENW; EXPECT_EQW;
+
+  format.NegativeOrder = NEG_RIGHT_SPACE;
+  STRINGSW("-1","1.0 -");
+  ret = pGetNumberFormatEx(enW, 0, input, &format, buffer, COUNTOF(buffer));
+  ok(ret, "Expected ret != 0, got %d, error %d\n", ret, GetLastError());
+  EXPECT_LENW; EXPECT_EQW;
+
+  if (pIsValidLocaleName(frW))
+  {
+    STRINGSW("-12345","-12 345,00"); /* Try French formatting */
+    Expected[3] = 160; /* Non breaking space */
+    ret = pGetNumberFormatEx(frW, NUO, input, NULL, buffer, COUNTOF(buffer));
+    ok(ret, "Expected ret != 0, got %d, error %d\n", ret, GetLastError());
+    EXPECT_LENW; EXPECT_EQW;
+  }
+}
+
 struct comparestringa_entry {
   LCID lcid;
   DWORD flags;
@@ -1634,7 +1818,21 @@ static const struct comparestringa_entry comparestringa_data[] = {
   { LOCALE_SYSTEM_DEFAULT, SORT_STRINGSORT, "'o", -1, "/m", -1, CSTR_LESS_THAN },
   { LOCALE_SYSTEM_DEFAULT, SORT_STRINGSORT, "/m", -1, "'o", -1, CSTR_GREATER_THAN },
   { LOCALE_SYSTEM_DEFAULT, 0, "aLuZkUtZ", 8, "aLuZkUtZ", 9, CSTR_EQUAL },
-  { LOCALE_SYSTEM_DEFAULT, 0, "aLuZkUtZ", 7, "aLuZkUtZ\0A", 10, CSTR_LESS_THAN }
+  { LOCALE_SYSTEM_DEFAULT, 0, "aLuZkUtZ", 7, "aLuZkUtZ\0A", 10, CSTR_LESS_THAN },
+  { LOCALE_SYSTEM_DEFAULT, 0, "a-", 3, "a\0", 3, CSTR_GREATER_THAN },
+  { LOCALE_SYSTEM_DEFAULT, 0, "a'", 3, "a\0", 3, CSTR_GREATER_THAN },
+  { LOCALE_SYSTEM_DEFAULT, SORT_STRINGSORT, "a-", 3, "a\0", 3, CSTR_GREATER_THAN },
+  { LOCALE_SYSTEM_DEFAULT, SORT_STRINGSORT, "a'", 3, "a\0", 3, CSTR_GREATER_THAN },
+  { LOCALE_SYSTEM_DEFAULT, NORM_IGNORESYMBOLS, "a.", 3, "a\0", 3, CSTR_EQUAL },
+  { LOCALE_SYSTEM_DEFAULT, NORM_IGNORESYMBOLS, "a ", 3, "a\0", 3, CSTR_EQUAL },
+  { LOCALE_SYSTEM_DEFAULT, 0, "a", 1, "a\0\0", 4, CSTR_EQUAL },
+  { LOCALE_SYSTEM_DEFAULT, 0, "a", 2, "a\0\0", 4, CSTR_EQUAL },
+  { LOCALE_SYSTEM_DEFAULT, 0, "a\0\0", 4, "a", 1, CSTR_EQUAL },
+  { LOCALE_SYSTEM_DEFAULT, 0, "a\0\0", 4, "a", 2, CSTR_EQUAL },
+  { LOCALE_SYSTEM_DEFAULT, 0, "a", 1, "a\0x", 4, CSTR_LESS_THAN },
+  { LOCALE_SYSTEM_DEFAULT, 0, "a", 2, "a\0x", 4, CSTR_LESS_THAN },
+  { LOCALE_SYSTEM_DEFAULT, 0, "a\0x", 4, "a", 1, CSTR_GREATER_THAN },
+  { LOCALE_SYSTEM_DEFAULT, 0, "a\0x", 4, "a", 2, CSTR_GREATER_THAN },
 };
 
 static void test_CompareStringA(void)
@@ -1780,6 +1978,36 @@ static void test_CompareStringA(void)
     ret = CompareStringA(lcid, 0, a, sizeof(a), a, sizeof(a));
     ok (GetLastError() == 0xdeadbeef && ret == CSTR_EQUAL,
         "ret %d, error %d, expected value %d\n", ret, GetLastError(), CSTR_EQUAL);
+}
+
+static void test_CompareStringW(void)
+{
+    WCHAR *str1, *str2;
+    SYSTEM_INFO si;
+    DWORD old_prot;
+    BOOL success;
+    char *buf;
+    int ret;
+
+    GetSystemInfo(&si);
+    buf = VirtualAlloc(NULL, si.dwPageSize * 4, MEM_COMMIT, PAGE_READWRITE);
+    ok(buf != NULL, "VirtualAlloc failed with %u\n", GetLastError());
+    success = VirtualProtect(buf + si.dwPageSize, si.dwPageSize, PAGE_NOACCESS, &old_prot);
+    ok(success, "VirtualProtect failed with %u\n", GetLastError());
+    success = VirtualProtect(buf + 3 * si.dwPageSize, si.dwPageSize, PAGE_NOACCESS, &old_prot);
+    ok(success, "VirtualProtect failed with %u\n", GetLastError());
+
+    str1 = (WCHAR *)(buf + si.dwPageSize - sizeof(WCHAR));
+    str2 = (WCHAR *)(buf + 3 * si.dwPageSize - sizeof(WCHAR));
+    *str1 = 'A';
+    *str2 = 'B';
+
+    /* CompareStringW should abort on the first non-matching character */
+    ret = CompareStringW(CP_ACP, 0, str1, 100, str2, 100);
+    ok(ret == CSTR_LESS_THAN, "expected CSTR_LESS_THAN, got %d\n", ret);
+
+    success = VirtualFree(buf, 0, MEM_RELEASE);
+    ok(success, "VirtualFree failed with %u\n", GetLastError());
 }
 
 struct comparestringex_test {
@@ -1964,23 +2192,44 @@ static void test_CompareStringEx(void)
 
         MultiByteToWideChar(CP_ACP, 0, e->locale, -1, locale, sizeof(locale)/sizeof(WCHAR));
         ret = pCompareStringEx(locale, e->flags, e->first, -1, e->second, -1, NULL, NULL, 0);
-        if (e->todo)
-        {
-            todo_wine ok(ret == e->ret || broken(ret == e->broken),
-                         "%d: got %s, expected %s\n", i, op[ret], op[e->ret]);
-        }
-        else
-        {
+        todo_wine_if (e->todo)
             ok(ret == e->ret || broken(ret == e->broken),
                "%d: got %s, expected %s\n", i, op[ret], op[e->ret]);
-        }
     }
 
 }
 
+static const DWORD lcmap_invalid_flags[] = {
+    0,
+    LCMAP_HIRAGANA | LCMAP_KATAKANA,
+    LCMAP_HALFWIDTH | LCMAP_FULLWIDTH,
+    LCMAP_TRADITIONAL_CHINESE | LCMAP_SIMPLIFIED_CHINESE,
+    LCMAP_LOWERCASE | SORT_STRINGSORT,
+    LCMAP_UPPERCASE | NORM_IGNORESYMBOLS,
+    LCMAP_LOWERCASE | NORM_IGNORESYMBOLS,
+    LCMAP_UPPERCASE | NORM_IGNORENONSPACE,
+    LCMAP_LOWERCASE | NORM_IGNORENONSPACE,
+    LCMAP_HIRAGANA | NORM_IGNORENONSPACE,
+    LCMAP_HIRAGANA | NORM_IGNORESYMBOLS,
+    LCMAP_HIRAGANA | LCMAP_SIMPLIFIED_CHINESE,
+    LCMAP_HIRAGANA | LCMAP_TRADITIONAL_CHINESE,
+    LCMAP_KATAKANA | NORM_IGNORENONSPACE,
+    LCMAP_KATAKANA | NORM_IGNORESYMBOLS,
+    LCMAP_KATAKANA | LCMAP_SIMPLIFIED_CHINESE,
+    LCMAP_KATAKANA | LCMAP_TRADITIONAL_CHINESE,
+    LCMAP_FULLWIDTH | NORM_IGNORENONSPACE,
+    LCMAP_FULLWIDTH | NORM_IGNORESYMBOLS,
+    LCMAP_FULLWIDTH | LCMAP_SIMPLIFIED_CHINESE,
+    LCMAP_FULLWIDTH | LCMAP_TRADITIONAL_CHINESE,
+    LCMAP_HALFWIDTH | NORM_IGNORENONSPACE,
+    LCMAP_HALFWIDTH | NORM_IGNORESYMBOLS,
+    LCMAP_HALFWIDTH | LCMAP_SIMPLIFIED_CHINESE,
+    LCMAP_HALFWIDTH | LCMAP_TRADITIONAL_CHINESE,
+};
+
 static void test_LCMapStringA(void)
 {
-    int ret, ret2;
+    int ret, ret2, i;
     char buf[256], buf2[256];
     static const char upper_case[] = "\tJUST! A, TEST; STRING 1/*+-.\r\n";
     static const char lower_case[] = "\tjust! a, test; string 1/*+-.\r\n";
@@ -2000,30 +2249,18 @@ static void test_LCMapStringA(void)
     ok(GetLastError() == ERROR_INVALID_FLAGS,
        "unexpected error code %d\n", GetLastError());
 
-    ret = LCMapStringA(LOCALE_USER_DEFAULT, LCMAP_HIRAGANA | LCMAP_KATAKANA,
-                       upper_case, -1, buf, sizeof(buf));
-    ok(!ret, "LCMAP_HIRAGANA and LCMAP_KATAKANA are mutually exclusive\n");
-    ok(GetLastError() == ERROR_INVALID_FLAGS,
-       "unexpected error code %d\n", GetLastError());
-
-    ret = LCMapStringA(LOCALE_USER_DEFAULT, LCMAP_HALFWIDTH | LCMAP_FULLWIDTH,
-                       upper_case, -1, buf, sizeof(buf));
-    ok(!ret, "LCMAP_HALFWIDTH | LCMAP_FULLWIDTH are mutually exclusive\n");
-    ok(GetLastError() == ERROR_INVALID_FLAGS,
-       "unexpected error code %d\n", GetLastError());
-
-    ret = LCMapStringA(LOCALE_USER_DEFAULT, LCMAP_TRADITIONAL_CHINESE | LCMAP_SIMPLIFIED_CHINESE,
-                       upper_case, -1, buf, sizeof(buf));
-    ok(!ret, "LCMAP_TRADITIONAL_CHINESE and LCMAP_SIMPLIFIED_CHINESE are mutually exclusive\n");
-    ok(GetLastError() == ERROR_INVALID_FLAGS,
-       "unexpected error code %d\n", GetLastError());
-
-    /* SORT_STRINGSORT must be used exclusively with LCMAP_SORTKEY */
-    SetLastError(0xdeadbeef);
-    ret = LCMapStringA(LOCALE_USER_DEFAULT, LCMAP_LOWERCASE | SORT_STRINGSORT,
-                       upper_case, -1, buf, sizeof(buf));
-    ok(GetLastError() == ERROR_INVALID_FLAGS, "expected ERROR_INVALID_FLAGS, got %d\n", GetLastError());
-    ok(!ret, "SORT_STRINGSORT without LCMAP_SORTKEY must fail\n");
+    /* test invalid flag combinations */
+    for (i = 0; i < sizeof(lcmap_invalid_flags)/sizeof(lcmap_invalid_flags[0]); i++) {
+        lstrcpyA(buf, "foo");
+        SetLastError(0xdeadbeef);
+        ret = LCMapStringA(LOCALE_USER_DEFAULT, lcmap_invalid_flags[i],
+                           lower_case, -1, buf, sizeof(buf));
+        ok(GetLastError() == ERROR_INVALID_FLAGS,
+           "LCMapStringA (flag %08x) unexpected error code %d\n",
+           lcmap_invalid_flags[i], GetLastError());
+        ok(!ret, "LCMapStringA (flag %08x) should return 0, got %d\n",
+           lcmap_invalid_flags[i], ret);
+    }
 
     /* test LCMAP_LOWERCASE */
     ret = LCMapStringA(LOCALE_USER_DEFAULT, LCMAP_LOWERCASE,
@@ -2134,6 +2371,14 @@ static void test_LCMapStringA(void)
 	lstrlenA(symbols_stripped) + 1, ret);
     ok(!lstrcmpA(buf, symbols_stripped), "LCMapStringA should return %s, but not %s\n", lower_case, buf);
 
+    /* test NORM_IGNORESYMBOLS | NORM_IGNORENONSPACE */
+    lstrcpyA(buf, "foo");
+    ret = LCMapStringA(LOCALE_USER_DEFAULT, NORM_IGNORESYMBOLS | NORM_IGNORENONSPACE,
+                       lower_case, -1, buf, sizeof(buf));
+    ok(ret == lstrlenA(symbols_stripped) + 1, "LCMapStringA should return %d, ret = %d\n",
+	lstrlenA(symbols_stripped) + 1, ret);
+    ok(!lstrcmpA(buf, symbols_stripped), "LCMapStringA should return %s, but not %s\n", lower_case, buf);
+
     /* test srclen = 0 */
     SetLastError(0xdeadbeef);
     ret = LCMapStringA(LOCALE_USER_DEFAULT, 0, upper_case, 0, buf, sizeof(buf));
@@ -2146,47 +2391,47 @@ typedef INT (*lcmapstring_wrapper)(DWORD, LPCWSTR, INT, LPWSTR, INT);
 
 static void test_lcmapstring_unicode(lcmapstring_wrapper func_ptr, const char *func_name)
 {
-    int ret, ret2;
+    const static WCHAR japanese_text[] = {
+        0x3044, 0x309d, 0x3084, 0x3001, 0x30a4, 0x30fc, 0x30cf,
+        0x30c8, 0x30fc, 0x30f4, 0x30a9, 0x306e, 0x2026, 0
+    };
+    const static WCHAR hiragana_text[] = {
+        0x3044, 0x309d, 0x3084, 0x3001, 0x3044, 0x30fc, 0x306f,
+        0x3068, 0x30fc, 0x3094, 0x3049, 0x306e, 0x2026, 0
+    };
+    const static WCHAR katakana_text[] = {
+        0x30a4, 0x30fd, 0x30e4, 0x3001, 0x30a4, 0x30fc, 0x30cf,
+        0x30c8, 0x30fc, 0x30f4, 0x30a9, 0x30ce, 0x2026, 0
+    };
+    const static WCHAR halfwidth_text[] = {
+        0x3044, 0x309d, 0x3084, 0xff64, 0xff72, 0xff70, 0xff8a,
+        0xff84, 0xff70, 0xff73, 0xff9e, 0xff6b, 0x306e, 0x2026, 0
+    };
+    int ret, ret2, i;
     WCHAR buf[256], buf2[256];
     char *p_buf = (char *)buf, *p_buf2 = (char *)buf2;
 
+    /* LCMAP_LOWERCASE | LCMAP_UPPERCASE makes LCMAP_TITLECASE, so it's valid now. */
     ret = func_ptr(LCMAP_LOWERCASE | LCMAP_UPPERCASE,
-                       upper_case, -1, buf, sizeof(buf)/sizeof(WCHAR));
-    if (broken(ret))
-        ok(lstrcmpW(buf, upper_case) == 0, "Expected upper case string\n");
-    else
-    {
-        ok(!ret, "%s LCMAP_LOWERCASE and LCMAP_UPPERCASE are mutually exclusive\n", func_name);
-        ok(GetLastError() == ERROR_INVALID_FLAGS, "%s unexpected error code %d\n",
-           func_name, GetLastError());
+                       lower_case, -1, buf, sizeof(buf)/sizeof(WCHAR));
+    todo_wine ok(ret == lstrlenW(title_case) + 1 || broken(!ret),
+       "%s ret %d, error %d, expected value %d\n", func_name,
+       ret, GetLastError(), lstrlenW(title_case) + 1);
+    todo_wine ok(lstrcmpW(buf, title_case) == 0 || broken(!ret),
+       "Expected title case string\n");
+
+    /* test invalid flag combinations */
+    for (i = 0; i < sizeof(lcmap_invalid_flags)/sizeof(lcmap_invalid_flags[0]); i++) {
+        lstrcpyW(buf, fooW);
+        SetLastError(0xdeadbeef);
+        ret = func_ptr(lcmap_invalid_flags[i],
+                           lower_case, -1, buf, sizeof(buf));
+        ok(GetLastError() == ERROR_INVALID_FLAGS,
+           "%s (flag %08x) unexpected error code %d\n",
+           func_name, lcmap_invalid_flags[i], GetLastError());
+        ok(!ret, "%s (flag %08x) should return 0, got %d\n",
+           func_name, lcmap_invalid_flags[i], ret);
     }
-
-    ret = func_ptr(LCMAP_HIRAGANA | LCMAP_KATAKANA,
-                       upper_case, -1, buf, sizeof(buf)/sizeof(WCHAR));
-    ok(!ret, "%s LCMAP_HIRAGANA and LCMAP_KATAKANA are mutually exclusive\n", func_name);
-    ok(GetLastError() == ERROR_INVALID_FLAGS, "%s unexpected error code %d\n",
-       func_name, GetLastError());
-
-    ret = func_ptr(LCMAP_HALFWIDTH | LCMAP_FULLWIDTH,
-                       upper_case, -1, buf, sizeof(buf)/sizeof(WCHAR));
-    ok(!ret, "%s LCMAP_HALFWIDTH | LCMAP_FULLWIDTH are mutually exclusive\n", func_name);
-    ok(GetLastError() == ERROR_INVALID_FLAGS, "%s unexpected error code %d\n",
-       func_name, GetLastError());
-
-    ret = func_ptr(LCMAP_TRADITIONAL_CHINESE | LCMAP_SIMPLIFIED_CHINESE,
-                       upper_case, -1, buf, sizeof(buf)/sizeof(WCHAR));
-    ok(!ret, "%s LCMAP_TRADITIONAL_CHINESE and LCMAP_SIMPLIFIED_CHINESE are mutually exclusive\n",
-       func_name);
-    ok(GetLastError() == ERROR_INVALID_FLAGS, "%s unexpected error code %d\n",
-       func_name, GetLastError());
-
-    /* SORT_STRINGSORT must be used exclusively with LCMAP_SORTKEY */
-    SetLastError(0xdeadbeef);
-    ret = func_ptr(LCMAP_LOWERCASE | SORT_STRINGSORT,
-                       upper_case, -1, buf, sizeof(buf)/sizeof(WCHAR));
-    ok(GetLastError() == ERROR_INVALID_FLAGS, "%s expected ERROR_INVALID_FLAGS, got %d\n",
-       func_name, GetLastError());
-    ok(!ret, "%s SORT_STRINGSORT without LCMAP_SORTKEY must fail\n", func_name);
 
     /* test LCMAP_LOWERCASE */
     ret = func_ptr(LCMAP_LOWERCASE,
@@ -2202,10 +2447,71 @@ static void test_lcmapstring_unicode(lcmapstring_wrapper func_ptr, const char *f
        ret, GetLastError(), lstrlenW(lower_case) + 1);
     ok(!lstrcmpW(buf, upper_case), "%s string compare mismatch\n", func_name);
 
+    /* test LCMAP_HIRAGANA */
+    ret = func_ptr(LCMAP_HIRAGANA,
+                   japanese_text, -1, buf, sizeof(buf)/sizeof(WCHAR));
+    ok(ret == lstrlenW(hiragana_text) + 1, "%s ret %d, error %d, expected value %d\n", func_name,
+       ret, GetLastError(), lstrlenW(hiragana_text) + 1);
+    ok(!lstrcmpW(buf, hiragana_text), "%s string compare mismatch\n", func_name);
+
+    buf[0] = 0x30f5; /* KATAKANA LETTER SMALL KA */
+    ret = func_ptr(LCMAP_HIRAGANA, buf, 1, buf2, 1);
+    ok(ret == 1, "%s ret %d, error %d, expected value 1\n", func_name,
+       ret, GetLastError());
+    /* U+3095: HIRAGANA LETTER SMALL KA was added in Unicode 3.2 */
+    ok(buf2[0] == 0x3095 || broken(buf2[0] == 0x30f5 /* Vista and earlier versions */),
+       "%s expected %04x, got %04x\n", func_name, 0x3095, buf2[0]);
+
+    /* test LCMAP_KATAKANA | LCMAP_LOWERCASE */
+    ret = func_ptr(LCMAP_KATAKANA | LCMAP_LOWERCASE,
+                   japanese_text, -1, buf, sizeof(buf)/sizeof(WCHAR));
+    ok(ret == lstrlenW(katakana_text) + 1, "%s ret %d, error %d, expected value %d\n", func_name,
+       ret, GetLastError(), lstrlenW(katakana_text) + 1);
+    ok(!lstrcmpW(buf, katakana_text), "%s string compare mismatch\n", func_name);
+
+    /* test LCMAP_FULLWIDTH */
+    ret = func_ptr(LCMAP_FULLWIDTH,
+                   halfwidth_text, -1, buf, sizeof(buf)/sizeof(WCHAR));
+    ok(ret == lstrlenW(japanese_text) + 1, "%s ret %d, error %d, expected value %d\n", func_name,
+       ret, GetLastError(), lstrlenW(japanese_text) + 1);
+    ok(!lstrcmpW(buf, japanese_text), "%s string compare mismatch\n", func_name);
+
+    ret2 = func_ptr(LCMAP_FULLWIDTH, halfwidth_text, -1, NULL, 0);
+    ok(ret == ret2, "%s ret %d, expected value %d\n", func_name, ret2, ret);
+
+    /* test LCMAP_FULLWIDTH | LCMAP_HIRAGANA
+       (half-width katakana is converted into full-wdith hiragana) */
+    ret = func_ptr(LCMAP_FULLWIDTH | LCMAP_HIRAGANA,
+                   halfwidth_text, -1, buf, sizeof(buf)/sizeof(WCHAR));
+    ok(ret == lstrlenW(hiragana_text) + 1, "%s ret %d, error %d, expected value %d\n", func_name,
+       ret, GetLastError(), lstrlenW(hiragana_text) + 1);
+    ok(!lstrcmpW(buf, hiragana_text), "%s string compare mismatch\n", func_name);
+
+    ret2 = func_ptr(LCMAP_FULLWIDTH | LCMAP_HIRAGANA, halfwidth_text, -1, NULL, 0);
+    ok(ret == ret2, "%s ret %d, expected value %d\n", func_name, ret, ret2);
+
+    /* test LCMAP_HALFWIDTH */
+    ret = func_ptr(LCMAP_HALFWIDTH,
+                   japanese_text, -1, buf, sizeof(buf)/sizeof(WCHAR));
+    ok(ret == lstrlenW(halfwidth_text) + 1, "%s ret %d, error %d, expected value %d\n", func_name,
+       ret, GetLastError(), lstrlenW(halfwidth_text) + 1);
+    ok(!lstrcmpW(buf, halfwidth_text), "%s string compare mismatch\n", func_name);
+
+    ret2 = func_ptr(LCMAP_HALFWIDTH, japanese_text, -1, NULL, 0);
+    ok(ret == ret2, "%s ret %d, expected value %d\n", func_name, ret, ret2);
+
     /* test buffer overflow */
     SetLastError(0xdeadbeef);
     ret = func_ptr(LCMAP_UPPERCASE,
                        lower_case, -1, buf, 4);
+    ok(!ret && GetLastError() == ERROR_INSUFFICIENT_BUFFER,
+       "%s should return 0 and ERROR_INSUFFICIENT_BUFFER, got %d\n", func_name, ret);
+
+    /* KATAKANA LETTER GA (U+30AC) is converted into two half-width characters.
+       Thus, it requires two WCHARs. */
+    buf[0] = 0x30ac;
+    SetLastError(0xdeadbeef);
+    ret = func_ptr(LCMAP_HALFWIDTH, buf, 1, buf2, 1);
     ok(!ret && GetLastError() == ERROR_INSUFFICIENT_BUFFER,
        "%s should return 0 and ERROR_INSUFFICIENT_BUFFER, got %d\n", func_name, ret);
 
@@ -2282,6 +2588,14 @@ static void test_lcmapstring_unicode(lcmapstring_wrapper func_ptr, const char *f
     lstrlenW(symbols_stripped) + 1, ret);
     ok(!lstrcmpW(buf, symbols_stripped), "%s string comparison mismatch\n", func_name);
 
+    /* test NORM_IGNORESYMBOLS | NORM_IGNORENONSPACE */
+    lstrcpyW(buf, fooW);
+    ret = func_ptr(NORM_IGNORESYMBOLS | NORM_IGNORENONSPACE,
+                       lower_case, -1, buf, sizeof(buf)/sizeof(WCHAR));
+    ok(ret == lstrlenW(symbols_stripped) + 1, "%s func_ptr should return %d, ret = %d\n", func_name,
+    lstrlenW(symbols_stripped) + 1, ret);
+    ok(!lstrcmpW(buf, symbols_stripped), "%s string comparison mismatch\n", func_name);
+
     /* test srclen = 0 */
     SetLastError(0xdeadbeef);
     ret = func_ptr(0, upper_case, 0, buf, sizeof(buf)/sizeof(WCHAR));
@@ -2331,7 +2645,7 @@ static void test_LCMapStringEx(void)
     trace("testing LCMapStringEx\n");
 
     SetLastError(0xdeadbeef);
-    ret = pLCMapStringEx(fooW, LCMAP_LOWERCASE,
+    ret = pLCMapStringEx(invalidW, LCMAP_LOWERCASE,
                          upper_case, -1, buf, sizeof(buf)/sizeof(WCHAR), NULL, NULL, 0);
     todo_wine {
     ok(!ret, "LCMapStringEx should fail with bad locale name\n");
@@ -2418,16 +2732,16 @@ static void test_LocaleNameToLCID(void)
     buffer[0] = 0;
     SetLastError(0xdeadbeef);
     lcid = pLocaleNameToLCID(LOCALE_NAME_INVARIANT, 0);
-    todo_wine ok(lcid == 0x7F, "Expected lcid = 0x7F, got %08x, error %d\n", lcid, GetLastError());
+    ok(lcid == 0x7F, "Expected lcid = 0x7F, got %08x, error %d\n", lcid, GetLastError());
     ret = pLCIDToLocaleName(lcid, buffer, LOCALE_NAME_MAX_LENGTH, 0);
     ok(ret > 0, "Expected ret > 0, got %d, error %d\n", ret, GetLastError());
     trace("%08x, %s\n", lcid, wine_dbgstr_w(buffer));
 
     /* bad name */
     SetLastError(0xdeadbeef);
-    lcid = pLocaleNameToLCID(fooW, 0);
+    lcid = pLocaleNameToLCID(invalidW, 0);
     ok(!lcid && GetLastError() == ERROR_INVALID_PARAMETER,
-       "Expected lcid == 0, got got %08x, error %d\n", lcid, GetLastError());
+       "Expected lcid == 0, got %08x, error %d\n", lcid, GetLastError());
 
     /* english neutral name */
     lcid = pLocaleNameToLCID(enW, 0);
@@ -2440,11 +2754,7 @@ static void test_LocaleNameToLCID(void)
         while (*ptr->name)
         {
             lcid = pLocaleNameToLCID(ptr->name, 0);
-            if (ptr->todo)
-            todo_wine
-                ok(lcid == ptr->lcid, "%s: got wrong lcid 0x%04x, expected 0x%04x\n",
-                    wine_dbgstr_w(ptr->name), lcid, ptr->lcid);
-            else
+            todo_wine_if (ptr->todo)
                 ok(lcid == ptr->lcid, "%s: got wrong lcid 0x%04x, expected 0x%04x\n",
                     wine_dbgstr_w(ptr->name), lcid, ptr->lcid);
 
@@ -3132,13 +3442,17 @@ static void test_ConvertDefaultLocale(void)
   LCID_RES(LOCALE_SYSTEM_DEFAULT, GetSystemDefaultLCID());
   LCID_RES(LOCALE_USER_DEFAULT,   GetUserDefaultLCID());
   LCID_RES(LOCALE_NEUTRAL,        GetUserDefaultLCID());
+  lcid = ConvertDefaultLocale(LOCALE_INVARIANT);
+  ok(lcid == LOCALE_INVARIANT || broken(lcid == 0x47f) /* win2k[3]/winxp */,
+     "Expected lcid = %08x, got %08x\n", LOCALE_INVARIANT, lcid);
 }
 
 static BOOL CALLBACK langgrp_procA(LGRPID lgrpid, LPSTR lpszNum, LPSTR lpszName,
                                     DWORD dwFlags, LONG_PTR lParam)
 {
-  trace("%08x, %s, %s, %08x, %08lx\n",
-        lgrpid, lpszNum, lpszName, dwFlags, lParam);
+  if (winetest_debug > 1)
+    trace("%08x, %s, %s, %08x, %08lx\n",
+          lgrpid, lpszNum, lpszName, dwFlags, lParam);
 
   ok(pIsValidLanguageGroup(lgrpid, dwFlags) == TRUE,
      "Enumerated grp %d not valid (flags %d)\n", lgrpid, dwFlags);
@@ -3187,7 +3501,8 @@ static void test_EnumSystemLanguageGroupsA(void)
 
 static BOOL CALLBACK enum_func( LPWSTR name, DWORD flags, LPARAM lparam )
 {
-    trace( "%s %x\n", wine_dbgstr_w(name), flags );
+    if (winetest_debug > 1)
+        trace( "%s %x\n", wine_dbgstr_w(name), flags );
     return TRUE;
 }
 
@@ -3212,7 +3527,8 @@ static void test_EnumSystemLocalesEx(void)
 static BOOL CALLBACK lgrplocale_procA(LGRPID lgrpid, LCID lcid, LPSTR lpszNum,
                                       LONG_PTR lParam)
 {
-  trace("%08x, %08x, %s, %08lx\n", lgrpid, lcid, lpszNum, lParam);
+  if (winetest_debug > 1)
+    trace("%08x, %08x, %s, %08lx\n", lgrpid, lcid, lpszNum, lParam);
 
   /* invalid locale enumerated on some platforms */
   if (lcid == 0)
@@ -3293,7 +3609,8 @@ static void test_SetLocaleInfoA(void)
 
 static BOOL CALLBACK luilocale_proc1A(LPSTR value, LONG_PTR lParam)
 {
-  trace("%s %08lx\n", value, lParam);
+  if (winetest_debug > 1)
+    trace("%s %08lx\n", value, lParam);
   return(TRUE);
 }
 
@@ -3351,12 +3668,19 @@ static void test_EnumUILanguageA(void)
 }
 
 static char date_fmt_buf[1024];
+static WCHAR date_fmt_bufW[1024];
 
 static BOOL CALLBACK enum_datetime_procA(LPSTR fmt)
 {
     lstrcatA(date_fmt_buf, fmt);
     lstrcatA(date_fmt_buf, "\n");
     return TRUE;
+}
+
+static BOOL CALLBACK enum_datetime_procW(WCHAR *fmt)
+{
+    lstrcatW(date_fmt_bufW, fmt);
+    return FALSE;
 }
 
 static void test_EnumDateFormatsA(void)
@@ -3466,6 +3790,57 @@ static void test_EnumTimeFormatsA(void)
     ok(!lstrcmpA(date_fmt_buf, buf), "expected \"%s\" got \"%s\"\n", date_fmt_buf, buf);
 }
 
+static void test_EnumTimeFormatsW(void)
+{
+    LCID lcid = MAKELCID(MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), SORT_DEFAULT);
+    WCHAR bufW[256];
+    BOOL ret;
+
+    date_fmt_bufW[0] = 0;
+    ret = EnumTimeFormatsW(enum_datetime_procW, lcid, 0);
+    ok(ret, "EnumTimeFormatsW(0) error %d\n", GetLastError());
+    ret = GetLocaleInfoW(lcid, LOCALE_STIMEFORMAT, bufW, sizeof(bufW)/sizeof(bufW[0]));
+    ok(ret, "GetLocaleInfoW(LOCALE_STIMEFORMAT) error %d\n", GetLastError());
+    ok(!lstrcmpW(date_fmt_bufW, bufW), "expected \"%s\" got \"%s\"\n", wine_dbgstr_w(date_fmt_bufW),
+        wine_dbgstr_w(bufW));
+
+    date_fmt_bufW[0] = 0;
+    ret = EnumTimeFormatsW(enum_datetime_procW, lcid, LOCALE_USE_CP_ACP);
+    ok(ret, "EnumTimeFormatsW(LOCALE_USE_CP_ACP) error %d\n", GetLastError());
+    ret = GetLocaleInfoW(lcid, LOCALE_STIMEFORMAT, bufW, sizeof(bufW)/sizeof(bufW[0]));
+    ok(ret, "GetLocaleInfoW(LOCALE_STIMEFORMAT) error %d\n", GetLastError());
+    ok(!lstrcmpW(date_fmt_bufW, bufW), "expected \"%s\" got \"%s\"\n", wine_dbgstr_w(date_fmt_bufW),
+        wine_dbgstr_w(bufW));
+
+    /* TIME_NOSECONDS is Win7+ feature */
+    date_fmt_bufW[0] = 0;
+    ret = EnumTimeFormatsW(enum_datetime_procW, lcid, TIME_NOSECONDS);
+    if (!ret && GetLastError() == ERROR_INVALID_FLAGS)
+        win_skip("EnumTimeFormatsW doesn't support TIME_NOSECONDS\n");
+    else {
+        char buf[256];
+
+        ok(ret, "EnumTimeFormatsW(TIME_NOSECONDS) error %d\n", GetLastError());
+        ret = GetLocaleInfoW(lcid, LOCALE_SSHORTTIME, bufW, sizeof(bufW)/sizeof(bufW[0]));
+        ok(ret, "GetLocaleInfoW(LOCALE_SSHORTTIME) error %d\n", GetLastError());
+        ok(!lstrcmpW(date_fmt_bufW, bufW), "expected \"%s\" got \"%s\"\n", wine_dbgstr_w(date_fmt_bufW),
+            wine_dbgstr_w(bufW));
+
+        /* EnumTimeFormatsA doesn't support this flag */
+        ret = EnumTimeFormatsA(enum_datetime_procA, lcid, TIME_NOSECONDS);
+        ok(!ret && GetLastError() == ERROR_INVALID_FLAGS, "EnumTimeFormatsA(TIME_NOSECONDS) ret %d, error %d\n", ret,
+            GetLastError());
+
+        ret = EnumTimeFormatsA(NULL, lcid, TIME_NOSECONDS);
+        ok(!ret && GetLastError() == ERROR_INVALID_FLAGS, "EnumTimeFormatsA(TIME_NOSECONDS) ret %d, error %d\n", ret,
+            GetLastError());
+
+        /* And it's not supported by GetLocaleInfoA either */
+        ret = GetLocaleInfoA(lcid, LOCALE_SSHORTTIME, buf, sizeof(buf)/sizeof(buf[0]));
+        ok(!ret && GetLastError() == ERROR_INVALID_FLAGS, "GetLocaleInfoA(LOCALE_SSHORTTIME) ret %d, error %d\n", ret,
+            GetLastError());
+    }
+}
 static void test_GetCPInfo(void)
 {
     BOOL ret;
@@ -3578,8 +3953,25 @@ static void test_GetStringTypeW(void)
     static const WCHAR space_special[] = {0x09, 0x0d, 0x85};
 
     WORD types[20];
-    WCHAR ch;
+    WCHAR ch[2];
+    BOOL ret;
     int i;
+
+    /* NULL src */
+    SetLastError(0xdeadbeef);
+    ret = GetStringTypeW(CT_CTYPE1, NULL, 0, NULL);
+    ok(!ret, "got %d\n", ret);
+    ok(GetLastError() == ERROR_INVALID_PARAMETER, "got error %d\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = GetStringTypeW(CT_CTYPE1, NULL, 0, types);
+    ok(!ret, "got %d\n", ret);
+    ok(GetLastError() == ERROR_INVALID_PARAMETER, "got error %d\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = GetStringTypeW(CT_CTYPE1, NULL, 5, types);
+    ok(!ret, "got %d\n", ret);
+    ok(GetLastError() == ERROR_INVALID_PARAMETER, "got error %d\n", GetLastError());
 
     memset(types,0,sizeof(types));
     GetStringTypeW(CT_CTYPE1, blanks, 5, types);
@@ -3637,18 +4029,38 @@ static void test_GetStringTypeW(void)
         ok(types[i] & C1_SPACE || broken(types[i] == C1_CNTRL) || broken(types[i] == 0), "incorrect types returned for %x -> (%x does not have %x)\n",space_special[i], types[i], C1_SPACE );
 
     /* surrogate pairs */
-    ch = 0xd800;
+    ch[0] = 0xd800;
     memset(types, 0, sizeof(types));
-    GetStringTypeW(CT_CTYPE3, &ch, 1, types);
+    GetStringTypeW(CT_CTYPE3, ch, 1, types);
     if (types[0] == C3_NOTAPPLICABLE)
         win_skip("C3_HIGHSURROGATE/C3_LOWSURROGATE are not supported.\n");
     else {
         ok(types[0] == C3_HIGHSURROGATE, "got %x\n", types[0]);
 
-        ch = 0xdc00;
+        ch[0] = 0xdc00;
         memset(types, 0, sizeof(types));
-        GetStringTypeW(CT_CTYPE3, &ch, 1, types);
+        GetStringTypeW(CT_CTYPE3, ch, 1, types);
         ok(types[0] == C3_LOWSURROGATE, "got %x\n", types[0]);
+    }
+
+    /* Zl, Zp categories */
+    ch[0] = 0x2028;
+    ch[1] = 0x2029;
+    memset(types, 0, sizeof(types));
+    GetStringTypeW(CT_CTYPE1, ch, 2, types);
+    ok(types[0] == (C1_DEFINED|C1_SPACE), "got %x\n", types[0]);
+    ok(types[1] == (C1_DEFINED|C1_SPACE), "got %x\n", types[1]);
+
+    /* check Arabic range for kashida flag */
+    for (ch[0] = 0x600; ch[0] <= 0x6ff; ch[0] += 1)
+    {
+        types[0] = 0;
+        ret = GetStringTypeW(CT_CTYPE3, ch, 1, types);
+        ok(ret, "%#x: failed %d\n", ch[0], ret);
+        if (ch[0] == 0x640) /* ARABIC TATWEEL (Kashida) */
+            ok(types[0] & C3_KASHIDA, "%#x: type %#x\n", ch[0], types[0]);
+        else
+            ok(!(types[0] & C3_KASHIDA), "%#x: type %#x\n", ch[0], types[0]);
     }
 }
 
@@ -3806,16 +4218,10 @@ static void test_IdnToNameprepUnicode(void)
                 test_data[i].in_len, buf, sizeof(buf)/sizeof(WCHAR));
         err = GetLastError();
 
-        if (!test_data[i].todo)
-        {
+        todo_wine_if (test_data[i].todo)
             ok(ret == test_data[i].ret ||
                     broken(ret == test_data[i].broken_ret), "%d) ret = %d\n", i, ret);
-        }
-        else
-        {
-            todo_wine ok(ret == test_data[i].ret ||
-                    broken(ret == test_data[i].broken_ret), "%d) ret = %d\n", i, ret);
-        }
+
         if(ret != test_data[i].ret)
             continue;
 
@@ -3974,7 +4380,7 @@ static void test_IdnToUnicode(void)
 static void test_GetLocaleInfoEx(void)
 {
     static const WCHAR enW[] = {'e','n',0};
-    WCHAR bufferW[80];
+    WCHAR bufferW[80], buffer2[80];
     INT ret;
 
     if (!pGetLocaleInfoEx)
@@ -4037,10 +4443,7 @@ static void test_GetLocaleInfoEx(void)
         {
             val = 0;
             pGetLocaleInfoEx(ptr->name, LOCALE_ILANGUAGE|LOCALE_RETURN_NUMBER, (WCHAR*)&val, sizeof(val)/sizeof(WCHAR));
-            if (ptr->todo)
-            todo_wine
-                ok(val == ptr->lcid, "%s: got wrong lcid 0x%04x, expected 0x%04x\n", wine_dbgstr_w(ptr->name), val, ptr->lcid);
-            else
+            todo_wine_if (ptr->todo)
                 ok(val == ptr->lcid, "%s: got wrong lcid 0x%04x, expected 0x%04x\n", wine_dbgstr_w(ptr->name), val, ptr->lcid);
             bufferW[0] = 0;
             ret = pGetLocaleInfoEx(ptr->name, LOCALE_SNAME, bufferW, sizeof(bufferW)/sizeof(WCHAR));
@@ -4048,6 +4451,12 @@ static void test_GetLocaleInfoEx(void)
             ok(!lstrcmpW(bufferW, ptr->name), "%s: got wrong LOCALE_SNAME %s\n", wine_dbgstr_w(ptr->name), wine_dbgstr_w(bufferW));
             ptr++;
         }
+
+        ret = pGetLocaleInfoEx(LOCALE_NAME_USER_DEFAULT, LOCALE_SNAME, bufferW, sizeof(bufferW)/sizeof(WCHAR));
+        ok(ret && ret == lstrlenW(bufferW)+1, "got ret value %d\n", ret);
+        ret = GetLocaleInfoW(GetUserDefaultLCID(), LOCALE_SNAME, buffer2, sizeof(buffer2)/sizeof(WCHAR));
+        ok(ret && ret == lstrlenW(buffer2)+1, "got ret value %d\n", ret);
+        ok(!lstrcmpW(bufferW, buffer2), "LOCALE_SNAMEs don't match %s %s\n", wine_dbgstr_w(bufferW), wine_dbgstr_w(buffer2));
     }
 }
 
@@ -4055,7 +4464,8 @@ static void test_IsValidLocaleName(void)
 {
     static const WCHAR enusW[] = {'e','n','-','U','S',0};
     static const WCHAR zzW[] = {'z','z',0};
-    static const WCHAR zzzzW[] = {'z','z','-','Z','Z',0};
+    static const WCHAR zz_zzW[] = {'z','z','-','Z','Z',0};
+    static const WCHAR zzzzW[] = {'z','z','z','z',0};
     BOOL ret;
 
     if (!pIsValidLocaleName)
@@ -4067,8 +4477,14 @@ static void test_IsValidLocaleName(void)
     ret = pIsValidLocaleName(enusW);
     ok(ret, "IsValidLocaleName failed\n");
     ret = pIsValidLocaleName(zzW);
-    ok(!ret, "IsValidLocaleName should have failed\n");
+    ok(!ret || broken(ret), "IsValidLocaleName should have failed\n");
+    ret = pIsValidLocaleName(zz_zzW);
+    ok(!ret || broken(ret), "IsValidLocaleName should have failed\n");
     ret = pIsValidLocaleName(zzzzW);
+    ok(!ret, "IsValidLocaleName should have failed\n");
+    ret = pIsValidLocaleName(LOCALE_NAME_INVARIANT);
+    ok(ret, "IsValidLocaleName failed\n");
+    ret = pIsValidLocaleName(NULL);
     ok(!ret, "IsValidLocaleName should have failed\n");
 }
 
@@ -4086,6 +4502,7 @@ static void test_CompareStringOrdinal(void)
     WCHAR coop2[] = { 'c','o','o','p',0 };
     WCHAR nonascii1[] = { 0x0102,0 };
     WCHAR nonascii2[] = { 0x0201,0 };
+    WCHAR ch1, ch2;
 
     if (!pCompareStringOrdinal)
     {
@@ -4142,6 +4559,21 @@ static void test_CompareStringOrdinal(void)
     ok(ret == CSTR_LESS_THAN, "Got %u, expected %u\n", ret, CSTR_LESS_THAN);
     ret = pCompareStringOrdinal(nonascii1, -1, nonascii2, -1, TRUE);
     ok(ret == CSTR_LESS_THAN, "Got %u, expected %u\n", ret, CSTR_LESS_THAN);
+
+    for (ch1 = 0; ch1 < 512; ch1++)
+    {
+        for (ch2 = 0; ch2 < 1024; ch2++)
+        {
+            int diff = ch1 - ch2;
+            ret = pCompareStringOrdinal( &ch1, 1, &ch2, 1, FALSE );
+            ok( ret == (diff > 0 ? CSTR_GREATER_THAN : diff < 0 ? CSTR_LESS_THAN : CSTR_EQUAL),
+                        "wrong result %d %04x %04x\n", ret, ch1, ch2 );
+            diff = pRtlUpcaseUnicodeChar( ch1 ) - pRtlUpcaseUnicodeChar( ch2 );
+            ret = pCompareStringOrdinal( &ch1, 1, &ch2, 1, TRUE );
+            ok( ret == (diff > 0 ? CSTR_GREATER_THAN : diff < 0 ? CSTR_LESS_THAN : CSTR_EQUAL),
+                        "wrong result %d %04x %04x\n", ret, ch1, ch2 );
+        }
+    }
 }
 
 static void test_GetGeoInfo(void)
@@ -4219,7 +4651,7 @@ static void test_GetGeoInfo(void)
 
     /* try invalid type value */
     SetLastError(0xdeadbeef);
-    ret = pGetGeoInfoA(203, GEO_PARENT + 1, NULL, 0, 0);
+    ret = pGetGeoInfoA(203, GEO_CURRENCYSYMBOL + 1, NULL, 0, 0);
     ok(ret == 0, "got %d\n", ret);
     ok(GetLastError() == ERROR_INVALID_FLAGS, "got %d\n", GetLastError());
 }
@@ -4291,11 +4723,551 @@ static void test_EnumSystemGeoID(void)
     }
 }
 
+struct invariant_entry {
+  const char *name;
+  int id;
+  const char *expect, *expect2;
+};
+
+#define X(x)  #x, x
+static const struct invariant_entry invariant_list[] = {
+    { X(LOCALE_ILANGUAGE),                "007f" },
+    { X(LOCALE_SENGLANGUAGE),             "Invariant Language" },
+    { X(LOCALE_SABBREVLANGNAME),          "IVL" },
+    { X(LOCALE_SNATIVELANGNAME),          "Invariant Language" },
+    { X(LOCALE_ICOUNTRY),                 "1" },
+    { X(LOCALE_SENGCOUNTRY),              "Invariant Country" },
+    { X(LOCALE_SABBREVCTRYNAME),          "IVC", "" },
+    { X(LOCALE_SNATIVECTRYNAME),          "Invariant Country" },
+    { X(LOCALE_IDEFAULTLANGUAGE),         "0409" },
+    { X(LOCALE_IDEFAULTCOUNTRY),          "1" },
+    { X(LOCALE_IDEFAULTCODEPAGE),         "437" },
+    { X(LOCALE_IDEFAULTANSICODEPAGE),     "1252" },
+    { X(LOCALE_IDEFAULTMACCODEPAGE),      "10000" },
+    { X(LOCALE_SLIST),                    "," },
+    { X(LOCALE_IMEASURE),                 "0" },
+    { X(LOCALE_SDECIMAL),                 "." },
+    { X(LOCALE_STHOUSAND),                "," },
+    { X(LOCALE_SGROUPING),                "3;0" },
+    { X(LOCALE_IDIGITS),                  "2" },
+    { X(LOCALE_ILZERO),                   "1" },
+    { X(LOCALE_INEGNUMBER),               "1" },
+    { X(LOCALE_SNATIVEDIGITS),            "0123456789" },
+    { X(LOCALE_SCURRENCY),                "\x00a4" },
+    { X(LOCALE_SINTLSYMBOL),              "XDR" },
+    { X(LOCALE_SMONDECIMALSEP),           "." },
+    { X(LOCALE_SMONTHOUSANDSEP),          "," },
+    { X(LOCALE_SMONGROUPING),             "3;0" },
+    { X(LOCALE_ICURRDIGITS),              "2" },
+    { X(LOCALE_IINTLCURRDIGITS),          "2" },
+    { X(LOCALE_ICURRENCY),                "0" },
+    { X(LOCALE_INEGCURR),                 "0" },
+    { X(LOCALE_SDATE),                    "/" },
+    { X(LOCALE_STIME),                    ":" },
+    { X(LOCALE_SSHORTDATE),               "MM/dd/yyyy" },
+    { X(LOCALE_SLONGDATE),                "dddd, dd MMMM yyyy" },
+    { X(LOCALE_STIMEFORMAT),              "HH:mm:ss" },
+    { X(LOCALE_IDATE),                    "0" },
+    { X(LOCALE_ILDATE),                   "1" },
+    { X(LOCALE_ITIME),                    "1" },
+    { X(LOCALE_ITIMEMARKPOSN),            "0" },
+    { X(LOCALE_ICENTURY),                 "1" },
+    { X(LOCALE_ITLZERO),                  "1" },
+    { X(LOCALE_IDAYLZERO),                "1" },
+    { X(LOCALE_IMONLZERO),                "1" },
+    { X(LOCALE_S1159),                    "AM" },
+    { X(LOCALE_S2359),                    "PM" },
+    { X(LOCALE_ICALENDARTYPE),            "1" },
+    { X(LOCALE_IOPTIONALCALENDAR),        "0" },
+    { X(LOCALE_IFIRSTDAYOFWEEK),          "6" },
+    { X(LOCALE_IFIRSTWEEKOFYEAR),         "0" },
+    { X(LOCALE_SDAYNAME1),                "Monday" },
+    { X(LOCALE_SDAYNAME2),                "Tuesday" },
+    { X(LOCALE_SDAYNAME3),                "Wednesday" },
+    { X(LOCALE_SDAYNAME4),                "Thursday" },
+    { X(LOCALE_SDAYNAME5),                "Friday" },
+    { X(LOCALE_SDAYNAME6),                "Saturday" },
+    { X(LOCALE_SDAYNAME7),                "Sunday" },
+    { X(LOCALE_SABBREVDAYNAME1),          "Mon" },
+    { X(LOCALE_SABBREVDAYNAME2),          "Tue" },
+    { X(LOCALE_SABBREVDAYNAME3),          "Wed" },
+    { X(LOCALE_SABBREVDAYNAME4),          "Thu" },
+    { X(LOCALE_SABBREVDAYNAME5),          "Fri" },
+    { X(LOCALE_SABBREVDAYNAME6),          "Sat" },
+    { X(LOCALE_SABBREVDAYNAME7),          "Sun" },
+    { X(LOCALE_SMONTHNAME1),              "January" },
+    { X(LOCALE_SMONTHNAME2),              "February" },
+    { X(LOCALE_SMONTHNAME3),              "March" },
+    { X(LOCALE_SMONTHNAME4),              "April" },
+    { X(LOCALE_SMONTHNAME5),              "May" },
+    { X(LOCALE_SMONTHNAME6),              "June" },
+    { X(LOCALE_SMONTHNAME7),              "July" },
+    { X(LOCALE_SMONTHNAME8),              "August" },
+    { X(LOCALE_SMONTHNAME9),              "September" },
+    { X(LOCALE_SMONTHNAME10),             "October" },
+    { X(LOCALE_SMONTHNAME11),             "November" },
+    { X(LOCALE_SMONTHNAME12),             "December" },
+    { X(LOCALE_SMONTHNAME13),             "" },
+    { X(LOCALE_SABBREVMONTHNAME1),        "Jan" },
+    { X(LOCALE_SABBREVMONTHNAME2),        "Feb" },
+    { X(LOCALE_SABBREVMONTHNAME3),        "Mar" },
+    { X(LOCALE_SABBREVMONTHNAME4),        "Apr" },
+    { X(LOCALE_SABBREVMONTHNAME5),        "May" },
+    { X(LOCALE_SABBREVMONTHNAME6),        "Jun" },
+    { X(LOCALE_SABBREVMONTHNAME7),        "Jul" },
+    { X(LOCALE_SABBREVMONTHNAME8),        "Aug" },
+    { X(LOCALE_SABBREVMONTHNAME9),        "Sep" },
+    { X(LOCALE_SABBREVMONTHNAME10),       "Oct" },
+    { X(LOCALE_SABBREVMONTHNAME11),       "Nov" },
+    { X(LOCALE_SABBREVMONTHNAME12),       "Dec" },
+    { X(LOCALE_SABBREVMONTHNAME13),       "" },
+    { X(LOCALE_SPOSITIVESIGN),            "+" },
+    { X(LOCALE_SNEGATIVESIGN),            "-" },
+    { X(LOCALE_IPOSSIGNPOSN),             "3" },
+    { X(LOCALE_INEGSIGNPOSN),             "0" },
+    { X(LOCALE_IPOSSYMPRECEDES),          "1" },
+    { X(LOCALE_IPOSSEPBYSPACE),           "0" },
+    { X(LOCALE_INEGSYMPRECEDES),          "1" },
+    { X(LOCALE_INEGSEPBYSPACE),           "0" },
+    { X(LOCALE_SISO639LANGNAME),          "iv" },
+    { X(LOCALE_SISO3166CTRYNAME),         "IV" },
+    { X(LOCALE_IDEFAULTEBCDICCODEPAGE),   "037" },
+    { X(LOCALE_IPAPERSIZE),               "9" },
+    { X(LOCALE_SENGCURRNAME),             "International Monetary Fund" },
+    { X(LOCALE_SNATIVECURRNAME),          "International Monetary Fund" },
+    { X(LOCALE_SYEARMONTH),               "yyyy MMMM" },
+    { X(LOCALE_IDIGITSUBSTITUTION),       "1" },
+    { X(LOCALE_SNAME),                    "" },
+    { X(LOCALE_SSCRIPTS),                 "Latn;" },
+    { 0 }
+};
+#undef X
+
+static void test_invariant(void)
+{
+  int ret;
+  int len;
+  char buffer[BUFFER_SIZE];
+  const struct invariant_entry *ptr = invariant_list;
+
+  if (!GetLocaleInfoA(LOCALE_INVARIANT, NUO|LOCALE_SLANGUAGE, buffer, sizeof(buffer)))
+  {
+      win_skip("GetLocaleInfoA(LOCALE_INVARIANT) not supported\n"); /* win2k */
+      return;
+  }
+
+  while (ptr->name)
+  {
+    ret = GetLocaleInfoA(LOCALE_INVARIANT, NUO|ptr->id, buffer, sizeof(buffer));
+    if (!ret && (ptr->id == LOCALE_SNAME || ptr->id == LOCALE_SSCRIPTS))
+        win_skip("not supported\n"); /* winxp/win2k3 */
+    else
+    {
+        len = strlen(ptr->expect)+1; /* include \0 */
+        ok(ret == len || (ptr->expect2 && ret == strlen(ptr->expect2)+1),
+           "For id %d, expected ret == %d, got %d, error %d\n",
+            ptr->id, len, ret, GetLastError());
+        ok(!strcmp(buffer, ptr->expect) || (ptr->expect2 && !strcmp(buffer, ptr->expect2)),
+           "For id %d, Expected %s, got '%s'\n",
+            ptr->id, ptr->expect, buffer);
+    }
+
+    ptr++;
+  }
+
+ if ((LANGIDFROMLCID(GetSystemDefaultLCID()) != MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US)) ||
+     (LANGIDFROMLCID(GetThreadLocale()) != MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US)))
+  {
+      skip("Non US-English locale\n");
+  }
+  else
+  {
+    /* some locales translate these */
+    static const char lang[]  = "Invariant Language (Invariant Country)";
+    static const char cntry[] = "Invariant Country";
+    static const char sortm[] = "Math Alphanumerics";
+    static const char sortd[] = "Default"; /* win2k3 */
+
+    ret = GetLocaleInfoA(LOCALE_INVARIANT, NUO|LOCALE_SLANGUAGE, buffer, sizeof(buffer));
+    len = lstrlenA(lang) + 1;
+    ok(ret == len, "Expected ret == %d, got %d, error %d\n", len, ret, GetLastError());
+    ok(!strcmp(buffer, lang), "Expected %s, got '%s'\n", lang, buffer);
+
+    ret = GetLocaleInfoA(LOCALE_INVARIANT, NUO|LOCALE_SCOUNTRY, buffer, sizeof(buffer));
+    len = lstrlenA(cntry) + 1;
+    ok(ret == len, "Expected ret == %d, got %d, error %d\n", len, ret, GetLastError());
+    ok(!strcmp(buffer, cntry), "Expected %s, got '%s'\n", cntry, buffer);
+
+    ret = GetLocaleInfoA(LOCALE_INVARIANT, NUO|LOCALE_SSORTNAME, buffer, sizeof(buffer));
+    if (ret == lstrlenA(sortm)+1)
+        ok(!strcmp(buffer, sortm), "Expected %s, got '%s'\n", sortm, buffer);
+    else if (ret == lstrlenA(sortd)+1) /* win2k3 */
+        ok(!strcmp(buffer, sortd), "Expected %s, got '%s'\n", sortd, buffer);
+    else
+        ok(0, "Expected ret == %d or %d, got %d, error %d\n",
+            lstrlenA(sortm)+1, lstrlenA(sortd)+1, ret, GetLastError());
+  }
+}
+
+static void test_GetSystemPreferredUILanguages(void)
+{
+    BOOL ret;
+    ULONG count, size, size_id, size_name, size_buffer;
+    WCHAR *buffer;
+
+
+    if (!pGetSystemPreferredUILanguages)
+    {
+        win_skip("GetSystemPreferredUILanguages is not available.\n");
+        return;
+    }
+
+    /* (in)valid first parameter */
+    count = 0xdeadbeef;
+    size = 0;
+    SetLastError(0xdeadbeef);
+    ret = pGetSystemPreferredUILanguages(0, &count, NULL, &size);
+    ok(ret, "Expected GetSystemPreferredUILanguages to succeed\n");
+    ok(count, "Expected count > 0\n");
+    ok(size % 6 == 1, "Expected size (%d) %% 6 == 1\n", size);
+
+    count = 0xdeadbeef;
+    size = 0;
+    SetLastError(0xdeadbeef);
+    ret = pGetSystemPreferredUILanguages(MUI_FULL_LANGUAGE, &count, NULL, &size);
+    ok(!ret, "Expected GetSystemPreferredUILanguages to fail\n");
+    ok(ERROR_INVALID_PARAMETER == GetLastError(),
+       "Expected error ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+
+    count = 0xdeadbeef;
+    size = 0;
+    SetLastError(0xdeadbeef);
+    ret = pGetSystemPreferredUILanguages(MUI_LANGUAGE_ID | MUI_FULL_LANGUAGE, &count, NULL, &size);
+    ok(!ret, "Expected GetSystemPreferredUILanguages to fail\n");
+    ok(ERROR_INVALID_PARAMETER == GetLastError(),
+       "Expected error ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+
+    count = 0xdeadbeef;
+    size = 0;
+    SetLastError(0xdeadbeef);
+    ret = pGetSystemPreferredUILanguages(MUI_LANGUAGE_ID | MUI_LANGUAGE_NAME, &count, NULL, &size);
+    ok(!ret, "Expected GetSystemPreferredUILanguages to fail\n");
+    ok(ERROR_INVALID_PARAMETER == GetLastError(),
+       "Expected error ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+
+    count = 0xdeadbeef;
+    size = 0;
+    SetLastError(0xdeadbeef);
+    ret = pGetSystemPreferredUILanguages(MUI_LANGUAGE_ID | MUI_MACHINE_LANGUAGE_SETTINGS, &count, NULL, &size);
+    ok(ret, "Expected GetSystemPreferredUILanguages to succeed\n");
+    ok(count, "Expected count > 0\n");
+    ok(size % 5 == 1, "Expected size (%d) %% 5 == 1\n", size);
+
+    count = 0xdeadbeef;
+    size = 0;
+    SetLastError(0xdeadbeef);
+    ret = pGetSystemPreferredUILanguages(MUI_LANGUAGE_NAME | MUI_MACHINE_LANGUAGE_SETTINGS, &count, NULL, &size);
+    ok(ret, "Expected GetSystemPreferredUILanguages to succeed\n");
+    ok(count, "Expected count > 0\n");
+    ok(size % 6 == 1, "Expected size (%d) %% 6 == 1\n", size);
+
+    /* second parameter
+     * ret = pGetSystemPreferredUILanguages(MUI_LANGUAGE_ID, NULL, NULL, &size);
+     * -> unhandled exception c0000005
+     */
+
+    /* invalid third parameter */
+    count = 0xdeadbeef;
+    size = 1;
+    SetLastError(0xdeadbeef);
+    ret = pGetSystemPreferredUILanguages(MUI_LANGUAGE_ID, &count, NULL, &size);
+    ok(!ret, "Expected GetSystemPreferredUILanguages to fail\n");
+    ok(ERROR_INVALID_PARAMETER == GetLastError(),
+       "Expected error ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+
+    /* fourth parameter
+     * ret = pGetSystemPreferredUILanguages(MUI_LANGUAGE_ID, &count, NULL, NULL);
+     * -> unhandled exception c0000005
+     */
+
+    count = 0xdeadbeef;
+    size_id = 0;
+    SetLastError(0xdeadbeef);
+    ret = pGetSystemPreferredUILanguages(MUI_LANGUAGE_ID, &count, NULL, &size_id);
+    ok(ret, "Expected GetSystemPreferredUILanguages to succeed\n");
+    ok(count, "Expected count > 0\n");
+    ok(size_id  % 5 == 1, "Expected size (%d) %% 5 == 1\n", size_id);
+
+    count = 0xdeadbeef;
+    size_name = 0;
+    SetLastError(0xdeadbeef);
+    ret = pGetSystemPreferredUILanguages(MUI_LANGUAGE_NAME, &count, NULL, &size_name);
+    ok(ret, "Expected GetSystemPreferredUILanguages to succeed\n");
+    ok(count, "Expected count > 0\n");
+    ok(size_name % 6 == 1, "Expected size (%d) %% 6 == 1\n", size_name);
+
+    size_buffer = max(size_id, size_name);
+    if(!size_buffer)
+    {
+        skip("No valid buffer size\n");
+        return;
+    }
+
+    buffer = HeapAlloc(GetProcessHeap(), 0, size_buffer * sizeof(WCHAR));
+    if (!buffer)
+    {
+        skip("Failed to allocate memory for %d chars\n", size_buffer);
+        return;
+    }
+
+    count = 0xdeadbeef;
+    size = size_buffer;
+    memset(buffer, 0x5a, size_buffer * sizeof(WCHAR));
+    SetLastError(0xdeadbeef);
+    ret = pGetSystemPreferredUILanguages(0, &count, buffer, &size);
+    ok(ret, "Expected GetSystemPreferredUILanguages to succeed\n");
+    ok(count, "Expected count > 0\n");
+    ok(size % 6 == 1, "Expected size (%d) %% 6 == 1\n", size);
+    if (ret && size % 6 == 1)
+        ok(!buffer[size -2] && !buffer[size -1],
+           "Expected last two WCHARs being empty, got 0x%x 0x%x\n",
+           buffer[size -2], buffer[size -1]);
+
+    count = 0xdeadbeef;
+    size = size_buffer;
+    memset(buffer, 0x5a, size_buffer * sizeof(WCHAR));
+    SetLastError(0xdeadbeef);
+    ret = pGetSystemPreferredUILanguages(MUI_LANGUAGE_ID, &count, buffer, &size);
+    ok(ret, "Expected GetSystemPreferredUILanguages to succeed\n");
+    ok(count, "Expected count > 0\n");
+    ok(size % 5 == 1, "Expected size (%d) %% 5 == 1\n", size);
+    if (ret && size % 5 == 1)
+        ok(!buffer[size -2] && !buffer[size -1],
+           "Expected last two WCHARs being empty, got 0x%x 0x%x\n",
+           buffer[size -2], buffer[size -1]);
+
+    count = 0xdeadbeef;
+    size = size_buffer;
+    SetLastError(0xdeadbeef);
+    ret = pGetSystemPreferredUILanguages(MUI_LANGUAGE_NAME, &count, buffer, &size);
+    ok(ret, "Expected GetSystemPreferredUILanguages to succeed\n");
+    ok(count, "Expected count > 0\n");
+    ok(size % 6 == 1, "Expected size (%d) %% 6 == 1\n", size);
+    if (ret && size % 5 == 1)
+        ok(!buffer[size -2] && !buffer[size -1],
+           "Expected last two WCHARs being empty, got 0x%x 0x%x\n",
+           buffer[size -2], buffer[size -1]);
+
+    count = 0xdeadbeef;
+    size = 0;
+    SetLastError(0xdeadbeef);
+    ret = pGetSystemPreferredUILanguages(MUI_MACHINE_LANGUAGE_SETTINGS, &count, NULL, &size);
+    ok(ret, "Expected GetSystemPreferredUILanguages to succeed\n");
+    ok(count, "Expected count > 0\n");
+    ok(size % 6 == 1, "Expected size (%d) %% 6 == 1\n", size);
+    if (ret && size % 6 == 1)
+        ok(!buffer[size -2] && !buffer[size -1],
+           "Expected last two WCHARs being empty, got 0x%x 0x%x\n",
+           buffer[size -2], buffer[size -1]);
+
+    count = 0xdeadbeef;
+    size = 1;
+    SetLastError(0xdeadbeef);
+    ret = pGetSystemPreferredUILanguages(MUI_LANGUAGE_ID, &count, buffer, &size);
+    ok(!ret, "Expected GetSystemPreferredUILanguages to fail\n");
+    ok(ERROR_INSUFFICIENT_BUFFER == GetLastError(),
+       "Expected error ERROR_INSUFFICIENT_BUFFER, got %d\n", GetLastError());
+
+    count = 0xdeadbeef;
+    size = size_id -1;
+    memset(buffer, 0x5a, size_buffer * sizeof(WCHAR));
+    SetLastError(0xdeadbeef);
+    ret = pGetSystemPreferredUILanguages(MUI_LANGUAGE_ID, &count, buffer, &size);
+    ok(!ret, "Expected GetSystemPreferredUILanguages to fail\n");
+    ok(ERROR_INSUFFICIENT_BUFFER == GetLastError(),
+       "Expected error ERROR_INSUFFICIENT_BUFFER, got %d\n", GetLastError());
+
+    count = 0xdeadbeef;
+    size = size_id -2;
+    memset(buffer, 0x5a, size_buffer * sizeof(WCHAR));
+    SetLastError(0xdeadbeef);
+    ret = pGetSystemPreferredUILanguages(0, &count, buffer, &size);
+    ok(!ret, "Expected GetSystemPreferredUILanguages to fail\n");
+    ok(ERROR_INSUFFICIENT_BUFFER == GetLastError(),
+       "Expected error ERROR_INSUFFICIENT_BUFFER, got %d\n", GetLastError());
+
+    HeapFree(GetProcessHeap(), 0, buffer);
+}
+
+static void test_GetThreadPreferredUILanguages(void)
+{
+    BOOL ret;
+    ULONG count, size;
+    WCHAR *buf;
+
+    if (!pGetThreadPreferredUILanguages)
+    {
+        win_skip("GetThreadPreferredUILanguages is not available.\n");
+        return;
+    }
+
+    size = count = 0;
+    ret = pGetThreadPreferredUILanguages(MUI_LANGUAGE_ID|MUI_UI_FALLBACK, &count, NULL, &size);
+    ok(ret, "got %u\n", GetLastError());
+    ok(count, "expected count > 0\n");
+    ok(size, "expected size > 0\n");
+
+    count = 0;
+    buf = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size * sizeof(WCHAR));
+    ret = pGetThreadPreferredUILanguages(MUI_LANGUAGE_ID|MUI_UI_FALLBACK, &count, buf, &size);
+    ok(ret, "got %u\n", GetLastError());
+    ok(count, "expected count > 0\n");
+    HeapFree(GetProcessHeap(), 0, buf);
+}
+
+static void test_GetUserPreferredUILanguages(void)
+{
+    BOOL ret;
+    ULONG count, size, size_id, size_name, size_buffer;
+    WCHAR *buffer;
+
+
+    if (!pGetUserPreferredUILanguages)
+    {
+        win_skip("GetUserPreferredUILanguages is not available.\n");
+        return;
+    }
+
+    count = 0xdeadbeef;
+    size = 0;
+    SetLastError(0xdeadbeef);
+    ret = pGetUserPreferredUILanguages(MUI_FULL_LANGUAGE, &count, NULL, &size);
+    ok(!ret, "Expected GetUserPreferredUILanguages to fail\n");
+    ok(ERROR_INVALID_PARAMETER == GetLastError(),
+       "Expected error ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+
+    count = 0xdeadbeef;
+    size = 0;
+    SetLastError(0xdeadbeef);
+    ret = pGetUserPreferredUILanguages(MUI_LANGUAGE_ID | MUI_FULL_LANGUAGE, &count, NULL, &size);
+    ok(!ret, "Expected GetUserPreferredUILanguages to fail\n");
+    ok(ERROR_INVALID_PARAMETER == GetLastError(),
+       "Expected error ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+
+    count = 0xdeadbeef;
+    size = 0;
+    SetLastError(0xdeadbeef);
+    ret = pGetUserPreferredUILanguages(MUI_LANGUAGE_ID | MUI_MACHINE_LANGUAGE_SETTINGS, &count, NULL, &size);
+    ok(!ret, "Expected GetUserPreferredUILanguages to fail\n");
+    ok(ERROR_INVALID_PARAMETER == GetLastError(),
+       "Expected error ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+
+    count = 0xdeadbeef;
+    size = 1;
+    SetLastError(0xdeadbeef);
+    ret = pGetUserPreferredUILanguages(MUI_LANGUAGE_ID, &count, NULL, &size);
+    ok(!ret, "Expected GetUserPreferredUILanguages to fail\n");
+    ok(ERROR_INVALID_PARAMETER == GetLastError(),
+       "Expected error ERROR_INVALID_PARAMETER, got %d\n", GetLastError());
+
+    count = 0xdeadbeef;
+    size_id = 0;
+    SetLastError(0xdeadbeef);
+    ret = pGetUserPreferredUILanguages(MUI_LANGUAGE_ID, &count, NULL, &size_id);
+    ok(ret, "Expected GetUserPreferredUILanguages to succeed\n");
+    ok(count, "Expected count > 0\n");
+    ok(size_id  % 5 == 1, "Expected size (%d) %% 5 == 1\n", size_id);
+
+    count = 0xdeadbeef;
+    size_name = 0;
+    SetLastError(0xdeadbeef);
+    ret = pGetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &count, NULL, &size_name);
+    ok(ret, "Expected GetUserPreferredUILanguages to succeed\n");
+    ok(count, "Expected count > 0\n");
+    ok(size_name % 6 == 1, "Expected size (%d) %% 6 == 1\n", size_name);
+
+    size_buffer = max(size_id, size_name);
+    if(!size_buffer)
+    {
+        skip("No valid buffer size\n");
+        return;
+    }
+
+    buffer = HeapAlloc(GetProcessHeap(), 0, size_buffer * sizeof(WCHAR));
+
+    count = 0xdeadbeef;
+    size = size_buffer;
+    memset(buffer, 0x5a, size_buffer * sizeof(WCHAR));
+    SetLastError(0xdeadbeef);
+    ret = pGetUserPreferredUILanguages(0, &count, buffer, &size);
+    ok(ret, "Expected GetUserPreferredUILanguages to succeed\n");
+    ok(count, "Expected count > 0\n");
+    ok(size % 6 == 1, "Expected size (%d) %% 6 == 1\n", size);
+    if (ret && size % 6 == 1)
+        ok(!buffer[size -2] && !buffer[size -1],
+           "Expected last two WCHARs being empty, got 0x%x 0x%x\n",
+           buffer[size -2], buffer[size -1]);
+
+    count = 0xdeadbeef;
+    size = size_buffer;
+    memset(buffer, 0x5a, size_buffer * sizeof(WCHAR));
+    SetLastError(0xdeadbeef);
+    ret = pGetUserPreferredUILanguages(MUI_LANGUAGE_ID, &count, buffer, &size);
+    ok(ret, "Expected GetUserPreferredUILanguages to succeed\n");
+    ok(count, "Expected count > 0\n");
+    ok(size % 5 == 1, "Expected size (%d) %% 5 == 1\n", size);
+    if (ret && size % 5 == 1)
+        ok(!buffer[size -2] && !buffer[size -1],
+           "Expected last two WCHARs being empty, got 0x%x 0x%x\n",
+           buffer[size -2], buffer[size -1]);
+
+    count = 0xdeadbeef;
+    size = size_buffer;
+    SetLastError(0xdeadbeef);
+    ret = pGetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &count, buffer, &size);
+    ok(ret, "Expected GetUserPreferredUILanguages to succeed\n");
+    ok(count, "Expected count > 0\n");
+    ok(size % 6 == 1, "Expected size (%d) %% 6 == 1\n", size);
+    if (ret && size % 5 == 1)
+        ok(!buffer[size -2] && !buffer[size -1],
+           "Expected last two WCHARs being empty, got 0x%x 0x%x\n",
+           buffer[size -2], buffer[size -1]);
+
+    count = 0xdeadbeef;
+    size = 1;
+    SetLastError(0xdeadbeef);
+    ret = pGetUserPreferredUILanguages(MUI_LANGUAGE_ID, &count, buffer, &size);
+    ok(!ret, "Expected GetUserPreferredUILanguages to fail\n");
+    ok(ERROR_INSUFFICIENT_BUFFER == GetLastError(),
+       "Expected error ERROR_INSUFFICIENT_BUFFER, got %d\n", GetLastError());
+
+    count = 0xdeadbeef;
+    size = size_id -1;
+    memset(buffer, 0x5a, size_buffer * sizeof(WCHAR));
+    SetLastError(0xdeadbeef);
+    ret = pGetUserPreferredUILanguages(MUI_LANGUAGE_ID, &count, buffer, &size);
+    ok(!ret, "Expected GetUserPreferredUILanguages to fail\n");
+    ok(ERROR_INSUFFICIENT_BUFFER == GetLastError(),
+       "Expected error ERROR_INSUFFICIENT_BUFFER, got %d\n", GetLastError());
+
+    count = 0xdeadbeef;
+    size = size_id -2;
+    memset(buffer, 0x5a, size_buffer * sizeof(WCHAR));
+    SetLastError(0xdeadbeef);
+    ret = pGetUserPreferredUILanguages(0, &count, buffer, &size);
+    ok(!ret, "Expected GetUserPreferredUILanguages to fail\n");
+    ok(ERROR_INSUFFICIENT_BUFFER == GetLastError(),
+       "Expected error ERROR_INSUFFICIENT_BUFFER, got %d\n", GetLastError());
+
+    HeapFree(GetProcessHeap(), 0, buffer);
+}
+
 START_TEST(locale)
 {
   InitFunctionPointers();
 
   test_EnumTimeFormatsA();
+  test_EnumTimeFormatsW();
   test_EnumDateFormatsA();
   test_GetLocaleInfoA();
   test_GetLocaleInfoW();
@@ -4307,7 +5279,9 @@ START_TEST(locale)
   test_GetDateFormatW();
   test_GetCurrencyFormatA(); /* Also tests the W version */
   test_GetNumberFormatA();   /* Also tests the W version */
+  test_GetNumberFormatEx();
   test_CompareStringA();
+  test_CompareStringW();
   test_CompareStringEx();
   test_LCMapStringA();
   test_LCMapStringW();
@@ -4330,6 +5304,10 @@ START_TEST(locale)
   test_CompareStringOrdinal();
   test_GetGeoInfo();
   test_EnumSystemGeoID();
+  test_invariant();
+  test_GetSystemPreferredUILanguages();
+  test_GetThreadPreferredUILanguages();
+  test_GetUserPreferredUILanguages();
   /* this requires collation table patch to make it MS compatible */
   if (0) test_sorting();
 }

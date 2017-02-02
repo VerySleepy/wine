@@ -21,7 +21,6 @@
  *
  */
 
-#include <stdio.h>
 #include <string.h>
 #include <windows.h>
 #include <shlwapi.h>
@@ -60,38 +59,86 @@ static const WCHAR UninstallCommandlineW[] = {'U','n','i','n','s','t','a','l','l
 static const WCHAR WindowsInstallerW[] = {'W','i','n','d','o','w','s','I','n','s','t','a','l','l','e','r',0};
 static const WCHAR SystemComponentW[] = {'S','y','s','t','e','m','C','o','m','p','o','n','e','n','t',0};
 
+static void output_writeconsole(const WCHAR *str, DWORD len)
+{
+    DWORD written, ret, lenA;
+    char *strA;
+
+    ret = WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), str, len, &written, NULL);
+    if (ret) return;
+
+    /* WriteConsole fails if its output is redirected to a file.
+     * If this occurs, we should use an OEM codepage and call WriteFile.
+     */
+    lenA = WideCharToMultiByte(GetConsoleOutputCP(), 0, str, len, NULL, 0, NULL, NULL);
+    strA = HeapAlloc(GetProcessHeap(), 0, lenA);
+    if (strA)
+    {
+        WideCharToMultiByte(GetConsoleOutputCP(), 0, str, len, strA, lenA, NULL, NULL);
+        WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), strA, lenA, &written, FALSE);
+        HeapFree(GetProcessHeap(), 0, strA);
+    }
+}
+
+static void output_formatstring(const WCHAR *fmt, __ms_va_list va_args)
+{
+    WCHAR *str;
+    DWORD len;
+
+    SetLastError(NO_ERROR);
+    len = FormatMessageW(FORMAT_MESSAGE_FROM_STRING|FORMAT_MESSAGE_ALLOCATE_BUFFER,
+                         fmt, 0, 0, (LPWSTR)&str, 0, &va_args);
+    if (len == 0 && GetLastError() != NO_ERROR)
+    {
+        WINE_FIXME("Could not format string: le=%u, fmt=%s\n", GetLastError(), wine_dbgstr_w(fmt));
+        return;
+    }
+    output_writeconsole(str, len);
+    LocalFree(str);
+}
+
+static void __cdecl output_message(unsigned int id, ...)
+{
+    WCHAR fmt[1024];
+    __ms_va_list va_args;
+
+    if (!LoadStringW(GetModuleHandleW(NULL), id, fmt, sizeof(fmt)/sizeof(fmt[0])))
+    {
+        WINE_FIXME("LoadString failed with %d\n", GetLastError());
+        return;
+    }
+    __ms_va_start(va_args, id);
+    output_formatstring(fmt, va_args);
+    __ms_va_end(va_args);
+}
+
+static void __cdecl output_array(WCHAR *fmt, ...)
+{
+    __ms_va_list va_args;
+
+    __ms_va_start(va_args, fmt);
+    output_formatstring(fmt, va_args);
+    __ms_va_end(va_args);
+}
+
 /**
  * Used to output program list when used with --list
  */
 static void ListUninstallPrograms(void)
 {
     unsigned int i;
-    int lenDescr, lenKey;
-    char *descr;
-    char *key;
+    static WCHAR fmtW[] = {'%','1','|','|','|','%','2','\n',0};
 
     FetchUninstallInformation();
 
     for (i=0; i < numentries; i++)
-    {
-        lenDescr = WideCharToMultiByte(CP_UNIXCP, 0, entries[i].descr, -1, NULL, 0, NULL, NULL); 
-        lenKey = WideCharToMultiByte(CP_UNIXCP, 0, entries[i].key, -1, NULL, 0, NULL, NULL); 
-        descr = HeapAlloc(GetProcessHeap(), 0, lenDescr);
-        key = HeapAlloc(GetProcessHeap(), 0, lenKey);
-        WideCharToMultiByte(CP_UNIXCP, 0, entries[i].descr, -1, descr, lenDescr, NULL, NULL);
-        WideCharToMultiByte(CP_UNIXCP, 0, entries[i].key, -1, key, lenKey, NULL, NULL);
-        printf("%s|||%s\n", key, descr);
-        HeapFree(GetProcessHeap(), 0, descr);
-        HeapFree(GetProcessHeap(), 0, key);
-    }
+        output_array(fmtW, entries[i].key, entries[i].descr);
 }
 
 
 static void RemoveSpecificProgram(WCHAR *nameW)
 {
     unsigned int i;
-    int lenName;
-    char *name;
 
     FetchUninstallInformation();
 
@@ -107,19 +154,14 @@ static void RemoveSpecificProgram(WCHAR *nameW)
     if (i < numentries)
         UninstallProgram();
     else
-    {
-        lenName = WideCharToMultiByte(CP_UNIXCP, 0, nameW, -1, NULL, 0, NULL, NULL); 
-        name = HeapAlloc(GetProcessHeap(), 0, lenName);
-        WideCharToMultiByte(CP_UNIXCP, 0, nameW, -1, name, lenName, NULL, NULL);
-        fprintf(stderr, "Error: could not match application [%s]\n", name);
-        HeapFree(GetProcessHeap(), 0, name);
-    }
+        output_message(STRING_NO_APP_MATCH, nameW);
 }
 
 
 int wmain(int argc, WCHAR *argv[])
 {
     LPCWSTR token = NULL;
+    static const WCHAR helpW[] = { '-','-','h','e','l','p',0 };
     static const WCHAR listW[] = { '-','-','l','i','s','t',0 };
     static const WCHAR removeW[] = { '-','-','r','e','m','o','v','e',0 };
     int i = 1;
@@ -128,8 +170,13 @@ int wmain(int argc, WCHAR *argv[])
     {
         token = argv[i++];
         
-        /* Handle requests just to list the applications */
-        if( !lstrcmpW( token, listW ) )
+        if( !lstrcmpW( token, helpW ) )
+        {
+            output_message(STRING_HEADER);
+            output_message(STRING_USAGE);
+            return 0;
+        }
+        else if( !lstrcmpW( token, listW ) )
         {
             ListUninstallPrograms();
             return 0;
@@ -138,7 +185,7 @@ int wmain(int argc, WCHAR *argv[])
         {
             if( i >= argc )
             {
-                WINE_ERR( "The remove option requires a parameter.\n");
+                output_message(STRING_PARAMETER_REQUIRED);
                 return 1;
             }
 
@@ -147,7 +194,7 @@ int wmain(int argc, WCHAR *argv[])
         }
         else 
         {
-            WINE_ERR( "unknown option %s\n",wine_dbgstr_w(token));
+            output_message(STRING_INVALID_OPTION, token);
             return 1;
         }
     }

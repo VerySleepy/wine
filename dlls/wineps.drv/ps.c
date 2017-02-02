@@ -48,6 +48,8 @@ static const char *cups_duplexes[3] =
     cups_two_sided_long,    /* DMDUP_VERTICAL */
     cups_two_sided_short    /* DMDUP_HORIZONTAL */
 };
+static const char cups_collate_false[] = "%cupsJobTicket: collate=false\n";
+static const char cups_collate_true[] = "%cupsJobTicket: collate=true\n";
 
 static const char psheader[] = /* title llx lly urx ury orientation */
 "%%%%Creator: Wine PostScript Driver\n"
@@ -331,6 +333,7 @@ struct ticket_info
 
 static void write_cups_job_ticket( PHYSDEV dev, const struct ticket_info *info )
 {
+    PSDRV_PDEVICE *physDev = get_psdrv_dev( dev );
     char buf[256];
     int len;
 
@@ -354,6 +357,22 @@ static void write_cups_job_ticket( PHYSDEV dev, const struct ticket_info *info )
         {
             const char *str = cups_duplexes[ info->duplex->WinDuplex - 1 ];
             write_spool( dev, str, strlen( str ) );
+        }
+    }
+
+    if (physDev->Devmode->dmPublic.u1.s1.dmCopies > 1)
+    {
+        len = snprintf( buf, sizeof(buf), "%%cupsJobTicket: copies=%d\n",
+                        physDev->Devmode->dmPublic.u1.s1.dmCopies );
+        if (len > 0 && len < sizeof(buf))
+            write_spool( dev, buf, len );
+
+        if (physDev->Devmode->dmPublic.dmFields & DM_COLLATE)
+        {
+            if (physDev->Devmode->dmPublic.dmCollate == DMCOLLATE_FALSE)
+                write_spool( dev, cups_collate_false, sizeof(cups_collate_false) - 1 );
+            else if (physDev->Devmode->dmPublic.dmCollate == DMCOLLATE_TRUE)
+                write_spool( dev, cups_collate_true, sizeof(cups_collate_true) - 1 );
         }
     }
 }
@@ -413,12 +432,6 @@ INT PSDRV_WriteHeader( PHYSDEV dev, LPCWSTR title )
     write_spool( dev, psprolog, strlen(psprolog) );
     write_spool( dev, psendprolog, strlen(psendprolog) );
     write_spool( dev, psbeginsetup, strlen(psbeginsetup) );
-
-    if(physDev->Devmode->dmPublic.u1.s1.dmCopies > 1) {
-        char copies_buf[100];
-        sprintf(copies_buf, "mark {\n << /NumCopies %d >> setpagedevice\n} stopped cleartomark\n", physDev->Devmode->dmPublic.u1.s1.dmCopies);
-        write_spool(dev, copies_buf, strlen(copies_buf));
-    }
 
     if (slot && slot->InvocationString)
         PSDRV_WriteFeature( dev, "*InputSlot", slot->Name, slot->InvocationString );

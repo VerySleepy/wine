@@ -56,10 +56,7 @@ HRESULT IDirectXFileImpl_Create(IUnknown* pUnkOuter, LPVOID* ppObj)
 
     object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectXFileImpl));
     if (!object)
-    {
-        ERR("Out of memory\n");
         return DXFILEERR_BADALLOC;
-    }
 
     object->IDirectXFile_iface.lpVtbl = &IDirectXFile_Vtbl;
     object->ref = 1;
@@ -373,10 +370,7 @@ static HRESULT IDirectXFileBinaryImpl_Create(IDirectXFileBinaryImpl** ppObj)
 
     object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectXFileBinaryImpl));
     if (!object)
-    {
-        ERR("Out of memory\n");
         return DXFILEERR_BADALLOC;
-    }
 
     object->IDirectXFileBinary_iface.lpVtbl = &IDirectXFileBinary_Vtbl;
     object->ref = 1;
@@ -506,10 +500,7 @@ static HRESULT IDirectXFileDataImpl_Create(IDirectXFileDataImpl** ppObj)
 
     object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectXFileDataImpl));
     if (!object)
-    {
-        ERR("Out of memory\n");
         return DXFILEERR_BADALLOC;
-    }
 
     object->IDirectXFileData_iface.lpVtbl = &IDirectXFileData_Vtbl;
     object->ref = 1;
@@ -619,7 +610,7 @@ static HRESULT WINAPI IDirectXFileDataImpl_GetId(IDirectXFileData* iface, LPGUID
   if (!pGuid)
     return DXFILEERR_BADVALUE;
 
-  memcpy(pGuid, &This->pobj->class_id, 16);
+  *pGuid = This->pobj->class_id;
 
   return DXFILE_OK;
 }
@@ -667,7 +658,7 @@ static HRESULT WINAPI IDirectXFileDataImpl_GetType(IDirectXFileData* iface, cons
   if (!pguid)
     return DXFILEERR_BADVALUE;
 
-  memcpy(&guid, &This->pobj->type, 16);
+  guid = This->pobj->type;
   *pguid = &guid;
 
   return DXFILE_OK;
@@ -784,10 +775,7 @@ static HRESULT IDirectXFileDataReferenceImpl_Create(IDirectXFileDataReferenceImp
 
     object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectXFileDataReferenceImpl));
     if (!object)
-    {
-        ERR("Out of memory\n");
         return DXFILEERR_BADALLOC;
-    }
 
     object->IDirectXFileDataReference_iface.lpVtbl = &IDirectXFileDataReference_Vtbl;
     object->ref = 1;
@@ -886,7 +874,7 @@ static HRESULT WINAPI IDirectXFileDataReferenceImpl_GetId(IDirectXFileDataRefere
   if (!pGuid)
     return DXFILEERR_BADVALUE;
 
-  memcpy(pGuid, &This->ptarget->class_id, 16);
+  *pGuid = This->ptarget->class_id;
 
   return DXFILE_OK;
 }
@@ -912,7 +900,7 @@ static HRESULT WINAPI IDirectXFileDataReferenceImpl_Resolve(IDirectXFileDataRefe
   object->level = 0;
   object->from_ref = TRUE;
 
-  *ppDataObj = (LPDIRECTXFILEDATA)object;
+  *ppDataObj = &object->IDirectXFileData_iface;
 
   return DXFILE_OK;
 }
@@ -935,10 +923,7 @@ static HRESULT IDirectXFileEnumObjectImpl_Create(IDirectXFileEnumObjectImpl** pp
 
     object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectXFileEnumObjectImpl));
     if (!object)
-    {
-        ERR("Out of memory\n");
         return DXFILEERR_BADALLOC;
-    }
 
     object->IDirectXFileEnumObject_iface.lpVtbl = &IDirectXFileEnumObject_Vtbl;
     object->ref = 1;
@@ -1037,7 +1022,6 @@ static HRESULT WINAPI IDirectXFileEnumObjectImpl_GetNextDataObject(IDirectXFileE
   object->pobj = HeapAlloc(GetProcessHeap(), 0, sizeof(xobject)*MAX_SUBOBJECTS);
   if (!object->pobj)
   {
-    ERR("Out of memory\n");
     hr = DXFILEERR_BADALLOC;
     goto error;
   }
@@ -1045,7 +1029,6 @@ static HRESULT WINAPI IDirectXFileEnumObjectImpl_GetNextDataObject(IDirectXFileE
   object->pstrings = HeapAlloc(GetProcessHeap(), 0, MAX_STRINGS_BUFFER);
   if (!object->pstrings)
   {
-    ERR("Out of memory\n");
     hr = DXFILEERR_BADALLOC;
     goto error;
   }
@@ -1072,10 +1055,10 @@ static HRESULT WINAPI IDirectXFileEnumObjectImpl_GetNextDataObject(IDirectXFileE
     goto error;
   }
 
-  *ppDataObj = (LPDIRECTXFILEDATA)object;
+  *ppDataObj = &object->IDirectXFileData_iface;
 
   /* Get a reference to created object */
-  This->pRefObjects[This->nb_xobjects] = (LPDIRECTXFILEDATA)object;
+  This->pRefObjects[This->nb_xobjects] = &object->IDirectXFileData_iface;
   IDirectXFileData_AddRef(This->pRefObjects[This->nb_xobjects]);
 
   This->nb_xobjects++;
@@ -1125,10 +1108,7 @@ static HRESULT IDirectXFileSaveObjectImpl_Create(IDirectXFileSaveObjectImpl** pp
 
     object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(IDirectXFileSaveObjectImpl));
     if (!object)
-    {
-        ERR("Out of memory\n");
         return DXFILEERR_BADALLOC;
-    }
 
     object->IDirectXFileSaveObject_iface.lpVtbl = &IDirectXFileSaveObject_Vtbl;
     object->ref = 1;

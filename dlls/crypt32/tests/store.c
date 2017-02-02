@@ -23,6 +23,9 @@
 
 #include <windef.h>
 #include <winbase.h>
+#include <winuser.h>
+#include <shlobj.h>
+#include <shlwapi.h>
 #include <winreg.h>
 #include <winerror.h>
 #include <wincrypt.h>
@@ -123,6 +126,8 @@ static BOOL (WINAPI *pCertGetStoreProperty)(HCERTSTORE,DWORD,void*,DWORD*);
 static void (WINAPI *pCertRemoveStoreFromCollection)(HCERTSTORE,HCERTSTORE);
 static BOOL (WINAPI *pCertSetStoreProperty)(HCERTSTORE,DWORD,DWORD,const void*);
 static BOOL (WINAPI *pCertAddCertificateLinkToStore)(HCERTSTORE,PCCERT_CONTEXT,DWORD,PCCERT_CONTEXT*);
+static BOOL (WINAPI *pCertRegisterSystemStore)(const void*,DWORD,void*,void*);
+static BOOL (WINAPI *pCertUnregisterSystemStore)(const void*,DWORD);
 
 #define test_store_is_empty(store) _test_store_is_empty(__LINE__,store)
 static void _test_store_is_empty(unsigned line, HCERTSTORE store)
@@ -317,11 +322,7 @@ static void compareStore(HCERTSTORE store, LPCSTR name, const BYTE *pb,
     ret = CertSaveStore(store, X509_ASN_ENCODING, CERT_STORE_SAVE_AS_STORE,
      CERT_STORE_SAVE_TO_MEMORY, &blob, 0);
     ok(ret, "CertSaveStore failed: %08x\n", GetLastError());
-    if (todo)
-        todo_wine
-        ok(blob.cbData == cb, "%s: expected size %d, got %d\n", name, cb,
-         blob.cbData);
-    else
+    todo_wine_if (todo)
         ok(blob.cbData == cb, "%s: expected size %d, got %d\n", name, cb,
          blob.cbData);
     blob.pbData = HeapAlloc(GetProcessHeap(), 0, blob.cbData);
@@ -330,10 +331,7 @@ static void compareStore(HCERTSTORE store, LPCSTR name, const BYTE *pb,
         ret = CertSaveStore(store, X509_ASN_ENCODING, CERT_STORE_SAVE_AS_STORE,
          CERT_STORE_SAVE_TO_MEMORY, &blob, 0);
         ok(ret, "CertSaveStore failed: %08x\n", GetLastError());
-        if (todo)
-            todo_wine
-            ok(!memcmp(pb, blob.pbData, cb), "%s: unexpected value\n", name);
-        else
+        todo_wine_if (todo)
             ok(!memcmp(pb, blob.pbData, cb), "%s: unexpected value\n", name);
         HeapFree(GetProcessHeap(), 0, blob.pbData);
     }
@@ -351,6 +349,292 @@ static const BYTE serializedStoreWithCert[] = {
  0xa3,0x16,0x30,0x14,0x30,0x12,0x06,0x03,0x55,0x1d,0x13,0x01,0x01,0xff,0x04,
  0x08,0x30,0x06,0x01,0x01,0xff,0x02,0x01,0x01,0x00,0x00,0x00,0x00,0x00,0x00,
  0x00,0x00,0x00,0x00,0x00,0x00 };
+
+static const struct
+{
+    HKEY key;
+    DWORD cert_store;
+    BOOL appdata_file;
+    WCHAR store_name[16];
+    const WCHAR *base_reg_path;
+} reg_store_saved_certs[] = {
+    { HKEY_LOCAL_MACHINE, CERT_SYSTEM_STORE_LOCAL_MACHINE, FALSE,
+        {'R','O','O','T',0}, CERT_LOCAL_MACHINE_SYSTEM_STORE_REGPATH },
+    { HKEY_LOCAL_MACHINE, CERT_SYSTEM_STORE_LOCAL_MACHINE, FALSE,
+        {'M','Y',0}, CERT_LOCAL_MACHINE_SYSTEM_STORE_REGPATH },
+    { HKEY_LOCAL_MACHINE, CERT_SYSTEM_STORE_LOCAL_MACHINE, FALSE,
+        {'C','A',0}, CERT_LOCAL_MACHINE_SYSTEM_STORE_REGPATH },
+    /* Adding to HKCU\Root triggers safety warning. */
+    { HKEY_CURRENT_USER, CERT_SYSTEM_STORE_CURRENT_USER, TRUE,
+        {'M','Y',0}, CERT_LOCAL_MACHINE_SYSTEM_STORE_REGPATH },
+    { HKEY_CURRENT_USER, CERT_SYSTEM_STORE_CURRENT_USER, FALSE,
+        {'C','A',0}, CERT_LOCAL_MACHINE_SYSTEM_STORE_REGPATH }
+};
+
+/* Testing whether system stores are available for adding new certs
+ * and checking directly in the registry whether they are actually saved or deleted.
+ * Windows treats HKCU\My (at least) as a special case and uses AppData directory
+ * for storing certs, not registry.
+ */
+static void testRegStoreSavedCerts(void)
+{
+    static const WCHAR fmt[] =
+        { '%','s','\\','%','s','\\','%','s','\\','%','s',0},
+    ms_certs[] =
+        { 'M','i','c','r','o','s','o','f','t','\\','S','y','s','t','e','m','C','e','r','t','i','f','i','c','a','t','e','s',0},
+    certs[] =
+        {'C','e','r','t','i','f','i','c','a','t','e','s',0},
+    bigCert_hash[] = {
+        '6','E','3','0','9','0','7','1','5','F','D','9','2','3',
+        '5','6','E','B','A','E','2','5','4','0','E','6','2','2',
+        'D','A','1','9','2','6','0','2','A','6','0','8',0};
+    PCCERT_CONTEXT cert1, cert2;
+    HCERTSTORE store;
+    HANDLE cert_file;
+    HRESULT pathres;
+    WCHAR key_name[MAX_PATH], appdata_path[MAX_PATH];
+    HKEY key;
+    BOOL ret;
+    DWORD res,i;
+
+    for (i = 0; i < sizeof(reg_store_saved_certs) / sizeof(reg_store_saved_certs[0]); i++)
+    {
+        DWORD err;
+
+        store = CertOpenStore(CERT_STORE_PROV_SYSTEM_REGISTRY_W,0,0,
+            reg_store_saved_certs[i].cert_store, reg_store_saved_certs[i].store_name);
+
+        err = GetLastError();
+        if (!store)
+        {
+            ok (err == ERROR_ACCESS_DENIED, "Failed to create store at %d (%08x)\n", i, err);
+            skip("Insufficient privileges for the test %d\n", i);
+            continue;
+        }
+        ok (store!=NULL, "Failed to open the store at %d, %x\n", i, GetLastError());
+        cert1 = CertCreateCertificateContext(X509_ASN_ENCODING, bigCert, sizeof(bigCert));
+        ok (cert1 != NULL, "Create cert context failed at %d, %x\n", i, GetLastError());
+        ret = CertAddCertificateContextToStore(store, cert1, CERT_STORE_ADD_REPLACE_EXISTING, NULL);
+        /* Addittional skip per Win7, it allows opening HKLM store, but disallows adding certs */
+        err = GetLastError();
+        if (!ret)
+        {
+            ok (err == ERROR_ACCESS_DENIED, "Failed to add certificate to store at %d (%08x)\n", i, err);
+            skip("Insufficient privileges for the test %d\n", i);
+            continue;
+        }
+        ok (ret, "Adding to the store failed at %d, %x\n", i, err);
+        CertFreeCertificateContext(cert1);
+        CertCloseStore(store, 0);
+
+        wsprintfW(key_name, fmt, reg_store_saved_certs[i].base_reg_path,
+            reg_store_saved_certs[i].store_name, certs, bigCert_hash);
+
+        if (!reg_store_saved_certs[i].appdata_file)
+        {
+            res = RegOpenKeyExW(reg_store_saved_certs[i].key, key_name, 0, KEY_ALL_ACCESS, &key);
+            ok (!res, "The cert hasn't been saved at %d, %x\n", i, GetLastError());
+            if (!res) RegCloseKey(key);
+        } else
+        {
+            pathres = SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, appdata_path);
+            ok (pathres == S_OK,
+                "Failed to get app data path at %d (%x)\n", pathres, GetLastError());
+            if (pathres == S_OK)
+            {
+                PathAppendW(appdata_path, ms_certs);
+                PathAppendW(appdata_path, reg_store_saved_certs[i].store_name);
+                PathAppendW(appdata_path, certs);
+                PathAppendW(appdata_path, bigCert_hash);
+
+                cert_file = CreateFileW(appdata_path, GENERIC_READ, 0, NULL,
+                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+                todo_wine ok (cert_file != INVALID_HANDLE_VALUE,
+                        "Cert was not saved in AppData at %d (%x)\n", i, GetLastError());
+                CloseHandle(cert_file);
+            }
+        }
+
+        /* deleting cert from store */
+        store = CertOpenStore(CERT_STORE_PROV_SYSTEM_REGISTRY_W,0,0,
+            reg_store_saved_certs[i].cert_store, reg_store_saved_certs[i].store_name);
+        ok (store!=NULL, "Failed to open the store at %d, %x\n", i, GetLastError());
+
+        cert1 = CertCreateCertificateContext(X509_ASN_ENCODING, bigCert, sizeof(bigCert));
+        ok (cert1 != NULL, "Create cert context failed at %d, %x\n", i, GetLastError());
+
+        cert2 = CertFindCertificateInStore(store, X509_ASN_ENCODING, 0,
+            CERT_FIND_EXISTING, cert1, NULL);
+        ok (cert2 != NULL, "Failed to find cert in the store at %d, %x\n", i, GetLastError());
+
+        ret = CertDeleteCertificateFromStore(cert2);
+        ok (ret, "Failed to delete certificate from store at %d, %x\n", i, GetLastError());
+
+        CertFreeCertificateContext(cert1);
+        CertFreeCertificateContext(cert2);
+        CertCloseStore(store, 0);
+
+        res = RegOpenKeyExW(reg_store_saved_certs[i].key, key_name, 0, KEY_ALL_ACCESS, &key);
+        ok (res, "The cert's registry entry should be absent at %i, %x\n", i, GetLastError());
+        if (!res) RegCloseKey(key);
+
+        if (reg_store_saved_certs[i].appdata_file)
+        {
+            cert_file = CreateFileW(appdata_path, GENERIC_READ, 0, NULL,
+                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+            ok (cert_file == INVALID_HANDLE_VALUE,
+                "Cert should have been absent in AppData %d\n", i);
+
+            CloseHandle(cert_file);
+        }
+    }
+}
+
+/**
+ * This test checks that certificate falls into correct store of a collection
+ * depending on the access flags and priorities.
+ */
+static void testStoresInCollection(void)
+{
+    PCCERT_CONTEXT cert1, cert2, tcert1;
+    HCERTSTORE collection, ro_store, rw_store, rw_store_2, tstore;
+    static const WCHAR WineTestRO_W[] = { 'W','i','n','e','T','e','s','t','_','R','O',0 },
+                       WineTestRW_W[] = { 'W','i','n','e','T','e','s','t','_','R','W',0 },
+                       WineTestRW2_W[]= { 'W','i','n','e','T','e','s','t','_','R','W','2',0 };
+    BOOL ret;
+
+    if (!pCertAddStoreToCollection)
+    {
+        win_skip("CertAddStoreToCollection() is not available\n");
+        return;
+    }
+    collection = CertOpenStore(CERT_STORE_PROV_COLLECTION, 0, 0,
+        CERT_STORE_CREATE_NEW_FLAG, NULL);
+    ok(collection != NULL, "Failed to init collection store, last error %x\n", GetLastError());
+    /* Add read-only store to collection with very high priority*/
+    ro_store = CertOpenStore(CERT_STORE_PROV_SYSTEM_REGISTRY_W, 0, 0,
+        CERT_SYSTEM_STORE_CURRENT_USER, WineTestRO_W);
+    ok(ro_store != NULL, "Failed to init ro store %x\n", GetLastError());
+
+    ret = CertAddStoreToCollection(collection, ro_store, 0, 1000);
+    ok (ret, "Failed to add read-only store to collection %x\n", GetLastError());
+
+    cert1 = CertCreateCertificateContext(X509_ASN_ENCODING, bigCert, sizeof(bigCert));
+    ok (cert1 != NULL, "Create cert context failed %x\n", GetLastError());
+    ret = CertAddCertificateContextToStore(collection, cert1, CERT_STORE_ADD_ALWAYS, NULL);
+    ok (!ret, "Added cert to collection with single read-only store %x\n", GetLastError());
+
+    /* Add read-write store to collection with the lowest priority*/
+    rw_store = CertOpenStore(CERT_STORE_PROV_SYSTEM_REGISTRY_W, 0, 0,
+        CERT_SYSTEM_STORE_CURRENT_USER, WineTestRW_W);
+    ok (rw_store != NULL, "Failed to open rw store %x\n", GetLastError());
+    ret = CertAddStoreToCollection(collection, rw_store, CERT_PHYSICAL_STORE_ADD_ENABLE_FLAG, 0);
+    ok (ret, "Failed to add rw store to collection %x\n", GetLastError());
+    /** Adding certificate to collection should fall into rw store,
+     *  even though prioirty of the ro_store is higher */
+    ret = CertAddCertificateContextToStore(collection, cert1, CERT_STORE_ADD_REPLACE_EXISTING, NULL);
+    ok (ret, "Failed to add cert to the collection %x\n", GetLastError());
+
+    tcert1 = CertEnumCertificatesInStore(ro_store, NULL);
+    ok (!tcert1, "Read-only ro_store contains cert\n");
+
+    tcert1 = CertEnumCertificatesInStore(rw_store, NULL);
+    ok (cert1 && tcert1->cbCertEncoded == cert1->cbCertEncoded,
+        "Unexpected cert in the rw store\n");
+    CertFreeCertificateContext(tcert1);
+
+    tcert1 = CertEnumCertificatesInStore(collection, NULL);
+    ok (tcert1 && tcert1->cbCertEncoded == cert1->cbCertEncoded,
+        "Unexpected cert in the collection\n");
+    CertFreeCertificateContext(tcert1);
+
+    /** adding one more rw store with higher priority*/
+    rw_store_2 = CertOpenStore(CERT_STORE_PROV_SYSTEM_REGISTRY_W, 0, 0,
+        CERT_SYSTEM_STORE_CURRENT_USER, WineTestRW2_W);
+    ok (rw_store_2 != NULL, "Failed to init second rw store %x\n", GetLastError());
+    ret = CertAddStoreToCollection(collection, rw_store_2, CERT_PHYSICAL_STORE_ADD_ENABLE_FLAG, 50);
+    ok (ret, "Failed to add rw_store_2 to collection %x\n",GetLastError());
+
+    cert2 = CertCreateCertificateContext(X509_ASN_ENCODING, signedBigCert, sizeof(signedBigCert));
+    ok (cert2 != NULL, "Failed to create cert context %x\n", GetLastError());
+    ret = CertAddCertificateContextToStore(collection, cert2, CERT_STORE_ADD_REPLACE_EXISTING, NULL);
+    ok (ret, "Failed to add cert3 to the store %x\n",GetLastError());
+
+    /** checking certificates in the stores */
+    tcert1 = CertEnumCertificatesInStore(ro_store, 0);
+    ok (tcert1 == NULL, "Read-only store not empty\n");
+
+    tcert1 = CertEnumCertificatesInStore(rw_store, NULL);
+    ok (tcert1 && tcert1->cbCertEncoded == cert1->cbCertEncoded,
+        "Unexpected cert in the rw_store\n");
+    CertFreeCertificateContext(tcert1);
+
+    tcert1 = CertEnumCertificatesInStore(rw_store_2, NULL);
+    ok (tcert1 && tcert1->cbCertEncoded == cert2->cbCertEncoded,
+        "Unexpected cert in the rw_store_2\n");
+    CertFreeCertificateContext(tcert1);
+
+    /** checking certificates in the collection */
+    tcert1 = CertEnumCertificatesInStore(collection, NULL);
+    ok (tcert1 && tcert1->cbCertEncoded == cert2->cbCertEncoded,
+        "cert2 expected in the collection got %p, %x\n",tcert1, GetLastError());
+    tcert1 = CertEnumCertificatesInStore(collection, tcert1);
+    ok (tcert1 && tcert1->cbCertEncoded == cert1->cbCertEncoded,
+        "cert1 expected in the collection got %p, %x\n",tcert1, GetLastError());
+    tcert1 = CertEnumCertificatesInStore(collection, tcert1);
+    ok (tcert1==NULL,"Unexpected cert in the collection %p %x\n",tcert1, GetLastError());
+
+    /* checking whether certs had been saved */
+    tstore = CertOpenStore(CERT_STORE_PROV_SYSTEM_REGISTRY_W,0,0,
+        CERT_SYSTEM_STORE_CURRENT_USER | CERT_STORE_OPEN_EXISTING_FLAG, WineTestRW_W);
+    ok (tstore!=NULL, "Failed to open existing rw store\n");
+    tcert1 = CertEnumCertificatesInStore(tstore, NULL);
+    todo_wine
+        ok(tcert1 && tcert1->cbCertEncoded == cert1->cbCertEncoded, "cert1 wasn't saved\n");
+    CertFreeCertificateContext(tcert1);
+    CertCloseStore(tstore,0);
+
+    tstore = CertOpenStore(CERT_STORE_PROV_SYSTEM_REGISTRY_W,0,0,
+        CERT_SYSTEM_STORE_CURRENT_USER | CERT_STORE_OPEN_EXISTING_FLAG, WineTestRW2_W);
+    ok (tstore!=NULL, "Failed to open existing rw2 store\n");
+    tcert1 = CertEnumCertificatesInStore(tstore, NULL);
+    todo_wine
+        ok (tcert1 && tcert1->cbCertEncoded == cert2->cbCertEncoded, "cert2 wasn't saved\n");
+    CertFreeCertificateContext(tcert1);
+    CertCloseStore(tstore,0);
+
+    CertCloseStore(collection,0);
+    CertCloseStore(ro_store,0);
+    CertCloseStore(rw_store,0);
+    CertCloseStore(rw_store_2,0);
+
+    /* reopening registry stores to check whether certs had been saved */
+    rw_store = CertOpenStore(CERT_STORE_PROV_SYSTEM_REGISTRY_W,0,0,
+        CERT_SYSTEM_STORE_CURRENT_USER, WineTestRW_W);
+    tcert1 = CertEnumCertificatesInStore(rw_store, NULL);
+    ok (tcert1 && tcert1->cbCertEncoded == cert1->cbCertEncoded,
+        "Unexpected cert in store %p\n", tcert1);
+    CertFreeCertificateContext(tcert1);
+    CertCloseStore(rw_store,0);
+
+    rw_store_2 = CertOpenStore(CERT_STORE_PROV_SYSTEM_REGISTRY_W,0,0,
+        CERT_SYSTEM_STORE_CURRENT_USER, WineTestRW2_W);
+    tcert1 = CertEnumCertificatesInStore(rw_store_2, NULL);
+    ok (tcert1 && tcert1->cbCertEncoded == cert2->cbCertEncoded,
+        "Unexpected cert in store %p\n", tcert1);
+    CertFreeCertificateContext(tcert1);
+    CertCloseStore(rw_store_2,0);
+
+    CertFreeCertificateContext(cert1);
+    CertFreeCertificateContext(cert2);
+    CertOpenStore(CERT_STORE_PROV_SYSTEM_REGISTRY_W,0,0,
+        CERT_STORE_DELETE_FLAG|CERT_SYSTEM_STORE_CURRENT_USER,WineTestRO_W);
+    CertOpenStore(CERT_STORE_PROV_SYSTEM_REGISTRY_W,0,0,
+        CERT_STORE_DELETE_FLAG|CERT_SYSTEM_STORE_CURRENT_USER,WineTestRW_W);
+    CertOpenStore(CERT_STORE_PROV_SYSTEM_REGISTRY_W,0,0,
+        CERT_STORE_DELETE_FLAG|CERT_SYSTEM_STORE_CURRENT_USER,WineTestRW2_W);
+
+}
 
 static void testCollectionStore(void)
 {
@@ -1241,7 +1525,7 @@ static void testFileStore(void)
 
     if (!GetTempFileNameW(szDot, szPrefix, 0, filename))
        return;
- 
+
     DeleteFileW(filename);
     file = CreateFileW(filename, GENERIC_READ | GENERIC_WRITE, 0, NULL,
      CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -1875,6 +2159,88 @@ static void testCertOpenSystemStore(void)
     RegDeleteKeyW(HKEY_CURRENT_USER, BogusPathW);
 }
 
+static const struct
+{
+    DWORD cert_store;
+    BOOL expected;
+    BOOL todo;
+} reg_system_store_test_data[] = {
+    { CERT_SYSTEM_STORE_CURRENT_USER,  TRUE, 0},
+    /* Following tests could require administrator privileges and thus could be skipped */
+    { CERT_SYSTEM_STORE_CURRENT_SERVICE, TRUE, 1},
+    { CERT_SYSTEM_STORE_LOCAL_MACHINE, TRUE, 0},
+    { CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY, TRUE, 0},
+    { CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY, TRUE, 0},
+    { CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE, TRUE, 1}
+};
+
+static void testCertRegisterSystemStore(void)
+{
+    BOOL ret, cur_flag;
+    DWORD err = 0;
+    HCERTSTORE hstore;
+    static const WCHAR WineTestW[] = {'W','i','n','e','T','e','s','t',0};
+    const CERT_CONTEXT *cert, *cert2;
+    unsigned int i;
+
+    if (!pCertRegisterSystemStore || !pCertUnregisterSystemStore)
+    {
+        win_skip("CertRegisterSystemStore() or CertUnregisterSystemStore() is not available\n");
+        return;
+    }
+
+    for (i = 0; i < sizeof(reg_system_store_test_data) / sizeof(reg_system_store_test_data[0]); i++) {
+        cur_flag = reg_system_store_test_data[i].cert_store;
+        ret = pCertRegisterSystemStore(WineTestW, cur_flag, NULL, NULL);
+        if (!ret)
+        {
+            err = GetLastError();
+            if (err == ERROR_ACCESS_DENIED)
+            {
+                win_skip("Insufficient privileges for the flag %08x test\n", cur_flag);
+                continue;
+            }
+        }
+        todo_wine_if (reg_system_store_test_data[i].todo)
+            ok (ret == reg_system_store_test_data[i].expected,
+                "Store registration (dwFlags=%08x) failed, last error %x\n", cur_flag, err);
+        if (!ret)
+        {
+            skip("Nothing to test without registered store at %08x\n", cur_flag);
+            continue;
+        }
+
+        hstore = CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0, CERT_STORE_OPEN_EXISTING_FLAG | cur_flag, WineTestW);
+        ok (hstore != NULL, "Opening just registered store at %08x failed, last error %x\n", cur_flag, GetLastError());
+
+        cert = CertCreateCertificateContext(X509_ASN_ENCODING, bigCert, sizeof(bigCert));
+        ok (cert != NULL, "Failed creating cert at %08x, last error: %x\n", cur_flag, GetLastError());
+        if (cert)
+        {
+            ret = CertAddCertificateContextToStore(hstore, cert, CERT_STORE_ADD_NEW, NULL);
+            ok (ret, "Failed to add cert at %08x, last error: %x\n", cur_flag, GetLastError());
+
+            cert2 = CertEnumCertificatesInStore(hstore, NULL);
+            ok (cert2 != NULL && cert2->cbCertEncoded == cert->cbCertEncoded,
+                "Unexpected cert encoded size at %08x, last error: %x\n", cur_flag, GetLastError());
+
+            ret = CertDeleteCertificateFromStore(cert2);
+            ok (ret, "Failed to delete certificate from the new store at %08x, last error: %x\n", cur_flag, GetLastError());
+
+            CertFreeCertificateContext(cert);
+        }
+
+        ret = CertCloseStore(hstore, 0);
+        ok (ret, "CertCloseStore failed at %08x, last error %x\n", cur_flag, GetLastError());
+
+        ret = pCertUnregisterSystemStore(WineTestW, cur_flag );
+        todo_wine_if (reg_system_store_test_data[i].todo)
+            ok( ret == reg_system_store_test_data[i].expected,
+                "Unregistering failed at %08x, last error %d\n", cur_flag, GetLastError());
+     }
+
+}
+
 struct EnumSystemStoreInfo
 {
     BOOL  goOn;
@@ -2072,12 +2438,12 @@ static void testAddSerialized(void)
     ok(!ret && GetLastError() == E_INVALIDARG,
      "Expected E_INVALIDARG, got %08x\n", GetLastError());
     /* With a bad context type */
-    ret = CertAddSerializedElementToStore(store, buf, sizeof(buf), 0, 0, 
+    ret = CertAddSerializedElementToStore(store, buf, sizeof(buf), 0, 0,
      CERT_STORE_CRL_CONTEXT_FLAG, NULL, NULL);
     ok(!ret && GetLastError() == E_INVALIDARG,
      "Expected E_INVALIDARG, got %08x\n", GetLastError());
     ret = CertAddSerializedElementToStore(store, buf,
-     sizeof(struct CertPropIDHeader) + sizeof(bigCert), 0, 0, 
+     sizeof(struct CertPropIDHeader) + sizeof(bigCert), 0, 0,
      CERT_STORE_CRL_CONTEXT_FLAG, NULL, NULL);
     ok(!ret && GetLastError() == E_INVALIDARG,
      "Expected E_INVALIDARG, got %08x\n", GetLastError());
@@ -2088,12 +2454,12 @@ static void testAddSerialized(void)
      "Expected E_INVALIDARG, got %08x\n", GetLastError());
     /* Bad unknown field, good type */
     hdr->unknown1 = 2;
-    ret = CertAddSerializedElementToStore(store, buf, sizeof(buf), 0, 0, 
+    ret = CertAddSerializedElementToStore(store, buf, sizeof(buf), 0, 0,
      CERT_STORE_CERTIFICATE_CONTEXT_FLAG, NULL, NULL);
     ok(!ret && GetLastError() == ERROR_FILE_NOT_FOUND,
      "Expected ERROR_FILE_NOT_FOUND got %08x\n", GetLastError());
     ret = CertAddSerializedElementToStore(store, buf,
-     sizeof(struct CertPropIDHeader) + sizeof(bigCert), 0, 0, 
+     sizeof(struct CertPropIDHeader) + sizeof(bigCert), 0, 0,
      CERT_STORE_CERTIFICATE_CONTEXT_FLAG, NULL, NULL);
     ok(!ret && GetLastError() == ERROR_FILE_NOT_FOUND,
      "Expected ERROR_FILE_NOT_FOUND got %08x\n", GetLastError());
@@ -2105,11 +2471,11 @@ static void testAddSerialized(void)
     /* Most everything okay, but bad add disposition */
     hdr->unknown1 = 1;
     /* This crashes
-    ret = CertAddSerializedElementToStore(store, buf, sizeof(buf), 0, 0, 
+    ret = CertAddSerializedElementToStore(store, buf, sizeof(buf), 0, 0,
      CERT_STORE_CERTIFICATE_CONTEXT_FLAG, NULL, NULL);
      * as does this
     ret = CertAddSerializedElementToStore(store, buf,
-     sizeof(struct CertPropIDHeader) + sizeof(bigCert), 0, 0, 
+     sizeof(struct CertPropIDHeader) + sizeof(bigCert), 0, 0,
      CERT_STORE_CERTIFICATE_CONTEXT_FLAG, NULL, NULL);
      */
     /* Everything okay, but buffer's too big */
@@ -2202,6 +2568,35 @@ static const BYTE serializedStoreWithCertAndHash[] = {
 0x01,0x00,0xa3,0x16,0x30,0x14,0x30,0x12,0x06,0x03,0x55,0x1d,0x13,0x01,0x01,
 0xff,0x04,0x08,0x30,0x06,0x01,0x01,0xff,0x02,0x01,0x01,0x00,0x00,0x00,0x00,
 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00 };
+
+static void delete_test_key(void)
+{
+    HKEY root_key, test_key;
+    static const WCHAR SysCertW[] = {'S','o','f','t','w','a','r','e','\\','M','i','c','r','o','s','o','f','t','\\',
+        'S','y','s','t','e','m','C','e','r','t','i','f','i','c','a','t','e','s',0};
+    static const WCHAR WineTestW[] = {'W','i','n','e','T','e','s','t',0};
+    WCHAR subkey_name[32];
+    DWORD num_subkeys, subkey_name_len;
+    int idx;
+
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, SysCertW, 0, KEY_READ, &root_key))
+        return;
+    if (RegOpenKeyExW(root_key, WineTestW, 0, KEY_READ, &test_key))
+    {
+        RegCloseKey(root_key);
+        return;
+    }
+    RegQueryInfoKeyW(test_key, NULL, NULL, NULL, &num_subkeys, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+    for (idx = num_subkeys; idx-- > 0;)
+    {
+        subkey_name_len = sizeof(subkey_name)/sizeof(WCHAR);
+        RegEnumKeyExW(test_key, idx, subkey_name, &subkey_name_len, NULL, NULL, NULL, NULL);
+        RegDeleteKeyW(test_key, subkey_name);
+    }
+    RegCloseKey(test_key);
+    RegDeleteKeyW(root_key, WineTestW);
+    RegCloseKey(root_key);
+}
 
 static void testAddCertificateLink(void)
 {
@@ -2499,6 +2894,8 @@ static void testAddCertificateLink(void)
 
     CertFreeCertificateContext(source);
     CertCloseStore(store1, 0);
+
+    delete_test_key();
 }
 
 static DWORD countCertsInStore(HCERTSTORE store)
@@ -2563,8 +2960,6 @@ static void testEmptyStore(void)
     ok(res, "CertDeleteCertificateContextFromStore failed\n");
     ok(cert3->hCertStore == cert->hCertStore, "Unexpected hCertStore\n");
 
-    CertFreeCertificateContext(cert3);
-
     store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, CERT_STORE_CREATE_NEW_FLAG, NULL);
     ok(store != NULL, "CertOpenStore failed\n");
 
@@ -2576,8 +2971,6 @@ static void testEmptyStore(void)
     res = CertDeleteCertificateFromStore(cert3);
     ok(res, "CertDeleteCertificateContextFromStore failed\n");
     ok(cert3->hCertStore == store, "Unexpected hCertStore\n");
-
-    CertFreeCertificateContext(cert3);
 
     CertCloseStore(store, 0);
 
@@ -2784,11 +3177,17 @@ START_TEST(store)
     pCertRemoveStoreFromCollection = (void*)GetProcAddress(hdll, "CertRemoveStoreFromCollection");
     pCertSetStoreProperty = (void*)GetProcAddress(hdll, "CertSetStoreProperty");
     pCertAddCertificateLinkToStore = (void*)GetProcAddress(hdll, "CertAddCertificateLinkToStore");
+    pCertRegisterSystemStore = (void*)GetProcAddress(hdll, "CertRegisterSystemStore");
+    pCertUnregisterSystemStore = (void*)GetProcAddress(hdll, "CertUnregisterSystemStore");
 
     /* various combinations of CertOpenStore */
     testMemStore();
     testCollectionStore();
+    testStoresInCollection();
+
     testRegStore();
+    testRegStoreSavedCerts();
+
     testSystemRegStore();
     testSystemStore();
     testFileStore();
@@ -2796,6 +3195,8 @@ START_TEST(store)
     testMessageStore();
     testSerializedStore();
     testCloseStore();
+
+    testCertRegisterSystemStore();
 
     testCertOpenSystemStore();
     testCertEnumSystemStore();

@@ -107,14 +107,14 @@ static ULONG WINAPI HTMLFormElement_Release(IHTMLFormElement *iface)
 static HRESULT WINAPI HTMLFormElement_GetTypeInfoCount(IHTMLFormElement *iface, UINT *pctinfo)
 {
     HTMLFormElement *This = impl_from_IHTMLFormElement(iface);
-    return IDispatchEx_GetTypeInfoCount(&This->element.node.dispex.IDispatchEx_iface, pctinfo);
+    return IDispatchEx_GetTypeInfoCount(&This->element.node.event_target.dispex.IDispatchEx_iface, pctinfo);
 }
 
 static HRESULT WINAPI HTMLFormElement_GetTypeInfo(IHTMLFormElement *iface, UINT iTInfo,
                                               LCID lcid, ITypeInfo **ppTInfo)
 {
     HTMLFormElement *This = impl_from_IHTMLFormElement(iface);
-    return IDispatchEx_GetTypeInfo(&This->element.node.dispex.IDispatchEx_iface, iTInfo, lcid,
+    return IDispatchEx_GetTypeInfo(&This->element.node.event_target.dispex.IDispatchEx_iface, iTInfo, lcid,
             ppTInfo);
 }
 
@@ -123,7 +123,7 @@ static HRESULT WINAPI HTMLFormElement_GetIDsOfNames(IHTMLFormElement *iface, REF
                                                 LCID lcid, DISPID *rgDispId)
 {
     HTMLFormElement *This = impl_from_IHTMLFormElement(iface);
-    return IDispatchEx_GetIDsOfNames(&This->element.node.dispex.IDispatchEx_iface, riid, rgszNames,
+    return IDispatchEx_GetIDsOfNames(&This->element.node.event_target.dispex.IDispatchEx_iface, riid, rgszNames,
             cNames, lcid, rgDispId);
 }
 
@@ -132,7 +132,7 @@ static HRESULT WINAPI HTMLFormElement_Invoke(IHTMLFormElement *iface, DISPID dis
                             VARIANT *pVarResult, EXCEPINFO *pExcepInfo, UINT *puArgErr)
 {
     HTMLFormElement *This = impl_from_IHTMLFormElement(iface);
-    return IDispatchEx_Invoke(&This->element.node.dispex.IDispatchEx_iface, dispIdMember, riid,
+    return IDispatchEx_Invoke(&This->element.node.event_target.dispex.IDispatchEx_iface, dispIdMember, riid,
             lcid, wFlags, pDispParams, pVarResult, pExcepInfo, puArgErr);
 }
 
@@ -794,8 +794,8 @@ static const tid_t HTMLFormElement_iface_tids[] = {
 static dispex_static_data_t HTMLFormElement_dispex = {
     NULL,
     DispHTMLFormElement_tid,
-    NULL,
-    HTMLFormElement_iface_tids
+    HTMLFormElement_iface_tids,
+    HTMLElement_init_dispex_info
 };
 
 HRESULT HTMLFormElement_Create(HTMLDocumentNode *doc, nsIDOMHTMLElement *nselem, HTMLElement **elem)

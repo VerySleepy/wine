@@ -27,8 +27,22 @@ struct scmdatabase
 {
     HKEY root_key;
     LONG service_start_lock;
+    struct list processes;
     struct list services;
     CRITICAL_SECTION cs;
+};
+
+struct process_entry
+{
+    struct list entry;
+    struct scmdatabase *db;
+    LONG ref_count;
+    LONG use_count;
+    DWORD process_id;
+    HANDLE process;
+    HANDLE control_mutex;
+    HANDLE control_pipe;
+    HANDLE overlapped_event;
 };
 
 struct service_entry
@@ -37,18 +51,18 @@ struct service_entry
     struct scmdatabase *db;
     LONG ref_count;                    /* number of references - if goes to zero and the service is deleted the structure will be freed */
     LPWSTR name;
-    SERVICE_STATUS_PROCESS status;
+    SERVICE_STATUS status;
+    HANDLE status_changed_event;
     QUERY_SERVICE_CONFIGW config;
     DWORD preshutdown_timeout;
     LPWSTR description;
     LPWSTR dependOnServices;
     LPWSTR dependOnGroups;
-    HANDLE process;
-    HANDLE control_mutex;
-    HANDLE control_pipe;
-    HANDLE overlapped_event;
-    HANDLE status_changed_event;
+    struct process_entry *process;
+    BOOL shared_process;
+    BOOL force_shutdown;
     BOOL marked_for_delete;
+    BOOL is_wow64;
 };
 
 extern struct scmdatabase *active_database;
@@ -59,11 +73,10 @@ struct service_entry *scmdatabase_find_service(struct scmdatabase *db, LPCWSTR n
 struct service_entry *scmdatabase_find_service_by_displayname(struct scmdatabase *db, LPCWSTR name);
 DWORD scmdatabase_add_service(struct scmdatabase *db, struct service_entry *entry);
 
-DWORD scmdatabase_lock_startup(struct scmdatabase *db);
+BOOL scmdatabase_lock_startup(struct scmdatabase *db);
 void scmdatabase_unlock_startup(struct scmdatabase *db);
 
-void scmdatabase_lock_shared(struct scmdatabase *db);
-void scmdatabase_lock_exclusive(struct scmdatabase *db);
+void scmdatabase_lock(struct scmdatabase *db);
 void scmdatabase_unlock(struct scmdatabase *db);
 
 /* Service functions */
@@ -73,22 +86,26 @@ BOOL validate_service_name(LPCWSTR name);
 BOOL validate_service_config(struct service_entry *entry);
 DWORD save_service_config(struct service_entry *entry);
 void free_service_entry(struct service_entry *entry);
+struct service_entry *grab_service(struct service_entry *service);
 void release_service(struct service_entry *service);
-void service_lock_shared(struct service_entry *service);
-void service_lock_exclusive(struct service_entry *service);
+void service_lock(struct service_entry *service);
 void service_unlock(struct service_entry *service);
 DWORD service_start(struct service_entry *service, DWORD service_argc, LPCWSTR *service_argv);
-void service_terminate(struct service_entry *service);
-BOOL service_send_command( struct service_entry *service, HANDLE pipe,
-                           const void *data, DWORD size, DWORD *result );
 
-extern HANDLE g_hStartedEvent;
+/* Process functions */
+
+struct process_entry *grab_process(struct process_entry *process);
+void release_process(struct process_entry *process);
+BOOL process_send_control(struct process_entry *process, BOOL winedevice, const WCHAR *name,
+                          DWORD control, const BYTE *data, DWORD data_size, DWORD *result);
+void process_terminate(struct process_entry *process);
 
 extern DWORD service_pipe_timeout;
 extern DWORD service_kill_timeout;
+extern HANDLE exit_event;
 
 DWORD RPC_Init(void);
-DWORD events_loop(void);
+void RPC_Stop(void);
 
 /* from utils.c */
 LPWSTR strdupW(LPCWSTR str);

@@ -9,7 +9,7 @@ msgstr ""
 "Last-Translator: Mosaab Alzoubi\n"
 "Language-Team: Linux Arab Community linuxac.org - AND - Arab Eyes Team "
 "arabeyes.org\n"
-"Language: Arabic\n"
+"Language: ar\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -45,30 +45,29 @@ msgstr "&معلومات الدّعم"
 msgid "&Modify..."
 msgstr "&تعديل..."
 
-#: appwiz.rc:69 appwiz.rc:45 cryptui.rc:346 msacm32.rc:40 winecfg.rc:198
-#: winecfg.rc:235 wordpad.rc:248
+#: appwiz.rc:69 appwiz.rc:45 cryptui.rc:346 msacm32.rc:40 winecfg.rc:200
+#: winecfg.rc:237 wordpad.rc:256
 msgid "&Remove"
 msgstr "&إزالة"
 
 #: appwiz.rc:75
 msgid "Support Information"
-msgstr "&معلومات الدّعم"
+msgstr "معلومات الدّعم"
 
-#: appwiz.rc:78 avifil32.rc:54 comctl32.rc:55 comdlg32.rc:231 comdlg32.rc:261
-#: comdlg32.rc:304 comdlg32.rc:358 comdlg32.rc:397 comdlg32.rc:451
-#: credui.rc:52 cryptui.rc:263 cryptui.rc:275 cryptui.rc:365 dinput.rc:46
-#: ieframe.rc:96 localui.rc:44 localui.rc:57 mpr.rc:49 msacm32.rc:53
-#: mshtml.rc:47 mshtml.rc:57 msvfw32.rc:36 oledlg.rc:58 oledlg.rc:90
-#: serialui.rc:41 setupapi.rc:59 shell32.rc:276 shell32.rc:300 shell32.rc:322
-#: shell32.rc:340 shlwapi.rc:44 user32.rc:80 user32.rc:98 wininet.rc:51
-#: wininet.rc:71 winspool.rc:42 net.rc:47 notepad.rc:117 oleview.rc:162
-#: oleview.rc:175 progman.rc:106 progman.rc:124 progman.rc:142 progman.rc:158
-#: progman.rc:180 progman.rc:199 progman.rc:216 regedit.rc:247 regedit.rc:258
-#: regedit.rc:271 regedit.rc:287 regedit.rc:300 regedit.rc:313 taskmgr.rc:442
-#: taskmgr.rc:517 winecfg.rc:212 winecfg.rc:222 wineconsole.rc:134
-#: winefile.rc:131 winefile.rc:154 winefile.rc:184 winemine.rc:71
-#: winemine.rc:81 winemine.rc:95 wordpad.rc:207 wordpad.rc:218 wordpad.rc:236
-#: wordpad.rc:249
+#: appwiz.rc:78 avifil32.rc:54 comctl32.rc:55 comdlg32.rc:232 comdlg32.rc:262
+#: comdlg32.rc:305 comdlg32.rc:359 comdlg32.rc:398 comdlg32.rc:452 credui.rc:52
+#: cryptui.rc:263 cryptui.rc:275 cryptui.rc:365 dinput.rc:46 ieframe.rc:96
+#: localui.rc:44 localui.rc:57 mpr.rc:49 msacm32.rc:53 mshtml.rc:47
+#: mshtml.rc:57 msvfw32.rc:36 oledlg.rc:62 oledlg.rc:94 serialui.rc:41
+#: setupapi.rc:59 shell32.rc:276 shell32.rc:300 shell32.rc:322 shell32.rc:341
+#: shlwapi.rc:44 user32.rc:83 user32.rc:98 wininet.rc:51 wininet.rc:71
+#: winspool.rc:42 net.rc:47 notepad.rc:117 oleview.rc:162 oleview.rc:175
+#: progman.rc:106 progman.rc:124 progman.rc:142 progman.rc:158 progman.rc:180
+#: progman.rc:199 progman.rc:216 regedit.rc:247 regedit.rc:258 regedit.rc:271
+#: regedit.rc:287 regedit.rc:300 regedit.rc:313 taskmgr.rc:442 taskmgr.rc:517
+#: winecfg.rc:214 winecfg.rc:224 wineconsole.rc:135 winefile.rc:128
+#: winefile.rc:151 winefile.rc:181 winemine.rc:71 winemine.rc:81 winemine.rc:95
+#: wordpad.rc:215 wordpad.rc:226 wordpad.rc:244 wordpad.rc:257
 msgid "OK"
 msgstr "حسنًا"
 
@@ -80,7 +79,7 @@ msgstr "المعلومات التّالية يمكن استخدامها للحص
 msgid "Publisher:"
 msgstr "النّاشر:"
 
-#: appwiz.rc:81 winefile.rc:169
+#: appwiz.rc:81 winefile.rc:166
 msgid "Version:"
 msgstr "الإصدار:"
 
@@ -133,22 +132,22 @@ msgid "&Install"
 msgstr "&تثبيت"
 
 #: appwiz.rc:110 appwiz.rc:125 avifil32.rc:55 browseui.rc:40 comctl32.rc:56
-#: comctl32.rc:71 comdlg32.rc:170 comdlg32.rc:192 comdlg32.rc:210
-#: comdlg32.rc:232 comdlg32.rc:262 comdlg32.rc:305 comdlg32.rc:327
-#: comdlg32.rc:347 comdlg32.rc:359 comdlg32.rc:398 comdlg32.rc:452
-#: comdlg32.rc:477 comdlg32.rc:495 credui.rc:53 cryptui.rc:264 cryptui.rc:276
+#: comctl32.rc:71 comdlg32.rc:171 comdlg32.rc:193 comdlg32.rc:211
+#: comdlg32.rc:233 comdlg32.rc:263 comdlg32.rc:306 comdlg32.rc:328
+#: comdlg32.rc:348 comdlg32.rc:360 comdlg32.rc:399 comdlg32.rc:453
+#: comdlg32.rc:478 comdlg32.rc:501 credui.rc:53 cryptui.rc:264 cryptui.rc:276
 #: cryptui.rc:366 dinput.rc:47 ieframe.rc:97 inetcpl.rc:81 localui.rc:45
 #: localui.rc:58 mpr.rc:50 msacm32.rc:54 mshtml.rc:48 mshtml.rc:58
-#: msvfw32.rc:37 oledlg.rc:59 oledlg.rc:91 serialui.rc:42 setupapi.rc:42
-#: setupapi.rc:60 shell32.rc:277 shell32.rc:301 shell32.rc:312 shell32.rc:341
-#: shlwapi.rc:45 user32.rc:81 user32.rc:99 wininet.rc:52 wininet.rc:72
+#: msvfw32.rc:37 oledlg.rc:63 oledlg.rc:95 serialui.rc:42 setupapi.rc:42
+#: setupapi.rc:60 shell32.rc:277 shell32.rc:301 shell32.rc:312 shell32.rc:342
+#: shlwapi.rc:45 user32.rc:84 user32.rc:99 wininet.rc:52 wininet.rc:72
 #: winspool.rc:43 notepad.rc:118 oleview.rc:163 oleview.rc:176 progman.rc:107
 #: progman.rc:125 progman.rc:143 progman.rc:159 progman.rc:181 progman.rc:200
 #: progman.rc:217 regedit.rc:248 regedit.rc:259 regedit.rc:272 regedit.rc:288
 #: regedit.rc:301 regedit.rc:314 taskmgr.rc:443 taskmgr.rc:518 wineboot.rc:34
-#: winecfg.rc:213 winecfg.rc:223 wineconsole.rc:135 winefile.rc:132
-#: winefile.rc:155 winefile.rc:185 winemine.rc:96 wordpad.rc:208
-#: wordpad.rc:219 wordpad.rc:237 wordpad.rc:250
+#: winecfg.rc:215 winecfg.rc:225 wineconsole.rc:136 winefile.rc:129
+#: winefile.rc:152 winefile.rc:182 winemine.rc:96 wordpad.rc:216 wordpad.rc:227
+#: wordpad.rc:245 wordpad.rc:258
 msgid "Cancel"
 msgstr "ألغِ"
 
@@ -297,15 +296,15 @@ msgstr "غير مضغوط"
 msgid "Canceling..."
 msgstr "جاري إلغاء الامر..."
 
-#: comctl32.rc:52 winefile.rc:160
+#: comctl32.rc:52 winefile.rc:157
 msgid "Properties for %s"
 msgstr "خصائص %s"
 
-#: comctl32.rc:57 comdlg32.rc:263
+#: comctl32.rc:57 comdlg32.rc:264
 msgid "&Apply"
 msgstr "&تطبيق"
 
-#: comctl32.rc:58 comctl32.rc:72 comdlg32.rc:306 user32.rc:89
+#: comctl32.rc:58 comctl32.rc:72 comdlg32.rc:307 user32.rc:88
 msgid "Help"
 msgstr "مساعدة"
 
@@ -338,13 +337,13 @@ msgstr "&إغلاق"
 msgid "R&eset"
 msgstr "إ&عادة الضبط"
 
-#: comctl32.rc:86 comdlg32.rc:171 comdlg32.rc:193 comdlg32.rc:264
-#: comdlg32.rc:328 comdlg32.rc:348 comdlg32.rc:360 comdlg32.rc:478
-#: comdlg32.rc:496 ieframe.rc:58 msacm32.rc:52 oledlg.rc:92 shell32.rc:128
+#: comctl32.rc:86 comdlg32.rc:172 comdlg32.rc:194 comdlg32.rc:265
+#: comdlg32.rc:329 comdlg32.rc:349 comdlg32.rc:361 comdlg32.rc:479
+#: comdlg32.rc:502 ieframe.rc:58 msacm32.rc:52 oledlg.rc:96 shell32.rc:128
 #: clock.rc:44 notepad.rc:60 notepad.rc:119 oleview.rc:72 progman.rc:55
 #: progman.rc:108 progman.rc:126 progman.rc:144 progman.rc:160 progman.rc:184
 #: progman.rc:202 progman.rc:219 regedit.rc:79 taskmgr.rc:87 winefile.rc:82
-#: winemine.rc:51 winhlp32.rc:56 wordpad.rc:94
+#: winemine.rc:51 winhlp32.rc:57 wordpad.rc:102
 msgid "&Help"
 msgstr "&مساعدة"
 
@@ -384,7 +383,7 @@ msgid "None"
 msgstr "لا شيء"
 
 #: comctl32.rc:31 cryptui.rc:230 regedit.rc:237 taskmgr.rc:434 winedbg.rc:60
-#: winedbg.rc:75 wordpad.rc:172
+#: winedbg.rc:75 wordpad.rc:180
 msgid "Close"
 msgstr "إغلاق"
 
@@ -396,404 +395,400 @@ msgstr "اليوم:"
 msgid "Go to today"
 msgstr "اذهب إلى اليوم"
 
-#: comdlg32.rc:156 comdlg32.rc:169 comdlg32.rc:458 comdlg32.rc:484
+#: comdlg32.rc:157 comdlg32.rc:170 comdlg32.rc:459 comdlg32.rc:485
 #: shell32.rc:167 oleview.rc:102
 msgid "Open"
 msgstr "ا&فتح"
 
-#: comdlg32.rc:159 comdlg32.rc:181
+#: comdlg32.rc:160 comdlg32.rc:182
 msgid "File &Name:"
 msgstr "ا&سم الملف:"
 
-#: comdlg32.rc:162 comdlg32.rc:184
+#: comdlg32.rc:163 comdlg32.rc:185
 msgid "&Directories:"
 msgstr "الم&جلدات:"
 
-#: comdlg32.rc:165 comdlg32.rc:187
+#: comdlg32.rc:166 comdlg32.rc:188
 msgid "List Files of &Type:"
 msgstr "قائمة الملفات من ن&وع:"
 
-#: comdlg32.rc:167 comdlg32.rc:189
+#: comdlg32.rc:168 comdlg32.rc:190
 msgid "Dri&ves:"
 msgstr "الم&حرّكات:"
 
-#: comdlg32.rc:172 comdlg32.rc:194 winefile.rc:176
+#: comdlg32.rc:173 comdlg32.rc:195 winefile.rc:173
 msgid "&Read Only"
 msgstr "القراءة ف&قط"
 
-#: comdlg32.rc:178
+#: comdlg32.rc:179
 msgid "Save As..."
 msgstr "احفظ &ك‍..."
 
-#: comdlg32.rc:191 comdlg32.rc:145
+#: comdlg32.rc:192 comdlg32.rc:145
 msgid "Save As"
 msgstr "احفظ ك‍"
 
-#: comdlg32.rc:200 comdlg32.rc:209 comdlg32.rc:355 comdlg32.rc:54 hhctrl.rc:49
-#: wordpad.rc:165
+#: comdlg32.rc:201 comdlg32.rc:210 comdlg32.rc:356 comdlg32.rc:54 hhctrl.rc:49
+#: wordpad.rc:173
 msgid "Print"
 msgstr "اطبع"
 
-#: comdlg32.rc:203
+#: comdlg32.rc:204
 msgid "Printer:"
 msgstr "الطّابعة:"
 
-#: comdlg32.rc:205 comdlg32.rc:382
+#: comdlg32.rc:206 comdlg32.rc:383
 msgid "Print range"
 msgstr "مدى الطّباعة"
 
-#: comdlg32.rc:206 comdlg32.rc:383 regedit.rc:219
+#: comdlg32.rc:207 comdlg32.rc:384 regedit.rc:219
 msgid "&All"
 msgstr "ال&كل"
 
-#: comdlg32.rc:207
+#: comdlg32.rc:208
 msgid "S&election"
 msgstr "الا&ختيار"
 
-#: comdlg32.rc:208
+#: comdlg32.rc:209
 msgid "&Pages"
 msgstr "صف&حات"
 
-#: comdlg32.rc:211 comdlg32.rc:233
+#: comdlg32.rc:212 comdlg32.rc:234
 msgid "&Setup"
 msgstr "&إعداد"
 
-#: comdlg32.rc:212
+#: comdlg32.rc:213
 msgid "&From:"
 msgstr "&من:"
 
-#: comdlg32.rc:213
+#: comdlg32.rc:214
 msgid "&To:"
 msgstr "&إلى:"
 
-#: comdlg32.rc:214 wineps.rc:42
+#: comdlg32.rc:215 wineps.rc:42
 msgid "Print &Quality:"
 msgstr "&جودة الطباعة:"
 
-#: comdlg32.rc:216
+#: comdlg32.rc:217
 msgid "Print to Fi&le"
 msgstr "اطب&ع إلى ملف"
 
-#: comdlg32.rc:217
+#: comdlg32.rc:218
 msgid "Condensed"
 msgstr "الموجزة"
 
-#: comdlg32.rc:223 comdlg32.rc:394
+#: comdlg32.rc:224 comdlg32.rc:395
 msgid "Print Setup"
 msgstr "إعداد الطباعة"
 
-#: comdlg32.rc:226 comdlg32.rc:362 comdlg32.rc:401
+#: comdlg32.rc:227 comdlg32.rc:363 comdlg32.rc:402
 msgid "Printer"
 msgstr "الطابعة"
 
-#: comdlg32.rc:227
+#: comdlg32.rc:228
 msgid "&Default Printer"
 msgstr "الطابعة الافترا&ضية"
 
-#: comdlg32.rc:228
+#: comdlg32.rc:229
 msgid "[none]"
 msgstr "[لا شيء]"
 
-#: comdlg32.rc:229
+#: comdlg32.rc:230
 msgid "Specific &Printer"
 msgstr "طابعة مخ&صصة"
 
-#: comdlg32.rc:234 comdlg32.rc:420 comdlg32.rc:439 wineps.rc:34
+#: comdlg32.rc:235 comdlg32.rc:421 comdlg32.rc:440 wineps.rc:34
 msgid "Orientation"
 msgstr "التوجّه"
 
-#: comdlg32.rc:235
+#: comdlg32.rc:236
 msgid "Po&rtrait"
 msgstr "&عمودي"
 
-#: comdlg32.rc:236 comdlg32.rc:441 wineps.rc:37
+#: comdlg32.rc:237 comdlg32.rc:442 wineps.rc:37
 msgid "&Landscape"
 msgstr "أ&فقي"
 
-#: comdlg32.rc:239 comdlg32.rc:414 comdlg32.rc:434 wineps.rc:28
+#: comdlg32.rc:240 comdlg32.rc:415 comdlg32.rc:435 wineps.rc:28
 msgid "Paper"
 msgstr "الصفحة"
 
-#: comdlg32.rc:240
+#: comdlg32.rc:241
 msgid "Si&ze"
 msgstr "الح&جم"
 
-#: comdlg32.rc:241
+#: comdlg32.rc:242
 msgid "&Source"
 msgstr "الم&صدر"
 
-#: comdlg32.rc:249 wineconsole.rc:84
+#: comdlg32.rc:250 wineconsole.rc:85
 msgid "Font"
 msgstr "الخط"
 
-#: comdlg32.rc:252
+#: comdlg32.rc:253
 msgid "&Font:"
 msgstr "ال&خط:"
 
-#: comdlg32.rc:255
+#: comdlg32.rc:256
 msgid "Font St&yle:"
 msgstr "نم&ط الخط:"
 
-#: comdlg32.rc:258 comdlg32.rc:435 winecfg.rc:292
+#: comdlg32.rc:259 comdlg32.rc:436 winecfg.rc:294
 msgid "&Size:"
 msgstr "ال&حجم:"
 
-#: comdlg32.rc:265
+#: comdlg32.rc:266
 msgid "Effects"
 msgstr "المؤثرات"
 
-#: comdlg32.rc:266
+#: comdlg32.rc:267
 msgid "Stri&keout"
 msgstr "&شطب"
 
-#: comdlg32.rc:267
+#: comdlg32.rc:268
 msgid "&Underline"
 msgstr "تسطي&ر"
 
-#: comdlg32.rc:268 winecfg.rc:290
+#: comdlg32.rc:269 winecfg.rc:292
 msgid "&Color:"
 msgstr "اللو&ن:"
 
-#: comdlg32.rc:271
+#: comdlg32.rc:272
 msgid "Sample"
 msgstr "نموذج"
 
-#: comdlg32.rc:273
+#: comdlg32.rc:274
 msgid "Scr&ipt:"
 msgstr "ترمي&ز:"
 
-#: comdlg32.rc:281
+#: comdlg32.rc:282
 msgid "Color"
 msgstr "الون"
 
-#: comdlg32.rc:284
+#: comdlg32.rc:285
 msgid "&Basic Colors:"
 msgstr "ال&ألوان الأساسية:"
 
-#: comdlg32.rc:285
+#: comdlg32.rc:286
 msgid "&Custom Colors:"
 msgstr "الأ&لوان النخصصة:"
 
-#: comdlg32.rc:286 comdlg32.rc:309
+#: comdlg32.rc:287 comdlg32.rc:310
 msgid "Color |  Sol&id"
 msgstr "اللون |  &جامد"
 
-#: comdlg32.rc:287
+#: comdlg32.rc:288
 msgid "&Red:"
 msgstr "أ&حمر:"
 
-#: comdlg32.rc:289
+#: comdlg32.rc:290
 msgid "&Green:"
 msgstr "أخ&ضر:"
 
-#: comdlg32.rc:291
+#: comdlg32.rc:292
 msgid "&Blue:"
 msgstr "أ&زرق:"
 
-#: comdlg32.rc:293
+#: comdlg32.rc:294
 msgid "&Hue:"
 msgstr "ال&تدرّج:"
 
-#: comdlg32.rc:295
+#: comdlg32.rc:296
 msgctxt "Saturation"
 msgid "&Sat:"
 msgstr "الت&شبع:"
 
-#: comdlg32.rc:297
+#: comdlg32.rc:298
 msgctxt "Luminance"
 msgid "&Lum:"
 msgstr "الس&طوع:"
 
-#: comdlg32.rc:307
+#: comdlg32.rc:308
 msgid "&Add to Custom Colors"
 msgstr "أض&ف لونًا محددًا"
 
-#: comdlg32.rc:308
+#: comdlg32.rc:309
 msgid "&Define Custom Colors >>"
 msgstr "ع&رّف لونًا محددًا >>"
 
-#: comdlg32.rc:315 regedit.rc:226 regedit.rc:236
+#: comdlg32.rc:316 regedit.rc:226 regedit.rc:236
 msgid "Find"
 msgstr "بحث"
 
-#: comdlg32.rc:318 comdlg32.rc:337
+#: comdlg32.rc:319 comdlg32.rc:338
 msgid "Fi&nd What:"
 msgstr "الب&حث عن:"
 
-#: comdlg32.rc:320 comdlg32.rc:341
+#: comdlg32.rc:321 comdlg32.rc:342
 msgid "Match &Whole Word Only"
 msgstr "مطابقة ال&كلمة"
 
-#: comdlg32.rc:321 comdlg32.rc:342
+#: comdlg32.rc:322 comdlg32.rc:343
 msgid "Match &Case"
 msgstr "مطابقة ال&حالة"
 
-#: comdlg32.rc:322 joy.rc:71
+#: comdlg32.rc:323 joy.rc:71
 msgid "Direction"
 msgstr "الاتجاه"
 
-#: comdlg32.rc:323 view.rc:42
+#: comdlg32.rc:324 view.rc:42
 msgid "&Up"
 msgstr "أ&على"
 
-#: comdlg32.rc:324 view.rc:43
+#: comdlg32.rc:325 view.rc:43
 msgid "&Down"
 msgstr "أس&فل"
 
-#: comdlg32.rc:326 comdlg32.rc:344
+#: comdlg32.rc:327 comdlg32.rc:345
 msgid "&Find Next"
 msgstr "جِ&د التالي"
 
-#: comdlg32.rc:334
+#: comdlg32.rc:335
 msgid "Replace"
 msgstr "استبدل"
 
-#: comdlg32.rc:339
+#: comdlg32.rc:340
 msgid "Re&place With:"
 msgstr "اس&تبدل بـ:"
 
-#: comdlg32.rc:345
+#: comdlg32.rc:346
 msgid "&Replace"
 msgstr "استبدل&"
 
-#: comdlg32.rc:346
+#: comdlg32.rc:347
 msgid "Replace &All"
 msgstr "ا&ستبدل الكل"
 
-#: comdlg32.rc:363
+#: comdlg32.rc:364
 msgid "Print to fi&le"
 msgstr "اطبع إلى &ملف"
 
-#: comdlg32.rc:364 comdlg32.rc:402 ieframe.rc:42 shdoclc.rc:61 shell32.rc:108
+#: comdlg32.rc:365 comdlg32.rc:403 ieframe.rc:42 shdoclc.rc:61 shell32.rc:108
 #: clock.rc:31 wineconsole.rc:30
 msgid "&Properties"
 msgstr "الخصا&ئص"
 
-#: comdlg32.rc:365 comdlg32.rc:403 msacm32.rc:34 winefile.rc:141
+#: comdlg32.rc:366 comdlg32.rc:404 msacm32.rc:34 winefile.rc:138
 msgid "&Name:"
 msgstr "ال&اسم:"
 
-#: comdlg32.rc:367 comdlg32.rc:405
+#: comdlg32.rc:368 comdlg32.rc:406
 msgid "Status:"
 msgstr "الحالة:"
 
-#: comdlg32.rc:369 comdlg32.rc:407
+#: comdlg32.rc:370 comdlg32.rc:408
 msgid "Type:"
 msgstr "النوع:"
 
-#: comdlg32.rc:371 comdlg32.rc:409
+#: comdlg32.rc:372 comdlg32.rc:410
 msgid "Where:"
 msgstr "المكان:"
 
-#: comdlg32.rc:373 comdlg32.rc:411
+#: comdlg32.rc:374 comdlg32.rc:412
 msgid "Comment:"
 msgstr "التعليق:"
 
-#: comdlg32.rc:376
+#: comdlg32.rc:377
 msgid "Copies"
 msgstr "النُّسخ"
 
-#: comdlg32.rc:377
+#: comdlg32.rc:378
 msgid "Number of &copies:"
 msgstr "عدد النُّس&خ:"
 
-#: comdlg32.rc:379
+#: comdlg32.rc:380
 msgid "C&ollate"
 msgstr "قارن"
 
-#: comdlg32.rc:384
+#: comdlg32.rc:385
 msgid "Pa&ges"
 msgstr "الص&فحات"
 
-#: comdlg32.rc:385
+#: comdlg32.rc:386
 msgid "&Selection"
 msgstr "الا&ختيار"
 
-#: comdlg32.rc:388
+#: comdlg32.rc:389
 msgid "&from:"
 msgstr "م&ن:"
 
-#: comdlg32.rc:389
+#: comdlg32.rc:390
 msgid "&to:"
 msgstr "إل&ى:"
 
-#: comdlg32.rc:415 winecfg.rc:298
+#: comdlg32.rc:416 winecfg.rc:300
 msgid "Si&ze:"
 msgstr "ال&حجم:"
 
-#: comdlg32.rc:417
+#: comdlg32.rc:418
 msgid "&Source:"
 msgstr "الم&صدر:"
 
-#: comdlg32.rc:422
+#: comdlg32.rc:423
 msgid "P&ortrait"
 msgstr "ع&مودي"
 
-#: comdlg32.rc:423
+#: comdlg32.rc:424
 msgid "L&andscape"
 msgstr "أف&قي"
 
-#: comdlg32.rc:428
+#: comdlg32.rc:429
 msgid "Setup Page"
 msgstr "إعداد الصفحة"
 
-#: comdlg32.rc:437
+#: comdlg32.rc:438
 msgid "&Tray:"
 msgstr "ال&صينية:"
 
-#: comdlg32.rc:440 wineps.rc:35
+#: comdlg32.rc:441 wineps.rc:35
 msgid "&Portrait"
 msgstr "&عمودي"
 
-#: comdlg32.rc:442
-msgid "Borders"
-msgstr "الحدود"
-
-#: comdlg32.rc:443
+#: comdlg32.rc:444
 msgid "L&eft:"
 msgstr "ال&يسار:"
 
-#: comdlg32.rc:445 notepad.rc:112
+#: comdlg32.rc:446 notepad.rc:112
 msgid "&Right:"
 msgstr "الي&مين:"
 
-#: comdlg32.rc:447
+#: comdlg32.rc:448
 msgid "T&op:"
 msgstr "الأع&لى:"
 
-#: comdlg32.rc:449 notepad.rc:114
+#: comdlg32.rc:450 notepad.rc:114
 msgid "&Bottom:"
 msgstr "الأس&فل:"
 
-#: comdlg32.rc:453
+#: comdlg32.rc:454
 msgid "P&rinter..."
 msgstr "الطاب&عة..."
 
-#: comdlg32.rc:461
+#: comdlg32.rc:462
 msgid "Look &in:"
 msgstr "ان&ظر في:"
 
-#: comdlg32.rc:467
+#: comdlg32.rc:468
 msgid "File &name:"
 msgstr "ا&سم الملف:"
 
-#: comdlg32.rc:471
+#: comdlg32.rc:472
 msgid "Files of &type:"
 msgstr "الملفات من نو&ع:"
 
-#: comdlg32.rc:474
+#: comdlg32.rc:475
 msgid "Open as &read-only"
 msgstr "افتح لل&قراءة فقط"
 
-#: comdlg32.rc:476 comdlg32.rc:494 shdoclc.rc:127 shell32.rc:99
+#: comdlg32.rc:477 comdlg32.rc:495 shdoclc.rc:127 shell32.rc:99
 msgid "&Open"
 msgstr "ا&فتح"
 
-#: comdlg32.rc:487
+#: comdlg32.rc:488
 msgid "File name:"
 msgstr "اسم الملف:"
 
-#: comdlg32.rc:490
+#: comdlg32.rc:491
 msgid "Files of type:"
 msgstr "الملفات من نوع:"
 
@@ -881,67 +876,67 @@ msgstr "مائل"
 msgid "Bold Italic"
 msgstr "سميك و مائل"
 
-#: comdlg32.rc:121 wordpad.rc:117
+#: comdlg32.rc:121 wordpad.rc:125
 msgid "Black"
 msgstr "أسود"
 
-#: comdlg32.rc:122 wordpad.rc:118
+#: comdlg32.rc:122 wordpad.rc:126
 msgid "Maroon"
 msgstr "داكن"
 
-#: comdlg32.rc:123 wordpad.rc:119
+#: comdlg32.rc:123 wordpad.rc:127
 msgid "Green"
 msgstr "أخضر"
 
-#: comdlg32.rc:124 wordpad.rc:120
+#: comdlg32.rc:124 wordpad.rc:128
 msgid "Olive"
 msgstr "زيتي"
 
-#: comdlg32.rc:125 wordpad.rc:121
+#: comdlg32.rc:125 wordpad.rc:129
 msgid "Navy"
 msgstr "بحري"
 
-#: comdlg32.rc:126 wordpad.rc:122
+#: comdlg32.rc:126 wordpad.rc:130
 msgid "Purple"
 msgstr "أرجواني"
 
-#: comdlg32.rc:127 wordpad.rc:123
+#: comdlg32.rc:127 wordpad.rc:131
 msgid "Teal"
 msgstr "نهري"
 
-#: comdlg32.rc:128 wordpad.rc:124
+#: comdlg32.rc:128 wordpad.rc:132
 msgid "Gray"
 msgstr "رمادي"
 
-#: comdlg32.rc:129 wordpad.rc:125
+#: comdlg32.rc:129 wordpad.rc:133
 msgid "Silver"
 msgstr "فضّي"
 
-#: comdlg32.rc:130 wordpad.rc:126
+#: comdlg32.rc:130 wordpad.rc:134
 msgid "Red"
 msgstr "أحمر"
 
-#: comdlg32.rc:131 wordpad.rc:127
+#: comdlg32.rc:131 wordpad.rc:135
 msgid "Lime"
 msgstr "ليموني"
 
-#: comdlg32.rc:132 wordpad.rc:128
+#: comdlg32.rc:132 wordpad.rc:136
 msgid "Yellow"
 msgstr "أصفر"
 
-#: comdlg32.rc:133 wordpad.rc:129
+#: comdlg32.rc:133 wordpad.rc:137
 msgid "Blue"
 msgstr "أزرق"
 
-#: comdlg32.rc:134 wordpad.rc:130
+#: comdlg32.rc:134 wordpad.rc:138
 msgid "Fuchsia"
 msgstr "فوشي"
 
-#: comdlg32.rc:135 wordpad.rc:131
+#: comdlg32.rc:135 wordpad.rc:139
 msgid "Aqua"
 msgstr "مائي"
 
-#: comdlg32.rc:136 wordpad.rc:132
+#: comdlg32.rc:136 wordpad.rc:140
 msgid "White"
 msgstr "أبيض"
 
@@ -1038,6 +1033,10 @@ msgstr "افتح ملف"
 #| msgid "New Folder"
 msgid "Select Folder"
 msgstr "مجلد جديد"
+
+#: comdlg32.rc:148
+msgid "Font size has to be a number."
+msgstr ""
 
 #: comdlg32.rc:83 oleview.rc:98
 msgid "Ready"
@@ -2069,6 +2068,7 @@ msgid "General"
 msgstr "عام"
 
 #: cryptui.rc:191
+#, fuzzy
 msgid "&Install Certificate..."
 msgstr "معلومات"
 
@@ -2089,6 +2089,7 @@ msgid "&Copy to File..."
 msgstr "ا&نسخ إلى ملف..."
 
 #: cryptui.rc:210
+#, fuzzy
 msgid "Certification Path"
 msgstr "معلومات"
 
@@ -2194,7 +2195,7 @@ msgstr ""
 msgid "&File name:"
 msgstr "ا&سم الملف:"
 
-#: cryptui.rc:296 cryptui.rc:318 cryptui.rc:432 winecfg.rc:307
+#: cryptui.rc:296 cryptui.rc:318 cryptui.rc:432 winecfg.rc:309
 msgid "B&rowse..."
 msgstr "استعر&ض..."
 
@@ -2715,9 +2716,14 @@ msgstr ""
 "هل ترغب حقًا بإزالة هذه الشهادة ؟"
 
 #: cryptui.rc:113
+#, fuzzy
+#| msgid ""
+#| "You will no longer be able to encrypt messages with these certificates, "
+#| "or verify messages signed with it.\n"
+#| "Are you sure you want to remove these certificates?"
 msgid ""
 "You will no longer be able to encrypt messages with these certificates, or "
-"verify messages signed with it.\n"
+"verify messages signed with them.\n"
 "Are you sure you want to remove these certificates?"
 msgstr ""
 "قد لا تتمكن من تشفير الرسائل مستقبلًا بهذه الشهادات ، أو أن تقوم بتحقيق "
@@ -2940,7 +2946,7 @@ msgstr "إعادة الضبط"
 msgid "Player"
 msgstr "المشغل"
 
-#: dinput.rc:52
+#: dinput.rc:52 winecfg.rc:89
 msgid "Device"
 msgstr "الجهاز"
 
@@ -3088,11 +3094,11 @@ msgstr "جاري الاتصال بالقُمرة... يرجى الانتظار"
 msgid "S&ync"
 msgstr "م&زامنة"
 
-#: hhctrl.rc:60 shdoclc.rc:41 winhlp32.rc:89
+#: hhctrl.rc:60 hhctrl.rc:73 shdoclc.rc:41 winhlp32.rc:89
 msgid "&Back"
 msgstr "ال&خلف"
 
-#: hhctrl.rc:61
+#: hhctrl.rc:61 hhctrl.rc:74
 msgid "&Forward"
 msgstr "الأ&مام"
 
@@ -3105,13 +3111,47 @@ msgstr "المنز&ل"
 msgid "&Stop"
 msgstr "إي&قاف"
 
-#: hhctrl.rc:64 shdoclc.rc:59
+#: hhctrl.rc:64 hhctrl.rc:81 shdoclc.rc:59
 msgid "&Refresh"
 msgstr "ت&حديث"
 
-#: hhctrl.rc:65 winhlp32.rc:34
+#: hhctrl.rc:65 hhctrl.rc:80 winhlp32.rc:34
 msgid "&Print..."
 msgstr "&طباعة..."
+
+#: hhctrl.rc:76 hhctrl.rc:90 shdoclc.rc:49 shdoclc.rc:98 shdoclc.rc:120
+#: user32.rc:65
+msgid "Select &All"
+msgstr "اخت&ر الكل"
+
+#: hhctrl.rc:78 shdoclc.rc:54
+msgid "&View Source"
+msgstr "اع&رض المصدر"
+
+#: hhctrl.rc:83
+#, fuzzy
+#| msgid "Properties"
+msgid "Proper&ties"
+msgstr "خصائص"
+
+#: hhctrl.rc:87 shdoclc.rc:79 shdoclc.rc:93 shdoclc.rc:117 shdoclc.rc:159
+#: shdoclc.rc:183 user32.rc:60 wordpad.rc:112
+msgid "Cu&t"
+msgstr "ق&ص"
+
+#: hhctrl.rc:88 shdoclc.rc:80 shdoclc.rc:94 shdoclc.rc:118 shdoclc.rc:133
+#: shdoclc.rc:160 shdoclc.rc:184 shell32.rc:102 user32.rc:61 wineconsole.rc:32
+#: winhlp32.rc:40 wordpad.rc:113
+msgid "&Copy"
+msgstr "ن&سخ"
+
+#: hhctrl.rc:89 shdoclc.rc:119 shell32.rc:64
+msgid "Paste"
+msgstr "الصق"
+
+#: hhctrl.rc:91 shdoclc.rc:121
+msgid "&Print"
+msgstr "اط&بع"
 
 #: hhctrl.rc:31 taskmgr.rc:89
 msgid "&Contents"
@@ -3141,7 +3181,7 @@ msgstr "إظهار الأل&سنة"
 msgid "Show"
 msgstr "إظهار"
 
-#: hhctrl.rc:43
+#: hhctrl.rc:43 winemac.rc:34
 msgid "Hide"
 msgstr "إخفاء"
 
@@ -3166,7 +3206,7 @@ msgstr "المنزل"
 msgid "Sync"
 msgstr "مزامنة"
 
-#: hhctrl.rc:50 wineconsole.rc:60 wordpad.rc:158
+#: hhctrl.rc:50 wineconsole.rc:60 wordpad.rc:166
 msgid "Options"
 msgstr "الخيارات"
 
@@ -3421,7 +3461,7 @@ msgstr "عالي"
 msgid "Joysticks"
 msgstr "مقابض اللعب"
 
-#: joy.rc:39 winecfg.rc:211
+#: joy.rc:39 winecfg.rc:213
 msgid "&Disable"
 msgstr "مع&طل"
 
@@ -6711,7 +6751,7 @@ msgstr "الوصلة العليا"
 msgid "Hyperlink Information"
 msgstr "معلومات الوصلة العليا"
 
-#: mshtml.rc:43 winecfg.rc:243
+#: mshtml.rc:43 winecfg.rc:245
 msgid "&Type:"
 msgstr "الن&وع:"
 
@@ -7359,72 +7399,72 @@ msgstr "تشغيل"
 msgid "Off"
 msgstr "إيقاف"
 
-#: oledlg.rc:51
+#: oledlg.rc:55
 msgid "Insert Object"
 msgstr "عنصر إدخال"
 
-#: oledlg.rc:57
+#: oledlg.rc:61
 msgid "Object Type:"
 msgstr "نوع العنصر:"
 
-#: oledlg.rc:60 oledlg.rc:98
+#: oledlg.rc:64 oledlg.rc:102
 msgid "Result"
 msgstr "نتيجة"
 
-#: oledlg.rc:61
+#: oledlg.rc:65
 msgid "Create New"
 msgstr "أنشئ الآن"
 
-#: oledlg.rc:63
+#: oledlg.rc:67
 msgid "Create Control"
 msgstr "أنشئ متحكمًا"
 
-#: oledlg.rc:65
+#: oledlg.rc:69
 msgid "Create From File"
 msgstr "أنشئ من ملف"
 
-#: oledlg.rc:68
+#: oledlg.rc:72
 msgid "&Add Control..."
 msgstr "أ&ضف متحكمًا..."
 
-#: oledlg.rc:69
+#: oledlg.rc:73
 msgid "Display As Icon"
 msgstr "اعرض كرمز"
 
-#: oledlg.rc:71 setupapi.rc:61
+#: oledlg.rc:75 setupapi.rc:61
 msgid "Browse..."
 msgstr "استعرض..."
 
-#: oledlg.rc:72
+#: oledlg.rc:76
 msgid "File:"
 msgstr "الملف:"
 
-#: oledlg.rc:78
+#: oledlg.rc:82
 msgid "Paste Special"
 msgstr "لصق خاص"
 
-#: oledlg.rc:81 setupapi.rc:43
+#: oledlg.rc:85 setupapi.rc:43
 msgid "Source:"
 msgstr "المصدر:"
 
-#: oledlg.rc:82 shdoclc.rc:50 shdoclc.rc:82 shdoclc.rc:95 shdoclc.rc:135
-#: shdoclc.rc:162 shdoclc.rc:186 user32.rc:62 wineconsole.rc:33 wordpad.rc:106
+#: oledlg.rc:86 shdoclc.rc:50 shdoclc.rc:82 shdoclc.rc:95 shdoclc.rc:135
+#: shdoclc.rc:162 shdoclc.rc:186 user32.rc:62 wineconsole.rc:33 wordpad.rc:114
 msgid "&Paste"
 msgstr "الص&ق"
 
-#: oledlg.rc:84
+#: oledlg.rc:88
 msgid "Paste &Link"
 msgstr "الصق و&صلة"
 
-#: oledlg.rc:86
+#: oledlg.rc:90
 msgid "&As:"
 msgstr "كـ:"
 
-#: oledlg.rc:93
+#: oledlg.rc:97
 msgid "&Display As Icon"
 msgstr "اع&رض كرمز"
 
-#: oledlg.rc:95
+#: oledlg.rc:99
 msgid "Change &Icon..."
 msgstr "غ&ير الرمز..."
 
@@ -7454,18 +7494,40 @@ msgstr "يبدو ان الملف ليس وحدة OLE صالحة ، غير قاد
 msgid "Add Control"
 msgstr "أضف متحكمًا"
 
-#: oledlg.rc:37
+#: oledlg.rc:35
+#, fuzzy
+#| msgid "&Font..."
+msgid "&Convert..."
+msgstr "ال&خط..."
+
+#: oledlg.rc:36
+#, fuzzy
+#| msgid "&Object"
+msgid "%1 %2 &Object"
+msgstr "الع&نصر"
+
+#: oledlg.rc:34
+#, fuzzy
+#| msgid "&Object"
+msgid "%1 &Object"
+msgstr "الع&نصر"
+
+#: oledlg.rc:33 oleview.rc:40
+msgid "&Object"
+msgstr "الع&نصر"
+
+#: oledlg.rc:41
 msgid "Inserts the contents of the clipboard into your document as %s."
 msgstr "أضف المحتوى الموجود في الحافظة إلى المستند كـ %s."
 
-#: oledlg.rc:38
+#: oledlg.rc:42
 msgid ""
 "Inserts the contents of the clipboard into your document so that you can "
 "activate it using %s."
 msgstr ""
 "أضف المحتوى الموجود في الحافظة إلى المستند لذلك يمكنك تفعيله بواسطة %s."
 
-#: oledlg.rc:39
+#: oledlg.rc:43
 msgid ""
 "Inserts the contents of the clipboard into your document so that you can "
 "activate it using %s. It will be displayed as an icon."
@@ -7473,7 +7535,7 @@ msgstr ""
 "أضف المحتوى الموجود في الحافظة إلى المستند لذلك يمكنك تفعيله بواسطة %s. و "
 "يمكن عرضها كرمز."
 
-#: oledlg.rc:40
+#: oledlg.rc:44
 msgid ""
 "Inserts the contents of the clipboard into your document as %s. The data is "
 "linked to the source file so that changes to the file will be reflected in "
@@ -7482,7 +7544,7 @@ msgstr ""
 "أدخل محتويات الحافظة إلى المستند كـ %s.البيانات يشير إلى الملف المصدر و "
 "التغيير في الملف سينعكس على المستند."
 
-#: oledlg.rc:41
+#: oledlg.rc:45
 msgid ""
 "Inserts a picture of the clipboard contents into your document. The picture "
 "is linked to the source file so that changes to the file will be reflected "
@@ -7491,7 +7553,7 @@ msgstr ""
 "أدخل صورة من محتويات الحافظة إلى المستند ، الصورة تشير إلى الملف المصدر و "
 "التغيير في الملف سينعكس على المستند."
 
-#: oledlg.rc:42
+#: oledlg.rc:46
 msgid ""
 "Inserts a shortcut which points to the location of the clipboard contents. "
 "The shortcut is linked to the source file so that changes to the file will "
@@ -7500,19 +7562,19 @@ msgstr ""
 "إنشاء اختصار يشير إلى موقع المحتويات في الحافظة. الاختصار يشير إلى الملف "
 "المصدر و التغيير في الملف سينعكس على المستند."
 
-#: oledlg.rc:43
+#: oledlg.rc:47
 msgid "Inserts the contents of the clipboard into your document."
 msgstr "أدخل المحتوى من الحافظة إلى المستند."
 
-#: oledlg.rc:44
+#: oledlg.rc:48
 msgid "Unknown Type"
 msgstr "نوع غير معروف"
 
-#: oledlg.rc:45
+#: oledlg.rc:49
 msgid "Unknown Source"
 msgstr "مصدر غير معروف"
 
-#: oledlg.rc:46
+#: oledlg.rc:50
 msgid "the program which created it"
 msgstr "البرنامج الذي تم إنشاؤه"
 
@@ -7534,7 +7596,7 @@ msgctxt "unit: bits"
 msgid "b"
 msgstr "b"
 
-#: sane.rc:34 wineps.rc:49 winecfg.rc:181
+#: sane.rc:34 wineps.rc:49 winecfg.rc:183
 msgctxt "unit: dots/inch"
 msgid "dpi"
 msgstr "dpi"
@@ -7633,10 +7695,6 @@ msgstr "انس&خ الخلفية"
 msgid "Set as &Desktop Item"
 msgstr "اض&بط كعنصر سطح مكتب"
 
-#: shdoclc.rc:49 shdoclc.rc:98 shdoclc.rc:120 user32.rc:65
-msgid "Select &All"
-msgstr "اخت&ر الكل"
-
 #: shdoclc.rc:52
 msgid "Create Shor&tcut"
 msgstr "أنش&ئ اختصار"
@@ -7644,10 +7702,6 @@ msgstr "أنش&ئ اختصار"
 #: shdoclc.rc:53 shdoclc.rc:84 shdoclc.rc:137 shdoclc.rc:164 shdoclc.rc:188
 msgid "Add to &Favorites..."
 msgstr "أض&ف للمفضلة..."
-
-#: shdoclc.rc:54
-msgid "&View Source"
-msgstr "اع&رض المصدر"
 
 #: shdoclc.rc:56
 msgid "&Encoding"
@@ -7701,17 +7755,6 @@ msgstr "اضب&ط كحلفية"
 msgid "Set as &Desktop Item..."
 msgstr "اضبط كعنصر س&طح مكتب..."
 
-#: shdoclc.rc:79 shdoclc.rc:93 shdoclc.rc:117 shdoclc.rc:159 shdoclc.rc:183
-#: user32.rc:60 wordpad.rc:104
-msgid "Cu&t"
-msgstr "ق&ص"
-
-#: shdoclc.rc:80 shdoclc.rc:94 shdoclc.rc:118 shdoclc.rc:133 shdoclc.rc:160
-#: shdoclc.rc:184 shell32.rc:102 user32.rc:61 wineconsole.rc:32 winhlp32.rc:40
-#: wordpad.rc:105
-msgid "&Copy"
-msgstr "ن&سخ"
-
 #: shdoclc.rc:81 shdoclc.rc:134 shdoclc.rc:161 shdoclc.rc:185
 msgid "Copy Shor&tcut"
 msgstr "نسخ الاختص&ار"
@@ -7755,14 +7798,6 @@ msgstr "خص&ائص الخلية"
 #: shdoclc.rc:112
 msgid "&Table Properties"
 msgstr "خصائص الجدو&ل"
-
-#: shdoclc.rc:119 shell32.rc:64
-msgid "Paste"
-msgstr "الصق"
-
-#: shdoclc.rc:121
-msgid "&Print"
-msgstr "اط&بع"
 
 #: shdoclc.rc:128
 msgid "Open in &New Window"
@@ -7955,7 +7990,7 @@ msgstr "تسطير الرموز"
 msgid "Paste as Link"
 msgstr "الصق كاختصار"
 
-#: shell32.rc:67 progman.rc:100 wordpad.rc:213
+#: shell32.rc:67 progman.rc:100 wordpad.rc:221
 msgid "New"
 msgstr "جديد"
 
@@ -8021,7 +8056,7 @@ msgstr "أنش&ئ مجلدًا جديدًا"
 msgid "Message"
 msgstr "الرسالة"
 
-#: shell32.rc:309 shlwapi.rc:46 user32.rc:85
+#: shell32.rc:309 shlwapi.rc:46 user32.rc:79
 msgid "&Yes"
 msgstr "ن&عم"
 
@@ -8029,7 +8064,7 @@ msgstr "ن&عم"
 msgid "Yes to &all"
 msgstr "نعم &للكل"
 
-#: shell32.rc:311 shlwapi.rc:47 user32.rc:86
+#: shell32.rc:311 shlwapi.rc:47 user32.rc:80
 msgid "&No"
 msgstr "لا"
 
@@ -8049,19 +8084,25 @@ msgstr "يجري التشغيل على %s"
 msgid "Wine was brought to you by:"
 msgstr "تم تحضير برنامج واين من أجلكم بواسطة:"
 
-#: shell32.rc:337
+#: shell32.rc:334
+#, fuzzy
+#| msgid "&Run..."
+msgid "Run"
+msgstr "ش&غل..."
+
+#: shell32.rc:338
 msgid ""
 "Type the name of a program, folder, document, or Internet resource, and Wine "
 "will open it for you."
 msgstr ""
 "أدخل اسم برنامج أو مجلد أو موقعًا على الشابكة و سيحاول واين فتحه من أجلك."
 
-#: shell32.rc:338
+#: shell32.rc:339
 msgid "&Open:"
 msgstr "ا&فتح:"
 
-#: shell32.rc:342 progman.rc:182 progman.rc:201 progman.rc:218 winecfg.rc:241
-#: winefile.rc:133
+#: shell32.rc:343 progman.rc:182 progman.rc:201 progman.rc:218 winecfg.rc:243
+#: winefile.rc:130
 msgid "&Browse..."
 msgstr "ا&ستعرض..."
 
@@ -8077,7 +8118,7 @@ msgstr "النوع"
 msgid "Modified"
 msgstr "معدل"
 
-#: shell32.rc:141 winefile.rc:175 winefile.rc:114
+#: shell32.rc:141 winefile.rc:172 winefile.rc:114
 msgid "Attributes"
 msgstr "السمات"
 
@@ -8105,7 +8146,7 @@ msgstr "الموضع الأصلي"
 msgid "Date deleted"
 msgstr "تاريخ الحذف"
 
-#: shell32.rc:156 winecfg.rc:99 winefile.rc:100
+#: shell32.rc:156 winecfg.rc:101 winefile.rc:100
 msgctxt "display name"
 msgid "Desktop"
 msgstr "سطح المكتب"
@@ -8183,7 +8224,7 @@ msgstr "النماذج"
 msgid "PrintHood"
 msgstr "الطباعة"
 
-#: shell32.rc:214 winhlp32.rc:48
+#: shell32.rc:214 winhlp32.rc:49
 msgid "History"
 msgstr "التأريخ"
 
@@ -8523,7 +8564,7 @@ msgstr "است&عادة"
 msgid "&Move"
 msgstr "ت&حريك"
 
-#: user32.rc:32 user32.rc:45 wineconsole.rc:92
+#: user32.rc:32 user32.rc:45 wineconsole.rc:93
 msgid "&Size"
 msgstr "تح&جيم"
 
@@ -8551,23 +8592,23 @@ msgstr "&إغلاق\tCtrl+F4"
 msgid "Nex&t\tCtrl+F6"
 msgstr "ال&تالي\tCtrl+F6"
 
-#: user32.rc:82
+#: user32.rc:81
 msgid "&Abort"
 msgstr "أحب&ط"
 
-#: user32.rc:83
+#: user32.rc:82
 msgid "&Retry"
 msgstr "أ&عد المحاولة"
 
-#: user32.rc:84
+#: user32.rc:85
 msgid "&Ignore"
 msgstr "تجا&هل"
 
-#: user32.rc:87
+#: user32.rc:86
 msgid "&Try Again"
 msgstr "حاول &ثانية"
 
-#: user32.rc:88
+#: user32.rc:87
 msgid "&Continue"
 msgstr "ا&ستمر"
 
@@ -8579,6 +8620,64 @@ msgstr "اختر نافذة"
 msgid "&More Windows..."
 msgstr "&نوافذ أخرى..."
 
+#: winemac.rc:32 wineboot.rc:42
+msgid "Wine"
+msgstr "واين"
+
+#: winemac.rc:33
+#, fuzzy
+#| msgid "Hide"
+msgid "Hide %@"
+msgstr "إخفاء"
+
+#: winemac.rc:35
+#, fuzzy
+#| msgid "Other"
+msgid "Hide Others"
+msgstr "آخر"
+
+#: winemac.rc:36
+#, fuzzy
+#| msgid "Show"
+msgid "Show All"
+msgstr "إظهار"
+
+#: winemac.rc:37
+msgid "Quit %@"
+msgstr ""
+
+#: winemac.rc:38
+msgid "Quit"
+msgstr ""
+
+#: winemac.rc:40
+#, fuzzy
+#| msgid "&Window"
+msgid "Window"
+msgstr "نا&فذة"
+
+#: winemac.rc:41
+#, fuzzy
+#| msgid "&Minimize"
+msgid "Minimize"
+msgstr "تص&غير"
+
+#: winemac.rc:42
+#, fuzzy
+#| msgid "Zoom in"
+msgid "Zoom"
+msgstr "تكبير"
+
+#: winemac.rc:43
+msgid "Enter Full Screen"
+msgstr ""
+
+#: winemac.rc:44
+#, fuzzy
+#| msgid "&Bring To Front"
+msgid "Bring All to Front"
+msgstr "&جلب إلى المقدمة"
+
 #: wineps.rc:31
 msgid "Paper Si&ze:"
 msgstr "ح&جم الصفحة:"
@@ -8586,6 +8685,12 @@ msgstr "ح&جم الصفحة:"
 #: wineps.rc:39
 msgid "Duplex:"
 msgstr "مزدوج:"
+
+#: wineps.rc:50
+#, fuzzy
+#| msgid "&Setup"
+msgid "Setup"
+msgstr "&إعداد"
 
 #: wininet.rc:42 wininet.rc:62
 msgid "Realm"
@@ -8628,37 +8733,37 @@ msgid ""
 "There is at least one unspecified security problem with this certificate."
 msgstr "هناك على الأقل مشكلة أمنية واحدة غير محددة في الشهادة."
 
-#: winmm.rc:31
+#: winmm.rc:32
 msgid "The specified command was carried out."
 msgstr "ألغي الامر المحدد."
 
-#: winmm.rc:32
+#: winmm.rc:33
 msgid "Undefined external error."
 msgstr "خطأ خارجي غير معرف."
 
-#: winmm.rc:33
+#: winmm.rc:34
 msgid "A device ID has been used that is out of range for your system."
 msgstr "معرف الجهاز المستخدم خارج مدى نظامك."
 
-#: winmm.rc:34
+#: winmm.rc:35
 msgid "The driver was not enabled."
 msgstr "التعريف غير مفعل."
 
-#: winmm.rc:35
+#: winmm.rc:36
 msgid ""
 "The specified device is already in use. Wait until it is free, and then try "
 "again."
 msgstr "الجهاز المحدد مستخدم بالفعل ، انتظر حتى يتفرغ ثم اعد المحاولة."
 
-#: winmm.rc:36
+#: winmm.rc:37
 msgid "The specified device handle is invalid."
 msgstr "لاقط الجهاز المحدد غير سليم."
 
-#: winmm.rc:37
+#: winmm.rc:38
 msgid "There is no driver installed on your system!"
 msgstr "لا يوجد أي تعريف مثبت على نظامك !"
 
-#: winmm.rc:38 winmm.rc:64
+#: winmm.rc:39 winmm.rc:65
 msgid ""
 "Not enough memory available for this task. Quit one or more applications to "
 "increase available memory, and then try again."
@@ -8666,25 +8771,25 @@ msgstr ""
 "لا تتوفر ذاكرة كافية لأداء المهمة ، أغلق تطبيقًا أو أكثر لزيادة الذاكرة "
 "المتاحة ، ثم حاول مجددًا."
 
-#: winmm.rc:39
+#: winmm.rc:40
 msgid ""
 "This function is not supported. Use the Capabilities function to determine "
 "which functions and messages the driver supports."
 msgstr "هذه الوظيفة غير مدعومة ، اختر وظيفة مناسبة تناسب عتادك ."
 
-#: winmm.rc:40
+#: winmm.rc:41
 msgid "An error number was specified that is not defined in the system."
 msgstr "رقم الخطأ المحدد غير معرف على نظامك ."
 
-#: winmm.rc:41
+#: winmm.rc:42
 msgid "An invalid flag was passed to a system function."
 msgstr "علم غير سليم دخل إلى وظيفة النظام"
 
-#: winmm.rc:42
+#: winmm.rc:43
 msgid "An invalid parameter was passed to a system function."
 msgstr "معامل غير سليم دخل إلى وظيفة النظام"
 
-#: winmm.rc:45
+#: winmm.rc:46
 msgid ""
 "The specified format is not supported or cannot be translated. Use the "
 "Capabilities function to determine the supported formats."
@@ -8692,7 +8797,7 @@ msgstr ""
 "الصيغة المحددة غير مدعومة أو لا يمكن ترجمتها ، استخدم وظيفة مناسبة تدعم هذا "
 "النوع من الصيغ."
 
-#: winmm.rc:46 winmm.rc:52
+#: winmm.rc:47 winmm.rc:53
 msgid ""
 "Cannot perform this operation while media data is still playing. Reset the "
 "device, or wait until the data is finished playing."
@@ -8700,14 +8805,14 @@ msgstr ""
 "لم يتمكن من أداء هذه العملية بسبب تشغيل الوسيط ، أعد تشغيل الجهاز أو انتظره "
 "حتى ينهي عمله ."
 
-#: winmm.rc:47
+#: winmm.rc:48
 msgid ""
 "The wave header was not prepared. Use the Prepare function to prepare the "
 "header, and then try again."
 msgstr ""
 "إن رأس الموجة غير معد ، استخدم وظيفة الإعداد لإعداد الرأس ، ثم حاول مجددًا ."
 
-#: winmm.rc:48
+#: winmm.rc:49
 msgid ""
 "Cannot open the device without using the WAVE_ALLOWSYNC flag. Use the flag, "
 "and then try again."
@@ -8715,14 +8820,14 @@ msgstr ""
 "لم يتمكن من تشغيل الجهاز لعدم توفر إشارة WAVE_ALLOWSYNC flag استخدم الإشارة "
 "ثم حاول مجددًا."
 
-#: winmm.rc:51
+#: winmm.rc:52
 msgid ""
 "The MIDI header was not prepared. Use the Prepare function to prepare the "
 "header, and then try again."
 msgstr ""
 "إن رأس المقطوعة غير معد ، استخدم وظيفة الإعداد لإعداد الرأس ، ثم حاول مجددًا ."
 
-#: winmm.rc:53
+#: winmm.rc:54
 msgid ""
 "A MIDI map was not found. There may be a problem with the driver, or the "
 "MIDIMAP.CFG file may be corrupt or missing."
@@ -8730,7 +8835,7 @@ msgstr ""
 "خريطة المقطوعات غير موجودة ، ربما توجد مشكلة بالتعريف ، أو بالملف MIDIMAP."
 "CFG حيث أنه قد يكون مفقودًا أو تالفًا."
 
-#: winmm.rc:54
+#: winmm.rc:55
 msgid ""
 "The port is transmitting data to the device. Wait until the data has been "
 "transmitted, and then try again."
@@ -8738,7 +8843,7 @@ msgstr ""
 "يقوم هذا المنفذ بنقل البيانات إلى الجهاز ، انتظر حتى يتم نقل البيانات "
 "الحالي ، ثم حاول مجددًا."
 
-#: winmm.rc:55 winmm.rc:128
+#: winmm.rc:56 winmm.rc:129
 #, fuzzy
 #| msgid ""
 #| "The current MIDI Mapper setup refers to a MIDI device that is not "
@@ -8750,7 +8855,7 @@ msgstr ""
 "يشير إعداد مخطط المقطوعات إلى جهاز مقطوعات غير مثبت على نظامك ، استخدم مخطط "
 "المقطوعات لتحرير الإعدادات."
 
-#: winmm.rc:56
+#: winmm.rc:57
 msgid ""
 "The current MIDI setup is damaged. Copy the original MIDIMAP.CFG file to the "
 "Windows SYSTEM directory, and then try again."
@@ -8758,29 +8863,29 @@ msgstr ""
 "إعدادات المقطوعات الحالية معطوبة ، انسخ ملف MIDIMAP.CFG الأصلي إلى مجلد "
 "النظام المودود في مجلد وندوز ثم حاول مجددًا."
 
-#: winmm.rc:59
+#: winmm.rc:60
 msgid "Invalid MCI device ID. Use the ID returned when opening the MCI device."
 msgstr "معرف جهاز MCI غير سليم ، أعد استخدام معرفك عندما تعيد فتح جهاز MCI"
 
-#: winmm.rc:60
+#: winmm.rc:61
 msgid "The driver cannot recognize the specified command parameter."
 msgstr "لم يتمكن المحرك من ضبط المعاملات المحددة بالأمر."
 
-#: winmm.rc:61
+#: winmm.rc:62
 msgid "The driver cannot recognize the specified command."
 msgstr "لم يتمكن المحرك من ضبط الأمر المحدد."
 
-#: winmm.rc:62
+#: winmm.rc:63
 msgid ""
 "There is a problem with your media device. Make sure it is working correctly "
 "or contact the device manufacturer."
 msgstr "حدثت مشكلة بجهاز الوسائط ، تاكد من عمله بشكل سليم أو اتصل بمصنعه."
 
-#: winmm.rc:63
+#: winmm.rc:64
 msgid "The specified device is not open or is not recognized by MCI."
 msgstr "الجهاز المحدد غير مفتوح أو انه غير مضبوط بواسطة MCI."
 
-#: winmm.rc:65
+#: winmm.rc:66
 msgid ""
 "The device name is already being used as an alias by this application. Use a "
 "unique alias."
@@ -8788,67 +8893,67 @@ msgstr ""
 "اسم الجهاز مستخدم بالفعل كاسم مستعار لهذا التطبيق ، استخدم اسمًا مستعارًا "
 "فريدًا."
 
-#: winmm.rc:66
+#: winmm.rc:67
 msgid ""
 "There is an undetectable problem in loading the specified device driver."
 msgstr "توجد مشكلة غير معروفة أثناء تحميل تعريف الجهاز المحدد."
 
-#: winmm.rc:67
+#: winmm.rc:68
 msgid "No command was specified."
 msgstr "لم يتم تحديد أي أمر."
 
-#: winmm.rc:68
+#: winmm.rc:69
 msgid ""
 "The output string was too large to fit in the return buffer. Increase the "
 "size of the buffer."
 msgstr "سلسلة المخرجات كبيرة جدًا على التدفق المستعمل حاليًا ، زد حجم التدفق."
 
-#: winmm.rc:69
+#: winmm.rc:70
 msgid ""
 "The specified command requires a character-string parameter. Please provide "
 "one."
 msgstr "يتطلب الأمر المعطى معاملًا متصل المحارف ، أضفه من فضلك."
 
-#: winmm.rc:70
+#: winmm.rc:71
 msgid "The specified integer is invalid for this command."
 msgstr "المعامل المدخل غير سليم لهذا الامر."
 
-#: winmm.rc:71
+#: winmm.rc:72
 msgid ""
 "The device driver returned an invalid return type. Check with the device "
 "manufacturer about obtaining a new driver."
 msgstr ""
 "عاد تعريف الجهاز بعودة غير سليمة ، تفحص مع مصنع الجهاز التعاريف الجديدة."
 
-#: winmm.rc:72
+#: winmm.rc:73
 msgid ""
 "There is a problem with the device driver. Check with the device "
 "manufacturer about obtaining a new driver."
 msgstr "هناك مشكلة بتعريف الجهاز ، تفحص مع مصنع الجهاز التعاريف الجديدة."
 
-#: winmm.rc:73
+#: winmm.rc:74
 msgid "The specified command requires a parameter. Please supply one."
 msgstr "يتطلب الأمر الذي أدخله معاملًا إضافيًا ، أدخله."
 
-#: winmm.rc:74
+#: winmm.rc:75
 msgid "The MCI device you are using does not support the specified command."
 msgstr "جهاز MCI الذي تستخدمه لا يدعم الامر المعطى."
 
-#: winmm.rc:75
+#: winmm.rc:76
 msgid ""
 "Cannot find the specified file. Make sure the path and filename are correct."
 msgstr ""
 "لم يتمكن من العثور على الملف المحدد ، تأكد من أن اسم الملف و موضعه سليمين ."
 
-#: winmm.rc:76
+#: winmm.rc:77
 msgid "The device driver is not ready."
 msgstr "تعريف الجهاز ليس جاهزًا."
 
-#: winmm.rc:77
+#: winmm.rc:78
 msgid "A problem occurred in initializing MCI. Try restarting Windows."
 msgstr "حدثت مشكلة اثناء تهيئة MCI ، حاول أن تعيد تشغيل الوندوز."
 
-#: winmm.rc:78
+#: winmm.rc:79
 msgid ""
 "There is a problem with the device driver. The driver has closed. Cannot "
 "access error."
@@ -8856,11 +8961,11 @@ msgstr ""
 "حدثت مشكلة مع تعريف الجهاز ، ثم أغلق الجهاز ، ولمنتمكن من الوصول لمعرفة "
 "الخطأ."
 
-#: winmm.rc:79
+#: winmm.rc:80
 msgid "Cannot use 'all' as the device name with the specified command."
 msgstr "لا يمكن استخدام all كاسم للجهاز مع الأمر المحدد."
 
-#: winmm.rc:80
+#: winmm.rc:81
 msgid ""
 "Errors occurred in more than one device. Specify each command and device "
 "separately to determine which devices caused the error."
@@ -8868,19 +8973,19 @@ msgstr ""
 "حدثت اخطاء في أكثر من جهاز ، مرر كل أمر متعلق بجهاز بشكل فردي و ذلك لتحديد "
 "الجهاز الذي حدث فيه الخطأ."
 
-#: winmm.rc:81
+#: winmm.rc:82
 msgid "Cannot determine the device type from the given filename extension."
 msgstr "لم يتمكن من تحديد نوع الجهاز من امتداد اسم الملف المعطى."
 
-#: winmm.rc:82
+#: winmm.rc:83
 msgid "The specified parameter is out of range for the specified command."
 msgstr "المعامل المحدد خارج المدى المسموع به لهذا الأمر."
 
-#: winmm.rc:83
+#: winmm.rc:84
 msgid "The specified parameters cannot be used together."
 msgstr "لا يمكن استعمال هذه المعاملات سوية."
 
-#: winmm.rc:84
+#: winmm.rc:85
 msgid ""
 "Cannot save the specified file. Make sure you have enough disk space or are "
 "still connected to the network."
@@ -8888,32 +8993,36 @@ msgstr ""
 "لم يتمكن من حفظ الملف المحدد ، تأكد من امتلاك مساحة كافية على القرص أو من "
 "اتصالك بالشبكة."
 
-#: winmm.rc:85
+#: winmm.rc:86
+#, fuzzy
+#| msgid ""
+#| "Cannot find the specified device. Make sure it is installed or that the "
+#| "device name is spelled correctly."
 msgid ""
-"Cannot find the specified device. Make sure it is installed or that the "
+"Cannot find the specified device. Make sure it is installed and that the "
 "device name is spelled correctly."
 msgstr ""
 "لم يتمكن من العثور على الجهاز المحدد ، تأكد من انه مثبت أو من التهجئة "
 "السليمة لاسمه."
 
-#: winmm.rc:86
+#: winmm.rc:87
 msgid ""
 "The specified device is now being closed. Wait a few seconds, and then try "
 "again."
 msgstr "الجهاز المحدد مغلق حاليًا ، انتضر بضع ثوانٍ ، ثم حاول مجددًا."
 
-#: winmm.rc:87
+#: winmm.rc:88
 msgid ""
 "The specified alias is already being used in this application. Use a unique "
 "alias."
 msgstr ""
 "الاسم المستعار الحالي مستخدم في هذا التطبيق ، استخدم اسمًا مستعارًا فريدًا."
 
-#: winmm.rc:88
+#: winmm.rc:89
 msgid "The specified parameter is invalid for this command."
 msgstr "المعامل الحالي لا يناسب هذا اﻷمر."
 
-#: winmm.rc:89
+#: winmm.rc:90
 msgid ""
 "The device driver is already in use. To share it, use the 'shareable' "
 "parameter with each 'open' command."
@@ -8921,7 +9030,7 @@ msgstr ""
 "تعريف الجهاز مستخدم بالفعل ، لمشاركته استخدم المعامل shareable معأمر الفتح "
 "open."
 
-#: winmm.rc:90
+#: winmm.rc:91
 msgid ""
 "The specified command requires an alias, file, driver, or device name. "
 "Please supply one."
@@ -8929,7 +9038,7 @@ msgstr ""
 "يتطلب الأمر الحالي اسمًا مستعارًا أو ملفًا أو محركًا أو اسم جهاز. أضف أحدها من "
 "فضلك."
 
-#: winmm.rc:91
+#: winmm.rc:92
 msgid ""
 "The specified value for the time format is invalid. Refer to the MCI "
 "documentation for valid formats."
@@ -8937,17 +9046,17 @@ msgstr ""
 "القيمة المعطاة كصيغة توقيت ، غير سليمة راجع توثيق MCI و اقرأ عن الصيغ "
 "السليمة."
 
-#: winmm.rc:92
+#: winmm.rc:93
 msgid ""
 "A closing double-quotation mark is missing from the parameter value. Please "
 "supply one."
 msgstr "قيمة المعامل يجب ان تحاط بعلامتي اقتباس للتعرف عليها ، أضفها من فضلك."
 
-#: winmm.rc:93
+#: winmm.rc:94
 msgid "A parameter or value was specified twice. Only specify it once."
 msgstr "لا تمرر معاملًا و قيمة بنفس الوقت ، مرر أحدهما فقط."
 
-#: winmm.rc:94
+#: winmm.rc:95
 msgid ""
 "The specified file cannot be played on the specified MCI device. The file "
 "may be corrupt, or not in the correct format."
@@ -8955,34 +9064,34 @@ msgstr ""
 "لا يمكن تشغيل الملف المحدد مع جهاز MCI هذا ، قد يكون الملف معطوبًا ، أو بصيغة "
 "خاطئة."
 
-#: winmm.rc:95
+#: winmm.rc:96
 msgid "A null parameter block was passed to MCI."
 msgstr "تم تمرير قطاع فارغ إلى MCI"
 
-#: winmm.rc:96
+#: winmm.rc:97
 msgid "Cannot save an unnamed file. Supply a filename."
 msgstr "لا يمكن الحفظ إلى ملف بدون اسم ، أدخل اسمًا للملف."
 
-#: winmm.rc:97
+#: winmm.rc:98
 msgid "You must specify an alias when using the 'new' parameter."
 msgstr "يجب أن تمرر اسمًا مستعارًا عند استخدامك للمعامل new"
 
-#: winmm.rc:98
+#: winmm.rc:99
 msgid "Cannot use the 'notify' flag with auto-opened devices."
 msgstr "لم يتمكن من استخدام الإشارة notify مع الاجهزة تلقائية الفتح."
 
-#: winmm.rc:99
+#: winmm.rc:100
 msgid "Cannot use a filename with the specified device."
 msgstr "لم يتمكن من استخدام اسم الملف مع الجهاز المحدد."
 
-#: winmm.rc:100
+#: winmm.rc:101
 msgid ""
 "Cannot carry out the commands in the order specified. Correct the command "
 "sequence, and then try again."
 msgstr ""
 "لم يتمكن من تنفيذ الأمر المحدد بهذه الصيغة ، صحح صيغة الأمر ، ثم حاول مجددًا ."
 
-#: winmm.rc:101
+#: winmm.rc:102
 msgid ""
 "Cannot carry out the specified command on an auto-opened device. Wait until "
 "the device is closed, and then try again."
@@ -8990,7 +9099,7 @@ msgstr ""
 "لم يتمكن من تنفيذ الأمر المحدد بواسطة جهاز الفتح التلقائي ، انتظر حتى إغلاق "
 "الجهاز ثم حاول مجددًا."
 
-#: winmm.rc:102
+#: winmm.rc:103
 msgid ""
 "The filename is invalid. Make sure the filename is not longer than 8 "
 "characters, followed by a period and an extension."
@@ -8998,12 +9107,12 @@ msgstr ""
 "اسم الملف غير سليم ، تأكد من أن اسم الملف لا يزيد عن 8 محارف متبوعًا بنقطة ثم "
 "الامتداد."
 
-#: winmm.rc:103
+#: winmm.rc:104
 msgid ""
 "Cannot specify extra characters after a string enclosed in quotation marks."
 msgstr "لا يمكن إضافة محرف خارج علامتي الاقتباس."
 
-#: winmm.rc:104
+#: winmm.rc:105
 msgid ""
 "The specified device is not installed on the system. Use the Drivers option "
 "in Control Panel to install the device."
@@ -9011,7 +9120,7 @@ msgstr ""
 "الجهاز المحدد غير مثبت على نظامك ، استخدم تبويب المحركات في لوحة التحكم "
 "لتثبيت الجهاز."
 
-#: winmm.rc:105
+#: winmm.rc:106
 msgid ""
 "Cannot access the specified file or MCI device. Try changing directories or "
 "restarting your computer."
@@ -9019,7 +9128,7 @@ msgstr ""
 "لا يمكن الوصول إلى الملف المحدد أو إلى جهاز MCI حاول تغيير المجلد أو إعادة "
 "تشغيل الحاسوب."
 
-#: winmm.rc:106
+#: winmm.rc:107
 msgid ""
 "Cannot access the specified file or MCI device because the application "
 "cannot change directories."
@@ -9027,7 +9136,7 @@ msgstr ""
 "لا يمكن الوصول إلى الملف المحدد أو إلى جهاز MCI و ذلك لأن التطبيق لم يتمكن "
 "من تغيير المجلد."
 
-#: winmm.rc:107
+#: winmm.rc:108
 msgid ""
 "Cannot access specified file or MCI device because the application cannot "
 "change drives."
@@ -9035,20 +9144,20 @@ msgstr ""
 "لا يمكن الوصول إلى الملف المحدد أو إلى جهاز MCI و ذلك لأن التطبيق لم يتمكن "
 "من تغيير المحرك."
 
-#: winmm.rc:108
+#: winmm.rc:109
 msgid "Specify a device or driver name that is less than 79 characters."
 msgstr "حدد اسم الجهاز أو المحرك بما لا يتجاوز 79 محرفًا."
 
-#: winmm.rc:109
+#: winmm.rc:110
 msgid "Specify a device or driver name that is less than 69 characters."
 msgstr "حدد اسم الجهاز أو المحرك بما لا يتجاوز 69 محرفًا."
 
-#: winmm.rc:110
+#: winmm.rc:111
 msgid ""
 "The specified command requires an integer parameter. Please provide one."
 msgstr "يتطلب اﻷمر المدخل معاملًا يحدد المطلوب ، أضفه من فضلك."
 
-#: winmm.rc:111
+#: winmm.rc:112
 msgid ""
 "All wave devices that can play files in the current format are in use. Wait "
 "until a wave device is free, and then try again."
@@ -9056,7 +9165,7 @@ msgstr ""
 "جميع اجهزة الموجات المتوافقة مع الصيغة الحالية مشغولة. انتظر حتى يتحرر أحدها "
 "ثم حاول مجددًا."
 
-#: winmm.rc:112
+#: winmm.rc:113
 msgid ""
 "Cannot set the current wave device for play back because it is in use. Wait "
 "until the device is free, and then try again."
@@ -9064,7 +9173,7 @@ msgstr ""
 "لم يتمكن من ضبط جهاز الموجات الحالي للتشغيل لأنه قيد الاستعمال ، انتظر حتى "
 "يتحرر الجهاز ثم حاول مجددًا."
 
-#: winmm.rc:113
+#: winmm.rc:114
 msgid ""
 "All wave devices that can record files in the current format are in use. "
 "Wait until a wave device is free, and then try again."
@@ -9072,7 +9181,7 @@ msgstr ""
 "جميع اجهزة الموجات المتوافقة مع الصيغة الحالية مشغولة. انتظر حتى يتحرر أحدها "
 "ثم حاول مجددًا."
 
-#: winmm.rc:114
+#: winmm.rc:115
 msgid ""
 "Cannot set the current wave device for recording because it is in use. Wait "
 "until the device is free, and then try again."
@@ -9080,15 +9189,15 @@ msgstr ""
 "لم يتمكن من ضبط جهاز الموجات الحالي للتسجيل لأنه قيد الاستعمال ، انتظر حتى "
 "يتحرر الجهاز ثم حاول مجددًا."
 
-#: winmm.rc:115
+#: winmm.rc:116
 msgid "Any compatible waveform playback device may be used."
 msgstr "يمكن استخدام أي جهاز تشغيل متوافق مص صيغة الموجات."
 
-#: winmm.rc:116
+#: winmm.rc:117
 msgid "Any compatible waveform recording device may be used."
 msgstr "يمكن استخدام أي جهاز تسجيل متوافق مص صيغة الموجات."
 
-#: winmm.rc:117
+#: winmm.rc:118
 msgid ""
 "No wave device that can play files in the current format is installed. Use "
 "the Drivers option to install the wave device."
@@ -9097,14 +9206,14 @@ msgstr ""
 "تبويب المحركات لإعادة تثبيت تعريف محرك الموجات.the Drivers option to install "
 "the wave device."
 
-#: winmm.rc:118
+#: winmm.rc:119
 msgid ""
 "The device you are trying to play to cannot recognize the current file "
 "format."
 msgstr ""
 "الجهاز الذي تحاول التشغيل بواسطته ، لم يتمكن من قراءة صيغة الملف المحدد."
 
-#: winmm.rc:119
+#: winmm.rc:120
 msgid ""
 "No wave device that can record files in the current format is installed. Use "
 "the Drivers option to install the wave device."
@@ -9112,26 +9221,26 @@ msgstr ""
 "جهاز الموجة الموجود الذي يتمكن من التسجيل بهذه الصيغة غير مثبت ، استخدم "
 "تبويب المحركات لإعادة تثبيت تعريف محرك الموجات."
 
-#: winmm.rc:120
+#: winmm.rc:121
 msgid ""
 "The device you are trying to record from cannot recognize the current file "
 "format."
 msgstr "الجهاز الذي تحاول التسجيل منه لم يستطع ضبط صيغة الملف الحالية."
 
-#: winmm.rc:125
+#: winmm.rc:126
 msgid ""
 "The time formats of the \"song pointer\" and SMPTE are mutually exclusive. "
 "You can't use them together."
 msgstr ""
 "صيغة التوقيت في نقطة الاغنية وفي SMPTE متطابقة ، ولا يمكنك استخدامهما معًا."
 
-#: winmm.rc:127
+#: winmm.rc:128
 msgid ""
 "The specified MIDI port is already in use. Wait until it is free; then try "
 "again."
 msgstr "منفذ المقطوعات مستخدم بالفعل ، انتظر حتى تحرر ثم جرب مجددًا"
 
-#: winmm.rc:130
+#: winmm.rc:131
 msgid ""
 "The specified MIDI device is not installed on the system. Use the Drivers "
 "option from the Control Panel to install a MIDI device."
@@ -9139,11 +9248,11 @@ msgstr ""
 "جهاز المقطوعات المحدد ليس مثبتًا على نظامك ، استخدم تبويب المحركات في لوحة "
 "التحكم لتثبيت جهاز المقطوعات."
 
-#: winmm.rc:129
+#: winmm.rc:130
 msgid "An error occurred with the specified port."
 msgstr "حدث خطأ في المنفذ المحدد."
 
-#: winmm.rc:132
+#: winmm.rc:133
 msgid ""
 "All multimedia timers are being used by other applications. Quit one of "
 "these applications; then, try again."
@@ -9151,11 +9260,11 @@ msgstr ""
 "جميع مؤقتات الوسائط مستخدمة بواسطة تطبيقات أخرى . اخرج من تلك التطبيقات ثم "
 "حاول مجددًا."
 
-#: winmm.rc:131
+#: winmm.rc:132
 msgid "The system doesn't have a current MIDI port specified."
 msgstr "لا يمتلك النظام منفذ المقطوعات المحدد."
 
-#: winmm.rc:126
+#: winmm.rc:127
 msgid ""
 "The system has no installed MIDI devices. Use the Drivers option from the "
 "Control Panel to install a MIDI driver."
@@ -9163,15 +9272,15 @@ msgstr ""
 "لا يملك هذا النظام جهازًا يقرأ المقطوعات ، استخدم خيارات المحركات في لوحة "
 "التحكم لتثبيت جهاز المقطوعات."
 
-#: winmm.rc:121
+#: winmm.rc:122
 msgid "There is no display window."
 msgstr "لا يوجد نافذة عرض."
 
-#: winmm.rc:122
+#: winmm.rc:123
 msgid "Could not create or use window."
 msgstr "لم يتمكن من إنشاء أو استخدام النافذة."
 
-#: winmm.rc:123
+#: winmm.rc:124
 msgid ""
 "Cannot read the specified file. Make sure the file is still present, or "
 "check your disk or network connection."
@@ -9179,13 +9288,33 @@ msgstr ""
 "لم يتمكن من قراءة الملف المحدد ، تأكد من أن الملف موجود على القرص ، أو أن "
 "الاتصال لا يزال موجودًا."
 
-#: winmm.rc:124
+#: winmm.rc:125
 msgid ""
 "Cannot write to the specified file. Make sure you have enough disk space or "
 "are still connected to the network."
 msgstr ""
 "لم يتمكن من الكتابة إلى الملف المحدد ، تأكد من امتلاكك للمساحة الكافية على "
 "القرص ، أو أن الاتصال لا يزال موجودًا."
+
+#: winmm.rc:136
+#, fuzzy
+#| msgid "Wine Mono Installer"
+msgid "Wine Sound Mapper"
+msgstr "مُثبّت آلة مونو"
+
+#: winmm.rc:137
+#, fuzzy
+#| msgid "column"
+msgid "Volume"
+msgstr "عمود"
+
+#: winmm.rc:138
+msgid "Master Volume"
+msgstr ""
+
+#: winmm.rc:139
+msgid "Mute"
+msgstr ""
 
 #: winspool.rc:37
 msgid "Print to File"
@@ -9439,7 +9568,7 @@ msgstr "حدثت دوامة أثناء التقاط التحويلات"
 msgid "Referral hop limit exceeded"
 msgstr "تم تجاوز الحد الأقصى للتحويلات"
 
-#: attrib.rc:30 cmd.rc:327
+#: attrib.rc:30 cmd.rc:361
 msgid ""
 "Not Yet Implemented\n"
 "\n"
@@ -9447,7 +9576,7 @@ msgstr ""
 "لم تنفذ بعد\n"
 "\n"
 
-#: attrib.rc:31 cmd.rc:330
+#: attrib.rc:31 cmd.rc:364
 msgid "%1: File Not Found\n"
 msgstr "%1: الملف غير موجود\n"
 
@@ -9499,7 +9628,7 @@ msgstr "تما&ثلية"
 msgid "Digi&tal"
 msgstr "ر&قمية"
 
-#: clock.rc:35 notepad.rc:53 winecfg.rc:301 winefile.rc:63 wordpad.rc:84
+#: clock.rc:35 notepad.rc:53 winecfg.rc:303 winefile.rc:63 wordpad.rc:84
 msgid "&Font..."
 msgstr "ال&خط..."
 
@@ -9528,11 +9657,20 @@ msgid "Clock"
 msgstr "ساعة واين"
 
 #: cmd.rc:40
+#, fuzzy
+#| msgid ""
+#| "CALL <batchfilename> is used within a batch file to execute commands\n"
+#| "from another batch file. When the batch file exits, control returns to\n"
+#| "the file which called it. The CALL command may supply parameters to the\n"
+#| "called procedure.\n"
+#| "\n"
+#| "Changes to default directory, environment variables etc made within a\n"
+#| "called procedure are inherited by the caller.\n"
 msgid ""
-"CALL <batchfilename> is used within a batch file to execute commands\n"
-"from another batch file. When the batch file exits, control returns to\n"
-"the file which called it. The CALL command may supply parameters to the\n"
-"called procedure.\n"
+"CALL <batchfilename> is used within a batch file to execute commands from\n"
+"another batch file. When the batch file exits, control returns to the file\n"
+"which called it. The CALL command may supply parameters to the called\n"
+"procedure.\n"
 "\n"
 "Changes to default directory, environment variables etc made within a\n"
 "called procedure are inherited by the caller.\n"
@@ -9545,7 +9683,7 @@ msgstr ""
 "يمكن بواسطة النداء تغيير الادلة و تطبيق المتغيرات و أي\n"
 "أوامر أخرى مطلوبة بواسطة المنادي .\n"
 
-#: cmd.rc:43
+#: cmd.rc:44
 #, fuzzy
 #| msgid ""
 #| "CD <dir> is the short version of CHDIR. It changes the current\n"
@@ -9557,42 +9695,52 @@ msgstr ""
 "CD <المجلد>\n"
 "هو اختصار لأمر تغيير المجلد حيث انه يقوم بتغيير المجلد الحالي.\n"
 
-#: cmd.rc:44
+#: cmd.rc:47
 #, fuzzy
 #| msgid "CHDIR <dir> changes the current default directory.\n"
 msgid "CHDIR <directory> changes the current default directory.\n"
 msgstr "CHDIR <dir> يغير المجلد الافتراضي الحالي.\n"
 
-#: cmd.rc:46
+#: cmd.rc:50
 msgid "CLS clears the console screen.\n"
 msgstr "CLS يقوم بمسح شاشة الطرفية.\n"
 
-#: cmd.rc:48
+#: cmd.rc:53
 msgid "COPY <filename> copies a file.\n"
 msgstr "COPY <filename> يقوم بنسخ الملفات.\n"
 
-#: cmd.rc:49
+#: cmd.rc:56
 msgid "CTTY changes the input/output device.\n"
 msgstr "CTTY يقوم بتغيير جهاز الإدخال والإخراج.\n"
 
-#: cmd.rc:50
+#: cmd.rc:59
 msgid "DATE shows or changes the system date.\n"
 msgstr "DATE يقوم بإظهار أو تعديل التاريخ.\n"
 
-#: cmd.rc:51
+#: cmd.rc:62
 msgid "DEL <filename> deletes a file or set of files.\n"
 msgstr "DEL <filename> يقوم بحذف ملف أو مجموعة ملفات.\n"
 
-#: cmd.rc:52
+#: cmd.rc:65
 msgid "DIR lists the contents of a directory.\n"
 msgstr "DIR يعرض قائمة بمحتويات المجلد الحالي.\n"
 
-#: cmd.rc:62
+#: cmd.rc:75
+#, fuzzy
+#| msgid ""
+#| "ECHO <string> displays <string> on the current terminal device.\n"
+#| "\n"
+#| "ECHO ON causes all subsequent commands in a batch file to be displayed\n"
+#| "on the terminal device before they are executed.\n"
+#| "\n"
+#| "ECHO OFF reverses the effect of a previous ECHO ON (ECHO is OFF by\n"
+#| "default). The ECHO OFF command can be prevented from displaying by\n"
+#| "preceding it with an @ sign.\n"
 msgid ""
 "ECHO <string> displays <string> on the current terminal device.\n"
 "\n"
-"ECHO ON causes all subsequent commands in a batch file to be displayed\n"
-"on the terminal device before they are executed.\n"
+"ECHO ON causes all subsequent commands in a batch file to be displayed on\n"
+"the terminal device before they are executed.\n"
 "\n"
 "ECHO OFF reverses the effect of a previous ECHO ON (ECHO is OFF by\n"
 "default). The ECHO OFF command can be prevented from displaying by\n"
@@ -9607,11 +9755,11 @@ msgstr ""
 "default). يقوم هذا اﻷمر بحظر عرض الأوامر المنفذة بواسطة المخطوطة\n"
 "والغير مسبوقة بإشارة @.\n"
 
-#: cmd.rc:64
+#: cmd.rc:78
 msgid "ERASE <filename> deletes a file or set of files.\n"
 msgstr "ERASE <filename> يقوم بحذف ملف أو مجموعة ملفات.\n"
 
-#: cmd.rc:71
+#: cmd.rc:85
 #, fuzzy
 #| msgid ""
 #| "The FOR command is used to execute a command for each of a set of files.\n"
@@ -9628,16 +9776,28 @@ msgstr ""
 "\n"
 "الصيغة: FOR %variable IN (set) DO command\n"
 
-#: cmd.rc:83
+#: cmd.rc:97
+#, fuzzy
+#| msgid ""
+#| "The GOTO command transfers execution to another statement within a\n"
+#| "batch file.\n"
+#| "\n"
+#| "The label which is the target of a GOTO may be up to 255 characters\n"
+#| "long but may not include spaces (this is different from other operating\n"
+#| "systems). If two or more identical labels exist in a batch file the\n"
+#| "first one will always be executed. Attempting to GOTO a nonexistent\n"
+#| "label terminates the batch file execution.\n"
+#| "\n"
+#| "GOTO has no effect when used interactively.\n"
 msgid ""
-"The GOTO command transfers execution to another statement within a\n"
-"batch file.\n"
+"The GOTO command transfers execution to another statement within a batch\n"
+"file.\n"
 "\n"
-"The label which is the target of a GOTO may be up to 255 characters\n"
-"long but may not include spaces (this is different from other operating\n"
-"systems). If two or more identical labels exist in a batch file the\n"
-"first one will always be executed. Attempting to GOTO a nonexistent\n"
-"label terminates the batch file execution.\n"
+"The label which is the target of a GOTO may be up to 255 characters long\n"
+"but may not include spaces (this is different from other operating\n"
+"systems). If two or more identical labels exist in a batch file the first\n"
+"one will always be executed. Attempting to GOTO a nonexistent label\n"
+"terminates the batch file execution.\n"
 "\n"
 "GOTO has no effect when used interactively.\n"
 msgstr ""
@@ -9652,7 +9812,7 @@ msgstr ""
 "\n"
 "لا يملك الأمر GOTO أي تأثير عند استخدامه ببيئة غير نشطة.\n"
 
-#: cmd.rc:86
+#: cmd.rc:101
 msgid ""
 "HELP <command> shows brief help details on a topic.\n"
 "HELP without an argument shows all CMD built-in commands.\n"
@@ -9661,7 +9821,7 @@ msgstr ""
 "يقوم بعرض المساعدة لأمر معين ، وفي حال إطلاقه يقوم بعرض المساعدة الخاصة بسطر "
 "الأوامر.\n"
 
-#: cmd.rc:96
+#: cmd.rc:111
 msgid ""
 "IF is used to conditionally execute a command.\n"
 "\n"
@@ -9681,7 +9841,7 @@ msgstr ""
 "في الصيغة الثانية يجب إحاطة كلًا من السلسلتين بعلامات الاقتباس\n"
 "عملية المقارنة حساسة من هذه الناحية.\n"
 
-#: cmd.rc:102
+#: cmd.rc:118
 msgid ""
 "LABEL is used to set a disk volume label.\n"
 "\n"
@@ -9695,21 +9855,31 @@ msgstr ""
 "يتطلب الامر توكيدًا منك بعد اختيارك الاسم الجديد.\n"
 "يمكنك إظهار الاسم الحالي بالأمر VOL.\n"
 
-#: cmd.rc:105
+#: cmd.rc:121
 msgid "MD <name> is the short version of MKDIR. It creates a subdirectory.\n"
 msgstr "MD هي اختصار لـ MKDIR.\n"
 
-#: cmd.rc:106
+#: cmd.rc:123
 msgid "MKDIR <name> creates a subdirectory.\n"
 msgstr "MKDIR <name> يحاول إنشاء مجلد فرعي.\n"
 
-#: cmd.rc:113
+#: cmd.rc:131
+#, fuzzy
+#| msgid ""
+#| "MOVE relocates a file or directory to a new point within the file "
+#| "system.\n"
+#| "\n"
+#| "If the item being moved is a directory then all the files and "
+#| "subdirectories\n"
+#| "below the item are moved as well.\n"
+#| "\n"
+#| "MOVE fails if the old and new locations are on different DOS drive "
+#| "letters.\n"
 msgid ""
 "MOVE relocates a file or directory to a new point within the file system.\n"
 "\n"
-"If the item being moved is a directory then all the files and "
-"subdirectories\n"
-"below the item are moved as well.\n"
+"If the item being moved is a directory then all the files and\n"
+"subdirectories below the item are moved as well.\n"
 "\n"
 "MOVE fails if the old and new locations are on different DOS drive letters.\n"
 msgstr ""
@@ -9721,13 +9891,24 @@ msgstr ""
 "\n"
 "MOVE تفشل عملية النقل في حال كان المصدر و الوجهة ليسا على قرص واحد.\n"
 
-#: cmd.rc:124
+#: cmd.rc:142
+#, fuzzy
+#| msgid ""
+#| "PATH displays or changes the cmd search path.\n"
+#| "\n"
+#| "Entering PATH will display the current PATH setting (initially taken\n"
+#| "from the registry). To change the setting follow the\n"
+#| "PATH command with the new value.\n"
+#| "\n"
+#| "It is also possible to modify the PATH by using the PATH environment\n"
+#| "variable, for example:\n"
+#| "PATH %PATH%;c:\\temp\n"
 msgid ""
 "PATH displays or changes the cmd search path.\n"
 "\n"
-"Entering PATH will display the current PATH setting (initially taken\n"
-"from the registry). To change the setting follow the\n"
-"PATH command with the new value.\n"
+"Entering PATH will display the current PATH setting (initially taken from\n"
+"the registry). To change the setting follow the PATH command with the new\n"
+"value.\n"
 "\n"
 "It is also possible to modify the PATH by using the PATH environment\n"
 "variable, for example:\n"
@@ -9743,19 +9924,49 @@ msgstr ""
 "مع المتغيرات ، مثلًا:\n"
 "PATH %PATH%;c:\\temp\n"
 
-#: cmd.rc:130
+#: cmd.rc:148
+#, fuzzy
+#| msgid ""
+#| "PAUSE displays a message on the screen asking the user to press a key.\n"
+#| "\n"
+#| "It is mainly useful in batch files to allow the user to read the output\n"
+#| "of a previous command before it scrolls off the screen.\n"
 msgid ""
 "PAUSE displays a message on the screen asking the user to press a key.\n"
 "\n"
-"It is mainly useful in batch files to allow the user to read the output\n"
-"of a previous command before it scrolls off the screen.\n"
+"It is mainly useful in batch files to allow the user to read the output of\n"
+"a previous command before it scrolls off the screen.\n"
 msgstr ""
 "PAUSE يقوم بإظهار رسالة تطلب من المستخدم الضغط على مفتاح.\n"
 "\n"
 "هذا الأمر مفيد في ملفات المخطوطات للسماح للمستخدم بقراءة\n"
 "مخرجات الأوامر السابقة قبل تمرير الشاشة.\n"
 
-#: cmd.rc:151
+#: cmd.rc:169
+#, fuzzy
+#| msgid ""
+#| "PROMPT sets the command-line prompt.\n"
+#| "\n"
+#| "The string following the PROMPT command (and the space immediately "
+#| "after)\n"
+#| "appears at the beginning of the line when cmd is waiting for input.\n"
+#| "\n"
+#| "The following character strings have the special meaning shown:\n"
+#| "\n"
+#| "$$    Dollar sign         $_    Linefeed            $b    Pipe sign (|)\n"
+#| "$d    Current date        $e    Escape              $g    > sign\n"
+#| "$l    < sign              $n    Current drive       $p    Current path\n"
+#| "$q    Equal sign          $t    Current time        $v    cmd version\n"
+#| "\n"
+#| "Note that entering the PROMPT command without a prompt-string resets the\n"
+#| "prompt to the default, which is the current directory (which includes "
+#| "the\n"
+#| "current drive letter) followed by a greater-than (>) sign.\n"
+#| "(like a command PROMPT $p$g).\n"
+#| "\n"
+#| "The prompt can also be changed by altering the PROMPT environment "
+#| "variable,\n"
+#| "so the command 'SET PROMPT=text' has the same effect as 'PROMPT text'.\n"
 msgid ""
 "PROMPT sets the command-line prompt.\n"
 "\n"
@@ -9797,35 +10008,57 @@ msgstr ""
 "يمكن أيضًا تعديل التلقينات بواسطة المتغير البيئي PROMT\n"
 "أي أن الأمر 'SET PROMPT=text' يعطي نفس نتيجة 'PROMPT text'.\n"
 
-#: cmd.rc:155
+#: cmd.rc:173
+#, fuzzy
+#| msgid ""
+#| "A command line beginning with REM (followed by a space) performs no\n"
+#| "action, and can therefore be used as a comment in a batch file.\n"
 msgid ""
-"A command line beginning with REM (followed by a space) performs no\n"
-"action, and can therefore be used as a comment in a batch file.\n"
+"A command line beginning with REM (followed by a space) performs no action,\n"
+"and can therefore be used as a comment in a batch file.\n"
 msgstr ""
 "إن أي سطر أمري يبدأ بـ REM متبوعة بمسافة لن يؤدي\n"
 "أي عمل ، ويمكن استعماله كتعليق ضمن المخطوط.\n"
 
-#: cmd.rc:158
+#: cmd.rc:176
 msgid "REN <filename> is the short version of RENAME. It renames a file.\n"
 msgstr "REN هي اختصار لـ RENAME.\n"
 
-#: cmd.rc:159
+#: cmd.rc:178
 msgid "RENAME <filename> renames a file.\n"
 msgstr "RENAME <filename> لإعادة تسمية الملف.\n"
 
-#: cmd.rc:161
+#: cmd.rc:181
 #, fuzzy
 #| msgid "RD <dir> is the short version of RMDIR. It deletes a subdirectory.\n"
 msgid "RD <directory> is the short version of RMDIR. It deletes a directory.\n"
 msgstr "RD هي اختصار لـ RMDIR.\n"
 
-#: cmd.rc:162
+#: cmd.rc:183
 #, fuzzy
 #| msgid "RMDIR <dir> deletes a subdirectory.\n"
 msgid "RMDIR <directory> deletes a directory.\n"
 msgstr "RMDIR <dir> يحذف مجلدًا فرعيًا.\n"
 
-#: cmd.rc:206
+#: cmd.rc:229
+#, fuzzy
+#| msgid ""
+#| "SET displays or changes the cmd environment variables.\n"
+#| "\n"
+#| "SET without parameters shows all of the current environment.\n"
+#| "\n"
+#| "To create or modify an environment variable the syntax is:\n"
+#| "\n"
+#| "SET <variable>=<value>\n"
+#| "\n"
+#| "where <variable> and <value> are character strings. There must be no\n"
+#| "space before the equals sign, nor can the variable name\n"
+#| "have embedded spaces.\n"
+#| "\n"
+#| "Under Wine, the environment of the underlying operating system is\n"
+#| "included into the Win32 environment, there will generally therefore be\n"
+#| "many more values than in a native Win32 implementation. Note that it is\n"
+#| "not possible to affect the operating system environment from within cmd.\n"
 msgid ""
 "SET displays or changes the cmd environment variables.\n"
 "\n"
@@ -9835,14 +10068,13 @@ msgid ""
 "\n"
 "SET <variable>=<value>\n"
 "\n"
-"where <variable> and <value> are character strings. There must be no\n"
-"space before the equals sign, nor can the variable name\n"
-"have embedded spaces.\n"
+"where <variable> and <value> are character strings. There must be no space\n"
+"before the equals sign, nor can the variable name have embedded spaces.\n"
 "\n"
-"Under Wine, the environment of the underlying operating system is\n"
-"included into the Win32 environment, there will generally therefore be\n"
-"many more values than in a native Win32 implementation. Note that it is\n"
-"not possible to affect the operating system environment from within cmd.\n"
+"Under Wine, the environment of the underlying operating system is included\n"
+"into the Win32 environment, there will generally therefore be many more\n"
+"values than in a native Win32 implementation. Note that it is not possible\n"
+"to affect the operating system environment from within cmd.\n"
 msgstr ""
 "SET يقوم بإظهار او تغيير المتغيرات البيئية في سطر الاوامر.\n"
 "\n"
@@ -9861,44 +10093,79 @@ msgstr ""
 "بالغضافة إلى قيم Win32 الأصلية ، مع ملاحظة عدم الإمكانية\n"
 "على التأثير على بيئة النظام من خلال سطر أوامر واين.\n"
 
-#: cmd.rc:211
+#: cmd.rc:234
+#, fuzzy
+#| msgid ""
+#| "SHIFT is used in a batch file to remove one parameter from the head of\n"
+#| "the list, so parameter 2 becomes parameter 1 and so on. It has no effect\n"
+#| "if called from the command line.\n"
 msgid ""
-"SHIFT is used in a batch file to remove one parameter from the head of\n"
-"the list, so parameter 2 becomes parameter 1 and so on. It has no effect\n"
-"if called from the command line.\n"
+"SHIFT is used in a batch file to remove one parameter from the head of the\n"
+"list, so parameter 2 becomes parameter 1 and so on. It has no effect if\n"
+"called from the command line.\n"
 msgstr ""
 "SHIFT يستخدم هذا الأمر في المخطوطات لحذف معامل من رأس القائمة وحتى موضعه\n"
 "مثلًا استبدال المعامل 1 بالمعامل 2 و هكذا ، مع ملاحظة أن الأمر .\n"
 "لا يملك اي تأثير إذا استخدم مباشرة دون مخطوطة.\n"
 
-#: cmd.rc:188 start.rc:53
+#: cmd.rc:212 start.rc:56
+#, fuzzy
+#| msgid ""
+#| "Start a program, or open a document in the program normally used for "
+#| "files with that suffix.\n"
+#| "Usage:\n"
+#| "start [options] program_filename [...]\n"
+#| "start [options] document_filename\n"
+#| "\n"
+#| "Options:\n"
+#| "\"title\"      Specifies the title of the child windows.\n"
+#| "/d directory Start the program in the specified directory.\n"
+#| "/b           Don't create a new console for the program.\n"
+#| "/i           Start the program with fresh environment variables.\n"
+#| "/min         Start the program minimized.\n"
+#| "/max         Start the program maximized.\n"
+#| "/low         Start the program in the idle priority class.\n"
+#| "/normal      Start the program in the normal priority class.\n"
+#| "/high        Start the program in the high priority class.\n"
+#| "/realtime    Start the program in the realtime priority class.\n"
+#| "/abovenormal Start the program in the abovenormal priority class.\n"
+#| "/belownormal Start the program in the belownormal priority class.\n"
+#| "/node n      Start the program on the specified NUMA node.\n"
+#| "/affinity mask Start the program with the specified affinity mask.\n"
+#| "/wait        Wait for the started program to finish, then exit with its "
+#| "exit code.\n"
+#| "/unix        Use a Unix filename and start the file like windows "
+#| "explorer.\n"
+#| "/ProgIDOpen  Open a document using the specified progID.\n"
+#| "/?           Display this help and exit.\n"
 msgid ""
-"Start a program, or open a document in the program normally used for files "
+"Start a program, or open a document in the program normally used for files\n"
 "with that suffix.\n"
 "Usage:\n"
 "start [options] program_filename [...]\n"
 "start [options] document_filename\n"
 "\n"
 "Options:\n"
-"\"title\"      Specifies the title of the child windows.\n"
-"/d directory Start the program in the specified directory.\n"
-"/b           Don't create a new console for the program.\n"
-"/i           Start the program with fresh environment variables.\n"
-"/min         Start the program minimized.\n"
-"/max         Start the program maximized.\n"
-"/low         Start the program in the idle priority class.\n"
-"/normal      Start the program in the normal priority class.\n"
-"/high        Start the program in the high priority class.\n"
-"/realtime    Start the program in the realtime priority class.\n"
-"/abovenormal Start the program in the abovenormal priority class.\n"
-"/belownormal Start the program in the belownormal priority class.\n"
-"/node n      Start the program on the specified NUMA node.\n"
+"\"title\"        Specifies the title of the child windows.\n"
+"/d directory   Start the program in the specified directory.\n"
+"/b             Don't create a new console for the program.\n"
+"/i             Start the program with fresh environment variables.\n"
+"/min           Start the program minimized.\n"
+"/max           Start the program maximized.\n"
+"/low           Start the program in the idle priority class.\n"
+"/normal        Start the program in the normal priority class.\n"
+"/high          Start the program in the high priority class.\n"
+"/realtime      Start the program in the realtime priority class.\n"
+"/abovenormal   Start the program in the abovenormal priority class.\n"
+"/belownormal   Start the program in the belownormal priority class.\n"
+"/node n        Start the program on the specified NUMA node.\n"
 "/affinity mask Start the program with the specified affinity mask.\n"
-"/wait        Wait for the started program to finish, then exit with its exit "
-"code.\n"
-"/unix        Use a Unix filename and start the file like windows explorer.\n"
-"/ProgIDOpen  Open a document using the specified progID.\n"
-"/?           Display this help and exit.\n"
+"/wait          Wait for the started program to finish, then exit with its\n"
+"exit code.\n"
+"/unix          Use a Unix filename and start the file like windows\n"
+"explorer.\n"
+"/ProgIDOpen    Open a document using the specified progID.\n"
+"/?             Display this help and exit.\n"
 msgstr ""
 "يقوم ببدء برنامج أو فتح مستند بالبرنامج الذي يفتحه كملحق.\n"
 "الاستخدام:\n"
@@ -9926,24 +10193,28 @@ msgstr ""
 "/ProgIDOpen  افتح المستند باستخدام معرف برنامجي محدد.\n"
 "/?           أظهر هذه المساعدة ثم اخرج.\n"
 
-#: cmd.rc:213
+#: cmd.rc:237
 msgid "TIME sets or shows the current system time.\n"
 msgstr "TIME لعرض أو ضبط توقيت النظام.\n"
 
-#: cmd.rc:215
+#: cmd.rc:240
 msgid "TITLE <string> sets the window title for the cmd window.\n"
 msgstr "TITLE <string> لضبط عنوان نافذة سطر الأوامر.\n"
 
-#: cmd.rc:219
+#: cmd.rc:244
+#, fuzzy
+#| msgid ""
+#| "TYPE <filename> copies <filename> to the console device (or elsewhere\n"
+#| "if redirected). No check is made that the file is readable text.\n"
 msgid ""
-"TYPE <filename> copies <filename> to the console device (or elsewhere\n"
-"if redirected). No check is made that the file is readable text.\n"
+"TYPE <filename> copies <filename> to the console device (or elsewhere if\n"
+"redirected). No check is made that the file is readable text.\n"
 msgstr ""
 "TYPE <filename>\n"
 "يقوم بعرض ملف معين على سطر الاوامر ( أو بمكان آخر ) دون التحقق ما إذا كان "
 "الملف نصيًا.\n"
 
-#: cmd.rc:228
+#: cmd.rc:253
 msgid ""
 "VERIFY is used to set, clear or test the verify flag. Valid forms are:\n"
 "\n"
@@ -9961,23 +10232,27 @@ msgstr ""
 "\n"
 "إشارة التحقق لا تملك عملا في واين.\n"
 
-#: cmd.rc:231
+#: cmd.rc:256
 msgid "VER displays the version of cmd you are running.\n"
 msgstr "VER يظهر إصدارة سطر الأوامر الحالية.\n"
 
-#: cmd.rc:233
+#: cmd.rc:259
 msgid "VOL shows the volume label of a disk device.\n"
 msgstr "VOL يظهر اسم القسم في القرص.\n"
 
-#: cmd.rc:237
+#: cmd.rc:263
+#, fuzzy
+#| msgid ""
+#| "ENDLOCAL ends localization of environment changes in a batch file\n"
+#| "which were introduced by a preceding SETLOCAL.\n"
 msgid ""
-"ENDLOCAL ends localization of environment changes in a batch file\n"
-"which were introduced by a preceding SETLOCAL.\n"
+"ENDLOCAL ends localization of environment changes in a batch file which\n"
+"were introduced by a preceding SETLOCAL.\n"
 msgstr ""
 "ENDLOCAL ينهي عملية أقلمة المتغيرات البيئية من مخطوطة\n"
 "و التي قدمة بواسطة SETLOCAL.\n"
 
-#: cmd.rc:245
+#: cmd.rc:271
 msgid ""
 "SETLOCAL starts localization of environment changes in a batch file.\n"
 "\n"
@@ -9993,23 +10268,33 @@ msgstr ""
 "ياتي أولًا ، وفي هذه النقطة المتغيرات البيئية السابقة\n"
 "سيعاد تحميلها.\n"
 
-#: cmd.rc:248
+#: cmd.rc:275
 #, fuzzy
 #| msgid ""
 #| "PUSHD <directoryname> saves the current directory onto a\n"
 #| "stack, and then changes the current directory to the supplied one.\n"
 msgid ""
-"PUSHD <directory> saves the current directory onto a\n"
-"stack, and then changes the current directory to the supplied one.\n"
+"PUSHD <directory> saves the current directory onto a stack, and then\n"
+"changes the current directory to the supplied one.\n"
 msgstr ""
 "PUSHD <directoryname> يحفظ الدليل الحالي في حافظته\n"
 "ثم ينتقل إلى الدليل المعطى.\n"
 
-#: cmd.rc:250
+#: cmd.rc:278
 msgid "POPD changes current directory to the last one saved with PUSHD.\n"
 msgstr "POPD يقوم بتغيير المجلد الحالي إلى نظيره المحفوظ بواسطة PUSHD.\n"
 
-#: cmd.rc:258
+#: cmd.rc:288
+#, fuzzy
+#| msgid ""
+#| "ASSOC shows or modifies file extension associations.\n"
+#| "\n"
+#| "Syntax: ASSOC [.ext[=[fileType]]]\n"
+#| "\n"
+#| "ASSOC without parameters displays current file associations.\n"
+#| "If used with only a file extension, displays the current association.\n"
+#| "Specifying no file type after the equal sign removes the current "
+#| "association, if any.\n"
 msgid ""
 "ASSOC shows or modifies file extension associations.\n"
 "\n"
@@ -10017,7 +10302,7 @@ msgid ""
 "\n"
 "ASSOC without parameters displays current file associations.\n"
 "If used with only a file extension, displays the current association.\n"
-"Specifying no file type after the equal sign removes the current "
+"Specifying no file type after the equal sign removes the current\n"
 "association, if any.\n"
 msgstr ""
 "ASSOC يقوم بعرض او تعديل اقترانات أنواع الملفات.\n"
@@ -10029,17 +10314,29 @@ msgstr ""
 "في حال عدم كتابة أي شيء بعد إشارة المساواة سقوم بحذف الاقتران الحالي إن كان "
 "موجودا.\n"
 
-#: cmd.rc:269
+#: cmd.rc:300
+#, fuzzy
+#| msgid ""
+#| "FTYPE shows or modifies open commands associated with file types.\n"
+#| "\n"
+#| "Syntax: FTYPE [fileType[=[openCommand]]]\n"
+#| "\n"
+#| "Without parameters, shows the file types for which open command strings "
+#| "are currently defined.\n"
+#| "If used with only a file type, displays the associated open command "
+#| "string, if any.\n"
+#| "Specifying no open command after the equal sign removes the command "
+#| "string associated to the specified file type.\n"
 msgid ""
 "FTYPE shows or modifies open commands associated with file types.\n"
 "\n"
 "Syntax: FTYPE [fileType[=[openCommand]]]\n"
 "\n"
-"Without parameters, shows the file types for which open command strings are "
+"Without parameters, shows the file types for which open command strings are\n"
 "currently defined.\n"
-"If used with only a file type, displays the associated open command string, "
+"If used with only a file type, displays the associated open command string,\n"
 "if any.\n"
-"Specifying no open command after the equal sign removes the command string "
+"Specifying no open command after the equal sign removes the command string\n"
 "associated to the specified file type.\n"
 msgstr ""
 "FTYPE يقوم بإظهار وتعديل أوامر الفتح المقترنة بأنواع الملفات، وصيغته.\n"
@@ -10053,29 +10350,38 @@ msgstr ""
 "في حال عدم وضع أي معامل بعد إشارة المساواة = ستقوم الاداة بحذف أمر الاقتران "
 "الموجود للنوع المحدد من الملفات.\n"
 
-#: cmd.rc:271
+#: cmd.rc:303
 msgid "MORE displays output of files or piped input in pages.\n"
 msgstr "MORE يقوم بعرض المخرجات سواء من ملف أو من القنوات في صفحات.\n"
 
-#: cmd.rc:275
+#: cmd.rc:308
+#, fuzzy
+#| msgid ""
+#| "CHOICE displays a text and waits, until the User\n"
+#| "presses an allowed Key from a selectable list.\n"
+#| "CHOICE is mainly used to build a menu selection in a batch file.\n"
 msgid ""
-"CHOICE displays a text and waits, until the User\n"
-"presses an allowed Key from a selectable list.\n"
+"CHOICE displays a text and waits, until the User presses an allowed Key\n"
+"from a selectable list.\n"
 "CHOICE is mainly used to build a menu selection in a batch file.\n"
 msgstr ""
 "CHOICE يقوم بعرض النصوص ثم ينتظر المستخدم حتى\n"
 "يضغط المفتاح المتاح من قائمة الاختيارات.\n"
 "CHOICE تستخدم هذه الاداة بشكل رئيسي لبناء قائمة اختيارات ضمن المخطوطة.\n"
 
-#: cmd.rc:279
+#: cmd.rc:312
+#, fuzzy
+#| msgid ""
+#| "EXIT terminates the current command session and returns\n"
+#| "to the operating system or shell from which you invoked cmd.\n"
 msgid ""
-"EXIT terminates the current command session and returns\n"
-"to the operating system or shell from which you invoked cmd.\n"
+"EXIT terminates the current command session and returns to the operating\n"
+"system or shell from which you invoked cmd.\n"
 msgstr ""
 "EXIT يقوم بإنهاء جلسة الأوامر الحالية ، ويعود إلى نظام\n"
 "التشغيل أو إلى الصدفة التي شغلت منها سطر الأوامر.\n"
 
-#: cmd.rc:317
+#: cmd.rc:351
 msgid ""
 "CMD built-in commands are:\n"
 "ASSOC\t\tShow or modify file extension associations\n"
@@ -10155,112 +10461,112 @@ msgstr ""
 "\n"
 "أدخل HELP <أمر> لعرض معلومات أكثر عن الأوامر المدرجة أعلاه.\n"
 
-#: cmd.rc:319
+#: cmd.rc:353
 msgid "Are you sure?"
 msgstr "هل أنت متاكد ؟"
 
-#: cmd.rc:320 xcopy.rc:43
+#: cmd.rc:354 reg.rc:50 xcopy.rc:43
 msgctxt "Yes key"
 msgid "Y"
 msgstr "Y"
 
-#: cmd.rc:321 xcopy.rc:44
+#: cmd.rc:355 reg.rc:51 xcopy.rc:44
 msgctxt "No key"
 msgid "N"
 msgstr "N"
 
-#: cmd.rc:322
+#: cmd.rc:356
 #, fuzzy
 #| msgid "File association missing for extension '%1'\n"
 msgid "File association missing for extension %1\n"
 msgstr "لا يتوفر اقتران مع هذا النوع من الملفات '%1'\n"
 
-#: cmd.rc:323
+#: cmd.rc:357
 msgid "No open command associated with file type '%1'\n"
 msgstr "لا يوجد أمر مفتوح مقترن بنوع الملفات '%1'\n"
 
-#: cmd.rc:324
+#: cmd.rc:358
 msgid "Overwrite %1?"
 msgstr "الكتابة فوق %1 ؟"
 
-#: cmd.rc:325
+#: cmd.rc:359
 msgid "More..."
 msgstr "أكثر..."
 
-#: cmd.rc:326
+#: cmd.rc:360
 msgid "Line in Batch processing possibly truncated. Using:\n"
 msgstr "الخط المعالج في المخطوطة يبدو مقطوعًا . استخدم:\n"
 
-#: cmd.rc:328
+#: cmd.rc:362
 msgid "Argument missing\n"
 msgstr "نقص في الإدخالات\n"
 
-#: cmd.rc:329
+#: cmd.rc:363
 msgid "Syntax error\n"
 msgstr "خطأ بنيوي\n"
 
-#: cmd.rc:331
+#: cmd.rc:365
 msgid "No help available for %1\n"
 msgstr "لا يوجد مساعدة في %1\n"
 
-#: cmd.rc:332
+#: cmd.rc:366
 msgid "Target to GOTO not found\n"
 msgstr "الهدف الذي ترغب في الذهاب إليه غير موجود\n"
 
-#: cmd.rc:333
+#: cmd.rc:367
 msgid "Current Date is %1\n"
 msgstr "التاريخ الحالي هو %1\n"
 
-#: cmd.rc:334
+#: cmd.rc:368
 msgid "Current Time is %1\n"
 msgstr "التوقيت الحالي هو %1\n"
 
-#: cmd.rc:335
+#: cmd.rc:369
 msgid "Enter new date: "
 msgstr "أدخل التاريخ الجديد: "
 
-#: cmd.rc:336
+#: cmd.rc:370
 msgid "Enter new time: "
 msgstr "أدخل التوقيت الجديد: "
 
-#: cmd.rc:337
+#: cmd.rc:371
 msgid "Environment variable %1 not defined\n"
 msgstr "متغير البيئة %1 غير معرف\n"
 
-#: cmd.rc:338 xcopy.rc:41
+#: cmd.rc:372 xcopy.rc:41
 msgid "Failed to open '%1'\n"
 msgstr "فشل فتح '%1'\n"
 
-#: cmd.rc:339
+#: cmd.rc:373
 msgid "Cannot call batch label outside of a batch script\n"
 msgstr "لم يتمكن من استدعاء هذا الاسم خارج المخطوطة\n"
 
-#: cmd.rc:340 xcopy.rc:45
+#: cmd.rc:374 xcopy.rc:45
 msgctxt "All key"
 msgid "A"
 msgstr "A"
 
-#: cmd.rc:341
+#: cmd.rc:375
 msgid "Delete %1?"
 msgstr "احذف %1 ؟"
 
-#: cmd.rc:342
+#: cmd.rc:376
 msgid "Echo is %1\n"
 msgstr "الصدى هو %1\n"
 
-#: cmd.rc:343
+#: cmd.rc:377
 msgid "Verify is %1\n"
 msgstr "التحقق هو %1\n"
 
-#: cmd.rc:344
+#: cmd.rc:378
 msgid "Verify must be ON or OFF\n"
 msgstr "تحقق حيث انها يجب ان تكون مشغلة أو مطفأة\n"
 
-#: cmd.rc:345
+#: cmd.rc:379
 msgid "Parameter error\n"
 msgstr "خطأ في المعامل\n"
 
-#: cmd.rc:346
+#: cmd.rc:380
 msgid ""
 "Volume Serial Number is %1!04x!-%2!04x!\n"
 "\n"
@@ -10268,72 +10574,72 @@ msgstr ""
 "الرقم التسلسلي للقسم هو %1!04x!-%2!04x!\n"
 "\n"
 
-#: cmd.rc:347
+#: cmd.rc:381
 msgid "Volume label (11 characters, <Enter> for none)?"
 msgstr "اسم القسم ( 11 محرفًا ) أو أضغط مفتاح الإدخال لتركه فارغًا ؟"
 
-#: cmd.rc:348
+#: cmd.rc:382
 msgid "PATH not found\n"
 msgstr "المسار غير موجود\n"
 
-#: cmd.rc:349
+#: cmd.rc:383
 msgid "Press any key to continue... "
 msgstr "اضغط أي مفتاح للاستمرار... "
 
-#: cmd.rc:350
+#: cmd.rc:384
 msgid "Wine Command Prompt"
 msgstr "سطر أوامر واين"
 
-#: cmd.rc:351
+#: cmd.rc:385
 msgid "Microsoft Windows %1!S!\n"
 msgstr ""
 
-#: cmd.rc:352
+#: cmd.rc:386
 msgid "More? "
 msgstr "إضافي؟ "
 
-#: cmd.rc:353
+#: cmd.rc:387
 msgid "The input line is too long.\n"
 msgstr "سطر الإدخال طويل جدًا.\n"
 
-#: cmd.rc:354
+#: cmd.rc:388
 msgid "Volume in drive %1!c! is %2\n"
 msgstr "القسم الموجود في المحرك %1!c! هو %2\n"
 
-#: cmd.rc:355
+#: cmd.rc:389
 msgid "Volume in drive %1!c! has no label.\n"
 msgstr "القسم الموجود في المحرك %1!c! لا يملك اسمًا.\n"
 
-#: cmd.rc:356
+#: cmd.rc:390 reg.rc:49
 msgid " (Yes|No)"
 msgstr " (Yes|No)"
 
-#: cmd.rc:357
+#: cmd.rc:391
 msgid " (Yes|No|All)"
 msgstr " (Yes|No|All)"
 
-#: cmd.rc:358
+#: cmd.rc:392
 msgid ""
 "Can't recognize '%1' as an internal or external command, or batch script.\n"
 msgstr "لا يمكن استكشاف '%1' كأمر داخلي أو خارجي و لا حتى مخطوطة.\n"
 
-#: cmd.rc:359
+#: cmd.rc:393
 msgid "Division by zero error.\n"
 msgstr "خطأ القسمة على الصفر.\n"
 
-#: cmd.rc:360
+#: cmd.rc:394
 msgid "Expected an operand.\n"
 msgstr "معمول متوقع.\n"
 
-#: cmd.rc:361
+#: cmd.rc:395
 msgid "Expected an operator.\n"
 msgstr "عامل متوقع.\n"
 
-#: cmd.rc:362
+#: cmd.rc:396
 msgid "Mismatch in parentheses.\n"
 msgstr "عدم تطابق في المعترضات .\n"
 
-#: cmd.rc:363
+#: cmd.rc:397
 msgid ""
 "Badly formed number - must be one of decimal (12),\n"
 " hexadecimal (0x34) or octal (056).\n"
@@ -10444,6 +10750,12 @@ msgstr "البوابة الافتراضية"
 #: ipconfig.rc:50
 msgid "IPv6 address"
 msgstr "عنوان IP الجيل السادس"
+
+#: msinfo32.rc:28
+#, fuzzy
+#| msgid "System Configuration"
+msgid "System Information"
+msgstr "إعدادات النظام"
 
 #: net.rc:30
 msgid ""
@@ -10796,42 +11108,42 @@ msgstr "الأ&على:"
 msgid "Encoding:"
 msgstr "الترميز:"
 
-#: notepad.rc:132 wordpad.rc:281
+#: notepad.rc:132 wordpad.rc:289
 msgctxt "accelerator Select All"
 msgid "A"
 msgstr "A"
 
-#: notepad.rc:133 wordpad.rc:283
+#: notepad.rc:133 wordpad.rc:291
 msgctxt "accelerator Copy"
 msgid "C"
 msgstr "C"
 
-#: notepad.rc:134 regedit.rc:323 wordpad.rc:279
+#: notepad.rc:134 regedit.rc:323 wordpad.rc:287
 msgctxt "accelerator Find"
 msgid "F"
 msgstr "F"
 
-#: notepad.rc:135 wordpad.rc:280
+#: notepad.rc:135 wordpad.rc:288
 msgctxt "accelerator Replace"
 msgid "H"
 msgstr "H"
 
-#: notepad.rc:136 wordpad.rc:289
+#: notepad.rc:136 wordpad.rc:297
 msgctxt "accelerator New"
 msgid "N"
 msgstr "N"
 
-#: notepad.rc:137 wordpad.rc:290
+#: notepad.rc:137 wordpad.rc:298
 msgctxt "accelerator Open"
 msgid "O"
 msgstr "O"
 
-#: notepad.rc:138 regedit.rc:324 wordpad.rc:292
+#: notepad.rc:138 regedit.rc:324 wordpad.rc:300
 msgctxt "accelerator Print"
 msgid "P"
 msgstr "P"
 
-#: notepad.rc:139 wordpad.rc:291
+#: notepad.rc:139 wordpad.rc:299
 msgctxt "accelerator Save"
 msgid "S"
 msgstr "S"
@@ -10841,12 +11153,12 @@ msgctxt "accelerator Paste"
 msgid "V"
 msgstr "V"
 
-#: notepad.rc:141 wordpad.rc:282
+#: notepad.rc:141 wordpad.rc:290
 msgctxt "accelerator Cut"
 msgid "X"
 msgstr "X"
 
-#: notepad.rc:142 wordpad.rc:284
+#: notepad.rc:142 wordpad.rc:292
 msgctxt "accelerator Undo"
 msgid "Z"
 msgstr "Z"
@@ -10939,10 +11251,6 @@ msgstr "اعدادات ال&نظام"
 msgid "&Run the Registry Editor"
 msgstr "ت&شغيل محرر السجل"
 
-#: oleview.rc:40
-msgid "&Object"
-msgstr "الع&نصر"
-
 #: oleview.rc:42
 msgid "&CoCreateInstance Flag"
 msgstr "علامات ن&صفية الإنشاء"
@@ -10995,11 +11303,11 @@ msgstr "وضع الخبراء"
 msgid "&Hidden component categories"
 msgstr "تصن&يف المحتويات المخفية"
 
-#: oleview.rc:67 oleview.rc:89 winefile.rc:65 wordpad.rc:71 wordpad.rc:264
+#: oleview.rc:67 oleview.rc:89 winefile.rc:65 wordpad.rc:71 wordpad.rc:272
 msgid "&Toolbar"
 msgstr "&شريط الأدوات"
 
-#: oleview.rc:68 oleview.rc:90 winefile.rc:67 wordpad.rc:74 wordpad.rc:267
+#: oleview.rc:68 oleview.rc:90 winefile.rc:67 wordpad.rc:74 wordpad.rc:275
 msgid "&Status Bar"
 msgstr "ش&ريط الحالة"
 
@@ -11476,19 +11784,20 @@ msgstr "ملفات الرموز"
 msgid "Icons (*.ico)"
 msgstr "الرموز (*.ico)"
 
-#: reg.rc:30
+#: reg.rc:35
 msgid ""
-"The syntax of this command is:\n"
+"Usage:\n"
+"  REG [operation] [parameters]\n"
 "\n"
-"REG [ ADD | DELETE | QUERY ]\n"
-"REG command /?\n"
+"Supported operations:\n"
+"  ADD | DELETE | QUERY\n"
+"\n"
+"For help on a specific operation, type:\n"
+"  REG [operation] /?\n"
+"\n"
 msgstr ""
-"صيغة هذا اﻷمر هي :\n"
-"\n"
-"REG [ ADD | DELETE | QUERY ]\n"
-"REG أمر /?\n"
 
-#: reg.rc:31
+#: reg.rc:36
 msgid ""
 "REG ADD key_name [/v value_name | /ve] [/t type] [/s separator] [/d data] [/"
 "f]\n"
@@ -11496,34 +11805,137 @@ msgstr ""
 "REG ADD اسم المفتاح [/v اسم القيمة | /ve] [/t نوعها] [/s الفاصل] [/d "
 "البيانات] [/f]\n"
 
-#: reg.rc:32
+#: reg.rc:37
 msgid "REG DELETE key_name [/v value_name | /ve | /va] [/f]\n"
 msgstr "REG DELETE اسم المفتاح [/v اسم القيمة | /ve | /va] [/f]\n"
 
-#: reg.rc:33
+#: reg.rc:38
 msgid "REG QUERY key_name [/v value_name | /ve] [/s]\n"
 msgstr "REG QUERY اسم المفتاح [/v اسم القيمة | /ve] [/s]\n"
 
-#: reg.rc:34
+#: reg.rc:39
 msgid "The operation completed successfully\n"
 msgstr "تمت العملية بنجاح\n"
 
-#: reg.rc:35
-msgid "Error: Invalid key name\n"
+#: reg.rc:40
+#, fuzzy
+#| msgid "Error: Invalid key name\n"
+msgid "reg: Invalid key name\n"
 msgstr "خطأ : اسم المفتاح غير سليم\n"
 
-#: reg.rc:36
-msgid "Error: Invalid command line parameters\n"
+#: reg.rc:41
+#, fuzzy
+#| msgid "Error: Invalid command line parameters\n"
+msgid "reg: Invalid command line parameters\n"
 msgstr "خطأ : معاملات سطر الاوامر غير سليمة\n"
 
-#: reg.rc:37
-msgid "Error: Unable to add keys to remote machine\n"
+#: reg.rc:42
+#, fuzzy
+#| msgid "Error: Unable to add keys to remote machine\n"
+msgid "reg: Unable to access remote machine\n"
 msgstr "خطأ : تعذر إضافة المفاتيح للجهاز البعيد\n"
 
-#: reg.rc:38
+#: reg.rc:43
+#, fuzzy
+#| msgid ""
+#| "Error: The system was unable to find the specified registry key or value\n"
 msgid ""
-"Error: The system was unable to find the specified registry key or value\n"
+"reg: The system was unable to find the specified registry key or value\n"
 msgstr "خطأ : فشل النظام في العثور على المفتاح أو القيمة المحددة\n"
+
+#: reg.rc:44
+#, fuzzy
+#| msgid "Unsupported type.\n"
+msgid "reg: Unsupported registry data type [%1]\n"
+msgstr "النوع غير مدعوم.\n"
+
+#: reg.rc:45
+msgid "reg: The option [/d] must be followed by a valid integer\n"
+msgstr ""
+
+#: reg.rc:46
+msgid "reg: The option [/d] must be followed by a valid hexadecimal value\n"
+msgstr ""
+
+#: reg.rc:47
+msgid "reg: Unhandled registry data type [/t 0x%1!x!, /d %2]\n"
+msgstr ""
+
+#: reg.rc:48
+#, fuzzy
+#| msgid "The specified file already exists. Do you want to replace it?"
+msgid "The registry value '%1' already exists. Do you want to overwrite it?"
+msgstr "الملف المحدد موجود بالفعل ، هل ترغب باستبداله ؟"
+
+#: reg.rc:52
+msgid "The registry operation was cancelled\n"
+msgstr ""
+
+#: reg.rc:53 regedit.rc:204
+msgid "(Default)"
+msgstr "(الافتراضي)"
+
+#: reg.rc:54
+#, fuzzy
+#| msgid "Are you sure you want to delete these values?"
+msgid "Are you sure you want to delete the registry value '%1'?"
+msgstr "هل أنت متأكد من رغبتك في حذف هذه القيم ؟"
+
+#: reg.rc:55
+#, fuzzy
+#| msgid "Are you sure you want to delete value '%s'?"
+msgid "Are you sure you want to delete all registry values in '%1'?"
+msgstr "هل أنت متأكد من رغبتك في حذف القيمة '%s' ؟"
+
+#: reg.rc:56
+#, fuzzy
+#| msgid "Are you sure you want to delete '%1'?"
+msgid "Are you sure you want to delete the registry key '%1'?"
+msgstr "هل أنت متأكد من رغبتك في حذف '%1' ؟"
+
+#: reg.rc:57
+msgid "reg: The option [/d] must be followed by a valid string\n"
+msgstr ""
+
+#: reg.rc:58
+msgid ""
+"reg: Unable to delete all registry values in '%1'. An unexpected error "
+"occurred.\n"
+msgstr ""
+
+#: reg.rc:59
+msgid ""
+"reg: Unable to complete the specified operation. An unexpected error "
+"occurred.\n"
+msgstr ""
+
+#: reg.rc:60
+msgid "Search complete. Number of matches found: %1!d!\n"
+msgstr ""
+
+#: reg.rc:61
+#, fuzzy
+#| msgid "Error: Invalid key name\n"
+msgid "reg: Invalid syntax. "
+msgstr "خطأ : اسم المفتاح غير سليم\n"
+
+#: reg.rc:62
+#, fuzzy
+#| msgid "Error: Invalid option '%c'.\n"
+msgid "reg: Invalid option [%1]. "
+msgstr "خطأ: خيار عير سليم '%c'.\n"
+
+#: reg.rc:63
+msgid "Type \"REG /?\" for help.\n"
+msgstr ""
+
+#: reg.rc:64
+msgid "Type \"REG %1 /?\" for help.\n"
+msgstr ""
+
+#: reg.rc:65 regedit.rc:205
+msgid "(value not set)"
+msgstr "(القيمة غير مضبوطة)"
 
 #: regedit.rc:34
 msgid "&Registry"
@@ -11726,14 +12138,6 @@ msgstr "الملفات التسجيلية (*.reg)"
 msgid "Win9x/NT4 Registry files (REGEDIT4)"
 msgstr "الملفات التسجيلية من الجيل الرابع win9x/nt4"
 
-#: regedit.rc:204
-msgid "(Default)"
-msgstr "(الافتراضي)"
-
-#: regedit.rc:205
-msgid "(value not set)"
-msgstr "(القيمة غير مضبوطة)"
-
 #: regedit.rc:206
 msgid "(cannot display value)"
 msgstr "(القيمة غير قابلة للعرض)"
@@ -11741,6 +12145,149 @@ msgstr "(القيمة غير قابلة للعرض)"
 #: regedit.rc:207
 msgid "(unknown %d)"
 msgstr "(%d غير معروف)"
+
+#: regedit.rc:359
+msgid ""
+"Usage:\n"
+"  regedit [options] [filename] [reg_key]\n"
+"\n"
+"Options:\n"
+"  [no option]    Launch the graphical version of this program.\n"
+"  /L:system.dat  The location of the system.dat file to be modified.\n"
+"                 Compatible with any other switch. Ignored.\n"
+"  /R:user.dat    The location of the user.dat file to be modified.\n"
+"                 Compatible with any other switch. Ignored.\n"
+"  /C             Import the contents of a registry file.\n"
+"  /D             Delete a specified registry key.\n"
+"  /E             Export the contents of a specified registry key to a file.\n"
+"                 If no key is specified, the entire registry is exported.\n"
+"  /S             Silent mode. No messages will be displayed.\n"
+"  /V             Launch the GUI in advanced mode. Ignored.\n"
+"  /?             Display this information and exit.\n"
+"  [filename]     The location of the file containing registry information "
+"to\n"
+"                 be imported. When used with [/E], this option specifies "
+"the\n"
+"                 file location where registry information will be exported.\n"
+"  [reg_key]      The registry key to be modified.\n"
+"\n"
+"Usage examples:\n"
+"  regedit \"import.reg\"\n"
+"  regedit /E \"export.reg\" \"HKEY_CURRENT_USER\\Console\"\n"
+"  regedit /D \"HKEY_LOCAL_MACHINE\\Error\\Path\"\n"
+msgstr ""
+
+#: regedit.rc:360
+msgid "regedit: Invalid or unrecognized switch [%1]\n"
+msgstr ""
+
+#: regedit.rc:361
+msgid "Type \"regedit /?\" for help.\n"
+msgstr ""
+
+#: regedit.rc:362
+#, fuzzy
+#| msgid "No command was specified."
+msgid "regedit: No filename was specified.\n"
+msgstr "لم يتم تحديد أي أمر."
+
+#: regedit.rc:363
+msgid "regedit: No registry key was specified for removal.\n"
+msgstr ""
+
+#: regedit.rc:364
+msgid "regedit: The file '%1' was not found.\n"
+msgstr ""
+
+#: regedit.rc:365
+#, fuzzy
+#| msgid "Error: Unable to add keys to remote machine\n"
+msgid "regedit: Unable to open the file '%1'.\n"
+msgstr "خطأ : تعذر إضافة المفاتيح للجهاز البعيد\n"
+
+#: regedit.rc:366
+#, fuzzy
+#| msgid "Invalid handle operation.\n"
+msgid "regedit: Unhandled action.\n"
+msgstr "عملية اللقط غير سليمة.\n"
+
+#: regedit.rc:367
+msgid "regedit: Out of memory! (%1!S!, line %2!u!)\n"
+msgstr ""
+
+#: regedit.rc:368
+#, fuzzy
+#| msgid "Error: Invalid key name\n"
+msgid "regedit: Invalid hexadecimal value.\n"
+msgstr "خطأ : اسم المفتاح غير سليم\n"
+
+#: regedit.rc:369
+msgid ""
+"regedit: Unable to convert hexadecimal data. An invalid value was "
+"encountered at '%1'.\n"
+msgstr ""
+
+#: regedit.rc:370
+msgid "regedit: Unrecognized escape sequence [\\%1!c!]\n"
+msgstr ""
+
+#: regedit.rc:371
+#, fuzzy
+#| msgid "Unsupported type.\n"
+msgid "regedit: Unsupported registry data type [%1]\n"
+msgstr "النوع غير مدعوم.\n"
+
+#: regedit.rc:372
+#, fuzzy
+#| msgid "Error: Unable to add keys to remote machine\n"
+msgid "regedit: Unexpected end of line in '%1'.\n"
+msgstr "خطأ : تعذر إضافة المفاتيح للجهاز البعيد\n"
+
+#: regedit.rc:373
+#, fuzzy
+#| msgid "No command was specified."
+msgid "regedit: The line '%1' was not recognized.\n"
+msgstr "لم يتم تحديد أي أمر."
+
+#: regedit.rc:374
+#, fuzzy
+#| msgid "Error: Unable to add keys to remote machine\n"
+msgid "regedit: Unable to add the registry value '%1' to '%2'.\n"
+msgstr "خطأ : تعذر إضافة المفاتيح للجهاز البعيد\n"
+
+#: regedit.rc:375
+#, fuzzy
+#| msgid "Error: Unable to add keys to remote machine\n"
+msgid "regedit: Unable to open the registry key '%1'.\n"
+msgstr "خطأ : تعذر إضافة المفاتيح للجهاز البعيد\n"
+
+#: regedit.rc:376
+#, fuzzy
+#| msgid "Unsupported type.\n"
+msgid "regedit: Unsupported registry data type [%1] encountered in '%2'.\n"
+msgstr "النوع غير مدعوم.\n"
+
+#: regedit.rc:377
+msgid "regedit: The registry value '%1' will be exported as binary data.\n"
+msgstr ""
+
+#: regedit.rc:378
+msgid "regedit: Incorrect registry class specification in '%1'.\n"
+msgstr ""
+
+#: regedit.rc:379
+#, fuzzy
+#| msgid ""
+#| "Error: The system was unable to find the specified registry key or value\n"
+msgid ""
+"regedit: Unable to export '%1'. The specified registry key was not found.\n"
+msgstr "خطأ : فشل النظام في العثور على المفتاح أو القيمة المحددة\n"
+
+#: regedit.rc:380
+#, fuzzy
+#| msgid "Error: Unable to add keys to remote machine\n"
+msgid "regedit: Unable to delete the registry class '%1'.\n"
+msgstr "خطأ : تعذر إضافة المفاتيح للجهاز البعيد\n"
 
 #: regedit.rc:163
 msgid "Quits the registry editor"
@@ -11905,7 +12452,7 @@ msgid "regsvr32: Failed to load DLL '%1'\n"
 msgstr "فشل فتح '%1'\n"
 
 #: regsvr32.rc:43
-msgid "regsvr32: %1 not implemented in DLL '%2'\n"
+msgid "regsvr32: '%1!S!' not implemented in DLL '%2'\n"
 msgstr ""
 
 #: regsvr32.rc:44
@@ -11940,7 +12487,7 @@ msgstr ""
 msgid "regsvr32: Successfully uninstalled DLL '%1'\n"
 msgstr ""
 
-#: start.rc:55
+#: start.rc:58
 msgid ""
 "Application could not be started, or no application associated with the "
 "specified file.\n"
@@ -11949,7 +12496,7 @@ msgstr ""
 "لم يتمكن التطبيق من العمل ، أو أنه لا يوجد اقتران مع هذا النوعمن الملفات.\n"
 "فشل التطبيق"
 
-#: start.rc:57
+#: start.rc:60
 msgid "Could not translate the specified Unix filename to a DOS filename."
 msgstr "لم يتمكن من ترجمة دليل يونكس المعطى إلى دليل دوس."
 
@@ -12815,6 +13362,43 @@ msgstr ""
 "حذف بطريقة أخرى.\n"
 "هل ترغب بإزالة هذا الخيار من السجل ؟"
 
+#: uninstaller.rc:31
+msgid "uninstaller: The application with GUID '%1' was not found\n"
+msgstr ""
+
+#: uninstaller.rc:32
+msgid ""
+"uninstaller: The option '--remove' must be followed by an application GUID\n"
+msgstr ""
+
+#: uninstaller.rc:33
+#, fuzzy
+#| msgid "Error: Invalid option '%c'.\n"
+msgid "uninstaller: Invalid option [%1]\n"
+msgstr "خطأ: خيار عير سليم '%c'.\n"
+
+#: uninstaller.rc:35
+msgid ""
+"Wine Application Uninstaller\n"
+"\n"
+"Uninstall applications from the current Wine prefix.\n"
+"\n"
+msgstr ""
+
+#: uninstaller.rc:43
+msgid ""
+"Usage:\n"
+"  uninstaller [options]\n"
+"\n"
+"Options:\n"
+"  --help\t    Display this information.\n"
+"  --list\t    List all applications installed in this Wine prefix.\n"
+"  --remove {GUID}   Uninstall the specified application.\n"
+"\t\t    Use '--list' to determine the application GUID.\n"
+"  [no option]       Launch the graphical version of this program.\n"
+"\n"
+msgstr ""
+
 #: view.rc:36
 msgid "&Pan"
 msgstr "الوج&ه"
@@ -12855,15 +13439,11 @@ msgstr ""
 "\n"
 "إنهاء البرنامج بهذه الطريقة يؤدي إلى خسارة البيانات غير المحفوظة."
 
-#: wineboot.rc:42
-msgid "Wine"
-msgstr "واين"
-
 #: wineboot.rc:46
 msgid "The Wine configuration in %s is being updated, please wait..."
 msgstr "يجري تحديث إعدادات واين في %s ، يرجى الانتظار..."
 
-#: winecfg.rc:139
+#: winecfg.rc:141
 msgid ""
 "This program is free software; you can redistribute it and/or modify it "
 "under the terms of the GNU Lesser General Public License as published by the "
@@ -12874,23 +13454,23 @@ msgstr ""
 "الإصدارة 2.1 او أحدث من رخصة غنّو العمومية المنشورة بواسطة منظمة البرمجيات "
 "الحرة ، ترجمه أعضاء من فريق عيون العرب و مجتمع لينكس العربي."
 
-#: winecfg.rc:141
+#: winecfg.rc:143
 msgid "Windows registration information"
 msgstr "معلومات تسجيل وندوز"
 
-#: winecfg.rc:142
+#: winecfg.rc:144
 msgid "&Owner:"
 msgstr "ال&مالك:"
 
-#: winecfg.rc:144
+#: winecfg.rc:146
 msgid "Organi&zation:"
 msgstr "المن&ظمة:"
 
-#: winecfg.rc:152
+#: winecfg.rc:154
 msgid "Application settings"
 msgstr "إعدادات التطبيق"
 
-#: winecfg.rc:153
+#: winecfg.rc:155
 msgid ""
 "Wine can mimic different Windows versions for each application. This tab is "
 "linked to the Libraries and Graphics tabs to allow you to change system-wide "
@@ -12900,55 +13480,57 @@ msgstr ""
 "بألسنة المكتبات و الرّسوميّات وذلك للسماح بتغييرات واسعة النّطاق تتعلق بتطبيق "
 "معين."
 
-#: winecfg.rc:157
-msgid "&Add application..."
+#: winecfg.rc:159
+#, fuzzy
+#| msgid "&Add application..."
+msgid "Add appli&cation..."
 msgstr "أ&ضف تطبيقًا..."
 
-#: winecfg.rc:158
+#: winecfg.rc:160
 msgid "&Remove application"
 msgstr "أزل تطبيقًا"
 
-#: winecfg.rc:159
+#: winecfg.rc:161
 msgid "&Windows Version:"
 msgstr "إصدارة الوندو&ز:"
 
-#: winecfg.rc:167
+#: winecfg.rc:169
 msgid "Window settings"
 msgstr "إعدادات النّافذة"
 
-#: winecfg.rc:168
+#: winecfg.rc:170
 msgid "Automatically capture the &mouse in full-screen windows"
 msgstr "التقا&ط آلي للفأرة في وضع ملء الشاشة"
 
-#: winecfg.rc:169
+#: winecfg.rc:171
 msgid "Allow the window manager to &decorate the windows"
 msgstr "السّماح لمدير النّواف&ذ بتأطيرها"
 
-#: winecfg.rc:170
+#: winecfg.rc:172
 msgid "Allow the &window manager to control the windows"
 msgstr "السّماح لمدير النّوا&فذ بالتّحكم بها"
 
-#: winecfg.rc:171
+#: winecfg.rc:173
 msgid "&Emulate a virtual desktop"
 msgstr "محاكاة سطح المكتب افترا&ضي"
 
-#: winecfg.rc:173
+#: winecfg.rc:175
 msgid "Desktop &size:"
 msgstr "حجم س&طح المكتب:"
 
-#: winecfg.rc:178
+#: winecfg.rc:180
 msgid "Screen resolution"
 msgstr "دقة الشّاشة"
 
-#: winecfg.rc:182
+#: winecfg.rc:184
 msgid "This is a sample text using 10 point Tahoma"
 msgstr "هذا مثالٌ نصيٌّ باستخدام عشر نقاط من الخط تاهوما"
 
-#: winecfg.rc:189
+#: winecfg.rc:191
 msgid "DLL overrides"
 msgstr "المكتبات المسيطرة"
 
-#: winecfg.rc:190
+#: winecfg.rc:192
 msgid ""
 "Dynamic Link Libraries can be specified individually to be either builtin "
 "(provided by Wine) or native (taken from Windows or provided by the "
@@ -12958,167 +13540,172 @@ msgstr ""
 "المضمّنة ( المصممّة بواسطة واين ) أو المكتبات الاصلية ( الموفّرة بواسطة تطبيق "
 "أو مأخوذة من وندوز ) "
 
-#: winecfg.rc:192
+#: winecfg.rc:194
 msgid "&New override for library:"
 msgstr "إعداد سي&طرة مكتباتية جديد:"
 
-#: winecfg.rc:194 wordpad.rc:247
-msgid "&Add"
-msgstr "أ&ضف"
+#: winecfg.rc:196
+msgid "A&dd"
+msgstr ""
 
-#: winecfg.rc:195
+#: winecfg.rc:197
 msgid "Existing &overrides:"
 msgstr "السيط&رات الحالية:"
 
-#: winecfg.rc:197
+#: winecfg.rc:199
 msgid "&Edit..."
 msgstr "ت&حرير..."
 
-#: winecfg.rc:203
+#: winecfg.rc:205
 msgid "Edit Override"
 msgstr "تحرير السيطرة"
 
-#: winecfg.rc:206
+#: winecfg.rc:208
 msgid "Load order"
 msgstr "المكتبة المستعملة"
 
-#: winecfg.rc:207
+#: winecfg.rc:209
 msgid "&Builtin (Wine)"
 msgstr "الم&ضمّنة (المبنية بواسطة واين)"
 
-#: winecfg.rc:208
+#: winecfg.rc:210
 msgid "&Native (Windows)"
 msgstr "الأ&صليّة (المأخوذة من وندوز)"
 
-#: winecfg.rc:209
-msgid "Bui&ltin then Native"
+#: winecfg.rc:211
+#, fuzzy
+#| msgid "Bui&ltin then Native"
+msgid "Buil&tin then Native"
 msgstr "المضمّنة ثمّ الأصليّة"
 
-#: winecfg.rc:210
+#: winecfg.rc:212
 msgid "Nati&ve then Builtin"
 msgstr "الأصليّة ثمّ المضمّنة"
 
-#: winecfg.rc:218
+#: winecfg.rc:220
+#, fuzzy
 msgid "Select Drive Letter"
 msgstr "اختر ال&كل\tCtrl+A"
 
-#: winecfg.rc:230
+#: winecfg.rc:232
 #, fuzzy
 #| msgid "Wine configuration"
 msgid "Drive configuration"
 msgstr "إعدادات واين"
 
-#: winecfg.rc:231
+#: winecfg.rc:233
 msgid ""
 "Failed to connect to the mount manager, the drive configuration cannot be "
 "edited."
 msgstr "فشل الاتّصال بمدير المحرّكات ، لا يمكن تحريرالاعدادات"
 
-#: winecfg.rc:234
-msgid "&Add..."
+#: winecfg.rc:236
+#, fuzzy
+#| msgid "&Add..."
+msgid "A&dd..."
 msgstr "أ&ضف..."
 
-#: winecfg.rc:236
-msgid "Auto&detect"
-msgstr "ك&شف تلقائي"
+#: winecfg.rc:238
+#, fuzzy
+#| msgid "Autodetect"
+msgid "Aut&odetect"
+msgstr "تحديد تلقائي"
 
-#: winecfg.rc:239
+#: winecfg.rc:241
 msgid "&Path:"
 msgstr "الم&سار:"
 
-#: winecfg.rc:246 winecfg.rc:38
-msgid "Show &Advanced"
+#: winecfg.rc:248 winecfg.rc:38
+#, fuzzy
+#| msgid "Show &Advanced"
+msgid "Show Advan&ced"
 msgstr "الخيارات المتقدمة"
 
-#: winecfg.rc:247
+#: winecfg.rc:249
 msgid "De&vice:"
 msgstr "الج&هاز:"
 
-#: winecfg.rc:249
+#: winecfg.rc:251
 msgid "Bro&wse..."
 msgstr "است&عراض..."
 
-#: winecfg.rc:251
+#: winecfg.rc:253
 msgid "&Label:"
 msgstr "الاس&م:"
 
-#: winecfg.rc:253
+#: winecfg.rc:255
 msgid "S&erial:"
 msgstr "المس&لسل:"
 
-#: winecfg.rc:256
-msgid "Show &dot files"
+#: winecfg.rc:258
+#, fuzzy
+#| msgid "Show &dot files"
+msgid "&Show dot files"
 msgstr "أظهر الملفات المخفيّة"
 
-#: winecfg.rc:263
+#: winecfg.rc:265
 msgid "Driver diagnostics"
 msgstr "معالج المحركات"
 
-#: winecfg.rc:265
+#: winecfg.rc:267
 msgid "Defaults"
 msgstr "الافتراضيات"
 
-#: winecfg.rc:266
+#: winecfg.rc:268
 msgid "Output device:"
 msgstr "جهاز الإخراج:"
 
-#: winecfg.rc:267
+#: winecfg.rc:269
 msgid "Voice output device:"
 msgstr "جهاز الإخراج الصوتي:"
 
-#: winecfg.rc:268
+#: winecfg.rc:270
 msgid "Input device:"
 msgstr "جهاز الإدخال:"
 
-#: winecfg.rc:269
+#: winecfg.rc:271
 msgid "Voice input device:"
 msgstr "جهاز الإدخال الصوتي:"
 
-#: winecfg.rc:274
+#: winecfg.rc:276
 msgid "&Test Sound"
 msgstr "ا&ختبار الصوت"
 
-#: winecfg.rc:275
+#: winecfg.rc:277 winecfg.rc:90
 #, fuzzy
 #| msgid "Wine configuration"
 msgid "Speaker configuration"
 msgstr "إعدادات واين"
 
-#: winecfg.rc:276
-#, fuzzy
-#| msgid "De&vice:"
-msgid "Device:"
-msgstr "الج&هاز:"
-
-#: winecfg.rc:278
+#: winecfg.rc:280
 msgid "Speakers:"
 msgstr ""
 
-#: winecfg.rc:286
+#: winecfg.rc:288
 msgid "Appearance"
 msgstr "العرض"
 
-#: winecfg.rc:287
+#: winecfg.rc:289
 msgid "&Theme:"
 msgstr "السّم&ة:"
 
-#: winecfg.rc:289
+#: winecfg.rc:291
 msgid "&Install theme..."
 msgstr "ت&ثبيت سمة..."
 
-#: winecfg.rc:294
+#: winecfg.rc:296
 msgid "It&em:"
 msgstr "العن&صر:"
 
-#: winecfg.rc:296
+#: winecfg.rc:298
 msgid "C&olor:"
 msgstr "اللو&ن:"
 
-#: winecfg.rc:302
+#: winecfg.rc:304
 msgid "Folders"
 msgstr "الم&جلدات"
 
-#: winecfg.rc:305
+#: winecfg.rc:307
 msgid "&Link to:"
 msgstr "موص&ول إلى:"
 
@@ -13135,7 +13722,9 @@ msgid "Select the Unix target directory, please."
 msgstr "اختر دليلًا متوافقًا مع طريقة يونكس من فضلك."
 
 #: winecfg.rc:37
-msgid "Hide &Advanced"
+#, fuzzy
+#| msgid "Hide &Advanced"
+msgid "Hide Advan&ced"
 msgstr "أخفِ الخيارات المت&قدمة"
 
 #: winecfg.rc:39
@@ -13198,21 +13787,21 @@ msgstr "فشل اختبار الصوت !"
 msgid "(System default)"
 msgstr "(الاعداد الافتراضي)"
 
-#: winecfg.rc:89
+#: winecfg.rc:91
 msgid "5.1 Surround"
 msgstr ""
 
-#: winecfg.rc:90
+#: winecfg.rc:92
 #, fuzzy
 #| msgid "graphic"
 msgid "Quadraphonic"
 msgstr "رسومي"
 
-#: winecfg.rc:91
+#: winecfg.rc:93
 msgid "Stereo"
 msgstr ""
 
-#: winecfg.rc:92
+#: winecfg.rc:94
 msgid "Mono"
 msgstr ""
 
@@ -13331,127 +13920,127 @@ msgstr ""
 "\n"
 "تذكر انه بإمكانك الضغط على زر أضف في لسان المحركات لإضافة محرك.\n"
 
-#: winecfg.rc:97
+#: winecfg.rc:99
 msgid "Controls Background"
 msgstr "خلفية التحكمات"
 
-#: winecfg.rc:98
+#: winecfg.rc:100
 msgid "Controls Text"
 msgstr "نص التحكمات"
 
-#: winecfg.rc:100
+#: winecfg.rc:102
 msgid "Menu Background"
 msgstr "خلفية القوائم"
 
-#: winecfg.rc:101
+#: winecfg.rc:103
 msgid "Menu Text"
 msgstr "نص القوائم"
 
-#: winecfg.rc:102
+#: winecfg.rc:104
 msgid "Scrollbar"
 msgstr "شريط التمرير"
 
-#: winecfg.rc:103
+#: winecfg.rc:105
 msgid "Selection Background"
 msgstr "خلفية الاختيار"
 
-#: winecfg.rc:104
+#: winecfg.rc:106
 msgid "Selection Text"
 msgstr "نص الاختيار"
 
-#: winecfg.rc:105
+#: winecfg.rc:107
 msgid "Tooltip Background"
 msgstr "خلفية اﻷدوات"
 
-#: winecfg.rc:106
+#: winecfg.rc:108
 msgid "Tooltip Text"
 msgstr "نص الأدوات"
 
-#: winecfg.rc:107
+#: winecfg.rc:109
 msgid "Window Background"
 msgstr "خلفية النافذة"
 
-#: winecfg.rc:108
+#: winecfg.rc:110
 msgid "Window Text"
 msgstr "نص النافذة"
 
-#: winecfg.rc:109
+#: winecfg.rc:111
 msgid "Active Title Bar"
 msgstr "شريط العنوان المفعل"
 
-#: winecfg.rc:110
+#: winecfg.rc:112
 msgid "Active Title Text"
 msgstr "العنوان المفعل"
 
-#: winecfg.rc:111
+#: winecfg.rc:113
 msgid "Inactive Title Bar"
 msgstr "شريط العنوان غير المفعل"
 
-#: winecfg.rc:112
+#: winecfg.rc:114
 msgid "Inactive Title Text"
 msgstr "العنوان غير المفعل"
 
-#: winecfg.rc:113
+#: winecfg.rc:115
 msgid "Message Box Text"
 msgstr "نص الرسائل"
 
-#: winecfg.rc:114
+#: winecfg.rc:116
 msgid "Application Workspace"
 msgstr "مساحة العمل"
 
-#: winecfg.rc:115
+#: winecfg.rc:117
 msgid "Window Frame"
 msgstr "إطار النافذة"
 
-#: winecfg.rc:116
+#: winecfg.rc:118
 msgid "Active Border"
 msgstr "الحد المفعل"
 
-#: winecfg.rc:117
+#: winecfg.rc:119
 msgid "Inactive Border"
 msgstr "الحد غير المفعل"
 
-#: winecfg.rc:118
+#: winecfg.rc:120
 msgid "Controls Shadow"
 msgstr "ظل التحكمات"
 
-#: winecfg.rc:119
+#: winecfg.rc:121
 msgid "Gray Text"
 msgstr "النص الرّمادي"
 
-#: winecfg.rc:120
+#: winecfg.rc:122
 msgid "Controls Highlight"
 msgstr "إضاءة التحكمات"
 
-#: winecfg.rc:121
+#: winecfg.rc:123
 msgid "Controls Dark Shadow"
 msgstr "الظل الغامق للتحكمات"
 
-#: winecfg.rc:122
+#: winecfg.rc:124
 msgid "Controls Light"
 msgstr "إضاءة التحكمات"
 
-#: winecfg.rc:123
+#: winecfg.rc:125
 msgid "Controls Alternate Background"
 msgstr "الخلفية البديلة للتحكمات"
 
-#: winecfg.rc:124
+#: winecfg.rc:126
 msgid "Hot Tracked Item"
 msgstr "عنصر ساخن"
 
-#: winecfg.rc:125
+#: winecfg.rc:127
 msgid "Active Title Bar Gradient"
 msgstr "تفعيل انحدار شريط العنوان"
 
-#: winecfg.rc:126
+#: winecfg.rc:128
 msgid "Inactive Title Bar Gradient"
 msgstr "إلغاء تفعيل انحدار شريط العنوان"
 
-#: winecfg.rc:127
+#: winecfg.rc:129
 msgid "Menu Highlight"
 msgstr "القوائم المضاءة"
 
-#: winecfg.rc:128
+#: winecfg.rc:130
 msgid "Menu Bar"
 msgstr "شريط القوائم"
 
@@ -13472,98 +14061,108 @@ msgid "&Large"
 msgstr "&كبير"
 
 #: wineconsole.rc:68
-msgid "Control"
-msgstr "تحكم"
-
-#: wineconsole.rc:69
-msgid "Popup menu"
-msgstr "القائمة المنبثقة"
-
-#: wineconsole.rc:70
-msgid "&Control"
-msgstr "ت&حكم"
-
-#: wineconsole.rc:71
-msgid "S&hift"
-msgstr "&عالي"
-
-#: wineconsole.rc:72
-msgid "Quick edit"
-msgstr "التحرير السّريع"
-
-#: wineconsole.rc:73
-msgid "&enable"
-msgstr "م&فعل"
-
-#: wineconsole.rc:75
 msgid "Command history"
 msgstr "تأريخ الأوامر"
 
-#: wineconsole.rc:76
-msgid "&Number of recalled commands:"
-msgstr "عد&د الاوامر المعاد طلبها:"
+#: wineconsole.rc:69
+#, fuzzy
+#| msgid "Buffer zone"
+msgid "&Buffer size:"
+msgstr "ركن التدفق"
 
-#: wineconsole.rc:79
-msgid "&Remove doubles"
+#: wineconsole.rc:72
+#, fuzzy
+#| msgid "&Remove doubles"
+msgid "&Remove duplicates"
 msgstr "حذف التك&رار"
 
-#: wineconsole.rc:87
+#: wineconsole.rc:74
+msgid "Popup menu"
+msgstr "القائمة المنبثقة"
+
+#: wineconsole.rc:75
+msgid "&Control"
+msgstr "ت&حكم"
+
+#: wineconsole.rc:76
+msgid "S&hift"
+msgstr "&عالي"
+
+#: wineconsole.rc:78
+#, fuzzy
+#| msgid "&Close console"
+msgid "Console"
+msgstr "أغلق الطرف&ية"
+
+#: wineconsole.rc:79
+#, fuzzy
+#| msgid "Quick edit"
+msgid "&Quick Edit mode"
+msgstr "التحرير السّريع"
+
+#: wineconsole.rc:80
+#, fuzzy
+#| msgid "&Expert mode"
+msgid "&Insert mode"
+msgstr "وضع الخبراء"
+
+#: wineconsole.rc:88
 msgid "&Font"
 msgstr "ال&خط"
 
-#: wineconsole.rc:89
+#: wineconsole.rc:90
 msgid "&Color"
 msgstr "ال&لون"
 
-#: wineconsole.rc:100
+#: wineconsole.rc:101
 msgid "Configuration"
 msgstr "الت&هيئة"
 
-#: wineconsole.rc:103
+#: wineconsole.rc:104
 msgid "Buffer zone"
 msgstr "ركن التدفق"
 
-#: wineconsole.rc:104
+#: wineconsole.rc:105
 msgid "&Width:"
 msgstr "العر&ض:"
 
-#: wineconsole.rc:107
+#: wineconsole.rc:108
 msgid "&Height:"
 msgstr "ال&طول:"
 
-#: wineconsole.rc:111
+#: wineconsole.rc:112
 msgid "Window size"
 msgstr "حجم النافذة"
 
-#: wineconsole.rc:112
+#: wineconsole.rc:113
 msgid "W&idth:"
 msgstr "ال&عرض:"
 
-#: wineconsole.rc:115
+#: wineconsole.rc:116
 msgid "H&eight:"
 msgstr "الط&ول:"
 
-#: wineconsole.rc:119
+#: wineconsole.rc:120
 msgid "End of program"
 msgstr "نهائة البرنامج"
 
-#: wineconsole.rc:120
+#: wineconsole.rc:121
 msgid "&Close console"
 msgstr "أغلق الطرف&ية"
 
-#: wineconsole.rc:122
+#: wineconsole.rc:123
 msgid "Edition"
 msgstr "الإصدارة"
 
-#: wineconsole.rc:128
+#: wineconsole.rc:129
 msgid "Console parameters"
 msgstr "معاملات الطرفية"
 
-#: wineconsole.rc:131
+#: wineconsole.rc:132
 msgid "Retain these settings for later sessions"
 msgstr "الاحتفاظ بهذه الإعدادات للجلسات اللاحقة"
 
-#: wineconsole.rc:132
+#: wineconsole.rc:133
 msgid "Modify only current session"
 msgstr "التعديل فقط لهذه الجلسة"
 
@@ -13600,7 +14199,11 @@ msgid "Configuration error"
 msgstr "خطأ في التهيئة"
 
 #: wineconsole.rc:42
-msgid "Screen buffer size must be greater or equal to the window's one"
+#, fuzzy
+#| msgid "Screen buffer size must be greater or equal to the window's one"
+msgid ""
+"The size of the screen buffer must be greater than or equal to the size of "
+"the window."
 msgstr "حجم تدفق الشاشة يجب ان يكون أكبر أو يساوي حجم تدفق النافذة"
 
 #: wineconsole.rc:37
@@ -13818,79 +14421,79 @@ msgstr "ار&صف عموديًا\tCtrl+F4"
 msgid "&About Wine File Manager"
 msgstr "معلومات &حول مدير ملفات واين"
 
-#: winefile.rc:125
+#: winefile.rc:122
 msgid "Select destination"
 msgstr "اختر الهدف"
 
-#: winefile.rc:138
+#: winefile.rc:135
 msgid "By File Type"
 msgstr "بنوع الملف"
 
-#: winefile.rc:143
+#: winefile.rc:140
 msgid "File type"
 msgstr "نوع الملف"
 
-#: winefile.rc:144
+#: winefile.rc:141
 msgid "&Directories"
 msgstr "المج&لدات"
 
-#: winefile.rc:146
+#: winefile.rc:143
 msgid "&Programs"
 msgstr "البرام&ج"
 
-#: winefile.rc:148
+#: winefile.rc:145
 msgid "Docu&ments"
 msgstr "المست&ندات"
 
-#: winefile.rc:150
+#: winefile.rc:147
 msgid "&Other files"
 msgstr "املفات الأخر&ى"
 
-#: winefile.rc:152
+#: winefile.rc:149
 msgid "Show Hidden/&System Files"
 msgstr "أ&ظهر الملفات المخفية و ملفات النظام"
 
-#: winefile.rc:163
+#: winefile.rc:160
 msgid "&File Name:"
 msgstr "&اسم الملف:"
 
-#: winefile.rc:165
+#: winefile.rc:162
 msgid "Full &Path:"
 msgstr "المسار الكام&ل:"
 
-#: winefile.rc:167
+#: winefile.rc:164
 msgid "Last Change:"
 msgstr "آ&خر تعديل:"
 
-#: winefile.rc:171
+#: winefile.rc:168
 msgid "Cop&yright:"
 msgstr "الح&قوق:"
 
-#: winefile.rc:173
+#: winefile.rc:170
 msgid "Size:"
 msgstr "الح&جم:"
 
-#: winefile.rc:177
+#: winefile.rc:174
 msgid "H&idden"
 msgstr "م&خفي"
 
-#: winefile.rc:178
+#: winefile.rc:175
 msgid "&Archive"
 msgstr "أرشي&في"
 
-#: winefile.rc:179
+#: winefile.rc:176
 msgid "&System"
 msgstr "ن&ظام"
 
-#: winefile.rc:180
+#: winefile.rc:177
 msgid "&Compressed"
 msgstr "م&ضغوط"
 
-#: winefile.rc:181
+#: winefile.rc:178
 msgid "Version information"
 msgstr "معلومات الإصدار"
 
-#: winefile.rc:197
+#: winefile.rc:194
 msgctxt "accelerator Fullscreen"
 msgid "S"
 msgstr "S"
@@ -13942,21 +14545,6 @@ msgstr "العقدة"
 #: winefile.rc:117
 msgid "%1 of %2 free"
 msgstr "%1 من %2 حرة"
-
-#: winefile.rc:118
-msgctxt "unit kilobyte"
-msgid "kB"
-msgstr "كب"
-
-#: winefile.rc:119
-msgctxt "unit megabyte"
-msgid "MB"
-msgstr "مب"
-
-#: winefile.rc:120
-msgctxt "unit gigabyte"
-msgid "GB"
-msgstr "غب"
 
 #: winemine.rc:37
 msgid "&Game"
@@ -14066,29 +14654,29 @@ msgstr "وضع إشا&رة"
 msgid "&Define..."
 msgstr "&عرّف..."
 
-#: winhlp32.rc:49 winhlp32.rc:70
+#: winhlp32.rc:48
+msgid "Always on &top"
+msgstr "د&ومًا في المقدمة"
+
+#: winhlp32.rc:50 winhlp32.rc:70
 msgid "Fonts"
 msgstr "ال&خطوط"
 
-#: winhlp32.rc:51 winhlp32.rc:72
+#: winhlp32.rc:52 winhlp32.rc:72
 msgid "Small"
 msgstr "صغير"
 
-#: winhlp32.rc:52 winhlp32.rc:73
+#: winhlp32.rc:53 winhlp32.rc:73
 msgid "Normal"
 msgstr "عادي"
 
-#: winhlp32.rc:53 winhlp32.rc:74
+#: winhlp32.rc:54 winhlp32.rc:74
 msgid "Large"
 msgstr "كبير"
 
-#: winhlp32.rc:57
+#: winhlp32.rc:58
 msgid "&Help on help\tF1"
 msgstr "&المساعدة في استخدام المساعدة\tF1"
-
-#: winhlp32.rc:58
-msgid "Always on &top"
-msgstr "د&ومًا في المقدمة"
 
 #: winhlp32.rc:59
 msgid "&About Wine Help"
@@ -14154,6 +14742,12 @@ msgstr "خطأ : الاسم المستعار غير موجود\n"
 msgid "Error: Invalid query\n"
 msgstr "خطأ : استعلام غير سلبم\n"
 
+#: wmic.rc:31
+#, fuzzy
+#| msgid "Error: Invalid key name\n"
+msgid "Error: Invalid syntax for PATH\n"
+msgstr "خطأ : اسم المفتاح غير سليم\n"
+
 #: wordpad.rc:31
 msgid "&New...\tCtrl+N"
 msgstr "&جديد...\tCtrl+N"
@@ -14206,11 +14800,11 @@ msgstr "صيغة المق&طع"
 msgid "&Get text"
 msgstr "أحضر ال&نص"
 
-#: wordpad.rc:72 wordpad.rc:265
+#: wordpad.rc:72 wordpad.rc:273
 msgid "&Format Bar"
 msgstr "شري&ط الصيغة"
 
-#: wordpad.rc:73 wordpad.rc:266
+#: wordpad.rc:73 wordpad.rc:274
 msgid "&Ruler"
 msgstr "ال&مسطرة"
 
@@ -14226,253 +14820,285 @@ msgstr "التار&يخ و الوقت..."
 msgid "F&ormat"
 msgstr "ال&صيغة"
 
-#: wordpad.rc:85 wordpad.rc:108
+#: wordpad.rc:85
+#, fuzzy
+#| msgid "&List"
+msgid "&Lists"
+msgstr "قائمة"
+
+#: wordpad.rc:87 wordpad.rc:116
 msgid "&Bullet points"
 msgstr "ن&قاط العلام"
 
-#: wordpad.rc:86 wordpad.rc:109
+#: wordpad.rc:88
+#, fuzzy
+#| msgid "CRL Number"
+msgid "Numbers"
+msgstr "رقم CRL"
+
+#: wordpad.rc:89
+msgid "Letters - lower case"
+msgstr ""
+
+#: wordpad.rc:90
+msgid "Letters - upper case"
+msgstr ""
+
+#: wordpad.rc:91
+msgid "Roman numerals - lower case"
+msgstr ""
+
+#: wordpad.rc:92
+msgid "Roman numerals - upper case"
+msgstr ""
+
+#: wordpad.rc:94 wordpad.rc:117
 msgid "&Paragraph..."
 msgstr "المق&طع..."
 
-#: wordpad.rc:87
+#: wordpad.rc:95
 msgid "&Tabs..."
 msgstr "الأ&لسنة..."
 
-#: wordpad.rc:88
+#: wordpad.rc:96
 msgid "Backgroun&d"
 msgstr "ال&خلفية"
 
-#: wordpad.rc:90
+#: wordpad.rc:98
 msgid "&System\tCtrl+1"
 msgstr "&النظام\tCtrl+1"
 
-#: wordpad.rc:91
+#: wordpad.rc:99
 msgid "&Pale yellow\tCtrl+2"
 msgstr "الأ&صفر\tCtrl+2"
 
-#: wordpad.rc:96
+#: wordpad.rc:104
 msgid "&About Wine Wordpad"
 msgstr "معلومات حول برنامج د&فتر واين"
 
-#: wordpad.rc:133
+#: wordpad.rc:141
 msgid "Automatic"
 msgstr "تلقائي"
 
-#: wordpad.rc:202
+#: wordpad.rc:210
 msgid "Date and time"
 msgstr "التاريخ و الوقت"
 
-#: wordpad.rc:205
+#: wordpad.rc:213
 msgid "Available formats"
 msgstr "الصيغ المتوفرة"
 
-#: wordpad.rc:216
+#: wordpad.rc:224
 msgid "New document type"
 msgstr "نوع المستند الجديد"
 
-#: wordpad.rc:224
+#: wordpad.rc:232
 msgid "Paragraph format"
 msgstr "صيغة المقطع"
 
-#: wordpad.rc:227
+#: wordpad.rc:235
 msgid "Indentation"
 msgstr "الهامش"
 
-#: wordpad.rc:228 wordpad.rc:151
+#: wordpad.rc:236 wordpad.rc:159
 msgid "Left"
 msgstr "اليسار"
 
-#: wordpad.rc:230 wordpad.rc:152
+#: wordpad.rc:238 wordpad.rc:160
 msgid "Right"
 msgstr "اليمين"
 
-#: wordpad.rc:232
+#: wordpad.rc:240
 msgid "First line"
 msgstr "السطر الأول"
 
-#: wordpad.rc:234
+#: wordpad.rc:242
 msgid "Alignment"
 msgstr "المحاذاة"
 
-#: wordpad.rc:242
+#: wordpad.rc:250
 msgid "Tabs"
 msgstr "الألسنة"
 
-#: wordpad.rc:245
+#: wordpad.rc:253
 msgid "Tab stops"
 msgstr "وقف اللسان"
 
-#: wordpad.rc:251
+#: wordpad.rc:255
+msgid "&Add"
+msgstr "أ&ضف"
+
+#: wordpad.rc:259
 msgid "Remove al&l"
 msgstr "حذف ال&كل"
 
-#: wordpad.rc:259
+#: wordpad.rc:267
 msgid "Line wrapping"
 msgstr "غلاف السطر"
 
-#: wordpad.rc:260
+#: wordpad.rc:268
 msgid "&No line wrapping"
 msgstr "لا &غلاف للسطر"
 
-#: wordpad.rc:261
+#: wordpad.rc:269
 msgid "Wrap text by the &window border"
 msgstr "غلف النص بحد الناف&ذة"
 
-#: wordpad.rc:262
+#: wordpad.rc:270
 msgid "Wrap text by the &margin"
 msgstr "غلف النص بال&حد"
 
-#: wordpad.rc:263
+#: wordpad.rc:271
 msgid "Toolbars"
 msgstr "أشرطة الأدوات"
 
-#: wordpad.rc:276
+#: wordpad.rc:284
 msgctxt "accelerator Align Left"
 msgid "L"
 msgstr "L"
 
-#: wordpad.rc:277
+#: wordpad.rc:285
 msgctxt "accelerator Align Center"
 msgid "E"
 msgstr "E"
 
-#: wordpad.rc:278
+#: wordpad.rc:286
 msgctxt "accelerator Align Right"
 msgid "R"
 msgstr "R"
 
-#: wordpad.rc:285
+#: wordpad.rc:293
 msgctxt "accelerator Redo"
 msgid "Y"
 msgstr "Y"
 
-#: wordpad.rc:286
+#: wordpad.rc:294
 msgctxt "accelerator Bold"
 msgid "B"
 msgstr "B"
 
-#: wordpad.rc:287
+#: wordpad.rc:295
 msgctxt "accelerator Italic"
 msgid "I"
 msgstr "I"
 
-#: wordpad.rc:288
+#: wordpad.rc:296
 msgctxt "accelerator Underline"
 msgid "U"
 msgstr "U"
 
-#: wordpad.rc:139
+#: wordpad.rc:147
 msgid "All documents (*.*)"
 msgstr "كل المستندات (*.*)"
 
-#: wordpad.rc:140
+#: wordpad.rc:148
 msgid "Text documents (*.txt)"
 msgstr "المستندات النصية (*.txt)"
 
-#: wordpad.rc:141
+#: wordpad.rc:149
 msgid "Unicode text document (*.txt)"
 msgstr "المستندات النصية متعددة الترميز (*.txt)"
 
-#: wordpad.rc:142
+#: wordpad.rc:150
 msgid "Rich text format (*.rtf)"
 msgstr "صيغة النصوص الغنية (*.rtf)"
 
-#: wordpad.rc:143
+#: wordpad.rc:151
 msgid "Rich text document"
 msgstr "مستند نصي غني"
 
-#: wordpad.rc:144
+#: wordpad.rc:152
 msgid "Text document"
 msgstr "مستند نصي"
 
-#: wordpad.rc:145
+#: wordpad.rc:153
 msgid "Unicode text document"
 msgstr "مستند نصي متعدد الترميز"
 
-#: wordpad.rc:146
+#: wordpad.rc:154
 msgid "Printer files (*.prn)"
 msgstr "ملفات الطابعة (*.prn)"
 
-#: wordpad.rc:153
+#: wordpad.rc:161
 msgid "Center"
 msgstr "الوسط"
 
-#: wordpad.rc:159
+#: wordpad.rc:167
 msgid "Text"
 msgstr "النص"
 
-#: wordpad.rc:160
+#: wordpad.rc:168
 msgid "Rich text"
 msgstr "النص الغني"
 
-#: wordpad.rc:166
+#: wordpad.rc:174
 msgid "Next page"
 msgstr "الصفحة التالية"
 
-#: wordpad.rc:167
+#: wordpad.rc:175
 msgid "Previous page"
 msgstr "الصفحة السابقة"
 
-#: wordpad.rc:168
+#: wordpad.rc:176
 msgid "Two pages"
 msgstr "صفحتين"
 
-#: wordpad.rc:169
+#: wordpad.rc:177
 msgid "One page"
 msgstr "صفحة واحدة"
 
-#: wordpad.rc:170
+#: wordpad.rc:178
 msgid "Zoom in"
 msgstr "تكبير"
 
-#: wordpad.rc:171
+#: wordpad.rc:179
 msgid "Zoom out"
 msgstr "تصغير"
 
-#: wordpad.rc:173
+#: wordpad.rc:181
 msgid "Page"
 msgstr "صفحة"
 
-#: wordpad.rc:174
+#: wordpad.rc:182
 msgid "Pages"
 msgstr "صفحات"
 
-#: wordpad.rc:175
+#: wordpad.rc:183
 msgctxt "unit: centimeter"
 msgid "cm"
 msgstr "سنتيمتر"
 
-#: wordpad.rc:176
+#: wordpad.rc:184
 msgctxt "unit: inch"
 msgid "in"
 msgstr "إنش"
 
-#: wordpad.rc:177
+#: wordpad.rc:185
 msgid "inch"
 msgstr "إنش"
 
-#: wordpad.rc:178
+#: wordpad.rc:186
 msgctxt "unit: point"
 msgid "pt"
 msgstr "نقطة"
 
-#: wordpad.rc:183
+#: wordpad.rc:191
 msgid "Document"
 msgstr "مستند"
 
-#: wordpad.rc:184
+#: wordpad.rc:192
 msgid "Save changes to '%s'?"
 msgstr "حفظ التغييرات في '%s' ؟"
 
-#: wordpad.rc:185
+#: wordpad.rc:193
 msgid "Finished searching the document."
 msgstr "تم إكمال البحث في المستند."
 
-#: wordpad.rc:186
+#: wordpad.rc:194
 msgid "Failed to load the RichEdit library."
 msgstr "فشل في تحميل مكتبة تحرير النص الغني."
 
-#: wordpad.rc:187
+#: wordpad.rc:195
 msgid ""
 "You have chosen to save in plain text format, which will cause all "
 "formatting to be lost. Are you sure that you wish to do this?"
@@ -14480,35 +15106,35 @@ msgstr ""
 "لقد اخترت الحفظ بصيغة النص البسيط ، قد يتسبب ذلك في خسارة التنسيق . هل أنت "
 "متأكد من المتابعة؟"
 
-#: wordpad.rc:190
+#: wordpad.rc:198
 msgid "Invalid number format."
 msgstr "رقم الصيغة غير سليم."
 
-#: wordpad.rc:191
+#: wordpad.rc:199
 msgid "OLE storage documents are not supported."
 msgstr "تخزين OLE للمستندات غير مدعوم."
 
-#: wordpad.rc:192
+#: wordpad.rc:200
 msgid "Could not save the file."
 msgstr "لم يتمكن من حفظ الملف."
 
-#: wordpad.rc:193
+#: wordpad.rc:201
 msgid "You do not have access to save the file."
 msgstr "لا تمكلك الصلاحيات لحفظ الملف."
 
-#: wordpad.rc:194
+#: wordpad.rc:202
 msgid "Could not open the file."
 msgstr "لا يمكن فتح الملف."
 
-#: wordpad.rc:195
+#: wordpad.rc:203
 msgid "You do not have access to open the file."
 msgstr "لا تملك الصلاحيات لفتح الملف."
 
-#: wordpad.rc:196
+#: wordpad.rc:204
 msgid "Printing not implemented."
 msgstr "لم تنفذ الطباعة."
 
-#: wordpad.rc:197
+#: wordpad.rc:205
 msgid "Cannot add more than 32 tab stops."
 msgstr "لا يمكن إضافة أكثر من 32 لسان."
 

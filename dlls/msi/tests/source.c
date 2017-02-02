@@ -987,7 +987,7 @@ machine_tests:
     r = pMsiSourceListAddSourceExA(prodcode, NULL,
                                   MSIINSTALLCONTEXT_MACHINE,
                                   MSICODE_PRODUCT | MSISOURCETYPE_URL, "C:\\source", 0);
-    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_INVALID_PARAMETER, got %d\n", r);
+    ok(r == ERROR_UNKNOWN_PRODUCT, "Expected ERROR_UNKNOWN_PRODUCT, got %d\n", r);
 
     lstrcpyA(keypath, "Software\\Classes\\Installer\\Products\\");
     lstrcatA(keypath, prod_squashed);
@@ -1316,7 +1316,7 @@ static void test_MsiSourceListEnumSources(void)
                                    MSIINSTALLCONTEXT_USERUNMANAGED,
                                    MSICODE_PRODUCT | MSICODE_PATCH | MSISOURCETYPE_URL,
                                    0, value, &size);
-    ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_SUCCESS, got %d\n", r);
+    ok(r == ERROR_UNKNOWN_PATCH, "Expected ERROR_UNKNOWN_PATCH, got %d\n", r);
     ok(!lstrcmpA(value, "aaa"), "Expected value to be unchanged, got %s\n", value);
     ok(size == MAX_PATH, "Expected MAX_PATH, got %d\n", size);
 
@@ -2887,6 +2887,24 @@ static void test_MsiSourceListEnumMediaDisks(void)
     ok(!lstrcmpA(label, "aaa"), "Expected \"aaa\", got \"%s\"\n", label);
     ok(labelsz == MAX_PATH, "Expected MAX_PATH, got %d\n", labelsz);
     ok(!lstrcmpA(prompt, "bbb"), "Expected \"bbb\", got \"%s\"\n", prompt);
+
+    /* pcchVolumeLabel, szDiskPrompt and pcchDiskPrompt are NULL */
+    id = 0;
+    lstrcpyA(label, "aaa");
+    r = pMsiSourceListEnumMediaDisksA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                                      MSICODE_PRODUCT, 0, &id, label, NULL,
+                                      NULL, NULL);
+    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
+    ok(!lstrcmpA(label, "aaa"), "Expected \"aaa\", got \"%s\"\n", label);
+    ok(id == 1, "Expected 1, got %d\n", id);
+
+    /* szVolumeLabel, pcchVolumeLabel, szDiskPrompt and pcchDiskPrompt are NULL */
+    id = 0;
+    r = pMsiSourceListEnumMediaDisksA(prodcode, usersid, MSIINSTALLCONTEXT_USERUNMANAGED,
+                                      MSICODE_PRODUCT, 0, &id, NULL, NULL,
+                                      NULL, NULL);
+    ok(r == ERROR_SUCCESS, "Expected ERROR_SUCCESS, got %d\n", r);
+    ok(id == 1, "Expected 1, got %d\n", id);
 
     /* pcchVolumeLabel is exactly 5 */
     lstrcpyA(label, "aaa");

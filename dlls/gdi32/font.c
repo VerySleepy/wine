@@ -87,7 +87,7 @@ static inline INT INTERNAL_YWSTODS(DC *dc, INT height)
     pt[0].x = pt[0].y = 0;
     pt[1].x = 0;
     pt[1].y = height;
-    LPtoDP(dc->hSelf, pt, 2);
+    lp_to_dp(dc, pt, 2);
     return pt[1].y - pt[0].y;
 }
 
@@ -407,6 +407,40 @@ DWORD WINAPI GdiGetCodePage( HDC hdc )
 }
 
 /***********************************************************************
+ *           get_text_charset_info
+ *
+ * Internal version of GetTextCharsetInfo() that takes a DC pointer.
+ */
+static UINT get_text_charset_info(DC *dc, FONTSIGNATURE *fs, DWORD flags)
+{
+    UINT ret = DEFAULT_CHARSET;
+    PHYSDEV dev;
+
+    dev = GET_DC_PHYSDEV( dc, pGetTextCharsetInfo );
+    ret = dev->funcs->pGetTextCharsetInfo( dev, fs, flags );
+
+    if (ret == DEFAULT_CHARSET && fs)
+        memset(fs, 0, sizeof(FONTSIGNATURE));
+    return ret;
+}
+
+/***********************************************************************
+ *           GetTextCharsetInfo    (GDI32.@)
+ */
+UINT WINAPI GetTextCharsetInfo(HDC hdc, FONTSIGNATURE *fs, DWORD flags)
+{
+    UINT ret = DEFAULT_CHARSET;
+    DC *dc = get_dc_ptr(hdc);
+
+    if (dc)
+    {
+        ret = get_text_charset_info( dc, fs, flags );
+        release_dc_ptr( dc );
+    }
+    return ret;
+}
+
+/***********************************************************************
  *           FONT_mbtowc
  *
  * Returns a Unicode translation of str using the charset of the
@@ -646,14 +680,16 @@ static DWORD get_associated_charset_info(void)
 static void update_font_code_page( DC *dc, HANDLE font )
 {
     CHARSETINFO csi;
-    int charset = GetTextCharsetInfo( dc->hSelf, NULL, 0 );
-    LOGFONTW lf;
+    int charset = get_text_charset_info( dc, NULL, 0 );
 
-    GetObjectW( font, sizeof(lf), &lf );
+    if (charset == ANSI_CHARSET && get_associated_charset_info() & ASSOC_CHARSET_ANSI)
+    {
+        LOGFONTW lf;
 
-    if (charset == ANSI_CHARSET && !(lf.lfClipPrecision & CLIP_DFA_DISABLE) &&
-        get_associated_charset_info() & ASSOC_CHARSET_ANSI)
-        charset = DEFAULT_CHARSET;
+        GetObjectW( font, sizeof(lf), &lf );
+        if (!(lf.lfClipPrecision & CLIP_DFA_DISABLE))
+            charset = DEFAULT_CHARSET;
+    }
 
     /* Hmm, nicely designed api this one! */
     if (TranslateCharsetInfo( ULongToPtr(charset), &csi, TCI_SRCCHARSET) )
@@ -1029,7 +1065,7 @@ BOOL WINAPI SetTextJustification( HDC hdc, INT extra, INT breaks )
     ret = physdev->funcs->pSetTextJustification( physdev, extra, breaks );
     if (ret)
     {
-        extra = abs((extra * dc->vportExtX + dc->wndExtX / 2) / dc->wndExtX);
+        extra = abs((extra * dc->vport_ext.cx + dc->wnd_ext.cx / 2) / dc->wnd_ext.cx);
         if (!extra) breaks = 0;
         if (breaks)
         {
@@ -1865,7 +1901,7 @@ static RECT get_total_extents( HDC hdc, INT x, INT y, UINT flags, UINT aa_flags,
 }
 
 /* helper for nulldrv_ExtTextOut */
-static void draw_glyph( HDC hdc, INT origin_x, INT origin_y, const GLYPHMETRICS *metrics,
+static void draw_glyph( DC *dc, INT origin_x, INT origin_y, const GLYPHMETRICS *metrics,
                         const struct gdi_image_bits *image, const RECT *clip )
 {
     static const BYTE masks[8] = {0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01};
@@ -1905,8 +1941,8 @@ static void draw_glyph( HDC hdc, INT origin_x, INT origin_y, const GLYPHMETRICS 
         }
     }
     assert( count <= max_count );
-    DPtoLP( hdc, pts, count );
-    for (i = 0; i < count; i += 2) Polyline( hdc, pts + i, 2 );
+    dp_to_lp( dc, pts, count );
+    for (i = 0; i < count; i += 2) Polyline( dc->hSelf, pts + i, 2 );
     HeapFree( GetProcessHeap(), 0, pts );
 }
 
@@ -1925,12 +1961,12 @@ BOOL nulldrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags, const RECT *rect
     if (flags & ETO_OPAQUE)
     {
         RECT rc = *rect;
-        HBRUSH brush = CreateSolidBrush( GetNearestColor( dev->hdc, GetBkColor(dev->hdc) ));
+        HBRUSH brush = CreateSolidBrush( GetNearestColor( dev->hdc, dc->backgroundColor ) );
 
         if (brush)
         {
             orig = SelectObject( dev->hdc, brush );
-            DPtoLP( dev->hdc, (POINT *)&rc, 2 );
+            dp_to_lp( dc, (POINT *)&rc, 2 );
             PatBlt( dev->hdc, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, PATCOPY );
             SelectObject( dev->hdc, orig );
             DeleteObject( brush );
@@ -2008,7 +2044,7 @@ BOOL nulldrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags, const RECT *rect
             /* make x,y relative to the image bits */
             x += src.visrect.left - dst.visrect.left;
             y += src.visrect.top - dst.visrect.top;
-            render_aa_text_bitmapinfo( dev->hdc, info, &bits, &src, x, y, flags,
+            render_aa_text_bitmapinfo( dc, info, &bits, &src, x, y, flags,
                                        aa_flags, str, count, dx );
             err = dst_dev->funcs->pPutImage( dst_dev, 0, info, &bits, &src, &dst, SRCCOPY );
             if (bits.free) bits.free( &bits );
@@ -2016,7 +2052,7 @@ BOOL nulldrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags, const RECT *rect
         }
     }
 
-    pen = CreatePen( PS_SOLID, 1, GetTextColor(dev->hdc) );
+    pen = CreatePen( PS_SOLID, 1, dc->textColor );
     orig = SelectObject( dev->hdc, pen );
 
     for (i = 0; i < count; i++)
@@ -2027,7 +2063,7 @@ BOOL nulldrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags, const RECT *rect
         err = get_glyph_bitmap( dev->hdc, str[i], flags, GGO_BITMAP, &metrics, &image );
         if (err) continue;
 
-        if (image.ptr) draw_glyph( dev->hdc, x, y, &metrics, &image, (flags & ETO_CLIPPED) ? rect : NULL );
+        if (image.ptr) draw_glyph( dc, x, y, &metrics, &image, (flags & ETO_CLIPPED) ? rect : NULL );
         if (image.free) image.free( &image );
 
         if (dx)
@@ -2109,6 +2145,18 @@ BOOL WINAPI ExtTextOutA( HDC hdc, INT x, INT y, UINT flags,
     return ret;
 }
 
+/***********************************************************************
+ *           get_line_width
+ *
+ * Scale the underline / strikeout line width.
+ */
+static inline int get_line_width( DC *dc, int metric_size )
+{
+    int width = abs( INTERNAL_YWSTODS( dc, metric_size ));
+    if (width == 0) width = 1;
+    if (metric_size < 0) width = -width;
+    return width;
+}
 
 /***********************************************************************
  *           ExtTextOutW    (GDI32.@)
@@ -2146,8 +2194,8 @@ BOOL WINAPI ExtTextOutW( HDC hdc, INT x, INT y, UINT flags,
     BOOL ret = FALSE;
     LPWSTR reordered_str = (LPWSTR)str;
     WORD *glyphs = NULL;
-    UINT align = GetTextAlign( hdc );
-    DWORD layout = GetLayout( hdc );
+    UINT align;
+    DWORD layout;
     POINT pt;
     TEXTMETRICW tm;
     LOGFONTW lf;
@@ -2164,7 +2212,9 @@ BOOL WINAPI ExtTextOutW( HDC hdc, INT x, INT y, UINT flags,
 
     if (!dc) return FALSE;
 
+    align = dc->textAlign;
     breakRem = dc->breakRem;
+    layout = dc->layout;
 
     if (quietfixme == 0 && flags & (ETO_NUMERICSLOCAL | ETO_NUMERICSLATIN))
     {
@@ -2211,17 +2261,17 @@ BOOL WINAPI ExtTextOutW( HDC hdc, INT x, INT y, UINT flags,
 
     TRACE("%p, %d, %d, %08x, %s, %s, %d, %p)\n", hdc, x, y, flags,
           wine_dbgstr_rect(lprect), debugstr_wn(str, count), count, lpDx);
-    TRACE("align = %x bkmode = %x mapmode = %x\n", align, GetBkMode(hdc), GetMapMode(hdc));
+    TRACE("align = %x bkmode = %x mapmode = %x\n", align, dc->backgroundMode, dc->MapMode);
 
     if(align & TA_UPDATECP)
     {
-        GetCurrentPositionEx( hdc, &pt );
+        pt = dc->cur_pos;
         x = pt.x;
         y = pt.y;
     }
 
     GetTextMetricsW(hdc, &tm);
-    GetObjectW(GetCurrentObject(hdc, OBJ_FONT), sizeof(lf), &lf);
+    GetObjectW(dc->hFont, sizeof(lf), &lf);
 
     if(!(tm.tmPitchAndFamily & TMPF_VECTOR)) /* Non-scalable fonts shouldn't be rotated */
         lf.lfEscapement = 0;
@@ -2243,10 +2293,10 @@ BOOL WINAPI ExtTextOutW( HDC hdc, INT x, INT y, UINT flags,
         sinEsc = 0;
     }
 
-    if (lprect)
+    if (lprect && (flags & (ETO_OPAQUE | ETO_CLIPPED)))
     {
         rc = *lprect;
-        LPtoDP(hdc, (POINT*)&rc, 2);
+        lp_to_dp(dc, (POINT*)&rc, 2);
         order_rect( &rc );
         if (flags & ETO_OPAQUE)
             physdev->funcs->pExtTextOut( physdev, 0, 0, ETO_OPAQUE, &rc, NULL, 0, NULL );
@@ -2261,7 +2311,7 @@ BOOL WINAPI ExtTextOutW( HDC hdc, INT x, INT y, UINT flags,
 
     pt.x = x;
     pt.y = y;
-    LPtoDP(hdc, &pt, 1);
+    lp_to_dp(dc, &pt, 1);
     x = pt.x;
     y = pt.y;
 
@@ -2323,7 +2373,7 @@ BOOL WINAPI ExtTextOutW( HDC hdc, INT x, INT y, UINT flags,
             desired[1].x =  cosEsc * total.x + sinEsc * total.y;
             desired[1].y = -sinEsc * total.x + cosEsc * total.y;
 
-            LPtoDP(hdc, desired, 2);
+            lp_to_dp(dc, desired, 2);
             desired[1].x -= desired[0].x;
             desired[1].y -= desired[0].y;
 
@@ -2353,7 +2403,7 @@ BOOL WINAPI ExtTextOutW( HDC hdc, INT x, INT y, UINT flags,
         desired[0].x = desired[0].y = 0;
         desired[1].x = sz.cx;
         desired[1].y = 0;
-        LPtoDP(hdc, desired, 2);
+        lp_to_dp(dc, desired, 2);
         desired[1].x -= desired[0].x;
         desired[1].y -= desired[0].y;
 
@@ -2376,7 +2426,7 @@ BOOL WINAPI ExtTextOutW( HDC hdc, INT x, INT y, UINT flags,
         {
             pt.x = x + width.x;
             pt.y = y + width.y;
-            DPtoLP(hdc, &pt, 1);
+            dp_to_lp(dc, &pt, 1);
             MoveToEx(hdc, pt.x, pt.y, NULL);
         }
         break;
@@ -2393,7 +2443,7 @@ BOOL WINAPI ExtTextOutW( HDC hdc, INT x, INT y, UINT flags,
         {
             pt.x = x;
             pt.y = y;
-            DPtoLP(hdc, &pt, 1);
+            dp_to_lp(dc, &pt, 1);
             MoveToEx(hdc, pt.x, pt.y, NULL);
         }
         break;
@@ -2415,7 +2465,7 @@ BOOL WINAPI ExtTextOutW( HDC hdc, INT x, INT y, UINT flags,
         break;
     }
 
-    if (GetBkMode(hdc) != TRANSPARENT)
+    if (dc->backgroundMode != TRANSPARENT)
     {
         if(!((flags & ETO_CLIPPED) && (flags & ETO_OPAQUE)))
         {
@@ -2446,8 +2496,6 @@ done:
     if(reordered_str != str)
         HeapFree(GetProcessHeap(), 0, reordered_str);
 
-    release_dc_ptr( dc );
-
     if (ret && (lf.lfUnderline || lf.lfStrikeOut))
     {
         int underlinePos, strikeoutPos;
@@ -2456,7 +2504,7 @@ done:
         OUTLINETEXTMETRICW* otm = NULL;
         POINT pts[5];
         HPEN hpen = SelectObject(hdc, GetStockObject(NULL_PEN));
-        HBRUSH hbrush = CreateSolidBrush(GetTextColor(hdc));
+        HBRUSH hbrush = CreateSolidBrush(dc->textColor);
 
         hbrush = SelectObject(hdc, hbrush);
 
@@ -2473,11 +2521,10 @@ done:
             GetOutlineTextMetricsW(hdc, size, otm);
             underlinePos = abs( INTERNAL_YWSTODS( dc, otm->otmsUnderscorePosition ));
             if (otm->otmsUnderscorePosition < 0) underlinePos = -underlinePos;
-            underlineWidth = abs( INTERNAL_YWSTODS( dc, otm->otmsUnderscoreSize ));
-            if (otm->otmsUnderscoreSize < 0) underlineWidth = -underlineWidth;
+            underlineWidth = get_line_width( dc, otm->otmsUnderscoreSize );
             strikeoutPos = abs( INTERNAL_YWSTODS( dc, otm->otmsStrikeoutPosition ));
             if (otm->otmsStrikeoutPosition < 0) strikeoutPos = -strikeoutPos;
-            strikeoutWidth = abs( INTERNAL_YWSTODS( dc, otm->otmsStrikeoutSize ));
+            strikeoutWidth = get_line_width( dc, otm->otmsStrikeoutSize );
             HeapFree(GetProcessHeap(), 0, otm);
         }
 
@@ -2494,7 +2541,7 @@ done:
             pts[3].y = pts[0].y + underlineWidth * cosEsc;
             pts[4].x = pts[0].x;
             pts[4].y = pts[0].y;
-            DPtoLP(hdc, pts, 5);
+            dp_to_lp(dc, pts, 5);
             Polygon(hdc, pts, 5);
         }
 
@@ -2510,7 +2557,7 @@ done:
             pts[3].y = pts[0].y + strikeoutWidth * cosEsc;
             pts[4].x = pts[0].x;
             pts[4].y = pts[0].y;
-            DPtoLP(hdc, pts, 5);
+            dp_to_lp(dc, pts, 5);
             Polygon(hdc, pts, 5);
         }
 
@@ -2518,6 +2565,8 @@ done:
         hbrush = SelectObject(hdc, hbrush);
         DeleteObject(hbrush);
     }
+
+    release_dc_ptr( dc );
 
     return ret;
 }
@@ -3021,7 +3070,6 @@ DWORD WINAPI GetFontLanguageInfo(HDC hdc)
 		GCP_GLYPHSHAPE_MASK=FS_ARABIC,
 		GCP_KASHIDA_MASK=0x00000000,
 		GCP_LIGATE_MASK=0x00000000,
-		GCP_USEKERNING_MASK=0x00000000,
 		GCP_REORDER_MASK=FS_HEBREW|FS_ARABIC;
 
 	DWORD result=0;
@@ -3047,7 +3095,7 @@ DWORD WINAPI GetFontLanguageInfo(HDC hdc)
 	if( (fontsig.fsCsb[0]&GCP_LIGATE_MASK)!=0 )
 		result|=GCP_LIGATE;
 
-	if( (fontsig.fsCsb[0]&GCP_USEKERNING_MASK)!=0 )
+	if( GetKerningPairsW( hdc, 0, NULL ) )
 		result|=GCP_USEKERNING;
 
         /* this might need a test for a HEBREW- or ARABIC_CHARSET as well */
@@ -3679,27 +3727,6 @@ UINT WINAPI GetTextCharset(HDC hdc)
 }
 
 /***********************************************************************
- *           GetTextCharsetInfo    (GDI32.@)
- */
-UINT WINAPI GetTextCharsetInfo(HDC hdc, LPFONTSIGNATURE fs, DWORD flags)
-{
-    UINT ret = DEFAULT_CHARSET;
-    DC *dc = get_dc_ptr(hdc);
-    PHYSDEV dev;
-
-    if (dc)
-    {
-        dev = GET_DC_PHYSDEV( dc, pGetTextCharsetInfo );
-        ret = dev->funcs->pGetTextCharsetInfo( dev, fs, flags );
-        release_dc_ptr( dc );
-    }
-
-    if (ret == DEFAULT_CHARSET && fs)
-        memset(fs, 0, sizeof(FONTSIGNATURE));
-    return ret;
-}
-
-/***********************************************************************
  *           GdiGetCharDimensions    (GDI32.@)
  *
  * Gets the average width of the characters in the English alphabet.
@@ -3836,19 +3863,51 @@ BOOL WINAPI FontIsLinked(HDC hdc)
 }
 
 /*************************************************************
+ *           GetFontRealizationInfo    (GDI32.@)
+ */
+BOOL WINAPI GetFontRealizationInfo(HDC hdc, struct font_realization_info *info)
+{
+    BOOL is_v0 = info->size == FIELD_OFFSET(struct font_realization_info, unk);
+    PHYSDEV dev;
+    BOOL ret;
+    DC *dc;
+
+    if (info->size != sizeof(*info) && !is_v0)
+        return FALSE;
+
+    dc = get_dc_ptr(hdc);
+    if (!dc) return FALSE;
+    dev = GET_DC_PHYSDEV( dc, pGetFontRealizationInfo );
+    ret = dev->funcs->pGetFontRealizationInfo( dev, info );
+    release_dc_ptr(dc);
+    return ret;
+}
+
+struct realization_info
+{
+    DWORD flags;       /* 1 for bitmap fonts, 3 for scalable fonts */
+    DWORD cache_num;   /* keeps incrementing - num of fonts that have been created allowing for caching?? */
+    DWORD instance_id; /* identifies a realized font instance */
+};
+
+/*************************************************************
  *           GdiRealizationInfo    (GDI32.@)
  *
  * Returns a structure that contains some font information.
  */
-BOOL WINAPI GdiRealizationInfo(HDC hdc, realization_info_t *info)
+BOOL WINAPI GdiRealizationInfo(HDC hdc, struct realization_info *info)
 {
-    DC *dc = get_dc_ptr(hdc);
-    PHYSDEV dev;
+    struct font_realization_info ri;
     BOOL ret;
 
-    if (!dc) return FALSE;
-    dev = GET_DC_PHYSDEV( dc, pGdiRealizationInfo );
-    ret = dev->funcs->pGdiRealizationInfo( dev, info );
-    release_dc_ptr(dc);
+    ri.size = sizeof(ri);
+    ret = GetFontRealizationInfo( hdc, &ri );
+    if (ret)
+    {
+        info->flags = ri.flags;
+        info->cache_num = ri.cache_num;
+        info->instance_id = ri.instance_id;
+    }
+
     return ret;
 }

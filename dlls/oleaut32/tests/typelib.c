@@ -2,7 +2,7 @@
  * ITypeLib and ITypeInfo test
  *
  * Copyright 2004 Jacek Caban
- * Copyright 2006 Dmitry Timoshkov
+ * Copyright 2006,2015 Dmitry Timoshkov
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -19,12 +19,16 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#define NONAMELESSSTRUCT
+#define NONAMELESSUNION
+
 #define COBJMACROS
 #define CONST_VTABLE
 
 #include <wine/test.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <assert.h>
 
 #include "windef.h"
 #include "winbase.h"
@@ -33,6 +37,7 @@
 #include "ocidl.h"
 #include "shlwapi.h"
 #include "tmarshal.h"
+#include "olectl.h"
 
 #include "test_reg.h"
 #include "test_tlb.h"
@@ -41,7 +46,7 @@
 #define expect_int(expr, value) expect_eq(expr, (int)(value), int, "%d")
 #define expect_hex(expr, value) expect_eq(expr, (int)(value), int, "0x%x")
 #define expect_null(expr) expect_eq(expr, NULL, const void *, "%p")
-#define expect_guid(expected, guid) { ok(IsEqualGUID(expected, guid), "got wrong guid\n"); }
+#define expect_guid(expected, guid) { ok(IsEqualGUID(expected, guid), "got wrong guid %s\n", wine_dbgstr_guid(guid)); }
 
 #define expect_wstr_acpval(expr, value) \
     { \
@@ -63,12 +68,16 @@
 #define ARCH "x86"
 #elif defined __x86_64__
 #define ARCH "amd64"
+#elif defined __arm__
+#define ARCH "arm"
+#elif defined __aarch64__
+#define ARCH "arm64"
 #else
 #define ARCH "none"
 #endif
 
-static HRESULT WINAPI (*pRegisterTypeLibForUser)(ITypeLib*,OLECHAR*,OLECHAR*);
-static HRESULT WINAPI (*pUnRegisterTypeLibForUser)(REFGUID,WORD,WORD,LCID,SYSKIND);
+static HRESULT (WINAPI *pRegisterTypeLibForUser)(ITypeLib*,OLECHAR*,OLECHAR*);
+static HRESULT (WINAPI *pUnRegisterTypeLibForUser)(REFGUID,WORD,WORD,LCID,SYSKIND);
 
 static BOOL   (WINAPI *pActivateActCtx)(HANDLE,ULONG_PTR*);
 static HANDLE (WINAPI *pCreateActCtxW)(PCACTCTXW);
@@ -148,6 +157,12 @@ static LONG WINAPI invoketest_putref_testprop2(IInvokeTest *iface, IUnknown *i)
     return 6;
 }
 
+static HRESULT WINAPI invoketest_testfunc(IInvokeTest *iface, int i, int *p)
+{
+    *p = i+1;
+    return S_OK;
+}
+
 static const IInvokeTestVtbl invoketestvtbl = {
     invoketest_QueryInterface,
     invoketest_AddRef,
@@ -158,7 +173,8 @@ static const IInvokeTestVtbl invoketestvtbl = {
     invoketest_Invoke,
     invoketest_get_test,
     invoketest_putref_testprop,
-    invoketest_putref_testprop2
+    invoketest_putref_testprop2,
+    invoketest_testfunc
 };
 
 static IInvokeTest invoketest = { &invoketestvtbl };
@@ -194,7 +210,8 @@ static void ref_count_test(LPCWSTR type_lib)
 
     hRes = ITypeLib_GetTypeInfo(iface, 1, &iti1);
     ok(hRes == S_OK, "ITypeLib_GetTypeInfo failed on index = 1\n");
-    ok(ref_count=ITypeLib_Release(iface) > 0, "ITypeLib destroyed while ITypeInfo has back pointer\n");
+    ref_count = ITypeLib_Release(iface);
+    ok(ref_count > 0, "ITypeLib destroyed while ITypeInfo has back pointer\n");
     if(!ref_count)
         return;
 
@@ -210,15 +227,13 @@ static void ref_count_test(LPCWSTR type_lib)
 
 static void test_TypeComp(void)
 {
+    ITypeComp *pTypeComp, *tcomp, *pTypeComp_tmp;
+    ITypeInfo *pTypeInfo, *ti, *pFontTypeInfo;
     ITypeLib *pTypeLib;
-    ITypeComp *pTypeComp;
     HRESULT hr;
     ULONG ulHash;
     DESCKIND desckind;
     BINDPTR bindptr;
-    ITypeInfo *pTypeInfo;
-    ITypeInfo *pFontTypeInfo;
-    ITypeComp *pTypeComp_tmp;
     static WCHAR wszStdFunctions[] = {'S','t','d','F','u','n','c','t','i','o','n','s',0};
     static WCHAR wszSavePicture[] = {'S','a','v','e','P','i','c','t','u','r','e',0};
     static WCHAR wszOLE_TRISTATE[] = {'O','L','E','_','T','R','I','S','T','A','T','E',0};
@@ -418,6 +433,17 @@ static void test_TypeComp(void)
 
     hr = ITypeInfo_GetTypeComp(pFontTypeInfo, &pTypeComp);
     ok_ole_success(hr, ITypeLib_GetTypeComp);
+
+    hr = ITypeInfo_QueryInterface(pFontTypeInfo, &IID_ITypeComp, (void**)&tcomp);
+    ok(hr == S_OK, "got %08x\n", hr);
+    ok(tcomp == pTypeComp, "got %p, was %p\n", tcomp, pTypeComp);
+
+    hr = ITypeComp_QueryInterface(tcomp, &IID_ITypeInfo, (void**)&ti);
+    ok(hr == S_OK, "got %08x\n", hr);
+    ok(ti == pFontTypeInfo, "got %p, was %p\n", ti, pFontTypeInfo);
+    ITypeInfo_Release(ti);
+
+    ITypeComp_Release(tcomp);
 
     ulHash = LHashValOfNameSys(SYS_WIN32, LOCALE_NEUTRAL, wszClone);
     hr = ITypeComp_Bind(pTypeComp, wszClone, ulHash, 0, &pTypeInfo, &desckind, &bindptr);
@@ -657,6 +683,33 @@ static void write_typelib(int res_no, const char *filename)
     WriteFile( file, ptr, SizeofResource( GetModuleHandleA(NULL), res ), &written, NULL );
     ok( written == SizeofResource( GetModuleHandleA(NULL), res ), "couldn't write resource\n" );
     CloseHandle( file );
+}
+
+static void test_invoke_func(ITypeInfo *typeinfo)
+{
+    DISPID named_args[3] = { DISPID_THIS };
+    VARIANT args[3], res;
+    DISPPARAMS dp = {args, named_args, 1, 0};
+    UINT i;
+    HRESULT hres;
+
+    V_VT(args) = VT_INT;
+    V_INT(args) = 3;
+    V_VT(&res) = VT_ERROR;
+    hres = ITypeInfo_Invoke(typeinfo, &invoketest, 3, DISPATCH_METHOD, &dp, &res, NULL, &i);
+    ok(hres == S_OK, "got 0x%08x\n", hres);
+    ok(V_VT(&res) == VT_I4, "got %d\n", V_VT(&res));
+    ok(V_I4(&res) == 4, "got %d\n", V_I4(&res));
+
+    V_VT(args) = VT_DISPATCH;
+    V_DISPATCH(args) = (IDispatch*)&invoketest;
+    V_VT(args+1) = VT_INT;
+    V_INT(args+1) = 3;
+    V_VT(&res) = VT_ERROR;
+    dp.cNamedArgs = 1;
+    dp.cArgs = 2;
+    hres = ITypeInfo_Invoke(typeinfo, &invoketest, 3, DISPATCH_METHOD, &dp, &res, NULL, &i);
+    ok(hres == DISP_E_BADPARAMCOUNT, "got 0x%08x\n", hres);
 }
 
 static const char *create_test_typelib(int res_no)
@@ -950,6 +1003,8 @@ static void test_TypeInfo(void)
     V_I4(&res) = 0;
     hr = ITypeInfo_Invoke(pTypeInfo, &invoketest, 2, DISPATCH_PROPERTYPUT, &dispparams, &res, NULL, &i);
     ok(hr == DISP_E_MEMBERNOTFOUND, "got 0x%08x, %d\n", hr, i);
+
+    test_invoke_func(pTypeInfo);
 
     ITypeInfo_Release(pTypeInfo);
     ITypeLib_Release(pTypeLib);
@@ -1611,7 +1666,6 @@ static void test_CreateTypeLib(SYSKIND sys) {
     static OLECHAR dualW[] = {'d','u','a','l',0};
     static OLECHAR coclassW[] = {'c','o','c','l','a','s','s',0};
     static const WCHAR defaultW[] = {'d','e','f','a','u','l','t',0x3213,0};
-    static const WCHAR defaultQW[] = {'d','e','f','a','u','l','t','?',0};
     static OLECHAR func1W[] = {'f','u','n','c','1',0};
     static OLECHAR func2W[] = {'f','u','n','c','2',0};
     static OLECHAR prop1W[] = {'P','r','o','p','1',0};
@@ -1623,6 +1677,7 @@ static void test_CreateTypeLib(SYSKIND sys) {
     static OLECHAR *names1[] = {func1W, param1W, param2W};
     static OLECHAR *names2[] = {func2W, param1W, param2W};
     static OLECHAR *propname[] = {prop1W, param1W};
+    static const GUID tlcustguid = {0xbf611abe,0x5b38,0x11df,{0x91,0x5c,0x08,0x02,0x79,0x79,0x94,0x69}};
     static const GUID custguid = {0xbf611abe,0x5b38,0x11df,{0x91,0x5c,0x08,0x02,0x79,0x79,0x94,0x70}};
     static const GUID bogusguid = {0xbf611abe,0x5b38,0x11df,{0x91,0x5c,0x08,0x02,0x79,0x79,0x94,0x71}};
     static const GUID interfaceguid = {0x3b9ff02f,0x9675,0x4861,{0xb7,0x81,0xce,0xae,0xa4,0x78,0x2a,0xcc}};
@@ -1634,10 +1689,11 @@ static void test_CreateTypeLib(SYSKIND sys) {
     ICreateTypeInfo *createti;
     ICreateTypeInfo2 *createti2;
     ITypeLib *tl, *stdole;
+    ITypeLib2 *tl2;
     ITypeInfo *interface1, *interface2, *dual, *unknown, *dispatch, *ti;
     ITypeInfo *tinfos[2];
     ITypeInfo2 *ti2;
-    ITypeComp *tcomp;
+    ITypeComp *tcomp, *tcomp2;
     MEMBERID memids[2];
     FUNCDESC funcdesc, *pfuncdesc;
     ELEMDESC elemdesc[5], *edesc;
@@ -1656,6 +1712,8 @@ static void test_CreateTypeLib(SYSKIND sys) {
     TYPEKIND kind;
     DESCKIND desckind;
     BINDPTR bindptr;
+    char nameA[16];
+    WCHAR nameW[16];
 
     switch(sys){
     case SYS_WIN32:
@@ -1749,6 +1807,23 @@ static void test_CreateTypeLib(SYSKIND sys) {
 
     SysFreeString(name);
     SysFreeString(helpfile);
+
+    V_VT(&cust_data) = VT_I4;
+    V_I4(&cust_data) = 1;
+    hres = ICreateTypeLib2_SetCustData(createtl, &tlcustguid, &cust_data);
+    ok(hres == S_OK, "got %08x\n", hres);
+
+    hres = ITypeLib_QueryInterface(tl, &IID_ITypeLib2, (void**)&tl2);
+    ok(hres == S_OK, "no ITypeLib2 interface (%x)\n", hres);
+
+    V_VT(&cust_data) = VT_EMPTY;
+    V_I4(&cust_data) = 0;
+    hres = ITypeLib2_GetCustData(tl2, &tlcustguid, &cust_data);
+    ok(hres == S_OK, "got %08x\n", hres);
+    ok(V_VT(&cust_data) == VT_I4, "V_VT(&cust_data) = %d\n", V_VT(&cust_data));
+    ok(V_I4(&cust_data) == 1, "V_I4(&cust_data) = %d\n", V_I4(&cust_data));
+
+    ITypeLib2_Release(tl2);
 
     /* invalid parameters */
     hres = ICreateTypeLib2_CreateTypeInfo(createtl, NULL, TKIND_INTERFACE, &createti);
@@ -1958,6 +2033,8 @@ static void test_CreateTypeLib(SYSKIND sys) {
     funcdesc.lprgelemdescParam = NULL;
     funcdesc.invkind = INVOKE_FUNC;
     funcdesc.cParams = 0;
+    funcdesc.cScodes = 1;
+    funcdesc.lprgscode = NULL;
     hres = ICreateTypeInfo_AddFuncDesc(createti, 1, &funcdesc);
     ok(hres == S_OK, "got %08x\n", hres);
 
@@ -2152,6 +2229,9 @@ static void test_CreateTypeLib(SYSKIND sys) {
     ok(hres == S_OK, "got %08x\n", hres);
     SysFreeString(V_BSTR(&paramdescex.varDefaultValue));
 
+    WideCharToMultiByte(CP_ACP, 0, defaultW, -1, nameA, sizeof(nameA), NULL, NULL);
+    MultiByteToWideChar(CP_ACP, 0, nameA, -1, nameW, sizeof(nameW)/sizeof(nameW[0]));
+
     hres = ITypeInfo2_GetFuncDesc(ti2, 3, &pfuncdesc);
     ok(hres == S_OK, "got %08x\n", hres);
 
@@ -2177,7 +2257,7 @@ static void test_CreateTypeLib(SYSKIND sys) {
             U(*edesc).paramdesc.pparamdescex->cBytes);
     ok(V_VT(&U(*edesc).paramdesc.pparamdescex->varDefaultValue) == VT_BSTR, "got: %d\n",
             V_VT(&U(*edesc).paramdesc.pparamdescex->varDefaultValue));
-    ok(!lstrcmpW(V_BSTR(&U(*edesc).paramdesc.pparamdescex->varDefaultValue), defaultQW),
+    ok(!lstrcmpW(V_BSTR(&U(*edesc).paramdesc.pparamdescex->varDefaultValue), nameW),
             "got: %s\n",
             wine_dbgstr_w(V_BSTR(&U(*edesc).paramdesc.pparamdescex->varDefaultValue)));
 
@@ -2189,7 +2269,7 @@ static void test_CreateTypeLib(SYSKIND sys) {
             U(*edesc).paramdesc.pparamdescex->cBytes);
     ok(V_VT(&U(*edesc).paramdesc.pparamdescex->varDefaultValue) == VT_BSTR, "got: %d\n",
             V_VT(&U(*edesc).paramdesc.pparamdescex->varDefaultValue));
-    ok(!lstrcmpW(V_BSTR(&U(*edesc).paramdesc.pparamdescex->varDefaultValue), defaultQW),
+    ok(!lstrcmpW(V_BSTR(&U(*edesc).paramdesc.pparamdescex->varDefaultValue), nameW),
             "got: %s\n",
             wine_dbgstr_w(V_BSTR(&U(*edesc).paramdesc.pparamdescex->varDefaultValue)));
 
@@ -2811,6 +2891,16 @@ static void test_CreateTypeLib(SYSKIND sys) {
     SysFreeString(name);
     SysFreeString(helpfile);
 
+    hres = ITypeLib_QueryInterface(tl, &IID_ITypeLib2, (void**)&tl2);
+    ok(hres == S_OK, "no ITypeLib2 interface (%x)\n", hres);
+    V_VT(&cust_data) = VT_EMPTY;
+    V_I4(&cust_data) = 0;
+    hres = ITypeLib2_GetCustData(tl2, &tlcustguid, &cust_data);
+    ok(hres == S_OK, "got %08x\n", hres);
+    ok(V_VT(&cust_data) == VT_I4, "V_VT(&cust_data) = %d\n", V_VT(&cust_data));
+    ok(V_I4(&cust_data) == 1, "V_I4(&cust_data) = %d\n", V_I4(&cust_data));
+    ITypeLib2_Release(tl2);
+
     hres = ITypeLib_GetTypeInfo(tl, 0, &ti);
     ok(hres == S_OK, "got %08x\n", hres);
 
@@ -2821,11 +2911,7 @@ static void test_CreateTypeLib(SYSKIND sys) {
     ok(typeattr->cFuncs == 13, "cFuncs = %d\n", typeattr->cFuncs);
     ok(typeattr->cVars == 0, "cVars = %d\n", typeattr->cVars);
     ok(typeattr->cImplTypes == 1, "cImplTypes = %d\n", typeattr->cImplTypes);
-#ifdef _WIN64
-    if(sys == SYS_WIN32)
-        todo_wine ok(typeattr->cbSizeVft == 16 * sizeof(void*), "cbSizeVft = %d\n", typeattr->cbSizeVft);
-    else
-#endif
+    todo_wine_if(is_win64 && sys == SYS_WIN32)
         ok(typeattr->cbSizeVft == 16 * sizeof(void*), "cbSizeVft = %d\n", typeattr->cbSizeVft);
     ok(typeattr->cbAlignment == alignment, "cbAlignment = %d\n", typeattr->cbAlignment);
     ok(typeattr->wTypeFlags == 0, "wTypeFlags = %d\n", typeattr->wTypeFlags);
@@ -2899,11 +2985,7 @@ static void test_CreateTypeLib(SYSKIND sys) {
     ok(pfuncdesc->callconv == CC_STDCALL, "got 0x%x\n", pfuncdesc->callconv);
     ok(pfuncdesc->cParams == 0, "got %d\n", pfuncdesc->cParams);
     ok(pfuncdesc->cParamsOpt == 0, "got %d\n", pfuncdesc->cParamsOpt);
-#ifdef _WIN64
-    if(sys == SYS_WIN32)
-        todo_wine ok(pfuncdesc->oVft == 4 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
-    else
-#endif
+    todo_wine_if(is_win64 && sys == SYS_WIN32)
         ok(pfuncdesc->oVft == 4 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
     ok(pfuncdesc->cScodes == 0, "got %d\n", pfuncdesc->cScodes);
     ok(pfuncdesc->elemdescFunc.tdesc.vt == VT_VOID, "got %d\n", pfuncdesc->elemdescFunc.tdesc.vt);
@@ -2928,11 +3010,7 @@ static void test_CreateTypeLib(SYSKIND sys) {
     ok(pfuncdesc->callconv == CC_STDCALL, "got 0x%x\n", pfuncdesc->callconv);
     ok(pfuncdesc->cParams == 0, "got %d\n", pfuncdesc->cParams);
     ok(pfuncdesc->cParamsOpt == 0, "got %d\n", pfuncdesc->cParamsOpt);
-#ifdef _WIN64
-    if(sys == SYS_WIN32)
-        todo_wine ok(pfuncdesc->oVft == 5 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
-    else
-#endif
+    todo_wine_if(is_win64 && sys == SYS_WIN32)
         ok(pfuncdesc->oVft == 5 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
     ok(pfuncdesc->cScodes == 0, "got %d\n", pfuncdesc->cScodes);
     ok(pfuncdesc->elemdescFunc.tdesc.vt == VT_VOID, "got %d\n", pfuncdesc->elemdescFunc.tdesc.vt);
@@ -2957,11 +3035,7 @@ static void test_CreateTypeLib(SYSKIND sys) {
     ok(pfuncdesc->callconv == CC_STDCALL, "got 0x%x\n", pfuncdesc->callconv);
     ok(pfuncdesc->cParams == 2, "got %d\n", pfuncdesc->cParams);
     ok(pfuncdesc->cParamsOpt == 0, "got %d\n", pfuncdesc->cParamsOpt);
-#ifdef _WIN64
-    if(sys == SYS_WIN32)
-        todo_wine ok(pfuncdesc->oVft == 6 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
-    else
-#endif
+    todo_wine_if(is_win64 && sys == SYS_WIN32)
         ok(pfuncdesc->oVft == 6 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
     ok(pfuncdesc->cScodes == 0, "got %d\n", pfuncdesc->cScodes);
     ok(pfuncdesc->elemdescFunc.tdesc.vt == VT_VOID, "got %d\n", pfuncdesc->elemdescFunc.tdesc.vt);
@@ -2975,7 +3049,7 @@ static void test_CreateTypeLib(SYSKIND sys) {
             U(*edesc).paramdesc.pparamdescex->cBytes);
     ok(V_VT(&U(*edesc).paramdesc.pparamdescex->varDefaultValue) == VT_BSTR, "got: %d\n",
             V_VT(&U(*edesc).paramdesc.pparamdescex->varDefaultValue));
-    ok(!lstrcmpW(V_BSTR(&U(*edesc).paramdesc.pparamdescex->varDefaultValue), defaultQW),
+    ok(!lstrcmpW(V_BSTR(&U(*edesc).paramdesc.pparamdescex->varDefaultValue), nameW),
             "got: %s\n",
             wine_dbgstr_w(V_BSTR(&U(*edesc).paramdesc.pparamdescex->varDefaultValue)));
 
@@ -2987,7 +3061,7 @@ static void test_CreateTypeLib(SYSKIND sys) {
             U(*edesc).paramdesc.pparamdescex->cBytes);
     ok(V_VT(&U(*edesc).paramdesc.pparamdescex->varDefaultValue) == VT_BSTR, "got: %d\n",
             V_VT(&U(*edesc).paramdesc.pparamdescex->varDefaultValue));
-    ok(!lstrcmpW(V_BSTR(&U(*edesc).paramdesc.pparamdescex->varDefaultValue), defaultQW),
+    ok(!lstrcmpW(V_BSTR(&U(*edesc).paramdesc.pparamdescex->varDefaultValue), nameW),
             "got: %s\n",
             wine_dbgstr_w(V_BSTR(&U(*edesc).paramdesc.pparamdescex->varDefaultValue)));
 
@@ -3021,11 +3095,7 @@ static void test_CreateTypeLib(SYSKIND sys) {
     ok(pfuncdesc->callconv == CC_STDCALL, "got 0x%x\n", pfuncdesc->callconv);
     ok(pfuncdesc->cParams == 2, "got %d\n", pfuncdesc->cParams);
     ok(pfuncdesc->cParamsOpt == 0, "got %d\n", pfuncdesc->cParamsOpt);
-#ifdef _WIN64
-    if(sys == SYS_WIN32)
-        todo_wine ok(pfuncdesc->oVft == 7 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
-    else
-#endif
+    todo_wine_if(is_win64 && sys == SYS_WIN32)
         ok(pfuncdesc->oVft == 7 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
     ok(pfuncdesc->cScodes == 0, "got %d\n", pfuncdesc->cScodes);
     ok(pfuncdesc->elemdescFunc.tdesc.vt == VT_VOID, "got %d\n", pfuncdesc->elemdescFunc.tdesc.vt);
@@ -3072,11 +3142,7 @@ static void test_CreateTypeLib(SYSKIND sys) {
     ok(pfuncdesc->callconv == CC_STDCALL, "got 0x%x\n", pfuncdesc->callconv);
     ok(pfuncdesc->cParams == 1, "got %d\n", pfuncdesc->cParams);
     ok(pfuncdesc->cParamsOpt == 0, "got %d\n", pfuncdesc->cParamsOpt);
-#ifdef _WIN64
-    if(sys == SYS_WIN32)
-        todo_wine ok(pfuncdesc->oVft == 8 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
-    else
-#endif
+    todo_wine_if(is_win64 && sys == SYS_WIN32)
         ok(pfuncdesc->oVft == 8 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
     ok(pfuncdesc->cScodes == 0, "got %d\n", pfuncdesc->cScodes);
     ok(pfuncdesc->elemdescFunc.tdesc.vt == VT_VOID, "got %d\n", pfuncdesc->elemdescFunc.tdesc.vt);
@@ -3114,11 +3180,7 @@ static void test_CreateTypeLib(SYSKIND sys) {
     ok(pfuncdesc->callconv == CC_STDCALL, "got 0x%x\n", pfuncdesc->callconv);
     ok(pfuncdesc->cParams == 1, "got %d\n", pfuncdesc->cParams);
     ok(pfuncdesc->cParamsOpt == 0, "got %d\n", pfuncdesc->cParamsOpt);
-#ifdef _WIN64
-    if(sys == SYS_WIN32)
-        todo_wine ok(pfuncdesc->oVft == 9 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
-    else
-#endif
+    todo_wine_if(is_win64 && sys == SYS_WIN32)
         ok(pfuncdesc->oVft == 9 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
     ok(pfuncdesc->cScodes == 0, "got %d\n", pfuncdesc->cScodes);
     ok(pfuncdesc->elemdescFunc.tdesc.vt == VT_VARIANT, "got %d\n", pfuncdesc->elemdescFunc.tdesc.vt);
@@ -3156,11 +3218,7 @@ static void test_CreateTypeLib(SYSKIND sys) {
     ok(pfuncdesc->callconv == CC_STDCALL, "got 0x%x\n", pfuncdesc->callconv);
     ok(pfuncdesc->cParams == 2, "got %d\n", pfuncdesc->cParams);
     ok(pfuncdesc->cParamsOpt == 0, "got %d\n", pfuncdesc->cParamsOpt);
-#ifdef _WIN64
-    if(sys == SYS_WIN32)
-        todo_wine ok(pfuncdesc->oVft == 10 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
-    else
-#endif
+    todo_wine_if(is_win64 && sys == SYS_WIN32)
         ok(pfuncdesc->oVft == 10 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
     ok(pfuncdesc->cScodes == 0, "got %d\n", pfuncdesc->cScodes);
     ok(pfuncdesc->elemdescFunc.tdesc.vt == VT_VOID, "got %d\n", pfuncdesc->elemdescFunc.tdesc.vt);
@@ -3201,11 +3259,7 @@ static void test_CreateTypeLib(SYSKIND sys) {
     ok(pfuncdesc->callconv == CC_STDCALL, "got 0x%x\n", pfuncdesc->callconv);
     ok(pfuncdesc->cParams == 1, "got %d\n", pfuncdesc->cParams);
     ok(pfuncdesc->cParamsOpt == 0, "got %d\n", pfuncdesc->cParamsOpt);
-#ifdef _WIN64
-    if(sys == SYS_WIN32)
-        todo_wine ok(pfuncdesc->oVft == 11 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
-    else
-#endif
+    todo_wine_if(is_win64 && sys == SYS_WIN32)
         ok(pfuncdesc->oVft == 11 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
     ok(pfuncdesc->cScodes == 0, "got %d\n", pfuncdesc->cScodes);
     ok(pfuncdesc->elemdescFunc.tdesc.vt == VT_VOID, "got %d\n", pfuncdesc->elemdescFunc.tdesc.vt);
@@ -3241,11 +3295,7 @@ static void test_CreateTypeLib(SYSKIND sys) {
     ok(pfuncdesc->callconv == CC_STDCALL, "got 0x%x\n", pfuncdesc->callconv);
     ok(pfuncdesc->cParams == 0, "got %d\n", pfuncdesc->cParams);
     ok(pfuncdesc->cParamsOpt == 0, "got %d\n", pfuncdesc->cParamsOpt);
-#ifdef _WIN64
-    if(sys == SYS_WIN32)
-        todo_wine ok(pfuncdesc->oVft == 12 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
-    else
-#endif
+    todo_wine_if(is_win64 && sys == SYS_WIN32)
         ok(pfuncdesc->oVft == 12 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
     ok(pfuncdesc->cScodes == 0, "got %d\n", pfuncdesc->cScodes);
     ok(pfuncdesc->elemdescFunc.tdesc.vt == VT_BSTR, "got %d\n", pfuncdesc->elemdescFunc.tdesc.vt);
@@ -3277,11 +3327,7 @@ static void test_CreateTypeLib(SYSKIND sys) {
     ok(pfuncdesc->callconv == CC_STDCALL, "got 0x%x\n", pfuncdesc->callconv);
     ok(pfuncdesc->cParams == 1, "got %d\n", pfuncdesc->cParams);
     ok(pfuncdesc->cParamsOpt == 0, "got %d\n", pfuncdesc->cParamsOpt);
-#ifdef _WIN64
-    if(sys == SYS_WIN32)
-        todo_wine ok(pfuncdesc->oVft == 13 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
-    else
-#endif
+    todo_wine_if(is_win64 && sys == SYS_WIN32)
         ok(pfuncdesc->oVft == 13 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
     ok(pfuncdesc->cScodes == 0, "got %d\n", pfuncdesc->cScodes);
     ok(pfuncdesc->elemdescFunc.tdesc.vt == VT_VOID, "got %d\n", pfuncdesc->elemdescFunc.tdesc.vt);
@@ -3315,11 +3361,7 @@ static void test_CreateTypeLib(SYSKIND sys) {
     ok(pfuncdesc->callconv == CC_STDCALL, "got 0x%x\n", pfuncdesc->callconv);
     ok(pfuncdesc->cParams == 1, "got %d\n", pfuncdesc->cParams);
     ok(pfuncdesc->cParamsOpt == 0, "got %d\n", pfuncdesc->cParamsOpt);
-#ifdef _WIN64
-    if(sys == SYS_WIN32)
-        todo_wine ok(pfuncdesc->oVft == 14 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
-    else
-#endif
+    todo_wine_if(is_win64 && sys == SYS_WIN32)
         ok(pfuncdesc->oVft == 14 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
     ok(pfuncdesc->cScodes == 0, "got %d\n", pfuncdesc->cScodes);
     ok(pfuncdesc->elemdescFunc.tdesc.vt == VT_VOID, "got %d\n", pfuncdesc->elemdescFunc.tdesc.vt);
@@ -3351,11 +3393,7 @@ static void test_CreateTypeLib(SYSKIND sys) {
     ok(pfuncdesc->callconv == CC_STDCALL, "got 0x%x\n", pfuncdesc->callconv);
     ok(pfuncdesc->cParams == 1, "got %d\n", pfuncdesc->cParams);
     ok(pfuncdesc->cParamsOpt == 0, "got %d\n", pfuncdesc->cParamsOpt);
-#ifdef _WIN64
-    if(sys == SYS_WIN32)
-        todo_wine ok(pfuncdesc->oVft == 15 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
-    else
-#endif
+    todo_wine_if(is_win64 && sys == SYS_WIN32)
         ok(pfuncdesc->oVft == 15 * sizeof(void*), "got %d\n", pfuncdesc->oVft);
     ok(pfuncdesc->cScodes == 0, "got %d\n", pfuncdesc->cScodes);
     ok(pfuncdesc->elemdescFunc.tdesc.vt == VT_VOID, "got %d\n", pfuncdesc->elemdescFunc.tdesc.vt);
@@ -3572,6 +3610,11 @@ static void test_CreateTypeLib(SYSKIND sys) {
     hres = ITypeInfo_GetTypeComp(ti, &tcomp);
     ok(hres == S_OK, "got %08x\n", hres);
 
+    hres = ITypeInfo_QueryInterface(ti, &IID_ITypeComp, (void**)&tcomp2);
+    ok(hres == S_OK, "got %08x\n", hres);
+    ok(tcomp == tcomp2, "got %p, was %p\n", tcomp2, tcomp);
+    ITypeComp_Release(tcomp2);
+
     hres = ITypeComp_Bind(tcomp, invokeW, 0, INVOKE_FUNC, &interface1, &desckind, &bindptr);
     ok(hres == S_OK, "got %08x\n", hres);
     ok(desckind == DESCKIND_FUNCDESC, "got wrong desckind: 0x%x\n", desckind);
@@ -3583,11 +3626,7 @@ static void test_CreateTypeLib(SYSKIND sys) {
     ok(bindptr.lpfuncdesc->callconv == CC_STDCALL, "got 0x%x\n", bindptr.lpfuncdesc->callconv);
     ok(bindptr.lpfuncdesc->cParams == 8, "got %d\n", bindptr.lpfuncdesc->cParams);
     ok(bindptr.lpfuncdesc->cParamsOpt == 0, "got %d\n", bindptr.lpfuncdesc->cParamsOpt);
-#ifdef _WIN64
-    if(sys == SYS_WIN32)
-        todo_wine ok(bindptr.lpfuncdesc->oVft == 6 * sizeof(void*), "got %x\n", bindptr.lpfuncdesc->oVft);
-    else
-#endif
+    todo_wine_if(is_win64 && sys == SYS_WIN32)
         ok(bindptr.lpfuncdesc->oVft == 6 * sizeof(void*), "got %x\n", bindptr.lpfuncdesc->oVft);
     ok(bindptr.lpfuncdesc->cScodes == 0, "got %d\n", bindptr.lpfuncdesc->cScodes);
     ok(bindptr.lpfuncdesc->elemdescFunc.tdesc.vt == VT_VOID, "got %d\n", bindptr.lpfuncdesc->elemdescFunc.tdesc.vt);
@@ -3611,11 +3650,7 @@ static void test_CreateTypeLib(SYSKIND sys) {
     ok(typeattr->cFuncs == 1, "cFuncs = %d\n", typeattr->cFuncs);
     ok(typeattr->cVars == 0, "cVars = %d\n", typeattr->cVars);
     ok(typeattr->cImplTypes == 1, "cImplTypes = %d\n", typeattr->cImplTypes);
-#ifdef _WIN64
-    if(sys == SYS_WIN32)
-        todo_wine ok(typeattr->cbSizeVft == 8 * sizeof(void*), "cbSizeVft = %d\n", typeattr->cbSizeVft);
-    else
-#endif
+    todo_wine_if(is_win64 && sys == SYS_WIN32)
         ok(typeattr->cbSizeVft == 8 * sizeof(void*), "cbSizeVft = %d\n", typeattr->cbSizeVft);
     ok(typeattr->cbAlignment == alignment, "cbAlignment = %d\n", typeattr->cbAlignment);
     ok(typeattr->wTypeFlags == (TYPEFLAG_FDISPATCHABLE | TYPEFLAG_FDUAL), "wTypeFlags = 0x%x\n", typeattr->wTypeFlags);
@@ -3658,11 +3693,9 @@ static void test_CreateTypeLib(SYSKIND sys) {
 
 static char *dump_string(LPWSTR wstr)
 {
-    int size = lstrlenW(wstr)+3;
+    int size = lstrlenW(wstr)+1;
     char *out = CoTaskMemAlloc(size);
-    WideCharToMultiByte(20127, 0, wstr, -1, out+1, size, NULL, NULL);
-    out[0] = '\"';
-    strcat(out, "\"");
+    WideCharToMultiByte(20127, 0, wstr, -1, out, size, NULL, NULL);
     return out;
 }
 
@@ -3703,9 +3736,95 @@ static const struct map_entry invkind_map[] = {
     {0, NULL}
 };
 
+static const struct map_entry callconv_map[] = {
+    MAP_ENTRY(CC_FASTCALL),
+    MAP_ENTRY(CC_CDECL),
+    MAP_ENTRY(CC_PASCAL),
+    MAP_ENTRY(CC_MACPASCAL),
+    MAP_ENTRY(CC_STDCALL),
+    MAP_ENTRY(CC_FPFASTCALL),
+    MAP_ENTRY(CC_SYSCALL),
+    MAP_ENTRY(CC_MPWCDECL),
+    MAP_ENTRY(CC_MPWPASCAL),
+    {0, NULL}
+};
+
+static const struct map_entry vt_map[] = {
+    MAP_ENTRY(VT_EMPTY),
+    MAP_ENTRY(VT_NULL),
+    MAP_ENTRY(VT_I2),
+    MAP_ENTRY(VT_I4),
+    MAP_ENTRY(VT_R4),
+    MAP_ENTRY(VT_R8),
+    MAP_ENTRY(VT_CY),
+    MAP_ENTRY(VT_DATE),
+    MAP_ENTRY(VT_BSTR),
+    MAP_ENTRY(VT_DISPATCH),
+    MAP_ENTRY(VT_ERROR),
+    MAP_ENTRY(VT_BOOL),
+    MAP_ENTRY(VT_VARIANT),
+    MAP_ENTRY(VT_UNKNOWN),
+    MAP_ENTRY(VT_DECIMAL),
+    MAP_ENTRY(15),
+    MAP_ENTRY(VT_I1),
+    MAP_ENTRY(VT_UI1),
+    MAP_ENTRY(VT_UI2),
+    MAP_ENTRY(VT_UI4),
+    MAP_ENTRY(VT_I8),
+    MAP_ENTRY(VT_UI8),
+    MAP_ENTRY(VT_INT),
+    MAP_ENTRY(VT_UINT),
+    MAP_ENTRY(VT_VOID),
+    MAP_ENTRY(VT_HRESULT),
+    MAP_ENTRY(VT_PTR),
+    MAP_ENTRY(VT_SAFEARRAY),
+    MAP_ENTRY(VT_CARRAY),
+    MAP_ENTRY(VT_USERDEFINED),
+    MAP_ENTRY(VT_LPSTR),
+    MAP_ENTRY(VT_LPWSTR),
+    MAP_ENTRY(VT_RECORD),
+    MAP_ENTRY(VT_INT_PTR),
+    MAP_ENTRY(VT_UINT_PTR),
+    MAP_ENTRY(39),
+    MAP_ENTRY(40),
+    MAP_ENTRY(41),
+    MAP_ENTRY(42),
+    MAP_ENTRY(43),
+    MAP_ENTRY(44),
+    MAP_ENTRY(45),
+    MAP_ENTRY(46),
+    MAP_ENTRY(47),
+    MAP_ENTRY(48),
+    MAP_ENTRY(49),
+    MAP_ENTRY(50),
+    MAP_ENTRY(51),
+    MAP_ENTRY(52),
+    MAP_ENTRY(53),
+    MAP_ENTRY(54),
+    MAP_ENTRY(55),
+    MAP_ENTRY(56),
+    MAP_ENTRY(57),
+    MAP_ENTRY(58),
+    MAP_ENTRY(59),
+    MAP_ENTRY(60),
+    MAP_ENTRY(61),
+    MAP_ENTRY(62),
+    MAP_ENTRY(63),
+    MAP_ENTRY(VT_FILETIME),
+    MAP_ENTRY(VT_BLOB),
+    MAP_ENTRY(VT_STREAM),
+    MAP_ENTRY(VT_STORAGE),
+    MAP_ENTRY(VT_STREAMED_OBJECT),
+    MAP_ENTRY(VT_STORED_OBJECT),
+    MAP_ENTRY(VT_BLOB_OBJECT),
+    MAP_ENTRY(VT_CF),
+    MAP_ENTRY(VT_CLSID),
+    {0, NULL}
+};
+
 #undef MAP_ENTRY
 
-static const char *map_value(DWORD val, const struct map_entry *map)
+static const char *map_value(int val, const struct map_entry *map)
 {
     static int map_id;
     static char bufs[16][256];
@@ -3719,8 +3838,150 @@ static const char *map_value(DWORD val, const struct map_entry *map)
     }
 
     buf = bufs[(map_id++)%16];
-    sprintf(buf, "0x%x", val);
+    sprintf(buf, "%d", val);
     return buf;
+}
+
+static const char *dump_type_flags(DWORD flags)
+{
+    static char buf[256];
+
+    if (!flags) return "0";
+
+    buf[0] = 0;
+
+#define ADD_FLAG(x) if (flags & x) { if (buf[0]) strcat(buf, "|"); strcat(buf, #x); flags &= ~x; }
+    ADD_FLAG(TYPEFLAG_FPROXY)
+    ADD_FLAG(TYPEFLAG_FREVERSEBIND)
+    ADD_FLAG(TYPEFLAG_FDISPATCHABLE)
+    ADD_FLAG(TYPEFLAG_FREPLACEABLE)
+    ADD_FLAG(TYPEFLAG_FAGGREGATABLE)
+    ADD_FLAG(TYPEFLAG_FRESTRICTED)
+    ADD_FLAG(TYPEFLAG_FOLEAUTOMATION)
+    ADD_FLAG(TYPEFLAG_FNONEXTENSIBLE)
+    ADD_FLAG(TYPEFLAG_FDUAL)
+    ADD_FLAG(TYPEFLAG_FCONTROL)
+    ADD_FLAG(TYPEFLAG_FHIDDEN)
+    ADD_FLAG(TYPEFLAG_FPREDECLID)
+    ADD_FLAG(TYPEFLAG_FLICENSED)
+    ADD_FLAG(TYPEFLAG_FCANCREATE)
+    ADD_FLAG(TYPEFLAG_FAPPOBJECT)
+#undef ADD_FLAG
+
+    assert(!flags);
+    assert(strlen(buf) < sizeof(buf));
+
+    return buf;
+}
+
+static char *print_size(BSTR name, TYPEATTR *attr)
+{
+    static char buf[256];
+
+    switch (attr->typekind)
+    {
+    case TKIND_DISPATCH:
+    case TKIND_INTERFACE:
+        sprintf(buf, "sizeof(%s*)", dump_string(name));
+        break;
+
+    case TKIND_RECORD:
+        sprintf(buf, "sizeof(struct %s)", dump_string(name));
+        break;
+
+    case TKIND_UNION:
+        sprintf(buf, "sizeof(union %s)", dump_string(name));
+        break;
+
+    case TKIND_ENUM:
+    case TKIND_ALIAS:
+        sprintf(buf, "4");
+        break;
+
+    default:
+        assert(0);
+        return NULL;
+    }
+
+    return buf;
+}
+
+static const char *dump_param_flags(DWORD flags)
+{
+    static char buf[256];
+
+    if (!flags) return "PARAMFLAG_NONE";
+
+    buf[0] = 0;
+
+#define ADD_FLAG(x) if (flags & x) { if (buf[0]) strcat(buf, "|"); strcat(buf, #x); flags &= ~x; }
+    ADD_FLAG(PARAMFLAG_FIN)
+    ADD_FLAG(PARAMFLAG_FOUT)
+    ADD_FLAG(PARAMFLAG_FLCID)
+    ADD_FLAG(PARAMFLAG_FRETVAL)
+    ADD_FLAG(PARAMFLAG_FOPT)
+    ADD_FLAG(PARAMFLAG_FHASDEFAULT)
+    ADD_FLAG(PARAMFLAG_FHASCUSTDATA)
+#undef ADD_FLAG
+
+    assert(!flags);
+    assert(strlen(buf) < sizeof(buf));
+
+    return buf;
+}
+
+static const char *dump_func_flags(DWORD flags)
+{
+    static char buf[256];
+
+    if (!flags) return "0";
+
+    buf[0] = 0;
+
+#define ADD_FLAG(x) if (flags & x) { if (buf[0]) strcat(buf, "|"); strcat(buf, #x); flags &= ~x; }
+    ADD_FLAG(FUNCFLAG_FRESTRICTED)
+    ADD_FLAG(FUNCFLAG_FSOURCE)
+    ADD_FLAG(FUNCFLAG_FBINDABLE)
+    ADD_FLAG(FUNCFLAG_FREQUESTEDIT)
+    ADD_FLAG(FUNCFLAG_FDISPLAYBIND)
+    ADD_FLAG(FUNCFLAG_FDEFAULTBIND)
+    ADD_FLAG(FUNCFLAG_FHIDDEN)
+    ADD_FLAG(FUNCFLAG_FUSESGETLASTERROR)
+    ADD_FLAG(FUNCFLAG_FDEFAULTCOLLELEM)
+    ADD_FLAG(FUNCFLAG_FUIDEFAULT)
+    ADD_FLAG(FUNCFLAG_FNONBROWSABLE)
+    ADD_FLAG(FUNCFLAG_FREPLACEABLE)
+    ADD_FLAG(FUNCFLAG_FIMMEDIATEBIND)
+#undef ADD_FLAG
+
+    assert(!flags);
+    assert(strlen(buf) < sizeof(buf));
+
+    return buf;
+}
+
+static int get_href_type(ITypeInfo *info, TYPEDESC *tdesc)
+{
+    int href_type = -1;
+
+    if (tdesc->vt == VT_USERDEFINED)
+    {
+        HRESULT hr;
+        ITypeInfo *param;
+        TYPEATTR *attr;
+
+        hr = ITypeInfo_GetRefTypeInfo(info, U(*tdesc).hreftype, &param);
+        ok(hr == S_OK, "GetRefTypeInfo error %#x\n", hr);
+        hr = ITypeInfo_GetTypeAttr(param, &attr);
+        ok(hr == S_OK, "GetTypeAttr error %#x\n", hr);
+
+        href_type = attr->typekind;
+
+        ITypeInfo_ReleaseTypeAttr(param, attr);
+        ITypeInfo_Release(param);
+    }
+
+    return href_type;
 }
 
 static void test_dump_typelib(const char *name)
@@ -3733,27 +3994,36 @@ static void test_dump_typelib(const char *name)
 
     MultiByteToWideChar(CP_ACP, 0, name, -1, wszString, 260);
     OLE_CHECK(LoadTypeLib(wszString, &lib));
+
+    printf("/*** Autogenerated data. Do not edit, change the generator above instead. ***/\n");
+
     count = ITypeLib_GetTypeInfoCount(lib);
-    printf("/* interfaces count: %d */\n", count);
     for (i = 0; i < count; i++)
     {
         TYPEATTR *attr;
         BSTR name;
+        DWORD help_ctx;
         int f = 0;
 
-        OLE_CHECK(ITypeLib_GetDocumentation(lib, i, &name, NULL, NULL, NULL));
+        OLE_CHECK(ITypeLib_GetDocumentation(lib, i, &name, NULL, &help_ctx, NULL));
         printf("{\n"
-               "  %s,\n", dump_string(name));
-        SysFreeString(name);
+               "  \"%s\",\n", dump_string(name));
 
         OLE_CHECK(ITypeLib_GetTypeInfo(lib, i, &info));
-        ITypeInfo_GetTypeAttr(info, &attr);
-        printf("  /*kind*/ %s, /*flags*/ 0x%x, /*align*/ %d, /*size*/ %d,\n"
-               "  /*#vtbl*/ %d, /*#func*/ %d,\n"
-               "  {\n",
-            map_value(attr->typekind, tkind_map), attr->wTypeFlags, attr->cbAlignment, attr->cbSizeInstance, attr->cbSizeVft,
-            attr->cFuncs);
-        ITypeInfo_ReleaseTypeAttr(info, attr);
+        OLE_CHECK(ITypeInfo_GetTypeAttr(info, &attr));
+
+        printf("  \"%s\",\n", wine_dbgstr_guid(&attr->guid));
+
+        printf("  /*kind*/ %s, /*flags*/ %s, /*align*/ %d, /*size*/ %s,\n"
+               "  /*helpctx*/ 0x%04x, /*version*/ 0x%08x, /*#vtbl*/ %d, /*#func*/ %d",
+            map_value(attr->typekind, tkind_map), dump_type_flags(attr->wTypeFlags),
+            attr->cbAlignment, print_size(name, attr),
+            help_ctx, MAKELONG(attr->wMinorVerNum, attr->wMajorVerNum),
+            attr->cbSizeVft/sizeof(void*), attr->cFuncs);
+
+        if (attr->cFuncs) printf(",\n  {\n");
+        else printf("\n");
+
         while (1)
         {
             FUNCDESC *desc;
@@ -3764,25 +4034,27 @@ static void test_dump_typelib(const char *name)
             if (FAILED(ITypeInfo_GetFuncDesc(info, f, &desc)))
                 break;
             printf("    {\n"
-                   "      0x%x, /*func*/ %s, /*inv*/ %s, /*call*/ 0x%x,\n",
+                   "      /*id*/ 0x%x, /*func*/ %s, /*inv*/ %s, /*call*/ %s,\n",
                 desc->memid, map_value(desc->funckind, funckind_map), map_value(desc->invkind, invkind_map),
-                desc->callconv);
-            printf("      /*#param*/ %d, /*#opt*/ %d, /*vtbl*/ %d, /*#scodes*/ %d, /*flags*/ 0x%x,\n",
-                desc->cParams, desc->cParamsOpt, desc->oVft, desc->cScodes, desc->wFuncFlags);
-            printf("      {%d, %x}, /* ret */\n", desc->elemdescFunc.tdesc.vt, desc->elemdescFunc.paramdesc.wParamFlags);
+                map_value(desc->callconv, callconv_map));
+            printf("      /*#param*/ %d, /*#opt*/ %d, /*vtbl*/ %d, /*#scodes*/ %d, /*flags*/ %s,\n",
+                desc->cParams, desc->cParamsOpt, desc->oVft/sizeof(void*), desc->cScodes, dump_func_flags(desc->wFuncFlags));
+            printf("      {%s, %s, %s}, /* ret */\n", map_value(desc->elemdescFunc.tdesc.vt, vt_map),
+                map_value(get_href_type(info, &desc->elemdescFunc.tdesc), tkind_map), dump_param_flags(U(desc->elemdescFunc).paramdesc.wParamFlags));
             printf("      { /* params */\n");
             for (p = 0; p < desc->cParams; p++)
             {
                 ELEMDESC e = desc->lprgelemdescParam[p];
-                printf("        {%d, %x},\n", e.tdesc.vt, e.paramdesc.wParamFlags);
+                printf("        {%s, %s, %s},\n", map_value(e.tdesc.vt, vt_map),
+                    map_value(get_href_type(info, &e.tdesc), tkind_map), dump_param_flags(U(e).paramdesc.wParamFlags));
             }
-            printf("        {-1, -1}\n");
+            printf("        {-1, 0, 0}\n");
             printf("      },\n");
             printf("      { /* names */\n");
             OLE_CHECK(ITypeInfo_GetNames(info, desc->memid, tab, 256, &cNames));
             for (p = 0; p < cNames; p++)
             {
-                printf("        %s,\n", dump_string(tab[p]));
+                printf("        \"%s\",\n", dump_string(tab[p]));
                 SysFreeString(tab[p]);
             }
             printf("        NULL,\n");
@@ -3791,9 +4063,11 @@ static void test_dump_typelib(const char *name)
             ITypeInfo_ReleaseFuncDesc(info, desc);
             f++;
         }
-        printf("  }\n");
+        if (attr->cFuncs) printf("  }\n");
         printf("},\n");
+        ITypeInfo_ReleaseTypeAttr(info, attr);
         ITypeInfo_Release(info);
+        SysFreeString(name);
     }
     ITypeLib_Release(lib);
 }
@@ -3803,6 +4077,7 @@ static void test_dump_typelib(const char *name)
 typedef struct _element_info
 {
     VARTYPE vt;
+    TYPEKIND type;
     USHORT wParamFlags;
 } element_info;
 
@@ -3830,26 +4105,135 @@ typedef struct _type_info
     WORD wTypeFlags;
     USHORT cbAlignment;
     USHORT cbSizeInstance;
+    USHORT help_ctx;
+    DWORD version;
     USHORT cbSizeVft;
     USHORT cFuncs;
     function_info funcs[20];
 } type_info;
 
 static const type_info info[] = {
+/*** Autogenerated data. Do not edit, change the generator above instead. ***/
+{
+  "g",
+  "{b14b6bb5-904e-4ff9-b247-bd361f7a0001}",
+  /*kind*/ TKIND_RECORD, /*flags*/ 0, /*align*/ 4, /*size*/ sizeof(struct g),
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "test_iface",
+  "{b14b6bb5-904e-4ff9-b247-bd361f7a0002}",
+  /*kind*/ TKIND_INTERFACE, /*flags*/ 0, /*align*/ 4, /*size*/ sizeof(test_iface*),
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 4, /*#func*/ 1,
+  {
+    {
+      /*id*/ 0x60010000, /*func*/ FUNC_PUREVIRTUAL, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
+      /*#param*/ 1, /*#opt*/ 0, /*vtbl*/ 3, /*#scodes*/ 0, /*flags*/ 0,
+      {VT_HRESULT, -1, PARAMFLAG_NONE}, /* ret */
+      { /* params */
+        {VT_PTR, -1, PARAMFLAG_FIN},
+        {-1, 0, 0}
+      },
+      { /* names */
+        "Test",
+        "ptr",
+        NULL,
+      },
+    },
+  }
+},
+{
+  "parent_iface",
+  "{b14b6bb5-904e-4ff9-b247-bd361f7aa001}",
+  /*kind*/ TKIND_INTERFACE, /*flags*/ 0, /*align*/ 4, /*size*/ sizeof(parent_iface*),
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 4, /*#func*/ 1,
+  {
+    {
+      /*id*/ 0x60010000, /*func*/ FUNC_PUREVIRTUAL, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
+      /*#param*/ 1, /*#opt*/ 0, /*vtbl*/ 3, /*#scodes*/ 0, /*flags*/ 0,
+      {VT_HRESULT, -1, PARAMFLAG_NONE}, /* ret */
+      { /* params */
+        {VT_PTR, -1, PARAMFLAG_FOUT|PARAMFLAG_FRETVAL},
+        {-1, 0, 0}
+      },
+      { /* names */
+        "test1",
+        "iface",
+        NULL,
+      },
+    },
+  }
+},
+{
+  "child_iface",
+  "{b14b6bb5-904e-4ff9-b247-bd361f7aa002}",
+  /*kind*/ TKIND_INTERFACE, /*flags*/ 0, /*align*/ 4, /*size*/ sizeof(child_iface*),
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 5, /*#func*/ 1,
+  {
+    {
+      /*id*/ 0x60020000, /*func*/ FUNC_PUREVIRTUAL, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
+      /*#param*/ 0, /*#opt*/ 0, /*vtbl*/ 4, /*#scodes*/ 0, /*flags*/ 0,
+      {VT_HRESULT, -1, PARAMFLAG_NONE}, /* ret */
+      { /* params */
+        {-1, 0, 0}
+      },
+      { /* names */
+        "test2",
+        NULL,
+      },
+    },
+  }
+},
+{
+  "_n",
+  "{016fe2ec-b2c8-45f8-b23b-39e53a753903}",
+  /*kind*/ TKIND_RECORD, /*flags*/ 0, /*align*/ 4, /*size*/ sizeof(struct _n),
+  /*helpctx*/ 0x0003, /*version*/ 0x00010002, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "n",
+  "{016fe2ec-b2c8-45f8-b23b-39e53a753902}",
+  /*kind*/ TKIND_ALIAS, /*flags*/ TYPEFLAG_FHIDDEN, /*align*/ 4, /*size*/ 4,
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "nn",
+  "{00000000-0000-0000-0000-000000000000}",
+  /*kind*/ TKIND_ALIAS, /*flags*/ 0, /*align*/ 4, /*size*/ 4,
+  /*helpctx*/ 0x0003, /*version*/ 0x00010002, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "_m",
+  "{016fe2ec-b2c8-45f8-b23b-39e53a753906}",
+  /*kind*/ TKIND_RECORD, /*flags*/ 0, /*align*/ 4, /*size*/ sizeof(struct _m),
+  /*helpctx*/ 0x0003, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "m",
+  "{016fe2ec-b2c8-45f8-b23b-39e53a753905}",
+  /*kind*/ TKIND_ALIAS, /*flags*/ TYPEFLAG_FHIDDEN, /*align*/ 4, /*size*/ 4,
+  /*helpctx*/ 0x0000, /*version*/ 0x00010002, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "mm",
+  "{00000000-0000-0000-0000-000000000000}",
+  /*kind*/ TKIND_ALIAS, /*flags*/ 0, /*align*/ 4, /*size*/ 4,
+  /*helpctx*/ 0x0003, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
 {
   "IDualIface",
   "{b14b6bb5-904e-4ff9-b247-bd361f7aaedd}",
-  /*kind*/ TKIND_DISPATCH, /*flags*/ TYPEFLAG_FDISPATCHABLE|TYPEFLAG_FDUAL, /*align*/ 4, /*size*/ sizeof(void*),
-  /*#vtbl*/ 7, /*#func*/ 8,
+  /*kind*/ TKIND_DISPATCH, /*flags*/ TYPEFLAG_FDISPATCHABLE|TYPEFLAG_FDUAL, /*align*/ 4, /*size*/ sizeof(IDualIface*),
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 7, /*#func*/ 8,
   {
     {
-      0x60000000, /*func*/ FUNC_DISPATCH, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
-      /*#param*/ 2, /*#opt*/ 0, /*vtbl*/ 0, /*#scodes*/ 0, /*flags*/ 0x1,
-      {24, 0}, /* ret */
+      /*id*/ 0x60000000, /*func*/ FUNC_DISPATCH, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
+      /*#param*/ 2, /*#opt*/ 0, /*vtbl*/ 0, /*#scodes*/ 0, /*flags*/ FUNCFLAG_FRESTRICTED,
+      {VT_VOID, -1, PARAMFLAG_NONE}, /* ret */
       { /* params */
-        {26, 1},
-        {26, 2},
-        {-1, -1}
+        {VT_PTR, -1, PARAMFLAG_FIN},
+        {VT_PTR, -1, PARAMFLAG_FOUT},
+        {-1, 0, 0}
       },
       { /* names */
         "QueryInterface",
@@ -3859,11 +4243,11 @@ static const type_info info[] = {
       },
     },
     {
-      0x60000001, /*func*/ FUNC_DISPATCH, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
-      /*#param*/ 0, /*#opt*/ 0, /*vtbl*/ 1, /*#scodes*/ 0, /*flags*/ 0x1,
-      {19, 0}, /* ret */
+      /*id*/ 0x60000001, /*func*/ FUNC_DISPATCH, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
+      /*#param*/ 0, /*#opt*/ 0, /*vtbl*/ 1, /*#scodes*/ 0, /*flags*/ FUNCFLAG_FRESTRICTED,
+      {VT_UI4, -1, PARAMFLAG_NONE}, /* ret */
       { /* params */
-        {-1, -1}
+        {-1, 0, 0}
       },
       { /* names */
         "AddRef",
@@ -3871,11 +4255,11 @@ static const type_info info[] = {
       },
     },
     {
-      0x60000002, /*func*/ FUNC_DISPATCH, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
-      /*#param*/ 0, /*#opt*/ 0, /*vtbl*/ 2, /*#scodes*/ 0, /*flags*/ 0x1,
-      {19, 0}, /* ret */
+      /*id*/ 0x60000002, /*func*/ FUNC_DISPATCH, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
+      /*#param*/ 0, /*#opt*/ 0, /*vtbl*/ 2, /*#scodes*/ 0, /*flags*/ FUNCFLAG_FRESTRICTED,
+      {VT_UI4, -1, PARAMFLAG_NONE}, /* ret */
       { /* params */
-        {-1, -1}
+        {-1, 0, 0}
       },
       { /* names */
         "Release",
@@ -3883,12 +4267,12 @@ static const type_info info[] = {
       },
     },
     {
-      0x60010000, /*func*/ FUNC_DISPATCH, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
-      /*#param*/ 1, /*#opt*/ 0, /*vtbl*/ 3, /*#scodes*/ 0, /*flags*/ 0x1,
-      {24, 0}, /* ret */
+      /*id*/ 0x60010000, /*func*/ FUNC_DISPATCH, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
+      /*#param*/ 1, /*#opt*/ 0, /*vtbl*/ 3, /*#scodes*/ 0, /*flags*/ FUNCFLAG_FRESTRICTED,
+      {VT_VOID, -1, PARAMFLAG_NONE}, /* ret */
       { /* params */
-        {26, 2},
-        {-1, -1}
+        {VT_PTR, -1, PARAMFLAG_FOUT},
+        {-1, 0, 0}
       },
       { /* names */
         "GetTypeInfoCount",
@@ -3897,14 +4281,14 @@ static const type_info info[] = {
       },
     },
     {
-      0x60010001, /*func*/ FUNC_DISPATCH, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
-      /*#param*/ 3, /*#opt*/ 0, /*vtbl*/ 4, /*#scodes*/ 0, /*flags*/ 0x1,
-      {24, 0}, /* ret */
+      /*id*/ 0x60010001, /*func*/ FUNC_DISPATCH, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
+      /*#param*/ 3, /*#opt*/ 0, /*vtbl*/ 4, /*#scodes*/ 0, /*flags*/ FUNCFLAG_FRESTRICTED,
+      {VT_VOID, -1, PARAMFLAG_NONE}, /* ret */
       { /* params */
-        {23, 1},
-        {19, 1},
-        {26, 2},
-        {-1, -1}
+        {VT_UINT, -1, PARAMFLAG_FIN},
+        {VT_UI4, -1, PARAMFLAG_FIN},
+        {VT_PTR, -1, PARAMFLAG_FOUT},
+        {-1, 0, 0}
       },
       { /* names */
         "GetTypeInfo",
@@ -3915,16 +4299,16 @@ static const type_info info[] = {
       },
     },
     {
-      0x60010002, /*func*/ FUNC_DISPATCH, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
-      /*#param*/ 5, /*#opt*/ 0, /*vtbl*/ 5, /*#scodes*/ 0, /*flags*/ 0x1,
-      {24, 0}, /* ret */
+      /*id*/ 0x60010002, /*func*/ FUNC_DISPATCH, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
+      /*#param*/ 5, /*#opt*/ 0, /*vtbl*/ 5, /*#scodes*/ 0, /*flags*/ FUNCFLAG_FRESTRICTED,
+      {VT_VOID, -1, PARAMFLAG_NONE}, /* ret */
       { /* params */
-        {26, 1},
-        {26, 1},
-        {23, 1},
-        {19, 1},
-        {26, 2},
-        {-1, -1}
+        {VT_PTR, -1, PARAMFLAG_FIN},
+        {VT_PTR, -1, PARAMFLAG_FIN},
+        {VT_UINT, -1, PARAMFLAG_FIN},
+        {VT_UI4, -1, PARAMFLAG_FIN},
+        {VT_PTR, -1, PARAMFLAG_FOUT},
+        {-1, 0, 0}
       },
       { /* names */
         "GetIDsOfNames",
@@ -3937,19 +4321,19 @@ static const type_info info[] = {
       },
     },
     {
-      0x60010003, /*func*/ FUNC_DISPATCH, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
-      /*#param*/ 8, /*#opt*/ 0, /*vtbl*/ 6, /*#scodes*/ 0, /*flags*/ 0x1,
-      {24, 0}, /* ret */
+      /*id*/ 0x60010003, /*func*/ FUNC_DISPATCH, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
+      /*#param*/ 8, /*#opt*/ 0, /*vtbl*/ 6, /*#scodes*/ 0, /*flags*/ FUNCFLAG_FRESTRICTED,
+      {VT_VOID, -1, PARAMFLAG_NONE}, /* ret */
       { /* params */
-        {3, 1},
-        {26, 1},
-        {19, 1},
-        {18, 1},
-        {26, 1},
-        {26, 2},
-        {26, 2},
-        {26, 2},
-        {-1, -1}
+        {VT_I4, -1, PARAMFLAG_FIN},
+        {VT_PTR, -1, PARAMFLAG_FIN},
+        {VT_UI4, -1, PARAMFLAG_FIN},
+        {VT_UI2, -1, PARAMFLAG_FIN},
+        {VT_PTR, -1, PARAMFLAG_FIN},
+        {VT_PTR, -1, PARAMFLAG_FOUT},
+        {VT_PTR, -1, PARAMFLAG_FOUT},
+        {VT_PTR, -1, PARAMFLAG_FOUT},
+        {-1, 0, 0}
       },
       { /* names */
         "Invoke",
@@ -3965,11 +4349,11 @@ static const type_info info[] = {
       },
     },
     {
-      0x60020000, /*func*/ FUNC_DISPATCH, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
-      /*#param*/ 0, /*#opt*/ 0, /*vtbl*/ 7, /*#scodes*/ 0, /*flags*/ 0x0,
-      {24, 0}, /* ret */
+      /*id*/ 0x60020000, /*func*/ FUNC_DISPATCH, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
+      /*#param*/ 0, /*#opt*/ 0, /*vtbl*/ 7, /*#scodes*/ 0, /*flags*/ 0,
+      {VT_VOID, -1, PARAMFLAG_NONE}, /* ret */
       { /* params */
-        {-1, -1}
+        {-1, 0, 0}
       },
       { /* names */
         "Test",
@@ -3981,15 +4365,15 @@ static const type_info info[] = {
 {
   "ISimpleIface",
   "{ec5dfcd6-eeb0-4cd6-b51e-8030e1dac009}",
-  /*kind*/ TKIND_INTERFACE, /*flags*/ TYPEFLAG_FDISPATCHABLE, /*align*/ 4, /*size*/ sizeof(void*),
-  /*#vtbl*/ 8, /*#func*/ 1,
+  /*kind*/ TKIND_INTERFACE, /*flags*/ TYPEFLAG_FDISPATCHABLE, /*align*/ 4, /*size*/ sizeof(ISimpleIface*),
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 8, /*#func*/ 1,
   {
     {
-      0x60020000, /*func*/ FUNC_PUREVIRTUAL, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
-      /*#param*/ 0, /*#opt*/ 0, /*vtbl*/ 7, /*#scodes*/ 0, /*flags*/ 0x0,
-      {25, 0}, /* ret */
+      /*id*/ 0x60020000, /*func*/ FUNC_PUREVIRTUAL, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
+      /*#param*/ 0, /*#opt*/ 0, /*vtbl*/ 7, /*#scodes*/ 0, /*flags*/ 0,
+      {VT_HRESULT, -1, PARAMFLAG_NONE}, /* ret */
       { /* params */
-        {-1, -1}
+        {-1, 0, 0}
       },
       { /* names */
         "Test",
@@ -4001,7 +4385,214 @@ static const type_info info[] = {
 {
   "test_struct",
   "{4029f190-ca4a-4611-aeb9-673983cb96dd}",
-  /* kind */ TKIND_RECORD, /*flags*/ 0, /*align*/ 4, /*size*/ sizeof(struct test_struct)
+  /*kind*/ TKIND_RECORD, /*flags*/ 0, /*align*/ 4, /*size*/ sizeof(struct test_struct),
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "test_struct2",
+  "{4029f190-ca4a-4611-aeb9-673983cb96de}",
+  /*kind*/ TKIND_RECORD, /*flags*/ 0, /*align*/ 4, /*size*/ sizeof(struct test_struct2),
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "t_INT",
+  "{016fe2ec-b2c8-45f8-b23b-39e53a75396a}",
+  /*kind*/ TKIND_ALIAS, /*flags*/ TYPEFLAG_FRESTRICTED, /*align*/ 4, /*size*/ 4,
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "a",
+  "{00000000-0000-0000-0000-000000000000}",
+  /*kind*/ TKIND_ALIAS, /*flags*/ 0, /*align*/ 4, /*size*/ 4,
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "_a",
+  "{00000000-0000-0000-0000-000000000000}",
+  /*kind*/ TKIND_ENUM, /*flags*/ 0, /*align*/ 4, /*size*/ 4,
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "aa",
+  "{00000000-0000-0000-0000-000000000000}",
+  /*kind*/ TKIND_ENUM, /*flags*/ 0, /*align*/ 4, /*size*/ 4,
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "_b",
+  "{00000000-0000-0000-0000-000000000000}",
+  /*kind*/ TKIND_ENUM, /*flags*/ 0, /*align*/ 4, /*size*/ 4,
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "bb",
+  "{00000000-0000-0000-0000-000000000000}",
+  /*kind*/ TKIND_ENUM, /*flags*/ 0, /*align*/ 4, /*size*/ 4,
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "c",
+  "{016fe2ec-b2c8-45f8-b23b-39e53a75396b}",
+  /*kind*/ TKIND_ALIAS, /*flags*/ 0, /*align*/ 4, /*size*/ 4,
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "_c",
+  "{00000000-0000-0000-0000-000000000000}",
+  /*kind*/ TKIND_ENUM, /*flags*/ 0, /*align*/ 4, /*size*/ 4,
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "cc",
+  "{016fe2ec-b2c8-45f8-b23b-39e53a75396c}",
+  /*kind*/ TKIND_ENUM, /*flags*/ 0, /*align*/ 4, /*size*/ 4,
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "d",
+  "{016fe2ec-b2c8-45f8-b23b-39e53a75396d}",
+  /*kind*/ TKIND_ALIAS, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ 4, /*size*/ 4,
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "_d",
+  "{00000000-0000-0000-0000-000000000000}",
+  /*kind*/ TKIND_ENUM, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ 4, /*size*/ 4,
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "dd",
+  "{016fe2ec-b2c8-45f8-b23b-39e53a75396e}",
+  /*kind*/ TKIND_ENUM, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ 4, /*size*/ 4,
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "e",
+  "{016fe2ec-b2c8-45f8-b23b-39e53a753970}",
+  /*kind*/ TKIND_ALIAS, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ 4, /*size*/ 4,
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "_e",
+  "{00000000-0000-0000-0000-000000000000}",
+  /*kind*/ TKIND_RECORD, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ 4, /*size*/ sizeof(struct _e),
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "ee",
+  "{016fe2ec-b2c8-45f8-b23b-39e53a753971}",
+  /*kind*/ TKIND_RECORD, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ 4, /*size*/ sizeof(struct ee),
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "f",
+  "{016fe2ec-b2c8-45f8-b23b-39e53a753972}",
+  /*kind*/ TKIND_ALIAS, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ 4, /*size*/ 4,
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "_f",
+  "{00000000-0000-0000-0000-000000000000}",
+  /*kind*/ TKIND_UNION, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ 4, /*size*/ sizeof(union _f),
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "ff",
+  "{016fe2ec-b2c8-45f8-b23b-39e53a753973}",
+  /*kind*/ TKIND_UNION, /*flags*/ TYPEFLAG_FRESTRICTED|TYPEFLAG_FHIDDEN, /*align*/ 4, /*size*/ sizeof(union ff),
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 0, /*#func*/ 0
+},
+{
+  "ITestIface",
+  "{ec5dfcd6-eeb0-4cd6-b51e-8030e1dac00a}",
+  /*kind*/ TKIND_INTERFACE, /*flags*/ TYPEFLAG_FDISPATCHABLE, /*align*/ 4, /*size*/ sizeof(ITestIface*),
+  /*helpctx*/ 0x0000, /*version*/ 0x00000000, /*#vtbl*/ 13, /*#func*/ 6,
+  {
+    {
+      /*id*/ 0x60020000, /*func*/ FUNC_PUREVIRTUAL, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
+      /*#param*/ 1, /*#opt*/ 0, /*vtbl*/ 7, /*#scodes*/ 0, /*flags*/ 0,
+      {VT_HRESULT, -1, PARAMFLAG_NONE}, /* ret */
+      { /* params */
+        {VT_USERDEFINED, TKIND_ALIAS, PARAMFLAG_NONE},
+        {-1, 0, 0}
+      },
+      { /* names */
+        "test1",
+        "value",
+        NULL,
+      },
+    },
+    {
+      /*id*/ 0x60020001, /*func*/ FUNC_PUREVIRTUAL, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
+      /*#param*/ 1, /*#opt*/ 0, /*vtbl*/ 8, /*#scodes*/ 0, /*flags*/ 0,
+      {VT_HRESULT, -1, PARAMFLAG_NONE}, /* ret */
+      { /* params */
+        {VT_USERDEFINED, TKIND_ENUM, PARAMFLAG_NONE},
+        {-1, 0, 0}
+      },
+      { /* names */
+        "test2",
+        "value",
+        NULL,
+      },
+    },
+    {
+      /*id*/ 0x60020002, /*func*/ FUNC_PUREVIRTUAL, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
+      /*#param*/ 1, /*#opt*/ 0, /*vtbl*/ 9, /*#scodes*/ 0, /*flags*/ 0,
+      {VT_HRESULT, -1, PARAMFLAG_NONE}, /* ret */
+      { /* params */
+        {VT_USERDEFINED, TKIND_ALIAS, PARAMFLAG_NONE},
+        {-1, 0, 0}
+      },
+      { /* names */
+        "test3",
+        "value",
+        NULL,
+      },
+    },
+    {
+      /*id*/ 0x60020003, /*func*/ FUNC_PUREVIRTUAL, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
+      /*#param*/ 1, /*#opt*/ 0, /*vtbl*/ 10, /*#scodes*/ 0, /*flags*/ 0,
+      {VT_HRESULT, -1, PARAMFLAG_NONE}, /* ret */
+      { /* params */
+        {VT_USERDEFINED, TKIND_ALIAS, PARAMFLAG_NONE},
+        {-1, 0, 0}
+      },
+      { /* names */
+        "test4",
+        "value",
+        NULL,
+      },
+    },
+    {
+      /*id*/ 0x60020004, /*func*/ FUNC_PUREVIRTUAL, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
+      /*#param*/ 1, /*#opt*/ 0, /*vtbl*/ 11, /*#scodes*/ 0, /*flags*/ 0,
+      {VT_HRESULT, -1, PARAMFLAG_NONE}, /* ret */
+      { /* params */
+        {VT_USERDEFINED, TKIND_ALIAS, PARAMFLAG_NONE},
+        {-1, 0, 0}
+      },
+      { /* names */
+        "test5",
+        "value",
+        NULL,
+      },
+    },
+    {
+      /*id*/ 0x60020005, /*func*/ FUNC_PUREVIRTUAL, /*inv*/ INVOKE_FUNC, /*call*/ CC_STDCALL,
+      /*#param*/ 1, /*#opt*/ 0, /*vtbl*/ 12, /*#scodes*/ 0, /*flags*/ 0,
+      {VT_HRESULT, -1, PARAMFLAG_NONE}, /* ret */
+      { /* params */
+        {VT_USERDEFINED, TKIND_ALIAS, PARAMFLAG_NONE},
+        {-1, 0, 0}
+      },
+      { /* names */
+        "test6",
+        "value",
+        NULL,
+      },
+    },
+  }
 }
 };
 
@@ -4026,18 +4617,34 @@ static void test_dump_typelib(const char *name)
         ITypeInfo *typeinfo;
         TYPEATTR *typeattr;
         BSTR bstrIfName;
+        DWORD help_ctx;
 
         trace("Interface %s\n", ti->name);
         ole_check(ITypeLib_GetTypeInfo(typelib, iface, &typeinfo));
-        ole_check(ITypeLib_GetDocumentation(typelib, iface, &bstrIfName, NULL, NULL, NULL));
+        ole_check(ITypeLib_GetDocumentation(typelib, iface, &bstrIfName, NULL, &help_ctx, NULL));
         expect_wstr_acpval(bstrIfName, ti->name);
         SysFreeString(bstrIfName);
 
         ole_check(ITypeInfo_GetTypeAttr(typeinfo, &typeattr));
         expect_int(typeattr->typekind, ti->type);
         expect_hex(typeattr->wTypeFlags, ti->wTypeFlags);
+        /* FIXME: remove once widl is fixed */
+        if (typeattr->typekind == TKIND_ALIAS && typeattr->cbAlignment != ti->cbAlignment)
+        {
+todo_wine /* widl generates broken typelib and typeattr just reflects that */
+        ok(typeattr->cbAlignment == ti->cbAlignment || broken(typeattr->cbAlignment == 1),
+           "expected %d, got %d\n", ti->cbAlignment, typeattr->cbAlignment);
+todo_wine /* widl generates broken typelib and typeattr just reflects that */
+        ok(typeattr->cbSizeInstance == ti->cbSizeInstance || broken(typeattr->cbSizeInstance == 0),
+           "expected %d, got %d\n", ti->cbSizeInstance, typeattr->cbSizeInstance);
+        }
+        else
+        {
         expect_int(typeattr->cbAlignment, ti->cbAlignment);
         expect_int(typeattr->cbSizeInstance, ti->cbSizeInstance);
+        }
+        expect_int(help_ctx, ti->help_ctx);
+        expect_int(MAKELONG(typeattr->wMinorVerNum, typeattr->wMajorVerNum), ti->version);
         expect_int(typeattr->cbSizeVft, ti->cbSizeVft * sizeof(void*));
         expect_int(typeattr->cFuncs, ti->cFuncs);
 
@@ -4056,8 +4663,8 @@ static void test_dump_typelib(const char *name)
             /* check that it's possible to search using this uuid */
             typeinfo2 = NULL;
             hr = ITypeLib_GetTypeInfoOfGuid(typelib, &guid, &typeinfo2);
-            ok(hr == S_OK, "got 0x%08x\n", hr);
-            ITypeInfo_Release(typeinfo2);
+            ok(hr == S_OK || (IsEqualGUID(&guid, &IID_NULL) && hr == TYPE_E_ELEMENTNOTFOUND), "got 0x%08x\n", hr);
+            if (hr == S_OK) ITypeInfo_Release(typeinfo2);
         }
 
         for (func = 0; func < typeattr->cFuncs; func++)
@@ -4093,6 +4700,20 @@ static void test_dump_typelib(const char *name)
             for (i = 0 ; i < desc->cParams; i++)
             {
                 check_type(&desc->lprgelemdescParam[i], &fn_info->params[i]);
+
+                if (desc->lprgelemdescParam[i].tdesc.vt == VT_USERDEFINED)
+                {
+                    ITypeInfo *param;
+                    TYPEATTR *var_attr;
+
+                    ole_check(ITypeInfo_GetRefTypeInfo(typeinfo, U(desc->lprgelemdescParam[i].tdesc).hreftype, &param));
+                    ole_check(ITypeInfo_GetTypeAttr(param, &var_attr));
+
+                    ok(var_attr->typekind == fn_info->params[i].type, "expected %#x, got %#x\n", fn_info->params[i].type, var_attr->typekind);
+
+                    ITypeInfo_ReleaseTypeAttr(param, var_attr);
+                    ITypeInfo_Release(param);
+                }
             }
             expect_int(fn_info->params[desc->cParams].vt, (VARTYPE)-1);
 
@@ -4210,7 +4831,7 @@ static void test_register_typelib(BOOL system_registration)
     {
         TYPEKIND kind;
         WORD flags;
-    } attrs[12] =
+    } attrs[13] =
     {
         { TKIND_INTERFACE, 0 },
         { TKIND_INTERFACE, TYPEFLAG_FDISPATCHABLE },
@@ -4223,7 +4844,8 @@ static void test_register_typelib(BOOL system_registration)
         { TKIND_DISPATCH,  TYPEFLAG_FDISPATCHABLE },
         { TKIND_DISPATCH,  TYPEFLAG_FDISPATCHABLE },
         { TKIND_DISPATCH,  TYPEFLAG_FDISPATCHABLE },
-        { TKIND_INTERFACE, TYPEFLAG_FDISPATCHABLE }
+        { TKIND_INTERFACE, TYPEFLAG_FDISPATCHABLE },
+        { TKIND_RECORD, 0 }
     };
 
     trace("Starting %s typelib registration tests\n",
@@ -4258,7 +4880,7 @@ static void test_register_typelib(BOOL system_registration)
     ok(hr == S_OK, "got %08x\n", hr);
 
     count = ITypeLib_GetTypeInfoCount(typelib);
-    ok(count == 12, "got %d\n", count);
+    ok(count == 13, "got %d\n", count);
 
     for(i = 0; i < count; i++)
     {
@@ -4574,6 +5196,7 @@ static void test_SetFuncAndParamNames(void)
     ok(infos[0] && !infos[1] && !infos[2], "got wrong typeinfo\n");
     ok(memids[0] == 0, "got wrong memid[0]\n");
     ok(memids[1] == 0xdeadbeef && memids[2] == 0xdeadbeef, "got wrong memids\n");
+    ITypeInfo_Release(infos[0]);
 
     found = 3;
     memset(infos, 0, sizeof(infos));
@@ -4586,6 +5209,8 @@ static void test_SetFuncAndParamNames(void)
     ok(infos[0] && infos[1] && infos[0] != infos[1], "got same typeinfo\n");
     ok(memids[0] == 0, "got wrong memid[0]\n");
     ok(memids[1] == 0, "got wrong memid[1]\n");
+    ITypeInfo_Release(infos[0]);
+    ITypeInfo_Release(infos[1]);
 
     ITypeLib_Release(tl);
     ICreateTypeLib2_Release(ctl);
@@ -4994,6 +5619,11 @@ static void test_LoadRegTypeLib(void)
     ok(hr == TYPE_E_LIBNOTREGISTERED || broken(hr == S_OK) /* winxp */, "got 0x%08x\n", hr);
     SysFreeString(path);
 
+    path = NULL;
+    hr = QueryPathOfRegTypeLib(&LIBID_TestTypelib, 0xffff, 0xffff, LOCALE_NEUTRAL, &path);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+    SysFreeString(path);
+
     /* manifest version is 2.0, actual is 1.0 */
     hr = LoadRegTypeLib(&LIBID_register_test, 1, 0, LOCALE_NEUTRAL, &tl);
     ok(hr == TYPE_E_LIBNOTREGISTERED || broken(hr == S_OK) /* winxp */, "got 0x%08x\n", hr);
@@ -5038,6 +5668,24 @@ static void test_LoadRegTypeLib(void)
 
     hr = LoadRegTypeLib(&LIBID_TestTypelib, 1, 7, LOCALE_NEUTRAL, &tl);
     ok(hr == TYPE_E_LIBNOTREGISTERED, "got 0x%08x\n", hr);
+
+    tl = NULL;
+    hr = LoadRegTypeLib(&LIBID_TestTypelib, 0xffff, 0xffff, LOCALE_NEUTRAL, &tl);
+    ok(hr == S_OK, "got 0x%08x\n", hr);
+
+    if (tl)
+    {
+        hr = ITypeLib_GetLibAttr(tl, &attr);
+        ok(hr == S_OK, "got 0x%08x\n", hr);
+
+        ok(attr->lcid == 0, "got %x\n", attr->lcid);
+        ok(attr->wMajorVerNum == 2, "got %d\n", attr->wMajorVerNum);
+        ok(attr->wMinorVerNum == 5, "got %d\n", attr->wMinorVerNum);
+        ok(attr->wLibFlags == LIBFLAG_FHASDISKIMAGE, "got %x\n", attr->wLibFlags);
+
+        ITypeLib_ReleaseTLibAttr(tl, attr);
+        ITypeLib_Release(tl);
+    }
 
     DeleteFileA("test_actctx_tlb.tlb");
     DeleteFileA("test_actctx_tlb2.tlb");
@@ -5494,6 +6142,7 @@ static void test_stub(void)
 
         hr = IPSFactoryBuffer_CreateStub(factory, &interfaceguid, &uk, &base_stub);
         ok(hr == S_OK, "got: %x, side: %04x\n", hr, side);
+        IRpcStubBuffer_Release(base_stub);
 
         IPSFactoryBuffer_Release(factory);
     next:

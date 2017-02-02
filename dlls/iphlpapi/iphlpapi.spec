@@ -12,15 +12,15 @@
 #@ stub ConvertGuidToStringA
 #@ stub ConvertGuidToStringW
 #@ stub ConvertInterfaceAliasToLuid
-#@ stub ConvertInterfaceGuidToLuid
-#@ stub ConvertInterfaceIndexToLuid
+@ stdcall ConvertInterfaceGuidToLuid( ptr ptr )
+@ stdcall ConvertInterfaceIndexToLuid( long ptr )
 #@ stub ConvertInterfaceLuidToAlias
-#@ stub ConvertInterfaceLuidToGuid
-#@ stub ConvertInterfaceLuidToIndex
-#@ stub ConvertInterfaceLuidToNameA
-#@ stub ConvertInterfaceLuidToNameW
-#@ stub ConvertInterfaceNameToLuidA
-#@ stub ConvertInterfaceNameToLuidW
+@ stdcall ConvertInterfaceLuidToGuid( ptr ptr )
+@ stdcall ConvertInterfaceLuidToIndex( ptr ptr )
+@ stdcall ConvertInterfaceLuidToNameA( ptr ptr long )
+@ stdcall ConvertInterfaceLuidToNameW( ptr ptr long )
+@ stdcall ConvertInterfaceNameToLuidA( str ptr )
+@ stdcall ConvertInterfaceNameToLuidW( wstr ptr )
 #@ stub ConvertInterfacePhysicalAddressToLuid
 #@ stub ConvertIpv4MaskToLength
 #@ stub ConvertLengthToIpv4Mask
@@ -87,11 +87,11 @@
 @ stdcall GetIcmpStatistics( ptr )
 @ stub GetIcmpStatsFromStack
 @ stdcall GetIfEntry( ptr )
-#@ stub GetIfEntry2
+@ stdcall GetIfEntry2( ptr )
 @ stub GetIfEntryFromStack
 #@ stub GetIfStackTable
 @ stdcall GetIfTable( ptr ptr long )
-#@ stub GetIfTable2
+@ stdcall GetIfTable2( ptr )
 #@ stub GetIfTable2Ex
 @ stub GetIfTableFromStack
 @ stub GetIgmpList
@@ -285,7 +285,7 @@
 #@ stub SetNetworkInformation
 #@ stub SetPerTcp6ConnectionEStats
 #@ stub SetPerTcp6ConnectionStats
-#@ stub SetPerTcpConnectionEStats
+@ stdcall SetPerTcpConnectionEStats( ptr long ptr long long long )
 #@ stub SetPerTcpConnectionStats
 @ stub SetProxyArpEntryToStack
 @ stub SetRouteWithRef

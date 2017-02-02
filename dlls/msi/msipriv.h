@@ -39,7 +39,7 @@
 #include "wine/debug.h"
 
 static const BOOL is_64bit = sizeof(void *) > sizeof(int);
-BOOL is_wow64;
+BOOL is_wow64 DECLSPEC_HIDDEN;
 
 #define MSI_DATASIZEMASK 0x00ff
 #define MSITYPE_VALID    0x0100
@@ -100,6 +100,7 @@ typedef struct tagMSIDATABASE
     UINT bytes_per_strref;
     LPWSTR path;
     LPWSTR deletefile;
+    LPWSTR tempfolder;
     LPCWSTR mode;
     UINT media_transform_offset;
     UINT media_transform_disk_id;
@@ -192,6 +193,8 @@ typedef struct tagMSIPATCHINFO
     LPWSTR localfile;
     MSIPATCHSTATE state;
     BOOL delete_on_close;
+    BOOL registered;
+    UINT disk_id;
 } MSIPATCHINFO;
 
 typedef struct tagMSIBINARY
@@ -579,12 +582,6 @@ typedef struct tagMSIFILE
     UINT disk_id;
 } MSIFILE;
 
-typedef struct tagMSITEMPFILE
-{
-    struct list entry;
-    LPWSTR Path;
-} MSITEMPFILE;
-
 typedef struct tagMSIFILEPATCH
 {
     struct list entry;
@@ -592,7 +589,9 @@ typedef struct tagMSIFILEPATCH
     INT Sequence;
     INT PatchSize;
     INT Attributes;
-    BOOL IsApplied;
+    BOOL extracted;
+    UINT disk_id;
+    WCHAR *path;
 } MSIFILEPATCH;
 
 typedef struct tagMSIAPPID
@@ -714,7 +713,7 @@ typedef struct tagMSISCRIPT
 #define MSI_BUILDNUMBER 6001
 
 #define GUID_SIZE 39
-#define SQUISH_GUID_SIZE 33
+#define SQUASHED_GUID_SIZE 33
 
 #define MSIHANDLE_MAGIC 0x4d434923
 
@@ -916,10 +915,11 @@ extern UINT MSIREG_OpenUserUpgradeCodesKey(LPCWSTR szProduct, HKEY* key, BOOL cr
 extern UINT MSIREG_DeleteProductKey(LPCWSTR szProduct) DECLSPEC_HIDDEN;
 extern UINT MSIREG_DeleteUserProductKey(LPCWSTR szProduct) DECLSPEC_HIDDEN;
 extern UINT MSIREG_DeleteUserDataPatchKey(LPCWSTR patch, MSIINSTALLCONTEXT context) DECLSPEC_HIDDEN;
-extern UINT MSIREG_DeleteUserDataProductKey(LPCWSTR szProduct) DECLSPEC_HIDDEN;
+extern UINT MSIREG_DeleteUserDataProductKey(LPCWSTR, MSIINSTALLCONTEXT) DECLSPEC_HIDDEN;
 extern UINT MSIREG_DeleteUserFeaturesKey(LPCWSTR szProduct) DECLSPEC_HIDDEN;
 extern UINT MSIREG_DeleteUserDataComponentKey(LPCWSTR szComponent, LPCWSTR szUserSid) DECLSPEC_HIDDEN;
 extern UINT MSIREG_DeleteUserUpgradeCodesKey(LPCWSTR szUpgradeCode) DECLSPEC_HIDDEN;
+extern UINT MSIREG_DeleteUpgradeCodesKey(const WCHAR *) DECLSPEC_HIDDEN;
 extern UINT MSIREG_DeleteClassesUpgradeCodesKey(LPCWSTR szUpgradeCode) DECLSPEC_HIDDEN;
 extern UINT MSIREG_OpenClassesUpgradeCodesKey(LPCWSTR szUpgradeCode, HKEY* key, BOOL create) DECLSPEC_HIDDEN;
 extern UINT MSIREG_DeleteLocalClassesProductKey(LPCWSTR szProductCode) DECLSPEC_HIDDEN;
@@ -935,6 +935,7 @@ extern int msi_compare_file_versions(VS_FIXEDFILEINFO *, const WCHAR *) DECLSPEC
 extern int msi_compare_font_versions(const WCHAR *, const WCHAR *) DECLSPEC_HIDDEN;
 extern DWORD msi_get_disk_file_size(LPCWSTR) DECLSPEC_HIDDEN;
 extern BOOL msi_file_hash_matches(MSIFILE *) DECLSPEC_HIDDEN;
+extern UINT msi_get_filehash(const WCHAR *, MSIFILEHASHINFO *) DECLSPEC_HIDDEN;
 
 extern LONG msi_reg_set_val_str( HKEY hkey, LPCWSTR name, LPCWSTR value ) DECLSPEC_HIDDEN;
 extern LONG msi_reg_set_val_multi_str( HKEY hkey, LPCWSTR name, LPCWSTR value ) DECLSPEC_HIDDEN;
@@ -948,12 +949,13 @@ extern void msi_dialog_unregister_class( void ) DECLSPEC_HIDDEN;
 extern UINT msi_spawn_error_dialog( MSIPACKAGE*, LPWSTR, LPWSTR ) DECLSPEC_HIDDEN;
 
 /* summary information */
-extern MSISUMMARYINFO *MSI_GetSummaryInformationW( IStorage *stg, UINT uiUpdateCount ) DECLSPEC_HIDDEN;
+extern UINT msi_get_suminfo( IStorage *stg, UINT uiUpdateCount, MSISUMMARYINFO **si ) DECLSPEC_HIDDEN;
+extern UINT msi_get_db_suminfo( MSIDATABASE *db, UINT uiUpdateCount, MSISUMMARYINFO **si ) DECLSPEC_HIDDEN;
 extern LPWSTR msi_suminfo_dup_string( MSISUMMARYINFO *si, UINT uiProperty ) DECLSPEC_HIDDEN;
 extern INT msi_suminfo_get_int32( MSISUMMARYINFO *si, UINT uiProperty ) DECLSPEC_HIDDEN;
 extern LPWSTR msi_get_suminfo_product( IStorage *stg ) DECLSPEC_HIDDEN;
 extern UINT msi_add_suminfo( MSIDATABASE *db, LPWSTR **records, int num_records, int num_columns ) DECLSPEC_HIDDEN;
-extern enum platform parse_platform( const WCHAR *str ) DECLSPEC_HIDDEN;
+extern UINT msi_load_suminfo_properties( MSIPACKAGE *package ) DECLSPEC_HIDDEN;
 
 /* undocumented functions */
 UINT WINAPI MsiCreateAndVerifyInstallerDirectory( DWORD );
@@ -1019,7 +1021,7 @@ extern MSICOMPONENT *msi_get_loaded_component(MSIPACKAGE *package, const WCHAR *
 extern MSIFEATURE *msi_get_loaded_feature(MSIPACKAGE *package, const WCHAR *Feature) DECLSPEC_HIDDEN;
 extern MSIFILE *msi_get_loaded_file(MSIPACKAGE *package, const WCHAR *file) DECLSPEC_HIDDEN;
 extern MSIFOLDER *msi_get_loaded_folder(MSIPACKAGE *package, const WCHAR *dir) DECLSPEC_HIDDEN;
-extern int msi_track_tempfile(MSIPACKAGE *package, const WCHAR *path) DECLSPEC_HIDDEN;
+extern WCHAR *msi_create_temp_file(MSIDATABASE *db) DECLSPEC_HIDDEN;
 extern void msi_free_action_script(MSIPACKAGE *package, UINT script) DECLSPEC_HIDDEN;
 extern WCHAR *msi_build_icon_path(MSIPACKAGE *, const WCHAR *) DECLSPEC_HIDDEN;
 extern WCHAR *msi_build_directory_name(DWORD , ...) DECLSPEC_HIDDEN;
@@ -1039,6 +1041,9 @@ extern UINT msi_install_assembly(MSIPACKAGE *, MSICOMPONENT *) DECLSPEC_HIDDEN;
 extern UINT msi_uninstall_assembly(MSIPACKAGE *, MSICOMPONENT *) DECLSPEC_HIDDEN;
 extern BOOL msi_init_assembly_caches(MSIPACKAGE *) DECLSPEC_HIDDEN;
 extern void msi_destroy_assembly_caches(MSIPACKAGE *) DECLSPEC_HIDDEN;
+extern BOOL msi_is_global_assembly(MSICOMPONENT *) DECLSPEC_HIDDEN;
+extern IAssemblyEnum *msi_create_assembly_enum(MSIPACKAGE *, const WCHAR *) DECLSPEC_HIDDEN;
+extern WCHAR *msi_get_assembly_path(MSIPACKAGE *, const WCHAR *) DECLSPEC_HIDDEN;
 extern WCHAR *msi_font_version_from_file(const WCHAR *) DECLSPEC_HIDDEN;
 extern WCHAR **msi_split_string(const WCHAR *, WCHAR) DECLSPEC_HIDDEN;
 extern UINT msi_set_original_database_property(MSIDATABASE *, const WCHAR *) DECLSPEC_HIDDEN;

@@ -55,7 +55,7 @@ static const IBaseFilterVtbl ACMWrapper_Vtbl;
 
 static inline ACMWrapperImpl *impl_from_TransformFilter( TransformFilter *iface )
 {
-    return CONTAINING_RECORD(iface, ACMWrapperImpl, tf.filter);
+    return CONTAINING_RECORD(iface, ACMWrapperImpl, tf);
 }
 
 static HRESULT WINAPI ACMWrapper_Receive(TransformFilter *tf, IMediaSample *pSample)
@@ -394,7 +394,7 @@ HRESULT ACMWrapper_create(IUnknown * pUnkOuter, LPVOID * ppv)
     if (FAILED(hr))
         return hr;
 
-    *ppv = This;
+    *ppv = &This->tf.filter.IBaseFilter_iface;
     This->lasttime_real = This->lasttime_sent = -1;
 
     return hr;

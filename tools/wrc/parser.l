@@ -90,7 +90,6 @@
 
 /* Some shortcut definitions */
 ws	[ \f\t\r]
-cident	[a-zA-Z_][0-9a-zA-Z_]*
 
 %{
 
@@ -251,7 +250,7 @@ static struct keyword keywords[] = {
 static int kw_cmp_func(const void *s1, const void *s2)
 {
 	int ret;
-	ret = strcasecmp(KWP(s1)->keyword, KWP(s2)->keyword);
+	ret = compare_striA(KWP(s1)->keyword, KWP(s2)->keyword);
 	if(!ret && (KWP(s1)->needcase || KWP(s2)->needcase))
 		return strcmp(KWP(s1)->keyword, KWP(s2)->keyword);
 	else

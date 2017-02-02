@@ -39,8 +39,6 @@
 #include <stdarg.h>
 #include <math.h>
 
-#define NONAMELESSSTRUCT
-#define NONAMELESSUNION
 #include "windef.h"
 #include "winbase.h"
 #include "mmsystem.h"
@@ -159,6 +157,13 @@ void putieee32(const IDirectSoundBufferImpl *dsb, DWORD pos, DWORD channel, floa
     *fbuf = value;
 }
 
+void putieee32_sum(const IDirectSoundBufferImpl *dsb, DWORD pos, DWORD channel, float value)
+{
+    BYTE *buf = (BYTE *)dsb->device->tmp_buffer;
+    float *fbuf = (float*)(buf + pos + sizeof(float) * channel);
+    *fbuf += value;
+}
+
 void put_mono2stereo(const IDirectSoundBufferImpl *dsb, DWORD pos, DWORD channel, float value)
 {
     dsb->put_aux(dsb, pos, 0, value);
@@ -205,6 +210,72 @@ void put_stereo2surround51(const IDirectSoundBufferImpl *dsb, DWORD pos, DWORD c
     } else if (channel == 1) { /* Right */
         dsb->put_aux(dsb, pos, 1, value); /* Front right */
         dsb->put_aux(dsb, pos, 5, value); /* Back right */
+    }
+}
+
+void put_surround512stereo(const IDirectSoundBufferImpl *dsb, DWORD pos, DWORD channel, float value)
+{
+    /* based on pulseaudio's downmix algorithm */
+    switch(channel){
+
+    case 4: /* back left */
+        value *= 0.056f; /* (1/9) / (sum of left volumes) */
+        dsb->put_aux(dsb, pos, 0, value);
+        break;
+
+    case 0: /* front left */
+        value *= 0.503f; /* 1 / (sum of left volumes) */
+        dsb->put_aux(dsb, pos, 0, value);
+        break;
+
+    case 5: /* back right */
+        value *= 0.056f; /* (1/9) / (sum of right volumes) */
+        dsb->put_aux(dsb, pos, 1, value);
+        break;
+
+    case 1: /* front right */
+        value *= 0.503f; /* 1 / (sum of right volumes) */
+        dsb->put_aux(dsb, pos, 1, value);
+        break;
+
+    case 2: /* front centre */
+        value *= 0.252f; /* 0.5 / (sum of left/right volumes) */
+        dsb->put_aux(dsb, pos, 0, value);
+        dsb->put_aux(dsb, pos, 1, value);
+        break;
+
+    case 3: /* LFE */
+        value *= 0.189f; /* 0.375 / (sum of left/right volumes) */
+        dsb->put_aux(dsb, pos, 0, value);
+        dsb->put_aux(dsb, pos, 1, value);
+        break;
+    }
+}
+
+void put_quad2stereo(const IDirectSoundBufferImpl *dsb, DWORD pos, DWORD channel, float value)
+{
+    /* based on pulseaudio's downmix algorithm */
+    switch(channel){
+
+    case 2: /* back left */
+        value *= 0.1f; /* (1/9) / (sum of left volumes) */
+        dsb->put_aux(dsb, pos, 0, value);
+        break;
+
+    case 0: /* front left */
+        value *= 0.9f; /* 1 / (sum of left volumes) */
+        dsb->put_aux(dsb, pos, 0, value);
+        break;
+
+    case 3: /* back right */
+        value *= 0.1f; /* (1/9) / (sum of right volumes) */
+        dsb->put_aux(dsb, pos, 1, value);
+        break;
+
+    case 1: /* front right */
+        value *= 0.9f; /* 1 / (sum of right volumes) */
+        dsb->put_aux(dsb, pos, 1, value);
+        break;
     }
 }
 
@@ -265,27 +336,9 @@ static void norm32(float *src, INT *dst, unsigned len)
     }
 }
 
-static void normieee32(float *src, float *dst, unsigned len)
-{
-    TRACE("%p - %p %d\n", src, dst, len);
-    len /= 4;
-    while (len--)
-    {
-        if(*src > 1)
-            *dst = 1;
-        else if(*src < -1)
-            *dst = -1;
-        else
-            *dst = *src;
-        ++dst;
-        ++src;
-    }
-}
-
-const normfunc normfunctions[5] = {
+const normfunc normfunctions[4] = {
     (normfunc)norm8,
     (normfunc)norm16,
     (normfunc)norm24,
     (normfunc)norm32,
-    (normfunc)normieee32
 };

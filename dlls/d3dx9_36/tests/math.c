@@ -609,7 +609,14 @@ static void D3DXPlaneTest(void)
     vec1.x = 11.0f; vec1.y = 13.0f; vec1.z = 15.0f;
     vec2.x = 17.0f; vec2.y = 31.0f; vec2.z = 24.0f;
     expectedplane.a = 17.0f; expectedplane.b = 31.0f; expectedplane.c = 24.0f; expectedplane.d = -950.0f;
-    D3DXPlaneFromPointNormal(&gotplane,&vec1,&vec2);
+    D3DXPlaneFromPointNormal(&gotplane, &vec1, &vec2);
+    expect_plane(expectedplane, gotplane);
+    gotplane.a = vec2.x; gotplane.b = vec2.y; gotplane.c = vec2.z;
+    D3DXPlaneFromPointNormal(&gotplane, &vec1, (D3DXVECTOR3 *)&gotplane);
+    expect_plane(expectedplane, gotplane);
+    gotplane.a = vec1.x; gotplane.b = vec1.y; gotplane.c = vec1.z;
+    expectedplane.d = -1826.0f;
+    D3DXPlaneFromPointNormal(&gotplane, (D3DXVECTOR3 *)&gotplane, &vec2);
     expect_plane(expectedplane, gotplane);
 
 /*_______________D3DXPlaneFromPoints_______*/
@@ -968,42 +975,49 @@ static void D3DXQuaternionTest(void)
     s.x = -3.0f; s.y = 4.0f; s.z = -5.0f; s.w = 7.0;
     t.x = -1111.0f, t.y = 111.0f; t.z = -11.0f; t.w = 1.0f;
     u.x = 91.0f; u.y = - 82.0f; u.z = 7.3f; u.w = -6.4f;
-    D3DXQuaternionSquadSetup(&gotquat,&Nq,&Nq1,&r,&s,&t,&u);
+    D3DXQuaternionSquadSetup(&gotquat, &Nq, &Nq1, &r, &s, &t, &u);
     expectedquat.x = 7.121285f; expectedquat.y = 2.159964f; expectedquat.z = -3.855094f; expectedquat.w = 5.362844f;
-    expect_vec4(expectedquat,gotquat);
+    expect_vec4(expectedquat, gotquat);
     expectedquat.x = -1113.492920f; expectedquat.y = 82.679260f; expectedquat.z = -6.696645f; expectedquat.w = -4.090050f;
-    expect_vec4(expectedquat,Nq);
+    expect_vec4(expectedquat, Nq);
     expectedquat.x = -1111.0f; expectedquat.y = 111.0f; expectedquat.z = -11.0f; expectedquat.w = 1.0f;
-    expect_vec4(expectedquat,Nq1);
+    expect_vec4(expectedquat, Nq1);
+    gotquat = s;
+    D3DXQuaternionSquadSetup(&gotquat, &Nq, &Nq1, &r, &gotquat, &t, &u);
+    expectedquat.x = -1113.492920f; expectedquat.y = 82.679260f; expectedquat.z = -6.696645f; expectedquat.w = -4.090050f;
+    expect_vec4(expectedquat, Nq);
+    Nq1 = u;
+    D3DXQuaternionSquadSetup(&gotquat, &Nq, &Nq1, &r, &s, &t, &Nq1);
+    expect_vec4(expectedquat, Nq);
     r.x = 0.2f; r.y = 0.3f; r.z = 1.3f; r.w = -0.6f;
     s.x = -3.0f; s.y =-2.0f; s.z = 4.0f; s.w = 0.2f;
     t.x = 0.4f; t.y = 8.3f; t.z = -3.1f; t.w = -2.7f;
     u.x = 1.1f; u.y = -0.7f; u.z = 9.2f; u.w = 0.0f;
-    D3DXQuaternionSquadSetup(&gotquat,&Nq,&Nq1,&r,&s,&u,&t);
+    D3DXQuaternionSquadSetup(&gotquat, &Nq, &Nq1, &r, &s, &u, &t);
     expectedquat.x = -4.139569f; expectedquat.y = -2.469115f; expectedquat.z = 2.364477f; expectedquat.w = 0.465494f;
-    expect_vec4(expectedquat,gotquat);
+    expect_vec4(expectedquat, gotquat);
     expectedquat.x = 2.342533f; expectedquat.y = 2.365127f; expectedquat.z = 8.628538f; expectedquat.w = -0.898356f;
-    expect_vec4(expectedquat,Nq);
+    expect_vec4(expectedquat, Nq);
     expectedquat.x = 1.1f; expectedquat.y = -0.7f; expectedquat.z = 9.2f; expectedquat.w = 0.0f;
-    expect_vec4(expectedquat,Nq1);
-    D3DXQuaternionSquadSetup(&gotquat,&Nq,&Nq1,&r,&s,&t,&u);
+    expect_vec4(expectedquat, Nq1);
+    D3DXQuaternionSquadSetup(&gotquat, &Nq, &Nq1, &r, &s, &t, &u);
     expectedquat.x = -3.754567f; expectedquat.y = -0.586085f; expectedquat.z = 3.815818f; expectedquat.w = -0.198150f;
-    expect_vec4(expectedquat,gotquat);
+    expect_vec4(expectedquat, gotquat);
     expectedquat.x = 0.140773f; expectedquat.y = -8.737090f; expectedquat.z = -0.516593f; expectedquat.w = 3.053942f;
-    expect_vec4(expectedquat,Nq);
+    expect_vec4(expectedquat, Nq);
     expectedquat.x = -0.4f; expectedquat.y = -8.3f; expectedquat.z = 3.1f; expectedquat.w = 2.7f;
-    expect_vec4(expectedquat,Nq1);
+    expect_vec4(expectedquat, Nq1);
     r.x = -1.0f; r.y = 0.0f; r.z = 0.0f; r.w = 0.0f;
     s.x = 1.0f; s.y =0.0f; s.z = 0.0f; s.w = 0.0f;
     t.x = 1.0f; t.y = 0.0f; t.z = 0.0f; t.w = 0.0f;
     u.x = -1.0f; u.y = 0.0f; u.z = 0.0f; u.w = 0.0f;
-    D3DXQuaternionSquadSetup(&gotquat,&Nq,&Nq1,&r,&s,&t,&u);
+    D3DXQuaternionSquadSetup(&gotquat, &Nq, &Nq1, &r, &s, &t, &u);
     expectedquat.x = 1.0f; expectedquat.y = 0.0f; expectedquat.z = 0.0f; expectedquat.w = 0.0f;
-    expect_vec4(expectedquat,gotquat);
+    expect_vec4(expectedquat, gotquat);
     expectedquat.x = 1.0f; expectedquat.y = 0.0f; expectedquat.z = 0.0f; expectedquat.w = 0.0f;
-    expect_vec4(expectedquat,Nq);
+    expect_vec4(expectedquat, Nq);
     expectedquat.x = 1.0f; expectedquat.y = 0.0f; expectedquat.z = 0.0f; expectedquat.w = 0.0f;
-    expect_vec4(expectedquat,Nq1);
+    expect_vec4(expectedquat, Nq1);
 
 /*_______________D3DXQuaternionToAxisAngle__________________*/
     Nq.x = 1.0f/22.0f; Nq.y = 2.0f/22.0f; Nq.z = 4.0f/22.0f; Nq.w = 10.0f/22.0f;
@@ -1019,9 +1033,14 @@ static void D3DXQuaternionTest(void)
     /* Test the null quaternion */
     expectedvec.x = 0.0f; expectedvec.y = 0.0f; expectedvec.z = 0.0f;
     expected = 3.141593f;
-    D3DXQuaternionToAxisAngle(&nul,&axis,&angle);
-    expect_vec3(expectedvec,axis);
-    ok(relative_error(angle, expected ) < admitted_error, "Expected: %f, Got: %f\n", expected, angle);
+    D3DXQuaternionToAxisAngle(&nul, &axis, &angle);
+    expect_vec3(expectedvec, axis);
+    ok(relative_error(angle, expected) < admitted_error, "Expected: %f, Got: %f\n", expected, angle);
+
+    D3DXQuaternionToAxisAngle(&nul, &axis, NULL);
+    D3DXQuaternionToAxisAngle(&nul, NULL, &angle);
+    expect_vec3(expectedvec, axis);
+    ok(relative_error(angle, expected) < admitted_error, "Expected: %f, Got: %f\n", expected, angle);
 }
 
 static void D3DXVector2Test(void)
@@ -1174,13 +1193,19 @@ static void D3DXVector2Test(void)
 
 /*_______________D3DXVec2Transform_______________________*/
     expectedtrans.x = 36.0f; expectedtrans.y = 44.0f; expectedtrans.z = 52.0f; expectedtrans.w = 60.0f;
-    D3DXVec2Transform(&gottrans,&u,&mat);
-    expect_vec4(expectedtrans,gottrans);
+    D3DXVec2Transform(&gottrans, &u, &mat);
+    expect_vec4(expectedtrans, gottrans);
+    gottrans.x = u.x; gottrans.y = u.y;
+    D3DXVec2Transform(&gottrans, (D3DXVECTOR2 *)&gottrans, &mat);
+    expect_vec4(expectedtrans, gottrans);
 
 /*_______________D3DXVec2TransformCoord_______________________*/
     expectedvec.x = 0.6f; expectedvec.y = 11.0f/15.0f;
-    D3DXVec2TransformCoord(&gotvec,&u,&mat);
-    expect_vec(expectedvec,gotvec);
+    D3DXVec2TransformCoord(&gotvec, &u, &mat);
+    expect_vec(expectedvec, gotvec);
+    gotvec.x = u.x; gotvec.y = u.y;
+    D3DXVec2TransformCoord(&gotvec, (D3DXVECTOR2 *)&gotvec, &mat);
+    expect_vec(expectedvec, gotvec);
 
  /*_______________D3DXVec2TransformNormal______________________*/
     expectedvec.x = 23.0f; expectedvec.y = 30.0f;
@@ -1356,8 +1381,12 @@ static void D3DXVector3Test(void)
 
 /*_______________D3DXVec3Transform_______________________*/
     expectedtrans.x = 70.0f; expectedtrans.y = 88.0f; expectedtrans.z = 106.0f; expectedtrans.w = 124.0f;
-    D3DXVec3Transform(&gottrans,&u,&mat);
-    expect_vec4(expectedtrans,gottrans);
+    D3DXVec3Transform(&gottrans, &u, &mat);
+    expect_vec4(expectedtrans, gottrans);
+
+    gottrans.x = u.x; gottrans.y = u.y; gottrans.z = u.z;
+    D3DXVec3Transform(&gottrans, (D3DXVECTOR3 *)&gottrans, &mat);
+    expect_vec4(expectedtrans, gottrans);
 
 /*_______________D3DXVec3TransformCoord_______________________*/
     expectedvec.x = 70.0f/124.0f; expectedvec.y = 88.0f/124.0f; expectedvec.z = 106.0f/124.0f;
@@ -3079,10 +3108,18 @@ static void test_D3DXSHMultiply3(void)
     unsigned int i;
     FLOAT a[20], b[20], c[20];
     /* D3DXSHMultiply3 only modifies the first 9 elements of the array */
-    const FLOAT expected[20] =
-    { 7.813913f, 2.256058f, 5.9484005f, 4.970894f, 2.899858f, 3.598946f,
-      1.726572f, 5.573538f, 0.622063f, 9.0f, 10.0f, 11.0f, 12.0f, 13.0f,
-      14.0f, 15.0f, 16.0f, 17.0f, 18.0f, 19.0f };
+    static const float expected[20] =
+    {
+        7.813913f, 2.256058f, 5.9484005f, 4.970894f, 2.899858f, 3.598946f,
+        1.726572f, 5.573538f, 0.622063f, 9.0f, 10.0f, 11.0f, 12.0f, 13.0f,
+        14.0f, 15.0f, 16.0f, 17.0f, 18.0f, 19.0f
+    };
+    static const float expected_aliased[20] =
+    {
+        454.092499f,2.126404f, 5.570401f, 15.330379f, 22.796087f, 43.604126f,
+        4.273841f, 175.772034f, 237.672729f, 1.09f, 1.1f, 1.11f, 1.12f, 1.13f,
+        1.14f, 1.15f, 1.16f, 1.17f, 1.18f, 1.19f
+    };
 
     for (i = 0; i < 20; i++)
     {
@@ -3093,7 +3130,14 @@ static void test_D3DXSHMultiply3(void)
 
     D3DXSHMultiply3(c, a, b);
     for (i = 0; i < 20; i++)
-        ok(relative_error(c[i], expected[i]) < admitted_error, "Expected[%d] = %f, received = %f\n", i, expected[i], c[i]);
+        ok(relative_error(c[i], expected[i]) < admitted_error,
+                "Expected[%d] = %f, received = %f\n", i, expected[i], c[i]);
+    for (i = 0; i < 20; i++)
+        c[i] = a[i];
+    D3DXSHMultiply3(c, c, b);
+    for (i = 0; i < 20; i++)
+        ok(relative_error(c[i], expected_aliased[i]) < admitted_error,
+                "Expected[%d] = %f, received = %f\n", i, expected[i], c[i]);
 }
 
 static void test_D3DXSHMultiply4(void)

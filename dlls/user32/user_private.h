@@ -80,14 +80,7 @@ typedef struct tagUSER_DRIVER {
     BOOL   (CDECL *pSetCursorPos)(INT,INT);
     BOOL   (CDECL *pClipCursor)(LPCRECT);
     /* clipboard functions */
-    INT    (CDECL *pAcquireClipboard)(HWND);                     /* Acquire selection */
-    BOOL   (CDECL *pCountClipboardFormats)(void);                /* Count available clipboard formats */
-    void   (CDECL *pEmptyClipboard)(BOOL);                       /* Empty clipboard data */
-    void   (CDECL *pEndClipboardUpdate)(void);                   /* End clipboard update */
-    UINT   (CDECL *pEnumClipboardFormats)(UINT);                 /* Enumerate clipboard formats */
-    HANDLE (CDECL *pGetClipboardData)(UINT);                     /* Get specified selection data */
-    BOOL   (CDECL *pIsClipboardFormatAvailable)(UINT);           /* Check if specified format is available */
-    BOOL   (CDECL *pSetClipboardData)(UINT, HANDLE, BOOL);       /* Set specified selection data */
+    void   (CDECL *pUpdateClipboard)(void);
     /* display modes */
     LONG   (CDECL *pChangeDisplaySettingsEx)(LPCWSTR,LPDEVMODEW,HWND,DWORD,LPVOID);
     BOOL   (CDECL *pEnumDisplayMonitors)(HDC,LPRECT,MONITORENUMPROC,LPARAM);
@@ -97,6 +90,7 @@ typedef struct tagUSER_DRIVER {
     BOOL   (CDECL *pCreateDesktopWindow)(HWND);
     BOOL   (CDECL *pCreateWindow)(HWND);
     void   (CDECL *pDestroyWindow)(HWND);
+    void   (CDECL *pFlashWindowEx)(FLASHWINFO*);
     void   (CDECL *pGetDC)(HDC,HWND,HWND,const RECT *,const RECT *,DWORD);
     DWORD  (CDECL *pMsgWaitForMultipleObjectsEx)(DWORD,const HANDLE*,DWORD,DWORD,DWORD);
     void   (CDECL *pReleaseDC)(HWND,HDC);
@@ -117,6 +111,8 @@ typedef struct tagUSER_DRIVER {
     void   (CDECL *pWindowPosChanged)(HWND,HWND,UINT,const RECT *,const RECT *,const RECT *,const RECT *,struct window_surface*);
     /* system parameters */
     BOOL   (CDECL *pSystemParametersInfo)(UINT,UINT,void*,UINT);
+    /* thread management */
+    void   (CDECL *pThreadDetach)(void);
 } USER_DRIVER;
 
 extern const USER_DRIVER *USER_Driver DECLSPEC_HIDDEN;
@@ -176,6 +172,7 @@ struct user_thread_info
     DWORD                         changed_mask;           /* Current queue changed mask */
     WORD                          recursion_count;        /* SendMessage recursion counter */
     WORD                          message_count;          /* Get/PeekMessage loop counter */
+    WORD                          hook_call_depth;        /* Number of recursively called hook procs */
     BOOL                          hook_unicode;           /* Is current hook unicode? */
     HHOOK                         hook;                   /* Current hook */
     struct received_message_info *receive_info;           /* Message being currently received */
@@ -184,13 +181,23 @@ struct user_thread_info
     DWORD                         GetMessagePosVal;       /* Value for GetMessagePos */
     ULONG_PTR                     GetMessageExtraInfoVal; /* Value for GetMessageExtraInfo */
     UINT                          active_hooks;           /* Bitmap of active hooks */
-    UINT                          key_state_time;         /* Time of last key state refresh */
-    BYTE                         *key_state;              /* Cache of global key state */
+    struct user_key_state_info   *key_state;              /* Cache of global key state */
     HWND                          top_window;             /* Desktop window */
     HWND                          msg_window;             /* HWND_MESSAGE parent window */
     RAWINPUT                     *rawinput;
+};
 
-    ULONG                         pad[6];                 /* Available for more data */
+C_ASSERT( sizeof(struct user_thread_info) <= sizeof(((TEB *)0)->Win32ClientInfo) );
+
+extern INT global_key_state_counter DECLSPEC_HIDDEN;
+extern BOOL (WINAPI *imm_register_window)(HWND) DECLSPEC_HIDDEN;
+extern void (WINAPI *imm_unregister_window)(HWND) DECLSPEC_HIDDEN;
+
+struct user_key_state_info
+{
+    UINT                          time;                   /* Time of last key state refresh */
+    INT                           counter;                /* Counter to invalidate the key state */
+    BYTE                          state[256];             /* State for each key */
 };
 
 struct hook_extra_info
@@ -215,7 +222,7 @@ extern HMODULE user32_module DECLSPEC_HIDDEN;
 struct dce;
 struct tagWND;
 
-extern BOOL CLIPBOARD_ReleaseOwner(void) DECLSPEC_HIDDEN;
+extern void CLIPBOARD_ReleaseOwner( HWND hwnd ) DECLSPEC_HIDDEN;
 extern BOOL FOCUS_MouseActivate( HWND hwnd ) DECLSPEC_HIDDEN;
 extern BOOL set_capture_window( HWND hwnd, UINT gui_flags, HWND *prev_ret ) DECLSPEC_HIDDEN;
 extern void free_dce( struct dce *dce, HWND hwnd ) DECLSPEC_HIDDEN;
@@ -309,8 +316,28 @@ typedef struct
     CURSORICONDIRENTRY  idEntries[1];
 } CURSORICONDIR;
 
+typedef struct {
+    BYTE bWidth;
+    BYTE bHeight;
+    BYTE bColorCount;
+    BYTE bReserved;
+    WORD xHotspot;
+    WORD yHotspot;
+    DWORD dwDIBSize;
+    DWORD dwDIBOffset;
+} CURSORICONFILEDIRENTRY;
+
+typedef struct
+{
+    WORD                idReserved;
+    WORD                idType;
+    WORD                idCount;
+    CURSORICONFILEDIRENTRY  idEntries[1];
+} CURSORICONFILEDIR;
+
 #include "poppack.h"
 
+extern int bitmap_info_size( const BITMAPINFO * info, WORD coloruse ) DECLSPEC_HIDDEN;
 extern BOOL get_icon_size( HICON handle, SIZE *size ) DECLSPEC_HIDDEN;
 
 /* Mingw's assert() imports MessageBoxA and gets confused by user32 exporting it */

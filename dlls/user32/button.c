@@ -143,10 +143,6 @@ static const pfPaint btnPaintFunc[MAX_BTN_TYPE] =
     OB_Paint     /* BS_OWNERDRAW */
 };
 
-static HBITMAP hbitmapCheckBoxes = 0;
-static WORD checkBoxWidth = 0, checkBoxHeight = 0;
-
-
 /*********************************************************************
  * button class descriptor
  */
@@ -201,7 +197,7 @@ static inline void paint_button( HWND hwnd, LONG style, UINT action )
 /* retrieve the button text; returned buffer must be freed by caller */
 static inline WCHAR *get_button_text( HWND hwnd )
 {
-    INT len = 512;
+    static const INT len = 512;
     WCHAR *buffer = HeapAlloc( GetProcessHeap(), 0, (len + 1) * sizeof(WCHAR) );
     if (buffer) InternalGetWindowText( hwnd, buffer, len + 1 );
     return buffer;
@@ -243,14 +239,6 @@ LRESULT ButtonWndProc_common(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
         break;
 
     case WM_CREATE:
-        if (!hbitmapCheckBoxes)
-        {
-            BITMAP bmp;
-            hbitmapCheckBoxes = LoadBitmapW(0, MAKEINTRESOURCEW(OBM_CHECKBOXES));
-            GetObjectW( hbitmapCheckBoxes, sizeof(bmp), &bmp );
-            checkBoxWidth  = bmp.bmWidth / 4;
-            checkBoxHeight = bmp.bmHeight / 3;
-        }
         if (btn_type >= MAX_BTN_TYPE)
             return -1; /* abort */
 
@@ -282,16 +270,18 @@ LRESULT ButtonWndProc_common(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
 
     case WM_PRINTCLIENT:
     case WM_PAINT:
+    {
+        PAINTSTRUCT ps;
+        HDC hdc = wParam ? (HDC)wParam : BeginPaint( hWnd, &ps );
         if (btnPaintFunc[btn_type])
         {
-            PAINTSTRUCT ps;
-            HDC hdc = wParam ? (HDC)wParam : BeginPaint( hWnd, &ps );
             int nOldMode = SetBkMode( hdc, OPAQUE );
             (btnPaintFunc[btn_type])( hWnd, hdc, ODA_DRAWENTIRE );
             SetBkMode(hdc, nOldMode); /*  reset painting mode */
-            if( !wParam ) EndPaint( hWnd, &ps );
         }
+        if ( !wParam ) EndPaint( hWnd, &ps );
         break;
+    }
 
     case WM_KEYDOWN:
 	if (wParam == VK_SPACE)
@@ -334,7 +324,6 @@ LRESULT ButtonWndProc_common(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
             break;
         }
         SendMessageW( hWnd, BM_SETSTATE, FALSE, 0 );
-        ReleaseCapture();
         GetClientRect( hWnd, &rect );
 	if (uMsg == WM_KEYUP || PtInRect( &rect, pt ))
         {
@@ -352,12 +341,18 @@ LRESULT ButtonWndProc_common(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
                                 (state & BST_INDETERMINATE) ? 0 : ((state & 3) + 1), 0 );
                 break;
             }
+            ReleaseCapture();
             BUTTON_NOTIFY_PARENT(hWnd, BN_CLICKED);
+        }
+        else
+        {
+            ReleaseCapture();
         }
         break;
 
     case WM_CAPTURECHANGED:
         TRACE("WM_CAPTURECHANGED %p\n", hWnd);
+        if (hWnd == (HWND)lParam) break;
         state = get_button_state( hWnd );
         if (state & BUTTON_BTNPRESSED)
         {
@@ -378,26 +373,34 @@ LRESULT ButtonWndProc_common(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
     case WM_SETTEXT:
     {
         /* Clear an old text here as Windows does */
-        HDC hdc = GetDC(hWnd);
-        HBRUSH hbrush;
-        RECT client, rc;
-        HWND parent = GetParent(hWnd);
+        if (IsWindowVisible(hWnd))
+        {
+            HDC hdc = GetDC(hWnd);
+            HBRUSH hbrush;
+            RECT client, rc;
+            HWND parent = GetParent(hWnd);
+            UINT message = (btn_type == BS_PUSHBUTTON ||
+                            btn_type == BS_DEFPUSHBUTTON ||
+                            btn_type == BS_USERBUTTON ||
+                            btn_type == BS_OWNERDRAW) ?
+                            WM_CTLCOLORBTN : WM_CTLCOLORSTATIC;
 
-        if (!parent) parent = hWnd;
-        hbrush = (HBRUSH)SendMessageW(parent, WM_CTLCOLORSTATIC,
-				      (WPARAM)hdc, (LPARAM)hWnd);
-        if (!hbrush) /* did the app forget to call DefWindowProc ? */
-            hbrush = (HBRUSH)DefWindowProcW(parent, WM_CTLCOLORSTATIC,
-					    (WPARAM)hdc, (LPARAM)hWnd);
+            if (!parent) parent = hWnd;
+            hbrush = (HBRUSH)SendMessageW(parent, message,
+                                          (WPARAM)hdc, (LPARAM)hWnd);
+            if (!hbrush) /* did the app forget to call DefWindowProc ? */
+                hbrush = (HBRUSH)DefWindowProcW(parent, message,
+                                                (WPARAM)hdc, (LPARAM)hWnd);
 
-        GetClientRect(hWnd, &client);
-        rc = client;
-        BUTTON_CalcLabelRect(hWnd, hdc, &rc);
-        /* Clip by client rect bounds */
-        if (rc.right > client.right) rc.right = client.right;
-        if (rc.bottom > client.bottom) rc.bottom = client.bottom;
-        FillRect(hdc, &rc, hbrush);
-        ReleaseDC(hWnd, hdc);
+            GetClientRect(hWnd, &client);
+            rc = client;
+            BUTTON_CalcLabelRect(hWnd, hdc, &rc);
+            /* Clip by client rect bounds */
+            if (rc.right > client.right) rc.right = client.right;
+            if (rc.bottom > client.bottom) rc.bottom = client.bottom;
+            FillRect(hdc, &rc, hbrush);
+            ReleaseDC(hWnd, hdc);
+        }
 
         if (unicode) DefWindowProcW( hWnd, WM_SETTEXT, wParam, lParam );
         else DefWindowProcA( hWnd, WM_SETTEXT, wParam, lParam );
@@ -443,7 +446,6 @@ LRESULT ButtonWndProc_common(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
         break;
 
     case BM_SETSTYLE:
-        if ((wParam & BS_TYPEMASK) >= MAX_BTN_TYPE) break;
         btn_type = wParam & BS_TYPEMASK;
         style = (style & ~BS_TYPEMASK) | btn_type;
         WIN_SetStyle( hWnd, style, BS_TYPEMASK & ~style );
@@ -676,11 +678,8 @@ static UINT BUTTON_CalcLabelRect(HWND hwnd, HDC hdc, RECT *rc)
 static BOOL CALLBACK BUTTON_DrawTextCallback(HDC hdc, LPARAM lp, WPARAM wp, int cx, int cy)
 {
    RECT rc;
-   rc.left = 0;
-   rc.top = 0;
-   rc.right = cx;
-   rc.bottom = cy;
 
+   SetRect(&rc, 0, 0, cx, cy);
    DrawTextW(hdc, (LPCWSTR)lp, -1, &rc, (UINT)wp);
    return TRUE;
 }
@@ -840,11 +839,12 @@ static void CB_Paint( HWND hwnd, HDC hDC, UINT action )
 {
     RECT rbox, rtext, client;
     HBRUSH hBrush;
-    int delta;
+    int delta, text_offset, checkBoxWidth, checkBoxHeight;
     UINT dtFlags;
     HFONT hFont;
     LONG state = get_button_state( hwnd );
     LONG style = GetWindowLongW( hwnd, GWL_STYLE );
+    LONG ex_style = GetWindowLongW( hwnd, GWL_EXSTYLE );
     HWND parent;
     HRGN hrgn;
 
@@ -857,7 +857,12 @@ static void CB_Paint( HWND hwnd, HDC hDC, UINT action )
     GetClientRect(hwnd, &client);
     rbox = rtext = client;
 
+    checkBoxWidth  = 12 * GetDeviceCaps( hDC, LOGPIXELSX ) / 96 + 1;
+    checkBoxHeight = 12 * GetDeviceCaps( hDC, LOGPIXELSY ) / 96 + 1;
+
     if ((hFont = get_button_font( hwnd ))) SelectObject( hDC, hFont );
+    GetCharWidthW( hDC, '0', '0', &text_offset );
+    text_offset /= 2;
 
     parent = GetParent(hwnd);
     if (!parent) parent = hwnd;
@@ -868,16 +873,14 @@ static void CB_Paint( HWND hwnd, HDC hDC, UINT action )
 					(WPARAM)hDC, (LPARAM)hwnd );
     hrgn = set_control_clipping( hDC, &client );
 
-    if (style & BS_LEFTTEXT)
+    if (style & BS_LEFTTEXT || ex_style & WS_EX_RIGHT)
     {
-	/* magic +4 is what CTL3D expects */
-
-        rtext.right -= checkBoxWidth + 4;
+        rtext.right -= checkBoxWidth + text_offset;
         rbox.left = rbox.right - checkBoxWidth;
     }
     else
     {
-        rtext.left += checkBoxWidth + 4;
+        rtext.left += checkBoxWidth + text_offset;
         rbox.right = checkBoxWidth;
     }
 

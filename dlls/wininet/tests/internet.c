@@ -360,11 +360,13 @@ static void test_get_cookie(void)
   DWORD len;
   BOOL ret;
 
+  len = 1024;
   SetLastError(0xdeadbeef);
   ret = InternetGetCookieA("http://www.example.com", NULL, NULL, &len);
   ok(!ret && GetLastError() == ERROR_NO_MORE_ITEMS,
     "InternetGetCookie should have failed with %s and error %d\n",
     ret ? "TRUE" : "FALSE", GetLastError());
+  ok(!len, "len = %u\n", len);
 }
 
 
@@ -388,7 +390,7 @@ static void test_complicated_cookie(void)
   /* Technically illegal! domain should require 2 dots, but native wininet accepts it */
   ret = InternetSetCookieA("http://www.example.com",NULL,"E=F; domain=example.com");
   ok(ret == TRUE,"InternetSetCookie failed\n");
-  ret = InternetSetCookieA("http://www.example.com",NULL,"G=H; domain=.example.com; path=/foo");
+  ret = InternetSetCookieA("http://www.example.com",NULL,"G=H; domain=.example.com; invalid=attr; path=/foo");
   ok(ret == TRUE,"InternetSetCookie failed\n");
   ret = InternetSetCookieA("http://www.example.com/bar.html",NULL,"I=J; domain=.example.com");
   ok(ret == TRUE,"InternetSetCookie failed\n");
@@ -614,6 +616,7 @@ static void test_cookie_attrs(void)
 
 static void test_cookie_url(void)
 {
+    char long_url[5000] = "http://long.url.test.com/", *p;
     WCHAR bufw[512];
     char buf[512];
     DWORD len;
@@ -640,6 +643,23 @@ static void test_cookie_url(void)
     res = pInternetGetCookieExW(about_blankW, NULL, bufw, &len, 0, NULL);
     ok(!res && GetLastError() == ERROR_INVALID_PARAMETER,
        "InternetGetCookeExW failed: %u, expected ERROR_INVALID_PARAMETER\n", GetLastError());
+
+    p = long_url + strlen(long_url);
+    memset(p, 'x', long_url+sizeof(long_url)-p);
+    p += (long_url+sizeof(long_url)-p) - 3;
+    p[0] = '/';
+    p[2] = 0;
+    res = InternetSetCookieA(long_url, NULL, "A=B");
+    ok(res, "InternetSetCookieA failed: %u\n", GetLastError());
+
+    len = sizeof(buf);
+    res = InternetGetCookieA(long_url, NULL, buf, &len);
+    ok(res, "InternetGetCookieA failed: %u\n", GetLastError());
+    ok(!strcmp(buf, "A=B"), "buf = %s\n", buf);
+
+    len = sizeof(buf);
+    res = InternetGetCookieA("http://long.url.test.com/", NULL, buf, &len);
+    ok(!res && GetLastError() == ERROR_NO_MORE_ITEMS, "InternetGetCookieA failed: %u\n", GetLastError());
 }
 
 static void test_null(void)
@@ -1049,7 +1069,8 @@ static void test_IsDomainLegalCookieDomainW(void)
 
 static void test_PrivacyGetSetZonePreferenceW(void)
 {
-    DWORD ret, zone, type, template, old_template;
+    DWORD ret, zone, type, template, old_template, pref_size = 0;
+    WCHAR pref[256];
 
     zone = 3;
     type = 0;
@@ -1059,6 +1080,14 @@ static void test_PrivacyGetSetZonePreferenceW(void)
     old_template = 0;
     ret = pPrivacyGetZonePreferenceW(zone, type, &old_template, NULL, NULL);
     ok(ret == 0, "expected ret == 0, got %u\n", ret);
+
+    trace("template %u\n", old_template);
+
+    if(old_template == PRIVACY_TEMPLATE_ADVANCED) {
+        pref_size = sizeof(pref)/sizeof(WCHAR);
+        ret = pPrivacyGetZonePreferenceW(zone, type, &old_template, pref, &pref_size);
+        ok(ret == 0, "expected ret == 0, got %u\n", ret);
+    }
 
     template = 5;
     ret = pPrivacySetZonePreferenceW(zone, type, template, NULL);
@@ -1070,7 +1099,7 @@ static void test_PrivacyGetSetZonePreferenceW(void)
     ok(template == 5, "expected template == 5, got %u\n", template);
 
     template = 5;
-    ret = pPrivacySetZonePreferenceW(zone, type, old_template, NULL);
+    ret = pPrivacySetZonePreferenceW(zone, type, old_template, pref_size ? pref : NULL);
     ok(ret == 0, "expected ret == 0, got %u\n", ret);
 }
 
@@ -1111,29 +1140,29 @@ static void test_InternetSetOption(void)
     SetLastError(0xdeadbeef);
     ulArg = 11;
     ret = InternetSetOptionA(NULL, INTERNET_OPTION_ERROR_MASK, (void*)&ulArg, sizeof(ULONG));
-    ok(ret == FALSE, "InternetQueryOption should've failed\n");
+    ok(ret == FALSE, "InternetSetOption should've failed\n");
     ok(GetLastError() == ERROR_INTERNET_INCORRECT_HANDLE_TYPE, "GetLastError() = %x\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     ulArg = 11;
     ret = InternetSetOptionA(req, INTERNET_OPTION_ERROR_MASK, (void*)&ulArg, 20);
-    ok(ret == FALSE, "InternetQueryOption should've failed\n");
+    ok(ret == FALSE, "InternetSetOption should've failed\n");
     ok(GetLastError() == ERROR_INTERNET_BAD_OPTION_LENGTH, "GetLastError() = %d\n", GetLastError());
 
     ulArg = 11;
     ret = InternetSetOptionA(req, INTERNET_OPTION_ERROR_MASK, (void*)&ulArg, sizeof(ULONG));
-    ok(ret == TRUE, "InternetQueryOption should've succeeded\n");
+    ok(ret == TRUE, "InternetSetOption should've succeeded\n");
 
     SetLastError(0xdeadbeef);
     ulArg = 4;
     ret = InternetSetOptionA(req, INTERNET_OPTION_ERROR_MASK, (void*)&ulArg, sizeof(ULONG));
-    ok(ret == FALSE, "InternetQueryOption should've failed\n");
+    ok(ret == FALSE, "InternetSetOption should've failed\n");
     ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetLastError() = %x\n", GetLastError());
 
     SetLastError(0xdeadbeef);
     ulArg = 16;
     ret = InternetSetOptionA(req, INTERNET_OPTION_ERROR_MASK, (void*)&ulArg, sizeof(ULONG));
-    ok(ret == FALSE, "InternetQueryOption should've failed\n");
+    ok(ret == FALSE, "InternetSetOption should've failed\n");
     ok(GetLastError() == ERROR_INVALID_PARAMETER, "GetLastError() = %x\n", GetLastError());
 
     ret = InternetCloseHandle(req);
@@ -1142,6 +1171,28 @@ static void test_InternetSetOption(void)
     ok(ret == TRUE, "InternetCloseHandle failed: 0x%08x\n", GetLastError());
     ret = InternetCloseHandle(ses);
     ok(ret == TRUE, "InternetCloseHandle failed: 0x%08x\n", GetLastError());
+}
+
+static void test_end_browser_session(void)
+{
+    DWORD len;
+    BOOL ret;
+
+    ret = InternetSetCookieA("http://www.example.com/test_end", NULL, "A=B");
+    ok(ret == TRUE, "InternetSetCookie failed\n");
+
+    len = 1024;
+    ret = InternetGetCookieA("http://www.example.com/test_end", NULL, NULL, &len);
+    ok(ret == TRUE,"InternetGetCookie failed\n");
+    ok(len != 0, "len = 0\n");
+
+    ret = InternetSetOptionA(NULL, INTERNET_OPTION_END_BROWSER_SESSION, NULL, 0);
+    ok(ret, "InternetSetOptio(INTERNET_OPTION_END_BROWSER_SESSION) failed: %u\n", GetLastError());
+
+    len = 1024;
+    ret = InternetGetCookieA("http://www.example.com/test_end", NULL, NULL, &len);
+    ok(!ret && GetLastError() == ERROR_NO_MORE_ITEMS, "InternetGetCookie returned %x (%u)\n", ret, GetLastError());
+    ok(!len, "len = %u\n", len);
 }
 
 #define verifyProxyEnable(e) r_verifyProxyEnable(__LINE__, e)
@@ -1349,6 +1400,35 @@ static void test_Option_PerConnectionOptionA(void)
     HeapFree(GetProcessHeap(), 0, list.pOptions[0].Value.pszValue);
     HeapFree(GetProcessHeap(), 0, list.pOptions);
 
+    /* test with NULL as proxy server */
+    list.dwOptionCount = 1;
+    list.pOptions = HeapAlloc(GetProcessHeap(), 0, sizeof(INTERNET_PER_CONN_OPTIONA));
+    list.pOptions[0].dwOption = INTERNET_PER_CONN_PROXY_SERVER;
+    list.pOptions[0].Value.pszValue = NULL;
+
+    ret = InternetSetOptionA(NULL, INTERNET_OPTION_PER_CONNECTION_OPTION, &list, size);
+    ok(ret == TRUE, "InternetSetOption should've succeeded\n");
+
+    ret = InternetSetOptionA(NULL, INTERNET_OPTION_PER_CONNECTION_OPTION, &list, size);
+    ok(ret == TRUE, "InternetSetOption should've succeeded\n");
+
+    HeapFree(GetProcessHeap(), 0, list.pOptions);
+
+    /* get & verify the proxy server */
+    list.dwOptionCount = 1;
+    list.dwOptionError = 0;
+    list.pOptions = HeapAlloc(GetProcessHeap(), 0, sizeof(INTERNET_PER_CONN_OPTIONA));
+    list.pOptions[0].dwOption = INTERNET_PER_CONN_PROXY_SERVER;
+
+    ret = InternetQueryOptionA(NULL, INTERNET_OPTION_PER_CONNECTION_OPTION, &list, &size);
+    ok(ret == TRUE, "InternetQueryOption should've succeeded\n");
+    ok(!list.pOptions[0].Value.pszValue,
+            "Retrieved proxy server should've been NULL, was: \"%s\"\n",
+            list.pOptions[0].Value.pszValue);
+
+    HeapFree(GetProcessHeap(), 0, list.pOptions[0].Value.pszValue);
+    HeapFree(GetProcessHeap(), 0, list.pOptions);
+
     /* restore original settings */
     list.dwOptionCount = 2;
     list.pOptions = orig_settings;
@@ -1471,19 +1551,19 @@ static void test_InternetErrorDlg(void)
                 continue;
             }
             break;
+        case ERROR_INTERNET_CHG_POST_IS_NON_SECURE:
+            if(res == ERROR_SUCCESS) /* win10 returns ERROR_SUCCESS */
+                expected = ERROR_SUCCESS;
+            break;
         default: break;
         }
 
-        if(test_flags & FLAG_TODO)
-            todo_wine ok(res == expected, "Got %d, expected %d (%d)\n", res, expected, i);
-        else
+        todo_wine_if(test_flags & FLAG_TODO)
             ok(res == expected, "Got %d, expected %d (%d)\n", res, expected, i);
 
         /* Same thing with NULL hwnd */
         res = InternetErrorDlg(NULL, req, i, flags, NULL);
-        if(test_flags & FLAG_TODO)
-            todo_wine ok(res == expected, "Got %d, expected %d (%d)\n", res, expected, i);
-        else
+        todo_wine_if(test_flags & FLAG_TODO)
             ok(res == expected, "Got %d, expected %d (%d)\n", res, expected, i);
 
 
@@ -1492,9 +1572,7 @@ static void test_InternetErrorDlg(void)
             expected = ERROR_INVALID_PARAMETER;
 
         res = InternetErrorDlg(hwnd, NULL, i, flags, NULL);
-        if( test_flags & FLAG_TODO || i == ERROR_INTERNET_INCORRECT_PASSWORD)
-            todo_wine ok(res == expected, "Got %d, expected %d (%d)\n", res, expected, i);
-        else
+        todo_wine_if( test_flags & FLAG_TODO || i == ERROR_INTERNET_INCORRECT_PASSWORD)
             ok(res == expected, "Got %d, expected %d (%d)\n", res, expected, i);
     }
 
@@ -1749,4 +1827,5 @@ START_TEST(internet)
         win_skip("Privacy[SG]etZonePreferenceW are not available\n");
 
     test_InternetSetOption();
+    test_end_browser_session();
 }

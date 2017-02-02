@@ -158,6 +158,8 @@ static const struct object_ops token_ops =
     default_get_sd,            /* get_sd */
     default_set_sd,            /* set_sd */
     no_lookup_name,            /* lookup_name */
+    no_link_name,              /* link_name */
+    NULL,                      /* unlink_name */
     no_open_file,              /* open_file */
     no_close_handle,           /* close_handle */
     token_destroy              /* destroy */
@@ -265,6 +267,10 @@ static int acl_is_valid( const ACL *acl, data_size_t size )
             sid = (const SID *)&((const SYSTEM_ALARM_ACE *)ace)->SidStart;
             sid_size = ace->AceSize - FIELD_OFFSET(SYSTEM_ALARM_ACE, SidStart);
             break;
+        case SYSTEM_MANDATORY_LABEL_ACE_TYPE:
+            sid = (const SID *)&((const SYSTEM_MANDATORY_LABEL_ACE *)ace)->SidStart;
+            sid_size = ace->AceSize - FIELD_OFFSET(SYSTEM_MANDATORY_LABEL_ACE, SidStart);
+            break;
         default:
             return FALSE;
         }
@@ -326,30 +332,6 @@ int sd_is_valid( const struct security_descriptor *sd, data_size_t size )
     if (dacl && !acl_is_valid( dacl, sd->dacl_len ))
         return FALSE;
     offset += sd->dacl_len;
-
-    return TRUE;
-}
-
-/* determines whether an object_attributes struct is valid in a buffer
- * and calls set_error appropriately */
-int objattr_is_valid( const struct object_attributes *objattr, data_size_t size )
-{
-    if ((size < sizeof(*objattr)) || (size - sizeof(*objattr) < objattr->sd_len) ||
-        (size - sizeof(*objattr) - objattr->sd_len < objattr->name_len))
-    {
-        set_error( STATUS_ACCESS_VIOLATION );
-        return FALSE;
-    }
-
-    if (objattr->sd_len)
-    {
-        const struct security_descriptor *sd = (const struct security_descriptor *)(objattr + 1);
-        if (!sd_is_valid( sd, objattr->sd_len ))
-        {
-            set_error( STATUS_INVALID_SECURITY_DESCR );
-            return FALSE;
-        }
-    }
 
     return TRUE;
 }
@@ -555,6 +537,7 @@ struct token *token_duplicate( struct token *src_token, unsigned primary,
     if (!token) return token;
 
     /* copy groups */
+    token->primary_group = NULL;
     LIST_FOR_EACH_ENTRY( group, &src_token->groups, struct group, entry )
     {
         size_t size = FIELD_OFFSET( struct group, sid.SubAuthority[group->sid.SubAuthorityCount] );
@@ -566,8 +549,9 @@ struct token *token_duplicate( struct token *src_token, unsigned primary,
         }
         memcpy( newgroup, group, size );
         list_add_tail( &token->groups, &newgroup->entry );
+        if (src_token->primary_group == &group->sid)
+            token->primary_group = &newgroup->sid;
     }
-    token->primary_group = src_token->primary_group;
     assert( token->primary_group );
 
     /* copy privileges */
@@ -844,7 +828,7 @@ static unsigned int token_access_check( struct token *token,
     /* fail if desired_access contains generic rights */
     if (desired_access & (GENERIC_READ|GENERIC_WRITE|GENERIC_EXECUTE|GENERIC_ALL))
     {
-        *priv_count = 0;
+        if (priv_count) *priv_count = 0;
         return STATUS_GENERIC_NOT_MAPPED;
     }
 
@@ -852,14 +836,14 @@ static unsigned int token_access_check( struct token *token,
     owner = sd_get_owner( sd );
     if (!owner || !sd_get_group( sd ))
     {
-        *priv_count = 0;
+        if (priv_count) *priv_count = 0;
         return STATUS_INVALID_SECURITY_DESCR;
     }
 
     /* 1: Grant desired access if the object is unprotected */
     if (!dacl_present || !dacl)
     {
-        *priv_count = 0;
+        if (priv_count) *priv_count = 0;
         *granted_access = desired_access;
         return *status = STATUS_SUCCESS;
     }
@@ -895,7 +879,7 @@ static unsigned int token_access_check( struct token *token,
         }
         else
         {
-            *priv_count = 0;
+            if (priv_count) *priv_count = 0;
             *status = STATUS_PRIVILEGE_NOT_HELD;
             return STATUS_SUCCESS;
         }
@@ -998,8 +982,7 @@ int check_object_access(struct object *obj, unsigned int *access)
 {
     GENERIC_MAPPING mapping;
     struct token *token = current->token ? current->token : current->process->token;
-    LUID_AND_ATTRIBUTES priv;
-    unsigned int status, priv_count = 1;
+    unsigned int status;
     int res;
 
     mapping.GenericAll = obj->ops->map_access( obj, GENERIC_ALL );
@@ -1015,7 +998,7 @@ int check_object_access(struct object *obj, unsigned int *access)
     mapping.GenericWrite = obj->ops->map_access( obj, GENERIC_WRITE );
     mapping.GenericExecute = obj->ops->map_access( obj, GENERIC_EXECUTE );
 
-    res = token_access_check( token, obj->sd, *access, &priv, &priv_count,
+    res = token_access_check( token, obj->sd, *access, NULL, NULL,
                               &mapping, access, &status ) == STATUS_SUCCESS &&
           status == STATUS_SUCCESS;
 

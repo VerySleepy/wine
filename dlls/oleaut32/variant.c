@@ -45,6 +45,15 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(variant);
 
+static CRITICAL_SECTION cache_cs;
+static CRITICAL_SECTION_DEBUG critsect_debug =
+{
+    0, 0, &cache_cs,
+    { &critsect_debug.ProcessLocksList, &critsect_debug.ProcessLocksList },
+      0, 0, { (DWORD_PTR)(__FILE__ ": cache_cs") }
+};
+static CRITICAL_SECTION cache_cs = { &critsect_debug, -1, 0, 0, 0, 0 };
+
 /* Convert a variant from one type to another */
 static inline HRESULT VARIANT_Coerce(VARIANTARG* pd, LCID lcid, USHORT wFlags,
                                      VARIANTARG* ps, VARTYPE vt)
@@ -460,7 +469,10 @@ static inline HRESULT VARIANT_Coerce(VARIANTARG* pd, LCID lcid, USHORT wFlags,
     {
     case VT_DISPATCH:
       if (V_DISPATCH(ps) == NULL)
+      {
         V_UNKNOWN(pd) = NULL;
+        res = S_OK;
+      }
       else
         res = IDispatch_QueryInterface(V_DISPATCH(ps), &IID_IUnknown, (LPVOID*)&V_UNKNOWN(pd));
       break;
@@ -472,7 +484,10 @@ static inline HRESULT VARIANT_Coerce(VARIANTARG* pd, LCID lcid, USHORT wFlags,
     {
     case VT_UNKNOWN:
       if (V_UNKNOWN(ps) == NULL)
+      {
         V_DISPATCH(pd) = NULL;
+        res = S_OK;
+      }
       else
         res = IUnknown_QueryInterface(V_UNKNOWN(ps), &IID_IDispatch, (LPVOID*)&V_DISPATCH(pd));
       break;
@@ -1490,7 +1505,6 @@ HRESULT WINAPI VarUdateFromDate(DATE dateIn, ULONG dwFlags, UDATE *lpUdate)
 static void VARIANT_GetLocalisedNumberChars(VARIANT_NUMBER_CHARS *lpChars, LCID lcid, DWORD dwFlags)
 {
   static const VARIANT_NUMBER_CHARS defaultChars = { '-','+','.',',','$',0,'.',',' };
-  static CRITICAL_SECTION csLastChars = { NULL, -1, 0, 0, 0, 0 };
   static VARIANT_NUMBER_CHARS lastChars;
   static LCID lastLcid = -1;
   static DWORD lastFlags = 0;
@@ -1498,14 +1512,14 @@ static void VARIANT_GetLocalisedNumberChars(VARIANT_NUMBER_CHARS *lpChars, LCID 
   WCHAR buff[4];
 
   /* To make caching thread-safe, a critical section is needed */
-  EnterCriticalSection(&csLastChars);
+  EnterCriticalSection(&cache_cs);
 
   /* Asking for default locale entries is very expensive: It is a registry
      server call. So cache one locally, as Microsoft does it too */
   if(lcid == lastLcid && dwFlags == lastFlags)
   {
     memcpy(lpChars, &lastChars, sizeof(defaultChars));
-    LeaveCriticalSection(&csLastChars);
+    LeaveCriticalSection(&cache_cs);
     return;
   }
 
@@ -1532,7 +1546,7 @@ static void VARIANT_GetLocalisedNumberChars(VARIANT_NUMBER_CHARS *lpChars, LCID 
   memcpy(&lastChars, lpChars, sizeof(defaultChars));
   lastLcid = lcid;
   lastFlags = dwFlags;
-  LeaveCriticalSection(&csLastChars);
+  LeaveCriticalSection(&cache_cs);
 }
 
 /* Number Parsing States */
@@ -3606,7 +3620,7 @@ HRESULT WINAPI VarDiv(LPVARIANT left, LPVARIANT right, LPVARIANT result)
     }
 
     /* Determine return type */
-    if (!(rightvt == VT_EMPTY))
+    if (rightvt != VT_EMPTY)
     {
         if (leftvt == VT_NULL || rightvt == VT_NULL)
         {
@@ -3639,7 +3653,7 @@ HRESULT WINAPI VarDiv(LPVARIANT left, LPVARIANT right, LPVARIANT result)
         else if (leftvt == VT_R4 || rightvt == VT_R4)
             resvt = VT_R4;
     }
-    else if (leftvt == VT_NULL && rightvt == VT_EMPTY)
+    else if (leftvt == VT_NULL)
     {
         V_VT(result) = VT_NULL;
         hres = S_OK;
@@ -3946,9 +3960,6 @@ HRESULT WINAPI VarSub(LPVARIANT left, LPVARIANT right, LPVARIANT result)
     break;
     case VT_I2:
     V_I2(result) = V_I2(&lv) - V_I2(&rv);
-    break;
-    case VT_I1:
-    V_I1(result) = V_I1(&lv) - V_I1(&rv);
     break;
     case VT_UI1:
     V_UI1(result) = V_UI2(&lv) - V_UI1(&rv);

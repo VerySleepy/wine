@@ -24,7 +24,6 @@
 
 #define COBJMACROS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "windef.h"
 #include "winbase.h"
@@ -57,7 +56,7 @@ PointerMonikerImpl_QueryInterface(IMoniker* iface,REFIID riid,void** ppvObject)
 {
     PointerMonikerImpl *This = impl_from_IMoniker(iface);
 
-    TRACE("(%p,%p,%p)\n",This,riid,ppvObject);
+    TRACE("(%p,%s,%p)\n",This,debugstr_guid(riid),ppvObject);
 
     /* Perform a sanity check on the parameters.*/
     if ( (This==0) || (ppvObject==0) )
@@ -109,7 +108,7 @@ PointerMonikerImpl_Release(IMoniker* iface)
 
     ref = InterlockedDecrement(&This->ref);
 
-    /* destroy the object if there's no more reference on it */
+    /* destroy the object if there are no more references on it */
     if (ref == 0)
     {
         if (This->pObject) IUnknown_Release(This->pObject);
@@ -201,7 +200,7 @@ PointerMonikerImpl_BindToObject(IMoniker* iface, IBindCtx* pbc, IMoniker* pmkToL
 {
     PointerMonikerImpl *This = impl_from_IMoniker(iface);
 
-    TRACE("(%p,%p,%p,%p,%p)\n",iface,pbc,pmkToLeft,riid,ppvResult);
+    TRACE("(%p,%p,%p,%s,%p)\n",iface,pbc,pmkToLeft,debugstr_guid(riid),ppvResult);
 
     if (!This->pObject)
         return E_UNEXPECTED;
@@ -218,7 +217,7 @@ PointerMonikerImpl_BindToStorage(IMoniker* iface, IBindCtx* pbc, IMoniker* pmkTo
 {
     PointerMonikerImpl *This = impl_from_IMoniker(iface);
 
-    TRACE("(%p,%p,%p,%p,%p)\n",iface,pbc,pmkToLeft,riid,ppvResult);
+    TRACE("(%p,%p,%p,%s,%p)\n",iface,pbc,pmkToLeft,debugstr_guid(riid),ppvResult);
 
     if (!This->pObject)
         return E_UNEXPECTED;

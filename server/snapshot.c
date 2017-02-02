@@ -68,6 +68,8 @@ static const struct object_ops snapshot_ops =
     default_get_sd,               /* get_sd */
     default_set_sd,               /* set_sd */
     no_lookup_name,               /* lookup_name */
+    no_link_name,                 /* link_name */
+    NULL,                         /* unlink_name */
     no_open_file,                 /* open_file */
     no_close_handle,              /* close_handle */
     snapshot_destroy              /* destroy */
@@ -113,7 +115,7 @@ static int snapshot_next_process( struct snapshot *snapshot, struct next_process
     ptr = &snapshot->processes[snapshot->process_pos++];
     reply->count    = ptr->count;
     reply->pid      = get_process_id( ptr->process );
-    reply->ppid     = ptr->process->parent ? get_process_id( ptr->process->parent ) : 0;
+    reply->ppid     = ptr->process->parent_id;
     reply->threads  = ptr->threads;
     reply->priority = ptr->priority;
     reply->handles  = ptr->handles;

@@ -732,7 +732,14 @@ schan_imp_session schan_session_for_transport(struct schan_transport* t)
     return t->ctx->session;
 }
 
-static int schan_init_sec_ctx_get_next_buffer(const struct schan_transport *t, struct schan_buffers *s)
+static int schan_init_sec_ctx_get_next_input_buffer(const struct schan_transport *t, struct schan_buffers *s)
+{
+    if (s->current_buffer_idx != -1)
+        return -1;
+    return schan_find_sec_buffer_idx(s->desc, 0, SECBUFFER_TOKEN);
+}
+
+static int schan_init_sec_ctx_get_next_output_buffer(const struct schan_transport *t, struct schan_buffers *s)
 {
     if (s->current_buffer_idx == -1)
     {
@@ -825,7 +832,7 @@ static SECURITY_STATUS SEC_ENTRY schan_InitializeSecurityContextW(
             return SEC_E_INTERNAL_ERROR;
         }
 
-        if (pszTargetName)
+        if (pszTargetName && *pszTargetName)
         {
             UINT len = WideCharToMultiByte( CP_UNIXCP, 0, pszTargetName, -1, NULL, 0, NULL, NULL );
             char *target = HeapAlloc( GetProcessHeap(), 0, len );
@@ -884,9 +891,9 @@ static SECURITY_STATUS SEC_ENTRY schan_InitializeSecurityContextW(
     ctx->req_ctx_attr = fContextReq;
 
     transport.ctx = ctx;
-    init_schan_buffers(&transport.in, pInput, schan_init_sec_ctx_get_next_buffer);
+    init_schan_buffers(&transport.in, pInput, schan_init_sec_ctx_get_next_input_buffer);
     transport.in.limit = expected_size;
-    init_schan_buffers(&transport.out, pOutput, schan_init_sec_ctx_get_next_buffer);
+    init_schan_buffers(&transport.out, pOutput, schan_init_sec_ctx_get_next_output_buffer);
     schan_imp_set_session_transport(ctx->session, &transport);
 
     /* Perform the TLS handshake */
@@ -908,8 +915,16 @@ static SECURITY_STATUS SEC_ENTRY schan_InitializeSecurityContextW(
     }
 
     *pfContextAttr = 0;
+    if (ctx->req_ctx_attr & ISC_REQ_REPLAY_DETECT)
+        *pfContextAttr |= ISC_RET_REPLAY_DETECT;
+    if (ctx->req_ctx_attr & ISC_REQ_SEQUENCE_DETECT)
+        *pfContextAttr |= ISC_RET_SEQUENCE_DETECT;
+    if (ctx->req_ctx_attr & ISC_REQ_CONFIDENTIALITY)
+        *pfContextAttr |= ISC_RET_CONFIDENTIALITY;
     if (ctx->req_ctx_attr & ISC_REQ_ALLOCATE_MEMORY)
         *pfContextAttr |= ISC_RET_ALLOCATED_MEMORY;
+    if (ctx->req_ctx_attr & ISC_REQ_STREAM)
+        *pfContextAttr |= ISC_RET_STREAM;
 
     return ret;
 }

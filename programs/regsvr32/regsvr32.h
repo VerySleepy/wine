@@ -18,6 +18,12 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+/* Exit codes */
+#define INVALID_ARG                           1
+#define LOADLIBRARY_FAILED                    3
+#define GETPROCADDRESS_FAILED                 4
+#define DLLSERVER_FAILED                      5
+
 /* Resource strings */
 #define STRING_HEADER                      1000
 #define STRING_USAGE                       1001

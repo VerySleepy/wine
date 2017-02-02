@@ -45,21 +45,16 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL( mscoree );
 
-static const WCHAR net_20_subdir[] = {'2','.','0',0};
-static const WCHAR net_40_subdir[] = {'4','.','0',0};
-
 static const struct ICLRRuntimeInfoVtbl CLRRuntimeInfoVtbl;
 
 #define NUM_RUNTIMES 4
 
 static struct CLRRuntimeInfo runtimes[NUM_RUNTIMES] = {
-    {{&CLRRuntimeInfoVtbl}, net_20_subdir, 1, 0, 3705, 0},
-    {{&CLRRuntimeInfoVtbl}, net_20_subdir, 1, 1, 4322, 0},
-    {{&CLRRuntimeInfoVtbl}, net_20_subdir, 2, 0, 50727, 0},
-    {{&CLRRuntimeInfoVtbl}, net_40_subdir, 4, 0, 30319, 0}
+    {{&CLRRuntimeInfoVtbl}, 1, 0, 3705, 0},
+    {{&CLRRuntimeInfoVtbl}, 1, 1, 4322, 0},
+    {{&CLRRuntimeInfoVtbl}, 2, 0, 50727, 0},
+    {{&CLRRuntimeInfoVtbl}, 4, 0, 30319, 0}
 };
-
-static BOOL runtimes_initialized = FALSE;
 
 static CRITICAL_SECTION runtime_list_cs;
 static CRITICAL_SECTION_DEBUG runtime_list_cs_debug =
@@ -84,15 +79,20 @@ MonoClass* (CDECL *mono_class_from_name)(MonoImage *image, const char* name_spac
 MonoMethod* (CDECL *mono_class_get_method_from_name)(MonoClass *klass, const char *name, int param_count);
 static void (CDECL *mono_config_parse)(const char *filename);
 MonoAssembly* (CDECL *mono_domain_assembly_open)(MonoDomain *domain, const char *name);
+MonoDomain* (CDECL *mono_domain_get)(void);
+MonoDomain* (CDECL *mono_domain_get_by_id)(int id);
+BOOL (CDECL *mono_domain_set)(MonoDomain *domain,BOOL force);
+void (CDECL *mono_domain_set_config)(MonoDomain *domain,const char *base_dir,const char *config_file_name);
 static void (CDECL *mono_free)(void *);
 static MonoImage* (CDECL *mono_image_open)(const char *fname, MonoImageOpenStatus *status);
 MonoImage* (CDECL *mono_image_open_from_module_handle)(HMODULE module_handle, char* fname, UINT has_entry_point, MonoImageOpenStatus* status);
 static void (CDECL *mono_install_assembly_preload_hook)(MonoAssemblyPreLoadFunc func, void *user_data);
 int (CDECL *mono_jit_exec)(MonoDomain *domain, MonoAssembly *assembly, int argc, char *argv[]);
-MonoDomain* (CDECL *mono_jit_init)(const char *file);
+MonoDomain* (CDECL *mono_jit_init_version)(const char *domain_name, const char *runtime_version);
 static int (CDECL *mono_jit_set_trace_options)(const char* options);
 void* (CDECL *mono_marshal_get_vtfixup_ftnptr)(MonoImage *image, DWORD token, WORD type);
 MonoDomain* (CDECL *mono_object_get_domain)(MonoObject *obj);
+MonoMethod* (CDECL *mono_object_get_virtual_method)(MonoObject *obj, MonoMethod *method);
 MonoObject* (CDECL *mono_object_new)(MonoDomain *domain, MonoClass *klass);
 void* (CDECL *mono_object_unbox)(MonoObject *obj);
 static void (CDECL *mono_profiler_install)(MonoProfiler *prof, MonoProfileFunc shutdown_callback);
@@ -100,6 +100,7 @@ MonoType* (CDECL *mono_reflection_type_from_name)(char *name, MonoImage *image);
 MonoObject* (CDECL *mono_runtime_invoke)(MonoMethod *method, void *obj, void **params, MonoObject **exc);
 void (CDECL *mono_runtime_object_init)(MonoObject *this_obj);
 void (CDECL *mono_runtime_quit)(void);
+static void (CDECL *mono_set_crash_chaining)(BOOL chain_signals);
 static void (CDECL *mono_set_dirs)(const char *assembly_dir, const char *config_dir);
 static void (CDECL *mono_set_verbose_level)(DWORD level);
 MonoString* (CDECL *mono_string_new)(MonoDomain *domain, const char *str);
@@ -107,27 +108,18 @@ static char* (CDECL *mono_stringify_assembly_name)(MonoAssemblyName *aname);
 MonoThread* (CDECL *mono_thread_attach)(MonoDomain *domain);
 void (CDECL *mono_thread_manage)(void);
 void (CDECL *mono_trace_set_assembly)(MonoAssembly *assembly);
+void (CDECL *mono_trace_set_print_handler)(MonoPrintCallback callback);
+void (CDECL *mono_trace_set_printerr_handler)(MonoPrintCallback callback);
+
+static BOOL get_mono_path(LPWSTR path);
 
 static BOOL find_mono_dll(LPCWSTR path, LPWSTR dll_path);
 
-static MonoAssembly* mono_assembly_preload_hook_fn(MonoAssemblyName *aname, char **assemblies_path, void *user_data);
+static MonoAssembly* CDECL mono_assembly_preload_hook_fn(MonoAssemblyName *aname, char **assemblies_path, void *user_data);
 
-static void mono_shutdown_callback_fn(MonoProfiler *prof);
+static void CDECL mono_shutdown_callback_fn(MonoProfiler *prof);
 
-static void set_environment(LPCWSTR bin_path)
-{
-    WCHAR path_env[MAX_PATH];
-    int len;
-
-    static const WCHAR pathW[] = {'P','A','T','H',0};
-
-    /* We have to modify PATH as Mono loads other DLLs from this directory. */
-    GetEnvironmentVariableW(pathW, path_env, sizeof(path_env)/sizeof(WCHAR));
-    len = strlenW(path_env);
-    path_env[len++] = ';';
-    strcpyW(path_env+len, bin_path);
-    SetEnvironmentVariableW(pathW, path_env);
-}
+static void CDECL mono_print_handler_fn(const char *string, INT is_stdout);
 
 static MonoImage* CDECL image_open_module_handle_dummy(HMODULE module_handle,
     char* fname, UINT has_entry_point, MonoImageOpenStatus* status)
@@ -135,17 +127,19 @@ static MonoImage* CDECL image_open_module_handle_dummy(HMODULE module_handle,
     return mono_image_open(fname, status);
 }
 
-static void missing_runtime_message(void)
+static void CDECL set_crash_chaining_dummy(BOOL crash_chaining)
 {
-    MESSAGE("wine: Install Mono for Windows to run .NET applications.\n");
 }
 
-static HRESULT load_mono(CLRRuntimeInfo *This)
+static void CDECL set_print_handler_dummy(MonoPrintCallback callback)
 {
-    static const WCHAR bin[] = {'\\','b','i','n',0};
+}
+
+static HRESULT load_mono(LPCWSTR mono_path)
+{
     static const WCHAR lib[] = {'\\','l','i','b',0};
     static const WCHAR etc[] = {'\\','e','t','c',0};
-    WCHAR mono_dll_path[MAX_PATH+16], mono_bin_path[MAX_PATH+4];
+    WCHAR mono_dll_path[MAX_PATH+16];
     WCHAR mono_lib_path[MAX_PATH+4], mono_etc_path[MAX_PATH+4];
     char mono_lib_path_a[MAX_PATH], mono_etc_path_a[MAX_PATH];
     int trace_size;
@@ -161,19 +155,15 @@ static HRESULT load_mono(CLRRuntimeInfo *This)
 
     if (!mono_handle)
     {
-        strcpyW(mono_bin_path, This->mono_path);
-        strcatW(mono_bin_path, bin);
-        set_environment(mono_bin_path);
-
-        strcpyW(mono_lib_path, This->mono_path);
+        strcpyW(mono_lib_path, mono_path);
         strcatW(mono_lib_path, lib);
         WideCharToMultiByte(CP_UTF8, 0, mono_lib_path, -1, mono_lib_path_a, MAX_PATH, NULL, NULL);
 
-        strcpyW(mono_etc_path, This->mono_path);
+        strcpyW(mono_etc_path, mono_path);
         strcatW(mono_etc_path, etc);
         WideCharToMultiByte(CP_UTF8, 0, mono_etc_path, -1, mono_etc_path_a, MAX_PATH, NULL, NULL);
 
-        if (!find_mono_dll(This->mono_path, mono_dll_path)) goto fail;
+        if (!find_mono_dll(mono_path, mono_dll_path)) goto fail;
 
         mono_handle = LoadLibraryW(mono_dll_path);
 
@@ -194,14 +184,19 @@ static HRESULT load_mono(CLRRuntimeInfo *This)
         LOAD_MONO_FUNCTION(mono_class_from_name);
         LOAD_MONO_FUNCTION(mono_class_get_method_from_name);
         LOAD_MONO_FUNCTION(mono_domain_assembly_open);
+        LOAD_MONO_FUNCTION(mono_domain_get);
+        LOAD_MONO_FUNCTION(mono_domain_get_by_id);
+        LOAD_MONO_FUNCTION(mono_domain_set);
+        LOAD_MONO_FUNCTION(mono_domain_set_config);
         LOAD_MONO_FUNCTION(mono_free);
         LOAD_MONO_FUNCTION(mono_image_open);
         LOAD_MONO_FUNCTION(mono_install_assembly_preload_hook);
         LOAD_MONO_FUNCTION(mono_jit_exec);
-        LOAD_MONO_FUNCTION(mono_jit_init);
+        LOAD_MONO_FUNCTION(mono_jit_init_version);
         LOAD_MONO_FUNCTION(mono_jit_set_trace_options);
         LOAD_MONO_FUNCTION(mono_marshal_get_vtfixup_ftnptr);
         LOAD_MONO_FUNCTION(mono_object_get_domain);
+        LOAD_MONO_FUNCTION(mono_object_get_virtual_method);
         LOAD_MONO_FUNCTION(mono_object_new);
         LOAD_MONO_FUNCTION(mono_object_unbox);
         LOAD_MONO_FUNCTION(mono_profiler_install);
@@ -227,10 +222,18 @@ static HRESULT load_mono(CLRRuntimeInfo *This)
 } while (0);
 
         LOAD_OPT_MONO_FUNCTION(mono_image_open_from_module_handle, image_open_module_handle_dummy);
+        LOAD_OPT_MONO_FUNCTION(mono_set_crash_chaining, set_crash_chaining_dummy);
+        LOAD_OPT_MONO_FUNCTION(mono_trace_set_print_handler, set_print_handler_dummy);
+        LOAD_OPT_MONO_FUNCTION(mono_trace_set_printerr_handler, set_print_handler_dummy);
 
 #undef LOAD_OPT_MONO_FUNCTION
 
         mono_profiler_install(NULL, mono_shutdown_callback_fn);
+
+        mono_set_crash_chaining(TRUE);
+
+        mono_trace_set_print_handler(mono_print_handler_fn);
+        mono_trace_set_printerr_handler(mono_print_handler_fn);
 
         mono_set_dirs(mono_lib_path_a, mono_etc_path_a);
 
@@ -262,14 +265,26 @@ fail:
     return E_FAIL;
 }
 
-static void mono_shutdown_callback_fn(MonoProfiler *prof)
+static void CDECL mono_shutdown_callback_fn(MonoProfiler *prof)
 {
     is_mono_shutdown = TRUE;
+}
+
+static void CDECL mono_print_handler_fn(const char *string, INT is_stdout)
+{
+    const char *p;
+    for (; *string; string = p)
+    {
+        if ((p = strstr(string, "\n"))) p++;
+        else p = string + strlen(string);
+        wine_dbg_printf("%.*s", (int)(p - string), string);
+    }
 }
 
 static HRESULT CLRRuntimeInfo_GetRuntimeHost(CLRRuntimeInfo *This, RuntimeHost **result)
 {
     HRESULT hr = S_OK;
+    WCHAR mono_path[MAX_PATH];
 
     if (This->loaded_runtime)
     {
@@ -277,9 +292,15 @@ static HRESULT CLRRuntimeInfo_GetRuntimeHost(CLRRuntimeInfo *This, RuntimeHost *
         return hr;
     }
 
+    if (!get_mono_path(mono_path))
+    {
+        ERR("Wine Mono is not installed\n");
+        return CLR_E_SHIM_RUNTIME;
+    }
+
     EnterCriticalSection(&runtime_list_cs);
 
-    hr = load_mono(This);
+    hr = load_mono(mono_path);
 
     if (SUCCEEDED(hr))
         hr = RuntimeHost_Construct(This, &This->loaded_runtime);
@@ -585,161 +606,22 @@ static BOOL find_mono_dll(LPCWSTR path, LPWSTR dll_path)
     return (attributes != INVALID_FILE_ATTRIBUTES);
 }
 
-static BOOL get_mono_path_from_registry(LPWSTR path)
-{
-    static const WCHAR mono_key[] = {'S','o','f','t','w','a','r','e','\\','N','o','v','e','l','l','\\','M','o','n','o',0};
-    static const WCHAR defaul_clr[] = {'D','e','f','a','u','l','t','C','L','R',0};
-    static const WCHAR install_root[] = {'S','d','k','I','n','s','t','a','l','l','R','o','o','t',0};
-    static const WCHAR slash[] = {'\\',0};
-
-    WCHAR version[64], version_key[MAX_PATH];
-    DWORD len;
-    HKEY key;
-    WCHAR dll_path[MAX_PATH];
-
-    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, mono_key, 0, KEY_READ, &key))
-        return FALSE;
-
-    len = sizeof(version);
-    if (RegQueryValueExW(key, defaul_clr, 0, NULL, (LPBYTE)version, &len))
-    {
-        RegCloseKey(key);
-        return FALSE;
-    }
-    RegCloseKey(key);
-
-    lstrcpyW(version_key, mono_key);
-    lstrcatW(version_key, slash);
-    lstrcatW(version_key, version);
-
-    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, version_key, 0, KEY_READ, &key))
-        return FALSE;
-
-    len = sizeof(WCHAR) * MAX_PATH;
-    if (RegQueryValueExW(key, install_root, 0, NULL, (LPBYTE)path, &len))
-    {
-        RegCloseKey(key);
-        return FALSE;
-    }
-    RegCloseKey(key);
-
-    return find_mono_dll(path, dll_path);
-}
-
-static BOOL get_mono_path_from_folder(LPCWSTR folder, LPWSTR mono_path)
-{
-    static const WCHAR mono_two_dot_zero[] = {'\\','m','o','n','o','-','2','.','0', 0};
-    WCHAR mono_dll_path[MAX_PATH];
-    BOOL found = FALSE;
-
-    strcpyW(mono_path, folder);
-
-    strcatW(mono_path, mono_two_dot_zero);
-
-    found = find_mono_dll(mono_path, mono_dll_path);
-
-    return found;
-}
-
 static BOOL get_mono_path(LPWSTR path)
 {
-    static const WCHAR subdir_mono[] = {'\\','m','o','n','o',0};
-    static const WCHAR sibling_mono[] = {'\\','.','.','\\','m','o','n','o',0};
-    WCHAR base_path[MAX_PATH];
-    const char *unix_data_dir;
-    WCHAR *dos_data_dir;
-    BOOL build_tree = FALSE;
-    static WCHAR* (CDECL *wine_get_dos_file_name)(const char*);
+    static const WCHAR subdir_mono[] = {'\\','m','o','n','o','\\','m','o','n','o','-','2','.','0', 0};
+    WCHAR base_path[MAX_PATH], mono_dll_path[MAX_PATH];
 
-    /* First try c:\windows\mono */
+    /* c:\windows\mono\mono-2.0 */
     GetWindowsDirectoryW(base_path, MAX_PATH);
     strcatW(base_path, subdir_mono);
 
-    if (get_mono_path_from_folder(base_path, path))
+    if (find_mono_dll(base_path, mono_dll_path))
+    {
+        strcpyW(path, base_path);
         return TRUE;
-
-    /* Next: /usr/share/wine/mono */
-    unix_data_dir = wine_get_data_dir();
-
-    if (!unix_data_dir)
-    {
-        unix_data_dir = wine_get_build_dir();
-        build_tree = TRUE;
     }
 
-    if (unix_data_dir)
-    {
-        if (!wine_get_dos_file_name)
-            wine_get_dos_file_name = (void*)GetProcAddress(GetModuleHandleA("kernel32"), "wine_get_dos_file_name");
-
-        if (wine_get_dos_file_name)
-        {
-            dos_data_dir = wine_get_dos_file_name(unix_data_dir);
-
-            if (dos_data_dir)
-            {
-                strcpyW(base_path, dos_data_dir);
-                strcatW(base_path, build_tree ? sibling_mono : subdir_mono);
-
-                HeapFree(GetProcessHeap(), 0, dos_data_dir);
-
-                if (get_mono_path_from_folder(base_path, path))
-                    return TRUE;
-            }
-        }
-    }
-
-    /* Last: the registry */
-    return get_mono_path_from_registry(path);
-}
-
-static void find_runtimes(void)
-{
-    int i;
-    static const WCHAR libmono[] = {'\\','l','i','b','\\','m','o','n','o','\\',0};
-    static const WCHAR mscorlib[] = {'\\','m','s','c','o','r','l','i','b','.','d','l','l',0};
-    WCHAR mono_path[MAX_PATH], lib_path[MAX_PATH];
-    BOOL any_runtimes_found = FALSE;
-
-    if (runtimes_initialized) return;
-
-    EnterCriticalSection(&runtime_list_cs);
-
-    if (runtimes_initialized) goto end;
-
-    if (get_mono_path(mono_path))
-    {
-        for (i=0; i<NUM_RUNTIMES; i++)
-        {
-            strcpyW(lib_path, mono_path);
-            strcatW(lib_path, libmono);
-            strcatW(lib_path, runtimes[i].mono_libdir);
-            strcatW(lib_path, mscorlib);
-
-            if (GetFileAttributesW(lib_path) != INVALID_FILE_ATTRIBUTES)
-            {
-                runtimes[i].found = TRUE;
-
-                strcpyW(runtimes[i].mono_path, mono_path);
-                strcpyW(runtimes[i].mscorlib_path, lib_path);
-
-                any_runtimes_found = TRUE;
-            }
-        }
-    }
-
-    if (!any_runtimes_found)
-    {
-        /* Report all runtimes are available if Mono isn't installed.
-         * FIXME: Remove this when Mono is properly packaged. */
-        for (i=0; i<NUM_RUNTIMES; i++)
-            runtimes[i].found = TRUE;
-    }
-
-    runtimes_initialized = TRUE;
-
-end:
-    LeaveCriticalSection(&runtime_list_cs);
+    return FALSE;
 }
 
 struct InstalledRuntimeEnum
@@ -819,13 +701,10 @@ static HRESULT WINAPI InstalledRuntimeEnum_Next(IEnumUnknown *iface, ULONG celt,
             hr = S_FALSE;
             break;
         }
-        if (runtimes[This->pos].found)
-        {
-            item = (IUnknown*)&runtimes[This->pos].ICLRRuntimeInfo_iface;
-            IUnknown_AddRef(item);
-            rgelt[num_fetched] = item;
-            num_fetched++;
-        }
+        item = (IUnknown*)&runtimes[This->pos].ICLRRuntimeInfo_iface;
+        IUnknown_AddRef(item);
+        rgelt[num_fetched] = item;
+        num_fetched++;
         This->pos++;
     }
 
@@ -850,10 +729,7 @@ static HRESULT WINAPI InstalledRuntimeEnum_Skip(IEnumUnknown *iface, ULONG celt)
             hr = S_FALSE;
             break;
         }
-        if (runtimes[This->pos].found)
-        {
-            num_fetched++;
-        }
+        num_fetched++;
         This->pos++;
     }
 
@@ -996,21 +872,13 @@ static HRESULT get_runtime(LPCWSTR pwzVersion, BOOL allow_short,
         return CLR_E_SHIM_RUNTIME;
     }
 
-    find_runtimes();
-
     for (i=0; i<NUM_RUNTIMES; i++)
     {
         if (runtimes[i].major == major && runtimes[i].minor == minor &&
             (runtimes[i].build == build || (allow_short && major >= 4 && build == 0)))
         {
-            if (runtimes[i].found)
-                return ICLRRuntimeInfo_QueryInterface(&runtimes[i].ICLRRuntimeInfo_iface, iid,
-                        ppRuntime);
-            else
-            {
-                missing_runtime_message();
-                return CLR_E_SHIM_RUNTIME;
-            }
+            return ICLRRuntimeInfo_QueryInterface(&runtimes[i].ICLRRuntimeInfo_iface, iid,
+                    ppRuntime);
         }
     }
 
@@ -1067,8 +935,6 @@ static HRESULT WINAPI CLRMetaHost_EnumerateInstalledRuntimes(ICLRMetaHost* iface
     struct InstalledRuntimeEnum *new_enum;
 
     TRACE("%p\n", ppEnumerator);
-
-    find_runtimes();
 
     new_enum = HeapAlloc(GetProcessHeap(), 0, sizeof(*new_enum));
     if (!new_enum)
@@ -1300,7 +1166,7 @@ HRESULT get_file_from_strongname(WCHAR* stringnameW, WCHAR* assemblies_path, int
     return hr;
 }
 
-static MonoAssembly* mono_assembly_preload_hook_fn(MonoAssemblyName *aname, char **assemblies_path, void *user_data)
+static MonoAssembly* CDECL mono_assembly_preload_hook_fn(MonoAssemblyName *aname, char **assemblies_path, void *user_data)
 {
     HRESULT hr;
     MonoAssembly *result=NULL;
@@ -1440,8 +1306,6 @@ HRESULT get_runtime_info(LPCWSTR exefile, LPCWSTR version, LPCWSTR config_file,
             return CLR_E_SHIM_RUNTIME;
         }
 
-        find_runtimes();
-
         if (legacy)
             i = 3;
         else
@@ -1449,20 +1313,15 @@ HRESULT get_runtime_info(LPCWSTR exefile, LPCWSTR version, LPCWSTR config_file,
 
         while (i--)
         {
-            if (runtimes[i].found)
+            /* Must be greater or equal to the version passed in. */
+            if (!version || ((runtimes[i].major >= major && runtimes[i].minor >= minor && runtimes[i].build >= build) ||
+                 (runtimes[i].major >= major && runtimes[i].minor > minor) ||
+                 (runtimes[i].major > major)))
             {
-                /* Must be greater or equal to the version passed in. */
-                if (!version || ((runtimes[i].major >= major && runtimes[i].minor >= minor && runtimes[i].build >= build) ||
-                     (runtimes[i].major >= major && runtimes[i].minor > minor) ||
-                     (runtimes[i].major > major)))
-                {
-                    return ICLRRuntimeInfo_QueryInterface(&runtimes[i].ICLRRuntimeInfo_iface,
-                            &IID_ICLRRuntimeInfo, (void **)result);
-                }
+                return ICLRRuntimeInfo_QueryInterface(&runtimes[i].ICLRRuntimeInfo_iface,
+                        &IID_ICLRRuntimeInfo, (void **)result);
             }
         }
-
-        missing_runtime_message();
 
         return CLR_E_SHIM_RUNTIME;
     }

@@ -16,9 +16,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
-
 #include "config.h"
 
 #include <stdarg.h>
@@ -1084,11 +1081,6 @@ static TW_UINT16 SANE_CAPFeederEnabled (pTW_CAPABILITY pCapability, TW_UINT16 ac
             twCC = msg_set(pCapability, &val);
             if (twCC == TWCC_SUCCESS)
             {
-                if (val)
-                    enabled = TRUE;
-                else
-                    enabled = FALSE;
-
                 strcpy(source, "ADF");
                 status = sane_option_set_str(activeDS.deviceHandle, SANE_NAME_SCAN_SOURCE, source, NULL);
                 if (status != SANE_STATUS_GOOD)
@@ -1112,7 +1104,6 @@ static TW_UINT16 SANE_CAPFeederEnabled (pTW_CAPABILITY pCapability, TW_UINT16 ac
             strcpy(source, "Auto");
             if (sane_option_set_str(activeDS.deviceHandle, SANE_NAME_SCAN_SOURCE, source, NULL) == SANE_STATUS_GOOD)
                 enabled = TRUE;
-            twCC = TWCC_SUCCESS;
             /* .. fall through intentional .. */
 
         case MSG_GETCURRENT:

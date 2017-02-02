@@ -296,6 +296,8 @@ extern LONG xmldoc_add_ref( xmlDocPtr doc ) DECLSPEC_HIDDEN;
 extern LONG xmldoc_release( xmlDocPtr doc ) DECLSPEC_HIDDEN;
 extern LONG xmldoc_add_refs( xmlDocPtr doc, LONG refs ) DECLSPEC_HIDDEN;
 extern LONG xmldoc_release_refs ( xmlDocPtr doc, LONG refs ) DECLSPEC_HIDDEN;
+extern void xmlnode_add_ref(xmlNodePtr node) DECLSPEC_HIDDEN;
+extern void xmlnode_release(xmlNodePtr node) DECLSPEC_HIDDEN;
 extern int xmlnode_get_inst_cnt( xmlnode *node ) DECLSPEC_HIDDEN;
 extern HRESULT xmldoc_add_orphan( xmlDocPtr doc, xmlNodePtr node ) DECLSPEC_HIDDEN;
 extern HRESULT xmldoc_remove_orphan( xmlDocPtr doc, xmlNodePtr node ) DECLSPEC_HIDDEN;
@@ -559,4 +561,7 @@ HRESULT detach_bsc(bsc_t*) DECLSPEC_HIDDEN;
 /* ... */
 #define E_XML_REQUIRED_ATTRIBUTE_MISSING    0xC00CE020
 
+#define NODE_PRIV_TRAILING_IGNORABLE_WS     0x40000000
+#define NODE_PRIV_CHILD_IGNORABLE_WS        0x80000000
+#define NODE_PRIV_REFCOUNT_MASK             ~(NODE_PRIV_TRAILING_IGNORABLE_WS|NODE_PRIV_CHILD_IGNORABLE_WS)
 #endif /* __MSXML_PRIVATE__ */

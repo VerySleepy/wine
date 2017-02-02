@@ -746,6 +746,16 @@ static void test_strftime(void)
         ok(retA == 17, "expected 17, got %ld\n", retA);
         ok(!strcmp(bufA, "02/30/70 00:00:00"), "got %s\n", bufA);
     }
+
+    if(!setlocale(LC_ALL, "Japanese_Japan.932")) {
+        win_skip("Japanese_Japan.932 locale not available\n");
+        return;
+    }
+
+    /* test with multibyte character */
+    retA = strftime(bufA, 256, "\x82%c", gmt_tm);
+    ok(retA == 3, "expected 3, got %ld\n", retA);
+    ok(!strcmp(bufA, "\x82%c"), "got %s\n", bufA);
 }
 
 static void test_asctime(void)
@@ -763,12 +773,12 @@ static void test_asctime(void)
     gmt = 0;
     gmt_tm = p_gmtime(&gmt);
     ret = p_asctime(gmt_tm);
-    ok(!strcmp(ret, "Thu Jan 01 00:00:00 1970\n"), "asctime retunred %s\n", ret);
+    ok(!strcmp(ret, "Thu Jan 01 00:00:00 1970\n"), "asctime returned %s\n", ret);
 
     gmt = 312433121;
     gmt_tm = p_gmtime(&gmt);
     ret = p_asctime(gmt_tm);
-    ok(!strcmp(ret, "Mon Nov 26 02:58:41 1979\n"), "asctime retunred %s\n", ret);
+    ok(!strcmp(ret, "Mon Nov 26 02:58:41 1979\n"), "asctime returned %s\n", ret);
 
     /* Week day is only checked if it's in 0..6 range */
     gmt_tm->tm_wday = 3;

@@ -4,7 +4,7 @@
 @ stdcall CreateRemoteThread(long ptr long ptr long long ptr) kernel32.CreateRemoteThread
 @ stub CreateRemoteThreadEx
 @ stdcall CreateThread(ptr long ptr long long ptr) kernel32.CreateThread
-@ stub DeleteProcThreadAttributeList
+@ stdcall DeleteProcThreadAttributeList(ptr) kernel32.DeleteProcThreadAttributeList
 @ stdcall ExitProcess(long) kernel32.ExitProcess
 @ stdcall ExitThread(long) kernel32.ExitThread
 @ stdcall FlushInstructionCache(long long long) kernel32.FlushInstructionCache
@@ -12,7 +12,7 @@
 @ stdcall -norelay GetCurrentProcess() kernel32.GetCurrentProcess
 @ stdcall -norelay GetCurrentProcessId() kernel32.GetCurrentProcessId
 @ stdcall GetCurrentProcessorNumber() kernel32.GetCurrentProcessorNumber
-@ stub GetCurrentProcessorNumberEx
+@ stdcall GetCurrentProcessorNumberEx(ptr) kernel32.GetCurrentProcessorNumberEx
 @ stdcall -norelay GetCurrentThread() kernel32.GetCurrentThread
 @ stdcall -norelay GetCurrentThreadId() kernel32.GetCurrentThreadId
 @ stub GetCurrentThreadStackLimits
@@ -21,7 +21,7 @@
 @ stdcall GetPriorityClass(long) kernel32.GetPriorityClass
 @ stdcall GetProcessHandleCount(long ptr) kernel32.GetProcessHandleCount
 @ stdcall GetProcessId(long) kernel32.GetProcessId
-@ stub GetProcessIdOfThread
+@ stdcall GetProcessIdOfThread(long) kernel32.GetProcessIdOfThread
 @ stub GetProcessMitigationPolicy
 @ stdcall GetProcessPriorityBoost(long ptr) kernel32.GetProcessPriorityBoost
 @ stdcall GetProcessTimes(long ptr ptr ptr ptr) kernel32.GetProcessTimes
@@ -36,7 +36,7 @@
 @ stdcall GetThreadPriority(long) kernel32.GetThreadPriority
 @ stdcall GetThreadPriorityBoost(long ptr) kernel32.GetThreadPriorityBoost
 @ stdcall GetThreadTimes(long ptr ptr ptr ptr) kernel32.GetThreadTimes
-@ stub InitializeProcThreadAttributeList
+@ stdcall InitializeProcThreadAttributeList(ptr long long ptr) kernel32.InitializeProcThreadAttributeList
 @ stub IsProcessCritical
 @ stdcall IsProcessorFeaturePresent(long) kernel32.IsProcessorFeaturePresent
 @ stdcall OpenProcess(long long long) kernel32.OpenProcess
@@ -67,4 +67,4 @@
 @ stdcall TlsFree(long) kernel32.TlsFree
 @ stdcall TlsGetValue(long) kernel32.TlsGetValue
 @ stdcall TlsSetValue(long ptr) kernel32.TlsSetValue
-@ stub UpdateProcThreadAttribute
+@ stdcall UpdateProcThreadAttribute(ptr long long ptr long ptr ptr) kernel32.UpdateProcThreadAttribute

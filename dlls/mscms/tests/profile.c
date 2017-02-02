@@ -35,6 +35,8 @@ static HMODULE huser32;
 
 static BOOL     (WINAPI *pAssociateColorProfileWithDeviceA)(PCSTR,PCSTR,PCSTR);
 static BOOL     (WINAPI *pCloseColorProfile)(HPROFILE);
+static HTRANSFORM (WINAPI *pCreateMultiProfileTransform)(PHPROFILE,DWORD,PDWORD,DWORD,DWORD,DWORD);
+static BOOL     (WINAPI *pDeleteColorTransform)(HTRANSFORM);
 static BOOL     (WINAPI *pDisassociateColorProfileFromDeviceA)(PCSTR,PCSTR,PCSTR);
 static BOOL     (WINAPI *pGetColorDirectoryA)(PCHAR,PCHAR,PDWORD);
 static BOOL     (WINAPI *pGetColorDirectoryW)(PWCHAR,PWCHAR,PDWORD);
@@ -68,6 +70,8 @@ static BOOL init_function_ptrs( void )
 {
     GETFUNCPTR( AssociateColorProfileWithDeviceA )
     GETFUNCPTR( CloseColorProfile )
+    GETFUNCPTR( CreateMultiProfileTransform )
+    GETFUNCPTR( DeleteColorTransform )
     GETFUNCPTR( DisassociateColorProfileFromDeviceA )
     GETFUNCPTR( GetColorDirectoryA )
     GETFUNCPTR( GetColorDirectoryW )
@@ -671,10 +675,8 @@ static void test_EnumColorProfilesA( char *standardprofile )
     ok( !ret, "EnumColorProfilesA() succeeded (%d)\n", GetLastError() );
 
     ret = pEnumColorProfilesA( NULL, &record, buffer, &size, &number );
-    if (have_color_profile)
+    todo_wine_if (!have_color_profile)
         ok( ret, "EnumColorProfilesA() failed (%d)\n", GetLastError() );
-    else
-        todo_wine ok( ret, "EnumColorProfilesA() failed (%d)\n", GetLastError() );
 
     size = 0;
 
@@ -685,10 +687,8 @@ static void test_EnumColorProfilesA( char *standardprofile )
 
     size = total;
     ret = pEnumColorProfilesA( NULL, &record, buffer, &size, &number );
-    if (have_color_profile)
+    todo_wine_if (!have_color_profile)
         ok( ret, "EnumColorProfilesA() failed (%d)\n", GetLastError() );
-    else
-        todo_wine ok( ret, "EnumColorProfilesA() failed (%d)\n", GetLastError() );
 
     HeapFree( GetProcessHeap(), 0, buffer );
 }
@@ -725,10 +725,8 @@ static void test_EnumColorProfilesW( WCHAR *standardprofileW )
     ok( !ret, "EnumColorProfilesW() succeeded (%d)\n", GetLastError() );
 
     ret = pEnumColorProfilesW( NULL, &record, buffer, &size, &number );
-    if (have_color_profile)
+    todo_wine_if (!have_color_profile)
         ok( ret, "EnumColorProfilesW() failed (%d)\n", GetLastError() );
-    else
-        todo_wine ok( ret, "EnumColorProfilesW() failed (%d)\n", GetLastError() );
 
     size = 0;
     ret = pEnumColorProfilesW( NULL, &record, buffer, &size, &number );
@@ -738,10 +736,8 @@ static void test_EnumColorProfilesW( WCHAR *standardprofileW )
 
     size = total;
     ret = pEnumColorProfilesW( NULL, &record, buffer, &size, &number );
-    if (have_color_profile)
+    todo_wine_if (!have_color_profile)
         ok( ret, "EnumColorProfilesW() failed (%d)\n", GetLastError() );
-    else
-        todo_wine ok( ret, "EnumColorProfilesW() failed (%d)\n", GetLastError() );
 
     HeapFree( GetProcessHeap(), 0, buffer );
 }
@@ -1334,6 +1330,38 @@ static BOOL have_profile(void)
     return TRUE;
 }
 
+static void test_CreateMultiProfileTransform( char *standardprofile, char *testprofile )
+{
+    PROFILE profile;
+    HPROFILE handle[2];
+    HTRANSFORM transform;
+    DWORD intents[2] = { INTENT_PERCEPTUAL, INTENT_PERCEPTUAL };
+
+    if (testprofile)
+    {
+        profile.dwType       = PROFILE_FILENAME;
+        profile.pProfileData = standardprofile;
+        profile.cbDataSize   = strlen(standardprofile);
+
+        handle[0] = pOpenColorProfileA( &profile, PROFILE_READ, 0, OPEN_EXISTING );
+        ok( handle[0] != NULL, "got %u\n", GetLastError() );
+
+        profile.dwType       = PROFILE_FILENAME;
+        profile.pProfileData = testprofile;
+        profile.cbDataSize   = strlen(testprofile);
+
+        handle[1] = pOpenColorProfileA( &profile, PROFILE_READ, 0, OPEN_EXISTING );
+        ok( handle[1] != NULL, "got %u\n", GetLastError() );
+
+        transform = pCreateMultiProfileTransform( handle, 2, intents, 2, 0, 0 );
+        ok( transform != NULL, "got %u\n", GetLastError() );
+
+        pDeleteColorTransform( transform );
+        pCloseColorProfile( handle[0] );
+        pCloseColorProfile( handle[1] );
+    }
+}
+
 START_TEST(profile)
 {
     UINT len;
@@ -1443,6 +1471,7 @@ START_TEST(profile)
     test_UninstallColorProfileW( testprofileW );
 
     test_AssociateColorProfileWithDeviceA( testprofile );
+    test_CreateMultiProfileTransform( standardprofile, testprofile );
 
     if (testprofile) DeleteFileA( testprofile );
     FreeLibrary( huser32 );

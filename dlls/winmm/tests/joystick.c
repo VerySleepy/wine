@@ -82,7 +82,9 @@ static void test_api(void)
         ret = joyGetDevCapsA(JOYSTICKID1 + i, &jc, sizeof(jc));
         if (ret == JOYERR_NOERROR)
         {
-            joyid = JOYSTICKID1 + i;
+            if (joyid == -1) /* Cache the first found joystick to run advanced tests below */
+              joyid = JOYSTICKID1 + i;
+
             trace("Joystick[%d] - name: '%s', axes: %d, buttons: %d, period range: %d - %d\n",
                   JOYSTICKID1 + i, jc.szPname, jc.wNumAxes, jc.wNumButtons, jc.wPeriodMin, jc.wPeriodMax);
             ret = joyGetDevCapsW(JOYSTICKID1 + i, &jcw, sizeof(jcw));
@@ -93,7 +95,6 @@ static void test_api(void)
                 ok(jc.wNumButtons == jcw.wNumButtons, "Expected %d == %d\n", jc.wNumButtons, jcw.wNumButtons);
             }
             else win98++;
-            break;
         }
         else
         {
@@ -156,7 +157,7 @@ static void test_api(void)
         par = 0xdead;
         ret = joyGetThreshold(joyid, &par);
         ok(ret == JOYERR_NOERROR, "Test [%d]: Expected %d, got %d\n", i, JOYERR_NOERROR, ret);
-        if (!win98 || (win98 && i < 8))
+        if (!win98 || i < 8)
         {
             if ((1 << i) & threshold_error)
                 ok(par == period[8], "Test [%d]: Expected %d, got %d\n", i, period[8], par);
@@ -195,6 +196,35 @@ static void test_api(void)
         ret = joyGetPosEx(joyid, &infoex.ex);
         ok(ret == JOYERR_NOERROR, "Expected %d, got %d\n", JOYERR_NOERROR, ret);
     }
+
+    /* the interactive tests spans for 15 seconds, a 500ms polling is used to get
+     * changes in the joystick. */
+    if (winetest_interactive)
+    {
+#define MAX_TIME 15000
+        DWORD tick = GetTickCount(), spent;
+        infoex.ex.dwSize = sizeof(infoex.ex);
+        infoex.ex.dwFlags = JOY_RETURNALL;
+        do
+        {
+            spent = GetTickCount() - tick;
+            ret = joyGetPosEx(joyid, &infoex.ex);
+            if (ret == JOYERR_NOERROR)
+            {
+                trace("X: %5d, Y: %5d, Z: %5d, POV: %5d\n",
+                       infoex.ex.dwXpos, infoex.ex.dwYpos, infoex.ex.dwZpos, infoex.ex.dwPOV);
+                trace("R: %5d, U: %5d, V: %5d\n",
+                       infoex.ex.dwRpos, infoex.ex.dwUpos, infoex.ex.dwVpos);
+                trace("BUTTONS: 0x%04X, BUTTON_COUNT: %2d, REMAINING: %d ms\n\n",
+                       infoex.ex.dwButtons, infoex.ex.dwButtonNumber, MAX_TIME - spent);
+            }
+            Sleep(500);
+        }
+        while (spent < MAX_TIME);
+#undef MAX_TIME
+    }
+    else
+        skip("Skipping interactive tests for the joystick\n");
 }
 
 START_TEST(joystick)

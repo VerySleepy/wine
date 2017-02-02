@@ -6,8 +6,8 @@
 @ stdcall AcquireCredentialsHandleW(wstr wstr long ptr ptr ptr ptr ptr ptr)
 @ stdcall AddCredentialsA(ptr str str long ptr ptr ptr ptr)
 @ stdcall AddCredentialsW(ptr wstr wstr long ptr ptr ptr ptr)
-@ stub AddSecurityPackageA
-@ stub AddSecurityPackageW
+@ stdcall AddSecurityPackageA(str ptr)
+@ stdcall AddSecurityPackageW(wstr ptr)
 @ stdcall ApplyControlToken(ptr ptr)
 @ stdcall CompleteAuthToken(ptr ptr)
 @ stdcall DecryptMessage(ptr ptr long ptr)
@@ -67,6 +67,13 @@
 @ stub SecpFreeMemory
 @ stub SecpTranslateName
 @ stub SecpTranslateNameEx
+@ stdcall SetContextAttributesA(ptr long ptr long)
+@ stdcall SetContextAttributesW(ptr long ptr long)
+@ stdcall SspiEncodeAuthIdentityAsStrings(ptr ptr ptr ptr) sspicli.SspiEncodeAuthIdentityAsStrings
+@ stdcall SspiEncodeStringsAsAuthIdentity(wstr wstr wstr ptr) sspicli.SspiEncodeStringsAsAuthIdentity
+@ stdcall SspiFreeAuthIdentity(ptr) sspicli.SspiFreeAuthIdentity
+@ stdcall SspiLocalFree(ptr) sspicli.SspiLocalFree
+@ stdcall SspiZeroAuthIdentity(ptr) sspicli.SspiZeroAuthIdentity
 @ stdcall TranslateNameA(str long long ptr ptr)
 @ stdcall TranslateNameW(wstr long long ptr ptr)
 @ stdcall UnsealMessage(ptr ptr long ptr) DecryptMessage

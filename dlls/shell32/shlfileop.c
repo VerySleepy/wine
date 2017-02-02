@@ -292,7 +292,7 @@ static BOOL SHELL_ConfirmDialogW(HWND hWnd, int nKindOfDialog, LPCWSTR szDir, FI
 
 	args[0] = (DWORD_PTR)szDir;
 	FormatMessageW(FORMAT_MESSAGE_FROM_STRING|FORMAT_MESSAGE_ARGUMENT_ARRAY,
-	               szText, 0, 0, szBuffer, sizeof(szBuffer), (__ms_va_list*)args);
+	               szText, 0, 0, szBuffer, sizeof(szBuffer)/sizeof(szBuffer[0]), (__ms_va_list*)args);
         hIcon = LoadIconW(ids.hIconInstance, (LPWSTR)MAKEINTRESOURCE(ids.icon_resource_id));
 
         ret = SHELL_ConfirmMsgBox(hWnd, szBuffer, szCaption, hIcon, op && op->bManyItems);
@@ -572,7 +572,7 @@ DWORD WINAPI Win32DeleteFileAW(LPCVOID path)
  *  dest       [I]   path to target file to move to
  *
  * RETURNS
- *  ERORR_SUCCESS if successful
+ *  ERROR_SUCCESS if successful
  */
 static DWORD SHNotifyMoveFileW(LPCWSTR src, LPCWSTR dest)
 {
@@ -662,7 +662,7 @@ static DWORD SHNotifyCopyFileW(LPCWSTR src, LPCWSTR dest, BOOL bFailIfExists)
  *  ERROR_PATH_NOT_FOUND can't find the path, probably invalid
  *  ERROR_INVALID_NAME if the path contains invalid chars
  *  ERROR_ALREADY_EXISTS when the directory already exists
- *  ERROR_FILENAME_EXCED_RANGE if the filename was to long to process
+ *  ERROR_FILENAME_EXCED_RANGE if the filename was too long to process
  *
  * NOTES
  *  exported by ordinal
@@ -694,7 +694,7 @@ DWORD WINAPI SHCreateDirectory(HWND hWnd, LPCVOID path)
  *  ERROR_INVALID_NAME if the path contains invalid chars
  *  ERROR_FILE_EXISTS when a file with that name exists
  *  ERROR_ALREADY_EXISTS when the directory already exists
- *  ERROR_FILENAME_EXCED_RANGE if the filename was to long to process
+ *  ERROR_FILENAME_EXCED_RANGE if the filename was too long to process
  *
  *  FIXME: Not implemented yet;
  *  SHCreateDirectoryEx also verifies that the files in the directory will be visible
@@ -894,7 +894,6 @@ int WINAPI SHFileOperationA(LPSHFILEOPSTRUCTA lpFileOp)
 	    if (ForFree) continue;
 	    retCode = ERROR_OUTOFMEMORY;
 	    nFileOp.fAnyOperationsAborted = TRUE;
-	    SetLastError(retCode);
 	    return retCode;
 	  }
 	}
@@ -1180,7 +1179,7 @@ static void create_dest_dirs(LPCWSTR szDestDir)
 }
 
 /* the FO_COPY operation */
-static DWORD copy_files(FILE_OPERATION *op, const FILE_LIST *flFrom, FILE_LIST *flTo)
+static int copy_files(FILE_OPERATION *op, const FILE_LIST *flFrom, FILE_LIST *flTo)
 {
     DWORD i;
     const FILE_ENTRY *entryToCopy;
@@ -1328,10 +1327,11 @@ static BOOL confirm_delete_list(HWND hWnd, DWORD fFlags, BOOL fTrash, const FILE
 }
 
 /* the FO_DELETE operation */
-static DWORD delete_files(LPSHFILEOPSTRUCTW lpFileOp, const FILE_LIST *flFrom)
+static int delete_files(LPSHFILEOPSTRUCTW lpFileOp, const FILE_LIST *flFrom)
 {
     const FILE_ENTRY *fileEntry;
-    DWORD i, ret;
+    DWORD i;
+    int ret;
     BOOL bTrash;
 
     if (!flFrom->dwNumFiles)
@@ -1389,46 +1389,17 @@ static DWORD delete_files(LPSHFILEOPSTRUCTW lpFileOp, const FILE_LIST *flFrom)
     return ERROR_SUCCESS;
 }
 
-static void move_dir_to_dir(LPSHFILEOPSTRUCTW lpFileOp, const FILE_ENTRY *feFrom, LPCWSTR szDestPath)
-{
-    WCHAR szFrom[MAX_PATH], szTo[MAX_PATH];
-    SHFILEOPSTRUCTW fileOp;
-
-    static const WCHAR wildCardFiles[] = {'*','.','*',0};
-
-    if (IsDotDir(feFrom->szFilename))
-        return;
-
-    SHNotifyCreateDirectoryW(szDestPath, NULL);
-
-    PathCombineW(szFrom, feFrom->szFullPath, wildCardFiles);
-    szFrom[lstrlenW(szFrom) + 1] = '\0';
-
-    lstrcpyW(szTo, szDestPath);
-    szTo[lstrlenW(szDestPath) + 1] = '\0';
-
-    fileOp = *lpFileOp;
-    fileOp.pFrom = szFrom;
-    fileOp.pTo = szTo;
-
-    SHFileOperationW(&fileOp);
-}
-
 /* moves a file or directory to another directory */
 static void move_to_dir(LPSHFILEOPSTRUCTW lpFileOp, const FILE_ENTRY *feFrom, const FILE_ENTRY *feTo)
 {
     WCHAR szDestPath[MAX_PATH];
 
     PathCombineW(szDestPath, feTo->szFullPath, feFrom->szFilename);
-
-    if (IsAttribFile(feFrom->attributes))
-        SHNotifyMoveFileW(feFrom->szFullPath, szDestPath);
-    else if (!(lpFileOp->fFlags & FOF_FILESONLY && feFrom->bFromWildcard))
-        move_dir_to_dir(lpFileOp, feFrom, szDestPath);
+    SHNotifyMoveFileW(feFrom->szFullPath, szDestPath);
 }
 
 /* the FO_MOVE operation */
-static DWORD move_files(LPSHFILEOPSTRUCTW lpFileOp, const FILE_LIST *flFrom, const FILE_LIST *flTo)
+static int move_files(LPSHFILEOPSTRUCTW lpFileOp, const FILE_LIST *flFrom, const FILE_LIST *flTo)
 {
     DWORD i;
     INT mismatched = 0;
@@ -1499,7 +1470,7 @@ static DWORD move_files(LPSHFILEOPSTRUCTW lpFileOp, const FILE_LIST *flFrom, con
 }
 
 /* the FO_RENAME files */
-static DWORD rename_files(LPSHFILEOPSTRUCTW lpFileOp, const FILE_LIST *flFrom, const FILE_LIST *flTo)
+static int rename_files(LPSHFILEOPSTRUCTW lpFileOp, const FILE_LIST *flFrom, const FILE_LIST *flTo)
 {
     const FILE_ENTRY *feFrom;
     const FILE_ENTRY *feTo;
@@ -1592,6 +1563,7 @@ int WINAPI SHFileOperationW(LPSHFILEOPSTRUCTW lpFileOp)
     if (ret == ERROR_CANCELLED)
         lpFileOp->fAnyOperationsAborted = TRUE;
 
+    SetLastError(ERROR_SUCCESS);
     return ret;
 }
 
@@ -1772,7 +1744,7 @@ HRESULT WINAPI SHPathPrepareForWriteW(HWND hwnd, IUnknown *modless, LPCWSTR path
     WCHAR* last_slash;
     WCHAR* temppath=NULL;
 
-    TRACE("%p %p %s 0x%80x\n", hwnd, modless, debugstr_w(path), flags);
+    TRACE("%p %p %s 0x%08x\n", hwnd, modless, debugstr_w(path), flags);
 
     if (flags & ~(SHPPFW_DIRCREATE|SHPPFW_ASKDIRCREATE|SHPPFW_IGNOREFILENAME))
         FIXME("unimplemented flags 0x%08x\n", flags);

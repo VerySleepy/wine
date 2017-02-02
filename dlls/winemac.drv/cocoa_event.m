@@ -294,13 +294,15 @@ static const OSType WineHotKeySignature = 'Wine';
         }];
     }
 
-    - (BOOL) query:(macdrv_query*)query timeout:(NSTimeInterval)timeout processEvents:(BOOL)processEvents
+    - (BOOL) query:(macdrv_query*)query timeout:(NSTimeInterval)timeout flags:(NSUInteger)flags
     {
+        int type;
         macdrv_event* event;
         NSDate* timeoutDate = [NSDate dateWithTimeIntervalSinceNow:timeout];
         BOOL timedout;
 
-        event = macdrv_create_event(QUERY_EVENT, (WineWindow*)query->window);
+        type = (flags & WineQueryNoPreemptWait) ? QUERY_EVENT_NO_PREEMPT_WAIT : QUERY_EVENT;
+        event = macdrv_create_event(type, (WineWindow*)query->window);
         event->query_event.query = macdrv_retain_query(query);
         query->done = FALSE;
 
@@ -308,18 +310,20 @@ static const OSType WineHotKeySignature = 'Wine';
         macdrv_release_event(event);
         timedout = ![[WineApplicationController sharedController] waitUntilQueryDone:&query->done
                                                                              timeout:timeoutDate
-                                                                       processEvents:processEvents];
+                                                                       processEvents:(flags & WineQueryProcessEvents) != 0];
         return !timedout && query->status;
     }
 
     - (BOOL) query:(macdrv_query*)query timeout:(NSTimeInterval)timeout
     {
-        return [self query:query timeout:timeout processEvents:FALSE];
+        return [self query:query timeout:timeout flags:0];
     }
 
     - (void) resetMouseEventPositions:(CGPoint)pos
     {
         MacDrvEvent* event;
+
+        pos = cgpoint_win_from_mac(pos);
 
         [eventsLock lock];
 
@@ -654,6 +658,7 @@ void macdrv_release_event(macdrv_event *event)
                 CFRelease(event->keyboard_changed.input_source);
                 break;
             case QUERY_EVENT:
+            case QUERY_EVENT_NO_PREEMPT_WAIT:
                 macdrv_release_query(event->query_event.query);
                 break;
             case WINDOW_GOT_FOCUS:

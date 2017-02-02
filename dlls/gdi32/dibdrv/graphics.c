@@ -68,12 +68,13 @@ static CRITICAL_SECTION font_cache_cs = { &critsect_debug, -1, 0, 0, 0, 0 };
 
 static BOOL brush_rect( dibdrv_physdev *pdev, dib_brush *brush, const RECT *rect, HRGN clip )
 {
+    DC *dc = get_physdev_dc( &pdev->dev );
     struct clipped_rects clipped_rects;
     BOOL ret;
 
     if (!get_clipped_rects( &pdev->dib, rect, clip, &clipped_rects )) return TRUE;
     ret = brush->rects( pdev, brush, &pdev->dib, clipped_rects.count, clipped_rects.rects,
-                        GetROP2( pdev->dev.hdc ));
+                        dc->ROPmode );
     free_clipped_rects( &clipped_rects );
     return ret;
 }
@@ -92,7 +93,7 @@ static BOOL pen_region( dibdrv_physdev *pdev, HRGN region )
     return brush_rect( pdev, &pdev->pen_brush, NULL, region );
 }
 
-static RECT get_device_rect( HDC hdc, int left, int top, int right, int bottom, BOOL rtl_correction )
+static RECT get_device_rect( DC *dc, int left, int top, int right, int bottom, BOOL rtl_correction )
 {
     RECT rect;
 
@@ -100,21 +101,22 @@ static RECT get_device_rect( HDC hdc, int left, int top, int right, int bottom, 
     rect.top    = top;
     rect.right  = right;
     rect.bottom = bottom;
-    if (rtl_correction && GetLayout( hdc ) & LAYOUT_RTL)
+    if (rtl_correction && dc->layout & LAYOUT_RTL)
     {
         /* shift the rectangle so that the right border is included after mirroring */
         /* it would be more correct to do this after LPtoDP but that's not what Windows does */
         rect.left--;
         rect.right--;
     }
-    LPtoDP( hdc, (POINT *)&rect, 2 );
+    lp_to_dp( dc, (POINT *)&rect, 2 );
     order_rect( &rect );
     return rect;
 }
 
-static BOOL get_pen_device_rect( dibdrv_physdev *dev, RECT *rect, int left, int top, int right, int bottom )
+static BOOL get_pen_device_rect( DC *dc, dibdrv_physdev *dev, RECT *rect,
+                                 int left, int top, int right, int bottom )
 {
-    *rect = get_device_rect( dev->dev.hdc, left, top, right, bottom, TRUE );
+    *rect = get_device_rect( dc, left, top, right, bottom, TRUE );
     if (rect->left == rect->right || rect->top == rect->bottom) return FALSE;
 
     if (dev->pen_style == PS_INSIDEFRAME)
@@ -234,7 +236,7 @@ static int find_intersection( const POINT *points, int x, int y, int count )
     return 2 * count + i;
 }
 
-static int get_arc_points( PHYSDEV dev, const RECT *rect, POINT start, POINT end, POINT *points )
+static int get_arc_points( int arc_dir, const RECT *rect, POINT start, POINT end, POINT *points )
 {
     int i, pos, count, start_pos, end_pos;
     int width = rect->right - rect->left;
@@ -246,7 +248,7 @@ static int get_arc_points( PHYSDEV dev, const RECT *rect, POINT start, POINT end
         points[i].x -= width / 2;
         points[i].y -= height / 2;
     }
-    if (GetArcDirection( dev->hdc ) != AD_CLOCKWISE)
+    if (arc_dir != AD_CLOCKWISE)
     {
         start.y = -start.y;
         end.y = -end.y;
@@ -256,7 +258,7 @@ static int get_arc_points( PHYSDEV dev, const RECT *rect, POINT start, POINT end
     if (end_pos <= start_pos) end_pos += 4 * count;
 
     pos = count;
-    if (GetArcDirection( dev->hdc ) == AD_CLOCKWISE)
+    if (arc_dir == AD_CLOCKWISE)
     {
         for (i = start_pos; i < end_pos; i++, pos++)
         {
@@ -316,13 +318,14 @@ static BOOL draw_arc( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
                       INT start_x, INT start_y, INT end_x, INT end_y, INT extra_lines )
 {
     dibdrv_physdev *pdev = get_dibdrv_pdev( dev );
+    DC *dc = get_physdev_dc( dev );
     RECT rect;
     POINT pt[2], *points;
     int width, height, count;
     BOOL ret = TRUE;
     HRGN outline = 0, interior = 0;
 
-    if (!get_pen_device_rect( pdev, &rect, left, top, right, bottom )) return TRUE;
+    if (!get_pen_device_rect( dc, pdev, &rect, left, top, right, bottom )) return TRUE;
 
     width = rect.right - rect.left;
     height = rect.bottom - rect.top;
@@ -331,7 +334,7 @@ static BOOL draw_arc( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
     pt[0].y = start_y;
     pt[1].x = end_x;
     pt[1].y = end_y;
-    LPtoDP( dev->hdc, pt, 2 );
+    lp_to_dp( dc, pt, 2 );
     /* make them relative to the ellipse center */
     pt[0].x -= rect.left + width / 2;
     pt[0].y -= rect.top + height / 2;
@@ -343,11 +346,11 @@ static BOOL draw_arc( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
 
     if (extra_lines == -1)
     {
-        GetCurrentPositionEx( dev->hdc, points );
-        LPtoDP( dev->hdc, points, 1 );
-        count = 1 + get_arc_points( dev, &rect, pt[0], pt[1], points + 1 );
+        points[0] = dc->cur_pos;
+        lp_to_dp( dc, points, 1 );
+        count = 1 + get_arc_points( dc->ArcDirection, &rect, pt[0], pt[1], points + 1 );
     }
-    else count = get_arc_points( dev, &rect, pt[0], pt[1], points );
+    else count = get_arc_points( dc->ArcDirection, &rect, pt[0], pt[1], points );
 
     if (extra_lines == 2)
     {
@@ -399,6 +402,73 @@ static BOOL draw_arc( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
         DeleteObject( outline );
     }
     HeapFree( GetProcessHeap(), 0, points );
+    return ret;
+}
+
+/* helper for path stroking and filling functions */
+static BOOL stroke_and_fill_path( dibdrv_physdev *dev, BOOL stroke, BOOL fill )
+{
+    DC *dc = get_physdev_dc( &dev->dev );
+    struct gdi_path *path;
+    POINT *points;
+    BYTE *types;
+    BOOL ret = TRUE;
+    HRGN outline = 0, interior = 0;
+    int i, pos, total;
+
+    if (dev->brush.style == BS_NULL) fill = FALSE;
+
+    if (!(path = get_gdi_flat_path( dc, fill ? &interior : NULL ))) return FALSE;
+    if (!(total = get_gdi_path_data( path, &points, &types ))) goto done;
+
+    if (stroke && dev->pen_uses_region) outline = CreateRectRgn( 0, 0, 0, 0 );
+
+    /* if not using a region, paint the interior first so the outline can overlap it */
+    if (interior && !outline)
+    {
+        ret = brush_region( dev, interior );
+        DeleteObject( interior );
+        interior = 0;
+    }
+
+    if (stroke)
+    {
+        pos = 0;
+        for (i = 1; i < total; i++)
+        {
+            if (types[i] != PT_MOVETO) continue;
+            if (i > pos + 1)
+            {
+                reset_dash_origin( dev );
+                dev->pen_lines( dev, i - pos, points + pos,
+                                fill || types[i - 1] & PT_CLOSEFIGURE, outline );
+            }
+            pos = i;
+        }
+        if (i > pos + 1)
+        {
+            reset_dash_origin( dev );
+            dev->pen_lines( dev, i - pos, points + pos,
+                            fill || types[i - 1] & PT_CLOSEFIGURE, outline );
+        }
+    }
+
+    add_pen_lines_bounds( dev, total, points, outline );
+
+    if (interior)
+    {
+        CombineRgn( interior, interior, outline, RGN_DIFF );
+        ret = brush_region( dev, interior );
+        DeleteObject( interior );
+    }
+    if (outline)
+    {
+        if (ret) ret = pen_region( dev, outline );
+        DeleteObject( outline );
+    }
+
+done:
+    free_gdi_path( path );
     return ret;
 }
 
@@ -482,15 +552,15 @@ static int font_cache_cmp( const struct cached_font *p1, const struct cached_fon
     return ret;
 }
 
-static struct cached_font *add_cached_font( HDC hdc, HFONT hfont, UINT aa_flags )
+static struct cached_font *add_cached_font( DC *dc, HFONT hfont, UINT aa_flags )
 {
     struct cached_font font, *ptr, *last_unused = NULL;
     UINT i = 0, j, k;
 
     GetObjectW( hfont, sizeof(font.lf), &font.lf );
-    GetTransform( hdc, 0x204, &font.xform );
+    font.xform = dc->xformWorld2Vport;
     font.xform.eDx = font.xform.eDy = 0;  /* unused, would break hashing */
-    if (GetGraphicsMode( hdc ) == GM_COMPATIBLE)
+    if (dc->GraphicsMode == GM_COMPATIBLE)
     {
         font.lf.lfOrientation = font.lf.lfEscapement;
         if (font.xform.eM11 * font.xform.eM22 < 0)
@@ -593,18 +663,18 @@ static struct cached_glyph *get_cached_glyph( struct cached_font *font, UINT ind
  *
  * See the comment above get_pen_bkgnd_masks
  */
-static inline void get_text_bkgnd_masks( HDC hdc, const dib_info *dib, rop_mask *mask )
+static inline void get_text_bkgnd_masks( DC *dc, const dib_info *dib, rop_mask *mask )
 {
-    COLORREF bg = GetBkColor( hdc );
+    COLORREF bg = dc->backgroundColor;
 
     mask->and = 0;
 
     if (dib->bit_count != 1)
-        mask->xor = get_pixel_color( hdc, dib, bg, FALSE );
+        mask->xor = get_pixel_color( dc, dib, bg, FALSE );
     else
     {
-        COLORREF fg = GetTextColor( hdc );
-        mask->xor = get_pixel_color( hdc, dib, fg, TRUE );
+        COLORREF fg = dc->textColor;
+        mask->xor = get_pixel_color( dc, dib, fg, TRUE );
         if (fg != bg) mask->xor = ~mask->xor;
     }
 }
@@ -673,7 +743,7 @@ static const int padding[4] = {0, 3, 2, 1};
  * For non-antialiased bitmaps convert them to the 17-level format
  * using only values 0 or 16.
  */
-static struct cached_glyph *cache_glyph_bitmap( HDC hdc, struct cached_font *font, UINT index, UINT flags )
+static struct cached_glyph *cache_glyph_bitmap( DC *dc, struct cached_font *font, UINT index, UINT flags )
 {
     UINT ggo_flags = font->aa_flags;
     static const MAT2 identity = { {0,1}, {0,0}, {0,0}, {0,1} };
@@ -690,7 +760,7 @@ static struct cached_glyph *cache_glyph_bitmap( HDC hdc, struct cached_font *fon
     for (i = 0; i < sizeof(indices) / sizeof(indices[0]); i++)
     {
         index = indices[i];
-        ret = GetGlyphOutlineW( hdc, index, ggo_flags, &metrics, 0, NULL, &identity );
+        ret = GetGlyphOutlineW( dc->hSelf, index, ggo_flags, &metrics, 0, NULL, &identity );
         if (ret != GDI_ERROR) break;
     }
     if (ret == GDI_ERROR) return NULL;
@@ -705,7 +775,7 @@ static struct cached_glyph *cache_glyph_bitmap( HDC hdc, struct cached_font *fon
 
     if (bit_count == 8) pad = padding[ metrics.gmBlackBoxX % 4 ];
 
-    ret = GetGlyphOutlineW( hdc, index, ggo_flags, &metrics, size, glyph->bits, &identity );
+    ret = GetGlyphOutlineW( dc->hSelf, index, ggo_flags, &metrics, size, glyph->bits, &identity );
     if (ret == GDI_ERROR)
     {
         HeapFree( GetProcessHeap(), 0, glyph );
@@ -736,7 +806,7 @@ done:
     return add_cached_glyph( font, index, flags, glyph );
 }
 
-static void render_string( HDC hdc, dib_info *dib, struct cached_font *font, INT x, INT y,
+static void render_string( DC *dc, dib_info *dib, struct cached_font *font, INT x, INT y,
                            UINT flags, const WCHAR *str, UINT count, const INT *dx,
                            const struct clipped_rects *clipped_rects, RECT *bounds )
 {
@@ -752,7 +822,7 @@ static void render_string( HDC hdc, dib_info *dib, struct cached_font *font, INT
     glyph_dib.bits.is_copy = FALSE;
     glyph_dib.bits.free    = NULL;
 
-    text_color = get_pixel_color( hdc, dib, GetTextColor( hdc ), TRUE );
+    text_color = get_pixel_color( dc, dib, dc->textColor, TRUE );
 
     if (glyph_dib.bit_count == 8)
         get_aa_ranges( dib->funcs->pixel_to_colorref( dib, text_color ), ranges );
@@ -760,7 +830,7 @@ static void render_string( HDC hdc, dib_info *dib, struct cached_font *font, INT
     for (i = 0; i < count; i++)
     {
         if (!(glyph = get_cached_glyph( font, str[i], flags )) &&
-            !(glyph = cache_glyph_bitmap( hdc, font, str[i], flags ))) continue;
+            !(glyph = cache_glyph_bitmap( dc, font, str[i], flags ))) continue;
 
         glyph_dib.width       = glyph->metrics.gmBlackBoxX;
         glyph_dib.height      = glyph->metrics.gmBlackBoxY;
@@ -789,7 +859,7 @@ static void render_string( HDC hdc, dib_info *dib, struct cached_font *font, INT
     }
 }
 
-BOOL render_aa_text_bitmapinfo( HDC hdc, BITMAPINFO *info, struct gdi_image_bits *bits,
+BOOL render_aa_text_bitmapinfo( DC *dc, BITMAPINFO *info, struct gdi_image_bits *bits,
                                 struct bitblt_coords *src, INT x, INT y, UINT flags,
                                 UINT aa_flags, LPCWSTR str, UINT count, const INT *dx )
 {
@@ -807,13 +877,13 @@ BOOL render_aa_text_bitmapinfo( HDC hdc, BITMAPINFO *info, struct gdi_image_bits
     if (flags & ETO_OPAQUE)
     {
         rop_mask bkgnd_color;
-        get_text_bkgnd_masks( hdc, &dib, &bkgnd_color );
+        get_text_bkgnd_masks( dc, &dib, &bkgnd_color );
         dib.funcs->solid_rects( &dib, 1, &src->visrect, bkgnd_color.and, bkgnd_color.xor );
     }
 
-    if (!(font = add_cached_font( hdc, GetCurrentObject( hdc, OBJ_FONT ), aa_flags ))) return FALSE;
+    if (!(font = add_cached_font( dc, dc->hFont, aa_flags ))) return FALSE;
 
-    render_string( hdc, &dib, font, x, y, flags, str, count, dx, &visrect, NULL );
+    render_string( dc, &dib, font, x, y, flags, str, count, dx, &visrect, NULL );
     release_cached_font( font );
     return TRUE;
 }
@@ -825,6 +895,7 @@ BOOL dibdrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags,
                         const RECT *rect, LPCWSTR str, UINT count, const INT *dx )
 {
     dibdrv_physdev *pdev = get_dibdrv_pdev(dev);
+    DC *dc = get_physdev_dc( dev );
     struct clipped_rects clipped_rects;
     RECT bounds;
 
@@ -836,7 +907,7 @@ BOOL dibdrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags,
     if (flags & ETO_OPAQUE)
     {
         rop_mask bkgnd_color;
-        get_text_bkgnd_masks( dev->hdc, &pdev->dib, &bkgnd_color );
+        get_text_bkgnd_masks( dc, &pdev->dib, &bkgnd_color );
         add_bounds_rect( &bounds, rect );
         get_clipped_rects( &pdev->dib, rect, pdev->clip, &clipped_rects );
         pdev->dib.funcs->solid_rects( &pdev->dib, clipped_rects.count, clipped_rects.rects,
@@ -857,7 +928,7 @@ BOOL dibdrv_ExtTextOut( PHYSDEV dev, INT x, INT y, UINT flags,
     }
     if (!clipped_rects.count) goto done;
 
-    render_string( dev->hdc, &pdev->dib, pdev->font, x, y, flags, str, count, dx,
+    render_string( dc, &pdev->dib, pdev->font, x, y, flags, str, count, dx,
                    &clipped_rects, &bounds );
 
 done:
@@ -872,6 +943,7 @@ done:
 HFONT dibdrv_SelectFont( PHYSDEV dev, HFONT font, UINT *aa_flags )
 {
     dibdrv_physdev *pdev = get_dibdrv_pdev(dev);
+    DC *dc = get_physdev_dc( dev );
     HFONT ret;
 
     if (pdev->dib.bit_count <= 8) *aa_flags = GGO_BITMAP;  /* no anti-aliasing on <= 8bpp */
@@ -881,7 +953,7 @@ HFONT dibdrv_SelectFont( PHYSDEV dev, HFONT font, UINT *aa_flags )
     if (ret)
     {
         struct cached_font *prev = pdev->font;
-        pdev->font = add_cached_font( dev->hdc, font, *aa_flags ? *aa_flags : GGO_BITMAP );
+        pdev->font = add_cached_font( dc, font, *aa_flags ? *aa_flags : GGO_BITMAP );
         release_cached_font( prev );
     }
     return ret;
@@ -976,11 +1048,15 @@ static void fill_row( dib_info *dib, HRGN clip, RECT *row, DWORD pixel, UINT typ
 BOOL dibdrv_ExtFloodFill( PHYSDEV dev, INT x, INT y, COLORREF color, UINT type )
 {
     dibdrv_physdev *pdev = get_dibdrv_pdev( dev );
-    DWORD pixel = get_pixel_color( dev->hdc, &pdev->dib, color, FALSE );
+    DC *dc = get_physdev_dc( dev );
+    DWORD pixel = get_pixel_color( dc, &pdev->dib, color, FALSE );
     RECT row;
     HRGN rgn;
 
     TRACE( "(%p, %d, %d, %08x, %d)\n", pdev, x, y, color, type );
+
+    if (x < 0 || x >= pdev->dib.rect.right - pdev->dib.rect.left ||
+        y < 0 || y >= pdev->dib.rect.bottom - pdev->dib.rect.top) return FALSE;
 
     if (!is_interior( &pdev->dib, pdev->clip, x, y, pixel, type )) return FALSE;
 
@@ -1000,16 +1076,27 @@ BOOL dibdrv_ExtFloodFill( PHYSDEV dev, INT x, INT y, COLORREF color, UINT type )
 }
 
 /***********************************************************************
+ *           dibdrv_FillPath
+ */
+BOOL dibdrv_FillPath( PHYSDEV dev )
+{
+    dibdrv_physdev *pdev = get_dibdrv_pdev( dev );
+
+    return stroke_and_fill_path( pdev, FALSE, TRUE );
+}
+
+/***********************************************************************
  *           dibdrv_GetNearestColor
  */
 COLORREF dibdrv_GetNearestColor( PHYSDEV dev, COLORREF color )
 {
     dibdrv_physdev *pdev = get_dibdrv_pdev( dev );
+    DC *dc = get_physdev_dc( dev );
     DWORD pixel;
 
     TRACE( "(%p, %08x)\n", dev, color );
 
-    pixel = get_pixel_color( dev->hdc, &pdev->dib, color, FALSE );
+    pixel = get_pixel_color( dc, &pdev->dib, color, FALSE );
     return pdev->dib.funcs->pixel_to_colorref( &pdev->dib, pixel );
 }
 
@@ -1019,6 +1106,7 @@ COLORREF dibdrv_GetNearestColor( PHYSDEV dev, COLORREF color )
 COLORREF dibdrv_GetPixel( PHYSDEV dev, INT x, INT y )
 {
     dibdrv_physdev *pdev = get_dibdrv_pdev( dev );
+    DC *dc = get_physdev_dc( dev );
     POINT pt;
     DWORD pixel;
 
@@ -1026,7 +1114,7 @@ COLORREF dibdrv_GetPixel( PHYSDEV dev, INT x, INT y )
 
     pt.x = x;
     pt.y = y;
-    LPtoDP( dev->hdc, &pt, 1 );
+    lp_to_dp( dc, &pt, 1 );
 
     if (pt.x < 0 || pt.x >= pdev->dib.rect.right - pdev->dib.rect.left ||
         pt.y < 0 || pt.y >= pdev->dib.rect.bottom - pdev->dib.rect.top)
@@ -1042,15 +1130,16 @@ COLORREF dibdrv_GetPixel( PHYSDEV dev, INT x, INT y )
 BOOL dibdrv_LineTo( PHYSDEV dev, INT x, INT y )
 {
     dibdrv_physdev *pdev = get_dibdrv_pdev(dev);
+    DC *dc = get_physdev_dc( dev );
     POINT pts[2];
     HRGN region = 0;
     BOOL ret;
 
-    GetCurrentPositionEx(dev->hdc, pts);
+    pts[0] = dc->cur_pos;
     pts[1].x = x;
     pts[1].y = y;
 
-    LPtoDP(dev->hdc, pts, 2);
+    lp_to_dp(dc, pts, 2);
 
     if (pdev->pen_uses_region && !(region = CreateRectRgn( 0, 0, 0, 0 ))) return FALSE;
 
@@ -1123,6 +1212,7 @@ BOOL dibdrv_PaintRgn( PHYSDEV dev, HRGN rgn )
     const WINEREGION *region;
     int i;
     RECT rect, bounds;
+    DC *dc = get_physdev_dc( dev );
 
     TRACE("%p, %p\n", dev, rgn);
 
@@ -1133,7 +1223,7 @@ BOOL dibdrv_PaintRgn( PHYSDEV dev, HRGN rgn )
 
     for(i = 0; i < region->numRects; i++)
     {
-        rect = get_device_rect( dev->hdc, region->rects[i].left, region->rects[i].top,
+        rect = get_device_rect( dc, region->rects[i].left, region->rects[i].top,
                                 region->rects[i].right, region->rects[i].bottom, FALSE );
         add_bounds_rect( &bounds, &rect );
         brush_rect( pdev, &pdev->brush, &rect, pdev->clip );
@@ -1150,9 +1240,11 @@ BOOL dibdrv_PaintRgn( PHYSDEV dev, HRGN rgn )
 BOOL dibdrv_PolyPolygon( PHYSDEV dev, const POINT *pt, const INT *counts, DWORD polygons )
 {
     dibdrv_physdev *pdev = get_dibdrv_pdev(dev);
+    DC *dc = get_physdev_dc( dev );
     DWORD total, i, pos;
     BOOL ret = TRUE;
-    POINT *points;
+    POINT pt_buf[32];
+    POINT *points = pt_buf;
     HRGN outline = 0, interior = 0;
 
     for (i = total = 0; i < polygons; i++)
@@ -1161,16 +1253,19 @@ BOOL dibdrv_PolyPolygon( PHYSDEV dev, const POINT *pt, const INT *counts, DWORD 
         total += counts[i];
     }
 
-    points = HeapAlloc( GetProcessHeap(), 0, total * sizeof(*pt) );
-    if (!points) return FALSE;
+    if (total > sizeof(pt_buf) / sizeof(pt_buf[0]))
+    {
+        points = HeapAlloc( GetProcessHeap(), 0, total * sizeof(*pt) );
+        if (!points) return FALSE;
+    }
     memcpy( points, pt, total * sizeof(*pt) );
-    LPtoDP( dev->hdc, points, total );
+    lp_to_dp( dc, points, total );
 
     if (pdev->brush.style != BS_NULL &&
-        !(interior = CreatePolyPolygonRgn( points, counts, polygons, GetPolyFillMode( dev->hdc ))))
+        !(interior = CreatePolyPolygonRgn( points, counts, polygons, dc->polyFillMode )))
     {
-        HeapFree( GetProcessHeap(), 0, points );
-        return FALSE;
+        ret = FALSE;
+        goto done;
     }
 
     if (pdev->pen_uses_region) outline = CreateRectRgn( 0, 0, 0, 0 );
@@ -1202,7 +1297,9 @@ BOOL dibdrv_PolyPolygon( PHYSDEV dev, const POINT *pt, const INT *counts, DWORD 
         if (ret) ret = pen_region( pdev, outline );
         DeleteObject( outline );
     }
-    HeapFree( GetProcessHeap(), 0, points );
+
+done:
+    if (points != pt_buf) HeapFree( GetProcessHeap(), 0, points );
     return ret;
 }
 
@@ -1212,8 +1309,10 @@ BOOL dibdrv_PolyPolygon( PHYSDEV dev, const POINT *pt, const INT *counts, DWORD 
 BOOL dibdrv_PolyPolyline( PHYSDEV dev, const POINT* pt, const DWORD* counts, DWORD polylines )
 {
     dibdrv_physdev *pdev = get_dibdrv_pdev(dev);
+    DC *dc = get_physdev_dc( dev );
     DWORD total, pos, i;
-    POINT *points;
+    POINT pt_buf[32];
+    POINT *points = pt_buf;
     BOOL ret = TRUE;
     HRGN outline = 0;
 
@@ -1223,15 +1322,18 @@ BOOL dibdrv_PolyPolyline( PHYSDEV dev, const POINT* pt, const DWORD* counts, DWO
         total += counts[i];
     }
 
-    points = HeapAlloc( GetProcessHeap(), 0, total * sizeof(*pt) );
-    if (!points) return FALSE;
+    if (total > sizeof(pt_buf) / sizeof(pt_buf[0]))
+    {
+        points = HeapAlloc( GetProcessHeap(), 0, total * sizeof(*pt) );
+        if (!points) return FALSE;
+    }
     memcpy( points, pt, total * sizeof(*pt) );
-    LPtoDP( dev->hdc, points, total );
+    lp_to_dp( dc, points, total );
 
     if (pdev->pen_uses_region && !(outline = CreateRectRgn( 0, 0, 0, 0 )))
     {
-        HeapFree( GetProcessHeap(), 0, points );
-        return FALSE;
+        ret = FALSE;
+        goto done;
     }
 
     for (i = pos = 0; i < polylines; i++)
@@ -1248,7 +1350,8 @@ BOOL dibdrv_PolyPolyline( PHYSDEV dev, const POINT* pt, const DWORD* counts, DWO
         DeleteObject( outline );
     }
 
-    HeapFree( GetProcessHeap(), 0, points );
+done:
+    if (points != pt_buf) HeapFree( GetProcessHeap(), 0, points );
     return ret;
 }
 
@@ -1279,6 +1382,7 @@ BOOL dibdrv_Polyline( PHYSDEV dev, const POINT* pt, INT count )
 BOOL dibdrv_Rectangle( PHYSDEV dev, INT left, INT top, INT right, INT bottom )
 {
     dibdrv_physdev *pdev = get_dibdrv_pdev(dev);
+    DC *dc = get_physdev_dc( dev );
     RECT rect;
     POINT pts[4];
     BOOL ret;
@@ -1286,7 +1390,7 @@ BOOL dibdrv_Rectangle( PHYSDEV dev, INT left, INT top, INT right, INT bottom )
 
     TRACE("(%p, %d, %d, %d, %d)\n", dev, left, top, right, bottom);
 
-    if (GetGraphicsMode( dev->hdc ) == GM_ADVANCED)
+    if (dc->GraphicsMode == GM_ADVANCED)
     {
         pts[0].x = pts[3].x = left;
         pts[0].y = pts[1].y = top;
@@ -1295,7 +1399,7 @@ BOOL dibdrv_Rectangle( PHYSDEV dev, INT left, INT top, INT right, INT bottom )
         return dibdrv_Polygon( dev, pts, 4 );
     }
 
-    if (!get_pen_device_rect( pdev, &rect, left, top, right, bottom )) return TRUE;
+    if (!get_pen_device_rect( dc, pdev, &rect, left, top, right, bottom )) return TRUE;
 
     if (pdev->pen_uses_region && !(outline = CreateRectRgn( 0, 0, 0, 0 ))) return FALSE;
 
@@ -1303,7 +1407,7 @@ BOOL dibdrv_Rectangle( PHYSDEV dev, INT left, INT top, INT right, INT bottom )
     rect.bottom--;
     reset_dash_origin(pdev);
 
-    if (GetArcDirection( dev->hdc ) == AD_CLOCKWISE)
+    if (dc->ArcDirection == AD_CLOCKWISE)
     {
         /* 4 pts going clockwise starting from bottom-right */
         pts[0].x = pts[3].x = rect.right;
@@ -1354,18 +1458,19 @@ BOOL dibdrv_RoundRect( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
                        INT ellipse_width, INT ellipse_height )
 {
     dibdrv_physdev *pdev = get_dibdrv_pdev( dev );
+    DC *dc = get_physdev_dc( dev );
     RECT rect;
     POINT pt[2], *points;
     int i, end, count;
     BOOL ret = TRUE;
     HRGN outline = 0, interior = 0;
 
-    if (!get_pen_device_rect( pdev, &rect, left, top, right, bottom )) return TRUE;
+    if (!get_pen_device_rect( dc, pdev, &rect, left, top, right, bottom )) return TRUE;
 
     pt[0].x = pt[0].y = 0;
     pt[1].x = ellipse_width;
     pt[1].y = ellipse_height;
-    LPtoDP( dev->hdc, pt, 2 );
+    lp_to_dp( dc, pt, 2 );
     ellipse_width = min( rect.right - rect.left, abs( pt[1].x - pt[0].x ));
     ellipse_height = min( rect.bottom - rect.top, abs( pt[1].y - pt[0].y ));
     if (ellipse_width <= 2|| ellipse_height <= 2)
@@ -1399,7 +1504,7 @@ BOOL dibdrv_RoundRect( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
 
     count = ellipse_first_quadrant( ellipse_width, ellipse_height, points );
 
-    if (GetArcDirection( dev->hdc ) == AD_CLOCKWISE)
+    if (dc->ArcDirection == AD_CLOCKWISE)
     {
         for (i = 0; i < count; i++)
         {
@@ -1474,6 +1579,7 @@ BOOL dibdrv_Pie( PHYSDEV dev, INT left, INT top, INT right, INT bottom,
 COLORREF dibdrv_SetPixel( PHYSDEV dev, INT x, INT y, COLORREF color )
 {
     dibdrv_physdev *pdev = get_dibdrv_pdev( dev );
+    DC *dc = get_physdev_dc( dev );
     struct clipped_rects clipped_rects;
     RECT rect;
     POINT pt;
@@ -1483,7 +1589,7 @@ COLORREF dibdrv_SetPixel( PHYSDEV dev, INT x, INT y, COLORREF color )
 
     pt.x = x;
     pt.y = y;
-    LPtoDP( dev->hdc, &pt, 1 );
+    lp_to_dp( dc, &pt, 1 );
     rect.left = pt.x;
     rect.top =  pt.y;
     rect.right = rect.left + 1;
@@ -1491,11 +1597,31 @@ COLORREF dibdrv_SetPixel( PHYSDEV dev, INT x, INT y, COLORREF color )
     add_clipped_bounds( pdev, &rect, pdev->clip );
 
     /* SetPixel doesn't do the 1bpp massaging like other fg colors */
-    pixel = get_pixel_color( dev->hdc, &pdev->dib, color, FALSE );
+    pixel = get_pixel_color( dc, &pdev->dib, color, FALSE );
     color = pdev->dib.funcs->pixel_to_colorref( &pdev->dib, pixel );
 
     if (!get_clipped_rects( &pdev->dib, &rect, pdev->clip, &clipped_rects )) return color;
     pdev->dib.funcs->solid_rects( &pdev->dib, clipped_rects.count, clipped_rects.rects, 0, pixel );
     free_clipped_rects( &clipped_rects );
     return color;
+}
+
+/***********************************************************************
+ *           dibdrv_StrokeAndFillPath
+ */
+BOOL dibdrv_StrokeAndFillPath( PHYSDEV dev )
+{
+    dibdrv_physdev *pdev = get_dibdrv_pdev( dev );
+
+    return stroke_and_fill_path( pdev, TRUE, TRUE );
+}
+
+/***********************************************************************
+ *           dibdrv_StrokePath
+ */
+BOOL dibdrv_StrokePath( PHYSDEV dev )
+{
+    dibdrv_physdev *pdev = get_dibdrv_pdev( dev );
+
+    return stroke_and_fill_path( pdev, TRUE, FALSE );
 }

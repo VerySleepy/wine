@@ -24,6 +24,9 @@
 #include <wine/test.h>
 #include <dmusici.h>
 
+DEFINE_GUID(IID_IDirectMusicWavePRIVATE, 0x69e934e4, 0x97f1, 0x4f1d, 0x88, 0xe8, 0xf2, 0xac, 0x88,
+        0x67, 0x13, 0x27);
+
 static BOOL missing_dswave(void)
 {
     IDirectMusicObject *dmo;
@@ -56,7 +59,7 @@ static void test_COM(void)
     /* Invalid RIID */
     hr = CoCreateInstance(&CLSID_DirectSoundWave, NULL, CLSCTX_INPROC_SERVER,
             &IID_IDirectMusicSegment8, (void**)&dmo);
-    todo_wine ok(hr == E_NOINTERFACE, "DirectSoundWave create failed: %08x, expected E_NOINTERFACE\n", hr);
+    ok(hr == E_NOINTERFACE, "DirectSoundWave create failed: %08x, expected E_NOINTERFACE\n", hr);
 
     /* Same refcount for all DirectSoundWave interfaces */
     hr = CoCreateInstance(&CLSID_DirectSoundWave, NULL, CLSCTX_INPROC_SERVER,
@@ -77,11 +80,19 @@ static void test_COM(void)
     ok(refcount == 5, "refcount == %u, expected 5\n", refcount);
     refcount = IUnknown_Release(unk);
 
+    hr = IDirectMusicObject_QueryInterface(dmo, &IID_IDirectMusicWavePRIVATE, (void**)&unk);
+    todo_wine ok(hr == S_OK, "QueryInterface for IID_IDirectMusicWavePRIVATE failed: %08x\n", hr);
+    if (hr == S_OK) {
+        refcount = IUnknown_AddRef(unk);
+        ok(refcount == 6, "refcount == %u, expected 6\n", refcount);
+        refcount = IUnknown_Release(unk);
+    }
+
     /* Interfaces that native does not support */
     hr = IDirectMusicObject_QueryInterface(dmo, &IID_IDirectMusicSegment, (void**)&unk);
-    todo_wine ok(hr == E_NOINTERFACE, "QueryInterface for IID_IDirectMusicSegment failed: %08x\n", hr);
+    ok(hr == E_NOINTERFACE, "QueryInterface for IID_IDirectMusicSegment failed: %08x\n", hr);
     hr = IDirectMusicObject_QueryInterface(dmo, &IID_IDirectMusicSegment8, (void**)&unk);
-    todo_wine ok(hr == E_NOINTERFACE, "QueryInterface for IID_IDirectMusicSegment8 failed: %08x\n", hr);
+    ok(hr == E_NOINTERFACE, "QueryInterface for IID_IDirectMusicSegment8 failed: %08x\n", hr);
 
     while (IDirectMusicObject_Release(dmo));
 }
@@ -102,13 +113,13 @@ static void test_dswave(void)
     hr = IDirectMusicObject_QueryInterface(dmo, &IID_IPersistStream, (void**)&ps);
     ok(hr == S_OK, "QueryInterface for IID_IPersistStream failed: %08x\n", hr);
     hr = IPersistStream_GetClassID(ps, &class);
-    todo_wine ok(hr == S_OK, "IPersistStream_GetClassID failed: %08x\n", hr);
-    todo_wine ok(IsEqualGUID(&class, &CLSID_DirectSoundWave),
+    ok(hr == S_OK, "IPersistStream_GetClassID failed: %08x\n", hr);
+    ok(IsEqualGUID(&class, &CLSID_DirectSoundWave),
             "Expected class CLSID_DirectSoundWave got %s\n", wine_dbgstr_guid(&class));
 
     /* Unimplemented IPersistStream methods */
     hr = IPersistStream_IsDirty(ps);
-    todo_wine ok(hr == S_FALSE, "IPersistStream_IsDirty failed: %08x\n", hr);
+    ok(hr == S_FALSE, "IPersistStream_IsDirty failed: %08x\n", hr);
     hr = IPersistStream_GetSizeMax(ps, &size);
     ok(hr == E_NOTIMPL, "IPersistStream_GetSizeMax failed: %08x\n", hr);
     hr = IPersistStream_Save(ps, NULL, TRUE);

@@ -49,6 +49,11 @@ static const WCHAR richedit20wW[] = {'R','i','c','h','E','d','i','t','2','0','W'
 
 typedef HRESULT (WINAPI *accessible_create)(HWND, const IID*, void**);
 
+extern HRESULT WINAPI OLEACC_DllGetClassObject(REFCLSID, REFIID, void**) DECLSPEC_HIDDEN;
+extern BOOL WINAPI OLEACC_DllMain(HINSTANCE, DWORD, void*) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI OLEACC_DllRegisterServer(void) DECLSPEC_HIDDEN;
+extern HRESULT WINAPI OLEACC_DllUnregisterServer(void) DECLSPEC_HIDDEN;
+
 static struct {
     const WCHAR *name;
     DWORD idx;
@@ -406,19 +411,34 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason,
             DisableThreadLibraryCalls(hinstDLL);
             break;
     }
-    return TRUE;
+
+    return OLEACC_DllMain(hinstDLL, fdwReason, lpvReserved);
 }
 
 HRESULT WINAPI DllRegisterServer(void)
 {
-    TRACE("()\n");
-    return __wine_register_resources(oleacc_handle);
+    return OLEACC_DllRegisterServer();
 }
 
 HRESULT WINAPI DllUnregisterServer(void)
 {
-    TRACE("()\n");
-    return __wine_unregister_resources(oleacc_handle);
+    return OLEACC_DllUnregisterServer();
+}
+
+HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID iid, void **ppv)
+{
+    if(IsEqualGUID(&CLSID_CAccPropServices, rclsid)) {
+        TRACE("(CLSID_CAccPropServices %s %p)\n", debugstr_guid(iid), ppv);
+        return get_accpropservices_factory(iid, ppv);
+    }
+
+    if(IsEqualGUID(&CLSID_PSFactoryBuffer, rclsid)) {
+        TRACE("(CLSID_PSFactoryBuffer %s %p)\n", debugstr_guid(iid), ppv);
+        return OLEACC_DllGetClassObject(rclsid, iid, ppv);
+    }
+
+    FIXME("%s %s %p: stub\n", debugstr_guid(rclsid), debugstr_guid(iid), ppv);
+    return E_NOTIMPL;
 }
 
 void WINAPI GetOleaccVersionInfo(DWORD* pVersion, DWORD* pBuild)
@@ -567,4 +587,51 @@ UINT WINAPI GetStateTextA(DWORD state_bit, CHAR *state_str, UINT state_str_len)
         CHAR tmp[256];
         return LoadStringA(oleacc_handle, state_id, tmp, sizeof(tmp));
     }
+}
+
+HRESULT WINAPI AccessibleChildren(IAccessible *container,
+        LONG start, LONG count, VARIANT *children, LONG *children_cnt)
+{
+    IEnumVARIANT *ev;
+    LONG i, child_no;
+    HRESULT hr;
+
+    TRACE("%p %d %d %p %p\n", container, start, count, children, children_cnt);
+
+    if(!container || !children || !children_cnt)
+        return E_INVALIDARG;
+
+    for(i=0; i<count; i++)
+        VariantInit(children+i);
+
+    hr = IAccessible_QueryInterface(container, &IID_IEnumVARIANT, (void**)&ev);
+    if(SUCCEEDED(hr)) {
+        hr = IEnumVARIANT_Reset(ev);
+        if(SUCCEEDED(hr))
+            hr = IEnumVARIANT_Skip(ev, start);
+        if(SUCCEEDED(hr))
+            hr = IEnumVARIANT_Next(ev, count, children, (ULONG*)children_cnt);
+        IEnumVARIANT_Release(ev);
+        return hr;
+    }
+
+    hr = IAccessible_get_accChildCount(container, &child_no);
+    if(FAILED(hr))
+        return hr;
+
+    for(i=0; i<count && start+i+1<=child_no; i++) {
+        IDispatch *disp;
+
+        V_VT(children+i) = VT_I4;
+        V_I4(children+i) = start+i+1;
+
+        hr = IAccessible_get_accChild(container, children[i], &disp);
+        if(SUCCEEDED(hr) && disp) {
+            V_VT(children+i) = VT_DISPATCH;
+            V_DISPATCH(children+i) = disp;
+        }
+    }
+
+    *children_cnt = i;
+    return i==count ? S_OK : S_FALSE;
 }

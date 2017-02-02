@@ -22,7 +22,10 @@
 @ stdcall CoFreeLibrary(long)
 @ stdcall CoFreeUnusedLibraries()
 @ stdcall CoFreeUnusedLibrariesEx(long long)
+@ stdcall CoGetActivationState(int128 long ptr)
+@ stdcall CoGetApartmentType(ptr ptr)
 @ stdcall CoGetCallContext(ptr ptr)
+@ stdcall CoGetCallState(long ptr)
 @ stdcall CoGetCallerTID(ptr)
 @ stdcall CoGetClassObject(ptr long ptr ptr ptr)
 @ stdcall CoGetContextToken(ptr)
@@ -124,10 +127,10 @@
 @ stdcall HBITMAP_UserMarshal(ptr ptr ptr)
 @ stdcall HBITMAP_UserSize(ptr long ptr)
 @ stdcall HBITMAP_UserUnmarshal(ptr ptr ptr)
-@ stub HBRUSH_UserFree
-@ stub HBRUSH_UserMarshal
-@ stub HBRUSH_UserSize
-@ stub HBRUSH_UserUnmarshal
+@ stdcall HBRUSH_UserFree(ptr ptr)
+@ stdcall HBRUSH_UserMarshal(ptr ptr ptr)
+@ stdcall HBRUSH_UserSize(ptr long ptr)
+@ stdcall HBRUSH_UserUnmarshal(ptr ptr ptr)
 @ stdcall HDC_UserFree(ptr ptr)
 @ stdcall HDC_UserMarshal(ptr ptr ptr)
 @ stdcall HDC_UserSize(ptr long ptr)
@@ -186,8 +189,8 @@
 @ stub OleCreateEx
 @ stdcall OleCreateFromData(ptr ptr long ptr ptr ptr ptr)
 @ stdcall OleCreateFromDataEx(ptr ptr long long long ptr ptr ptr ptr ptr ptr ptr)
-@ stdcall OleCreateFromFile(ptr ptr ptr long ptr ptr ptr ptr)
-@ stub OleCreateFromFileEx
+@ stdcall OleCreateFromFile(ptr wstr ptr long ptr ptr ptr ptr)
+@ stdcall OleCreateFromFileEx(ptr wstr ptr long long long ptr ptr ptr ptr ptr ptr ptr)
 @ stdcall OleCreateLink(ptr ptr long ptr ptr ptr ptr)
 @ stub OleCreateLinkEx
 @ stdcall OleCreateLinkFromData(ptr ptr long ptr ptr ptr ptr)
@@ -260,12 +263,14 @@
 @ stdcall StgCreateDocfile(wstr long long ptr)
 @ stdcall StgCreateDocfileOnILockBytes(ptr long long ptr)
 @ stdcall StgCreatePropSetStg(ptr long ptr)
+@ stdcall StgCreatePropStg(ptr ptr ptr long long ptr)
 @ stdcall StgCreateStorageEx(wstr long long long ptr ptr ptr ptr)
 @ stub StgGetIFillLockBytesOnFile
 @ stub StgGetIFillLockBytesOnILockBytes
 @ stdcall StgIsStorageFile(wstr)
 @ stdcall StgIsStorageILockBytes(ptr)
 @ stub StgOpenAsyncDocfileOnIFillLockBytes
+@ stdcall StgOpenPropStg(ptr ptr long long ptr)
 @ stdcall StgOpenStorage(wstr ptr long ptr long ptr)
 @ stdcall StgOpenStorageEx(wstr long long long ptr ptr ptr ptr)
 @ stdcall StgOpenStorageOnILockBytes(ptr ptr long long long ptr)

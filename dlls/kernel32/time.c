@@ -39,10 +39,9 @@
 #include <machine/limits.h>
 #endif
 
-#define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
+#define NONAMELESSUNION
 #include "windef.h"
 #include "winbase.h"
 #include "winternl.h"
@@ -283,6 +282,179 @@ static BOOL TIME_GetTimezoneBias( const TIME_ZONE_INFORMATION *pTZinfo,
     return TRUE;
 }
 
+/***********************************************************************
+ *  TIME_GetSpecificTimeZoneKey
+ *
+ *  Opens the registry key for the time zone with the given name.
+ *
+ * PARAMS
+ *  key_name   [in]  The time zone name.
+ *  result     [out] The open registry key handle.
+ *
+ * RETURNS
+ *  TRUE if successful.
+ */
+static BOOL TIME_GetSpecificTimeZoneKey( const WCHAR *key_name, HANDLE *result )
+{
+    static const WCHAR Time_ZonesW[] = { '\\','R','E','G','I','S','T','R','Y','\\',
+        'M','a','c','h','i','n','e','\\',
+        'S','o','f','t','w','a','r','e','\\',
+        'M','i','c','r','o','s','o','f','t','\\',
+        'W','i','n','d','o','w','s',' ','N','T','\\',
+        'C','u','r','r','e','n','t','V','e','r','s','i','o','n','\\',
+        'T','i','m','e',' ','Z','o','n','e','s',0 };
+    HANDLE time_zones_key;
+    OBJECT_ATTRIBUTES attr;
+    UNICODE_STRING nameW;
+    NTSTATUS status;
+
+    attr.Length = sizeof(attr);
+    attr.RootDirectory = 0;
+    attr.ObjectName = &nameW;
+    attr.Attributes = 0;
+    attr.SecurityDescriptor = NULL;
+    attr.SecurityQualityOfService = NULL;
+    RtlInitUnicodeString( &nameW, Time_ZonesW );
+    status = NtOpenKey( &time_zones_key, KEY_READ, &attr );
+    if (status)
+    {
+        WARN("Unable to open the time zones key\n");
+        SetLastError( RtlNtStatusToDosError(status) );
+        return FALSE;
+    }
+
+    attr.RootDirectory = time_zones_key;
+    RtlInitUnicodeString( &nameW, key_name );
+    status = NtOpenKey( result, KEY_READ, &attr );
+
+    NtClose( time_zones_key );
+
+    if (status)
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+static BOOL reg_query_value(HKEY hkey, LPCWSTR name, DWORD type, void *data, DWORD count)
+{
+    UNICODE_STRING nameW;
+    char buf[256];
+    KEY_VALUE_PARTIAL_INFORMATION *info = (KEY_VALUE_PARTIAL_INFORMATION *)buf;
+    NTSTATUS status;
+
+    if (count > sizeof(buf) - sizeof(KEY_VALUE_PARTIAL_INFORMATION))
+        return FALSE;
+
+    RtlInitUnicodeString(&nameW, name);
+
+    if ((status = NtQueryValueKey(hkey, &nameW, KeyValuePartialInformation,
+                                  buf, sizeof(buf), &count)))
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        return FALSE;
+    }
+
+    if (info->Type != type)
+    {
+        SetLastError( ERROR_DATATYPE_MISMATCH );
+        return FALSE;
+    }
+
+    memcpy(data, info->Data, info->DataLength);
+    return TRUE;
+}
+
+/***********************************************************************
+ *  TIME_GetSpecificTimeZoneInfo
+ *
+ *  Returns time zone information for the given time zone and year.
+ *
+ * PARAMS
+ *  key_name   [in]  The time zone name.
+ *  year       [in]  The year, if Dynamic DST is used.
+ *  dynamic    [in]  Whether to use Dynamic DST.
+ *  result     [out] The time zone information.
+ *
+ * RETURNS
+ *  TRUE if successful.
+ */
+static BOOL TIME_GetSpecificTimeZoneInfo( const WCHAR *key_name, WORD year,
+    BOOL dynamic, DYNAMIC_TIME_ZONE_INFORMATION *tzinfo )
+{
+    static const WCHAR Dynamic_DstW[] = { 'D','y','n','a','m','i','c',' ','D','S','T',0 };
+    static const WCHAR fmtW[] = { '%','d',0 };
+    static const WCHAR stdW[] = { 'S','t','d',0 };
+    static const WCHAR dltW[] = { 'D','l','t',0 };
+    static const WCHAR tziW[] = { 'T','Z','I',0 };
+    HANDLE time_zone_key, dynamic_dst_key;
+    OBJECT_ATTRIBUTES attr;
+    UNICODE_STRING nameW;
+    WCHAR yearW[16];
+    BOOL got_reg_data = FALSE;
+    struct tz_reg_data
+    {
+        LONG bias;
+        LONG std_bias;
+        LONG dlt_bias;
+        SYSTEMTIME std_date;
+        SYSTEMTIME dlt_date;
+    } tz_data;
+
+    if (!TIME_GetSpecificTimeZoneKey( key_name, &time_zone_key ))
+        return FALSE;
+
+    if (!reg_query_value( time_zone_key, stdW, REG_SZ, tzinfo->StandardName, sizeof(tzinfo->StandardName)) ||
+        !reg_query_value( time_zone_key, dltW, REG_SZ, tzinfo->DaylightName, sizeof(tzinfo->DaylightName)))
+    {
+        NtClose( time_zone_key );
+        return FALSE;
+    }
+
+    lstrcpyW(tzinfo->TimeZoneKeyName, key_name);
+
+    if (dynamic)
+    {
+        attr.Length = sizeof(attr);
+        attr.RootDirectory = time_zone_key;
+        attr.ObjectName = &nameW;
+        attr.Attributes = 0;
+        attr.SecurityDescriptor = NULL;
+        attr.SecurityQualityOfService = NULL;
+        RtlInitUnicodeString( &nameW, Dynamic_DstW );
+        if (!NtOpenKey( &dynamic_dst_key, KEY_READ, &attr ))
+        {
+            sprintfW( yearW, fmtW, year );
+            got_reg_data = reg_query_value( dynamic_dst_key, yearW, REG_BINARY, &tz_data, sizeof(tz_data) );
+
+            NtClose( dynamic_dst_key );
+        }
+    }
+
+    if (!got_reg_data)
+    {
+        if (!reg_query_value( time_zone_key, tziW, REG_BINARY, &tz_data, sizeof(tz_data) ))
+        {
+            NtClose( time_zone_key );
+            return FALSE;
+        }
+    }
+
+    tzinfo->Bias = tz_data.bias;
+    tzinfo->StandardBias = tz_data.std_bias;
+    tzinfo->DaylightBias = tz_data.dlt_bias;
+    tzinfo->StandardDate = tz_data.std_date;
+    tzinfo->DaylightDate = tz_data.dlt_date;
+
+    tzinfo->DynamicDaylightTimeDisabled = !dynamic;
+
+    NtClose( time_zone_key );
+
+    return TRUE;
+}
+
 
 /***********************************************************************
  *              SetLocalTime            (KERNEL32.@)
@@ -419,6 +591,30 @@ DWORD WINAPI GetTimeZoneInformation( LPTIME_ZONE_INFORMATION tzinfo )
 }
 
 /***********************************************************************
+ *              GetTimeZoneInformationForYear  (KERNEL32.@)
+ */
+BOOL WINAPI GetTimeZoneInformationForYear( USHORT wYear,
+    PDYNAMIC_TIME_ZONE_INFORMATION pdtzi, LPTIME_ZONE_INFORMATION ptzi )
+{
+    DYNAMIC_TIME_ZONE_INFORMATION local_dtzi, result;
+
+    if (!pdtzi)
+    {
+        if (GetDynamicTimeZoneInformation(&local_dtzi) == TIME_ZONE_ID_INVALID)
+            return FALSE;
+        pdtzi = &local_dtzi;
+    }
+
+    if (!TIME_GetSpecificTimeZoneInfo(pdtzi->TimeZoneKeyName, wYear,
+            !pdtzi->DynamicDaylightTimeDisabled, &result))
+        return FALSE;
+
+    memcpy(ptzi, &result, sizeof(*ptzi));
+
+    return TRUE;
+}
+
+/***********************************************************************
  *              SetTimeZoneInformation  (KERNEL32.@)
  *
  *  Change the settings of the current local time zone.
@@ -549,6 +745,21 @@ VOID WINAPI GetSystemTimeAsFileTime(
 }
 
 
+/***********************************************************************
+ *              GetSystemTimePreciseAsFileTime  (KERNEL32.@)
+ *
+ *  Get the current time in utc format, with <1 us precision.
+ *
+ *  RETURNS
+ *   Nothing.
+ */
+VOID WINAPI GetSystemTimePreciseAsFileTime(
+    LPFILETIME time) /* [out] Destination for the current utc time */
+{
+    GetSystemTimeAsFileTime(time);
+}
+
+
 /*********************************************************************
  *      TIME_ClockTimeToFileTime    (olorin@fandra.org, 20-Sep-1998)
  *
@@ -645,6 +856,69 @@ int WINAPI GetCalendarInfoA(LCID lcid, CALID Calendar, CALTYPE CalType,
 int WINAPI GetCalendarInfoW(LCID Locale, CALID Calendar, CALTYPE CalType,
 			    LPWSTR lpCalData, int cchData, LPDWORD lpValue)
 {
+    static const LCTYPE caltype_lctype_map[] = {
+        0, /* not used */
+        0, /* CAL_ICALINTVALUE */
+        0, /* CAL_SCALNAME */
+        0, /* CAL_IYEAROFFSETRANGE */
+        0, /* CAL_SERASTRING */
+        LOCALE_SSHORTDATE,
+        LOCALE_SLONGDATE,
+        LOCALE_SDAYNAME1,
+        LOCALE_SDAYNAME2,
+        LOCALE_SDAYNAME3,
+        LOCALE_SDAYNAME4,
+        LOCALE_SDAYNAME5,
+        LOCALE_SDAYNAME6,
+        LOCALE_SDAYNAME7,
+        LOCALE_SABBREVDAYNAME1,
+        LOCALE_SABBREVDAYNAME2,
+        LOCALE_SABBREVDAYNAME3,
+        LOCALE_SABBREVDAYNAME4,
+        LOCALE_SABBREVDAYNAME5,
+        LOCALE_SABBREVDAYNAME6,
+        LOCALE_SABBREVDAYNAME7,
+        LOCALE_SMONTHNAME1,
+        LOCALE_SMONTHNAME2,
+        LOCALE_SMONTHNAME3,
+        LOCALE_SMONTHNAME4,
+        LOCALE_SMONTHNAME5,
+        LOCALE_SMONTHNAME6,
+        LOCALE_SMONTHNAME7,
+        LOCALE_SMONTHNAME8,
+        LOCALE_SMONTHNAME9,
+        LOCALE_SMONTHNAME10,
+        LOCALE_SMONTHNAME11,
+        LOCALE_SMONTHNAME12,
+        LOCALE_SMONTHNAME13,
+        LOCALE_SABBREVMONTHNAME1,
+        LOCALE_SABBREVMONTHNAME2,
+        LOCALE_SABBREVMONTHNAME3,
+        LOCALE_SABBREVMONTHNAME4,
+        LOCALE_SABBREVMONTHNAME5,
+        LOCALE_SABBREVMONTHNAME6,
+        LOCALE_SABBREVMONTHNAME7,
+        LOCALE_SABBREVMONTHNAME8,
+        LOCALE_SABBREVMONTHNAME9,
+        LOCALE_SABBREVMONTHNAME10,
+        LOCALE_SABBREVMONTHNAME11,
+        LOCALE_SABBREVMONTHNAME12,
+        LOCALE_SABBREVMONTHNAME13,
+        LOCALE_SYEARMONTH,
+        0, /* CAL_ITWODIGITYEARMAX */
+        LOCALE_SSHORTESTDAYNAME1,
+        LOCALE_SSHORTESTDAYNAME2,
+        LOCALE_SSHORTESTDAYNAME3,
+        LOCALE_SSHORTESTDAYNAME4,
+        LOCALE_SSHORTESTDAYNAME5,
+        LOCALE_SSHORTESTDAYNAME6,
+        LOCALE_SSHORTESTDAYNAME7,
+        LOCALE_SMONTHDAY,
+        0, /* CAL_SABBREVERASTRING */
+    };
+    DWORD localeflags = 0;
+    CALTYPE calinfo;
+
     if (CalType & CAL_NOUSEROVERRIDE)
 	FIXME("flag CAL_NOUSEROVERRIDE used, not fully implemented\n");
     if (CalType & CAL_USE_CP_ACP)
@@ -667,108 +941,72 @@ int WINAPI GetCalendarInfoW(LCID Locale, CALID Calendar, CALTYPE CalType,
 
     /* FIXME: No verification is made yet wrt Locale
      * for the CALTYPES not requiring GetLocaleInfoA */
-    switch (CalType & ~(CAL_NOUSEROVERRIDE|CAL_RETURN_NUMBER|CAL_USE_CP_ACP)) {
+
+    calinfo = CalType & 0xffff;
+
+    if (CalType & CAL_RETURN_GENITIVE_NAMES)
+        localeflags |= LOCALE_RETURN_GENITIVE_NAMES;
+
+    switch (calinfo) {
 	case CAL_ICALINTVALUE:
             if (CalType & CAL_RETURN_NUMBER)
                 return GetLocaleInfoW(Locale, LOCALE_RETURN_NUMBER | LOCALE_ICALENDARTYPE,
                         (LPWSTR)lpValue, 2);
             return GetLocaleInfoW(Locale, LOCALE_ICALENDARTYPE, lpCalData, cchData);
 	case CAL_SCALNAME:
-            FIXME("Unimplemented caltype %d\n", CalType & 0xffff);
+            FIXME("Unimplemented caltype %d\n", calinfo);
             if (lpCalData) *lpCalData = 0;
 	    return 1;
 	case CAL_IYEAROFFSETRANGE:
-            FIXME("Unimplemented caltype %d\n", CalType & 0xffff);
+            FIXME("Unimplemented caltype %d\n", calinfo);
 	    return 0;
 	case CAL_SERASTRING:
-            FIXME("Unimplemented caltype %d\n", CalType & 0xffff);
+            FIXME("Unimplemented caltype %d\n", calinfo);
 	    return 0;
 	case CAL_SSHORTDATE:
-	    return GetLocaleInfoW(Locale, LOCALE_SSHORTDATE, lpCalData, cchData);
 	case CAL_SLONGDATE:
-	    return GetLocaleInfoW(Locale, LOCALE_SLONGDATE, lpCalData, cchData);
 	case CAL_SDAYNAME1:
-	    return GetLocaleInfoW(Locale, LOCALE_SDAYNAME1, lpCalData, cchData);
 	case CAL_SDAYNAME2:
-	    return GetLocaleInfoW(Locale, LOCALE_SDAYNAME2, lpCalData, cchData);
 	case CAL_SDAYNAME3:
-	    return GetLocaleInfoW(Locale, LOCALE_SDAYNAME3, lpCalData, cchData);
 	case CAL_SDAYNAME4:
-	    return GetLocaleInfoW(Locale, LOCALE_SDAYNAME4, lpCalData, cchData);
 	case CAL_SDAYNAME5:
-	    return GetLocaleInfoW(Locale, LOCALE_SDAYNAME5, lpCalData, cchData);
 	case CAL_SDAYNAME6:
-	    return GetLocaleInfoW(Locale, LOCALE_SDAYNAME6, lpCalData, cchData);
 	case CAL_SDAYNAME7:
-	    return GetLocaleInfoW(Locale, LOCALE_SDAYNAME7, lpCalData, cchData);
 	case CAL_SABBREVDAYNAME1:
-	    return GetLocaleInfoW(Locale, LOCALE_SABBREVDAYNAME1, lpCalData, cchData);
 	case CAL_SABBREVDAYNAME2:
-	    return GetLocaleInfoW(Locale, LOCALE_SABBREVDAYNAME2, lpCalData, cchData);
 	case CAL_SABBREVDAYNAME3:
-	    return GetLocaleInfoW(Locale, LOCALE_SABBREVDAYNAME3, lpCalData, cchData);
 	case CAL_SABBREVDAYNAME4:
-	    return GetLocaleInfoW(Locale, LOCALE_SABBREVDAYNAME4, lpCalData, cchData);
 	case CAL_SABBREVDAYNAME5:
-	    return GetLocaleInfoW(Locale, LOCALE_SABBREVDAYNAME5, lpCalData, cchData);
 	case CAL_SABBREVDAYNAME6:
-	    return GetLocaleInfoW(Locale, LOCALE_SABBREVDAYNAME6, lpCalData, cchData);
 	case CAL_SABBREVDAYNAME7:
-	    return GetLocaleInfoW(Locale, LOCALE_SABBREVDAYNAME7, lpCalData, cchData);
 	case CAL_SMONTHNAME1:
-	    return GetLocaleInfoW(Locale, LOCALE_SMONTHNAME1, lpCalData, cchData);
 	case CAL_SMONTHNAME2:
-	    return GetLocaleInfoW(Locale, LOCALE_SMONTHNAME2, lpCalData, cchData);
 	case CAL_SMONTHNAME3:
-	    return GetLocaleInfoW(Locale, LOCALE_SMONTHNAME3, lpCalData, cchData);
 	case CAL_SMONTHNAME4:
-	    return GetLocaleInfoW(Locale, LOCALE_SMONTHNAME4, lpCalData, cchData);
 	case CAL_SMONTHNAME5:
-	    return GetLocaleInfoW(Locale, LOCALE_SMONTHNAME5, lpCalData, cchData);
 	case CAL_SMONTHNAME6:
-	    return GetLocaleInfoW(Locale, LOCALE_SMONTHNAME6, lpCalData, cchData);
 	case CAL_SMONTHNAME7:
-	    return GetLocaleInfoW(Locale, LOCALE_SMONTHNAME7, lpCalData, cchData);
 	case CAL_SMONTHNAME8:
-	    return GetLocaleInfoW(Locale, LOCALE_SMONTHNAME8, lpCalData, cchData);
 	case CAL_SMONTHNAME9:
-	    return GetLocaleInfoW(Locale, LOCALE_SMONTHNAME9, lpCalData, cchData);
 	case CAL_SMONTHNAME10:
-	    return GetLocaleInfoW(Locale, LOCALE_SMONTHNAME10, lpCalData, cchData);
 	case CAL_SMONTHNAME11:
-	    return GetLocaleInfoW(Locale, LOCALE_SMONTHNAME11, lpCalData, cchData);
 	case CAL_SMONTHNAME12:
-	    return GetLocaleInfoW(Locale, LOCALE_SMONTHNAME12, lpCalData, cchData);
 	case CAL_SMONTHNAME13:
-	    return GetLocaleInfoW(Locale, LOCALE_SMONTHNAME13, lpCalData, cchData);
 	case CAL_SABBREVMONTHNAME1:
-	    return GetLocaleInfoW(Locale, LOCALE_SABBREVMONTHNAME1, lpCalData, cchData);
 	case CAL_SABBREVMONTHNAME2:
-	    return GetLocaleInfoW(Locale, LOCALE_SABBREVMONTHNAME2, lpCalData, cchData);
 	case CAL_SABBREVMONTHNAME3:
-	    return GetLocaleInfoW(Locale, LOCALE_SABBREVMONTHNAME3, lpCalData, cchData);
 	case CAL_SABBREVMONTHNAME4:
-	    return GetLocaleInfoW(Locale, LOCALE_SABBREVMONTHNAME4, lpCalData, cchData);
 	case CAL_SABBREVMONTHNAME5:
-	    return GetLocaleInfoW(Locale, LOCALE_SABBREVMONTHNAME5, lpCalData, cchData);
 	case CAL_SABBREVMONTHNAME6:
-	    return GetLocaleInfoW(Locale, LOCALE_SABBREVMONTHNAME6, lpCalData, cchData);
 	case CAL_SABBREVMONTHNAME7:
-	    return GetLocaleInfoW(Locale, LOCALE_SABBREVMONTHNAME7, lpCalData, cchData);
 	case CAL_SABBREVMONTHNAME8:
-	    return GetLocaleInfoW(Locale, LOCALE_SABBREVMONTHNAME8, lpCalData, cchData);
 	case CAL_SABBREVMONTHNAME9:
-	    return GetLocaleInfoW(Locale, LOCALE_SABBREVMONTHNAME9, lpCalData, cchData);
 	case CAL_SABBREVMONTHNAME10:
-	    return GetLocaleInfoW(Locale, LOCALE_SABBREVMONTHNAME10, lpCalData, cchData);
 	case CAL_SABBREVMONTHNAME11:
-	    return GetLocaleInfoW(Locale, LOCALE_SABBREVMONTHNAME11, lpCalData, cchData);
 	case CAL_SABBREVMONTHNAME12:
-	    return GetLocaleInfoW(Locale, LOCALE_SABBREVMONTHNAME12, lpCalData, cchData);
 	case CAL_SABBREVMONTHNAME13:
-	    return GetLocaleInfoW(Locale, LOCALE_SABBREVMONTHNAME13, lpCalData, cchData);
 	case CAL_SYEARMONTH:
-	    return GetLocaleInfoW(Locale, LOCALE_SYEARMONTH, lpCalData, cchData);
+            return GetLocaleInfoW(Locale, caltype_lctype_map[calinfo] | localeflags, lpCalData, cchData);
 	case CAL_ITWODIGITYEARMAX:
             if (CalType & CAL_RETURN_NUMBER)
             {
@@ -791,7 +1029,7 @@ int WINAPI GetCalendarInfoW(LCID Locale, CALID Calendar, CALTYPE CalType,
             }
 	    break;
 	default:
-            FIXME("Unknown caltype %d\n",CalType & 0xffff);
+            FIXME("Unknown caltype %d\n", calinfo);
             SetLastError(ERROR_INVALID_FLAGS);
             return 0;
     }
@@ -1090,19 +1328,95 @@ BOOL WINAPI FileTimeToDosDateTime( const FILETIME *ft, LPWORD fatdate,
  */
 BOOL WINAPI GetSystemTimes(LPFILETIME lpIdleTime, LPFILETIME lpKernelTime, LPFILETIME lpUserTime)
 {
-    FIXME("(%p,%p,%p): Stub!\n", lpIdleTime, lpKernelTime, lpUserTime);
+    LARGE_INTEGER idle_time, kernel_time, user_time;
+    SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION *sppi;
+    SYSTEM_BASIC_INFORMATION sbi;
+    NTSTATUS status;
+    ULONG ret_size;
+    int i;
 
-    return FALSE;
+    TRACE("(%p,%p,%p)\n", lpIdleTime, lpKernelTime, lpUserTime);
+
+    status = NtQuerySystemInformation( SystemBasicInformation, &sbi, sizeof(sbi), &ret_size );
+    if (status != STATUS_SUCCESS)
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        return FALSE;
+    }
+
+    sppi = HeapAlloc( GetProcessHeap(), 0,
+                      sizeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION) * sbi.NumberOfProcessors);
+    if (!sppi)
+    {
+        SetLastError( ERROR_OUTOFMEMORY );
+        return FALSE;
+    }
+
+    status = NtQuerySystemInformation( SystemProcessorPerformanceInformation, sppi, sizeof(*sppi) * sbi.NumberOfProcessors,
+                                       &ret_size );
+    if (status != STATUS_SUCCESS)
+    {
+        HeapFree( GetProcessHeap(), 0, sppi );
+        SetLastError( RtlNtStatusToDosError(status) );
+        return FALSE;
+    }
+
+    idle_time.QuadPart = 0;
+    kernel_time.QuadPart = 0;
+    user_time.QuadPart = 0;
+    for (i = 0; i < sbi.NumberOfProcessors; i++)
+    {
+        idle_time.QuadPart += sppi[i].IdleTime.QuadPart;
+        kernel_time.QuadPart += sppi[i].KernelTime.QuadPart;
+        user_time.QuadPart += sppi[i].UserTime.QuadPart;
+    }
+
+    if (lpIdleTime)
+    {
+        lpIdleTime->dwLowDateTime = idle_time.u.LowPart;
+        lpIdleTime->dwHighDateTime = idle_time.u.HighPart;
+    }
+    if (lpKernelTime)
+    {
+        lpKernelTime->dwLowDateTime = kernel_time.u.LowPart;
+        lpKernelTime->dwHighDateTime = kernel_time.u.HighPart;
+    }
+    if (lpUserTime)
+    {
+        lpUserTime->dwLowDateTime = user_time.u.LowPart;
+        lpUserTime->dwHighDateTime = user_time.u.HighPart;
+    }
+
+    HeapFree( GetProcessHeap(), 0, sppi );
+    return TRUE;
 }
 
 /***********************************************************************
  *           GetDynamicTimeZoneInformation   (KERNEL32.@)
  */
-DWORD WINAPI GetDynamicTimeZoneInformation(PDYNAMIC_TIME_ZONE_INFORMATION info)
+DWORD WINAPI GetDynamicTimeZoneInformation(DYNAMIC_TIME_ZONE_INFORMATION *tzinfo)
 {
-    FIXME("(%p) stub!\n", info);
+    NTSTATUS status;
+
+    status = RtlQueryDynamicTimeZoneInformation( (RTL_DYNAMIC_TIME_ZONE_INFORMATION*)tzinfo );
+    if ( status != STATUS_SUCCESS )
+    {
+        SetLastError( RtlNtStatusToDosError(status) );
+        return TIME_ZONE_ID_INVALID;
+    }
+    return TIME_ZoneID( (TIME_ZONE_INFORMATION*)tzinfo );
+}
+
+/***********************************************************************
+ *           QueryThreadCycleTime   (KERNEL32.@)
+ */
+BOOL WINAPI QueryThreadCycleTime(HANDLE thread, PULONG64 cycle)
+{
+    static int once;
+    if (!once++)
+        FIXME("(%p,%p): stub!\n", thread, cycle);
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-    return TIME_ZONE_ID_INVALID;
+    return FALSE;
 }
 
 /***********************************************************************

@@ -21,12 +21,15 @@
 #ifndef __WINE_MSCTF_I_H
 #define __WINE_MSCTF_I_H
 
+#include "wine/list.h"
+
 #define COOKIE_MAGIC_TMSINK  0x0010
 #define COOKIE_MAGIC_CONTEXTSINK 0x0020
 #define COOKIE_MAGIC_GUIDATOM 0x0030
 #define COOKIE_MAGIC_IPPSINK 0x0040
 #define COOKIE_MAGIC_EDITCOOKIE 0x0050
 #define COOKIE_MAGIC_COMPARTMENTSINK 0x0060
+#define COOKIE_MAGIC_DMSINK 0x0070
 
 extern DWORD tlsIndex DECLSPEC_HIDDEN;
 extern TfClientId processId DECLSPEC_HIDDEN;
@@ -58,13 +61,36 @@ extern DWORD enumerate_Cookie(DWORD magic, DWORD *index) DECLSPEC_HIDDEN;
 /* activated text services functions */
 extern HRESULT add_active_textservice(TF_LANGUAGEPROFILE *lp) DECLSPEC_HIDDEN;
 extern BOOL get_active_textservice(REFCLSID rclsid, TF_LANGUAGEPROFILE *lp) DECLSPEC_HIDDEN;
-extern HRESULT activate_textservices(ITfThreadMgr *tm) DECLSPEC_HIDDEN;
+extern HRESULT activate_textservices(ITfThreadMgrEx *tm) DECLSPEC_HIDDEN;
 extern HRESULT deactivate_textservices(void) DECLSPEC_HIDDEN;
 
 extern CLSID get_textservice_clsid(TfClientId tid) DECLSPEC_HIDDEN;
 extern HRESULT get_textservice_sink(TfClientId tid, REFCLSID iid, IUnknown** sink) DECLSPEC_HIDDEN;
 extern HRESULT set_textservice_sink(TfClientId tid, REFCLSID iid, IUnknown* sink) DECLSPEC_HIDDEN;
 
-extern const WCHAR szwSystemTIPKey[];
-extern const WCHAR szwSystemCTFKey[];
+typedef struct {
+    struct list entry;
+    union {
+        IUnknown *pIUnknown;
+        ITfThreadMgrEventSink *pITfThreadMgrEventSink;
+        ITfCompartmentEventSink *pITfCompartmentEventSink;
+        ITfTextEditSink *pITfTextEditSink;
+        ITfLanguageProfileNotifySink *pITfLanguageProfileNotifySink;
+        ITfTransitoryExtensionSink *pITfTransitoryExtensionSink;
+    } interfaces;
+} Sink;
+
+#define SINK_ENTRY(cursor,type) (LIST_ENTRY(cursor,Sink,entry)->interfaces.p##type)
+#define SINK_FOR_EACH(cursor,list,type,elem) \
+    for ((cursor) = (list)->next, elem = SINK_ENTRY(cursor,type); \
+         (cursor) != (list); \
+         (cursor) = (cursor)->next, elem = SINK_ENTRY(cursor,type))
+
+HRESULT advise_sink(struct list *sink_list, REFIID riid, DWORD cookie_magic, IUnknown *unk, DWORD *cookie) DECLSPEC_HIDDEN;
+HRESULT unadvise_sink(DWORD cookie) DECLSPEC_HIDDEN;
+void free_sinks(struct list *sink_list) DECLSPEC_HIDDEN;
+
+extern const WCHAR szwSystemTIPKey[] DECLSPEC_HIDDEN;
+extern const WCHAR szwSystemCTFKey[] DECLSPEC_HIDDEN;
+
 #endif /* __WINE_MSCTF_I_H */

@@ -183,7 +183,7 @@ static BOOL queue_timer(thread_data_t *thread_data, task_timer_t *timer)
     return FALSE;
 }
 
-HRESULT set_task_timer(HTMLInnerWindow *window, DWORD msec, BOOL interval, IDispatch *disp, LONG *id)
+HRESULT set_task_timer(HTMLInnerWindow *window, LONG msec, BOOL interval, IDispatch *disp, LONG *id)
 {
     thread_data_t *thread_data;
     task_timer_t *timer;
@@ -198,6 +198,9 @@ HRESULT set_task_timer(HTMLInnerWindow *window, DWORD msec, BOOL interval, IDisp
     timer = heap_alloc(sizeof(task_timer_t));
     if(!timer)
         return E_OUTOFMEMORY;
+
+    if(msec < 1)
+        msec = 1;
 
     timer->id = id_cnt++;
     timer->window = window;
@@ -215,7 +218,7 @@ HRESULT set_task_timer(HTMLInnerWindow *window, DWORD msec, BOOL interval, IDisp
     return S_OK;
 }
 
-HRESULT clear_task_timer(HTMLInnerWindow *window, BOOL interval, DWORD id)
+HRESULT clear_task_timer(HTMLInnerWindow *window, DWORD id)
 {
     thread_data_t *thread_data = get_thread_data(FALSE);
     task_timer_t *iter;
@@ -224,7 +227,7 @@ HRESULT clear_task_timer(HTMLInnerWindow *window, BOOL interval, DWORD id)
         return S_OK;
 
     LIST_FOR_EACH_ENTRY(iter, &thread_data->timer_list, task_timer_t, entry) {
-        if(iter->id == id && iter->window == window && !iter->interval == !interval) {
+        if(iter->id == id && iter->window == window) {
             release_task_timer(thread_data->thread_hwnd, iter);
             return S_OK;
         }

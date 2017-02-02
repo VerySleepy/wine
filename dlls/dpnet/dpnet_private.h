@@ -26,6 +26,8 @@
 #endif
 
 #include <wine/list.h>
+#include "winsock2.h"
+#include "wine/unicode.h"
 
 #include "dplay8.h"
 #include "dplobby8.h"
@@ -55,6 +57,9 @@ struct IDirectPlay8ClientImpl
     PFNDPNMESSAGEHANDLER msghandler;
     DWORD flags;
     void *usercontext;
+    WCHAR *username;
+    void  *data;
+    DWORD datasize;
 
     DPN_SP_CAPS spcaps;
 };
@@ -91,7 +96,9 @@ struct IDirectPlay8AddressImpl
     GUID SP_guid;
     BOOL init;
 
-    struct list components;
+    struct component **components;
+    DWORD comp_count;
+    DWORD comp_array_size;
 };
 
 /*****************************************************************************
@@ -129,6 +136,7 @@ extern HRESULT DPNET_CreateDirectPlay8ThreadPool(LPCLASSFACTORY iface, LPUNKNOWN
 extern HRESULT DPNET_CreateDirectPlay8LobbyClient(IClassFactory *iface, IUnknown *pUnkOuter, REFIID riid, void **ppobj) DECLSPEC_HIDDEN;
 
 extern void init_dpn_sp_caps(DPN_SP_CAPS *dpnspcaps) DECLSPEC_HIDDEN;
+extern void init_winsock(void) DECLSPEC_HIDDEN;
 
 /* used for generic dumping (copied from ddraw) */
 typedef struct {
@@ -144,6 +152,27 @@ typedef struct {
 #define FE(x) { x, #x }	
 #define GE(x) { &x, #x }
 
+static inline void *heap_alloc( size_t len )
+{
+    return HeapAlloc( GetProcessHeap(), 0, len );
+}
 
+static inline void *heap_realloc(void *mem, size_t len)
+{
+    return HeapReAlloc( GetProcessHeap(), 0, mem, len);
+}
+
+static inline BOOL heap_free( void *mem )
+{
+    return HeapFree( GetProcessHeap(), 0, mem );
+}
+
+static inline WCHAR *heap_strdupW( const WCHAR *src )
+{
+    WCHAR *dst;
+    if (!src) return NULL;
+    if ((dst = heap_alloc( (strlenW( src ) + 1) * sizeof(WCHAR) ))) strcpyW( dst, src );
+    return dst;
+}
 
 #endif

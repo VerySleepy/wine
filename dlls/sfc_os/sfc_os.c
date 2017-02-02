@@ -25,6 +25,7 @@
 #include "winerror.h"
 #include "winreg.h"
 #include "sfc.h"
+#include "srrestoreptapi.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(sfc);
@@ -46,6 +47,15 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
             break;
     }
     return TRUE;
+}
+
+/******************************************************************
+ *      SfcGetNextProtectedFile     [sfc_os.@]
+ */
+BOOL WINAPI SfcGetNextProtectedFile(HANDLE handle, PROTECTED_FILE_DATA *data)
+{
+    FIXME("%p %p\n", handle, data);
+    return FALSE;
 }
 
 /******************************************************************
@@ -121,5 +131,25 @@ BOOL WINAPI SfcIsKeyProtected(HKEY hKey, LPCWSTR lpSubKey, REGSAM samDesired)
     }
 
     SetLastError(ERROR_FILE_NOT_FOUND);
+    return FALSE;
+}
+
+DWORD WINAPI SfcConnectToServer(DWORD unknown)
+{
+    FIXME("%x\n", unknown);
+    return 0;
+}
+
+BOOL WINAPI SRSetRestorePointA(RESTOREPOINTINFOA *restorepoint, STATEMGRSTATUS *status)
+{
+    FIXME("%p %p\n", restorepoint, status);
+    status->nStatus = ERROR_SUCCESS;
+    return FALSE;
+}
+
+BOOL WINAPI SRSetRestorePointW(RESTOREPOINTINFOW *restorepoint, STATEMGRSTATUS *status)
+{
+    FIXME("%p %p\n", restorepoint, status);
+    status->nStatus = ERROR_SUCCESS;
     return FALSE;
 }

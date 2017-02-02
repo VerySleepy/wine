@@ -40,12 +40,6 @@ WINE_DEFAULT_DEBUG_CHANNEL(clipboard);
  *              Types
  **************************************************************************/
 
-typedef struct
-{
-    HWND hwnd_owner;
-    UINT flags;
-} CLIPBOARDINFO, *LPCLIPBOARDINFO;
-
 typedef HANDLE (*DRVIMPORTFUNC)(CFDataRef data);
 typedef CFDataRef (*DRVEXPORTFUNC)(HANDLE data);
 
@@ -65,6 +59,8 @@ typedef struct _WINE_CLIPFORMAT
  *              Constants
  **************************************************************************/
 
+#define CLIPBOARD_UPDATE_DELAY 2000   /* delay between checks of the Mac pasteboard */
+
 
 /**************************************************************************
  *              Forward Function Declarations
@@ -74,21 +70,11 @@ static HANDLE import_clipboard_data(CFDataRef data);
 static HANDLE import_bmp_to_bitmap(CFDataRef data);
 static HANDLE import_bmp_to_dib(CFDataRef data);
 static HANDLE import_enhmetafile(CFDataRef data);
-static HANDLE import_enhmetafile_to_metafilepict(CFDataRef data);
+static HANDLE import_html(CFDataRef data);
 static HANDLE import_metafilepict(CFDataRef data);
-static HANDLE import_metafilepict_to_enhmetafile(CFDataRef data);
 static HANDLE import_nsfilenames_to_hdrop(CFDataRef data);
-static HANDLE import_oemtext_to_text(CFDataRef data);
-static HANDLE import_oemtext_to_unicodetext(CFDataRef data);
-static HANDLE import_text_to_oemtext(CFDataRef data);
-static HANDLE import_text_to_unicodetext(CFDataRef data);
-static HANDLE import_unicodetext_to_oemtext(CFDataRef data);
-static HANDLE import_unicodetext_to_text(CFDataRef data);
-static HANDLE import_utf8_to_oemtext(CFDataRef data);
 static HANDLE import_utf8_to_text(CFDataRef data);
 static HANDLE import_utf8_to_unicodetext(CFDataRef data);
-static HANDLE import_utf16_to_oemtext(CFDataRef data);
-static HANDLE import_utf16_to_text(CFDataRef data);
 static HANDLE import_utf16_to_unicodetext(CFDataRef data);
 
 static CFDataRef export_clipboard_data(HANDLE data);
@@ -96,11 +82,9 @@ static CFDataRef export_bitmap_to_bmp(HANDLE data);
 static CFDataRef export_dib_to_bmp(HANDLE data);
 static CFDataRef export_enhmetafile(HANDLE data);
 static CFDataRef export_hdrop_to_filenames(HANDLE data);
+static CFDataRef export_html(HANDLE data);
 static CFDataRef export_metafilepict(HANDLE data);
-static CFDataRef export_oemtext_to_utf8(HANDLE data);
-static CFDataRef export_oemtext_to_utf16(HANDLE data);
 static CFDataRef export_text_to_utf8(HANDLE data);
-static CFDataRef export_text_to_utf16(HANDLE data);
 static CFDataRef export_unicodetext_to_utf8(HANDLE data);
 static CFDataRef export_unicodetext_to_utf16(HANDLE data);
 
@@ -158,55 +142,30 @@ static const struct
     BOOL          synthesized;
 } builtin_format_ids[] =
 {
+    { CF_BITMAP,            CFSTR("org.winehq.builtin.bitmap"),             import_bmp_to_bitmap,           export_bitmap_to_bmp,       FALSE },
     { CF_DIBV5,             CFSTR("org.winehq.builtin.dibv5"),              import_clipboard_data,          export_clipboard_data,      FALSE },
     { CF_DIF,               CFSTR("org.winehq.builtin.dif"),                import_clipboard_data,          export_clipboard_data,      FALSE },
-    { CF_DSPBITMAP,         CFSTR("org.winehq.builtin.dspbitmap"),          import_clipboard_data,          export_clipboard_data,      FALSE },
-    { CF_DSPENHMETAFILE,    CFSTR("org.winehq.builtin.dspenhmetafile"),     import_clipboard_data,          export_clipboard_data,      FALSE },
-    { CF_DSPMETAFILEPICT,   CFSTR("org.winehq.builtin.dspmetafilepict"),    import_clipboard_data,          export_clipboard_data,      FALSE },
-    { CF_DSPTEXT,           CFSTR("org.winehq.builtin.dsptext"),            import_clipboard_data,          export_clipboard_data,      FALSE },
+    { CF_ENHMETAFILE,       CFSTR("org.winehq.builtin.enhmetafile"),        import_enhmetafile,             export_enhmetafile,         FALSE },
     { CF_LOCALE,            CFSTR("org.winehq.builtin.locale"),             import_clipboard_data,          export_clipboard_data,      FALSE },
-    { CF_OWNERDISPLAY,      CFSTR("org.winehq.builtin.ownerdisplay"),       import_clipboard_data,          export_clipboard_data,      FALSE },
+    { CF_METAFILEPICT,      CFSTR("org.winehq.builtin.metafilepict"),       import_metafilepict,            export_metafilepict,        FALSE },
+    { CF_OEMTEXT,           CFSTR("org.winehq.builtin.oemtext"),            import_clipboard_data,          export_clipboard_data,      FALSE },
     { CF_PALETTE,           CFSTR("org.winehq.builtin.palette"),            import_clipboard_data,          export_clipboard_data,      FALSE },
     { CF_PENDATA,           CFSTR("org.winehq.builtin.pendata"),            import_clipboard_data,          export_clipboard_data,      FALSE },
     { CF_RIFF,              CFSTR("org.winehq.builtin.riff"),               import_clipboard_data,          export_clipboard_data,      FALSE },
     { CF_SYLK,              CFSTR("org.winehq.builtin.sylk"),               import_clipboard_data,          export_clipboard_data,      FALSE },
+    { CF_TEXT,              CFSTR("org.winehq.builtin.text"),               import_clipboard_data,          export_clipboard_data,      FALSE },
     { CF_TIFF,              CFSTR("public.tiff"),                           import_clipboard_data,          export_clipboard_data,      FALSE },
     { CF_WAVE,              CFSTR("com.microsoft.waveform-audio"),          import_clipboard_data,          export_clipboard_data,      FALSE },
-
-    { CF_UNICODETEXT,       CFSTR("org.winehq.builtin.unicodetext"),        import_clipboard_data,          export_clipboard_data,      FALSE },
-    { CF_TEXT,              CFSTR("org.winehq.builtin.unicodetext"),        import_unicodetext_to_text,     NULL,                       TRUE },
-    { CF_OEMTEXT,           CFSTR("org.winehq.builtin.unicodetext"),        import_unicodetext_to_oemtext,  NULL,                       TRUE },
-
-    { CF_TEXT,              CFSTR("org.winehq.builtin.text"),               import_clipboard_data,          export_clipboard_data,      FALSE },
-    { CF_OEMTEXT,           CFSTR("org.winehq.builtin.text"),               import_text_to_oemtext,         NULL,                       TRUE },
-    { CF_UNICODETEXT,       CFSTR("org.winehq.builtin.text"),               import_text_to_unicodetext,     NULL,                       TRUE },
-
-    { CF_OEMTEXT,           CFSTR("org.winehq.builtin.oemtext"),            import_clipboard_data,          export_clipboard_data,      FALSE },
-    { CF_TEXT,              CFSTR("org.winehq.builtin.oemtext"),            import_oemtext_to_text,         NULL,                       TRUE },
-    { CF_UNICODETEXT,       CFSTR("org.winehq.builtin.oemtext"),            import_oemtext_to_unicodetext,  NULL,                       TRUE },
-
-    { CF_TEXT,              CFSTR("public.utf8-plain-text"),                import_utf8_to_text,            export_text_to_utf8,        TRUE },
-    { CF_OEMTEXT,           CFSTR("public.utf8-plain-text"),                import_utf8_to_oemtext,         export_oemtext_to_utf8,     TRUE },
-    { CF_UNICODETEXT,       CFSTR("public.utf8-plain-text"),                import_utf8_to_unicodetext,     export_unicodetext_to_utf8, TRUE },
-
-    { CF_TEXT,              CFSTR("public.utf16-plain-text"),                import_utf16_to_text,          export_text_to_utf16,       TRUE },
-    { CF_OEMTEXT,           CFSTR("public.utf16-plain-text"),                import_utf16_to_oemtext,       export_oemtext_to_utf16,    TRUE },
-    { CF_UNICODETEXT,       CFSTR("public.utf16-plain-text"),                import_utf16_to_unicodetext,   export_unicodetext_to_utf16,TRUE },
 
     { CF_DIB,               CFSTR("org.winehq.builtin.dib"),                import_clipboard_data,          export_clipboard_data,      FALSE },
     { CF_DIB,               CFSTR("com.microsoft.bmp"),                     import_bmp_to_dib,              export_dib_to_bmp,          TRUE },
 
-    { CF_BITMAP,            CFSTR("org.winehq.builtin.bitmap"),             import_bmp_to_bitmap,           export_bitmap_to_bmp,       FALSE },
-    { CF_BITMAP,            CFSTR("com.microsoft.bmp"),                     import_bmp_to_bitmap,           export_bitmap_to_bmp,       TRUE },
-
     { CF_HDROP,             CFSTR("org.winehq.builtin.hdrop"),              import_clipboard_data,          export_clipboard_data,      FALSE },
     { CF_HDROP,             CFSTR("NSFilenamesPboardType"),                 import_nsfilenames_to_hdrop,    export_hdrop_to_filenames,  TRUE },
 
-    { CF_ENHMETAFILE,       CFSTR("org.winehq.builtin.enhmetafile"),        import_enhmetafile,                 export_enhmetafile,     FALSE },
-    { CF_METAFILEPICT,      CFSTR("org.winehq.builtin.enhmetafile"),        import_enhmetafile_to_metafilepict, NULL,                   TRUE },
-
-    { CF_METAFILEPICT,      CFSTR("org.winehq.builtin.metafilepict"),       import_metafilepict,                export_metafilepict,    FALSE },
-    { CF_ENHMETAFILE,       CFSTR("org.winehq.builtin.metafilepict"),       import_metafilepict_to_enhmetafile, NULL,                   TRUE },
+    { CF_UNICODETEXT,       CFSTR("org.winehq.builtin.unicodetext"),        import_clipboard_data,          export_clipboard_data,      FALSE },
+    { CF_UNICODETEXT,       CFSTR("public.utf16-plain-text"),               import_utf16_to_unicodetext,    export_unicodetext_to_utf16,TRUE },
+    { CF_UNICODETEXT,       CFSTR("public.utf8-plain-text"),                import_utf8_to_unicodetext,     export_unicodetext_to_utf8, TRUE },
 };
 
 static const WCHAR wszRichTextFormat[] = {'R','i','c','h',' ','T','e','x','t',' ','F','o','r','m','a','t',0};
@@ -220,18 +179,30 @@ static const struct
     CFStringRef   type;
     DRVIMPORTFUNC import;
     DRVEXPORTFUNC export;
+    BOOL          synthesized;
 } builtin_format_names[] =
 {
     { wszRichTextFormat,    CFSTR("public.rtf"),                            import_clipboard_data,          export_clipboard_data },
     { wszGIF,               CFSTR("com.compuserve.gif"),                    import_clipboard_data,          export_clipboard_data },
     { wszJFIF,              CFSTR("public.jpeg"),                           import_clipboard_data,          export_clipboard_data },
     { wszPNG,               CFSTR("public.png"),                            import_clipboard_data,          export_clipboard_data },
-    { wszHTMLFormat,        CFSTR("public.html"),                           import_clipboard_data,          export_clipboard_data },
+    { wszHTMLFormat,        NULL,                                           import_clipboard_data,          export_clipboard_data },
+    { wszHTMLFormat,        CFSTR("public.html"),                           import_html,                    export_html,            TRUE },
     { CFSTR_SHELLURLW,      CFSTR("public.url"),                            import_utf8_to_text,            export_text_to_utf8 },
 };
 
 /* The prefix prepended to a Win32 clipboard format name to make a Mac pasteboard type. */
 static const CFStringRef registered_name_type_prefix = CFSTR("org.winehq.registered.");
+
+static DWORD clipboard_thread_id;
+static HWND clipboard_hwnd;
+static BOOL is_clipboard_owner;
+static macdrv_window clipboard_cocoa_window;
+static UINT rendered_formats;
+static ULONG64 last_clipboard_update;
+static WINE_CLIPFORMAT **current_mac_formats;
+static unsigned int nb_current_mac_formats;
+static WCHAR clipboard_pipe_name[256];
 
 
 /**************************************************************************
@@ -347,55 +318,6 @@ static WINE_CLIPFORMAT* register_format(UINT id, CFStringRef type)
 
 
 /**************************************************************************
- *              format_for_type
- */
-static WINE_CLIPFORMAT* format_for_type(WINE_CLIPFORMAT *current, CFStringRef type)
-{
-    struct list *ptr = current ? &current->entry : &format_list;
-    WINE_CLIPFORMAT *format = NULL;
-
-    TRACE("current %p/%s type %s\n", current, debugstr_format(current ? current->format_id : 0), debugstr_cf(type));
-
-    while ((ptr = list_next(&format_list, ptr)))
-    {
-        format = LIST_ENTRY(ptr, WINE_CLIPFORMAT, entry);
-        if (CFEqual(format->type, type))
-            goto done;
-    }
-
-    format = NULL;
-    if (!current)
-    {
-        if (CFStringHasPrefix(type, CFSTR("org.winehq.builtin.")))
-        {
-            ERR("Shouldn't happen. Built-in type %s should have matched something in format list.\n",
-                debugstr_cf(type));
-        }
-        else if (CFStringHasPrefix(type, registered_name_type_prefix))
-        {
-            LPWSTR name;
-            int len = CFStringGetLength(type) - CFStringGetLength(registered_name_type_prefix);
-
-            name = HeapAlloc(GetProcessHeap(), 0, (len + 1) * sizeof(WCHAR));
-            CFStringGetCharacters(type, CFRangeMake(CFStringGetLength(registered_name_type_prefix), len),
-                                  (UniChar*)name);
-            name[len] = 0;
-
-            format = register_format(RegisterClipboardFormatW(name), type);
-            if (!format)
-                ERR("Failed to register format for type %s name %s\n", debugstr_cf(type), debugstr_w(name));
-
-            HeapFree(GetProcessHeap(), 0, name);
-        }
-    }
-
-done:
-    TRACE(" -> %p/%s\n", format, debugstr_format(format ? format->format_id : 0));
-    return format;
-}
-
-
-/**************************************************************************
  *              natural_format_for_format
  *
  * Find the "natural" format for this format_id (the one which isn't
@@ -417,83 +339,98 @@ static WINE_CLIPFORMAT* natural_format_for_format(UINT format_id)
 
 
 /**************************************************************************
- *              convert_text
- *
- *  Convert string data between code pages or to/from wide characters.  The
- *  special value of (UINT)-1 for a code page indicates to use wide
- *  characters.
+ *              register_builtin_formats
  */
-static HANDLE convert_text(const void *src, int src_len, UINT src_cp, UINT dest_cp)
+static void register_builtin_formats(void)
 {
-    HANDLE ret = NULL;
-    const WCHAR *wstr;
-    int wstr_len;
-    HANDLE handle;
-    char *p;
+    UINT i;
+    WINE_CLIPFORMAT *format;
 
-    if (src_cp == (UINT)-1)
+    /* Register built-in formats */
+    for (i = 0; i < sizeof(builtin_format_ids)/sizeof(builtin_format_ids[0]); i++)
     {
-        wstr = src;
-        wstr_len = src_len / sizeof(WCHAR);
-    }
-    else
-    {
-        WCHAR *temp;
-
-        wstr_len = MultiByteToWideChar(src_cp, 0, src, src_len, NULL, 0);
-        if (!src_len || ((const char*)src)[src_len - 1]) wstr_len += 1;
-        temp = HeapAlloc(GetProcessHeap(), 0, wstr_len * sizeof(WCHAR));
-        MultiByteToWideChar(src_cp, 0, src, src_len, temp, wstr_len);
-        temp[wstr_len - 1] = 0;
-        wstr = temp;
+        if (!(format = HeapAlloc(GetProcessHeap(), 0, sizeof(*format)))) break;
+        format->format_id       = builtin_format_ids[i].id;
+        format->type            = CFRetain(builtin_format_ids[i].type);
+        format->import_func     = builtin_format_ids[i].import;
+        format->export_func     = builtin_format_ids[i].export;
+        format->synthesized     = builtin_format_ids[i].synthesized;
+        format->natural_format  = NULL;
+        list_add_tail(&format_list, &format->entry);
     }
 
-    if (dest_cp == (UINT)-1)
+    /* Register known mappings between Windows formats and Mac types */
+    for (i = 0; i < sizeof(builtin_format_names)/sizeof(builtin_format_names[0]); i++)
     {
-        handle = GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, wstr_len * sizeof(WCHAR));
-        if (handle && (p = GlobalLock(handle)))
+        if (!(format = HeapAlloc(GetProcessHeap(), 0, sizeof(*format)))) break;
+        format->format_id       = RegisterClipboardFormatW(builtin_format_names[i].name);
+        format->import_func     = builtin_format_names[i].import;
+        format->export_func     = builtin_format_names[i].export;
+        format->synthesized     = builtin_format_names[i].synthesized;
+        format->natural_format  = NULL;
+
+        if (builtin_format_names[i].type)
+            format->type = CFRetain(builtin_format_names[i].type);
+        else
         {
-            memcpy(p, wstr, wstr_len * sizeof(WCHAR));
-            GlobalUnlock(handle);
-            ret = handle;
+            format->type = CFStringCreateWithFormat(NULL, NULL, CFSTR("%@%S"),
+                                                    registered_name_type_prefix, builtin_format_names[i].name);
         }
+
+        list_add_tail(&format_list, &format->entry);
     }
-    else
+
+    LIST_FOR_EACH_ENTRY(format, &format_list, WINE_CLIPFORMAT, entry)
     {
-        INT len;
-
-        len = WideCharToMultiByte(dest_cp, 0, wstr, wstr_len, NULL, 0, NULL, NULL);
-        if (!wstr_len || wstr[wstr_len - 1]) len += 1;
-        handle = GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, len);
-
-        if (handle && (p = GlobalLock(handle)))
-        {
-            WideCharToMultiByte(dest_cp, 0, wstr, wstr_len, p, len, NULL, NULL);
-            p[len - 1] = 0;
-            GlobalUnlock(handle);
-            ret = handle;
-        }
+        if (format->synthesized)
+            format->natural_format = natural_format_for_format(format->format_id);
     }
-
-    return ret;
 }
 
 
 /**************************************************************************
- *              convert_unicodetext_to_codepage
+ *              format_for_type
  */
-static HANDLE convert_unicodetext_to_codepage(HANDLE unicode_handle, UINT cp)
+static WINE_CLIPFORMAT* format_for_type(CFStringRef type)
 {
-    LPWSTR unicode_string = GlobalLock(unicode_handle);
-    HANDLE ret = NULL;
+    WINE_CLIPFORMAT *format;
 
-    if (unicode_string)
+    TRACE("type %s\n", debugstr_cf(type));
+
+    if (list_empty(&format_list)) register_builtin_formats();
+
+    LIST_FOR_EACH_ENTRY(format, &format_list, WINE_CLIPFORMAT, entry)
     {
-        ret = convert_text(unicode_string, GlobalSize(unicode_handle), -1, cp);
-        GlobalUnlock(unicode_handle);
+        if (CFEqual(format->type, type))
+            goto done;
     }
 
-    return ret;
+    format = NULL;
+    if (CFStringHasPrefix(type, CFSTR("org.winehq.builtin.")))
+    {
+        ERR("Shouldn't happen. Built-in type %s should have matched something in format list.\n",
+            debugstr_cf(type));
+    }
+    else if (CFStringHasPrefix(type, registered_name_type_prefix))
+    {
+        LPWSTR name;
+        int len = CFStringGetLength(type) - CFStringGetLength(registered_name_type_prefix);
+
+        name = HeapAlloc(GetProcessHeap(), 0, (len + 1) * sizeof(WCHAR));
+        CFStringGetCharacters(type, CFRangeMake(CFStringGetLength(registered_name_type_prefix), len),
+                              (UniChar*)name);
+        name[len] = 0;
+
+        format = register_format(RegisterClipboardFormatW(name), type);
+        if (!format)
+            ERR("Failed to register format for type %s name %s\n", debugstr_cf(type), debugstr_w(name));
+
+        HeapFree(GetProcessHeap(), 0, name);
+    }
+
+done:
+    TRACE(" -> %p/%s\n", format, debugstr_format(format ? format->format_id : 0));
+    return format;
 }
 
 
@@ -515,7 +452,7 @@ static int bitmap_info_size(const BITMAPINFO *info, WORD coloruse)
     }
     else  /* assume BITMAPINFOHEADER */
     {
-        colors = info->bmiHeader.biClrUsed;
+        colors = min(info->bmiHeader.biClrUsed, 256);
         if (!colors && (info->bmiHeader.biBitCount <= 8))
             colors = 1 << info->bmiHeader.biBitCount;
         if (info->bmiHeader.biCompression == BI_BITFIELDS) masks = 3;
@@ -530,77 +467,80 @@ static int bitmap_info_size(const BITMAPINFO *info, WORD coloruse)
  *
  * Allocates a packed DIB and copies the bitmap data into it.
  */
-static HGLOBAL create_dib_from_bitmap(HBITMAP hBmp)
+static HGLOBAL create_dib_from_bitmap(HBITMAP bitmap)
 {
-    BITMAP bmp;
-    HDC hdc;
-    HGLOBAL hPackedDIB;
-    LPBYTE pPackedDIB;
-    LPBITMAPINFOHEADER pbmiHeader;
-    unsigned int cDataSize, cPackedSize, OffsetBits;
-    int nLinesCopied;
+    HANDLE ret = 0;
+    BITMAPINFOHEADER header;
+    HDC hdc = GetDC(0);
+    DWORD header_size;
+    BITMAPINFO *bmi;
 
-    if (!GetObjectW(hBmp, sizeof(bmp), &bmp)) return 0;
+    memset(&header, 0, sizeof(header));
+    header.biSize = sizeof(header);
+    if (!GetDIBits(hdc, bitmap, 0, 0, NULL, (BITMAPINFO *)&header, DIB_RGB_COLORS)) goto done;
 
-    /*
-     * A packed DIB contains a BITMAPINFO structure followed immediately by
-     * an optional color palette and the pixel data.
-     */
+    header_size = bitmap_info_size((BITMAPINFO *)&header, DIB_RGB_COLORS);
+    if (!(ret = GlobalAlloc(GMEM_FIXED, header_size + header.biSizeImage))) goto done;
+    bmi = (BITMAPINFO *)ret;
+    memset(bmi, 0, header_size);
+    memcpy(bmi, &header, header.biSize);
+    GetDIBits(hdc, bitmap, 0, abs(header.biHeight), (char *)bmi + header_size, bmi, DIB_RGB_COLORS);
 
-    /* Calculate the size of the packed DIB */
-    cDataSize = abs(bmp.bmHeight) * (((bmp.bmWidth * bmp.bmBitsPixel + 31) / 8) & ~3);
-    cPackedSize = sizeof(BITMAPINFOHEADER)
-                  + ((bmp.bmBitsPixel <= 8) ? (sizeof(RGBQUAD) * (1 << bmp.bmBitsPixel)) : 0)
-                  + cDataSize;
-    /* Get the offset to the bits */
-    OffsetBits = cPackedSize - cDataSize;
-
-    /* Allocate the packed DIB */
-    TRACE("\tAllocating packed DIB of size %d\n", cPackedSize);
-    hPackedDIB = GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, cPackedSize);
-    if (!hPackedDIB)
-    {
-        WARN("Could not allocate packed DIB!\n");
-        return 0;
-    }
-
-    /* A packed DIB starts with a BITMAPINFOHEADER */
-    pPackedDIB = GlobalLock(hPackedDIB);
-    pbmiHeader = (LPBITMAPINFOHEADER)pPackedDIB;
-
-    /* Init the BITMAPINFOHEADER */
-    pbmiHeader->biSize = sizeof(BITMAPINFOHEADER);
-    pbmiHeader->biWidth = bmp.bmWidth;
-    pbmiHeader->biHeight = bmp.bmHeight;
-    pbmiHeader->biPlanes = 1;
-    pbmiHeader->biBitCount = bmp.bmBitsPixel;
-    pbmiHeader->biCompression = BI_RGB;
-    pbmiHeader->biSizeImage = 0;
-    pbmiHeader->biXPelsPerMeter = pbmiHeader->biYPelsPerMeter = 0;
-    pbmiHeader->biClrUsed = 0;
-    pbmiHeader->biClrImportant = 0;
-
-    /* Retrieve the DIB bits from the bitmap and fill in the
-     * DIB color table if present */
-    hdc = GetDC(0);
-    nLinesCopied = GetDIBits(hdc,                       /* Handle to device context */
-                             hBmp,                      /* Handle to bitmap */
-                             0,                         /* First scan line to set in dest bitmap */
-                             bmp.bmHeight,              /* Number of scan lines to copy */
-                             pPackedDIB + OffsetBits,   /* [out] Address of array for bitmap bits */
-                             (LPBITMAPINFO) pbmiHeader, /* [out] Address of BITMAPINFO structure */
-                             0);                        /* RGB or palette index */
-    GlobalUnlock(hPackedDIB);
+done:
     ReleaseDC(0, hdc);
+    return ret;
+}
 
-    /* Cleanup if GetDIBits failed */
-    if (nLinesCopied != bmp.bmHeight)
+
+/**************************************************************************
+ *              create_bitmap_from_dib
+ *
+ *  Given a packed DIB, creates a bitmap object from it.
+ */
+static HANDLE create_bitmap_from_dib(HANDLE dib)
+{
+    HANDLE ret = 0;
+    BITMAPINFO *bmi;
+
+    if (dib && (bmi = GlobalLock(dib)))
     {
-        TRACE("\tGetDIBits returned %d. Actual lines=%d\n", nLinesCopied, bmp.bmHeight);
-        GlobalFree(hPackedDIB);
-        hPackedDIB = 0;
+        HDC hdc;
+        unsigned int offset;
+
+        hdc = GetDC(NULL);
+
+        offset = bitmap_info_size(bmi, DIB_RGB_COLORS);
+
+        ret = CreateDIBitmap(hdc, &bmi->bmiHeader, CBM_INIT, (LPBYTE)bmi + offset,
+                             bmi, DIB_RGB_COLORS);
+
+        GlobalUnlock(dib);
+        ReleaseDC(NULL, hdc);
     }
-    return hPackedDIB;
+
+    return ret;
+}
+
+
+/**************************************************************************
+ *		get_html_description_field
+ *
+ *  Find the value of a field in an HTML Format description.
+ */
+static const char* get_html_description_field(const char* data, const char* keyword)
+{
+    const char* pos = data;
+
+    while (pos && *pos && *pos != '<')
+    {
+        if (memcmp(pos, keyword, strlen(keyword)) == 0)
+            return pos + strlen(keyword);
+
+        pos = strchr(pos, '\n');
+        if (pos) pos++;
+    }
+
+    return NULL;
 }
 
 
@@ -619,7 +559,7 @@ static HANDLE import_clipboard_data(CFDataRef data)
         LPVOID p;
 
         /* Turn on the DDESHARE flag to enable shared 32 bit memory */
-        data_handle = GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, len);
+        data_handle = GlobalAlloc(GMEM_FIXED, len);
         if (!data_handle)
             return NULL;
 
@@ -646,25 +586,10 @@ static HANDLE import_clipboard_data(CFDataRef data)
  */
 static HANDLE import_bmp_to_bitmap(CFDataRef data)
 {
-    HANDLE ret = 0;
+    HANDLE ret;
     HANDLE dib = import_bmp_to_dib(data);
-    BITMAPINFO *bmi;
 
-    if (dib && (bmi = GlobalLock(dib)))
-    {
-        HDC hdc;
-        unsigned int offset;
-
-        hdc = GetDC(NULL);
-
-        offset = bitmap_info_size(bmi, DIB_RGB_COLORS);
-
-        ret = CreateDIBitmap(hdc, &bmi->bmiHeader, CBM_INIT, (LPBYTE)bmi + offset,
-                             bmi, DIB_RGB_COLORS);
-
-        GlobalUnlock(dib);
-        ReleaseDC(NULL, hdc);
-    }
+    ret = create_bitmap_from_dib(dib);
 
     GlobalFree(dib);
     return ret;
@@ -674,8 +599,8 @@ static HANDLE import_bmp_to_bitmap(CFDataRef data)
 /**************************************************************************
  *              import_bmp_to_dib
  *
- *  Import BMP data, converting to CF_DIB format.  This just entails
- *  stripping the BMP file format header.
+ *  Import BMP data, converting to CF_DIB or CF_DIBV5 format.  This just
+ *  entails stripping the BMP file format header.
  */
 static HANDLE import_bmp_to_dib(CFDataRef data)
 {
@@ -690,7 +615,7 @@ static HANDLE import_bmp_to_dib(CFDataRef data)
         BYTE* p;
 
         len -= sizeof(*bfh);
-        ret = GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, len);
+        ret = GlobalAlloc(GMEM_FIXED, len);
         if (!ret || !(p = GlobalLock(ret)))
         {
             GlobalFree(ret);
@@ -725,43 +650,34 @@ static HANDLE import_enhmetafile(CFDataRef data)
 
 
 /**************************************************************************
- *              import_enhmetafile_to_metafilepict
+ *              import_html
  *
- *  Import enhanced metafile data, converting it to CF_METAFILEPICT.
+ *  Import HTML data.
  */
-static HANDLE import_enhmetafile_to_metafilepict(CFDataRef data)
+static HANDLE import_html(CFDataRef data)
 {
-    HANDLE ret = 0, hmf;
-    HANDLE hemf;
-    METAFILEPICT *mfp;
+    static const char header[] =
+        "Version:0.9\n"
+        "StartHTML:0000000100\n"
+        "EndHTML:%010lu\n"
+        "StartFragment:%010lu\n"
+        "EndFragment:%010lu\n"
+        "<!--StartFragment-->";
+    static const char trailer[] = "\n<!--EndFragment-->";
+    HANDLE ret;
+    SIZE_T len, total;
+    size_t size = CFDataGetLength(data);
 
-    if ((hmf = GlobalAlloc(0, sizeof(*mfp))) && (hemf = import_enhmetafile(data)))
+    len = strlen(header) + 12;  /* 3 * 4 extra chars for %010lu */
+    total = len + size + sizeof(trailer);
+    if ((ret = GlobalAlloc(GMEM_FIXED, total)))
     {
-        ENHMETAHEADER header;
-        HDC hdc = CreateCompatibleDC(0);
-        unsigned int size = GetWinMetaFileBits(hemf, 0, NULL, MM_ISOTROPIC, hdc);
-        BYTE *bytes;
-
-        bytes = HeapAlloc(GetProcessHeap(), 0, size);
-        if (bytes && GetEnhMetaFileHeader(hemf, sizeof(header), &header) &&
-            GetWinMetaFileBits(hemf, size, bytes, MM_ISOTROPIC, hdc))
-        {
-            mfp = GlobalLock(hmf);
-            mfp->mm = MM_ISOTROPIC;
-            mfp->xExt = header.rclFrame.right - header.rclFrame.left;
-            mfp->yExt = header.rclFrame.bottom - header.rclFrame.top;
-            mfp->hMF = SetMetaFileBitsEx(size, bytes);
-            GlobalUnlock(hmf);
-
-            ret = hmf;
-        }
-
-        if (hdc) DeleteDC(hdc);
-        HeapFree(GetProcessHeap(), 0, bytes);
-        DeleteEnhMetaFile(hemf);
+        char *p = ret;
+        p += sprintf(p, header, total - 1, len, len + size + 1 /* include the final \n in the data */);
+        CFDataGetBytes(data, CFRangeMake(0, size), (UInt8*)p);
+        strcpy(p + size, trailer);
+        TRACE("returning %s\n", debugstr_a(ret));
     }
-
-    if (!ret) GlobalFree(hmf);
     return ret;
 }
 
@@ -779,7 +695,7 @@ static HANDLE import_metafilepict(CFDataRef data)
 
     TRACE("data %s\n", debugstr_cf(data));
 
-    if (len >= sizeof(*mfp) && (ret = GlobalAlloc(0, sizeof(*mfp))))
+    if (len >= sizeof(*mfp) && (ret = GlobalAlloc(GMEM_FIXED, sizeof(*mfp))))
     {
         const BYTE *bytes = (const BYTE*)CFDataGetBytePtr(data);
 
@@ -787,29 +703,6 @@ static HANDLE import_metafilepict(CFDataRef data)
         memcpy(mfp, bytes, sizeof(*mfp));
         mfp->hMF = SetMetaFileBitsEx(len - sizeof(*mfp), bytes + sizeof(*mfp));
         GlobalUnlock(ret);
-    }
-
-    return ret;
-}
-
-
-/**************************************************************************
- *              import_metafilepict_to_enhmetafile
- *
- *  Import metafile picture data, converting it to CF_ENHMETAFILE.
- */
-static HANDLE import_metafilepict_to_enhmetafile(CFDataRef data)
-{
-    HANDLE ret = 0;
-    CFIndex len = CFDataGetLength(data);
-    const METAFILEPICT *mfp;
-
-    TRACE("data %s\n", debugstr_cf(data));
-
-    if (len >= sizeof(*mfp))
-    {
-        mfp = (const METAFILEPICT*)CFDataGetBytePtr(data);
-        ret = SetWinMetaFileBits(len - sizeof(*mfp), (const BYTE*)(mfp + 1), NULL, mfp);
     }
 
     return ret;
@@ -896,7 +789,7 @@ static HANDLE import_nsfilenames_to_hdrop(CFDataRef data)
     for (i = 0; i < count; i++)
         len += strlenW(paths[i]) + 1;
 
-    hdrop = GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, sizeof(*dropfiles) + len * sizeof(WCHAR));
+    hdrop = GlobalAlloc(GMEM_FIXED, sizeof(*dropfiles) + len * sizeof(WCHAR));
     if (!hdrop || !(dropfiles = GlobalLock(hdrop)))
     {
         WARN("failed to allocate HDROP\n");
@@ -935,95 +828,38 @@ done:
 
 
 /**************************************************************************
- *              import_oemtext_to_text
- *
- *  Import CF_OEMTEXT data, converting the string to CF_TEXT.
- */
-static HANDLE import_oemtext_to_text(CFDataRef data)
-{
-    return convert_text(CFDataGetBytePtr(data), CFDataGetLength(data), CP_OEMCP, CP_ACP);
-}
-
-
-/**************************************************************************
- *              import_oemtext_to_unicodetext
- *
- *  Import CF_OEMTEXT data, converting the string to CF_UNICODETEXT.
- */
-static HANDLE import_oemtext_to_unicodetext(CFDataRef data)
-{
-    return convert_text(CFDataGetBytePtr(data), CFDataGetLength(data), CP_OEMCP, -1);
-}
-
-
-/**************************************************************************
- *              import_text_to_oemtext
- *
- *  Import CF_TEXT data, converting the string to CF_OEMTEXT.
- */
-static HANDLE import_text_to_oemtext(CFDataRef data)
-{
-    return convert_text(CFDataGetBytePtr(data), CFDataGetLength(data), CP_ACP, CP_OEMCP);
-}
-
-
-/**************************************************************************
- *              import_text_to_unicodetext
- *
- *  Import CF_TEXT data, converting the string to CF_UNICODETEXT.
- */
-static HANDLE import_text_to_unicodetext(CFDataRef data)
-{
-    return convert_text(CFDataGetBytePtr(data), CFDataGetLength(data), CP_ACP, -1);
-}
-
-
-/**************************************************************************
- *              import_unicodetext_to_oemtext
- *
- *  Import a CF_UNICODETEXT string, converting the string to CF_OEMTEXT.
- */
-static HANDLE import_unicodetext_to_oemtext(CFDataRef data)
-{
-    return convert_text(CFDataGetBytePtr(data), CFDataGetLength(data), -1, CP_OEMCP);
-}
-
-
-/**************************************************************************
- *              import_unicodetext_to_text
- *
- *  Import a CF_UNICODETEXT string, converting the string to CF_TEXT.
- */
-static HANDLE import_unicodetext_to_text(CFDataRef data)
-{
-    return convert_text(CFDataGetBytePtr(data), CFDataGetLength(data), -1, CP_ACP);
-}
-
-
-/**************************************************************************
- *              import_utf8_to_oemtext
- *
- *  Import a UTF-8 string, converting the string to CF_OEMTEXT.
- */
-static HANDLE import_utf8_to_oemtext(CFDataRef data)
-{
-    HANDLE unicode_handle = import_utf8_to_unicodetext(data);
-    HANDLE ret = convert_unicodetext_to_codepage(unicode_handle, CP_OEMCP);
-
-    GlobalFree(unicode_handle);
-    return ret;
-}
-
-
-/**************************************************************************
  *              import_utf8_to_text
  *
  *  Import a UTF-8 string, converting the string to CF_TEXT.
  */
 static HANDLE import_utf8_to_text(CFDataRef data)
 {
+    HANDLE ret = NULL;
     HANDLE unicode_handle = import_utf8_to_unicodetext(data);
-    HANDLE ret = convert_unicodetext_to_codepage(unicode_handle, CP_ACP);
+    LPWSTR unicode_string = GlobalLock(unicode_handle);
+
+    if (unicode_string)
+    {
+        int unicode_len;
+        HANDLE handle;
+        char *p;
+        INT len;
+
+        unicode_len = GlobalSize(unicode_handle) / sizeof(WCHAR);
+
+        len = WideCharToMultiByte(CP_ACP, 0, unicode_string, unicode_len, NULL, 0, NULL, NULL);
+        if (!unicode_len || unicode_string[unicode_len - 1]) len += 1;
+        handle = GlobalAlloc(GMEM_FIXED, len);
+
+        if (handle && (p = GlobalLock(handle)))
+        {
+            WideCharToMultiByte(CP_ACP, 0, unicode_string, unicode_len, p, len, NULL, NULL);
+            p[len - 1] = 0;
+            GlobalUnlock(handle);
+            ret = handle;
+        }
+        GlobalUnlock(unicode_handle);
+    }
 
     GlobalFree(unicode_handle);
     return ret;
@@ -1066,7 +902,7 @@ static HANDLE import_utf8_to_unicodetext(CFDataRef data)
         dst[j] = 0;
 
         count = MultiByteToWideChar(CP_UTF8, 0, dst, -1, NULL, 0);
-        unicode_handle = GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, count * sizeof(WCHAR));
+        unicode_handle = GlobalAlloc(GMEM_FIXED, count * sizeof(WCHAR));
 
         if (unicode_handle)
         {
@@ -1079,36 +915,6 @@ static HANDLE import_utf8_to_unicodetext(CFDataRef data)
     }
 
     return unicode_handle;
-}
-
-
-/**************************************************************************
- *              import_utf16_to_oemtext
- *
- *  Import a UTF-16 string, converting the string to CF_OEMTEXT.
- */
-static HANDLE import_utf16_to_oemtext(CFDataRef data)
-{
-    HANDLE unicode_handle = import_utf16_to_unicodetext(data);
-    HANDLE ret = convert_unicodetext_to_codepage(unicode_handle, CP_OEMCP);
-
-    GlobalFree(unicode_handle);
-    return ret;
-}
-
-
-/**************************************************************************
- *              import_utf16_to_text
- *
- *  Import a UTF-16 string, converting the string to CF_TEXT.
- */
-static HANDLE import_utf16_to_text(CFDataRef data)
-{
-    HANDLE unicode_handle = import_utf16_to_unicodetext(data);
-    HANDLE ret = convert_unicodetext_to_codepage(unicode_handle, CP_ACP);
-
-    GlobalFree(unicode_handle);
-    return ret;
 }
 
 
@@ -1132,9 +938,11 @@ static HANDLE import_utf16_to_unicodetext(CFDataRef data)
     {
         if (src[i] == '\n')
             new_lines++;
+        else if (src[i] == '\r' && (i + 1 >= src_len || src[i + 1] != '\n'))
+            new_lines++;
     }
 
-    if ((unicode_handle = GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, (src_len + new_lines + 1) * sizeof(WCHAR))))
+    if ((unicode_handle = GlobalAlloc(GMEM_FIXED, (src_len + new_lines + 1) * sizeof(WCHAR))))
     {
         dst = GlobalLock(unicode_handle);
 
@@ -1144,6 +952,9 @@ static HANDLE import_utf16_to_unicodetext(CFDataRef data)
                 dst[j++] = '\r';
 
             dst[j++] = src[i];
+
+            if (src[i] == '\r' && (i + 1 >= src_len || src[i + 1] != '\n'))
+                dst[j++] = '\n';
         }
         dst[j] = 0;
 
@@ -1198,58 +1009,10 @@ static CFDataRef export_bitmap_to_bmp(HANDLE data)
 
 
 /**************************************************************************
- *              export_codepage_to_utf8
- *
- *  Export string data in a specified codepage to UTF-8.
- */
-static CFDataRef export_codepage_to_utf8(HANDLE data, UINT cp)
-{
-    CFDataRef ret = NULL;
-    const char* str;
-
-    if ((str = GlobalLock(data)))
-    {
-        HANDLE unicode = convert_text(str, GlobalSize(data), cp, -1);
-
-        ret = export_unicodetext_to_utf8(unicode);
-
-        GlobalFree(unicode);
-        GlobalUnlock(data);
-    }
-
-    return ret;
-}
-
-
-/**************************************************************************
- *              export_codepage_to_utf16
- *
- *  Export string data in a specified codepage to UTF-16.
- */
-static CFDataRef export_codepage_to_utf16(HANDLE data, UINT cp)
-{
-    CFDataRef ret = NULL;
-    const char* str;
-
-    if ((str = GlobalLock(data)))
-    {
-        HANDLE unicode = convert_text(str, GlobalSize(data), cp, -1);
-
-        ret = export_unicodetext_to_utf16(unicode);
-
-        GlobalFree(unicode);
-        GlobalUnlock(data);
-    }
-
-    return ret;
-}
-
-
-/**************************************************************************
  *              export_dib_to_bmp
  *
- *  Export CF_DIB to BMP file format.  This just entails prepending a BMP
- *  file format header to the data.
+ *  Export CF_DIB or CF_DIBV5 to BMP file format.  This just entails
+ *  prepending a BMP file format header to the data.
  */
 static CFDataRef export_dib_to_bmp(HANDLE data)
 {
@@ -1401,6 +1164,49 @@ done:
 
 
 /**************************************************************************
+ *              export_html
+ *
+ *  Export HTML Format to public.html data.
+ *
+ * FIXME: We should attempt to add an <a base> tag and convert windows paths.
+ */
+static CFDataRef export_html(HANDLE handle)
+{
+    CFDataRef ret;
+    const char *data, *field_value;
+    int fragmentstart, fragmentend;
+
+    data = GlobalLock(handle);
+
+    /* read the important fields */
+    field_value = get_html_description_field(data, "StartFragment:");
+    if (!field_value)
+    {
+        ERR("Couldn't find StartFragment value\n");
+        goto failed;
+    }
+    fragmentstart = atoi(field_value);
+
+    field_value = get_html_description_field(data, "EndFragment:");
+    if (!field_value)
+    {
+        ERR("Couldn't find EndFragment value\n");
+        goto failed;
+    }
+    fragmentend = atoi(field_value);
+
+    /* export only the fragment */
+    ret = CFDataCreate(NULL, (const UInt8*)&data[fragmentstart], fragmentend - fragmentstart);
+    GlobalUnlock(handle);
+    return ret;
+
+failed:
+    GlobalUnlock(handle);
+    return NULL;
+}
+
+
+/**************************************************************************
  *              export_metafilepict
  *
  *  Export a metafile to data.
@@ -1428,46 +1234,43 @@ static CFDataRef export_metafilepict(HANDLE data)
 
 
 /**************************************************************************
- *              export_oemtext_to_utf8
- *
- *  Export CF_OEMTEXT to UTF-8.
- */
-static CFDataRef export_oemtext_to_utf8(HANDLE data)
-{
-    return export_codepage_to_utf8(data, CP_OEMCP);
-}
-
-
-/**************************************************************************
- *              export_oemtext_to_utf16
- *
- *  Export CF_OEMTEXT to UTF-16.
- */
-static CFDataRef export_oemtext_to_utf16(HANDLE data)
-{
-    return export_codepage_to_utf16(data, CP_OEMCP);
-}
-
-
-/**************************************************************************
  *              export_text_to_utf8
  *
  *  Export CF_TEXT to UTF-8.
  */
 static CFDataRef export_text_to_utf8(HANDLE data)
 {
-    return export_codepage_to_utf8(data, CP_ACP);
-}
+    CFDataRef ret = NULL;
+    const char* str;
 
+    if ((str = GlobalLock(data)))
+    {
+        int str_len = GlobalSize(data);
+        int wstr_len;
+        WCHAR *wstr;
+        HANDLE unicode;
+        char *p;
 
-/**************************************************************************
- *              export_text_to_utf16
- *
- *  Export CF_TEXT to UTF-16.
- */
-static CFDataRef export_text_to_utf16(HANDLE data)
-{
-    return export_codepage_to_utf16(data, CP_ACP);
+        wstr_len = MultiByteToWideChar(CP_ACP, 0, str, str_len, NULL, 0);
+        if (!str_len || str[str_len - 1]) wstr_len += 1;
+        wstr = HeapAlloc(GetProcessHeap(), 0, wstr_len * sizeof(WCHAR));
+        MultiByteToWideChar(CP_ACP, 0, str, str_len, wstr, wstr_len);
+        wstr[wstr_len - 1] = 0;
+
+        unicode = GlobalAlloc(GMEM_FIXED, wstr_len * sizeof(WCHAR));
+        if (unicode && (p = GlobalLock(unicode)))
+        {
+            memcpy(p, wstr, wstr_len * sizeof(WCHAR));
+            GlobalUnlock(unicode);
+        }
+
+        ret = export_unicodetext_to_utf8(unicode);
+
+        GlobalFree(unicode);
+        GlobalUnlock(data);
+    }
+
+    return ret;
 }
 
 
@@ -1555,57 +1358,6 @@ static CFDataRef export_unicodetext_to_utf16(HANDLE data)
 
 
 /**************************************************************************
- *              get_clipboard_info
- */
-static BOOL get_clipboard_info(LPCLIPBOARDINFO cbinfo)
-{
-    BOOL ret = FALSE;
-
-    SERVER_START_REQ(set_clipboard_info)
-    {
-        req->flags = 0;
-
-        if (wine_server_call_err(req))
-        {
-            ERR("Failed to get clipboard owner.\n");
-        }
-        else
-        {
-            cbinfo->hwnd_owner = wine_server_ptr_handle(reply->old_owner);
-            cbinfo->flags = reply->flags;
-
-            ret = TRUE;
-        }
-    }
-    SERVER_END_REQ;
-
-    return ret;
-}
-
-
-/**************************************************************************
- *              release_ownership
- */
-static BOOL release_ownership(void)
-{
-    BOOL ret = FALSE;
-
-    SERVER_START_REQ(set_clipboard_info)
-    {
-        req->flags = SET_CB_RELOWNER | SET_CB_SEQNO;
-
-        if (wine_server_call_err(req))
-            ERR("Failed to set clipboard.\n");
-        else
-            ret = TRUE;
-    }
-    SERVER_END_REQ;
-
-    return ret;
-}
-
-
-/**************************************************************************
  *              macdrv_get_pasteboard_data
  */
 HANDLE macdrv_get_pasteboard_data(CFTypeRef pasteboard, UINT desired_format)
@@ -1635,10 +1387,9 @@ HANDLE macdrv_get_pasteboard_data(CFTypeRef pasteboard, UINT desired_format)
 
         type = CFArrayGetValueAtIndex(types, i);
 
-        format = NULL;
-        while ((!best_format || best_format->synthesized) && (format = format_for_type(format, type)))
+        if ((format = format_for_type(type)))
         {
-            TRACE("for type %s got format %p/%s\n", debugstr_cf(type), format, debugstr_format(format ? format->format_id : 0));
+            TRACE("for type %s got format %p/%s\n", debugstr_cf(type), format, debugstr_format(format->format_id));
 
             if (format->format_id == desired_format)
             {
@@ -1694,18 +1445,20 @@ BOOL macdrv_pasteboard_has_format(CFTypeRef pasteboard, UINT desired_format)
     count = CFArrayGetCount(types);
     TRACE("got %d types\n", count);
 
-    for (i = 0; !found && i < count; i++)
+    for (i = 0; i < count; i++)
     {
         CFStringRef type = CFArrayGetValueAtIndex(types, i);
-        WINE_CLIPFORMAT* format;
+        WINE_CLIPFORMAT* format = format_for_type(type);
 
-        format = NULL;
-        while (!found && (format = format_for_type(format, type)))
+        if (format)
         {
             TRACE("for type %s got format %s\n", debugstr_cf(type), debugstr_format(format->format_id));
 
             if (format->format_id == desired_format)
+            {
                 found = TRUE;
+                break;
+            }
         }
     }
 
@@ -1716,17 +1469,112 @@ BOOL macdrv_pasteboard_has_format(CFTypeRef pasteboard, UINT desired_format)
 
 
 /**************************************************************************
- *              macdrv_copy_pasteboard_formats
+ *              get_formats_for_pasteboard_types
  */
-CFArrayRef macdrv_copy_pasteboard_formats(CFTypeRef pasteboard)
+static WINE_CLIPFORMAT** get_formats_for_pasteboard_types(CFArrayRef types, UINT *num_formats)
+{
+    CFIndex count, i;
+    CFMutableSetRef seen_formats;
+    WINE_CLIPFORMAT** formats;
+    UINT pos;
+
+    count = CFArrayGetCount(types);
+    TRACE("got %ld types\n", count);
+
+    if (!count)
+        return NULL;
+
+    seen_formats = CFSetCreateMutable(NULL, count, NULL);
+    if (!seen_formats)
+    {
+        WARN("Failed to allocate seen formats set\n");
+        return NULL;
+    }
+
+    formats = HeapAlloc(GetProcessHeap(), 0, count * sizeof(*formats));
+    if (!formats)
+    {
+        WARN("Failed to allocate formats array\n");
+        CFRelease(seen_formats);
+        return NULL;
+    }
+
+    pos = 0;
+    for (i = 0; i < count; i++)
+    {
+        CFStringRef type = CFArrayGetValueAtIndex(types, i);
+        WINE_CLIPFORMAT* format = format_for_type(type);
+
+        if (!format)
+        {
+            TRACE("ignoring type %s\n", debugstr_cf(type));
+            continue;
+        }
+
+        if (!format->synthesized)
+        {
+            TRACE("for type %s got format %p/%s\n", debugstr_cf(type), format, debugstr_format(format->format_id));
+            CFSetAddValue(seen_formats, (void*)format->format_id);
+            formats[pos++] = format;
+        }
+        else if (format->natural_format &&
+                 CFArrayContainsValue(types, CFRangeMake(0, count), format->natural_format->type))
+        {
+            TRACE("for type %s deferring synthesized formats because type %s is also present\n",
+                  debugstr_cf(type), debugstr_cf(format->natural_format->type));
+        }
+        else if (CFSetContainsValue(seen_formats, (void*)format->format_id))
+        {
+            TRACE("for type %s got duplicate synthesized format %p/%s; skipping\n", debugstr_cf(type), format,
+                  debugstr_format(format->format_id));
+        }
+        else
+        {
+            TRACE("for type %s got synthesized format %p/%s\n", debugstr_cf(type), format, debugstr_format(format->format_id));
+            CFSetAddValue(seen_formats, (void*)format->format_id);
+            formats[pos++] = format;
+        }
+    }
+
+    /* Now go back through the types adding the synthesized formats that we deferred before. */
+    for (i = 0; i < count; i++)
+    {
+        CFStringRef type = CFArrayGetValueAtIndex(types, i);
+        WINE_CLIPFORMAT* format = format_for_type(type);
+
+        if (!format) continue;
+        if (!format->synthesized) continue;
+
+        /* Don't duplicate a real value with a synthesized value. */
+        if (CFSetContainsValue(seen_formats, (void*)format->format_id)) continue;
+
+        TRACE("for type %s got synthesized format %p/%s\n", debugstr_cf(type), format, debugstr_format(format->format_id));
+        CFSetAddValue(seen_formats, (void*)format->format_id);
+        formats[pos++] = format;
+    }
+
+    CFRelease(seen_formats);
+
+    if (!pos)
+    {
+        HeapFree(GetProcessHeap(), 0, formats);
+        formats = NULL;
+    }
+
+    *num_formats = pos;
+    return formats;
+}
+
+
+/**************************************************************************
+ *              get_formats_for_pasteboard
+ */
+static WINE_CLIPFORMAT** get_formats_for_pasteboard(CFTypeRef pasteboard, UINT *num_formats)
 {
     CFArrayRef types;
-    CFIndex count;
-    CFMutableArrayRef formats;
-    CFIndex i;
-    WINE_CLIPFORMAT* format;
+    WINE_CLIPFORMAT** formats;
 
-    TRACE("pasteboard %p\n", pasteboard);
+    TRACE("pasteboard %s\n", debugstr_cf(pasteboard));
 
     types = macdrv_copy_pasteboard_types(pasteboard);
     if (!types)
@@ -1735,142 +1583,470 @@ CFArrayRef macdrv_copy_pasteboard_formats(CFTypeRef pasteboard)
         return NULL;
     }
 
-    count = CFArrayGetCount(types);
-    TRACE("got %ld types\n", count);
-
-    if (!count)
-    {
-        CFRelease(types);
-        return NULL;
-    }
-
-    formats = CFArrayCreateMutable(NULL, 0, NULL);
-    if (!formats)
-    {
-        WARN("Failed to allocate formats array\n");
-        CFRelease(types);
-        return NULL;
-    }
-
-    for (i = 0; i < count; i++)
-    {
-        CFStringRef type = CFArrayGetValueAtIndex(types, i);
-        BOOL found = FALSE;
-
-        format = NULL;
-        while ((format = format_for_type(format, type)))
-        {
-            /* Suppose type is "public.utf8-plain-text".  format->format_id will be each of
-               CF_TEXT, CF_OEMTEXT, and CF_UNICODETEXT in turn.  We want to look up the natural
-               type for each of those IDs (e.g. CF_TEXT -> "org.winehq.builtin.text") and then see
-               if that type is present in the pasteboard.  If it is, then we don't want to add the
-               format to the list yet because it would be out of order.
-
-               For example, if a Mac app put "public.utf8-plain-text" and "public.tiff" on the
-               pasteboard, then we want the Win32 clipboard formats to be CF_TEXT, CF_OEMTEXT, and
-               CF_UNICODETEXT, and CF_TIFF, in that order.  All of the text formats belong before
-               CF_TIFF because the Mac app expressed that text was "better" than the TIFF.  In
-               this case, as soon as we encounter "public.utf8-plain-text" we should add all of
-               the associated text format IDs.
-
-               But if a Wine process put "org.winehq.builtin.unicodetext",
-               "public.utf8-plain-text", "public.utf16-plain-text", and "public.tiff", then we
-               want the clipboard formats to be CF_UNICODETEXT, CF_TIFF, CF_TEXT, and CF_OEMTEXT,
-               in that order.  The Windows program presumably added CF_UNICODETEXT and CF_TIFF.
-               We're synthesizing CF_TEXT and CF_OEMTEXT from CF_UNICODETEXT but we want them to
-               come after the non-synthesized CF_TIFF.  In this case, we don't want to add the
-               text formats upon encountering "public.utf8-plain-text",
-
-               We tell the two cases apart by seeing that one of the natural types for the text
-               formats (i.e. "org.winehq.builtin.unicodetext") is present on the pasteboard.
-               "found" indicates that. */
-
-            if (!format->synthesized)
-            {
-                TRACE("for type %s got primary format %p/%s\n", debugstr_cf(type), format, debugstr_format(format->format_id));
-                CFArrayAppendValue(formats, (void*)format->format_id);
-                found = TRUE;
-            }
-            else if (!found && format->natural_format &&
-                     CFArrayContainsValue(types, CFRangeMake(0, count), format->natural_format->type))
-            {
-                TRACE("for type %s deferring synthesized formats because type %s is also present\n",
-                      debugstr_cf(type), debugstr_cf(format->natural_format->type));
-                found = TRUE;
-            }
-        }
-
-        if (!found)
-        {
-            while ((format = format_for_type(format, type)))
-            {
-                /* Don't override a real value with a synthesized value. */
-                if (!CFArrayContainsValue(formats, CFRangeMake(0, CFArrayGetCount(formats)), (void*)format->format_id))
-                {
-                    TRACE("for type %s got synthesized format %p/%s\n", debugstr_cf(type), format, debugstr_format(format->format_id));
-                    CFArrayAppendValue(formats, (void*)format->format_id);
-                }
-            }
-        }
-    }
-
-    /* Now go back through the types adding the synthesized formats that we deferred before. */
-    for (i = 0; i < count; i++)
-    {
-        CFStringRef type = CFArrayGetValueAtIndex(types, i);
-
-        format = NULL;
-        while ((format = format_for_type(format, type)))
-        {
-            if (format->synthesized)
-            {
-                /* Don't override a real value with a synthesized value. */
-                if (!CFArrayContainsValue(formats, CFRangeMake(0, CFArrayGetCount(formats)), (void*)format->format_id))
-                {
-                    TRACE("for type %s got synthesized format %p/%s\n", debugstr_cf(type), format, debugstr_format(format->format_id));
-                    CFArrayAppendValue(formats, (void*)format->format_id);
-                }
-            }
-        }
-    }
-
+    formats = get_formats_for_pasteboard_types(types, num_formats);
     CFRelease(types);
-
-    TRACE(" -> %s\n", debugstr_cf(formats));
     return formats;
 }
 
 
 /**************************************************************************
- *              check_clipboard_ownership
+ *              macdrv_get_pasteboard_formats
  */
-static void check_clipboard_ownership(HWND *owner)
+UINT* macdrv_get_pasteboard_formats(CFTypeRef pasteboard, UINT* num_formats)
 {
-    CLIPBOARDINFO cbinfo;
+    WINE_CLIPFORMAT** formats;
+    UINT count, i;
+    UINT* format_ids;
 
-    if (owner) *owner = NULL;
+    formats = get_formats_for_pasteboard(pasteboard, &count);
+    if (!formats)
+        return NULL;
 
-    /* If Wine thinks we're the clipboard owner but Mac OS X thinks we're not
-       the pasteboard owner, update Wine. */
-    if (get_clipboard_info(&cbinfo) && (cbinfo.flags & CB_PROCESS))
+    format_ids = HeapAlloc(GetProcessHeap(), 0, count);
+    if (!format_ids)
     {
-        if (!(cbinfo.flags & CB_OPEN) && !macdrv_is_pasteboard_owner())
+        WARN("Failed to allocate formats IDs array\n");
+        HeapFree(GetProcessHeap(), 0, formats);
+        return NULL;
+    }
+
+    for (i = 0; i < count; i++)
+        format_ids[i] = formats[i]->format_id;
+
+    HeapFree(GetProcessHeap(), 0, formats);
+
+    *num_formats = count;
+    return format_ids;
+}
+
+
+/**************************************************************************
+ *              register_win32_formats
+ *
+ * Register Win32 clipboard formats the first time we encounter them.
+ */
+static void register_win32_formats(const UINT *ids, UINT size)
+{
+    unsigned int i;
+
+    if (list_empty(&format_list)) register_builtin_formats();
+
+    for (i = 0; i < size; i++)
+        register_format(ids[i], NULL);
+}
+
+
+/***********************************************************************
+ *              get_clipboard_formats
+ *
+ * Return a list of all formats currently available on the Win32 clipboard.
+ * Helper for set_mac_pasteboard_types_from_win32_clipboard.
+ */
+static UINT *get_clipboard_formats(UINT *size)
+{
+    UINT *ids;
+
+    *size = 256;
+    for (;;)
+    {
+        if (!(ids = HeapAlloc(GetProcessHeap(), 0, *size * sizeof(*ids)))) return NULL;
+        if (GetUpdatedClipboardFormats(ids, *size, size)) break;
+        HeapFree(GetProcessHeap(), 0, ids);
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) return NULL;
+    }
+    register_win32_formats(ids, *size);
+    return ids;
+}
+
+
+/**************************************************************************
+ *              set_mac_pasteboard_types_from_win32_clipboard
+ */
+static void set_mac_pasteboard_types_from_win32_clipboard(void)
+{
+    WINE_CLIPFORMAT *format;
+    UINT count, i, *formats;
+
+    if (!(formats = get_clipboard_formats(&count))) return;
+
+    macdrv_clear_pasteboard(clipboard_cocoa_window);
+
+    for (i = 0; i < count; i++)
+    {
+        LIST_FOR_EACH_ENTRY(format, &format_list, WINE_CLIPFORMAT, entry)
         {
-            TRACE("Lost clipboard ownership\n");
+            if (format->format_id != formats[i]) continue;
+            TRACE("%s -> %s\n", debugstr_format(format->format_id), debugstr_cf(format->type));
+            macdrv_set_pasteboard_data(format->type, NULL, clipboard_cocoa_window);
+        }
+    }
 
-            if (OpenClipboard(cbinfo.hwnd_owner))
+    HeapFree(GetProcessHeap(), 0, formats);
+    return;
+}
+
+
+/**************************************************************************
+ *              set_win32_clipboard_formats_from_mac_pasteboard
+ */
+static void set_win32_clipboard_formats_from_mac_pasteboard(CFArrayRef types)
+{
+    WINE_CLIPFORMAT** formats;
+    UINT count, i;
+
+    formats = get_formats_for_pasteboard_types(types, &count);
+    if (!formats)
+        return;
+
+    for (i = 0; i < count; i++)
+    {
+        TRACE("adding format %s\n", debugstr_format(formats[i]->format_id));
+        SetClipboardData(formats[i]->format_id, 0);
+    }
+
+    HeapFree(GetProcessHeap(), 0, current_mac_formats);
+    current_mac_formats = formats;
+    nb_current_mac_formats = count;
+}
+
+
+/**************************************************************************
+ *              render_format
+ */
+static void render_format(UINT id)
+{
+    unsigned int i;
+
+    for (i = 0; i < nb_current_mac_formats; i++)
+    {
+        CFDataRef pasteboard_data;
+
+        if (current_mac_formats[i]->format_id != id) continue;
+
+        pasteboard_data = macdrv_copy_pasteboard_data(NULL, current_mac_formats[i]->type);
+        if (pasteboard_data)
+        {
+            HANDLE handle = current_mac_formats[i]->import_func(pasteboard_data);
+            CFRelease(pasteboard_data);
+            if (handle)
             {
-                /* Destroy private objects */
-                SendMessageW(cbinfo.hwnd_owner, WM_DESTROYCLIPBOARD, 0, 0);
+                SetClipboardData(id, handle);
+                rendered_formats++;
+            }
+            break;
+        }
+    }
+}
 
-                /* Give up ownership of the windows clipboard */
-                release_ownership();
-                CloseClipboard();
+
+/**************************************************************************
+ *              grab_win32_clipboard
+ *
+ * Grab the Win32 clipboard when a Mac app has taken ownership of the
+ * pasteboard, and fill it with the pasteboard data types.
+ */
+static void grab_win32_clipboard(BOOL changed)
+{
+    static CFArrayRef last_types;
+    CFArrayRef types;
+
+    types = macdrv_copy_pasteboard_types(NULL);
+    if (!types)
+    {
+        WARN("Failed to copy pasteboard types\n");
+        return;
+    }
+
+    changed = (changed || rendered_formats || !last_types || !CFEqual(types, last_types));
+    if (!changed)
+    {
+        CFRelease(types);
+        return;
+    }
+
+    if (last_types) CFRelease(last_types);
+    last_types = types; /* takes ownership */
+
+    if (!OpenClipboard(clipboard_hwnd)) return;
+    EmptyClipboard();
+    is_clipboard_owner = TRUE;
+    rendered_formats = 0;
+    last_clipboard_update = GetTickCount64();
+    set_win32_clipboard_formats_from_mac_pasteboard(types);
+    CloseClipboard();
+    SetTimer(clipboard_hwnd, 1, CLIPBOARD_UPDATE_DELAY, NULL);
+}
+
+
+/**************************************************************************
+ *              update_clipboard
+ *
+ * Periodically update the clipboard while the clipboard is owned by a
+ * Mac app.
+ */
+static void update_clipboard(void)
+{
+    static BOOL updating;
+
+    TRACE("is_clipboard_owner %d last_clipboard_update %llu now %llu\n",
+          is_clipboard_owner, last_clipboard_update, GetTickCount64());
+
+    if (updating) return;
+    updating = TRUE;
+
+    if (is_clipboard_owner)
+    {
+        if (GetTickCount64() - last_clipboard_update > CLIPBOARD_UPDATE_DELAY)
+            grab_win32_clipboard(FALSE);
+    }
+    else if (!macdrv_is_pasteboard_owner(clipboard_cocoa_window))
+        grab_win32_clipboard(TRUE);
+
+    updating = FALSE;
+}
+
+
+/**************************************************************************
+ *              clipboard_wndproc
+ *
+ * Window procedure for the clipboard manager.
+ */
+static LRESULT CALLBACK clipboard_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    switch (msg)
+    {
+        case WM_NCCREATE:
+            return TRUE;
+        case WM_CLIPBOARDUPDATE:
+            if (is_clipboard_owner) break;  /* ignore our own changes */
+            set_mac_pasteboard_types_from_win32_clipboard();
+            break;
+        case WM_RENDERFORMAT:
+            render_format(wp);
+            break;
+        case WM_TIMER:
+            if (!is_clipboard_owner) break;
+            grab_win32_clipboard(FALSE);
+            break;
+        case WM_DESTROYCLIPBOARD:
+            TRACE("WM_DESTROYCLIPBOARD: lost ownership\n");
+            is_clipboard_owner = FALSE;
+            KillTimer(hwnd, 1);
+            break;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+
+/**************************************************************************
+ *              wait_clipboard_mutex
+ *
+ * Make sure that there's only one clipboard thread per window station.
+ */
+static BOOL wait_clipboard_mutex(void)
+{
+    static const WCHAR prefix[] = {'_','_','w','i','n','e','_','c','l','i','p','b','o','a','r','d','_'};
+    WCHAR buffer[MAX_PATH + sizeof(prefix) / sizeof(WCHAR)];
+    HANDLE mutex;
+
+    memcpy(buffer, prefix, sizeof(prefix));
+    if (!GetUserObjectInformationW(GetProcessWindowStation(), UOI_NAME,
+                                   buffer + sizeof(prefix) / sizeof(WCHAR),
+                                   sizeof(buffer) - sizeof(prefix), NULL))
+    {
+        ERR("failed to get winstation name\n");
+        return FALSE;
+    }
+    mutex = CreateMutexW(NULL, TRUE, buffer);
+    if (GetLastError() == ERROR_ALREADY_EXISTS)
+    {
+        TRACE("waiting for mutex %s\n", debugstr_w(buffer));
+        WaitForSingleObject(mutex, INFINITE);
+    }
+    return TRUE;
+}
+
+
+/**************************************************************************
+ *              init_pipe_name
+ *
+ * Init-once helper for get_pipe_name.
+ */
+static BOOL CALLBACK init_pipe_name(INIT_ONCE* once, void* param, void** context)
+{
+    static const WCHAR prefix[] = {'\\','\\','.','\\','p','i','p','e','\\','_','_','w','i','n','e','_','c','l','i','p','b','o','a','r','d','_'};
+
+    memcpy(clipboard_pipe_name, prefix, sizeof(prefix));
+    if (!GetUserObjectInformationW(GetProcessWindowStation(), UOI_NAME,
+                                   clipboard_pipe_name + sizeof(prefix) / sizeof(WCHAR),
+                                   sizeof(clipboard_pipe_name) - sizeof(prefix), NULL))
+    {
+        ERR("failed to get winstation name\n");
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+
+/**************************************************************************
+ *              get_pipe_name
+ *
+ * Get the name of the pipe used to communicate with the per-window-station
+ * clipboard manager thread.
+ */
+static const WCHAR* get_pipe_name(void)
+{
+    static INIT_ONCE once = INIT_ONCE_STATIC_INIT;
+    InitOnceExecuteOnce(&once, init_pipe_name, NULL, NULL);
+    return clipboard_pipe_name[0] ? clipboard_pipe_name : NULL;
+}
+
+
+/**************************************************************************
+ *              clipboard_thread
+ *
+ * Thread running inside the desktop process to manage the clipboard
+ */
+static DWORD WINAPI clipboard_thread(void *arg)
+{
+    static const WCHAR clipboard_classname[] = {'_','_','w','i','n','e','_','c','l','i','p','b','o','a','r','d','_','m','a','n','a','g','e','r',0};
+    WNDCLASSW class;
+    struct macdrv_window_features wf;
+    const WCHAR* pipe_name;
+    HANDLE pipe = NULL;
+    HANDLE event = NULL;
+    OVERLAPPED overlapped;
+    BOOL need_connect = TRUE, pending = FALSE;
+    MSG msg;
+
+    if (!wait_clipboard_mutex()) return 0;
+
+    memset(&class, 0, sizeof(class));
+    class.lpfnWndProc   = clipboard_wndproc;
+    class.lpszClassName = clipboard_classname;
+
+    if (!RegisterClassW(&class) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+    {
+        ERR("could not register clipboard window class err %u\n", GetLastError());
+        return 0;
+    }
+    if (!(clipboard_hwnd = CreateWindowW(clipboard_classname, NULL, 0, 0, 0, 0, 0,
+                                         HWND_MESSAGE, 0, 0, NULL)))
+    {
+        ERR("failed to create clipboard window err %u\n", GetLastError());
+        return 0;
+    }
+
+    memset(&wf, 0, sizeof(wf));
+    clipboard_cocoa_window = macdrv_create_cocoa_window(&wf, CGRectMake(100, 100, 100, 100), clipboard_hwnd,
+                                                        macdrv_init_thread_data()->queue);
+    if (!clipboard_cocoa_window)
+    {
+        ERR("failed to create clipboard Cocoa window\n");
+        goto done;
+    }
+
+    pipe_name = get_pipe_name();
+    if (!pipe_name)
+    {
+        ERR("failed to get pipe name\n");
+        goto done;
+    }
+
+    pipe = CreateNamedPipeW(pipe_name, PIPE_ACCESS_OUTBOUND | FILE_FLAG_OVERLAPPED,
+                            PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, 1, 1, 0, NULL);
+    if (!pipe)
+    {
+        ERR("failed to create named pipe: %u\n", GetLastError());
+        goto done;
+    }
+
+    event = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (!event)
+    {
+        ERR("failed to create event: %d\n", GetLastError());
+        goto done;
+    }
+
+    clipboard_thread_id = GetCurrentThreadId();
+    AddClipboardFormatListener(clipboard_hwnd);
+    register_builtin_formats();
+    grab_win32_clipboard(TRUE);
+
+    TRACE("clipboard thread %04x running\n", GetCurrentThreadId());
+    while (1)
+    {
+        DWORD result;
+
+        if (need_connect)
+        {
+            pending = FALSE;
+            memset(&overlapped, 0, sizeof(overlapped));
+            overlapped.hEvent = event;
+            if (ConnectNamedPipe(pipe, &overlapped))
+            {
+                ERR("asynchronous ConnectNamedPipe unexpectedly returned true: %d\n", GetLastError());
+                ResetEvent(event);
+            }
+            else
+            {
+                result = GetLastError();
+                switch (result)
+                {
+                    case ERROR_PIPE_CONNECTED:
+                    case ERROR_NO_DATA:
+                        SetEvent(event);
+                        need_connect = FALSE;
+                        break;
+                    case ERROR_IO_PENDING:
+                        need_connect = FALSE;
+                        pending = TRUE;
+                        break;
+                    default:
+                        ERR("failed to initiate pipe connection: %d\n", result);
+                        break;
+                }
             }
         }
-        else if (owner)
-            *owner = cbinfo.hwnd_owner;
+
+        result = MsgWaitForMultipleObjectsEx(1, &event, INFINITE, QS_ALLINPUT, MWMO_ALERTABLE | MWMO_INPUTAVAILABLE);
+        switch (result)
+        {
+            case WAIT_OBJECT_0:
+            {
+                DWORD written;
+
+                if (pending && !GetOverlappedResult(pipe, &overlapped, &written, FALSE))
+                    ERR("failed to connect pipe: %d\n", GetLastError());
+
+                update_clipboard();
+                DisconnectNamedPipe(pipe);
+                need_connect = TRUE;
+                break;
+            }
+            case WAIT_OBJECT_0 + 1:
+                while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE))
+                {
+                    if (msg.message == WM_QUIT)
+                        goto done;
+                    DispatchMessageW(&msg);
+                }
+                break;
+            case WAIT_IO_COMPLETION:
+                break;
+            default:
+                ERR("failed to wait for connection or input: %d\n", GetLastError());
+                break;
+        }
     }
+
+done:
+    if (event) CloseHandle(event);
+    if (pipe) CloseHandle(pipe);
+    macdrv_destroy_cocoa_window(clipboard_cocoa_window);
+    DestroyWindow(clipboard_hwnd);
+    return 0;
 }
 
 
@@ -1880,251 +2056,129 @@ static void check_clipboard_ownership(HWND *owner)
 
 
 /**************************************************************************
- *              AcquireClipboard (MACDRV.@)
+ *              macdrv_UpdateClipboard
  */
-int CDECL macdrv_AcquireClipboard(HWND hwnd)
+void CDECL macdrv_UpdateClipboard(void)
 {
-    TRACE("hwnd %p\n", hwnd);
-    check_clipboard_ownership(NULL);
-    return 0;
-}
+    static ULONG last_update;
+    ULONG now, end;
+    const WCHAR* pipe_name;
+    HANDLE pipe;
+    BYTE dummy;
+    DWORD count;
+    OVERLAPPED overlapped = { 0 };
+    BOOL canceled = FALSE;
 
+    if (GetCurrentThreadId() == clipboard_thread_id) return;
 
-/**************************************************************************
- *              CountClipboardFormats (MACDRV.@)
- */
-INT CDECL macdrv_CountClipboardFormats(void)
-{
-    CFMutableSetRef seen_formats;
-    CFArrayRef types;
-    CFIndex count;
-    CFIndex i;
-    INT ret = 0;
+    TRACE("\n");
 
-    TRACE("()\n");
-    check_clipboard_ownership(NULL);
+    now = GetTickCount();
+    if ((int)(now - last_update) <= CLIPBOARD_UPDATE_DELAY) return;
+    last_update = now;
 
-    seen_formats = CFSetCreateMutable(NULL, 0, NULL);
-    if (!seen_formats)
+    if (!(pipe_name = get_pipe_name())) return;
+    pipe = CreateFileW(pipe_name, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                       OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, NULL);
+    if (pipe == INVALID_HANDLE_VALUE)
     {
-        WARN("Failed to allocate set to track seen formats\n");
-        return 0;
+        WARN("failed to open pipe to clipboard manager: %d\n", GetLastError());
+        return;
     }
 
-    types = macdrv_copy_pasteboard_types(NULL);
-    if (!types)
+    overlapped.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (!overlapped.hEvent)
     {
-        WARN("Failed to copy pasteboard types\n");
-        CFRelease(seen_formats);
-        return 0;
+        ERR("failed to create event: %d\n", GetLastError());
+        goto done;
     }
 
-    count = CFArrayGetCount(types);
-    TRACE("got %ld types\n", count);
-
-    for (i = 0; i < count; i++)
+    /* We expect the read to fail because the server just closes our connection.  This
+       is just waiting for that close to happen. */
+    if (ReadFile(pipe, &dummy, sizeof(dummy), NULL, &overlapped))
     {
-        CFStringRef type = CFArrayGetValueAtIndex(types, i);
-        WINE_CLIPFORMAT* format;
-
-        format = NULL;
-        while ((format = format_for_type(format, type)))
-        {
-            TRACE("for type %s got format %p/%s\n", debugstr_cf(type), format, debugstr_format(format->format_id));
-
-            if (!CFSetContainsValue(seen_formats, (void*)format->format_id))
-            {
-                ret++;
-                CFSetAddValue(seen_formats, (void*)format->format_id);
-            }
-        }
+        WARN("asynchronous ReadFile unexpectedly returned true: %d\n", GetLastError());
+        goto done;
     }
-
-    CFRelease(types);
-    CFRelease(seen_formats);
-    TRACE(" -> %d\n", ret);
-    return ret;
-}
-
-
-/**************************************************************************
- *              EmptyClipboard (MACDRV.@)
- *
- * Empty cached clipboard data.
- */
-void CDECL macdrv_EmptyClipboard(BOOL keepunowned)
-{
-    TRACE("keepunowned %d\n", keepunowned);
-    macdrv_clear_pasteboard();
-}
-
-
-/**************************************************************************
- *              EndClipboardUpdate (MACDRV.@)
- */
-void CDECL macdrv_EndClipboardUpdate(void)
-{
-    TRACE("()\n");
-    check_clipboard_ownership(NULL);
-}
-
-
-/**************************************************************************
- *              EnumClipboardFormats (MACDRV.@)
- */
-UINT CDECL macdrv_EnumClipboardFormats(UINT prev_format)
-{
-    CFArrayRef formats;
-    CFIndex count;
-    CFIndex i;
-    UINT ret = 0;
-
-    TRACE("prev_format %s\n", debugstr_format(prev_format));
-    check_clipboard_ownership(NULL);
-
-    formats = macdrv_copy_pasteboard_formats(NULL);
-    if (formats)
-    {
-        count = CFArrayGetCount(formats);
-        if (prev_format)
-        {
-            i = CFArrayGetFirstIndexOfValue(formats, CFRangeMake(0, count), (void*)prev_format);
-            if (i != kCFNotFound)
-                i++;
-        }
-        else
-            i = 0;
-
-        if (i != kCFNotFound && i < count)
-            ret = (UINT)CFArrayGetValueAtIndex(formats, i);
-
-        CFRelease(formats);
-    }
-
-    TRACE(" -> %u\n", ret);
-    return ret;
-}
-
-
-/**************************************************************************
- *              GetClipboardData (MACDRV.@)
- */
-HANDLE CDECL macdrv_GetClipboardData(UINT desired_format)
-{
-    check_clipboard_ownership(NULL);
-
-    return macdrv_get_pasteboard_data(NULL, desired_format);
-}
-
-
-/**************************************************************************
- *              IsClipboardFormatAvailable (MACDRV.@)
- */
-BOOL CDECL macdrv_IsClipboardFormatAvailable(UINT desired_format)
-{
-    check_clipboard_ownership(NULL);
-    return macdrv_pasteboard_has_format(NULL, desired_format);
-}
-
-
-/**************************************************************************
- *              SetClipboardData (MACDRV.@)
- */
-BOOL CDECL macdrv_SetClipboardData(UINT format_id, HANDLE data, BOOL owner)
-{
-    HWND hwnd_owner;
-    macdrv_window window;
-    WINE_CLIPFORMAT *format;
-    CFDataRef cfdata = NULL;
-
-    check_clipboard_ownership(&hwnd_owner);
-    window = macdrv_get_cocoa_window(GetAncestor(hwnd_owner, GA_ROOT), FALSE);
-    TRACE("format_id %s data %p owner %d hwnd_owner %p window %p)\n", debugstr_format(format_id), data, owner, hwnd_owner, window);
-
-    format = natural_format_for_format(format_id);
-    if (!format && !(format = insert_clipboard_format(format_id, NULL)))
-    {
-        WARN("Failed to register clipboard format %s\n", debugstr_format(format_id));
-        return FALSE;
-    }
-
-    /* Export the data to the Mac pasteboard. */
-    if (data)
-    {
-        if (!format->export_func || !(cfdata = format->export_func(data)))
-        {
-            WARN("Failed to export %s data to type %s\n", debugstr_format(format_id), debugstr_cf(format->type));
-            return FALSE;
-        }
-    }
-
-    if (macdrv_set_pasteboard_data(format->type, cfdata, window))
-        TRACE("Set pasteboard data for type %s: %s\n", debugstr_cf(format->type), debugstr_cf(cfdata));
     else
     {
-        WARN("Failed to set pasteboard data for type %s: %s\n", debugstr_cf(format->type), debugstr_cf(cfdata));
-        if (cfdata) CFRelease(cfdata);
-        return FALSE;
+        DWORD error = GetLastError();
+        if (error == ERROR_PIPE_NOT_CONNECTED || error == ERROR_BROKEN_PIPE)
+        {
+            /* The server accepted, handled, and closed our connection before we
+               attempted the read, which is fine. */
+            goto done;
+        }
+        else if (error != ERROR_IO_PENDING)
+        {
+            ERR("failed to initiate read from pipe: %d\n", error);
+            goto done;
+        }
     }
 
-    if (cfdata) CFRelease(cfdata);
-
-    /* Find any other formats for this format_id (the exportable synthesized ones). */
-    LIST_FOR_EACH_ENTRY(format, &format_list, WINE_CLIPFORMAT, entry)
+    end = now + 500;
+    while (1)
     {
-        if (format->format_id == format_id && format->synthesized && format->export_func)
-        {
-            /* We have a synthesized format for this format ID.  Add its type to the pasteboard. */
-            TRACE("Synthesized from format %s: type %s\n", debugstr_format(format_id), debugstr_cf(format->type));
+        DWORD result, timeout;
 
-            if (data)
+        if (canceled)
+            timeout = INFINITE;
+        else
+        {
+            now = GetTickCount();
+            timeout = end - now;
+            if ((int)timeout < 0)
+                timeout = 0;
+        }
+
+        result = MsgWaitForMultipleObjectsEx(1, &overlapped.hEvent, timeout, QS_SENDMESSAGE, MWMO_ALERTABLE);
+        switch (result)
+        {
+            case WAIT_OBJECT_0:
             {
-                cfdata = format->export_func(data);
-                if (!cfdata)
+                if (GetOverlappedResult(pipe, &overlapped, &count, FALSE))
+                    WARN("unexpectedly succeeded in reading from pipe\n");
+                else
                 {
-                    WARN("Failed to export %s data to type %s\n", debugstr_format(format->format_id), debugstr_cf(format->type));
-                    continue;
+                    result = GetLastError();
+                    if (result != ERROR_BROKEN_PIPE && result != ERROR_OPERATION_ABORTED &&
+                        result != ERROR_HANDLES_CLOSED)
+                        WARN("failed to read from pipe: %d\n", result);
                 }
+
+                goto done;
             }
-            else
-                cfdata = NULL;
+            case WAIT_OBJECT_0 + 1:
+            {
+                MSG msg;
+                while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE | PM_QS_SENDMESSAGE))
+                    DispatchMessageW(&msg);
+                break;
+            }
+            case WAIT_IO_COMPLETION:
+                break;
+            case WAIT_TIMEOUT:
+                WARN("timed out waiting for read\n");
+                CancelIoEx(pipe, &overlapped);
+                canceled = TRUE;
+                break;
+            default:
+                if (canceled)
+                {
+                    ERR("failed to wait for cancel: %d\n", GetLastError());
+                    goto done;
+                }
 
-            if (macdrv_set_pasteboard_data(format->type, cfdata, window))
-                TRACE("    ... set pasteboard data: %s\n", debugstr_cf(cfdata));
-            else
-                WARN("    ... failed to set pasteboard data: %s\n", debugstr_cf(cfdata));
-
-            if (cfdata) CFRelease(cfdata);
+                ERR("failed to wait for read: %d\n", GetLastError());
+                CancelIoEx(pipe, &overlapped);
+                canceled = TRUE;
+                break;
         }
     }
 
-    if (data)
-    {
-        /* FIXME: According to MSDN, the caller is entitled to lock and read from
-           data until CloseClipboard is called.  So, we should defer this cleanup. */
-        if ((format_id >= CF_GDIOBJFIRST && format_id <= CF_GDIOBJLAST) ||
-            format_id == CF_BITMAP ||
-            format_id == CF_DIB ||
-            format_id == CF_PALETTE)
-        {
-            DeleteObject(data);
-        }
-        else if (format_id == CF_METAFILEPICT)
-        {
-            DeleteMetaFile(((METAFILEPICT *)GlobalLock(data))->hMF);
-            GlobalFree(data);
-        }
-        else if (format_id == CF_ENHMETAFILE)
-        {
-            DeleteEnhMetaFile(data);
-        }
-        else if (format_id < CF_PRIVATEFIRST || CF_PRIVATELAST < format_id)
-        {
-            GlobalFree(data);
-        }
-    }
-
-    return TRUE;
+done:
+    if (overlapped.hEvent) CloseHandle(overlapped.hEvent);
+    CloseHandle(pipe);
 }
 
 
@@ -2134,107 +2188,65 @@ BOOL CDECL macdrv_SetClipboardData(UINT format_id, HANDLE data, BOOL owner)
 
 
 /**************************************************************************
- *              macdrv_clipboard_process_attach
- */
-void macdrv_clipboard_process_attach(void)
-{
-    UINT i;
-    WINE_CLIPFORMAT *format;
-
-    /* Register built-in formats */
-    for (i = 0; i < sizeof(builtin_format_ids)/sizeof(builtin_format_ids[0]); i++)
-    {
-        if (!(format = HeapAlloc(GetProcessHeap(), 0, sizeof(*format)))) break;
-        format->format_id       = builtin_format_ids[i].id;
-        format->type            = CFRetain(builtin_format_ids[i].type);
-        format->import_func     = builtin_format_ids[i].import;
-        format->export_func     = builtin_format_ids[i].export;
-        format->synthesized     = builtin_format_ids[i].synthesized;
-        format->natural_format  = NULL;
-        list_add_tail(&format_list, &format->entry);
-    }
-
-    LIST_FOR_EACH_ENTRY(format, &format_list, WINE_CLIPFORMAT, entry)
-    {
-        if (format->synthesized)
-            format->natural_format = natural_format_for_format(format->format_id);
-    }
-
-    /* Register known mappings between Windows formats and Mac types */
-    for (i = 0; i < sizeof(builtin_format_names)/sizeof(builtin_format_names[0]); i++)
-    {
-        if (!(format = HeapAlloc(GetProcessHeap(), 0, sizeof(*format)))) break;
-        format->format_id       = RegisterClipboardFormatW(builtin_format_names[i].name);
-        format->type            = CFRetain(builtin_format_names[i].type);
-        format->import_func     = builtin_format_names[i].import;
-        format->export_func     = builtin_format_names[i].export;
-        format->synthesized     = FALSE;
-        format->natural_format  = NULL;
-        list_add_tail(&format_list, &format->entry);
-    }
-}
-
-
-/**************************************************************************
  *              query_pasteboard_data
  */
 BOOL query_pasteboard_data(HWND hwnd, CFStringRef type)
 {
+    WINE_CLIPFORMAT *format;
     BOOL ret = FALSE;
-    CLIPBOARDINFO cbinfo;
-    WINE_CLIPFORMAT* format;
-    CFArrayRef types = NULL;
-    CFRange range;
+    HANDLE handle;
 
-    TRACE("hwnd %p type %s\n", hwnd, debugstr_cf(type));
+    TRACE("win %p/%p type %s\n", hwnd, clipboard_cocoa_window, debugstr_cf(type));
 
-    if (get_clipboard_info(&cbinfo))
-        hwnd = cbinfo.hwnd_owner;
+    format = format_for_type(type);
+    if (!format) return FALSE;
 
-    format = NULL;
-    while ((format = format_for_type(format, type)))
+    if (!OpenClipboard(clipboard_hwnd))
     {
-        TRACE("for type %s got format %p/%s\n", debugstr_cf(type), format, debugstr_format(format->format_id));
+        ERR("failed to open clipboard for %s\n", debugstr_cf(type));
+        return FALSE;
+    }
 
-        if (!format->synthesized)
+    if ((handle = GetClipboardData(format->format_id)))
+    {
+        CFDataRef data;
+
+        TRACE("exporting %s %p\n", debugstr_format(format->format_id), handle);
+
+        if ((data = format->export_func(handle)))
         {
-            TRACE("Sending WM_RENDERFORMAT message for format %s to hwnd %p\n", debugstr_format(format->format_id), hwnd);
-            SendMessageW(hwnd, WM_RENDERFORMAT, format->format_id, 0);
-            ret = TRUE;
-            goto done;
-        }
-
-        if (!types)
-        {
-            types = macdrv_copy_pasteboard_types(NULL);
-            if (!types)
-            {
-                WARN("Failed to copy pasteboard types\n");
-                break;
-            }
-
-            range = CFRangeMake(0, CFArrayGetCount(types));
-        }
-
-        /* The type maps to a synthesized format.  Now look up what type that format maps to natively
-           (not synthesized).  For example, if type is "public.utf8-plain-text", then this format may
-           have an ID of CF_TEXT.  From CF_TEXT, we want to find "org.winehq.builtin.text" to see if
-           that type is present in the pasteboard.  If it is, then the app must have promised it and
-           we can ask it to render it.  (If it had put it on the clipboard immediately, then the
-           pasteboard would also have data for "public.utf8-plain-text" and we wouldn't be here.)  If
-           "org.winehq.builtin.text" is not on the pasteboard, then one of the other text formats is
-           presumably responsible for the promise that we're trying to satisfy, so we keep looking. */
-        if (format->natural_format && CFArrayContainsValue(types, range, format->natural_format->type))
-        {
-            TRACE("Sending WM_RENDERFORMAT message for format %s to hwnd %p\n", debugstr_format(format->format_id), hwnd);
-            SendMessageW(hwnd, WM_RENDERFORMAT, format->format_id, 0);
-            ret = TRUE;
-            goto done;
+            ret = macdrv_set_pasteboard_data(format->type, data, clipboard_cocoa_window);
+            CFRelease(data);
         }
     }
 
-done:
-    if (types) CFRelease(types);
+    CloseClipboard();
 
     return ret;
+}
+
+
+/**************************************************************************
+ *              macdrv_lost_pasteboard_ownership
+ *
+ * Handler for the LOST_PASTEBOARD_OWNERSHIP event.
+ */
+void macdrv_lost_pasteboard_ownership(HWND hwnd)
+{
+    TRACE("win %p\n", hwnd);
+    if (!macdrv_is_pasteboard_owner(clipboard_cocoa_window))
+        grab_win32_clipboard(TRUE);
+}
+
+
+/**************************************************************************
+ *              macdrv_init_clipboard
+ */
+void macdrv_init_clipboard(void)
+{
+    DWORD id;
+    HANDLE handle = CreateThread(NULL, 0, clipboard_thread, NULL, 0, &id);
+
+    if (handle) CloseHandle(handle);
+    else ERR("failed to create clipboard thread\n");
 }

@@ -32,14 +32,15 @@
 #include <usp10.h>
 
 typedef struct _itemTest {
-    char todo_flag[5];
+    char todo_flag[6];
     int iCharPos;
     int fRTL;
     int fLayoutRTL;
     int uBidiLevel;
+    int fOverrideDirection;
     ULONG scriptTag;
     BOOL isBroken;
-    int broken_value[5];
+    int broken_value[6];
 } itemTest;
 
 typedef struct _shapeTest_char {
@@ -84,38 +85,29 @@ static inline void _test_items_ok(LPCWSTR string, DWORD cchString,
         winetest_win_skip("This test broken on this platform\n");
         return;
     }
-    if (nItemsToDo)
-        todo_wine winetest_ok(outnItems == nItems, "Wrong number of items\n");
-    else
-        winetest_ok(outnItems == nItems, "Wrong number of items\n");
+    todo_wine_if (nItemsToDo)
+        winetest_ok(outnItems == nItems, "Wrong number of items (%u)\n", outnItems);
+    outnItems = min(outnItems, nItems);
     for (x = 0; x <= outnItems; x++)
     {
         if (items[x].isBroken && broken(outpItems[x].iCharPos == items[x].broken_value[0]))
             winetest_win_skip("This test broken on this platform\n");
-        else if (items[x].todo_flag[0])
-            todo_wine winetest_ok(outpItems[x].iCharPos == items[x].iCharPos, "%i:Wrong CharPos\n",x);
-        else
+        else todo_wine_if (items[x].todo_flag[0])
             winetest_ok(outpItems[x].iCharPos == items[x].iCharPos, "%i:Wrong CharPos (%i)\n",x,outpItems[x].iCharPos);
 
         if (items[x].isBroken && broken(outpItems[x].a.fRTL== items[x].broken_value[1]))
             winetest_win_skip("This test broken on this platform\n");
-        else if (items[x].todo_flag[1])
-            todo_wine winetest_ok(outpItems[x].a.fRTL == items[x].fRTL, "%i:Wrong fRTL\n",x);
-        else
+        else todo_wine_if (items[x].todo_flag[1])
             winetest_ok(outpItems[x].a.fRTL == items[x].fRTL, "%i:Wrong fRTL(%i)\n",x,outpItems[x].a.fRTL);
 
         if (items[x].isBroken && broken(outpItems[x].a.fLayoutRTL == items[x].broken_value[2]))
             winetest_win_skip("This test broken on this platform\n");
-        else if (items[x].todo_flag[2])
-            todo_wine winetest_ok(outpItems[x].a.fLayoutRTL == items[x].fLayoutRTL, "%i:Wrong fLayoutRTL\n",x);
-        else
+        else todo_wine_if (items[x].todo_flag[2])
             winetest_ok(outpItems[x].a.fLayoutRTL == items[x].fLayoutRTL, "%i:Wrong fLayoutRTL(%i)\n",x,outpItems[x].a.fLayoutRTL);
 
         if (items[x].isBroken && broken(outpItems[x].a.s.uBidiLevel == items[x].broken_value[3]))
             winetest_win_skip("This test broken on this platform\n");
-        else if (items[x].todo_flag[3])
-            todo_wine winetest_ok(outpItems[x].a.s.uBidiLevel == items[x].uBidiLevel, "%i:Wrong BidiLevel\n",x);
-        else
+        else todo_wine_if (items[x].todo_flag[3])
             winetest_ok(outpItems[x].a.s.uBidiLevel == items[x].uBidiLevel, "%i:Wrong BidiLevel(%i)\n",x,outpItems[x].a.s.uBidiLevel);
         if (x != outnItems)
             winetest_ok(outpItems[x].a.eScript != SCRIPT_UNDEFINED, "%i: Undefined script\n",x);
@@ -123,11 +115,14 @@ static inline void _test_items_ok(LPCWSTR string, DWORD cchString,
         {
             if (items[x].isBroken && broken(tags[x] == items[x].broken_value[4]))
                 winetest_win_skip("This test broken on this platform\n");
-            else if (items[x].todo_flag[4])
-                todo_wine winetest_ok(tags[x] == items[x].scriptTag,"%i:Incorrect Script Tag %x != %x\n",x,tags[x],items[x].scriptTag);
-            else
+            else todo_wine_if (items[x].todo_flag[4])
                 winetest_ok(tags[x] == items[x].scriptTag,"%i:Incorrect Script Tag %x != %x\n",x,tags[x],items[x].scriptTag);
         }
+
+        if (items[x].isBroken && broken(outpItems[x].a.s.fOverrideDirection == items[x].broken_value[5]))
+            winetest_win_skip("This test broken on this platform\n");
+        else todo_wine_if (items[x].todo_flag[5])
+            winetest_ok(outpItems[x].a.s.fOverrideDirection == items[x].fOverrideDirection, "%i:Wrong fOverrideDirection(%i)\n",x,outpItems[x].a.s.fOverrideDirection);
     }
 }
 
@@ -179,42 +174,62 @@ static inline void _test_items_ok(LPCWSTR string, DWORD cchString,
 static void test_ScriptItemize( void )
 {
     static const WCHAR test1[] = {'t', 'e', 's', 't',0};
-    static const itemTest t11[2] = {{{0,0,0,0,0},0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0},4,0,0,0,-1}};
-    static const itemTest t12[2] = {{{0,0,0,0,0},0,0,0,2,latn_tag,FALSE},{{0,0,0,0,0},4,0,0,0,-1,FALSE}};
+    static const itemTest t11[2] = {{{0,0,0,0,0,0},0,0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0,0},4,0,0,0,0,-1}};
+    static const itemTest t12[2] = {{{0,0,0,0,0,0},0,0,0,2,0,latn_tag,FALSE},{{0,0,0,0,0,0},4,0,0,0,0,-1,FALSE}};
 
     static const WCHAR test1b[] = {' ', ' ', ' ', ' ',0};
-    static const itemTest t1b1[2] = {{{0,0,0,0,0},0,0,0,0,0,FALSE},{{0,0,0,0,0},4,0,0,0,-1,FALSE}};
-    static const itemTest t1b2[2] = {{{0,0,0,0,0},0,1,1,1,0,FALSE},{{0,0,0,0,0},4,0,0,0,-1,FALSE}};
+    static const itemTest t1b1[2] = {{{0,0,0,0,0,0},0,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},4,0,0,0,0,-1,FALSE}};
+    static const itemTest t1b2[2] = {{{0,0,0,0,0,0},0,1,1,1,0,0,FALSE},{{0,0,0,0,0,0},4,0,0,0,0,-1,FALSE}};
 
     static const WCHAR test1c[] = {' ', ' ', ' ', '1', '2', ' ',0};
-    static const itemTest t1c1[2] = {{{0,0,0,0,0},0,0,0,0,0,FALSE},{{0,0,0,0,0},6,0,0,0,-1,FALSE}};
-    static const itemTest t1c2[4] = {{{0,0,0,0,0},0,1,1,1,0,FALSE},{{0,0,0,0,0},3,0,1,2,0,FALSE},{{0,0,0,0,0},5,1,1,1,0,FALSE},{{0,0,0,0,0},6,0,0,0,-1,FALSE}};
+    static const itemTest t1c1[2] = {{{0,0,0,0,0,0},0,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
+    static const itemTest t1c2[4] = {{{0,0,0,0,0,0},0,1,1,1,0,0,FALSE},{{0,0,0,0,0,0},3,0,1,2,0,0,FALSE},{{0,0,0,0,0,0},5,1,1,1,0,0,FALSE},{{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
 
     /* Arabic, English*/
     static const WCHAR test2[] = {'1','2','3','-','5','2',0x064a,0x064f,0x0633,0x0627,0x0648,0x0650,0x064a,'7','1','.',0};
-    static const itemTest t21[7] = {{{0,0,0,0,0},0,0,0,0,0,FALSE},{{0,0,0,0,0},3,0,0,0,0,FALSE},{{0,0,0,0,0},4,0,0,0,0,FALSE},{{0,0,0,0,0},6,1,1,1,arab_tag,FALSE},{{0,0,0,0,0},13,0,0,0,0,FALSE},{{0,0,0,0,0},15,0,0,0,0,FALSE},{{0,0,0,0,0},16,0,0,0,-1,FALSE}};
-    static const itemTest t22[5] = {{{0,0,0,0,0},0,0,0,2,0,FALSE},{{0,0,0,0,0},6,1,1,1,arab_tag,FALSE},{{0,0,0,0,0},13,0,1,2,0,FALSE},{{0,0,0,0,0},15,0,0,0,0,FALSE},{{0,0,0,0,0},16,0,0,0,-1,FALSE}};
-    static const itemTest t23[5] = {{{0,0,0,0,0},0,0,1,2,0,FALSE},{{0,0,0,0,0},6,1,1,1,arab_tag,FALSE},{{0,0,0,0,0},13,0,1,2,0,FALSE},{{0,0,0,0,0},15,1,1,1,0,FALSE},{{0,0,0,0,0},16,0,0,0,-1,FALSE}};
+    static const itemTest t21[7] = {{{0,0,0,0,0,0},0,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},3,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},4,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},6,1,1,1,0,arab_tag,FALSE},{{0,0,0,0,0,0},13,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},15,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},16,0,0,0,0,-1,FALSE}};
+    static const itemTest t22[5] = {{{0,0,0,0,0,0},0,0,0,2,0,0,FALSE},{{0,0,0,0,0,0},6,1,1,1,0,arab_tag,FALSE},{{0,0,0,0,0,0},13,0,1,2,0,0,FALSE},{{0,0,0,0,0,0},15,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},16,0,0,0,0,-1,FALSE}};
+    static const itemTest t23[5] = {{{0,0,0,0,0,0},0,0,1,2,0,0,FALSE},{{0,0,0,0,0,0},6,1,1,1,0,arab_tag,FALSE},{{0,0,0,0,0,0},13,0,1,2,0,0,FALSE},{{0,0,0,0,0,0},15,1,1,1,0,0,FALSE},{{0,0,0,0,0,0},16,0,0,0,0,-1,FALSE}};
+    static const itemTest t24[5] = {{{0,0,0,0,0,0},0,0,0,0,1,0,FALSE},
+                                {{0,0,0,0,0,0},6,0,0,0,1,arab_tag,FALSE},
+                                {{0,0,0,0,0,0},13,0,1,0,1,0,FALSE},
+                                {{0,0,0,0,0,0},15,0,0,0,1,0,FALSE},
+                                {{0,0,0,0,0,0},16,0,0,0,0,-1,FALSE}};
 
     static const WCHAR test2b[] = {'A','B','C','-','D','E','F',' ',0x0621,0x0623,0x0624,0};
-    static const itemTest t2b1[5] = {{{0,0,0,0,0},0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0},3,0,0,0,0,FALSE},{{0,0,0,0,0},4,0,0,0,latn_tag,FALSE},{{0,0,0,0,0},8,1,1,1,arab_tag,FALSE},{{0,0,0,0,0},11,0,0,0,-1,FALSE}};
-    static const itemTest t2b2[5] = {{{0,0,0,0,0},0,0,0,2,latn_tag,FALSE},{{0,0,0,0,0},3,0,0,2,0,FALSE},{{0,0,0,0,0},4,0,0,2,latn_tag,FALSE},{{0,0,0,0,0},7,1,1,1,arab_tag,FALSE},{{0,0,0,0,0},11,0,0,0,-1,FALSE}};
-    static const itemTest t2b3[3] = {{{0,0,0,0,0},0,0,0,2,latn_tag,FALSE},{{0,0,0,0,0},7,1,1,1,arab_tag,FALSE},{{0,0,0,0,0},11,0,0,0,-1,FALSE}};
+    static const itemTest t2b1[5] = {{{0,0,0,0,0,0},0,0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0,0},3,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},4,0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0,0},8,1,1,1,0,arab_tag,FALSE},{{0,0,0,0,0,0},11,0,0,0,0,-1,FALSE}};
+    static const itemTest t2b2[5] = {{{0,0,0,0,0,0},0,0,0,2,0,latn_tag,FALSE},{{0,0,0,0,0,0},3,0,0,2,0,0,FALSE},{{0,0,0,0,0,0},4,0,0,2,0,latn_tag,FALSE},{{0,0,0,0,0,0},7,1,1,1,0,arab_tag,FALSE},{{0,0,0,0,0,0},11,0,0,0,0,-1,FALSE}};
+    static const itemTest t2b3[3] = {{{0,0,0,0,0,0},0,0,0,2,0,latn_tag,FALSE},{{0,0,0,0,0,0},7,1,1,1,0,arab_tag,FALSE},{{0,0,0,0,0,0},11,0,0,0,0,-1,FALSE}};
+    static const itemTest t2b4[5] = {{{0,0,0,0,0,0},0,0,0,0,1,latn_tag,FALSE},
+                                    {{0,0,0,0,0,0},3,0,0,0,1,0,FALSE},
+                                    {{0,0,0,0,0,0},4,0,0,0,1,latn_tag,FALSE},
+                                    {{0,0,0,0,0,0},8,0,0,0,1,arab_tag,FALSE},
+                                    {{0,0,0,0,0,0},11,0,0,0,0,-1,FALSE}};
     static const int b2[2] = {4,4};
 
     /* leading space */
     static const WCHAR test2c[] = {' ',0x0621,0x0623,0x0624,'A','B','C','-','D','E','F',0};
-    static const itemTest t2c1[5] = {{{0,0,0,0,0},0,1,1,1,arab_tag,FALSE},{{0,0,0,0,0},4,0,0,0,latn_tag,FALSE},{{0,0,0,0,0},7,0,0,0,0,FALSE},{{0,0,0,0,0},8,0,0,0,latn_tag,FALSE},{{0,0,0,0,0},11,0,0,0,-1,FALSE}};
-    static const itemTest t2c2[6] = {{{0,0,0,0,0},0,0,0,0,0,FALSE},{{0,0,0,0,0},1,1,1,1,arab_tag,FALSE},{{0,0,0,0,0},4,0,0,0,latn_tag,FALSE},{{0,0,0,0,0},7,0,0,0,0,FALSE},{{0,0,0,0,0},8,0,0,0,latn_tag,FALSE},{{0,0,0,0,0},11,0,0,0,-1,FALSE}};
-    static const itemTest t2c3[5] = {{{0,0,0,0,0},0,1,1,1,arab_tag,FALSE},{{0,0,0,0,0},4,0,0,2,latn_tag,FALSE},{{0,0,0,0,0},7,0,0,2,0,FALSE},{{0,0,0,0,0},8,0,0,2,latn_tag,FALSE},{{0,0,0,0,0},11,0,0,0,-1,FALSE}};
-    static const itemTest t2c4[3] = {{{0,0,0,0,0},0,1,1,1,arab_tag,FALSE},{{0,0,0,0,0},4,0,0,2,latn_tag,FALSE},{{0,0,0,0,0},11,0,0,0,-1,FALSE}};
+    static const itemTest t2c1[5] = {{{0,0,0,0,0,0},0,1,1,1,0,arab_tag,FALSE},{{0,0,0,0,0,0},4,0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0,0},7,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},8,0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0,0},11,0,0,0,0,-1,FALSE}};
+    static const itemTest t2c2[6] = {{{0,0,0,0,0,0},0,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},1,1,1,1,0,arab_tag,FALSE},{{0,0,0,0,0,0},4,0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0,0},7,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},8,0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0,0},11,0,0,0,0,-1,FALSE}};
+    static const itemTest t2c3[5] = {{{0,0,0,0,0,0},0,1,1,1,0,arab_tag,FALSE},{{0,0,0,0,0,0},4,0,0,2,0,latn_tag,FALSE},{{0,0,0,0,0,0},7,0,0,2,0,0,FALSE},{{0,0,0,0,0,0},8,0,0,2,0,latn_tag,FALSE},{{0,0,0,0,0,0},11,0,0,0,0,-1,FALSE}};
+    static const itemTest t2c4[3] = {{{0,0,0,0,0,0},0,1,1,1,0,arab_tag,FALSE},{{0,0,0,0,0,0},4,0,0,2,0,latn_tag,FALSE},{{0,0,0,0,0,0},11,0,0,0,0,-1,FALSE}};
+    static const itemTest t2c5[5] = {{{0,0,0,0,0,0},0,0,0,0,1,arab_tag,FALSE},
+                                    {{0,0,0,0,0,0},4,0,0,0,1,latn_tag,FALSE},
+                                    {{0,0,0,0,0,0},7,0,0,0,1,0,FALSE},
+                                    {{0,0,0,0,0,0},8,0,0,0,1,latn_tag,FALSE},
+                                    {{0,0,0,0,0,0},11,0,0,0,0,-1,FALSE}};
 
     /* trailing space */
     static const WCHAR test2d[] = {'A','B','C','-','D','E','F',0x0621,0x0623,0x0624,' ',0};
-    static const itemTest t2d1[5] = {{{0,0,0,0,0},0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0},3,0,0,0,0,FALSE},{{0,0,0,0,0},4,0,0,0,latn_tag,FALSE},{{0,0,0,0,0},7,1,1,1,arab_tag,FALSE},{{0,0,0,0,0},11,0,0,0,-1,FALSE}};
-    static const itemTest t2d2[6] = {{{0,0,0,0,0},0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0},3,0,0,0,0,FALSE},{{0,0,0,0,0},4,0,0,0,latn_tag,FALSE},{{0,0,0,0,0},7,1,1,1,arab_tag,FALSE},{{0,0,0,0,0},10,0,0,0,0,FALSE},{{0,0,0,0,0},11,0,0,0,-1,FALSE}};
-    static const itemTest t2d3[5] = {{{0,0,0,0,0},0,0,0,2,latn_tag,FALSE},{{0,0,0,0,0},3,0,0,2,0,FALSE},{{0,0,0,0,0},4,0,0,2,latn_tag,FALSE},{{0,0,0,0,0},7,1,1,1,arab_tag,FALSE},{{0,0,0,0,0},11,0,0,0,-1,FALSE}};
-    static const itemTest t2d4[3] = {{{0,0,0,0,0},0,0,0,2,latn_tag,FALSE},{{0,0,0,0,0},7,1,1,1,arab_tag,FALSE},{{0,0,0,0,0},11,0,0,0,-1,FALSE}};
+    static const itemTest t2d1[5] = {{{0,0,0,0,0,0},0,0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0,0},3,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},4,0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0,0},7,1,1,1,0,arab_tag,FALSE},{{0,0,0,0,0,0},11,0,0,0,0,-1,FALSE}};
+    static const itemTest t2d2[6] = {{{0,0,0,0,0,0},0,0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0,0},3,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},4,0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0,0},7,1,1,1,0,arab_tag,FALSE},{{0,0,0,0,0,0},10,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},11,0,0,0,0,-1,FALSE}};
+    static const itemTest t2d3[5] = {{{0,0,0,0,0,0},0,0,0,2,0,latn_tag,FALSE},{{0,0,0,0,0,0},3,0,0,2,0,0,FALSE},{{0,0,0,0,0,0},4,0,0,2,0,latn_tag,FALSE},{{0,0,0,0,0,0},7,1,1,1,0,arab_tag,FALSE},{{0,0,0,0,0,0},11,0,0,0,0,-1,FALSE}};
+    static const itemTest t2d4[3] = {{{0,0,0,0,0,0},0,0,0,2,0,latn_tag,FALSE},{{0,0,0,0,0,0},7,1,1,1,0,arab_tag,FALSE},{{0,0,0,0,0,0},11,0,0,0,0,-1,FALSE}};
+static const itemTest t2d5[5] = {{{0,0,0,0,0,0},0,0,0,0,1,latn_tag,FALSE},
+                                {{0,0,0,0,0,0},3,0,0,0,1,0,FALSE},
+                                {{0,0,0,0,0,0},4,0,0,0,1,latn_tag,FALSE},
+                                {{0,0,0,0,0,0},7,0,0,0,1,arab_tag,FALSE},
+                                {{0,0,0,0,0,0},11,0,0,0,0,-1,FALSE}};
 
     /* Thai */
     static const WCHAR test3[] =
@@ -223,14 +238,14 @@ static void test_ScriptItemize( void )
 ,0x0e04,0x0e27,0x0e32,0x0e21,0x0e2a, 0x0e33,0x0e40,0x0e23,0x0e47,0x0e08,
  0x0e2d,0x0e22,0x0e39,0x0e48,0x0e17,0x0e35,0x0e48,0x0e19,0x0e31,0x0e48,0x0e19,0};
 
-    static const itemTest t31[2] = {{{0,0,0,0,0},0,0,0,0,thai_tag,FALSE},{{0,0,0,0,0},41,0,0,0,-1,FALSE}};
-    static const itemTest t32[2] = {{{0,0,0,0,0},0,0,0,2,thai_tag,FALSE},{{0,0,0,0,0},41,0,0,0,-1,FALSE}};
+    static const itemTest t31[2] = {{{0,0,0,0,0,0},0,0,0,0,0,thai_tag,FALSE},{{0,0,0,0,0,0},41,0,0,0,0,-1,FALSE}};
+    static const itemTest t32[2] = {{{0,0,0,0,0,0},0,0,0,2,0,thai_tag,FALSE},{{0,0,0,0,0,0},41,0,0,0,0,-1,FALSE}};
 
     static const WCHAR test4[]  = {'1','2','3','-','5','2',' ','i','s',' ','7','1','.',0};
 
-    static const itemTest t41[6] = {{{0,0,0,0,0},0,0,0,0,0,FALSE},{{0,0,0,0,0},3,0,0,0,0,FALSE},{{0,0,0,0,0},4,0,0,0,0,FALSE},{{0,0,0,0,0},7,0,0,0,latn_tag,FALSE},{{0,0,0,0,0},10,0,0,0,0,FALSE},{{0,0,0,0,0},12,0,0,0,-1,FALSE}};
-    static const itemTest t42[5] = {{{0,0,0,0,0},0,0,1,2,0,FALSE},{{0,0,0,0,0},6,1,1,1,0,FALSE},{{0,0,0,0,0},7,0,0,2,latn_tag,FALSE},{{0,0,0,0,0},10,0,0,2,0,FALSE},{{0,0,0,0,0},12,0,0,0,-1,FALSE}};
-    static const itemTest t43[4] = {{{0,0,0,0,0},0,0,1,2,0,FALSE},{{0,0,0,0,0},6,1,1,1,0,FALSE},{{0,0,0,0,0},7,0,0,2,latn_tag,FALSE},{{0,0,0,0,0},12,0,0,0,-1,FALSE}};
+    static const itemTest t41[6] = {{{0,0,0,0,0,0},0,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},3,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},4,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},7,0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0,0},10,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},12,0,0,0,0,-1,FALSE}};
+    static const itemTest t42[5] = {{{0,0,0,0,0,0},0,0,1,2,0,0,FALSE},{{0,0,0,0,0,0},6,1,1,1,0,0,FALSE},{{0,0,0,0,0,0},7,0,0,2,0,latn_tag,FALSE},{{0,0,0,0,0,0},10,0,0,2,0,0,FALSE},{{0,0,0,0,0,0},12,0,0,0,0,-1,FALSE}};
+    static const itemTest t43[4] = {{{0,0,0,0,0,0},0,0,1,2,0,0,FALSE},{{0,0,0,0,0,0},6,1,1,1,0,0,FALSE},{{0,0,0,0,0,0},7,0,0,2,0,latn_tag,FALSE},{{0,0,0,0,0,0},12,0,0,0,0,-1,FALSE}};
     static const int b43[2] = {4,4};
 
     /* Arabic */
@@ -239,222 +254,343 @@ static void test_ScriptItemize( void )
 0x0627,0x062c,0x064c,' ',0x0639,0x064e,0x0644,0x0649,' ',
 0x0631,0x064f,0x0624,0x0648,0x0633,0x0650,' ',0x0627,0x0644
 ,0x0623,0x0635,0x0650,0x062d,0x0651,0x064e,0x0627,0x0621,0x0650,0};
-    static const itemTest t51[2] = {{{0,0,0,0,0},0,1,1,1,arab_tag,FALSE},{{0,0,0,0,0},38,0,0,0,-1,FALSE}};
+    static const itemTest t51[2] = {{{0,0,0,0,0,0},0,1,1,1,0,arab_tag,FALSE},{{0,0,0,0,0,0},38,0,0,0,0,-1,FALSE}};
+    static const itemTest t52[2] = {{{0,0,0,0,0,0},0,0,0,0,1,arab_tag,FALSE},
+                                    {{0,0,0,0,0,0},38,0,0,0,0,-1,FALSE}};
+
 
     /* Hebrew */
     static const WCHAR test6[]  = {0x05e9, 0x05dc, 0x05d5, 0x05dd, '.',0};
-    static const itemTest t61[3] = {{{0,0,0,0,0},0,1,1,1,hebr_tag,TRUE,{-1,0,0,0,-1}},{{0,0,0,0,0},4,0,0,0,0,FALSE},{{0,0,0,0,0},5,0,0,0,-1,FALSE}};
-    static const itemTest t62[3] = {{{0,0,0,0,0},0,1,1,1,hebr_tag,FALSE},{{0,0,0,0,0},4,1,1,1,0,FALSE},{{0,0,0,0,0},5,0,0,0,-1,FALSE}};
-    static const itemTest t63[2] = {{{0,0,0,0,0},0,1,1,1,hebr_tag,FALSE},{{0,0,0,0,0},5,0,0,0,-1,FALSE}};
+    static const itemTest t61[3] = {{{0,0,0,0,0,0},0,1,1,1,0,hebr_tag,TRUE,{-1,0,0,0,-1}},{{0,0,0,0,0,0},4,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},5,0,0,0,0,-1,FALSE}};
+    static const itemTest t62[3] = {{{0,0,0,0,0,0},0,1,1,1,0,hebr_tag,FALSE},{{0,0,0,0,0,0},4,1,1,1,0,0,FALSE},{{0,0,0,0,0,0},5,0,0,0,0,-1,FALSE}};
+    static const itemTest t63[2] = {{{0,0,0,0,0,0},0,1,1,1,0,hebr_tag,FALSE},{{0,0,0,0,0,0},5,0,0,0,0,-1,FALSE}};
+static const itemTest t64[3] = {{{0,0,0,0,0,0},0,0,0,0,1,hebr_tag,FALSE},
+                                {{0,0,0,0,0,0},4,0,0,0,1,0,FALSE},
+                                {{0,0,0,0,0,0},5,0,0,0,0,-1,FALSE}};
+
     static const int b63[2] = {2,2};
     static const WCHAR test7[]  = {'p','a','r','t',' ','o','n','e',' ',0x05d7, 0x05dc, 0x05e7, ' ', 0x05e9, 0x05ea, 0x05d9, 0x05d9, 0x05dd, ' ','p','a','r','t',' ','t','h','r','e','e', 0};
-    static const itemTest t71[4] = {{{0,0,0,0,0},0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0},9,1,1,1,hebr_tag,TRUE,{-1,0,0,0,-1}},{{0,0,0,0,0},19,0,0,0,latn_tag,FALSE},{{0,0,0,0,0},29,0,0,0,-1,FALSE}};
-    static const itemTest t72[4] = {{{0,0,0,0,0},0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0},9,1,1,1,hebr_tag,FALSE},{{0,0,0,0,0},18,0,0,0,latn_tag,FALSE},{{0,0,0,0,0},29,0,0,0,-1,FALSE}};
-    static const itemTest t73[4] = {{{0,0,0,0,0},0,0,0,2,latn_tag,FALSE},{{0,0,0,0,0},8,1,1,1,hebr_tag,FALSE},{{0,0,0,0,0},19,0,0,2,latn_tag,FALSE},{{0,0,0,0,0},29,0,0,0,-1,FALSE}};
+    static const itemTest t71[4] = {{{0,0,0,0,0,0},0,0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0,0},9,1,1,1,0,hebr_tag,TRUE,{-1,0,0,0,-1}},{{0,0,0,0,0,0},19,0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0,0},29,0,0,0,0,-1,FALSE}};
+    static const itemTest t72[4] = {{{0,0,0,0,0,0},0,0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0,0},9,1,1,1,0,hebr_tag,FALSE},{{0,0,0,0,0,0},18,0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0,0},29,0,0,0,0,-1,FALSE}};
+    static const itemTest t73[4] = {{{0,0,0,0,0,0},0,0,0,2,0,latn_tag,FALSE},{{0,0,0,0,0,0},8,1,1,1,0,hebr_tag,FALSE},{{0,0,0,0,0,0},19,0,0,2,0,latn_tag,FALSE},{{0,0,0,0,0,0},29,0,0,0,0,-1,FALSE}};
+static const itemTest t74[4] = {{{0,0,0,0,0,0},0,0,0,0,1,latn_tag,FALSE},
+                                {{0,0,0,0,0,0},9,0,0,0,1,hebr_tag,FALSE},
+                                {{0,0,0,0,0,0},19,0,0,0,1,latn_tag,FALSE},
+                                {{0,0,0,0,0,0},29,0,0,0,0,-1,FALSE}};
+
     static const WCHAR test8[] = {0x0633, 0x0644, 0x0627, 0x0645,0};
-    static const itemTest t81[2] = {{{0,0,0,0,0},0,1,1,1,arab_tag,FALSE},{{0,0,0,0,0},4,0,0,0,-1,FALSE}};
+    static const itemTest t81[2] = {{{0,0,0,0,0,0},0,1,1,1,0,arab_tag,FALSE},{{0,0,0,0,0,0},4,0,0,0,0,-1,FALSE}};
+    static const itemTest t82[2] = {{{0,0,0,0,0,0},0,0,0,0,1,arab_tag,FALSE},
+                                    {{0,0,0,0,0,0},4,0,0,0,0,-1,FALSE}};
 
     /* Syriac  (Like Arabic )*/
     static const WCHAR test9[] = {0x0710, 0x0712, 0x0712, 0x0714, '.',0};
-    static const itemTest t91[3] = {{{0,0,0,0,0},0,1,1,1,syrc_tag,FALSE},{{0,0,0,0,0},4,0,0,0,0,FALSE},{{0,0,0,0,0},5,0,0,0,-1,FALSE}};
-    static const itemTest t92[3] = {{{0,0,0,0,0},0,1,1,1,syrc_tag},{{0,0,0,0,0},4,1,1,1,0,FALSE},{{0,0,0,0,0},5,0,0,0,-1,FALSE}};
-    static const itemTest t93[2] = {{{0,0,0,0,0},0,1,1,1,syrc_tag,FALSE},{{0,0,0,0,0},5,0,0,0,-1,FALSE}};
+    static const itemTest t91[3] = {{{0,0,0,0,0,0},0,1,1,1,0,syrc_tag,FALSE},{{0,0,0,0,0,0},4,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},5,0,0,0,0,-1,FALSE}};
+    static const itemTest t92[3] = {{{0,0,0,0,0,0},0,1,1,1,0,syrc_tag},{{0,0,0,0,0,0},4,1,1,1,0,0,FALSE},{{0,0,0,0,0,0},5,0,0,0,0,-1,FALSE}};
+    static const itemTest t93[2] = {{{0,0,0,0,0,0},0,1,1,1,0,syrc_tag,FALSE},{{0,0,0,0,0,0},5,0,0,0,0,-1,FALSE}};
+    static const itemTest t94[3] = {{{0,0,0,0,0,0},0,0,0,0,1,syrc_tag,FALSE},
+                                    {{0,0,0,0,0,0},4,0,0,0,1,0,FALSE},
+                                    {{0,0,0,0,0,0},5,0,0,0,0,-1,FALSE}};
     static const int b93[2] = {2,2};
 
     static const WCHAR test10[] = {0x0717, 0x0718, 0x071a, 0x071b,0};
-    static const itemTest t101[2] = {{{0,0,0,0,0},0,1,1,1,syrc_tag,FALSE},{{0,0,0,0,0},4,0,0,0,-1,FALSE}};
+    static const itemTest t101[2] = {{{0,0,0,0,0,0},0,1,1,1,0,syrc_tag,FALSE},{{0,0,0,0,0,0},4,0,0,0,0,-1,FALSE}};
+    static const itemTest t102[2] = {{{0,0,0,0,0,0},0,0,0,0,1,syrc_tag,FALSE},
+                                     {{0,0,0,0,0,0},4,0,0,0,0,-1,FALSE}};
 
     /* Devanagari */
     static const WCHAR test11[] = {0x0926, 0x0947, 0x0935, 0x0928, 0x093e, 0x0917, 0x0930, 0x0940};
-    static const itemTest t111[2] = {{{0,0,0,0,0},0,0,0,0,deva_tag,FALSE},{{0,0,0,0,0},8,0,0,0,-1,FALSE}};
-    static const itemTest t112[2] = {{{0,0,0,0,0},0,0,0,2,deva_tag,FALSE},{{0,0,0,0,0},8,0,0,0,-1,FALSE}};
+    static const itemTest t111[2] = {{{0,0,0,0,0,0},0,0,0,0,0,deva_tag,FALSE},{{0,0,0,0,0,0},8,0,0,0,0,-1,FALSE}};
+    static const itemTest t112[2] = {{{0,0,0,0,0,0},0,0,0,2,0,deva_tag,FALSE},{{0,0,0,0,0,0},8,0,0,0,0,-1,FALSE}};
 
     /* Bengali */
     static const WCHAR test12[] = {0x09ac, 0x09be, 0x0982, 0x09b2, 0x09be};
-    static const itemTest t121[2] = {{{0,0,0,0,0},0,0,0,0,beng_tag,FALSE},{{0,0,0,0,0},5,0,0,0,-1,FALSE}};
-    static const itemTest t122[2] = {{{0,0,0,0,0},0,0,0,2,beng_tag,FALSE},{{0,0,0,0,0},5,0,0,0,-1,FALSE}};
+    static const itemTest t121[2] = {{{0,0,0,0,0,0},0,0,0,0,0,beng_tag,FALSE},{{0,0,0,0,0,0},5,0,0,0,0,-1,FALSE}};
+    static const itemTest t122[2] = {{{0,0,0,0,0,0},0,0,0,2,0,beng_tag,FALSE},{{0,0,0,0,0,0},5,0,0,0,0,-1,FALSE}};
 
     /* Gurmukhi */
     static const WCHAR test13[] = {0x0a17, 0x0a41, 0x0a30, 0x0a2e, 0x0a41, 0x0a16, 0x0a40};
-    static const itemTest t131[2] = {{{0,0,0,0,0},0,0,0,0,guru_tag,FALSE},{{0,0,0,0,0},7,0,0,0,-1,FALSE}};
-    static const itemTest t132[2] = {{{0,0,0,0,0},0,0,0,2,guru_tag,FALSE},{{0,0,0,0,0},7,0,0,0,-1,FALSE}};
+    static const itemTest t131[2] = {{{0,0,0,0,0,0},0,0,0,0,0,guru_tag,FALSE},{{0,0,0,0,0,0},7,0,0,0,0,-1,FALSE}};
+    static const itemTest t132[2] = {{{0,0,0,0,0,0},0,0,0,2,0,guru_tag,FALSE},{{0,0,0,0,0,0},7,0,0,0,0,-1,FALSE}};
 
     /* Gujarati */
     static const WCHAR test14[] = {0x0a97, 0x0ac1, 0x0a9c, 0x0ab0, 0x0abe, 0x0aa4, 0x0ac0};
-    static const itemTest t141[2] = {{{0,0,0,0,0},0,0,0,0,gujr_tag,FALSE},{{0,0,0,0,0},7,0,0,0,-1,FALSE}};
-    static const itemTest t142[2] = {{{0,0,0,0,0},0,0,0,2,gujr_tag,FALSE},{{0,0,0,0,0},7,0,0,0,-1,FALSE}};
+    static const itemTest t141[2] = {{{0,0,0,0,0,0},0,0,0,0,0,gujr_tag,FALSE},{{0,0,0,0,0,0},7,0,0,0,0,-1,FALSE}};
+    static const itemTest t142[2] = {{{0,0,0,0,0,0},0,0,0,2,0,gujr_tag,FALSE},{{0,0,0,0,0,0},7,0,0,0,0,-1,FALSE}};
 
     /* Oriya */
     static const WCHAR test15[] = {0x0b13, 0x0b21, 0x0b3c, 0x0b3f, 0x0b06};
-    static const itemTest t151[2] = {{{0,0,0,0,0},0,0,0,0,orya_tag,FALSE},{{0,0,0,0,0},5,0,0,0,-1,FALSE}};
-    static const itemTest t152[2] = {{{0,0,0,0,0},0,0,0,2,orya_tag,FALSE},{{0,0,0,0,0},5,0,0,0,-1,FALSE}};
+    static const itemTest t151[2] = {{{0,0,0,0,0,0},0,0,0,0,0,orya_tag,FALSE},{{0,0,0,0,0,0},5,0,0,0,0,-1,FALSE}};
+    static const itemTest t152[2] = {{{0,0,0,0,0,0},0,0,0,2,0,orya_tag,FALSE},{{0,0,0,0,0,0},5,0,0,0,0,-1,FALSE}};
 
     /* Tamil */
     static const WCHAR test16[] = {0x0ba4, 0x0bae, 0x0bbf, 0x0bb4, 0x0bcd};
-    static const itemTest t161[2] = {{{0,0,0,0,0},0,0,0,0,taml_tag,FALSE},{{0,0,0,0,0},5,0,0,0,-1,FALSE}};
-    static const itemTest t162[2] = {{{0,0,0,0,0},0,0,0,2,taml_tag,FALSE},{{0,0,0,0,0},5,0,0,0,-1,FALSE}};
+    static const itemTest t161[2] = {{{0,0,0,0,0,0},0,0,0,0,0,taml_tag,FALSE},{{0,0,0,0,0,0},5,0,0,0,0,-1,FALSE}};
+    static const itemTest t162[2] = {{{0,0,0,0,0,0},0,0,0,2,0,taml_tag,FALSE},{{0,0,0,0,0,0},5,0,0,0,0,-1,FALSE}};
 
     /* Telugu */
     static const WCHAR test17[] = {0x0c24, 0x0c46, 0x0c32, 0x0c41, 0x0c17, 0x0c41};
-    static const itemTest t171[2] = {{{0,0,0,0,0},0,0,0,0,telu_tag,FALSE},{{0,0,0,0,0},6,0,0,0,-1,FALSE}};
-    static const itemTest t172[2] = {{{0,0,0,0,0},0,0,0,2,telu_tag,FALSE},{{0,0,0,0,0},6,0,0,0,-1,FALSE}};
+    static const itemTest t171[2] = {{{0,0,0,0,0,0},0,0,0,0,0,telu_tag,FALSE},{{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
+    static const itemTest t172[2] = {{{0,0,0,0,0,0},0,0,0,2,0,telu_tag,FALSE},{{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
 
     /* Kannada */
     static const WCHAR test18[] = {0x0c95, 0x0ca8, 0x0ccd, 0x0ca8, 0x0ca1};
-    static const itemTest t181[2] = {{{0,0,0,0,0},0,0,0,0,knda_tag,FALSE},{{0,0,0,0,0},5,0,0,0,-1,FALSE}};
-    static const itemTest t182[2] = {{{0,0,0,0,0},0,0,0,2,knda_tag,FALSE},{{0,0,0,0,0},5,0,0,0,-1,FALSE}};
+    static const itemTest t181[2] = {{{0,0,0,0,0,0},0,0,0,0,0,knda_tag,FALSE},{{0,0,0,0,0,0},5,0,0,0,0,-1,FALSE}};
+    static const itemTest t182[2] = {{{0,0,0,0,0,0},0,0,0,2,0,knda_tag,FALSE},{{0,0,0,0,0,0},5,0,0,0,0,-1,FALSE}};
 
     /* Malayalam */
     static const WCHAR test19[] = {0x0d2e, 0x0d32, 0x0d2f, 0x0d3e, 0x0d33, 0x0d02};
-    static const itemTest t191[2] = {{{0,0,0,0,0},0,0,0,0,mlym_tag,FALSE},{{0,0,0,0,0},6,0,0,0,-1,FALSE}};
-    static const itemTest t192[2] = {{{0,0,0,0,0},0,0,0,2,mlym_tag,FALSE},{{0,0,0,0,0},6,0,0,0,-1,FALSE}};
+    static const itemTest t191[2] = {{{0,0,0,0,0,0},0,0,0,0,0,mlym_tag,FALSE},{{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
+    static const itemTest t192[2] = {{{0,0,0,0,0,0},0,0,0,2,0,mlym_tag,FALSE},{{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
 
     /* Diacritical */
     static const WCHAR test20[] = {0x0309,'a','b','c','d',0};
-    static const itemTest t201[3] = {{{0,0,0,0,0},0,0,0,0,0x0,FALSE},{{0,0,0,0,0},1,0,0,0,latn_tag,FALSE},{{0,0,0,0,0},5,0,0,0,-1,FALSE}};
-    static const itemTest t202[3] = {{{0,0,0,0,0},0,0,0,2,0,TRUE,{-1,1,1,1,-1}},{{0,0,0,0,0},1,0,0,2,latn_tag,FALSE},{{0,0,0,0,0},5,0,0,0,-1,FALSE}};
+    static const itemTest t201[3] = {{{0,0,0,0,0,0},0,0,0,0,0x0,0,FALSE},{{0,0,0,0,0,0},1,0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0,0},5,0,0,0,0,-1,FALSE}};
+    static const itemTest t202[3] = {{{0,0,0,0,0,0},0,0,0,2,0,0,TRUE,{-1,1,1,1,-1}},{{0,0,0,0,0,0},1,0,0,2,0,latn_tag,FALSE},{{0,0,0,0,0,0},5,0,0,0,0,-1,FALSE}};
 
     static const WCHAR test21[] = {0x0710, 0x0712, 0x0308, 0x0712, 0x0714,0};
-    static const itemTest t211[2] = {{{0,0,0,0,0},0,1,1,1,syrc_tag,FALSE},{{0,0,0,0,0},5,0,0,0,-1,FALSE}};
+    static const itemTest t211[2] = {{{0,0,0,0,0,0},0,1,1,1,0,syrc_tag,FALSE},{{0,0,0,0,0,0},5,0,0,0,0,-1,FALSE}};
+    static const itemTest t212[2] = {{{0,0,0,0,0,0},0,0,0,0,1,syrc_tag,FALSE},
+                                     {{0,0,0,0,0,0},5,0,0,0,0,-1,FALSE}};
 
     /* Latin Punctuation */
     static const WCHAR test22[] = {'#','$',',','!','\"','*',0};
-    static const itemTest t221[3] = {{{0,0,0,0,0},0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0},3,0,0,0,0,FALSE},{{0,0,0,0,0},6,0,0,0,-1,FALSE}};
-    static const itemTest t222[3] = {{{0,0,0,0,0},0,1,1,1,latn_tag,FALSE},{{0,0,0,0,0},3,1,1,1,0,FALSE},{{0,0,0,0,0},6,0,0,0,-1,FALSE}};
-    static const itemTest t223[2] = {{{0,0,0,0,0},0,1,1,1,latn_tag,FALSE},{{0,0,0,0,0},6,0,0,0,-1,FALSE}};
+    static const itemTest t221[3] = {{{0,0,0,0,0,0},0,0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0,0},3,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
+    static const itemTest t222[3] = {{{0,0,0,0,0,0},0,1,1,1,0,latn_tag,FALSE},{{0,0,0,0,0,0},3,1,1,1,0,0,FALSE},{{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
+    static const itemTest t223[2] = {{{0,0,0,0,0,0},0,1,1,1,0,latn_tag,FALSE},{{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
     static const int b222[2] = {1,1};
     static const int b223[2] = {2,2};
 
     /* Number 2*/
     static const WCHAR test23[] = {'1','2','3',0x00b2,0x00b3,0x2070,0};
-    static const itemTest t231[3] = {{{0,0,0,0,0},0,0,0,0,0,FALSE},{{0,0,0,0,0},3,0,0,0,0,FALSE},{{0,0,0,0,0},6,0,0,0,-1,FALSE}};
-    static const itemTest t232[3] = {{{0,0,0,0,0},0,0,1,2,0,FALSE},{{0,0,0,0,0},3,0,1,2,0,FALSE},{{0,0,0,0,0},6,0,0,0,-1,FALSE}};
+    static const itemTest t231[3] = {{{0,0,0,0,0,0},0,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},3,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
+    static const itemTest t232[3] = {{{0,0,0,0,0,0},0,0,1,2,0,0,FALSE},{{0,0,0,0,0,0},3,0,1,2,0,0,FALSE},{{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
 
     /* Myanmar */
     static const WCHAR test24[] = {0x1019,0x103c,0x1014,0x103a,0x1019,0x102c,0x1021,0x1000,0x1039,0x1001,0x101b,0x102c};
-    static const itemTest t241[2] = {{{0,0,0,0,0},0,0,0,0,mymr_tag,FALSE},{{0,0,0,0,0},12,0,0,0,-1,FALSE}};
-    static const itemTest t242[2] = {{{0,0,0,0,0},0,0,0,2,mymr_tag,TRUE,{-1,1,1,1,-1}},{{0,0,0,0,0},12,0,0,0,-1,FALSE}};
+    static const itemTest t241[2] = {{{0,0,0,0,0,0},0,0,0,0,0,mymr_tag,FALSE},{{0,0,0,0,0,0},12,0,0,0,0,-1,FALSE}};
+    static const itemTest t242[2] = {{{0,0,0,0,0,0},0,0,0,2,0,mymr_tag,TRUE,{-1,1,1,1,-1}},{{0,0,0,0,0,0},12,0,0,0,0,-1,FALSE}};
 
     /* Tai Le */
     static const WCHAR test25[] = {0x1956,0x196d,0x1970,0x1956,0x196c,0x1973,0x1951,0x1968,0x1952,0x1970};
-    static const itemTest t251[2] = {{{0,0,0,0,0},0,0,0,0,tale_tag,TRUE,{-1,-1,-1,-1,latn_tag}},{{0,0,0,0,0},10,0,0,0,-1,FALSE}};
-    static const itemTest t252[2] = {{{0,0,0,0,0},0,0,0,2,tale_tag,TRUE,{-1,1,1,1,latn_tag}},{{0,0,0,0,0},10,0,0,0,-1,FALSE}};
+    static const itemTest t251[2] = {{{0,0,0,0,0,0},0,0,0,0,0,tale_tag,TRUE,{-1,-1,-1,-1,latn_tag}},{{0,0,0,0,0,0},10,0,0,0,0,-1,FALSE}};
+    static const itemTest t252[2] = {{{0,0,0,0,0,0},0,0,0,2,0,tale_tag,TRUE,{-1,1,1,1,latn_tag}},{{0,0,0,0,0,0},10,0,0,0,0,-1,FALSE}};
 
     /* New Tai Lue */
     static const WCHAR test26[] = {0x1992,0x19c4};
-    static const itemTest t261[2] = {{{0,0,0,0,0},0,0,0,0,talu_tag,TRUE,{-1,-1,-1,-1,latn_tag}},{{0,0,0,0,0},2,0,0,0,-1,FALSE}};
-    static const itemTest t262[2] = {{{0,0,0,0,0},0,0,0,2,talu_tag,TRUE,{-1,1,1,1,latn_tag}},{{0,0,0,0,0},2,0,0,0,-1,FALSE}};
+    static const itemTest t261[2] = {{{0,0,0,0,0,0},0,0,0,0,0,talu_tag,TRUE,{-1,-1,-1,-1,latn_tag}},{{0,0,0,0,0,0},2,0,0,0,0,-1,FALSE}};
+    static const itemTest t262[2] = {{{0,0,0,0,0,0},0,0,0,2,0,talu_tag,TRUE,{-1,1,1,1,latn_tag}},{{0,0,0,0,0,0},2,0,0,0,0,-1,FALSE}};
 
     /* Khmer */
     static const WCHAR test27[] = {0x1781,0x17c1,0x1798,0x179a,0x1797,0x17b6,0x179f,0x17b6};
-    static const itemTest t271[2] = {{{0,0,0,0,0},0,0,0,0,khmr_tag,FALSE},{{0,0,0,0,0},8,0,0,0,-1,FALSE}};
-    static const itemTest t272[2] = {{{0,0,0,0,0},0,0,0,2,khmr_tag,TRUE,{-1,1,1,1,-1}},{{0,0,0,0,0},8,0,0,0,-1,FALSE}};
+    static const itemTest t271[2] = {{{0,0,0,0,0,0},0,0,0,0,0,khmr_tag,FALSE},{{0,0,0,0,0,0},8,0,0,0,0,-1,FALSE}};
+    static const itemTest t272[2] = {{{0,0,0,0,0,0},0,0,0,2,0,khmr_tag,TRUE,{-1,1,1,1,-1}},{{0,0,0,0,0,0},8,0,0,0,0,-1,FALSE}};
 
     /* CJK Han */
     static const WCHAR test28[] = {0x8bed,0x7d20,0x6587,0x5b57};
-    static const itemTest t281[2] = {{{0,0,0,0,0},0,0,0,0,hani_tag,FALSE},{{0,0,0,0,0},4,0,0,0,-1,FALSE}};
-    static const itemTest t282[2] = {{{0,0,0,0,0},0,0,0,2,hani_tag,FALSE},{{0,0,0,0,0},4,0,0,0,-1,FALSE}};
+    static const itemTest t281[2] = {{{0,0,0,0,0,0},0,0,0,0,0,hani_tag,FALSE},{{0,0,0,0,0,0},4,0,0,0,0,-1,FALSE}};
+    static const itemTest t282[2] = {{{0,0,0,0,0,0},0,0,0,2,0,hani_tag,FALSE},{{0,0,0,0,0,0},4,0,0,0,0,-1,FALSE}};
 
     /* Ideographic */
     static const WCHAR test29[] = {0x2ff0,0x2ff3,0x2ffb,0x2ff0,0x65e5,0x65e5,0x5de5,0x7f51,0x4e02,0x4e5e};
-    static const itemTest t291[3] = {{{0,0,0,0,0},0,0,0,0,hani_tag,FALSE},{{0,0,0,0,0},4,0,0,0,hani_tag,FALSE},{{0,0,0,0,0},10,0,0,0,-1,FALSE}};
-    static const itemTest t292[3] = {{{0,0,0,0,0},0,1,1,1,hani_tag,FALSE},{{0,0,0,0,0},4,0,0,2,hani_tag,FALSE},{{0,0,0,0,0},10,0,0,0,-1,FALSE}};
+    static const itemTest t291[3] = {{{0,0,0,0,0,0},0,0,0,0,0,hani_tag,FALSE},{{0,0,0,0,0,0},4,0,0,0,0,hani_tag,FALSE},{{0,0,0,0,0,0},10,0,0,0,0,-1,FALSE}};
+    static const itemTest t292[3] = {{{0,0,0,0,0,0},0,1,1,1,0,hani_tag,FALSE},{{0,0,0,0,0,0},4,0,0,2,0,hani_tag,FALSE},{{0,0,0,0,0,0},10,0,0,0,0,-1,FALSE}};
 
     /* Bopomofo */
     static const WCHAR test30[] = {0x3113,0x3128,0x3127,0x3123,0x3108,0x3128,0x310f,0x3120};
-    static const itemTest t301[2] = {{{0,0,0,0,0},0,0,0,0,bopo_tag,FALSE},{{0,0,0,0,0},8,0,0,0,-1,FALSE}};
-    static const itemTest t302[2] = {{{0,0,0,0,0},0,0,0,2,bopo_tag,FALSE},{{0,0,0,0,0},8,0,0,0,-1,FALSE}};
+    static const itemTest t301[2] = {{{0,0,0,0,0,0},0,0,0,0,0,bopo_tag,FALSE},{{0,0,0,0,0,0},8,0,0,0,0,-1,FALSE}};
+    static const itemTest t302[2] = {{{0,0,0,0,0,0},0,0,0,2,0,bopo_tag,FALSE},{{0,0,0,0,0,0},8,0,0,0,0,-1,FALSE}};
 
     /* Kana */
     static const WCHAR test31[] = {0x3072,0x3089,0x304b,0x306a,0x30ab,0x30bf,0x30ab,0x30ca};
-    static const itemTest t311[2] = {{{0,0,0,0,0},0,0,0,0,kana_tag,FALSE},{{0,0,0,0,0},8,0,0,0,-1,FALSE}};
-    static const itemTest t312[2] = {{{0,0,0,0,0},0,0,0,2,kana_tag,FALSE},{{0,0,0,0,0},8,0,0,0,-1,FALSE}};
+    static const itemTest t311[2] = {{{0,0,0,0,0,0},0,0,0,0,0,kana_tag,FALSE},{{0,0,0,0,0,0},8,0,0,0,0,-1,FALSE}};
+    static const itemTest t312[2] = {{{0,0,0,0,0,0},0,0,0,2,0,kana_tag,FALSE},{{0,0,0,0,0,0},8,0,0,0,0,-1,FALSE}};
     static const int b311[2] = {2,2};
     static const int b312[2] = {2,2};
 
     /* Hangul */
     static const WCHAR test32[] = {0xd55c,0xad6d,0xc5b4};
-    static const itemTest t321[2] = {{{0,0,0,0,0},0,0,0,0,hang_tag,FALSE},{{0,0,0,0,0},3,0,0,0,-1,FALSE}};
-    static const itemTest t322[2] = {{{0,0,0,0,0},0,0,0,2,hang_tag,FALSE},{{0,0,0,0,0},3,0,0,0,-1,FALSE}};
+    static const itemTest t321[2] = {{{0,0,0,0,0,0},0,0,0,0,0,hang_tag,FALSE},{{0,0,0,0,0,0},3,0,0,0,0,-1,FALSE}};
+    static const itemTest t322[2] = {{{0,0,0,0,0,0},0,0,0,2,0,hang_tag,FALSE},{{0,0,0,0,0,0},3,0,0,0,0,-1,FALSE}};
 
     /* Yi */
     static const WCHAR test33[] = {0xa188,0xa320,0xa071,0xa0b7};
-    static const itemTest t331[2] = {{{0,0,0,0,0},0,0,0,0,yi_tag,FALSE},{{0,0,0,0,0},4,0,0,0,-1,FALSE}};
-    static const itemTest t332[2] = {{{0,0,0,0,0},0,0,0,2,yi_tag,FALSE},{{0,0,0,0,0},4,0,0,0,-1,FALSE}};
+    static const itemTest t331[2] = {{{0,0,0,0,0,0},0,0,0,0,0,yi_tag,FALSE},{{0,0,0,0,0,0},4,0,0,0,0,-1,FALSE}};
+    static const itemTest t332[2] = {{{0,0,0,0,0,0},0,0,0,2,0,yi_tag,FALSE},{{0,0,0,0,0,0},4,0,0,0,0,-1,FALSE}};
 
     /* Ethiopic */
     static const WCHAR test34[] = {0x130d,0x12d5,0x12dd};
-    static const itemTest t341[2] = {{{0,0,0,0,0},0,0,0,0,ethi_tag,FALSE},{{0,0,0,0,0},3,0,0,0,-1,FALSE}};
-    static const itemTest t342[2] = {{{0,0,0,0,0},0,0,0,2,ethi_tag,FALSE},{{0,0,0,0,0},3,0,0,0,-1,FALSE}};
+    static const itemTest t341[2] = {{{0,0,0,0,0,0},0,0,0,0,0,ethi_tag,FALSE},{{0,0,0,0,0,0},3,0,0,0,0,-1,FALSE}};
+    static const itemTest t342[2] = {{{0,0,0,0,0,0},0,0,0,2,0,ethi_tag,FALSE},{{0,0,0,0,0,0},3,0,0,0,0,-1,FALSE}};
     static const int b342[2] = {2,2};
 
     /* Mongolian */
     static const WCHAR test35[] = {0x182e,0x1823,0x1829,0x182d,0x1823,0x182f,0x0020,0x182a,0x1822,0x1834,0x1822,0x182d,0x180c};
-    static const itemTest t351[2] = {{{0,0,0,0,0},0,0,0,0,mong_tag,FALSE},{{0,0,0,0,0},13,0,0,0,-1,FALSE}};
-    static const itemTest t352[2] = {{{0,0,0,0,0},0,0,0,2,mong_tag,TRUE,{-1,1,1,1,-1}},{{0,0,0,0,0},13,0,0,0,-1,FALSE}};
+    static const itemTest t351[2] = {{{0,0,0,0,0,0},0,0,0,0,0,mong_tag,FALSE},{{0,0,0,0,0,0},13,0,0,0,0,-1,FALSE}};
     static const int b351[2] = {2,2};
+    static const itemTest t352[2] = {{{0,0,0,0,0,0},0,0,0,2,0,mong_tag,TRUE,{-1,1,1,1,-1}},{{0,0,0,0,0,0},13,0,0,0,0,-1,FALSE}};
     static const int b352[2] = {2,3};
+    static const itemTest t353[2] = {{{0,0,0,0,0,1},0,0,0,0,1,mong_tag,TRUE,{0,0,0,0,0}},{{0,0,0,0,0,0},13,0,0,0,0,-1,FALSE}};
 
     /* Tifinagh */
     static const WCHAR test36[] = {0x2d5c,0x2d49,0x2d3c,0x2d49,0x2d4f,0x2d30,0x2d56};
-    static const itemTest t361[2] = {{{0,0,0,0,0},0,0,0,0,tfng_tag,TRUE,{-1,-1,-1,-1,latn_tag}},{{0,0,0,0,0},7,0,0,0,-1,FALSE}};
-    static const itemTest t362[2] = {{{0,0,0,0,0},0,0,0,2,tfng_tag,TRUE,{-1,1,1,1,latn_tag}},{{0,0,0,0,0},7,0,0,0,-1,FALSE}};
+    static const itemTest t361[2] = {{{0,0,0,0,0,0},0,0,0,0,0,tfng_tag,TRUE,{-1,-1,-1,-1,latn_tag}},{{0,0,0,0,0,0},7,0,0,0,0,-1,FALSE}};
+    static const itemTest t362[2] = {{{0,0,0,0,0,0},0,0,0,2,0,tfng_tag,TRUE,{-1,1,1,1,latn_tag}},{{0,0,0,0,0,0},7,0,0,0,0,-1,FALSE}};
 
     /* N'Ko */
     static const WCHAR test37[] = {0x07d2,0x07de,0x07cf};
-    static const itemTest t371[2] = {{{0,0,0,0,0},0,1,1,1,nko_tag,TRUE,{-1,0,0,0,arab_tag}},{{0,0,0,0,0},3,0,0,0,-1,FALSE}};
-    static const itemTest t372[2] = {{{0,0,0,0,0},0,1,1,1,nko_tag,TRUE,{-1,0,0,2,arab_tag}},{{0,0,0,0,0},3,0,0,0,-1,FALSE}};
+    static const itemTest t371[2] = {{{0,0,0,0,0,0},0,1,1,1,0,nko_tag,TRUE,{-1,0,0,0,arab_tag,0}},{{0,0,0,0,0,0},3,0,0,0,0,-1,FALSE}};
+    static const itemTest t372[2] = {{{0,0,0,0,0,0},0,1,1,1,0,nko_tag,TRUE,{-1,0,0,2,arab_tag,0}},{{0,0,0,0,0,0},3,0,0,0,0,-1,FALSE}};
+    static const itemTest t373[2] = {{{0,0,0,0,0,0},0,0,0,0,1,nko_tag,TRUE,{-1,0,0,2,arab_tag,0}}, {{0,0,0,0,0,0},3,0,0,0,0,-1,FALSE}};
 
     /* Vai */
     static const WCHAR test38[] = {0xa559,0xa524};
-    static const itemTest t381[2] = {{{0,0,0,0,0},0,0,0,0,vai_tag,TRUE,{-1,-1,-1,-1,latn_tag}},{{0,0,0,0,0},2,0,0,0,-1,FALSE}};
-    static const itemTest t382[2] = {{{0,0,0,0,0},0,0,0,2,vai_tag,TRUE,{-1,1,1,1,latn_tag}},{{0,0,0,0,0},2,0,0,0,-1,FALSE}};
+    static const itemTest t381[2] = {{{0,0,0,0,0,0},0,0,0,0,0,vai_tag,TRUE,{-1,-1,-1,-1,latn_tag}},{{0,0,0,0,0,0},2,0,0,0,0,-1,FALSE}};
+    static const itemTest t382[2] = {{{0,0,0,0,0,0},0,0,0,2,0,vai_tag,TRUE,{-1,1,1,1,latn_tag}},{{0,0,0,0,0,0},2,0,0,0,0,-1,FALSE}};
 
     /* Cherokee */
     static const WCHAR test39[] = {0x13e3,0x13b3,0x13a9,0x0020,0x13a6,0x13ec,0x13c2,0x13af,0x13cd,0x13d7};
-    static const itemTest t391[2] = {{{0,0,0,0,0},0,0,0,0,cher_tag,FALSE},{{0,0,0,0,0},10,0,0,0,-1,FALSE}};
-    static const itemTest t392[2] = {{{0,0,0,0,0},0,0,0,2,cher_tag,TRUE,{-1,1,1,1,-1}},{{0,0,0,0,0},10,0,0,0,-1,FALSE}};
+    static const itemTest t391[2] = {{{0,0,0,0,0,0},0,0,0,0,0,cher_tag,FALSE},{{0,0,0,0,0,0},10,0,0,0,0,-1,FALSE}};
+    static const itemTest t392[2] = {{{0,0,0,0,0,0},0,0,0,2,0,cher_tag,TRUE,{-1,1,1,1,-1}},{{0,0,0,0,0,0},10,0,0,0,0,-1,FALSE}};
 
     /* Canadian Aboriginal Syllabics */
     static const WCHAR test40[] = {0x1403,0x14c4,0x1483,0x144e,0x1450,0x1466};
-    static const itemTest t401[2] = {{{0,0,0,0,0},0,0,0,0,cans_tag,FALSE},{{0,0,0,0,0},6,0,0,0,-1,FALSE}};
-    static const itemTest t402[2] = {{{0,0,0,0,0},0,0,0,2,cans_tag,TRUE,{-1,1,1,1,-1}},{{0,0,0,0,0},6,0,0,0,-1,FALSE}};
+    static const itemTest t401[2] = {{{0,0,0,0,0,0},0,0,0,0,0,cans_tag,FALSE},{{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
+    static const itemTest t402[2] = {{{0,0,0,0,0,0},0,0,0,2,0,cans_tag,TRUE,{-1,1,1,1,-1}},{{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
 
     /* Ogham */
     static const WCHAR test41[] = {0x169b,0x1691,0x168c,0x1690,0x168b,0x169c};
-    static const itemTest t411[2] = {{{0,0,0,0,0},0,0,0,0,ogam_tag,FALSE},{{0,0,0,0,0},6,0,0,0,-1,FALSE}};
-    static const itemTest t412[4] = {{{0,0,0,0,0},0,1,1,1,ogam_tag,FALSE},{{0,0,0,0,0},1,0,0,2,ogam_tag,FALSE},{{0,0,0,0,0},5,1,1,1,ogam_tag,FALSE},{{0,0,0,0,0},6,0,0,0,-1,FALSE}};
+    static const itemTest t411[2] = {{{0,0,0,0,0,0},0,0,0,0,0,ogam_tag,FALSE},{{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
+    static const itemTest t412[4] = {{{0,0,0,0,0,0},0,1,1,1,0,ogam_tag,FALSE},{{0,0,0,0,0,0},1,0,0,2,0,ogam_tag,FALSE},{{0,0,0,0,0,0},5,1,1,1,0,ogam_tag,FALSE},{{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
     static const int b412[2] = {1,1};
 
     /* Runic */
     static const WCHAR test42[] = {0x16a0,0x16a1,0x16a2,0x16a3,0x16a4,0x16a5};
-    static const itemTest t421[2] = {{{0,0,0,0,0},0,0,0,0,runr_tag,FALSE},{{0,0,0,0,0},6,0,0,0,-1,FALSE}};
-    static const itemTest t422[4] = {{{0,0,0,0,0},0,0,0,2,runr_tag,TRUE,{-1,1,1,1,-1}},{{0,0,0,0,0},6,0,0,0,-1,FALSE}};
+    static const itemTest t421[2] = {{{0,0,0,0,0,0},0,0,0,0,0,runr_tag,FALSE},{{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
+    static const itemTest t422[4] = {{{0,0,0,0,0,0},0,0,0,2,0,runr_tag,TRUE,{-1,1,1,1,-1}},{{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
 
     /* Braille */
     static const WCHAR test43[] = {0x280f,0x2817,0x2811,0x280d,0x280a,0x2811,0x2817};
-    static const itemTest t431[2] = {{{0,0,0,0,0},0,0,0,0,brai_tag,FALSE},{{0,0,0,0,0},7,0,0,0,-1,FALSE}};
-    static const itemTest t432[4] = {{{0,0,0,0,0},0,0,0,2,brai_tag,TRUE,{-1,1,1,1,-1}},{{0,0,0,0,0},7,0,0,0,-1,FALSE}};
+    static const itemTest t431[2] = {{{0,0,0,0,0,0},0,0,0,0,0,brai_tag,FALSE},{{0,0,0,0,0,0},7,0,0,0,0,-1,FALSE}};
+    static const itemTest t432[4] = {{{0,0,0,0,0,0},0,0,0,2,0,brai_tag,TRUE,{-1,1,1,1,-1}},{{0,0,0,0,0,0},7,0,0,0,0,-1,FALSE}};
 
     /* Private and Surrogates Area */
     static const WCHAR test44[] = {0xe000, 0xe001, 0xd800, 0xd801};
-    static const itemTest t441[3] = {{{0,0,0,0,0},0,0,0,0,0,FALSE},{{0,0,0,0,0},2,0,0,0,0,FALSE},{{0,0,0,0,0},4,0,0,0,-1,FALSE}};
-    static const itemTest t442[4] = {{{0,0,0,0,0},0,0,0,2,0,TRUE,{-1,1,1,1,-1}},{{0,0,0,0,0},2,0,0,2,0,TRUE,{-1,1,1,1,-1}},{{0,0,0,0,0},4,0,0,0,-1,FALSE}};
+    static const itemTest t441[3] = {{{0,0,0,0,0,0},0,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},2,0,0,0,0,0,FALSE},{{0,0,0,0,0,0},4,0,0,0,0,-1,FALSE}};
+    static const itemTest t442[4] = {{{0,0,0,0,0,0},0,0,0,2,0,0,TRUE,{-1,1,1,1,-1}},{{0,0,0,0,0,0},2,0,0,2,0,0,TRUE,{-1,1,1,1,-1}},{{0,0,0,0,0,0},4,0,0,0,0,-1,FALSE}};
 
     /* Deseret */
     static const WCHAR test45[] = {0xd801,0xdc19,0xd801,0xdc32,0xd801,0xdc4c,0xd801,0xdc3c,0xd801,0xdc32,0xd801,0xdc4b,0xd801,0xdc2f,0xd801,0xdc4c,0xd801,0xdc3b,0xd801,0xdc32,0xd801,0xdc4a,0xd801,0xdc28};
-    static const itemTest t451[2] = {{{0,0,0,0,0},0,0,0,0,dsrt_tag,TRUE,{-1,-1,-1,-1,0x0}},{{0,0,0,0,0},24,0,0,0,-1,FALSE}};
-    static const itemTest t452[2] = {{{0,0,0,0,0},0,0,0,2,dsrt_tag,TRUE,{-1,1,1,1,0x0}},{{0,0,0,0,0},24,0,0,0,-1,FALSE}};
+    static const itemTest t451[2] = {{{0,0,0,0,0,0},0,0,0,0,0,dsrt_tag,TRUE,{-1,-1,-1,-1,0x0}},{{0,0,0,0,0,0},24,0,0,0,0,-1,FALSE}};
+    static const itemTest t452[2] = {{{0,0,0,0,0,0},0,0,0,2,0,dsrt_tag,TRUE,{-1,1,1,1,0x0}},{{0,0,0,0,0,0},24,0,0,0,0,-1,FALSE}};
 
     /* Osmanya */
     static const WCHAR test46[] = {0xd801,0xdc8b,0xd801,0xdc98,0xd801,0xdc88,0xd801,0xdc91,0xd801,0xdc9b,0xd801,0xdc92,0xd801,0xdc95,0xd801,0xdc80};
-    static const itemTest t461[2] = {{{0,0,0,0,0},0,0,0,0,osma_tag,TRUE,{-1,-1,-1,-1,0x0}},{{0,0,0,0,0},16,0,0,0,-1,FALSE}};
-    static const itemTest t462[2] = {{{0,0,0,0,0},0,0,0,2,osma_tag,TRUE,{-1,1,1,1,0x0}},{{0,0,0,0,0},16,0,0,0,-1,FALSE}};
+    static const itemTest t461[2] = {{{0,0,0,0,0,0},0,0,0,0,0,osma_tag,TRUE,{-1,-1,-1,-1,0x0}},{{0,0,0,0,0,0},16,0,0,0,0,-1,FALSE}};
+    static const itemTest t462[2] = {{{0,0,0,0,0,0},0,0,0,2,0,osma_tag,TRUE,{-1,1,1,1,0x0}},{{0,0,0,0,0,0},16,0,0,0,0,-1,FALSE}};
 
     /* Mathematical Alphanumeric Symbols */
     static const WCHAR test47[] = {0xd835,0xdc00,0xd835,0xdc35,0xd835,0xdc6a,0xd835,0xdc9f,0xd835,0xdcd4,0xd835,0xdd09,0xd835,0xdd3e,0xd835,0xdd73,0xd835,0xdda8,0xd835,0xdddd,0xd835,0xde12,0xd835,0xde47,0xd835,0xde7c};
-    static const itemTest t471[2] = {{{0,0,0,0,0},0,0,0,0,math_tag,TRUE,{-1,-1,-1,-1,0x0}},{{0,0,0,0,0},26,0,0,0,-1,FALSE}};
-    static const itemTest t472[2] = {{{0,0,0,0,0},0,0,0,2,math_tag,TRUE,{-1,1,1,1,0x0}},{{0,0,0,0,0},26,0,0,0,-1,FALSE}};
+    static const itemTest t471[2] = {{{0,0,0,0,0,0},0,0,0,0,0,math_tag,TRUE,{-1,-1,-1,-1,0x0}},{{0,0,0,0,0,0},26,0,0,0,0,-1,FALSE}};
+    static const itemTest t472[2] = {{{0,0,0,0,0,0},0,0,0,2,0,math_tag,TRUE,{-1,1,1,1,0x0}},{{0,0,0,0,0,0},26,0,0,0,0,-1,FALSE}};
+
+    /* Mathematical and Numeric combinations */
+    /* These have a leading hebrew character to force complicated itemization */
+    static const WCHAR test48[] = {0x05e9,' ','1','2','3','.'};
+    static const itemTest t481[4] = {{{0,0,0,0,0,0},0,1,1,1,0,hebr_tag,FALSE},
+        {{0,0,0,0,0},2,0,1,2,0,0,FALSE},{{0,0,0,0,0},5,0,0,0,0,0,FALSE},
+        {{0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
+    static const itemTest t482[4] = {{{0,0,0,0,0,0},0,0,0,0,1,hebr_tag,FALSE},
+                                    {{0,0,0,0,0,0},2,0,1,0,1,0,FALSE},
+                                    {{0,0,0,0,0,0},5,0,0,0,1,0,FALSE},
+                                    {{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
+
+    static const WCHAR test49[] = {0x05e9,' ','1','2','.','1','2'};
+    static const itemTest t491[3] = {{{0,0,0,0,0,0},0,1,1,1,0,hebr_tag,FALSE},
+        {{0,0,0,0,0},2,0,1,2,0,0,FALSE},{{0,0,0,0,0},7,0,0,0,0,-1,FALSE}};
+    static const itemTest t492[3] = {{{0,0,0,0,0,0},0,0,0,0,1,hebr_tag,FALSE},
+                                {{0,0,0,0,0,0},2,0,1,0,1,0,FALSE},
+                                {{0,0,0,0,0,0},7,0,0,0,0,-1,FALSE}};
+
+    static const WCHAR test50[] = {0x05e9,' ','.','1','2','3'};
+    static const itemTest t501[4] = {{{0,0,0,0,0,0},0,1,1,1,0,hebr_tag,FALSE},
+        {{0,0,0,0,0},2,1,1,1,0,0,FALSE},{{0,0,0,0,0},3,0,1,2,0,0,FALSE},
+        {{0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
+    static const itemTest t502[4] = {{{0,0,0,0,0,0},0,0,0,0,1,hebr_tag,FALSE},
+                                {{0,0,0,0,0,0},2,0,0,0,1,0,FALSE},
+                                {{0,0,0,0,0,0},3,0,1,0,1,0,FALSE},
+                                {{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
+
+    static const WCHAR test51[] = {0x05e9,' ','a','b','.','1','2'};
+    static const itemTest t511[5] = {{{0,0,0,0,0,0},0,1,1,1,0,hebr_tag,FALSE},
+        {{0,0,0,0,0},1,0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0},4,0,0,0,0,0,FALSE},
+        {{0,0,0,0,0},5,0,0,2,0,0,FALSE},{{0,0,0,0,0},7,0,0,0,0,-1,FALSE}};
+    static const itemTest t512[5] = {{{0,0,0,0,0,0},0,0,0,0,1,hebr_tag,FALSE},
+                            {{0,0,0,0,0,0},2,0,0,0,1,latn_tag,FALSE},
+                            {{0,0,0,0,0,0},4,0,0,0,1,0,FALSE},
+                            {{0,0,0,0,0,0},5,0,0,0,1,0,FALSE},
+                            {{0,0,0,0,0,0},7,0,0,0,0,-1,FALSE}};
+
+    static const WCHAR test52[] = {0x05e9,' ','1','2','.','a','b'};
+    static const itemTest t521[5] = {{{0,0,0,0,0,0},0,1,1,1,0,hebr_tag,FALSE},
+        {{0,0,0,0,0},2,0,1,2,0,0,FALSE},{{0,0,0,0,0},4,0,0,0,0,0,FALSE},
+        {{0,0,0,0,0},5,0,0,0,0,latn_tag,FALSE},{{0,0,0,0,0},7,0,0,0,0,-1,FALSE}};
+    static const itemTest t522[5] = {{{0,0,0,0,0,0},0,0,0,0,1,hebr_tag,FALSE},
+                        {{0,0,0,0,0,0},2,0,1,0,1,0,FALSE},
+                        {{0,0,0,0,0,0},4,0,0,0,1,0,FALSE},
+                        {{0,0,0,0,0,0},5,0,0,0,1,latn_tag,FALSE},
+                        {{0,0,0,0,0,0},7,0,0,0,0,-1,FALSE}};
+
+    static const WCHAR test53[] = {0x05e9,' ','1','2','.','.','1','2'};
+    static const itemTest t531[5] = {{{0,0,0,0,0,0},0,1,1,1,0,hebr_tag,FALSE},
+        {{0,0,0,0,0},2,0,1,2,0,0,FALSE},{{0,0,0,0,0},4,1,1,1,0,0,FALSE},
+        {{0,0,0,0,0},6,0,1,2,0,0,FALSE},{{0,0,0,0,0},8,0,0,0,0,-1,FALSE}};
+    static const itemTest t532[5] = {{{0,0,0,0,0,0},0,0,0,0,1,hebr_tag,FALSE},
+                            {{0,0,0,0,0,0},2,0,1,0,1,0,FALSE},
+                            {{0,0,0,0,0,0},4,0,0,0,1,0,FALSE},
+                            {{0,0,0,0,0,0},6,0,1,0,1,0,FALSE},
+                            {{0,0,0,0,0,0},8,0,0,0,0,-1,FALSE}};
+
+    static const WCHAR test54[] = {0x05e9,' ','1','2','+','1','2'};
+    static const itemTest t541[3] = {{{0,0,0,0,0,0},0,1,1,1,0,hebr_tag,FALSE},
+        {{0,0,0,0,0},2,0,1,2,0,0,FALSE},{{0,0,0,0,0},7,0,0,0,0,-1,FALSE}};
+    static const itemTest t542[3] = {{{0,0,0,0,0,0},0,0,0,0,1,hebr_tag,FALSE},
+                                {{0,0,0,0,0,0},2,0,1,0,1,0,FALSE},
+                                {{0,0,0,0,0,0},7,0,0,0,0,-1,FALSE}};
+    static const WCHAR test55[] = {0x05e9,' ','1','2','+','+','1','2'};
+    static const itemTest t551[3] = {{{0,0,0,0,0,0},0,1,1,1,0,hebr_tag,FALSE},
+        {{0,0,0,0,0},2,0,1,2,0,0,FALSE},{{0,0,0,0,0},8,0,0,0,0,-1,FALSE}};
+    static const itemTest t552[3] = {{{0,0,0,0,0,0},0,0,0,0,1,hebr_tag,FALSE},
+                                {{0,0,0,0,0,0},2,0,1,0,1,0,FALSE},
+                                {{0,0,0,0,0,0},8,0,0,0,0,-1,FALSE}};
+
+    /* ZWNJ */
+    static const WCHAR test56[] = {0x0645, 0x06cc, 0x200c, 0x06a9, 0x0646, 0x0645}; /* می‌کنم */
+    static const itemTest t561[] = {{{0,0,0,0,0,0},0,1,1,1,0,arab_tag,FALSE},{{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
+    static const itemTest t562[] = {{{0,0,0,0,0,0},0,0,0,0,1,arab_tag,FALSE},{{0,0,0,0,0,0},6,0,0,0,0,-1,FALSE}};
+
+    /* Persian numerals and punctuation. */
+    static const WCHAR test57[] = {0x06f1, 0x06f2, 0x066c, 0x06f3, 0x06f4, 0x06f5, 0x066c,  /* ۱۲٬۳۴۵٬ */
+                                   0x06f6, 0x06f7, 0x06f8, 0x066b, 0x06f9, 0x06f0};         /* ۶۷۸٫۹۰ */
+    static const itemTest t571[] = {{{0,0,0,0,0,0}, 0,0,1,2,0,arab_tag,FALSE},{{0,0,0,0,0,0}, 2,0,1,2,0,arab_tag,FALSE},
+                                    {{0,0,0,0,0,0}, 3,0,1,2,0,arab_tag,FALSE},{{0,0,0,0,0,0}, 6,0,1,2,0,arab_tag,FALSE},
+                                    {{0,0,0,0,0,0}, 7,0,1,2,0,arab_tag,FALSE},{{0,0,0,0,0,0},10,0,1,2,0,arab_tag,FALSE},
+                                    {{0,0,0,0,0,0},11,0,1,2,0,arab_tag,FALSE},{{0,0,0,0,0,0},13,0,0,0,0,-1,FALSE}};
+    static const itemTest t572[] = {{{0,0,0,0,0,0}, 0,0,0,2,0,arab_tag,FALSE},{{0,0,1,0,0,0}, 2,0,1,2,0,arab_tag,FALSE},
+                                    {{0,0,0,0,0,0}, 3,0,0,2,0,arab_tag,FALSE},{{0,0,1,0,0,0}, 6,0,1,2,0,arab_tag,FALSE},
+                                    {{0,0,0,0,0,0}, 7,0,0,2,0,arab_tag,FALSE},{{0,0,1,0,0,0},10,0,1,2,0,arab_tag,FALSE},
+                                    {{0,0,0,0,0,0},11,0,0,2,0,arab_tag,FALSE},{{0,0,0,0,0,0},13,0,0,0,0,-1,FALSE}};
+    static const itemTest t573[] = {{{0,0,0,0,0,0}, 0,0,0,0,1,arab_tag,FALSE},{{0,0,0,0,0,0}, 2,0,0,0,1,arab_tag,FALSE},
+                                    {{0,0,0,0,0,0}, 3,0,0,0,1,arab_tag,FALSE},{{0,0,0,0,0,0}, 6,0,0,0,1,arab_tag,FALSE},
+                                    {{0,0,0,0,0,0}, 7,0,0,0,1,arab_tag,FALSE},{{0,0,0,0,0,0},10,0,0,0,1,arab_tag,FALSE},
+                                    {{0,0,0,0,0,0},11,0,0,0,1,arab_tag,FALSE},{{0,0,0,0,0,0},13,0,0,0,0,-1,FALSE}};
+    /* Arabic numerals and punctuation. */
+    static const WCHAR test58[] = {0x0661, 0x0662, 0x066c, 0x0663, 0x0664, 0x0665, 0x066c,  /* ١٢٬٣٤٥٬ */
+                                   0x0666, 0x0667, 0x0668, 0x066b, 0x0669, 0x0660};         /* ٦٧٨٫٩٠ */
+    static const itemTest t581[] = {{{0,0,0,0,0,0}, 0,0,1,2,0,arab_tag,FALSE},
+                                    {{0,0,0,0,0,0},13,0,0,0,0,-1,FALSE}};
+    static const itemTest t582[] = {{{0,0,1,1,0,1}, 0,0,0,0,1,arab_tag,FALSE},
+                                    {{0,0,0,0,0,0},13,0,0,0,0,-1,FALSE}};
 
     SCRIPT_ITEM items[15];
     SCRIPT_CONTROL  Control;
@@ -536,6 +672,9 @@ static void test_ScriptItemize( void )
     test_items_ok(test45,24,NULL,NULL,1,t451,FALSE,0);
     test_items_ok(test46,16,NULL,NULL,1,t461,FALSE,0);
     test_items_ok(test47,26,NULL,NULL,1,t471,FALSE,0);
+    test_items_ok(test56,6,NULL,NULL,1,t561,FALSE,0);
+    test_items_ok(test57,13,NULL,NULL,7,t571,FALSE,0);
+    test_items_ok(test58,13,NULL,NULL,1,t581,FALSE,0);
 
     State.uBidiLevel = 0;
     test_items_ok(test1,4,&Control,&State,1,t11,FALSE,0);
@@ -590,6 +729,17 @@ static void test_ScriptItemize( void )
     test_items_ok(test45,24,&Control,&State,1,t451,FALSE,0);
     test_items_ok(test46,16,&Control,&State,1,t461,FALSE,0);
     test_items_ok(test47,26,&Control,&State,1,t471,FALSE,0);
+    test_items_ok(test48,6,&Control,&State,3,t481,FALSE,0);
+    test_items_ok(test49,7,&Control,&State,2,t491,FALSE,0);
+    test_items_ok(test50,6,&Control,&State,3,t501,FALSE,0);
+    test_items_ok(test51,7,&Control,&State,4,t511,FALSE,0);
+    test_items_ok(test52,7,&Control,&State,4,t521,FALSE,0);
+    test_items_ok(test53,8,&Control,&State,4,t531,FALSE,0);
+    test_items_ok(test54,7,&Control,&State,2,t541,FALSE,0);
+    test_items_ok(test55,8,&Control,&State,2,t551,FALSE,0);
+    test_items_ok(test56,6,&Control,&State,1,t561,FALSE,0);
+    test_items_ok(test57,13,&Control,&State,7,t572,FALSE,0);
+    test_items_ok(test58,13,&Control,&State,1,t581,FALSE,0);
 
     State.uBidiLevel = 1;
     test_items_ok(test1,4,&Control,&State,1,t12,FALSE,0);
@@ -644,6 +794,9 @@ static void test_ScriptItemize( void )
     test_items_ok(test45,24,&Control,&State,1,t452,FALSE,0);
     test_items_ok(test46,16,&Control,&State,1,t462,FALSE,0);
     test_items_ok(test47,26,&Control,&State,1,t472,FALSE,0);
+    test_items_ok(test56,6,&Control,&State,1,t561,FALSE,0);
+    test_items_ok(test57,13,&Control,&State,7,t571,FALSE,0);
+    test_items_ok(test58,13,&Control,&State,1,t581,FALSE,0);
 
     State.uBidiLevel = 1;
     Control.fMergeNeutralItems = TRUE;
@@ -699,6 +852,76 @@ static void test_ScriptItemize( void )
     test_items_ok(test45,24,&Control,&State,1,t452,FALSE,0);
     test_items_ok(test46,16,&Control,&State,1,t462,FALSE,0);
     test_items_ok(test47,26,&Control,&State,1,t472,FALSE,0);
+    test_items_ok(test56,6,&Control,&State,1,t561,FALSE,0);
+    test_items_ok(test57,13,&Control,&State,7,t571,FALSE,0);
+    test_items_ok(test58,13,&Control,&State,1,t581,FALSE,0);
+
+    State.uBidiLevel = 0;
+    Control.fMergeNeutralItems = FALSE;
+    State.fOverrideDirection = 1;
+    test_items_ok(test1,4,&Control,&State,1,t11,FALSE,0);
+    test_items_ok(test1b,4,&Control,&State,1,t1b1,FALSE,0);
+    test_items_ok(test1c,6,&Control,&State,1,t1c1,FALSE,0);
+    test_items_ok(test2,16,&Control,&State,4,t24,FALSE,0);
+    test_items_ok(test2b,11,&Control,&State,4,t2b4,FALSE,0);
+    test_items_ok(test2c,11,&Control,&State,4,t2c5,FALSE,0);
+    test_items_ok(test2d,11,&Control,&State,4,t2d5,FALSE,0);
+    test_items_ok(test3,41,&Control,&State,1,t31,FALSE,0);
+    test_items_ok(test4,12,&Control,&State,5,t41,FALSE,0);
+    test_items_ok(test5,38,&Control,&State,1,t52,FALSE,0);
+    test_items_ok(test6,5,&Control,&State,2,t64,FALSE,0);
+    test_items_ok(test7,29,&Control,&State,3,t74,FALSE,0);
+    test_items_ok(test8,4,&Control,&State,1,t82,FALSE,0);
+    test_items_ok(test9,5,&Control,&State,2,t94,FALSE,0);
+    test_items_ok(test10,4,&Control,&State,1,t102,FALSE,0);
+    test_items_ok(test11,8,&Control,&State,1,t111,FALSE,0);
+    test_items_ok(test12,5,&Control,&State,1,t121,FALSE,0);
+    test_items_ok(test13,7,&Control,&State,1,t131,FALSE,0);
+    test_items_ok(test14,7,&Control,&State,1,t141,FALSE,0);
+    test_items_ok(test15,5,&Control,&State,1,t151,FALSE,0);
+    test_items_ok(test16,5,&Control,&State,1,t161,FALSE,0);
+    test_items_ok(test17,6,&Control,&State,1,t171,FALSE,0);
+    test_items_ok(test18,5,&Control,&State,1,t181,FALSE,0);
+    test_items_ok(test19,6,&Control,&State,1,t191,FALSE,0);
+    test_items_ok(test20,5,&Control,&State,2,t201,FALSE,0);
+    test_items_ok(test21,5,&Control,&State,1,t212,FALSE,0);
+    test_items_ok(test22,6,&Control,&State,2,t221,FALSE,0);
+    test_items_ok(test23,6,&Control,&State,2,t231,FALSE,0);
+    test_items_ok(test24,12,&Control,&State,1,t241,FALSE,0);
+    test_items_ok(test25,10,&Control,&State,1,t251,FALSE,0);
+    test_items_ok(test26,2,&Control,&State,1,t261,FALSE,0);
+    test_items_ok(test27,8,&Control,&State,1,t271,FALSE,0);
+    test_items_ok(test28,4,&Control,&State,1,t281,FALSE,0);
+    test_items_ok(test29,10,&Control,&State,2,t291,FALSE,0);
+    test_items_ok(test30,8,&Control,&State,1,t301,FALSE,0);
+    test_items_ok(test31,8,&Control,&State,1,t311,FALSE,b311);
+    test_items_ok(test32,3,&Control,&State,1,t321,FALSE,0);
+    test_items_ok(test33,4,&Control,&State,1,t331,FALSE,0);
+    test_items_ok(test34,3,&Control,&State,1,t341,FALSE,0);
+    test_items_ok(test35,13,&Control,&State,1,t353,FALSE,b351);
+    test_items_ok(test36,7,&Control,&State,1,t361,FALSE,0);
+    test_items_ok(test37,3,&Control,&State,1,t373,FALSE,0);
+    test_items_ok(test38,2,&Control,&State,1,t381,FALSE,0);
+    test_items_ok(test39,10,&Control,&State,1,t391,FALSE,0);
+    test_items_ok(test40,6,&Control,&State,1,t401,FALSE,0);
+    test_items_ok(test41,6,&Control,&State,1,t411,FALSE,0);
+    test_items_ok(test42,6,&Control,&State,1,t421,FALSE,0);
+    test_items_ok(test43,7,&Control,&State,1,t431,FALSE,0);
+    test_items_ok(test44,4,&Control,&State,2,t441,FALSE,0);
+    test_items_ok(test45,24,&Control,&State,1,t451,FALSE,0);
+    test_items_ok(test46,16,&Control,&State,1,t461,FALSE,0);
+    test_items_ok(test47,26,&Control,&State,1,t471,FALSE,0);
+    test_items_ok(test48,6,&Control,&State,3,t482,FALSE,0);
+    test_items_ok(test49,7,&Control,&State,2,t492,FALSE,0);
+    test_items_ok(test50,6,&Control,&State,3,t502,FALSE,0);
+    test_items_ok(test51,7,&Control,&State,4,t512,FALSE,0);
+    test_items_ok(test52,7,&Control,&State,4,t522,FALSE,0);
+    test_items_ok(test53,8,&Control,&State,4,t532,FALSE,0);
+    test_items_ok(test54,7,&Control,&State,2,t542,FALSE,0);
+    test_items_ok(test55,8,&Control,&State,2,t552,FALSE,0);
+    test_items_ok(test56,6,&Control,&State,1,t562,FALSE,0);
+    test_items_ok(test57,13,&Control,&State,7,t573,FALSE,0);
+    test_items_ok(test58,13,&Control,&State,1,t582,FALSE,0);
 }
 
 static inline void _test_shape_ok(int valid, HDC hdc, LPCWSTR string,
@@ -756,7 +979,7 @@ static inline void _test_shape_ok(int valid, HDC hdc, LPCWSTR string,
     else if (hr != S_OK)
         winetest_trace("ScriptShapeOpenType failed (%x)\n",hr);
     if (FAILED(hr))
-        return;
+        goto cleanup;
 
     for (x = 0; x < cchString; x++)
     {
@@ -808,6 +1031,7 @@ static inline void _test_shape_ok(int valid, HDC hdc, LPCWSTR string,
             winetest_trace("%i: fZeroWidth incorrect (%i)\n",x,glyphProp[x].sva.fZeroWidth);
     }
 
+cleanup:
     HeapFree(GetProcessHeap(),0,logclust);
     HeapFree(GetProcessHeap(),0,charProp);
     HeapFree(GetProcessHeap(),0,glyphs);
@@ -927,6 +1151,7 @@ static void test_ScriptShapeOpenType(HDC hdc)
     int nb, outnItems;
     HFONT hfont, hfont_orig;
     int test_valid;
+    shapeTest_glyph glyph_test[4];
 
     static const WCHAR test1[] = {'w', 'i', 'n', 'e',0};
     static const shapeTest_char t1_c[] = {{0,{0,0}},{1,{0,0}},{2,{0,0}},{3,{0,0}}};
@@ -1185,7 +1410,16 @@ static void test_ScriptShapeOpenType(HDC hdc)
     ScriptFreeCache(&sc);
 
     test_shape_ok(hdc, test1, 4, &Control, &State, 0, 4, t1_c, t1_g);
-    test_shape_ok(hdc, test2, 4, &Control, &State, 1, 4, t2_c, t2_g);
+
+    /* newer Tahoma has zerowidth space glyphs for 0x202b and 0x202c */
+    memcpy(glyph_test, t2_g, sizeof(glyph_test));
+    GetGlyphIndicesW(hdc, test2, 4, glyphs, 0);
+    if (glyphs[0] != 0)
+        glyph_test[0].Glyph = 1;
+    if (glyphs[3] != 0)
+        glyph_test[3].Glyph = 1;
+
+    test_shape_ok(hdc, test2, 4, &Control, &State, 1, 4, t2_c, glyph_test);
 
     test_valid = find_font_for_range(hdc, "Microsoft Sans Serif", 11, test_hebrew[0], &hfont, &hfont_orig);
     if (hfont != NULL)
@@ -1330,10 +1564,10 @@ static void test_ScriptShape(HDC hdc)
     static const WCHAR test2[] = {0x202B, 'i', 'n', 0x202C,0};
     HRESULT hr;
     SCRIPT_CACHE sc = NULL;
-    WORD glyphs[4], glyphs2[4], logclust[4];
+    WORD glyphs[4], glyphs2[4], logclust[4], glyphs3[4];
     SCRIPT_VISATTR attrs[4];
     SCRIPT_ITEM items[2];
-    int nb;
+    int nb, i, j;
 
     hr = ScriptItemize(test1, 4, 2, NULL, NULL, items, NULL);
     ok(hr == S_OK, "ScriptItemize should return S_OK not %08x\n", hr);
@@ -1391,13 +1625,17 @@ static void test_ScriptShape(HDC hdc)
     sc = NULL;
 
     memset(glyphs2,-1,sizeof(glyphs2));
+    memset(glyphs3,-1,sizeof(glyphs3));
     memset(logclust,-1,sizeof(logclust));
     memset(attrs,-1,sizeof(attrs));
+
+    GetGlyphIndicesW(hdc, test2, 4, glyphs3, 0);
+
     hr = ScriptShape(hdc, &sc, test2, 4, 4, &items[0].a, glyphs2, logclust, attrs, &nb);
     ok(hr == S_OK, "ScriptShape should return S_OK not %08x\n", hr);
     ok(nb == 4, "Wrong number of items\n");
-    ok(glyphs2[0] == 0 || broken(glyphs2[0] == 0x80), "Incorrect glyph for 0x202B\n");
-    ok(glyphs2[3] == 0 || broken(glyphs2[3] == 0x80), "Incorrect glyph for 0x202C\n");
+    ok(glyphs2[0] == glyphs3[0], "Incorrect glyph for 0x202B\n");
+    ok(glyphs2[3] == glyphs3[3], "Incorrect glyph for 0x202C\n");
     ok(logclust[0] == 0, "clusters out of order\n");
     ok(logclust[1] == 1, "clusters out of order\n");
     ok(logclust[2] == 2, "clusters out of order\n");
@@ -1453,6 +1691,75 @@ static void test_ScriptShape(HDC hdc)
     ok(attrs[3].fZeroWidth == 0, "fZeroWidth incorrect\n");
 
     ScriptFreeCache(&sc);
+
+    /* some control characters are shown as blank */
+    for (i = 0; i < 2; i++)
+    {
+        static const WCHAR space[]  = {' ', 0};
+        static const WCHAR blanks[] = {'\t', '\r', '\n', 0x001c, 0x001d, 0x001e, 0x001f,
+                                       0x200b, 0x200c, 0x200d, 0x200e, 0x200f,          /* ZWSP, ZWNJ, ZWJ, LRM, RLM */
+                                       0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0};      /* LRE, RLE, PDF, LRO, RLO */
+        HFONT font, oldfont = NULL;
+        LOGFONTA lf;
+
+        font = GetCurrentObject(hdc, OBJ_FONT);
+        GetObjectA(font, sizeof(lf), &lf);
+        if (i == 1) {
+            lstrcpyA(lf.lfFaceName, "MS Sans Serif");
+            font = CreateFontIndirectA(&lf);
+            oldfont = SelectObject(hdc, font);
+        }
+
+        hr = ScriptItemize(space, 1, 2, NULL, NULL, items, NULL);
+        ok(hr == S_OK, "%s: expected S_OK, got %08x\n", lf.lfFaceName, hr);
+
+        hr = ScriptShape(hdc, &sc, space, 1, 1, &items[0].a, glyphs, logclust, attrs, &nb);
+        ok(hr == S_OK, "%s: expected S_OK, got %08x\n", lf.lfFaceName, hr);
+        ok(nb == 1, "%s: expected 1, got %d\n", lf.lfFaceName, nb);
+
+        for (j = 0; blanks[j]; j++)
+        {
+            hr = ScriptItemize(&blanks[j], 1, 2, NULL, NULL, items, NULL);
+            ok(hr == S_OK, "%s: [%02x] expected S_OK, got %08x\n", lf.lfFaceName, blanks[j], hr);
+
+            ok(!items[0].a.fNoGlyphIndex, "%s: [%02x] got unexpected fNoGlyphIndex %#x.\n",
+               lf.lfFaceName, blanks[j], items[0].a.fNoGlyphIndex);
+            hr = ScriptShape(hdc, &sc, &blanks[j], 1, 1, &items[0].a, glyphs2, logclust, attrs, &nb);
+            ok(hr == S_OK, "%s: [%02x] expected S_OK, got %08x\n", lf.lfFaceName, blanks[j], hr);
+            ok(nb == 1, "%s: [%02x] expected 1, got %d\n", lf.lfFaceName, blanks[j], nb);
+            ok(!items[0].a.fNoGlyphIndex, "%s: [%02x] got unexpected fNoGlyphIndex %#x.\n",
+               lf.lfFaceName, blanks[j], items[0].a.fNoGlyphIndex);
+
+            ok(glyphs[0] == glyphs2[0] ||
+               broken(glyphs2[0] == blanks[j] && (blanks[j] < 0x10)),
+               "%s: [%02x] expected %04x, got %04x\n", lf.lfFaceName, blanks[j], glyphs[0], glyphs2[0]);
+            ok(attrs[0].fZeroWidth || broken(!attrs[0].fZeroWidth && (blanks[j] < 0x10) /* Vista */),
+               "%s: [%02x] got unexpected fZeroWidth %#x.\n", lf.lfFaceName, blanks[j], attrs[0].fZeroWidth);
+
+            items[0].a.fNoGlyphIndex = 1;
+            hr = ScriptShape(hdc, &sc, &blanks[j], 1, 1, &items[0].a, glyphs2, logclust, attrs, &nb);
+            ok(hr == S_OK, "%s: [%02x] expected S_OK, got %08x\n", lf.lfFaceName, blanks[j], hr);
+            ok(nb == 1, "%s: [%02x] expected 1, got %d\n", lf.lfFaceName, blanks[j], nb);
+
+            if (blanks[j] == 0x200b || blanks[j] == 0x200c || blanks[j] == 0x200d)
+            {
+                ok(glyphs2[0] == 0x0020,
+                   "%s: [%02x] got unexpected %04x.\n", lf.lfFaceName, blanks[j], glyphs2[0]);
+                ok(attrs[0].fZeroWidth, "%s: [%02x] got unexpected fZeroWidth %#x.\n",
+                   lf.lfFaceName, blanks[j], attrs[0].fZeroWidth);
+            }
+            else
+            {
+                ok(glyphs2[0] == blanks[j],
+                   "%s: [%02x] got unexpected %04x.\n", lf.lfFaceName, blanks[j], glyphs2[0]);
+                ok(!attrs[0].fZeroWidth, "%s: [%02x] got unexpected fZeroWidth %#x.\n",
+                   lf.lfFaceName, blanks[j], attrs[0].fZeroWidth);
+            }
+        }
+        if (oldfont)
+            DeleteObject(SelectObject(hdc, oldfont));
+        ScriptFreeCache(&sc);
+    }
 }
 
 static void test_ScriptPlace(HDC hdc)
@@ -1497,6 +1804,19 @@ static void test_ScriptPlace(HDC hdc)
     hr = ScriptPlace(hdc, &sc, glyphs, 4, attrs, &items[0].a, widths, offset, NULL);
     ok(hr == S_OK, "ScriptPlace should return S_OK not %08x\n", hr);
     ok(items[0].a.fNoGlyphIndex == FALSE, "fNoGlyphIndex TRUE\n");
+
+    if (widths[0] != 0)
+    {
+        int old_width = widths[0];
+        attrs[0].fZeroWidth = 1;
+
+        hr = ScriptPlace(hdc, &sc, glyphs, 4, attrs, &items[0].a, widths, offset, NULL);
+        ok(hr == S_OK, "ScriptPlace should return S_OK not %08x\n", hr);
+        ok(widths[0] == 0, "got width %d\n", widths[0]);
+        widths[0] = old_width;
+    }
+    else
+        skip("Glyph already has zero-width - skipping fZeroWidth test\n");
 
     ret = ExtTextOutW(hdc, 1, 1, 0, NULL, glyphs, 4, widths);
     ok(ret, "ExtTextOutW should return TRUE\n");
@@ -1770,13 +2090,19 @@ static void test_ScriptGetCMap(HDC hdc, unsigned short pwOutGlyphs[256])
     ScriptFreeCache( &psc);
     ok (!psc, "psc is not null after ScriptFreeCache\n");
 
+    /* ScriptGetCMap returns whatever font defines, no special treatment for control chars */
     cInChars = cChars = 4;
-    hr = ScriptGetCMap(hdc, &psc, TestItem2, cInChars, dwFlags, pwOutGlyphs3);
-    ok (hr == S_FALSE, "ScriptGetCMap should return S_FALSE not (%08x)\n", hr);
-    ok (psc != NULL, "psc should not be null and have SCRIPT_CACHE buffer address\n");
-    ok(pwOutGlyphs3[0] == 0 || broken(pwOutGlyphs3[0] == 0x80), "Glyph 0 should be default glyph\n");
-    ok(pwOutGlyphs3[3] == 0 || broken(pwOutGlyphs3[0] == 0x80), "Glyph 0 should be default glyph\n");
+    GetGlyphIndicesW(hdc, TestItem2, cInChars, pwOutGlyphs2, 0);
 
+    hr = ScriptGetCMap(hdc, &psc, TestItem2, cInChars, dwFlags, pwOutGlyphs3);
+    if (pwOutGlyphs3[0] == 0 || pwOutGlyphs3[3] == 0)
+        ok(hr == S_FALSE, "ScriptGetCMap should return S_FALSE not (%08x)\n", hr);
+    else
+        ok(hr == S_OK, "ScriptGetCMap should return S_OK not (%08x)\n", hr);
+
+    ok(psc != NULL, "psc should not be null and have SCRIPT_CACHE buffer address\n");
+    ok(pwOutGlyphs3[0] == pwOutGlyphs2[0], "expected glyph %d, got %d\n", pwOutGlyphs2[0], pwOutGlyphs3[0]);
+    ok(pwOutGlyphs3[3] == pwOutGlyphs2[3], "expected glyph %d, got %d\n", pwOutGlyphs2[3], pwOutGlyphs3[3]);
 
     cInChars = cChars = 9;
     hr = ScriptGetCMap(hdc, &psc, TestItem3b, cInChars, dwFlags, pwOutGlyphs2);
@@ -1859,7 +2185,7 @@ static void test_ScriptGetFontProperties(HDC hdc)
     /* U+0020: numeric space
        U+200B: zero width space
        U+F71B: unknown, found by black box testing */
-    BOOL is_terminal, is_arial, is_times_new_roman, is_arabic = (system_lang_id == LANG_ARABIC);
+    BOOL is_arial, is_times_new_roman, is_arabic = (system_lang_id == LANG_ARABIC);
 
     /* Some sanity checks for ScriptGetFontProperties */
 
@@ -1931,6 +2257,11 @@ static void test_ScriptGetFontProperties(HDC hdc)
 
     for (i = 0; i < efnd.total; i++)
     {
+        if (strlen((char *)efnd.elf[i].elfFullName) >= LF_FACESIZE)
+        {
+            trace("Font name to long to test: %s\n",(char *)efnd.elf[i].elfFullName);
+            continue;
+        }
         lstrcpyA(lf.lfFaceName, (char *)efnd.elf[i].elfFullName);
         font = CreateFontIndirectA(&lf);
         oldfont = SelectObject(hdc, font);
@@ -1952,10 +2283,12 @@ static void test_ScriptGetFontProperties(HDC hdc)
         ret = GetTextMetricsA(hdc, &tmA);
         ok(ret != 0, "GetTextMetricsA failed!\n");
 
-        is_terminal = !(lstrcmpA(lf.lfFaceName, "Terminal") && lstrcmpA(lf.lfFaceName, "@Terminal"));
-        ok(sfp.wgBlank == tmA.tmBreakChar || broken(is_terminal) || broken(is_arabic), "bitmap font %s wgBlank %04x tmBreakChar %04x\n", lf.lfFaceName, sfp.wgBlank, tmA.tmBreakChar);
+        ret = pGetGlyphIndicesW(hdc, invalids, 1, gi, GGI_MARK_NONEXISTING_GLYPHS);
+        ok(ret != GDI_ERROR, "GetGlyphIndicesW failed!\n");
 
-        ok(sfp.wgDefault == tmA.tmDefaultChar || broken(is_arabic), "bitmap font %s wgDefault %04x, tmDefaultChar %04x\n", lf.lfFaceName, sfp.wgDefault, tmA.tmDefaultChar);
+        ok(sfp.wgBlank == tmA.tmBreakChar || sfp.wgBlank == gi[0], "bitmap font %s wgBlank %04x tmBreakChar %04x Space %04x\n", lf.lfFaceName, sfp.wgBlank, tmA.tmBreakChar, gi[0]);
+
+        ok(sfp.wgDefault == 0 || sfp.wgDefault == tmA.tmDefaultChar || broken(sfp.wgDefault == (0x100 | tmA.tmDefaultChar)), "bitmap font %s wgDefault %04x, tmDefaultChar %04x\n", lf.lfFaceName, sfp.wgDefault, tmA.tmDefaultChar);
 
         ok(sfp.wgInvalid == sfp.wgBlank || broken(is_arabic), "bitmap font %s wgInvalid %02x wgBlank %02x\n", lf.lfFaceName, sfp.wgInvalid, sfp.wgBlank);
 
@@ -1972,6 +2305,11 @@ static void test_ScriptGetFontProperties(HDC hdc)
 
     for (i = 0; i < efnd.total; i++)
     {
+        if (strlen((char *)efnd.elf[i].elfFullName) >= LF_FACESIZE)
+        {
+            trace("Font name to long to test: %s\n",(char *)efnd.elf[i].elfFullName);
+            continue;
+        }
         lstrcpyA(lf.lfFaceName, (char *)efnd.elf[i].elfFullName);
         font = CreateFontIndirectA(&lf);
         oldfont = SelectObject(hdc, font);
@@ -2112,10 +2450,7 @@ static void test_ScriptTextOut(HDC hdc)
             ok (hr == S_OK, "ScriptTextOut should return S_OK not (%08x)\n", hr);
 
             /* Test Rect Rgn is acceptable */
-            rect.top = 10;
-            rect.bottom = 20;
-            rect.left = 10;
-            rect.right = 40;
+            SetRect(&rect, 10, 10, 40, 20);
             hr = ScriptTextOut(hdc, &psc, 0, 0, 0, &rect, &pItem[0].a, NULL, 0, pwOutGlyphs1, pcGlyphs,
                                piAdvance, NULL, pGoffset);
             ok (hr == S_OK, "ScriptTextOut should return S_OK not (%08x)\n", hr);
@@ -2193,15 +2528,17 @@ static void test_ScriptTextOut2(HDC hdc)
         ok (hr == S_OK, "ScriptShape should return S_OK not (%08x)\n", hr);
         ok (psc != NULL, "psc should not be null and have SCRIPT_CACHE buffer address\n");
         ok (pcGlyphs == cChars, "Chars in (%d) should equal Glyphs out (%d)\n", cChars, pcGlyphs);
-        if (hr ==0) {
+        if (hr == S_OK) {
+            BOOL ret;
+
             /* Note hdc is needed as glyph info is not yet in psc                  */
             hr = ScriptPlace(hdc2, &psc, pwOutGlyphs1, pcGlyphs, psva, &pItem[0].a, piAdvance,
                              pGoffset, pABC);
             ok (hr == S_OK, "Should return S_OK not (%08x)\n", hr);
 
             /*   key part!!!   cached dc is being deleted  */
-            hr = DeleteDC(hdc2);
-            ok(hr == 1, "DeleteDC should return 1 not %08x\n", hr);
+            ret = DeleteDC(hdc2);
+            ok(ret, "DeleteDC should return 1 not %d\n", ret);
 
             /* At this point the cached hdc (hdc2) has been destroyed,
              * however, we are passing in a *real* hdc (the original hdc).
@@ -2276,10 +2613,7 @@ static void test_ScriptTextOut3(HDC hdc)
             ok (hr == S_OK, "Should return S_OK not (%08x)\n", hr);
 
             /* Test Rect Rgn is acceptable */
-            rect.top = 10;
-            rect.bottom = 20;
-            rect.left = 10;
-            rect.right = 40;
+            SetRect(&rect, 10, 10, 40, 20);
             hr = ScriptTextOut(hdc, &psc, 0, 0, 0, &rect, &pItem[0].a, NULL, 0, pwOutGlyphs1, pcGlyphs,
                                piAdvance, NULL, pGoffset);
             ok (hr == S_OK, "ScriptTextOut should return S_OK not (%08x)\n", hr);
@@ -2362,6 +2696,70 @@ static void _test_item_ScriptXtoX(SCRIPT_ANALYSIS *psa, int cChars, int cGlyphs,
     }
 }
 
+#define test_caret_item_ScriptXtoCP(a,b,c,d,e,f) _test_caret_item_ScriptXtoCP(__LINE__,a,b,c,d,e,f)
+
+static void _test_caret_item_ScriptXtoCP(int line, SCRIPT_ANALYSIS *psa, int cChars, int cGlyphs, const int* offsets, const WORD *pwLogClust, const int* piAdvance )
+{
+    int iX, iCP, i;
+    int icChars, icGlyphs;
+    int piCP;
+    int clusterSize;
+    HRESULT hr;
+    SCRIPT_VISATTR psva[10];
+    int piTrailing;
+    int direction;
+
+    memset(psva,0,sizeof(psva));
+    direction = (psa->fRTL)?-1:+1;
+
+    for(iX = -1, i = iCP = 0; i < cChars; i++)
+    {
+        if (offsets[i] != iX)
+        {
+            iX = offsets[i];
+            iCP = i;
+        }
+        icChars = cChars;
+        icGlyphs = cGlyphs;
+        hr = ScriptXtoCP(iX, icChars, icGlyphs, pwLogClust, psva, piAdvance, psa, &piCP, &piTrailing);
+        ok_(__FILE__,line)(hr == S_OK, "ScriptXtoCP: should return S_OK not %08x\n", hr);
+        ok_(__FILE__,line)(piCP == iCP, "ScriptXtoCP: iX=%d should return piCP=%d not %d\n", iX, iCP, piCP);
+        ok_(__FILE__,line)(piTrailing == 0, "ScriptXtoCP: iX=%d should return piTrailing=0 not %d\n", iX, piTrailing);
+    }
+
+    for(iX = -2, i = 0; i < cChars; i++)
+    {
+        if (offsets[i]+direction != iX)
+        {
+            iX = offsets[i] + direction;
+            iCP = i;
+        }
+        icChars = cChars;
+        icGlyphs = cGlyphs;
+        hr = ScriptXtoCP(iX, icChars, icGlyphs, pwLogClust, psva, piAdvance, psa, &piCP, &piTrailing);
+        ok_(__FILE__,line)(hr == S_OK, "ScriptXtoCP leading: should return S_OK not %08x\n", hr);
+        ok_(__FILE__,line)(piCP == iCP, "ScriptXtoCP leading: iX=%d should return piCP=%d not %d\n", iX, iCP, piCP);
+        ok_(__FILE__,line)(piTrailing == 0, "ScriptXtoCP leading: iX=%d should return piTrailing=0 not %d\n", iX, piTrailing);
+    }
+
+    for(clusterSize = 0, iCP = 0, iX = -2, i = 0; i < cChars; i++)
+    {
+        clusterSize++;
+        if (offsets[i] != offsets[i+1])
+        {
+            iX = offsets[i+1]-direction;
+            icChars = cChars;
+            icGlyphs = cGlyphs;
+            hr = ScriptXtoCP(iX, icChars, icGlyphs, pwLogClust, psva, piAdvance, psa, &piCP, &piTrailing);
+            ok_(__FILE__,line)(hr == S_OK, "ScriptXtoCP trailing: should return S_OK not %08x\n", hr);
+            ok_(__FILE__,line)(piCP == iCP, "ScriptXtoCP trailing: iX=%d should return piCP=%d not %d\n", iX, iCP, piCP);
+            ok_(__FILE__,line)(piTrailing == clusterSize, "ScriptXtoCP trailing: iX=%d should return piTrailing=%d not %d\n", iX, clusterSize, piTrailing);
+            iCP = i+1;
+            clusterSize = 0;
+        }
+    }
+}
+
 static void test_ScriptXtoX(void)
 /****************************************************************************************
  *  This routine tests the ScriptXtoCP and ScriptCPtoX functions using static variables *
@@ -2370,17 +2768,28 @@ static void test_ScriptXtoX(void)
     WORD pwLogClust[10] = {0, 0, 0, 1, 1, 2, 2, 3, 3, 3};
     WORD pwLogClust_RTL[10] = {3, 3, 3, 2, 2, 1, 1, 0, 0, 0};
     WORD pwLogClust_2[7] = {4, 3, 3, 2, 1, 0 ,0};
+    WORD pwLogClust_3[17] = {0, 1, 1, 1, 1, 4, 5, 6, 6, 8, 8, 8, 8, 11, 11, 13, 13};
+    WORD pwLogClust_3_RTL[17] = {13, 13, 11, 11, 8, 8, 8, 8, 6, 6, 5, 4, 1, 1, 1, 1, 0};
     int piAdvance[10] = {201, 190, 210, 180, 170, 204, 189, 195, 212, 203};
     int piAdvance_2[5] = {39, 26, 19, 17, 11};
+    int piAdvance_3[15] = {6, 6, 0, 0, 10, 5, 10, 0, 12, 0, 0, 9, 0, 10, 0};
     static const int offsets[13] = {0, 67, 134, 201, 296, 391, 496, 601, 1052, 1503, 1954, 1954, 1954};
     static const int offsets_RTL[13] = {781, 721, 661, 601, 496, 391, 296, 201, 134, 67, 0, 0, 0};
     static const int offsets_2[10] = {112, 101, 92, 84, 65, 39, 19, 0, 0, 0};
-    SCRIPT_VISATTR psva[10];
+
+    static const int offsets_3[19] = {0, 6, 6, 6, 6, 12, 22, 27, 27, 37, 37, 37, 37, 49, 49, 58, 58, 68, 68};
+    static const int offsets_3_RTL[19] = {68, 68, 58, 58, 49, 49, 49, 49, 37, 37, 27, 22, 12, 12, 12, 12, 6, 6};
+
+    SCRIPT_VISATTR psva[15];
     SCRIPT_ANALYSIS sa;
-    int iX;
+    SCRIPT_ITEM items[2];
+    int iX, i;
     int piCP;
     int piTrailing;
     HRESULT hr;
+    static const WCHAR hebrW[] = { 0x5be, 0};
+    static const WCHAR thaiW[] = { 0xe2a, 0};
+    const SCRIPT_PROPERTIES **ppScriptProperties;
 
     memset(&sa, 0 , sizeof(SCRIPT_ANALYSIS));
     memset(psva, 0, sizeof(psva));
@@ -2442,6 +2851,34 @@ static void test_ScriptXtoX(void)
     sa.fRTL = TRUE;
     test_item_ScriptXtoX(&sa, 10, 10, offsets_RTL, pwLogClust_RTL, piAdvance);
     test_item_ScriptXtoX(&sa, 7, 5, offsets_2, pwLogClust_2, piAdvance_2);
+
+    /* Get thai eScript, This will do LTR and fNeedsCaretInfo */
+    hr = ScriptItemize(thaiW, 1, 2, NULL, NULL, items, &i);
+    ok(hr == S_OK, "got %08x\n", hr);
+    ok(i == 1, "got %d\n", i);
+    sa = items[0].a;
+
+    test_caret_item_ScriptXtoCP(&sa, 17, 15, offsets_3, pwLogClust_3, piAdvance_3);
+
+    /* Get hebrew eScript, This will do RTL and fNeedsCaretInfo */
+    hr = ScriptItemize(hebrW, 1, 2, NULL, NULL, items, &i);
+    ok(hr == S_OK, "got %08x\n", hr);
+    ok(i == 1, "got %d\n", i);
+    sa = items[0].a;
+
+    /* Note: This behavior CHANGED in uniscribe versions...
+     *       so we only want to test if fNeedsCaretInfo is set */
+    hr = ScriptGetProperties(&ppScriptProperties, &i);
+    if (ppScriptProperties[sa.eScript]->fNeedsCaretInfo)
+    {
+        test_caret_item_ScriptXtoCP(&sa, 17, 15, offsets_3_RTL, pwLogClust_3_RTL, piAdvance_3);
+        hr = ScriptXtoCP(0, 17, 15, pwLogClust_3_RTL, psva, piAdvance_3, &sa, &piCP, &piTrailing);
+        ok(hr == S_OK, "ScriptXtoCP: should return S_OK not %08x\n", hr);
+        ok(piCP == 16, "ScriptXtoCP: iX=0 should return piCP=16 not %d\n", piCP);
+        ok(piTrailing == 1, "ScriptXtoCP: iX=0 should return piTrailing=1 not %d\n", piTrailing);
+    }
+    else
+        win_skip("Uniscribe version too old to test Hebrew clusters\n");
 }
 
 static void test_ScriptString(HDC hdc)
@@ -2462,8 +2899,8 @@ static void test_ScriptString(HDC hdc)
     int             Charset;
     DWORD           Flags = SSA_GLYPHS;
     int             ReqWidth = 100;
-    const int       Dx[5] = {10, 10, 10, 10, 10};
-    const BYTE      InClass = 0;
+    static const int Dx[(sizeof(teststr) / sizeof(WCHAR)) - 1];
+    static const BYTE InClass[(sizeof(teststr) / sizeof(WCHAR)) - 1];
     SCRIPT_STRING_ANALYSIS ssa = NULL;
 
     int             X = 10; 
@@ -2482,20 +2919,26 @@ static void test_ScriptString(HDC hdc)
     /* Test without hdc to get E_PENDING */
     hr = ScriptStringAnalyse( NULL, teststr, len, Glyphs, Charset, Flags,
                               ReqWidth, NULL, NULL, Dx, NULL,
-                              &InClass, &ssa);
+                              InClass, &ssa);
     ok(hr == E_PENDING, "ScriptStringAnalyse Stub should return E_PENDING not %08x\n", hr);
+
+    /* Test that 0 length string returns E_INVALIDARG  */
+    hr = ScriptStringAnalyse( hdc, teststr, 0, Glyphs, Charset, Flags,
+                              ReqWidth, NULL, NULL, Dx, NULL,
+                              InClass, &ssa);
+    ok(hr == E_INVALIDARG, "ScriptStringAnalyse should return E_INVALIDARG not %08x\n", hr);
 
     /* test with hdc, this should be a valid test  */
     hr = ScriptStringAnalyse( hdc, teststr, len, Glyphs, Charset, Flags,
                               ReqWidth, NULL, NULL, Dx, NULL,
-                              &InClass, &ssa);
+                              InClass, &ssa);
     ok(hr == S_OK, "ScriptStringAnalyse should return S_OK not %08x\n", hr);
     ScriptStringFree(&ssa);
 
     /* test makes sure that a call with a valid pssa still works */
     hr = ScriptStringAnalyse( hdc, teststr, len, Glyphs, Charset, Flags,
                               ReqWidth, NULL, NULL, Dx, NULL,
-                              &InClass, &ssa);
+                              InClass, &ssa);
     ok(hr == S_OK, "ScriptStringAnalyse should return S_OK not %08x\n", hr);
     ok(ssa != NULL, "ScriptStringAnalyse pssa should not be NULL\n");
 
@@ -2539,7 +2982,7 @@ static void test_ScriptStringXtoCP_CPtoX(HDC hdc)
     int             Charset = -1;                       /* unicode                        */
     DWORD           Flags = SSA_GLYPHS;
     int             ReqWidth = 100;
-    const BYTE      InClass = 0;
+    static const BYTE InClass[(sizeof(teststr1)/sizeof(WCHAR))-1];
     SCRIPT_STRING_ANALYSIS ssa = NULL;
 
     int             Ch;                                  /* Character position in string */
@@ -2556,7 +2999,7 @@ static void test_ScriptStringXtoCP_CPtoX(HDC hdc)
 
     hr = ScriptStringAnalyse( hdc, String, String_len, Glyphs, Charset, Flags,
                               ReqWidth, NULL, NULL, NULL, NULL,
-                              &InClass, &ssa);
+                              InClass, &ssa);
     ok(hr == S_OK ||
        hr == E_INVALIDARG, /* NT */
        "ScriptStringAnalyse should return S_OK or E_INVALIDARG not %08x\n", hr);
@@ -2696,7 +3139,7 @@ static void test_ScriptStringXtoCP_CPtoX(HDC hdc)
          */
         hr = ScriptStringAnalyse( hdc, String, String_len, Glyphs, Charset, Flags,
                                   ReqWidth, NULL, NULL, NULL, NULL,
-                                  &InClass, &ssa);
+                                  InClass, &ssa);
         ok(hr == S_OK, "ScriptStringAnalyse should return S_OK not %08x\n", hr);
 
         /*
@@ -3167,6 +3610,58 @@ static void test_ScriptGetFontFunctions(HDC hdc)
     }
 }
 
+struct logical_width_test
+{
+    int char_count;
+    int glyph_count;
+    int advances[3];
+    WORD map[3];
+    int widths[3];
+    BOOL clusterstart[3];
+    BOOL diacritic[3];
+    BOOL zerowidth[3];
+    BOOL todo;
+};
+
+static const struct logical_width_test logical_width_tests[] =
+{
+    { 3, 3, { 6, 9, 12 }, { 0, 1, 2 }, {  6,  9, 12 }, { 1, 1, 1 } },
+    { 3, 3, { 6, 9, 12 }, { 0, 1, 2 }, {  6,  9, 12 }, { 1, 1, 1 }, { 1, 0, 0 } },
+    { 3, 3, { 6, 9, 12 }, { 0, 1, 2 }, {  6,  9, 12 }, { 1, 1, 1 }, { 0 }, { 1, 1, 1 } },
+    { 3, 3, { 6, 9, 12 }, { 0, 1, 2 }, { 27, 21, 12 }, { 0, 0, 0 }, { 0 }, { 0 }, TRUE },
+    { 3, 3, { 6, 9, 12 }, { 0, 1, 2 }, {  6, 21, 12 }, { 0, 1, 0 }, { 0 }, { 0 }, TRUE },
+    { 3, 3, { 6, 9, 12 }, { 0, 1, 2 }, {  6, 21, 12 }, { 1, 1, 0 }, { 0 }, { 0 }, TRUE },
+    { 3, 3, { 6, 9, 12 }, { 0, 2, 2 }, { 15,  6,  6 }, { 1, 0, 1 } },
+};
+
+static void test_ScriptGetLogicalWidths(void)
+{
+    SCRIPT_ANALYSIS sa = { 0 };
+    unsigned int i, j;
+
+    for (i = 0; i < sizeof(logical_width_tests)/sizeof(logical_width_tests[0]); i++)
+    {
+        const struct logical_width_test *ptr = logical_width_tests + i;
+        SCRIPT_VISATTR attrs[3];
+        int widths[3];
+        HRESULT hr;
+
+        memset(attrs, 0, sizeof(attrs));
+        for (j = 0; j < ptr->glyph_count; j++)
+        {
+            attrs[j].fClusterStart = ptr->clusterstart[j];
+            attrs[j].fDiacritic = ptr->diacritic[j];
+            attrs[j].fZeroWidth = ptr->zerowidth[j];
+        }
+
+        hr = ScriptGetLogicalWidths(&sa, ptr->char_count, ptr->glyph_count, ptr->advances, ptr->map, attrs, widths);
+        ok(hr == S_OK, "got 0x%08x\n", hr);
+
+        todo_wine_if(ptr->todo)
+            ok(!memcmp(ptr->widths, widths, sizeof(widths)), "test %u: got wrong widths\n", i);
+    }
+}
+
 START_TEST(usp10)
 {
     HWND            hwnd;
@@ -3220,6 +3715,7 @@ START_TEST(usp10)
     test_newlines();
 
     test_ScriptGetFontFunctions(hdc);
+    test_ScriptGetLogicalWidths();
 
     ReleaseDC(hwnd, hdc);
     DestroyWindow(hwnd);

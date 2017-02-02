@@ -189,32 +189,6 @@ BOOL WINAPI RegistryDelnode(DWORD x, DWORD y)
 }
 
 /***********************************************************************
- *      SetupCloseLog(SETUPAPI.@)
- */
-void WINAPI SetupCloseLog(void)
-{
-    FIXME("() stub\n");
-}
-
-/***********************************************************************
- *      SetupLogErrorW(SETUPAPI.@)
- */
-BOOL WINAPI SetupLogErrorW(LPCWSTR MessageString, LogSeverity Severity)
-{
-    FIXME("(%s, %d) stub\n", debugstr_w(MessageString), Severity);
-    return TRUE;
-}
-
-/***********************************************************************
- *      SetupOpenLog(SETUPAPI.@)
- */
-BOOL WINAPI SetupOpenLog(BOOL Reserved)
-{
-    FIXME("(%d) stub\n", Reserved);
-    return TRUE;
-}
-
-/***********************************************************************
  *      SetupPromptReboot(SETUPAPI.@)
  */
 INT WINAPI SetupPromptReboot( HSPFILEQ file_queue, HWND owner, BOOL scan_only )
@@ -445,6 +419,26 @@ CONFIGRET WINAPI CM_Get_DevNode_Registry_PropertyW(DEVINST dev, ULONG prop, PULO
 }
 
 /***********************************************************************
+ *      CM_Get_DevNode_Status (SETUPAPI.@)
+ */
+CONFIGRET WINAPI CM_Get_DevNode_Status(ULONG *status, ULONG *problem, DEVINST dev,
+                                       ULONG flags)
+{
+    FIXME("%p %p 0x%08x 0x%08x: stub\n", status, problem, dev, flags);
+    return CR_FAILURE;
+}
+
+/***********************************************************************
+ *      CM_Get_DevNode_Status_Ex (SETUPAPI.@)
+ */
+CONFIGRET WINAPI CM_Get_DevNode_Status_Ex(ULONG *status, ULONG *problem, DEVINST dev,
+                                          ULONG flags, HMACHINE machine)
+{
+    FIXME("%p %p 0x%08x 0x%08x %p: stub\n", status, problem, dev, flags, machine);
+    return CR_FAILURE;
+}
+
+/***********************************************************************
  *      CM_Enumerate_Classes (SETUPAPI.@)
  */
 CONFIGRET WINAPI CM_Enumerate_Classes(ULONG index, LPGUID class, ULONG flags)
@@ -614,6 +608,17 @@ BOOL WINAPI SetupDiGetClassBitmapIndex(const GUID *ClassGuid, PINT MiniIconIndex
 BOOL WINAPI SetupDiLoadClassIcon(const GUID *ClassGuid, HICON *LargeIcon, PINT MiniIconIndex)
 {
     FIXME(": stub %s, %p, %p\n", debugstr_guid(ClassGuid), LargeIcon, MiniIconIndex);
+
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+/***********************************************************************
+ *              SetupDiSelectBestCompatDrv (SETUPAPI.@)
+ */
+BOOL WINAPI SetupDiSelectBestCompatDrv(HDEVINFO DeviceInfoSet, PSP_DEVINFO_DATA DeviceInfoData)
+{
+    FIXME(": stub %p, %p\n", DeviceInfoSet, DeviceInfoData);
 
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;

@@ -21,11 +21,16 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include "config.h"
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifdef HAVE_UNISTD_H
+# include <unistd.h>
+#endif
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -34,6 +39,10 @@
 #include "winternl.h"
 #include "ntdll_misc.h"
 #include "wine/server.h"
+
+#ifdef HAVE_MACH_MACH_H
+#include <mach/mach.h>
+#endif
 
 WINE_DEFAULT_DEBUG_CHANNEL(ntdll);
 
@@ -60,7 +69,7 @@ NTSTATUS WINAPI NtTerminateProcess( HANDLE handle, LONG exit_code )
         self = !ret && reply->self;
     }
     SERVER_END_REQ;
-    if (self && handle) exit( exit_code );
+    if (self && handle) _exit( exit_code );
     return ret;
 }
 
@@ -104,6 +113,32 @@ ULONG_PTR get_system_affinity_mask(void)
     if (num_cpus >= sizeof(ULONG_PTR) * 8) return ~(ULONG_PTR)0;
     return ((ULONG_PTR)1 << num_cpus) - 1;
 }
+
+#if defined(HAVE_MACH_MACH_H)
+
+static void fill_VM_COUNTERS(VM_COUNTERS* pvmi)
+{
+#if defined(MACH_TASK_BASIC_INFO)
+    struct mach_task_basic_info info;
+    mach_msg_type_number_t infoCount = MACH_TASK_BASIC_INFO_COUNT;
+    if(task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &infoCount) == KERN_SUCCESS)
+    {
+        pvmi->VirtualSize = info.resident_size + info.virtual_size;
+        pvmi->PagefileUsage = info.virtual_size;
+        pvmi->WorkingSetSize = info.resident_size;
+        pvmi->PeakWorkingSetSize = info.resident_size_max;
+    }
+#endif
+}
+
+#else
+
+static void fill_VM_COUNTERS(VM_COUNTERS* pvmi)
+{
+    /* FIXME : real data */
+}
+
+#endif
 
 /******************************************************************************
 *  NtQueryInformationProcess		[NTDLL.@]
@@ -235,8 +270,8 @@ NTSTATUS WINAPI NtQueryInformationProcess(
                     ret = STATUS_INVALID_HANDLE;
                 else
                 {
-                    /* FIXME : real data */
                     memset(&pvmi, 0 , sizeof(VM_COUNTERS));
+                    fill_VM_COUNTERS(&pvmi);
 
                     len = ProcessInformationLength;
                     if (len != FIELD_OFFSET(VM_COUNTERS,PrivatePageCount)) len = sizeof(VM_COUNTERS);
@@ -334,7 +369,7 @@ NTSTATUS WINAPI NtQueryInformationProcess(
                     req->handle = wine_server_obj_handle( ProcessHandle );
                     if ((ret = wine_server_call( req )) == STATUS_SUCCESS)
                     {
-                        *(DWORD *)ProcessInformation = !reply->debugger_present;
+                        *(DWORD *)ProcessInformation = reply->debug_children;
                     }
                 }
                 SERVER_END_REQ;
@@ -419,12 +454,13 @@ NTSTATUS WINAPI NtQueryInformationProcess(
             ULONG_PTR val = 0;
 
             if (ProcessHandle == GetCurrentProcess()) val = is_wow64;
-            else if (server_cpus & (1 << CPU_x86_64))
+            else if (server_cpus & ((1 << CPU_x86_64) | (1 << CPU_ARM64)))
             {
                 SERVER_START_REQ( get_process_info )
                 {
                     req->handle = wine_server_obj_handle( ProcessHandle );
-                    if (!(ret = wine_server_call( req ))) val = (reply->cpu != CPU_x86_64);
+                    if (!(ret = wine_server_call( req )))
+                        val = (reply->cpu != CPU_x86_64 && reply->cpu != CPU_ARM64);
                 }
                 SERVER_END_REQ;
             }
@@ -605,4 +641,24 @@ NTSTATUS  WINAPI NtOpenProcess(PHANDLE handle, ACCESS_MASK access,
     }
     SERVER_END_REQ;
     return status;
+}
+
+/******************************************************************************
+ * NtResumeProcess
+ * ZwResumeProcess
+ */
+NTSTATUS WINAPI NtResumeProcess( HANDLE handle )
+{
+    FIXME("stub: %p\n", handle);
+    return STATUS_NOT_IMPLEMENTED;
+}
+
+/******************************************************************************
+ * NtSuspendProcess
+ * ZwSuspendProcess
+ */
+NTSTATUS WINAPI NtSuspendProcess( HANDLE handle )
+{
+    FIXME("stub: %p\n", handle);
+    return STATUS_NOT_IMPLEMENTED;
 }

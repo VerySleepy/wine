@@ -23,6 +23,7 @@
 
 #include "ieframe.h"
 #include "exdispid.h"
+#include "shlwapi.h"
 
 #include "wine/debug.h"
 
@@ -539,7 +540,7 @@ static HRESULT WINAPI BrowserService_GetSetCodePage(
         VARIANT *pvarOut)
 {
     ShellBrowser *This = impl_from_IBrowserService(iface);
-    FIXME("%p %p %p\n", This, pvarIn, pvarOut);
+    FIXME("%p %s %p\n", This, debugstr_variant(pvarIn), pvarOut);
     return E_NOTIMPL;
 }
 
@@ -551,7 +552,7 @@ static HRESULT WINAPI BrowserService_OnHttpEquiv(
         VARIANT *pvarargOut)
 {
     ShellBrowser *This = impl_from_IBrowserService(iface);
-    FIXME("%p %p %d %p %p\n", This, psv, fDone, pvarargIn, pvarargOut);
+    FIXME("%p %p %d %s %p\n", This, psv, fDone, debugstr_variant(pvarargIn), pvarargOut);
     return E_NOTIMPL;
 }
 
@@ -656,6 +657,8 @@ static HRESULT WINAPI DocObjectService_FireBeforeNavigate2(
     DISPPARAMS dp = {params, NULL, 7, 0};
     VARIANT_BOOL cancel = VARIANT_FALSE;
     SAFEARRAY *post_data;
+    WCHAR file_path[MAX_PATH];
+    DWORD file_path_len = sizeof(file_path) / sizeof(*file_path);
 
     TRACE("%p %p %s %x %s %p %d %s %d %p\n", This, pDispatch, debugstr_w(lpszUrl),
             dwFlags, debugstr_w(lpszFrameName), pPostData, cbPostData,
@@ -703,7 +706,10 @@ static HRESULT WINAPI DocObjectService_FireBeforeNavigate2(
     V_VT(params+5) = (VT_BYREF|VT_VARIANT);
     V_VARIANTREF(params+5) = &var_url;
     V_VT(&var_url) = VT_BSTR;
-    V_BSTR(&var_url) = SysAllocString(lpszUrl);
+    if(PathCreateFromUrlW(lpszUrl, file_path, &file_path_len, 0) == S_OK)
+        V_BSTR(&var_url) = SysAllocString(file_path);
+    else
+        V_BSTR(&var_url) = SysAllocString(lpszUrl);
 
     V_VT(params+6) = (VT_DISPATCH);
     V_DISPATCH(params+6) = (IDispatch*)This->doc_host->wb;
@@ -741,6 +747,8 @@ static HRESULT WINAPI DocObjectService_FireNavigateComplete2(
     HRESULT hres;
 
     TRACE("%p %p %x\n", This, pHTMLWindow2, dwFlags);
+
+    update_navigation_commands(This->doc_host);
 
     if(doc_host->travellog.loading_pos != -1) {
         WARN("histupdate not notified\n");

@@ -34,6 +34,7 @@
     BOOL fullscreen;
     BOOL pendingMinimize;
     BOOL savedVisibleState;
+    BOOL drawnSinceShown;
     WineWindow* latentParentWindow;
     NSMutableArray* latentChildWindows;
 
@@ -42,6 +43,12 @@
 
     void* surface;
     pthread_mutex_t* surface_mutex;
+
+    CGDirectDisplayID _lastDisplayID;
+    NSTimeInterval _lastDisplayTime;
+
+    NSRect wineFrame;
+    NSRect roundedWineFrame;
 
     NSBezierPath* shape;
     NSData* shapeData;
@@ -54,7 +61,6 @@
 
     NSUInteger lastModifierFlags;
 
-    NSTimer* liveResizeDisplayTimer;
     NSRect frameAtResizeStart;
     BOOL resizingFromLeft, resizingFromTop;
 
@@ -69,6 +75,12 @@
     NSRect nonFullscreenFrame;
     NSTimeInterval enteredFullScreenTime;
 
+    int draggingPhase;
+    NSPoint dragStartPosition;
+    NSPoint dragWindowStartPosition;
+
+    NSTimeInterval lastDockIconSnapshot;
+
     BOOL ignore_windowDeminiaturize;
     BOOL ignore_windowResize;
     BOOL fakingClose;
@@ -80,6 +92,7 @@
 @property (readonly, nonatomic) BOOL floating;
 @property (readonly, getter=isFullscreen, nonatomic) BOOL fullscreen;
 @property (readonly, getter=isFakingClose, nonatomic) BOOL fakingClose;
+@property (readonly, nonatomic) NSRect wine_fractionalFrame;
 
     - (NSInteger) minimumLevelForActive:(BOOL)active;
     - (void) updateFullscreen;
@@ -90,5 +103,7 @@
     - (WineWindow*) ancestorWineWindow;
 
     - (void) updateForCursorClipping;
+
+    - (void) setRetinaMode:(int)mode;
 
 @end

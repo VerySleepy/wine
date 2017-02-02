@@ -99,12 +99,7 @@ static void test_preinitialization(void)
                                            enum_devices_tests[i].lpCallback,
                                            NULL,
                                            enum_devices_tests[i].dwFlags);
-        if (enum_devices_tests[i].todo)
-        {
-            todo_wine
-            ok(hr == enum_devices_tests[i].expected_hr, "[%d] IDirectInput8_EnumDevice returned 0x%08x\n", i, hr);
-        }
-        else
+        todo_wine_if(enum_devices_tests[i].todo)
             ok(hr == enum_devices_tests[i].expected_hr, "[%d] IDirectInput8_EnumDevice returned 0x%08x\n", i, hr);
     }
 
@@ -366,6 +361,22 @@ static BOOL CALLBACK enum_devices_callback(const DIDEVICEINSTANCEA *instance, vo
 {
     struct enum_devices_test *enum_test = context;
 
+    trace("---- Device Information ----\n"
+          "Product Name  : %s\n"
+          "Instance Name : %s\n"
+          "devType       : 0x%08x\n"
+          "GUID Product  : %s\n"
+          "GUID Instance : %s\n"
+          "HID Page      : 0x%04x\n"
+          "HID Usage     : 0x%04x\n",
+          instance->tszProductName,
+          instance->tszInstanceName,
+          instance->dwDevType,
+          wine_dbgstr_guid(&instance->guidProduct),
+          wine_dbgstr_guid(&instance->guidInstance),
+          instance->wUsagePage,
+          instance->wUsage);
+
     enum_test->device_count++;
     return enum_test->return_value;
 }
@@ -443,16 +454,21 @@ struct enum_semantics_test
 static DIACTIONA actionMapping[]=
 {
   /* axis */
-  { 0, 0x01008A01 /* DIAXIS_DRIVINGR_STEER */,      0, { "Steer" }   },
+  { 0, 0x01008A01 /* DIAXIS_DRIVINGR_STEER */,      0, { "Steer.\0" }   },
   /* button */
-  { 1, 0x01000C01 /* DIBUTTON_DRIVINGR_SHIFTUP */,  0, { "Upshift" } },
+  { 1, 0x01000C01 /* DIBUTTON_DRIVINGR_SHIFTUP */,  0, { "Upshift.\0" } },
   /* keyboard key */
-  { 2, DIKEYBOARD_SPACE,                            0, { "Missile" } },
+  { 2, DIKEYBOARD_SPACE,                            0, { "Missile.\0" } },
   /* mouse button */
-  { 3, DIMOUSE_BUTTON0,                             0, { "Select" }  },
+  { 3, DIMOUSE_BUTTON0,                             0, { "Select\0" }   },
   /* mouse axis */
-  { 4, DIMOUSE_YAXIS,                               0, { "Y Axis" }  }
+  { 4, DIMOUSE_YAXIS,                               0, { "Y Axis\0" }   }
 };
+/* By placing the memory pointed to by lptszActionName right before memory with PAGE_NOACCESS
+ * one can find out that the regular ansi string termination is not respected by EnumDevicesBySemantics.
+ * Adding a double termination, making it a valid wide string termination, made the test succeed.
+ * Therefore it looks like ansi version of EnumDevicesBySemantics forwards the string to
+ * the wide variant without conversation. */
 
 static BOOL CALLBACK enum_semantics_callback(const DIDEVICEINSTANCEA *lpddi, IDirectInputDevice8A *lpdid, DWORD dwFlags, DWORD dwRemaining, void *context)
 {

@@ -160,7 +160,11 @@ static const struct
     { "x86_64",  CPU_x86_64 },
     { "powerpc", CPU_POWERPC },
     { "arm",     CPU_ARM },
-    { "aarch64", CPU_ARM64 }
+    { "armv5",   CPU_ARM },
+    { "armv6",   CPU_ARM },
+    { "armv7",   CPU_ARM },
+    { "arm64",   CPU_ARM64 },
+    { "aarch64", CPU_ARM64 },
 };
 
 static const struct
@@ -171,6 +175,7 @@ static const struct
 {
     { "macos",   PLATFORM_APPLE },
     { "darwin",  PLATFORM_APPLE },
+    { "android", PLATFORM_ANDROID },
     { "solaris", PLATFORM_SOLARIS },
     { "cygwin",  PLATFORM_CYGWIN },
     { "mingw32", PLATFORM_WINDOWS },
@@ -229,6 +234,8 @@ static const enum target_cpu build_cpu = CPU_ARM64;
 
 #ifdef __APPLE__
 static enum target_platform build_platform = PLATFORM_APPLE;
+#elif defined(__ANDROID__)
+static enum target_platform build_platform = PLATFORM_ANDROID;
 #elif defined(__sun)
 static enum target_platform build_platform = PLATFORM_SOLARIS;
 #elif defined(__CYGWIN__)
@@ -384,6 +391,7 @@ static const strarray* get_lddllflags( const struct options *opts, const strarra
         }
         break;
 
+    case PLATFORM_ANDROID:
     case PLATFORM_SOLARIS:
     case PLATFORM_UNSPECIFIED:
         strarray_add( flags, "-shared" );
@@ -548,47 +556,34 @@ static void compile(struct options* opts, const char* lang)
 
     if (gcc_defs)
     {
-        int fastcall_done = 0;
-        if (opts->target_cpu == CPU_x86_64)
+        switch (opts->target_cpu)
         {
+        case CPU_x86_64:
             strarray_add(comp_args, "-D__stdcall=__attribute__((ms_abi))");
             strarray_add(comp_args, "-D__cdecl=__attribute__((ms_abi))");
             strarray_add(comp_args, "-D_stdcall=__attribute__((ms_abi))");
             strarray_add(comp_args, "-D_cdecl=__attribute__((ms_abi))");
             strarray_add(comp_args, "-D__fastcall=__attribute__((ms_abi))");
             strarray_add(comp_args, "-D_fastcall=__attribute__((ms_abi))");
-            fastcall_done = 1;
-        }
-        else if (opts->target_platform == PLATFORM_APPLE)
-        {
-            /* Mac OS X uses a 16-byte aligned stack and not a 4-byte one */
+            break;
+        case CPU_x86:
             strarray_add(comp_args, "-D__stdcall=__attribute__((__stdcall__)) __attribute__((__force_align_arg_pointer__))");
             strarray_add(comp_args, "-D__cdecl=__attribute__((__cdecl__)) __attribute__((__force_align_arg_pointer__))");
             strarray_add(comp_args, "-D_stdcall=__attribute__((__stdcall__)) __attribute__((__force_align_arg_pointer__))");
             strarray_add(comp_args, "-D_cdecl=__attribute__((__cdecl__)) __attribute__((__force_align_arg_pointer__))");
-        }
-        else if (opts->target_cpu == CPU_ARM || opts->target_cpu == CPU_ARM64)
-        {
+            strarray_add(comp_args, "-D__fastcall=__attribute__((__fastcall__))");
+            strarray_add(comp_args, "-D_fastcall=__attribute__((__fastcall__))");
+            break;
+        case CPU_ARM:
+        case CPU_ARM64:
+        case CPU_POWERPC:
             strarray_add(comp_args, "-D__stdcall=");
             strarray_add(comp_args, "-D__cdecl=");
             strarray_add(comp_args, "-D_stdcall=");
             strarray_add(comp_args, "-D_cdecl=");
             strarray_add(comp_args, "-D__fastcall=");
             strarray_add(comp_args, "-D_fastcall=");
-            fastcall_done = 1;
-        }
-        else
-        {
-            strarray_add(comp_args, "-D__stdcall=__attribute__((__stdcall__))");
-            strarray_add(comp_args, "-D__cdecl=__attribute__((__cdecl__))");
-            strarray_add(comp_args, "-D_stdcall=__attribute__((__stdcall__))");
-            strarray_add(comp_args, "-D_cdecl=__attribute__((__cdecl__))");
-        }
-
-	if (!fastcall_done)
-        {
-            strarray_add(comp_args, "-D__fastcall=__attribute__((__fastcall__))");
-            strarray_add(comp_args, "-D_fastcall=__attribute__((__fastcall__))");
+            break;
         }
 	strarray_add(comp_args, "-D__declspec(x)=__declspec_##x");
 	strarray_add(comp_args, "-D__declspec_align(x)=__attribute__((aligned(x)))");
@@ -776,6 +771,7 @@ static void build(struct options* opts)
     char *output_file;
     const char *spec_o_name;
     const char *output_name, *spec_file, *lang;
+    const char *prelink = NULL;
     int generate_app_loader = 1;
     int fake_module = 0;
     unsigned int j;
@@ -962,7 +958,7 @@ static void build(struct options* opts)
                 strarray_add(link_args, name);
                 break;
             case 'a':
-                if (strchr(name, '/'))
+                if (!opts->lib_suffix && strchr(name, '/'))
                 {
                     /* turn the path back into -Ldir -lfoo options
                      * this makes sure that we use the specified libs even
@@ -1133,7 +1129,20 @@ static void build(struct options* opts)
             strarray_add(tmp_files, mapfile);
         }
         break;
+    case PLATFORM_ANDROID:
+        /* the Android loader requires a soname for all libraries */
+        strarray_add( link_args, strmake( "-Wl,-soname,%s.so", output_name ));
+        break;
     default:
+        if (opts->image_base)
+        {
+            if (!try_link(opts->prefix, link_args, "-Wl,-z,max-page-size=0x1000"))
+                strarray_add(link_args, "-Wl,-z,max-page-size=0x1000");
+            if (!try_link(opts->prefix, link_args, strmake("-Wl,-Ttext-segment=%s", opts->image_base)))
+                strarray_add(link_args, strmake("-Wl,-Ttext-segment=%s", opts->image_base));
+            else
+                prelink = PRELINK;
+        }
         break;
     }
 
@@ -1167,10 +1176,9 @@ static void build(struct options* opts)
     spawn(opts->prefix, link_args, 0);
     strarray_free (link_args);
 
-    /* set the base address */
-    if (opts->image_base && !opts->target)
+    /* set the base address with prelink if linker support is not present */
+    if (prelink && !opts->target)
     {
-        const char *prelink = PRELINK;
         if (prelink[0] && strcmp(prelink,"false"))
         {
             strarray *prelink_args = strarray_alloc();
@@ -1457,6 +1465,11 @@ int main(int argc, char **argv)
                         /* don't pass it to the compiler, this generates warnings */
                         raw_compiler_arg = raw_linker_arg = 0;
                     }
+                    else if (!strcmp(str, "tools/winebuild"))
+                    {
+                        opts.wine_objdir = ".";
+                        raw_compiler_arg = raw_linker_arg = 0;
+                    }
                     if (!opts.prefix) opts.prefix = strarray_alloc();
                     strarray_add(opts.prefix, str);
 		    break;
@@ -1524,7 +1537,7 @@ int main(int argc, char **argv)
                         strarray_add(opts.winebuild_args, argv[i]);
 			raw_linker_arg = 1;
                     }
-                    else if (strncmp("-mcpu=", argv[i], 6) == 0)
+                    else if (strncmp("-mcpu=", argv[i], 6) == 0 || strncmp("-march=", argv[i], 7) == 0)
                         strarray_add(opts.winebuild_args, argv[i]);
 		    break;
                 case 'n':

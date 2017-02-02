@@ -400,6 +400,14 @@ static void test_persist_save_data(const char *testname, IHlink *lnk,
         same = TRUE;
         for (i = 0; i < min(data_size, expected_data_alt_size); i++)
         {
+            if ((expected_data_alt == expected_hlink_data_ie7  && i == 89)  /* Win10 */ ||
+                (expected_data_alt == expected_hlink_data2_ie7 && i == 109) /* Win10 */ ||
+                (expected_data_alt == expected_hlink_data3_ie7 && i == 109) /* Win10 */ ||
+                (expected_data_alt == expected_hlink_data5_ie7 && i == 107) /* Win10 */)
+            {
+                ok(data[i] == 0 || broken(data[i] == 1), "Expected 0 or 1, got %d\n", data[i]);
+                continue;
+            }
             if ((expected_data_alt[i] != data[i]) &&
                 (((expected_data_alt != expected_hlink_data2) &&
                   (expected_data_alt != expected_hlink_data3)) ||
@@ -637,7 +645,7 @@ static void test_HlinkParseDisplayName(void)
     ok(mon != NULL, "mon == NULL\n");
 
     hres = IMoniker_GetDisplayName(mon, bctx, 0, &name);
-    ok(hres == S_OK, "GetDiasplayName failed: %08x\n", hres);
+    ok(hres == S_OK, "GetDisplayName failed: %08x\n", hres);
     ok(!lstrcmpW(name, winehq_urlW), "wrong display name %s\n", wine_dbgstr_w(name));
     CoTaskMemFree(name);
 
@@ -664,7 +672,7 @@ static void test_HlinkParseDisplayName(void)
     ok(mon != NULL, "mon == NULL\n");
 
     hres = IMoniker_GetDisplayName(mon, bctx, 0, &name);
-    ok(hres == S_OK, "GetDiasplayName failed: %08x\n", hres);
+    ok(hres == S_OK, "GetDisplayName failed: %08x\n", hres);
     ok(!lstrcmpW(name, invalid_urlW), "wrong display name %s\n", wine_dbgstr_w(name));
     CoTaskMemFree(name);
 
@@ -680,7 +688,7 @@ static void test_HlinkParseDisplayName(void)
     ok(mon != NULL, "mon == NULL\n");
 
     hres = IMoniker_GetDisplayName(mon, bctx, 0, &name);
-    ok(hres == S_OK, "GetDiasplayName failed: %08x\n", hres);
+    ok(hres == S_OK, "GetDisplayName failed: %08x\n", hres);
     ok(!lstrcmpW(name, file_urlW+8), "wrong display name %s\n", wine_dbgstr_w(name));
     CoTaskMemFree(name);
 
@@ -1731,7 +1739,7 @@ static const WCHAR ref_monikerW[] = {'R','E','F','_','M','O','N','I','K','E','R'
 static HRESULT WINAPI hls_test_Moniker_BindToStorage(IMoniker *iface,
         IBindCtx *pbc, IMoniker *toLeft, REFIID riid, void **obj)
 {
-    ok(0, "BTS: %p %p %p %p %p\n", iface, pbc, toLeft, riid, obj);
+    ok(0, "BTS: %p %p %p %s %p\n", iface, pbc, toLeft, wine_dbgstr_guid(riid), obj);
     return E_NOTIMPL;
 }
 

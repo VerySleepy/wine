@@ -40,15 +40,6 @@
 #include "security.h"
 
 
-struct object_name
-{
-    struct list         entry;           /* entry in the hash list */
-    struct object      *obj;             /* object owning this name */
-    struct object      *parent;          /* parent object */
-    data_size_t         len;             /* name length in bytes */
-    WCHAR               name[1];
-};
-
 struct namespace
 {
     unsigned int        hash_size;       /* size of hash table */
@@ -68,12 +59,14 @@ void dump_objects(void)
     {
         struct object *ptr = LIST_ENTRY( p, struct object, obj_list );
         fprintf( stderr, "%p:%d: ", ptr, ptr->refcount );
+        dump_object_name( ptr );
         ptr->ops->dump( ptr, 1 );
     }
     LIST_FOR_EACH( p, &object_list )
     {
         struct object *ptr = LIST_ENTRY( p, struct object, obj_list );
         fprintf( stderr, "%p:%d: ", ptr, ptr->refcount );
+        dump_object_name( ptr );
         ptr->ops->dump( ptr, 1 );
     }
 }
@@ -128,6 +121,13 @@ static int get_name_hash( const struct namespace *namespace, const WCHAR *name, 
     return hash % namespace->hash_size;
 }
 
+void namespace_add( struct namespace *namespace, struct object_name *ptr )
+{
+    int hash = get_name_hash( namespace, ptr->name, ptr->len );
+
+    list_add_head( &namespace->names[hash], &ptr->entry );
+}
+
 /* allocate a name for an object */
 static struct object_name *alloc_name( const struct unicode_str *name )
 {
@@ -140,26 +140,6 @@ static struct object_name *alloc_name( const struct unicode_str *name )
         memcpy( ptr->name, name->str, name->len );
     }
     return ptr;
-}
-
-/* free the name of an object */
-static void free_name( struct object *obj )
-{
-    struct object_name *ptr = obj->name;
-    list_remove( &ptr->entry );
-    if (ptr->parent) release_object( ptr->parent );
-    free( ptr );
-}
-
-/* set the name of an existing object */
-static void set_object_name( struct namespace *namespace,
-                             struct object *obj, struct object_name *ptr )
-{
-    int hash = get_name_hash( namespace, ptr->name, ptr->len );
-
-    list_add_head( &namespace->names[hash], &ptr->entry );
-    ptr->obj = obj;
-    obj->name = ptr;
 }
 
 /* get the name of an existing object */
@@ -206,10 +186,11 @@ void *alloc_object( const struct object_ops *ops )
     struct object *obj = mem_alloc( ops->size );
     if (obj)
     {
-        obj->refcount = 1;
-        obj->ops      = ops;
-        obj->name     = NULL;
-        obj->sd       = NULL;
+        obj->refcount     = 1;
+        obj->handle_count = 0;
+        obj->ops          = ops;
+        obj->name         = NULL;
+        obj->sd           = NULL;
         list_init( &obj->wait_queue );
 #ifdef DEBUG_OBJECTS
         list_add_head( &object_list, &obj->obj_list );
@@ -219,31 +200,116 @@ void *alloc_object( const struct object_ops *ops )
     return NULL;
 }
 
-void *create_object( struct namespace *namespace, const struct object_ops *ops,
-                     const struct unicode_str *name, struct object *parent )
+/* free an object once it has been destroyed */
+void free_object( struct object *obj )
+{
+    free( obj->sd );
+#ifdef DEBUG_OBJECTS
+    list_remove( &obj->obj_list );
+    memset( obj, 0xaa, obj->ops->size );
+#endif
+    free( obj );
+}
+
+/* find an object by name starting from the specified root */
+/* if it doesn't exist, its parent is returned, and name_left contains the remaining name */
+struct object *lookup_named_object( struct object *root, const struct unicode_str *name,
+                                    unsigned int attr, struct unicode_str *name_left )
+{
+    struct object *obj, *parent;
+    struct unicode_str name_tmp = *name, *ptr = &name_tmp;
+
+    if (root)
+    {
+        /* if root is specified path shouldn't start with backslash */
+        if (name_tmp.len && name_tmp.str[0] == '\\')
+        {
+            set_error( STATUS_OBJECT_PATH_SYNTAX_BAD );
+            return NULL;
+        }
+        parent = grab_object( root );
+    }
+    else
+    {
+        if (!name_tmp.len || name_tmp.str[0] != '\\')
+        {
+            set_error( STATUS_OBJECT_PATH_SYNTAX_BAD );
+            return NULL;
+        }
+        /* skip leading backslash */
+        name_tmp.str++;
+        name_tmp.len -= sizeof(WCHAR);
+        parent = get_root_directory();
+    }
+
+    if (!name_tmp.len) ptr = NULL;  /* special case for empty path */
+
+    clear_error();
+
+    while ((obj = parent->ops->lookup_name( parent, ptr, attr )))
+    {
+        /* move to the next element */
+        release_object ( parent );
+        parent = obj;
+    }
+    if (get_error())
+    {
+        release_object( parent );
+        return NULL;
+    }
+
+    if (name_left) *name_left = name_tmp;
+    return parent;
+}
+
+static struct object *create_object( struct object *parent, const struct object_ops *ops,
+                                     const struct unicode_str *name, const struct security_descriptor *sd )
 {
     struct object *obj;
     struct object_name *name_ptr;
 
     if (!(name_ptr = alloc_name( name ))) return NULL;
-    if ((obj = alloc_object( ops )))
-    {
-        set_object_name( namespace, obj, name_ptr );
-        if (parent) name_ptr->parent = grab_object( parent );
-    }
-    else
-        free( name_ptr );
+    if (!(obj = alloc_object( ops ))) goto failed;
+    if (sd && !default_set_sd( obj, sd, OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
+                               DACL_SECURITY_INFORMATION | SACL_SECURITY_INFORMATION ))
+        goto failed;
+    if (!obj->ops->link_name( obj, name_ptr, parent )) goto failed;
+
+    name_ptr->obj = obj;
+    obj->name = name_ptr;
     return obj;
+
+failed:
+    if (obj) free_object( obj );
+    free( name_ptr );
+    return NULL;
 }
 
-void *create_named_object( struct namespace *namespace, const struct object_ops *ops,
-                           const struct unicode_str *name, unsigned int attributes )
+/* create an object as named child under the specified parent */
+void *create_named_object( struct object *parent, const struct object_ops *ops,
+                           const struct unicode_str *name, unsigned int attributes,
+                           const struct security_descriptor *sd )
 {
-    struct object *obj;
+    struct object *obj, *new_obj;
+    struct unicode_str new_name;
 
-    if (!name || !name->len) return alloc_object( ops );
+    clear_error();
 
-    if ((obj = find_object( namespace, name, attributes )))
+    if (!name || !name->len)
+    {
+        if (!(new_obj = alloc_object( ops ))) return NULL;
+        if (sd && !default_set_sd( new_obj, sd, OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
+                                   DACL_SECURITY_INFORMATION | SACL_SECURITY_INFORMATION ))
+        {
+            free_object( new_obj );
+            return NULL;
+        }
+        return new_obj;
+    }
+
+    if (!(obj = lookup_named_object( parent, name, attributes, &new_name ))) return NULL;
+
+    if (!new_name.len)
     {
         if (attributes & OBJ_OPENIF && obj->ops == ops)
             set_error( STATUS_OBJECT_NAME_EXISTS );
@@ -258,27 +324,63 @@ void *create_named_object( struct namespace *namespace, const struct object_ops 
         }
         return obj;
     }
-    if ((obj = create_object( namespace, ops, name, NULL ))) clear_error();
-    return obj;
+
+    new_obj = create_object( obj, ops, &new_name, sd );
+    release_object( obj );
+    return new_obj;
+}
+
+/* open a object by name under the specified parent */
+void *open_named_object( struct object *parent, const struct object_ops *ops,
+                         const struct unicode_str *name, unsigned int attributes )
+{
+    struct unicode_str name_left;
+    struct object *obj;
+
+    if ((obj = lookup_named_object( parent, name, attributes, &name_left )))
+    {
+        if (name_left.len) /* not fully parsed */
+            set_error( STATUS_OBJECT_NAME_NOT_FOUND );
+        else if (ops && obj->ops != ops)
+            set_error( STATUS_OBJECT_TYPE_MISMATCH );
+        else
+            return obj;
+
+        release_object( obj );
+    }
+    return NULL;
+}
+
+/* recursive helper for dump_object_name */
+static void dump_name( struct object *obj )
+{
+    struct object_name *name = obj->name;
+
+    if (!name) return;
+    if (name->parent) dump_name( name->parent );
+    fputs( "\\\\", stderr );
+    dump_strW( name->name, name->len / sizeof(WCHAR), stderr, "[]" );
 }
 
 /* dump the name of an object to stderr */
 void dump_object_name( struct object *obj )
 {
-    if (!obj->name) fprintf( stderr, "name=\"\"" );
-    else
-    {
-        fprintf( stderr, "name=L\"" );
-        dump_strW( obj->name->name, obj->name->len/sizeof(WCHAR), stderr, "\"\"" );
-        fputc( '\"', stderr );
-    }
+    if (!obj->name) return;
+    fputc( '[', stderr );
+    dump_name( obj );
+    fputs( "] ", stderr );
 }
 
 /* unlink a named object from its namespace, without freeing the object itself */
 void unlink_named_object( struct object *obj )
 {
-    if (obj->name) free_name( obj );
+    struct object_name *name_ptr = obj->name;
+
+    if (!name_ptr) return;
     obj->name = NULL;
+    obj->ops->unlink_name( obj, name_ptr );
+    if (name_ptr->parent) release_object( name_ptr->parent );
+    free( name_ptr );
 }
 
 /* mark an object as being stored statically, i.e. only released at shutdown */
@@ -306,16 +408,12 @@ void release_object( void *ptr )
     assert( obj->refcount );
     if (!--obj->refcount)
     {
+        assert( !obj->handle_count );
         /* if the refcount is 0, nobody can be in the wait queue */
         assert( list_empty( &obj->wait_queue ));
+        unlink_named_object( obj );
         obj->ops->destroy( obj );
-        if (obj->name) free_name( obj );
-        free( obj->sd );
-#ifdef DEBUG_OBJECTS
-        list_remove( &obj->obj_list );
-        memset( obj, 0xaa, obj->ops->size );
-#endif
-        free( obj );
+        free_object( obj );
     }
 }
 
@@ -532,7 +630,19 @@ int default_set_sd( struct object *obj, const struct security_descriptor *sd,
 struct object *no_lookup_name( struct object *obj, struct unicode_str *name,
                                unsigned int attr )
 {
+    if (!name) set_error( STATUS_OBJECT_TYPE_MISMATCH );
     return NULL;
+}
+
+int no_link_name( struct object *obj, struct object_name *name, struct object *parent )
+{
+    set_error( STATUS_OBJECT_TYPE_MISMATCH );
+    return 0;
+}
+
+void default_unlink_name( struct object *obj, struct object_name *name )
+{
+    list_remove( &name->entry );
 }
 
 struct object *no_open_file( struct object *obj, unsigned int access, unsigned int sharing,

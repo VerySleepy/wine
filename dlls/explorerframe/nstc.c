@@ -22,7 +22,6 @@
 
 #define COBJMACROS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "winerror.h"
 #include "windef.h"
@@ -499,7 +498,7 @@ static LRESULT create_namespacetree(HWND hWnd, CREATESTRUCTW *crs)
 
     INameSpaceTreeControl2_AddRef(&This->INameSpaceTreeControl2_iface);
 
-    /* Subclass the treeview to get the keybord events. */
+    /* Subclass the treeview to get the keyboard events. */
     This->tv_oldwndproc = (WNDPROC)SetWindowLongPtrW(This->hwnd_tv, GWLP_WNDPROC,
                                                      (ULONG_PTR)tv_wndproc);
     if(This->tv_oldwndproc)
@@ -819,7 +818,7 @@ static HRESULT WINAPI NSTC2_fnQueryInterface(INameSpaceTreeControl2* iface,
        IsEqualIID(riid, &IID_INameSpaceTreeControl) ||
        IsEqualIID(riid, &IID_IUnknown))
     {
-        *ppvObject = This;
+        *ppvObject = &This->INameSpaceTreeControl2_iface;
     }
     else if(IsEqualIID(riid, &IID_IOleWindow))
     {
@@ -911,9 +910,9 @@ static HRESULT WINAPI NSTC2_fnInitialize(INameSpaceTreeControl2* iface,
     window_ex_style = nstcsFlags & NSTCS_TABSTOP ? WS_EX_CONTROLPARENT : 0;
 
     if(prc)
-        CopyRect(&rc, prc);
+        rc = *prc;
     else
-        rc.left = rc.right = rc.top = rc.bottom = 0;
+        SetRectEmpty(&rc);
 
     This->hwnd_main = CreateWindowExW(window_ex_style, NSTC2_CLASS_NAME, NULL, window_style,
                                       rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,

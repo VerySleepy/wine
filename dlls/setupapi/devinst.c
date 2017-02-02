@@ -535,7 +535,7 @@ static void SETUPDI_FreeDeviceInfo(struct DeviceInfo *devInfo)
  */
 static BOOL SETUPDI_AddDeviceToSet(struct DeviceInfoSet *set,
         const GUID *guid,
-        DWORD devInst,
+        DWORD dev_inst,
         LPCWSTR instanceId,
         BOOL phantom,
         SP_DEVINFO_DATA **dev)
@@ -544,7 +544,7 @@ static BOOL SETUPDI_AddDeviceToSet(struct DeviceInfoSet *set,
     struct DeviceInfo *devInfo = SETUPDI_AllocateDeviceInfo(set, set->cDevices,
             instanceId, phantom);
 
-    TRACE("%p, %s, %d, %s, %d\n", set, debugstr_guid(guid), devInst,
+    TRACE("%p, %s, %d, %s, %d\n", set, debugstr_guid(guid), dev_inst,
             debugstr_w(instanceId), phantom);
 
     if (devInfo)
@@ -1144,7 +1144,7 @@ SetupDiCreateDeviceInfoListExA(const GUID *ClassGuid,
  *   ClassGuid [I] if not NULL only devices with GUID ClassGuid are associated
  *                 with this list.
  *   hwndParent [I] hwnd needed for interface related actions.
- *   MachineName [I] name of machine to create emtpy DeviceInfoSet list, if NULL
+ *   MachineName [I] name of machine to create empty DeviceInfoSet list, if NULL
  *                   local registry will be used.
  *   Reserved [I] must be NULL
  *
@@ -1556,6 +1556,16 @@ BOOL WINAPI SetupDiRemoveDevice(
         PSP_DEVINFO_DATA info)
 {
     FIXME("(%p, %p): stub\n", devinfo, info);
+    SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+    return FALSE;
+}
+
+/***********************************************************************
+ *              SetupDiRemoveDeviceInterface (SETUPAPI.@)
+ */
+BOOL WINAPI SetupDiRemoveDeviceInterface(HDEVINFO info, PSP_DEVICE_INTERFACE_DATA data)
+{
+    FIXME("(%p, %p): stub\n", info, data);
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
     return FALSE;
 }
@@ -2132,6 +2142,8 @@ static void SETUPDI_EnumerateInterfaces(HDEVINFO DeviceInfoSet,
 
                         interfaceGuidStr[37] = 0;
                         UuidFromStringW(&interfaceGuidStr[1], &interfaceGuid);
+                        interfaceGuidStr[37] = '}';
+                        interfaceGuidStr[38] = 0;
                         l = RegOpenKeyExW(interfacesKey, interfaceGuidStr, 0,
                                 KEY_READ, &interfaceKey);
                         if (!l)
@@ -2338,7 +2350,7 @@ HDEVINFO WINAPI SetupDiGetClassDevsExW(const GUID *class, PCWSTR enumstr, HWND p
     if (!(flags & DIGCF_ALLCLASSES) && !class)
     {
         SetLastError(ERROR_INVALID_PARAMETER);
-        return NULL;
+        return INVALID_HANDLE_VALUE;
     }
     if (flags & unsupportedFlags)
         WARN("unsupported flags %08x\n", flags & unsupportedFlags);
@@ -2346,7 +2358,7 @@ HDEVINFO WINAPI SetupDiGetClassDevsExW(const GUID *class, PCWSTR enumstr, HWND p
         set = deviceset;
     else
         set = SetupDiCreateDeviceInfoListExW(class, parent, machine, reserved);
-    if (set)
+    if (set != INVALID_HANDLE_VALUE)
     {
         if (machine && *machine)
             FIXME("%s: unimplemented for remote machines\n",
@@ -3710,6 +3722,19 @@ BOOL WINAPI SetupDiSetDeviceInstallParamsA(
     return TRUE;
 }
 
+/***********************************************************************
+ *              SetupDiSetDeviceInstallParamsW  (SETUPAPI.@)
+ */
+BOOL WINAPI SetupDiSetDeviceInstallParamsW(
+       HDEVINFO DeviceInfoSet,
+       PSP_DEVINFO_DATA DeviceInfoData,
+       PSP_DEVINSTALL_PARAMS_W DeviceInstallParams)
+{
+    FIXME("(%p, %p, %p) stub\n", DeviceInfoSet, DeviceInfoData, DeviceInstallParams);
+
+    return TRUE;
+}
+
 static HKEY SETUPDI_OpenDevKey(struct DeviceInfo *devInfo, REGSAM samDesired)
 {
     HKEY enumKey, key = INVALID_HANDLE_VALUE;
@@ -4127,4 +4152,18 @@ BOOL WINAPI SetupDiGetINFClassW(PCWSTR inf, LPGUID class_guid, PWSTR class_name,
     if (required_size) *required_size = dret + ((dret) ? 1 : 0);
 
     return (have_guid || have_name);
+}
+
+/***********************************************************************
+ *              SetupDiGetDevicePropertyW (SETUPAPI.@)
+ */
+BOOL WINAPI SetupDiGetDevicePropertyW(HDEVINFO info_set, PSP_DEVINFO_DATA info_data,
+                const DEVPROPKEY *prop_key, DEVPROPTYPE *prop_type, BYTE *prop_buff,
+                DWORD prop_buff_size, DWORD *required_size, DWORD flags)
+{
+    FIXME("%p, %p, %p, %p, %p, %d, %p, 0x%08x stub\n", info_set, info_data, prop_key,
+               prop_type, prop_buff, prop_buff_size, required_size, flags);
+
+    SetLastError(ERROR_NOT_FOUND);
+    return FALSE;
 }

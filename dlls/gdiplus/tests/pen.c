@@ -344,6 +344,7 @@ static void test_compoundarray(void)
     GpStatus status;
     GpPen *pen;
     static const REAL testvalues[] = {0.2, 0.4, 0.6, 0.8};
+    INT count;
 
     status = GdipSetPenCompoundArray(NULL, testvalues, 4);
     expect(InvalidParameter, status);
@@ -351,6 +352,20 @@ static void test_compoundarray(void)
     status = GdipCreatePen1((ARGB)0xffff00ff, 10.0f, UnitPixel, &pen);
     expect(Ok, status);
 
+    status = GdipGetPenCompoundCount(NULL, NULL);
+    expect(InvalidParameter, status);
+
+    status = GdipGetPenCompoundCount(pen, NULL);
+    expect(InvalidParameter, status);
+
+    count = 10;
+    status = GdipGetPenCompoundCount(pen, &count);
+todo_wine {
+    expect(Ok, status);
+    ok(count == 0, "Unexpected compound count %d\n", count);
+}
+    status = GdipSetPenCompoundArray(pen, NULL, 0);
+    expect(InvalidParameter, status);
     status = GdipSetPenCompoundArray(pen, NULL, 4);
     expect(InvalidParameter, status);
     status = GdipSetPenCompoundArray(pen, testvalues, 3);
@@ -362,8 +377,78 @@ static void test_compoundarray(void)
 
     status = GdipSetPenCompoundArray(pen, testvalues, 4);
     todo_wine expect(Ok, status);
+    status = GdipSetPenCompoundArray(pen, NULL, 0);
+    expect(InvalidParameter, status);
+
+    count = 0;
+    status = GdipGetPenCompoundCount(pen, &count);
+todo_wine {
+    expect(Ok, status);
+    ok(count == 4, "Unexpected compound count %d\n", count);
+}
+    GdipDeletePen(pen);
+}
+
+static void test_transform(void)
+{
+    GpStatus status;
+    GpPen *pen;
+    GpMatrix *matrix, *matrix2;
+    REAL values[6];
+
+    status = GdipCreatePen1((ARGB)0xffff00ff, 10.0f, UnitPixel, &pen);
+    expect(Ok, status);
+
+    status = GdipCreateMatrix(&matrix);
+    expect(Ok, status);
+
+    status = GdipGetPenTransform(pen, matrix);
+    expect(Ok, status);
+
+    status = GdipGetMatrixElements(matrix, values);
+    expect(Ok, status);
+
+    expectf(1.0, values[0]);
+    expectf(0.0, values[1]);
+    expectf(0.0, values[2]);
+    expectf(1.0, values[3]);
+    expectf(0.0, values[4]);
+    expectf(0.0, values[5]);
+
+    GdipCreateMatrix2(3.0, -2.0, 5.0, 2.0, 6.0, 3.0, &matrix2);
+    status = GdipSetPenTransform(pen, matrix2);
+    expect(Ok, status);
+    GdipDeleteMatrix(matrix2);
+
+    status = GdipGetPenTransform(pen, matrix);
+    expect(Ok, status);
+    status = GdipGetMatrixElements(matrix, values);
+    expect(Ok, status);
+    expectf(3.0,  values[0]);
+    expectf(-2.0,  values[1]);
+    expectf(5.0,  values[2]);
+    expectf(2.0, values[3]);
+    expectf(6.0, values[4]);
+    expectf(3.0,  values[5]);
+
+    status = GdipResetPenTransform(pen);
+    expect(Ok, status);
+
+    status = GdipGetPenTransform(pen, matrix);
+    expect(Ok, status);
+    status = GdipGetMatrixElements(matrix, values);
+    expect(Ok, status);
+
+    expectf(1.0, values[0]);
+    expectf(0.0, values[1]);
+    expectf(0.0, values[2]);
+    expectf(1.0, values[3]);
+    expectf(0.0, values[4]);
+    expectf(0.0, values[5]);
 
     GdipDeletePen(pen);
+
+    GdipDeleteMatrix(matrix);
 }
 
 START_TEST(pen)
@@ -387,6 +472,7 @@ START_TEST(pen)
     test_customcap();
     test_penfilltype();
     test_compoundarray();
+    test_transform();
 
     GdiplusShutdown(gdiplusToken);
 }

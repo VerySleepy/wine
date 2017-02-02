@@ -45,6 +45,7 @@
 #include "wine/unicode.h"
 #include "ntdll_misc.h"
 #include "inaddr.h"
+#include "ddk/ntddk.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(ntdll);
 
@@ -56,6 +57,16 @@ static RTL_CRITICAL_SECTION_DEBUG critsect_debug =
       0, 0, { (DWORD_PTR)(__FILE__ ": peb_lock") }
 };
 static RTL_CRITICAL_SECTION peb_lock = { &critsect_debug, -1, 0, 0, 0, 0 };
+
+#ifdef __i386__
+#define DEFINE_FASTCALL4_ENTRYPOINT( name ) \
+    __ASM_STDCALL_FUNC( name, 16, \
+                       "popl %eax\n\t" \
+                       "pushl %edx\n\t" \
+                       "pushl %ecx\n\t" \
+                       "pushl %eax\n\t" \
+                       "jmp " __ASM_NAME("__regs_") #name __ASM_STDCALL(16))
+#endif
 
 /* CRC polynomial 0xedb88320 */
 static const DWORD CRC_table[256] =
@@ -534,6 +545,15 @@ SIZE_T WINAPI RtlCompareMemoryUlong(const ULONG *Source1, SIZE_T Length, ULONG d
 }
 
 /******************************************************************************
+ *  RtlCopyMemory   [NTDLL.@]
+ */
+#undef RtlCopyMemory
+void WINAPI RtlCopyMemory(void *dest, const void *src, SIZE_T len)
+{
+    memcpy(dest, src, len);
+}
+
+/******************************************************************************
  *  RtlAssert                           [NTDLL.@]
  *
  * Fail a debug assertion.
@@ -544,9 +564,10 @@ SIZE_T WINAPI RtlCompareMemoryUlong(const ULONG *Source1, SIZE_T Length, ULONG d
  * NOTES
  * Not implemented in non-debug versions.
  */
-void WINAPI RtlAssert(LPVOID x1,LPVOID x2,DWORD x3, DWORD x4)
+void WINAPI RtlAssert(void *assertion, void *filename, ULONG linenumber, char *message)
 {
-	FIXME("(%p,%p,0x%08x,0x%08x),stub\n",x1,x2,x3,x4);
+    FIXME("(%s, %s, %u, %s): stub\n", debugstr_a((char*)assertion), debugstr_a((char*)filename),
+        linenumber, debugstr_a(message));
 }
 
 /*************************************************************************
@@ -1181,10 +1202,10 @@ PSLIST_ENTRY WINAPI RtlInterlockedPopEntrySList(PSLIST_HEADER list)
 }
 
 /*************************************************************************
- * RtlInterlockedPushListSList   [NTDLL.@]
+ * RtlInterlockedPushListSListEx   [NTDLL.@]
  */
-PSLIST_ENTRY WINAPI RtlInterlockedPushListSList(PSLIST_HEADER list, PSLIST_ENTRY first,
-                                                PSLIST_ENTRY last, ULONG count)
+PSLIST_ENTRY WINAPI RtlInterlockedPushListSListEx(PSLIST_HEADER list, PSLIST_ENTRY first,
+                                                  PSLIST_ENTRY last, ULONG count)
 {
     SLIST_HEADER old, new;
 
@@ -1212,45 +1233,324 @@ PSLIST_ENTRY WINAPI RtlInterlockedPushListSList(PSLIST_HEADER list, PSLIST_ENTRY
 #endif
 }
 
+/*************************************************************************
+ * RtlInterlockedPushListSList   [NTDLL.@]
+ */
+#ifdef DEFINE_FASTCALL4_ENTRYPOINT
+DEFINE_FASTCALL4_ENTRYPOINT(RtlInterlockedPushListSList)
+PSLIST_ENTRY WINAPI __regs_RtlInterlockedPushListSList(PSLIST_HEADER list, PSLIST_ENTRY first,
+                                                       PSLIST_ENTRY last, ULONG count)
+#else
+PSLIST_ENTRY WINAPI RtlInterlockedPushListSList(PSLIST_HEADER list, PSLIST_ENTRY first,
+                                                PSLIST_ENTRY last, ULONG count)
+#endif
+{
+    return RtlInterlockedPushListSListEx(list, first, last, count);
+}
+
 /******************************************************************************
  *  RtlGetCompressionWorkSpaceSize		[NTDLL.@]
  */
-NTSTATUS WINAPI RtlGetCompressionWorkSpaceSize(USHORT CompressionFormatAndEngine,
-                                               PULONG CompressBufferWorkSpaceSize,
-                                               PULONG CompressFragmentWorkSpaceSize)
+NTSTATUS WINAPI RtlGetCompressionWorkSpaceSize(USHORT format, PULONG compress_workspace,
+                                               PULONG decompress_workspace)
 {
-    FIXME("0x%04x, %p, %p: stub!\n", CompressionFormatAndEngine, CompressBufferWorkSpaceSize,
-         CompressFragmentWorkSpaceSize);
+    FIXME("0x%04x, %p, %p: semi-stub\n", format, compress_workspace, decompress_workspace);
 
-    return STATUS_NOT_IMPLEMENTED;
+    switch (format & ~COMPRESSION_ENGINE_MAXIMUM)
+    {
+        case COMPRESSION_FORMAT_LZNT1:
+            if (compress_workspace)
+            {
+                /* FIXME: The current implementation of RtlCompressBuffer does not use a
+                 * workspace buffer, but Windows applications might expect a nonzero value. */
+                *compress_workspace = 16;
+            }
+            if (decompress_workspace)
+                *decompress_workspace = 0x1000;
+            return STATUS_SUCCESS;
+
+        case COMPRESSION_FORMAT_NONE:
+        case COMPRESSION_FORMAT_DEFAULT:
+            return STATUS_INVALID_PARAMETER;
+
+        default:
+            FIXME("format %u not implemented\n", format);
+            return STATUS_UNSUPPORTED_COMPRESSION;
+    }
+}
+
+/* compress data using LZNT1, currently only a stub */
+static NTSTATUS lznt1_compress(UCHAR *src, ULONG src_size, UCHAR *dst, ULONG dst_size,
+                               ULONG chunk_size, ULONG *final_size, UCHAR *workspace)
+{
+    UCHAR *src_cur = src, *src_end = src + src_size;
+    UCHAR *dst_cur = dst, *dst_end = dst + dst_size;
+    ULONG block_size;
+
+    while (src_cur < src_end)
+    {
+        /* determine size of current chunk */
+        block_size = min(0x1000, src_end - src_cur);
+        if (dst_cur + sizeof(WORD) + block_size > dst_end)
+            return STATUS_BUFFER_TOO_SMALL;
+
+        /* write (uncompressed) chunk header */
+        *(WORD *)dst_cur = 0x3000 | (block_size - 1);
+        dst_cur += sizeof(WORD);
+
+        /* write chunk content */
+        memcpy(dst_cur, src_cur, block_size);
+        dst_cur += block_size;
+        src_cur += block_size;
+    }
+
+    if (final_size)
+        *final_size = dst_cur - dst;
+
+    return STATUS_SUCCESS;
 }
 
 /******************************************************************************
  *  RtlCompressBuffer		[NTDLL.@]
  */
-NTSTATUS WINAPI RtlCompressBuffer(USHORT CompressionFormatAndEngine, PUCHAR UncompressedBuffer,
-                                  ULONG UncompressedBufferSize, PUCHAR CompressedBuffer,
-                                  ULONG CompressedBufferSize, ULONG UncompressedChunkSize,
-                                  PULONG FinalCompressedSize, PVOID WorkSpace)
+NTSTATUS WINAPI RtlCompressBuffer(USHORT format, PUCHAR uncompressed, ULONG uncompressed_size,
+                                  PUCHAR compressed, ULONG compressed_size, ULONG chunk_size,
+                                  PULONG final_size, PVOID workspace)
 {
-    FIXME("0x%04x, %p, %u, %p, %u, %u, %p, %p :stub\n", CompressionFormatAndEngine, UncompressedBuffer,
-         UncompressedBufferSize, CompressedBuffer, CompressedBufferSize, UncompressedChunkSize,
-         FinalCompressedSize, WorkSpace);
+    FIXME("0x%04x, %p, %u, %p, %u, %u, %p, %p: semi-stub\n", format, uncompressed,
+          uncompressed_size, compressed, compressed_size, chunk_size, final_size, workspace);
 
-    return STATUS_NOT_IMPLEMENTED;
+    switch (format & ~COMPRESSION_ENGINE_MAXIMUM)
+    {
+        case COMPRESSION_FORMAT_LZNT1:
+            return lznt1_compress(uncompressed, uncompressed_size, compressed,
+                                  compressed_size, chunk_size, final_size, workspace);
+
+        case COMPRESSION_FORMAT_NONE:
+        case COMPRESSION_FORMAT_DEFAULT:
+            return STATUS_INVALID_PARAMETER;
+
+        default:
+            FIXME("format %u not implemented\n", format);
+            return STATUS_UNSUPPORTED_COMPRESSION;
+    }
 }
+
+/* decompress a single LZNT1 chunk */
+static UCHAR *lznt1_decompress_chunk(UCHAR *dst, ULONG dst_size, UCHAR *src, ULONG src_size)
+{
+    UCHAR *src_cur = src, *src_end = src + src_size;
+    UCHAR *dst_cur = dst, *dst_end = dst + dst_size;
+    ULONG displacement_bits, length_bits;
+    ULONG code_displacement, code_length;
+    WORD flags, code;
+
+    while (src_cur < src_end && dst_cur < dst_end)
+    {
+        flags = 0x8000 | *src_cur++;
+        while ((flags & 0xff00) && src_cur < src_end)
+        {
+            if (flags & 1)
+            {
+                /* backwards reference */
+                if (src_cur + sizeof(WORD) > src_end)
+                    return NULL;
+
+                code = *(WORD *)src_cur;
+                src_cur += sizeof(WORD);
+
+                /* find length / displacement bits */
+                for (displacement_bits = 12; displacement_bits > 4; displacement_bits--)
+                    if ((1 << (displacement_bits - 1)) < dst_cur - dst) break;
+
+                length_bits       = 16 - displacement_bits;
+                code_length       = (code & ((1 << length_bits) - 1)) + 3;
+                code_displacement = (code >> length_bits) + 1;
+
+                if (dst_cur < dst + code_displacement)
+                    return NULL;
+
+                /* copy bytes of chunk - we can't use memcpy() since source and dest can
+                 * be overlapping, and the same bytes can be repeated over and over again */
+                while (code_length--)
+                {
+                    if (dst_cur >= dst_end) return dst_cur;
+                    *dst_cur = *(dst_cur - code_displacement);
+                    dst_cur++;
+                }
+            }
+            else
+            {
+                /* uncompressed data */
+                if (dst_cur >= dst_end) return dst_cur;
+                *dst_cur++ = *src_cur++;
+            }
+            flags >>= 1;
+        }
+    }
+
+    return dst_cur;
+}
+
+/* decompress data encoded with LZNT1 */
+static NTSTATUS lznt1_decompress(UCHAR *dst, ULONG dst_size, UCHAR *src, ULONG src_size,
+                                 ULONG offset, ULONG *final_size, UCHAR *workspace)
+{
+    UCHAR *src_cur = src, *src_end = src + src_size;
+    UCHAR *dst_cur = dst, *dst_end = dst + dst_size;
+    ULONG chunk_size, block_size;
+    WORD chunk_header;
+    UCHAR *ptr;
+
+    if (src_cur + sizeof(WORD) > src_end)
+        return STATUS_BAD_COMPRESSION_BUFFER;
+
+    /* skip over chunks with a distance >= 0x1000 to the destination offset */
+    while (offset >= 0x1000 && src_cur + sizeof(WORD) <= src_end)
+    {
+        chunk_header = *(WORD *)src_cur;
+        src_cur += sizeof(WORD);
+        if (!chunk_header) goto out;
+        chunk_size = (chunk_header & 0xfff) + 1;
+
+        if (src_cur + chunk_size > src_end)
+            return STATUS_BAD_COMPRESSION_BUFFER;
+
+        src_cur += chunk_size;
+        offset  -= 0x1000;
+    }
+
+    /* handle partially included chunk */
+    if (offset && src_cur + sizeof(WORD) <= src_end)
+    {
+        chunk_header = *(WORD *)src_cur;
+        src_cur += sizeof(WORD);
+        if (!chunk_header) goto out;
+        chunk_size = (chunk_header & 0xfff) + 1;
+
+        if (src_cur + chunk_size > src_end)
+            return STATUS_BAD_COMPRESSION_BUFFER;
+
+        if (dst_cur >= dst_end)
+            goto out;
+
+        if (chunk_header & 0x8000)
+        {
+            /* compressed chunk */
+            if (!workspace) return STATUS_ACCESS_VIOLATION;
+            ptr = lznt1_decompress_chunk(workspace, 0x1000, src_cur, chunk_size);
+            if (!ptr) return STATUS_BAD_COMPRESSION_BUFFER;
+            if (ptr - workspace > offset)
+            {
+                block_size = min((ptr - workspace) - offset, dst_end - dst_cur);
+                memcpy(dst_cur, workspace + offset, block_size);
+                dst_cur += block_size;
+            }
+        }
+        else
+        {
+            /* uncompressed chunk */
+            if (chunk_size > offset)
+            {
+                block_size = min(chunk_size - offset, dst_end - dst_cur);
+                memcpy(dst_cur, src_cur + offset, block_size);
+                dst_cur += block_size;
+            }
+        }
+
+        src_cur += chunk_size;
+    }
+
+    /* handle remaining chunks */
+    while (src_cur + sizeof(WORD) <= src_end)
+    {
+        chunk_header = *(WORD *)src_cur;
+        src_cur += sizeof(WORD);
+        if (!chunk_header) goto out;
+        chunk_size = (chunk_header & 0xfff) + 1;
+
+        if (src_cur + chunk_size > src_end)
+            return STATUS_BAD_COMPRESSION_BUFFER;
+
+        /* fill space with padding when the previous chunk was decompressed
+         * to less than 4096 bytes. no padding is needed for the last chunk
+         * or when the next chunk is truncated */
+        block_size = ((dst_cur - dst) + offset) & 0xfff;
+        if (block_size)
+        {
+            block_size = 0x1000 - block_size;
+            if (dst_cur + block_size >= dst_end)
+                goto out;
+            memset(dst_cur, 0, block_size);
+            dst_cur += block_size;
+        }
+
+        if (dst_cur >= dst_end)
+            goto out;
+
+        if (chunk_header & 0x8000)
+        {
+            /* compressed chunk */
+            dst_cur = lznt1_decompress_chunk(dst_cur, dst_end - dst_cur, src_cur, chunk_size);
+            if (!dst_cur) return STATUS_BAD_COMPRESSION_BUFFER;
+        }
+        else
+        {
+            /* uncompressed chunk */
+            block_size = min(chunk_size, dst_end - dst_cur);
+            memcpy(dst_cur, src_cur, block_size);
+            dst_cur += block_size;
+        }
+
+        src_cur += chunk_size;
+    }
+
+out:
+    if (final_size)
+        *final_size = dst_cur - dst;
+
+    return STATUS_SUCCESS;
+
+}
+
+/******************************************************************************
+ *  RtlDecompressFragment	[NTDLL.@]
+ */
+NTSTATUS WINAPI RtlDecompressFragment(USHORT format, PUCHAR uncompressed, ULONG uncompressed_size,
+                               PUCHAR compressed, ULONG compressed_size, ULONG offset,
+                               PULONG final_size, PVOID workspace)
+{
+    TRACE("0x%04x, %p, %u, %p, %u, %u, %p, %p\n", format, uncompressed,
+          uncompressed_size, compressed, compressed_size, offset, final_size, workspace);
+
+    switch (format & ~COMPRESSION_ENGINE_MAXIMUM)
+    {
+        case COMPRESSION_FORMAT_LZNT1:
+            return lznt1_decompress(uncompressed, uncompressed_size, compressed,
+                                    compressed_size, offset, final_size, workspace);
+
+        case COMPRESSION_FORMAT_NONE:
+        case COMPRESSION_FORMAT_DEFAULT:
+            return STATUS_INVALID_PARAMETER;
+
+        default:
+            FIXME("format %u not implemented\n", format);
+            return STATUS_UNSUPPORTED_COMPRESSION;
+    }
+}
+
 
 /******************************************************************************
  *  RtlDecompressBuffer		[NTDLL.@]
  */
-NTSTATUS WINAPI RtlDecompressBuffer(USHORT CompressionFormat, PUCHAR UncompressedBuffer,
-                                    ULONG UncompressedBufferSize, PUCHAR CompressedBuffer,
-                                    ULONG CompressedBufferSize, PULONG FinalUncompressedSize)
+NTSTATUS WINAPI RtlDecompressBuffer(USHORT format, PUCHAR uncompressed, ULONG uncompressed_size,
+                                    PUCHAR compressed, ULONG compressed_size, PULONG final_size)
 {
-    FIXME("0x%04x, %p, %u, %p, %u, %p :stub\n", CompressionFormat, UncompressedBuffer, UncompressedBufferSize,
-         CompressedBuffer, CompressedBufferSize, FinalUncompressedSize);
+    TRACE("0x%04x, %p, %u, %p, %u, %p\n", format, uncompressed,
+        uncompressed_size, compressed, compressed_size, final_size);
 
-    return STATUS_NOT_IMPLEMENTED;
+    return RtlDecompressFragment(format, uncompressed, uncompressed_size,
+                                 compressed, compressed_size, 0, final_size, NULL);
 }
 
 /***********************************************************************
@@ -1310,4 +1610,45 @@ BOOL WINAPI RtlSetCurrentTransaction(HANDLE new_transaction)
 {
     FIXME("(%p) :stub\n", new_transaction);
     return FALSE;
+}
+
+/**********************************************************************
+ *           RtlGetCurrentProcessorNumberEx [NTDLL.@]
+ */
+void WINAPI RtlGetCurrentProcessorNumberEx(PROCESSOR_NUMBER *processor)
+{
+    FIXME("(%p) :semi-stub\n", processor);
+    processor->Group = 0;
+    processor->Number = NtGetCurrentProcessorNumber();
+    processor->Reserved = 0;
+}
+
+/***********************************************************************
+ *           RtlInitializeGenericTableAvl  (NTDLL.@)
+ */
+void WINAPI RtlInitializeGenericTableAvl(PRTL_AVL_TABLE table, PRTL_AVL_COMPARE_ROUTINE compare,
+                                         PRTL_AVL_ALLOCATE_ROUTINE allocate, PRTL_AVL_FREE_ROUTINE free, void *context)
+{
+    FIXME("%p %p %p %p %p: stub\n", table, compare, allocate, free, context);
+}
+
+/***********************************************************************
+ *           RtlInsertElementGenericTableAvl  (NTDLL.@)
+ */
+void WINAPI RtlInsertElementGenericTableAvl(PRTL_AVL_TABLE table, void *buffer, ULONG size, BOOL *element)
+{
+    FIXME("%p %p %u %p: stub\n", table, buffer, size, element);
+}
+
+/**********************************************************************
+ *           RtlCreateUserProcess [NTDLL.@]
+ */
+NTSTATUS WINAPI RtlCreateUserProcess(UNICODE_STRING *path, ULONG attributes, RTL_USER_PROCESS_PARAMETERS *parameters,
+                                     SECURITY_DESCRIPTOR *process_descriptor, SECURITY_DESCRIPTOR *thread_descriptor,
+                                     HANDLE parent, BOOLEAN inherit, HANDLE debug, HANDLE exception,
+                                     RTL_USER_PROCESS_INFORMATION *info)
+{
+    FIXME("(%p %u %p %p %p %p %d %p %p %p): stub\n", path, attributes, parameters, process_descriptor, thread_descriptor,
+                                     parent, inherit, debug, exception, info);
+    return STATUS_NOT_IMPLEMENTED;
 }

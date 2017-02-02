@@ -34,7 +34,7 @@
 #define STACKOFFSET 0xc0  /* FIELD_OFFSET(TEB,WOW32Reserved) */
 
 /* fix this if the ntdll_thread_regs structure is changed */
-#define GS_OFFSET  0x1d8  /* FIELD_OFFSET(TEB,SystemReserved2) + FIELD_OFFSET(ntdll_thread_data,gs) */
+#define GS_OFFSET  0x1d8  /* FIELD_OFFSET(TEB,SpareBytes1) + FIELD_OFFSET(ntdll_thread_data,gs) */
 
 #define DPMI_VIF_OFFSET      (0x1fc + 0) /* FIELD_OFFSET(TEB,GdiTebBatch) + FIELD_OFFSET(WINE_VM86_TEB_INFO,dpmi_vif) */
 #define VM86_PENDING_OFFSET  (0x1fc + 4) /* FIELD_OFFSET(TEB,GdiTebBatch) + FIELD_OFFSET(WINE_VM86_TEB_INFO,vm86_pending) */
@@ -852,29 +852,71 @@ static void build_call_from_regs_x86(void)
 
     /* Restore the context structure */
 
-    output( "2:\tpushl 0x94(%%ecx)\n");     /* SegEs */
+    output( "2:\tpushl 0x94(%%ecx)\n" );    /* SegEs */
     output( "\tpopl %%es\n" );
-    output( "\tpushl 0x90(%%ecx)\n");       /* SegFs */
+    output( "\tpushl 0x90(%%ecx)\n" );      /* SegFs */
     output( "\tpopl %%fs\n" );
-    output( "\tpushl 0x8c(%%ecx)\n");       /* SegGs */
+    output( "\tpushl 0x8c(%%ecx)\n" );      /* SegGs */
     output( "\tpopl %%gs\n" );
 
-    output( "\tmovl 0x9c(%%ecx),%%edi\n");  /* Edi */
-    output( "\tmovl 0xa0(%%ecx),%%esi\n");  /* Esi */
-    output( "\tmovl 0xa8(%%ecx),%%edx\n");  /* Edx */
-    output( "\tmovl 0xa4(%%ecx),%%ebx\n");  /* Ebx */
-    output( "\tmovl 0xb0(%%ecx),%%eax\n");  /* Eax */
-    output( "\tmovl 0xb4(%%ecx),%%ebp\n");  /* Ebp */
+    output( "\tmovw %%ss,%%ax\n" );
+    output( "\tcmpw 0xc8(%%ecx),%%ax\n" );  /* SegSs */
+    output( "\tjne 3f\n" );
 
-    output( "\tpushl 0xc8(%%ecx)\n");       /* SegSs */
+    /* As soon as we have switched stacks the context structure could
+     * be invalid (when signal handlers are executed for example). Copy
+     * values on the target stack before changing ESP. */
+
+    output( "\tmovl 0xc4(%%ecx),%%eax\n" ); /* Esp */
+    output( "\tleal -4*4(%%eax),%%eax\n" );
+
+    output( "\tmovl 0xc0(%%ecx),%%edx\n" ); /* EFlags */
+    output( "\t.byte 0x36\n\tmovl %%edx,3*4(%%eax)\n" );
+    output( "\tmovl 0xbc(%%ecx),%%edx\n" ); /* SegCs */
+    output( "\t.byte 0x36\n\tmovl %%edx,2*4(%%eax)\n" );
+    output( "\tmovl 0xb8(%%ecx),%%edx\n" ); /* Eip */
+    output( "\t.byte 0x36\n\tmovl %%edx,1*4(%%eax)\n" );
+    output( "\tmovl 0xb0(%%ecx),%%edx\n" ); /* Eax */
+    output( "\t.byte 0x36\n\tmovl %%edx,0*4(%%eax)\n" );
+
+    output( "\tpushl 0x98(%%ecx)\n" );      /* SegDs */
+
+    output( "\tmovl 0x9c(%%ecx),%%edi\n" ); /* Edi */
+    output( "\tmovl 0xa0(%%ecx),%%esi\n" ); /* Esi */
+    output( "\tmovl 0xa4(%%ecx),%%ebx\n" ); /* Ebx */
+    output( "\tmovl 0xa8(%%ecx),%%edx\n" ); /* Edx */
+    output( "\tmovl 0xb4(%%ecx),%%ebp\n" ); /* Ebp */
+    output( "\tmovl 0xac(%%ecx),%%ecx\n" ); /* Ecx */
+
+    output( "\tpopl %%ds\n" );
+    output( "\tmovl %%eax,%%esp\n" );
+
+    output( "\tpopl %%eax\n" );
+    output( "\tiret\n" );
+
+    output("3:\n");
+
+    /* Restore the context when the stack segment changes. We can't use
+     * the same code as above because we do not know if the stack segment
+     * is 16 or 32 bit, and 'movl' will throw an exception when we try to
+     * access memory above the limit. */
+
+    output( "\tmovl 0x9c(%%ecx),%%edi\n" ); /* Edi */
+    output( "\tmovl 0xa0(%%ecx),%%esi\n" ); /* Esi */
+    output( "\tmovl 0xa4(%%ecx),%%ebx\n" ); /* Ebx */
+    output( "\tmovl 0xa8(%%ecx),%%edx\n" ); /* Edx */
+    output( "\tmovl 0xb0(%%ecx),%%eax\n" ); /* Eax */
+    output( "\tmovl 0xb4(%%ecx),%%ebp\n" ); /* Ebp */
+
+    output( "\tpushl 0xc8(%%ecx)\n" );      /* SegSs */
     output( "\tpopl %%ss\n" );
-    output( "\tmovl 0xc4(%%ecx),%%esp\n");  /* Esp */
+    output( "\tmovl 0xc4(%%ecx),%%esp\n" ); /* Esp */
 
-    output( "\tpushl 0xc0(%%ecx)\n");       /* EFlags */
-    output( "\tpushl 0xbc(%%ecx)\n");       /* SegCs */
-    output( "\tpushl 0xb8(%%ecx)\n");       /* Eip */
-    output( "\tpushl 0x98(%%ecx)\n");       /* SegDs */
-    output( "\tmovl 0xac(%%ecx),%%ecx\n");  /* Ecx */
+    output( "\tpushl 0xc0(%%ecx)\n" );      /* EFlags */
+    output( "\tpushl 0xbc(%%ecx)\n" );      /* SegCs */
+    output( "\tpushl 0xb8(%%ecx)\n" );      /* Eip */
+    output( "\tpushl 0x98(%%ecx)\n" );      /* SegDs */
+    output( "\tmovl 0xac(%%ecx),%%ecx\n" ); /* Ecx */
 
     output( "\tpopl %%ds\n" );
     output( "\tiret\n" );

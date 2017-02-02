@@ -18,6 +18,9 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#ifndef __WINE_SERVER_SECURITY_H
+#define __WINE_SERVER_SECURITY_H
+
 extern const LUID SeIncreaseQuotaPrivilege;
 extern const LUID SeSecurityPrivilege;
 extern const LUID SeTakeOwnershipPrivilege;
@@ -136,11 +139,4 @@ static inline const SID *sd_get_group( const struct security_descriptor *sd )
         return NULL;
 }
 
-/* determines whether an object_attributes struct is valid in a buffer
- * and calls set_error appropriately */
-extern int objattr_is_valid( const struct object_attributes *objattr, data_size_t size );
-static inline void objattr_get_name( const struct object_attributes *objattr, struct unicode_str *name )
-{
-    name->len = ((objattr->name_len) / sizeof(WCHAR)) * sizeof(WCHAR);
-    name->str = (const WCHAR *)objattr + (sizeof(*objattr) + objattr->sd_len) / sizeof(WCHAR);
-}
+#endif  /* __WINE_SERVER_SECURITY_H */

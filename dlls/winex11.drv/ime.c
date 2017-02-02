@@ -217,11 +217,11 @@ static HIMCC updateCompStr(HIMCC old, LPCWSTR compstr, DWORD len)
     {
         needed_size += lpcs->dwCompReadAttrLen;
         needed_size += lpcs->dwCompReadClauseLen;
-        needed_size += lpcs->dwCompReadStrLen * sizeof(DWORD);
+        needed_size += lpcs->dwCompReadStrLen * sizeof(WCHAR);
         needed_size += lpcs->dwResultReadClauseLen;
-        needed_size += lpcs->dwResultReadStrLen * sizeof(DWORD);
+        needed_size += lpcs->dwResultReadStrLen * sizeof(WCHAR);
         needed_size += lpcs->dwResultClauseLen;
-        needed_size += lpcs->dwResultStrLen * sizeof(DWORD);
+        needed_size += lpcs->dwResultStrLen * sizeof(WCHAR);
         needed_size += lpcs->dwPrivateSize;
     }
     rc = ImmCreateIMCC(needed_size);
@@ -304,6 +304,8 @@ static HIMCC updateCompStr(HIMCC old, LPCWSTR compstr, DWORD len)
         *(DWORD*)(&newdata[current_offset]) = len;
         current_offset += sizeof(DWORD);
     }
+    else
+        new_one->dwCompClauseLen = 0;
 
     /* CompStr */
     new_one->dwCompStrLen = len;
@@ -359,12 +361,12 @@ static HIMCC updateResultStr(HIMCC old, LPWSTR resultstr, DWORD len)
     {
         needed_size += lpcs->dwCompReadAttrLen;
         needed_size += lpcs->dwCompReadClauseLen;
-        needed_size += lpcs->dwCompReadStrLen * sizeof(DWORD);
+        needed_size += lpcs->dwCompReadStrLen * sizeof(WCHAR);
         needed_size += lpcs->dwCompAttrLen;
         needed_size += lpcs->dwCompClauseLen;
-        needed_size += lpcs->dwCompStrLen * sizeof(DWORD);
+        needed_size += lpcs->dwCompStrLen * sizeof(WCHAR);
         needed_size += lpcs->dwResultReadClauseLen;
-        needed_size += lpcs->dwResultReadStrLen * sizeof(DWORD);
+        needed_size += lpcs->dwResultReadStrLen * sizeof(WCHAR);
         needed_size += lpcs->dwPrivateSize;
     }
     rc = ImmCreateIMCC(needed_size);
@@ -446,6 +448,8 @@ static HIMCC updateResultStr(HIMCC old, LPWSTR resultstr, DWORD len)
         *(DWORD*)(&newdata[current_offset]) = len;
         current_offset += sizeof(DWORD);
     }
+    else
+        new_one->dwResultClauseLen = 0;
 
     /* ResultStr */
     new_one->dwResultStrLen = len;
@@ -759,6 +763,7 @@ BOOL WINAPI NotifyIME(HIMC hIMC, DWORD dwAction, DWORD dwIndex, DWORD dwValue)
                         cpstr = (LPWSTR)&(cdata[cs->dwCompStrOffset]);
                         ImmUnlockIMCC(lpIMC->hCompStr);
                     }
+                    myPrivate = ImmLockIMCC(lpIMC->hPrivate);
                     if (cplen > 0)
                     {
                         WCHAR param = cpstr[0];
@@ -775,11 +780,12 @@ BOOL WINAPI NotifyIME(HIMC hIMC, DWORD dwAction, DWORD dwIndex, DWORD dwValue)
 
                         GenerateIMEMessage(hIMC, WM_IME_COMPOSITION, param,
                                             GCS_RESULTSTR|GCS_RESULTCLAUSE);
+
+                        GenerateIMEMessage(hIMC,WM_IME_ENDCOMPOSITION, 0, 0);
                     }
+                    else if (myPrivate->bInComposition)
+                        GenerateIMEMessage(hIMC,WM_IME_ENDCOMPOSITION, 0, 0);
 
-                    GenerateIMEMessage(hIMC,WM_IME_ENDCOMPOSITION, 0, 0);
-
-                    myPrivate = ImmLockIMCC(lpIMC->hPrivate);
                     myPrivate->bInComposition = FALSE;
                     ImmUnlockIMCC(lpIMC->hPrivate);
 
@@ -1046,23 +1052,37 @@ void IME_SetResultString(LPWSTR lpResult, DWORD dwResultLen)
     LPINPUTCONTEXT lpIMC;
     HIMCC newCompStr;
     LPIMEPRIVATE myPrivate;
+    BOOL inComp;
 
     imc = RealIMC(FROM_X11);
     lpIMC = ImmLockIMC(imc);
     if (lpIMC == NULL)
         return;
 
+    newCompStr = updateCompStr(lpIMC->hCompStr, NULL, 0);
+    ImmDestroyIMCC(lpIMC->hCompStr);
+    lpIMC->hCompStr = newCompStr;
+
     newCompStr = updateResultStr(lpIMC->hCompStr, lpResult, dwResultLen);
     ImmDestroyIMCC(lpIMC->hCompStr);
     lpIMC->hCompStr = newCompStr;
 
     myPrivate = ImmLockIMCC(lpIMC->hPrivate);
-    if (!myPrivate->bInComposition)
-        GenerateIMEMessage(imc, WM_IME_STARTCOMPOSITION, 0, 0);
-    GenerateIMEMessage(imc, WM_IME_COMPOSITION, 0, GCS_RESULTSTR);
-    if (!myPrivate->bInComposition)
-        GenerateIMEMessage(imc, WM_IME_ENDCOMPOSITION, 0, 0);
+    inComp = myPrivate->bInComposition;
     ImmUnlockIMCC(lpIMC->hPrivate);
+
+    if (!inComp)
+    {
+        ImmSetOpenStatus(imc, TRUE);
+        GenerateIMEMessage(imc, WM_IME_STARTCOMPOSITION, 0, 0);
+    }
+
+    GenerateIMEMessage(imc, WM_IME_COMPOSITION, 0, GCS_COMPSTR);
+    GenerateIMEMessage(imc, WM_IME_COMPOSITION, lpResult[0], GCS_RESULTSTR|GCS_RESULTCLAUSE);
+    GenerateIMEMessage(imc, WM_IME_ENDCOMPOSITION, 0, 0);
+
+    if (!inComp)
+        ImmSetOpenStatus(imc, FALSE);
 
     ImmUnlockIMC(imc);
 }

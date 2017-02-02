@@ -16,14 +16,14 @@
 # @ stub AccessCheckByTypeResultListAndAuditAlarmW
 @ stdcall AddAccessAllowedAce (ptr long long ptr)
 @ stdcall AddAccessAllowedAceEx (ptr long long long ptr)
-# @ stub AddAccessAllowedObjectAce
+@ stdcall AddAccessAllowedObjectAce(ptr long long long ptr ptr ptr)
 @ stdcall AddAccessDeniedAce(ptr long long ptr)
 @ stdcall AddAccessDeniedAceEx(ptr long long long ptr)
-# @ stub AddAccessDeniedObjectAce
+@ stdcall AddAccessDeniedObjectAce(ptr long long long ptr ptr ptr)
 @ stdcall AddAce(ptr long long ptr long)
 @ stdcall AddAuditAccessAce(ptr long long ptr long long)
 @ stdcall AddAuditAccessAceEx(ptr long long long ptr long long)
-# @ stub AddAuditAccessObjectAce
+@ stdcall AddAuditAccessObjectAce(ptr long long long ptr ptr ptr long long)
 # @ stub AddConditionalAce
 @ stdcall AddMandatoryAce(ptr long long long ptr)
 # @ stub AddUsersToEncryptedFileEx
@@ -120,8 +120,8 @@
 @ stdcall CopySid(long ptr ptr)
 # @ stub CreateCodeAuthzLevel
 @ stdcall CreatePrivateObjectSecurity(ptr ptr ptr long long ptr)
-# @ stub CreatePrivateObjectSecurityEx
-# @ stub CreatePrivateObjectSecurityWithMultipleInheritance
+@ stdcall CreatePrivateObjectSecurityEx(ptr ptr ptr ptr long long long ptr)
+@ stdcall CreatePrivateObjectSecurityWithMultipleInheritance(ptr ptr ptr ptr long long long long ptr)
 @ stdcall CreateProcessAsUserA(long str str ptr ptr long long ptr str ptr ptr)
 # @ stub CreateProcessAsUserSecure
 @ stdcall CreateProcessAsUserW(long wstr wstr ptr ptr long long ptr wstr ptr ptr)
@@ -248,7 +248,7 @@
 @ stub ElfReportEventW
 @ stdcall EnableTrace(long long long ptr int64)
 @ stdcall EnableTraceEx(ptr ptr int64 long long int64 int64 long ptr)
-# @ stub EnableTraceEx2
+@ stdcall EnableTraceEx2(int64 ptr long long int64 int64 long ptr)
 @ stdcall EncryptFileA(str)
 @ stdcall EncryptFileW(wstr)
 # @ stub EncryptedFileKeyInfo
@@ -269,17 +269,18 @@
 # @ stub EventAccessControl
 # @ stub EventAccessQuery
 # @ stub EventAccessRemove
-# @ stub EventActivityIdControl
+@ stdcall EventActivityIdControl(long ptr)
 @ stdcall EventEnabled(int64 ptr)
 @ stdcall EventProviderEnabled(int64 long int64)
-@ stdcall EventRegister(ptr ptr ptr ptr)
-@ stdcall EventUnregister(int64)
+@ stdcall EventRegister(ptr ptr ptr ptr) ntdll.EtwEventRegister
+@ stdcall EventSetInformation(int64 long ptr long) ntdll.EtwEventSetInformation
+@ stdcall EventUnregister(int64) ntdll.EtwEventUnregister
 @ stdcall EventWrite(int64 ptr long ptr)
 # @ stub EventWriteEndScenario
 # @ stub EventWriteEx
 # @ stub EventWriteStartScenario
 # @ stub EventWriteString
-# @ stub EventWriteTransfer
+@ stdcall EventWriteTransfer(int64 ptr ptr ptr long ptr)
 @ stdcall FileEncryptionStatusA(str ptr)
 @ stdcall FileEncryptionStatusW(wstr ptr)
 @ stdcall FindFirstFreeAce(ptr ptr)
@@ -362,7 +363,7 @@
 @ stdcall GetTrusteeTypeW(ptr) 
 @ stdcall GetUserNameA(ptr ptr)
 @ stdcall GetUserNameW(ptr ptr)
-# @ stub GetWindowsAccountDomainSid
+@ stdcall GetWindowsAccountDomainSid(ptr ptr ptr)
 # @ stub I_QueryTagInformation
 # @ stub I_ScGetCurrentGroupStateW
 # @ stub I_ScIsSecurityProcess
@@ -375,7 +376,7 @@
 @ stub I_ScSetServiceBitsA
 # @ stub I_ScSetServiceBitsW
 # @ stub IdentifyCodeAuthzLevelW
-# @ stub ImpersonateAnonymousToken
+@ stdcall ImpersonateAnonymousToken(long)
 @ stdcall ImpersonateLoggedOnUser(long)
 @ stdcall ImpersonateNamedPipeClient(long)
 @ stdcall ImpersonateSelf(long)
@@ -496,7 +497,7 @@
 @ stdcall NotifyChangeEventLog (long long)
 # @ stub NotifyServiceStatusChange
 # @ stub NotifyServiceStatusChangeA
-# @ stub NotifyServiceStatusChangeW
+@ stdcall NotifyServiceStatusChangeW(ptr long ptr)
 @ stdcall ObjectCloseAuditAlarmA(str ptr long)
 @ stdcall ObjectCloseAuditAlarmW(wstr ptr long)
 # @ stub ObjectDeleteAuditAlarmA
@@ -574,14 +575,14 @@
 @ stdcall RegConnectRegistryW(wstr long ptr)
 # @ stub RegConnectRegistryExA
 # @ stub RegConnectRegistryExW
-# @ stub RegCopyTreeA
-# @ stub RegCopyTreeW
+@ stdcall RegCopyTreeA(long str long)
+@ stdcall RegCopyTreeW(long wstr long)
 @ stdcall RegCreateKeyA(long str ptr)
 @ stdcall RegCreateKeyExA(long str long ptr long long ptr ptr ptr)
 @ stdcall RegCreateKeyExW(long wstr long ptr long long ptr ptr ptr)
 @ stdcall RegCreateKeyW(long wstr ptr)
-# @ stub RegCreateKeyTransactedA
-# @ stub RegCreateKeyTransactedW
+@ stdcall RegCreateKeyTransactedA(long str long ptr long long ptr ptr ptr long ptr)
+@ stdcall RegCreateKeyTransactedW(long wstr long ptr long long ptr ptr ptr long ptr)
 @ stdcall RegDeleteKeyA(long str)
 @ stdcall RegDeleteKeyExA(long str long long)
 @ stdcall RegDeleteKeyExW(long wstr long long)
@@ -608,7 +609,7 @@
 @ stdcall RegGetKeySecurity(long long ptr ptr)
 @ stdcall RegGetValueA(long str str long ptr ptr ptr)
 @ stdcall RegGetValueW(long wstr wstr long ptr ptr ptr)
-# @ stub RegisterWaitChainCOMCallback
+@ stdcall RegisterWaitChainCOMCallback(ptr ptr)
 # @ stub RegLoadAppKeyA
 # @ stub RegLoadAppKeyW
 @ stdcall RegLoadKeyA(long str str)
@@ -660,8 +661,8 @@
 @ stdcall RegisterServiceCtrlHandlerExA(str ptr ptr)
 @ stdcall RegisterServiceCtrlHandlerExW(wstr ptr ptr)
 @ stdcall RegisterServiceCtrlHandlerW(wstr ptr)
-@ stdcall RegisterTraceGuidsA(ptr ptr ptr long ptr str str ptr)
-@ stdcall RegisterTraceGuidsW(ptr ptr ptr long ptr wstr wstr ptr)
+@ stdcall RegisterTraceGuidsA(ptr ptr ptr long ptr str str ptr) ntdll.EtwRegisterTraceGuidsA
+@ stdcall RegisterTraceGuidsW(ptr ptr ptr long ptr wstr wstr ptr) ntdll.EtwRegisterTraceGuidsW
 # @ stub RemoveTraceCallback
 # @ stub RemoveUsersFromEncryptedFile
 @ stdcall ReportEventA(long long long long ptr long long ptr ptr)
@@ -794,35 +795,35 @@
 # @ stub WmiDevInstToInstanceNameA
 # @ stub WmiDevInstToInstanceNameW
 # @ stub WmiEnumerateGuids
-# @ stub WmiExecuteMethodA
-# @ stub WmiExecuteMethodW
+@ stdcall WmiExecuteMethodA(long str long long ptr ptr ptr)
+@ stdcall WmiExecuteMethodW(long wstr long long ptr ptr ptr)
 # @ stub WmiFileHandleToInstanceNameA
 # @ stub WmiFileHandleToInstanceNameW
-# @ stub WmiFreeBuffer
+@ stdcall WmiFreeBuffer(ptr)
 # @ stub WmiGetFirstTraceOffset
 # @ stub WmiGetNextEvent
 # @ stub WmiGetTraceHeader
-# @ stub WmiMofEnumerateResourcesA
-# @ stub WmiMofEnumerateResourcesW
-# @ stub WmiNotificationRegistrationA
-# @ stub WmiNotificationRegistrationW
+@ stdcall WmiMofEnumerateResourcesA(long ptr ptr)
+@ stdcall WmiMofEnumerateResourcesW(long ptr ptr)
+@ stdcall WmiNotificationRegistrationA(ptr long ptr long long)
+@ stdcall WmiNotificationRegistrationW(ptr long ptr long long)
 @ stdcall WmiOpenBlock(ptr long ptr)
 # @ stub WmiOpenTraceWithCursor
 # @ stub WmiParseTraceEvent
-# @ stub WmiQueryAllDataA
+@ stdcall WmiQueryAllDataA(long ptr ptr)
 # @ stub WmiQueryAllDataMultipleA
 # @ stub WmiQueryAllDataMultipleW
-# @ stub WmiQueryAllDataW
-# @ stub WmiQueryGuidInformation
+@ stdcall WmiQueryAllDataW(long ptr ptr)
+@ stdcall WmiQueryGuidInformation(long ptr)
 # @ stub WmiQuerySingleInstanceA
 # @ stub WmiQuerySingleInstanceMultipleA
 # @ stub WmiQuerySingleInstanceMultipleW
 @ stub WmiQuerySingleInstanceW
 # @ stub WmiReceiveNotificationsA
 # @ stub WmiReceiveNotificationsW
-# @ stub WmiSetSingleInstanceA
-@ stub WmiSetSingleInstanceW
-# @ stub WmiSetSingleItemA
-# @ stub WmiSetSingleItemW
+@ stdcall WmiSetSingleInstanceA(long str long long ptr)
+@ stdcall WmiSetSingleInstanceW(long wstr long long ptr)
+@ stdcall WmiSetSingleItemA(long str long long long ptr)
+@ stdcall WmiSetSingleItemW(long wstr long long long ptr)
 # @ stub Wow64Win32ApiEntry
 @ stdcall WriteEncryptedFileRaw(ptr ptr ptr)

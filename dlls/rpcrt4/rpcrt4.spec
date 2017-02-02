@@ -93,10 +93,10 @@
 @ stub I_RpcTransServerNewConnection
 @ stub I_RpcTurnOnEEInfoPropagation # wxp
 @ stdcall I_RpcWindowProc(ptr long long long) # win9x
-@ stub I_UuidCreate
+@ stdcall I_UuidCreate(ptr)
 @ stub MIDL_wchar_strcpy
 @ stub MIDL_wchar_strlen
-@ stub MesBufferHandleReset
+@ stdcall MesBufferHandleReset(ptr long long ptr long ptr)
 @ stdcall MesDecodeBufferHandleCreate(ptr long ptr)
 @ stdcall MesDecodeIncrementalHandleCreate(ptr ptr ptr)
 @ stdcall MesEncodeDynBufferHandleCreate(ptr ptr ptr)
@@ -117,7 +117,7 @@
 @ stub NDRcopy
 @ stdcall NdrAllocate(ptr long)
 @ varargs NdrAsyncClientCall(ptr ptr)
-@ stub NdrAsyncServerCall
+@ stdcall NdrAsyncServerCall(ptr)
 @ stdcall NdrAsyncStubCall(ptr ptr ptr ptr)
 @ stdcall NdrByteCountPointerBufferSize(ptr ptr ptr)
 @ stdcall NdrByteCountPointerFree(ptr ptr ptr)
@@ -352,7 +352,7 @@
 @ stdcall RpcBindingInqObject(ptr ptr)
 @ stub RpcBindingInqOption
 @ stdcall RpcBindingReset(ptr)
-@ stub RpcBindingServerFromClient
+@ stdcall RpcBindingServerFromClient(ptr ptr)
 @ stdcall RpcBindingSetAuthInfoA(ptr str long long ptr long)
 @ stdcall RpcBindingSetAuthInfoExA(ptr str long long ptr long ptr)
 @ stdcall RpcBindingSetAuthInfoExW(ptr wstr long long ptr long ptr)
@@ -434,6 +434,7 @@
 @ stdcall RpcServerRegisterAuthInfoA(str  long ptr ptr)
 @ stdcall RpcServerRegisterAuthInfoW(wstr long ptr ptr)
 @ stdcall RpcServerRegisterIf2(ptr ptr ptr long long long ptr)
+@ stdcall RpcServerRegisterIf3(ptr ptr ptr long long long ptr ptr)
 @ stdcall RpcServerRegisterIf(ptr ptr ptr)
 @ stdcall RpcServerRegisterIfEx(ptr ptr ptr long long ptr)
 @ stub RpcServerTestCancel

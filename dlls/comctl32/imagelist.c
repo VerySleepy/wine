@@ -776,7 +776,8 @@ ImageList_Create (INT cx, INT cy, UINT flags,
 
     TRACE("(%d %d 0x%x %d %d)\n", cx, cy, flags, cInitial, cGrow);
 
-    if (cx <= 0 || cy <= 0) return NULL;
+    if (cx < 0 || cy < 0) return NULL;
+    if (!((flags&ILC_COLORDDB) == ILC_COLORDDB) && (cx == 0 || cy == 0)) return NULL;
 
     /* Create the IImageList interface for the image list */
     if (FAILED(ImageListImpl_CreateInstance(NULL, &IID_IImageList, (void **)&himl)))
@@ -929,11 +930,7 @@ ImageList_DragEnter (HWND hwndLock, INT x, INT y)
     InternalDrag.y = y;
 
     /* draw the drag image and save the background */
-    if (!ImageList_DragShowNolock(TRUE)) {
-	return FALSE;
-    }
-
-    return TRUE;
+    return ImageList_DragShowNolock(TRUE);
 }
 
 
@@ -1831,8 +1828,6 @@ ImageList_GetIconSize (HIMAGELIST himl, INT *cx, INT *cy)
 {
     if (!is_valid(himl) || !cx || !cy)
 	return FALSE;
-    if ((himl->cx <= 0) || (himl->cy <= 0))
-	return FALSE;
 
     *cx = himl->cx;
     *cy = himl->cy;
@@ -2172,7 +2167,7 @@ ImageList_Merge (HIMAGELIST himl1, INT i1, HIMAGELIST himl2, INT i2,
 
 
 /* helper for ImageList_Read, see comments below */
-static void *read_bitmap(LPSTREAM pstm, BITMAPINFO *bmi)
+static void *read_bitmap(IStream *pstm, BITMAPINFO *bmi)
 {
     BITMAPFILEHEADER	bmfh;
     int bitsperpixel, palspace;
@@ -2248,7 +2243,7 @@ static void *read_bitmap(LPSTREAM pstm, BITMAPINFO *bmi)
  *
  *	BYTE			maskbits[imagesize];
  */
-HIMAGELIST WINAPI ImageList_Read (LPSTREAM pstm)
+HIMAGELIST WINAPI ImageList_Read(IStream *pstm)
 {
     char image_buf[sizeof(BITMAPINFOHEADER) + sizeof(RGBQUAD) * 256];
     char mask_buf[sizeof(BITMAPINFOHEADER) + sizeof(RGBQUAD) * 256];
@@ -2982,8 +2977,7 @@ ImageList_SetOverlayImage (HIMAGELIST himl, INT iImage, INT iOverlay)
 /* helper for ImageList_Write - write bitmap to pstm
  * currently everything is written as 24 bit RGB, except masks
  */
-static BOOL
-_write_bitmap(HBITMAP hBitmap, LPSTREAM pstm)
+static BOOL _write_bitmap(HBITMAP hBitmap, IStream *pstm)
 {
     LPBITMAPFILEHEADER bmfh;
     LPBITMAPINFOHEADER bmih;
@@ -3069,8 +3063,7 @@ failed:
  *     probably.
  */
 
-BOOL WINAPI
-ImageList_Write (HIMAGELIST himl, LPSTREAM pstm)
+BOOL WINAPI ImageList_Write(HIMAGELIST himl, IStream *pstm)
 {
     ILHEAD ilHead;
     int i;
@@ -3476,7 +3469,9 @@ static HRESULT WINAPI ImageListImpl_GetImageRect(IImageList2 *iface, int i,
     if (!ImageList_GetImageInfo(imgl, i, &info))
         return E_FAIL;
 
-    return CopyRect(prc, &info.rcImage) ? S_OK : E_FAIL;
+    *prc = info.rcImage;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI ImageListImpl_GetIconSize(IImageList2 *iface, int *cx,
@@ -3554,7 +3549,7 @@ static HRESULT WINAPI ImageListImpl_SetDragCursorImage(IImageList2 *iface,
     IUnknown *punk, int iDrag, int dxHotspot, int dyHotspot)
 {
     IImageList *iml2 = NULL;
-    HRESULT ret;
+    BOOL ret;
 
     if (!punk)
         return E_FAIL;

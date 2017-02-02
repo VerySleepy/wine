@@ -399,6 +399,7 @@ static struct cpu_register cpu_register_map[] = {
 #elif defined(__aarch64__)
 static const char target_xml[] = "";
 static struct cpu_register cpu_register_map[] = {
+    REG(Cpsr, 4, CONTEXT_CONTROL),
     REG(X0,  8, CONTEXT_INTEGER),
     REG(X1,  8, CONTEXT_INTEGER),
     REG(X2,  8, CONTEXT_INTEGER),
@@ -428,11 +429,10 @@ static struct cpu_register cpu_register_map[] = {
     REG(X26, 8, CONTEXT_INTEGER),
     REG(X27, 8, CONTEXT_INTEGER),
     REG(X28, 8, CONTEXT_INTEGER),
-    REG(X29, 8, CONTEXT_INTEGER),
-    REG(X30, 8, CONTEXT_INTEGER),
+    REG(Fp,  8, CONTEXT_INTEGER),
+    REG(Lr,  8, CONTEXT_INTEGER),
     REG(Sp,  8, CONTEXT_CONTROL),
     REG(Pc,  8, CONTEXT_CONTROL),
-    REG(PState, 8, CONTEXT_CONTROL),
 };
 #else
 # error Define the registers map for your CPU
@@ -1400,13 +1400,12 @@ static enum packet_return packet_read_registers(struct gdb_context* gdbctx)
 {
     int                 i;
     CONTEXT             ctx;
-    CONTEXT*            pctx = &gdbctx->context;
 
     assert(gdbctx->in_trap);
 
     if (dbg_curr_thread != gdbctx->other_thread && gdbctx->other_thread)
     {
-        if (!fetch_context(gdbctx, gdbctx->other_thread->handle, pctx = &ctx))
+        if (!fetch_context(gdbctx, gdbctx->other_thread->handle, &ctx))
             return packet_error;
     }
 
@@ -1711,7 +1710,7 @@ static void packet_query_monitor_wnd(struct gdb_context* gdbctx, int len, const 
 static void packet_query_monitor_process(struct gdb_context* gdbctx, int len, const char* str)
 {
     HANDLE              snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    char                buffer[128];
+    char                buffer[31+MAX_PATH];
     char                deco;
     PROCESSENTRY32      entry;
     BOOL                ok;

@@ -87,6 +87,29 @@ typedef struct _UNICODE_STRING {
 
 typedef UNICODE_STRING SECURITY_STRING, *PSECURITY_STRING;
 
+#define SSPIPFC_CREDPROV_DO_NOT_SAVE 0x00000001
+#define SSPIPFC_NO_CHECKBOX          0x00000002
+
+typedef void *PSEC_WINNT_AUTH_IDENTITY_OPAQUE;
+
+SECURITY_STATUS SEC_ENTRY SspiEncodeAuthIdentityAsStrings(
+    PSEC_WINNT_AUTH_IDENTITY_OPAQUE, PCWSTR *, PCWSTR *, PCWSTR *);
+
+SECURITY_STATUS SEC_ENTRY SspiEncodeStringsAsAuthIdentity(
+    PCWSTR, PCWSTR, PCWSTR, PSEC_WINNT_AUTH_IDENTITY_OPAQUE *);
+
+ULONG SEC_ENTRY SspiPromptForCredentialsA(PCSTR, void *,
+    ULONG, PCSTR, PSEC_WINNT_AUTH_IDENTITY_OPAQUE,
+    PSEC_WINNT_AUTH_IDENTITY_OPAQUE *, int *, ULONG);
+ULONG SEC_ENTRY SspiPromptForCredentialsW(PCWSTR, void *,
+    ULONG, PCWSTR, PSEC_WINNT_AUTH_IDENTITY_OPAQUE,
+    PSEC_WINNT_AUTH_IDENTITY_OPAQUE *, int *, ULONG);
+#define SspiPromptForCredentials WINELIB_NAME_AW(SspiPromptForCredentials)
+
+void SEC_ENTRY SspiFreeAuthIdentity(PSEC_WINNT_AUTH_IDENTITY_OPAQUE);
+void SEC_ENTRY SspiLocalFree(void *);
+void SEC_ENTRY SspiZeroAuthIdentity(PSEC_WINNT_AUTH_IDENTITY_OPAQUE);
+
 typedef struct _SecPkgInfoA
 {
     ULONG     fCapabilities;
@@ -106,6 +129,18 @@ typedef struct _SecPkgInfoW
     SEC_WCHAR *Name;
     SEC_WCHAR *Comment;
 } SecPkgInfoW, *PSecPkgInfoW;
+
+typedef struct _SECURITY_PACKAGE_OPTIONS {
+  ULONG Size;
+  ULONG Type;
+  ULONG Flags;
+  ULONG SignatureSize;
+  void *Signature;
+} SECURITY_PACKAGE_OPTIONS, *PSECURITY_PACKAGE_OPTIONS;
+
+SECURITY_STATUS WINAPI AddSecurityPackageA(LPSTR,SECURITY_PACKAGE_OPTIONS*);
+SECURITY_STATUS WINAPI AddSecurityPackageW(LPWSTR,SECURITY_PACKAGE_OPTIONS*);
+#define AddSecurityPackage WINELIB_NAME_AW(AddSecurityPackage)
 
 #define SecPkgInfo WINELIB_NAME_AW(SecPkgInfo)
 #define PSecPkgInfo WINELIB_NAME_AW(PSecPkgInfo)

@@ -48,7 +48,6 @@
 
 #define COBJMACROS
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
 
 #include "winerror.h"
 #include "windef.h"
@@ -300,7 +299,8 @@ static OLEPictureImpl* OLEPictureImpl_Construct(LPPICTDESC pictDesc, BOOL fOwn)
   newObject->IConnectionPointContainer_iface.lpVtbl = &OLEPictureImpl_IConnectionPointContainer_VTable;
 
   newObject->pCP = NULL;
-  CreateConnectionPoint((IUnknown*)newObject,&IID_IPropertyNotifySink,&newObject->pCP);
+  CreateConnectionPoint((IUnknown*)&newObject->IPicture_iface, &IID_IPropertyNotifySink,
+                        &newObject->pCP);
   if (!newObject->pCP)
   {
     HeapFree(GetProcessHeap(), 0, newObject);
@@ -473,7 +473,7 @@ static HRESULT WINAPI OLEPictureImpl_QueryInterface(
 
   if (!*ppvObject)
   {
-    FIXME("() : asking for un supported interface %s\n",debugstr_guid(riid));
+    FIXME("() : asking for unsupported interface %s\n",debugstr_guid(riid));
     return E_NOINTERFACE;
   }
 
@@ -637,8 +637,7 @@ static HRESULT WINAPI OLEPictureImpl_Render(IPicture *iface, HDC hdc,
   TRACE("(%p)->(%p, (%d,%d), (%d,%d) <- (%d,%d), (%d,%d), %p)\n",
 	This, hdc, x, y, cx, cy, xSrc, ySrc, cxSrc, cySrc, prcWBounds);
   if(prcWBounds)
-    TRACE("prcWBounds (%d,%d) - (%d,%d)\n", prcWBounds->left, prcWBounds->top,
-	  prcWBounds->right, prcWBounds->bottom);
+  TRACE("prcWBounds %s\n", wine_dbgstr_rect(prcWBounds));
 
   if(cx == 0 || cy == 0 || cxSrc == 0 || cySrc == 0){
     return CTL_E_INVALIDPROPERTYVALUE;
@@ -1211,6 +1210,8 @@ static HRESULT OLEPictureImpl_LoadIcon(OLEPictureImpl *This, BYTE *xbuf, ULONG x
     HDC hdcRef;
     int	i;
 
+    TRACE("(this %p, xbuf %p, xread %u)\n", This, xbuf, xread);
+
     /*
     FIXME("icon.idReserved=%d\n",cifd->idReserved);
     FIXME("icon.idType=%d\n",cifd->idType);
@@ -1227,6 +1228,13 @@ static HRESULT OLEPictureImpl_LoadIcon(OLEPictureImpl *This, BYTE *xbuf, ULONG x
 	FIXME("[%d] dwDIBOffset %d\n",i,cifd->idEntries[i].dwDIBOffset);
     }
     */
+
+    /* Need at least one icon to do something. */
+    if (!cifd->idCount)
+    {
+        ERR("Invalid icon count of zero.\n");
+        return E_FAIL;
+    }
     i=0;
     /* If we have more than one icon, try to find the best.
      * this currently means '32 pixel wide'.
@@ -1237,6 +1245,12 @@ static HRESULT OLEPictureImpl_LoadIcon(OLEPictureImpl *This, BYTE *xbuf, ULONG x
 		break;
 	}
 	if (i==cifd->idCount) i=0;
+    }
+    if (xread < cifd->idEntries[i].dwDIBOffset + cifd->idEntries[i].dwDIBSize)
+    {
+        ERR("Icon data address %u is over %u bytes available.\n",
+            cifd->idEntries[i].dwDIBOffset + cifd->idEntries[i].dwDIBSize, xread);
+        return E_FAIL;
     }
     if (cifd->idType == 2)
     {
@@ -2299,6 +2313,15 @@ HRESULT WINAPI OleLoadPictureEx( LPSTREAM lpstream, LONG lSize, BOOL fRunmode,
       ERR("Failed to get interface %s from IPicture.\n",debugstr_guid(riid));
   IPicture_Release(newpic);
   return hr;
+}
+
+/***********************************************************************
+ * OleLoadPictureFile (OLEAUT32.422)
+ */
+HRESULT WINAPI OleLoadPictureFile(VARIANT file, LPDISPATCH *picture)
+{
+    FIXME("(%s %p): stub\n", wine_dbgstr_variant(&file), picture);
+    return E_NOTIMPL;
 }
 
 /***********************************************************************

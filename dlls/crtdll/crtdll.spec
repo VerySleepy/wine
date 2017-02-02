@@ -108,7 +108,7 @@
 @ cdecl _flushall() msvcrt._flushall
 @ extern _fmode_dll msvcrt._fmode
 @ cdecl _fpclass(double) msvcrt._fpclass
-@ cdecl _fpieee_flt(long ptr ptr) msvcrt._fpieee_flt
+@ cdecl -arch=i386,x86_64,arm _fpieee_flt(long ptr ptr) msvcrt._fpieee_flt
 @ cdecl _fpreset() msvcrt._fpreset
 @ cdecl _fputchar(long) msvcrt._fputchar
 @ cdecl _fputwchar(long) msvcrt._fputwchar
@@ -346,7 +346,7 @@
 @ cdecl asin(double) msvcrt.asin
 @ cdecl atan(double) msvcrt.atan
 @ cdecl atan2(double double) msvcrt.atan2
-@ cdecl atexit(ptr) msvcrt.atexit
+@ cdecl -private atexit(ptr) msvcrt.atexit
 @ cdecl atof(str) msvcrt.atof
 @ cdecl atoi(str) msvcrt.atoi
 @ cdecl atol(str) msvcrt.atol

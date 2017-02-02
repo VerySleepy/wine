@@ -87,6 +87,8 @@ static const struct object_ops atom_table_ops =
     default_get_sd,               /* get_sd */
     default_set_sd,               /* set_sd */
     no_lookup_name,               /* lookup_name */
+    no_link_name,                 /* link_name */
+    NULL,                         /* unlink_name */
     no_open_file,                 /* open_file */
     no_close_handle,              /* close_handle */
     atom_table_destroy            /* destroy */
@@ -103,6 +105,7 @@ static struct atom_table *create_table(int entries_count)
     {
         if ((entries_count < MIN_HASH_SIZE) ||
             (entries_count > MAX_HASH_SIZE)) entries_count = HASH_SIZE;
+        table->handles = NULL;
         table->entries_count = entries_count;
         if (!(table->entries = malloc( sizeof(*table->entries) * table->entries_count )))
         {
@@ -381,12 +384,11 @@ void release_global_atom( struct winstation *winstation, atom_t atom )
 /* add a global atom */
 DECL_HANDLER(add_atom)
 {
-    struct unicode_str name;
+    struct unicode_str name = get_req_unicode_str();
     struct atom_table *table = get_table( req->table, 1 );
 
     if (table)
     {
-        get_req_unicode_str( &name );
         reply->atom = add_atom( table, &name );
         release_object( table );
     }
@@ -406,12 +408,11 @@ DECL_HANDLER(delete_atom)
 /* find a global atom */
 DECL_HANDLER(find_atom)
 {
-    struct unicode_str name;
+    struct unicode_str name = get_req_unicode_str();
     struct atom_table *table = get_table( req->table, 0 );
 
     if (table)
     {
-        get_req_unicode_str( &name );
         reply->atom = find_atom( table, &name );
         release_object( table );
     }

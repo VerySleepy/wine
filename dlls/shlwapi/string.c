@@ -28,7 +28,7 @@
 #include <string.h>
 
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
+
 #include "windef.h"
 #include "winbase.h"
 #define NO_SHLWAPI_REG
@@ -1509,7 +1509,7 @@ HRESULT WINAPI StrRetToBufA (LPSTRRET src, const ITEMIDLIST *pidl, LPSTR dest, U
 
 	  default:
 	    FIXME("unknown type!\n");
-	    return FALSE;
+	    return E_NOTIMPL;
 	}
 	return S_OK;
 }
@@ -1559,7 +1559,7 @@ HRESULT WINAPI StrRetToBufW (LPSTRRET src, const ITEMIDLIST *pidl, LPWSTR dest, 
 
 	  default:
 	    FIXME("unknown type!\n");
-	    return FALSE;
+	    return E_NOTIMPL;
 	}
 	return S_OK;
 }
@@ -2705,8 +2705,7 @@ DWORD WINAPI SHUnicodeToAnsiCP(UINT CodePage, LPCWSTR lpSrcStr, LPSTR lpDstStr, 
       mem = HeapAlloc(GetProcessHeap(), 0, reqLen);
       if (mem)
       {
-        reqLen = WideCharToMultiByte(CodePage, 0, lpSrcStr, len, mem,
-                                     reqLen, NULL, NULL);
+        WideCharToMultiByte(CodePage, 0, lpSrcStr, len, mem, reqLen, NULL, NULL);
 
         reqLen = SHTruncateString(mem, dstlen -1);
         reqLen++;

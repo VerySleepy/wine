@@ -49,16 +49,6 @@
 typedef struct IDirectMusicGraphImpl IDirectMusicGraphImpl;
 typedef struct IDirectMusicAudioPathImpl IDirectMusicAudioPathImpl;
 
-typedef struct IDirectMusicLyricsTrack IDirectMusicLyricsTrack;
-typedef struct IDirectMusicMarkerTrack IDirectMusicMarkerTrack;
-typedef struct IDirectMusicParamControlTrack IDirectMusicParamControlTrack;
-typedef struct IDirectMusicSegTriggerTrack IDirectMusicSegTriggerTrack;
-typedef struct IDirectMusicSeqTrack IDirectMusicSeqTrack;
-typedef struct IDirectMusicSysExTrack IDirectMusicSysExTrack;
-typedef struct IDirectMusicTempoTrack IDirectMusicTempoTrack;
-typedef struct IDirectMusicTimeSigTrack IDirectMusicTimeSigTrack;
-typedef struct IDirectMusicWaveTrack IDirectMusicWaveTrack;
-	
 /*****************************************************************************
  * ClassFactory
  */
@@ -78,6 +68,9 @@ extern HRESULT WINAPI create_dmtempotrack(REFIID riid, void **ret_iface) DECLSPE
 extern HRESULT WINAPI create_dmtimesigtrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
 extern HRESULT WINAPI create_dmwavetrack(REFIID riid, void **ret_iface) DECLSPEC_HIDDEN;
 
+extern void set_audiopath_perf_pointer(IDirectMusicAudioPath*,IDirectMusicPerformance8*) DECLSPEC_HIDDEN;
+extern void set_audiopath_dsound_buffer(IDirectMusicAudioPath*,IDirectSoundBuffer*) DECLSPEC_HIDDEN;
+extern void set_audiopath_primary_dsound_buffer(IDirectMusicAudioPath*,IDirectSoundBuffer*) DECLSPEC_HIDDEN;
 
 /*****************************************************************************
  * Auxiliary definitions
@@ -119,159 +112,6 @@ typedef struct DMUSIC_PRIVATE_PCHANNEL_ {
 	DWORD group; /* ... in this group ... */
 	IDirectMusicPort *port; /* ... at this port */
 } DMUSIC_PRIVATE_PCHANNEL, *LPDMUSIC_PRIVATE_PCHANNEL;
-
-/*****************************************************************************
- * IDirectMusicAudioPathImpl implementation structure
- */
-struct IDirectMusicAudioPathImpl {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicAudioPathVtbl *AudioPathVtbl;
-  const IDirectMusicObjectVtbl *ObjectVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicAudioPathImpl fields */
-  LPDMUS_OBJECTDESC pDesc;
-	
-  IDirectMusicPerformance8* pPerf;
-  IDirectMusicGraph*        pToolGraph;
-  IDirectSoundBuffer*       pDSBuffer;
-  IDirectSoundBuffer*       pPrimary;
-
-  BOOL fActive;
-};
-
-/*****************************************************************************
- * IDirectMusicLyricsTrack implementation structure
- */
-struct IDirectMusicLyricsTrack
-{
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicLyricsTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-};
-
-/*****************************************************************************
- * IDirectMusicMarkerTrack implementation structure
- */
-struct IDirectMusicMarkerTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicMarkerTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-};
-
-/*****************************************************************************
- * IDirectMusicParamControlTrack implementation structure
- */
-struct IDirectMusicParamControlTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicParamControlTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-};
-
-/*****************************************************************************
- * IDirectMusicSegTriggerTrack implementation structure
- */
-struct IDirectMusicSegTriggerTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicSegTriggerTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-
-  struct list Items;
-};
-
-/*****************************************************************************
- * IDirectMusicSeqTrack implementation structure
- */
-struct IDirectMusicSeqTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicSeqTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-};
-
-/*****************************************************************************
- * IDirectMusicSysExTrack implementation structure
- */
-struct IDirectMusicSysExTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicSysExTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-};
-
-/*****************************************************************************
- * IDirectMusicTempoTrack implementation structure
- */
-struct IDirectMusicTempoTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicTempoTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-  BOOL enabled;
-  struct list Items;
-};
-
-/*****************************************************************************
- * IDirectMusicTimeSigTrack implementation structure
- */
-struct IDirectMusicTimeSigTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicTimeSigTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-};
-
-/*****************************************************************************
- * IDirectMusicWaveTrack implementation structure
- */
-struct IDirectMusicWaveTrack {
-  /* IUnknown fields */
-  const IUnknownVtbl *UnknownVtbl;
-  const IDirectMusicTrack8Vtbl *TrackVtbl;
-  const IPersistStreamVtbl *PersistStreamVtbl;
-  LONG           ref;
-
-  /* IDirectMusicWaveTrack fields */
-  LPDMUS_OBJECTDESC pDesc;
-};
 
 /**********************************************************************
  * Dll lifetime tracking declaration for dmime.dll

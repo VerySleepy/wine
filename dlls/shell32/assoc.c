@@ -88,6 +88,8 @@ static inline struct enumassochandlers *impl_from_IEnumAssocHandlers(IEnumAssocH
   return CONTAINING_RECORD(iface, struct enumassochandlers, IEnumAssocHandlers_iface);
 }
 
+static HRESULT ASSOC_GetValue(HKEY hkey, const WCHAR *name, void **data, DWORD *data_size);
+
 /**************************************************************************
  *  IQueryAssociations_QueryInterface
  *
@@ -196,10 +198,16 @@ static HRESULT WINAPI IQueryAssociations_fnInit(
 	FIXME("unsupported flags: %x\n", cfFlags);
 
     RegCloseKey(This->hkeySource);
-    RegCloseKey(This->hkeyProgID);
+    if (This->hkeySource != This->hkeyProgID)
+        RegCloseKey(This->hkeyProgID);
     This->hkeySource = This->hkeyProgID = NULL;
+
+    /* If the process of initializing hkeyProgID fails, just return S_OK. That's what Windows does. */
     if (pszAssoc != NULL)
     {
+        WCHAR *progId;
+        HRESULT hr;
+
         ret = RegOpenKeyExW(HKEY_CLASSES_ROOT,
                             pszAssoc,
                             0,
@@ -207,22 +215,53 @@ static HRESULT WINAPI IQueryAssociations_fnInit(
                             &This->hkeySource);
         if (ret)
             return S_OK;
-        /* if this is not a prog id */
-        if ((*pszAssoc == '.') || (*pszAssoc == '{'))
+        /* if this is a progid */
+        if (*pszAssoc != '.' && *pszAssoc != '{')
         {
-            RegOpenKeyExW(This->hkeySource,
-                          szProgID,
-                          0,
-                          KEY_READ,
-                          &This->hkeyProgID);
-        }
-        else
             This->hkeyProgID = This->hkeySource;
+            return S_OK;
+        }
+
+        /* if it's not a progid, it's a file extension or clsid */
+        if (*pszAssoc == '.')
+        {
+            /* for a file extension, the progid is the default value */
+            hr = ASSOC_GetValue(This->hkeySource, NULL, (void**)&progId, NULL);
+            if (FAILED(hr))
+                return S_OK;
+        }
+        else /* if (*pszAssoc == '{') */
+        {
+            HKEY progIdKey;
+            /* for a clsid, the progid is the default value of the ProgID subkey */
+            ret = RegOpenKeyExW(This->hkeySource,
+                                szProgID,
+                                0,
+                                KEY_READ,
+                                &progIdKey);
+            if (ret != ERROR_SUCCESS)
+                return S_OK;
+            hr = ASSOC_GetValue(progIdKey, NULL, (void**)&progId, NULL);
+            if (FAILED(hr))
+                return S_OK;
+            RegCloseKey(progIdKey);
+        }
+
+        /* open the actual progid key, the one with the shell subkey */
+        ret = RegOpenKeyExW(HKEY_CLASSES_ROOT,
+                            progId,
+                            0,
+                            KEY_READ,
+                            &This->hkeyProgID);
+        HeapFree(GetProcessHeap(), 0, progId);
+
         return S_OK;
     }
     else if (hkeyProgid != NULL)
     {
-        This->hkeyProgID = hkeyProgid;
+        /* reopen the key so we don't end up closing a key owned by the caller */
+        RegOpenKeyExW(hkeyProgid, NULL, 0, KEY_READ, &This->hkeyProgID);
+        This->hkeySource = This->hkeyProgID;
         return S_OK;
     }
     else
@@ -507,33 +546,15 @@ static HRESULT WINAPI IQueryAssociations_fnGetString(
 
     case ASSOCSTR_FRIENDLYDOCNAME:
     {
-      WCHAR *pszFileType;
-      DWORD ret;
-      DWORD size;
+      WCHAR *docName;
 
-      hr = ASSOC_GetValue(This->hkeySource, NULL, (void**)&pszFileType, NULL);
-      if (FAILED(hr))
-        return hr;
-      size = 0;
-      ret = RegGetValueW(HKEY_CLASSES_ROOT, pszFileType, NULL, RRF_RT_REG_SZ, NULL, NULL, &size);
-      if (ret == ERROR_SUCCESS)
-      {
-        WCHAR *docName = HeapAlloc(GetProcessHeap(), 0, size);
-        if (docName)
-        {
-          ret = RegGetValueW(HKEY_CLASSES_ROOT, pszFileType, NULL, RRF_RT_REG_SZ, NULL, docName, &size);
-          if (ret == ERROR_SUCCESS)
-            hr = ASSOC_ReturnString(flags, pszOut, pcchOut, docName, strlenW(docName) + 1);
-          else
-            hr = HRESULT_FROM_WIN32(ret);
-          HeapFree(GetProcessHeap(), 0, docName);
-        }
-        else
-          hr = E_OUTOFMEMORY;
+      hr = ASSOC_GetValue(This->hkeyProgID, NULL, (void**)&docName, NULL);
+      if (FAILED(hr)) {
+          /* hKeyProgID is NULL or there is no default value, so fail */
+          return HRESULT_FROM_WIN32(ERROR_NO_ASSOCIATION);
       }
-      else
-        hr = HRESULT_FROM_WIN32(ret);
-      HeapFree(GetProcessHeap(), 0, pszFileType);
+      hr = ASSOC_ReturnString(flags, pszOut, pcchOut, docName, strlenW(docName) + 1);
+      HeapFree(GetProcessHeap(), 0, docName);
       return hr;
     }
 
@@ -623,41 +644,33 @@ get_friendly_name_fail:
     case ASSOCSTR_DEFAULTICON:
     {
       static const WCHAR DefaultIconW[] = {'D','e','f','a','u','l','t','I','c','o','n',0};
-      WCHAR *pszFileType;
+      static const WCHAR documentIcon[] = {'s','h','e','l','l','3','2','.','d','l','l',',','0',0};
       DWORD ret;
       DWORD size;
-      HKEY hkeyFile;
 
-      hr = ASSOC_GetValue(This->hkeySource, NULL, (void**)&pszFileType, NULL);
-      if (FAILED(hr))
-        return hr;
-      ret = RegOpenKeyExW(HKEY_CLASSES_ROOT, pszFileType, 0, KEY_READ, &hkeyFile);
+      size = 0;
+      ret = RegGetValueW(This->hkeyProgID, DefaultIconW, NULL, RRF_RT_REG_SZ, NULL, NULL, &size);
       if (ret == ERROR_SUCCESS)
       {
-        size = 0;
-        ret = RegGetValueW(hkeyFile, DefaultIconW, NULL, RRF_RT_REG_SZ, NULL, NULL, &size);
-        if (ret == ERROR_SUCCESS)
+        WCHAR *icon = HeapAlloc(GetProcessHeap(), 0, size);
+        if (icon)
         {
-          WCHAR *icon = HeapAlloc(GetProcessHeap(), 0, size);
-          if (icon)
-          {
-            ret = RegGetValueW(hkeyFile, DefaultIconW, NULL, RRF_RT_REG_SZ, NULL, icon, &size);
-            if (ret == ERROR_SUCCESS)
-              hr = ASSOC_ReturnString(flags, pszOut, pcchOut, icon, strlenW(icon) + 1);
-            else
-              hr = HRESULT_FROM_WIN32(ret);
-            HeapFree(GetProcessHeap(), 0, icon);
-          }
+          ret = RegGetValueW(This->hkeyProgID, DefaultIconW, NULL, RRF_RT_REG_SZ, NULL, icon, &size);
+          if (ret == ERROR_SUCCESS)
+            hr = ASSOC_ReturnString(flags, pszOut, pcchOut, icon, strlenW(icon) + 1);
           else
-            hr = E_OUTOFMEMORY;
+            hr = HRESULT_FROM_WIN32(ret);
+          HeapFree(GetProcessHeap(), 0, icon);
         }
         else
-          hr = HRESULT_FROM_WIN32(ret);
-        RegCloseKey(hkeyFile);
+          hr = E_OUTOFMEMORY;
+      } else {
+          /* there is no DefaultIcon subkey or hkeyProgID is NULL, so return the default document icon */
+          if (This->hkeyProgID == NULL)
+              hr = ASSOC_ReturnString(flags, pszOut, pcchOut, documentIcon, strlenW(documentIcon) + 1);
+          else
+              return HRESULT_FROM_WIN32(ERROR_NO_ASSOCIATION);
       }
-      else
-        hr = HRESULT_FROM_WIN32(ret);
-      HeapFree(GetProcessHeap(), 0, pszFileType);
       return hr;
     }
     case ASSOCSTR_SHELLEXTENSION:
@@ -745,7 +758,7 @@ static HRESULT WINAPI IQueryAssociations_fnGetData(IQueryAssociations *iface,
     static const WCHAR edit_flags[] = {'E','d','i','t','F','l','a','g','s',0};
 
     IQueryAssociationsImpl *This = impl_from_IQueryAssociations(iface);
-    void *data;
+    void *data = NULL;
     DWORD size;
     HRESULT hres;
 
@@ -761,10 +774,8 @@ static HRESULT WINAPI IQueryAssociations_fnGetData(IQueryAssociations *iface,
             return HRESULT_FROM_WIN32(ERROR_NO_ASSOCIATION);
 
         hres = ASSOC_GetValue(This->hkeyProgID, edit_flags, &data, &size);
-        if(FAILED(hres) || !pcbOut)
-            return hres;
-
-        hres = ASSOC_ReturnData(pvOut, pcbOut, data, size);
+        if(SUCCEEDED(hres) && pcbOut)
+            hres = ASSOC_ReturnData(pvOut, pcbOut, data, size);
         HeapFree(GetProcessHeap(), 0, data);
         return hres;
     default:
@@ -873,11 +884,105 @@ static ULONG WINAPI ApplicationAssociationRegistration_Release(IApplicationAssoc
     return ref;
 }
 
-static HRESULT WINAPI ApplicationAssociationRegistration_QueryCurrentDefault(IApplicationAssociationRegistration* This, LPCWSTR query,
+static HRESULT WINAPI ApplicationAssociationRegistration_QueryCurrentDefault(IApplicationAssociationRegistration *iface, LPCWSTR query,
                                                                              ASSOCIATIONTYPE type, ASSOCIATIONLEVEL level, LPWSTR *association)
 {
-    FIXME("(%p)->(%s, %d, %d, %p)\n", This, debugstr_w(query), type, level, association);
-    return E_NOTIMPL;
+    IApplicationAssociationRegistrationImpl *This = impl_from_IApplicationAssociationRegistration(iface);
+    static WCHAR urlassoc[] = {'U','r','l','A','s','s','o','c','i','a','t','i','o','n','s',0};
+    static WCHAR mimeassoc[] = {'M','I','M','E','A','s','s','o','c','i','a','t','i','o','n','s',0};
+    static WCHAR assocations[] = {'S','o','f','t','w','a','r','e','\\','M','i','c','r','o','s','o','f','t','\\',
+                                'W','i','n','d','o','w','s','\\','S','h','e','l','l','\\',
+                                'A','s','s','o','c','i','a','t','i','o','n','s',0};
+    static WCHAR slash[] = {'\\',0};
+    static WCHAR choice[] = {'U','s','e','r','C','h','o','i','c','e',0};
+    static WCHAR propid[] = {'P','r','o','g','i','d',0};
+    WCHAR path[MAX_PATH] = {0};
+    DWORD ret, keytype, size;
+    HKEY hkey = NULL;
+    HRESULT hr = HRESULT_FROM_WIN32(ERROR_NO_ASSOCIATION);
+
+    TRACE("(%p)->(%s, %d, %d, %p)\n", This, debugstr_w(query), type, level, association);
+
+    if(!association)
+        return E_INVALIDARG;
+
+    *association = NULL;
+
+    if((type == AT_URLPROTOCOL || type == AT_FILEEXTENSION) && !query[0])
+        return E_INVALIDARG;
+    else if(type == AT_FILEEXTENSION && query[0] != '.')
+        return E_INVALIDARG;
+
+    if(type == AT_FILEEXTENSION)
+    {
+        ret = RegOpenKeyExW(HKEY_CLASSES_ROOT, query, 0, KEY_READ, &hkey);
+        if(ret == ERROR_SUCCESS)
+        {
+            ret = RegGetValueW(hkey, NULL, NULL, RRF_RT_REG_SZ, &keytype, NULL, &size);
+            if(ret == ERROR_SUCCESS)
+            {
+                *association = CoTaskMemAlloc(size);
+                if(*association)
+                {
+                    ret = RegGetValueW(hkey, NULL, NULL, RRF_RT_REG_SZ, &keytype, *association, &size);
+                    if(ret == ERROR_SUCCESS)
+                        hr = S_OK;
+                    else
+                    {
+                        CoTaskMemFree(*association);
+                        *association = NULL;
+                    }
+                }
+                else
+                    hr = E_OUTOFMEMORY;
+            }
+        }
+    }
+    else
+    {
+        ret = RegOpenKeyExW(HKEY_CURRENT_USER, assocations, 0, KEY_READ, &hkey);
+        if(ret == ERROR_SUCCESS)
+        {
+            if(type == AT_URLPROTOCOL)
+                lstrcpyW(path, urlassoc);
+            else if(type == AT_MIMETYPE)
+                lstrcpyW(path, mimeassoc);
+            else
+            {
+                WARN("Unsupported type (%d).\n", type);
+                RegCloseKey(hkey);
+                return hr;
+            }
+
+            lstrcatW(path, slash);
+            lstrcatW(path, query);
+            lstrcatW(path, slash);
+            lstrcatW(path, choice);
+
+            ret = RegGetValueW(hkey, path, propid, RRF_RT_REG_SZ, &keytype, NULL, &size);
+            if(ret == ERROR_SUCCESS)
+            {
+                *association = CoTaskMemAlloc(size);
+                if(*association)
+                {
+                    ret = RegGetValueW(hkey, path, propid, RRF_RT_REG_SZ, &keytype, *association, &size);
+                    if(ret == ERROR_SUCCESS)
+                        hr = S_OK;
+                    else
+                    {
+                        CoTaskMemFree(*association);
+                        *association = NULL;
+                    }
+                }
+                else
+                    hr = E_OUTOFMEMORY;
+            }
+        }
+    }
+
+    RegCloseKey(hkey);
+
+    return hr;
 }
 
 static HRESULT WINAPI ApplicationAssociationRegistration_QueryAppIsDefault(IApplicationAssociationRegistration* This, LPCWSTR query,

@@ -168,6 +168,7 @@
 @ stdcall DisableProcessWindowsGhosting()
 @ stdcall DispatchMessageA(ptr)
 @ stdcall DispatchMessageW(ptr)
+@ stdcall DisplayConfigGetDeviceInfo(ptr)
 # @ stub DisplayExitWindowsWarnings
 @ stdcall DlgDirListA(long str long long long)
 @ stdcall DlgDirListComboBoxA(long ptr long long long)
@@ -281,6 +282,7 @@
 @ stdcall GetDCEx(long long long)
 @ stdcall GetDesktopWindow()
 @ stdcall GetDialogBaseUnits()
+@ stdcall GetDisplayConfigBufferSizes(long ptr ptr)
 @ stdcall GetDlgCtrlID(long)
 @ stdcall GetDlgItem(long long)
 @ stdcall GetDlgItemInt(long long ptr long)
@@ -289,6 +291,7 @@
 @ stdcall GetDoubleClickTime()
 @ stdcall GetFocus()
 @ stdcall GetForegroundWindow()
+@ stdcall GetGestureConfig(long long long ptr ptr long)
 @ stdcall GetGUIThreadInfo(long ptr)
 @ stdcall GetGuiResources(long long)
 @ stdcall GetIconInfo(long ptr)
@@ -371,6 +374,7 @@
 @ stdcall GetTopWindow(long)
 @ stdcall GetUpdateRect(long ptr long)
 @ stdcall GetUpdateRgn(long long long)
+@ stdcall GetUpdatedClipboardFormats(ptr long ptr)
 @ stdcall GetUserObjectInformationA (long long ptr long ptr)
 @ stdcall GetUserObjectInformationW (long long ptr long ptr)
 @ stdcall GetUserObjectSecurity (long ptr ptr long ptr)
@@ -443,6 +447,7 @@
 # @ stub IsHungThread
 @ stdcall IsIconic(long)
 @ stdcall IsMenu(long)
+@ stdcall IsProcessDPIAware()
 @ stdcall IsRectEmpty(ptr)
 # @ stub IsServerSideWindow
 @ stdcall IsTouchWindow(long ptr)
@@ -450,6 +455,7 @@
 @ stdcall IsWindow(long)
 @ stdcall IsWindowEnabled(long)
 # @ stub IsWindowInDestroy
+@ stdcall IsWindowRedirectedForPrint(long)
 @ stdcall IsWindowUnicode(long)
 @ stdcall IsWindowVisible(long)
 @ stdcall IsZoomed(long)
@@ -546,6 +552,7 @@
 # @ stub PrivateSetDbgTag
 # @ stub PrivateSetRipFlags
 @ stdcall PtInRect(ptr int64)
+@ stdcall QueryDisplayConfig(long ptr ptr ptr ptr ptr)
 @ stub QuerySendMessage
 # @ stub QueryUserCounters
 @ stdcall RealChildWindowFromPoint(long int64)
@@ -618,6 +625,7 @@
 @ stdcall SetClassWord(long long long)
 @ stdcall SetClipboardData(long long)
 @ stdcall SetClipboardViewer(long)
+@ stdcall SetCoalescableTimer(long long long ptr long)
 # @ stub SetConsoleReserveKeys
 @ stdcall SetCursor(long)
 @ stub SetCursorContents
@@ -697,6 +705,8 @@
 @ stub ShowStartGlass
 @ stdcall ShowWindow(long long)
 @ stdcall ShowWindowAsync(long long)
+@ stdcall ShutdownBlockReasonCreate(long wstr)
+@ stdcall ShutdownBlockReasonDestroy(long)
 # @ stub SoftModalMessageBox
 @ stdcall SubtractRect(ptr ptr ptr)
 @ stdcall SwapMouseButton(long)
@@ -734,6 +744,7 @@
 @ stdcall UnregisterDeviceNotification(long)
 @ stdcall UnregisterHotKey(long long)
 # @ stub UnregisterMessagePumpHook
+@ stdcall UnregisterPowerSettingNotification(ptr)
 # @ stub UnregisterUserApiHook
 @ stdcall UpdateLayeredWindow(long long ptr ptr long ptr long ptr long)
 @ stdcall UpdateLayeredWindowIndirect(long ptr)

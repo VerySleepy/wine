@@ -250,7 +250,7 @@ IUnknown * CALLBACK QTSplitter_create(IUnknown *punkout, HRESULT *phr)
     QTSplitter *This;
     static const WCHAR wcsInputPinName[] = {'I','n','p','u','t',' ','P','i','n',0};
 
-    EnterMovies();
+    EnterMoviesOnThread(0);
 
     RegisterWineDataHandler();
 
@@ -324,7 +324,7 @@ static void QT_Destroy(QTSplitter *This)
     if (This->aSession)
         MovieAudioExtractionEnd(This->aSession);
 
-    ExitMovies();
+    ExitMoviesOnThread();
     LeaveCriticalSection(&This->csReceive);
 
     if (This->loaderThread)
@@ -864,6 +864,9 @@ static ULONG WINAPI QTInPin_Release(IPin *iface)
         if (This->pAlloc)
             IMemAllocator_Release(This->pAlloc);
         This->pAlloc = NULL;
+        if (This->pReader)
+            IAsyncReader_Release(This->pReader);
+        This->pReader = NULL;
         This->pin.IPin_iface.lpVtbl = NULL;
         return 0;
     }
@@ -1101,6 +1104,7 @@ static HRESULT WINAPI QTInPin_ReceiveConnection(IPin *iface, IPin *pReceivePin, 
     HRESULT hr = S_OK;
     ALLOCATOR_PROPERTIES props;
     QTInPin *This = impl_from_IPin(iface);
+    IMemAllocator *pAlloc;
 
     TRACE("(%p/%p)->(%p, %p)\n", This, iface, pReceivePin, pmt);
 
@@ -1138,6 +1142,8 @@ static HRESULT WINAPI QTInPin_ReceiveConnection(IPin *iface, IPin *pReceivePin, 
     hr = QT_Process_Movie(impl_from_IBaseFilter(This->pin.pinInfo.pFilter));
     if (FAILED(hr))
     {
+        IAsyncReader_Release(This->pReader);
+        This->pReader = NULL;
         LeaveCriticalSection(&impl_from_IBaseFilter(This->pin.pinInfo.pFilter)->filter.csFilter);
         TRACE("Unable to process movie\n");
         return hr;
@@ -1148,8 +1154,18 @@ static HRESULT WINAPI QTInPin_ReceiveConnection(IPin *iface, IPin *pReceivePin, 
     props.cbAlign = 1;
     props.cbBuffer = impl_from_IBaseFilter(This->pin.pinInfo.pFilter)->outputSize + props.cbAlign;
     props.cbPrefix = 0;
+    hr = CoCreateInstance(&CLSID_MemoryAllocator, NULL, CLSCTX_INPROC,
+                          &IID_IMemAllocator, (LPVOID *)&pAlloc);
+    if (SUCCEEDED(hr))
+    {
+        /* A certain IAsyncReader::RequestAllocator expects to be passed
+           non-NULL preferred allocator */
+        hr = IAsyncReader_RequestAllocator(This->pReader, pAlloc, &props, &This->pAlloc);
+        if (FAILED(hr))
+            WARN("Can't get an allocator, got %08x\n", hr);
+        IMemAllocator_Release(pAlloc);
+    }
 
-    hr = IAsyncReader_RequestAllocator(This->pReader, NULL, &props, &This->pAlloc);
     if (SUCCEEDED(hr))
     {
         CopyMediaType(&This->pin.mtCurrent, pmt);
@@ -1190,6 +1206,7 @@ static HRESULT WINAPI QTInPin_Disconnect(IPin *iface)
         {
             IMemAllocator_Decommit(This->pAlloc);
             IPin_Disconnect(This->pin.pConnectedTo);
+            IPin_Release(This->pin.pConnectedTo);
             This->pin.pConnectedTo = NULL;
             hr = QT_RemoveOutputPins(Parser);
         }

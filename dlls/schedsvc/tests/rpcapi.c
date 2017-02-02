@@ -114,7 +114,8 @@ START_TEST(rpcapi)
     version = 0;
     hr = SchRpcHighestVersion(&version);
     ok(hr == S_OK, "expected S_OK, got %#x\n", hr);
-    ok(version == 0x10002 /* vista */ || version == 0x10003 /* win7 */ || version == 0x10004 /* win8 */,
+    ok(version == 0x10002 /* vista */ || version == 0x10003 /* win7 */ ||
+       version == 0x10004 /* win8 */ || version == 0x10005 /* win10 */,
        "wrong version %#x\n", version);
 
     SetUnhandledExceptionFilter(old_exception_filter);
@@ -295,7 +296,7 @@ START_TEST(rpcapi)
     ok(count == 1, "expected 1, got %u\n", count);
     ok(start_index == 1, "expected 1, got %u\n", start_index);
     ok(names != NULL, "names should not be NULL\n");
-    ok(!lstrcmpW(names[0], Folder1), "expected Folder1, got %s\n", wine_dbgstr_w(names[0]));
+    ok(!lstrcmpW(names[0], Folder1) || !lstrcmpW(names[0], Folder2), "got %s\n", wine_dbgstr_w(names[0]));
     MIDL_user_free(names[0]);
     MIDL_user_free(names);
 

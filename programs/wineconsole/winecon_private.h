@@ -27,15 +27,18 @@
 
 /* this is the configuration stored & loaded into the registry */
 struct config_data {
+    DWORD       color_map[16];  /* console color table */
     unsigned	cell_width;	/* width in pixels of a character */
     unsigned	cell_height;	/* height in pixels of a character */
     int		cursor_size;	/* in % of cell height */
     int		cursor_visible;
-    DWORD       def_attr;
+    DWORD       def_attr;       /* default fill attributes (screen colors) */
+    DWORD       popup_attr;     /* pop-up color attributes */
     WCHAR       face_name[32];  /* name of font (size is LF_FACESIZE) */
     DWORD       font_weight;
     DWORD       history_size;   /* number of commands in history buffer */
     DWORD       history_nodup;  /* TRUE if commands are not stored twice in buffer */
+    DWORD       insert_mode;    /* TRUE to insert text at the cursor location; FALSE to overwrite it */
     DWORD       menu_mask;      /* MK_CONTROL MK_SHIFT mask to drive submenu opening */
     DWORD       quick_edit;     /* whether mouse ops are sent to app (false) or used for content selection (true) */
     unsigned	sb_width;	/* active screen buffer width */
@@ -58,6 +61,7 @@ struct inner_data {
     HANDLE		hConIn;		/* console input handle */
     HANDLE		hConOut;	/* screen buffer handle: has to be changed when active sb changes */
     HANDLE		hSynchro;	/* waitable handle signalled by server when something in server has been modified */
+    HANDLE              hProcess;       /* handle to the child process or NULL */
     HWND		hWnd;           /* handle of 'user' window or NULL for 'curses' */
     INT                 nCmdShow;       /* argument of WinMain */
     BOOL                in_set_config;  /* to handle re-entrant calls to WINECON_SetConfig */

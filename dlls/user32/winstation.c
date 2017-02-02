@@ -28,6 +28,8 @@
 #include "winerror.h"
 #include "wingdi.h"
 #include "winuser.h"
+#include "winternl.h"
+#include "ddk/wdm.h"
 #include "wine/server.h"
 #include "wine/unicode.h"
 #include "wine/debug.h"
@@ -53,6 +55,30 @@ static BOOL CALLBACK enum_names_WtoA( LPWSTR name, LPARAM lparam )
     return data->func( buffer, data->lparam );
 }
 
+/* return a handle to the directory where window station objects are created */
+static HANDLE get_winstations_dir_handle(void)
+{
+    static HANDLE handle = NULL;
+    static const WCHAR basenameW[] = {'\\','S','e','s','s','i','o','n','s','\\','%','u',
+                                      '\\','W','i','n','d','o','w','s','\\',
+                                      'W','i','n','d','o','w','S','t','a','t','i','o','n','s',0};
+    WCHAR buffer[64];
+    UNICODE_STRING str;
+    OBJECT_ATTRIBUTES attr;
+
+    if (!handle)
+    {
+        HANDLE dir;
+
+        sprintfW( buffer, basenameW, NtCurrentTeb()->Peb->SessionId );
+        RtlInitUnicodeString( &str, buffer );
+        InitializeObjectAttributes( &attr, &str, 0, 0, NULL );
+        NtOpenDirectoryObject( &dir, DIRECTORY_CREATE_OBJECT | DIRECTORY_TRAVERSE, &attr );
+        if (InterlockedCompareExchangePointer( &handle, dir, 0 ) != 0) /* someone beat us here */
+            CloseHandle( dir );
+    }
+    return handle;
+}
 
 /***********************************************************************
  *              CreateWindowStationA  (USER32.@)
@@ -93,9 +119,9 @@ HWINSTA WINAPI CreateWindowStationW( LPCWSTR name, DWORD reserved, ACCESS_MASK a
         req->access     = access;
         req->attributes = OBJ_CASE_INSENSITIVE | OBJ_OPENIF |
                           ((sa && sa->bInheritHandle) ? OBJ_INHERIT : 0);
+        req->rootdir    = wine_server_obj_handle( get_winstations_dir_handle() );
         wine_server_add_data( req, name, len * sizeof(WCHAR) );
-        /* it doesn't seem to set last error */
-        wine_server_call( req );
+        wine_server_call_err( req );
         ret = wine_server_ptr_handle( reply->handle );
     }
     SERVER_END_REQ;
@@ -137,6 +163,7 @@ HWINSTA WINAPI OpenWindowStationW( LPCWSTR name, BOOL inherit, ACCESS_MASK acces
     {
         req->access     = access;
         req->attributes = OBJ_CASE_INSENSITIVE | (inherit ? OBJ_INHERIT : 0);
+        req->rootdir    = wine_server_obj_handle( get_winstations_dir_handle() );
         wine_server_add_data( req, name, len * sizeof(WCHAR) );
         if (!wine_server_call_err( req )) ret = wine_server_ptr_handle( reply->handle );
     }
@@ -291,8 +318,7 @@ HDESK WINAPI CreateDesktopW( LPCWSTR name, LPCWSTR device, LPDEVMODEW devmode,
         req->attributes = OBJ_CASE_INSENSITIVE | OBJ_OPENIF |
                           ((sa && sa->bInheritHandle) ? OBJ_INHERIT : 0);
         wine_server_add_data( req, name, len * sizeof(WCHAR) );
-        /* it doesn't seem to set last error */
-        wine_server_call( req );
+        wine_server_call_err( req );
         ret = wine_server_ptr_handle( reply->handle );
     }
     SERVER_END_REQ;
@@ -334,7 +360,7 @@ HDESK open_winstation_desktop( HWINSTA hwinsta, LPCWSTR name, DWORD flags, BOOL 
         req->access     = access;
         req->attributes = OBJ_CASE_INSENSITIVE | (inherit ? OBJ_INHERIT : 0);
         wine_server_add_data( req, name, len * sizeof(WCHAR) );
-        if (!wine_server_call( req )) ret = wine_server_ptr_handle( reply->handle );
+        if (!wine_server_call_err( req )) ret = wine_server_ptr_handle( reply->handle );
     }
     SERVER_END_REQ;
     return ret;
@@ -399,9 +425,10 @@ BOOL WINAPI SetThreadDesktop( HDESK handle )
     if (ret)  /* reset the desktop windows */
     {
         struct user_thread_info *thread_info = get_user_thread_info();
+        struct user_key_state_info *key_state_info = thread_info->key_state;
         thread_info->top_window = 0;
         thread_info->msg_window = 0;
-        thread_info->key_state_time = 0;
+        if (key_state_info) key_state_info->time = 0;
     }
     return ret;
 }
@@ -631,7 +658,7 @@ BOOL WINAPI SetUserObjectInformationW( HANDLE handle, INT index, LPVOID info, DW
     SERVER_START_REQ( set_user_object_info )
     {
         req->handle    = wine_server_obj_handle( handle );
-        req->flags     = SET_USER_OBJECT_FLAGS;
+        req->flags     = SET_USER_OBJECT_SET_FLAGS;
         req->obj_flags = obj_flags->dwFlags;
         ret = !wine_server_call_err( req );
     }

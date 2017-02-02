@@ -113,7 +113,7 @@ static BOOL init_driver(void)
 {
     static const WCHAR drv_value[] = {'A','u','d','i','o',0};
 
-    static WCHAR default_list[] = {'a','l','s','a',',','o','s','s',',',
+    static WCHAR default_list[] = {'p','u','l','s','e',',','a','l','s','a',',','o','s','s',',',
         'c','o','r','e','a','u','d','i','o',0};
 
     DriverFuncs driver;
@@ -304,7 +304,6 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID *ppv)
             *ppv = &MMDEVAPI_CF[i];
             return S_OK;
         }
-        i++;
     }
 
     WARN("(%s, %s, %p): no class found.\n", debugstr_guid(rclsid),

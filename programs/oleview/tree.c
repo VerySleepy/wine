@@ -82,7 +82,7 @@ void CreateInst(HTREEITEM item, WCHAR *wszMachineName)
     tvis.hParent = item;
     tvis.hInsertAfter = TVI_LAST;
 
-    SendMessageW(globals.hTree, TVM_GETITEMW, 0, (LPARAM)&tvi);
+    if (!SendMessageW(globals.hTree, TVM_GETITEMW, 0, (LPARAM)&tvi)) return;
 
     if(!tvi.lParam || ((ITEM_INFO *)tvi.lParam)->loaded
                 || !(((ITEM_INFO *)tvi.lParam)->cFlag&SHOWALL)) return;
@@ -154,9 +154,7 @@ void CreateInst(HTREEITEM item, WCHAR *wszMachineName)
     while(hCur)
     {
         tvi.hItem = hCur;
-        SendMessageW(globals.hTree, TVM_GETITEMW, 0, (LPARAM)&tvi);
-
-        if(!tvi.lParam)
+        if(!SendMessageW(globals.hTree, TVM_GETITEMW, 0, (LPARAM)&tvi) || !tvi.lParam)
         {
             hCur = (HTREEITEM)SendMessageW(globals.hTree, TVM_GETNEXTITEM,
                     TVGN_NEXT, (LPARAM)hCur);
@@ -192,9 +190,7 @@ void ReleaseInst(HTREEITEM item)
 
     memset(&tvi, 0, sizeof(TVITEMW));
     tvi.hItem = item;
-    SendMessageW(globals.hTree, TVM_GETITEMW, 0, (LPARAM)&tvi);
-
-    if(!tvi.lParam) return;
+    if(!SendMessageW(globals.hTree, TVM_GETITEMW, 0, (LPARAM)&tvi) || !tvi.lParam) return;
 
     pU = ((ITEM_INFO *)tvi.lParam)->pU;
 
@@ -223,18 +219,18 @@ BOOL CreateRegPath(HTREEITEM item, WCHAR *buffer, int bufSize)
 {
     TVITEMW tvi;
     int bufLen;
-    BOOL ret;
+    BOOL ret = FALSE;
 
     memset(buffer, 0, bufSize * sizeof(WCHAR));
     memset(&tvi, 0, sizeof(TVITEMW));
     tvi.hItem = item;
 
-    SendMessageW(globals.hTree, TVM_GETITEMW, 0, (LPARAM)&tvi);
-    ret = (tvi.lParam && ((ITEM_INFO *)tvi.lParam)->cFlag & REGPATH);
+    if (SendMessageW(globals.hTree, TVM_GETITEMW, 0, (LPARAM)&tvi))
+        ret = (tvi.lParam && ((ITEM_INFO *)tvi.lParam)->cFlag & REGPATH);
 
     while(TRUE)
     {
-        SendMessageW(globals.hTree, TVM_GETITEMW, 0, (LPARAM)&tvi);
+        if(!SendMessageW(globals.hTree, TVM_GETITEMW, 0, (LPARAM)&tvi)) break;
 
         if(tvi.lParam && (((ITEM_INFO *)tvi.lParam)->cFlag & (REGPATH|REGTOP)))
         {
@@ -318,7 +314,7 @@ static void AddCOMandAll(void)
             while(curSearch)
             {
                 tvi.hItem = curSearch;
-                SendMessageW(globals.hTree, TVM_GETITEMW, 0, (LPARAM)&tvi);
+                if(!SendMessageW(globals.hTree, TVM_GETITEMW, 0, (LPARAM)&tvi)) break;
 
                 if(tvi.lParam && !lstrcmpW(((ITEM_INFO *)tvi.lParam)->info, wszComp))
                 {
@@ -500,10 +496,12 @@ static void AddComponentCategories(void)
 {
     TVINSERTSTRUCTW tvis;
     HKEY hKey, hCurKey;
+    WCHAR keyName[MAX_LOAD_STRING];
     WCHAR valName[MAX_LOAD_STRING];
     WCHAR buffer[MAX_LOAD_STRING];
     LONG lenBuffer;
     DWORD lenBufferHlp;
+    DWORD lenValName;
     int i=-1;
 
     U(tvis).item.mask = TVIF_TEXT|TVIF_PARAM|TVIF_CHILDREN;
@@ -520,23 +518,24 @@ static void AddComponentCategories(void)
     {
         i++;
 
-        if(RegEnumKeyW(hKey, i, valName, sizeof(valName)/sizeof(valName[0])) != ERROR_SUCCESS) break;
+        if(RegEnumKeyW(hKey, i, keyName, sizeof(keyName)/sizeof(keyName[0])) != ERROR_SUCCESS) break;
 
-        if(RegOpenKeyW(hKey, valName, &hCurKey) != ERROR_SUCCESS) continue;
+        if(RegOpenKeyW(hKey, keyName, &hCurKey) != ERROR_SUCCESS) continue;
 
         lenBuffer = sizeof(WCHAR[MAX_LOAD_STRING]);
         lenBufferHlp = sizeof(WCHAR[MAX_LOAD_STRING]);
+        lenValName = sizeof(WCHAR[MAX_LOAD_STRING]);
 
         if(RegQueryValueW(hCurKey, NULL, buffer, &lenBuffer) == ERROR_SUCCESS && *buffer)
             U(tvis).item.pszText = buffer;
-        else if(RegEnumValueW(hCurKey, 0, NULL, NULL, NULL, NULL,
+        else if(RegEnumValueW(hCurKey, 0, valName, &lenValName, NULL, NULL,
                     (LPBYTE)buffer, &lenBufferHlp) == ERROR_SUCCESS && *buffer)
             U(tvis).item.pszText = buffer;
         else continue;
 
         RegCloseKey(hCurKey);
 
-        U(tvis).item.lParam = CreateITEM_INFO(REGTOP, valName, valName, NULL);
+        U(tvis).item.lParam = CreateITEM_INFO(REGTOP, keyName, keyName, NULL);
         SendMessageW(globals.hTree, TVM_INSERTITEMW, 0, (LPARAM)&tvis);
     }
 
@@ -628,15 +627,13 @@ void EmptyTree(void)
                     TVM_GETNEXTITEM, TVGN_PARENT, (LPARAM)del);
 
             tvi.hItem = del;
-            SendMessageW(globals.hTree, TVM_GETITEMW, 0, (LPARAM)&tvi);
-
-            if(tvi.lParam)
+            if(SendMessageW(globals.hTree, TVM_GETITEMW, 0, (LPARAM)&tvi) && tvi.lParam)
             {
                 if(((ITEM_INFO *)tvi.lParam)->loaded) ReleaseInst(del);
                 HeapFree(GetProcessHeap(), 0, (ITEM_INFO *)tvi.lParam);
-            }
 
-            SendMessageW(globals.hTree, TVM_DELETEITEM, 0, (LPARAM)del);
+                SendMessageW(globals.hTree, TVM_DELETEITEM, 0, (LPARAM)del);
+            }
 
             if(!cur) break;
         }
@@ -700,6 +697,8 @@ HWND CreateTreeWindow(HINSTANCE hInst)
     memset(&wct, 0, sizeof(WNDCLASSW));
     wct.lpfnWndProc = TreeProc;
     wct.lpszClassName = wszTreeClass;
+    wct.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
+    wct.hCursor       = LoadCursorW(0, (LPCWSTR)IDC_ARROW);
 
     if(!RegisterClassW(&wct)) return NULL;
 

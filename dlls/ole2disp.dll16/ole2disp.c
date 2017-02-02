@@ -30,6 +30,7 @@
 #include "ole2.h"
 #include "oleauto.h"
 #include "winerror.h"
+#include "wownt32.h"
 #include "wine/windef16.h"
 #include "wine/winbase16.h"
 
@@ -38,6 +39,200 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(ole);
+
+#define E_OUTOFMEMORY16 MAKE_SCODE(SEVERITY_ERROR, FACILITY_NULL, 2)
+#define E_INVALIDARG16  MAKE_SCODE(SEVERITY_ERROR, FACILITY_NULL, 3)
+
+/* 16-bit SAFEARRAY implementation */
+typedef struct tagSAFEARRAYBOUND16
+{
+    ULONG cElements;
+    LONG  lLbound;
+} SAFEARRAYBOUND16;
+
+typedef struct tagSAFEARRAY16
+{
+    USHORT cDims;
+    USHORT fFeatures;
+    USHORT cbElements;
+    USHORT cLocks;
+    ULONG  handle;
+    SEGPTR pvData;
+    SAFEARRAYBOUND16 rgsabound[1];
+} SAFEARRAY16;
+
+static SEGPTR safearray_alloc(ULONG size)
+{
+    HANDLE16 h;
+    return WOWGlobalAllocLock16(GPTR, size, &h);
+}
+
+static void safearray_free(SEGPTR ptr)
+{
+    WOWGlobalUnlockFree16(ptr);
+}
+
+static ULONG safearray_getcellcount(const SAFEARRAY16 *sa)
+{
+    const SAFEARRAYBOUND16 *sab = sa->rgsabound;
+    USHORT count = sa->cDims;
+    ULONG cells = 1;
+
+    while (count--)
+    {
+        if (!sab->cElements)
+            return 0;
+        cells *= sab->cElements;
+        sab++;
+    }
+
+    return cells;
+}
+
+static HRESULT safearray_lock(SAFEARRAY16 *sa)
+{
+    if (sa->cLocks == 0xffff)
+        return E_UNEXPECTED;
+
+    sa->cLocks++;
+    return S_OK;
+}
+
+/******************************************************************************
+ *    SafeArrayGetDim [OLE2DISP.17]
+ */
+USHORT WINAPI SafeArrayGetDim16(SAFEARRAY16 *sa)
+{
+    TRACE("(%p)\n", sa);
+    return sa->cDims;
+}
+
+/******************************************************************************
+ *    SafeArrayGetElemsize [OLE2DISP.18]
+ */
+USHORT WINAPI SafeArrayGetElemsize16(SAFEARRAY16 *sa)
+{
+    TRACE("(%p)\n", sa);
+    return sa->cbElements;
+}
+
+/******************************************************************************
+ *    SafeArrayLock [OLE2DISP.21]
+ */
+HRESULT WINAPI SafeArrayLock16(SAFEARRAY16 *sa)
+{
+    TRACE("(%p)\n", sa);
+
+    if (!sa)
+        return E_INVALIDARG16;
+
+    return safearray_lock(sa);
+}
+
+/******************************************************************************
+ *    SafeArrayUnlock [OLE2DISP.22]
+ */
+HRESULT WINAPI SafeArrayUnlock16(SAFEARRAY16 *sa)
+{
+    TRACE("(%p)\n", sa);
+
+    if (!sa)
+        return E_INVALIDARG16;
+
+    if (sa->cLocks == 0)
+        return E_UNEXPECTED;
+
+    sa->cLocks--;
+    return S_OK;
+}
+
+/******************************************************************************
+ *    SafeArrayAccessData [OLE2DISP.23]
+ */
+HRESULT WINAPI SafeArrayAccessData16(SAFEARRAY16 *sa, SEGPTR *data)
+{
+    HRESULT hr;
+
+    TRACE("(%p, %p)\n", sa, data);
+
+    /* arguments are not tested, it crashes if any of them is NULL */
+
+    hr = safearray_lock(sa);
+    if (FAILED(hr))
+        return hr;
+
+    *data = sa->pvData;
+    return S_OK;
+}
+
+/******************************************************************************
+ *    SafeArrayUnaccessData [OLE2DISP.24]
+ */
+HRESULT WINAPI SafeArrayUnaccessData16(SAFEARRAY16 *sa)
+{
+    TRACE("(%p)\n", sa);
+    return SafeArrayUnlock16(sa);
+}
+
+/******************************************************************************
+ *    SafeArrayAllocDescriptor [OLE2DISP.38]
+ */
+HRESULT WINAPI SafeArrayAllocDescriptor16(UINT16 dims, SEGPTR *ret)
+{
+    SAFEARRAY16 *sa;
+    ULONG size;
+
+    TRACE("%u, %p\n", dims, ret);
+
+    if (!dims)
+        return E_INVALIDARG16;
+
+    size = sizeof(SAFEARRAY16) + sizeof(SAFEARRAYBOUND16) * (dims - 1);
+    *ret = safearray_alloc(size);
+    if (!*ret)
+        return E_OUTOFMEMORY16;
+
+    sa = MapSL(*ret);
+    sa->cDims = dims;
+    return S_OK;
+}
+
+/******************************************************************************
+ *    SafeArrayAllocData [OLE2DISP.39]
+ */
+HRESULT WINAPI SafeArrayAllocData16(SAFEARRAY16 *sa)
+{
+    ULONG size;
+
+    TRACE("%p\n", sa);
+
+    if (!sa)
+        return E_INVALIDARG16;
+
+    size = safearray_getcellcount(sa);
+    sa->pvData = safearray_alloc(size * sa->cbElements);
+    return sa->pvData ? S_OK : E_OUTOFMEMORY16;
+}
+
+/******************************************************************************
+ *    SafeArrayDestroyDescriptor [OLE2DISP.40]
+ */
+HRESULT WINAPI SafeArrayDestroyDescriptor16(SEGPTR s)
+{
+    TRACE("0x%08x\n", s);
+
+    if (s)
+    {
+        SAFEARRAY16 *sa = MapSL(s);
+
+        if (sa->cLocks)
+            return DISP_E_ARRAYISLOCKED;
+
+        safearray_free(s);
+    }
+
+    return S_OK;
+}
 
 /* This implementation of the BSTR API is 16-bit only. It
    represents BSTR as a 16:16 far pointer, and the strings
@@ -275,4 +470,13 @@ HRESULT WINAPI SetErrorInfo16(ULONG dwReserved, IErrorInfo *perrinfo)
 {
         FIXME("stub: (%d, %p)\n", dwReserved, perrinfo);
         return E_INVALIDARG;
+}
+
+/******************************************************************************
+ * VariantInit [OLE2DISP.8]
+ */
+void WINAPI VariantInit16(VARIANTARG16 *v)
+{
+    TRACE("(%p)\n", v);
+    v->vt = VT_EMPTY;
 }

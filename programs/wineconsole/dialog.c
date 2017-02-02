@@ -22,7 +22,7 @@
 #include <stdarg.h>
 
 #define NONAMELESSUNION
-#define NONAMELESSSTRUCT
+
 #include "windef.h"
 #include "winbase.h"
 #include "wingdi.h"
@@ -76,6 +76,8 @@ static INT_PTR WINAPI WCUSER_OptionDlgProc(HWND hDlg, UINT msg, WPARAM wParam, L
 	SetDlgItemInt(hDlg, IDC_OPT_HIST_SIZE, di->config.history_size,  FALSE);
         SendDlgItemMessageW(hDlg, IDC_OPT_HIST_NODOUBLE, BM_SETCHECK,
                             (di->config.history_nodup) ? BST_CHECKED : BST_UNCHECKED, 0);
+        SendDlgItemMessageW(hDlg, IDC_OPT_INSERT_MODE, BM_SETCHECK,
+                            (di->config.insert_mode) ? BST_CHECKED : BST_UNCHECKED, 0);
         SendDlgItemMessageW(hDlg, IDC_OPT_CONF_CTRL, BM_SETCHECK,
                             (di->config.menu_mask & MK_CONTROL) ? BST_CHECKED : BST_UNCHECKED, 0);
         SendDlgItemMessageW(hDlg, IDC_OPT_CONF_SHIFT, BM_SETCHECK,
@@ -121,6 +123,9 @@ static INT_PTR WINAPI WCUSER_OptionDlgProc(HWND hDlg, UINT msg, WPARAM wParam, L
             val = (IsDlgButtonChecked(hDlg, IDC_OPT_HIST_NODOUBLE) & BST_CHECKED) != 0;
             di->config.history_nodup = val;
 
+            val = (IsDlgButtonChecked(hDlg, IDC_OPT_INSERT_MODE) & BST_CHECKED) != 0;
+            di->config.insert_mode = val;
+
             val = 0;
             if (IsDlgButtonChecked(hDlg, IDC_OPT_CONF_CTRL) & BST_CHECKED)  val |= MK_CONTROL;
             if (IsDlgButtonChecked(hDlg, IDC_OPT_CONF_SHIFT) & BST_CHECKED) val |= MK_SHIFT;
@@ -140,6 +145,14 @@ static INT_PTR WINAPI WCUSER_OptionDlgProc(HWND hDlg, UINT msg, WPARAM wParam, L
 	return FALSE;
     }
     return TRUE;
+}
+
+static COLORREF get_color(struct dialog_info *di, unsigned int idc)
+{
+    LONG_PTR index;
+
+    index = GetWindowLongPtrW(GetDlgItem(di->hDlg, idc), 0);
+    return di->config.color_map[index];
 }
 
 /******************************************************************
@@ -185,13 +198,16 @@ static LRESULT WINAPI WCUSER_FontPreviewProc(HWND hWnd, UINT msg, WPARAM wParam,
             hFont = (HFONT)GetWindowLongPtrW(hWnd, 0);
             if (hFont)
             {
+                COLORREF bkcolor;
                 WCHAR ascii[] = {'A','S','C','I','I',':',' ','a','b','c','X','Y','Z','\0'};
                 WCHAR buf[256];
                 int   len;
 
                 hOldFont = SelectObject(ps.hdc, hFont);
-                SetBkColor(ps.hdc, WCUSER_ColorMap[GetWindowLongW(GetDlgItem(di->hDlg, IDC_FNT_COLOR_BK), 0)]);
-                SetTextColor(ps.hdc, WCUSER_ColorMap[GetWindowLongW(GetDlgItem(di->hDlg, IDC_FNT_COLOR_FG), 0)]);
+                bkcolor = get_color(di, IDC_FNT_COLOR_BK);
+                FillRect(ps.hdc, &ps.rcPaint, CreateSolidBrush(bkcolor));
+                SetBkColor(ps.hdc, bkcolor);
+                SetTextColor(ps.hdc, get_color(di, IDC_FNT_COLOR_FG));
                 len = LoadStringW(GetModuleHandleW(NULL), IDS_FNT_PREVIEW,
                                   buf, sizeof(buf) / sizeof(buf[0]));
                 if (len)
@@ -220,14 +236,17 @@ static LRESULT WINAPI WCUSER_ColorPreviewProc(HWND hWnd, UINT msg, WPARAM wParam
     {
     case WM_PAINT:
         {
-            PAINTSTRUCT     ps;
-            int             i, step;
-            RECT            client, r;
-            HBRUSH          hbr;
+            PAINTSTRUCT ps;
+            int i, step;
+            RECT client, r;
+            struct dialog_info *di;
+            HBRUSH hbr;
 
             BeginPaint(hWnd, &ps);
             GetClientRect(hWnd, &client);
             step = client.right / 8;
+
+            di = (struct dialog_info *)GetWindowLongPtrW(GetParent(hWnd), DWLP_USER);
 
             for (i = 0; i < 16; i++)
             {
@@ -235,7 +254,7 @@ static LRESULT WINAPI WCUSER_ColorPreviewProc(HWND hWnd, UINT msg, WPARAM wParam
                 r.bottom = r.top + client.bottom / 2;
                 r.left = (i & 7) * step;
                 r.right = r.left + step;
-                hbr = CreateSolidBrush(WCUSER_ColorMap[i]);
+                hbr = CreateSolidBrush(di->config.color_map[i]);
                 FillRect(ps.hdc, &r, hbr);
                 DeleteObject(hbr);
                 if (GetWindowLongW(hWnd, 0) == i)
@@ -295,7 +314,7 @@ static int CALLBACK font_enum_size2(const LOGFONTW* lf, const TEXTMETRICW* tm,
     struct dialog_info*	di = (struct dialog_info*)lParam;
 
     WCUSER_DumpTextMetric(tm, FontType);
-    if (WCUSER_ValidateFontMetric(di->data, tm, FontType))
+    if (WCUSER_ValidateFontMetric(di->data, tm, FontType, 0))
     {
 	di->nFont++;
     }
@@ -309,7 +328,7 @@ static int CALLBACK font_enum(const LOGFONTW* lf, const TEXTMETRICW* tm,
     struct dialog_info*	di = (struct dialog_info*)lParam;
 
     WCUSER_DumpLogFont("DlgFamily: ", lf, FontType);
-    if (WCUSER_ValidateFont(di->data, lf))
+    if (WCUSER_ValidateFont(di->data, lf, 0))
     {
         if (FontType & RASTER_FONTTYPE)
         {
@@ -367,7 +386,7 @@ static int CALLBACK font_enum_size(const LOGFONTW* lf, const TEXTMETRICW* tm,
         return 0;
     }
 
-    if (WCUSER_ValidateFontMetric(di->data, tm, FontType))
+    if (WCUSER_ValidateFontMetric(di->data, tm, FontType, 0))
     {
 	int	idx = 0;
 

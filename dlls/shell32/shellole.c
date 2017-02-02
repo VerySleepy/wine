@@ -59,7 +59,7 @@ static IClassFactory * IDefClF_fnConstructor(LPFNCREATEINSTANCE lpfnCI, PLONG pc
 
 /* this table contains all CLSIDs of shell32 objects */
 static const struct {
-	REFIID			riid;
+	REFIID			clsid;
 	LPFNCREATEINSTANCE	lpfnCI;
 } InterfaceTable[] = {
 
@@ -83,6 +83,7 @@ static const struct {
 	{&CLSID_ExplorerBrowser,ExplorerBrowser_Constructor},
 	{&CLSID_KnownFolderManager, KnownFolderManager_Constructor},
 	{&CLSID_Shell,          IShellDispatch_Constructor},
+	{&CLSID_DestinationList, CustomDestinationList_Constructor},
 	{NULL, NULL}
 };
 
@@ -204,8 +205,8 @@ end:
  */
 HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID iid, LPVOID *ppv)
 {
-	HRESULT	hres = E_OUTOFMEMORY;
 	IClassFactory * pcf = NULL;
+	HRESULT	hres;
 	int i;
 
 	TRACE("CLSID:%s,IID:%s\n",shdebugstr_guid(rclsid),shdebugstr_guid(iid));
@@ -214,10 +215,11 @@ HRESULT WINAPI DllGetClassObject(REFCLSID rclsid, REFIID iid, LPVOID *ppv)
 	*ppv = NULL;
 
 	/* search our internal interface table */
-	for(i=0;InterfaceTable[i].riid;i++) {
-	    if(IsEqualIID(InterfaceTable[i].riid, rclsid)) {
+	for(i=0;InterfaceTable[i].clsid;i++) {
+	    if(IsEqualIID(InterfaceTable[i].clsid, rclsid)) {
 	        TRACE("index[%u]\n", i);
 	        pcf = IDefClF_fnConstructor(InterfaceTable[i].lpfnCI, NULL, NULL);
+	        break;
 	    }
 	}
 
@@ -578,7 +580,7 @@ UINT WINAPI DragQueryFileA(
         if(lpDropFileStruct->fWide) {
             LPWSTR lpszFileW = NULL;
 
-            if(lpszFile) {
+            if(lpszFile && lFile != 0xFFFFFFFF) {
                 lpszFileW = HeapAlloc(GetProcessHeap(), 0, lLength*sizeof(WCHAR));
                 if(lpszFileW == NULL) {
                     goto end;
@@ -633,7 +635,7 @@ UINT WINAPI DragQueryFileW(
         if(lpDropFileStruct->fWide == FALSE) {
             LPSTR lpszFileA = NULL;
 
-            if(lpszwFile) {
+            if(lpszwFile && lFile != 0xFFFFFFFF) {
                 lpszFileA = HeapAlloc(GetProcessHeap(), 0, lLength);
                 if(lpszFileA == NULL) {
                     goto end;

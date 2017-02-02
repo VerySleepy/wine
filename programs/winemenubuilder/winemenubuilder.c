@@ -103,7 +103,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(menubuilder);
                                (csidl)==CSIDL_COMMON_DESKTOPDIRECTORY)
 #define in_startmenu(csidl)   ((csidl)==CSIDL_STARTMENU || \
                                (csidl)==CSIDL_COMMON_STARTMENU)
-        
+
 /* link file formats */
 
 #include "pshpack1.h"
@@ -195,8 +195,6 @@ static char *xdg_config_dir;
 static char *xdg_data_dir;
 static char *xdg_desktop_dir;
 
-static WCHAR* assoc_query(ASSOCSTR assocStr, LPCWSTR name, LPCWSTR extra);
-static HRESULT open_icon(LPCWSTR filename, int index, BOOL bWait, IStream **ppStream);
 
 /* Utility routines */
 static unsigned short crc16(const char* string)
@@ -264,35 +262,12 @@ static int winemenubuilder_rb_string_compare(const void *key, const struct wine_
     return strcmp((char*)key, t->string);
 }
 
-static void *winemenubuilder_rb_alloc(size_t size)
-{
-    return HeapAlloc(GetProcessHeap(), 0, size);
-}
-
-static void *winemenubuilder_rb_realloc(void *ptr, size_t size)
-{
-    return HeapReAlloc(GetProcessHeap(), 0, ptr, size);
-}
-
-static void winemenubuilder_rb_free(void *ptr)
-{
-    HeapFree(GetProcessHeap(), 0, ptr);
-}
-
 static void winemenubuilder_rb_destroy(struct wine_rb_entry *entry, void *context)
 {
     struct rb_string_entry *t = WINE_RB_ENTRY_VALUE(entry, struct rb_string_entry, entry);
     HeapFree(GetProcessHeap(), 0, t->string);
     HeapFree(GetProcessHeap(), 0, t);
 }
-
-static const struct wine_rb_functions winemenubuilder_rb_functions =
-{
-    winemenubuilder_rb_alloc,
-    winemenubuilder_rb_realloc,
-    winemenubuilder_rb_free,
-    winemenubuilder_rb_string_compare,
-};
 
 static void write_xml_text(FILE *file, const char *text)
 {
@@ -966,19 +941,31 @@ end:
     return hr;
 }
 
-static HRESULT write_native_icon(IStream *iconStream, const char *icon_name, LPCWSTR szFileName)
+static HRESULT validate_ico(IStream **ppStream, ICONDIRENTRY **ppIconDirEntries, int *numEntries)
 {
-    ICONDIRENTRY *pIconDirEntry = NULL;
-    int numEntries;
+    HRESULT hr;
+
+    hr = read_ico_direntries(*ppStream, ppIconDirEntries, numEntries);
+    if (SUCCEEDED(hr))
+    {
+        if (*numEntries)
+            return hr;
+        HeapFree(GetProcessHeap(), 0, *ppIconDirEntries);
+        *ppIconDirEntries = NULL;
+    }
+    IStream_Release(*ppStream);
+    *ppStream = NULL;
+    return E_FAIL;
+}
+
+static HRESULT write_native_icon(IStream *iconStream, ICONDIRENTRY *pIconDirEntry,
+                                 int numEntries, const char *icon_name, LPCWSTR szFileName)
+{
     int nMax = 0, nMaxBits = 0;
     int nIndex = 0;
     int i;
     LARGE_INTEGER position;
     HRESULT hr;
-
-    hr = read_ico_direntries(iconStream, &pIconDirEntry, &numEntries);
-    if (FAILED(hr))
-        goto end;
 
     for (i = 0; i < numEntries; i++)
     {
@@ -995,13 +982,30 @@ static HRESULT write_native_icon(IStream *iconStream, const char *icon_name, LPC
 
     position.QuadPart = 0;
     hr = IStream_Seek(iconStream, position, STREAM_SEEK_SET, NULL);
-    if (FAILED(hr))
-        goto end;
-    hr = convert_to_native_icon(iconStream, &nIndex, 1, &CLSID_WICPngEncoder, icon_name, szFileName);
+    if (FAILED(hr)) return hr;
+    return convert_to_native_icon(iconStream, &nIndex, 1, &CLSID_WICPngEncoder, icon_name, szFileName);
+}
 
-end:
-    HeapFree(GetProcessHeap(), 0, pIconDirEntry);
-    return hr;
+static WCHAR* assoc_query(ASSOCSTR assocStr, LPCWSTR name, LPCWSTR extra)
+{
+    HRESULT hr;
+    WCHAR *value = NULL;
+    DWORD size = 0;
+    hr = AssocQueryStringW(0, assocStr, name, extra, NULL, &size);
+    if (SUCCEEDED(hr))
+    {
+        value = HeapAlloc(GetProcessHeap(), 0, size * sizeof(WCHAR));
+        if (value)
+        {
+            hr = AssocQueryStringW(0, assocStr, name, extra, value, &size);
+            if (FAILED(hr))
+            {
+                HeapFree(GetProcessHeap(), 0, value);
+                value = NULL;
+            }
+        }
+    }
+    return value;
 }
 
 static HRESULT open_file_type_icon(LPCWSTR szFileName, IStream **ppStream)
@@ -1049,7 +1053,7 @@ static HRESULT open_default_icon(IStream **ppStream)
     return open_module_icon(user32W, -(INT_PTR)IDI_WINLOGO, ppStream);
 }
 
-static HRESULT open_icon(LPCWSTR filename, int index, BOOL bWait, IStream **ppStream)
+static HRESULT open_icon(LPCWSTR filename, int index, BOOL bWait, IStream **ppStream, ICONDIRENTRY **ppIconDirEntries, int *numEntries)
 {
     HRESULT hr;
 
@@ -1064,16 +1068,25 @@ static HRESULT open_icon(LPCWSTR filename, int index, BOOL bWait, IStream **ppSt
         }
         else
         {
-            static const WCHAR dot_icoW[] = {'.','i','c','o',0};
-            int len = strlenW(filename);
-            if (len >= 4 && strcmpiW(&filename[len - 4], dot_icoW) == 0)
-                hr = SHCreateStreamOnFileW(filename, STGM_READ, ppStream);
+            /* This might be a raw .ico file */
+            hr = SHCreateStreamOnFileW(filename, STGM_READ, ppStream);
         }
     }
+    if (SUCCEEDED(hr))
+        hr = validate_ico(ppStream, ppIconDirEntries, numEntries);
+
     if (FAILED(hr))
+    {
         hr = open_file_type_icon(filename, ppStream);
+        if (SUCCEEDED(hr))
+            hr = validate_ico(ppStream, ppIconDirEntries, numEntries);
+    }
     if (FAILED(hr) && !bWait)
+    {
         hr = open_default_icon(ppStream);
+        if (SUCCEEDED(hr))
+            hr = validate_ico(ppStream, ppIconDirEntries, numEntries);
+    }
     return hr;
 }
 
@@ -1127,11 +1140,10 @@ static inline int size_to_slot(int size)
 
 #define CLASSIC_SLOT 3
 
-static HRESULT platform_write_icon(IStream *icoStream, int exeIndex, LPCWSTR icoPathW,
+static HRESULT platform_write_icon(IStream *icoStream, ICONDIRENTRY *iconDirEntries,
+                                   int numEntries, int exeIndex, LPCWSTR icoPathW,
                                    const char *destFilename, char **nativeIdentifier)
 {
-    ICONDIRENTRY *iconDirEntries = NULL;
-    int numEntries;
     struct {
         int index;
         int maxBits;
@@ -1144,9 +1156,6 @@ static HRESULT platform_write_icon(IStream *icoStream, int exeIndex, LPCWSTR ico
     LARGE_INTEGER zero;
     HRESULT hr;
 
-    hr = read_ico_direntries(icoStream, &iconDirEntries, &numEntries);
-    if (FAILED(hr))
-        goto end;
     for (i = 0; i < ICNS_SLOTS; i++)
     {
         best[i].index = -1;
@@ -1234,7 +1243,6 @@ static HRESULT platform_write_icon(IStream *icoStream, int exeIndex, LPCWSTR ico
     }
 
 end:
-    HeapFree(GetProcessHeap(), 0, iconDirEntries);
     HeapFree(GetProcessHeap(), 0, icnsPath);
     return hr;
 }
@@ -1259,19 +1267,14 @@ static void refresh_icon_cache(const char *iconsDir)
     }
 }
 
-static HRESULT platform_write_icon(IStream *icoStream, int exeIndex, LPCWSTR icoPathW,
+static HRESULT platform_write_icon(IStream *icoStream, ICONDIRENTRY *iconDirEntries,
+                                   int numEntries, int exeIndex, LPCWSTR icoPathW,
                                    const char *destFilename, char **nativeIdentifier)
 {
-    ICONDIRENTRY *iconDirEntries = NULL;
-    int numEntries;
     int i;
     char *iconsDir = NULL;
     HRESULT hr = S_OK;
     LARGE_INTEGER zero;
-
-    hr = read_ico_direntries(icoStream, &iconDirEntries, &numEntries);
-    if (FAILED(hr))
-        goto end;
 
     if (destFilename)
         *nativeIdentifier = heap_printf("%s", destFilename);
@@ -1352,7 +1355,6 @@ static HRESULT platform_write_icon(IStream *icoStream, int exeIndex, LPCWSTR ico
     refresh_icon_cache(iconsDir);
 
 end:
-    HeapFree(GetProcessHeap(), 0, iconDirEntries);
     HeapFree(GetProcessHeap(), 0, iconsDir);
     return hr;
 }
@@ -1362,24 +1364,27 @@ end:
 static char *extract_icon(LPCWSTR icoPathW, int index, const char *destFilename, BOOL bWait)
 {
     IStream *stream = NULL;
+    ICONDIRENTRY *pIconDirEntries = NULL;
+    int numEntries;
     HRESULT hr;
     char *nativeIdentifier = NULL;
 
     WINE_TRACE("path=[%s] index=%d destFilename=[%s]\n", wine_dbgstr_w(icoPathW), index, wine_dbgstr_a(destFilename));
 
-    hr = open_icon(icoPathW, index, bWait, &stream);
+    hr = open_icon(icoPathW, index, bWait, &stream, &pIconDirEntries, &numEntries);
     if (FAILED(hr))
     {
         WINE_WARN("opening icon %s index %d failed, hr=0x%08X\n", wine_dbgstr_w(icoPathW), index, hr);
         goto end;
     }
-    hr = platform_write_icon(stream, index, icoPathW, destFilename, &nativeIdentifier);
+    hr = platform_write_icon(stream, pIconDirEntries, numEntries, index, icoPathW, destFilename, &nativeIdentifier);
     if (FAILED(hr))
         WINE_WARN("writing icon failed, error 0x%08X\n", hr);
 
 end:
     if (stream)
         IStream_Release(stream);
+    HeapFree(GetProcessHeap(), 0, pIconDirEntries);
     if (FAILED(hr))
     {
         HeapFree(GetProcessHeap(), 0, nativeIdentifier);
@@ -1390,11 +1395,11 @@ end:
 
 static HKEY open_menus_reg_key(void)
 {
-    static const WCHAR Software_Wine_FileOpenAssociationsW[] = {
+    static const WCHAR Software_Wine_FileOpenMenuFilesW[] = {
         'S','o','f','t','w','a','r','e','\\','W','i','n','e','\\','M','e','n','u','F','i','l','e','s',0};
     HKEY assocKey;
     DWORD ret;
-    ret = RegCreateKeyW(HKEY_CURRENT_USER, Software_Wine_FileOpenAssociationsW, &assocKey);
+    ret = RegCreateKeyW(HKEY_CURRENT_USER, Software_Wine_FileOpenMenuFilesW, &assocKey);
     if (ret == ERROR_SUCCESS)
         return assocKey;
     SetLastError(ret);
@@ -1939,28 +1944,6 @@ static HRESULT get_cmdline( IShellLinkW *sl, LPWSTR szPath, DWORD pathSize,
     return hr;
 }
 
-static WCHAR* assoc_query(ASSOCSTR assocStr, LPCWSTR name, LPCWSTR extra)
-{
-    HRESULT hr;
-    WCHAR *value = NULL;
-    DWORD size = 0;
-    hr = AssocQueryStringW(0, assocStr, name, extra, NULL, &size);
-    if (SUCCEEDED(hr))
-    {
-        value = HeapAlloc(GetProcessHeap(), 0, size * sizeof(WCHAR));
-        if (value)
-        {
-            hr = AssocQueryStringW(0, assocStr, name, extra, value, &size);
-            if (FAILED(hr))
-            {
-                HeapFree(GetProcessHeap(), 0, value);
-                value = NULL;
-            }
-        }
-    }
-    return value;
-}
-
 static char *slashes_to_minuses(const char *string)
 {
     int i;
@@ -2091,15 +2074,12 @@ static void free_native_mime_types(struct list *native_mime_types)
         HeapFree(GetProcessHeap(), 0, mime_type_entry->mimeType);
         HeapFree(GetProcessHeap(), 0, mime_type_entry);
     }
-    HeapFree(GetProcessHeap(), 0, native_mime_types);
 }
 
-static BOOL build_native_mime_types(const char *xdg_data_home, struct list **mime_types)
+static BOOL build_native_mime_types(const char *xdg_data_home, struct list *mime_types)
 {
     char *xdg_data_dirs;
     BOOL ret;
-
-    *mime_types = NULL;
 
     xdg_data_dirs = getenv("XDG_DATA_DIRS");
     if (xdg_data_dirs == NULL)
@@ -2109,39 +2089,29 @@ static BOOL build_native_mime_types(const char *xdg_data_home, struct list **mim
 
     if (xdg_data_dirs)
     {
-        *mime_types = HeapAlloc(GetProcessHeap(), 0, sizeof(struct list));
-        if (*mime_types)
-        {
-            const char *begin;
-            char *end;
+        const char *begin;
+        char *end;
 
-            list_init(*mime_types);
-            ret = add_mimes(xdg_data_home, *mime_types);
-            if (ret)
+        ret = add_mimes(xdg_data_home, mime_types);
+        if (ret)
+        {
+            for (begin = xdg_data_dirs; (end = strchr(begin, ':')); begin = end + 1)
             {
-                for (begin = xdg_data_dirs; (end = strchr(begin, ':')); begin = end + 1)
-                {
-                    *end = '\0';
-                    ret = add_mimes(begin, *mime_types);
-                    *end = ':';
-                    if (!ret)
-                        break;
-                }
-                if (ret)
-                    ret = add_mimes(begin, *mime_types);
+                *end = '\0';
+                ret = add_mimes(begin, mime_types);
+                *end = ':';
+                if (!ret)
+                    break;
             }
+            if (ret)
+                ret = add_mimes(begin, mime_types);
         }
-        else
-            ret = FALSE;
         HeapFree(GetProcessHeap(), 0, xdg_data_dirs);
     }
     else
         ret = FALSE;
-    if (!ret && *mime_types)
-    {
-        free_native_mime_types(*mime_types);
-        *mime_types = NULL;
-    }
+    if (!ret)
+        free_native_mime_types(mime_types);
     return ret;
 }
 
@@ -2545,17 +2515,12 @@ static BOOL write_freedesktop_association_entry(const char *desktopPath, const c
 static BOOL generate_associations(const char *xdg_data_home, const char *packages_dir, const char *applications_dir)
 {
     static const WCHAR openW[] = {'o','p','e','n',0};
-    struct wine_rb_tree mimeProgidTree;
-    struct list *nativeMimeTypes = NULL;
+    struct wine_rb_tree mimeProgidTree = { winemenubuilder_rb_string_compare };
+    struct list nativeMimeTypes = LIST_INIT(nativeMimeTypes);
     LSTATUS ret = 0;
     int i;
     BOOL hasChanged = FALSE;
 
-    if (wine_rb_init(&mimeProgidTree, &winemenubuilder_rb_functions))
-    {
-        WINE_ERR("wine_rb_init failed\n");
-        return FALSE;
-    }
     if (!build_native_mime_types(xdg_data_home, &nativeMimeTypes))
     {
         WINE_ERR("could not build native MIME types\n");
@@ -2623,7 +2588,7 @@ static BOOL generate_associations(const char *xdg_data_home, const char *package
             if (contentTypeW)
                 strlwrW(contentTypeW);
 
-            if (!freedesktop_mime_type_for_extension(nativeMimeTypes, extensionA, extensionW, &mimeTypeA))
+            if (!freedesktop_mime_type_for_extension(&nativeMimeTypes, extensionA, extensionW, &mimeTypeA))
                 goto end;
 
             if (mimeTypeA == NULL)
@@ -2769,7 +2734,7 @@ static BOOL generate_associations(const char *xdg_data_home, const char *package
     }
 
     wine_rb_destroy(&mimeProgidTree, winemenubuilder_rb_destroy, NULL);
-    free_native_mime_types(nativeMimeTypes);
+    free_native_mime_types(&nativeMimeTypes);
     return hasChanged;
 }
 
@@ -3416,7 +3381,7 @@ static void cleanup_menus(void)
                 if (data == NULL)
                     break;
                 lret = RegEnumValueW(hkey, i, value, &valueSize, NULL, NULL, (BYTE*)data, &dataSize);
-                if (lret == ERROR_SUCCESS || lret != ERROR_MORE_DATA)
+                if (lret != ERROR_MORE_DATA)
                     break;
                 valueSize *= 2;
                 dataSize *= 2;
@@ -3474,6 +3439,8 @@ static void thumbnail_lnk(LPCWSTR lnkPath, LPCWSTR outputPath)
     WCHAR szIconPath[MAX_PATH];
     int iconId;
     IStream *stream = NULL;
+    ICONDIRENTRY *pIconDirEntries = NULL;
+    int numEntries;
     HRESULT hr;
 
     utf8lnkPath = wchars_to_utf8_chars(lnkPath);
@@ -3535,15 +3502,15 @@ static void thumbnail_lnk(LPCWSTR lnkPath, LPCWSTR outputPath)
 
     if (szIconPath[0])
     {
-        hr = open_icon(szIconPath, iconId, FALSE, &stream);
+        hr = open_icon(szIconPath, iconId, FALSE, &stream, &pIconDirEntries, &numEntries);
         if (SUCCEEDED(hr))
-            hr = write_native_icon(stream, utf8OutputPath, NULL);
+            hr = write_native_icon(stream, pIconDirEntries, numEntries, utf8OutputPath, NULL);
     }
     else
     {
-        hr = open_icon(szPath, iconId, FALSE, &stream);
+        hr = open_icon(szPath, iconId, FALSE, &stream, &pIconDirEntries, &numEntries);
         if (SUCCEEDED(hr))
-            hr = write_native_icon(stream, utf8OutputPath, NULL);
+            hr = write_native_icon(stream, pIconDirEntries, numEntries, utf8OutputPath, NULL);
     }
 
 end:
@@ -3556,6 +3523,7 @@ end:
         IPersistFile_Release(persistFile);
     if (stream != NULL)
         IStream_Release(stream);
+    HeapFree(GetProcessHeap(), 0, pIconDirEntries);
 }
 
 static WCHAR *next_token( LPWSTR *p )

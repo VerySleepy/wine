@@ -17,10 +17,10 @@
  *
  */
 
-#include "wine/debug.h"
+#include "config.h"
+#include "wine/port.h"
 
-#define COBJMACROS
-#include "d3dx9.h"
+#include "d3dx9_private.h"
 #include "d3dx9xof.h"
 #undef MAKE_DDHRESULT
 #include "dxfile.h"
@@ -331,7 +331,7 @@ static HRESULT d3dx9_file_data_create(IDirectXFileObject *dxfile_object, ID3DXFi
         }
         else
         {
-            FIXME("Don't known what to do with binary object\n");
+            FIXME("Don't know what to do with binary object\n");
             HeapFree(GetProcessHeap(), 0, object);
             return E_FAIL;
         }

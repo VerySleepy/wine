@@ -25,7 +25,7 @@
 
 #include "wine/test.h"
 
-static HWND hScroll, hMainWnd;
+static HWND hScroll;
 static BOOL bThemeActive = FALSE;
 
 static LRESULT CALLBACK MyWndProc( HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam )
@@ -52,19 +52,44 @@ static LRESULT CALLBACK MyWndProc( HWND hWnd, UINT msg, WPARAM wParam, LPARAM lP
     }
     return 0;
 }
-static void scrollbar_test_track(void)
+
+static HWND create_main_test_wnd(void)
 {
-    /* test that scrollbar tracking is terminated when
-     * the control looses mouse capture */
-    SendMessageA( hScroll, WM_LBUTTONDOWN, 0, MAKELPARAM( 1, 1));
-    /* a normal return from the sendmessage */
-    /* not normal for instance by closing the windws */
-    ok( IsWindow( hScroll), "Scrollbar has gone!\n");
+    HWND hMainWnd;
+
+    hScroll = NULL;
+    hMainWnd = CreateWindowExA( 0, "MyTestWnd", "Scroll",
+      WS_OVERLAPPEDWINDOW|WS_VSCROLL|WS_HSCROLL,
+      CW_USEDEFAULT, CW_USEDEFAULT, 100, 100, NULL, NULL, GetModuleHandleA(NULL), 0 );
+    ok(hMainWnd != NULL, "Failed to create parent window. Tests aborted.\n");
+    ok(hScroll != NULL, "got NULL scroll bar handle\n");
+
+    return hMainWnd;
 }
 
-static void scrollbar_test1(void)
+static void scrollbar_test_track(void)
 {
+    HWND mainwnd;
+
+    mainwnd = create_main_test_wnd();
+
+    /* test that scrollbar tracking is terminated when
+     * the control loses mouse capture */
+    SendMessageA( hScroll, WM_LBUTTONDOWN, 0, MAKELPARAM( 1, 1));
+    /* a normal return from SendMessage */
+    /* not normal for instances such as closing the window */
+    ok( IsWindow( hScroll), "Scrollbar has gone!\n");
+
+    DestroyWindow(hScroll);
+    DestroyWindow(mainwnd);
+}
+
+static void test_EnableScrollBar(void)
+{
+    HWND mainwnd;
     BOOL ret;
+
+    mainwnd = create_main_test_wnd();
 
     ret = EnableScrollBar( hScroll, SB_CTL, ESB_DISABLE_BOTH );
     ok( ret, "The scrollbar should be disabled.\n" );
@@ -88,13 +113,26 @@ static void scrollbar_test1(void)
     ret = EnableScrollBar( hScroll, SB_CTL, ESB_ENABLE_BOTH );
     ok( ret, "The scrollbar should be enabled.\n" );
     ok( IsWindowEnabled( hScroll ), "The scrollbar window should be enabled.\n" );
+
+    /* disable window, try to re-enable */
+    ret = EnableWindow( hScroll, FALSE );
+    ok( !ret, "got %d\n", ret );
+    ok( !IsWindowEnabled( hScroll ), "The scrollbar window should be disabled.\n" );
+
+    ret = EnableScrollBar( hScroll, SB_CTL, ESB_ENABLE_BOTH );
+    ok( ret, "got %d\n", ret );
+    ok( IsWindowEnabled( hScroll ), "The scrollbar window should be disabled.\n" );
+
+    DestroyWindow(hScroll);
+    DestroyWindow(mainwnd);
 }
 
-static void scrollbar_test2(void)
+static void test_SetScrollPos(void)
 {
+    HWND mainwnd;
     int ret;
 
-    trace("The scrollbar is disabled.\n");
+    mainwnd = create_main_test_wnd();
 
     EnableWindow( hScroll, FALSE );
     ok( !IsWindowEnabled( hScroll ), "The scroll should be disabled.\n" );
@@ -114,8 +152,6 @@ static void scrollbar_test2(void)
     ret = GetScrollPos( hScroll, SB_CTL);
     ok( ret == 30, "The position should be set!!!\n");
 
-    trace("The scrollbar is enabled.\n");
-
     EnableWindow( hScroll, TRUE );
     ok( IsWindowEnabled( hScroll ), "The scroll should be enabled.\n" );
 
@@ -133,11 +169,17 @@ static void scrollbar_test2(void)
 
     ret = GetScrollPos( hScroll, SB_CTL);
     ok( ret == 30, "The position should not be equal to zero\n");
+
+    DestroyWindow(hScroll);
+    DestroyWindow(mainwnd);
 }
 
-static void scrollbar_test3(void)
+static void test_ShowScrollBar(void)
 {
+    HWND mainwnd;
     BOOL    ret;
+
+    mainwnd = create_main_test_wnd();
 
     ret = ShowScrollBar( hScroll, SB_CTL, FALSE );
     ok( ret, "The ShowScrollBar() should not failed.\n" );
@@ -150,10 +192,13 @@ static void scrollbar_test3(void)
     ret = ShowScrollBar( NULL, SB_CTL, TRUE );
     ok( !ret, "The ShowScrollBar() should failed.\n" );
 
+    DestroyWindow(hScroll);
+    DestroyWindow(mainwnd);
 }
 
-static void scrollbar_test4(void)
+static void test_GetScrollBarInfo(void)
 {
+    HWND hMainWnd;
     BOOL ret;
     SCROLLBARINFO sbi;
     RECT rect;
@@ -166,6 +211,8 @@ static void scrollbar_test4(void)
         return;
     }
 
+    hMainWnd = create_main_test_wnd();
+
     /* Test GetScrollBarInfo to make sure it returns rcScrollBar in screen
      * coordinates. */
     sbi.cbSize = sizeof(sbi);
@@ -175,11 +222,8 @@ static void scrollbar_test4(void)
     ok( ret, "The GetWindowRect() call should not fail.\n" );
     ok( !(sbi.rgstate[0] & (STATE_SYSTEM_INVISIBLE|STATE_SYSTEM_OFFSCREEN)),
         "unexpected rgstate(0x%x)\n", sbi.rgstate[0]);
-    ok( EqualRect(&rect, &sbi.rcScrollBar),
-        "WindowRect(%d, %d, %d, %d) != rcScrollBar(%d, %d, %d, %d)\n",
-        rect.top, rect.left, rect.bottom, rect.right,
-        sbi.rcScrollBar.top, sbi.rcScrollBar.left,
-        sbi.rcScrollBar.bottom, sbi.rcScrollBar.right );
+    ok(EqualRect(&rect, &sbi.rcScrollBar), "WindowRect %s != rcScrollBar %s\n",
+       wine_dbgstr_rect(&rect), wine_dbgstr_rect(&sbi.rcScrollBar));
 
     /* Test windows horizontal and vertical scrollbar to make sure rcScrollBar
      * is still returned in screen coordinates by moving the window, and
@@ -196,11 +240,8 @@ static void scrollbar_test4(void)
     OffsetRect(&rect, 5, 5);
     ret = pGetScrollBarInfo( hMainWnd, OBJID_HSCROLL, &sbi);
     ok( ret, "The GetScrollBarInfo() call should not fail.\n" );
-    ok( EqualRect(&rect, &sbi.rcScrollBar),
-        "PreviousRect(%d, %d, %d, %d) != CurrentRect(%d, %d, %d, %d)\n",
-        rect.top, rect.left, rect.bottom, rect.right,
-        sbi.rcScrollBar.top, sbi.rcScrollBar.left,
-        sbi.rcScrollBar.bottom, sbi.rcScrollBar.right );
+    ok(EqualRect(&rect, &sbi.rcScrollBar), "PreviousRect %s != CurrentRect %s\n",
+       wine_dbgstr_rect(&rect), wine_dbgstr_rect(&sbi.rcScrollBar));
 
     sbi.cbSize = sizeof(sbi);
     ret = pGetScrollBarInfo( hMainWnd, OBJID_VSCROLL, &sbi);
@@ -213,11 +254,11 @@ static void scrollbar_test4(void)
     OffsetRect(&rect, 5, 5);
     ret = pGetScrollBarInfo( hMainWnd, OBJID_VSCROLL, &sbi);
     ok( ret, "The GetScrollBarInfo() call should not fail.\n" );
-    ok( EqualRect(&rect, &sbi.rcScrollBar),
-        "PreviousRect(%d, %d, %d, %d) != CurrentRect(%d, %d, %d, %d)\n",
-        rect.top, rect.left, rect.bottom, rect.right,
-        sbi.rcScrollBar.top, sbi.rcScrollBar.left,
-        sbi.rcScrollBar.bottom, sbi.rcScrollBar.right );
+    ok(EqualRect(&rect, &sbi.rcScrollBar), "PreviousRect %s != CurrentRect %s\n",
+       wine_dbgstr_rect(&rect), wine_dbgstr_rect(&sbi.rcScrollBar));
+
+    DestroyWindow(hScroll);
+    DestroyWindow(hMainWnd);
 }
 
 /* some tests designed to show that Horizontal and Vertical
@@ -484,6 +525,62 @@ static void scrollbar_test_init(void)
     UnregisterClassA(cls_name, wc.hInstance);
 }
 
+static void test_SetScrollInfo(void)
+{
+    SCROLLINFO si;
+    HWND mainwnd;
+    BOOL ret;
+
+    mainwnd = create_main_test_wnd();
+
+    ret = IsWindowEnabled(hScroll);
+    ok(ret, "scroll bar disabled\n");
+
+    EnableScrollBar(hScroll, SB_CTL, ESB_DISABLE_BOTH);
+
+    ret = IsWindowEnabled(hScroll);
+    ok(!ret, "scroll bar enabled\n");
+
+    memset(&si, 0, sizeof(si));
+    si.cbSize = sizeof(si);
+    si.fMask = 0xf;
+    ret = GetScrollInfo(hScroll, SB_CTL, &si);
+    ok(ret, "got %d\n", ret);
+
+    /* SetScrollInfo */
+    memset(&si, 0, sizeof(si));
+    si.cbSize = sizeof(si);
+    ret = IsWindowEnabled(hScroll);
+    ok(!ret, "scroll bar enabled\n");
+    si.fMask = SIF_POS|SIF_RANGE|SIF_PAGE|SIF_DISABLENOSCROLL;
+    si.nMax = 100;
+    si.nMin = 10;
+    si.nPos = 0;
+    si.nPage = 100;
+    SetScrollInfo(hScroll, SB_CTL, &si, TRUE);
+    ret = IsWindowEnabled(hScroll);
+    ok(!ret, "scroll bar enabled\n");
+
+    si.fMask = 0xf;
+    ret = GetScrollInfo(hScroll, SB_CTL, &si);
+    ok(ret, "got %d\n", ret);
+
+    EnableScrollBar(hScroll, SB_CTL, ESB_ENABLE_BOTH);
+    ok(IsWindowEnabled(hScroll), "expected enabled scrollbar\n");
+
+    si.fMask = SIF_POS|SIF_RANGE|SIF_PAGE|SIF_DISABLENOSCROLL;
+    si.nMax = 10;
+    si.nMin = 100;
+    si.nPos = 0;
+    si.nPage = 100;
+    SetScrollInfo(hScroll, SB_CTL, &si, TRUE);
+    ret = IsWindowEnabled(hScroll);
+    ok(ret, "scroll bar disabled\n");
+
+    DestroyWindow(hScroll);
+    DestroyWindow(mainwnd);
+}
+
 START_TEST ( scroll )
 {
     WNDCLASSA wc;
@@ -502,20 +599,12 @@ START_TEST ( scroll )
     wc.lpfnWndProc = MyWndProc;
     RegisterClassA(&wc);
 
-    hMainWnd = CreateWindowExA( 0, "MyTestWnd", "Scroll",
-      WS_OVERLAPPEDWINDOW|WS_VSCROLL|WS_HSCROLL,
-      CW_USEDEFAULT, CW_USEDEFAULT, 100, 100, NULL, NULL, GetModuleHandleA(NULL), 0 );
-
-    ok(hMainWnd != NULL, "Failed to create parent window. Tests aborted.\n");
-    if (!hMainWnd) return;
-
-    assert( hScroll );
-
-    scrollbar_test1();
-    scrollbar_test2();
-    scrollbar_test3();
-    scrollbar_test4();
+    test_EnableScrollBar();
+    test_SetScrollPos();
+    test_ShowScrollBar();
+    test_GetScrollBarInfo();
     scrollbar_test_track();
+    test_SetScrollInfo();
 
     /* Some test results vary depending of theming being active or not */
     hUxtheme = LoadLibraryA("uxtheme.dll");
@@ -533,7 +622,4 @@ START_TEST ( scroll )
     scrollbar_test_default( WS_HSCROLL | WS_VSCROLL);
 
     scrollbar_test_init();
-
-    DestroyWindow(hScroll);
-    DestroyWindow(hMainWnd);
 }

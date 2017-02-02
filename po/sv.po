@@ -7,8 +7,8 @@ msgstr ""
 "POT-Creation-Date: N/A\n"
 "PO-Revision-Date: 2013-06-19 00:18+0300\n"
 "Last-Translator: Lauri Kenttä <lauri.kentta@gmail.com>\n"
-"Language-Team: none\n"
-"Language: Swedish\n"
+"Language-Team: Swedish\n"
+"Language: sv\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -47,8 +47,8 @@ msgstr "&Supportinformation"
 msgid "&Modify..."
 msgstr "&Ändra..."
 
-#: appwiz.rc:69 appwiz.rc:45 cryptui.rc:346 msacm32.rc:40 winecfg.rc:198
-#: winecfg.rc:235 wordpad.rc:248
+#: appwiz.rc:69 appwiz.rc:45 cryptui.rc:346 msacm32.rc:40 winecfg.rc:200
+#: winecfg.rc:237 wordpad.rc:256
 msgid "&Remove"
 msgstr "Ta &bort"
 
@@ -56,21 +56,20 @@ msgstr "Ta &bort"
 msgid "Support Information"
 msgstr "Supportinformation"
 
-#: appwiz.rc:78 avifil32.rc:54 comctl32.rc:55 comdlg32.rc:231 comdlg32.rc:261
-#: comdlg32.rc:304 comdlg32.rc:358 comdlg32.rc:397 comdlg32.rc:451
-#: credui.rc:52 cryptui.rc:263 cryptui.rc:275 cryptui.rc:365 dinput.rc:46
-#: ieframe.rc:96 localui.rc:44 localui.rc:57 mpr.rc:49 msacm32.rc:53
-#: mshtml.rc:47 mshtml.rc:57 msvfw32.rc:36 oledlg.rc:58 oledlg.rc:90
-#: serialui.rc:41 setupapi.rc:59 shell32.rc:276 shell32.rc:300 shell32.rc:322
-#: shell32.rc:340 shlwapi.rc:44 user32.rc:80 user32.rc:98 wininet.rc:51
-#: wininet.rc:71 winspool.rc:42 net.rc:47 notepad.rc:117 oleview.rc:162
-#: oleview.rc:175 progman.rc:106 progman.rc:124 progman.rc:142 progman.rc:158
-#: progman.rc:180 progman.rc:199 progman.rc:216 regedit.rc:247 regedit.rc:258
-#: regedit.rc:271 regedit.rc:287 regedit.rc:300 regedit.rc:313 taskmgr.rc:442
-#: taskmgr.rc:517 winecfg.rc:212 winecfg.rc:222 wineconsole.rc:134
-#: winefile.rc:131 winefile.rc:154 winefile.rc:184 winemine.rc:71
-#: winemine.rc:81 winemine.rc:95 wordpad.rc:207 wordpad.rc:218 wordpad.rc:236
-#: wordpad.rc:249
+#: appwiz.rc:78 avifil32.rc:54 comctl32.rc:55 comdlg32.rc:232 comdlg32.rc:262
+#: comdlg32.rc:305 comdlg32.rc:359 comdlg32.rc:398 comdlg32.rc:452 credui.rc:52
+#: cryptui.rc:263 cryptui.rc:275 cryptui.rc:365 dinput.rc:46 ieframe.rc:96
+#: localui.rc:44 localui.rc:57 mpr.rc:49 msacm32.rc:53 mshtml.rc:47
+#: mshtml.rc:57 msvfw32.rc:36 oledlg.rc:62 oledlg.rc:94 serialui.rc:41
+#: setupapi.rc:59 shell32.rc:276 shell32.rc:300 shell32.rc:322 shell32.rc:341
+#: shlwapi.rc:44 user32.rc:83 user32.rc:98 wininet.rc:51 wininet.rc:71
+#: winspool.rc:42 net.rc:47 notepad.rc:117 oleview.rc:162 oleview.rc:175
+#: progman.rc:106 progman.rc:124 progman.rc:142 progman.rc:158 progman.rc:180
+#: progman.rc:199 progman.rc:216 regedit.rc:247 regedit.rc:258 regedit.rc:271
+#: regedit.rc:287 regedit.rc:300 regedit.rc:313 taskmgr.rc:442 taskmgr.rc:517
+#: winecfg.rc:214 winecfg.rc:224 wineconsole.rc:135 winefile.rc:128
+#: winefile.rc:151 winefile.rc:181 winemine.rc:71 winemine.rc:81 winemine.rc:95
+#: wordpad.rc:215 wordpad.rc:226 wordpad.rc:244 wordpad.rc:257
 msgid "OK"
 msgstr "OK"
 
@@ -82,7 +81,7 @@ msgstr "Följande information kan användas för att få teknisk support för %s
 msgid "Publisher:"
 msgstr "Utgivare:"
 
-#: appwiz.rc:81 winefile.rc:169
+#: appwiz.rc:81 winefile.rc:166
 msgid "Version:"
 msgstr "Version:"
 
@@ -137,22 +136,22 @@ msgid "&Install"
 msgstr "&Installera"
 
 #: appwiz.rc:110 appwiz.rc:125 avifil32.rc:55 browseui.rc:40 comctl32.rc:56
-#: comctl32.rc:71 comdlg32.rc:170 comdlg32.rc:192 comdlg32.rc:210
-#: comdlg32.rc:232 comdlg32.rc:262 comdlg32.rc:305 comdlg32.rc:327
-#: comdlg32.rc:347 comdlg32.rc:359 comdlg32.rc:398 comdlg32.rc:452
-#: comdlg32.rc:477 comdlg32.rc:495 credui.rc:53 cryptui.rc:264 cryptui.rc:276
+#: comctl32.rc:71 comdlg32.rc:171 comdlg32.rc:193 comdlg32.rc:211
+#: comdlg32.rc:233 comdlg32.rc:263 comdlg32.rc:306 comdlg32.rc:328
+#: comdlg32.rc:348 comdlg32.rc:360 comdlg32.rc:399 comdlg32.rc:453
+#: comdlg32.rc:478 comdlg32.rc:501 credui.rc:53 cryptui.rc:264 cryptui.rc:276
 #: cryptui.rc:366 dinput.rc:47 ieframe.rc:97 inetcpl.rc:81 localui.rc:45
 #: localui.rc:58 mpr.rc:50 msacm32.rc:54 mshtml.rc:48 mshtml.rc:58
-#: msvfw32.rc:37 oledlg.rc:59 oledlg.rc:91 serialui.rc:42 setupapi.rc:42
-#: setupapi.rc:60 shell32.rc:277 shell32.rc:301 shell32.rc:312 shell32.rc:341
-#: shlwapi.rc:45 user32.rc:81 user32.rc:99 wininet.rc:52 wininet.rc:72
+#: msvfw32.rc:37 oledlg.rc:63 oledlg.rc:95 serialui.rc:42 setupapi.rc:42
+#: setupapi.rc:60 shell32.rc:277 shell32.rc:301 shell32.rc:312 shell32.rc:342
+#: shlwapi.rc:45 user32.rc:84 user32.rc:99 wininet.rc:52 wininet.rc:72
 #: winspool.rc:43 notepad.rc:118 oleview.rc:163 oleview.rc:176 progman.rc:107
 #: progman.rc:125 progman.rc:143 progman.rc:159 progman.rc:181 progman.rc:200
 #: progman.rc:217 regedit.rc:248 regedit.rc:259 regedit.rc:272 regedit.rc:288
 #: regedit.rc:301 regedit.rc:314 taskmgr.rc:443 taskmgr.rc:518 wineboot.rc:34
-#: winecfg.rc:213 winecfg.rc:223 wineconsole.rc:135 winefile.rc:132
-#: winefile.rc:155 winefile.rc:185 winemine.rc:96 wordpad.rc:208
-#: wordpad.rc:219 wordpad.rc:237 wordpad.rc:250
+#: winecfg.rc:215 winecfg.rc:225 wineconsole.rc:136 winefile.rc:129
+#: winefile.rc:152 winefile.rc:182 winemine.rc:96 wordpad.rc:216 wordpad.rc:227
+#: wordpad.rc:245 wordpad.rc:258
 msgid "Cancel"
 msgstr "Avbryt"
 
@@ -304,15 +303,15 @@ msgstr "okomprimerad"
 msgid "Canceling..."
 msgstr "Avbryter..."
 
-#: comctl32.rc:52 winefile.rc:160
+#: comctl32.rc:52 winefile.rc:157
 msgid "Properties for %s"
 msgstr "Egenskaper för %s"
 
-#: comctl32.rc:57 comdlg32.rc:263
+#: comctl32.rc:57 comdlg32.rc:264
 msgid "&Apply"
 msgstr "&Verkställ"
 
-#: comctl32.rc:58 comctl32.rc:72 comdlg32.rc:306 user32.rc:89
+#: comctl32.rc:58 comctl32.rc:72 comdlg32.rc:307 user32.rc:88
 msgid "Help"
 msgstr "Hjälp"
 
@@ -345,13 +344,13 @@ msgstr "St&äng"
 msgid "R&eset"
 msgstr "&Återställ"
 
-#: comctl32.rc:86 comdlg32.rc:171 comdlg32.rc:193 comdlg32.rc:264
-#: comdlg32.rc:328 comdlg32.rc:348 comdlg32.rc:360 comdlg32.rc:478
-#: comdlg32.rc:496 ieframe.rc:58 msacm32.rc:52 oledlg.rc:92 shell32.rc:128
+#: comctl32.rc:86 comdlg32.rc:172 comdlg32.rc:194 comdlg32.rc:265
+#: comdlg32.rc:329 comdlg32.rc:349 comdlg32.rc:361 comdlg32.rc:479
+#: comdlg32.rc:502 ieframe.rc:58 msacm32.rc:52 oledlg.rc:96 shell32.rc:128
 #: clock.rc:44 notepad.rc:60 notepad.rc:119 oleview.rc:72 progman.rc:55
 #: progman.rc:108 progman.rc:126 progman.rc:144 progman.rc:160 progman.rc:184
 #: progman.rc:202 progman.rc:219 regedit.rc:79 taskmgr.rc:87 winefile.rc:82
-#: winemine.rc:51 winhlp32.rc:56 wordpad.rc:94
+#: winemine.rc:51 winhlp32.rc:57 wordpad.rc:102
 msgid "&Help"
 msgstr "&Hjälp"
 
@@ -389,7 +388,7 @@ msgid "None"
 msgstr "Ingen"
 
 #: comctl32.rc:31 cryptui.rc:230 regedit.rc:237 taskmgr.rc:434 winedbg.rc:60
-#: winedbg.rc:75 wordpad.rc:172
+#: winedbg.rc:75 wordpad.rc:180
 msgid "Close"
 msgstr "Stäng"
 
@@ -401,404 +400,400 @@ msgstr "Idag:"
 msgid "Go to today"
 msgstr "Gå till idag"
 
-#: comdlg32.rc:156 comdlg32.rc:169 comdlg32.rc:458 comdlg32.rc:484
+#: comdlg32.rc:157 comdlg32.rc:170 comdlg32.rc:459 comdlg32.rc:485
 #: shell32.rc:167 oleview.rc:102
 msgid "Open"
 msgstr "Öppna"
 
-#: comdlg32.rc:159 comdlg32.rc:181
+#: comdlg32.rc:160 comdlg32.rc:182
 msgid "File &Name:"
 msgstr "Fil&namn:"
 
-#: comdlg32.rc:162 comdlg32.rc:184
+#: comdlg32.rc:163 comdlg32.rc:185
 msgid "&Directories:"
 msgstr "&Kataloger:"
 
-#: comdlg32.rc:165 comdlg32.rc:187
+#: comdlg32.rc:166 comdlg32.rc:188
 msgid "List Files of &Type:"
 msgstr "Lista filer av &typen:"
 
-#: comdlg32.rc:167 comdlg32.rc:189
+#: comdlg32.rc:168 comdlg32.rc:190
 msgid "Dri&ves:"
 msgstr "&Enheter:"
 
-#: comdlg32.rc:172 comdlg32.rc:194 winefile.rc:176
+#: comdlg32.rc:173 comdlg32.rc:195 winefile.rc:173
 msgid "&Read Only"
 msgstr "Sk&rivskyddad"
 
-#: comdlg32.rc:178
+#: comdlg32.rc:179
 msgid "Save As..."
 msgstr "Spara som..."
 
-#: comdlg32.rc:191 comdlg32.rc:145
+#: comdlg32.rc:192 comdlg32.rc:145
 msgid "Save As"
 msgstr "Spara som"
 
-#: comdlg32.rc:200 comdlg32.rc:209 comdlg32.rc:355 comdlg32.rc:54 hhctrl.rc:49
-#: wordpad.rc:165
+#: comdlg32.rc:201 comdlg32.rc:210 comdlg32.rc:356 comdlg32.rc:54 hhctrl.rc:49
+#: wordpad.rc:173
 msgid "Print"
 msgstr "Skriv ut"
 
-#: comdlg32.rc:203
+#: comdlg32.rc:204
 msgid "Printer:"
 msgstr "Skrivare:"
 
-#: comdlg32.rc:205 comdlg32.rc:382
+#: comdlg32.rc:206 comdlg32.rc:383
 msgid "Print range"
 msgstr "Skriv ut"
 
-#: comdlg32.rc:206 comdlg32.rc:383 regedit.rc:219
+#: comdlg32.rc:207 comdlg32.rc:384 regedit.rc:219
 msgid "&All"
 msgstr "&Allt"
 
-#: comdlg32.rc:207
+#: comdlg32.rc:208
 msgid "S&election"
 msgstr "&Markerat"
 
-#: comdlg32.rc:208
+#: comdlg32.rc:209
 msgid "&Pages"
 msgstr "&Sidor"
 
-#: comdlg32.rc:211 comdlg32.rc:233
+#: comdlg32.rc:212 comdlg32.rc:234
 msgid "&Setup"
 msgstr "&Inställningar"
 
-#: comdlg32.rc:212
+#: comdlg32.rc:213
 msgid "&From:"
 msgstr "&Från:"
 
-#: comdlg32.rc:213
+#: comdlg32.rc:214
 msgid "&To:"
 msgstr "&Till:"
 
-#: comdlg32.rc:214 wineps.rc:42
+#: comdlg32.rc:215 wineps.rc:42
 msgid "Print &Quality:"
 msgstr "Utskriftskvalitet:"
 
-#: comdlg32.rc:216
+#: comdlg32.rc:217
 msgid "Print to Fi&le"
 msgstr "&Skriv till fil"
 
-#: comdlg32.rc:217
+#: comdlg32.rc:218
 msgid "Condensed"
 msgstr "Sammantryckt"
 
-#: comdlg32.rc:223 comdlg32.rc:394
+#: comdlg32.rc:224 comdlg32.rc:395
 msgid "Print Setup"
 msgstr "Skrivarinställningar"
 
-#: comdlg32.rc:226 comdlg32.rc:362 comdlg32.rc:401
+#: comdlg32.rc:227 comdlg32.rc:363 comdlg32.rc:402
 msgid "Printer"
 msgstr "Skrivare"
 
-#: comdlg32.rc:227
+#: comdlg32.rc:228
 msgid "&Default Printer"
 msgstr "&Standardskrivare"
 
-#: comdlg32.rc:228
+#: comdlg32.rc:229
 msgid "[none]"
 msgstr "[ingen]"
 
-#: comdlg32.rc:229
+#: comdlg32.rc:230
 msgid "Specific &Printer"
 msgstr "S&pecificerad skrivare"
 
-#: comdlg32.rc:234 comdlg32.rc:420 comdlg32.rc:439 wineps.rc:34
+#: comdlg32.rc:235 comdlg32.rc:421 comdlg32.rc:440 wineps.rc:34
 msgid "Orientation"
 msgstr "Orientering"
 
-#: comdlg32.rc:235
+#: comdlg32.rc:236
 msgid "Po&rtrait"
 msgstr "S&tående"
 
-#: comdlg32.rc:236 comdlg32.rc:441 wineps.rc:37
+#: comdlg32.rc:237 comdlg32.rc:442 wineps.rc:37
 msgid "&Landscape"
 msgstr "&Liggande"
 
-#: comdlg32.rc:239 comdlg32.rc:414 comdlg32.rc:434 wineps.rc:28
+#: comdlg32.rc:240 comdlg32.rc:415 comdlg32.rc:435 wineps.rc:28
 msgid "Paper"
 msgstr "Papper"
 
-#: comdlg32.rc:240
+#: comdlg32.rc:241
 msgid "Si&ze"
 msgstr "St&orlek"
 
-#: comdlg32.rc:241
+#: comdlg32.rc:242
 msgid "&Source"
 msgstr "&Källa"
 
-#: comdlg32.rc:249 wineconsole.rc:84
+#: comdlg32.rc:250 wineconsole.rc:85
 msgid "Font"
 msgstr "Typsnitt"
 
-#: comdlg32.rc:252
+#: comdlg32.rc:253
 msgid "&Font:"
 msgstr "&Typsnitt:"
 
-#: comdlg32.rc:255
+#: comdlg32.rc:256
 msgid "Font St&yle:"
 msgstr "Typsnittss&til:"
 
-#: comdlg32.rc:258 comdlg32.rc:435 winecfg.rc:292
+#: comdlg32.rc:259 comdlg32.rc:436 winecfg.rc:294
 msgid "&Size:"
 msgstr "&Storlek:"
 
-#: comdlg32.rc:265
+#: comdlg32.rc:266
 msgid "Effects"
 msgstr "Effekter"
 
-#: comdlg32.rc:266
+#: comdlg32.rc:267
 msgid "Stri&keout"
 msgstr "&Genomstruken"
 
-#: comdlg32.rc:267
+#: comdlg32.rc:268
 msgid "&Underline"
 msgstr "&Understruken"
 
-#: comdlg32.rc:268 winecfg.rc:290
+#: comdlg32.rc:269 winecfg.rc:292
 msgid "&Color:"
 msgstr "&Färg:"
 
-#: comdlg32.rc:271
+#: comdlg32.rc:272
 msgid "Sample"
 msgstr "Test"
 
-#: comdlg32.rc:273
+#: comdlg32.rc:274
 msgid "Scr&ipt:"
 msgstr "Skr&ift:"
 
-#: comdlg32.rc:281
+#: comdlg32.rc:282
 msgid "Color"
 msgstr "Färg"
 
-#: comdlg32.rc:284
+#: comdlg32.rc:285
 msgid "&Basic Colors:"
 msgstr "&Grundläggande färger:"
 
-#: comdlg32.rc:285
+#: comdlg32.rc:286
 msgid "&Custom Colors:"
 msgstr "&Egendefinierade färger:"
 
-#: comdlg32.rc:286 comdlg32.rc:309
+#: comdlg32.rc:287 comdlg32.rc:310
 msgid "Color |  Sol&id"
 msgstr "Färg |  Enfärgat"
 
-#: comdlg32.rc:287
+#: comdlg32.rc:288
 msgid "&Red:"
 msgstr "&Röd:"
 
-#: comdlg32.rc:289
+#: comdlg32.rc:290
 msgid "&Green:"
 msgstr "&Grön:"
 
-#: comdlg32.rc:291
+#: comdlg32.rc:292
 msgid "&Blue:"
 msgstr "&Blå:"
 
-#: comdlg32.rc:293
+#: comdlg32.rc:294
 msgid "&Hue:"
 msgstr "&Nyans:"
 
-#: comdlg32.rc:295
+#: comdlg32.rc:296
 msgctxt "Saturation"
 msgid "&Sat:"
 msgstr "&Mättn:"
 
-#: comdlg32.rc:297
+#: comdlg32.rc:298
 msgctxt "Luminance"
 msgid "&Lum:"
 msgstr "&Lum:"
 
-#: comdlg32.rc:307
+#: comdlg32.rc:308
 msgid "&Add to Custom Colors"
 msgstr "&Lägg till egendefinierad färg"
 
-#: comdlg32.rc:308
+#: comdlg32.rc:309
 msgid "&Define Custom Colors >>"
 msgstr "&Definiera egen färg >>"
 
-#: comdlg32.rc:315 regedit.rc:226 regedit.rc:236
+#: comdlg32.rc:316 regedit.rc:226 regedit.rc:236
 msgid "Find"
 msgstr "Sök"
 
-#: comdlg32.rc:318 comdlg32.rc:337
+#: comdlg32.rc:319 comdlg32.rc:338
 msgid "Fi&nd What:"
 msgstr "&Sök efter:"
 
-#: comdlg32.rc:320 comdlg32.rc:341
+#: comdlg32.rc:321 comdlg32.rc:342
 msgid "Match &Whole Word Only"
 msgstr "&Bara hela ord"
 
-#: comdlg32.rc:321 comdlg32.rc:342
+#: comdlg32.rc:322 comdlg32.rc:343
 msgid "Match &Case"
 msgstr "&Skillnad på stora/små bokstäver"
 
-#: comdlg32.rc:322 joy.rc:71
+#: comdlg32.rc:323 joy.rc:71
 msgid "Direction"
 msgstr "Riktning"
 
-#: comdlg32.rc:323 view.rc:42
+#: comdlg32.rc:324 view.rc:42
 msgid "&Up"
 msgstr "&Upp"
 
-#: comdlg32.rc:324 view.rc:43
+#: comdlg32.rc:325 view.rc:43
 msgid "&Down"
 msgstr "&Ner"
 
-#: comdlg32.rc:326 comdlg32.rc:344
+#: comdlg32.rc:327 comdlg32.rc:345
 msgid "&Find Next"
 msgstr "&Sök efter nästa"
 
-#: comdlg32.rc:334
+#: comdlg32.rc:335
 msgid "Replace"
 msgstr "Sök/ersätt"
 
-#: comdlg32.rc:339
+#: comdlg32.rc:340
 msgid "Re&place With:"
 msgstr "&Ersätt med:"
 
-#: comdlg32.rc:345
+#: comdlg32.rc:346
 msgid "&Replace"
 msgstr "&Ersätt"
 
-#: comdlg32.rc:346
+#: comdlg32.rc:347
 msgid "Replace &All"
 msgstr "Ersätt &alla"
 
-#: comdlg32.rc:363
+#: comdlg32.rc:364
 msgid "Print to fi&le"
 msgstr "Skr&iv till fil"
 
-#: comdlg32.rc:364 comdlg32.rc:402 ieframe.rc:42 shdoclc.rc:61 shell32.rc:108
+#: comdlg32.rc:365 comdlg32.rc:403 ieframe.rc:42 shdoclc.rc:61 shell32.rc:108
 #: clock.rc:31 wineconsole.rc:30
 msgid "&Properties"
 msgstr "&Egenskaper"
 
-#: comdlg32.rc:365 comdlg32.rc:403 msacm32.rc:34 winefile.rc:141
+#: comdlg32.rc:366 comdlg32.rc:404 msacm32.rc:34 winefile.rc:138
 msgid "&Name:"
 msgstr "&Namn:"
 
-#: comdlg32.rc:367 comdlg32.rc:405
+#: comdlg32.rc:368 comdlg32.rc:406
 msgid "Status:"
 msgstr "Status:"
 
-#: comdlg32.rc:369 comdlg32.rc:407
+#: comdlg32.rc:370 comdlg32.rc:408
 msgid "Type:"
 msgstr "Typ:"
 
-#: comdlg32.rc:371 comdlg32.rc:409
+#: comdlg32.rc:372 comdlg32.rc:410
 msgid "Where:"
 msgstr "Plats:"
 
-#: comdlg32.rc:373 comdlg32.rc:411
+#: comdlg32.rc:374 comdlg32.rc:412
 msgid "Comment:"
 msgstr "Kommentar:"
 
-#: comdlg32.rc:376
+#: comdlg32.rc:377
 msgid "Copies"
 msgstr "Kopior"
 
-#: comdlg32.rc:377
+#: comdlg32.rc:378
 msgid "Number of &copies:"
 msgstr "Antal k&opior:"
 
-#: comdlg32.rc:379
+#: comdlg32.rc:380
 msgid "C&ollate"
 msgstr "&Sortera"
 
-#: comdlg32.rc:384
+#: comdlg32.rc:385
 msgid "Pa&ges"
 msgstr "Si&dor"
 
-#: comdlg32.rc:385
+#: comdlg32.rc:386
 msgid "&Selection"
 msgstr "&Markering"
 
-#: comdlg32.rc:388
+#: comdlg32.rc:389
 msgid "&from:"
 msgstr "&från:"
 
-#: comdlg32.rc:389
+#: comdlg32.rc:390
 msgid "&to:"
 msgstr "&till:"
 
-#: comdlg32.rc:415 winecfg.rc:298
+#: comdlg32.rc:416 winecfg.rc:300
 msgid "Si&ze:"
 msgstr "St&orlek:"
 
-#: comdlg32.rc:417
+#: comdlg32.rc:418
 msgid "&Source:"
 msgstr "&Källa:"
 
-#: comdlg32.rc:422
+#: comdlg32.rc:423
 msgid "P&ortrait"
 msgstr "St&ående"
 
-#: comdlg32.rc:423
+#: comdlg32.rc:424
 msgid "L&andscape"
 msgstr "L&iggande"
 
-#: comdlg32.rc:428
+#: comdlg32.rc:429
 msgid "Setup Page"
 msgstr "Utskriftsformat"
 
-#: comdlg32.rc:437
+#: comdlg32.rc:438
 msgid "&Tray:"
 msgstr "&Fack:"
 
-#: comdlg32.rc:440 wineps.rc:35
+#: comdlg32.rc:441 wineps.rc:35
 msgid "&Portrait"
 msgstr "&Stående"
 
-#: comdlg32.rc:442
-msgid "Borders"
-msgstr "Marginaler"
-
-#: comdlg32.rc:443
+#: comdlg32.rc:444
 msgid "L&eft:"
 msgstr "&Vänster:"
 
-#: comdlg32.rc:445 notepad.rc:112
+#: comdlg32.rc:446 notepad.rc:112
 msgid "&Right:"
 msgstr "&Höger:"
 
-#: comdlg32.rc:447
+#: comdlg32.rc:448
 msgid "T&op:"
 msgstr "&Överkant:"
 
-#: comdlg32.rc:449 notepad.rc:114
+#: comdlg32.rc:450 notepad.rc:114
 msgid "&Bottom:"
 msgstr "&Under:"
 
-#: comdlg32.rc:453
+#: comdlg32.rc:454
 msgid "P&rinter..."
 msgstr "&Skrivare..."
 
-#: comdlg32.rc:461
+#: comdlg32.rc:462
 msgid "Look &in:"
 msgstr "Leta &i:"
 
-#: comdlg32.rc:467
+#: comdlg32.rc:468
 msgid "File &name:"
 msgstr "Fil&namn:"
 
-#: comdlg32.rc:471
+#: comdlg32.rc:472
 msgid "Files of &type:"
 msgstr "&Filformat:"
 
-#: comdlg32.rc:474
+#: comdlg32.rc:475
 msgid "Open as &read-only"
 msgstr "Öppna som &skrivskyddad"
 
-#: comdlg32.rc:476 comdlg32.rc:494 shdoclc.rc:127 shell32.rc:99
+#: comdlg32.rc:477 comdlg32.rc:495 shdoclc.rc:127 shell32.rc:99
 msgid "&Open"
 msgstr "&Öppna"
 
-#: comdlg32.rc:487
+#: comdlg32.rc:488
 msgid "File name:"
 msgstr "Filnamn:"
 
-#: comdlg32.rc:490
+#: comdlg32.rc:491
 msgid "Files of type:"
 msgstr "Filformat:"
 
@@ -848,7 +843,7 @@ msgstr "Filen finns inte"
 
 #: comdlg32.rc:40
 msgid "The selection contains a non-folder object"
-msgstr ""
+msgstr "Du har valt en objekt som inte är en mapp"
 
 #: comdlg32.rc:45
 msgid "Up One Level"
@@ -886,67 +881,67 @@ msgstr "Kursiv"
 msgid "Bold Italic"
 msgstr "Fet kursiv"
 
-#: comdlg32.rc:121 wordpad.rc:117
+#: comdlg32.rc:121 wordpad.rc:125
 msgid "Black"
 msgstr "Svart"
 
-#: comdlg32.rc:122 wordpad.rc:118
+#: comdlg32.rc:122 wordpad.rc:126
 msgid "Maroon"
 msgstr "Rödbrun"
 
-#: comdlg32.rc:123 wordpad.rc:119
+#: comdlg32.rc:123 wordpad.rc:127
 msgid "Green"
 msgstr "Grön"
 
-#: comdlg32.rc:124 wordpad.rc:120
+#: comdlg32.rc:124 wordpad.rc:128
 msgid "Olive"
 msgstr "Oliv"
 
-#: comdlg32.rc:125 wordpad.rc:121
+#: comdlg32.rc:125 wordpad.rc:129
 msgid "Navy"
 msgstr "Marinblå"
 
-#: comdlg32.rc:126 wordpad.rc:122
+#: comdlg32.rc:126 wordpad.rc:130
 msgid "Purple"
 msgstr "Lila"
 
-#: comdlg32.rc:127 wordpad.rc:123
+#: comdlg32.rc:127 wordpad.rc:131
 msgid "Teal"
 msgstr "Teal"
 
-#: comdlg32.rc:128 wordpad.rc:124
+#: comdlg32.rc:128 wordpad.rc:132
 msgid "Gray"
 msgstr "Grå"
 
-#: comdlg32.rc:129 wordpad.rc:125
+#: comdlg32.rc:129 wordpad.rc:133
 msgid "Silver"
 msgstr "Silver"
 
-#: comdlg32.rc:130 wordpad.rc:126
+#: comdlg32.rc:130 wordpad.rc:134
 msgid "Red"
 msgstr "Röd"
 
-#: comdlg32.rc:131 wordpad.rc:127
+#: comdlg32.rc:131 wordpad.rc:135
 msgid "Lime"
 msgstr "Limegrön"
 
-#: comdlg32.rc:132 wordpad.rc:128
+#: comdlg32.rc:132 wordpad.rc:136
 msgid "Yellow"
 msgstr "Gul"
 
-#: comdlg32.rc:133 wordpad.rc:129
+#: comdlg32.rc:133 wordpad.rc:137
 msgid "Blue"
 msgstr "Blå"
 
-#: comdlg32.rc:134 wordpad.rc:130
+#: comdlg32.rc:134 wordpad.rc:138
 msgid "Fuchsia"
 msgstr "Fuchsia"
 
-#: comdlg32.rc:135 wordpad.rc:131
+#: comdlg32.rc:135 wordpad.rc:139
 msgid "Aqua"
 msgstr "Aqua"
 
-#: comdlg32.rc:136 wordpad.rc:132
+#: comdlg32.rc:136 wordpad.rc:140
 msgid "White"
 msgstr "Vit"
 
@@ -1039,10 +1034,12 @@ msgid "Open File"
 msgstr "Öppna fil"
 
 #: comdlg32.rc:147
-#, fuzzy
-#| msgid "New Folder"
 msgid "Select Folder"
-msgstr "Ny mapp"
+msgstr "Välj mapp"
+
+#: comdlg32.rc:148
+msgid "Font size has to be a number."
+msgstr "Typsnitts storlek måste vara ett tal."
 
 #: comdlg32.rc:83 oleview.rc:98
 msgid "Ready"
@@ -1126,7 +1123,7 @@ msgstr "Ingen toner; "
 
 #: comdlg32.rc:103
 msgid "Page punt; "
-msgstr ""
+msgstr "Pappersproblem; "
 
 #: comdlg32.rc:104
 msgid "Interrupted by user; "
@@ -1219,7 +1216,7 @@ msgstr "Caps Lock är på"
 
 #: crypt32.rc:30
 msgid "Authority Key Identifier"
-msgstr ""
+msgstr "Utfärdarens nyckel-ID"
 
 #: crypt32.rc:31
 msgid "Key Attributes"
@@ -1231,11 +1228,11 @@ msgstr "Nyckelanvändningsbegränsning"
 
 #: crypt32.rc:33
 msgid "Subject Alternative Name"
-msgstr ""
+msgstr "Certifikatämnets andra namn"
 
 #: crypt32.rc:34
 msgid "Issuer Alternative Name"
-msgstr ""
+msgstr "Utfärdarens andra namn"
 
 #: crypt32.rc:35
 msgid "Basic Constraints"
@@ -1251,7 +1248,7 @@ msgstr "Certifikatpolicyer"
 
 #: crypt32.rc:38
 msgid "Subject Key Identifier"
-msgstr ""
+msgstr "Certifikatämnets nyckel-ID"
 
 #: crypt32.rc:39
 msgid "CRL Reason Code"
@@ -1267,7 +1264,7 @@ msgstr "Utökad nyckelanvändning"
 
 #: crypt32.rc:42
 msgid "Authority Information Access"
-msgstr ""
+msgstr "Åtkomst till auktoritetsinformation"
 
 #: crypt32.rc:43
 msgid "Certificate Extensions"
@@ -1275,11 +1272,11 @@ msgstr "Certifikattillägg"
 
 #: crypt32.rc:44
 msgid "Next Update Location"
-msgstr ""
+msgstr "Nästa uppdateringsplats"
 
 #: crypt32.rc:45
 msgid "Yes or No Trust"
-msgstr ""
+msgstr "Förtroende eller ej"
 
 #: crypt32.rc:46
 msgid "Email Address"
@@ -1295,7 +1292,7 @@ msgstr "Innehållstyp"
 
 #: crypt32.rc:49
 msgid "Message Digest"
-msgstr ""
+msgstr "Sammandrag av meddelande"
 
 #: crypt32.rc:50
 msgid "Signing Time"
@@ -1307,7 +1304,7 @@ msgstr "Counter Sign"
 
 #: crypt32.rc:52
 msgid "Challenge Password"
-msgstr ""
+msgstr "Kravets lösenord"
 
 #: crypt32.rc:53
 msgid "Unstructured Address"
@@ -1315,7 +1312,7 @@ msgstr "Ostrukturerad adress"
 
 #: crypt32.rc:54
 msgid "S/MIME Capabilities"
-msgstr ""
+msgstr "S/MIME-kapacitet"
 
 #: crypt32.rc:55
 msgid "Prefer Signed Data"
@@ -1332,7 +1329,7 @@ msgstr "Användarmeddelande"
 
 #: crypt32.rc:58
 msgid "On-line Certificate Status Protocol"
-msgstr ""
+msgstr "Online Certificate Status Protocol"
 
 #: crypt32.rc:59
 msgid "Certification Authority Issuer"
@@ -1340,7 +1337,7 @@ msgstr "Certifikatauktoritetsutfärdare"
 
 #: crypt32.rc:60
 msgid "Certification Template Name"
-msgstr ""
+msgstr "Certificatmallens namn"
 
 #: crypt32.rc:61
 msgid "Certificate Type"
@@ -1396,7 +1393,7 @@ msgstr "Organisationsenhet"
 
 #: crypt32.rc:74
 msgid "Common Name"
-msgstr ""
+msgstr "Vanligt namn"
 
 #: crypt32.rc:75
 msgid "Locality"
@@ -1444,7 +1441,7 @@ msgstr ""
 
 #: crypt32.rc:86
 msgid "Serialized Signature Serial Number"
-msgstr ""
+msgstr "Serienummer för serialiserad signatur"
 
 #: crypt32.rc:87
 msgid "Principal Name"
@@ -2202,7 +2199,7 @@ msgstr ""
 msgid "&File name:"
 msgstr "&Filnamn:"
 
-#: cryptui.rc:296 cryptui.rc:318 cryptui.rc:432 winecfg.rc:307
+#: cryptui.rc:296 cryptui.rc:318 cryptui.rc:432 winecfg.rc:309
 msgid "B&rowse..."
 msgstr "B&läddra..."
 
@@ -2730,7 +2727,7 @@ msgstr ""
 #: cryptui.rc:113
 msgid ""
 "You will no longer be able to encrypt messages with these certificates, or "
-"verify messages signed with it.\n"
+"verify messages signed with them.\n"
 "Are you sure you want to remove these certificates?"
 msgstr ""
 "Du kommer inte längre kunna kryptera meddelanden med dessa certifikat, eller "
@@ -2958,7 +2955,7 @@ msgstr "Återställa"
 msgid "Player"
 msgstr "Spelare"
 
-#: dinput.rc:52
+#: dinput.rc:52 winecfg.rc:89
 msgid "Device"
 msgstr "Enhet"
 
@@ -3106,11 +3103,11 @@ msgstr "Ansluter till kamera... vänta"
 msgid "S&ync"
 msgstr "S&ynkronisera"
 
-#: hhctrl.rc:60 shdoclc.rc:41 winhlp32.rc:89
+#: hhctrl.rc:60 hhctrl.rc:73 shdoclc.rc:41 winhlp32.rc:89
 msgid "&Back"
 msgstr "&Bakåt"
 
-#: hhctrl.rc:61
+#: hhctrl.rc:61 hhctrl.rc:74
 msgid "&Forward"
 msgstr "&Framåt"
 
@@ -3123,13 +3120,45 @@ msgstr "S&tartsida"
 msgid "&Stop"
 msgstr "&Stopp"
 
-#: hhctrl.rc:64 shdoclc.rc:59
+#: hhctrl.rc:64 hhctrl.rc:81 shdoclc.rc:59
 msgid "&Refresh"
 msgstr "Upp&datera"
 
-#: hhctrl.rc:65 winhlp32.rc:34
+#: hhctrl.rc:65 hhctrl.rc:80 winhlp32.rc:34
 msgid "&Print..."
 msgstr "Skriv &ut..."
+
+#: hhctrl.rc:76 hhctrl.rc:90 shdoclc.rc:49 shdoclc.rc:98 shdoclc.rc:120
+#: user32.rc:65
+msgid "Select &All"
+msgstr "&Markera allt"
+
+#: hhctrl.rc:78 shdoclc.rc:54
+msgid "&View Source"
+msgstr "&Visa källkod"
+
+#: hhctrl.rc:83
+msgid "Proper&ties"
+msgstr "&Egenskaper"
+
+#: hhctrl.rc:87 shdoclc.rc:79 shdoclc.rc:93 shdoclc.rc:117 shdoclc.rc:159
+#: shdoclc.rc:183 user32.rc:60 wordpad.rc:112
+msgid "Cu&t"
+msgstr "Klipp &ut"
+
+#: hhctrl.rc:88 shdoclc.rc:80 shdoclc.rc:94 shdoclc.rc:118 shdoclc.rc:133
+#: shdoclc.rc:160 shdoclc.rc:184 shell32.rc:102 user32.rc:61 wineconsole.rc:32
+#: winhlp32.rc:40 wordpad.rc:113
+msgid "&Copy"
+msgstr "&Kopiera"
+
+#: hhctrl.rc:89 shdoclc.rc:119 shell32.rc:64
+msgid "Paste"
+msgstr "Klistra in"
+
+#: hhctrl.rc:91 shdoclc.rc:121
+msgid "&Print"
+msgstr "Skriv &ut"
 
 #: hhctrl.rc:31 taskmgr.rc:89
 msgid "&Contents"
@@ -3159,7 +3188,7 @@ msgstr "Visa fl&ikar"
 msgid "Show"
 msgstr "Visa"
 
-#: hhctrl.rc:43
+#: hhctrl.rc:43 winemac.rc:34
 msgid "Hide"
 msgstr "Dölj"
 
@@ -3184,7 +3213,7 @@ msgstr "Startsida"
 msgid "Sync"
 msgstr "Synkronisera"
 
-#: hhctrl.rc:50 wineconsole.rc:60 wordpad.rc:158
+#: hhctrl.rc:50 wineconsole.rc:60 wordpad.rc:166
 msgid "Options"
 msgstr "Alternativ"
 
@@ -3340,6 +3369,8 @@ msgid ""
 "Temporary internet files\n"
 "Cached copies of web pages, images and certificates."
 msgstr ""
+"Temporära internetfiler\n"
+"Arkivkopior av webbsidor, bilder och certifikat."
 
 #: inetcpl.rc:73
 msgid ""
@@ -3347,24 +3378,33 @@ msgid ""
 "Files saved on your computer by websites, which store things like user "
 "preferences and login information."
 msgstr ""
+"Cookies\n"
+"Filer som webbplatser har lagrat på din dator för att spara t.ex. "
+"inställningar och inloggningsinformation."
 
 #: inetcpl.rc:75
 msgid ""
 "History\n"
 "List of websites you have accessed."
 msgstr ""
+"Historik\n"
+"Listan med webbplatser som du har besökt."
 
 #: inetcpl.rc:77
 msgid ""
 "Form data\n"
 "Usernames and other information you have entered into forms."
 msgstr ""
+"Formulärdata\n"
+"Användarnamn och annan information som du har skrivit in i formulär."
 
 #: inetcpl.rc:79
 msgid ""
 "Passwords\n"
 "Saved passwords you have entered into forms."
 msgstr ""
+"Lösenord\n"
+"Sparade lösenord som du har skrivit in i formulär."
 
 #: inetcpl.rc:82 progman.rc:67
 msgid "Delete"
@@ -3430,7 +3470,7 @@ msgstr "Hög"
 msgid "Joysticks"
 msgstr "Joysticks"
 
-#: joy.rc:39 winecfg.rc:211
+#: joy.rc:39 winecfg.rc:213
 msgid "&Disable"
 msgstr "&Inaktivera"
 
@@ -3531,10 +3571,8 @@ msgid "Expected identifier"
 msgstr ""
 
 #: jscript.rc:41
-#, fuzzy
-#| msgid "Expected ';'"
 msgid "Expected '='"
-msgstr "';' förväntades"
+msgstr "'=' förväntades"
 
 #: jscript.rc:42
 msgid "Invalid character"
@@ -3565,20 +3603,16 @@ msgid "Label not found"
 msgstr "Etiketten hittades inte"
 
 #: jscript.rc:49
-#, fuzzy
-#| msgid "Expected ';'"
 msgid "Expected '@end'"
-msgstr "';' förväntades"
+msgstr "'@end' förväntades"
 
 #: jscript.rc:50
 msgid "Conditional compilation is turned off"
 msgstr "Villkorlig kompilering är avslagen"
 
 #: jscript.rc:51
-#, fuzzy
-#| msgid "Expected ';'"
 msgid "Expected '@'"
-msgstr "';' förväntades"
+msgstr "'@' förväntades"
 
 #: jscript.rc:54
 msgid "Number expected"
@@ -6601,16 +6635,12 @@ msgid "The username could not be found.\n"
 msgstr "Användarnamnet kunde inte hittas.\n"
 
 #: winerror.mc:3741
-#, fuzzy
-#| msgid "The site does not exist.\n"
 msgid "This network connection does not exist.\n"
-msgstr "Sidan existerar inte.\n"
+msgstr "Nätverksanslutningen existerar inte.\n"
 
 #: winerror.mc:3746
-#, fuzzy
-#| msgid "Connection refused.\n"
 msgid "Connection reset by peer.\n"
-msgstr "Anslutning nekades.\n"
+msgstr "Anslutningen återställdes.\n"
 
 #: localspl.rc:31 localui.rc:31 winspool.rc:30
 msgid "Local Port"
@@ -6714,7 +6744,7 @@ msgstr "Hyperlänk"
 msgid "Hyperlink Information"
 msgstr "Länkinformation"
 
-#: mshtml.rc:43 winecfg.rc:243
+#: mshtml.rc:43 winecfg.rc:245
 msgid "&Type:"
 msgstr "&Typ:"
 
@@ -7145,72 +7175,54 @@ msgid "outline button"
 msgstr "dispositionsknapp"
 
 #: oleacc.rc:97
-#, fuzzy
-#| msgid "Normal"
 msgctxt "object state"
 msgid "normal"
-msgstr "Normalt"
+msgstr "normalt"
 
 #: oleacc.rc:98
-#, fuzzy
-#| msgid "Unavailable"
 msgctxt "object state"
 msgid "unavailable"
-msgstr "Otillgänglig"
+msgstr "otillgängligt"
 
 #: oleacc.rc:99
-#, fuzzy
-#| msgid "Select"
 msgctxt "object state"
 msgid "selected"
-msgstr "Välj"
+msgstr "valt"
 
 #: oleacc.rc:100
-#, fuzzy
-#| msgid "Paused"
 msgctxt "object state"
 msgid "focused"
-msgstr "Pausad"
+msgstr "fokuserat"
 
 #: oleacc.rc:101
-#, fuzzy
-#| msgid "&Compressed"
 msgctxt "object state"
 msgid "pressed"
-msgstr "&Komprimerad"
+msgstr "tryckt"
 
 #: oleacc.rc:102
 msgctxt "object state"
 msgid "checked"
-msgstr ""
+msgstr "markerat"
 
 #: oleacc.rc:103
-#, fuzzy
-#| msgid "Mixed"
 msgctxt "object state"
 msgid "mixed"
-msgstr "Mixad"
+msgstr "blandat"
 
 #: oleacc.rc:104
-#, fuzzy
-#| msgid "&Read Only"
 msgctxt "object state"
 msgid "read only"
-msgstr "Sk&rivskyddad"
+msgstr "skrivskyddat"
 
 #: oleacc.rc:105
-#, fuzzy
-#| msgid "Hot Tracked Item"
 msgctxt "object state"
 msgid "hot tracked"
-msgstr "Hovrat föremål"
+msgstr ""
 
 #: oleacc.rc:106
-#, fuzzy
-#| msgid "(Default)"
 msgctxt "object state"
 msgid "default"
-msgstr "(Standard)"
+msgstr "standard"
 
 #: oleacc.rc:107
 msgctxt "object state"
@@ -7238,16 +7250,14 @@ msgid "marqueed"
 msgstr ""
 
 #: oleacc.rc:112
-#, fuzzy
-#| msgid "animation"
 msgctxt "object state"
 msgid "animated"
-msgstr "animation"
+msgstr "animerat"
 
 #: oleacc.rc:113
 msgctxt "object state"
 msgid "invisible"
-msgstr ""
+msgstr "osynligt"
 
 #: oleacc.rc:114
 msgctxt "object state"
@@ -7255,18 +7265,14 @@ msgid "offscreen"
 msgstr ""
 
 #: oleacc.rc:115
-#, fuzzy
-#| msgid "Size available"
 msgctxt "object state"
 msgid "sizeable"
-msgstr "Ledigt utrymme"
+msgstr ""
 
 #: oleacc.rc:116
-#, fuzzy
-#| msgid "Remove al&l"
 msgctxt "object state"
 msgid "moveable"
-msgstr "Ta bort a&lla"
+msgstr ""
 
 #: oleacc.rc:117
 msgctxt "object state"
@@ -7274,25 +7280,19 @@ msgid "self voicing"
 msgstr ""
 
 #: oleacc.rc:118
-#, fuzzy
-#| msgid "Paused"
 msgctxt "object state"
 msgid "focusable"
-msgstr "Pausad"
+msgstr ""
 
 #: oleacc.rc:119
-#, fuzzy
-#| msgid "table"
 msgctxt "object state"
 msgid "selectable"
-msgstr "tabell"
+msgstr ""
 
 #: oleacc.rc:120
-#, fuzzy
-#| msgid "link"
 msgctxt "object state"
 msgid "linked"
-msgstr "länk"
+msgstr ""
 
 #: oleacc.rc:121
 msgctxt "object state"
@@ -7300,46 +7300,34 @@ msgid "traversed"
 msgstr ""
 
 #: oleacc.rc:122
-#, fuzzy
-#| msgid "table"
 msgctxt "object state"
 msgid "multi selectable"
-msgstr "tabell"
+msgstr ""
 
 #: oleacc.rc:123
-#, fuzzy
-#| msgid "Please select a file."
 msgctxt "object state"
 msgid "extended selectable"
-msgstr "Var god välj en fil."
+msgstr ""
 
 #: oleacc.rc:124
-#, fuzzy
-#| msgid "alert"
 msgctxt "object state"
 msgid "alert low"
-msgstr "varning"
+msgstr ""
 
 #: oleacc.rc:125
-#, fuzzy
-#| msgid "alert"
 msgctxt "object state"
 msgid "alert medium"
-msgstr "varning"
+msgstr ""
 
 #: oleacc.rc:126
-#, fuzzy
-#| msgid "alert"
 msgctxt "object state"
 msgid "alert high"
-msgstr "varning"
+msgstr ""
 
 #: oleacc.rc:127
-#, fuzzy
-#| msgid "Write protected.\n"
 msgctxt "object state"
 msgid "protected"
-msgstr "Skrivskyddad.\n"
+msgstr "skyddat"
 
 #: oleacc.rc:128
 msgctxt "object state"
@@ -7362,72 +7350,72 @@ msgstr "På"
 msgid "Off"
 msgstr "Av"
 
-#: oledlg.rc:51
+#: oledlg.rc:55
 msgid "Insert Object"
 msgstr "Infoga objekt"
 
-#: oledlg.rc:57
+#: oledlg.rc:61
 msgid "Object Type:"
 msgstr "Objekttyp:"
 
-#: oledlg.rc:60 oledlg.rc:98
+#: oledlg.rc:64 oledlg.rc:102
 msgid "Result"
 msgstr "Resultat"
 
-#: oledlg.rc:61
+#: oledlg.rc:65
 msgid "Create New"
 msgstr "Skapa ny"
 
-#: oledlg.rc:63
+#: oledlg.rc:67
 msgid "Create Control"
 msgstr "Skapa en kontroll"
 
-#: oledlg.rc:65
+#: oledlg.rc:69
 msgid "Create From File"
 msgstr "Skapa från fil"
 
-#: oledlg.rc:68
+#: oledlg.rc:72
 msgid "&Add Control..."
 msgstr "&Lägg till kontroll..."
 
-#: oledlg.rc:69
+#: oledlg.rc:73
 msgid "Display As Icon"
 msgstr "Visa som ikon"
 
-#: oledlg.rc:71 setupapi.rc:61
+#: oledlg.rc:75 setupapi.rc:61
 msgid "Browse..."
 msgstr "Bläddra..."
 
-#: oledlg.rc:72
+#: oledlg.rc:76
 msgid "File:"
 msgstr "Fil:"
 
-#: oledlg.rc:78
+#: oledlg.rc:82
 msgid "Paste Special"
 msgstr "Klistra in special"
 
-#: oledlg.rc:81 setupapi.rc:43
+#: oledlg.rc:85 setupapi.rc:43
 msgid "Source:"
 msgstr "Källa:"
 
-#: oledlg.rc:82 shdoclc.rc:50 shdoclc.rc:82 shdoclc.rc:95 shdoclc.rc:135
-#: shdoclc.rc:162 shdoclc.rc:186 user32.rc:62 wineconsole.rc:33 wordpad.rc:106
+#: oledlg.rc:86 shdoclc.rc:50 shdoclc.rc:82 shdoclc.rc:95 shdoclc.rc:135
+#: shdoclc.rc:162 shdoclc.rc:186 user32.rc:62 wineconsole.rc:33 wordpad.rc:114
 msgid "&Paste"
 msgstr "Klistra &in"
 
-#: oledlg.rc:84
+#: oledlg.rc:88
 msgid "Paste &Link"
 msgstr "Klistra in &länk"
 
-#: oledlg.rc:86
+#: oledlg.rc:90
 msgid "&As:"
 msgstr "&Som:"
 
-#: oledlg.rc:93
+#: oledlg.rc:97
 msgid "&Display As Icon"
 msgstr "&Visa som ikon"
 
-#: oledlg.rc:95
+#: oledlg.rc:99
 msgid "Change &Icon..."
 msgstr "Byt &ikon..."
 
@@ -7455,56 +7443,72 @@ msgstr ""
 msgid "Add Control"
 msgstr "Lägg till kontroll"
 
-#: oledlg.rc:37
+#: oledlg.rc:35
+msgid "&Convert..."
+msgstr ""
+
+#: oledlg.rc:36
+msgid "%1 %2 &Object"
+msgstr "%1 %2 &Objekt"
+
+#: oledlg.rc:34
+msgid "%1 &Object"
+msgstr "%1 &Objekt"
+
+#: oledlg.rc:33 oleview.rc:40
+msgid "&Object"
+msgstr "&Objekt"
+
+#: oledlg.rc:41
 msgid "Inserts the contents of the clipboard into your document as %s."
 msgstr ""
 
-#: oledlg.rc:38
+#: oledlg.rc:42
 msgid ""
 "Inserts the contents of the clipboard into your document so that you can "
 "activate it using %s."
 msgstr ""
 
-#: oledlg.rc:39
+#: oledlg.rc:43
 msgid ""
 "Inserts the contents of the clipboard into your document so that you can "
 "activate it using %s. It will be displayed as an icon."
 msgstr ""
 
-#: oledlg.rc:40
+#: oledlg.rc:44
 msgid ""
 "Inserts the contents of the clipboard into your document as %s. The data is "
 "linked to the source file so that changes to the file will be reflected in "
 "your document."
 msgstr ""
 
-#: oledlg.rc:41
+#: oledlg.rc:45
 msgid ""
 "Inserts a picture of the clipboard contents into your document. The picture "
 "is linked to the source file so that changes to the file will be reflected "
 "in your document."
 msgstr ""
 
-#: oledlg.rc:42
+#: oledlg.rc:46
 msgid ""
 "Inserts a shortcut which points to the location of the clipboard contents. "
 "The shortcut is linked to the source file so that changes to the file will "
 "be reflected in your document."
 msgstr ""
 
-#: oledlg.rc:43
+#: oledlg.rc:47
 msgid "Inserts the contents of the clipboard into your document."
 msgstr ""
 
-#: oledlg.rc:44
+#: oledlg.rc:48
 msgid "Unknown Type"
 msgstr "Okänd typ"
 
-#: oledlg.rc:45
+#: oledlg.rc:49
 msgid "Unknown Source"
 msgstr "Okänd källa"
 
-#: oledlg.rc:46
+#: oledlg.rc:50
 msgid "the program which created it"
 msgstr "programmet som skapade det"
 
@@ -7526,7 +7530,7 @@ msgctxt "unit: bits"
 msgid "b"
 msgstr "b"
 
-#: sane.rc:34 wineps.rc:49 winecfg.rc:181
+#: sane.rc:34 wineps.rc:49 winecfg.rc:183
 msgctxt "unit: dots/inch"
 msgid "dpi"
 msgstr "dpi"
@@ -7625,10 +7629,6 @@ msgstr "K&opiera bakgrund"
 msgid "Set as &Desktop Item"
 msgstr "Använd som &skrivbordsobjekt"
 
-#: shdoclc.rc:49 shdoclc.rc:98 shdoclc.rc:120 user32.rc:65
-msgid "Select &All"
-msgstr "&Markera allt"
-
 #: shdoclc.rc:52
 msgid "Create Shor&tcut"
 msgstr "Skapa genv&äg"
@@ -7636,10 +7636,6 @@ msgstr "Skapa genv&äg"
 #: shdoclc.rc:53 shdoclc.rc:84 shdoclc.rc:137 shdoclc.rc:164 shdoclc.rc:188
 msgid "Add to &Favorites..."
 msgstr "Lägg till &i Favoriter..."
-
-#: shdoclc.rc:54
-msgid "&View Source"
-msgstr "&Visa källkod"
 
 #: shdoclc.rc:56
 msgid "&Encoding"
@@ -7693,17 +7689,6 @@ msgstr "A&nvänd som skrivbordsbakgrund"
 msgid "Set as &Desktop Item..."
 msgstr "Använd som &skrivbordsobjekt..."
 
-#: shdoclc.rc:79 shdoclc.rc:93 shdoclc.rc:117 shdoclc.rc:159 shdoclc.rc:183
-#: user32.rc:60 wordpad.rc:104
-msgid "Cu&t"
-msgstr "Klipp &ut"
-
-#: shdoclc.rc:80 shdoclc.rc:94 shdoclc.rc:118 shdoclc.rc:133 shdoclc.rc:160
-#: shdoclc.rc:184 shell32.rc:102 user32.rc:61 wineconsole.rc:32 winhlp32.rc:40
-#: wordpad.rc:105
-msgid "&Copy"
-msgstr "&Kopiera"
-
 #: shdoclc.rc:81 shdoclc.rc:134 shdoclc.rc:161 shdoclc.rc:185
 msgid "Copy Shor&tcut"
 msgstr "Kopier&a genväg"
@@ -7747,14 +7732,6 @@ msgstr "&Cellegenskaper"
 #: shdoclc.rc:112
 msgid "&Table Properties"
 msgstr "&Tabellegenskaper"
-
-#: shdoclc.rc:119 shell32.rc:64
-msgid "Paste"
-msgstr "Klistra in"
-
-#: shdoclc.rc:121
-msgid "&Print"
-msgstr "Skriv &ut"
 
 #: shdoclc.rc:128
 msgid "Open in &New Window"
@@ -7947,7 +7924,7 @@ msgstr "Rada upp ikoner"
 msgid "Paste as Link"
 msgstr "Klistra in som genväg"
 
-#: shell32.rc:67 progman.rc:100 wordpad.rc:213
+#: shell32.rc:67 progman.rc:100 wordpad.rc:221
 msgid "New"
 msgstr "Ny"
 
@@ -8013,7 +7990,7 @@ msgstr "Ny &mapp"
 msgid "Message"
 msgstr "Meddelande"
 
-#: shell32.rc:309 shlwapi.rc:46 user32.rc:85
+#: shell32.rc:309 shlwapi.rc:46 user32.rc:79
 msgid "&Yes"
 msgstr "&Ja"
 
@@ -8021,7 +7998,7 @@ msgstr "&Ja"
 msgid "Yes to &all"
 msgstr "Ja till &allt"
 
-#: shell32.rc:311 shlwapi.rc:47 user32.rc:86
+#: shell32.rc:311 shlwapi.rc:47 user32.rc:80
 msgid "&No"
 msgstr "&Nej"
 
@@ -8041,7 +8018,13 @@ msgstr "Kör på %s"
 msgid "Wine was brought to you by:"
 msgstr "Wine hade inte varit möjligt utan dessa personer:"
 
-#: shell32.rc:337
+#: shell32.rc:334
+#, fuzzy
+#| msgid "&Run..."
+msgid "Run"
+msgstr "&Kör..."
+
+#: shell32.rc:338
 msgid ""
 "Type the name of a program, folder, document, or Internet resource, and Wine "
 "will open it for you."
@@ -8049,12 +8032,12 @@ msgstr ""
 "Skriv namnet på ett program, en mapp eller ett dokument och Wine kommer att "
 "öppna det åt dig."
 
-#: shell32.rc:338
+#: shell32.rc:339
 msgid "&Open:"
 msgstr "&Öppna:"
 
-#: shell32.rc:342 progman.rc:182 progman.rc:201 progman.rc:218 winecfg.rc:241
-#: winefile.rc:133
+#: shell32.rc:343 progman.rc:182 progman.rc:201 progman.rc:218 winecfg.rc:243
+#: winefile.rc:130
 msgid "&Browse..."
 msgstr "&Bläddra..."
 
@@ -8070,7 +8053,7 @@ msgstr "Typ"
 msgid "Modified"
 msgstr "Ändrad"
 
-#: shell32.rc:141 winefile.rc:175 winefile.rc:114
+#: shell32.rc:141 winefile.rc:172 winefile.rc:114
 msgid "Attributes"
 msgstr "Attribut"
 
@@ -8098,7 +8081,7 @@ msgstr "Ursprunglig plats"
 msgid "Date deleted"
 msgstr "Borttagningsdatum"
 
-#: shell32.rc:156 winecfg.rc:99 winefile.rc:100
+#: shell32.rc:156 winecfg.rc:101 winefile.rc:100
 msgctxt "display name"
 msgid "Desktop"
 msgstr "Skrivbord"
@@ -8176,7 +8159,7 @@ msgstr "Mallar"
 msgid "PrintHood"
 msgstr "Skrivare"
 
-#: shell32.rc:214 winhlp32.rc:48
+#: shell32.rc:214 winhlp32.rc:49
 msgid "History"
 msgstr "Historik"
 
@@ -8519,7 +8502,7 @@ msgstr "&Återställ"
 msgid "&Move"
 msgstr "&Flytta"
 
-#: user32.rc:32 user32.rc:45 wineconsole.rc:92
+#: user32.rc:32 user32.rc:45 wineconsole.rc:93
 msgid "&Size"
 msgstr "&Storlek"
 
@@ -8547,23 +8530,23 @@ msgstr "&Stäng\tCtrl+F4"
 msgid "Nex&t\tCtrl+F6"
 msgstr "&Nästa\tCtrl+F6"
 
-#: user32.rc:82
+#: user32.rc:81
 msgid "&Abort"
 msgstr "&Avbryt"
 
-#: user32.rc:83
+#: user32.rc:82
 msgid "&Retry"
 msgstr "&Försök igen"
 
-#: user32.rc:84
+#: user32.rc:85
 msgid "&Ignore"
 msgstr "&Ignorera"
 
-#: user32.rc:87
+#: user32.rc:86
 msgid "&Try Again"
 msgstr "&Försök igen"
 
-#: user32.rc:88
+#: user32.rc:87
 msgid "&Continue"
 msgstr "For&tsätt"
 
@@ -8575,6 +8558,50 @@ msgstr "Välj fönster"
 msgid "&More Windows..."
 msgstr "&Fler fönster..."
 
+#: winemac.rc:32 wineboot.rc:42
+msgid "Wine"
+msgstr "Wine"
+
+#: winemac.rc:33
+msgid "Hide %@"
+msgstr "Dölj %@"
+
+#: winemac.rc:35
+msgid "Hide Others"
+msgstr "Dölj andra"
+
+#: winemac.rc:36
+msgid "Show All"
+msgstr "Visa alla"
+
+#: winemac.rc:37
+msgid "Quit %@"
+msgstr ""
+
+#: winemac.rc:38
+msgid "Quit"
+msgstr ""
+
+#: winemac.rc:40
+msgid "Window"
+msgstr "Fönster"
+
+#: winemac.rc:41
+msgid "Minimize"
+msgstr "Minimera"
+
+#: winemac.rc:42
+msgid "Zoom"
+msgstr "Zooma"
+
+#: winemac.rc:43
+msgid "Enter Full Screen"
+msgstr ""
+
+#: winemac.rc:44
+msgid "Bring All to Front"
+msgstr "Visa alla överst"
+
 #: wineps.rc:31
 msgid "Paper Si&ze:"
 msgstr "Papperssto&rlek:"
@@ -8582,6 +8609,10 @@ msgstr "Papperssto&rlek:"
 #: wineps.rc:39
 msgid "Duplex:"
 msgstr "Dubbelsidig:"
+
+#: wineps.rc:50
+msgid "Setup"
+msgstr "Inställningar"
 
 #: wininet.rc:42 wininet.rc:62
 msgid "Realm"
@@ -8624,37 +8655,37 @@ msgid ""
 "There is at least one unspecified security problem with this certificate."
 msgstr "Certifikatet har minst ett ospecificerat säkerhetsproblem."
 
-#: winmm.rc:31
+#: winmm.rc:32
 msgid "The specified command was carried out."
 msgstr "Det angivna kommandot utfördes."
 
-#: winmm.rc:32
+#: winmm.rc:33
 msgid "Undefined external error."
 msgstr "Odefinierat externt fel."
 
-#: winmm.rc:33
+#: winmm.rc:34
 msgid "A device ID has been used that is out of range for your system."
 msgstr "Ett enhets-ID som använts är utanför räckvidden för ditt system."
 
-#: winmm.rc:34
+#: winmm.rc:35
 msgid "The driver was not enabled."
 msgstr "Drivrutinen aktiverades inte."
 
-#: winmm.rc:35
+#: winmm.rc:36
 msgid ""
 "The specified device is already in use. Wait until it is free, and then try "
 "again."
 msgstr "Angiven enhet används redan. Vänta tills den är ledig och försök igen."
 
-#: winmm.rc:36
+#: winmm.rc:37
 msgid "The specified device handle is invalid."
 msgstr "Angiven handle för enheten är ogiltig."
 
-#: winmm.rc:37
+#: winmm.rc:38
 msgid "There is no driver installed on your system!"
 msgstr "Ingen drivrutin finns installerad på ditt system!"
 
-#: winmm.rc:38 winmm.rc:64
+#: winmm.rc:39 winmm.rc:65
 msgid ""
 "Not enough memory available for this task. Quit one or more applications to "
 "increase available memory, and then try again."
@@ -8663,7 +8694,7 @@ msgstr ""
 "ett eller flera program för att utöka tillgängligt minne och försök sedan "
 "igen."
 
-#: winmm.rc:39
+#: winmm.rc:40
 msgid ""
 "This function is not supported. Use the Capabilities function to determine "
 "which functions and messages the driver supports."
@@ -8671,19 +8702,19 @@ msgstr ""
 "Denna funktion stöds inte. Använd funktionen Capabilities för att avgöra "
 "vilka funktioner och meddelanden som drivrutinen stöder."
 
-#: winmm.rc:40
+#: winmm.rc:41
 msgid "An error number was specified that is not defined in the system."
 msgstr "Ett felnummer som inte är definierat i systemet angavs."
 
-#: winmm.rc:41
+#: winmm.rc:42
 msgid "An invalid flag was passed to a system function."
 msgstr "En ogiltig flagga skickades till en systemfunktion."
 
-#: winmm.rc:42
+#: winmm.rc:43
 msgid "An invalid parameter was passed to a system function."
 msgstr "En ogiltig parameter skickades till en systemfunktion."
 
-#: winmm.rc:45
+#: winmm.rc:46
 msgid ""
 "The specified format is not supported or cannot be translated. Use the "
 "Capabilities function to determine the supported formats."
@@ -8691,7 +8722,7 @@ msgstr ""
 "Angivet format stöds inte eller kan inte översättas. Använd funktionen "
 "Capabilities för att avgöra vilka format som stöds."
 
-#: winmm.rc:46 winmm.rc:52
+#: winmm.rc:47 winmm.rc:53
 msgid ""
 "Cannot perform this operation while media data is still playing. Reset the "
 "device, or wait until the data is finished playing."
@@ -8699,7 +8730,7 @@ msgstr ""
 "Kan inte uföra denna operation medan mediadata fortfarande spelas. Starta om "
 "enheten eller vänta tills data spelats klart."
 
-#: winmm.rc:47
+#: winmm.rc:48
 msgid ""
 "The wave header was not prepared. Use the Prepare function to prepare the "
 "header, and then try again."
@@ -8707,7 +8738,7 @@ msgstr ""
 "Wave-headern var inte förberedd. Använd funktionen Prepare för att förbereda "
 "headern och försök sedan igen."
 
-#: winmm.rc:48
+#: winmm.rc:49
 msgid ""
 "Cannot open the device without using the WAVE_ALLOWSYNC flag. Use the flag, "
 "and then try again."
@@ -8715,7 +8746,7 @@ msgstr ""
 "Kan inte öppna enheten utan att använda flaggan WAVE_ALLOWSYNC. Använd "
 "flaggan och försök igen."
 
-#: winmm.rc:51
+#: winmm.rc:52
 msgid ""
 "The MIDI header was not prepared. Use the Prepare function to prepare the "
 "header, and then try again."
@@ -8723,7 +8754,7 @@ msgstr ""
 "MIDI-headern var inte förberedd. Använd funktionen Prepare för att förbereda "
 "headern och försök sedan igen."
 
-#: winmm.rc:53
+#: winmm.rc:54
 msgid ""
 "A MIDI map was not found. There may be a problem with the driver, or the "
 "MIDIMAP.CFG file may be corrupt or missing."
@@ -8731,7 +8762,7 @@ msgstr ""
 "Ingen MIDI-mappning hittades. Det kan vara ett problem med drivrutinen, "
 "eller så kan filen MIDIMAP.CFG vara korrupt eller saknas."
 
-#: winmm.rc:54
+#: winmm.rc:55
 msgid ""
 "The port is transmitting data to the device. Wait until the data has been "
 "transmitted, and then try again."
@@ -8739,7 +8770,7 @@ msgstr ""
 "Porten överför data till enheten. Vänta till allt data överförts och försök "
 "sedan igen."
 
-#: winmm.rc:55 winmm.rc:128
+#: winmm.rc:56 winmm.rc:129
 msgid ""
 "The current MIDI Mapper setup refers to a MIDI device that is not installed "
 "on the system."
@@ -8747,7 +8778,7 @@ msgstr ""
 "Den nuvarande MIDI Mapper-installationen refererar till en MIDI-enhet som "
 "inte är installerad på systemet."
 
-#: winmm.rc:56
+#: winmm.rc:57
 msgid ""
 "The current MIDI setup is damaged. Copy the original MIDIMAP.CFG file to the "
 "Windows SYSTEM directory, and then try again."
@@ -8755,21 +8786,21 @@ msgstr ""
 "Den nuvarande MIDI-installationen är skadad. Kopiera den ursprungliga "
 "MIDIMAP.CFG till Windows SYSTEM-katalog och försök sedan igen."
 
-#: winmm.rc:59
+#: winmm.rc:60
 msgid "Invalid MCI device ID. Use the ID returned when opening the MCI device."
 msgstr ""
 "Ogiltigt ID på MCI-enheten. Använd det ID som returneras när MCI-enheten "
 "öppnas."
 
-#: winmm.rc:60
+#: winmm.rc:61
 msgid "The driver cannot recognize the specified command parameter."
 msgstr "Drivrutinen känner inte igen den angivna kommandoparametern."
 
-#: winmm.rc:61
+#: winmm.rc:62
 msgid "The driver cannot recognize the specified command."
 msgstr "Drivrutinen känner inte igen det angivna kommandot."
 
-#: winmm.rc:62
+#: winmm.rc:63
 msgid ""
 "There is a problem with your media device. Make sure it is working correctly "
 "or contact the device manufacturer."
@@ -8777,11 +8808,11 @@ msgstr ""
 "Ett problem uppstod med din mediaenhet. Kontrollera att den fungerar "
 "korrekt, kontakta annars enhetens tillverkare."
 
-#: winmm.rc:63
+#: winmm.rc:64
 msgid "The specified device is not open or is not recognized by MCI."
 msgstr "Angiven enhet är inte öppen eller känns inte igen av MCI."
 
-#: winmm.rc:65
+#: winmm.rc:66
 msgid ""
 "The device name is already being used as an alias by this application. Use a "
 "unique alias."
@@ -8789,18 +8820,18 @@ msgstr ""
 "Enhetsnamnet används redan som ett alias av detta program. Använd ett unikt "
 "alias."
 
-#: winmm.rc:66
+#: winmm.rc:67
 msgid ""
 "There is an undetectable problem in loading the specified device driver."
 msgstr ""
 "Ett oupptäckbart problem uppstod då den angivna enhetsdrivrutinen skulle "
 "laddas."
 
-#: winmm.rc:67
+#: winmm.rc:68
 msgid "No command was specified."
 msgstr "Inget kommando angavs."
 
-#: winmm.rc:68
+#: winmm.rc:69
 msgid ""
 "The output string was too large to fit in the return buffer. Increase the "
 "size of the buffer."
@@ -8808,7 +8839,7 @@ msgstr ""
 "Utskriftssträngen var för stor för att rymmas i returbuffern. Utöka bufferns "
 "storlek."
 
-#: winmm.rc:69
+#: winmm.rc:70
 msgid ""
 "The specified command requires a character-string parameter. Please provide "
 "one."
@@ -8816,11 +8847,11 @@ msgstr ""
 "Det angivna kommandot kräver en teckensträngsparameter. Var god uppge en "
 "sådan."
 
-#: winmm.rc:70
+#: winmm.rc:71
 msgid "The specified integer is invalid for this command."
 msgstr "Det angivna heltalet är ogiltigt för detta kommando."
 
-#: winmm.rc:71
+#: winmm.rc:72
 msgid ""
 "The device driver returned an invalid return type. Check with the device "
 "manufacturer about obtaining a new driver."
@@ -8828,7 +8859,7 @@ msgstr ""
 "Enhetsdrivrutinen returnerade en ogiltig returtyp. Hör med enhetens "
 "tillverkare om att få en ny drivrutin."
 
-#: winmm.rc:72
+#: winmm.rc:73
 msgid ""
 "There is a problem with the device driver. Check with the device "
 "manufacturer about obtaining a new driver."
@@ -8836,29 +8867,29 @@ msgstr ""
 "Ett problem uppstod med enhetsdrivrutinen. Hör med enhetens tillverkare om "
 "att få en ny drivrutin."
 
-#: winmm.rc:73
+#: winmm.rc:74
 msgid "The specified command requires a parameter. Please supply one."
 msgstr "Angivet kommando kräver en parameter. Var god uppge en sådan."
 
-#: winmm.rc:74
+#: winmm.rc:75
 msgid "The MCI device you are using does not support the specified command."
 msgstr "MCI-enheten du använder stöder inte det angivna kommandot."
 
-#: winmm.rc:75
+#: winmm.rc:76
 msgid ""
 "Cannot find the specified file. Make sure the path and filename are correct."
 msgstr ""
 "Kan inte hitta angiven fil. Säkerställ att sökvägen och filnamnet stämmer."
 
-#: winmm.rc:76
+#: winmm.rc:77
 msgid "The device driver is not ready."
 msgstr "Enhetsdrivrutinen är inte redo."
 
-#: winmm.rc:77
+#: winmm.rc:78
 msgid "A problem occurred in initializing MCI. Try restarting Windows."
 msgstr "Ett problem uppstod då MCI initialiserades. Försök starta om Windows."
 
-#: winmm.rc:78
+#: winmm.rc:79
 msgid ""
 "There is a problem with the device driver. The driver has closed. Cannot "
 "access error."
@@ -8866,11 +8897,11 @@ msgstr ""
 "Ett problem uppstod med enhetsdrivrutinen. Drivrutinen har avslutats. Kan "
 "inte komma åt fel."
 
-#: winmm.rc:79
+#: winmm.rc:80
 msgid "Cannot use 'all' as the device name with the specified command."
 msgstr "Kan inte använda 'all' som enhetsnamn med det angivna kommandot."
 
-#: winmm.rc:80
+#: winmm.rc:81
 msgid ""
 "Errors occurred in more than one device. Specify each command and device "
 "separately to determine which devices caused the error."
@@ -8878,19 +8909,19 @@ msgstr ""
 "Fel uppstod i mer än en enhet. Ange varje kommando och enhet separat för att "
 "avgöra vilka enheter som orsakade felet."
 
-#: winmm.rc:81
+#: winmm.rc:82
 msgid "Cannot determine the device type from the given filename extension."
 msgstr "Kan inte avgöra enhetens typ från den givna filändelsen."
 
-#: winmm.rc:82
+#: winmm.rc:83
 msgid "The specified parameter is out of range for the specified command."
 msgstr "Angiven parameter är utanför räckvidden för det angivna kommandot."
 
-#: winmm.rc:83
+#: winmm.rc:84
 msgid "The specified parameters cannot be used together."
 msgstr "De angivna parametrarna kan inte användas tillsammans."
 
-#: winmm.rc:84
+#: winmm.rc:85
 msgid ""
 "Cannot save the specified file. Make sure you have enough disk space or are "
 "still connected to the network."
@@ -8898,32 +8929,32 @@ msgstr ""
 "Kan inte spara angiven fil. Kontrollera att du har tillräckligt diskutrymme "
 "och fortfarande är ansluten till nätverket."
 
-#: winmm.rc:85
+#: winmm.rc:86
 msgid ""
-"Cannot find the specified device. Make sure it is installed or that the "
+"Cannot find the specified device. Make sure it is installed and that the "
 "device name is spelled correctly."
 msgstr ""
 "Kan inte hitta angiven enhet. Kontrollera att den är installerad och att "
 "enhetsnamnets stavning är korrekt."
 
-#: winmm.rc:86
+#: winmm.rc:87
 msgid ""
 "The specified device is now being closed. Wait a few seconds, and then try "
 "again."
 msgstr ""
 "Den angivna enheten stängs nu. Vänta några sekunder och försök sedan igen."
 
-#: winmm.rc:87
+#: winmm.rc:88
 msgid ""
 "The specified alias is already being used in this application. Use a unique "
 "alias."
 msgstr "Angivet alias används redan i detta program. Använd ett unikt alias."
 
-#: winmm.rc:88
+#: winmm.rc:89
 msgid "The specified parameter is invalid for this command."
 msgstr "Den angivna parametern är ogiltig för detta kommando."
 
-#: winmm.rc:89
+#: winmm.rc:90
 msgid ""
 "The device driver is already in use. To share it, use the 'shareable' "
 "parameter with each 'open' command."
@@ -8931,7 +8962,7 @@ msgstr ""
 "Enhetsdrivrutinen används redan. Använd parametern 'shareable' med varje "
 "'open'-kommando för att dela den."
 
-#: winmm.rc:90
+#: winmm.rc:91
 msgid ""
 "The specified command requires an alias, file, driver, or device name. "
 "Please supply one."
@@ -8939,7 +8970,7 @@ msgstr ""
 "Angivet kommando kräver ett alias, en fil, en drivrutin eller ett "
 "enhetsnamn. Var god uppge någon av dessa."
 
-#: winmm.rc:91
+#: winmm.rc:92
 msgid ""
 "The specified value for the time format is invalid. Refer to the MCI "
 "documentation for valid formats."
@@ -8947,7 +8978,7 @@ msgstr ""
 "Angivet värde för tidsformatet är ogiltigt. Läs dokumentationen för MCI för "
 "att se giltiga format."
 
-#: winmm.rc:92
+#: winmm.rc:93
 msgid ""
 "A closing double-quotation mark is missing from the parameter value. Please "
 "supply one."
@@ -8955,11 +8986,11 @@ msgstr ""
 "Ett avslutande dubbelt citationstecken saknas från parametervärdet. Var god "
 "lägg till ett sådant."
 
-#: winmm.rc:93
+#: winmm.rc:94
 msgid "A parameter or value was specified twice. Only specify it once."
 msgstr "En parameter eller ett värde angavs två gånger. Ange det bara en gång."
 
-#: winmm.rc:94
+#: winmm.rc:95
 msgid ""
 "The specified file cannot be played on the specified MCI device. The file "
 "may be corrupt, or not in the correct format."
@@ -8967,27 +8998,27 @@ msgstr ""
 "Den angivna filen kan inte spelas på den angivna MCI-enheten. Filen kan vara "
 "korrupt eller i fel format."
 
-#: winmm.rc:95
+#: winmm.rc:96
 msgid "A null parameter block was passed to MCI."
 msgstr "Ett nullparameterblock skickades till MCI."
 
-#: winmm.rc:96
+#: winmm.rc:97
 msgid "Cannot save an unnamed file. Supply a filename."
 msgstr "Kan inte spara en namnlös fil. Ange ett filnamn."
 
-#: winmm.rc:97
+#: winmm.rc:98
 msgid "You must specify an alias when using the 'new' parameter."
 msgstr "Du måste ange ett alias då du använder parametern 'new'."
 
-#: winmm.rc:98
+#: winmm.rc:99
 msgid "Cannot use the 'notify' flag with auto-opened devices."
 msgstr "Kan inte använda flaggan 'notify' med auto-öppnade enheter."
 
-#: winmm.rc:99
+#: winmm.rc:100
 msgid "Cannot use a filename with the specified device."
 msgstr "Kan inte använda ett filnamn med den angivna enheten."
 
-#: winmm.rc:100
+#: winmm.rc:101
 msgid ""
 "Cannot carry out the commands in the order specified. Correct the command "
 "sequence, and then try again."
@@ -8995,7 +9026,7 @@ msgstr ""
 "Kan inte utföra kommandona i angiven ordning. Rätta till kommandoordningen "
 "och försök igen."
 
-#: winmm.rc:101
+#: winmm.rc:102
 msgid ""
 "Cannot carry out the specified command on an auto-opened device. Wait until "
 "the device is closed, and then try again."
@@ -9003,7 +9034,7 @@ msgstr ""
 "Kan inte utföra det angivna kommandot på en auto-öppnad enhet. Vänta tills "
 "enheten är stängd och försök sedan igen."
 
-#: winmm.rc:102
+#: winmm.rc:103
 msgid ""
 "The filename is invalid. Make sure the filename is not longer than 8 "
 "characters, followed by a period and an extension."
@@ -9011,13 +9042,13 @@ msgstr ""
 "Filnamnet är ogiltigt. Säkerställ att filnamnet har högst 8 tecken följt av "
 "en punkt och en ändelse."
 
-#: winmm.rc:103
+#: winmm.rc:104
 msgid ""
 "Cannot specify extra characters after a string enclosed in quotation marks."
 msgstr ""
 "Kan inte ange extra tecken efter en sträng omsluten av citationstecken."
 
-#: winmm.rc:104
+#: winmm.rc:105
 msgid ""
 "The specified device is not installed on the system. Use the Drivers option "
 "in Control Panel to install the device."
@@ -9025,7 +9056,7 @@ msgstr ""
 "Angiven enhet är inte installerad på systemet. Använd valet Drivers i "
 "Control Panel för att installera enheten."
 
-#: winmm.rc:105
+#: winmm.rc:106
 msgid ""
 "Cannot access the specified file or MCI device. Try changing directories or "
 "restarting your computer."
@@ -9033,7 +9064,7 @@ msgstr ""
 "Kan inte komma åt angiven fil eller MCI-enhet. Försök byta katalog eller "
 "starta om din dator."
 
-#: winmm.rc:106
+#: winmm.rc:107
 msgid ""
 "Cannot access the specified file or MCI device because the application "
 "cannot change directories."
@@ -9041,7 +9072,7 @@ msgstr ""
 "Kan inte komma åt angiven fil eller MCI-enhet eftersom programmet inte kan "
 "byta katalog."
 
-#: winmm.rc:107
+#: winmm.rc:108
 msgid ""
 "Cannot access specified file or MCI device because the application cannot "
 "change drives."
@@ -9049,20 +9080,20 @@ msgstr ""
 "Kan inte komma åt angiven fil eller MCI-enhet eftersom programmet inte kan "
 "byta diskenhet."
 
-#: winmm.rc:108
+#: winmm.rc:109
 msgid "Specify a device or driver name that is less than 79 characters."
 msgstr "Ange ett enhets- eller drivrutinsnamn kortare än 79 tecken."
 
-#: winmm.rc:109
+#: winmm.rc:110
 msgid "Specify a device or driver name that is less than 69 characters."
 msgstr "Ange ett enhets- eller drivrutinsnamn kortare än 69 tecken."
 
-#: winmm.rc:110
+#: winmm.rc:111
 msgid ""
 "The specified command requires an integer parameter. Please provide one."
 msgstr "Angivet kommando kräver en heltalsparameter. Var god uppge en sådan."
 
-#: winmm.rc:111
+#: winmm.rc:112
 msgid ""
 "All wave devices that can play files in the current format are in use. Wait "
 "until a wave device is free, and then try again."
@@ -9070,7 +9101,7 @@ msgstr ""
 "Alla wave-enheter som kan spela filer i det aktuella formatet används. Vänta "
 "tills en wave-enhet är ledig och försök sedan igen."
 
-#: winmm.rc:112
+#: winmm.rc:113
 msgid ""
 "Cannot set the current wave device for play back because it is in use. Wait "
 "until the device is free, and then try again."
@@ -9078,7 +9109,7 @@ msgstr ""
 "Kan inte sätta aktuell wave-enhet till uppspelning eftersom den används. "
 "Vänta tills enheten är ledig och försök sedan igen."
 
-#: winmm.rc:113
+#: winmm.rc:114
 msgid ""
 "All wave devices that can record files in the current format are in use. "
 "Wait until a wave device is free, and then try again."
@@ -9086,7 +9117,7 @@ msgstr ""
 "Alla wave-enheter som kan spela in filer i aktuellt format används. Vänta "
 "tills en wave-enhet är ledig och försök sedan igen."
 
-#: winmm.rc:114
+#: winmm.rc:115
 msgid ""
 "Cannot set the current wave device for recording because it is in use. Wait "
 "until the device is free, and then try again."
@@ -9094,15 +9125,15 @@ msgstr ""
 "Kan inte sätta aktuell wave-enhet till inspelning eftersom den används. "
 "Vänta tills enheten är ledig och försök sedan igen."
 
-#: winmm.rc:115
+#: winmm.rc:116
 msgid "Any compatible waveform playback device may be used."
 msgstr "Varje kompatibel wave-uppspelningsenhet kan användas."
 
-#: winmm.rc:116
+#: winmm.rc:117
 msgid "Any compatible waveform recording device may be used."
 msgstr "Varje kompatibel wave-inspelningsenhet kan användas."
 
-#: winmm.rc:117
+#: winmm.rc:118
 msgid ""
 "No wave device that can play files in the current format is installed. Use "
 "the Drivers option to install the wave device."
@@ -9110,14 +9141,14 @@ msgstr ""
 "Ingen wave-enhet som kan spela filer i det aktuella formatet är installerad. "
 "Använd valet Drivers för att installera wave-enheten."
 
-#: winmm.rc:118
+#: winmm.rc:119
 msgid ""
 "The device you are trying to play to cannot recognize the current file "
 "format."
 msgstr ""
 "Enheten du försöker spela till känner inte igen det aktuella filformatet."
 
-#: winmm.rc:119
+#: winmm.rc:120
 msgid ""
 "No wave device that can record files in the current format is installed. Use "
 "the Drivers option to install the wave device."
@@ -9125,13 +9156,13 @@ msgstr ""
 "Ingen wave-enhet som kan spela in filer i det aktuella formatet finns "
 "installerad. Använd valet Drivers för att installera wave-enheten."
 
-#: winmm.rc:120
+#: winmm.rc:121
 msgid ""
 "The device you are trying to record from cannot recognize the current file "
 "format."
 msgstr "Enheten du försöker spela in från känner inte igen aktuellt filformat."
 
-#: winmm.rc:125
+#: winmm.rc:126
 msgid ""
 "The time formats of the \"song pointer\" and SMPTE are mutually exclusive. "
 "You can't use them together."
@@ -9139,7 +9170,7 @@ msgstr ""
 "Tidsformaten för \"song pointer\" och SMPTE är ömsesidigt exklusiva. De kan "
 "inte användas tillsammans."
 
-#: winmm.rc:127
+#: winmm.rc:128
 msgid ""
 "The specified MIDI port is already in use. Wait until it is free; then try "
 "again."
@@ -9147,7 +9178,7 @@ msgstr ""
 "Angiven MIDI-port används redan. Vänta tills den är ledig och försök sedan "
 "igen."
 
-#: winmm.rc:130
+#: winmm.rc:131
 msgid ""
 "The specified MIDI device is not installed on the system. Use the Drivers "
 "option from the Control Panel to install a MIDI device."
@@ -9155,11 +9186,11 @@ msgstr ""
 "Den angivna MIDI-enheten är inte installerad på systemet. Använd valet "
 "Drivers från Control Panel för att installera en MIDI-enhet."
 
-#: winmm.rc:129
+#: winmm.rc:130
 msgid "An error occurred with the specified port."
 msgstr "Ett fel inträffade med den angivna porten."
 
-#: winmm.rc:132
+#: winmm.rc:133
 msgid ""
 "All multimedia timers are being used by other applications. Quit one of "
 "these applications; then, try again."
@@ -9167,11 +9198,11 @@ msgstr ""
 "Alla multimediatimers används av andra program. Avsluta ett av dessa program "
 "och försök sedan igen."
 
-#: winmm.rc:131
+#: winmm.rc:132
 msgid "The system doesn't have a current MIDI port specified."
 msgstr "Ingen aktuell MIDI-port är angiven i systemet."
 
-#: winmm.rc:126
+#: winmm.rc:127
 msgid ""
 "The system has no installed MIDI devices. Use the Drivers option from the "
 "Control Panel to install a MIDI driver."
@@ -9179,15 +9210,15 @@ msgstr ""
 "Systemet har inga installerade MIDI-enheter. Använd valet Drivers från "
 "Control Panel för att installera en MIDI-drivrutin."
 
-#: winmm.rc:121
+#: winmm.rc:122
 msgid "There is no display window."
 msgstr "Det finns inget visningsfönster."
 
-#: winmm.rc:122
+#: winmm.rc:123
 msgid "Could not create or use window."
 msgstr "Kunde inte skapa eller använda fönster."
 
-#: winmm.rc:123
+#: winmm.rc:124
 msgid ""
 "Cannot read the specified file. Make sure the file is still present, or "
 "check your disk or network connection."
@@ -9195,13 +9226,29 @@ msgstr ""
 "Kan inte läsa angiven fil. Kontrollera att filen fortfarande är kvar, eller "
 "kontrollera hårddisken eller nätverksanslutningen."
 
-#: winmm.rc:124
+#: winmm.rc:125
 msgid ""
 "Cannot write to the specified file. Make sure you have enough disk space or "
 "are still connected to the network."
 msgstr ""
 "Kan inte skriva till angiven fil. Kontrollera att du har tillräckligt minne "
 "eller är ansluten till nätverket."
+
+#: winmm.rc:136
+msgid "Wine Sound Mapper"
+msgstr ""
+
+#: winmm.rc:137
+msgid "Volume"
+msgstr "Volym"
+
+#: winmm.rc:138
+msgid "Master Volume"
+msgstr ""
+
+#: winmm.rc:139
+msgid "Mute"
+msgstr ""
 
 #: winspool.rc:37
 msgid "Print to File"
@@ -9455,7 +9502,7 @@ msgstr ""
 msgid "Referral hop limit exceeded"
 msgstr ""
 
-#: attrib.rc:30 cmd.rc:327
+#: attrib.rc:30 cmd.rc:361
 msgid ""
 "Not Yet Implemented\n"
 "\n"
@@ -9463,7 +9510,7 @@ msgstr ""
 "Ännu ej implementerat\n"
 "\n"
 
-#: attrib.rc:31 cmd.rc:330
+#: attrib.rc:31 cmd.rc:364
 msgid "%1: File Not Found\n"
 msgstr "%1: Kunde inte hitta filen\n"
 
@@ -9497,7 +9544,7 @@ msgstr "Ana&log"
 msgid "Digi&tal"
 msgstr "Digi&tal"
 
-#: clock.rc:35 notepad.rc:53 winecfg.rc:301 winefile.rc:63 wordpad.rc:84
+#: clock.rc:35 notepad.rc:53 winecfg.rc:303 winefile.rc:63 wordpad.rc:84
 msgid "&Font..."
 msgstr "T&ypsnitt..."
 
@@ -9527,10 +9574,10 @@ msgstr "Klocka"
 
 #: cmd.rc:40
 msgid ""
-"CALL <batchfilename> is used within a batch file to execute commands\n"
-"from another batch file. When the batch file exits, control returns to\n"
-"the file which called it. The CALL command may supply parameters to the\n"
-"called procedure.\n"
+"CALL <batchfilename> is used within a batch file to execute commands from\n"
+"another batch file. When the batch file exits, control returns to the file\n"
+"which called it. The CALL command may supply parameters to the called\n"
+"procedure.\n"
 "\n"
 "Changes to default directory, environment variables etc made within a\n"
 "called procedure are inherited by the caller.\n"
@@ -9543,7 +9590,7 @@ msgstr ""
 "Ändringar av standardsökväg, miljövariabler o.s.v. som görs inom en anropad\n"
 "process ärvs av den som anropar processen.\n"
 
-#: cmd.rc:43
+#: cmd.rc:44
 msgid ""
 "CD <directory> is the short version of CHDIR. It changes the current\n"
 "default directory.\n"
@@ -9551,40 +9598,40 @@ msgstr ""
 "CD <plats> är en synonym för CHDIR. Den används för att\n"
 "ändra standardsökväg.\n"
 
-#: cmd.rc:44
+#: cmd.rc:47
 msgid "CHDIR <directory> changes the current default directory.\n"
 msgstr "CHDIR <plats> ändrar standardsökväg.\n"
 
-#: cmd.rc:46
+#: cmd.rc:50
 msgid "CLS clears the console screen.\n"
 msgstr "CLS rensar konsollen från text.\n"
 
-#: cmd.rc:48
+#: cmd.rc:53
 msgid "COPY <filename> copies a file.\n"
 msgstr "COPY <filename> kopierar en fil.\n"
 
-#: cmd.rc:49
+#: cmd.rc:56
 msgid "CTTY changes the input/output device.\n"
 msgstr "CTTY ändrar input/output-enheter.\n"
 
-#: cmd.rc:50
+#: cmd.rc:59
 msgid "DATE shows or changes the system date.\n"
 msgstr "DATE visar eller ändrar systemets datum.\n"
 
-#: cmd.rc:51
+#: cmd.rc:62
 msgid "DEL <filename> deletes a file or set of files.\n"
 msgstr "DEL <filename> tar bort en eller flera filer.\n"
 
-#: cmd.rc:52
+#: cmd.rc:65
 msgid "DIR lists the contents of a directory.\n"
 msgstr "DIR visar mappens innehåll.\n"
 
-#: cmd.rc:62
+#: cmd.rc:75
 msgid ""
 "ECHO <string> displays <string> on the current terminal device.\n"
 "\n"
-"ECHO ON causes all subsequent commands in a batch file to be displayed\n"
-"on the terminal device before they are executed.\n"
+"ECHO ON causes all subsequent commands in a batch file to be displayed on\n"
+"the terminal device before they are executed.\n"
 "\n"
 "ECHO OFF reverses the effect of a previous ECHO ON (ECHO is OFF by\n"
 "default). The ECHO OFF command can be prevented from displaying by\n"
@@ -9595,16 +9642,15 @@ msgstr ""
 "ECHO ON gör att alla följdkommandon från en batchfil skrivs ut i terminalen\n"
 "innan dessa exekveras.\n"
 "\n"
-"ECHO OFF tar bort effekten av ett föregående ECHO ON. (ECHO är\n"
-"OFF (avstängd) som standard.) Du kan förhindra ECHO OFF från att visas "
-"genom\n"
+"ECHO OFF tar bort effekten av ett föregående ECHO ON. (ECHO är OFF\n"
+"(avstängd) som standard.) Du kan förhindra ECHO OFF från att visas genom\n"
 "att lägga till ett @-tecken innan kommandot.\n"
 
-#: cmd.rc:64
+#: cmd.rc:78
 msgid "ERASE <filename> deletes a file or set of files.\n"
 msgstr "ERASE <filename> tar bort en eller flera filer.\n"
 
-#: cmd.rc:71
+#: cmd.rc:85
 msgid ""
 "The FOR command is used to execute a command for each of a set of files.\n"
 "\n"
@@ -9618,31 +9664,30 @@ msgstr ""
 "\n"
 "%-tecknet måste dubbleras när FOR används i en batchfil.\n"
 
-#: cmd.rc:83
+#: cmd.rc:97
 msgid ""
-"The GOTO command transfers execution to another statement within a\n"
-"batch file.\n"
+"The GOTO command transfers execution to another statement within a batch\n"
+"file.\n"
 "\n"
-"The label which is the target of a GOTO may be up to 255 characters\n"
-"long but may not include spaces (this is different from other operating\n"
-"systems). If two or more identical labels exist in a batch file the\n"
-"first one will always be executed. Attempting to GOTO a nonexistent\n"
-"label terminates the batch file execution.\n"
+"The label which is the target of a GOTO may be up to 255 characters long\n"
+"but may not include spaces (this is different from other operating\n"
+"systems). If two or more identical labels exist in a batch file the first\n"
+"one will always be executed. Attempting to GOTO a nonexistent label\n"
+"terminates the batch file execution.\n"
 "\n"
 "GOTO has no effect when used interactively.\n"
 msgstr ""
-"Kommandot GOTO överlåter exekvering till ett annat påstående\n"
-"i en batchfil.\n"
+"Kommandot GOTO överlåter exekvering till ett annat påstående i en batchfil.\n"
 "\n"
-"En etikett som är målet för ett GOTO kan innehålla upp till 255 tecken,\n"
-"men blanksteg tillåts ej (till skillnad från andra operativsystem).\n"
-"Om två eller flera identiska etiketter existerar i en batchfil, så kommer\n"
-"alltid den första exekveras. Vid försök att använda GOTO till en icke\n"
-"existerande etikett så avbryts batchfilens exekvering.\n"
+"En etikett som är målet för ett GOTO kan innehålla upp till 255 tecken, men\n"
+"blanksteg tillåts ej (till skillnad från andra operativsystem). Om två\n"
+"eller flera identiska etiketter existerar i en batchfil, så kommer alltid\n"
+"den första exekveras. Vid försök att använda GOTO till en icke existerande\n"
+"etikett så avbryts batchfilens exekvering.\n"
 "\n"
 "GOTO har ingen effekt när det används interaktivt.\n"
 
-#: cmd.rc:86
+#: cmd.rc:101
 msgid ""
 "HELP <command> shows brief help details on a topic.\n"
 "HELP without an argument shows all CMD built-in commands.\n"
@@ -9650,7 +9695,7 @@ msgstr ""
 "HELP <command> skriver ut mer detaljerad information ang. ämnet.\n"
 "HELP utan ett argument visar alla inbyggda CMD-kommandon.\n"
 
-#: cmd.rc:96
+#: cmd.rc:111
 msgid ""
 "IF is used to conditionally execute a command.\n"
 "\n"
@@ -9670,7 +9715,7 @@ msgstr ""
 "I den andra IF-satsen måste sträng1 och sträng2 vara inom citattecken.\n"
 "IF bryr sej inte om stora eller små bokstäver.\n"
 
-#: cmd.rc:102
+#: cmd.rc:118
 msgid ""
 "LABEL is used to set a disk volume label.\n"
 "\n"
@@ -9684,23 +9729,22 @@ msgstr ""
 "Kommandot kommer fråga dig efter enhetens nya namn.\n"
 "Du kan visa enhetens namn genom att använda kommandot VOL.\n"
 
-#: cmd.rc:105
+#: cmd.rc:121
 msgid "MD <name> is the short version of MKDIR. It creates a subdirectory.\n"
 msgstr ""
 "MD <name> är en synonym för MKDIR.\n"
 "Den skapar en ny mapp i mappen du befinner dig i.\n"
 
-#: cmd.rc:106
+#: cmd.rc:123
 msgid "MKDIR <name> creates a subdirectory.\n"
 msgstr "MKDIR <name> skapar en ny mapp i mappen du befinner dig i.\n"
 
-#: cmd.rc:113
+#: cmd.rc:131
 msgid ""
 "MOVE relocates a file or directory to a new point within the file system.\n"
 "\n"
-"If the item being moved is a directory then all the files and "
-"subdirectories\n"
-"below the item are moved as well.\n"
+"If the item being moved is a directory then all the files and\n"
+"subdirectories below the item are moved as well.\n"
 "\n"
 "MOVE fails if the old and new locations are on different DOS drive letters.\n"
 msgstr ""
@@ -9711,13 +9755,13 @@ msgstr ""
 "MOVE misslyckas om den gamla och det den nya stället är på olika\n"
 "DOS-enhetsbokstäver.\n"
 
-#: cmd.rc:124
+#: cmd.rc:142
 msgid ""
 "PATH displays or changes the cmd search path.\n"
 "\n"
-"Entering PATH will display the current PATH setting (initially taken\n"
-"from the registry). To change the setting follow the\n"
-"PATH command with the new value.\n"
+"Entering PATH will display the current PATH setting (initially taken from\n"
+"the registry). To change the setting follow the PATH command with the new\n"
+"value.\n"
 "\n"
 "It is also possible to modify the PATH by using the PATH environment\n"
 "variable, for example:\n"
@@ -9725,27 +9769,27 @@ msgid ""
 msgstr ""
 "PATH visar eller ändrar cmd:s sökväg.\n"
 "\n"
-"Om du skriver enbart PATH så visas den aktuella sökvägen\n"
-"(som står i windowsregistret). För att ändra på denna inställning,\n"
-"skriv PATH och sedan den nya sökvägen.\n"
+"Om du skriver enbart PATH så visas den aktuella sökvägen (som står i\n"
+"windowsregistret). För att ändra på denna inställning, skriv PATH och sedan\n"
+"den nya sökvägen.\n"
 "\n"
 "Det går också att ändra PATH genom att använda PATH:s miljövariabler.\n"
 "Till exempel:\n"
 "PATH %PATH%;c:\\temp\n"
 
-#: cmd.rc:130
+#: cmd.rc:148
 msgid ""
 "PAUSE displays a message on the screen asking the user to press a key.\n"
 "\n"
-"It is mainly useful in batch files to allow the user to read the output\n"
-"of a previous command before it scrolls off the screen.\n"
+"It is mainly useful in batch files to allow the user to read the output of\n"
+"a previous command before it scrolls off the screen.\n"
 msgstr ""
 "PAUSE visar ett meddelande som ber användaren att trycka på en tangent.\n"
 "\n"
 "PAUSE används mestadels i batchfiler så att användaren hinner läsa\n"
 "resultatet av ett kört kommando innan det rullar av skärmen.\n"
 
-#: cmd.rc:151
+#: cmd.rc:169
 msgid ""
 "PROMPT sets the command-line prompt.\n"
 "\n"
@@ -9769,8 +9813,8 @@ msgid ""
 msgstr ""
 "PROMPT ändrar promptens utseende.\n"
 "\n"
-"Inmatad sträng efter PROMPT-kommandot (och följande blanksteg)\n"
-"visas i början av nästa rad, när cmd väntar på inmatning.\n"
+"Inmatad sträng efter PROMPT-kommandot (och följande blanksteg) visas i\n"
+"början av nästa rad, när cmd väntar på inmatning.\n"
 "\n"
 "Följande tecken betyder:\n"
 "\n"
@@ -9785,35 +9829,35 @@ msgstr ""
 "och ett större än-tecken (>).\n"
 "(Som kommandot PROMPT $p$g.)\n"
 "\n"
-"Prompten går att ändra genom att modifiera miljövariabeln PROMPT,\n"
-"så kommandot 'SET PROMPT=text' har samma effekt som 'PROMPT text'.\n"
+"Prompten går att ändra genom att modifiera miljövariabeln PROMPT, så\n"
+"kommandot 'SET PROMPT=text' har samma effekt som 'PROMPT text'.\n"
 
-#: cmd.rc:155
+#: cmd.rc:173
 msgid ""
-"A command line beginning with REM (followed by a space) performs no\n"
-"action, and can therefore be used as a comment in a batch file.\n"
+"A command line beginning with REM (followed by a space) performs no action,\n"
+"and can therefore be used as a comment in a batch file.\n"
 msgstr ""
 "En kommandorad som börjar på REM (med ett blanksteg efter) ignoreras.\n"
 "Därav kan REM användas för att kommentera rader i en batchfil.\n"
 
-#: cmd.rc:158
+#: cmd.rc:176
 msgid "REN <filename> is the short version of RENAME. It renames a file.\n"
 msgstr ""
 "REN <filnamn> är en synonym för kommandot RENAME. REN döper om en fil.\n"
 
-#: cmd.rc:159
+#: cmd.rc:178
 msgid "RENAME <filename> renames a file.\n"
 msgstr "RENAME <filnamn> döper om en fil.\n"
 
-#: cmd.rc:161
+#: cmd.rc:181
 msgid "RD <directory> is the short version of RMDIR. It deletes a directory.\n"
 msgstr "RD <plats> är en synonym för RMDIR. RD tar bort vald plats.\n"
 
-#: cmd.rc:162
+#: cmd.rc:183
 msgid "RMDIR <directory> deletes a directory.\n"
 msgstr "RMDIR <plats> tar bort vald plats.\n"
 
-#: cmd.rc:206
+#: cmd.rc:229
 msgid ""
 "SET displays or changes the cmd environment variables.\n"
 "\n"
@@ -9823,14 +9867,13 @@ msgid ""
 "\n"
 "SET <variable>=<value>\n"
 "\n"
-"where <variable> and <value> are character strings. There must be no\n"
-"space before the equals sign, nor can the variable name\n"
-"have embedded spaces.\n"
+"where <variable> and <value> are character strings. There must be no space\n"
+"before the equals sign, nor can the variable name have embedded spaces.\n"
 "\n"
-"Under Wine, the environment of the underlying operating system is\n"
-"included into the Win32 environment, there will generally therefore be\n"
-"many more values than in a native Win32 implementation. Note that it is\n"
-"not possible to affect the operating system environment from within cmd.\n"
+"Under Wine, the environment of the underlying operating system is included\n"
+"into the Win32 environment, there will generally therefore be many more\n"
+"values than in a native Win32 implementation. Note that it is not possible\n"
+"to affect the operating system environment from within cmd.\n"
 msgstr ""
 "SET visar eller ändrar cmd:s miljövariabler.\n"
 "\n"
@@ -9840,71 +9883,72 @@ msgstr ""
 "\n"
 "SET <variabel>=<värde>\n"
 "\n"
-"där <variabel> och <värde> är teckensträngar. Inga blanksteg är\n"
-"tillåtna varken innan lika med tecknet eller inom variabel namnet.\n"
+"där <variabel> och <värde> är teckensträngar. Inga blanksteg är tillåtna\n"
+"varken innan lika med tecknet eller inom variabel namnet.\n"
 "\n"
-"I Wine inkluderas miljövariabler från det underliggande operativsystemet\n"
-"i Win32-miljön vilket resulterar i att det finns många fler värden\n"
-"än i en riktig Win32-implementation. Notera att det inte går att påverka\n"
+"I Wine inkluderas miljövariabler från det underliggande operativsystemet i\n"
+"Win32-miljön vilket resulterar i att det finns många fler värden än i en\n"
+"riktig Win32-implementation. Notera att det inte går att påverka\n"
 "operativsystemets miljövariabler via cmd.\n"
 
-#: cmd.rc:211
+#: cmd.rc:234
 msgid ""
-"SHIFT is used in a batch file to remove one parameter from the head of\n"
-"the list, so parameter 2 becomes parameter 1 and so on. It has no effect\n"
-"if called from the command line.\n"
+"SHIFT is used in a batch file to remove one parameter from the head of the\n"
+"list, so parameter 2 becomes parameter 1 and so on. It has no effect if\n"
+"called from the command line.\n"
 msgstr ""
-"SHIFT används i batchfiler för att ta bort en parameter högst upp på\n"
-"listan så att parameter 2 blir parameter 1 o.s.v. SHIFT har ingen effekt\n"
-"om det anropas ifrån kommandoraden.\n"
+"SHIFT används i batchfiler för att ta bort en parameter högst upp på listan\n"
+"så att parameter 2 blir parameter 1 o.s.v. SHIFT har ingen effekt om det\n"
+"anropas ifrån kommandoraden.\n"
 
-#: cmd.rc:188 start.rc:53
+#: cmd.rc:212 start.rc:56
 msgid ""
-"Start a program, or open a document in the program normally used for files "
+"Start a program, or open a document in the program normally used for files\n"
 "with that suffix.\n"
 "Usage:\n"
 "start [options] program_filename [...]\n"
 "start [options] document_filename\n"
 "\n"
 "Options:\n"
-"\"title\"      Specifies the title of the child windows.\n"
-"/d directory Start the program in the specified directory.\n"
-"/b           Don't create a new console for the program.\n"
-"/i           Start the program with fresh environment variables.\n"
-"/min         Start the program minimized.\n"
-"/max         Start the program maximized.\n"
-"/low         Start the program in the idle priority class.\n"
-"/normal      Start the program in the normal priority class.\n"
-"/high        Start the program in the high priority class.\n"
-"/realtime    Start the program in the realtime priority class.\n"
-"/abovenormal Start the program in the abovenormal priority class.\n"
-"/belownormal Start the program in the belownormal priority class.\n"
-"/node n      Start the program on the specified NUMA node.\n"
+"\"title\"        Specifies the title of the child windows.\n"
+"/d directory   Start the program in the specified directory.\n"
+"/b             Don't create a new console for the program.\n"
+"/i             Start the program with fresh environment variables.\n"
+"/min           Start the program minimized.\n"
+"/max           Start the program maximized.\n"
+"/low           Start the program in the idle priority class.\n"
+"/normal        Start the program in the normal priority class.\n"
+"/high          Start the program in the high priority class.\n"
+"/realtime      Start the program in the realtime priority class.\n"
+"/abovenormal   Start the program in the abovenormal priority class.\n"
+"/belownormal   Start the program in the belownormal priority class.\n"
+"/node n        Start the program on the specified NUMA node.\n"
 "/affinity mask Start the program with the specified affinity mask.\n"
-"/wait        Wait for the started program to finish, then exit with its exit "
-"code.\n"
-"/unix        Use a Unix filename and start the file like windows explorer.\n"
-"/ProgIDOpen  Open a document using the specified progID.\n"
-"/?           Display this help and exit.\n"
+"/wait          Wait for the started program to finish, then exit with its\n"
+"exit code.\n"
+"/unix          Use a Unix filename and start the file like windows\n"
+"explorer.\n"
+"/ProgIDOpen    Open a document using the specified progID.\n"
+"/?             Display this help and exit.\n"
 msgstr ""
 
-#: cmd.rc:213
+#: cmd.rc:237
 msgid "TIME sets or shows the current system time.\n"
 msgstr "TIME ställer in eller skriver ut ditt systems tid.\n"
 
-#: cmd.rc:215
+#: cmd.rc:240
 msgid "TITLE <string> sets the window title for the cmd window.\n"
 msgstr "TITLE <sträng> ändrar fönsternamn för cmd-fönstret.\n"
 
-#: cmd.rc:219
+#: cmd.rc:244
 msgid ""
-"TYPE <filename> copies <filename> to the console device (or elsewhere\n"
-"if redirected). No check is made that the file is readable text.\n"
+"TYPE <filename> copies <filename> to the console device (or elsewhere if\n"
+"redirected). No check is made that the file is readable text.\n"
 msgstr ""
 "TYPE <filnamn> kopierar <filnamn> till konsollen (eller annanstans om\n"
 "angivet). TYPE kollar inte vad filen i fråga är för typ av fil.\n"
 
-#: cmd.rc:228
+#: cmd.rc:253
 msgid ""
 "VERIFY is used to set, clear or test the verify flag. Valid forms are:\n"
 "\n"
@@ -9923,21 +9967,21 @@ msgstr ""
 "\n"
 "Det finns dock ingen användning för verifieraflaggor i Wine.\n"
 
-#: cmd.rc:231
+#: cmd.rc:256
 msgid "VER displays the version of cmd you are running.\n"
 msgstr "VER visar körd version av cmd.\n"
 
-#: cmd.rc:233
+#: cmd.rc:259
 msgid "VOL shows the volume label of a disk device.\n"
 msgstr "VOL visar namnet på en diskvolym.\n"
 
-#: cmd.rc:237
+#: cmd.rc:263
 msgid ""
-"ENDLOCAL ends localization of environment changes in a batch file\n"
-"which were introduced by a preceding SETLOCAL.\n"
+"ENDLOCAL ends localization of environment changes in a batch file which\n"
+"were introduced by a preceding SETLOCAL.\n"
 msgstr ""
 
-#: cmd.rc:245
+#: cmd.rc:271
 msgid ""
 "SETLOCAL starts localization of environment changes in a batch file.\n"
 "\n"
@@ -9947,19 +9991,19 @@ msgid ""
 "settings are restored.\n"
 msgstr ""
 
-#: cmd.rc:248
+#: cmd.rc:275
 msgid ""
-"PUSHD <directory> saves the current directory onto a\n"
-"stack, and then changes the current directory to the supplied one.\n"
+"PUSHD <directory> saves the current directory onto a stack, and then\n"
+"changes the current directory to the supplied one.\n"
 msgstr ""
-"PUSHD <plats> sparar nuvarande sökväg i en stack,\n"
-"och ändrar sedan sökvägen till den angivna mappen.\n"
+"PUSHD <plats> sparar nuvarande sökväg i en stack, och ändrar sedan sökvägen\n"
+"till den angivna mappen.\n"
 
-#: cmd.rc:250
+#: cmd.rc:278
 msgid "POPD changes current directory to the last one saved with PUSHD.\n"
 msgstr "POPD ändrar nuvarande sökväg till den senast angivna i PUSHD.\n"
 
-#: cmd.rc:258
+#: cmd.rc:288
 msgid ""
 "ASSOC shows or modifies file extension associations.\n"
 "\n"
@@ -9967,47 +10011,47 @@ msgid ""
 "\n"
 "ASSOC without parameters displays current file associations.\n"
 "If used with only a file extension, displays the current association.\n"
-"Specifying no file type after the equal sign removes the current "
+"Specifying no file type after the equal sign removes the current\n"
 "association, if any.\n"
 msgstr ""
 
-#: cmd.rc:269
+#: cmd.rc:300
 msgid ""
 "FTYPE shows or modifies open commands associated with file types.\n"
 "\n"
 "Syntax: FTYPE [fileType[=[openCommand]]]\n"
 "\n"
-"Without parameters, shows the file types for which open command strings are "
+"Without parameters, shows the file types for which open command strings are\n"
 "currently defined.\n"
-"If used with only a file type, displays the associated open command string, "
+"If used with only a file type, displays the associated open command string,\n"
 "if any.\n"
-"Specifying no open command after the equal sign removes the command string "
+"Specifying no open command after the equal sign removes the command string\n"
 "associated to the specified file type.\n"
 msgstr ""
 
-#: cmd.rc:271
+#: cmd.rc:303
 msgid "MORE displays output of files or piped input in pages.\n"
 msgstr "MORE visar filer eller inmatad text på sidor.\n"
 
-#: cmd.rc:275
+#: cmd.rc:308
 msgid ""
-"CHOICE displays a text and waits, until the User\n"
-"presses an allowed Key from a selectable list.\n"
+"CHOICE displays a text and waits, until the User presses an allowed Key\n"
+"from a selectable list.\n"
 "CHOICE is mainly used to build a menu selection in a batch file.\n"
 msgstr ""
-"CHOICE visar en text och väntar tills användaren\n"
-"trycker ner en tangent från en valbar lista.\n"
+"CHOICE visar en text och väntar tills användaren trycker ner en tangent\n"
+"från en valbar lista.\n"
 "CHOICE används främst för att skapa menyval i batchfiler.\n"
 
-#: cmd.rc:279
+#: cmd.rc:312
 msgid ""
-"EXIT terminates the current command session and returns\n"
-"to the operating system or shell from which you invoked cmd.\n"
+"EXIT terminates the current command session and returns to the operating\n"
+"system or shell from which you invoked cmd.\n"
 msgstr ""
-"EXIT avslutar cmd och skickar tillbaks användaren till\n"
-"operativsystemet eller skalet som cmd startades ifrån.\n"
+"EXIT avslutar cmd och skickar tillbaks användaren till operativsystemet\n"
+"eller skalet som cmd startades ifrån.\n"
 
-#: cmd.rc:317
+#: cmd.rc:351
 msgid ""
 "CMD built-in commands are:\n"
 "ASSOC\t\tShow or modify file extension associations\n"
@@ -10088,110 +10132,110 @@ msgstr ""
 "\n"
 "Skriv HELP <command> för mer information om något av kommandona ovanför.\n"
 
-#: cmd.rc:319
+#: cmd.rc:353
 msgid "Are you sure?"
 msgstr "Är du säker?"
 
-#: cmd.rc:320 xcopy.rc:43
+#: cmd.rc:354 reg.rc:50 xcopy.rc:43
 msgctxt "Yes key"
 msgid "Y"
 msgstr "J"
 
-#: cmd.rc:321 xcopy.rc:44
+#: cmd.rc:355 reg.rc:51 xcopy.rc:44
 msgctxt "No key"
 msgid "N"
 msgstr "N"
 
-#: cmd.rc:322
+#: cmd.rc:356
 msgid "File association missing for extension %1\n"
 msgstr "Det finns ingen filassociation för filformat %1\n"
 
-#: cmd.rc:323
+#: cmd.rc:357
 msgid "No open command associated with file type '%1'\n"
 msgstr "Ingen kommando förknippat med filtyp '%1'\n"
 
-#: cmd.rc:324
+#: cmd.rc:358
 msgid "Overwrite %1?"
 msgstr "Skriva över %1?"
 
-#: cmd.rc:325
+#: cmd.rc:359
 msgid "More..."
 msgstr "Mer..."
 
-#: cmd.rc:326
+#: cmd.rc:360
 msgid "Line in Batch processing possibly truncated. Using:\n"
 msgstr "En rad i batch möjligtvis trunkerad. Använder:\n"
 
-#: cmd.rc:328
+#: cmd.rc:362
 msgid "Argument missing\n"
 msgstr "Argument saknas\n"
 
-#: cmd.rc:329
+#: cmd.rc:363
 msgid "Syntax error\n"
 msgstr "Syntaxfel\n"
 
-#: cmd.rc:331
+#: cmd.rc:365
 msgid "No help available for %1\n"
 msgstr "Ingen hjälp tillgänglig för %1\n"
 
-#: cmd.rc:332
+#: cmd.rc:366
 msgid "Target to GOTO not found\n"
 msgstr "Mål för GOTO ej funnet\n"
 
-#: cmd.rc:333
+#: cmd.rc:367
 msgid "Current Date is %1\n"
 msgstr "Dagens datum är %1\n"
 
-#: cmd.rc:334
+#: cmd.rc:368
 msgid "Current Time is %1\n"
 msgstr "Tiden är %1\n"
 
-#: cmd.rc:335
+#: cmd.rc:369
 msgid "Enter new date: "
 msgstr "Skriv nytt datum: "
 
-#: cmd.rc:336
+#: cmd.rc:370
 msgid "Enter new time: "
 msgstr "Skriv in den nya tiden: "
 
-#: cmd.rc:337
+#: cmd.rc:371
 msgid "Environment variable %1 not defined\n"
 msgstr "Miljövariabeln %1 ej definierad\n"
 
-#: cmd.rc:338 xcopy.rc:41
+#: cmd.rc:372 xcopy.rc:41
 msgid "Failed to open '%1'\n"
 msgstr "Misslyckades med att öppna '%1'\n"
 
-#: cmd.rc:339
+#: cmd.rc:373
 msgid "Cannot call batch label outside of a batch script\n"
 msgstr "Går ej att anropa en batchetikett utanför ett batchskript\n"
 
-#: cmd.rc:340 xcopy.rc:45
+#: cmd.rc:374 xcopy.rc:45
 msgctxt "All key"
 msgid "A"
 msgstr "A"
 
-#: cmd.rc:341
+#: cmd.rc:375
 msgid "Delete %1?"
 msgstr "Ta bort %1?"
 
-#: cmd.rc:342
+#: cmd.rc:376
 msgid "Echo is %1\n"
 msgstr "Ekot är %1\n"
 
-#: cmd.rc:343
+#: cmd.rc:377
 msgid "Verify is %1\n"
 msgstr "Verifiera är %1\n"
 
-#: cmd.rc:344
+#: cmd.rc:378
 msgid "Verify must be ON or OFF\n"
 msgstr "Verifiera måste vara ON (på) eller OFF (av)\n"
 
-#: cmd.rc:345
+#: cmd.rc:379
 msgid "Parameter error\n"
 msgstr "Parameterfel\n"
 
-#: cmd.rc:346
+#: cmd.rc:380
 msgid ""
 "Volume Serial Number is %1!04x!-%2!04x!\n"
 "\n"
@@ -10199,72 +10243,72 @@ msgstr ""
 "Diskvolymens serienummer är %1!04x!-%2!04x!\n"
 "\n"
 
-#: cmd.rc:347
+#: cmd.rc:381
 msgid "Volume label (11 characters, <Enter> for none)?"
 msgstr "Diskvolymens namn (11 tecken, tryck <Enter> för inget)?"
 
-#: cmd.rc:348
+#: cmd.rc:382
 msgid "PATH not found\n"
 msgstr "Sökväg ej funnen\n"
 
-#: cmd.rc:349
+#: cmd.rc:383
 msgid "Press any key to continue... "
 msgstr "Tryck på en tangent för att fortsätta... "
 
-#: cmd.rc:350
+#: cmd.rc:384
 msgid "Wine Command Prompt"
 msgstr "Wine kommandoprompt"
 
-#: cmd.rc:351
+#: cmd.rc:385
 msgid "Microsoft Windows %1!S!\n"
-msgstr ""
+msgstr "Microsoft Windows %1!S!\n"
 
-#: cmd.rc:352
+#: cmd.rc:386
 msgid "More? "
 msgstr "Mer? "
 
-#: cmd.rc:353
+#: cmd.rc:387
 msgid "The input line is too long.\n"
 msgstr "Inmatningen är för lång.\n"
 
-#: cmd.rc:354
+#: cmd.rc:388
 msgid "Volume in drive %1!c! is %2\n"
 msgstr ""
 
-#: cmd.rc:355
+#: cmd.rc:389
 msgid "Volume in drive %1!c! has no label.\n"
 msgstr ""
 
-#: cmd.rc:356
+#: cmd.rc:390 reg.rc:49
 msgid " (Yes|No)"
 msgstr " (Ja|Nej)"
 
-#: cmd.rc:357
+#: cmd.rc:391
 msgid " (Yes|No|All)"
 msgstr " (Ja|Nej|Alla)"
 
-#: cmd.rc:358
+#: cmd.rc:392
 msgid ""
 "Can't recognize '%1' as an internal or external command, or batch script.\n"
 msgstr ""
 
-#: cmd.rc:359
+#: cmd.rc:393
 msgid "Division by zero error.\n"
 msgstr ""
 
-#: cmd.rc:360
+#: cmd.rc:394
 msgid "Expected an operand.\n"
 msgstr ""
 
-#: cmd.rc:361
+#: cmd.rc:395
 msgid "Expected an operator.\n"
 msgstr "Operator förväntades.\n"
 
-#: cmd.rc:362
+#: cmd.rc:396
 msgid "Mismatch in parentheses.\n"
 msgstr ""
 
-#: cmd.rc:363
+#: cmd.rc:397
 msgid ""
 "Badly formed number - must be one of decimal (12),\n"
 " hexadecimal (0x34) or octal (056).\n"
@@ -10283,10 +10327,8 @@ msgid "Wine Explorer"
 msgstr "Wine Explorer"
 
 #: explorer.rc:33
-#, fuzzy
-#| msgid "Start Menu"
 msgid "Start"
-msgstr "Start-meny"
+msgstr ""
 
 #: explorer.rc:34 winefile.rc:36
 msgid "&Run..."
@@ -10373,6 +10415,12 @@ msgstr "Förvald gateway"
 #: ipconfig.rc:50
 msgid "IPv6 address"
 msgstr "IPv6-adress"
+
+#: msinfo32.rc:28
+#, fuzzy
+#| msgid "System Configuration"
+msgid "System Information"
+msgstr "Systeminställning"
 
 #: net.rc:30
 msgid ""
@@ -10725,42 +10773,42 @@ msgstr "&Över:"
 msgid "Encoding:"
 msgstr "Kodning:"
 
-#: notepad.rc:132 wordpad.rc:281
+#: notepad.rc:132 wordpad.rc:289
 msgctxt "accelerator Select All"
 msgid "A"
 msgstr "A"
 
-#: notepad.rc:133 wordpad.rc:283
+#: notepad.rc:133 wordpad.rc:291
 msgctxt "accelerator Copy"
 msgid "C"
 msgstr "C"
 
-#: notepad.rc:134 regedit.rc:323 wordpad.rc:279
+#: notepad.rc:134 regedit.rc:323 wordpad.rc:287
 msgctxt "accelerator Find"
 msgid "F"
 msgstr "F"
 
-#: notepad.rc:135 wordpad.rc:280
+#: notepad.rc:135 wordpad.rc:288
 msgctxt "accelerator Replace"
 msgid "H"
-msgstr ""
+msgstr "H"
 
-#: notepad.rc:136 wordpad.rc:289
+#: notepad.rc:136 wordpad.rc:297
 msgctxt "accelerator New"
 msgid "N"
 msgstr "N"
 
-#: notepad.rc:137 wordpad.rc:290
+#: notepad.rc:137 wordpad.rc:298
 msgctxt "accelerator Open"
 msgid "O"
 msgstr "O"
 
-#: notepad.rc:138 regedit.rc:324 wordpad.rc:292
+#: notepad.rc:138 regedit.rc:324 wordpad.rc:300
 msgctxt "accelerator Print"
 msgid "P"
-msgstr ""
+msgstr "P"
 
-#: notepad.rc:139 wordpad.rc:291
+#: notepad.rc:139 wordpad.rc:299
 msgctxt "accelerator Save"
 msgid "S"
 msgstr "S"
@@ -10768,17 +10816,17 @@ msgstr "S"
 #: notepad.rc:140
 msgctxt "accelerator Paste"
 msgid "V"
-msgstr ""
+msgstr "V"
 
-#: notepad.rc:141 wordpad.rc:282
+#: notepad.rc:141 wordpad.rc:290
 msgctxt "accelerator Cut"
 msgid "X"
-msgstr ""
+msgstr "X"
 
-#: notepad.rc:142 wordpad.rc:284
+#: notepad.rc:142 wordpad.rc:292
 msgctxt "accelerator Undo"
 msgid "Z"
-msgstr ""
+msgstr "Z"
 
 #: notepad.rc:69
 msgid "Page &p"
@@ -10868,10 +10916,6 @@ msgstr "&Systeminställningar"
 msgid "&Run the Registry Editor"
 msgstr "Kör &Registereditorn"
 
-#: oleview.rc:40
-msgid "&Object"
-msgstr "&Objekt"
-
 #: oleview.rc:42
 msgid "&CoCreateInstance Flag"
 msgstr "&CoCreateInstance-flagga"
@@ -10924,11 +10968,11 @@ msgstr "&Expertläge"
 msgid "&Hidden component categories"
 msgstr "&Dolda komponentkategorier"
 
-#: oleview.rc:67 oleview.rc:89 winefile.rc:65 wordpad.rc:71 wordpad.rc:264
+#: oleview.rc:67 oleview.rc:89 winefile.rc:65 wordpad.rc:71 wordpad.rc:272
 msgid "&Toolbar"
 msgstr "&Verktygsfält"
 
-#: oleview.rc:68 oleview.rc:90 winefile.rc:67 wordpad.rc:74 wordpad.rc:267
+#: oleview.rc:68 oleview.rc:90 winefile.rc:67 wordpad.rc:74 wordpad.rc:275
 msgid "&Status Bar"
 msgstr "St&atusfält"
 
@@ -11406,19 +11450,20 @@ msgstr "Ikonfiler"
 msgid "Icons (*.ico)"
 msgstr "Ikoner (*.ico)"
 
-#: reg.rc:30
+#: reg.rc:35
 msgid ""
-"The syntax of this command is:\n"
+"Usage:\n"
+"  REG [operation] [parameters]\n"
 "\n"
-"REG [ ADD | DELETE | QUERY ]\n"
-"REG command /?\n"
+"Supported operations:\n"
+"  ADD | DELETE | QUERY\n"
+"\n"
+"For help on a specific operation, type:\n"
+"  REG [operation] /?\n"
+"\n"
 msgstr ""
-"Syntax för detta kommando är:\n"
-"\n"
-"REG [ ADD | DELETE | QUERY ]\n"
-"REG kommando /?\n"
 
-#: reg.rc:31
+#: reg.rc:36
 msgid ""
 "REG ADD key_name [/v value_name | /ve] [/t type] [/s separator] [/d data] [/"
 "f]\n"
@@ -11426,35 +11471,119 @@ msgstr ""
 "REG ADD nyckelnamn [/v värdenamn | /ve] [/t typ] [/s separator] [/d data] [/"
 "f]\n"
 
-#: reg.rc:32
+#: reg.rc:37
 msgid "REG DELETE key_name [/v value_name | /ve | /va] [/f]\n"
 msgstr "REG DELETE nyckelnamn [/v värdenamn | /ve | /va] [/f]\n"
 
-#: reg.rc:33
+#: reg.rc:38
 msgid "REG QUERY key_name [/v value_name | /ve] [/s]\n"
 msgstr "REG QUERY nyckelnamn [/v värdenamn | /ve] [/s]\n"
 
-#: reg.rc:34
+#: reg.rc:39
 msgid "The operation completed successfully\n"
 msgstr "Operation slutfördes utan problem\n"
 
-#: reg.rc:35
-msgid "Error: Invalid key name\n"
-msgstr "Fel: Ogiltigt nyckelnamn\n"
+#: reg.rc:40
+msgid "reg: Invalid key name\n"
+msgstr "reg: Ogiltigt nyckelnamn\n"
 
-#: reg.rc:36
-msgid "Error: Invalid command line parameters\n"
-msgstr "Fel: Ogiltiga kommandoradsparametrar\n"
+#: reg.rc:41
+msgid "reg: Invalid command line parameters\n"
+msgstr "reg: Ogiltiga kommandoradsparametrar\n"
 
-#: reg.rc:37
-msgid "Error: Unable to add keys to remote machine\n"
-msgstr "Fel: Kan inte lägga till nycklar till fjärrmaskin\n"
+#: reg.rc:42
+msgid "reg: Unable to access remote machine\n"
+msgstr "reg: Kan inte få tillgång till fjärrmaskin\n"
 
-#: reg.rc:38
+#: reg.rc:43
 msgid ""
-"Error: The system was unable to find the specified registry key or value\n"
+"reg: The system was unable to find the specified registry key or value\n"
 msgstr ""
-"Fel: Systemet kunde inte hitta angiven nyckel eller värde i registret\n"
+"reg: Systemet kunde inte hitta angiven nyckel eller värde i registret\n"
+
+#: reg.rc:44
+msgid "reg: Unsupported registry data type [%1]\n"
+msgstr "reg: Ej stödd typ [%1] i registret\n"
+
+#: reg.rc:45
+msgid "reg: The option [/d] must be followed by a valid integer\n"
+msgstr ""
+
+#: reg.rc:46
+msgid "reg: The option [/d] must be followed by a valid hexadecimal value\n"
+msgstr ""
+
+#: reg.rc:47
+msgid "reg: Unhandled registry data type [/t 0x%1!x!, /d %2]\n"
+msgstr ""
+
+#: reg.rc:48
+msgid "The registry value '%1' already exists. Do you want to overwrite it?"
+msgstr "Värdet '%1' finns redan i registret. Vill du ersätta det?"
+
+#: reg.rc:52
+msgid "The registry operation was cancelled\n"
+msgstr ""
+
+#: reg.rc:53 regedit.rc:204
+msgid "(Default)"
+msgstr "(Standard)"
+
+#: reg.rc:54
+msgid "Are you sure you want to delete the registry value '%1'?"
+msgstr "Vill du verkligen ta bort registervärdet '%1'?"
+
+#: reg.rc:55
+msgid "Are you sure you want to delete all registry values in '%1'?"
+msgstr "Vill du verkligen ta bort alla registervärden i '%1'?"
+
+#: reg.rc:56
+msgid "Are you sure you want to delete the registry key '%1'?"
+msgstr "Vill du verkligen ta bort registernyckeln '%1'?"
+
+#: reg.rc:57
+msgid "reg: The option [/d] must be followed by a valid string\n"
+msgstr ""
+
+#: reg.rc:58
+msgid ""
+"reg: Unable to delete all registry values in '%1'. An unexpected error "
+"occurred.\n"
+msgstr ""
+
+#: reg.rc:59
+msgid ""
+"reg: Unable to complete the specified operation. An unexpected error "
+"occurred.\n"
+msgstr ""
+
+#: reg.rc:60
+msgid "Search complete. Number of matches found: %1!d!\n"
+msgstr ""
+
+#: reg.rc:61
+#, fuzzy
+#| msgid "reg: Invalid key name\n"
+msgid "reg: Invalid syntax. "
+msgstr "reg: Ogiltigt nyckelnamn\n"
+
+#: reg.rc:62
+#, fuzzy
+#| msgid "uninstaller: Invalid option [%1]\n"
+msgid "reg: Invalid option [%1]. "
+msgstr "uninstaller: Flaggan [%1] är ogiltig\n"
+
+#: reg.rc:63
+msgid "Type \"REG /?\" for help.\n"
+msgstr ""
+
+#: reg.rc:64
+msgid "Type \"REG %1 /?\" for help.\n"
+msgstr ""
+
+#: reg.rc:65 regedit.rc:205
+msgid "(value not set)"
+msgstr "(värde ej angivet)"
 
 #: regedit.rc:34
 msgid "&Registry"
@@ -11658,14 +11787,6 @@ msgstr "Registerfiler (*.reg)"
 msgid "Win9x/NT4 Registry files (REGEDIT4)"
 msgstr "Win9x-/NT4-registerfiler (REGEDIT4)"
 
-#: regedit.rc:204
-msgid "(Default)"
-msgstr "(Standard)"
-
-#: regedit.rc:205
-msgid "(value not set)"
-msgstr "(värde ej angivet)"
-
 #: regedit.rc:206
 msgid "(cannot display value)"
 msgstr "(kunde inte visa värde)"
@@ -11673,6 +11794,150 @@ msgstr "(kunde inte visa värde)"
 #: regedit.rc:207
 msgid "(unknown %d)"
 msgstr "(okänt %d)"
+
+#: regedit.rc:359
+msgid ""
+"Usage:\n"
+"  regedit [options] [filename] [reg_key]\n"
+"\n"
+"Options:\n"
+"  [no option]    Launch the graphical version of this program.\n"
+"  /L:system.dat  The location of the system.dat file to be modified.\n"
+"                 Compatible with any other switch. Ignored.\n"
+"  /R:user.dat    The location of the user.dat file to be modified.\n"
+"                 Compatible with any other switch. Ignored.\n"
+"  /C             Import the contents of a registry file.\n"
+"  /D             Delete a specified registry key.\n"
+"  /E             Export the contents of a specified registry key to a file.\n"
+"                 If no key is specified, the entire registry is exported.\n"
+"  /S             Silent mode. No messages will be displayed.\n"
+"  /V             Launch the GUI in advanced mode. Ignored.\n"
+"  /?             Display this information and exit.\n"
+"  [filename]     The location of the file containing registry information "
+"to\n"
+"                 be imported. When used with [/E], this option specifies "
+"the\n"
+"                 file location where registry information will be exported.\n"
+"  [reg_key]      The registry key to be modified.\n"
+"\n"
+"Usage examples:\n"
+"  regedit \"import.reg\"\n"
+"  regedit /E \"export.reg\" \"HKEY_CURRENT_USER\\Console\"\n"
+"  regedit /D \"HKEY_LOCAL_MACHINE\\Error\\Path\"\n"
+msgstr ""
+
+#: regedit.rc:360
+msgid "regedit: Invalid or unrecognized switch [%1]\n"
+msgstr ""
+
+#: regedit.rc:361
+msgid "Type \"regedit /?\" for help.\n"
+msgstr ""
+
+#: regedit.rc:362
+#, fuzzy
+#| msgid "No command was specified."
+msgid "regedit: No filename was specified.\n"
+msgstr "Inget kommando angavs."
+
+#: regedit.rc:363
+msgid "regedit: No registry key was specified for removal.\n"
+msgstr ""
+
+#: regedit.rc:364
+msgid "regedit: The file '%1' was not found.\n"
+msgstr ""
+
+#: regedit.rc:365
+#, fuzzy
+#| msgid "reg: Unable to access remote machine\n"
+msgid "regedit: Unable to open the file '%1'.\n"
+msgstr "reg: Kan inte få tillgång till fjärrmaskin\n"
+
+#: regedit.rc:366
+#, fuzzy
+#| msgid "Invalid handle operation.\n"
+msgid "regedit: Unhandled action.\n"
+msgstr "Ogiltig referensoperation.\n"
+
+#: regedit.rc:367
+msgid "regedit: Out of memory! (%1!S!, line %2!u!)\n"
+msgstr ""
+
+#: regedit.rc:368
+#, fuzzy
+#| msgid "reg: Invalid key name\n"
+msgid "regedit: Invalid hexadecimal value.\n"
+msgstr "reg: Ogiltigt nyckelnamn\n"
+
+#: regedit.rc:369
+msgid ""
+"regedit: Unable to convert hexadecimal data. An invalid value was "
+"encountered at '%1'.\n"
+msgstr ""
+
+#: regedit.rc:370
+msgid "regedit: Unrecognized escape sequence [\\%1!c!]\n"
+msgstr ""
+
+#: regedit.rc:371
+#, fuzzy
+#| msgid "reg: Unsupported registry data type [%1]\n"
+msgid "regedit: Unsupported registry data type [%1]\n"
+msgstr "reg: Ej stödd typ [%1] i registret\n"
+
+#: regedit.rc:372
+#, fuzzy
+#| msgid "reg: Unable to access remote machine\n"
+msgid "regedit: Unexpected end of line in '%1'.\n"
+msgstr "reg: Kan inte få tillgång till fjärrmaskin\n"
+
+#: regedit.rc:373
+#, fuzzy
+#| msgid "No command was specified."
+msgid "regedit: The line '%1' was not recognized.\n"
+msgstr "Inget kommando angavs."
+
+#: regedit.rc:374
+#, fuzzy
+#| msgid "reg: Unable to access remote machine\n"
+msgid "regedit: Unable to add the registry value '%1' to '%2'.\n"
+msgstr "reg: Kan inte få tillgång till fjärrmaskin\n"
+
+#: regedit.rc:375
+#, fuzzy
+#| msgid "reg: Unable to access remote machine\n"
+msgid "regedit: Unable to open the registry key '%1'.\n"
+msgstr "reg: Kan inte få tillgång till fjärrmaskin\n"
+
+#: regedit.rc:376
+#, fuzzy
+#| msgid "reg: Unsupported registry data type [%1]\n"
+msgid "regedit: Unsupported registry data type [%1] encountered in '%2'.\n"
+msgstr "reg: Ej stödd typ [%1] i registret\n"
+
+#: regedit.rc:377
+msgid "regedit: The registry value '%1' will be exported as binary data.\n"
+msgstr ""
+
+#: regedit.rc:378
+msgid "regedit: Incorrect registry class specification in '%1'.\n"
+msgstr ""
+
+#: regedit.rc:379
+#, fuzzy
+#| msgid ""
+#| "reg: The system was unable to find the specified registry key or value\n"
+msgid ""
+"regedit: Unable to export '%1'. The specified registry key was not found.\n"
+msgstr ""
+"reg: Systemet kunde inte hitta angiven nyckel eller värde i registret\n"
+
+#: regedit.rc:380
+#, fuzzy
+#| msgid "reg: Unable to access remote machine\n"
+msgid "regedit: Unable to delete the registry class '%1'.\n"
+msgstr "reg: Kan inte få tillgång till fjärrmaskin\n"
 
 #: regedit.rc:163
 msgid "Quits the registry editor"
@@ -11831,13 +12096,11 @@ msgid ""
 msgstr ""
 
 #: regsvr32.rc:42
-#, fuzzy
-#| msgid "Failed to open '%1'\n"
 msgid "regsvr32: Failed to load DLL '%1'\n"
-msgstr "Misslyckades med att öppna '%1'\n"
+msgstr ""
 
 #: regsvr32.rc:43
-msgid "regsvr32: %1 not implemented in DLL '%2'\n"
+msgid "regsvr32: '%1!S!' not implemented in DLL '%2'\n"
 msgstr ""
 
 #: regsvr32.rc:44
@@ -11872,7 +12135,7 @@ msgstr ""
 msgid "regsvr32: Successfully uninstalled DLL '%1'\n"
 msgstr ""
 
-#: start.rc:55
+#: start.rc:58
 msgid ""
 "Application could not be started, or no application associated with the "
 "specified file.\n"
@@ -11882,7 +12145,7 @@ msgstr ""
 "angivna filen.\n"
 "'ShellExecuteEx' misslyckades"
 
-#: start.rc:57
+#: start.rc:60
 msgid "Could not translate the specified Unix filename to a DOS filename."
 msgstr "Kunde inte konvertera Unix-filnamnet till ett DOS-filnamn."
 
@@ -12751,6 +13014,41 @@ msgid ""
 "Do you want to remove the uninstall entry from the registry?"
 msgstr ""
 
+#: uninstaller.rc:31
+msgid "uninstaller: The application with GUID '%1' was not found\n"
+msgstr ""
+
+#: uninstaller.rc:32
+msgid ""
+"uninstaller: The option '--remove' must be followed by an application GUID\n"
+msgstr ""
+
+#: uninstaller.rc:33
+msgid "uninstaller: Invalid option [%1]\n"
+msgstr "uninstaller: Flaggan [%1] är ogiltig\n"
+
+#: uninstaller.rc:35
+msgid ""
+"Wine Application Uninstaller\n"
+"\n"
+"Uninstall applications from the current Wine prefix.\n"
+"\n"
+msgstr ""
+
+#: uninstaller.rc:43
+msgid ""
+"Usage:\n"
+"  uninstaller [options]\n"
+"\n"
+"Options:\n"
+"  --help\t    Display this information.\n"
+"  --list\t    List all applications installed in this Wine prefix.\n"
+"  --remove {GUID}   Uninstall the specified application.\n"
+"\t\t    Use '--list' to determine the application GUID.\n"
+"  [no option]       Launch the graphical version of this program.\n"
+"\n"
+msgstr ""
+
 #: view.rc:36
 msgid "&Pan"
 msgstr "&Panorera"
@@ -12791,15 +13089,11 @@ msgstr ""
 "\n"
 "Om du avslutar processen kan du förlora allt osparat data."
 
-#: wineboot.rc:42
-msgid "Wine"
-msgstr "Wine"
-
 #: wineboot.rc:46
 msgid "The Wine configuration in %s is being updated, please wait..."
 msgstr "Wine-inställningarna i %s uppdateras, var god vänta..."
 
-#: winecfg.rc:139
+#: winecfg.rc:141
 msgid ""
 "This program is free software; you can redistribute it and/or modify it "
 "under the terms of the GNU Lesser General Public License as published by the "
@@ -12811,23 +13105,23 @@ msgstr ""
 "publicerad av Free Software Foundation, antingen version 2.1 eller (om du så "
 "vill) någon senare version."
 
-#: winecfg.rc:141
+#: winecfg.rc:143
 msgid "Windows registration information"
 msgstr "Registreringsinformation för Windows"
 
-#: winecfg.rc:142
+#: winecfg.rc:144
 msgid "&Owner:"
 msgstr "Ägare:"
 
-#: winecfg.rc:144
+#: winecfg.rc:146
 msgid "Organi&zation:"
 msgstr "Organisation:"
 
-#: winecfg.rc:152
+#: winecfg.rc:154
 msgid "Application settings"
 msgstr "Programinställningar"
 
-#: winecfg.rc:153
+#: winecfg.rc:155
 msgid ""
 "Wine can mimic different Windows versions for each application. This tab is "
 "linked to the Libraries and Graphics tabs to allow you to change system-wide "
@@ -12838,55 +13132,55 @@ msgstr ""
 "inställningar i de flikarna också, antingen systemövergripande eller per "
 "program."
 
-#: winecfg.rc:157
-msgid "&Add application..."
+#: winecfg.rc:159
+msgid "Add appli&cation..."
 msgstr "&Lägg till program..."
 
-#: winecfg.rc:158
+#: winecfg.rc:160
 msgid "&Remove application"
 msgstr "&Ta bort program"
 
-#: winecfg.rc:159
+#: winecfg.rc:161
 msgid "&Windows Version:"
 msgstr "&Windows-version:"
 
-#: winecfg.rc:167
+#: winecfg.rc:169
 msgid "Window settings"
 msgstr "Fönsterinställningar"
 
-#: winecfg.rc:168
+#: winecfg.rc:170
 msgid "Automatically capture the &mouse in full-screen windows"
 msgstr "Fånga &musen automatiskt i fullskärmsfönster"
 
-#: winecfg.rc:169
+#: winecfg.rc:171
 msgid "Allow the window manager to &decorate the windows"
 msgstr "Tillåt fönsterhanteraren att &dekorera fönstren"
 
-#: winecfg.rc:170
+#: winecfg.rc:172
 msgid "Allow the &window manager to control the windows"
 msgstr "Tillåt &fönsterhanteraren att styra fönstren"
 
-#: winecfg.rc:171
+#: winecfg.rc:173
 msgid "&Emulate a virtual desktop"
 msgstr "Emulera ett virtuellt skriv&bord"
 
-#: winecfg.rc:173
+#: winecfg.rc:175
 msgid "Desktop &size:"
 msgstr "Storlek på &skrivbord:"
 
-#: winecfg.rc:178
+#: winecfg.rc:180
 msgid "Screen resolution"
 msgstr "Skärm&upplösning"
 
-#: winecfg.rc:182
+#: winecfg.rc:184
 msgid "This is a sample text using 10 point Tahoma"
 msgstr "Denna exempeltext använder 10-punkters Tahoma"
 
-#: winecfg.rc:189
+#: winecfg.rc:191
 msgid "DLL overrides"
 msgstr "DLL-åsidosättningar"
 
-#: winecfg.rc:190
+#: winecfg.rc:192
 msgid ""
 "Dynamic Link Libraries can be specified individually to be either builtin "
 "(provided by Wine) or native (taken from Windows or provided by the "
@@ -12896,55 +13190,55 @@ msgstr ""
 "(tillhandahålls av Wine) eller ursprungliga (tagna från Windows eller "
 "tillhandahålls av programmet)."
 
-#: winecfg.rc:192
+#: winecfg.rc:194
 msgid "&New override for library:"
 msgstr "&Ny åsidosättning för bibliotek:"
 
-#: winecfg.rc:194 wordpad.rc:247
-msgid "&Add"
-msgstr "Lägg &till"
+#: winecfg.rc:196
+msgid "A&dd"
+msgstr "&Lägg till"
 
-#: winecfg.rc:195
+#: winecfg.rc:197
 msgid "Existing &overrides:"
 msgstr "Befintliga &åsidosättningar:"
 
-#: winecfg.rc:197
+#: winecfg.rc:199
 msgid "&Edit..."
 msgstr "R&edigera..."
 
-#: winecfg.rc:203
+#: winecfg.rc:205
 msgid "Edit Override"
 msgstr "Redigera åsidosättning"
 
-#: winecfg.rc:206
+#: winecfg.rc:208
 msgid "Load order"
 msgstr "Inläsningsordning"
 
-#: winecfg.rc:207
+#: winecfg.rc:209
 msgid "&Builtin (Wine)"
 msgstr "&Inbyggd (Wine)"
 
-#: winecfg.rc:208
+#: winecfg.rc:210
 msgid "&Native (Windows)"
 msgstr "&Ursprunglig (Windows)"
 
-#: winecfg.rc:209
-msgid "Bui&ltin then Native"
+#: winecfg.rc:211
+msgid "Buil&tin then Native"
 msgstr "Inb&yggd sedan Ursprunglig"
 
-#: winecfg.rc:210
+#: winecfg.rc:212
 msgid "Nati&ve then Builtin"
 msgstr "Urs&prunglig sedan Inbyggd"
 
-#: winecfg.rc:218
+#: winecfg.rc:220
 msgid "Select Drive Letter"
 msgstr "Välj enhetsbokstav"
 
-#: winecfg.rc:230
+#: winecfg.rc:232
 msgid "Drive configuration"
 msgstr "Enhetskonfiguration"
 
-#: winecfg.rc:231
+#: winecfg.rc:233
 msgid ""
 "Failed to connect to the mount manager, the drive configuration cannot be "
 "edited."
@@ -12952,111 +13246,103 @@ msgstr ""
 "Misslyckades med att ansluta till monteringshanteraren. "
 "Enhetskonfigurationen kan inte redigeras."
 
-#: winecfg.rc:234
-msgid "&Add..."
+#: winecfg.rc:236
+msgid "A&dd..."
 msgstr "&Lägg till..."
 
-#: winecfg.rc:236
-msgid "Auto&detect"
-msgstr "Upptäck aut&omatiskt"
+#: winecfg.rc:238
+msgid "Aut&odetect"
+msgstr "&Upptäck automatiskt"
 
-#: winecfg.rc:239
+#: winecfg.rc:241
 msgid "&Path:"
 msgstr "&Sökväg:"
 
-#: winecfg.rc:246 winecfg.rc:38
-msgid "Show &Advanced"
+#: winecfg.rc:248 winecfg.rc:38
+msgid "Show Advan&ced"
 msgstr "Visa &avancerat"
 
-#: winecfg.rc:247
-msgid "De&vice:"
-msgstr "E&nhet:"
-
 #: winecfg.rc:249
-msgid "Bro&wse..."
-msgstr "&Bläddra..."
+msgid "De&vice:"
+msgstr "&Enhet:"
 
 #: winecfg.rc:251
-msgid "&Label:"
-msgstr "&Etikett:"
+msgid "Bro&wse..."
+msgstr "B&läddra..."
 
 #: winecfg.rc:253
-msgid "S&erial:"
-msgstr "S&erienr:"
+msgid "&Label:"
+msgstr "Et&ikett:"
 
-#: winecfg.rc:256
-msgid "Show &dot files"
+#: winecfg.rc:255
+msgid "S&erial:"
+msgstr "Se&rienr:"
+
+#: winecfg.rc:258
+msgid "&Show dot files"
 msgstr "Visa &punktfiler"
 
-#: winecfg.rc:263
-msgid "Driver diagnostics"
-msgstr ""
-
 #: winecfg.rc:265
-msgid "Defaults"
-msgstr ""
+msgid "Driver diagnostics"
+msgstr "Diagnostisera drivrutin"
 
-#: winecfg.rc:266
+#: winecfg.rc:267
+msgid "Defaults"
+msgstr "Standardvärden"
+
+#: winecfg.rc:268
 msgid "Output device:"
 msgstr ""
 
-#: winecfg.rc:267
+#: winecfg.rc:269
 msgid "Voice output device:"
 msgstr ""
 
-#: winecfg.rc:268
+#: winecfg.rc:270
 msgid "Input device:"
 msgstr ""
 
-#: winecfg.rc:269
+#: winecfg.rc:271
 msgid "Voice input device:"
 msgstr ""
 
-#: winecfg.rc:274
+#: winecfg.rc:276
 msgid "&Test Sound"
 msgstr "&Testa ljud"
 
-#: winecfg.rc:275
-#, fuzzy
-#| msgid "Wine configuration"
+#: winecfg.rc:277 winecfg.rc:90
 msgid "Speaker configuration"
-msgstr "Konfiguration av Wine"
+msgstr "Högtalarkonfiguration"
 
-#: winecfg.rc:276
-#, fuzzy
-#| msgid "De&vice:"
-msgid "Device:"
-msgstr "E&nhet:"
-
-#: winecfg.rc:278
+#: winecfg.rc:280
 msgid "Speakers:"
-msgstr ""
+msgstr "Högtalare:"
 
-#: winecfg.rc:286
+#: winecfg.rc:288
 msgid "Appearance"
 msgstr "Utseende"
 
-#: winecfg.rc:287
+#: winecfg.rc:289
 msgid "&Theme:"
 msgstr "&Tema:"
 
-#: winecfg.rc:289
+#: winecfg.rc:291
 msgid "&Install theme..."
 msgstr "&Installera tema..."
 
-#: winecfg.rc:294
+#: winecfg.rc:296
 msgid "It&em:"
 msgstr "Ob&jekt:"
 
-#: winecfg.rc:296
+#: winecfg.rc:298
 msgid "C&olor:"
 msgstr "Fä&rg:"
 
-#: winecfg.rc:302
+#: winecfg.rc:304
 msgid "Folders"
 msgstr "Mappar"
 
-#: winecfg.rc:305
+#: winecfg.rc:307
 msgid "&Link to:"
 msgstr "&Länka till:"
 
@@ -13073,7 +13359,7 @@ msgid "Select the Unix target directory, please."
 msgstr "Välj unix-målkatalog, tack."
 
 #: winecfg.rc:37
-msgid "Hide &Advanced"
+msgid "Hide Advan&ced"
 msgstr "Dölj &avancerat"
 
 #: winecfg.rc:39
@@ -13122,7 +13408,7 @@ msgstr "Wine-konfiguration för %s"
 
 #: winecfg.rc:84
 msgid "Selected driver: %s"
-msgstr ""
+msgstr "Vald drivrutin: %s"
 
 #: winecfg.rc:85
 msgid "(None)"
@@ -13136,23 +13422,21 @@ msgstr "Ljudtest misslyckades!"
 msgid "(System default)"
 msgstr "(Systemstandard)"
 
-#: winecfg.rc:89
-msgid "5.1 Surround"
-msgstr ""
-
-#: winecfg.rc:90
-#, fuzzy
-#| msgid "graphic"
-msgid "Quadraphonic"
-msgstr "grafik"
-
 #: winecfg.rc:91
-msgid "Stereo"
-msgstr ""
+msgid "5.1 Surround"
+msgstr "5.1 surround"
 
 #: winecfg.rc:92
+msgid "Quadraphonic"
+msgstr "4-kanalsstereo"
+
+#: winecfg.rc:93
+msgid "Stereo"
+msgstr "Stereo"
+
+#: winecfg.rc:94
 msgid "Mono"
-msgstr ""
+msgstr "Mono"
 
 #: winecfg.rc:54
 msgid ""
@@ -13267,127 +13551,127 @@ msgstr ""
 "\n"
 "Kom ihåg att klicka på ‘Lägg till’ i fliken Enheter för att skapa en!\n"
 
-#: winecfg.rc:97
+#: winecfg.rc:99
 msgid "Controls Background"
 msgstr "Bakgrund i kontroller"
 
-#: winecfg.rc:98
+#: winecfg.rc:100
 msgid "Controls Text"
 msgstr "Text i kontroller"
 
-#: winecfg.rc:100
+#: winecfg.rc:102
 msgid "Menu Background"
 msgstr "Menybakgrund"
 
-#: winecfg.rc:101
+#: winecfg.rc:103
 msgid "Menu Text"
 msgstr "Menytext"
 
-#: winecfg.rc:102
+#: winecfg.rc:104
 msgid "Scrollbar"
 msgstr "Rullningslist"
 
-#: winecfg.rc:103
+#: winecfg.rc:105
 msgid "Selection Background"
 msgstr "Bakgrund för markering"
 
-#: winecfg.rc:104
+#: winecfg.rc:106
 msgid "Selection Text"
 msgstr "Text för markering"
 
-#: winecfg.rc:105
+#: winecfg.rc:107
 msgid "Tooltip Background"
 msgstr "Bakgrund för verktygstips"
 
-#: winecfg.rc:106
+#: winecfg.rc:108
 msgid "Tooltip Text"
 msgstr "Text för verktygstips"
 
-#: winecfg.rc:107
+#: winecfg.rc:109
 msgid "Window Background"
 msgstr "Fönsterbakgrund"
 
-#: winecfg.rc:108
+#: winecfg.rc:110
 msgid "Window Text"
 msgstr "Fönstertext"
 
-#: winecfg.rc:109
+#: winecfg.rc:111
 msgid "Active Title Bar"
 msgstr "Aktiv titellist"
 
-#: winecfg.rc:110
+#: winecfg.rc:112
 msgid "Active Title Text"
 msgstr "Aktiv titeltext"
 
-#: winecfg.rc:111
+#: winecfg.rc:113
 msgid "Inactive Title Bar"
 msgstr "Inaktiv titellist"
 
-#: winecfg.rc:112
+#: winecfg.rc:114
 msgid "Inactive Title Text"
 msgstr "Inaktiv titeltext"
 
-#: winecfg.rc:113
+#: winecfg.rc:115
 msgid "Message Box Text"
 msgstr "Text i meddelandefönster"
 
-#: winecfg.rc:114
+#: winecfg.rc:116
 msgid "Application Workspace"
 msgstr "Arbetsyta i program"
 
-#: winecfg.rc:115
+#: winecfg.rc:117
 msgid "Window Frame"
 msgstr "Fönsterram"
 
-#: winecfg.rc:116
+#: winecfg.rc:118
 msgid "Active Border"
 msgstr "Aktiv kant"
 
-#: winecfg.rc:117
+#: winecfg.rc:119
 msgid "Inactive Border"
 msgstr "Inaktiv kant"
 
-#: winecfg.rc:118
+#: winecfg.rc:120
 msgid "Controls Shadow"
 msgstr "Skugga i kontroller"
 
-#: winecfg.rc:119
+#: winecfg.rc:121
 msgid "Gray Text"
 msgstr "Grå text"
 
-#: winecfg.rc:120
+#: winecfg.rc:122
 msgid "Controls Highlight"
 msgstr "Markering i kontroller"
 
-#: winecfg.rc:121
+#: winecfg.rc:123
 msgid "Controls Dark Shadow"
 msgstr "Mörk skugga i kontroller"
 
-#: winecfg.rc:122
+#: winecfg.rc:124
 msgid "Controls Light"
 msgstr "Ljus i kontroller"
 
-#: winecfg.rc:123
+#: winecfg.rc:125
 msgid "Controls Alternate Background"
 msgstr "Alternativ bakgrund i kontroller"
 
-#: winecfg.rc:124
+#: winecfg.rc:126
 msgid "Hot Tracked Item"
 msgstr "Hovrat föremål"
 
-#: winecfg.rc:125
+#: winecfg.rc:127
 msgid "Active Title Bar Gradient"
 msgstr "Gradient för aktiv titellist"
 
-#: winecfg.rc:126
+#: winecfg.rc:128
 msgid "Inactive Title Bar Gradient"
 msgstr "Gradient för inaktiv titellist"
 
-#: winecfg.rc:127
+#: winecfg.rc:129
 msgid "Menu Highlight"
 msgstr "Menymarkering"
 
-#: winecfg.rc:128
+#: winecfg.rc:130
 msgid "Menu Bar"
 msgstr "Menyrad"
 
@@ -13408,98 +13692,98 @@ msgid "&Large"
 msgstr "&Stor"
 
 #: wineconsole.rc:68
-msgid "Control"
-msgstr "Control"
-
-#: wineconsole.rc:69
-msgid "Popup menu"
-msgstr ""
-
-#: wineconsole.rc:70
-msgid "&Control"
-msgstr ""
-
-#: wineconsole.rc:71
-msgid "S&hift"
-msgstr "S&hift"
-
-#: wineconsole.rc:72
-msgid "Quick edit"
-msgstr ""
-
-#: wineconsole.rc:73
-msgid "&enable"
-msgstr ""
-
-#: wineconsole.rc:75
 msgid "Command history"
 msgstr "Kommandohistorik"
 
-#: wineconsole.rc:76
-msgid "&Number of recalled commands:"
+#: wineconsole.rc:69
+msgid "&Buffer size:"
 msgstr ""
+
+#: wineconsole.rc:72
+msgid "&Remove duplicates"
+msgstr "&Ta bort upprepade"
+
+#: wineconsole.rc:74
+msgid "Popup menu"
+msgstr ""
+
+#: wineconsole.rc:75
+msgid "&Control"
+msgstr ""
+
+#: wineconsole.rc:76
+msgid "S&hift"
+msgstr "S&hift"
+
+#: wineconsole.rc:78
+msgid "Console"
+msgstr "Konsoll"
 
 #: wineconsole.rc:79
-msgid "&Remove doubles"
+msgid "&Quick Edit mode"
 msgstr ""
 
-#: wineconsole.rc:87
+#: wineconsole.rc:80
+msgid "&Insert mode"
+msgstr ""
+
+#: wineconsole.rc:88
 msgid "&Font"
 msgstr "&Typsnitt"
 
-#: wineconsole.rc:89
+#: wineconsole.rc:90
 msgid "&Color"
 msgstr "&Färg"
 
-#: wineconsole.rc:100
+#: wineconsole.rc:101
 msgid "Configuration"
 msgstr "Konfiguration"
 
-#: wineconsole.rc:103
+#: wineconsole.rc:104
 msgid "Buffer zone"
 msgstr ""
 
-#: wineconsole.rc:104
+#: wineconsole.rc:105
 msgid "&Width:"
 msgstr "&Bredd:"
 
-#: wineconsole.rc:107
+#: wineconsole.rc:108
 msgid "&Height:"
 msgstr "&Höjd:"
 
-#: wineconsole.rc:111
+#: wineconsole.rc:112
 msgid "Window size"
 msgstr "Fönsterstorlek"
 
-#: wineconsole.rc:112
+#: wineconsole.rc:113
 msgid "W&idth:"
 msgstr "B&redd:"
 
-#: wineconsole.rc:115
+#: wineconsole.rc:116
 msgid "H&eight:"
 msgstr "H&öjd:"
 
-#: wineconsole.rc:119
+#: wineconsole.rc:120
 msgid "End of program"
 msgstr ""
 
-#: wineconsole.rc:120
+#: wineconsole.rc:121
 msgid "&Close console"
 msgstr "&Stäng konsoll"
 
-#: wineconsole.rc:122
+#: wineconsole.rc:123
 msgid "Edition"
 msgstr "Edition"
 
-#: wineconsole.rc:128
+#: wineconsole.rc:129
 msgid "Console parameters"
 msgstr "Konsollparametrar"
 
-#: wineconsole.rc:131
+#: wineconsole.rc:132
 msgid "Retain these settings for later sessions"
 msgstr "Spara dessa inställningar för följande sessioner"
 
-#: wineconsole.rc:132
+#: wineconsole.rc:133
 msgid "Modify only current session"
 msgstr "Ändra enbart den aktuella sessionen"
 
@@ -13536,7 +13820,9 @@ msgid "Configuration error"
 msgstr "Konfigurationsfel"
 
 #: wineconsole.rc:42
-msgid "Screen buffer size must be greater or equal to the window's one"
+msgid ""
+"The size of the screen buffer must be greater than or equal to the size of "
+"the window."
 msgstr ""
 
 #: wineconsole.rc:37
@@ -13757,82 +14043,82 @@ msgstr "Ordna &vertikalt\tCtrl+F4"
 msgid "&About Wine File Manager"
 msgstr "&Om Wine Filhanteraren"
 
-#: winefile.rc:125
+#: winefile.rc:122
 msgid "Select destination"
 msgstr "Välj mål"
 
-#: winefile.rc:138
+#: winefile.rc:135
 msgid "By File Type"
 msgstr "Efter filtyp"
 
-#: winefile.rc:143
+#: winefile.rc:140
 msgid "File type"
 msgstr "Filtyp"
 
-#: winefile.rc:144
+#: winefile.rc:141
 msgid "&Directories"
 msgstr "&Kataloger"
 
-#: winefile.rc:146
+#: winefile.rc:143
 msgid "&Programs"
 msgstr "&Program"
 
-#: winefile.rc:148
+#: winefile.rc:145
 msgid "Docu&ments"
 msgstr "&Dokument"
 
-#: winefile.rc:150
+#: winefile.rc:147
 msgid "&Other files"
 msgstr "&Andra filer"
 
-#: winefile.rc:152
+#: winefile.rc:149
 msgid "Show Hidden/&System Files"
 msgstr "Visa gömda/&system-filer"
 
-#: winefile.rc:163
+#: winefile.rc:160
 msgid "&File Name:"
 msgstr "&Filnamn:"
 
-#: winefile.rc:165
+#: winefile.rc:162
 msgid "Full &Path:"
 msgstr "F&ull sökväg:"
 
-#: winefile.rc:167
+#: winefile.rc:164
 msgid "Last Change:"
 msgstr "Sist ändrad:"
 
-#: winefile.rc:171
+#: winefile.rc:168
 msgid "Cop&yright:"
 msgstr "Cop&yright:"
 
-#: winefile.rc:173
+#: winefile.rc:170
 msgid "Size:"
 msgstr "Storlek:"
 
-#: winefile.rc:177
+#: winefile.rc:174
 msgid "H&idden"
 msgstr "&Dold"
 
-#: winefile.rc:178
+#: winefile.rc:175
 msgid "&Archive"
 msgstr "&Arkiv"
 
-#: winefile.rc:179
+#: winefile.rc:176
 msgid "&System"
 msgstr "&System"
 
-#: winefile.rc:180
+#: winefile.rc:177
 msgid "&Compressed"
 msgstr "&Komprimerad"
 
-#: winefile.rc:181
+#: winefile.rc:178
 msgid "Version information"
 msgstr "Versionsinformation"
 
-#: winefile.rc:197
+#: winefile.rc:194
 msgctxt "accelerator Fullscreen"
 msgid "S"
-msgstr ""
+msgstr "S"
 
 #: winefile.rc:90
 msgid "Applying font settings"
@@ -13881,21 +14167,6 @@ msgstr "Index/Inode"
 #: winefile.rc:117
 msgid "%1 of %2 free"
 msgstr "%1 av %2 ledigt"
-
-#: winefile.rc:118
-msgctxt "unit kilobyte"
-msgid "kB"
-msgstr "kbyte"
-
-#: winefile.rc:119
-msgctxt "unit megabyte"
-msgid "MB"
-msgstr "Mbyte"
-
-#: winefile.rc:120
-msgctxt "unit gigabyte"
-msgid "GB"
-msgstr "Gbyte"
 
 #: winemine.rc:37
 msgid "&Game"
@@ -14005,29 +14276,29 @@ msgstr "&Bokmärke"
 msgid "&Define..."
 msgstr "&Definiera..."
 
-#: winhlp32.rc:49 winhlp32.rc:70
+#: winhlp32.rc:48
+msgid "Always on &top"
+msgstr "Alltid &överst"
+
+#: winhlp32.rc:50 winhlp32.rc:70
 msgid "Fonts"
 msgstr "Typsnitt"
 
-#: winhlp32.rc:51 winhlp32.rc:72
+#: winhlp32.rc:52 winhlp32.rc:72
 msgid "Small"
 msgstr "Litet"
 
-#: winhlp32.rc:52 winhlp32.rc:73
+#: winhlp32.rc:53 winhlp32.rc:73
 msgid "Normal"
 msgstr "Normalt"
 
-#: winhlp32.rc:53 winhlp32.rc:74
+#: winhlp32.rc:54 winhlp32.rc:74
 msgid "Large"
 msgstr "Stort"
 
-#: winhlp32.rc:57
+#: winhlp32.rc:58
 msgid "&Help on help\tF1"
 msgstr "&Hjälp om hjälp\tF1"
-
-#: winhlp32.rc:58
-msgid "Always on &top"
-msgstr "Alltid &överst"
 
 #: winhlp32.rc:59
 msgid "&About Wine Help"
@@ -14093,6 +14364,12 @@ msgstr "Fel: Aliaset hittades inte\n"
 msgid "Error: Invalid query\n"
 msgstr "Fel: Ogiltig fråga\n"
 
+#: wmic.rc:31
+#, fuzzy
+#| msgid "reg: Invalid key name\n"
+msgid "Error: Invalid syntax for PATH\n"
+msgstr "reg: Ogiltigt nyckelnamn\n"
+
 #: wordpad.rc:31
 msgid "&New...\tCtrl+N"
 msgstr "&Nytt...\tCtrl+N"
@@ -14145,11 +14422,11 @@ msgstr "Stycke&format"
 msgid "&Get text"
 msgstr "&Hämta text"
 
-#: wordpad.rc:72 wordpad.rc:265
+#: wordpad.rc:72 wordpad.rc:273
 msgid "&Format Bar"
 msgstr "&Formatfält"
 
-#: wordpad.rc:73 wordpad.rc:266
+#: wordpad.rc:73 wordpad.rc:274
 msgid "&Ruler"
 msgstr "&Linjal"
 
@@ -14165,253 +14442,285 @@ msgstr "&Datum och tid..."
 msgid "F&ormat"
 msgstr "F&ormat"
 
-#: wordpad.rc:85 wordpad.rc:108
+#: wordpad.rc:85
+#, fuzzy
+#| msgid "&List"
+msgid "&Lists"
+msgstr "&Lista"
+
+#: wordpad.rc:87 wordpad.rc:116
 msgid "&Bullet points"
 msgstr "&Punktuppställning"
 
-#: wordpad.rc:86 wordpad.rc:109
+#: wordpad.rc:88
+#, fuzzy
+#| msgid "CRL Number"
+msgid "Numbers"
+msgstr "CRL-nummer"
+
+#: wordpad.rc:89
+msgid "Letters - lower case"
+msgstr ""
+
+#: wordpad.rc:90
+msgid "Letters - upper case"
+msgstr ""
+
+#: wordpad.rc:91
+msgid "Roman numerals - lower case"
+msgstr ""
+
+#: wordpad.rc:92
+msgid "Roman numerals - upper case"
+msgstr ""
+
+#: wordpad.rc:94 wordpad.rc:117
 msgid "&Paragraph..."
 msgstr "&Stycke..."
 
-#: wordpad.rc:87
+#: wordpad.rc:95
 msgid "&Tabs..."
 msgstr "&Tabulatorer..."
 
-#: wordpad.rc:88
+#: wordpad.rc:96
 msgid "Backgroun&d"
 msgstr "&Bakgrund"
 
-#: wordpad.rc:90
+#: wordpad.rc:98
 msgid "&System\tCtrl+1"
 msgstr "&System\tCtrl+1"
 
-#: wordpad.rc:91
+#: wordpad.rc:99
 msgid "&Pale yellow\tCtrl+2"
 msgstr "Blek&gult\tCtrl+2"
 
-#: wordpad.rc:96
+#: wordpad.rc:104
 msgid "&About Wine Wordpad"
 msgstr "&Om Wine Wordpad"
 
-#: wordpad.rc:133
+#: wordpad.rc:141
 msgid "Automatic"
 msgstr "Automatisk"
 
-#: wordpad.rc:202
+#: wordpad.rc:210
 msgid "Date and time"
 msgstr "Datum och tid"
 
-#: wordpad.rc:205
+#: wordpad.rc:213
 msgid "Available formats"
 msgstr "Tillgängliga format"
 
-#: wordpad.rc:216
+#: wordpad.rc:224
 msgid "New document type"
 msgstr "Ny dokumenttyp"
 
-#: wordpad.rc:224
+#: wordpad.rc:232
 msgid "Paragraph format"
 msgstr "Formatera stycke"
 
-#: wordpad.rc:227
+#: wordpad.rc:235
 msgid "Indentation"
 msgstr "Indrag"
 
-#: wordpad.rc:228 wordpad.rc:151
+#: wordpad.rc:236 wordpad.rc:159
 msgid "Left"
 msgstr "Vänsterställt"
 
-#: wordpad.rc:230 wordpad.rc:152
+#: wordpad.rc:238 wordpad.rc:160
 msgid "Right"
 msgstr "Högerställt"
 
-#: wordpad.rc:232
+#: wordpad.rc:240
 msgid "First line"
 msgstr "Första rad"
 
-#: wordpad.rc:234
+#: wordpad.rc:242
 msgid "Alignment"
 msgstr "Justering"
 
-#: wordpad.rc:242
+#: wordpad.rc:250
 msgid "Tabs"
 msgstr "Tabulatorer"
 
-#: wordpad.rc:245
+#: wordpad.rc:253
 msgid "Tab stops"
 msgstr "Tabbstopp"
 
-#: wordpad.rc:251
+#: wordpad.rc:255
+msgid "&Add"
+msgstr "Lägg &till"
+
+#: wordpad.rc:259
 msgid "Remove al&l"
 msgstr "Ta bort a&lla"
 
-#: wordpad.rc:259
+#: wordpad.rc:267
 msgid "Line wrapping"
 msgstr "Radbrytning"
 
-#: wordpad.rc:260
+#: wordpad.rc:268
 msgid "&No line wrapping"
 msgstr "&Ingen radbrytning"
 
-#: wordpad.rc:261
+#: wordpad.rc:269
 msgid "Wrap text by the &window border"
 msgstr "&Bryt text vid fönsterkanten"
 
-#: wordpad.rc:262
+#: wordpad.rc:270
 msgid "Wrap text by the &margin"
 msgstr "Bryt text vid &marginalen"
 
-#: wordpad.rc:263
+#: wordpad.rc:271
 msgid "Toolbars"
 msgstr "Verktygsrader"
 
-#: wordpad.rc:276
+#: wordpad.rc:284
 msgctxt "accelerator Align Left"
 msgid "L"
-msgstr ""
-
-#: wordpad.rc:277
-msgctxt "accelerator Align Center"
-msgid "E"
-msgstr ""
-
-#: wordpad.rc:278
-msgctxt "accelerator Align Right"
-msgid "R"
-msgstr ""
+msgstr "L"
 
 #: wordpad.rc:285
+msgctxt "accelerator Align Center"
+msgid "E"
+msgstr "E"
+
+#: wordpad.rc:286
+msgctxt "accelerator Align Right"
+msgid "R"
+msgstr "R"
+
+#: wordpad.rc:293
 msgctxt "accelerator Redo"
 msgid "Y"
 msgstr "Y"
 
-#: wordpad.rc:286
+#: wordpad.rc:294
 msgctxt "accelerator Bold"
 msgid "B"
-msgstr ""
+msgstr "B"
 
-#: wordpad.rc:287
+#: wordpad.rc:295
 msgctxt "accelerator Italic"
 msgid "I"
-msgstr ""
+msgstr "I"
 
-#: wordpad.rc:288
+#: wordpad.rc:296
 msgctxt "accelerator Underline"
 msgid "U"
-msgstr ""
+msgstr "U"
 
-#: wordpad.rc:139
+#: wordpad.rc:147
 msgid "All documents (*.*)"
 msgstr "Alla filer (*.*)"
 
-#: wordpad.rc:140
+#: wordpad.rc:148
 msgid "Text documents (*.txt)"
 msgstr "Textdokument (*.txt)"
 
-#: wordpad.rc:141
+#: wordpad.rc:149
 msgid "Unicode text document (*.txt)"
 msgstr "Unicode-textdokument (*.txt)"
 
-#: wordpad.rc:142
+#: wordpad.rc:150
 msgid "Rich text format (*.rtf)"
 msgstr "Rich text-format (*.rtf)"
 
-#: wordpad.rc:143
+#: wordpad.rc:151
 msgid "Rich text document"
 msgstr "Rich text-dokument"
 
-#: wordpad.rc:144
+#: wordpad.rc:152
 msgid "Text document"
 msgstr "Textdokument"
 
-#: wordpad.rc:145
+#: wordpad.rc:153
 msgid "Unicode text document"
 msgstr "Textdokument (Unicode)"
 
-#: wordpad.rc:146
+#: wordpad.rc:154
 msgid "Printer files (*.prn)"
 msgstr "Skrivarfiler (*.prn)"
 
-#: wordpad.rc:153
+#: wordpad.rc:161
 msgid "Center"
 msgstr "Centrerat"
 
-#: wordpad.rc:159
+#: wordpad.rc:167
 msgid "Text"
 msgstr "Text"
 
-#: wordpad.rc:160
+#: wordpad.rc:168
 msgid "Rich text"
 msgstr "Rich text"
 
-#: wordpad.rc:166
+#: wordpad.rc:174
 msgid "Next page"
 msgstr "Nästa sida"
 
-#: wordpad.rc:167
+#: wordpad.rc:175
 msgid "Previous page"
 msgstr "Föregående sida"
 
-#: wordpad.rc:168
+#: wordpad.rc:176
 msgid "Two pages"
 msgstr "Två sidor"
 
-#: wordpad.rc:169
+#: wordpad.rc:177
 msgid "One page"
 msgstr "En sida"
 
-#: wordpad.rc:170
+#: wordpad.rc:178
 msgid "Zoom in"
 msgstr "Zooma in"
 
-#: wordpad.rc:171
+#: wordpad.rc:179
 msgid "Zoom out"
 msgstr "Zooma ut"
 
-#: wordpad.rc:173
+#: wordpad.rc:181
 msgid "Page"
 msgstr "Sida"
 
-#: wordpad.rc:174
+#: wordpad.rc:182
 msgid "Pages"
 msgstr "Sidor"
 
-#: wordpad.rc:175
+#: wordpad.rc:183
 msgctxt "unit: centimeter"
 msgid "cm"
 msgstr "cm"
 
-#: wordpad.rc:176
+#: wordpad.rc:184
 msgctxt "unit: inch"
 msgid "in"
 msgstr "in"
 
-#: wordpad.rc:177
+#: wordpad.rc:185
 msgid "inch"
 msgstr "tum"
 
-#: wordpad.rc:178
+#: wordpad.rc:186
 msgctxt "unit: point"
 msgid "pt"
 msgstr "pt"
 
-#: wordpad.rc:183
+#: wordpad.rc:191
 msgid "Document"
 msgstr "Dokument"
 
-#: wordpad.rc:184
+#: wordpad.rc:192
 msgid "Save changes to '%s'?"
 msgstr "Spara ändringar i '%s'?"
 
-#: wordpad.rc:185
+#: wordpad.rc:193
 msgid "Finished searching the document."
 msgstr "Sökningen i dokumentet har slutförts."
 
-#: wordpad.rc:186
+#: wordpad.rc:194
 msgid "Failed to load the RichEdit library."
 msgstr "Misslyckades att ladda RichEdit-biblioteket."
 
-#: wordpad.rc:187
+#: wordpad.rc:195
 msgid ""
 "You have chosen to save in plain text format, which will cause all "
 "formatting to be lost. Are you sure that you wish to do this?"
@@ -14419,35 +14728,35 @@ msgstr ""
 "Du har valt att spara i rent textformat, vilket kommer leda till att all "
 "formatering förloras. Är du säker att du vill göra detta?"
 
-#: wordpad.rc:190
+#: wordpad.rc:198
 msgid "Invalid number format."
 msgstr "Ogiltigt talformat."
 
-#: wordpad.rc:191
+#: wordpad.rc:199
 msgid "OLE storage documents are not supported."
 msgstr "OLE lagringsdokument stöds ej."
 
-#: wordpad.rc:192
+#: wordpad.rc:200
 msgid "Could not save the file."
 msgstr "Kunde inte spara filen."
 
-#: wordpad.rc:193
+#: wordpad.rc:201
 msgid "You do not have access to save the file."
 msgstr "Du har inte tillgång till att spara filen."
 
-#: wordpad.rc:194
+#: wordpad.rc:202
 msgid "Could not open the file."
 msgstr "Kunde inte öppna filen."
 
-#: wordpad.rc:195
+#: wordpad.rc:203
 msgid "You do not have access to open the file."
 msgstr "Du har inte tillgång till att öppna filen."
 
-#: wordpad.rc:196
+#: wordpad.rc:204
 msgid "Printing not implemented."
 msgstr "Utskrift ej implementerat."
 
-#: wordpad.rc:197
+#: wordpad.rc:205
 msgid "Cannot add more than 32 tab stops."
 msgstr "Kan ej lägga till mer än 32 tabbstopp."
 
